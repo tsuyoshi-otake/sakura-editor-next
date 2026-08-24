@@ -33,16 +33,6 @@ struct ColorThemeInfo final {
 	[[nodiscard]] bool operator==(const ColorThemeInfo&) const noexcept = default;
 };
 
-//! Parsed token-color metadata is retained before being projected into Sakura's
-//! coarse native syntax categories. The original scopes remain available for
-//! future grammar-aware support and for diagnostics.
-struct ThemeTokenColorRule final {
-	std::vector<std::wstring> scopes;
-	std::optional<ThemeColor> foreground;
-	std::optional<ThemeColor> background;
-	std::wstring fontStyle;
-};
-
 struct ColorThemeSnapshot final {
 	ColorThemeInfo info;
 	std::map<std::wstring, ThemeColor, std::less<>> colors;

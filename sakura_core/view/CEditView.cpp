@@ -56,6 +56,7 @@ LRESULT CALLBACK EditViewWndProc( HWND, UINT, WPARAM, LPARAM );
 VOID CALLBACK EditViewTimerProc( HWND, UINT, UINT_PTR, DWORD );
 
 #define IDT_ROLLMOUSE	1
+#define IDT_MINIMAP_AUTOHIDE 3
 
 /*
 || ウィンドウプロシージャ
@@ -400,17 +401,17 @@ void CEditView::Close()
 	//	2007.09.30 genta 関数化
 	//	m_hbmpCompatBMPもここで削除される．
 	UseCompatibleDC(FALSE);
-	if( m_hbmpMiniMapViewport != nullptr ){
-		if( m_hbmpMiniMapViewportOld != nullptr ){
-			::SelectObject( m_hdcMiniMapViewport, m_hbmpMiniMapViewportOld );
+	if( m_hbmpAlphaOverlay != nullptr ){
+		if( m_hbmpAlphaOverlayOld != nullptr ){
+			::SelectObject( m_hdcAlphaOverlay, m_hbmpAlphaOverlayOld );
 		}
-		::DeleteObject( m_hbmpMiniMapViewport );
-		m_hbmpMiniMapViewport = nullptr;
-		m_hbmpMiniMapViewportOld = nullptr;
+		::DeleteObject( m_hbmpAlphaOverlay );
+		m_hbmpAlphaOverlay = nullptr;
+		m_hbmpAlphaOverlayOld = nullptr;
 	}
-	if( m_hdcMiniMapViewport != nullptr ){
-		::DeleteDC( m_hdcMiniMapViewport );
-		m_hdcMiniMapViewport = nullptr;
+	if( m_hdcAlphaOverlay != nullptr ){
+		::DeleteDC( m_hdcAlphaOverlay );
+		m_hdcAlphaOverlay = nullptr;
 	}
 	if( m_hdcBackImage != nullptr ){
 		::DeleteDC( m_hdcBackImage );
@@ -785,6 +786,16 @@ LRESULT CEditView::DispatchEvent(
 		return 0L;
 	case WM_MOUSEMOVE:
 		OnMOUSEMOVE( wParam, (short)LOWORD( lParam ), (short)HIWORD( lParam ) );
+		return 0L;
+	case WM_MOUSELEAVE:
+		if( m_bMiniMap ) OnMiniMapMouseLeave();
+		return 0L;
+	case WM_CAPTURECHANGED:
+		if( m_bMiniMap && reinterpret_cast<HWND>(lParam) != GetHwnd() ) {
+			m_bMiniMapMouseDown = false;
+			m_nMiniMapDragOffsetY = -1;
+			::InvalidateRect(GetHwnd(), nullptr, FALSE);
+		}
 		return 0L;
 
 	case WM_RBUTTONDBLCLK:
@@ -1486,6 +1497,12 @@ VOID CEditView::OnTimer(
 {
 	POINT		po;
 	RECT		rc;
+	if( m_bMiniMap && idEvent == IDT_MINIMAP_AUTOHIDE ) {
+		::KillTimer(GetHwnd(), IDT_MINIMAP_AUTOHIDE);
+		m_bMiniMapScrollVisible = false;
+		::InvalidateRect(GetHwnd(), nullptr, FALSE);
+		return;
+	}
 
 	if( GetDllShareData().m_Common.m_sEdit.m_bUseOLE_DragDrop ){	/* OLEによるドラッグ & ドロップを使う */
 		if( IsDragSource() ){
@@ -2831,6 +2848,15 @@ void CEditView::SetInsMode(bool mode)
 	MarkRenderDamage(
 		editor::rendering::EEditViewDamage::Caret
 		| editor::rendering::EEditViewDamage::Ime);
+}
+
+void CEditView::RevealMiniMapForScroll()
+{
+	if( !m_bMiniMap || m_miniMapOptions.autohide != minimap::AutoHide::Scroll
+		|| GetHwnd() == nullptr ) return;
+	m_bMiniMapScrollVisible = true;
+	::SetTimer(GetHwnd(), IDT_MINIMAP_AUTOHIDE, 500, EditViewTimerProc);
+	::InvalidateRect(GetHwnd(), nullptr, FALSE);
 }
 
 // -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //

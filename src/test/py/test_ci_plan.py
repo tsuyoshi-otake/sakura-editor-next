@@ -194,7 +194,8 @@ class CiRustNativeWorkflowContractTests(unittest.TestCase):
             "MSBuild Rust backend full headless gate (${{ matrix.config }})"
         )
         for block in (rust_headless,):
-            self.assertIn("$env:HEADLESS_GTEST_EXCLUDES", block)
+            self.assertIn("src/test/headless-suite-selection.env", block)
+            self.assertIn("$env:GTEST_FILTER = $Matches.value", block)
             self.assertIn("'--test-dir' 'build/${{ matrix.platform }}/CMakeTools'", block)
             self.assertIn("'--timeout' '600'", block)
 
@@ -206,9 +207,22 @@ class CiRustNativeWorkflowContractTests(unittest.TestCase):
             self.workflow.index("MSBuild Rust backend full headless gate"),
         )
         self.assertIn(
-            "needs: [check-encoding, build-vcpkg-msvc, build]",
+            "needs: [check-encoding, rust-security-audit, build-vcpkg-msvc, build]",
             self.workflow,
         )
+
+    def test_cargo_audit_uses_a_pinned_verified_official_binary(self) -> None:
+        self.assertIn("  rust-security-audit:\n", self.workflow)
+        self.assertIn("readonly version='0.22.2'", self.workflow)
+        self.assertIn(
+            "readonly expected_sha256='ab28a1bdb54db4d5d8ad5981cf1f959410370b3d28250dbd35f6a44248620e39'",
+            self.workflow,
+        )
+        self.assertIn("sha256sum --check --strict", self.workflow)
+        self.assertIn("test -x \"${executable}\"", self.workflow)
+        self.assertIn("audit --file rust/Cargo.lock", self.workflow)
+        self.assertNotIn("cargo install cargo-audit", self.workflow)
+        self.assertIn("AUDIT_RESULT: ${{ needs.rust-security-audit.result }}", self.workflow)
 
     def test_rust_gates_preserve_historical_release_promotion(self) -> None:
         for name in (

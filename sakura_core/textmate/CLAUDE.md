@@ -7,8 +7,9 @@ engine: a format-neutral grammar model (`TextMateGrammarModel.h`), a JSON/plist
 compiler (`TextMateGrammarCompiler.*`, `TextMateJsonGrammarLoader.*`,
 `TextMatePlistGrammarLoader.*`), a thin Onigmo regex wrapper
 (`OnigmoRegexEngine.*`), and a line-by-line tokenizer
-(`TextMateTokenizer.*`). None of this is wired into rendering yet; that is a
-separate, larger effort. This directory has no dependency on `sakura_core/theme`
+(`TextMateTokenizer.*`). `senp::ISenpLanguageService` now loads enabled
+declarative grammar contributions and `CEditView` resolves their token scopes
+through the active theme during paint. This directory has no dependency on `sakura_core/theme`
 or on the workbench; `theme::TextMateScopeColorResolver`
 (`sakura_core/theme/TextMateScopeColorResolver.h/.cpp`) depends on this
 directory's *output shape* (`std::vector<std::wstring>` scope paths) only by
@@ -22,7 +23,7 @@ convention, not by `#include`, to keep `theme/` free of a compile dependency on
 | 1. Onigmo usable from `sakura_core` | Built (MSVC) | Linked as the vcpkg static library `Onigmo::onigmo` (full encodings). TextMate runtime uses UTF-8 only; `bregonig.dll` keeps CP932 via the same lib. Direct engine coverage is `OnigmoRegexEngineTest`; tokenizer coverage is `TextMateTokenizerTest`. |
 | 2. `.tmLanguage.json` / `.tmLanguage` (plist) parsing | Implemented | `TextMateGrammarCompiler` + both loaders. See "Known gaps" for exact divergences from vscode-textmate. |
 | 3. Line tokenizer | Implemented | `TextMateTokenizer::TokenizeLine`. It calls `OnigmoPattern::Compile`/`Search`, so it could not be build-verified until stage 1 landed; it now is. |
-| 4. Scope-to-color boundary | Boundary defined, not wired to rendering | `theme::TextMateScopeColorResolver`. No production caller passes real `TextMateToken::scopes` into it yet. |
+| 4. Scope-to-color boundary | Implemented | `CEditView` sends real `TextMateToken::scopes` to `theme::TextMateScopeColorResolver` with a bounded per-paint tokenization budget. |
 
 ## Onigmo build integration
 
@@ -118,11 +119,6 @@ Two details are load-bearing and easy to undo by accident:
   `TokenizeLine_MatchRule_ProducesKeywordTokenAndPlainRemainder` test asserts
   this directly: the keyword token's scope list is exactly
   `["keyword.control.demo"]`, not `["source.demo", "keyword.control.demo"]`.
-- **`TextMateRuleStackFrame` does not track its owning `Grammar`.** This
-  matters once real cross-grammar `source.foo` / `source.foo#name` includes are
-  exercised with state that must be interpreted against the foreign grammar
-  rather than the home grammar. Documented directly on the struct in
-  `TextMateTokenizer.h`.
 - **JSON object member order is not preserved end-to-end.**
   `platform::serialization::JsoncValue::Object` is a sorted
   `std::map<std::wstring, JsoncValue, std::less<>>`, so
@@ -169,9 +165,10 @@ specificity ranking (sum of dot-separated segments across every matched
 selector part; later rule wins an exact tie). It has no `#include` dependency
 on `sakura_core/textmate` by design, so an integration layer that already
 depends on both `textmate::TextMateToken` and `theme::ColorThemeSnapshot` is
-expected to pass `token.scopes` straight through. **No production caller wires
-this into rendering yet** — that is real remaining work, not merely omitted
-documentation.
+expected to pass `token.scopes` straight through. `CEditView_Paint.cpp` is that
+integration layer. Selection/search colors remain authoritative, high-contrast
+mode suppresses theme token colors, and a bounded line budget prevents grammar
+work from turning one paint into an unbounded document scan.
 
 ## Tests
 
@@ -208,7 +205,8 @@ glob:
   a plain-text remainder, and a `begin`/`end` string rule whose state (open
   frame, `beginCaptures` scope) is carried across two separate `TokenizeLine`
   calls via `RuleStackHandle`, closing correctly on the second line and popping
-  back to root. This also reaches the regex engine through
+  back to root. It also verifies that a pushed external-grammar frame retains
+  its owning grammar for nested repository references. This reaches the regex engine through
   `OnigmoPattern::Compile`/`Search`.
 
 ### `.vcxproj` registration

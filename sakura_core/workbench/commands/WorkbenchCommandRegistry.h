@@ -129,6 +129,7 @@ struct WorkbenchBuiltinCommandExecutors {
 	WorkbenchCommandExecutor activityBarLocationTop;
 	WorkbenchCommandExecutor activityBarLocationBottom;
 	WorkbenchCommandExecutor showExplorer;
+	WorkbenchCommandExecutor showExtensions;
 	WorkbenchCommandExecutor showProblems;
 	WorkbenchCommandExecutor toggleOutput;
 	WorkbenchCommandExecutor selectTheme;

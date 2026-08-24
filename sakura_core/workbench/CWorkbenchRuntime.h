@@ -29,6 +29,9 @@
 #include "workbench/workspace/WorkspaceConfigurationTypes.h"
 #include "workbench/workspace/WorkspaceArtifactDocumentService.h"
 #include "workbench/workspace/WorkspaceEditingService.h"
+#include "senp/SenpManagementService.h"
+#include "senp/SenpLanguageService.h"
+#include "senp/SenpRuntimeService.h"
 
 #include <map>
 #include <memory>
@@ -69,6 +72,9 @@ struct WorkbenchRuntimeDependencies final {
 	//! Profile/User persistence stays behind a control-process adapter. The
 	//! runtime owns the UI-independent service, never the durable backend.
 	std::unique_ptr<recent::IRecentlyOpenedWorkspaceStore> recentlyOpenedWorkspaceStore;
+	//! Profile-scoped package authority. The runtime composes the separate
+	//! process host only when this dependency is present.
+	std::unique_ptr<senp::ISenpManagementService> senpManagementService;
 };
 
 class CWorkbenchRuntime final : public IWorkbenchRuntime {
@@ -116,6 +122,9 @@ public:
 	[[nodiscard]] const output::OutputService* Output() const noexcept override;
 	[[nodiscard]] scm::SourceControlService* Scm() noexcept override;
 	[[nodiscard]] const scm::SourceControlService* Scm() const noexcept override;
+	[[nodiscard]] senp::ISenpManagementService* Extensions() noexcept override;
+	[[nodiscard]] senp::ISenpRuntimeService* ExtensionRuntime() noexcept override;
+	[[nodiscard]] senp::ISenpLanguageService* ExtensionLanguages() noexcept override;
 	[[nodiscard]] std::optional<tasks::FolderTaskCatalogSnapshot> TaskCatalogForFolder(
 		const platform::uri::Uri& folderUri) const override;
 	[[nodiscard]] tasks::TaskExecutionService* TaskExecution() noexcept override;
@@ -202,6 +211,9 @@ private:
 	std::shared_ptr<platform::filesystem::IFileService> m_fileService;
 	std::unique_ptr<workspace::IWorkspaceEditingService> m_workspaceEditing;
 	std::unique_ptr<recent::IRecentlyOpenedWorkspaceService> m_recentlyOpenedWorkspaces;
+	std::unique_ptr<senp::ISenpManagementService> m_senpManagement;
+	std::unique_ptr<senp::ISenpRuntimeService> m_senpRuntime;
+	std::unique_ptr<senp::ISenpLanguageService> m_senpLanguage;
 	std::unique_ptr<config::CConfigurationFileSourceController> m_fileSources;
 	std::unique_ptr<config::CSettingsWritebackCoordinator> m_settingsWriteback;
 	//! Owns advisory watchers and their cancellation/join boundary. It reports

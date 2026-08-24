@@ -1,0 +1,23 @@
+{
+  "name": "TOML",
+  "scopeName": "source.toml",
+  "patterns": [
+    { "include": "#comments" },
+    { "match": "^\\s*\\[\\[?[^]\\r\\n]+\\]\\]?", "name": "entity.name.section.toml" },
+    { "match": "^[ \\t]*(?:[A-Za-z0-9_-]+|\"[^\"]+\"|'[^']+')[ \\t]*(?==)", "name": "variable.other.key.toml" },
+    { "include": "#strings" },
+    { "match": "(?i)\\b(true|false)\\b", "name": "constant.language.boolean.toml" },
+    { "match": "(?x)\\b(?:0x[0-9A-Fa-f_]+|0o[0-7_]+|0b[01_]+|[+-]?(?:[0-9][0-9_]*)(?:\\.[0-9_]+)?(?:[eE][+-]?[0-9_]+)?)\\b", "name": "constant.numeric.toml" },
+    { "match": "\\b\\d{4}-\\d{2}-\\d{2}(?:[Tt ][0-9:.+-]+[Zz]?)?\\b", "name": "constant.other.datetime.toml" },
+    { "match": "[=.,{}\\[\\]]", "name": "punctuation.separator.toml" }
+  ],
+  "repository": {
+    "comments": { "patterns": [{ "match": "#.*$", "name": "comment.line.number-sign.toml" }] },
+    "strings": { "patterns": [
+      { "begin": "\"\"\"", "end": "\"\"\"", "name": "string.quoted.multi.basic.toml", "patterns": [{ "match": "\\\\.", "name": "constant.character.escape.toml" }] },
+      { "begin": "'''", "end": "'''", "name": "string.quoted.multi.literal.toml" },
+      { "begin": "\"", "end": "\"", "name": "string.quoted.double.toml", "patterns": [{ "match": "\\\\.", "name": "constant.character.escape.toml" }] },
+      { "begin": "'", "end": "'", "name": "string.quoted.single.toml" }
+    ] }
+  }
+}

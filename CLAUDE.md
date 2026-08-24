@@ -93,6 +93,7 @@ This file contains repository-wide guidance. More specific `CLAUDE.md` files are
 | Filesystem resource/version boundary | [`sakura_core/platform/filesystem/CLAUDE.md`](sakura_core/platform/filesystem/CLAUDE.md) |
 | Self-update and the installer relaunch contract | [`sakura_core/update/CLAUDE.md`](sakura_core/update/CLAUDE.md) |
 | Terminal and debug capability boundaries | [`sakura_core/terminal/CLAUDE.md`](sakura_core/terminal/CLAUDE.md), [`sakura_core/debug/CLAUDE.md`](sakura_core/debug/CLAUDE.md) |
+| SENP package management and extension runtime | [`sakura_core/senp/CLAUDE.md`](sakura_core/senp/CLAUDE.md) |
 | Build generation and shared resources | [`src/main/CLAUDE.md`](src/main/CLAUDE.md) |
 | Tests and test infrastructure | [`src/test/CLAUDE.md`](src/test/CLAUDE.md) |
 | Build helpers and build documentation | [`tools/CLAUDE.md`](tools/CLAUDE.md) |

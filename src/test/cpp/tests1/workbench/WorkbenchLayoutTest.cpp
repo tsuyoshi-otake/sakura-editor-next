@@ -118,6 +118,20 @@ TEST(WorkbenchLayout, MinimapIsInsideEditorAtTheRightEdge)
 	EXPECT_EQ(layout.editor.bottom, layout.minimap.bottom);
 }
 
+TEST(WorkbenchLayout, MinimapCanOwnTheLeftEdgeOfTheEditorGroup)
+{
+	auto request = WorkbenchLayoutRequest{ .clientWidth = 1800, .clientHeight = 1000 };
+	request.showMinimap = true;
+	request.minimapOnLeft = true;
+	const auto layout = CalculateWorkbenchLayout(request);
+
+	EXPECT_GT(layout.minimap.Width(), 0);
+	EXPECT_EQ(layout.leftSplitter.right, layout.minimap.left);
+	EXPECT_EQ(layout.minimap.right, layout.editor.left);
+	EXPECT_EQ(layout.editor.top, layout.minimap.top);
+	EXPECT_EQ(layout.editor.bottom, layout.minimap.bottom);
+}
+
 TEST(WorkbenchLayout, UndersizedClientsRemainClampedAndNonNegative)
 {
 	const auto layout = CalculateWorkbenchLayout({ .clientWidth = 8, .clientHeight = 7, .dpi = 192, .showMinimap = true });

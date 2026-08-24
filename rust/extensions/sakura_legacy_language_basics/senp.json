@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "sakura-legacy-language-basics",
+  "displayName": "Legacy Language Basics",
+  "version": "0.1.0",
+  "publisher": "sakura.builtin",
+  "description": "Syntax highlighting for Perl, COBOL, and fixed/free-form Fortran.",
+  "engines": { "sakura": ">=0.1.0" },
+  "contributes": {
+    "languages": [
+      { "id": "perl", "aliases": ["Perl", "perl"], "extensions": [".pl", ".pm", ".pod", ".t", ".PL", ".psgi"], "firstLine": "^#!.*\\bperl\\b" },
+      { "id": "cobol", "aliases": ["COBOL", "cobol"], "extensions": [".cob", ".cbl", ".cpy", ".cobol", ".ccp"] },
+      { "id": "fortran-fixed", "aliases": ["Fortran Fixed Form", "FORTRAN 77"], "extensions": [".f", ".for", ".f77", ".ftn"] },
+      { "id": "fortran-free", "aliases": ["Fortran Free Form", "Modern Fortran"], "extensions": [".f90", ".f95", ".f03", ".f08", ".f18"] }
+    ],
+    "grammars": [
+      { "language": "perl", "scopeName": "source.perl", "path": "assets/syntaxes/perl.tmLanguage.json" },
+      { "language": "cobol", "scopeName": "source.cobol", "path": "assets/syntaxes/cobol.tmLanguage.json" },
+      { "language": "fortran-fixed", "scopeName": "source.fortran.fixed", "path": "assets/syntaxes/fortran-fixed.tmLanguage.json" },
+      { "language": "fortran-free", "scopeName": "source.fortran.free", "path": "assets/syntaxes/fortran-free.tmLanguage.json" }
+    ]
+  }
+}

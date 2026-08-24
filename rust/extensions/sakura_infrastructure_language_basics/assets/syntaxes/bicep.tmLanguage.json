@@ -1,0 +1,17 @@
+{
+  "name": "Azure Bicep",
+  "scopeName": "source.bicep",
+  "patterns": [
+    { "match": "//.*$", "name": "comment.line.double-slash.bicep" },
+    { "begin": "/\\*", "end": "\\*/", "name": "comment.block.bicep" },
+    { "begin": "'''", "end": "'''", "name": "string.quoted.multi.bicep", "patterns": [ { "match": "\\$\\{[^}]+\\}", "name": "variable.other.interpolation.bicep" } ] },
+    { "begin": "'", "end": "'", "name": "string.quoted.single.bicep", "patterns": [ { "match": "\\$\\{[^}]+\\}", "name": "variable.other.interpolation.bicep" }, { "match": "\\\\.", "name": "constant.character.escape.bicep" } ] },
+    { "match": "(?i)\\b(targetScope|metadata|param|var|resource|module|output|existing|import|type|func|assert|extension|with|from|as)\\b", "name": "keyword.control.bicep" },
+    { "match": "(?i)\\b(string|int|bool|array|object|resource|secureObject|secureString)\\b", "name": "support.type.bicep" },
+    { "match": "(?i)\\b(true|false|null)\\b", "name": "constant.language.bicep" },
+    { "match": "@[A-Za-z_][A-Za-z0-9_]*(?=\\()", "name": "storage.modifier.decorator.bicep" },
+    { "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*:)" , "name": "variable.other.property.bicep" },
+    { "match": "(?<![A-Za-z0-9_])\\d+(?![A-Za-z0-9_])", "name": "constant.numeric.bicep" },
+    { "match": "=>|==|!=|<=|>=|&&|\\|\\||[+*/%?:<>!-]", "name": "keyword.operator.bicep" }
+  ]
+}

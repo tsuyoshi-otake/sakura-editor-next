@@ -1,6 +1,27 @@
 [workspace]
-members = ["sakura_rust_core"]
+members = [
+    "extensions/sakura_indent_rainbow",
+    "sakura_rust_core",
+    "sakura_senp",
+    "sakura_senp_host",
+    "sakura_senp_tool",
+]
 resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "Zlib"
+publish = false
+
+[workspace.dependencies]
+ed25519-dalek = "=2.2.0"
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.145"
+sha2 = "=0.10.9"
+wasmtime = { version = "=47.0.3", default-features = false, features = ["component-model", "cranelift", "runtime", "std"] }
+wit-bindgen = { version = "=0.46.0", default-features = false, features = ["macros", "realloc", "std"] }
+wit-component = "=0.252.0"
+zip = { version = "=5.1.1", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [profile.dev]
 panic = "abort"

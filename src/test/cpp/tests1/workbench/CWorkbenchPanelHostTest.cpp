@@ -196,6 +196,37 @@ TEST(WorkbenchPanelHost, SharedExtentApplicationDoesNotPersistOrEnterResize)
 	EXPECT_EQ(0, persistCount);
 }
 
+TEST(WorkbenchPanelHost, OwnsViewContainerTitleOverflowGeometry)
+{
+	workbench::CWorkbenchPanelHost host(workbench::WorkbenchEdge::Left, 280);
+	auto tool = std::make_unique<RecordingTool>();
+	ASSERT_TRUE(host.Create(::GetDesktopWindow(), ::GetModuleHandleW(nullptr), std::move(tool)));
+	host.SetHeaderMenu({ {
+		.title = L"Install from .senp...",
+		.enabled = true,
+		.invoke = []() {},
+	} });
+	host.Layout(RECT{ 0, 0, 360, 500 }, 96);
+	host.Show();
+
+	const HWND button = ::FindWindowExW(host.GetHwnd(), nullptr, L"BUTTON", L"More Actions...");
+	ASSERT_NE(nullptr, button);
+	EXPECT_NE(0L, ::GetWindowLongPtrW(button, GWL_STYLE) & WS_VISIBLE);
+	EXPECT_NE(0L, ::GetWindowLongPtrW(button, GWL_STYLE) & WS_TABSTOP);
+	EXPECT_EQ(BS_OWNERDRAW, ::GetWindowLongPtrW(button, GWL_STYLE) & BS_TYPEMASK);
+	RECT bounds{};
+	ASSERT_TRUE(::GetWindowRect(button, &bounds));
+	::MapWindowPoints(nullptr, host.GetHwnd(), reinterpret_cast<POINT*>(&bounds), 2);
+	EXPECT_EQ(330, bounds.left);
+	EXPECT_EQ(2, bounds.top);
+	EXPECT_EQ(356, bounds.right);
+	EXPECT_EQ(28, bounds.bottom);
+
+	host.SetHeaderMenu({});
+	EXPECT_EQ(0L, ::GetWindowLongPtrW(button, GWL_STYLE) & WS_VISIBLE);
+	host.Close();
+}
+
 TEST(WorkbenchPanelHost, SashOverlaysAdjacentChildrenAndForwardsInitialPress)
 {
 	MouseDownRecorder recorder;

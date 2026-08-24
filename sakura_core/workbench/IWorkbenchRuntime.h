@@ -48,6 +48,12 @@ namespace workbench::scm {
 class SourceControlService;
 }
 
+namespace senp {
+class ISenpLanguageService;
+class ISenpManagementService;
+class ISenpRuntimeService;
+}
+
 namespace workbench::statusbar {
 class StatusbarViewModel;
 struct StatusbarMementoSaveResult;
@@ -83,6 +89,7 @@ enum class EWorkbenchRuntimeDiagnosticSource : std::uint8_t {
 	WorkspaceContext,
 	WorkspaceArtifacts,
 	Layout,
+	Extensions,
 };
 
 enum class EWorkbenchRuntimeDiagnosticCode : std::uint8_t {
@@ -186,6 +193,11 @@ public:
 	[[nodiscard]] virtual const output::OutputService* Output() const noexcept = 0;
 	[[nodiscard]] virtual scm::SourceControlService* Scm() noexcept = 0;
 	[[nodiscard]] virtual const scm::SourceControlService* Scm() const noexcept = 0;
+	//! Profile-scoped package management and isolated runtime are distinct
+	//! services. Both are running-only borrows and never expose Wasm internals.
+	[[nodiscard]] virtual senp::ISenpManagementService* Extensions() noexcept { return nullptr; }
+	[[nodiscard]] virtual senp::ISenpRuntimeService* ExtensionRuntime() noexcept { return nullptr; }
+	[[nodiscard]] virtual senp::ISenpLanguageService* ExtensionLanguages() noexcept { return nullptr; }
 	//! Explicit folder lookup only. Empty workbenches and unknown folders return
 	//! no catalog instead of silently borrowing a first/default workspace folder.
 	[[nodiscard]] virtual std::optional<tasks::FolderTaskCatalogSnapshot> TaskCatalogForFolder(

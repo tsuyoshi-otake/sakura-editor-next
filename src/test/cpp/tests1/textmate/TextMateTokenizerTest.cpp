@@ -19,11 +19,28 @@
 namespace {
 
 using textmate::GrammarCompileResult;
+using textmate::IExternalGrammarResolver;
 using textmate::RuleStackHandle;
 using textmate::TextMateJsonGrammarLoader;
 using textmate::TextMateLineTokenizeResult;
 using textmate::TextMateToken;
 using textmate::TextMateTokenizer;
+
+class SingleGrammarResolver final : public IExternalGrammarResolver {
+public:
+	explicit SingleGrammarResolver(const textmate::Grammar& grammar) noexcept
+		: m_grammar(grammar)
+	{
+	}
+
+	const textmate::Grammar* ResolveGrammar(std::wstring_view scopeName) override
+	{
+		return scopeName == m_grammar.scopeName ? &m_grammar : nullptr;
+	}
+
+private:
+	const textmate::Grammar& m_grammar;
+};
 
 TEST(TextMateTokenizerTest, TokenizeLine_MatchRule_ProducesKeywordTokenAndPlainRemainder)
 {
@@ -131,6 +148,51 @@ TEST(TextMateTokenizerTest, TokenizeLine_BeginEndRule_CarriesStackAcrossLines)
 	// The end match closed the frame: state after line 2 is back at root.
 	ASSERT_NE(nullptr, afterLine2);
 	EXPECT_EQ(nullptr, afterLine2->parent);
+}
+
+TEST(TextMateTokenizerTest, TokenizeLine_ExternalBeginEndFrameResolvesNestedRulesInOwningGrammar)
+{
+	constexpr std::string_view homeSource = R"JSON(
+	{
+		"scopeName": "source.home",
+		"patterns": [{ "include": "source.external" }]
+	}
+	)JSON";
+	constexpr std::string_view externalSource = R"JSON(
+	{
+		"scopeName": "source.external",
+		"patterns": [{
+			"begin": "<",
+			"end": ">",
+			"name": "meta.embedded.external",
+			"patterns": [{ "include": "#digits" }]
+		}],
+		"repository": {
+			"digits": { "match": "\\d+", "name": "constant.numeric.external" }
+		}
+	}
+	)JSON";
+	const GrammarCompileResult home = TextMateJsonGrammarLoader::Load(homeSource);
+	const GrammarCompileResult external = TextMateJsonGrammarLoader::Load(externalSource);
+	ASSERT_TRUE(home.Succeeded());
+	ASSERT_TRUE(external.Succeeded());
+
+	SingleGrammarResolver resolver(*external.grammar);
+	const TextMateTokenizer tokenizer(*home.grammar, &resolver);
+	RuleStackHandle afterOpen;
+	const auto open = tokenizer.TokenizeLine(L"<", tokenizer.InitialState(), afterOpen);
+	ASSERT_EQ(1u, open.tokens.size());
+	ASSERT_NE(nullptr, afterOpen->parent);
+	EXPECT_EQ(external.grammar.get(), afterOpen->owningGrammar);
+
+	RuleStackHandle afterClose;
+	const auto content = tokenizer.TokenizeLine(L"123>", afterOpen, afterClose);
+	ASSERT_EQ(2u, content.tokens.size());
+	ASSERT_EQ(2u, content.tokens[0].scopes.size());
+	EXPECT_EQ(L"meta.embedded.external", content.tokens[0].scopes[0]);
+	EXPECT_EQ(L"constant.numeric.external", content.tokens[0].scopes[1]);
+	ASSERT_NE(nullptr, afterClose);
+	EXPECT_EQ(nullptr, afterClose->parent);
 }
 
 } // namespace

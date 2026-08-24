@@ -74,7 +74,7 @@ TEST(CThemeService, DarkPaletteMatchesWorkbenchTokensExactly)
 
 TEST(CThemeService, LightPaletteMatchesWorkbenchTokensExactly)
 {
-	constexpr ThemePalette expected{
+	ThemePalette expected{
 		{ 0xFF, 0xFF, 0xFF }, { 0xF8, 0xF8, 0xF8 }, { 0xF2, 0xF2, 0xF2 },
 		{ 0xE5, 0xE5, 0xE5 }, { 0x3B, 0x3B, 0x3B }, { 0x3B, 0x3B, 0x3B },
 		{ 0x3B, 0x3B, 0x3B }, { 0xB0, 0xB0, 0xB0 }, { 0x00, 0x5F, 0xB8 }, { 0xFF, 0xFF, 0xFF },
@@ -101,6 +101,12 @@ TEST(CThemeService, LightPaletteMatchesWorkbenchTokensExactly)
 		{ 0x64, 0x64, 0x64, 0xB3 }, { 0x00, 0x00, 0x00, 0x99 },
 		{ 0x33, 0x33, 0x33, 0x33 },
 	};
+	expected.minimapBackground = { 0xFF, 0xFF, 0xFF };
+	expected.minimapForegroundOpacity = { 0x00, 0x00, 0x00, 0xFF };
+	expected.minimapSliderBackground = { 0x64, 0x64, 0x64, 0x33 };
+	expected.minimapSliderHoverBackground = { 0x64, 0x64, 0x64, 0x59 };
+	expected.minimapSliderActiveBackground = { 0x00, 0x00, 0x00, 0x4C };
+	expected.editorIndentGuideBackground = { 0xD3, 0xD3, 0xD3 };
 	EXPECT_EQ(expected, CThemeService::PaletteFor(ThemeMode::Light));
 }
 
@@ -164,6 +170,7 @@ TEST(CThemeService, HighContrastTerminalBackgroundUsesThePanelFace)
 	EXPECT_EQ(highContrast.primaryText, highContrast.editorLineNumberForeground);
 	EXPECT_EQ(highContrast.primaryText, highContrast.editorLineNumberActiveForeground);
 	EXPECT_EQ(highContrast.primaryText, highContrast.editorWhitespaceForeground);
+	EXPECT_EQ(highContrast.primaryText, highContrast.editorIndentGuideBackground);
 }
 
 TEST(CThemeService, ActiveColorThemePalettePublishesEditorProjectionWithoutCopying)

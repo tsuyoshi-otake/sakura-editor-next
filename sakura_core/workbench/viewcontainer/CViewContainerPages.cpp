@@ -43,6 +43,7 @@ CViewContainerPages::CViewContainerPages(CDlgFuncList& dialog)
 	, m_outline(std::make_unique<outline::COutlineWorkbenchTool>(dialog))
 	, m_scm(std::make_unique<scm::CScmWorkbenchTool>())
 	, m_search(std::make_unique<search::CSearchWorkbenchTool>())
+	, m_extensions(std::make_unique<extensions::CExtensionsWorkbenchTool>())
 {
 	m_pages.push_back({ std::string(pageIds::Explorer), STR_WORKBENCH_EXPLORER_TITLE, nullptr,
 		std::make_unique<rendering::FrameSurfaceCommitState>(1) });
@@ -50,6 +51,8 @@ CViewContainerPages::CViewContainerPages(CDlgFuncList& dialog)
 		std::make_unique<rendering::FrameSurfaceCommitState>(2) });
 	m_pages.push_back({ std::string(pageIds::Search), STR_WORKBENCH_SEARCH_TITLE, nullptr,
 		std::make_unique<rendering::FrameSurfaceCommitState>(3) });
+	m_pages.push_back({ std::string(pageIds::Extensions), 0, nullptr,
+		std::make_unique<rendering::FrameSurfaceCommitState>(4) });
 }
 
 CViewContainerPages::~CViewContainerPages()
@@ -62,13 +65,14 @@ bool CViewContainerPages::Create(HWND owner)
 	if (m_closed || m_created || owner == nullptr) return false;
 	m_owner = owner;
 	if (!m_explorer->Create(owner) || !m_outline->Create(owner) || !m_scm->Create(owner)
-		|| !m_search->Create(owner)) {
+		|| !m_search->Create(owner) || !m_extensions->Create(owner)) {
 		Close();
 		return false;
 	}
 	m_outline->SetVisible(false);
 	m_scm->SetVisible(false);
 	m_search->SetVisible(false);
+	m_extensions->SetVisible(false);
 	ApplySearchTexts();
 	if (const HWND window = m_explorer->GetHwnd()) ::ShowWindow(window, SW_HIDE);
 	for (auto& page : m_pages) {
@@ -86,6 +90,7 @@ void CViewContainerPages::Close()
 	m_closed = true;
 	if (m_outline) m_outline->Close();
 	if (m_search) m_search->Close();
+	if (m_extensions) m_extensions->Close();
 	if (m_scm) m_scm->Close();
 	if (m_explorer) m_explorer->Close();
 	for (auto& page : m_pages) {
@@ -116,6 +121,7 @@ HWND CViewContainerPages::PageWindow(const Page& page) const noexcept
 	if (page.id == pageIds::Explorer) return m_explorer ? m_explorer->GetHwnd() : nullptr;
 	if (page.id == pageIds::SourceControl) return m_scm ? m_scm->GetHwnd() : nullptr;
 	if (page.id == pageIds::Search) return m_search ? m_search->GetHwnd() : nullptr;
+	if (page.id == pageIds::Extensions) return m_extensions ? m_extensions->GetHwnd() : nullptr;
 	return nullptr;
 }
 
@@ -133,6 +139,7 @@ void CViewContainerPages::Attach(
 		if (::SetParent(window, target) == nullptr) return;
 	}
 	if (page->id == pageIds::Explorer && m_outline) (void)m_outline->Reparent(target);
+	if (page->id == pageIds::Extensions && m_extensions) (void)m_extensions->Reparent(target);
 	page->attached = host;
 	if (page->frameSurface) (void)page->frameSurface->SetHost(logicalHostId);
 }
@@ -148,6 +155,8 @@ void CViewContainerPages::SetPageVisible(std::string_view containerId, bool visi
 	} else if (page->id == pageIds::SourceControl && m_scm) {
 		ShowPageWindow(PageWindow(*page), visible);
 	} else if (page->id == pageIds::Search && m_search) {
+		ShowPageWindow(PageWindow(*page), visible);
+	} else if (page->id == pageIds::Extensions && m_extensions) {
 		ShowPageWindow(PageWindow(*page), visible);
 	}
 	if (page->frameSurface) (void)page->frameSurface->SetVisible(visible);
@@ -266,12 +275,15 @@ void CViewContainerPages::SetPalette(const theme::ThemePalette& palette)
 	if (m_outline) m_outline->SetPalette(palette);
 	if (m_scm) m_scm->SetPalette(palette);
 	if (m_search) m_search->SetPalette(palette);
+	if (m_extensions) m_extensions->SetPalette(palette);
 }
 
 std::wstring CViewContainerPages::PageTitle(std::string_view containerId) const
 {
 	const Page* page = Find(containerId);
-	return page == nullptr ? std::wstring{} : std::wstring(LS(page->titleResourceId));
+	if (page == nullptr) return {};
+	return page->id == pageIds::Extensions
+		? std::wstring(L"Extensions") : std::wstring(LS(page->titleResourceId));
 }
 
 void CViewContainerPages::RefreshStrings()

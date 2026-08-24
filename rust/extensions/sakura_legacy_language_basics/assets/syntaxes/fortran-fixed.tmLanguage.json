@@ -1,0 +1,17 @@
+{
+  "name": "Fortran Fixed Form",
+  "scopeName": "source.fortran.fixed",
+  "patterns": [
+    { "match": "^[Cc*!].*$", "name": "comment.line.fixed.fortran" },
+    { "match": "^.{5}[^ 0]", "name": "punctuation.definition.continuation.fortran" },
+    { "match": "^ {0,5}[0-9]{1,5}", "name": "constant.numeric.label.fortran" },
+    { "match": "!.*$", "name": "comment.line.exclamation.fortran" },
+    { "begin": "\"", "end": "\"", "name": "string.quoted.double.fortran" },
+    { "begin": "'", "end": "'", "name": "string.quoted.single.fortran" },
+    { "match": "(?i)\\b(PROGRAM|SUBROUTINE|FUNCTION|BLOCK DATA|MODULE|SUBMODULE|USE|IMPLICIT|NONE|INCLUDE|PARAMETER|COMMON|EQUIVALENCE|DATA|DIMENSION|SAVE|EXTERNAL|INTRINSIC|ENTRY|FORMAT|NAMELIST)\\b", "name": "keyword.declaration.fortran" },
+    { "match": "(?i)\\b(IF|THEN|ELSE|ELSEIF|ENDIF|DO|CONTINUE|GOTO|GO TO|CALL|RETURN|STOP|PAUSE|READ|WRITE|PRINT|OPEN|CLOSE|REWIND|BACKSPACE|ENDFILE|INQUIRE)\\b", "name": "keyword.control.fortran" },
+    { "match": "(?i)\\b(INTEGER|REAL|DOUBLE PRECISION|COMPLEX|LOGICAL|CHARACTER|BYTE)\\b", "name": "storage.type.fortran" },
+    { "match": "(?i)\\.(TRUE|FALSE|AND|OR|NOT|EQ|NE|LT|LE|GT|GE|EQV|NEQV)\\.", "name": "keyword.operator.fortran" },
+    { "match": "(?<![A-Za-z0-9_])(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[EDed][+-]?\\d+)?(?![A-Za-z0-9_])", "name": "constant.numeric.fortran" }
+  ]
+}

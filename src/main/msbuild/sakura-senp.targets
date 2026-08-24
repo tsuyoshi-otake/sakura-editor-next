@@ -1,0 +1,123 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup Label="SakuraSenp">
+    <SakuraSenpRepoRoot>$([MSBuild]::NormalizePath('$(MSBuildThisFileDirectory)', '..\..\..\'))</SakuraSenpRepoRoot>
+    <SakuraSenpWorkspace>$([MSBuild]::NormalizePath('$(SakuraSenpRepoRoot)', 'rust'))</SakuraSenpWorkspace>
+    <SakuraSenpManifest>$([MSBuild]::NormalizePath('$(SakuraSenpWorkspace)', 'Cargo.toml'))</SakuraSenpManifest>
+    <SakuraSenpCargo Condition="'$(SakuraSenpCargo)'==''">cargo</SakuraSenpCargo>
+    <SakuraSenpTargetDir>$([MSBuild]::NormalizePath('$(SakuraSenpRepoRoot)', 'build\$(Platform)\$(Configuration)\rust\senp'))</SakuraSenpTargetDir>
+    <SakuraSenpCargoProfile Condition="'$(Configuration)'=='Debug'">dev</SakuraSenpCargoProfile>
+    <SakuraSenpProfileDirectory Condition="'$(Configuration)'=='Debug'">debug</SakuraSenpProfileDirectory>
+    <SakuraSenpCargoProfile Condition="'$(Configuration)'=='Release'">release</SakuraSenpCargoProfile>
+    <SakuraSenpProfileDirectory Condition="'$(Configuration)'=='Release'">release</SakuraSenpProfileDirectory>
+    <SakuraSenpGuestModule>$([MSBuild]::NormalizePath('$(SakuraSenpTargetDir)', 'wasm32-unknown-unknown\$(SakuraSenpProfileDirectory)\sakura_indent_rainbow.wasm'))</SakuraSenpGuestModule>
+    <SakuraSenpTool>$([MSBuild]::NormalizePath('$(SakuraSenpTargetDir)', 'x86_64-pc-windows-msvc\$(SakuraSenpProfileDirectory)\sakura-senp-tool.exe'))</SakuraSenpTool>
+    <SakuraSenpHost>$([MSBuild]::NormalizePath('$(SakuraSenpTargetDir)', 'x86_64-pc-windows-msvc\$(SakuraSenpProfileDirectory)\sakura-senp-host.exe'))</SakuraSenpHost>
+    <SakuraSenpStage>$([MSBuild]::NormalizePath('$(SakuraSenpTargetDir)', 'stage\sakura-indent-rainbow'))</SakuraSenpStage>
+    <SakuraSenpComponent>$([MSBuild]::NormalizePath('$(SakuraSenpStage)', 'module\extension.wasm'))</SakuraSenpComponent>
+    <SakuraSenpPackage>$([MSBuild]::NormalizePath('$(SakuraSenpTargetDir)', 'packages\sakura-indent-rainbow.senp'))</SakuraSenpPackage>
+    <SakuraSenpPackageHash>$([MSBuild]::NormalizePath('$(SakuraSenpTargetDir)', 'packages\sakura-indent-rainbow.sha256'))</SakuraSenpPackageHash>
+    <SakuraSenpCoreLanguagePackage>$([MSBuild]::NormalizePath('$(SakuraSenpTargetDir)', 'packages\sakura-core-language-basics.senp'))</SakuraSenpCoreLanguagePackage>
+    <SakuraSenpCoreLanguagePackageHash>$([MSBuild]::NormalizePath('$(SakuraSenpTargetDir)', 'packages\sakura-core-language-basics.sha256'))</SakuraSenpCoreLanguagePackageHash>
+    <SakuraSenpShellLanguagePackage>$([MSBuild]::NormalizePath('$(SakuraSenpTargetDir)', 'packages\sakura-shell-language-basics.senp'))</SakuraSenpShellLanguagePackage>
+    <SakuraSenpShellLanguagePackageHash>$([MSBuild]::NormalizePath('$(SakuraSenpTargetDir)', 'packages\sakura-shell-language-basics.sha256'))</SakuraSenpShellLanguagePackageHash>
+    <SakuraSenpDatabaseLanguagePackage>$([MSBuild]::NormalizePath('$(SakuraSenpTargetDir)', 'packages\sakura-database-language-basics.senp'))</SakuraSenpDatabaseLanguagePackage>
+    <SakuraSenpDatabaseLanguagePackageHash>$([MSBuild]::NormalizePath('$(SakuraSenpTargetDir)', 'packages\sakura-database-language-basics.sha256'))</SakuraSenpDatabaseLanguagePackageHash>
+    <SakuraSenpInfrastructureLanguagePackage>$([MSBuild]::NormalizePath('$(SakuraSenpTargetDir)', 'packages\sakura-infrastructure-language-basics.senp'))</SakuraSenpInfrastructureLanguagePackage>
+    <SakuraSenpInfrastructureLanguagePackageHash>$([MSBuild]::NormalizePath('$(SakuraSenpTargetDir)', 'packages\sakura-infrastructure-language-basics.sha256'))</SakuraSenpInfrastructureLanguagePackageHash>
+    <SakuraSenpConfigurationLanguagePackage>$([MSBuild]::NormalizePath('$(SakuraSenpTargetDir)', 'packages\sakura-configuration-language-basics.senp'))</SakuraSenpConfigurationLanguagePackage>
+    <SakuraSenpConfigurationLanguagePackageHash>$([MSBuild]::NormalizePath('$(SakuraSenpTargetDir)', 'packages\sakura-configuration-language-basics.sha256'))</SakuraSenpConfigurationLanguagePackageHash>
+    <SakuraSenpLegacyLanguagePackage>$([MSBuild]::NormalizePath('$(SakuraSenpTargetDir)', 'packages\sakura-legacy-language-basics.senp'))</SakuraSenpLegacyLanguagePackage>
+    <SakuraSenpLegacyLanguagePackageHash>$([MSBuild]::NormalizePath('$(SakuraSenpTargetDir)', 'packages\sakura-legacy-language-basics.sha256'))</SakuraSenpLegacyLanguagePackageHash>
+    <SakuraSenpResourceFile>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(IntDir)', 'sakura-senp-builtin.rc'))</SakuraSenpResourceFile>
+    <SakuraSenpStamp>$([MSBuild]::NormalizePath('$(SakuraSenpTargetDir)', 'sakura-senp.msbuild.stamp'))</SakuraSenpStamp>
+    <SakuraSenpOutputHost>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(SakuraSharedOutDir)', 'sakura-senp-host.exe'))</SakuraSenpOutputHost>
+    <SakuraSenpOutputTool>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(SakuraSharedOutDir)', 'sakura-senp-tool.exe'))</SakuraSenpOutputTool>
+    <SakuraSenpPackageRc>$([System.Text.RegularExpressions.Regex]::Replace('$(SakuraSenpPackage)', '[\\\\]', '/'))</SakuraSenpPackageRc>
+    <SakuraSenpPackageHashRc>$([System.Text.RegularExpressions.Regex]::Replace('$(SakuraSenpPackageHash)', '[\\\\]', '/'))</SakuraSenpPackageHashRc>
+    <SakuraSenpCoreLanguagePackageRc>$([System.Text.RegularExpressions.Regex]::Replace('$(SakuraSenpCoreLanguagePackage)', '[\\\\]', '/'))</SakuraSenpCoreLanguagePackageRc>
+    <SakuraSenpCoreLanguagePackageHashRc>$([System.Text.RegularExpressions.Regex]::Replace('$(SakuraSenpCoreLanguagePackageHash)', '[\\\\]', '/'))</SakuraSenpCoreLanguagePackageHashRc>
+    <SakuraSenpShellLanguagePackageRc>$([System.Text.RegularExpressions.Regex]::Replace('$(SakuraSenpShellLanguagePackage)', '[\\\\]', '/'))</SakuraSenpShellLanguagePackageRc>
+    <SakuraSenpShellLanguagePackageHashRc>$([System.Text.RegularExpressions.Regex]::Replace('$(SakuraSenpShellLanguagePackageHash)', '[\\\\]', '/'))</SakuraSenpShellLanguagePackageHashRc>
+    <SakuraSenpDatabaseLanguagePackageRc>$([System.Text.RegularExpressions.Regex]::Replace('$(SakuraSenpDatabaseLanguagePackage)', '[\\\\]', '/'))</SakuraSenpDatabaseLanguagePackageRc>
+    <SakuraSenpDatabaseLanguagePackageHashRc>$([System.Text.RegularExpressions.Regex]::Replace('$(SakuraSenpDatabaseLanguagePackageHash)', '[\\\\]', '/'))</SakuraSenpDatabaseLanguagePackageHashRc>
+    <SakuraSenpInfrastructureLanguagePackageRc>$([System.Text.RegularExpressions.Regex]::Replace('$(SakuraSenpInfrastructureLanguagePackage)', '[\\\\]', '/'))</SakuraSenpInfrastructureLanguagePackageRc>
+    <SakuraSenpInfrastructureLanguagePackageHashRc>$([System.Text.RegularExpressions.Regex]::Replace('$(SakuraSenpInfrastructureLanguagePackageHash)', '[\\\\]', '/'))</SakuraSenpInfrastructureLanguagePackageHashRc>
+    <SakuraSenpConfigurationLanguagePackageRc>$([System.Text.RegularExpressions.Regex]::Replace('$(SakuraSenpConfigurationLanguagePackage)', '[\\\\]', '/'))</SakuraSenpConfigurationLanguagePackageRc>
+    <SakuraSenpConfigurationLanguagePackageHashRc>$([System.Text.RegularExpressions.Regex]::Replace('$(SakuraSenpConfigurationLanguagePackageHash)', '[\\\\]', '/'))</SakuraSenpConfigurationLanguagePackageHashRc>
+    <SakuraSenpLegacyLanguagePackageRc>$([System.Text.RegularExpressions.Regex]::Replace('$(SakuraSenpLegacyLanguagePackage)', '[\\\\]', '/'))</SakuraSenpLegacyLanguagePackageRc>
+    <SakuraSenpLegacyLanguagePackageHashRc>$([System.Text.RegularExpressions.Regex]::Replace('$(SakuraSenpLegacyLanguagePackageHash)', '[\\\\]', '/'))</SakuraSenpLegacyLanguagePackageHashRc>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <SakuraSenpSource Include="$(MSBuildThisFileFullPath)" />
+    <SakuraSenpSource Include="$(SakuraSenpWorkspace)\Cargo.toml" />
+    <SakuraSenpSource Include="$(SakuraSenpWorkspace)\Cargo.lock" />
+    <SakuraSenpSource Include="$(SakuraSenpWorkspace)\rust-toolchain.toml" />
+    <SakuraSenpSource Include="$(SakuraSenpWorkspace)\wit\**\*.wit" />
+    <SakuraSenpSource Include="$(SakuraSenpWorkspace)\sakura_senp\**\*.toml" />
+    <SakuraSenpSource Include="$(SakuraSenpWorkspace)\sakura_senp\src\**\*.rs" />
+    <SakuraSenpSource Include="$(SakuraSenpWorkspace)\sakura_senp_host\**\*.toml" />
+    <SakuraSenpSource Include="$(SakuraSenpWorkspace)\sakura_senp_host\src\**\*.rs" />
+    <SakuraSenpSource Include="$(SakuraSenpWorkspace)\sakura_senp_tool\**\*.toml" />
+    <SakuraSenpSource Include="$(SakuraSenpWorkspace)\sakura_senp_tool\src\**\*.rs" />
+    <SakuraSenpSource Include="$(SakuraSenpWorkspace)\extensions\sakura_indent_rainbow\**\*.toml" />
+    <SakuraSenpSource Include="$(SakuraSenpWorkspace)\extensions\sakura_indent_rainbow\src\**\*.rs" />
+    <SakuraSenpSource Include="$(SakuraSenpWorkspace)\extensions\sakura_indent_rainbow\senp.json" />
+    <SakuraSenpSource Include="$(SakuraSenpWorkspace)\extensions\sakura_indent_rainbow\README.md" />
+    <SakuraSenpSource Include="$(SakuraSenpWorkspace)\extensions\sakura_indent_rainbow\LICENSE" />
+    <SakuraSenpSource Include="$(SakuraSenpWorkspace)\extensions\sakura_core_language_basics\**\*" />
+    <SakuraSenpSource Include="$(SakuraSenpWorkspace)\extensions\sakura_shell_language_basics\**\*" />
+    <SakuraSenpSource Include="$(SakuraSenpWorkspace)\extensions\sakura_database_language_basics\**\*" />
+    <SakuraSenpSource Include="$(SakuraSenpWorkspace)\extensions\sakura_infrastructure_language_basics\**\*" />
+    <SakuraSenpSource Include="$(SakuraSenpWorkspace)\extensions\sakura_configuration_language_basics\**\*" />
+    <SakuraSenpSource Include="$(SakuraSenpWorkspace)\extensions\sakura_legacy_language_basics\**\*" />
+    <ResourceCompile Include="$(SakuraSenpResourceFile)" />
+  </ItemGroup>
+
+  <Target Name="PrepareSakuraSenpIncrementalState">
+    <Delete Files="$(SakuraSenpStamp)"
+            Condition="Exists('$(SakuraSenpStamp)') And (!Exists('$(SakuraSenpPackage)') Or !Exists('$(SakuraSenpPackageHash)') Or !Exists('$(SakuraSenpCoreLanguagePackage)') Or !Exists('$(SakuraSenpCoreLanguagePackageHash)') Or !Exists('$(SakuraSenpShellLanguagePackage)') Or !Exists('$(SakuraSenpShellLanguagePackageHash)') Or !Exists('$(SakuraSenpDatabaseLanguagePackage)') Or !Exists('$(SakuraSenpDatabaseLanguagePackageHash)') Or !Exists('$(SakuraSenpInfrastructureLanguagePackage)') Or !Exists('$(SakuraSenpInfrastructureLanguagePackageHash)') Or !Exists('$(SakuraSenpConfigurationLanguagePackage)') Or !Exists('$(SakuraSenpConfigurationLanguagePackageHash)') Or !Exists('$(SakuraSenpLegacyLanguagePackage)') Or !Exists('$(SakuraSenpLegacyLanguagePackageHash)') Or !Exists('$(SakuraSenpResourceFile)') Or !Exists('$(SakuraSenpOutputHost)') Or !Exists('$(SakuraSenpOutputTool)'))" />
+  </Target>
+
+  <Target Name="BuildSakuraSenpArtifacts"
+          DependsOnTargets="PrepareSakuraSenpIncrementalState"
+          Inputs="@(SakuraSenpSource)"
+          Outputs="$(SakuraSenpStamp)"
+          BeforeTargets="ResourceCompile">
+    <MakeDir Directories="$(SakuraSenpTargetDir);$(SakuraSenpStage)\module;$([System.IO.Path]::GetDirectoryName('$(SakuraSenpPackage)'))" />
+    <Exec Command="&quot;$(SakuraSenpCargo)&quot; build --manifest-path &quot;$(SakuraSenpManifest)&quot; --package sakura-indent-rainbow --locked --target wasm32-unknown-unknown --target-dir &quot;$(SakuraSenpTargetDir)&quot; --profile $(SakuraSenpCargoProfile)"
+          WorkingDirectory="$(SakuraSenpWorkspace)" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
+    <Exec Command="&quot;$(SakuraSenpCargo)&quot; build --manifest-path &quot;$(SakuraSenpManifest)&quot; --package sakura-senp-tool --package sakura-senp-host --locked --target x86_64-pc-windows-msvc --target-dir &quot;$(SakuraSenpTargetDir)&quot; --profile $(SakuraSenpCargoProfile)"
+          WorkingDirectory="$(SakuraSenpWorkspace)" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
+    <Error Condition="!Exists('$(SakuraSenpGuestModule)') Or !Exists('$(SakuraSenpTool)') Or !Exists('$(SakuraSenpHost)')"
+           Text="Cargo completed without producing all required SENP artifacts." />
+    <Copy SourceFiles="$(SakuraSenpWorkspace)\extensions\sakura_indent_rainbow\senp.json;$(SakuraSenpWorkspace)\extensions\sakura_indent_rainbow\README.md;$(SakuraSenpWorkspace)\extensions\sakura_indent_rainbow\LICENSE"
+          DestinationFolder="$(SakuraSenpStage)" SkipUnchangedFiles="true" />
+    <Exec Command="&quot;$(SakuraSenpTool)&quot; componentize &quot;$(SakuraSenpGuestModule)&quot; &quot;$(SakuraSenpComponent)&quot;"
+          WorkingDirectory="$(SakuraSenpWorkspace)" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
+    <Exec Command="&quot;$(SakuraSenpTool)&quot; pack-builtin &quot;$(SakuraSenpStage)&quot; &quot;$(SakuraSenpPackage)&quot; &quot;$(SakuraSenpPackageHash)&quot;"
+          WorkingDirectory="$(SakuraSenpWorkspace)" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
+    <Exec Command="&quot;$(SakuraSenpTool)&quot; pack-builtin &quot;$(SakuraSenpWorkspace)\extensions\sakura_core_language_basics&quot; &quot;$(SakuraSenpCoreLanguagePackage)&quot; &quot;$(SakuraSenpCoreLanguagePackageHash)&quot;"
+          WorkingDirectory="$(SakuraSenpWorkspace)" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
+    <Exec Command="&quot;$(SakuraSenpTool)&quot; pack-builtin &quot;$(SakuraSenpWorkspace)\extensions\sakura_shell_language_basics&quot; &quot;$(SakuraSenpShellLanguagePackage)&quot; &quot;$(SakuraSenpShellLanguagePackageHash)&quot;"
+          WorkingDirectory="$(SakuraSenpWorkspace)" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
+    <Exec Command="&quot;$(SakuraSenpTool)&quot; pack-builtin &quot;$(SakuraSenpWorkspace)\extensions\sakura_database_language_basics&quot; &quot;$(SakuraSenpDatabaseLanguagePackage)&quot; &quot;$(SakuraSenpDatabaseLanguagePackageHash)&quot;"
+          WorkingDirectory="$(SakuraSenpWorkspace)" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
+    <Exec Command="&quot;$(SakuraSenpTool)&quot; pack-builtin &quot;$(SakuraSenpWorkspace)\extensions\sakura_infrastructure_language_basics&quot; &quot;$(SakuraSenpInfrastructureLanguagePackage)&quot; &quot;$(SakuraSenpInfrastructureLanguagePackageHash)&quot;"
+          WorkingDirectory="$(SakuraSenpWorkspace)" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
+    <Exec Command="&quot;$(SakuraSenpTool)&quot; pack-builtin &quot;$(SakuraSenpWorkspace)\extensions\sakura_configuration_language_basics&quot; &quot;$(SakuraSenpConfigurationLanguagePackage)&quot; &quot;$(SakuraSenpConfigurationLanguagePackageHash)&quot;"
+          WorkingDirectory="$(SakuraSenpWorkspace)" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
+    <Exec Command="&quot;$(SakuraSenpTool)&quot; pack-builtin &quot;$(SakuraSenpWorkspace)\extensions\sakura_legacy_language_basics&quot; &quot;$(SakuraSenpLegacyLanguagePackage)&quot; &quot;$(SakuraSenpLegacyLanguagePackageHash)&quot;"
+          WorkingDirectory="$(SakuraSenpWorkspace)" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
+    <Copy SourceFiles="$(SakuraSenpHost);$(SakuraSenpTool)" DestinationFiles="$(SakuraSenpOutputHost);$(SakuraSenpOutputTool)" SkipUnchangedFiles="true" />
+    <WriteLinesToFile File="$(SakuraSenpResourceFile)"
+          Lines="39000 RCDATA &quot;$(SakuraSenpPackageRc)&quot;;39001 RCDATA &quot;$(SakuraSenpPackageHashRc)&quot;;39002 RCDATA &quot;$(SakuraSenpCoreLanguagePackageRc)&quot;;39003 RCDATA &quot;$(SakuraSenpCoreLanguagePackageHashRc)&quot;;39004 RCDATA &quot;$(SakuraSenpShellLanguagePackageRc)&quot;;39005 RCDATA &quot;$(SakuraSenpShellLanguagePackageHashRc)&quot;;39006 RCDATA &quot;$(SakuraSenpDatabaseLanguagePackageRc)&quot;;39007 RCDATA &quot;$(SakuraSenpDatabaseLanguagePackageHashRc)&quot;;39008 RCDATA &quot;$(SakuraSenpInfrastructureLanguagePackageRc)&quot;;39009 RCDATA &quot;$(SakuraSenpInfrastructureLanguagePackageHashRc)&quot;;39010 RCDATA &quot;$(SakuraSenpConfigurationLanguagePackageRc)&quot;;39011 RCDATA &quot;$(SakuraSenpConfigurationLanguagePackageHashRc)&quot;;39012 RCDATA &quot;$(SakuraSenpLegacyLanguagePackageRc)&quot;;39013 RCDATA &quot;$(SakuraSenpLegacyLanguagePackageHashRc)&quot;"
+          Overwrite="true" WriteOnlyWhenDifferent="true" Encoding="Unicode" />
+    <Touch Files="$(SakuraSenpStamp)" AlwaysCreate="true" />
+  </Target>
+
+  <Target Name="ValidateSakuraSenpArtifacts" DependsOnTargets="BuildSakuraSenpArtifacts" BeforeTargets="ResourceCompile">
+    <Error Condition="!Exists('$(SakuraSenpPackage)') Or !Exists('$(SakuraSenpPackageHash)') Or !Exists('$(SakuraSenpCoreLanguagePackage)') Or !Exists('$(SakuraSenpCoreLanguagePackageHash)') Or !Exists('$(SakuraSenpShellLanguagePackage)') Or !Exists('$(SakuraSenpShellLanguagePackageHash)') Or !Exists('$(SakuraSenpDatabaseLanguagePackage)') Or !Exists('$(SakuraSenpDatabaseLanguagePackageHash)') Or !Exists('$(SakuraSenpInfrastructureLanguagePackage)') Or !Exists('$(SakuraSenpInfrastructureLanguagePackageHash)') Or !Exists('$(SakuraSenpConfigurationLanguagePackage)') Or !Exists('$(SakuraSenpConfigurationLanguagePackageHash)') Or !Exists('$(SakuraSenpLegacyLanguagePackage)') Or !Exists('$(SakuraSenpLegacyLanguagePackageHash)') Or !Exists('$(SakuraSenpResourceFile)') Or !Exists('$(SakuraSenpOutputHost)') Or !Exists('$(SakuraSenpOutputTool)')"
+           Text="The SENP build completed without publishing all required outputs." />
+  </Target>
+</Project>

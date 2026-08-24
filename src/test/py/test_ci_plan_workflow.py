@@ -119,8 +119,8 @@ class PrGateTopologyTests(unittest.TestCase):
         self.assertIn("default: false", self.build)
         self.assertEqual(
             self.build.count("github.event_name != 'pull_request' || inputs.run_native_build"),
-            3,
-            "MSVC vcpkg, advisory MinGW vcpkg, and MSBuild must share the caller decision",
+            4,
+            "Rust audit, MSVC vcpkg, advisory MinGW vcpkg, and MSBuild must share the caller decision",
         )
 
 
@@ -148,6 +148,7 @@ class PrGateTerminalTests(unittest.TestCase):
             "PLAN_MODE": "full_native",
             "RUN_NATIVE_BUILD": "true",
             "ENCODING_RESULT": "success",
+            "AUDIT_RESULT": "success",
             "VCPKG_RESULT": "success",
             "BUILD_RESULT": "success",
             **values,
@@ -181,6 +182,7 @@ class PrGateTerminalTests(unittest.TestCase):
         docs = self.run_native(
             PLAN_MODE="docs_only",
             RUN_NATIVE_BUILD="false",
+            AUDIT_RESULT="skipped",
             VCPKG_RESULT="skipped",
             BUILD_RESULT="skipped",
         )
@@ -191,6 +193,9 @@ class PrGateTerminalTests(unittest.TestCase):
         selected_but_absent = self.run_native(BUILD_RESULT="skipped")
         self.assertNotEqual(selected_but_absent.returncode, 0)
         self.assertIn("Selected MSBuild matrix did not succeed", selected_but_absent.stderr)
+        audit_absent = self.run_native(AUDIT_RESULT="skipped")
+        self.assertNotEqual(audit_absent.returncode, 0)
+        self.assertIn("Selected Rust dependency audit did not succeed", audit_absent.stderr)
         unsupported = self.run_native(PLAN_MODE="full_native", RUN_NATIVE_BUILD="false")
         self.assertNotEqual(unsupported.returncode, 0)
         self.assertIn("unsupported terminal state", unsupported.stderr)

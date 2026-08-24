@@ -210,6 +210,17 @@ TEST(WorkbenchCommandRegistry, BuiltinsResolveEverySurfaceToTheSameStableCommand
 		EXPECT_EQ("workbench.view.explorer", resolved->commandId);
 		EXPECT_FALSE(resolved->binding.legacyFunctionCode.has_value());
 	}
+	const std::array<std::pair<EWorkbenchCommandSurface, std::string_view>, 3> extensionsBindings = {
+		std::pair{ EWorkbenchCommandSurface::CommandPalette, "workbench.view.extensions.palette" },
+		std::pair{ EWorkbenchCommandSurface::ActivityBar, "workbench.view.extensions.activity" },
+		std::pair{ EWorkbenchCommandSurface::Keybinding, "workbench.view.extensions.key" },
+	};
+	for (const auto& [surface, slot] : extensionsBindings) {
+		const auto resolved = registry.ResolveSurface(surface, slot);
+		ASSERT_TRUE(resolved.has_value());
+		EXPECT_EQ("workbench.view.extensions", resolved->commandId);
+		EXPECT_FALSE(resolved->binding.legacyFunctionCode.has_value());
+	}
 	EXPECT_EQ(EWorkbenchCommandRegistrationStatus::Conflict, registry.RegisterBuiltinCommands().status);
 }
 
@@ -579,6 +590,7 @@ TEST(WorkbenchCommandRegistry, BuiltinExecutorsAreBoundAtomicallyAndReachTypedSu
 	WorkbenchCommandRegistry registry;
 	int sidebarCalls{};
 	int explorerCalls{};
+	int extensionsCalls{};
 	int problemsCalls{};
 	int outputCalls{};
 	int openFolderCalls{};
@@ -598,6 +610,11 @@ TEST(WorkbenchCommandRegistry, BuiltinExecutorsAreBoundAtomicallyAndReachTypedSu
 		},
 		.showExplorer = [&explorerCalls] {
 			++explorerCalls;
+			return workbench::commands::WorkbenchCommandExecutionResult{
+				EWorkbenchCommandExecutionStatus::Succeeded, {} };
+		},
+		.showExtensions = [&extensionsCalls] {
+			++extensionsCalls;
 			return workbench::commands::WorkbenchCommandExecutionResult{
 				EWorkbenchCommandExecutionStatus::Succeeded, {} };
 		},
@@ -633,6 +650,8 @@ TEST(WorkbenchCommandRegistry, BuiltinExecutorsAreBoundAtomicallyAndReachTypedSu
 	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
 		registry.Execute("workbench.view.explorer", context).status);
 	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
+		registry.Execute("workbench.view.extensions", context).status);
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
 		registry.Execute("workbench.actions.view.problems", context).status);
 	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
 		registry.Execute("workbench.action.output.toggleOutput", context).status);
@@ -646,6 +665,7 @@ TEST(WorkbenchCommandRegistry, BuiltinExecutorsAreBoundAtomicallyAndReachTypedSu
 		registry.Execute("workbench.action.toggleStatusbarVisibility", context).status);
 	EXPECT_EQ(1, sidebarCalls);
 	EXPECT_EQ(1, explorerCalls);
+	EXPECT_EQ(1, extensionsCalls);
 	EXPECT_EQ(1, problemsCalls);
 	EXPECT_EQ(1, outputCalls);
 	EXPECT_EQ(1, openFolderCalls);
@@ -729,6 +749,8 @@ TEST(WorkbenchCommandRegistry, DisabledCommandNeverInvokesExecutorAndUnknownUnsu
 	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, registry.RegisterBuiltinCommands().status);
 	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Unsupported,
 		registry.Execute("workbench.view.explorer", EnabledContext()).status);
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Unsupported,
+		registry.Execute("workbench.view.extensions", EnabledContext()).status);
 	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Unsupported,
 		registry.Execute("workbench.actions.view.problems", EnabledContext()).status);
 	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Unsupported,

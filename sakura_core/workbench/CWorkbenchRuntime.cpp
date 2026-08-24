@@ -275,6 +275,9 @@ CWorkbenchRuntime::CWorkbenchRuntime(
 	, m_recentlyOpenedWorkspaces(dependencies.recentlyOpenedWorkspaceStore
 		? std::make_unique<recent::CRecentlyOpenedWorkspaceService>(std::move(dependencies.recentlyOpenedWorkspaceStore))
 		: nullptr)
+	, m_senpManagement(std::move(dependencies.senpManagementService))
+	, m_senpRuntime(m_senpManagement ? senp::CreateWin32SenpRuntimeService(*m_senpManagement) : nullptr)
+	, m_senpLanguage(m_senpManagement ? senp::CreateSenpLanguageService(*m_senpManagement) : nullptr)
 	, m_workspaceArtifacts(std::make_shared<workspace::CWorkspaceArtifactDocumentService>())
 	, m_taskExecution(std::move(dependencies.taskExecutionSessionFactory))
 	, m_markers(problems::MarkerServiceLimits {
@@ -340,6 +343,24 @@ recent::IRecentlyOpenedWorkspaceService* CWorkbenchRuntime::RecentlyOpenedWorksp
 {
 	std::lock_guard lock(m_stateMutex);
 	return IsReadyForServiceAccessLocked() ? m_recentlyOpenedWorkspaces.get() : nullptr;
+}
+
+senp::ISenpManagementService* CWorkbenchRuntime::Extensions() noexcept
+{
+	std::lock_guard lock(m_stateMutex);
+	return IsReadyForServiceAccessLocked() ? m_senpManagement.get() : nullptr;
+}
+
+senp::ISenpRuntimeService* CWorkbenchRuntime::ExtensionRuntime() noexcept
+{
+	std::lock_guard lock(m_stateMutex);
+	return IsReadyForServiceAccessLocked() ? m_senpRuntime.get() : nullptr;
+}
+
+senp::ISenpLanguageService* CWorkbenchRuntime::ExtensionLanguages() noexcept
+{
+	std::lock_guard lock(m_stateMutex);
+	return IsReadyForServiceAccessLocked() ? m_senpLanguage.get() : nullptr;
 }
 
 CWorkbenchRuntime::~CWorkbenchRuntime()
@@ -1621,6 +1642,31 @@ WorkbenchRuntimeResult CWorkbenchRuntime::Start()
 		// later successful store operation.
 		if (m_recentlyOpenedWorkspaces) (void)m_recentlyOpenedWorkspaces->Load();
 
+		if (m_senpManagement) {
+			const auto extensionStart = m_senpManagement->Start();
+			if (!extensionStart.Succeeded()) {
+				SetDiagnostic("extensions.start", WorkbenchRuntimeDiagnostic {
+					.source = EWorkbenchRuntimeDiagnosticSource::Extensions,
+					.code = EWorkbenchRuntimeDiagnosticCode::InternalFailure,
+					.message = "SENP extension management did not reach a ready state",
+				});
+			}
+			if (m_senpRuntime && !m_senpRuntime->Start()) {
+				SetDiagnostic("extensions.runtime", WorkbenchRuntimeDiagnostic {
+					.source = EWorkbenchRuntimeDiagnosticSource::Extensions,
+					.code = EWorkbenchRuntimeDiagnosticCode::InternalFailure,
+					.message = "SENP extension runtime did not start",
+				});
+			}
+			if (m_senpLanguage && !m_senpLanguage->Start()) {
+				SetDiagnostic("extensions.languages", WorkbenchRuntimeDiagnostic {
+					.source = EWorkbenchRuntimeDiagnosticSource::Extensions,
+					.code = EWorkbenchRuntimeDiagnosticCode::InternalFailure,
+					.message = "SENP declarative language service did not reach a ready state",
+				});
+			}
+		}
+
 		if (!ApplyBootstrapWorkspace()) {
 			return FailStart(EWorkbenchRuntimeDiagnosticCode::WorkspaceTransitionFailed,
 				"immutable bootstrap workspace did not match the semantic workspace service");
@@ -1761,9 +1807,12 @@ bool CWorkbenchRuntime::CompleteStopAfterListeners() noexcept
 
 bool CWorkbenchRuntime::StopOwnedServices() noexcept
 {
-	// Stop in reverse declaration/composition order. Keep both objects alive
+	// Stop in reverse declaration/composition order. Keep all objects alive
 	// until runtime destruction so a previously borrowed pointer observes the
 	// service's typed Stopped result rather than becoming dangling mid-stop.
+	if (m_senpLanguage) m_senpLanguage->Stop();
+	if (m_senpRuntime) m_senpRuntime->Stop();
+	if (m_senpManagement) m_senpManagement->Stop();
 	const auto outputStop = m_output.Stop();
 	const auto markerStop = m_markers.Stop();
 	const auto scmStop = m_scm.Stop();

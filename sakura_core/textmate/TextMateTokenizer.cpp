@@ -23,8 +23,14 @@ constexpr int kMaxIncludeExpansionDepth = 64;
 //! `patterns`/`include`, or the current frame's own `end`/`while` pattern.
 struct Candidate final {
 	const TextMateRule* rule = nullptr; // null when isFrameBoundary
+	const Grammar* owningGrammar = nullptr;
 	OnigmoPattern* pattern = nullptr;
 	bool isFrameBoundary = false; // true => this is the current frame's end/while
+};
+
+struct OwnedRule final {
+	const Grammar* grammar = nullptr;
+	const TextMateRule* rule = nullptr;
 };
 
 //! Expands `holder->patterns` into leaf match candidates, recursively
@@ -39,13 +45,13 @@ struct Candidate final {
 //! plain `RuleId` entries in `holder->patterns`; it changes when recursion
 //! crosses an `ExternalGrammar` include (`source.foo`/`source.foo#name`) so
 //! that a foreign grammar's own `RuleId`s are never looked up in the wrong
-//! arena — a `RuleId` is only a valid index within the `Grammar` that
+//! arena -- a `RuleId` is only a valid index within the `Grammar` that
 //! produced it.
 void CollectMatchableRules(
 	const Grammar& homeGrammar,
 	IExternalGrammarResolver* externalResolver,
 	const TextMateRule* holder,
-	std::vector<const TextMateRule*>& out,
+	std::vector<OwnedRule>& out,
 	int depth,
 	std::vector<const TextMateRule*>& visitedIncludeOnly)
 {
@@ -84,7 +90,7 @@ void CollectMatchableRules(
 			CollectMatchableRules(*resolvedGrammar, externalResolver, resolved, out, depth + 1, visitedIncludeOnly);
 			continue;
 		}
-		out.push_back(resolved);
+		out.push_back({resolvedGrammar, resolved});
 	}
 }
 
@@ -123,7 +129,7 @@ std::wstring EscapeForRegexLiteral(std::wstring_view text)
 //! text of the corresponding capture group from `beginMatch`, sliced out of
 //! `beginLine` (the same line text the begin match was found in). A
 //! back-reference to a group that did not participate, or that does not
-//! exist, is left untouched — vscode-textmate's own behavior is likewise to
+//! exist, is left untouched -- vscode-textmate's own behavior is likewise to
 //! leave an unresolvable back-reference as literal source text rather than
 //! failing the whole pattern.
 std::wstring SubstituteBackReferences(std::wstring_view source, std::wstring_view beginLine, const OnigmoMatchResult& beginMatch)
@@ -179,7 +185,7 @@ std::vector<std::wstring> BuildScopePath(const RuleStackHandle& stack, bool incl
 //! (`nestedPatternsRuleId`) contribute no extra scope for that sub-range;
 //! nested-pattern re-tokenization inside a capture is not implemented (see
 //! `TextMateRuleStackFrame`'s file-level documentation and
-//! `textmate/CLAUDE.md` "Known gaps") — the range simply keeps `baseScopePath`.
+//! `textmate/CLAUDE.md` "Known gaps") -- the range simply keeps `baseScopePath`.
 void EmitCaptureTokens(
 	std::size_t rangeBegin,
 	std::size_t rangeEnd,
@@ -240,6 +246,7 @@ void EmitCaptureTokens(
 RuleStackHandle TextMateTokenizer::InitialState() const
 {
 	auto root = std::make_shared<TextMateRuleStackFrame>();
+	root->owningGrammar = &m_grammar;
 	root->rule = RootRule();
 	return root;
 }
@@ -345,18 +352,18 @@ TextMateLineTokenizeResult TextMateTokenizer::TokenizeLine(std::wstring_view lin
 		// block above), never as a per-position candidate the way `end` is.
 		const bool hasBoundary = stack->endOrWhilePattern != nullptr && !stack->isWhileRule;
 		if (hasBoundary && !frameRule->applyEndPatternLast) {
-			candidates.push_back({nullptr, stack->endOrWhilePattern.get(), true});
+			candidates.push_back({nullptr, stack->owningGrammar, stack->endOrWhilePattern.get(), true});
 		}
 		{
-			std::vector<const TextMateRule*> leafRules;
+			std::vector<OwnedRule> leafRules;
 			std::vector<const TextMateRule*> visited;
-			CollectMatchableRules(m_grammar, m_externalResolver, frameRule, leafRules, 0, visited);
-			for (const TextMateRule* leaf : leafRules) {
-				candidates.push_back({leaf, GetOrCompileStaticPattern(leaf), false});
+			CollectMatchableRules(*stack->owningGrammar, m_externalResolver, frameRule, leafRules, 0, visited);
+			for (const auto& leaf : leafRules) {
+				candidates.push_back({leaf.rule, leaf.grammar, GetOrCompileStaticPattern(leaf.rule), false});
 			}
 		}
 		if (hasBoundary && frameRule->applyEndPatternLast) {
-			candidates.push_back({nullptr, stack->endOrWhilePattern.get(), true});
+			candidates.push_back({nullptr, stack->owningGrammar, stack->endOrWhilePattern.get(), true});
 		}
 
 		const Candidate* best = nullptr;
@@ -410,6 +417,7 @@ TextMateLineTokenizeResult TextMateTokenizer::TokenizeLine(std::wstring_view lin
 
 			auto frame = std::make_shared<TextMateRuleStackFrame>();
 			frame->parent = stack;
+			frame->owningGrammar = best->owningGrammar;
 			frame->rule = best->rule;
 			frame->name = best->rule->name;
 			frame->contentName = best->rule->contentName;
@@ -435,8 +443,8 @@ TextMateLineTokenizeResult TextMateTokenizer::TokenizeLine(std::wstring_view lin
 			// `Match` (or a zero-width boundary match that somehow left the
 			// same frame pointer, which should not normally happen) would
 			// otherwise match identically forever. A zero-width `begin`
-			// push/`end` pop is deliberately exempt — the stack pointer
-			// differs there — so legitimate lookahead-only begin/end rules
+			// push/`end` pop is deliberately exempt -- the stack pointer
+			// differs there -- so legitimate lookahead-only begin/end rules
 			// keep working; `maxIterations` above remains the backstop for
 			// a pathological push/pop cycle that never consumes text.
 			result.tokens.push_back(TextMateToken{pos, pos + 1, BuildScopePath(stack, true)});

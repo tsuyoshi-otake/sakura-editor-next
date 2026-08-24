@@ -58,11 +58,6 @@ env:
   VCPKG_NUGET_FEED: https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
   VCPKG_NUGET_OWNER: ${{ github.repository_owner }}
   VCPKG_ROOT: ${{ github.workspace }}\tools\vcpkg
-  # Keep this source-of-truth exclusion list identical for ordinary full CI,
-  # main-PR selection, and main coverage-map collection. Hosted runners
-  # are non-interactive, so these UI/external suites are intentionally outside
-  # all three paths.
-  HEADLESS_GTEST_EXCLUDES: MacroMgrTest.*:CPpaTest.*:SelectFileTest.*:FileDialog/FileDialogTest.*:CDlgProfileMgrTest.*:TrayWndTest.*:EditWndTest.*:WinMainFuncTest.*:WinMain/WinMainTest.*
   COVERAGE_MAP_SCHEMA_VERSION: '1'
 
 permissions:
@@ -257,6 +252,37 @@ jobs:
           --triplet x64-mingw-static `
           --clean-after-build
 
+  rust-security-audit:
+    name: Audit locked Rust dependencies
+    runs-on: ubuntu-latest
+    needs: check-encoding
+    if: ${{ !inputs.release_promotion && (github.event_name != 'pull_request' || inputs.run_native_build) }}
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
+          fetch-depth: 1
+
+      - name: Run pinned cargo audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          readonly version='0.22.2'
+          readonly archive="${RUNNER_TEMP}/cargo-audit-${version}.tgz"
+          readonly tool_dir="${RUNNER_TEMP}/cargo-audit-${version}"
+          readonly expected_sha256='ab28a1bdb54db4d5d8ad5981cf1f959410370b3d28250dbd35f6a44248620e39'
+          readonly url="https://github.com/rustsec/rustsec/releases/download/cargo-audit/v${version}/cargo-audit-x86_64-unknown-linux-gnu-v${version}.tgz"
+
+          curl --fail --location --retry 3 --retry-all-errors --output "${archive}" "${url}"
+          echo "${expected_sha256}  ${archive}" | sha256sum --check --strict
+          mkdir --parents "${tool_dir}"
+          tar --extract --gzip --file "${archive}" --directory "${tool_dir}"
+          readonly executable="${tool_dir}/cargo-audit-x86_64-unknown-linux-gnu-v${version}/cargo-audit"
+          test -x "${executable}"
+          "${executable}" audit --file rust/Cargo.lock
+
   build-chm:
     name: Build CHM
     runs-on: *windows_runner
@@ -415,11 +441,10 @@ jobs:
         fetch-depth: 0
         submodules: true
 
-    # Job-level env values cannot reference the workflow env context.  Export
-    # the regular headless filter for every later step; main-targeted map selection
-    # below may replace only its positive portion.
+    # Export the shared headless filter for every later step; main-targeted map
+    # selection below may replace only its positive portion.
     - name: Set default headless test filter
-      run: '"GTEST_FILTER=-$env:HEADLESS_GTEST_EXCLUDES" >> $env:GITHUB_ENV'
+      run: Get-Content src/test/headless-suite-selection.env >> $env:GITHUB_ENV
 
     ## see https://github.com/microsoft/setup-msbuild
     - name: Add msbuild to PATH
@@ -732,7 +757,11 @@ jobs:
           # headless exclusion list, which is the same behavior as full CI.
           $selectedFilter = $env:GTEST_FILTER
           try {
-            $env:GTEST_FILTER = "-$env:HEADLESS_GTEST_EXCLUDES"
+            $headlessAssignment = (Get-Content -LiteralPath 'src/test/headless-suite-selection.env' -Raw).Trim()
+            if ($headlessAssignment -notmatch '^GTEST_FILTER=(?<value>-.+)$') {
+              throw 'Shared headless suite selection is invalid.'
+            }
+            $env:GTEST_FILTER = $Matches.value
             Invoke-Ctest ($commonArguments + @('--exclude-regex', '^(CoverageTest|UnitTest)$'))
           } finally {
             $env:GTEST_FILTER = $selectedFilter
@@ -1057,7 +1086,11 @@ jobs:
       timeout-minutes: 15
       run: |
         $ErrorActionPreference = 'Stop'
-        $env:GTEST_FILTER = "-$env:HEADLESS_GTEST_EXCLUDES"
+        $headlessAssignment = (Get-Content -LiteralPath 'src/test/headless-suite-selection.env' -Raw).Trim()
+        if ($headlessAssignment -notmatch '^GTEST_FILTER=(?<value>-.+)$') {
+          throw 'Shared headless suite selection is invalid.'
+        }
+        $env:GTEST_FILTER = $Matches.value
         & ctest `
           '--test-dir' 'build/${{ matrix.platform }}/CMakeTools' `
           '-C' '${{ matrix.config }}' `
@@ -1088,7 +1121,7 @@ jobs:
   pr-gate:
     name: Native PR Gate
     runs-on: ubuntu-latest
-    needs: [check-encoding, build-vcpkg-msvc, build]
+    needs: [check-encoding, rust-security-audit, build-vcpkg-msvc, build]
     if: ${{ always() && github.event_name == 'pull_request' }}
     steps:
       - name: Verify every selected terminal state
@@ -1097,6 +1130,7 @@ jobs:
           PLAN_MODE: ${{ inputs.ci_mode }}
           RUN_NATIVE_BUILD: ${{ inputs.run_native_build }}
           ENCODING_RESULT: ${{ needs.check-encoding.result }}
+          AUDIT_RESULT: ${{ needs.rust-security-audit.result }}
           VCPKG_RESULT: ${{ needs.build-vcpkg-msvc.result }}
           BUILD_RESULT: ${{ needs.build.result }}
         run: |
@@ -1108,6 +1142,9 @@ jobs:
           }
 
           if ($env:RUN_NATIVE_BUILD -eq 'true') {
+            if ($env:AUDIT_RESULT -ne 'success') {
+              throw "Selected Rust dependency audit did not succeed: $env:AUDIT_RESULT"
+            }
             if ($env:VCPKG_RESULT -ne 'success') {
               throw "Selected vcpkg job did not succeed: $env:VCPKG_RESULT"
             }
@@ -1117,8 +1154,8 @@ jobs:
           }
           elseif ($env:RUN_NATIVE_BUILD -eq 'false' -and $env:PLAN_MODE -eq 'docs_only') {
             $notSelected = -join ('s', 'kipped')
-            if ($env:VCPKG_RESULT -ne $notSelected -or $env:BUILD_RESULT -ne $notSelected) {
-              throw "Documentation-only plan unexpectedly ran native jobs: vcpkg=$env:VCPKG_RESULT build=$env:BUILD_RESULT"
+            if ($env:AUDIT_RESULT -ne $notSelected -or $env:VCPKG_RESULT -ne $notSelected -or $env:BUILD_RESULT -ne $notSelected) {
+              throw "Documentation-only plan unexpectedly ran native jobs: audit=$env:AUDIT_RESULT vcpkg=$env:VCPKG_RESULT build=$env:BUILD_RESULT"
             }
           }
           else {
@@ -1128,5 +1165,6 @@ jobs:
           "## PR Gate" >> $env:GITHUB_STEP_SUMMARY
           "- Plan: ``$env:PLAN_MODE``" >> $env:GITHUB_STEP_SUMMARY
           "- Encoding: ``$env:ENCODING_RESULT``" >> $env:GITHUB_STEP_SUMMARY
+          "- Rust audit: ``$env:AUDIT_RESULT``" >> $env:GITHUB_STEP_SUMMARY
           "- vcpkg: ``$env:VCPKG_RESULT``" >> $env:GITHUB_STEP_SUMMARY
           "- MSBuild: ``$env:BUILD_RESULT``" >> $env:GITHUB_STEP_SUMMARY

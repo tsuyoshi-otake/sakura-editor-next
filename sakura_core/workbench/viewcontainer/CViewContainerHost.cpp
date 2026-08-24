@@ -173,6 +173,10 @@ void CViewContainerHost::Activate()
 		if (auto* view = m_pages->Search()) view->Activate();
 		return;
 	}
+	if (m_page == pageIds::Extensions) {
+		if (auto* view = m_pages->Extensions()) view->Activate();
+		return;
+	}
 	if (m_page == pageIds::Explorer) {
 		if (auto* explorer = m_pages->Explorer()) explorer->Activate();
 		return;
@@ -188,6 +192,10 @@ void CViewContainerHost::Deactivate()
 	}
 	if (m_page == pageIds::Search) {
 		if (auto* view = m_pages->Search()) view->Deactivate();
+		return;
+	}
+	if (m_page == pageIds::Extensions) {
+		if (auto* view = m_pages->Extensions()) view->Deactivate();
 		return;
 	}
 	if (m_page == pageIds::Explorer) {
@@ -206,6 +214,10 @@ bool CViewContainerHost::PreTranslateMessage(MSG& message)
 	}
 	if (m_page == pageIds::Search) {
 		auto* view = m_pages->Search();
+		return view != nullptr && view->PreTranslateMessage(message);
+	}
+	if (m_page == pageIds::Extensions) {
+		auto* view = m_pages->Extensions();
 		return view != nullptr && view->PreTranslateMessage(message);
 	}
 	if (m_page != pageIds::Explorer) return false;
@@ -431,6 +443,14 @@ void CViewContainerHost::LayoutChildren()
 		if (auto* view = m_pages->Search()) view->Layout(client, m_dpi);
 		m_pages->SetPageVisible(pageIds::Search, true);
 		m_pages->NotifyPageLayout(pageIds::Search);
+		m_outlineHeader = {};
+		invalidateHeaderChange();
+		return;
+	}
+	if (m_page == pageIds::Extensions) {
+		if (auto* view = m_pages->Extensions()) view->Layout(client, m_dpi);
+		m_pages->SetPageVisible(pageIds::Extensions, true);
+		m_pages->NotifyPageLayout(pageIds::Extensions);
 		m_outlineHeader = {};
 		invalidateHeaderChange();
 		return;

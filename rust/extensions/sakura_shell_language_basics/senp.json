@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "id": "sakura-shell-language-basics",
+  "displayName": "Shell Language Basics",
+  "version": "0.1.0",
+  "publisher": "sakura.builtin",
+  "description": "Syntax highlighting for sh, Bash, zsh, ksh, csh, tcsh, and PowerShell.",
+  "engines": { "sakura": ">=0.1.0" },
+  "contributes": {
+    "languages": [
+      {
+        "id": "shellscript",
+        "aliases": ["Shell Script", "sh", "Bash", "zsh", "ksh"],
+        "extensions": [".sh", ".bash", ".bashrc", ".bash_profile", ".zsh", ".zshrc", ".zprofile", ".ksh", ".profile"],
+        "filenames": ["APKBUILD", "PKGBUILD", ".envrc", ".bashrc", ".bash_profile", ".zshrc", ".zprofile"],
+        "firstLine": "^#!.*\\b(bash|zsh|sh|ksh|ash|dash|yash)\\b",
+        "mimetypes": ["text/x-shellscript"]
+      },
+      {
+        "id": "csh",
+        "aliases": ["C Shell", "csh", "tcsh"],
+        "extensions": [".csh", ".tcsh", ".cshrc", ".tcshrc"],
+        "filenames": [".cshrc", ".tcshrc", ".login", ".logout"],
+        "firstLine": "^#!.*\\b(csh|tcsh)\\b"
+      },
+      {
+        "id": "powershell",
+        "aliases": ["PowerShell", "powershell"],
+        "extensions": [".ps1", ".psm1", ".psd1"],
+        "firstLine": "^#!.*\\b(pwsh|powershell)\\b"
+      },
+      {
+        "id": "bat",
+        "aliases": ["Windows Batch", "bat"],
+        "extensions": [".bat", ".cmd"]
+      }
+    ],
+    "grammars": [
+      { "language": "shellscript", "scopeName": "source.shell", "path": "assets/syntaxes/shell-unix-bash.tmLanguage.json" },
+      { "language": "csh", "scopeName": "source.csh", "path": "assets/syntaxes/csh.tmLanguage.json" },
+      { "language": "powershell", "scopeName": "source.powershell", "path": "assets/syntaxes/powershell.tmLanguage.json" },
+      { "language": "bat", "scopeName": "source.batchfile", "path": "assets/syntaxes/batchfile.tmLanguage.json" }
+    ]
+  }
+}

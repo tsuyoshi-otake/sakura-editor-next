@@ -66,7 +66,7 @@
           Inputs="@(SakuraRustCoreSource)"
           Outputs="$(SakuraRustCoreStamp)"
           BeforeTargets="Link">
-    <Exec Command="&quot;$(SakuraRustCoreCargo)&quot; build --manifest-path &quot;$(SakuraRustCoreManifest)&quot; --workspace --package sakura-rust-core --locked --target x86_64-pc-windows-msvc --target-dir &quot;$(SakuraRustCoreTargetDir)&quot; --profile $(SakuraRustCoreCargoProfile)"
+    <Exec Command="&quot;$(SakuraRustCoreCargo)&quot; build --manifest-path &quot;$(SakuraRustCoreManifest)&quot; --package sakura-rust-core --locked --target x86_64-pc-windows-msvc --target-dir &quot;$(SakuraRustCoreTargetDir)&quot; --profile $(SakuraRustCoreCargoProfile)"
           WorkingDirectory="$(SakuraRustCoreWorkspace)"
           StdOutEncoding="UTF-8"
           ConsoleToMSBuild="true" />

@@ -11,6 +11,8 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
+#include <vector>
 
 namespace theme {
 
@@ -179,6 +181,18 @@ struct ThemePalette {
 	//! editor decoration consumers so a theme switch cannot retain a legacy
 	//! type-specific background behind tabs, spaces, or EOL marks.
 	ThemeColor editorWhitespaceForeground = { 0xE3, 0xE4, 0xE2, 0x29 };
+	//! VS Code `minimap.background`; falls back to `editor.background`.
+	ThemeColor minimapBackground = { 0x1E, 0x1E, 0x1E };
+	//! VS Code `minimap.foregroundOpacity`; only alpha participates in rendering.
+	ThemeColor minimapForegroundOpacity = { 0x00, 0x00, 0x00, 0xFF };
+	//! VS Code `minimapSlider.*`. Defaults are 50% of the corresponding scrollbar
+	//! slider alpha and remain raw until painted over the minimap background.
+	ThemeColor minimapSliderBackground = { 0x79, 0x79, 0x79, 0x33 };
+	ThemeColor minimapSliderHoverBackground = { 0x64, 0x64, 0x64, 0x59 };
+	ThemeColor minimapSliderActiveBackground = { 0xBF, 0xBF, 0xBF, 0x33 };
+	//! VS Code `editorIndentGuide.background1`. It stays raw until the editor
+	//! paints it over the current line background and extension decorations.
+	ThemeColor editorIndentGuideBackground = { 0x40, 0x40, 0x40 };
 	[[nodiscard]] constexpr bool operator==(const ThemePalette&) const noexcept = default;
 };
 
@@ -207,6 +221,16 @@ struct ThemeSyntaxStyle final {
 	bool underline = false;
 
 	[[nodiscard]] constexpr bool operator==(const ThemeSyntaxStyle&) const noexcept = default;
+};
+
+//! One VS Code TextMate tokenColors rule retained for grammar-aware rendering.
+//! This lives beside ThemeColor so the active-theme service can expose the full
+//! scope rules without introducing a dependency cycle through the theme registry.
+struct ThemeTokenColorRule final {
+	std::vector<std::wstring> scopes;
+	std::optional<ThemeColor> foreground;
+	std::optional<ThemeColor> background;
+	std::wstring fontStyle;
 };
 
 //! Projected syntax colors consumed by Sakura's existing syntax-category renderer.
@@ -328,6 +352,11 @@ public:
 	//! pointer is valid until the next theme application on the UI thread.
 	[[nodiscard]] static const ThemeSyntaxPalette* ActiveColorThemeSyntaxPalette() noexcept;
 	[[nodiscard]] static ThemeSyntaxPalette EffectiveSyntaxPalette(ThemeMode savedMode) noexcept;
+	//! Installs and exposes the selected theme's unprojected TextMate scope rules.
+	//! High Contrast suppresses these rules so system colors remain authoritative.
+	static void SetActiveColorThemeTokenColors(std::vector<ThemeTokenColorRule> tokenColors);
+	static void ClearActiveColorThemeTokenColors() noexcept;
+	[[nodiscard]] static const std::vector<ThemeTokenColorRule>* ActiveColorThemeTokenColors() noexcept;
 	//! Preferred/fallback font policy. Creation verifies installed faces at runtime.
 	[[nodiscard]] static constexpr ThemeFontSpec FontSpec(ThemeFontKind kind) noexcept;
 	//! Resolves the preferred family when installed, otherwise returns the fallback family.
@@ -351,7 +380,7 @@ private:
 constexpr ThemePalette CThemeService::PaletteFor(ThemeMode mode) noexcept
 {
 	if (mode == ThemeMode::Light) {
-		return {
+		ThemePalette palette{
 			{ 0xFF, 0xFF, 0xFF }, // editor.background
 			{ 0xF8, 0xF8, 0xF8 }, // panel.background / workbench chrome
 			{ 0xF2, 0xF2, 0xF2 }, // list.hoverBackground / raised surface
@@ -405,6 +434,13 @@ constexpr ThemePalette CThemeService::PaletteFor(ThemeMode mode) noexcept
 			{ 0x00, 0x00, 0x00, 0x99 }, // scrollbarSlider.activeBackground: black at 60%
 			{ 0x33, 0x33, 0x33, 0x33 }, // editorWhitespace.foreground
 		};
+		palette.minimapBackground = { 0xFF, 0xFF, 0xFF };
+		palette.minimapForegroundOpacity = { 0x00, 0x00, 0x00, 0xFF };
+		palette.minimapSliderBackground = { 0x64, 0x64, 0x64, 0x33 };
+		palette.minimapSliderHoverBackground = { 0x64, 0x64, 0x64, 0x59 };
+		palette.minimapSliderActiveBackground = { 0x00, 0x00, 0x00, 0x4C };
+		palette.editorIndentGuideBackground = { 0xD3, 0xD3, 0xD3 };
+		return palette;
 	}
 	return {
 		{ 0x1E, 0x1E, 0x1E }, // canvas: classic editor charcoal

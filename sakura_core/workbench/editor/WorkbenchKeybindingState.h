@@ -245,6 +245,10 @@ public:
 			&& modifiers.shift && !modifiers.alt) {
 			return command_ids::MarkdownTogglePreview;
 		}
+		if (virtualKey == static_cast<std::uint32_t>('X') && modifiers.control
+			&& modifiers.shift && !modifiers.alt) {
+			return command_ids::ShowExtensions;
+		}
 		if (!modifiers.IsControlOnly()) return {};
 		switch (virtualKey) {
 		case 'R': return command_ids::OpenRecent;

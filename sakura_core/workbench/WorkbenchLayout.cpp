@@ -186,12 +186,18 @@ WorkbenchLayout CalculateWorkbenchLayout(const WorkbenchLayoutRequest& request) 
 	}
 
 	const int editorBottom = bodyBottom - bottomPane - bottomSplitter;
-	const int minimapLeft = std::max(centralLeft, centralRight - minimap);
 	layout.documentTabs = MakeRect(centralLeft, sidePaneTop, centralRight, editorTop);
 	const auto primarySideBar = MakeRect(activityWidth, sidePaneTop, activityWidth + leftPane, bodyBottom);
 	layout.leftSplitter = MakeRect(activityWidth + leftPane, sidePaneTop, centralLeft, bodyBottom);
-	layout.editor = MakeRect(centralLeft, editorTop, minimapLeft, editorBottom);
-	layout.minimap = MakeRect(minimapLeft, editorTop, centralRight, editorBottom);
+	if (request.minimapOnLeft) {
+		const int minimapRight = std::min(centralRight, centralLeft + minimap);
+		layout.minimap = MakeRect(centralLeft, editorTop, minimapRight, editorBottom);
+		layout.editor = MakeRect(minimapRight, editorTop, centralRight, editorBottom);
+	} else {
+		const int minimapLeft = std::max(centralLeft, centralRight - minimap);
+		layout.editor = MakeRect(centralLeft, editorTop, minimapLeft, editorBottom);
+		layout.minimap = MakeRect(minimapLeft, editorTop, centralRight, editorBottom);
+	}
 	layout.rightSplitter = MakeRect(centralRight, sidePaneTop, centralRight + rightSplitter, bodyBottom);
 	const auto secondarySideBar = MakeRect(centralRight + rightSplitter, sidePaneTop, width, bodyBottom);
 	layout.leftPane = primarySideBar;

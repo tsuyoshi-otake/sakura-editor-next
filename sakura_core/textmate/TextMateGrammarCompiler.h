@@ -22,10 +22,9 @@ namespace textmate {
 //! `include: "source.foo#bar"` can cross into it. Sakura NEXT's extension
 //! host owns the set of installed grammars; this interface lets
 //! `sakura_core/textmate` stay ignorant of how grammars are discovered or
-//! cached. No implementation is wired up yet — see `textmate/CLAUDE.md`
-//! "Known gaps" — so today every caller may pass `nullptr`, which makes every
-//! `ExternalGrammar` include resolve to "no patterns" (fail closed, not a
-//! crash; see `ResolveInclude` below).
+//! cached. `senp::ISenpLanguageService` supplies the enabled installed grammar
+//! set in production. Tests and standalone callers may pass `nullptr`, which
+//! makes every external include resolve to no patterns (fail closed).
 class IExternalGrammarResolver {
 public:
 	virtual ~IExternalGrammarResolver() = default;
@@ -46,7 +45,7 @@ public:
 //! `#a`), and VS Code resolves every `include` fresh at the point it is
 //! expanded during tokenization. Returns `nullptr` when the reference cannot
 //! be resolved (unknown repository name, unknown external scope, or unknown
-//! member of an external grammar's repository) — an unresolved include
+//! member of an external grammar's repository) -- an unresolved include
 //! contributes zero patterns rather than aborting tokenization.
 const TextMateRule* ResolveInclude(
 	const Grammar& grammar,

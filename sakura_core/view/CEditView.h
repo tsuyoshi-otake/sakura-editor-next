@@ -61,7 +61,9 @@
 #include "_os/CClipboard.h"
 #include "workbench/controls/COverlayScrollbar.h"
 #include "view/CEditView_RenderingState.h"
+#include "view/MiniMapOverview.h"
 #include "workbench/rendering/FrameNativeSurfacePayloadAdapter.h"
+#include "senp/SenpLanguageService.h"
 
 class CDropTarget; /// 2002/2/3 aroka ヘッダー軽量化
 class COpeBlk;///
@@ -232,8 +234,17 @@ public:
 		MarkRenderDamage(static_cast<editor::rendering::EditViewDamageMask>(damage));
 	}
 	bool OnPaint2(HDC _hdc, PAINTSTRUCT *pPs, BOOL bDrawFromComptibleBmp);			/* 通常の描画処理 */
-	void DrawMiniMapOverview(HDC hdc);
-	void DrawMiniMapViewport(HDC hdc);
+	void DrawMiniMapFrame(HDC hdc);
+	void SetMiniMapOptions(const minimap::Options& options);
+	[[nodiscard]] const minimap::Options& GetMiniMapOptions() const noexcept { return m_miniMapOptions; }
+	void SetIndentGuidesEnabled(bool enabled);
+	[[nodiscard]] bool AreIndentGuidesEnabled() const noexcept { return m_indentGuidesEnabled; }
+	[[nodiscard]] minimap::Layout CalculateMiniMapLayout() const noexcept;
+	void OnMiniMapMouseLeave();
+	void NavigateMiniMapToPointer(int y, bool centerViewport);
+	void RevealMiniMapForScroll();
+	[[nodiscard]] bool EnsureAlphaOverlaySource(HDC target) noexcept;
+	void FillAlphaOverlay(HDC target, const RECT& rectangle, COLORREF color, BYTE alpha) noexcept;
 	HDC GetBackImageDC(HDC hdc);
 	void DrawBackImage(HDC hdc, RECT& rcPaint, HDC hdcBgImg);
 	void OnTimer(HWND hwnd, UINT uMsg, UINT_PTR idEvent, DWORD dwTime);
@@ -253,6 +264,7 @@ public:
 	void OnLBUTTONDBLCLK(WPARAM fwKeys, int _xPos, int _yPos);			/* マウス左ボタンダブルクリック */
 	void OnRBUTTONDOWN(WPARAM fwKeys, int xPos, int yPos);				/* マウス右ボタン押下 */
 	void OnRBUTTONUP(WPARAM fwKeys, int xPos, int yPos);				/* マウス右ボタン開放 */
+	void ShowMiniMapContextMenu(int xPos, int yPos);
 	void OnMBUTTONDOWN(WPARAM fwKeys, int xPos, int yPos);				/* マウス中ボタン押下 */
 	void OnMBUTTONUP(WPARAM fwKeys, int xPos, int yPos);				/* マウス中ボタン開放 */
 	void OnXLBUTTONDOWN(WPARAM fwKeys, int xPos, int yPos);			/* マウスサイドボタン1押下 */
@@ -278,6 +290,12 @@ protected:
 
 	//! レイアウト行を1行描画
 	bool DrawLayoutLine(SColorStrategyInfo* pInfo);
+	//! Returns the grammar tokens for one logical line. Tokenization is carried
+	//! forward in bounded chunks because TextMate rule stacks are line-ordered.
+	[[nodiscard]] const std::vector<textmate::TextMateToken>* GetTextMateTokens(
+		CLogicInt logicalLine);
+	void ApplyTextMateTokenStyle(SColorStrategyInfo& info,
+		const textmate::TextMateToken* token);
 
 	//色分け
 public:
@@ -810,28 +828,49 @@ public:
 	CMigemo*		m_pcmigemo;
 	bool			m_bMiniMap;
 	bool			m_bMiniMapMouseDown;
+	bool			m_bMiniMapMouseOver = false;
+	bool			m_bMiniMapTrackingMouseLeave = false;
+	bool			m_bMiniMapScrollVisible = false;
+	int				m_nMiniMapDragOffsetY = -1;
 	CLayoutInt		m_nPageViewTop;
 	CLayoutInt		m_nPageViewBottom;
+	minimap::Options m_miniMapOptions{};
+	bool m_indentGuidesEnabled = true;
 
 	struct MiniMapOverviewCache {
 		const CEditDoc* document = nullptr;
 		std::uint64_t layoutGeneration = 0;
+		std::uint64_t styleFingerprint = 0;
 		std::int64_t lineCount = 0;
 		int width = 0;
 		int height = 0;
 		COLORREF background = CLR_INVALID;
-		COLORREF foreground = CLR_INVALID;
-		std::vector<int> rowStart;
-		std::vector<int> rowEnd;
+		minimap::Options options{};
+		minimap::Layout geometry{};
+		// Top-down 32-bit BI_RGB pixels. Caching the complete raster keeps normal
+		// repaint to one transfer even when renderCharacters emits many glyphs.
+		std::vector<std::uint32_t> pixels;
 		bool valid = false;
 	};
 	MiniMapOverviewCache m_miniMapOverviewCache;
-	// The minimap viewport overlay uses a one-pixel source surface for AlphaBlend.
-	// Keep that surface for the lifetime of the view instead of allocating GDI
-	// objects on every paint.
-	HDC				m_hdcMiniMapViewport = nullptr;
-	HBITMAP			m_hbmpMiniMapViewport = nullptr;
-	HBITMAP			m_hbmpMiniMapViewportOld = nullptr;
+	// Reused composition storage. A complete overview plus slider is assembled
+	// here and transferred to the window in one operation.
+	std::vector<std::uint32_t> m_miniMapFramePixels;
+	struct TextMateCachedLine final {
+		textmate::RuleStackHandle stateAfter;
+		std::vector<textmate::TextMateToken> tokens;
+	};
+	std::unique_ptr<senp::ISenpTextMateSession> m_textMateSession;
+	std::vector<TextMateCachedLine> m_textMateLines;
+	std::wstring m_textMateResourcePath;
+	std::uint64_t m_textMateLayoutGeneration = 0;
+	std::uint64_t m_textMateServiceRevision = 0;
+	std::size_t m_textMateTokenizeBudget = 128;
+	// Translucent editor overlays share a one-pixel AlphaBlend source. Keep it
+	// for the view lifetime instead of allocating GDI objects on every paint.
+	HDC				m_hdcAlphaOverlay = nullptr;
+	HBITMAP			m_hbmpAlphaOverlay = nullptr;
+	HBITMAP			m_hbmpAlphaOverlayOld = nullptr;
 
 	DISALLOW_COPY_AND_ASSIGN(CEditView);
 };

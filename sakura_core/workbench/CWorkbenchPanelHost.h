@@ -12,12 +12,22 @@
 
 #include <functional>
 #include <memory>
+#include <string>
+#include <vector>
 
 namespace workbench {
 
 //! Owns one CEditWnd-child host and the tool child hosted inside it.
 class CWorkbenchPanelHost final {
 public:
+	//! One secondary action contributed to VS Code's ViewContainer title menu.
+	//! The physical Part owns the button and popup; the contributing feature owns
+	//! only the command callback.
+	struct HeaderMenuItem final {
+		std::wstring title;
+		bool enabled = true;
+		std::function<void()> invoke;
+	};
 	//! Commits an extent to the authoritative layout model. Returning false leaves
 	//! this host at its previously committed extent.
 	using CommitExtentCallback = std::function<bool(WorkbenchEdge edge, int extentDip)>;
@@ -38,6 +48,7 @@ public:
 	void ActivateTool();
 	void SetPalette(const theme::ThemePalette& palette);
 	void SetTitle(std::wstring title);
+	void SetHeaderMenu(std::vector<HeaderMenuItem> items);
 	void SetHeaderDragCallback(HeaderDragCallback callback) { m_headerDrag = std::move(callback); }
 	//! Applies a shared extent without entering resize state or invoking persistence.
 	void ApplyExtentDip(int extentDip);
@@ -62,12 +73,19 @@ public:
 	[[nodiscard]] int GetHeaderHeightPixels() const noexcept;
 	static LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
 	static LRESULT CALLBACK SashWindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
+	static LRESULT CALLBACK HeaderMenuButtonSubclassProc(HWND window, UINT message,
+		WPARAM wParam, LPARAM lParam, UINT_PTR id, DWORD_PTR data);
 
 private:
 	LRESULT HandleMessage(UINT message, WPARAM wParam, LPARAM lParam);
 	LRESULT HandleSashMessage(UINT message, WPARAM wParam, LPARAM lParam);
 	void LayoutTool();
+	void LayoutHeaderMenuButton();
 	void Paint();
+	void PaintHeaderMenuButton(const DRAWITEMSTRUCT& draw);
+	void ShowHeaderMenu();
+	[[nodiscard]] HFONT AcquireCodiconFont(int height) noexcept;
+	void ReleaseCodiconFont() noexcept;
 	//! True while the pointer is over this Part's title, the only drag handle it owns.
 	[[nodiscard]] bool IsHeaderPoint(POINT clientPoint) const noexcept;
 	void EndHeaderDrag(bool deliver, POINT clientPoint);
@@ -84,13 +102,19 @@ private:
 	rendering::CGdiBackBuffer m_backBuffer;
 	HWND m_window = nullptr;
 	HWND m_sashWindow = nullptr;
+	HWND m_headerMenuButton = nullptr;
 	std::unique_ptr<IWorkbenchTool> m_tool;
 	std::wstring m_title;
+	std::vector<HeaderMenuItem> m_headerMenu;
+	HFONT m_codiconFont = nullptr;
+	int m_codiconFontHeight = 0;
 	CommitExtentCallback m_commitExtent;
 	HeaderDragCallback m_headerDrag;
 	POINT m_headerDragOrigin{};
 	bool m_headerPressed = false;
 	bool m_headerDragging = false;
+	bool m_headerMenuHovered = false;
+	bool m_headerMenuTrackingMouse = false;
 	bool m_closed = false;
 };
 

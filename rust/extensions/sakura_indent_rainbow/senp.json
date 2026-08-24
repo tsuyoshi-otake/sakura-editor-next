@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "sakura-indent-rainbow",
+  "displayName": "Indent Rainbow",
+  "version": "0.1.1",
+  "publisher": "sakura.builtin",
+  "description": "Colors indentation levels in the active editor.",
+  "engines": {
+    "sakura": ">=0.1.0"
+  },
+  "runtime": {
+    "abi": "sakura:senp/extension@1.0.0",
+    "module": "module/extension.wasm"
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "capabilities": [
+    "editor.visibleText",
+    "editor.decorations"
+  ],
+  "contributes": {
+    "editorDecorations": [
+      {
+        "id": "sakura.indent-rainbow",
+        "kind": "indent"
+      }
+    ]
+  }
+}

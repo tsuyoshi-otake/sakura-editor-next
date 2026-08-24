@@ -19,3 +19,16 @@ timer must not create a floating `CTipWnd` containing a four-line source
 excerpt; `CTipWnd` remains reserved for explicit keyword-help behavior in the
 main editor. This keeps the minimap free of an unrelated yellow overlay while
 preserving keyboard and pointer navigation.
+
+## Indentation guides
+
+`editor.guides.indentation` belongs to the Editor and defaults to `true`, as it
+does in VS Code. The guide color is `editorIndentGuide.background1`; the
+deprecated `editorIndentGuide.background` remains its fallback. SENP extensions
+may contribute indentation backgrounds, but their installation state must not
+control the Editor-owned guide surface.
+
+**Divergence:** active-indent highlighting (`editor.guides.highlightActiveIndentation`)
+and the optional `editorIndentGuide.background2` through `background6` color
+cycle are not implemented. Those settings/tokens remain unregistered rather
+than being accepted as inert capabilities.

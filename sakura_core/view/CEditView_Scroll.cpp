@@ -659,6 +659,7 @@ void CEditView::MiniMapRedraw(bool bUpdateAll)
 	(void)bUpdateAll;
 	if( this == &GetEditWnd().GetActiveView() && GetEditWnd().GetMiniMap().GetHwnd() ){
 		CEditView& miniMap = GetEditWnd().GetMiniMap();
+		miniMap.RevealMiniMapForScroll();
 		miniMap.MarkRenderDamage(
 			editor::rendering::EEditViewDamage::BaseText
 			| editor::rendering::EEditViewDamage::Minimap);

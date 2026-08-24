@@ -125,6 +125,61 @@ TEST(ConfigurationService, BuiltinTerminalTabSettingsReadAsOneCoherentSnapshot)
 	EXPECT_EQ(L"right", std::get<std::wstring>(read.snapshot->values[8].Value()));
 }
 
+TEST(ConfigurationService, BuiltinMinimapSettingsMatchUpstreamDefaultsAndBounds)
+{
+	CConfigurationService service(BuiltinConfigurationDescriptors());
+	const std::vector<std::string> keys{
+		"editor.minimap.enabled",
+		"editor.minimap.autohide",
+		"editor.minimap.side",
+		"editor.minimap.size",
+		"editor.minimap.showSlider",
+		"editor.minimap.renderCharacters",
+		"editor.minimap.maxColumn",
+		"editor.minimap.scale",
+	};
+	const auto profile = Target();
+	const auto read = service.ReadSnapshot(keys, profile);
+	ASSERT_EQ(EConfigurationOutcome::Applied, read.outcome);
+	ASSERT_TRUE(read.snapshot.has_value());
+	ASSERT_EQ(keys.size(), read.snapshot->values.size());
+	EXPECT_TRUE(std::get<bool>(read.snapshot->values[0].Value()));
+	EXPECT_EQ(L"none", std::get<std::wstring>(read.snapshot->values[1].Value()));
+	EXPECT_EQ(L"right", std::get<std::wstring>(read.snapshot->values[2].Value()));
+	EXPECT_EQ(L"proportional", std::get<std::wstring>(read.snapshot->values[3].Value()));
+	EXPECT_EQ(L"mouseover", std::get<std::wstring>(read.snapshot->values[4].Value()));
+	EXPECT_TRUE(std::get<bool>(read.snapshot->values[5].Value()));
+	EXPECT_EQ(120, std::get<std::int64_t>(read.snapshot->values[6].Value()));
+	EXPECT_EQ(1, std::get<std::int64_t>(read.snapshot->values[7].Value()));
+
+	EXPECT_EQ(EConfigurationOutcome::InvalidValue, service.Update({
+		Source(EConfigurationScope::Profile, profile), "editor.minimap.maxColumn",
+		ConfigurationValue(0), "minimap-column-too-small" }).outcome);
+	EXPECT_EQ(EConfigurationOutcome::InvalidValue, service.Update({
+		Source(EConfigurationScope::Profile, profile), "editor.minimap.scale",
+		ConfigurationValue(4), "minimap-scale-too-large" }).outcome);
+	EXPECT_EQ(EConfigurationOutcome::InvalidValue, service.Update({
+		Source(EConfigurationScope::Profile, profile), "editor.minimap.size",
+		ConfigurationValue(L"cover"), "minimap-size-invalid" }).outcome);
+	EXPECT_EQ(EConfigurationOutcome::InvalidScope, service.Update({
+		Source(EConfigurationScope::Application, {}), "editor.minimap.enabled",
+		ConfigurationValue(false), "minimap-application-scope" }).outcome);
+}
+
+TEST(ConfigurationService, BuiltinIndentationGuidesMatchTheUpstreamDefault)
+{
+	CConfigurationService service(BuiltinConfigurationDescriptors());
+	const auto profile = Target();
+	const auto lookup = service.GetValue("editor.guides.indentation", profile);
+	ASSERT_EQ(EConfigurationOutcome::Applied, lookup.outcome);
+	ASSERT_TRUE(lookup.value.has_value());
+	EXPECT_TRUE(std::get<bool>(lookup.value->Value()));
+
+	EXPECT_EQ(EConfigurationOutcome::InvalidValue, service.Update({
+		Source(EConfigurationScope::Profile, profile), "editor.guides.indentation",
+		ConfigurationValue(L"always"), "indent-guides-not-boolean" }).outcome);
+}
+
 TEST(ConfigurationService, BuiltinTerminalScrollbackMatchesUpstreamDefaultAndStaysBounded)
 {
 	CConfigurationService service(BuiltinConfigurationDescriptors());

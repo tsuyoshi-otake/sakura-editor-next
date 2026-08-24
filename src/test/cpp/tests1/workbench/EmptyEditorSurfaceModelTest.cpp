@@ -152,10 +152,13 @@ TEST(WorkbenchKeybindingState, FocusCancellationAndExactDirectBindingsAreModeled
 	result = state.HandleKeyDown('V', { .control = true, .shift = true }, 202, 12, available);
 	EXPECT_EQ(EWorkbenchKeyInputDecision::ExecuteStableCommandAndConsume, result.decision);
 	EXPECT_EQ(command_ids::MarkdownTogglePreview, result.commandId);
+	result = state.HandleKeyDown('X', { .control = true, .shift = true }, 203, 12, available);
+	EXPECT_EQ(EWorkbenchKeyInputDecision::ExecuteStableCommandAndConsume, result.decision);
+	EXPECT_EQ(command_ids::ShowExtensions, result.commandId);
 	EXPECT_EQ(EWorkbenchKeyInputDecision::PassThrough,
-		state.HandleKeyDown('R', { .control = true, .shift = true }, 203, 12, available).decision);
+		state.HandleKeyDown('R', { .control = true, .shift = true }, 204, 12, available).decision);
 	EXPECT_EQ(EWorkbenchKeyInputDecision::PassThrough,
-		state.HandleKeyDown('W', { .alt = true }, 204, 12, available).decision);
+		state.HandleKeyDown('W', { .alt = true }, 205, 12, available).decision);
 }
 
 TEST(WorkbenchKeybindingState, RegisteredDisabledCommandIsStillATerminalConsumedBinding)

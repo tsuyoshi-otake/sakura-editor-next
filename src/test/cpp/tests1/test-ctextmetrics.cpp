@@ -5,12 +5,38 @@
 	SPDX-License-Identifier: Zlib
 */
 #include "pch.h"
+#include "view/CEditView_Paint.h"
 #include "view/CTextMetrics.h"
 #include "view/figures/CFigureStrategy.h"
 #include <vector>
 #include <Windows.h>
 
 namespace {
+
+TEST(IndentDecorationLayout, ProjectsVisualColumnsIntoEditorLayoutUnits)
+{
+	using view::indent_decoration::LayoutRange;
+	using view::indent_decoration::ProjectVisualColumns;
+
+	const LayoutRange firstLevel{ 0, 32 };
+	const LayoutRange secondLevel{ 32, 64 };
+	EXPECT_EQ(ProjectVisualColumns(0, 4, 8), firstLevel);
+	EXPECT_EQ(ProjectVisualColumns(4, 4, 8), secondLevel);
+	EXPECT_FALSE(ProjectVisualColumns(0, 0, 8).has_value());
+	EXPECT_FALSE(ProjectVisualColumns(UINT32_MAX, 1, 8).has_value());
+}
+
+TEST(IndentGuideLayout, MeasuresLeadingSpacesAndTabsInVisualColumns)
+{
+	using view::indent_guide::LeadingVisualColumns;
+
+	EXPECT_EQ(8U, LeadingVisualColumns(L"        value", 4));
+	EXPECT_EQ(8U, LeadingVisualColumns(L"\t    value", 4));
+	EXPECT_EQ(4U, LeadingVisualColumns(L" \tvalue", 4));
+	EXPECT_EQ(0U, LeadingVisualColumns(L"value", 4));
+	EXPECT_EQ(0U, LeadingVisualColumns(L"    value", 0));
+}
+
 class GdiTextSurface final {
 public:
 	GdiTextSurface(HDC referenceDc, HFONT font, int width, int height)

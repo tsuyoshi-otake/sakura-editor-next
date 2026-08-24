@@ -1,0 +1,18 @@
+{
+  "name": "COBOL",
+  "scopeName": "source.cobol",
+  "patterns": [
+    { "match": "^.{6}[*/].*$|^[*>].*$", "name": "comment.line.cobol" },
+    { "begin": "*>[ \\t]*", "end": "$", "name": "comment.line.inline.cobol" },
+    { "begin": "\"", "end": "\"", "name": "string.quoted.double.cobol", "patterns": [ { "match": "\"\"", "name": "constant.character.escape.cobol" } ] },
+    { "begin": "'", "end": "'", "name": "string.quoted.single.cobol", "patterns": [ { "match": "''", "name": "constant.character.escape.cobol" } ] },
+    { "match": "(?i)^[ \\t]*(IDENTIFICATION|ENVIRONMENT|DATA|PROCEDURE)\\s+DIVISION\\b", "name": "entity.name.section.division.cobol" },
+    { "match": "(?i)^[ \\t]*(CONFIGURATION|INPUT-OUTPUT|FILE|WORKING-STORAGE|LOCAL-STORAGE|LINKAGE|SCREEN|REPORT)\\s+SECTION\\b", "name": "entity.name.section.cobol" },
+    { "match": "(?i)\\b(ACCEPT|ADD|ALLOCATE|CALL|CANCEL|CLOSE|COMPUTE|CONTINUE|DELETE|DISPLAY|DIVIDE|EVALUATE|EXIT|FREE|GENERATE|GO|GOBACK|IF|INITIALIZE|INSPECT|MERGE|MOVE|MULTIPLY|OPEN|PERFORM|READ|RELEASE|RETURN|REWRITE|SEARCH|SET|SORT|START|STOP|STRING|SUBTRACT|UNSTRING|WRITE|WHEN|END-IF|END-EVALUATE|END-PERFORM|END-READ|END-WRITE)\\b", "name": "keyword.control.cobol" },
+    { "match": "(?i)\\b(PIC|PICTURE|USAGE|COMP(?:-[1-5])?|BINARY|PACKED-DECIMAL|DISPLAY|OCCURS|REDEFINES|RENAMES|VALUE|VALUES|SIGN|SYNCHRONIZED|JUSTIFIED|BLANK|BASED|EXTERNAL|GLOBAL)\\b", "name": "storage.type.cobol" },
+    { "match": "(?i)\\b(PROGRAM-ID|AUTHOR|INSTALLATION|DATE-WRITTEN|DATE-COMPILED|SECURITY|CLASS-ID|METHOD-ID|FUNCTION-ID|SOURCE-COMPUTER|OBJECT-COMPUTER|SPECIAL-NAMES|FILE-CONTROL|SELECT|FD|SD)\\b", "name": "keyword.declaration.cobol" },
+    { "match": "(?i)\\b(TRUE|FALSE|NULL|NULLS|ZERO|ZEROS|SPACE|SPACES|HIGH-VALUE|HIGH-VALUES|LOW-VALUE|LOW-VALUES|QUOTE|QUOTES)\\b", "name": "constant.language.cobol" },
+    { "match": "(?<![A-Za-z0-9-])[+-]?\\d+(?:\\.\\d+)?(?![A-Za-z0-9-])", "name": "constant.numeric.cobol" },
+    { "match": "(?i)\\b[A-Z][A-Z0-9-]*(?=\\.)", "name": "entity.name.function.paragraph.cobol" }
+  ]
+}

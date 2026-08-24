@@ -1,0 +1,32 @@
+package sakura:senp@1.0.0;
+
+interface editor-decorations {
+    record visible-line {
+        line: u32,
+        text: string,
+    }
+
+    record decoration-request {
+        revision: u64,
+        tab-size: u32,
+        lines: list<visible-line>,
+    }
+
+    record decoration-slot {
+        line: u32,
+        visual-start: u32,
+        visual-length: u32,
+        depth: u32,
+    }
+
+    variant extension-error {
+        invalid-request(string),
+        limit-exceeded(string),
+    }
+
+    decorate: func(request: decoration-request) -> result<list<decoration-slot>, extension-error>;
+}
+
+world extension {
+    export editor-decorations;
+}

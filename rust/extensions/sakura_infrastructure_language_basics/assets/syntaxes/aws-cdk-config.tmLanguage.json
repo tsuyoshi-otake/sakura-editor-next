@@ -1,0 +1,13 @@
+{
+  "name": "AWS CDK Configuration",
+  "scopeName": "source.aws-cdk-config",
+  "patterns": [
+    { "match": "//.*$", "name": "comment.line.double-slash.jsonc" },
+    { "begin": "/\\*", "end": "\\*/", "name": "comment.block.jsonc" },
+    { "begin": "\"", "end": "\"(?=\\s*:)", "name": "support.type.property-name.json", "patterns": [ { "match": "\\\\(?:[\"\\\\/bfnrt]|u[0-9A-Fa-f]{4})", "name": "constant.character.escape.json" } ] },
+    { "begin": "\"", "end": "\"", "name": "string.quoted.double.json", "patterns": [ { "match": "\\\\(?:[\"\\\\/bfnrt]|u[0-9A-Fa-f]{4})", "name": "constant.character.escape.json" } ] },
+    { "match": "(?i)\\b(app|context|output|watch|build|language|versionReporting|pathMetadata|assetMetadata|staging|bundlingStacks|lookups|notices)\\b", "name": "variable.other.property.cdk" },
+    { "match": "\\b(true|false|null)\\b", "name": "constant.language.json" },
+    { "match": "(?<![A-Za-z0-9_.-])-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?(?![A-Za-z0-9_.-])", "name": "constant.numeric.json" }
+  ]
+}

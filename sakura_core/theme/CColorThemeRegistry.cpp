@@ -35,6 +35,7 @@ constexpr std::string_view kSakuraDefaultDarkThemeJson = R"json({
 		"editor.background": "#1E1E1E",
 		"editorGutter.background": "#1E1E1E",
 		"editorWhitespace.foreground": "#E3E4E229",
+		"editorIndentGuide.background1": "#404040",
 		"editorLineNumber.foreground": "#858585",
 		"editorLineNumber.activeForeground": "#CCCCCC",
 		"sideBar.background": "#293134",
@@ -77,6 +78,7 @@ constexpr std::string_view kSakuraDefaultLightThemeJson = R"json({
 		"editor.background": "#FFFFFF",
 		"editorGutter.background": "#FFFFFF",
 		"editorWhitespace.foreground": "#33333333",
+		"editorIndentGuide.background1": "#D3D3D3",
 		"editorLineNumber.foreground": "#6E7681",
 		"editorLineNumber.activeForeground": "#171184",
 		"sideBar.background": "#F8F8F8",
@@ -560,6 +562,23 @@ ThemePalette CColorThemeRegistry::ProjectPalette(
 			{ L"scrollbarSlider.activeBackground" });
 		palette.editorWhitespaceForeground = firstRaw(palette.editorWhitespaceForeground,
 			{ L"editorWhitespace.foreground" });
+		palette.editorIndentGuideBackground = firstRaw(palette.editorIndentGuideBackground,
+			{ L"editorIndentGuide.background1", L"editorIndentGuide.background" });
+		palette.minimapBackground = first(palette.canvas, { L"minimap.background" });
+		palette.minimapForegroundOpacity = firstRaw(palette.minimapForegroundOpacity,
+			{ L"minimap.foregroundOpacity" });
+		const auto halfAlpha = [](ThemeColor color) noexcept {
+			color.alpha = static_cast<std::uint8_t>(color.alpha / 2);
+			return color;
+		};
+		palette.minimapSliderBackground = firstRaw(halfAlpha(palette.scrollbarSliderBackground),
+			{ L"minimapSlider.background" });
+		palette.minimapSliderHoverBackground = firstRaw(
+			halfAlpha(palette.scrollbarSliderHoverBackground),
+			{ L"minimapSlider.hoverBackground" });
+		palette.minimapSliderActiveBackground = firstRaw(
+			halfAlpha(palette.scrollbarSliderActiveBackground),
+			{ L"minimapSlider.activeBackground" });
 		// The Search view's match highlight is the editor's own find-match role, which
 		// is what upstream's `searchResult` rendering reuses.
 		palette.searchMatchHighlightBackground = firstOverWithFallback(palette.sideBar,

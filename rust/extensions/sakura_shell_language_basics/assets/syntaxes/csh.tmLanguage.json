@@ -1,0 +1,19 @@
+{
+  "name": "C Shell",
+  "scopeName": "source.csh",
+  "patterns": [
+    { "match": "#.*$", "name": "comment.line.number-sign.csh" },
+    { "begin": "'", "end": "'", "name": "string.quoted.single.csh" },
+    { "begin": "\"", "end": "\"", "name": "string.quoted.double.csh", "patterns": [
+      { "match": "\\\\.", "name": "constant.character.escape.csh" },
+      { "match": "\\$[A-Za-z_][A-Za-z0-9_]*|\\$\\{[^}]+\\}", "name": "variable.other.csh" }
+    ] },
+    { "begin": "`", "end": "`", "name": "string.interpolated.command.csh" },
+    { "match": "\\$[A-Za-z_][A-Za-z0-9_]*|\\$\\{[^}]+\\}|\\$[0-9*#?$!<]", "name": "variable.other.csh" },
+    { "match": "(?i)\\b(alias|bg|break|breaksw|case|cd|chdir|continue|default|dirs|echo|else|end|endif|endsw|eval|exec|exit|foreach|glob|goto|hashstat|history|if|jobs|kill|limit|login|logout|nice|nohup|notify|onintr|popd|pushd|rehash|repeat|set|setenv|shift|source|stop|suspend|switch|time|umask|unalias|unhash|unlimit|unset|unsetenv|wait|while)\\b", "name": "keyword.control.csh" },
+    { "match": "(?i)\\b(then|argv|cwd|home|path|prompt|shell|status|term|user)\\b", "name": "support.variable.csh" },
+    { "match": "(?<![A-Za-z0-9_])(?:0[xX][0-9A-Fa-f]+|[0-9]+(?:\\.[0-9]+)?)(?![A-Za-z0-9_])", "name": "constant.numeric.csh" },
+    { "match": "&&|\\|\\||==|!=|=~|!~|<=|>=|<<|>>|[|&;<>]", "name": "keyword.operator.csh" },
+    { "match": "^[ \\t]*[A-Za-z_][A-Za-z0-9_.-]*", "name": "support.function.command.csh" }
+  ]
+}

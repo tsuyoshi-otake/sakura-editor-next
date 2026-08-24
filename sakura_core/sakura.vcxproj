@@ -154,6 +154,7 @@
   </ItemDefinitionGroup>
   <Import Project="..\src\main\msbuild\cmake.props" />
   <Import Project="..\src\main\msbuild\sakura-rust-core.targets" />
+  <Import Project="..\src\main\msbuild\sakura-senp.targets" />
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -1325,6 +1326,10 @@
 	<ClCompile Include="..\sakura_core\workbench\explorer\CExplorerTool.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\viewcontainer\CViewContainerHost.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\viewcontainer\CViewContainerPages.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\extensions\CExtensionsWorkbenchTool.cpp" />
+	<ClCompile Include="..\sakura_core\senp\SenpLanguageService.cpp" />
+	<ClCompile Include="..\sakura_core\senp\SenpManagementService.cpp" />
+	<ClCompile Include="..\sakura_core\senp\SenpRuntimeService.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\panel\CBottomPanelTool.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\outline\COutlineWorkbenchTool.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\outline\OutlineParserWorker.cpp" />

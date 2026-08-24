@@ -16,10 +16,10 @@ down the single legacy ``test.filtered_or_skipped`` finding that
 ``tools/CLAUDE.md`` recorded as the reason the workflow could not be edited at
 all.
 
-``build-sakura.yml`` still holds its own copy, because editing it obliges its
-own finding reduction and that is a change for its own day.  This file is what
-makes the copy safe in the meantime: the hand-maintained equality the old
-comment asked for is now checked, so the two cannot drift apart unnoticed.
+Both workflows now read this file. ``build-sakura.yml`` also reloads it when a
+main-targeted selection temporarily replaces ``GTEST_FILTER``, so the later
+full headless gate restores the exact shared negative pattern without a second
+literal.
 
 Regular expressions rather than PyYAML, for the reason
 ``test_workflow_cleanup_gating.py`` gives: CI installs ``requirements.txt`` with
@@ -37,11 +37,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOWS = REPO_ROOT / ".github/workflows"
 SELECTION_FILE = REPO_ROOT / "src/test/headless-suite-selection.env"
 
-# The value the MinGW job publishes, and the name build-sakura.yml gives the
-# same list.  build-sakura.yml stores it without the leading '-' and composes
-# the sign at each use site.
 SELECTION_VARIABLE = "GTEST_FILTER"
-SAKURA_VARIABLE = "HEADLESS_GTEST_EXCLUDES"
 
 
 def _selection_value() -> str:
@@ -104,19 +100,17 @@ class BothWorkflowsAgreeOnTheSelection(unittest.TestCase):
             "repository already avoids for $GITHUB_OUTPUT.",
         )
 
-    def test_build_sakura_copy_matches_the_shared_file(self) -> None:
+    def test_build_sakura_reads_the_shared_file(self) -> None:
         text = (WORKFLOWS / "build-sakura.yml").read_text(encoding="utf-8")
-        match = re.search(rf"^\s*{SAKURA_VARIABLE}:[ \t]*(?P<value>\S.*?)[ \t]*$", text, re.MULTILINE)
-        self.assertIsNotNone(
-            match, f"build-sakura.yml no longer defines {SAKURA_VARIABLE}"
+        self.assertGreaterEqual(
+            text.count("src/test/headless-suite-selection.env"),
+            3,
+            "The default, selected component tests, and Rust full gate must use the shared definition.",
         )
-        self.assertEqual(
-            match.group("value"),
-            _selection_value().lstrip("-"),
-            f"build-sakura.yml's {SAKURA_VARIABLE} drifted from "
-            f"{SELECTION_FILE.name}. Change the shared file, then bring this "
-            "copy back to it -- or, better, retire the copy in a change that "
-            "can afford build-sakura.yml's own finding reduction.",
+        self.assertNotIn(
+            "HEADLESS_GTEST_EXCLUDES:",
+            text,
+            "A workflow-local copy would reintroduce silent filter drift.",
         )
 
 

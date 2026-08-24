@@ -1,0 +1,16 @@
+{
+  "name": "Liquibase Changelog",
+  "scopeName": "source.liquibase",
+  "patterns": [
+    { "match": "^[ \\t]*(#|//).*$", "name": "comment.line.liquibase" },
+    { "begin": "<!--", "end": "-->", "name": "comment.block.xml.liquibase" },
+    { "match": "(?i)(?<=<)(databaseChangeLog|changeSet|preConditions|include|includeAll|createTable|addColumn|dropTable|sql|rollback|property|column|constraints|loadData|insert|update|delete)(?=[ >])", "name": "entity.name.tag.liquibase" },
+    { "match": "^[ \\t]*-?[ \\t]*(databaseChangeLog|changeSet|changes|preConditions|include|includeAll|createTable|addColumn|dropTable|sql|rollback|property|column|constraints|loadData|insert|update|delete)(?=\\s*:)", "name": "support.type.property-name.liquibase" },
+    { "match": "(?i)\\b(id|author|tableName|columnName|schemaName|catalogName|file|path|relativeToChangelogFile|onFail|onError|runAlways|runOnChange|context|labels)(?=\\s*[=:])", "name": "variable.other.property.liquibase" },
+    { "begin": "\"", "end": "\"", "name": "string.quoted.double.liquibase" },
+    { "begin": "'", "end": "'", "name": "string.quoted.single.liquibase" },
+    { "match": "\\$\\{[^}]+\\}", "name": "variable.other.interpolation.liquibase" },
+    { "match": "(?i)\\b(true|false|null)\\b", "name": "constant.language.liquibase" },
+    { "match": "(?<![A-Za-z0-9_.-])\\d+(?:\\.\\d+)?(?![A-Za-z0-9_.-])", "name": "constant.numeric.liquibase" }
+  ]
+}

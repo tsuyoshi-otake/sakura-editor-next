@@ -1,0 +1,16 @@
+{
+  "name": "Terraform HCL",
+  "scopeName": "source.hcl.terraform",
+  "patterns": [
+    { "match": "(#|//).*$", "name": "comment.line.terraform" },
+    { "begin": "/\\*", "end": "\\*/", "name": "comment.block.terraform" },
+    { "begin": "<<-?([A-Za-z_][A-Za-z0-9_]*)", "end": "^\\1$", "name": "string.unquoted.heredoc.terraform", "patterns": [ { "match": "\\$\\{[^}]+\\}", "name": "variable.other.interpolation.terraform" } ] },
+    { "begin": "\"", "end": "\"", "name": "string.quoted.double.terraform", "patterns": [ { "match": "\\\\.", "name": "constant.character.escape.terraform" }, { "match": "[%$]\\{[^}]+\\}", "name": "variable.other.interpolation.terraform" } ] },
+    { "match": "(?i)\\b(terraform|required_version|required_providers|provider|resource|data|module|variable|output|locals|moved|import|check|dynamic|lifecycle|provisioner|connection|backend)\\b", "name": "keyword.control.terraform" },
+    { "match": "(?i)\\b(for|in|if|else|null|true|false)\\b", "name": "constant.language.terraform" },
+    { "match": "\\b(var|local|module|data|path|terraform|count|each|self)\\b", "name": "support.variable.terraform" },
+    { "match": "\\b[A-Za-z_][A-Za-z0-9_-]*(?=\\s*=)", "name": "variable.other.property.terraform" },
+    { "match": "(?<![A-Za-z0-9_.-])(?:0[xX][0-9A-Fa-f]+|\\d+(?:\\.\\d+)?)(?![A-Za-z0-9_.-])", "name": "constant.numeric.terraform" },
+    { "match": "=>|==|!=|<=|>=|&&|\\|\\||[+*/%?:<>!-]", "name": "keyword.operator.terraform" }
+  ]
+}

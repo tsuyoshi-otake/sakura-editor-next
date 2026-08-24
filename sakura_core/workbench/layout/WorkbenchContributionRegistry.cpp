@@ -91,6 +91,7 @@ WorkbenchContributionRegistry::WorkbenchContributionRegistry()
 	addContainer(ids::viewContainer::Search, "Search", EViewContainerLocation::Sidebar, 20);
 	addContainer(ids::viewContainer::RunAndDebug, "Run and Debug", EViewContainerLocation::Sidebar, 30);
 	addContainer(ids::viewContainer::SourceControl, "Source Control", EViewContainerLocation::Sidebar, 40);
+	addContainer(ids::viewContainer::Extensions, "Extensions", EViewContainerLocation::Sidebar, 50);
 	addContainer(ids::viewContainer::Problems, "Problems", EViewContainerLocation::Panel, 10);
 	addContainer(ids::viewContainer::Output, "Output", EViewContainerLocation::Panel, 20);
 	addContainer(ids::viewContainer::Terminal, "Terminal", EViewContainerLocation::Panel, 30);
@@ -109,6 +110,7 @@ WorkbenchContributionRegistry::WorkbenchContributionRegistry()
 	// are rendered as non-selectable native siblings until the layout registry can
 	// model VS Code's provider-driven visibility conditions.
 	addView(ids::view::SourceControl, ids::viewContainer::SourceControl, "Changes", 10);
+	addView(ids::view::ExtensionsInstalled, ids::viewContainer::Extensions, "Installed", 10);
 	addView(ids::view::Problems, ids::viewContainer::Problems, "Problems", 10);
 	addView(ids::view::Output, ids::viewContainer::Output, "Output", 10);
 	addView(ids::view::Terminal, ids::viewContainer::Terminal, "Terminal", 10);

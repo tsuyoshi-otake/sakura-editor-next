@@ -53,6 +53,8 @@ TEST(CColorThemeRegistry, RegistersBuiltinThemesThroughTheVsCodeProjectionPath)
 	ASSERT_TRUE(dark.Succeeded()) << dark.diagnostic.c_str();
 	ASSERT_TRUE(dark.theme.has_value());
 	EXPECT_EQ((ThemeColor{ 0x1E, 0x1E, 0x1E, 0xFF }), dark.theme->colors.at(L"editor.background"));
+	EXPECT_EQ((ThemeColor{ 0x40, 0x40, 0x40, 0xFF }),
+		dark.theme->colors.at(L"editorIndentGuide.background1"));
 	EXPECT_FALSE(dark.theme->tokenColors.empty());
 	ASSERT_TRUE(dark.theme->syntaxPalette.comment.foreground.has_value());
 	EXPECT_EQ((ThemeColor{ 0x6A, 0x99, 0x55, 0xFF }), *dark.theme->syntaxPalette.comment.foreground);
@@ -89,6 +91,8 @@ TEST(CColorThemeRegistry, RegistersBuiltinThemesThroughTheVsCodeProjectionPath)
 		light.theme->palette.scrollbarSliderActiveBackground);
 	EXPECT_EQ((ThemeColor{ 0x33, 0x33, 0x33, 0x33 }),
 		light.theme->palette.editorWhitespaceForeground);
+	EXPECT_EQ((ThemeColor{ 0xD3, 0xD3, 0xD3 }),
+		light.theme->palette.editorIndentGuideBackground);
 
 	// A refresh can rebuild the built-ins without leaving stale virtual files
 	// behind. Clear is still a complete registry reset for callers that need it.
@@ -131,6 +135,35 @@ TEST(CColorThemeRegistry, PreservesScrollbarAlphaUntilTheOwningSurfaceIsKnown)
 	EXPECT_EQ((ThemeColor{ 0x43, 0x65, 0x87, 0xC0 }), palette.scrollbarSliderActiveBackground);
 }
 
+TEST(CColorThemeRegistry, ProjectsExplicitMinimapTokensAndDerivesSliderFallbacks)
+{
+	using theme::CColorThemeRegistry;
+	using theme::ColorThemeKind;
+	using theme::ThemeColor;
+
+	const std::map<std::wstring, ThemeColor, std::less<>> fallbackColors{
+		{ L"editor.background", ThemeColor{ 0x10, 0x20, 0x30, 0xFF } },
+		{ L"scrollbarSlider.background", ThemeColor{ 0x21, 0x43, 0x65, 0x40 } },
+		{ L"scrollbarSlider.hoverBackground", ThemeColor{ 0x32, 0x54, 0x76, 0x80 } },
+		{ L"scrollbarSlider.activeBackground", ThemeColor{ 0x43, 0x65, 0x87, 0xC0 } },
+	};
+	auto palette = CColorThemeRegistry::ProjectPalette(ColorThemeKind::Light, fallbackColors);
+	EXPECT_EQ((ThemeColor{ 0x10, 0x20, 0x30, 0xFF }), palette.minimapBackground);
+	EXPECT_EQ((ThemeColor{ 0x21, 0x43, 0x65, 0x20 }), palette.minimapSliderBackground);
+	EXPECT_EQ((ThemeColor{ 0x32, 0x54, 0x76, 0x40 }), palette.minimapSliderHoverBackground);
+	EXPECT_EQ((ThemeColor{ 0x43, 0x65, 0x87, 0x60 }), palette.minimapSliderActiveBackground);
+
+	const std::map<std::wstring, ThemeColor, std::less<>> explicitColors{
+		{ L"minimap.background", ThemeColor{ 0xAA, 0xBB, 0xCC, 0xFF } },
+		{ L"minimap.foregroundOpacity", ThemeColor{ 0, 0, 0, 0x80 } },
+		{ L"minimapSlider.background", ThemeColor{ 1, 2, 3, 0x70 } },
+	};
+	palette = CColorThemeRegistry::ProjectPalette(ColorThemeKind::Dark, explicitColors);
+	EXPECT_EQ((ThemeColor{ 0xAA, 0xBB, 0xCC, 0xFF }), palette.minimapBackground);
+	EXPECT_EQ(0x80, palette.minimapForegroundOpacity.alpha);
+	EXPECT_EQ((ThemeColor{ 1, 2, 3, 0x70 }), palette.minimapSliderBackground);
+}
+
 TEST(CColorThemeRegistry, PreservesEditorWhitespaceAlphaUntilTheEditorCanvasIsKnown)
 {
 	using theme::CColorThemeRegistry;
@@ -143,6 +176,24 @@ TEST(CColorThemeRegistry, PreservesEditorWhitespaceAlphaUntilTheEditorCanvasIsKn
 	const auto palette = CColorThemeRegistry::ProjectPalette(ColorThemeKind::Light, colors);
 
 	EXPECT_EQ((ThemeColor{ 0x12, 0x34, 0x56, 0x40 }), palette.editorWhitespaceForeground);
+}
+
+TEST(CColorThemeRegistry, ProjectsTheStableIndentGuideTokenAndDeprecatedFallback)
+{
+	using theme::CColorThemeRegistry;
+	using theme::ColorThemeKind;
+	using theme::ThemeColor;
+
+	const auto deprecated = CColorThemeRegistry::ProjectPalette(ColorThemeKind::Dark, {
+		{ L"editorIndentGuide.background", ThemeColor{ 1, 2, 3, 0x80 } },
+	});
+	EXPECT_EQ((ThemeColor{ 1, 2, 3, 0x80 }), deprecated.editorIndentGuideBackground);
+
+	const auto stable = CColorThemeRegistry::ProjectPalette(ColorThemeKind::Dark, {
+		{ L"editorIndentGuide.background", ThemeColor{ 1, 2, 3, 0x80 } },
+		{ L"editorIndentGuide.background1", ThemeColor{ 4, 5, 6, 0x90 } },
+	});
+	EXPECT_EQ((ThemeColor{ 4, 5, 6, 0x90 }), stable.editorIndentGuideBackground);
 }
 
 

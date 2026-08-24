@@ -1,0 +1,15 @@
+{
+  "name": "Infrastructure YAML",
+  "scopeName": "source.infrastructure.yaml",
+  "patterns": [
+    { "match": "#.*$", "name": "comment.line.number-sign.yaml" },
+    { "begin": "{{-?", "end": "-?}}", "name": "meta.embedded.template.helm", "patterns": [ { "match": "\\b(if|else|end|range|with|define|template|include|required|default|toYaml|quote|nindent|indent)\\b", "name": "keyword.control.helm" }, { "match": "\\.[A-Za-z_][A-Za-z0-9_.]*", "name": "variable.other.helm" } ] },
+    { "match": "^[ \\t]*-?[ \\t]*(apiVersion|kind|metadata|spec|status|data|stringData|type|services|volumes|networks|jobs|steps|stages|trigger|pr|pool|strategy|matrix|runs-on|uses|run|with|env|permissions|on|name|image|build|command|entrypoint|ports|environment|depends_on|deploy|resources)(?=\\s*:)", "name": "support.type.property-name.infrastructure" },
+    { "match": "(?i)\\b(Deployment|StatefulSet|DaemonSet|Service|Ingress|ConfigMap|Secret|Namespace|Job|CronJob|Pod|PersistentVolume|PersistentVolumeClaim|Role|ClusterRole|ServiceAccount)\\b", "name": "entity.name.type.kubernetes" },
+    { "begin": "\"", "end": "\"", "name": "string.quoted.double.yaml", "patterns": [ { "match": "\\$\\{\\{[^}]+\\}\\}|\\$\\{[^}]+\\}", "name": "variable.other.interpolation.infrastructure" } ] },
+    { "begin": "'", "end": "'", "name": "string.quoted.single.yaml" },
+    { "match": "(?i)\\b(true|false|null|yes|no|on|off)\\b", "name": "constant.language.yaml" },
+    { "match": "(?<![A-Za-z0-9_.-])-?\\d+(?:\\.\\d+)?(?![A-Za-z0-9_.-])", "name": "constant.numeric.yaml" },
+    { "match": "&[A-Za-z0-9_.-]+|\\*[A-Za-z0-9_.-]+", "name": "variable.other.anchor.yaml" }
+  ]
+}

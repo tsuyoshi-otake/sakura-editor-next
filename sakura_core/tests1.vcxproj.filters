@@ -291,6 +291,9 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerToolTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExtensionsWorkbenchToolTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\OverlayScrollbarTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
@@ -598,6 +601,9 @@
       <Filter>Test Files\textmate</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\textmate\OnigmoRegexEngineTest.cpp">
+      <Filter>Test Files\textmate</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\senp\SenpLanguageServiceTest.cpp">
       <Filter>Test Files\textmate</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\test-cmemory.cpp">

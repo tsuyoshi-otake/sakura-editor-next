@@ -7,6 +7,9 @@
 #include "StdAfx.h"
 
 #include "workbench/CWorkbenchPanelHost.h"
+#include "workbench/icons/CCodiconFont.h"
+#include "workbench/icons/CodiconGlyphTable.h"
+#include "workbench/icons/LabelRunPainter.h"
 
 #include <windowsx.h>
 
@@ -21,6 +24,10 @@ constexpr wchar_t kPanelSashClass[] = L"SakuraWorkbenchPanelSash";
 constexpr int kDefaultDpi = 96;
 constexpr int kHeaderHeightDip = 30;
 constexpr int kSashHitTargetDip = 4;
+constexpr int kHeaderActionSideDip = 26;
+constexpr int kHeaderActionTrailingDip = 4;
+constexpr int kHeaderMenuControlId = 0x7f01;
+constexpr UINT_PTR kHeaderMenuSubclassId = 1;
 
 BOOL CALLBACK ApplyChromeFont(HWND window, LPARAM parameter)
 {
@@ -94,11 +101,25 @@ bool CWorkbenchPanelHost::Create(HWND parent, HINSTANCE instance, std::unique_pt
 	m_window = ::CreateWindowExW(0, kPanelHostClass, L"", WS_CHILD | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
 		0, 0, 0, 0, parent, nullptr, instance, this);
 	if (m_window == nullptr) return false;
+	m_headerMenuButton = ::CreateWindowExW(0, L"BUTTON", L"More Actions...",
+		WS_CHILD | WS_TABSTOP | BS_OWNERDRAW,
+		0, 0, 0, 0, m_window,
+		reinterpret_cast<HMENU>(static_cast<INT_PTR>(kHeaderMenuControlId)), instance, nullptr);
+	if (m_headerMenuButton == nullptr
+		|| ::SetWindowSubclass(m_headerMenuButton, HeaderMenuButtonSubclassProc,
+			kHeaderMenuSubclassId, reinterpret_cast<DWORD_PTR>(this)) == FALSE) {
+		if (m_headerMenuButton != nullptr) ::DestroyWindow(m_headerMenuButton);
+		m_headerMenuButton = nullptr;
+		::DestroyWindow(m_window);
+		m_window = nullptr;
+		return false;
+	}
 	m_tool = std::move(tool);
 	if (!m_tool->Create(m_window)) {
 		m_tool.reset();
 		::DestroyWindow(m_window);
 		m_window = nullptr;
+		m_headerMenuButton = nullptr;
 		return false;
 	}
 	m_sashWindow = ::CreateWindowExW(WS_EX_TRANSPARENT | WS_EX_NOPARENTNOTIFY,
@@ -109,6 +130,7 @@ bool CWorkbenchPanelHost::Create(HWND parent, HINSTANCE instance, std::unique_pt
 		m_tool.reset();
 		::DestroyWindow(m_window);
 		m_window = nullptr;
+		m_headerMenuButton = nullptr;
 		return false;
 	}
 	return true;
@@ -173,11 +195,19 @@ void CWorkbenchPanelHost::SetPalette(const theme::ThemePalette& palette)
 {
 	m_palette = palette;
 	if (m_window != nullptr) ::InvalidateRect(m_window, nullptr, FALSE);
+	if (m_headerMenuButton != nullptr) ::InvalidateRect(m_headerMenuButton, nullptr, FALSE);
 }
 
 void CWorkbenchPanelHost::SetTitle(std::wstring title)
 {
 	m_title = std::move(title);
+	if (m_window != nullptr) ::InvalidateRect(m_window, nullptr, FALSE);
+}
+
+void CWorkbenchPanelHost::SetHeaderMenu(std::vector<HeaderMenuItem> items)
+{
+	m_headerMenu = std::move(items);
+	LayoutHeaderMenuButton();
 	if (m_window != nullptr) ::InvalidateRect(m_window, nullptr, FALSE);
 }
 
@@ -295,10 +325,18 @@ void CWorkbenchPanelHost::Close()
 		m_tool->Close();
 		m_tool.reset();
 	}
+	if (m_headerMenuButton != nullptr && ::IsWindow(m_headerMenuButton)) {
+		::DestroyWindow(m_headerMenuButton);
+	}
+	m_headerMenuButton = nullptr;
 	if (m_window != nullptr) {
 		::DestroyWindow(m_window);
 		m_window = nullptr;
 	}
+	m_headerMenu.clear();
+	m_headerMenuHovered = false;
+	m_headerMenuTrackingMouse = false;
+	ReleaseCodiconFont();
 	m_backBuffer.Reset();
 	m_state = WorkbenchPanelState::Hidden;
 }
@@ -349,6 +387,64 @@ LRESULT CALLBACK CWorkbenchPanelHost::SashWindowProc(HWND window, UINT message, 
 	return self->HandleSashMessage(message, wParam, lParam);
 }
 
+LRESULT CALLBACK CWorkbenchPanelHost::HeaderMenuButtonSubclassProc(HWND window,
+	UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR id, DWORD_PTR data)
+{
+	auto* self = reinterpret_cast<CWorkbenchPanelHost*>(data);
+	if (message == WM_NCDESTROY) {
+		(void)::RemoveWindowSubclass(window, HeaderMenuButtonSubclassProc, id);
+		if (self != nullptr && self->m_headerMenuButton == window) self->m_headerMenuButton = nullptr;
+		return ::DefSubclassProc(window, message, wParam, lParam);
+	}
+	if (self == nullptr) return ::DefSubclassProc(window, message, wParam, lParam);
+	const auto paintButton = [self, window](HDC dc) {
+		RECT bounds{};
+		::GetClientRect(window, &bounds);
+		const LRESULT buttonState = ::SendMessageW(window, BM_GETSTATE, 0, 0);
+		UINT state = 0;
+		if ((buttonState & BST_PUSHED) != 0) state |= ODS_SELECTED;
+		if ((buttonState & BST_FOCUS) != 0) state |= ODS_FOCUS;
+		if (::IsWindowEnabled(window) == FALSE) state |= ODS_DISABLED;
+		if ((::SendMessageW(window, WM_QUERYUISTATE, 0, 0) & UISF_HIDEFOCUS) != 0) {
+			state |= ODS_NOFOCUSRECT;
+		}
+		const DRAWITEMSTRUCT draw{ ODT_BUTTON, kHeaderMenuControlId, 0, ODA_DRAWENTIRE,
+			state, window, dc, bounds, 0 };
+		self->PaintHeaderMenuButton(draw);
+	};
+	if (message == WM_ERASEBKGND) return 1;
+	if (message == WM_PAINT) {
+		PAINTSTRUCT paint{};
+		const HDC dc = ::BeginPaint(window, &paint);
+		if (dc != nullptr) paintButton(dc);
+		::EndPaint(window, &paint);
+		return 0;
+	}
+	if (message == WM_PRINTCLIENT) {
+		paintButton(reinterpret_cast<HDC>(wParam));
+		return 0;
+	}
+	if (message == WM_MOUSEMOVE) {
+		if (!self->m_headerMenuHovered) {
+			self->m_headerMenuHovered = true;
+			::InvalidateRect(window, nullptr, FALSE);
+		}
+		if (!self->m_headerMenuTrackingMouse) {
+			TRACKMOUSEEVENT track{ sizeof(track), TME_LEAVE, window, 0 };
+			self->m_headerMenuTrackingMouse = ::TrackMouseEvent(&track) != FALSE;
+		}
+	} else if (message == WM_MOUSELEAVE) {
+		self->m_headerMenuHovered = false;
+		self->m_headerMenuTrackingMouse = false;
+		::InvalidateRect(window, nullptr, FALSE);
+	}
+	const LRESULT result = ::DefSubclassProc(window, message, wParam, lParam);
+	if (message == WM_SETFOCUS || message == WM_KILLFOCUS || message == WM_ENABLE) {
+		::InvalidateRect(window, nullptr, FALSE);
+	}
+	return result;
+}
+
 int CWorkbenchPanelHost::GetHeaderHeightPixels() const noexcept
 {
 	if (m_edge == WorkbenchEdge::Bottom) return 0;
@@ -378,6 +474,21 @@ LRESULT CALLBACK CWorkbenchPanelHost::WindowProc(HWND window, UINT message, WPAR
 LRESULT CWorkbenchPanelHost::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam)
 {
 	switch (message) {
+	case WM_DRAWITEM: {
+		const auto* draw = reinterpret_cast<const DRAWITEMSTRUCT*>(lParam);
+		if (draw != nullptr && draw->CtlID == kHeaderMenuControlId
+			&& draw->hwndItem == m_headerMenuButton) {
+			PaintHeaderMenuButton(*draw);
+			return TRUE;
+		}
+		break;
+	}
+	case WM_COMMAND:
+		if (LOWORD(wParam) == kHeaderMenuControlId && HIWORD(wParam) == BN_CLICKED) {
+			ShowHeaderMenu();
+			return 0;
+		}
+		break;
 	case WM_ERASEBKGND:
 		return 1;
 	case WM_PAINT:
@@ -449,6 +560,13 @@ bool CWorkbenchPanelHost::IsHeaderPoint(POINT clientPoint) const noexcept
 {
 	const int headerHeight = GetHeaderHeightPixels();
 	if (headerHeight <= 0 || m_window == nullptr) return false;
+	if (m_headerMenuButton != nullptr && ::IsWindowVisible(m_headerMenuButton)) {
+		RECT action{};
+		if (::GetWindowRect(m_headerMenuButton, &action)) {
+			::MapWindowPoints(nullptr, m_window, reinterpret_cast<POINT*>(&action), 2);
+			if (::PtInRect(&action, clientPoint)) return false;
+		}
+	}
 	RECT client{};
 	::GetClientRect(m_window, &client);
 	return clientPoint.y >= client.top && clientPoint.y < client.top + headerHeight
@@ -477,11 +595,51 @@ void CWorkbenchPanelHost::LayoutTool()
 	if (m_closed || m_tool == nullptr || m_window == nullptr) return;
 	RECT client{};
 	::GetClientRect(m_window, &client);
+	LayoutHeaderMenuButton();
 	client.top = std::min(client.bottom, client.top + GetHeaderHeightPixels());
 	m_tool->Layout(client, m_dpi);
 	if (m_font.Get() != nullptr) {
 		::EnumChildWindows(m_window, ApplyChromeFont, reinterpret_cast<LPARAM>(m_font.Get()));
 	}
+}
+
+void CWorkbenchPanelHost::LayoutHeaderMenuButton()
+{
+	if (m_headerMenuButton == nullptr || m_window == nullptr) return;
+	RECT client{};
+	::GetClientRect(m_window, &client);
+	const int headerHeight = GetHeaderHeightPixels();
+	const bool visible = headerHeight > 0 && !m_headerMenu.empty();
+	if (!visible) {
+		::ShowWindow(m_headerMenuButton, SW_HIDE);
+		return;
+	}
+	const int side = std::min(headerHeight, ScaleDip(kHeaderActionSideDip, m_dpi));
+	const int trailing = ScaleDip(kHeaderActionTrailingDip, m_dpi);
+	const int left = std::max<LONG>(client.left, client.right - trailing - side);
+	const int top = client.top + std::max(0, (headerHeight - side) / 2);
+	::SetWindowPos(m_headerMenuButton, HWND_TOP, left, top, side, side,
+		SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOCOPYBITS | SWP_NOREDRAW);
+	::InvalidateRect(m_headerMenuButton, nullptr, FALSE);
+}
+
+HFONT CWorkbenchPanelHost::AcquireCodiconFont(int height) noexcept
+{
+	if (height <= 0) return nullptr;
+	if (m_codiconFont != nullptr && m_codiconFontHeight == height) return m_codiconFont;
+	ReleaseCodiconFont();
+	const auto faceName = workbench::icons::CCodiconFont::Instance().FaceName();
+	if (faceName.empty()) return nullptr;
+	m_codiconFont = workbench::icons::CreateLabelRunGlyphFont(faceName, height);
+	if (m_codiconFont != nullptr) m_codiconFontHeight = height;
+	return m_codiconFont;
+}
+
+void CWorkbenchPanelHost::ReleaseCodiconFont() noexcept
+{
+	if (m_codiconFont != nullptr) ::DeleteObject(m_codiconFont);
+	m_codiconFont = nullptr;
+	m_codiconFontHeight = 0;
 }
 
 void CWorkbenchPanelHost::Paint()
@@ -514,11 +672,87 @@ void CWorkbenchPanelHost::Paint()
 		const wchar_t* title = !m_title.empty() ? m_title.c_str()
 			: m_edge == WorkbenchEdge::Left ? L"EXPLORER" : L"OUTLINE";
 		::InflateRect(&header, -ScaleDip(8, m_dpi), 0);
+		if (m_headerMenuButton != nullptr && ::IsWindowVisible(m_headerMenuButton)) {
+			RECT action{};
+			if (::GetWindowRect(m_headerMenuButton, &action)) {
+				::MapWindowPoints(nullptr, m_window, reinterpret_cast<POINT*>(&action), 2);
+				header.right = std::max(header.left, action.left - ScaleDip(4, m_dpi));
+			}
+		}
 		::DrawTextW(dc, title, -1, &header, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS | DT_NOPREFIX);
 		if (previousFont != nullptr) ::SelectObject(dc, previousFont);
 	}
 	if (buffered) (void)m_backBuffer.Present(target, client);
 	::EndPaint(m_window, &paint);
+}
+
+void CWorkbenchPanelHost::PaintHeaderMenuButton(const DRAWITEMSTRUCT& draw)
+{
+	if (draw.hDC == nullptr) return;
+	const bool enabled = (draw.itemState & ODS_DISABLED) == 0;
+	const bool pressed = (draw.itemState & ODS_SELECTED) != 0;
+	const bool focused = (draw.itemState & ODS_FOCUS) != 0
+		&& (draw.itemState & ODS_NOFOCUSRECT) == 0;
+	const COLORREF background = enabled && (pressed || m_headerMenuHovered)
+		? m_palette.listHoverBackground.ToColorRef() : m_palette.raised.ToColorRef();
+	const COLORREF foreground = enabled
+		? m_palette.primaryText.ToColorRef() : m_palette.disabledText.ToColorRef();
+	const HBRUSH fill = ::CreateSolidBrush(background);
+	if (fill != nullptr) {
+		::FillRect(draw.hDC, &draw.rcItem, fill);
+		::DeleteObject(fill);
+	}
+	RECT glyphBounds = draw.rcItem;
+	if (pressed) ::OffsetRect(&glyphBounds, 0, 1);
+	const auto glyph = workbench::icons::FindCodiconGlyph(L"ellipsis");
+	const HFONT font = AcquireCodiconFont(ScaleDip(16, m_dpi));
+	if (glyph.has_value() && font != nullptr) {
+		const wchar_t text[] = { *glyph, L'\0' };
+		const HGDIOBJ previousFont = ::SelectObject(draw.hDC, font);
+		const int previousMode = ::SetBkMode(draw.hDC, TRANSPARENT);
+		const COLORREF previousColor = ::SetTextColor(draw.hDC, foreground);
+		::DrawTextW(draw.hDC, text, 1, &glyphBounds,
+			DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+		::SetTextColor(draw.hDC, previousColor);
+		::SetBkMode(draw.hDC, previousMode);
+		if (previousFont != nullptr) ::SelectObject(draw.hDC, previousFont);
+	}
+	if (!focused) return;
+	RECT focus = draw.rcItem;
+	::InflateRect(&focus, -ScaleDip(2, m_dpi), -ScaleDip(2, m_dpi));
+	const HBRUSH border = ::CreateSolidBrush(m_palette.listFocusAndSelectionOutline.ToColorRef());
+	if (border != nullptr) {
+		::FrameRect(draw.hDC, &focus, border);
+		::DeleteObject(border);
+	}
+}
+
+void CWorkbenchPanelHost::ShowHeaderMenu()
+{
+	if (m_headerMenuButton == nullptr || m_headerMenu.empty()) return;
+	const HMENU menu = ::CreatePopupMenu();
+	if (menu == nullptr) return;
+	for (std::size_t index = 0; index < m_headerMenu.size(); ++index) {
+		const auto& item = m_headerMenu[index];
+		const UINT flags = MF_STRING | (item.enabled ? MF_ENABLED : MF_GRAYED);
+		(void)::AppendMenuW(menu, flags, static_cast<UINT_PTR>(index + 1), item.title.c_str());
+	}
+	RECT anchor{};
+	::GetWindowRect(m_headerMenuButton, &anchor);
+	const UINT chosen = ::TrackPopupMenuEx(menu,
+		TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_TOPALIGN | TPM_RIGHTALIGN,
+		anchor.right, anchor.bottom, m_window, nullptr);
+	::DestroyMenu(menu);
+	if (chosen == 0 || static_cast<std::size_t>(chosen) > m_headerMenu.size()) return;
+	const auto& item = m_headerMenu[static_cast<std::size_t>(chosen) - 1];
+	if (!item.enabled || !item.invoke) return;
+	auto invoke = item.invoke;
+	try {
+		invoke();
+	}
+	catch (...) {
+		// A contributed title command cannot unwind through the Part window proc.
+	}
 }
 
 int CWorkbenchPanelHost::ClampExtent(int extentDip) noexcept

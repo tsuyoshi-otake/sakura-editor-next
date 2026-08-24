@@ -1,0 +1,15 @@
+{
+  "name": "Database Configuration",
+  "scopeName": "source.database-config",
+  "patterns": [
+    { "match": "^[ \\t]*[#;].*$", "name": "comment.line.database-config" },
+    { "match": "^[ \\t]*\\[[^]]+\\]", "name": "entity.name.section.database-config" },
+    { "match": "(?i)(?<=\\()\\s*(DESCRIPTION|DESCRIPTION_LIST|ADDRESS|ADDRESS_LIST|CONNECT_DATA|SOURCE_ROUTE|FAILOVER|LOAD_BALANCE|PROTOCOL|HOST|PORT|SERVICE_NAME|SID|SERVER|UR|INSTANCE_NAME|GLOBAL_DBNAME|SID_LIST|SID_DESC|ORACLE_HOME|PROGRAM|ENVS)\\s*(?==)", "name": "support.type.property-name.oracle-net" },
+    { "match": "^[ \\t]*[A-Za-z_][A-Za-z0-9_.-]*(?=\\s*[=:])", "name": "variable.other.property.database-config" },
+    { "begin": "\"", "end": "\"", "name": "string.quoted.double.database-config", "patterns": [ { "match": "\\\\.", "name": "constant.character.escape.database-config" } ] },
+    { "begin": "'", "end": "'", "name": "string.quoted.single.database-config" },
+    { "match": "(?i)\\b(true|false|yes|no|on|off|null|trust|reject|md5|scram-sha-256|peer|ident|password|cert|ldap|radius|pam)\\b", "name": "constant.language.database-config" },
+    { "match": "(?<![A-Za-z0-9_.-])(?:\\d+(?:\\.\\d+)?)(?![A-Za-z0-9_.-])", "name": "constant.numeric.database-config" },
+    { "match": "[()=,:]", "name": "punctuation.separator.database-config" }
+  ]
+}

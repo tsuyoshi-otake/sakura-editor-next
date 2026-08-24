@@ -1,0 +1,20 @@
+{
+  "name": "Oracle PL/SQL",
+  "scopeName": "source.plsql",
+  "patterns": [
+    { "match": "--.*$", "name": "comment.line.double-dash.plsql" },
+    { "begin": "/\\*", "end": "\\*/", "name": "comment.block.plsql" },
+    { "begin": "(?i)q'(?=[\\[\\{\\(<])", "end": "[\\]\\}\\)>]'", "name": "string.quoted.other.plsql" },
+    { "begin": "'", "end": "'", "name": "string.quoted.single.plsql", "patterns": [ { "match": "''", "name": "constant.character.escape.plsql" } ] },
+    { "match": "(?i)^[ \\t]*(?:SQL>|/|@@?|START|SPOOL|PROMPT|SET|SHOW|WHENEVER|COLUMN|VARIABLE|PRINT|ACCEPT|DEFINE|UNDEFINE|CONNECT|DISCONNECT|HOST|EXIT)\\b.*$", "name": "meta.command.sqlplus.plsql" },
+    { "match": "(?i)\\b(CREATE|OR|REPLACE|ALTER|DROP|TRUNCATE|COMMENT|GRANT|REVOKE|SELECT|INSERT|UPDATE|DELETE|MERGE|INTO|VALUES|FROM|WHERE|GROUP|BY|HAVING|ORDER|CONNECT|START|WITH|UNION|ALL|INTERSECT|MINUS|JOIN|INNER|LEFT|RIGHT|FULL|OUTER|CROSS|ON|USING|AS|DISTINCT|RETURNING|BULK|COLLECT|FORALL|SAVEPOINT|COMMIT|ROLLBACK|LOCK)\\b", "name": "keyword.control.sql.plsql" },
+    { "match": "(?i)\\b(DECLARE|BEGIN|END|EXCEPTION|WHEN|THEN|ELSE|ELSIF|IF|LOOP|WHILE|FOR|REVERSE|CASE|EXIT|CONTINUE|GOTO|NULL|RAISE|RETURN|PRAGMA|AUTONOMOUS_TRANSACTION|CURSOR|OPEN|FETCH|CLOSE|EXECUTE|IMMEDIATE|AUTHID|DEFINER|CURRENT_USER|PIPELINED|DETERMINISTIC|RESULT_CACHE)\\b", "name": "keyword.control.plsql" },
+    { "match": "(?i)\\b(PROCEDURE|FUNCTION|PACKAGE|BODY|TRIGGER|TYPE|SUBTYPE|RECORD|TABLE|VIEW|MATERIALIZED|SEQUENCE|SYNONYM|INDEX|CONSTRAINT)\\b", "name": "storage.type.plsql" },
+    { "match": "(?i)\\b(VARCHAR2|NVARCHAR2|CHAR|NCHAR|CLOB|NCLOB|BLOB|RAW|LONG|NUMBER|BINARY_FLOAT|BINARY_DOUBLE|PLS_INTEGER|BINARY_INTEGER|BOOLEAN|DATE|TIMESTAMP|INTERVAL|ROWID|UROWID|SYS_REFCURSOR)\\b", "name": "support.type.plsql" },
+    { "match": "(?i)\\b(COUNT|SUM|AVG|MIN|MAX|NVL|NVL2|COALESCE|DECODE|TO_CHAR|TO_DATE|TO_NUMBER|TRUNC|ROUND|SUBSTR|INSTR|LENGTH|REGEXP_LIKE|REGEXP_REPLACE|LISTAGG|ROW_NUMBER|RANK|DENSE_RANK|SYSDATE|SYSTIMESTAMP|DBMS_[A-Z0-9_]+|UTL_[A-Z0-9_]+)\\b", "name": "support.function.plsql" },
+    { "match": ":[A-Za-z_][A-Za-z0-9_$#]*|&{1,2}[A-Za-z_][A-Za-z0-9_$#]*", "name": "variable.other.bind.plsql" },
+    { "match": "(?i)\\b(NULL|TRUE|FALSE)\\b", "name": "constant.language.plsql" },
+    { "match": "(?<![A-Za-z0-9_$#])(?:\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)(?![A-Za-z0-9_$#])", "name": "constant.numeric.plsql" },
+    { "match": "=>|:=|\\*\\*|<>|!=|<=|>=|[-+*/=<>]", "name": "keyword.operator.plsql" }
+  ]
+}

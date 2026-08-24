@@ -1,6 +1,7 @@
 #include "pch.h"
 
 #include "workbench/activity/ActivityBarEntryProjection.h"
+#include "workbench/layout/WorkbenchIds.h"
 
 #include <array>
 #include <utility>
@@ -57,6 +58,22 @@ TEST(ActivityBarEntryProjection, OptionsCanSelectTheAuxiliaryLocation)
 	const auto entries = ProjectActivityBarEntries(snapshot, options);
 	ASSERT_EQ(1U, entries.size());
 	EXPECT_EQ("auxiliary", entries.front().id);
+}
+
+TEST(ActivityBarEntryProjection, ExtensionsUsesTheStableContainerIdAndCodicon)
+{
+	layout::WorkbenchContributionSnapshot snapshot;
+	snapshot.viewContainers = {
+		Container(std::string(layout::ids::viewContainer::Extensions),
+			layout::EViewContainerLocation::Sidebar, 50),
+	};
+	const std::array renderable{ layout::ids::viewContainer::Extensions };
+	ActivityBarProjectionOptions options{ .renderableBuiltins = renderable };
+
+	const auto entries = ProjectActivityBarEntries(snapshot, options);
+	ASSERT_EQ(1U, entries.size());
+	EXPECT_EQ(layout::ids::viewContainer::Extensions, entries.front().id);
+	EXPECT_EQ(L"extensions", entries.front().codicon);
 }
 
 } // namespace

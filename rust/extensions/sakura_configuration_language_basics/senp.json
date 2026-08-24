@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "id": "sakura-configuration-language-basics",
+  "displayName": "Configuration and Build Language Basics",
+  "version": "0.1.0",
+  "publisher": "sakura.builtin",
+  "description": "Syntax highlighting for INI/properties, environment files, Makefiles, CMake, TOML, and common application configuration files.",
+  "engines": { "sakura": ">=0.1.0" },
+  "contributes": {
+    "languages": [
+      {
+        "id": "ini-properties",
+        "aliases": ["INI and Properties", "INI", "Properties", "Git Config", "EditorConfig"],
+        "extensions": [".ini", ".conf", ".properties", ".cfg", ".directory", ".gitattributes", ".gitconfig", ".gitmodules", ".editorconfig", ".repo"],
+        "filenames": ["gitconfig", ".gitconfig", ".editorconfig"],
+        "filenamePatterns": ["*.service", "*.socket", "*.mount", "*.timer"]
+      },
+      {
+        "id": "dotenv",
+        "aliases": ["Environment Variables", "dotenv"],
+        "extensions": [".env"],
+        "filenames": [".env", ".flaskenv", "user-dirs.dirs"],
+        "filenamePatterns": [".env.*"]
+      },
+      {
+        "id": "makefile",
+        "aliases": ["Makefile", "makefile"],
+        "extensions": [".mak", ".mk"],
+        "filenames": ["Makefile", "makefile", "GNUmakefile", "OCamlMakefile"]
+      },
+      {
+        "id": "cmake",
+        "aliases": ["CMake", "cmake"],
+        "extensions": [".cmake"],
+        "filenames": ["CMakeLists.txt"]
+      },
+      {
+        "id": "toml",
+        "aliases": ["TOML", "toml"],
+        "extensions": [".toml"],
+        "filenames": ["Cargo.lock", "Pipfile"]
+      }
+    ],
+    "grammars": [
+      { "language": "ini-properties", "scopeName": "source.ini", "path": "assets/syntaxes/ini.tmLanguage.json" },
+      { "language": "dotenv", "scopeName": "source.dotenv", "path": "assets/syntaxes/dotenv.tmLanguage.json" },
+      { "language": "makefile", "scopeName": "source.makefile", "path": "assets/syntaxes/make.tmLanguage.json" },
+      { "language": "cmake", "scopeName": "source.cmake", "path": "assets/syntaxes/cmake.tmLanguage.json" },
+      { "language": "toml", "scopeName": "source.toml", "path": "assets/syntaxes/toml.tmLanguage.json" }
+    ]
+  }
+}

@@ -120,6 +120,23 @@ WorkbenchCommandDescriptor MakeExplorerDescriptor()
 	};
 }
 
+WorkbenchCommandDescriptor MakeExtensionsDescriptor()
+{
+	return {
+		"workbench.view.extensions",
+		"Show Extensions",
+		kBuiltinOwner,
+		"workbenchReady",
+		"workbenchReady",
+		EWorkbenchCommandExecutorTarget::Layout,
+		{
+			{ EWorkbenchCommandSurface::CommandPalette, "workbench.view.extensions.palette", std::nullopt },
+			{ EWorkbenchCommandSurface::ActivityBar, "workbench.view.extensions.activity", std::nullopt },
+			{ EWorkbenchCommandSurface::Keybinding, "workbench.view.extensions.key", std::nullopt },
+		},
+	};
+}
+
 WorkbenchCommandDescriptor MakeProblemsDescriptor()
 {
 	return {
@@ -804,6 +821,7 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterBuiltinComm
 			"workbench.action.activityBarLocation.bottom", "Move Activity Bar to Bottom"),
 			std::move(executors.activityBarLocationBottom), {} },
 		Entry{ MakeExplorerDescriptor(), std::move(executors.showExplorer), {} },
+		Entry{ MakeExtensionsDescriptor(), std::move(executors.showExtensions), {} },
 		Entry{ MakeProblemsDescriptor(), std::move(executors.showProblems), {} },
 		Entry{ MakeOutputDescriptor(), std::move(executors.toggleOutput), {} },
 		Entry{ MakeShowCommandsDescriptor(), std::move(executors.showCommands), {} },

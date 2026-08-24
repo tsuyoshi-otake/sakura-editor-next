@@ -36,6 +36,90 @@ TEST( MiniMapOverview, MapsEntireDocumentAndViewportConsistently )
 	EXPECT_EQ(onePixelViewport.top + 1, onePixelViewport.bottom);
 }
 
+TEST( MiniMapOverview, ProportionalLayoutBoundsWorkToTheVisiblePixelBudget )
+{
+	minimap::Options options;
+	const auto top = minimap::CalculateLayout(options, {
+		.lineCount = 10000, .editorTopLine = 0, .editorVisibleLines = 50, .height = 600 });
+	EXPECT_EQ(0, top.firstLine);
+	EXPECT_EQ(300, top.visibleLineSpan);
+	EXPECT_EQ(2, top.lineHeight);
+	EXPECT_FALSE(top.sampled);
+	EXPECT_EQ(0, top.viewport.top);
+	EXPECT_EQ(100, top.viewport.bottom);
+
+	const auto middle = minimap::CalculateLayout(options, {
+		.lineCount = 10000, .editorTopLine = 5000, .editorVisibleLines = 50, .height = 600 });
+	EXPECT_GT(middle.firstLine, 4800);
+	EXPECT_LT(middle.firstLine, 5000);
+	EXPECT_GE(middle.viewport.top, 0);
+	EXPECT_LE(middle.viewport.bottom, middle.height);
+	EXPECT_EQ(5000, middle.YToLine(middle.LineToY(5000)));
+}
+
+TEST( MiniMapOverview, FitAndFillUseStableWholeDocumentMappings )
+{
+	minimap::Options options;
+	options.size = minimap::Size::Fit;
+	auto layout = minimap::CalculateLayout(options, {
+		.lineCount = 100, .editorTopLine = 25, .editorVisibleLines = 10, .height = 600 });
+	EXPECT_EQ(2, layout.lineHeight);
+	EXPECT_FALSE(layout.sampled);
+	EXPECT_EQ(50, layout.viewport.top);
+	EXPECT_EQ(70, layout.viewport.bottom);
+
+	options.size = minimap::Size::Fill;
+	layout = minimap::CalculateLayout(options, {
+		.lineCount = 100, .editorTopLine = 25, .editorVisibleLines = 10, .height = 600 });
+	EXPECT_EQ(6, layout.lineHeight);
+	EXPECT_EQ(150, layout.viewport.top);
+	EXPECT_EQ(210, layout.viewport.bottom);
+
+	layout = minimap::CalculateLayout(options, {
+		.lineCount = 100000, .editorTopLine = 50000, .editorVisibleLines = 100, .height = 500 });
+	EXPECT_TRUE(layout.sampled);
+	EXPECT_EQ(250, layout.viewport.top);
+	EXPECT_EQ(50000, layout.YToLine(layout.LineToY(50100)));
+	EXPECT_EQ(49950, layout.CenteredEditorTopForY(250));
+}
+
+TEST( MiniMapOverview, PreferredWidthMatchesUpstreamColumnScaleContract )
+{
+	minimap::Options options;
+	EXPECT_EQ(128, minimap::PreferredWidthDip(options));
+	options.maxColumn = 80;
+	options.scale = 3;
+	EXPECT_EQ(248, minimap::PreferredWidthDip(options));
+}
+
+TEST( MiniMapOverview, ContextMenuCommandsApplyTheVsCodeSettingModel )
+{
+	minimap::Options options;
+	options = minimap::ApplyContextCommand(
+		options, minimap::ContextCommand::ToggleRenderCharacters);
+	EXPECT_FALSE(options.renderCharacters);
+	options = minimap::ApplyContextCommand(options, minimap::ContextCommand::SizeFill);
+	EXPECT_EQ(minimap::Size::Fill, options.size);
+	options = minimap::ApplyContextCommand(options, minimap::ContextCommand::SliderAlways);
+	EXPECT_EQ(minimap::ShowSlider::Always, options.showSlider);
+	options = minimap::ApplyContextCommand(options, minimap::ContextCommand::SideLeft);
+	EXPECT_EQ(minimap::Side::Left, options.side);
+	options = minimap::ApplyContextCommand(options, minimap::ContextCommand::ToggleEnabled);
+	EXPECT_FALSE(options.enabled);
+}
+
+TEST( MiniMapOverview, CompositionOnlySettingsRetainTheOverviewRaster )
+{
+	minimap::Options original;
+	auto changed = original;
+	changed.showSlider = minimap::ShowSlider::Always;
+	changed.side = minimap::Side::Left;
+	changed.autohide = minimap::AutoHide::MouseOver;
+	EXPECT_TRUE(minimap::HasSameOverviewRendering(original, changed));
+	changed.renderCharacters = false;
+	EXPECT_FALSE(minimap::HasSameOverviewRendering(original, changed));
+}
+
 /*!
 	@brief 設定値の正当性判定
 */

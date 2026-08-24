@@ -49,6 +49,49 @@
 #include "sakura_rc.h"
 #include "config/system_constants.h"
 
+namespace {
+
+struct MiniMapMenuLabels {
+	const wchar_t* minimap;
+	const wchar_t* renderCharacters;
+	const wchar_t* verticalSize;
+	const wchar_t* slider;
+	const wchar_t* side;
+	const wchar_t* proportional;
+	const wchar_t* fill;
+	const wchar_t* fit;
+	const wchar_t* mouseOver;
+	const wchar_t* always;
+	const wchar_t* right;
+	const wchar_t* left;
+};
+
+[[nodiscard]] const MiniMapMenuLabels& LocalizedMiniMapMenuLabels() noexcept
+{
+	static constexpr MiniMapMenuLabels japanese{
+		L"ミニマップ", L"文字を描画", L"垂直方向のサイズ", L"スライダー", L"表示位置",
+		L"比例", L"全体に表示", L"収まる場合に全体表示", L"マウスを重ねたとき",
+		L"常に表示", L"右", L"左" };
+	static constexpr MiniMapMenuLabels chinese{
+		L"缩略图", L"渲染字符", L"垂直大小", L"滑块", L"侧边", L"比例", L"填充",
+		L"适应", L"鼠标悬停", L"始终", L"右", L"左" };
+	static constexpr MiniMapMenuLabels english{
+		L"Minimap", L"Render Characters", L"Vertical size", L"Slider", L"Side",
+		L"Proportional", L"Fill", L"Fit", L"Mouse Over", L"Always", L"Right", L"Left" };
+	const WORD language = PRIMARYLANGID(CSelectLang::getDefaultLangId());
+	if( language == LANG_JAPANESE ) return japanese;
+	if( language == LANG_CHINESE ) return chinese;
+	return english;
+}
+
+[[nodiscard]] constexpr UINT MiniMapMenuCommandId(
+	minimap::ContextCommand command) noexcept
+{
+	return static_cast<UINT>(command) + 1U;
+}
+
+} // namespace
+
 // -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
 //                      マウスイベント                         //
 // -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
@@ -71,10 +114,19 @@ void CEditView::OnLBUTTONDOWN( WPARAM fwKeys, int _xPos , int _yPos )
 		AutoScrollExit();
 	}
 	if( m_bMiniMap ){
-		::SetFocus( GetHwnd() );
+		CEditView& activeView = GetEditWnd().GetActiveView();
+		if( activeView.GetHwnd() != nullptr ) ::SetFocus(activeView.GetHwnd());
 		::SetCapture( GetHwnd() );
 		m_bMiniMapMouseDown = true;
-		OnMOUSEMOVE( fwKeys, _xPos, _yPos );
+		m_bMiniMapMouseOver = true;
+		const auto geometry = CalculateMiniMapLayout();
+		if( _yPos >= geometry.viewport.top && _yPos < geometry.viewport.bottom ) {
+			m_nMiniMapDragOffsetY = _yPos - geometry.viewport.top;
+		} else {
+			m_nMiniMapDragOffsetY = geometry.viewport.Height() / 2;
+			NavigateMiniMapToPointer(_yPos, true);
+		}
+		::InvalidateRect(GetHwnd(), nullptr, FALSE);
 		return;
 	}
 
@@ -578,9 +630,90 @@ void CEditView::OnRBUTTONDOWN( WPARAM fwKeys, int xPos , int yPos )
 	return;
 }
 
+void CEditView::ShowMiniMapContextMenu(int xPos, int yPos)
+{
+	if( !m_bMiniMap || GetHwnd() == nullptr ) return;
+	const HMENU menu = ::CreatePopupMenu();
+	const HMENU sizeMenu = ::CreatePopupMenu();
+	const HMENU sliderMenu = ::CreatePopupMenu();
+	const HMENU sideMenu = ::CreatePopupMenu();
+	if( menu == nullptr || sizeMenu == nullptr || sliderMenu == nullptr || sideMenu == nullptr ) {
+		if( sizeMenu != nullptr ) ::DestroyMenu(sizeMenu);
+		if( sliderMenu != nullptr ) ::DestroyMenu(sliderMenu);
+		if( sideMenu != nullptr ) ::DestroyMenu(sideMenu);
+		if( menu != nullptr ) ::DestroyMenu(menu);
+		return;
+	}
+	const auto& labels = LocalizedMiniMapMenuLabels();
+	const auto& options = GetMiniMapOptions();
+	const auto appendCommand = [](HMENU target, minimap::ContextCommand command,
+		const wchar_t* label, bool checked) noexcept {
+		return ::AppendMenuW(target, MF_STRING | (checked ? MF_CHECKED : MF_UNCHECKED),
+			MiniMapMenuCommandId(command), label) != FALSE;
+	};
+	bool complete = appendCommand(menu, minimap::ContextCommand::ToggleEnabled,
+		labels.minimap, options.enabled);
+	complete = complete && ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr) != FALSE;
+	complete = complete && appendCommand(menu,
+		minimap::ContextCommand::ToggleRenderCharacters,
+		labels.renderCharacters, options.renderCharacters);
+	complete = complete && appendCommand(sizeMenu,
+		minimap::ContextCommand::SizeProportional,
+		labels.proportional, options.size == minimap::Size::Proportional);
+	complete = complete && appendCommand(sizeMenu, minimap::ContextCommand::SizeFill,
+		labels.fill, options.size == minimap::Size::Fill);
+	complete = complete && appendCommand(sizeMenu, minimap::ContextCommand::SizeFit,
+		labels.fit, options.size == minimap::Size::Fit);
+	complete = complete && appendCommand(sliderMenu,
+		minimap::ContextCommand::SliderMouseOver,
+		labels.mouseOver, options.showSlider == minimap::ShowSlider::MouseOver);
+	complete = complete && appendCommand(sliderMenu,
+		minimap::ContextCommand::SliderAlways,
+		labels.always, options.showSlider == minimap::ShowSlider::Always);
+	complete = complete && appendCommand(sideMenu, minimap::ContextCommand::SideRight,
+		labels.right, options.side == minimap::Side::Right);
+	complete = complete && appendCommand(sideMenu, minimap::ContextCommand::SideLeft,
+		labels.left, options.side == minimap::Side::Left);
+	bool sizeAttached = false;
+	bool sliderAttached = false;
+	bool sideAttached = false;
+	if( complete ) {
+		sizeAttached = ::AppendMenuW(menu, MF_POPUP | MF_STRING,
+			reinterpret_cast<UINT_PTR>(sizeMenu), labels.verticalSize) != FALSE;
+		sliderAttached = ::AppendMenuW(menu, MF_POPUP | MF_STRING,
+			reinterpret_cast<UINT_PTR>(sliderMenu), labels.slider) != FALSE;
+		sideAttached = ::AppendMenuW(menu, MF_POPUP | MF_STRING,
+			reinterpret_cast<UINT_PTR>(sideMenu), labels.side) != FALSE;
+		complete = sizeAttached && sliderAttached && sideAttached;
+	}
+
+	UINT selected = 0;
+	if( complete ) {
+		POINT screenPoint{ xPos, yPos };
+		(void)::ClientToScreen(GetHwnd(), &screenPoint);
+		selected = ::TrackPopupMenu(menu,
+			TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY,
+			screenPoint.x, screenPoint.y, 0, GetHwnd(), nullptr);
+	}
+	::DestroyMenu(menu);
+	if( !sizeAttached ) ::DestroyMenu(sizeMenu);
+	if( !sliderAttached ) ::DestroyMenu(sliderMenu);
+	if( !sideAttached ) ::DestroyMenu(sideMenu);
+	if( selected == 0 ) return;
+	const UINT first = MiniMapMenuCommandId(minimap::ContextCommand::ToggleEnabled);
+	const UINT last = MiniMapMenuCommandId(minimap::ContextCommand::SideLeft);
+	if( selected < first || selected > last ) return;
+	const auto command = static_cast<minimap::ContextCommand>(selected - 1U);
+	(void)GetEditWnd().ApplyMiniMapContextCommand(command);
+}
+
 /* マウス右ボタン開放 */
 void CEditView::OnRBUTTONUP( WPARAM fwKeys, int xPos , int yPos )
 {
+	if( m_bMiniMap ) {
+		ShowMiniMapContextMenu(xPos, yPos);
+		return;
+	}
 	if( GetSelectionInfo().IsMouseSelecting() ){	/* 範囲選択中 */
 		/* マウス左ボタン開放のメッセージ処理 */
 		OnLBUTTONUP( fwKeys, xPos, yPos );
@@ -935,48 +1068,16 @@ void CEditView::OnMOUSEMOVE( [[maybe_unused]] WPARAM fwKeys, int xPos_, int yPos
 	}
 
 	if( m_bMiniMap ){
-		POINT		po;
-		::GetCursorPos( &po );
-		// 辞書Tipが起動されている
-		if( 0 == m_dwTipTimer ){
-			if( (m_poTipCurPos.x != po.x || m_poTipCurPos.y != po.y ) ){
-				m_cTipWnd.Hide();
-				m_dwTipTimer = ::GetTickCount();
-			}
-		}else{
-			m_dwTipTimer = ::GetTickCount();
+		if( !m_bMiniMapTrackingMouseLeave ) {
+			TRACKMOUSEEVENT tracking{ sizeof(tracking), TME_LEAVE, GetHwnd(), 0 };
+			m_bMiniMapTrackingMouseLeave = ::TrackMouseEvent(&tracking) != FALSE;
+		}
+		if( !m_bMiniMapMouseOver ) {
+			m_bMiniMapMouseOver = true;
+			::InvalidateRect(GetHwnd(), nullptr, FALSE);
 		}
 		if( m_bMiniMapMouseDown ){
-			CLayoutPoint ptNew;
-			RECT client{};
-			::GetClientRect(GetHwnd(), &client);
-			const auto lineCount = static_cast<std::int64_t>(m_pcEditDoc->m_cLayoutMgr.GetLineCount());
-			const auto mappedLine = minimap::PixelToLine(
-				ptMouse.y - client.top, lineCount, client.bottom - client.top);
-			ptNew.y = CLayoutYInt(static_cast<int>(std::min<std::int64_t>(mappedLine, INT_MAX)));
-			CEditView& view = GetEditWnd().GetActiveView();
-			ptNew.x = 0;
-			CLogicPoint ptNewLogic;
-			view.GetCaret().GetAdjustCursorPos( &ptNew );
-			GetDocument()->m_cLayoutMgr.LayoutToLogic( ptNew, &ptNewLogic );
-			GetDocument()->m_cLayoutMgr.LogicToLayout( ptNewLogic, &ptNew, ptNew.y );
-			if( ApiWrap::GetKeyState_Shift() ){
-				if( view.GetSelectionInfo().IsTextSelected() ){
-					if( view.GetSelectionInfo().IsBoxSelecting() ){
-						view.GetSelectionInfo().DisableSelectArea( true );
-						view.GetSelectionInfo().BeginSelectArea();
-					}
-				}else{
-					view.GetSelectionInfo().BeginSelectArea();
-				}
-				view.GetSelectionInfo().ChangeSelectAreaByCurrentCursor( ptNew );
-			}else{
-				if( view.GetSelectionInfo().IsTextSelected() ){
-					view.GetSelectionInfo().DisableSelectArea( true );
-				}
-			}
-			view.GetCaret().MoveCursor( ptNew, true );
-			view.GetCaret().m_nCaretPosX_Prev = GetCaret().GetCaretLayoutPos().GetX2();
+			NavigateMiniMapToPointer(ptMouse.y, false);
 		}
 		::SetCursor( ::LoadCursor( nullptr, IDC_ARROW ) );
 		GetSelectionInfo().m_ptMouseRollPosOld = ptMouse; // マウス範囲選択前回位置(XY座標)
@@ -1480,9 +1581,39 @@ void CEditView::OnLBUTTONUP( [[maybe_unused]] WPARAM fwKeys, [[maybe_unused]] in
 	}
 	if( m_bMiniMapMouseDown ){
 		m_bMiniMapMouseDown = false;
+		m_nMiniMapDragOffsetY = -1;
 		::ReleaseCapture();
+		::InvalidateRect(GetHwnd(), nullptr, FALSE);
 	}
 	return;
+}
+
+void CEditView::NavigateMiniMapToPointer(int y, bool centerViewport)
+{
+	if( !m_bMiniMap ) return;
+	const auto geometry = CalculateMiniMapLayout();
+	if( geometry.lineCount <= 0 || geometry.height <= 0 ) return;
+	const int mappedY = centerViewport
+		? y
+		: y - (std::max)(0, m_nMiniMapDragOffsetY);
+	const auto target = centerViewport
+		? geometry.CenteredEditorTopForY(mappedY)
+		: geometry.YToLine(mappedY);
+	CEditView& activeView = GetEditWnd().GetActiveView();
+	const auto boundedTarget = CLayoutInt(static_cast<int>((std::min)(target,
+		static_cast<std::int64_t>(INT_MAX))));
+	activeView.SyncScrollV(activeView.ScrollAtV(boundedTarget));
+}
+
+void CEditView::OnMiniMapMouseLeave()
+{
+	if( !m_bMiniMap ) return;
+	m_bMiniMapTrackingMouseLeave = false;
+	if( m_bMiniMapMouseDown ) return;
+	if( m_bMiniMapMouseOver ) {
+		m_bMiniMapMouseOver = false;
+		::InvalidateRect(GetHwnd(), nullptr, FALSE);
+	}
 }
 
 /* ShellExecuteを呼び出すプロシージャ */

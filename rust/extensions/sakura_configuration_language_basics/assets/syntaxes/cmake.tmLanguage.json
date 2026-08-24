@@ -1,0 +1,17 @@
+{
+  "name": "CMake",
+  "scopeName": "source.cmake",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "match": "(?i)\\b(add_executable|add_library|cmake_minimum_required|configure_file|find_package|include|install|message|project|set|target_compile_definitions|target_compile_features|target_compile_options|target_include_directories|target_link_libraries|unset)\\b", "name": "support.function.cmake" },
+    { "match": "(?i)\\b(if|elseif|else|endif|foreach|endforeach|function|endfunction|macro|endmacro|while|endwhile|return|break|continue)\\b", "name": "keyword.control.cmake" },
+    { "match": "\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}", "name": "variable.other.cmake" },
+    { "match": "(?i)\\b(ON|OFF|TRUE|FALSE|YES|NO)\\b", "name": "constant.language.cmake" },
+    { "match": "\\b[0-9]+(?:\\.[0-9]+)*\\b", "name": "constant.numeric.cmake" }
+  ],
+  "repository": {
+    "comments": { "patterns": [{ "match": "#.*$", "name": "comment.line.number-sign.cmake" }] },
+    "strings": { "patterns": [{ "begin": "\"", "end": "\"", "name": "string.quoted.double.cmake", "patterns": [{ "match": "\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}", "name": "variable.other.cmake" }] }] }
+  }
+}

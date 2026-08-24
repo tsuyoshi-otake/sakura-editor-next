@@ -106,6 +106,10 @@ class UpdateComposition;
 //! drift into different types without a compile error here.
 using UpdateServiceSubscriptionId = std::uint64_t;
 }
+namespace senp {
+class ISenpLanguageService;
+class ISenpRuntimeService;
+}
 namespace workbench {
 class CActivityBar;
 class IWorkbenchRuntime;
@@ -143,6 +147,9 @@ class CScmWorkbenchTool;
 }
 namespace search {
 class CSearchWorkbenchTool;
+}
+namespace extensions {
+class CExtensionsWorkbenchTool;
 }
 namespace panel {
 class CBottomPanelTool;
@@ -488,6 +495,9 @@ public:
 	void LayoutStatusBar( void );		/* ステータスバーの配置処理 */		// 2006.12.19 ryoji
 	void LayoutStatusBarParts();		//!< 現在の表示内容に合わせて右側項目を詰めて配置する
 	void LayoutMiniMap();				// ミニマップの配置処理
+	[[nodiscard]] bool SetMiniMapEnabled(bool enabled, bool persist = true);
+	[[nodiscard]] bool ApplyMiniMapContextCommand(
+		minimap::ContextCommand command, bool persist = true);
 	void EndLayoutBars( BOOL bAdjust = TRUE );	/* バーの配置終了処理 */	// 2006.12.19 ryoji
 	bool SetWorkbenchPanelVisible(
 		workbench::WorkbenchEdge edge, bool visible, bool activate = false);
@@ -500,6 +510,8 @@ public:
 	void ExecuteWorkbenchFileFunction(EFunctionCode functionCode);
 	//! True only for the real runtime-backed Workbench composition, never the classic test/legacy path.
 	[[nodiscard]] bool IsWorkbenchRuntimeBacked() const noexcept { return m_workbenchRuntime != nullptr; }
+	[[nodiscard]] senp::ISenpRuntimeService* GetSenpRuntime() const noexcept;
+	[[nodiscard]] senp::ISenpLanguageService* GetSenpLanguageService() const noexcept;
 	[[nodiscard]] bool IsWorkbenchPanelVisible(workbench::WorkbenchEdge edge) const noexcept;
 	//! `workbench.action.toggleAuxiliaryBar` (Ctrl+Alt+B). This is the physical Secondary
 	//! Side Bar Part, never the Outline View nested in the Primary Side Bar.
@@ -963,6 +975,7 @@ private:
 	[[nodiscard]] bool ShowCommandPalette();
 	[[nodiscard]] bool ExecuteToggleSidebarVisibilityCommand();
 	[[nodiscard]] bool ExecuteShowExplorerCommand();
+	[[nodiscard]] bool ExecuteShowExtensionsCommand();
 	[[nodiscard]] bool ExecuteShowProblemsCommand();
 	[[nodiscard]] bool ExecuteShowOutputCommand(bool requestFocus = true);
 	[[nodiscard]] bool ExecuteToggleOutputCommand();
@@ -1045,6 +1058,15 @@ private:
 	//! coherent configuration snapshot and pushes plain data to CTerminalTool.
 	//! Configuration never reaches TerminalTabManager or the paint path.
 	void ApplyTerminalTabPresentationSettings();
+	//! Reads the supported editor.minimap.* cohort from one configuration revision.
+	void ApplyMiniMapSettings();
+	[[nodiscard]] minimap::Options ReadMiniMapSettings() const;
+	//! Resolves VS Code's editor-owned `editor.guides.indentation` setting and
+	//! applies it to every editor pane; SENP decoration state is not consulted.
+	void ApplyIndentGuideSettings();
+	bool PersistMiniMapContextSelection(
+		minimap::ContextCommand command, const minimap::Options& options);
+	void CommitMiniMapOptions(const minimap::Options& options);
 	//! Writes the terminal keybinding preset the user picked from the terminal menu
 	//! into the profile settings document.
 	bool PersistTerminalShortcutPresetSelection(terminal::TerminalShortcutPreset preset);
@@ -1081,7 +1103,7 @@ private:
 		apply.
 	*/
 	[[nodiscard]] RECT LayoutMarkdownPreview(int left, int top, int right, int bottom,
-		unsigned int dpi, int minimapWidth);
+		unsigned int dpi, int minimapWidth, bool minimapOnLeft);
 	//! True when the point is on the Markdown preview divider, with VS Code's sash hit slop.
 	[[nodiscard]] bool HitTestMarkdownPreviewDivider(POINT point) const noexcept;
 	void CommitMarkdownPreviewResize();
@@ -1218,6 +1240,7 @@ private:
 	workbench::outline::COutlineWorkbenchTool* m_outlineWorkbenchTool = nullptr;
 	workbench::scm::CScmWorkbenchTool* m_scmTool = nullptr;
 	workbench::search::CSearchWorkbenchTool* m_searchTool = nullptr;
+	workbench::extensions::CExtensionsWorkbenchTool* m_extensionsTool = nullptr;
 	terminal::CTerminalTool* m_terminalTool = nullptr;
 	workbench::panel::CBottomPanelTool* m_bottomPanelTool = nullptr;
 	std::unique_ptr<markdown::CMarkdownPreviewWnd> m_markdownPreview;
@@ -1239,6 +1262,7 @@ private:
 	RECT m_markdownPreviewRegion{};
 	//! The minimap column cached by the committed frame layout for preview-only drag samples.
 	int m_markdownPreviewMinimapWidth = 0;
+	bool m_markdownPreviewMinimapOnLeft = false;
 	bool m_resizingMarkdownPreview = false;
 	bool m_layoutInProgress = false;
 	bool m_layoutPending = false;
@@ -1304,6 +1328,8 @@ private:
 	CEditViewsArray	m_pcEditViewArr{};	//!< ビュー
 	CEditView*		m_pcEditView;		//!< 有効なビュー
 	CMiniMapView	m_cMiniMapView;		//!< ミニマップ
+	minimap::Options m_miniMapOptions{};
+	bool m_indentGuidesEnabled = true;
 	int				m_nActivePaneIndex = 0;	//!< 有効なビューのindex
 	int				m_nEditViewCount = 1;	//!< 有効なビューの数
 	const int		m_nEditViewMaxCount = int(std::size(m_pcEditViewArr));//!< ビューの最大数=4

@@ -22,6 +22,7 @@ constexpr UINT kDefaultDpi = 96;
 // palette through CEditWnd::ApplyWorkbenchTheme.
 std::optional<theme::ThemePalette> g_activeColorThemePalette;
 std::optional<theme::ThemeSyntaxPalette> g_activeColorThemeSyntaxPalette;
+std::optional<std::vector<theme::ThemeTokenColorRule>> g_activeColorThemeTokenColors;
 
 [[nodiscard]] theme::ThemeColor FromColorRef(COLORREF color) noexcept
 {
@@ -166,7 +167,7 @@ ThemePalette CThemeService::HighContrastPalette() noexcept
 	// upstream deliberately keeps. This product resolves one High Contrast palette
 	// from system colors and has no hcDark/hcLight kind to select between, so the
 	// `highContrast` (dark) set is used for both; see theme/CLAUDE.md.
-	return { window, face, face, frame, windowText, grayText, windowText, grayText, highlight, highlightText,
+	ThemePalette palette{ window, face, face, frame, windowText, grayText, windowText, grayText, highlight, highlightText,
 		face, face, highlight, highlight, face, face, face, window, windowText, windowText,
 		window, window, window, highlight, highlight, highlightText, highlight, highlight, highlightText,
 		{ 0xA1, 0xE3, 0xAD }, { 0xE2, 0xC0, 0x8D }, { 0xC7, 0x4E, 0x39 }, { 0x73, 0xC9, 0x91 },
@@ -174,6 +175,8 @@ ThemePalette CThemeService::HighContrastPalette() noexcept
 		{ 0xC7, 0x4E, 0x39 }, { 0x8D, 0xB9, 0xE2 },
 		face, face, frame, highlight, highlightText, face, highlightText,
 		{ 0x00, 0x00, 0x00, 0x00 }, frame, frame, frame, windowText };
+	palette.editorIndentGuideBackground = windowText;
+	return palette;
 }
 
 ThemePalette CThemeService::EffectivePalette(ThemeMode savedMode) noexcept
@@ -196,6 +199,7 @@ void CThemeService::ClearActiveColorThemePalette() noexcept
 {
 	g_activeColorThemePalette.reset();
 	g_activeColorThemeSyntaxPalette.reset();
+	g_activeColorThemeTokenColors.reset();
 }
 
 bool CThemeService::HasActiveColorThemePalette() noexcept
@@ -235,6 +239,22 @@ ThemeSyntaxPalette CThemeService::EffectiveSyntaxPalette(ThemeMode savedMode) no
 		return {};
 	}
 	return *g_activeColorThemeSyntaxPalette;
+}
+
+void CThemeService::SetActiveColorThemeTokenColors(std::vector<ThemeTokenColorRule> tokenColors)
+{
+	g_activeColorThemeTokenColors = std::move(tokenColors);
+}
+
+void CThemeService::ClearActiveColorThemeTokenColors() noexcept
+{
+	g_activeColorThemeTokenColors.reset();
+}
+
+const std::vector<ThemeTokenColorRule>* CThemeService::ActiveColorThemeTokenColors() noexcept
+{
+	if (IsHighContrastActive() || !g_activeColorThemeTokenColors) return nullptr;
+	return &*g_activeColorThemeTokenColors;
 }
 
 } // namespace theme

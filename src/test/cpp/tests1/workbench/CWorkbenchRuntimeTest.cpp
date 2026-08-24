@@ -1003,8 +1003,9 @@ TEST(CWorkbenchRuntime, OwnsCanonicalContributionsAndAnIndependentAuxiliaryBarLa
 	};
 
 	EXPECT_EQ(1U, contributions.revision);
-	EXPECT_EQ(9U, contributions.viewContainers.size());
+	EXPECT_EQ(10U, contributions.viewContainers.size());
 	EXPECT_NE(contributions.viewContainers.end(), findContainer(layout::ids::viewContainer::Search));
+	EXPECT_NE(contributions.viewContainers.end(), findContainer(layout::ids::viewContainer::Extensions));
 	EXPECT_NE(contributions.viewContainers.end(), findContainer(layout::ids::viewContainer::RunAndDebug));
 	EXPECT_NE(contributions.viewContainers.end(), findContainer(layout::ids::viewContainer::Problems));
 	EXPECT_NE(contributions.viewContainers.end(), findContainer(layout::ids::viewContainer::Output));
@@ -1039,6 +1040,11 @@ TEST(CWorkbenchRuntime, OwnsCanonicalContributionsAndAnIndependentAuxiliaryBarLa
 	EXPECT_EQ(std::string_view("workbench.scm.history"), layout::ids::view::SourceControlGraph);
 	EXPECT_EQ(contributions.views.end(), findView(layout::ids::view::SourceControlRepositories));
 	EXPECT_EQ(contributions.views.end(), findView(layout::ids::view::SourceControlGraph));
+	const auto extensionsInstalled = findView(layout::ids::view::ExtensionsInstalled);
+	ASSERT_NE(contributions.views.end(), extensionsInstalled);
+	EXPECT_EQ("Installed", extensionsInstalled->descriptor.title);
+	EXPECT_EQ(std::string(layout::ids::viewContainer::Extensions),
+		extensionsInstalled->descriptor.containerId);
 }
 
 

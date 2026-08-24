@@ -51,6 +51,7 @@
 #include "platform/controlipc/EditorControlPlatformRuntime.h"
 #include "platform/profiles/ProfileBootstrapSnapshot.h"
 #include "platform/profiles/UserDataProfileBootstrap.h"
+#include "senp/SenpManagementService.h"
 #include <sakura/uri/UriIdentity.h>
 #include "workbench/CWorkbenchRuntime.h"
 #include "workbench/WorkbenchBootstrapContext.h"
@@ -523,6 +524,15 @@ bool CNormalProcess::InitializeProcess()
 			*m_editorControlPlatformRuntime, platformIdentity->profileId);
 	workbenchDependencies.taskExecutionSessionFactory =
 		workbench::tasks::CreateDefaultTaskTerminalSessionFactory();
+	const auto extensionProfileHome = bootstrap.context->UserDataProfile().Resources().ProfileHome().ToWindowsPath();
+	if (!extensionProfileHome) {
+		TopErrorMessage(nullptr,
+			L"ワークベンチの初期化に失敗しました。\n"
+			L"拡張機能のユーザーデータ領域を確定できませんでした。");
+		return false;
+	}
+	workbenchDependencies.senpManagementService =
+		std::make_unique<senp::CWin32SenpManagementService>(*extensionProfileHome.value);
 	auto workingCopyStore = std::make_unique<CControlPlatformWorkingCopyPersistenceStore>(
 		*m_editorControlPlatformRuntime, platformIdentity->profileId);
 	if (!m_pcEditApp->Create(

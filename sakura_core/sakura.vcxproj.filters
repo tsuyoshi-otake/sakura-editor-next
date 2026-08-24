@@ -3091,6 +3091,18 @@
 	<ClCompile Include="..\sakura_core\workbench\viewcontainer\CViewContainerPages.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\extensions\CExtensionsWorkbenchTool.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\senp\SenpManagementService.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\senp\SenpLanguageService.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\senp\SenpRuntimeService.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\rendering\FrameCoordinatorModel.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>

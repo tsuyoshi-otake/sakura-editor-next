@@ -20,6 +20,35 @@ std::vector<ConfigurationDescriptor> BuiltinConfigurationDescriptors()
 		// workspace persists its window settings in .vscode/settings.json.
 		{ "workbench.editor.showTabs", ConfigurationValue(L"multiple"),
 			{ Scope::Profile, Scope::Workspace, Scope::Folder } },
+		// VS Code's native editor minimap contract. Section-header settings remain
+		// unregistered until the editor has a real symbol/folding provider; accepting
+		// those keys as inert screenshot decoration would violate the capability boundary.
+		{ "editor.minimap.enabled", ConfigurationValue(true),
+			{ Scope::Profile, Scope::Workspace, Scope::Folder }, { Kind::Boolean } },
+		{ "editor.minimap.autohide", ConfigurationValue(L"none"),
+			{ Scope::Profile, Scope::Workspace, Scope::Folder },
+			{ Kind::String, 16, { L"none", L"mouseover", L"scroll" } } },
+		{ "editor.minimap.side", ConfigurationValue(L"right"),
+			{ Scope::Profile, Scope::Workspace, Scope::Folder },
+			{ Kind::String, 8, { L"left", L"right" } } },
+		{ "editor.minimap.size", ConfigurationValue(L"proportional"),
+			{ Scope::Profile, Scope::Workspace, Scope::Folder },
+			{ Kind::String, 16, { L"proportional", L"fill", L"fit" } } },
+		{ "editor.minimap.showSlider", ConfigurationValue(L"mouseover"),
+			{ Scope::Profile, Scope::Workspace, Scope::Folder },
+			{ Kind::String, 16, { L"always", L"mouseover" } } },
+		{ "editor.minimap.renderCharacters", ConfigurationValue(true),
+			{ Scope::Profile, Scope::Workspace, Scope::Folder }, { Kind::Boolean } },
+		{ "editor.minimap.maxColumn", ConfigurationValue(120),
+			{ Scope::Profile, Scope::Workspace, Scope::Folder },
+			{ Kind::Integer, std::nullopt, {}, 1, 10000 } },
+		{ "editor.minimap.scale", ConfigurationValue(1),
+			{ Scope::Profile, Scope::Workspace, Scope::Folder },
+			{ Kind::Integer, std::nullopt, {}, 1, 3 } },
+		// VS Code's editor-owned indentation guides. This remains separate from
+		// indent-rainbow, whose classic decoration contributes background bands only.
+		{ "editor.guides.indentation", ConfigurationValue(true),
+			{ Scope::Profile, Scope::Workspace, Scope::Folder }, { Kind::Boolean } },
 		// VS Code's Activity Bar location is a window-scoped setting. The native
 		// workbench exposes only the owner-approved default, top, and bottom layouts.
 		// `hidden` is intentionally rejected rather than accepted as a fake capability.

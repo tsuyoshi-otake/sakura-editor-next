@@ -7,7 +7,9 @@
 */
 
 #include "StdAfx.h"
+#include <cmath>
 #include <vector>
+#include <array>
 #include <limits.h>
 #include "view/CEditView_Paint.h"
 #include "view/CEditView.h"
@@ -23,6 +25,9 @@
 #include "debug/StartupTrace.h"
 #include "window/CEditWnd.h"
 #include "theme/CThemeService.h"
+#include "theme/TextMateScopeColorResolver.h"
+#include "senp/SenpLanguageService.h"
+#include "senp/SenpRuntimeService.h"
 #include "parse/CWordParse.h"
 #include "util/string_ex2.h"
 #ifdef USE_SSE2
@@ -36,6 +41,299 @@
 void _DispWrap(CGraphics& gr, DispPos* pDispPos, const CEditView* pcView, CLayoutYInt nLineNum);
 
 namespace {
+
+COLORREF IndentDecorationColor(std::uint32_t depth) noexcept
+{
+	// Match indent-rainbow's classic four-color cycle. Alpha is applied by the
+	// editor so text, whitespace markers, themes, and selections stay legible.
+	constexpr std::array<COLORREF, 4> colors{
+		RGB(255, 255, 64), RGB(127, 255, 127),
+		RGB(255, 127, 255), RGB(79, 236, 236),
+	};
+	return colors[depth % colors.size()];
+}
+
+constexpr BYTE kIndentDecorationAlpha = 18;
+
+std::uint32_t MiniMapDibPixel(COLORREF color) noexcept
+{
+	// A 32-bit BI_RGB DIB stores bytes in B, G, R, unused order.
+	return (static_cast<std::uint32_t>(GetRValue(color)) << 16)
+		| (static_cast<std::uint32_t>(GetGValue(color)) << 8)
+		| static_cast<std::uint32_t>(GetBValue(color));
+}
+
+std::uint32_t BlendMiniMapPixel(
+	std::uint32_t destination, COLORREF source, int alpha) noexcept
+{
+	alpha = (std::clamp)(alpha, 0, 255);
+	const int inverse = 255 - alpha;
+	const auto blend = [alpha, inverse](int foreground, int background) noexcept {
+		return (foreground * alpha + background * inverse + 127) / 255;
+	};
+	const int blue = blend(GetBValue(source), destination & 0xFFU);
+	const int green = blend(GetGValue(source), (destination >> 8) & 0xFFU);
+	const int red = blend(GetRValue(source), (destination >> 16) & 0xFFU);
+	return static_cast<std::uint32_t>(blue)
+		| (static_cast<std::uint32_t>(green) << 8)
+		| (static_cast<std::uint32_t>(red) << 16);
+}
+
+void BlendMiniMapRectangle(std::vector<std::uint32_t>& pixels, int width, int height,
+	const RECT& rectangle, COLORREF color, int alpha) noexcept
+{
+	const int left = (std::clamp)(static_cast<int>(rectangle.left), 0, width);
+	const int right = (std::clamp)(static_cast<int>(rectangle.right), 0, width);
+	const int top = (std::clamp)(static_cast<int>(rectangle.top), 0, height);
+	const int bottom = (std::clamp)(static_cast<int>(rectangle.bottom), 0, height);
+	if( right <= left || bottom <= top ) return;
+	for( int y = top; y < bottom; ++y ) {
+		for( int x = left; x < right; ++x ) {
+			auto& pixel = pixels[static_cast<std::size_t>(y)
+				* static_cast<std::size_t>(width) + static_cast<std::size_t>(x)];
+			pixel = BlendMiniMapPixel(pixel, color, alpha);
+		}
+	}
+}
+
+void PresentMiniMapPixels(HDC target, const RECT& client,
+	const std::vector<std::uint32_t>& pixels) noexcept
+{
+	const int width = client.right - client.left;
+	const int height = client.bottom - client.top;
+	if( target == nullptr || width <= 0 || height <= 0
+		|| pixels.size() != static_cast<std::size_t>(width)
+			* static_cast<std::size_t>(height) ) return;
+	BITMAPINFO bitmapInfo{};
+	bitmapInfo.bmiHeader.biSize = sizeof(bitmapInfo.bmiHeader);
+	bitmapInfo.bmiHeader.biWidth = width;
+	bitmapInfo.bmiHeader.biHeight = -height;
+	bitmapInfo.bmiHeader.biPlanes = 1;
+	bitmapInfo.bmiHeader.biBitCount = 32;
+	bitmapInfo.bmiHeader.biCompression = BI_RGB;
+	(void)::SetDIBitsToDevice(target, client.left, client.top, width, height,
+		0, 0, 0, height, pixels.data(), &bitmapInfo, DIB_RGB_COLORS);
+}
+
+void PaintMiniMapBlock(std::vector<std::uint32_t>& pixels, int width, int height,
+	int left, int top, int columns, int scale, int lineHeight,
+	COLORREF color) noexcept
+{
+	if( width <= 0 || height <= 0 || columns <= 0 || scale <= 0
+		|| left >= width || top >= height || top + lineHeight <= 0 ) return;
+	const int right = (std::min)(width, left + columns * scale);
+	const int bottom = (std::min)(height, top + (std::max)(1, lineHeight));
+	for( int x = (std::max)(0, left); x < right; ++x ) {
+		for( int y = (std::max)(0, top); y < bottom; ++y ) {
+			auto& pixel = pixels[static_cast<std::size_t>(y) * static_cast<std::size_t>(width)
+				+ static_cast<std::size_t>(x)];
+			// VS Code's block renderer uses half of the resolved foreground alpha.
+			pixel = BlendMiniMapPixel(pixel, color, 128);
+		}
+	}
+}
+
+//! VS Code does not ask the platform to rasterize a two-pixel font. It samples
+//! printable characters at 10x16 and downsamples that sheet to scale x 2*scale.
+//! The resulting coverage atlas preserves letter shapes at minimap resolution.
+class MiniMapCharAtlas final {
+public:
+	MiniMapCharAtlas() = default;
+	MiniMapCharAtlas(const MiniMapCharAtlas&) = delete;
+	MiniMapCharAtlas& operator=(const MiniMapCharAtlas&) = delete;
+	~MiniMapCharAtlas() noexcept
+	{
+		ReleaseGdi();
+	}
+
+	bool Create(HDC reference, const LOGFONT& sourceFont, int scale) noexcept
+	{
+		Reset();
+		if( reference == nullptr || scale <= 0 ) return false;
+		m_outputWidth = scale;
+		m_outputHeight = scale * 2;
+		m_dc = ::CreateCompatibleDC(reference);
+		if( m_dc == nullptr ) return false;
+
+		BITMAPINFO bitmapInfo{};
+		bitmapInfo.bmiHeader.biSize = sizeof(bitmapInfo.bmiHeader);
+		bitmapInfo.bmiHeader.biWidth = kSheetWidth;
+		bitmapInfo.bmiHeader.biHeight = -kSampleHeight;
+		bitmapInfo.bmiHeader.biPlanes = 1;
+		bitmapInfo.bmiHeader.biBitCount = 32;
+		bitmapInfo.bmiHeader.biCompression = BI_RGB;
+		void* bits = nullptr;
+		m_bitmap = ::CreateDIBSection(reference, &bitmapInfo, DIB_RGB_COLORS,
+			&bits, nullptr, 0);
+		if( m_bitmap == nullptr || bits == nullptr ) return false;
+		m_bits = static_cast<std::uint32_t*>(bits);
+		const HGDIOBJ oldBitmap = ::SelectObject(m_dc, m_bitmap);
+		if( oldBitmap == nullptr || oldBitmap == HGDI_ERROR ) return false;
+		m_oldBitmap = static_cast<HBITMAP>(oldBitmap);
+
+		LOGFONT glyphFont = sourceFont;
+		glyphFont.lfHeight = -kSampleHeight;
+		glyphFont.lfWidth = 0;
+		glyphFont.lfEscapement = 0;
+		glyphFont.lfOrientation = 0;
+		glyphFont.lfWeight = FW_BOLD;
+		glyphFont.lfQuality = ANTIALIASED_QUALITY;
+		m_font = ::CreateFontIndirectW(&glyphFont);
+		if( m_font == nullptr ) return false;
+		const HGDIOBJ oldFont = ::SelectObject(m_dc, m_font);
+		if( oldFont == nullptr || oldFont == HGDI_ERROR ) return false;
+		m_oldFont = static_cast<HFONT>(oldFont);
+
+		::SetBkMode(m_dc, OPAQUE);
+		::SetBkColor(m_dc, RGB(0, 0, 0));
+		::SetTextColor(m_dc, RGB(255, 255, 255));
+		::PatBlt(m_dc, 0, 0, kSheetWidth, kSampleHeight, BLACKNESS);
+		for( int index = 0; index < kCharacterCount; ++index ) {
+			const wchar_t character = index < kPrintableCharacterCount
+				? static_cast<wchar_t>(L' ' + index) : L'?';
+			RECT cell{ index * kSampleWidth, 0,
+				(index + 1) * kSampleWidth, kSampleHeight };
+			(void)::DrawTextW(m_dc, &character, 1, &cell,
+				DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+		}
+		::GdiFlush();
+
+		m_coverage.assign(static_cast<std::size_t>(kCharacterCount)
+			* static_cast<std::size_t>(m_outputWidth)
+			* static_cast<std::size_t>(m_outputHeight), 0);
+		int brightest = 0;
+		for( int character = 0; character < kCharacterCount; ++character ) {
+			for( int outputY = 0; outputY < m_outputHeight; ++outputY ) {
+				const double sourceTop = static_cast<double>(outputY)
+					* kSampleHeight / m_outputHeight;
+				const double sourceBottom = static_cast<double>(outputY + 1)
+					* kSampleHeight / m_outputHeight;
+				for( int outputX = 0; outputX < m_outputWidth; ++outputX ) {
+					const double sourceLeft = static_cast<double>(outputX)
+						* kSampleWidth / m_outputWidth;
+					const double sourceRight = static_cast<double>(outputX + 1)
+						* kSampleWidth / m_outputWidth;
+					double weightedCoverage = 0.0;
+					double area = 0.0;
+					for( int sourceY = static_cast<int>(std::floor(sourceTop));
+						sourceY < static_cast<int>(std::ceil(sourceBottom)); ++sourceY ) {
+						const double verticalWeight = (std::max)(0.0,
+							(std::min)(sourceBottom, static_cast<double>(sourceY + 1))
+							- (std::max)(sourceTop, static_cast<double>(sourceY)));
+						for( int sourceX = static_cast<int>(std::floor(sourceLeft));
+							sourceX < static_cast<int>(std::ceil(sourceRight)); ++sourceX ) {
+							const double horizontalWeight = (std::max)(0.0,
+								(std::min)(sourceRight, static_cast<double>(sourceX + 1))
+								- (std::max)(sourceLeft, static_cast<double>(sourceX)));
+							const double weight = horizontalWeight * verticalWeight;
+							const auto sample = m_bits[static_cast<std::size_t>(sourceY)
+								* static_cast<std::size_t>(kSheetWidth)
+								+ static_cast<std::size_t>(character * kSampleWidth + sourceX)];
+							const int intensity = (std::max)({
+								static_cast<int>(sample & 0xFFU),
+								static_cast<int>((sample >> 8) & 0xFFU),
+								static_cast<int>((sample >> 16) & 0xFFU) });
+							weightedCoverage += intensity * weight;
+							area += weight;
+						}
+					}
+					const int coverage = area <= 0.0 ? 0
+						: static_cast<int>(weightedCoverage / area + 0.5);
+					const auto atlasIndex = CoverageIndex(
+						character, outputX, outputY);
+					m_coverage[atlasIndex] = static_cast<std::uint8_t>(coverage);
+					brightest = (std::max)(brightest, coverage);
+				}
+			}
+		}
+		if( brightest > 0 ) {
+			for( auto& coverage : m_coverage ) {
+				coverage = static_cast<std::uint8_t>((coverage * 255 + brightest / 2)
+					/ brightest);
+			}
+		}
+		ReleaseGdi();
+		return !m_coverage.empty();
+	}
+
+	bool Paint(std::vector<std::uint32_t>& pixels, int width, int height,
+		int left, int top, int lineHeight, wchar_t character, COLORREF color) const noexcept
+	{
+		if( m_coverage.empty() || width <= 0 || height <= 0
+			|| left >= width || top >= height || lineHeight <= 0 ) return false;
+		const int characterIndex = character >= L' ' && character <= L'~'
+			? static_cast<int>(character - L' ') : kPrintableCharacterCount;
+		const int paintHeight = (std::min)(lineHeight, m_outputHeight);
+		for( int y = 0; y < paintHeight; ++y ) {
+			const int destinationY = top + y;
+			if( destinationY < 0 || destinationY >= height ) continue;
+			for( int x = 0; x < m_outputWidth; ++x ) {
+				const int destinationX = left + x;
+				if( destinationX < 0 || destinationX >= width ) continue;
+				// Upstream softens normal character coverage to 12/15 before
+				// blending it into the resolved minimap background.
+				const int coverage = (m_coverage[CoverageIndex(characterIndex, x, y)]
+					* 12 + 7) / 15;
+				auto& pixel = pixels[static_cast<std::size_t>(destinationY)
+					* static_cast<std::size_t>(width) + static_cast<std::size_t>(destinationX)];
+				pixel = BlendMiniMapPixel(pixel, color, coverage);
+			}
+		}
+		return true;
+	}
+
+private:
+	static constexpr int kSampleWidth = 10;
+	static constexpr int kSampleHeight = 16;
+	static constexpr int kPrintableCharacterCount = 95;
+	static constexpr int kCharacterCount = kPrintableCharacterCount + 1;
+	static constexpr int kSheetWidth = kCharacterCount * kSampleWidth;
+
+	[[nodiscard]] std::size_t CoverageIndex(
+		int character, int x, int y) const noexcept
+	{
+		return (static_cast<std::size_t>(character)
+			* static_cast<std::size_t>(m_outputHeight) + static_cast<std::size_t>(y))
+			* static_cast<std::size_t>(m_outputWidth) + static_cast<std::size_t>(x);
+	}
+
+	void Reset() noexcept
+	{
+		ReleaseGdi();
+		m_coverage.clear();
+		m_outputWidth = 0;
+		m_outputHeight = 0;
+	}
+
+	void ReleaseGdi() noexcept
+	{
+		if( m_dc != nullptr && m_oldFont != nullptr ) {
+			::SelectObject(m_dc, m_oldFont);
+		}
+		if( m_dc != nullptr && m_oldBitmap != nullptr ) {
+			::SelectObject(m_dc, m_oldBitmap);
+		}
+		if( m_font != nullptr ) ::DeleteObject(m_font);
+		if( m_bitmap != nullptr ) ::DeleteObject(m_bitmap);
+		if( m_dc != nullptr ) ::DeleteDC(m_dc);
+		m_dc = nullptr;
+		m_bitmap = nullptr;
+		m_oldBitmap = nullptr;
+		m_font = nullptr;
+		m_oldFont = nullptr;
+		m_bits = nullptr;
+	}
+
+	HDC m_dc{};
+	HBITMAP m_bitmap{};
+	HBITMAP m_oldBitmap{};
+	HFONT m_font{};
+	HFONT m_oldFont{};
+	std::uint32_t* m_bits{};
+	std::vector<std::uint8_t> m_coverage;
+	int m_outputWidth{};
+	int m_outputHeight{};
+};
 
 std::optional<theme::ThemeSyntaxTokenKind> SyntaxKindForColorIndex(EColorIndexType index) noexcept
 {
@@ -546,11 +844,10 @@ void CEditView::SetCurrentColor( CGraphics& gr, EColorIndexType eColorIndex,  EC
 		bkcolor = applyThemeColor(syntaxStyle->background, bkcolor);
 		fgcolor = applyThemeColor(syntaxStyle->foreground, fgcolor);
 	}
-	if( m_bMiniMap ){
-		// The minimap is navigational context, not a second editor.  Pull syntax
-		// colors toward their background so they remain legible without competing
-		// with the active document.
-		fgcolor = MakeColor2(fgcolor, bkcolor, 72);
+	if( m_bMiniMap && editorPalette != nullptr ){
+		bkcolor = editorPalette->minimapBackground.ToColorRef();
+		fgcolor = MakeColor2(fgcolor, bkcolor,
+			editorPalette->minimapForegroundOpacity.alpha);
 	}
 	gr.SetTextForeColor(fgcolor);
 	gr.SetTextBackColor(bkcolor);
@@ -562,6 +859,94 @@ void CEditView::SetCurrentColor( CGraphics& gr, EColorIndexType eColorIndex,  EC
 	}
 	sFont.m_hFont = GetFontset().ChooseFontHandle( 0, sFont.m_sFontAttr );
 	gr.SetMyFont(sFont);
+}
+
+const std::vector<textmate::TextMateToken>* CEditView::GetTextMateTokens(
+	CLogicInt logicalLine)
+{
+	if( logicalLine < 0 || m_pcEditDoc == nullptr ) return nullptr;
+	auto* service = GetEditWnd().GetSenpLanguageService();
+	if( service == nullptr ) {
+		m_textMateSession.reset();
+		m_textMateLines.clear();
+		return nullptr;
+	}
+
+	const std::uint64_t layoutGeneration =
+		m_pcEditDoc->m_cLayoutMgr.GetLayoutGeneration();
+	const std::uint64_t serviceRevision = service->Revision();
+	const std::wstring resourcePath = m_pcEditDoc->m_cDocFile.GetFilePath();
+	if( m_textMateLayoutGeneration != layoutGeneration
+		|| m_textMateServiceRevision != serviceRevision
+		|| m_textMateResourcePath != resourcePath ) {
+		m_textMateSession.reset();
+		m_textMateLines.clear();
+		m_textMateLayoutGeneration = layoutGeneration;
+		m_textMateServiceRevision = serviceRevision;
+		m_textMateResourcePath = resourcePath;
+
+		const CDocLine* first = m_pcEditDoc->m_cDocLineMgr.GetLine(CLogicInt(0));
+		const std::wstring_view firstLine = first == nullptr
+			? std::wstring_view{}
+			: std::wstring_view(first->GetPtr(),
+				static_cast<std::size_t>(first->GetLengthWithoutEOL()));
+		m_textMateSession = service->CreateSession(resourcePath, firstLine);
+	}
+	if( !m_textMateSession ) return nullptr;
+
+	const std::size_t requested = static_cast<std::size_t>(static_cast<int>(logicalLine));
+	while( m_textMateLines.size() <= requested && m_textMateTokenizeBudget > 0 ) {
+		const auto sourceLine = static_cast<int>(m_textMateLines.size());
+		const CDocLine* line = m_pcEditDoc->m_cDocLineMgr.GetLine(CLogicInt(sourceLine));
+		if( line == nullptr ) break;
+		const std::wstring_view text(line->GetPtr(),
+			static_cast<std::size_t>(line->GetLengthWithoutEOL()));
+		const textmate::RuleStackHandle previous = m_textMateLines.empty()
+			? m_textMateSession->InitialState()
+			: m_textMateLines.back().stateAfter;
+		textmate::RuleStackHandle next;
+		auto tokenized = m_textMateSession->TokenizeLine(text, previous, next);
+		m_textMateLines.push_back({ std::move(next), std::move(tokenized.tokens) });
+		--m_textMateTokenizeBudget;
+	}
+	if( requested >= m_textMateLines.size() ) {
+		// TextMate state is line-ordered. Continue in later paint turns instead of
+		// blocking a large jump into a long file on one synchronous scan.
+		::InvalidateRect(GetHwnd(), nullptr, FALSE);
+		return nullptr;
+	}
+	return &m_textMateLines[requested].tokens;
+}
+
+void CEditView::ApplyTextMateTokenStyle(SColorStrategyInfo& info,
+	const textmate::TextMateToken* token)
+{
+	if( token == nullptr || info.GetCurrentColor() != info.GetCurrentColor2() ) return;
+	const EColorIndexType underlying = info.GetCurrentColor2();
+	if( underlying >= COLORIDX_SEARCH && underlying <= COLORIDX_SEARCHTAIL ) return;
+	const auto* tokenColors = theme::CThemeService::ActiveColorThemeTokenColors();
+	if( tokenColors == nullptr ) return;
+	const auto style = theme::TextMateScopeColorResolver::Resolve(token->scopes, *tokenColors);
+	if( !style.matched ) return;
+	const auto apply = [](const theme::ThemeColor& color, COLORREF base) noexcept {
+		if( color.alpha == 0 ) return base;
+		return color.alpha == 0xFF ? color.ToColorRef()
+			: MakeColor2(color.ToColorRef(), base, color.alpha);
+	};
+	if( style.foreground ) {
+		COLORREF foreground = apply(*style.foreground, ::GetTextColor(info.m_gr));
+		if( m_bMiniMap ) {
+			if( const auto* editorPalette = theme::CThemeService::ActiveColorThemePalette() ) {
+				foreground = MakeColor2(foreground,
+					editorPalette->minimapBackground.ToColorRef(),
+					editorPalette->minimapForegroundOpacity.alpha);
+			}
+		}
+		info.m_gr.SetTextForeColor(foreground);
+	}
+	if( style.background ) {
+		info.m_gr.SetTextBackColor(apply(*style.background, ::GetBkColor(info.m_gr)));
+	}
 }
 
 inline COLORREF MakeColor2(COLORREF a, COLORREF b, int alpha)
@@ -624,7 +1009,7 @@ COLORREF CEditView::GetBackColorByColorInfo2(const ColorInfo& info, const ColorI
 	return MakeColor2(info.m_sColorAttr.m_cBACK, info2.m_sColorAttr.m_cBACK, alpha);
 }
 
-void CEditView::DrawMiniMapOverview(HDC hdc)
+void CEditView::DrawMiniMapFrame(HDC hdc)
 {
 	if( !m_bMiniMap || hdc == nullptr ) return;
 	RECT client{};
@@ -634,27 +1019,83 @@ void CEditView::DrawMiniMapOverview(HDC hdc)
 	if( width <= 0 || height <= 0 ) return;
 
 	CTypeSupport textType(this, COLORIDX_TEXT);
-	const COLORREF background = textType.GetBackColor();
-	const HBRUSH dcBrush = static_cast<HBRUSH>(::GetStockObject(DC_BRUSH));
-	const HBRUSH previousBrush = static_cast<HBRUSH>(::SelectObject(hdc, dcBrush));
-	const COLORREF previousBrushColor = ::SetDCBrushColor(hdc, background);
-	::FillRect(hdc, &client, dcBrush);
-	::SetDCBrushColor(hdc, previousBrushColor);
-	::SelectObject(hdc, previousBrush);
+	const auto* activePalette = theme::CThemeService::ActiveColorThemePalette();
+	const COLORREF background = activePalette != nullptr
+		? activePalette->minimapBackground.ToColorRef() : textType.GetBackColor();
+	const auto pixelCount = static_cast<std::size_t>(width)
+		* static_cast<std::size_t>(height);
+	m_miniMapFramePixels.assign(pixelCount, MiniMapDibPixel(background));
+	const bool autoHidden = m_miniMapOptions.autohide == minimap::AutoHide::MouseOver
+		? !m_bMiniMapMouseOver && !m_bMiniMapMouseDown
+		: m_miniMapOptions.autohide == minimap::AutoHide::Scroll
+			&& !m_bMiniMapScrollVisible && !m_bMiniMapMouseOver && !m_bMiniMapMouseDown;
+	if( autoHidden ) {
+		PresentMiniMapPixels(hdc, client, m_miniMapFramePixels);
+		return;
+	}
 
 	const auto lineCount = static_cast<std::int64_t>(m_pcEditDoc->m_cLayoutMgr.GetLineCount());
-	if( lineCount <= 0 ) return;
+	if( lineCount <= 0 ) {
+		PresentMiniMapPixels(hdc, client, m_miniMapFramePixels);
+		return;
+	}
 
-	const COLORREF foreground = MakeColor2(textType.GetTextColor(), background, 68);
+	const auto geometry = CalculateMiniMapLayout();
+	if( geometry.visibleLineSpan <= 0 ) {
+		PresentMiniMapPixels(hdc, client, m_miniMapFramePixels);
+		return;
+	}
+	// TextMate rule stacks are line-ordered. Advance the minimap's own session
+	// in bounded paint turns, but keep the already complete overview raster while
+	// catch-up is pending. Once the final logical line is available the readiness
+	// bit below changes and the overview is rebuilt exactly once with token colors.
+	const auto* languageService = GetEditWnd().GetSenpLanguageService();
+	const std::uint64_t languageServiceRevision = languageService == nullptr
+		? 0 : languageService->Revision();
+	bool textMateAvailable = false;
+	bool textMateReady = true;
+	const int logicalLineCount = static_cast<int>(
+		m_pcEditDoc->m_cDocLineMgr.GetLineCount());
+	if( logicalLineCount > 0 ) {
+		const auto* finalLineTokens = GetTextMateTokens(CLogicInt(logicalLineCount - 1));
+		textMateAvailable = m_textMateSession != nullptr;
+		textMateReady = !textMateAvailable || finalLineTokens != nullptr;
+	}
+	std::uint64_t styleFingerprint = 1469598103934665603ULL;
+	const auto mixStyle = [&styleFingerprint](std::uint64_t value) noexcept {
+		styleFingerprint ^= value;
+		styleFingerprint *= 1099511628211ULL;
+	};
+	for( int index = 0; index < COLORIDX_LAST; ++index ) {
+		const auto& color = m_pTypeData->m_ColorInfoArr[index];
+		mixStyle(color.m_sColorAttr.m_cTEXT);
+		mixStyle(color.m_sColorAttr.m_cBACK);
+		mixStyle(color.m_sFontAttr.m_bBoldFont ? 1U : 0U);
+	}
+	const LOGFONT& miniMapFont = m_pcViewFont->GetLogfont();
+	mixStyle(static_cast<std::uint64_t>(miniMapFont.lfWeight));
+	mixStyle(static_cast<std::uint64_t>(miniMapFont.lfItalic));
+	mixStyle(static_cast<std::uint64_t>(miniMapFont.lfCharSet));
+	mixStyle(static_cast<std::uint64_t>(miniMapFont.lfPitchAndFamily));
+	for( const wchar_t character : miniMapFont.lfFaceName ) {
+		if( character == L'\0' ) break;
+		mixStyle(static_cast<std::uint64_t>(character));
+	}
+	mixStyle(languageServiceRevision);
+	mixStyle(textMateAvailable ? 1U : 0U);
+	mixStyle(textMateReady ? 1U : 0U);
 	const auto layoutGeneration = m_pcEditDoc->m_cLayoutMgr.GetLayoutGeneration();
 	const auto cacheMatches = m_miniMapOverviewCache.valid
 		&& m_miniMapOverviewCache.document == m_pcEditDoc
 		&& m_miniMapOverviewCache.layoutGeneration == layoutGeneration
+		&& m_miniMapOverviewCache.styleFingerprint == styleFingerprint
 		&& m_miniMapOverviewCache.lineCount == lineCount
 		&& m_miniMapOverviewCache.width == width
 		&& m_miniMapOverviewCache.height == height
 		&& m_miniMapOverviewCache.background == background
-		&& m_miniMapOverviewCache.foreground == foreground;
+		&& minimap::HasSameOverviewRendering(
+			m_miniMapOverviewCache.options, m_miniMapOptions)
+		&& m_miniMapOverviewCache.geometry == geometry;
 	if( !cacheMatches ) {
 		const bool traceCache = CStartupTrace::IsCollectingStartupDocumentMetrics();
 		LARGE_INTEGER cacheBuildStart{};
@@ -666,32 +1107,129 @@ void CEditView::DrawMiniMapOverview(HDC hdc)
 		MiniMapOverviewCache next;
 		next.document = m_pcEditDoc;
 		next.layoutGeneration = layoutGeneration;
+		next.styleFingerprint = styleFingerprint;
 		next.lineCount = lineCount;
 		next.width = width;
 		next.height = height;
 		next.background = background;
-		next.foreground = foreground;
-		next.rowStart.assign(static_cast<std::size_t>(height), width);
-		next.rowEnd.assign(static_cast<std::size_t>(height), 0);
-		constexpr int kMaxColumns = 160;
-		constexpr int kLeftPadding = 4;
-		const int drawableWidth = (std::max)(1, width - kLeftPadding - 2);
-		const CLayout* layout = m_pcEditDoc->m_cLayoutMgr.GetTopLayout();
-		std::int64_t line = 0;
-		while( layout != nullptr && line < lineCount ) {
-			const wchar_t* text = layout->GetPtr();
-			const int length = (std::min)(static_cast<int>(layout->GetLengthWithoutEOL()), kMaxColumns);
-			int indent = 0;
-			while( indent < length && (text[indent] == L' ' || text[indent] == L'\t') ) ++indent;
-			if( length > indent ) {
-				const int row = (std::min)(height - 1, minimap::LineToPixel(line, lineCount, height));
-				const int start = kLeftPadding + (indent * drawableWidth) / kMaxColumns;
-				const int end = kLeftPadding + ((std::max)(indent + 1, length) * drawableWidth) / kMaxColumns;
-				next.rowStart[static_cast<std::size_t>(row)] = (std::min)(next.rowStart[static_cast<std::size_t>(row)], start);
-				next.rowEnd[static_cast<std::size_t>(row)] = (std::max)(next.rowEnd[static_cast<std::size_t>(row)], end);
+		next.options = m_miniMapOptions;
+		next.geometry = geometry;
+		next.pixels.assign(pixelCount, MiniMapDibPixel(background));
+		const auto dpi = GetHwnd() == nullptr ? 96U : ::GetDpiForWindow(GetHwnd());
+		const int glyphScale = (std::max)(1,
+			::MulDiv((std::clamp)(m_miniMapOptions.scale, 1, 3), static_cast<int>(dpi), 96));
+		const int leftPadding = (std::max)(2, ::MulDiv(4, static_cast<int>(dpi), 96));
+		const int maxColumn = (std::clamp)(m_miniMapOptions.maxColumn, 1, 10000);
+		const int tabSize = (std::max)(1,
+			static_cast<int>(m_pcEditDoc->m_cLayoutMgr.GetTabSpaceKetas()));
+		MiniMapCharAtlas characterAtlas;
+		const bool drawCharacterGlyphs = m_miniMapOptions.renderCharacters
+			&& characterAtlas.Create(hdc, miniMapFont, glyphScale);
+		CGraphics graphics(hdc);
+		std::int64_t visitedLines = 0;
+		std::int64_t previousSourceLine = -1;
+		const int rowCount = geometry.sampled
+			? geometry.height
+			: static_cast<int>(geometry.visibleLineSpan);
+		for( int row = 0; row < rowCount; ++row ) {
+			const std::int64_t sourceLine = geometry.sampled
+				? geometry.YToLine(row)
+				: geometry.firstLine + row;
+			if( sourceLine == previousSourceLine || sourceLine >= geometry.LastLineExclusive() ) continue;
+			previousSourceLine = sourceLine;
+			const CLayout* layout = m_pcEditDoc->m_cLayoutMgr.SearchLineByLayoutY(
+				CLayoutInt(static_cast<int>((std::min)(sourceLine,
+					static_cast<std::int64_t>(INT_MAX)))));
+			if( layout == nullptr ) continue;
+			++visitedLines;
+			const int lineTop = geometry.sampled ? row : geometry.LineToY(sourceLine);
+			const int lineBottom = (std::min)(height,
+				lineTop + (std::max)(1, geometry.lineHeight));
+			if( lineTop >= height || lineBottom <= 0 ) continue;
+
+			DispPos position(1, 1);
+			position.SetLayoutLineRef(CLayoutInt(static_cast<int>(sourceLine)));
+			SColorStrategyInfo colorInfo(hdc);
+			colorInfo.m_pcView = this;
+			colorInfo.m_pDispPos = &position;
+			CColor3Setting currentColor = GetColorIndex(layout,
+				CLayoutYInt(static_cast<int>(sourceLine)), 0, &colorInfo, true);
+			colorInfo.m_nPosInLogic = layout->GetLogicOffset();
+			SetCurrentColor(graphics, currentColor.eColorIndex2,
+				currentColor.eColorIndex2, COLORIDX_TEXT);
+			COLORREF characterColor = ::GetTextColor(hdc);
+			int visualColumn = (std::max)(0, static_cast<int>(layout->GetIndent()));
+
+			const wchar_t* lineText = layout->GetDocLineRef()->GetPtr();
+			const int logicalLength = static_cast<int>(layout->GetDocLineRef()->GetLengthWithEOL());
+			const int begin = static_cast<int>(layout->GetLogicOffset());
+			const int end = (std::min)(logicalLength,
+				begin + static_cast<int>(layout->GetLengthWithoutEOL()));
+			const auto* textMateTokens = textMateReady
+				? GetTextMateTokens(CLayout::GetLogicLineNo_Safe(layout)) : nullptr;
+			std::size_t textMateIndex = 0;
+			const auto tokenAt = [&](int offset) -> const textmate::TextMateToken* {
+				if( textMateTokens == nullptr || offset < 0 ) return nullptr;
+				const auto tokenPosition = static_cast<std::size_t>(offset);
+				while( textMateIndex < textMateTokens->size()
+					&& (*textMateTokens)[textMateIndex].utf16End <= tokenPosition ) {
+					++textMateIndex;
+				}
+				if( textMateIndex >= textMateTokens->size() ) return nullptr;
+				const auto& token = (*textMateTokens)[textMateIndex];
+				return token.utf16Start <= tokenPosition && tokenPosition < token.utf16End
+					? &token : nullptr;
+			};
+			const textmate::TextMateToken* activeTextMateToken = tokenAt(begin);
+			ApplyTextMateTokenStyle(colorInfo, activeTextMateToken);
+			characterColor = ::GetTextColor(hdc);
+			for( int offset = begin; offset < end && visualColumn < maxColumn; ) {
+				colorInfo.m_nPosInLogic = CLogicInt(offset);
+				const textmate::TextMateToken* nextTextMateToken = tokenAt(offset);
+				if( nextTextMateToken != activeTextMateToken ) {
+					SetCurrentColor(graphics, currentColor.eColorIndex2,
+						currentColor.eColorIndex2, COLORIDX_TEXT);
+					activeTextMateToken = nextTextMateToken;
+					ApplyTextMateTokenStyle(colorInfo, activeTextMateToken);
+					characterColor = ::GetTextColor(hdc);
+				}
+				if( colorInfo.CheckChangeColor(CStringRef(lineText, logicalLength)) ) {
+					colorInfo.DoChangeColor(&currentColor);
+					SetCurrentColor(graphics, currentColor.eColorIndex2,
+						currentColor.eColorIndex2, COLORIDX_TEXT);
+					ApplyTextMateTokenStyle(colorInfo, activeTextMateToken);
+					characterColor = ::GetTextColor(hdc);
+				}
+				const wchar_t character = lineText[offset];
+				const int characterSize = (std::max)(1, static_cast<int>(
+					CNativeW::GetSizeOfChar(lineText, logicalLength, offset)));
+				if( character == L'\t' ) {
+					visualColumn += tabSize - visualColumn % tabSize;
+				} else {
+					const int characterColumns = (std::clamp)(static_cast<int>(
+						m_pcEditDoc->m_cLayoutMgr.GetLayoutXOfChar(
+							lineText, logicalLength, offset)), 1, 2);
+					const bool whitespace = character == L' ' || character == L'\r'
+						|| character == L'\n' || character == L'\0';
+					const int glyphLeft = leftPadding + visualColumn * glyphScale;
+					const int glyphAdvance = characterColumns * glyphScale;
+					const int glyphRight = glyphLeft + glyphAdvance;
+					if( glyphLeft >= width ) break;
+					if( drawCharacterGlyphs && !whitespace ) {
+						(void)characterAtlas.Paint(next.pixels, width, height,
+							glyphLeft, lineTop, lineBottom - lineTop,
+							character, characterColor);
+					} else if( !whitespace && glyphRight > glyphLeft ) {
+						// If the character DIB cannot be created, fail visibly as the
+						// same block renderer used by renderCharacters=false.
+						PaintMiniMapBlock(next.pixels, width, height,
+							glyphLeft, lineTop, characterColumns, glyphScale,
+							lineBottom - lineTop, characterColor);
+					}
+					visualColumn += characterColumns;
+				}
+				offset += characterSize;
 			}
-			layout = layout->GetNextLayout();
-			++line;
 		}
 
 		next.valid = true;
@@ -700,82 +1238,117 @@ void CEditView::DrawMiniMapOverview(HDC hdc)
 			LARGE_INTEGER cacheBuildEnd{};
 			::QueryPerformanceCounter(&cacheBuildEnd);
 			CStartupTrace::AccumulateStartupMiniMapCacheLookup(
-				false, cacheBuildEnd.QuadPart - cacheBuildStart.QuadPart, line);
+				false, cacheBuildEnd.QuadPart - cacheBuildStart.QuadPart, visitedLines);
 		}
 	} else {
 		CStartupTrace::AccumulateStartupMiniMapCacheLookup(true);
 	}
-	const HPEN dcPen = static_cast<HPEN>(::GetStockObject(DC_PEN));
-	const HPEN previousPen = static_cast<HPEN>(::SelectObject(hdc, dcPen));
-	const COLORREF previousPenColor = ::SetDCPenColor(hdc, foreground);
-	for( int row = 0; row < height; ++row ) {
-		const int start = m_miniMapOverviewCache.rowStart[static_cast<std::size_t>(row)];
-		const int end = m_miniMapOverviewCache.rowEnd[static_cast<std::size_t>(row)];
-		if( end <= start ) continue;
-		::MoveToEx(hdc, start, client.top + row, nullptr);
-		::LineTo(hdc, (std::min)(end, static_cast<int>(client.right)), client.top + row);
+	if( m_miniMapOverviewCache.pixels.size()
+		== static_cast<std::size_t>(width) * static_cast<std::size_t>(height) ) {
+		m_miniMapFramePixels = m_miniMapOverviewCache.pixels;
 	}
-	::SetDCPenColor(hdc, previousPenColor);
-	::SelectObject(hdc, previousPen);
+	const bool sliderVisible = m_miniMapOptions.showSlider == minimap::ShowSlider::Always
+		|| m_bMiniMapMouseOver || m_bMiniMapMouseDown;
+	if( sliderVisible ) {
+		const auto band = geometry.viewport;
+		RECT viewport{ client.left, client.top + band.top,
+			client.right, client.top + band.bottom };
+		viewport.top = (std::clamp)(viewport.top, client.top, client.bottom);
+		viewport.bottom = (std::clamp)(viewport.bottom, client.top, client.bottom);
+		if( viewport.bottom <= viewport.top ) {
+			viewport.bottom = (std::min)(client.bottom, viewport.top + 2);
+		}
+		COLORREF sliderColor = textType.GetTextColor();
+		BYTE sliderAlpha = m_bMiniMapMouseDown ? 72 : m_bMiniMapMouseOver ? 48 : 32;
+		if( const auto* palette = theme::CThemeService::ActiveColorThemePalette() ) {
+			const auto& source = m_bMiniMapMouseDown
+				? palette->minimapSliderActiveBackground
+				: m_bMiniMapMouseOver
+					? palette->minimapSliderHoverBackground
+					: palette->minimapSliderBackground;
+			sliderColor = source.ToColorRef();
+			sliderAlpha = source.alpha;
+		}
+		BlendMiniMapRectangle(m_miniMapFramePixels, width, height,
+			viewport, sliderColor, sliderAlpha);
+	}
+	// The live window only observes this completed frame. Cache rebuild, slider
+	// composition, and hover/drag state never become intermediate screen states.
+	PresentMiniMapPixels(hdc, client, m_miniMapFramePixels);
 }
 
-void CEditView::DrawMiniMapViewport(HDC hdc)
+void CEditView::SetMiniMapOptions(const minimap::Options& options)
 {
-	if( !m_bMiniMap || hdc == nullptr ) return;
-	RECT client{};
-	if( !GetClientRect(&client) ) return;
-	CEditView& activeView = GetEditWnd().GetActiveView();
-	const auto lineCount = static_cast<std::int64_t>(m_pcEditDoc->m_cLayoutMgr.GetLineCount());
-	const int height = client.bottom - client.top;
-	if( lineCount <= 0 || height <= 0 ) return;
-	const auto band = minimap::ViewportToPixels(
-		static_cast<Int>(activeView.GetTextArea().GetViewTopLine()),
-		static_cast<Int>(activeView.GetTextArea().GetBottomLine()), lineCount, height);
-	RECT viewport{
-		client.left,
-		client.top + band.top,
-		client.right,
-		client.top + band.bottom
-	};
-	viewport.top = (std::clamp)(viewport.top, client.top, client.bottom);
-	viewport.bottom = (std::clamp)(viewport.bottom, client.top, client.bottom);
-	if( viewport.bottom <= viewport.top ) viewport.bottom = (std::min)(client.bottom, viewport.top + 2);
-	if( viewport.right <= viewport.left || viewport.bottom <= viewport.top ) return;
-
-	// VS Code represents the visible editor range as a quiet, neutral overlay
-	// across the minimap rather than as a high-contrast outline.  Blend after
-	// the map is rendered so syntax marks remain visible through the band.
-	CTypeSupport textType(this, COLORIDX_TEXT);
-	if( m_hdcMiniMapViewport == nullptr ){
-		m_hdcMiniMapViewport = ::CreateCompatibleDC(hdc);
+	if( m_miniMapOptions == options ) return;
+	const bool overviewChanged = !minimap::HasSameOverviewRendering(
+		m_miniMapOptions, options);
+	m_miniMapOptions = options;
+	if( overviewChanged ) m_miniMapOverviewCache = {};
+	if( GetHwnd() != nullptr ) {
+		::InvalidateRect(GetHwnd(), nullptr, FALSE);
 	}
-	if( m_hdcMiniMapViewport == nullptr ) return;
-	if( m_hbmpMiniMapViewport == nullptr ){
-		m_hbmpMiniMapViewport = ::CreateCompatibleBitmap(hdc, 1, 1);
-		if( m_hbmpMiniMapViewport == nullptr ) return;
-		m_hbmpMiniMapViewportOld = static_cast<HBITMAP>(::SelectObject(m_hdcMiniMapViewport, m_hbmpMiniMapViewport));
-		if( m_hbmpMiniMapViewportOld == nullptr || m_hbmpMiniMapViewportOld == HGDI_ERROR ){
-			::DeleteObject(m_hbmpMiniMapViewport);
-			m_hbmpMiniMapViewport = nullptr;
-			m_hbmpMiniMapViewportOld = nullptr;
-			return;
+}
+
+void CEditView::SetIndentGuidesEnabled(bool enabled)
+{
+	if( m_indentGuidesEnabled == enabled ) return;
+	m_indentGuidesEnabled = enabled;
+	if( GetHwnd() != nullptr ){
+		::InvalidateRect(GetHwnd(), nullptr, FALSE);
+	}
+}
+
+minimap::Layout CEditView::CalculateMiniMapLayout() const noexcept
+{
+	if( !m_bMiniMap || GetHwnd() == nullptr || m_pcEditDoc == nullptr ) return {};
+	RECT client{};
+	if( !::GetClientRect(GetHwnd(), &client) ) return {};
+	const CEditView& activeView = GetEditWnd().GetActiveView();
+	auto effectiveOptions = m_miniMapOptions;
+	const auto dpi = ::GetDpiForWindow(GetHwnd());
+	effectiveOptions.scale = (std::max)(1,
+		::MulDiv((std::clamp)(effectiveOptions.scale, 1, 3), static_cast<int>(dpi), 96));
+	return minimap::CalculateLayout(effectiveOptions, {
+		.lineCount = static_cast<std::int64_t>(m_pcEditDoc->m_cLayoutMgr.GetLineCount()),
+		.editorTopLine = static_cast<std::int64_t>(activeView.GetTextArea().GetViewTopLine()),
+		.editorVisibleLines = static_cast<std::int64_t>((std::max)(CLayoutInt(1),
+			activeView.GetTextArea().GetBottomLine() - activeView.GetTextArea().GetViewTopLine())),
+		.height = client.bottom - client.top,
+	});
+}
+
+bool CEditView::EnsureAlphaOverlaySource(HDC target) noexcept
+{
+	if( target == nullptr ) return false;
+	if( m_hdcAlphaOverlay == nullptr ){
+		m_hdcAlphaOverlay = ::CreateCompatibleDC(target);
+	}
+	if( m_hdcAlphaOverlay == nullptr ) return false;
+	if( m_hbmpAlphaOverlay == nullptr ){
+		m_hbmpAlphaOverlay = ::CreateCompatibleBitmap(target, 1, 1);
+		if( m_hbmpAlphaOverlay == nullptr ) return false;
+		m_hbmpAlphaOverlayOld = static_cast<HBITMAP>(
+			::SelectObject(m_hdcAlphaOverlay, m_hbmpAlphaOverlay));
+		if( m_hbmpAlphaOverlayOld == nullptr || m_hbmpAlphaOverlayOld == HGDI_ERROR ){
+			::DeleteObject(m_hbmpAlphaOverlay);
+			m_hbmpAlphaOverlay = nullptr;
+			m_hbmpAlphaOverlayOld = nullptr;
+			return false;
 		}
 	}
-	::SetPixelV(m_hdcMiniMapViewport, 0, 0, textType.GetTextColor());
-	BLENDFUNCTION blend{ AC_SRC_OVER, 0, 18, 0 };
-	::AlphaBlend(
-		hdc,
-		viewport.left,
-		viewport.top,
-		viewport.right - viewport.left,
-		viewport.bottom - viewport.top,
-		m_hdcMiniMapViewport,
-		0,
-		0,
-		1,
-		1,
-		blend
-	);
+	return true;
+}
+
+void CEditView::FillAlphaOverlay(
+	HDC target, const RECT& rectangle, COLORREF color, BYTE alpha) noexcept
+{
+	if( rectangle.right <= rectangle.left || rectangle.bottom <= rectangle.top
+		|| !EnsureAlphaOverlaySource(target) ) return;
+	::SetPixelV(m_hdcAlphaOverlay, 0, 0, color);
+	const BLENDFUNCTION blend{ AC_SRC_OVER, 0, alpha, 0 };
+	(void)::AlphaBlend(target, rectangle.left, rectangle.top,
+		rectangle.right - rectangle.left, rectangle.bottom - rectangle.top,
+		m_hdcAlphaOverlay, 0, 0, 1, 1, blend);
 }
 
 // -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
@@ -788,6 +1361,10 @@ void CEditView::OnPaint( HDC _hdc, PAINTSTRUCT *pPs, BOOL bDrawFromComptibleBmp 
 		return;
 	}
 	RequestGdiFrame();
+	// Both the editor and minimap own a bounded, line-ordered TextMate session.
+	// Resetting here lets invalidated paint turns make forward progress without
+	// allowing one frame to scan an unbounded document.
+	m_textMateTokenizeBudget = 128;
 	if( m_bMiniMap ){
 		const bool measureStartupPaint = CStartupTrace::IsEnabled()
 			&& GetEditWnd().IsStartupDrawCommitting();
@@ -795,8 +1372,7 @@ void CEditView::OnPaint( HDC _hdc, PAINTSTRUCT *pPs, BOOL bDrawFromComptibleBmp 
 		if (measureStartupPaint) {
 			::QueryPerformanceCounter(&begin);
 		}
-		DrawMiniMapOverview(_hdc);
-		DrawMiniMapViewport(_hdc);
+		DrawMiniMapFrame(_hdc);
 		if (measureStartupPaint) {
 			LARGE_INTEGER end{};
 			::QueryPerformanceCounter(&end);
@@ -1456,6 +2032,21 @@ bool CEditView::DrawLayoutLine(SColorStrategyInfo* pInfo)
 	}
 	//行終端または折り返しに達するまでループ
 	if(pcLayout){
+		const auto* textMateTokens = GetTextMateTokens(
+			CLayout::GetLogicLineNo_Safe(pcLayout));
+		std::size_t textMateIndex = 0;
+		const auto tokenAt = [&](int offset) -> const textmate::TextMateToken* {
+			if( textMateTokens == nullptr || offset < 0 ) return nullptr;
+			const auto position = static_cast<std::size_t>(offset);
+			while( textMateIndex < textMateTokens->size()
+				&& (*textMateTokens)[textMateIndex].utf16End <= position ) {
+				++textMateIndex;
+			}
+			if( textMateIndex >= textMateTokens->size() ) return nullptr;
+			const auto& token = (*textMateTokens)[textMateIndex];
+			return token.utf16Start <= position && position < token.utf16End
+				? &token : nullptr;
+		};
 		int nPosBgn = pInfo->m_nPosInLogic; // Logic
 		int nPosLength = 0;
 		CLayoutInt nDrawX = pInfo->m_pDispPos->GetDrawCol(); // Layout
@@ -1463,6 +2054,8 @@ bool CEditView::DrawLayoutLine(SColorStrategyInfo* pInfo)
 		int nPosTo = pcLayout->GetLogicOffset() + pcLayout->GetLengthWithEOL();
 		CFigureManager* pcFigureManager = CFigureManager::getInstance();
 		FigureRenderType prevRenderType = CFigure_Text::RenderType_None;
+		const textmate::TextMateToken* activeTextMateToken = tokenAt(nPosBgn);
+		ApplyTextMateTokenStyle(*pInfo, activeTextMateToken);
 		bool paintYielded = false;
 		while(pInfo->m_nPosInLogic < nPosTo){
 			if( m_pRenderState && !m_pRenderState->ConsumePaintWork() ){
@@ -1479,10 +2072,12 @@ bool CEditView::DrawLayoutLine(SColorStrategyInfo* pInfo)
 			if (is_text) {
 				nextRenderType = CFigure_Text::GetRenderType(pInfo);
 			}
+			const textmate::TextMateToken* nextTextMateToken = tokenAt(nPosInLogic);
+			const bool textMateBoundary = nextTextMateToken != activeTextMateToken;
 			const bool renderTypeBoundary = prevRenderType != nextRenderType;
 			const bool lengthBoundary = nDrawBlockLen < nPosLength;
 			if (CFigure_Text::IsRenderType_Block(prevRenderType) &&
-				(renderTypeBoundary || lengthBoundary)) {
+				(renderTypeBoundary || lengthBoundary || textMateBoundary)) {
 				if (0 < nPosLength) {
 					if (pInfo->m_collectStartupPaintMetrics) {
 						CStartupTrace::AccumulateFirstContentTextBoundary(
@@ -1492,6 +2087,12 @@ bool CEditView::DrawLayoutLine(SColorStrategyInfo* pInfo)
 					nPosBgn = nPosInLogic;
 					nPosLength = 0;
 				}
+			}
+			if( textMateBoundary ) {
+				SetCurrentColor(pInfo->m_gr, pInfo->GetCurrentColor(),
+					pInfo->GetCurrentColor2(), pInfo->GetCurrentColorBg());
+				activeTextMateToken = nextTextMateToken;
+				ApplyTextMateTokenStyle(*pInfo, activeTextMateToken);
 			}
 			prevRenderType = nextRenderType;
 
@@ -1512,6 +2113,7 @@ bool CEditView::DrawLayoutLine(SColorStrategyInfo* pInfo)
 				CColor3Setting cColor;
 				pInfo->DoChangeColor(&cColor);
 				SetCurrentColor(pInfo->m_gr, cColor.eColorIndex, cColor.eColorIndex2, cColor.eColorIndexBg);
+				ApplyTextMateTokenStyle(*pInfo, activeTextMateToken);
 			}
 
 			if (is_text && CFigure_Text::IsRenderType_Block(nextRenderType)){
@@ -1555,6 +2157,103 @@ bool CEditView::DrawLayoutLine(SColorStrategyInfo* pInfo)
 					static_cast<std::int64_t>(pInfo->m_pDispPos->GetDrawCol()));
 			}
 			return false;
+		}
+	}
+
+	// SENP editor decorations are cache-only on the paint thread. A missing
+	// result schedules bounded work in the isolated host and returns immediately.
+	if( pcLayout && pcLayout->GetLogicOffset() == 0 && !m_bMiniMap
+		&& !theme::CThemeService::IsHighContrastActive() ){
+		if( auto* runtime = GetEditWnd().GetSenpRuntime() ){
+			std::size_t lineLength = static_cast<std::size_t>(cLineStr.GetLength());
+			while( lineLength > 0 && (cLineStr.GetPtr()[lineLength - 1] == L'\r'
+				|| cLineStr.GetPtr()[lineLength - 1] == L'\n') ) --lineLength;
+			const auto decorations = runtime->RequestIndentDecorations(
+				std::wstring_view(cLineStr.GetPtr(), lineLength),
+				static_cast<std::uint32_t>(m_pcEditDoc->m_cLayoutMgr.GetTabSpaceKetas()),
+				reinterpret_cast<std::uintptr_t>(GetHwnd()));
+			if( decorations ){
+				const CLayoutInt viewLeft = GetTextArea().GetViewLeftCol();
+				const int layoutUnitsPerColumn = static_cast<int>(
+					GetTextMetrics().GetLayoutXDefault());
+				RECT body{ GetTextArea().GetAreaLeft(), pInfo->m_pDispPos->GetDrawPos().y,
+					GetTextArea().GetAreaRight(), pInfo->m_pDispPos->GetDrawPos().y + nLineHeight };
+				for( const auto& decoration : *decorations ){
+					const auto layoutRange = view::indent_decoration::ProjectVisualColumns(
+						decoration.visualStart, decoration.visualLength, layoutUnitsPerColumn);
+					if( !layoutRange ) continue;
+					if( CLayoutInt(layoutRange->end) <= viewLeft ) continue;
+					const CLayoutInt relativeStart = CLayoutInt(layoutRange->start)
+						- viewLeft;
+					const CLayoutInt relativeEnd = CLayoutInt(layoutRange->end)
+						- viewLeft;
+					const int left = GetTextArea().GetAreaLeft()
+						+ static_cast<int>(GetTextMetrics().GetCharPxWidth(relativeStart));
+					if( left >= body.right ) break;
+					const int right = GetTextArea().GetAreaLeft()
+						+ static_cast<int>(GetTextMetrics().GetCharPxWidth(relativeEnd));
+					RECT band{ left, pInfo->m_pDispPos->GetDrawPos().y,
+						right, pInfo->m_pDispPos->GetDrawPos().y + nLineHeight };
+					RECT clipped{};
+					if( ::IntersectRect(&clipped, &band, &body) ){
+						FillAlphaOverlay(pInfo->m_gr, clipped,
+							IndentDecorationColor(decoration.depth), kIndentDecorationAlpha);
+					}
+				}
+			}
+		}
+	}
+
+	// VS Code owns indentation guides in the Editor. Keep them independent of
+	// SENP decorations so disabling or uninstalling indent-rainbow leaves the
+	// built-in guide surface intact.
+	if( pcLayout && pcLayout->GetLogicOffset() == 0 && !m_bMiniMap
+		&& m_indentGuidesEnabled ){
+		std::size_t lineLength = static_cast<std::size_t>(cLineStr.GetLength());
+		while( lineLength > 0 && (cLineStr.GetPtr()[lineLength - 1] == L'\r'
+			|| cLineStr.GetPtr()[lineLength - 1] == L'\n') ) --lineLength;
+		const auto tabSize = static_cast<std::uint32_t>((std::max)(1,
+			static_cast<int>(m_pcEditDoc->m_cLayoutMgr.GetTabSpaceKetas())));
+		const auto indentColumns = view::indent_guide::LeadingVisualColumns(
+			std::wstring_view(cLineStr.GetPtr(), lineLength), tabSize);
+		if( indentColumns > 0 ){
+			const int layoutUnitsPerColumn = static_cast<int>(
+				GetTextMetrics().GetLayoutXDefault());
+			const CLayoutInt viewLeft = GetTextArea().GetViewLeftCol();
+			const int lineWidth = static_cast<int>((std::max)(1L, DpiScaleX(1)));
+			const int top = pInfo->m_pDispPos->GetDrawPos().y;
+			RECT body{ GetTextArea().GetAreaLeft(), top,
+				GetTextArea().GetAreaRight(), top + nLineHeight };
+			theme::ThemeColor guideColor = theme::CThemeService::PaletteFor(
+				GetDllShareData().m_Common.m_sWindow.m_bDarkMode
+					? theme::ThemeMode::Dark : theme::ThemeMode::Light)
+				.editorIndentGuideBackground;
+			if( theme::CThemeService::IsHighContrastActive() ){
+				guideColor = theme::CThemeService::HighContrastPalette()
+					.editorIndentGuideBackground;
+			}else if( const auto* activePalette =
+				theme::CThemeService::ActiveColorThemePalette() ){
+				guideColor = activePalette->editorIndentGuideBackground;
+			}
+			for( std::uint32_t column = 0; column < indentColumns; ){
+				const auto projected = view::indent_decoration::ProjectVisualColumns(
+					column, 1, layoutUnitsPerColumn);
+				if( !projected ) break;
+				if( CLayoutInt(projected->start) >= viewLeft ){
+					const CLayoutInt relative = CLayoutInt(projected->start) - viewLeft;
+					const int left = GetTextArea().GetAreaLeft()
+						+ static_cast<int>(GetTextMetrics().GetCharPxWidth(relative));
+					if( left >= body.right ) break;
+					RECT guide{ left, top, left + lineWidth, top + nLineHeight };
+					RECT clipped{};
+					if( ::IntersectRect(&clipped, &guide, &body) ){
+						FillAlphaOverlay(pInfo->m_gr, clipped,
+							guideColor.ToColorRef(), guideColor.alpha);
+					}
+				}
+				if( column > std::numeric_limits<std::uint32_t>::max() - tabSize ) break;
+				column += tabSize;
+			}
 		}
 	}
 

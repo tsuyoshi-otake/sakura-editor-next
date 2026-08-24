@@ -1,0 +1,17 @@
+{
+  "name": "Fortran Free Form",
+  "scopeName": "source.fortran.free",
+  "patterns": [
+    { "match": "!.*$", "name": "comment.line.exclamation.fortran" },
+    { "begin": "\"", "end": "\"", "name": "string.quoted.double.fortran", "patterns": [ { "match": "\"\"", "name": "constant.character.escape.fortran" } ] },
+    { "begin": "'", "end": "'", "name": "string.quoted.single.fortran", "patterns": [ { "match": "''", "name": "constant.character.escape.fortran" } ] },
+    { "match": "(?i)\\b(PROGRAM|SUBROUTINE|FUNCTION|MODULE|SUBMODULE|USE|IMPORT|IMPLICIT|NONE|INCLUDE|CONTAINS|INTERFACE|ABSTRACT|PROCEDURE|GENERIC|FINAL|TYPE|CLASS|ENUM|BIND|EXTENDS|SEQUENCE|PARAMETER|ALLOCATABLE|POINTER|TARGET|OPTIONAL|INTENT|VALUE|VOLATILE|ASYNCHRONOUS|CONTIGUOUS|CODIMENSION)\\b", "name": "keyword.declaration.fortran" },
+    { "match": "(?i)\\b(IF|THEN|ELSE|ELSEIF|END IF|SELECT|CASE|TYPE IS|CLASS IS|RANK|DO|WHILE|CONCURRENT|CYCLE|EXIT|WHERE|ELSEWHERE|FORALL|ASSOCIATE|BLOCK|CRITICAL|TEAM|CHANGE TEAM|SYNC|LOCK|UNLOCK|CALL|RETURN|STOP|ERROR STOP|READ|WRITE|PRINT|OPEN|CLOSE|INQUIRE|ALLOCATE|DEALLOCATE|NULLIFY|WAIT)\\b", "name": "keyword.control.fortran" },
+    { "match": "(?i)\\b(INTEGER|REAL|DOUBLE PRECISION|COMPLEX|LOGICAL|CHARACTER|DOUBLE COMPLEX)\\b", "name": "storage.type.fortran" },
+    { "match": "(?i)\\b(PURE|ELEMENTAL|RECURSIVE|IMPURE|NON_RECURSIVE)\\b", "name": "storage.modifier.fortran" },
+    { "match": "(?i)\\.(TRUE|FALSE|AND|OR|NOT|EQ|NE|LT|LE|GT|GE|EQV|NEQV)\\.", "name": "keyword.operator.fortran" },
+    { "match": "(?<![A-Za-z0-9_])(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[EDed][+-]?\\d+)?(?:_[A-Za-z0-9_]+)?(?![A-Za-z0-9_])", "name": "constant.numeric.fortran" },
+    { "match": "=>|::|\\*\\*|//|[+*/%=<>-]", "name": "keyword.operator.fortran" },
+    { "match": "&[ \\t]*(?:!.*)?$|^[ \\t]*&", "name": "punctuation.definition.continuation.fortran" }
+  ]
+}

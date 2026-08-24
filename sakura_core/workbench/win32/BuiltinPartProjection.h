@@ -57,6 +57,7 @@ enum class BuiltinActiveSurface : std::uint8_t {
 	Outline,
 	Search,
 	SourceControl,
+	Extensions,
 	Terminal,
 	Problems,
 	Output,

@@ -34,6 +34,7 @@ inline constexpr std::string_view ShowCommands = "workbench.action.showCommands"
 inline constexpr std::string_view OpenSettings = "workbench.action.openSettings";
 inline constexpr std::string_view OpenGlobalKeybindings = "workbench.action.openGlobalKeybindings";
 inline constexpr std::string_view SelectTheme = "workbench.action.selectTheme";
+inline constexpr std::string_view ShowExtensions = "workbench.view.extensions";
 inline constexpr std::string_view MarkdownShowPreview = "markdown.showPreview";
 inline constexpr std::string_view MarkdownShowPreviewToSide = "markdown.showPreviewToSide";
 inline constexpr std::string_view MarkdownShowLockedPreviewToSide = "markdown.showLockedPreviewToSide";

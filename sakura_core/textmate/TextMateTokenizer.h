@@ -38,23 +38,11 @@ namespace textmate {
 //! two different end patterns.
 struct TextMateRuleStackFrame final {
 	std::shared_ptr<const TextMateRuleStackFrame> parent;
+	//! Grammar that owns `rule`. RuleId values in the rule's nested patterns
+	//! are only meaningful in this grammar's arena.
+	const Grammar* owningGrammar = nullptr;
 	//! Never null. The root frame's `rule` is `Grammar::rootRuleId`'s
 	//! `IncludeOnly` rule.
-	//!
-	//! Known gap: once pushed, this rule's own nested `patterns` are always
-	//! expanded against the tokenizer's home `Grammar` (`m_grammar`), even
-	//! when `rule` was reached through an `IExternalGrammarResolver` and
-	//! actually belongs to a different `Grammar`. `CollectMatchableRules` in
-	//! `TextMateTokenizer.cpp` already threads the correct owning grammar
-	//! through recursive `IncludeOnly` expansion, so a foreign grammar's
-	//! *own* `$self`/`#name` references resolve correctly right up until one
-	//! of its `Match`/`BeginEnd`/`BeginWhile` leaves is actually pushed onto
-	//! this stack — at that point the frame itself does not remember which
-	//! grammar it came from. No caller in this codebase supplies a resolver
-	//! today (`m_externalResolver` is always `nullptr`), so this gap has no
-	//! observable effect yet; it must be closed (by adding an
-	//! `owningGrammar` field here) before cross-grammar `include:
-	//! "source.foo"` is wired up for real. See `textmate/CLAUDE.md`.
 	const TextMateRule* rule = nullptr;
 	//! Resolved once at push time (`IncludeOnly`/`Match` rules never become a
 	//! frame, so only a `BeginEnd`/`BeginWhile` rule's own `name`/
@@ -90,7 +78,7 @@ struct TextMateLineTokenizeResult final {
 //! bottom, passing the previous call's `outNextState` back in as
 //! `previousState` for the next. Re-tokenizing from a different starting
 //! line requires either starting over from `InitialState()` or reusing a
-//! `RuleStackHandle` captured after some earlier line — there is no
+//! `RuleStackHandle` captured after some earlier line -- there is no
 //! "resynchronize mid-document" support here (VS Code's own incremental
 //! re-tokenization on edit is a separate, unimplemented layer; see
 //! `textmate/CLAUDE.md`).
@@ -111,7 +99,7 @@ public:
 	[[nodiscard]] RuleStackHandle InitialState() const;
 
 	//! Tokenizes `line` (a single line's text, with no line-ending
-	//! characters — matching how the rest of `sakura_core` already splits
+	//! characters -- matching how the rest of `sakura_core` already splits
 	//! lines). `previousState` must be either `InitialState()` or a state
 	//! this tokenizer previously returned; passing a null handle is
 	//! equivalent to `InitialState()`.

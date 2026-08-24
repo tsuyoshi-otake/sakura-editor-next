@@ -8,6 +8,7 @@
 
 #include "theme/CThemeService.h"
 #include "workbench/explorer/CExplorerTool.h"
+#include "workbench/extensions/CExtensionsWorkbenchTool.h"
 #include "workbench/layout/WorkbenchIds.h"
 #include "workbench/outline/COutlineWorkbenchTool.h"
 #include "workbench/scm/CScmWorkbenchTool.h"
@@ -28,6 +29,7 @@ namespace pageIds {
 inline constexpr std::string_view Explorer = layout::ids::viewContainer::Explorer;
 inline constexpr std::string_view SourceControl = layout::ids::viewContainer::SourceControl;
 inline constexpr std::string_view Search = layout::ids::viewContainer::Search;
+inline constexpr std::string_view Extensions = layout::ids::viewContainer::Extensions;
 } // namespace pageIds
 
 class CViewContainerPages final {
@@ -68,6 +70,7 @@ public:
 	[[nodiscard]] outline::COutlineWorkbenchTool* Outline() const noexcept { return m_outline.get(); }
 	[[nodiscard]] scm::CScmWorkbenchTool* SourceControl() const noexcept { return m_scm.get(); }
 	[[nodiscard]] search::CSearchWorkbenchTool* Search() const noexcept { return m_search.get(); }
+	[[nodiscard]] extensions::CExtensionsWorkbenchTool* Extensions() const noexcept { return m_extensions.get(); }
 	[[nodiscard]] bool IsWebviewOnly(std::string_view) const noexcept { return false; }
 	[[nodiscard]] std::wstring PageTitle(std::string_view containerId) const;
 
@@ -88,6 +91,7 @@ private:
 	std::unique_ptr<outline::COutlineWorkbenchTool> m_outline;
 	std::unique_ptr<scm::CScmWorkbenchTool> m_scm;
 	std::unique_ptr<search::CSearchWorkbenchTool> m_search;
+	std::unique_ptr<extensions::CExtensionsWorkbenchTool> m_extensions;
 	std::vector<Page> m_pages;
 	HWND m_owner = nullptr;
 	bool m_outlineExpanded = true;

@@ -1,0 +1,15 @@
+{
+  "name": "AWS CloudFormation",
+  "scopeName": "source.cloudformation",
+  "patterns": [
+    { "match": "^[ \\t]*#.*$", "name": "comment.line.number-sign.cloudformation" },
+    { "match": "(?i)\\b(AWSTemplateFormatVersion|Transform|Description|Metadata|Parameters|Mappings|Conditions|Resources|Outputs|Type|Properties|DependsOn|DeletionPolicy|UpdateReplacePolicy|CreationPolicy|UpdatePolicy)\\b(?=\\s*[:\"])", "name": "support.type.property-name.cloudformation" },
+    { "match": "!(Ref|Sub|GetAtt|Join|Select|Split|FindInMap|ImportValue|GetAZs|If|Equals|And|Or|Not|Condition|Base64|Cidr|Transform)\\b", "name": "support.function.intrinsic.cloudformation" },
+    { "match": "\\bFn::(Base64|Cidr|FindInMap|ForEach|GetAtt|GetAZs|If|ImportValue|Join|Length|Select|Split|Sub|ToJsonString|Transform)\\b|\\bRef\\b", "name": "support.function.intrinsic.cloudformation" },
+    { "match": "\\bAWS::[A-Za-z0-9:]+\\b", "name": "entity.name.type.resource.cloudformation" },
+    { "begin": "\"", "end": "\"", "name": "string.quoted.double.cloudformation", "patterns": [ { "match": "\\$\\{[^}]+\\}", "name": "variable.other.interpolation.cloudformation" }, { "match": "\\\\.", "name": "constant.character.escape.cloudformation" } ] },
+    { "begin": "'", "end": "'", "name": "string.quoted.single.cloudformation" },
+    { "match": "(?i)\\b(true|false|null|yes|no)\\b", "name": "constant.language.cloudformation" },
+    { "match": "(?<![A-Za-z0-9_.-])-?\\d+(?:\\.\\d+)?(?![A-Za-z0-9_.-])", "name": "constant.numeric.cloudformation" }
+  ]
+}

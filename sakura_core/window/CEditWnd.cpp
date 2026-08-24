@@ -78,6 +78,7 @@
 #include "terminal/model/TerminalModel.h"
 #include "theme/CThemeService.h"
 #include "theme/CColorThemeRegistry.h"
+#include "senp/SenpRuntimeService.h"
 #include "update/UpdateComposition.h"
 #include "update/IUpdateService.h"
 #include "config/ConfigurationTypes.h"
@@ -685,13 +686,14 @@ constexpr int kSideBarDropEdgeDip = 48;
 	@brief The built-in ViewContainers the native side bar can actually open.
 
 	The layout registry declares VS Code's full built-in set, Search and Run and Debug included,
-	but `CViewContainerPages` has no page for those two yet. Projecting them onto the Activity
+	but `CViewContainerPages` has no page for Run and Debug yet. Projecting it onto the Activity
 	Bar would add buttons that open nothing, so the composition passes only what it can show.
 */
 constexpr std::array kRenderableBuiltinContainers{
 	std::string_view(workbench::layout::ids::viewContainer::Explorer),
 	std::string_view(workbench::layout::ids::viewContainer::Search),
 	std::string_view(workbench::layout::ids::viewContainer::SourceControl),
+	std::string_view(workbench::layout::ids::viewContainer::Extensions),
 };
 
 [[nodiscard]] std::wstring LocalizedWorkbenchString(UINT resourceId)
@@ -1209,6 +1211,8 @@ struct CEditWnd::ThemeConfigurationGate final {
 			// rather than at the next Source Control publication.
 			return change.key == "workbench.colorTheme" || change.key == "workbench.iconTheme"
 				|| change.key == "workbench.activityBar.location"
+				|| change.key.starts_with("editor.minimap.")
+				|| change.key == "editor.guides.indentation"
 				|| change.key == "scm.countBadge"
 				|| change.key == "terminal.integrated.tabs.title"
 				|| change.key == "terminal.integrated.tabs.description"
@@ -2049,6 +2053,16 @@ void CEditWnd::ExecuteWorkbenchFileFunction(EFunctionCode functionCode)
 	DispatchEditorFunction(functionCode);
 }
 
+senp::ISenpRuntimeService* CEditWnd::GetSenpRuntime() const noexcept
+{
+	return m_workbenchRuntime == nullptr ? nullptr : m_workbenchRuntime->ExtensionRuntime();
+}
+
+senp::ISenpLanguageService* CEditWnd::GetSenpLanguageService() const noexcept
+{
+	return m_workbenchRuntime == nullptr ? nullptr : m_workbenchRuntime->ExtensionLanguages();
+}
+
 void CEditWnd::RefreshEditorCorePresentation()
 {
 	if (m_editorServiceAdapter == nullptr) return;
@@ -2602,6 +2616,17 @@ bool CEditWnd::InitializeWorkbench()
 	m_outlineWorkbenchTool = m_viewContainerPages->Outline();
 	m_scmTool = m_viewContainerPages->SourceControl();
 	m_searchTool = m_viewContainerPages->Search();
+	m_extensionsTool = m_viewContainerPages->Extensions();
+	if (m_extensionsTool != nullptr && m_workbenchRuntime != nullptr) {
+		m_extensionsTool->SetExtensionsChangedCallback([this] {
+			// Rebuild each extension-owned projection before repainting. Package
+			// management remains the only source of enabled/installed state.
+			if (auto* runtime = GetSenpRuntime()) runtime->NotifyExtensionsChanged();
+			if (auto* languages = GetSenpLanguageService()) languages->NotifyExtensionsChanged();
+			Views_Redraw();
+		});
+		m_extensionsTool->SetManagementService(m_workbenchRuntime->Extensions());
+	}
 	const auto workspaceRoot = GetSemanticWorkspaceRoot();
 	m_explorerTool->SetRoot(workspaceRoot);
 	m_scmTool->SetRoot(workspaceRoot);
@@ -2822,6 +2847,8 @@ bool CEditWnd::InitializeWorkbench()
 				? std::string_view("workbench.action.toggleSidebarVisibility")
 				: containerId == workbench::viewcontainer::pageIds::Explorer
 					? std::string_view("workbench.view.explorer")
+					: containerId == workbench::viewcontainer::pageIds::Extensions
+						? std::string_view("workbench.view.extensions")
 					: std::string_view();
 			if (!commandId.empty()) {
 				bool handled = false;
@@ -2844,6 +2871,7 @@ bool CEditWnd::InitializeWorkbench()
 			if (containerId == pageIds::Explorer) viewId = workbench::layout::ids::view::Explorer;
 			else if (containerId == pageIds::Search) viewId = workbench::layout::ids::view::Search;
 			else if (containerId == pageIds::SourceControl) viewId = workbench::layout::ids::view::SourceControl;
+			else if (containerId == pageIds::Extensions) viewId = workbench::layout::ids::view::ExtensionsInstalled;
 			if (!viewId.empty()) static_cast<void>(ActivateBuiltinWorkbenchView(viewId, true));
 		});
 	const auto showGlobalAction = [this](std::string_view actionId, POINT screenPoint) {
@@ -2902,6 +2930,8 @@ bool CEditWnd::InitializeWorkbench()
 		m_auxiliaryActivityBar.reset();
 	}
 	ApplyActivityBarLocationSetting();
+	ApplyMiniMapSettings();
+	ApplyIndentGuideSettings();
 	// The strip is empty until it is projected, and the first layout commit can be far away
 	// (or never arrive at all on the legacy path), so seed it as soon as the window exists.
 	SyncViewContainers(nullptr);
@@ -3182,6 +3212,13 @@ bool CEditWnd::InitializeWorkbench()
 						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} }
 					: workbench::commands::WorkbenchCommandExecutionResult{
 						workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "explorer layout command failed" };
+			},
+			.showExtensions = [this]() {
+				return ExecuteShowExtensionsCommand()
+					? workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} }
+					: workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "extensions layout command failed" };
 			},
 			.showProblems = [this]() {
 				return ExecuteShowProblemsCommand()
@@ -5629,6 +5666,8 @@ void CEditWnd::CloseWorkbench() noexcept
 	m_explorerTool = nullptr;
 	m_outlineWorkbenchTool = nullptr;
 	m_scmTool = nullptr;
+	m_searchTool = nullptr;
+	m_extensionsTool = nullptr;
 	m_terminalTool = nullptr;
 	m_bottomWorkbenchMaximized = false;
 	m_workspaceContext.reset();
@@ -5696,6 +5735,7 @@ bool CEditWnd::ApplyWorkbenchTheme(std::wstring_view previewTheme)
 		if (!theme::CThemeService::IsHighContrastActive()) {
 			theme::CThemeService::SetActiveColorThemePalette(resolvedTheme->palette);
 			theme::CThemeService::SetActiveColorThemeSyntaxPalette(resolvedTheme->syntaxPalette);
+			theme::CThemeService::SetActiveColorThemeTokenColors(resolvedTheme->tokenColors);
 		}
 		mode = theme::CColorThemeRegistry::ModeForKind(resolvedTheme->info.kind);
 		lightColorTheme = resolvedTheme->info.kind == theme::ColorThemeKind::Light;
@@ -5969,6 +6009,8 @@ std::string_view CEditWnd::SidebarPageForActiveSurface(
 		return pageIds::Search;
 	case workbench::win32::BuiltinActiveSurface::SourceControl:
 		return pageIds::SourceControl;
+	case workbench::win32::BuiltinActiveSurface::Extensions:
+		return pageIds::Extensions;
 	default:
 		break;
 	}
@@ -5981,7 +6023,9 @@ void CEditWnd::ApplyBuiltinWorkbenchFocus(
 	if (projection.focus) {
 		switch (*projection.focus) {
 		case workbench::win32::BuiltinActiveSurface::Explorer:
+		case workbench::win32::BuiltinActiveSurface::Search:
 		case workbench::win32::BuiltinActiveSurface::SourceControl:
+		case workbench::win32::BuiltinActiveSurface::Extensions:
 		{
 			// Focus follows the container, and the container decides which Part hosts it.
 			const auto page = SidebarPageForActiveSurface(*projection.focus);
@@ -7251,6 +7295,7 @@ bool CEditWnd::ActivateBuiltinWorkbenchView(std::string_view viewId, bool reques
 		|| viewId == workbench::layout::ids::view::Outline
 		|| viewId == workbench::layout::ids::view::Search
 		|| viewId == workbench::layout::ids::view::SourceControl
+		|| viewId == workbench::layout::ids::view::ExtensionsInstalled
 		|| viewId == workbench::layout::ids::view::Terminal
 		|| viewId == workbench::layout::ids::view::Problems
 		|| viewId == workbench::layout::ids::view::Output
@@ -7808,6 +7853,9 @@ void CEditWnd::ActivateSidebarPage(const std::string_view containerId, bool togg
 	} else if (containerId == pageIds::SourceControl) {
 		requestedView = workbench::layout::ids::view::SourceControl;
 		legacyTool = WORKBENCH_TOOL_SCM;
+	} else if (containerId == pageIds::Extensions) {
+		requestedView = workbench::layout::ids::view::ExtensionsInstalled;
+		if (m_workbenchRuntime == nullptr) return;
 	} else if (m_workbenchRuntime == nullptr) {
 		// The legacy path has no registry to hold a contributed container, so there is nothing
 		// it could activate and mirroring it onto a built-in tool would be a lie.
@@ -7894,14 +7942,29 @@ void CEditWnd::RefreshSidebarTitles()
 		if (containerId.empty() || m_viewContainerPages == nullptr) return {};
 		return m_viewContainerPages->PageTitle(containerId);
 	};
+	const auto menuOf = [this](std::string_view containerId) {
+		std::vector<workbench::CWorkbenchPanelHost::HeaderMenuItem> items;
+		if (containerId != workbench::viewcontainer::pageIds::Extensions) return items;
+		items.push_back({
+			.title = L"Install from .senp...",
+			.enabled = m_extensionsTool != nullptr && m_extensionsTool->CanInstallDeveloperPackage(),
+			.invoke = [this]() {
+				if (m_extensionsTool != nullptr) m_extensionsTool->InstallDeveloperPackage();
+			},
+		});
+		return items;
+	};
 	if (m_leftWorkbenchPanel && m_sidebarHost != nullptr) {
-		m_leftWorkbenchPanel->SetTitle(titleOf(m_sidebarHost->ActivePage()));
+		const auto page = m_sidebarHost->ActivePage();
+		m_leftWorkbenchPanel->SetTitle(titleOf(page));
+		m_leftWorkbenchPanel->SetHeaderMenu(menuOf(page));
 	}
 	if (m_rightWorkbenchPanel && m_auxiliaryBarHost != nullptr) {
 		const auto page = m_auxiliaryBarHost->ActivePage();
 		m_rightWorkbenchPanel->SetTitle(page.empty()
 			? LocalizedWorkbenchString(STR_WORKBENCH_SECONDARY_SIDEBAR_TITLE)
 			: titleOf(page));
+		m_rightWorkbenchPanel->SetHeaderMenu(menuOf(page));
 	}
 }
 
@@ -8105,6 +8168,22 @@ config::ConfigurationTarget CEditWnd::BuildWorkbenchConfigurationTarget() const
 	return target;
 }
 
+bool CEditWnd::ExecuteShowExtensionsCommand()
+{
+	if (m_workbenchRuntime == nullptr) return false;
+	try {
+		if (!ActivateBuiltinWorkbenchView(workbench::layout::ids::view::ExtensionsInstalled, true)) return false;
+		bool mirrorChanged = false;
+		if (!ApplyCurrentWorkbenchLayoutState(true, false, &mirrorChanged)) return false;
+		if (m_extensionsTool != nullptr) m_extensionsTool->Refresh();
+		if (mirrorChanged) BroadcastWorkbenchSettings();
+		return true;
+	}
+	catch (...) {
+		return false;
+	}
+}
+
 workbench::ActivityBarLocation CEditWnd::ReadActivityBarLocationSetting() const
 {
 	if (m_workbenchRuntime == nullptr) return workbench::ActivityBarLocation::Default;
@@ -8202,6 +8281,210 @@ bool CEditWnd::SetActivityBarLocation(workbench::ActivityBarLocation location, b
 void CEditWnd::ApplyActivityBarLocationSetting()
 {
 	static_cast<void>(SetActivityBarLocation(ReadActivityBarLocationSetting(), false));
+}
+
+minimap::Options CEditWnd::ReadMiniMapSettings() const
+{
+	minimap::Options options;
+	if (m_workbenchRuntime == nullptr) {
+		options.enabled = m_pShareData->m_Common.m_sWindow.m_bDispMiniMap;
+		return options;
+	}
+	try {
+		const std::vector<std::string> keys{
+			"editor.minimap.enabled",
+			"editor.minimap.autohide",
+			"editor.minimap.side",
+			"editor.minimap.size",
+			"editor.minimap.showSlider",
+			"editor.minimap.renderCharacters",
+			"editor.minimap.maxColumn",
+			"editor.minimap.scale",
+		};
+		const auto read = m_workbenchRuntime->Configuration().ReadSnapshot(
+			keys, BuildWorkbenchConfigurationTarget());
+		if (!read.snapshot || read.snapshot->values.size() != keys.size()) return options;
+		const auto& values = read.snapshot->values;
+		const auto boolAt = [&values](std::size_t index, bool fallback) {
+			if (const auto* value = std::get_if<bool>(&values[index].Value())) return *value;
+			return fallback;
+		};
+		const auto integerAt = [&values](std::size_t index, int fallback) {
+			if (const auto* value = std::get_if<std::int64_t>(&values[index].Value())) {
+				return static_cast<int>(*value);
+			}
+			return fallback;
+		};
+		const auto stringAt = [&values](std::size_t index) -> std::wstring_view {
+			if (const auto* value = std::get_if<std::wstring>(&values[index].Value())) return *value;
+			return {};
+		};
+		options.enabled = boolAt(0, options.enabled);
+		const auto autohide = stringAt(1);
+		if (autohide == L"mouseover") options.autohide = minimap::AutoHide::MouseOver;
+		else if (autohide == L"scroll") options.autohide = minimap::AutoHide::Scroll;
+		options.side = stringAt(2) == L"left" ? minimap::Side::Left : minimap::Side::Right;
+		const auto size = stringAt(3);
+		if (size == L"fill") options.size = minimap::Size::Fill;
+		else if (size == L"fit") options.size = minimap::Size::Fit;
+		options.showSlider = stringAt(4) == L"always"
+			? minimap::ShowSlider::Always : minimap::ShowSlider::MouseOver;
+		options.renderCharacters = boolAt(5, options.renderCharacters);
+		options.maxColumn = std::clamp(integerAt(6, options.maxColumn), 1, 10000);
+		options.scale = std::clamp(integerAt(7, options.scale), 1, 3);
+	}
+	catch (...) {
+		return minimap::Options{};
+	}
+	return options;
+}
+
+void CEditWnd::ApplyMiniMapSettings()
+{
+	const auto next = ReadMiniMapSettings();
+	const bool layoutChanged = next.enabled != m_miniMapOptions.enabled
+		|| next.side != m_miniMapOptions.side
+		|| next.maxColumn != m_miniMapOptions.maxColumn
+		|| next.scale != m_miniMapOptions.scale;
+	m_miniMapOptions = next;
+	m_pShareData->m_Common.m_sWindow.m_bDispMiniMap = next.enabled;
+	LayoutMiniMap();
+	if (m_cMiniMapView.GetHwnd() != nullptr) {
+		m_cMiniMapView.SetMiniMapOptions(next);
+	}
+	if (layoutChanged && m_dispatchReady && GetHwnd() != nullptr) {
+		EndLayoutBars();
+	}
+}
+
+void CEditWnd::ApplyIndentGuideSettings()
+{
+	bool enabled = true;
+	if( m_workbenchRuntime != nullptr ){
+		try {
+			const auto lookup = m_workbenchRuntime->Configuration().GetValue(
+				"editor.guides.indentation", BuildWorkbenchConfigurationTarget());
+			if( lookup.value ){
+				if( const auto* value = std::get_if<bool>(&lookup.value->Value()) ){
+					enabled = *value;
+				}
+			}
+		}
+		catch (...) {
+			enabled = true;
+		}
+	}
+	m_indentGuidesEnabled = enabled;
+	for( const auto& view : m_pcEditViewArr ){
+		if( view != nullptr ) view->SetIndentGuidesEnabled(enabled);
+	}
+}
+
+bool CEditWnd::PersistMiniMapContextSelection(
+	minimap::ContextCommand command, const minimap::Options& options)
+{
+	if (m_workbenchRuntime == nullptr) return true;
+	std::string key;
+	config::ConfigurationValue value;
+	switch (command) {
+	case minimap::ContextCommand::ToggleEnabled:
+		key = "editor.minimap.enabled";
+		value = config::ConfigurationValue(options.enabled);
+		break;
+	case minimap::ContextCommand::ToggleRenderCharacters:
+		key = "editor.minimap.renderCharacters";
+		value = config::ConfigurationValue(options.renderCharacters);
+		break;
+	case minimap::ContextCommand::SizeProportional:
+		key = "editor.minimap.size";
+		value = config::ConfigurationValue(L"proportional");
+		break;
+	case minimap::ContextCommand::SizeFill:
+		key = "editor.minimap.size";
+		value = config::ConfigurationValue(L"fill");
+		break;
+	case minimap::ContextCommand::SizeFit:
+		key = "editor.minimap.size";
+		value = config::ConfigurationValue(L"fit");
+		break;
+	case minimap::ContextCommand::SliderMouseOver:
+		key = "editor.minimap.showSlider";
+		value = config::ConfigurationValue(L"mouseover");
+		break;
+	case minimap::ContextCommand::SliderAlways:
+		key = "editor.minimap.showSlider";
+		value = config::ConfigurationValue(L"always");
+		break;
+	case minimap::ContextCommand::SideRight:
+		key = "editor.minimap.side";
+		value = config::ConfigurationValue(L"right");
+		break;
+	case minimap::ContextCommand::SideLeft:
+		key = "editor.minimap.side";
+		value = config::ConfigurationValue(L"left");
+		break;
+	}
+	if (key.empty()) return false;
+	try {
+		const auto& profile = m_workbenchRuntime->Bootstrap().UserDataProfile();
+		config::ConfigurationTarget sourceTarget;
+		sourceTarget.profileId = profile.SelectedProfileId();
+		const config::ConfigurationSource source{
+			config::EConfigurationScope::Profile, sourceTarget, "profile.settings", 0 };
+		config::editing::ConfigurationDocumentEditTarget editTarget;
+		editTarget.scope = config::editing::EConfigurationDocumentScope::Profile;
+		editTarget.target = sourceTarget;
+		editTarget.resource = profile.Resources().Settings();
+		const config::SettingsWritebackRequest request{
+			.edit = {
+				.target = std::move(editTarget),
+				.key = std::move(key),
+				.value = std::move(value),
+			},
+			.documentKey = "profile.settings",
+			.source = source,
+		};
+		return m_workbenchRuntime->WriteSetting(request).Succeeded();
+	}
+	catch (...) {
+		return false;
+	}
+}
+
+void CEditWnd::CommitMiniMapOptions(const minimap::Options& options)
+{
+	const bool layoutChanged = options.enabled != m_miniMapOptions.enabled
+		|| options.side != m_miniMapOptions.side
+		|| options.maxColumn != m_miniMapOptions.maxColumn
+		|| options.scale != m_miniMapOptions.scale;
+	m_miniMapOptions = options;
+	m_pShareData->m_Common.m_sWindow.m_bDispMiniMap = options.enabled;
+	LayoutMiniMap();
+	if (m_cMiniMapView.GetHwnd() != nullptr) {
+		m_cMiniMapView.SetMiniMapOptions(m_miniMapOptions);
+	}
+	if (layoutChanged && m_dispatchReady && GetHwnd() != nullptr) EndLayoutBars();
+}
+
+bool CEditWnd::SetMiniMapEnabled(bool enabled, bool persist)
+{
+	if (m_miniMapOptions.enabled == enabled) return true;
+	auto next = m_miniMapOptions;
+	next.enabled = enabled;
+	if (persist && !PersistMiniMapContextSelection(
+		minimap::ContextCommand::ToggleEnabled, next)) return false;
+	CommitMiniMapOptions(next);
+	return true;
+}
+
+bool CEditWnd::ApplyMiniMapContextCommand(
+	minimap::ContextCommand command, bool persist)
+{
+	const auto next = minimap::ApplyContextCommand(m_miniMapOptions, command);
+	if (next == m_miniMapOptions) return true;
+	if (persist && !PersistMiniMapContextSelection(command, next)) return false;
+	CommitMiniMapOptions(next);
+	return true;
 }
 
 void CEditWnd::ApplyScmInputLineCountSetting()
@@ -8530,6 +8813,7 @@ void CEditWnd::MoveViewContainerToEdge(const std::string_view containerId,
 		if (containerId == pageIds::Explorer) viewId = workbench::layout::ids::view::Explorer;
 		else if (containerId == pageIds::Search) viewId = workbench::layout::ids::view::Search;
 		else if (containerId == pageIds::SourceControl) viewId = workbench::layout::ids::view::SourceControl;
+		else if (containerId == pageIds::Extensions) viewId = workbench::layout::ids::view::ExtensionsInstalled;
 		if (viewId.empty()) return;
 		const bool activated = ActivateBuiltinWorkbenchView(viewId, true);
 		if (!activated) return;
@@ -9337,12 +9621,15 @@ void CEditWnd::UpdateMarkdownPreviewIfNeeded()
 }
 
 RECT CEditWnd::LayoutMarkdownPreview(int left, int top, int right, int bottom, unsigned int dpi,
-	int minimapWidth)
+	int minimapWidth, bool minimapOnLeft)
 {
 	m_markdownPreviewMinimapWidth = std::max(0, minimapWidth);
+	m_markdownPreviewMinimapOnLeft = minimapOnLeft;
 	const RECT previousDivider = m_markdownPreviewDivider;
 	// Where the minimap ends up unless a sibling preview claims the right side.
-	RECT minimapBounds{ right - minimapWidth, top, right, bottom };
+	RECT minimapBounds = minimapOnLeft
+		? RECT{ left, top, left + minimapWidth, bottom }
+		: RECT{ right - minimapWidth, top, right, bottom };
 	if (!HasActiveEditorInput()) {
 		m_markdownPreviewDivider = {};
 		if (GetHwnd() != nullptr) ::InvalidateRect(GetHwnd(), &previousDivider, FALSE);
@@ -9392,8 +9679,15 @@ RECT CEditWnd::LayoutMarkdownPreview(int left, int top, int right, int bottom, u
 	// The minimap travels with the editor half, so the view keeps the region left
 	// of it. The split was calculated over the region including the minimap's
 	// column, which is why no width is lost when the preview is hidden.
-	minimapBounds = { layout.editorRight - minimapWidth, top, layout.editorRight, bottom };
-	const int editorViewRight = std::max(layout.editorLeft, layout.editorRight - minimapWidth);
+	minimapBounds = minimapOnLeft
+		? RECT{ layout.editorLeft, top, layout.editorLeft + minimapWidth, bottom }
+		: RECT{ layout.editorRight - minimapWidth, top, layout.editorRight, bottom };
+	const int editorViewLeft = minimapOnLeft
+		? std::min(layout.editorRight, layout.editorLeft + minimapWidth)
+		: layout.editorLeft;
+	const int editorViewRight = minimapOnLeft
+		? layout.editorRight
+		: std::max(layout.editorLeft, layout.editorRight - minimapWidth);
 	if (paneMode != markdown::PreviewPaneMode::NativeSibling || layout.PreviewWidth() == 0) {
 		m_markdownPreviewDivider = {};
 	}
@@ -9402,8 +9696,8 @@ RECT CEditWnd::LayoutMarkdownPreview(int left, int top, int right, int bottom, u
 		::InvalidateRect(GetHwnd(), &m_markdownPreviewDivider, FALSE);
 	}
 	if (const HWND splitter = m_cSplitterWnd.GetHwnd(); splitter != nullptr) {
-		(void)PositionChildForFrame(splitter, layout.editorLeft, top,
-			std::max(0, editorViewRight - layout.editorLeft), std::max(0, bottom - top));
+		(void)PositionChildForFrame(splitter, editorViewLeft, top,
+			std::max(0, editorViewRight - editorViewLeft), std::max(0, bottom - top));
 		::ShowWindow(splitter, paneMode == markdown::PreviewPaneMode::Replacement || m_pPrintPreview
 			? SW_HIDE : SW_SHOWNA);
 	}
@@ -9456,7 +9750,7 @@ void CEditWnd::RelayoutForMarkdownPreviewDivider()
 	// every Part and synchronously replay all accessory layout on mouse-up.
 	const RECT minimapBounds = LayoutMarkdownPreview(region.left, region.top,
 		region.right, region.bottom, ::GetDpiForWindow(GetHwnd()),
-		m_markdownPreviewMinimapWidth);
+		m_markdownPreviewMinimapWidth, m_markdownPreviewMinimapOnLeft);
 	if (const HWND minimap = m_cMiniMapView.GetHwnd(); minimap != nullptr) {
 		(void)PositionChildForFrame(minimap, minimapBounds.left, minimapBounds.top,
 			std::max(0L, minimapBounds.right - minimapBounds.left),
@@ -10680,10 +10974,14 @@ void CEditWnd::LayoutTabBar( void )
 */
 void CEditWnd::LayoutMiniMap( void )
 {
-	if( m_pShareData->m_Common.m_sWindow.m_bDispMiniMap ){	/* タブバーを表示する */
+	const bool enabled = m_workbenchRuntime != nullptr
+		? m_miniMapOptions.enabled
+		: m_pShareData->m_Common.m_sWindow.m_bDispMiniMap;
+	if( enabled ){
 		if( !m_cMiniMapView.GetHwnd() ){
 			m_cMiniMapView.Create( GetHwnd() );
 		}
+		if( m_cMiniMapView.GetHwnd() ) m_cMiniMapView.SetMiniMapOptions(m_miniMapOptions);
 	}else{
 		if( m_cMiniMapView.GetHwnd() ){
 			m_cMiniMapView.Close();
@@ -10877,6 +11175,8 @@ LRESULT CEditWnd::DispatchEvent(
 		}
 		(void)ApplyWorkbenchTheme();
 		ApplyActivityBarLocationSetting();
+		ApplyMiniMapSettings();
+		ApplyIndentGuideSettings();
 		// Re-read `scm.countBadge`; the count itself has not moved, but whether it
 		// is shown at all may have.
 		SyncScmActivityBadge();
@@ -13216,13 +13516,14 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 	layoutRequest.bottomPaneMaximized = m_bottomWorkbenchMaximized
 		&& layoutRequest.bottomPane != workbench::WorkbenchPanelState::Hidden;
 	layoutRequest.showMinimap = HasActiveEditorInput() && m_cMiniMapView.GetHwnd() != nullptr;
+	layoutRequest.minimapOnLeft = m_miniMapOptions.side == minimap::Side::Left;
 	layoutRequest.leftPaneWidthDip = m_leftWorkbenchPanel
 		? m_leftWorkbenchPanel->GetPendingExtentDip() : m_pShareData->m_Common.m_sWorkbench.m_nLeftPanelExtent96;
 	layoutRequest.rightPaneWidthDip = m_rightWorkbenchPanel
 		? m_rightWorkbenchPanel->GetPendingExtentDip() : m_pShareData->m_Common.m_sWorkbench.m_nAuxiliaryBarExtent96;
 	layoutRequest.bottomPaneHeightDip = m_bottomWorkbenchPanel
 		? m_bottomWorkbenchPanel->GetPendingExtentDip() : m_pShareData->m_Common.m_sWorkbench.m_nBottomPanelExtent96;
-	layoutRequest.minimapWidthDip = GetDllShareData().m_Common.m_sWindow.m_nMiniMapWidth;
+	layoutRequest.minimapWidthDip = minimap::PreferredWidthDip(m_miniMapOptions);
 
 	// The chrome bands — title bar and top accessory — and the central
 	// column's horizontal extent are all decided above the document tabs, so this
@@ -13405,8 +13706,13 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 	// where that split leaves it. Positioning it from `layout.minimap` here would
 	// pin it to the frame's right edge, on the far side of a sibling preview.
 	const int minimapWidth = layout.minimap.Width();
-	const RECT minimapBounds = LayoutMarkdownPreview(editorBounds.left, editorBounds.top,
-		editorBounds.right + minimapWidth, editorBounds.bottom, physicalDpi, minimapWidth);
+	const int editorGroupLeft = layoutRequest.minimapOnLeft
+		? editorBounds.left - minimapWidth : editorBounds.left;
+	const int editorGroupRight = layoutRequest.minimapOnLeft
+		? editorBounds.right : editorBounds.right + minimapWidth;
+	const RECT minimapBounds = LayoutMarkdownPreview(editorGroupLeft, editorBounds.top,
+		editorGroupRight, editorBounds.bottom, physicalDpi, minimapWidth,
+		layoutRequest.minimapOnLeft);
 
 	if( m_cMiniMapView.GetHwnd() ){
 		::ShowWindow(m_cMiniMapView.GetHwnd(),
@@ -14678,6 +14984,7 @@ bool CEditWnd::CreateEditViewBySplit(int nViewCount )
 			assert( nullptr == m_pcEditViewArr[i] );
 			m_pcEditViewArr[i] = std::make_unique<CEditView>();
 			m_pcEditViewArr[i]->Create( m_cSplitterWnd.GetHwnd(), GetDocument(), i, FALSE, false );
+			m_pcEditViewArr[i]->SetIndentGuidesEnabled(m_indentGuidesEnabled);
 		}
 		m_nEditViewCount = nViewCount;
 		std::vector<HWND> hWndArr;

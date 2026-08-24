@@ -27,6 +27,7 @@ constexpr std::array kBuiltinCodicons{
 	std::pair{ layout::ids::viewContainer::Search, std::wstring_view(L"search") },
 	std::pair{ layout::ids::viewContainer::RunAndDebug, std::wstring_view(L"debug-alt") },
 	std::pair{ layout::ids::viewContainer::SourceControl, std::wstring_view(L"source-control") },
+	std::pair{ layout::ids::viewContainer::Extensions, std::wstring_view(L"extensions") },
 };
 
 } // namespace

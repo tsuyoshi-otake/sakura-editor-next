@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "sakura-infrastructure-language-basics",
+  "displayName": "Infrastructure Language Basics",
+  "version": "0.1.0",
+  "publisher": "sakura.builtin",
+  "description": "Docker, Terraform/HCL, Bicep, CloudFormation, AWS CDK, Kubernetes, Helm, and CI configuration syntax highlighting.",
+  "engines": { "sakura": ">=0.1.0" },
+  "contributes": {
+    "languages": [
+      { "id": "dockerfile", "aliases": ["Dockerfile", "Containerfile"], "extensions": [".dockerfile", ".containerfile"], "filenames": ["Dockerfile", "Containerfile"], "filenamePatterns": ["Dockerfile.*", "Containerfile.*"] },
+      { "id": "terraform", "aliases": ["Terraform", "HCL"], "extensions": [".tf", ".tfvars", ".hcl"], "filenames": [".terraformrc", "terraform.rc"] },
+      { "id": "bicep", "aliases": ["Bicep", "Azure Bicep"], "extensions": [".bicep", ".bicepparam"] },
+      { "id": "cloudformation", "aliases": ["AWS CloudFormation", "CloudFormation"], "filenames": ["template.yaml", "template.yml", "sam-template.yaml", "sam-template.yml"], "filenamePatterns": ["*cloudformation*.yaml", "*cloudformation*.yml", "*.template.yaml", "*.template.yml", "*.template.json"] },
+      { "id": "aws-cdk-config", "aliases": ["AWS CDK Configuration", "CDK Config"], "filenames": ["cdk.json", "cdk.context.json"] },
+      {
+        "id": "infrastructure-yaml",
+        "aliases": ["Infrastructure YAML", "Docker Compose", "Kubernetes", "Helm", "GitHub Actions", "Azure Pipelines"],
+        "filenames": ["compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml", "kustomization.yaml", "kustomization.yml", "Chart.yaml", "Chart.yml", "values.yaml", "values.yml", "action.yaml", "action.yml", "azure-pipelines.yaml", "azure-pipelines.yml"],
+        "filenamePatterns": ["docker-compose.*.yaml", "docker-compose.*.yml", "*.k8s.yaml", "*.k8s.yml", "*.kubernetes.yaml", "*.kubernetes.yml", "*.helm.yaml", "*.helm.yml", "*.github*workflows*.yaml", "*.github*workflows*.yml", "azure-pipelines-*.yaml", "azure-pipelines-*.yml"]
+      }
+    ],
+    "grammars": [
+      { "language": "dockerfile", "scopeName": "source.dockerfile", "path": "assets/syntaxes/docker.tmLanguage.json" },
+      { "language": "terraform", "scopeName": "source.hcl.terraform", "path": "assets/syntaxes/terraform.tmLanguage.json" },
+      { "language": "bicep", "scopeName": "source.bicep", "path": "assets/syntaxes/bicep.tmLanguage.json" },
+      { "language": "cloudformation", "scopeName": "source.cloudformation", "path": "assets/syntaxes/cloudformation.tmLanguage.json" },
+      { "language": "aws-cdk-config", "scopeName": "source.aws-cdk-config", "path": "assets/syntaxes/aws-cdk-config.tmLanguage.json" },
+      { "language": "infrastructure-yaml", "scopeName": "source.infrastructure.yaml", "path": "assets/syntaxes/infrastructure-yaml.tmLanguage.json" }
+    ]
+  }
+}
