@@ -664,6 +664,7 @@
 	<ClInclude Include="..\sakura_core\workbench\viewcontainer\CViewContainerPages.h" />
 	<ClInclude Include="..\sakura_core\workbench\panel\CBottomPanelTool.h" />
 	<ClInclude Include="..\sakura_core\workbench\outline\COutlineWorkbenchTool.h" />
+	<ClInclude Include="..\sakura_core\workbench\account\AccountDiscovery.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitCommandRunner.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitOutputChannel.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitBranchCommands.h" />
@@ -1336,6 +1337,8 @@
 	<ClCompile Include="..\sakura_core\workbench\outline\COutlineWorkbenchTool.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\outline\OutlineParserWorker.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\outline\OutlineSnapshotParser.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\account\AccountDiscovery.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\account\GhCommandRunner.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\scm\GitCommandRunner.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\scm\GitOutputChannel.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\scm\GitBranchCommands.cpp" />

@@ -13,6 +13,9 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <string>
+#include <string_view>
+#include <vector>
 #include <utility>
 
 #include "theme/CThemeService.h"
@@ -96,7 +99,7 @@ struct CustomFramePopupPlacement final {
 
 //! Calculates the one coordinate/flag combination used by the custom-frame Account
 //! and Manage menus. `anchorScreen` is in screen coordinates. For ActivityBar placement
-//! its right/top edge is the button's right/top edge; for TitleBar placement the full
+//! its right/bottom edge is the button's right/bottom edge; for TitleBar placement the full
 //! button rectangle is used. `rightAlign` applies only to TitleBar placement.
 //! `popupSize` is the measured (or conservative estimated) native menu extent.
 [[nodiscard]] CustomFramePopupPlacement CalculateCustomFramePopupPlacement(
@@ -210,6 +213,59 @@ using CustomFrameManageActionCallback = std::function<void(CustomFrameManageActi
 //! exactly as upstream's `updateTitleBarEntry.ts` does.
 using CustomFrameUpdateIndicatorCallback = std::function<void()>;
 
+//! Presentation state for the read-only Account popup. Account providers are an
+//! integration boundary owned by the composition root; the frame only projects
+//! the snapshot it is given and never invents authentication commands.
+enum class CustomFrameAccountMenuState : unsigned char {
+	Absent,
+	Loading,
+	Available,
+	Unavailable,
+};
+
+//! One account/provider parent in the Account popup. `label` is already localized
+//! by the producer (for example, "account label (provider label)"). Every detail
+//! row is deliberately read-only and is rendered disabled by the native adapter.
+struct CustomFrameAccountMenuParent final {
+	std::wstring label;
+	std::vector<std::wstring> detailRows;
+};
+
+//! HWND-free input owned by the frame controller. The fallback labels are supplied
+//! by the composition root so loading/unavailable states remain explicit and
+//! localized even though the frame has no account-provider knowledge.
+struct CustomFrameAccountMenuModel final {
+	CustomFrameAccountMenuState state = CustomFrameAccountMenuState::Absent;
+	std::vector<CustomFrameAccountMenuParent> parents;
+	std::wstring absentFallback;
+	std::wstring loadingFallback;
+	std::wstring unavailableFallback;
+};
+
+//! The validated, pure menu projection consumed by the native HMENU builder.
+//! Empty labels/details are removed; an Available snapshot with no usable parent
+//! becomes Unavailable rather than producing an empty or actionable popup.
+struct CustomFrameAccountMenuProjection final {
+	CustomFrameAccountMenuState state = CustomFrameAccountMenuState::Absent;
+	std::vector<CustomFrameAccountMenuParent> parents;
+	std::wstring fallbackLabel;
+};
+
+//! Projects account-provider presentation data without HWND/HMENU side effects.
+[[nodiscard]] CustomFrameAccountMenuProjection ProjectCustomFrameAccountMenu(
+	const CustomFrameAccountMenuModel& model);
+
+//! Converts provider-owned display text to one safe Win32 menu row. Account data
+//! has no accelerator semantics: ampersands are escaped as literal `&&`, and
+//! embedded control characters/newlines/tabs become spaces rather than changing
+//! native menu layout.
+[[nodiscard]] std::wstring SanitizeCustomFrameAccountMenuText(std::wstring_view text);
+
+//! Supplies the current Account snapshot when the popup is opened. The callback
+//! result is copied/moved into a native-only projection and is never retained as
+//! provider or authentication state by the frame.
+using CustomFrameAccountMenuCallback = std::function<CustomFrameAccountMenuModel()>;
+
 //! Owns non-client extension, hit-testing, custom title/menu painting, and per-window DPI state.
 class CCustomFrameController final : public accessibility::ICustomUiAutomationHost {
 public:
@@ -236,6 +292,19 @@ public:
 	void SetUpdateIndicatorCallback(CustomFrameUpdateIndicatorCallback callback) noexcept
 	{
 		m_updateIndicatorCallback = std::move(callback);
+	}
+	//! Supplies a stable read-only Account presentation snapshot. Setting a model
+	//! clears any live callback so there is one unambiguous input source.
+	void SetAccountMenuModel(CustomFrameAccountMenuModel model) noexcept
+	{
+		m_accountMenuModel = std::move(model);
+		m_accountMenuModelCallback = {};
+	}
+	//! Supplies a live Account snapshot when the popup opens. An empty callback
+	//! restores the last model set through SetAccountMenuModel (Absent by default).
+	void SetAccountMenuModelCallback(CustomFrameAccountMenuCallback callback) noexcept
+	{
+		m_accountMenuModelCallback = std::move(callback);
 	}
 	//! Shows or hides the Update indicator. Upstream shows it only for the
 	//! actionable states and only while `update.titleBar` is enabled; both
@@ -271,7 +340,7 @@ public:
 	void LayoutResizeOverlays() noexcept;
 	//! Activity Bar GlobalCompositeBar popup anchors (screen coordinates).
 	void ShowAccountMenuAt(POINT screenPoint) noexcept;
-	//! `rightAlign` matches a former title-bar Manage popup; Activity Bar uses left-align.
+	//! `rightAlign` selects the shared title-bar GlobalCompositeBar alignment.
 	void ShowManageMenuAt(POINT screenPoint, bool rightAlign = false) noexcept;
 	static LRESULT CALLBACK ResizeOverlayWindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
 
@@ -338,6 +407,8 @@ private:
 	CCustomTitleBar m_titleBar;
 	CustomFrameManageActionCallback m_manageMenuActionCallback;
 	CustomFrameUpdateIndicatorCallback m_updateIndicatorCallback;
+	CustomFrameAccountMenuModel m_accountMenuModel;
+	CustomFrameAccountMenuCallback m_accountMenuModelCallback;
 	bool m_updateIndicatorVisible = false;
 	bool m_activityBarGlobalActionsInTitleBar = false;
 	CustomFrameUpdateMenuEntry m_updateMenuEntry = CustomFrameUpdateMenuEntry::None;

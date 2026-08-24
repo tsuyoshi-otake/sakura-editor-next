@@ -10,6 +10,7 @@
 #include "workbench/commands/WorkbenchCommandRegistry.h"
 #include "workbench/editor/WorkbenchCommandPaletteModel.h"
 #include "Funccode_enum.h"
+#include "sakura_rc.h"
 
 #include "workbench/layout/WorkbenchIds.h"
 
@@ -41,6 +42,12 @@ using workbench::commands::WorkbenchContextValue;
 using workbench::commands::WorkbenchWhenClauseEvaluator;
 using workbench::layout::EWorkbenchPartPosition;
 using workbench::layout::WorkbenchLayoutStateSnapshot;
+
+TEST(WorkbenchCommandRegistryLocalization, ExtensionsUsesTheLocalizedCommandTitle)
+{
+	EXPECT_EQ(STR_WORKBENCH_COMMAND_EXTENSIONS,
+		workbench::commands::ResolveBuiltinWorkbenchCommandTitleResourceId("workbench.view.extensions"));
+}
 
 const WorkbenchCommandOwner kContributorGenerationOne{ "sakura.test.contributor", 1 };
 const WorkbenchCommandOwner kContributorGenerationTwo{ "sakura.test.contributor", 2 };

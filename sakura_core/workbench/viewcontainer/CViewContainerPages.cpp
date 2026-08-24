@@ -51,7 +51,7 @@ CViewContainerPages::CViewContainerPages(CDlgFuncList& dialog)
 		std::make_unique<rendering::FrameSurfaceCommitState>(2) });
 	m_pages.push_back({ std::string(pageIds::Search), STR_WORKBENCH_SEARCH_TITLE, nullptr,
 		std::make_unique<rendering::FrameSurfaceCommitState>(3) });
-	m_pages.push_back({ std::string(pageIds::Extensions), 0, nullptr,
+	m_pages.push_back({ std::string(pageIds::Extensions), STR_WORKBENCH_EXTENSIONS_TITLE, nullptr,
 		std::make_unique<rendering::FrameSurfaceCommitState>(4) });
 }
 
@@ -282,14 +282,14 @@ std::wstring CViewContainerPages::PageTitle(std::string_view containerId) const
 {
 	const Page* page = Find(containerId);
 	if (page == nullptr) return {};
-	return page->id == pageIds::Extensions
-		? std::wstring(L"Extensions") : std::wstring(LS(page->titleResourceId));
+	return std::wstring(LS(page->titleResourceId));
 }
 
 void CViewContainerPages::RefreshStrings()
 {
 	if (m_explorer) m_explorer->RefreshStrings();
 	if (m_scm) m_scm->RefreshStrings();
+	if (m_extensions) m_extensions->RefreshStrings();
 	ApplySearchTexts();
 	for (const auto& page : m_pages) {
 		if (page.attached != nullptr) RedrawVisiblePage(PageWindow(page));

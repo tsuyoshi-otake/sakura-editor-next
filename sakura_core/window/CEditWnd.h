@@ -117,6 +117,9 @@ class CWorkbenchPanelHost;
 class CWorkspaceContext;
 enum class WorkbenchEdge : std::uint8_t;
 enum class ActivityBarLocation : std::uint8_t;
+namespace account {
+class AccountDiscoveryService;
+}
 namespace layout {
 class IWorkbenchLayoutSubscription;
 struct WorkbenchLayoutStateSnapshot;
@@ -1167,6 +1170,10 @@ private:
 	//! forwarded to the same child again.
 	bool			m_mouseWheelForwarding = false;
 	std::unique_ptr<workbench::CWorkspaceContext> m_workspaceContext;
+	//! Window-local, bounded discovery for the read-only Account popup. The
+	//! service owns its worker and is stopped before the frame callback and
+	//! workspace context are torn down.
+	std::unique_ptr<workbench::account::AccountDiscoveryService> m_accountDiscoveryService;
 	std::unique_ptr<workbench::editor::CEmptyEditorSurface> m_emptyEditorSurface;
 	//! Native side-by-side comparison surface. This is a
 	//! composition-layer projection rather than an `EditorInput`, so it may be visible only

@@ -781,9 +781,9 @@ bool CActivityBar::InvokeGlobalAction(std::string_view actionId) noexcept
 	const auto index = m_model.IndexOf(actionId);
 	if (index == ActivityBarModel::kNoIndex) return false;
 	const auto bounds = m_model.GetButton(index).bounds;
-	// Open to the right of the Activity Bar icon (vertical bar), matching VS Code's
-	// GlobalCompositeBar popup alignment rather than the title-bar "below" placement.
-	POINT screen{ bounds.right, bounds.top };
+	// Open to the right of the Activity Bar icon (vertical bar) and align the menu's
+	// bottom edge with the action's bottom edge, matching GlobalCompositeBar placement.
+	POINT screen{ bounds.right, bounds.bottom };
 	if (::ClientToScreen(m_window, &screen) == FALSE) return false;
 	try {
 		const std::string requested(actionId);

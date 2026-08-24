@@ -1,8 +1,8 @@
 {
-  "baseline_hash": "sha256:b5a502e79b1d3786e7d12e371df743150090f580ab61594b06a79f84f2c7f388",
-  "compatibility_version": 2,
+  "baseline_hash": "sha256:432ca64198d8d445bfb470af9cb74355a3fda6befadc105d5e19212772cc4585",
+  "compatibility_version": 3,
   "header": {
-    "definition_count": 2162,
+    "definition_count": 2260,
     "definitions": {
       "F_BOOKMARK_SUBMENU": 34047,
       "F_CHGMOD_EOL_SUBMENU": 34044,
@@ -1780,6 +1780,20 @@
       "STR_SCROLL_WITH_SIDE_2_BTN": 34572,
       "STR_SELLANG_LANGID": 34081,
       "STR_SELLANG_NAME": 34080,
+      "STR_SENP_CONFIGURATION_LANGUAGE_BASICS_DESCRIPTION": 35623,
+      "STR_SENP_CONFIGURATION_LANGUAGE_BASICS_NAME": 35622,
+      "STR_SENP_CORE_LANGUAGE_BASICS_DESCRIPTION": 35625,
+      "STR_SENP_CORE_LANGUAGE_BASICS_NAME": 35624,
+      "STR_SENP_DATABASE_LANGUAGE_BASICS_DESCRIPTION": 35627,
+      "STR_SENP_DATABASE_LANGUAGE_BASICS_NAME": 35626,
+      "STR_SENP_INDENT_RAINBOW_DESCRIPTION": 35629,
+      "STR_SENP_INDENT_RAINBOW_NAME": 35628,
+      "STR_SENP_INFRASTRUCTURE_LANGUAGE_BASICS_DESCRIPTION": 35631,
+      "STR_SENP_INFRASTRUCTURE_LANGUAGE_BASICS_NAME": 35630,
+      "STR_SENP_LEGACY_LANGUAGE_BASICS_DESCRIPTION": 35633,
+      "STR_SENP_LEGACY_LANGUAGE_BASICS_NAME": 35632,
+      "STR_SENP_SHELL_LANGUAGE_BASICS_DESCRIPTION": 35635,
+      "STR_SENP_SHELL_LANGUAGE_BASICS_NAME": 35634,
       "STR_SHELL_HHCTRL": 34752,
       "STR_SHELL_IMPEXPDIR": 34756,
       "STR_SHELL_INFO": 34753,
@@ -1828,6 +1842,10 @@
       "STR_TERMINAL_REDETECT_POWERSHELL": 35067,
       "STR_TERMINAL_RESTART": 35062,
       "STR_TERMINAL_SESSIONS": 35060,
+      "STR_TERMINAL_SHORTCUTS": 35422,
+      "STR_TERMINAL_SHORTCUT_PRESET_NONE": 35423,
+      "STR_TERMINAL_SHORTCUT_PRESET_SCREEN": 35425,
+      "STR_TERMINAL_SHORTCUT_PRESET_TMUX": 35424,
       "STR_TERMINAL_SPLIT": 35064,
       "STR_TERMINAL_SPLIT_DOWN": 35285,
       "STR_TERMINAL_TITLE": 35057,
@@ -1862,7 +1880,23 @@
       "STR_VIEW_MOUSE_MENU_OPEN": 34431,
       "STR_VIEW_MOUSE_MENU_PATH": 34429,
       "STR_VIEW_TIMER": 34336,
+      "STR_WORKBENCH_ACCOUNT_ACTIVE": 35458,
+      "STR_WORKBENCH_ACCOUNT_DISCOVERY_FAILED": 35455,
+      "STR_WORKBENCH_ACCOUNT_GITHUB_CLI_NO_ACCOUNTS": 35461,
+      "STR_WORKBENCH_ACCOUNT_GITHUB_CLI_UNAVAILABLE": 35454,
+      "STR_WORKBENCH_ACCOUNT_GIT_IDENTITY_NOT_CONFIGURED": 35453,
+      "STR_WORKBENCH_ACCOUNT_GIT_PROTOCOL": 35457,
+      "STR_WORKBENCH_ACCOUNT_GIT_UNAVAILABLE": 35452,
+      "STR_WORKBENCH_ACCOUNT_HOST": 35456,
+      "STR_WORKBENCH_ACCOUNT_INACTIVE": 35459,
+      "STR_WORKBENCH_ACCOUNT_LOADING": 35451,
+      "STR_WORKBENCH_ACCOUNT_NEEDS_ATTENTION": 35460,
+      "STR_WORKBENCH_ACCOUNT_NO_PROVIDER": 35419,
+      "STR_WORKBENCH_ACCOUNT_STATUS": 35462,
+      "STR_WORKBENCH_ACTIVITY_ACCOUNTS": 35449,
       "STR_WORKBENCH_ACTIVITY_EXPLORER": 35158,
+      "STR_WORKBENCH_ACTIVITY_MANAGE": 35450,
+      "STR_WORKBENCH_ACTIVITY_SEARCH": 35427,
       "STR_WORKBENCH_ACTIVITY_SOURCE_CONTROL": 35159,
       "STR_WORKBENCH_COLOR_THEME": 35089,
       "STR_WORKBENCH_COLOR_THEME_APPLY_FAILED": 35100,
@@ -1870,6 +1904,7 @@
       "STR_WORKBENCH_COLOR_THEME_PICKER_PLACEHOLDER": 35102,
       "STR_WORKBENCH_COLOR_THEME_SAVE_FAILED": 35099,
       "STR_WORKBENCH_COMMAND_ADD_ROOT_FOLDER": 35214,
+      "STR_WORKBENCH_COMMAND_CLEAR_RECENT": 35402,
       "STR_WORKBENCH_COMMAND_CLOSE_EDITOR": 35220,
       "STR_WORKBENCH_COMMAND_CLOSE_FOLDER": 35221,
       "STR_WORKBENCH_COMMAND_CLOSE_WINDOW": 35222,
@@ -1886,6 +1921,7 @@
       "STR_WORKBENCH_COMMAND_EXPLORER_RENAME": 35269,
       "STR_WORKBENCH_COMMAND_EXPLORER_REVEAL": 35274,
       "STR_WORKBENCH_COMMAND_EXPLORER_TRASH": 35270,
+      "STR_WORKBENCH_COMMAND_EXTENSIONS": 35601,
       "STR_WORKBENCH_COMMAND_GIT_BRANCH": 35242,
       "STR_WORKBENCH_COMMAND_GIT_BRANCH_FROM": 35243,
       "STR_WORKBENCH_COMMAND_GIT_CHECKOUT": 35240,
@@ -1975,6 +2011,27 @@
       "STR_WORKBENCH_EXPLORER_OPEN_FOLDER": 35078,
       "STR_WORKBENCH_EXPLORER_RENAME_FAILED": 35086,
       "STR_WORKBENCH_EXPLORER_TITLE": 35073,
+      "STR_WORKBENCH_EXTENSIONS_BUILTIN_INSTALL_FAILED": 35619,
+      "STR_WORKBENCH_EXTENSIONS_BUILTIN_UNINSTALL_FAILED": 35620,
+      "STR_WORKBENCH_EXTENSIONS_DEVELOPER_WARNING": 35612,
+      "STR_WORKBENCH_EXTENSIONS_DEVELOPER_WARNING_TITLE": 35611,
+      "STR_WORKBENCH_EXTENSIONS_DROP_READ_FAILED": 35621,
+      "STR_WORKBENCH_EXTENSIONS_DROP_TOO_MANY": 35617,
+      "STR_WORKBENCH_EXTENSIONS_DROP_TOO_MANY_TITLE": 35616,
+      "STR_WORKBENCH_EXTENSIONS_DROP_UNSUPPORTED": 35615,
+      "STR_WORKBENCH_EXTENSIONS_DROP_UNSUPPORTED_TITLE": 35614,
+      "STR_WORKBENCH_EXTENSIONS_EMPTY": 35608,
+      "STR_WORKBENCH_EXTENSIONS_INSTALL": 35603,
+      "STR_WORKBENCH_EXTENSIONS_INSTALL_FAILED": 35609,
+      "STR_WORKBENCH_EXTENSIONS_INSTALL_FROM_SENP": 35602,
+      "STR_WORKBENCH_EXTENSIONS_PACKAGE_REJECTED": 35613,
+      "STR_WORKBENCH_EXTENSIONS_SENP_FILTER": 35618,
+      "STR_WORKBENCH_EXTENSIONS_STATUS_BUILT_IN": 35605,
+      "STR_WORKBENCH_EXTENSIONS_STATUS_DISABLED": 35607,
+      "STR_WORKBENCH_EXTENSIONS_STATUS_ENABLED": 35606,
+      "STR_WORKBENCH_EXTENSIONS_TITLE": 35600,
+      "STR_WORKBENCH_EXTENSIONS_UNINSTALL": 35604,
+      "STR_WORKBENCH_EXTENSIONS_UNINSTALL_FAILED": 35610,
       "STR_WORKBENCH_GIT_ADD_FOLDER_TO_WORKSPACE": 35126,
       "STR_WORKBENCH_GIT_AUTHENTICATION_FAILED": 35370,
       "STR_WORKBENCH_GIT_AUTHENTICATION_FAILED_TARGET": 35371,
@@ -1994,6 +2051,10 @@
       "STR_WORKBENCH_GIT_CLONE_OVERWRITE_WARNING": 35134,
       "STR_WORKBENCH_GIT_CLONE_REPOSITORY": 35125,
       "STR_WORKBENCH_GIT_CLONE_SUCCESS": 35153,
+      "STR_WORKBENCH_GIT_COMMIT_ACTION": 35420,
+      "STR_WORKBENCH_GIT_COMMIT_AMEND_ACTION": 35421,
+      "STR_WORKBENCH_GIT_COMMIT_AND_PUSH_ACTION": 35447,
+      "STR_WORKBENCH_GIT_COMMIT_AND_SYNC_ACTION": 35448,
       "STR_WORKBENCH_GIT_COMMIT_CHANGES": 35303,
       "STR_WORKBENCH_GIT_COMMIT_MESSAGE": 35152,
       "STR_WORKBENCH_GIT_COMMIT_MESSAGE_ON_BRANCH": 35315,
@@ -2119,6 +2180,21 @@
       "STR_WORKBENCH_GIT_WORKSPACE_NO_REPOSITORY": 35122,
       "STR_WORKBENCH_GIT_YES": 35305,
       "STR_WORKBENCH_INITIALIZE_FAILED": 35193,
+      "STR_WORKBENCH_LAYOUT_TOGGLE_PANEL": 35417,
+      "STR_WORKBENCH_LAYOUT_TOGGLE_PRIMARY_SIDEBAR": 35416,
+      "STR_WORKBENCH_LAYOUT_TOGGLE_SECONDARY_SIDEBAR": 35418,
+      "STR_WORKBENCH_MANAGE_COMMAND_PALETTE": 35404,
+      "STR_WORKBENCH_MANAGE_KEYBOARD_SHORTCUTS": 35406,
+      "STR_WORKBENCH_MANAGE_SETTINGS": 35405,
+      "STR_WORKBENCH_MANAGE_THEMES": 35407,
+      "STR_WORKBENCH_MANAGE_UPDATE_CANCELLING": 35414,
+      "STR_WORKBENCH_MANAGE_UPDATE_CHECK": 35408,
+      "STR_WORKBENCH_MANAGE_UPDATE_CHECKING": 35409,
+      "STR_WORKBENCH_MANAGE_UPDATE_DOWNLOAD": 35410,
+      "STR_WORKBENCH_MANAGE_UPDATE_DOWNLOADING": 35411,
+      "STR_WORKBENCH_MANAGE_UPDATE_INSTALL": 35412,
+      "STR_WORKBENCH_MANAGE_UPDATE_RESTART": 35415,
+      "STR_WORKBENCH_MANAGE_UPDATE_UPDATING": 35413,
       "STR_WORKBENCH_PANEL_COLUMN_FILE": 35105,
       "STR_WORKBENCH_PANEL_COLUMN_MESSAGE": 35104,
       "STR_WORKBENCH_PANEL_COLUMN_SEVERITY": 35103,
@@ -2134,12 +2210,34 @@
       "STR_WORKBENCH_PANEL_TERMINAL": 35096,
       "STR_WORKBENCH_QUICK_INPUT_CANCEL": 35179,
       "STR_WORKBENCH_QUICK_INPUT_OK": 35178,
+      "STR_WORKBENCH_RECENT_CLEAR_CONFIRM": 35403,
+      "STR_WORKBENCH_RECENT_WORKSPACE_LABEL": 35399,
       "STR_WORKBENCH_REMOTE_UNSUPPORTED": 35394,
       "STR_WORKBENCH_REPOSITORY_INIT_QUICK_PICK_TITLE": 35084,
       "STR_WORKBENCH_SCM_CHANGES_TITLE": 35396,
       "STR_WORKBENCH_SCM_GRAPH_TITLE": 35397,
       "STR_WORKBENCH_SCM_GRAPH_UNAVAILABLE": 35398,
       "STR_WORKBENCH_SCM_REPOSITORIES_TITLE": 35395,
+      "STR_WORKBENCH_SEARCH_DISMISS": 35438,
+      "STR_WORKBENCH_SEARCH_INVALID_PATTERN": 35444,
+      "STR_WORKBENCH_SEARCH_LIMIT_HIT": 35442,
+      "STR_WORKBENCH_SEARCH_MATCH_CASE": 35431,
+      "STR_WORKBENCH_SEARCH_NO_RESULTS": 35439,
+      "STR_WORKBENCH_SEARCH_NO_WORKSPACE": 35445,
+      "STR_WORKBENCH_SEARCH_PLACEHOLDER": 35428,
+      "STR_WORKBENCH_SEARCH_PRESERVE_CASE": 35434,
+      "STR_WORKBENCH_SEARCH_REGEX_UNAVAILABLE": 35443,
+      "STR_WORKBENCH_SEARCH_REPLACE_ALL": 35435,
+      "STR_WORKBENCH_SEARCH_REPLACE_FAILED": 35446,
+      "STR_WORKBENCH_SEARCH_REPLACE_IN_FILE": 35437,
+      "STR_WORKBENCH_SEARCH_REPLACE_ONE": 35436,
+      "STR_WORKBENCH_SEARCH_REPLACE_PLACEHOLDER": 35429,
+      "STR_WORKBENCH_SEARCH_RESULT_SUMMARY": 35440,
+      "STR_WORKBENCH_SEARCH_SEARCHING": 35441,
+      "STR_WORKBENCH_SEARCH_TITLE": 35426,
+      "STR_WORKBENCH_SEARCH_TOGGLE_REPLACE": 35430,
+      "STR_WORKBENCH_SEARCH_USE_REGEX": 35433,
+      "STR_WORKBENCH_SEARCH_WHOLE_WORD": 35432,
       "STR_WORKBENCH_SECONDARY_SIDEBAR_TITLE": 35082,
       "STR_WORKBENCH_SOURCE_CONTROL_TITLE": 35081,
       "STR_WORKBENCH_STATUS_CHARACTER_CODE": 35188,
@@ -2164,17 +2262,17 @@
       "STR_WSHPLUG_LOADMACRO": 34948,
       "_APS_NEXT_COMMAND_VALUE": 101,
       "_APS_NEXT_CONTROL_VALUE": 1741,
-      "_APS_NEXT_RESOURCE_VALUE": 35399,
+      "_APS_NEXT_RESOURCE_VALUE": 35636,
       "_APS_NEXT_SYMED_VALUE": 10000
     },
-    "mapping_hash": "sha256:9a76cc4fcd7192eb70a64b72ebf1d136a01cce9bd776688695a08ef57d9ab9f2",
+    "mapping_hash": "sha256:590b4e7859a31910a66ab4c3b540236d7692235aac1e6fbd7ef3343c2103bc0a",
     "path": "src/main/resources/sakura_rc.h"
   },
   "images": [
     {
       "contract": {
         "accelerators": [],
-        "contract_hash": "sha256:6465cc2b076006b9cf1d631be0f391d28c43636ab5e8089c683b31b531e39dde",
+        "contract_hash": "sha256:bb225e715c44d68127ab3d9706abe098a06254d1984f265e0c0d1f28f4147a56",
         "counts": {
           "accelerator_commands": 0,
           "accelerators": 0,
@@ -2184,9 +2282,9 @@
           "menu_commands": 0,
           "menu_items": 0,
           "menus": 0,
-          "string_blocks": 155,
-          "strings": 1671,
-          "top_level": 278
+          "string_blocks": 162,
+          "strings": 1770,
+          "top_level": 285
         },
         "dialogs": [
           {
@@ -4896,6 +4994,7 @@
               "value": 1939
             },
             "string_ids": [
+              31008,
               31010
             ],
             "type": {
@@ -7724,8 +7823,197 @@
               35396,
               35397,
               35398,
+              35399,
               35400,
-              35401
+              35401,
+              35402,
+              35403,
+              35404,
+              35405,
+              35406,
+              35407
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2214
+            },
+            "string_ids": [
+              35408,
+              35409,
+              35410,
+              35411,
+              35412,
+              35413,
+              35414,
+              35415,
+              35416,
+              35417,
+              35418,
+              35419,
+              35420,
+              35421,
+              35422,
+              35423
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2215
+            },
+            "string_ids": [
+              35424,
+              35425,
+              35426,
+              35427,
+              35428,
+              35429,
+              35430,
+              35431,
+              35432,
+              35433,
+              35434,
+              35435,
+              35436,
+              35437,
+              35438,
+              35439
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2216
+            },
+            "string_ids": [
+              35440,
+              35441,
+              35442,
+              35443,
+              35444,
+              35445,
+              35446,
+              35447,
+              35448,
+              35449,
+              35450,
+              35451,
+              35452,
+              35453,
+              35454,
+              35455
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2217
+            },
+            "string_ids": [
+              35456,
+              35457,
+              35458,
+              35459,
+              35460,
+              35461,
+              35462
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2226
+            },
+            "string_ids": [
+              35600,
+              35601,
+              35602,
+              35603,
+              35604,
+              35605,
+              35606,
+              35607,
+              35608,
+              35609,
+              35610,
+              35611,
+              35612,
+              35613,
+              35614,
+              35615
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2227
+            },
+            "string_ids": [
+              35616,
+              35617,
+              35618,
+              35619,
+              35620,
+              35621,
+              35622,
+              35623,
+              35624,
+              35625,
+              35626,
+              35627,
+              35628,
+              35629,
+              35630,
+              35631
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2228
+            },
+            "string_ids": [
+              35632,
+              35633,
+              35634,
+              35635
             ],
             "type": {
               "kind": "id",
@@ -10510,6 +10798,83 @@
             "language_id": 1033,
             "name": {
               "kind": "id",
+              "value": 2214
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2215
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2216
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2217
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2226
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2227
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2228
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
               "value": 220
             },
             "type": {
@@ -10799,7 +11164,7 @@
     {
       "contract": {
         "accelerators": [],
-        "contract_hash": "sha256:fb57dc83faf239aff43b84dfc685c19d5eb8ac2730dac208410b71cee1400c48",
+        "contract_hash": "sha256:6fdd9075d2fb53ec24ccd3328e8b0a03c397affd80e96b004f0dc890d744a493",
         "counts": {
           "accelerator_commands": 0,
           "accelerators": 0,
@@ -10809,9 +11174,9 @@
           "menu_commands": 0,
           "menu_items": 0,
           "menus": 0,
-          "string_blocks": 156,
-          "strings": 1677,
-          "top_level": 280
+          "string_blocks": 163,
+          "strings": 1776,
+          "top_level": 302
         },
         "dialogs": [
           {
@@ -13522,6 +13887,7 @@
               "value": 1939
             },
             "string_ids": [
+              31008,
               31010
             ],
             "type": {
@@ -16369,8 +16735,197 @@
               35396,
               35397,
               35398,
+              35399,
               35400,
-              35401
+              35401,
+              35402,
+              35403,
+              35404,
+              35405,
+              35406,
+              35407
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2214
+            },
+            "string_ids": [
+              35408,
+              35409,
+              35410,
+              35411,
+              35412,
+              35413,
+              35414,
+              35415,
+              35416,
+              35417,
+              35418,
+              35419,
+              35420,
+              35421,
+              35422,
+              35423
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2215
+            },
+            "string_ids": [
+              35424,
+              35425,
+              35426,
+              35427,
+              35428,
+              35429,
+              35430,
+              35431,
+              35432,
+              35433,
+              35434,
+              35435,
+              35436,
+              35437,
+              35438,
+              35439
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2216
+            },
+            "string_ids": [
+              35440,
+              35441,
+              35442,
+              35443,
+              35444,
+              35445,
+              35446,
+              35447,
+              35448,
+              35449,
+              35450,
+              35451,
+              35452,
+              35453,
+              35454,
+              35455
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2217
+            },
+            "string_ids": [
+              35456,
+              35457,
+              35458,
+              35459,
+              35460,
+              35461,
+              35462
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2226
+            },
+            "string_ids": [
+              35600,
+              35601,
+              35602,
+              35603,
+              35604,
+              35605,
+              35606,
+              35607,
+              35608,
+              35609,
+              35610,
+              35611,
+              35612,
+              35613,
+              35614,
+              35615
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2227
+            },
+            "string_ids": [
+              35616,
+              35617,
+              35618,
+              35619,
+              35620,
+              35621,
+              35622,
+              35623,
+              35624,
+              35625,
+              35626,
+              35627,
+              35628,
+              35629,
+              35630,
+              35631
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2228
+            },
+            "string_ids": [
+              35632,
+              35633,
+              35634,
+              35635
             ],
             "type": {
               "kind": "id",
@@ -19165,8 +19720,250 @@
           {
             "language_id": 1041,
             "name": {
+              "kind": "id",
+              "value": 2214
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2215
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2216
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2217
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2226
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2227
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2228
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 39000
+            },
+            "type": {
+              "kind": "id",
+              "value": 10
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 39001
+            },
+            "type": {
+              "kind": "id",
+              "value": 10
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 39002
+            },
+            "type": {
+              "kind": "id",
+              "value": 10
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 39003
+            },
+            "type": {
+              "kind": "id",
+              "value": 10
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 39004
+            },
+            "type": {
+              "kind": "id",
+              "value": 10
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 39005
+            },
+            "type": {
+              "kind": "id",
+              "value": 10
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 39006
+            },
+            "type": {
+              "kind": "id",
+              "value": 10
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 39007
+            },
+            "type": {
+              "kind": "id",
+              "value": 10
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 39008
+            },
+            "type": {
+              "kind": "id",
+              "value": 10
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 39009
+            },
+            "type": {
+              "kind": "id",
+              "value": 10
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 39010
+            },
+            "type": {
+              "kind": "id",
+              "value": 10
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 39011
+            },
+            "type": {
+              "kind": "id",
+              "value": 10
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 39012
+            },
+            "type": {
+              "kind": "id",
+              "value": 10
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 39013
+            },
+            "type": {
+              "kind": "id",
+              "value": 10
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
               "kind": "name",
               "value": "CODICONFONT"
+            },
+            "type": {
+              "kind": "id",
+              "value": 10
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "name",
+              "value": "SETIFONT"
             },
             "type": {
               "kind": "id",
@@ -19466,7 +20263,7 @@
     {
       "contract": {
         "accelerators": [],
-        "contract_hash": "sha256:9d8d7f86228335fb63d4ec8de3df0656096da886e8347f3f3d0e1666bdda1c48",
+        "contract_hash": "sha256:949bc211874824b4972d0e4e980f4b440c04e6735601a67e8e3b46c77d0b8503",
         "counts": {
           "accelerator_commands": 0,
           "accelerators": 0,
@@ -19476,9 +20273,9 @@
           "menu_commands": 0,
           "menu_items": 0,
           "menus": 0,
-          "string_blocks": 155,
-          "strings": 1671,
-          "top_level": 278
+          "string_blocks": 162,
+          "strings": 1770,
+          "top_level": 285
         },
         "dialogs": [
           {
@@ -22186,6 +22983,7 @@
               "value": 1939
             },
             "string_ids": [
+              31008,
               31010
             ],
             "type": {
@@ -25014,8 +25812,197 @@
               35396,
               35397,
               35398,
+              35399,
               35400,
-              35401
+              35401,
+              35402,
+              35403,
+              35404,
+              35405,
+              35406,
+              35407
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2214
+            },
+            "string_ids": [
+              35408,
+              35409,
+              35410,
+              35411,
+              35412,
+              35413,
+              35414,
+              35415,
+              35416,
+              35417,
+              35418,
+              35419,
+              35420,
+              35421,
+              35422,
+              35423
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2215
+            },
+            "string_ids": [
+              35424,
+              35425,
+              35426,
+              35427,
+              35428,
+              35429,
+              35430,
+              35431,
+              35432,
+              35433,
+              35434,
+              35435,
+              35436,
+              35437,
+              35438,
+              35439
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2216
+            },
+            "string_ids": [
+              35440,
+              35441,
+              35442,
+              35443,
+              35444,
+              35445,
+              35446,
+              35447,
+              35448,
+              35449,
+              35450,
+              35451,
+              35452,
+              35453,
+              35454,
+              35455
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2217
+            },
+            "string_ids": [
+              35456,
+              35457,
+              35458,
+              35459,
+              35460,
+              35461,
+              35462
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2226
+            },
+            "string_ids": [
+              35600,
+              35601,
+              35602,
+              35603,
+              35604,
+              35605,
+              35606,
+              35607,
+              35608,
+              35609,
+              35610,
+              35611,
+              35612,
+              35613,
+              35614,
+              35615
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2227
+            },
+            "string_ids": [
+              35616,
+              35617,
+              35618,
+              35619,
+              35620,
+              35621,
+              35622,
+              35623,
+              35624,
+              35625,
+              35626,
+              35627,
+              35628,
+              35629,
+              35630,
+              35631
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2228
+            },
+            "string_ids": [
+              35632,
+              35633,
+              35634,
+              35635
             ],
             "type": {
               "kind": "id",
@@ -27800,6 +28787,83 @@
             "language_id": 2052,
             "name": {
               "kind": "id",
+              "value": 2214
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2215
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2216
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2217
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2226
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2227
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2228
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
               "value": 220
             },
             "type": {
@@ -28090,14 +29154,14 @@
   "schema_version": 1,
   "sources": [
     {
-      "contract_hash": "sha256:c4a0e84ff367b6ab44d7d348b5e39e7ce621270840b6975d2a10de15ee8d171b",
-      "occurrence_count": 2587,
+      "contract_hash": "sha256:203de1349c7b3b664ce2f2bf62d3d5a318dda54d1f2730cae459c30e9589a9eb",
+      "occurrence_count": 2685,
       "paths": [
         "sakura_lang/sakura_rc_en-US.rc",
         "sakura_lang/sakura_rc_en-US.rc2"
       ],
       "role": "en-US",
-      "symbol_count": 2141,
+      "symbol_count": 2239,
       "symbols": {
         "F_BOOKMARK_SUBMENU": 1,
         "F_CHGMOD_EOL_SUBMENU": 1,
@@ -29858,6 +30922,20 @@
         "STR_SCROLL_WITH_SIDE_2_BTN": 1,
         "STR_SELLANG_LANGID": 1,
         "STR_SELLANG_NAME": 1,
+        "STR_SENP_CONFIGURATION_LANGUAGE_BASICS_DESCRIPTION": 1,
+        "STR_SENP_CONFIGURATION_LANGUAGE_BASICS_NAME": 1,
+        "STR_SENP_CORE_LANGUAGE_BASICS_DESCRIPTION": 1,
+        "STR_SENP_CORE_LANGUAGE_BASICS_NAME": 1,
+        "STR_SENP_DATABASE_LANGUAGE_BASICS_DESCRIPTION": 1,
+        "STR_SENP_DATABASE_LANGUAGE_BASICS_NAME": 1,
+        "STR_SENP_INDENT_RAINBOW_DESCRIPTION": 1,
+        "STR_SENP_INDENT_RAINBOW_NAME": 1,
+        "STR_SENP_INFRASTRUCTURE_LANGUAGE_BASICS_DESCRIPTION": 1,
+        "STR_SENP_INFRASTRUCTURE_LANGUAGE_BASICS_NAME": 1,
+        "STR_SENP_LEGACY_LANGUAGE_BASICS_DESCRIPTION": 1,
+        "STR_SENP_LEGACY_LANGUAGE_BASICS_NAME": 1,
+        "STR_SENP_SHELL_LANGUAGE_BASICS_DESCRIPTION": 1,
+        "STR_SENP_SHELL_LANGUAGE_BASICS_NAME": 1,
         "STR_SHELL_HHCTRL": 1,
         "STR_SHELL_IMPEXPDIR": 1,
         "STR_SHELL_INFO": 1,
@@ -29906,6 +30984,10 @@
         "STR_TERMINAL_REDETECT_POWERSHELL": 1,
         "STR_TERMINAL_RESTART": 1,
         "STR_TERMINAL_SESSIONS": 1,
+        "STR_TERMINAL_SHORTCUTS": 1,
+        "STR_TERMINAL_SHORTCUT_PRESET_NONE": 1,
+        "STR_TERMINAL_SHORTCUT_PRESET_SCREEN": 1,
+        "STR_TERMINAL_SHORTCUT_PRESET_TMUX": 1,
         "STR_TERMINAL_SPLIT": 1,
         "STR_TERMINAL_SPLIT_DOWN": 1,
         "STR_TERMINAL_TITLE": 1,
@@ -29940,7 +31022,23 @@
         "STR_VIEW_MOUSE_MENU_OPEN": 1,
         "STR_VIEW_MOUSE_MENU_PATH": 1,
         "STR_VIEW_TIMER": 1,
+        "STR_WORKBENCH_ACCOUNT_ACTIVE": 1,
+        "STR_WORKBENCH_ACCOUNT_DISCOVERY_FAILED": 1,
+        "STR_WORKBENCH_ACCOUNT_GITHUB_CLI_NO_ACCOUNTS": 1,
+        "STR_WORKBENCH_ACCOUNT_GITHUB_CLI_UNAVAILABLE": 1,
+        "STR_WORKBENCH_ACCOUNT_GIT_IDENTITY_NOT_CONFIGURED": 1,
+        "STR_WORKBENCH_ACCOUNT_GIT_PROTOCOL": 1,
+        "STR_WORKBENCH_ACCOUNT_GIT_UNAVAILABLE": 1,
+        "STR_WORKBENCH_ACCOUNT_HOST": 1,
+        "STR_WORKBENCH_ACCOUNT_INACTIVE": 1,
+        "STR_WORKBENCH_ACCOUNT_LOADING": 1,
+        "STR_WORKBENCH_ACCOUNT_NEEDS_ATTENTION": 1,
+        "STR_WORKBENCH_ACCOUNT_NO_PROVIDER": 1,
+        "STR_WORKBENCH_ACCOUNT_STATUS": 1,
+        "STR_WORKBENCH_ACTIVITY_ACCOUNTS": 1,
         "STR_WORKBENCH_ACTIVITY_EXPLORER": 1,
+        "STR_WORKBENCH_ACTIVITY_MANAGE": 1,
+        "STR_WORKBENCH_ACTIVITY_SEARCH": 1,
         "STR_WORKBENCH_ACTIVITY_SOURCE_CONTROL": 1,
         "STR_WORKBENCH_COLOR_THEME": 1,
         "STR_WORKBENCH_COLOR_THEME_APPLY_FAILED": 1,
@@ -29948,6 +31046,7 @@
         "STR_WORKBENCH_COLOR_THEME_PICKER_PLACEHOLDER": 1,
         "STR_WORKBENCH_COLOR_THEME_SAVE_FAILED": 1,
         "STR_WORKBENCH_COMMAND_ADD_ROOT_FOLDER": 1,
+        "STR_WORKBENCH_COMMAND_CLEAR_RECENT": 1,
         "STR_WORKBENCH_COMMAND_CLOSE_EDITOR": 1,
         "STR_WORKBENCH_COMMAND_CLOSE_FOLDER": 1,
         "STR_WORKBENCH_COMMAND_CLOSE_WINDOW": 1,
@@ -29964,6 +31063,7 @@
         "STR_WORKBENCH_COMMAND_EXPLORER_RENAME": 1,
         "STR_WORKBENCH_COMMAND_EXPLORER_REVEAL": 1,
         "STR_WORKBENCH_COMMAND_EXPLORER_TRASH": 1,
+        "STR_WORKBENCH_COMMAND_EXTENSIONS": 1,
         "STR_WORKBENCH_COMMAND_GIT_BRANCH": 1,
         "STR_WORKBENCH_COMMAND_GIT_BRANCH_FROM": 1,
         "STR_WORKBENCH_COMMAND_GIT_CHECKOUT": 1,
@@ -30053,6 +31153,27 @@
         "STR_WORKBENCH_EXPLORER_OPEN_FOLDER": 1,
         "STR_WORKBENCH_EXPLORER_RENAME_FAILED": 1,
         "STR_WORKBENCH_EXPLORER_TITLE": 1,
+        "STR_WORKBENCH_EXTENSIONS_BUILTIN_INSTALL_FAILED": 1,
+        "STR_WORKBENCH_EXTENSIONS_BUILTIN_UNINSTALL_FAILED": 1,
+        "STR_WORKBENCH_EXTENSIONS_DEVELOPER_WARNING": 1,
+        "STR_WORKBENCH_EXTENSIONS_DEVELOPER_WARNING_TITLE": 1,
+        "STR_WORKBENCH_EXTENSIONS_DROP_READ_FAILED": 1,
+        "STR_WORKBENCH_EXTENSIONS_DROP_TOO_MANY": 1,
+        "STR_WORKBENCH_EXTENSIONS_DROP_TOO_MANY_TITLE": 1,
+        "STR_WORKBENCH_EXTENSIONS_DROP_UNSUPPORTED": 1,
+        "STR_WORKBENCH_EXTENSIONS_DROP_UNSUPPORTED_TITLE": 1,
+        "STR_WORKBENCH_EXTENSIONS_EMPTY": 1,
+        "STR_WORKBENCH_EXTENSIONS_INSTALL": 1,
+        "STR_WORKBENCH_EXTENSIONS_INSTALL_FAILED": 1,
+        "STR_WORKBENCH_EXTENSIONS_INSTALL_FROM_SENP": 1,
+        "STR_WORKBENCH_EXTENSIONS_PACKAGE_REJECTED": 1,
+        "STR_WORKBENCH_EXTENSIONS_SENP_FILTER": 1,
+        "STR_WORKBENCH_EXTENSIONS_STATUS_BUILT_IN": 1,
+        "STR_WORKBENCH_EXTENSIONS_STATUS_DISABLED": 1,
+        "STR_WORKBENCH_EXTENSIONS_STATUS_ENABLED": 1,
+        "STR_WORKBENCH_EXTENSIONS_TITLE": 1,
+        "STR_WORKBENCH_EXTENSIONS_UNINSTALL": 1,
+        "STR_WORKBENCH_EXTENSIONS_UNINSTALL_FAILED": 1,
         "STR_WORKBENCH_GIT_ADD_FOLDER_TO_WORKSPACE": 1,
         "STR_WORKBENCH_GIT_AUTHENTICATION_FAILED": 1,
         "STR_WORKBENCH_GIT_AUTHENTICATION_FAILED_TARGET": 1,
@@ -30072,6 +31193,10 @@
         "STR_WORKBENCH_GIT_CLONE_OVERWRITE_WARNING": 1,
         "STR_WORKBENCH_GIT_CLONE_REPOSITORY": 1,
         "STR_WORKBENCH_GIT_CLONE_SUCCESS": 1,
+        "STR_WORKBENCH_GIT_COMMIT_ACTION": 1,
+        "STR_WORKBENCH_GIT_COMMIT_AMEND_ACTION": 1,
+        "STR_WORKBENCH_GIT_COMMIT_AND_PUSH_ACTION": 1,
+        "STR_WORKBENCH_GIT_COMMIT_AND_SYNC_ACTION": 1,
         "STR_WORKBENCH_GIT_COMMIT_CHANGES": 1,
         "STR_WORKBENCH_GIT_COMMIT_MESSAGE": 1,
         "STR_WORKBENCH_GIT_COMMIT_MESSAGE_ON_BRANCH": 1,
@@ -30197,6 +31322,21 @@
         "STR_WORKBENCH_GIT_WORKSPACE_NO_REPOSITORY": 1,
         "STR_WORKBENCH_GIT_YES": 1,
         "STR_WORKBENCH_INITIALIZE_FAILED": 1,
+        "STR_WORKBENCH_LAYOUT_TOGGLE_PANEL": 1,
+        "STR_WORKBENCH_LAYOUT_TOGGLE_PRIMARY_SIDEBAR": 1,
+        "STR_WORKBENCH_LAYOUT_TOGGLE_SECONDARY_SIDEBAR": 1,
+        "STR_WORKBENCH_MANAGE_COMMAND_PALETTE": 1,
+        "STR_WORKBENCH_MANAGE_KEYBOARD_SHORTCUTS": 1,
+        "STR_WORKBENCH_MANAGE_SETTINGS": 1,
+        "STR_WORKBENCH_MANAGE_THEMES": 1,
+        "STR_WORKBENCH_MANAGE_UPDATE_CANCELLING": 1,
+        "STR_WORKBENCH_MANAGE_UPDATE_CHECK": 1,
+        "STR_WORKBENCH_MANAGE_UPDATE_CHECKING": 1,
+        "STR_WORKBENCH_MANAGE_UPDATE_DOWNLOAD": 1,
+        "STR_WORKBENCH_MANAGE_UPDATE_DOWNLOADING": 1,
+        "STR_WORKBENCH_MANAGE_UPDATE_INSTALL": 1,
+        "STR_WORKBENCH_MANAGE_UPDATE_RESTART": 1,
+        "STR_WORKBENCH_MANAGE_UPDATE_UPDATING": 1,
         "STR_WORKBENCH_PANEL_COLUMN_FILE": 1,
         "STR_WORKBENCH_PANEL_COLUMN_MESSAGE": 1,
         "STR_WORKBENCH_PANEL_COLUMN_SEVERITY": 1,
@@ -30212,12 +31352,34 @@
         "STR_WORKBENCH_PANEL_TERMINAL": 1,
         "STR_WORKBENCH_QUICK_INPUT_CANCEL": 1,
         "STR_WORKBENCH_QUICK_INPUT_OK": 1,
+        "STR_WORKBENCH_RECENT_CLEAR_CONFIRM": 1,
+        "STR_WORKBENCH_RECENT_WORKSPACE_LABEL": 1,
         "STR_WORKBENCH_REMOTE_UNSUPPORTED": 1,
         "STR_WORKBENCH_REPOSITORY_INIT_QUICK_PICK_TITLE": 1,
         "STR_WORKBENCH_SCM_CHANGES_TITLE": 1,
         "STR_WORKBENCH_SCM_GRAPH_TITLE": 1,
         "STR_WORKBENCH_SCM_GRAPH_UNAVAILABLE": 1,
         "STR_WORKBENCH_SCM_REPOSITORIES_TITLE": 1,
+        "STR_WORKBENCH_SEARCH_DISMISS": 1,
+        "STR_WORKBENCH_SEARCH_INVALID_PATTERN": 1,
+        "STR_WORKBENCH_SEARCH_LIMIT_HIT": 1,
+        "STR_WORKBENCH_SEARCH_MATCH_CASE": 1,
+        "STR_WORKBENCH_SEARCH_NO_RESULTS": 1,
+        "STR_WORKBENCH_SEARCH_NO_WORKSPACE": 1,
+        "STR_WORKBENCH_SEARCH_PLACEHOLDER": 1,
+        "STR_WORKBENCH_SEARCH_PRESERVE_CASE": 1,
+        "STR_WORKBENCH_SEARCH_REGEX_UNAVAILABLE": 1,
+        "STR_WORKBENCH_SEARCH_REPLACE_ALL": 1,
+        "STR_WORKBENCH_SEARCH_REPLACE_FAILED": 1,
+        "STR_WORKBENCH_SEARCH_REPLACE_IN_FILE": 1,
+        "STR_WORKBENCH_SEARCH_REPLACE_ONE": 1,
+        "STR_WORKBENCH_SEARCH_REPLACE_PLACEHOLDER": 1,
+        "STR_WORKBENCH_SEARCH_RESULT_SUMMARY": 1,
+        "STR_WORKBENCH_SEARCH_SEARCHING": 1,
+        "STR_WORKBENCH_SEARCH_TITLE": 1,
+        "STR_WORKBENCH_SEARCH_TOGGLE_REPLACE": 1,
+        "STR_WORKBENCH_SEARCH_USE_REGEX": 1,
+        "STR_WORKBENCH_SEARCH_WHOLE_WORD": 1,
         "STR_WORKBENCH_SECONDARY_SIDEBAR_TITLE": 1,
         "STR_WORKBENCH_SOURCE_CONTROL_TITLE": 1,
         "STR_WORKBENCH_STATUS_CHARACTER_CODE": 1,
@@ -30243,14 +31405,14 @@
       }
     },
     {
-      "contract_hash": "sha256:f6395a159c367bbb86f02d574a7786262193ea4e4386efe4e651e5d149ca0469",
-      "occurrence_count": 2588,
+      "contract_hash": "sha256:56ace29175dd1e0e99b9a4ee821ef533bde66945e219c9839dca5a33c9991eb1",
+      "occurrence_count": 2686,
       "paths": [
         "sakura_core/sakura_rc.rc",
         "sakura_core/sakura_rc.rc2"
       ],
       "role": "ja-JP",
-      "symbol_count": 2145,
+      "symbol_count": 2243,
       "symbols": {
         "F_BOOKMARK_SUBMENU": 1,
         "F_CHGMOD_EOL_SUBMENU": 1,
@@ -32015,6 +33177,20 @@
         "STR_SCROLL_WITH_SIDE_2_BTN": 1,
         "STR_SELLANG_LANGID": 1,
         "STR_SELLANG_NAME": 1,
+        "STR_SENP_CONFIGURATION_LANGUAGE_BASICS_DESCRIPTION": 1,
+        "STR_SENP_CONFIGURATION_LANGUAGE_BASICS_NAME": 1,
+        "STR_SENP_CORE_LANGUAGE_BASICS_DESCRIPTION": 1,
+        "STR_SENP_CORE_LANGUAGE_BASICS_NAME": 1,
+        "STR_SENP_DATABASE_LANGUAGE_BASICS_DESCRIPTION": 1,
+        "STR_SENP_DATABASE_LANGUAGE_BASICS_NAME": 1,
+        "STR_SENP_INDENT_RAINBOW_DESCRIPTION": 1,
+        "STR_SENP_INDENT_RAINBOW_NAME": 1,
+        "STR_SENP_INFRASTRUCTURE_LANGUAGE_BASICS_DESCRIPTION": 1,
+        "STR_SENP_INFRASTRUCTURE_LANGUAGE_BASICS_NAME": 1,
+        "STR_SENP_LEGACY_LANGUAGE_BASICS_DESCRIPTION": 1,
+        "STR_SENP_LEGACY_LANGUAGE_BASICS_NAME": 1,
+        "STR_SENP_SHELL_LANGUAGE_BASICS_DESCRIPTION": 1,
+        "STR_SENP_SHELL_LANGUAGE_BASICS_NAME": 1,
         "STR_SHELL_HHCTRL": 1,
         "STR_SHELL_IMPEXPDIR": 1,
         "STR_SHELL_INFO": 1,
@@ -32063,6 +33239,10 @@
         "STR_TERMINAL_REDETECT_POWERSHELL": 1,
         "STR_TERMINAL_RESTART": 1,
         "STR_TERMINAL_SESSIONS": 1,
+        "STR_TERMINAL_SHORTCUTS": 1,
+        "STR_TERMINAL_SHORTCUT_PRESET_NONE": 1,
+        "STR_TERMINAL_SHORTCUT_PRESET_SCREEN": 1,
+        "STR_TERMINAL_SHORTCUT_PRESET_TMUX": 1,
         "STR_TERMINAL_SPLIT": 1,
         "STR_TERMINAL_SPLIT_DOWN": 1,
         "STR_TERMINAL_TITLE": 1,
@@ -32097,7 +33277,23 @@
         "STR_VIEW_MOUSE_MENU_OPEN": 1,
         "STR_VIEW_MOUSE_MENU_PATH": 1,
         "STR_VIEW_TIMER": 1,
+        "STR_WORKBENCH_ACCOUNT_ACTIVE": 1,
+        "STR_WORKBENCH_ACCOUNT_DISCOVERY_FAILED": 1,
+        "STR_WORKBENCH_ACCOUNT_GITHUB_CLI_NO_ACCOUNTS": 1,
+        "STR_WORKBENCH_ACCOUNT_GITHUB_CLI_UNAVAILABLE": 1,
+        "STR_WORKBENCH_ACCOUNT_GIT_IDENTITY_NOT_CONFIGURED": 1,
+        "STR_WORKBENCH_ACCOUNT_GIT_PROTOCOL": 1,
+        "STR_WORKBENCH_ACCOUNT_GIT_UNAVAILABLE": 1,
+        "STR_WORKBENCH_ACCOUNT_HOST": 1,
+        "STR_WORKBENCH_ACCOUNT_INACTIVE": 1,
+        "STR_WORKBENCH_ACCOUNT_LOADING": 1,
+        "STR_WORKBENCH_ACCOUNT_NEEDS_ATTENTION": 1,
+        "STR_WORKBENCH_ACCOUNT_NO_PROVIDER": 1,
+        "STR_WORKBENCH_ACCOUNT_STATUS": 1,
+        "STR_WORKBENCH_ACTIVITY_ACCOUNTS": 1,
         "STR_WORKBENCH_ACTIVITY_EXPLORER": 1,
+        "STR_WORKBENCH_ACTIVITY_MANAGE": 1,
+        "STR_WORKBENCH_ACTIVITY_SEARCH": 1,
         "STR_WORKBENCH_ACTIVITY_SOURCE_CONTROL": 1,
         "STR_WORKBENCH_COLOR_THEME": 1,
         "STR_WORKBENCH_COLOR_THEME_APPLY_FAILED": 1,
@@ -32105,6 +33301,7 @@
         "STR_WORKBENCH_COLOR_THEME_PICKER_PLACEHOLDER": 1,
         "STR_WORKBENCH_COLOR_THEME_SAVE_FAILED": 1,
         "STR_WORKBENCH_COMMAND_ADD_ROOT_FOLDER": 1,
+        "STR_WORKBENCH_COMMAND_CLEAR_RECENT": 1,
         "STR_WORKBENCH_COMMAND_CLOSE_EDITOR": 1,
         "STR_WORKBENCH_COMMAND_CLOSE_FOLDER": 1,
         "STR_WORKBENCH_COMMAND_CLOSE_WINDOW": 1,
@@ -32121,6 +33318,7 @@
         "STR_WORKBENCH_COMMAND_EXPLORER_RENAME": 1,
         "STR_WORKBENCH_COMMAND_EXPLORER_REVEAL": 1,
         "STR_WORKBENCH_COMMAND_EXPLORER_TRASH": 1,
+        "STR_WORKBENCH_COMMAND_EXTENSIONS": 1,
         "STR_WORKBENCH_COMMAND_GIT_BRANCH": 1,
         "STR_WORKBENCH_COMMAND_GIT_BRANCH_FROM": 1,
         "STR_WORKBENCH_COMMAND_GIT_CHECKOUT": 1,
@@ -32210,6 +33408,27 @@
         "STR_WORKBENCH_EXPLORER_OPEN_FOLDER": 1,
         "STR_WORKBENCH_EXPLORER_RENAME_FAILED": 1,
         "STR_WORKBENCH_EXPLORER_TITLE": 1,
+        "STR_WORKBENCH_EXTENSIONS_BUILTIN_INSTALL_FAILED": 1,
+        "STR_WORKBENCH_EXTENSIONS_BUILTIN_UNINSTALL_FAILED": 1,
+        "STR_WORKBENCH_EXTENSIONS_DEVELOPER_WARNING": 1,
+        "STR_WORKBENCH_EXTENSIONS_DEVELOPER_WARNING_TITLE": 1,
+        "STR_WORKBENCH_EXTENSIONS_DROP_READ_FAILED": 1,
+        "STR_WORKBENCH_EXTENSIONS_DROP_TOO_MANY": 1,
+        "STR_WORKBENCH_EXTENSIONS_DROP_TOO_MANY_TITLE": 1,
+        "STR_WORKBENCH_EXTENSIONS_DROP_UNSUPPORTED": 1,
+        "STR_WORKBENCH_EXTENSIONS_DROP_UNSUPPORTED_TITLE": 1,
+        "STR_WORKBENCH_EXTENSIONS_EMPTY": 1,
+        "STR_WORKBENCH_EXTENSIONS_INSTALL": 1,
+        "STR_WORKBENCH_EXTENSIONS_INSTALL_FAILED": 1,
+        "STR_WORKBENCH_EXTENSIONS_INSTALL_FROM_SENP": 1,
+        "STR_WORKBENCH_EXTENSIONS_PACKAGE_REJECTED": 1,
+        "STR_WORKBENCH_EXTENSIONS_SENP_FILTER": 1,
+        "STR_WORKBENCH_EXTENSIONS_STATUS_BUILT_IN": 1,
+        "STR_WORKBENCH_EXTENSIONS_STATUS_DISABLED": 1,
+        "STR_WORKBENCH_EXTENSIONS_STATUS_ENABLED": 1,
+        "STR_WORKBENCH_EXTENSIONS_TITLE": 1,
+        "STR_WORKBENCH_EXTENSIONS_UNINSTALL": 1,
+        "STR_WORKBENCH_EXTENSIONS_UNINSTALL_FAILED": 1,
         "STR_WORKBENCH_GIT_ADD_FOLDER_TO_WORKSPACE": 1,
         "STR_WORKBENCH_GIT_AUTHENTICATION_FAILED": 1,
         "STR_WORKBENCH_GIT_AUTHENTICATION_FAILED_TARGET": 1,
@@ -32229,6 +33448,10 @@
         "STR_WORKBENCH_GIT_CLONE_OVERWRITE_WARNING": 1,
         "STR_WORKBENCH_GIT_CLONE_REPOSITORY": 1,
         "STR_WORKBENCH_GIT_CLONE_SUCCESS": 1,
+        "STR_WORKBENCH_GIT_COMMIT_ACTION": 1,
+        "STR_WORKBENCH_GIT_COMMIT_AMEND_ACTION": 1,
+        "STR_WORKBENCH_GIT_COMMIT_AND_PUSH_ACTION": 1,
+        "STR_WORKBENCH_GIT_COMMIT_AND_SYNC_ACTION": 1,
         "STR_WORKBENCH_GIT_COMMIT_CHANGES": 1,
         "STR_WORKBENCH_GIT_COMMIT_MESSAGE": 1,
         "STR_WORKBENCH_GIT_COMMIT_MESSAGE_ON_BRANCH": 1,
@@ -32354,6 +33577,21 @@
         "STR_WORKBENCH_GIT_WORKSPACE_NO_REPOSITORY": 1,
         "STR_WORKBENCH_GIT_YES": 1,
         "STR_WORKBENCH_INITIALIZE_FAILED": 1,
+        "STR_WORKBENCH_LAYOUT_TOGGLE_PANEL": 1,
+        "STR_WORKBENCH_LAYOUT_TOGGLE_PRIMARY_SIDEBAR": 1,
+        "STR_WORKBENCH_LAYOUT_TOGGLE_SECONDARY_SIDEBAR": 1,
+        "STR_WORKBENCH_MANAGE_COMMAND_PALETTE": 1,
+        "STR_WORKBENCH_MANAGE_KEYBOARD_SHORTCUTS": 1,
+        "STR_WORKBENCH_MANAGE_SETTINGS": 1,
+        "STR_WORKBENCH_MANAGE_THEMES": 1,
+        "STR_WORKBENCH_MANAGE_UPDATE_CANCELLING": 1,
+        "STR_WORKBENCH_MANAGE_UPDATE_CHECK": 1,
+        "STR_WORKBENCH_MANAGE_UPDATE_CHECKING": 1,
+        "STR_WORKBENCH_MANAGE_UPDATE_DOWNLOAD": 1,
+        "STR_WORKBENCH_MANAGE_UPDATE_DOWNLOADING": 1,
+        "STR_WORKBENCH_MANAGE_UPDATE_INSTALL": 1,
+        "STR_WORKBENCH_MANAGE_UPDATE_RESTART": 1,
+        "STR_WORKBENCH_MANAGE_UPDATE_UPDATING": 1,
         "STR_WORKBENCH_PANEL_COLUMN_FILE": 1,
         "STR_WORKBENCH_PANEL_COLUMN_MESSAGE": 1,
         "STR_WORKBENCH_PANEL_COLUMN_SEVERITY": 1,
@@ -32369,12 +33607,34 @@
         "STR_WORKBENCH_PANEL_TERMINAL": 1,
         "STR_WORKBENCH_QUICK_INPUT_CANCEL": 1,
         "STR_WORKBENCH_QUICK_INPUT_OK": 1,
+        "STR_WORKBENCH_RECENT_CLEAR_CONFIRM": 1,
+        "STR_WORKBENCH_RECENT_WORKSPACE_LABEL": 1,
         "STR_WORKBENCH_REMOTE_UNSUPPORTED": 1,
         "STR_WORKBENCH_REPOSITORY_INIT_QUICK_PICK_TITLE": 1,
         "STR_WORKBENCH_SCM_CHANGES_TITLE": 1,
         "STR_WORKBENCH_SCM_GRAPH_TITLE": 1,
         "STR_WORKBENCH_SCM_GRAPH_UNAVAILABLE": 1,
         "STR_WORKBENCH_SCM_REPOSITORIES_TITLE": 1,
+        "STR_WORKBENCH_SEARCH_DISMISS": 1,
+        "STR_WORKBENCH_SEARCH_INVALID_PATTERN": 1,
+        "STR_WORKBENCH_SEARCH_LIMIT_HIT": 1,
+        "STR_WORKBENCH_SEARCH_MATCH_CASE": 1,
+        "STR_WORKBENCH_SEARCH_NO_RESULTS": 1,
+        "STR_WORKBENCH_SEARCH_NO_WORKSPACE": 1,
+        "STR_WORKBENCH_SEARCH_PLACEHOLDER": 1,
+        "STR_WORKBENCH_SEARCH_PRESERVE_CASE": 1,
+        "STR_WORKBENCH_SEARCH_REGEX_UNAVAILABLE": 1,
+        "STR_WORKBENCH_SEARCH_REPLACE_ALL": 1,
+        "STR_WORKBENCH_SEARCH_REPLACE_FAILED": 1,
+        "STR_WORKBENCH_SEARCH_REPLACE_IN_FILE": 1,
+        "STR_WORKBENCH_SEARCH_REPLACE_ONE": 1,
+        "STR_WORKBENCH_SEARCH_REPLACE_PLACEHOLDER": 1,
+        "STR_WORKBENCH_SEARCH_RESULT_SUMMARY": 1,
+        "STR_WORKBENCH_SEARCH_SEARCHING": 1,
+        "STR_WORKBENCH_SEARCH_TITLE": 1,
+        "STR_WORKBENCH_SEARCH_TOGGLE_REPLACE": 1,
+        "STR_WORKBENCH_SEARCH_USE_REGEX": 1,
+        "STR_WORKBENCH_SEARCH_WHOLE_WORD": 1,
         "STR_WORKBENCH_SECONDARY_SIDEBAR_TITLE": 1,
         "STR_WORKBENCH_SOURCE_CONTROL_TITLE": 1,
         "STR_WORKBENCH_STATUS_CHARACTER_CODE": 1,
@@ -32400,14 +33660,14 @@
       }
     },
     {
-      "contract_hash": "sha256:58a2ccbeaa9ad02d4947ac1e45055083a196c08050f47fc49ebee65882848c19",
-      "occurrence_count": 2587,
+      "contract_hash": "sha256:ae5f33645999cf904733dc8138979fefd0a89f855a0308e2a6c8557b3ed1c75d",
+      "occurrence_count": 2685,
       "paths": [
         "sakura_lang/sakura_rc_zh-CN.rc",
         "sakura_lang/sakura_rc_zh-CN.rc2"
       ],
       "role": "zh-CN",
-      "symbol_count": 2141,
+      "symbol_count": 2239,
       "symbols": {
         "F_BOOKMARK_SUBMENU": 1,
         "F_CHGMOD_EOL_SUBMENU": 1,
@@ -34168,6 +35428,20 @@
         "STR_SCROLL_WITH_SIDE_2_BTN": 1,
         "STR_SELLANG_LANGID": 1,
         "STR_SELLANG_NAME": 1,
+        "STR_SENP_CONFIGURATION_LANGUAGE_BASICS_DESCRIPTION": 1,
+        "STR_SENP_CONFIGURATION_LANGUAGE_BASICS_NAME": 1,
+        "STR_SENP_CORE_LANGUAGE_BASICS_DESCRIPTION": 1,
+        "STR_SENP_CORE_LANGUAGE_BASICS_NAME": 1,
+        "STR_SENP_DATABASE_LANGUAGE_BASICS_DESCRIPTION": 1,
+        "STR_SENP_DATABASE_LANGUAGE_BASICS_NAME": 1,
+        "STR_SENP_INDENT_RAINBOW_DESCRIPTION": 1,
+        "STR_SENP_INDENT_RAINBOW_NAME": 1,
+        "STR_SENP_INFRASTRUCTURE_LANGUAGE_BASICS_DESCRIPTION": 1,
+        "STR_SENP_INFRASTRUCTURE_LANGUAGE_BASICS_NAME": 1,
+        "STR_SENP_LEGACY_LANGUAGE_BASICS_DESCRIPTION": 1,
+        "STR_SENP_LEGACY_LANGUAGE_BASICS_NAME": 1,
+        "STR_SENP_SHELL_LANGUAGE_BASICS_DESCRIPTION": 1,
+        "STR_SENP_SHELL_LANGUAGE_BASICS_NAME": 1,
         "STR_SHELL_HHCTRL": 1,
         "STR_SHELL_IMPEXPDIR": 1,
         "STR_SHELL_INFO": 1,
@@ -34216,6 +35490,10 @@
         "STR_TERMINAL_REDETECT_POWERSHELL": 1,
         "STR_TERMINAL_RESTART": 1,
         "STR_TERMINAL_SESSIONS": 1,
+        "STR_TERMINAL_SHORTCUTS": 1,
+        "STR_TERMINAL_SHORTCUT_PRESET_NONE": 1,
+        "STR_TERMINAL_SHORTCUT_PRESET_SCREEN": 1,
+        "STR_TERMINAL_SHORTCUT_PRESET_TMUX": 1,
         "STR_TERMINAL_SPLIT": 1,
         "STR_TERMINAL_SPLIT_DOWN": 1,
         "STR_TERMINAL_TITLE": 1,
@@ -34250,7 +35528,23 @@
         "STR_VIEW_MOUSE_MENU_OPEN": 1,
         "STR_VIEW_MOUSE_MENU_PATH": 1,
         "STR_VIEW_TIMER": 1,
+        "STR_WORKBENCH_ACCOUNT_ACTIVE": 1,
+        "STR_WORKBENCH_ACCOUNT_DISCOVERY_FAILED": 1,
+        "STR_WORKBENCH_ACCOUNT_GITHUB_CLI_NO_ACCOUNTS": 1,
+        "STR_WORKBENCH_ACCOUNT_GITHUB_CLI_UNAVAILABLE": 1,
+        "STR_WORKBENCH_ACCOUNT_GIT_IDENTITY_NOT_CONFIGURED": 1,
+        "STR_WORKBENCH_ACCOUNT_GIT_PROTOCOL": 1,
+        "STR_WORKBENCH_ACCOUNT_GIT_UNAVAILABLE": 1,
+        "STR_WORKBENCH_ACCOUNT_HOST": 1,
+        "STR_WORKBENCH_ACCOUNT_INACTIVE": 1,
+        "STR_WORKBENCH_ACCOUNT_LOADING": 1,
+        "STR_WORKBENCH_ACCOUNT_NEEDS_ATTENTION": 1,
+        "STR_WORKBENCH_ACCOUNT_NO_PROVIDER": 1,
+        "STR_WORKBENCH_ACCOUNT_STATUS": 1,
+        "STR_WORKBENCH_ACTIVITY_ACCOUNTS": 1,
         "STR_WORKBENCH_ACTIVITY_EXPLORER": 1,
+        "STR_WORKBENCH_ACTIVITY_MANAGE": 1,
+        "STR_WORKBENCH_ACTIVITY_SEARCH": 1,
         "STR_WORKBENCH_ACTIVITY_SOURCE_CONTROL": 1,
         "STR_WORKBENCH_COLOR_THEME": 1,
         "STR_WORKBENCH_COLOR_THEME_APPLY_FAILED": 1,
@@ -34258,6 +35552,7 @@
         "STR_WORKBENCH_COLOR_THEME_PICKER_PLACEHOLDER": 1,
         "STR_WORKBENCH_COLOR_THEME_SAVE_FAILED": 1,
         "STR_WORKBENCH_COMMAND_ADD_ROOT_FOLDER": 1,
+        "STR_WORKBENCH_COMMAND_CLEAR_RECENT": 1,
         "STR_WORKBENCH_COMMAND_CLOSE_EDITOR": 1,
         "STR_WORKBENCH_COMMAND_CLOSE_FOLDER": 1,
         "STR_WORKBENCH_COMMAND_CLOSE_WINDOW": 1,
@@ -34274,6 +35569,7 @@
         "STR_WORKBENCH_COMMAND_EXPLORER_RENAME": 1,
         "STR_WORKBENCH_COMMAND_EXPLORER_REVEAL": 1,
         "STR_WORKBENCH_COMMAND_EXPLORER_TRASH": 1,
+        "STR_WORKBENCH_COMMAND_EXTENSIONS": 1,
         "STR_WORKBENCH_COMMAND_GIT_BRANCH": 1,
         "STR_WORKBENCH_COMMAND_GIT_BRANCH_FROM": 1,
         "STR_WORKBENCH_COMMAND_GIT_CHECKOUT": 1,
@@ -34363,6 +35659,27 @@
         "STR_WORKBENCH_EXPLORER_OPEN_FOLDER": 1,
         "STR_WORKBENCH_EXPLORER_RENAME_FAILED": 1,
         "STR_WORKBENCH_EXPLORER_TITLE": 1,
+        "STR_WORKBENCH_EXTENSIONS_BUILTIN_INSTALL_FAILED": 1,
+        "STR_WORKBENCH_EXTENSIONS_BUILTIN_UNINSTALL_FAILED": 1,
+        "STR_WORKBENCH_EXTENSIONS_DEVELOPER_WARNING": 1,
+        "STR_WORKBENCH_EXTENSIONS_DEVELOPER_WARNING_TITLE": 1,
+        "STR_WORKBENCH_EXTENSIONS_DROP_READ_FAILED": 1,
+        "STR_WORKBENCH_EXTENSIONS_DROP_TOO_MANY": 1,
+        "STR_WORKBENCH_EXTENSIONS_DROP_TOO_MANY_TITLE": 1,
+        "STR_WORKBENCH_EXTENSIONS_DROP_UNSUPPORTED": 1,
+        "STR_WORKBENCH_EXTENSIONS_DROP_UNSUPPORTED_TITLE": 1,
+        "STR_WORKBENCH_EXTENSIONS_EMPTY": 1,
+        "STR_WORKBENCH_EXTENSIONS_INSTALL": 1,
+        "STR_WORKBENCH_EXTENSIONS_INSTALL_FAILED": 1,
+        "STR_WORKBENCH_EXTENSIONS_INSTALL_FROM_SENP": 1,
+        "STR_WORKBENCH_EXTENSIONS_PACKAGE_REJECTED": 1,
+        "STR_WORKBENCH_EXTENSIONS_SENP_FILTER": 1,
+        "STR_WORKBENCH_EXTENSIONS_STATUS_BUILT_IN": 1,
+        "STR_WORKBENCH_EXTENSIONS_STATUS_DISABLED": 1,
+        "STR_WORKBENCH_EXTENSIONS_STATUS_ENABLED": 1,
+        "STR_WORKBENCH_EXTENSIONS_TITLE": 1,
+        "STR_WORKBENCH_EXTENSIONS_UNINSTALL": 1,
+        "STR_WORKBENCH_EXTENSIONS_UNINSTALL_FAILED": 1,
         "STR_WORKBENCH_GIT_ADD_FOLDER_TO_WORKSPACE": 1,
         "STR_WORKBENCH_GIT_AUTHENTICATION_FAILED": 1,
         "STR_WORKBENCH_GIT_AUTHENTICATION_FAILED_TARGET": 1,
@@ -34382,6 +35699,10 @@
         "STR_WORKBENCH_GIT_CLONE_OVERWRITE_WARNING": 1,
         "STR_WORKBENCH_GIT_CLONE_REPOSITORY": 1,
         "STR_WORKBENCH_GIT_CLONE_SUCCESS": 1,
+        "STR_WORKBENCH_GIT_COMMIT_ACTION": 1,
+        "STR_WORKBENCH_GIT_COMMIT_AMEND_ACTION": 1,
+        "STR_WORKBENCH_GIT_COMMIT_AND_PUSH_ACTION": 1,
+        "STR_WORKBENCH_GIT_COMMIT_AND_SYNC_ACTION": 1,
         "STR_WORKBENCH_GIT_COMMIT_CHANGES": 1,
         "STR_WORKBENCH_GIT_COMMIT_MESSAGE": 1,
         "STR_WORKBENCH_GIT_COMMIT_MESSAGE_ON_BRANCH": 1,
@@ -34507,6 +35828,21 @@
         "STR_WORKBENCH_GIT_WORKSPACE_NO_REPOSITORY": 1,
         "STR_WORKBENCH_GIT_YES": 1,
         "STR_WORKBENCH_INITIALIZE_FAILED": 1,
+        "STR_WORKBENCH_LAYOUT_TOGGLE_PANEL": 1,
+        "STR_WORKBENCH_LAYOUT_TOGGLE_PRIMARY_SIDEBAR": 1,
+        "STR_WORKBENCH_LAYOUT_TOGGLE_SECONDARY_SIDEBAR": 1,
+        "STR_WORKBENCH_MANAGE_COMMAND_PALETTE": 1,
+        "STR_WORKBENCH_MANAGE_KEYBOARD_SHORTCUTS": 1,
+        "STR_WORKBENCH_MANAGE_SETTINGS": 1,
+        "STR_WORKBENCH_MANAGE_THEMES": 1,
+        "STR_WORKBENCH_MANAGE_UPDATE_CANCELLING": 1,
+        "STR_WORKBENCH_MANAGE_UPDATE_CHECK": 1,
+        "STR_WORKBENCH_MANAGE_UPDATE_CHECKING": 1,
+        "STR_WORKBENCH_MANAGE_UPDATE_DOWNLOAD": 1,
+        "STR_WORKBENCH_MANAGE_UPDATE_DOWNLOADING": 1,
+        "STR_WORKBENCH_MANAGE_UPDATE_INSTALL": 1,
+        "STR_WORKBENCH_MANAGE_UPDATE_RESTART": 1,
+        "STR_WORKBENCH_MANAGE_UPDATE_UPDATING": 1,
         "STR_WORKBENCH_PANEL_COLUMN_FILE": 1,
         "STR_WORKBENCH_PANEL_COLUMN_MESSAGE": 1,
         "STR_WORKBENCH_PANEL_COLUMN_SEVERITY": 1,
@@ -34522,12 +35858,34 @@
         "STR_WORKBENCH_PANEL_TERMINAL": 1,
         "STR_WORKBENCH_QUICK_INPUT_CANCEL": 1,
         "STR_WORKBENCH_QUICK_INPUT_OK": 1,
+        "STR_WORKBENCH_RECENT_CLEAR_CONFIRM": 1,
+        "STR_WORKBENCH_RECENT_WORKSPACE_LABEL": 1,
         "STR_WORKBENCH_REMOTE_UNSUPPORTED": 1,
         "STR_WORKBENCH_REPOSITORY_INIT_QUICK_PICK_TITLE": 1,
         "STR_WORKBENCH_SCM_CHANGES_TITLE": 1,
         "STR_WORKBENCH_SCM_GRAPH_TITLE": 1,
         "STR_WORKBENCH_SCM_GRAPH_UNAVAILABLE": 1,
         "STR_WORKBENCH_SCM_REPOSITORIES_TITLE": 1,
+        "STR_WORKBENCH_SEARCH_DISMISS": 1,
+        "STR_WORKBENCH_SEARCH_INVALID_PATTERN": 1,
+        "STR_WORKBENCH_SEARCH_LIMIT_HIT": 1,
+        "STR_WORKBENCH_SEARCH_MATCH_CASE": 1,
+        "STR_WORKBENCH_SEARCH_NO_RESULTS": 1,
+        "STR_WORKBENCH_SEARCH_NO_WORKSPACE": 1,
+        "STR_WORKBENCH_SEARCH_PLACEHOLDER": 1,
+        "STR_WORKBENCH_SEARCH_PRESERVE_CASE": 1,
+        "STR_WORKBENCH_SEARCH_REGEX_UNAVAILABLE": 1,
+        "STR_WORKBENCH_SEARCH_REPLACE_ALL": 1,
+        "STR_WORKBENCH_SEARCH_REPLACE_FAILED": 1,
+        "STR_WORKBENCH_SEARCH_REPLACE_IN_FILE": 1,
+        "STR_WORKBENCH_SEARCH_REPLACE_ONE": 1,
+        "STR_WORKBENCH_SEARCH_REPLACE_PLACEHOLDER": 1,
+        "STR_WORKBENCH_SEARCH_RESULT_SUMMARY": 1,
+        "STR_WORKBENCH_SEARCH_SEARCHING": 1,
+        "STR_WORKBENCH_SEARCH_TITLE": 1,
+        "STR_WORKBENCH_SEARCH_TOGGLE_REPLACE": 1,
+        "STR_WORKBENCH_SEARCH_USE_REGEX": 1,
+        "STR_WORKBENCH_SEARCH_WHOLE_WORD": 1,
         "STR_WORKBENCH_SECONDARY_SIDEBAR_TITLE": 1,
         "STR_WORKBENCH_SOURCE_CONTROL_TITLE": 1,
         "STR_WORKBENCH_STATUS_CHARACTER_CODE": 1,

@@ -10,6 +10,8 @@ SPDX-License-Identifier: Zlib
 #include "workbench/IWorkbenchTool.h"
 #include "workbench/controls/COverlayScrollbar.h"
 
+#include <shellapi.h>
+
 #include <cstddef>
 #include <functional>
 #include <string>
@@ -45,6 +47,7 @@ public:
 	//! its asynchronous decoration cache is requested again on the next paint.
 	void SetExtensionsChangedCallback(std::function<void()> callback);
 	void Refresh();
+	void RefreshStrings();
 	//! Invokes the package-install command contributed to the Extensions
 	//! ViewContainer title. The list surface never owns this action's placement.
 	void InstallDeveloperPackage();
@@ -65,6 +68,11 @@ private:
 		bool hovered = false;
 		bool trackingMouse = false;
 	};
+	enum class EDeveloperPackageInstallResult {
+		Succeeded,
+		Cancelled,
+		Failed,
+	};
 	static LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
 	static LRESULT CALLBACK ActionButtonSubclassProc(HWND window, UINT message, WPARAM wParam,
 		LPARAM lParam, UINT_PTR id, DWORD_PTR data);
@@ -81,6 +89,9 @@ private:
 	void DestroyActionButtons() noexcept;
 	void InstallBuiltIn(std::wstring_view extensionId);
 	void UninstallBuiltIn(std::wstring_view extensionId);
+	[[nodiscard]] EDeveloperPackageInstallResult InstallDeveloperPackagePath(
+		std::wstring_view packagePath);
+	void HandleDroppedFiles(HDROP drop) noexcept;
 	[[nodiscard]] ActionButtonState* FindActionButton(HWND window) noexcept;
 	void ScrollTo(int offset);
 	void UpdateScrollBar(int viewportHeight);
@@ -92,7 +103,6 @@ private:
 	unsigned int m_dpi = 96;
 	theme::ThemePalette m_palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
 	theme::CThemeFont m_font;
-	HFONT m_semiboldFont = nullptr;
 	HFONT m_extensionIconFont = nullptr;
 	controls::COverlayScrollbar m_scrollbar;
 	std::vector<ActionButtonState> m_actionButtons;

@@ -204,6 +204,9 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ActivityBarModelTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\AccountDiscoveryTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkspaceContextTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
@@ -292,6 +295,9 @@
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExtensionsWorkbenchToolTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\OverlayScrollbarTest.cpp">

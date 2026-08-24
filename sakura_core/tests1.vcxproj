@@ -256,6 +256,7 @@
 	<ClCompile Include="..\src\test\cpp\tests1\update\WorkbenchUpdateCommandsTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerToolTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExtensionsWorkbenchToolTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\OverlayScrollbarTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\FileDecorationTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\GitSourceControlTest.cpp" />
@@ -283,6 +284,7 @@
     <ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchBootstrapContextTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ActivityBarEntryProjectionTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ActivityBarModelTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\AccountDiscoveryTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchLayoutTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cdocline.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cdoclinemgr.cpp" />

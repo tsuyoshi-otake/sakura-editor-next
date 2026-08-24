@@ -137,12 +137,56 @@ struct WorkbenchScmLocaleExpectation {
 	std::array<const wchar_t*, 5> strings;
 };
 
+struct WorkbenchExtensionsLocaleExpectation {
+	const wchar_t* dllName;
+	std::array<const wchar_t*, 36> strings;
+};
+
 constexpr std::array<UINT, 5> kWorkbenchScmStringResourceIds = {
 	STR_WORKBENCH_GIT_EMPTY_WORKBENCH,
 	STR_WORKBENCH_SCM_REPOSITORIES_TITLE,
 	STR_WORKBENCH_SCM_CHANGES_TITLE,
 	STR_WORKBENCH_SCM_GRAPH_TITLE,
 	STR_WORKBENCH_SCM_GRAPH_UNAVAILABLE,
+};
+
+constexpr std::array<UINT, 36> kWorkbenchExtensionsStringResourceIds = {
+	STR_WORKBENCH_EXTENSIONS_TITLE,
+	STR_WORKBENCH_COMMAND_EXTENSIONS,
+	STR_WORKBENCH_EXTENSIONS_INSTALL_FROM_SENP,
+	STR_WORKBENCH_EXTENSIONS_INSTALL,
+	STR_WORKBENCH_EXTENSIONS_UNINSTALL,
+	STR_WORKBENCH_EXTENSIONS_STATUS_BUILT_IN,
+	STR_WORKBENCH_EXTENSIONS_STATUS_ENABLED,
+	STR_WORKBENCH_EXTENSIONS_STATUS_DISABLED,
+	STR_WORKBENCH_EXTENSIONS_EMPTY,
+	STR_WORKBENCH_EXTENSIONS_INSTALL_FAILED,
+	STR_WORKBENCH_EXTENSIONS_UNINSTALL_FAILED,
+	STR_WORKBENCH_EXTENSIONS_DEVELOPER_WARNING_TITLE,
+	STR_WORKBENCH_EXTENSIONS_DEVELOPER_WARNING,
+	STR_WORKBENCH_EXTENSIONS_PACKAGE_REJECTED,
+	STR_WORKBENCH_EXTENSIONS_DROP_UNSUPPORTED_TITLE,
+	STR_WORKBENCH_EXTENSIONS_DROP_UNSUPPORTED,
+	STR_WORKBENCH_EXTENSIONS_DROP_TOO_MANY_TITLE,
+	STR_WORKBENCH_EXTENSIONS_DROP_TOO_MANY,
+	STR_WORKBENCH_EXTENSIONS_SENP_FILTER,
+	STR_WORKBENCH_EXTENSIONS_BUILTIN_INSTALL_FAILED,
+	STR_WORKBENCH_EXTENSIONS_BUILTIN_UNINSTALL_FAILED,
+	STR_WORKBENCH_EXTENSIONS_DROP_READ_FAILED,
+	STR_SENP_CONFIGURATION_LANGUAGE_BASICS_NAME,
+	STR_SENP_CONFIGURATION_LANGUAGE_BASICS_DESCRIPTION,
+	STR_SENP_CORE_LANGUAGE_BASICS_NAME,
+	STR_SENP_CORE_LANGUAGE_BASICS_DESCRIPTION,
+	STR_SENP_DATABASE_LANGUAGE_BASICS_NAME,
+	STR_SENP_DATABASE_LANGUAGE_BASICS_DESCRIPTION,
+	STR_SENP_INDENT_RAINBOW_NAME,
+	STR_SENP_INDENT_RAINBOW_DESCRIPTION,
+	STR_SENP_INFRASTRUCTURE_LANGUAGE_BASICS_NAME,
+	STR_SENP_INFRASTRUCTURE_LANGUAGE_BASICS_DESCRIPTION,
+	STR_SENP_LEGACY_LANGUAGE_BASICS_NAME,
+	STR_SENP_LEGACY_LANGUAGE_BASICS_DESCRIPTION,
+	STR_SENP_SHELL_LANGUAGE_BASICS_NAME,
+	STR_SENP_SHELL_LANGUAGE_BASICS_DESCRIPTION,
 };
 
 //! This is the complete function-code surface of the File menu's v8 default,
@@ -382,6 +426,87 @@ TEST(WorkbenchScmLocalization, AllSelectedRuntimeResourcesContainLocalizedScmVie
 			}
 			catch (const std::out_of_range&) {
 				ADD_FAILURE() << "selected language resource is missing Workbench SCM string " << resourceId;
+			}
+		}
+	}
+}
+
+TEST(WorkbenchExtensionsLocalization, AllSelectedRuntimeResourcesContainLocalizedExtensionStrings)
+{
+	ScopedLanguageSelection restoreLanguage;
+	const auto resourceDirectory = GetCurrentProcessDirectory();
+	ASSERT_TRUE(std::filesystem::is_regular_file(resourceDirectory / L"sakura_lang_en_US.dll"));
+	ASSERT_TRUE(std::filesystem::is_regular_file(resourceDirectory / L"sakura_lang_zh_CN.dll"));
+
+	CSelectLang::InitializeLanguageEnvironment();
+	const std::array locales = {
+		WorkbenchExtensionsLocaleExpectation{ L"", {
+			L"拡張機能", L"拡張機能の表示", L"SENP パッケージからインストール...", L"インストール", L"アンインストール",
+			L"組み込み", L"有効", L"無効", L"拡張機能はありません。", L"拡張機能のインストールに失敗しました",
+			L"拡張機能のアンインストールに失敗しました", L"開発用 SENP パッケージのインストール",
+			L"開発用 .senp パッケージは発行元による信頼確認がありません。\n\n[はい]: インストールして有効化します。\n[いいえ]: 無効な状態でインストールします。\n[キャンセル]: 何もしません。",
+			L"SENP パッケージが拒否されました。", L"サポートされていないドロップ",
+			L"拡張機能ビューには通常の .senp ファイルだけをドロップできます。パッケージはインストールされていません。", L"パッケージが多すぎます",
+			L"一度にドロップしてインストールできる .senp パッケージは 16 個までです。パッケージはインストールされていません。",
+			L"Sakura 拡張機能パッケージ (*.senp)", L"組み込み SENP 拡張機能をインストールできませんでした。",
+			L"組み込み SENP 拡張機能をアンインストールできませんでした。",
+			L"ドロップされたファイルを読み取れませんでした。パッケージはインストールされていません。",
+			L"設定およびビルド言語の基本",
+			L"INI/プロパティ、環境変数ファイル、Makefile、CMake、TOML、および一般的なアプリケーション設定ファイルの構文を強調表示します。",
+			L"コア言語の基本", L"広く使われているプログラミング、Web、データ、およびスクリプト言語向けの組み込み TextMate 構文強調表示です。",
+			L"データベース言語の基本", L"SQL、Oracle PL/SQL と SQL*Plus、およびデータベース設定の構文を強調表示します。",
+			L"インデント レインボー", L"アクティブなエディターのインデント レベルを色分けします。",
+			L"インフラストラクチャ言語の基本",
+			L"Docker、Terraform/HCL、Bicep、CloudFormation、AWS CDK、Kubernetes、Helm、および CI 設定の構文を強調表示します。",
+			L"レガシー言語の基本", L"Perl、COBOL、および固定形式/自由形式の Fortran の構文を強調表示します。",
+			L"シェル言語の基本", L"sh、Bash、zsh、ksh、csh、tcsh、および PowerShell の構文を強調表示します。" } },
+		WorkbenchExtensionsLocaleExpectation{ L"sakura_lang_en_US.dll", {
+			L"Extensions", L"Show Extensions", L"Install from .senp...", L"Install", L"Uninstall", L"Built-in", L"Enabled",
+			L"Disabled", L"No extensions.", L"Extension install failed", L"Extension uninstall failed",
+			L"Install Developer SENP Package", L"Developer .senp packages are not publisher-trusted.\n\nYes: install and enable it.\nNo: install it disabled.\nCancel: do nothing.",
+			L"The SENP package was rejected.", L"Unsupported drop", L"Only regular .senp files can be dropped on the Extensions view. No packages were installed.",
+			L"Too many packages", L"At most 16 .senp packages can be installed in one drop. No packages were installed.",
+			L"Sakura extension package (*.senp)", L"The built-in SENP extension could not be installed.",
+			L"The built-in SENP extension could not be uninstalled.",
+			L"The dropped files could not be read. No packages were installed.",
+			L"Configuration and Build Language Basics",
+			L"Syntax highlighting for INI/properties, environment files, Makefiles, CMake, TOML, and common application configuration files.",
+			L"Core Language Basics", L"Built-in TextMate syntax highlighting for widely used programming, web, data, and scripting languages.",
+			L"Database Language Basics", L"SQL, Oracle PL/SQL and SQL*Plus, and database configuration syntax highlighting.",
+			L"Indent Rainbow", L"Colors indentation levels in the active editor.", L"Infrastructure Language Basics",
+			L"Docker, Terraform/HCL, Bicep, CloudFormation, AWS CDK, Kubernetes, Helm, and CI configuration syntax highlighting.",
+			L"Legacy Language Basics", L"Syntax highlighting for Perl, COBOL, and fixed/free-form Fortran.",
+			L"Shell Language Basics", L"Syntax highlighting for sh, Bash, zsh, ksh, csh, tcsh, and PowerShell." } },
+		WorkbenchExtensionsLocaleExpectation{ L"sakura_lang_zh_CN.dll", {
+			L"扩展", L"显示扩展", L"从 .senp 安装...", L"安装", L"卸载", L"内置", L"已启用", L"已禁用", L"没有扩展。",
+			L"扩展安装失败", L"扩展卸载失败", L"安装开发者 SENP 包",
+			L"开发者 .senp 包未经发布者信任验证。\n\n是: 安装并启用。\n否: 安装但保持禁用。\n取消: 不执行任何操作。",
+			L"SENP 包被拒绝。", L"不支持的拖放", L"只能将普通 .senp 文件拖放到扩展视图。未安装任何包。", L"包过多",
+			L"一次拖放最多可以安装 16 个 .senp 包。未安装任何包。",
+			L"Sakura 扩展包 (*.senp)", L"无法安装内置 SENP 扩展。", L"无法卸载内置 SENP 扩展。",
+			L"无法读取拖放的文件。未安装任何包。", L"配置和构建语言基础",
+			L"为 INI/属性、环境文件、Makefile、CMake、TOML 和常见应用程序配置文件提供语法高亮。",
+			L"核心语言基础", L"为常用编程、Web、数据和脚本语言提供内置 TextMate 语法高亮。",
+			L"数据库语言基础", L"为 SQL、Oracle PL/SQL 和 SQL*Plus 以及数据库配置提供语法高亮。",
+			L"缩进彩虹", L"为活动编辑器中的缩进级别着色。", L"基础设施语言基础",
+			L"为 Docker、Terraform/HCL、Bicep、CloudFormation、AWS CDK、Kubernetes、Helm 和 CI 配置提供语法高亮。",
+			L"传统语言基础", L"为 Perl、COBOL 以及固定/自由格式 Fortran 提供语法高亮。",
+			L"Shell 语言基础", L"为 sh、Bash、zsh、ksh、csh、tcsh 和 PowerShell 提供语法高亮。" } },
+	};
+
+	for (const auto& locale : locales) {
+		SCOPED_TRACE(locale.dllName);
+		CSelectLang::ChangeLang(locale.dllName);
+		for (size_t index = 0; index < kWorkbenchExtensionsStringResourceIds.size(); ++index) {
+			const UINT resourceId = kWorkbenchExtensionsStringResourceIds[index];
+			SCOPED_TRACE(resourceId);
+			try {
+				const auto resource = cxx::load_string(
+					resourceId, std::optional<HMODULE>{ CSelectLang::getLangRsrcInstance() });
+				EXPECT_EQ(locale.strings[index], resource);
+			}
+			catch (const std::out_of_range&) {
+				ADD_FAILURE() << "selected language resource is missing Workbench Extensions string " << resourceId;
 			}
 		}
 	}

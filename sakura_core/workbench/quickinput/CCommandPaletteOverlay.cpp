@@ -27,11 +27,21 @@ constexpr COLORREF kFallbackPanel = RGB(37, 37, 38);
 //! A Quick Input query is a single-line editor.  Keep the chrome row close to
 //! the workbench's other compact inputs instead of allocating two text lines.
 constexpr int kInputRowHeightDip = 26;
+constexpr int kHeaderTopPaddingDip = 6;
+constexpr int kHeaderHorizontalPaddingDip = 6;
+constexpr int kHeaderBottomPaddingDip = 4;
+constexpr int kListScrollablePaddingDip = 6;
+constexpr int kListEntryPaddingDip = 6;
 constexpr int kQuickPickCompactRowHeightDip = 22;
 constexpr int kQuickPickDetailRowHeightDip = 44;
 constexpr int kSeparatorRowHeightDip = 30;
-constexpr int kMaximumWidthDip = 600;
-constexpr int kMinimumWidthDip = 320;
+//! VS Code's `cornerRadius-xLarge` token is 12px in the 1.134.0 size ramp.
+constexpr int kWidgetCornerRadiusDip = 12;
+//! The native child cannot paint outside its parent, so the shadow is kept as
+//! a themed inner edge while the rounded region clips the four outer corners.
+constexpr int kWidgetShadowWidthDip = 2;
+constexpr int kInputCornerRadiusDip = 6;
+constexpr int kRowCornerRadiusDip = 3;
 
 [[nodiscard]] std::wstring LocalizedString(UINT resourceId, const wchar_t* fallback)
 {
@@ -114,6 +124,49 @@ void PaintParentRegionNow(HWND parent, const RECT& bounds) noexcept
 		RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE | RDW_ALLCHILDREN);
 }
 
+[[nodiscard]] COLORREF BlendTowardBlack(COLORREF color, int amount) noexcept
+{
+	const int clamped = (std::clamp)(amount, 0, 255);
+	const int red = GetRValue(color);
+	const int green = GetGValue(color);
+	const int blue = GetBValue(color);
+	return RGB(
+		red * (255 - clamped) / 255,
+		green * (255 - clamped) / 255,
+		blue * (255 - clamped) / 255);
+}
+
+void FillRoundedRect(HDC dc, const RECT& bounds, int radius, COLORREF color) noexcept
+{
+	if (dc == nullptr || bounds.right <= bounds.left || bounds.bottom <= bounds.top) return;
+	const HBRUSH brush = ::CreateSolidBrush(color);
+	const HPEN pen = ::CreatePen(PS_SOLID, 1, color);
+	if (brush != nullptr && pen != nullptr) {
+		const HGDIOBJ oldBrush = ::SelectObject(dc, brush);
+		const HGDIOBJ oldPen = ::SelectObject(dc, pen);
+		(void)::RoundRect(dc, bounds.left, bounds.top, bounds.right, bounds.bottom,
+			radius, radius);
+		if (oldPen != nullptr && oldPen != HGDI_ERROR) ::SelectObject(dc, oldPen);
+		if (oldBrush != nullptr && oldBrush != HGDI_ERROR) ::SelectObject(dc, oldBrush);
+	}
+	if (pen != nullptr) ::DeleteObject(pen);
+	if (brush != nullptr) ::DeleteObject(brush);
+}
+
+void FrameRoundedRect(HDC dc, const RECT& bounds, int radius, COLORREF color) noexcept
+{
+	if (dc == nullptr || bounds.right <= bounds.left || bounds.bottom <= bounds.top) return;
+	const HPEN pen = ::CreatePen(PS_SOLID, 1, color);
+	if (pen == nullptr) return;
+	const HGDIOBJ oldPen = ::SelectObject(dc, pen);
+	const HGDIOBJ oldBrush = ::SelectObject(dc, ::GetStockObject(NULL_BRUSH));
+	(void)::RoundRect(dc, bounds.left, bounds.top, bounds.right, bounds.bottom,
+		radius, radius);
+	if (oldBrush != nullptr && oldBrush != HGDI_ERROR) ::SelectObject(dc, oldBrush);
+	if (oldPen != nullptr && oldPen != HGDI_ERROR) ::SelectObject(dc, oldPen);
+	::DeleteObject(pen);
+}
+
 } // namespace
 
 CCommandPaletteOverlay::~CCommandPaletteOverlay() noexcept
@@ -184,6 +237,7 @@ void CCommandPaletteOverlay::Destroy() noexcept
 	m_empty = nullptr;
 	m_previousFocus = nullptr;
 	m_inputMode = false;
+	m_suppressInputChange = false;
 	m_inputPrompt.clear();
 	m_inputPlaceholder.clear();
 	m_rowPixelOffsets.clear();
@@ -216,13 +270,23 @@ bool CCommandPaletteOverlay::Show(
 		if (IsPaletteTarget(m_window, m_previousFocus)) m_previousFocus = m_parent;
 	}
 	m_inputMode = false;
+	m_suppressInputChange = true;
 	m_inputPrompt.clear();
 	m_inputPlaceholder.clear();
 	m_selectionNotificationsEnabled = false;
 	m_lastNotifiedSelectionId.clear();
-	if (m_input != nullptr) ::SetWindowTextW(m_input, L"");
-	if (m_prompt != nullptr) ::SetWindowTextW(m_prompt, L">");
 	m_items = std::move(items);
+	if (m_input != nullptr) {
+		::SetWindowTextW(m_input, L">");
+		::SendMessageW(m_input, EM_SETSEL, 1, 1);
+	}
+	if (m_prompt != nullptr) {
+		::ShowWindow(m_prompt, SW_HIDE);
+	}
+	if (m_close != nullptr) {
+		::ShowWindow(m_close, SW_HIDE);
+	}
+	m_suppressInputChange = false;
 	RefreshStrings();
 	if (m_list != nullptr) ::ShowWindow(m_list, SW_SHOW);
 	if (m_empty != nullptr) ::ShowWindow(m_empty, SW_HIDE);
@@ -249,6 +313,7 @@ bool CCommandPaletteOverlay::ShowInput(
 		if (IsPaletteTarget(m_window, m_previousFocus)) m_previousFocus = m_parent;
 	}
 	m_inputMode = true;
+	m_suppressInputChange = true;
 	m_inputPrompt.assign(prompt);
 	m_inputPlaceholder.assign(placeholder);
 	m_items.clear();
@@ -262,6 +327,9 @@ bool CCommandPaletteOverlay::ShowInput(
 		::SetWindowTextW(m_input, std::wstring(value).c_str());
 		::SendMessageW(m_input, EM_SETSEL, static_cast<WPARAM>(-1), static_cast<LPARAM>(-1));
 	}
+	m_suppressInputChange = false;
+	if (m_prompt != nullptr) ::ShowWindow(m_prompt, SW_SHOW);
+	if (m_close != nullptr) ::ShowWindow(m_close, SW_SHOW);
 	if (m_list != nullptr) ::ShowWindow(m_list, SW_HIDE);
 	if (m_empty != nullptr) ::ShowWindow(m_empty, SW_HIDE);
 	RefreshStrings();
@@ -346,32 +414,18 @@ void CCommandPaletteOverlay::Layout() noexcept
 
 	// VS Code caps Quick Input at 62% of the host width / 600 CSS px and gives
 	// its list 40% of the host height as a maximum. The list itself remains
-	// content-sized, which is what keeps a two-item theme picker compact.
-	const int edgeMargin = Scale(6);
-	const int availableWidth = (std::max)(0, parentWidth - edgeMargin * 2);
-	const int goldenWidth = parentWidth * 62 / 100;
-	const int width = (std::min)(availableWidth,
-		(std::min)(Scale(kMaximumWidthDip),
-			(std::max)(Scale(kMinimumWidthDip), goldenWidth)));
-	const int headerHeight = Scale(6) + Scale(kInputRowHeightDip) + Scale(4);
-	int listHeight = 0;
-	if (!m_inputMode) {
-		EnsureRowPixelOffsets();
-		const int contentHeight = m_items.empty()
-			? Scale(kQuickPickDetailRowHeightDip)
-			: (m_rowPixelOffsets.empty() ? 0 : m_rowPixelOffsets.back());
-		const int rowBand = (std::max)(1, Scale(kQuickPickDetailRowHeightDip));
-		const int rawMaximum = parentHeight * 40 / 100;
-		const int alignedMaximum = rawMaximum / rowBand * rowBand + Scale(6);
-		const int availableHeight = (std::max)(0,
-			parentHeight - edgeMargin - headerHeight - Scale(4));
-		listHeight = (std::min)(contentHeight,
-			(std::min)(alignedMaximum, availableHeight));
-	}
-	const int height = headerHeight + listHeight + Scale(4);
-	const int x = (std::max)(0, (parentWidth - width) / 2);
-	const int y = (std::min)(edgeMargin,
-		(std::max)(0, parentHeight - height));
+	// content-sized, which is what keeps a two-item theme picker compact.  The
+	// pure helper keeps the same arithmetic available to narrow/DPI tests.
+	EnsureRowPixelOffsets();
+	const int contentHeight = m_items.empty()
+		? Scale(kQuickPickDetailRowHeightDip)
+		: (m_rowPixelOffsets.empty() ? 0 : m_rowPixelOffsets.back());
+	const auto geometry = ComputeQuickInputLayout(parentWidth, parentHeight,
+		static_cast<int>(::GetDpiForWindow(m_window)), contentHeight, m_inputMode);
+	const int x = geometry.x;
+	const int y = geometry.y;
+	const int width = geometry.width;
+	const int height = geometry.height;
 	RECT previousBounds{};
 	const bool repaintParent = IsVisible()
 		&& ::GetWindowRect(m_window, &previousBounds) != FALSE;
@@ -583,6 +637,9 @@ LRESULT CCommandPaletteOverlay::HandleMessage(UINT message, WPARAM wParam, LPARA
 		}, controls::OverlayScrollbarSource::ExplicitModel);
 		m_overlayScrollbar.SetHideNativeBar(true);
 		::SendMessageW(m_input, EM_SETLIMITTEXT, 4096, 0);
+		const int inputPadding = Scale(kListEntryPaddingDip);
+		::SendMessageW(m_input, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
+			MAKELONG(inputPadding, inputPadding));
 		const HFONT font = ControlFont(m_font.Get());
 		SetControlFont(m_prompt, font);
 		SetControlFont(m_input, font);
@@ -708,18 +765,23 @@ void CCommandPaletteOverlay::Layout(int width, int height) noexcept
 {
 	if (m_window == nullptr) return;
 	// VS Code's Quick Input header is exactly one input line: six DIP above a
-	// 26-DIP input and four DIP below. Keep horizontal spacing independent so a
+	// 26-DIP input and four DIP below.  The list then owns its independent
+	// seven-DIP bottom padding. Keep horizontal spacing independent so a
 	// vertical tweak cannot silently restore the old dialog-like header.
-	const int horizontalMargin = Scale(4);
-	const int topInset = Scale(6);
-	const int bottomInset = Scale(4);
+	const int horizontalMargin = Scale(kHeaderHorizontalPaddingDip);
+	const int topInset = Scale(kHeaderTopPaddingDip);
+	const int bottomInset = Scale(kHeaderBottomPaddingDip);
+	const int listScrollablePadding = Scale(kListScrollablePaddingDip);
 	const int rowHeight = Scale(kInputRowHeightDip);
 	int promptWidth = Scale(26);
-	const int closeWidth = Scale(30);
-	const int gap = Scale(4);
+	const int closeWidth = m_inputMode ? Scale(30) : 0;
+	const int gap = m_inputMode ? Scale(4) : 0;
 	const int listTop = topInset + rowHeight + bottomInset;
-	const int listBottom = (std::max)(listTop, height - bottomInset);
-	const int listWidth = (std::max)(0, width - horizontalMargin * 2);
+	const int listBottom = (std::max)(listTop, height);
+	const int listWidth = (std::max)(0, width - listScrollablePadding * 2);
+	if (!m_inputMode) {
+		promptWidth = 0;
+	}
 	if (m_inputMode && m_prompt != nullptr) {
 		const std::wstring prompt = ReadWindowText(m_prompt);
 		if (!prompt.empty()) {
@@ -741,8 +803,15 @@ void CCommandPaletteOverlay::Layout(int width, int height) noexcept
 			}
 		}
 	}
-	const int inputWidth = (std::max)(0,
-		width - horizontalMargin * 2 - promptWidth - closeWidth - gap * 2);
+	const int inputWidth = m_inputMode
+		? (std::max)(0,
+			width - horizontalMargin * 2 - promptWidth - closeWidth - gap * 2)
+		: listWidth;
+	if (m_input != nullptr) {
+		const int inputPadding = Scale(kListEntryPaddingDip);
+		::SendMessageW(m_input, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
+			MAKELONG(inputPadding, inputPadding));
+	}
 
 	const UINT commonFlags = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS;
 	struct Placement {
@@ -764,17 +833,25 @@ void CCommandPaletteOverlay::Layout(int width, int height) noexcept
 		}};
 	} else {
 		placements = {{
-			{ m_prompt, horizontalMargin, topInset, promptWidth, rowHeight },
-			{ m_input, horizontalMargin + promptWidth + gap, topInset,
-				(std::max)(0, width - horizontalMargin * 2
-					- promptWidth - closeWidth - gap * 2), rowHeight },
-			{ m_close, (std::max)(horizontalMargin,
-				width - horizontalMargin - closeWidth), topInset, closeWidth, rowHeight },
-			{ m_list, horizontalMargin, listTop, listWidth,
+			{ m_prompt, 0, 0, 0, 0 },
+			{ m_input, horizontalMargin, topInset, inputWidth, rowHeight },
+			{ m_close, 0, 0, 0, 0 },
+			{ m_list, listScrollablePadding, listTop, listWidth,
 				(std::max)(0, listBottom - listTop) },
-			{ m_empty, horizontalMargin, listTop, listWidth,
+			{ m_empty, listScrollablePadding, listTop, listWidth,
 				(std::max)(0, listBottom - listTop) },
 		}};
+	}
+	if (width > 0 && height > 0) {
+		const int radius = (std::min)(Scale(kWidgetCornerRadiusDip),
+			(std::min)(width / 2, height / 2));
+		HRGN region = ::CreateRoundRectRgn(0, 0, width + 1, height + 1,
+			radius * 2, radius * 2);
+		if (region != nullptr) {
+			if (::SetWindowRgn(m_window, region, TRUE) == 0) {
+				::DeleteObject(region);
+			}
+		}
 	}
 
 	HDWP transaction = ::BeginDeferWindowPos(static_cast<int>(std::size(placements)));
@@ -842,9 +919,11 @@ void CCommandPaletteOverlay::PopulateList(std::wstring_view preferredSelectionId
 
 void CCommandPaletteOverlay::UpdateSearch() noexcept
 {
-	if (m_input == nullptr || m_inputMode) return;
+	if (m_input == nullptr || m_inputMode || m_suppressInputChange) return;
 	const auto previousSelectionId = SelectedItemId();
-	const std::wstring query = ReadWindowText(m_input);
+	NormalizeCommandPaletteInput();
+	const std::wstring value = ReadWindowText(m_input);
+	const std::wstring query(StripCommandPaletteProviderPrefix(value));
 	if (!m_searchCallback) {
 		PopulateList(previousSelectionId);
 		Layout();
@@ -860,6 +939,30 @@ void CCommandPaletteOverlay::UpdateSearch() noexcept
 	PopulateList(previousSelectionId);
 	Layout();
 	if (IsVisible()) PaintOverlayNow(m_window);
+}
+
+void CCommandPaletteOverlay::NormalizeCommandPaletteInput() noexcept
+{
+	if (m_input == nullptr || m_inputMode || m_suppressInputChange) return;
+	const std::wstring value = ReadWindowText(m_input);
+	if (!value.empty() && value.front() == L'>') return;
+
+	DWORD selectionStart = 0;
+	DWORD selectionEnd = 0;
+	(void)::SendMessageW(m_input, EM_GETSEL,
+		reinterpret_cast<WPARAM>(&selectionStart), reinterpret_cast<LPARAM>(&selectionEnd));
+	std::wstring normalized;
+	normalized.reserve(value.size() + 1);
+	normalized.push_back(L'>');
+	normalized.append(value);
+	m_suppressInputChange = true;
+	::SetWindowTextW(m_input, normalized.c_str());
+	m_suppressInputChange = false;
+	const auto clampSelection = [size = normalized.size()](DWORD position) {
+		return static_cast<WPARAM>((std::min)(static_cast<std::size_t>(position + 1), size));
+	};
+	(void)::SendMessageW(m_input, EM_SETSEL,
+		clampSelection(selectionStart), clampSelection(selectionEnd));
 }
 
 void CCommandPaletteOverlay::MoveSelection(int direction) noexcept
@@ -1004,33 +1107,46 @@ void CCommandPaletteOverlay::RestoreFocus() noexcept
 	}
 }
 
-void CCommandPaletteOverlay::Paint(HDC dc, const RECT& bounds) noexcept
+void CCommandPaletteOverlay::Paint(HDC dc, const RECT&) noexcept
 {
 	const COLORREF panelColor = m_palette.quickInputBackground.ToColorRef();
-	if (m_panelBrush != nullptr) {
-		::FillRect(dc, &bounds, m_panelBrush);
-	} else {
-		FillWithColor(dc, bounds, panelColor == 0 ? kFallbackPanel : panelColor);
+	RECT frame{};
+	::GetClientRect(m_window, &frame);
+	const COLORREF surface = panelColor == 0 ? kFallbackPanel : panelColor;
+	const int frameHalfWidth = static_cast<int>((frame.right - frame.left) / 2);
+	const int frameHalfHeight = static_cast<int>((frame.bottom - frame.top) / 2);
+	const int frameRadius = (std::min)(Scale(kWidgetCornerRadiusDip),
+		(std::min)(frameHalfWidth, frameHalfHeight));
+	const int shadowWidth = (std::min)(Scale(kWidgetShadowWidthDip),
+		(std::min)(frameHalfWidth, frameHalfHeight));
+	if (shadowWidth > 0) {
+		// `shadow-xl` is represented by a compact inner feather because a child
+		// HWND cannot paint outside its parent's client area.  The palette surface
+		// and border remain opaque, while the two-pixel edge preserves the elevation
+		// cue on both light and dark themes.
+		const COLORREF shadow = BlendTowardBlack(surface, 40);
+		FillRoundedRect(dc, frame, frameRadius * 2, shadow);
 	}
-	const HBRUSH border = ::CreateSolidBrush(m_palette.border.ToColorRef());
-	if (border != nullptr) {
-		RECT frame{};
-		::GetClientRect(m_window, &frame);
-		::FrameRect(dc, &frame, border);
-		if (m_input != nullptr && ::IsWindowVisible(m_input) != FALSE) {
-			RECT inputFrame{};
-			if (::GetWindowRect(m_input, &inputFrame) != FALSE) {
-				::MapWindowPoints(nullptr, m_window,
-					reinterpret_cast<POINT*>(&inputFrame), 2);
-				::InflateRect(&inputFrame, 1, 1);
-				const HBRUSH inputBorder = ::CreateSolidBrush(m_palette.inputBorder.ToColorRef());
-				if (inputBorder != nullptr) {
-					::FrameRect(dc, &inputFrame, inputBorder);
-					::DeleteObject(inputBorder);
-				}
-			}
+	RECT surfaceFrame = frame;
+	::InflateRect(&surfaceFrame, -shadowWidth, -shadowWidth);
+	const int surfaceRadius = (std::max)(0, frameRadius - shadowWidth);
+	FillRoundedRect(dc, surfaceFrame, surfaceRadius * 2, surface);
+	FrameRoundedRect(dc, frame, frameRadius * 2, m_palette.border.ToColorRef());
+	if (m_input != nullptr && ::IsWindowVisible(m_input) != FALSE) {
+		RECT inputFrame{};
+		if (::GetWindowRect(m_input, &inputFrame) != FALSE) {
+			::MapWindowPoints(nullptr, m_window,
+				reinterpret_cast<POINT*>(&inputFrame), 2);
+			::InflateRect(&inputFrame, 1, 1);
+			const int inputRadius = Scale(kInputCornerRadiusDip);
+			// Command Palette keeps the provider marker inside the focused input
+			// control.  VS Code exposes that focus with the blue focusBorder; the
+			// generic ShowInput contract retains its neutral input.border frame.
+			const COLORREF inputBorder = m_inputMode
+				? m_palette.inputBorder.ToColorRef() : m_palette.accent.ToColorRef();
+			FrameRoundedRect(dc, inputFrame, inputRadius * 2,
+				inputBorder);
 		}
-		::DeleteObject(border);
 	}
 }
 
@@ -1047,11 +1163,21 @@ void CCommandPaletteOverlay::DrawItem(const DRAWITEMSTRUCT& draw) noexcept
 	const COLORREF background = selected
 		? m_palette.listActiveSelectionBackground.ToColorRef()
 		: m_palette.quickInputBackground.ToColorRef();
-	FillWithColor(draw.hDC, bounds, background);
+	// LISTBOX gives owner-draw rows a square band.  Clear that band first, then
+	// paint the actual row with VS Code's 3-DIP radius so the list's six-DIP
+	// scrollable side padding remains visible at both corners.
+	FillWithColor(draw.hDC, bounds, m_palette.quickInputBackground.ToColorRef());
+	if (selected) {
+		const int rowHalfWidth = static_cast<int>((bounds.right - bounds.left) / 2);
+		const int rowHalfHeight = static_cast<int>((bounds.bottom - bounds.top) / 2);
+		const int radius = (std::min)(Scale(kRowCornerRadiusDip),
+			(std::min)(rowHalfWidth, rowHalfHeight));
+		FillRoundedRect(draw.hDC, bounds, radius * 2, background);
+	}
 	if (!valid) return;
 
 	const auto& item = m_items[draw.itemID];
-	const int padding = Scale(8);
+	const int padding = Scale(kListEntryPaddingDip);
 	const int lineHeight = Scale(17);
 	const int iconSide = Scale(16);
 	const int lineGap = Scale(8);

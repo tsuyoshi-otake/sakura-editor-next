@@ -71,6 +71,48 @@ public:
 	int closeCalls = 0;
 };
 
+class FormattingRectTool final : public workbench::IWorkbenchTool {
+public:
+	bool Create(HWND parent) override
+	{
+		m_input = ::CreateWindowExW(0, L"EDIT", L"",
+			WS_CHILD | ES_MULTILINE | ES_AUTOVSCROLL,
+			0, 0, 0, 0, parent, nullptr, ::GetModuleHandleW(nullptr), nullptr);
+		return m_input != nullptr;
+	}
+	void Layout(const RECT&, unsigned int) override
+	{
+		fontAtLayout = reinterpret_cast<HFONT>(
+			::SendMessageW(m_input, WM_GETFONT, 0, 0));
+		::SetWindowPos(m_input, nullptr, 0, 0, 200, 24,
+			SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOREDRAW);
+		RECT formatting{ 4, 4, 196, 20 };
+		::SendMessageW(m_input, EM_SETRECTNP, 0,
+			reinterpret_cast<LPARAM>(&formatting));
+	}
+	void Activate() override {}
+	void Deactivate() override {}
+	bool PreTranslateMessage(MSG&) override { return false; }
+	void Close() override
+	{
+		if (m_input != nullptr) ::DestroyWindow(m_input);
+		m_input = nullptr;
+	}
+
+	[[nodiscard]] RECT FormattingRect() const
+	{
+		RECT formatting{};
+		::SendMessageW(m_input, EM_GETRECT, 0,
+			reinterpret_cast<LPARAM>(&formatting));
+		return formatting;
+	}
+
+	HFONT fontAtLayout{};
+
+private:
+	HWND m_input{};
+};
+
 TEST(WorkbenchPanelHost, UsesHideWithoutClosingOwnedToolAndCommitsOnlyAcceptedResize)
 {
 	int callbackCount = 0;
@@ -224,6 +266,24 @@ TEST(WorkbenchPanelHost, OwnsViewContainerTitleOverflowGeometry)
 
 	host.SetHeaderMenu({});
 	EXPECT_EQ(0L, ::GetWindowLongPtrW(button, GWL_STYLE) & WS_VISIBLE);
+	host.Close();
+}
+
+TEST(WorkbenchPanelHost, AppliesChromeFontBeforeToolLayoutEstablishesNativeGeometry)
+{
+	workbench::CWorkbenchPanelHost host(workbench::WorkbenchEdge::Left, 280);
+	auto tool = std::make_unique<FormattingRectTool>();
+	auto* formattingTool = tool.get();
+	ASSERT_TRUE(host.Create(::GetDesktopWindow(), ::GetModuleHandleW(nullptr), std::move(tool)));
+
+	host.Layout(RECT{ 0, 0, 360, 500 }, 96);
+
+	ASSERT_NE(nullptr, formattingTool->fontAtLayout);
+	const RECT formatting = formattingTool->FormattingRect();
+	EXPECT_EQ(4, formatting.left);
+	EXPECT_EQ(4, formatting.top);
+	EXPECT_EQ(196, formatting.right);
+	EXPECT_EQ(20, formatting.bottom);
 	host.Close();
 }
 

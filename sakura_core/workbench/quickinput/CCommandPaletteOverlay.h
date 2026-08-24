@@ -13,6 +13,7 @@
 
 #include <Windows.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <functional>
 #include <string>
@@ -37,6 +38,76 @@ struct QuickInputStrings {
 	std::wstring placeholder;
 	std::wstring noResults;
 };
+
+//! The pixel geometry contract shared by the native Quick Input projection and
+//! its pure tests.  `listContentHeight` is already DPI-scaled because variable
+//! owner-draw rows are measured by USER in physical pixels.
+struct QuickInputLayoutMetrics {
+	int x = 0;
+	int y = 0;
+	int width = 0;
+	int height = 0;
+	int headerHeight = 0;
+	int listTop = 0;
+	int listHeight = 0;
+};
+
+//! Converts a positive DIP token using the same nearest-pixel rule as
+//! `MulDiv(value, dpi, 96)` without requiring a USER/GDI handle.
+[[nodiscard]] constexpr int ScaleQuickInputDip(int value, int dpi) noexcept
+{
+	const int effectiveDpi = dpi > 0 ? dpi : USER_DEFAULT_SCREEN_DPI;
+	return (value * effectiveDpi + USER_DEFAULT_SCREEN_DPI / 2)
+		/ USER_DEFAULT_SCREEN_DPI;
+}
+
+//! Pure command-palette provider parsing.  The provider marker is part of the
+//! EDIT value, while filtering receives only the user query after it.
+[[nodiscard]] constexpr std::wstring_view StripCommandPaletteProviderPrefix(
+	std::wstring_view value) noexcept
+{
+	return !value.empty() && value.front() == L'>' ? value.substr(1) : value;
+}
+
+//! Computes the bounded overlay geometry for one host/DPI combination.  Keeping
+//! this arithmetic outside HWND code makes narrow clients and non-96-DPI
+//! rounding behavior directly testable.
+[[nodiscard]] constexpr QuickInputLayoutMetrics ComputeQuickInputLayout(
+	int parentWidth,
+	int parentHeight,
+	int dpi,
+	int listContentHeight,
+	bool inputMode) noexcept
+{
+	const int edgeMargin = ScaleQuickInputDip(6, dpi);
+	const int availableWidth = (std::max)(0, parentWidth - edgeMargin * 2);
+	const int goldenWidth = parentWidth * 62 / 100;
+	const int width = (std::min)(availableWidth,
+		(std::min)(ScaleQuickInputDip(600, dpi),
+			(std::max)(ScaleQuickInputDip(320, dpi), goldenWidth)));
+	const int headerHeight = ScaleQuickInputDip(6, dpi)
+		+ ScaleQuickInputDip(26, dpi) + ScaleQuickInputDip(4, dpi);
+	const int listBottomPadding = inputMode ? 0 : ScaleQuickInputDip(7, dpi);
+	const int availableHeight = (std::max)(0,
+		parentHeight - edgeMargin - headerHeight);
+	const int rowBand = (std::max)(1, ScaleQuickInputDip(44, dpi));
+	const int rawMaximum = parentHeight * 40 / 100;
+	const int alignedMaximum = rawMaximum / rowBand * rowBand + ScaleQuickInputDip(6, dpi);
+	const int contentMaximum = (std::max)(0, availableHeight - listBottomPadding);
+	const int boundedContent = (std::min)((std::max)(0, listContentHeight),
+		(std::min)(alignedMaximum, contentMaximum));
+	const int listHeight = inputMode ? 0 : boundedContent + listBottomPadding;
+	const int height = headerHeight + listHeight;
+	return {
+		.x = (std::max)(0, (parentWidth - width) / 2),
+		.y = (std::min)(edgeMargin, (std::max)(0, parentHeight - height)),
+		.width = width,
+		.height = height,
+		.headerHeight = headerHeight,
+		.listTop = headerHeight,
+		.listHeight = listHeight,
+	};
+}
 
 //! Borderless, non-modal Quick Input surface used by Ctrl+Shift+P and theme picking.
 class CCommandPaletteOverlay final {
@@ -99,6 +170,7 @@ private:
 	void Layout(int width, int height) noexcept;
 	void PopulateList(std::wstring_view preferredSelectionId = {}) noexcept;
 	void UpdateSearch() noexcept;
+	void NormalizeCommandPaletteInput() noexcept;
 	void MoveSelection(int direction) noexcept;
 	void NotifySelectionChanged() noexcept;
 	[[nodiscard]] std::wstring SelectedItemId() const;
@@ -137,6 +209,7 @@ private:
 	UINT m_rowPixelOffsetsDpi = 0;
 	int m_wheelDeltaRemainder = 0;
 	bool m_inputMode = false;
+	bool m_suppressInputChange = false;
 	std::wstring m_inputPrompt;
 	std::wstring m_inputPlaceholder;
 	int m_lastSelectableIndex = -1;

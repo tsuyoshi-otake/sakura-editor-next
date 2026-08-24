@@ -24,6 +24,14 @@
   than opening an unrelated or fabricated surface.
 - Overflow uses the shared workbench overlay scrollbar over the View body. Do
   not restore a native `WS_VSCROLL` gutter.
+- File-picker and drag-and-drop installation are two projections of the same
+  developer-package service operation. A drop accepts only 1-16 regular
+  `.senp` files, validates the complete batch before the first install, and
+  processes valid packages in drop order with the same explicit trust choice.
+- SENP manifest identity is immutable package metadata. The product may
+  localize only its known embedded built-ins by stable extension ID in this UI
+  composition layer; developer and publisher packages retain their manifest
+  `displayName` and `description` verbatim.
 
 ## Intentional SENP Divergence
 
@@ -31,7 +39,9 @@ SENP is a local Sakura Editor NEXT package format, not VSIX and not an Open VSX
 client. There is no extension gallery. Marketplace search, recommendations,
 ratings, download counts, update controls, and publisher verification remain
 unsupported and must not be approximated. Local package installation is exposed
-through the Extensions ViewContainer title menu as `Install from .senp...`.
+through the Extensions ViewContainer title menu and by dropping local `.senp`
+files on the Extensions View. Both are developer-package installation paths,
+not marketplace or publisher-trust capabilities.
 
 Unlike VS Code's product-owned built-in extensions, SENP uses `builtIn` only for
 the embedded source and integrity trust class. Sakura Editor NEXT intentionally

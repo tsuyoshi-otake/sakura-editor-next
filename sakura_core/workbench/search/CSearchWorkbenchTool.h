@@ -50,6 +50,26 @@ struct SearchViewTexts final {
 	std::wstring replaceFailed = L"{0} files could not be replaced.";
 };
 
+//! DPI-aware geometry for the native equivalent of VS Code's searchWidget.
+//!
+//! This is deliberately independent of HWND state so that the CSS contract
+//! can be tested without creating a window.  `clientRect` is the local client
+//! rectangle of the Search view; all returned rectangles use that same local
+//! coordinate space.
+struct SearchWidgetGeometry final {
+	RECT container{};
+	RECT queryBox{};
+	RECT replaceBox{};
+	RECT replaceAll{};
+	RECT toggleReplace{};
+	RECT queryEdit{};
+	RECT replaceEdit{};
+};
+
+//! Calculates the Search widget layout using VS Code 1.134.0's CSS constants.
+[[nodiscard]] SearchWidgetGeometry CalculateSearchWidgetGeometry(
+	const RECT& clientRect, unsigned int dpi, bool replaceVisible) noexcept;
+
 /*!
 	@brief The native `workbench.view.search` ViewContainer.
 

@@ -226,7 +226,7 @@ TEST(CustomFrame, ActivityBarGlobalActionsPresentationDefaultsToVertical)
 	EXPECT_FALSE(controller.AreActivityBarGlobalActionsInTitleBar());
 }
 
-TEST(CustomFramePopup, ActivityBarPlacementUsesTheRightTopAnchorAndDpiGap)
+TEST(CustomFramePopup, ActivityBarPlacementUsesTheRightBottomAnchorAndHorizontalDpiGap)
 {
 	const RECT anchor{ 42, 187, 42, 187 };
 	const SIZE menu{ 270, 145 };
@@ -235,13 +235,13 @@ TEST(CustomFramePopup, ActivityBarPlacementUsesTheRightTopAnchorAndDpiGap)
 		anchor, menu, workArea, 96, CustomFramePopupPlacementKind::ActivityBar);
 
 	// The menu sits just to the right of the 42px Activity Bar and its bottom edge
-	// sits just above the gear button, so the native menu grows upward.
+	// aligns with the action's bottom edge, so the native menu grows upward.
 	EXPECT_EQ(46, placement.point.x);
-	EXPECT_EQ(183, placement.point.y);
+	EXPECT_EQ(187, placement.point.y);
 	EXPECT_EQ(46, placement.bounds.left);
-	EXPECT_EQ(38, placement.bounds.top);
+	EXPECT_EQ(42, placement.bounds.top);
 	EXPECT_EQ(316, placement.bounds.right);
-	EXPECT_EQ(183, placement.bounds.bottom);
+	EXPECT_EQ(187, placement.bounds.bottom);
 	EXPECT_EQ(0u, placement.flags & TPM_RIGHTALIGN);
 	EXPECT_NE(0u, placement.flags & TPM_BOTTOMALIGN);
 	EXPECT_NE(0u, placement.flags & TPM_VERTICAL);
@@ -251,7 +251,7 @@ TEST(CustomFramePopup, ActivityBarPlacementUsesTheRightTopAnchorAndDpiGap)
 		RECT{ 200, 700, 200, 700 }, SIZE{ 300, 220 }, RECT{ 0, 0, 1200, 900 },
 		144, CustomFramePopupPlacementKind::ActivityBar);
 	EXPECT_EQ(206, highDpi.point.x);
-	EXPECT_EQ(694, highDpi.point.y);
+	EXPECT_EQ(700, highDpi.point.y);
 }
 
 TEST(CustomFramePopup, ActivityBarPlacementReversesAtTheScreenEdgeAndClampsVertically)
@@ -261,7 +261,7 @@ TEST(CustomFramePopup, ActivityBarPlacementReversesAtTheScreenEdgeAndClampsVerti
 		96, CustomFramePopupPlacementKind::ActivityBar);
 	EXPECT_NE(0u, reversed.flags & TPM_RIGHTALIGN);
 	EXPECT_EQ(956, reversed.point.x);
-	EXPECT_EQ(496, reversed.point.y);
+	EXPECT_EQ(500, reversed.point.y);
 	EXPECT_EQ(656, reversed.bounds.left);
 	EXPECT_EQ(956, reversed.bounds.right);
 
@@ -291,6 +291,90 @@ TEST(CustomFramePopup, TitleBarPlacementOpensBelowAndClampsToTheWorkArea)
 	EXPECT_EQ(700, edge.bounds.bottom);
 	EXPECT_EQ(976, edge.point.x);
 	EXPECT_EQ(600, edge.point.y);
+}
+
+TEST(CustomFrameAccountMenu, ProjectsLocalizedParentsAndReadOnlyDetailRows)
+{
+	CustomFrameAccountMenuModel model;
+	model.state = CustomFrameAccountMenuState::Available;
+	model.parents = {
+		{ L"Alice (GitHub)", { L"alice@example.test", L"Signed in", L"" } },
+		{ L"", { L"discarded" } },
+		{ L"Empty (Provider)", {} },
+		{ L"Bob (Microsoft)", { L"bob@example.test" } },
+	};
+	model.unavailableFallback = L"Account information unavailable";
+
+	const auto projection = ProjectCustomFrameAccountMenu(model);
+	ASSERT_EQ(CustomFrameAccountMenuState::Available, projection.state);
+	ASSERT_EQ(2u, projection.parents.size());
+
+	EXPECT_EQ(L"Alice (GitHub)", projection.parents[0].label);
+	ASSERT_EQ(2u, projection.parents[0].detailRows.size());
+	EXPECT_EQ(L"alice@example.test", projection.parents[0].detailRows[0]);
+	EXPECT_EQ(L"Signed in", projection.parents[0].detailRows[1]);
+	EXPECT_EQ(L"Bob (Microsoft)", projection.parents[1].label);
+	ASSERT_EQ(1u, projection.parents[1].detailRows.size());
+	EXPECT_EQ(L"bob@example.test", projection.parents[1].detailRows[0]);
+
+	// The native adapter turns every projected detail row into MF_GRAYED with
+	// command id zero; the pure projection carries no action/callback field at all.
+}
+
+TEST(CustomFrameAccountMenu, SanitizesProviderTextForOneNativeMenuRow)
+{
+	EXPECT_EQ(L"Provider && Co. Line one Line two",
+		SanitizeCustomFrameAccountMenuText(L"Provider & Co.\r\nLine one\tLine two"));
+	EXPECT_EQ(L"Control text", SanitizeCustomFrameAccountMenuText(L"\aControl\b text"));
+	const wchar_t embeddedNull[] = { L'A', L'\0', L'B' };
+	EXPECT_EQ(L"A B", SanitizeCustomFrameAccountMenuText(std::wstring_view(embeddedNull, 3)));
+	EXPECT_TRUE(SanitizeCustomFrameAccountMenuText(L" \r\n\t ").empty());
+	// A pre-escaped provider ampersand is still data, so it is escaped once for
+	// AppendMenuW rather than interpreted as a second mnemonic layer.
+	EXPECT_EQ(L"A &&&& B", SanitizeCustomFrameAccountMenuText(L"A && B"));
+}
+
+TEST(CustomFrameAccountMenu, KeepsAbsentLoadingAndUnavailableStatesExplicit)
+{
+	CustomFrameAccountMenuModel model;
+	model.parents = { { L"Account (Provider)", { L"detail" } } };
+	model.absentFallback = L"No provider";
+	model.loadingFallback = L"Loading accounts...";
+	model.unavailableFallback = L"Accounts unavailable";
+
+	model.state = CustomFrameAccountMenuState::Absent;
+	auto projection = ProjectCustomFrameAccountMenu(model);
+	EXPECT_EQ(CustomFrameAccountMenuState::Absent, projection.state);
+	EXPECT_TRUE(projection.parents.empty());
+	EXPECT_EQ(L"No provider", projection.fallbackLabel);
+
+	model.state = CustomFrameAccountMenuState::Loading;
+	projection = ProjectCustomFrameAccountMenu(model);
+	EXPECT_EQ(CustomFrameAccountMenuState::Loading, projection.state);
+	EXPECT_TRUE(projection.parents.empty());
+	EXPECT_EQ(L"Loading accounts...", projection.fallbackLabel);
+
+	model.state = CustomFrameAccountMenuState::Unavailable;
+	projection = ProjectCustomFrameAccountMenu(model);
+	EXPECT_EQ(CustomFrameAccountMenuState::Unavailable, projection.state);
+	EXPECT_TRUE(projection.parents.empty());
+	EXPECT_EQ(L"Accounts unavailable", projection.fallbackLabel);
+}
+
+TEST(CustomFrameAccountMenu, EmptyAvailableSnapshotFallsBackToUnavailable)
+{
+	CustomFrameAccountMenuModel model;
+	model.state = CustomFrameAccountMenuState::Available;
+	model.parents = {
+		{ L"Missing details (Provider)", {} },
+		{ L"", { L"orphan detail" } },
+	};
+	model.unavailableFallback = L"Accounts unavailable";
+
+	const auto projection = ProjectCustomFrameAccountMenu(model);
+	EXPECT_EQ(CustomFrameAccountMenuState::Unavailable, projection.state);
+	EXPECT_TRUE(projection.parents.empty());
+	EXPECT_EQ(L"Accounts unavailable", projection.fallbackLabel);
 }
 
 TEST(CustomFrame, CollapsesActivityBarGlobalActionsWithTheWholeTitleControlRun)

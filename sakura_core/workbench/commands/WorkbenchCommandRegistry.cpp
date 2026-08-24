@@ -681,6 +681,7 @@ std::uint32_t ResolveBuiltinWorkbenchCommandTitleResourceId(std::string_view com
 	static constexpr std::pair<std::string_view, std::uint32_t> kTitles[] = {
 		{"workbench.action.toggleSidebarVisibility", STR_WORKBENCH_COMMAND_TOGGLE_SIDEBAR},
 		{"workbench.view.explorer", STR_WORKBENCH_COMMAND_EXPLORER},
+		{"workbench.view.extensions", STR_WORKBENCH_COMMAND_EXTENSIONS},
 		{"workbench.actions.view.problems", STR_WORKBENCH_COMMAND_PROBLEMS},
 		{"workbench.action.output.toggleOutput", STR_WORKBENCH_COMMAND_OUTPUT},
 		{"workbench.action.showCommands", STR_WORKBENCH_COMMAND_SHOW_COMMANDS},

@@ -8,6 +8,8 @@ SPDX-License-Identifier: Zlib
 
 #include "workbench/extensions/CExtensionsWorkbenchTool.h"
 
+#include "CSelectLang.h"
+#include "sakura_rc.h"
 #include "senp/SenpManagementService.h"
 #include "workbench/icons/CCodiconFont.h"
 #include "workbench/icons/CodiconGlyphTable.h"
@@ -15,11 +17,14 @@ SPDX-License-Identifier: Zlib
 
 #include <algorithm>
 #include <array>
+#include <filesystem>
 
 namespace workbench::extensions {
 namespace {
 
 constexpr wchar_t kWindowClass[] = L"SakuraSenpExtensionsView";
+constexpr std::size_t kDeveloperPackagePathLimit = 32768;
+constexpr UINT kMaximumDroppedDeveloperPackages = 16;
 //! VS Code's extension list delegate publishes an exact 72px row height.
 constexpr int kExtensionRowHeightDip = 72;
 constexpr int kRowLeftDip = 16;
@@ -29,10 +34,15 @@ constexpr int kEmptyMessageHeightDip = 44;
 constexpr int kDiagnosticHeightDip = 44;
 constexpr int kEmptyMessageLeftDip = 20;
 constexpr int kEmptyMessageRightDip = 12;
-constexpr int kActionButtonWidthDip = 66;
-constexpr int kActionButtonHeightDip = 22;
+//! Keep row actions aligned with VS Code's compact `.extension-action` rules:
+//! 14-DIP line height, 5-DIP horizontal padding, and a 1-DIP border.  Width is
+//! derived from the rendered label rather than reserving a fixed rectangle.
+constexpr int kActionButtonLineHeightDip = 14;
+constexpr int kActionButtonHorizontalPaddingDip = 5;
+constexpr int kActionButtonBorderDip = 1;
 constexpr int kActionButtonRightDip = 10;
 constexpr int kActionButtonBottomDip = 6;
+constexpr int kActionButtonMetadataGapDip = 10;
 constexpr int kActionButtonControlBase = 0x7200;
 constexpr UINT_PTR kActionButtonSubclassId = 1;
 
@@ -60,6 +70,155 @@ void Text(HDC dc, std::wstring_view value, RECT bounds, COLORREF color, HFONT fo
 	if (oldFont != nullptr) ::SelectObject(dc, oldFont);
 }
 
+std::wstring Localized(UINT resourceId)
+{
+	return std::wstring(CSelectLang::LoadStringW(resourceId));
+}
+
+std::wstring ActionLabel(bool installed)
+{
+	return Localized(installed
+		? STR_WORKBENCH_EXTENSIONS_UNINSTALL : STR_WORKBENCH_EXTENSIONS_INSTALL);
+}
+
+std::wstring DeveloperPackageFilter()
+{
+	std::wstring filter = Localized(STR_WORKBENCH_EXTENSIONS_SENP_FILTER);
+	filter.push_back(L'\0');
+	filter.append(L"*.senp");
+	filter.push_back(L'\0');
+	filter.append(Localized(STR_DLGOPNFL_EXTNAME3));
+	filter.append(L" (*.*)");
+	filter.push_back(L'\0');
+	filter.append(L"*.*");
+	filter.push_back(L'\0');
+	return filter;
+}
+
+void ShowLocalizedMessage(HWND owner, UINT messageId, UINT titleId, UINT flags) noexcept
+{
+	try {
+		const auto message = Localized(messageId);
+		const auto title = Localized(titleId);
+		::MessageBoxW(owner, message.c_str(), title.c_str(), flags);
+	}
+	catch (...) {
+		::OutputDebugStringW(L"Sakura Editor NEXT: localized Extensions message could not be shown.\n");
+	}
+}
+
+int ActionButtonWidth(HDC dc, std::wstring_view label, HFONT font, unsigned int dpi) noexcept
+{
+	SIZE textSize{};
+	if (dc != nullptr) {
+		const HGDIOBJ previousFont = font == nullptr ? nullptr : ::SelectObject(dc, font);
+		const BOOL measured = ::GetTextExtentPoint32W(
+			dc, label.data(), static_cast<int>(label.size()), &textSize);
+		if (previousFont != nullptr) ::SelectObject(dc, previousFont);
+		if (measured == FALSE) textSize = {};
+	}
+	if (textSize.cx <= 0) {
+		// The normal path always has the Chrome font, but keep the child usable if
+		// font creation failed during a low-resource startup.
+		textSize.cx = Scale(static_cast<int>(label.size()) * 8, dpi);
+	}
+	return textSize.cx + 2 * (Scale(kActionButtonHorizontalPaddingDip, dpi)
+		+ Scale(kActionButtonBorderDip, dpi));
+}
+
+int ActionButtonHeight(unsigned int dpi) noexcept
+{
+	return Scale(kActionButtonLineHeightDip, dpi)
+		+ 2 * Scale(kActionButtonBorderDip, dpi);
+}
+
+bool GetWindowBoundsInParent(HWND window, HWND parent, RECT& bounds) noexcept
+{
+	if (window == nullptr || parent == nullptr || ::GetWindowRect(window, &bounds) == FALSE) {
+		return false;
+	}
+	::MapWindowPoints(nullptr, parent, reinterpret_cast<POINT*>(&bounds), 2);
+	return true;
+}
+
+struct BuiltInLocalizationIds final {
+	std::wstring_view extensionId;
+	UINT displayName;
+	UINT description;
+};
+
+constexpr std::array kBuiltInLocalizations{
+	BuiltInLocalizationIds{ L"sakura-configuration-language-basics",
+		STR_SENP_CONFIGURATION_LANGUAGE_BASICS_NAME,
+		STR_SENP_CONFIGURATION_LANGUAGE_BASICS_DESCRIPTION },
+	BuiltInLocalizationIds{ L"sakura-core-language-basics",
+		STR_SENP_CORE_LANGUAGE_BASICS_NAME, STR_SENP_CORE_LANGUAGE_BASICS_DESCRIPTION },
+	BuiltInLocalizationIds{ L"sakura-database-language-basics",
+		STR_SENP_DATABASE_LANGUAGE_BASICS_NAME,
+		STR_SENP_DATABASE_LANGUAGE_BASICS_DESCRIPTION },
+	BuiltInLocalizationIds{ L"sakura-indent-rainbow",
+		STR_SENP_INDENT_RAINBOW_NAME, STR_SENP_INDENT_RAINBOW_DESCRIPTION },
+	BuiltInLocalizationIds{ L"sakura-infrastructure-language-basics",
+		STR_SENP_INFRASTRUCTURE_LANGUAGE_BASICS_NAME,
+		STR_SENP_INFRASTRUCTURE_LANGUAGE_BASICS_DESCRIPTION },
+	BuiltInLocalizationIds{ L"sakura-legacy-language-basics",
+		STR_SENP_LEGACY_LANGUAGE_BASICS_NAME, STR_SENP_LEGACY_LANGUAGE_BASICS_DESCRIPTION },
+	BuiltInLocalizationIds{ L"sakura-shell-language-basics",
+		STR_SENP_SHELL_LANGUAGE_BASICS_NAME, STR_SENP_SHELL_LANGUAGE_BASICS_DESCRIPTION },
+};
+
+std::wstring LocalizedBuiltInMetadata(const senp::ExtensionDescriptor& extension,
+	std::wstring_view fallback, bool displayName)
+{
+	if (!extension.builtIn) return std::wstring(fallback);
+	const auto found = std::ranges::find(kBuiltInLocalizations, extension.id,
+		&BuiltInLocalizationIds::extensionId);
+	if (found == kBuiltInLocalizations.end()) return std::wstring(fallback);
+	const auto localized = Localized(displayName ? found->displayName : found->description);
+	return localized.empty() ? std::wstring(fallback) : localized;
+}
+
+bool HasSenpExtension(std::wstring_view path)
+{
+	const auto separator = path.find_last_of(L"\\/");
+	const auto dot = path.find_last_of(L'.');
+	if (dot == std::wstring_view::npos
+		|| (separator != std::wstring_view::npos && dot <= separator)
+		|| path.size() - dot != 5) {
+		return false;
+	}
+	constexpr std::wstring_view suffix = L".senp";
+	for (std::size_t index = 0; index < suffix.size(); ++index) {
+		wchar_t actual = path[dot + index];
+		if (actual >= L'A' && actual <= L'Z') actual = static_cast<wchar_t>(actual + (L'a' - L'A'));
+		if (actual != suffix[index]) return false;
+	}
+	return true;
+}
+
+bool IsRegularSenpFile(std::wstring_view path)
+{
+	if (!HasSenpExtension(path)) return false;
+	std::error_code error;
+	return std::filesystem::is_regular_file(std::filesystem::path(path), error) && !error;
+}
+
+class DropFilesGuard final {
+public:
+	explicit DropFilesGuard(HDROP drop) noexcept : m_drop(drop) {}
+	~DropFilesGuard()
+	{
+		if (m_drop != nullptr) ::DragFinish(m_drop);
+	}
+	DropFilesGuard(const DropFilesGuard&) = delete;
+	DropFilesGuard& operator=(const DropFilesGuard&) = delete;
+
+	[[nodiscard]] HDROP Get() const noexcept { return m_drop; }
+
+private:
+	HDROP m_drop = nullptr;
+};
+
 } // namespace
 
 CExtensionsWorkbenchTool::~CExtensionsWorkbenchTool()
@@ -80,6 +239,7 @@ bool CExtensionsWorkbenchTool::Create(HWND parent)
 	m_window = ::CreateWindowExW(0, kWindowClass, L"", WS_CHILD | WS_CLIPCHILDREN,
 		0, 0, 0, 0, parent, nullptr, G_AppInstance(), this);
 	if (m_window == nullptr) return false;
+	::DragAcceptFiles(m_window, TRUE);
 	if (!m_scrollbar.Create(m_window, m_window, [this](int pixelOffset) {
 		ScrollTo(pixelOffset);
 	}, controls::OverlayScrollbarSource::ExplicitModel)) {
@@ -144,7 +304,10 @@ void CExtensionsWorkbenchTool::Close()
 	m_extensionsChanged = {};
 	DestroyActionButtons();
 	m_scrollbar.Destroy();
-	if (m_window != nullptr) ::DestroyWindow(m_window);
+	if (m_window != nullptr) {
+		::DragAcceptFiles(m_window, FALSE);
+		::DestroyWindow(m_window);
+	}
 	m_window = nullptr;
 	m_parent = nullptr;
 	m_scrollOffset = 0;
@@ -186,14 +349,6 @@ void CExtensionsWorkbenchTool::ApplyAppearance()
 void CExtensionsWorkbenchTool::RecreateDerivedFonts()
 {
 	ReleaseDerivedFonts();
-	if (m_font.Get() != nullptr) {
-		LOGFONTW logical{};
-		if (::GetObjectW(m_font.Get(), sizeof(logical), &logical)
-			== static_cast<int>(sizeof(logical))) {
-			logical.lfWeight = FW_SEMIBOLD;
-			m_semiboldFont = ::CreateFontIndirectW(&logical);
-		}
-	}
 	const auto faceName = workbench::icons::CCodiconFont::Instance().FaceName();
 	if (!faceName.empty()) {
 		m_extensionIconFont = workbench::icons::CreateLabelRunGlyphFont(
@@ -203,9 +358,7 @@ void CExtensionsWorkbenchTool::RecreateDerivedFonts()
 
 void CExtensionsWorkbenchTool::ReleaseDerivedFonts() noexcept
 {
-	if (m_semiboldFont != nullptr) ::DeleteObject(m_semiboldFont);
 	if (m_extensionIconFont != nullptr) ::DeleteObject(m_extensionIconFont);
-	m_semiboldFont = nullptr;
 	m_extensionIconFont = nullptr;
 }
 
@@ -226,6 +379,11 @@ void CExtensionsWorkbenchTool::Refresh()
 	UpdateContentMetrics();
 	SyncActionButtons();
 	::InvalidateRect(m_window, nullptr, FALSE);
+}
+
+void CExtensionsWorkbenchTool::RefreshStrings()
+{
+	Refresh();
 }
 
 void CExtensionsWorkbenchTool::ScrollTo(int offset)
@@ -283,10 +441,21 @@ void CExtensionsWorkbenchTool::SyncActionButtons()
 	::GetClientRect(m_window, &client);
 	const int diagnosticHeight = snapshot.diagnostic.empty() ? 0 : Scale(kDiagnosticHeightDip, m_dpi);
 	const int rowHeight = Scale(kExtensionRowHeightDip, m_dpi);
-	const int buttonWidth = Scale(kActionButtonWidthDip, m_dpi);
-	const int buttonHeight = Scale(kActionButtonHeightDip, m_dpi);
+	const int buttonHeight = ActionButtonHeight(m_dpi);
 	const int right = Scale(kActionButtonRightDip, m_dpi);
 	const int bottom = Scale(kActionButtonBottomDip, m_dpi);
+	struct PreviousBounds final {
+		HWND window = nullptr;
+		RECT bounds{};
+	};
+	std::vector<PreviousBounds> previousBounds;
+	previousBounds.reserve(m_actionButtons.size());
+	for (const auto& button : m_actionButtons) {
+		RECT bounds{};
+		if (GetWindowBoundsInParent(button.window, m_window, bounds)) {
+			previousBounds.push_back({ button.window, bounds });
+		}
+	}
 	std::vector<ActionButtonState> next;
 	for (std::size_t index = 0; index < snapshot.extensions.size(); ++index) {
 		const auto& extension = snapshot.extensions[index];
@@ -311,7 +480,7 @@ void CExtensionsWorkbenchTool::SyncActionButtons()
 		}
 		state.rowIndex = index;
 		state.action = action;
-		::SetWindowTextW(state.window, action == ERowAction::Install ? L"Install" : L"Uninstall");
+		::SetWindowTextW(state.window, ActionLabel(action == ERowAction::Uninstall).data());
 		const int controlId = kActionButtonControlBase + static_cast<int>(next.size());
 		::SetWindowLongPtrW(state.window, GWLP_ID, controlId);
 		::SendMessageW(state.window, WM_SETFONT, reinterpret_cast<WPARAM>(m_font.Get()), TRUE);
@@ -322,16 +491,33 @@ void CExtensionsWorkbenchTool::SyncActionButtons()
 		if (retained == next.end() && obsolete.window != nullptr) ::DestroyWindow(obsolete.window);
 	}
 	m_actionButtons = std::move(next);
+	HDC measureDc = ::GetDC(m_window);
 	for (const auto& button : m_actionButtons) {
 		const int rowTop = diagnosticHeight + static_cast<int>(button.rowIndex) * rowHeight
 			- m_scrollOffset;
 		const int top = rowTop + rowHeight - bottom - buttonHeight;
+		const int buttonWidth = ActionButtonWidth(
+			measureDc, ActionLabel(button.action == ERowAction::Uninstall), m_font.Get(), m_dpi);
 		const int left = std::max<LONG>(client.left, client.right - right - buttonWidth);
 		const bool visible = top < client.bottom && top + buttonHeight > client.top;
 		::SetWindowPos(button.window, HWND_TOP, left, top, buttonWidth, buttonHeight,
 			SWP_NOACTIVATE | SWP_NOCOPYBITS | (visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
 		if (visible) {
 			::RedrawWindow(button.window, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+		}
+	}
+	if (measureDc != nullptr) ::ReleaseDC(m_window, measureDc);
+	// A label transition changes the child width (and can also move its left
+	// edge).  Explicitly invalidate both rectangles after the child has moved;
+	// invalidating only the child leaves the part of the old rectangle exposed
+	// to the parent with stale pixels on some Win32 paint paths.
+	for (const auto& old : previousBounds) {
+		::InvalidateRect(m_window, &old.bounds, FALSE);
+	}
+	for (const auto& button : m_actionButtons) {
+		RECT bounds{};
+		if (GetWindowBoundsInParent(button.window, m_window, bounds)) {
+			::InvalidateRect(m_window, &bounds, FALSE);
 		}
 	}
 }
@@ -357,10 +543,11 @@ void CExtensionsWorkbenchTool::InstallBuiltIn(std::wstring_view extensionId)
 	if (m_service == nullptr || extensionId.empty()) return;
 	const auto result = m_service->InstallBuiltInPackage(extensionId);
 	if (!result.Succeeded()) {
-		const wchar_t* message = result.snapshot.diagnostic.empty()
-			? L"The built-in SENP extension could not be installed."
-			: result.snapshot.diagnostic.c_str();
-		::MessageBoxW(m_window, message, L"SENP installation failed", MB_OK | MB_ICONERROR);
+		const std::wstring message = result.snapshot.diagnostic.empty()
+			? Localized(STR_WORKBENCH_EXTENSIONS_BUILTIN_INSTALL_FAILED)
+			: result.snapshot.diagnostic;
+		const auto title = Localized(STR_WORKBENCH_EXTENSIONS_INSTALL_FAILED);
+		::MessageBoxW(m_window, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
 	}
 	else if (m_extensionsChanged) {
 		m_extensionsChanged();
@@ -373,10 +560,11 @@ void CExtensionsWorkbenchTool::UninstallBuiltIn(std::wstring_view extensionId)
 	if (m_service == nullptr || extensionId.empty()) return;
 	const auto result = m_service->UninstallBuiltInPackage(extensionId);
 	if (!result.Succeeded()) {
-		const wchar_t* message = result.snapshot.diagnostic.empty()
-			? L"The built-in SENP extension could not be uninstalled."
-			: result.snapshot.diagnostic.c_str();
-		::MessageBoxW(m_window, message, L"SENP uninstallation failed", MB_OK | MB_ICONERROR);
+		const std::wstring message = result.snapshot.diagnostic.empty()
+			? Localized(STR_WORKBENCH_EXTENSIONS_BUILTIN_UNINSTALL_FAILED)
+			: result.snapshot.diagnostic;
+		const auto title = Localized(STR_WORKBENCH_EXTENSIONS_UNINSTALL_FAILED);
+		::MessageBoxW(m_window, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
 	}
 	else if (m_extensionsChanged) {
 		m_extensionsChanged();
@@ -387,30 +575,101 @@ void CExtensionsWorkbenchTool::UninstallBuiltIn(std::wstring_view extensionId)
 void CExtensionsWorkbenchTool::InstallDeveloperPackage()
 {
 	if (m_service == nullptr || m_window == nullptr) return;
-	std::array<wchar_t, 32768> path{};
+	std::array<wchar_t, kDeveloperPackagePathLimit> path{};
+	const auto filter = DeveloperPackageFilter();
+	const auto title = Localized(STR_WORKBENCH_EXTENSIONS_INSTALL_FROM_SENP);
 	OPENFILENAMEW picker{ sizeof(picker) };
 	picker.hwndOwner = m_window;
-	picker.lpstrFilter = L"Sakura extension package (*.senp)\0*.senp\0All files (*.*)\0*.*\0\0";
+	picker.lpstrFilter = filter.c_str();
+	picker.lpstrTitle = title.c_str();
 	picker.lpstrFile = path.data();
 	picker.nMaxFile = static_cast<DWORD>(path.size());
 	picker.lpstrDefExt = L"senp";
 	picker.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
 	if (!::GetOpenFileNameW(&picker)) return;
-	const int choice = ::MessageBoxW(m_window,
-		L"Developer .senp packages are not publisher-trusted.\n\n"
-		L"Yes: install and enable it.\nNo: install it disabled.\nCancel: do nothing.",
-		L"Install developer SENP extension", MB_YESNOCANCEL | MB_ICONWARNING | MB_DEFBUTTON3);
-	if (choice == IDCANCEL) return;
-	const auto result = m_service->InstallDeveloperPackage(path.data(), choice == IDYES);
-	if (!result.Succeeded()) {
-		const auto message = result.snapshot.diagnostic.empty()
-			? L"The .senp package was rejected." : result.snapshot.diagnostic.c_str();
-		::MessageBoxW(m_window, message, L"SENP installation failed", MB_OK | MB_ICONERROR);
+	(void)InstallDeveloperPackagePath(path.data());
+}
+
+CExtensionsWorkbenchTool::EDeveloperPackageInstallResult
+CExtensionsWorkbenchTool::InstallDeveloperPackagePath(std::wstring_view packagePath)
+{
+	if (m_service == nullptr || m_window == nullptr || packagePath.empty()) {
+		return EDeveloperPackageInstallResult::Failed;
 	}
-	else if (m_extensionsChanged) {
+	const auto confirmation = Localized(STR_WORKBENCH_EXTENSIONS_DEVELOPER_WARNING);
+	const auto confirmationTitle = Localized(STR_WORKBENCH_EXTENSIONS_DEVELOPER_WARNING_TITLE);
+	const int choice = ::MessageBoxW(m_window,
+		confirmation.c_str(), confirmationTitle.c_str(),
+		MB_YESNOCANCEL | MB_ICONWARNING | MB_DEFBUTTON3);
+	if (choice == IDCANCEL) return EDeveloperPackageInstallResult::Cancelled;
+	const auto result = m_service->InstallDeveloperPackage(packagePath, choice == IDYES);
+	if (!result.Succeeded()) {
+		const std::wstring message = result.snapshot.diagnostic.empty()
+			? Localized(STR_WORKBENCH_EXTENSIONS_PACKAGE_REJECTED) : result.snapshot.diagnostic;
+		const auto failureTitle = Localized(STR_WORKBENCH_EXTENSIONS_INSTALL_FAILED);
+		::MessageBoxW(m_window, message.c_str(), failureTitle.c_str(), MB_OK | MB_ICONERROR);
+		Refresh();
+		return EDeveloperPackageInstallResult::Failed;
+	}
+	if (m_extensionsChanged) {
 		m_extensionsChanged();
 	}
 	Refresh();
+	return EDeveloperPackageInstallResult::Succeeded;
+}
+
+void CExtensionsWorkbenchTool::HandleDroppedFiles(HDROP drop) noexcept
+{
+	if (m_service == nullptr || m_window == nullptr || drop == nullptr) return;
+	try {
+		const UINT count = ::DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+		if (count == 0) {
+			ShowLocalizedMessage(m_window, STR_WORKBENCH_EXTENSIONS_DROP_UNSUPPORTED,
+				STR_WORKBENCH_EXTENSIONS_DROP_UNSUPPORTED_TITLE, MB_OK | MB_ICONWARNING);
+			return;
+		}
+		if (count > kMaximumDroppedDeveloperPackages) {
+			ShowLocalizedMessage(m_window, STR_WORKBENCH_EXTENSIONS_DROP_TOO_MANY,
+				STR_WORKBENCH_EXTENSIONS_DROP_TOO_MANY_TITLE, MB_OK | MB_ICONWARNING);
+			return;
+		}
+
+		std::vector<std::wstring> paths;
+		paths.reserve(count);
+		for (UINT index = 0; index < count; ++index) {
+			const UINT required = ::DragQueryFileW(drop, index, nullptr, 0);
+			if (required == 0 || required >= kDeveloperPackagePathLimit) {
+				ShowLocalizedMessage(m_window, STR_WORKBENCH_EXTENSIONS_DROP_UNSUPPORTED,
+					STR_WORKBENCH_EXTENSIONS_DROP_UNSUPPORTED_TITLE,
+					MB_OK | MB_ICONWARNING);
+				return;
+			}
+			std::wstring path(required + 1, L'\0');
+			const UINT copied = ::DragQueryFileW(drop, index, path.data(), required + 1);
+			if (copied != required) {
+				ShowLocalizedMessage(m_window, STR_WORKBENCH_EXTENSIONS_DROP_UNSUPPORTED,
+					STR_WORKBENCH_EXTENSIONS_DROP_UNSUPPORTED_TITLE,
+					MB_OK | MB_ICONWARNING);
+				return;
+			}
+			path.resize(copied);
+			if (!IsRegularSenpFile(path)) {
+				ShowLocalizedMessage(m_window, STR_WORKBENCH_EXTENSIONS_DROP_UNSUPPORTED,
+					STR_WORKBENCH_EXTENSIONS_DROP_UNSUPPORTED_TITLE,
+					MB_OK | MB_ICONWARNING);
+				return;
+			}
+			paths.push_back(std::move(path));
+		}
+
+		for (const auto& path : paths) {
+			const auto result = InstallDeveloperPackagePath(path);
+			if (result != EDeveloperPackageInstallResult::Succeeded) return;
+		}
+	} catch (...) {
+		ShowLocalizedMessage(m_window, STR_WORKBENCH_EXTENSIONS_DROP_READ_FAILED,
+			STR_WORKBENCH_EXTENSIONS_INSTALL_FAILED, MB_OK | MB_ICONWARNING);
+	}
 }
 
 void CExtensionsWorkbenchTool::Paint(HDC dc)
@@ -434,7 +693,8 @@ void CExtensionsWorkbenchTool::Paint(HDC dc)
 		RECT empty{ client.left + Scale(kEmptyMessageLeftDip, m_dpi), y,
 			client.right - Scale(kEmptyMessageRightDip, m_dpi),
 			y + Scale(kEmptyMessageHeightDip, m_dpi) };
-		Text(dc, L"No extensions.", empty, m_palette.descriptionText.ToColorRef(), m_font.Get(),
+		const auto emptyText = Localized(STR_WORKBENCH_EXTENSIONS_EMPTY);
+		Text(dc, emptyText, empty, m_palette.descriptionText.ToColorRef(), m_font.Get(),
 			DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 	} else {
 		for (const auto& extension : snapshot.extensions) {
@@ -473,20 +733,30 @@ void CExtensionsWorkbenchTool::PaintExtensionRow(
 	const LONG detailsRight = std::max(detailsLeft, bounds.right - Scale(10, m_dpi));
 	RECT name{ detailsLeft, bounds.top + Scale(4, m_dpi), detailsRight,
 		bounds.top + Scale(24, m_dpi) };
-	Text(dc, extension.displayName, name, foreground,
-		m_semiboldFont != nullptr ? m_semiboldFont : m_font.Get(),
+	const auto displayName = LocalizedBuiltInMetadata(extension, extension.displayName, true);
+	// Keep extension names on the same Chrome font metrics and weight as the
+	// Explorer and SCM rows. A derived semibold face made this one View read as
+	// a larger type scale even though its nominal point size was unchanged.
+	Text(dc, displayName, name, foreground, m_font.Get(),
 		DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 	RECT description{ detailsLeft, bounds.top + Scale(23, m_dpi), detailsRight,
 		bounds.top + Scale(45, m_dpi) };
-	Text(dc, extension.description, description, secondary, m_font.Get(),
+	const auto descriptionText = LocalizedBuiltInMetadata(extension, extension.description, false);
+	Text(dc, descriptionText, description, secondary, m_font.Get(),
 		DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 	const std::wstring publisher = extension.publisher + L"  " + extension.version;
-	const std::wstring status = !extension.installed ? L"" : extension.builtIn ? L"Built-in"
-		: (extension.enabled ? L"Enabled" : L"Disabled");
-	const LONG metadataRight = extension.builtIn
-		? std::max(detailsLeft, detailsRight
-			- Scale(kActionButtonWidthDip + kActionButtonRightDip, m_dpi))
-		: detailsRight;
+	const std::wstring status = !extension.installed ? L"" : extension.builtIn
+		? Localized(STR_WORKBENCH_EXTENSIONS_STATUS_BUILT_IN)
+		: Localized(extension.enabled
+			? STR_WORKBENCH_EXTENSIONS_STATUS_ENABLED : STR_WORKBENCH_EXTENSIONS_STATUS_DISABLED);
+	LONG metadataRight = detailsRight;
+	if (extension.builtIn) {
+		HDC measureDc = dc;
+		const int actionWidth = ActionButtonWidth(
+			measureDc, ActionLabel(extension.installed), m_font.Get(), m_dpi);
+		metadataRight = std::max(detailsLeft, detailsRight
+			- actionWidth - Scale(kActionButtonMetadataGapDip, m_dpi));
+	}
 	RECT statusBounds{ detailsLeft, bounds.top + Scale(45, m_dpi), metadataRight,
 		bounds.bottom - Scale(3, m_dpi) };
 	SIZE statusSize{};
@@ -528,7 +798,8 @@ void CExtensionsWorkbenchTool::PaintActionButton(
 	Fill(dc, bounds, background);
 	RECT label = bounds;
 	if (pressed) ::OffsetRect(&label, 0, 1);
-	Text(dc, action == ERowAction::Install ? L"Install" : L"Uninstall", label,
+	const auto actionLabel = ActionLabel(action == ERowAction::Uninstall);
+	Text(dc, actionLabel, label,
 		m_palette.buttonForeground.ToColorRef(), m_font.Get(),
 		DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 	if (!focused) return;
@@ -642,6 +913,11 @@ LRESULT CExtensionsWorkbenchTool::HandleMessage(
 			}
 		}
 		break;
+	case WM_DROPFILES: {
+		DropFilesGuard dropped(reinterpret_cast<HDROP>(wParam));
+		HandleDroppedFiles(dropped.Get());
+		return 0;
+	}
 	case WM_MOUSEWHEEL: {
 		const int notches = GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA;
 		ScrollTo(m_scrollOffset - notches * Scale(48, m_dpi));

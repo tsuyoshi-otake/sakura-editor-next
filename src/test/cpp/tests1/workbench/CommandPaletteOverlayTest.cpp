@@ -19,6 +19,7 @@ constexpr wchar_t kOverlayClassName[] = L"SakuraEditor.Next.CommandPaletteOverla
 constexpr wchar_t kScrollbarClassName[] = L"SakuraWorkbenchOverlayScrollbar";
 constexpr int kInputControl = 100;
 constexpr int kListControl = 101;
+constexpr int kCloseControl = 102;
 
 HWND CreateTestParent()
 {
@@ -60,6 +61,44 @@ std::vector<workbench::quickinput::CommandPaletteItem> MixedHeightTestItems()
 	return items;
 }
 
+TEST(CommandPaletteOverlayPureTest, ProviderPrefixIsStrippedOnlyAtTheInputStart)
+{
+	using workbench::quickinput::StripCommandPaletteProviderPrefix;
+	EXPECT_EQ(std::wstring_view(L"dark"),
+		StripCommandPaletteProviderPrefix(std::wstring_view(L">dark")));
+	EXPECT_EQ(std::wstring_view(L"dark"),
+		StripCommandPaletteProviderPrefix(std::wstring_view(L"dark")));
+	EXPECT_EQ(std::wstring_view(L">dark"),
+		StripCommandPaletteProviderPrefix(std::wstring_view(L">>dark")));
+	EXPECT_TRUE(StripCommandPaletteProviderPrefix({}).empty());
+}
+
+TEST(CommandPaletteOverlayPureTest, GeometryStaysInsideNarrowClientsAtSupportedDpi)
+{
+	using namespace workbench::quickinput;
+	for (const int dpi : { 96, 120, 144, 192 }) {
+		const int parentWidth = ScaleQuickInputDip(240, dpi);
+		const int parentHeight = ScaleQuickInputDip(420, dpi);
+		const auto contentHeight = ScaleQuickInputDip(44, dpi);
+		const auto palette = ComputeQuickInputLayout(
+			parentWidth, parentHeight, dpi, contentHeight, false);
+		EXPECT_GE(palette.x, 0);
+		EXPECT_GE(palette.y, 0);
+		EXPECT_LE(palette.x + palette.width, parentWidth);
+		EXPECT_LE(palette.y + palette.height, parentHeight);
+		EXPECT_EQ(ScaleQuickInputDip(6, dpi) + ScaleQuickInputDip(26, dpi)
+			+ ScaleQuickInputDip(4, dpi), palette.headerHeight);
+		EXPECT_EQ(palette.headerHeight, palette.listTop);
+		EXPECT_EQ(ScaleQuickInputDip(7, dpi) + contentHeight, palette.listHeight);
+
+		const auto input = ComputeQuickInputLayout(
+			parentWidth, parentHeight, dpi, contentHeight, true);
+		EXPECT_EQ(0, input.listHeight);
+		EXPECT_EQ(input.headerHeight, input.height);
+		EXPECT_LE(input.x + input.width, parentWidth);
+	}
+}
+
 class CommandPaletteOverlayTest : public testing::Test {
 protected:
 	void SetUp() override
@@ -81,6 +120,7 @@ protected:
 	}
 
 	HWND InputWindow() const { return ::GetDlgItem(OverlayWindow(), kInputControl); }
+	HWND CloseWindow() const { return ::GetDlgItem(OverlayWindow(), kCloseControl); }
 	HWND PromptWindow() const
 	{
 		return ::FindWindowExW(OverlayWindow(), nullptr, L"STATIC", L"Branch name");
@@ -142,6 +182,32 @@ TEST_F(CommandPaletteOverlayTest, PreviewsInitialKeyboardMouseAndFilteredSelecti
 	ASSERT_NE(nullptr, InputWindow());
 	::SetWindowTextW(InputWindow(), L"dark");
 	EXPECT_EQ((std::vector<std::wstring>{ L"light", L"dark", L"light", L"dark" }), selected);
+}
+
+TEST_F(CommandPaletteOverlayTest, CommandPaletteKeepsProviderPrefixInInputAndFiltersWithoutIt)
+{
+	std::vector<std::wstring> queries;
+	m_overlay.SetSearchCallback([&queries](std::wstring_view query) {
+		queries.emplace_back(query);
+		return TestItems();
+	});
+	ASSERT_TRUE(m_overlay.Show(TestItems(), L"dark"));
+
+	wchar_t value[32]{};
+	ASSERT_GT(::GetWindowTextW(InputWindow(), value, static_cast<int>(std::size(value))), 0);
+	EXPECT_EQ(L">", std::wstring(value));
+	EXPECT_FALSE(::IsWindowVisible(PromptWindow()));
+	EXPECT_FALSE(::IsWindowVisible(CloseWindow()));
+
+	::SetWindowTextW(InputWindow(), L">dark");
+	ASSERT_FALSE(queries.empty());
+	EXPECT_EQ(L"dark", queries.back());
+	// A direct native edit replacement is normalized back to a provider value,
+	// while the callback still receives only the user query.
+	::SetWindowTextW(InputWindow(), L"light");
+	EXPECT_EQ(L"light", queries.back());
+	ASSERT_GT(::GetWindowTextW(InputWindow(), value, static_cast<int>(std::size(value))), 0);
+	EXPECT_EQ(L">light", std::wstring(value));
 }
 
 TEST_F(CommandPaletteOverlayTest, AcceptAndCancelHaveDistinctTerminalCallbacks)
@@ -244,7 +310,7 @@ TEST_F(CommandPaletteOverlayTest, ShortQuickPicksAndInputBoxesUseOnlyTheirConten
 	::MapWindowPoints(nullptr, m_parent, reinterpret_cast<POINT*>(&overlay), 2);
 	const int expectedHeader = ::MulDiv(6, effectiveDpi, 96)
 		+ ::MulDiv(26, effectiveDpi, 96) + ::MulDiv(4, effectiveDpi, 96);
-	const int expectedBottom = ::MulDiv(4, effectiveDpi, 96);
+	const int expectedBottom = ::MulDiv(7, effectiveDpi, 96);
 	const int expectedThemeRows = ::MulDiv(22, effectiveDpi, 96) * 2;
 	EXPECT_EQ(expectedHeader + expectedThemeRows + expectedBottom,
 		overlay.bottom - overlay.top);
@@ -252,7 +318,7 @@ TEST_F(CommandPaletteOverlayTest, ShortQuickPicksAndInputBoxesUseOnlyTheirConten
 
 	ASSERT_TRUE(m_overlay.ShowInput(L"Branch name", L"Branch name", L"feature"));
 	ASSERT_TRUE(::GetWindowRect(OverlayWindow(), &overlay));
-	EXPECT_EQ(expectedHeader + expectedBottom, overlay.bottom - overlay.top);
+	EXPECT_EQ(expectedHeader, overlay.bottom - overlay.top);
 }
 
 TEST_F(CommandPaletteOverlayTest, FilteringShrinksAndSynchronouslyRepaintsTheVacatedRegion)
@@ -482,9 +548,11 @@ TEST_F(CommandPaletteOverlayTest, LightSelectionUsesThemeElevationInsteadOfAccen
 	draw.rcItem = row;
 	ASSERT_EQ(TRUE, ::SendMessageW(OverlayWindow(), WM_DRAWITEM, kListControl,
 		reinterpret_cast<LPARAM>(&draw)));
-	const COLORREF selectedPixel = ::GetPixel(dc, 1, 1);
+	const COLORREF selectedPixel = ::GetPixel(dc, 120, 32);
 	EXPECT_EQ(light.listActiveSelectionBackground.ToColorRef(), selectedPixel);
 	EXPECT_NE(light.accent.ToColorRef(), selectedPixel);
+	// The owner-draw row is rounded independently from the LISTBOX band.
+	EXPECT_EQ(light.quickInputBackground.ToColorRef(), ::GetPixel(dc, 0, 0));
 
 	::SelectObject(dc, previous);
 	::DeleteObject(bitmap);

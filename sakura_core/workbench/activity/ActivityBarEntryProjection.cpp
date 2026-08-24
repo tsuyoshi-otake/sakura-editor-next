@@ -37,7 +37,23 @@ std::uint32_t ResolveBuiltinActivityTitleResourceId(std::string_view containerId
 	if (containerId == layout::ids::viewContainer::Explorer) return STR_WORKBENCH_ACTIVITY_EXPLORER;
 	if (containerId == layout::ids::viewContainer::Search) return STR_WORKBENCH_ACTIVITY_SEARCH;
 	if (containerId == layout::ids::viewContainer::SourceControl) return STR_WORKBENCH_ACTIVITY_SOURCE_CONTROL;
+	if (containerId == layout::ids::viewContainer::Extensions) return STR_WORKBENCH_EXTENSIONS_TITLE;
 	return 0;
+}
+
+std::uint32_t ResolveGlobalActivityTitleResourceId(std::string_view actionId) noexcept
+{
+	if (actionId == kAccountsActivityId) return STR_WORKBENCH_ACTIVITY_ACCOUNTS;
+	if (actionId == kManageActivityId) return STR_WORKBENCH_ACTIVITY_MANAGE;
+	return 0;
+}
+
+std::uint32_t ResolveActivityTitleResourceId(std::string_view activityId) noexcept
+{
+	if (const auto resourceId = ResolveBuiltinActivityTitleResourceId(activityId); resourceId != 0) {
+		return resourceId;
+	}
+	return ResolveGlobalActivityTitleResourceId(activityId);
 }
 
 std::wstring_view BuiltinContainerCodicon(std::string_view containerId) noexcept
@@ -112,13 +128,25 @@ std::vector<ActivityBarEntry> ProjectActivityBarEntries(
 
 void AppendGlobalActivityActions(std::vector<ActivityBarEntry>& entries)
 {
+	AppendGlobalActivityActions(entries, ActivityBarTitleResolver{});
+}
+
+void AppendGlobalActivityActions(std::vector<ActivityBarEntry>& entries,
+	const ActivityBarTitleResolver& titleResolver)
+{
+	const auto resolveLabel = [&titleResolver](std::string_view id, std::wstring_view fallback) {
+		if (titleResolver) {
+			if (const auto localized = titleResolver(id, fallback); !localized.empty()) return localized;
+		}
+		return std::wstring(fallback);
+	};
 	const auto alreadyPresent = [&entries](std::string_view id) {
 		return std::ranges::find(entries, id, &ActivityBarEntry::id) != entries.end();
 	};
 	if (!alreadyPresent(kAccountsActivityId)) {
 		entries.push_back({
 			.id = std::string(kAccountsActivityId),
-			.label = L"Accounts",
+			.label = resolveLabel(kAccountsActivityId, L"Accounts"),
 			.codicon = L"account",
 			.kind = ActivityBarEntryKind::GlobalAction,
 		});
@@ -126,7 +154,7 @@ void AppendGlobalActivityActions(std::vector<ActivityBarEntry>& entries)
 	if (!alreadyPresent(kManageActivityId)) {
 		entries.push_back({
 			.id = std::string(kManageActivityId),
-			.label = L"Manage",
+			.label = resolveLabel(kManageActivityId, L"Manage"),
 			.codicon = L"settings-gear",
 			.kind = ActivityBarEntryKind::GlobalAction,
 		});

@@ -18,7 +18,15 @@
 
 namespace workbench::activity {
 
+//! Resolves an Activity Bar entry's stable id to its localized presentation label.
+using ActivityBarTitleResolver = std::function<std::wstring(
+	std::string_view activityId, std::wstring_view fallback)>;
+
 [[nodiscard]] std::uint32_t ResolveBuiltinActivityTitleResourceId(std::string_view containerId) noexcept;
+//! Resolves a GlobalCompositeBar action id (Accounts or Manage) to its resource id.
+[[nodiscard]] std::uint32_t ResolveGlobalActivityTitleResourceId(std::string_view actionId) noexcept;
+//! Resolves either a built-in ViewContainer or a GlobalCompositeBar action id.
+[[nodiscard]] std::uint32_t ResolveActivityTitleResourceId(std::string_view activityId) noexcept;
 
 /*!
 	@brief What the projection needs beyond the layout registry itself.
@@ -38,7 +46,7 @@ struct ActivityBarProjectionOptions {
 	*/
 	std::span<const std::string_view> renderableBuiltins;
 	//! Resolves a container's display title at presentation time. Empty means registry fallback.
-	std::function<std::wstring(std::string_view containerId, std::wstring_view fallback)> titleResolver;
+	ActivityBarTitleResolver titleResolver;
 	//! Requested ViewContainer location. Only Sidebar and AuxiliaryBar are Activity Bar hosts.
 	layout::EViewContainerLocation location = layout::EViewContainerLocation::Sidebar;
 };
@@ -76,5 +84,9 @@ struct ActivityBarProjectionOptions {
 	open menus rather than activating a Side Bar page.
 */
 void AppendGlobalActivityActions(std::vector<ActivityBarEntry>& entries);
+
+//! Appends GlobalCompositeBar actions with labels supplied by the composition boundary.
+void AppendGlobalActivityActions(std::vector<ActivityBarEntry>& entries,
+	const ActivityBarTitleResolver& titleResolver);
 
 } // namespace workbench::activity

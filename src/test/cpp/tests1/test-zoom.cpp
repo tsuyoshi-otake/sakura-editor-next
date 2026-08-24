@@ -120,6 +120,34 @@ TEST( MiniMapOverview, CompositionOnlySettingsRetainTheOverviewRaster )
 	EXPECT_FALSE(minimap::HasSameOverviewRendering(original, changed));
 }
 
+TEST( MiniMapOverview, ViewportOnlyMovementRetainsTheOverviewIdentity )
+{
+	minimap::Options options;
+	for (const auto size : { minimap::Size::Fill, minimap::Size::Fit }) {
+		options.size = size;
+		const auto top = minimap::CalculateLayout(options, {
+			.lineCount = 100, .editorTopLine = 0, .editorVisibleLines = 10, .height = 600 });
+		const auto scrolled = minimap::CalculateLayout(options, {
+			.lineCount = 100, .editorTopLine = 25, .editorVisibleLines = 10, .height = 600 });
+
+		EXPECT_NE(top.viewport, scrolled.viewport);
+		EXPECT_TRUE(minimap::HasSameOverviewIdentity(top, scrolled));
+	}
+}
+
+TEST( MiniMapOverview, ProportionalOverviewIdentityTracksItsRasterWindow )
+{
+	minimap::Options options;
+	const auto top = minimap::CalculateLayout(options, {
+		.lineCount = 10000, .editorTopLine = 0, .editorVisibleLines = 50, .height = 600 });
+	const auto scrolled = minimap::CalculateLayout(options, {
+		.lineCount = 10000, .editorTopLine = 5000, .editorVisibleLines = 50, .height = 600 });
+
+	EXPECT_NE(top.firstLine, scrolled.firstLine);
+	EXPECT_NE(top.viewport, scrolled.viewport);
+	EXPECT_FALSE(minimap::HasSameOverviewIdentity(top, scrolled));
+}
+
 /*!
 	@brief 設定値の正当性判定
 */

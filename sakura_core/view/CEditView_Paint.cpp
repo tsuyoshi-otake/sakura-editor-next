@@ -1095,7 +1095,8 @@ void CEditView::DrawMiniMapFrame(HDC hdc)
 		&& m_miniMapOverviewCache.background == background
 		&& minimap::HasSameOverviewRendering(
 			m_miniMapOverviewCache.options, m_miniMapOptions)
-		&& m_miniMapOverviewCache.geometry == geometry;
+		&& minimap::HasSameOverviewIdentity(
+			m_miniMapOverviewCache.geometry, geometry);
 	if( !cacheMatches ) {
 		const bool traceCache = CStartupTrace::IsCollectingStartupDocumentMetrics();
 		LARGE_INTEGER cacheBuildStart{};

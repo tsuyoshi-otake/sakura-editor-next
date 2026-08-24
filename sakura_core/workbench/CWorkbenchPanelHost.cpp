@@ -597,10 +597,13 @@ void CWorkbenchPanelHost::LayoutTool()
 	::GetClientRect(m_window, &client);
 	LayoutHeaderMenuButton();
 	client.top = std::min(client.bottom, client.top + GetHeaderHeightPixels());
-	m_tool->Layout(client, m_dpi);
+	// Font metrics are layout input. Applying WM_SETFONT after a tool has laid out
+	// its children lets native controls reset geometry such as EDIT's formatting
+	// rectangle after the tool established it.
 	if (m_font.Get() != nullptr) {
 		::EnumChildWindows(m_window, ApplyChromeFont, reinterpret_cast<LPARAM>(m_font.Get()));
 	}
+	m_tool->Layout(client, m_dpi);
 }
 
 void CWorkbenchPanelHost::LayoutHeaderMenuButton()

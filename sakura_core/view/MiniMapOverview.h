@@ -196,6 +196,43 @@ struct Layout {
 	}
 };
 
+//! Identity of the retained overview raster. The editor viewport and slider
+//! are composition state; they do not change which lines or pixels are
+//! rasterized into the retained overview.
+struct OverviewIdentity {
+	std::int64_t lineCount = 0;
+	std::int64_t firstLine = 0;
+	std::int64_t visibleLineSpan = 0;
+	int height = 0;
+	int lineHeight = 1;
+	bool sampled = false;
+
+	[[nodiscard]] constexpr bool operator==(const OverviewIdentity&) const noexcept = default;
+};
+
+[[nodiscard]] constexpr OverviewIdentity GetOverviewIdentity(
+	const Layout& layout) noexcept
+{
+	return {
+		.lineCount = layout.lineCount,
+		.firstLine = layout.firstLine,
+		.visibleLineSpan = layout.visibleLineSpan,
+		.height = layout.height,
+		.lineHeight = layout.lineHeight,
+		.sampled = layout.sampled,
+	};
+}
+
+//! Viewport/slider movement must not rebuild the O(N) overview raster. A
+//! proportional minimap remains correct because firstLine and visibleLineSpan
+//! are part of this identity and therefore invalidate the cache when they
+//! actually change.
+[[nodiscard]] constexpr bool HasSameOverviewIdentity(
+	const Layout& left, const Layout& right) noexcept
+{
+	return GetOverviewIdentity(left) == GetOverviewIdentity(right);
+}
+
 [[nodiscard]] constexpr Layout CalculateLayout(const Options& options, const LayoutInput& input) noexcept
 {
 	Layout result;

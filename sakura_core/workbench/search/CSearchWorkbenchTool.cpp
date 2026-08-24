@@ -51,20 +51,37 @@ constexpr int kQueryControlId = 1;
 constexpr int kReplaceControlId = 2;
 constexpr int kListControlId = 3;
 
-//! The widget's own inset inside the view, and the gap between its two boxes.
-constexpr int kWidgetInsetDip = 8;
-constexpr int kWidgetGapDip = 4;
+//! `.search-widgets-container` from VS Code 1.134.0.
+constexpr int kWidgetMarginLeftDip = 2;
+constexpr int kWidgetMarginRightDip = 12;
+constexpr int kWidgetPaddingDip = 6;
+//! `.search-container`/`.replace-container` and `.replace-container`'s margin.
+constexpr int kInputContainerMarginLeftDip = 18;
+constexpr int kReplaceMarginTopDip = 6;
 //! `.monaco-inputbox` height at the default font size.
 constexpr int kInputHeightDip = 26;
 //! The chevron column left of both boxes, which is upstream's replace toggle.
-constexpr int kToggleColumnDip = 20;
+constexpr int kToggleReplaceWidthDip = 16;
 //! One inline toggle button inside a box, and the box's own text padding.
 constexpr int kInlineButtonDip = 20;
-constexpr int kInputPaddingDip = 4;
+constexpr int kInputPaddingLeftDip = 6;
+constexpr int kInputPaddingVerticalDip = 3;
+//! The native EDIT stays one pixel inside the painted input border.
+constexpr int kInputBorderDip = 1;
+//! The inline controls sit two CSS pixels inside the input's right edge.
+constexpr int kInputControlsRightDip = 2;
+//! Keep the native edit text out from under the inline controls.
+constexpr int kInputControlsGapDip = 2;
 //! The Replace All button that sits right of the replace box.
 constexpr int kReplaceAllButtonDip = 24;
+//! The action bar has a four-pixel margin before its 24-pixel action.
+constexpr int kReplaceActionGapDip = 4;
 //! The message line under the widget ("N results in M files").
 constexpr int kMessageHeightDip = 22;
+//! Legacy result-message inset; it is outside the Search widget CSS box.
+constexpr int kMessageInsetDip = 8;
+//! Result rows retain their existing action spacing.
+constexpr int kRowActionGapDip = 4;
 //! One result row, upstream's `SearchDelegate.getHeight`.
 constexpr int kRowHeightDip = 22;
 constexpr int kRowIndentDip = 8;
@@ -80,6 +97,75 @@ constexpr int kBadgeHeightDip = 16;
 [[nodiscard]] int Scale(int dip, unsigned int dpi) noexcept
 {
 	return ::MulDiv(dip, static_cast<int>(dpi == 0 ? 96u : dpi), 96);
+}
+
+//! Returns one of the inline controls measured from the input's right edge.
+[[nodiscard]] RECT CalculateInlineToggleRect(const RECT& box, int indexFromRight,
+	unsigned int dpi) noexcept
+{
+	const int size = Scale(kInlineButtonDip, dpi);
+	const int rightInset = Scale(kInputControlsRightDip, dpi);
+	RECT toggle{};
+	toggle.right = box.right - rightInset - indexFromRight * size;
+	toggle.left = toggle.right - size;
+	toggle.top = box.top + ((box.bottom - box.top) - size) / 2;
+	toggle.bottom = toggle.top + size;
+	return toggle;
+}
+
+SearchWidgetGeometry CalculateSearchWidgetGeometryImpl(const RECT& clientRect,
+	unsigned int dpi, bool replaceVisible) noexcept
+{
+	const auto scaled = [dpi](int dip) noexcept { return Scale(dip, dpi); };
+	const int widgetLeft = clientRect.left + scaled(kWidgetMarginLeftDip);
+	const int widgetRight = std::max(widgetLeft,
+		static_cast<int>(clientRect.right) - scaled(kWidgetMarginRightDip));
+	const int inputHeight = scaled(kInputHeightDip);
+	const int containerTop = clientRect.top;
+	const int queryTop = containerTop + scaled(kWidgetPaddingDip);
+	const int queryLeft = widgetLeft + scaled(kInputContainerMarginLeftDip);
+	const int queryBottom = queryTop + inputHeight;
+	const int replaceTop = queryBottom + scaled(kReplaceMarginTopDip);
+	const int replaceBottom = replaceTop + inputHeight;
+	const int contentBottom = replaceVisible ? replaceBottom : queryBottom;
+
+	SearchWidgetGeometry geometry{};
+	geometry.container = RECT{ widgetLeft, containerTop, widgetRight,
+		contentBottom + scaled(kWidgetPaddingDip) };
+	geometry.queryBox = RECT{ queryLeft, queryTop,
+		std::max(queryLeft, widgetRight), queryBottom };
+	geometry.replaceBox = geometry.queryBox;
+	geometry.replaceBox.top = replaceTop;
+	geometry.replaceBox.bottom = replaceBottom;
+	geometry.replaceBox.right = std::max(queryLeft, widgetRight - scaled(kReplaceAllButtonDip)
+		- scaled(kReplaceActionGapDip));
+	geometry.replaceAll.right = widgetRight;
+	geometry.replaceAll.left = std::max(widgetLeft,
+		static_cast<int>(geometry.replaceAll.right) - scaled(kReplaceAllButtonDip));
+	geometry.replaceAll.top = geometry.replaceBox.top
+		+ (inputHeight - scaled(kReplaceAllButtonDip)) / 2;
+	geometry.replaceAll.bottom = geometry.replaceAll.top + scaled(kReplaceAllButtonDip);
+	geometry.toggleReplace = RECT{ widgetLeft, queryTop,
+		std::min(widgetRight, widgetLeft + scaled(kToggleReplaceWidthDip)),
+		replaceVisible ? geometry.replaceBox.bottom : geometry.queryBox.bottom };
+
+	const RECT queryCaseToggle = CalculateInlineToggleRect(geometry.queryBox, 3, dpi);
+	const RECT replacePreserveToggle = CalculateInlineToggleRect(geometry.replaceBox, 1, dpi);
+	geometry.queryEdit = geometry.queryBox;
+	geometry.queryEdit.left += scaled(kInputBorderDip);
+	geometry.queryEdit.top += scaled(kInputBorderDip);
+	geometry.queryEdit.bottom = std::max(geometry.queryEdit.top,
+		static_cast<LONG>(geometry.queryEdit.bottom - scaled(kInputBorderDip)));
+	geometry.queryEdit.right = std::max(geometry.queryEdit.left,
+		static_cast<LONG>(queryCaseToggle.left - scaled(kInputControlsGapDip)));
+	geometry.replaceEdit = geometry.replaceBox;
+	geometry.replaceEdit.left += scaled(kInputBorderDip);
+	geometry.replaceEdit.top += scaled(kInputBorderDip);
+	geometry.replaceEdit.bottom = std::max(geometry.replaceEdit.top,
+		static_cast<LONG>(geometry.replaceEdit.bottom - scaled(kInputBorderDip)));
+	geometry.replaceEdit.right = std::max(geometry.replaceEdit.left,
+		static_cast<LONG>(replacePreserveToggle.left - scaled(kInputControlsGapDip)));
+	return geometry;
 }
 
 void DrawSearchIcon(HDC dc, std::wstring_view name, const RECT& rect, COLORREF color)
@@ -218,6 +304,12 @@ bool EnsureClass(HINSTANCE instance);
 
 } // namespace
 
+SearchWidgetGeometry CalculateSearchWidgetGeometry(const RECT& clientRect,
+	unsigned int dpi, bool replaceVisible) noexcept
+{
+	return CalculateSearchWidgetGeometryImpl(clientRect, dpi, replaceVisible);
+}
+
 struct CSearchWorkbenchTool::Impl {
 	HWND window{};
 	HWND query{};
@@ -268,73 +360,47 @@ struct CSearchWorkbenchTool::Impl {
 		return client;
 	}
 
+	[[nodiscard]] SearchWidgetGeometry Geometry() const noexcept
+	{
+		return CalculateSearchWidgetGeometry(ClientRect(), dpi, replaceVisible);
+	}
+
 	[[nodiscard]] RECT QueryBoxRect() const noexcept
 	{
-		const RECT client = ClientRect();
-		RECT box{};
-		box.left = client.left + Dip(kToggleColumnDip);
-		box.right = std::max(box.left, client.right - Dip(kWidgetInsetDip));
-		box.top = client.top + Dip(kWidgetGapDip);
-		box.bottom = box.top + Dip(kInputHeightDip);
-		return box;
+		return Geometry().queryBox;
 	}
 
 	[[nodiscard]] RECT ReplaceBoxRect() const noexcept
 	{
-		const RECT query = QueryBoxRect();
-		const RECT client = ClientRect();
-		RECT box{};
-		box.left = query.left;
-		box.right = std::max(box.left, client.right - Dip(kWidgetInsetDip)
-			- Dip(kReplaceAllButtonDip) - Dip(kWidgetGapDip));
-		box.top = query.bottom + Dip(kWidgetGapDip);
-		box.bottom = box.top + Dip(kInputHeightDip);
-		return box;
+		return Geometry().replaceBox;
 	}
 
 	[[nodiscard]] RECT ReplaceAllRect() const noexcept
 	{
-		const RECT box = ReplaceBoxRect();
-		const RECT client = ClientRect();
-		RECT button{};
-		button.right = client.right - Dip(kWidgetInsetDip);
-		button.left = button.right - Dip(kReplaceAllButtonDip);
-		button.top = box.top + (Dip(kInputHeightDip) - Dip(kReplaceAllButtonDip)) / 2;
-		button.bottom = button.top + Dip(kReplaceAllButtonDip);
-		return button;
+		return Geometry().replaceAll;
 	}
 
 	[[nodiscard]] RECT ToggleReplaceRect() const noexcept
 	{
-		const RECT queryBox = QueryBoxRect();
-		RECT chevron{};
-		chevron.left = Dip(kWidgetGapDip) / 2;
-		chevron.right = chevron.left + Dip(kToggleColumnDip) - Dip(kWidgetGapDip) / 2;
-		chevron.top = queryBox.top;
-		chevron.bottom = replaceVisible ? ReplaceBoxRect().bottom : queryBox.bottom;
-		return chevron;
+		return Geometry().toggleReplace;
 	}
 
 	//! The nth inline toggle inside `box`, counted from its right edge.
 	[[nodiscard]] RECT InlineToggleRect(const RECT& box, int indexFromRight) const noexcept
 	{
-		const int size = Dip(kInlineButtonDip);
-		RECT toggle{};
-		toggle.right = box.right - Dip(kInputPaddingDip) / 2 - indexFromRight * size;
-		toggle.left = toggle.right - size;
-		toggle.top = box.top + ((box.bottom - box.top) - size) / 2;
-		toggle.bottom = toggle.top + size;
-		return toggle;
+		return CalculateInlineToggleRect(box, indexFromRight, dpi);
 	}
 
 	[[nodiscard]] RECT MessageRect() const noexcept
 	{
 		const RECT client = ClientRect();
+		const SearchWidgetGeometry geometry = Geometry();
 		RECT message{};
-		message.left = client.left + Dip(kWidgetInsetDip);
-		message.right = client.right - Dip(kWidgetInsetDip);
-		message.top = (replaceVisible ? ReplaceBoxRect().bottom : QueryBoxRect().bottom)
-			+ Dip(kWidgetGapDip);
+		message.left = client.left + Dip(kMessageInsetDip);
+		message.right = client.right - Dip(kMessageInsetDip);
+		// The widget's bottom padding is part of its container, so the result
+		// message starts after that padding rather than inside the replace row.
+		message.top = geometry.container.bottom;
 		message.bottom = message.top + Dip(kMessageHeightDip);
 		return message;
 	}
@@ -459,7 +525,9 @@ struct CSearchWorkbenchTool::Impl {
 		FrameRectangle(dc, box, focused ? palette.accent.ToColorRef() : palette.border.ToColorRef());
 		if (edit == nullptr || ::GetWindowTextLengthW(edit) > 0 || placeholder.empty()) return;
 		RECT text = box;
-		text.left += Dip(kInputPaddingDip) + 2;
+		text.left += Dip(kInputBorderDip) + Dip(kInputPaddingLeftDip);
+		text.top += Dip(kInputPaddingVerticalDip);
+		text.bottom = std::max(text.top, text.bottom - Dip(kInputPaddingVerticalDip));
 		::SetTextColor(dc, palette.disabledText.ToColorRef());
 		::DrawTextW(dc, placeholder.data(), static_cast<int>(placeholder.size()), &text,
 			DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
@@ -537,7 +605,7 @@ struct CSearchWorkbenchTool::Impl {
 	{
 		const int size = Dip(kRowActionDip);
 		RECT action{};
-		action.right = row.right - Dip(kWidgetGapDip) - indexFromRight * size;
+		action.right = row.right - Dip(kRowActionGapDip) - indexFromRight * size;
 		action.left = action.right - size;
 		action.top = row.top;
 		action.bottom = row.bottom;
@@ -564,7 +632,7 @@ struct CSearchWorkbenchTool::Impl {
 
 		// Hover actions are laid out first: every other run is clipped against them,
 		// so a long path can never draw underneath a button the user can click.
-		int right = rect.right - Dip(kWidgetGapDip);
+		int right = rect.right - Dip(kRowActionGapDip);
 		if (hovered) {
 			const RECT dismiss = RowActionRect(rect, 0);
 			RECT glyph = dismiss;
@@ -813,15 +881,18 @@ struct CSearchWorkbenchTool::Impl {
 	void LayoutChildren()
 	{
 		if (window == nullptr) return;
-		const RECT queryBox = QueryBoxRect();
-		RECT queryInner = queryBox;
-		::InflateRect(&queryInner, -Dip(kInputPaddingDip), -Dip(kInputPaddingDip));
-		queryInner.right = InlineToggleRect(queryBox, 3).left - Dip(2);
-		const RECT replaceBox = ReplaceBoxRect();
-		RECT replaceInner = replaceBox;
-		::InflateRect(&replaceInner, -Dip(kInputPaddingDip), -Dip(kInputPaddingDip));
-		replaceInner.right = InlineToggleRect(replaceBox, 1).left - Dip(2);
+		const SearchWidgetGeometry geometry = Geometry();
+		const RECT& queryInner = geometry.queryEdit;
+		const RECT& replaceInner = geometry.replaceEdit;
 		const RECT listRect = ListRect();
+		const LPARAM editMargins = MAKELPARAM(static_cast<WORD>(Dip(kInputPaddingLeftDip)), 0);
+		for (HWND edit : { query, replace }) {
+			if (edit != nullptr) {
+				// CSS uses `padding-left: 6px`; make the Win32 edit's margin
+				// explicit so its text does not inherit the platform default.
+				(void)::SendMessageW(edit, EM_SETMARGINS, EC_LEFTMARGIN, editMargins);
+			}
+		}
 		if (list != nullptr) {
 			::SendMessageW(list, LB_SETITEMHEIGHT, 0, static_cast<LPARAM>(Dip(kRowHeightDip)));
 		}
@@ -1384,6 +1455,8 @@ LRESULT CALLBACK CSearchWorkbenchTool::WindowProc(HWND window, UINT message, WPA
 		::SetTextColor(dc, impl.palette.primaryText.ToColorRef());
 		::SetBkColor(dc, impl.palette.raised.ToColorRef());
 		::SetDCBrushColor(dc, impl.palette.raised.ToColorRef());
+		// The native EDIT is one pixel inside PaintBox.  Keep its solid brush so
+		// deleting text invalidates and clears glyphs on every theme/DPI.
 		return reinterpret_cast<LRESULT>(::GetStockObject(DC_BRUSH));
 	}
 	case WM_CTLCOLORLISTBOX: {

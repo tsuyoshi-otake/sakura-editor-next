@@ -94,6 +94,7 @@
 #include "workbench/workspace/WorkspaceWindowTransitionPlanner.h"
 #include "workbench/IconMetrics.h"
 #include "workbench/WorkbenchLayout.h"
+#include "workbench/account/AccountDiscovery.h"
 #include "workbench/activity/ActivityBarEntryProjection.h"
 #include "workbench/activity/CActivityBar.h"
 #include "workbench/panel/CBottomPanelTool.h"
@@ -954,9 +955,95 @@ void ReplaceLocalizedArgument(std::wstring& text, std::wstring_view argument)
 [[nodiscard]] std::wstring ResolveLocalizedActivityBarTitle(
 	std::string_view containerId, std::wstring_view fallback)
 {
-	const auto resourceId = workbench::activity::ResolveBuiltinActivityTitleResourceId(containerId);
+	const auto resourceId = workbench::activity::ResolveActivityTitleResourceId(containerId);
 	if (const auto localized = LocalizedWorkbenchString(resourceId); !localized.empty()) return localized;
 	return std::wstring(fallback);
+}
+
+[[nodiscard]] std::wstring AccountDetail(const int labelResourceId, std::wstring_view value)
+{
+	auto label = LocalizedWorkbenchString(labelResourceId);
+	if (label.empty()) return std::wstring(value);
+	label.append(L": ");
+	label.append(value);
+	return label;
+}
+
+[[nodiscard]] CustomFrameAccountMenuModel ProjectAccountMenuModel(
+	const workbench::account::AccountDiscoverySnapshot& snapshot)
+{
+	using workbench::account::EAccountDiscoveryState;
+	using workbench::account::EAccountSourceState;
+	using workbench::account::EGitHubAccountState;
+
+	CustomFrameAccountMenuModel model;
+	model.loadingFallback = LocalizedWorkbenchString(STR_WORKBENCH_ACCOUNT_LOADING);
+	model.unavailableFallback = LocalizedWorkbenchString(STR_WORKBENCH_ACCOUNT_DISCOVERY_FAILED);
+	model.absentFallback = LocalizedWorkbenchString(STR_WORKBENCH_ACCOUNT_NO_PROVIDER);
+	if (snapshot.state == EAccountDiscoveryState::Loading) {
+		model.state = CustomFrameAccountMenuState::Loading;
+		return model;
+	}
+	if (snapshot.state == EAccountDiscoveryState::Stopped) {
+		model.state = CustomFrameAccountMenuState::Absent;
+		return model;
+	}
+
+	model.state = CustomFrameAccountMenuState::Available;
+	if (snapshot.gitIdentity) {
+		const auto& identity = *snapshot.gitIdentity;
+		CustomFrameAccountMenuParent parent;
+		if (!identity.userName.empty()) parent.label = identity.userName;
+		if (!identity.userEmail.empty()) {
+			if (!parent.label.empty()) {
+				parent.label.append(L" <").append(identity.userEmail).append(L">");
+			} else {
+				parent.label = identity.userEmail;
+			}
+		}
+		if (parent.label.empty()) parent.label = L"Git";
+		else parent.label.append(L" (Git)");
+		if (!identity.userName.empty()) parent.detailRows.push_back(L"user.name: " + identity.userName);
+		if (!identity.userEmail.empty()) parent.detailRows.push_back(L"user.email: " + identity.userEmail);
+		model.parents.push_back(std::move(parent));
+	} else {
+		CustomFrameAccountMenuParent parent{ .label = L"Git" };
+		parent.detailRows.push_back(LocalizedWorkbenchString(
+			snapshot.gitState == EAccountSourceState::Unconfigured
+				? STR_WORKBENCH_ACCOUNT_GIT_IDENTITY_NOT_CONFIGURED
+				: snapshot.gitState == EAccountSourceState::Unavailable
+					? STR_WORKBENCH_ACCOUNT_GIT_UNAVAILABLE
+					: STR_WORKBENCH_ACCOUNT_DISCOVERY_FAILED));
+		model.parents.push_back(std::move(parent));
+	}
+
+	for (const auto& account : snapshot.githubAccounts) {
+		CustomFrameAccountMenuParent parent;
+		parent.label = account.login;
+		parent.label.append(L" (GitHub CLI)");
+		parent.detailRows.push_back(AccountDetail(STR_WORKBENCH_ACCOUNT_HOST, account.host));
+		parent.detailRows.push_back(AccountDetail(
+			STR_WORKBENCH_ACCOUNT_GIT_PROTOCOL, account.gitProtocol));
+		const int statusResourceId = account.state != EGitHubAccountState::Success
+			? STR_WORKBENCH_ACCOUNT_NEEDS_ATTENTION
+			: account.active
+				? STR_WORKBENCH_ACCOUNT_ACTIVE
+				: STR_WORKBENCH_ACCOUNT_INACTIVE;
+		parent.detailRows.push_back(AccountDetail(STR_WORKBENCH_ACCOUNT_STATUS,
+			LocalizedWorkbenchString(statusResourceId)));
+		model.parents.push_back(std::move(parent));
+	}
+	if (snapshot.githubAccounts.empty()) {
+		CustomFrameAccountMenuParent parent{ .label = L"GitHub CLI" };
+		parent.detailRows.push_back(LocalizedWorkbenchString(
+			snapshot.githubState == EAccountSourceState::Ready
+				? STR_WORKBENCH_ACCOUNT_GITHUB_CLI_NO_ACCOUNTS
+				: snapshot.githubState == EAccountSourceState::Unavailable
+					? STR_WORKBENCH_ACCOUNT_GITHUB_CLI_UNAVAILABLE
+					: STR_WORKBENCH_ACCOUNT_DISCOVERY_FAILED));
+		model.parents.push_back(std::move(parent));
+	}
+	return model;
 }
 
 [[nodiscard]] workbench::ActivityBarLocationMenuLabels ActivityBarLocationMenuLabels()
@@ -2610,6 +2697,29 @@ bool CEditWnd::InitializeWorkbench()
 		}
 	} else {
 		ApplySemanticWorkspaceContext();
+	}
+	m_accountDiscoveryService = std::make_unique<workbench::account::AccountDiscoveryService>();
+	(void)m_accountDiscoveryService->RequestRefresh(
+		m_workspaceContext->GetNewTerminalWorkingDirectory());
+	if (m_customFrame) {
+		m_customFrame->SetAccountMenuModelCallback([this] {
+			if (!m_accountDiscoveryService) return CustomFrameAccountMenuModel{};
+			const auto snapshot = m_accountDiscoveryService->Snapshot();
+			auto model = ProjectAccountMenuModel(snapshot);
+			// Return the stable snapshot captured above, then refresh in the
+			// background for the next open. The popup never waits for git or gh.
+			if (workbench::account::IsTerminalAccountDiscoveryState(snapshot.state)
+				&& m_workspaceContext) {
+				try {
+					(void)m_accountDiscoveryService->RequestRefresh(
+						m_workspaceContext->GetNewTerminalWorkingDirectory());
+				}
+				catch (...) {
+					// The already-built snapshot remains a complete terminal view.
+				}
+			}
+			return model;
+		});
 	}
 
 	const auto commitExtent = [this](workbench::WorkbenchEdge edge, int extentDip) {
@@ -5643,7 +5753,12 @@ void CEditWnd::CloseWorkbench() noexcept
 	m_layoutStateSubscription.reset();
 	// Registry executors capture this window and must be gone before any host they
 	// can project is closed. Context state has no external owner and is window-local.
-	if (m_customFrame) m_customFrame->SetManageMenuActionCallback({});
+	if (m_customFrame) {
+		m_customFrame->SetManageMenuActionCallback({});
+		m_customFrame->SetAccountMenuModelCallback({});
+	}
+	if (m_accountDiscoveryService) m_accountDiscoveryService->Stop();
+	m_accountDiscoveryService.reset();
 	ClearWorkbenchKeybindingChord();
 	m_workbenchCommandRegistry.reset();
 	m_workbenchContextKeyService.reset();
@@ -7968,7 +8083,7 @@ void CEditWnd::RefreshSidebarTitles()
 		std::vector<workbench::CWorkbenchPanelHost::HeaderMenuItem> items;
 		if (containerId != workbench::viewcontainer::pageIds::Extensions) return items;
 		items.push_back({
-			.title = L"Install from .senp...",
+			.title = LocalizedWorkbenchString(STR_WORKBENCH_EXTENSIONS_INSTALL_FROM_SENP),
 			.enabled = m_extensionsTool != nullptr && m_extensionsTool->CanInstallDeveloperPackage(),
 			.invoke = [this]() {
 				if (m_extensionsTool != nullptr) m_extensionsTool->InstallDeveloperPackage();
@@ -8101,7 +8216,8 @@ void CEditWnd::SyncViewContainers(const workbench::layout::WorkbenchLayoutStateS
 	// GlobalCompositeBar: Accounts then Manage are pinned to the vertical bar.
 	// Top/bottom placement moves both actions to the native title bar.
 	if (m_activityBarLocation == workbench::ActivityBarLocation::Default) {
-		workbench::activity::AppendGlobalActivityActions(primaryEntries);
+		workbench::activity::AppendGlobalActivityActions(primaryEntries,
+			ResolveLocalizedActivityBarTitle);
 	}
 	if (m_activityBar) m_activityBar->SetEntries(std::move(primaryEntries));
 	if (m_auxiliaryActivityBar) m_auxiliaryActivityBar->SetEntries(std::move(auxiliaryEntries));

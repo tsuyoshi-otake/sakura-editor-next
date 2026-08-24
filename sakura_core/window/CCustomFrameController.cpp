@@ -176,6 +176,26 @@ struct MenuItemText
 	[[nodiscard]] const wchar_t* c_str() const noexcept { return text; }
 };
 
+//! Owns a popup until it is successfully attached to another menu. DestroyMenu
+//! recursively releases attached submenus, while an unattached submenu remains
+//! owned by this guard on every AppendMenuW failure path.
+class ScopedPopupMenu final {
+public:
+	explicit ScopedPopupMenu(HMENU menu = nullptr) noexcept : m_menu(menu) {}
+	~ScopedPopupMenu()
+	{
+		if (m_menu != nullptr) ::DestroyMenu(m_menu);
+	}
+	ScopedPopupMenu(const ScopedPopupMenu&) = delete;
+	ScopedPopupMenu& operator=(const ScopedPopupMenu&) = delete;
+
+	[[nodiscard]] HMENU get() const noexcept { return m_menu; }
+	[[nodiscard]] HMENU release() noexcept { return std::exchange(m_menu, nullptr); }
+
+private:
+	HMENU m_menu = nullptr;
+};
+
 [[nodiscard]] MenuItemText MakeMenuItemText(int stringId, const wchar_t* accelerator = nullptr) noexcept
 {
 	MenuItemText item{};
@@ -534,10 +554,11 @@ CustomFramePopupPlacement CalculateCustomFramePopupPlacement(
 	placement.flags = commonFlags;
 	RECT popup{};
 	if (kind == CustomFramePopupPlacementKind::ActivityBar) {
-		// GlobalCompositeBar's vertical action is anchored at its right/top corner. The
-		// bottom alignment makes the menu grow upward, leaving the action itself visible.
-		popup = MakeRect(anchorScreen.right + gap, anchorScreen.top - gap - height,
-			anchorScreen.right + gap + width, anchorScreen.top - gap);
+		// GlobalCompositeBar's vertical action is anchored at its right/bottom corner.
+		// The horizontal gap separates the menu from the bar while the shared bottom
+		// edge keeps the popup visually attached to the action that opened it.
+		popup = MakeRect(anchorScreen.right + gap, anchorScreen.bottom - height,
+			anchorScreen.right + gap + width, anchorScreen.bottom);
 		bool alignRight = false;
 		if (!::IsRectEmpty(&workArea) && width > 0) {
 			const int leftCandidate = anchorScreen.left - gap - width;
@@ -560,8 +581,8 @@ CustomFramePopupPlacement CalculateCustomFramePopupPlacement(
 			popup.bottom,
 		};
 	} else {
-		// Title-bar actions are laid out horizontally. Keep Manage's historical
-		// right-edge alignment, while Account uses the button's left edge.
+		// Title-bar actions are laid out horizontally. Account and Manage share this
+		// alignment, as they do in VS Code's GlobalCompositeBar.
 		popup = rightAlign
 			? MakeRect(anchorScreen.right - gap - width, anchorScreen.bottom + gap,
 				anchorScreen.right - gap, anchorScreen.bottom + gap + height)
@@ -577,6 +598,89 @@ CustomFramePopupPlacement CalculateCustomFramePopupPlacement(
 	}
 	placement.bounds = popup;
 	return placement;
+}
+
+std::wstring SanitizeCustomFrameAccountMenuText(std::wstring_view text)
+{
+	std::wstring sanitized;
+	sanitized.reserve(text.size());
+	bool pendingSpace = false;
+	for (const wchar_t character : text) {
+		if (character == L'\0') {
+			// AppendMenuW consumes a null-terminated string. Treat an embedded NUL
+			// as a separator so data after it cannot silently merge into the row.
+			if (!sanitized.empty()) pendingSpace = true;
+			continue;
+		}
+		if (character == L' ' || character < 0x20
+			|| (character >= 0x7F && character <= 0x9F)
+			|| character == L'\u2028' || character == L'\u2029') {
+			if (!sanitized.empty()) pendingSpace = true;
+			continue;
+		}
+		if (pendingSpace) {
+			sanitized.push_back(L' ');
+			pendingSpace = false;
+		}
+		if (character == L'&') {
+			// Account labels are data, not menu markup. Win32 interprets a single
+			// ampersand as a mnemonic marker, so double it before AppendMenuW.
+			sanitized.append(L"&&");
+		} else {
+			sanitized.push_back(character);
+		}
+	}
+	return sanitized;
+}
+
+CustomFrameAccountMenuProjection ProjectCustomFrameAccountMenu(
+	const CustomFrameAccountMenuModel& model)
+{
+	CustomFrameAccountMenuProjection projection{};
+	projection.state = model.state;
+	switch (model.state) {
+	case CustomFrameAccountMenuState::Absent:
+		projection.fallbackLabel = SanitizeCustomFrameAccountMenuText(model.absentFallback);
+		return projection;
+	case CustomFrameAccountMenuState::Loading:
+		projection.fallbackLabel = SanitizeCustomFrameAccountMenuText(model.loadingFallback);
+		return projection;
+	case CustomFrameAccountMenuState::Unavailable:
+		projection.fallbackLabel = SanitizeCustomFrameAccountMenuText(model.unavailableFallback);
+		return projection;
+	case CustomFrameAccountMenuState::Available:
+		break;
+	default:
+		// A value outside the closed enum is malformed producer data. Preserve an
+		// explicit terminal state and do not treat it as an available snapshot.
+		projection.state = CustomFrameAccountMenuState::Unavailable;
+		projection.fallbackLabel = SanitizeCustomFrameAccountMenuText(model.unavailableFallback);
+		return projection;
+	}
+
+	projection.parents.reserve(model.parents.size());
+	for (const auto& parent : model.parents) {
+		CustomFrameAccountMenuParent projectedParent;
+		projectedParent.label = SanitizeCustomFrameAccountMenuText(parent.label);
+		if (projectedParent.label.empty()) continue;
+		projectedParent.detailRows.reserve(parent.detailRows.size());
+		for (const auto& detail : parent.detailRows) {
+			const std::wstring sanitizedDetail = SanitizeCustomFrameAccountMenuText(detail);
+			if (!sanitizedDetail.empty()) projectedParent.detailRows.push_back(sanitizedDetail);
+		}
+		// A parent without a read-only detail row is not a useful Account menu
+		// surface. Drop it instead of manufacturing an enabled or empty action.
+		if (!projectedParent.detailRows.empty()) {
+			projection.parents.push_back(std::move(projectedParent));
+		}
+	}
+	if (!projection.parents.empty()) return projection;
+
+	// An Available snapshot with no complete parent is not an empty success. Make
+	// the loss of provider data explicit and use the producer's unavailable copy.
+	projection.state = CustomFrameAccountMenuState::Unavailable;
+	projection.fallbackLabel = SanitizeCustomFrameAccountMenuText(model.unavailableFallback);
+	return projection;
 }
 
 CustomFrameControl HitTestCustomFrameControl(const CustomFrameLayout& layout, POINT point) noexcept
@@ -1200,7 +1304,7 @@ void CCustomFrameController::ShowLayoutMenu(const RECT& anchor) noexcept
 void CCustomFrameController::ShowAccountMenu(const RECT& anchor) noexcept
 {
 	if (m_window == nullptr || ::IsRectEmpty(&anchor)) return;
-	POINT point{ anchor.left, anchor.bottom };
+	POINT point{ anchor.right, anchor.bottom };
 	::ClientToScreen(m_window, &point);
 	ShowAccountMenuAt(point, true);
 }
@@ -1213,19 +1317,82 @@ void CCustomFrameController::ShowAccountMenuAt(POINT screenPoint) noexcept
 void CCustomFrameController::ShowAccountMenuAt(POINT screenPoint, bool titleBar) noexcept
 {
 	if (m_window == nullptr) return;
-	const HMENU menu = ::CreatePopupMenu();
-	if (menu == nullptr) return;
-	// Authentication is not configured in Sakura Editor; keep this explicit rather than implying sign-in works.
-	::AppendMenuW(menu, MF_STRING | MF_GRAYED, 0,
-		MakeMenuItemText(STR_WORKBENCH_ACCOUNT_NO_PROVIDER).c_str());
-	const SIZE popupSize = EstimatePopupMenuSize(menu, m_window, m_menuFont.Get(), m_dpi);
+	CustomFrameAccountMenuModel model;
+	try {
+		if (m_accountMenuModelCallback) {
+			model = m_accountMenuModelCallback();
+		} else {
+			model = m_accountMenuModel;
+		}
+	}
+	catch (...) {
+		// A provider callback is an optional presentation source. Its failure must
+		// not escape this noexcept UI path or turn into an implied sign-in action.
+		::OutputDebugStringW(L"Sakura Editor NEXT: Account menu callback threw.\n");
+		model = {};
+	}
+
+	CustomFrameAccountMenuProjection projection;
+	try {
+		projection = ProjectCustomFrameAccountMenu(model);
+	}
+	catch (...) {
+		// Allocation failure while copying provider presentation data fails closed
+		// to the explicit no-provider row below.
+		::OutputDebugStringW(L"Sakura Editor NEXT: Account menu projection failed.\n");
+		projection = {};
+	}
+
+	ScopedPopupMenu menu(::CreatePopupMenu());
+	if (menu.get() == nullptr) return;
+	bool menuBuilt = true;
+	if (projection.parents.empty()) {
+		const wchar_t* fallback = projection.fallbackLabel.empty()
+			? LS(STR_WORKBENCH_ACCOUNT_NO_PROVIDER)
+			: projection.fallbackLabel.c_str();
+		if (fallback == nullptr) {
+			// The legacy no-provider resource remains the final localized fallback
+			// for an absent or malformed snapshot. Loading/unavailable producers pass
+			// their own localized text through the model above.
+			fallback = L"";
+		}
+		menuBuilt = ::AppendMenuW(menu.get(), MF_STRING | MF_GRAYED, 0, fallback) != FALSE;
+	} else {
+		for (const auto& parent : projection.parents) {
+			ScopedPopupMenu submenu(::CreatePopupMenu());
+			if (submenu.get() == nullptr) {
+				menuBuilt = false;
+				break;
+			}
+			for (const auto& detail : parent.detailRows) {
+				// Account rows are descriptive only. They intentionally have no
+				// command id and cannot initiate sign-in/sign-out or other actions.
+				if (::AppendMenuW(submenu.get(), MF_STRING | MF_GRAYED, 0,
+					detail.c_str()) == FALSE) {
+					menuBuilt = false;
+					break;
+				}
+			}
+			if (!menuBuilt) break;
+			if (::AppendMenuW(menu.get(), MF_POPUP,
+				reinterpret_cast<UINT_PTR>(submenu.get()), parent.label.c_str()) == FALSE) {
+				menuBuilt = false;
+				break;
+			}
+			// Ownership transfers to the parent menu only after AppendMenuW succeeds.
+			(void)submenu.release();
+		}
+	}
+	if (!menuBuilt) return;
+
+	const SIZE popupSize = EstimatePopupMenuSize(menu.get(), m_window, m_menuFont.Get(), m_dpi);
 	const RECT anchor{ screenPoint.x, screenPoint.y, screenPoint.x, screenPoint.y };
 	const auto placement = CalculateCustomFramePopupPlacement(
 		anchor, popupSize, PopupWorkAreaForPoint(screenPoint), m_dpi,
-		titleBar ? CustomFramePopupPlacementKind::TitleBar : CustomFramePopupPlacementKind::ActivityBar);
-	(void)::TrackPopupMenuEx(menu, placement.flags,
+		titleBar ? CustomFramePopupPlacementKind::TitleBar : CustomFramePopupPlacementKind::ActivityBar,
+		titleBar);
+	(void)::TrackPopupMenuEx(menu.get(), placement.flags,
 		placement.point.x, placement.point.y, m_window, nullptr);
-	::DestroyMenu(menu);
 }
 
 void CCustomFrameController::ShowManageMenu(const RECT& anchor) noexcept

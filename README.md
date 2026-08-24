@@ -107,6 +107,7 @@ Visual Studio で [`sakura.sln`](./sakura.sln) を開くこともできます。
 | --- | --- |
 | コントリビュート | [CONTRIBUTING.md](./CONTRIBUTING.md) |
 | セキュリティ | [GitHub Security Advisories](https://github.com/tsuyoshi-otake/sakura-editor-next/security/advisories) |
+| SENP パッケージ仕様・開発ガイド | [docs/senp-package-format.md](./docs/senp-package-format.md) |
 | 最新の変更 | [コミット履歴](https://github.com/tsuyoshi-otake/sakura-editor-next/commits/main/) ・ [Releases](https://github.com/tsuyoshi-otake/sakura-editor-next/releases) |
 | 引き継いだ変更履歴 | [CHANGELOG.md](./CHANGELOG.md) |
 | ライセンス | [zlib License](./LICENSE) |

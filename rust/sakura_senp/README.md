@@ -1,59 +1,28 @@
-# Sakura Extension Package (`.senp`)
+# `sakura-senp`
 
-SENP is Sakura Editor NEXT's native extension package. It borrows the useful
-package ergonomics of VS Code extensions, including a manifest and a Markdown
-README, but it is intentionally not a VSIX container and does not implement the
-VS Code Extension API or OpenVSX protocol.
+This crate owns SENP v1 package validation, deterministic ZIP packing, trust
+policy checks, and immutable profile installation. SENP is Sakura Editor NEXT's
+native `.senp` format; it is not VSIX, Open VSX, or the VS Code Extension API.
 
-## Version 1 archive
+The canonical package format and development guide is
+[SENP パッケージ仕様（v1）](../../docs/senp-package-format.md). Read that
+document for archive layout, manifest fields, checksum/signature rules, trust
+policies, `sakura-senp-tool` commands, runtime Components, and declarative
+language/grammar examples.
 
-A `.senp` file is a deterministic ZIP archive. Every path uses `/`, every file
-name is UTF-8, and these entries are required:
+実装上、`module/extension.wasm` は常に必要なファイルではありません。
+`senp.json` に `runtime` がある package だけが
+`module/extension.wasm` を必須とし、runtime を持たない declarative
+language/grammar package に module があると拒否されます。
 
-| Path | Purpose |
-|---|---|
-| `senp.json` | Strict JSON manifest. Unknown or duplicate members are rejected. |
-| `README.md` | UTF-8 Markdown shown as the extension's user-facing explanation. |
-| `LICENSE` | UTF-8 license text for the packaged extension. |
-| `module/extension.wasm` | WebAssembly component implementing the declared SENP ABI. |
-| `integrity/SHA256SUMS` | Canonical, sorted SHA-256 coverage for every payload entry. |
+主要な公開 API は次のとおりです。
 
-`CHANGELOG.md`, `assets/**`, and `signature/ed25519.sig` are optional. No other
-archive paths are accepted. Packages are bounded to 64 MiB compressed and
-expanded, 256 entries, 32 MiB per entry, and a 100:1 compression ratio.
+- `pack_directory` — source directory を deterministic `.senp` にする。
+- `verify_package` — archive bytes、ZIP entries、checksum、manifest、trust を検証する。
+- `install_package` — 検証済み archive を content-addressed profile root に公開する。
+- `list_installed` / `list_uninstalled` — profile state と content を再検証して列挙する。
+- `set_extension_enabled` / `uninstall_built_in` — profile の有効化と built-in tombstone を管理する。
 
-The manifest for the first built-in extension is representative:
-
-```json
-{
-  "schemaVersion": 1,
-  "id": "sakura-indent-rainbow",
-  "displayName": "Indent Rainbow",
-  "version": "0.1.0",
-  "publisher": "sakura.builtin",
-  "description": "Colors indentation levels in the active editor.",
-  "engines": { "sakura": ">=0.1.0" },
-  "runtime": {
-    "abi": "sakura:senp/extension@1.0.0",
-    "module": "module/extension.wasm"
-  },
-  "activationEvents": ["onStartupFinished"],
-  "capabilities": ["editor.visibleText", "editor.decorations"],
-  "contributes": {
-    "editorDecorations": [{ "id": "sakura.indent-rainbow", "kind": "indent" }]
-  }
-}
-```
-
-## Trust and installation
-
-- Built-ins are embedded into the signed application and pinned to an embedded
-  archive SHA-256 before installation.
-- Publisher packages require a valid Ed25519 signature from a configured key.
-- A locally selected developer package may be unsigned, but installs disabled
-  and requires an explicit enable decision.
-- Verified payloads are extracted to immutable content-addressed directories;
-  profile state selects the active digest separately and is published atomically.
-
-The runtime receives only the capabilities declared by the ABI. Version 1 has
-no filesystem, network, process, shell, environment, or native-window imports.
+CLI の入口は [`rust/sakura_senp_tool/src/main.rs`](../sakura_senp_tool/src/main.rs)、
+runtime の WIT 境界は [`rust/wit/senp-extension.wit`](../wit/senp-extension.wit)
+です。crate の実装変更時は正規仕様書も同時に確認してください。
