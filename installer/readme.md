@@ -93,6 +93,8 @@ Windows の「アプリで開く」登録、右クリックメニュー、`送�
 - installer/
     - sakura/
         - sakura.exe
+        - sakura-senp-tool.exe（SENP パッケージ管理ツール）
+        - sakura-senp-host.exe（SENP 拡張機能ランタイムホスト）
         - sakura_lang_en_US.dll
         - bregonig.dll （製品ビルドがステージした DLL。`bron420.zip` からは展開しない）
         - sakura.exe.manifest.x
@@ -133,8 +135,9 @@ Windows の「アプリで開く」登録、右クリックメニュー、`送�
             - *.rule
             - *.txt
 
-Release と Debug の `sakura/sakura.exe` は、それぞれの構成の
-`x64/<Configuration>/sakura.exe` からステージングされます。ショートカット、
+Release と Debug の `sakura/sakura.exe`、`sakura/sakura-senp-tool.exe`、および
+`sakura/sakura-senp-host.exe` は、それぞれの構成の `x64/<Configuration>/` から
+ステージングされます。ショートカット、
 ファイル関連付け、および既存の起動方法は従来どおり `sakura.exe` を参照します。
 
 ## インストーラのビルド

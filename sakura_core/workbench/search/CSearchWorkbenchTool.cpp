@@ -66,7 +66,10 @@ constexpr int kToggleReplaceWidthDip = 16;
 constexpr int kInlineButtonDip = 20;
 constexpr int kInputPaddingLeftDip = 6;
 constexpr int kInputPaddingVerticalDip = 3;
-//! The native EDIT stays one pixel inside the painted input border.
+//! The native EDIT stays one pixel inside the painted input border horizontally.
+//! Vertically it uses the input box's CSS padding because a single-line Win32
+//! EDIT anchors its caret near the top of a tall child window instead of
+//! centering it like Monaco's input control.
 constexpr int kInputBorderDip = 1;
 //! The inline controls sit two CSS pixels inside the input's right edge.
 constexpr int kInputControlsRightDip = 2;
@@ -153,16 +156,16 @@ SearchWidgetGeometry CalculateSearchWidgetGeometryImpl(const RECT& clientRect,
 	const RECT replacePreserveToggle = CalculateInlineToggleRect(geometry.replaceBox, 1, dpi);
 	geometry.queryEdit = geometry.queryBox;
 	geometry.queryEdit.left += scaled(kInputBorderDip);
-	geometry.queryEdit.top += scaled(kInputBorderDip);
+	geometry.queryEdit.top += scaled(kInputPaddingVerticalDip);
 	geometry.queryEdit.bottom = std::max(geometry.queryEdit.top,
-		static_cast<LONG>(geometry.queryEdit.bottom - scaled(kInputBorderDip)));
+		static_cast<LONG>(geometry.queryEdit.bottom - scaled(kInputPaddingVerticalDip)));
 	geometry.queryEdit.right = std::max(geometry.queryEdit.left,
 		static_cast<LONG>(queryCaseToggle.left - scaled(kInputControlsGapDip)));
 	geometry.replaceEdit = geometry.replaceBox;
 	geometry.replaceEdit.left += scaled(kInputBorderDip);
-	geometry.replaceEdit.top += scaled(kInputBorderDip);
+	geometry.replaceEdit.top += scaled(kInputPaddingVerticalDip);
 	geometry.replaceEdit.bottom = std::max(geometry.replaceEdit.top,
-		static_cast<LONG>(geometry.replaceEdit.bottom - scaled(kInputBorderDip)));
+		static_cast<LONG>(geometry.replaceEdit.bottom - scaled(kInputPaddingVerticalDip)));
 	geometry.replaceEdit.right = std::max(geometry.replaceEdit.left,
 		static_cast<LONG>(replacePreserveToggle.left - scaled(kInputControlsGapDip)));
 	return geometry;

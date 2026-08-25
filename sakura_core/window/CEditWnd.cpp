@@ -2970,12 +2970,16 @@ bool CEditWnd::InitializeWorkbench()
 		// A container the page pool cannot render would toggle a side bar that then shows
 		// nothing, so the click is ignored rather than producing an empty Part.
 		if (m_viewContainerPages == nullptr || !m_viewContainerPages->Contains(containerId)) return;
-		// VS Code's `ViewContainerActivityAction` hides the Primary Side Bar when the clicked
-		// ViewContainer already is the visible active one, and opens it otherwise; the default
-		// `workbench.activityBar.iconClickBehavior` is "toggle". Hiding therefore belongs to the
-		// click gesture, never to `workbench.view.*`, which only ever reveals a container.
+		// VS Code's default vertical Activity Bar hides the Primary Side Bar when the clicked
+		// ViewContainer already is the visible active one. Its top/bottom composite bars instead
+		// focus that view and stay visible. Hiding therefore belongs only to the vertical click
+		// gesture, never to `workbench.view.*`, which only ever reveals a container.
 		if (m_workbenchRuntime != nullptr) {
-			const std::string_view commandId = IsSidebarViewContainerActive(containerId)
+			const bool toggleIfActive = workbench::ResolveActivityBarActiveIconClickBehavior(
+				m_activityBarLocation)
+				== workbench::EActivityBarActiveIconClickBehavior::TogglePrimarySideBar;
+			const std::string_view commandId = toggleIfActive
+				&& IsSidebarViewContainerActive(containerId)
 				? std::string_view("workbench.action.toggleSidebarVisibility")
 				: containerId == workbench::viewcontainer::pageIds::Explorer
 					? std::string_view("workbench.view.explorer")
@@ -2987,6 +2991,8 @@ bool CEditWnd::InitializeWorkbench()
 				(void)TryExecuteWorkbenchStableCommand(commandId, handled);
 				if (handled) return;
 			}
+			ActivateSidebarPage(containerId, toggleIfActive);
+			return;
 		}
 		ActivateSidebarPage(containerId, true);
 	});

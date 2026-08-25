@@ -99,6 +99,35 @@ TEST(CommandPaletteOverlayPureTest, GeometryStaysInsideNarrowClientsAtSupportedD
 	}
 }
 
+TEST(CommandPaletteOverlayPureTest, SingleLineEditorIsCenteredInsideThePaintedInputFrame)
+{
+	using namespace workbench::quickinput;
+	for (const int dpi : { 96, 120, 144, 192 }) {
+		const auto geometry = ComputeQuickInputRowGeometry(
+			ScaleQuickInputDip(6, dpi), ScaleQuickInputDip(6, dpi),
+			ScaleQuickInputDip(300, dpi), dpi);
+		EXPECT_EQ(ScaleQuickInputDip(26, dpi),
+			geometry.frame.bottom - geometry.frame.top);
+		EXPECT_EQ(ScaleQuickInputDip(3, dpi),
+			geometry.editor.top - geometry.frame.top);
+		EXPECT_EQ(geometry.editor.top - geometry.frame.top,
+			geometry.frame.bottom - geometry.editor.bottom);
+		EXPECT_EQ(ScaleQuickInputDip(1, dpi),
+			geometry.editor.left - geometry.frame.left);
+		EXPECT_EQ(geometry.editor.left - geometry.frame.left,
+			geometry.frame.right - geometry.editor.right);
+	}
+}
+
+TEST(CommandPaletteOverlayPureTest, MousePressesDismissOnlyFromOutsideQuickInput)
+{
+	using namespace workbench::quickinput;
+	EXPECT_TRUE(IsQuickInputDismissMouseMessage(WM_LBUTTONDOWN));
+	EXPECT_TRUE(IsQuickInputDismissMouseMessage(WM_NCRBUTTONDOWN));
+	EXPECT_FALSE(IsQuickInputDismissMouseMessage(WM_LBUTTONUP));
+	EXPECT_FALSE(IsQuickInputDismissMouseMessage(WM_MOUSEMOVE));
+}
+
 class CommandPaletteOverlayTest : public testing::Test {
 protected:
 	void SetUp() override
@@ -234,6 +263,23 @@ TEST_F(CommandPaletteOverlayTest, AcceptAndCancelHaveDistinctTerminalCallbacks)
 	EXPECT_FALSE(m_overlay.IsVisible());
 }
 
+TEST_F(CommandPaletteOverlayTest, OutsideClickCancelsButStillDispatchesToItsWorkbenchTarget)
+{
+	int cancelled = 0;
+	m_overlay.SetCancelCallback([&cancelled] { ++cancelled; });
+	ASSERT_TRUE(m_overlay.Show(TestItems(), L"light"));
+
+	MSG inside{ InputWindow(), WM_LBUTTONDOWN, MK_LBUTTON, 0 };
+	(void)m_overlay.PreTranslateMessage(inside);
+	EXPECT_TRUE(m_overlay.IsVisible());
+	EXPECT_EQ(0, cancelled);
+
+	MSG outside{ m_parent, WM_LBUTTONDOWN, MK_LBUTTON, 0 };
+	EXPECT_FALSE(m_overlay.PreTranslateMessage(outside));
+	EXPECT_FALSE(m_overlay.IsVisible());
+	EXPECT_EQ(1, cancelled);
+}
+
 TEST_F(CommandPaletteOverlayTest, MouseClickAcceptsSelectedQuickPickItem)
 {
 	std::vector<std::wstring> accepted;
@@ -273,8 +319,13 @@ TEST_F(CommandPaletteOverlayTest, UsesOneLineInputAndSharedOverlayScrollbar)
 	const int inputHeight = inputRect.bottom - inputRect.top;
 	const int dpi = static_cast<int>(::GetDpiForWindow(OverlayWindow()));
 	const int effectiveDpi = dpi == 0 ? 96 : dpi;
-	const int expectedHeight = ::MulDiv(26, effectiveDpi, 96);
+	const int expectedFrameHeight = ::MulDiv(26, effectiveDpi, 96);
+	const int expectedVerticalInset = ::MulDiv(3, effectiveDpi, 96);
+	const int expectedHeight = expectedFrameHeight - expectedVerticalInset * 2;
 	EXPECT_EQ(expectedHeight, inputHeight);
+	::MapWindowPoints(nullptr, OverlayWindow(),
+		reinterpret_cast<POINT*>(&inputRect), 2);
+	EXPECT_EQ(::MulDiv(6, effectiveDpi, 96) + expectedVerticalInset, inputRect.top);
 
 	RECT listRect{};
 	ASSERT_TRUE(::GetWindowRect(ListWindow(), &listRect));
@@ -284,7 +335,7 @@ TEST_F(CommandPaletteOverlayTest, UsesOneLineInputAndSharedOverlayScrollbar)
 	// Guard both the control height and the full 36-DIP header geometry.
 	const int expectedTopInset = ::MulDiv(6, effectiveDpi, 96);
 	const int expectedBottomInset = ::MulDiv(4, effectiveDpi, 96);
-	EXPECT_EQ(expectedTopInset + expectedHeight + expectedBottomInset, listRect.top);
+	EXPECT_EQ(expectedTopInset + expectedFrameHeight + expectedBottomInset, listRect.top);
 	EXPECT_EQ(::MulDiv(36, effectiveDpi, 96), listRect.top);
 	EXPECT_LT(listRect.top, ::MulDiv(52, effectiveDpi, 96));
 
@@ -495,15 +546,16 @@ TEST_F(CommandPaletteOverlayTest, InputModeUsesTheSharedNonModalTerminal)
 	RECT inputRect{};
 	ASSERT_TRUE(::GetWindowRect(PromptWindow(), &promptRect));
 	ASSERT_TRUE(::GetWindowRect(InputWindow(), &inputRect));
-	EXPECT_EQ(promptRect.top, inputRect.top);
-	EXPECT_EQ(promptRect.bottom, inputRect.bottom);
+	const int dpi = static_cast<int>(::GetDpiForWindow(OverlayWindow()));
+	const int effectiveDpi = dpi == 0 ? 96 : dpi;
+	const int expectedVerticalInset = ::MulDiv(3, effectiveDpi, 96);
+	EXPECT_EQ(promptRect.top + expectedVerticalInset, inputRect.top);
+	EXPECT_EQ(promptRect.bottom - expectedVerticalInset, inputRect.bottom);
 	EXPECT_LT(promptRect.right, inputRect.left);
 	RECT listRect{};
 	ASSERT_TRUE(::GetWindowRect(ListWindow(), &listRect));
 	::MapWindowPoints(nullptr, OverlayWindow(),
 		reinterpret_cast<POINT*>(&listRect), 2);
-	const int dpi = static_cast<int>(::GetDpiForWindow(OverlayWindow()));
-	const int effectiveDpi = dpi == 0 ? 96 : dpi;
 	const int expectedTopInset = ::MulDiv(6, effectiveDpi, 96);
 	const int expectedBottomInset = ::MulDiv(4, effectiveDpi, 96);
 	const int expectedInputHeight = ::MulDiv(26, effectiveDpi, 96);

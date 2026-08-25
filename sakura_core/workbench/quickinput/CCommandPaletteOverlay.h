@@ -52,6 +52,15 @@ struct QuickInputLayoutMetrics {
 	int listHeight = 0;
 };
 
+//! The painted input frame and the native single-line EDIT hosted inside it.
+//! USER does not vertically center a single-line EDIT's caret when the HWND is
+//! stretched to the full chrome row, so the two rectangles are deliberately
+//! separate just like VS Code's input widget and its editor content.
+struct QuickInputRowGeometry {
+	RECT frame{};
+	RECT editor{};
+};
+
 //! Converts a positive DIP token using the same nearest-pixel rule as
 //! `MulDiv(value, dpi, 96)` without requiring a USER/GDI handle.
 [[nodiscard]] constexpr int ScaleQuickInputDip(int value, int dpi) noexcept
@@ -59,6 +68,48 @@ struct QuickInputLayoutMetrics {
 	const int effectiveDpi = dpi > 0 ? dpi : USER_DEFAULT_SCREEN_DPI;
 	return (value * effectiveDpi + USER_DEFAULT_SCREEN_DPI / 2)
 		/ USER_DEFAULT_SCREEN_DPI;
+}
+
+[[nodiscard]] constexpr QuickInputRowGeometry ComputeQuickInputRowGeometry(
+	int x,
+	int y,
+	int width,
+	int dpi) noexcept
+{
+	const int frameWidth = (std::max)(0, width);
+	const int frameHeight = ScaleQuickInputDip(26, dpi);
+	const int horizontalInset = (std::min)(ScaleQuickInputDip(1, dpi), frameWidth / 2);
+	const int verticalInset = (std::min)(ScaleQuickInputDip(3, dpi), frameHeight / 2);
+	const RECT frame{ x, y, x + frameWidth, y + frameHeight };
+	return {
+		.frame = frame,
+		.editor = {
+			frame.left + horizontalInset,
+			frame.top + verticalInset,
+			frame.right - horizontalInset,
+			frame.bottom - verticalInset,
+		},
+	};
+}
+
+//! Mouse presses outside Quick Input end the non-modal session.  The message is
+//! deliberately not consumed: the workbench surface the user clicked must still
+//! receive the click after the palette has closed, matching VS Code's blur model.
+[[nodiscard]] constexpr bool IsQuickInputDismissMouseMessage(UINT message) noexcept
+{
+	switch (message) {
+	case WM_LBUTTONDOWN:
+	case WM_RBUTTONDOWN:
+	case WM_MBUTTONDOWN:
+	case WM_XBUTTONDOWN:
+	case WM_NCLBUTTONDOWN:
+	case WM_NCRBUTTONDOWN:
+	case WM_NCMBUTTONDOWN:
+	case WM_NCXBUTTONDOWN:
+		return true;
+	default:
+		return false;
+	}
 }
 
 //! Pure command-palette provider parsing.  The provider marker is part of the
@@ -204,6 +255,7 @@ private:
 	HWND m_close = nullptr;
 	HWND m_empty = nullptr;
 	HWND m_previousFocus = nullptr;
+	RECT m_inputFrame{};
 	controls::COverlayScrollbar m_overlayScrollbar;
 	std::vector<int> m_rowPixelOffsets;
 	UINT m_rowPixelOffsetsDpi = 0;

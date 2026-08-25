@@ -1,4 +1,4 @@
-"""SHA-256 identity of staged runtime DLLs versus packaged payloads.
+"""SHA-256 identity of staged runtime files versus packaged payloads.
 
 ``tools/verify_runtime_artifact_identity.py`` is what packaging scripts run
 against real installer and ZIP outputs. These tests drive that same tool with
@@ -32,17 +32,27 @@ class RuntimeArtifactIdentityTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tool = _load_tool()
 
-    def test_matching_zip_payload_agrees_with_the_staged_dlls(self) -> None:
+    def _write_staged_files(self, staged: Path) -> dict[str, bytes]:
+        payloads = {
+            "bregonig.dll": b"bregonig-bytes",
+            "migemo.dll": b"migemo-bytes",
+            "sakura-senp-tool.exe": b"senp-tool-bytes",
+            "sakura-senp-host.exe": b"senp-host-bytes",
+        }
+        for name, payload in payloads.items():
+            (staged / name).write_bytes(payload)
+        return payloads
+
+    def test_matching_zip_payload_agrees_with_the_staged_runtime_files(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             staged = root / "staged"
             staged.mkdir()
-            (staged / "bregonig.dll").write_bytes(b"bregonig-bytes")
-            (staged / "migemo.dll").write_bytes(b"migemo-bytes")
+            payloads = self._write_staged_files(staged)
             archive = root / "exe.zip"
             with zipfile.ZipFile(archive, "w") as bundle:
-                bundle.writestr("bregonig.dll", b"bregonig-bytes")
-                bundle.writestr("migemo.dll", b"migemo-bytes")
+                for name, payload in payloads.items():
+                    bundle.writestr(name, payload)
             report_path = root / "report.json"
             argv = [
                 "--staged",
@@ -63,12 +73,14 @@ class RuntimeArtifactIdentityTests(unittest.TestCase):
             root = Path(temporary)
             staged = root / "staged"
             staged.mkdir()
-            (staged / "bregonig.dll").write_bytes(b"tested")
-            (staged / "migemo.dll").write_bytes(b"migemo-bytes")
+            payloads = self._write_staged_files(staged)
             archive = root / "exe.zip"
             with zipfile.ZipFile(archive, "w") as bundle:
-                bundle.writestr("bregonig.dll", b"shipped-other-bytes")
-                bundle.writestr("migemo.dll", b"migemo-bytes")
+                for name, payload in payloads.items():
+                    bundle.writestr(
+                        name,
+                        b"shipped-other-bytes" if name == "bregonig.dll" else payload,
+                    )
             args = self.tool.parse_args(
                 [
                     "--staged",
@@ -84,6 +96,32 @@ class RuntimeArtifactIdentityTests(unittest.TestCase):
             report = self.tool.collect(args)
             self.assertFalse(report["ok"])
             self.assertTrue(report["mismatches"])
+
+    def test_missing_senp_runtime_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            staged = root / "staged"
+            staged.mkdir()
+            payloads = self._write_staged_files(staged)
+            archive = root / "exe.zip"
+            with zipfile.ZipFile(archive, "w") as bundle:
+                for name, payload in payloads.items():
+                    if name != "sakura-senp-host.exe":
+                        bundle.writestr(name, payload)
+            args = self.tool.parse_args(
+                [
+                    "--staged",
+                    str(staged),
+                    "--zip",
+                    str(archive),
+                    "--clean-extract",
+                    str(root / "extract"),
+                    "--report",
+                    str(root / "report.json"),
+                ]
+            )
+            with self.assertRaisesRegex(self.tool.IdentityError, "sakura-senp-host.exe"):
+                self.tool.collect(args)
 
 
 if __name__ == "__main__":

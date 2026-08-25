@@ -60,6 +60,8 @@ mkdir %INSTALLER_WORK%\license\wil\
 
 set BREGONIG_DLL=bregonig.dll
 set MIGEMO_DLL=migemo.dll
+set SENP_TOOL_EXE=sakura-senp-tool.exe
+set SENP_HOST_EXE=sakura-senp-host.exe
 if not exist "%platform%\%configuration%\%BREGONIG_DLL%" (
 	echo error: %platform%\%configuration%\%BREGONIG_DLL% was not staged by the product build.
 	echo The installer must ship that DLL. It must not extract installer\externals\bregonig\bron420.zip.
@@ -67,6 +69,14 @@ if not exist "%platform%\%configuration%\%BREGONIG_DLL%" (
 )
 if not exist "%platform%\%configuration%\%MIGEMO_DLL%" (
 	echo error: %platform%\%configuration%\%MIGEMO_DLL% was not staged by the product build.
+	exit /b 1
+)
+if not exist "%platform%\%configuration%\%SENP_TOOL_EXE%" (
+	echo error: %platform%\%configuration%\%SENP_TOOL_EXE% was not staged by the product build.
+	exit /b 1
+)
+if not exist "%platform%\%configuration%\%SENP_HOST_EXE%" (
+	echo error: %platform%\%configuration%\%SENP_HOST_EXE% was not staged by the product build.
 	exit /b 1
 )
 if not exist "%BREGONIG_LICENSE_DIR%\bsd_license.txt" (
@@ -148,7 +158,7 @@ copy /Y /B %platform%\%configuration%\*.exe                 %INSTALLER_WORK%\ > 
 copy /Y /B %platform%\%configuration%\*.dll                 %INSTALLER_WORK%\ > NUL
 
 if not exist "build\logs" mkdir build\logs
-py -3 "%~dp0tools\verify_runtime_artifact_identity.py" --staged "%platform%\%configuration%" --installer-work "%INSTALLER_WORK%" --clean-extract "installer\temp\runtime-identity-%platform%-%configuration%-work" --report "build\logs\runtime-artifact-identity-%platform%-%configuration%-installer-work.json" || (echo error: staged DLLs do not match the installer work directory && exit /b 1)
+py -3 "%~dp0tools\verify_runtime_artifact_identity.py" --staged "%platform%\%configuration%" --installer-work "%INSTALLER_WORK%" --clean-extract "installer\temp\runtime-identity-%platform%-%configuration%-work" --report "build\logs\runtime-artifact-identity-%platform%-%configuration%-installer-work.json" || (echo error: staged runtime files do not match the installer work directory && exit /b 1)
 
 set SAKURA_ISS=installer\sakura-%platform%.iss
 @echo running "%CMD_ISCC%" %SAKURA_ISS%
@@ -164,7 +174,7 @@ if not defined INSTALLER_EXE (
 	echo error: Inno Setup did not produce an installer exe under %INSTALLER_OUTPUT%.
 	exit /b 1
 )
-py -3 "%~dp0tools\verify_runtime_artifact_identity.py" --staged "%platform%\%configuration%" --installer-exe "%INSTALLER_EXE%" --seven-zip "%CMD_7Z%" --clean-extract "installer\temp\runtime-identity-%platform%-%configuration%-exe" --report "build\logs\runtime-artifact-identity-%platform%-%configuration%-installer.json" || (echo error: staged DLLs do not match the installer payload && exit /b 1)
+py -3 "%~dp0tools\verify_runtime_artifact_identity.py" --staged "%platform%\%configuration%" --installer-exe "%INSTALLER_EXE%" --seven-zip "%CMD_7Z%" --clean-extract "installer\temp\runtime-identity-%platform%-%configuration%-exe" --report "build\logs\runtime-artifact-identity-%platform%-%configuration%-installer.json" || (echo error: staged runtime files do not match the installer payload && exit /b 1)
 exit /b 0
 
 @rem ------------------------------------------------------------------------------

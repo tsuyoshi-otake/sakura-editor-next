@@ -33,7 +33,7 @@ TEST(SearchWorkbenchToolGeometry, MatchesVsCodeSearchWidgetAtDefaultDpi)
 	ExpectRect(RECT{ 2, 0, 468, 38 }, geometry.container);
 	ExpectRect(RECT{ 20, 6, 468, 32 }, geometry.queryBox);
 	ExpectRect(RECT{ 2, 6, 18, 32 }, geometry.toggleReplace);
-	ExpectRect(RECT{ 21, 7, 384, 31 }, geometry.queryEdit);
+	ExpectRect(RECT{ 21, 9, 384, 29 }, geometry.queryEdit);
 	EXPECT_EQ(26, geometry.queryBox.bottom - geometry.queryBox.top);
 	EXPECT_EQ(18, geometry.queryBox.left - geometry.container.left);
 	EXPECT_EQ(16, geometry.toggleReplace.right - geometry.toggleReplace.left);
@@ -41,7 +41,7 @@ TEST(SearchWorkbenchToolGeometry, MatchesVsCodeSearchWidgetAtDefaultDpi)
 	EXPECT_EQ(6, geometry.container.bottom - geometry.queryBox.bottom);
 }
 
-TEST(SearchWorkbenchToolGeometry, ReplaceRowUsesCssMarginsAndKeepsNativeEditInset)
+TEST(SearchWorkbenchToolGeometry, ReplaceRowUsesCssMarginsAndCentersNativeEdit)
 {
 	const auto geometry = workbench::search::CalculateSearchWidgetGeometry(
 		RECT{ 0, 0, 480, 320 }, 96, true);
@@ -50,11 +50,15 @@ TEST(SearchWorkbenchToolGeometry, ReplaceRowUsesCssMarginsAndKeepsNativeEditInse
 	ExpectRect(RECT{ 20, 38, 440, 64 }, geometry.replaceBox);
 	ExpectRect(RECT{ 444, 39, 468, 63 }, geometry.replaceAll);
 	ExpectRect(RECT{ 2, 6, 18, 64 }, geometry.toggleReplace);
-	ExpectRect(RECT{ 21, 7, 384, 31 }, geometry.queryEdit);
-	ExpectRect(RECT{ 21, 39, 396, 63 }, geometry.replaceEdit);
+	ExpectRect(RECT{ 21, 9, 384, 29 }, geometry.queryEdit);
+	ExpectRect(RECT{ 21, 41, 396, 61 }, geometry.replaceEdit);
 	EXPECT_EQ(6, geometry.replaceBox.top - geometry.queryBox.bottom);
 	EXPECT_EQ(6, geometry.container.bottom - geometry.replaceBox.bottom);
-	EXPECT_EQ(24, geometry.replaceEdit.bottom - geometry.replaceEdit.top);
+	EXPECT_EQ(20, geometry.replaceEdit.bottom - geometry.replaceEdit.top);
+	EXPECT_EQ(geometry.queryEdit.top - geometry.queryBox.top,
+		geometry.queryBox.bottom - geometry.queryEdit.bottom);
+	EXPECT_EQ(geometry.replaceEdit.top - geometry.replaceBox.top,
+		geometry.replaceBox.bottom - geometry.replaceEdit.bottom);
 }
 
 TEST(SearchWorkbenchToolGeometry, PreservesCssRelationshipsAcrossSupportedDpi)
@@ -73,8 +77,12 @@ TEST(SearchWorkbenchToolGeometry, PreservesCssRelationshipsAcrossSupportedDpi)
 			geometry.toggleReplace.right - geometry.toggleReplace.left);
 		EXPECT_EQ(inputHeight, geometry.queryBox.bottom - geometry.queryBox.top);
 		EXPECT_EQ(ScaleDip(6, dpi), geometry.replaceBox.top - geometry.queryBox.bottom);
-		EXPECT_EQ(inputHeight - 2 * ScaleDip(1, dpi),
+		EXPECT_EQ(inputHeight - 2 * ScaleDip(3, dpi),
 			geometry.replaceEdit.bottom - geometry.replaceEdit.top);
+		EXPECT_EQ(geometry.queryEdit.top - geometry.queryBox.top,
+			geometry.queryBox.bottom - geometry.queryEdit.bottom);
+		EXPECT_EQ(geometry.replaceEdit.top - geometry.replaceBox.top,
+			geometry.replaceBox.bottom - geometry.replaceEdit.bottom);
 		EXPECT_EQ(ScaleDip(6, dpi), geometry.container.bottom - geometry.replaceBox.bottom);
 		EXPECT_LE(geometry.queryEdit.left, geometry.queryEdit.right);
 		EXPECT_LE(geometry.replaceEdit.left, geometry.replaceEdit.right);
@@ -89,9 +97,9 @@ TEST(SearchWorkbenchToolGeometry, ClampsNarrowClientWithoutNegativeEditBounds)
 	EXPECT_LE(geometry.container.left, geometry.container.right);
 	EXPECT_LE(geometry.queryEdit.left, geometry.queryEdit.right);
 	EXPECT_LE(geometry.replaceEdit.left, geometry.replaceEdit.right);
-	EXPECT_EQ(ScaleDip(26, 192) - 2 * ScaleDip(1, 192),
+	EXPECT_EQ(ScaleDip(26, 192) - 2 * ScaleDip(3, 192),
 		geometry.queryEdit.bottom - geometry.queryEdit.top);
-	EXPECT_EQ(ScaleDip(26, 192) - 2 * ScaleDip(1, 192),
+	EXPECT_EQ(ScaleDip(26, 192) - 2 * ScaleDip(3, 192),
 		geometry.replaceEdit.bottom - geometry.replaceEdit.top);
 }
 

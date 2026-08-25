@@ -236,6 +236,7 @@ void CCommandPaletteOverlay::Destroy() noexcept
 	m_close = nullptr;
 	m_empty = nullptr;
 	m_previousFocus = nullptr;
+	m_inputFrame = {};
 	m_inputMode = false;
 	m_suppressInputChange = false;
 	m_inputPrompt.clear();
@@ -291,8 +292,6 @@ bool CCommandPaletteOverlay::Show(
 	if (m_list != nullptr) ::ShowWindow(m_list, SW_SHOW);
 	if (m_empty != nullptr) ::ShowWindow(m_empty, SW_HIDE);
 	PopulateList(initiallySelectedId);
-	m_selectionNotificationsEnabled = true;
-	NotifySelectionChanged();
 	Layout();
 	::SetWindowPos(m_window, HWND_TOP, 0, 0, 0, 0,
 		SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW
@@ -300,6 +299,8 @@ bool CCommandPaletteOverlay::Show(
 	::ShowWindow(m_window, SW_SHOWNOACTIVATE);
 	::SetFocus(m_input);
 	PaintOverlayNow(m_window);
+	m_selectionNotificationsEnabled = true;
+	NotifySelectionChanged();
 	return true;
 }
 
@@ -365,7 +366,11 @@ bool CCommandPaletteOverlay::IsVisible() const noexcept
 
 bool CCommandPaletteOverlay::PreTranslateMessage(MSG& message) noexcept
 {
-	if (!IsVisible() || !IsPaletteTarget(m_window, message.hwnd)) return false;
+	if (!IsVisible()) return false;
+	if (!IsPaletteTarget(m_window, message.hwnd)) {
+		if (IsQuickInputDismissMouseMessage(message.message)) Cancel();
+		return false;
+	}
 	if (message.message == WM_MOUSEWHEEL && !m_inputMode && m_list != nullptr) {
 		// Quick Input deliberately keeps keyboard focus in the query EDIT. Windows
 		// therefore delivers wheel input to the EDIT even while the pointer is over
@@ -812,6 +817,15 @@ void CCommandPaletteOverlay::Layout(int width, int height) noexcept
 		::SendMessageW(m_input, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
 			MAKELONG(inputPadding, inputPadding));
 	}
+	const int inputX = m_inputMode
+		? horizontalMargin + promptWidth + gap : horizontalMargin;
+	const int effectiveDpi = static_cast<int>(::GetDpiForWindow(m_window));
+	const auto inputGeometry = ComputeQuickInputRowGeometry(
+		inputX, topInset, inputWidth,
+		effectiveDpi > 0 ? effectiveDpi : USER_DEFAULT_SCREEN_DPI);
+	m_inputFrame = inputGeometry.frame;
+	const int editorWidth = inputGeometry.editor.right - inputGeometry.editor.left;
+	const int editorHeight = inputGeometry.editor.bottom - inputGeometry.editor.top;
 
 	const UINT commonFlags = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS;
 	struct Placement {
@@ -825,7 +839,8 @@ void CCommandPaletteOverlay::Layout(int width, int height) noexcept
 	if (m_inputMode) {
 		placements = {{
 			{ m_prompt, horizontalMargin, topInset, promptWidth, rowHeight },
-			{ m_input, horizontalMargin + promptWidth + gap, topInset, inputWidth, rowHeight },
+			{ m_input, inputGeometry.editor.left, inputGeometry.editor.top,
+				editorWidth, editorHeight },
 			{ m_close, (std::max)(horizontalMargin,
 				width - horizontalMargin - closeWidth), topInset, closeWidth, rowHeight },
 			{ m_list, horizontalMargin, listTop, listWidth, 0 },
@@ -834,7 +849,8 @@ void CCommandPaletteOverlay::Layout(int width, int height) noexcept
 	} else {
 		placements = {{
 			{ m_prompt, 0, 0, 0, 0 },
-			{ m_input, horizontalMargin, topInset, inputWidth, rowHeight },
+			{ m_input, inputGeometry.editor.left, inputGeometry.editor.top,
+				editorWidth, editorHeight },
 			{ m_close, 0, 0, 0, 0 },
 			{ m_list, listScrollablePadding, listTop, listWidth,
 				(std::max)(0, listBottom - listTop) },
@@ -885,6 +901,10 @@ void CCommandPaletteOverlay::Layout(int width, int height) noexcept
 void CCommandPaletteOverlay::PopulateList(std::wstring_view preferredSelectionId) noexcept
 {
 	if (m_list == nullptr) return;
+	// The owner-drawn LISTBOX must never observe a partially rebuilt native item
+	// array paired with the already-replaced m_items model.  Search uses the same
+	// redraw transaction for its result list.
+	::SendMessageW(m_list, WM_SETREDRAW, FALSE, 0);
 	::SendMessageW(m_list, LB_RESETCONTENT, 0, 0);
 	for (const auto& item : m_items) {
 		::SendMessageW(m_list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(item.label.c_str()));
@@ -913,8 +933,8 @@ void CCommandPaletteOverlay::PopulateList(std::wstring_view preferredSelectionId
 	const bool hasSelectable = selected >= 0;
 	if (m_empty != nullptr) ::ShowWindow(m_empty, hasSelectable ? SW_HIDE : SW_SHOW);
 	UpdateOverlayScrollbar();
+	::SendMessageW(m_list, WM_SETREDRAW, TRUE, 0);
 	QueueNoEraseInvalidate(m_list);
-	if (!m_inputMode) NotifySelectionChanged();
 }
 
 void CCommandPaletteOverlay::UpdateSearch() noexcept
@@ -928,6 +948,7 @@ void CCommandPaletteOverlay::UpdateSearch() noexcept
 		PopulateList(previousSelectionId);
 		Layout();
 		if (IsVisible()) PaintOverlayNow(m_window);
+		NotifySelectionChanged();
 		return;
 	}
 	try {
@@ -939,6 +960,7 @@ void CCommandPaletteOverlay::UpdateSearch() noexcept
 	PopulateList(previousSelectionId);
 	Layout();
 	if (IsVisible()) PaintOverlayNow(m_window);
+	NotifySelectionChanged();
 }
 
 void CCommandPaletteOverlay::NormalizeCommandPaletteInput() noexcept
@@ -1133,12 +1155,11 @@ void CCommandPaletteOverlay::Paint(HDC dc, const RECT&) noexcept
 	FillRoundedRect(dc, surfaceFrame, surfaceRadius * 2, surface);
 	FrameRoundedRect(dc, frame, frameRadius * 2, m_palette.border.ToColorRef());
 	if (m_input != nullptr && ::IsWindowVisible(m_input) != FALSE) {
-		RECT inputFrame{};
-		if (::GetWindowRect(m_input, &inputFrame) != FALSE) {
-			::MapWindowPoints(nullptr, m_window,
-				reinterpret_cast<POINT*>(&inputFrame), 2);
-			::InflateRect(&inputFrame, 1, 1);
+		const RECT inputFrame = m_inputFrame;
+		if (inputFrame.right > inputFrame.left && inputFrame.bottom > inputFrame.top) {
 			const int inputRadius = Scale(kInputCornerRadiusDip);
+			FillRoundedRect(dc, inputFrame, inputRadius * 2,
+				m_palette.inputBackground.ToColorRef());
 			// Command Palette keeps the provider marker inside the focused input
 			// control.  VS Code exposes that focus with the blue focusBorder; the
 			// generic ShowInput contract retains its neutral input.border frame.

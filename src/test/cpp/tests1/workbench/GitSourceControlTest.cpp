@@ -196,6 +196,37 @@ TEST(ScmViewStackLayout, ReservesANonInteractiveGraphFrameBelowChanges)
 	EXPECT_TRUE(empty.graphBody.Empty());
 }
 
+TEST(ScmViewStackLayout, OneLineInputMatchesSearchHeightAndCentersItsEditorAtSupportedDpi)
+{
+	for (const unsigned int dpi : { 96U, 120U, 144U, 192U }) {
+		const int width = (300 * static_cast<int>(dpi) + 48) / 96;
+		const int lineHeight = (14 * static_cast<int>(dpi) + 48) / 96;
+		const auto geometry = BuildScmInputGeometry(width, lineHeight, 1, dpi);
+		EXPECT_EQ(ScaleScmInputDip(kScmInputMinimumHeightDip, dpi), geometry.frameHeight);
+		EXPECT_EQ(ScaleScmInputDip(kScmInputBorderDip, dpi), geometry.editor.left);
+		EXPECT_EQ(geometry.editor.left, width - geometry.editor.right);
+		const int textTop = geometry.editor.top + geometry.formatting.top;
+		const int textBottomInset = geometry.frameHeight
+			- (geometry.editor.top + geometry.formatting.bottom);
+		EXPECT_LE(std::abs(textTop - textBottomInset), 1);
+	}
+}
+
+TEST(ScmViewStackLayout, MultilineInputGrowsByMeasuredContentAndKeepsFourDipPadding)
+{
+	for (const unsigned int dpi : { 96U, 120U, 144U, 192U }) {
+		const int width = ScaleScmInputDip(300, dpi);
+		const int lineHeight = ScaleScmInputDip(16, dpi);
+		const auto geometry = BuildScmInputGeometry(width, lineHeight, 3, dpi);
+		EXPECT_EQ(3 * lineHeight + 2 * ScaleScmInputDip(kScmInputPaddingDip, dpi),
+			geometry.frameHeight);
+		EXPECT_EQ(ScaleScmInputDip(kScmInputPaddingDip, dpi),
+			geometry.editor.left + geometry.formatting.left);
+		EXPECT_EQ(ScaleScmInputDip(kScmInputPaddingDip, dpi),
+			geometry.editor.top + geometry.formatting.top);
+	}
+}
+
 TEST(ScmWheelRoute, RoutesHeadersToTheirOwningScrollableList)
 {
 	const auto layout = BuildScmViewStackLayout({

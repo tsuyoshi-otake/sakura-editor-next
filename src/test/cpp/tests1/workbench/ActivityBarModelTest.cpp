@@ -1,11 +1,23 @@
 #include "pch.h"
 
-#include "workbench/activity/ActivityBarModel.h"
+#include "workbench/activity/CActivityBar.h"
 
 #include <utility>
 
 namespace workbench::activity {
 namespace {
+
+TEST(ActivityBarClickBehavior, OnlyDefaultVerticalPlacementTogglesThePrimarySideBar)
+{
+	EXPECT_EQ(EActivityBarActiveIconClickBehavior::TogglePrimarySideBar,
+		ResolveActivityBarActiveIconClickBehavior(ActivityBarLocation::Default));
+	EXPECT_EQ(EActivityBarActiveIconClickBehavior::FocusActiveView,
+		ResolveActivityBarActiveIconClickBehavior(ActivityBarLocation::Top));
+	EXPECT_EQ(EActivityBarActiveIconClickBehavior::FocusActiveView,
+		ResolveActivityBarActiveIconClickBehavior(ActivityBarLocation::Bottom));
+	EXPECT_EQ(EActivityBarActiveIconClickBehavior::TogglePrimarySideBar,
+		ResolveActivityBarActiveIconClickBehavior(static_cast<ActivityBarLocation>(255)));
+}
 
 ActivityBarEntry ViewContainer(std::string id)
 {

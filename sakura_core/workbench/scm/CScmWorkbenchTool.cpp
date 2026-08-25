@@ -135,9 +135,6 @@ void ScrollListBoxByWheel(HWND list, WPARAM wParam)
 		static_cast<int>(::SendMessageW(list, LB_GETTOPINDEX, 0, 0)));
 	return { .contentExtent = count, .viewportExtent = viewport, .offset = top };
 }
-//! The box's own text padding. One line plus both paddings is upstream's
-//! `InputRenderer.DEFAULT_HEIGHT` of 26 at the default font size.
-constexpr int kInputPaddingDip = 4;
 //! The gap between the Commit button's label and the dropdown half, and the
 //! dropdown half's own width. Upstream's `.monaco-button-dropdown` is a 1px
 //! separator plus a `$(chevron-down)` box; this is that box at 100%.
@@ -1050,7 +1047,7 @@ struct CScmWorkbenchTool::Impl {
 	{
 		if (!inputModel.visible) return 0;
 		const int lines = std::clamp(inputLineCount, inputMinLineCount, inputMaxLineCount);
-		return lines * std::max(1, inputLineHeight) + 2 * icons::ScaleDip(kInputPaddingDip, dpi);
+		return BuildScmInputGeometry(0, inputLineHeight, lines, dpi).frameHeight;
 	}
 	[[nodiscard]] ScmViewStackLayout ViewStack() const
 	{
@@ -1134,13 +1131,21 @@ struct CScmWorkbenchTool::Impl {
 		if (!inputModel.visible) return;
 		const RECT bounds = InputBounds();
 		const LONG width = std::max(0L, bounds.right - bounds.left);
-		const LONG height = std::max(0L, bounds.bottom - bounds.top);
-		::SetWindowPos(input, nullptr, bounds.left, bounds.top, width, height,
+		const int lines = std::clamp(inputLineCount, inputMinLineCount, inputMaxLineCount);
+		const auto inputGeometry = BuildScmInputGeometry(width, inputLineHeight, lines, dpi);
+		const auto& editor = inputGeometry.editor;
+		::SetWindowPos(input, nullptr, bounds.left + editor.left, bounds.top + editor.top,
+			editor.right - editor.left, editor.bottom - editor.top,
 			SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOCOPYBITS | SWP_NOREDRAW);
 		// A multiline edit has no vertical margin message, so the padding is the
 		// formatting rectangle; without it the first line would hug the border.
-		const LONG pad = icons::ScaleDip(kInputPaddingDip, dpi);
-		RECT formatting{ pad, pad, std::max(pad, width - pad), std::max(pad, height - pad) };
+		const auto& inputFormatting = inputGeometry.formatting;
+		RECT formatting{
+			inputFormatting.left,
+			inputFormatting.top,
+			inputFormatting.right,
+			inputFormatting.bottom,
+		};
 		::SendMessageW(input, EM_SETRECTNP, 0, reinterpret_cast<LPARAM>(&formatting));
 		inputFormattingRect = formatting;
 	}
@@ -1440,12 +1445,19 @@ struct CScmWorkbenchTool::Impl {
 	void PaintInputFrame(HDC dc)
 	{
 		if (!input || !inputModel.visible) return;
-		RECT frame = InputBounds();
-		::InflateRect(&frame, 1, 1);
-		const HBRUSH brush = ::CreateSolidBrush(palette.inputBorder.ToColorRef());
-		if (brush == nullptr) return;
-		::FrameRect(dc, &frame, brush);
-		::DeleteObject(brush);
+		const RECT frame = InputBounds();
+		const HBRUSH background = ::CreateSolidBrush(palette.raised.ToColorRef());
+		if (background != nullptr) {
+			::FillRect(dc, &frame, background);
+			::DeleteObject(background);
+		}
+		const COLORREF borderColor = ::GetFocus() == input
+			? palette.accent.ToColorRef() : palette.border.ToColorRef();
+		const HBRUSH border = ::CreateSolidBrush(borderColor);
+		if (border != nullptr) {
+			::FrameRect(dc, &frame, border);
+			::DeleteObject(border);
+		}
 	}
 	[[nodiscard]] RECT BandBounds() const
 	{
@@ -3074,6 +3086,10 @@ LRESULT CALLBACK CScmWorkbenchTool::InputSubclassProc(HWND window, UINT message,
 		return ::DefSubclassProc(window, message, wParam, lParam);
 	}
 	if (message == WM_ERASEBKGND && impl != nullptr) return 1;
+	if (impl != nullptr && (message == WM_SETFOCUS || message == WM_KILLFOCUS)) {
+		const RECT frame = impl->InputBounds();
+		::InvalidateRect(impl->window, &frame, FALSE);
+	}
 	if (message != WM_PAINT || impl == nullptr) {
 		return ::DefSubclassProc(window, message, wParam, lParam);
 	}
@@ -3740,8 +3756,8 @@ LRESULT CALLBACK CScmWorkbenchTool::WindowProc(HWND window, UINT message, WPARAM
 		if (reinterpret_cast<HWND>(lParam) != impl.input) break;
 		const HDC dc = reinterpret_cast<HDC>(wParam);
 		::SetTextColor(dc, impl.palette.primaryText.ToColorRef());
-		::SetBkColor(dc, impl.palette.inputBackground.ToColorRef());
-		::SetDCBrushColor(dc, impl.palette.inputBackground.ToColorRef());
+		::SetBkColor(dc, impl.palette.raised.ToColorRef());
+		::SetDCBrushColor(dc, impl.palette.raised.ToColorRef());
 		return reinterpret_cast<LRESULT>(::GetStockObject(DC_BRUSH));
 	}
 	case WM_CTLCOLORLISTBOX: {

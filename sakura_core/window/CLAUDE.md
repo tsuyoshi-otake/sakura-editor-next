@@ -234,6 +234,12 @@ composites with `CreateCompatibleDC`/`BitBlt`, and even
   Primary Side Bar, so a nested View selection such as Outline inside Explorer
   must not change the answer. Reserve `IsBuiltinWorkbenchViewActive` for
   questions about the active View itself.
+- That toggle behavior applies only to the default vertical Activity Bar. When
+  `workbench.activityBar.location` is `top` or `bottom`, VS Code embeds a
+  horizontal composite bar in the Side Bar and an active icon click focuses the
+  active view without hiding the Part. Keep the placement decision explicit;
+  sharing the vertical toggle branch makes the horizontal bar disappear with
+  its owning Side Bar and diverges from upstream's as-designed behavior.
 - Run and Debug, Ports, Debug Console, arbitrary extension-owned views,
   reorder within a bar, moving the whole Panel
   (`workbench.action.movePanelToSecondarySideBar`), and panel alignment still

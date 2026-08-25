@@ -1,8 +1,9 @@
-"""Prove staged runtime DLLs match installer and ZIP payloads by SHA-256.
+"""Prove staged runtime files match installer and ZIP payloads by SHA-256.
 
 Issue #183: a green compile does not prove the tested bregonig.dll / migemo.dll
 is the DLL that packaging ships. This tool hashes the staged files, extracts
-packaging outputs into a fresh directory, and compares the bytes.
+packaging outputs into a fresh directory, and compares the bytes. Issue #260
+extends that same fail-closed contract to the two required SENP executables.
 
 It is invoked from build-installer.bat and zipArtifacts.bat. A source-level
 script inspection is not a substitute for this comparison.
@@ -21,7 +22,12 @@ import zipfile
 from pathlib import Path
 
 
-RUNTIME_NAMES = ("bregonig.dll", "migemo.dll")
+RUNTIME_NAMES = (
+    "bregonig.dll",
+    "migemo.dll",
+    "sakura-senp-tool.exe",
+    "sakura-senp-host.exe",
+)
 CHUNK = 1024 * 1024
 
 

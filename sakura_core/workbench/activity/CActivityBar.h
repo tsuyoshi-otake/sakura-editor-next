@@ -36,6 +36,26 @@ struct ActivityBarLocationMenuLabels {
 	std::wstring bottom = L"Bottom";
 };
 
+//! VS Code toggles the Primary Side Bar only from the default vertical Activity Bar.
+//! The composite bars embedded at the top or bottom of a Side Bar focus the active view.
+enum class EActivityBarActiveIconClickBehavior : std::uint8_t {
+	TogglePrimarySideBar,
+	FocusActiveView,
+};
+
+[[nodiscard]] constexpr EActivityBarActiveIconClickBehavior ResolveActivityBarActiveIconClickBehavior(
+	ActivityBarLocation location) noexcept
+{
+	switch (location) {
+	case ActivityBarLocation::Top:
+	case ActivityBarLocation::Bottom:
+		return EActivityBarActiveIconClickBehavior::FocusActiveView;
+	case ActivityBarLocation::Default:
+	default:
+		return EActivityBarActiveIconClickBehavior::TogglePrimarySideBar;
+	}
+}
+
 //! Caller-supplied colours. High contrast is explicit so callers can inject their system palette.
 struct ActivityBarPalette {
 	COLORREF background = RGB(24, 24, 24);

@@ -13,6 +13,12 @@
 
 namespace workbench::scm {
 
+//! The native multiline EDIT formatting inset corresponding to VS Code's SCM
+//! input content padding.
+inline constexpr int kScmInputPaddingDip = 4;
+inline constexpr int kScmInputMinimumHeightDip = 26;
+inline constexpr int kScmInputBorderDip = 1;
+
 //! Whether the Graph view has a history snapshot to render.  Keeping this a
 //! typed state prevents "the history could not be read" from being rendered as
 //! "this repository has no commits".
@@ -56,6 +62,74 @@ struct ScmVerticalBounds final {
 	[[nodiscard]] constexpr bool Empty() const noexcept { return bottom <= top; }
 	[[nodiscard]] constexpr bool operator==(const ScmVerticalBounds&) const = default;
 };
+
+//! Client-relative formatting rectangle for the real multiline SCM EDIT.  A
+//! multiline control supports EM_SETRECTNP, so unlike Search and Quick Input it
+//! keeps the full painted HWND and centers its first line with equal padding.
+struct ScmInputFormattingBounds final {
+	int left{};
+	int top{};
+	int right{};
+	int bottom{};
+
+	[[nodiscard]] constexpr bool operator==(const ScmInputFormattingBounds&) const = default;
+};
+
+//! Geometry for the painted SCM input frame, its native multiline EDIT child,
+//! and the child's formatting rectangle.  The frame shares Search's 26-DIP
+//! minimum while extra commit lines grow the control by the measured line height.
+struct ScmInputGeometry final {
+	int frameHeight{};
+	ScmInputFormattingBounds editor{};
+	ScmInputFormattingBounds formatting{};
+
+	[[nodiscard]] constexpr bool operator==(const ScmInputGeometry&) const = default;
+};
+
+[[nodiscard]] constexpr int ScaleScmInputDip(int value, unsigned int dpi) noexcept
+{
+	const unsigned int effectiveDpi = dpi == 0 ? 96U : dpi;
+	return std::max(0, (value * static_cast<int>(effectiveDpi) + 48) / 96);
+}
+
+[[nodiscard]] constexpr ScmInputGeometry BuildScmInputGeometry(
+	int width,
+	int lineHeight,
+	int lineCount,
+	unsigned int dpi) noexcept
+{
+	const int pad = ScaleScmInputDip(kScmInputPaddingDip, dpi);
+	const int border = ScaleScmInputDip(kScmInputBorderDip, dpi);
+	const int boundedWidth = std::max(0, width);
+	const int contentHeight = std::max(1, lineHeight) * std::max(1, lineCount);
+	const int frameHeight = std::max(
+		ScaleScmInputDip(kScmInputMinimumHeightDip, dpi), contentHeight + 2 * pad);
+	const int editorWidth = std::max(0, boundedWidth - 2 * border);
+	const int editorHeight = std::max(0, frameHeight - 2 * border);
+	const int verticalSlack = std::max(0, frameHeight - contentHeight);
+	const int outerTop = verticalSlack / 2;
+	const int outerBottom = verticalSlack - outerTop;
+	const int horizontalFormattingInset = std::max(0, pad - border);
+	const int formattingTop = std::max(0, outerTop - border);
+	const int formattingBottomInset = std::max(0, outerBottom - border);
+	return {
+		.frameHeight = frameHeight,
+		.editor = {
+			.left = border,
+			.top = border,
+			.right = std::max(border, boundedWidth - border),
+			.bottom = std::max(border, frameHeight - border),
+		},
+		.formatting = {
+			.left = horizontalFormattingInset,
+			.top = formattingTop,
+			.right = std::max(horizontalFormattingInset,
+				editorWidth - horizontalFormattingInset),
+			.bottom = std::max(formattingTop,
+				editorHeight - formattingBottomInset),
+		},
+	};
+}
 
 //! Scaled native measurements fed into the pure View-stack projection.
 struct ScmViewStackMeasurements final {

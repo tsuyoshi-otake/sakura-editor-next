@@ -748,6 +748,12 @@ and working-tree commands.
   tokens.** VS Code styles it from `input.background` / `input.border`, which
   this theme palette does not publish. The nearest published tokens are used
   rather than a hard-coded colour that no theme could change.
+- **One input line has the same 26-DIP border box as Search.** The parent owns
+  that complete background and uses the accent token while the multiline EDIT
+  has focus. The EDIT is inset one DIP from the frame; its formatting rectangle
+  keeps four DIP of total content padding and centers a short first line. Extra
+  commit lines grow from their measured line height instead of stretching the
+  native caret inside a taller one-line HWND.
 - **The placeholder is painted by the tool, not by the control.**
   `EM_SETCUEBANNER` works only on a single-line edit, and the commit box is
   multi-line, so the placeholder is drawn in the tool's own paint path.

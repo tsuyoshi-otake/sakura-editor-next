@@ -205,6 +205,10 @@ mkdir %WORKDIR_DEV%
 mkdir %WORKDIR_INST%
 call :copyRequired "%platform%\%configuration%\sakura.exe" "%WORKDIR_EXE%\" "sakura executable"
 if errorlevel 1 exit /b 1
+call :copyRequired "%platform%\%configuration%\sakura-senp-tool.exe" "%WORKDIR_EXE%\" "SENP management executable"
+if errorlevel 1 exit /b 1
+call :copyRequired "%platform%\%configuration%\sakura-senp-host.exe" "%WORKDIR_EXE%\" "SENP runtime host"
+if errorlevel 1 exit /b 1
 call :copyRequired "%platform%\%configuration%\*.dll" "%WORKDIR_EXE%\" "runtime DLLs"
 if errorlevel 1 exit /b 1
 
@@ -403,7 +407,7 @@ if not defined CMD_7Z (
 )
 py -3 "%~dp0tools\verify_runtime_artifact_identity.py" --staged "%platform%\%configuration%" --zip "%OUTFILE_EXE%" --installer-zip "%OUTFILE_INST%" --seven-zip "%CMD_7Z%" --clean-extract "installer\temp\runtime-identity-%platform%-%configuration%-zip" --report "build\logs\runtime-artifact-identity-%platform%-%configuration%-zip.json"
 if errorlevel 1 (
-	echo Error: staged DLLs do not match the installer or executable ZIP payload.
+	echo Error: staged runtime files do not match the installer or executable ZIP payload.
 	exit /b 1
 )
 

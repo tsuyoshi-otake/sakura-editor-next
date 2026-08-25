@@ -28,6 +28,12 @@ and `searchWidget.ts`, read as source rather than inferred from a screenshot.
 - The query box carries the three toggles `Match Case`, `Whole Word`, and
   `Use Regular Expression`, and the replace row is opened by the same chevron
   that upstream puts to the left of the two boxes.
+- The painted 26-DIP Monaco input box and its native single-line `EDIT` child
+  are separate rectangles. Win32 does not vertically center the caret when the
+  child is stretched to the painted box height, so the child keeps the CSS
+  vertical padding on both edges. Geometry tests must assert equal top/bottom
+  inset at every supported DPI; matching only the outer box leaves the caret
+  visibly top-aligned.
 - Results are grouped by file, one header row per file with its match rows below,
   and a row is activated by a single click.
 - `Replace All`, per-file replace, and single-match replace are the three replace
