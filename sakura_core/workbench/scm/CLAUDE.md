@@ -1487,10 +1487,11 @@ cancellable, and its terminal state is typed.
 ## Git Output Channel
 
 `GitOutputChannel.h`/`.cpp` (Issue #221) is an adapter, not a new authority: it
-mirrors `RunGit` invocations into `workbench::output::OutputService` as the
+mirrors `RunGit` invocations into the provider-neutral
+`workbench::output::IOutputService` as the
 "Git" Log channel, exactly as upstream's built-in Git extension mirrors its own
-`_exec` calls into its own "Git" Output channel. `OutputService` itself remains
-the sole owner of channel content; nothing here retains its own copy.
+`_exec` calls into its own "Git" Output channel. The selected output provider
+remains the sole owner of channel content; nothing here retains its own copy.
 
 - **Format verified against `microsoft/vscode` source, not guessed.** The
   built-in Git extension creates its channel with
@@ -1516,22 +1517,23 @@ the sole owner of channel content; nothing here retains its own copy.
   a stock VS Code never logs stdout either, and this adapter has no settings
   reader for that list yet.
 - **`EnsureGitOutputChannel` is Snapshot-based, not replay-cache-based.**
-  `OutputService::CreateChannel` called twice for an already-created channel
+  The provider's `CreateChannel` called twice for an already-created channel
   with two *different* `operationId`s is a `Conflict`/`InvalidChannelId` by
   design (see `ValidateOwnedChannel`/`CreateChannel` in `OutputService.cpp`),
   and the remembered-operation replay cache is bounded
   (`maximumRememberedOperations`, default 512) and can evict the original
   create operation over a long-lived owner generation. `EnsureGitOutputChannel`
-  therefore checks `OutputService::Snapshot()` for an existing channel with the
+  therefore checks the provider's `Snapshot()` for an existing channel with the
   same `channelId`/owner/kind first, and only calls `CreateChannel` when none is
   found.
 - **`RunGitLogged` never changes `RunGit`'s own result.** Output-channel
-  mirroring is strictly best-effort: a null `OutputService*` in `GitOutputSink`,
+  mirroring is strictly best-effort: a null `IOutputService*` in `GitOutputSink`,
   an exhausted `nextAppendOperationId` callable, or any non-`Conflict` failure
   from `EnsureGitOutputChannel` all skip logging silently and still return
   `RunGit`'s result unchanged.
 - **Thread safety matches `RunGit`'s own.** `RunGitLogged` carries no shared
-  mutable state beyond the `OutputService` (already documented thread-safe) and
+  mutable state beyond the supplied `IOutputService` provider (which must satisfy
+  the provider's thread-safe contract) and
   the caller-supplied `HANDLE stop`/callables, so it is safe to call from the UI
   thread (as `CEditWnd.cpp`'s existing `RunGit` call sites already do) or from a
   background worker thread (as `CScmWorkbenchTool.cpp`'s periodic status-refresh

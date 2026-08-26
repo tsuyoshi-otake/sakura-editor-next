@@ -36,6 +36,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -78,6 +79,16 @@ using workbench::EWorkbenchRuntimeState;
 using workbench::ResolveWorkbenchBootstrapContext;
 using workbench::WorkbenchBootstrapContext;
 using workbench::WorkbenchBootstrapRequest;
+
+static_assert(std::is_same_v<decltype(std::declval<workbench::IWorkbenchRuntime&>().Output()),
+	workbench::output::IOutputService*>);
+static_assert(std::is_same_v<decltype(std::declval<const workbench::IWorkbenchRuntime&>().Output()),
+	const workbench::output::IOutputService*>);
+static_assert(std::is_same_v<decltype(std::declval<CWorkbenchRuntime&>().Output()),
+	workbench::output::IOutputService*>);
+static_assert(std::is_same_v<decltype(std::declval<const CWorkbenchRuntime&>().Output()),
+	const workbench::output::IOutputService*>);
+
 using workbench::WorkbenchRuntimeDependencies;
 namespace layout = workbench::layout;
 namespace outputModel = workbench::output;
@@ -552,7 +563,7 @@ TEST(CWorkbenchRuntime, OwnsMarkerAndOutputServicesOnlyWhileRunning)
 
 	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
 	auto* markers = fixture.runtime->Markers();
-	auto* output = fixture.runtime->Output();
+	workbench::output::IOutputService* output = fixture.runtime->Output();
 	ASSERT_NE(nullptr, markers);
 	ASSERT_NE(nullptr, output);
 	EXPECT_EQ(markers, boundary.Markers());

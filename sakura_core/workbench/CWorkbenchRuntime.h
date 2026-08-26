@@ -119,8 +119,8 @@ public:
 	[[nodiscard]] const workspace::CWorkspaceArtifactDocumentService& WorkspaceArtifacts() const noexcept override { return *m_workspaceArtifacts; }
 	[[nodiscard]] problems::MarkerService* Markers() noexcept override;
 	[[nodiscard]] const problems::MarkerService* Markers() const noexcept override;
-	[[nodiscard]] output::OutputService* Output() noexcept override;
-	[[nodiscard]] const output::OutputService* Output() const noexcept override;
+	[[nodiscard]] output::IOutputService* Output() noexcept override;
+	[[nodiscard]] const output::IOutputService* Output() const noexcept override;
 	//! Concrete-runtime diagnostics for the observational Rust candidate. The
 	//! candidate remains outside IWorkbenchRuntime and never becomes an output
 	//! provider or mutation authority.

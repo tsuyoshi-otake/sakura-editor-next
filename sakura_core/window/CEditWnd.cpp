@@ -1257,7 +1257,7 @@ private:
 //! best-effort: a null service or an exhausted operation-id sequence skips
 //! the mirror and never changes the command's own result.
 [[nodiscard]] workbench::scm::GitOutputSink MakeGitOutputSink(
-	workbench::output::OutputService* service)
+	workbench::output::IOutputService* service)
 {
 	workbench::scm::GitOutputSink sink;
 	sink.service = service;
@@ -1265,7 +1265,7 @@ private:
 	sink.createOperationId = "sakura.scm.git.output/create";
 	sink.nextAppendOperationId = []() -> std::optional<std::string> {
 		// Process-local and thread-safe: these commands run on the UI thread,
-		// but the OutputService itself is shared with other producers.
+		// but the output provider is shared with other producers.
 		static std::atomic<std::uint64_t> sequence{ 0 };
 		const auto next = ++sequence;
 		if (next == (std::numeric_limits<std::uint64_t>::max)()) return std::nullopt;
@@ -1273,7 +1273,7 @@ private:
 		operationId += std::to_string(static_cast<unsigned long long>(::GetCurrentProcessId()));
 		operationId += '/';
 		operationId += std::to_string(static_cast<unsigned long long>(next));
-		if (!workbench::output::OutputService::IsValidOperationId(operationId)) return std::nullopt;
+		if (!workbench::output::IsValidOutputOperationId(operationId)) return std::nullopt;
 		return operationId;
 	};
 	return sink;
@@ -7354,7 +7354,7 @@ std::optional<std::string> CEditWnd::NextOutputPanelOperationId()
 		reinterpret_cast<std::uintptr_t>(GetHwnd())));
 	operationId += '/';
 	operationId += std::to_string(static_cast<unsigned long long>(sequence));
-	if (!workbench::output::OutputService::IsValidOperationId(operationId)) return std::nullopt;
+	if (!workbench::output::IsValidOutputOperationId(operationId)) return std::nullopt;
 	return operationId;
 }
 

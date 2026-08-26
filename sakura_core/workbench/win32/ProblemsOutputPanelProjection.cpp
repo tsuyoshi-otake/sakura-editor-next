@@ -8,7 +8,7 @@
 
 #include "workbench/win32/ProblemsOutputPanelProjection.h"
 
-#include "workbench/output/OutputService.h"
+#include "workbench/output/OutputServiceTypes.h"
 #include "workbench/problems/MarkerService.h"
 
 #include <algorithm>

@@ -41,7 +41,7 @@ class MarkerService;
 }
 
 namespace workbench::output {
-class OutputService;
+class IOutputService;
 }
 
 namespace workbench::scm {
@@ -189,8 +189,8 @@ public:
 	//! resurrect a service for an inactive runtime.
 	[[nodiscard]] virtual problems::MarkerService* Markers() noexcept = 0;
 	[[nodiscard]] virtual const problems::MarkerService* Markers() const noexcept = 0;
-	[[nodiscard]] virtual output::OutputService* Output() noexcept = 0;
-	[[nodiscard]] virtual const output::OutputService* Output() const noexcept = 0;
+	[[nodiscard]] virtual output::IOutputService* Output() noexcept = 0;
+	[[nodiscard]] virtual const output::IOutputService* Output() const noexcept = 0;
 	[[nodiscard]] virtual scm::SourceControlService* Scm() noexcept = 0;
 	[[nodiscard]] virtual const scm::SourceControlService* Scm() const noexcept = 0;
 	//! Profile-scoped package management and isolated runtime are distinct

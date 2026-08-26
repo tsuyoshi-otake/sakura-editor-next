@@ -682,7 +682,7 @@ struct OutputService::Impl final {
 
 bool OutputOwner::IsValid() const noexcept
 {
-	return generation != 0 && OutputService::IsValidStableId(ownerId);
+	return generation != 0 && IsValidOutputStableId(ownerId);
 }
 
 OutputService::OutputService(OutputServiceLimits limits)
@@ -696,7 +696,7 @@ OutputService::~OutputService()
 	delete m_impl;
 }
 
-bool OutputService::IsValidStableId(const std::string_view value) noexcept
+bool IsValidOutputStableId(const std::string_view value) noexcept
 {
 	if (value.empty() || value.size() > kMaximumStableIdBytes || !IsValidUtf8(value, false)) return false;
 	return std::none_of(value.begin(), value.end(), [](const unsigned char character) {
@@ -704,9 +704,9 @@ bool OutputService::IsValidStableId(const std::string_view value) noexcept
 	});
 }
 
-bool OutputService::IsValidOperationId(const std::string_view value) noexcept
+bool IsValidOutputOperationId(const std::string_view value) noexcept
 {
-	return IsValidStableId(value);
+	return IsValidOutputStableId(value);
 }
 
 namespace {
@@ -720,7 +720,7 @@ OutputOperationResult Apply(ImplType& impl, const Request& request, Fingerprint 
 	{
 		std::lock_guard lock(impl.mutex);
 		if (impl.stopped) return impl.Current(EOutputOperationStatus::Stopped, EOutputOperationReason::None);
-		if (!OutputService::IsValidOperationId(request.operation.operationId)) {
+		if (!IsValidOutputOperationId(request.operation.operationId)) {
 			return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidOperationId);
 		}
 		const auto fingerprint = makeFingerprint(request);
@@ -746,7 +746,7 @@ OutputOperationResult ValidateOwnedChannel(ImplType& impl, const OutputOwner& ow
 	const EOutputChannelKind expectedKind, Channel*& channel)
 {
 	if (!owner.IsValid()) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidOwner);
-	if (!OutputService::IsValidStableId(channelId)) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidChannelId);
+	if (!IsValidOutputStableId(channelId)) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidChannelId);
 	const auto found = impl.channels.find(channelId);
 	if (found == impl.channels.end()) return impl.Current(EOutputOperationStatus::NotApplicable, EOutputOperationReason::ChannelNotFound);
 	if (!IsOwnedChannel(found->second, owner)) return impl.Current(EOutputOperationStatus::Conflict, EOutputOperationReason::OwnerGenerationConflict);
@@ -781,7 +781,7 @@ OutputOperationResult OutputService::CreateChannel(const OutputCreateChannelRequ
 {
 	return Apply(*m_impl, request, CreateFingerprint, [&](Impl& impl, const std::string& fingerprint, bool& drain, bool& acceptedCommitDrain) {
 		if (!request.owner.IsValid()) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidOwner);
-		if (!IsValidStableId(request.channelId)) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidChannelId);
+		if (!IsValidOutputStableId(request.channelId)) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidChannelId);
 		if (request.label.empty() || request.label.size() > kMaximumLabelBytes || !IsValidUtf8(request.label, false)) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidLabel);
 		if (!IsValidMetadata(request.metadata)) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidMetadata);
 		const auto existingGeneration = impl.activeOwnerGenerations.find(request.owner.ownerId);
@@ -882,7 +882,7 @@ OutputOperationResult OutputService::Clear(const OutputChannelMutationRequest& r
 {
 	return Apply(*m_impl, request, [](const auto& value) { return ChannelFingerprint("clear", value); }, [&](Impl& impl, const std::string& fingerprint, bool& drain, bool& acceptedCommitDrain) {
 		if (!request.owner.IsValid()) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidOwner);
-		if (!IsValidStableId(request.channelId)) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidChannelId);
+		if (!IsValidOutputStableId(request.channelId)) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidChannelId);
 		const auto found = impl.channels.find(request.channelId); if (found == impl.channels.end()) return impl.Current(EOutputOperationStatus::NotApplicable, EOutputOperationReason::ChannelNotFound); if (!IsOwnedChannel(found->second, request.owner)) return impl.Current(EOutputOperationStatus::Conflict, EOutputOperationReason::OwnerGenerationConflict);
 		auto& channel = found->second; if (channel.text.empty() && channel.logEntries.empty() && channel.droppedCharacterCount == 0) return impl.Current(EOutputOperationStatus::NotApplicable, EOutputOperationReason::None);
 		if (impl.revision == std::numeric_limits<std::uint64_t>::max()) return impl.Current(EOutputOperationStatus::RevisionExhausted, EOutputOperationReason::None);
@@ -895,7 +895,7 @@ OutputOperationResult OutputService::Clear(const OutputChannelMutationRequest& r
 OutputOperationResult OutputService::Show(const OutputShowChannelRequest& request)
 {
 	return Apply(*m_impl, request, [](const auto& value) { std::string fingerprint("show;"); AppendOperation(fingerprint, value.operation); AppendOwner(fingerprint, value.owner); AppendToken(fingerprint, value.channelId); AppendToken(fingerprint, value.preserveFocus ? "1" : "0"); return fingerprint; }, [&](Impl& impl, const std::string& fingerprint, bool& drain, bool& acceptedCommitDrain) {
-		if (!request.owner.IsValid()) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidOwner); if (!IsValidStableId(request.channelId)) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidChannelId);
+		if (!request.owner.IsValid()) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidOwner); if (!IsValidOutputStableId(request.channelId)) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidChannelId);
 		const auto found = impl.channels.find(request.channelId); if (found == impl.channels.end()) return impl.Current(EOutputOperationStatus::NotApplicable, EOutputOperationReason::ChannelNotFound); if (!IsOwnedChannel(found->second, request.owner)) return impl.Current(EOutputOperationStatus::Conflict, EOutputOperationReason::OwnerGenerationConflict);
 		if (impl.revision == std::numeric_limits<std::uint64_t>::max()) return impl.Current(EOutputOperationStatus::RevisionExhausted, EOutputOperationReason::None); found->second.visible = true; found->second.lastShowPreservedFocus = request.preserveFocus; impl.activeChannelId = request.channelId;
 		return impl.FinalizeAcceptedCommitLocked(EOutputAcceptedCommitKind::Show, request, fingerprint,
@@ -906,7 +906,7 @@ OutputOperationResult OutputService::Show(const OutputShowChannelRequest& reques
 OutputOperationResult OutputService::Hide(const OutputChannelMutationRequest& request)
 {
 	return Apply(*m_impl, request, [](const auto& value) { return ChannelFingerprint("hide", value); }, [&](Impl& impl, const std::string& fingerprint, bool& drain, bool& acceptedCommitDrain) {
-		if (!request.owner.IsValid()) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidOwner); if (!IsValidStableId(request.channelId)) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidChannelId);
+		if (!request.owner.IsValid()) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidOwner); if (!IsValidOutputStableId(request.channelId)) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidChannelId);
 		const auto found = impl.channels.find(request.channelId); if (found == impl.channels.end()) return impl.Current(EOutputOperationStatus::NotApplicable, EOutputOperationReason::ChannelNotFound); if (!IsOwnedChannel(found->second, request.owner)) return impl.Current(EOutputOperationStatus::Conflict, EOutputOperationReason::OwnerGenerationConflict);
 		if (!found->second.visible) return impl.Current(EOutputOperationStatus::NotApplicable, EOutputOperationReason::None); if (impl.revision == std::numeric_limits<std::uint64_t>::max()) return impl.Current(EOutputOperationStatus::RevisionExhausted, EOutputOperationReason::None);
 		found->second.visible = false; if (impl.activeChannelId && *impl.activeChannelId == request.channelId) { impl.activeChannelId.reset(); impl.SelectFallbackLocked(); }
@@ -918,7 +918,7 @@ OutputOperationResult OutputService::Hide(const OutputChannelMutationRequest& re
 OutputOperationResult OutputService::Dispose(const OutputChannelMutationRequest& request)
 {
 	return Apply(*m_impl, request, [](const auto& value) { return ChannelFingerprint("dispose", value); }, [&](Impl& impl, const std::string& fingerprint, bool& drain, bool& acceptedCommitDrain) {
-		if (!request.owner.IsValid()) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidOwner); if (!IsValidStableId(request.channelId)) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidChannelId);
+		if (!request.owner.IsValid()) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidOwner); if (!IsValidOutputStableId(request.channelId)) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidChannelId);
 		const auto found = impl.channels.find(request.channelId); if (found == impl.channels.end()) return impl.Current(EOutputOperationStatus::NotApplicable, EOutputOperationReason::ChannelNotFound); if (!IsOwnedChannel(found->second, request.owner)) return impl.Current(EOutputOperationStatus::Conflict, EOutputOperationReason::OwnerGenerationConflict); if (impl.revision == std::numeric_limits<std::uint64_t>::max()) return impl.Current(EOutputOperationStatus::RevisionExhausted, EOutputOperationReason::None);
 		impl.channels.erase(found); if (impl.activeChannelId && *impl.activeChannelId == request.channelId) { impl.activeChannelId.reset(); impl.SelectFallbackLocked(); }
 		return impl.FinalizeAcceptedCommitLocked(EOutputAcceptedCommitKind::Dispose, request, fingerprint,

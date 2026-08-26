@@ -1428,7 +1428,13 @@
     <ClInclude Include="..\sakura_core\workbench\problems\MarkerService.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\output\IOutputService.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\workbench\output\OutputService.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\output\OutputServiceTypes.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\workbench\output\OutputServiceRustCandidate.h">

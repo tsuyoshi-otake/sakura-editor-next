@@ -515,13 +515,13 @@ const problems::MarkerService* CWorkbenchRuntime::Markers() const noexcept
 	return IsReadyForServiceAccessLocked() ? &m_markers : nullptr;
 }
 
-output::OutputService* CWorkbenchRuntime::Output() noexcept
+output::IOutputService* CWorkbenchRuntime::Output() noexcept
 {
 	std::lock_guard lock(m_stateMutex);
 	return IsReadyForServiceAccessLocked() ? &m_output : nullptr;
 }
 
-const output::OutputService* CWorkbenchRuntime::Output() const noexcept
+const output::IOutputService* CWorkbenchRuntime::Output() const noexcept
 {
 	std::lock_guard lock(m_stateMutex);
 	return IsReadyForServiceAccessLocked() ? &m_output : nullptr;

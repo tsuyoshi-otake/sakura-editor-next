@@ -9,10 +9,13 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <cstddef>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "workbench/output/IOutputService.h"
 #include "workbench/output/OutputService.h"
 #include "workbench/scm/GitOutputChannel.h"
 
@@ -39,6 +42,129 @@ const OutputChannelSnapshot* FindGitChannel(const OutputServiceSnapshot& snapsho
 	}
 	return nullptr;
 }
+
+class FakeOutputProvider final : public IOutputService {
+public:
+	FakeOutputProvider()
+	{
+		snapshot.revision = 1;
+	}
+
+	OutputOperationResult CreateChannel(const OutputCreateChannelRequest& request) override
+	{
+		createRequests.push_back(request);
+		if (!createResult.Succeeded()) return createResult;
+
+		OutputChannelSnapshot channel;
+		channel.channelId = request.channelId;
+		channel.label = request.label;
+		channel.owner = request.owner;
+		channel.kind = request.kind;
+		channel.metadata = request.metadata;
+		snapshot.channels.push_back(std::move(channel));
+		OutputOperationResult result = createResult;
+		result.revision = ++snapshot.revision;
+		return result;
+	}
+
+	OutputOperationResult AppendOutput(const OutputTextMutationRequest&) override
+	{
+		return UnsupportedResult();
+	}
+
+	OutputOperationResult ReplaceOutput(const OutputTextMutationRequest&) override
+	{
+		return UnsupportedResult();
+	}
+
+	OutputOperationResult AppendLog(const OutputLogMutationRequest& request) override
+	{
+		appendLogRequests.push_back(request);
+		if (!appendLogResult.Succeeded()) return appendLogResult;
+
+		for (auto& channel : snapshot.channels) {
+			if (channel.channelId == request.channelId && channel.owner == request.owner
+				&& channel.kind == EOutputChannelKind::Log) {
+				channel.logEntries.insert(channel.logEntries.end(), request.entries.begin(), request.entries.end());
+				break;
+			}
+		}
+		OutputOperationResult result = appendLogResult;
+		result.revision = ++snapshot.revision;
+		return result;
+	}
+
+	OutputOperationResult Clear(const OutputChannelMutationRequest&) override
+	{
+		return UnsupportedResult();
+	}
+
+	OutputOperationResult Show(const OutputShowChannelRequest&) override
+	{
+		return UnsupportedResult();
+	}
+
+	OutputOperationResult Hide(const OutputChannelMutationRequest&) override
+	{
+		return UnsupportedResult();
+	}
+
+	OutputOperationResult Dispose(const OutputChannelMutationRequest&) override
+	{
+		return UnsupportedResult();
+	}
+
+	OutputOperationResult DisposeOwner(const OutputDisposeOwnerRequest&) override
+	{
+		return UnsupportedResult();
+	}
+
+	OutputOperationResult Stop() noexcept override
+	{
+		snapshot.stopped = true;
+		OutputOperationResult result;
+		result.status = EOutputOperationStatus::Succeeded;
+		result.revision = ++snapshot.revision;
+		return result;
+	}
+
+	OutputServiceSnapshot Snapshot() const override
+	{
+		++snapshotCallCount;
+		return snapshot;
+	}
+
+	std::optional<OutputServiceSubscriptionId> Subscribe(OutputServiceListener) override
+	{
+		return std::nullopt;
+	}
+
+	void Unsubscribe(OutputServiceSubscriptionId) noexcept override
+	{
+	}
+
+	OutputServiceSnapshot snapshot;
+	mutable std::size_t snapshotCallCount{};
+	std::vector<OutputCreateChannelRequest> createRequests;
+	std::vector<OutputLogMutationRequest> appendLogRequests;
+	OutputOperationResult createResult{
+		.status = EOutputOperationStatus::Succeeded,
+		.reason = EOutputOperationReason::None,
+	};
+	OutputOperationResult appendLogResult{
+		.status = EOutputOperationStatus::Succeeded,
+		.reason = EOutputOperationReason::None,
+	};
+
+private:
+	static OutputOperationResult UnsupportedResult() noexcept
+	{
+		return {
+			.status = EOutputOperationStatus::Rejected,
+			.reason = EOutputOperationReason::None,
+		};
+	}
+};
 
 } // namespace
 
@@ -71,6 +197,33 @@ TEST(GitOutputChannel, EnsureCreatesALogChannelOnceAndIsIdempotentAcrossDifferen
 	const auto second = EnsureGitOutputChannel(service, owner, "create-2");
 	EXPECT_TRUE(second.Succeeded());
 	EXPECT_EQ(snapshotAfterFirst.revision, service.Snapshot().revision);
+}
+
+TEST(GitOutputChannel, ConsumerUsesProviderSnapshotCreateAndAppendLogWithoutConcreteService)
+{
+	FakeOutputProvider service;
+	const OutputOwner owner{ .ownerId = "workbench.scm.git", .generation = 1 };
+
+	const auto created = EnsureGitOutputChannel(service, owner, "create");
+	ASSERT_TRUE(created.Succeeded());
+	ASSERT_EQ(1U, service.snapshotCallCount);
+	ASSERT_EQ(1U, service.createRequests.size());
+	EXPECT_EQ(std::string(kGitOutputChannelId), service.createRequests[0].channelId);
+	EXPECT_EQ(EOutputChannelKind::Log, service.createRequests[0].kind);
+
+	std::vector<OutputLogEntry> entries;
+	entries.push_back({ .level = EOutputLogLevel::Info, .message = "> git status [1ms]" });
+	const auto appended = AppendGitOutputLogEntries(service, owner, "append", entries);
+	ASSERT_TRUE(appended.Succeeded());
+	ASSERT_EQ(1U, service.appendLogRequests.size());
+	EXPECT_EQ(std::string(kGitOutputChannelId), service.appendLogRequests[0].channelId);
+
+	const auto snapshot = service.Snapshot();
+	EXPECT_EQ(2U, service.snapshotCallCount);
+	const auto* channel = FindGitChannel(snapshot);
+	ASSERT_NE(nullptr, channel);
+	ASSERT_EQ(1U, channel->logEntries.size());
+	EXPECT_EQ(entries[0].message, channel->logEntries[0].message);
 }
 
 TEST(GitOutputChannel, AppendBeforeChannelCreationIsChannelNotFound)

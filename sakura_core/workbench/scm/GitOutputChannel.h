@@ -10,7 +10,7 @@
 
 #include <Windows.h>
 
-#include "workbench/output/OutputService.h"
+#include "workbench/output/IOutputService.h"
 #include "workbench/scm/GitCommandRunner.h"
 
 #include <chrono>
@@ -46,11 +46,11 @@ inline constexpr std::string_view kGitOutputChannelLabel = "Git";
 //! Idempotent by construction: a channel with `kGitOutputChannelId` already
 //! owned by `owner` (same ownerId and generation) at kind `Log` is treated as
 //! already-created and returns `Succeeded` without a second `CreateChannel`
-//! call. This does not depend on `OutputService`'s bounded remembered-operation
+//! call. This does not depend on the provider's bounded remembered-operation
 //! replay cache, so it stays correct even after that cache has evicted the
 //! original create operation.
 //!
-//! `operationId` is still required by `OutputService::CreateChannel` for the
+//! `operationId` is still required by the provider's `CreateChannel` contract for the
 //! first, channel-creating call. Callers should pass a stable id that does not
 //! change across repeated calls in the same owner generation (for example
 //! `"workbench.scm.git.output/create"`), so that if two callers race to create
@@ -61,7 +61,7 @@ inline constexpr std::string_view kGitOutputChannelLabel = "Git";
 //! means the channel exists and is safe to append to; it is not a fatal error.
 //!
 [[nodiscard]] output::OutputOperationResult EnsureGitOutputChannel(
-	output::OutputService& service,
+	output::IOutputService& service,
 	const output::OutputOwner& owner,
 	const std::string& operationId);
 
@@ -123,7 +123,7 @@ inline constexpr std::string_view kGitOutputChannelLabel = "Git";
 //! least the command-line entry).
 //!
 [[nodiscard]] output::OutputOperationResult AppendGitOutputLogEntries(
-	output::OutputService& service,
+	output::IOutputService& service,
 	const output::OutputOwner& owner,
 	const std::string& operationId,
 	std::vector<output::OutputLogEntry> entries,
@@ -137,7 +137,7 @@ inline constexpr std::string_view kGitOutputChannelLabel = "Git";
 //! runs.
 //!
 struct GitOutputSink {
-	output::OutputService* service{};
+	output::IOutputService* service{};
 	output::OutputOwner owner;
 	//! A stable id reused across every `RunGitLogged` call for this owner
 	//! generation; see `EnsureGitOutputChannel`'s contract above. Left empty
@@ -161,14 +161,14 @@ struct GitOutputSink {
 //! succeeded.
 //!
 //! Thread safety: identical to `RunGit` -- this function is stateless aside
-//! from the `HANDLE`/`OutputService`/callables it is handed, so it is safe to
+//! from the `HANDLE`/`IOutputService`/callables it is handed, so it is safe to
 //! call from the UI thread (as the branch/commit/sync/init commands already
 //! call `RunGit` synchronously today) or from a background worker thread (as
 //! the periodic status refresh in `CScmWorkbenchTool` already does). Every
 //! call must supply its own fresh `HANDLE stop` and its own
 //! `nextAppendOperationId` sequence; nothing here is safe to share
-//! concurrently between two in-flight calls except `OutputService` itself,
-//! which is already documented as thread-safe.
+//! concurrently between two in-flight calls except the supplied output provider,
+//! which must satisfy the thread-safe `IOutputService` contract.
 //!
 [[nodiscard]] GitExecutionResult RunGitLogged(
 	const GitExecutionRequest& request,

@@ -82,11 +82,11 @@ namespace {
 } // namespace
 
 output::OutputOperationResult EnsureGitOutputChannel(
-	output::OutputService& service,
+	output::IOutputService& service,
 	const output::OutputOwner& owner,
 	const std::string& operationId)
 {
-	// Snapshot-based existence check first: `OutputService`'s remembered-operation
+	// Snapshot-based existence check first: the provider's remembered-operation
 	// replay cache is bounded (`maximumRememberedOperations`), so relying on it
 	// alone would make a long-lived owner generation eventually see a spurious
 	// `Conflict` on its Nth `RunGitLogged` call once the original create
@@ -156,7 +156,7 @@ std::vector<output::OutputLogEntry> BuildGitOutputLogEntries(
 }
 
 output::OutputOperationResult AppendGitOutputLogEntries(
-	output::OutputService& service,
+	output::IOutputService& service,
 	const output::OutputOwner& owner,
 	const std::string& operationId,
 	std::vector<output::OutputLogEntry> entries,

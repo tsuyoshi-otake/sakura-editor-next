@@ -67,7 +67,7 @@
 #include "workbench/commands/WorkbenchContextKeyService.h"
 #include "config/WorkspaceContextTypes.h"
 #include "workbench/recent/RecentlyOpenedWorkspaceMenuProjection.h"
-#include "workbench/output/OutputService.h"
+#include "workbench/output/IOutputService.h"
 #include "workbench/problems/MarkerService.h"
 #include "markdown/MarkdownPreviewCommandState.h"
 #include "markdown/MarkdownPreviewLayout.h"
@@ -1144,7 +1144,7 @@ private:
 	//! gate is disconnected and their exact subscriptions are removed.
 	workbench::problems::MarkerService* m_markerService = nullptr;
 	std::optional<workbench::problems::MarkerSubscriptionId> m_markerSubscriptionId;
-	workbench::output::OutputService* m_outputService = nullptr;
+	workbench::output::IOutputService* m_outputService = nullptr;
 	std::optional<workbench::output::OutputServiceSubscriptionId> m_outputSubscriptionId;
 	//! The window's own update stack. Owned rather than borrowed because the
 	//! update service has no runtime owner: it is composed from configuration and

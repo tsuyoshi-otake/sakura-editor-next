@@ -617,7 +617,9 @@
 	<ClInclude Include="..\sakura_core\workbench\tasks\TaskTerminalSessionFactory.h" />
 	<ClInclude Include="..\sakura_core\workbench\problems\MarkerPositionAdapter.h" />
 	<ClInclude Include="..\sakura_core\workbench\problems\MarkerService.h" />
+	<ClInclude Include="..\sakura_core\workbench\output\IOutputService.h" />
 	<ClInclude Include="..\sakura_core\workbench\output\OutputService.h" />
+	<ClInclude Include="..\sakura_core\workbench\output\OutputServiceTypes.h" />
 	<ClInclude Include="..\sakura_core\workbench\output\OutputServiceRustCandidate.h" />
 	<ClInclude Include="..\sakura_core\workbench\output\OutputServiceRustShadowAbi.h" />
 	<ClInclude Include="..\sakura_core\workbench\ports\PortForwardingService.h" />

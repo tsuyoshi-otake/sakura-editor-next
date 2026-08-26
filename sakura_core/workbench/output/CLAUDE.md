@@ -84,10 +84,20 @@ lifetime is fenced, then destroys the candidate token. Without the candidate
 macro the same composition surface reports typed unavailable state and has no
 Rust symbol reference.
 
-A production cutover still requires a stable provider boundary because native
-code currently borrows the concrete `OutputService`. That boundary must select
-one authority for an entire lifecycle; it may not be approximated with dual
-writes, silent fallback, snapshot-based state transfer, or an in-place provider
+Issue #272 introduces the prerequisite stable provider boundary without changing
+authority. Provider-neutral DTOs and validation live in `OutputServiceTypes.h`,
+and `IOutputService` carries all nine mutations, copied snapshots, advisory
+subscription, and Stop/drain semantics. `IWorkbenchRuntime`, `CEditWnd`, and the
+Git Output adapter borrow only that interface; the runtime still owns one
+concrete C++ `OutputService`, publishes the same identity only while Ready, and
+retains the stopped object until runtime destruction so existing borrows never
+dangle. The accepted-commit feed intentionally remains outside the production
+interface as a migration-only observation contract.
+
+This boundary enables, but does not perform, a production cutover. A later
+selector must choose one authority before the first mutation and keep it for the
+entire lifecycle; it may not be approximated with dual writes, per-call health
+probing, silent fallback, snapshot-based state transfer, or an in-place provider
 swap after an accepted mutation.
 
 `sakura_core/workbench/scm/GitOutputChannel.h`/`.cpp` (Issue #221) is this
