@@ -1578,6 +1578,9 @@
     <ClInclude Include="..\sakura_core\include\sakura\uri\UriIdentity.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\uri\UriRustCandidate.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\terminal\PowerShellLocator.h">
       <Filter>Cpp Source Files\terminal</Filter>
     </ClInclude>
@@ -3397,6 +3400,9 @@
       <Filter>Cpp Source Files\platform</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\platform\uri\UriIdentity.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\uri\UriRustCandidate.cpp">
       <Filter>Cpp Source Files\platform</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\terminal\PowerShellLocator.cpp">

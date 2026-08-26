@@ -137,6 +137,7 @@
     <ClCompile Include="..\src\test\cpp\tests1\platform\request\WinHttpSystemProxyResolverTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\AtomicFileStorageServiceTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\StorageServiceTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\platform\UriRustCandidateTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\profiles\ProfileAuthorityStoreTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\platform\profiles\DurableUserDataProfileRegistryServiceTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\platform\profiles\ControlUserDataProfileRegistryTest.cpp" />

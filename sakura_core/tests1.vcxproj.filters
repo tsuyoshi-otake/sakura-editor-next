@@ -415,6 +415,9 @@
     <ClCompile Include="..\src\test\cpp\tests1\platform\StorageServiceTest.cpp">
       <Filter>Test Files\platform</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\UriRustCandidateTest.cpp">
+      <Filter>Test Files\platform</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\platform\profiles\ProfileAuthorityStoreTest.cpp">
       <Filter>Test Files\platform</Filter>
     </ClCompile>

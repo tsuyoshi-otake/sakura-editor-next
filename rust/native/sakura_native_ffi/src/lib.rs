@@ -10,6 +10,8 @@ use std::sync::OnceLock;
 
 use sakura_simd as native_simd;
 
+mod uri_candidate;
+
 const ABI_VERSION_V1: u32 = 1;
 const POLICY_COUNT_V1: usize = 3;
 

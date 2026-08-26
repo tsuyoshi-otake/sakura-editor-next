@@ -502,6 +502,7 @@
     <ClInclude Include="..\sakura_core\platform\process\WindowsExecutableResolver.h" />
     <ClInclude Include="..\sakura_core\platform\filesystem\CFileService.h" />
     <ClInclude Include="..\sakura_core\platform\filesystem\CWin32FileSystemProvider.h" />
+    <ClInclude Include="..\sakura_core\platform\uri\UriRustCandidate.h" />
     <ClInclude Include="..\sakura_core\include\sakura\filesystem\FileSystemFactory.h" />
     <ClInclude Include="..\sakura_core\include\sakura\filesystem\IFileService.h" />
     <ClInclude Include="..\sakura_core\include\sakura\filesystem\IFileSystemProvider.h" />
@@ -1208,6 +1209,9 @@
 	<ClCompile Include="..\sakura_core\platform\controlipc\EditorControlPlatformRuntime.cpp" />
     <ClCompile Include="..\sakura_core\platform\storage\CInMemoryStorageService.cpp" />
     <ClCompile Include="..\sakura_core\platform\uri\UriIdentity.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\uri\UriRustCandidate.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="..\sakura_core\terminal\PowerShellLocator.cpp" />
