@@ -132,4 +132,15 @@ SakuraStatus sakura_utf16_find_markdown_special_avx512bw_v2(
 SakuraStatus sakura_utf16_find_char_avx512bw_v2(
 	const std::uint16_t* data, std::uint64_t length, std::uint16_t target,
 	std::uint64_t* resultIndex) noexcept;
+
+// The byte CR/LF exports are direct comparison candidates only. They reuse
+// the C++-owned capability snapshot for ISA/OS gating, but intentionally do
+// not add a fourth operation-policy slot to ABI V1. The 512-byte handoff used
+// inside the kernels is an implementation boundary, not a policy minimum.
+SakuraStatus sakura_byte_find_cr_or_lf_avx128_candidate_v1(
+	const std::uint8_t* data, std::uint64_t length, std::uint64_t* resultIndex) noexcept;
+SakuraStatus sakura_byte_find_cr_or_lf_avx2_candidate_v1(
+	const std::uint8_t* data, std::uint64_t length, std::uint64_t* resultIndex) noexcept;
+SakuraStatus sakura_byte_find_cr_or_lf_avx512bw_candidate_v1(
+	const std::uint8_t* data, std::uint64_t length, std::uint64_t* resultIndex) noexcept;
 }

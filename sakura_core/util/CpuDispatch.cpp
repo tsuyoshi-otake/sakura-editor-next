@@ -457,6 +457,24 @@ FindCrOrLfFunction GetSupportedFindCrOrLf(Isa isa) noexcept
 	}
 }
 
+FindCrOrLfFunction GetSupportedFindCrOrLfRust(Isa isa) noexcept
+{
+	const auto& dispatch = Get();
+#if defined(SAKURA_UTF16_BACKEND_RUST) || defined(SAKURA_UTF16_RUST_CANDIDATE)
+	switch (isa) {
+	case Isa::Avx512:
+		return dispatch.capabilities.avx512 ? Internal::FindCrOrLfRustAvx512Bw : nullptr;
+	case Isa::Avx2:
+		return dispatch.capabilities.avx2 ? Internal::FindCrOrLfRustAvx2 : nullptr;
+	default:
+		return dispatch.capabilities.avx ? Internal::FindCrOrLfRustAvx128 : nullptr;
+	}
+#else
+	(void)isa;
+	return nullptr;
+#endif
+}
+
 FindUtf16Function GetSupportedFindCrOrLfUtf16Cpp(Isa isa) noexcept
 {
 	const auto& dispatch = Get();

@@ -763,6 +763,43 @@ using RustUtf16FindCharFunction = std::size_t (*)(
 	const std::uint16_t*, std::size_t, std::uint16_t) noexcept;
 
 template<typename Operation>
+std::size_t InvokeRustByteForTest(std::size_t length, Operation operation) noexcept
+{
+	std::uint64_t result = static_cast<std::uint64_t>(length);
+	const auto status = operation(&result);
+	return status == SakuraStatus::Ok && result <= static_cast<std::uint64_t>(length)
+		? static_cast<std::size_t>(result)
+		: length;
+}
+
+std::size_t RustByteAvx128(const char* data, std::size_t length) noexcept
+{
+	return InvokeRustByteForTest(length, [&](std::uint64_t* result) noexcept {
+		return sakura_byte_find_cr_or_lf_avx128_candidate_v1(
+			reinterpret_cast<const std::uint8_t*>(data),
+			static_cast<std::uint64_t>(length), result);
+	});
+}
+
+std::size_t RustByteAvx2(const char* data, std::size_t length) noexcept
+{
+	return InvokeRustByteForTest(length, [&](std::uint64_t* result) noexcept {
+		return sakura_byte_find_cr_or_lf_avx2_candidate_v1(
+			reinterpret_cast<const std::uint8_t*>(data),
+			static_cast<std::uint64_t>(length), result);
+	});
+}
+
+std::size_t RustByteAvx512Bw(const char* data, std::size_t length) noexcept
+{
+	return InvokeRustByteForTest(length, [&](std::uint64_t* result) noexcept {
+		return sakura_byte_find_cr_or_lf_avx512bw_candidate_v1(
+			reinterpret_cast<const std::uint8_t*>(data),
+			static_cast<std::uint64_t>(length), result);
+	});
+}
+
+template<typename Operation>
 std::size_t InvokeRustUtf16ForTest(std::size_t length, Operation operation) noexcept
 {
 	std::uint64_t result = static_cast<std::uint64_t>(length);
@@ -1281,6 +1318,309 @@ TEST(CpuDispatchTest, RustUtf16ScannersTouchBothGuardPagesAtEveryShortLength)
 						middle, pageSize, PAGE_READONLY, &previousProtection));
 					EXPECT_EQ(position, implementation.findChar(data, length, 0x2603));
 				}
+			}
+		}
+	}
+}
+
+TEST(CpuDispatchTest, RustByteCandidateMatchesCppAtEveryBoundaryAndAlignment)
+{
+	const auto& dispatch = CpuDispatch::Get();
+	ASSERT_TRUE(dispatch.nativeCandidateLinked);
+	alignas(64) std::array<char, 4096 + 64> storage{};
+	constexpr std::array<std::size_t, 23> lengths{
+		0, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129,
+		255, 256, 257, 511, 512, 513, 1023, 1024, 4096,
+	};
+
+	for (const auto isa : kImplementations) {
+		const auto cpp = CpuDispatch::Testing::GetSupportedFindCrOrLf(isa);
+		const auto rust = CpuDispatch::Testing::GetSupportedFindCrOrLfRust(isa);
+		if (cpp == nullptr) {
+			EXPECT_EQ(nullptr, rust) << "isa=" << CpuDispatch::GetIsaName(isa);
+			continue;
+		}
+		ASSERT_NE(nullptr, rust) << "isa=" << CpuDispatch::GetIsaName(isa);
+		for (std::size_t alignmentOffset = 0; alignmentOffset < 64; ++alignmentOffset) {
+			char* const data = storage.data() + alignmentOffset;
+			for (const auto length : lengths) {
+				std::fill(data, data + length, 'x');
+				EXPECT_EQ(cpp(data, length), rust(data, length))
+					<< "isa=" << CpuDispatch::GetIsaName(isa)
+					<< " alignmentOffset=" << alignmentOffset
+					<< " length=" << length;
+
+				if (length == 0) {
+					continue;
+				}
+				const std::array<std::size_t, 10> positions{
+					0,
+					length - 1,
+					std::min<std::size_t>(15, length - 1),
+					std::min<std::size_t>(16, length - 1),
+					std::min<std::size_t>(31, length - 1),
+					std::min<std::size_t>(32, length - 1),
+					std::min<std::size_t>(63, length - 1),
+					std::min<std::size_t>(64, length - 1),
+					std::min<std::size_t>(511, length - 1),
+					std::min<std::size_t>(512, length - 1),
+				};
+				for (const auto position : positions) {
+					std::fill(data, data + length, 'x');
+					data[position] = (position & 1) == 0 ? '\r' : '\n';
+					EXPECT_EQ(position, cpp(data, length));
+					EXPECT_EQ(position, rust(data, length))
+						<< "isa=" << CpuDispatch::GetIsaName(isa)
+						<< " alignmentOffset=" << alignmentOffset
+						<< " length=" << length
+						<< " position=" << position;
+				}
+			}
+		}
+	}
+
+	// The production byte owner remains the C++ dispatch function even while
+	// the Rust provider is exposed through the explicit candidate accessor.
+	EXPECT_EQ(dispatch.findCrOrLf,
+		CpuDispatch::Testing::GetSupportedFindCrOrLf(dispatch.isa));
+}
+
+TEST(CpuDispatchTest, RustByteCandidateHasDeterministicRandomDifferential)
+{
+	const auto& dispatch = CpuDispatch::Get();
+	alignas(64) std::array<char, 4096 + 64> storage{};
+	std::uint64_t state = 0x2395'16f1ULL;
+	std::size_t executed = 0;
+	for (const auto isa : kImplementations) {
+		const auto cpp = CpuDispatch::Testing::GetSupportedFindCrOrLf(isa);
+		const auto rust = CpuDispatch::Testing::GetSupportedFindCrOrLfRust(isa);
+		if (cpp == nullptr || rust == nullptr) {
+			continue;
+		}
+		for (std::size_t caseIndex = 0; caseIndex < 50'000; ++caseIndex) {
+			state = state * 6'364'136'223'846'793'005ULL + 1;
+			const std::size_t alignmentOffset = static_cast<std::size_t>(state & 63);
+			const std::size_t length = static_cast<std::size_t>((state >> 6) % 4097);
+			char* const data = storage.data() + alignmentOffset;
+			for (std::size_t index = 0; index < length; ++index) {
+				state = (state << 17) | (state >> 47);
+				state += 0x9e37'79b9'7f4a'7c15ULL;
+				const auto value = static_cast<unsigned char>(state);
+				data[index] = static_cast<char>(value == '\r' || value == '\n' ? 'x' : value);
+			}
+			if (length != 0 && caseIndex % 3 == 0) {
+				state = (state << 23) | (state >> 41);
+				const std::size_t position = static_cast<std::size_t>(state % length);
+				data[position] = caseIndex & 1 ? '\r' : '\n';
+			}
+			const std::size_t expected = FindReference(data, length);
+			EXPECT_EQ(expected, cpp(data, length))
+				<< "provider=cpp isa=" << CpuDispatch::GetIsaName(isa)
+				<< " caseIndex=" << caseIndex;
+			EXPECT_EQ(expected, rust(data, length))
+				<< " provider=rust isa=" << CpuDispatch::GetIsaName(isa)
+				<< " caseIndex=" << caseIndex;
+		}
+		executed += 50'000;
+	}
+	ASSERT_GE(executed, dispatch.capabilities.avx ? 50'000U : 0U);
+	std::printf("RUST_BYTE_RANDOM_DIFFERENTIAL cases=%zu\n", executed);
+}
+
+TEST(CpuDispatchTest, RustByteCandidateAbiFailsClosedWithTypedStatus)
+{
+	const auto& dispatch = CpuDispatch::Get();
+	ASSERT_TRUE(dispatch.nativeCandidateLinked);
+	ASSERT_TRUE(dispatch.capabilities.avx);
+	using AbiFunction = SakuraStatus (*)(
+		const std::uint8_t*, std::uint64_t, std::uint64_t*) noexcept;
+	const std::array<std::pair<const char*, AbiFunction>, 3> functions{{
+		{"avx128", sakura_byte_find_cr_or_lf_avx128_candidate_v1},
+		{"avx2", sakura_byte_find_cr_or_lf_avx2_candidate_v1},
+		{"avx512bw", sakura_byte_find_cr_or_lf_avx512bw_candidate_v1},
+	}};
+	const std::array<std::uint8_t, 2> aligned{0, 0};
+	const auto* const misaligned = aligned.data() + 1;
+	const auto max = std::numeric_limits<std::uint64_t>::max();
+
+	for (const auto& [name, function] : functions) {
+		const bool supported = std::string_view{name} == "avx128"
+			? dispatch.capabilities.avx
+			: std::string_view{name} == "avx2"
+			? dispatch.capabilities.avx2
+			: dispatch.capabilities.avx512;
+		if (!supported) {
+			continue;
+		}
+
+		std::uint64_t result = 99;
+		EXPECT_EQ(SakuraStatus::Ok, function(nullptr, 0, &result)) << name;
+		EXPECT_EQ(0U, result) << name;
+
+		result = 99;
+		EXPECT_EQ(SakuraStatus::InvalidArgument, function(nullptr, 7, &result)) << name;
+		EXPECT_EQ(7U, result) << name;
+
+		result = 99;
+		EXPECT_EQ(SakuraStatus::Ok, function(misaligned, 1, &result)) << name;
+		EXPECT_EQ(1U, result) << name;
+
+		result = 99;
+		EXPECT_EQ(SakuraStatus::InvalidArgument,
+			function(reinterpret_cast<const std::uint8_t*>(SIZE_MAX), 1, &result)) << name;
+		EXPECT_EQ(1U, result) << name;
+
+		result = 99;
+		EXPECT_EQ(SakuraStatus::InvalidArgument,
+			function(reinterpret_cast<const std::uint8_t*>(SIZE_MAX - 1), 2, &result)) << name;
+		EXPECT_EQ(2U, result) << name;
+
+		result = 99;
+		EXPECT_EQ(SakuraStatus::InvalidArgument, function(nullptr, max, &result)) << name;
+		EXPECT_EQ(max, result) << name;
+
+		std::array<std::uint8_t, sizeof(std::uint64_t) + 1> outputStorage{};
+		EXPECT_EQ(SakuraStatus::InvalidArgument,
+			function(aligned.data(), 1,
+				reinterpret_cast<std::uint64_t*>(outputStorage.data() + 1))) << name;
+	}
+}
+
+TEST(CpuDispatchTest, RustByteCandidateTouchesBothGuardPages)
+{
+	struct Implementation {
+		const char* name;
+		CpuDispatch::FindCrOrLfFunction cpp;
+		CpuDispatch::FindCrOrLfFunction rust;
+	};
+	const std::array<Implementation, 3> implementations{{
+		{"avx128", CpuDispatch::Testing::GetSupportedFindCrOrLf(CpuDispatch::Isa::Avx),
+			CpuDispatch::Testing::GetSupportedFindCrOrLfRust(CpuDispatch::Isa::Avx)},
+		{"avx2", CpuDispatch::Testing::GetSupportedFindCrOrLf(CpuDispatch::Isa::Avx2),
+			CpuDispatch::Testing::GetSupportedFindCrOrLfRust(CpuDispatch::Isa::Avx2)},
+		{"avx512bw", CpuDispatch::Testing::GetSupportedFindCrOrLf(CpuDispatch::Isa::Avx512),
+			CpuDispatch::Testing::GetSupportedFindCrOrLfRust(CpuDispatch::Isa::Avx512)},
+	}};
+	SYSTEM_INFO systemInfo{};
+	::GetSystemInfo(&systemInfo);
+	const std::size_t pageSize = systemInfo.dwPageSize;
+	std::unique_ptr<void, VirtualAllocationDeleter> allocation{
+		::VirtualAlloc(nullptr, pageSize * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE)
+	};
+	ASSERT_NE(nullptr, allocation);
+	DWORD previousProtection{};
+	ASSERT_TRUE(::VirtualProtect(
+		allocation.get(), pageSize, PAGE_NOACCESS, &previousProtection));
+	ASSERT_TRUE(::VirtualProtect(
+		static_cast<char*>(allocation.get()) + pageSize * 2,
+		pageSize, PAGE_NOACCESS, &previousProtection));
+
+	char* const middle = static_cast<char*>(allocation.get()) + pageSize;
+	const std::array<std::size_t, 22> lengths{
+		1, 2, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129,
+		255, 256, 257, 511, 512, 513, 1023, 1024,
+	};
+	for (const auto& implementation : implementations) {
+		if (implementation.cpp == nullptr || implementation.rust == nullptr) {
+			continue;
+		}
+		for (const bool rightBoundary : {false, true}) {
+			for (const auto length : lengths) {
+				char* const data = rightBoundary
+					? middle + pageSize - length
+					: middle;
+				ASSERT_TRUE(::VirtualProtect(
+					middle, pageSize, PAGE_READWRITE, &previousProtection));
+				std::fill(data, data + length, 'x');
+				ASSERT_TRUE(::VirtualProtect(
+					middle, pageSize, PAGE_READONLY, &previousProtection));
+				EXPECT_EQ(length, implementation.cpp(data, length))
+					<< "name=" << implementation.name
+					<< " rightBoundary=" << rightBoundary
+					<< " length=" << length;
+				EXPECT_EQ(length, implementation.rust(data, length))
+					<< "name=" << implementation.name
+					<< " rightBoundary=" << rightBoundary
+					<< " length=" << length;
+
+				const std::array<std::size_t, 6> positions{
+					0,
+					length - 1,
+					std::min<std::size_t>(15, length - 1),
+					std::min<std::size_t>(31, length - 1),
+					std::min<std::size_t>(511, length - 1),
+					std::min<std::size_t>(512, length - 1),
+				};
+				for (const auto position : positions) {
+					ASSERT_TRUE(::VirtualProtect(
+						middle, pageSize, PAGE_READWRITE, &previousProtection));
+					std::fill(data, data + length, 'x');
+					data[position] = (position & 1) == 0 ? '\r' : '\n';
+					ASSERT_TRUE(::VirtualProtect(
+						middle, pageSize, PAGE_READONLY, &previousProtection));
+					EXPECT_EQ(position, implementation.cpp(data, length))
+						<< "name=" << implementation.name
+						<< " rightBoundary=" << rightBoundary
+						<< " length=" << length
+						<< " position=" << position;
+					EXPECT_EQ(position, implementation.rust(data, length))
+						<< "name=" << implementation.name
+						<< " rightBoundary=" << rightBoundary
+						<< " length=" << length
+						<< " position=" << position;
+				}
+			}
+		}
+	}
+}
+
+// Non-gating diagnostic only. This reports scalar, C++, and Rust candidate
+// timings at representative early-match and no-match lengths; it does not
+// establish a dispatch policy or a performance threshold.
+TEST(CpuDispatchTest, DISABLED_RustByteCandidateMicrobenchmark)
+{
+	constexpr std::array<std::size_t, 17> lengths{
+		1, 2, 15, 16, 17, 31, 32, 33, 63, 64, 127, 128, 255, 256, 511, 512, 4096,
+	};
+	constexpr int iterations = 1'000'000;
+	std::array<char, 4096> storage{};
+	LARGE_INTEGER frequency{};
+	::QueryPerformanceFrequency(&frequency);
+	const auto measure = [&](auto function, const char* data, std::size_t length) {
+		volatile std::size_t sink = 0;
+		LARGE_INTEGER begin{};
+		LARGE_INTEGER end{};
+		::QueryPerformanceCounter(&begin);
+		for (int iteration = 0; iteration < iterations; ++iteration) {
+			sink += function(data, length);
+		}
+		::QueryPerformanceCounter(&end);
+		return static_cast<double>(end.QuadPart - begin.QuadPart)
+			* 1e9 / frequency.QuadPart / iterations;
+	};
+
+	for (const auto isa : kImplementations) {
+		const auto cpp = CpuDispatch::Testing::GetSupportedFindCrOrLf(isa);
+		const auto rust = CpuDispatch::Testing::GetSupportedFindCrOrLfRust(isa);
+		if (cpp == nullptr || rust == nullptr) {
+			continue;
+		}
+		for (const auto length : lengths) {
+			for (const int matchKind : {0, 1, 2}) {
+				std::fill(storage.begin(), storage.begin() + length, 'x');
+				if (matchKind == 1) {
+					storage[0] = '\n';
+				} else if (matchKind == 2) {
+					storage[length - 1] = '\r';
+				}
+				const char* const data = storage.data();
+				std::printf(
+					"RUST_BYTE_BENCH isa=%s length=%zu case=%s scalar=%.2fns cpp=%.2fns rust=%.2fns\n",
+					CpuDispatch::GetIsaName(isa), length,
+					matchKind == 0 ? "none" : matchKind == 1 ? "early" : "late",
+					measure(FindReference, data, length),
+					measure(cpp, data, length),
+					measure(rust, data, length));
 			}
 		}
 	}

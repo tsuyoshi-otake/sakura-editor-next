@@ -208,7 +208,7 @@ class CMakeGenerationContractTests(unittest.TestCase):
         self.assertIn("!Exists('$(SakuraRustCoreLibrary)')", msbuild_target)
         self.assertIn("--locked", msbuild_target)
 
-    def test_rust_avx512_public_abi_matches_global_dispatch_contract(self) -> None:
+    def test_rust_simd_abi_matches_global_dispatch_contract(self) -> None:
         header = (REPO_ROOT / "sakura_core/util/RustUtf16Scan.h").read_text(
             encoding="utf-8-sig"
         )
@@ -267,14 +267,23 @@ class CMakeGenerationContractTests(unittest.TestCase):
         ):
             self.assertIn(required, dispatch_source)
 
+        # ABI V1 still has exactly three production UTF-16 operations. The
+        # fourth AVX-512 kernel is a direct byte-scanner comparison candidate
+        # and must not consume an operation-policy slot.
         self.assertEqual(
-            3,
+            4,
             rust_source.count('#[target_feature(enable = "avx2,avx512f,avx512bw")]'),
         )
+        self.assertIn("const POLICY_COUNT_V1: usize = 3;", ffi_source)
+        self.assertIn("direct comparison candidates only", header)
+        self.assertIn("fourth operation-policy slot", header)
         for export in (
             "sakura_utf16_find_cr_or_lf_avx512bw_v2",
             "sakura_utf16_find_markdown_special_avx512bw_v2",
             "sakura_utf16_find_char_avx512bw_v2",
+            "sakura_byte_find_cr_or_lf_avx128_candidate_v1",
+            "sakura_byte_find_cr_or_lf_avx2_candidate_v1",
+            "sakura_byte_find_cr_or_lf_avx512bw_candidate_v1",
         ):
             self.assertIn(export, ffi_source)
         self.assertIn(

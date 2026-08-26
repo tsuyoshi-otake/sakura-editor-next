@@ -14,6 +14,12 @@ std::size_t FindCrOrLfAvx(const char* data, std::size_t length) noexcept;
 std::size_t FindCrOrLfAvx2(const char* data, std::size_t length) noexcept;
 std::size_t FindCrOrLfAvx512(const char* data, std::size_t length) noexcept;
 
+#if defined(SAKURA_UTF16_BACKEND_RUST) || defined(SAKURA_UTF16_RUST_CANDIDATE)
+std::size_t FindCrOrLfRustAvx128(const char* data, std::size_t length) noexcept;
+std::size_t FindCrOrLfRustAvx2(const char* data, std::size_t length) noexcept;
+std::size_t FindCrOrLfRustAvx512Bw(const char* data, std::size_t length) noexcept;
+#endif
+
 std::size_t FindCrOrLfUtf16Avx(const wchar_t* data, std::size_t length) noexcept;
 std::size_t FindCrOrLfUtf16Avx2(const wchar_t* data, std::size_t length) noexcept;
 std::size_t FindCrOrLfUtf16Avx512(const wchar_t* data, std::size_t length) noexcept;

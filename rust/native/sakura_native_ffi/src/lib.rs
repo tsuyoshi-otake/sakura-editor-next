@@ -284,6 +284,23 @@ fn validate_span(data: *const u16, length: u64) -> Result<usize, SakuraStatus> {
     Ok(length)
 }
 
+fn validate_byte_span(data: *const u8, length: u64) -> Result<usize, SakuraStatus> {
+    let length = usize::try_from(length).map_err(|_| SakuraStatus::InvalidArgument)?;
+    if length == 0 {
+        return Ok(0);
+    }
+    if data.is_null() {
+        return Err(SakuraStatus::InvalidArgument);
+    }
+    if length > isize::MAX as usize {
+        return Err(SakuraStatus::InvalidArgument);
+    }
+    (data as usize)
+        .checked_add(length)
+        .ok_or(SakuraStatus::InvalidArgument)?;
+    Ok(length)
+}
+
 unsafe fn run_scan(
     initialization: &InitializationCell,
     required_isa: RequiredIsa,
@@ -306,6 +323,41 @@ unsafe fn run_scan(
         return SakuraStatus::Unsupported;
     }
     let length_usize = match validate_span(data, length) {
+        Ok(length) => length,
+        Err(status) => return status,
+    };
+    let result = operation(data, length_usize);
+    if result > length_usize {
+        return SakuraStatus::InternalError;
+    }
+    // SAFETY: The output pointer remains valid for the duration of this call.
+    unsafe { result_index.write(result as u64) };
+    SakuraStatus::Ok
+}
+
+unsafe fn run_byte_scan(
+    initialization: &InitializationCell,
+    required_isa: RequiredIsa,
+    data: *const u8,
+    length: u64,
+    result_index: *mut u64,
+    operation: impl FnOnce(*const u8, usize) -> usize,
+) -> SakuraStatus {
+    if result_index.is_null() || !is_aligned(result_index.cast_const()) {
+        return SakuraStatus::InvalidArgument;
+    }
+    // SAFETY: The output pointer is non-null, aligned, and caller-owned for
+    // this call. Publishing the sentinel first makes every later failure fail
+    // closed, including invalid input and unsupported CPU/OS state.
+    unsafe { result_index.write(length) };
+
+    let Some(snapshot) = initialization.snapshot.get() else {
+        return SakuraStatus::NotInitialized;
+    };
+    if !supports_isa(&snapshot.capabilities, required_isa) {
+        return SakuraStatus::Unsupported;
+    }
+    let length_usize = match validate_byte_span(data, length) {
         Ok(length) => length,
         Err(status) => return status,
     };
@@ -397,6 +449,49 @@ macro_rules! export_find_char {
     };
 }
 
+macro_rules! export_byte_candidate {
+    ($name:ident, $required:expr, $kernel:path) => {
+        #[unsafe(no_mangle)]
+        #[doc = "Runs one initialized, capability-checked byte CR/LF candidate scan."]
+        ///
+        /// # Safety
+        ///
+        /// For nonzero `length`, `data` must reference that many initialized
+        /// immutable bytes. `result_index` must reference writable `u64`
+        /// storage. No pointer is retained. The result unit is bytes, and a
+        /// not-found result equals `length`. This candidate does not add an
+        /// operation-policy slot to ABI V1; the existing three UTF-16 policy
+        /// entries remain fixed.
+        pub unsafe extern "C" fn $name(
+            data: *const u8,
+            length: u64,
+            result_index: *mut u64,
+        ) -> SakuraStatus {
+            catch_status(|| {
+                let operation = |data, length| {
+                    // SAFETY: `run_byte_scan` invokes this closure only after
+                    // the immutable C++ snapshot proves the required ISA and
+                    // the raw byte span has passed validation.
+                    unsafe { $kernel(data, length) }
+                };
+                // SAFETY: The export's caller contract is forwarded to the
+                // common byte validator. The ISA kernel runs only after
+                // capability and span validation.
+                unsafe {
+                    run_byte_scan(
+                        &INITIALIZATION,
+                        $required,
+                        data,
+                        length,
+                        result_index,
+                        operation,
+                    )
+                }
+            })
+        }
+    };
+}
+
 #[cfg(target_arch = "x86_64")]
 export_scan!(
     sakura_utf16_find_cr_or_lf_avx128_v2,
@@ -452,6 +547,25 @@ export_find_char!(
     sakura_utf16_find_char_avx512bw_v2,
     RequiredIsa::Avx512Bw,
     native_simd::sakura_utf16_find_char_avx512bw_v1
+);
+
+#[cfg(target_arch = "x86_64")]
+export_byte_candidate!(
+    sakura_byte_find_cr_or_lf_avx128_candidate_v1,
+    RequiredIsa::Avx128,
+    native_simd::sakura_byte_find_cr_or_lf_avx128_candidate_v1
+);
+#[cfg(target_arch = "x86_64")]
+export_byte_candidate!(
+    sakura_byte_find_cr_or_lf_avx2_candidate_v1,
+    RequiredIsa::Avx2,
+    native_simd::sakura_byte_find_cr_or_lf_avx2_candidate_v1
+);
+#[cfg(target_arch = "x86_64")]
+export_byte_candidate!(
+    sakura_byte_find_cr_or_lf_avx512bw_candidate_v1,
+    RequiredIsa::Avx512Bw,
+    native_simd::sakura_byte_find_cr_or_lf_avx512bw_candidate_v1
 );
 
 #[cfg(test)]
@@ -659,6 +773,102 @@ mod tests {
         };
         assert_eq!(SakuraStatus::InvalidArgument, invalid);
         assert_eq!(1, result);
+    }
+
+    #[test]
+    fn byte_scan_capability_gate_and_invalid_span_fail_closed() {
+        let cell = InitializationCell::new();
+        let snapshot = snapshot(
+            capabilities(CPU_FEATURE_AVX, OS_STATE_XMM | OS_STATE_YMM),
+            policies(IMPLEMENTATION_CPP_AVX128),
+        );
+        assert_eq!(SakuraStatus::Ok, cell.initialize(snapshot));
+
+        let data = [b'x', b'\r'];
+        let mut result = 0_u64;
+        // SAFETY: The local pointers satisfy the byte scan contract.
+        let found = unsafe {
+            run_byte_scan(
+                &cell,
+                RequiredIsa::Avx128,
+                data.as_ptr(),
+                data.len() as u64,
+                &mut result,
+                |pointer, length| {
+                    // SAFETY: The validator established a valid immutable
+                    // byte span before invoking this test operation.
+                    let input = slice::from_raw_parts(pointer, length);
+                    if input[0] == b'\r' {
+                        0
+                    } else {
+                        1
+                    }
+                },
+            )
+        };
+        assert_eq!(SakuraStatus::Ok, found);
+        assert_eq!(1, result);
+
+        // The required ISA gate runs before input validation and still leaves
+        // the output at its length sentinel.
+        // SAFETY: The local pointers and operation satisfy the byte scan
+        // contract; the test intentionally requests an unsupported ISA.
+        let unsupported = unsafe {
+            run_byte_scan(
+                &cell,
+                RequiredIsa::Avx2,
+                data.as_ptr(),
+                data.len() as u64,
+                &mut result,
+                |_, _| 0,
+            )
+        };
+        assert_eq!(SakuraStatus::Unsupported, unsupported);
+        assert_eq!(data.len() as u64, result);
+
+        // Byte input accepts every alignment, but null non-empty spans and
+        // overflowing addresses fail closed before dereference.
+        // SAFETY: The null input is intentionally rejected before dereference.
+        let invalid = unsafe {
+            run_byte_scan(
+                &cell,
+                RequiredIsa::Avx128,
+                std::ptr::null(),
+                1,
+                &mut result,
+                |_, _| 0,
+            )
+        };
+        assert_eq!(SakuraStatus::InvalidArgument, invalid);
+        assert_eq!(1, result);
+
+        // SAFETY: The overflowing pointer is intentionally rejected before
+        // dereference.
+        let overflowing = unsafe {
+            run_byte_scan(
+                &cell,
+                RequiredIsa::Avx128,
+                usize::MAX as *const u8,
+                1,
+                &mut result,
+                |_, _| 0,
+            )
+        };
+        assert_eq!(SakuraStatus::InvalidArgument, overflowing);
+        assert_eq!(1, result);
+
+        // SAFETY: A null output pointer is intentionally rejected before any
+        // output write.
+        assert_eq!(SakuraStatus::InvalidArgument, unsafe {
+            run_byte_scan(
+                &cell,
+                RequiredIsa::Avx128,
+                data.as_ptr(),
+                data.len() as u64,
+                std::ptr::null_mut(),
+                |_, _| 0,
+            )
+        });
     }
 
     #[test]

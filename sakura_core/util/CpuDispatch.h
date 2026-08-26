@@ -104,16 +104,18 @@ namespace Testing
 {
 // Returns nullptr when the requested implementation is unsafe on this machine.
 FindCrOrLfFunction GetSupportedFindCrOrLf(Isa isa) noexcept;
+FindCrOrLfFunction GetSupportedFindCrOrLfRust(Isa isa) noexcept;
 FindUtf16Function GetSupportedFindCrOrLfUtf16(Isa isa) noexcept;
 FindUtf16Function GetSupportedFindMarkdownInlineSpecialUtf16(Isa isa) noexcept;
 WidenAsciiToUtf16Function GetSupportedWidenAsciiToUtf16(Isa isa) noexcept;
 FindUtf16CharFunction GetSupportedFindUtf16Char(Isa isa) noexcept;
 
 // Explicit provider selectors used by the differential benchmark. The C++
-// candidate is always present. The Rust candidate is present only when the
-// build links the Rust UTF-16 library (SAKURA_UTF16_BACKEND_RUST or the
-// test-only SAKURA_UTF16_RUST_CANDIDATE); otherwise these accessors return
-// nullptr and never silently substitute the production provider.
+// candidate is always present. Rust candidates are present only when the build
+// links the Rust native library (SAKURA_UTF16_BACKEND_RUST or the test-only
+// SAKURA_UTF16_RUST_CANDIDATE); otherwise these accessors return nullptr and
+// never silently substitute the production provider. The byte accessor is a
+// direct candidate only; it does not participate in production dispatch.
 FindUtf16Function GetSupportedFindCrOrLfUtf16Cpp(Isa isa) noexcept;
 FindUtf16Function GetSupportedFindMarkdownInlineSpecialUtf16Cpp(Isa isa) noexcept;
 FindUtf16CharFunction GetSupportedFindUtf16CharCpp(Isa isa) noexcept;

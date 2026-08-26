@@ -11,6 +11,20 @@ use core::mem;
 use core::slice;
 
 const U16_BYTES: usize = mem::size_of::<u16>();
+const BYTE_KERNEL_INTERNAL_BOUNDARY: usize = 512;
+
+#[inline]
+fn find_byte_cr_or_lf_scalar(input: &[u8]) -> usize {
+    let mut index = 0;
+    while index < input.len() {
+        let value = input[index];
+        if value == b'\r' || value == b'\n' {
+            return index;
+        }
+        index += 1;
+    }
+    input.len()
+}
 
 #[inline]
 fn find_cr_or_lf_scalar(input: &[u16]) -> usize {
@@ -66,9 +80,162 @@ fn find_char_scalar(input: &[u16], target: u16) -> usize {
 #[cfg(target_arch = "x86_64")]
 mod x86_64_kernels {
     use super::{
-        find_char_scalar, find_cr_or_lf_scalar, find_markdown_special_scalar, is_markdown_special,
+        find_byte_cr_or_lf_scalar, find_char_scalar, find_cr_or_lf_scalar,
+        find_markdown_special_scalar, is_markdown_special, BYTE_KERNEL_INTERNAL_BOUNDARY,
     };
     use core::arch::x86_64::*;
+
+    #[inline]
+    #[target_feature(enable = "avx")]
+    /// # Safety
+    ///
+    /// The caller must execute this function only when the CPU and OS expose
+    /// AVX with XMM/YMM state enabled. `input` must be a valid slice of
+    /// initialized bytes for its entire length. The unaligned loads are
+    /// confined to in-bounds portions of that slice.
+    pub unsafe fn find_byte_cr_or_lf_avx128(input: &[u8]) -> usize {
+        let cr = _mm_set1_epi8(b'\r' as i8);
+        let lf = _mm_set1_epi8(b'\n' as i8);
+        let mut offset = 0;
+
+        // 512 is an implementation boundary shared with the C++ byte
+        // scanner. It is deliberately kept inside the kernel and is not a
+        // caller policy minimum.
+        while offset < BYTE_KERNEL_INTERNAL_BOUNDARY && input.len() - offset >= 16 {
+            // SAFETY: The loop condition proves that 16 bytes remain in the
+            // slice; the load itself permits any byte alignment.
+            let values = unsafe { _mm_loadu_si128(input.as_ptr().add(offset).cast()) };
+            let matches = _mm_or_si128(_mm_cmpeq_epi8(values, cr), _mm_cmpeq_epi8(values, lf));
+            let mask = _mm_movemask_epi8(matches) as u32;
+            if mask != 0 {
+                return offset + (mask.trailing_zeros() as usize);
+            }
+            offset += 16;
+        }
+
+        while input.len() - offset >= 16 {
+            // SAFETY: The loop condition proves that 16 bytes remain in the
+            // slice; the load itself permits any byte alignment.
+            let values = unsafe { _mm_loadu_si128(input.as_ptr().add(offset).cast()) };
+            let matches = _mm_or_si128(_mm_cmpeq_epi8(values, cr), _mm_cmpeq_epi8(values, lf));
+            let mask = _mm_movemask_epi8(matches) as u32;
+            if mask != 0 {
+                return offset + (mask.trailing_zeros() as usize);
+            }
+            offset += 16;
+        }
+
+        offset + find_byte_cr_or_lf_scalar(&input[offset..])
+    }
+
+    #[inline]
+    #[target_feature(enable = "avx2")]
+    /// # Safety
+    ///
+    /// The caller must execute this function only when the CPU and OS expose
+    /// AVX2 with XMM/YMM state enabled. `input` must be a valid slice of
+    /// initialized bytes for its entire length. The unaligned loads are
+    /// confined to in-bounds portions of that slice.
+    pub unsafe fn find_byte_cr_or_lf_avx2(input: &[u8]) -> usize {
+        let cr = _mm256_set1_epi8(b'\r' as i8);
+        let lf = _mm256_set1_epi8(b'\n' as i8);
+        let mut offset = 0;
+
+        while offset < BYTE_KERNEL_INTERNAL_BOUNDARY && input.len() - offset >= 32 {
+            // SAFETY: The loop condition proves that 32 bytes remain in the
+            // slice; the load itself permits any byte alignment.
+            let values = unsafe { _mm256_loadu_si256(input.as_ptr().add(offset).cast()) };
+            let matches =
+                _mm256_or_si256(_mm256_cmpeq_epi8(values, cr), _mm256_cmpeq_epi8(values, lf));
+            let mask = _mm256_movemask_epi8(matches) as u32;
+            if mask != 0 {
+                return offset + (mask.trailing_zeros() as usize);
+            }
+            offset += 32;
+        }
+
+        // Keep the two-vector hot loop explicit. The 512-byte handoff above
+        // is a kernel detail, never a dispatch/policy threshold.
+        while input.len() - offset >= 64 {
+            // SAFETY: The loop condition proves that both 32-byte loads stay
+            // within the slice; the loads permit any byte alignment.
+            let values0 = unsafe { _mm256_loadu_si256(input.as_ptr().add(offset).cast()) };
+            // SAFETY: The same loop condition proves that the second 32-byte
+            // load stays within the slice and it permits any byte alignment.
+            let values1 = unsafe { _mm256_loadu_si256(input.as_ptr().add(offset + 32).cast()) };
+            let matches0 = _mm256_or_si256(
+                _mm256_cmpeq_epi8(values0, cr),
+                _mm256_cmpeq_epi8(values0, lf),
+            );
+            let matches1 = _mm256_or_si256(
+                _mm256_cmpeq_epi8(values1, cr),
+                _mm256_cmpeq_epi8(values1, lf),
+            );
+            let aggregate = _mm256_movemask_epi8(_mm256_or_si256(matches0, matches1)) as u32;
+            if aggregate != 0 {
+                let mask0 = _mm256_movemask_epi8(matches0) as u32;
+                if mask0 != 0 {
+                    return offset + (mask0.trailing_zeros() as usize);
+                }
+                return offset + 32 + (aggregate.trailing_zeros() as usize);
+            }
+            offset += 64;
+        }
+
+        while input.len() - offset >= 32 {
+            // SAFETY: The loop condition proves that 32 bytes remain in the
+            // slice; the load itself permits any byte alignment.
+            let values = unsafe { _mm256_loadu_si256(input.as_ptr().add(offset).cast()) };
+            let matches =
+                _mm256_or_si256(_mm256_cmpeq_epi8(values, cr), _mm256_cmpeq_epi8(values, lf));
+            let mask = _mm256_movemask_epi8(matches) as u32;
+            if mask != 0 {
+                return offset + (mask.trailing_zeros() as usize);
+            }
+            offset += 32;
+        }
+
+        offset + find_byte_cr_or_lf_scalar(&input[offset..])
+    }
+
+    #[inline]
+    #[target_feature(enable = "avx2,avx512f,avx512bw")]
+    /// # Safety
+    ///
+    /// The caller must execute this function only when the CPU and OS expose
+    /// AVX2, AVX-512F, and AVX-512BW with XMM/YMM, opmask, and ZMM state
+    /// enabled. `input` must be a valid slice of initialized bytes for its
+    /// entire length. The unaligned loads are confined to in-bounds portions
+    /// of that slice.
+    pub unsafe fn find_byte_cr_or_lf_avx512bw(input: &[u8]) -> usize {
+        let cr = _mm512_set1_epi8(b'\r' as i8);
+        let lf = _mm512_set1_epi8(b'\n' as i8);
+        let mut offset = 0;
+
+        while offset < BYTE_KERNEL_INTERNAL_BOUNDARY && input.len() - offset >= 64 {
+            // SAFETY: The loop condition proves that 64 bytes remain in the
+            // slice; the load itself permits any byte alignment.
+            let values = unsafe { _mm512_loadu_si512(input.as_ptr().add(offset).cast()) };
+            let matches = _mm512_cmpeq_epi8_mask(values, cr) | _mm512_cmpeq_epi8_mask(values, lf);
+            if matches != 0 {
+                return offset + (matches.trailing_zeros() as usize);
+            }
+            offset += 64;
+        }
+
+        while input.len() - offset >= 64 {
+            // SAFETY: The loop condition proves that 64 bytes remain in the
+            // slice; the load itself permits any byte alignment.
+            let values = unsafe { _mm512_loadu_si512(input.as_ptr().add(offset).cast()) };
+            let matches = _mm512_cmpeq_epi8_mask(values, cr) | _mm512_cmpeq_epi8_mask(values, lf);
+            if matches != 0 {
+                return offset + (matches.trailing_zeros() as usize);
+            }
+            offset += 64;
+        }
+
+        offset + find_byte_cr_or_lf_scalar(&input[offset..])
+    }
 
     #[inline]
     #[target_feature(enable = "avx")]
@@ -388,6 +555,35 @@ unsafe fn checked_span<'a>(data: *const u16, length: usize) -> Option<&'a [u16]>
 }
 
 #[inline]
+/// Converts a byte FFI pointer/length pair after checking conditions that are
+/// representable without dereferencing the pointer.
+///
+/// # Safety
+///
+/// For a non-zero `length` whose representational checks pass, the caller must
+/// guarantee that `data` points to one allocation containing `length`
+/// initialized bytes, that the allocation remains alive for the returned
+/// borrow, and that no mutable access can occur for that duration. A byte span
+/// has no stricter input alignment than one byte, but null and overflowing
+/// spans are still rejected. A zero-length span does not require an allocation.
+unsafe fn checked_byte_span<'a>(data: *const u8, length: usize) -> Option<&'a [u8]> {
+    if length == 0 {
+        return Some(&[]);
+    }
+
+    let address = data as usize;
+    if address == 0 || length > isize::MAX as usize || address.checked_add(length).is_none() {
+        return None;
+    }
+
+    // SAFETY: The C++ ABI contract requires `data..data+length` to be one
+    // initialized, immutable allocation. The checks above reject
+    // representationally invalid spans before this conversion; ownership and
+    // lifetime remain the caller's responsibility and no pointer is retained.
+    Some(unsafe { slice::from_raw_parts(data, length) })
+}
+
+#[inline]
 /// Applies one of the private SIMD adapters to an FFI span and clamps an
 /// invalid or out-of-range result to the ABI sentinel.
 ///
@@ -417,6 +613,36 @@ unsafe fn scan_ffi(data: *const u16, length: usize, scan: unsafe fn(&[u16]) -> u
     }
 }
 
+#[inline]
+/// Applies one byte SIMD adapter to an FFI span and clamps an invalid or
+/// out-of-range result to the byte-length sentinel.
+///
+/// # Safety
+///
+/// The caller must satisfy the allocation, initialization, lifetime, and
+/// immutability requirements of [`checked_byte_span`] whenever its
+/// representational checks accept a non-zero span. `scan` must be a private
+/// adapter whose target ISA is enabled by the caller's CPU/OS feature state
+/// and whose contract accepts the resulting valid slice.
+unsafe fn scan_byte_ffi(data: *const u8, length: usize, scan: unsafe fn(&[u8]) -> usize) -> usize {
+    // SAFETY: The caller supplies the allocation/lifetime/immutability
+    // contract documented above; this check rejects invalid representations
+    // before constructing the slice.
+    let input = match unsafe { checked_byte_span(data, length) } {
+        Some(value) => value,
+        None => return length,
+    };
+
+    // SAFETY: `scan` is one of the private SIMD entry points in this crate,
+    // and its caller has supplied a valid Rust slice.
+    let result = unsafe { scan(input) };
+    if result <= length {
+        result
+    } else {
+        length
+    }
+}
+
 #[cfg(target_arch = "x86_64")]
 #[inline]
 /// # Safety
@@ -428,6 +654,19 @@ unsafe fn avx128_cr_or_lf(input: &[u16]) -> usize {
     // SAFETY: The caller selected the AVX-capable implementation and the
     // function only performs unaligned reads within `input`.
     unsafe { x86_64_kernels::find_cr_or_lf_avx128(input) }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
+/// # Safety
+///
+/// The caller must have selected an execution context with AVX and OS XMM/YMM
+/// state enabled. `input` must be a valid initialized byte slice; the
+/// delegated kernel reads only in-bounds bytes.
+unsafe fn avx128_byte_cr_or_lf(input: &[u8]) -> usize {
+    // SAFETY: The caller selected the AVX-capable implementation and the
+    // function only performs unaligned reads within `input`.
+    unsafe { x86_64_kernels::find_byte_cr_or_lf_avx128(input) }
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -471,6 +710,18 @@ unsafe fn avx2_cr_or_lf(input: &[u16]) -> usize {
 /// # Safety
 ///
 /// The caller must have selected an execution context with AVX2 and OS
+/// XMM/YMM state enabled. `input` must be a valid initialized byte slice; the
+/// delegated kernel reads only in-bounds bytes.
+unsafe fn avx2_byte_cr_or_lf(input: &[u8]) -> usize {
+    // SAFETY: The caller selected the AVX2-capable implementation.
+    unsafe { x86_64_kernels::find_byte_cr_or_lf_avx2(input) }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
+/// # Safety
+///
+/// The caller must have selected an execution context with AVX2 and OS
 /// XMM/YMM state enabled. `input` must be a valid slice of initialized UTF-16
 /// code units; the delegated kernel reads only in-bounds units.
 unsafe fn avx2_markdown_special(input: &[u16]) -> usize {
@@ -507,6 +758,19 @@ unsafe fn avx512bw_cr_or_lf(input: &[u16]) -> usize {
 #[inline]
 /// # Safety
 ///
+/// The caller must have selected an execution context with AVX2, AVX-512F,
+/// and AVX-512BW plus OS XMM/YMM, opmask, and ZMM state enabled. `input` must
+/// be a valid initialized byte slice; the delegated kernel reads only
+/// in-bounds bytes.
+unsafe fn avx512bw_byte_cr_or_lf(input: &[u8]) -> usize {
+    // SAFETY: The caller selected the AVX2/AVX-512F/BW-capable implementation.
+    unsafe { x86_64_kernels::find_byte_cr_or_lf_avx512bw(input) }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
+/// # Safety
+///
 /// The caller must have selected an execution context with AVX2, AVX-512F, and
 /// AVX-512BW plus OS XMM/YMM, opmask, and ZMM state enabled. `input` must be a
 /// valid slice of initialized UTF-16 code units; the delegated kernel reads
@@ -527,6 +791,58 @@ unsafe fn avx512bw_markdown_special(input: &[u16]) -> usize {
 unsafe fn avx512bw_find_char(input: &[u16], target: u16) -> usize {
     // SAFETY: See `avx512bw_cr_or_lf`.
     unsafe { x86_64_kernels::find_char_avx512bw(input, target) }
+}
+
+#[cfg(target_arch = "x86_64")]
+/// # Safety
+///
+/// The caller must execute this function only when CPUID reports AVX and
+/// OSXSAVE with XCR0 XMM/YMM state enabled. For non-zero `length`, `data`
+/// must identify one allocation containing `length` initialized bytes; that
+/// allocation must remain alive and immutable for the call. Rejected null,
+/// size, or address-overflow representations return `length` without
+/// dereference. The byte candidate accepts every input alignment.
+pub unsafe fn sakura_byte_find_cr_or_lf_avx128_candidate_v1(
+    data: *const u8,
+    length: usize,
+) -> usize {
+    // SAFETY: This entry point's contract supplies the CPU/OS feature state
+    // and caller-owned allocation contract required by `scan_byte_ffi`.
+    unsafe { scan_byte_ffi(data, length, avx128_byte_cr_or_lf) }
+}
+
+#[cfg(target_arch = "x86_64")]
+/// # Safety
+///
+/// The caller must execute this function only when CPUID reports AVX2 and
+/// OSXSAVE with XCR0 XMM/YMM state enabled. For non-zero `length`, `data`
+/// must identify one allocation containing `length` initialized bytes; that
+/// allocation must remain alive and immutable for the call. Rejected null,
+/// size, or address-overflow representations return `length` without
+/// dereference. The byte candidate accepts every input alignment.
+pub unsafe fn sakura_byte_find_cr_or_lf_avx2_candidate_v1(data: *const u8, length: usize) -> usize {
+    // SAFETY: This entry point's contract supplies the CPU/OS feature state
+    // and caller-owned allocation contract required by `scan_byte_ffi`.
+    unsafe { scan_byte_ffi(data, length, avx2_byte_cr_or_lf) }
+}
+
+#[cfg(target_arch = "x86_64")]
+/// # Safety
+///
+/// The caller must execute this function only when CPUID reports AVX2,
+/// AVX-512F, and AVX-512BW, with OSXSAVE and XCR0 XMM/YMM plus opmask/ZMM
+/// state enabled. For non-zero `length`, `data` must identify one allocation
+/// containing `length` initialized bytes; that allocation must remain alive
+/// and immutable for the call. Rejected null, size, or address-overflow
+/// representations return `length` without dereference. The byte candidate
+/// accepts every input alignment.
+pub unsafe fn sakura_byte_find_cr_or_lf_avx512bw_candidate_v1(
+    data: *const u8,
+    length: usize,
+) -> usize {
+    // SAFETY: This entry point's contract supplies the CPU/OS feature state
+    // and caller-owned allocation contract required by `scan_byte_ffi`.
+    unsafe { scan_byte_ffi(data, length, avx512bw_byte_cr_or_lf) }
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -780,6 +1096,17 @@ mod tests {
         // SAFETY: The tests intentionally exercise both valid and invalid
         // spans. The exported ABI functions are required to fail closed for
         // invalid representational spans and to read only valid spans.
+        unsafe { scan(data, length) }
+    }
+
+    fn call_byte_scan(
+        scan: unsafe fn(*const u8, usize) -> usize,
+        data: *const u8,
+        length: usize,
+    ) -> usize {
+        // SAFETY: The tests intentionally exercise both valid and invalid
+        // spans. The byte candidate functions fail closed for invalid
+        // representational spans and read only valid spans.
         unsafe { scan(data, length) }
     }
 
@@ -1100,6 +1427,78 @@ mod tests {
                     input[position] = value;
                     assert_eq!(find_char_scalar(&input, value), position);
                     input[position] = 0x1234_u16;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn byte_candidates_match_scalar_at_all_alignments_and_boundaries() {
+        type ByteScan = unsafe fn(*const u8, usize) -> usize;
+        let mut storage = vec![b'x'; 4097 + 64];
+        let lengths = [
+            0, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 255, 256, 257, 511, 512, 513,
+            1023, 4096,
+        ];
+        let implementations: &[(&str, bool, ByteScan)] = &[
+            (
+                "avx128",
+                std::is_x86_feature_detected!("avx"),
+                sakura_byte_find_cr_or_lf_avx128_candidate_v1,
+            ),
+            (
+                "avx2",
+                std::is_x86_feature_detected!("avx2"),
+                sakura_byte_find_cr_or_lf_avx2_candidate_v1,
+            ),
+            (
+                "avx512bw",
+                std::is_x86_feature_detected!("avx2")
+                    && std::is_x86_feature_detected!("avx512f")
+                    && std::is_x86_feature_detected!("avx512bw"),
+                sakura_byte_find_cr_or_lf_avx512bw_candidate_v1,
+            ),
+        ];
+
+        for &(name, enabled, scan) in implementations {
+            if !enabled {
+                std::println!("BYTE_ISA_EXECUTION {name}=skipped");
+                continue;
+            }
+            std::println!("BYTE_ISA_EXECUTION {name}=executed");
+            for alignment in 0..64 {
+                for &length in &lengths {
+                    let input = &mut storage[alignment..alignment + length];
+                    input.fill(b'x');
+                    assert_eq!(
+                        length,
+                        call_byte_scan(scan, input.as_ptr(), length),
+                        "name={name} alignment={alignment} length={length}",
+                    );
+
+                    for position in [
+                        0,
+                        length.saturating_sub(1),
+                        15.min(length.saturating_sub(1)),
+                        16.min(length.saturating_sub(1)),
+                        31.min(length.saturating_sub(1)),
+                        32.min(length.saturating_sub(1)),
+                        63.min(length.saturating_sub(1)),
+                        64.min(length.saturating_sub(1)),
+                        511.min(length.saturating_sub(1)),
+                        512.min(length.saturating_sub(1)),
+                    ] {
+                        if length == 0 {
+                            break;
+                        }
+                        input.fill(b'x');
+                        input[position] = if position & 1 == 0 { b'\r' } else { b'\n' };
+                        assert_eq!(
+                            position,
+                            call_byte_scan(scan, input.as_ptr(), length),
+                            "name={name} alignment={alignment} length={length} position={position}",
+                        );
+                    }
                 }
             }
         }

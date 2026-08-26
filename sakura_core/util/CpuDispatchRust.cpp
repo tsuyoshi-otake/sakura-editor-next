@@ -28,6 +28,11 @@ const std::uint16_t* AsUtf16(const wchar_t* data) noexcept
 	return reinterpret_cast<const std::uint16_t*>(data);
 }
 
+const std::uint8_t* AsBytes(const char* data) noexcept
+{
+	return reinterpret_cast<const std::uint8_t*>(data);
+}
+
 template<typename Operation>
 std::size_t InvokeRustScan(std::size_t length, Operation operation) noexcept
 {
@@ -39,6 +44,30 @@ std::size_t InvokeRustScan(std::size_t length, Operation operation) noexcept
 	}
 	return static_cast<std::size_t>(result);
 }
+}
+
+std::size_t FindCrOrLfRustAvx128(const char* data, std::size_t length) noexcept
+{
+	return InvokeRustScan(length, [&](std::uint64_t* result) noexcept {
+		return sakura_byte_find_cr_or_lf_avx128_candidate_v1(
+			AsBytes(data), static_cast<std::uint64_t>(length), result);
+	});
+}
+
+std::size_t FindCrOrLfRustAvx2(const char* data, std::size_t length) noexcept
+{
+	return InvokeRustScan(length, [&](std::uint64_t* result) noexcept {
+		return sakura_byte_find_cr_or_lf_avx2_candidate_v1(
+			AsBytes(data), static_cast<std::uint64_t>(length), result);
+	});
+}
+
+std::size_t FindCrOrLfRustAvx512Bw(const char* data, std::size_t length) noexcept
+{
+	return InvokeRustScan(length, [&](std::uint64_t* result) noexcept {
+		return sakura_byte_find_cr_or_lf_avx512bw_candidate_v1(
+			AsBytes(data), static_cast<std::uint64_t>(length), result);
+	});
 }
 
 std::size_t FindCrOrLfUtf16RustAvx128(const wchar_t* data, std::size_t length) noexcept
