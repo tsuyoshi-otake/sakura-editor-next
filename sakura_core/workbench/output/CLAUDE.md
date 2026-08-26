@@ -112,6 +112,33 @@ for a lifecycle: dual writes, per-call health probing, silent fallback,
 snapshot-based state transfer, and in-place provider swaps after an accepted
 mutation remain forbidden.
 
+Issue #274 adds provider-neutral, payload-free health evidence without turning
+health into a fallback selector. `IOutputService::Health()` reports the selected
+kind, factory and lifecycle state, initialization and ABI boundaries, retained
+terminal fault, last typed operation result, revision, and saturating counters.
+Advisory listener exceptions and queue drops are counted separately and never
+become authority faults. Test creator overrides are explicitly marked so their
+runs cannot be mistaken for production evidence.
+
+The Rust provider keeps one stopped object alive for existing runtime borrows.
+A successful terminal Stop caches its stopped snapshot, destroys the opaque Rust
+token exactly once, and continues to answer typed stopped operations without
+state transfer. A destroy failure retains the original fault and ownership for
+a bounded external Stop retry; it never selects or reconstructs the C++
+provider. Runtime health overlays only immutable composition metadata and does
+not infer provider state from RTTI, snapshots, or the observational candidate.
+
+Issue #274 remains a measurement gate, not an adoption decision. C++ is still
+the default Output authority. `SAKURA_OUTPUT_PRODUCTION_PACKAGE` is an explicit
+package-release gate independent from UTF-16 packaging and currently accepts
+only the C++ Output backend; comparison builds may select Rust without enabling
+that gate. The paired provider benchmark uses independently built and hashed
+test executables, a fixed verified processor-affinity mask, interleaved runs,
+provider health validation, semantic digests, and payload-free evidence. No
+default or production-package flip is allowed until the remaining startup,
+incremental-build, native-link closure, AMD/Intel, and required toolchain cells
+are complete.
+
 `SAKURA_OUTPUT_BACKEND_RUST` is deliberately independent of
 `SAKURA_UTF16_BACKEND_RUST` and the SIMD ISA dispatcher. The Output model is a
 stateful authority with lifecycle and revision semantics; SIMD remains an

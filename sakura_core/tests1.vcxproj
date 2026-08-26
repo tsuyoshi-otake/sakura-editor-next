@@ -221,6 +221,7 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\GitOutputChannelTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\OutputServiceTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\OutputServiceProviderConformanceTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\OutputServiceProviderMeasurementTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\OutputServiceRustShadowTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\PortForwardingServiceTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\debug\DapProtocolCodecTest.cpp" />
