@@ -62,6 +62,27 @@ workbench owns those states through adapters described in
 - Dispose the model only after its resolver references, working-copy ownership,
   and editor inputs have all released it.
 
+## Untitled Document Identity
+
+- An untitled document's name is `Untitled-<n>`, matching VS Code, whose
+  `untitledTextEditorService` builds the resource URI `untitled:Untitled-<n>`
+  and shows that URI's basename. The number is part of the name, not a
+  decoration a caption appends, so `$f` and its siblings expand to the whole
+  name. `$n` keeps its own meaning -- the number alone -- but the shipped
+  captions no longer append it, because `$f$n` now reads `Untitled-11`.
+- Build the name only through `GetUntitledDocumentName` in
+  `env/CFileNameManager`. It returns the bare `STR_NO_TITLE1` resource for a
+  non-positive number, which is what `EditNode::GetSafeId` yields when there
+  is no node, so a document with no number never prints `Untitled-0`.
+- `CAppNodeManager::GetNoNameNumber` hands out the **lowest number no open
+  untitled editor holds**, not the next value of a monotonic sequence.
+  Closing `Untitled-1` therefore frees the name for the next new file, as it
+  does upstream. An editor that already holds a free number keeps it: VS Code
+  never renames an editor that is already open.
+- A document that has a path is named by that path and releases the number it
+  used to hold. `IsUntitledNumberFree` encodes exactly that, and is the only
+  place the "taken" rule lives.
+
 ## Verification
 
 - Cover logical-line behavior independently from layout behavior when possible.

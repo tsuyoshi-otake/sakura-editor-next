@@ -23,15 +23,39 @@ the marker normalizes it back into the EDIT while filtering receives the text
 after the marker. When Quick Open exists, replace this boundary with real
 provider switching rather than retaining the normalization behavior.
 
+**Divergence (#264):** because the provider is locked, the caret is *pinned*
+after the `>` marker -- `Home`, `Shift+Home`, a click in the marker's cell, and
+a drag that starts left of it all clamp the selection to offset one. Upstream
+lets the caret reach offset zero precisely so the user can delete `>` and switch
+providers; here that would only produce the normalization loop above, which
+appended a stray marker on every edit before the clamp existed. Remove the clamp
+in the same change that adds provider switching, not before. The clamp runs
+*after* `DefSubclassProc`, because `PreTranslateMessage` sees a key before the
+EDIT has moved the caret and a mouse-placed caret raises no `EN_CHANGE`.
+
 ## Single-line input projection
 
 The 26-DIP input token describes the painted Quick Input frame, not the native
-single-line EDIT HWND. USER32 anchors the caret near the top when a single-line
-EDIT is stretched to that full height. Keep the EDIT inset by three DIP above
-and below (and one DIP inside each horizontal border), while the parent paints
-the complete 26-DIP background and focus frame. Tests must protect both
-rectangles at 96, 120, 144, and 192 DPI; changing only the outer frame does not
-verify caret alignment.
+single-line EDIT HWND. USER32 top-anchors a single-line EDIT's formatting
+rectangle inside a client taller than one text line, and `EM_SETRECT` is
+documented as multiline-only, so a full-height EDIT paints the caret near the
+top no matter what padding the parent reserves.
+
+The fix is not padding. Measure the control font's `TEXTMETRICW::tmHeight`,
+size the EDIT client to exactly that one line, and centre that HWND inside the
+painted frame -- `workbench/controls/CInputBoxGeometry`'s
+`CenterSingleLineEditor` performs that calculation for every workbench input, so
+Quick Input and Search cannot drift apart. `ComputeQuickInputRowGeometry` takes
+the measured line height as its last argument; zero means "not measured yet" and
+falls back to the CSS three-DIP inset, which is the only case that inset still
+describes. Cache the measurement per DPI and re-measure when the font is
+recreated.
+
+Tests must protect both rectangles at 96, 120, 144, and 192 DPI, and must assert
+the *editor* height equals the measured line height. Changing only the outer
+frame, or asserting a symmetric inset around an over-tall EDIT, does not verify
+caret alignment: at 96 DPI a 20px EDIT holding a 13px line measures 3px above
+the caret and 10px below it while every inset assertion still passes (#263).
 
 ## Dismissal and repaint transaction
 

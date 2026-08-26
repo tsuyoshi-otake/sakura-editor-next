@@ -100,6 +100,7 @@ public:
 	//ウィンドウハンドル → ノード　変換
 	EditNode* GetEditNode( HWND hWnd );							/* 編集ウィンドウ情報を取得する */
 	int GetNoNameNumber(HWND hWnd);
+	static bool IsUntitledNumberFree(int nNumber, const EditNode* pExclude);
 
 	//タブ
 	bool ReorderTab( HWND hSrcTab, HWND hDstTab );				/* タブ移動に伴うウィンドウの並び替え 2007.07.07 genta */

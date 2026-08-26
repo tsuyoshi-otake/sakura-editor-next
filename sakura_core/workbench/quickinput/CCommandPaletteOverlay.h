@@ -8,6 +8,7 @@
 */
 #pragma once
 
+#include "workbench/controls/CInputBoxGeometry.h"
 #include "workbench/controls/COverlayScrollbar.h"
 #include "theme/CThemeService.h"
 
@@ -70,25 +71,24 @@ struct QuickInputRowGeometry {
 		/ USER_DEFAULT_SCREEN_DPI;
 }
 
+//! `lineHeight` is the measured `TEXTMETRICW::tmHeight` of the input font; pass
+//! zero before the font has been measured and the CSS padding is used instead.
+//! The centering itself belongs to `workbench::controls::CenterSingleLineEditor`,
+//! which the Search widget shares, mirroring the single upstream `InputBox`.
 [[nodiscard]] constexpr QuickInputRowGeometry ComputeQuickInputRowGeometry(
 	int x,
 	int y,
 	int width,
-	int dpi) noexcept
+	int dpi,
+	int lineHeight) noexcept
 {
 	const int frameWidth = (std::max)(0, width);
 	const int frameHeight = ScaleQuickInputDip(26, dpi);
-	const int horizontalInset = (std::min)(ScaleQuickInputDip(1, dpi), frameWidth / 2);
-	const int verticalInset = (std::min)(ScaleQuickInputDip(3, dpi), frameHeight / 2);
 	const RECT frame{ x, y, x + frameWidth, y + frameHeight };
 	return {
 		.frame = frame,
-		.editor = {
-			frame.left + horizontalInset,
-			frame.top + verticalInset,
-			frame.right - horizontalInset,
-			frame.bottom - verticalInset,
-		},
+		.editor = controls::CenterSingleLineEditor(frame, lineHeight,
+			ScaleQuickInputDip(1, dpi), frameHeight - 2 * ScaleQuickInputDip(3, dpi)),
 	};
 }
 
@@ -216,12 +216,16 @@ private:
 	static LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) noexcept;
 	static LRESULT CALLBACK ListSubclassProc(HWND window, UINT message, WPARAM wParam,
 		LPARAM lParam, UINT_PTR id, DWORD_PTR data) noexcept;
+	static LRESULT CALLBACK InputSubclassProc(HWND window, UINT message, WPARAM wParam,
+		LPARAM lParam, UINT_PTR id, DWORD_PTR data) noexcept;
 	LRESULT HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) noexcept;
 
 	void Layout(int width, int height) noexcept;
 	void PopulateList(std::wstring_view preferredSelectionId = {}) noexcept;
 	void UpdateSearch() noexcept;
 	void NormalizeCommandPaletteInput() noexcept;
+	void PinCommandPaletteCaret() noexcept;
+	void MeasureInputLineHeight() noexcept;
 	void MoveSelection(int direction) noexcept;
 	void NotifySelectionChanged() noexcept;
 	[[nodiscard]] std::wstring SelectedItemId() const;
@@ -256,6 +260,9 @@ private:
 	HWND m_empty = nullptr;
 	HWND m_previousFocus = nullptr;
 	RECT m_inputFrame{};
+	//! Measured TEXTMETRICW::tmHeight of the input font, cached per DPI.
+	int m_inputLineHeight = 0;
+	UINT m_inputLineHeightDpi = 0;
 	controls::COverlayScrollbar m_overlayScrollbar;
 	std::vector<int> m_rowPixelOffsets;
 	UINT m_rowPixelOffsetsDpi = 0;

@@ -1164,6 +1164,9 @@
 	<ClInclude Include="..\sakura_core\workbench\win32\BuiltinPartProjection.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\controls\CInputBoxGeometry.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\controls\COverlayScrollbar.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
@@ -3067,6 +3070,9 @@
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\win32\BuiltinPartProjection.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\controls\CInputBoxGeometry.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\controls\COverlayScrollbar.cpp">

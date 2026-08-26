@@ -21,6 +21,19 @@ Sakura INI serialization remains behind an adapter under `env/` until migrated.
 - Parse errors never cause the original configuration file to be overwritten;
   retain the last valid model and publish a diagnostic.
 
+## Shipped Caption Defaults
+
+- The window and tab caption defaults in `CShareData.cpp` and the migrations
+  in `CShareData_IO.cpp` are one unit: changing a shipped default without
+  adding its migration leaves every existing profile on the old string.
+- Migration compares the **whole** previous shipped default and rewrites only
+  an exact match, so a caption the user edited is left alone. Keep each
+  superseded default as its own named constant rather than editing the
+  current one in place.
+- `CShareDataTest.InitShareData001` asserts the shipped defaults verbatim.
+  A default that changes without that test changing is a defect in one of
+  the two.
+
 ## Workspace Context
 
 - Workspace identity is explicit: `EMPTY` has no root, `FOLDER` has one folder

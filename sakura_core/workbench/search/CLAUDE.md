@@ -29,11 +29,24 @@ and `searchWidget.ts`, read as source rather than inferred from a screenshot.
   `Use Regular Expression`, and the replace row is opened by the same chevron
   that upstream puts to the left of the two boxes.
 - The painted 26-DIP Monaco input box and its native single-line `EDIT` child
-  are separate rectangles. Win32 does not vertically center the caret when the
-  child is stretched to the painted box height, so the child keeps the CSS
-  vertical padding on both edges. Geometry tests must assert equal top/bottom
-  inset at every supported DPI; matching only the outer box leaves the caret
-  visibly top-aligned.
+  are separate rectangles, and centring the *child* is not enough. USER32
+  top-anchors a single-line EDIT's text inside a client taller than one line, so
+  a 20px EDIT holding a 13px line puts 3px above the caret and 10px below it
+  (#263). The child is therefore sized to the measured
+  `TEXTMETRICW::tmHeight` and centred through the shared
+  `workbench/controls/CInputBoxGeometry` helper, the same one Quick Input uses;
+  the CSS vertical padding survives only as the fallback for a font that has not
+  been measured yet. Geometry tests must assert the child's height equals the
+  measured line height at every supported DPI -- an equal top/bottom inset alone
+  passes while the caret is visibly high. `PaintBox` draws the placeholder in
+  that same editor rectangle, or the text jumps on the first keystroke.
+- Both boxes are painted from `input.background` and `input.border`, which is
+  what `InputBox`'s `defaultInputBoxStyles` resolve to upstream; the focused
+  frame is `focusBorder`, which `accent` resolves from (#262). `raised`
+  (`list.hoverBackground`) and `border` (`sideBar.border`) belong to the result
+  rows and the Part separators, not to a text field. `PaintBox` and
+  `WM_CTLCOLOREDIT` must name the same role, or the native EDIT -- inset one
+  pixel inside the painted box -- shows as a different colour within it.
 - Results are grouped by file, one header row per file with its match rows below,
   and a row is activated by a single click.
 - `Replace All`, per-file replace, and single-match replace are the three replace

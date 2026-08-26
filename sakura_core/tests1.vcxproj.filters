@@ -165,6 +165,9 @@
     <ClCompile Include="..\src\test\cpp\tests1\workbench\MarkerPositionAdapterTest.cpp">
       <Filter>Test Files\workbench</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\InputBoxGeometryTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\workbench\MarkerServiceTest.cpp">
       <Filter>Test Files\workbench</Filter>
     </ClCompile>
@@ -795,6 +798,9 @@
     <ClCompile Include="..\src\test\cpp\tests1\test-csharedata.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\env\UntitledDocumentNameTest.cpp">
+		<Filter>Test Files\env</Filter>
+	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\env\WorkbenchSettingsTest.cpp">
 		<Filter>Test Files\env</Filter>
 	</ClCompile>

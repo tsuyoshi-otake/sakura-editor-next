@@ -650,6 +650,7 @@
 	<ClInclude Include="..\sakura_core\workbench\layout\WorkbenchLayoutStateTypes.h" />
 	<ClInclude Include="..\sakura_core\workbench\keybinding\KeybindingChord.h" />
 	<ClInclude Include="..\sakura_core\workbench\win32\BuiltinPartProjection.h" />
+	<ClInclude Include="..\sakura_core\workbench\controls\CInputBoxGeometry.h" />
 	<ClInclude Include="..\sakura_core\workbench\controls\COverlayScrollbar.h" />
 	<ClInclude Include="..\sakura_core\workbench\win32\ProblemsOutputPanelProjection.h" />
 	<ClInclude Include="..\sakura_core\workbench\activity\ActivityBarEntryProjection.h" />
@@ -1321,6 +1322,7 @@
 	<ClCompile Include="..\sakura_core\workbench\rendering\FrameFaultModel.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\keybinding\KeybindingChord.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\win32\BuiltinPartProjection.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\controls\CInputBoxGeometry.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\controls\COverlayScrollbar.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\win32\ProblemsOutputPanelProjection.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\activity\ActivityBarEntryProjection.cpp" />

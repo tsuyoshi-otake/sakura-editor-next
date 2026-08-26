@@ -3382,8 +3382,8 @@ BEGIN
     STR_ERR_CTRLMTX2        "CreateEvent() failed.\n Will exit app."
     STR_ERR_CTRLMTX3        "Failed to create window\nCant start it up."
     STR_ERR_CTRLMTX4        "SetEvent() failed.\nWeill exit app."
-    STR_NO_TITLE1           "(No Title)"
-    STR_NO_TITLE2           "No Title"
+    STR_NO_TITLE1           "Untitled"
+    STR_NO_TITLE2           "Untitled"
 END
 
 STRINGTABLE

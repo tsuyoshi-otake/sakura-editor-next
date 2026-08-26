@@ -10,6 +10,9 @@
 
 #include "workbench/quickinput/CCommandPaletteOverlay.h"
 
+#include "workbench/controls/CInputBoxGeometry.h"
+
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -99,13 +102,16 @@ TEST(CommandPaletteOverlayPureTest, GeometryStaysInsideNarrowClientsAtSupportedD
 	}
 }
 
-TEST(CommandPaletteOverlayPureTest, SingleLineEditorIsCenteredInsideThePaintedInputFrame)
+//! The geometry's "the font has not been measured yet" input.
+constexpr int kUnmeasuredLineHeight = 0;
+
+TEST(CommandPaletteOverlayPureTest, UnmeasuredFontFallsBackToTheCssInputPadding)
 {
 	using namespace workbench::quickinput;
 	for (const int dpi : { 96, 120, 144, 192 }) {
 		const auto geometry = ComputeQuickInputRowGeometry(
 			ScaleQuickInputDip(6, dpi), ScaleQuickInputDip(6, dpi),
-			ScaleQuickInputDip(300, dpi), dpi);
+			ScaleQuickInputDip(300, dpi), dpi, kUnmeasuredLineHeight);
 		EXPECT_EQ(ScaleQuickInputDip(26, dpi),
 			geometry.frame.bottom - geometry.frame.top);
 		EXPECT_EQ(ScaleQuickInputDip(3, dpi),
@@ -117,6 +123,37 @@ TEST(CommandPaletteOverlayPureTest, SingleLineEditorIsCenteredInsideThePaintedIn
 		EXPECT_EQ(geometry.editor.left - geometry.frame.left,
 			geometry.frame.right - geometry.editor.right);
 	}
+}
+
+TEST(CommandPaletteOverlayPureTest, MeasuredLineHeightCentersTheCaretLineNotJustTheHwnd)
+{
+	using namespace workbench::quickinput;
+	// Centering the HWND alone leaves the caret high: USER top-anchors a
+	// single-line EDIT's text inside a client taller than one line, so a 20px
+	// control holding a 13px line puts 3px above the caret and 10px below it.
+	for (const int dpi : { 96, 120, 144, 192 }) {
+		const int lineHeight = ScaleQuickInputDip(13, dpi);
+		const auto geometry = ComputeQuickInputRowGeometry(
+			ScaleQuickInputDip(6, dpi), ScaleQuickInputDip(6, dpi),
+			ScaleQuickInputDip(300, dpi), dpi, lineHeight);
+		const LONG above = geometry.editor.top - geometry.frame.top;
+		const LONG below = geometry.frame.bottom - geometry.editor.bottom;
+		EXPECT_EQ(lineHeight, geometry.editor.bottom - geometry.editor.top);
+		EXPECT_EQ((ScaleQuickInputDip(26, dpi) - lineHeight) / 2, above);
+		EXPECT_LE(std::abs(above - below), 1);
+		EXPECT_EQ(ScaleQuickInputDip(1, dpi),
+			geometry.editor.left - geometry.frame.left);
+		EXPECT_EQ(geometry.editor.left - geometry.frame.left,
+			geometry.frame.right - geometry.editor.right);
+	}
+}
+
+TEST(CommandPaletteOverlayPureTest, LineHeightTallerThanTheFrameIsClampedToTheFrame)
+{
+	using namespace workbench::quickinput;
+	const auto geometry = ComputeQuickInputRowGeometry(0, 0, 600, 96, 999);
+	EXPECT_EQ(geometry.frame.top, geometry.editor.top);
+	EXPECT_EQ(geometry.frame.bottom, geometry.editor.bottom);
 }
 
 TEST(CommandPaletteOverlayPureTest, MousePressesDismissOnlyFromOutsideQuickInput)
@@ -310,6 +347,16 @@ TEST_F(CommandPaletteOverlayTest, MissingSelectionCallbackKeepsCommandPaletteSid
 	EXPECT_TRUE(m_overlay.IsVisible());
 }
 
+//! The height of one text line in the input's own font -- the height USER32
+//! actually paints the caret at, and therefore the height the EDIT must have.
+[[nodiscard]] int MeasuredInputLineHeight(HWND input)
+{
+	const auto font = reinterpret_cast<HFONT>(::SendMessageW(input, WM_GETFONT, 0, 0));
+	const int measured = workbench::controls::MeasureTextLineHeight(input, font);
+	EXPECT_GT(measured, 0) << "the input font could not be measured";
+	return measured;
+}
+
 TEST_F(CommandPaletteOverlayTest, UsesOneLineInputAndSharedOverlayScrollbar)
 {
 	ASSERT_TRUE(m_overlay.Show(ManyTestItems(), L"item-0"));
@@ -320,12 +367,20 @@ TEST_F(CommandPaletteOverlayTest, UsesOneLineInputAndSharedOverlayScrollbar)
 	const int dpi = static_cast<int>(::GetDpiForWindow(OverlayWindow()));
 	const int effectiveDpi = dpi == 0 ? 96 : dpi;
 	const int expectedFrameHeight = ::MulDiv(26, effectiveDpi, 96);
-	const int expectedVerticalInset = ::MulDiv(3, effectiveDpi, 96);
-	const int expectedHeight = expectedFrameHeight - expectedVerticalInset * 2;
-	EXPECT_EQ(expectedHeight, inputHeight);
+	// USER32 top-anchors a single-line EDIT's text inside a client taller than
+	// one line, so the EDIT is one measured line tall and centred in the painted
+	// frame. Asserting a symmetric inset around an over-tall control passes
+	// while the caret sits visibly high (#263).
+	const int lineHeight = MeasuredInputLineHeight(InputWindow());
+	EXPECT_EQ(lineHeight, inputHeight);
+	EXPECT_LE(inputHeight, expectedFrameHeight);
 	::MapWindowPoints(nullptr, OverlayWindow(),
 		reinterpret_cast<POINT*>(&inputRect), 2);
-	EXPECT_EQ(::MulDiv(6, effectiveDpi, 96) + expectedVerticalInset, inputRect.top);
+	const LONG frameTop = ::MulDiv(6, effectiveDpi, 96);
+	const LONG above = inputRect.top - frameTop;
+	const LONG below = frameTop + expectedFrameHeight - inputRect.bottom;
+	EXPECT_EQ((expectedFrameHeight - lineHeight) / 2, above);
+	EXPECT_LE(std::abs(above - below), 1);
 
 	RECT listRect{};
 	ASSERT_TRUE(::GetWindowRect(ListWindow(), &listRect));
@@ -548,9 +603,15 @@ TEST_F(CommandPaletteOverlayTest, InputModeUsesTheSharedNonModalTerminal)
 	ASSERT_TRUE(::GetWindowRect(InputWindow(), &inputRect));
 	const int dpi = static_cast<int>(::GetDpiForWindow(OverlayWindow()));
 	const int effectiveDpi = dpi == 0 ? 96 : dpi;
-	const int expectedVerticalInset = ::MulDiv(3, effectiveDpi, 96);
-	EXPECT_EQ(promptRect.top + expectedVerticalInset, inputRect.top);
-	EXPECT_EQ(promptRect.bottom - expectedVerticalInset, inputRect.bottom);
+	// Same one-measured-line rule as the filtering input above (#263): the
+	// prompt spans the painted 26-DIP frame, the EDIT is centred inside it.
+	const int lineHeight = MeasuredInputLineHeight(InputWindow());
+	const LONG frameHeight = promptRect.bottom - promptRect.top;
+	const LONG above = inputRect.top - promptRect.top;
+	const LONG below = promptRect.bottom - inputRect.bottom;
+	EXPECT_EQ(lineHeight, inputRect.bottom - inputRect.top);
+	EXPECT_EQ((frameHeight - lineHeight) / 2, above);
+	EXPECT_LE(std::abs(above - below), 1);
 	EXPECT_LT(promptRect.right, inputRect.left);
 	RECT listRect{};
 	ASSERT_TRUE(::GetWindowRect(ListWindow(), &listRect));

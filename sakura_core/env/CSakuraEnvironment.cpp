@@ -99,7 +99,15 @@ void CSakuraEnvironment::ExpandParameter(const wchar_t* pszSource, wchar_t* pszB
 	// Apr. 03, 2003 genta 固定文字列をまとめる
 	const std::wstring	PRINT_PREVIEW_ONLY		= LS( STR_PREVIEW_ONLY );	//L"(印刷プレビューでのみ使用できます)";
 	const auto			PRINT_PREVIEW_ONLY_LEN	= int(PRINT_PREVIEW_ONLY.length());
-	const std::wstring	NO_TITLE				= LS( STR_NO_TITLE1 );	//L"(無題)";
+	//	VS Code's ${activeEditorShort} for an untitled editor is the editor's own
+	//	name -- `Untitled-1` -- because the name is the basename of its
+	//	`untitled:Untitled-<n>` resource URI. The number therefore belongs to $f
+	//	and its siblings, not only to $n, which keeps its own meaning for a
+	//	caption that wants the number alone.
+	const std::wstring	NO_TITLE				= GetUntitledDocumentName(
+		EditNode::GetSafeId( GetMainWindow() != nullptr
+			? CAppNodeManager::getInstance()->GetEditNode( GetMainWindow()->GetHwnd() )
+			: nullptr ) );
 	const auto			NO_TITLE_LEN			= int(NO_TITLE.length());
 	const std::wstring	NOT_SAVED				= LS( STR_NOT_SAVED );	//L"(保存されていません)";
 	const auto			NOT_SAVED_LEN			= int(NOT_SAVED.length());

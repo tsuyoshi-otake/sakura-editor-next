@@ -12,6 +12,7 @@
 #define SAKURA_CFILENAMEMANAGER_2B89B426_470E_40D6_B62E_5321E383ECD6_H_
 #pragma once
 
+#include <string>
 #include <string_view>
 
 #include "config/maxdata.h"
@@ -19,6 +20,19 @@
 #include "util/design_template.h"
 
 struct EditInfo;
+
+/*!
+	VS Code's untitled editor name.
+
+	Upstream allocates the editor's own resource URI, `untitled:Untitled-<n>`,
+	and displays that URI's basename, so the number is part of the name and the
+	name is never localized -- a Japanese VS Code shows `Untitled-1` too.
+
+	@param nUntitledNumber `EditNode::m_nId`. A non-positive value means the
+		caller has no node to name (a tab that has not been told its document
+		yet, a lock message about another window), and gets the bare name.
+*/
+[[nodiscard]] std::wstring GetUntitledDocumentName(int nUntitledNumber);
 
 //!ファイル名管理
 class CFileNameManager : public TSakuraSingleton<CFileNameManager>, private env::ShareDataClient {

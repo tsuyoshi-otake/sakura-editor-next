@@ -22,6 +22,15 @@
 #include "util/window.h"
 #include "CSelectLang.h"
 
+#include <format>
+
+std::wstring GetUntitledDocumentName(int nUntitledNumber)
+{
+	const std::wstring name = LS(STR_NO_TITLE1);
+	if (nUntitledNumber <= 0) return name;
+	return std::format(L"{}-{}", name, nUntitledNumber);
+}
+
 // -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
 //                      ファイル名管理                         //
 // -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
@@ -412,11 +421,7 @@ bool CFileNameManager::GetMenuFullLabel(
 			pszName = szFileName;
 		}
 	}else{
-		if( nId == -1 ){
-			::swprintf_s(szFileName, LS(STR_NO_TITLE1));
-		}else{
-			::swprintf_s(szFileName, L"%s%d", LS(STR_NO_TITLE1), nId);
-		}
+		::wcsncpy_s(szFileName, GetUntitledDocumentName(nId).c_str(), _TRUNCATE);
 		pszName = szFileName;
 	}
 	const WCHAR* pszCharset = L"";

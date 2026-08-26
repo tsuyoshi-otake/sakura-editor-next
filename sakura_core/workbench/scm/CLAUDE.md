@@ -692,6 +692,14 @@ and working-tree commands.
 - `handleCommitError`'s order is preserved: git's own stderr is matched first, and
   only then is git asked whether `user.name` / `user.email` are configured, so a
   failure that merely mentions a name cannot be reported as a missing identity.
+- The box is a text input, so it is painted from `input.background` and
+  `input.border`, matching upstream's `.scm-editor-container` and the Command
+  Palette's input (#262). `raised` (`list.hoverBackground`) and `border`
+  (`sideBar.border`) belong to the rows and separators around it and must not
+  leak back in. Three places have to name the same role or #261's padding band
+  returns in a different colour: `PaintInputFrame`'s fill, the input subclass's
+  `WM_PAINT` fill, and `WM_CTLCOLOREDIT`. The focused frame stays `accent`,
+  which resolves from `focusBorder`.
 
 ### Commit divergences
 
@@ -744,10 +752,6 @@ and working-tree commands.
   commit message` becomes the caption and the placeholder — the half that names
   the branch being committed on, `Message (commit on "<branch>")` — stays in the
   field. Both are degraded presentations of the same two strings.
-- **The input box's background and border use the `raised` and `border` palette
-  tokens.** VS Code styles it from `input.background` / `input.border`, which
-  this theme palette does not publish. The nearest published tokens are used
-  rather than a hard-coded colour that no theme could change.
 - **One input line has the same 26-DIP border box as Search.** The parent owns
   that complete background and uses the accent token while the multiline EDIT
   has focus. The EDIT is inset one DIP from the frame; its formatting rectangle

@@ -420,11 +420,11 @@ MATCHER(IsInitializedCommonSettingWindow, "Checks if CommonSetting_Window is pro
 	// folder's own name, and never a path. Active and inactive are the same
 	// string, so this asserts one literal twice rather than two variants.
 	EXPECT_THAT(sWindow.m_szWindowCaptionActive, StrEq(
-		L"${U?● $}${w?$h$:アウトプット$:$f$n$}${W? - $W$} -"
+		L"${U?● $}${w?$h$:アウトプット$:$f$}${W? - $W$} -"
 		L" $A${R?  (ビューモード)$:  (上書き禁止)$}${M?  【キーマクロの記録中】$}"));
 
 	EXPECT_THAT(sWindow.m_szWindowCaptionInactive, StrEq(
-		L"${U?● $}${w?$h$:アウトプット$:$f$n$}${W? - $W$} -"
+		L"${U?● $}${w?$h$:アウトプット$:$f$}${W? - $W$} -"
 		L" $A${R?  (ビューモード)$:  (上書き禁止)$}${M?  【キーマクロの記録中】$}"));
 
 	return true;
@@ -437,7 +437,7 @@ MATCHER_P2(IsInitializedCommonSettingTabBar, lfIconTitle, nIconPointSize, "Check
 	EXPECT_THAT(sTabBar.m_bDispTabWnd, IsTrue());
 	EXPECT_THAT(sTabBar.m_bDispTabWndMultiWin, IsFalse());
 
-	EXPECT_THAT(sTabBar.m_szTabWndCaption, StrEq(L"${w?【Grep】$h$:【アウトプット】$:$f$n$}${U?(更新)$}${R?(ビューモード)$:(上書き禁止)$}${M?【キーマクロの記録中】$}"));	// 👈バグ。 STR_ERR_CSHAREDATA10を更新して使うべき。
+	EXPECT_THAT(sTabBar.m_szTabWndCaption, StrEq(L"${w?【Grep】$h$:【アウトプット】$:$f$}${U?(更新)$}${R?(ビューモード)$:(上書き禁止)$}${M?【キーマクロの記録中】$}"));	// 👈バグ。 STR_ERR_CSHAREDATA10を更新して使うべき。
 
 	EXPECT_THAT(sTabBar.m_bSameTabWidth, IsFalse());
 	EXPECT_THAT(sTabBar.m_bDispTabIcon, IsFalse());

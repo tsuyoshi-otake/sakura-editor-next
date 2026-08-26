@@ -3093,7 +3093,8 @@ void CTabWnd::GetTabName( EditNode* pEditNode, BOOL bFull, BOOL bDupamp, LPWSTR 
 		}
 		else
 		{
-			::wcsncpy_s(pszText, nLen, LS(STR_NO_TITLE1), _TRUNCATE);
+			::wcsncpy_s(pszText, nLen,
+				GetUntitledDocumentName( EditNode::GetSafeId( pEditNode ) ).c_str(), _TRUNCATE);
 		}
 	}
 	else

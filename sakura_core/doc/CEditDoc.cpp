@@ -896,7 +896,7 @@ BOOL CEditDoc::OnFileClose(bool bGrepNoConfirm)
 	}
 	if( nullptr == pszTitle ){
 		const EditNode* node = CAppNodeManager::getInstance()->GetEditNode( CEditWnd::getInstance()->GetHwnd() );
-		auto_sprintf( szGrepTitle, L"%s%d", LS(STR_NO_TITLE1), node->m_nId );	//(無題)
+		::wcsncpy_s( szGrepTitle, GetUntitledDocumentName( EditNode::GetSafeId( node ) ).c_str(), _TRUNCATE );
 		pszTitle = szGrepTitle;
 	}
 	/* ウィンドウをアクティブにする */

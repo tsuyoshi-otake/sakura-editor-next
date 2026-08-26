@@ -499,16 +499,46 @@ EditNode* CAppNodeManager::GetEditNode( HWND hWnd )
 //! 無題番号取得
 int CAppNodeManager::GetNoNameNumber( HWND hWnd )
 {
-	DLLSHAREDATA* pShare = &GetDllShareData();
 	EditNode* editNode = GetEditNode( hWnd );
-	if( editNode ){
-		if( -1 == editNode->m_nId ){
-			pShare->m_sNodes.m_nNonameSequences++;
-			editNode->m_nId = pShare->m_sNodes.m_nNonameSequences;
-		}
+	if( nullptr == editNode ){
+		return -1;
+	}
+	//	VS Code takes the lowest number no open untitled editor is using:
+	//		let counter = 1;
+	//		do { resource = URI.from({scheme: untitled, path: `Untitled-${counter}`}); counter++; }
+	//		while (this.get(resource));
+	//	so closing Untitled-1 frees the name for the next new file. A monotonic
+	//	sequence would hand out Untitled-2 there instead. An editor that already
+	//	holds a free number keeps it: upstream never renames an open editor.
+	if( 0 < editNode->m_nId && IsUntitledNumberFree( editNode->m_nId, editNode ) ){
 		return editNode->m_nId;
 	}
-	return -1;
+	int nNumber = 1;
+	while( !IsUntitledNumberFree( nNumber, editNode ) ){
+		nNumber++;
+	}
+	editNode->m_nId = nNumber;
+	return editNode->m_nId;
+}
+
+/*!	その番号を名乗っている「無題」ウィンドウが他にないか
+
+	保存済みのウィンドウは数えない。VS Code は untitled エディタを保存した時点で
+	その名前を解放するので、パスを持つノードが握ったままの番号は再利用してよい。
+*/
+bool CAppNodeManager::IsUntitledNumberFree( int nNumber, const EditNode* pExclude )
+{
+	DLLSHAREDATA* pShare = &GetDllShareData();
+
+	for( int i = 0; i < pShare->m_sNodes.m_nEditArrNum; i++ )
+	{
+		const EditNode& node = pShare->m_sNodes.m_pEditArr[i];
+		if( &node == pExclude ) continue;
+		if( node.m_nId != nNumber ) continue;
+		if( node.m_szFilePath[0] != 0 ) continue;
+		return false;
+	}
+	return true;
 }
 
 /** 現在開いている編集ウィンドウの配列を返す

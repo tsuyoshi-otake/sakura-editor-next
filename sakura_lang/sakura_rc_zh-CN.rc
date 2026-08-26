@@ -3298,8 +3298,8 @@ BEGIN
     STR_ERR_CTRLMTX2        "CreateEvent()失败。\n程序即将退出。"
     STR_ERR_CTRLMTX3        "创建窗口失败\n无法启动应用程序。"
     STR_ERR_CTRLMTX4        "SetEvent()失败。\n程序即将退出。"
-    STR_NO_TITLE1           "(无标题)"
-    STR_NO_TITLE2           "未命名"
+    STR_NO_TITLE1           "Untitled"
+    STR_NO_TITLE2           "Untitled"
 END
 
 STRINGTABLE

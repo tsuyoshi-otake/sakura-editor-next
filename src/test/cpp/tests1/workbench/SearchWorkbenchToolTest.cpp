@@ -8,9 +8,16 @@ SPDX-License-Identifier: Zlib
 
 #include <gtest/gtest.h>
 
+#include <cstdlib>
+#include <utility>
+
 #include "workbench/search/CSearchWorkbenchTool.h"
 
 namespace {
+
+//! The geometry's "the font has not been measured yet" input, which selects the
+//! CSS vertical padding as the fallback line height.
+constexpr int kUnmeasuredLineHeight = 0;
 
 int ScaleDip(int dip, unsigned int dpi)
 {
@@ -28,7 +35,7 @@ void ExpectRect(const RECT& expected, const RECT& actual)
 TEST(SearchWorkbenchToolGeometry, MatchesVsCodeSearchWidgetAtDefaultDpi)
 {
 	const auto geometry = workbench::search::CalculateSearchWidgetGeometry(
-		RECT{ 0, 0, 480, 320 }, 96, false);
+		RECT{ 0, 0, 480, 320 }, 96, false, kUnmeasuredLineHeight);
 
 	ExpectRect(RECT{ 2, 0, 468, 38 }, geometry.container);
 	ExpectRect(RECT{ 20, 6, 468, 32 }, geometry.queryBox);
@@ -44,7 +51,7 @@ TEST(SearchWorkbenchToolGeometry, MatchesVsCodeSearchWidgetAtDefaultDpi)
 TEST(SearchWorkbenchToolGeometry, ReplaceRowUsesCssMarginsAndCentersNativeEdit)
 {
 	const auto geometry = workbench::search::CalculateSearchWidgetGeometry(
-		RECT{ 0, 0, 480, 320 }, 96, true);
+		RECT{ 0, 0, 480, 320 }, 96, true, kUnmeasuredLineHeight);
 
 	ExpectRect(RECT{ 20, 6, 468, 32 }, geometry.queryBox);
 	ExpectRect(RECT{ 20, 38, 440, 64 }, geometry.replaceBox);
@@ -66,7 +73,7 @@ TEST(SearchWorkbenchToolGeometry, PreservesCssRelationshipsAcrossSupportedDpi)
 	constexpr RECT client{ 10, 20, 810, 620 };
 	for (const unsigned int dpi : { 96u, 120u, 144u, 192u }) {
 		const auto geometry = workbench::search::CalculateSearchWidgetGeometry(
-			client, dpi, true);
+			client, dpi, true, kUnmeasuredLineHeight);
 		const int inputHeight = ScaleDip(26, dpi);
 
 		EXPECT_EQ(client.left + ScaleDip(2, dpi), geometry.container.left);
@@ -89,10 +96,61 @@ TEST(SearchWorkbenchToolGeometry, PreservesCssRelationshipsAcrossSupportedDpi)
 	}
 }
 
+TEST(SearchWorkbenchToolGeometry, MeasuredLineHeightCentersTheCaretLineNotJustTheHwnd)
+{
+	// The HWND being centered is not enough: a single-line EDIT top-anchors its
+	// text inside a taller client, so a 20px control holding a 13px line leaves
+	// 3px above the caret and 10px below it.  Sizing the control to the measured
+	// line is what actually centers the text the user sees.
+	constexpr int kLineHeight = 13;
+	const auto geometry = workbench::search::CalculateSearchWidgetGeometry(
+		RECT{ 0, 0, 480, 320 }, 96, true, kLineHeight);
+
+	EXPECT_EQ(kLineHeight, geometry.queryEdit.bottom - geometry.queryEdit.top);
+	EXPECT_EQ(kLineHeight, geometry.replaceEdit.bottom - geometry.replaceEdit.top);
+	for (const auto& [box, edit] : {
+			std::pair{ geometry.queryBox, geometry.queryEdit },
+			std::pair{ geometry.replaceBox, geometry.replaceEdit } }) {
+		const LONG above = edit.top - box.top;
+		const LONG below = box.bottom - edit.bottom;
+		EXPECT_EQ((box.bottom - box.top - kLineHeight) / 2, above);
+		EXPECT_LE(std::abs(above - below), 1);
+	}
+}
+
+TEST(SearchWorkbenchToolGeometry, MeasuredLineHeightStaysCenteredAcrossSupportedDpi)
+{
+	constexpr RECT client{ 10, 20, 810, 620 };
+	for (const unsigned int dpi : { 96u, 120u, 144u, 192u }) {
+		const int lineHeight = ScaleDip(13, dpi);
+		const auto geometry = workbench::search::CalculateSearchWidgetGeometry(
+			client, dpi, true, lineHeight);
+
+		EXPECT_EQ(lineHeight, geometry.queryEdit.bottom - geometry.queryEdit.top);
+		EXPECT_EQ(lineHeight, geometry.replaceEdit.bottom - geometry.replaceEdit.top);
+		EXPECT_LE(std::abs((geometry.queryEdit.top - geometry.queryBox.top)
+			- (geometry.queryBox.bottom - geometry.queryEdit.bottom)), 1);
+		// The horizontal contract must survive the vertical change.
+		EXPECT_EQ(ScaleDip(1, dpi), geometry.queryEdit.left - geometry.queryBox.left);
+		EXPECT_LE(geometry.queryEdit.right, geometry.queryBox.right);
+	}
+}
+
+TEST(SearchWorkbenchToolGeometry, LineHeightTallerThanTheBoxIsClampedToTheBox)
+{
+	const auto geometry = workbench::search::CalculateSearchWidgetGeometry(
+		RECT{ 0, 0, 480, 320 }, 96, true, 999);
+
+	EXPECT_EQ(geometry.queryBox.top, geometry.queryEdit.top);
+	EXPECT_EQ(geometry.queryBox.bottom, geometry.queryEdit.bottom);
+	EXPECT_EQ(geometry.replaceBox.top, geometry.replaceEdit.top);
+	EXPECT_EQ(geometry.replaceBox.bottom, geometry.replaceEdit.bottom);
+}
+
 TEST(SearchWorkbenchToolGeometry, ClampsNarrowClientWithoutNegativeEditBounds)
 {
 	const auto geometry = workbench::search::CalculateSearchWidgetGeometry(
-		RECT{ 0, 0, 32, 100 }, 192, true);
+		RECT{ 0, 0, 32, 100 }, 192, true, kUnmeasuredLineHeight);
 
 	EXPECT_LE(geometry.container.left, geometry.container.right);
 	EXPECT_LE(geometry.queryEdit.left, geometry.queryEdit.right);

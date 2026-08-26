@@ -665,6 +665,19 @@ void CShareData_IO::ShareData_IO_Common( CDataProfile& cProfile )
 	cProfile.IOProfileData( pszSecName, L"bDispTabWnd"			, common.m_sTabBar.m_bDispTabWnd );	//タブウインドウ	//@@@ 2003.05.31 MIK
 	cProfile.IOProfileData( pszSecName, L"bDispTabWndMultiWin"	, common.m_sTabBar.m_bDispTabWndMultiWin );	//タブウインドウ	//@@@ 2003.05.31 MIK
 	cProfile.IOProfileData(pszSecName, L"szTabWndCaption", StringBufferW(common.m_sTabBar.m_szTabWndCaption));	//@@@ 2003.06.13 MIK
+	if( cProfile.IsReadingMode() ){
+		//	The tab caption follows the window caption: $f now expands to the
+		//	untitled editor's whole VS Code name, `Untitled-1`, so the trailing $n
+		//	the shipped default used to carry would repeat the number. Only a
+		//	profile still holding that shipped default is upgraded.
+		constexpr const wchar_t* numberedCaption =
+			L"${w?【Grep】$h$:【アウトプット】$:$f$n$}${U?(更新)$}${R?(ビューモード)$:(上書き禁止)$}${M?【キーマクロの記録中】$}";
+		constexpr const wchar_t* currentCaption =
+			L"${w?【Grep】$h$:【アウトプット】$:$f$}${U?(更新)$}${R?(ビューモード)$:(上書き禁止)$}${M?【キーマクロの記録中】$}";
+		if( 0 == wcscmp( common.m_sTabBar.m_szTabWndCaption, numberedCaption ) ){
+			wcscpy_s( common.m_sTabBar.m_szTabWndCaption, currentCaption );
+		}
+	}
 	cProfile.IOProfileData( pszSecName, L"bSameTabWidth"			, common.m_sTabBar.m_bSameTabWidth );	// 2006.01.28 ryoji タブを等幅にする
 	cProfile.IOProfileData( pszSecName, L"bDispTabIcon"			, common.m_sTabBar.m_bDispTabIcon );	// 2006.01.28 ryoji タブにアイコンを表示する
 	cProfile.IOProfileData(pszSecName, L"bDispTabClose", common.m_sTabBar.m_bDispTabClose );	// 2012.04.14 syat
@@ -779,21 +792,29 @@ void CShareData_IO::ShareData_IO_Common( CDataProfile& cProfile )
 	if( cProfile.IsReadingMode() ){
 		//	The caption format moved to VS Code's window.title layout, which shows the
 		//	file name and the opened folder's name rather than $N's abbreviated full
-		//	path. Only a profile still holding the previous shipped default is
-		//	upgraded; a caption the user edited is theirs and is left alone.
+		//	path. $f then absorbed the untitled number -- VS Code names that
+		//	editor `Untitled-1`, so a trailing $n would repeat it -- and the
+		//	shipped default dropped $n. Only a profile still holding one of the
+		//	previously shipped defaults is upgraded; a caption the user edited is
+		//	theirs and is left alone.
 		constexpr const wchar_t* legacyActive =
 			L"${w?$h$:アウトプット$:${I?$f$n$:$N$n$}$}${U?(更新)$} -"
 			L" $A $V ${R?(ビューモード)$:(上書き禁止)$}${M?  【キーマクロの記録中】$}";
 		constexpr const wchar_t* legacyInactive =
 			L"${w?$h$:アウトプット$:$f$n$}${U?(更新)$} -"
 			L" $A $V ${R?(ビューモード)$:(上書き禁止)$}${M?  【キーマクロの記録中】$}";
-		constexpr const wchar_t* currentCaption =
+		constexpr const wchar_t* numberedCaption =
 			L"${U?● $}${w?$h$:アウトプット$:$f$n$}${W? - $W$} -"
 			L" $A${R?  (ビューモード)$:  (上書き禁止)$}${M?  【キーマクロの記録中】$}";
-		if( 0 == wcscmp( common.m_sWindow.m_szWindowCaptionActive, legacyActive ) ){
+		constexpr const wchar_t* currentCaption =
+			L"${U?● $}${w?$h$:アウトプット$:$f$}${W? - $W$} -"
+			L" $A${R?  (ビューモード)$:  (上書き禁止)$}${M?  【キーマクロの記録中】$}";
+		if( 0 == wcscmp( common.m_sWindow.m_szWindowCaptionActive, legacyActive )
+		 || 0 == wcscmp( common.m_sWindow.m_szWindowCaptionActive, numberedCaption ) ){
 			wcscpy_s( common.m_sWindow.m_szWindowCaptionActive, currentCaption );
 		}
-		if( 0 == wcscmp( common.m_sWindow.m_szWindowCaptionInactive, legacyInactive ) ){
+		if( 0 == wcscmp( common.m_sWindow.m_szWindowCaptionInactive, legacyInactive )
+		 || 0 == wcscmp( common.m_sWindow.m_szWindowCaptionInactive, numberedCaption ) ){
 			wcscpy_s( common.m_sWindow.m_szWindowCaptionInactive, currentCaption );
 		}
 	}

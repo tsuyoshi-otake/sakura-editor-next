@@ -9,6 +9,7 @@
 #include "workbench/search/CSearchWorkbenchTool.h"
 
 #include "theme/CThemeService.h"
+#include "workbench/controls/CInputBoxGeometry.h"
 #include "workbench/controls/COverlayScrollbar.h"
 #include "workbench/rendering/CGdiBackBuffer.h"
 #include "workbench/rendering/LatestOnlyMailbox.h"
@@ -65,11 +66,13 @@ constexpr int kToggleReplaceWidthDip = 16;
 //! One inline toggle button inside a box, and the box's own text padding.
 constexpr int kInlineButtonDip = 20;
 constexpr int kInputPaddingLeftDip = 6;
+//! The box's CSS vertical padding.  It is only the fallback line height here:
+//! a single-line Win32 EDIT top-anchors its text inside a taller client, so the
+//! EDIT is sized to one measured text line and centered instead of being
+//! stretched and inset.  `workbench::controls::CenterSingleLineEditor` owns that
+//! rule for every native input box, matching upstream's single `InputBox`.
 constexpr int kInputPaddingVerticalDip = 3;
 //! The native EDIT stays one pixel inside the painted input border horizontally.
-//! Vertically it uses the input box's CSS padding because a single-line Win32
-//! EDIT anchors its caret near the top of a tall child window instead of
-//! centering it like Monaco's input control.
 constexpr int kInputBorderDip = 1;
 //! The inline controls sit two CSS pixels inside the input's right edge.
 constexpr int kInputControlsRightDip = 2;
@@ -117,7 +120,7 @@ constexpr int kBadgeHeightDip = 16;
 }
 
 SearchWidgetGeometry CalculateSearchWidgetGeometryImpl(const RECT& clientRect,
-	unsigned int dpi, bool replaceVisible) noexcept
+	unsigned int dpi, bool replaceVisible, int inputLineHeight) noexcept
 {
 	const auto scaled = [dpi](int dip) noexcept { return Scale(dip, dpi); };
 	const int widgetLeft = clientRect.left + scaled(kWidgetMarginLeftDip);
@@ -154,18 +157,13 @@ SearchWidgetGeometry CalculateSearchWidgetGeometryImpl(const RECT& clientRect,
 
 	const RECT queryCaseToggle = CalculateInlineToggleRect(geometry.queryBox, 3, dpi);
 	const RECT replacePreserveToggle = CalculateInlineToggleRect(geometry.replaceBox, 1, dpi);
-	geometry.queryEdit = geometry.queryBox;
-	geometry.queryEdit.left += scaled(kInputBorderDip);
-	geometry.queryEdit.top += scaled(kInputPaddingVerticalDip);
-	geometry.queryEdit.bottom = std::max(geometry.queryEdit.top,
-		static_cast<LONG>(geometry.queryEdit.bottom - scaled(kInputPaddingVerticalDip)));
+	const int fallbackLineHeight = inputHeight - 2 * scaled(kInputPaddingVerticalDip);
+	geometry.queryEdit = controls::CenterSingleLineEditor(geometry.queryBox,
+		inputLineHeight, scaled(kInputBorderDip), fallbackLineHeight);
 	geometry.queryEdit.right = std::max(geometry.queryEdit.left,
 		static_cast<LONG>(queryCaseToggle.left - scaled(kInputControlsGapDip)));
-	geometry.replaceEdit = geometry.replaceBox;
-	geometry.replaceEdit.left += scaled(kInputBorderDip);
-	geometry.replaceEdit.top += scaled(kInputPaddingVerticalDip);
-	geometry.replaceEdit.bottom = std::max(geometry.replaceEdit.top,
-		static_cast<LONG>(geometry.replaceEdit.bottom - scaled(kInputPaddingVerticalDip)));
+	geometry.replaceEdit = controls::CenterSingleLineEditor(geometry.replaceBox,
+		inputLineHeight, scaled(kInputBorderDip), fallbackLineHeight);
 	geometry.replaceEdit.right = std::max(geometry.replaceEdit.left,
 		static_cast<LONG>(replacePreserveToggle.left - scaled(kInputControlsGapDip)));
 	return geometry;
@@ -308,9 +306,9 @@ bool EnsureClass(HINSTANCE instance);
 } // namespace
 
 SearchWidgetGeometry CalculateSearchWidgetGeometry(const RECT& clientRect,
-	unsigned int dpi, bool replaceVisible) noexcept
+	unsigned int dpi, bool replaceVisible, int inputLineHeight) noexcept
 {
-	return CalculateSearchWidgetGeometryImpl(clientRect, dpi, replaceVisible);
+	return CalculateSearchWidgetGeometryImpl(clientRect, dpi, replaceVisible, inputLineHeight);
 }
 
 struct CSearchWorkbenchTool::Impl {
@@ -326,6 +324,8 @@ struct CSearchWorkbenchTool::Impl {
 	workbench::rendering::FrameNativeSurfacePayloadAdapter nativeSurface;
 	unsigned int dpi{ 96 };
 	theme::CThemeFont font;
+	//! Cached `TEXTMETRICW::tmHeight` for `font`; zero means "not measured yet".
+	mutable int inputLineHeight{};
 	theme::ThemePalette palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
 	SearchViewTexts texts;
 	std::wstring root;
@@ -363,9 +363,20 @@ struct CSearchWorkbenchTool::Impl {
 		return client;
 	}
 
+	//! Measured lazily because painting also needs the geometry, and cheap after
+	//! the first call: the result only changes when the font is recreated, which
+	//! `Layout` signals by clearing the cache.
+	[[nodiscard]] int InputLineHeight() const noexcept
+	{
+		if (inputLineHeight <= 0) {
+			inputLineHeight = controls::MeasureTextLineHeight(window, font.Get());
+		}
+		return inputLineHeight;
+	}
+
 	[[nodiscard]] SearchWidgetGeometry Geometry() const noexcept
 	{
-		return CalculateSearchWidgetGeometry(ClientRect(), dpi, replaceVisible);
+		return CalculateSearchWidgetGeometry(ClientRect(), dpi, replaceVisible, InputLineHeight());
 	}
 
 	[[nodiscard]] RECT QueryBoxRect() const noexcept
@@ -521,16 +532,21 @@ struct CSearchWorkbenchTool::Impl {
 
 	// --- painting -------------------------------------------------------------
 
-	void PaintBox(HDC dc, const RECT& box, HWND edit, std::wstring_view placeholder) const
+	void PaintBox(HDC dc, const RECT& box, const RECT& editor, HWND edit,
+		std::wstring_view placeholder) const
 	{
-		FillRectangle(dc, box, palette.raised.ToColorRef());
+		// `searchWidget.ts` builds these with `InputBox`, whose `defaultInputBoxStyles`
+		// are `input.background` / `input.border`; the focused frame is `focusBorder`,
+		// which `accent` resolves from.
+		FillRectangle(dc, box, palette.inputBackground.ToColorRef());
 		const bool focused = edit != nullptr && ::GetFocus() == edit;
-		FrameRectangle(dc, box, focused ? palette.accent.ToColorRef() : palette.border.ToColorRef());
+		FrameRectangle(dc, box, focused ? palette.accent.ToColorRef() : palette.inputBorder.ToColorRef());
 		if (edit == nullptr || ::GetWindowTextLengthW(edit) > 0 || placeholder.empty()) return;
-		RECT text = box;
-		text.left += Dip(kInputBorderDip) + Dip(kInputPaddingLeftDip);
-		text.top += Dip(kInputPaddingVerticalDip);
-		text.bottom = std::max(text.top, text.bottom - Dip(kInputPaddingVerticalDip));
+		// Upstream's placeholder is the same DOM node as the value, so it cannot
+		// sit anywhere else.  Drawing it in the EDIT's own rectangle keeps the
+		// text from jumping when the first character is typed.
+		RECT text = editor;
+		text.left += Dip(kInputPaddingLeftDip);
 		::SetTextColor(dc, palette.disabledText.ToColorRef());
 		::DrawTextW(dc, placeholder.data(), static_cast<int>(placeholder.size()), &text,
 			DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
@@ -549,8 +565,9 @@ struct CSearchWorkbenchTool::Impl {
 
 	void PaintWidget(HDC dc)
 	{
-		const RECT queryBox = QueryBoxRect();
-		PaintBox(dc, queryBox, query, texts.searchPlaceholder);
+		const SearchWidgetGeometry geometry = Geometry();
+		const RECT queryBox = geometry.queryBox;
+		PaintBox(dc, queryBox, geometry.queryEdit, query, texts.searchPlaceholder);
 		PaintToggle(dc, InlineToggleRect(queryBox, 1), L"regex", model.useRegex,
 			hoverToggle == EToggle::UseRegex);
 		PaintToggle(dc, InlineToggleRect(queryBox, 2), L"whole-word", model.wholeWord,
@@ -567,8 +584,8 @@ struct CSearchWorkbenchTool::Impl {
 			palette.primaryText.ToColorRef());
 
 		if (replaceVisible) {
-			const RECT replaceBox = ReplaceBoxRect();
-			PaintBox(dc, replaceBox, replace, texts.replacePlaceholder);
+			const RECT replaceBox = geometry.replaceBox;
+			PaintBox(dc, replaceBox, geometry.replaceEdit, replace, texts.replacePlaceholder);
 			PaintToggle(dc, InlineToggleRect(replaceBox, 1), L"preserve-case", model.preserveCase,
 				hoverToggle == EToggle::PreserveCase);
 			const RECT replaceAll = ReplaceAllRect();
@@ -1081,6 +1098,8 @@ void CSearchWorkbenchTool::Layout(const RECT& contentRect, unsigned int dpi)
 	m_impl->dpi = dpi == 0 ? 96 : dpi;
 	if (m_impl->font.Dpi() != m_impl->dpi) {
 		(void)m_impl->font.Recreate(theme::ThemeFontKind::Chrome, m_impl->dpi);
+		// A new font means a new text line height, and the boxes are centered on it.
+		m_impl->inputLineHeight = 0;
 	}
 	for (HWND child : { m_impl->query, m_impl->replace, m_impl->list }) {
 		if (child != nullptr) {
@@ -1456,8 +1475,8 @@ LRESULT CALLBACK CSearchWorkbenchTool::WindowProc(HWND window, UINT message, WPA
 	case WM_CTLCOLOREDIT: {
 		const HDC dc = reinterpret_cast<HDC>(wParam);
 		::SetTextColor(dc, impl.palette.primaryText.ToColorRef());
-		::SetBkColor(dc, impl.palette.raised.ToColorRef());
-		::SetDCBrushColor(dc, impl.palette.raised.ToColorRef());
+		::SetBkColor(dc, impl.palette.inputBackground.ToColorRef());
+		::SetDCBrushColor(dc, impl.palette.inputBackground.ToColorRef());
 		// The native EDIT is one pixel inside PaintBox.  Keep its solid brush so
 		// deleting text invalidates and clears glyphs on every theme/DPI.
 		return reinterpret_cast<LRESULT>(::GetStockObject(DC_BRUSH));

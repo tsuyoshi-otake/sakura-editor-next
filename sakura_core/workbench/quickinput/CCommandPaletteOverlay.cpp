@@ -224,6 +224,10 @@ void CCommandPaletteOverlay::Destroy() noexcept
 		(void)::RemoveWindowSubclass(m_list, &CCommandPaletteOverlay::ListSubclassProc,
 			static_cast<UINT_PTR>(kListControl));
 	}
+	if (m_input != nullptr && ::IsWindow(m_input)) {
+		(void)::RemoveWindowSubclass(m_input, &CCommandPaletteOverlay::InputSubclassProc,
+			static_cast<UINT_PTR>(kInputControl));
+	}
 	m_overlayScrollbar.Destroy();
 	if (m_window != nullptr && ::IsWindow(m_window)) {
 		::DestroyWindow(m_window);
@@ -237,6 +241,8 @@ void CCommandPaletteOverlay::Destroy() noexcept
 	m_empty = nullptr;
 	m_previousFocus = nullptr;
 	m_inputFrame = {};
+	m_inputLineHeight = 0;
+	m_inputLineHeightDpi = 0;
 	m_inputMode = false;
 	m_suppressInputChange = false;
 	m_inputPrompt.clear();
@@ -535,6 +541,47 @@ LRESULT CALLBACK CCommandPaletteOverlay::WindowProc(
 	return ::DefWindowProcW(window, message, wParam, lParam);
 }
 
+LRESULT CALLBACK CCommandPaletteOverlay::InputSubclassProc(
+	HWND window,
+	UINT message,
+	WPARAM wParam,
+	LPARAM lParam,
+	UINT_PTR id,
+	DWORD_PTR data) noexcept
+{
+	auto* const self = reinterpret_cast<CCommandPaletteOverlay*>(data);
+	if (message == WM_NCDESTROY) {
+		(void)::RemoveWindowSubclass(window, &CCommandPaletteOverlay::InputSubclassProc, id);
+		return ::DefSubclassProc(window, message, wParam, lParam);
+	}
+	// The clamp has to run after USER has already moved the caret.
+	// PreTranslateMessage sees a key before the EDIT does, and a caret placed with
+	// the mouse produces no EN_CHANGE at all, so neither can enforce the marker.
+	const LRESULT result = ::DefSubclassProc(window, message, wParam, lParam);
+	bool caretMayHaveMoved = false;
+	switch (message) {
+	case WM_KEYDOWN:
+	case WM_CHAR:
+	case WM_LBUTTONDOWN:
+	case WM_LBUTTONUP:
+	case WM_LBUTTONDBLCLK:
+	case WM_SETFOCUS:
+		caretMayHaveMoved = true;
+		break;
+	case WM_MOUSEMOVE:
+		// Only a drag selection can move the caret; plain hovering must not pay
+		// for two cross-control messages on every mouse move.
+		caretMayHaveMoved = (wParam & MK_LBUTTON) != 0;
+		break;
+	default:
+		break;
+	}
+	if (caretMayHaveMoved && self != nullptr) {
+		self->PinCommandPaletteCaret();
+	}
+	return result;
+}
+
 LRESULT CALLBACK CCommandPaletteOverlay::ListSubclassProc(
 	HWND window, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR id,
 	DWORD_PTR data) noexcept
@@ -637,6 +684,8 @@ LRESULT CCommandPaletteOverlay::HandleMessage(UINT message, WPARAM wParam, LPARA
 		}
 		(void)::SetWindowSubclass(m_list, &CCommandPaletteOverlay::ListSubclassProc,
 			static_cast<UINT_PTR>(kListControl), reinterpret_cast<DWORD_PTR>(this));
+		(void)::SetWindowSubclass(m_input, &CCommandPaletteOverlay::InputSubclassProc,
+			static_cast<UINT_PTR>(kInputControl), reinterpret_cast<DWORD_PTR>(this));
 		(void)m_overlayScrollbar.Create(m_window, m_list, [this](int pixelOffset) {
 			ScrollListToPixelOffset(pixelOffset);
 		}, controls::OverlayScrollbarSource::ExplicitModel);
@@ -820,9 +869,11 @@ void CCommandPaletteOverlay::Layout(int width, int height) noexcept
 	const int inputX = m_inputMode
 		? horizontalMargin + promptWidth + gap : horizontalMargin;
 	const int effectiveDpi = static_cast<int>(::GetDpiForWindow(m_window));
+	MeasureInputLineHeight();
 	const auto inputGeometry = ComputeQuickInputRowGeometry(
 		inputX, topInset, inputWidth,
-		effectiveDpi > 0 ? effectiveDpi : USER_DEFAULT_SCREEN_DPI);
+		effectiveDpi > 0 ? effectiveDpi : USER_DEFAULT_SCREEN_DPI,
+		m_inputLineHeight);
 	m_inputFrame = inputGeometry.frame;
 	const int editorWidth = inputGeometry.editor.right - inputGeometry.editor.left;
 	const int editorHeight = inputGeometry.editor.bottom - inputGeometry.editor.top;
@@ -985,6 +1036,38 @@ void CCommandPaletteOverlay::NormalizeCommandPaletteInput() noexcept
 	};
 	(void)::SendMessageW(m_input, EM_SETSEL,
 		clampSelection(selectionStart), clampSelection(selectionEnd));
+}
+
+void CCommandPaletteOverlay::PinCommandPaletteCaret() noexcept
+{
+	// The Command Palette is locked to the `>` provider, so the marker is chrome
+	// rather than editable text. A caret placed in front of it lets the next
+	// keystroke insert ahead of the marker; NormalizeCommandPaletteInput then sees
+	// text that does not start with `>`, prepends a second one, and the stray
+	// marker stays in the query forever. ShowInput's generic prompt contract has
+	// no marker, so the clamp applies to Command Palette mode only.
+	if (m_input == nullptr || m_inputMode) return;
+	constexpr DWORD kMarkerLength = 1;
+	DWORD selectionStart = 0;
+	DWORD selectionEnd = 0;
+	(void)::SendMessageW(m_input, EM_GETSEL,
+		reinterpret_cast<WPARAM>(&selectionStart), reinterpret_cast<LPARAM>(&selectionEnd));
+	if (selectionStart >= kMarkerLength && selectionEnd >= kMarkerLength) return;
+	(void)::SendMessageW(m_input, EM_SETSEL,
+		static_cast<WPARAM>((std::max)(selectionStart, kMarkerLength)),
+		static_cast<LPARAM>((std::max)(selectionEnd, kMarkerLength)));
+}
+
+void CCommandPaletteOverlay::MeasureInputLineHeight() noexcept
+{
+	if (m_window == nullptr) return;
+	const UINT dpi = ::GetDpiForWindow(m_window);
+	const UINT effectiveDpi = dpi > 0 ? dpi : USER_DEFAULT_SCREEN_DPI;
+	if (m_inputLineHeight > 0 && m_inputLineHeightDpi == effectiveDpi) return;
+	const int height = controls::MeasureTextLineHeight(m_window, ControlFont(m_font.Get()));
+	if (height <= 0) return;
+	m_inputLineHeight = height;
+	m_inputLineHeightDpi = effectiveDpi;
 }
 
 void CCommandPaletteOverlay::MoveSelection(int direction) noexcept

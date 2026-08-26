@@ -25,6 +25,7 @@
 #include "workbench/icons/SetiFileIcon.h"
 #include "workbench/icons/SetiIconPainter.h"
 #include "workbench/icons/ThemeIconResolver.h"
+#include "workbench/controls/CInputBoxGeometry.h"
 #include "workbench/controls/COverlayScrollbar.h"
 #include "workbench/rendering/CGdiBackBuffer.h"
 #include "workbench/rendering/LatestOnlyMailbox.h"
@@ -1114,14 +1115,10 @@ struct CScmWorkbenchTool::Impl {
 	}
 	void MeasureInputLineHeight()
 	{
-		if (!window) return;
-		const HDC dc = ::GetDC(window);
-		if (dc == nullptr) return;
-		const HGDIOBJ previousFont = font.Get() == nullptr ? nullptr : ::SelectObject(dc, font.Get());
-		TEXTMETRICW metrics{};
-		if (::GetTextMetricsW(dc, &metrics) != FALSE) inputLineHeight = static_cast<int>(metrics.tmHeight);
-		if (previousFont != nullptr) ::SelectObject(dc, previousFont);
-		::ReleaseDC(window, dc);
+		// The same measurement Search and Quick Input take; CSS gives the three
+		// widgets one line box upstream, so they take one measurement here.
+		const int measured = controls::MeasureTextLineHeight(window, font.Get());
+		if (measured > 0) inputLineHeight = measured;
 	}
 	void LayoutInput()
 	{
@@ -1442,17 +1439,21 @@ struct CScmWorkbenchTool::Impl {
 	}
 	//! The box's themed border. The control itself has no `WS_BORDER`, because a
 	//! non-client frame is drawn in system colors and would ignore the theme.
+	//! Upstream's `.scm-editor-container` is a text input, so it takes the
+	//! `input.background` / `input.border` roles rather than the list-hover and
+	//! side-bar-separator roles the surrounding rows use, and `accent`
+	//! (`focusBorder`) replaces the border while the box has focus.
 	void PaintInputFrame(HDC dc)
 	{
 		if (!input || !inputModel.visible) return;
 		const RECT frame = InputBounds();
-		const HBRUSH background = ::CreateSolidBrush(palette.raised.ToColorRef());
+		const HBRUSH background = ::CreateSolidBrush(palette.inputBackground.ToColorRef());
 		if (background != nullptr) {
 			::FillRect(dc, &frame, background);
 			::DeleteObject(background);
 		}
 		const COLORREF borderColor = ::GetFocus() == input
-			? palette.accent.ToColorRef() : palette.border.ToColorRef();
+			? palette.accent.ToColorRef() : palette.inputBorder.ToColorRef();
 		const HBRUSH border = ::CreateSolidBrush(borderColor);
 		if (border != nullptr) {
 			::FrameRect(dc, &frame, border);
@@ -3108,6 +3109,20 @@ LRESULT CALLBACK CScmWorkbenchTool::InputSubclassProc(HWND window, UINT message,
 	::SetWindowOrgEx(dc, 0, 0, nullptr);
 	::SetViewportOrgEx(dc, 0, 0, nullptr);
 	(void)::SelectClipRgn(dc, nullptr);
+	// The native EDIT paints only inside its EM_SETRECTNP formatting rectangle,
+	// and this subclass answers WM_ERASEBKGND without painting, so the padding
+	// around that rectangle has no owner: the WM_PRINTCLIENT below delegates its
+	// erase back through this same chain, where it is swallowed. Those rows would
+	// then reach the screen as raw CreateCompatibleBitmap memory -- pure black --
+	// because the host's WS_CLIPCHILDREN keeps PaintInputFrame's fill out of this
+	// rectangle. Establish the same color WM_CTLCOLOREDIT hands the control, and
+	// let the control draw its own line over it, exactly as PaintChangesListFrame
+	// fills before drawing rows.
+	const HBRUSH background = ::CreateSolidBrush(impl->palette.inputBackground.ToColorRef());
+	if (background != nullptr) {
+		::FillRect(dc, &client, background);
+		::DeleteObject(background);
+	}
 	const int nativeState = ::SaveDC(dc);
 	(void)::DefSubclassProc(window, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(dc),
 		PRF_CLIENT | PRF_ERASEBKGND);
@@ -3756,8 +3771,8 @@ LRESULT CALLBACK CScmWorkbenchTool::WindowProc(HWND window, UINT message, WPARAM
 		if (reinterpret_cast<HWND>(lParam) != impl.input) break;
 		const HDC dc = reinterpret_cast<HDC>(wParam);
 		::SetTextColor(dc, impl.palette.primaryText.ToColorRef());
-		::SetBkColor(dc, impl.palette.raised.ToColorRef());
-		::SetDCBrushColor(dc, impl.palette.raised.ToColorRef());
+		::SetBkColor(dc, impl.palette.inputBackground.ToColorRef());
+		::SetDCBrushColor(dc, impl.palette.inputBackground.ToColorRef());
 		return reinterpret_cast<LRESULT>(::GetStockObject(DC_BRUSH));
 	}
 	case WM_CTLCOLORLISTBOX: {

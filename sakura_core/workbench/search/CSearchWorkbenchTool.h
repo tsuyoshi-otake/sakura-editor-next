@@ -67,8 +67,14 @@ struct SearchWidgetGeometry final {
 };
 
 //! Calculates the Search widget layout using VS Code 1.134.0's CSS constants.
+//!
+//! `inputLineHeight` is the measured `TEXTMETRICW::tmHeight` of the box font,
+//! which decides where the native EDIT's single text line sits inside the
+//! painted 26-DIP box.  Pass zero before the font has been measured; the CSS
+//! vertical padding is then used as the fallback line height.
 [[nodiscard]] SearchWidgetGeometry CalculateSearchWidgetGeometry(
-	const RECT& clientRect, unsigned int dpi, bool replaceVisible) noexcept;
+	const RECT& clientRect, unsigned int dpi, bool replaceVisible,
+	int inputLineHeight) noexcept;
 
 /*!
 	@brief The native `workbench.view.search` ViewContainer.

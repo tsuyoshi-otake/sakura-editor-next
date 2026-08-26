@@ -3325,8 +3325,8 @@ BEGIN
     STR_ERR_CTRLMTX2        "CreateEvent()失敗。\n終了します。"
     STR_ERR_CTRLMTX3        "ウィンドウの作成に失敗しました。\n起動できません。"
     STR_ERR_CTRLMTX4        "SetEvent()失敗。\n終了します。"
-    STR_NO_TITLE1           "(無題)"
-    STR_NO_TITLE2           "無題"
+    STR_NO_TITLE1           "Untitled"
+    STR_NO_TITLE2           "Untitled"
 END
 
 STRINGTABLE

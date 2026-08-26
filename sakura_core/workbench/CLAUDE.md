@@ -167,6 +167,15 @@ adding one-off HWND branches. Unsupported capabilities are explicit.
 - Explorer never exposes a horizontal scrollbar. Its TreeView keeps
   `TVS_NOHSCROLL`, native scrollbars are suppressed, and the owned vertical
   scrollbar overlays the content instead of reserving a permanent gutter.
+- Single-line input geometry is one shared control,
+  `workbench/controls/CInputBoxGeometry`. Upstream never writes this code: an
+  `InputBox`'s `<input>` and the SCM widget's Monaco line box are both centred
+  by CSS `line-height`, and Win32 has no equivalent, so the fork must supply
+  that missing layer once rather than per view. `MeasureTextLineHeight` reads
+  the control font's `TEXTMETRICW::tmHeight` and `CenterSingleLineEditor`
+  centres a one-line EDIT inside the painted frame; Search and Quick Input both
+  route through it. A view that recomputes its own inset instead will drift,
+  which is exactly how #263 reached two views at once.
 - The overlay scrollbar is one shared control, `workbench/controls/COverlayScrollbar`.
   Every workbench list that scrolls uses it -- the Explorer TreeView and the
   Source Control list today -- so no view can drift back to the platform

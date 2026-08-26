@@ -325,12 +325,15 @@ bool CShareData::InitShareData()
 			//	so the caption carries the file's own name and the opened folder's
 			//	own name. Neither is a full path: $f is the file name and $W is the
 			//	folder name, where the legacy default used $N, the abbreviated full
-			//	path.
+			//	path. $f already carries an untitled editor's number: VS Code's
+			//	${activeEditorShort} is `Untitled-1`, one name, not `Untitled`
+			//	followed by a separate number. So the caption drops $n, which
+			//	would now repeat it as `Untitled-11`.
 			wcscpy( sWindow.m_szWindowCaptionActive, 
-				L"${U?● $}${w?$h$:アウトプット$:$f$n$}${W? - $W$} -"
+				L"${U?● $}${w?$h$:アウトプット$:$f$}${W? - $W$} -"
 				L" $A${R?  (ビューモード)$:  (上書き禁止)$}${M?  【キーマクロの記録中】$}" );
 			wcscpy( sWindow.m_szWindowCaptionInactive, 
-				L"${U?● $}${w?$h$:アウトプット$:$f$n$}${W? - $W$} -"
+				L"${U?● $}${w?$h$:アウトプット$:$f$}${W? - $W$} -"
 				L" $A${R?  (ビューモード)$:  (上書き禁止)$}${M?  【キーマクロの記録中】$}" );
 		}
 
@@ -342,7 +345,7 @@ bool CShareData::InitShareData()
 			sTabBar.m_bDispTabWndMultiWin = FALSE;	//タブウインドウ表示	//@@@ 2003.05.31 MIK
 			wcscpy(	//@@@ 2003.06.13 MIK
 				sTabBar.m_szTabWndCaption,
-				L"${w?【Grep】$h$:【アウトプット】$:$f$n$}${U?(更新)$}${R?(ビューモード)$:(上書き禁止)$}${M?【キーマクロの記録中】$}"
+				L"${w?【Grep】$h$:【アウトプット】$:$f$}${U?(更新)$}${R?(ビューモード)$:(上書き禁止)$}${M?【キーマクロの記録中】$}"
 			);
 			sTabBar.m_bSameTabWidth = FALSE;			//タブを等幅にする			//@@@ 2006.01.28 ryoji
 			sTabBar.m_bDispTabIcon = FALSE;			//タブにアイコンを表示する	//@@@ 2006.01.28 ryoji

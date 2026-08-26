@@ -214,6 +214,7 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\TaskExecutionServiceTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\TaskTerminalSessionFactoryTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\MarkerPositionAdapterTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\InputBoxGeometryTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\MarkerServiceTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ProblemMatcherEngineTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\GitOutputChannelTest.cpp" />
@@ -293,6 +294,7 @@
     <ClCompile Include="..\src\test\cpp\tests1\test-csearchagent.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-crunningtimer.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-csharedata.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\env\UntitledDocumentNameTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\env\WorkbenchSettingsTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-czipfile.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-extmodules.cpp" />
