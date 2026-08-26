@@ -12,10 +12,12 @@ if(CMAKE_GENERATOR_PLATFORM)
   endif()
 endif()
 
-# Validate the UTF-16 backend contract before semantic-graph checks, compiler
-# identification, project setup, and dependency discovery. Rust target/staticlib
-# integration is added later by sakura.cmake after project().
+# Validate native Rust provider contracts before semantic-graph checks, compiler
+# identification, project setup, and dependency discovery. Output authority and
+# UTF-16/SIMD selection are independent; their shared staticlib integration is
+# added later by sakura.cmake after project().
 include("${CMAKE_SOURCE_DIR}/src/main/cmake/sakura-utf16-backend.cmake")
+include("${CMAKE_SOURCE_DIR}/src/main/cmake/sakura-output-backend.cmake")
 
 # Keep direct CMake/IDE builds on the same read-only semantic-graph trust path.
 # This runs before compiler probing, so a stale graph fails before restore/build.

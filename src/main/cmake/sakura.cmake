@@ -759,14 +759,18 @@ if(MINGW)
     message(FATAL_ERROR
       "MinGW currently retains only the legacy C++ UTF-16 compatibility backend")
   endif()
+  if(NOT SAKURA_OUTPUT_BACKEND STREQUAL "cpp")
+    message(FATAL_ERROR
+      "MinGW currently retains only the C++ Output authority backend")
+  endif()
 elseif(NOT MSVC)
   message(FATAL_ERROR
-    "The UTF-16 backend contract supports only MSVC and experimental MinGW")
+    "Native provider contracts support only MSVC and experimental MinGW")
 endif()
 
-# MSVC always builds the one native Rust FFI archive. It remains an explicit
-# candidate in the rollback-first C++ configuration and becomes the selected
-# provider only when SAKURA_UTF16_BACKEND=rust is passed deliberately.
+# MSVC always builds the one native Rust FFI archive. UTF-16/SIMD and Output
+# authority choose their providers independently, but both cross the same
+# staticlib boundary.
 if(MSVC)
   find_program(SAKURA_CARGO_EXECUTABLE cargo)
   if(NOT SAKURA_CARGO_EXECUTABLE)
@@ -912,6 +916,9 @@ if(MSVC)
   target_link_libraries(sakura_core PUBLIC sakura_native_ffi)
   if(SAKURA_UTF16_BACKEND STREQUAL "rust")
     target_compile_definitions(sakura_core PUBLIC SAKURA_UTF16_BACKEND_RUST)
+  endif()
+  if(SAKURA_OUTPUT_BACKEND STREQUAL "rust")
+    target_compile_definitions(sakura_core PUBLIC SAKURA_OUTPUT_BACKEND_RUST)
   endif()
 endif()
 

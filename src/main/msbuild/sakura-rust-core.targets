@@ -5,9 +5,11 @@
     <!-- G0 rollback-first default: C++ remains the production provider while
          Rust is always built and linked as the explicitly observable candidate. -->
     <SAKURA_UTF16_BACKEND Condition="'$(SAKURA_UTF16_BACKEND)'==''">cpp</SAKURA_UTF16_BACKEND>
+    <SAKURA_OUTPUT_BACKEND Condition="'$(SAKURA_OUTPUT_BACKEND)'==''">cpp</SAKURA_OUTPUT_BACKEND>
     <SAKURA_UTF16_BENCHMARK_TELEMETRY Condition="'$(SAKURA_UTF16_BENCHMARK_TELEMETRY)'==''">false</SAKURA_UTF16_BENCHMARK_TELEMETRY>
     <SakuraUtf16BenchmarkTelemetryUpper>$(SAKURA_UTF16_BENCHMARK_TELEMETRY.ToUpperInvariant())</SakuraUtf16BenchmarkTelemetryUpper>
     <SakuraUtf16BackendUpper>$(SAKURA_UTF16_BACKEND.ToUpperInvariant())</SakuraUtf16BackendUpper>
+    <SakuraOutputBackendUpper>$(SAKURA_OUTPUT_BACKEND.ToUpperInvariant())</SakuraOutputBackendUpper>
 
     <!-- Native Cargo is intentionally rooted below rust/native. SENP has a
          different workspace, lockfile, target directory, and source closure. -->
@@ -50,8 +52,12 @@
   <Target Name="ValidateSakuraRustCoreBackend" BeforeTargets="PrepareForBuild">
     <Error Condition="'$(SakuraUtf16BackendUpper)'!='CPP' And '$(SakuraUtf16BackendUpper)'!='RUST'"
            Text="SAKURA_UTF16_BACKEND must be exactly cpp or rust; got $(SAKURA_UTF16_BACKEND)." />
+    <Error Condition="'$(SakuraOutputBackendUpper)'!='CPP' And '$(SakuraOutputBackendUpper)'!='RUST'"
+           Text="SAKURA_OUTPUT_BACKEND must be exactly cpp or rust; got $(SAKURA_OUTPUT_BACKEND)." />
     <Error Condition="'$(SakuraUtf16BackendUpper)'=='RUST' And ('$(SakuraUtf16ProductionPackageUpper)'=='TRUE' Or '$(SakuraUtf16ProductionPackageUpper)'=='1' Or '$(SakuraUtf16ProductionPackageUpper)'=='ON' Or '$(SakuraUtf16ProductionPackageUpper)'=='YES')"
            Text="SAKURA_UTF16_PRODUCTION_PACKAGE=true requires SAKURA_UTF16_BACKEND=cpp" />
+    <Error Condition="'$(SakuraOutputBackendUpper)'=='RUST' And ('$(SakuraUtf16ProductionPackageUpper)'=='TRUE' Or '$(SakuraUtf16ProductionPackageUpper)'=='1' Or '$(SakuraUtf16ProductionPackageUpper)'=='ON' Or '$(SakuraUtf16ProductionPackageUpper)'=='YES')"
+           Text="SAKURA_UTF16_PRODUCTION_PACKAGE=true requires SAKURA_OUTPUT_BACKEND=cpp" />
     <Error Condition="('$(SakuraUtf16BenchmarkTelemetryUpper)'=='TRUE' Or '$(SakuraUtf16BenchmarkTelemetryUpper)'=='1' Or '$(SakuraUtf16BenchmarkTelemetryUpper)'=='ON' Or '$(SakuraUtf16BenchmarkTelemetryUpper)'=='YES') And ('$(SakuraUtf16ProductionPackageUpper)'=='TRUE' Or '$(SakuraUtf16ProductionPackageUpper)'=='1' Or '$(SakuraUtf16ProductionPackageUpper)'=='ON' Or '$(SakuraUtf16ProductionPackageUpper)'=='YES')"
            Text="SAKURA_UTF16_BENCHMARK_TELEMETRY is test-only and cannot package production." />
     <Exec Command="&quot;$(SakuraRustCoreCargo)&quot; --version"
@@ -91,6 +97,13 @@
     <ClCompile>
       <!-- Only an explicit Rust selection becomes the production provider. -->
       <PreprocessorDefinitions>SAKURA_UTF16_BACKEND_RUST;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
+
+  <ItemDefinitionGroup Condition="'$(SakuraOutputBackendUpper)'=='RUST'">
+    <ClCompile>
+      <!-- Output authority selection is independent from UTF-16/SIMD dispatch. -->
+      <PreprocessorDefinitions>SAKURA_OUTPUT_BACKEND_RUST;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
   </ItemDefinitionGroup>
 

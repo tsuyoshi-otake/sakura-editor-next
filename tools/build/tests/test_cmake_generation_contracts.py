@@ -208,6 +208,47 @@ class CMakeGenerationContractTests(unittest.TestCase):
         self.assertIn("!Exists('$(SakuraRustCoreLibrary)')", msbuild_target)
         self.assertIn("--locked", msbuild_target)
 
+    def test_rust_output_backend_contract_is_explicit_and_independent(self) -> None:
+        output_backend_cmake = (
+            REPO_ROOT / "src/main/cmake/sakura-output-backend.cmake"
+        ).read_text(encoding="utf-8-sig")
+        sakura_cmake = (REPO_ROOT / "src/main/cmake/sakura.cmake").read_text(
+            encoding="utf-8-sig"
+        )
+        cmake_root = (REPO_ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+        msbuild_target = (
+            REPO_ROOT / "src/main/msbuild/sakura-rust-core.targets"
+        ).read_text(encoding="utf-8-sig")
+
+        self.assertIn("PROPERTY STRINGS cpp rust", output_backend_cmake)
+        self.assertNotIn("SAKURA_UTF16_BACKEND_RUST", output_backend_cmake)
+        self.assertIn(
+            "SAKURA_OUTPUT_BACKEND must be exactly cpp or rust",
+            output_backend_cmake,
+        )
+        self.assertIn(
+            "The Rust Output backend cannot package production until independent adoption",
+            output_backend_cmake,
+        )
+        output_include = (
+            'include("${CMAKE_SOURCE_DIR}/src/main/cmake/sakura-output-backend.cmake")'
+        )
+        self.assertIn(output_include, cmake_root)
+        self.assertLess(
+            cmake_root.index(output_include),
+            cmake_root.index("if(NOT SAKURA_SKIP_MODULES_CHECK)"),
+        )
+        self.assertIn("SAKURA_OUTPUT_BACKEND_RUST", sakura_cmake)
+        self.assertIn(
+            '<SAKURA_OUTPUT_BACKEND Condition="\'$(SAKURA_OUTPUT_BACKEND)\'==\'\'">cpp</SAKURA_OUTPUT_BACKEND>',
+            msbuild_target,
+        )
+        self.assertIn("SAKURA_OUTPUT_BACKEND_RUST", msbuild_target)
+        self.assertNotIn(
+            "SAKURA_UTF16_BACKEND_RUST;SAKURA_OUTPUT_BACKEND_RUST",
+            msbuild_target,
+        )
+
     def test_rust_simd_abi_matches_global_dispatch_contract(self) -> None:
         header = (REPO_ROOT / "sakura_core/util/RustUtf16Scan.h").read_text(
             encoding="utf-8-sig"
@@ -382,6 +423,19 @@ class CMakeGenerationContractTests(unittest.TestCase):
                 ],
                 "The Rust UTF-16 backend cannot package production until independent adoption",
             ),
+            (
+                "output-auto",
+                ["-DSAKURA_OUTPUT_BACKEND=auto"],
+                "SAKURA_OUTPUT_BACKEND must be exactly cpp or rust",
+            ),
+            (
+                "output-rust-production",
+                [
+                    "-DSAKURA_OUTPUT_BACKEND=rust",
+                    "-DSAKURA_UTF16_PRODUCTION_PACKAGE=ON",
+                ],
+                "The Rust Output backend cannot package production until independent adoption",
+            ),
         )
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -546,6 +600,35 @@ class CMakeGenerationContractTests(unittest.TestCase):
                     output = re.sub(r"\s+", " ", result.stdout + result.stderr)
                     self.assertNotEqual(0, result.returncode, output)
                     self.assertIn(expected, output)
+
+    @unittest.skipUnless(CMAKE_EXECUTABLE, "cmake is required")
+    def test_cmake_output_backend_module_accepts_explicit_rust_comparison(self) -> None:
+        cmake = CMAKE_EXECUTABLE
+        assert cmake is not None
+        module = (REPO_ROOT / "src/main/cmake/sakura-output-backend.cmake").as_posix()
+        utf16_module = (REPO_ROOT / "src/main/cmake/sakura-utf16-backend.cmake").as_posix()
+        with tempfile.TemporaryDirectory() as temporary:
+            probe = Path(temporary) / "probe.cmake"
+            probe.write_text(
+                f'include("{utf16_module}")\n'
+                f'include("{module}")\n'
+                'message(STATUS "contract output=${SAKURA_OUTPUT_BACKEND}")\n',
+                encoding="utf-8",
+            )
+            environment = os.environ.copy()
+            environment.pop("SAKURA_OUTPUT_BACKEND", None)
+            environment.pop("SAKURA_UTF16_PRODUCTION_PACKAGE", None)
+            result = subprocess.run(
+                [cmake, "-DSAKURA_OUTPUT_BACKEND=rust", "-P", str(probe)],
+                capture_output=True,
+                check=False,
+                env=environment,
+                text=True,
+                timeout=10,
+            )
+            output = result.stdout + result.stderr
+            self.assertEqual(0, result.returncode, output)
+            self.assertIn("contract output=rust", output)
 
     @unittest.skipUnless(CMAKE_EXECUTABLE, "cmake is required")
     def test_native_ffi_helper_keeps_an_up_to_date_archive_untouched(self) -> None:
@@ -756,6 +839,56 @@ class CMakeGenerationContractTests(unittest.TestCase):
                 output = result.stdout + result.stderr
                 self.assertEqual(0, result.returncode, output)
                 self.assertLess(elapsed, 8.0, output)
+
+    @unittest.skipUnless(MSBUILD_EXECUTABLE, "MSBuild is required")
+    def test_msbuild_output_backend_is_explicit_and_fails_closed_for_packaging(self) -> None:
+        msbuild = MSBUILD_EXECUTABLE
+        assert msbuild is not None
+        project = str(REPO_ROOT / "sakura_core/sakura.vcxproj")
+        cases = (
+            ("cpp", "false", 0, None),
+            ("rust", "false", 0, None),
+            (
+                "both",
+                "false",
+                1,
+                "SAKURA_OUTPUT_BACKEND must be exactly cpp or rust",
+            ),
+            (
+                "rust",
+                "true",
+                1,
+                "SAKURA_UTF16_PRODUCTION_PACKAGE=true requires SAKURA_OUTPUT_BACKEND=cpp",
+            ),
+        )
+        for backend, production, expected_code, expected_text in cases:
+            with self.subTest(backend=backend, production=production):
+                result = subprocess.run(
+                    [
+                        msbuild,
+                        project,
+                        "/t:ValidateSakuraRustCoreBackend",
+                        "/p:Platform=x64",
+                        "/p:Configuration=Debug",
+                        f"/p:SAKURA_OUTPUT_BACKEND={backend}",
+                        f"/p:SAKURA_UTF16_PRODUCTION_PACKAGE={production}",
+                        "/nr:false",
+                        "/nologo",
+                    ],
+                    capture_output=True,
+                    check=False,
+                    encoding="utf-8",
+                    errors="replace",
+                    text=True,
+                    timeout=10,
+                )
+                output = result.stdout + result.stderr
+                if expected_code == 0:
+                    self.assertEqual(0, result.returncode, output)
+                else:
+                    self.assertNotEqual(0, result.returncode, output)
+                    assert expected_text is not None
+                    self.assertIn(expected_text, re.sub(r"\s+", " ", output))
 
     @unittest.skipUnless(MSBUILD_EXECUTABLE, "MSBuild is required")
     def test_msbuild_missing_cargo_fails_with_current_output(self) -> None:

@@ -1030,6 +1030,7 @@ class Utf16PackagingContractTests(unittest.TestCase):
             {
                 "SAKURA_GENERATE_ASSEMBLY_LISTINGS": "1",
                 "SAKURA_UTF16_BACKEND": "cpp",
+                "SAKURA_OUTPUT_BACKEND": "cpp",
                 "SAKURA_UTF16_PRODUCTION_PACKAGE": "true",
             },
             sakura_build.production_package_environment({}),
@@ -1042,6 +1043,7 @@ class Utf16PackagingContractTests(unittest.TestCase):
                     {
                         "SAKURA_GENERATE_ASSEMBLY_LISTINGS": "1",
                         "SAKURA_UTF16_BACKEND": backend,
+                        "SAKURA_OUTPUT_BACKEND": "cpp",
                         "SAKURA_UTF16_PRODUCTION_PACKAGE": "true",
                     },
                     sakura_build.production_package_environment(
@@ -1059,6 +1061,17 @@ class Utf16PackagingContractTests(unittest.TestCase):
                 ):
                     sakura_build.production_package_environment(environment)
                 self.assertEqual(backend, environment["SAKURA_UTF16_BACKEND"])
+
+        for backend in ("rust", "both", " cpp ", "CPP", "unknown"):
+            with self.subTest(output_backend=backend):
+                environment = {"SAKURA_OUTPUT_BACKEND": backend}
+                with self.assertRaisesRegex(
+                    BuildError,
+                    "SAKURA_UTF16_PRODUCTION_PACKAGE=true requires "
+                    "SAKURA_OUTPUT_BACKEND=cpp;",
+                ):
+                    sakura_build.production_package_environment(environment)
+                self.assertEqual(backend, environment["SAKURA_OUTPUT_BACKEND"])
 
     def test_batch_packagers_scope_and_reject_both_backend(self):
         repository = TOOLS_BUILD.parents[1]
@@ -1081,11 +1094,28 @@ class Utf16PackagingContractTests(unittest.TestCase):
                 body,
                 name,
             )
+            self.assertIn(
+                'if not defined SAKURA_OUTPUT_BACKEND set "SAKURA_OUTPUT_BACKEND=cpp"',
+                body,
+                name,
+            )
+            self.assertIn(
+                "Production packaging requires SAKURA_OUTPUT_BACKEND=cpp;",
+                body,
+                name,
+            )
             self.assertIn("exit /b 1", body, name)
 
     def test_mingw_environment_and_cmake_command_force_cpp_backend(self):
-        environment = mingw_environment({"PATH": "sentinel", "SAKURA_UTF16_BACKEND": "rust"})
+        environment = mingw_environment(
+            {
+                "PATH": "sentinel",
+                "SAKURA_UTF16_BACKEND": "rust",
+                "SAKURA_OUTPUT_BACKEND": "rust",
+            }
+        )
         self.assertEqual("cpp", environment["SAKURA_UTF16_BACKEND"])
+        self.assertEqual("cpp", environment["SAKURA_OUTPUT_BACKEND"])
         with patch("sakura_build_lib.runner.find_cmake_tool", side_effect=lambda name: name):
             with patch("sakura_build_lib.runner.Path.is_file", return_value=True):
                 generated = cmake_commands(
@@ -1096,6 +1126,7 @@ class Utf16PackagingContractTests(unittest.TestCase):
                     package_cmake_config=Path("build/pkg/v/a/x64-mingw-static.cmake"),
                 )
         self.assertIn("-DSAKURA_UTF16_BACKEND=cpp", generated[0])
+        self.assertIn("-DSAKURA_OUTPUT_BACKEND=cpp", generated[0])
 
 
 class RunnerTests(unittest.TestCase):

@@ -84,6 +84,11 @@ containmentを所有し、各exportはpanicを型付き`InternalError`へ変換�
 しません。allocation-freeのstrict UTF-8 primitiveは`no_std`の
 `sakura-unicode-core`に分離し、CESU-8や各subsystem固有policyとは混在させません。
 
+Output authorityは別の`SAKURA_OUTPUT_BACKEND`で明示し、既定は`cpp`です。MSVCでは
+`rust`を移行比較用に選択できますが、UTF-16/SIMD backend、ISA dispatch、CPU feature
+判定には影響しません。二つの選択は同じ`rust/native/sakura_native_ffi` staticlibを
+共有するだけで、provider policyやlifecycleは共有しません。
+
 MSBuildでは`/p:SAKURA_UTF16_BACKEND=cpp`（既定）または明示的な
 `/p:SAKURA_UTF16_BACKEND=rust`、MSVCのCMakeでは`-DSAKURA_UTF16_BACKEND=cpp`（既定）
 または`rust`を指定します。MinGWは`-DSAKURA_UTF16_BACKEND=cpp`を明示します。
@@ -92,10 +97,15 @@ MSBuildでは`/p:SAKURA_UTF16_BACKEND=cpp`（既定）または明示的な
 `rust/senp/rust-toolchain.toml`の固定toolchainを選ぶため、Cargoは各ワークスペースの
 ディレクトリを作業ディレクトリにして実行されます。
 
+Outputも同様にMSBuildでは`/p:SAKURA_OUTPUT_BACKEND=cpp|rust`、CMakeでは
+`-DSAKURA_OUTPUT_BACKEND=cpp|rust`を指定します。MinGWは`cpp`固定です。Outputの
+選択を変えても`SAKURA_UTF16_BACKEND`は変わらず、逆方向にも影響しません。
+
 配布ビルド・インストーラ・ZIPは`SAKURA_UTF16_PRODUCTION_PACKAGE=true`を設定します。
 G0のrollback-first契約では`SAKURA_UTF16_BACKEND=cpp`だけを受け付け、`rust`は比較ビルドで
 選択できても配布処理では拒否します。Rustを本番採用する場合は、別の採用変更でこのhard gateを
-明示的に更新します。`both`など未知のモードもCargo・コンパイル・パッケージ処理の前に拒否します。
+明示的に更新します。C1dのOutput authorityも配布時は`SAKURA_OUTPUT_BACKEND=cpp`を要求し、
+Rust採用は別のC1e gateに残します。`both`など未知のモードもCargo・コンパイル・パッケージ処理の前に拒否します。
 
 ## ビルド手順
 

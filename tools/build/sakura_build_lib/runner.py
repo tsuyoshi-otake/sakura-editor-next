@@ -424,6 +424,7 @@ def mingw_environment(environment: Mapping[str, str] | None = None) -> dict[str,
         # MinGW retains the explicit legacy C++ compatibility backend. Do not
         # allow an ambient developer/CI Rust selection to change this path.
         "SAKURA_UTF16_BACKEND": "cpp",
+        "SAKURA_OUTPUT_BACKEND": "cpp",
     }
 
 
@@ -571,6 +572,7 @@ def cmake_commands(
             cmake, "-S", str(repo_root), "-B", str(build_dir),
             f"-DCMAKE_BUILD_TYPE={configuration}", "-DBUILD_PLATFORM=MinGW",
             "-DSAKURA_UTF16_BACKEND=cpp",
+            "-DSAKURA_OUTPUT_BACKEND=cpp",
             f"-DCMAKE_TOOLCHAIN_FILE={toolchain.as_posix()}",
             f"-DSAKURA_PACKAGE_CONFIG={active_config.as_posix()}",
             f"-DVCPKG_TARGET_TRIPLET={triplet}",

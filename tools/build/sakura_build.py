@@ -615,18 +615,28 @@ def production_package_environment(
     validation.
     """
     source = os.environ if environment is None else environment
-    backend = source.get("SAKURA_UTF16_BACKEND")
-    if backend not in (None, "", "cpp"):
+    utf16_backend = source.get("SAKURA_UTF16_BACKEND")
+    if utf16_backend not in (None, "", "cpp"):
         raise BuildError(
             "UTF16_PRODUCTION_BACKEND_INVALID",
             "SAKURA_UTF16_PRODUCTION_PACKAGE=true requires "
-            f"SAKURA_UTF16_BACKEND=cpp; got {backend}",
+            f"SAKURA_UTF16_BACKEND=cpp; got {utf16_backend}",
             EXIT_USAGE,
         )
-    selected_backend = "cpp" if backend in (None, "") else backend
+    output_backend = source.get("SAKURA_OUTPUT_BACKEND")
+    if output_backend not in (None, "", "cpp"):
+        raise BuildError(
+            "OUTPUT_PRODUCTION_BACKEND_INVALID",
+            "SAKURA_UTF16_PRODUCTION_PACKAGE=true requires "
+            f"SAKURA_OUTPUT_BACKEND=cpp; got {output_backend}",
+            EXIT_USAGE,
+        )
+    selected_utf16_backend = "cpp" if utf16_backend in (None, "") else utf16_backend
+    selected_output_backend = "cpp" if output_backend in (None, "") else output_backend
     return {
         "SAKURA_GENERATE_ASSEMBLY_LISTINGS": "1",
-        "SAKURA_UTF16_BACKEND": selected_backend,
+        "SAKURA_UTF16_BACKEND": selected_utf16_backend,
+        "SAKURA_OUTPUT_BACKEND": selected_output_backend,
         "SAKURA_UTF16_PRODUCTION_PACKAGE": "true",
     }
 
