@@ -37,6 +37,7 @@ public:
 	//! External callers wait for active listener callbacks; a reentrant listener Stop returns deferred.
 	[[nodiscard]] OutputOperationResult Stop() noexcept override;
 
+	[[nodiscard]] OutputProviderHealthSnapshot Health() const noexcept override;
 	[[nodiscard]] OutputServiceSnapshot Snapshot() const override;
 	[[nodiscard]] std::optional<OutputServiceSubscriptionId> Subscribe(OutputServiceListener listener) override;
 	void Unsubscribe(OutputServiceSubscriptionId subscriptionId) noexcept override;

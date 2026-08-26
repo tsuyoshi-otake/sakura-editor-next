@@ -126,6 +126,7 @@ public:
 	[[nodiscard]] const problems::MarkerService* Markers() const noexcept override;
 	[[nodiscard]] output::IOutputService* Output() noexcept override;
 	[[nodiscard]] const output::IOutputService* Output() const noexcept override;
+	[[nodiscard]] output::OutputProviderHealthSnapshot OutputProviderHealth() const noexcept override;
 	//! Concrete-runtime diagnostics for the observational Rust candidate. The
 	//! candidate remains outside IWorkbenchRuntime and never becomes an output
 	//! provider or mutation authority.
@@ -263,6 +264,7 @@ private:
 	const output::EOutputProviderKind m_outputProviderKind;
 	output::OutputProviderFactoryDependencies m_outputProviderFactory;
 	std::unique_ptr<output::IOutputService> m_outputProvider;
+	output::OutputProviderHealthSnapshot m_outputProviderHealth{};
 	//! C1b is attached only when the C++ provider is the selected authority.
 	//! Rust-authority runtimes never construct a live C++ authority/candidate.
 	std::unique_ptr<output::OutputServiceRustCandidate> m_outputCandidate;

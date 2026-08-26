@@ -460,51 +460,170 @@ struct OutputServiceRustProvider::Control final {
 	std::uint64_t token{};
 	std::uint64_t lastRevision{ 1 };
 	bool authorityStopped{};
+	bool pendingDestroy{};
+	bool terminalSnapshotAvailable{};
+	OutputServiceSnapshot terminalSnapshot;
 	OutputServiceRustProviderDiagnostics diagnostics{};
 };
 
 namespace {
 
+void SaturatingIncrement(std::uint64_t& value) noexcept
+{
+	if (value != std::numeric_limits<std::uint64_t>::max()) ++value;
+}
+
+template <typename Control>
+void RecordBoundaryCall(
+	Control& control,
+	const EOutputProviderBoundary boundary,
+	std::uint64_t OutputProviderHealthCounters::* const counter) noexcept
+{
+	std::lock_guard lock(control.modelMutex);
+	SaturatingIncrement(control.diagnostics.counters.ffiCalls);
+	if (counter) SaturatingIncrement(control.diagnostics.counters.*counter);
+	control.diagnostics.lastBoundary = boundary;
+}
+
+template <typename Control>
+void RecordBoundaryStatus(
+	Control& control,
+	const EOutputProviderBoundary boundary,
+	const SakuraOutputProviderStatus status) noexcept
+{
+	std::lock_guard lock(control.modelMutex);
+	control.diagnostics.lastBoundary = boundary;
+	control.diagnostics.lastFfiStatus = status;
+}
+
 template <typename Control>
 void SetFault(
 	Control& control,
 	const EOutputServiceRustProviderFault fault,
+	const EOutputProviderBoundary boundary,
 	const SakuraOutputProviderStatus ffiStatus) noexcept
 {
 	std::lock_guard lock(control.modelMutex);
 	control.diagnostics.availability =
-		control.token == 0 ? EOutputServiceRustProviderAvailability::Unavailable
+		control.token == 0 || control.authorityStopped ? EOutputServiceRustProviderAvailability::Unavailable
 			: EOutputServiceRustProviderAvailability::Available;
-	control.diagnostics.state = EOutputServiceRustProviderState::Faulted;
+	if (!control.authorityStopped) control.diagnostics.state = EOutputServiceRustProviderState::Faulted;
 	control.diagnostics.fault = fault;
+	control.diagnostics.lastBoundary = boundary;
+	control.diagnostics.failureBoundary = boundary;
 	control.diagnostics.lastFfiStatus = ffiStatus;
+	SaturatingIncrement(control.diagnostics.counters.boundaryFailures);
+}
+
+template <typename Control>
+void RecordPublicResultLocked(
+	Control& control,
+	const OutputOperationResult& result,
+	const bool countMutation) noexcept
+{
+	control.diagnostics.hasLastOperation = true;
+	control.diagnostics.lastOperationStatus =
+		static_cast<SakuraOutputProviderOperationStatus>(result.status);
+	control.diagnostics.lastOperationReason =
+		static_cast<SakuraOutputProviderReason>(result.reason);
+	control.diagnostics.lastOperationRevision = result.revision;
+	// A replay carries the original commit revision and must not make the
+	// provider's cached current revision move backwards after later commits.
+	if (result.revision > control.lastRevision) control.lastRevision = result.revision;
+	if (!countMutation) return;
+	switch (result.status) {
+	case EOutputOperationStatus::Succeeded:
+		SaturatingIncrement(control.diagnostics.counters.acceptedOperations);
+		break;
+	case EOutputOperationStatus::Replayed:
+		SaturatingIncrement(control.diagnostics.counters.replayedOperations);
+		break;
+	default:
+		SaturatingIncrement(control.diagnostics.counters.rejectedOperations);
+		break;
+	}
+}
+
+template <typename Control>
+void RecordMutationAttempt(Control& control) noexcept
+{
+	std::lock_guard lock(control.modelMutex);
+	SaturatingIncrement(control.diagnostics.counters.mutationCalls);
 }
 
 template <typename Control>
 void RecordOperation(
 	Control& control,
 	const SakuraOutputProviderStatus ffiStatus,
-	const SakuraOutputProviderApplyResultV1& raw) noexcept
+	const SakuraOutputProviderApplyResultV1& raw,
+	const bool countMutation = true) noexcept
 {
 	std::lock_guard lock(control.modelMutex);
+	control.diagnostics.lastBoundary = EOutputProviderBoundary::Apply;
 	control.diagnostics.lastFfiStatus = ffiStatus;
-	control.diagnostics.lastOperationStatus =
-		static_cast<SakuraOutputProviderOperationStatus>(raw.status);
-	control.diagnostics.lastOperationReason =
-		static_cast<SakuraOutputProviderReason>(raw.reason);
-	control.diagnostics.lastOperationRevision = raw.revision;
-	control.lastRevision = raw.revision;
+	RecordPublicResultLocked(control, OutputOperationResult{
+		static_cast<EOutputOperationStatus>(raw.status),
+		static_cast<EOutputOperationReason>(raw.reason),
+		raw.revision,
+		raw.callback_drain_deferred != 0,
+	}, countMutation);
 }
 
 template <typename Control>
 [[nodiscard]] OutputOperationResult ProviderUnavailable(
-	const Control& control) noexcept
+	Control& control,
+	const bool countMutation = false) noexcept
 {
 	std::lock_guard lock(control.modelMutex);
+	OutputOperationResult result;
 	if (control.authorityStopped) {
-		return { EOutputOperationStatus::Stopped, EOutputOperationReason::None, control.lastRevision };
+		result = { EOutputOperationStatus::Stopped, EOutputOperationReason::None, control.lastRevision };
+	} else {
+		result = { EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidPayload, control.lastRevision };
 	}
-	return { EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidPayload, control.lastRevision };
+	RecordPublicResultLocked(control, result, countMutation);
+	return result;
+}
+
+[[nodiscard]] EOutputProviderBoundaryStatus ToBoundaryStatus(
+	const SakuraOutputProviderStatus status) noexcept
+{
+	switch (status) {
+	case SakuraOutputProviderStatus::Ok: return EOutputProviderBoundaryStatus::Ok;
+	case SakuraOutputProviderStatus::InvalidArgument: return EOutputProviderBoundaryStatus::InvalidArgument;
+	case SakuraOutputProviderStatus::InvalidHandle: return EOutputProviderBoundaryStatus::InvalidHandle;
+	case SakuraOutputProviderStatus::Stopped: return EOutputProviderBoundaryStatus::Stopped;
+	case SakuraOutputProviderStatus::InsufficientCapacity: return EOutputProviderBoundaryStatus::InsufficientCapacity;
+	case SakuraOutputProviderStatus::InternalError: return EOutputProviderBoundaryStatus::InternalError;
+	default: return EOutputProviderBoundaryStatus::InternalError;
+	}
+}
+
+[[nodiscard]] EOutputProviderLifecycle ToProviderLifecycle(
+	const EOutputServiceRustProviderState state) noexcept
+{
+	switch (state) {
+	case EOutputServiceRustProviderState::Unavailable: return EOutputProviderLifecycle::Unavailable;
+	case EOutputServiceRustProviderState::Ready: return EOutputProviderLifecycle::Ready;
+	case EOutputServiceRustProviderState::Faulted: return EOutputProviderLifecycle::Faulted;
+	case EOutputServiceRustProviderState::Stopped: return EOutputProviderLifecycle::Stopped;
+	default: return EOutputProviderLifecycle::Faulted;
+	}
+}
+
+[[nodiscard]] EOutputProviderFault ToProviderFault(
+	const EOutputServiceRustProviderFault fault) noexcept
+{
+	switch (fault) {
+	case EOutputServiceRustProviderFault::None: return EOutputProviderFault::None;
+	case EOutputServiceRustProviderFault::Unavailable: return EOutputProviderFault::Unavailable;
+	case EOutputServiceRustProviderFault::AbiFailure: return EOutputProviderFault::AbiContract;
+	case EOutputServiceRustProviderFault::FfiFailure: return EOutputProviderFault::Ffi;
+	case EOutputServiceRustProviderFault::SnapshotFailure: return EOutputProviderFault::Snapshot;
+	case EOutputServiceRustProviderFault::CallbackFailure: return EOutputProviderFault::Callback;
+	case EOutputServiceRustProviderFault::DestroyFailure: return EOutputProviderFault::Destroy;
+	default: return EOutputProviderFault::Ffi;
+	}
 }
 
 #if defined(SAKURA_OUTPUT_BACKEND_RUST)
@@ -515,16 +634,19 @@ template <typename Control>
 {
 	SakuraOutputProviderSnapshotInfoV1 info{};
 	InitializeAbiHeader(info);
+	RecordBoundaryCall(control, EOutputProviderBoundary::SnapshotMeasure, nullptr);
 	const auto measured = sakura_output_provider_snapshot_measure_v1(control.token, &info);
+	RecordBoundaryStatus(control, EOutputProviderBoundary::SnapshotMeasure, measured);
 	if (measured != SakuraOutputProviderStatus::Ok || !IsValidSnapshotInfo(info)) {
 		SetFault(control, measured == SakuraOutputProviderStatus::Ok
 			? EOutputServiceRustProviderFault::AbiFailure
-			: EOutputServiceRustProviderFault::FfiFailure, measured);
+			: EOutputServiceRustProviderFault::FfiFailure,
+			EOutputProviderBoundary::SnapshotMeasure, measured);
 		return std::nullopt;
 	}
 	if (info.encoded_size > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
 		SetFault(control, EOutputServiceRustProviderFault::SnapshotFailure,
-			SakuraOutputProviderStatus::InternalError);
+			EOutputProviderBoundary::SnapshotMeasure, SakuraOutputProviderStatus::InternalError);
 		return std::nullopt;
 	}
 	std::vector<std::uint8_t> bytes(static_cast<std::size_t>(info.encoded_size));
@@ -534,7 +656,9 @@ template <typename Control>
 	buffer.capacity = static_cast<std::uint64_t>(bytes.size());
 	const auto expectedData = buffer.data;
 	const auto expectedCapacity = buffer.capacity;
+	RecordBoundaryCall(control, EOutputProviderBoundary::SnapshotWrite, nullptr);
 	const auto written = sakura_output_provider_snapshot_write_v1(control.token, &buffer);
+	RecordBoundaryStatus(control, EOutputProviderBoundary::SnapshotWrite, written);
 	if (written != SakuraOutputProviderStatus::Ok
 		|| !IsValidSnapshotBuffer(buffer)
 		|| buffer.data != expectedData
@@ -542,12 +666,13 @@ template <typename Control>
 		|| buffer.length != info.encoded_size) {
 		SetFault(control, written == SakuraOutputProviderStatus::Ok
 			? EOutputServiceRustProviderFault::AbiFailure
-			: EOutputServiceRustProviderFault::FfiFailure, written);
+			: EOutputServiceRustProviderFault::FfiFailure,
+			EOutputProviderBoundary::SnapshotWrite, written);
 		return std::nullopt;
 	}
 	if (buffer.length != static_cast<std::uint64_t>(bytes.size())) {
 		SetFault(control, EOutputServiceRustProviderFault::SnapshotFailure,
-			SakuraOutputProviderStatus::InternalError);
+			EOutputProviderBoundary::SnapshotWrite, SakuraOutputProviderStatus::InternalError);
 		return std::nullopt;
 	}
 	auto snapshot = ParseSnapshot(bytes);
@@ -558,7 +683,7 @@ template <typename Control>
 		|| snapshot->channels.size() != static_cast<std::size_t>(info.channel_count)
 		|| snapshot->activeChannelId.has_value() != (info.active_channel_present != 0)) {
 		SetFault(control, EOutputServiceRustProviderFault::SnapshotFailure,
-			SakuraOutputProviderStatus::InternalError);
+			EOutputProviderBoundary::SnapshotDecode, SakuraOutputProviderStatus::InternalError);
 		return std::nullopt;
 	}
 	{
@@ -579,12 +704,16 @@ template <typename Control>
 	active.struct_size = sizeof(active);
 	active.abi_version = SAKURA_OUTPUT_PROVIDER_ABI_VERSION_V1;
 	active.capacity = 0;
+	RecordBoundaryCall(control, EOutputProviderBoundary::ActiveChannelQuery,
+		&OutputProviderHealthCounters::activeChannelCalls);
 	const auto measured = sakura_output_provider_active_channel_v1(control.token, &active);
+	RecordBoundaryStatus(control, EOutputProviderBoundary::ActiveChannelQuery, measured);
 	if (measured == SakuraOutputProviderStatus::Ok) {
 		if (!IsValidActiveChannelHeader(active) || active.present != 0 || active.length != 0
 			|| active.data != nullptr || active.capacity != 0
 			|| active.revision != expectedRevision) {
-			SetFault(control, EOutputServiceRustProviderFault::AbiFailure, measured);
+			SetFault(control, EOutputServiceRustProviderFault::AbiFailure,
+				EOutputProviderBoundary::ActiveChannelQuery, measured);
 			return false;
 		}
 		activeChannelId.reset();
@@ -598,7 +727,8 @@ template <typename Control>
 		|| active.length > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
 		SetFault(control, measured == SakuraOutputProviderStatus::Ok
 			? EOutputServiceRustProviderFault::AbiFailure
-			: EOutputServiceRustProviderFault::FfiFailure, measured);
+			: EOutputServiceRustProviderFault::FfiFailure,
+			EOutputProviderBoundary::ActiveChannelQuery, measured);
 		return false;
 	}
 	const auto length = static_cast<std::size_t>(active.length);
@@ -608,7 +738,10 @@ template <typename Control>
 		: reinterpret_cast<std::uint8_t*>(value.data());
 	active.data = expectedData;
 	active.capacity = static_cast<std::uint64_t>(value.size());
+	RecordBoundaryCall(control, EOutputProviderBoundary::ActiveChannelQuery,
+		&OutputProviderHealthCounters::activeChannelCalls);
 	const auto written = sakura_output_provider_active_channel_v1(control.token, &active);
+	RecordBoundaryStatus(control, EOutputProviderBoundary::ActiveChannelQuery, written);
 	if (written != SakuraOutputProviderStatus::Ok
 		|| !IsValidActiveChannelHeader(active)
 		|| active.data != expectedData
@@ -617,13 +750,14 @@ template <typename Control>
 		|| active.length != static_cast<std::uint64_t>(value.size())) {
 		SetFault(control, written == SakuraOutputProviderStatus::Ok
 			? EOutputServiceRustProviderFault::AbiFailure
-			: EOutputServiceRustProviderFault::FfiFailure, written);
+			: EOutputServiceRustProviderFault::FfiFailure,
+			EOutputProviderBoundary::ActiveChannelQuery, written);
 		return false;
 	}
 	if (active.present == 0) {
 		if (!value.empty()) {
 			SetFault(control, EOutputServiceRustProviderFault::AbiFailure,
-				SakuraOutputProviderStatus::InternalError);
+				EOutputProviderBoundary::ActiveChannelQuery, SakuraOutputProviderStatus::InternalError);
 			return false;
 		}
 		activeChannelId.reset();
@@ -631,7 +765,7 @@ template <typename Control>
 	}
 	if (!IsValidOutputStableId(value)) {
 		SetFault(control, EOutputServiceRustProviderFault::AbiFailure,
-			SakuraOutputProviderStatus::InternalError);
+			EOutputProviderBoundary::ActiveChannelQuery, SakuraOutputProviderStatus::InternalError);
 		return false;
 	}
 	activeChannelId = std::move(value);
@@ -652,22 +786,26 @@ template <typename Control>
 		ready = !control.authorityStopped
 			&& control.diagnostics.state == EOutputServiceRustProviderState::Ready;
 	}
-	if (!ready) return ProviderUnavailable(control);
+	if (!ready) return ProviderUnavailable(control, true);
 	SakuraOutputProviderApplyResultV1 raw{};
 	InitializeAbiHeader(raw);
+	RecordBoundaryCall(control, EOutputProviderBoundary::Apply, nullptr);
 	const auto ffiStatus = sakura_output_provider_apply_v1(control.token, &pending.raw, &raw);
+	RecordBoundaryStatus(control, EOutputProviderBoundary::Apply, ffiStatus);
 	const auto operationStatus = static_cast<SakuraOutputProviderOperationStatus>(raw.status);
 	if (ffiStatus != SakuraOutputProviderStatus::Ok
 		&& !(ffiStatus == SakuraOutputProviderStatus::Stopped
 			&& operationStatus == SakuraOutputProviderOperationStatus::Stopped)) {
-		SetFault(control, EOutputServiceRustProviderFault::FfiFailure, ffiStatus);
-		return ProviderUnavailable(control);
+		SetFault(control, EOutputServiceRustProviderFault::FfiFailure,
+			EOutputProviderBoundary::Apply, ffiStatus);
+		return ProviderUnavailable(control, true);
 	}
 	if (!IsValidApplyResult(raw)) {
 		SetFault(control, ffiStatus == SakuraOutputProviderStatus::Ok
 			? EOutputServiceRustProviderFault::AbiFailure
-			: EOutputServiceRustProviderFault::FfiFailure, ffiStatus);
-		return ProviderUnavailable(control);
+			: EOutputServiceRustProviderFault::FfiFailure,
+			EOutputProviderBoundary::Apply, ffiStatus);
+		return ProviderUnavailable(control, true);
 	}
 	RecordOperation(control, ffiStatus, raw);
 	if (operationStatus == SakuraOutputProviderOperationStatus::Stopped) {
@@ -700,6 +838,73 @@ template <typename Control>
 
 #endif
 
+template <typename Control>
+void CacheTerminalSnapshot(
+	Control& control,
+	std::optional<OutputServiceSnapshot> snapshot,
+	const std::uint64_t revision) noexcept
+{
+	std::lock_guard lock(control.modelMutex);
+	try {
+		if (snapshot) {
+			control.terminalSnapshot = std::move(*snapshot);
+		} else {
+			control.terminalSnapshot.channels.clear();
+			control.terminalSnapshot.activeChannelId.reset();
+		}
+	} catch (...) {
+		// A terminal snapshot is an observation cache. Preserve the terminal
+		// fence even if copying the complete Rust snapshot fails under pressure.
+		control.terminalSnapshot.channels.clear();
+		control.terminalSnapshot.activeChannelId.reset();
+	}
+	control.terminalSnapshot.revision = revision;
+	control.terminalSnapshot.stopped = true;
+	control.terminalSnapshot.droppedNotificationCount =
+		control.notificationDispatcher.DroppedNotificationCountLocked();
+	control.terminalSnapshotAvailable = true;
+	control.lastRevision = revision;
+}
+
+template <typename Control>
+[[nodiscard]] bool DestroyToken(Control& control) noexcept
+{
+	std::uint64_t token{};
+	{
+		std::lock_guard lock(control.modelMutex);
+		token = control.token;
+		if (token == 0) {
+			control.pendingDestroy = false;
+			return true;
+		}
+		control.pendingDestroy = true;
+	}
+#if defined(SAKURA_OUTPUT_BACKEND_RUST)
+	RecordBoundaryCall(control, EOutputProviderBoundary::Destroy,
+		&OutputProviderHealthCounters::destroyCalls);
+	// Keep the ABI's writable token slot private to this serialized call. The
+	// control token is also observed under modelMutex by health/fault paths, so
+	// passing its address directly would race with those observers while Rust
+	// consumes the slot on success.
+	std::uint64_t destroyToken = token;
+	const auto status = sakura_output_provider_destroy_v1(&destroyToken);
+	RecordBoundaryStatus(control, EOutputProviderBoundary::Destroy, status);
+	if (status != SakuraOutputProviderStatus::Ok) {
+		SetFault(control, EOutputServiceRustProviderFault::DestroyFailure,
+			EOutputProviderBoundary::Destroy, status);
+		return false;
+	}
+#else
+	(void)token;
+#endif
+	{
+		std::lock_guard lock(control.modelMutex);
+		control.token = 0;
+		control.pendingDestroy = false;
+	}
+	return true;
+}
+
 } // namespace
 
 OutputServiceRustProvider::OutputServiceRustProvider(OutputServiceLimits limits) noexcept
@@ -707,6 +912,9 @@ OutputServiceRustProvider::OutputServiceRustProvider(OutputServiceLimits limits)
 	try {
 		m_control = std::make_unique<Control>(std::move(limits));
 		auto& control = *m_control;
+		control.diagnostics.initializationStage =
+			EOutputProviderInitializationStage::ProviderConstruction;
+		control.diagnostics.counters.initializationAttempts = 1;
 #if defined(SAKURA_OUTPUT_BACKEND_RUST)
 		SakuraOutputProviderLimitsV1 rawLimits{};
 		rawLimits.struct_size = sizeof(rawLimits);
@@ -717,8 +925,10 @@ OutputServiceRustProvider::OutputServiceRustProvider(OutputServiceLimits limits)
 		rawLimits.maximum_payload_bytes = static_cast<std::uint64_t>(control.limits.maximumPayloadBytes);
 		rawLimits.maximum_log_entries_per_channel = static_cast<std::uint64_t>(control.limits.maximumLogEntriesPerChannel);
 		rawLimits.maximum_remembered_operations = static_cast<std::uint64_t>(control.limits.maximumRememberedOperations);
+		control.diagnostics.initializationStage = EOutputProviderInitializationStage::AbiCreate;
+		RecordBoundaryCall(control, EOutputProviderBoundary::Create, nullptr);
 		const auto status = sakura_output_provider_create_v1(&rawLimits, &control.token);
-		control.diagnostics.lastFfiStatus = status;
+		RecordBoundaryStatus(control, EOutputProviderBoundary::Create, status);
 		if (status != SakuraOutputProviderStatus::Ok || control.token == 0) {
 			control.token = 0;
 			control.diagnostics.availability = EOutputServiceRustProviderAvailability::Unavailable;
@@ -726,16 +936,21 @@ OutputServiceRustProvider::OutputServiceRustProvider(OutputServiceLimits limits)
 			control.diagnostics.fault = status == SakuraOutputProviderStatus::Ok
 				? EOutputServiceRustProviderFault::AbiFailure
 				: EOutputServiceRustProviderFault::Unavailable;
+			control.diagnostics.failureBoundary = EOutputProviderBoundary::Create;
+			SaturatingIncrement(control.diagnostics.counters.boundaryFailures);
 			return;
 		}
 		control.diagnostics.availability = EOutputServiceRustProviderAvailability::Available;
 		control.diagnostics.state = EOutputServiceRustProviderState::Ready;
 		control.diagnostics.fault = EOutputServiceRustProviderFault::None;
+		control.diagnostics.initializationStage = EOutputProviderInitializationStage::Ready;
 #else
 		control.diagnostics.availability = EOutputServiceRustProviderAvailability::Unavailable;
 		control.diagnostics.state = EOutputServiceRustProviderState::Unavailable;
 		control.diagnostics.fault = EOutputServiceRustProviderFault::Unavailable;
 		control.diagnostics.lastFfiStatus = SakuraOutputProviderStatus::InternalError;
+		control.diagnostics.failureBoundary = EOutputProviderBoundary::Factory;
+		SaturatingIncrement(control.diagnostics.counters.boundaryFailures);
 #endif
 	}
 	catch (...) {
@@ -747,11 +962,16 @@ OutputServiceRustProvider::OutputServiceRustProvider(OutputServiceLimits limits)
 			}
 		}
 		auto& control = *m_control;
+		control.diagnostics.initializationStage =
+			EOutputProviderInitializationStage::ProviderConstruction;
+		control.diagnostics.counters.initializationAttempts = 1;
 		control.token = 0;
 		control.diagnostics.availability = EOutputServiceRustProviderAvailability::Unavailable;
 		control.diagnostics.state = EOutputServiceRustProviderState::Unavailable;
 		control.diagnostics.fault = EOutputServiceRustProviderFault::Unavailable;
 		control.diagnostics.lastFfiStatus = SakuraOutputProviderStatus::InternalError;
+		control.diagnostics.failureBoundary = EOutputProviderBoundary::Factory;
+		SaturatingIncrement(control.diagnostics.counters.boundaryFailures);
 	}
 }
 
@@ -760,15 +980,7 @@ OutputServiceRustProvider::~OutputServiceRustProvider()
 	if (!m_control) return;
 	(void)Stop();
 	std::unique_lock mutationLock(m_control->mutationMutex);
-#if defined(SAKURA_OUTPUT_BACKEND_RUST)
-	if (m_control->token == 0) return;
-	const auto status = sakura_output_provider_destroy_v1(&m_control->token);
-	if (status != SakuraOutputProviderStatus::Ok) {
-		SetFault(*m_control, EOutputServiceRustProviderFault::DestroyFailure, status);
-	}
-#else
-	(void)mutationLock;
-#endif
+	(void)DestroyToken(*m_control);
 }
 
 bool OutputServiceRustProvider::IsAvailable() const noexcept
@@ -783,13 +995,62 @@ OutputServiceRustProviderDiagnostics OutputServiceRustProvider::Diagnostics() co
 {
 	if (!m_control) return {};
 	std::lock_guard lock(m_control->modelMutex);
-	return m_control->diagnostics;
+	auto diagnostics = m_control->diagnostics;
+	diagnostics.counters.advisoryDroppedNotifications =
+		m_control->notificationDispatcher.DroppedNotificationCountLocked();
+	diagnostics.counters.advisoryListenerFailures =
+		m_control->notificationDispatcher.ListenerFailureCountLocked();
+	return diagnostics;
+}
+
+OutputProviderHealthSnapshot OutputServiceRustProvider::Health() const noexcept
+{
+	OutputProviderHealthSnapshot health;
+	health.kind = EOutputProviderKind::Rust;
+	health.compiledIn = IsCompiledIn();
+	health.abiVersion = IsCompiledIn() ? SAKURA_OUTPUT_PROVIDER_ABI_VERSION_V1 : 0;
+	if (!m_control) {
+		health.factoryStatus = EOutputProviderFactoryStatus::Unavailable;
+		health.lifecycle = EOutputProviderLifecycle::Unavailable;
+		health.fault = EOutputProviderFault::Initialization;
+		health.failureBoundary = EOutputProviderBoundary::Factory;
+		health.counters.initializationAttempts = 1;
+		health.counters.boundaryFailures = 1;
+		return health;
+	}
+	std::lock_guard lock(m_control->modelMutex);
+	const auto& diagnostics = m_control->diagnostics;
+	health.factoryStatus = diagnostics.initializationStage == EOutputProviderInitializationStage::Ready
+		? EOutputProviderFactoryStatus::Created
+		: EOutputProviderFactoryStatus::Unavailable;
+	health.lifecycle = ToProviderLifecycle(diagnostics.state);
+	health.initializationStage = diagnostics.initializationStage;
+	health.fault = ToProviderFault(diagnostics.fault);
+	health.lastBoundary = diagnostics.lastBoundary;
+	health.failureBoundary = diagnostics.failureBoundary;
+	health.lastBoundaryStatus = diagnostics.lastBoundary == EOutputProviderBoundary::None
+		? EOutputProviderBoundaryStatus::NotCalled
+		: ToBoundaryStatus(diagnostics.lastFfiStatus);
+	health.available = diagnostics.availability == EOutputServiceRustProviderAvailability::Available
+		&& diagnostics.state == EOutputServiceRustProviderState::Ready;
+	health.hasLastOperation = diagnostics.hasLastOperation;
+	health.lastOperationStatus = static_cast<EOutputOperationStatus>(diagnostics.lastOperationStatus);
+	health.lastOperationReason = static_cast<EOutputOperationReason>(diagnostics.lastOperationReason);
+	health.lastOperationRevision = diagnostics.lastOperationRevision;
+	health.currentRevision = m_control->lastRevision;
+	health.counters = diagnostics.counters;
+	health.counters.advisoryDroppedNotifications =
+		m_control->notificationDispatcher.DroppedNotificationCountLocked();
+	health.counters.advisoryListenerFailures =
+		m_control->notificationDispatcher.ListenerFailureCountLocked();
+	return health;
 }
 
 OutputOperationResult OutputServiceRustProvider::CreateChannel(
 	const OutputCreateChannelRequest& request)
 {
 	if (!m_control) return { EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidPayload, 0 };
+	RecordMutationAttempt(*m_control);
 	PendingRequest pending;
 	try {
 #if defined(SAKURA_OUTPUT_BACKEND_RUST)
@@ -797,12 +1058,12 @@ OutputOperationResult OutputServiceRustProvider::CreateChannel(
 		return ApplyPending(*m_control, pending, EOutputChangeKind::ChannelCreated, request.channelId);
 #else
 		(void)request;
-		return ProviderUnavailable(*m_control);
+		return ProviderUnavailable(*m_control, true);
 #endif
 	} catch (...) {
 		SetFault(*m_control, EOutputServiceRustProviderFault::FfiFailure,
-			SakuraOutputProviderStatus::InternalError);
-		return ProviderUnavailable(*m_control);
+			EOutputProviderBoundary::Apply, SakuraOutputProviderStatus::InternalError);
+		return ProviderUnavailable(*m_control, true);
 	}
 }
 
@@ -810,6 +1071,7 @@ OutputOperationResult OutputServiceRustProvider::AppendOutput(
 	const OutputTextMutationRequest& request)
 {
 	if (!m_control) return { EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidPayload, 0 };
+	RecordMutationAttempt(*m_control);
 	PendingRequest pending;
 	try {
 #if defined(SAKURA_OUTPUT_BACKEND_RUST)
@@ -817,12 +1079,12 @@ OutputOperationResult OutputServiceRustProvider::AppendOutput(
 		return ApplyPending(*m_control, pending, EOutputChangeKind::ContentAppended, request.channelId);
 #else
 		(void)request;
-		return ProviderUnavailable(*m_control);
+		return ProviderUnavailable(*m_control, true);
 #endif
 	} catch (...) {
 		SetFault(*m_control, EOutputServiceRustProviderFault::FfiFailure,
-			SakuraOutputProviderStatus::InternalError);
-		return ProviderUnavailable(*m_control);
+			EOutputProviderBoundary::Apply, SakuraOutputProviderStatus::InternalError);
+		return ProviderUnavailable(*m_control, true);
 	}
 }
 
@@ -830,6 +1092,7 @@ OutputOperationResult OutputServiceRustProvider::ReplaceOutput(
 	const OutputTextMutationRequest& request)
 {
 	if (!m_control) return { EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidPayload, 0 };
+	RecordMutationAttempt(*m_control);
 	PendingRequest pending;
 	try {
 #if defined(SAKURA_OUTPUT_BACKEND_RUST)
@@ -837,12 +1100,12 @@ OutputOperationResult OutputServiceRustProvider::ReplaceOutput(
 		return ApplyPending(*m_control, pending, EOutputChangeKind::ContentReplaced, request.channelId);
 #else
 		(void)request;
-		return ProviderUnavailable(*m_control);
+		return ProviderUnavailable(*m_control, true);
 #endif
 	} catch (...) {
 		SetFault(*m_control, EOutputServiceRustProviderFault::FfiFailure,
-			SakuraOutputProviderStatus::InternalError);
-		return ProviderUnavailable(*m_control);
+			EOutputProviderBoundary::Apply, SakuraOutputProviderStatus::InternalError);
+		return ProviderUnavailable(*m_control, true);
 	}
 }
 
@@ -850,6 +1113,7 @@ OutputOperationResult OutputServiceRustProvider::AppendLog(
 	const OutputLogMutationRequest& request)
 {
 	if (!m_control) return { EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidPayload, 0 };
+	RecordMutationAttempt(*m_control);
 	PendingRequest pending;
 	try {
 #if defined(SAKURA_OUTPUT_BACKEND_RUST)
@@ -857,12 +1121,12 @@ OutputOperationResult OutputServiceRustProvider::AppendLog(
 		return ApplyPending(*m_control, pending, EOutputChangeKind::ContentAppended, request.channelId);
 #else
 		(void)request;
-		return ProviderUnavailable(*m_control);
+		return ProviderUnavailable(*m_control, true);
 #endif
 	} catch (...) {
 		SetFault(*m_control, EOutputServiceRustProviderFault::FfiFailure,
-			SakuraOutputProviderStatus::InternalError);
-		return ProviderUnavailable(*m_control);
+			EOutputProviderBoundary::Apply, SakuraOutputProviderStatus::InternalError);
+		return ProviderUnavailable(*m_control, true);
 	}
 }
 
@@ -870,6 +1134,7 @@ OutputOperationResult OutputServiceRustProvider::Clear(
 	const OutputChannelMutationRequest& request)
 {
 	if (!m_control) return { EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidPayload, 0 };
+	RecordMutationAttempt(*m_control);
 	PendingRequest pending;
 	try {
 #if defined(SAKURA_OUTPUT_BACKEND_RUST)
@@ -877,12 +1142,12 @@ OutputOperationResult OutputServiceRustProvider::Clear(
 		return ApplyPending(*m_control, pending, EOutputChangeKind::ContentCleared, request.channelId);
 #else
 		(void)request;
-		return ProviderUnavailable(*m_control);
+		return ProviderUnavailable(*m_control, true);
 #endif
 	} catch (...) {
 		SetFault(*m_control, EOutputServiceRustProviderFault::FfiFailure,
-			SakuraOutputProviderStatus::InternalError);
-		return ProviderUnavailable(*m_control);
+			EOutputProviderBoundary::Apply, SakuraOutputProviderStatus::InternalError);
+		return ProviderUnavailable(*m_control, true);
 	}
 }
 
@@ -890,6 +1155,7 @@ OutputOperationResult OutputServiceRustProvider::Show(
 	const OutputShowChannelRequest& request)
 {
 	if (!m_control) return { EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidPayload, 0 };
+	RecordMutationAttempt(*m_control);
 	PendingRequest pending;
 	try {
 #if defined(SAKURA_OUTPUT_BACKEND_RUST)
@@ -897,12 +1163,12 @@ OutputOperationResult OutputServiceRustProvider::Show(
 		return ApplyPending(*m_control, pending, EOutputChangeKind::ChannelShown, request.channelId);
 #else
 		(void)request;
-		return ProviderUnavailable(*m_control);
+		return ProviderUnavailable(*m_control, true);
 #endif
 	} catch (...) {
 		SetFault(*m_control, EOutputServiceRustProviderFault::FfiFailure,
-			SakuraOutputProviderStatus::InternalError);
-		return ProviderUnavailable(*m_control);
+			EOutputProviderBoundary::Apply, SakuraOutputProviderStatus::InternalError);
+		return ProviderUnavailable(*m_control, true);
 	}
 }
 
@@ -910,6 +1176,7 @@ OutputOperationResult OutputServiceRustProvider::Hide(
 	const OutputChannelMutationRequest& request)
 {
 	if (!m_control) return { EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidPayload, 0 };
+	RecordMutationAttempt(*m_control);
 	PendingRequest pending;
 	try {
 #if defined(SAKURA_OUTPUT_BACKEND_RUST)
@@ -917,12 +1184,12 @@ OutputOperationResult OutputServiceRustProvider::Hide(
 		return ApplyPending(*m_control, pending, EOutputChangeKind::ChannelHidden, request.channelId);
 #else
 		(void)request;
-		return ProviderUnavailable(*m_control);
+		return ProviderUnavailable(*m_control, true);
 #endif
 	} catch (...) {
 		SetFault(*m_control, EOutputServiceRustProviderFault::FfiFailure,
-			SakuraOutputProviderStatus::InternalError);
-		return ProviderUnavailable(*m_control);
+			EOutputProviderBoundary::Apply, SakuraOutputProviderStatus::InternalError);
+		return ProviderUnavailable(*m_control, true);
 	}
 }
 
@@ -930,6 +1197,7 @@ OutputOperationResult OutputServiceRustProvider::Dispose(
 	const OutputChannelMutationRequest& request)
 {
 	if (!m_control) return { EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidPayload, 0 };
+	RecordMutationAttempt(*m_control);
 	PendingRequest pending;
 	try {
 #if defined(SAKURA_OUTPUT_BACKEND_RUST)
@@ -937,12 +1205,12 @@ OutputOperationResult OutputServiceRustProvider::Dispose(
 		return ApplyPending(*m_control, pending, EOutputChangeKind::ChannelDisposed, request.channelId);
 #else
 		(void)request;
-		return ProviderUnavailable(*m_control);
+		return ProviderUnavailable(*m_control, true);
 #endif
 	} catch (...) {
 		SetFault(*m_control, EOutputServiceRustProviderFault::FfiFailure,
-			SakuraOutputProviderStatus::InternalError);
-		return ProviderUnavailable(*m_control);
+			EOutputProviderBoundary::Apply, SakuraOutputProviderStatus::InternalError);
+		return ProviderUnavailable(*m_control, true);
 	}
 }
 
@@ -950,6 +1218,7 @@ OutputOperationResult OutputServiceRustProvider::DisposeOwner(
 	const OutputDisposeOwnerRequest& request)
 {
 	if (!m_control) return { EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidPayload, 0 };
+	RecordMutationAttempt(*m_control);
 	PendingRequest pending;
 	try {
 #if defined(SAKURA_OUTPUT_BACKEND_RUST)
@@ -957,70 +1226,101 @@ OutputOperationResult OutputServiceRustProvider::DisposeOwner(
 		return ApplyPending(*m_control, pending, EOutputChangeKind::OwnerDisposed, std::nullopt);
 #else
 		(void)request;
-		return ProviderUnavailable(*m_control);
+		return ProviderUnavailable(*m_control, true);
 #endif
 	} catch (...) {
 		SetFault(*m_control, EOutputServiceRustProviderFault::FfiFailure,
-			SakuraOutputProviderStatus::InternalError);
-		return ProviderUnavailable(*m_control);
+			EOutputProviderBoundary::Apply, SakuraOutputProviderStatus::InternalError);
+		return ProviderUnavailable(*m_control, true);
 	}
 }
 
 OutputOperationResult OutputServiceRustProvider::Stop() noexcept
 {
 	if (!m_control) return { EOutputOperationStatus::Succeeded, EOutputOperationReason::None, 0 };
+	{
+		std::lock_guard lock(m_control->modelMutex);
+		SaturatingIncrement(m_control->diagnostics.counters.stopCalls);
+	}
 	OutputOperationResult result{ EOutputOperationStatus::Succeeded, EOutputOperationReason::None, 1 };
-	bool stopSucceeded = true;
 	{
 		std::unique_lock mutationLock(m_control->mutationMutex);
 		bool alreadyStopped{};
-		bool priorFaulted{};
+		bool stopSucceeded = true;
 		{
 			std::lock_guard lock(m_control->modelMutex);
 			alreadyStopped = m_control->authorityStopped;
-			priorFaulted = m_control->diagnostics.state == EOutputServiceRustProviderState::Faulted;
 			result.revision = m_control->lastRevision;
 		}
+
 		if (alreadyStopped) {
-			mutationLock.unlock();
-			result.callbackDrainDeferred = m_control->notificationDispatcher.WaitForDrain();
-			return result;
-		}
-#if defined(SAKURA_OUTPUT_BACKEND_RUST)
-		if (!alreadyStopped && m_control->token != 0) {
-			SakuraOutputProviderApplyResultV1 raw{};
-			InitializeAbiHeader(raw);
-			const auto status = sakura_output_provider_stop_v1(m_control->token, &raw);
-			if (status != SakuraOutputProviderStatus::Ok
-				|| !IsValidApplyResult(raw)
-				|| raw.status != static_cast<std::uint32_t>(SakuraOutputProviderOperationStatus::Succeeded)) {
-				SetFault(*m_control, status == SakuraOutputProviderStatus::Ok
-					? EOutputServiceRustProviderFault::AbiFailure
-					: EOutputServiceRustProviderFault::FfiFailure, status);
-				result = ProviderUnavailable(*m_control);
-				stopSucceeded = false;
-			} else {
-				if (!priorFaulted) {
-					RecordOperation(*m_control, status, raw);
-				} else {
-					std::lock_guard lock(m_control->modelMutex);
-					m_control->lastRevision = raw.revision;
-				}
-				result = { static_cast<EOutputOperationStatus>(raw.status),
-					static_cast<EOutputOperationReason>(raw.reason), raw.revision };
+			bool pendingDestroy{};
+			{
+				std::lock_guard lock(m_control->modelMutex);
+				pendingDestroy = m_control->pendingDestroy;
 			}
-		} else if (m_control->token == 0) {
-			result = { EOutputOperationStatus::Succeeded, EOutputOperationReason::None, m_control->lastRevision };
-		}
+			if (pendingDestroy && !DestroyToken(*m_control)) {
+				result = { EOutputOperationStatus::Rejected, EOutputOperationReason::None, result.revision };
+			}
+			{
+				std::lock_guard lock(m_control->modelMutex);
+				result.revision = m_control->lastRevision;
+				RecordPublicResultLocked(*m_control, result, false);
+			}
+		} else {
+#if defined(SAKURA_OUTPUT_BACKEND_RUST)
+			if (m_control->token != 0) {
+				SakuraOutputProviderApplyResultV1 raw{};
+				InitializeAbiHeader(raw);
+				RecordBoundaryCall(*m_control, EOutputProviderBoundary::Stop, nullptr);
+				const auto status = sakura_output_provider_stop_v1(m_control->token, &raw);
+				RecordBoundaryStatus(*m_control, EOutputProviderBoundary::Stop, status);
+				if (status != SakuraOutputProviderStatus::Ok
+					|| !IsValidApplyResult(raw)
+					|| raw.status != static_cast<std::uint32_t>(SakuraOutputProviderOperationStatus::Succeeded)) {
+					SetFault(*m_control, status == SakuraOutputProviderStatus::Ok
+						? EOutputServiceRustProviderFault::AbiFailure
+						: EOutputServiceRustProviderFault::FfiFailure,
+						EOutputProviderBoundary::Stop, status);
+					result = ProviderUnavailable(*m_control);
+					stopSucceeded = false;
+				} else {
+					result = { static_cast<EOutputOperationStatus>(raw.status),
+						static_cast<EOutputOperationReason>(raw.reason), raw.revision,
+						raw.callback_drain_deferred != 0 };
+					std::optional<OutputServiceSnapshot> terminalSnapshot;
+					try {
+						terminalSnapshot = ReadSnapshot(*m_control);
+					} catch (...) {
+						SetFault(*m_control, EOutputServiceRustProviderFault::SnapshotFailure,
+							EOutputProviderBoundary::SnapshotDecode,
+							SakuraOutputProviderStatus::InternalError);
+					}
+					CacheTerminalSnapshot(*m_control, std::move(terminalSnapshot), result.revision);
+				}
+			} else {
+				CacheTerminalSnapshot(*m_control, std::nullopt, result.revision);
+			}
+#else
+			CacheTerminalSnapshot(*m_control, std::nullopt, result.revision);
 #endif
-		{
-			std::lock_guard lock(m_control->modelMutex);
-			m_control->notificationDispatcher.StopLocked();
-			if (stopSucceeded) {
-				m_control->authorityStopped = true;
-				if (!priorFaulted && m_control->diagnostics.fault == EOutputServiceRustProviderFault::None) {
+			{
+				std::lock_guard lock(m_control->modelMutex);
+				m_control->notificationDispatcher.StopLocked();
+				if (stopSucceeded) {
+					m_control->authorityStopped = true;
+					m_control->diagnostics.availability =
+						EOutputServiceRustProviderAvailability::Unavailable;
 					m_control->diagnostics.state = EOutputServiceRustProviderState::Stopped;
 				}
+			}
+			if (stopSucceeded && !DestroyToken(*m_control)) {
+				result = { EOutputOperationStatus::Rejected, EOutputOperationReason::None, result.revision };
+			}
+			{
+				std::lock_guard lock(m_control->modelMutex);
+				result.revision = m_control->lastRevision;
+				RecordPublicResultLocked(*m_control, result, false);
 			}
 		}
 	}
@@ -1031,14 +1331,20 @@ OutputOperationResult OutputServiceRustProvider::Stop() noexcept
 OutputServiceSnapshot OutputServiceRustProvider::Snapshot() const
 {
 	if (!m_control) return {};
+	{
+		std::lock_guard lock(m_control->modelMutex);
+		SaturatingIncrement(m_control->diagnostics.counters.snapshotCalls);
+	}
 	try {
 		std::unique_lock mutationLock(m_control->mutationMutex);
 		{
 			std::lock_guard lock(m_control->modelMutex);
+			if (m_control->authorityStopped && m_control->terminalSnapshotAvailable) {
+				return m_control->terminalSnapshot;
+			}
 			if (m_control->token == 0
-				|| (!m_control->authorityStopped
-					&& (m_control->diagnostics.state == EOutputServiceRustProviderState::Unavailable
-						|| m_control->diagnostics.state == EOutputServiceRustProviderState::Faulted))) {
+				|| m_control->diagnostics.state == EOutputServiceRustProviderState::Unavailable
+				|| m_control->diagnostics.state == EOutputServiceRustProviderState::Faulted) {
 				return {};
 			}
 		}
@@ -1047,7 +1353,7 @@ OutputServiceSnapshot OutputServiceRustProvider::Snapshot() const
 #endif
 	} catch (...) {
 		SetFault(*m_control, EOutputServiceRustProviderFault::SnapshotFailure,
-			SakuraOutputProviderStatus::InternalError);
+			EOutputProviderBoundary::SnapshotDecode, SakuraOutputProviderStatus::InternalError);
 	}
 	return {};
 }

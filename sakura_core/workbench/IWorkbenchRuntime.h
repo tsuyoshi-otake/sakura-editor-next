@@ -13,6 +13,7 @@
 #include "config/IWorkspaceContextService.h"
 #include "config/SettingsWritebackCoordinator.h"
 #include "workbench/WorkbenchBootstrapContext.h"
+#include "workbench/output/OutputProviderTypes.h"
 #include "workbench/tasks/FolderTaskCatalogRegistry.h"
 #include "workbench/tasks/TaskExecutionService.h"
 #include "workbench/workspace/WorkspaceConfigurationTypes.h"
@@ -191,6 +192,12 @@ public:
 	[[nodiscard]] virtual const problems::MarkerService* Markers() const noexcept = 0;
 	[[nodiscard]] virtual output::IOutputService* Output() noexcept = 0;
 	[[nodiscard]] virtual const output::IOutputService* Output() const noexcept = 0;
+	//! Payload-free copied health for the one-shot Output authority selection.
+	//! Narrow test runtimes may retain the not-attempted default.
+	[[nodiscard]] virtual output::OutputProviderHealthSnapshot OutputProviderHealth() const noexcept
+	{
+		return {};
+	}
 	[[nodiscard]] virtual scm::SourceControlService* Scm() noexcept = 0;
 	[[nodiscard]] virtual const scm::SourceControlService* Scm() const noexcept = 0;
 	//! Profile-scoped package management and isolated runtime are distinct

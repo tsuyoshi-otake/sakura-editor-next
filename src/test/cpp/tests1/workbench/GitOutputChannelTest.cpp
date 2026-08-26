@@ -128,6 +128,23 @@ public:
 		return result;
 	}
 
+	OutputProviderHealthSnapshot Health() const noexcept override
+	{
+		OutputProviderHealthSnapshot health;
+		health.kind = EOutputProviderKind::Cpp;
+		health.factoryStatus = EOutputProviderFactoryStatus::Created;
+		health.lifecycle = snapshot.stopped
+			? EOutputProviderLifecycle::Stopped
+			: EOutputProviderLifecycle::Ready;
+		health.initializationStage = EOutputProviderInitializationStage::Ready;
+		health.compiledIn = true;
+		health.available = !snapshot.stopped;
+		health.counters.initializationAttempts = 1;
+		health.counters.snapshotCalls = snapshotCallCount;
+		health.currentRevision = snapshot.revision;
+		return health;
+	}
+
 	OutputServiceSnapshot Snapshot() const override
 	{
 		++snapshotCallCount;

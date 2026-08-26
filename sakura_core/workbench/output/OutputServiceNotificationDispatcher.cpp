@@ -96,6 +96,11 @@ std::uint64_t OutputServiceNotificationDispatcher::DroppedNotificationCountLocke
 	return m_droppedNotificationCount;
 }
 
+std::uint64_t OutputServiceNotificationDispatcher::ListenerFailureCountLocked() const noexcept
+{
+	return m_listenerFailureCount;
+}
+
 bool OutputServiceNotificationDispatcher::WaitForDrain() noexcept
 {
 	std::unique_lock lock(m_modelMutex);
@@ -146,6 +151,7 @@ void OutputServiceNotificationDispatcher::Drain() noexcept
 						// alive when a stateful target rejects the copy, and let later
 						// subscribers and queued notifications continue.
 						SaturatingIncrement(m_droppedNotificationCount);
+						SaturatingIncrement(m_listenerFailureCount);
 						listenerCopyFailed = true;
 					}
 				}
@@ -160,6 +166,8 @@ void OutputServiceNotificationDispatcher::Drain() noexcept
 			catch (...) {
 				// An advisory observer cannot suppress later observers or mutate the
 				// terminal state of the provider by throwing.
+				std::lock_guard lock(m_modelMutex);
+				SaturatingIncrement(m_listenerFailureCount);
 			}
 		}
 	}

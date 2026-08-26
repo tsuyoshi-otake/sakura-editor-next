@@ -10,29 +10,13 @@
 #pragma once
 
 #include "workbench/output/IOutputService.h"
+#include "workbench/output/OutputProviderTypes.h"
 
-#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
 
 namespace workbench::output {
-
-//! The authority is selected once for one runtime lifetime.  This selector is
-//! deliberately independent from CpuDispatch and all UTF-16 backend macros.
-enum class EOutputProviderKind : std::uint8_t {
-	Cpp,
-	Rust,
-};
-
-//! Construction is separate from provider operation results.  In particular,
-//! Rust unavailability is not a request to fall back to C++.
-enum class EOutputProviderFactoryStatus : std::uint8_t {
-	Created,
-	Unavailable,
-	InitializationFailed,
-	InvalidSelection,
-};
 
 //! A provider creator is an explicit composition seam.  The creator must
 //! return exactly one fully initialized provider or null.  It must not return
@@ -41,12 +25,13 @@ using OutputProviderCreator = std::function<std::unique_ptr<IOutputService>(
 	const OutputServiceLimits&)>;
 
 struct OutputProviderFactoryDependencies final {
-	//! Optional test/production C++ creator.  The default is OutputService.
-	OutputProviderCreator cppCreator;
-	//! Optional Rust creator for explicit composition tests.  Without one, a
+	//! Test-only C++ creator override. Production composition must leave this
+	//! empty so health attribution cannot mislabel another implementation.
+	OutputProviderCreator testCppCreator;
+	//! Test-only Rust creator override. Without one, a
 	//! Rust-enabled build constructs OutputServiceRustProvider directly; a
 	//! non-Rust build reports typed unavailability with no C++ fallback.
-	OutputProviderCreator rustCreator;
+	OutputProviderCreator testRustCreator;
 };
 
 struct OutputProviderFactoryRequest final {
@@ -55,10 +40,11 @@ struct OutputProviderFactoryRequest final {
 };
 
 struct OutputProviderFactoryResult final {
-	EOutputProviderFactoryStatus status{ EOutputProviderFactoryStatus::InvalidSelection };
+	EOutputProviderFactoryStatus status{ EOutputProviderFactoryStatus::NotAttempted };
 	EOutputProviderKind kind{ EOutputProviderKind::Cpp };
 	std::unique_ptr<IOutputService> provider;
 	std::string diagnostic;
+	OutputProviderHealthSnapshot health{};
 
 	[[nodiscard]] bool Succeeded() const noexcept
 	{

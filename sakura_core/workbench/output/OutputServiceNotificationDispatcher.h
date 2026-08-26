@@ -74,6 +74,7 @@ public:
 	[[nodiscard]] bool IsDrainingLocked() const noexcept;
 	[[nodiscard]] bool IsDispatchThreadLocked() const noexcept;
 	[[nodiscard]] std::uint64_t DroppedNotificationCountLocked() const noexcept;
+	[[nodiscard]] std::uint64_t ListenerFailureCountLocked() const noexcept;
 
 private:
 	struct PendingNotification final {
@@ -89,6 +90,7 @@ private:
 	std::map<OutputServiceSubscriptionId, OutputServiceListener> m_subscriptions;
 	std::deque<PendingNotification> m_pendingNotifications;
 	std::uint64_t m_droppedNotificationCount{};
+	std::uint64_t m_listenerFailureCount{};
 	OutputServiceSubscriptionId m_nextSubscriptionId{ 1 };
 	bool m_stopped{};
 	bool m_draining{};

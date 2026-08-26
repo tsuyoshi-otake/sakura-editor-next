@@ -794,6 +794,25 @@ TEST(OutputServiceProviderConformance, AdvisoryCallbacksAreFifoNonRecursiveAndCo
 	AssertRustProviderReady(providers);
 	RunAdvisoryFifoAndReentrancyConformance(*providers.cpp);
 	RunAdvisoryFifoAndReentrancyConformance(*providers.rust);
+	const auto expectHealth = [](const OutputProviderHealthSnapshot& health) {
+		EXPECT_EQ(EOutputProviderLifecycle::Stopped, health.lifecycle);
+		EXPECT_EQ(EOutputProviderFault::None, health.fault);
+		EXPECT_EQ(2U, health.counters.advisoryListenerFailures);
+		EXPECT_EQ(0U, health.counters.advisoryDroppedNotifications);
+		EXPECT_EQ(2U, health.counters.mutationCalls);
+		EXPECT_EQ(2U, health.counters.acceptedOperations);
+		EXPECT_EQ(1U, health.counters.stopCalls);
+		EXPECT_TRUE(health.hasLastOperation);
+		EXPECT_EQ(EOutputOperationStatus::Succeeded, health.lastOperationStatus);
+	};
+	const auto cppHealth = providers.cpp->Health();
+	const auto rustHealth = providers.rust->Health();
+	expectHealth(cppHealth);
+	expectHealth(rustHealth);
+	EXPECT_EQ(0U, cppHealth.counters.destroyCalls);
+	EXPECT_EQ(1U, rustHealth.counters.destroyCalls);
+	EXPECT_EQ(EOutputProviderBoundary::Destroy, rustHealth.lastBoundary);
+	EXPECT_EQ(EOutputProviderBoundaryStatus::Ok, rustHealth.lastBoundaryStatus);
 }
 
 TEST(OutputServiceProviderConformance, CallbackOriginStopDefersAndExternalRetryCompletes)
@@ -998,6 +1017,15 @@ TEST(OutputServiceRustProvider, IsExplicitlyUnavailableWithoutFunctionalFallback
 	EXPECT_EQ(EOutputServiceRustProviderAvailability::Unavailable, diagnostics.availability);
 	EXPECT_EQ(EOutputServiceRustProviderState::Unavailable, diagnostics.state);
 	EXPECT_EQ(EOutputServiceRustProviderFault::Unavailable, diagnostics.fault);
+	const auto health = provider.Health();
+	EXPECT_EQ(EOutputProviderKind::Rust, health.kind);
+	EXPECT_EQ(EOutputProviderFactoryStatus::Unavailable, health.factoryStatus);
+	EXPECT_EQ(EOutputProviderLifecycle::Unavailable, health.lifecycle);
+	EXPECT_EQ(EOutputProviderFault::Unavailable, health.fault);
+	EXPECT_FALSE(health.compiledIn);
+	EXPECT_FALSE(health.available);
+	EXPECT_EQ(0U, health.abiVersion);
+	EXPECT_EQ(1U, health.counters.initializationAttempts);
 
 	const auto before = provider.Snapshot();
 	const auto create = provider.CreateChannel(
@@ -1007,7 +1035,27 @@ TEST(OutputServiceRustProvider, IsExplicitlyUnavailableWithoutFunctionalFallback
 	const auto after = provider.Snapshot();
 	ExpectSnapshotsExactlyEqual(before, after);
 	EXPECT_TRUE(after.channels.empty());
+	const auto stop = provider.Stop();
+	ExpectExpectedResult(stop, EOutputOperationStatus::Succeeded,
+		EOutputOperationReason::None, 1);
+	const auto terminal = provider.Snapshot();
+	EXPECT_TRUE(terminal.stopped);
+	EXPECT_EQ(1U, terminal.revision);
+	const auto repeatedStop = provider.Stop();
+	ExpectExpectedResult(repeatedStop, EOutputOperationStatus::Succeeded,
+		EOutputOperationReason::None, 1);
+	const auto postStop = provider.AppendOutput(
+		ConformanceText("unavailable.post-stop", ConformanceOwner("unavailable.owner"),
+			"unavailable.output", "ignored"));
+	ExpectExpectedResult(postStop, EOutputOperationStatus::Stopped,
+		EOutputOperationReason::None, 1);
 	EXPECT_FALSE(provider.Subscribe([](const OutputServiceChange&) {}));
+	const auto stoppedHealth = provider.Health();
+	EXPECT_EQ(EOutputProviderLifecycle::Stopped, stoppedHealth.lifecycle);
+	EXPECT_EQ(EOutputProviderFault::Unavailable, stoppedHealth.fault);
+	EXPECT_FALSE(stoppedHealth.available);
+	EXPECT_TRUE(stoppedHealth.hasLastOperation);
+	EXPECT_EQ(EOutputOperationStatus::Stopped, stoppedHealth.lastOperationStatus);
 }
 
 #endif

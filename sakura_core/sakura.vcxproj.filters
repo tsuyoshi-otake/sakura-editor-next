@@ -1434,6 +1434,9 @@
     <ClInclude Include="..\sakura_core\workbench\output\OutputProviderFactory.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\output\OutputProviderTypes.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\workbench\output\OutputService.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>

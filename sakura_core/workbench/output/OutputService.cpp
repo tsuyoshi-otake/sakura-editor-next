@@ -217,6 +217,7 @@ struct OutputService::Impl final {
 	bool drainingAcceptedCommits{};
 	std::thread::id acceptedCommitDispatchThreadId;
 	bool stopped{};
+	OutputProviderHealthSnapshot health;
 
 	explicit Impl(OutputServiceLimits initialLimits)
 		: limits(NormalizeLimits(std::move(initialLimits)))
@@ -226,11 +227,45 @@ struct OutputService::Impl final {
 				.maximumPendingNotifications = limits.maximumPendingNotifications,
 			})
 	{
+		health.kind = EOutputProviderKind::Cpp;
+		health.factoryStatus = EOutputProviderFactoryStatus::Created;
+		health.lifecycle = EOutputProviderLifecycle::Ready;
+		health.initializationStage = EOutputProviderInitializationStage::Ready;
+		health.compiledIn = true;
+		health.available = true;
+		health.counters.initializationAttempts = 1;
+		health.currentRevision = revision;
 	}
 
 	[[nodiscard]] OutputOperationResult Current(const EOutputOperationStatus status, const EOutputOperationReason reason) const noexcept
 	{
 		return { status, reason, revision };
+	}
+
+	void RecordMutationAttemptLocked() noexcept
+	{
+		SaturatingIncrement(health.counters.mutationCalls);
+	}
+
+	void RecordPublicResultLocked(const OutputOperationResult& result, const bool countMutation) noexcept
+	{
+		health.hasLastOperation = true;
+		health.lastOperationStatus = result.status;
+		health.lastOperationReason = result.reason;
+		health.lastOperationRevision = result.revision;
+		health.currentRevision = revision;
+		if (!countMutation) return;
+		switch (result.status) {
+		case EOutputOperationStatus::Succeeded:
+			SaturatingIncrement(health.counters.acceptedOperations);
+			break;
+		case EOutputOperationStatus::Replayed:
+			SaturatingIncrement(health.counters.replayedOperations);
+			break;
+		default:
+			SaturatingIncrement(health.counters.rejectedOperations);
+			break;
+		}
 	}
 
 	void RememberLocked(std::string operationId, std::string fingerprint, const OutputOperationResult& result)
@@ -671,16 +706,22 @@ OutputOperationResult Apply(ImplType& impl, const Request& request, Fingerprint 
 	OutputOperationResult result;
 	{
 		std::lock_guard lock(impl.mutex);
-		if (impl.stopped) return impl.Current(EOutputOperationStatus::Stopped, EOutputOperationReason::None);
-		if (!IsValidOutputOperationId(request.operation.operationId)) {
-			return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidOperationId);
+		impl.RecordMutationAttemptLocked();
+		if (impl.stopped) {
+			result = impl.Current(EOutputOperationStatus::Stopped, EOutputOperationReason::None);
+		} else if (!IsValidOutputOperationId(request.operation.operationId)) {
+			result = impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidOperationId);
+		} else {
+			const auto fingerprint = makeFingerprint(request);
+			if (const auto replay = impl.ReplayOrConflictLocked(request.operation, fingerprint)) {
+				result = *replay;
+			} else if (request.operation.expectedRevision && *request.operation.expectedRevision != impl.revision) {
+				result = impl.Current(EOutputOperationStatus::StaleRevision, EOutputOperationReason::ExpectedRevisionMismatch);
+			} else {
+				result = mutate(impl, fingerprint, drain, acceptedCommitDrain);
+			}
 		}
-		const auto fingerprint = makeFingerprint(request);
-		if (const auto replay = impl.ReplayOrConflictLocked(request.operation, fingerprint)) return *replay;
-		if (request.operation.expectedRevision && *request.operation.expectedRevision != impl.revision) {
-			return impl.Current(EOutputOperationStatus::StaleRevision, EOutputOperationReason::ExpectedRevisionMismatch);
-		}
-		result = mutate(impl, fingerprint, drain, acceptedCommitDrain);
+		impl.RecordPublicResultLocked(result, true);
 	}
 	if (drain) impl.DrainNotifications();
 	if (acceptedCommitDrain) impl.DrainAcceptedCommits();
@@ -895,6 +936,7 @@ OutputOperationResult OutputService::Stop() noexcept
 	bool acceptedCommitDrain{};
 	{
 		std::lock_guard lock(m_impl->mutex);
+		Impl::SaturatingIncrement(m_impl->health.counters.stopCalls);
 		if (m_impl->stopped) {
 			result = m_impl->Current(EOutputOperationStatus::Succeeded, EOutputOperationReason::None);
 		} else {
@@ -905,15 +947,34 @@ OutputOperationResult OutputService::Stop() noexcept
 			if (m_impl->revision != std::numeric_limits<std::uint64_t>::max()) ++m_impl->revision;
 			result = m_impl->Current(EOutputOperationStatus::Succeeded, EOutputOperationReason::None);
 		}
+		m_impl->RecordPublicResultLocked(result, false);
 	}
 	if (acceptedCommitDrain) m_impl->DrainAcceptedCommits();
 	result.callbackDrainDeferred = m_impl->WaitForNotificationDrain();
 	return result;
 }
 
+OutputProviderHealthSnapshot OutputService::Health() const noexcept
+{
+	std::lock_guard lock(m_impl->mutex);
+	auto health = m_impl->health;
+	health.lifecycle = m_impl->stopped
+		? EOutputProviderLifecycle::Stopped
+		: EOutputProviderLifecycle::Ready;
+	health.available = !m_impl->stopped;
+	health.currentRevision = m_impl->revision;
+	health.counters.advisoryDroppedNotifications =
+		m_impl->notificationDispatcher.DroppedNotificationCountLocked();
+	health.counters.advisoryListenerFailures =
+		m_impl->notificationDispatcher.ListenerFailureCountLocked();
+	return health;
+}
+
 OutputServiceSnapshot OutputService::Snapshot() const
 {
 	std::lock_guard lock(m_impl->mutex);
+	Impl::SaturatingIncrement(m_impl->health.counters.snapshotCalls);
+	m_impl->health.currentRevision = m_impl->revision;
 	return m_impl->SnapshotLocked();
 }
 

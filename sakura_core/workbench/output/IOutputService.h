@@ -6,6 +6,7 @@
 */
 #pragma once
 
+#include "workbench/output/OutputProviderTypes.h"
 #include "workbench/output/OutputServiceTypes.h"
 
 namespace workbench::output {
@@ -39,6 +40,9 @@ public:
 
 	//! External callers wait for active advisory listener callbacks; a reentrant Stop returns deferred.
 	[[nodiscard]] virtual OutputOperationResult Stop() noexcept = 0;
+
+	//! Returns a copied provider-neutral health view without taking runtime lifecycle locks.
+	[[nodiscard]] virtual OutputProviderHealthSnapshot Health() const noexcept = 0;
 
 	[[nodiscard]] virtual OutputServiceSnapshot Snapshot() const = 0;
 	[[nodiscard]] virtual std::optional<OutputServiceSubscriptionId> Subscribe(OutputServiceListener listener) = 0;

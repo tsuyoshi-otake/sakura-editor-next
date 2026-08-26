@@ -6,6 +6,7 @@
 #pragma once
 
 #include "workbench/output/IOutputService.h"
+#include "workbench/output/OutputProviderTypes.h"
 #include "workbench/output/OutputServiceRustProviderAbi.h"
 
 #include <cstdint>
@@ -40,12 +41,18 @@ struct OutputServiceRustProviderDiagnostics final {
 	EOutputServiceRustProviderAvailability availability{
 		EOutputServiceRustProviderAvailability::Unavailable };
 	EOutputServiceRustProviderState state{ EOutputServiceRustProviderState::Unavailable };
+	EOutputProviderInitializationStage initializationStage{
+		EOutputProviderInitializationStage::NotStarted };
+	EOutputProviderBoundary lastBoundary{ EOutputProviderBoundary::None };
+	EOutputProviderBoundary failureBoundary{ EOutputProviderBoundary::None };
 	SakuraOutputProviderStatus lastFfiStatus{ SakuraOutputProviderStatus::InternalError };
+	bool hasLastOperation{};
 	SakuraOutputProviderOperationStatus lastOperationStatus{
 		SakuraOutputProviderOperationStatus::Stopped };
 	SakuraOutputProviderReason lastOperationReason{ SakuraOutputProviderReason::None };
 	std::uint64_t lastOperationRevision{};
 	EOutputServiceRustProviderFault fault{ EOutputServiceRustProviderFault::Unavailable };
+	OutputProviderHealthCounters counters{};
 };
 
 /*!
@@ -77,6 +84,7 @@ public:
 	}
 	[[nodiscard]] bool IsAvailable() const noexcept;
 	[[nodiscard]] OutputServiceRustProviderDiagnostics Diagnostics() const noexcept;
+	[[nodiscard]] OutputProviderHealthSnapshot Health() const noexcept override;
 
 	[[nodiscard]] OutputOperationResult CreateChannel(const OutputCreateChannelRequest& request) override;
 	[[nodiscard]] OutputOperationResult AppendOutput(const OutputTextMutationRequest& request) override;

@@ -89,6 +89,10 @@ static_assert(std::is_same_v<decltype(std::declval<CWorkbenchRuntime&>().Output(
 	workbench::output::IOutputService*>);
 static_assert(std::is_same_v<decltype(std::declval<const CWorkbenchRuntime&>().Output()),
 	const workbench::output::IOutputService*>);
+static_assert(std::is_same_v<decltype(std::declval<const workbench::IWorkbenchRuntime&>().OutputProviderHealth()),
+	workbench::output::OutputProviderHealthSnapshot>);
+static_assert(std::is_same_v<decltype(std::declval<const CWorkbenchRuntime&>().OutputProviderHealth()),
+	workbench::output::OutputProviderHealthSnapshot>);
 
 using workbench::WorkbenchRuntimeDependencies;
 namespace layout = workbench::layout;
@@ -491,9 +495,11 @@ class DelegatingOutputProvider final : public outputModel::IOutputService {
 public:
 	explicit DelegatingOutputProvider(
 		outputModel::OutputServiceLimits limits,
-		bool deferFirstStop = false)
+		bool deferFirstStop = false,
+		outputModel::EOutputProviderKind reportedKind = outputModel::EOutputProviderKind::Rust)
 		: m_delegate(std::move(limits))
 		, m_deferFirstStop(deferFirstStop)
+		, m_reportedKind(reportedKind)
 	{
 	}
 
@@ -551,6 +557,16 @@ public:
 		return result;
 	}
 
+	outputModel::OutputProviderHealthSnapshot Health() const noexcept override
+	{
+		auto health = m_delegate.Health();
+		// This wrapper is a Rust test seam backed by an independent model. It
+		// must identify the selected test authority without exposing the C++
+		// concrete type to the factory.
+		health.kind = m_reportedKind;
+		return health;
+	}
+
 	outputModel::OutputServiceSnapshot Snapshot() const override
 	{
 		return m_delegate.Snapshot();
@@ -572,6 +588,7 @@ public:
 private:
 	outputModel::OutputService m_delegate;
 	bool m_deferFirstStop = false;
+	outputModel::EOutputProviderKind m_reportedKind = outputModel::EOutputProviderKind::Rust;
 	std::size_t m_stopCalls{};
 };
 
@@ -595,8 +612,8 @@ struct RuntimeFixture final {
 		dependencies.taskExecutionSessionFactory = std::move(taskFactory);
 		dependencies.statusbarVisibilityMementoStore = std::move(ownedStatusbarStore);
 		if (outputProviderKind) dependencies.outputProviderKind = *outputProviderKind;
-		dependencies.outputProviderFactory.rustCreator = std::move(rustOutputProviderCreator);
-		dependencies.outputProviderFactory.cppCreator = std::move(cppOutputProviderCreator);
+		dependencies.outputProviderFactory.testRustCreator = std::move(rustOutputProviderCreator);
+		dependencies.outputProviderFactory.testCppCreator = std::move(cppOutputProviderCreator);
 		runtime = std::make_unique<CWorkbenchRuntime>(
 			std::move(bootstrap), config::BuiltinConfigurationDescriptors(), std::move(dependencies));
 	}
@@ -740,6 +757,16 @@ TEST(CWorkbenchRuntime, CapturesTheCppOutputSelectionBeforeReadyAndBuildsItOnce)
 	EXPECT_EQ(outputModel::EOutputProviderKind::Cpp, fixture.runtime->OutputProviderKind());
 	EXPECT_EQ(1U, buildCount);
 	EXPECT_EQ(nullptr, fixture.runtime->Output());
+	const auto selectedHealth = fixture.runtime->OutputProviderHealth();
+	EXPECT_EQ(outputModel::EOutputProviderKind::Cpp, selectedHealth.kind);
+	EXPECT_EQ(outputModel::EOutputProviderFactoryStatus::Created, selectedHealth.factoryStatus);
+	EXPECT_EQ(outputModel::EOutputProviderLifecycle::Ready, selectedHealth.lifecycle);
+	EXPECT_EQ(outputModel::EOutputProviderInitializationStage::Ready,
+		selectedHealth.initializationStage);
+	EXPECT_TRUE(selectedHealth.compiledIn);
+	EXPECT_TRUE(selectedHealth.available);
+	EXPECT_TRUE(selectedHealth.testOverrideActive);
+	EXPECT_EQ(1U, selectedHealth.currentRevision);
 	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
 	EXPECT_EQ(1U, buildCount);
 	ASSERT_NE(nullptr, fixture.runtime->Output());
@@ -748,6 +775,8 @@ TEST(CWorkbenchRuntime, CapturesTheCppOutputSelectionBeforeReadyAndBuildsItOnce)
 	ASSERT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
 	ASSERT_NE(nullptr, borrowed);
 	EXPECT_TRUE(borrowed->Snapshot().stopped);
+	EXPECT_EQ(outputModel::EOutputProviderLifecycle::Stopped,
+		fixture.runtime->OutputProviderHealth().lifecycle);
 }
 
 TEST(CWorkbenchRuntime, ExplicitRustInitializationFailureIsTerminalWithoutCppFallback)
@@ -768,6 +797,21 @@ TEST(CWorkbenchRuntime, ExplicitRustInitializationFailureIsTerminalWithoutCppFal
 	EXPECT_EQ(1U, rustBuildCount);
 	EXPECT_EQ(0U, cppBuildCount);
 	EXPECT_EQ(nullptr, fixture.runtime->Output());
+	const auto unavailableHealth = fixture.runtime->OutputProviderHealth();
+	EXPECT_EQ(outputModel::EOutputProviderKind::Rust, unavailableHealth.kind);
+	EXPECT_EQ(outputModel::EOutputProviderFactoryStatus::InitializationFailed,
+		unavailableHealth.factoryStatus);
+	EXPECT_EQ(outputModel::EOutputProviderLifecycle::Unavailable,
+		unavailableHealth.lifecycle);
+	EXPECT_EQ(outputModel::EOutputProviderInitializationStage::ProviderConstruction,
+		unavailableHealth.initializationStage);
+	EXPECT_EQ(outputModel::EOutputProviderFault::Initialization, unavailableHealth.fault);
+	EXPECT_EQ(outputModel::EOutputProviderBoundary::Factory,
+		unavailableHealth.failureBoundary);
+	EXPECT_FALSE(unavailableHealth.available);
+	EXPECT_TRUE(unavailableHealth.testOverrideActive);
+	EXPECT_EQ(1U, unavailableHealth.counters.initializationAttempts);
+	EXPECT_EQ(1U, unavailableHealth.counters.boundaryFailures);
 	const auto failed = fixture.runtime->Start();
 	EXPECT_EQ(EWorkbenchRuntimeResultCode::Failed, failed.code);
 	EXPECT_EQ(EWorkbenchRuntimeState::Failed, failed.snapshot.state);
@@ -777,6 +821,35 @@ TEST(CWorkbenchRuntime, ExplicitRustInitializationFailureIsTerminalWithoutCppFal
 	ASSERT_FALSE(failed.snapshot.diagnostics.empty());
 	EXPECT_NE(std::string::npos,
 		failed.snapshot.diagnostics.front().message.find("Rust Output provider"));
+	EXPECT_EQ(EWorkbenchRuntimeResultCode::Failed, fixture.runtime->Start().code);
+	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
+}
+
+TEST(CWorkbenchRuntime, RejectsAProviderCreatorThatMislabelsItsSelectedKind)
+{
+	std::size_t rustBuildCount = 0;
+	std::size_t cppBuildCount = 0;
+	RuntimeFixture fixture(Bootstrap(), {}, {}, {}, outputModel::EOutputProviderKind::Rust,
+		[&rustBuildCount](const outputModel::OutputServiceLimits& limits) {
+			++rustBuildCount;
+			return std::make_unique<outputModel::OutputService>(limits);
+		},
+		[&cppBuildCount](const outputModel::OutputServiceLimits& limits) {
+			++cppBuildCount;
+			return std::make_unique<outputModel::OutputService>(limits);
+		});
+
+	EXPECT_EQ(1U, rustBuildCount);
+	EXPECT_EQ(0U, cppBuildCount);
+	EXPECT_EQ(nullptr, fixture.runtime->Output());
+	const auto health = fixture.runtime->OutputProviderHealth();
+	EXPECT_EQ(outputModel::EOutputProviderKind::Rust, health.kind);
+	EXPECT_EQ(outputModel::EOutputProviderFactoryStatus::InvalidSelection,
+		health.factoryStatus);
+	EXPECT_EQ(outputModel::EOutputProviderLifecycle::Unavailable, health.lifecycle);
+	EXPECT_EQ(outputModel::EOutputProviderFault::AbiContract, health.fault);
+	EXPECT_FALSE(health.available);
+	EXPECT_TRUE(health.testOverrideActive);
 	EXPECT_EQ(EWorkbenchRuntimeResultCode::Failed, fixture.runtime->Start().code);
 	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
 }
@@ -802,6 +875,11 @@ TEST(CWorkbenchRuntime, ExplicitRustOwnsOnlyItsProviderAndRetainsItsStoppedBorro
 	auto* const output = fixture.runtime->Output();
 	ASSERT_NE(nullptr, output);
 	EXPECT_FALSE(fixture.runtime->OutputCandidateAvailable());
+	const auto readyHealth = fixture.runtime->OutputProviderHealth();
+	EXPECT_EQ(outputModel::EOutputProviderKind::Rust, readyHealth.kind);
+	EXPECT_EQ(outputModel::EOutputProviderLifecycle::Ready, readyHealth.lifecycle);
+	EXPECT_TRUE(readyHealth.available);
+	EXPECT_TRUE(readyHealth.testOverrideActive);
 
 	const outputModel::OutputOwner owner{ .ownerId = "runtime.explicit-rust", .generation = 1 };
 	ASSERT_EQ(outputModel::EOutputOperationStatus::Succeeded, output->CreateChannel({
@@ -810,8 +888,11 @@ TEST(CWorkbenchRuntime, ExplicitRustOwnsOnlyItsProviderAndRetainsItsStoppedBorro
 		.channelId = "runtime.explicit-rust",
 		.label = "Explicit Rust",
 	}).status);
+	EXPECT_EQ(2U, fixture.runtime->OutputProviderHealth().currentRevision);
 	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
 	EXPECT_TRUE(output->Snapshot().stopped);
+	EXPECT_EQ(outputModel::EOutputProviderLifecycle::Stopped,
+		fixture.runtime->OutputProviderHealth().lifecycle);
 	EXPECT_EQ(1U, rustBuildCount);
 	EXPECT_EQ(0U, cppBuildCount);
 }
@@ -824,6 +905,12 @@ TEST(CWorkbenchRuntime, CompileSelectedOutputProviderOwnsTheRuntimeLifecycle)
 	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
 	auto* const output = fixture.runtime->Output();
 	ASSERT_NE(nullptr, output);
+	const auto readyHealth = fixture.runtime->OutputProviderHealth();
+	EXPECT_EQ(fixture.runtime->OutputProviderKind(), readyHealth.kind);
+	EXPECT_EQ(outputModel::EOutputProviderFactoryStatus::Created, readyHealth.factoryStatus);
+	EXPECT_EQ(outputModel::EOutputProviderLifecycle::Ready, readyHealth.lifecycle);
+	EXPECT_TRUE(readyHealth.available);
+	EXPECT_FALSE(readyHealth.testOverrideActive);
 
 #if defined(SAKURA_OUTPUT_BACKEND_RUST)
 	EXPECT_EQ(outputModel::EOutputProviderKind::Rust, fixture.runtime->OutputProviderKind());
@@ -844,6 +931,15 @@ TEST(CWorkbenchRuntime, CompileSelectedOutputProviderOwnsTheRuntimeLifecycle)
 		.label = "Compile-selected provider",
 	}).status);
 	EXPECT_EQ(1U, output->Snapshot().channels.size());
+	const auto mutatedHealth = fixture.runtime->OutputProviderHealth();
+	EXPECT_TRUE(mutatedHealth.hasLastOperation);
+	EXPECT_EQ(outputModel::EOutputOperationStatus::Succeeded,
+		mutatedHealth.lastOperationStatus);
+	EXPECT_EQ(1U, mutatedHealth.counters.mutationCalls);
+	EXPECT_EQ(1U, mutatedHealth.counters.acceptedOperations);
+#if defined(SAKURA_OUTPUT_BACKEND_RUST)
+	EXPECT_EQ(SAKURA_OUTPUT_PROVIDER_ABI_VERSION_V1, mutatedHealth.abiVersion);
+#endif
 	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
 	EXPECT_EQ(nullptr, fixture.runtime->Output());
 	EXPECT_TRUE(output->Snapshot().stopped);
@@ -853,6 +949,12 @@ TEST(CWorkbenchRuntime, CompileSelectedOutputProviderOwnsTheRuntimeLifecycle)
 		.channelId = "runtime.compile-selected",
 		.text = "after stop",
 	}).status);
+	const auto stoppedHealth = fixture.runtime->OutputProviderHealth();
+	EXPECT_EQ(outputModel::EOutputProviderLifecycle::Stopped, stoppedHealth.lifecycle);
+	EXPECT_EQ(1U, stoppedHealth.counters.stopCalls);
+	EXPECT_TRUE(stoppedHealth.hasLastOperation);
+	EXPECT_EQ(outputModel::EOutputOperationStatus::Stopped,
+		stoppedHealth.lastOperationStatus);
 }
 
 TEST(CWorkbenchRuntime, ComposesRustOutputCandidateBeforePublishingRuntime)
@@ -1209,7 +1311,8 @@ TEST(CWorkbenchRuntime, FailedStartRetainsDeferredOutputStopForExternalRetry)
 	DelegatingOutputProvider* selectedOutput = nullptr;
 	RuntimeFixture fixture(Bootstrap(), {}, {}, {}, outputModel::EOutputProviderKind::Cpp,
 		{}, [&selectedOutput](const outputModel::OutputServiceLimits& limits) {
-			auto provider = std::make_unique<DelegatingOutputProvider>(limits, true);
+			auto provider = std::make_unique<DelegatingOutputProvider>(
+				limits, true, outputModel::EOutputProviderKind::Cpp);
 			selectedOutput = provider.get();
 			return provider;
 		});

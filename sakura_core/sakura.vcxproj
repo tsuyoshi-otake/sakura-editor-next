@@ -619,6 +619,7 @@
 	<ClInclude Include="..\sakura_core\workbench\problems\MarkerService.h" />
 	<ClInclude Include="..\sakura_core\workbench\output\IOutputService.h" />
 	<ClInclude Include="..\sakura_core\workbench\output\OutputProviderFactory.h" />
+	<ClInclude Include="..\sakura_core\workbench\output\OutputProviderTypes.h" />
 	<ClInclude Include="..\sakura_core\workbench\output\OutputService.h" />
 	<ClInclude Include="..\sakura_core\workbench\output\OutputServiceNotificationDispatcher.h" />
 	<ClInclude Include="..\sakura_core\workbench\output\OutputServiceTypes.h" />

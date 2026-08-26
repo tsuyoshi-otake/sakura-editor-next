@@ -17,6 +17,7 @@
 #include "workbench/layout/WorkbenchIds.h"
 #include "workbench/output/OutputProviderFactory.h"
 #include "workbench/output/OutputService.h"
+#include "workbench/output/OutputServiceRustProvider.h"
 #include "workbench/workspace/WorkspaceConfigurationDocumentParser.h"
 #include "workbench/workspace/WorkspaceArtifactDocumentSourceController.h"
 #include "workbench/workspace/WorkspaceResourceDescriptors.h"
@@ -345,6 +346,10 @@ CWorkbenchRuntime::CWorkbenchRuntime(
 	if (!m_workspaceArtifactSubscription) {
 		m_initializationFailure = "workspace artifact listener registration failed";
 	}
+	m_outputProviderHealth.kind = m_outputProviderKind;
+	m_outputProviderHealth.compiledIn = m_outputProviderKind == output::EOutputProviderKind::Cpp
+		|| (m_outputProviderKind == output::EOutputProviderKind::Rust
+			&& output::OutputServiceRustProvider::IsCompiledIn());
 	// Compose the selected authority before Start so the C++ observational
 	// candidate is attached before any producer can mutate the service. Rust
 	// construction failure is retained as a Start-time typed failure; this
@@ -534,17 +539,40 @@ const output::IOutputService* CWorkbenchRuntime::Output() const noexcept
 	return IsReadyForServiceAccessLocked() ? m_outputProvider.get() : nullptr;
 }
 
+output::OutputProviderHealthSnapshot CWorkbenchRuntime::OutputProviderHealth() const noexcept
+{
+	// Provider identity and the factory snapshot are immutable after construction.
+	// Do not take the runtime lifecycle lock here: an advisory callback may read
+	// health while an external Stop owns that lock and waits for callback drain.
+	auto health = m_outputProviderHealth;
+	if (!m_outputProvider) return health;
+	// The provider owns all live counters and terminal state. Only immutable
+	// factory composition metadata is overlaid here; never infer health from a
+	// model snapshot or from a concrete provider RTTI type.
+	health = m_outputProvider->Health();
+	health.kind = m_outputProviderHealth.kind;
+	health.factoryStatus = m_outputProviderHealth.factoryStatus;
+	health.testOverrideActive = m_outputProviderHealth.testOverrideActive;
+	health.compiledIn = m_outputProviderHealth.compiledIn;
+	return health;
+}
+
 bool CWorkbenchRuntime::InitializeOutputProvider() noexcept
 {
 	if (m_outputProvider) return true;
 	if (m_outputProviderInitializationAttempted) return false;
 	m_outputProviderInitializationAttempted = true;
+	m_outputProviderHealth.kind = m_outputProviderKind;
+	m_outputProviderHealth.initializationStage =
+		output::EOutputProviderInitializationStage::FactorySelection;
+	m_outputProviderHealth.counters.initializationAttempts = 1;
 
 	try {
 		auto result = output::CreateOutputProvider({
 			.kind = m_outputProviderKind,
 			.limits = RuntimeOutputServiceLimits(),
 		}, m_outputProviderFactory);
+		m_outputProviderHealth = result.health;
 		if (!result.Succeeded()) {
 			try {
 				m_outputProviderInitializationFailure = result.diagnostic.empty()
@@ -577,6 +605,20 @@ bool CWorkbenchRuntime::InitializeOutputProvider() noexcept
 		}
 		return true;
 	} catch (...) {
+		m_outputProviderHealth.kind = m_outputProviderKind;
+		m_outputProviderHealth.factoryStatus = output::EOutputProviderFactoryStatus::InitializationFailed;
+		m_outputProviderHealth.lifecycle = output::EOutputProviderLifecycle::Unavailable;
+		m_outputProviderHealth.initializationStage =
+			output::EOutputProviderInitializationStage::FactorySelection;
+		m_outputProviderHealth.fault = output::EOutputProviderFault::Initialization;
+		m_outputProviderHealth.lastBoundary = output::EOutputProviderBoundary::Factory;
+		m_outputProviderHealth.failureBoundary = output::EOutputProviderBoundary::Factory;
+		m_outputProviderHealth.available = false;
+		m_outputProviderHealth.counters.initializationAttempts = 1;
+		m_outputProviderHealth.counters.boundaryFailures = 1;
+		m_outputProviderHealth.testOverrideActive = m_outputProviderKind == output::EOutputProviderKind::Rust
+			? static_cast<bool>(m_outputProviderFactory.testRustCreator)
+			: static_cast<bool>(m_outputProviderFactory.testCppCreator);
 		try {
 			m_outputProviderInitializationFailure = "Output provider initialization failed unexpectedly";
 		} catch (...) {
