@@ -131,6 +131,29 @@ TEST(TerminalRenderMapping, UsesApportionedPaddingAtEachSupportedDpi)
 	EXPECT_EQ(0, terminal::TerminalViewportGeometry::FromDpi(192).GridHeight(12));
 }
 
+TEST(TerminalRenderMapping, MeasuresNoGridForAClientWithoutExtent)
+{
+	const auto geometry = terminal::TerminalViewportGeometry::FromDpi(96);
+
+	// A minimized frame and a hidden bottom Panel both lay the terminal out at 0x0.
+	// Answering with a grid there would resize the model to 1x1 and truncate every
+	// retained row, so an extentless client must measure nothing at all.
+	EXPECT_FALSE(geometry.MeasureGrid(0, 0, 8, 16).has_value());
+	EXPECT_FALSE(geometry.MeasureGrid(0, 416, 8, 16).has_value());
+	EXPECT_FALSE(geometry.MeasureGrid(810, 0, 8, 16).has_value());
+	EXPECT_FALSE(geometry.MeasureGrid(-1, -1, 8, 16).has_value());
+
+	const auto measured = geometry.MeasureGrid(810, 416, 8, 16);
+	ASSERT_TRUE(measured.has_value());
+	EXPECT_EQ((terminal::TerminalGridExtent{ 100, 25 }), *measured);
+
+	// A client too small for one whole cell is still a real measurement, and the
+	// clamp keeps it at the minimum grid rather than reporting nothing.
+	const auto minimal = geometry.MeasureGrid(1, 1, 8, 16);
+	ASSERT_TRUE(minimal.has_value());
+	EXPECT_EQ((terminal::TerminalGridExtent{ 1, 1 }), *minimal);
+}
+
 TEST(TerminalRenderMapping, ClampsHitTestingInsideAndBeforeThePadding)
 {
 	const terminal::TerminalViewport viewport{ 4, 2, 1 };

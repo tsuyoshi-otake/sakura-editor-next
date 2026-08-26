@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 
 namespace terminal {
 
@@ -23,6 +24,18 @@ struct TerminalImeWindowPosition final {
 	POINT caret{};
 	POINT composition{};
 	RECT candidateArea{};
+};
+
+//! Terminal grid dimensions a client rectangle can carry.
+struct TerminalGridExtent final {
+	std::uint16_t columns{};
+	std::uint16_t rows{};
+
+	[[nodiscard]] friend constexpr bool operator==(
+		const TerminalGridExtent& lhs, const TerminalGridExtent& rhs ) noexcept
+	{
+		return lhs.columns == rhs.columns && lhs.rows == rhs.rows;
+	}
 };
 
 //! Shared terminal content inset used by PTY sizing, painting, hit testing, and
@@ -89,6 +102,28 @@ struct TerminalViewportGeometry final {
 		const auto right = std::clamp(client.right - insetX, left, client.right);
 		const auto bottom = std::clamp(client.bottom - insetY, top, client.bottom);
 		return { left, top, right, bottom };
+	}
+
+	//! Columns and rows this client extent can hold, or nothing when the client
+	//! has no extent at all.
+	//!
+	//! A minimized frame lays every child out at 0x0, and a hidden bottom Panel
+	//! reaches the same path. Deriving a grid from that extent would clamp to a
+	//! single column and row, and resizing a model to it truncates every retained
+	//! row, so a caller must keep its last real measurement instead. This is what
+	//! VS Code's TerminalInstance._evaluateColsAndRows() does when the terminal
+	//! element reports a zero dimension: it returns null and changes nothing.
+	[[nodiscard]] constexpr std::optional<TerminalGridExtent> MeasureGrid(
+		int clientWidth, int clientHeight, int cellWidth, int cellHeight ) const noexcept
+	{
+		if( clientWidth <= 0 || clientHeight <= 0 ) return std::nullopt;
+		constexpr int kMaxExtent = 65535;
+		return TerminalGridExtent{
+			static_cast<std::uint16_t>(std::clamp(
+				GridWidth(clientWidth) / std::max(1, cellWidth), 1, kMaxExtent)),
+			static_cast<std::uint16_t>(std::clamp(
+				GridHeight(clientHeight) / std::max(1, cellHeight), 1, kMaxExtent)),
+		};
 	}
 
 	[[nodiscard]] constexpr TerminalImeWindowPosition ImeWindowPosition(

@@ -469,6 +469,10 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 	std::size_t visibleRows{ 1 };
 	std::size_t scrollOffset{};
 	TerminalSize terminalSize{ 1, 1 };
+	//! True once terminalSize came from a client rectangle with real extent.
+	//! Until then it is only the placeholder a viewport starts with, and it must
+	//! never be published to a session or a model.
+	bool terminalSizeMeasured{};
 	bool scrollbarHover{};
 	bool scrollbarButtonPressed{};
 	bool scrollbarDragging{};
@@ -1079,16 +1083,22 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 		if( window == nullptr ) return;
 		RECT client{};
 		::GetClientRect(window, &client);
-		const int clientWidth = static_cast<int>(client.right - client.left);
-		const int clientHeight = static_cast<int>(client.bottom - client.top);
-		const auto geometry = Geometry();
-		const auto columns = static_cast<std::uint16_t>(std::clamp(
-			geometry.GridWidth(clientWidth) / std::max(1, cellWidth), 1, 65535));
-		const auto rows = static_cast<std::uint16_t>(std::clamp(
-			geometry.GridHeight(clientHeight) / std::max(1, cellHeight), 1, 65535));
-		visibleRows = rows;
-		const TerminalSize next{ columns, rows };
-		if( next.columns != terminalSize.columns || next.rows != terminalSize.rows ) {
+		// A client with no extent carries no measurement at all: a minimized frame
+		// lays every child out at 0x0, and a hidden bottom Panel reaches this the
+		// same way. Publishing the 1x1 grid such an extent produces would truncate
+		// every retained row through TerminalModel::Resize, destroying the session's
+		// text before the window is ever restored, so the last real measurement
+		// stays authoritative instead.
+		const auto measured = Geometry().MeasureGrid(
+			static_cast<int>(client.right - client.left),
+			static_cast<int>(client.bottom - client.top),
+			cellWidth, cellHeight);
+		if( !measured ) return;
+		visibleRows = measured->rows;
+		const TerminalSize next{ measured->columns, measured->rows };
+		const bool firstMeasurement = !terminalSizeMeasured;
+		terminalSizeMeasured = true;
+		if( firstMeasurement || next.columns != terminalSize.columns || next.rows != terminalSize.rows ) {
 			terminalSize = next;
 			if( resizeSink ) resizeSink(next);
 		}
@@ -1973,7 +1983,10 @@ void CTerminalWnd::SetInputSink( InputSink sink )
 void CTerminalWnd::SetResizeSink( ResizeSink sink )
 {
 	m_impl->resizeSink = std::move(sink);
-	if( m_impl->resizeSink ) m_impl->resizeSink(m_impl->terminalSize);
+	// Replay only a real measurement. A pane renderer is created and bound before
+	// its first Layout(), so replaying the placeholder size here would resize an
+	// existing model to 1x1 during a group rebuild and truncate its retained rows.
+	if( m_impl->resizeSink && m_impl->terminalSizeMeasured ) m_impl->resizeSink(m_impl->terminalSize);
 }
 
 void CTerminalWnd::SetFocusSink( FocusSink sink )

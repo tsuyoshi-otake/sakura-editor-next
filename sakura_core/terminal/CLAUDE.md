@@ -443,3 +443,61 @@ configuration service boundary and pushes a coherent snapshot through
 `CTerminalTool` as plain data — `TerminalTabManagerDependencies` owns session
 lifetime and must not gain a configuration dependency. Paint reads only the
 already-projected settings; it never calls the configuration service.
+
+## A client with no extent is not a size (2026-08-26, #266)
+
+Reported symptom: minimize the window and restore it, and the integrated
+terminal comes back blank.
+
+Root cause: `WM_SIZE`/`SIZE_MINIMIZED` gives the frame `cx = cy = 0`, and that
+zero extent cascades unchanged down `CEditWnd::OnSize2` ->
+`CalculateWorkbenchLayout` -> `CWorkbenchPanelHost::LayoutTool` ->
+`CTerminalTool::Layout` -> `CTerminalWnd::Layout` -> `NotifySize`. `NotifySize`
+derived a grid from that client rectangle, the `std::clamp(..., 1, 65535)` floor
+turned it into 1x1, and the resize sink published it to
+`TerminalTabManager::ResizeTab`, which calls `TerminalModel::Resize`. That
+resize does `row.cells.resize(columns)` over the retained rows, so **every row
+was truncated to one column before the window was ever restored**. Restoring
+then resized an already-destroyed model back to the real grid. The same path is
+reached with no minimize at all: hiding the bottom Panel sets its extent to
+zero (`WorkbenchLayout.cpp`'s `IsShown(request.bottomPane) ? ScaleDip(...) : 0`),
+so `Ctrl+J` twice destroyed the session's text just as thoroughly.
+
+Fix: `TerminalViewportGeometry::MeasureGrid` returns `std::optional` and answers
+`nullopt` for a client with no extent, and `NotifySize` returns without
+publishing anything in that case. This is VS Code's own behavior:
+`TerminalInstance._evaluateColsAndRows()` returns null when the terminal element
+reports a zero dimension, and the instance keeps its last known cols/rows.
+
+Two details are load-bearing and must not be "simplified" away:
+
+- `terminalSizeMeasured` distinguishes a real measurement from the `{1, 1}`
+  placeholder a viewport starts with. Without it, the first real `NotifySize`
+  after the fix could match the placeholder and publish nothing at all.
+- `SetResizeSink` replays the retained size **only** when it was measured. A
+  pane renderer is created and bound before its first `Layout()`, so an
+  unconditional replay would resize an existing model to 1x1 during a group
+  rebuild -- reintroducing the same truncation through a different door.
+
+Verified 2026-08-26 (x64 Debug, throwaway `-PROF=` profiles, driven with
+`PostMessage(WM_COMMAND, F_NEW_TERMINAL/F_TOGGLE_BOTTOM_PANEL)`). The metric is
+non-background pixel count ("ink") in a `PrintWindow(PW_RENDERFULLCONTENT)`
+capture of the `SakuraNativeTerminalWindow` client after `echo`ing a probe line:
+
+| Gesture | Before | After |
+|---|---|---|
+| baseline | 6599 / 6613 | 6017 / 6031 |
+| minimize + restore x1 / x2 / x3 | 396 / 300 / 240 | 6017 / 6017 / 6017 |
+| Panel hide+show x1 / x2 (no minimize) | 1860 / 1764 | 6031 / 6017 |
+
+Screen-versus-`PrintWindow` after three minimize cycles measured 0.000%, so the
+restored text is really composited and not merely present in the model. Note
+that the occlusion sampler needs the probe to take the foreground through
+`AttachThreadInput` + `HWND_TOPMOST`; without it a foreground-locked window
+above ours makes the comparison unavailable, not merely noisy.
+
+`MeasureGrid` is pinned by
+`TerminalRenderMapping.MeasuresNoGridForAClientWithoutExtent`. Keep the decision
+in the pure geometry header rather than in `CTerminalWnd`'s `Impl`: the window
+class is not linked into `tests1`, so an invariant that lives there cannot be
+tested at all.
