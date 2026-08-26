@@ -1032,11 +1032,12 @@ class Utf16PackagingContractTests(unittest.TestCase):
                 "SAKURA_UTF16_BACKEND": "cpp",
                 "SAKURA_OUTPUT_BACKEND": "cpp",
                 "SAKURA_UTF16_PRODUCTION_PACKAGE": "true",
+                "SAKURA_OUTPUT_PRODUCTION_PACKAGE": "true",
             },
             sakura_build.production_package_environment({}),
         )
 
-    def test_production_environment_requires_cpp_backend(self):
+    def test_production_environment_keeps_utf16_cpp_and_output_gate_separate(self):
         for backend in ("cpp",):
             with self.subTest(backend=backend):
                 self.assertEqual(
@@ -1045,6 +1046,7 @@ class Utf16PackagingContractTests(unittest.TestCase):
                         "SAKURA_UTF16_BACKEND": backend,
                         "SAKURA_OUTPUT_BACKEND": "cpp",
                         "SAKURA_UTF16_PRODUCTION_PACKAGE": "true",
+                        "SAKURA_OUTPUT_PRODUCTION_PACKAGE": "true",
                     },
                     sakura_build.production_package_environment(
                         {"SAKURA_UTF16_BACKEND": backend}
@@ -1062,12 +1064,27 @@ class Utf16PackagingContractTests(unittest.TestCase):
                     sakura_build.production_package_environment(environment)
                 self.assertEqual(backend, environment["SAKURA_UTF16_BACKEND"])
 
+        for backend in ("cpp",):
+            with self.subTest(output_backend=backend):
+                self.assertEqual(
+                    {
+                        "SAKURA_GENERATE_ASSEMBLY_LISTINGS": "1",
+                        "SAKURA_UTF16_BACKEND": "cpp",
+                        "SAKURA_OUTPUT_BACKEND": backend,
+                        "SAKURA_UTF16_PRODUCTION_PACKAGE": "true",
+                        "SAKURA_OUTPUT_PRODUCTION_PACKAGE": "true",
+                    },
+                    sakura_build.production_package_environment(
+                        {"SAKURA_OUTPUT_BACKEND": backend}
+                    ),
+                )
+
         for backend in ("rust", "both", " cpp ", "CPP", "unknown"):
             with self.subTest(output_backend=backend):
                 environment = {"SAKURA_OUTPUT_BACKEND": backend}
                 with self.assertRaisesRegex(
                     BuildError,
-                    "SAKURA_UTF16_PRODUCTION_PACKAGE=true requires "
+                    "SAKURA_OUTPUT_PRODUCTION_PACKAGE=true requires "
                     "SAKURA_OUTPUT_BACKEND=cpp;",
                 ):
                     sakura_build.production_package_environment(environment)
@@ -1080,9 +1097,12 @@ class Utf16PackagingContractTests(unittest.TestCase):
             body_lower = body.lower()
             setlocal = body_lower.find("setlocal")
             production_flag = body.find('set "SAKURA_UTF16_PRODUCTION_PACKAGE=true"')
+            output_production_flag = body.find('set "SAKURA_OUTPUT_PRODUCTION_PACKAGE=true"')
             self.assertGreaterEqual(setlocal, 0, name)
             self.assertGreaterEqual(production_flag, 0, name)
+            self.assertGreaterEqual(output_production_flag, 0, name)
             self.assertLess(setlocal, production_flag, name)
+            self.assertLess(setlocal, output_production_flag, name)
             self.assertIn(
                 'if not defined SAKURA_UTF16_BACKEND set "SAKURA_UTF16_BACKEND=cpp"',
                 body,
@@ -1096,6 +1116,11 @@ class Utf16PackagingContractTests(unittest.TestCase):
             )
             self.assertIn(
                 'if not defined SAKURA_OUTPUT_BACKEND set "SAKURA_OUTPUT_BACKEND=cpp"',
+                body,
+                name,
+            )
+            self.assertIn(
+                'set "SAKURA_OUTPUT_PRODUCTION_PACKAGE=true"',
                 body,
                 name,
             )

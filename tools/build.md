@@ -101,11 +101,13 @@ Outputも同様にMSBuildでは`/p:SAKURA_OUTPUT_BACKEND=cpp|rust`、CMakeでは
 `-DSAKURA_OUTPUT_BACKEND=cpp|rust`を指定します。MinGWは`cpp`固定です。Outputの
 選択を変えても`SAKURA_UTF16_BACKEND`は変わらず、逆方向にも影響しません。
 
-配布ビルド・インストーラ・ZIPは`SAKURA_UTF16_PRODUCTION_PACKAGE=true`を設定します。
-G0のrollback-first契約では`SAKURA_UTF16_BACKEND=cpp`だけを受け付け、`rust`は比較ビルドで
-選択できても配布処理では拒否します。Rustを本番採用する場合は、別の採用変更でこのhard gateを
-明示的に更新します。C1dのOutput authorityも配布時は`SAKURA_OUTPUT_BACKEND=cpp`を要求し、
-Rust採用は別のC1e gateに残します。`both`など未知のモードもCargo・コンパイル・パッケージ処理の前に拒否します。
+配布ビルド・インストーラ・ZIPは`SAKURA_UTF16_PRODUCTION_PACKAGE=true`と
+`SAKURA_OUTPUT_PRODUCTION_PACKAGE=true`をそれぞれ設定します。G0のrollback-first契約では
+`SAKURA_UTF16_BACKEND=cpp`だけを受け付け、UTF-16の`rust`は比較ビルドで選択できても配布処理では
+拒否します。OutputもC1dのproduction authorityをC++に保ち、
+`SAKURA_OUTPUT_PRODUCTION_PACKAGE=true`の場合は`SAKURA_OUTPUT_BACKEND=cpp`だけを受け付けます。
+Outputのproduction判定はUTF-16のproductionフラグから推測せず、Rust採用は別のC1e gateで更新します。
+`both`など未知のモードもCargo・コンパイル・パッケージ処理の前に拒否します。
 
 ## ビルド手順
 

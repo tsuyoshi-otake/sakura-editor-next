@@ -68,7 +68,8 @@ CMakeには同じ目的のcache option `SAKURA_SKIP_MODULES_CHECK=ON` がある�
 |SAKURA_DEV_BUILD_TARGET|`Build`|診断専用。`build-dev.bat` が実行する MSBuild ターゲットを上書きする。`Build` 以外では成果物が完成しない場合があるため、通常は設定せず、使用後は解除する。|
 |SAKURA_UTF16_BACKEND|MSVC:`cpp` / MinGW:`cpp`|UTF-16走査の明示バックエンド。G0 rollback-firstではMSVCの既定・本番プロバイダーを`cpp`に戻し、RustはCargoで常にcandidateとしてビルド・リンクする。`rust`は明示した比較・承認経路で選択できる。`both`、`auto`、未知の値はMSBuild/CMakeが拒否する。|
 |SAKURA_OUTPUT_BACKEND|MSVC:`cpp` / MinGW:`cpp`|Output authorityの明示バックエンド。UTF-16/SIMD dispatchとは独立し、`rust`はMSVCの比較・移行確認ビルドでだけ明示選択する。C1dでは既定と配布を`cpp`に保ち、`both`、`auto`、未知の値、MinGWの`rust`を拒否する。|
-|SAKURA_UTF16_PRODUCTION_PACKAGE|`false`|配布ビルド、インストーラ、ZIPが`true`に設定する契約フラグ。rollback-first中は`SAKURA_UTF16_BACKEND=cpp`だけを受け付け、比較用の`rust`を含む他のモードはCargo・コンパイル・パッケージ処理の前に拒否する。Rust本番採用時は独立した採用変更でこのhard gateを更新する。|
+|SAKURA_UTF16_PRODUCTION_PACKAGE|`false`|配布ビルド、インストーラ、ZIPが`true`に設定するUTF-16専用の契約フラグ。rollback-first中は`SAKURA_UTF16_BACKEND=cpp`だけを受け付け、比較用の`rust`を含む他のモードはCargo・コンパイル・パッケージ処理の前に拒否する。Rust本番採用時は独立した採用変更でこのhard gateを更新する。|
+|SAKURA_OUTPUT_PRODUCTION_PACKAGE|`false`|配布ビルド、インストーラ、ZIPが`true`に設定するOutput専用の契約フラグ。C1dでは`SAKURA_OUTPUT_BACKEND=cpp`だけを受け付け、UTF-16のproductionフラグから推測しない。Rust Output本番採用時は独立した採用変更でこのhard gateを更新する。|
 |SAKURA_MSBUILD_BINLOG|未設定（無効）|診断専用。`msbuild_command` が構築するすべての MSBuild 呼び出し（`build-dev.bat`/`build-sln.bat`/`build-all.bat`）に `/bl:<パス>` を追加し、MSBuild バイナリログを指定パスへ出力する。値は空文字列であってはならず、設定した場合は空白のみの値も含めて明示的エラーになる。ビルド最適化・アセンブリ一覧・LTCG・ビルドターゲットには影響しない。計測が終わったら解除する。|
 |SAKURA_MSBUILD_PERFORMANCE_SUMMARY|未設定（無効）|診断専用。`1` または `true` の場合、`msbuild_command` が構築するすべての MSBuild 呼び出しに `/clp:PerformanceSummary` を追加し、コンソールログの末尾にタスク別実行時間の要約を出力する。`0` または `false` は明示的に無効（未設定と同じ挙動）。それ以外の値は明示的エラーになる（無効値を暗黙に無効側へ倒さない）。ビルド最適化・アセンブリ一覧・LTCG・ビルドターゲットには影響しない。|
 

@@ -1,8 +1,9 @@
 # Early Output authority backend contract validation.
 #
 # Output authority selection is intentionally independent from UTF-16/SIMD
-# dispatch. C++ remains the production-package authority until the separate
-# adoption gate lands; Rust is available only through an explicit build choice.
+# dispatch. C++ remains the Output production-package authority until the
+# separate adoption gate lands; Rust is available only through an explicit
+# comparison build choice.
 
 if(DEFINED SAKURA_OUTPUT_BACKEND)
   set(_sakura_output_backend_value "${SAKURA_OUTPUT_BACKEND}")
@@ -25,10 +26,24 @@ if(NOT SAKURA_OUTPUT_BACKEND STREQUAL "cpp"
     "auto and unknown values are rejected")
 endif()
 
-# The existing package flag is the early distribution-build fence used by all
-# native Rust adoption gates. It is defined by sakura-utf16-backend.cmake before
-# this module is included.
-if(SAKURA_OUTPUT_BACKEND STREQUAL "rust" AND SAKURA_UTF16_PRODUCTION_PACKAGE)
+# Output has its own production-package context. Do not infer Output packaging
+# from the UTF-16 package contract: the two backends are selected independently.
+string(TOUPPER
+  "$ENV{SAKURA_OUTPUT_PRODUCTION_PACKAGE}"
+  _sakura_output_production_environment_value
+)
+if(DEFINED SAKURA_OUTPUT_PRODUCTION_PACKAGE)
+  set(_sakura_output_production_value "${SAKURA_OUTPUT_PRODUCTION_PACKAGE}")
+elseif(_sakura_output_production_environment_value MATCHES "^(1|ON|TRUE|YES)$")
+  set(_sakura_output_production_value ON)
+else()
+  set(_sakura_output_production_value OFF)
+endif()
+set(SAKURA_OUTPUT_PRODUCTION_PACKAGE
+  "${_sakura_output_production_value}"
+  CACHE BOOL "Output production packaging contract; C++ remains the authority"
+)
+if(SAKURA_OUTPUT_BACKEND STREQUAL "rust" AND SAKURA_OUTPUT_PRODUCTION_PACKAGE)
   message(FATAL_ERROR
-    "The Rust Output backend cannot package production until independent adoption")
+    "SAKURA_OUTPUT_PRODUCTION_PACKAGE=true requires SAKURA_OUTPUT_BACKEND=cpp")
 endif()

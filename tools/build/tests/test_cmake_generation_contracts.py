@@ -227,9 +227,12 @@ class CMakeGenerationContractTests(unittest.TestCase):
             output_backend_cmake,
         )
         self.assertIn(
-            "The Rust Output backend cannot package production until independent adoption",
+            "SAKURA_OUTPUT_PRODUCTION_PACKAGE=true requires SAKURA_OUTPUT_BACKEND=cpp",
             output_backend_cmake,
         )
+        self.assertIn("SAKURA_OUTPUT_PRODUCTION_PACKAGE", output_backend_cmake)
+        self.assertIn('set(_sakura_output_backend_value "cpp")', output_backend_cmake)
+        self.assertNotIn("SAKURA_UTF16_PRODUCTION_PACKAGE", output_backend_cmake)
         output_include = (
             'include("${CMAKE_SOURCE_DIR}/src/main/cmake/sakura-output-backend.cmake")'
         )
@@ -241,6 +244,11 @@ class CMakeGenerationContractTests(unittest.TestCase):
         self.assertIn("SAKURA_OUTPUT_BACKEND_RUST", sakura_cmake)
         self.assertIn(
             '<SAKURA_OUTPUT_BACKEND Condition="\'$(SAKURA_OUTPUT_BACKEND)\'==\'\'">cpp</SAKURA_OUTPUT_BACKEND>',
+            msbuild_target,
+        )
+        self.assertIn("SAKURA_OUTPUT_PRODUCTION_PACKAGE", msbuild_target)
+        self.assertIn(
+            "SAKURA_OUTPUT_PRODUCTION_PACKAGE=true requires SAKURA_OUTPUT_BACKEND=cpp",
             msbuild_target,
         )
         self.assertIn("SAKURA_OUTPUT_BACKEND_RUST", msbuild_target)
@@ -462,9 +470,9 @@ class CMakeGenerationContractTests(unittest.TestCase):
                 "output-rust-production",
                 [
                     "-DSAKURA_OUTPUT_BACKEND=rust",
-                    "-DSAKURA_UTF16_PRODUCTION_PACKAGE=ON",
+                    "-DSAKURA_OUTPUT_PRODUCTION_PACKAGE=ON",
                 ],
-                "The Rust Output backend cannot package production until independent adoption",
+                "SAKURA_OUTPUT_PRODUCTION_PACKAGE=true requires SAKURA_OUTPUT_BACKEND=cpp",
             ),
         )
         with tempfile.TemporaryDirectory() as temporary:
@@ -648,8 +656,17 @@ class CMakeGenerationContractTests(unittest.TestCase):
             environment = os.environ.copy()
             environment.pop("SAKURA_OUTPUT_BACKEND", None)
             environment.pop("SAKURA_UTF16_PRODUCTION_PACKAGE", None)
+            environment.pop("SAKURA_OUTPUT_PRODUCTION_PACKAGE", None)
             result = subprocess.run(
-                [cmake, "-DSAKURA_OUTPUT_BACKEND=rust", "-P", str(probe)],
+                [
+                    cmake,
+                    "-DSAKURA_OUTPUT_BACKEND=rust",
+                    # The UTF-16 package contract must not classify an Output
+                    # comparison build as production.
+                    "-DSAKURA_UTF16_PRODUCTION_PACKAGE=ON",
+                    "-P",
+                    str(probe),
+                ],
                 capture_output=True,
                 check=False,
                 env=environment,
@@ -659,6 +676,44 @@ class CMakeGenerationContractTests(unittest.TestCase):
             output = result.stdout + result.stderr
             self.assertEqual(0, result.returncode, output)
             self.assertIn("contract output=rust", output)
+
+    @unittest.skipUnless(CMAKE_EXECUTABLE, "cmake is required")
+    def test_cmake_output_backend_rejects_its_production_context_only(self) -> None:
+        cmake = CMAKE_EXECUTABLE
+        assert cmake is not None
+        module = (REPO_ROOT / "src/main/cmake/sakura-output-backend.cmake").as_posix()
+        with tempfile.TemporaryDirectory() as temporary:
+            probe = Path(temporary) / "probe.cmake"
+            probe.write_text(
+                f'include("{module}")\n'
+                'message(STATUS "contract output=${SAKURA_OUTPUT_BACKEND}")\n'
+                'message(STATUS "contract production=${SAKURA_OUTPUT_PRODUCTION_PACKAGE}")\n',
+                encoding="utf-8",
+            )
+            environment = os.environ.copy()
+            environment.pop("SAKURA_OUTPUT_BACKEND", None)
+            environment.pop("SAKURA_OUTPUT_PRODUCTION_PACKAGE", None)
+            environment["SAKURA_UTF16_PRODUCTION_PACKAGE"] = "true"
+            result = subprocess.run(
+                [
+                    cmake,
+                    "-DSAKURA_OUTPUT_BACKEND=rust",
+                    "-DSAKURA_OUTPUT_PRODUCTION_PACKAGE=ON",
+                    "-P",
+                    str(probe),
+                ],
+                capture_output=True,
+                check=False,
+                env=environment,
+                text=True,
+                timeout=10,
+            )
+            output = re.sub(r"\s+", " ", result.stdout + result.stderr)
+            self.assertNotEqual(0, result.returncode, output)
+            self.assertIn(
+                "SAKURA_OUTPUT_PRODUCTION_PACKAGE=true requires SAKURA_OUTPUT_BACKEND=cpp",
+                output,
+            )
 
     @unittest.skipUnless(CMAKE_EXECUTABLE, "cmake is required")
     def test_native_ffi_helper_keeps_an_up_to_date_archive_untouched(self) -> None:
@@ -876,10 +931,14 @@ class CMakeGenerationContractTests(unittest.TestCase):
         assert msbuild is not None
         project = str(REPO_ROOT / "sakura_core/sakura.vcxproj")
         cases = (
-            ("cpp", "false", 0, None),
-            ("rust", "false", 0, None),
+            ("cpp", "false", "false", 0, None),
+            ("rust", "false", "false", 0, None),
+            # The UTF-16 production context must not reject an Output
+            # comparison build when its own context is not enabled.
+            ("rust", "true", "false", 0, None),
             (
                 "both",
+                "false",
                 "false",
                 1,
                 "SAKURA_OUTPUT_BACKEND must be exactly cpp or rust",
@@ -887,12 +946,17 @@ class CMakeGenerationContractTests(unittest.TestCase):
             (
                 "rust",
                 "true",
+                "true",
                 1,
-                "SAKURA_UTF16_PRODUCTION_PACKAGE=true requires SAKURA_OUTPUT_BACKEND=cpp",
+                "SAKURA_OUTPUT_PRODUCTION_PACKAGE=true requires SAKURA_OUTPUT_BACKEND=cpp",
             ),
         )
-        for backend, production, expected_code, expected_text in cases:
-            with self.subTest(backend=backend, production=production):
+        for backend, utf16_production, output_production, expected_code, expected_text in cases:
+            with self.subTest(
+                backend=backend,
+                utf16_production=utf16_production,
+                output_production=output_production,
+            ):
                 result = subprocess.run(
                     [
                         msbuild,
@@ -901,7 +965,8 @@ class CMakeGenerationContractTests(unittest.TestCase):
                         "/p:Platform=x64",
                         "/p:Configuration=Debug",
                         f"/p:SAKURA_OUTPUT_BACKEND={backend}",
-                        f"/p:SAKURA_UTF16_PRODUCTION_PACKAGE={production}",
+                        f"/p:SAKURA_UTF16_PRODUCTION_PACKAGE={utf16_production}",
+                        f"/p:SAKURA_OUTPUT_PRODUCTION_PACKAGE={output_production}",
                         "/nr:false",
                         "/nologo",
                     ],

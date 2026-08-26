@@ -607,12 +607,12 @@ def production_package_environment(
 ) -> dict[str, str]:
     """Return the environment contract required by production packaging.
 
-    Production packaging uses the rollback-first C++ implementation until the
-    Rust adoption gate in Issue #267 is completed independently.  The removed
-    ``both`` mode and an early Rust production selection are rejected before
-    package restore or compilation.  The selected backend is returned
-    explicitly so a stale ambient environment cannot change the package after
-    validation.
+    Production packaging uses the rollback-first C++ implementation for both
+    UTF-16 and Output until their adoption gates are completed independently.
+    The removed ``both`` mode and an early Rust production selection are
+    rejected before package restore or compilation.  The selected backends and
+    their independent production-package contracts are returned explicitly so
+    a stale ambient environment cannot change the package after validation.
     """
     source = os.environ if environment is None else environment
     utf16_backend = source.get("SAKURA_UTF16_BACKEND")
@@ -627,7 +627,7 @@ def production_package_environment(
     if output_backend not in (None, "", "cpp"):
         raise BuildError(
             "OUTPUT_PRODUCTION_BACKEND_INVALID",
-            "SAKURA_UTF16_PRODUCTION_PACKAGE=true requires "
+            "SAKURA_OUTPUT_PRODUCTION_PACKAGE=true requires "
             f"SAKURA_OUTPUT_BACKEND=cpp; got {output_backend}",
             EXIT_USAGE,
         )
@@ -638,6 +638,7 @@ def production_package_environment(
         "SAKURA_UTF16_BACKEND": selected_utf16_backend,
         "SAKURA_OUTPUT_BACKEND": selected_output_backend,
         "SAKURA_UTF16_PRODUCTION_PACKAGE": "true",
+        "SAKURA_OUTPUT_PRODUCTION_PACKAGE": "true",
     }
 
 
