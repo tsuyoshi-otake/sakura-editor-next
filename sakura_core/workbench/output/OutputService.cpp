@@ -13,6 +13,7 @@
 #include <deque>
 #include <limits>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <utility>
@@ -175,6 +176,17 @@ struct OutputService::Impl final {
 		OutputServiceChange change;
 		std::vector<OutputServiceSubscriptionId> subscriberIds;
 	};
+	struct AcceptedCommitSubscription final {
+		std::shared_ptr<OutputAcceptedCommitListener> listener;
+		std::uint64_t nextSequence{ 1 };
+		EOutputAcceptedCommitFeedState state{ EOutputAcceptedCommitFeedState::Live };
+		bool gapPending{};
+		std::uint64_t gapFromSequence{};
+		std::uint64_t gapToSequence{};
+		bool stopPending{};
+		bool sequenceExhausted{};
+		bool callbackInFlight{};
+	};
 
 	mutable std::mutex mutex;
 	OutputServiceLimits limits;
@@ -186,12 +198,18 @@ struct OutputService::Impl final {
 	std::deque<std::string> completedOperationOrder;
 	std::map<OutputServiceSubscriptionId, OutputServiceListener> subscriptions;
 	std::deque<PendingNotification> pendingNotifications;
+	std::deque<OutputAcceptedCommit> acceptedCommitJournal;
+	std::map<OutputAcceptedCommitSubscriptionId, std::shared_ptr<AcceptedCommitSubscription>> acceptedCommitSubscriptions;
 	std::uint64_t revision{ 1 };
+	std::uint64_t acceptedCommitSequence{};
 	std::uint64_t droppedNotificationCount{};
 	OutputServiceSubscriptionId nextSubscriptionId{ 1 };
+	OutputAcceptedCommitSubscriptionId nextAcceptedCommitSubscriptionId{ 1 };
 	bool drainingNotifications{};
 	std::thread::id notificationDispatchThreadId;
 	std::condition_variable notificationDrained;
+	bool drainingAcceptedCommits{};
+	std::thread::id acceptedCommitDispatchThreadId;
 	bool stopped{};
 
 	explicit Impl(OutputServiceLimits initialLimits)
@@ -206,6 +224,7 @@ struct OutputService::Impl final {
 		if (limits.maximumSubscriptions == 0) limits.maximumSubscriptions = 1;
 		if (limits.maximumRememberedOperations == 0) limits.maximumRememberedOperations = 1;
 		if (limits.maximumPendingNotifications == 0) limits.maximumPendingNotifications = 1;
+		if (limits.maximumAcceptedCommitFeedEntries == 0) limits.maximumAcceptedCommitFeedEntries = 1;
 	}
 
 	[[nodiscard]] OutputOperationResult Current(const EOutputOperationStatus status, const EOutputOperationReason reason) const noexcept
@@ -270,12 +289,135 @@ struct OutputService::Impl final {
 		}
 	}
 
+	[[nodiscard]] bool EnsureAcceptedCommitDrainLocked() noexcept
+	{
+		if (acceptedCommitSubscriptions.empty() || drainingAcceptedCommits) return false;
+		drainingAcceptedCommits = true;
+		return true;
+	}
+
+	void MarkAcceptedCommitGapLocked(const std::uint64_t firstMissingSequence, const std::uint64_t lastMissingSequence) noexcept
+	{
+		if (firstMissingSequence > lastMissingSequence) return;
+		for (const auto& [ignoredId, subscription] : acceptedCommitSubscriptions) {
+			(void)ignoredId;
+			if (!subscription || subscription->state != EOutputAcceptedCommitFeedState::Live) continue;
+			if (subscription->nextSequence > lastMissingSequence) continue;
+			const auto effectiveFirst = std::max(subscription->nextSequence, firstMissingSequence);
+			if (!subscription->gapPending) {
+				subscription->gapPending = true;
+				subscription->gapFromSequence = effectiveFirst;
+				subscription->gapToSequence = lastMissingSequence;
+			} else {
+				subscription->gapFromSequence = std::min(subscription->gapFromSequence, effectiveFirst);
+				subscription->gapToSequence = std::max(subscription->gapToSequence, lastMissingSequence);
+			}
+		}
+	}
+
+	static void AdvanceSequence(std::uint64_t& sequence) noexcept
+	{
+		if (sequence != std::numeric_limits<std::uint64_t>::max()) ++sequence;
+	}
+
+	[[nodiscard]] const OutputAcceptedCommit* FindAcceptedCommitLocked(const std::uint64_t sequence) const noexcept
+	{
+		const auto found = std::lower_bound(acceptedCommitJournal.begin(), acceptedCommitJournal.end(), sequence,
+			[](const OutputAcceptedCommit& commit, const std::uint64_t value) { return commit.sequence < value; });
+		return found != acceptedCommitJournal.end() && found->sequence == sequence ? &*found : nullptr;
+	}
+
+	void PruneAcceptedCommitJournalLocked() noexcept
+	{
+		std::uint64_t minimumNextSequence = std::numeric_limits<std::uint64_t>::max();
+		bool hasLiveConsumer{};
+		for (const auto& [ignoredId, subscription] : acceptedCommitSubscriptions) {
+			(void)ignoredId;
+			if (!subscription || subscription->state != EOutputAcceptedCommitFeedState::Live || subscription->sequenceExhausted) continue;
+			hasLiveConsumer = true;
+			minimumNextSequence = std::min(minimumNextSequence, subscription->nextSequence);
+		}
+		if (!hasLiveConsumer) {
+			acceptedCommitJournal.clear();
+			return;
+		}
+		while (!acceptedCommitJournal.empty() && acceptedCommitJournal.front().sequence < minimumNextSequence) {
+			acceptedCommitJournal.pop_front();
+		}
+	}
+
+	void PublishAcceptedCommitGapLocked(const std::uint64_t firstMissingSequence, const std::uint64_t lastMissingSequence,
+		bool& drain) noexcept
+	{
+		MarkAcceptedCommitGapLocked(firstMissingSequence, lastMissingSequence);
+		drain = EnsureAcceptedCommitDrainLocked() || drain;
+	}
+
+	template <typename Request>
+	void PublishAcceptedCommitLocked(const EOutputAcceptedCommitKind kind, const Request& request,
+		const OutputOperationResult& result, bool& drain) noexcept
+	{
+		const auto maximumSequence = std::numeric_limits<std::uint64_t>::max();
+		if (acceptedCommitSequence == maximumSequence) {
+			PublishAcceptedCommitGapLocked(maximumSequence, maximumSequence, drain);
+			return;
+		}
+		const auto sequence = acceptedCommitSequence + 1;
+		// The bootstrap is future-only, so there is no reason to retain copied
+		// requests until a consumer exists.
+		if (acceptedCommitSubscriptions.empty()) {
+			acceptedCommitSequence = sequence;
+			return;
+		}
+		std::optional<std::uint64_t> evictedSequence;
+		if (acceptedCommitJournal.size() >= limits.maximumAcceptedCommitFeedEntries) {
+			evictedSequence = acceptedCommitJournal.front().sequence;
+			acceptedCommitJournal.pop_front();
+		}
+		acceptedCommitSequence = sequence;
+		try {
+			acceptedCommitJournal.push_back(OutputAcceptedCommit{
+				.sequence = sequence,
+				.kind = kind,
+				.data = request,
+				.result = result,
+				.postCommitRevision = result.revision,
+			});
+		} catch (...) {
+			// The model commit is already accepted. Make every affected live
+			// subscriber resnapshot rather than silently losing this sequence.
+			const auto firstMissing = evictedSequence.value_or(sequence);
+			PublishAcceptedCommitGapLocked(firstMissing, sequence, drain);
+			return;
+		}
+		if (evictedSequence) PublishAcceptedCommitGapLocked(*evictedSequence, *evictedSequence, drain);
+		else drain = EnsureAcceptedCommitDrainLocked() || drain;
+	}
+
+	void StopAcceptedCommitSubscriptionsLocked(bool& drain) noexcept
+	{
+		for (const auto& [ignoredId, subscription] : acceptedCommitSubscriptions) {
+			(void)ignoredId;
+			if (!subscription || subscription->state != EOutputAcceptedCommitFeedState::Live) continue;
+			// Stop is ordered after every already accepted commit. A subscriber
+			// with a pending gap still receives that stronger terminal instead.
+			subscription->stopPending = true;
+		}
+		drain = EnsureAcceptedCommitDrainLocked() || drain;
+	}
+
 	[[nodiscard]] bool WaitForNotificationDrain() noexcept
 	{
 		std::unique_lock lock(mutex);
-		if (drainingNotifications && notificationDispatchThreadId == std::this_thread::get_id()) return true;
-		try { notificationDrained.wait(lock, [this] { return !drainingNotifications; }); }
-		catch (...) { return drainingNotifications; }
+		const auto dispatchThreadId = std::this_thread::get_id();
+		if ((drainingNotifications && notificationDispatchThreadId == dispatchThreadId)
+			|| (drainingAcceptedCommits && acceptedCommitDispatchThreadId == dispatchThreadId)) return true;
+		try {
+			notificationDrained.wait(lock, [this] { return !drainingNotifications && !drainingAcceptedCommits; });
+		}
+		catch (...) {
+			return drainingNotifications || drainingAcceptedCommits;
+		}
 		return false;
 	}
 
@@ -342,6 +484,200 @@ struct OutputService::Impl final {
 			activeChannelId.reset();
 		}
 	}
+
+	void DrainAcceptedCommits() noexcept
+	{
+		{
+			std::lock_guard lock(mutex);
+			if (!drainingAcceptedCommits || acceptedCommitDispatchThreadId != std::thread::id{}) return;
+			acceptedCommitDispatchThreadId = std::this_thread::get_id();
+		}
+		for (;;) {
+			std::shared_ptr<AcceptedCommitSubscription> subscription;
+			OutputAcceptedCommitSubscriptionId subscriptionId{};
+			OutputAcceptedCommitEvent event;
+			std::shared_ptr<OutputAcceptedCommitListener> listener;
+			bool haveEvent{};
+			{
+				std::lock_guard lock(mutex);
+				for (const auto& [id, candidate] : acceptedCommitSubscriptions) {
+					if (!candidate || candidate->callbackInFlight) continue;
+					if (candidate->state == EOutputAcceptedCommitFeedState::Gap) continue;
+					if (candidate->state == EOutputAcceptedCommitFeedState::Stopped) {
+						subscriptionId = id;
+						subscription = candidate;
+						candidate->callbackInFlight = true;
+						event.state = EOutputAcceptedCommitFeedState::Stopped;
+						event.cursor.sequence = acceptedCommitSequence;
+						listener = candidate->listener;
+						haveEvent = true;
+						break;
+					}
+					const auto makeGapEvent = [&]() noexcept {
+						event = {};
+						event.state = EOutputAcceptedCommitFeedState::Gap;
+						event.cursor.sequence = candidate->gapToSequence;
+						event.missingFromSequence = candidate->gapFromSequence;
+						event.missingToSequence = candidate->gapToSequence;
+						candidate->gapPending = false;
+						candidate->state = EOutputAcceptedCommitFeedState::Gap;
+						candidate->callbackInFlight = true;
+					};
+					const auto makeStoppedEvent = [&]() noexcept {
+						candidate->state = EOutputAcceptedCommitFeedState::Stopped;
+						candidate->stopPending = false;
+						candidate->callbackInFlight = true;
+						subscriptionId = id;
+						subscription = candidate;
+						event.state = EOutputAcceptedCommitFeedState::Stopped;
+						event.cursor.sequence = acceptedCommitSequence;
+						listener = candidate->listener;
+						haveEvent = true;
+					};
+
+					if (candidate->gapPending) {
+						if (candidate->nextSequence < candidate->gapFromSequence) {
+							const auto* commit = FindAcceptedCommitLocked(candidate->nextSequence);
+							if (commit) {
+								try {
+									event = {};
+									event.state = EOutputAcceptedCommitFeedState::Live;
+									event.commit = *commit;
+									event.cursor.sequence = commit->sequence;
+									if (candidate->nextSequence == std::numeric_limits<std::uint64_t>::max()) candidate->sequenceExhausted = true;
+									else AdvanceSequence(candidate->nextSequence);
+									candidate->callbackInFlight = true;
+									subscriptionId = id;
+									subscription = candidate;
+									listener = candidate->listener;
+									haveEvent = true;
+									break;
+								} catch (...) {
+									candidate->gapFromSequence = candidate->nextSequence;
+									candidate->gapToSequence = acceptedCommitSequence;
+									makeGapEvent();
+									subscriptionId = id;
+									subscription = candidate;
+									listener = candidate->listener;
+									haveEvent = true;
+									break;
+								}
+							}
+							// A prior sequence disappeared without a recorded gap. Widen
+							// the explicit gap rather than delivering an out-of-order event.
+							candidate->gapFromSequence = candidate->nextSequence;
+							candidate->gapToSequence = std::max(candidate->gapToSequence, acceptedCommitSequence);
+						}
+						makeGapEvent();
+						subscriptionId = id;
+						subscription = candidate;
+						listener = candidate->listener;
+						haveEvent = true;
+						break;
+					}
+					if (candidate->sequenceExhausted) {
+						if (candidate->stopPending) {
+							makeStoppedEvent();
+							break;
+						}
+						continue;
+					}
+
+					const auto* commit = FindAcceptedCommitLocked(candidate->nextSequence);
+					if (commit) {
+						try {
+							event = {};
+							event.state = EOutputAcceptedCommitFeedState::Live;
+							event.commit = *commit;
+							event.cursor.sequence = commit->sequence;
+							if (candidate->nextSequence == std::numeric_limits<std::uint64_t>::max()) candidate->sequenceExhausted = true;
+							else AdvanceSequence(candidate->nextSequence);
+							candidate->callbackInFlight = true;
+							subscriptionId = id;
+							subscription = candidate;
+							listener = candidate->listener;
+							haveEvent = true;
+							break;
+						} catch (...) {
+							candidate->gapPending = false;
+							candidate->gapFromSequence = candidate->nextSequence;
+							candidate->gapToSequence = acceptedCommitSequence;
+							makeGapEvent();
+							subscriptionId = id;
+							subscription = candidate;
+							listener = candidate->listener;
+							haveEvent = true;
+							break;
+						}
+					}
+					if (candidate->nextSequence <= acceptedCommitSequence) {
+						candidate->gapPending = true;
+						candidate->gapFromSequence = candidate->nextSequence;
+						candidate->gapToSequence = acceptedCommitSequence;
+						makeGapEvent();
+						subscriptionId = id;
+						subscription = candidate;
+						listener = candidate->listener;
+						haveEvent = true;
+						break;
+					}
+					if (candidate->stopPending) {
+						makeStoppedEvent();
+						break;
+					}
+				}
+				if (!haveEvent) {
+					drainingAcceptedCommits = false;
+					acceptedCommitDispatchThreadId = {};
+					if (stopped) acceptedCommitSubscriptions.clear();
+					notificationDrained.notify_all();
+					return;
+				}
+			}
+			const auto terminalEvent = event.state != EOutputAcceptedCommitFeedState::Live;
+			try {
+				if (listener && *listener) (*listener)(event);
+			} catch (...) {
+				// Feed listeners are observers. One faulty listener cannot stop
+				// accepted commits from reaching other subscriptions.
+			}
+			{
+				std::lock_guard lock(mutex);
+				if (subscription) {
+					subscription->callbackInFlight = false;
+					const auto found = acceptedCommitSubscriptions.find(subscriptionId);
+					if (terminalEvent && found != acceptedCommitSubscriptions.end() && found->second == subscription) {
+						acceptedCommitSubscriptions.erase(found);
+					}
+				}
+				PruneAcceptedCommitJournalLocked();
+			}
+		}
+	}
+
+	[[nodiscard]] OutputServiceSnapshot SnapshotLocked() const
+	{
+		OutputServiceSnapshot snapshot{ .revision = revision, .stopped = stopped, .droppedNotificationCount = droppedNotificationCount, .activeChannelId = activeChannelId };
+		snapshot.channels.reserve(channels.size());
+		for (const auto& [id, channel] : channels) {
+			(void)id;
+			snapshot.channels.push_back({ .channelId = channel.id, .label = channel.label, .owner = channel.owner, .kind = channel.kind, .metadata = channel.metadata, .visible = channel.visible, .lastShowPreservedFocus = channel.lastShowPreservedFocus, .droppedCharacterCount = channel.droppedCharacterCount, .text = channel.text, .logEntries = std::vector<OutputLogEntry>(channel.logEntries.begin(), channel.logEntries.end()), .projectedText = channel.projectedText });
+		}
+		return snapshot;
+	}
+
+	template <typename Request>
+	[[nodiscard]] OutputOperationResult FinalizeAcceptedCommitLocked(const EOutputAcceptedCommitKind kind, const Request& request,
+		const std::string& fingerprint, const EOutputChangeKind changeKind, const std::optional<std::string>& channelId,
+		bool& notificationDrain, bool& acceptedCommitDrain)
+	{
+		++revision;
+		const auto result = Current(EOutputOperationStatus::Succeeded, EOutputOperationReason::None);
+		RememberLocked(request.operation.operationId, fingerprint, result);
+		PublishAcceptedCommitLocked(kind, request, result, acceptedCommitDrain);
+		notificationDrain = QueueNotificationLocked(changeKind, channelId);
+		return result;
+	}
 };
 
 bool OutputOwner::IsValid() const noexcept
@@ -379,6 +715,7 @@ template <typename ImplType, typename Request, typename Fingerprint, typename Mu
 OutputOperationResult Apply(ImplType& impl, const Request& request, Fingerprint makeFingerprint, Mutate mutate)
 {
 	bool drain{};
+	bool acceptedCommitDrain{};
 	OutputOperationResult result;
 	{
 		std::lock_guard lock(impl.mutex);
@@ -391,9 +728,10 @@ OutputOperationResult Apply(ImplType& impl, const Request& request, Fingerprint 
 		if (request.operation.expectedRevision && *request.operation.expectedRevision != impl.revision) {
 			return impl.Current(EOutputOperationStatus::StaleRevision, EOutputOperationReason::ExpectedRevisionMismatch);
 		}
-		result = mutate(impl, fingerprint, drain);
+		result = mutate(impl, fingerprint, drain, acceptedCommitDrain);
 	}
 	if (drain) impl.DrainNotifications();
+	if (acceptedCommitDrain) impl.DrainAcceptedCommits();
 	return result;
 }
 
@@ -441,7 +779,7 @@ std::string ChannelFingerprint(const char* verb, const OutputChannelMutationRequ
 
 OutputOperationResult OutputService::CreateChannel(const OutputCreateChannelRequest& request)
 {
-	return Apply(*m_impl, request, CreateFingerprint, [&](Impl& impl, const std::string& fingerprint, bool& drain) {
+	return Apply(*m_impl, request, CreateFingerprint, [&](Impl& impl, const std::string& fingerprint, bool& drain, bool& acceptedCommitDrain) {
 		if (!request.owner.IsValid()) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidOwner);
 		if (!IsValidStableId(request.channelId)) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidChannelId);
 		if (request.label.empty() || request.label.size() > kMaximumLabelBytes || !IsValidUtf8(request.label, false)) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidLabel);
@@ -486,35 +824,34 @@ OutputOperationResult OutputService::CreateChannel(const OutputCreateChannelRequ
 		impl.activeOwnerGenerations.insert_or_assign(request.owner.ownerId, Impl::OwnerGeneration{ .generation = request.owner.generation });
 		impl.channels.emplace(request.channelId, Impl::Channel{ .id = request.channelId, .label = request.label, .owner = request.owner, .kind = request.kind, .metadata = request.metadata });
 		impl.SelectFallbackLocked();
-		++impl.revision;
-		const auto result = impl.Current(EOutputOperationStatus::Succeeded, EOutputOperationReason::None);
-		impl.RememberLocked(request.operation.operationId, fingerprint, result);
-		drain = impl.QueueNotificationLocked(EOutputChangeKind::ChannelCreated, request.channelId);
-		return result;
+		return impl.FinalizeAcceptedCommitLocked(EOutputAcceptedCommitKind::CreateChannel, request, fingerprint,
+			EOutputChangeKind::ChannelCreated, request.channelId, drain, acceptedCommitDrain);
 	});
 }
 
 OutputOperationResult OutputService::AppendOutput(const OutputTextMutationRequest& request)
 {
-	return Apply(*m_impl, request, [](const auto& value) { return TextFingerprint("append-output", value); }, [&](Impl& impl, const std::string& fingerprint, bool& drain) {
+	return Apply(*m_impl, request, [](const auto& value) { return TextFingerprint("append-output", value); }, [&](Impl& impl, const std::string& fingerprint, bool& drain, bool& acceptedCommitDrain) {
 		if (!IsValidBoundedText(request.text, impl.limits.maximumPayloadBytes)) return impl.Current(EOutputOperationStatus::Rejected, request.text.size() > impl.limits.maximumPayloadBytes ? EOutputOperationReason::PayloadLimitExceeded : EOutputOperationReason::InvalidPayload);
 		Impl::Channel* channel{}; const auto valid = ValidateOwnedChannel(impl, request.owner, request.channelId, EOutputChannelKind::Output, channel); if (!valid.Succeeded()) return valid;
 		if (request.text.empty()) return impl.Current(EOutputOperationStatus::NotApplicable, EOutputOperationReason::None);
 		if (impl.revision == std::numeric_limits<std::uint64_t>::max()) return impl.Current(EOutputOperationStatus::RevisionExhausted, EOutputOperationReason::None);
 		channel->text += request.text; KeepSuffix(channel->text, impl.limits.maximumTextBytesPerChannel, channel->droppedCharacterCount); channel->projectedText = channel->text;
-		++impl.revision; const auto result = impl.Current(EOutputOperationStatus::Succeeded, EOutputOperationReason::None); impl.RememberLocked(request.operation.operationId, fingerprint, result); drain = impl.QueueNotificationLocked(EOutputChangeKind::ContentAppended, request.channelId); return result;
+		return impl.FinalizeAcceptedCommitLocked(EOutputAcceptedCommitKind::AppendOutput, request, fingerprint,
+			EOutputChangeKind::ContentAppended, request.channelId, drain, acceptedCommitDrain);
 	});
 }
 
 OutputOperationResult OutputService::ReplaceOutput(const OutputTextMutationRequest& request)
 {
-	return Apply(*m_impl, request, [](const auto& value) { return TextFingerprint("replace-output", value); }, [&](Impl& impl, const std::string& fingerprint, bool& drain) {
+	return Apply(*m_impl, request, [](const auto& value) { return TextFingerprint("replace-output", value); }, [&](Impl& impl, const std::string& fingerprint, bool& drain, bool& acceptedCommitDrain) {
 		if (!IsValidBoundedText(request.text, impl.limits.maximumPayloadBytes)) return impl.Current(EOutputOperationStatus::Rejected, request.text.size() > impl.limits.maximumPayloadBytes ? EOutputOperationReason::PayloadLimitExceeded : EOutputOperationReason::InvalidPayload);
 		Impl::Channel* channel{}; const auto valid = ValidateOwnedChannel(impl, request.owner, request.channelId, EOutputChannelKind::Output, channel); if (!valid.Succeeded()) return valid;
 		if (channel->text == request.text && channel->droppedCharacterCount == 0) return impl.Current(EOutputOperationStatus::NotApplicable, EOutputOperationReason::None);
 		if (impl.revision == std::numeric_limits<std::uint64_t>::max()) return impl.Current(EOutputOperationStatus::RevisionExhausted, EOutputOperationReason::None);
 		channel->text = request.text; channel->droppedCharacterCount = 0; KeepSuffix(channel->text, impl.limits.maximumTextBytesPerChannel, channel->droppedCharacterCount); channel->projectedText = channel->text;
-		++impl.revision; const auto result = impl.Current(EOutputOperationStatus::Succeeded, EOutputOperationReason::None); impl.RememberLocked(request.operation.operationId, fingerprint, result); drain = impl.QueueNotificationLocked(EOutputChangeKind::ContentReplaced, request.channelId); return result;
+		return impl.FinalizeAcceptedCommitLocked(EOutputAcceptedCommitKind::ReplaceOutput, request, fingerprint,
+			EOutputChangeKind::ContentReplaced, request.channelId, drain, acceptedCommitDrain);
 	});
 }
 
@@ -522,7 +859,7 @@ OutputOperationResult OutputService::AppendLog(const OutputLogMutationRequest& r
 {
 	return Apply(*m_impl, request, [](const auto& value) {
 		std::string fingerprint("append-log;"); AppendOperation(fingerprint, value.operation); AppendOwner(fingerprint, value.owner); AppendToken(fingerprint, value.channelId); for (const auto& entry : value.entries) { AppendToken(fingerprint, std::to_string(static_cast<unsigned>(entry.level))); AppendToken(fingerprint, entry.message); AppendToken(fingerprint, entry.source.value_or("")); } return fingerprint;
-	}, [&](Impl& impl, const std::string& fingerprint, bool& drain) {
+	}, [&](Impl& impl, const std::string& fingerprint, bool& drain, bool& acceptedCommitDrain) {
 		if (request.entries.empty()) return impl.Current(EOutputOperationStatus::NotApplicable, EOutputOperationReason::None);
 		if (request.entries.size() > impl.limits.maximumLogEntriesPerChannel) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::LogEntryLimitExceeded);
 		std::size_t payloadBytes{};
@@ -536,78 +873,88 @@ OutputOperationResult OutputService::AppendLog(const OutputLogMutationRequest& r
 		channel->logEntries.insert(channel->logEntries.end(), request.entries.begin(), request.entries.end());
 		while (channel->logEntries.size() > impl.limits.maximumLogEntriesPerChannel) { channel->droppedCharacterCount += CharacterCount(RenderLogEntry(channel->logEntries.front())); channel->logEntries.pop_front(); }
 		impl.RebuildLogProjection(*channel);
-		++impl.revision; const auto result = impl.Current(EOutputOperationStatus::Succeeded, EOutputOperationReason::None); impl.RememberLocked(request.operation.operationId, fingerprint, result); drain = impl.QueueNotificationLocked(EOutputChangeKind::ContentAppended, request.channelId); return result;
+		return impl.FinalizeAcceptedCommitLocked(EOutputAcceptedCommitKind::AppendLog, request, fingerprint,
+			EOutputChangeKind::ContentAppended, request.channelId, drain, acceptedCommitDrain);
 	});
 }
 
 OutputOperationResult OutputService::Clear(const OutputChannelMutationRequest& request)
 {
-	return Apply(*m_impl, request, [](const auto& value) { return ChannelFingerprint("clear", value); }, [&](Impl& impl, const std::string& fingerprint, bool& drain) {
+	return Apply(*m_impl, request, [](const auto& value) { return ChannelFingerprint("clear", value); }, [&](Impl& impl, const std::string& fingerprint, bool& drain, bool& acceptedCommitDrain) {
 		if (!request.owner.IsValid()) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidOwner);
 		if (!IsValidStableId(request.channelId)) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidChannelId);
 		const auto found = impl.channels.find(request.channelId); if (found == impl.channels.end()) return impl.Current(EOutputOperationStatus::NotApplicable, EOutputOperationReason::ChannelNotFound); if (!IsOwnedChannel(found->second, request.owner)) return impl.Current(EOutputOperationStatus::Conflict, EOutputOperationReason::OwnerGenerationConflict);
 		auto& channel = found->second; if (channel.text.empty() && channel.logEntries.empty() && channel.droppedCharacterCount == 0) return impl.Current(EOutputOperationStatus::NotApplicable, EOutputOperationReason::None);
 		if (impl.revision == std::numeric_limits<std::uint64_t>::max()) return impl.Current(EOutputOperationStatus::RevisionExhausted, EOutputOperationReason::None);
 		channel.text.clear(); channel.logEntries.clear(); channel.projectedText.clear(); channel.droppedCharacterCount = 0;
-		++impl.revision; const auto result = impl.Current(EOutputOperationStatus::Succeeded, EOutputOperationReason::None); impl.RememberLocked(request.operation.operationId, fingerprint, result); drain = impl.QueueNotificationLocked(EOutputChangeKind::ContentCleared, request.channelId); return result;
+		return impl.FinalizeAcceptedCommitLocked(EOutputAcceptedCommitKind::Clear, request, fingerprint,
+			EOutputChangeKind::ContentCleared, request.channelId, drain, acceptedCommitDrain);
 	});
 }
 
 OutputOperationResult OutputService::Show(const OutputShowChannelRequest& request)
 {
-	return Apply(*m_impl, request, [](const auto& value) { std::string fingerprint("show;"); AppendOperation(fingerprint, value.operation); AppendOwner(fingerprint, value.owner); AppendToken(fingerprint, value.channelId); AppendToken(fingerprint, value.preserveFocus ? "1" : "0"); return fingerprint; }, [&](Impl& impl, const std::string& fingerprint, bool& drain) {
+	return Apply(*m_impl, request, [](const auto& value) { std::string fingerprint("show;"); AppendOperation(fingerprint, value.operation); AppendOwner(fingerprint, value.owner); AppendToken(fingerprint, value.channelId); AppendToken(fingerprint, value.preserveFocus ? "1" : "0"); return fingerprint; }, [&](Impl& impl, const std::string& fingerprint, bool& drain, bool& acceptedCommitDrain) {
 		if (!request.owner.IsValid()) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidOwner); if (!IsValidStableId(request.channelId)) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidChannelId);
 		const auto found = impl.channels.find(request.channelId); if (found == impl.channels.end()) return impl.Current(EOutputOperationStatus::NotApplicable, EOutputOperationReason::ChannelNotFound); if (!IsOwnedChannel(found->second, request.owner)) return impl.Current(EOutputOperationStatus::Conflict, EOutputOperationReason::OwnerGenerationConflict);
 		if (impl.revision == std::numeric_limits<std::uint64_t>::max()) return impl.Current(EOutputOperationStatus::RevisionExhausted, EOutputOperationReason::None); found->second.visible = true; found->second.lastShowPreservedFocus = request.preserveFocus; impl.activeChannelId = request.channelId;
-		++impl.revision; const auto result = impl.Current(EOutputOperationStatus::Succeeded, EOutputOperationReason::None); impl.RememberLocked(request.operation.operationId, fingerprint, result); drain = impl.QueueNotificationLocked(EOutputChangeKind::ChannelShown, request.channelId); return result;
+		return impl.FinalizeAcceptedCommitLocked(EOutputAcceptedCommitKind::Show, request, fingerprint,
+			EOutputChangeKind::ChannelShown, request.channelId, drain, acceptedCommitDrain);
 	});
 }
 
 OutputOperationResult OutputService::Hide(const OutputChannelMutationRequest& request)
 {
-	return Apply(*m_impl, request, [](const auto& value) { return ChannelFingerprint("hide", value); }, [&](Impl& impl, const std::string& fingerprint, bool& drain) {
+	return Apply(*m_impl, request, [](const auto& value) { return ChannelFingerprint("hide", value); }, [&](Impl& impl, const std::string& fingerprint, bool& drain, bool& acceptedCommitDrain) {
 		if (!request.owner.IsValid()) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidOwner); if (!IsValidStableId(request.channelId)) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidChannelId);
 		const auto found = impl.channels.find(request.channelId); if (found == impl.channels.end()) return impl.Current(EOutputOperationStatus::NotApplicable, EOutputOperationReason::ChannelNotFound); if (!IsOwnedChannel(found->second, request.owner)) return impl.Current(EOutputOperationStatus::Conflict, EOutputOperationReason::OwnerGenerationConflict);
 		if (!found->second.visible) return impl.Current(EOutputOperationStatus::NotApplicable, EOutputOperationReason::None); if (impl.revision == std::numeric_limits<std::uint64_t>::max()) return impl.Current(EOutputOperationStatus::RevisionExhausted, EOutputOperationReason::None);
 		found->second.visible = false; if (impl.activeChannelId && *impl.activeChannelId == request.channelId) { impl.activeChannelId.reset(); impl.SelectFallbackLocked(); }
-		++impl.revision; const auto result = impl.Current(EOutputOperationStatus::Succeeded, EOutputOperationReason::None); impl.RememberLocked(request.operation.operationId, fingerprint, result); drain = impl.QueueNotificationLocked(EOutputChangeKind::ChannelHidden, request.channelId); return result;
+		return impl.FinalizeAcceptedCommitLocked(EOutputAcceptedCommitKind::Hide, request, fingerprint,
+			EOutputChangeKind::ChannelHidden, request.channelId, drain, acceptedCommitDrain);
 	});
 }
 
 OutputOperationResult OutputService::Dispose(const OutputChannelMutationRequest& request)
 {
-	return Apply(*m_impl, request, [](const auto& value) { return ChannelFingerprint("dispose", value); }, [&](Impl& impl, const std::string& fingerprint, bool& drain) {
+	return Apply(*m_impl, request, [](const auto& value) { return ChannelFingerprint("dispose", value); }, [&](Impl& impl, const std::string& fingerprint, bool& drain, bool& acceptedCommitDrain) {
 		if (!request.owner.IsValid()) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidOwner); if (!IsValidStableId(request.channelId)) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidChannelId);
 		const auto found = impl.channels.find(request.channelId); if (found == impl.channels.end()) return impl.Current(EOutputOperationStatus::NotApplicable, EOutputOperationReason::ChannelNotFound); if (!IsOwnedChannel(found->second, request.owner)) return impl.Current(EOutputOperationStatus::Conflict, EOutputOperationReason::OwnerGenerationConflict); if (impl.revision == std::numeric_limits<std::uint64_t>::max()) return impl.Current(EOutputOperationStatus::RevisionExhausted, EOutputOperationReason::None);
 		impl.channels.erase(found); if (impl.activeChannelId && *impl.activeChannelId == request.channelId) { impl.activeChannelId.reset(); impl.SelectFallbackLocked(); }
-		++impl.revision; const auto result = impl.Current(EOutputOperationStatus::Succeeded, EOutputOperationReason::None); impl.RememberLocked(request.operation.operationId, fingerprint, result); drain = impl.QueueNotificationLocked(EOutputChangeKind::ChannelDisposed, request.channelId); return result;
+		return impl.FinalizeAcceptedCommitLocked(EOutputAcceptedCommitKind::Dispose, request, fingerprint,
+			EOutputChangeKind::ChannelDisposed, request.channelId, drain, acceptedCommitDrain);
 	});
 }
 
 OutputOperationResult OutputService::DisposeOwner(const OutputDisposeOwnerRequest& request)
 {
-	return Apply(*m_impl, request, [](const auto& value) { std::string fingerprint("dispose-owner;"); AppendOperation(fingerprint, value.operation); AppendOwner(fingerprint, value.owner); return fingerprint; }, [&](Impl& impl, const std::string& fingerprint, bool& drain) {
+	return Apply(*m_impl, request, [](const auto& value) { std::string fingerprint("dispose-owner;"); AppendOperation(fingerprint, value.operation); AppendOwner(fingerprint, value.owner); return fingerprint; }, [&](Impl& impl, const std::string& fingerprint, bool& drain, bool& acceptedCommitDrain) {
 		if (!request.owner.IsValid()) return impl.Current(EOutputOperationStatus::Rejected, EOutputOperationReason::InvalidOwner); const auto active = impl.activeOwnerGenerations.find(request.owner.ownerId); if (active == impl.activeOwnerGenerations.end() || active->second.disposed) return impl.Current(EOutputOperationStatus::NotApplicable, EOutputOperationReason::ChannelNotFound); if (active->second.generation != request.owner.generation) return impl.Current(EOutputOperationStatus::Conflict, EOutputOperationReason::OwnerGenerationConflict); if (impl.revision == std::numeric_limits<std::uint64_t>::max()) return impl.Current(EOutputOperationStatus::RevisionExhausted, EOutputOperationReason::None);
 		for (auto iterator = impl.channels.begin(); iterator != impl.channels.end();) { if (IsSameOwner(iterator->second.owner, request.owner)) iterator = impl.channels.erase(iterator); else ++iterator; }
 		active->second.disposed = true; impl.activeChannelId.reset(); impl.SelectFallbackLocked();
-		++impl.revision; const auto result = impl.Current(EOutputOperationStatus::Succeeded, EOutputOperationReason::None); impl.RememberLocked(request.operation.operationId, fingerprint, result); drain = impl.QueueNotificationLocked(EOutputChangeKind::OwnerDisposed, std::nullopt); return result;
+		return impl.FinalizeAcceptedCommitLocked(EOutputAcceptedCommitKind::DisposeOwner, request, fingerprint,
+			EOutputChangeKind::OwnerDisposed, std::nullopt, drain, acceptedCommitDrain);
 	});
 }
 
 OutputOperationResult OutputService::Stop() noexcept
 {
 	OutputOperationResult result;
+	bool acceptedCommitDrain{};
 	{
 		std::lock_guard lock(m_impl->mutex);
 		if (m_impl->stopped) {
 			result = m_impl->Current(EOutputOperationStatus::Succeeded, EOutputOperationReason::None);
 		} else {
-			m_impl->channels.clear(); m_impl->activeOwnerGenerations.clear(); m_impl->activeChannelId.reset(); m_impl->completedOperations.clear(); m_impl->completedOperationOrder.clear(); m_impl->subscriptions.clear(); m_impl->pendingNotifications.clear(); m_impl->stopped = true;
+			m_impl->channels.clear(); m_impl->activeOwnerGenerations.clear(); m_impl->activeChannelId.reset(); m_impl->completedOperations.clear(); m_impl->completedOperationOrder.clear(); m_impl->subscriptions.clear(); m_impl->pendingNotifications.clear();
+			m_impl->StopAcceptedCommitSubscriptionsLocked(acceptedCommitDrain);
+			m_impl->stopped = true;
 			// At the terminal counter value we cannot publish another revision, but Stop still must close the service.
 			if (m_impl->revision != std::numeric_limits<std::uint64_t>::max()) ++m_impl->revision;
 			result = m_impl->Current(EOutputOperationStatus::Succeeded, EOutputOperationReason::None);
 		}
 	}
+	if (acceptedCommitDrain) m_impl->DrainAcceptedCommits();
 	result.callbackDrainDeferred = m_impl->WaitForNotificationDrain();
 	return result;
 }
@@ -615,13 +962,7 @@ OutputOperationResult OutputService::Stop() noexcept
 OutputServiceSnapshot OutputService::Snapshot() const
 {
 	std::lock_guard lock(m_impl->mutex);
-	OutputServiceSnapshot snapshot{ .revision = m_impl->revision, .stopped = m_impl->stopped, .droppedNotificationCount = m_impl->droppedNotificationCount, .activeChannelId = m_impl->activeChannelId };
-	snapshot.channels.reserve(m_impl->channels.size());
-	for (const auto& [id, channel] : m_impl->channels) {
-		(void)id;
-		snapshot.channels.push_back({ .channelId = channel.id, .label = channel.label, .owner = channel.owner, .kind = channel.kind, .metadata = channel.metadata, .visible = channel.visible, .lastShowPreservedFocus = channel.lastShowPreservedFocus, .droppedCharacterCount = channel.droppedCharacterCount, .text = channel.text, .logEntries = std::vector<OutputLogEntry>(channel.logEntries.begin(), channel.logEntries.end()), .projectedText = channel.projectedText });
-	}
-	return snapshot;
+	return m_impl->SnapshotLocked();
 }
 
 std::optional<OutputServiceSubscriptionId> OutputService::Subscribe(OutputServiceListener listener)
@@ -638,6 +979,42 @@ void OutputService::Unsubscribe(const OutputServiceSubscriptionId subscriptionId
 {
 	std::lock_guard lock(m_impl->mutex);
 	m_impl->subscriptions.erase(subscriptionId);
+}
+
+std::optional<OutputAcceptedCommitBootstrap> OutputService::SubscribeAcceptedCommits(OutputAcceptedCommitListener listener)
+{
+	if (!listener) return std::nullopt;
+	std::shared_ptr<Impl::AcceptedCommitSubscription> subscription;
+	try {
+		subscription = std::make_shared<Impl::AcceptedCommitSubscription>();
+		subscription->listener = std::make_shared<OutputAcceptedCommitListener>(std::move(listener));
+		std::lock_guard lock(m_impl->mutex);
+		if (m_impl->stopped || m_impl->acceptedCommitSubscriptions.size() >= m_impl->limits.maximumSubscriptions
+			|| m_impl->nextAcceptedCommitSubscriptionId == 0) return std::nullopt;
+		const auto subscriptionId = m_impl->nextAcceptedCommitSubscriptionId++;
+		const auto cursor = OutputAcceptedCommitCursor{ .sequence = m_impl->acceptedCommitSequence };
+		const auto snapshot = m_impl->SnapshotLocked();
+		subscription->nextSequence = cursor.sequence;
+		if (subscription->nextSequence == std::numeric_limits<std::uint64_t>::max()) subscription->sequenceExhausted = true;
+		else Impl::AdvanceSequence(subscription->nextSequence);
+		m_impl->acceptedCommitSubscriptions.emplace(subscriptionId, subscription);
+		m_impl->PruneAcceptedCommitJournalLocked();
+		return OutputAcceptedCommitBootstrap{
+			.snapshot = snapshot,
+			.cursor = cursor,
+			.state = EOutputAcceptedCommitFeedState::Live,
+			.subscriptionId = subscriptionId,
+		};
+	} catch (...) {
+		return std::nullopt;
+	}
+}
+
+void OutputService::UnsubscribeAcceptedCommits(const OutputAcceptedCommitSubscriptionId subscriptionId) noexcept
+{
+	std::lock_guard lock(m_impl->mutex);
+	m_impl->acceptedCommitSubscriptions.erase(subscriptionId);
+	m_impl->PruneAcceptedCommitJournalLocked();
 }
 
 } // namespace workbench::output

@@ -12,6 +12,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 namespace workbench::output {
@@ -167,6 +168,69 @@ struct OutputServiceSnapshot {
 	std::vector<OutputChannelSnapshot> channels;
 };
 
+//! The accepted-commit feed has its own sequence space, independent of model revisions.
+struct OutputAcceptedCommitCursor {
+	std::uint64_t sequence{};
+
+	[[nodiscard]] bool operator==(const OutputAcceptedCommitCursor&) const noexcept = default;
+};
+
+enum class EOutputAcceptedCommitFeedState : std::uint8_t {
+	Live,
+	Gap,
+	Stopped,
+};
+
+enum class EOutputAcceptedCommitKind : std::uint8_t {
+	CreateChannel,
+	AppendOutput,
+	ReplaceOutput,
+	AppendLog,
+	Clear,
+	Show,
+	Hide,
+	Dispose,
+	DisposeOwner,
+};
+
+//! Request data is copied into the feed; the kind disambiguates shared request DTOs such as text mutations.
+using OutputAcceptedCommitData = std::variant<
+	OutputCreateChannelRequest,
+	OutputTextMutationRequest,
+	OutputLogMutationRequest,
+	OutputChannelMutationRequest,
+	OutputShowChannelRequest,
+	OutputDisposeOwnerRequest>;
+
+//! One fresh successful mutation, with no borrow into the service or caller-owned request.
+struct OutputAcceptedCommit {
+	std::uint64_t sequence{};
+	EOutputAcceptedCommitKind kind{ EOutputAcceptedCommitKind::CreateChannel };
+	OutputAcceptedCommitData data;
+	OutputOperationResult result;
+	std::uint64_t postCommitRevision{};
+};
+
+//! Feed callbacks carry one copied commit, an explicit terminal gap, or terminal stopped state.
+struct OutputAcceptedCommitEvent {
+	EOutputAcceptedCommitFeedState state{ EOutputAcceptedCommitFeedState::Live };
+	std::optional<OutputAcceptedCommit> commit;
+	OutputAcceptedCommitCursor cursor;
+	std::uint64_t missingFromSequence{};
+	std::uint64_t missingToSequence{};
+};
+
+using OutputAcceptedCommitSubscriptionId = std::uint64_t;
+using OutputAcceptedCommitListener = std::function<void(const OutputAcceptedCommitEvent&)>;
+
+//! Snapshot and accepted-feed bootstrap are captured and subscribed under one model lock.
+struct OutputAcceptedCommitBootstrap {
+	OutputServiceSnapshot snapshot;
+	OutputAcceptedCommitCursor cursor;
+	EOutputAcceptedCommitFeedState state{ EOutputAcceptedCommitFeedState::Live };
+	OutputAcceptedCommitSubscriptionId subscriptionId{};
+};
+
 enum class EOutputChangeKind : std::uint8_t {
 	ChannelCreated,
 	ContentAppended,
@@ -198,6 +262,7 @@ struct OutputServiceLimits {
 	std::size_t maximumSubscriptions{ 256 };
 	std::size_t maximumRememberedOperations{ 512 };
 	std::size_t maximumPendingNotifications{ 512 };
+	std::size_t maximumAcceptedCommitFeedEntries{ 512 };
 };
 
 /*!
@@ -231,6 +296,13 @@ public:
 	[[nodiscard]] OutputServiceSnapshot Snapshot() const;
 	[[nodiscard]] std::optional<OutputServiceSubscriptionId> Subscribe(OutputServiceListener listener);
 	void Unsubscribe(OutputServiceSubscriptionId subscriptionId) noexcept;
+	//! Atomically captures a service snapshot, current feed cursor, and a future-only feed subscription.
+	//! A returned Live subscription starts after the returned cursor. A Gap event is terminal and requires
+	//! resnapshot/rebootstrap; it is never silently converted into a partial stream.
+	[[nodiscard]] std::optional<OutputAcceptedCommitBootstrap> SubscribeAcceptedCommits(OutputAcceptedCommitListener listener);
+	//! Removes a feed subscription without waiting. Stop() is the lifetime fence for an owner that is
+	//! destroying a callback target; an already-active copied callback may finish after this returns.
+	void UnsubscribeAcceptedCommits(OutputAcceptedCommitSubscriptionId subscriptionId) noexcept;
 
 	[[nodiscard]] static bool IsValidStableId(std::string_view value) noexcept;
 	[[nodiscard]] static bool IsValidOperationId(std::string_view value) noexcept;

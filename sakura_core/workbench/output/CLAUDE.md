@@ -56,11 +56,21 @@ snapshots; it owns no callback, UI, filesystem, process, transport, cache, or
 production notification path. `CWorkbenchRuntime::m_output` and the C++
 `OutputService` remain the only production authority.
 
-A live shadow is a later change. It first requires an ordered accepted-commit
-observer with explicit feed-gap and callback-drain semantics. A production
-cutover additionally requires a stable provider boundary because native code
-currently borrows the concrete `OutputService`. Neither boundary may be
-approximated with dual writes or an in-place provider swap.
+Issue #271 adds the prerequisite ordered accepted-commit feed. Snapshot and
+cursor bootstrap are atomic; only fresh successful mutations enter the copied
+stream. A bounded lag or allocation failure becomes a terminal explicit gap,
+and Stop drains already accepted commits before its terminal stopped event.
+Feed callbacks run outside the model lock, are exception-contained, and share
+the service's external-drain/reentrant-deferred lifetime fence. The advisory UI
+notification queue and its drop counter remain a separate best-effort path.
+With no feed consumer, the service advances only the cursor and retains no
+request DTOs; caught-up consumers also release journal entries immediately.
+
+The next Issue #271 step may attach the replay-only Rust model to this feed as
+an observational candidate. A production cutover still requires a stable
+provider boundary because native code currently borrows the concrete
+`OutputService`. Neither boundary may be approximated with dual writes or an
+in-place provider swap.
 
 `sakura_core/workbench/scm/GitOutputChannel.h`/`.cpp` (Issue #221) is this
 service's first real production content producer: an HWND-free adapter that
