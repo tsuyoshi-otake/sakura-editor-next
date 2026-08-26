@@ -1434,6 +1434,9 @@
     <ClInclude Include="..\sakura_core\workbench\output\OutputService.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\output\OutputServiceNotificationDispatcher.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\workbench\output\OutputServiceTypes.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
@@ -3872,6 +3875,9 @@
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\workbench\problems\MarkerService.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\output\OutputServiceNotificationDispatcher.cpp">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\workbench\output\OutputService.cpp">

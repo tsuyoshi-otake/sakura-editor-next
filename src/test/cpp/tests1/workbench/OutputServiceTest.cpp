@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "workbench/output/OutputService.h"
+#include "workbench/output/OutputServiceNotificationDispatcher.h"
 
 namespace workbench::output {
 namespace {
@@ -65,6 +66,376 @@ const OutputChannelSnapshot& FindChannel(const OutputServiceSnapshot& snapshot, 
 	});
 	EXPECT_NE(snapshot.channels.end(), found);
 	return *found;
+}
+
+TEST(OutputServiceNotificationDispatcher, BoundsPendingDeliveryAndRunsCallbacksOutsideModelLock)
+{
+	using namespace std::chrono_literals;
+	std::mutex modelMutex;
+	std::condition_variable drainCondition;
+	OutputServiceNotificationDispatcher dispatcher(modelMutex, drainCondition,
+		{ .maximumSubscriptions = 4, .maximumPendingNotifications = 1 });
+	std::vector<OutputServiceChange> changes;
+	std::promise<void> enteredPromise;
+	auto enteredFuture = enteredPromise.get_future();
+	std::promise<void> releasePromise;
+	auto releaseFuture = releasePromise.get_future().share();
+	bool callbackOutsideModelLock{};
+	bool firstCallback{};
+
+	ASSERT_TRUE(dispatcher.Subscribe([&](const OutputServiceChange& change) {
+		if (!firstCallback) {
+			firstCallback = true;
+			if (modelMutex.try_lock()) {
+				callbackOutsideModelLock = true;
+				modelMutex.unlock();
+			}
+			enteredPromise.set_value();
+			releaseFuture.wait();
+		}
+		changes.push_back(change);
+	}));
+
+	bool shouldDrain{};
+	{
+		std::lock_guard lock(modelMutex);
+		shouldDrain = dispatcher.QueueLocked(1, EOutputChangeKind::ChannelCreated,
+			std::string("first.channel"), std::nullopt);
+	}
+	ASSERT_TRUE(shouldDrain);
+	std::thread drainer([&dispatcher] { dispatcher.Drain(); });
+	ASSERT_EQ(std::future_status::ready, enteredFuture.wait_for(2s));
+
+	{
+		std::lock_guard lock(modelMutex);
+		EXPECT_FALSE(dispatcher.QueueLocked(2, EOutputChangeKind::ContentAppended,
+			std::string("second.channel"), std::nullopt));
+		EXPECT_FALSE(dispatcher.QueueLocked(3, EOutputChangeKind::ContentReplaced,
+			std::string("dropped.channel"), std::nullopt));
+		EXPECT_EQ(1U, dispatcher.DroppedNotificationCountLocked());
+	}
+
+	releasePromise.set_value();
+	drainer.join();
+	EXPECT_TRUE(callbackOutsideModelLock);
+	ASSERT_EQ(2U, changes.size());
+	EXPECT_EQ(1U, changes[0].revision);
+	EXPECT_EQ(2U, changes[1].revision);
+	EXPECT_FALSE(dispatcher.WaitForDrain());
+}
+
+TEST(OutputServiceNotificationDispatcher, ReentrantDeliveryRemainsFifoAndNonRecursive)
+{
+	std::mutex modelMutex;
+	std::condition_variable drainCondition;
+	OutputServiceNotificationDispatcher dispatcher(modelMutex, drainCondition);
+	std::vector<std::uint64_t> revisions;
+	std::size_t callbackDepth{};
+	std::size_t maximumCallbackDepth{};
+	bool reentrantQueueAccepted{};
+	bool reentrantDrainReturned{};
+
+	ASSERT_TRUE(dispatcher.Subscribe([&](const OutputServiceChange& change) {
+		++callbackDepth;
+		maximumCallbackDepth = std::max(maximumCallbackDepth, callbackDepth);
+		revisions.push_back(change.revision);
+		if (change.revision == 1) {
+			{
+				std::lock_guard lock(modelMutex);
+				reentrantQueueAccepted = dispatcher.QueueLocked(2, EOutputChangeKind::ContentAppended,
+					std::string("reentrant.channel"), std::nullopt);
+			}
+			// A callback may reenter the delivery boundary, but the active owner
+			// must keep delivery iterative rather than recursively invoking itself.
+			dispatcher.Drain();
+			reentrantDrainReturned = true;
+		}
+		--callbackDepth;
+	}));
+
+	bool shouldDrain{};
+	{
+		std::lock_guard lock(modelMutex);
+		shouldDrain = dispatcher.QueueLocked(1, EOutputChangeKind::ChannelCreated,
+			std::string("first.channel"), std::nullopt);
+	}
+	ASSERT_TRUE(shouldDrain);
+	dispatcher.Drain();
+
+	ASSERT_EQ(2U, revisions.size());
+	EXPECT_EQ(1U, revisions[0]);
+	EXPECT_EQ(2U, revisions[1]);
+	EXPECT_FALSE(reentrantQueueAccepted);
+	EXPECT_TRUE(reentrantDrainReturned);
+	EXPECT_EQ(1U, maximumCallbackDepth);
+}
+
+TEST(OutputServiceNotificationDispatcher, ContainsThrowingListenerAndContinuesWithLaterEvents)
+{
+	std::mutex modelMutex;
+	std::condition_variable drainCondition;
+	OutputServiceNotificationDispatcher dispatcher(modelMutex, drainCondition);
+	std::vector<std::uint64_t> revisions;
+
+	ASSERT_TRUE(dispatcher.Subscribe([](const OutputServiceChange&) {
+		throw std::runtime_error("expected dispatcher listener failure");
+	}));
+	ASSERT_TRUE(dispatcher.Subscribe([&](const OutputServiceChange& change) {
+		revisions.push_back(change.revision);
+	}));
+
+	for (const auto revision : { 1U, 2U }) {
+		bool shouldDrain{};
+		{
+			std::lock_guard lock(modelMutex);
+			shouldDrain = dispatcher.QueueLocked(revision, EOutputChangeKind::ChannelCreated,
+				std::string("throwing.channel"), std::nullopt);
+		}
+		EXPECT_TRUE(shouldDrain);
+		if (shouldDrain) dispatcher.Drain();
+	}
+
+	ASSERT_EQ(2U, revisions.size());
+	EXPECT_EQ(1U, revisions[0]);
+	EXPECT_EQ(2U, revisions[1]);
+}
+
+TEST(OutputServiceNotificationDispatcher, ContainsListenerCopyFailureAndContinuesWithLaterSubscribers)
+{
+	struct CopyState final {
+		bool throwOnCopy{};
+	};
+	struct ThrowingCopyListener final {
+		std::shared_ptr<CopyState> state;
+
+		ThrowingCopyListener(std::shared_ptr<CopyState> value)
+			: state(std::move(value))
+		{
+		}
+		ThrowingCopyListener(const ThrowingCopyListener& other)
+			: state(other.state)
+		{
+			if (state->throwOnCopy) throw std::runtime_error("expected listener copy failure");
+		}
+		ThrowingCopyListener(ThrowingCopyListener&&) noexcept = default;
+		void operator()(const OutputServiceChange&) const noexcept {}
+	};
+
+	std::mutex modelMutex;
+	std::condition_variable drainCondition;
+	OutputServiceNotificationDispatcher dispatcher(modelMutex, drainCondition);
+	const auto copyState = std::make_shared<CopyState>();
+	ASSERT_TRUE(dispatcher.Subscribe(ThrowingCopyListener(copyState)));
+	std::vector<std::uint64_t> revisions;
+	ASSERT_TRUE(dispatcher.Subscribe([&](const OutputServiceChange& change) {
+		revisions.push_back(change.revision);
+	}));
+	copyState->throwOnCopy = true;
+
+	for (const auto revision : { 1U, 2U }) {
+		bool shouldDrain{};
+		{
+			std::lock_guard lock(modelMutex);
+			shouldDrain = dispatcher.QueueLocked(revision, EOutputChangeKind::ChannelCreated,
+				std::string("copy-failure.channel"), std::nullopt);
+		}
+		EXPECT_TRUE(shouldDrain);
+		dispatcher.Drain();
+	}
+
+	ASSERT_EQ(2U, revisions.size());
+	EXPECT_EQ(1U, revisions[0]);
+	EXPECT_EQ(2U, revisions[1]);
+	{
+		std::lock_guard lock(modelMutex);
+		EXPECT_EQ(2U, dispatcher.DroppedNotificationCountLocked());
+	}
+}
+
+TEST(OutputServiceNotificationDispatcher, UnsubscribeDoesNotDrainActiveCallback)
+{
+	using namespace std::chrono_literals;
+	std::mutex modelMutex;
+	std::condition_variable drainCondition;
+	OutputServiceNotificationDispatcher dispatcher(modelMutex, drainCondition);
+	std::vector<std::uint64_t> revisions;
+	std::promise<void> enteredPromise;
+	auto enteredFuture = enteredPromise.get_future();
+	std::promise<void> releasePromise;
+	auto releaseFuture = releasePromise.get_future().share();
+	std::optional<OutputServiceSubscriptionId> subscriptionId;
+
+	subscriptionId = dispatcher.Subscribe([&](const OutputServiceChange& change) {
+		revisions.push_back(change.revision);
+		enteredPromise.set_value();
+		releaseFuture.wait();
+	});
+	ASSERT_TRUE(subscriptionId);
+
+	bool shouldDrain{};
+	{
+		std::lock_guard lock(modelMutex);
+		shouldDrain = dispatcher.QueueLocked(1, EOutputChangeKind::ChannelCreated,
+			std::string("active.channel"), std::nullopt);
+	}
+	ASSERT_TRUE(shouldDrain);
+	std::thread drainer([&dispatcher] { dispatcher.Drain(); });
+	const auto callbackEntered = enteredFuture.wait_for(2s) == std::future_status::ready;
+	EXPECT_TRUE(callbackEntered);
+
+	std::promise<void> unsubscribePromise;
+	auto unsubscribeFuture = unsubscribePromise.get_future();
+	std::thread unsubscriber([&dispatcher, subscriptionId, &unsubscribePromise] {
+		dispatcher.Unsubscribe(*subscriptionId);
+		unsubscribePromise.set_value();
+	});
+	const auto unsubscribeReturnedWhileActive = unsubscribeFuture.wait_for(2s) == std::future_status::ready;
+	EXPECT_TRUE(unsubscribeReturnedWhileActive);
+
+	releasePromise.set_value();
+	drainer.join();
+	unsubscriber.join();
+
+	{
+		std::lock_guard lock(modelMutex);
+		shouldDrain = dispatcher.QueueLocked(2, EOutputChangeKind::ContentAppended,
+			std::string("after-unsubscribe.channel"), std::nullopt);
+	}
+	EXPECT_TRUE(shouldDrain);
+	dispatcher.Drain();
+	ASSERT_EQ(1U, revisions.size());
+	EXPECT_EQ(1U, revisions.front());
+}
+
+TEST(OutputServiceNotificationDispatcher, ExternalStopWaitsForCallbackAndRepeatedStopIsSafe)
+{
+	using namespace std::chrono_literals;
+	std::mutex modelMutex;
+	std::condition_variable drainCondition;
+	OutputServiceNotificationDispatcher dispatcher(modelMutex, drainCondition);
+	std::promise<void> enteredPromise;
+	auto enteredFuture = enteredPromise.get_future();
+	std::promise<void> releasePromise;
+	auto releaseFuture = releasePromise.get_future().share();
+
+	ASSERT_TRUE(dispatcher.Subscribe([&](const OutputServiceChange&) {
+		enteredPromise.set_value();
+		releaseFuture.wait();
+	}));
+	bool shouldDrain{};
+	{
+		std::lock_guard lock(modelMutex);
+		shouldDrain = dispatcher.QueueLocked(1, EOutputChangeKind::ChannelCreated,
+			std::string("stop.channel"), std::nullopt);
+	}
+	ASSERT_TRUE(shouldDrain);
+	std::thread drainer([&dispatcher] { dispatcher.Drain(); });
+	const auto callbackEntered = enteredFuture.wait_for(2s) == std::future_status::ready;
+	EXPECT_TRUE(callbackEntered);
+
+	std::promise<void> stopStartedPromise;
+	auto stopStartedFuture = stopStartedPromise.get_future();
+	std::promise<bool> stopPromise;
+	auto stopFuture = stopPromise.get_future();
+	std::thread stopper([&dispatcher, &modelMutex, &stopStartedPromise, &stopPromise] {
+		{
+			std::lock_guard lock(modelMutex);
+			dispatcher.StopLocked();
+		}
+		stopStartedPromise.set_value();
+		stopPromise.set_value(dispatcher.WaitForDrain());
+	});
+	const auto stopStarted = stopStartedFuture.wait_for(2s) == std::future_status::ready;
+	EXPECT_TRUE(stopStarted);
+	const auto stopBlockedOnCallback = stopFuture.wait_for(100ms) == std::future_status::timeout;
+	EXPECT_TRUE(stopBlockedOnCallback);
+
+	releasePromise.set_value();
+	drainer.join();
+	stopper.join();
+	EXPECT_FALSE(stopFuture.get());
+
+	{
+		std::lock_guard lock(modelMutex);
+		dispatcher.StopLocked();
+		EXPECT_FALSE(dispatcher.QueueLocked(2, EOutputChangeKind::ContentAppended,
+			std::string("after-stop.channel"), std::nullopt));
+	}
+	EXPECT_FALSE(dispatcher.WaitForDrain());
+}
+
+TEST(OutputServiceNotificationDispatcher, CallbackOriginStopDefersDrainAndIsIdempotent)
+{
+	std::mutex modelMutex;
+	std::condition_variable drainCondition;
+	OutputServiceNotificationDispatcher dispatcher(modelMutex, drainCondition);
+	bool deferred{};
+	bool queueAfterStop{};
+
+	ASSERT_TRUE(dispatcher.Subscribe([&](const OutputServiceChange&) {
+		{
+			std::lock_guard lock(modelMutex);
+			dispatcher.StopLocked();
+			queueAfterStop = dispatcher.QueueLocked(2, EOutputChangeKind::ContentAppended,
+				std::string("after-stop.channel"), std::nullopt);
+		}
+		deferred = dispatcher.WaitForDrain();
+	}));
+	bool shouldDrain{};
+	{
+		std::lock_guard lock(modelMutex);
+		shouldDrain = dispatcher.QueueLocked(1, EOutputChangeKind::ChannelCreated,
+			std::string("callback-stop.channel"), std::nullopt);
+	}
+	ASSERT_TRUE(shouldDrain);
+	dispatcher.Drain();
+
+	EXPECT_TRUE(deferred);
+	EXPECT_FALSE(queueAfterStop);
+	EXPECT_FALSE(dispatcher.WaitForDrain());
+	{
+		std::lock_guard lock(modelMutex);
+		dispatcher.StopLocked();
+	}
+	EXPECT_FALSE(dispatcher.WaitForDrain());
+}
+
+TEST(OutputServiceNotificationDispatcher, ZeroLimitsNormalizeToOne)
+{
+	std::mutex modelMutex;
+	std::condition_variable drainCondition;
+	OutputServiceNotificationDispatcher dispatcher(modelMutex, drainCondition,
+		{ .maximumSubscriptions = 0, .maximumPendingNotifications = 0 });
+	std::size_t callbacks{};
+	ASSERT_TRUE(dispatcher.Subscribe([&callbacks](const OutputServiceChange&) { ++callbacks; }));
+	EXPECT_FALSE(dispatcher.Subscribe([](const OutputServiceChange&) {}));
+
+	bool shouldDrain{};
+	{
+		std::lock_guard lock(modelMutex);
+		shouldDrain = dispatcher.QueueLocked(1, EOutputChangeKind::ChannelCreated,
+			std::string("zero-limit.channel"), std::nullopt);
+		EXPECT_TRUE(shouldDrain);
+		EXPECT_FALSE(dispatcher.QueueLocked(2, EOutputChangeKind::ContentAppended,
+			std::string("dropped.channel"), std::nullopt));
+		EXPECT_EQ(1U, dispatcher.DroppedNotificationCountLocked());
+	}
+	dispatcher.Drain();
+	EXPECT_EQ(1U, callbacks);
+}
+
+TEST(OutputService, ZeroAdvisoryLimitsUseFailClosedNonzeroDefaults)
+{
+	OutputServiceLimits limits;
+	limits.maximumSubscriptions = 0;
+	limits.maximumPendingNotifications = 0;
+	OutputService service(limits);
+	std::size_t notifications{};
+	ASSERT_TRUE(service.Subscribe([&notifications](const OutputServiceChange&) { ++notifications; }));
+	ASSERT_EQ(EOutputOperationStatus::Succeeded,
+		service.CreateChannel(Create("zero-limits", Owner("zero-limits"), "zero-limits.channel")).status);
+	EXPECT_EQ(1U, notifications);
+	EXPECT_EQ(0U, service.Snapshot().droppedNotificationCount);
 }
 
 TEST(OutputService, CreatesDeterministicSnapshotAndShowPreservesFocusAsProjectionMetadata)

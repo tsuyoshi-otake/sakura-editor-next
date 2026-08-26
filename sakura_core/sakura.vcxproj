@@ -619,6 +619,7 @@
 	<ClInclude Include="..\sakura_core\workbench\problems\MarkerService.h" />
 	<ClInclude Include="..\sakura_core\workbench\output\IOutputService.h" />
 	<ClInclude Include="..\sakura_core\workbench\output\OutputService.h" />
+	<ClInclude Include="..\sakura_core\workbench\output\OutputServiceNotificationDispatcher.h" />
 	<ClInclude Include="..\sakura_core\workbench\output\OutputServiceTypes.h" />
 	<ClInclude Include="..\sakura_core\workbench\output\OutputServiceRustCandidate.h" />
 	<ClInclude Include="..\sakura_core\workbench\output\OutputServiceRustShadowAbi.h" />
@@ -1306,6 +1307,7 @@
 	<ClCompile Include="..\sakura_core\workbench\problems\MarkerPositionAdapter.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\problems\MarkerService.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\output\OutputService.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\output\OutputServiceNotificationDispatcher.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\output\OutputServiceRustCandidate.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\ports\PortForwardingService.cpp" />
 	<ClCompile Include="..\sakura_core\debug\dap\DapProtocolCodec.cpp" />

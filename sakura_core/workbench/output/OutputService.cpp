@@ -7,6 +7,7 @@
 #include "StdAfx.h"
 
 #include "workbench/output/OutputService.h"
+#include "workbench/output/OutputServiceNotificationDispatcher.h"
 
 #include <algorithm>
 #include <condition_variable>
@@ -24,6 +25,20 @@ namespace {
 constexpr std::size_t kMaximumStableIdBytes = 160;
 constexpr std::size_t kMaximumLabelBytes = 512;
 constexpr std::size_t kMaximumMetadataBytes = 512;
+
+OutputServiceLimits NormalizeLimits(OutputServiceLimits limits) noexcept
+{
+	if (limits.maximumOwners == 0) limits.maximumOwners = 1;
+	if (limits.maximumChannels == 0) limits.maximumChannels = 1;
+	if (limits.maximumTextBytesPerChannel == 0) limits.maximumTextBytesPerChannel = 1;
+	if (limits.maximumPayloadBytes == 0) limits.maximumPayloadBytes = 1;
+	if (limits.maximumLogEntriesPerChannel == 0) limits.maximumLogEntriesPerChannel = 1;
+	if (limits.maximumSubscriptions == 0) limits.maximumSubscriptions = 1;
+	if (limits.maximumRememberedOperations == 0) limits.maximumRememberedOperations = 1;
+	if (limits.maximumPendingNotifications == 0) limits.maximumPendingNotifications = 1;
+	if (limits.maximumAcceptedCommitFeedEntries == 0) limits.maximumAcceptedCommitFeedEntries = 1;
+	return limits;
+}
 
 bool IsValidUtf8(const std::string_view value, const bool permitControls) noexcept
 {
@@ -172,10 +187,6 @@ struct OutputService::Impl final {
 		std::uint64_t generation{};
 		bool disposed{};
 	};
-	struct PendingNotification final {
-		OutputServiceChange change;
-		std::vector<OutputServiceSubscriptionId> subscriberIds;
-	};
 	struct AcceptedCommitSubscription final {
 		std::shared_ptr<OutputAcceptedCommitListener> listener;
 		std::uint64_t nextSequence{ 1 };
@@ -190,41 +201,31 @@ struct OutputService::Impl final {
 
 	mutable std::mutex mutex;
 	OutputServiceLimits limits;
+	std::condition_variable notificationDrained;
+	OutputServiceNotificationDispatcher notificationDispatcher;
 	std::map<std::string, Channel, std::less<>> channels;
 	// Tombstones retain the most recently disposed generation, fencing late work from an old provider.
 	std::map<std::string, OwnerGeneration, std::less<>> activeOwnerGenerations;
 	std::optional<std::string> activeChannelId;
 	std::map<std::string, CompletedOperation, std::less<>> completedOperations;
 	std::deque<std::string> completedOperationOrder;
-	std::map<OutputServiceSubscriptionId, OutputServiceListener> subscriptions;
-	std::deque<PendingNotification> pendingNotifications;
 	std::deque<OutputAcceptedCommit> acceptedCommitJournal;
 	std::map<OutputAcceptedCommitSubscriptionId, std::shared_ptr<AcceptedCommitSubscription>> acceptedCommitSubscriptions;
 	std::uint64_t revision{ 1 };
 	std::uint64_t acceptedCommitSequence{};
-	std::uint64_t droppedNotificationCount{};
-	OutputServiceSubscriptionId nextSubscriptionId{ 1 };
 	OutputAcceptedCommitSubscriptionId nextAcceptedCommitSubscriptionId{ 1 };
-	bool drainingNotifications{};
-	std::thread::id notificationDispatchThreadId;
-	std::condition_variable notificationDrained;
 	bool drainingAcceptedCommits{};
 	std::thread::id acceptedCommitDispatchThreadId;
 	bool stopped{};
 
 	explicit Impl(OutputServiceLimits initialLimits)
-		: limits(std::move(initialLimits))
+		: limits(NormalizeLimits(std::move(initialLimits)))
+		, notificationDispatcher(mutex, notificationDrained,
+			OutputServiceNotificationDispatcher::Limits{
+				.maximumSubscriptions = limits.maximumSubscriptions,
+				.maximumPendingNotifications = limits.maximumPendingNotifications,
+			})
 	{
-		// Invalid caller limits fail closed to safe nonzero defaults; operations still validate their own payloads.
-		if (limits.maximumOwners == 0) limits.maximumOwners = 1;
-		if (limits.maximumChannels == 0) limits.maximumChannels = 1;
-		if (limits.maximumTextBytesPerChannel == 0) limits.maximumTextBytesPerChannel = 1;
-		if (limits.maximumPayloadBytes == 0) limits.maximumPayloadBytes = 1;
-		if (limits.maximumLogEntriesPerChannel == 0) limits.maximumLogEntriesPerChannel = 1;
-		if (limits.maximumSubscriptions == 0) limits.maximumSubscriptions = 1;
-		if (limits.maximumRememberedOperations == 0) limits.maximumRememberedOperations = 1;
-		if (limits.maximumPendingNotifications == 0) limits.maximumPendingNotifications = 1;
-		if (limits.maximumAcceptedCommitFeedEntries == 0) limits.maximumAcceptedCommitFeedEntries = 1;
 	}
 
 	[[nodiscard]] OutputOperationResult Current(const EOutputOperationStatus status, const EOutputOperationReason reason) const noexcept
@@ -266,27 +267,7 @@ struct OutputService::Impl final {
 
 	[[nodiscard]] bool QueueNotificationLocked(const EOutputChangeKind kind, const std::optional<std::string>& channelId) noexcept
 	{
-		try {
-			if (pendingNotifications.size() >= limits.maximumPendingNotifications) {
-				// Delivery is advisory. A bounded queue prevents a reentrant listener
-				// from turning committed Output mutations into unbounded memory growth.
-				SaturatingIncrement(droppedNotificationCount);
-				return false;
-			}
-			PendingNotification pending{ .change = { .revision = revision, .kind = kind, .channelId = channelId, .activeChannelId = activeChannelId } };
-			pending.subscriberIds.reserve(subscriptions.size());
-			for (const auto& [id, ignored] : subscriptions) {
-				(void)ignored;
-				pending.subscriberIds.push_back(id);
-			}
-			pendingNotifications.push_back(std::move(pending));
-			if (drainingNotifications) return false;
-			drainingNotifications = true;
-			return true;
-		} catch (...) {
-			SaturatingIncrement(droppedNotificationCount);
-			return false;
-		}
+		return notificationDispatcher.QueueLocked(revision, kind, channelId, activeChannelId);
 	}
 
 	[[nodiscard]] bool EnsureAcceptedCommitDrainLocked() noexcept
@@ -409,52 +390,22 @@ struct OutputService::Impl final {
 	[[nodiscard]] bool WaitForNotificationDrain() noexcept
 	{
 		std::unique_lock lock(mutex);
-		const auto dispatchThreadId = std::this_thread::get_id();
-		if ((drainingNotifications && notificationDispatchThreadId == dispatchThreadId)
-			|| (drainingAcceptedCommits && acceptedCommitDispatchThreadId == dispatchThreadId)) return true;
+		if (notificationDispatcher.IsDispatchThreadLocked()
+			|| (drainingAcceptedCommits && acceptedCommitDispatchThreadId == std::this_thread::get_id())) return true;
 		try {
-			notificationDrained.wait(lock, [this] { return !drainingNotifications && !drainingAcceptedCommits; });
+			notificationDrained.wait(lock, [this] {
+				return !notificationDispatcher.IsDrainingLocked() && !drainingAcceptedCommits;
+			});
 		}
 		catch (...) {
-			return drainingNotifications || drainingAcceptedCommits;
+			return notificationDispatcher.IsDrainingLocked() || drainingAcceptedCommits;
 		}
 		return false;
 	}
 
 	void DrainNotifications() noexcept
 	{
-		{
-			std::lock_guard lock(mutex);
-			if (!drainingNotifications || notificationDispatchThreadId != std::thread::id{}) return;
-			notificationDispatchThreadId = std::this_thread::get_id();
-		}
-		for (;;) {
-			PendingNotification pending;
-			{
-				std::lock_guard lock(mutex);
-				if (pendingNotifications.empty()) {
-					drainingNotifications = false;
-					notificationDispatchThreadId = {};
-					notificationDrained.notify_all();
-					return;
-				}
-				pending = std::move(pendingNotifications.front());
-				pendingNotifications.pop_front();
-			}
-			for (const auto id : pending.subscriberIds) {
-				OutputServiceListener listener;
-				{
-					std::lock_guard lock(mutex);
-					const auto found = subscriptions.find(id);
-					if (found != subscriptions.end()) listener = found->second;
-				}
-				if (!listener) continue;
-				try {
-					listener(pending.change);
-				} catch (...) {
-				}
-			}
-		}
+		notificationDispatcher.Drain();
 	}
 
 	void RebuildLogProjection(Channel& channel)
@@ -657,7 +608,8 @@ struct OutputService::Impl final {
 
 	[[nodiscard]] OutputServiceSnapshot SnapshotLocked() const
 	{
-		OutputServiceSnapshot snapshot{ .revision = revision, .stopped = stopped, .droppedNotificationCount = droppedNotificationCount, .activeChannelId = activeChannelId };
+		OutputServiceSnapshot snapshot{ .revision = revision, .stopped = stopped,
+			.droppedNotificationCount = notificationDispatcher.DroppedNotificationCountLocked(), .activeChannelId = activeChannelId };
 		snapshot.channels.reserve(channels.size());
 		for (const auto& [id, channel] : channels) {
 			(void)id;
@@ -946,7 +898,7 @@ OutputOperationResult OutputService::Stop() noexcept
 		if (m_impl->stopped) {
 			result = m_impl->Current(EOutputOperationStatus::Succeeded, EOutputOperationReason::None);
 		} else {
-			m_impl->channels.clear(); m_impl->activeOwnerGenerations.clear(); m_impl->activeChannelId.reset(); m_impl->completedOperations.clear(); m_impl->completedOperationOrder.clear(); m_impl->subscriptions.clear(); m_impl->pendingNotifications.clear();
+			m_impl->channels.clear(); m_impl->activeOwnerGenerations.clear(); m_impl->activeChannelId.reset(); m_impl->completedOperations.clear(); m_impl->completedOperationOrder.clear(); m_impl->notificationDispatcher.StopLocked();
 			m_impl->StopAcceptedCommitSubscriptionsLocked(acceptedCommitDrain);
 			m_impl->stopped = true;
 			// At the terminal counter value we cannot publish another revision, but Stop still must close the service.
@@ -967,18 +919,12 @@ OutputServiceSnapshot OutputService::Snapshot() const
 
 std::optional<OutputServiceSubscriptionId> OutputService::Subscribe(OutputServiceListener listener)
 {
-	if (!listener) return std::nullopt;
-	std::lock_guard lock(m_impl->mutex);
-	if (m_impl->stopped || m_impl->subscriptions.size() == m_impl->limits.maximumSubscriptions || m_impl->nextSubscriptionId == 0) return std::nullopt;
-	const auto id = m_impl->nextSubscriptionId++;
-	m_impl->subscriptions.emplace(id, std::move(listener));
-	return id;
+	return m_impl->notificationDispatcher.Subscribe(std::move(listener));
 }
 
 void OutputService::Unsubscribe(const OutputServiceSubscriptionId subscriptionId) noexcept
 {
-	std::lock_guard lock(m_impl->mutex);
-	m_impl->subscriptions.erase(subscriptionId);
+	m_impl->notificationDispatcher.Unsubscribe(subscriptionId);
 }
 
 std::optional<OutputAcceptedCommitBootstrap> OutputService::SubscribeAcceptedCommits(OutputAcceptedCommitListener listener)
