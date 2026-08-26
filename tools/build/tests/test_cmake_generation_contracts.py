@@ -299,6 +299,59 @@ class CMakeGenerationContractTests(unittest.TestCase):
             dispatch_source,
         )
 
+    def test_output_shadow_ffi_is_replay_only_and_keeps_one_staticlib_boundary(self) -> None:
+        native_ffi_source = (
+            REPO_ROOT / "rust/native/sakura_native_ffi/src/lib.rs"
+        ).read_text(encoding="utf-8")
+        output_shadow_source = (
+            REPO_ROOT / "rust/native/sakura_native_ffi/src/output_shadow.rs"
+        ).read_text(encoding="utf-8")
+        native_manifest = (
+            REPO_ROOT / "rust/native/sakura_native_ffi/Cargo.toml"
+        )
+        native_manifest_text = native_manifest.read_text(encoding="utf-8")
+
+        self.assertIn("mod output_shadow;", native_ffi_source)
+
+        expected_exports = {
+            "sakura_output_shadow_create_v1",
+            "sakura_output_shadow_apply_v1",
+            "sakura_output_shadow_snapshot_measure_v1",
+            "sakura_output_shadow_snapshot_write_v1",
+            "sakura_output_shadow_stop_v1",
+            "sakura_output_shadow_destroy_v1",
+        }
+        exported_functions = set(
+            re.findall(
+                r'pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+'
+                r"(sakura_output_shadow_[A-Za-z0-9_]+)",
+                output_shadow_source,
+            )
+        )
+        self.assertEqual(expected_exports, exported_functions)
+        self.assertFalse(
+            any("callback" in export.lower() for export in exported_functions)
+        )
+
+        self.assertIn('crate-type = ["staticlib"]', native_manifest_text)
+        staticlib_manifests = []
+        for manifest in sorted((REPO_ROOT / "rust/native").rglob("Cargo.toml")):
+            manifest_text = manifest.read_text(encoding="utf-8")
+            if 'crate-type = ["staticlib"]' in manifest_text:
+                staticlib_manifests.append(manifest)
+        self.assertEqual([native_manifest], staticlib_manifests)
+
+        for production_source in (
+            "sakura_core/workbench/output/OutputService.cpp",
+            "sakura_core/workbench/CWorkbenchRuntime.cpp",
+            "sakura_core/window/CEditWnd.cpp",
+        ):
+            with self.subTest(source=production_source):
+                self.assertNotIn(
+                    "sakura_output_shadow_",
+                    (REPO_ROOT / production_source).read_text(encoding="utf-8-sig"),
+                )
+
     @unittest.skipUnless(CMAKE_EXECUTABLE, "cmake is required")
     def test_invalid_backend_configures_fail_before_project(self) -> None:
         cmake = CMAKE_EXECUTABLE

@@ -14,7 +14,11 @@ The native link boundary is deliberately one archive:
 - `sakura-native-ffi` is the only `staticlib`. It uses `std` to own the C ABI
   wrappers and catches a panic at every export, returning the typed
   `InternalError` status rather than unwinding into C++. Its fixed-width V2
-  UTF-16 scan ABI delegates to the internal kernels in `sakura-simd`.
+  UTF-16 scan ABI delegates to the internal kernels in `sakura-simd`. The same
+  archive also owns the stateless URI candidate and the replay-only Output
+  state candidate. Those candidates copy caller input, retain no foreign
+  pointer, and have no callback or external side-effect authority; the C++
+  services remain the production owners.
 
 `sakura_native_ffi.lib` is therefore the only Rust library added to each
 native product/test link. The old `SakuraRustCore*` MSBuild property and target

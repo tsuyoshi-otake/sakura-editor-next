@@ -77,6 +77,9 @@
     <ClInclude Include="..\src\test\cpp\tests1\Utf16Phase8Benchmark.h">
       <Filter>Test Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\test\cpp\tests1\workbench\OutputServiceRustShadowAbi.h">
+      <Filter>Test Files\workbench</Filter>
+    </ClInclude>
     <Text Include="..\src\test\cmake\tests1.cmake">
       <Filter>Other Files</Filter>
     </Text>
@@ -178,6 +181,9 @@
       <Filter>Test Files\workbench</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\workbench\OutputServiceTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\OutputServiceRustShadowTest.cpp">
       <Filter>Test Files\workbench</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\workbench\PortForwardingServiceTest.cpp">

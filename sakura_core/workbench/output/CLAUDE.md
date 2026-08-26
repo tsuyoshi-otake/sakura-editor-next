@@ -48,6 +48,20 @@ extension-host mutation carries one bounded session-scoped operation ID and
 reuses it for transport replay. The integrated native cohort passes 210/210 and
 the extension-host API cohort passes 15/15.
 
+## Rust Migration Boundary
+
+Issue #270's first Rust candidate is replay-only and test-owned. It receives
+copied requests through the existing one-staticlib C ABI and returns copied
+snapshots; it owns no callback, UI, filesystem, process, transport, cache, or
+production notification path. `CWorkbenchRuntime::m_output` and the C++
+`OutputService` remain the only production authority.
+
+A live shadow is a later change. It first requires an ordered accepted-commit
+observer with explicit feed-gap and callback-drain semantics. A production
+cutover additionally requires a stable provider boundary because native code
+currently borrows the concrete `OutputService`. Neither boundary may be
+approximated with dual writes or an in-place provider swap.
+
 `sakura_core/workbench/scm/GitOutputChannel.h`/`.cpp` (Issue #221) is this
 service's first real production content producer: an HWND-free adapter that
 mirrors `workbench::scm::RunGit` invocations into a "Git" `Log` channel,

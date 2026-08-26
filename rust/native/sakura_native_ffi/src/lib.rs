@@ -10,6 +10,7 @@ use std::sync::OnceLock;
 
 use sakura_simd as native_simd;
 
+mod output_shadow;
 mod uri_candidate;
 
 const ABI_VERSION_V1: u32 = 1;

@@ -220,6 +220,7 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ProblemMatcherEngineTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\GitOutputChannelTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\OutputServiceTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\OutputServiceRustShadowTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\PortForwardingServiceTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\debug\DapProtocolCodecTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\debug\DapSessionTest.cpp" />
@@ -361,6 +362,7 @@
     <ClInclude Include="..\src\test\cpp\tests1\window\EditorTestSuite.hpp" />
     <ClInclude Include="..\src\test\cpp\tests1\window\UiaTestSuite.hpp" />
     <ClInclude Include="..\src\test\cpp\tests1\terminal\window\TerminalLegacyRendererBaseline.h" />
+    <ClInclude Include="..\src\test\cpp\tests1\workbench\OutputServiceRustShadowAbi.h" />
     <ClInclude Include="..\src\test\resources\eval_outputs.hpp" />
     <ClInclude Include="..\src\test\resources\rt_zipres.h" />
     <ClInclude Include="..\src\test\resources\TExtModule.hpp" />
