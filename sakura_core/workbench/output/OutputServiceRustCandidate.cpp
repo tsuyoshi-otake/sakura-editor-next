@@ -24,7 +24,7 @@
 namespace workbench::output {
 namespace {
 
-constexpr std::string_view kSnapshotMagic("SAKURA_OUTPUT_SHADOW_V1\0", 24);
+constexpr std::string_view kSnapshotMagic("SAKURA_OUTPUT_MODEL_V1\0", 23);
 
 struct SnapshotReader final {
 	const std::vector<std::uint8_t>& bytes;

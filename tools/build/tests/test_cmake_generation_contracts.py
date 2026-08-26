@@ -347,12 +347,16 @@ class CMakeGenerationContractTests(unittest.TestCase):
         output_shadow_source = (
             REPO_ROOT / "rust/native/sakura_native_ffi/src/output_shadow.rs"
         ).read_text(encoding="utf-8")
+        output_provider_source = (
+            REPO_ROOT / "rust/native/sakura_native_ffi/src/output_provider.rs"
+        ).read_text(encoding="utf-8")
         native_manifest = (
             REPO_ROOT / "rust/native/sakura_native_ffi/Cargo.toml"
         )
         native_manifest_text = native_manifest.read_text(encoding="utf-8")
 
         self.assertIn("mod output_shadow;", native_ffi_source)
+        self.assertIn("mod output_provider;", native_ffi_source)
 
         expected_exports = {
             "sakura_output_shadow_create_v1",
@@ -373,6 +377,32 @@ class CMakeGenerationContractTests(unittest.TestCase):
         self.assertFalse(
             any("callback" in export.lower() for export in exported_functions)
         )
+
+        expected_provider_exports = {
+            "sakura_output_provider_create_v1",
+            "sakura_output_provider_apply_v1",
+            "sakura_output_provider_snapshot_measure_v1",
+            "sakura_output_provider_snapshot_write_v1",
+            "sakura_output_provider_active_channel_v1",
+            "sakura_output_provider_stop_v1",
+            "sakura_output_provider_destroy_v1",
+        }
+        provider_exports = set(
+            re.findall(
+                r'pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+'
+                r"(sakura_output_provider_[A-Za-z0-9_]+)",
+                output_provider_source,
+            )
+        )
+        self.assertEqual(expected_provider_exports, provider_exports)
+        self.assertFalse(any("callback" in export.lower() for export in provider_exports))
+        self.assertGreaterEqual(
+            output_provider_source.count("catch_unwind"),
+            len(expected_provider_exports),
+        )
+        self.assertNotIn("sakura_output_shadow_", output_provider_source)
+        self.assertIn("SAKURA_OUTPUT_MODEL_V1", output_shadow_source)
+        self.assertNotIn("SAKURA_OUTPUT_SHADOW_V1", output_shadow_source)
 
         self.assertIn('crate-type = ["staticlib"]', native_manifest_text)
         staticlib_manifests = []

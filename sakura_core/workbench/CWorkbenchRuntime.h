@@ -18,7 +18,7 @@
 #include "workbench/layout/WorkbenchContributionRegistry.h"
 #include "workbench/layout/IWorkbenchLayoutMementoStore.h"
 #include "workbench/layout/WorkbenchLayoutStateService.h"
-#include "workbench/output/OutputService.h"
+#include "workbench/output/OutputProviderFactory.h"
 #include "workbench/output/OutputServiceRustCandidate.h"
 #include "workbench/problems/MarkerService.h"
 #include "workbench/recent/RecentlyOpenedWorkspaceService.h"
@@ -76,6 +76,11 @@ struct WorkbenchRuntimeDependencies final {
 	//! Profile-scoped package authority. The runtime composes the separate
 	//! process host only when this dependency is present.
 	std::unique_ptr<senp::ISenpManagementService> senpManagementService;
+	//! The Output authority is selected once for this runtime. The default is
+	//! the compile-selected C++ provider; an explicit Rust selection never
+	//! falls back to C++ when its creator is unavailable or fails.
+	output::EOutputProviderKind outputProviderKind{ output::DefaultOutputProviderKind() };
+	output::OutputProviderFactoryDependencies outputProviderFactory;
 };
 
 class CWorkbenchRuntime final : public IWorkbenchRuntime {
@@ -126,10 +131,22 @@ public:
 	//! provider or mutation authority.
 	[[nodiscard]] output::OutputServiceRustCandidateDiagnostics OutputCandidateDiagnostics() const noexcept
 	{
-		return m_outputCandidate.Diagnostics();
+		return m_outputCandidate ? m_outputCandidate->Diagnostics() : m_outputCandidateFallbackDiagnostics;
 	}
-	[[nodiscard]] bool OutputCandidateAvailable() const noexcept { return m_outputCandidate.IsAvailable(); }
-	[[nodiscard]] bool OutputCandidateMatchesAuthority() noexcept { return m_outputCandidate.VerifySnapshot(); }
+	[[nodiscard]] bool OutputCandidateAvailable() const noexcept
+	{
+		return m_outputCandidate && m_outputCandidate->IsAvailable();
+	}
+	[[nodiscard]] bool OutputCandidateMatchesAuthority() noexcept
+	{
+		return m_outputCandidate && m_outputCandidate->VerifySnapshot();
+	}
+	//! Returns the one-shot choice captured by this runtime. This value never
+	//! changes after construction, including after a failed Start.
+	[[nodiscard]] output::EOutputProviderKind OutputProviderKind() const noexcept
+	{
+		return m_outputProviderKind;
+	}
 	[[nodiscard]] scm::SourceControlService* Scm() noexcept override;
 	[[nodiscard]] const scm::SourceControlService* Scm() const noexcept override;
 	[[nodiscard]] senp::ISenpManagementService* Extensions() noexcept override;
@@ -181,6 +198,7 @@ private:
 	[[nodiscard]] bool StopOwnedServices() noexcept;
 	[[nodiscard]] bool IsStopRequested() const noexcept;
 	[[nodiscard]] bool IsReadyForServiceAccessLocked() const noexcept;
+	[[nodiscard]] bool InitializeOutputProvider() noexcept;
 	static void DispatchListener(
 		const std::shared_ptr<ListenerGate>& gate,
 		const std::function<void(CWorkbenchRuntime&)>& callback) noexcept;
@@ -242,8 +260,13 @@ private:
 	//! These HWND-free authorities remain internal until Start reaches a ready
 	//! terminal state. Their limits are explicit runtime composition policy.
 	problems::MarkerService m_markers;
-	output::OutputService m_output;
-	output::OutputServiceRustCandidate m_outputCandidate;
+	const output::EOutputProviderKind m_outputProviderKind;
+	output::OutputProviderFactoryDependencies m_outputProviderFactory;
+	std::unique_ptr<output::IOutputService> m_outputProvider;
+	//! C1b is attached only when the C++ provider is the selected authority.
+	//! Rust-authority runtimes never construct a live C++ authority/candidate.
+	std::unique_ptr<output::OutputServiceRustCandidate> m_outputCandidate;
+	output::OutputServiceRustCandidateDiagnostics m_outputCandidateFallbackDiagnostics{};
 	scm::SourceControlService m_scm;
 	std::optional<config::WorkspaceContextSnapshot> m_workspaceArtifactTopology;
 	std::shared_ptr<std::atomic_bool> m_stopRequested;
@@ -272,6 +295,8 @@ private:
 	std::uint64_t m_nextWorkspaceDocument = 1;
 	std::uint64_t m_nextWorkspaceOperation = 1;
 	std::string m_initializationFailure;
+	std::string m_outputProviderInitializationFailure;
+	bool m_outputProviderInitializationAttempted = false;
 
 	EWorkbenchRuntimeState m_state = EWorkbenchRuntimeState::Created;
 	std::uint64_t m_revision = 0;

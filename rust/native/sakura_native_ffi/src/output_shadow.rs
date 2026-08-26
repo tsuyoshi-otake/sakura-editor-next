@@ -53,7 +53,7 @@ const LOG_INFO: u32 = 2;
 const LOG_WARNING: u32 = 3;
 const LOG_ERROR: u32 = 4;
 
-const SNAPSHOT_MAGIC: &[u8] = b"SAKURA_OUTPUT_SHADOW_V1\0";
+const SNAPSHOT_MAGIC: &[u8] = b"SAKURA_OUTPUT_MODEL_V1\0";
 
 /// Errors in the ABI call itself. Operation-level failures are returned in
 /// `SakuraOutputShadowApplyResultV1` so rejected requests remain observable.
@@ -211,6 +211,23 @@ pub struct SakuraOutputShadowSnapshotInfoV1 {
 pub struct SakuraOutputShadowSnapshotBufferV1 {
     pub struct_size: u32,
     pub abi_version: u32,
+    pub data: *mut u8,
+    pub capacity: u64,
+    pub length: u64,
+    pub reserved: [u64; 2],
+}
+
+/// Caller-owned destination for the current active-channel identifier.  This
+/// deliberately carries only post-commit metadata; advisory notification
+/// dispatch must not copy the full retained channel snapshot per mutation.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct SakuraOutputShadowActiveChannelV1 {
+    pub struct_size: u32,
+    pub abi_version: u32,
+    pub revision: u64,
+    pub present: u8,
+    pub reserved0: [u8; 7],
     pub data: *mut u8,
     pub capacity: u64,
     pub length: u64,
@@ -1122,6 +1139,20 @@ fn poison_info() -> SakuraOutputShadowSnapshotInfoV1 {
     }
 }
 
+fn poison_active_channel() -> SakuraOutputShadowActiveChannelV1 {
+    SakuraOutputShadowActiveChannelV1 {
+        struct_size: size_of::<SakuraOutputShadowActiveChannelV1>() as u32,
+        abi_version: ABI_VERSION_V1,
+        revision: u64::MAX,
+        present: 0xff,
+        reserved0: [0; 7],
+        data: ptr::null_mut(),
+        capacity: u64::MAX,
+        length: u64::MAX,
+        reserved: [0; 2],
+    }
+}
+
 fn validate_struct_header(struct_size: u32, abi_version: u32, expected_size: usize) -> bool {
     struct_size as usize == expected_size && abi_version == ABI_VERSION_V1
 }
@@ -1192,7 +1223,11 @@ fn read_log_entries(
 ) -> Result<Vec<LogEntry>, SakuraOutputShadowStatus> {
     let count = checked_len(count).ok_or(SakuraOutputShadowStatus::InvalidArgument)?;
     if count == 0 {
-        return Ok(Vec::new());
+        return if pointer.is_null() {
+            Ok(Vec::new())
+        } else {
+            Err(SakuraOutputShadowStatus::InvalidArgument)
+        };
     }
     if pointer.is_null() || !is_aligned(pointer) || count > isize::MAX as usize {
         return Err(SakuraOutputShadowStatus::InvalidArgument);
@@ -1215,6 +1250,7 @@ fn read_log_entries(
             entry.abi_version,
             size_of::<SakuraOutputShadowLogEntryV1>(),
         ) || entry.flags & !LOG_SOURCE_PRESENT != 0
+            || entry.level > LOG_ERROR
             || entry.reserved != [0; 2]
         {
             return Err(SakuraOutputShadowStatus::InvalidArgument);
@@ -1223,7 +1259,13 @@ fn read_log_entries(
         let source = if entry.flags & LOG_SOURCE_PRESENT != 0 {
             Some(copy_span(entry.source)?)
         } else {
-            if entry.source.length != 0 {
+            if !validate_struct_header(
+                entry.source.struct_size,
+                entry.source.abi_version,
+                size_of::<SakuraOutputShadowSpanV1>(),
+            ) || entry.source.reserved != [0; 2]
+                || entry.source.length != 0
+            {
                 return Err(SakuraOutputShadowStatus::InvalidArgument);
             }
             None
@@ -1482,33 +1524,41 @@ fn catch_status(operation: impl FnOnce() -> SakuraOutputShadowStatus) -> SakuraO
 ///
 /// `limits` must point to one initialized immutable V1 structure and `token`
 /// must point to writable `u64` storage. No pointer is retained.
+pub(crate) unsafe fn model_create_v1(
+    limits: *const SakuraOutputShadowLimitsV1,
+    token: *mut u64,
+) -> SakuraOutputShadowStatus {
+    if !is_valid_pointer(token.cast_const()) {
+        return SakuraOutputShadowStatus::InvalidArgument;
+    }
+    // SAFETY: The output pointer is non-null and aligned. Poisoning it
+    // before validation makes every failure fail closed.
+    unsafe { token.write(0) };
+    let limits = match read_limits(limits) {
+        Ok(value) => value,
+        Err(status) => return status,
+    };
+    let mut registry = lock_registry();
+    let token_value = registry.next_token;
+    if token_value == 0 {
+        return SakuraOutputShadowStatus::InternalError;
+    }
+    registry.next_token = token_value.checked_add(1).unwrap_or(0);
+    registry.services.insert(token_value, Service::new(limits));
+    // SAFETY: The output pointer was validated above and remains caller
+    // owned for this call.
+    unsafe { token.write(token_value) };
+    SakuraOutputShadowStatus::Ok
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sakura_output_shadow_create_v1(
     limits: *const SakuraOutputShadowLimitsV1,
     token: *mut u64,
 ) -> SakuraOutputShadowStatus {
     catch_status(|| {
-        if !is_valid_pointer(token.cast_const()) {
-            return SakuraOutputShadowStatus::InvalidArgument;
-        }
-        // SAFETY: The output pointer is non-null and aligned. Poisoning it
-        // before validation makes every failure fail closed.
-        unsafe { token.write(0) };
-        let limits = match read_limits(limits) {
-            Ok(value) => value,
-            Err(status) => return status,
-        };
-        let mut registry = lock_registry();
-        let token_value = registry.next_token;
-        if token_value == 0 {
-            return SakuraOutputShadowStatus::InternalError;
-        }
-        registry.next_token = token_value.checked_add(1).unwrap_or(0);
-        registry.services.insert(token_value, Service::new(limits));
-        // SAFETY: The output pointer was validated above and remains caller
-        // owned for this call.
-        unsafe { token.write(token_value) };
-        SakuraOutputShadowStatus::Ok
+        // SAFETY: This wrapper has the same caller contract as the model call.
+        unsafe { model_create_v1(limits, token) }
     })
 }
 
@@ -1519,6 +1569,48 @@ pub unsafe extern "C" fn sakura_output_shadow_create_v1(
 /// `request` and `result` must point to initialized/caller-owned V1 storage
 /// for the duration of this call. Nested spans and log-entry arrays follow
 /// the same immutable, non-retained contract.
+pub(crate) unsafe fn model_apply_v1(
+    token: u64,
+    request: *const SakuraOutputShadowRequestV1,
+    result: *mut SakuraOutputShadowApplyResultV1,
+) -> SakuraOutputShadowStatus {
+    if !is_valid_pointer(result.cast_const()) {
+        return SakuraOutputShadowStatus::InvalidArgument;
+    }
+    // SAFETY: The output pointer is non-null and aligned. Publish a poison
+    // result before reading any caller-controlled input.
+    unsafe { result.write(poison_result()) };
+    if !request.is_null()
+        && is_aligned(request)
+        && ranges_overlap(
+            request.cast(),
+            size_of::<SakuraOutputShadowRequestV1>(),
+            result.cast(),
+            size_of::<SakuraOutputShadowApplyResultV1>(),
+        )
+    {
+        return SakuraOutputShadowStatus::InvalidArgument;
+    }
+    let request = match read_request(request) {
+        Ok(value) => value,
+        Err(status) => return status,
+    };
+    let mut registry = lock_registry();
+    let Some(service) = registry.services.get_mut(&token) else {
+        return SakuraOutputShadowStatus::InvalidHandle;
+    };
+    let operation_result = service.apply(request);
+    let status = if operation_result.status == SakuraOutputShadowOperationStatus::Stopped {
+        SakuraOutputShadowStatus::Stopped
+    } else {
+        SakuraOutputShadowStatus::Ok
+    };
+    // SAFETY: The output pointer was validated above and remains caller
+    // owned for this call.
+    unsafe { result.write(operation_result.to_ffi()) };
+    status
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sakura_output_shadow_apply_v1(
     token: u64,
@@ -1526,41 +1618,8 @@ pub unsafe extern "C" fn sakura_output_shadow_apply_v1(
     result: *mut SakuraOutputShadowApplyResultV1,
 ) -> SakuraOutputShadowStatus {
     catch_status(|| {
-        if !is_valid_pointer(result.cast_const()) {
-            return SakuraOutputShadowStatus::InvalidArgument;
-        }
-        // SAFETY: The output pointer is non-null and aligned. Publish a poison
-        // result before reading any caller-controlled input.
-        unsafe { result.write(poison_result()) };
-        if !request.is_null()
-            && is_aligned(request)
-            && ranges_overlap(
-                request.cast(),
-                size_of::<SakuraOutputShadowRequestV1>(),
-                result.cast(),
-                size_of::<SakuraOutputShadowApplyResultV1>(),
-            )
-        {
-            return SakuraOutputShadowStatus::InvalidArgument;
-        }
-        let request = match read_request(request) {
-            Ok(value) => value,
-            Err(status) => return status,
-        };
-        let mut registry = lock_registry();
-        let Some(service) = registry.services.get_mut(&token) else {
-            return SakuraOutputShadowStatus::InvalidHandle;
-        };
-        let operation_result = service.apply(request);
-        let status = if operation_result.status == SakuraOutputShadowOperationStatus::Stopped {
-            SakuraOutputShadowStatus::Stopped
-        } else {
-            SakuraOutputShadowStatus::Ok
-        };
-        // SAFETY: The output pointer was validated above and remains caller
-        // owned for this call.
-        unsafe { result.write(operation_result.to_ffi()) };
-        status
+        // SAFETY: This wrapper has the same caller contract as the model call.
+        unsafe { model_apply_v1(token, request, result) }
     })
 }
 
@@ -1569,46 +1628,54 @@ pub unsafe extern "C" fn sakura_output_shadow_apply_v1(
 /// # Safety
 ///
 /// `info` must point to writable V1 storage for the duration of this call.
+pub(crate) unsafe fn model_snapshot_measure_v1(
+    token: u64,
+    info: *mut SakuraOutputShadowSnapshotInfoV1,
+) -> SakuraOutputShadowStatus {
+    if !is_valid_pointer(info.cast_const()) {
+        return SakuraOutputShadowStatus::InvalidArgument;
+    }
+    // SAFETY: The output pointer is non-null and aligned.
+    unsafe { info.write(poison_info()) };
+    let registry = lock_registry();
+    let Some(service) = registry.services.get(&token) else {
+        return SakuraOutputShadowStatus::InvalidHandle;
+    };
+    let bytes = service.snapshot_bytes();
+    let encoded_size = match u64::try_from(bytes.len()) {
+        Ok(value) => value,
+        Err(_) => return SakuraOutputShadowStatus::InternalError,
+    };
+    let value = SakuraOutputShadowSnapshotInfoV1 {
+        struct_size: size_of::<SakuraOutputShadowSnapshotInfoV1>() as u32,
+        abi_version: ABI_VERSION_V1,
+        revision: service.revision,
+        stopped: u8::from(service.stopped),
+        active_channel_present: u8::from(service.active_channel_id.is_some()),
+        reserved0: [0; 6],
+        dropped_notification_count: service.dropped_notification_count,
+        channel_count: service.channels.len() as u64,
+        encoded_size,
+        reserved: [0; 2],
+    };
+    // SAFETY: The output pointer was validated above.
+    unsafe { info.write(value) };
+    SakuraOutputShadowStatus::Ok
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sakura_output_shadow_snapshot_measure_v1(
     token: u64,
     info: *mut SakuraOutputShadowSnapshotInfoV1,
 ) -> SakuraOutputShadowStatus {
     catch_status(|| {
-        if !is_valid_pointer(info.cast_const()) {
-            return SakuraOutputShadowStatus::InvalidArgument;
-        }
-        // SAFETY: The output pointer is non-null and aligned.
-        unsafe { info.write(poison_info()) };
-        let registry = lock_registry();
-        let Some(service) = registry.services.get(&token) else {
-            return SakuraOutputShadowStatus::InvalidHandle;
-        };
-        let bytes = service.snapshot_bytes();
-        let encoded_size = match u64::try_from(bytes.len()) {
-            Ok(value) => value,
-            Err(_) => return SakuraOutputShadowStatus::InternalError,
-        };
-        let value = SakuraOutputShadowSnapshotInfoV1 {
-            struct_size: size_of::<SakuraOutputShadowSnapshotInfoV1>() as u32,
-            abi_version: ABI_VERSION_V1,
-            revision: service.revision,
-            stopped: u8::from(service.stopped),
-            active_channel_present: u8::from(service.active_channel_id.is_some()),
-            reserved0: [0; 6],
-            dropped_notification_count: service.dropped_notification_count,
-            channel_count: service.channels.len() as u64,
-            encoded_size,
-            reserved: [0; 2],
-        };
-        // SAFETY: The output pointer was validated above.
-        unsafe { info.write(value) };
-        SakuraOutputShadowStatus::Ok
+        // SAFETY: This wrapper has the same caller contract as the model call.
+        unsafe { model_snapshot_measure_v1(token, info) }
     })
 }
 
 /// Writes a measured canonical snapshot without retaining the destination.
-/// The stream begins with `SAKURA_OUTPUT_SHADOW_V1\0`, then uses little-endian
+/// The stream begins with `SAKURA_OUTPUT_MODEL_V1\0`, then uses little-endian
 /// fixed-width integers and length-prefixed byte fields. BTreeMap iteration
 /// makes channel order deterministic by channel ID.
 ///
@@ -1616,30 +1683,112 @@ pub unsafe extern "C" fn sakura_output_shadow_snapshot_measure_v1(
 ///
 /// `buffer` must point to writable V1 storage. On success its `data` span must
 /// reference writable storage of at least `capacity` bytes.
+pub(crate) unsafe fn model_snapshot_write_v1(
+    token: u64,
+    buffer: *mut SakuraOutputShadowSnapshotBufferV1,
+) -> SakuraOutputShadowStatus {
+    if !is_valid_pointer(buffer.cast_const()) {
+        return SakuraOutputShadowStatus::InvalidArgument;
+    }
+    // SAFETY: The output structure pointer is non-null and aligned.
+    unsafe { (*buffer).length = u64::MAX };
+    // SAFETY: The structure pointer was validated above; copy it before
+    // taking the registry lock so no caller pointer is retained.
+    let descriptor = unsafe { buffer.read() };
+    if !validate_struct_header(
+        descriptor.struct_size,
+        descriptor.abi_version,
+        size_of::<SakuraOutputShadowSnapshotBufferV1>(),
+    ) || descriptor.reserved != [0; 2]
+    {
+        return SakuraOutputShadowStatus::InvalidArgument;
+    }
+    let Some(capacity) = checked_len(descriptor.capacity) else {
+        return SakuraOutputShadowStatus::InvalidArgument;
+    };
+    if capacity != 0
+        && (descriptor.data.is_null()
+            || !is_aligned(descriptor.data)
+            || capacity > isize::MAX as usize
+            || (descriptor.data as usize)
+                .checked_add(capacity)
+                .is_none_or(|end| end > isize::MAX as usize))
+    {
+        return SakuraOutputShadowStatus::InvalidArgument;
+    }
+    if ranges_overlap(
+        buffer.cast(),
+        size_of::<SakuraOutputShadowSnapshotBufferV1>(),
+        descriptor.data.cast_const(),
+        capacity,
+    ) {
+        return SakuraOutputShadowStatus::InvalidArgument;
+    }
+    let registry = lock_registry();
+    let Some(service) = registry.services.get(&token) else {
+        return SakuraOutputShadowStatus::InvalidHandle;
+    };
+    let bytes = service.snapshot_bytes();
+    if capacity < bytes.len() {
+        return SakuraOutputShadowStatus::InsufficientCapacity;
+    }
+    if !bytes.is_empty() {
+        // SAFETY: Capacity and address-range checks above prove that the
+        // caller supplied a writable destination large enough for the
+        // canonical stream. No alias is retained after the copy.
+        unsafe { ptr::copy_nonoverlapping(bytes.as_ptr(), descriptor.data, bytes.len()) };
+    }
+    // SAFETY: The descriptor pointer was validated above.
+    unsafe { (*buffer).length = bytes.len() as u64 };
+    SakuraOutputShadowStatus::Ok
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sakura_output_shadow_snapshot_write_v1(
     token: u64,
     buffer: *mut SakuraOutputShadowSnapshotBufferV1,
 ) -> SakuraOutputShadowStatus {
     catch_status(|| {
-        if !is_valid_pointer(buffer.cast_const()) {
+        // SAFETY: This wrapper has the same caller contract as the model call.
+        unsafe { model_snapshot_write_v1(token, buffer) }
+    })
+}
+
+/// Copies the current active-channel identifier into a caller-owned bounded
+/// byte span.  This is an O(identifier length) post-commit metadata query and
+/// never retains the destination pointer.
+///
+/// # Safety
+///
+/// `active` must point to writable V1 storage.  When `capacity` is nonzero,
+/// `data` must point to writable storage for that many bytes.
+pub(crate) unsafe fn read_active_channel_internal(
+    token: u64,
+    active: *mut SakuraOutputShadowActiveChannelV1,
+) -> SakuraOutputShadowStatus {
+    catch_status(|| {
+        if !is_valid_pointer(active.cast_const()) {
             return SakuraOutputShadowStatus::InvalidArgument;
         }
-        // SAFETY: The output structure pointer is non-null and aligned.
-        unsafe { (*buffer).length = u64::MAX };
-        // SAFETY: The structure pointer was validated above; copy it before
-        // taking the registry lock so no caller pointer is retained.
-        let descriptor = unsafe { buffer.read() };
+        // SAFETY: The descriptor pointer was validated above and is copied
+        // before any registry lock is acquired.
+        let descriptor = unsafe { active.read() };
+        // SAFETY: The output descriptor is caller-owned and was validated
+        // above. Poisoning it makes every rejected call fail closed while the
+        // copied descriptor preserves the caller-owned destination metadata.
+        unsafe { active.write(poison_active_channel()) };
         if !validate_struct_header(
             descriptor.struct_size,
             descriptor.abi_version,
-            size_of::<SakuraOutputShadowSnapshotBufferV1>(),
-        ) || descriptor.reserved != [0; 2]
+            size_of::<SakuraOutputShadowActiveChannelV1>(),
+        ) || descriptor.reserved0 != [0; 7]
+            || descriptor.reserved != [0; 2]
         {
             return SakuraOutputShadowStatus::InvalidArgument;
         }
-        let Some(capacity) = checked_len(descriptor.capacity) else {
-            return SakuraOutputShadowStatus::InvalidArgument;
+        let capacity = match checked_len(descriptor.capacity) {
+            Some(value) => value,
+            None => return SakuraOutputShadowStatus::InvalidArgument,
         };
         if capacity != 0
             && (descriptor.data.is_null()
@@ -1652,8 +1801,8 @@ pub unsafe extern "C" fn sakura_output_shadow_snapshot_write_v1(
             return SakuraOutputShadowStatus::InvalidArgument;
         }
         if ranges_overlap(
-            buffer.cast(),
-            size_of::<SakuraOutputShadowSnapshotBufferV1>(),
+            active.cast(),
+            size_of::<SakuraOutputShadowActiveChannelV1>(),
             descriptor.data.cast_const(),
             capacity,
         ) {
@@ -1663,18 +1812,45 @@ pub unsafe extern "C" fn sakura_output_shadow_snapshot_write_v1(
         let Some(service) = registry.services.get(&token) else {
             return SakuraOutputShadowStatus::InvalidHandle;
         };
-        let bytes = service.snapshot_bytes();
-        if capacity < bytes.len() {
+        let identifier = service.active_channel_id.as_deref().unwrap_or_default();
+        if capacity < identifier.len() {
+            let required = SakuraOutputShadowActiveChannelV1 {
+                struct_size: size_of::<SakuraOutputShadowActiveChannelV1>() as u32,
+                abi_version: ABI_VERSION_V1,
+                revision: service.revision,
+                present: u8::from(service.active_channel_id.is_some()),
+                reserved0: [0; 7],
+                data: descriptor.data,
+                capacity: descriptor.capacity,
+                length: identifier.len() as u64,
+                reserved: [0; 2],
+            };
+            // SAFETY: The descriptor pointer remains caller-owned.  Returning
+            // the required bounded length lets the caller allocate exactly the
+            // small active-id buffer without exposing retained model memory.
+            unsafe { active.write(required) };
             return SakuraOutputShadowStatus::InsufficientCapacity;
         }
-        if !bytes.is_empty() {
-            // SAFETY: Capacity and address-range checks above prove that the
-            // caller supplied a writable destination large enough for the
-            // canonical stream. No alias is retained after the copy.
-            unsafe { ptr::copy_nonoverlapping(bytes.as_ptr(), descriptor.data, bytes.len()) };
+        if !identifier.is_empty() {
+            // SAFETY: The destination capacity and address range were checked
+            // above and the source is Rust-owned for the call.
+            unsafe {
+                ptr::copy_nonoverlapping(identifier.as_ptr(), descriptor.data, identifier.len())
+            };
         }
-        // SAFETY: The descriptor pointer was validated above.
-        unsafe { (*buffer).length = bytes.len() as u64 };
+        let value = SakuraOutputShadowActiveChannelV1 {
+            struct_size: size_of::<SakuraOutputShadowActiveChannelV1>() as u32,
+            abi_version: ABI_VERSION_V1,
+            revision: service.revision,
+            present: u8::from(service.active_channel_id.is_some()),
+            reserved0: [0; 7],
+            data: descriptor.data,
+            capacity: descriptor.capacity,
+            length: identifier.len() as u64,
+            reserved: [0; 2],
+        };
+        // SAFETY: The descriptor pointer remains caller-owned for this call.
+        unsafe { active.write(value) };
         SakuraOutputShadowStatus::Ok
     })
 }
@@ -1685,24 +1861,32 @@ pub unsafe extern "C" fn sakura_output_shadow_snapshot_write_v1(
 /// # Safety
 ///
 /// `result` must point to writable V1 storage for the duration of this call.
+pub(crate) unsafe fn model_stop_v1(
+    token: u64,
+    result: *mut SakuraOutputShadowApplyResultV1,
+) -> SakuraOutputShadowStatus {
+    if !is_valid_pointer(result.cast_const()) {
+        return SakuraOutputShadowStatus::InvalidArgument;
+    }
+    // SAFETY: The output pointer is non-null and aligned.
+    unsafe { result.write(poison_result()) };
+    let mut registry = lock_registry();
+    let Some(service) = registry.services.get_mut(&token) else {
+        return SakuraOutputShadowStatus::InvalidHandle;
+    };
+    // SAFETY: The output pointer was validated above.
+    unsafe { result.write(service.stop().to_ffi()) };
+    SakuraOutputShadowStatus::Ok
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sakura_output_shadow_stop_v1(
     token: u64,
     result: *mut SakuraOutputShadowApplyResultV1,
 ) -> SakuraOutputShadowStatus {
     catch_status(|| {
-        if !is_valid_pointer(result.cast_const()) {
-            return SakuraOutputShadowStatus::InvalidArgument;
-        }
-        // SAFETY: The output pointer is non-null and aligned.
-        unsafe { result.write(poison_result()) };
-        let mut registry = lock_registry();
-        let Some(service) = registry.services.get_mut(&token) else {
-            return SakuraOutputShadowStatus::InvalidHandle;
-        };
-        // SAFETY: The output pointer was validated above.
-        unsafe { result.write(service.stop().to_ffi()) };
-        SakuraOutputShadowStatus::Ok
+        // SAFETY: This wrapper has the same caller contract as the model call.
+        unsafe { model_stop_v1(token, result) }
     })
 }
 
@@ -1712,27 +1896,32 @@ pub unsafe extern "C" fn sakura_output_shadow_stop_v1(
 /// # Safety
 ///
 /// `token` must point to writable `u64` storage for the duration of this call.
+pub(crate) unsafe fn model_destroy_v1(token: *mut u64) -> SakuraOutputShadowStatus {
+    if !is_valid_pointer(token.cast_const()) {
+        return SakuraOutputShadowStatus::InvalidArgument;
+    }
+    // SAFETY: The pointer is non-null and aligned; caller owns it for this
+    // call and the value is copied before touching the registry.
+    let value = unsafe { token.read() };
+    if value == 0 {
+        return SakuraOutputShadowStatus::InvalidHandle;
+    }
+    let mut registry = lock_registry();
+    if registry.services.remove(&value).is_none() {
+        return SakuraOutputShadowStatus::InvalidHandle;
+    }
+    // SAFETY: The pointer was validated above and remains caller-owned.
+    unsafe { token.write(0) };
+    SakuraOutputShadowStatus::Ok
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sakura_output_shadow_destroy_v1(
     token: *mut u64,
 ) -> SakuraOutputShadowStatus {
     catch_status(|| {
-        if !is_valid_pointer(token.cast_const()) {
-            return SakuraOutputShadowStatus::InvalidArgument;
-        }
-        // SAFETY: The pointer is non-null and aligned; caller owns it for this
-        // call and the value is copied before touching the registry.
-        let value = unsafe { token.read() };
-        if value == 0 {
-            return SakuraOutputShadowStatus::InvalidHandle;
-        }
-        let mut registry = lock_registry();
-        if registry.services.remove(&value).is_none() {
-            return SakuraOutputShadowStatus::InvalidHandle;
-        }
-        // SAFETY: The pointer was validated above and remains caller-owned.
-        unsafe { token.write(0) };
-        SakuraOutputShadowStatus::Ok
+        // SAFETY: This wrapper has the same caller contract as the model call.
+        unsafe { model_destroy_v1(token) }
     })
 }
 
@@ -2050,6 +2239,7 @@ mod tests {
         assert_eq!(32, size_of::<SakuraOutputShadowApplyResultV1>());
         assert_eq!(64, size_of::<SakuraOutputShadowSnapshotInfoV1>());
         assert_eq!(48, size_of::<SakuraOutputShadowSnapshotBufferV1>());
+        assert_eq!(64, size_of::<SakuraOutputShadowActiveChannelV1>());
         assert_eq!(0, SakuraOutputShadowStatus::Ok as u32);
     }
 

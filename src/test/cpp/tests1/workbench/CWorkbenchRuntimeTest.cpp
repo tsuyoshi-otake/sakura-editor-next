@@ -16,6 +16,7 @@
 #include "workbench/layout/IWorkbenchLayoutMementoStore.h"
 #include "workbench/layout/WorkbenchIds.h"
 #include "workbench/output/OutputService.h"
+#include "workbench/output/OutputServiceRustProvider.h"
 #include "workbench/problems/MarkerService.h"
 #include "workbench/statusbar/IStatusbarVisibilityMementoStore.h"
 
@@ -482,12 +483,107 @@ public:
 	std::shared_ptr<RuntimeTaskSessionState> lastState;
 };
 
+//! Test-only provider wrapper with a distinct dynamic type from OutputService.
+//! It can optionally report a callback-drain deferral after entering the
+//! stopped state. The distinct type lets Rust creator tests honor the factory
+//! contract without returning the C++ authority object itself.
+class DelegatingOutputProvider final : public outputModel::IOutputService {
+public:
+	explicit DelegatingOutputProvider(
+		outputModel::OutputServiceLimits limits,
+		bool deferFirstStop = false)
+		: m_delegate(std::move(limits))
+		, m_deferFirstStop(deferFirstStop)
+	{
+	}
+
+	outputModel::OutputOperationResult CreateChannel(
+		const outputModel::OutputCreateChannelRequest& request) override
+	{
+		return m_delegate.CreateChannel(request);
+	}
+	outputModel::OutputOperationResult AppendOutput(
+		const outputModel::OutputTextMutationRequest& request) override
+	{
+		return m_delegate.AppendOutput(request);
+	}
+	outputModel::OutputOperationResult ReplaceOutput(
+		const outputModel::OutputTextMutationRequest& request) override
+	{
+		return m_delegate.ReplaceOutput(request);
+	}
+	outputModel::OutputOperationResult AppendLog(
+		const outputModel::OutputLogMutationRequest& request) override
+	{
+		return m_delegate.AppendLog(request);
+	}
+	outputModel::OutputOperationResult Clear(
+		const outputModel::OutputChannelMutationRequest& request) override
+	{
+		return m_delegate.Clear(request);
+	}
+	outputModel::OutputOperationResult Show(
+		const outputModel::OutputShowChannelRequest& request) override
+	{
+		return m_delegate.Show(request);
+	}
+	outputModel::OutputOperationResult Hide(
+		const outputModel::OutputChannelMutationRequest& request) override
+	{
+		return m_delegate.Hide(request);
+	}
+	outputModel::OutputOperationResult Dispose(
+		const outputModel::OutputChannelMutationRequest& request) override
+	{
+		return m_delegate.Dispose(request);
+	}
+	outputModel::OutputOperationResult DisposeOwner(
+		const outputModel::OutputDisposeOwnerRequest& request) override
+	{
+		return m_delegate.DisposeOwner(request);
+	}
+
+	outputModel::OutputOperationResult Stop() noexcept override
+	{
+		++m_stopCalls;
+		auto result = m_delegate.Stop();
+		if (m_deferFirstStop && m_stopCalls == 1) result.callbackDrainDeferred = true;
+		return result;
+	}
+
+	outputModel::OutputServiceSnapshot Snapshot() const override
+	{
+		return m_delegate.Snapshot();
+	}
+
+	std::optional<outputModel::OutputServiceSubscriptionId> Subscribe(
+		outputModel::OutputServiceListener listener) override
+	{
+		return m_delegate.Subscribe(std::move(listener));
+	}
+
+	void Unsubscribe(outputModel::OutputServiceSubscriptionId subscriptionId) noexcept override
+	{
+		m_delegate.Unsubscribe(subscriptionId);
+	}
+
+	[[nodiscard]] std::size_t StopCalls() const noexcept { return m_stopCalls; }
+
+private:
+	outputModel::OutputService m_delegate;
+	bool m_deferFirstStop = false;
+	std::size_t m_stopCalls{};
+};
+
 struct RuntimeFixture final {
 	explicit RuntimeFixture(
 		WorkbenchBootstrapContext bootstrap,
 		std::unique_ptr<FakeLayoutMementoStore> ownedLayoutStore = {},
 		std::shared_ptr<workbench::tasks::ITaskExecutionSessionFactory> taskFactory = {},
-		std::unique_ptr<FakeStatusbarVisibilityMementoStore> ownedStatusbarStore = {})
+		std::unique_ptr<FakeStatusbarVisibilityMementoStore> ownedStatusbarStore = {},
+		std::optional<outputModel::EOutputProviderKind> outputProviderKind = std::nullopt,
+		outputModel::OutputProviderCreator rustOutputProviderCreator = {},
+		outputModel::OutputProviderCreator cppOutputProviderCreator = {})
 	{
 		auto ownedFiles = std::make_unique<FakeFileService>();
 		files = ownedFiles.get();
@@ -498,6 +594,9 @@ struct RuntimeFixture final {
 		dependencies.layoutMementoStore = std::move(ownedLayoutStore);
 		dependencies.taskExecutionSessionFactory = std::move(taskFactory);
 		dependencies.statusbarVisibilityMementoStore = std::move(ownedStatusbarStore);
+		if (outputProviderKind) dependencies.outputProviderKind = *outputProviderKind;
+		dependencies.outputProviderFactory.rustCreator = std::move(rustOutputProviderCreator);
+		dependencies.outputProviderFactory.cppCreator = std::move(cppOutputProviderCreator);
 		runtime = std::make_unique<CWorkbenchRuntime>(
 			std::move(bootstrap), config::BuiltinConfigurationDescriptors(), std::move(dependencies));
 	}
@@ -629,9 +728,136 @@ TEST(CWorkbenchRuntime, OwnsMarkerAndOutputServicesOnlyWhileRunning)
 	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
 }
 
-TEST(CWorkbenchRuntime, ComposesRustOutputCandidateBeforePublishingRuntime)
+TEST(CWorkbenchRuntime, CapturesTheCppOutputSelectionBeforeReadyAndBuildsItOnce)
+{
+	std::size_t buildCount = 0;
+	RuntimeFixture fixture(Bootstrap(), {}, {}, {}, outputModel::EOutputProviderKind::Cpp,
+		{}, [&buildCount](const outputModel::OutputServiceLimits& limits) {
+			++buildCount;
+			return std::make_unique<outputModel::OutputService>(limits);
+		});
+
+	EXPECT_EQ(outputModel::EOutputProviderKind::Cpp, fixture.runtime->OutputProviderKind());
+	EXPECT_EQ(1U, buildCount);
+	EXPECT_EQ(nullptr, fixture.runtime->Output());
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+	EXPECT_EQ(1U, buildCount);
+	ASSERT_NE(nullptr, fixture.runtime->Output());
+
+	const auto* borrowed = fixture.runtime->Output();
+	ASSERT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
+	ASSERT_NE(nullptr, borrowed);
+	EXPECT_TRUE(borrowed->Snapshot().stopped);
+}
+
+TEST(CWorkbenchRuntime, ExplicitRustInitializationFailureIsTerminalWithoutCppFallback)
+{
+	std::size_t rustBuildCount = 0;
+	std::size_t cppBuildCount = 0;
+	RuntimeFixture fixture(Bootstrap(), {}, {}, {}, outputModel::EOutputProviderKind::Rust,
+		[&rustBuildCount](const outputModel::OutputServiceLimits&) {
+			++rustBuildCount;
+			return std::unique_ptr<outputModel::IOutputService>{};
+		},
+		[&cppBuildCount](const outputModel::OutputServiceLimits& limits) {
+			++cppBuildCount;
+			return std::make_unique<outputModel::OutputService>(limits);
+		});
+
+	EXPECT_EQ(outputModel::EOutputProviderKind::Rust, fixture.runtime->OutputProviderKind());
+	EXPECT_EQ(1U, rustBuildCount);
+	EXPECT_EQ(0U, cppBuildCount);
+	EXPECT_EQ(nullptr, fixture.runtime->Output());
+	const auto failed = fixture.runtime->Start();
+	EXPECT_EQ(EWorkbenchRuntimeResultCode::Failed, failed.code);
+	EXPECT_EQ(EWorkbenchRuntimeState::Failed, failed.snapshot.state);
+	EXPECT_EQ(nullptr, fixture.runtime->Output());
+	EXPECT_EQ(1U, rustBuildCount);
+	EXPECT_EQ(0U, cppBuildCount);
+	ASSERT_FALSE(failed.snapshot.diagnostics.empty());
+	EXPECT_NE(std::string::npos,
+		failed.snapshot.diagnostics.front().message.find("Rust Output provider"));
+	EXPECT_EQ(EWorkbenchRuntimeResultCode::Failed, fixture.runtime->Start().code);
+	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
+}
+
+TEST(CWorkbenchRuntime, ExplicitRustOwnsOnlyItsProviderAndRetainsItsStoppedBorrow)
+{
+	std::size_t rustBuildCount = 0;
+	std::size_t cppBuildCount = 0;
+	RuntimeFixture fixture(Bootstrap(), {}, {}, {}, outputModel::EOutputProviderKind::Rust,
+		[&rustBuildCount](const outputModel::OutputServiceLimits& limits) {
+			++rustBuildCount;
+			return std::make_unique<DelegatingOutputProvider>(limits);
+		},
+		[&cppBuildCount](const outputModel::OutputServiceLimits& limits) {
+			++cppBuildCount;
+			return std::make_unique<outputModel::OutputService>(limits);
+		});
+
+	EXPECT_EQ(1U, rustBuildCount);
+	EXPECT_EQ(0U, cppBuildCount);
+	EXPECT_FALSE(fixture.runtime->OutputCandidateAvailable());
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+	auto* const output = fixture.runtime->Output();
+	ASSERT_NE(nullptr, output);
+	EXPECT_FALSE(fixture.runtime->OutputCandidateAvailable());
+
+	const outputModel::OutputOwner owner{ .ownerId = "runtime.explicit-rust", .generation = 1 };
+	ASSERT_EQ(outputModel::EOutputOperationStatus::Succeeded, output->CreateChannel({
+		.operation = { .operationId = "runtime.explicit-rust.create" },
+		.owner = owner,
+		.channelId = "runtime.explicit-rust",
+		.label = "Explicit Rust",
+	}).status);
+	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
+	EXPECT_TRUE(output->Snapshot().stopped);
+	EXPECT_EQ(1U, rustBuildCount);
+	EXPECT_EQ(0U, cppBuildCount);
+}
+
+TEST(CWorkbenchRuntime, CompileSelectedOutputProviderOwnsTheRuntimeLifecycle)
 {
 	RuntimeFixture fixture(Bootstrap());
+	EXPECT_EQ(outputModel::DefaultOutputProviderKind(), fixture.runtime->OutputProviderKind());
+	EXPECT_EQ(nullptr, fixture.runtime->Output());
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+	auto* const output = fixture.runtime->Output();
+	ASSERT_NE(nullptr, output);
+
+#if defined(SAKURA_OUTPUT_BACKEND_RUST)
+	EXPECT_EQ(outputModel::EOutputProviderKind::Rust, fixture.runtime->OutputProviderKind());
+	EXPECT_NE(nullptr, dynamic_cast<outputModel::OutputServiceRustProvider*>(output));
+	EXPECT_EQ(nullptr, dynamic_cast<outputModel::OutputService*>(output));
+	EXPECT_FALSE(fixture.runtime->OutputCandidateAvailable());
+#else
+	EXPECT_EQ(outputModel::EOutputProviderKind::Cpp, fixture.runtime->OutputProviderKind());
+	EXPECT_NE(nullptr, dynamic_cast<outputModel::OutputService*>(output));
+	EXPECT_EQ(nullptr, dynamic_cast<outputModel::OutputServiceRustProvider*>(output));
+#endif
+
+	const outputModel::OutputOwner owner{ .ownerId = "runtime.compile-selected", .generation = 1 };
+	ASSERT_EQ(outputModel::EOutputOperationStatus::Succeeded, output->CreateChannel({
+		.operation = { .operationId = "runtime.compile-selected.create" },
+		.owner = owner,
+		.channelId = "runtime.compile-selected",
+		.label = "Compile-selected provider",
+	}).status);
+	EXPECT_EQ(1U, output->Snapshot().channels.size());
+	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
+	EXPECT_EQ(nullptr, fixture.runtime->Output());
+	EXPECT_TRUE(output->Snapshot().stopped);
+	EXPECT_EQ(outputModel::EOutputOperationStatus::Stopped, output->AppendOutput({
+		.operation = { .operationId = "runtime.compile-selected.after-stop" },
+		.owner = owner,
+		.channelId = "runtime.compile-selected",
+		.text = "after stop",
+	}).status);
+}
+
+TEST(CWorkbenchRuntime, ComposesRustOutputCandidateBeforePublishingRuntime)
+{
+	RuntimeFixture fixture(Bootstrap(), {}, {}, {}, outputModel::EOutputProviderKind::Cpp);
 	EXPECT_EQ(nullptr, fixture.runtime->Output());
 	const auto beforeStart = fixture.runtime->OutputCandidateDiagnostics();
 	if (!fixture.runtime->OutputCandidateAvailable()) {
@@ -657,7 +883,7 @@ TEST(CWorkbenchRuntime, ComposesRustOutputCandidateBeforePublishingRuntime)
 
 TEST(CWorkbenchRuntime, RustOutputCandidateObservesAcceptedLiveCommitsWithoutReplacingCppAuthority)
 {
-	RuntimeFixture fixture(Bootstrap());
+	RuntimeFixture fixture(Bootstrap(), {}, {}, {}, outputModel::EOutputProviderKind::Cpp);
 	if (!fixture.runtime->OutputCandidateAvailable()) {
 		ASSERT_TRUE(fixture.runtime->Start().IsUsable());
 		EXPECT_NE(nullptr, fixture.runtime->Output());
@@ -705,7 +931,7 @@ TEST(CWorkbenchRuntime, RustOutputCandidateObservesAcceptedLiveCommitsWithoutRep
 
 TEST(CWorkbenchRuntime, RustOutputCandidateExcludesReplayAndRejectedOperations)
 {
-	RuntimeFixture fixture(Bootstrap());
+	RuntimeFixture fixture(Bootstrap(), {}, {}, {}, outputModel::EOutputProviderKind::Cpp);
 	if (!fixture.runtime->OutputCandidateAvailable()) {
 		ASSERT_TRUE(fixture.runtime->Start().IsUsable());
 		EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
@@ -749,7 +975,7 @@ TEST(CWorkbenchRuntime, RustOutputCandidateExcludesReplayAndRejectedOperations)
 
 TEST(CWorkbenchRuntime, StopPublishesCppOutputTerminalBeforeRustCandidateTeardown)
 {
-	RuntimeFixture fixture(Bootstrap());
+	RuntimeFixture fixture(Bootstrap(), {}, {}, {}, outputModel::EOutputProviderKind::Cpp);
 	const bool candidateAvailable = fixture.runtime->OutputCandidateAvailable();
 	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
 	auto* const output = fixture.runtime->Output();
@@ -785,7 +1011,7 @@ TEST(CWorkbenchRuntime, StopPublishesCppOutputTerminalBeforeRustCandidateTeardow
 
 TEST(CWorkbenchRuntime, FailedStartStopsRustOutputCandidateAlongsideUnpublishedCppServices)
 {
-	RuntimeFixture fixture(Bootstrap());
+	RuntimeFixture fixture(Bootstrap(), {}, {}, {}, outputModel::EOutputProviderKind::Cpp);
 	fixture.files->onRead = [] { throw std::runtime_error("forced candidate runtime bootstrap failure"); };
 	const bool candidateAvailable = fixture.runtime->OutputCandidateAvailable();
 
@@ -952,18 +1178,61 @@ TEST(CWorkbenchRuntime, AddsAndRemovesKnownEmptyTaskCatalogSlotsWithWorkspaceTop
 
 TEST(CWorkbenchRuntime, FailedStartRollsBackUnpublishedMarkerAndOutputServices)
 {
-	RuntimeFixture fixture(Bootstrap());
+	outputModel::OutputService* selectedOutput = nullptr;
+	RuntimeFixture fixture(Bootstrap(), {}, {}, {}, outputModel::EOutputProviderKind::Cpp,
+		{}, [&selectedOutput](const outputModel::OutputServiceLimits& limits) {
+			auto provider = std::make_unique<outputModel::OutputService>(limits);
+			selectedOutput = provider.get();
+			return provider;
+		});
 	fixture.files->onRead = [] { throw std::runtime_error("forced runtime bootstrap failure"); };
 
 	const auto failed = fixture.runtime->Start();
 	EXPECT_EQ(EWorkbenchRuntimeResultCode::Failed, failed.code);
 	EXPECT_EQ(EWorkbenchRuntimeState::Failed, failed.snapshot.state);
+	ASSERT_NE(nullptr, selectedOutput);
+	EXPECT_TRUE(selectedOutput->Snapshot().stopped);
 	EXPECT_EQ(nullptr, fixture.runtime->Markers());
 	EXPECT_EQ(nullptr, fixture.runtime->Output());
 	EXPECT_EQ(EWorkbenchRuntimeResultCode::Failed, fixture.runtime->Start().code);
-	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
+	const auto stopped = fixture.runtime->Stop();
+	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, stopped.code);
+	const auto repeatedStop = fixture.runtime->Stop();
+	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, repeatedStop.code);
+	EXPECT_EQ(stopped.snapshot.revision, repeatedStop.snapshot.revision);
 	EXPECT_EQ(nullptr, fixture.runtime->Markers());
 	EXPECT_EQ(nullptr, fixture.runtime->Output());
+}
+
+TEST(CWorkbenchRuntime, FailedStartRetainsDeferredOutputStopForExternalRetry)
+{
+	DelegatingOutputProvider* selectedOutput = nullptr;
+	RuntimeFixture fixture(Bootstrap(), {}, {}, {}, outputModel::EOutputProviderKind::Cpp,
+		{}, [&selectedOutput](const outputModel::OutputServiceLimits& limits) {
+			auto provider = std::make_unique<DelegatingOutputProvider>(limits, true);
+			selectedOutput = provider.get();
+			return provider;
+		});
+	fixture.files->onRead = [] { throw std::runtime_error("forced deferred-stop bootstrap failure"); };
+
+	const auto failed = fixture.runtime->Start();
+	EXPECT_EQ(EWorkbenchRuntimeResultCode::Failed, failed.code);
+	EXPECT_EQ(EWorkbenchRuntimeState::Failed, failed.snapshot.state);
+	ASSERT_NE(nullptr, selectedOutput);
+	EXPECT_EQ(1U, selectedOutput->StopCalls());
+	EXPECT_TRUE(selectedOutput->Snapshot().stopped);
+	EXPECT_EQ(nullptr, fixture.runtime->Output());
+
+	const auto stopped = fixture.runtime->Stop();
+	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, stopped.code);
+	EXPECT_EQ(EWorkbenchRuntimeState::Stopped, stopped.snapshot.state);
+	EXPECT_EQ(2U, selectedOutput->StopCalls());
+	EXPECT_TRUE(selectedOutput->Snapshot().stopped);
+
+	const auto repeatedStop = fixture.runtime->Stop();
+	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, repeatedStop.code);
+	EXPECT_EQ(stopped.snapshot.revision, repeatedStop.snapshot.revision);
+	EXPECT_EQ(2U, selectedOutput->StopCalls());
 }
 
 TEST(CWorkbenchRuntime, MarkerCallbackStopDefersRuntimeTerminalPublicationUntilAnExternalStop)

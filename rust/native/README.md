@@ -15,10 +15,14 @@ The native link boundary is deliberately one archive:
   wrappers and catches a panic at every export, returning the typed
   `InternalError` status rather than unwinding into C++. Its fixed-width V2
   UTF-16 scan ABI delegates to the internal kernels in `sakura-simd`. The same
-  archive also owns the stateless URI candidate and the replay-only Output
-  state candidate. Those candidates copy caller input, retain no foreign
-  pointer, and have no callback or external side-effect authority; the C++
-  services remain the production owners.
+  archive also owns the stateless URI candidate, the replay-only Output state
+  candidate, and the callback-free Output authority provider. All three copy
+  caller input and retain no foreign pointer. Candidates have no callback or
+  external side-effect authority. In an explicit
+  `SAKURA_OUTPUT_BACKEND_RUST` build, the provider owns the Output model behind
+  a separate opaque-token family while its C++ adapter owns advisory listener
+  dispatch; C++ remains the default authority and there is no runtime fallback
+  between providers.
 
 `sakura_native_ffi.lib` is therefore the only Rust library added to each
 native product/test link. The old `SakuraRustCore*` MSBuild property and target
@@ -32,3 +36,7 @@ SENP-only change cannot invalidate the native Cargo stamp.
 Both native Cargo profiles use unwind semantics so the FFI crate can contain
 panics at the ABI boundary with `catch_unwind`; the no_std SIMD rlib does not
 install a panic handler.
+
+Output provider selection is independent of UTF-16/SIMD backend selection.
+Both paths use this same static archive, but the stateful Output lifecycle must
+not be coupled to CPU feature detection or the stateless SIMD dispatch table.

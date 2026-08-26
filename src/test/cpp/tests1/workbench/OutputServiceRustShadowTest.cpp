@@ -32,7 +32,7 @@ namespace {
 
 #if defined(SAKURA_UTF16_RUST_CANDIDATE)
 
-constexpr std::string_view kSnapshotMagic("SAKURA_OUTPUT_SHADOW_V1\0", 24);
+constexpr std::string_view kSnapshotMagic("SAKURA_OUTPUT_MODEL_V1\0", 23);
 
 struct RustApplyResponse final {
 	SakuraOutputShadowStatus abiStatus{ SakuraOutputShadowStatus::InternalError };
@@ -262,6 +262,7 @@ void FillLog(PendingRequest& pending, const OutputLogMutationRequest& request)
 		raw.abi_version = SAKURA_OUTPUT_SHADOW_ABI_VERSION_V1;
 		raw.level = static_cast<std::uint32_t>(entry.level);
 		raw.message = Span(entry.message);
+		raw.source = Span(std::string_view{});
 		if (entry.source) {
 			raw.flags = SAKURA_OUTPUT_SHADOW_LOG_SOURCE_PRESENT;
 			raw.source = Span(*entry.source);

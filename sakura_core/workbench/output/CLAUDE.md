@@ -94,11 +94,29 @@ retains the stopped object until runtime destruction so existing borrows never
 dangle. The accepted-commit feed intentionally remains outside the production
 interface as a migration-only observation contract.
 
-This boundary enables, but does not perform, a production cutover. A later
-selector must choose one authority before the first mutation and keep it for the
-entire lifecycle; it may not be approximated with dual writes, per-call health
-probing, silent fallback, snapshot-based state transfer, or an in-place provider
-swap after an accepted mutation.
+Issue #273 completes the first production-capable cutover boundary. The runtime
+selects exactly one `IOutputService` provider before Ready and retains that same
+object through Stop and runtime destruction. C++ remains the default. An
+explicit `SAKURA_OUTPUT_BACKEND_RUST` build selects the Rust authority and fails
+closed when its ABI or initialization is unavailable; it never creates a C++
+authority as a fallback. The observational accepted-commit candidate is attached
+only when C++ is authoritative and is not part of the Rust production path.
+
+The Rust provider owns channels, owner generations, operation replay, revisions,
+and snapshots behind one opaque numeric token in the existing native Rust
+static library. The C++ adapter owns only copied ABI conversion, diagnostics,
+and the shared provider-neutral advisory notification dispatcher. The ABI is
+callback-free, validates every fixed-width descriptor, contains panics at every
+export, and never retains a foreign pointer. The provider selector is immutable
+for a lifecycle: dual writes, per-call health probing, silent fallback,
+snapshot-based state transfer, and in-place provider swaps after an accepted
+mutation remain forbidden.
+
+`SAKURA_OUTPUT_BACKEND_RUST` is deliberately independent of
+`SAKURA_UTF16_BACKEND_RUST` and the SIMD ISA dispatcher. The Output model is a
+stateful authority with lifecycle and revision semantics; SIMD remains an
+internal stateless kernel concern. They share only the one-staticlib native Rust
+transport and must be selected, tested, and rolled back independently.
 
 `sakura_core/workbench/scm/GitOutputChannel.h`/`.cpp` (Issue #221) is this
 service's first real production content producer: an HWND-free adapter that

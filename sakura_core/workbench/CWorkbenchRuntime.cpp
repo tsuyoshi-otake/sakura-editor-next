@@ -15,6 +15,8 @@
 #include <sakura/filesystem/FileSystemFactory.h>
 #include <sakura/uri/UriIdentity.h>
 #include "workbench/layout/WorkbenchIds.h"
+#include "workbench/output/OutputProviderFactory.h"
+#include "workbench/output/OutputService.h"
 #include "workbench/workspace/WorkspaceConfigurationDocumentParser.h"
 #include "workbench/workspace/WorkspaceArtifactDocumentSourceController.h"
 #include "workbench/workspace/WorkspaceResourceDescriptors.h"
@@ -297,8 +299,8 @@ CWorkbenchRuntime::CWorkbenchRuntime(
 	, m_markers(problems::MarkerServiceLimits {
 		.maximumOwners = 128U,
 	})
-	, m_output(RuntimeOutputServiceLimits())
-	, m_outputCandidate(m_output, RuntimeOutputServiceLimits())
+	, m_outputProviderKind(dependencies.outputProviderKind)
+	, m_outputProviderFactory(std::move(dependencies.outputProviderFactory))
 	, m_scm(scm::SourceControlServiceLimits {
 		.maximumOwners = 128U,
 		.maximumProviders = 128U,
@@ -343,6 +345,11 @@ CWorkbenchRuntime::CWorkbenchRuntime(
 	if (!m_workspaceArtifactSubscription) {
 		m_initializationFailure = "workspace artifact listener registration failed";
 	}
+	// Compose the selected authority before Start so the C++ observational
+	// candidate is attached before any producer can mutate the service. Rust
+	// construction failure is retained as a Start-time typed failure; this
+	// constructor never substitutes a C++ authority for an explicit Rust pick.
+	(void)InitializeOutputProvider();
 }
 
 recent::IRecentlyOpenedWorkspaceService* CWorkbenchRuntime::RecentlyOpenedWorkspaces() noexcept
@@ -518,13 +525,67 @@ const problems::MarkerService* CWorkbenchRuntime::Markers() const noexcept
 output::IOutputService* CWorkbenchRuntime::Output() noexcept
 {
 	std::lock_guard lock(m_stateMutex);
-	return IsReadyForServiceAccessLocked() ? &m_output : nullptr;
+	return IsReadyForServiceAccessLocked() ? m_outputProvider.get() : nullptr;
 }
 
 const output::IOutputService* CWorkbenchRuntime::Output() const noexcept
 {
 	std::lock_guard lock(m_stateMutex);
-	return IsReadyForServiceAccessLocked() ? &m_output : nullptr;
+	return IsReadyForServiceAccessLocked() ? m_outputProvider.get() : nullptr;
+}
+
+bool CWorkbenchRuntime::InitializeOutputProvider() noexcept
+{
+	if (m_outputProvider) return true;
+	if (m_outputProviderInitializationAttempted) return false;
+	m_outputProviderInitializationAttempted = true;
+
+	try {
+		auto result = output::CreateOutputProvider({
+			.kind = m_outputProviderKind,
+			.limits = RuntimeOutputServiceLimits(),
+		}, m_outputProviderFactory);
+		if (!result.Succeeded()) {
+			try {
+				m_outputProviderInitializationFailure = result.diagnostic.empty()
+					? "Output provider initialization failed"
+					: result.diagnostic;
+			} catch (...) {
+				// Keep the one-shot failure latch even when the optional diagnostic
+				// cannot be copied under allocation pressure.
+				m_outputProviderInitializationFailure.clear();
+			}
+			return false;
+		}
+
+		// The factory owns the selected provider construction. Move it into the
+		// runtime exactly once before any Ready publication. A C++ authority may
+		// have the migration-only candidate attached; Rust authority never creates
+		// a C++ authority merely for observation.
+		m_outputProvider = std::move(result.provider);
+		if (m_outputProviderKind == output::EOutputProviderKind::Cpp) {
+			if (auto* cppAuthority = dynamic_cast<output::OutputService*>(m_outputProvider.get())) {
+				try {
+					m_outputCandidate = std::make_unique<output::OutputServiceRustCandidate>(
+						*cppAuthority, RuntimeOutputServiceLimits());
+				} catch (...) {
+					// The candidate is observational. A failed candidate allocation does
+					// not change the C++ authority's terminal selection.
+					m_outputCandidate.reset();
+				}
+			}
+		}
+		return true;
+	} catch (...) {
+		try {
+			m_outputProviderInitializationFailure = "Output provider initialization failed unexpectedly";
+		} catch (...) {
+			// The attempted flag remains terminal even when diagnostics cannot be
+			// allocated. Start() supplies a stable literal fallback message.
+			m_outputProviderInitializationFailure.clear();
+		}
+		return false;
+	}
 }
 
 scm::SourceControlService* CWorkbenchRuntime::Scm() noexcept
@@ -1636,6 +1697,16 @@ WorkbenchRuntimeResult CWorkbenchRuntime::Start()
 				? "configuration filesystem is unavailable"
 				: m_initializationFailure);
 	}
+	// Select and construct the sole Output authority before any startup path
+	// can publish Ready or allow a producer to mutate it. An explicit Rust
+	// selection is terminal on unavailable/failed initialization; no C++
+	// fallback is attempted.
+	if (!InitializeOutputProvider()) {
+		return FailStart(EWorkbenchRuntimeDiagnosticCode::InternalFailure,
+			m_outputProviderInitializationFailure.empty()
+			? "Output provider initialization failed"
+			: m_outputProviderInitializationFailure);
+	}
 
 	try {
 		RestoreInitialLayoutMemento();
@@ -1819,11 +1890,17 @@ bool CWorkbenchRuntime::StopOwnedServices() noexcept
 	if (m_senpLanguage) m_senpLanguage->Stop();
 	if (m_senpRuntime) m_senpRuntime->Stop();
 	if (m_senpManagement) m_senpManagement->Stop();
-	const auto outputStop = m_output.Stop();
-	if (!outputStop.callbackDrainDeferred) m_outputCandidate.ShutdownAfterOutputServiceStop();
+	bool outputStopped = true;
+	if (m_outputProvider) {
+		const auto outputStop = m_outputProvider->Stop();
+		const bool outputStopAccepted = outputStop.status == output::EOutputOperationStatus::Succeeded
+			|| outputStop.status == output::EOutputOperationStatus::Stopped;
+		outputStopped = outputStopAccepted && !outputStop.callbackDrainDeferred;
+		if (outputStopped && m_outputCandidate) m_outputCandidate->ShutdownAfterOutputServiceStop();
+	}
 	const auto markerStop = m_markers.Stop();
 	const auto scmStop = m_scm.Stop();
-	return !outputStop.callbackDrainDeferred && !markerStop.callbackDrainDeferred &&
+	return outputStopped && !markerStop.callbackDrainDeferred &&
 		(scmStop.status == scm::EScmOperationStatus::Succeeded || scmStop.status == scm::EScmOperationStatus::Stopped);
 }
 
