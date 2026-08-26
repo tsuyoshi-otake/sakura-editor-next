@@ -1,0 +1,20 @@
+[workspace]
+members = [
+    "sakura_simd",
+    "sakura_native_ffi",
+    "sakura_unicode_core",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "Zlib"
+publish = false
+
+[profile.dev]
+panic = "unwind"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+panic = "unwind"

@@ -87,7 +87,7 @@ def _record_for_output(records: list[dict[str, object]], output: str) -> dict[st
 
 
 class CMakeGenerationContractTests(unittest.TestCase):
-    def test_single_config_msvc_architecture_and_rust_byproducts_are_explicit(self) -> None:
+    def test_single_config_msvc_architecture_and_native_ffi_byproducts_are_explicit(self) -> None:
         sakura_path = REPO_ROOT / "src/main/cmake/sakura.cmake"
         sakura_cmake = sakura_path.read_text(encoding="utf-8-sig")
 
@@ -102,18 +102,23 @@ class CMakeGenerationContractTests(unittest.TestCase):
         )
 
         records = _generation_records(sakura_path)
-        rust_targets = [
+        native_ffi_targets = [
             record
             for record in records
             if record.get("kind") == "custom-target"
-            and record.get("target") == "sakura_rust_core_build"
+            and record.get("target") == "sakura_native_ffi_build"
         ]
-        self.assertEqual(1, len(rust_targets))
+        self.assertEqual(1, len(native_ffi_targets))
         self.assertTrue(
             {
-                "${SAKURA_RUST_CORE_DEBUG_LIBRARY}",
-                "${SAKURA_RUST_CORE_RELEASE_LIBRARY}",
-            }.issubset(set(rust_targets[0]["byproducts"]))
+                "${SAKURA_NATIVE_FFI_DEBUG_LIBRARY}",
+                "${SAKURA_NATIVE_FFI_RELEASE_LIBRARY}",
+            }.issubset(set(native_ffi_targets[0]["byproducts"]))
+        )
+        self.assertIn("${SAKURA_NATIVE_FFI_SOURCE}", native_ffi_targets[0]["inputs"])
+        self.assertIn(
+            "${SAKURA_NATIVE_FFI_BUILD_SCRIPT}",
+            native_ffi_targets[0]["inputs"],
         )
 
     def test_rust_utf16_backend_contract_is_explicit(self) -> None:
@@ -132,9 +137,12 @@ class CMakeGenerationContractTests(unittest.TestCase):
         self.assertNotIn("PROPERTY STRINGS cpp rust both", backend_cmake)
         self.assertIn("SAKURA_UTF16_BACKEND must be exactly cpp or rust", backend_cmake)
         self.assertIn("SAKURA_UTF16_PRODUCTION_PACKAGE", backend_cmake)
-        self.assertIn('set(_sakura_utf16_backend_value "rust")', backend_cmake)
+        self.assertIn('set(_sakura_utf16_backend_value "cpp")', backend_cmake)
         self.assertIn("canonical MinGW runner passes", backend_cmake)
-        self.assertIn("The C++ UTF-16 backend cannot package production", backend_cmake)
+        self.assertIn(
+            "The Rust UTF-16 backend cannot package production until independent adoption",
+            backend_cmake,
+        )
         self.assertIn("string(TOUPPER", backend_cmake)
         self.assertIn('include("${CMAKE_SOURCE_DIR}/src/main/cmake/sakura-utf16-backend.cmake")', (REPO_ROOT / "CMakeLists.txt").read_text(encoding="utf-8"))
         self.assertLess(
@@ -145,27 +153,54 @@ class CMakeGenerationContractTests(unittest.TestCase):
                 "if(NOT SAKURA_SKIP_MODULES_CHECK)"
             ),
         )
-        self.assertIn("SAKURA_RUST_CORE_MEMBER_MANIFEST", sakura_cmake)
-        self.assertIn("${SAKURA_RUST_CORE_MEMBER_MANIFEST}", sakura_cmake)
+        self.assertIn("SAKURA_NATIVE_FFI_MEMBER_MANIFEST", sakura_cmake)
+        self.assertIn("SAKURA_NATIVE_FFI_SIMD_MANIFEST", sakura_cmake)
+        self.assertIn("SAKURA_NATIVE_FFI_UNICODE_MANIFEST", sakura_cmake)
+        self.assertIn("${SAKURA_NATIVE_FFI_MEMBER_MANIFEST}", sakura_cmake)
+        self.assertIn("${SAKURA_NATIVE_FFI_SIMD_MANIFEST}", sakura_cmake)
+        self.assertIn("${SAKURA_NATIVE_FFI_UNICODE_MANIFEST}", sakura_cmake)
+        self.assertIn("rust/native", sakura_cmake)
+        self.assertIn("sakura_native_ffi.lib", sakura_cmake)
+        self.assertIn(
+            'INTERFACE_LINK_LIBRARIES "kernel32;ntdll;userenv;ws2_32;dbghelp"',
+            sakura_cmake,
+        )
+        self.assertIn("SAKURA_UTF16_RUST_CANDIDATE", sakura_cmake)
+        self.assertIn("SAKURA_UTF16_BACKEND_RUST", sakura_cmake)
+        self.assertNotIn("SAKURA_RUST_CORE_", sakura_cmake)
+        self.assertNotIn("sakura_rust_core", sakura_cmake)
         self.assertNotIn("utf16_scan", sakura_cmake.lower())
-        self.assertIn('WORKING_DIRECTORY "${SAKURA_RUST_CORE_WORKING_DIR}"', rust_helper)
+        self.assertIn('WORKING_DIRECTORY "${SAKURA_NATIVE_FFI_WORKING_DIR}"', rust_helper)
         self.assertIn("--locked", rust_helper)
+        self.assertIn("SAKURA_NATIVE_FFI_SOURCE_DIR", rust_helper)
+        self.assertIn("SAKURA_NATIVE_FFI_SIMD_MANIFEST", rust_helper)
+        self.assertIn("SAKURA_NATIVE_FFI_UNICODE_MANIFEST", rust_helper)
+        self.assertIn("--package sakura-native-ffi", rust_helper)
+        self.assertNotIn("sakura-rust-core", rust_helper)
         self.assertIn("Cargo.toml", msbuild_target)
-        self.assertIn("SakuraRustCoreCargo", msbuild_target)
-        self.assertIn("WorkingDirectory=\"$(SakuraRustCoreWorkspace)\"", msbuild_target)
+        self.assertIn("SakuraNativeFfiCargo", msbuild_target)
+        self.assertIn("WorkingDirectory=\"$(SakuraNativeFfiWorkspace)\"", msbuild_target)
         self.assertIn("ToUpperInvariant()", msbuild_target)
         self.assertIn(
-            "<SAKURA_UTF16_BACKEND Condition=\"'$(SAKURA_UTF16_BACKEND)'==''\">rust</SAKURA_UTF16_BACKEND>",
+            "<SAKURA_UTF16_BACKEND Condition=\"'$(SAKURA_UTF16_BACKEND)'==''\">cpp</SAKURA_UTF16_BACKEND>",
             msbuild_target,
         )
-        self.assertIn(">rust</SAKURA_UTF16_BACKEND>", msbuild_target)
+        self.assertIn("'$(SakuraUtf16BackendUpper)'=='RUST'", msbuild_target)
         self.assertIn("--version", msbuild_target)
         self.assertIn('DependsOnTargets="ValidateSakuraRustCoreBackend"', msbuild_target)
-        self.assertIn("<SakuraRustCoreMemberManifest>", msbuild_target)
-        self.assertIn("<SakuraRustCoreStamp>", msbuild_target)
+        self.assertIn("<SakuraNativeFfiMemberManifest>", msbuild_target)
+        self.assertIn("<SakuraNativeFfiStamp>", msbuild_target)
         self.assertIn('Include="$(MSBuildThisFileFullPath)"', msbuild_target)
         self.assertIn(
-            r'Include="$(SakuraRustCoreWorkspace)\sakura_rust_core\src\**\*.rs"',
+            r'Include="$(SakuraNativeFfiWorkspace)\sakura_simd\src\**\*.rs"',
+            msbuild_target,
+        )
+        self.assertIn(
+            r'Include="$(SakuraNativeFfiWorkspace)\sakura_unicode_core\src\**\*.rs"',
+            msbuild_target,
+        )
+        self.assertIn(
+            r'Include="$(SakuraNativeFfiWorkspace)\sakura_native_ffi\src\**\*.rs"',
             msbuild_target,
         )
         self.assertIn('Outputs="$(SakuraRustCoreStamp)"', msbuild_target)
@@ -177,16 +212,19 @@ class CMakeGenerationContractTests(unittest.TestCase):
         header = (REPO_ROOT / "sakura_core/util/RustUtf16Scan.h").read_text(
             encoding="utf-8-sig"
         )
-        rust_source = (REPO_ROOT / "rust/sakura_rust_core/src/lib.rs").read_text(
+        rust_source = (REPO_ROOT / "rust/native/sakura_simd/src/lib.rs").read_text(
             encoding="utf-8"
         )
+        ffi_source = (
+            REPO_ROOT / "rust/native/sakura_native_ffi/src/lib.rs"
+        ).read_text(encoding="utf-8")
         dispatch_source = (REPO_ROOT / "sakura_core/util/CpuDispatch.cpp").read_text(
             encoding="utf-8-sig"
         )
 
         contract_match = re.search(
             r"(?P<contract>(?://[^\n]*\n)+)"
-            r"std::size_t sakura_utf16_find_cr_or_lf_avx512bw_v1\s*\(",
+            r"SakuraStatus sakura_utf16_find_cr_or_lf_avx512bw_v2\s*\(",
             header,
         )
         self.assertIsNotNone(contract_match)
@@ -197,12 +235,12 @@ class CMakeGenerationContractTests(unittest.TestCase):
             re.sub(r"(?m)^// ?", "", contract_match.group("contract")),
         ).strip()
         for required in (
-            "process-wide AVX-512 tier",
             "AVX2",
             "AVX512F",
             "AVX512BW",
-            "OSXSAVE/XCR0 XMM/YMM/opmask/ZMM",
-            "tail delegates to `FindCrOrLfAvx2`",
+            "XMM/YMM/opmask/ZMM",
+            "explicit Rust target-feature prerequisite",
+            "C++ byte scanner's current tail design",
         ):
             self.assertIn(required, contract_comment)
 
@@ -213,27 +251,44 @@ class CMakeGenerationContractTests(unittest.TestCase):
             3,
             len(
                 re.findall(
-                    r"\bsakura_utf16_find_[a-z_]+_avx512bw_v1\s*\(",
+                    r"\bsakura_utf16_find_[a-z_]+_avx512bw_v2\s*\(",
                     declaration_group,
                 )
             ),
         )
 
-        overview_start = header.index("// The caller must also prove")
-        overview = re.sub(
-            r"\s+",
-            " ",
-            header[overview_start : header.index('extern "C"', overview_start)],
-        )
-        avx512_overview = overview[overview.index("AVX512BW requires") :]
-        for required in ("AVX2", "AVX512F", "AVX512BW", "OSXSAVE/XCR0"):
-            self.assertIn(required, avx512_overview)
+        for required in (
+            "SakuraCpuFeature::Avx2",
+            "SakuraCpuFeature::Avx512F",
+            "SakuraCpuFeature::Avx512Bw",
+            "SakuraOsExtendedState::Opmask",
+            "SakuraOsExtendedState::ZmmHi256",
+            "SakuraOsExtendedState::Hi16Zmm",
+        ):
+            self.assertIn(required, dispatch_source)
 
         self.assertEqual(
             3,
             rust_source.count('#[target_feature(enable = "avx2,avx512f,avx512bw")]'),
         )
-        self.assertIn("capabilities.avx2 && cpuAvx512", dispatch_source)
+        for export in (
+            "sakura_utf16_find_cr_or_lf_avx512bw_v2",
+            "sakura_utf16_find_markdown_special_avx512bw_v2",
+            "sakura_utf16_find_char_avx512bw_v2",
+        ):
+            self.assertIn(export, ffi_source)
+        self.assertIn(
+            "CPU_FEATURE_AVX2 | CPU_FEATURE_AVX512F | CPU_FEATURE_AVX512BW",
+            ffi_source,
+        )
+        self.assertIn(
+            "OS_STATE_OPMASK | OS_STATE_ZMM_HI256 | OS_STATE_HI16_ZMM",
+            ffi_source,
+        )
+        self.assertIn(
+            "detected.effective.avx512 = detected.effective.avx2",
+            dispatch_source,
+        )
 
     @unittest.skipUnless(CMAKE_EXECUTABLE, "cmake is required")
     def test_invalid_backend_configures_fail_before_project(self) -> None:
@@ -258,12 +313,12 @@ class CMakeGenerationContractTests(unittest.TestCase):
                 "SAKURA_UTF16_BACKEND must be exactly cpp or rust",
             ),
             (
-                "cpp-production",
+                "rust-production",
                 [
-                    "-DSAKURA_UTF16_BACKEND=cpp",
+                    "-DSAKURA_UTF16_BACKEND=rust",
                     "-DSAKURA_UTF16_PRODUCTION_PACKAGE=ON",
                 ],
-                "The C++ UTF-16 backend cannot package production",
+                "The Rust UTF-16 backend cannot package production until independent adoption",
             ),
         )
         with tempfile.TemporaryDirectory() as temporary:
@@ -293,7 +348,7 @@ class CMakeGenerationContractTests(unittest.TestCase):
                     self.assertLess(elapsed, 8.0, output)
 
     @unittest.skipUnless(CMAKE_EXECUTABLE, "cmake is required")
-    def test_lowercase_production_environment_rejects_removed_backend(self) -> None:
+    def test_lowercase_production_environment_rejects_rust_backend(self) -> None:
         cmake = CMAKE_EXECUTABLE
         assert cmake is not None
         with tempfile.TemporaryDirectory() as temporary:
@@ -306,8 +361,8 @@ class CMakeGenerationContractTests(unittest.TestCase):
                     "-S",
                     str(REPO_ROOT),
                     "-B",
-                    str(Path(temporary) / "both-production-lowercase-env"),
-                    "-DSAKURA_UTF16_BACKEND=both",
+                    str(Path(temporary) / "rust-production-lowercase-env"),
+                    "-DSAKURA_UTF16_BACKEND=rust",
                 ],
                 capture_output=True,
                 check=False,
@@ -320,13 +375,13 @@ class CMakeGenerationContractTests(unittest.TestCase):
             normalized_output = re.sub(r"\s+", " ", output)
             self.assertNotEqual(0, result.returncode, output)
             self.assertIn(
-                "SAKURA_UTF16_BACKEND must be exactly cpp or rust",
+                "The Rust UTF-16 backend cannot package production until independent adoption",
                 normalized_output,
             )
             self.assertLess(elapsed, 8.0, output)
 
     @unittest.skipUnless(CMAKE_EXECUTABLE, "cmake is required")
-    def test_cmake_backend_module_accepts_rust_and_rejects_cpp_production(self) -> None:
+    def test_cmake_backend_module_accepts_cpp_and_rejects_rust_production(self) -> None:
         cmake = CMAKE_EXECUTABLE
         assert cmake is not None
         module = (REPO_ROOT / "src/main/cmake/sakura-utf16-backend.cmake").as_posix()
@@ -364,28 +419,29 @@ class CMakeGenerationContractTests(unittest.TestCase):
 
             accepted = (
                 (
-                    "explicit-rust-production",
+                    "implicit-cpp-production",
+                    ["-DSAKURA_UTF16_PRODUCTION_PACKAGE=ON"],
+                    None,
+                    None,
+                    "cpp",
+                ),
+                (
+                    "explicit-cpp-production",
                     [
-                        "-DSAKURA_UTF16_BACKEND=rust",
+                        "-DSAKURA_UTF16_BACKEND=cpp",
                         "-DSAKURA_UTF16_PRODUCTION_PACKAGE=ON",
                     ],
                     None,
                     None,
-                    "rust",
+                    "cpp",
                 ),
+                ("ambient-cpp-production", [], "cpp", "true", "cpp"),
                 (
-                    "implicit-rust-production",
-                    ["-DSAKURA_UTF16_PRODUCTION_PACKAGE=ON"],
+                    "explicit-cpp-nonproduction",
+                    ["-DSAKURA_UTF16_BACKEND=cpp"],
                     None,
                     None,
-                    "rust",
-                ),
-                (
-                    "ambient-rust-production",
-                    [],
-                    "rust",
-                    "true",
-                    "rust",
+                    "cpp",
                 ),
                 (
                     "explicit-rust-nonproduction",
@@ -406,17 +462,97 @@ class CMakeGenerationContractTests(unittest.TestCase):
             rejected = (
                 (
                     "ambient-both",
+                    [],
                     "both",
                     None,
                     "SAKURA_UTF16_BACKEND must be exactly cpp or rust",
                 ),
+                (
+                    "explicit-rust-production",
+                    [
+                        "-DSAKURA_UTF16_BACKEND=rust",
+                        "-DSAKURA_UTF16_PRODUCTION_PACKAGE=ON",
+                    ],
+                    None,
+                    None,
+                    "The Rust UTF-16 backend cannot package production until independent adoption",
+                ),
             )
-            for name, backend, production, expected in rejected:
+            for name, options, backend, production, expected in rejected:
                 with self.subTest(case=name):
-                    result = run_case(name, [], backend, production)
+                    result = run_case(name, options, backend, production)
                     output = re.sub(r"\s+", " ", result.stdout + result.stderr)
                     self.assertNotEqual(0, result.returncode, output)
                     self.assertIn(expected, output)
+
+    @unittest.skipUnless(CMAKE_EXECUTABLE, "cmake is required")
+    def test_native_ffi_helper_keeps_an_up_to_date_archive_untouched(self) -> None:
+        cmake = CMAKE_EXECUTABLE
+        assert cmake is not None
+        helper = REPO_ROOT / "src/main/cmake/build-rust-sakura-core.cmake"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace = root / "rust" / "native"
+            ffi = workspace / "sakura_native_ffi"
+            simd = workspace / "sakura_simd"
+            unicode_core = workspace / "sakura_unicode_core"
+            ffi.mkdir(parents=True)
+            simd.mkdir(parents=True)
+            unicode_core.mkdir(parents=True)
+            manifest = workspace / "Cargo.toml"
+            member_manifest = ffi / "Cargo.toml"
+            simd_manifest = simd / "Cargo.toml"
+            unicode_manifest = unicode_core / "Cargo.toml"
+            lock = workspace / "Cargo.lock"
+            toolchain = workspace / "rust-toolchain.toml"
+            ffi_source = ffi / "src.rs"
+            simd_source = simd / "src.rs"
+            unicode_source = unicode_core / "src.rs"
+            for path in (
+                manifest,
+                member_manifest,
+                simd_manifest,
+                unicode_manifest,
+                lock,
+                toolchain,
+                ffi_source,
+                simd_source,
+                unicode_source,
+            ):
+                path.write_text("fixture\n", encoding="utf-8")
+            output = root / "build" / "x86_64-pc-windows-msvc" / "debug" / "sakura_native_ffi.lib"
+            output.parent.mkdir(parents=True)
+            output.write_bytes(b"stable native archive")
+            before = output.stat()
+
+            options = [
+                f"-DSAKURA_NATIVE_FFI_CARGO=missing-cargo",
+                f"-DSAKURA_NATIVE_FFI_MANIFEST={manifest.as_posix()}",
+                f"-DSAKURA_NATIVE_FFI_MEMBER_MANIFEST={member_manifest.as_posix()}",
+                f"-DSAKURA_NATIVE_FFI_SIMD_MANIFEST={simd_manifest.as_posix()}",
+                f"-DSAKURA_NATIVE_FFI_UNICODE_MANIFEST={unicode_manifest.as_posix()}",
+                f"-DSAKURA_NATIVE_FFI_LOCK={lock.as_posix()}",
+                f"-DSAKURA_NATIVE_FFI_TOOLCHAIN={toolchain.as_posix()}",
+                f"-DSAKURA_NATIVE_FFI_SOURCE_DIR={workspace.as_posix()}",
+                "-DSAKURA_NATIVE_FFI_TARGET=x86_64-pc-windows-msvc",
+                f"-DSAKURA_NATIVE_FFI_TARGET_DIR={(root / 'build').as_posix()}",
+                f"-DSAKURA_NATIVE_FFI_WORKING_DIR={workspace.as_posix()}",
+                "-DSAKURA_NATIVE_FFI_PROFILE=dev",
+                f"-DSAKURA_NATIVE_FFI_OUTPUT={output.as_posix()}",
+            ]
+            result = subprocess.run(
+                [cmake, *options, "-P", str(helper)],
+                capture_output=True,
+                check=False,
+                text=True,
+                timeout=10,
+            )
+            output_text = result.stdout + result.stderr
+            self.assertEqual(0, result.returncode, output_text)
+            self.assertIn("sakura_native_ffi static library is up to date", output_text)
+            after = output.stat()
+            self.assertEqual(before.st_mtime_ns, after.st_mtime_ns)
+            self.assertEqual(b"stable native archive", output.read_bytes())
 
     @unittest.skipUnless(MSBUILD_EXECUTABLE, "MSBuild is required")
     def test_msbuild_production_backend_contract_fails_closed(self) -> None:
@@ -427,19 +563,25 @@ class CMakeGenerationContractTests(unittest.TestCase):
                 "both",
                 "both",
                 "false",
-                "MSBuild requires SAKURA_UTF16_BACKEND=rust",
+                "SAKURA_UTF16_BACKEND must be exactly cpp or rust",
+            ),
+            (
+                "rust-production",
+                "rust",
+                "false",
+                "SAKURA_UTF16_PRODUCTION_PACKAGE=true requires SAKURA_UTF16_BACKEND=cpp",
             ),
             (
                 "rust-production-telemetry",
                 "rust",
                 "true",
-                "SAKURA_UTF16_BENCHMARK_TELEMETRY is test-only and cannot package production",
+                "SAKURA_UTF16_PRODUCTION_PACKAGE=true requires SAKURA_UTF16_BACKEND=cpp",
             ),
             (
-                "cpp-production",
+                "cpp-production-telemetry",
                 "cpp",
-                "false",
-                "MSBuild requires SAKURA_UTF16_BACKEND=rust",
+                "true",
+                "SAKURA_UTF16_BENCHMARK_TELEMETRY is test-only and cannot package production",
             ),
         )
         for name, backend, telemetry, expected in cases:
@@ -473,33 +615,42 @@ class CMakeGenerationContractTests(unittest.TestCase):
                 self.assertLess(elapsed, 8.0, output)
 
     @unittest.skipUnless(MSBUILD_EXECUTABLE, "MSBuild is required")
-    def test_msbuild_accepts_rust_for_all_configurations(self) -> None:
+    def test_msbuild_accepts_cpp_authority_and_explicit_rust_candidate(self) -> None:
         msbuild = MSBUILD_EXECUTABLE
         assert msbuild is not None
         project = str(REPO_ROOT / "sakura_core/sakura.vcxproj")
         cases = (
             (
-                "explicit-rust-nonproduction",
+                "explicit-cpp-nonproduction",
                 [
-                    "/p:SAKURA_UTF16_BACKEND=rust",
+                    "/p:SAKURA_UTF16_BACKEND=cpp",
                     "/p:SAKURA_UTF16_PRODUCTION_PACKAGE=false",
                     "/p:SAKURA_UTF16_BENCHMARK_TELEMETRY=false",
                 ],
                 {},
             ),
             (
-                "explicit-rust-production",
+                "explicit-cpp-production",
                 [
-                    "/p:SAKURA_UTF16_BACKEND=rust",
+                    "/p:SAKURA_UTF16_BACKEND=cpp",
                     "/p:SAKURA_UTF16_PRODUCTION_PACKAGE=true",
                     "/p:SAKURA_UTF16_BENCHMARK_TELEMETRY=false",
                 ],
                 {},
             ),
             (
-                "implicit-rust-production",
+                "implicit-cpp-production",
                 [
                     "/p:SAKURA_UTF16_PRODUCTION_PACKAGE=true",
+                    "/p:SAKURA_UTF16_BENCHMARK_TELEMETRY=false",
+                ],
+                {},
+            ),
+            (
+                "explicit-rust-nonproduction",
+                [
+                    "/p:SAKURA_UTF16_BACKEND=rust",
+                    "/p:SAKURA_UTF16_PRODUCTION_PACKAGE=false",
                     "/p:SAKURA_UTF16_BENCHMARK_TELEMETRY=false",
                 ],
                 {},
@@ -549,7 +700,7 @@ class CMakeGenerationContractTests(unittest.TestCase):
         msbuild = MSBUILD_EXECUTABLE
         assert msbuild is not None
         with tempfile.TemporaryDirectory() as temporary:
-            library = Path(temporary) / "sakura_rust_core.lib"
+            library = Path(temporary) / "sakura_native_ffi.lib"
             library.write_bytes(b"up-to-date output placeholder")
             original = library.read_bytes()
             started = time.monotonic()
@@ -557,12 +708,12 @@ class CMakeGenerationContractTests(unittest.TestCase):
                 [
                     msbuild,
                     str(REPO_ROOT / "sakura_core/sakura.vcxproj"),
-                    "/t:BuildSakuraRustCore",
+                    "/t:BuildSakuraNativeFfi",
                     "/p:Platform=x64",
                     "/p:Configuration=Debug",
                     "/p:SAKURA_UTF16_BACKEND=rust",
-                    "/p:SakuraRustCoreCargo=issue239-cargo-missing",
-                    f"/p:SakuraRustCoreLibrary={library}",
+                    "/p:SakuraNativeFfiCargo=issue239-cargo-missing",
+                    f"/p:SakuraNativeFfiLibrary={library}",
                     "/m:1",
                     "/nr:false",
                     "/nologo",

@@ -13,7 +13,9 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <cstdio>
+#include <limits>
 #include <memory>
 #include <random>
 #include <string>
@@ -181,11 +183,24 @@ TEST(CpuDispatchTest, SelectsHighestSafeIsa)
 		{{true, true, false}, Isa::Avx2},
 		{{true, true, true}, Isa::Avx512},
 	}};
+	constexpr std::array<SakuraOperationId, 3> operations{
+		SakuraOperationId::FindCrOrLfUtf16,
+		SakuraOperationId::FindMarkdownSpecialUtf16,
+		SakuraOperationId::FindCharUtf16,
+	};
 	for (const auto& [capabilities, expected] : cases) {
 		EXPECT_EQ(expected, CpuDispatch::SelectBestIsa(capabilities))
 			<< "avx=" << capabilities.avx
 			<< " avx2=" << capabilities.avx2
 			<< " avx512=" << capabilities.avx512;
+		for (const auto operation : operations) {
+			EXPECT_EQ(expected,
+				CpuDispatch::SelectUtf16OperationIsa(operation, capabilities))
+				<< "operation=" << static_cast<std::uint32_t>(operation)
+				<< " avx=" << capabilities.avx
+				<< " avx2=" << capabilities.avx2
+				<< " avx512=" << capabilities.avx512;
+		}
 	}
 }
 
@@ -560,7 +575,7 @@ TEST(CpuDispatchTest, DispatchDiagnosticsExposePerOperationBackendAndThresholds)
 	EXPECT_STREQ("cpp", dispatch.utf16Backend);
 	EXPECT_STREQ("cpp", dispatch.utf16BuildMode);
 #endif
-	const auto expectImplementation = [&](const char* implementation) {
+	const auto expectImplementation = [&](const char* implementation, CpuDispatch::Isa isa) {
 		ASSERT_NE(nullptr, implementation);
 		const std::string value{implementation};
 #if defined(SAKURA_UTF16_BACKEND_RUST)
@@ -568,27 +583,35 @@ TEST(CpuDispatchTest, DispatchDiagnosticsExposePerOperationBackendAndThresholds)
 #else
 		EXPECT_EQ(std::size_t{0}, value.find("cpp-"));
 #endif
-		EXPECT_NE(std::string::npos, value.find(CpuDispatch::GetIsaName(dispatch.isa)));
+		EXPECT_NE(std::string::npos, value.find(CpuDispatch::GetIsaName(isa)));
 	};
-	expectImplementation(dispatch.utf16CrOrLfImplementation);
-	expectImplementation(dispatch.utf16MarkdownImplementation);
-	expectImplementation(dispatch.utf16FindCharImplementation);
+	expectImplementation(dispatch.utf16CrOrLfImplementation, dispatch.utf16CrOrLfIsa);
+	expectImplementation(dispatch.utf16MarkdownImplementation, dispatch.utf16MarkdownIsa);
+	expectImplementation(dispatch.utf16FindCharImplementation, dispatch.utf16FindCharIsa);
 	EXPECT_EQ(1U, dispatch.utf16AbiVersion);
 	EXPECT_STREQ(CpuDispatch::GetIsaName(dispatch.isa),
 		dispatch.isa == CpuDispatch::Isa::Avx
 			? "avx128"
 			: dispatch.isa == CpuDispatch::Isa::Avx2 ? "avx2" : "avx512bw");
-	const auto policy = CpuDispatch::GetUtf16ScanPolicy(dispatch.isa);
-	EXPECT_EQ(policy.crOrLfMinimumLength, dispatch.utf16ScanPolicy.crOrLfMinimumLength);
-	EXPECT_EQ(policy.markdownInlineSpecialMinimumLength,
+	const auto crOrLfPolicy = CpuDispatch::GetUtf16ScanPolicy(dispatch.utf16CrOrLfIsa);
+	const auto markdownPolicy = CpuDispatch::GetUtf16ScanPolicy(dispatch.utf16MarkdownIsa);
+	const auto findCharPolicy = CpuDispatch::GetUtf16ScanPolicy(dispatch.utf16FindCharIsa);
+	EXPECT_EQ(crOrLfPolicy.crOrLfMinimumLength,
+		dispatch.utf16ScanPolicy.crOrLfMinimumLength);
+	EXPECT_EQ(markdownPolicy.markdownInlineSpecialMinimumLength,
 		dispatch.utf16ScanPolicy.markdownInlineSpecialMinimumLength);
-	EXPECT_EQ(policy.findCharMinimumLength, dispatch.utf16ScanPolicy.findCharMinimumLength);
+	EXPECT_EQ(findCharPolicy.findCharMinimumLength,
+		dispatch.utf16ScanPolicy.findCharMinimumLength);
 	std::printf(
-		"UTF16_DISPATCH build_mode=%s backend=%s isa=%s crlf=%s markdown=%s "
+		"UTF16_DISPATCH build_mode=%s backend=%s isa=%s operation_isas=%s,%s,%s "
+		"crlf=%s markdown=%s "
 		"find_char=%s thresholds=%zu,%zu,%zu abi=%u\n",
 		dispatch.utf16BuildMode,
 		dispatch.utf16Backend,
 		CpuDispatch::GetIsaName(dispatch.isa),
+		CpuDispatch::GetIsaName(dispatch.utf16CrOrLfIsa),
+		CpuDispatch::GetIsaName(dispatch.utf16MarkdownIsa),
+		CpuDispatch::GetIsaName(dispatch.utf16FindCharIsa),
 		dispatch.utf16CrOrLfImplementation,
 		dispatch.utf16MarkdownImplementation,
 		dispatch.utf16FindCharImplementation,
@@ -598,11 +621,104 @@ TEST(CpuDispatchTest, DispatchDiagnosticsExposePerOperationBackendAndThresholds)
 		dispatch.utf16AbiVersion);
 	// These accessors resolve to the selected production backend.
 	EXPECT_EQ(dispatch.findCrOrLfUtf16,
-		CpuDispatch::Testing::GetSupportedFindCrOrLfUtf16(dispatch.isa));
+		CpuDispatch::Testing::GetSupportedFindCrOrLfUtf16(dispatch.utf16CrOrLfIsa));
 	EXPECT_EQ(dispatch.findMarkdownInlineSpecialUtf16,
-		CpuDispatch::Testing::GetSupportedFindMarkdownInlineSpecialUtf16(dispatch.isa));
+		CpuDispatch::Testing::GetSupportedFindMarkdownInlineSpecialUtf16(
+			dispatch.utf16MarkdownIsa));
 	EXPECT_EQ(dispatch.findUtf16Char,
-		CpuDispatch::Testing::GetSupportedFindUtf16Char(dispatch.isa));
+		CpuDispatch::Testing::GetSupportedFindUtf16Char(dispatch.utf16FindCharIsa));
+}
+
+TEST(CpuDispatchTest, ExplicitUtf16ProvidersAreAddressableAndDifferentiallyEquivalent)
+{
+	constexpr bool rustCandidateLinked =
+#if defined(SAKURA_UTF16_BACKEND_RUST) || defined(SAKURA_UTF16_RUST_CANDIDATE)
+		true;
+#else
+		false;
+#endif
+
+	alignas(64) std::array<wchar_t, 512 + 31> storage{};
+	constexpr std::array<std::size_t, 13> lengths{
+		0, 1, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64,
+	};
+	for (const auto isa : kImplementations) {
+		const auto cppCrOrLf = CpuDispatch::Testing::GetSupportedFindCrOrLfUtf16Cpp(isa);
+		const auto cppMarkdown =
+			CpuDispatch::Testing::GetSupportedFindMarkdownInlineSpecialUtf16Cpp(isa);
+		const auto cppFindChar = CpuDispatch::Testing::GetSupportedFindUtf16CharCpp(isa);
+		const auto rustCrOrLf = CpuDispatch::Testing::GetSupportedFindCrOrLfUtf16Rust(isa);
+		const auto rustMarkdown =
+			CpuDispatch::Testing::GetSupportedFindMarkdownInlineSpecialUtf16Rust(isa);
+		const auto rustFindChar = CpuDispatch::Testing::GetSupportedFindUtf16CharRust(isa);
+
+		if (cppCrOrLf == nullptr || cppMarkdown == nullptr || cppFindChar == nullptr) {
+			EXPECT_EQ(nullptr, rustCrOrLf) << "isa=" << CpuDispatch::GetIsaName(isa);
+			EXPECT_EQ(nullptr, rustMarkdown) << "isa=" << CpuDispatch::GetIsaName(isa);
+			EXPECT_EQ(nullptr, rustFindChar) << "isa=" << CpuDispatch::GetIsaName(isa);
+			continue;
+		}
+		if (rustCandidateLinked) {
+			ASSERT_NE(nullptr, rustCrOrLf) << "isa=" << CpuDispatch::GetIsaName(isa);
+			ASSERT_NE(nullptr, rustMarkdown) << "isa=" << CpuDispatch::GetIsaName(isa);
+			ASSERT_NE(nullptr, rustFindChar) << "isa=" << CpuDispatch::GetIsaName(isa);
+		} else {
+			EXPECT_EQ(nullptr, rustCrOrLf) << "isa=" << CpuDispatch::GetIsaName(isa);
+			EXPECT_EQ(nullptr, rustMarkdown) << "isa=" << CpuDispatch::GetIsaName(isa);
+			EXPECT_EQ(nullptr, rustFindChar) << "isa=" << CpuDispatch::GetIsaName(isa);
+			continue;
+		}
+
+		for (std::size_t alignmentOffset = 0; alignmentOffset < 32; ++alignmentOffset) {
+			wchar_t* const data = storage.data() + alignmentOffset;
+			for (const auto length : lengths) {
+				std::fill(data, data + length, L'x');
+				for (std::size_t position = 0; position <= length; ++position) {
+					std::fill(data, data + length, L'x');
+					if (position < length) data[position] = L'\n';
+					EXPECT_EQ(cppCrOrLf(data, length), rustCrOrLf(data, length))
+						<< "operation=crlf isa=" << CpuDispatch::GetIsaName(isa)
+						<< " alignmentOffset=" << alignmentOffset
+						<< " length=" << length << " position=" << position;
+
+					std::fill(data, data + length, L'x');
+					if (position < length) data[position] = L'$';
+					EXPECT_EQ(cppMarkdown(data, length), rustMarkdown(data, length))
+						<< "operation=markdown isa=" << CpuDispatch::GetIsaName(isa)
+						<< " alignmentOffset=" << alignmentOffset
+						<< " length=" << length << " position=" << position;
+				}
+
+				std::fill(data, data + length, static_cast<wchar_t>(0x65e5));
+				if (length > 0) data[length / 2] = static_cast<wchar_t>(0xd83d);
+				const wchar_t target = length > 0
+					? data[length / 2] : static_cast<wchar_t>(0xd83d);
+				EXPECT_EQ(cppFindChar(data, length, target), rustFindChar(data, length, target))
+					<< "operation=find_char isa=" << CpuDispatch::GetIsaName(isa)
+					<< " alignmentOffset=" << alignmentOffset
+					<< " length=" << length;
+			}
+		}
+	}
+
+	const auto& dispatch = CpuDispatch::Get();
+#if defined(SAKURA_UTF16_BACKEND_RUST)
+	EXPECT_EQ(dispatch.findCrOrLfUtf16,
+		CpuDispatch::Testing::GetSupportedFindCrOrLfUtf16Rust(dispatch.utf16CrOrLfIsa));
+	EXPECT_EQ(dispatch.findMarkdownInlineSpecialUtf16,
+		CpuDispatch::Testing::GetSupportedFindMarkdownInlineSpecialUtf16Rust(
+			dispatch.utf16MarkdownIsa));
+	EXPECT_EQ(dispatch.findUtf16Char,
+		CpuDispatch::Testing::GetSupportedFindUtf16CharRust(dispatch.utf16FindCharIsa));
+#else
+	EXPECT_EQ(dispatch.findCrOrLfUtf16,
+		CpuDispatch::Testing::GetSupportedFindCrOrLfUtf16Cpp(dispatch.utf16CrOrLfIsa));
+	EXPECT_EQ(dispatch.findMarkdownInlineSpecialUtf16,
+		CpuDispatch::Testing::GetSupportedFindMarkdownInlineSpecialUtf16Cpp(
+			dispatch.utf16MarkdownIsa));
+	EXPECT_EQ(dispatch.findUtf16Char,
+		CpuDispatch::Testing::GetSupportedFindUtf16CharCpp(dispatch.utf16FindCharIsa));
+#endif
 }
 
 // This test must run in a fresh tests1 process before any other CpuDispatch
@@ -638,13 +754,104 @@ TEST(CpuDispatchTest, ConcurrentInitializationAndDiagnosticsAreStable)
 		dispatches[0]->utf16AbiVersion);
 }
 
-#if defined(SAKURA_UTF16_BACKEND_RUST)
+#if defined(SAKURA_UTF16_BACKEND_RUST) || defined(SAKURA_UTF16_RUST_CANDIDATE)
 namespace
 {
 using RustUtf16ScanFunction = std::size_t (*)(
 	const std::uint16_t*, std::size_t) noexcept;
 using RustUtf16FindCharFunction = std::size_t (*)(
 	const std::uint16_t*, std::size_t, std::uint16_t) noexcept;
+
+template<typename Operation>
+std::size_t InvokeRustUtf16ForTest(std::size_t length, Operation operation) noexcept
+{
+	std::uint64_t result = static_cast<std::uint64_t>(length);
+	const auto status = operation(&result);
+	return status == SakuraStatus::Ok && result <= static_cast<std::uint64_t>(length)
+		? static_cast<std::size_t>(result)
+		: length;
+}
+
+std::size_t RustCrOrLfAvx128(
+	const std::uint16_t* data, std::size_t length) noexcept
+{
+	return InvokeRustUtf16ForTest(length, [&](std::uint64_t* result) noexcept {
+		return sakura_utf16_find_cr_or_lf_avx128_v2(
+			data, static_cast<std::uint64_t>(length), result);
+	});
+}
+
+std::size_t RustMarkdownAvx128(
+	const std::uint16_t* data, std::size_t length) noexcept
+{
+	return InvokeRustUtf16ForTest(length, [&](std::uint64_t* result) noexcept {
+		return sakura_utf16_find_markdown_special_avx128_v2(
+			data, static_cast<std::uint64_t>(length), result);
+	});
+}
+
+std::size_t RustFindCharAvx128(
+	const std::uint16_t* data, std::size_t length, std::uint16_t target) noexcept
+{
+	return InvokeRustUtf16ForTest(length, [&](std::uint64_t* result) noexcept {
+		return sakura_utf16_find_char_avx128_v2(
+			data, static_cast<std::uint64_t>(length), target, result);
+	});
+}
+
+std::size_t RustCrOrLfAvx2(
+	const std::uint16_t* data, std::size_t length) noexcept
+{
+	return InvokeRustUtf16ForTest(length, [&](std::uint64_t* result) noexcept {
+		return sakura_utf16_find_cr_or_lf_avx2_v2(
+			data, static_cast<std::uint64_t>(length), result);
+	});
+}
+
+std::size_t RustMarkdownAvx2(
+	const std::uint16_t* data, std::size_t length) noexcept
+{
+	return InvokeRustUtf16ForTest(length, [&](std::uint64_t* result) noexcept {
+		return sakura_utf16_find_markdown_special_avx2_v2(
+			data, static_cast<std::uint64_t>(length), result);
+	});
+}
+
+std::size_t RustFindCharAvx2(
+	const std::uint16_t* data, std::size_t length, std::uint16_t target) noexcept
+{
+	return InvokeRustUtf16ForTest(length, [&](std::uint64_t* result) noexcept {
+		return sakura_utf16_find_char_avx2_v2(
+			data, static_cast<std::uint64_t>(length), target, result);
+	});
+}
+
+std::size_t RustCrOrLfAvx512Bw(
+	const std::uint16_t* data, std::size_t length) noexcept
+{
+	return InvokeRustUtf16ForTest(length, [&](std::uint64_t* result) noexcept {
+		return sakura_utf16_find_cr_or_lf_avx512bw_v2(
+			data, static_cast<std::uint64_t>(length), result);
+	});
+}
+
+std::size_t RustMarkdownAvx512Bw(
+	const std::uint16_t* data, std::size_t length) noexcept
+{
+	return InvokeRustUtf16ForTest(length, [&](std::uint64_t* result) noexcept {
+		return sakura_utf16_find_markdown_special_avx512bw_v2(
+			data, static_cast<std::uint64_t>(length), result);
+	});
+}
+
+std::size_t RustFindCharAvx512Bw(
+	const std::uint16_t* data, std::size_t length, std::uint16_t target) noexcept
+{
+	return InvokeRustUtf16ForTest(length, [&](std::uint64_t* result) noexcept {
+		return sakura_utf16_find_char_avx512bw_v2(
+			data, static_cast<std::uint64_t>(length), target, result);
+	});
+}
 
 struct RustUtf16Implementation {
 	const char* name;
@@ -659,24 +866,24 @@ std::array<RustUtf16Implementation, 3> GetRustUtf16Implementations()
 	return {
 		RustUtf16Implementation{
 			"avx128",
-			dispatch.capabilities.avx ? sakura_utf16_find_cr_or_lf_avx128_v1 : nullptr,
+			dispatch.capabilities.avx ? RustCrOrLfAvx128 : nullptr,
 			dispatch.capabilities.avx
-				? sakura_utf16_find_markdown_special_avx128_v1 : nullptr,
-			dispatch.capabilities.avx ? sakura_utf16_find_char_avx128_v1 : nullptr,
+				? RustMarkdownAvx128 : nullptr,
+			dispatch.capabilities.avx ? RustFindCharAvx128 : nullptr,
 		},
 		RustUtf16Implementation{
 			"avx2",
-			dispatch.capabilities.avx2 ? sakura_utf16_find_cr_or_lf_avx2_v1 : nullptr,
+			dispatch.capabilities.avx2 ? RustCrOrLfAvx2 : nullptr,
 			dispatch.capabilities.avx2
-				? sakura_utf16_find_markdown_special_avx2_v1 : nullptr,
-			dispatch.capabilities.avx2 ? sakura_utf16_find_char_avx2_v1 : nullptr,
+				? RustMarkdownAvx2 : nullptr,
+			dispatch.capabilities.avx2 ? RustFindCharAvx2 : nullptr,
 		},
 		RustUtf16Implementation{
 			"avx512bw",
-			dispatch.capabilities.avx512 ? sakura_utf16_find_cr_or_lf_avx512bw_v1 : nullptr,
+			dispatch.capabilities.avx512 ? RustCrOrLfAvx512Bw : nullptr,
 			dispatch.capabilities.avx512
-				? sakura_utf16_find_markdown_special_avx512bw_v1 : nullptr,
-			dispatch.capabilities.avx512 ? sakura_utf16_find_char_avx512bw_v1 : nullptr,
+				? RustMarkdownAvx512Bw : nullptr,
+			dispatch.capabilities.avx512 ? RustFindCharAvx512Bw : nullptr,
 		},
 	};
 }
@@ -819,6 +1026,129 @@ TEST(CpuDispatchTest, RustUtf16ScannersRejectInvalidFfiSpans)
 			EXPECT_EQ(0U, implementation.findChar(reinterpret_cast<const std::uint16_t*>(2), 0, target));
 		}
 	}
+}
+
+TEST(CpuDispatchTest, NativeInitializationAbiValidatesAndFreezesTheCppSnapshot)
+{
+	const auto& dispatch = CpuDispatch::Get();
+	ASSERT_TRUE(dispatch.nativeCandidateLinked);
+	ASSERT_EQ(SakuraStatus::Ok, dispatch.nativeInitializationStatus);
+	EXPECT_EQ(sizeof(SakuraCpuCapabilitiesV1),
+		dispatch.nativeCapabilities.structSize);
+	EXPECT_EQ(SAKURA_NATIVE_ABI_VERSION_V1,
+		dispatch.nativeCapabilities.abiVersion);
+	for (const auto& policy : dispatch.nativeOperationPolicies) {
+		EXPECT_EQ(sizeof(SakuraOperationPolicyV1), policy.structSize);
+		EXPECT_EQ(SAKURA_NATIVE_ABI_VERSION_V1, policy.abiVersion);
+	}
+	const auto expectedImplementationId = [](CpuDispatch::Isa isa) {
+#if defined(SAKURA_UTF16_BACKEND_RUST)
+		switch (isa) {
+		case CpuDispatch::Isa::Avx512: return SakuraImplementationId::RustAvx512Bw;
+		case CpuDispatch::Isa::Avx2: return SakuraImplementationId::RustAvx2;
+		default: return SakuraImplementationId::RustAvx128;
+		}
+#else
+		switch (isa) {
+		case CpuDispatch::Isa::Avx512: return SakuraImplementationId::CppAvx512Bw;
+		case CpuDispatch::Isa::Avx2: return SakuraImplementationId::CppAvx2;
+		default: return SakuraImplementationId::CppAvx128;
+		}
+#endif
+	};
+	const std::array<SakuraOperationId, 3> expectedOperations{
+		SakuraOperationId::FindCrOrLfUtf16,
+		SakuraOperationId::FindMarkdownSpecialUtf16,
+		SakuraOperationId::FindCharUtf16,
+	};
+	const std::array<CpuDispatch::Isa, 3> expectedIsas{
+		dispatch.utf16CrOrLfIsa,
+		dispatch.utf16MarkdownIsa,
+		dispatch.utf16FindCharIsa,
+	};
+	const std::array<std::size_t, 3> expectedMinimumLengths{
+		dispatch.utf16ScanPolicy.crOrLfMinimumLength,
+		dispatch.utf16ScanPolicy.markdownInlineSpecialMinimumLength,
+		dispatch.utf16ScanPolicy.findCharMinimumLength,
+	};
+	for (std::size_t index = 0; index < dispatch.nativeOperationPolicies.size(); ++index) {
+		const auto& policy = dispatch.nativeOperationPolicies[index];
+		EXPECT_EQ(static_cast<std::uint32_t>(expectedOperations[index]), policy.operationId);
+		EXPECT_EQ(static_cast<std::uint32_t>(expectedImplementationId(expectedIsas[index])),
+			policy.implementationId);
+		EXPECT_EQ(expectedMinimumLengths[index], policy.minimumLength);
+	}
+
+	EXPECT_EQ(SakuraStatus::Ok, sakura_native_initialize_v1(
+		&dispatch.nativeCapabilities, dispatch.nativeOperationPolicies.data(),
+		static_cast<std::uint64_t>(dispatch.nativeOperationPolicies.size())));
+
+	auto invalidCapabilities = dispatch.nativeCapabilities;
+	invalidCapabilities.structSize = 0;
+	EXPECT_EQ(SakuraStatus::InvalidArgument, sakura_native_initialize_v1(
+		&invalidCapabilities, dispatch.nativeOperationPolicies.data(),
+		static_cast<std::uint64_t>(dispatch.nativeOperationPolicies.size())));
+	invalidCapabilities = dispatch.nativeCapabilities;
+	invalidCapabilities.abiVersion += 1;
+	EXPECT_EQ(SakuraStatus::InvalidArgument, sakura_native_initialize_v1(
+		&invalidCapabilities, dispatch.nativeOperationPolicies.data(),
+		static_cast<std::uint64_t>(dispatch.nativeOperationPolicies.size())));
+	EXPECT_EQ(SakuraStatus::InvalidArgument, sakura_native_initialize_v1(
+		nullptr, dispatch.nativeOperationPolicies.data(),
+		static_cast<std::uint64_t>(dispatch.nativeOperationPolicies.size())));
+	EXPECT_EQ(SakuraStatus::InvalidArgument, sakura_native_initialize_v1(
+		&dispatch.nativeCapabilities, nullptr,
+		static_cast<std::uint64_t>(dispatch.nativeOperationPolicies.size())));
+	EXPECT_EQ(SakuraStatus::InvalidArgument, sakura_native_initialize_v1(
+		&dispatch.nativeCapabilities, dispatch.nativeOperationPolicies.data(), 2));
+
+	SakuraCpuCapabilitiesV1 avxOnly{};
+	avxOnly.structSize = sizeof(avxOnly);
+	avxOnly.abiVersion = SAKURA_NATIVE_ABI_VERSION_V1;
+	avxOnly.rawFeatureBits = SakuraAbiBit(SakuraCpuFeature::Avx);
+	avxOnly.osExtendedStateBits = SakuraAbiBit(SakuraOsExtendedState::Xmm)
+		| SakuraAbiBit(SakuraOsExtendedState::Ymm);
+	auto unsupportedPolicies = dispatch.nativeOperationPolicies;
+	for (auto& policy : unsupportedPolicies) {
+		policy.implementationId =
+			static_cast<std::uint32_t>(SakuraImplementationId::RustAvx2);
+	}
+	EXPECT_EQ(SakuraStatus::Unsupported, sakura_native_initialize_v1(
+		&avxOnly, unsupportedPolicies.data(),
+		static_cast<std::uint64_t>(unsupportedPolicies.size())));
+
+	auto conflictingPolicies = dispatch.nativeOperationPolicies;
+	conflictingPolicies[0].minimumLength += 1;
+	EXPECT_EQ(SakuraStatus::ConflictingInitialization, sakura_native_initialize_v1(
+		&dispatch.nativeCapabilities, conflictingPolicies.data(),
+		static_cast<std::uint64_t>(conflictingPolicies.size())));
+}
+
+TEST(CpuDispatchTest, TypedRustScanAbiFailsClosed)
+{
+	const auto& dispatch = CpuDispatch::Get();
+	ASSERT_TRUE(dispatch.capabilities.avx);
+	ASSERT_EQ(SakuraStatus::Ok, dispatch.nativeInitializationStatus);
+	std::uint64_t result = 99;
+	EXPECT_EQ(SakuraStatus::Ok,
+		sakura_utf16_find_cr_or_lf_avx128_v2(nullptr, 0, &result));
+	EXPECT_EQ(0U, result);
+
+	result = 99;
+	EXPECT_EQ(SakuraStatus::InvalidArgument,
+		sakura_utf16_find_cr_or_lf_avx128_v2(nullptr, 7, &result));
+	EXPECT_EQ(7U, result);
+	const std::array<std::uint16_t, 2> aligned{};
+	const auto* const misaligned = reinterpret_cast<const std::uint16_t*>(
+		reinterpret_cast<const unsigned char*>(aligned.data()) + 1);
+	EXPECT_EQ(SakuraStatus::InvalidArgument,
+		sakura_utf16_find_cr_or_lf_avx128_v2(misaligned, 1, &result));
+	EXPECT_EQ(1U, result);
+	EXPECT_EQ(SakuraStatus::InvalidArgument,
+		sakura_utf16_find_cr_or_lf_avx128_v2(aligned.data(), 1, nullptr));
+	EXPECT_EQ(SakuraStatus::InvalidArgument,
+		sakura_utf16_find_cr_or_lf_avx128_v2(
+			aligned.data(), std::numeric_limits<std::uint64_t>::max(), &result));
 }
 
 TEST(CpuDispatchTest, RustUtf16ScannersMatchEveryLegalAlignment)

@@ -31,6 +31,24 @@ inline std::uint64_t g_runId{};
 inline std::uint64_t g_eventOrder{};
 inline bool g_started{};
 
+inline constexpr bool RustCandidateLinked() noexcept
+{
+#if defined(SAKURA_UTF16_BACKEND_RUST) || defined(SAKURA_UTF16_RUST_CANDIDATE)
+	return true;
+#else
+	return false;
+#endif
+}
+
+inline const char* ImplementationForOperation(
+	const CpuDispatch::Dispatch& dispatch, std::string_view operation) noexcept
+{
+	if (operation == "crlf") return dispatch.utf16CrOrLfImplementation;
+	if (operation == "markdown") return dispatch.utf16MarkdownImplementation;
+	if (operation == "find_char") return dispatch.utf16FindCharImplementation;
+	return "unknown";
+}
+
 inline const char* IsaName(CpuDispatch::Isa isa) noexcept
 {
 	switch (isa) {
@@ -54,7 +72,18 @@ inline void Start(const std::filesystem::path& path, std::uint64_t runId)
 		<< g_runId << ",\"pid\":" << ::GetCurrentProcessId()
 		<< ",\"backend\":\"" << dispatch.utf16Backend
 		<< "\",\"build_mode\":\"" << dispatch.utf16BuildMode
-		<< "\",\"selected_isa\":\"" << IsaName(dispatch.isa) << "\"}\n";
+		<< "\",\"selected_isa\":\"" << IsaName(dispatch.isa)
+		<< "\",\"crlf_isa\":\"" << IsaName(dispatch.utf16CrOrLfIsa)
+		<< "\",\"markdown_isa\":\"" << IsaName(dispatch.utf16MarkdownIsa)
+		<< "\",\"find_char_isa\":\"" << IsaName(dispatch.utf16FindCharIsa)
+		<< "\",\"crlf_implementation\":\"" << dispatch.utf16CrOrLfImplementation
+		<< "\",\"markdown_implementation\":\""
+		<< dispatch.utf16MarkdownImplementation
+		<< "\",\"find_char_implementation\":\""
+		<< dispatch.utf16FindCharImplementation
+		<< "\",\"rust_candidate_linked\":"
+		<< (RustCandidateLinked() ? "true" : "false")
+		<< ",\"abi_version\":" << dispatch.utf16AbiVersion << "}\n";
 	if (!g_output) throw std::runtime_error("cannot write UTF-16 telemetry metadata");
 }
 
@@ -92,8 +121,13 @@ inline void Record(
 		<< "\",\"result_offset\":" << result
 		<< ",\"alignment_mod64\":" << alignment
 		<< ",\"selected_isa\":\"" << IsaName(isa)
+		<< "\",\"backend\":\"" << CpuDispatch::Get().utf16Backend
+		<< "\",\"implementation\":\""
+		<< ImplementationForOperation(CpuDispatch::Get(), operation)
 		<< "\",\"implementation_path\":\"" << path
-		<< "\",\"corpus_label\":\"" << g_corpus << "\"}\n";
+		<< "\",\"rust_candidate_linked\":"
+		<< (RustCandidateLinked() ? "true" : "false")
+		<< ",\"corpus_label\":\"" << g_corpus << "\"}\n";
 	if (!g_output) throw std::runtime_error("cannot write UTF-16 telemetry output");
 }
 }

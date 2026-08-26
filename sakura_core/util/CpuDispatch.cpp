@@ -28,6 +28,12 @@ constexpr std::uint64_t kXcr0AvxMask = (std::uint64_t{1} << 1) | (std::uint64_t{
 constexpr std::uint64_t kXcr0Avx512Mask =
 	kXcr0AvxMask | (std::uint64_t{1} << 5) | (std::uint64_t{1} << 6) | (std::uint64_t{1} << 7);
 
+struct DetectedCapabilities {
+	CpuDispatch::Capabilities effective{};
+	std::uint64_t rawFeatureBits{};
+	std::uint64_t osExtendedStateBits{};
+};
+
 int GetMaximumCpuidLeaf() noexcept
 {
 #if defined(_MSC_VER)
@@ -71,58 +77,172 @@ std::uint64_t ReadXcr0() noexcept
 #endif
 }
 
-CpuDispatch::Capabilities DetectCapabilities() noexcept
+DetectedCapabilities DetectCapabilities() noexcept
 {
+	DetectedCapabilities detected{};
 	int registers[4]{};
 	const int maximumLeaf = GetMaximumCpuidLeaf();
 	if (maximumLeaf < kCpuidLeafFeatures) {
-		return {};
+		return detected;
 	}
 
 	Cpuid(registers, kCpuidLeafFeatures, kCpuidSubleafZero);
 	const bool cpuAvx = (registers[2] & kCpuidEcxAvx) != 0;
 	const bool osXsave = (registers[2] & kCpuidEcxOsXsave) != 0;
-	if (!cpuAvx || !osXsave) {
-		return {};
+	if (cpuAvx) {
+		detected.rawFeatureBits |= SakuraAbiBit(SakuraCpuFeature::Avx);
 	}
 
-	const std::uint64_t xcr0 = ReadXcr0();
+	if (maximumLeaf >= kCpuidLeafExtendedFeatures) {
+		Cpuid(registers, kCpuidLeafExtendedFeatures, kCpuidSubleafZero);
+		if ((registers[1] & kCpuidEbxAvx2) != 0) {
+			detected.rawFeatureBits |= SakuraAbiBit(SakuraCpuFeature::Avx2);
+		}
+		if ((registers[1] & kCpuidEbxAvx512F) != 0) {
+			detected.rawFeatureBits |= SakuraAbiBit(SakuraCpuFeature::Avx512F);
+		}
+		if ((registers[1] & kCpuidEbxAvx512Bw) != 0) {
+			detected.rawFeatureBits |= SakuraAbiBit(SakuraCpuFeature::Avx512Bw);
+		}
+	}
+
+	std::uint64_t xcr0{};
+	if (osXsave) {
+		xcr0 = ReadXcr0();
+		if ((xcr0 & (std::uint64_t{1} << 1)) != 0) {
+			detected.osExtendedStateBits |= SakuraAbiBit(SakuraOsExtendedState::Xmm);
+		}
+		if ((xcr0 & (std::uint64_t{1} << 2)) != 0) {
+			detected.osExtendedStateBits |= SakuraAbiBit(SakuraOsExtendedState::Ymm);
+		}
+		if ((xcr0 & (std::uint64_t{1} << 5)) != 0) {
+			detected.osExtendedStateBits |= SakuraAbiBit(SakuraOsExtendedState::Opmask);
+		}
+		if ((xcr0 & (std::uint64_t{1} << 6)) != 0) {
+			detected.osExtendedStateBits |= SakuraAbiBit(SakuraOsExtendedState::ZmmHi256);
+		}
+		if ((xcr0 & (std::uint64_t{1} << 7)) != 0) {
+			detected.osExtendedStateBits |= SakuraAbiBit(SakuraOsExtendedState::Hi16Zmm);
+		}
+	}
+
 	const bool avxState = (xcr0 & kXcr0AvxMask) == kXcr0AvxMask;
-	if (!avxState) {
-		return {};
-	}
-
-	CpuDispatch::Capabilities capabilities{true, false, false};
-	if (maximumLeaf < kCpuidLeafExtendedFeatures) {
-		return capabilities;
-	}
-
-	Cpuid(registers, kCpuidLeafExtendedFeatures, kCpuidSubleafZero);
-	capabilities.avx2 = (registers[1] & kCpuidEbxAvx2) != 0;
-	const bool cpuAvx512 =
-		(registers[1] & kCpuidEbxAvx512F) != 0
-		&& (registers[1] & kCpuidEbxAvx512Bw) != 0;
+	detected.effective.avx = cpuAvx && osXsave && avxState;
+	detected.effective.avx2 = detected.effective.avx
+		&& (detected.rawFeatureBits & SakuraAbiBit(SakuraCpuFeature::Avx2)) != 0;
+	const bool cpuAvx512 = (detected.rawFeatureBits &
+		(SakuraAbiBit(SakuraCpuFeature::Avx512F)
+			| SakuraAbiBit(SakuraCpuFeature::Avx512Bw)))
+		== (SakuraAbiBit(SakuraCpuFeature::Avx512F)
+			| SakuraAbiBit(SakuraCpuFeature::Avx512Bw));
 	// AVX-512 is a process-wide tier: it selects both the UTF-16 path and the
 	// C++ byte scanner, whose tail delegates to FindCrOrLfAvx2. Keep AVX2 in
 	// this effective capability until that dependency is removed.
-	capabilities.avx512 =
-		capabilities.avx2 && cpuAvx512 && (xcr0 & kXcr0Avx512Mask) == kXcr0Avx512Mask;
-	return capabilities;
+	detected.effective.avx512 = detected.effective.avx2
+		&& cpuAvx512 && (xcr0 & kXcr0Avx512Mask) == kXcr0Avx512Mask;
+	return detected;
 }
 
 const char* GetUtf16ImplementationName(CpuDispatch::Isa isa) noexcept
 {
 #if defined(SAKURA_UTF16_BACKEND_RUST)
 	switch (isa) {
-	case CpuDispatch::Isa::Avx512: return "rust-avx512bw-v1";
-	case CpuDispatch::Isa::Avx2: return "rust-avx2-v1";
-	default: return "rust-avx128-v1";
+	case CpuDispatch::Isa::Avx512: return "rust-avx512bw-v2";
+	case CpuDispatch::Isa::Avx2: return "rust-avx2-v2";
+	default: return "rust-avx128-v2";
 	}
 #else
 	switch (isa) {
 	case CpuDispatch::Isa::Avx512: return "cpp-avx512bw";
 	case CpuDispatch::Isa::Avx2: return "cpp-avx2";
 	default: return "cpp-avx128";
+	}
+#endif
+}
+
+SakuraImplementationId GetUtf16ImplementationId(CpuDispatch::Isa isa) noexcept
+{
+#if defined(SAKURA_UTF16_BACKEND_RUST)
+	switch (isa) {
+	case CpuDispatch::Isa::Avx512: return SakuraImplementationId::RustAvx512Bw;
+	case CpuDispatch::Isa::Avx2: return SakuraImplementationId::RustAvx2;
+	default: return SakuraImplementationId::RustAvx128;
+	}
+#else
+	switch (isa) {
+	case CpuDispatch::Isa::Avx512: return SakuraImplementationId::CppAvx512Bw;
+	case CpuDispatch::Isa::Avx2: return SakuraImplementationId::CppAvx2;
+	default: return SakuraImplementationId::CppAvx128;
+	}
+#endif
+}
+
+SakuraOperationPolicyV1 MakeOperationPolicy(
+	SakuraOperationId operationId, SakuraImplementationId implementationId,
+	std::size_t minimumLength) noexcept
+{
+	SakuraOperationPolicyV1 policy{};
+	policy.structSize = sizeof(policy);
+	policy.abiVersion = SAKURA_NATIVE_ABI_VERSION_V1;
+	policy.operationId = static_cast<std::uint32_t>(operationId);
+	policy.implementationId = static_cast<std::uint32_t>(implementationId);
+	policy.minimumLength = static_cast<std::uint64_t>(minimumLength);
+	return policy;
+}
+
+CpuDispatch::FindUtf16Function SelectFindCrOrLfUtf16(CpuDispatch::Isa isa) noexcept
+{
+#if defined(SAKURA_UTF16_BACKEND_RUST)
+	switch (isa) {
+	case CpuDispatch::Isa::Avx512: return CpuDispatch::Internal::FindCrOrLfUtf16RustAvx512Bw;
+	case CpuDispatch::Isa::Avx2: return CpuDispatch::Internal::FindCrOrLfUtf16RustAvx2;
+	default: return CpuDispatch::Internal::FindCrOrLfUtf16RustAvx128;
+	}
+#else
+	switch (isa) {
+	case CpuDispatch::Isa::Avx512: return CpuDispatch::Internal::FindCrOrLfUtf16Avx512;
+	case CpuDispatch::Isa::Avx2: return CpuDispatch::Internal::FindCrOrLfUtf16Avx2;
+	default: return CpuDispatch::Internal::FindCrOrLfUtf16Avx;
+	}
+#endif
+}
+
+CpuDispatch::FindUtf16Function SelectFindMarkdownUtf16(CpuDispatch::Isa isa) noexcept
+{
+#if defined(SAKURA_UTF16_BACKEND_RUST)
+	switch (isa) {
+	case CpuDispatch::Isa::Avx512:
+		return CpuDispatch::Internal::FindMarkdownInlineSpecialUtf16RustAvx512Bw;
+	case CpuDispatch::Isa::Avx2:
+		return CpuDispatch::Internal::FindMarkdownInlineSpecialUtf16RustAvx2;
+	default:
+		return CpuDispatch::Internal::FindMarkdownInlineSpecialUtf16RustAvx128;
+	}
+#else
+	switch (isa) {
+	case CpuDispatch::Isa::Avx512:
+		return CpuDispatch::Internal::FindMarkdownInlineSpecialUtf16Avx512;
+	case CpuDispatch::Isa::Avx2:
+		return CpuDispatch::Internal::FindMarkdownInlineSpecialUtf16Avx2;
+	default:
+		return CpuDispatch::Internal::FindMarkdownInlineSpecialUtf16Avx;
+	}
+#endif
+}
+
+CpuDispatch::FindUtf16CharFunction SelectFindCharUtf16(CpuDispatch::Isa isa) noexcept
+{
+#if defined(SAKURA_UTF16_BACKEND_RUST)
+	switch (isa) {
+	case CpuDispatch::Isa::Avx512: return CpuDispatch::Internal::FindUtf16CharRustAvx512Bw;
+	case CpuDispatch::Isa::Avx2: return CpuDispatch::Internal::FindUtf16CharRustAvx2;
+	default: return CpuDispatch::Internal::FindUtf16CharRustAvx128;
+	}
+#else
+	switch (isa) {
+	case CpuDispatch::Isa::Avx512: return CpuDispatch::Internal::FindUtf16CharAvx512;
+	case CpuDispatch::Isa::Avx2: return CpuDispatch::Internal::FindUtf16CharAvx2;
+	default: return CpuDispatch::Internal::FindUtf16CharAvx;
 	}
 #endif
 }
@@ -134,13 +254,42 @@ CpuDispatch::Dispatch CreateDispatch() noexcept
 	::QueryPerformanceCounter(&begin);
 
 	CpuDispatch::Dispatch dispatch{};
-	dispatch.capabilities = DetectCapabilities();
+	const auto detected = DetectCapabilities();
+	dispatch.capabilities = detected.effective;
 	dispatch.isa = CpuDispatch::SelectBestIsa(dispatch.capabilities);
-	dispatch.utf16ScanPolicy = CpuDispatch::GetUtf16ScanPolicy(dispatch.isa);
+	dispatch.utf16CrOrLfIsa = CpuDispatch::SelectUtf16OperationIsa(
+		SakuraOperationId::FindCrOrLfUtf16, dispatch.capabilities);
+	dispatch.utf16MarkdownIsa = CpuDispatch::SelectUtf16OperationIsa(
+		SakuraOperationId::FindMarkdownSpecialUtf16, dispatch.capabilities);
+	dispatch.utf16FindCharIsa = CpuDispatch::SelectUtf16OperationIsa(
+		SakuraOperationId::FindCharUtf16, dispatch.capabilities);
+	const auto crOrLfPolicy = CpuDispatch::GetUtf16ScanPolicy(dispatch.utf16CrOrLfIsa);
+	const auto markdownPolicy = CpuDispatch::GetUtf16ScanPolicy(dispatch.utf16MarkdownIsa);
+	const auto findCharPolicy = CpuDispatch::GetUtf16ScanPolicy(dispatch.utf16FindCharIsa);
+	dispatch.utf16ScanPolicy = {
+		crOrLfPolicy.crOrLfMinimumLength,
+		markdownPolicy.markdownInlineSpecialMinimumLength,
+		findCharPolicy.findCharMinimumLength,
+	};
 	dispatch.utf8ConversionPolicy = CpuDispatch::GetUtf8ConversionPolicy(dispatch.isa);
-	dispatch.utf16CrOrLfImplementation = GetUtf16ImplementationName(dispatch.isa);
-	dispatch.utf16MarkdownImplementation = GetUtf16ImplementationName(dispatch.isa);
-	dispatch.utf16FindCharImplementation = GetUtf16ImplementationName(dispatch.isa);
+	dispatch.utf16CrOrLfImplementation = GetUtf16ImplementationName(dispatch.utf16CrOrLfIsa);
+	dispatch.utf16MarkdownImplementation = GetUtf16ImplementationName(dispatch.utf16MarkdownIsa);
+	dispatch.utf16FindCharImplementation = GetUtf16ImplementationName(dispatch.utf16FindCharIsa);
+	dispatch.nativeCapabilities.structSize = sizeof(dispatch.nativeCapabilities);
+	dispatch.nativeCapabilities.abiVersion = SAKURA_NATIVE_ABI_VERSION_V1;
+	dispatch.nativeCapabilities.rawFeatureBits = detected.rawFeatureBits;
+	dispatch.nativeCapabilities.osExtendedStateBits = detected.osExtendedStateBits;
+	dispatch.nativeOperationPolicies = {
+		MakeOperationPolicy(SakuraOperationId::FindCrOrLfUtf16,
+			GetUtf16ImplementationId(dispatch.utf16CrOrLfIsa),
+			dispatch.utf16ScanPolicy.crOrLfMinimumLength),
+		MakeOperationPolicy(SakuraOperationId::FindMarkdownSpecialUtf16,
+			GetUtf16ImplementationId(dispatch.utf16MarkdownIsa),
+			dispatch.utf16ScanPolicy.markdownInlineSpecialMinimumLength),
+		MakeOperationPolicy(SakuraOperationId::FindCharUtf16,
+			GetUtf16ImplementationId(dispatch.utf16FindCharIsa),
+			dispatch.utf16ScanPolicy.findCharMinimumLength),
+	};
 #if defined(SAKURA_UTF16_BACKEND_RUST)
 	dispatch.utf16Backend = "rust";
 	dispatch.utf16BuildMode = "rust";
@@ -148,52 +297,31 @@ CpuDispatch::Dispatch CreateDispatch() noexcept
 	dispatch.utf16Backend = "cpp";
 	dispatch.utf16BuildMode = "cpp";
 #endif
-	// The C++ branch is retained only for the experimental MinGW build. MSVC
-	// always defines SAKURA_UTF16_BACKEND_RUST and dispatches to the Rust ABI.
+#if defined(SAKURA_UTF16_BACKEND_RUST) || defined(SAKURA_UTF16_RUST_CANDIDATE)
+	dispatch.nativeCandidateLinked = true;
+	dispatch.nativeInitializationStatus = sakura_native_initialize_v1(
+		&dispatch.nativeCapabilities, dispatch.nativeOperationPolicies.data(),
+		static_cast<std::uint64_t>(dispatch.nativeOperationPolicies.size()));
+#endif
+	dispatch.findCrOrLfUtf16 = SelectFindCrOrLfUtf16(dispatch.utf16CrOrLfIsa);
+	dispatch.findMarkdownInlineSpecialUtf16 =
+		SelectFindMarkdownUtf16(dispatch.utf16MarkdownIsa);
+	dispatch.findUtf16Char = SelectFindCharUtf16(dispatch.utf16FindCharIsa);
+	// Rust is selected only when the build explicitly defines
+	// SAKURA_UTF16_BACKEND_RUST. The default production path remains the C++
+	// implementation; a Rust-linked test build can still expose both providers
+	// through the explicit Testing accessors below.
 	switch (dispatch.isa) {
 	case CpuDispatch::Isa::Avx512:
 		dispatch.findCrOrLf = CpuDispatch::Internal::FindCrOrLfAvx512;
-	#if defined(SAKURA_UTF16_BACKEND_RUST)
-		dispatch.findCrOrLfUtf16 = CpuDispatch::Internal::FindCrOrLfUtf16RustAvx512Bw;
-		dispatch.findMarkdownInlineSpecialUtf16 =
-			CpuDispatch::Internal::FindMarkdownInlineSpecialUtf16RustAvx512Bw;
-		dispatch.findUtf16Char = CpuDispatch::Internal::FindUtf16CharRustAvx512Bw;
-	#else
-		dispatch.findCrOrLfUtf16 = CpuDispatch::Internal::FindCrOrLfUtf16Avx512;
-		dispatch.findMarkdownInlineSpecialUtf16 =
-			CpuDispatch::Internal::FindMarkdownInlineSpecialUtf16Avx512;
-		dispatch.findUtf16Char = CpuDispatch::Internal::FindUtf16CharAvx512;
-	#endif
 		dispatch.widenAsciiToUtf16 = CpuDispatch::Internal::WidenAsciiToUtf16Avx512;
 		break;
 	case CpuDispatch::Isa::Avx2:
 		dispatch.findCrOrLf = CpuDispatch::Internal::FindCrOrLfAvx2;
-	#if defined(SAKURA_UTF16_BACKEND_RUST)
-		dispatch.findCrOrLfUtf16 = CpuDispatch::Internal::FindCrOrLfUtf16RustAvx2;
-		dispatch.findMarkdownInlineSpecialUtf16 =
-			CpuDispatch::Internal::FindMarkdownInlineSpecialUtf16RustAvx2;
-		dispatch.findUtf16Char = CpuDispatch::Internal::FindUtf16CharRustAvx2;
-	#else
-		dispatch.findCrOrLfUtf16 = CpuDispatch::Internal::FindCrOrLfUtf16Avx2;
-		dispatch.findMarkdownInlineSpecialUtf16 =
-			CpuDispatch::Internal::FindMarkdownInlineSpecialUtf16Avx2;
-		dispatch.findUtf16Char = CpuDispatch::Internal::FindUtf16CharAvx2;
-	#endif
 		dispatch.widenAsciiToUtf16 = CpuDispatch::Internal::WidenAsciiToUtf16Avx2;
 		break;
 	default:
 		dispatch.findCrOrLf = CpuDispatch::Internal::FindCrOrLfAvx;
-	#if defined(SAKURA_UTF16_BACKEND_RUST)
-		dispatch.findCrOrLfUtf16 = CpuDispatch::Internal::FindCrOrLfUtf16RustAvx128;
-		dispatch.findMarkdownInlineSpecialUtf16 =
-			CpuDispatch::Internal::FindMarkdownInlineSpecialUtf16RustAvx128;
-		dispatch.findUtf16Char = CpuDispatch::Internal::FindUtf16CharRustAvx128;
-	#else
-		dispatch.findCrOrLfUtf16 = CpuDispatch::Internal::FindCrOrLfUtf16Avx;
-		dispatch.findMarkdownInlineSpecialUtf16 =
-			CpuDispatch::Internal::FindMarkdownInlineSpecialUtf16Avx;
-		dispatch.findUtf16Char = CpuDispatch::Internal::FindUtf16CharAvx;
-	#endif
 		dispatch.widenAsciiToUtf16 = CpuDispatch::Internal::WidenAsciiToUtf16Avx;
 		break;
 	}
@@ -212,6 +340,35 @@ Isa SelectBestIsa(const Capabilities& capabilities) noexcept
 		return Isa::Avx512;
 	}
 	if (capabilities.avx && capabilities.avx2) {
+		return Isa::Avx2;
+	}
+	return Isa::Avx;
+}
+
+Isa SelectUtf16OperationIsa(
+	SakuraOperationId operationId, const Capabilities& capabilities) noexcept
+{
+	// Each operation owns an independent ISA ceiling. They currently all use
+	// the highest audited tier, but keeping the policy slots separate lets an
+	// adoption decision lower one cell without changing the other operations or
+	// the legacy byte/widening tier.
+	Isa maximumIsa = Isa::Avx;
+	switch (operationId) {
+	case SakuraOperationId::FindCrOrLfUtf16:
+		maximumIsa = Isa::Avx512;
+		break;
+	case SakuraOperationId::FindMarkdownSpecialUtf16:
+		maximumIsa = Isa::Avx512;
+		break;
+	case SakuraOperationId::FindCharUtf16:
+		maximumIsa = Isa::Avx512;
+		break;
+	}
+	if (maximumIsa == Isa::Avx512
+		&& capabilities.avx && capabilities.avx2 && capabilities.avx512) {
+		return Isa::Avx512;
+	}
+	if (maximumIsa != Isa::Avx && capabilities.avx && capabilities.avx2) {
 		return Isa::Avx2;
 	}
 	return Isa::Avx;
@@ -300,66 +457,96 @@ FindCrOrLfFunction GetSupportedFindCrOrLf(Isa isa) noexcept
 	}
 }
 
-FindUtf16Function GetSupportedFindCrOrLfUtf16(Isa isa) noexcept
+FindUtf16Function GetSupportedFindCrOrLfUtf16Cpp(Isa isa) noexcept
 {
 	const auto& dispatch = Get();
 	switch (isa) {
 	case Isa::Avx512:
-	#if defined(SAKURA_UTF16_BACKEND_RUST)
-		return dispatch.capabilities.avx512 ? Internal::FindCrOrLfUtf16RustAvx512Bw : nullptr;
-	#else
 		return dispatch.capabilities.avx512 ? Internal::FindCrOrLfUtf16Avx512 : nullptr;
-	#endif
 	case Isa::Avx2:
-	#if defined(SAKURA_UTF16_BACKEND_RUST)
-		return dispatch.capabilities.avx2 ? Internal::FindCrOrLfUtf16RustAvx2 : nullptr;
-	#else
 		return dispatch.capabilities.avx2 ? Internal::FindCrOrLfUtf16Avx2 : nullptr;
-	#endif
 	default:
-	#if defined(SAKURA_UTF16_BACKEND_RUST)
-		return dispatch.capabilities.avx ? Internal::FindCrOrLfUtf16RustAvx128 : nullptr;
-	#else
 		return dispatch.capabilities.avx ? Internal::FindCrOrLfUtf16Avx : nullptr;
-	#endif
 	}
+}
+
+FindUtf16Function GetSupportedFindCrOrLfUtf16Rust(Isa isa) noexcept
+{
+	const auto& dispatch = Get();
+#if defined(SAKURA_UTF16_BACKEND_RUST) || defined(SAKURA_UTF16_RUST_CANDIDATE)
+	switch (isa) {
+	case Isa::Avx512:
+		return dispatch.capabilities.avx512 ? Internal::FindCrOrLfUtf16RustAvx512Bw : nullptr;
+	case Isa::Avx2:
+		return dispatch.capabilities.avx2 ? Internal::FindCrOrLfUtf16RustAvx2 : nullptr;
+	default:
+		return dispatch.capabilities.avx ? Internal::FindCrOrLfUtf16RustAvx128 : nullptr;
+	}
+#else
+	(void)isa;
+	return nullptr;
+#endif
+}
+
+FindUtf16Function GetSupportedFindCrOrLfUtf16(Isa isa) noexcept
+{
+#if defined(SAKURA_UTF16_BACKEND_RUST)
+	return GetSupportedFindCrOrLfUtf16Rust(isa);
+#else
+	return GetSupportedFindCrOrLfUtf16Cpp(isa);
+#endif
+}
+
+FindUtf16Function GetSupportedFindMarkdownInlineSpecialUtf16Cpp(Isa isa) noexcept
+{
+	const auto& dispatch = Get();
+	switch (isa) {
+	case Isa::Avx512:
+		return dispatch.capabilities.avx512
+			? Internal::FindMarkdownInlineSpecialUtf16Avx512
+			: nullptr;
+	case Isa::Avx2:
+		return dispatch.capabilities.avx2
+			? Internal::FindMarkdownInlineSpecialUtf16Avx2
+			: nullptr;
+	default:
+		return dispatch.capabilities.avx
+			? Internal::FindMarkdownInlineSpecialUtf16Avx
+			: nullptr;
+	}
+}
+
+FindUtf16Function GetSupportedFindMarkdownInlineSpecialUtf16Rust(Isa isa) noexcept
+{
+	const auto& dispatch = Get();
+#if defined(SAKURA_UTF16_BACKEND_RUST) || defined(SAKURA_UTF16_RUST_CANDIDATE)
+	switch (isa) {
+	case Isa::Avx512:
+		return dispatch.capabilities.avx512
+			? Internal::FindMarkdownInlineSpecialUtf16RustAvx512Bw
+			: nullptr;
+	case Isa::Avx2:
+		return dispatch.capabilities.avx2
+			? Internal::FindMarkdownInlineSpecialUtf16RustAvx2
+			: nullptr;
+	default:
+		return dispatch.capabilities.avx
+			? Internal::FindMarkdownInlineSpecialUtf16RustAvx128
+			: nullptr;
+	}
+#else
+	(void)isa;
+	return nullptr;
+#endif
 }
 
 FindUtf16Function GetSupportedFindMarkdownInlineSpecialUtf16(Isa isa) noexcept
 {
-	const auto& dispatch = Get();
-	switch (isa) {
-	case Isa::Avx512:
-	#if defined(SAKURA_UTF16_BACKEND_RUST)
-		return dispatch.capabilities.avx512
-			? Internal::FindMarkdownInlineSpecialUtf16RustAvx512Bw
-			: nullptr;
-	#else
-		return dispatch.capabilities.avx512
-			? Internal::FindMarkdownInlineSpecialUtf16Avx512
-			: nullptr;
-	#endif
-	case Isa::Avx2:
-	#if defined(SAKURA_UTF16_BACKEND_RUST)
-		return dispatch.capabilities.avx2
-			? Internal::FindMarkdownInlineSpecialUtf16RustAvx2
-			: nullptr;
-	#else
-		return dispatch.capabilities.avx2
-			? Internal::FindMarkdownInlineSpecialUtf16Avx2
-			: nullptr;
-	#endif
-	default:
-	#if defined(SAKURA_UTF16_BACKEND_RUST)
-		return dispatch.capabilities.avx
-			? Internal::FindMarkdownInlineSpecialUtf16RustAvx128
-			: nullptr;
-	#else
-		return dispatch.capabilities.avx
-			? Internal::FindMarkdownInlineSpecialUtf16Avx
-			: nullptr;
-	#endif
-	}
+#if defined(SAKURA_UTF16_BACKEND_RUST)
+	return GetSupportedFindMarkdownInlineSpecialUtf16Rust(isa);
+#else
+	return GetSupportedFindMarkdownInlineSpecialUtf16Cpp(isa);
+#endif
 }
 
 WidenAsciiToUtf16Function GetSupportedWidenAsciiToUtf16(Isa isa) noexcept
@@ -375,29 +562,44 @@ WidenAsciiToUtf16Function GetSupportedWidenAsciiToUtf16(Isa isa) noexcept
 	}
 }
 
-FindUtf16CharFunction GetSupportedFindUtf16Char(Isa isa) noexcept
+FindUtf16CharFunction GetSupportedFindUtf16CharCpp(Isa isa) noexcept
 {
 	const auto& dispatch = Get();
 	switch (isa) {
 	case Isa::Avx512:
-	#if defined(SAKURA_UTF16_BACKEND_RUST)
-		return dispatch.capabilities.avx512 ? Internal::FindUtf16CharRustAvx512Bw : nullptr;
-	#else
 		return dispatch.capabilities.avx512 ? Internal::FindUtf16CharAvx512 : nullptr;
-	#endif
 	case Isa::Avx2:
-	#if defined(SAKURA_UTF16_BACKEND_RUST)
-		return dispatch.capabilities.avx2 ? Internal::FindUtf16CharRustAvx2 : nullptr;
-	#else
 		return dispatch.capabilities.avx2 ? Internal::FindUtf16CharAvx2 : nullptr;
-	#endif
 	default:
-	#if defined(SAKURA_UTF16_BACKEND_RUST)
-		return dispatch.capabilities.avx ? Internal::FindUtf16CharRustAvx128 : nullptr;
-	#else
 		return dispatch.capabilities.avx ? Internal::FindUtf16CharAvx : nullptr;
-	#endif
 	}
+}
+
+FindUtf16CharFunction GetSupportedFindUtf16CharRust(Isa isa) noexcept
+{
+	const auto& dispatch = Get();
+#if defined(SAKURA_UTF16_BACKEND_RUST) || defined(SAKURA_UTF16_RUST_CANDIDATE)
+	switch (isa) {
+	case Isa::Avx512:
+		return dispatch.capabilities.avx512 ? Internal::FindUtf16CharRustAvx512Bw : nullptr;
+	case Isa::Avx2:
+		return dispatch.capabilities.avx2 ? Internal::FindUtf16CharRustAvx2 : nullptr;
+	default:
+		return dispatch.capabilities.avx ? Internal::FindUtf16CharRustAvx128 : nullptr;
+	}
+#else
+	(void)isa;
+	return nullptr;
+#endif
+}
+
+FindUtf16CharFunction GetSupportedFindUtf16Char(Isa isa) noexcept
+{
+#if defined(SAKURA_UTF16_BACKEND_RUST)
+	return GetSupportedFindUtf16CharRust(isa);
+#else
+	return GetSupportedFindUtf16CharCpp(isa);
+#endif
 }
 }
 }

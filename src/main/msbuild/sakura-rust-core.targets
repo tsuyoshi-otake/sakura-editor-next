@@ -1,27 +1,57 @@
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-  <PropertyGroup Label="SakuraRustCore">
+  <PropertyGroup Label="SakuraNativeFfi">
     <SAKURA_UTF16_PRODUCTION_PACKAGE Condition="'$(SAKURA_UTF16_PRODUCTION_PACKAGE)'==''">false</SAKURA_UTF16_PRODUCTION_PACKAGE>
     <SakuraUtf16ProductionPackageUpper>$(SAKURA_UTF16_PRODUCTION_PACKAGE.ToUpperInvariant())</SakuraUtf16ProductionPackageUpper>
-    <SAKURA_UTF16_BACKEND Condition="'$(SAKURA_UTF16_BACKEND)'==''">rust</SAKURA_UTF16_BACKEND>
+    <!-- G0 rollback-first default: C++ remains the production provider while
+         Rust is always built and linked as the explicitly observable candidate. -->
+    <SAKURA_UTF16_BACKEND Condition="'$(SAKURA_UTF16_BACKEND)'==''">cpp</SAKURA_UTF16_BACKEND>
     <SAKURA_UTF16_BENCHMARK_TELEMETRY Condition="'$(SAKURA_UTF16_BENCHMARK_TELEMETRY)'==''">false</SAKURA_UTF16_BENCHMARK_TELEMETRY>
     <SakuraUtf16BenchmarkTelemetryUpper>$(SAKURA_UTF16_BENCHMARK_TELEMETRY.ToUpperInvariant())</SakuraUtf16BenchmarkTelemetryUpper>
-    <SakuraRustCoreRepoRoot>$([MSBuild]::NormalizePath('$(MSBuildThisFileDirectory)', '..\..\..\'))</SakuraRustCoreRepoRoot>
-    <SakuraRustCoreWorkspace>$([MSBuild]::NormalizePath('$(SakuraRustCoreRepoRoot)', 'rust'))</SakuraRustCoreWorkspace>
-    <SakuraRustCoreManifest>$([MSBuild]::NormalizePath('$(SakuraRustCoreWorkspace)', 'Cargo.toml'))</SakuraRustCoreManifest>
-    <SakuraRustCoreMemberManifest>$([MSBuild]::NormalizePath('$(SakuraRustCoreWorkspace)', 'sakura_rust_core\Cargo.toml'))</SakuraRustCoreMemberManifest>
-    <SakuraRustCoreCargo Condition="'$(SakuraRustCoreCargo)'==''">cargo</SakuraRustCoreCargo>
-    <SakuraRustCoreTargetDir>$([MSBuild]::NormalizePath('$(SakuraRustCoreRepoRoot)', 'build\$(Platform)\$(Configuration)\rust\sakura_rust_core'))</SakuraRustCoreTargetDir>
-    <SakuraRustCoreCargoProfile Condition="'$(Configuration)'=='Debug'">dev</SakuraRustCoreCargoProfile>
-    <SakuraRustCoreProfileDirectory Condition="'$(Configuration)'=='Debug'">debug</SakuraRustCoreProfileDirectory>
-    <SakuraRustCoreCargoProfile Condition="'$(Configuration)'=='Release'">release</SakuraRustCoreCargoProfile>
-    <SakuraRustCoreProfileDirectory Condition="'$(Configuration)'=='Release'">release</SakuraRustCoreProfileDirectory>
-    <SakuraRustCoreLibrary>$([MSBuild]::NormalizePath('$(SakuraRustCoreTargetDir)', 'x86_64-pc-windows-msvc\$(SakuraRustCoreProfileDirectory)\sakura_rust_core.lib'))</SakuraRustCoreLibrary>
-    <SakuraRustCoreStamp>$([MSBuild]::NormalizePath('$(SakuraRustCoreTargetDir)', 'x86_64-pc-windows-msvc\$(SakuraRustCoreProfileDirectory)\sakura_rust_core.msbuild.stamp'))</SakuraRustCoreStamp>
+    <SakuraUtf16BackendUpper>$(SAKURA_UTF16_BACKEND.ToUpperInvariant())</SakuraUtf16BackendUpper>
+
+    <!-- Native Cargo is intentionally rooted below rust/native. SENP has a
+         different workspace, lockfile, target directory, and source closure. -->
+    <SakuraNativeFfiRepoRoot>$([MSBuild]::NormalizePath('$(MSBuildThisFileDirectory)', '..\..\..\'))</SakuraNativeFfiRepoRoot>
+    <SakuraNativeFfiWorkspace>$([MSBuild]::NormalizePath('$(SakuraNativeFfiRepoRoot)', 'rust\native'))</SakuraNativeFfiWorkspace>
+    <SakuraNativeFfiManifest>$([MSBuild]::NormalizePath('$(SakuraNativeFfiWorkspace)', 'Cargo.toml'))</SakuraNativeFfiManifest>
+    <SakuraNativeFfiMemberManifest>$([MSBuild]::NormalizePath('$(SakuraNativeFfiWorkspace)', 'sakura_native_ffi\Cargo.toml'))</SakuraNativeFfiMemberManifest>
+    <SakuraNativeFfiSimdManifest>$([MSBuild]::NormalizePath('$(SakuraNativeFfiWorkspace)', 'sakura_simd\Cargo.toml'))</SakuraNativeFfiSimdManifest>
+    <SakuraNativeFfiUnicodeManifest>$([MSBuild]::NormalizePath('$(SakuraNativeFfiWorkspace)', 'sakura_unicode_core\Cargo.toml'))</SakuraNativeFfiUnicodeManifest>
+    <SakuraNativeFfiCargo Condition="'$(SakuraNativeFfiCargo)'==''">cargo</SakuraNativeFfiCargo>
+    <SakuraNativeFfiTargetDir>$([MSBuild]::NormalizePath('$(SakuraNativeFfiRepoRoot)', 'build\$(Platform)\$(Configuration)\rust\native'))</SakuraNativeFfiTargetDir>
+    <SakuraNativeFfiCargoProfile Condition="'$(Configuration)'=='Debug'">dev</SakuraNativeFfiCargoProfile>
+    <SakuraNativeFfiProfileDirectory Condition="'$(Configuration)'=='Debug'">debug</SakuraNativeFfiProfileDirectory>
+    <SakuraNativeFfiCargoProfile Condition="'$(Configuration)'=='Release'">release</SakuraNativeFfiCargoProfile>
+    <SakuraNativeFfiProfileDirectory Condition="'$(Configuration)'=='Release'">release</SakuraNativeFfiProfileDirectory>
+    <SakuraNativeFfiLibrary>$([MSBuild]::NormalizePath('$(SakuraNativeFfiTargetDir)', 'x86_64-pc-windows-msvc\$(SakuraNativeFfiProfileDirectory)\sakura_native_ffi.lib'))</SakuraNativeFfiLibrary>
+    <SakuraNativeFfiStamp>$([MSBuild]::NormalizePath('$(SakuraNativeFfiTargetDir)', 'x86_64-pc-windows-msvc\$(SakuraNativeFfiProfileDirectory)\sakura_native_ffi.msbuild.stamp'))</SakuraNativeFfiStamp>
+    <!-- These are the stable native libraries reported by rustc's
+         native-static-libs output for the x86_64-pc-windows-msvc std runtime.
+         The C++ project supplies some defaults, but the Rust staticlib must
+         carry the complete system-library closure explicitly. -->
+    <SakuraNativeFfiSystemLibraries Condition="'$(SakuraNativeFfiSystemLibraries)'==''">kernel32.lib;ntdll.lib;userenv.lib;ws2_32.lib;dbghelp.lib</SakuraNativeFfiSystemLibraries>
+
+    <!-- Keep the established property/target names as compatibility shims for
+         existing project imports and explicit diagnostic invocations. They
+         resolve to the one native FFI archive and never name a second library. -->
+    <SakuraRustCoreRepoRoot Condition="'$(SakuraRustCoreRepoRoot)'==''">$(SakuraNativeFfiRepoRoot)</SakuraRustCoreRepoRoot>
+    <SakuraRustCoreWorkspace Condition="'$(SakuraRustCoreWorkspace)'==''">$(SakuraNativeFfiWorkspace)</SakuraRustCoreWorkspace>
+    <SakuraRustCoreManifest Condition="'$(SakuraRustCoreManifest)'==''">$(SakuraNativeFfiManifest)</SakuraRustCoreManifest>
+    <SakuraRustCoreMemberManifest Condition="'$(SakuraRustCoreMemberManifest)'==''">$(SakuraNativeFfiMemberManifest)</SakuraRustCoreMemberManifest>
+    <SakuraRustCoreCargo Condition="'$(SakuraRustCoreCargo)'==''">$(SakuraNativeFfiCargo)</SakuraRustCoreCargo>
+    <SakuraRustCoreTargetDir Condition="'$(SakuraRustCoreTargetDir)'==''">$(SakuraNativeFfiTargetDir)</SakuraRustCoreTargetDir>
+    <SakuraRustCoreCargoProfile Condition="'$(SakuraRustCoreCargoProfile)'==''">$(SakuraNativeFfiCargoProfile)</SakuraRustCoreCargoProfile>
+    <SakuraRustCoreProfileDirectory Condition="'$(SakuraRustCoreProfileDirectory)'==''">$(SakuraNativeFfiProfileDirectory)</SakuraRustCoreProfileDirectory>
+    <SakuraRustCoreLibrary Condition="'$(SakuraRustCoreLibrary)'==''">$(SakuraNativeFfiLibrary)</SakuraRustCoreLibrary>
+    <SakuraRustCoreStamp Condition="'$(SakuraRustCoreStamp)'==''">$(SakuraNativeFfiStamp)</SakuraRustCoreStamp>
+    <SakuraRustCoreSystemLibraries Condition="'$(SakuraRustCoreSystemLibraries)'==''">$(SakuraNativeFfiSystemLibraries)</SakuraRustCoreSystemLibraries>
   </PropertyGroup>
 
   <Target Name="ValidateSakuraRustCoreBackend" BeforeTargets="PrepareForBuild">
-    <Error Condition="'$(SAKURA_UTF16_BACKEND)'!='rust'"
-           Text="MSBuild requires SAKURA_UTF16_BACKEND=rust; the C++ fallback and both mode were removed from the MSVC path." />
+    <Error Condition="'$(SakuraUtf16BackendUpper)'!='CPP' And '$(SakuraUtf16BackendUpper)'!='RUST'"
+           Text="SAKURA_UTF16_BACKEND must be exactly cpp or rust; got $(SAKURA_UTF16_BACKEND)." />
+    <Error Condition="'$(SakuraUtf16BackendUpper)'=='RUST' And ('$(SakuraUtf16ProductionPackageUpper)'=='TRUE' Or '$(SakuraUtf16ProductionPackageUpper)'=='1' Or '$(SakuraUtf16ProductionPackageUpper)'=='ON' Or '$(SakuraUtf16ProductionPackageUpper)'=='YES')"
+           Text="SAKURA_UTF16_PRODUCTION_PACKAGE=true requires SAKURA_UTF16_BACKEND=cpp" />
     <Error Condition="('$(SakuraUtf16BenchmarkTelemetryUpper)'=='TRUE' Or '$(SakuraUtf16BenchmarkTelemetryUpper)'=='1' Or '$(SakuraUtf16BenchmarkTelemetryUpper)'=='ON' Or '$(SakuraUtf16BenchmarkTelemetryUpper)'=='YES') And ('$(SakuraUtf16ProductionPackageUpper)'=='TRUE' Or '$(SakuraUtf16ProductionPackageUpper)'=='1' Or '$(SakuraUtf16ProductionPackageUpper)'=='ON' Or '$(SakuraUtf16ProductionPackageUpper)'=='YES')"
            Text="SAKURA_UTF16_BENCHMARK_TELEMETRY is test-only and cannot package production." />
     <Exec Command="&quot;$(SakuraRustCoreCargo)&quot; --version"
@@ -32,20 +62,36 @@
 
   <ItemGroup>
     <SakuraRustCoreSource Include="$(MSBuildThisFileFullPath)" />
-    <SakuraRustCoreSource Include="$(SakuraRustCoreManifest)" />
-    <SakuraRustCoreSource Include="$(SakuraRustCoreMemberManifest)" />
-    <SakuraRustCoreSource Include="$([MSBuild]::NormalizePath('$(SakuraRustCoreWorkspace)', 'Cargo.lock'))" />
-    <SakuraRustCoreSource Include="$([MSBuild]::NormalizePath('$(SakuraRustCoreWorkspace)', 'rust-toolchain.toml'))" />
-    <SakuraRustCoreSource Include="$(SakuraRustCoreWorkspace)\sakura_rust_core\src\**\*.rs" />
+    <SakuraRustCoreSource Include="$(SakuraNativeFfiManifest)" />
+    <SakuraRustCoreSource Include="$(SakuraNativeFfiMemberManifest)" />
+    <SakuraRustCoreSource Include="$(SakuraNativeFfiSimdManifest)" />
+    <SakuraRustCoreSource Include="$(SakuraNativeFfiUnicodeManifest)" />
+    <SakuraRustCoreSource Include="$([MSBuild]::NormalizePath('$(SakuraNativeFfiWorkspace)', 'Cargo.lock'))" />
+    <SakuraRustCoreSource Include="$([MSBuild]::NormalizePath('$(SakuraNativeFfiWorkspace)', 'rust-toolchain.toml'))" />
+    <SakuraRustCoreSource Include="$(SakuraNativeFfiWorkspace)\sakura_simd\src\**\*.rs" />
+    <SakuraRustCoreSource Include="$(SakuraNativeFfiWorkspace)\sakura_unicode_core\src\**\*.rs" />
+    <SakuraRustCoreSource Include="$(SakuraNativeFfiWorkspace)\sakura_native_ffi\src\**\*.rs" />
+    <SakuraRustCoreSource Include="$(SakuraNativeFfiWorkspace)\sakura_simd\**\build.rs" />
+    <SakuraRustCoreSource Include="$(SakuraNativeFfiWorkspace)\sakura_unicode_core\**\build.rs" />
+    <SakuraRustCoreSource Include="$(SakuraNativeFfiWorkspace)\sakura_native_ffi\**\build.rs" />
   </ItemGroup>
 
   <ItemDefinitionGroup>
     <ClCompile>
-      <PreprocessorDefinitions>SAKURA_UTF16_BACKEND_RUST;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <!-- Native FFI is linked in both modes for candidate differential tests. -->
+      <PreprocessorDefinitions>SAKURA_UTF16_RUST_CANDIDATE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>$(SakuraRustCoreLibrary);%(AdditionalDependencies)</AdditionalDependencies>
+      <!-- Exactly one Rust staticlib enters each native product/test link. -->
+      <AdditionalDependencies>$(SakuraRustCoreLibrary);$(SakuraRustCoreSystemLibraries);%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
+  </ItemDefinitionGroup>
+
+  <ItemDefinitionGroup Condition="'$(SakuraUtf16BackendUpper)'=='RUST'">
+    <ClCompile>
+      <!-- Only an explicit Rust selection becomes the production provider. -->
+      <PreprocessorDefinitions>SAKURA_UTF16_BACKEND_RUST;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
   </ItemDefinitionGroup>
 
   <ItemDefinitionGroup Condition="'$(SakuraUtf16BenchmarkTelemetryUpper)'=='TRUE' Or '$(SakuraUtf16BenchmarkTelemetryUpper)'=='1' Or '$(SakuraUtf16BenchmarkTelemetryUpper)'=='ON' Or '$(SakuraUtf16BenchmarkTelemetryUpper)'=='YES'">
@@ -54,24 +100,32 @@
     </ClCompile>
   </ItemDefinitionGroup>
 
-  <Target Name="PrepareSakuraRustCoreIncrementalState"
+  <Target Name="PrepareSakuraNativeFfiIncrementalState"
           DependsOnTargets="ValidateSakuraRustCoreBackend">
     <!-- A stamp cannot represent a usable Cargo result after its library is removed. -->
     <Delete Files="$(SakuraRustCoreStamp)"
             Condition="Exists('$(SakuraRustCoreStamp)') And !Exists('$(SakuraRustCoreLibrary)')" />
   </Target>
 
-  <Target Name="BuildSakuraRustCore"
-          DependsOnTargets="PrepareSakuraRustCoreIncrementalState"
+  <Target Name="BuildSakuraNativeFfi"
+          DependsOnTargets="PrepareSakuraNativeFfiIncrementalState"
           Inputs="@(SakuraRustCoreSource)"
           Outputs="$(SakuraRustCoreStamp)"
           BeforeTargets="Link">
-    <Exec Command="&quot;$(SakuraRustCoreCargo)&quot; build --manifest-path &quot;$(SakuraRustCoreManifest)&quot; --package sakura-rust-core --locked --target x86_64-pc-windows-msvc --target-dir &quot;$(SakuraRustCoreTargetDir)&quot; --profile $(SakuraRustCoreCargoProfile)"
-          WorkingDirectory="$(SakuraRustCoreWorkspace)"
+    <Exec Command="&quot;$(SakuraRustCoreCargo)&quot; build --manifest-path &quot;$(SakuraNativeFfiManifest)&quot; --package sakura-native-ffi --locked --target x86_64-pc-windows-msvc --target-dir &quot;$(SakuraNativeFfiTargetDir)&quot; --profile $(SakuraNativeFfiCargoProfile)"
+          WorkingDirectory="$(SakuraNativeFfiWorkspace)"
           StdOutEncoding="UTF-8"
           ConsoleToMSBuild="true" />
     <Error Condition="!Exists('$(SakuraRustCoreLibrary)')"
-           Text="Cargo completed without producing the required sakura_rust_core static library: $(SakuraRustCoreLibrary)" />
+           Text="Cargo completed without producing the required sakura_native_ffi static library: $(SakuraRustCoreLibrary)" />
     <Touch Files="$(SakuraRustCoreStamp)" AlwaysCreate="true" />
   </Target>
+
+  <!-- Compatibility entry point retained for existing build/test scripts. -->
+  <Target Name="PrepareSakuraRustCoreIncrementalState"
+          DependsOnTargets="PrepareSakuraNativeFfiIncrementalState" />
+
+  <!-- Compatibility entry point retained for existing build/test scripts. -->
+  <Target Name="BuildSakuraRustCore"
+          DependsOnTargets="BuildSakuraNativeFfi" />
 </Project>

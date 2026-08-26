@@ -200,14 +200,16 @@ const wchar_t* CSearchAgent::SearchString(
 			if( nSpan >= nMinimumScan ){
 				nFound = cpuDispatch.findUtf16Char( &pLine[nPos], nSpan, wcFirst );
 				SAKURA_UTF16_BENCHMARK_RECORD(
-					"find_char", nSpan, nFound, &pLine[nPos], cpuDispatch.isa, "simd");
+					"find_char", nSpan, nFound, &pLine[nPos],
+					cpuDispatch.utf16FindCharIsa, "simd");
 			}else{
 				nFound = 0;
 				while( nFound < nSpan && pLine[nPos + nFound] != wcFirst ){
 					++nFound;
 				}
 				SAKURA_UTF16_BENCHMARK_RECORD(
-					"find_char", nSpan, nFound, &pLine[nPos], cpuDispatch.isa, "scalar");
+					"find_char", nSpan, nFound, &pLine[nPos],
+					cpuDispatch.utf16FindCharIsa, "scalar");
 			}
 			if( nFound >= nSpan ){
 				return nullptr;

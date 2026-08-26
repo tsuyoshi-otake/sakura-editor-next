@@ -323,23 +323,29 @@ std::vector<DirectImplementation> GetDirectImplementations()
 	std::vector<DirectImplementation> result{
 		{"scalar", "scalar", "scalar", ScalarCrOrLf, ScalarMarkdown, ScalarFindChar},
 	};
-#if defined(SAKURA_UTF16_BACKEND_RUST)
-	constexpr const char* backend = "rust";
-	constexpr const char* prefix = "rust-";
-#else
-	constexpr const char* backend = "cpp";
-	constexpr const char* prefix = "cpp-";
+	const auto appendProvider = [&](const char* backend, const char* prefix,
+		auto crlfSelector, auto markdownSelector, auto findCharSelector) {
+		for (const CpuDispatch::Isa isa : {
+			CpuDispatch::Isa::Avx, CpuDispatch::Isa::Avx2, CpuDispatch::Isa::Avx512}) {
+			const auto crlf = crlfSelector(isa);
+			const auto markdown = markdownSelector(isa);
+			const auto findChar = findCharSelector(isa);
+			if (crlf == nullptr || markdown == nullptr || findChar == nullptr) continue;
+			const char* const isaName = CpuDispatch::GetIsaName(isa);
+			result.push_back({std::string(prefix) + isaName, backend, isaName,
+				crlf, markdown, findChar});
+		}
+	};
+	appendProvider("cpp", "cpp-",
+		CpuDispatch::Testing::GetSupportedFindCrOrLfUtf16Cpp,
+		CpuDispatch::Testing::GetSupportedFindMarkdownInlineSpecialUtf16Cpp,
+		CpuDispatch::Testing::GetSupportedFindUtf16CharCpp);
+#if defined(SAKURA_UTF16_BACKEND_RUST) || defined(SAKURA_UTF16_RUST_CANDIDATE)
+	appendProvider("rust", "rust-",
+		CpuDispatch::Testing::GetSupportedFindCrOrLfUtf16Rust,
+		CpuDispatch::Testing::GetSupportedFindMarkdownInlineSpecialUtf16Rust,
+		CpuDispatch::Testing::GetSupportedFindUtf16CharRust);
 #endif
-	for (const CpuDispatch::Isa isa : {
-		CpuDispatch::Isa::Avx, CpuDispatch::Isa::Avx2, CpuDispatch::Isa::Avx512}) {
-		const auto crlf = CpuDispatch::Testing::GetSupportedFindCrOrLfUtf16(isa);
-		const auto markdown = CpuDispatch::Testing::GetSupportedFindMarkdownInlineSpecialUtf16(isa);
-		const auto findChar = CpuDispatch::Testing::GetSupportedFindUtf16Char(isa);
-		if (crlf == nullptr || markdown == nullptr || findChar == nullptr) continue;
-		const char* const isaName = CpuDispatch::GetIsaName(isa);
-		result.push_back({std::string(prefix) + isaName, backend, isaName,
-			crlf, markdown, findChar});
-	}
 	return result;
 }
 
@@ -468,7 +474,21 @@ void WriteMetadata(JsonlWriter& writer, std::string_view mode, std::uint64_t run
 		<< ",\"build_mode\":\"" << dispatch.utf16BuildMode
 		<< "\",\"backend\":\"" << dispatch.utf16Backend
 		<< "\",\"selected_isa\":\"" << CpuDispatch::GetIsaName(dispatch.isa)
-		<< "\",\"threshold_crlf\":" << dispatch.utf16ScanPolicy.crOrLfMinimumLength
+		<< "\",\"crlf_isa\":\"" << CpuDispatch::GetIsaName(dispatch.utf16CrOrLfIsa)
+		<< "\",\"markdown_isa\":\"" << CpuDispatch::GetIsaName(dispatch.utf16MarkdownIsa)
+		<< "\",\"find_char_isa\":\"" << CpuDispatch::GetIsaName(dispatch.utf16FindCharIsa)
+		<< "\",\"crlf_implementation\":\"" << dispatch.utf16CrOrLfImplementation
+		<< "\",\"markdown_implementation\":\""
+		<< dispatch.utf16MarkdownImplementation
+		<< "\",\"find_char_implementation\":\""
+		<< dispatch.utf16FindCharImplementation
+		<< "\",\"rust_candidate_linked\":"
+#if defined(SAKURA_UTF16_BACKEND_RUST) || defined(SAKURA_UTF16_RUST_CANDIDATE)
+		<< "true"
+#else
+		<< "false"
+#endif
+		<< ",\"threshold_crlf\":" << dispatch.utf16ScanPolicy.crOrLfMinimumLength
 		<< ",\"threshold_markdown\":"
 		<< dispatch.utf16ScanPolicy.markdownInlineSpecialMinimumLength
 		<< ",\"threshold_find_char\":" << dispatch.utf16ScanPolicy.findCharMinimumLength
@@ -484,10 +504,16 @@ void RunDirect(JsonlWriter& writer, std::uint64_t runId, const LARGE_INTEGER& fr
 		targetMilliseconds * static_cast<double>(frequency.QuadPart) / 1000.0);
 	auto implementations = GetDirectImplementations();
 	const auto capabilities = CpuDispatch::Get().capabilities;
-	const std::size_t expectedImplementations =
-		1U + (capabilities.avx ? 1U : 0U)
+	const std::size_t supportedIsaCount =
+		(capabilities.avx ? 1U : 0U)
 		+ (capabilities.avx2 ? 1U : 0U)
 		+ (capabilities.avx512 ? 1U : 0U);
+	const std::size_t providerCount = 1U
+#if defined(SAKURA_UTF16_BACKEND_RUST) || defined(SAKURA_UTF16_RUST_CANDIDATE)
+		+ 1U
+#endif
+		;
+	const std::size_t expectedImplementations = 1U + supportedIsaCount * providerCount;
 	if (implementations.size() != expectedImplementations) {
 		throw std::runtime_error("all supported UTF-16 ISA implementations must be executable");
 	}
@@ -750,6 +776,9 @@ void RunCaller(JsonlWriter& writer, std::uint64_t runId, const LARGE_INTEGER& fr
 			<< "\",\"corpus\":\"" << testCase.corpus
 			<< "\",\"backend\":\"" << dispatch.utf16Backend
 			<< "\",\"selected_isa\":\"" << CpuDispatch::GetIsaName(dispatch.isa)
+			<< "\",\"crlf_isa\":\"" << CpuDispatch::GetIsaName(dispatch.utf16CrOrLfIsa)
+			<< "\",\"markdown_isa\":\"" << CpuDispatch::GetIsaName(dispatch.utf16MarkdownIsa)
+			<< "\",\"find_char_isa\":\"" << CpuDispatch::GetIsaName(dispatch.utf16FindCharIsa)
 			<< "\",\"length\":" << testCase.text.size()
 			<< ",\"iterations\":" << iterations
 			<< ",\"duration_ticks\":" << ticks

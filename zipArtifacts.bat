@@ -1,9 +1,9 @@
 @echo off
 @setlocal EnableExtensions EnableDelayedExpansion
 set "SAKURA_UTF16_PRODUCTION_PACKAGE=true"
-if not defined SAKURA_UTF16_BACKEND set "SAKURA_UTF16_BACKEND=rust"
-if not "%SAKURA_UTF16_BACKEND%" == "rust" (
-	echo Production packaging requires SAKURA_UTF16_BACKEND=rust; got %SAKURA_UTF16_BACKEND%.
+if not defined SAKURA_UTF16_BACKEND set "SAKURA_UTF16_BACKEND=cpp"
+if not "%SAKURA_UTF16_BACKEND%" == "cpp" (
+	echo Production packaging requires SAKURA_UTF16_BACKEND=cpp; got %SAKURA_UTF16_BACKEND%.
 	exit /b 1
 )
 set platform=%1

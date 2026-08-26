@@ -29,7 +29,7 @@
           Condition="'$(SakuraModulesGeneratedProps)' != '' and Exists('$(SakuraModulesGeneratedProps)')" />
   <ItemGroup>
     <SakuraBuildModelInputs Include="$(SakuraModulesManifest)" />
-    <SakuraBuildModelInputs Include="$(SakuraRepositoryRoot)src\main\modules\schema-v3.json" />
+    <SakuraBuildModelInputs Include="$(SakuraRepositoryRoot)src\main\modules\schema-v4.json" />
     <SakuraBuildModelInputs Include="$(SakuraRepositoryRoot)src\main\modules\compile-profiles.json" />
     <SakuraBuildModelInputs Include="$(SakuraRepositoryRoot)tools\build\sakura_build.py" />
     <SakuraBuildModelInputs Include="$(SakuraRepositoryRoot)tools\build\sakura_build_lib\*.py" />

@@ -115,6 +115,9 @@
     "tests1-to-editor-document-core",
     "tests1-to-resource-id-contract"
   ],
+  "active_runtime_providers": [
+    "sakura-utf16-cpp-provider"
+  ],
   "compile_profiles": [
     "mingw-x64-release",
     "mingw-release-link"
@@ -137,7 +140,10 @@
   "package_sets": [
     "root-vcpkg-package-set"
   ],
+  "production_runtime_providers": {
+    "utf16-scan-backend": "sakura-utf16-cpp-provider"
+  },
   "projection_schema": 1,
-  "semantic_graph_hash": "sha256:17ba1ef5a5b9012c0de06a8d709a112f594089b45e850b5e45d9566a79709801",
+  "semantic_graph_hash": "sha256:425f735f6e0d0098d269b547e3dfda43113922894991af4a83876f4757b835de",
   "staging_sets": []
 }

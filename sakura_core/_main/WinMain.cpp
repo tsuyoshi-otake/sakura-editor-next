@@ -63,6 +63,14 @@ int WINAPI wWinMain(
 		CStartupTrace::Event::IsaDispatch,
 		static_cast<std::int64_t>(cpuDispatch.isa),
 		cpuDispatch.initializationTicks);
+	if (cpuDispatch.nativeCandidateLinked
+		&& cpuDispatch.nativeInitializationStatus != SakuraStatus::Ok) {
+		::MessageBoxW(nullptr,
+			L"The native Rust library rejected the C++ CPU capability/policy snapshot.",
+			L"Sakura Editor NEXT - Native initialization failure",
+			MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
+		return ERROR_BAD_ENVIRONMENT;
+	}
 #ifdef USE_LEAK_CHECK_WITH_CRTDBG
 	// 2009.9.10 syat メモリリークチェックを追加
 	::_CrtSetDbgFlag(_CRTDBG_LEAK_CHECK_DF | _CRTDBG_ALLOC_MEM_DF);

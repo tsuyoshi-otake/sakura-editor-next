@@ -1,22 +1,24 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://sakura-editor-next.invalid/schemas/modules-v3.json",
-  "title": "Sakura semantic component graph v3",
+  "$id": "https://sakura-editor-next.invalid/schemas/modules-v4.json",
+  "title": "Sakura semantic component graph v4",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "minimum_generator_version", "contexts", "components", "contracts", "artifacts", "edges"],
+  "required": ["schema_version", "minimum_generator_version", "contexts", "components", "contracts", "artifacts", "runtime_providers", "edges"],
   "properties": {
-    "schema_version": {"const": 3},
+    "schema_version": {"const": 4},
     "minimum_generator_version": {"type": "string", "minLength": 1},
     "contexts": {"type": "array", "items": {"$ref": "#/$defs/context"}},
     "components": {"type": "array", "items": {"$ref": "#/$defs/component"}},
     "contracts": {"type": "array", "items": {"$ref": "#/$defs/contract"}},
     "artifacts": {"type": "array", "items": {"$ref": "#/$defs/artifact"}},
+    "runtime_providers": {"type": "array", "items": {"$ref": "#/$defs/runtimeProvider"}},
     "edges": {"type": "array", "items": {"$ref": "#/$defs/edge"}}
   },
   "$defs": {
     "nonEmptyString": {"type": "string", "minLength": 1},
     "stringArray": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/nonEmptyString"}},
+    "providerByContext": {"type": "object", "additionalProperties": {"$ref": "#/$defs/nonEmptyString"}},
     "condition": {
       "anyOf": [
         {"const": true},
@@ -60,10 +62,40 @@
               "state_owner": {"type": "null"}
             }
           }
+        },
+        {
+          "if": {"properties": {"implementation_language": {"const": "rust"}}},
+          "then": {
+            "properties": {
+              "cargo_package": {"$ref": "#/$defs/nonEmptyString"},
+              "cargo_target": {"$ref": "#/$defs/nonEmptyString"},
+              "link_artifact": {"$ref": "#/$defs/nonEmptyString"}
+            }
+          },
+          "else": {
+            "properties": {
+              "cargo_package": {"type": "null"},
+              "cargo_target": {"type": "null"},
+              "link_artifact": {"type": "null"}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"authority_mode": {"const": "candidate-shadow"}}},
+          "then": {"properties": {"side_effects": {"maxItems": 0}}}
+        },
+        {
+          "if": {"properties": {"authority_mode": {"const": "none"}}},
+          "then": {
+            "properties": {
+              "authority_domain": {"type": "null"},
+              "provider_by_context": {"maxProperties": 0}
+            }
+          }
         }
       ],
       "type": "object", "additionalProperties": false,
-      "required": ["id", "family", "kind", "maturity", "build_definition", "supported_contexts", "owner", "sources", "public_headers", "private_headers", "ownership_exclusions", "public_include_roots", "private_include_roots", "state_owner", "backend_targets", "compile_profile"],
+      "required": ["id", "family", "kind", "maturity", "build_definition", "supported_contexts", "owner", "sources", "public_headers", "private_headers", "ownership_exclusions", "public_include_roots", "private_include_roots", "state_owner", "backend_targets", "compile_profile", "implementation_language", "cargo_package", "cargo_target", "link_artifact", "authority_domain", "authority_mode", "thread_affinity", "lifecycle_owner", "side_effects", "provider_by_context"],
       "properties": {
         "id": {"$ref": "#/$defs/nonEmptyString"}, "family": {"$ref": "#/$defs/nonEmptyString"},
         "kind": {"enum": ["implementation", "contract", "composition", "executable", "test", "aggregate"]},
@@ -78,6 +110,16 @@
         "state_owner": {"type": ["string", "null"]},
         "backend_targets": {"type": "object", "additionalProperties": false, "properties": {"msbuild": {"$ref": "#/$defs/stringArray"}, "cmake": {"$ref": "#/$defs/stringArray"}}},
         "compile_profile": {"type": ["string", "null"]},
+        "implementation_language": {"enum": ["cpp", "rust"]},
+        "cargo_package": {"type": ["string", "null"]},
+        "cargo_target": {"type": ["string", "null"]},
+        "link_artifact": {"type": ["string", "null"]},
+        "authority_domain": {"type": ["string", "null"]},
+        "authority_mode": {"enum": ["none", "candidate-shadow", "production", "legacy-production", "retired"]},
+        "thread_affinity": {"$ref": "#/$defs/nonEmptyString"},
+        "lifecycle_owner": {"type": ["string", "null"]},
+        "side_effects": {"$ref": "#/$defs/stringArray"},
+        "provider_by_context": {"$ref": "#/$defs/providerByContext"},
         "system_libraries": {"$ref": "#/$defs/stringArray"}
       }
     },
@@ -111,9 +153,50 @@
         "artifact_kind": {"enum": ["generated", "resource", "asset", "package_set", "staging_set", "test_fixture", "product", "source_set"]},
         "inputs": {"$ref": "#/$defs/stringArray"},
         "outputs": {"$ref": "#/$defs/stringArray"},
-        "tool_id": {"anyOf": [{"type": "null"}, {"enum": ["sakura-module-generator", "header-make", "cmake", "msbuild", "rc", "copy"]}]},
+        "tool_id": {"anyOf": [{"type": "null"}, {"enum": ["sakura-module-generator", "header-make", "cmake", "msbuild", "cargo", "rc", "copy"]}]},
         "condition": {"$ref": "#/$defs/condition"}
       }
+    },
+    "runtimeProvider": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "authority_domain", "authority_mode", "implementation_language", "build_component", "supported_contexts", "cargo_package", "cargo_target", "link_artifact", "thread_affinity", "lifecycle_owner", "side_effects"],
+      "properties": {
+        "id": {"$ref": "#/$defs/nonEmptyString"},
+        "authority_domain": {"$ref": "#/$defs/nonEmptyString"},
+        "authority_mode": {"enum": ["candidate-shadow", "production", "legacy-production", "retired"]},
+        "implementation_language": {"enum": ["cpp", "rust"]},
+        "build_component": {"$ref": "#/$defs/nonEmptyString"},
+        "supported_contexts": {"$ref": "#/$defs/stringArray"},
+        "cargo_package": {"type": ["string", "null"]},
+        "cargo_target": {"type": ["string", "null"]},
+        "link_artifact": {"type": ["string", "null"]},
+        "thread_affinity": {"$ref": "#/$defs/nonEmptyString"},
+        "lifecycle_owner": {"$ref": "#/$defs/nonEmptyString"},
+        "side_effects": {"$ref": "#/$defs/stringArray"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"implementation_language": {"const": "rust"}}},
+          "then": {
+            "properties": {
+              "cargo_package": {"$ref": "#/$defs/nonEmptyString"},
+              "cargo_target": {"$ref": "#/$defs/nonEmptyString"},
+              "link_artifact": {"$ref": "#/$defs/nonEmptyString"}
+            }
+          },
+          "else": {
+            "properties": {
+              "cargo_package": {"type": "null"},
+              "cargo_target": {"type": "null"},
+              "link_artifact": {"type": "null"}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"authority_mode": {"const": "candidate-shadow"}}},
+          "then": {"properties": {"side_effects": {"maxItems": 0}}}
+        }
+      ]
     },
     "witness": {
       "type": "object", "additionalProperties": false, "required": ["context", "probe"],

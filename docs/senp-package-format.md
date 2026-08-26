@@ -2,8 +2,8 @@
 
 この文書は、Sakura Editor NEXT の `.senp` パッケージを作成・検証・
 インストールするための正規仕様書です。実装上の正本は
-[`rust/sakura_senp/src/lib.rs`](../rust/sakura_senp/src/lib.rs) と
-[`sakura-senp-tool`](../rust/sakura_senp_tool/src/main.rs) です。
+[`rust/senp/sakura_senp/src/lib.rs`](../rust/senp/sakura_senp/src/lib.rs) と
+[`sakura-senp-tool`](../rust/senp/sakura_senp_tool/src/main.rs) です。
 この文書はその実装が受け付ける形式を説明します。VSIX、Open VSX、または
 VS Code Extension API の仕様ではありません。
 
@@ -34,12 +34,12 @@ my-language/
 
 リポジトリ内の実例は次のとおりです。
 
-- [Shell Language Basics](../rust/extensions/sakura_shell_language_basics/)
-- [Core Language Basics](../rust/extensions/sakura_core_language_basics/)
-- [Database Language Basics](../rust/extensions/sakura_database_language_basics/)
-- [Infrastructure Language Basics](../rust/extensions/sakura_infrastructure_language_basics/)
-- [Configuration and Build Language Basics](../rust/extensions/sakura_configuration_language_basics/)
-- [Legacy Language Basics](../rust/extensions/sakura_legacy_language_basics/)
+- [Shell Language Basics](../rust/senp/extensions/sakura_shell_language_basics/)
+- [Core Language Basics](../rust/senp/extensions/sakura_core_language_basics/)
+- [Database Language Basics](../rust/senp/extensions/sakura_database_language_basics/)
+- [Infrastructure Language Basics](../rust/senp/extensions/sakura_infrastructure_language_basics/)
+- [Configuration and Build Language Basics](../rust/senp/extensions/sakura_configuration_language_basics/)
+- [Legacy Language Basics](../rust/senp/extensions/sakura_legacy_language_basics/)
 
 ### runtime パッケージ
 
@@ -56,12 +56,12 @@ my-runtime/
 ```
 
 現在の runtime 実例は
-[Indent Rainbow](../rust/extensions/sakura_indent_rainbow/) です。リポジトリに
+[Indent Rainbow](../rust/senp/extensions/sakura_indent_rainbow/) です。リポジトリに
 置かれている実例のソースツリーには生成前の Rust ソースしかなく、
 `module/extension.wasm` はビルド時の staging 出力です。
 
 runtime の ABI は `sakura:senp/extension@1.0.0` です。現在の WIT world は
-[`rust/wit/senp-extension.wit`](../rust/wit/senp-extension.wit) に定義され、
+[`rust/senp/wit/senp-extension.wit`](../rust/senp/wit/senp-extension.wit) に定義され、
 `editor-decorations` を export します。host は WASI やその他の ambient
 import を linker に追加しません。Wasm 側の機能はこの WIT の境界だけを
 使用してください。
@@ -189,7 +189,7 @@ runtime package は `onStartupFinished` を 1 件だけ宣言し、
 `sakura_senp` の `pack`/`verify` は module の存在、サイズ、checksum、path を
 検査しますが、Wasm の Component model を解釈しません。runtime 用の bytes は
 `sakura-senp-tool componentize` で作成し、実行時には
-[`sakura-senp-host`](../rust/sakura_senp_host/src/main.rs) が Component として
+[`sakura-senp-host`](../rust/senp/sakura_senp_host/src/main.rs) が Component として
 ロードします。したがって、path が正しいだけの任意 bytes は archive の
 形式検証を通っても runtime として実行できるとは限りません。
 
@@ -458,9 +458,9 @@ marketplace、gallery search、network install は引き続き未実装です。
 通常、次のように作成できます。
 
 ```powershell
-cargo build --manifest-path rust/Cargo.toml `
+cargo build --manifest-path rust/senp/Cargo.toml `
   --package sakura-senp-tool --release --target x86_64-pc-windows-msvc
-$tool = Resolve-Path rust/target/x86_64-pc-windows-msvc/release/sakura-senp-tool.exe
+$tool = Resolve-Path rust/senp/target/x86_64-pc-windows-msvc/release/sakura-senp-tool.exe
 ```
 
 ### unsigned 開発 package
@@ -531,23 +531,23 @@ publisher 署名を要求せず archive pin を検証します。
 
 ### runtime Component の作成
 
-runtime の guest は `rust/wit/senp-extension.wit` を `wit-bindgen` で参照し、
+runtime の guest は `rust/senp/wit/senp-extension.wit` を `wit-bindgen` で参照し、
 `wasm32-unknown-unknown` 向けに build します。たとえばリポジトリの
 Indent Rainbow の staging を手動で再現する場合は次の流れです。
 
 ```powershell
-cargo build --manifest-path rust/Cargo.toml `
+cargo build --manifest-path rust/senp/Cargo.toml `
   --package sakura-indent-rainbow --release --target wasm32-unknown-unknown
-cargo build --manifest-path rust/Cargo.toml `
+cargo build --manifest-path rust/senp/Cargo.toml `
   --package sakura-senp-tool --release --target x86_64-pc-windows-msvc
 
 $stage = Join-Path $PWD 'out\sakura-indent-rainbow'
 New-Item -ItemType Directory -Force (Join-Path $stage 'module') | Out-Null
-Copy-Item rust/extensions/sakura_indent_rainbow/senp.json, `
-  rust/extensions/sakura_indent_rainbow/README.md, `
-  rust/extensions/sakura_indent_rainbow/LICENSE $stage
+Copy-Item rust/senp/extensions/sakura_indent_rainbow/senp.json, `
+  rust/senp/extensions/sakura_indent_rainbow/README.md, `
+  rust/senp/extensions/sakura_indent_rainbow/LICENSE $stage
 
-$guest = Resolve-Path rust/target/wasm32-unknown-unknown/release/sakura_indent_rainbow.wasm
+$guest = Resolve-Path rust/senp/target/wasm32-unknown-unknown/release/sakura_indent_rainbow.wasm
 $component = Join-Path $stage 'module\extension.wasm'
 & $tool componentize $guest $component
 
@@ -593,12 +593,12 @@ content を再走査するため、インストール後に payload や checksum
 この仕様の主な実装入口は次のとおりです。
 
 - format constants、manifest 型、validator、checksum、署名、pack、install：
-  [`rust/sakura_senp/src/lib.rs`](../rust/sakura_senp/src/lib.rs)
+  [`rust/senp/sakura_senp/src/lib.rs`](../rust/senp/sakura_senp/src/lib.rs)
 - CLI の全 command と引数形式：
-  [`rust/sakura_senp_tool/src/main.rs`](../rust/sakura_senp_tool/src/main.rs)
-- runtime の WIT 境界：[`rust/wit/senp-extension.wit`](../rust/wit/senp-extension.wit)
+  [`rust/senp/sakura_senp_tool/src/main.rs`](../rust/senp/sakura_senp_tool/src/main.rs)
+- runtime の WIT 境界：[`rust/senp/wit/senp-extension.wit`](../rust/senp/wit/senp-extension.wit)
 - runtime host の component、hash、fuel、memory、frame 制限：
-  [`rust/sakura_senp_host/src/main.rs`](../rust/sakura_senp_host/src/main.rs)
+  [`rust/senp/sakura_senp_host/src/main.rs`](../rust/senp/sakura_senp_host/src/main.rs)
 - built-in package の staging/pack 手順：
   [`src/main/msbuild/sakura-senp.targets`](../src/main/msbuild/sakura-senp.targets)
 

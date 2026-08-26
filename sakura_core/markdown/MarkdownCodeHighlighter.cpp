@@ -409,7 +409,7 @@ public:
 			m_source.data() + position, length);
 		SAKURA_UTF16_BENCHMARK_RECORD(
 			"crlf", length, offset, m_source.data() + position,
-			m_dispatch.isa, "simd");
+			m_dispatch.utf16CrOrLfIsa, "simd");
 		RecordWork(offset + (offset < length ? 1 : 0));
 		return position + offset;
 	}
@@ -442,8 +442,6 @@ public:
 		}
 		const std::size_t length = std::min(end, Size()) - position;
 		std::size_t offset = 0;
-		const auto implementationPath = length >= m_dispatch.utf16ScanPolicy
-			.markdownInlineSpecialMinimumLength ? "simd" : "scalar";
 		// Token-bounded scans are usually short; below the per-ISA minimum the
 		// local scalar loop beats an indirect call into the dispatched scanner.
 		if (length >= m_dispatch.utf16ScanPolicy.markdownInlineSpecialMinimumLength) {
@@ -457,7 +455,9 @@ public:
 		}
 		SAKURA_UTF16_BENCHMARK_RECORD(
 			"markdown", length, offset, m_source.data() + position,
-			m_dispatch.isa, implementationPath);
+			m_dispatch.utf16MarkdownIsa,
+			length >= m_dispatch.utf16ScanPolicy.markdownInlineSpecialMinimumLength
+				? "simd" : "scalar");
 		RecordWork(offset + (offset < length ? 1 : 0));
 		return position + offset;
 	}

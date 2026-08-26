@@ -607,22 +607,23 @@ def production_package_environment(
 ) -> dict[str, str]:
     """Return the environment contract required by production packaging.
 
-    Production packaging always uses the Rust implementation.  The MinGW-only
-    C++ compatibility backend and the removed ``both`` mode are rejected
-    before package restore or compilation.  The selected backend is returned
+    Production packaging uses the rollback-first C++ implementation until the
+    Rust adoption gate in Issue #267 is completed independently.  The removed
+    ``both`` mode and an early Rust production selection are rejected before
+    package restore or compilation.  The selected backend is returned
     explicitly so a stale ambient environment cannot change the package after
     validation.
     """
     source = os.environ if environment is None else environment
     backend = source.get("SAKURA_UTF16_BACKEND")
-    if backend not in (None, "", "rust"):
+    if backend not in (None, "", "cpp"):
         raise BuildError(
             "UTF16_PRODUCTION_BACKEND_INVALID",
             "SAKURA_UTF16_PRODUCTION_PACKAGE=true requires "
-            f"SAKURA_UTF16_BACKEND=rust; got {backend}",
+            f"SAKURA_UTF16_BACKEND=cpp; got {backend}",
             EXIT_USAGE,
         )
-    selected_backend = "rust" if backend in (None, "") else backend
+    selected_backend = "cpp" if backend in (None, "") else backend
     return {
         "SAKURA_GENERATE_ASSEMBLY_LISTINGS": "1",
         "SAKURA_UTF16_BACKEND": selected_backend,

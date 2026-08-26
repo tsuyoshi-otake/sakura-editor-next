@@ -10,19 +10,6 @@ extern crate std;
 use core::mem;
 use core::slice;
 
-#[cfg(not(test))]
-unsafe extern "C" {
-    fn abort() -> !;
-}
-
-#[cfg(not(test))]
-#[panic_handler]
-fn panic_handler(_: &core::panic::PanicInfo<'_>) -> ! {
-    // SAFETY: The platform C runtime abort function does not return. Product
-    // profiles are panic=abort, so no Rust unwind can cross the FFI boundary.
-    unsafe { abort() }
-}
-
 const U16_BYTES: usize = mem::size_of::<u16>();
 
 #[inline]
@@ -543,7 +530,6 @@ unsafe fn avx512bw_find_char(input: &[u16], target: u16) -> usize {
 }
 
 #[cfg(target_arch = "x86_64")]
-#[unsafe(no_mangle)]
 /// # Safety
 /// The caller must execute this function only when CPUID reports AVX and
 /// OSXSAVE with XCR0 XMM/YMM state enabled. For non-zero `length`, `data`
@@ -552,17 +538,13 @@ unsafe fn avx512bw_find_char(input: &[u16], target: u16) -> usize {
 /// can reject null, misalignment, size, and address-overflow representations,
 /// but it cannot prove allocation validity, initialization, lifetime, or
 /// immutability. Rejected representations return `length` without dereference.
-pub unsafe extern "C" fn sakura_utf16_find_cr_or_lf_avx128_v1(
-    data: *const u16,
-    length: usize,
-) -> usize {
+pub unsafe fn sakura_utf16_find_cr_or_lf_avx128_v1(data: *const u16, length: usize) -> usize {
     // SAFETY: This entry point's Safety contract supplies the CPU/OS feature
     // state and caller-owned allocation contract required by `scan_ffi`.
     unsafe { scan_ffi(data, length, avx128_cr_or_lf) }
 }
 
 #[cfg(target_arch = "x86_64")]
-#[unsafe(no_mangle)]
 /// # Safety
 /// The caller must execute this function only when CPUID reports AVX and
 /// OSXSAVE with XCR0 XMM/YMM state enabled. For non-zero `length`, `data`
@@ -571,7 +553,7 @@ pub unsafe extern "C" fn sakura_utf16_find_cr_or_lf_avx128_v1(
 /// can reject null, misalignment, size, and address-overflow representations,
 /// but it cannot prove allocation validity, initialization, lifetime, or
 /// immutability. Rejected representations return `length` without dereference.
-pub unsafe extern "C" fn sakura_utf16_find_markdown_special_avx128_v1(
+pub unsafe fn sakura_utf16_find_markdown_special_avx128_v1(
     data: *const u16,
     length: usize,
 ) -> usize {
@@ -581,7 +563,6 @@ pub unsafe extern "C" fn sakura_utf16_find_markdown_special_avx128_v1(
 }
 
 #[cfg(target_arch = "x86_64")]
-#[unsafe(no_mangle)]
 /// # Safety
 /// The caller must execute this function only when CPUID reports AVX and
 /// OSXSAVE with XCR0 XMM/YMM state enabled. For non-zero `length`, `data`
@@ -591,7 +572,7 @@ pub unsafe extern "C" fn sakura_utf16_find_markdown_special_avx128_v1(
 /// but it cannot prove allocation validity, initialization, lifetime, or
 /// immutability. Rejected representations return `length` without dereference;
 /// `target` is one UTF-16 code unit.
-pub unsafe extern "C" fn sakura_utf16_find_char_avx128_v1(
+pub unsafe fn sakura_utf16_find_char_avx128_v1(
     data: *const u16,
     length: usize,
     target: u16,
@@ -614,7 +595,6 @@ pub unsafe extern "C" fn sakura_utf16_find_char_avx128_v1(
 }
 
 #[cfg(target_arch = "x86_64")]
-#[unsafe(no_mangle)]
 /// # Safety
 /// The caller must execute this function only when CPUID reports AVX2 and
 /// OSXSAVE with XCR0 XMM/YMM state enabled. For non-zero `length`, `data`
@@ -623,17 +603,13 @@ pub unsafe extern "C" fn sakura_utf16_find_char_avx128_v1(
 /// can reject null, misalignment, size, and address-overflow representations,
 /// but it cannot prove allocation validity, initialization, lifetime, or
 /// immutability. Rejected representations return `length` without dereference.
-pub unsafe extern "C" fn sakura_utf16_find_cr_or_lf_avx2_v1(
-    data: *const u16,
-    length: usize,
-) -> usize {
+pub unsafe fn sakura_utf16_find_cr_or_lf_avx2_v1(data: *const u16, length: usize) -> usize {
     // SAFETY: This entry point's Safety contract supplies the CPU/OS feature
     // state and caller-owned allocation contract required by `scan_ffi`.
     unsafe { scan_ffi(data, length, avx2_cr_or_lf) }
 }
 
 #[cfg(target_arch = "x86_64")]
-#[unsafe(no_mangle)]
 /// # Safety
 /// The caller must execute this function only when CPUID reports AVX2 and
 /// OSXSAVE with XCR0 XMM/YMM state enabled. For non-zero `length`, `data`
@@ -642,17 +618,13 @@ pub unsafe extern "C" fn sakura_utf16_find_cr_or_lf_avx2_v1(
 /// can reject null, misalignment, size, and address-overflow representations,
 /// but it cannot prove allocation validity, initialization, lifetime, or
 /// immutability. Rejected representations return `length` without dereference.
-pub unsafe extern "C" fn sakura_utf16_find_markdown_special_avx2_v1(
-    data: *const u16,
-    length: usize,
-) -> usize {
+pub unsafe fn sakura_utf16_find_markdown_special_avx2_v1(data: *const u16, length: usize) -> usize {
     // SAFETY: This entry point's Safety contract supplies the CPU/OS feature
     // state and caller-owned allocation contract required by `scan_ffi`.
     unsafe { scan_ffi(data, length, avx2_markdown_special) }
 }
 
 #[cfg(target_arch = "x86_64")]
-#[unsafe(no_mangle)]
 /// # Safety
 /// The caller must execute this function only when CPUID reports AVX2 and
 /// OSXSAVE with XCR0 XMM/YMM state enabled. For non-zero `length`, `data`
@@ -662,7 +634,7 @@ pub unsafe extern "C" fn sakura_utf16_find_markdown_special_avx2_v1(
 /// but it cannot prove allocation validity, initialization, lifetime, or
 /// immutability. Rejected representations return `length` without dereference;
 /// `target` is one UTF-16 code unit.
-pub unsafe extern "C" fn sakura_utf16_find_char_avx2_v1(
+pub unsafe fn sakura_utf16_find_char_avx2_v1(
     data: *const u16,
     length: usize,
     target: u16,
@@ -684,7 +656,6 @@ pub unsafe extern "C" fn sakura_utf16_find_char_avx2_v1(
 }
 
 #[cfg(target_arch = "x86_64")]
-#[unsafe(no_mangle)]
 /// # Safety
 /// The caller must execute this function only when CPUID reports AVX2,
 /// AVX-512F, and AVX-512BW, with OSXSAVE and XCR0 XMM/YMM plus opmask/ZMM
@@ -696,17 +667,13 @@ pub unsafe extern "C" fn sakura_utf16_find_char_avx2_v1(
 /// and address-overflow representations, but it cannot prove allocation
 /// validity, initialization, lifetime, or immutability. Rejected
 /// representations return `length` without dereference.
-pub unsafe extern "C" fn sakura_utf16_find_cr_or_lf_avx512bw_v1(
-    data: *const u16,
-    length: usize,
-) -> usize {
+pub unsafe fn sakura_utf16_find_cr_or_lf_avx512bw_v1(data: *const u16, length: usize) -> usize {
     // SAFETY: This entry point's Safety contract supplies the CPU/OS feature
     // state and caller-owned allocation contract required by `scan_ffi`.
     unsafe { scan_ffi(data, length, avx512bw_cr_or_lf) }
 }
 
 #[cfg(target_arch = "x86_64")]
-#[unsafe(no_mangle)]
 /// # Safety
 /// The caller must execute this function only when CPUID reports AVX2,
 /// AVX-512F, and AVX-512BW, with OSXSAVE and XCR0 XMM/YMM plus opmask/ZMM
@@ -718,7 +685,7 @@ pub unsafe extern "C" fn sakura_utf16_find_cr_or_lf_avx512bw_v1(
 /// and address-overflow representations, but it cannot prove allocation
 /// validity, initialization, lifetime, or immutability. Rejected
 /// representations return `length` without dereference.
-pub unsafe extern "C" fn sakura_utf16_find_markdown_special_avx512bw_v1(
+pub unsafe fn sakura_utf16_find_markdown_special_avx512bw_v1(
     data: *const u16,
     length: usize,
 ) -> usize {
@@ -728,7 +695,6 @@ pub unsafe extern "C" fn sakura_utf16_find_markdown_special_avx512bw_v1(
 }
 
 #[cfg(target_arch = "x86_64")]
-#[unsafe(no_mangle)]
 /// # Safety
 /// The caller must execute this function only when CPUID reports AVX2,
 /// AVX-512F, and AVX-512BW, with OSXSAVE and XCR0 XMM/YMM plus opmask/ZMM
@@ -741,7 +707,7 @@ pub unsafe extern "C" fn sakura_utf16_find_markdown_special_avx512bw_v1(
 /// validity, initialization, lifetime, or immutability. Rejected
 /// representations return `length` without dereference; `target` is one
 /// UTF-16 code unit.
-pub unsafe extern "C" fn sakura_utf16_find_char_avx512bw_v1(
+pub unsafe fn sakura_utf16_find_char_avx512bw_v1(
     data: *const u16,
     length: usize,
     target: u16,
@@ -763,7 +729,7 @@ pub unsafe extern "C" fn sakura_utf16_find_char_avx512bw_v1(
 }
 
 #[cfg(not(target_arch = "x86_64"))]
-compile_error!("sakura-rust-core currently targets x86_64-pc-windows-msvc only");
+compile_error!("sakura-simd currently targets x86_64-pc-windows-msvc only");
 
 #[cfg(test)]
 mod tests {
@@ -807,7 +773,7 @@ mod tests {
     }
 
     fn call_scan(
-        scan: unsafe extern "C" fn(*const u16, usize) -> usize,
+        scan: unsafe fn(*const u16, usize) -> usize,
         data: *const u16,
         length: usize,
     ) -> usize {
@@ -818,7 +784,7 @@ mod tests {
     }
 
     fn call_find_char(
-        find_char: unsafe extern "C" fn(*const u16, usize, u16) -> usize,
+        find_char: unsafe fn(*const u16, usize, u16) -> usize,
         data: *const u16,
         length: usize,
         target: u16,
@@ -829,9 +795,9 @@ mod tests {
     }
 
     fn run_exhaustive_short_cases(
-        cr_or_lf: unsafe extern "C" fn(*const u16, usize) -> usize,
-        markdown: unsafe extern "C" fn(*const u16, usize) -> usize,
-        find_char: unsafe extern "C" fn(*const u16, usize, u16) -> usize,
+        cr_or_lf: unsafe fn(*const u16, usize) -> usize,
+        markdown: unsafe fn(*const u16, usize) -> usize,
+        find_char: unsafe fn(*const u16, usize, u16) -> usize,
     ) {
         let mut input = vec![0x1234_u16; 129];
         for length in 0..=129 {
@@ -905,9 +871,9 @@ mod tests {
     }
 
     fn run_alignment_cases(
-        cr_or_lf: unsafe extern "C" fn(*const u16, usize) -> usize,
-        markdown: unsafe extern "C" fn(*const u16, usize) -> usize,
-        find_char: unsafe extern "C" fn(*const u16, usize, u16) -> usize,
+        cr_or_lf: unsafe fn(*const u16, usize) -> usize,
+        markdown: unsafe fn(*const u16, usize) -> usize,
+        find_char: unsafe fn(*const u16, usize, u16) -> usize,
     ) {
         for &length in ALIGNMENT_TEST_LENGTHS {
             for byte_offset in (0..64).step_by(2) {
@@ -976,9 +942,9 @@ mod tests {
     }
 
     fn run_extended_boundary_cases(
-        cr_or_lf: unsafe extern "C" fn(*const u16, usize) -> usize,
-        markdown: unsafe extern "C" fn(*const u16, usize) -> usize,
-        find_char: unsafe extern "C" fn(*const u16, usize, u16) -> usize,
+        cr_or_lf: unsafe fn(*const u16, usize) -> usize,
+        markdown: unsafe fn(*const u16, usize) -> usize,
+        find_char: unsafe fn(*const u16, usize, u16) -> usize,
     ) {
         for &length in EXTENDED_TEST_LENGTHS {
             let mut input = vec![0x1234_u16; length];
@@ -1031,8 +997,8 @@ mod tests {
 
     fn run_mixed_match_cases(
         vector_width: usize,
-        cr_or_lf: unsafe extern "C" fn(*const u16, usize) -> usize,
-        markdown: unsafe extern "C" fn(*const u16, usize) -> usize,
+        cr_or_lf: unsafe fn(*const u16, usize) -> usize,
+        markdown: unsafe fn(*const u16, usize) -> usize,
     ) {
         let length = 2 * vector_width + MARKDOWN_SPECIALS.len() + 2;
         let mut input = vec![0x1234_u16; length];
@@ -1094,9 +1060,9 @@ mod tests {
     fn run_executable_isa_cases(
         name: &str,
         vector_width: usize,
-        cr_or_lf: unsafe extern "C" fn(*const u16, usize) -> usize,
-        markdown: unsafe extern "C" fn(*const u16, usize) -> usize,
-        find_char: unsafe extern "C" fn(*const u16, usize, u16) -> usize,
+        cr_or_lf: unsafe fn(*const u16, usize) -> usize,
+        markdown: unsafe fn(*const u16, usize) -> usize,
+        find_char: unsafe fn(*const u16, usize, u16) -> usize,
     ) {
         std::println!("ISA_EXECUTION {name}=executed");
         run_exhaustive_short_cases(cr_or_lf, markdown, find_char);
@@ -1311,9 +1277,9 @@ mod tests {
 
     fn run_invalid_spans_for_isa(
         name: &str,
-        cr_or_lf: unsafe extern "C" fn(*const u16, usize) -> usize,
-        markdown: unsafe extern "C" fn(*const u16, usize) -> usize,
-        find_char: unsafe extern "C" fn(*const u16, usize, u16) -> usize,
+        cr_or_lf: unsafe fn(*const u16, usize) -> usize,
+        markdown: unsafe fn(*const u16, usize) -> usize,
+        find_char: unsafe fn(*const u16, usize, u16) -> usize,
     ) {
         std::println!("FFI_ISA_EXECUTION {name}=executed");
         let aligned_storage = [0u16; 2];

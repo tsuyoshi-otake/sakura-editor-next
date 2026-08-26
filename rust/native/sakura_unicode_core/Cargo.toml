@@ -1,0 +1,9 @@
+[package]
+name = "sakura-unicode-core"
+version = "0.1.0"
+edition = "2021"
+license = "Zlib"
+publish = false
+
+[lib]
+crate-type = ["rlib"]

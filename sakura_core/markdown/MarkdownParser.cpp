@@ -161,7 +161,7 @@ enum class AngleAutolinkKind {
 	}
 	SAKURA_UTF16_BENCHMARK_RECORD(
 		"markdown", remaining, offset, source.data() + start,
-		CpuDispatch::Get().isa, implementationPath);
+		CpuDispatch::Get().utf16MarkdownIsa, implementationPath);
 	return start + offset;
 }
 
@@ -184,7 +184,7 @@ enum class AngleAutolinkKind {
 	}
 	SAKURA_UTF16_BENCHMARK_RECORD(
 		"crlf", remaining, offset, source.data() + start,
-		CpuDispatch::Get().isa, implementationPath);
+		CpuDispatch::Get().utf16CrOrLfIsa, implementationPath);
 	return start + offset;
 }
 

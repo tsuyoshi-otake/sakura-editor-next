@@ -1,4 +1,4 @@
-/*! @file @brief C ABI for the bounded, audited Rust UTF-16 scan kernels. */
+/*! @file @brief Panic-safe C ABI for the final native Rust static library. */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -6,57 +6,130 @@
 */
 #pragma once
 
-#include <cstddef>
 #include <cstdint>
+#include <type_traits>
 
-// ABI version 1 is a bounded, read-only UTF-16 span. The Rust side borrows
-// data only for the duration of each call; no allocation crosses this ABI and
-// no pointer or reference escapes it. The return value is always in
-// [0, length], with length meaning "not found".
+constexpr std::uint32_t SAKURA_NATIVE_ABI_VERSION_V1 = 1;
+
+enum class SakuraStatus : std::uint32_t {
+	Ok = 0,
+	InvalidArgument = 1,
+	Unsupported = 2,
+	NotInitialized = 3,
+	ConflictingInitialization = 4,
+	InternalError = 5,
+};
+
+enum class SakuraCpuFeature : std::uint64_t {
+	Avx = std::uint64_t{1} << 0,
+	Avx2 = std::uint64_t{1} << 1,
+	Avx512F = std::uint64_t{1} << 2,
+	Avx512Bw = std::uint64_t{1} << 3,
+};
+
+enum class SakuraOsExtendedState : std::uint64_t {
+	Xmm = std::uint64_t{1} << 0,
+	Ymm = std::uint64_t{1} << 1,
+	Opmask = std::uint64_t{1} << 2,
+	ZmmHi256 = std::uint64_t{1} << 3,
+	Hi16Zmm = std::uint64_t{1} << 4,
+};
+
+enum class SakuraOperationId : std::uint32_t {
+	FindCrOrLfUtf16 = 1,
+	FindMarkdownSpecialUtf16 = 2,
+	FindCharUtf16 = 3,
+};
+
+enum class SakuraImplementationId : std::uint32_t {
+	CppAvx128 = 1,
+	CppAvx2 = 2,
+	CppAvx512Bw = 3,
+	RustAvx128 = 101,
+	RustAvx2 = 102,
+	RustAvx512Bw = 103,
+};
+
+constexpr std::uint64_t SakuraAbiBit(SakuraCpuFeature bit) noexcept
+{
+	return static_cast<std::uint64_t>(bit);
+}
+
+constexpr std::uint64_t SakuraAbiBit(SakuraOsExtendedState bit) noexcept
+{
+	return static_cast<std::uint64_t>(bit);
+}
+
+// C++ is the sole CPUID/XGETBV owner. It copies one immutable snapshot into
+// the Rust library during wWinMain startup before workers or Rust services can
+// run. Raw CPUID bits stay separate from OS-enabled register state and from
+// the selected operation policy. All reserved fields must be zero.
+struct SakuraCpuCapabilitiesV1 {
+	std::uint32_t structSize{};
+	std::uint32_t abiVersion{SAKURA_NATIVE_ABI_VERSION_V1};
+	std::uint64_t rawFeatureBits{};
+	std::uint64_t osExtendedStateBits{};
+	std::uint64_t reserved[4]{};
+};
+
+struct SakuraOperationPolicyV1 {
+	std::uint32_t structSize{};
+	std::uint32_t abiVersion{SAKURA_NATIVE_ABI_VERSION_V1};
+	std::uint32_t operationId{};
+	std::uint32_t implementationId{};
+	std::uint64_t minimumLength{};
+	std::uint64_t reserved[3]{};
+};
+
+static_assert(sizeof(SakuraStatus) == sizeof(std::uint32_t));
+static_assert(sizeof(SakuraCpuCapabilitiesV1) == 56);
+static_assert(sizeof(SakuraOperationPolicyV1) == 48);
+static_assert(std::is_trivially_copyable_v<SakuraCpuCapabilitiesV1>);
+static_assert(std::is_trivially_copyable_v<SakuraOperationPolicyV1>);
+
+// Every export returns a typed status. The native workspace uses
+// panic=unwind, and sakura_native_ffi catches all Rust panics before they can
+// cross this C boundary. InternalError identifies a caught panic or violated
+// internal invariant. OOM, explicit abort, and a double panic remain fatal.
 //
-// A zero-length call returns zero without reading data, so both null and
-// non-null pointers are valid in that case. For a positive length, the caller
-// must pass one initialized, immutable allocation of UTF-16 code units whose
-// byte size is at most INT64_MAX, whose address is non-null and 2-byte
-// aligned, and whose address plus byte size does not overflow. A null,
-// misaligned, oversized, or address-overflow span fails closed by returning
-// length before dereference. Those representational checks do not make an
-// invalid lifetime or freed allocation safe; callers still own that contract.
-//
-// Rust is built with panic=abort. These functions are noexcept on the C++
-// side, retain no pointer, and do not permit C++ exceptions or Rust unwinding
-// to cross the boundary.
-//
-// The caller must also prove the matching CPU and OS state before invoking a
-// valid-span operation: AVX-128 requires AVX plus OSXSAVE/XCR0 XMM/YMM state;
-// AVX2 additionally requires AVX2; AVX512BW requires AVX2, AVX512F, and
-// AVX512BW plus OSXSAVE/XCR0 XMM/YMM/opmask/ZMM state. Invalid spans return
-// before reaching the ISA kernel, but that fail-closed path is not a license
-// to call a valid span on unsupported hardware.
+// V2 UTF-16 scans use fixed-width lengths and an explicit caller-owned output.
+// `resultIndex` is written with `length` before later validation so all
+// failures after output validation fail closed. The unit is UTF-16 code units;
+// `length` means not found. Zero length permits a null data pointer. Positive
+// lengths require one immutable initialized allocation, two-byte alignment,
+// a byte length no larger than INT64_MAX, and no address overflow. No pointer
+// is retained. Raw NUL and unpaired surrogates remain ordinary code units.
 extern "C"
 {
-std::size_t sakura_utf16_find_cr_or_lf_avx128_v1(
-	const std::uint16_t* data, std::size_t length) noexcept;
-std::size_t sakura_utf16_find_markdown_special_avx128_v1(
-	const std::uint16_t* data, std::size_t length) noexcept;
-std::size_t sakura_utf16_find_char_avx128_v1(
-	const std::uint16_t* data, std::size_t length, std::uint16_t target) noexcept;
+SakuraStatus sakura_native_initialize_v1(
+	const SakuraCpuCapabilitiesV1* capabilities,
+	const SakuraOperationPolicyV1* policies,
+	std::uint64_t policyCount) noexcept;
 
-std::size_t sakura_utf16_find_cr_or_lf_avx2_v1(
-	const std::uint16_t* data, std::size_t length) noexcept;
-std::size_t sakura_utf16_find_markdown_special_avx2_v1(
-	const std::uint16_t* data, std::size_t length) noexcept;
-std::size_t sakura_utf16_find_char_avx2_v1(
-	const std::uint16_t* data, std::size_t length, std::uint16_t target) noexcept;
+SakuraStatus sakura_utf16_find_cr_or_lf_avx128_v2(
+	const std::uint16_t* data, std::uint64_t length, std::uint64_t* resultIndex) noexcept;
+SakuraStatus sakura_utf16_find_markdown_special_avx128_v2(
+	const std::uint16_t* data, std::uint64_t length, std::uint64_t* resultIndex) noexcept;
+SakuraStatus sakura_utf16_find_char_avx128_v2(
+	const std::uint16_t* data, std::uint64_t length, std::uint16_t target,
+	std::uint64_t* resultIndex) noexcept;
 
-// All three AVX512BW entry points below share the process-wide AVX-512 tier
-// contract: AVX2 + AVX512F + AVX512BW with OSXSAVE/XCR0 XMM/YMM/opmask/ZMM
-// state enabled. AVX2 remains required because that global tier also selects
-// the C++ byte scanner; its AVX-512 tail delegates to `FindCrOrLfAvx2`.
-std::size_t sakura_utf16_find_cr_or_lf_avx512bw_v1(
-	const std::uint16_t* data, std::size_t length) noexcept;
-std::size_t sakura_utf16_find_markdown_special_avx512bw_v1(
-	const std::uint16_t* data, std::size_t length) noexcept;
-std::size_t sakura_utf16_find_char_avx512bw_v1(
-	const std::uint16_t* data, std::size_t length, std::uint16_t target) noexcept;
+SakuraStatus sakura_utf16_find_cr_or_lf_avx2_v2(
+	const std::uint16_t* data, std::uint64_t length, std::uint64_t* resultIndex) noexcept;
+SakuraStatus sakura_utf16_find_markdown_special_avx2_v2(
+	const std::uint16_t* data, std::uint64_t length, std::uint64_t* resultIndex) noexcept;
+SakuraStatus sakura_utf16_find_char_avx2_v2(
+	const std::uint16_t* data, std::uint64_t length, std::uint16_t target,
+	std::uint64_t* resultIndex) noexcept;
+
+// The Rust AVX-512 kernels require AVX2 + AVX512F + AVX512BW and OS-enabled
+// XMM/YMM/opmask/ZMM state. AVX2 remains an explicit Rust target-feature
+// prerequisite independently of the C++ byte scanner's current tail design.
+SakuraStatus sakura_utf16_find_cr_or_lf_avx512bw_v2(
+	const std::uint16_t* data, std::uint64_t length, std::uint64_t* resultIndex) noexcept;
+SakuraStatus sakura_utf16_find_markdown_special_avx512bw_v2(
+	const std::uint16_t* data, std::uint64_t length, std::uint64_t* resultIndex) noexcept;
+SakuraStatus sakura_utf16_find_char_avx512bw_v2(
+	const std::uint16_t* data, std::uint64_t length, std::uint16_t target,
+	std::uint64_t* resultIndex) noexcept;
 }

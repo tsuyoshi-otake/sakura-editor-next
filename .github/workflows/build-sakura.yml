@@ -280,7 +280,8 @@ jobs:
           tar --extract --gzip --file "${archive}" --directory "${tool_dir}"
           readonly executable="${tool_dir}/cargo-audit-x86_64-unknown-linux-gnu-v${version}/cargo-audit"
           test -x "${executable}"
-          "${executable}" audit --file rust/Cargo.lock
+          "${executable}" audit --file rust/native/Cargo.lock
+          "${executable}" audit --file rust/senp/Cargo.lock
 
   build-chm:
     name: Build CHM
@@ -572,7 +573,7 @@ jobs:
     - name: MSBuild release promotion
       if: ${{ inputs.release_promotion }}
       env:
-        SAKURA_UTF16_BACKEND: rust
+        SAKURA_UTF16_BACKEND: cpp
         SAKURA_UTF16_PRODUCTION_PACKAGE: true
       run: |
         set "GITHUB_SHA=${{ env.RELEASE_SOURCE_SHA }}"
@@ -582,8 +583,9 @@ jobs:
     - name: MSBuild
       if: ${{ !inputs.release_promotion }}
       env:
-        # The solution build uses the production/default Rust backend.
-        SAKURA_UTF16_BACKEND: rust
+        # Rollback-first keeps C++ authoritative while the linked Rust
+        # candidate remains available to the focused differential tests.
+        SAKURA_UTF16_BACKEND: cpp
         SAKURA_UTF16_PRODUCTION_PACKAGE: true
       run: build-sln.bat ${{ matrix.platform }} ${{ matrix.config }}
       shell: cmd
@@ -715,26 +717,38 @@ jobs:
 
     - name: Prepare pinned Rust toolchain
       if: ${{ !inputs.release_promotion }}
-      working-directory: rust
+      working-directory: rust/native
       shell: pwsh
       run: |
         $ErrorActionPreference = 'Stop'
         $toolchainDocument = Get-Content -LiteralPath 'rust-toolchain.toml' -Raw
+        $senpToolchainDocument = Get-Content -LiteralPath '..\senp\rust-toolchain.toml' -Raw
         $channelMatches = [regex]::Matches(
           $toolchainDocument,
+          '(?m)^\s*channel\s*=\s*"([^"]+)"\s*$'
+        )
+        $senpChannelMatches = [regex]::Matches(
+          $senpToolchainDocument,
           '(?m)^\s*channel\s*=\s*"([^"]+)"\s*$'
         )
         if ($channelMatches.Count -ne 1) {
           throw 'rust-toolchain.toml must declare exactly one channel.'
         }
+        if ($senpChannelMatches.Count -ne 1) {
+          throw 'SENP rust-toolchain.toml must declare exactly one channel.'
+        }
         $pin = $channelMatches[0].Groups[1].Value
+        $senpPin = $senpChannelMatches[0].Groups[1].Value
+        if ($pin -cne $senpPin) {
+          throw "Native and SENP must pin the same Rust toolchain release: native=$pin senp=$senpPin"
+        }
         if ($pin -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
           throw "rust-toolchain.toml channel must be an exact numeric release, not a moving alias: $pin"
         }
         "RUST_TOOLCHAIN_PIN=$pin" >> $env:GITHUB_ENV
         $toolchainArgument = "+$pin"
 
-        rustup toolchain install $pin --profile minimal --target x86_64-pc-windows-msvc --no-self-update
+        rustup toolchain install $pin --profile minimal --target x86_64-pc-windows-msvc --target wasm32-unknown-unknown --no-self-update
         if ($LASTEXITCODE -ne 0) {
           throw "Pinned Rust toolchain installation failed with exit code $LASTEXITCODE."
         }
@@ -758,7 +772,7 @@ jobs:
     # still run their own locked tests and product staticlib builds.
     - name: Rust static checks (Debug matrix cell)
       if: ${{ !inputs.release_promotion && matrix.config == 'Debug' }}
-      working-directory: rust
+      working-directory: rust/native
       shell: pwsh
       timeout-minutes: 15
       run: |
@@ -766,42 +780,94 @@ jobs:
         $toolchainArgument = "+$env:RUST_TOOLCHAIN_PIN"
         cargo $toolchainArgument fmt --all -- --check
         if ($LASTEXITCODE -ne 0) {
-          throw "cargo fmt failed with exit code $LASTEXITCODE."
+          throw "native cargo fmt failed with exit code $LASTEXITCODE."
+        }
+        cargo $toolchainArgument fmt --manifest-path '..\senp\Cargo.toml' --all -- --check
+        if ($LASTEXITCODE -ne 0) {
+          throw "SENP cargo fmt failed with exit code $LASTEXITCODE."
         }
         $metadataJson = cargo $toolchainArgument metadata --locked --no-deps --format-version 1
         if ($LASTEXITCODE -ne 0) {
-          throw "cargo metadata failed with exit code $LASTEXITCODE."
+          throw "native cargo metadata failed with exit code $LASTEXITCODE."
         }
         $metadata = $metadataJson | ConvertFrom-Json
-        $corePackages = @(
-          $metadata.packages | Where-Object { $_.name -eq 'sakura-rust-core' }
+        $ffiPackages = @(
+          $metadata.packages | Where-Object { $_.name -eq 'sakura-native-ffi' }
         )
-        if ($corePackages.Count -ne 1) {
-          throw "Rust workspace must contain exactly one sakura-rust-core package; matches=$($corePackages.Count)."
-        }
-        $package = $corePackages[0]
-        $coreMemberMatches = @(
-          $metadata.workspace_members | Where-Object { $_ -eq $package.id }
+        $simdPackages = @(
+          $metadata.packages | Where-Object { $_.name -eq 'sakura-simd' }
         )
-        if ($coreMemberMatches.Count -ne 1 -or @($package.dependencies).Count -ne 0) {
-          throw "sakura-rust-core must remain a dependency-free workspace member."
+        $unicodePackages = @(
+          $metadata.packages | Where-Object { $_.name -eq 'sakura-unicode-core' }
+        )
+        if ($ffiPackages.Count -ne 1 -or $simdPackages.Count -ne 1 -or $unicodePackages.Count -ne 1) {
+          throw "Native workspace must contain exactly one FFI, SIMD, and Unicode core package."
         }
-        $targets = @($package.targets)
+        $ffiPackage = $ffiPackages[0]
+        $simdPackage = $simdPackages[0]
+        $unicodePackage = $unicodePackages[0]
+        $ffiMemberMatches = @(
+          $metadata.workspace_members | Where-Object { $_ -eq $ffiPackage.id }
+        )
+        $simdMemberMatches = @(
+          $metadata.workspace_members | Where-Object { $_ -eq $simdPackage.id }
+        )
+        $unicodeMemberMatches = @(
+          $metadata.workspace_members | Where-Object { $_ -eq $unicodePackage.id }
+        )
+        if ($ffiMemberMatches.Count -ne 1 -or $simdMemberMatches.Count -ne 1 -or $unicodeMemberMatches.Count -ne 1) {
+          throw 'All native crates must be workspace members.'
+        }
+        $staticlibTargets = @(
+          $metadata.packages.targets |
+            Where-Object { @($_.crate_types) -contains 'staticlib' }
+        )
+        if ($staticlibTargets.Count -ne 1) {
+          throw "Native workspace must expose exactly one staticlib; matches=$($staticlibTargets.Count)."
+        }
+        $targets = @($ffiPackage.targets)
         if (
           $targets.Count -ne 1 -or
           ($targets[0].kind -join ',') -ne 'staticlib' -or
           ($targets[0].crate_types -join ',') -ne 'staticlib'
         ) {
-          throw "sakura-rust-core must expose exactly one staticlib target and no build script."
+          throw 'sakura-native-ffi must be the sole staticlib target.'
+        }
+        $simdTargets = @($simdPackage.targets)
+        if (
+          $simdTargets.Count -ne 1 -or
+          ($simdTargets[0].kind -join ',') -ne 'lib' -or
+          ($simdTargets[0].crate_types -join ',') -ne 'rlib'
+        ) {
+          throw 'sakura-simd must expose exactly one rlib target.'
+        }
+        $unicodeTargets = @($unicodePackage.targets)
+        if (
+          $unicodeTargets.Count -ne 1 -or
+          ($unicodeTargets[0].kind -join ',') -ne 'lib' -or
+          ($unicodeTargets[0].crate_types -join ',') -ne 'rlib'
+        ) {
+          throw 'sakura-unicode-core must expose exactly one rlib target.'
+        }
+        $ffiDependencyNames = @($ffiPackage.dependencies | ForEach-Object { $_.name })
+        if (
+          $ffiDependencyNames -notcontains 'sakura-simd' -or
+          $ffiDependencyNames -notcontains 'sakura-unicode-core'
+        ) {
+          throw 'sakura-native-ffi must own the final link edges to both native rlibs.'
         }
         cargo $toolchainArgument clippy --workspace --all-targets --all-features --locked -- -D warnings
         if ($LASTEXITCODE -ne 0) {
-          throw "cargo clippy failed with exit code $LASTEXITCODE."
+          throw "native cargo clippy failed with exit code $LASTEXITCODE."
+        }
+        cargo $toolchainArgument clippy --manifest-path '..\senp\Cargo.toml' --workspace --all-targets --all-features --locked -- -D warnings
+        if ($LASTEXITCODE -ne 0) {
+          throw "SENP cargo clippy failed with exit code $LASTEXITCODE."
         }
 
     - name: Rust tests and product staticlib (${{ matrix.config }})
       if: ${{ !inputs.release_promotion }}
-      working-directory: rust
+      working-directory: rust/native
       shell: pwsh
       timeout-minutes: 30
       run: |
@@ -809,19 +875,27 @@ jobs:
         $toolchainArgument = "+$env:RUST_TOOLCHAIN_PIN"
         if ('${{ matrix.config }}' -eq 'Release') {
           cargo $toolchainArgument test --workspace --locked --release --no-fail-fast -- --nocapture
+          if ($LASTEXITCODE -ne 0) {
+            throw "native cargo test (${{ matrix.config }}) failed with exit code $LASTEXITCODE."
+          }
+          cargo $toolchainArgument test --manifest-path '..\senp\Cargo.toml' --workspace --locked --release --no-fail-fast -- --nocapture
         } else {
           cargo $toolchainArgument test --workspace --locked --no-fail-fast -- --nocapture
+          if ($LASTEXITCODE -ne 0) {
+            throw "native cargo test (${{ matrix.config }}) failed with exit code $LASTEXITCODE."
+          }
+          cargo $toolchainArgument test --manifest-path '..\senp\Cargo.toml' --workspace --locked --no-fail-fast -- --nocapture
         }
         if ($LASTEXITCODE -ne 0) {
-          throw "cargo test (${{ matrix.config }}) failed with exit code $LASTEXITCODE."
+          throw "SENP cargo test (${{ matrix.config }}) failed with exit code $LASTEXITCODE."
         }
         $profile = if ('${{ matrix.config }}' -eq 'Release') { 'release' } else { 'dev' }
-        cargo $toolchainArgument build --workspace --package sakura-rust-core --locked --target x86_64-pc-windows-msvc --profile $profile
+        cargo $toolchainArgument build --package sakura-native-ffi --locked --target x86_64-pc-windows-msvc --profile $profile
         if ($LASTEXITCODE -ne 0) {
           throw "Rust product staticlib ($profile) failed with exit code $LASTEXITCODE."
         }
 
-    - name: Rust integration initialization (rust, ${{ matrix.config }})
+    - name: Rust candidate integration initialization (cpp production, ${{ matrix.config }})
       if: ${{ !inputs.release_promotion }}
       shell: pwsh
       timeout-minutes: 5
@@ -839,7 +913,7 @@ jobs:
           throw 'rust initialization diagnostics did not execute exactly one test.'
         }
 
-    - name: Rust integration focused tests (rust, ${{ matrix.config }})
+    - name: Rust candidate differential tests (cpp production, ${{ matrix.config }})
       if: ${{ !inputs.release_promotion }}
       shell: pwsh
       timeout-minutes: 10

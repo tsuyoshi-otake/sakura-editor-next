@@ -10,7 +10,7 @@ from .generator import stale_outputs
 from .model import SemanticGraph, load_semantic_graph
 
 
-SCHEMA_PATH = Path("src/main/modules/schema-v3.json")
+SCHEMA_PATH = Path("src/main/modules/schema-v4.json")
 
 
 def _lf_text(text: str) -> str:

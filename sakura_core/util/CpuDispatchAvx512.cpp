@@ -15,7 +15,6 @@ namespace CpuDispatch::Internal
 {
 namespace
 {
-#if !defined(SAKURA_UTF16_BACKEND_RUST)
 [[nodiscard]] unsigned long FirstUtf16Lane(std::uint32_t laneMask) noexcept
 {
 	unsigned long index{};
@@ -26,7 +25,6 @@ namespace
 #endif
 	return index;
 }
-#endif
 
 // Low `count` bits set. A width-exact shift (`1 << 32`) is undefined
 // behavior, so both edges are handled explicitly.
@@ -75,7 +73,6 @@ std::size_t WidenAsciiPartial(__m512i bytes, std::size_t count, wchar_t* destina
 	return count;
 }
 
-#if !defined(SAKURA_UTF16_BACKEND_RUST)
 [[nodiscard]] __mmask32 MatchMarkdownInlineSpecial(__m512i units) noexcept
 {
 	__mmask32 matches = _mm512_cmpeq_epi16_mask(units, _mm512_set1_epi16(L'\\'));
@@ -89,7 +86,6 @@ std::size_t WidenAsciiPartial(__m512i bytes, std::size_t count, wchar_t* destina
 	matches |= _mm512_cmpeq_epi16_mask(units, _mm512_set1_epi16(L'&'));
 	return matches | _mm512_cmpeq_epi16_mask(units, _mm512_set1_epi16(L'$'));
 }
-#endif
 }
 
 // The global AVX-512 tier intentionally retains an AVX2 prerequisite because
@@ -176,7 +172,6 @@ std::size_t FindCrOrLfAvx512(const char* data, std::size_t length) noexcept
 	return FindCrOrLfAvx2(data + offset, length - offset) + offset;
 }
 
-#if !defined(SAKURA_UTF16_BACKEND_RUST)
 std::size_t FindCrOrLfUtf16Avx512(const wchar_t* data, std::size_t length) noexcept
 {
 	static_assert(sizeof(wchar_t) == 2, "The UTF-16 scanner requires 16-bit wchar_t");
@@ -232,7 +227,6 @@ std::size_t FindMarkdownInlineSpecialUtf16Avx512(
 		MatchMarkdownInlineSpecial(units) & valid);
 	return mask != 0 ? offset + FirstUtf16Lane(mask) : length;
 }
-#endif
 
 std::size_t WidenAsciiToUtf16Avx512(
 	const char* source, std::size_t length, wchar_t* destination) noexcept
@@ -269,7 +263,6 @@ std::size_t WidenAsciiToUtf16Avx512(
 	return offset + WidenAsciiPartial(bytes, run, destination + offset);
 }
 
-#if !defined(SAKURA_UTF16_BACKEND_RUST)
 std::size_t FindUtf16CharAvx512(
 	const wchar_t* data, std::size_t length, wchar_t target) noexcept
 {
@@ -296,5 +289,4 @@ std::size_t FindUtf16CharAvx512(
 		static_cast<std::uint32_t>(_mm512_cmpeq_epi16_mask(units, needle) & valid);
 	return mask != 0 ? offset + FirstUtf16Lane(mask) : length;
 }
-#endif
 }

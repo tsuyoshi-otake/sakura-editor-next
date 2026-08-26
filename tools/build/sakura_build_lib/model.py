@@ -11,7 +11,7 @@ import hashlib
 import json
 import re
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -55,13 +55,17 @@ ARTIFACT_KINDS = {
     "source_set",
 }
 RUNTIME_ARTIFACT_KINDS = {"asset", "product", "staging_set"}
-TOOL_IDS = {"sakura-module-generator", "header-make", "cmake", "msbuild", "rc", "copy"}
+TOOL_IDS = {"sakura-module-generator", "header-make", "cmake", "msbuild", "cargo", "rc", "copy"}
 MATURITY_LEVELS = {"legacy", "candidate", "transitional", "independent"}
 BUILD_DEFINITIONS = {"legacy", "generated"}
 EDGE_KINDS = {"api", "implementation", "tool", "asset", "package", "protocol", "test"}
 PHASES = {"generate", "compile", "link", "test", "stage", "runtime", "lifecycle"}
 VISIBILITIES = {"public", "private"}
 PROPAGATIONS = {"none", "public"}
+IMPLEMENTATION_LANGUAGES = {"cpp", "rust"}
+AUTHORITY_MODES = {"none", "candidate-shadow", "production", "legacy-production", "retired"}
+PRODUCTION_AUTHORITY_MODES = {"production", "legacy-production"}
+PRODUCTION_EDGE_PHASES = {"link", "runtime"}
 
 
 class ManifestError(ValueError):
@@ -273,6 +277,16 @@ class Component:
     backend_targets: Mapping[str, tuple[str, ...]]
     compile_profile: str | None
     system_libraries: tuple[str, ...] = ()
+    implementation_language: str = "cpp"
+    cargo_package: str | None = None
+    cargo_target: str | None = None
+    link_artifact: str | None = None
+    authority_domain: str | None = None
+    authority_mode: str = "none"
+    thread_affinity: str = "unspecified"
+    lifecycle_owner: str | None = None
+    side_effects: tuple[str, ...] = ()
+    provider_by_context: Mapping[str, str] = field(default_factory=dict)
 
     def as_mapping(self) -> dict[str, Any]:
         return {
@@ -292,6 +306,16 @@ class Component:
             "state_owner": self.state_owner,
             "backend_targets": {key: list(value) for key, value in sorted(self.backend_targets.items())},
             "compile_profile": self.compile_profile,
+            "implementation_language": self.implementation_language,
+            "cargo_package": self.cargo_package,
+            "cargo_target": self.cargo_target,
+            "link_artifact": self.link_artifact,
+            "authority_domain": self.authority_domain,
+            "authority_mode": self.authority_mode,
+            "thread_affinity": self.thread_affinity,
+            "lifecycle_owner": self.lifecycle_owner,
+            "side_effects": list(self.side_effects),
+            "provider_by_context": dict(sorted(self.provider_by_context.items())),
             "system_libraries": list(self.system_libraries),
         }
 
@@ -335,6 +359,47 @@ class Artifact:
             "outputs": list(self.outputs),
             "tool_id": self.tool_id,
             "condition": self.condition,
+        }
+
+
+@dataclass(frozen=True)
+class RuntimeProvider:
+    """A runtime authority record independent of source/build ownership.
+
+    A provider deliberately points at an existing build component instead of
+    owning source paths itself.  This is the bounded representation needed for
+    C++ production plus a linked Rust shadow candidate: the graph can prove
+    authority and link reachability without inventing a second owner for the
+    same implementation files.
+    """
+
+    id: str
+    authority_domain: str
+    authority_mode: str
+    implementation_language: str
+    build_component: str
+    supported_contexts: tuple[str, ...]
+    cargo_package: str | None
+    cargo_target: str | None
+    link_artifact: str | None
+    thread_affinity: str
+    lifecycle_owner: str
+    side_effects: tuple[str, ...]
+
+    def as_mapping(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "authority_domain": self.authority_domain,
+            "authority_mode": self.authority_mode,
+            "implementation_language": self.implementation_language,
+            "build_component": self.build_component,
+            "supported_contexts": list(self.supported_contexts),
+            "cargo_package": self.cargo_package,
+            "cargo_target": self.cargo_target,
+            "link_artifact": self.link_artifact,
+            "thread_affinity": self.thread_affinity,
+            "lifecycle_owner": self.lifecycle_owner,
+            "side_effects": list(self.side_effects),
         }
 
 
@@ -399,6 +464,7 @@ class SemanticGraph:
     compile_profiles: CompileProfiles
     edges: tuple[Edge, ...]
     semantic_graph_hash: str
+    runtime_providers: Mapping[str, RuntimeProvider] = field(default_factory=dict)
 
     def context(self, context_id: str) -> Context:
         try:
@@ -415,6 +481,25 @@ class SemanticGraph:
             and self._node_supports_context(edge.source, context_id)
             and self._node_supports_context(edge.target, context_id)
         )
+
+    def active_runtime_providers(self, context_id: str) -> tuple[RuntimeProvider, ...]:
+        """Return authority records applicable to one concrete build context."""
+
+        self.context(context_id)
+        return tuple(
+            provider
+            for provider in sorted(self.runtime_providers.values(), key=lambda item: item.id)
+            if context_id in provider.supported_contexts
+        )
+
+    def production_runtime_providers(self, context_id: str) -> Mapping[str, RuntimeProvider]:
+        """Return the unique production provider for every active authority domain."""
+
+        result: dict[str, RuntimeProvider] = {}
+        for provider in self.active_runtime_providers(context_id):
+            if provider.authority_mode in PRODUCTION_AUTHORITY_MODES:
+                result[provider.authority_domain] = provider
+        return result
 
     def _node_supports_context(self, node_id: str, context_id: str) -> bool:
         component = self.components.get(node_id)
@@ -575,6 +660,11 @@ class SemanticGraph:
                 if evaluate_condition(artifact.condition, context.as_mapping())
             ),
             "active_edges": [edge.id for edge in active_edges],
+            "active_runtime_providers": [provider.id for provider in self.active_runtime_providers(context_id)],
+            "production_runtime_providers": {
+                domain: provider.id
+                for domain, provider in sorted(self.production_runtime_providers(context_id).items())
+            },
             "compile_profiles": [
                 self.compile_profiles.context_profiles[context_id]["project_profile"],
                 self.compile_profiles.context_profiles[context_id]["link_profile"],
@@ -685,7 +775,7 @@ def _parse_component(repo_root: Path, value: Any, location: str) -> Component:
     obj = _closed_object(
         value,
         location,
-        required={"id", "family", "kind", "maturity", "build_definition", "supported_contexts", "owner", "sources", "public_headers", "private_headers", "ownership_exclusions", "public_include_roots", "private_include_roots", "state_owner", "backend_targets", "compile_profile"},
+        required={"id", "family", "kind", "maturity", "build_definition", "supported_contexts", "owner", "sources", "public_headers", "private_headers", "ownership_exclusions", "public_include_roots", "private_include_roots", "state_owner", "backend_targets", "compile_profile", "implementation_language", "cargo_package", "cargo_target", "link_artifact", "authority_domain", "authority_mode", "thread_affinity", "lifecycle_owner", "side_effects", "provider_by_context"},
         optional={"system_libraries"},
     )
     kind = _string(obj["kind"], f"{location}.kind")
@@ -707,6 +797,73 @@ def _parse_component(repo_root: Path, value: Any, location: str) -> Component:
     compile_profile = obj["compile_profile"]
     if compile_profile is not None:
         compile_profile = _string(compile_profile, f"{location}.compile_profile")
+    implementation_language = _string(obj["implementation_language"], f"{location}.implementation_language")
+    if implementation_language not in IMPLEMENTATION_LANGUAGES:
+        _fail(
+            "IMPLEMENTATION_LANGUAGE",
+            f"{location}.implementation_language",
+            f"unsupported implementation language: {implementation_language}",
+        )
+
+    def nullable_string(field: str) -> str | None:
+        value = obj[field]
+        return None if value is None else _string(value, f"{location}.{field}")
+
+    cargo_package = nullable_string("cargo_package")
+    cargo_target = nullable_string("cargo_target")
+    link_artifact = nullable_string("link_artifact")
+    if implementation_language == "rust":
+        missing_rust_metadata = [
+            field
+            for field, value in (
+                ("cargo_package", cargo_package),
+                ("cargo_target", cargo_target),
+                ("link_artifact", link_artifact),
+            )
+            if value is None
+        ]
+        if missing_rust_metadata:
+            _fail(
+                "RUST_METADATA_MISSING",
+                location,
+                f"Rust components require: {', '.join(missing_rust_metadata)}",
+            )
+    elif any(value is not None for value in (cargo_package, cargo_target, link_artifact)):
+        _fail(
+            "CPP_RUST_METADATA",
+            location,
+            "C++ components must not declare Cargo package, target, or link artifact metadata",
+        )
+
+    authority_domain = nullable_string("authority_domain")
+    authority_mode = _string(obj["authority_mode"], f"{location}.authority_mode")
+    if authority_mode not in AUTHORITY_MODES:
+        _fail("AUTHORITY_MODE", f"{location}.authority_mode", f"unsupported authority mode: {authority_mode}")
+    if authority_mode == "none" and authority_domain is not None:
+        _fail("AUTHORITY_DOMAIN", f"{location}.authority_domain", "authority_mode 'none' must not declare a domain")
+    if authority_mode != "none" and authority_domain is None:
+        _fail("AUTHORITY_DOMAIN", f"{location}.authority_domain", "an authority domain is required when authority_mode is not 'none'")
+    thread_affinity = _string(obj["thread_affinity"], f"{location}.thread_affinity")
+    lifecycle_owner = nullable_string("lifecycle_owner")
+    side_effects = _string_list(obj["side_effects"], f"{location}.side_effects")
+    if authority_mode == "candidate-shadow" and side_effects:
+        _fail(
+            "AUTHORITY_SHADOW_SIDE_EFFECTS",
+            f"{location}.side_effects",
+            "candidate-shadow authorities must declare no side effects",
+        )
+    providers_obj = _object(obj["provider_by_context"], f"{location}.provider_by_context")
+    provider_by_context: dict[str, str] = {}
+    for context_id, provider in sorted(providers_obj.items()):
+        if not isinstance(context_id, str) or not context_id:
+            _fail("AUTHORITY_CONTEXT_REFERENCE", f"{location}.provider_by_context", "context IDs must be non-empty strings")
+        provider_by_context[context_id] = _string(provider, f"{location}.provider_by_context.{context_id}")
+    if authority_mode == "none" and provider_by_context:
+        _fail(
+            "AUTHORITY_PROVIDER_MAP",
+            f"{location}.provider_by_context",
+            "authority_mode 'none' must not declare providers",
+        )
     system_libraries = _string_list(obj.get("system_libraries", []), f"{location}.system_libraries")
     for index, library in enumerate(system_libraries):
         if not re.fullmatch(r"[A-Za-z0-9_.+-]+", library):
@@ -760,7 +917,8 @@ def _parse_component(repo_root: Path, value: Any, location: str) -> Component:
         for index, item in enumerate(_array(obj["private_include_roots"], f"{location}.private_include_roots"))
     )
     if kind in INTERFACE_COMPONENT_KINDS:
-        # v3 can prove only ownership represented by these fields. Do not
+        # The component graph can prove only ownership represented by these
+        # fields. Do not
         # invent a generic thread/OS-handle lifecycle IR for unobservable
         # invariants.
         if sources:
@@ -804,6 +962,16 @@ def _parse_component(repo_root: Path, value: Any, location: str) -> Component:
         state_owner=state_owner,
         backend_targets=backend_targets,
         compile_profile=compile_profile,
+        implementation_language=implementation_language,
+        cargo_package=cargo_package,
+        cargo_target=cargo_target,
+        link_artifact=link_artifact,
+        authority_domain=authority_domain,
+        authority_mode=authority_mode,
+        thread_affinity=thread_affinity,
+        lifecycle_owner=lifecycle_owner,
+        side_effects=side_effects,
+        provider_by_context=provider_by_context,
         system_libraries=system_libraries,
     )
 
@@ -871,6 +1039,80 @@ def _parse_artifact(repo_root: Path, value: Any, location: str) -> Artifact:
         outputs=outputs,
         tool_id=tool_id,
         condition=normalize_condition(obj["condition"], f"{location}.condition"),
+    )
+
+
+def _parse_runtime_provider(value: Any, location: str) -> RuntimeProvider:
+    """Parse a non-owning runtime authority record.
+
+    Runtime providers are intentionally not Components: a provider may share
+    the legacy monolith's source ownership while still having an independent
+    production/candidate authority and Cargo link contract.
+    """
+
+    obj = _closed_object(
+        value,
+        location,
+        required={
+            "id",
+            "authority_domain",
+            "authority_mode",
+            "implementation_language",
+            "build_component",
+            "supported_contexts",
+            "cargo_package",
+            "cargo_target",
+            "link_artifact",
+            "thread_affinity",
+            "lifecycle_owner",
+            "side_effects",
+        },
+    )
+    authority_mode = _string(obj["authority_mode"], f"{location}.authority_mode")
+    if authority_mode not in PRODUCTION_AUTHORITY_MODES | {"candidate-shadow", "retired"}:
+        _fail("RUNTIME_PROVIDER_MODE", f"{location}.authority_mode", f"unsupported authority mode: {authority_mode}")
+    implementation_language = _string(obj["implementation_language"], f"{location}.implementation_language")
+    if implementation_language not in IMPLEMENTATION_LANGUAGES:
+        _fail("RUNTIME_PROVIDER_LANGUAGE", f"{location}.implementation_language", f"unsupported implementation language: {implementation_language}")
+    supported_contexts = _string_list(obj["supported_contexts"], f"{location}.supported_contexts")
+    if not supported_contexts:
+        _fail("RUNTIME_PROVIDER_CONTEXT_EMPTY", f"{location}.supported_contexts", "at least one supported context is required")
+
+    def nullable_string(field: str) -> str | None:
+        value = obj[field]
+        return None if value is None else _string(value, f"{location}.{field}")
+
+    cargo_package = nullable_string("cargo_package")
+    cargo_target = nullable_string("cargo_target")
+    link_artifact = nullable_string("link_artifact")
+    if implementation_language == "rust":
+        missing = [
+            field
+            for field, item in (("cargo_package", cargo_package), ("cargo_target", cargo_target), ("link_artifact", link_artifact))
+            if item is None
+        ]
+        if missing:
+            _fail("RUNTIME_PROVIDER_RUST_METADATA", location, f"Rust providers require: {', '.join(missing)}")
+    elif any(item is not None for item in (cargo_package, cargo_target, link_artifact)):
+        _fail("RUNTIME_PROVIDER_CPP_METADATA", location, "C++ providers must not declare Cargo or link-artifact metadata")
+
+    side_effects = _string_list(obj["side_effects"], f"{location}.side_effects")
+    if authority_mode == "candidate-shadow" and side_effects:
+        _fail("RUNTIME_PROVIDER_SHADOW_SIDE_EFFECTS", f"{location}.side_effects", "candidate-shadow providers must declare no side effects")
+
+    return RuntimeProvider(
+        id=_string(obj["id"], f"{location}.id"),
+        authority_domain=_string(obj["authority_domain"], f"{location}.authority_domain"),
+        authority_mode=authority_mode,
+        implementation_language=implementation_language,
+        build_component=_string(obj["build_component"], f"{location}.build_component"),
+        supported_contexts=supported_contexts,
+        cargo_package=cargo_package,
+        cargo_target=cargo_target,
+        link_artifact=link_artifact,
+        thread_affinity=_string(obj["thread_affinity"], f"{location}.thread_affinity"),
+        lifecycle_owner=_string(obj["lifecycle_owner"], f"{location}.lifecycle_owner"),
+        side_effects=side_effects,
     )
 
 
@@ -1016,15 +1258,15 @@ def load_semantic_graph(
         _fail("MANIFEST_NOT_FOUND", str(manifest_path), "manifest does not exist")
     except json.JSONDecodeError as error:
         _fail("MANIFEST_JSON", str(manifest_path), f"{error.msg} at line {error.lineno}, column {error.colno}")
-    root = _closed_object(raw, "$", required={"schema_version", "minimum_generator_version", "contexts", "components", "contracts", "artifacts", "edges"})
+    root = _closed_object(raw, "$", required={"schema_version", "minimum_generator_version", "contexts", "components", "contracts", "artifacts", "runtime_providers", "edges"})
     schema_version = root["schema_version"]
-    if schema_version != 3:
-        _fail("MANIFEST_SCHEMA_VERSION", "$.schema_version", f"expected 3, got {schema_version!r}; run explicit manifest migrate")
+    if schema_version != 4:
+        _fail("MANIFEST_SCHEMA_VERSION", "$.schema_version", f"expected 4, got {schema_version!r}; run explicit manifest migrate")
     minimum_generator_version = _string(root["minimum_generator_version"], "$.minimum_generator_version")
     if _version_tuple(GENERATOR_VERSION, "generator") < _version_tuple(minimum_generator_version, "$.minimum_generator_version"):
         _fail("GENERATOR_TOO_OLD", "$.minimum_generator_version", f"generator {GENERATOR_VERSION} is older than required {minimum_generator_version}")
     compile_profiles = _load_compile_profiles(repo_root)
-    schema_path = repo_root / "src/main/modules/schema-v3.json"
+    schema_path = repo_root / "src/main/modules/schema-v4.json"
     try:
         checked_out_schema_text = schema_path.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -1035,6 +1277,7 @@ def load_semantic_graph(
     components_list = [_parse_component(repo_root, item, f"$.components[{index}]") for index, item in enumerate(_array(root["components"], "$.components"))]
     contracts_list = [_parse_contract(item, f"$.contracts[{index}]") for index, item in enumerate(_array(root["contracts"], "$.contracts"))]
     artifacts_list = [_parse_artifact(repo_root, item, f"$.artifacts[{index}]") for index, item in enumerate(_array(root["artifacts"], "$.artifacts"))]
+    runtime_providers_list = [_parse_runtime_provider(item, f"$.runtime_providers[{index}]") for index, item in enumerate(_array(root["runtime_providers"], "$.runtime_providers"))]
     edges = tuple(_parse_edge(item, f"$.edges[{index}]") for index, item in enumerate(_array(root["edges"], "$.edges")))
 
     def unique(items: Iterable[Any], kind: str) -> dict[str, Any]:
@@ -1049,8 +1292,9 @@ def load_semantic_graph(
     components = unique(components_list, "components")
     contracts = unique(contracts_list, "contracts")
     artifacts = unique(artifacts_list, "artifacts")
+    runtime_providers = unique(runtime_providers_list, "runtime_providers")
     edge_ids = unique(edges, "edges")
-    id_groups = (set(contexts), set(components), set(contracts), set(artifacts), set(edge_ids))
+    id_groups = (set(contexts), set(components), set(contracts), set(artifacts), set(runtime_providers), set(edge_ids))
     overlap: list[str] = []
     for left_index, left in enumerate(id_groups):
         for right in id_groups[left_index + 1 :]:
@@ -1100,6 +1344,20 @@ def load_semantic_graph(
                     _fail("GENERATED_TARGET_LOCATION", f"$.components.{component.id}.backend_targets.msbuild", f"generated MSBuild target is outside generated projects: {target}")
         if component.compile_profile is not None and component.compile_profile not in known_compile_profiles:
             _fail("COMPILE_PROFILE_REFERENCE", f"$.components.{component.id}.compile_profile", f"unknown profile: {component.compile_profile}")
+        unknown_provider_contexts = sorted(set(component.provider_by_context) - set(contexts))
+        if unknown_provider_contexts:
+            _fail(
+                "AUTHORITY_CONTEXT_REFERENCE",
+                f"$.components.{component.id}.provider_by_context",
+                f"unknown contexts: {', '.join(unknown_provider_contexts)}",
+            )
+        unsupported_provider_contexts = sorted(set(component.provider_by_context) - set(component.supported_contexts))
+        if unsupported_provider_contexts:
+            _fail(
+                "AUTHORITY_CONTEXT_UNSUPPORTED",
+                f"$.components.{component.id}.provider_by_context",
+                f"provider contexts are not supported by the component: {', '.join(unsupported_provider_contexts)}",
+            )
     graph_nodes = set(components) | set(contracts) | set(artifacts)
     for contract in contracts.values():
         if contract.contract_owner not in components:
@@ -1135,6 +1393,183 @@ def load_semantic_graph(
             if witness["context"] not in contexts:
                 _fail("WITNESS_CONTEXT", f"$.edges.{edge.id}.witnesses", f"unknown context: {witness['context']}")
             _repo_path(repo_root, witness["probe"], f"$.edges.{edge.id}.witnesses.probe", must_exist=True)
+
+    # Runtime providers are deliberately separate from Components.  Validate
+    # the references here, after all graph IDs and edge conditions are known,
+    # so the authority record cannot silently become a source/build owner.
+    runtime_authority_records: dict[tuple[str, str], list[RuntimeProvider]] = {}
+    for provider in runtime_providers.values():
+        unknown_contexts = sorted(set(provider.supported_contexts) - set(contexts))
+        if unknown_contexts:
+            _fail(
+                "RUNTIME_PROVIDER_CONTEXT_REFERENCE",
+                f"$.runtime_providers.{provider.id}.supported_contexts",
+                f"unknown contexts: {', '.join(unknown_contexts)}",
+            )
+        build_component = components.get(provider.build_component)
+        if build_component is None:
+            _fail(
+                "RUNTIME_PROVIDER_BUILD_COMPONENT",
+                f"$.runtime_providers.{provider.id}.build_component",
+                f"unknown component: {provider.build_component}",
+            )
+        unsupported_contexts = sorted(set(provider.supported_contexts) - set(build_component.supported_contexts))
+        if unsupported_contexts:
+            _fail(
+                "RUNTIME_PROVIDER_COMPONENT_CONTEXT",
+                f"$.runtime_providers.{provider.id}.supported_contexts",
+                f"build component {provider.build_component} does not support: {', '.join(unsupported_contexts)}",
+            )
+        if provider.link_artifact is not None:
+            artifact = artifacts.get(provider.link_artifact)
+            if artifact is None:
+                _fail(
+                    "RUNTIME_PROVIDER_LINK_ARTIFACT",
+                    f"$.runtime_providers.{provider.id}.link_artifact",
+                    f"unknown artifact: {provider.link_artifact}",
+                )
+            if artifact.owner != provider.build_component:
+                _fail(
+                    "RUNTIME_PROVIDER_LINK_OWNER",
+                    f"$.runtime_providers.{provider.id}.link_artifact",
+                    f"artifact {provider.link_artifact} must be owned by build component {provider.build_component}",
+                )
+        for context_id in provider.supported_contexts:
+            runtime_authority_records.setdefault((provider.authority_domain, context_id), []).append(provider)
+
+    def active_provider_edges(provider: RuntimeProvider, context_id: str) -> tuple[Edge, ...]:
+        context = contexts[context_id].as_mapping()
+        return tuple(
+            edge
+            for edge in edges
+            if PRODUCTION_EDGE_PHASES.intersection(edge.phases)
+            and evaluate_condition(edge.condition, context)
+            and all(
+                endpoint not in components or context_id in components[endpoint].supported_contexts
+                for endpoint in (edge.source, edge.target)
+            )
+            and (
+                provider.build_component in {edge.source, edge.target}
+                or (provider.link_artifact is not None and provider.link_artifact in {edge.source, edge.target})
+            )
+        )
+
+    for (domain, context_id), providers in sorted(runtime_authority_records.items()):
+        for provider in providers:
+            active_edges = active_provider_edges(provider, context_id)
+            if provider.authority_mode == "retired" and active_edges:
+                _fail(
+                    "RUNTIME_PROVIDER_RETIRED_EDGE",
+                    f"$.runtime_providers.{provider.id}.authority_mode",
+                    f"retired provider has production edges in {context_id}: {', '.join(edge.id for edge in active_edges)}",
+                )
+        production = [
+            provider
+            for provider in providers
+            if provider.authority_mode in PRODUCTION_AUTHORITY_MODES
+        ]
+        if len(production) != 1:
+            _fail(
+                "RUNTIME_AUTHORITY_PRODUCTION_COUNT",
+                f"$.runtime_authority[{domain}][{context_id}]",
+                f"expected exactly one production provider, found {len(production)}",
+            )
+        for provider in providers:
+            active_edges = active_provider_edges(provider, context_id)
+            if provider.link_artifact is not None:
+                artifact_edges = tuple(
+                    edge
+                    for edge in active_edges
+                    if provider.link_artifact in {edge.source, edge.target}
+                )
+                if not artifact_edges:
+                    _fail(
+                        "RUNTIME_PROVIDER_LINK_NOT_IN_GRAPH",
+                        f"$.runtime_providers.{provider.id}.link_artifact",
+                        f"link artifact {provider.link_artifact} is absent from the context link/runtime graph for {context_id}",
+                    )
+        production_provider = production[0]
+        if not active_provider_edges(production_provider, context_id):
+            _fail(
+                "RUNTIME_PROVIDER_NOT_IN_GRAPH",
+                f"$.runtime_providers.{production_provider.id}.build_component",
+                f"production provider is absent from the context link/runtime graph for {context_id}",
+            )
+
+    # Runtime authority is intentionally separate from source/build ownership.
+    # A component may describe a candidate shadow, a retained legacy provider,
+    # or a production provider independently of its build_definition.
+    authority_records: dict[tuple[str, str], list[tuple[Component, str]]] = {}
+    for component in components.values():
+        if component.authority_mode == "none":
+            continue
+        if not component.provider_by_context:
+            _fail(
+                "AUTHORITY_PROVIDER_MAP",
+                f"$.components.{component.id}.provider_by_context",
+                "an authority component must declare at least one applicable context",
+            )
+        assert component.authority_domain is not None
+        for context_id, provider_id in component.provider_by_context.items():
+            provider = components.get(provider_id)
+            if provider is None:
+                _fail(
+                    "AUTHORITY_PROVIDER_REFERENCE",
+                    f"$.components.{component.id}.provider_by_context.{context_id}",
+                    f"unknown component provider: {provider_id}",
+                )
+            if context_id not in provider.supported_contexts:
+                _fail(
+                    "AUTHORITY_PROVIDER_CONTEXT",
+                    f"$.components.{component.id}.provider_by_context.{context_id}",
+                    f"provider {provider_id} does not support context {context_id}",
+                )
+            authority_records.setdefault((component.authority_domain, context_id), []).append((component, provider_id))
+
+    for component in components.values():
+        if component.authority_mode != "retired":
+            continue
+        retired_edges = [
+            edge.id
+            for edge in edges
+            if PRODUCTION_EDGE_PHASES.intersection(edge.phases)
+            and component.id in {edge.source, edge.target}
+        ]
+        if retired_edges:
+            _fail(
+                "AUTHORITY_RETIRED_EDGE",
+                f"$.components.{component.id}.authority_mode",
+                f"retired authority has production edges: {', '.join(sorted(retired_edges))}",
+            )
+
+    for (domain, context_id), records in sorted(authority_records.items()):
+        production = [
+            (component, provider_id)
+            for component, provider_id in records
+            if component.authority_mode in PRODUCTION_AUTHORITY_MODES
+        ]
+        if len(production) != 1:
+            _fail(
+                "AUTHORITY_PRODUCTION_COUNT",
+                f"$.authority[{domain}][{context_id}]",
+                f"expected exactly one production authority, found {len(production)}",
+            )
+        provider_id = production[0][1]
+        provider = components[provider_id]
+        active_production_edges = [
+            edge
+            for edge in edges
+            if PRODUCTION_EDGE_PHASES.intersection(edge.phases)
+            and provider_id in {edge.source, edge.target}
+            and evaluate_condition(edge.condition, contexts[context_id].as_mapping())
+            and context_id in provider.supported_contexts
+        ]
+        if not active_production_edges:
+            _fail(
+                "AUTHORITY_PROVIDER_NOT_IN_GRAPH",
+                f"$.components.{production[0][0].id}.provider_by_context.{context_id}",
+                f"production provider {provider_id} is absent from the context link/runtime graph",
+            )
 
     owned_paths: list[tuple[str, Path, str]] = []
     for component in components.values():
@@ -1185,6 +1620,7 @@ def load_semantic_graph(
         "components": [components[key].as_mapping() for key in sorted(components)],
         "contracts": [contracts[key].as_mapping() for key in sorted(contracts)],
         "artifacts": [artifacts[key].as_mapping() for key in sorted(artifacts)],
+        "runtime_providers": [runtime_providers[key].as_mapping() for key in sorted(runtime_providers)],
         "compile_profiles": compile_profiles.as_mapping(),
         "edges": [edge_ids[key].as_mapping() for key in sorted(edge_ids)],
     }
@@ -1198,6 +1634,7 @@ def load_semantic_graph(
         components=components,
         contracts=contracts,
         artifacts=artifacts,
+        runtime_providers=runtime_providers,
         compile_profiles=compile_profiles,
         edges=edges,
         semantic_graph_hash=graph_hash,

@@ -53,7 +53,7 @@ C++20をサポートするC++コンパイラーが必要です。
 |HTML Help Workshop|hhc.exe|Visual Studio同梱のもの|
 |CMake|cmake.exe|Visual Studio同梱のもので可|
 |PowerShell Core|pwsh.exe|Microsoft Storeなどからインストール|
-|Rust toolchain|cargo.exe / rustc.exe|Rustを選択する通常ビルド、またはRust既定の配布ビルド・インストーラ・ZIPで必要です。`rust/rust-toolchain.toml`がRust toolchain 1.96.0を固定するため、stableを別途選択しません。|
+|Rust toolchain|cargo.exe / rustc.exe|MSVCの通常・テスト・配布ビルドでは、C++を本番プロバイダーに保ったままRust candidateをビルド・リンクするため必要です。SENPのホスト・ツール・WASM拡張のビルドにも使用します。`rust/native/rust-toolchain.toml`と`rust/senp/rust-toolchain.toml`がRust toolchain 1.96.0を固定するため、stableを別途選択しません。|
 |[7-Zip](https://7-zip.opensource.jp/)|7z.exe|外部依存ファイルの解凍に使用します。|
 |Locale Emulator|LEProc.exe|日本語環境以外でHTMLヘルプをビルドする場合に利用します。|
 |Auto HotKey|AutoHotKey.exe|日本語環境以外でHTMLヘルプをビルドする場合にソースに腹持ちしたLocale Emulatorを展開する際に利用します。|
@@ -72,21 +72,30 @@ choco install InnoSetup -y
 
 詳細は [インストーラビルドの仕組み](../installer/readme.md) を参照してください。
 
-UTF-16走査バックエンドは`SAKURA_UTF16_BACKEND`で明示します。MSVCではRust実装を
-常に使用し、通常ビルド・テスト・配布ビルドのすべてでCargoと固定toolchainを必要と
-します。`rust`はCargoで`rust/sakura_rust_core`の依存関係なしstaticlibをビルドして
-Rust実装を選択します。C++ UTF-16カーネルは実験的MinGW互換経路だけに残し、MSVCの
-コンパイル対象・製品ディスパッチから除外しています。
+UTF-16走査バックエンドは`SAKURA_UTF16_BACKEND`で明示します。MSVCではrollback-firstの
+既定・本番プロバイダーをC++に戻しますが、Rust実装は候補として常にビルド・リンクする
+ため、通常ビルド・テスト・配布ビルドのすべてでCargoと固定toolchainを必要とします。
+ネイティブ側は`rust/native`のCargoワークスペースから内部`rlib`の
+`sakura-simd`と、唯一のRustリンク境界である`rust/native/sakura_native_ffi`の
+`sakura_native_ffi.lib`をビルドします。SENPのホスト・ツール・WASM拡張は独立した
+`rust/senp`ワークスペース、lockfile、target directoryでビルドされ、SENPだけの
+変更ではネイティブstaticlibを再リンクしません。`sakura_native_ffi`がC ABIとpanic
+containmentを所有し、各exportはpanicを型付き`InternalError`へ変換してC++へunwind
+しません。allocation-freeのstrict UTF-8 primitiveは`no_std`の
+`sakura-unicode-core`に分離し、CESU-8や各subsystem固有policyとは混在させません。
 
-MSBuildでは`/p:SAKURA_UTF16_BACKEND=rust`、MSVCのCMakeでは
-`-DSAKURA_UTF16_BACKEND=rust`を指定します。MinGWは`-DSAKURA_UTF16_BACKEND=cpp`を
-明示します。`both`、`auto`、空でない未知の値はハードエラーです。Rustワークスペースは
-`rust/rust-toolchain.toml`の固定toolchainを選ぶため、Cargoは必ず`rust`ディレクトリを
-作業ディレクトリにして実行されます。
+MSBuildでは`/p:SAKURA_UTF16_BACKEND=cpp`（既定）または明示的な
+`/p:SAKURA_UTF16_BACKEND=rust`、MSVCのCMakeでは`-DSAKURA_UTF16_BACKEND=cpp`（既定）
+または`rust`を指定します。MinGWは`-DSAKURA_UTF16_BACKEND=cpp`を明示します。
+`both`、`auto`、空でない未知の値はハードエラーです。Rustワークスペースは
+ネイティブなら`rust/native/rust-toolchain.toml`、SENPなら
+`rust/senp/rust-toolchain.toml`の固定toolchainを選ぶため、Cargoは各ワークスペースの
+ディレクトリを作業ディレクトリにして実行されます。
 
-配布ビルド・インストーラ・ZIPは`SAKURA_UTF16_PRODUCTION_PACKAGE=true`を設定し、
-`SAKURA_UTF16_BACKEND=rust`だけを受け付けます。C++バックエンドやテスト用の別モードを
-指定したパッケージ処理は、Cargo・コンパイル・パッケージ処理の前に拒否します。
+配布ビルド・インストーラ・ZIPは`SAKURA_UTF16_PRODUCTION_PACKAGE=true`を設定します。
+G0のrollback-first契約では`SAKURA_UTF16_BACKEND=cpp`だけを受け付け、`rust`は比較ビルドで
+選択できても配布処理では拒否します。Rustを本番採用する場合は、別の採用変更でこのhard gateを
+明示的に更新します。`both`など未知のモードもCargo・コンパイル・パッケージ処理の前に拒否します。
 
 ## ビルド手順
 
@@ -324,7 +333,7 @@ replaceし、同じ入力の通常収集で不要なmtime更新は発生しま�
 `architecture-gates` jobを生成する。path filterやjob条件を置かないので、documentation-only PRでも
 required checkがpendingのままにはならない。baseline commitのancestor判定とblob比較に必要な履歴を
 checkoutするため、workflowは`fetch-depth: 0`を使う。CI起動前にも同じlintを必須実行し、jobは次の4検証をfail-closedで順に実行する。
-semantic graphが参照する`schema-v3.json`のhashもuniversal-newline textから計算するため、WindowsのCRLFと
+semantic graphが参照する`schema-v4.json`のhashもuniversal-newline textから計算するため、WindowsのCRLFと
 LinuxのLFでcommitted projectionが相互にstaleになることはない。
 legacy MSBuild project内の`ClCompile Include`はWindows pathとして解釈するため、Linux CIでも
 consumer projectionのsource removalがWindows checkoutと一致する。

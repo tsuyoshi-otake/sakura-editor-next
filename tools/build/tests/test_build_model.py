@@ -49,17 +49,18 @@ from sakura_build_lib.test_inventory import (
 
 def manifest_data() -> dict:
     return {
-        "schema_version": 3,
+        "schema_version": 4,
         "minimum_generator_version": "0.2.1",
         "contexts": [
             {"id": "ctx", "platform": "x64", "arch": "x64", "configuration": "Debug", "toolchain": "msvc", "backend": "msbuild", "role": "test", "features": []}
         ],
         "components": [
-            {"id": "provider", "family": "test", "kind": "implementation", "maturity": "candidate", "build_definition": "legacy", "supported_contexts": ["ctx"], "owner": "provider", "sources": ["provider"], "public_headers": [], "private_headers": [], "ownership_exclusions": [], "public_include_roots": ["provider"], "private_include_roots": [], "state_owner": None, "backend_targets": {"msbuild": ["provider.vcxproj"]}, "compile_profile": "project-compile"},
-            {"id": "consumer", "family": "test", "kind": "implementation", "maturity": "candidate", "build_definition": "legacy", "supported_contexts": ["ctx"], "owner": "consumer", "sources": ["consumer"], "public_headers": [], "private_headers": [], "ownership_exclusions": [], "public_include_roots": [], "private_include_roots": ["consumer"], "state_owner": None, "backend_targets": {"msbuild": ["consumer.vcxproj"]}, "compile_profile": "project-compile"}
+            {"id": "provider", "family": "test", "kind": "implementation", "maturity": "candidate", "build_definition": "legacy", "supported_contexts": ["ctx"], "owner": "provider", "sources": ["provider"], "public_headers": [], "private_headers": [], "ownership_exclusions": [], "public_include_roots": ["provider"], "private_include_roots": [], "state_owner": None, "implementation_language": "cpp", "cargo_package": None, "cargo_target": None, "link_artifact": None, "authority_domain": None, "authority_mode": "none", "thread_affinity": "unspecified", "lifecycle_owner": None, "side_effects": [], "provider_by_context": {}, "backend_targets": {"msbuild": ["provider.vcxproj"]}, "compile_profile": "project-compile"},
+            {"id": "consumer", "family": "test", "kind": "implementation", "maturity": "candidate", "build_definition": "legacy", "supported_contexts": ["ctx"], "owner": "consumer", "sources": ["consumer"], "public_headers": [], "private_headers": [], "ownership_exclusions": [], "public_include_roots": [], "private_include_roots": ["consumer"], "state_owner": None, "implementation_language": "cpp", "cargo_package": None, "cargo_target": None, "link_artifact": None, "authority_domain": None, "authority_mode": "none", "thread_affinity": "unspecified", "lifecycle_owner": None, "side_effects": [], "provider_by_context": {}, "backend_targets": {"msbuild": ["consumer.vcxproj"]}, "compile_profile": "project-compile"}
         ],
         "contracts": [],
         "artifacts": [],
+        "runtime_providers": [],
         "edges": [
             {"id": "consumer-to-provider", "from": "consumer", "to": "provider", "kind": "api", "phases": ["compile", "link"], "visibility": "public", "propagation": "public", "contract_profile": "contract-edge", "condition": True, "required": True, "witnesses": [{"context": "ctx", "probe": "tests/contract.cpp"}]}
         ]
@@ -90,7 +91,7 @@ class RepositoryFixture:
         manifest.parent.mkdir(parents=True)
         manifest.write_text(json.dumps(manifest_data()), encoding="utf-8")
         (manifest.parent / "compile-profiles.json").write_text(json.dumps(compile_profiles_data()), encoding="utf-8")
-        (manifest.parent / "schema-v3.json").write_text("{}\n", encoding="utf-8")
+        (manifest.parent / "schema-v4.json").write_text("{}\n", encoding="utf-8")
         return self.root, manifest
 
     def __exit__(self, *args):
@@ -168,6 +169,167 @@ class ManifestTests(unittest.TestCase):
             manifest.write_text(json.dumps(value), encoding="utf-8")
             with self.assertRaisesRegex(ManifestError, "MANIFEST_UNKNOWN_FIELD"):
                 load_semantic_graph(root, manifest)
+
+    def test_rejects_duplicate_production_authority(self):
+        with RepositoryFixture() as (root, manifest):
+            value = manifest_data()
+            for component in value["components"]:
+                component.update({
+                    "authority_domain": "test-state",
+                    "authority_mode": "production",
+                    "provider_by_context": {"ctx": component["id"]},
+                })
+            manifest.write_text(json.dumps(value), encoding="utf-8")
+            with self.assertRaisesRegex(ManifestError, "AUTHORITY_PRODUCTION_COUNT"):
+                load_semantic_graph(root, manifest)
+
+    def test_rejects_side_effects_for_candidate_shadow(self):
+        with RepositoryFixture() as (root, manifest):
+            value = manifest_data()
+            value["components"][0].update({
+                "authority_domain": "test-state",
+                "authority_mode": "candidate-shadow",
+                "side_effects": ["persistence"],
+                "provider_by_context": {"ctx": "provider"},
+            })
+            manifest.write_text(json.dumps(value), encoding="utf-8")
+            with self.assertRaisesRegex(ManifestError, "AUTHORITY_SHADOW_SIDE_EFFECTS"):
+                load_semantic_graph(root, manifest)
+
+    def test_rejects_production_edge_for_retired_authority(self):
+        with RepositoryFixture() as (root, manifest):
+            value = manifest_data()
+            value["components"][0].update({
+                "authority_domain": "test-state",
+                "authority_mode": "retired",
+                "provider_by_context": {"ctx": "provider"},
+            })
+            value["components"][1].update({
+                "authority_domain": "test-state",
+                "authority_mode": "production",
+                "provider_by_context": {"ctx": "consumer"},
+            })
+            manifest.write_text(json.dumps(value), encoding="utf-8")
+            with self.assertRaisesRegex(ManifestError, "AUTHORITY_RETIRED_EDGE"):
+                load_semantic_graph(root, manifest)
+
+    def test_runtime_provider_records_are_non_owning_and_require_one_production(self):
+        with RepositoryFixture() as (root, manifest):
+            value = manifest_data()
+            value["runtime_providers"] = [
+                {
+                    "id": "cpp-runtime",
+                    "authority_domain": "test-runtime",
+                    "authority_mode": "production",
+                    "implementation_language": "cpp",
+                    "build_component": "provider",
+                    "supported_contexts": ["ctx"],
+                    "cargo_package": None,
+                    "cargo_target": None,
+                    "link_artifact": None,
+                    "thread_affinity": "any-worker",
+                    "lifecycle_owner": "consumer",
+                    "side_effects": [],
+                },
+                {
+                    "id": "cpp-runtime-duplicate",
+                    "authority_domain": "test-runtime",
+                    "authority_mode": "production",
+                    "implementation_language": "cpp",
+                    "build_component": "provider",
+                    "supported_contexts": ["ctx"],
+                    "cargo_package": None,
+                    "cargo_target": None,
+                    "link_artifact": None,
+                    "thread_affinity": "any-worker",
+                    "lifecycle_owner": "consumer",
+                    "side_effects": [],
+                },
+            ]
+            manifest.write_text(json.dumps(value), encoding="utf-8")
+            with self.assertRaisesRegex(ManifestError, "RUNTIME_AUTHORITY_PRODUCTION_COUNT"):
+                load_semantic_graph(root, manifest)
+
+    def test_rejects_runtime_candidate_shadow_side_effects(self):
+        with RepositoryFixture() as (root, manifest):
+            value = manifest_data()
+            value["runtime_providers"] = [{
+                "id": "rust-runtime-shadow",
+                "authority_domain": "test-runtime",
+                "authority_mode": "candidate-shadow",
+                "implementation_language": "cpp",
+                "build_component": "provider",
+                "supported_contexts": ["ctx"],
+                "cargo_package": None,
+                "cargo_target": None,
+                "link_artifact": None,
+                "thread_affinity": "any-worker",
+                "lifecycle_owner": "consumer",
+                "side_effects": ["notification"],
+            }]
+            manifest.write_text(json.dumps(value), encoding="utf-8")
+            with self.assertRaisesRegex(ManifestError, "RUNTIME_PROVIDER_SHADOW_SIDE_EFFECTS"):
+                load_semantic_graph(root, manifest)
+
+    def test_rejects_runtime_retired_provider_with_production_edge(self):
+        with RepositoryFixture() as (root, manifest):
+            value = manifest_data()
+            value["runtime_providers"] = [{
+                "id": "retired-runtime",
+                "authority_domain": "test-runtime",
+                "authority_mode": "retired",
+                "implementation_language": "cpp",
+                "build_component": "provider",
+                "supported_contexts": ["ctx"],
+                "cargo_package": None,
+                "cargo_target": None,
+                "link_artifact": None,
+                "thread_affinity": "any-worker",
+                "lifecycle_owner": "consumer",
+                "side_effects": [],
+            }]
+            manifest.write_text(json.dumps(value), encoding="utf-8")
+            with self.assertRaisesRegex(ManifestError, "RUNTIME_PROVIDER_RETIRED_EDGE"):
+                load_semantic_graph(root, manifest)
+
+    def test_rejects_runtime_production_provider_absent_from_link_graph(self):
+        with RepositoryFixture() as (root, manifest):
+            value = manifest_data()
+            value["edges"] = []
+            value["runtime_providers"] = [{
+                "id": "unlinked-runtime",
+                "authority_domain": "test-runtime",
+                "authority_mode": "production",
+                "implementation_language": "cpp",
+                "build_component": "provider",
+                "supported_contexts": ["ctx"],
+                "cargo_package": None,
+                "cargo_target": None,
+                "link_artifact": None,
+                "thread_affinity": "any-worker",
+                "lifecycle_owner": "consumer",
+                "side_effects": [],
+            }]
+            manifest.write_text(json.dumps(value), encoding="utf-8")
+            with self.assertRaisesRegex(ManifestError, "RUNTIME_PROVIDER_NOT_IN_GRAPH"):
+                load_semantic_graph(root, manifest)
+
+    def test_utf16_runtime_provider_contexts_select_cpp_production_and_rust_shadow(self):
+        repository_root = TOOLS_BUILD.parents[1]
+        graph = load_semantic_graph(repository_root, repository_root / "src/main/modules/modules.json")
+
+        self.assertEqual("sakura-utf16-cpp-provider", graph.production_runtime_providers("msvc-x64-release")["utf16-scan-backend"].id)
+        self.assertEqual("sakura-utf16-cpp-provider", graph.production_runtime_providers("mingw-x64-release")["utf16-scan-backend"].id)
+        self.assertEqual(
+            {"sakura-utf16-cpp-provider", "sakura-utf16-rust-candidate"},
+            {provider.id for provider in graph.active_runtime_providers("cmake-msvc-x64-debug")},
+        )
+        self.assertEqual({"sakura-utf16-cpp-provider"}, {provider.id for provider in graph.active_runtime_providers("mingw-x64-debug")})
+        rust = graph.runtime_providers["sakura-utf16-rust-candidate"]
+        self.assertEqual("sakura_app", rust.build_component)
+        self.assertEqual("sakura-native-ffi-staticlib", rust.link_artifact)
+        self.assertEqual([], list(rust.side_effects))
+        self.assertEqual("sakura-utf16-rust-candidate", graph.project("msvc-x64-debug")["active_runtime_providers"][1])
 
     def test_rejects_path_escape(self):
         with RepositoryFixture() as (root, manifest):
@@ -448,7 +610,7 @@ class ManifestTests(unittest.TestCase):
             value = manifest_data()
             (root / "private-provider").mkdir()
             (root / "private-provider.vcxproj").touch()
-            value["components"].append({"id": "private-provider", "family": "test", "kind": "implementation", "maturity": "candidate", "build_definition": "legacy", "supported_contexts": ["ctx"], "owner": "private-provider", "sources": ["private-provider"], "public_headers": [], "private_headers": [], "ownership_exclusions": [], "public_include_roots": [], "private_include_roots": ["private-provider"], "state_owner": None, "backend_targets": {"msbuild": ["private-provider.vcxproj"]}, "compile_profile": "project-compile"})
+            value["components"].append({"id": "private-provider", "family": "test", "kind": "implementation", "maturity": "candidate", "build_definition": "legacy", "supported_contexts": ["ctx"], "owner": "private-provider", "sources": ["private-provider"], "public_headers": [], "private_headers": [], "ownership_exclusions": [], "public_include_roots": [], "private_include_roots": ["private-provider"], "state_owner": None, "implementation_language": "cpp", "cargo_package": None, "cargo_target": None, "link_artifact": None, "authority_domain": None, "authority_mode": "none", "thread_affinity": "unspecified", "lifecycle_owner": None, "side_effects": [], "provider_by_context": {}, "backend_targets": {"msbuild": ["private-provider.vcxproj"]}, "compile_profile": "project-compile"})
             value["edges"].append({"id": "provider-to-private", "from": "provider", "to": "private-provider", "kind": "implementation", "phases": ["compile"], "visibility": "private", "propagation": "none", "contract_profile": None, "condition": True, "required": False, "witnesses": []})
             manifest.write_text(json.dumps(value), encoding="utf-8")
             graph = load_semantic_graph(root, manifest)
@@ -460,7 +622,7 @@ class ManifestTests(unittest.TestCase):
             value = manifest_data()
             (root / "private-provider").mkdir()
             (root / "private-provider.vcxproj").touch()
-            value["components"].append({"id": "private-provider", "family": "test", "kind": "implementation", "maturity": "candidate", "build_definition": "legacy", "supported_contexts": ["ctx"], "owner": "private-provider", "sources": ["private-provider"], "public_headers": [], "private_headers": [], "ownership_exclusions": [], "public_include_roots": [], "private_include_roots": ["private-provider"], "state_owner": None, "backend_targets": {"msbuild": ["private-provider.vcxproj"]}, "compile_profile": "project-compile"})
+            value["components"].append({"id": "private-provider", "family": "test", "kind": "implementation", "maturity": "candidate", "build_definition": "legacy", "supported_contexts": ["ctx"], "owner": "private-provider", "sources": ["private-provider"], "public_headers": [], "private_headers": [], "ownership_exclusions": [], "public_include_roots": [], "private_include_roots": ["private-provider"], "state_owner": None, "implementation_language": "cpp", "cargo_package": None, "cargo_target": None, "link_artifact": None, "authority_domain": None, "authority_mode": "none", "thread_affinity": "unspecified", "lifecycle_owner": None, "side_effects": [], "provider_by_context": {}, "backend_targets": {"msbuild": ["private-provider.vcxproj"]}, "compile_profile": "project-compile"})
             value["edges"].append({"id": "provider-to-private-link", "from": "provider", "to": "private-provider", "kind": "implementation", "phases": ["link"], "visibility": "private", "propagation": "none", "contract_profile": None, "condition": True, "required": False, "witnesses": []})
             manifest.write_text(json.dumps(value), encoding="utf-8")
             graph = load_semantic_graph(root, manifest)
@@ -491,6 +653,16 @@ class ManifestTests(unittest.TestCase):
                 "public_include_roots": ["private-provider"],
                 "private_include_roots": [],
                 "state_owner": None,
+                "implementation_language": "cpp",
+                "cargo_package": None,
+                "cargo_target": None,
+                "link_artifact": None,
+                "authority_domain": None,
+                "authority_mode": "none",
+                "thread_affinity": "unspecified",
+                "lifecycle_owner": None,
+                "side_effects": [],
+                "provider_by_context": {},
                 "backend_targets": {
                     "msbuild": ["src/main/modules/generated/msbuild/projects/private-provider.vcxproj"],
                     "cmake": ["private-provider"],
@@ -846,7 +1018,7 @@ class ManifestTests(unittest.TestCase):
             manifest.parent.mkdir(parents=True)
             manifest.write_text(json.dumps(manifest_data()), encoding="utf-8")
             (manifest.parent / "compile-profiles.json").write_text(json.dumps(compile_profiles_data()), encoding="utf-8")
-            (manifest.parent / "schema-v3.json").write_text("{}\n", encoding="utf-8")
+            (manifest.parent / "schema-v4.json").write_text("{}\n", encoding="utf-8")
             graph = load_semantic_graph(nested, manifest)
             self.assertTrue(generate(graph))
             self.assertEqual([], stale_outputs(graph))
@@ -857,14 +1029,14 @@ class Utf16PackagingContractTests(unittest.TestCase):
         self.assertEqual(
             {
                 "SAKURA_GENERATE_ASSEMBLY_LISTINGS": "1",
-                "SAKURA_UTF16_BACKEND": "rust",
+                "SAKURA_UTF16_BACKEND": "cpp",
                 "SAKURA_UTF16_PRODUCTION_PACKAGE": "true",
             },
             sakura_build.production_package_environment({}),
         )
 
-    def test_production_environment_requires_rust_backend(self):
-        for backend in ("rust",):
+    def test_production_environment_requires_cpp_backend(self):
+        for backend in ("cpp",):
             with self.subTest(backend=backend):
                 self.assertEqual(
                     {
@@ -877,13 +1049,13 @@ class Utf16PackagingContractTests(unittest.TestCase):
                     ),
                 )
 
-        for backend in ("cpp", "both", " cpp ", "CPP", "unknown"):
+        for backend in ("rust", "both", " cpp ", "CPP", "unknown"):
             with self.subTest(backend=backend):
                 environment = {"SAKURA_UTF16_BACKEND": backend}
                 with self.assertRaisesRegex(
                     BuildError,
                     "SAKURA_UTF16_PRODUCTION_PACKAGE=true requires "
-                    "SAKURA_UTF16_BACKEND=rust;",
+                    "SAKURA_UTF16_BACKEND=cpp;",
                 ):
                     sakura_build.production_package_environment(environment)
                 self.assertEqual(backend, environment["SAKURA_UTF16_BACKEND"])
@@ -899,13 +1071,13 @@ class Utf16PackagingContractTests(unittest.TestCase):
             self.assertGreaterEqual(production_flag, 0, name)
             self.assertLess(setlocal, production_flag, name)
             self.assertIn(
-                'if not defined SAKURA_UTF16_BACKEND set "SAKURA_UTF16_BACKEND=rust"',
+                'if not defined SAKURA_UTF16_BACKEND set "SAKURA_UTF16_BACKEND=cpp"',
                 body,
                 name,
             )
             self.assertNotIn('if "%SAKURA_UTF16_BACKEND%" == "both"', body, name)
             self.assertIn(
-                "Production packaging requires SAKURA_UTF16_BACKEND=rust;",
+                "Production packaging requires SAKURA_UTF16_BACKEND=cpp;",
                 body,
                 name,
             )

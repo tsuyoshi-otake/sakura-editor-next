@@ -15,7 +15,8 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 TOOLS_BUILD = REPO_ROOT / "tools/build"
 BUILD_WORKFLOW = REPO_ROOT / ".github/workflows/build-sakura.yml"
 MINGW_WORKFLOW = REPO_ROOT / ".github/workflows/build-on-msys2.yml"
-RUST_TOOLCHAIN = REPO_ROOT / "rust/rust-toolchain.toml"
+NATIVE_RUST_TOOLCHAIN = REPO_ROOT / "rust/native/rust-toolchain.toml"
+SENP_RUST_TOOLCHAIN = REPO_ROOT / "rust/senp/rust-toolchain.toml"
 CPU_DISPATCH_TEST = REPO_ROOT / "src/test/cpp/tests1/test-cpudispatch.cpp"
 
 if str(TOOLS_BUILD) not in sys.path:
@@ -69,13 +70,19 @@ class CiPlanDecisionTests(unittest.TestCase):
         self.assertFull(decide("sakura_core/foo.cpp"), "native_or_unknown_change")
         self.assertFull(decide("unexpected.data"), "native_or_unknown_change")
 
-    def test_issue239_rust_and_integration_paths_are_full_native(self) -> None:
+    def test_issue267_rust_workspace_and_integration_paths_are_full_native(self) -> None:
         paths = (
-            "rust/Cargo.toml",
-            "rust/sakura_rust_core/Cargo.toml",
-            "rust/Cargo.lock",
-            "rust/rust-toolchain.toml",
-            "rust/sakura_rust_core/src/lib.rs",
+            "rust/native/Cargo.toml",
+            "rust/native/sakura_simd/Cargo.toml",
+            "rust/native/sakura_native_ffi/Cargo.toml",
+            "rust/native/sakura_unicode_core/Cargo.toml",
+            "rust/native/Cargo.lock",
+            "rust/native/rust-toolchain.toml",
+            "rust/native/sakura_simd/src/lib.rs",
+            "rust/native/sakura_native_ffi/src/lib.rs",
+            "rust/native/sakura_unicode_core/src/lib.rs",
+            "rust/senp/Cargo.toml",
+            "rust/senp/Cargo.lock",
             "sakura_core/util/CpuDispatchRust.cpp",
             "sakura_core/util/RustUtf16Scan.h",
             "src/main/msbuild/sakura-rust-core.targets",
@@ -135,10 +142,14 @@ class CiRustNativeWorkflowContractTests(unittest.TestCase):
     def setUp(self) -> None:
         self.workflow = BUILD_WORKFLOW.read_text(encoding="utf-8-sig")
         self.mingw_workflow = MINGW_WORKFLOW.read_text(encoding="utf-8-sig")
-        with RUST_TOOLCHAIN.open("rb") as stream:
-            toolchain = tomllib.load(stream)["toolchain"]
-        self.toolchain = toolchain["channel"]
-        self.toolchain_targets = toolchain["targets"]
+        with NATIVE_RUST_TOOLCHAIN.open("rb") as stream:
+            native_toolchain = tomllib.load(stream)["toolchain"]
+        with SENP_RUST_TOOLCHAIN.open("rb") as stream:
+            senp_toolchain = tomllib.load(stream)["toolchain"]
+        self.toolchain = native_toolchain["channel"]
+        self.senp_toolchain = senp_toolchain["channel"]
+        self.native_toolchain_targets = native_toolchain["targets"]
+        self.senp_toolchain_targets = senp_toolchain["targets"]
 
     def step(self, name: str) -> str:
         marker = f"    - name: {name}\n"
@@ -155,12 +166,19 @@ class CiRustNativeWorkflowContractTests(unittest.TestCase):
 
     def test_toolchain_toml_is_the_single_exact_ci_pin(self) -> None:
         self.assertRegex(self.toolchain, r"^[0-9]+\.[0-9]+\.[0-9]+$")
+        self.assertEqual(self.toolchain, self.senp_toolchain)
         self.assertEqual(
-            self.toolchain_targets,
+            self.native_toolchain_targets,
+            ["x86_64-pc-windows-msvc"],
+        )
+        self.assertEqual(
+            self.senp_toolchain_targets,
             ["x86_64-pc-windows-msvc", "wasm32-unknown-unknown"],
         )
         prepare = self.step("Prepare pinned Rust toolchain")
         self.assertIn("Get-Content -LiteralPath 'rust-toolchain.toml' -Raw", prepare)
+        self.assertIn("Get-Content -LiteralPath '..\\senp\\rust-toolchain.toml' -Raw", prepare)
+        self.assertIn("Native and SENP must pin the same Rust toolchain release", prepare)
         self.assertIn("channel must be an exact numeric release", prepare)
         self.assertIn('"RUST_TOOLCHAIN_PIN=$pin"', prepare)
         self.assertIn("rustup toolchain install $pin", prepare)
@@ -168,7 +186,7 @@ class CiRustNativeWorkflowContractTests(unittest.TestCase):
         self.assertNotIn(f"toolchain install {self.toolchain}", self.workflow)
         self.assertNotIn(f"cargo +{self.toolchain}", self.workflow)
 
-    def test_static_gate_proves_dependency_free_single_staticlib_shape(self) -> None:
+    def test_static_gate_proves_split_workspace_and_single_staticlib_shape(self) -> None:
         static_gate = self.step("Rust static checks (Debug matrix cell)")
         self.assertIn(
             "if: ${{ !inputs.release_promotion && matrix.config == 'Debug' }}",
@@ -178,14 +196,20 @@ class CiRustNativeWorkflowContractTests(unittest.TestCase):
         self.assertIn("metadata --locked --no-deps --format-version 1", static_gate)
         self.assertIn("ConvertFrom-Json", static_gate)
         self.assertIn(
-            "$metadata.packages | Where-Object { $_.name -eq 'sakura-rust-core' }",
+            "$metadata.packages | Where-Object { $_.name -eq 'sakura-native-ffi' }",
             static_gate,
         )
         self.assertIn(
-            "$metadata.workspace_members | Where-Object { $_ -eq $package.id }",
+            "$metadata.packages | Where-Object { $_.name -eq 'sakura-simd' }",
             static_gate,
         )
-        self.assertIn("$package.dependencies", static_gate)
+        self.assertIn(
+            "$metadata.packages | Where-Object { $_.name -eq 'sakura-unicode-core' }",
+            static_gate,
+        )
+        self.assertIn("sakura-native-ffi must own the final link edges", static_gate)
+        self.assertIn("'..\\senp\\Cargo.toml'", static_gate)
+        self.assertIn("Native workspace must expose exactly one staticlib", static_gate)
         self.assertIn("$targets[0].kind", static_gate)
         self.assertIn("$targets[0].crate_types", static_gate)
         self.assertIn(
@@ -197,13 +221,15 @@ class CiRustNativeWorkflowContractTests(unittest.TestCase):
         cargo_gate = self.step("Rust tests and product staticlib (${{ matrix.config }})")
         self.assertIn("test --workspace --locked --release", cargo_gate)
         self.assertIn("test --workspace --locked --no-fail-fast", cargo_gate)
+        self.assertIn("--manifest-path '..\\senp\\Cargo.toml'", cargo_gate)
         self.assertIn(
-            "build --workspace --package sakura-rust-core --locked "
+            "build --package sakura-native-ffi --locked "
             "--target x86_64-pc-windows-msvc",
             cargo_gate,
         )
 
-        self.assertIn("SAKURA_UTF16_BACKEND: rust", self.workflow)
+        self.assertIn("SAKURA_UTF16_BACKEND: cpp", self.workflow)
+        self.assertNotIn("SAKURA_UTF16_BACKEND: rust", self.workflow)
         self.assertIn("SAKURA_UTF16_PRODUCTION_PACKAGE: true", self.workflow)
         self.assertNotIn("SAKURA_UTF16_BACKEND: both", self.workflow)
         self.assertNotIn("MSBuild Rust integration (rust", self.workflow)
@@ -231,7 +257,8 @@ class CiRustNativeWorkflowContractTests(unittest.TestCase):
         )
         self.assertIn("sha256sum --check --strict", self.workflow)
         self.assertIn("test -x \"${executable}\"", self.workflow)
-        self.assertIn("audit --file rust/Cargo.lock", self.workflow)
+        self.assertIn("audit --file rust/native/Cargo.lock", self.workflow)
+        self.assertIn("audit --file rust/senp/Cargo.lock", self.workflow)
         self.assertNotIn("cargo install cargo-audit", self.workflow)
         self.assertIn("AUDIT_RESULT: ${{ needs.rust-security-audit.result }}", self.workflow)
 
@@ -239,8 +266,8 @@ class CiRustNativeWorkflowContractTests(unittest.TestCase):
         for name in (
             "Prepare pinned Rust toolchain",
             "Rust tests and product staticlib (${{ matrix.config }})",
-            "Rust integration initialization (rust, ${{ matrix.config }})",
-            "Rust integration focused tests (rust, ${{ matrix.config }})",
+            "Rust candidate integration initialization (cpp production, ${{ matrix.config }})",
+            "Rust candidate differential tests (cpp production, ${{ matrix.config }})",
         ):
             with self.subTest(step=name):
                 self.assertIn(

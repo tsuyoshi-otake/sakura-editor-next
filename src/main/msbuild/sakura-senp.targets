@@ -1,7 +1,9 @@
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup Label="SakuraSenp">
     <SakuraSenpRepoRoot>$([MSBuild]::NormalizePath('$(MSBuildThisFileDirectory)', '..\..\..\'))</SakuraSenpRepoRoot>
-    <SakuraSenpWorkspace>$([MSBuild]::NormalizePath('$(SakuraSenpRepoRoot)', 'rust'))</SakuraSenpWorkspace>
+    <!-- SENP deliberately has its own Cargo manifest, lockfile, toolchain
+         contract, cache, and output tree; native Rust never appears here. -->
+    <SakuraSenpWorkspace>$([MSBuild]::NormalizePath('$(SakuraSenpRepoRoot)', 'rust\senp'))</SakuraSenpWorkspace>
     <SakuraSenpManifest>$([MSBuild]::NormalizePath('$(SakuraSenpWorkspace)', 'Cargo.toml'))</SakuraSenpManifest>
     <SakuraSenpCargo Condition="'$(SakuraSenpCargo)'==''">cargo</SakuraSenpCargo>
     <SakuraSenpTargetDir>$([MSBuild]::NormalizePath('$(SakuraSenpRepoRoot)', 'build\$(Platform)\$(Configuration)\rust\senp'))</SakuraSenpTargetDir>

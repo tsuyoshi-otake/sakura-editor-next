@@ -6,8 +6,11 @@
 */
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
+
+#include "util/RustUtf16Scan.h"
 
 namespace CpuDispatch
 {
@@ -60,6 +63,9 @@ struct Utf8ConversionPolicy {
 
 struct Dispatch {
 	Isa isa{Isa::Avx};
+	Isa utf16CrOrLfIsa{Isa::Avx};
+	Isa utf16MarkdownIsa{Isa::Avx};
+	Isa utf16FindCharIsa{Isa::Avx};
 	Capabilities capabilities{};
 	FindCrOrLfFunction findCrOrLf{};
 	FindUtf16Function findCrOrLfUtf16{};
@@ -68,12 +74,16 @@ struct Dispatch {
 	FindUtf16CharFunction findUtf16Char{};
 	Utf16ScanPolicy utf16ScanPolicy{};
 	Utf8ConversionPolicy utf8ConversionPolicy{};
-	const char* utf16Backend{"rust"};
-	const char* utf16BuildMode{"rust"};
-	const char* utf16CrOrLfImplementation{"rust-avx128-v1"};
-	const char* utf16MarkdownImplementation{"rust-avx128-v1"};
-	const char* utf16FindCharImplementation{"rust-avx128-v1"};
+	const char* utf16Backend{"cpp"};
+	const char* utf16BuildMode{"cpp"};
+	const char* utf16CrOrLfImplementation{"cpp-avx128"};
+	const char* utf16MarkdownImplementation{"cpp-avx128"};
+	const char* utf16FindCharImplementation{"cpp-avx128"};
 	std::uint32_t utf16AbiVersion{1};
+	SakuraCpuCapabilitiesV1 nativeCapabilities{};
+	std::array<SakuraOperationPolicyV1, 3> nativeOperationPolicies{};
+	bool nativeCandidateLinked{};
+	SakuraStatus nativeInitializationStatus{SakuraStatus::NotInitialized};
 	std::int64_t initializationTicks{};
 };
 
@@ -84,6 +94,8 @@ const Dispatch& Get() noexcept;
 
 // Pure selection helpers used to lock the fallback order in unit tests.
 Isa SelectBestIsa(const Capabilities& capabilities) noexcept;
+Isa SelectUtf16OperationIsa(
+	SakuraOperationId operationId, const Capabilities& capabilities) noexcept;
 Utf16ScanPolicy GetUtf16ScanPolicy(Isa isa) noexcept;
 Utf8ConversionPolicy GetUtf8ConversionPolicy(Isa isa) noexcept;
 const char* GetIsaName(Isa isa) noexcept;
@@ -96,5 +108,17 @@ FindUtf16Function GetSupportedFindCrOrLfUtf16(Isa isa) noexcept;
 FindUtf16Function GetSupportedFindMarkdownInlineSpecialUtf16(Isa isa) noexcept;
 WidenAsciiToUtf16Function GetSupportedWidenAsciiToUtf16(Isa isa) noexcept;
 FindUtf16CharFunction GetSupportedFindUtf16Char(Isa isa) noexcept;
+
+// Explicit provider selectors used by the differential benchmark. The C++
+// candidate is always present. The Rust candidate is present only when the
+// build links the Rust UTF-16 library (SAKURA_UTF16_BACKEND_RUST or the
+// test-only SAKURA_UTF16_RUST_CANDIDATE); otherwise these accessors return
+// nullptr and never silently substitute the production provider.
+FindUtf16Function GetSupportedFindCrOrLfUtf16Cpp(Isa isa) noexcept;
+FindUtf16Function GetSupportedFindMarkdownInlineSpecialUtf16Cpp(Isa isa) noexcept;
+FindUtf16CharFunction GetSupportedFindUtf16CharCpp(Isa isa) noexcept;
+FindUtf16Function GetSupportedFindCrOrLfUtf16Rust(Isa isa) noexcept;
+FindUtf16Function GetSupportedFindMarkdownInlineSpecialUtf16Rust(Isa isa) noexcept;
+FindUtf16CharFunction GetSupportedFindUtf16CharRust(Isa isa) noexcept;
 }
 }

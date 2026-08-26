@@ -22,7 +22,7 @@ include("${CMAKE_SOURCE_DIR}/src/main/cmake/sakura-utf16-backend.cmake")
 option(SAKURA_SKIP_MODULES_CHECK "Diagnostic-only: skip semantic graph staleness check" OFF)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
   "${CMAKE_SOURCE_DIR}/src/main/modules/modules.json"
-  "${CMAKE_SOURCE_DIR}/src/main/modules/schema-v3.json"
+  "${CMAKE_SOURCE_DIR}/src/main/modules/schema-v4.json"
   "${CMAKE_SOURCE_DIR}/src/main/modules/compile-profiles.json"
   "${CMAKE_SOURCE_DIR}/tools/build/sakura_build.py"
   "${CMAKE_SOURCE_DIR}/tools/build/sakura_build_lib/model.py"

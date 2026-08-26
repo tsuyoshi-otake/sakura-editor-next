@@ -22,7 +22,7 @@ DEFAULT_TIMEOUT_SECONDS = 300
 _MATRIX_FILES = (
     "CMakeLists.txt",
     "src/main/modules/modules.json",
-    "src/main/modules/schema-v3.json",
+    "src/main/modules/schema-v4.json",
     "src/main/modules/compile-profiles.json",
     "sakura_core/sakura.vcxproj.filters",
 )
