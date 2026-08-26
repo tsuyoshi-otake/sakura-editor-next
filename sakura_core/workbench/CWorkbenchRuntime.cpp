@@ -251,6 +251,20 @@ bool IsWorkspaceMutationSuccess(EWorkspaceContextOutcome outcome) noexcept
 	return outcome == EWorkspaceContextOutcome::Succeeded || outcome == EWorkspaceContextOutcome::NotApplicable;
 }
 
+output::OutputServiceLimits RuntimeOutputServiceLimits() noexcept
+{
+	return output::OutputServiceLimits {
+		.maximumOwners = 128U,
+		.maximumChannels = 128U,
+		.maximumTextBytesPerChannel = 1U << 20,
+		.maximumPayloadBytes = 64U << 10,
+		.maximumLogEntriesPerChannel = 4'096U,
+		.maximumSubscriptions = 256U,
+		.maximumRememberedOperations = 512U,
+		.maximumPendingNotifications = 512U,
+	};
+}
+
 } // namespace
 
 CWorkbenchRuntime::CWorkbenchRuntime(
@@ -283,16 +297,8 @@ CWorkbenchRuntime::CWorkbenchRuntime(
 	, m_markers(problems::MarkerServiceLimits {
 		.maximumOwners = 128U,
 	})
-	, m_output(output::OutputServiceLimits {
-		.maximumOwners = 128U,
-		.maximumChannels = 128U,
-		.maximumTextBytesPerChannel = 1U << 20,
-		.maximumPayloadBytes = 64U << 10,
-		.maximumLogEntriesPerChannel = 4'096U,
-		.maximumSubscriptions = 256U,
-		.maximumRememberedOperations = 512U,
-		.maximumPendingNotifications = 512U,
-	})
+	, m_output(RuntimeOutputServiceLimits())
+	, m_outputCandidate(m_output, RuntimeOutputServiceLimits())
 	, m_scm(scm::SourceControlServiceLimits {
 		.maximumOwners = 128U,
 		.maximumProviders = 128U,
@@ -1814,6 +1820,7 @@ bool CWorkbenchRuntime::StopOwnedServices() noexcept
 	if (m_senpRuntime) m_senpRuntime->Stop();
 	if (m_senpManagement) m_senpManagement->Stop();
 	const auto outputStop = m_output.Stop();
+	if (!outputStop.callbackDrainDeferred) m_outputCandidate.ShutdownAfterOutputServiceStop();
 	const auto markerStop = m_markers.Stop();
 	const auto scmStop = m_scm.Stop();
 	return !outputStop.callbackDrainDeferred && !markerStop.callbackDrainDeferred &&

@@ -618,6 +618,8 @@
 	<ClInclude Include="..\sakura_core\workbench\problems\MarkerPositionAdapter.h" />
 	<ClInclude Include="..\sakura_core\workbench\problems\MarkerService.h" />
 	<ClInclude Include="..\sakura_core\workbench\output\OutputService.h" />
+	<ClInclude Include="..\sakura_core\workbench\output\OutputServiceRustCandidate.h" />
+	<ClInclude Include="..\sakura_core\workbench\output\OutputServiceRustShadowAbi.h" />
 	<ClInclude Include="..\sakura_core\workbench\ports\PortForwardingService.h" />
 	<ClInclude Include="..\sakura_core\debug\launch\LaunchConfigurationCatalog.h" />
 	<ClInclude Include="..\sakura_core\debug\dap\DapProtocolCodec.h" />
@@ -1302,6 +1304,7 @@
 	<ClCompile Include="..\sakura_core\workbench\problems\MarkerPositionAdapter.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\problems\MarkerService.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\output\OutputService.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\output\OutputServiceRustCandidate.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\ports\PortForwardingService.cpp" />
 	<ClCompile Include="..\sakura_core\debug\dap\DapProtocolCodec.cpp" />
 	<ClCompile Include="..\sakura_core\debug\dap\DapSession.cpp" />

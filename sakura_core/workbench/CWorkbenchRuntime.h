@@ -19,6 +19,7 @@
 #include "workbench/layout/IWorkbenchLayoutMementoStore.h"
 #include "workbench/layout/WorkbenchLayoutStateService.h"
 #include "workbench/output/OutputService.h"
+#include "workbench/output/OutputServiceRustCandidate.h"
 #include "workbench/problems/MarkerService.h"
 #include "workbench/recent/RecentlyOpenedWorkspaceService.h"
 #include "workbench/scm/SourceControlService.h"
@@ -120,6 +121,15 @@ public:
 	[[nodiscard]] const problems::MarkerService* Markers() const noexcept override;
 	[[nodiscard]] output::OutputService* Output() noexcept override;
 	[[nodiscard]] const output::OutputService* Output() const noexcept override;
+	//! Concrete-runtime diagnostics for the observational Rust candidate. The
+	//! candidate remains outside IWorkbenchRuntime and never becomes an output
+	//! provider or mutation authority.
+	[[nodiscard]] output::OutputServiceRustCandidateDiagnostics OutputCandidateDiagnostics() const noexcept
+	{
+		return m_outputCandidate.Diagnostics();
+	}
+	[[nodiscard]] bool OutputCandidateAvailable() const noexcept { return m_outputCandidate.IsAvailable(); }
+	[[nodiscard]] bool OutputCandidateMatchesAuthority() noexcept { return m_outputCandidate.VerifySnapshot(); }
 	[[nodiscard]] scm::SourceControlService* Scm() noexcept override;
 	[[nodiscard]] const scm::SourceControlService* Scm() const noexcept override;
 	[[nodiscard]] senp::ISenpManagementService* Extensions() noexcept override;
@@ -233,6 +243,7 @@ private:
 	//! terminal state. Their limits are explicit runtime composition policy.
 	problems::MarkerService m_markers;
 	output::OutputService m_output;
+	output::OutputServiceRustCandidate m_outputCandidate;
 	scm::SourceControlService m_scm;
 	std::optional<config::WorkspaceContextSnapshot> m_workspaceArtifactTopology;
 	std::shared_ptr<std::atomic_bool> m_stopRequested;

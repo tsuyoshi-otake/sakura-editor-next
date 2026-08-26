@@ -66,11 +66,29 @@ notification queue and its drop counter remain a separate best-effort path.
 With no feed consumer, the service advances only the cursor and retains no
 request DTOs; caught-up consumers also release journal entries immediately.
 
-The next Issue #271 step may attach the replay-only Rust model to this feed as
-an observational candidate. A production cutover still requires a stable
-provider boundary because native code currently borrows the concrete
-`OutputService`. Neither boundary may be approximated with dual writes or an
-in-place provider swap.
+Issue #271 now attaches the replay-only Rust model to this feed as an
+observational candidate when `SAKURA_UTF16_RUST_CANDIDATE` is compiled. Runtime
+composition constructs it immediately after the authoritative `OutputService`
+with the exact same limits and before any mutation can be published. It accepts
+only the fresh empty revision-one/cursor-zero bootstrap, applies copied future
+commits synchronously, and exposes copied diagnostics plus an explicit on-demand
+snapshot comparison. It does not publish state, operation results,
+notifications, or fallback behavior to any production consumer.
+
+The candidate has explicit unavailable, attaching, live, faulted, and stopped
+states. A subscribe failure, cursor mismatch, bounded-feed gap, FFI/result
+mismatch, callback failure, or snapshot mismatch is terminal: it detaches,
+destroys the Rust model, and never resynchronizes or replays from the C++
+snapshot. Runtime shutdown stops `OutputService` first so its feed callback
+lifetime is fenced, then destroys the candidate token. Without the candidate
+macro the same composition surface reports typed unavailable state and has no
+Rust symbol reference.
+
+A production cutover still requires a stable provider boundary because native
+code currently borrows the concrete `OutputService`. That boundary must select
+one authority for an entire lifecycle; it may not be approximated with dual
+writes, silent fallback, snapshot-based state transfer, or an in-place provider
+swap after an accepted mutation.
 
 `sakura_core/workbench/scm/GitOutputChannel.h`/`.cpp` (Issue #221) is this
 service's first real production content producer: an HWND-free adapter that

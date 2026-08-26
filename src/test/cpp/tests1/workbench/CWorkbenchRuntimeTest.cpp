@@ -618,6 +618,181 @@ TEST(CWorkbenchRuntime, OwnsMarkerAndOutputServicesOnlyWhileRunning)
 	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
 }
 
+TEST(CWorkbenchRuntime, ComposesRustOutputCandidateBeforePublishingRuntime)
+{
+	RuntimeFixture fixture(Bootstrap());
+	EXPECT_EQ(nullptr, fixture.runtime->Output());
+	const auto beforeStart = fixture.runtime->OutputCandidateDiagnostics();
+	if (!fixture.runtime->OutputCandidateAvailable()) {
+		EXPECT_EQ(outputModel::EOutputServiceRustCandidateAvailability::Unavailable, beforeStart.availability);
+		EXPECT_EQ(outputModel::EOutputServiceRustCandidateState::Unavailable, beforeStart.state);
+		EXPECT_EQ(outputModel::EOutputServiceRustCandidateFault::Unavailable, beforeStart.fault);
+		ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+		EXPECT_NE(nullptr, fixture.runtime->Output());
+		EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
+		return;
+	}
+
+	EXPECT_EQ(outputModel::EOutputServiceRustCandidateAvailability::Available, beforeStart.availability);
+	EXPECT_EQ(outputModel::EOutputServiceRustCandidateState::Live, beforeStart.state);
+	EXPECT_EQ(outputModel::EOutputServiceRustCandidateFault::None, beforeStart.fault);
+	EXPECT_EQ(0U, beforeStart.appliedCommitCount);
+	EXPECT_TRUE(fixture.runtime->OutputCandidateMatchesAuthority());
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+	EXPECT_NE(nullptr, fixture.runtime->Output());
+	EXPECT_TRUE(fixture.runtime->OutputCandidateMatchesAuthority());
+	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
+}
+
+TEST(CWorkbenchRuntime, RustOutputCandidateObservesAcceptedLiveCommitsWithoutReplacingCppAuthority)
+{
+	RuntimeFixture fixture(Bootstrap());
+	if (!fixture.runtime->OutputCandidateAvailable()) {
+		ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+		EXPECT_NE(nullptr, fixture.runtime->Output());
+		EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
+		return;
+	}
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+	auto* const output = fixture.runtime->Output();
+	ASSERT_NE(nullptr, output);
+	const workbench::IWorkbenchRuntime& boundary = *fixture.runtime;
+	EXPECT_EQ(output, boundary.Output());
+
+	std::size_t notificationCount = 0;
+	const auto subscription = output->Subscribe([&notificationCount](const outputModel::OutputServiceChange&) {
+		++notificationCount;
+	});
+	ASSERT_TRUE(subscription.has_value());
+	const outputModel::OutputOwner owner{ .ownerId = "runtime.candidate-live", .generation = 1 };
+	const auto created = output->CreateChannel({
+		.operation = { .operationId = "runtime.candidate-live.create" },
+		.owner = owner,
+		.channelId = "runtime.candidate-live",
+		.label = "Candidate live",
+	});
+	EXPECT_EQ(outputModel::EOutputOperationStatus::Succeeded, created.status);
+	ASSERT_EQ(1U, output->Snapshot().channels.size());
+	EXPECT_TRUE(fixture.runtime->OutputCandidateMatchesAuthority());
+	EXPECT_EQ(1U, fixture.runtime->OutputCandidateDiagnostics().appliedCommitCount);
+
+	const auto appended = output->AppendOutput({
+		.operation = { .operationId = "runtime.candidate-live.append" },
+		.owner = owner,
+		.channelId = "runtime.candidate-live",
+		.text = "accepted live text",
+	});
+	EXPECT_EQ(outputModel::EOutputOperationStatus::Succeeded, appended.status);
+	const auto authority = output->Snapshot();
+	ASSERT_EQ(1U, authority.channels.size());
+	EXPECT_EQ("accepted live text", authority.channels.front().text);
+	EXPECT_EQ(2U, notificationCount);
+	EXPECT_TRUE(fixture.runtime->OutputCandidateMatchesAuthority());
+	EXPECT_EQ(2U, fixture.runtime->OutputCandidateDiagnostics().appliedCommitCount);
+	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
+}
+
+TEST(CWorkbenchRuntime, RustOutputCandidateExcludesReplayAndRejectedOperations)
+{
+	RuntimeFixture fixture(Bootstrap());
+	if (!fixture.runtime->OutputCandidateAvailable()) {
+		ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+		EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
+		return;
+	}
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+	auto* const output = fixture.runtime->Output();
+	ASSERT_NE(nullptr, output);
+	const outputModel::OutputOwner owner{ .ownerId = "runtime.candidate-filter", .generation = 1 };
+	const outputModel::OutputCreateChannelRequest createRequest {
+		.operation = { .operationId = "runtime.candidate-filter.create" },
+		.owner = owner,
+		.channelId = "runtime.candidate-filter",
+		.label = "Candidate filter",
+	};
+	ASSERT_EQ(outputModel::EOutputOperationStatus::Succeeded, output->CreateChannel(createRequest).status);
+	const auto acceptedCount = fixture.runtime->OutputCandidateDiagnostics().appliedCommitCount;
+	ASSERT_EQ(1U, acceptedCount);
+
+	EXPECT_EQ(outputModel::EOutputOperationStatus::Replayed, output->CreateChannel(createRequest).status);
+	EXPECT_EQ(outputModel::EOutputOperationStatus::Rejected, output->AppendOutput({
+		.operation = { .operationId = "runtime.candidate-filter.invalid-owner" },
+		.owner = {},
+		.channelId = "runtime.candidate-filter",
+		.text = "rejected",
+	}).status);
+	EXPECT_EQ(outputModel::EOutputOperationStatus::Conflict, output->AppendOutput({
+		.operation = { .operationId = "runtime.candidate-filter.wrong-generation" },
+		.owner = { .ownerId = owner.ownerId, .generation = 2 },
+		.channelId = "runtime.candidate-filter",
+		.text = "conflict",
+	}).status);
+
+	EXPECT_EQ(acceptedCount, fixture.runtime->OutputCandidateDiagnostics().appliedCommitCount);
+	EXPECT_TRUE(fixture.runtime->OutputCandidateMatchesAuthority());
+	const auto authority = output->Snapshot();
+	ASSERT_EQ(1U, authority.channels.size());
+	EXPECT_TRUE(authority.channels.front().text.empty());
+	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
+}
+
+TEST(CWorkbenchRuntime, StopPublishesCppOutputTerminalBeforeRustCandidateTeardown)
+{
+	RuntimeFixture fixture(Bootstrap());
+	const bool candidateAvailable = fixture.runtime->OutputCandidateAvailable();
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+	auto* const output = fixture.runtime->Output();
+	ASSERT_NE(nullptr, output);
+	const outputModel::OutputOwner owner{ .ownerId = "runtime.candidate-stop", .generation = 1 };
+	ASSERT_EQ(outputModel::EOutputOperationStatus::Succeeded, output->CreateChannel({
+		.operation = { .operationId = "runtime.candidate-stop.create" },
+		.owner = owner,
+		.channelId = "runtime.candidate-stop",
+		.label = "Candidate stop",
+	}).status);
+
+	const auto stopped = fixture.runtime->Stop();
+	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, stopped.code);
+	EXPECT_EQ(nullptr, fixture.runtime->Output());
+	EXPECT_TRUE(output->Snapshot().stopped);
+	EXPECT_EQ(outputModel::EOutputOperationStatus::Stopped, output->AppendOutput({
+		.operation = { .operationId = "runtime.candidate-stop.after-stop" },
+		.owner = owner,
+		.channelId = "runtime.candidate-stop",
+		.text = "after stop",
+	}).status);
+	const auto diagnostics = fixture.runtime->OutputCandidateDiagnostics();
+	if (candidateAvailable) {
+		EXPECT_EQ(outputModel::EOutputServiceRustCandidateState::Stopped, diagnostics.state);
+		EXPECT_EQ(outputModel::EOutputServiceRustCandidateFault::None, diagnostics.fault);
+		EXPECT_EQ(1U, diagnostics.appliedCommitCount);
+	} else {
+		EXPECT_EQ(outputModel::EOutputServiceRustCandidateState::Unavailable, diagnostics.state);
+	}
+	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
+}
+
+TEST(CWorkbenchRuntime, FailedStartStopsRustOutputCandidateAlongsideUnpublishedCppServices)
+{
+	RuntimeFixture fixture(Bootstrap());
+	fixture.files->onRead = [] { throw std::runtime_error("forced candidate runtime bootstrap failure"); };
+	const bool candidateAvailable = fixture.runtime->OutputCandidateAvailable();
+
+	const auto failed = fixture.runtime->Start();
+	EXPECT_EQ(EWorkbenchRuntimeResultCode::Failed, failed.code);
+	EXPECT_EQ(EWorkbenchRuntimeState::Failed, failed.snapshot.state);
+	EXPECT_EQ(nullptr, fixture.runtime->Output());
+	const auto diagnostics = fixture.runtime->OutputCandidateDiagnostics();
+	if (candidateAvailable) {
+		EXPECT_EQ(outputModel::EOutputServiceRustCandidateState::Stopped, diagnostics.state);
+		EXPECT_EQ(outputModel::EOutputServiceRustCandidateFault::None, diagnostics.fault);
+	} else {
+		EXPECT_EQ(outputModel::EOutputServiceRustCandidateState::Unavailable, diagnostics.state);
+	}
+	EXPECT_EQ(EWorkbenchRuntimeResultCode::Failed, fixture.runtime->Start().code);
+	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
+}
+
 TEST(CWorkbenchRuntime, OwnsTaskExecutionAndFolderCatalogsOnlyWhileRunning)
 {
 	const auto unknown = Parse(L"file:///C:/Unknown");

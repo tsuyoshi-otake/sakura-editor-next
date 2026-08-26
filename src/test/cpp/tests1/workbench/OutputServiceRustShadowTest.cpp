@@ -8,17 +8,22 @@
 
 #include "OutputServiceRustShadowAbi.h"
 #include "workbench/output/OutputService.h"
+#include "workbench/output/OutputServiceRustCandidate.h"
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <condition_variable>
 #include <iterator>
 #include <limits>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -849,11 +854,313 @@ TEST(OutputServiceRustCandidate, ReplaysOnlyWithinTheBoundedRememberedWindow)
 	ExpectSnapshotsEqual(cpp.Snapshot(), shadowSnapshot);
 }
 
+TEST(OutputServiceRustCandidate, LiveCandidateCoversEveryAcceptedCommitKind)
+{
+	OutputServiceLimits limits;
+	limits.maximumPayloadBytes = 32;
+	limits.maximumTextBytesPerChannel = 32;
+	limits.maximumLogEntriesPerChannel = 4;
+	limits.maximumRememberedOperations = 32;
+	OutputService authority(limits);
+	OutputServiceRustCandidate candidate(authority, limits);
+	ASSERT_TRUE(candidate.IsAvailable());
+	ASSERT_EQ(EOutputServiceRustCandidateState::Live, candidate.Diagnostics().state);
+
+	const auto owner = Owner("all-kinds.owner");
+	const auto outputChannel = "all-kinds.output";
+	const auto logChannel = "all-kinds.log";
+	const auto expectLiveMatch = [&](const std::uint64_t expectedSequence) {
+		const auto diagnostics = candidate.Diagnostics();
+		EXPECT_EQ(EOutputServiceRustCandidateState::Live, diagnostics.state);
+		EXPECT_EQ(EOutputServiceRustCandidateFault::None, diagnostics.fault);
+		EXPECT_EQ(expectedSequence, diagnostics.lastCursor);
+		EXPECT_EQ(expectedSequence, diagnostics.appliedCommitCount);
+		EXPECT_TRUE(candidate.VerifySnapshot());
+	};
+
+	ASSERT_EQ(EOutputOperationStatus::Succeeded,
+		authority.CreateChannel(Create("all-kinds-create-output", owner, outputChannel)).status);
+	expectLiveMatch(1);
+	ASSERT_EQ(EOutputOperationStatus::Succeeded,
+		authority.CreateChannel(Create("all-kinds-create-log", owner, logChannel, EOutputChannelKind::Log)).status);
+	expectLiveMatch(2);
+	ASSERT_EQ(EOutputOperationStatus::Succeeded,
+		authority.AppendOutput(Text("all-kinds-append", owner, outputChannel, "first")).status);
+	expectLiveMatch(3);
+	ASSERT_EQ(EOutputOperationStatus::Succeeded,
+		authority.ReplaceOutput(Text("all-kinds-replace", owner, outputChannel, "second")).status);
+	expectLiveMatch(4);
+
+	const OutputLogMutationRequest appendLog{
+		.operation = Operation("all-kinds-append-log"),
+		.owner = owner,
+		.channelId = logChannel,
+		.entries = {
+			{ .level = EOutputLogLevel::Warning, .message = "warning", .source = std::string("tests") },
+		},
+	};
+	ASSERT_EQ(EOutputOperationStatus::Succeeded, authority.AppendLog(appendLog).status);
+	expectLiveMatch(5);
+	ASSERT_EQ(EOutputOperationStatus::Succeeded,
+		authority.Clear(Channel("all-kinds-clear", owner, logChannel)).status);
+	expectLiveMatch(6);
+	ASSERT_EQ(EOutputOperationStatus::Succeeded,
+		authority.Show(Show("all-kinds-show", owner, outputChannel, true)).status);
+	expectLiveMatch(7);
+	ASSERT_EQ(EOutputOperationStatus::Succeeded,
+		authority.Hide(Channel("all-kinds-hide", owner, outputChannel)).status);
+	expectLiveMatch(8);
+	ASSERT_EQ(EOutputOperationStatus::Succeeded,
+		authority.Dispose(Channel("all-kinds-dispose", owner, outputChannel)).status);
+	expectLiveMatch(9);
+	ASSERT_EQ(EOutputOperationStatus::Succeeded,
+		authority.DisposeOwner(DisposeOwner("all-kinds-dispose-owner", owner)).status);
+	expectLiveMatch(10);
+
+	const auto diagnostics = candidate.Diagnostics();
+	EXPECT_EQ(10U, diagnostics.lastCursor);
+	EXPECT_EQ(10U, diagnostics.appliedCommitCount);
+	EXPECT_EQ(EOutputServiceRustCandidateFault::None, diagnostics.fault);
+	EXPECT_TRUE(candidate.VerifySnapshot());
+	EXPECT_TRUE(authority.Snapshot().channels.empty());
+	ASSERT_EQ(EOutputOperationStatus::Succeeded, authority.Stop().status);
+	candidate.ShutdownAfterOutputServiceStop();
+}
+
+TEST(OutputServiceRustCandidate, LiveFeedTracksOnlyFreshAcceptedCommits)
+{
+	OutputServiceLimits limits;
+	limits.maximumRememberedOperations = 16;
+	OutputService authority(limits);
+	OutputServiceRustCandidate candidate(authority, limits);
+	ASSERT_TRUE(candidate.IsAvailable());
+	ASSERT_EQ(EOutputServiceRustCandidateState::Live, candidate.Diagnostics().state);
+
+	const auto owner = Owner("live.owner");
+	const auto create = Create("live-create", owner, "live.output");
+	ASSERT_EQ(EOutputOperationStatus::Succeeded, authority.CreateChannel(create).status);
+	const auto afterCreate = candidate.Diagnostics();
+	EXPECT_EQ(1U, afterCreate.lastCursor);
+	EXPECT_EQ(1U, afterCreate.appliedCommitCount);
+	EXPECT_EQ(SakuraOutputShadowOperationStatus::Succeeded, afterCreate.lastOperationStatus);
+	EXPECT_EQ(SakuraOutputShadowReason::None, afterCreate.lastOperationReason);
+	EXPECT_EQ(2U, afterCreate.lastOperationRevision);
+
+	EXPECT_EQ(EOutputOperationStatus::Replayed, authority.CreateChannel(create).status);
+	EXPECT_EQ(EOutputOperationStatus::Conflict,
+		authority.CreateChannel(Create("live-create", owner, "other.output")).status);
+	EXPECT_EQ(EOutputOperationStatus::Rejected, authority.AppendOutput({
+		.operation = Operation("live-invalid-owner"),
+		.owner = {},
+		.channelId = "live.output",
+		.text = "rejected",
+	}).status);
+	EXPECT_EQ(EOutputOperationStatus::Conflict,
+		authority.AppendOutput(Text("live-wrong-generation", Owner("live.owner", 2),
+			"live.output", "conflict")).status);
+	EXPECT_EQ(EOutputOperationStatus::StaleRevision,
+		authority.AppendOutput(Text("live-stale", owner, "live.output", "stale", 1)).status);
+	EXPECT_EQ(EOutputOperationStatus::NotApplicable,
+		authority.AppendOutput(Text("live-empty", owner, "live.output", "")).status);
+	EXPECT_EQ(1U, candidate.Diagnostics().appliedCommitCount);
+
+	ASSERT_EQ(EOutputOperationStatus::Succeeded,
+		authority.AppendOutput(Text("live-append", owner, "live.output", "accepted")).status);
+	const auto accepted = candidate.Diagnostics();
+	EXPECT_EQ(EOutputServiceRustCandidateState::Live, accepted.state);
+	EXPECT_EQ(EOutputServiceRustCandidateFault::None, accepted.fault);
+	EXPECT_EQ(2U, accepted.lastCursor);
+	EXPECT_EQ(2U, accepted.appliedCommitCount);
+	EXPECT_EQ(3U, accepted.lastOperationRevision);
+	ASSERT_TRUE(candidate.VerifySnapshot());
+	const auto authoritativeSnapshot = authority.Snapshot();
+	ASSERT_EQ(1U, authoritativeSnapshot.channels.size());
+	EXPECT_EQ("accepted", authoritativeSnapshot.channels.front().text);
+
+	EXPECT_EQ(EOutputOperationStatus::Succeeded, authority.Stop().status);
+	EXPECT_TRUE(candidate.VerifySnapshot());
+	EXPECT_EQ(EOutputServiceRustCandidateState::Stopped, candidate.Diagnostics().state);
+	candidate.ShutdownAfterOutputServiceStop();
+	EXPECT_EQ(EOutputServiceRustCandidateState::Stopped, candidate.Diagnostics().state);
+}
+
+TEST(OutputServiceRustCandidate, NonFreshBootstrapFaultsWithoutRetainingFeedOwnership)
+{
+	OutputServiceLimits limits;
+	limits.maximumSubscriptions = 1;
+	OutputService authority(limits);
+	const auto owner = Owner("bootstrap.owner");
+	ASSERT_EQ(EOutputOperationStatus::Succeeded,
+		authority.CreateChannel(Create("bootstrap-create", owner, "bootstrap.output")).status);
+
+	OutputServiceRustCandidate candidate(authority, limits);
+	ASSERT_TRUE(candidate.IsAvailable());
+	const auto diagnostics = candidate.Diagnostics();
+	EXPECT_EQ(EOutputServiceRustCandidateState::Faulted, diagnostics.state);
+	EXPECT_EQ(EOutputServiceRustCandidateFault::BootstrapMismatch, diagnostics.fault);
+	EXPECT_EQ(0U, diagnostics.appliedCommitCount);
+
+	// The failed candidate must release the only feed slot immediately. This is
+	// also an observable proxy for not retaining future journal DTOs.
+	const auto probe = authority.SubscribeAcceptedCommits([](const OutputAcceptedCommitEvent&) {});
+	ASSERT_TRUE(probe.has_value());
+	authority.UnsubscribeAcceptedCommits(probe->subscriptionId);
+	ASSERT_EQ(EOutputOperationStatus::Succeeded,
+		authority.AppendOutput(Text("bootstrap-later", owner, "bootstrap.output", "cpp-only")).status);
+	EXPECT_EQ(0U, candidate.Diagnostics().appliedCommitCount);
+	ASSERT_EQ(1U, authority.Snapshot().channels.size());
+	EXPECT_EQ("cpp-only", authority.Snapshot().channels.front().text);
+	EXPECT_EQ(EOutputOperationStatus::Succeeded, authority.Stop().status);
+	candidate.ShutdownAfterOutputServiceStop();
+}
+
+TEST(OutputServiceRustCandidate, SubscriptionFailureIsTypedAndTerminal)
+{
+	OutputServiceLimits limits;
+	limits.maximumSubscriptions = 1;
+	OutputService authority(limits);
+	const auto occupied = authority.SubscribeAcceptedCommits([](const OutputAcceptedCommitEvent&) {});
+	ASSERT_TRUE(occupied.has_value());
+
+	OutputServiceRustCandidate candidate(authority, limits);
+	ASSERT_TRUE(candidate.IsAvailable());
+	const auto diagnostics = candidate.Diagnostics();
+	EXPECT_EQ(EOutputServiceRustCandidateState::Faulted, diagnostics.state);
+	EXPECT_EQ(EOutputServiceRustCandidateFault::SubscribeFailed, diagnostics.fault);
+	EXPECT_EQ(0U, diagnostics.appliedCommitCount);
+	authority.UnsubscribeAcceptedCommits(occupied->subscriptionId);
+	EXPECT_EQ(EOutputOperationStatus::Succeeded, authority.Stop().status);
+	candidate.ShutdownAfterOutputServiceStop();
+	EXPECT_EQ(EOutputServiceRustCandidateState::Faulted, candidate.Diagnostics().state);
+}
+
+TEST(OutputServiceRustCandidate, BoundedFeedGapIsTerminalAndNeverResynchronizes)
+{
+	OutputServiceLimits limits;
+	limits.maximumAcceptedCommitFeedEntries = 1;
+	limits.maximumSubscriptions = 4;
+	OutputService authority(limits);
+
+	std::mutex gateMutex;
+	std::condition_variable gate;
+	bool firstCallbackEntered{};
+	bool releaseFirstCallback{};
+	const auto blocker = authority.SubscribeAcceptedCommits(
+		[&](const OutputAcceptedCommitEvent& event) {
+			if (event.state != EOutputAcceptedCommitFeedState::Live
+				|| !event.commit || event.commit->sequence != 1) return;
+			std::unique_lock lock(gateMutex);
+			firstCallbackEntered = true;
+			gate.notify_all();
+			gate.wait(lock, [&] { return releaseFirstCallback; });
+		});
+	ASSERT_TRUE(blocker.has_value());
+	OutputServiceRustCandidate candidate(authority, limits);
+	ASSERT_TRUE(candidate.IsAvailable());
+
+	const auto owner = Owner("gap.owner");
+	OutputOperationResult firstResult;
+	std::thread firstMutation([&] {
+		firstResult = authority.CreateChannel(Create("gap-create", owner, "gap.output"));
+	});
+	bool enteredInTime{};
+	{
+		std::unique_lock lock(gateMutex);
+		enteredInTime = gate.wait_for(lock, std::chrono::seconds(5), [&] { return firstCallbackEntered; });
+		if (!enteredInTime) releaseFirstCallback = true;
+	}
+	if (!enteredInTime) {
+		gate.notify_all();
+		firstMutation.join();
+		authority.UnsubscribeAcceptedCommits(blocker->subscriptionId);
+		(void)authority.Stop();
+		candidate.ShutdownAfterOutputServiceStop();
+		FAIL() << "accepted-commit blocker did not start within the bounded wait";
+		return;
+	}
+
+	const auto secondResult = authority.AppendOutput(
+		Text("gap-append", owner, "gap.output", "accepted by C++"));
+	EXPECT_EQ(EOutputOperationStatus::Succeeded, secondResult.status);
+	{
+		std::lock_guard lock(gateMutex);
+		releaseFirstCallback = true;
+	}
+	gate.notify_all();
+	firstMutation.join();
+	EXPECT_EQ(EOutputOperationStatus::Succeeded, firstResult.status);
+
+	const auto gap = candidate.Diagnostics();
+	EXPECT_EQ(EOutputServiceRustCandidateState::Faulted, gap.state);
+	EXPECT_EQ(EOutputServiceRustCandidateFault::Gap, gap.fault);
+	EXPECT_EQ(0U, gap.appliedCommitCount);
+	EXPECT_EQ(1U, gap.lastCursor);
+	authority.UnsubscribeAcceptedCommits(blocker->subscriptionId);
+	ASSERT_EQ(EOutputOperationStatus::Succeeded,
+		authority.AppendOutput(Text("gap-after-terminal", owner, "gap.output", " later")).status);
+	EXPECT_EQ(0U, candidate.Diagnostics().appliedCommitCount);
+	const auto authoritySnapshot = authority.Snapshot();
+	ASSERT_EQ(1U, authoritySnapshot.channels.size());
+	EXPECT_EQ("accepted by C++ later", authoritySnapshot.channels.front().text);
+	EXPECT_EQ(EOutputOperationStatus::Succeeded, authority.Stop().status);
+	candidate.ShutdownAfterOutputServiceStop();
+}
+
+TEST(OutputServiceRustCandidate, SnapshotMismatchFaultsWithoutChangingCppAuthority)
+{
+	OutputServiceLimits authorityLimits;
+	authorityLimits.maximumPayloadBytes = 16;
+	authorityLimits.maximumTextBytesPerChannel = 4;
+	OutputServiceLimits divergentCandidateLimits = authorityLimits;
+	divergentCandidateLimits.maximumTextBytesPerChannel = 8;
+	OutputService authority(authorityLimits);
+	// A deliberately divergent test-only limit injects a deterministic model
+	// mismatch without exposing or mutating the candidate's opaque Rust token.
+	OutputServiceRustCandidate candidate(authority, divergentCandidateLimits);
+	ASSERT_TRUE(candidate.IsAvailable());
+	const auto owner = Owner("mismatch.owner");
+	ASSERT_EQ(EOutputOperationStatus::Succeeded,
+		authority.CreateChannel(Create("mismatch-create", owner, "mismatch.output")).status);
+	ASSERT_EQ(EOutputOperationStatus::Succeeded,
+		authority.AppendOutput(Text("mismatch-append", owner, "mismatch.output", "abcdef")).status);
+	ASSERT_EQ(EOutputServiceRustCandidateState::Live, candidate.Diagnostics().state);
+
+	EXPECT_FALSE(candidate.VerifySnapshot());
+	const auto mismatch = candidate.Diagnostics();
+	EXPECT_EQ(EOutputServiceRustCandidateState::Faulted, mismatch.state);
+	EXPECT_EQ(EOutputServiceRustCandidateFault::SnapshotMismatch, mismatch.fault);
+	EXPECT_EQ(2U, mismatch.lastCursor);
+	EXPECT_EQ(2U, mismatch.appliedCommitCount);
+	const auto authoritySnapshot = authority.Snapshot();
+	ASSERT_EQ(1U, authoritySnapshot.channels.size());
+	EXPECT_EQ("cdef", authoritySnapshot.channels.front().text);
+	EXPECT_EQ(2U, authoritySnapshot.channels.front().droppedCharacterCount);
+
+	ASSERT_EQ(EOutputOperationStatus::Succeeded,
+		authority.AppendOutput(Text("mismatch-after-terminal", owner, "mismatch.output", "z")).status);
+	EXPECT_EQ(2U, candidate.Diagnostics().appliedCommitCount);
+	EXPECT_FALSE(candidate.VerifySnapshot());
+	EXPECT_EQ(EOutputOperationStatus::Succeeded, authority.Stop().status);
+	candidate.ShutdownAfterOutputServiceStop();
+	EXPECT_EQ(EOutputServiceRustCandidateState::Faulted, candidate.Diagnostics().state);
+}
+
 #else
 
 TEST(OutputServiceRustCandidate, IsExplicitlyUnavailableWithoutNativeRustArchive)
 {
-	GTEST_SKIP() << "Rust OutputService shadow candidate is unavailable: SAKURA_UTF16_RUST_CANDIDATE is not defined";
+	OutputService authority;
+	OutputServiceRustCandidate candidate(authority, {});
+	EXPECT_FALSE(OutputServiceRustCandidate::IsCompiledIn());
+	EXPECT_FALSE(candidate.IsAvailable());
+	const auto diagnostics = candidate.Diagnostics();
+	EXPECT_EQ(EOutputServiceRustCandidateAvailability::Unavailable, diagnostics.availability);
+	EXPECT_EQ(EOutputServiceRustCandidateState::Unavailable, diagnostics.state);
+	EXPECT_EQ(EOutputServiceRustCandidateFault::Unavailable, diagnostics.fault);
+	EXPECT_FALSE(candidate.VerifySnapshot());
+	EXPECT_EQ(EOutputOperationStatus::Succeeded, authority.Stop().status);
+	candidate.ShutdownAfterOutputServiceStop();
+	EXPECT_EQ(EOutputServiceRustCandidateState::Unavailable, candidate.Diagnostics().state);
 }
 
 #endif
