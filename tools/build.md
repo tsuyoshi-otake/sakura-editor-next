@@ -95,7 +95,10 @@ MSBuildでは`/p:SAKURA_UTF16_BACKEND=cpp`（既定）または明示的な
 `both`、`auto`、空でない未知の値はハードエラーです。Rustワークスペースは
 ネイティブなら`rust/native/rust-toolchain.toml`、SENPなら
 `rust/senp/rust-toolchain.toml`の固定toolchainを選ぶため、Cargoは各ワークスペースの
-ディレクトリを作業ディレクトリにして実行されます。
+ディレクトリを作業ディレクトリにして実行されます。MSBuildの通常のバックエンド・
+パッケージ検証はCargoを起動しません。toolchainの導入状態を先に確認する診断時だけ、
+`MSBuild.exe sakura_core/sakura.vcxproj /t:PreflightSakuraNativeFfiCargo`を明示的に
+呼び出してください。実際のネイティブビルドでは必要なCargo buildが通常どおり実行されます。
 
 Outputも同様にMSBuildでは`/p:SAKURA_OUTPUT_BACKEND=cpp|rust`、CMakeでは
 `-DSAKURA_OUTPUT_BACKEND=cpp|rust`を指定します。MinGWは`cpp`固定です。Outputの

@@ -63,6 +63,13 @@
            Text="SAKURA_OUTPUT_PRODUCTION_PACKAGE=true requires SAKURA_OUTPUT_BACKEND=cpp" />
     <Error Condition="('$(SakuraUtf16BenchmarkTelemetryUpper)'=='TRUE' Or '$(SakuraUtf16BenchmarkTelemetryUpper)'=='1' Or '$(SakuraUtf16BenchmarkTelemetryUpper)'=='ON' Or '$(SakuraUtf16BenchmarkTelemetryUpper)'=='YES') And ('$(SakuraUtf16ProductionPackageUpper)'=='TRUE' Or '$(SakuraUtf16ProductionPackageUpper)'=='1' Or '$(SakuraUtf16ProductionPackageUpper)'=='ON' Or '$(SakuraUtf16ProductionPackageUpper)'=='YES')"
            Text="SAKURA_UTF16_BENCHMARK_TELEMETRY is test-only and cannot package production." />
+  </Target>
+
+  <!-- Explicit diagnostic entry point. Normal backend/package validation must
+       remain Cargo-free so a no-op or invalid-selection build fails only on its
+       typed configuration contract. The actual build invokes Cargo naturally. -->
+  <Target Name="PreflightSakuraNativeFfiCargo"
+          DependsOnTargets="ValidateSakuraRustCoreBackend">
     <Exec Command="&quot;$(SakuraRustCoreCargo)&quot; --version"
           WorkingDirectory="$(SakuraRustCoreWorkspace)"
           StdOutEncoding="UTF-8"

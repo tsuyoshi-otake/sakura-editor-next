@@ -86,6 +86,14 @@ def _record_for_output(records: list[dict[str, object]], output: str) -> dict[st
     return matches[0]
 
 
+def _msbuild_target_block(text: str, name: str) -> str:
+    for match in re.finditer(r"<Target\b[^>]*>.*?</Target>", text, re.DOTALL):
+        block = match.group(0)
+        if re.search(rf'\bName="{re.escape(name)}"', block):
+            return block
+    raise AssertionError(f"MSBuild target {name!r} was not found")
+
+
 class CMakeGenerationContractTests(unittest.TestCase):
     def test_single_config_msvc_architecture_and_native_ffi_byproducts_are_explicit(self) -> None:
         sakura_path = REPO_ROOT / "src/main/cmake/sakura.cmake"
@@ -186,7 +194,20 @@ class CMakeGenerationContractTests(unittest.TestCase):
             msbuild_target,
         )
         self.assertIn("'$(SakuraUtf16BackendUpper)'=='RUST'", msbuild_target)
-        self.assertIn("--version", msbuild_target)
+        validation_target = _msbuild_target_block(
+            msbuild_target, "ValidateSakuraRustCoreBackend"
+        )
+        self.assertNotIn("<Exec", validation_target)
+        self.assertNotIn("--version", validation_target)
+        cargo_preflight_target = _msbuild_target_block(
+            msbuild_target, "PreflightSakuraNativeFfiCargo"
+        )
+        self.assertIn(
+            'DependsOnTargets="ValidateSakuraRustCoreBackend"',
+            cargo_preflight_target,
+        )
+        self.assertEqual(1, cargo_preflight_target.count("<Exec"))
+        self.assertIn("--version", cargo_preflight_target)
         self.assertIn('DependsOnTargets="ValidateSakuraRustCoreBackend"', msbuild_target)
         self.assertIn("<SakuraNativeFfiMemberManifest>", msbuild_target)
         self.assertIn("<SakuraNativeFfiStamp>", msbuild_target)
@@ -986,7 +1007,65 @@ class CMakeGenerationContractTests(unittest.TestCase):
                     self.assertIn(expected_text, re.sub(r"\s+", " ", output))
 
     @unittest.skipUnless(MSBUILD_EXECUTABLE, "MSBuild is required")
-    def test_msbuild_missing_cargo_fails_with_current_output(self) -> None:
+    def test_msbuild_validation_does_not_probe_missing_cargo(self) -> None:
+        msbuild = MSBUILD_EXECUTABLE
+        assert msbuild is not None
+        result = subprocess.run(
+            [
+                msbuild,
+                str(REPO_ROOT / "sakura_core/sakura.vcxproj"),
+                "/t:ValidateSakuraRustCoreBackend",
+                "/p:Platform=x64",
+                "/p:Configuration=Debug",
+                "/p:SAKURA_UTF16_BACKEND=cpp",
+                "/p:SakuraNativeFfiCargo=issue274-cargo-missing",
+                "/nr:false",
+                "/nologo",
+            ],
+            capture_output=True,
+            check=False,
+            encoding="utf-8",
+            errors="replace",
+            text=True,
+            timeout=10,
+        )
+        output = result.stdout + result.stderr
+        self.assertEqual(0, result.returncode, output)
+        self.assertNotIn("--version", output)
+        self.assertNotIn("MSB3073", output)
+
+    @unittest.skipUnless(MSBUILD_EXECUTABLE, "MSBuild is required")
+    def test_msbuild_explicit_cargo_preflight_probes_only_when_invoked(self) -> None:
+        msbuild = MSBUILD_EXECUTABLE
+        assert msbuild is not None
+        result = subprocess.run(
+            [
+                msbuild,
+                str(REPO_ROOT / "sakura_core/sakura.vcxproj"),
+                "/t:PreflightSakuraNativeFfiCargo",
+                "/p:Platform=x64",
+                "/p:Configuration=Debug",
+                "/p:SAKURA_UTF16_BACKEND=cpp",
+                "/p:SakuraNativeFfiCargo=issue274-cargo-missing",
+                "/nr:false",
+                "/nologo",
+            ],
+            capture_output=True,
+            check=False,
+            encoding="utf-8",
+            errors="replace",
+            text=True,
+            timeout=10,
+        )
+        output = result.stdout + result.stderr
+        normalized_output = re.sub(r"\s+", " ", output)
+        self.assertNotEqual(0, result.returncode, output)
+        self.assertIn("--version", normalized_output)
+        self.assertIn("MSB3073", normalized_output)
+        self.assertNotIn("build --manifest-path", normalized_output)
+
+    @unittest.skipUnless(MSBUILD_EXECUTABLE, "MSBuild is required")
+    def test_msbuild_missing_cargo_fails_when_native_build_runs(self) -> None:
         msbuild = MSBUILD_EXECUTABLE
         assert msbuild is not None
         with tempfile.TemporaryDirectory() as temporary:
@@ -1019,7 +1098,8 @@ class CMakeGenerationContractTests(unittest.TestCase):
             output = result.stdout + result.stderr
             normalized_output = re.sub(r"\s+", " ", output)
             self.assertNotEqual(0, result.returncode, output)
-            self.assertIn("--version", normalized_output)
+            self.assertIn("build --manifest-path", normalized_output)
+            self.assertNotIn("--version", normalized_output)
             self.assertIn("MSB3073", normalized_output)
             self.assertEqual(original, library.read_bytes())
             self.assertLess(elapsed, 8.0, output)
