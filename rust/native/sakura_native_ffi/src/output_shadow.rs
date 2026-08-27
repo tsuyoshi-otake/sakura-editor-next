@@ -11,13 +11,13 @@
 
 #[cfg(test)]
 use std::cell::Cell;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::mem::{align_of, size_of};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
 use std::slice;
 use std::str;
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 const ABI_VERSION_V1: u32 = 1;
 
@@ -60,6 +60,40 @@ const SNAPSHOT_MAGIC: &[u8] = b"SAKURA_OUTPUT_MODEL_V1\0";
 #[cfg(test)]
 thread_local! {
     static FINGERPRINT_CONSTRUCTION_COUNT: Cell<usize> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReserveFailurePoint {
+    Map,
+    Queue,
+}
+
+#[cfg(test)]
+thread_local! {
+    static NEXT_RESERVE_FAILURE: Cell<Option<ReserveFailurePoint>> = const { Cell::new(None) };
+}
+
+#[cfg(test)]
+fn take_reserve_failure(point: ReserveFailurePoint) -> bool {
+    NEXT_RESERVE_FAILURE.with(|failure| {
+        if failure.get() == Some(point) {
+            failure.set(None);
+            true
+        } else {
+            false
+        }
+    })
+}
+
+#[cfg(test)]
+fn fail_next_reserve(point: ReserveFailurePoint) {
+    NEXT_RESERVE_FAILURE.with(|failure| failure.set(Some(point)));
+}
+
+#[cfg(test)]
+fn discard_reserve_failure() {
+    NEXT_RESERVE_FAILURE.with(|failure| failure.set(None));
 }
 
 /// Errors in the ABI call itself. Operation-level failures are returned in
@@ -293,7 +327,7 @@ struct OwnerGeneration {
 
 #[derive(Clone, Debug)]
 struct Operation {
-    id: Vec<u8>,
+    id: Arc<[u8]>,
     expected_revision: Option<u64>,
 }
 
@@ -354,13 +388,18 @@ impl OperationResult {
     }
 }
 
+struct PreparedRemember {
+    operation_id: Arc<[u8]>,
+    fingerprint: Vec<u8>,
+}
+
 enum ApplyOutcome {
     NotAccepted(OperationResult),
     Accepted {
-        operation_id: Vec<u8>,
-        fingerprint: Vec<u8>,
+        prepared: PreparedRemember,
         result: OperationResult,
     },
+    InternalError,
 }
 
 impl From<OperationResult> for ApplyOutcome {
@@ -387,8 +426,8 @@ struct Service {
     channels: BTreeMap<Vec<u8>, Channel>,
     active_owner_generations: BTreeMap<Vec<u8>, OwnerGeneration>,
     active_channel_id: Option<Vec<u8>>,
-    completed_operations: BTreeMap<Vec<u8>, CompletedOperation>,
-    completed_operation_order: VecDeque<Vec<u8>>,
+    completed_operations: HashMap<Arc<[u8]>, CompletedOperation>,
+    completed_operation_order: VecDeque<Arc<[u8]>>,
     revision: u64,
     dropped_notification_count: u64,
     stopped: bool,
@@ -402,7 +441,7 @@ impl Service {
             channels: BTreeMap::new(),
             active_owner_generations: BTreeMap::new(),
             active_channel_id: None,
-            completed_operations: BTreeMap::new(),
+            completed_operations: HashMap::new(),
             completed_operation_order: VecDeque::new(),
             revision: 1,
             dropped_notification_count: 0,
@@ -433,7 +472,52 @@ impl Service {
         )
     }
 
-    fn remember(&mut self, operation_id: Vec<u8>, fingerprint: Vec<u8>, result: OperationResult) {
+    fn prepare_remember(
+        &mut self,
+        operation_id: Arc<[u8]>,
+        fingerprint: Vec<u8>,
+    ) -> Result<PreparedRemember, SakuraOutputShadowStatus> {
+        debug_assert_eq!(
+            self.completed_operations.len(),
+            self.completed_operation_order.len()
+        );
+        debug_assert!(self.completed_operations.len() <= self.limits.maximum_remembered_operations);
+        let needs_reserve =
+            self.completed_operations.len() < self.limits.maximum_remembered_operations;
+        if !needs_reserve {
+            #[cfg(test)]
+            // A full cache evicts before reusing both existing allocations.
+            // Consume an inapplicable test injection so it cannot leak into a
+            // later non-full operation.
+            discard_reserve_failure();
+        }
+        if needs_reserve {
+            #[cfg(test)]
+            if take_reserve_failure(ReserveFailurePoint::Map) {
+                return Err(SakuraOutputShadowStatus::InternalError);
+            }
+            self.completed_operations
+                .try_reserve(1)
+                .map_err(|_| SakuraOutputShadowStatus::InternalError)?;
+            #[cfg(test)]
+            if take_reserve_failure(ReserveFailurePoint::Queue) {
+                return Err(SakuraOutputShadowStatus::InternalError);
+            }
+            self.completed_operation_order
+                .try_reserve(1)
+                .map_err(|_| SakuraOutputShadowStatus::InternalError)?;
+        }
+        Ok(PreparedRemember {
+            operation_id,
+            fingerprint,
+        })
+    }
+
+    fn commit_remember(&mut self, prepared: PreparedRemember, result: OperationResult) {
+        let PreparedRemember {
+            operation_id,
+            fingerprint,
+        } = prepared;
         if self.completed_operations.len() == self.limits.maximum_remembered_operations {
             if let Some(oldest) = self.completed_operation_order.pop_front() {
                 self.completed_operations.remove(&oldest);
@@ -450,17 +534,23 @@ impl Service {
         );
     }
 
+    #[cfg(test)]
     fn apply(&mut self, request: Request) -> OperationResult {
+        self.try_apply(request)
+            .expect("test operation should not fail to reserve replay storage")
+    }
+
+    fn try_apply(&mut self, request: Request) -> Result<OperationResult, SakuraOutputShadowStatus> {
         if self.stopped {
-            return self.stopped_result();
+            return Ok(self.stopped_result());
         }
 
         let operation = request.operation();
         if !is_valid_operation_id(&operation.id) {
-            return self.current(
+            return Ok(self.current(
                 SakuraOutputShadowOperationStatus::Rejected,
                 SakuraOutputShadowReason::InvalidOperationId,
-            );
+            ));
         }
         if let Some(found) = self.completed_operations.get(&operation.id) {
             // A remembered ID must retain replay/conflict precedence over every
@@ -468,22 +558,22 @@ impl Service {
             // canonical bytes are therefore still built on this path.
             let fingerprint = fingerprint(&request);
             if found.fingerprint != fingerprint {
-                return self.current(
+                return Ok(self.current(
                     SakuraOutputShadowOperationStatus::Conflict,
                     SakuraOutputShadowReason::OperationIdConflict,
-                );
+                ));
             }
             let mut result = found.result;
             result.status = SakuraOutputShadowOperationStatus::Replayed;
-            return result;
+            return Ok(result);
         }
         if operation.expected_revision != Some(self.revision)
             && operation.expected_revision.is_some()
         {
-            return self.current(
+            return Ok(self.current(
                 SakuraOutputShadowOperationStatus::StaleRevision,
                 SakuraOutputShadowReason::ExpectedRevisionMismatch,
-            );
+            ));
         }
 
         let outcome = match request {
@@ -518,15 +608,12 @@ impl Service {
             Request::DisposeOwner { operation, owner } => self.dispose_owner(operation, owner),
         };
         match outcome {
-            ApplyOutcome::NotAccepted(result) => result,
-            ApplyOutcome::Accepted {
-                operation_id,
-                fingerprint,
-                result,
-            } => {
-                self.remember(operation_id, fingerprint, result);
-                result
+            ApplyOutcome::NotAccepted(result) => Ok(result),
+            ApplyOutcome::Accepted { prepared, result } => {
+                self.commit_remember(prepared, result);
+                Ok(result)
             }
+            ApplyOutcome::InternalError => Err(SakuraOutputShadowStatus::InternalError),
         }
     }
 
@@ -626,6 +713,10 @@ impl Service {
 
         let fingerprint =
             fingerprint_create_channel(&operation, &owner, &channel_id, &label, kind, &metadata);
+        let prepared = match self.prepare_remember(operation.id, fingerprint) {
+            Ok(prepared) => prepared,
+            Err(_) => return ApplyOutcome::InternalError,
+        };
         if adopts_new_generation {
             self.channels
                 .retain(|_, channel| channel.owner.id != owner.id);
@@ -661,11 +752,7 @@ impl Service {
             SakuraOutputShadowOperationStatus::Succeeded,
             SakuraOutputShadowReason::None,
         );
-        ApplyOutcome::Accepted {
-            operation_id: operation.id,
-            fingerprint,
-            result,
-        }
+        ApplyOutcome::Accepted { prepared, result }
     }
 
     fn apply_text(
@@ -712,6 +799,10 @@ impl Service {
             );
         }
         let fingerprint = fingerprint_text(&operation, &owner, &channel_id, &text, replace);
+        let prepared = match self.prepare_remember(operation.id, fingerprint) {
+            Ok(prepared) => prepared,
+            Err(_) => return ApplyOutcome::InternalError,
+        };
         let maximum_text_bytes_per_channel = self.limits.maximum_text_bytes_per_channel;
         let channel = self
             .channels
@@ -733,11 +824,7 @@ impl Service {
             SakuraOutputShadowOperationStatus::Succeeded,
             SakuraOutputShadowReason::None,
         );
-        ApplyOutcome::Accepted {
-            operation_id: operation.id,
-            fingerprint,
-            result,
-        }
+        ApplyOutcome::Accepted { prepared, result }
     }
 
     fn append_log(
@@ -790,6 +877,10 @@ impl Service {
             );
         }
         let fingerprint = fingerprint_append_log(&operation, &owner, &channel_id, &entries);
+        let prepared = match self.prepare_remember(operation.id, fingerprint) {
+            Ok(prepared) => prepared,
+            Err(_) => return ApplyOutcome::InternalError,
+        };
         let maximum_log_entries_per_channel = self.limits.maximum_log_entries_per_channel;
         let maximum_text_bytes_per_channel = self.limits.maximum_text_bytes_per_channel;
         let channel = self
@@ -811,11 +902,7 @@ impl Service {
             SakuraOutputShadowOperationStatus::Succeeded,
             SakuraOutputShadowReason::None,
         );
-        ApplyOutcome::Accepted {
-            operation_id: operation.id,
-            fingerprint,
-            result,
-        }
+        ApplyOutcome::Accepted { prepared, result }
     }
 
     fn apply_channel(
@@ -841,6 +928,10 @@ impl Service {
             }
             let fingerprint =
                 fingerprint_channel(&operation, &owner, &channel_id, kind, preserve_focus);
+            let prepared = match self.prepare_remember(operation.id, fingerprint) {
+                Ok(prepared) => prepared,
+                Err(_) => return ApplyOutcome::InternalError,
+            };
             let channel = self
                 .channels
                 .get_mut(&channel_id)
@@ -853,11 +944,7 @@ impl Service {
                 SakuraOutputShadowOperationStatus::Succeeded,
                 SakuraOutputShadowReason::None,
             );
-            return ApplyOutcome::Accepted {
-                operation_id: operation.id,
-                fingerprint,
-                result,
-            };
+            return ApplyOutcome::Accepted { prepared, result };
         }
         if !self.channel_matches(&owner, &channel_id, None) {
             return self.validation_result_any(&owner, &channel_id);
@@ -882,6 +969,10 @@ impl Service {
             }
             let fingerprint =
                 fingerprint_channel(&operation, &owner, &channel_id, kind, preserve_focus);
+            let prepared = match self.prepare_remember(operation.id, fingerprint) {
+                Ok(prepared) => prepared,
+                Err(_) => return ApplyOutcome::InternalError,
+            };
             let channel = self
                 .channels
                 .get_mut(&channel_id)
@@ -896,11 +987,7 @@ impl Service {
                 SakuraOutputShadowOperationStatus::Succeeded,
                 SakuraOutputShadowReason::None,
             );
-            return ApplyOutcome::Accepted {
-                operation_id: operation.id,
-                fingerprint,
-                result,
-            };
+            return ApplyOutcome::Accepted { prepared, result };
         }
         if self.revision == u64::MAX {
             return self.current(
@@ -910,6 +997,10 @@ impl Service {
         }
         let fingerprint =
             fingerprint_channel(&operation, &owner, &channel_id, kind, preserve_focus);
+        let prepared = match self.prepare_remember(operation.id, fingerprint) {
+            Ok(prepared) => prepared,
+            Err(_) => return ApplyOutcome::InternalError,
+        };
         self.channels.remove(&channel_id);
         if self.active_channel_id.as_ref() == Some(&channel_id) {
             self.active_channel_id = None;
@@ -920,11 +1011,7 @@ impl Service {
             SakuraOutputShadowOperationStatus::Succeeded,
             SakuraOutputShadowReason::None,
         );
-        ApplyOutcome::Accepted {
-            operation_id: operation.id,
-            fingerprint,
-            result,
-        }
+        ApplyOutcome::Accepted { prepared, result }
     }
 
     fn clear_channel(
@@ -958,6 +1045,10 @@ impl Service {
             );
         }
         let fingerprint = fingerprint_channel(&operation, owner, channel_id, OP_CLEAR, false);
+        let prepared = match self.prepare_remember(operation.id, fingerprint) {
+            Ok(prepared) => prepared,
+            Err(_) => return ApplyOutcome::InternalError,
+        };
         let channel = self
             .channels
             .get_mut(channel_id)
@@ -971,11 +1062,7 @@ impl Service {
             SakuraOutputShadowOperationStatus::Succeeded,
             SakuraOutputShadowReason::None,
         );
-        ApplyOutcome::Accepted {
-            operation_id: operation.id,
-            fingerprint,
-            result,
-        }
+        ApplyOutcome::Accepted { prepared, result }
     }
 
     fn dispose_owner(&mut self, operation: Operation, owner: Owner) -> ApplyOutcome {
@@ -1010,6 +1097,10 @@ impl Service {
             );
         }
         let fingerprint = fingerprint_dispose_owner(&operation, &owner);
+        let prepared = match self.prepare_remember(operation.id, fingerprint) {
+            Ok(prepared) => prepared,
+            Err(_) => return ApplyOutcome::InternalError,
+        };
         self.channels.retain(|_, channel| {
             channel.owner.id != owner.id || channel.owner.generation != owner.generation
         });
@@ -1023,11 +1114,7 @@ impl Service {
             SakuraOutputShadowOperationStatus::Succeeded,
             SakuraOutputShadowReason::None,
         );
-        ApplyOutcome::Accepted {
-            operation_id: operation.id,
-            fingerprint,
-            result,
-        }
+        ApplyOutcome::Accepted { prepared, result }
     }
 
     fn channel_matches(&self, owner: &Owner, channel_id: &[u8], expected_kind: Option<u8>) -> bool {
@@ -1383,6 +1470,23 @@ fn copy_shaped_span(
     Ok(copy_validated_span(span))
 }
 
+fn copy_shaped_arc_span(
+    span: SakuraOutputShadowSpanV1,
+    length: usize,
+) -> Result<Arc<[u8]>, SakuraOutputShadowStatus> {
+    let span = validate_span_range(span, length)?;
+    if span.length == 0 {
+        return Ok(Arc::from(&[][..]));
+    }
+    // SAFETY: The ABI contract requires an immutable initialized byte span for
+    // this call. Null, alignment, length, and address overflow were checked.
+    // `Arc::from` copies the bytes into owned Arc storage and retains no raw
+    // pointer after this function returns.
+    Ok(Arc::from(unsafe {
+        slice::from_raw_parts(span.data, span.length)
+    }))
+}
+
 fn copy_operation_and_owner(
     raw: SakuraOutputShadowRequestV1,
     operation_id_length: usize,
@@ -1391,7 +1495,7 @@ fn copy_operation_and_owner(
 ) -> Result<(Operation, Owner), SakuraOutputShadowStatus> {
     Ok((
         Operation {
-            id: copy_shaped_span(raw.operation_id, operation_id_length)?,
+            id: copy_shaped_arc_span(raw.operation_id, operation_id_length)?,
             expected_revision,
         },
         Owner {
@@ -1826,7 +1930,10 @@ pub(crate) unsafe fn model_apply_v1(
     // request boundary is conservative for rejected/replayed operations and
     // keeps panic recovery fail-closed without changing their result.
     service.snapshot_cache = None;
-    let operation_result = service.apply(request);
+    let operation_result = match service.try_apply(request) {
+        Ok(result) => result,
+        Err(status) => return status,
+    };
     let status = if operation_result.status == SakuraOutputShadowOperationStatus::Stopped {
         SakuraOutputShadowStatus::Stopped
     } else {
@@ -2637,9 +2744,21 @@ mod tests {
 
     fn operation(id: &str) -> Operation {
         Operation {
-            id: id.as_bytes().to_vec(),
+            id: Arc::from(id.as_bytes()),
             expected_revision: None,
         }
+    }
+
+    fn assert_remember_invariant(service: &Service) {
+        assert_eq!(
+            service.completed_operations.len(),
+            service.completed_operation_order.len()
+        );
+        assert!(service
+            .completed_operation_order
+            .iter()
+            .all(|operation_id| service.completed_operations.contains_key(operation_id)));
+        assert!(service.completed_operations.len() <= service.limits.maximum_remembered_operations);
     }
 
     fn span(data: *const u8, length: usize) -> SakuraOutputShadowSpanV1 {
@@ -2649,6 +2768,30 @@ mod tests {
             data,
             length: length as u64,
             reserved: [0; 2],
+        }
+    }
+
+    fn abi_create_request(operation_id: &[u8], channel_id: &[u8]) -> SakuraOutputShadowRequestV1 {
+        let owner_id = b"owner";
+        let label = b"Label";
+        SakuraOutputShadowRequestV1 {
+            struct_size: size_of::<SakuraOutputShadowRequestV1>() as u32,
+            abi_version: ABI_VERSION_V1,
+            operation_kind: OP_CREATE_CHANNEL,
+            channel_kind: u32::from(CHANNEL_KIND_OUTPUT),
+            flags: 0,
+            operation_id: span(operation_id.as_ptr(), operation_id.len()),
+            expected_revision: 0,
+            owner_id: span(owner_id.as_ptr(), owner_id.len()),
+            owner_generation: 1,
+            channel_id: span(channel_id.as_ptr(), channel_id.len()),
+            label: span(label.as_ptr(), label.len()),
+            metadata_language_id: span(ptr::null(), 0),
+            metadata_source: span(ptr::null(), 0),
+            payload: span(ptr::null(), 0),
+            log_entries: ptr::null(),
+            log_entry_count: 0,
+            reserved: [0; 4],
         }
     }
 
@@ -2706,6 +2849,20 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(Some(expected.len()), fingerprint_capacity(request));
         assert_eq!(expected, fingerprint(request));
+    }
+
+    fn assert_poisoned_result(result: &SakuraOutputShadowApplyResultV1) {
+        let poison = poison_result();
+        assert_eq!(poison.struct_size, result.struct_size);
+        assert_eq!(poison.abi_version, result.abi_version);
+        assert_eq!(poison.status, result.status);
+        assert_eq!(poison.reason, result.reason);
+        assert_eq!(poison.revision, result.revision);
+        assert_eq!(
+            poison.callback_drain_deferred,
+            result.callback_drain_deferred
+        );
+        assert_eq!(poison.reserved, result.reserved);
     }
 
     #[test]
@@ -2853,7 +3010,9 @@ mod tests {
         assert!(service
             .completed_operations
             .contains_key(b"second".as_slice()));
+        assert_remember_invariant(&service);
 
+        fail_next_reserve(ReserveFailurePoint::Map);
         let fresh = create("first", 1, "fresh-channel", CHANNEL_KIND_OUTPUT);
         assert_eq!(
             SakuraOutputShadowOperationStatus::Succeeded,
@@ -2866,6 +3025,7 @@ mod tests {
             .completed_operations
             .contains_key(b"second".as_slice()));
         assert_eq!(3, fingerprint_count());
+        assert_remember_invariant(&service);
     }
 
     #[test]
@@ -2920,12 +3080,13 @@ mod tests {
         assert!(service
             .completed_operations
             .contains_key(b"dispose-owner".as_slice()));
+        assert_remember_invariant(&service);
     }
 
     #[test]
     fn canonical_fingerprint_bytes_are_stable_for_every_request_kind() {
         let operation_with_revision = Operation {
-            id: b"op".to_vec(),
+            id: Arc::from(&b"op"[..]),
             expected_revision: Some(9),
         };
         let owner_with_generation = Owner {
@@ -3479,6 +3640,129 @@ mod tests {
     }
 
     #[test]
+    fn reserve_failure_is_typed_and_preserves_model_state() {
+        let limits = SakuraOutputShadowLimitsV1 {
+            struct_size: size_of::<SakuraOutputShadowLimitsV1>() as u32,
+            abi_version: ABI_VERSION_V1,
+            maximum_owners: 4,
+            maximum_channels: 4,
+            maximum_text_bytes_per_channel: 32,
+            maximum_payload_bytes: 32,
+            maximum_log_entries_per_channel: 4,
+            maximum_remembered_operations: 4,
+            reserved: [0; 3],
+        };
+        let mut token = 0_u64;
+        // SAFETY: The limits and token point to initialized storage owned by
+        // this test, and the export retains neither pointer.
+        assert_eq!(SakuraOutputShadowStatus::Ok, unsafe {
+            sakura_output_shadow_create_v1(&limits, &mut token)
+        });
+
+        let seed_id = b"seed";
+        let seed_channel = b"seed-channel";
+        let seed_request = abi_create_request(seed_id, seed_channel);
+        let mut result = poison_result();
+        // SAFETY: The request and result point to initialized test storage for
+        // the duration of this call.
+        assert_eq!(SakuraOutputShadowStatus::Ok, unsafe {
+            sakura_output_shadow_apply_v1(token, &seed_request, &mut result)
+        });
+        assert_eq!(
+            SakuraOutputShadowOperationStatus::Succeeded as u32,
+            result.status
+        );
+
+        let snapshot_state = |token| {
+            let mut registry = lock_registry();
+            let service = registry
+                .services
+                .get_mut(&token)
+                .expect("test token remains registered");
+            assert_remember_invariant(service);
+            let snapshot = service.snapshot_bytes().to_vec();
+            let seed_key: Arc<[u8]> = Arc::from(&seed_id[..]);
+            let seed_record = service
+                .completed_operations
+                .get(&seed_key)
+                .expect("seed operation is remembered");
+            (
+                service.revision,
+                service.channels.len(),
+                service.completed_operations.len(),
+                service.completed_operation_order.clone(),
+                seed_record.fingerprint.clone(),
+                seed_record.result,
+                snapshot,
+            )
+        };
+
+        let before_map_failure = snapshot_state(token);
+        let map_failure_id = b"fail-map";
+        let map_failure_channel = b"map-channel";
+        let map_failure_request = abi_create_request(map_failure_id, map_failure_channel);
+        fail_next_reserve(ReserveFailurePoint::Map);
+        result = poison_result();
+        // SAFETY: The request and result point to initialized test storage for
+        // the duration of this call.
+        assert_eq!(SakuraOutputShadowStatus::InternalError, unsafe {
+            sakura_output_shadow_apply_v1(token, &map_failure_request, &mut result)
+        });
+        assert_poisoned_result(&result);
+        {
+            let after = snapshot_state(token);
+            assert_eq!(before_map_failure, after);
+        }
+
+        // The failed operation was not remembered and can be accepted on a
+        // retry after the injected reserve failure has been consumed.
+        // SAFETY: The request and result point to initialized test storage for
+        // the duration of this call.
+        assert_eq!(SakuraOutputShadowStatus::Ok, unsafe {
+            sakura_output_shadow_apply_v1(token, &map_failure_request, &mut result)
+        });
+        assert_eq!(
+            SakuraOutputShadowOperationStatus::Succeeded as u32,
+            result.status
+        );
+
+        let before_queue_failure = snapshot_state(token);
+        let queue_failure_id = b"fail-queue";
+        let queue_failure_channel = b"queue-channel";
+        let queue_failure_request = abi_create_request(queue_failure_id, queue_failure_channel);
+        fail_next_reserve(ReserveFailurePoint::Queue);
+        result = poison_result();
+        // SAFETY: The request and result point to initialized test storage for
+        // the duration of this call.
+        assert_eq!(SakuraOutputShadowStatus::InternalError, unsafe {
+            sakura_output_shadow_apply_v1(token, &queue_failure_request, &mut result)
+        });
+        assert_poisoned_result(&result);
+        {
+            let after = snapshot_state(token);
+            assert_eq!(before_queue_failure, after);
+        }
+
+        // Queue reservation failure has the same retry semantics as map
+        // reservation failure.
+        // SAFETY: The request and result point to initialized test storage for
+        // the duration of this call.
+        assert_eq!(SakuraOutputShadowStatus::Ok, unsafe {
+            sakura_output_shadow_apply_v1(token, &queue_failure_request, &mut result)
+        });
+        assert_eq!(
+            SakuraOutputShadowOperationStatus::Succeeded as u32,
+            result.status
+        );
+
+        // SAFETY: The token storage is writable and this test owns its token.
+        assert_eq!(SakuraOutputShadowStatus::Ok, unsafe {
+            sakura_output_shadow_destroy_v1(&mut token)
+        });
+        assert_eq!(0, token);
+    }
+
+    #[test]
     fn span_shape_validation_defers_address_check_until_selected_copy() {
         let invalid_address = usize::MAX as *const u8;
         let empty = span(invalid_address, 0);
@@ -3492,6 +3776,10 @@ mod tests {
             Ok(payload.to_vec()),
             copy_shaped_span(selected, selected_length)
         );
+        let copied_arc = copy_shaped_arc_span(selected, selected_length)
+            .expect("operation IDs copy directly into owned Arc storage");
+        assert_eq!(payload, copied_arc.as_ref());
+        assert_ne!(payload.as_ptr(), copied_arc.as_ptr());
 
         let invalid = span(invalid_address, 1);
         let invalid_length = validate_span_shape(invalid).expect("length shape is valid");
