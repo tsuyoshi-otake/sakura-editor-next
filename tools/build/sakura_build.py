@@ -61,6 +61,13 @@ from sakura_build_lib.output_evidence_ledger import (
     append_output_evidence,
     verify_output_evidence_ledger,
 )
+from sakura_build_lib.output_link_size_evidence import (
+    DEFAULT_SIZE_THRESHOLD_PERCENT,
+    OutputLinkSizeEvidenceError,
+    build_output_link_size_evidence,
+    validate_output_link_size_evidence,
+    write_output_link_size_evidence,
+)
 from sakura_build_lib.runtime_stage import stage_runtime_artifacts
 from sakura_build_lib.repository_inventory import (
     collect_repository_inventory,
@@ -404,6 +411,46 @@ def parser() -> argparse.ArgumentParser:
         type=Path,
         default=DEFAULT_LEDGER_DIRECTORY,
         help="append-only ledger directory (default: build/evidence/output-adoption-ledger)",
+    )
+    evidence_link_size = evidence_commands.add_parser(
+        "output-link-size",
+        help="compare payload-free C++/Rust Output link, MAP, archive, symbol, and image-size evidence (startup manifests required for final-image proof)",
+    )
+    evidence_link_size.add_argument(
+        "--cpp-native-evidence",
+        type=Path,
+        required=True,
+        help="C++ product-native evidence JSON",
+    )
+    evidence_link_size.add_argument(
+        "--rust-native-evidence",
+        type=Path,
+        required=True,
+        help="Rust product-native evidence JSON",
+    )
+    evidence_link_size.add_argument(
+        "--cpp-manifest",
+        type=Path,
+        required=True,
+        help="C++ output-startup-build-manifest JSON (provider manifest is accepted only as incomplete evidence)",
+    )
+    evidence_link_size.add_argument(
+        "--rust-manifest",
+        type=Path,
+        required=True,
+        help="Rust output-startup-build-manifest JSON (provider manifest is accepted only as incomplete evidence)",
+    )
+    evidence_link_size.add_argument(
+        "--output",
+        type=Path,
+        default=Path("build/evidence/output-link-size.json"),
+        help="payload-free comparison report path inside the repository (default: build/evidence/output-link-size.json)",
+    )
+    evidence_link_size.add_argument(
+        "--threshold-percent",
+        type=float,
+        default=DEFAULT_SIZE_THRESHOLD_PERCENT,
+        help="maximum Rust image-size increase (default: 5)",
     )
 
     package = commands.add_parser(
@@ -1261,8 +1308,8 @@ def main(argv: list[str] | None = None) -> int:
             output(_package_result_for_output(result), args.format)
             return 0 if result["valid"] else EXIT_GRAPH
         if args.command == "evidence":
-            ledger_directory = _repository_path(repo, args.ledger_dir, "--ledger-dir")
             if args.evidence_command == "output-append":
+                ledger_directory = _repository_path(repo, args.ledger_dir, "--ledger-dir")
                 source_path = _repository_path(repo, args.source, "--source")
                 result = append_output_evidence(
                     ledger_directory,
@@ -1271,9 +1318,31 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 output(result, args.format)
                 return 0
-            result = verify_output_evidence_ledger(ledger_directory)
-            output(result, args.format)
-            return 0 if result["ok"] else EXIT_RATCHET
+            if args.evidence_command == "output-verify":
+                ledger_directory = _repository_path(repo, args.ledger_dir, "--ledger-dir")
+                result = verify_output_evidence_ledger(ledger_directory)
+                output(result, args.format)
+                return 0 if result["ok"] else EXIT_RATCHET
+            try:
+                cpp_native = _repository_path(repo, args.cpp_native_evidence, "--cpp-native-evidence")
+                rust_native = _repository_path(repo, args.rust_native_evidence, "--rust-native-evidence")
+                cpp_manifest = _repository_path(repo, args.cpp_manifest, "--cpp-manifest")
+                rust_manifest = _repository_path(repo, args.rust_manifest, "--rust-manifest")
+                destination = _repository_path(repo, args.output, "--output")
+                result = build_output_link_size_evidence(
+                    cpp_native,
+                    rust_native,
+                    cpp_manifest,
+                    rust_manifest,
+                    repo_root=repo,
+                    threshold_percent=args.threshold_percent,
+                )
+                write_output_link_size_evidence(destination, result)
+                validation = validate_output_link_size_evidence(result)
+                output({**validation, "output": str(destination)}, args.format)
+                return 0 if validation["ok"] else EXIT_GRAPH
+            except OutputLinkSizeEvidenceError as error:
+                raise BuildError(error.code, str(error), error.exit_code) from error
         if args.command == "inventory":
             destination = args.output if args.output.is_absolute() else repo / args.output
             try:

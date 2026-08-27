@@ -611,6 +611,40 @@ headは `genesis` です。これはC1eの採用GO判定ではなく、Debug/Rel
 provider workload/compatibility各gateと、Issue #274が要求する明示的なGO/NO-GO決定を後続工程で結び付けるための
 append-only receiptです。
 
+### Output link/MAP/size gate証跡
+
+既存のproduct-native evidence二件（C++/Rust）とbuild manifest二件から、link入力と最終イメージの比較を行う場合は、
+台帳v1とは独立した専用reportを生成します。完全なfinal-image-bound reportには、各構成の
+`output-startup-build-manifest`（`sakura.exe`のhash/sizeを含む）が必要です。`output-provider-build-manifest`はtests1.exe
+用なので入力として受理できますが、最終イメージを証明できず `FINAL_IMAGE_UNPROVEN` のincomplete reportになります。
+次のコマンドは、両providerが同じclean source、`x64`、`Debug`または`Release`、`UTF16=cpp`、production package無効で
+あること、selector proof、link command hash、MAP hash/size、静的Rust archive/member、provider symbolのexact-one証跡を
+突き合わせます。
+
+```cmd
+py -3 tools/build/sakura_build.py --format json evidence output-link-size ^
+  --cpp-native-evidence build/evidence/native-cpp.json ^
+  --rust-native-evidence build/evidence/native-rust.json ^
+  --cpp-manifest build/evidence/output-startup-cpp-manifest.json ^
+  --rust-manifest build/evidence/output-startup-rust-manifest.json ^
+  --output build/evidence/output-link-size.json ^
+  --threshold-percent 5
+```
+
+reportは `payloadFree=true`、`decision=HOLD`、`adoptionEligible=false` を固定し、exe/MAPのraw pathやlink command、
+archive member名は保存しません。入力から最終イメージ、MAP、member、static archive、provider symbolの証明が一つでも
+不足・不一致・改竄されている場合は、推測せず `status=incomplete` と型付きfailure codeを記録します。`incomplete` の
+reportは常にsize gate不合格です。すべての証明がそろっていてRustイメージの増分が5%を超える場合だけは、測定自体を
+`status=complete` として保持し、`sizeGate.pass=false` として終了コード5を返します。これは証拠不足と実測gate失敗を
+混同しないための扱いであり、いずれもproduction provider採用を許可しません。このreportはOutput adoption ledger v1を
+変更せず、最終GO/NO-GO決定の代替にもなりません。
+
+なお、product-native evidenceの一般的なarchive member差分やmanifestのarchive export一覧だけでは、最終イメージに
+Output providerのmember/symbolが選択されたことを証明できません。selector proofのarchive/export契約と、最終linkに
+おけるprovider-specific selectionは別の証跡です。producerが明示したprovider-scoped member/symbol evidenceが無い場合は
+`PROVIDER_MEMBER_UNPROVEN` または `FINAL_PROVIDER_SYMBOL_UNPROVEN` として停止します。RustがC++より小さい場合の
+`deltaBytes`は負値を許容しますが、サイズ・件数は常に非負でなければなりません。
+
 ### 単体テストの実行
 
 `build-sln.bat` でビルドした構成の `tests1.exe` を実行します。
