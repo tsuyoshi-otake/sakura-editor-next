@@ -322,14 +322,114 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual("sakura-utf16-cpp-provider", graph.production_runtime_providers("mingw-x64-release")["utf16-scan-backend"].id)
         self.assertEqual(
             {"sakura-utf16-cpp-provider", "sakura-utf16-rust-candidate"},
-            {provider.id for provider in graph.active_runtime_providers("cmake-msvc-x64-debug")},
+            {
+                provider.id
+                for provider in graph.active_runtime_providers("cmake-msvc-x64-debug")
+                if provider.authority_domain == "utf16-scan-backend"
+            },
         )
-        self.assertEqual({"sakura-utf16-cpp-provider"}, {provider.id for provider in graph.active_runtime_providers("mingw-x64-debug")})
+        self.assertEqual(
+            {"sakura-utf16-cpp-provider"},
+            {
+                provider.id
+                for provider in graph.active_runtime_providers("mingw-x64-debug")
+                if provider.authority_domain == "utf16-scan-backend"
+            },
+        )
         rust = graph.runtime_providers["sakura-utf16-rust-candidate"]
         self.assertEqual("sakura_app", rust.build_component)
         self.assertEqual("sakura-native-ffi-staticlib", rust.link_artifact)
         self.assertEqual([], list(rust.side_effects))
-        self.assertEqual("sakura-utf16-rust-candidate", graph.project("msvc-x64-debug")["active_runtime_providers"][1])
+        self.assertIn("sakura-utf16-rust-candidate", graph.project("msvc-x64-debug")["active_runtime_providers"])
+
+    def test_default_output_runtime_contexts_select_cpp_production_and_rust_shadow(self):
+        repository_root = TOOLS_BUILD.parents[1]
+        graph = load_semantic_graph(repository_root, repository_root / "src/main/modules/modules.json")
+        contexts = (
+            "msvc-x64-debug",
+            "cmake-msvc-x64-debug",
+            "msvc-x64-release",
+            "cmake-msvc-x64-release",
+            "mingw-x64-debug",
+            "mingw-x64-release",
+        )
+
+        for context_id in contexts:
+            with self.subTest(context=context_id):
+                active_output = tuple(
+                    provider
+                    for provider in graph.active_runtime_providers(context_id)
+                    if provider.authority_domain == "output-service-state"
+                )
+                production_output = tuple(
+                    provider
+                    for provider in active_output
+                    if provider.authority_mode in {"production", "legacy-production"}
+                )
+                self.assertEqual(1, len(production_output))
+                self.assertEqual("sakura-output-cpp-provider", production_output[0].id)
+                self.assertEqual("cpp", production_output[0].implementation_language)
+                self.assertEqual(
+                    0,
+                    sum(
+                        provider.implementation_language == "rust"
+                        and provider.authority_mode in {"production", "legacy-production"}
+                        for provider in active_output
+                    ),
+                )
+                self.assertEqual(
+                    "sakura-output-cpp-provider",
+                    graph.production_runtime_providers(context_id)["output-service-state"].id,
+                )
+                self.assertEqual(
+                    "sakura-utf16-cpp-provider",
+                    graph.production_runtime_providers(context_id)["utf16-scan-backend"].id,
+                )
+
+        msvc_output_ids = {
+            provider.id
+            for provider in graph.active_runtime_providers("cmake-msvc-x64-debug")
+            if provider.authority_domain == "output-service-state"
+        }
+        self.assertEqual({"sakura-output-cpp-provider", "sakura-output-rust-candidate"}, msvc_output_ids)
+        mingw_output_ids = {
+            provider.id
+            for provider in graph.active_runtime_providers("mingw-x64-debug")
+            if provider.authority_domain == "output-service-state"
+        }
+        self.assertEqual({"sakura-output-cpp-provider"}, mingw_output_ids)
+
+        rust_output = graph.runtime_providers["sakura-output-rust-candidate"]
+        self.assertEqual("rust", rust_output.implementation_language)
+        self.assertEqual("candidate-shadow", rust_output.authority_mode)
+        self.assertEqual("sakura_app", rust_output.build_component)
+        self.assertEqual("sakura-native-ffi-staticlib", rust_output.link_artifact)
+        self.assertEqual([], list(rust_output.side_effects))
+        self.assertEqual(
+            {
+                "msvc-x64-debug",
+                "cmake-msvc-x64-debug",
+                "msvc-x64-release",
+                "cmake-msvc-x64-release",
+            },
+            set(rust_output.supported_contexts),
+        )
+        self.assertNotIn("sakura-output-rust-candidate", graph.project("mingw-x64-debug")["active_runtime_providers"])
+
+        native_ffi = graph.artifacts["sakura-native-ffi-staticlib"]
+        self.assertEqual("sakura_app", native_ffi.owner)
+        self.assertEqual("product", native_ffi.artifact_kind)
+        self.assertEqual("build/native/sakura_native_ffi.lib", native_ffi.outputs[0])
+        self.assertEqual({"rust/native/sakura_simd/Cargo.toml"}, {path for path in native_ffi.inputs if "sakura_simd" in path})
+        self.assertEqual(
+            {"sakura-native-ffi-staticlib"},
+            {
+                provider.link_artifact
+                for provider in graph.runtime_providers.values()
+                if provider.implementation_language == "rust"
+            },
+        )
+        self.assertNotIn("sakura-native-ffi-staticlib", graph.project("mingw-x64-debug")["active_artifacts"])
 
     def test_rejects_path_escape(self):
         with RepositoryFixture() as (root, manifest):

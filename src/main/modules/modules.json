@@ -1250,6 +1250,34 @@
       "thread_affinity": "any-worker",
       "lifecycle_owner": "sakura_app",
       "side_effects": []
+    },
+    {
+      "id": "sakura-output-cpp-provider",
+      "authority_domain": "output-service-state",
+      "authority_mode": "production",
+      "implementation_language": "cpp",
+      "build_component": "sakura_app",
+      "supported_contexts": ["msvc-x64-debug", "cmake-msvc-x64-debug", "msvc-x64-release", "cmake-msvc-x64-release", "mingw-x64-debug", "mingw-x64-release"],
+      "cargo_package": null,
+      "cargo_target": null,
+      "link_artifact": null,
+      "thread_affinity": "any-worker",
+      "lifecycle_owner": "sakura_app",
+      "side_effects": []
+    },
+    {
+      "id": "sakura-output-rust-candidate",
+      "authority_domain": "output-service-state",
+      "authority_mode": "candidate-shadow",
+      "implementation_language": "rust",
+      "build_component": "sakura_app",
+      "supported_contexts": ["msvc-x64-debug", "cmake-msvc-x64-debug", "msvc-x64-release", "cmake-msvc-x64-release"],
+      "cargo_package": "sakura-native-ffi",
+      "cargo_target": "sakura_native_ffi",
+      "link_artifact": "sakura-native-ffi-staticlib",
+      "thread_affinity": "any-worker",
+      "lifecycle_owner": "sakura_app",
+      "side_effects": []
     }
   ],
   "edges": [

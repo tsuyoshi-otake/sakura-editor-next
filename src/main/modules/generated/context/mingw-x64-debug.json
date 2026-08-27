@@ -116,6 +116,7 @@
     "tests1-to-resource-id-contract"
   ],
   "active_runtime_providers": [
+    "sakura-output-cpp-provider",
     "sakura-utf16-cpp-provider"
   ],
   "compile_profiles": [
@@ -141,9 +142,10 @@
     "root-vcpkg-package-set"
   ],
   "production_runtime_providers": {
+    "output-service-state": "sakura-output-cpp-provider",
     "utf16-scan-backend": "sakura-utf16-cpp-provider"
   },
   "projection_schema": 1,
-  "semantic_graph_hash": "sha256:425f735f6e0d0098d269b547e3dfda43113922894991af4a83876f4757b835de",
+  "semantic_graph_hash": "sha256:21b67017d638ad89d2255c9b761379c70d7ac4f5a21b63d0f900d2bc6ddebe56",
   "staging_sets": []
 }
