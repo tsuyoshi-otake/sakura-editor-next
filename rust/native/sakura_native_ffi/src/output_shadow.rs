@@ -696,7 +696,6 @@ impl Service {
             maximum_text_bytes_per_channel,
             &mut channel.dropped_character_count,
         );
-        channel.projected_text = channel.text.clone();
         self.revision += 1;
         self.current(
             SakuraOutputShadowOperationStatus::Succeeded,
@@ -1121,7 +1120,15 @@ impl Service {
                 put_bytes(&mut output, &entry.message);
                 put_optional_bytes(&mut output, entry.source.as_deref());
             }
-            put_bytes(&mut output, &channel.projected_text);
+            // Plain Output projection is exactly its retained text. Do not
+            // duplicate that buffer on every append/replace; structured Log
+            // channels still retain their separately rendered projection.
+            let projected_text = if channel.kind == CHANNEL_KIND_OUTPUT {
+                &channel.text
+            } else {
+                &channel.projected_text
+            };
+            put_bytes(&mut output, projected_text);
         }
         self.snapshot_cache = Some(SnapshotCache {
             revision: self.revision,

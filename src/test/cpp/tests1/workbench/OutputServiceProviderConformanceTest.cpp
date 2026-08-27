@@ -1172,6 +1172,8 @@ struct BoundedNotificationOutcome final {
 	std::size_t blockerCallbackCount{};
 	std::size_t unsubscribedCallbackCount{};
 	bool externalStopBlocked{};
+	OutputProviderHealthSnapshot healthBeforeTimedMutations;
+	OutputProviderHealthSnapshot healthAfterTimedMutations;
 	OutputServiceSnapshot snapshot;
 };
 
@@ -1238,12 +1240,14 @@ std::optional<BoundedNotificationOutcome> RunBoundedNotificationConformance(
 	// notification. Removing the second listener while the first callback is
 	// active must prevent its copied subscription ID from being invoked.
 	service.Unsubscribe(*toUnsubscribe);
+	const auto healthBeforeTimedMutations = service.Health();
 	const auto appendResult = service.AppendOutput(
 		ConformanceText("bounded-notification.append", owner,
 			"bounded-notification.output", "append"));
 	const auto replaceResult = service.ReplaceOutput(
 		ConformanceText("bounded-notification.replace", owner,
 			"bounded-notification.output", "replace"));
+	const auto healthAfterTimedMutations = service.Health();
 
 	std::mutex stopMutex;
 	std::condition_variable stopCondition;
@@ -1303,6 +1307,8 @@ std::optional<BoundedNotificationOutcome> RunBoundedNotificationConformance(
 		.blockerCallbackCount = blockerCallbackCount,
 		.unsubscribedCallbackCount = unsubscribedCallbackCount,
 		.externalStopBlocked = stopBlocked,
+		.healthBeforeTimedMutations = healthBeforeTimedMutations,
+		.healthAfterTimedMutations = healthAfterTimedMutations,
 		.snapshot = service.Snapshot(),
 	};
 }
@@ -1339,6 +1345,15 @@ TEST(OutputServiceProviderConformance, BoundedAdvisoryDropUnsubscribeAndExternal
 	EXPECT_EQ(0U, rust->unsubscribedCallbackCount);
 	EXPECT_EQ(1U, cpp->snapshot.droppedNotificationCount);
 	EXPECT_EQ(cpp->snapshot.droppedNotificationCount, rust->snapshot.droppedNotificationCount);
+	const auto& rustBefore = rust->healthBeforeTimedMutations.counters;
+	const auto& rustAfter = rust->healthAfterTimedMutations.counters;
+	EXPECT_EQ(2U, rustAfter.mutationCalls - rustBefore.mutationCalls);
+	EXPECT_EQ(2U, rustAfter.acceptedOperations - rustBefore.acceptedOperations);
+	EXPECT_EQ(2U, rustAfter.ffiCalls - rustBefore.ffiCalls);
+	EXPECT_EQ(0U, rustAfter.activeChannelCalls - rustBefore.activeChannelCalls);
+	EXPECT_EQ(0U, rustAfter.snapshotCalls - rustBefore.snapshotCalls);
+	EXPECT_EQ(1U, rustAfter.advisoryDroppedNotifications
+		- rustBefore.advisoryDroppedNotifications);
 	ExpectSnapshotsExactlyEqual(cpp->snapshot, rust->snapshot);
 	EXPECT_TRUE(cpp->snapshot.stopped);
 	EXPECT_TRUE(cpp->snapshot.channels.empty());

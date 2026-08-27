@@ -405,6 +405,19 @@ void SaturatingIncrement(std::uint64_t& value) noexcept
 	if (value != std::numeric_limits<std::uint64_t>::max()) ++value;
 }
 
+template <typename Control>
+void RecordBoundaryLocked(
+	Control& control,
+	const EOutputProviderBoundary boundary,
+	std::uint64_t OutputProviderHealthCounters::* const counter,
+	const SakuraOutputProviderStatus status) noexcept
+{
+	SaturatingIncrement(control.diagnostics.counters.ffiCalls);
+	if (counter) SaturatingIncrement(control.diagnostics.counters.*counter);
+	control.diagnostics.lastBoundary = boundary;
+	control.diagnostics.lastFfiStatus = status;
+}
+
 template <typename Control, typename Invoke>
 [[nodiscard]] SakuraOutputProviderStatus InvokeBoundary(
 	Control& control,
@@ -418,10 +431,7 @@ template <typename Control, typename Invoke>
 	const auto status = invoke();
 	{
 		std::lock_guard lock(control.modelMutex);
-		SaturatingIncrement(control.diagnostics.counters.ffiCalls);
-		if (counter) SaturatingIncrement(control.diagnostics.counters.*counter);
-		control.diagnostics.lastBoundary = boundary;
-		control.diagnostics.lastFfiStatus = status;
+		RecordBoundaryLocked(control, boundary, counter, status);
 	}
 	return status;
 }
@@ -453,21 +463,6 @@ void InvalidateSnapshotCache(Control& control) noexcept
 {
 	std::lock_guard lock(control.modelMutex);
 	control.snapshotCacheValid = false;
-}
-
-template <typename Control>
-void RestoreSnapshotCacheIfAvailable(Control& control) noexcept
-{
-	std::lock_guard lock(control.modelMutex);
-	if (!control.authorityStopped
-		&& control.diagnostics.state == EOutputServiceRustProviderState::Ready
-		&& control.snapshotCache) {
-		control.snapshotCacheValid = true;
-		if (!control.activeChannelKnown) {
-			control.knownActiveChannelId = control.snapshotCache->activeChannelId;
-			control.activeChannelKnown = true;
-		}
-	}
 }
 
 //! Updates the adapter's advisory active-channel fact after an accepted commit.
@@ -544,24 +539,6 @@ void RecordMutationAttempt(Control& control) noexcept
 {
 	std::lock_guard lock(control.modelMutex);
 	SaturatingIncrement(control.diagnostics.counters.mutationCalls);
-}
-
-template <typename Control>
-void RecordOperation(
-	Control& control,
-	const SakuraOutputProviderStatus ffiStatus,
-	const SakuraOutputProviderApplyResultV1& raw,
-	const bool countMutation = true) noexcept
-{
-	std::lock_guard lock(control.modelMutex);
-	control.diagnostics.lastBoundary = EOutputProviderBoundary::Apply;
-	control.diagnostics.lastFfiStatus = ffiStatus;
-	RecordPublicResultLocked(control, OutputOperationResult{
-		static_cast<EOutputOperationStatus>(raw.status),
-		static_cast<EOutputOperationReason>(raw.reason),
-		raw.revision,
-		raw.callback_drain_deferred != 0,
-	}, countMutation);
 }
 
 template <typename Control>
@@ -809,69 +786,92 @@ template <typename Control>
 		std::lock_guard lock(control.modelMutex);
 		ready = !control.authorityStopped
 			&& control.diagnostics.state == EOutputServiceRustProviderState::Ready;
+		if (ready) {
+			// Invalidate before the fallible authority call. Keep this in the
+			// readiness critical section so every Apply pays one pre-FFI model
+			// lock instead of two without widening the external-call boundary.
+			control.snapshotCacheValid = false;
+		}
 	}
 	if (!ready) return ProviderUnavailable(control, true);
-	// Do this before entering the fallible Rust call. An accepted mutation can
-	// retain a saturated revision, and a panic or partial mutation must never
-	// leave an old decoded observation eligible for a later Snapshot().
-	InvalidateSnapshotCache(control);
 	SakuraOutputProviderApplyResultV1 raw{};
 	InitializeAbiHeader(raw);
-	const auto ffiStatus = InvokeBoundary(control, EOutputProviderBoundary::Apply,
-		nullptr, [&]() noexcept {
-			return sakura_output_provider_apply_v1(control.token, &pending.raw, &raw);
-		});
+	// Apply is callback-free, but keep the foreign boundary outside modelMutex.
+	// The complete diagnostic/result update is published in one post-call
+	// critical section below.
+	const auto ffiStatus = sakura_output_provider_apply_v1(control.token, &pending.raw, &raw);
 	const auto operationStatus = static_cast<SakuraOutputProviderOperationStatus>(raw.status);
 	if (ffiStatus != SakuraOutputProviderStatus::Ok
 		&& !(ffiStatus == SakuraOutputProviderStatus::Stopped
 			&& operationStatus == SakuraOutputProviderOperationStatus::Stopped)) {
+		{
+			std::lock_guard lock(control.modelMutex);
+			RecordBoundaryLocked(control, EOutputProviderBoundary::Apply, nullptr, ffiStatus);
+		}
 		SetFault(control, EOutputServiceRustProviderFault::FfiFailure,
 			EOutputProviderBoundary::Apply, ffiStatus);
 		return ProviderUnavailable(control, true);
 	}
 	if (!IsValidApplyResult(raw)) {
+		{
+			std::lock_guard lock(control.modelMutex);
+			RecordBoundaryLocked(control, EOutputProviderBoundary::Apply, nullptr, ffiStatus);
+		}
 		SetFault(control, ffiStatus == SakuraOutputProviderStatus::Ok
 			? EOutputServiceRustProviderFault::AbiFailure
 			: EOutputServiceRustProviderFault::FfiFailure,
 			EOutputProviderBoundary::Apply, ffiStatus);
 		return ProviderUnavailable(control, true);
 	}
-	RecordOperation(control, ffiStatus, raw);
-	if (operationStatus != SakuraOutputProviderOperationStatus::Succeeded
-		&& operationStatus != SakuraOutputProviderOperationStatus::Stopped) {
-		// The validated non-accepted result does not change Rust state. Keep the
-		// value allocated, but make it eligible again only after this boundary
-		// has established that no accepted mutation occurred.
-		RestoreSnapshotCacheIfAvailable(control);
-	}
-	if (operationStatus == SakuraOutputProviderOperationStatus::Stopped) {
-		std::lock_guard lock(control.modelMutex);
-		control.authorityStopped = true;
-		control.diagnostics.state = EOutputServiceRustProviderState::Stopped;
-		control.knownActiveChannelId.reset();
-		control.activeChannelKnown = true;
-		control.notificationDispatcher.StopLocked();
-	}
 	OutputOperationResult result{
 		static_cast<EOutputOperationStatus>(raw.status),
 		static_cast<EOutputOperationReason>(raw.reason),
 		raw.revision,
 		raw.callback_drain_deferred != 0 };
-	if (operationStatus == SakuraOutputProviderOperationStatus::Succeeded) {
-		bool activeQueryNeeded{};
-		{
-			std::lock_guard lock(control.modelMutex);
-			// Content-only commits and known non-active hides/disposals can reuse
-			// the provider-local fact. If no listener is present, leave an
-			// uncertain transition unknown and defer the query until one is needed.
+	bool activeQueryNeeded{};
+	bool lateSubscriptionCheckNeeded{};
+	bool drain{};
+	{
+		std::lock_guard lock(control.modelMutex);
+		RecordBoundaryLocked(control, EOutputProviderBoundary::Apply, nullptr, ffiStatus);
+		RecordPublicResultLocked(control, result, true);
+		if (operationStatus != SakuraOutputProviderOperationStatus::Succeeded
+			&& operationStatus != SakuraOutputProviderOperationStatus::Stopped) {
+			// The validated non-accepted result does not change Rust state. Keep
+			// the decoded observation allocated and publish it again only after
+			// this boundary established that no accepted mutation occurred.
+			if (!control.authorityStopped
+				&& control.diagnostics.state == EOutputServiceRustProviderState::Ready
+				&& control.snapshotCache) {
+				control.snapshotCacheValid = true;
+				if (!control.activeChannelKnown) {
+					control.knownActiveChannelId = control.snapshotCache->activeChannelId;
+					control.activeChannelKnown = true;
+				}
+			}
+		}
+		if (operationStatus == SakuraOutputProviderOperationStatus::Stopped) {
+			control.authorityStopped = true;
+			control.diagnostics.state = EOutputServiceRustProviderState::Stopped;
+			control.knownActiveChannelId.reset();
+			control.activeChannelKnown = true;
+			control.notificationDispatcher.StopLocked();
+		}
+		if (operationStatus == SakuraOutputProviderOperationStatus::Succeeded) {
 			const auto activeKnown = UpdateKnownActiveChannelAfterAcceptedLocked(
 				control, changeKind, channelId);
-			activeQueryNeeded = control.notificationDispatcher.HasSubscriptionsLocked() && !activeKnown;
+			const auto hasSubscriptions = control.notificationDispatcher.HasSubscriptionsLocked();
+			activeQueryNeeded = hasSubscriptions && !activeKnown;
+			lateSubscriptionCheckNeeded = !hasSubscriptions && !activeKnown;
+			if (hasSubscriptions && activeKnown) {
+				drain = control.notificationDispatcher.QueueLocked(
+					result.revision, changeKind, channelId, control.knownActiveChannelId);
+			}
 		}
-
+	}
+	if (operationStatus == SakuraOutputProviderOperationStatus::Succeeded) {
 		bool activeQuerySucceeded = true;
-		bool drain{};
-		for (;;) {
+		while (activeQueryNeeded || lateSubscriptionCheckNeeded) {
 			if (activeQueryNeeded) {
 				std::optional<std::string> queriedActiveChannelId;
 				activeQuerySucceeded = ReadActiveChannel(
@@ -886,6 +886,7 @@ template <typename Control>
 			}
 			if (!activeQuerySucceeded) break;
 			std::lock_guard lock(control.modelMutex);
+			lateSubscriptionCheckNeeded = false;
 			if (!control.notificationDispatcher.HasSubscriptionsLocked()
 				|| control.diagnostics.state != EOutputServiceRustProviderState::Ready) {
 				break;
