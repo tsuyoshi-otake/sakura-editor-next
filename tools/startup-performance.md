@@ -13,6 +13,79 @@ Sakura 実行ファイルと同じ Markdown 入力について、プロセス起
 `80156fc08b7c91988fd79d7230342862ea0fe534147089ac9e6f5b29461c61b6` です。計測前にこの値または
 ファイルハッシュを確認し、入力が変わった結果を同列に比較しないでください。
 
+## C++ / Rust GUI 起動のペア計測
+
+Issue #274 の GUI 起動証拠には [`measure-output-startup.ps1`](measure-output-startup.ps1)
+を使います。これは `tests1.exe` の Output provider マイクロベンチマークとは別の計測です。
+後者の結果を GUI 起動時間の証拠として扱ってはいけません。
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\measure-output-startup.ps1 `
+  -CppSakuraExe .\build\evidence\output-startup\cpp\sakura.exe `
+  -RustSakuraExe .\build\evidence\output-startup\rust\sakura.exe `
+  -StartupSample .\tools\startup-benchmark-sample.md `
+  -AffinityMask 1 `
+  -CollectOnly -WarmupLaunches 1 -MeasuredLaunches 1
+```
+
+既定では各バックエンドについて 5 回の warmup と 30 回の measured launch を行います。
+各スロットでは C++ / Rust を交互に先頭へ置く決定的な順序で起動し、同じ固定サンプル、
+同じ fresh-per-launch プロファイル方針、同じ非ゼロ CPU affinity mask を使います。qualified mode では
+各 backend の canonical runtime stage と `.sakura-runtime-stage.json` receipt が必須で、receipt が列挙した
+全ファイルを計測用 campaign bundle にコピーし、サイズと SHA-256 を各起動前と campaign 終了後に
+再検証します。bundle 直下へ UTF-16LE BOM/CRLF の `sakura.exe.ini` を生成して
+`[Settings] MultiUser=0` を厳密に検証します。これにより `-PROF` は bundle 内だけへ解決され、
+`%APPDATA%` や利用者の設定へフォールバックしません。sidecar が欠落・改変・再解析点の場合は
+起動せず fail closed します。隣接 DLL を探索して暗黙にコピーすることはありません。exe と sidecar
+だけの fallback は `-CollectOnly` に限定され、dependency closure の証拠にはなりません。
+プロセスは suspended 状態で作成し、run-owned の kill-on-close Job Object へ割り当て、CPU affinity を
+設定して read-back した後にだけ resume します。bundle を working directory とし、cleanup 後は Job
+membership と exact bundle image path の両方で残存がないことを確認します。
+
+既定の qualified mode では各 backend の warmup 5 回 / measured 30 回を下回る指定を拒否します。
+GUI の疎通だけを確認する場合は `-CollectOnly -WarmupLaunches 1 -MeasuredLaunches 1` を明示的に
+指定できますが、その結果は `acceptance.qualified=false` および `pass=false` となり、性能証拠には
+なりません。
+
+出力 JSON は payload-free です。commit、C++ / Rust artifact、host、sample、profile policy と
+各 launch の profile の SHA-256、sidecar contract、bundle の source/copy ハッシュ前後と cleanup、
+起動マイルストーンの中央値 / p95、失敗種別と cleanup の結果
+だけを含み、絶対パス、本文、ウィンドウキャプション、コマンドライン、例外本文、環境変数の値は
+含みません。失敗またはプロセス残存の launch は `excluded=true` の typed record として残りますが、
+統計には入りません。親プロセスを先に identity 再照合して終了させる cleanup は全体で 3 秒に制限され、
+残存があれば証拠全体を不合格にします。
+
+いずれかの launch で process cleanup または profile cleanup を検証できなかった場合、後続の
+backend を起動せず、その時点で campaign を停止します。JSON の `termination` に typed な
+`cleanup-unverified`、完了数、抑止数を残し、`acceptance.qualified` と `pass` は false になります。
+これにより残存プロセスや汚染された profile による後続 launch の増殖を防ぎます。
+
+`acceptance.qualified` は必要な launch 数と cleanup がそろった収集判定です。qualified mode は
+`-CppBuildManifest` / `-RustBuildManifest` と
+`-CppRuntimeStageDirectory` / `-RustRuntimeStageDirectory` を必須とします。manifest は現在の source
+state、artifact、Output/UTF-16 selector、Debug/Release、runtime receipt と dependency closure、Windows
+image、power mode、parallelism、MSVC/Rust toolchain、Cargo lock、package plan、build command の identity
+を含み、runner は二つの manifest の共通条件も照合します。build 後に手書きで補うものではありません。
+再現可能な manifest producer が未用意なら `-CollectOnly` だけを使い、qualified 証拠とは扱いません。
+
+これとは別に `performance` が measured `documentReadyMs` の C++ / Rust paired delta を集計し、Rust の
+median は相対 2% かつ絶対 1 ms、p95 は相対 5% 以内というゲートを評価します。トップレベルの
+`pass` は両方を満たした場合だけ true です。実行した二つの PowerShell スクリプト、CPU
+manufacturer/model、OS version、physical/logical core 数も hash とともに記録されます。runner は
+`startupGatePass` と明示的な `adoption.decision=HOLD` / `adoptionEligible=false` を別々に残します。
+起動ゲートが通っても、Issue #274 の correctness、provider workload、build/package、Debug/Release、
+MinGW、複数 hardware のゲートを代替せず、Rust default の採用を意味しません。
+
+実機計測を行わずに順序、統計、スキーマ、affinity metadata、PID identity / parent-first cleanup
+helper を確認するには次を使います。
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\measure-output-startup.ps1 -SelfTest
+```
+
+`-SelfTest` は GUI を起動しません。通常の `measure-startup-performance.ps1` は単一の
+`sakura.exe` のマイルストーン比較用であり、ペア証拠の既定 35 回 / backend の代用ではありません。
+
 ## 前提条件
 
 - Windows 上で実行すること。対象の Release または Debug の `sakura.exe` が実在し、起動
@@ -333,7 +406,8 @@ proxy です。
 `captionReadyMs`、`inputIdleMs`、`documentReadyMs`、`verticalScrollMaximum`、
 `startupTrace`、`inputIdleReached`、`success`、`error`、`screenshotPath`、
 `processCleanupVerified`、`profileCleanupVerified`、`cleanupVerified` を記録します。`summaries` は
-7 マイルストーンごとに `count`、`medianMs`、`minMs`、`maxMs`、`meanMs` を条件別に集計します。
+7 マイルストーンごとに `count`、`medianMs`、`p95Ms`（nearest-rank ceiling）、`minMs`、`maxMs`、
+`meanMs` を条件別に集計します。
 `CaptureScreenshot` 時の画像名は
 `startup-performance-<runId>-fresh-iteration-1.png` または
 `startup-performance-<runId>-existing-profile-iteration-1.png` です。
@@ -361,8 +435,12 @@ proxy です。
 
 ## fresh と existing の意味
 
-通常の **fresh** 条件では、試行ごとに一意なベンチマーク用プロファイルを作り、そのプロファイル
-で Sakura を起動します。これは設定・履歴による差を抑え、再現性のある変更比較の基準にします。
+通常の **fresh** 条件では、入力した `sakura.exe` を計測専用の artifact bundle へコピーし、
+bundle と同じ階層に UTF-16LE BOM/CRLF の `sakura.exe.ini`（`[Settings] MultiUser=0`）を
+生成します。試行ごとに一意なプロファイルを bundle 内へ作って Sakura を起動するため、
+`%APPDATA%` や利用者の設定へフォールバックしません。sidecar の欠落・改変・再解析点は
+起動前に拒否されます。bundle は exe と sidecar だけで、DLL や隣接リソースを暗黙にコピーしません。
+これは設定・履歴による差を抑え、再現性のある変更比較の基準にします。
 
 `-CompareExistingProfile` を付けると、各反復の fresh 起動で作成・保存された同じ一意プロファイルを
 もう一度使う **existingProfile** 条件も併記します。これは「設定ファイルが既にある 2 回目の起動」
@@ -370,8 +448,9 @@ proxy です。
 影響を含み得るため、結果では条件を区別し、existingProfile の値で fresh ベースラインを置き換えないで
 ください。
 
-一意なプロファイルは試行終了後に削除されます。削除失敗、または Sakura／その子プロセスの残存は
-失敗として扱い、原因を解消してから再計測します。
+一意なプロファイルと artifact bundle は試行終了後に削除されます。source/copy の SHA-256 は
+前後で照合し、sidecar の contract と bundle cleanup も結果へ記録します。削除失敗、または
+Sakura／その子プロセスの残存は失敗として扱い、原因を解消してから再計測します。
 
 ## 安全性と後始末
 
