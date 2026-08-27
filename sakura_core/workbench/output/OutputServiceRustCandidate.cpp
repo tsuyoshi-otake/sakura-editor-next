@@ -10,6 +10,7 @@
 #include "StdAfx.h"
 
 #include "OutputServiceRustCandidate.h"
+#include "workbench/output/OutputServiceRustSnapshotCodec.h"
 
 #include <algorithm>
 #include <limits>
@@ -23,161 +24,6 @@
 
 namespace workbench::output {
 namespace {
-
-constexpr std::string_view kSnapshotMagic("SAKURA_OUTPUT_MODEL_V1\0", 23);
-
-struct SnapshotReader final {
-	const std::vector<std::uint8_t>& bytes;
-	std::size_t offset{};
-
-	[[nodiscard]] std::size_t Remaining() const noexcept
-	{
-		return offset <= bytes.size() ? bytes.size() - offset : 0;
-	}
-
-	[[nodiscard]] bool ReadByte(std::uint8_t& value) noexcept
-	{
-		if (Remaining() < 1) return false;
-		value = bytes[offset++];
-		return true;
-	}
-
-	[[nodiscard]] bool ReadU32(std::uint32_t& value) noexcept
-	{
-		if (Remaining() < sizeof(value)) return false;
-		value = static_cast<std::uint32_t>(bytes[offset])
-			| (static_cast<std::uint32_t>(bytes[offset + 1]) << 8)
-			| (static_cast<std::uint32_t>(bytes[offset + 2]) << 16)
-			| (static_cast<std::uint32_t>(bytes[offset + 3]) << 24);
-		offset += sizeof(value);
-		return true;
-	}
-
-	[[nodiscard]] bool ReadU64(std::uint64_t& value) noexcept
-	{
-		if (Remaining() < sizeof(value)) return false;
-		value = 0;
-		for (std::size_t index = 0; index < sizeof(value); ++index) {
-			value |= static_cast<std::uint64_t>(bytes[offset + index]) << (index * 8);
-		}
-		offset += sizeof(value);
-		return true;
-	}
-
-	[[nodiscard]] bool ReadBytes(std::string& value)
-	{
-		std::uint64_t length{};
-		if (!ReadU64(length)
-			|| length > Remaining()
-			|| length > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
-			return false;
-		}
-		const auto size = static_cast<std::size_t>(length);
-		value.assign(reinterpret_cast<const char*>(bytes.data() + offset), size);
-		offset += size;
-		return true;
-	}
-
-	[[nodiscard]] bool ReadOptionalBytes(std::optional<std::string>& value)
-	{
-		std::uint8_t present{};
-		if (!ReadByte(present) || present > 1) return false;
-		if (present == 0) {
-			value.reset();
-			return true;
-		}
-		std::string copied;
-		if (!ReadBytes(copied)) return false;
-		value = std::move(copied);
-		return true;
-	}
-};
-
-[[nodiscard]] std::optional<OutputServiceSnapshot> ParseSnapshot(
-	const std::vector<std::uint8_t>& bytes)
-{
-	SnapshotReader reader{ bytes };
-	if (reader.Remaining() < kSnapshotMagic.size()
-		|| !std::equal(kSnapshotMagic.begin(), kSnapshotMagic.end(), bytes.begin())) {
-		return std::nullopt;
-	}
-	reader.offset = kSnapshotMagic.size();
-
-	OutputServiceSnapshot snapshot;
-	if (!reader.ReadU64(snapshot.revision)) return std::nullopt;
-	std::uint8_t stopped{};
-	if (!reader.ReadByte(stopped) || stopped > 1) return std::nullopt;
-	snapshot.stopped = stopped != 0;
-	// The Rust model has no advisory C++ notification listeners.  The encoded
-	// value is read for stream validation but deliberately not used by equality.
-	if (!reader.ReadU64(snapshot.droppedNotificationCount)) return std::nullopt;
-
-	std::uint8_t activePresent{};
-	if (!reader.ReadByte(activePresent) || activePresent > 1) return std::nullopt;
-	if (activePresent != 0) {
-		std::string active;
-		if (!reader.ReadBytes(active)) return std::nullopt;
-		snapshot.activeChannelId = std::move(active);
-	}
-
-	std::uint64_t channelCount{};
-	if (!reader.ReadU64(channelCount)
-		|| channelCount > reader.Remaining()
-		|| channelCount > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
-		return std::nullopt;
-	}
-	snapshot.channels.reserve(static_cast<std::size_t>(channelCount));
-	for (std::uint64_t index = 0; index < channelCount; ++index) {
-		OutputChannelSnapshot channel;
-		if (!reader.ReadBytes(channel.channelId)
-			|| !reader.ReadBytes(channel.label)
-			|| !reader.ReadBytes(channel.owner.ownerId)
-			|| !reader.ReadU64(channel.owner.generation)) {
-			return std::nullopt;
-		}
-		std::uint8_t kind{};
-		if (!reader.ReadByte(kind) || kind > SAKURA_OUTPUT_SHADOW_CHANNEL_LOG) return std::nullopt;
-		channel.kind = static_cast<EOutputChannelKind>(kind);
-		if (!reader.ReadOptionalBytes(channel.metadata.languageId)
-			|| !reader.ReadOptionalBytes(channel.metadata.source)) {
-			return std::nullopt;
-		}
-		std::uint8_t visible{};
-		std::uint8_t preservedFocus{};
-		if (!reader.ReadByte(visible) || visible > 1
-			|| !reader.ReadByte(preservedFocus) || preservedFocus > 1
-			|| !reader.ReadU64(channel.droppedCharacterCount)
-			|| !reader.ReadBytes(channel.text)) {
-			return std::nullopt;
-		}
-		channel.visible = visible != 0;
-		channel.lastShowPreservedFocus = preservedFocus != 0;
-
-		std::uint64_t logCount{};
-		if (!reader.ReadU64(logCount)
-			|| logCount > reader.Remaining()
-			|| logCount > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
-			return std::nullopt;
-		}
-		channel.logEntries.reserve(static_cast<std::size_t>(logCount));
-		for (std::uint64_t logIndex = 0; logIndex < logCount; ++logIndex) {
-			std::uint32_t level{};
-			OutputLogEntry entry;
-			if (!reader.ReadU32(level)
-				|| level > static_cast<std::uint32_t>(EOutputLogLevel::Error)
-				|| !reader.ReadBytes(entry.message)
-				|| !reader.ReadOptionalBytes(entry.source)) {
-				return std::nullopt;
-			}
-			entry.level = static_cast<EOutputLogLevel>(level);
-			channel.logEntries.push_back(std::move(entry));
-		}
-		if (!reader.ReadBytes(channel.projectedText)) return std::nullopt;
-		snapshot.channels.push_back(std::move(channel));
-	}
-	if (reader.Remaining() != 0) return std::nullopt;
-	return snapshot;
-}
 
 [[nodiscard]] bool SnapshotsEqualExceptAdvisoryDrop(
 	const OutputServiceSnapshot& expected,
@@ -551,7 +397,7 @@ bool ReadRustSnapshotLocked(
 		}
 		return false;
 	}
-	const auto parsed = ParseSnapshot(bytes);
+	const auto parsed = DecodeOutputServiceRustSnapshotV1(bytes);
 	if (!parsed
 		|| parsed->revision != info.revision
 		|| parsed->stopped != (info.stopped != 0)
