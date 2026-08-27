@@ -101,7 +101,10 @@ checkout, artifact hashes, explicit Output selectors, UTF-16 C++ selector,
 Debug/Release configuration, runtime-stage receipt and dependency closure,
 Windows image, power mode, parallelism, MSVC/Rust toolchains, Cargo lock,
 package plan, and build-command identities. The two manifests must agree on the
-shared environment identities. The checkout must be clean. During the campaign,
+shared environment identities. The checkout must be clean. An empty clean
+`git status --porcelain` is hashed as the UTF-8 empty string
+(`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`);
+null or non-string source-status input fails closed. During the campaign,
 the runner rechecks the source state and both measurement-script hashes after
 the launches, immediately before report serialization, and after atomic report
 publication. A drift produces typed integrity evidence and keeps the decision

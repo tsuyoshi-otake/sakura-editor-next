@@ -170,7 +170,9 @@ function Assert-PairedEqual {
 }
 
 function Get-TextSha256 {
-    param([Parameter(Mandatory = $true)] [string]$Value)
+    param([Parameter(Mandatory = $true)] [AllowNull()] [AllowEmptyString()] [object]$Value)
+    if ($null -eq $Value) { throw 'Text SHA-256 input cannot be null.' }
+    if ($Value -isnot [string]) { throw 'Text SHA-256 input must be a string.' }
     $algorithm = [Security.Cryptography.SHA256]::Create()
     try {
         $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes($Value)
@@ -355,16 +357,31 @@ function Get-PairedGitText {
     return [string]$value
 }
 
-function Get-PairedSourceState {
-    $statusText = Get-PairedGitText @('status', '--porcelain=v1', '--untracked-files=all')
+function New-PairedSourceState {
+    param(
+        [Parameter(Mandatory = $true)] [string]$Head,
+        [Parameter(Mandatory = $true)] [AllowNull()] [AllowEmptyString()] [object]$StatusText
+    )
+    if ($null -eq $StatusText) { throw 'Repository source status cannot be null.' }
+    if ($StatusText -isnot [string]) { throw 'Repository source status must be a string.' }
     $canonicalStatus = ($statusText -replace "`r`n", "`n" -replace "`r", "`n").TrimEnd("`n")
-    $statusLines = if ([string]::IsNullOrEmpty($canonicalStatus)) { @() } else { @($canonicalStatus -split "`n") }
+    if ([string]::IsNullOrEmpty($canonicalStatus)) {
+        $statusLines = [object[]]@()
+    }
+    else {
+        $statusLines = @($canonicalStatus -split "`n")
+    }
     return [pscustomobject][ordered]@{
-        head = Get-PairedCommitHash
+        head = $Head
         dirty = [bool]($statusLines.Count -ne 0)
         statusSha256 = Get-TextSha256 $canonicalStatus
         statusLineCount = [int]$statusLines.Count
     }
+}
+
+function Get-PairedSourceState {
+    $statusText = Get-PairedGitText @('status', '--porcelain=v1', '--untracked-files=all')
+    return New-PairedSourceState -Head (Get-PairedCommitHash) -StatusText $statusText
 }
 
 function Get-PairedScriptIdentity {
@@ -1670,6 +1687,27 @@ function Write-PairedEvidenceEnvelope {
 
 function Invoke-PairedSelfTest {
     [void](Assert-PairedAffinityMask $AffinityMask)
+    $emptyTextSha256 = Get-TextSha256 ''
+    $nonEmptyTextSha256 = Get-TextSha256 'paired-startup-text-selftest-v1'
+    Assert-PairedEqual 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855' $emptyTextSha256 'empty text SHA-256'
+    Assert-PairedEqual '379861ae5e8cfc84f68ff929d7abec4a9cb2a7844dfe00105610416c62936cdf' $nonEmptyTextSha256 'non-empty text SHA-256'
+    $nullTextRejected = $false
+    try { [void](Get-TextSha256 $null) } catch { $nullTextRejected = $true }
+    if (-not $nullTextRejected) { throw 'Null text SHA-256 input was accepted.' }
+    $syntheticSource = New-PairedSourceState ('0' * 40) ''
+    if ($syntheticSource.dirty -or $syntheticSource.statusLineCount -ne 0 -or
+        $syntheticSource.statusSha256 -ne 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855') {
+        throw 'Empty source-state self-test failed.'
+    }
+    $syntheticSourcePreflight = [ordered]@{
+        sourcePreflightCaptured = $true
+        sourceState = $syntheticSource
+    }
+    if (-not $syntheticSourcePreflight.sourcePreflightCaptured -or
+        $syntheticSourcePreflight.sourceState.dirty -or
+        $syntheticSourcePreflight.sourceState.statusSha256 -ne $emptyTextSha256) {
+        throw 'Empty source-state preflight self-test failed.'
+    }
     $stageSelfTestRoot = Join-Path $env:TEMP ('paired-runtime-stage-selftest-' + [Guid]::NewGuid().ToString('N'))
     try {
         [void][IO.Directory]::CreateDirectory($stageSelfTestRoot)
@@ -2077,6 +2115,13 @@ function Invoke-PairedSelfTest {
         scheduleHash = $scheduleHash
         measurementArgumentsSchemaVersion = [int]$selfTestMeasurementArguments.schemaVersion
         measurementCommandSha256 = [string]$selfTestMeasurementCommandSha256
+        textSha256EmptyVerified = [bool]($emptyTextSha256 -eq 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855')
+        textSha256NonEmptyVerified = [bool]($nonEmptyTextSha256 -eq '379861ae5e8cfc84f68ff929d7abec4a9cb2a7844dfe00105610416c62936cdf')
+        textSha256NullRejected = [bool]$nullTextRejected
+        sourcePreflightSyntheticVerified = [bool]($syntheticSourcePreflight.sourcePreflightCaptured -and
+            -not $syntheticSourcePreflight.sourceState.dirty -and
+            $syntheticSourcePreflight.sourceState.statusLineCount -eq 0 -and
+            $syntheticSourcePreflight.sourceState.statusSha256 -eq $emptyTextSha256)
         manifestProducerContractVerified = $true
         manifestSelectorProofVerified = [bool]$rustManifestAccepted
         manifestCleanSourceRequired = [bool]$dirtyManifestRejected

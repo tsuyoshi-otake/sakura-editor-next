@@ -197,6 +197,17 @@ class PairedStartupContractTests(unittest.TestCase):
         self.assertNotRegex(self.paired_text, r"Get-ChildItem[^\r\n]*-Recurse")
         self.assertNotRegex(self.shared_text, r"Get-ChildItem[^\r\n]*-Recurse")
 
+    def test_empty_source_status_hash_contract_is_explicit(self):
+        self.assertIn("function New-PairedSourceState", self.paired_text)
+        self.assertIn("[AllowEmptyString()] [object]$Value", self.paired_text)
+        self.assertIn("[AllowEmptyString()] [object]$StatusText", self.paired_text)
+        self.assertIn("Text SHA-256 input cannot be null.", self.paired_text)
+        self.assertIn("Repository source status cannot be null.", self.paired_text)
+        self.assertIn("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", self.paired_text)
+        self.assertIn("sourcePreflightCaptured = $true", self.paired_text)
+        self.assertIn("textSha256EmptyVerified", self.paired_text)
+        self.assertIn("sourcePreflightSyntheticVerified", self.paired_text)
+
     def test_profile_isolation_bundle_and_sidecar_contract_are_mandatory(self):
         for marker in (
             "Convert-StartupReceiptPath",
@@ -298,6 +309,10 @@ class PairedStartupContractTests(unittest.TestCase):
             self.assertEqual(70, payload["scheduleEntries"])
             self.assertEqual(1, payload["measurementArgumentsSchemaVersion"])
             self.assertRegex(payload["measurementCommandSha256"], r"^[0-9a-f]{64}$")
+            self.assertTrue(payload["textSha256EmptyVerified"])
+            self.assertTrue(payload["textSha256NonEmptyVerified"])
+            self.assertTrue(payload["textSha256NullRejected"])
+            self.assertTrue(payload["sourcePreflightSyntheticVerified"])
             self.assertTrue(payload["manifestProducerContractVerified"])
             self.assertTrue(payload["manifestSelectorProofVerified"])
             self.assertTrue(payload["manifestCleanSourceRequired"])
