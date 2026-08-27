@@ -4,11 +4,13 @@
   Runs the disabled provider-neutral Output benchmark and analyzes JSONL samples.
 
 .DESCRIPTION
-  The caller supplies one C++ and one Rust tests1.exe.  Each interleaved pair
-  runs the same deterministic disabled gtest workload against the compile-time
-  selected provider.  The script rejects missing or failed runs, validates the
-  payload-free schema and semantic digests, checks for surviving descendants,
-  and writes median/p95 statistics without adding dependencies.
+  The caller supplies one C++ and one Rust tests1.exe.  Qualified runs also
+  require the matching producer-owned v1 build manifest for each executable.
+  Each interleaved pair runs the same deterministic disabled gtest workload
+  against the compile-time selected provider.  The script rejects missing or
+  failed runs, validates the payload-free schema and semantic digests, checks
+  complete paired provenance and surviving descendants, and writes median/p95
+  statistics without adding dependencies.
 
   The benchmark process is intentionally disabled in normal test runs.  This
   script is the opt-in orchestrator for local and CI evidence collection.
@@ -17,6 +19,8 @@
 param(
   [string]$CppTests1,
   [string]$RustTests1,
+  [string]$CppBuildManifest,
+  [string]$RustBuildManifest,
   [string]$OutputDirectory = 'build/output-provider-benchmarks',
   [ValidateRange(1, 100)]
   [int]$Pairs = 7,
@@ -59,6 +63,19 @@ $script:MinimumAcceptanceMutationOperations = [UInt64]100000
 $script:MaximumOperationClassRatio = 2.0
 $script:ForbiddenPayloadPropertyPattern =
   '"(?:text|channelId|ownerId|operationId|message|label|projectedText|logEntries|entries|payload)"\s*:'
+$script:ProviderManifestSchemaVersion = 1
+$script:ProviderManifestRecord = 'output-provider-build-manifest'
+$script:ProviderProbeFilter = 'CWorkbenchRuntime.CompileSelectedOutputProviderOwnsTheRuntimeLifecycle'
+$script:ProviderSymbols = @(
+  'sakura_output_provider_create_v1',
+  'sakura_output_provider_apply_v1',
+  'sakura_output_provider_snapshot_measure_v1',
+  'sakura_output_provider_snapshot_write_v1',
+  'sakura_output_provider_active_channel_v1',
+  'sakura_output_provider_stop_v1',
+  'sakura_output_provider_destroy_v1'
+)
+$script:RepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 
 function Get-JsonProperty {
   param(
@@ -217,6 +234,588 @@ function Get-AcceptanceFailures {
   return $failures.ToArray()
 }
 
+function Get-ProviderProperty {
+  param(
+    [Parameter(Mandatory = $true)] [AllowNull()] [object]$Object,
+    [Parameter(Mandatory = $true)] [string]$Name,
+    [Parameter(Mandatory = $true)] [string]$Context
+  )
+  if ($null -eq $Object) { throw "$Context is missing" }
+  $property = $Object.PSObject.Properties[$Name]
+  if ($null -eq $property) { throw "$Context is missing property '$Name'" }
+  return $property.Value
+}
+
+function Get-ProviderCandidate {
+  param(
+    [Parameter(Mandatory = $true)] [AllowNull()] [object]$Object,
+    [Parameter(Mandatory = $true)] [string[]]$Names,
+    [string[]]$Sections = @()
+  )
+  if ($null -eq $Object) { return $null }
+  foreach ($name in $Names) {
+    $property = $Object.PSObject.Properties[$name]
+    if ($null -ne $property) { return $property.Value }
+  }
+  foreach ($sectionName in $Sections) {
+    $sectionProperty = $Object.PSObject.Properties[$sectionName]
+    if ($null -eq $sectionProperty -or $null -eq $sectionProperty.Value) { continue }
+    foreach ($name in $Names) {
+      $property = $sectionProperty.Value.PSObject.Properties[$name]
+      if ($null -ne $property) { return $property.Value }
+    }
+  }
+  return $null
+}
+
+function Get-ProviderRequiredCandidate {
+  param(
+    [Parameter(Mandatory = $true)] [AllowNull()] [object]$Object,
+    [Parameter(Mandatory = $true)] [string[]]$Names,
+    [Parameter(Mandatory = $true)] [string]$Context,
+    [string[]]$Sections = @()
+  )
+  $value = Get-ProviderCandidate $Object $Names $Sections
+  if ($null -eq $value) { throw "$Context is missing" }
+  return $value
+}
+
+function Get-ProviderString {
+  param(
+    [Parameter(Mandatory = $true)] [AllowNull()] [object]$Value,
+    [Parameter(Mandatory = $true)] [string]$Context
+  )
+  if ($Value -isnot [string] -or [string]::IsNullOrWhiteSpace([string]$Value) -or
+      [string]$Value -ne ([string]$Value).Trim() -or [string]$Value -match '[\r\n]' -or
+      [string]$Value.Length -gt 512 -or [string]$Value -match '(?i)^[A-Za-z]:\\|^\\\\') {
+    throw "$Context must be a bounded identity string"
+  }
+  return [string]$Value
+}
+
+function Get-ProviderBoolean {
+  param(
+    [Parameter(Mandatory = $true)] [AllowNull()] [object]$Value,
+    [Parameter(Mandatory = $true)] [string]$Context
+  )
+  if ($Value -isnot [bool]) { throw "$Context must be a JSON boolean" }
+  return [bool]$Value
+}
+
+function Get-ProviderHash {
+  param(
+    [Parameter(Mandatory = $true)] [AllowNull()] [object]$Value,
+    [Parameter(Mandatory = $true)] [string]$Context
+  )
+  if ($Value -isnot [string] -or [string]$Value -notmatch '^(?i:sha256:)?[0-9a-f]{64}$') {
+    throw "$Context must be a SHA-256 identity"
+  }
+  return ([string]$Value -replace '^(?i:sha256:)','').ToLowerInvariant()
+}
+
+function Get-ProviderUInt64 {
+  param(
+    [Parameter(Mandatory = $true)] [AllowNull()] [object]$Value,
+    [Parameter(Mandatory = $true)] [string]$Context,
+    [UInt64]$Maximum = [UInt64]::MaxValue
+  )
+  if ($null -eq $Value -or $Value -is [bool]) { throw "$Context must be a bounded non-negative integer" }
+  try { $decimal = [decimal]$Value } catch { throw "$Context must be a bounded non-negative integer" }
+  if ($decimal -lt 0 -or $decimal -ne [decimal]::Truncate($decimal) -or $decimal -gt [decimal]$Maximum) {
+    throw "$Context must be a bounded non-negative integer"
+  }
+  return [UInt64]$decimal
+}
+
+function Get-TextSha256 {
+  param([Parameter(Mandatory = $true)] [AllowEmptyString()] [string]$Value)
+  $algorithm = [Security.Cryptography.SHA256]::Create()
+  try {
+    $encoding = New-Object Text.UTF8Encoding($false)
+    return ([BitConverter]::ToString($algorithm.ComputeHash($encoding.GetBytes($Value)))).Replace('-', '').ToLowerInvariant()
+  }
+  finally { $algorithm.Dispose() }
+}
+
+function Resolve-ProviderManifestFile {
+  param([Parameter(Mandatory = $true)] [string]$Path, [Parameter(Mandatory = $true)] [string]$Name)
+  if ([string]::IsNullOrWhiteSpace($Path)) { throw "$Name is required" }
+  try { $resolved = Resolve-Path -LiteralPath $Path -ErrorAction Stop }
+  catch { throw "$Name does not exist" }
+  $fullPath = [IO.Path]::GetFullPath($resolved.Path)
+  $item = Get-Item -LiteralPath $fullPath -Force -ErrorAction Stop
+  if ($item -isnot [IO.FileInfo] -or -not $item.Exists -or
+      (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) {
+    throw "$Name is not a regular file"
+  }
+  return $fullPath
+}
+
+function Get-ProviderFileSha256 {
+  param([Parameter(Mandatory = $true)] [string]$Path)
+  return (Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+}
+
+function Invoke-ProviderGitText {
+  param([Parameter(Mandatory = $true)] [string[]]$Arguments)
+  $oldErrorAction = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = 'SilentlyContinue'
+    $value = (& git -C $script:RepoRoot @Arguments 2>$null | Out-String)
+    $exitCode = $LASTEXITCODE
+  }
+  finally { $ErrorActionPreference = $oldErrorAction }
+  if ($exitCode -ne 0) { throw 'Git source-state query failed' }
+  return [string]$value
+}
+
+function Get-ProviderSourceState {
+  $statusText = Invoke-ProviderGitText @('status', '--porcelain=v1', '--untracked-files=all')
+  $canonicalStatus = ($statusText -replace "`r`n", "`n" -replace "`r", "`n").TrimEnd("`n")
+  $statusLines = @()
+  if (-not [string]::IsNullOrEmpty($canonicalStatus)) { $statusLines = @($canonicalStatus -split "`n") }
+  $head = (Invoke-ProviderGitText @('rev-parse', '--verify', 'HEAD')).Trim()
+  if ($head -notmatch '^[0-9a-fA-F]{40}$') { throw 'Git HEAD is not a full commit identity' }
+  return [pscustomobject][ordered]@{
+    head = $head.ToLowerInvariant()
+    dirty = [bool]($statusLines.Count -ne 0)
+    statusSha256 = Get-TextSha256 $canonicalStatus
+    statusLineCount = [int]$statusLines.Count
+  }
+}
+
+function Assert-ProviderSourceState {
+  param(
+    [Parameter(Mandatory = $true)] [object]$Expected,
+    [Parameter(Mandatory = $true)] [object]$Actual,
+    [string]$Context = 'provider source state'
+  )
+  if ([string]$Expected.head -ne [string]$Actual.head -or
+      [bool]$Expected.dirty -ne [bool]$Actual.dirty -or
+      [string]$Expected.statusSha256 -ne [string]$Actual.statusSha256 -or
+      [int]$Expected.statusLineCount -ne [int]$Actual.statusLineCount) {
+    throw "$Context changed"
+  }
+}
+
+function Assert-ProviderPayloadFree {
+  param([Parameter(Mandatory = $true)] [object]$Manifest)
+  $json = $Manifest | ConvertTo-Json -Depth 20 -Compress
+  if ($json -match '(?i)"(?:path|filepath|directory|command|commandLine|arguments|argv|stdout|stderr|caption|text|document|profile|exception|message|detail|label|id|payload)"\s*:') {
+    throw 'provider build manifest contains a payload-bearing property'
+  }
+  if ($json -match '(?i)[A-Za-z]:\\\\|\\\\\\\\') { throw 'provider build manifest contains a path-shaped value' }
+  return $true
+}
+
+function Get-ProviderManifestArtifact {
+  param(
+    [Parameter(Mandatory = $true)] [object]$Manifest,
+    [Parameter(Mandatory = $true)] [string]$Backend,
+    [Parameter(Mandatory = $true)] [object]$Executable
+  )
+  $entries = @(Get-ProviderRequiredCandidate $Manifest @('artifacts') 'artifacts')
+  if ($entries.Count -lt 1 -or $entries.Count -gt 16) { throw 'provider build manifest artifacts are outside the bounded range' }
+  $matches = New-Object System.Collections.Generic.List[object]
+  foreach ($entry in $entries) {
+    if ($null -eq $entry) { throw 'provider build manifest has a null artifact entry' }
+    $entryBackend = (Get-ProviderString (Get-ProviderRequiredCandidate $entry @('backend') 'artifact.backend') 'artifact.backend').ToLowerInvariant()
+    $entryHash = Get-ProviderHash (Get-ProviderRequiredCandidate $entry @('artifactSha256', 'sha256') 'artifact.artifactSha256') 'artifact.artifactSha256'
+    $entrySize = Get-ProviderUInt64 (Get-ProviderRequiredCandidate $entry @('sizeBytes', 'artifactSizeBytes') 'artifact.sizeBytes') 'artifact.sizeBytes'
+    if ($entrySize -lt 1) { throw 'provider build manifest artifact size must be positive' }
+    if ($entryBackend -ne $Backend) { throw 'provider build manifest contains an unexpected artifact backend' }
+    if ($entryHash -eq $Executable.sha256 -and $entrySize -eq [UInt64]$Executable.sizeBytes) {
+      [void]$matches.Add([pscustomobject][ordered]@{ backend = $entryBackend; sha256 = $entryHash; sizeBytes = [UInt64]$entrySize })
+    }
+  }
+  if ($matches.Count -ne 1) { throw 'provider build manifest tests1 artifact does not match the supplied executable' }
+  return $matches[0]
+}
+
+function Get-ProviderSelectorProof {
+  param(
+    [Parameter(Mandatory = $true)] [object]$Manifest,
+    [Parameter(Mandatory = $true)] [string]$Backend
+  )
+  $proof = Get-ProviderRequiredCandidate $Manifest @('selectorProof') 'selectorProof'
+  $result = Get-ProviderString (Get-ProviderRequiredCandidate $proof @('result') 'selectorProof.result') 'selectorProof.result'
+  if ($result -cne 'dumpbin-unresolved-refs-verified') { throw 'selector proof did not come from dumpbin unresolved-reference verification' }
+  $outputBackend = (Get-ProviderString (Get-ProviderRequiredCandidate $proof @('outputBackend') 'selectorProof.outputBackend') 'selectorProof.outputBackend').ToLowerInvariant()
+  $utf16Backend = (Get-ProviderString (Get-ProviderRequiredCandidate $proof @('utf16Backend') 'selectorProof.utf16Backend') 'selectorProof.utf16Backend').ToLowerInvariant()
+  if ($outputBackend -ne $Backend -or $utf16Backend -ne 'cpp') { throw 'selector proof providers are not exact' }
+  foreach ($field in @('outputProductionPackage', 'utf16ProductionPackage', 'utf16BenchmarkTelemetry', 'assemblyListings')) {
+    if (Get-ProviderBoolean (Get-ProviderRequiredCandidate $proof @($field) ('selectorProof.' + $field)) ('selectorProof.' + $field)) {
+      throw "selector proof enables $field"
+    }
+  }
+  $objectHash = Get-ProviderHash (Get-ProviderRequiredCandidate $proof @('providerObjectSha256After', 'objectSha256After') 'selectorProof.providerObjectSha256After') 'selectorProof.providerObjectSha256After'
+  $objectSize = Get-ProviderUInt64 (Get-ProviderRequiredCandidate $proof @('providerObjectSizeBytesAfter', 'objectSizeBytesAfter') 'selectorProof.providerObjectSizeBytesAfter') 'selectorProof.providerObjectSizeBytesAfter'
+  if ($objectSize -lt 1) { throw 'selector proof object size must be positive' }
+  $symbolsProperty = $proof.PSObject.Properties['unresolvedProviderSymbols']
+  if ($null -eq $symbolsProperty) { throw 'selector proof unresolved symbol set is missing' }
+  $symbols = @($symbolsProperty.Value | ForEach-Object { Get-ProviderString $_ 'selectorProof.unresolvedProviderSymbols' })
+  $normalizedSymbols = @($symbols | ForEach-Object { $_.ToLowerInvariant() })
+  if (@($normalizedSymbols | Sort-Object -Unique).Count -ne $normalizedSymbols.Count) { throw 'selector proof unresolved symbol set contains duplicates' }
+  $expectedSymbols = if ($Backend -eq 'rust') { @($script:ProviderSymbols | ForEach-Object { $_.ToLowerInvariant() } | Sort-Object) } else { @() }
+  if ((@($normalizedSymbols | Sort-Object) -join '|') -cne ($expectedSymbols -join '|')) { throw 'selector proof unresolved symbol set is not exact' }
+  $symbolCount = Get-ProviderUInt64 (Get-ProviderRequiredCandidate $proof @('unresolvedProviderSymbolCount') 'selectorProof.unresolvedProviderSymbolCount') 'selectorProof.unresolvedProviderSymbolCount' 1024
+  if ($symbolCount -ne $normalizedSymbols.Count) { throw 'selector proof unresolved symbol count is invalid' }
+  $archiveResult = Get-ProviderString (Get-ProviderRequiredCandidate $proof @('rustArchiveResult', 'archiveResult') 'selectorProof.rustArchiveResult') 'selectorProof.rustArchiveResult'
+  if ($archiveResult -cne 'dumpbin-defined-exports-verified') { throw 'selector proof archive export verification is incomplete' }
+  $archiveHash = Get-ProviderHash (Get-ProviderRequiredCandidate $proof @('rustArchiveSha256', 'archiveSha256') 'selectorProof.rustArchiveSha256') 'selectorProof.rustArchiveSha256'
+  $archiveSize = Get-ProviderUInt64 (Get-ProviderRequiredCandidate $proof @('rustArchiveSizeBytes', 'archiveSizeBytes') 'selectorProof.rustArchiveSizeBytes') 'selectorProof.rustArchiveSizeBytes'
+  if ($archiveSize -lt 1) { throw 'selector proof archive size must be positive' }
+  $definedProperty = $proof.PSObject.Properties['definedProviderSymbols']
+  if ($null -eq $definedProperty) { throw 'selector proof defined symbol set is missing' }
+  $defined = @($definedProperty.Value | ForEach-Object { Get-ProviderString $_ 'selectorProof.definedProviderSymbols' })
+  $normalizedDefined = @($defined | ForEach-Object { $_.ToLowerInvariant() } | Sort-Object -Unique)
+  $expectedDefined = @($script:ProviderSymbols | ForEach-Object { $_.ToLowerInvariant() } | Sort-Object)
+  if ((@($normalizedDefined) -join '|') -cne ($expectedDefined -join '|')) { throw 'selector proof defined symbol set is not exact' }
+  $definedCount = Get-ProviderUInt64 (Get-ProviderRequiredCandidate $proof @('definedProviderSymbolCount') 'selectorProof.definedProviderSymbolCount') 'selectorProof.definedProviderSymbolCount' 1024
+  if ($definedCount -ne $expectedDefined.Count) { throw 'selector proof defined symbol count is invalid' }
+  $contractHash = Get-ProviderHash (Get-ProviderRequiredCandidate $proof @('selectorContractSha256', 'contractSha256') 'selectorProof.selectorContractSha256') 'selectorProof.selectorContractSha256'
+  $baseCanonical = 'output={0}|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result={1}|symbols={2}|object-after={3}' -f
+    $Backend, $result, (@($normalizedSymbols | Sort-Object) -join ','), $objectHash
+  $canonical = '{0}|archive-result={1}|archive={2}|defined={3}' -f
+    (Get-TextSha256 $baseCanonical), $archiveResult, $archiveHash, (@($normalizedDefined) -join ',')
+  if ($contractHash -ne (Get-TextSha256 $canonical)) { throw 'selector proof contract hash is invalid' }
+  $manifestProofHash = Get-ProviderHash (Get-ProviderRequiredCandidate $Manifest @('selectorProofSha256', 'selectorContractSha256') 'selectorProofSha256') 'selectorProofSha256'
+  if ($manifestProofHash -ne $contractHash) { throw 'provider build manifest selector proof hash does not match its proof' }
+  $objectBefore = Get-ProviderCandidate $proof @('providerObjectSha256Before', 'objectSha256Before')
+  if ($null -ne $objectBefore) { $objectBefore = Get-ProviderHash $objectBefore 'selectorProof.providerObjectSha256Before' }
+  return [pscustomobject][ordered]@{
+    result = $result
+    outputBackend = $outputBackend
+    utf16Backend = $utf16Backend
+    providerObjectSha256Before = $objectBefore
+    providerObjectSha256After = $objectHash
+    providerObjectSizeBytesAfter = [UInt64]$objectSize
+    unresolvedProviderSymbols = @($normalizedSymbols | Sort-Object)
+    unresolvedProviderSymbolCount = [int]$symbolCount
+    rustArchiveResult = $archiveResult
+    rustArchiveSha256 = $archiveHash
+    rustArchiveSizeBytes = [UInt64]$archiveSize
+    definedProviderSymbols = @($normalizedDefined)
+    definedProviderSymbolCount = [int]$definedCount
+    selectorContractSha256 = $contractHash
+  }
+}
+
+function Get-ProviderRuntimeProbe {
+  param(
+    [Parameter(Mandatory = $true)] [object]$Manifest,
+    [Parameter(Mandatory = $true)] [string]$Backend,
+    [Parameter(Mandatory = $true)] [object]$Executable
+  )
+  $probe = Get-ProviderRequiredCandidate $Manifest @('runtimeProviderProbe', 'providerProbe') 'runtimeProviderProbe'
+  $result = Get-ProviderString (Get-ProviderRequiredCandidate $probe @('result') 'runtimeProviderProbe.result') 'runtimeProviderProbe.result'
+  if ($result -cne 'verified') { throw 'runtime provider probe is not verified' }
+  $expected = (Get-ProviderString (Get-ProviderRequiredCandidate $probe @('expectedBackend') 'runtimeProviderProbe.expectedBackend') 'runtimeProviderProbe.expectedBackend').ToLowerInvariant()
+  $observed = (Get-ProviderString (Get-ProviderRequiredCandidate $probe @('observedBackend') 'runtimeProviderProbe.observedBackend') 'runtimeProviderProbe.observedBackend').ToLowerInvariant()
+  if ($expected -ne $Backend -or $observed -ne $Backend) { throw 'runtime provider probe backend observation is not exact' }
+  if (-not (Get-ProviderBoolean (Get-ProviderRequiredCandidate $probe @('standalone') 'runtimeProviderProbe.standalone') 'runtimeProviderProbe.standalone')) { throw 'runtime provider probe was not standalone' }
+  if (-not (Get-ProviderBoolean (Get-ProviderRequiredCandidate $probe @('payloadFree') 'runtimeProviderProbe.payloadFree') 'runtimeProviderProbe.payloadFree')) { throw 'runtime provider probe is not payload-free' }
+  $testFilter = Get-ProviderString (Get-ProviderRequiredCandidate $probe @('testFilter', 'gtestFilter') 'runtimeProviderProbe.testFilter') 'runtimeProviderProbe.testFilter'
+  if ($testFilter -cne $script:ProviderProbeFilter) { throw 'runtime provider probe did not execute the frozen lifecycle test' }
+  $hash = Get-ProviderHash (Get-ProviderRequiredCandidate $probe @('tests1Sha256', 'executableSha256', 'artifactSha256') 'runtimeProviderProbe.tests1Sha256') 'runtimeProviderProbe.tests1Sha256'
+  $size = Get-ProviderUInt64 (Get-ProviderRequiredCandidate $probe @('tests1SizeBytes', 'executableSizeBytes', 'sizeBytes') 'runtimeProviderProbe.tests1SizeBytes') 'runtimeProviderProbe.tests1SizeBytes'
+  if ($hash -ne $Executable.sha256 -or $size -ne [UInt64]$Executable.sizeBytes) { throw 'runtime provider probe identity does not match the supplied executable' }
+  return [pscustomobject][ordered]@{
+    result = $result
+    expectedBackend = $expected
+    observedBackend = $observed
+    standalone = $true
+    payloadFree = $true
+    testFilter = $testFilter
+    tests1Sha256 = $hash
+    tests1SizeBytes = [UInt64]$size
+  }
+}
+
+function Get-ProviderBuildManifest {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Path,
+    [Parameter(Mandatory = $true)] [string]$Backend,
+    [Parameter(Mandatory = $true)] [string]$Configuration,
+    [Parameter(Mandatory = $true)] [object]$Executable,
+    [Parameter(Mandatory = $true)] [object]$CurrentSource
+  )
+  $manifestPath = Resolve-ProviderManifestFile $Path ($Backend + 'BuildManifest')
+  $manifestSha256Before = Get-ProviderFileSha256 $manifestPath
+  try { $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -ErrorAction Stop }
+  catch { throw "$Backend build manifest is not valid JSON" }
+  if ($null -eq $manifest) { throw "$Backend build manifest is empty" }
+  $schema = Get-ProviderUInt64 (Get-ProviderRequiredCandidate $manifest @('schemaVersion') 'schemaVersion') 'schemaVersion' 16
+  if ($schema -ne $script:ProviderManifestSchemaVersion) { throw "$Backend build manifest schema is unsupported" }
+  $record = Get-ProviderString (Get-ProviderRequiredCandidate $manifest @('record') 'record') 'record'
+  if ($record -cne $script:ProviderManifestRecord) { throw "$Backend build manifest record is not provider-generated" }
+  if (-not (Get-ProviderBoolean (Get-ProviderRequiredCandidate $manifest @('payloadFree') 'payloadFree') 'payloadFree')) { throw "$Backend build manifest is not payload-free" }
+  $status = Get-ProviderString (Get-ProviderRequiredCandidate $manifest @('status') 'status') 'status'
+  if ($status -cne 'committed') { throw "$Backend build manifest is not committed" }
+  $manifestBackend = (Get-ProviderString (Get-ProviderRequiredCandidate $manifest @('backend') 'backend') 'backend').ToLowerInvariant()
+  $platform = (Get-ProviderString (Get-ProviderRequiredCandidate $manifest @('platform') 'platform') 'platform').ToLowerInvariant()
+  $manifestConfiguration = Get-ProviderString (Get-ProviderRequiredCandidate $manifest @('configuration') 'configuration') 'configuration'
+  if ($manifestBackend -ne $Backend -or $platform -ne 'x64' -or
+      -not [StringComparer]::OrdinalIgnoreCase.Equals($manifestConfiguration, $Configuration)) {
+    throw "$Backend build manifest selector identity does not match the requested run"
+  }
+  $sourceHead = (Get-ProviderString (Get-ProviderRequiredCandidate $manifest @('sourceHead', 'sourceCommit') 'sourceHead' -Sections @('source')) 'sourceHead').ToLowerInvariant()
+  if ($sourceHead -notmatch '^[0-9a-f]{40}$') { throw 'provider build manifest sourceHead is not a commit identity' }
+  $sourceDirty = Get-ProviderBoolean (Get-ProviderRequiredCandidate $manifest @('sourceDirty', 'dirty') 'sourceDirty' -Sections @('source')) 'sourceDirty'
+  $sourceStatus = Get-ProviderHash (Get-ProviderRequiredCandidate $manifest @('sourceStatusSha256', 'statusSha256') 'sourceStatusSha256' -Sections @('source')) 'sourceStatusSha256'
+  $sourceStatusLines = Get-ProviderUInt64 (Get-ProviderRequiredCandidate $manifest @('sourceStatusLineCount', 'statusLineCount') 'sourceStatusLineCount' -Sections @('source')) 'sourceStatusLineCount' 2147483647
+  if ($sourceDirty) { throw 'qualified provider evidence requires a clean source state' }
+  if ($sourceHead -ne [string]$CurrentSource.head -or $sourceStatus -ne [string]$CurrentSource.statusSha256 -or
+      [UInt64]$sourceStatusLines -ne [UInt64]$CurrentSource.statusLineCount -or [bool]$CurrentSource.dirty) {
+    throw "$Backend build manifest source state does not match the current checkout"
+  }
+  $outputBackend = (Get-ProviderString (Get-ProviderRequiredCandidate $manifest @('outputBackend') 'outputBackend' -Sections @('selectors')) 'outputBackend').ToLowerInvariant()
+  $utf16Backend = (Get-ProviderString (Get-ProviderRequiredCandidate $manifest @('utf16Backend') 'utf16Backend' -Sections @('selectors')) 'utf16Backend').ToLowerInvariant()
+  if ($outputBackend -ne $Backend -or $utf16Backend -ne 'cpp') { throw "$Backend build manifest selectors are not exact" }
+  foreach ($field in @('outputProductionPackage', 'utf16ProductionPackage')) {
+    if (Get-ProviderBoolean (Get-ProviderRequiredCandidate $manifest @($field) $field -Sections @('selectors')) $field) { throw "$Backend build manifest enables $field" }
+  }
+  foreach ($field in @('utf16BenchmarkTelemetry', 'assemblyListings')) {
+    $flag = Get-ProviderCandidate $manifest @($field) @('selectors')
+    if ($null -ne $flag -and (Get-ProviderBoolean $flag $field)) { throw "$Backend build manifest enables $field" }
+  }
+  $manifestTestsHash = Get-ProviderHash (Get-ProviderRequiredCandidate $manifest @('tests1Sha256', 'tests1HashAfter') 'tests1Sha256' -Sections @('tests1', 'artifact')) 'tests1Sha256'
+  $manifestTestsSize = Get-ProviderUInt64 (Get-ProviderRequiredCandidate $manifest @('tests1SizeBytes', 'tests1SizeBytesAfter') 'tests1SizeBytes' -Sections @('tests1', 'artifact')) 'tests1SizeBytes'
+  if ($manifestTestsHash -ne $Executable.sha256 -or $manifestTestsSize -ne [UInt64]$Executable.sizeBytes) { throw "$Backend build manifest tests1 identity does not match the supplied executable" }
+  $artifact = Get-ProviderManifestArtifact $manifest $Backend $Executable
+  $testsBefore = Get-ProviderCandidate $manifest @('tests1Sha256Before', 'tests1HashBefore') @('tests1')
+  if ($null -ne $testsBefore) { $testsBefore = Get-ProviderHash $testsBefore 'tests1Sha256Before' }
+  $testsBeforeSizeValue = Get-ProviderCandidate $manifest @('tests1SizeBytesBefore') @('tests1')
+  $testsBeforeSize = if ($null -eq $testsBeforeSizeValue) { [UInt64]0 } else { Get-ProviderUInt64 $testsBeforeSizeValue 'tests1SizeBytesBefore' }
+  $windowsImage = Get-ProviderString (Get-ProviderRequiredCandidate $manifest @('windowsImageIdentity', 'windowsImage') 'windowsImageIdentity' -Sections @('host')) 'windowsImageIdentity'
+  if ($windowsImage -match '(?i)^(unknown|unspecified|n/?a)$') { throw "$Backend build manifest Windows identity is unknown" }
+  $windowsImageHash = Get-ProviderHash (Get-ProviderRequiredCandidate $manifest @('windowsImageSha256', 'hostSha256') 'windowsImageSha256' -Sections @('host')) 'windowsImageSha256'
+  if ($windowsImageHash -ne (Get-TextSha256 $windowsImage)) { throw "$Backend build manifest Windows identity hash is invalid" }
+  $powerMode = Get-ProviderString (Get-ProviderRequiredCandidate $manifest @('powerMode', 'powerPlan') 'powerMode' -Sections @('power')) 'powerMode'
+  if ($powerMode -match '(?i)^(unknown|unspecified|n/?a)$') { throw "$Backend build manifest power mode is unknown" }
+  $powerModeHash = Get-ProviderHash (Get-ProviderRequiredCandidate $manifest @('powerModeSha256', 'powerSha256') 'powerModeSha256' -Sections @('power')) 'powerModeSha256'
+  if ($powerModeHash -ne (Get-TextSha256 $powerMode)) { throw "$Backend build manifest power identity hash is invalid" }
+  $parallelism = Get-ProviderUInt64 (Get-ProviderRequiredCandidate $manifest @('buildParallelism', 'parallelism') 'buildParallelism' -Sections @('build')) 'buildParallelism' 256
+  if ($parallelism -lt 1) { throw 'provider build manifest parallelism is invalid' }
+  $msvc = Get-ProviderString (Get-ProviderRequiredCandidate $manifest @('msvcIdentity', 'msvcVersion') 'msvcIdentity' -Sections @('toolchain')) 'msvcIdentity'
+  $rust = Get-ProviderString (Get-ProviderRequiredCandidate $manifest @('rustToolchain', 'rustVersion') 'rustToolchain' -Sections @('toolchain')) 'rustToolchain'
+  $rustLock = Get-ProviderHash (Get-ProviderRequiredCandidate $manifest @('rustLockSha256', 'cargoLockSha256') 'rustLockSha256' -Sections @('toolchain')) 'rustLockSha256'
+  $packagePlan = Get-ProviderHash (Get-ProviderRequiredCandidate $manifest @('packagePlanSha256', 'packagePlanHash') 'packagePlanSha256' -Sections @('package')) 'packagePlanSha256'
+  $buildCommand = Get-ProviderHash (Get-ProviderRequiredCandidate $manifest @('buildCommandSha256', 'commandSha256') 'buildCommandSha256' -Sections @('commands', 'build')) 'buildCommandSha256'
+  $packageCommand = Get-ProviderHash (Get-ProviderRequiredCandidate $manifest @('packagePlanCommandSha256', 'packageCommandSha256') 'packagePlanCommandSha256' -Sections @('commands', 'build')) 'packagePlanCommandSha256'
+  $probeCommand = Get-ProviderHash (Get-ProviderRequiredCandidate $manifest @('runtimeProviderProbeCommandSha256', 'providerProbeCommandSha256') 'runtimeProviderProbeCommandSha256' -Sections @('commands', 'runtimeProviderProbe')) 'runtimeProviderProbeCommandSha256'
+  $closureMode = Get-ProviderString (Get-ProviderRequiredCandidate $manifest @('runtimeClosureMode') 'runtimeClosureMode' -Sections @('runtimeProviderProbe')) 'runtimeClosureMode'
+  if ($closureMode -cne 'exe-only') { throw "$Backend build manifest runtime closure mode is not exe-only" }
+  $runtimeClosureSha256 = Get-ProviderHash (Get-ProviderRequiredCandidate $manifest @('runtimeClosureSha256') 'runtimeClosureSha256' -Sections @('runtimeProviderProbe')) 'runtimeClosureSha256'
+  $expectedRuntimeClosure = Get-TextSha256 ('exe-only|tests1={0}|size={1}' -f
+    $manifestTestsHash, ([UInt64]$manifestTestsSize).ToString([Globalization.CultureInfo]::InvariantCulture))
+  if ($runtimeClosureSha256 -ne $expectedRuntimeClosure) { throw "$Backend build manifest runtime closure receipt is invalid" }
+  $selectorProof = Get-ProviderSelectorProof $manifest $Backend
+  $probe = Get-ProviderRuntimeProbe $manifest $Backend $Executable
+  $transaction = Get-ProviderRequiredCandidate $manifest @('transaction') 'transaction'
+  $transactionStatus = Get-ProviderString (Get-ProviderRequiredCandidate $transaction @('status') 'transaction.status') 'transaction.status'
+  $publication = Get-ProviderString (Get-ProviderRequiredCandidate $transaction @('publication') 'transaction.publication') 'transaction.publication'
+  if ($transactionStatus -cne 'committed' -or $publication -cne 'atomic-directory-rename') { throw "$Backend provider transaction is not committed atomically" }
+  foreach ($field in @('sourceBeforeVerified', 'sourceAfterVerified', 'hostBeforeVerified', 'hostAfterVerified', 'tests1BeforeVerified', 'tests1AfterVerified', 'tests1CopyVerified', 'tests1ManifestVerified', 'tests1ProbeVerified', 'manifestGeneratedByProducer')) {
+    if (-not (Get-ProviderBoolean (Get-ProviderRequiredCandidate $transaction @($field) ('transaction.' + $field)) ('transaction.' + $field))) { throw "$Backend provider transaction proof is incomplete" }
+  }
+  [void](Assert-ProviderPayloadFree $manifest)
+  $manifestSha256After = Get-ProviderFileSha256 $manifestPath
+  if ($manifestSha256After -ne $manifestSha256Before) { throw "$Backend build manifest changed while it was being validated" }
+  return [pscustomobject][ordered]@{
+    manifestPath = $manifestPath
+    manifestSha256 = $manifestSha256After
+    schemaVersion = [int]$schema
+    record = $record
+    payloadFree = $true
+    status = $status
+    backend = $manifestBackend
+    platform = $platform
+    configuration = $manifestConfiguration
+    sourceHead = $sourceHead
+    sourceDirty = [bool]$sourceDirty
+    sourceStatusSha256 = $sourceStatus
+    sourceStatusLineCount = [UInt64]$sourceStatusLines
+    outputBackend = $outputBackend
+    utf16Backend = $utf16Backend
+    outputProductionPackage = $false
+    utf16ProductionPackage = $false
+    tests1Sha256 = $manifestTestsHash
+    tests1SizeBytes = [UInt64]$manifestTestsSize
+    tests1Sha256Before = $testsBefore
+    tests1SizeBytesBefore = [UInt64]$testsBeforeSize
+    artifact = $artifact
+    windowsImageIdentity = $windowsImage
+    windowsImageSha256 = $windowsImageHash
+    powerMode = $powerMode
+    powerModeSha256 = $powerModeHash
+    buildParallelism = [int]$parallelism
+    msvcIdentity = $msvc
+    rustToolchain = $rust
+    rustLockSha256 = $rustLock
+    packagePlanSha256 = $packagePlan
+    buildCommandSha256 = $buildCommand
+    packagePlanCommandSha256 = $packageCommand
+    runtimeProviderProbeCommandSha256 = $probeCommand
+    runtimeClosureMode = $closureMode
+    runtimeClosureSha256 = $runtimeClosureSha256
+    selectorProof = $selectorProof
+    selectorProofSha256 = $selectorProof.selectorContractSha256
+    runtimeProviderProbe = $probe
+    transaction = $transaction
+  }
+}
+
+function Assert-ProviderManifestIdentity {
+  param([Parameter(Mandatory = $true)] [object]$Provenance)
+  $actual = Get-ProviderFileSha256 $Provenance.manifestPath
+  if ($actual -ne [string]$Provenance.manifestSha256) { throw 'provider build manifest changed during measurement' }
+  return $true
+}
+
+function Test-ProviderAcceptanceQualified {
+  param(
+    [Parameter(Mandatory = $true)] [bool]$CollectOnly,
+    [Parameter(Mandatory = $true)] [bool]$ProvenanceComplete,
+    [Parameter(Mandatory = $true)] [AllowEmptyCollection()] [string[]]$Failures
+  )
+  return (-not $CollectOnly) -and $ProvenanceComplete -and @($Failures).Count -eq 0
+}
+
+function Assert-ProviderSelfTestRejects {
+  param(
+    [Parameter(Mandatory = $true)] [scriptblock]$Action,
+    [Parameter(Mandatory = $true)] [string]$Context
+  )
+  try {
+    & $Action
+  }
+  catch {
+    return
+  }
+  throw "$Context unexpectedly accepted invalid evidence"
+}
+
+function New-ProviderProvenance {
+  param(
+    [Parameter(Mandatory = $true)] [object]$Cpp,
+    [Parameter(Mandatory = $true)] [object]$Rust,
+    [Parameter(Mandatory = $true)] [object]$Platform,
+    [Parameter(Mandatory = $true)] [string]$MeasurementSha256
+  )
+  foreach ($field in @('sourceHead', 'sourceStatusSha256', 'sourceStatusLineCount', 'windowsImageIdentity', 'windowsImageSha256', 'powerMode', 'powerModeSha256', 'msvcIdentity', 'rustToolchain', 'rustLockSha256', 'packagePlanSha256', 'buildParallelism', 'runtimeClosureMode')) {
+    if ([string]$Cpp.$field -ne [string]$Rust.$field) { throw "paired provider manifests disagree on $field" }
+  }
+  if ([bool]$Cpp.sourceDirty -or [bool]$Rust.sourceDirty) { throw 'paired provider manifests are not clean' }
+  return [ordered]@{
+    complete = $true
+    status = 'verified'
+    record = $script:ProviderManifestRecord
+    sourceHead = [string]$Cpp.sourceHead
+    sourceStatusSha256 = [string]$Cpp.sourceStatusSha256
+    sourceStatusLineCount = [UInt64]$Cpp.sourceStatusLineCount
+    sourceDirty = $false
+    source = [ordered]@{
+      commit = [string]$Cpp.sourceHead
+      dirty = $false
+      statusSha256 = [string]$Cpp.sourceStatusSha256
+      statusLineCount = [UInt64]$Cpp.sourceStatusLineCount
+      status = 'clean'
+      complete = $true
+    }
+    outputBackend = 'paired(cpp,rust)'
+    utf16Backend = 'cpp'
+    outputProductionPackage = $false
+    utf16ProductionPackage = $false
+    selectors = [ordered]@{
+      outputBackend = 'paired(cpp,rust)'
+      utf16Backend = 'cpp'
+      outputProductionPackage = $false
+      utf16ProductionPackage = $false
+      cpp = [ordered]@{ backend = 'cpp'; result = [string]$Cpp.selectorProof.result; proofSha256 = [string]$Cpp.selectorProofSha256; objectSha256 = [string]$Cpp.selectorProof.providerObjectSha256After }
+      rust = [ordered]@{ backend = 'rust'; result = [string]$Rust.selectorProof.result; proofSha256 = [string]$Rust.selectorProofSha256; objectSha256 = [string]$Rust.selectorProof.providerObjectSha256After }
+      complete = $true
+    }
+    selectorProofSha256 = Get-TextSha256 ('paired-selector|cpp={0}|rust={1}' -f $Cpp.selectorProofSha256, $Rust.selectorProofSha256)
+    host = [ordered]@{
+      os = 'Windows'
+      osVersion = [string]$Cpp.windowsImageIdentity
+      windowsImageIdentity = [string]$Cpp.windowsImageIdentity
+      windowsImageSha256 = [string]$Cpp.windowsImageSha256
+      architecture = [string]$Platform.os.architecture
+      cpuManufacturer = [string]$Platform.cpu.manufacturer
+      cpuModel = [string]$Platform.cpu.model
+      physicalCores = [UInt64]$Platform.cpu.physicalCores
+      logicalProcessors = [UInt64]$Platform.cpu.logicalProcessors
+      identitySha256 = [string]$Cpp.windowsImageSha256
+      powerMode = [string]$Cpp.powerMode
+      powerModeSha256 = [string]$Cpp.powerModeSha256
+      buildParallelism = [int]$Cpp.buildParallelism
+      complete = $true
+    }
+    power = [ordered]@{
+      mode = [string]$Cpp.powerMode
+      modeSha256 = [string]$Cpp.powerModeSha256
+      complete = $true
+    }
+    toolchain = [ordered]@{
+      msvc = [string]$Cpp.msvcIdentity
+      rust = [string]$Cpp.rustToolchain
+      rustLockSha256 = [string]$Cpp.rustLockSha256
+      packagePlanSha256 = [string]$Cpp.packagePlanSha256
+      buildCommandSha256 = [string]$Cpp.buildCommandSha256
+      packageCommandSha256 = [string]$Cpp.packagePlanCommandSha256
+      complete = $true
+    }
+    package = [ordered]@{
+      planSha256 = [string]$Cpp.packagePlanSha256
+      closureSha256 = Get-TextSha256 ('paired-runtime-closure|cpp={0}|rust={1}' -f $Cpp.runtimeClosureSha256, $Rust.runtimeClosureSha256)
+      status = 'verified-exe-only'
+      runtimeClosureMode = 'exe-only'
+      cppRuntimeClosureSha256 = [string]$Cpp.runtimeClosureSha256
+      rustRuntimeClosureSha256 = [string]$Rust.runtimeClosureSha256
+      productionPackage = $false
+      complete = $true
+    }
+    commands = [ordered]@{
+      buildSha256 = Get-TextSha256 ('paired-build|cpp={0}|rust={1}' -f $Cpp.buildCommandSha256, $Rust.buildCommandSha256)
+      packageSha256 = [string]$Cpp.packagePlanCommandSha256
+      measurementSha256 = $MeasurementSha256
+      runnerSha256 = $MeasurementSha256
+      complete = $true
+      cppBuildSha256 = [string]$Cpp.buildCommandSha256
+      rustBuildSha256 = [string]$Rust.buildCommandSha256
+      cppProbeSha256 = [string]$Cpp.runtimeProviderProbeCommandSha256
+      rustProbeSha256 = [string]$Rust.runtimeProviderProbeCommandSha256
+    }
+    artifacts = @(
+      [ordered]@{ backend = 'cpp'; artifact = 'tests1'; artifactSha256 = [string]$Cpp.tests1Sha256; sizeBytes = [UInt64]$Cpp.tests1SizeBytes }
+      [ordered]@{ backend = 'rust'; artifact = 'tests1'; artifactSha256 = [string]$Rust.tests1Sha256; sizeBytes = [UInt64]$Rust.tests1SizeBytes }
+    )
+    manifests = @(
+      [ordered]@{ backend = 'cpp'; sha256 = [string]$Cpp.manifestSha256 }
+      [ordered]@{ backend = 'rust'; sha256 = [string]$Rust.manifestSha256 }
+    )
+    transaction = [ordered]@{
+      status = 'committed'
+      publication = 'atomic-directory-rename'
+      cppTests1 = [ordered]@{ beforeVerified = [bool]$Cpp.transaction.tests1BeforeVerified; afterVerified = [bool]$Cpp.transaction.tests1AfterVerified; copyVerified = [bool]$Cpp.transaction.tests1CopyVerified; manifestVerified = [bool]$Cpp.transaction.tests1ManifestVerified; probeVerified = [bool]$Cpp.transaction.tests1ProbeVerified }
+      rustTests1 = [ordered]@{ beforeVerified = [bool]$Rust.transaction.tests1BeforeVerified; afterVerified = [bool]$Rust.transaction.tests1AfterVerified; copyVerified = [bool]$Rust.transaction.tests1CopyVerified; manifestVerified = [bool]$Rust.transaction.tests1ManifestVerified; probeVerified = [bool]$Rust.transaction.tests1ProbeVerified }
+      sourceBeforeVerified = [bool]$Cpp.transaction.sourceBeforeVerified -and [bool]$Rust.transaction.sourceBeforeVerified
+      sourceAfterVerified = [bool]$Cpp.transaction.sourceAfterVerified -and [bool]$Rust.transaction.sourceAfterVerified
+      hostBeforeVerified = [bool]$Cpp.transaction.hostBeforeVerified -and [bool]$Rust.transaction.hostBeforeVerified
+      hostAfterVerified = [bool]$Cpp.transaction.hostAfterVerified -and [bool]$Rust.transaction.hostAfterVerified
+      tests1BeforeVerified = [bool]$Cpp.transaction.tests1BeforeVerified -and [bool]$Rust.transaction.tests1BeforeVerified
+      tests1AfterVerified = [bool]$Cpp.transaction.tests1AfterVerified -and [bool]$Rust.transaction.tests1AfterVerified
+      tests1CopyVerified = [bool]$Cpp.transaction.tests1CopyVerified -and [bool]$Rust.transaction.tests1CopyVerified
+      tests1ManifestVerified = [bool]$Cpp.transaction.tests1ManifestVerified -and [bool]$Rust.transaction.tests1ManifestVerified
+      tests1ProbeVerified = [bool]$Cpp.transaction.tests1ProbeVerified -and [bool]$Rust.transaction.tests1ProbeVerified
+      manifestGeneratedByProducer = [bool]$Cpp.transaction.manifestGeneratedByProducer -and [bool]$Rust.transaction.manifestGeneratedByProducer
+      complete = $true
+    }
+  }
+}
+
 function Invoke-SelfTest {
   [void](Assert-AffinityMaskInput -Mask $AffinityMask)
   $statistics = Get-Statistics -Values @([double]4, 1, 9, 3, 2)
@@ -267,6 +866,151 @@ function Invoke-SelfTest {
   if ($smokeFailures.Count -ne 4) { throw 'acceptance self-test did not reject smoke evidence' }
   $fullFailures = @(Get-AcceptanceFailures -PairCount 7 -MeasuredCount 10 -CppOperations 100000 -RustOperations 100000)
   if ($fullFailures.Count -ne 0) { throw 'acceptance self-test rejected complete evidence' }
+  if (Test-ProviderAcceptanceQualified -CollectOnly $true -ProvenanceComplete $true -Failures @()) {
+    throw 'collect-only evidence was incorrectly qualified'
+  }
+  if (Test-ProviderAcceptanceQualified -CollectOnly $false -ProvenanceComplete $false -Failures @()) {
+    throw 'manifest-omitted evidence was incorrectly qualified'
+  }
+  if (-not (Test-ProviderAcceptanceQualified -CollectOnly $false -ProvenanceComplete $true -Failures @())) {
+    throw 'complete provider evidence was incorrectly rejected'
+  }
+
+  $syntheticCommit = '0' * 40
+  $syntheticStatusHash = '1' * 64
+  $syntheticWindowsHash = '2' * 64
+  $syntheticPowerHash = '3' * 64
+  $syntheticLockHash = '4' * 64
+  $syntheticPackageHash = '5' * 64
+  $syntheticBuildHash = '6' * 64
+  $syntheticPackageCommandHash = '7' * 64
+  $syntheticProbeCommandHash = '8' * 64
+  $syntheticCppSelector = [pscustomobject][ordered]@{
+    result = 'dumpbin-unresolved-refs-verified'
+    outputBackend = 'cpp'
+    utf16Backend = 'cpp'
+    outputProductionPackage = $false
+    utf16ProductionPackage = $false
+    utf16BenchmarkTelemetry = $false
+    assemblyListings = $false
+    providerObjectSha256After = ('9' * 64)
+    providerObjectSizeBytesAfter = [UInt64]1
+    unresolvedProviderSymbols = @()
+    unresolvedProviderSymbolCount = 0
+    rustArchiveResult = 'dumpbin-defined-exports-verified'
+    rustArchiveSha256 = ('a' * 64)
+    rustArchiveSizeBytes = [UInt64]1
+    definedProviderSymbols = @($script:ProviderSymbols)
+    definedProviderSymbolCount = $script:ProviderSymbols.Count
+  }
+  $syntheticCppBase = 'output=cpp|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result=dumpbin-unresolved-refs-verified|symbols=|object-after={0}' -f $syntheticCppSelector.providerObjectSha256After
+  $syntheticCppSelector | Add-Member -NotePropertyName selectorContractSha256 -NotePropertyValue (Get-TextSha256 ('{0}|archive-result={1}|archive={2}|defined={3}' -f
+      (Get-TextSha256 $syntheticCppBase), $syntheticCppSelector.rustArchiveResult, $syntheticCppSelector.rustArchiveSha256,
+      (@($syntheticCppSelector.definedProviderSymbols | ForEach-Object { $_.ToLowerInvariant() } | Sort-Object) -join ',')))
+  $syntheticRustSelector = [pscustomobject]([ordered]@{
+    result = 'dumpbin-unresolved-refs-verified'
+    outputBackend = 'rust'
+    utf16Backend = 'cpp'
+    outputProductionPackage = $false
+    utf16ProductionPackage = $false
+    utf16BenchmarkTelemetry = $false
+    assemblyListings = $false
+    providerObjectSha256After = ('b' * 64)
+    providerObjectSizeBytesAfter = [UInt64]1
+    unresolvedProviderSymbols = @($script:ProviderSymbols)
+    unresolvedProviderSymbolCount = $script:ProviderSymbols.Count
+    rustArchiveResult = 'dumpbin-defined-exports-verified'
+    rustArchiveSha256 = ('c' * 64)
+    rustArchiveSizeBytes = [UInt64]1
+    definedProviderSymbols = @($script:ProviderSymbols)
+    definedProviderSymbolCount = $script:ProviderSymbols.Count
+  })
+  $syntheticRustBase = 'output=rust|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result=dumpbin-unresolved-refs-verified|symbols={0}|object-after={1}' -f
+    (@($syntheticRustSelector.unresolvedProviderSymbols | ForEach-Object { $_.ToLowerInvariant() } | Sort-Object) -join ','), $syntheticRustSelector.providerObjectSha256After
+  $syntheticRustSelector | Add-Member -NotePropertyName selectorContractSha256 -NotePropertyValue (Get-TextSha256 ('{0}|archive-result={1}|archive={2}|defined={3}' -f
+      (Get-TextSha256 $syntheticRustBase), $syntheticRustSelector.rustArchiveResult, $syntheticRustSelector.rustArchiveSha256,
+      (@($syntheticRustSelector.definedProviderSymbols | ForEach-Object { $_.ToLowerInvariant() } | Sort-Object) -join ',')))
+  $syntheticSelectorManifest = [pscustomobject][ordered]@{
+    selectorProof = $syntheticCppSelector
+    selectorProofSha256 = $syntheticCppSelector.selectorContractSha256
+  }
+  $validatedSelector = Get-ProviderSelectorProof -Manifest $syntheticSelectorManifest -Backend 'cpp'
+  Assert-EqualValue $syntheticCppSelector.selectorContractSha256 $validatedSelector.selectorContractSha256 'selector proof self-test'
+  $badSelectorManifest = $syntheticSelectorManifest | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+  $badSelectorManifest.selectorProof.outputBackend = 'rust'
+  Assert-ProviderSelfTestRejects { Get-ProviderSelectorProof -Manifest $badSelectorManifest -Backend 'cpp' } 'selector mismatch self-test'
+  $syntheticTransaction = [pscustomobject][ordered]@{
+    sourceBeforeVerified = $true
+    sourceAfterVerified = $true
+    hostBeforeVerified = $true
+    hostAfterVerified = $true
+    tests1BeforeVerified = $true
+    tests1AfterVerified = $true
+    tests1CopyVerified = $true
+    tests1ManifestVerified = $true
+    tests1ProbeVerified = $true
+    manifestGeneratedByProducer = $true
+  }
+  $syntheticCommon = [ordered]@{
+    sourceHead = $syntheticCommit
+    sourceDirty = $false
+    sourceStatusSha256 = $syntheticStatusHash
+    sourceStatusLineCount = [UInt64]0
+    windowsImageIdentity = 'windows-self-test'
+    windowsImageSha256 = $syntheticWindowsHash
+    powerMode = 'Balanced'
+    powerModeSha256 = $syntheticPowerHash
+    msvcIdentity = 'msvc-self-test'
+    rustToolchain = 'rust-self-test'
+    rustLockSha256 = $syntheticLockHash
+    packagePlanSha256 = $syntheticPackageHash
+    buildCommandSha256 = $syntheticBuildHash
+    packagePlanCommandSha256 = $syntheticPackageCommandHash
+    runtimeProviderProbeCommandSha256 = $syntheticProbeCommandHash
+    buildParallelism = 1
+    tests1Sha256 = ('d' * 64)
+    tests1SizeBytes = [UInt64]1
+    runtimeClosureMode = 'exe-only'
+    runtimeClosureSha256 = Get-TextSha256 ('exe-only|tests1={0}|size=1' -f ('d' * 64))
+    manifestSha256 = ('e' * 64)
+    transaction = $syntheticTransaction
+  }
+  $syntheticCpp = $syntheticCommon | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+  $syntheticCpp | Add-Member -NotePropertyName backend -NotePropertyValue 'cpp'
+  $syntheticCpp | Add-Member -NotePropertyName selectorProof -NotePropertyValue $syntheticCppSelector
+  $syntheticCpp | Add-Member -NotePropertyName selectorProofSha256 -NotePropertyValue $syntheticCppSelector.selectorContractSha256
+  $syntheticRust = $syntheticCommon | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+  $syntheticRust.tests1Sha256 = 'f' * 64
+  $syntheticRust.runtimeClosureSha256 = Get-TextSha256 ('exe-only|tests1={0}|size=1' -f ('f' * 64))
+  $syntheticRust | Add-Member -NotePropertyName backend -NotePropertyValue 'rust'
+  $syntheticRust | Add-Member -NotePropertyName selectorProof -NotePropertyValue $syntheticRustSelector
+  $syntheticRust | Add-Member -NotePropertyName selectorProofSha256 -NotePropertyValue $syntheticRustSelector.selectorContractSha256
+  $syntheticPlatform = [pscustomobject][ordered]@{
+    os = [pscustomobject][ordered]@{ architecture = 'X64' }
+    cpu = [pscustomobject][ordered]@{ manufacturer = 'self-test'; model = 'provider host'; physicalCores = [UInt64]1; logicalProcessors = [UInt64]1 }
+  }
+  $syntheticProvenance = New-ProviderProvenance -Cpp $syntheticCpp -Rust $syntheticRust -Platform $syntheticPlatform -MeasurementSha256 ('a' * 64)
+  if (-not $syntheticProvenance.complete) { throw 'valid provider pair self-test was not complete' }
+  [void](Assert-ProviderPayloadFree $syntheticProvenance)
+  $sourceMismatch = $syntheticRust | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+  $sourceMismatch.sourceHead = '1' * 40
+  Assert-ProviderSelfTestRejects { New-ProviderProvenance -Cpp $syntheticCpp -Rust $sourceMismatch -Platform $syntheticPlatform -MeasurementSha256 ('a' * 64) } 'mixed source self-test'
+  $dirtyMismatch = $syntheticRust | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+  $dirtyMismatch.sourceDirty = $true
+  Assert-ProviderSelfTestRejects { New-ProviderProvenance -Cpp $syntheticCpp -Rust $dirtyMismatch -Platform $syntheticPlatform -MeasurementSha256 ('a' * 64) } 'dirty source self-test'
+  $badProbeManifest = [pscustomobject][ordered]@{
+    runtimeProviderProbe = [pscustomobject][ordered]@{
+      result = 'verified'
+      expectedBackend = 'cpp'
+      observedBackend = 'cpp'
+      standalone = $true
+      payloadFree = $true
+      testFilter = $script:ProviderProbeFilter
+      tests1Sha256 = ('1' * 64)
+      tests1SizeBytes = [UInt64]2
+    }
+  }
+  Assert-ProviderSelfTestRejects { Get-ProviderRuntimeProbe -Manifest $badProbeManifest -Backend 'cpp' -Executable ([pscustomobject][ordered]@{ sha256 = ('2' * 64); sizeBytes = [UInt64]1 }) } 'tests1 identity self-test'
   Assert-EqualValue '1' (([UInt64]1).ToString([Globalization.CultureInfo]::InvariantCulture)) 'default affinity mask decimal representation'
   Write-Output 'PASS measure-output-provider.ps1 self-tests'
 }
@@ -295,7 +1039,7 @@ function Get-ExecutableMetadata {
   if ($item -isnot [IO.FileInfo] -or -not $item.Exists) {
     throw "executable is not a regular file: $Path"
   }
-  $hash = (Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction Stop).Hash.ToUpperInvariant()
+  $hash = (Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
   if ([string]::IsNullOrWhiteSpace($hash)) {
     throw "executable SHA-256 is empty: $Path"
   }
@@ -965,6 +1709,28 @@ function Invoke-Benchmark {
   $cppExecutable = Get-ExecutableMetadata -Path $cppPath
   $rustExecutable = Get-ExecutableMetadata -Path $rustPath
   $platform = Get-PlatformMetadata
+  $cppManifestSupplied = -not [string]::IsNullOrWhiteSpace($CppBuildManifest)
+  $rustManifestSupplied = -not [string]::IsNullOrWhiteSpace($RustBuildManifest)
+  $manifestsSupplied = $cppManifestSupplied -or $rustManifestSupplied
+  if ($manifestsSupplied -and (-not $cppManifestSupplied -or -not $rustManifestSupplied)) {
+    throw 'CppBuildManifest and RustBuildManifest must be supplied together'
+  }
+  if (-not $CollectOnly -and -not $manifestsSupplied) {
+    throw 'qualified provider measurement requires both CppBuildManifest and RustBuildManifest'
+  }
+  $provenance = $null
+  $sourceState = $null
+  if ($manifestsSupplied) {
+    $sourceState = Get-ProviderSourceState
+    $cppManifest = Get-ProviderBuildManifest -Path $CppBuildManifest -Backend 'cpp' `
+      -Configuration $Configuration -Executable $cppExecutable -CurrentSource $sourceState
+    $rustManifest = Get-ProviderBuildManifest -Path $RustBuildManifest -Backend 'rust' `
+      -Configuration $Configuration -Executable $rustExecutable -CurrentSource $sourceState
+    $measurementSha256 = Get-ProviderFileSha256 -Path $PSCommandPath
+    $provenance = New-ProviderProvenance -Cpp $cppManifest -Rust $rustManifest `
+      -Platform $platform -MeasurementSha256 $measurementSha256
+    [void](Assert-ProviderPayloadFree $provenance)
+  }
   $outputRoot = [IO.Path]::GetFullPath($OutputDirectory)
   [void][IO.Directory]::CreateDirectory($outputRoot)
   $runDirectory = New-UniqueRunDirectory -Root $outputRoot
@@ -976,6 +1742,12 @@ function Invoke-Benchmark {
     foreach ($provider in $order) {
       $executable = if ($provider -eq 'cpp') { $cppPath } else { $rustPath }
       $executableMetadata = if ($provider -eq 'cpp') { $cppExecutable } else { $rustExecutable }
+      if ($null -ne $provenance) {
+        $manifestForProvider = if ($provider -eq 'cpp') { $cppManifest } else { $rustManifest }
+        [void](Assert-ProviderManifestIdentity -Provenance $manifestForProvider)
+        Assert-ProviderSourceState -Expected $sourceState -Actual (Get-ProviderSourceState) `
+          -Context ("provider source state changed before pair {0} {1} launch" -f $pairIndex, $provider)
+      }
       Write-Host ("pair {0}/{1}: {2}" -f ($pairIndex + 1), $Pairs, $provider)
       $runResult = Invoke-BenchmarkProcess -Executable $executable -ExecutableMetadata $executableMetadata `
         -Provider $provider -PairIndex $pairIndex -RunDirectory $runDirectory
@@ -990,6 +1762,12 @@ function Invoke-Benchmark {
       $parsed = Read-BenchmarkRun -Path $runResult.rawPath -ExpectedProvider $provider -PairIndex $pairIndex
       [void]$runRecords.Add($parsed)
     }
+  }
+  if ($null -ne $provenance) {
+    [void](Assert-ProviderManifestIdentity -Provenance $cppManifest)
+    [void](Assert-ProviderManifestIdentity -Provenance $rustManifest)
+    Assert-ProviderSourceState -Expected $sourceState -Actual (Get-ProviderSourceState) `
+      -Context 'provider source state changed after benchmark campaign'
   }
   Assert-ExecutableUnchanged -Expected $cppExecutable
   Assert-ExecutableUnchanged -Expected $rustExecutable
@@ -1025,6 +1803,13 @@ function Invoke-Benchmark {
   }
   $acceptanceFailures = @(Get-AcceptanceFailures -PairCount $Pairs -MeasuredCount $MeasuredBlocks `
     -CppOperations $cppMutationOperations -RustOperations $rustMutationOperations)
+  $provenanceComplete = $null -ne $provenance
+  if (-not $provenanceComplete) {
+    $acceptanceFailures += 'complete provider provenance is required'
+  }
+  if ($CollectOnly) {
+    $acceptanceFailures += 'collect-only mode is unqualified'
+  }
 
   $cppStats = Get-ProviderStatistics -Runs $cppRuns -Warmup $false
   $rustStats = Get-ProviderStatistics -Runs $rustRuns -Warmup $false
@@ -1051,13 +1836,32 @@ function Invoke-Benchmark {
       performanceGatePassed = [bool]$gate.pass
     }
   }
-  $acceptanceQualified = $acceptanceFailures.Count -eq 0
+  $acceptanceQualified = Test-ProviderAcceptanceQualified -CollectOnly ([bool]$CollectOnly) `
+    -ProvenanceComplete $provenanceComplete -Failures $acceptanceFailures
   $semanticPass = $true
   $pass = $semanticPass -and $acceptanceQualified -and $performancePass -and (-not $CollectOnly)
+  $analysisBackend = if ($provenanceComplete) { [string]$provenance.outputBackend } else { 'unknown' }
+  $analysisUtf16Backend = if ($provenanceComplete) { [string]$provenance.utf16Backend } else { 'unknown' }
+  $analysisSourceHead = if ($provenanceComplete) { [string]$provenance.sourceHead } else { $null }
+  $analysisSourceStatusSha256 = if ($provenanceComplete) { [string]$provenance.sourceStatusSha256 } else { $null }
+  $analysisSelectorProofSha256 = if ($provenanceComplete) { [string]$provenance.selectorProofSha256 } else { $null }
+  $analysisArtifacts = if ($provenanceComplete) {
+    $provenance.artifacts
+  } else {
+    @(
+      [ordered]@{ backend = 'cpp'; artifact = 'tests1'; artifactSha256 = $cppExecutable.sha256; sizeBytes = $cppExecutable.sizeBytes }
+      [ordered]@{ backend = 'rust'; artifact = 'tests1'; artifactSha256 = $rustExecutable.sha256; sizeBytes = $rustExecutable.sizeBytes }
+    )
+  }
   $analysisPath = Join-Path $runDirectory 'analysis-v1.json'
   $analysis = [ordered]@{
     schemaVersion = $script:SchemaVersion
     record = 'analysis'
+    backend = $analysisBackend
+    outputBackend = $analysisBackend
+    utf16Backend = $analysisUtf16Backend
+    outputProductionPackage = $false
+    utf16ProductionPackage = $false
     seed = $Seed
     configuration = $Configuration
     affinityMask = [UInt64]$AffinityMask
@@ -1073,6 +1877,23 @@ function Invoke-Benchmark {
     acceptanceFailures = @($acceptanceFailures)
     cppTimedMutationOperations = $cppMutationOperations
     rustTimedMutationOperations = $rustMutationOperations
+    provenanceComplete = $provenanceComplete
+    provenance = if ($provenanceComplete) { $provenance } else { [ordered]@{ complete = $false; status = 'unverified' } }
+    sourceHead = $analysisSourceHead
+    sourceCommit = $analysisSourceHead
+    sourceDirty = if ($provenanceComplete) { [bool]$provenance.sourceDirty } else { $null }
+    sourceStatusSha256 = $analysisSourceStatusSha256
+    selectorProofSha256 = $analysisSelectorProofSha256
+    host = if ($provenanceComplete) { $provenance.host } else { $platform }
+    toolchain = if ($provenanceComplete) { $provenance.toolchain } else { $null }
+    package = if ($provenanceComplete) { $provenance.package } else { $null }
+    commands = if ($provenanceComplete) { $provenance.commands } else { $null }
+    artifacts = $analysisArtifacts
+    packagePlanSha256 = if ($provenanceComplete) { [string]$provenance.toolchain.packagePlanSha256 } else { $null }
+    dependencyClosureSha256 = if ($provenanceComplete) { [string]$provenance.package.closureSha256 } else { $null }
+    buildCommandSha256 = if ($provenanceComplete) { [string]$provenance.commands.buildSha256 } else { $null }
+    packagePlanCommandSha256 = if ($provenanceComplete) { [string]$provenance.commands.packageSha256 } else { $null }
+    measurementCommandSha256 = if ($provenanceComplete) { [string]$provenance.commands.measurementSha256 } else { $null }
     executables = @(
       [pscustomobject][ordered]@{
         provider = 'cpp'
