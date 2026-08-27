@@ -1178,6 +1178,85 @@ mod tests {
         assert_eq!(u64::MAX, buffer.length);
     }
 
+    fn assert_provider_token_is_invalid(token: u64, label: &str) {
+        let request = create_request(b"invalid-token-request", b"owner", b"channel", b"Label");
+        let mut result = poison_result();
+        // SAFETY: The request and result are initialized local storage. The
+        // token is deliberately absent from the provider registry.
+        let status = unsafe { sakura_output_provider_apply_v1(token, &request, &mut result) };
+        assert_eq!(
+            SakuraOutputProviderStatus::InvalidHandle,
+            status,
+            "{label}: apply must reject the token"
+        );
+        assert_poison_result(&result);
+
+        let mut info = poison_info();
+        // SAFETY: The info slot is writable local storage and the token is
+        // deliberately absent from the provider registry.
+        let status = unsafe { sakura_output_provider_snapshot_measure_v1(token, &mut info) };
+        assert_eq!(
+            SakuraOutputProviderStatus::InvalidHandle,
+            status,
+            "{label}: snapshot measure must reject the token"
+        );
+        assert_poison_info(&info);
+
+        let mut snapshot_storage = [0xa5_u8; 128];
+        let mut snapshot = snapshot_buffer(&mut snapshot_storage);
+        // SAFETY: The descriptor and destination are valid caller-owned
+        // storage; the token is deliberately absent from the registry.
+        let status = unsafe { sakura_output_provider_snapshot_write_v1(token, &mut snapshot) };
+        assert_eq!(
+            SakuraOutputProviderStatus::InvalidHandle,
+            status,
+            "{label}: snapshot write must reject the token"
+        );
+        assert_poison_snapshot_length(&snapshot);
+        assert!(
+            snapshot_storage.iter().all(|value| *value == 0xa5),
+            "{label}: snapshot destination must remain unchanged"
+        );
+
+        let mut active_storage = [0xa5_u8; 64];
+        let mut active = active_buffer(&mut active_storage);
+        // SAFETY: The active descriptor and destination are valid caller-owned
+        // storage; the token is deliberately absent from the registry.
+        let status = unsafe { sakura_output_provider_active_channel_v1(token, &mut active) };
+        assert_eq!(
+            SakuraOutputProviderStatus::InvalidHandle,
+            status,
+            "{label}: active query must reject the token"
+        );
+        assert_poison_active(&active);
+        assert!(
+            active_storage.iter().all(|value| *value == 0xa5),
+            "{label}: active destination must remain unchanged"
+        );
+
+        let mut stop_result = poison_result();
+        // SAFETY: The result slot is writable local storage and the token is
+        // deliberately absent from the provider registry.
+        let status = unsafe { sakura_output_provider_stop_v1(token, &mut stop_result) };
+        assert_eq!(
+            SakuraOutputProviderStatus::InvalidHandle,
+            status,
+            "{label}: stop must reject the token"
+        );
+        assert_poison_result(&stop_result);
+
+        let mut token_slot = token;
+        // SAFETY: The token slot is writable local storage and the token is
+        // deliberately absent from the provider registry.
+        let status = unsafe { sakura_output_provider_destroy_v1(&mut token_slot) };
+        assert_eq!(
+            SakuraOutputProviderStatus::InvalidHandle,
+            status,
+            "{label}: destroy must reject the token"
+        );
+        assert_eq!(token, token_slot, "{label}: destroy must retain the token");
+    }
+
     #[test]
     fn provider_snapshot_write_rejects_unmeasured_and_same_size_mutations() {
         let token = create_provider_token();
@@ -2632,6 +2711,44 @@ mod tests {
     }
 
     #[test]
+    fn provider_forged_tokens_fail_closed_for_all_exports() {
+        let mut token = create_provider_token();
+        let candidates = [
+            ("zero", 0_u64),
+            ("small", 1_u64),
+            ("random-looking", 0x0123_4567_89ab_cdef_u64),
+            ("provider-tag", PROVIDER_TOKEN_TAG),
+            ("provider-tag-like", PROVIDER_TOKEN_TAG | (1_u64 << 62)),
+            ("shadow-tag-like", PROVIDER_TOKEN_TAG - 1),
+            ("maximum", u64::MAX),
+            ("valid-low-bit-flip", token ^ 1),
+            ("valid-family-bit-flip", token ^ PROVIDER_TOKEN_TAG),
+            ("valid-second-bit-flip", token ^ 2),
+        ];
+
+        for (label, forged) in candidates {
+            assert_ne!(
+                token, forged,
+                "the forged table must not test its live token"
+            );
+            let is_live = lock_providers().providers.contains_key(&forged);
+            if is_live {
+                // A concurrent test may have allocated a neighboring token;
+                // never classify a live handle as forged.
+                continue;
+            }
+            assert_provider_token_is_invalid(forged, label);
+        }
+
+        // SAFETY: The token slot is valid caller-owned storage and is
+        // destroyed exactly once after the forged-token table completes.
+        assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
+            sakura_output_provider_destroy_v1(&mut token)
+        });
+        assert_eq!(0, token);
+    }
+
+    #[test]
     fn provider_cross_family_tokens_fail_closed_for_all_operations() {
         let provider_token = create_provider_token();
         let raw_limits = limits();
@@ -2886,6 +3003,266 @@ mod tests {
             sakura_output_provider_destroy_v1(&mut stale_slot)
         });
         assert_eq!(token, stale_slot);
+    }
+
+    #[test]
+    fn provider_concurrent_receipts_and_terminal_handles_are_bounded() {
+        const ITERATIONS: usize = 100;
+        let mut accepted_rounds = 0_usize;
+
+        for _ in 0..ITERATIONS {
+            let token = create_provider_token();
+            let barrier = Arc::new(Barrier::new(5));
+
+            let apply_handle = {
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    let request = create_request(
+                        b"bounded-concurrent-create",
+                        b"owner",
+                        b"channel",
+                        b"Label",
+                    );
+                    let mut result = poison_result();
+                    // SAFETY: The request and result are worker-local storage;
+                    // the provider token is an opaque copied value.
+                    let status =
+                        unsafe { sakura_output_provider_apply_v1(token, &request, &mut result) };
+                    (status, result)
+                })
+            };
+
+            let snapshot_handle = {
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    let mut info = poison_info();
+                    // SAFETY: The info slot is worker-local storage and the
+                    // provider token is an opaque copied value.
+                    let measure_status =
+                        unsafe { sakura_output_provider_snapshot_measure_v1(token, &mut info) };
+                    let mut storage = [0xa5_u8; 4096];
+                    let mut buffer = snapshot_buffer_with_receipt(&mut storage, info.receipt);
+                    // SAFETY: The receipt and destination belong to this
+                    // worker and are used only for this measure->write pair.
+                    let write_status =
+                        unsafe { sakura_output_provider_snapshot_write_v1(token, &mut buffer) };
+                    let destination_changed = storage.iter().any(|value| *value != 0xa5);
+                    (
+                        measure_status,
+                        info,
+                        write_status,
+                        buffer.length,
+                        destination_changed,
+                    )
+                })
+            };
+
+            let active_handle = {
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    let mut storage = [0xa5_u8; 256];
+                    let mut active = active_buffer(&mut storage);
+                    // SAFETY: The active descriptor and destination are
+                    // worker-local storage.
+                    let status =
+                        unsafe { sakura_output_provider_active_channel_v1(token, &mut active) };
+                    (
+                        status,
+                        active.struct_size,
+                        active.abi_version,
+                        active.revision,
+                        active.present,
+                        active.data.is_null(),
+                        active.capacity,
+                        active.length,
+                        active.reserved,
+                        storage.iter().any(|value| *value != 0xa5),
+                    )
+                })
+            };
+
+            let stop_handle = {
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    let mut result = poison_result();
+                    // SAFETY: The result slot is worker-local storage.
+                    let status = unsafe { sakura_output_provider_stop_v1(token, &mut result) };
+                    (status, result)
+                })
+            };
+
+            let destroy_handle = {
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    // Let at least one competing worker reach its call site in
+                    // the usual schedule without imposing an ordering claim.
+                    thread::yield_now();
+                    let mut token_slot = token;
+                    // SAFETY: The token slot is worker-local storage and this
+                    // is the only destroy worker for the live provider.
+                    let status = unsafe { sakura_output_provider_destroy_v1(&mut token_slot) };
+                    (status, token_slot)
+                })
+            };
+
+            let (apply_status, apply_result) = apply_handle.join().expect("apply worker panicked");
+            let (
+                measure_status,
+                measure_info,
+                write_status,
+                write_length,
+                snapshot_destination_changed,
+            ) = snapshot_handle.join().expect("snapshot worker panicked");
+            let (
+                active_status,
+                active_struct_size,
+                active_abi_version,
+                active_revision,
+                active_present,
+                active_data_is_null,
+                active_capacity,
+                active_length,
+                active_reserved,
+                active_changed,
+            ) = active_handle.join().expect("active worker panicked");
+            let (stop_status, stop_result) = stop_handle.join().expect("stop worker panicked");
+            let (destroy_status, destroy_slot) =
+                destroy_handle.join().expect("destroy worker panicked");
+
+            assert_eq!(SakuraOutputProviderStatus::Ok, destroy_status);
+            assert_eq!(0, destroy_slot);
+
+            let mut accepted_mutation_revisions = Vec::new();
+            match apply_status {
+                SakuraOutputProviderStatus::Ok => {
+                    assert_eq!(
+                        SakuraOutputProviderOperationStatus::Succeeded as u32,
+                        apply_result.status
+                    );
+                    assert!(apply_result.revision > 1);
+                    accepted_mutation_revisions.push(apply_result.revision);
+                }
+                SakuraOutputProviderStatus::Stopped => {
+                    assert_eq!(
+                        SakuraOutputProviderOperationStatus::Stopped as u32,
+                        apply_result.status
+                    );
+                }
+                SakuraOutputProviderStatus::InvalidHandle => assert_poison_result(&apply_result),
+                status => panic!("unexpected concurrent apply status: {status:?}"),
+            }
+
+            match measure_status {
+                SakuraOutputProviderStatus::Ok => {
+                    assert!(snapshot_receipt_is_valid(&measure_info.receipt));
+                    assert_eq!(measure_info.revision, measure_info.receipt.revision);
+                    assert_eq!(measure_info.encoded_size, measure_info.receipt.encoded_size);
+                    assert!(matches!(
+                        write_status,
+                        SakuraOutputProviderStatus::Ok
+                            | SakuraOutputProviderStatus::InsufficientCapacity
+                            | SakuraOutputProviderStatus::InternalError
+                            | SakuraOutputProviderStatus::InvalidHandle
+                    ));
+                    if write_status == SakuraOutputProviderStatus::Ok {
+                        assert_eq!(measure_info.encoded_size, write_length);
+                        assert!(snapshot_destination_changed);
+                    } else {
+                        assert_eq!(u64::MAX, write_length);
+                        assert!(!snapshot_destination_changed);
+                    }
+                }
+                SakuraOutputProviderStatus::InvalidHandle => {
+                    assert_poison_info(&measure_info);
+                    assert_eq!(SakuraOutputProviderStatus::InvalidHandle, write_status);
+                    assert_eq!(u64::MAX, write_length);
+                    assert!(!snapshot_destination_changed);
+                }
+                status => panic!("unexpected concurrent snapshot measure status: {status:?}"),
+            }
+
+            match active_status {
+                SakuraOutputProviderStatus::Ok => {
+                    assert_eq!(
+                        size_of::<SakuraOutputProviderActiveChannelV1>() as u32,
+                        active_struct_size
+                    );
+                    assert_eq!(1, active_abi_version);
+                    assert!(active_revision < u64::MAX);
+                    assert!(active_present <= 1);
+                    assert!(active_length <= 256);
+                    assert_eq!([0; 2], active_reserved);
+                    let _ = active_changed;
+                }
+                SakuraOutputProviderStatus::InvalidHandle => {
+                    let active = SakuraOutputProviderActiveChannelV1 {
+                        struct_size: active_struct_size,
+                        abi_version: active_abi_version,
+                        revision: active_revision,
+                        present: active_present,
+                        reserved0: [0; 7],
+                        data: if active_data_is_null {
+                            ptr::null_mut()
+                        } else {
+                            ptr::dangling_mut::<u8>()
+                        },
+                        capacity: active_capacity,
+                        length: active_length,
+                        reserved: active_reserved,
+                    };
+                    assert_poison_active(&active);
+                    assert!(!active_changed);
+                }
+                status => panic!("unexpected concurrent active status: {status:?}"),
+            }
+
+            match stop_status {
+                SakuraOutputProviderStatus::Ok => {
+                    assert_eq!(
+                        SakuraOutputProviderOperationStatus::Succeeded as u32,
+                        stop_result.status
+                    );
+                    assert!(stop_result.revision > 1);
+                    accepted_mutation_revisions.push(stop_result.revision);
+                }
+                SakuraOutputProviderStatus::InvalidHandle => assert_poison_result(&stop_result),
+                status => panic!("unexpected concurrent stop status: {status:?}"),
+            }
+
+            accepted_mutation_revisions.sort_unstable();
+            assert!(accepted_mutation_revisions
+                .windows(2)
+                .all(|revisions| revisions[0] < revisions[1]));
+            if !accepted_mutation_revisions.is_empty() {
+                accepted_rounds += 1;
+            }
+            let maximum_revision = accepted_mutation_revisions
+                .iter()
+                .copied()
+                .max()
+                .unwrap_or(1);
+            if measure_status == SakuraOutputProviderStatus::Ok {
+                assert!(measure_info.revision <= maximum_revision);
+            }
+            if active_status == SakuraOutputProviderStatus::Ok {
+                assert!(active_revision <= maximum_revision);
+            }
+
+            // The race's destroy worker has consumed the only live token. The
+            // post-race assertions check terminal fail-closed behavior only;
+            // they do not infer an order among the racing worker returns.
+            assert_provider_token_is_invalid(token, "post-race stale token");
+        }
+
+        assert!(
+            accepted_rounds > 0,
+            "race never observed an accepted mutation"
+        );
     }
 
     #[test]
