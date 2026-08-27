@@ -22,7 +22,6 @@
 namespace workbench::output {
 namespace {
 
-constexpr std::size_t kMaximumStableIdBytes = 160;
 constexpr std::size_t kMaximumLabelBytes = 512;
 constexpr std::size_t kMaximumMetadataBytes = 512;
 
@@ -685,7 +684,7 @@ OutputService::~OutputService()
 
 bool IsValidOutputStableId(const std::string_view value) noexcept
 {
-	if (value.empty() || value.size() > kMaximumStableIdBytes || !IsValidUtf8(value, false)) return false;
+	if (value.empty() || value.size() > kMaximumOutputStableIdBytes || !IsValidUtf8(value, false)) return false;
 	return std::none_of(value.begin(), value.end(), [](const unsigned char character) {
 		return character <= 0x20 || character == 0x7f;
 	});

@@ -10,6 +10,7 @@
 #include "workbench/output/OutputServiceRustSnapshotCodec.h"
 
 #include <algorithm>
+#include <array>
 #include <condition_variable>
 #include <limits>
 #include <map>
@@ -398,27 +399,24 @@ void SaturatingIncrement(std::uint64_t& value) noexcept
 	if (value != std::numeric_limits<std::uint64_t>::max()) ++value;
 }
 
-template <typename Control>
-void RecordBoundaryCall(
+template <typename Control, typename Invoke>
+[[nodiscard]] SakuraOutputProviderStatus InvokeBoundary(
 	Control& control,
 	const EOutputProviderBoundary boundary,
-	std::uint64_t OutputProviderHealthCounters::* const counter) noexcept
+	std::uint64_t OutputProviderHealthCounters::* const counter,
+	Invoke&& invoke) noexcept
 {
+	// The native provider exports are callback-free and do not call back into
+	// Control. Keep the diagnostic update and the ABI call in one short critical
+	// section so a boundary does not require separate lock/unlock pairs for its
+	// call and status record. Allocation and decoding remain outside this lock.
 	std::lock_guard lock(control.modelMutex);
 	SaturatingIncrement(control.diagnostics.counters.ffiCalls);
 	if (counter) SaturatingIncrement(control.diagnostics.counters.*counter);
 	control.diagnostics.lastBoundary = boundary;
-}
-
-template <typename Control>
-void RecordBoundaryStatus(
-	Control& control,
-	const EOutputProviderBoundary boundary,
-	const SakuraOutputProviderStatus status) noexcept
-{
-	std::lock_guard lock(control.modelMutex);
-	control.diagnostics.lastBoundary = boundary;
+	const auto status = invoke();
 	control.diagnostics.lastFfiStatus = status;
+	return status;
 }
 
 template <typename Control>
@@ -578,9 +576,10 @@ template <typename Control>
 {
 	SakuraOutputProviderSnapshotInfoV1 info{};
 	InitializeAbiHeader(info);
-	RecordBoundaryCall(control, EOutputProviderBoundary::SnapshotMeasure, nullptr);
-	const auto measured = sakura_output_provider_snapshot_measure_v1(control.token, &info);
-	RecordBoundaryStatus(control, EOutputProviderBoundary::SnapshotMeasure, measured);
+	const auto measured = InvokeBoundary(control, EOutputProviderBoundary::SnapshotMeasure,
+		nullptr, [&]() noexcept {
+			return sakura_output_provider_snapshot_measure_v1(control.token, &info);
+		});
 	if (measured != SakuraOutputProviderStatus::Ok || !IsValidSnapshotInfo(info)) {
 		SetFault(control, measured == SakuraOutputProviderStatus::Ok
 			? EOutputServiceRustProviderFault::AbiFailure
@@ -602,9 +601,10 @@ template <typename Control>
 	const auto expectedData = buffer.data;
 	const auto expectedCapacity = buffer.capacity;
 	const auto expectedReceipt = buffer.receipt;
-	RecordBoundaryCall(control, EOutputProviderBoundary::SnapshotWrite, nullptr);
-	const auto written = sakura_output_provider_snapshot_write_v1(control.token, &buffer);
-	RecordBoundaryStatus(control, EOutputProviderBoundary::SnapshotWrite, written);
+	const auto written = InvokeBoundary(control, EOutputProviderBoundary::SnapshotWrite,
+		nullptr, [&]() noexcept {
+			return sakura_output_provider_snapshot_write_v1(control.token, &buffer);
+		});
 	if (written != SakuraOutputProviderStatus::Ok
 		|| !IsValidSnapshotBuffer(buffer)
 		|| buffer.data != expectedData
@@ -650,26 +650,48 @@ template <typename Control>
 	SakuraOutputProviderActiveChannelV1 active{};
 	active.struct_size = sizeof(active);
 	active.abi_version = SAKURA_OUTPUT_PROVIDER_ABI_VERSION_V1;
-	active.capacity = 0;
-	RecordBoundaryCall(control, EOutputProviderBoundary::ActiveChannelQuery,
-		&OutputProviderHealthCounters::activeChannelCalls);
-	const auto measured = sakura_output_provider_active_channel_v1(control.token, &active);
-	RecordBoundaryStatus(control, EOutputProviderBoundary::ActiveChannelQuery, measured);
+	std::array<std::uint8_t, kMaximumOutputStableIdBytes> inlineStorage{};
+	active.data = inlineStorage.data();
+	active.capacity = static_cast<std::uint64_t>(inlineStorage.size());
+	const auto measured = InvokeBoundary(control, EOutputProviderBoundary::ActiveChannelQuery,
+		&OutputProviderHealthCounters::activeChannelCalls, [&]() noexcept {
+			return sakura_output_provider_active_channel_v1(control.token, &active);
+		});
 	if (measured == SakuraOutputProviderStatus::Ok) {
-		if (!IsValidActiveChannelHeader(active) || active.present != 0 || active.length != 0
-			|| active.data != nullptr || active.capacity != 0
-			|| active.revision != expectedRevision) {
+		if (!IsValidActiveChannelHeader(active)
+			|| active.data != inlineStorage.data()
+			|| active.capacity != static_cast<std::uint64_t>(inlineStorage.size())
+			|| active.revision != expectedRevision
+			|| active.length > static_cast<std::uint64_t>(inlineStorage.size())) {
 			SetFault(control, EOutputServiceRustProviderFault::AbiFailure,
 				EOutputProviderBoundary::ActiveChannelQuery, measured);
 			return false;
 		}
-		activeChannelId.reset();
+		if (active.present == 0) {
+			if (active.length != 0) {
+				SetFault(control, EOutputServiceRustProviderFault::AbiFailure,
+					EOutputProviderBoundary::ActiveChannelQuery, measured);
+				return false;
+			}
+			activeChannelId.reset();
+			return true;
+		}
+		const auto length = static_cast<std::size_t>(active.length);
+		const std::string_view value(
+			reinterpret_cast<const char*>(inlineStorage.data()), length);
+		if (!IsValidOutputStableId(value)) {
+			SetFault(control, EOutputServiceRustProviderFault::AbiFailure,
+				EOutputProviderBoundary::ActiveChannelQuery, measured);
+			return false;
+		}
+		activeChannelId = std::string(value);
 		return true;
 	}
 	if (measured != SakuraOutputProviderStatus::InsufficientCapacity
 		|| !IsValidActiveChannelHeader(active)
 		|| active.present != 1
-		|| active.data != nullptr || active.capacity != 0
+		|| active.data != inlineStorage.data()
+		|| active.capacity != static_cast<std::uint64_t>(inlineStorage.size())
 		|| active.revision != expectedRevision
 		|| active.length > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
 		SetFault(control, measured == SakuraOutputProviderStatus::Ok
@@ -685,10 +707,10 @@ template <typename Control>
 		: reinterpret_cast<std::uint8_t*>(value.data());
 	active.data = expectedData;
 	active.capacity = static_cast<std::uint64_t>(value.size());
-	RecordBoundaryCall(control, EOutputProviderBoundary::ActiveChannelQuery,
-		&OutputProviderHealthCounters::activeChannelCalls);
-	const auto written = sakura_output_provider_active_channel_v1(control.token, &active);
-	RecordBoundaryStatus(control, EOutputProviderBoundary::ActiveChannelQuery, written);
+	const auto written = InvokeBoundary(control, EOutputProviderBoundary::ActiveChannelQuery,
+		&OutputProviderHealthCounters::activeChannelCalls, [&]() noexcept {
+			return sakura_output_provider_active_channel_v1(control.token, &active);
+		});
 	if (written != SakuraOutputProviderStatus::Ok
 		|| !IsValidActiveChannelHeader(active)
 		|| active.data != expectedData
@@ -740,9 +762,10 @@ template <typename Control>
 	InvalidateSnapshotCache(control);
 	SakuraOutputProviderApplyResultV1 raw{};
 	InitializeAbiHeader(raw);
-	RecordBoundaryCall(control, EOutputProviderBoundary::Apply, nullptr);
-	const auto ffiStatus = sakura_output_provider_apply_v1(control.token, &pending.raw, &raw);
-	RecordBoundaryStatus(control, EOutputProviderBoundary::Apply, ffiStatus);
+	const auto ffiStatus = InvokeBoundary(control, EOutputProviderBoundary::Apply,
+		nullptr, [&]() noexcept {
+			return sakura_output_provider_apply_v1(control.token, &pending.raw, &raw);
+		});
 	const auto operationStatus = static_cast<SakuraOutputProviderOperationStatus>(raw.status);
 	if (ffiStatus != SakuraOutputProviderStatus::Ok
 		&& !(ffiStatus == SakuraOutputProviderStatus::Stopped
@@ -846,15 +869,15 @@ template <typename Control>
 		control.pendingDestroy = true;
 	}
 #if defined(SAKURA_OUTPUT_BACKEND_RUST)
-	RecordBoundaryCall(control, EOutputProviderBoundary::Destroy,
-		&OutputProviderHealthCounters::destroyCalls);
 	// Keep the ABI's writable token slot private to this serialized call. The
 	// control token is also observed under modelMutex by health/fault paths, so
 	// passing its address directly would race with those observers while Rust
 	// consumes the slot on success.
 	std::uint64_t destroyToken = token;
-	const auto status = sakura_output_provider_destroy_v1(&destroyToken);
-	RecordBoundaryStatus(control, EOutputProviderBoundary::Destroy, status);
+	const auto status = InvokeBoundary(control, EOutputProviderBoundary::Destroy,
+		&OutputProviderHealthCounters::destroyCalls, [&]() noexcept {
+			return sakura_output_provider_destroy_v1(&destroyToken);
+		});
 	if (status != SakuraOutputProviderStatus::Ok) {
 		SetFault(control, EOutputServiceRustProviderFault::DestroyFailure,
 			EOutputProviderBoundary::Destroy, status);
@@ -892,9 +915,10 @@ OutputServiceRustProvider::OutputServiceRustProvider(OutputServiceLimits limits)
 		rawLimits.maximum_log_entries_per_channel = static_cast<std::uint64_t>(control.limits.maximumLogEntriesPerChannel);
 		rawLimits.maximum_remembered_operations = static_cast<std::uint64_t>(control.limits.maximumRememberedOperations);
 		control.diagnostics.initializationStage = EOutputProviderInitializationStage::AbiCreate;
-		RecordBoundaryCall(control, EOutputProviderBoundary::Create, nullptr);
-		const auto status = sakura_output_provider_create_v1(&rawLimits, &control.token);
-		RecordBoundaryStatus(control, EOutputProviderBoundary::Create, status);
+		const auto status = InvokeBoundary(control, EOutputProviderBoundary::Create,
+			nullptr, [&]() noexcept {
+				return sakura_output_provider_create_v1(&rawLimits, &control.token);
+			});
 		if (status != SakuraOutputProviderStatus::Ok || control.token == 0) {
 			control.token = 0;
 			control.diagnostics.availability = EOutputServiceRustProviderAvailability::Unavailable;
@@ -1242,9 +1266,10 @@ OutputOperationResult OutputServiceRustProvider::Stop() noexcept
 			if (m_control->token != 0) {
 				SakuraOutputProviderApplyResultV1 raw{};
 				InitializeAbiHeader(raw);
-				RecordBoundaryCall(*m_control, EOutputProviderBoundary::Stop, nullptr);
-				const auto status = sakura_output_provider_stop_v1(m_control->token, &raw);
-				RecordBoundaryStatus(*m_control, EOutputProviderBoundary::Stop, status);
+				const auto status = InvokeBoundary(*m_control, EOutputProviderBoundary::Stop,
+					nullptr, [&]() noexcept {
+						return sakura_output_provider_stop_v1(m_control->token, &raw);
+					});
 				if (status != SakuraOutputProviderStatus::Ok
 					|| !IsValidApplyResult(raw)
 					|| raw.status != static_cast<std::uint32_t>(SakuraOutputProviderOperationStatus::Succeeded)) {

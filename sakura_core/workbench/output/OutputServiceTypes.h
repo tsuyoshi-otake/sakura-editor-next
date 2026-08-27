@@ -17,6 +17,8 @@
 
 namespace workbench::output {
 
+inline constexpr std::size_t kMaximumOutputStableIdBytes = 160;
+
 //! Provider-neutral validation for owner/channel identifiers.
 [[nodiscard]] bool IsValidOutputStableId(std::string_view value) noexcept;
 //! Provider-neutral validation for mutation operation identifiers.

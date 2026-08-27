@@ -534,6 +534,26 @@ TEST(OutputServiceProviderConformance, EveryAcceptedMutationKindMatchesCppAuthor
 	EXPECT_TRUE(cppSnapshot.channels.empty());
 }
 
+TEST(OutputServiceProviderConformance, ActiveChannelAtStableIdLimitMatchesCppAuthority)
+{
+	auto providers = MakeProviderPair();
+	AssertRustProviderReady(providers);
+	const auto owner = ConformanceOwner("active-limit.owner");
+	const std::string channelId(kMaximumOutputStableIdBytes, 'a');
+	const auto create = ConformanceCreate("active-limit.create", owner, channelId);
+	const auto cppResult = providers.cpp->CreateChannel(create);
+	const auto rustResult = providers.rust->CreateChannel(create);
+	ExpectResultParity(cppResult, rustResult);
+	ExpectExpectedResult(rustResult, EOutputOperationStatus::Succeeded,
+		EOutputOperationReason::None, 2);
+	const auto cppSnapshot = providers.cpp->Snapshot();
+	const auto rustSnapshot = providers.rust->Snapshot();
+	ExpectSnapshotsExactlyEqual(cppSnapshot, rustSnapshot);
+	ASSERT_TRUE(rustSnapshot.activeChannelId.has_value());
+	EXPECT_EQ(channelId, *rustSnapshot.activeChannelId);
+	EXPECT_EQ(1U, providers.rust->Health().counters.activeChannelCalls);
+}
+
 TEST(OutputServiceProviderConformance, ReplayConflictStaleRevisionAndNotApplicableAreTyped)
 {
 	auto providers = MakeProviderPair();
