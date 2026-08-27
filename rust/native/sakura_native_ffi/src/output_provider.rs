@@ -1760,6 +1760,19 @@ mod tests {
         assert_poison_result(&result);
 
         let overflowing_log_entry = valid_log_entry(b"message");
+        let mut over_isize_log_count = empty_request(b"bad-log-count-range", 4);
+        over_isize_log_count.log_entries = &overflowing_log_entry;
+        over_isize_log_count.log_entry_count = (isize::MAX as u64).saturating_add(1);
+        // SAFETY: The aligned non-null base pointer and near-isize count
+        // exercise the checked count bound before any log array read.
+        let count_range_status =
+            unsafe { sakura_output_provider_apply_v1(token, &over_isize_log_count, &mut result) };
+        assert_eq!(
+            SakuraOutputProviderStatus::InvalidArgument,
+            count_range_status
+        );
+        assert_poison_result(&result);
+
         let mut overflowing_log_byte_count = empty_request(b"bad-log-byte-count", 4);
         overflowing_log_byte_count.log_entries = &overflowing_log_entry;
         overflowing_log_byte_count.log_entry_count = isize::MAX as u64;
@@ -1775,8 +1788,22 @@ mod tests {
         );
         assert_poison_result(&result);
 
+        let mut overflowing_log_address = empty_request(b"bad-log-address", 4);
+        overflowing_log_address.log_entries = &overflowing_log_entry;
+        overflowing_log_address.log_entry_count =
+            (isize::MAX as usize / size_of::<SakuraOutputProviderLogEntryV1>()) as u64;
+        // SAFETY: The valid non-null base pointer and largest count whose
+        // byte span fits under isize::MAX are rejected by checked address
+        // arithmetic before the array is dereferenced.
+        let address_status = unsafe {
+            sakura_output_provider_apply_v1(token, &overflowing_log_address, &mut result)
+        };
+        assert_eq!(SakuraOutputProviderStatus::InvalidArgument, address_status);
+        assert_poison_result(&result);
+
         let nonnull_span_data = [0_u8];
-        let mut overflowing_span_length = valid;
+        let mut overflowing_span_length =
+            text_request(b"bad-span-length", b"channel", b"unused-payload", 2);
         overflowing_span_length.payload = SakuraOutputProviderSpanV1 {
             data: nonnull_span_data.as_ptr(),
             length: (isize::MAX as u64).saturating_add(1),
@@ -1787,6 +1814,20 @@ mod tests {
         // constructed.
         assert_eq!(SakuraOutputProviderStatus::InvalidArgument, unsafe {
             sakura_output_provider_apply_v1(token, &overflowing_span_length, &mut result)
+        });
+        assert_poison_result(&result);
+
+        let mut overflowing_span_address =
+            text_request(b"bad-span-address", b"channel", b"unused-payload", 2);
+        overflowing_span_address.payload = SakuraOutputProviderSpanV1 {
+            data: nonnull_span_data.as_ptr(),
+            length: isize::MAX as u64,
+            ..span(&[])
+        };
+        // SAFETY: The non-null valid base pointer and near-isize byte length
+        // exercise checked address arithmetic before any bytes are copied.
+        assert_eq!(SakuraOutputProviderStatus::InvalidArgument, unsafe {
+            sakura_output_provider_apply_v1(token, &overflowing_span_address, &mut result)
         });
         assert_poison_result(&result);
 
