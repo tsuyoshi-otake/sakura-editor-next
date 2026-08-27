@@ -80,6 +80,26 @@ class PrepareOutputStartupArtifactContractTests(unittest.TestCase):
             "VC\\Tools\\MSVC\\**\\bin\\Hostx64\\x64\\dumpbin.exe",
             "$dumpbin = Resolve-Dumpbin $comspec",
             "Get-SelectorProof $providerObjectBefore $providerObjectAfter",
+            "Get-NormalizedProviderSymbols",
+            "Get-ProviderCompileSelector",
+            "Assert-ProviderCompileSelector",
+            "Assert-ProviderObjectFormat",
+            "providerObjectFormat",
+            "compileLogProof",
+            "compileCommandHasGl",
+            "compileLogExistsBefore",
+            "compileLogExistsAfter",
+            "$Configuration -eq 'Release'",
+            "Assert-ProviderCompileSelector $compileLogText",
+            "ANONYMOUS OBJECT",
+            "msvc-ltcg-compile-selector-verified",
+            "compileLogSha256Before",
+            "compileLogSizeBytesBefore",
+            "compileLogSha256After",
+            "compileLogSizeBytesAfter",
+            "compileCommandRustSelectorDefineCount",
+            "compile-log-before",
+            "compile-log-after",
             "dumpbin-unresolved-refs-verified",
             "Get-ProviderArchiveProof",
             "Add-ProviderArchiveProof",
@@ -112,7 +132,11 @@ class PrepareOutputStartupArtifactContractTests(unittest.TestCase):
     def test_transaction_and_fail_closed_identity_contract_is_explicit(self) -> None:
         for marker in (
             "Get-OptionalFileIdentity $artifactSource",
+            "Get-OptionalFileIdentity $compileLogSource",
             "$artifactAfter = Get-FileIdentity $artifactSource",
+            "$compileLogAfter = Get-FileIdentity $compileLogSource",
+            "CL.command.1.tlog",
+            "Release provider object and compile log were not produced by this build.",
             "artifactHashBefore",
             "artifactHashAfter",
             "artifactSha256Before",
@@ -170,6 +194,12 @@ class PrepareOutputStartupArtifactContractTests(unittest.TestCase):
             self.assertTrue(payload["noBuildLaunched"])
             self.assertTrue(payload["selectorVerified"])
             self.assertTrue(payload["selectorProofVerified"])
+            self.assertTrue(payload["rustLtcgSelectorVerified"])
+            self.assertTrue(payload["cppLtcgSelectorVerified"])
+            self.assertTrue(payload["missingGlRejected"])
+            self.assertTrue(payload["duplicateSelectorRejected"])
+            self.assertTrue(payload["ambiguousSourceRejected"])
+            self.assertTrue(payload["wrongConfigObjectFormatRejected"])
             self.assertTrue(payload["archiveExportsVerified"])
             self.assertTrue(payload["archiveExactSetRejected"])
             self.assertTrue(payload["runtimeStageVerified"])

@@ -66,8 +66,10 @@ backend を起動せず、その時点で campaign を停止します。JSON の
 state、artifact、Output/UTF-16 selector、Debug/Release、runtime receipt と dependency closure、Windows
 image、power mode、parallelism、MSVC/Rust toolchain、Cargo lock、package plan、build command の identity
 を含み、runner は二つの manifest の共通条件も照合します。build 後に手書きで補うものではありません。
-`prepare-output-startup-artifact.ps1` が build、`dumpbin` による Output authority selector 証明、canonical
-runtime stage、manifest の atomic publish を一つの bounded transaction として所有します。qualified mode
+`prepare-output-startup-artifact.ps1` が build、`dumpbin` と構成別の Output authority selector 証明、canonical
+runtime stage、manifest の atomic publish を一つの bounded transaction として所有します。Debug は
+`dumpbin` の未解決参照、Release LTCG は匿名 object 形式と `CL.command.1.tlog` の単一 provider source
+compile command（`/GL` と selector define 数）で検証します。qualified mode
 では clean checkout が必須です。runner は campaign 後、report serialization 直前、atomic write 直後に
 source state と両 measurement script の hash を再確認し、drift があれば typed integrity failure として
 HOLD を維持します。receipt の `artifact_id` / role / source / destination は canonical stage layout へ

@@ -988,13 +988,107 @@ function Assert-PayloadFreeManifest {
     return $true
 }
 
+function Get-NormalizedProviderSymbols {
+    param(
+        [Parameter(Mandatory = $true)] [string]$Text,
+        [switch]$Definitions
+    )
+    $symbols = New-Object Collections.Generic.List[string]
+    foreach ($line in @($Text -split "`r?`n")) {
+        $pattern = if ($Definitions) {
+            '(?i)^\s*[0-9A-F]+\s+[0-9A-F]+\s+SECT[0-9A-F]+\s+notype\s+\(\)\s+External\s+\|\s+(sakura_output_provider_[A-Za-z0-9_]+)\s*$'
+        }
+        else {
+            '(?i)\bUNDEF\b.*\|\s*(sakura_output_provider_[A-Za-z0-9_]+)\s*$'
+        }
+        $match = [regex]::Match([string]$line, $pattern)
+        if ($match.Success) {
+            $symbol = $match.Groups[1].Value.ToLowerInvariant()
+            if (-not $symbols.Contains($symbol)) { [void]$symbols.Add($symbol) }
+        }
+    }
+    $symbols.Sort([StringComparer]::Ordinal)
+    return $symbols.ToArray()
+}
+
+function Get-ProviderCompileSelector {
+    param(
+        [Parameter(Mandatory = $true)] [string]$Text,
+        [Parameter(Mandatory = $true)] [string]$SourceName
+    )
+    $records = @($Text -split '(?m)(?=^\^)')
+    $commands = New-Object Collections.Generic.List[string]
+    foreach ($record in $records) {
+        $lines = @($record -split "`r?`n")
+        if ($lines.Count -lt 2) { continue }
+        $sourceLine = $lines[0].Trim().TrimStart([char]0xFEFF)
+        if (-not $sourceLine.StartsWith('^', [StringComparison]::Ordinal)) { continue }
+        $sourcePath = $sourceLine.Substring(1).Trim()
+        if ([IO.Path]::GetFileName($sourcePath) -ine $SourceName) { continue }
+        $command = (($lines | Select-Object -Skip 1) -join ' ').Trim()
+        if ([string]::IsNullOrWhiteSpace($command)) { continue }
+        [void]$commands.Add($command)
+    }
+    if ($commands.Count -ne 1) {
+        throw 'Compiler command log does not contain exactly one provider source command.'
+    }
+    $command = $commands[0]
+    $hasGl = [bool]($command -match '(?i)(?:^|\s)/GL(?=\s|$)')
+    if (-not $hasGl) { throw 'Provider source compile command is not an LTCG /GL command.' }
+    $rustSelectorCount = [regex]::Matches(
+        $command,
+        '(?i)(?:^|\s)/D\s+SAKURA_OUTPUT_BACKEND_RUST(?=\s|$)'
+    ).Count
+    return [pscustomobject][ordered]@{
+        hasGl = $hasGl
+        rustSelectorDefineCount = [int]$rustSelectorCount
+    }
+}
+
+function Assert-ProviderCompileSelector {
+    param(
+        [Parameter(Mandatory = $true)] [string]$Text,
+        [Parameter(Mandatory = $true)] [string]$SourceName,
+        [Parameter(Mandatory = $true)] [ValidateSet('cpp', 'rust')] [string]$ExpectedBackend
+    )
+    $selector = Get-ProviderCompileSelector $Text $SourceName
+    if (($ExpectedBackend -eq 'rust' -and $selector.rustSelectorDefineCount -ne 1) -or
+        ($ExpectedBackend -eq 'cpp' -and $selector.rustSelectorDefineCount -ne 0)) {
+        throw 'Provider compile command selector does not match the requested backend.'
+    }
+    return $selector
+}
+
+function Assert-ProviderObjectFormat {
+    param(
+        [Parameter(Mandatory = $true)] [string]$DumpbinText,
+        [Parameter(Mandatory = $true)] [ValidateSet('Debug', 'Release')] [string]$ExpectedConfiguration
+    )
+    $objectAnonymous = [bool]($DumpbinText -match '(?im)^\s*File Type:\s+ANONYMOUS OBJECT\s*$')
+    if ($ExpectedConfiguration -eq 'Release' -and -not $objectAnonymous) {
+        throw 'Release provider object is expected to be an MSVC LTCG anonymous object.'
+    }
+    if ($ExpectedConfiguration -ne 'Release' -and $objectAnonymous) {
+        throw 'Provider object proof unexpectedly became anonymous outside Release.'
+    }
+    return [ordered]@{
+        anonymous = $objectAnonymous
+        format = if ($objectAnonymous) { 'msvc-ltcg-anonymous' } else { 'coff-symbols' }
+    }
+}
+
 function New-SelectorProof {
     param(
         [Parameter(Mandatory = $true)] [object]$ProviderObjectBefore,
         [Parameter(Mandatory = $true)] [object]$ProviderObjectAfter,
         [string[]]$UnresolvedProviderSymbols = @(),
-        [ValidateSet('environment-selector-verified', 'dumpbin-unresolved-refs-verified')]
-        [string]$ProofResult = 'environment-selector-verified'
+        [ValidateSet('environment-selector-verified', 'dumpbin-unresolved-refs-verified', 'msvc-ltcg-compile-selector-verified')]
+        [string]$ProofResult = 'environment-selector-verified',
+        [string]$VerificationMethod = 'environment-selector',
+        [string]$ProviderObjectFormat = 'coff-symbols',
+        [AllowNull()] [object]$CompileLogBefore = $null,
+        [AllowNull()] [object]$CompileLogAfter = $null,
+        [AllowNull()] [object]$CompileSelector = $null
     )
     if ($null -eq $ProviderObjectAfter -or -not (Test-Sha256 $ProviderObjectAfter.sha256) -or
         [UInt64]$ProviderObjectAfter.sizeBytes -lt 1) {
@@ -1004,8 +1098,27 @@ function New-SelectorProof {
         throw 'The pre-build Output provider object identity is invalid.'
     }
     $normalizedSymbols = @($UnresolvedProviderSymbols | ForEach-Object { ([string]$_).ToLowerInvariant() } | Sort-Object -Unique)
-    $canonical = 'output={0}|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result={1}|symbols={2}|object-after={3}' -f
-        $Backend, $ProofResult, ($normalizedSymbols -join ','), ([string]$ProviderObjectAfter.sha256).ToLowerInvariant()
+    $compileBeforeExists = $null -ne $CompileLogBefore -and [bool]$CompileLogBefore.exists
+    $compileAfterExists = $null -ne $CompileLogAfter -and [bool]$CompileLogAfter.exists
+    $compileBeforeHash = if ($compileBeforeExists) { ([string]$CompileLogBefore.sha256).ToLowerInvariant() } else { 'missing' }
+    $compileAfterHash = if ($compileAfterExists) { ([string]$CompileLogAfter.sha256).ToLowerInvariant() } else { 'missing' }
+    $compileBeforeSize = if ($compileBeforeExists) { [UInt64]$CompileLogBefore.sizeBytes } else { [UInt64]0 }
+    $compileAfterSize = if ($compileAfterExists) { [UInt64]$CompileLogAfter.sizeBytes } else { [UInt64]0 }
+    if (($compileBeforeExists -and (-not (Test-Sha256 $CompileLogBefore.sha256) -or $compileBeforeSize -lt 1)) -or
+        ($compileAfterExists -and (-not (Test-Sha256 $CompileLogAfter.sha256) -or $compileAfterSize -lt 1))) {
+        throw 'The Output provider compile log identity is invalid.'
+    }
+    $compileHasGl = if ($null -ne $CompileSelector) { [bool]$CompileSelector.hasGl } else { $false }
+    $compileRustSelectorCount = if ($null -ne $CompileSelector) { [int]$CompileSelector.rustSelectorDefineCount } else { 0 }
+    $canonical = if ($ProofResult -eq 'msvc-ltcg-compile-selector-verified') {
+        'output={0}|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result={1}|method={2}|symbols=|object-after={3}|object-format={4}|compile-log-before={5}|compile-log-before-size={6}|compile-log-after={7}|compile-log-after-size={8}|compile-gl={9}|compile-rust-selector-count={10}' -f
+            $Backend, $ProofResult, $VerificationMethod, ([string]$ProviderObjectAfter.sha256).ToLowerInvariant(), $ProviderObjectFormat,
+            $compileBeforeHash, $compileBeforeSize, $compileAfterHash, $compileAfterSize, $compileHasGl, $compileRustSelectorCount
+    }
+    else {
+        'output={0}|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result={1}|symbols={2}|object-after={3}' -f
+            $Backend, $ProofResult, ($normalizedSymbols -join ','), ([string]$ProviderObjectAfter.sha256).ToLowerInvariant()
+    }
     return [ordered]@{
         result = $ProofResult
         outputBackend = $Backend
@@ -1014,11 +1127,22 @@ function New-SelectorProof {
         utf16ProductionPackage = $false
         utf16BenchmarkTelemetry = $false
         assemblyListings = $false
+        verificationMethod = $VerificationMethod
+        providerObjectFormat = $ProviderObjectFormat
         providerObjectSha256Before = if ($ProviderObjectBefore.exists) { [string]$ProviderObjectBefore.sha256 } else { $null }
         providerObjectSha256After = [string]$ProviderObjectAfter.sha256
         providerObjectSizeBytesAfter = [UInt64]$ProviderObjectAfter.sizeBytes
         unresolvedProviderSymbols = $normalizedSymbols
         unresolvedProviderSymbolCount = [int]$normalizedSymbols.Count
+        compileLogExistsBefore = $compileBeforeExists
+        compileLogExistsAfter = $compileAfterExists
+        compileLogSha256Before = if ($compileBeforeExists) { [string]$CompileLogBefore.sha256 } else { $null }
+        compileLogSizeBytesBefore = $compileBeforeSize
+        compileLogSha256After = if ($compileAfterExists) { [string]$CompileLogAfter.sha256 } else { $null }
+        compileLogSizeBytesAfter = $compileAfterSize
+        compileLogProof = ($ProofResult -eq 'msvc-ltcg-compile-selector-verified')
+        compileCommandHasGl = $compileHasGl
+        compileCommandRustSelectorDefineCount = $compileRustSelectorCount
         selectorContractSha256 = Get-TextSha256 $canonical
     }
 }
@@ -1124,7 +1248,10 @@ function Get-SelectorProof {
         [Parameter(Mandatory = $true)] [string]$EnvironmentBlock,
         [Parameter(Mandatory = $true)] [string]$WorkingDirectory,
         [Parameter(Mandatory = $true)] [string]$OutputPath,
-        [Parameter(Mandatory = $true)] [int]$Timeout
+        [Parameter(Mandatory = $true)] [int]$Timeout,
+        [Parameter(Mandatory = $true)] [object]$CompileLogBefore,
+        [Parameter(Mandatory = $true)] [object]$CompileLogAfter,
+        [Parameter(Mandatory = $true)] [string]$CompileLogPath
     )
     if (-not (Test-Sha256 $ProviderObjectAfter.sha256)) { throw 'The selector proof object hash is invalid.' }
     $errorPath = '{0}.stderr' -f $OutputPath
@@ -1136,29 +1263,44 @@ function Get-SelectorProof {
             (ConvertTo-WindowsCommandLineArgument $errorPath)
         [void](Invoke-OwnedCommand $ComSpec (New-CmdCommandLine $commandText $ComSpec) $WorkingDirectory $EnvironmentBlock $Timeout)
         Assert-RegularFile $OutputPath
-        $symbols = New-Object Collections.Generic.List[string]
-        foreach ($line in @(Get-Content -LiteralPath $OutputPath)) {
-            $match = [regex]::Match([string]$line, '(?i)\bUNDEF\b.*\|\s*(sakura_output_provider_[A-Za-z0-9_]+)\s*$')
-            if ($match.Success) {
-                $symbol = $match.Groups[1].Value.ToLowerInvariant()
-                if (-not $symbols.Contains($symbol)) { [void]$symbols.Add($symbol) }
+        $objectDump = Get-Content -LiteralPath $OutputPath -Raw
+        $objectFormat = Assert-ProviderObjectFormat $objectDump $Configuration
+        $symbols = @()
+        $compileSelector = $null
+        $verificationMethod = 'dumpbin-object-undefined'
+        $verificationResult = 'dumpbin-unresolved-refs-verified'
+        if ($Configuration -eq 'Release') {
+            if (-not $CompileLogAfter.exists -or -not (Test-Sha256 $CompileLogAfter.sha256) -or
+                [UInt64]$CompileLogAfter.sizeBytes -lt 1) {
+                throw 'The Release provider compile log identity is invalid.'
             }
+            $compileLogText = Get-Content -LiteralPath $CompileLogPath -Raw -ErrorAction Stop
+            $compileLogReadAfter = Get-FileIdentity $CompileLogPath
+            if ([string]$compileLogReadAfter.sha256 -cne [string]$CompileLogAfter.sha256 -or
+                [UInt64]$compileLogReadAfter.sizeBytes -ne [UInt64]$CompileLogAfter.sizeBytes) {
+                throw 'The Release provider compile log changed during selector proof.'
+            }
+            $compileSelector = Assert-ProviderCompileSelector $compileLogText 'OutputServiceRustProvider.cpp' $Backend
+            $verificationMethod = 'msvc-ltcg-compile-selector'
+            $verificationResult = 'msvc-ltcg-compile-selector-verified'
         }
-        $symbols.Sort([StringComparer]::Ordinal)
+        else {
+            $symbols = @(Get-NormalizedProviderSymbols $objectDump)
+        }
         $expected = New-Object Collections.Generic.List[string]
         foreach ($expectedSymbol in $script:OutputProviderSymbols) {
             [void]$expected.Add(([string]$expectedSymbol).ToLowerInvariant())
         }
         $expected.Sort([StringComparer]::Ordinal)
-        if ($Backend -eq 'rust') {
-            if (($symbols.ToArray() -join '|') -cne ($expected.ToArray() -join '|')) {
+        if ($Configuration -ne 'Release' -and $Backend -eq 'rust') {
+            if (($symbols -join '|') -cne ($expected.ToArray() -join '|')) {
                 throw 'The Rust Output provider object does not reference the complete fixed v1 entrypoint set.'
             }
         }
-        elseif ($symbols.Count -ne 0) {
+        elseif ($Configuration -ne 'Release' -and $symbols.Count -ne 0) {
             throw 'The C++ Output provider object unexpectedly references Rust Output entrypoints.'
         }
-        return New-SelectorProof $ProviderObjectBefore $ProviderObjectAfter $symbols.ToArray() 'dumpbin-unresolved-refs-verified'
+        return New-SelectorProof $ProviderObjectBefore $ProviderObjectAfter $symbols $verificationResult $verificationMethod $objectFormat.format $CompileLogBefore $CompileLogAfter $compileSelector
     }
     finally {
         foreach ($temporary in @($OutputPath, $errorPath)) {
@@ -1313,6 +1455,17 @@ function New-BuildManifest {
         selectorProofSha256 = [string]$SelectorProof.selectorContractSha256
         providerObjectSha256Before = $SelectorProof.providerObjectSha256Before
         providerObjectSha256After = [string]$SelectorProof.providerObjectSha256After
+        providerObjectFormat = [string]$SelectorProof.providerObjectFormat
+        verificationMethod = [string]$SelectorProof.verificationMethod
+        compileLogExistsBefore = [bool]$SelectorProof.compileLogExistsBefore
+        compileLogExistsAfter = [bool]$SelectorProof.compileLogExistsAfter
+        compileLogSha256Before = $SelectorProof.compileLogSha256Before
+        compileLogSizeBytesBefore = [UInt64]$SelectorProof.compileLogSizeBytesBefore
+        compileLogSha256After = $SelectorProof.compileLogSha256After
+        compileLogSizeBytesAfter = [UInt64]$SelectorProof.compileLogSizeBytesAfter
+        compileLogProof = [bool]$SelectorProof.compileLogProof
+        compileCommandHasGl = [bool]$SelectorProof.compileCommandHasGl
+        compileCommandRustSelectorDefineCount = [int]$SelectorProof.compileCommandRustSelectorDefineCount
         canonicalRuntimeStage = $true
         transaction = [ordered]@{
             status = 'committed'
@@ -1420,6 +1573,63 @@ function Assert-BuildManifest {
         (@($actualDefinedSymbols) -join '|') -cne (@($canonicalDefinedSymbols) -join '|')) {
         throw 'The generated build manifest selector proof is stale or incomplete.'
     }
+    $expectedObjectFormat = [string](Get-PropertyValue $ExpectedSelectorProof @('providerObjectFormat'))
+    $actualObjectFormat = [string](Get-PropertyValue $selectorProof @('providerObjectFormat'))
+    $expectedVerificationMethod = [string](Get-PropertyValue $ExpectedSelectorProof @('verificationMethod'))
+    $actualVerificationMethod = [string](Get-PropertyValue $selectorProof @('verificationMethod'))
+    $expectedCompileProof = [bool](Get-PropertyValue $ExpectedSelectorProof @('compileLogProof'))
+    $actualCompileProof = [bool](Get-PropertyValue $selectorProof @('compileLogProof'))
+    $expectedCompileHasGl = [bool](Get-PropertyValue $ExpectedSelectorProof @('compileCommandHasGl'))
+    $actualCompileHasGl = [bool](Get-PropertyValue $selectorProof @('compileCommandHasGl'))
+    $expectedCompileSelectorCount = [int](Get-PropertyValue $ExpectedSelectorProof @('compileCommandRustSelectorDefineCount'))
+    $actualCompileSelectorCount = [int](Get-PropertyValue $selectorProof @('compileCommandRustSelectorDefineCount'))
+    $expectedCompileBeforeSize = [UInt64](Get-PropertyValue $ExpectedSelectorProof @('compileLogSizeBytesBefore'))
+    $actualCompileBeforeSize = [UInt64](Get-PropertyValue $selectorProof @('compileLogSizeBytesBefore'))
+    $expectedCompileAfterSize = [UInt64](Get-PropertyValue $ExpectedSelectorProof @('compileLogSizeBytesAfter'))
+    $actualCompileAfterSize = [UInt64](Get-PropertyValue $selectorProof @('compileLogSizeBytesAfter'))
+    if ($actualObjectFormat -cne $expectedObjectFormat -or
+        $actualVerificationMethod -cne $expectedVerificationMethod -or
+        $actualCompileProof -ne $expectedCompileProof -or
+        $actualCompileHasGl -ne $expectedCompileHasGl -or
+        $actualCompileSelectorCount -ne $expectedCompileSelectorCount -or
+        $actualCompileBeforeSize -ne $expectedCompileBeforeSize -or
+        $actualCompileAfterSize -ne $expectedCompileAfterSize -or
+        [bool](Get-PropertyValue $selectorProof @('compileLogExistsBefore')) -ne [bool](Get-PropertyValue $ExpectedSelectorProof @('compileLogExistsBefore')) -or
+        [bool](Get-PropertyValue $selectorProof @('compileLogExistsAfter')) -ne [bool](Get-PropertyValue $ExpectedSelectorProof @('compileLogExistsAfter')) -or
+        [string](Get-PropertyValue $selectorProof @('compileLogSha256Before')) -cne [string](Get-PropertyValue $ExpectedSelectorProof @('compileLogSha256Before')) -or
+        [string](Get-PropertyValue $selectorProof @('compileLogSha256After')) -cne [string](Get-PropertyValue $ExpectedSelectorProof @('compileLogSha256After'))) {
+        throw 'The generated build manifest selector format or compile proof is stale.'
+    }
+    if ([string](Get-PropertyValue $manifest @('providerObjectFormat')) -cne $actualObjectFormat -or
+        [string](Get-PropertyValue $manifest @('verificationMethod')) -cne $actualVerificationMethod -or
+        [bool](Get-PropertyValue $manifest @('compileLogExistsBefore')) -ne [bool](Get-PropertyValue $selectorProof @('compileLogExistsBefore')) -or
+        [bool](Get-PropertyValue $manifest @('compileLogExistsAfter')) -ne [bool](Get-PropertyValue $selectorProof @('compileLogExistsAfter')) -or
+        [string](Get-PropertyValue $manifest @('compileLogSha256Before')) -cne [string](Get-PropertyValue $selectorProof @('compileLogSha256Before')) -or
+        [UInt64](Get-PropertyValue $manifest @('compileLogSizeBytesBefore')) -ne $actualCompileBeforeSize -or
+        [string](Get-PropertyValue $manifest @('compileLogSha256After')) -cne [string](Get-PropertyValue $selectorProof @('compileLogSha256After')) -or
+        [UInt64](Get-PropertyValue $manifest @('compileLogSizeBytesAfter')) -ne $actualCompileAfterSize -or
+        [bool](Get-PropertyValue $manifest @('compileLogProof')) -ne $actualCompileProof -or
+        [bool](Get-PropertyValue $manifest @('compileCommandHasGl')) -ne $actualCompileHasGl -or
+        [int](Get-PropertyValue $manifest @('compileCommandRustSelectorDefineCount')) -ne $actualCompileSelectorCount) {
+        throw 'The generated build manifest top-level selector proof fields are stale.'
+    }
+    if ($Configuration -eq 'Release') {
+        if ($expectedProofResult -cne 'msvc-ltcg-compile-selector-verified' -or
+            $expectedObjectFormat -cne 'msvc-ltcg-anonymous' -or
+            -not $expectedCompileProof -or -not $expectedCompileHasGl -or
+            $expectedCompileAfterSize -lt 1 -or
+            ($Backend -eq 'rust' -and $expectedCompileSelectorCount -ne 1) -or
+            ($Backend -eq 'cpp' -and $expectedCompileSelectorCount -ne 0)) {
+            throw 'The Release build manifest lacks the required LTCG selector proof.'
+        }
+    }
+    else {
+        if ($expectedProofResult -cne 'dumpbin-unresolved-refs-verified' -or
+            $expectedObjectFormat -eq 'msvc-ltcg-anonymous' -or $expectedCompileProof -or
+            $actualCompileHasGl -or $actualCompileSelectorCount -ne 0) {
+            throw 'The Debug build manifest has an invalid selector proof format.'
+        }
+    }
     $selectorHash = Get-PropertyValue $manifest @('selectorProofSha256')
     if (-not (Test-Sha256 $selectorHash) -or [string]$selectorHash -ne [string]$ExpectedSelectorProof.selectorContractSha256) {
         throw 'The generated build manifest selector proof hash is invalid.'
@@ -1504,6 +1714,8 @@ function New-FailureEnvelope {
 
 function Invoke-SelfTest {
     Assert-BackendSelector
+    $selfTestConfiguration = $Configuration
+    $Configuration = 'Debug'
     $root = Join-Path $script:RepoRoot ('build/tmp/.output-startup-selftest-{0}' -f ([Guid]::NewGuid().ToString('N')))
     try {
         Assert-NoReparseAncestors $root
@@ -1572,7 +1784,7 @@ function Invoke-SelfTest {
         }
         catch { $archiveExactSetRejected = $true }
         if (-not $archiveExactSetRejected) { throw 'Self-test accepted an extra Rust Output provider archive export.' }
-        $selectorProof = New-SelectorProof ([pscustomobject]@{ exists = $false; sha256 = $null; sizeBytes = [UInt64]0 }) $artifact
+        $selectorProof = New-SelectorProof ([pscustomobject]@{ exists = $false; sha256 = $null; sizeBytes = [UInt64]0 }) $artifact @() 'dumpbin-unresolved-refs-verified' 'dumpbin-object-undefined' 'coff-symbols'
         $selectorProof = Add-ProviderArchiveProof $selectorProof $syntheticArchiveProof
         $manifest = New-BuildManifest $sourceState ([pscustomobject]@{ exists = $false; sha256 = $null; sizeBytes = [UInt64]0 }) $artifact $stage 'windows-selftest' ('2' * 64) 'active-power-plan:selftest' ('3' * 64) 'msvc-selftest' 'rust-selftest' ('4' * 64) ('5' * 64) ('6' * 64) ('7' * 64) ('8' * 64) $selectorProof
         $manifestPath = Join-Path $transaction 'build-manifest.json'
@@ -1604,6 +1816,40 @@ function Invoke-SelfTest {
             $rustSelectorProofVerified = $true
         }
         finally { $Backend = $savedBackend }
+        $rustLtcgSelectorVerified = $false
+        $cppLtcgSelectorVerified = $false
+        $missingGlRejected = $false
+        $duplicateSelectorRejected = $false
+        $ambiguousSourceRejected = $false
+        $wrongConfigObjectFormatRejected = $false
+        $syntheticProviderSource = '^C:\build\OutputServiceRustProvider.cpp'
+        $rustCompileLog = $syntheticProviderSource + "`r`n" + 'cl.exe /nologo /c /GL /D SAKURA_OUTPUT_BACKEND_RUST /FoOutputServiceRustProvider.obj'
+        $cppCompileLog = $syntheticProviderSource + "`r`n" + 'cl.exe /nologo /c /GL /FoOutputServiceRustProvider.obj'
+        $missingGlCompileLog = $syntheticProviderSource + "`r`n" + 'cl.exe /nologo /c /D SAKURA_OUTPUT_BACKEND_RUST /FoOutputServiceRustProvider.obj'
+        $duplicateSelectorCompileLog = $syntheticProviderSource + "`r`n" + 'cl.exe /nologo /c /GL /D SAKURA_OUTPUT_BACKEND_RUST /D SAKURA_OUTPUT_BACKEND_RUST /FoOutputServiceRustProvider.obj'
+        $ambiguousSourceCompileLog = $rustCompileLog + "`r`n" + $rustCompileLog
+        $anonymousObjectDump = 'File Type: ANONYMOUS OBJECT'
+        $coffObjectDump = 'File Type: COFF OBJECT'
+        $rustSelector = Assert-ProviderCompileSelector $rustCompileLog 'OutputServiceRustProvider.cpp' 'rust'
+        if (-not $rustSelector.hasGl -or $rustSelector.rustSelectorDefineCount -ne 1) { throw 'Self-test Rust LTCG selector proof failed.' }
+        $rustLtcgSelectorVerified = $true
+        $cppSelector = Assert-ProviderCompileSelector $cppCompileLog 'OutputServiceRustProvider.cpp' 'cpp'
+        if (-not $cppSelector.hasGl -or $cppSelector.rustSelectorDefineCount -ne 0) { throw 'Self-test C++ LTCG selector proof failed.' }
+        $cppLtcgSelectorVerified = $true
+        try { [void](Get-ProviderCompileSelector $missingGlCompileLog 'OutputServiceRustProvider.cpp') }
+        catch { $missingGlRejected = $true }
+        if (-not $missingGlRejected) { throw 'Self-test accepted a compile command without /GL.' }
+        try { [void](Assert-ProviderCompileSelector $duplicateSelectorCompileLog 'OutputServiceRustProvider.cpp' 'rust') }
+        catch { $duplicateSelectorRejected = $true }
+        if (-not $duplicateSelectorRejected) { throw 'Self-test accepted duplicate Rust selector defines.' }
+        try { [void](Get-ProviderCompileSelector $ambiguousSourceCompileLog 'OutputServiceRustProvider.cpp') }
+        catch { $ambiguousSourceRejected = $true }
+        if (-not $ambiguousSourceRejected) { throw 'Self-test accepted ambiguous provider source commands.' }
+        $formatFailures = 0
+        try { [void](Assert-ProviderObjectFormat $coffObjectDump 'Release') } catch { $formatFailures++ }
+        try { [void](Assert-ProviderObjectFormat $anonymousObjectDump 'Debug') } catch { $formatFailures++ }
+        if ($formatFailures -ne 2) { throw 'Self-test accepted a provider object format for the wrong configuration.' }
+        $wrongConfigObjectFormatRejected = $true
         $cleanupEnvelopeVerified = $false
         $syntheticCleanup = [ordered]@{
             attempted = $true
@@ -1642,6 +1888,12 @@ function Invoke-SelfTest {
             sourceFingerprintVerified = $true
             selectorProofVerified = $true
             rustSelectorProofVerified = $rustSelectorProofVerified
+            rustLtcgSelectorVerified = $rustLtcgSelectorVerified
+            cppLtcgSelectorVerified = $cppLtcgSelectorVerified
+            missingGlRejected = $missingGlRejected
+            duplicateSelectorRejected = $duplicateSelectorRejected
+            ambiguousSourceRejected = $ambiguousSourceRejected
+            wrongConfigObjectFormatRejected = $wrongConfigObjectFormatRejected
             archiveExportsVerified = $true
             archiveExactSetRejected = $archiveExactSetRejected
             cleanupEnvelopeVerified = $cleanupEnvelopeVerified
@@ -1658,6 +1910,7 @@ function Invoke-SelfTest {
     finally {
         if ($script:LockOwned) { try { [void](Release-ExclusiveLock) } catch { } }
         [void](Remove-OwnedDirectory $root)
+        $Configuration = $selfTestConfiguration
     }
 }
 
@@ -1695,6 +1948,7 @@ function Invoke-Producer {
         $context = 'msvc-x64-{0}' -f $Configuration.ToLowerInvariant()
         $artifactSource = Join-Path $script:RepoRoot ('x64/{0}/sakura.exe' -f $Configuration)
         $providerObjectSource = Join-Path $script:RepoRoot ('build/{0}/{1}/sakura_core/OutputServiceRustProvider.obj' -f $Platform, $Configuration)
+        $compileLogSource = Join-Path $script:RepoRoot ('build/{0}/{1}/sakura_core/sakura.tlog/CL.command.1.tlog' -f $Platform, $Configuration)
         $rustProfile = if ($Configuration -eq 'Debug') { 'debug' } else { 'release' }
         $rustArchiveSource = Join-Path $script:RepoRoot ('build/{0}/{1}/rust/native/x86_64-pc-windows-msvc/{2}/sakura_native_ffi.lib' -f $Platform, $Configuration, $rustProfile)
         $canonicalStage = Join-Path $script:RepoRoot ('build/staging/{0}/sakura-editor' -f $context)
@@ -1706,6 +1960,7 @@ function Invoke-Producer {
         $sourceBefore = Get-SourceState
         $artifactBefore = Get-OptionalFileIdentity $artifactSource
         $providerObjectBefore = Get-OptionalFileIdentity $providerObjectSource
+        $compileLogBefore = Get-OptionalFileIdentity $compileLogSource
         $windowsBefore = Get-WindowsImageIdentity
         $powerBefore = Get-PowerModeIdentity
         $msvcIdentity = Get-MsvcIdentity
@@ -1754,19 +2009,30 @@ function Invoke-Producer {
         $runtimeStageCommandSha256 = Get-TextSha256 ('stage-runtime|{0}|sakura_app|canonical' -f $context)
         $script:Stage = 'build'
         $script:BuildStarted = $true
+        $buildStartedUtc = [DateTime]::UtcNow
         $buildCommandText = '{0} x64 {1}' -f (ConvertTo-WindowsCommandLineArgument $buildBatch), $Configuration
         [void](Invoke-OwnedCommand $comspec (New-CmdCommandLine $buildCommandText $comspec) $script:RepoRoot $environmentBlock $TimeoutSeconds)
         $sourceAfterBuild = Get-SourceState
         Assert-SourceStateEqual $sourceBefore $sourceAfterBuild
         $artifactAfter = Get-FileIdentity $artifactSource
         $providerObjectAfter = Get-FileIdentity $providerObjectSource
+        $compileLogAfter = Get-FileIdentity $compileLogSource
+        if ($Configuration -eq 'Release') {
+            $providerObjectItem = Get-Item -LiteralPath $providerObjectSource -Force -ErrorAction Stop
+            $compileLogItem = Get-Item -LiteralPath $compileLogSource -Force -ErrorAction Stop
+            if ($providerObjectItem.LastWriteTimeUtc -le $buildStartedUtc -or
+                $compileLogItem.LastWriteTimeUtc -le $buildStartedUtc) {
+                throw 'Release provider object and compile log were not produced by this build.'
+            }
+        }
         $archiveProofOutput = Join-Path $transactionRoot 'archive-proof.txt'
         $selectorProofOutput = Join-Path $transactionRoot 'selector-proof.txt'
         $script:Stage = 'selector-proof'
         $archiveProof = Get-ProviderArchiveProof $rustArchiveSource $dumpbin $comspec $environmentBlock $script:RepoRoot $archiveProofOutput $TimeoutSeconds
-        $selectorProof = Get-SelectorProof $providerObjectBefore $providerObjectAfter $providerObjectSource $dumpbin $comspec $environmentBlock $script:RepoRoot $selectorProofOutput $TimeoutSeconds
+        $selectorProof = Get-SelectorProof $providerObjectBefore $providerObjectAfter $providerObjectSource $dumpbin $comspec $environmentBlock $script:RepoRoot $selectorProofOutput $TimeoutSeconds $compileLogBefore $compileLogAfter $compileLogSource
         $selectorProof = Add-ProviderArchiveProof $selectorProof $archiveProof
-        if ([string]$selectorProof.result -cne 'dumpbin-unresolved-refs-verified') { throw 'The Output selector proof did not come from dumpbin unresolved-reference verification.' }
+        $expectedSelectorResult = if ($Configuration -eq 'Release') { 'msvc-ltcg-compile-selector-verified' } else { 'dumpbin-unresolved-refs-verified' }
+        if ([string]$selectorProof.result -cne $expectedSelectorResult) { throw 'The Output selector proof did not use the expected configuration-specific verification.' }
         if ([UInt64]$artifactAfter.sizeBytes -lt 1) { throw 'The built sakura.exe is empty.' }
         $script:Stage = 'runtime-stage'
         $stageCommandText = '{0} -3 {1} --format json stage runtime --context {2} --product sakura_app' -f
