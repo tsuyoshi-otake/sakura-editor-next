@@ -31,6 +31,7 @@ $ErrorActionPreference = 'Stop'
 
 $script:SchemaVersion = 1
 $script:RepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$script:Stage = 'preflight'
 $script:ProbeFilter = 'CWorkbenchRuntime.CompileSelectedOutputProviderOwnsTheRuntimeLifecycle'
 $script:ProviderSymbols = @(
   'sakura_output_provider_create_v1',
@@ -114,7 +115,8 @@ function Get-SourceState {
   $status = (& git -C $script:RepoRoot status --porcelain=v1 --untracked-files=all 2>$null | Out-String)
   if ($LASTEXITCODE -ne 0) { throw 'Git source-state query failed.' }
   $canonical = ($status -replace "`r`n", "`n" -replace "`r", "`n").TrimEnd("`n")
-  $lines = if ([string]::IsNullOrEmpty($canonical)) { @() } else { @($canonical -split "`n") }
+  $lines = @()
+  if (-not [string]::IsNullOrEmpty($canonical)) { $lines = @($canonical -split "`n") }
   return [pscustomobject][ordered]@{
     head = $head.ToLowerInvariant()
     dirty = [bool]($lines.Count -ne 0)
@@ -436,8 +438,10 @@ function Invoke-Producer {
     if ([IO.Directory]::Exists($finalRoot) -or [IO.File]::Exists($finalRoot)) { throw 'Selected provider artifact already exists; refusing overwrite.' }
     $transaction = Join-Path $configurationRoot ('.{0}-transaction-{1}' -f $Backend, ([Guid]::NewGuid().ToString('N')))
     [void][IO.Directory]::CreateDirectory($transaction)
+    $script:Stage = 'source-state'
     $sourceBefore = Get-SourceState
     if ($sourceBefore.dirty) { throw 'Qualified provider artifact production requires a clean checkout.' }
+    $script:Stage = 'host-toolchain'
     $windowsBefore = Get-WindowsIdentity
     $powerBefore = Get-PowerIdentity
     $context = 'msvc-x64-{0}' -f $Configuration.ToLowerInvariant()
@@ -456,6 +460,7 @@ function Invoke-Producer {
     $environment = Get-EnvironmentOverrides
     $py = Resolve-Executable 'py.exe'
     $buildModel = Join-Path $script:RepoRoot 'tools/build/sakura_build.py'
+    $script:Stage = 'package-plan'
     $packagePlanResult = Invoke-OwnedProcess -FileName $py -Arguments ('-3 "{0}" --format json package plan sakura_app --context {1}' -f $buildModel, $context) -WorkingDirectory $script:RepoRoot -Environment $environment -ReturnOutput
     try { $packagePlan = $packagePlanResult.stdout | ConvertFrom-Json -ErrorAction Stop } catch { throw 'Canonical package plan is not valid JSON.' }
     $packagePlanHash = if ($null -ne $packagePlan.PSObject.Properties['plan_hash']) {
@@ -468,6 +473,7 @@ function Invoke-Producer {
     $packageCommandHash = Get-TextSha256 ('package-plan|{0}|x64|{1}' -f $Backend, $Configuration)
     $buildCommandHash = Get-TextSha256 ('build-sln.bat|x64|{0}|SAKURA_OUTPUT_BACKEND={1}|SAKURA_UTF16_BACKEND=cpp|SAKURA_OUTPUT_PRODUCTION_PACKAGE=false|SAKURA_UTF16_PRODUCTION_PACKAGE=false|SAKURA_UTF16_BENCHMARK_TELEMETRY=false|SAKURA_GENERATE_ASSEMBLY_LISTINGS=false|SKIP_CREATE_GITHASH=1|SAKURA_BUILD_JOBS={2}|MSBUILDDISABLENODEREUSE=1|VSLANG=1033' -f $Configuration, $Backend, $BuildParallelism)
     $cmd = Resolve-Executable 'cmd.exe'
+    $script:Stage = 'build'
     [void](Invoke-OwnedProcess -FileName $cmd -Arguments ('/d /s /c "call build-sln.bat x64 {0}"' -f $Configuration) -WorkingDirectory $script:RepoRoot -Environment $environment)
     Assert-SourceStateEqual $sourceBefore (Get-SourceState)
     $testsAfter = Get-FileIdentity $testsSource
@@ -477,8 +483,10 @@ function Invoke-Producer {
     [IO.File]::Copy($testsSource, $copiedTests, $false)
     $copiedIdentity = Get-FileIdentity $copiedTests
     if ($copiedIdentity.sha256 -cne $testsAfter.sha256 -or $copiedIdentity.sizeBytes -ne $testsAfter.sizeBytes) { throw 'Copied tests1 identity changed.' }
+    $script:Stage = 'selector-proof'
     $selectorProof = Get-SelectorProof $dumpbin $objectBefore $objectAfter $objectSource $archive $archiveSource
     $probeCommandHash = Get-TextSha256 ('tests1.exe|--gtest_filter={0}|--gtest_color=no|backend={1}' -f $script:ProbeFilter, $Backend)
+    $script:Stage = 'runtime-probe'
     [void](Invoke-OwnedProcess -FileName $copiedTests -Arguments ('--gtest_filter={0} --gtest_color=no' -f $script:ProbeFilter) -WorkingDirectory $transaction)
     $runtimeClosureHash = Get-TextSha256 ('exe-only|tests1={0}|size={1}' -f
       $copiedIdentity.sha256, ([UInt64]$copiedIdentity.sizeBytes).ToString([Globalization.CultureInfo]::InvariantCulture))
@@ -486,6 +494,7 @@ function Invoke-Producer {
     $powerAfter = Get-PowerIdentity
     if ($windowsBefore.sha256 -cne $windowsAfter.sha256 -or $powerBefore.sha256 -cne $powerAfter.sha256) { throw 'Host or power identity changed.' }
     Assert-SourceStateEqual $sourceBefore (Get-SourceState)
+    $script:Stage = 'manifest'
     $manifest = [ordered]@{
       schemaVersion = $script:SchemaVersion
       record = 'output-provider-build-manifest'
@@ -557,6 +566,7 @@ function Invoke-Producer {
     Write-JsonAtomic $manifestPath $manifest
     Assert-ProducedManifest $manifestPath $copiedIdentity $selectorProof $runtimeClosureHash
     if ((Get-FileSha256 $copiedTests) -cne $copiedIdentity.sha256) { throw 'Copied tests1 changed before publication.' }
+    $script:Stage = 'publication'
     [IO.Directory]::Move($transaction, $finalRoot)
     $transaction = $null
     $movedFinalRoot = $true
@@ -607,6 +617,6 @@ try {
   exit 0
 }
 catch {
-  Write-Error $_.Exception.Message
+  Write-Error ('provider artifact stage {0} failed: {1}' -f $script:Stage, $_.Exception.Message)
   exit 1
 }
