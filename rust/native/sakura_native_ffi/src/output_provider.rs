@@ -8,7 +8,7 @@
 #![allow(dead_code)]
 
 use std::collections::BTreeMap;
-use std::mem::{align_of, size_of};
+use std::mem::{align_of, offset_of, size_of};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
@@ -83,12 +83,122 @@ struct SnapshotMeasurement {
     receipt: SnapshotMeasureReceiptV1,
 }
 
+// ABI V1 is frozen at every field boundary. An incompatible change must use
+// a new ABI version and export family rather than updating these assertions.
+macro_rules! assert_abi_layout {
+    ($type:ty, $size:expr, $alignment:expr, { $($field:ident: $offset:expr),+ $(,)? }) => {
+        const _: () = {
+            assert!(size_of::<$type>() == $size);
+            assert!(align_of::<$type>() == $alignment);
+            $(assert!(offset_of!($type, $field) == $offset);)+
+        };
+    };
+}
+
 const _: () = {
-    assert!(size_of::<SnapshotMeasureReceiptV1>() == 48);
-    assert!(align_of::<SnapshotMeasureReceiptV1>() == 8);
-    assert!(size_of::<SakuraOutputProviderSnapshotInfoV1>() == 112);
-    assert!(size_of::<SakuraOutputProviderSnapshotBufferV1>() == 96);
+    assert!(size_of::<SakuraOutputProviderStatus>() == 4);
+    assert!(size_of::<SakuraOutputProviderOperationStatus>() == 4);
+    assert!(size_of::<SakuraOutputProviderReason>() == 4);
 };
+
+assert_abi_layout!(SakuraOutputProviderSpanV1, 40, 8, {
+    struct_size: 0,
+    abi_version: 4,
+    data: 8,
+    length: 16,
+    reserved: 24,
+});
+assert_abi_layout!(SakuraOutputProviderLimitsV1, 80, 8, {
+    struct_size: 0,
+    abi_version: 4,
+    maximum_owners: 8,
+    maximum_channels: 16,
+    maximum_text_bytes_per_channel: 24,
+    maximum_payload_bytes: 32,
+    maximum_log_entries_per_channel: 40,
+    maximum_remembered_operations: 48,
+    reserved: 56,
+});
+assert_abi_layout!(SakuraOutputProviderLogEntryV1, 112, 8, {
+    struct_size: 0,
+    abi_version: 4,
+    level: 8,
+    flags: 12,
+    message: 16,
+    source: 56,
+    reserved: 96,
+});
+assert_abi_layout!(SakuraOutputProviderRequestV1, 368, 8, {
+    struct_size: 0,
+    abi_version: 4,
+    operation_kind: 8,
+    channel_kind: 12,
+    flags: 16,
+    operation_id: 24,
+    expected_revision: 64,
+    owner_id: 72,
+    owner_generation: 112,
+    channel_id: 120,
+    label: 160,
+    metadata_language_id: 200,
+    metadata_source: 240,
+    payload: 280,
+    log_entries: 320,
+    log_entry_count: 328,
+    reserved: 336,
+});
+assert_abi_layout!(SakuraOutputProviderApplyResultV1, 32, 8, {
+    struct_size: 0,
+    abi_version: 4,
+    status: 8,
+    reason: 12,
+    revision: 16,
+    callback_drain_deferred: 24,
+    reserved: 25,
+});
+assert_abi_layout!(SakuraOutputProviderSnapshotReceiptV1, 48, 8, {
+    measurement_id: 0,
+    revision: 8,
+    dropped_notification_count: 16,
+    channel_count: 24,
+    encoded_size: 32,
+    stopped: 40,
+    active_channel_present: 41,
+    reserved: 42,
+});
+assert_abi_layout!(SakuraOutputProviderSnapshotInfoV1, 112, 8, {
+    struct_size: 0,
+    abi_version: 4,
+    revision: 8,
+    stopped: 16,
+    active_channel_present: 17,
+    reserved0: 18,
+    dropped_notification_count: 24,
+    channel_count: 32,
+    encoded_size: 40,
+    reserved: 48,
+    receipt: 64,
+});
+assert_abi_layout!(SakuraOutputProviderSnapshotBufferV1, 96, 8, {
+    struct_size: 0,
+    abi_version: 4,
+    data: 8,
+    capacity: 16,
+    length: 24,
+    reserved: 32,
+    receipt: 48,
+});
+assert_abi_layout!(SakuraOutputProviderActiveChannelV1, 64, 8, {
+    struct_size: 0,
+    abi_version: 4,
+    revision: 8,
+    present: 16,
+    reserved0: 17,
+    data: 24,
+    capacity: 32,
+    length: 40,
+    reserved: 48,
+});
 
 struct ProviderRegistry {
     next_token: u64,
@@ -1767,6 +1877,14 @@ mod tests {
         });
         assert_poison_snapshot_length(&nonzero_reserved);
 
+        let mut nonzero_receipt_reserved = snapshot_buffer(&mut storage);
+        nonzero_receipt_reserved.receipt.reserved[0] = 1;
+        // SAFETY: The destination receipt has nonzero reserved bytes.
+        assert_eq!(SakuraOutputProviderStatus::InvalidArgument, unsafe {
+            sakura_output_provider_snapshot_write_v1(token, &mut nonzero_receipt_reserved)
+        });
+        assert_poison_snapshot_length(&nonzero_receipt_reserved);
+
         let mut null_data = [];
         let mut null_destination = snapshot_buffer(&mut null_data);
         null_destination.capacity = 1;
@@ -2479,10 +2597,18 @@ mod tests {
                 exports.push(rest.split('(').next().unwrap_or_default());
             }
         }
-        assert_eq!(7, exports.len());
-        assert!(exports
-            .iter()
-            .all(|name| name.starts_with("sakura_output_provider_")));
+        assert_eq!(
+            [
+                "sakura_output_provider_create_v1",
+                "sakura_output_provider_apply_v1",
+                "sakura_output_provider_snapshot_measure_v1",
+                "sakura_output_provider_snapshot_write_v1",
+                "sakura_output_provider_active_channel_v1",
+                "sakura_output_provider_stop_v1",
+                "sakura_output_provider_destroy_v1",
+            ],
+            exports.as_slice()
+        );
         let forbidden = ["sakura_output_", "shadow_"].concat();
         assert!(!source.contains(&forbidden));
     }

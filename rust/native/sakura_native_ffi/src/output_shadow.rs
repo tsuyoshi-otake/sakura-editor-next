@@ -2231,7 +2231,80 @@ mod tests {
     }
 
     #[test]
-    fn fixed_abi_shapes_are_stable() {
+    fn fixed_abi_contract_is_stable() {
+        assert_eq!(1, ABI_VERSION_V1);
+        assert_eq!(1, REQUEST_HAS_EXPECTED_REVISION);
+        assert_eq!(2, REQUEST_PRESERVE_FOCUS);
+        assert_eq!(4, REQUEST_LANGUAGE_PRESENT);
+        assert_eq!(8, REQUEST_SOURCE_PRESENT);
+        assert_eq!(15, REQUEST_KNOWN_FLAGS);
+        assert_eq!(1, LOG_SOURCE_PRESENT);
+        assert_eq!(
+            [1, 2, 3, 4, 5, 6, 7, 8, 9],
+            [
+                OP_CREATE_CHANNEL,
+                OP_APPEND_OUTPUT,
+                OP_REPLACE_OUTPUT,
+                OP_APPEND_LOG,
+                OP_CLEAR,
+                OP_SHOW,
+                OP_HIDE,
+                OP_DISPOSE,
+                OP_DISPOSE_OWNER,
+            ]
+        );
+        assert_eq!([0, 1], [CHANNEL_KIND_OUTPUT, CHANNEL_KIND_LOG]);
+        assert_eq!(
+            [0, 1, 2, 3, 4],
+            [LOG_TRACE, LOG_DEBUG, LOG_INFO, LOG_WARNING, LOG_ERROR]
+        );
+        assert_eq!(b"SAKURA_OUTPUT_MODEL_V1\0", SNAPSHOT_MAGIC);
+        assert_eq!(
+            [0, 1, 2, 3, 4, 5],
+            [
+                SakuraOutputShadowStatus::Ok as u32,
+                SakuraOutputShadowStatus::InvalidArgument as u32,
+                SakuraOutputShadowStatus::InvalidHandle as u32,
+                SakuraOutputShadowStatus::Stopped as u32,
+                SakuraOutputShadowStatus::InsufficientCapacity as u32,
+                SakuraOutputShadowStatus::InternalError as u32,
+            ]
+        );
+        assert_eq!(
+            [0, 1, 2, 3, 4, 5, 6, 7],
+            [
+                SakuraOutputShadowOperationStatus::Succeeded as u32,
+                SakuraOutputShadowOperationStatus::Replayed as u32,
+                SakuraOutputShadowOperationStatus::NotApplicable as u32,
+                SakuraOutputShadowOperationStatus::Rejected as u32,
+                SakuraOutputShadowOperationStatus::Conflict as u32,
+                SakuraOutputShadowOperationStatus::StaleRevision as u32,
+                SakuraOutputShadowOperationStatus::RevisionExhausted as u32,
+                SakuraOutputShadowOperationStatus::Stopped as u32,
+            ]
+        );
+        assert_eq!(
+            [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+            [
+                SakuraOutputShadowReason::None as u32,
+                SakuraOutputShadowReason::InvalidOperationId as u32,
+                SakuraOutputShadowReason::InvalidOwner as u32,
+                SakuraOutputShadowReason::InvalidChannelId as u32,
+                SakuraOutputShadowReason::InvalidLabel as u32,
+                SakuraOutputShadowReason::InvalidMetadata as u32,
+                SakuraOutputShadowReason::InvalidPayload as u32,
+                SakuraOutputShadowReason::PayloadLimitExceeded as u32,
+                SakuraOutputShadowReason::OwnerLimitExceeded as u32,
+                SakuraOutputShadowReason::ChannelLimitExceeded as u32,
+                SakuraOutputShadowReason::TextLimitExceeded as u32,
+                SakuraOutputShadowReason::LogEntryLimitExceeded as u32,
+                SakuraOutputShadowReason::ChannelNotFound as u32,
+                SakuraOutputShadowReason::OwnerGenerationConflict as u32,
+                SakuraOutputShadowReason::ChannelKindMismatch as u32,
+                SakuraOutputShadowReason::OperationIdConflict as u32,
+                SakuraOutputShadowReason::ExpectedRevisionMismatch as u32,
+            ]
+        );
         assert_eq!(40, size_of::<SakuraOutputShadowSpanV1>());
         assert_eq!(80, size_of::<SakuraOutputShadowLimitsV1>());
         assert_eq!(112, size_of::<SakuraOutputShadowLogEntryV1>());
@@ -2240,7 +2313,6 @@ mod tests {
         assert_eq!(64, size_of::<SakuraOutputShadowSnapshotInfoV1>());
         assert_eq!(48, size_of::<SakuraOutputShadowSnapshotBufferV1>());
         assert_eq!(64, size_of::<SakuraOutputShadowActiveChannelV1>());
-        assert_eq!(0, SakuraOutputShadowStatus::Ok as u32);
     }
 
     #[test]
