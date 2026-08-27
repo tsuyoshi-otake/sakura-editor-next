@@ -542,6 +542,10 @@ def _derive_selectors(source: Mapping[str, object], backend: str) -> dict[str, o
     observed = {_normalise_backend(value) for value in output_values}
     observed.discard(None)
     expected = _artifact_backend_candidates(source) or (set(_backend_candidates(source)) & {"cpp", "rust"})
+    if "paired" in observed:
+        if expected != {"cpp", "rust"}:
+            _fail("OUTPUT_LEDGER_SELECTOR_MISMATCH", "paired selector requires independently observed cpp and rust artifacts")
+        observed.remove("paired")
     if expected and observed and (observed - expected or (len(expected) == 1 and len(observed) > 1)):
         _fail("OUTPUT_LEDGER_SELECTOR_MISMATCH", "selector and provider evidence disagree")
     utf16 = _get(source, "utf16Backend") or _get(provenance, "utf16Backend") or _get(environment, "SAKURA_UTF16_BACKEND")

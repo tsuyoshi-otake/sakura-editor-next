@@ -215,6 +215,25 @@ def _incremental_verifier_fixture() -> dict[str, object]:
 
 
 class OutputEvidenceLedgerTests(unittest.TestCase):
+    def test_paired_provider_analysis_requires_both_observed_artifacts(self) -> None:
+        source = _fixture("cpp", "Debug")
+        source["record"] = "analysis"
+        source["backend"] = "paired(cpp,rust)"
+        source["outputBackend"] = "paired(cpp,rust)"
+        source["provenance"] = {"outputBackend": "paired(cpp,rust)", "utf16Backend": "cpp"}
+        source["artifacts"] = [
+            {"backend": "cpp", "artifactSha256": _hash("4"), "sizeBytes": 1001},
+            {"backend": "rust", "artifactSha256": _hash("6"), "sizeBytes": 1002},
+        ]
+        extracted = extract_output_evidence(source)
+        self.assertEqual("paired", extracted["backend"])
+        self.assertEqual(["cpp", "rust"], extracted["backends"])
+
+        incomplete = copy.deepcopy(source)
+        incomplete["artifacts"] = incomplete["artifacts"][:1]
+        with self.assertRaisesRegex(OutputEvidenceLedgerError, "paired selector"):
+            extract_output_evidence(incomplete)
+
     def test_cpp_and_rust_debug_and_release_cells_are_derived(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             ledger = Path(temporary) / "ledger"
