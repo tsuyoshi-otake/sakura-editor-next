@@ -23,20 +23,115 @@
 namespace workbench::output {
 namespace {
 
+// The provider archive and its fixed-width descriptors are an x64-only ABI.
+// Keep this assertion close to the conversions so an accidental Win32 build
+// fails with an explicit contract error instead of relying on layout fallout.
+static_assert(sizeof(void*) == sizeof(std::uint64_t),
+	"Sakura Output provider ABI V1 requires 64-bit pointers");
+
+// These assertions are deliberately exhaustive.  The provider ABI carries
+// operation/channel/log discriminants as uint32_t values, while the C++ model
+// uses smaller scoped enums.  Any insertion, reordering, or ABI renumbering
+// must therefore fail at this boundary rather than silently changing model
+// semantics.
 static_assert(static_cast<std::uint32_t>(EOutputChannelKind::Output)
 	== SAKURA_OUTPUT_PROVIDER_CHANNEL_OUTPUT);
 static_assert(static_cast<std::uint32_t>(EOutputChannelKind::Log)
 	== SAKURA_OUTPUT_PROVIDER_CHANNEL_LOG);
+
 static_assert(static_cast<std::uint32_t>(EOutputLogLevel::Trace) == 0);
+static_assert(static_cast<std::uint32_t>(EOutputLogLevel::Debug) == 1);
+static_assert(static_cast<std::uint32_t>(EOutputLogLevel::Info) == 2);
+static_assert(static_cast<std::uint32_t>(EOutputLogLevel::Warning) == 3);
 static_assert(static_cast<std::uint32_t>(EOutputLogLevel::Error) == 4);
+
 static_assert(static_cast<std::uint32_t>(EOutputOperationStatus::Succeeded)
 	== static_cast<std::uint32_t>(SakuraOutputProviderOperationStatus::Succeeded));
+static_assert(static_cast<std::uint32_t>(EOutputOperationStatus::Replayed)
+	== static_cast<std::uint32_t>(SakuraOutputProviderOperationStatus::Replayed));
+static_assert(static_cast<std::uint32_t>(EOutputOperationStatus::NotApplicable)
+	== static_cast<std::uint32_t>(SakuraOutputProviderOperationStatus::NotApplicable));
+static_assert(static_cast<std::uint32_t>(EOutputOperationStatus::Rejected)
+	== static_cast<std::uint32_t>(SakuraOutputProviderOperationStatus::Rejected));
+static_assert(static_cast<std::uint32_t>(EOutputOperationStatus::Conflict)
+	== static_cast<std::uint32_t>(SakuraOutputProviderOperationStatus::Conflict));
+static_assert(static_cast<std::uint32_t>(EOutputOperationStatus::StaleRevision)
+	== static_cast<std::uint32_t>(SakuraOutputProviderOperationStatus::StaleRevision));
+static_assert(static_cast<std::uint32_t>(EOutputOperationStatus::RevisionExhausted)
+	== static_cast<std::uint32_t>(SakuraOutputProviderOperationStatus::RevisionExhausted));
 static_assert(static_cast<std::uint32_t>(EOutputOperationStatus::Stopped)
 	== static_cast<std::uint32_t>(SakuraOutputProviderOperationStatus::Stopped));
+
 static_assert(static_cast<std::uint32_t>(EOutputOperationReason::None)
 	== static_cast<std::uint32_t>(SakuraOutputProviderReason::None));
+static_assert(static_cast<std::uint32_t>(EOutputOperationReason::InvalidOperationId)
+	== static_cast<std::uint32_t>(SakuraOutputProviderReason::InvalidOperationId));
+static_assert(static_cast<std::uint32_t>(EOutputOperationReason::InvalidOwner)
+	== static_cast<std::uint32_t>(SakuraOutputProviderReason::InvalidOwner));
+static_assert(static_cast<std::uint32_t>(EOutputOperationReason::InvalidChannelId)
+	== static_cast<std::uint32_t>(SakuraOutputProviderReason::InvalidChannelId));
+static_assert(static_cast<std::uint32_t>(EOutputOperationReason::InvalidLabel)
+	== static_cast<std::uint32_t>(SakuraOutputProviderReason::InvalidLabel));
+static_assert(static_cast<std::uint32_t>(EOutputOperationReason::InvalidMetadata)
+	== static_cast<std::uint32_t>(SakuraOutputProviderReason::InvalidMetadata));
+static_assert(static_cast<std::uint32_t>(EOutputOperationReason::InvalidPayload)
+	== static_cast<std::uint32_t>(SakuraOutputProviderReason::InvalidPayload));
+static_assert(static_cast<std::uint32_t>(EOutputOperationReason::PayloadLimitExceeded)
+	== static_cast<std::uint32_t>(SakuraOutputProviderReason::PayloadLimitExceeded));
+static_assert(static_cast<std::uint32_t>(EOutputOperationReason::OwnerLimitExceeded)
+	== static_cast<std::uint32_t>(SakuraOutputProviderReason::OwnerLimitExceeded));
+static_assert(static_cast<std::uint32_t>(EOutputOperationReason::ChannelLimitExceeded)
+	== static_cast<std::uint32_t>(SakuraOutputProviderReason::ChannelLimitExceeded));
+static_assert(static_cast<std::uint32_t>(EOutputOperationReason::TextLimitExceeded)
+	== static_cast<std::uint32_t>(SakuraOutputProviderReason::TextLimitExceeded));
+static_assert(static_cast<std::uint32_t>(EOutputOperationReason::LogEntryLimitExceeded)
+	== static_cast<std::uint32_t>(SakuraOutputProviderReason::LogEntryLimitExceeded));
+static_assert(static_cast<std::uint32_t>(EOutputOperationReason::ChannelNotFound)
+	== static_cast<std::uint32_t>(SakuraOutputProviderReason::ChannelNotFound));
+static_assert(static_cast<std::uint32_t>(EOutputOperationReason::OwnerGenerationConflict)
+	== static_cast<std::uint32_t>(SakuraOutputProviderReason::OwnerGenerationConflict));
+static_assert(static_cast<std::uint32_t>(EOutputOperationReason::ChannelKindMismatch)
+	== static_cast<std::uint32_t>(SakuraOutputProviderReason::ChannelKindMismatch));
+static_assert(static_cast<std::uint32_t>(EOutputOperationReason::OperationIdConflict)
+	== static_cast<std::uint32_t>(SakuraOutputProviderReason::OperationIdConflict));
 static_assert(static_cast<std::uint32_t>(EOutputOperationReason::ExpectedRevisionMismatch)
 	== static_cast<std::uint32_t>(SakuraOutputProviderReason::ExpectedRevisionMismatch));
+
+// Accepted-commit operation kinds use zero-based C++ discriminants and
+// one-based provider request operation codes.
+static_assert(static_cast<std::uint32_t>(EOutputAcceptedCommitKind::CreateChannel) + 1U
+	== SAKURA_OUTPUT_PROVIDER_OP_CREATE_CHANNEL);
+static_assert(static_cast<std::uint32_t>(EOutputAcceptedCommitKind::AppendOutput) + 1U
+	== SAKURA_OUTPUT_PROVIDER_OP_APPEND_OUTPUT);
+static_assert(static_cast<std::uint32_t>(EOutputAcceptedCommitKind::ReplaceOutput) + 1U
+	== SAKURA_OUTPUT_PROVIDER_OP_REPLACE_OUTPUT);
+static_assert(static_cast<std::uint32_t>(EOutputAcceptedCommitKind::AppendLog) + 1U
+	== SAKURA_OUTPUT_PROVIDER_OP_APPEND_LOG);
+static_assert(static_cast<std::uint32_t>(EOutputAcceptedCommitKind::Clear) + 1U
+	== SAKURA_OUTPUT_PROVIDER_OP_CLEAR);
+static_assert(static_cast<std::uint32_t>(EOutputAcceptedCommitKind::Show) + 1U
+	== SAKURA_OUTPUT_PROVIDER_OP_SHOW);
+static_assert(static_cast<std::uint32_t>(EOutputAcceptedCommitKind::Hide) + 1U
+	== SAKURA_OUTPUT_PROVIDER_OP_HIDE);
+static_assert(static_cast<std::uint32_t>(EOutputAcceptedCommitKind::Dispose) + 1U
+	== SAKURA_OUTPUT_PROVIDER_OP_DISPOSE);
+static_assert(static_cast<std::uint32_t>(EOutputAcceptedCommitKind::DisposeOwner) + 1U
+	== SAKURA_OUTPUT_PROVIDER_OP_DISPOSE_OWNER);
+
+// ToBoundaryStatus intentionally reserves NotCalled as the zero value, so
+// every ABI status maps to the following provider-health status.
+static_assert(static_cast<std::uint32_t>(SakuraOutputProviderStatus::Ok) + 1U
+	== static_cast<std::uint32_t>(EOutputProviderBoundaryStatus::Ok));
+static_assert(static_cast<std::uint32_t>(SakuraOutputProviderStatus::InvalidArgument) + 1U
+	== static_cast<std::uint32_t>(EOutputProviderBoundaryStatus::InvalidArgument));
+static_assert(static_cast<std::uint32_t>(SakuraOutputProviderStatus::InvalidHandle) + 1U
+	== static_cast<std::uint32_t>(EOutputProviderBoundaryStatus::InvalidHandle));
+static_assert(static_cast<std::uint32_t>(SakuraOutputProviderStatus::Stopped) + 1U
+	== static_cast<std::uint32_t>(EOutputProviderBoundaryStatus::Stopped));
+static_assert(static_cast<std::uint32_t>(SakuraOutputProviderStatus::InsufficientCapacity) + 1U
+	== static_cast<std::uint32_t>(EOutputProviderBoundaryStatus::InsufficientCapacity));
+static_assert(static_cast<std::uint32_t>(SakuraOutputProviderStatus::InternalError) + 1U
+	== static_cast<std::uint32_t>(EOutputProviderBoundaryStatus::InternalError));
 
 OutputServiceLimits NormalizeLimits(OutputServiceLimits limits) noexcept
 {
