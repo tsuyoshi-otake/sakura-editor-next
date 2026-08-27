@@ -862,7 +862,11 @@ def _status_records(source: Mapping[str, object]) -> tuple[list[dict[str, object
                         ):
                             bounded = _scalar(item_value, f"{child_prefix}.{item_key}")
                             records.append({"field": f"{child_prefix}.{item_key}"[:MAX_STRING_LENGTH], "value": bounded})
-                elif lowered in status_names and isinstance(child, (str, bool, int, float)):
+                elif (
+                    len(records) < MAX_STATUS_RECORDS
+                    and lowered in status_names
+                    and isinstance(child, (str, bool, int, float))
+                ):
                     bounded = _scalar(child, child_prefix)
                     records.append({"field": child_prefix[:MAX_STRING_LENGTH], "value": bounded})
                 if isinstance(child, (Mapping, list)):

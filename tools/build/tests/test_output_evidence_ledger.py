@@ -105,6 +105,115 @@ def _fixture(backend: str, configuration: str, *, status: str = "passed", run: i
     }
 
 
+def _incremental_verifier_fixture() -> dict[str, object]:
+    """Return a passed six-phase verifier report with bounded nested status data."""
+
+    phase_names = ("baseline", "no_op_1", "no_op_2", "no_op_3", "rust_source", "cpp_provider")
+    action_counts = {
+        "cargo": 1,
+        "cargo-preflight": 0,
+        "rustc": 0,
+        "cl": 1,
+        "link": 1,
+        "lib": 0,
+        "rc": 0,
+        "mt": 0,
+        "cmake": 0,
+        "senp-tool": 0,
+        "vcpkg-applocal": 1,
+        "delete": 0,
+        "unexpected_tool": 0,
+    }
+    phases = []
+    for index, name in enumerate(phase_names):
+        phases.append(
+            {
+                "name": name,
+                "result": {
+                    "type": "ok",
+                    "phase": name,
+                    "exitCode": 0,
+                    "durationSeconds": 1.0 + index,
+                    "observedExpectedHelperCount": 0,
+                    "postCleanupSurvivorCount": 0,
+                },
+                "diagnostics": {
+                    "available": True,
+                    "byteCount": 1000 + index,
+                    "lineCount": 10 + index,
+                    "sha256": _hash(str(index + 1)),
+                    "errorCodes": {"C180": 1},
+                    "errorCodesTruncated": False,
+                },
+                "diagnosticsParseFailed": False,
+                "actionCounts": action_counts,
+                "actions": [
+                    {
+                        "phase": name,
+                        "kind": "cl",
+                        "operation": "invoke",
+                        "project": "sakura_core/sakura.vcxproj",
+                        "sourcePaths": "sakura_core/workbench/output/OutputServiceRustProvider.cpp",
+                    }
+                ],
+                "actionRecordCount": 1,
+                "retainedActionCount": 1,
+                "unretainedActionCount": 0,
+                "workActionCount": 1,
+                "closure": {"type": "ok", "phase": name},
+                "closureProofAvailable": True,
+                "artifactChanges": [],
+                "artifactsBefore": [],
+                "artifactsAfter": [],
+                "logAvailable": True,
+                "actionsTruncated": False,
+                "unexpectedToolNames": [],
+                "unexpectedToolNamesTruncated": False,
+            }
+        )
+    return {
+        "schemaVersion": 1,
+        "verifier": "verify-native-rust-incremental.ps1",
+        "payloadFree": True,
+        "status": "passed",
+        "phaseOrder": list(phase_names),
+        "phases": phases,
+        "configuration": {
+            "platform": "x64",
+            "configuration": "Debug",
+            "environment": {
+                "SAKURA_OUTPUT_BACKEND": "cpp",
+                "SAKURA_UTF16_BACKEND": "cpp",
+                "SAKURA_OUTPUT_PRODUCTION_PACKAGE": "false",
+                "SAKURA_UTF16_PRODUCTION_PACKAGE": "false",
+            },
+        },
+        "sourceCommit": "a" * 40,
+        "sourceDirty": False,
+        "sourceStatusSha256": _hash("b"),
+        "host": {
+            "osVersion": "Windows 11 10.0.26200.0",
+            "architecture": "X64",
+            "cpuManufacturer": "AuthenticAMD",
+            "cpuModel": "AMD Ryzen 7 9700X",
+            "physicalCores": 8,
+            "logicalProcessors": 16,
+        },
+        "toolchain": {
+            "msvc": "MSVC 19.40",
+            "rust": "rustc 1.88.0",
+            "rustLockSha256": _hash("c"),
+            "packagePlanSha256": _hash("d"),
+        },
+        "packagePlanSha256": _hash("d"),
+        "dependencyClosureSha256": _hash("e"),
+        "packageRestore": {"status": "ok"},
+        "sample": {"sha256": _hash("f"), "sizeBytes": 4096},
+        "seed": 274001,
+        "scripts": {"pairedRunnerSha256": _hash("0")},
+    }
+
+
 class OutputEvidenceLedgerTests(unittest.TestCase):
     def test_cpp_and_rust_debug_and_release_cells_are_derived(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -227,6 +336,19 @@ class OutputEvidenceLedgerTests(unittest.TestCase):
             self.assertEqual(record["sourceEvidenceKind"], "native-rust-incremental")
             self.assertFalse(record["source"]["complete"])
             self.assertFalse(record["host"]["complete"])
+
+    def test_passed_incremental_verifier_six_phases_respects_status_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            ledger = Path(temporary) / "ledger"
+            result = append_output_evidence(ledger, _incremental_verifier_fixture())
+            record = json.loads(next((ledger / "records").iterdir()).read_text(encoding="utf-8"))
+            self.assertEqual(result["backend"], "cpp")
+            self.assertEqual(record["sourceEvidenceKind"], "native-rust-incremental")
+            self.assertEqual(len(record["results"]["statuses"]), 128)
+            self.assertTrue(record["results"]["statusesTruncated"])
+            verification = verify_output_evidence_ledger(ledger)
+            self.assertTrue(verification["ok"], verification)
+            self.assertEqual(verification["recordCount"], 1)
 
     def test_existing_paired_and_provider_evidence_are_accepted(self) -> None:
         paired_files = sorted((REPOSITORY_ROOT / "build" / "evidence").glob("output-startup-smoke-*/results/paired-startup-*.json"))
