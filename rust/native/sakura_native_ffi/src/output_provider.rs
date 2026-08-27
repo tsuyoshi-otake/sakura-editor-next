@@ -949,6 +949,8 @@ mod tests {
     use std::sync::{Arc, Barrier};
     use std::thread;
 
+    type FieldMutation<T> = (&'static str, fn(&mut T));
+
     fn limits() -> SakuraOutputProviderLimitsV1 {
         SakuraOutputProviderLimitsV1 {
             struct_size: size_of::<SakuraOutputProviderLimitsV1>() as u32,
@@ -1330,6 +1332,88 @@ mod tests {
     }
 
     #[test]
+    fn provider_snapshot_write_rejects_each_mutated_semantic_receipt_field_without_consuming_it() {
+        let token = create_provider_token();
+        let create = create_request(b"receipt-fields-create", b"owner", b"channel", b"Label");
+        let mut result = poison_result();
+        // SAFETY: The request and result satisfy the V1 copied ABI contract.
+        assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
+            sakura_output_provider_apply_v1(token, &create, &mut result)
+        });
+
+        let mut info = poison_info();
+        // SAFETY: The info slot is writable local V1 storage.
+        assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
+            sakura_output_provider_snapshot_measure_v1(token, &mut info)
+        });
+        assert!(info.encoded_size > 0);
+
+        let receipt_mutations: [FieldMutation<SakuraOutputProviderSnapshotReceiptV1>; 7] = [
+            ("measurement_id", |receipt| {
+                receipt.measurement_id = receipt.measurement_id.wrapping_add(1)
+            }),
+            ("revision", |receipt| {
+                receipt.revision = receipt.revision.wrapping_add(1)
+            }),
+            ("dropped_notification_count", |receipt| {
+                receipt.dropped_notification_count =
+                    receipt.dropped_notification_count.wrapping_add(1)
+            }),
+            ("channel_count", |receipt| {
+                receipt.channel_count = receipt.channel_count.wrapping_add(1)
+            }),
+            ("encoded_size", |receipt| {
+                receipt.encoded_size = receipt.encoded_size.wrapping_add(1)
+            }),
+            ("stopped", |receipt| receipt.stopped ^= 1),
+            ("active_channel_present", |receipt| {
+                receipt.active_channel_present ^= 1
+            }),
+        ];
+
+        for (field, mutate) in receipt_mutations {
+            let mut forged_receipt = info.receipt;
+            mutate(&mut forged_receipt);
+            assert_ne!(info.receipt, forged_receipt, "receipt mutation {field}");
+
+            let mut forged_storage = vec![0xa5_u8; info.encoded_size as usize];
+            let mut forged_buffer =
+                snapshot_buffer_with_receipt(&mut forged_storage, forged_receipt);
+            // SAFETY: The forged descriptor and destination are caller-owned
+            // and bounded; only one semantic receipt field is mutated.
+            let forged_status =
+                unsafe { sakura_output_provider_snapshot_write_v1(token, &mut forged_buffer) };
+            assert_eq!(
+                SakuraOutputProviderStatus::InvalidArgument,
+                forged_status,
+                "mutated receipt {field} must be rejected"
+            );
+            assert_poison_snapshot_length(&forged_buffer);
+            assert_eq!(forged_receipt, forged_buffer.receipt);
+            assert!(forged_storage.iter().all(|value| *value == 0xa5));
+
+            let mut valid_storage = vec![0xa5_u8; info.encoded_size as usize];
+            let mut valid_buffer = snapshot_buffer_with_receipt(&mut valid_storage, info.receipt);
+            // SAFETY: The original receipt and destination remain valid and
+            // prove that the forged attempt did not consume the measurement.
+            let valid_status =
+                unsafe { sakura_output_provider_snapshot_write_v1(token, &mut valid_buffer) };
+            assert_eq!(
+                SakuraOutputProviderStatus::Ok,
+                valid_status,
+                "original receipt must remain usable after mutating {field}"
+            );
+            assert_eq!(info.encoded_size, valid_buffer.length);
+        }
+
+        let mut token = token;
+        // SAFETY: The token slot is valid caller-owned storage.
+        let destroy_status = unsafe { sakura_output_provider_destroy_v1(&mut token) };
+        assert_eq!(SakuraOutputProviderStatus::Ok, destroy_status);
+        assert_eq!(0, token);
+    }
+
+    #[test]
     fn provider_create_rejects_bad_headers_and_pointer_ranges() {
         let good_limits = limits();
         let mut token = 0xfeed_beef_u64;
@@ -1636,12 +1720,100 @@ mod tests {
         });
         assert_poison_result(&result);
 
+        let log_entry_header_mutations: [FieldMutation<SakuraOutputProviderLogEntryV1>; 3] = [
+            ("struct_size", |entry| entry.struct_size -= 1),
+            ("abi_version", |entry| entry.abi_version = 2),
+            ("reserved", |entry| entry.reserved[0] = 1),
+        ];
+        for (field, mutate) in log_entry_header_mutations {
+            let mut entry = valid_log_entry(b"message");
+            mutate(&mut entry);
+            let malformed_log_request = append_log_request(
+                b"bad-log-entry-header",
+                b"channel",
+                std::slice::from_ref(&entry),
+            );
+            // SAFETY: The log entry and request are local storage with one
+            // deliberately malformed nested entry header.
+            let status = unsafe {
+                sakura_output_provider_apply_v1(token, &malformed_log_request, &mut result)
+            };
+            assert_eq!(
+                SakuraOutputProviderStatus::InvalidArgument,
+                status,
+                "nested log entry {field} must be rejected"
+            );
+            assert_poison_result(&result);
+        }
+
         let mut overflowing_log_count = empty_request(b"bad-log-count", 4);
         overflowing_log_count.log_entries = ptr::null();
         overflowing_log_count.log_entry_count = u64::MAX;
-        // SAFETY: The count overflow is rejected before any log array read.
+        // SAFETY: The null log array and oversized count are rejected before
+        // any log array read.
+        let null_count_status =
+            unsafe { sakura_output_provider_apply_v1(token, &overflowing_log_count, &mut result) };
+        assert_eq!(
+            SakuraOutputProviderStatus::InvalidArgument,
+            null_count_status
+        );
+        assert_poison_result(&result);
+
+        let overflowing_log_entry = valid_log_entry(b"message");
+        let mut overflowing_log_byte_count = empty_request(b"bad-log-byte-count", 4);
+        overflowing_log_byte_count.log_entries = &overflowing_log_entry;
+        overflowing_log_byte_count.log_entry_count = isize::MAX as u64;
+        // SAFETY: The aligned non-null pointer and deliberately overflowing
+        // count exercise checked element-size multiplication before any log
+        // array read.
+        let byte_count_status = unsafe {
+            sakura_output_provider_apply_v1(token, &overflowing_log_byte_count, &mut result)
+        };
+        assert_eq!(
+            SakuraOutputProviderStatus::InvalidArgument,
+            byte_count_status
+        );
+        assert_poison_result(&result);
+
+        let nonnull_span_data = [0_u8];
+        let mut overflowing_span_length = valid;
+        overflowing_span_length.payload = SakuraOutputProviderSpanV1 {
+            data: nonnull_span_data.as_ptr(),
+            length: (isize::MAX as u64).saturating_add(1),
+            ..span(&[])
+        };
+        // SAFETY: The deliberately non-null byte span exceeds the isize
+        // addressable length bound and must be rejected before a slice is
+        // constructed.
         assert_eq!(SakuraOutputProviderStatus::InvalidArgument, unsafe {
-            sakura_output_provider_apply_v1(token, &overflowing_log_count, &mut result)
+            sakura_output_provider_apply_v1(token, &overflowing_span_length, &mut result)
+        });
+        assert_poison_result(&result);
+
+        let mut metadata_language_without_flag = valid;
+        metadata_language_without_flag.metadata_language_id = span(b"en");
+        // SAFETY: The request has a non-empty optional metadata span while
+        // its presence flag is deliberately clear.
+        assert_eq!(SakuraOutputProviderStatus::InvalidArgument, unsafe {
+            sakura_output_provider_apply_v1(token, &metadata_language_without_flag, &mut result)
+        });
+        assert_poison_result(&result);
+
+        let mut metadata_source_without_flag = valid;
+        metadata_source_without_flag.metadata_source = span(b"source");
+        // SAFETY: The request has a non-empty optional metadata span while
+        // its presence flag is deliberately clear.
+        assert_eq!(SakuraOutputProviderStatus::InvalidArgument, unsafe {
+            sakura_output_provider_apply_v1(token, &metadata_source_without_flag, &mut result)
+        });
+        assert_poison_result(&result);
+
+        let mut unknown_request_flag = valid;
+        unknown_request_flag.flags = 1 << 31;
+        // SAFETY: The request has an unknown V1 flag bit and must be rejected
+        // before any operation-level result can be produced.
+        assert_eq!(SakuraOutputProviderStatus::InvalidArgument, unsafe {
+            sakura_output_provider_apply_v1(token, &unknown_request_flag, &mut result)
         });
         assert_poison_result(&result);
 
