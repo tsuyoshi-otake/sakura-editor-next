@@ -13,6 +13,7 @@
 #include <condition_variable>
 #include <limits>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -378,6 +379,11 @@ struct OutputServiceRustProvider::Control final {
 	std::mutex mutationMutex;
 	std::uint64_t token{};
 	std::uint64_t lastRevision{ 1 };
+	// This is a bounded, immutable observation cache only. The valid bit is
+	// cleared before every fallible authority mutation, so a saturated revision
+	// or partial mutation can never make an old observation look current.
+	std::shared_ptr<const OutputServiceSnapshot> snapshotCache;
+	bool snapshotCacheValid{};
 	bool authorityStopped{};
 	bool pendingDestroy{};
 	bool terminalSnapshotAvailable{};
@@ -428,10 +434,29 @@ void SetFault(
 			: EOutputServiceRustProviderAvailability::Available;
 	if (!control.authorityStopped) control.diagnostics.state = EOutputServiceRustProviderState::Faulted;
 	control.diagnostics.fault = fault;
+	control.snapshotCacheValid = false;
 	control.diagnostics.lastBoundary = boundary;
 	control.diagnostics.failureBoundary = boundary;
 	control.diagnostics.lastFfiStatus = ffiStatus;
 	SaturatingIncrement(control.diagnostics.counters.boundaryFailures);
+}
+
+template <typename Control>
+void InvalidateSnapshotCache(Control& control) noexcept
+{
+	std::lock_guard lock(control.modelMutex);
+	control.snapshotCacheValid = false;
+}
+
+template <typename Control>
+void RestoreSnapshotCacheIfAvailable(Control& control) noexcept
+{
+	std::lock_guard lock(control.modelMutex);
+	if (!control.authorityStopped
+		&& control.diagnostics.state == EOutputServiceRustProviderState::Ready
+		&& control.snapshotCache) {
+		control.snapshotCacheValid = true;
+	}
 }
 
 template <typename Control>
@@ -709,6 +734,10 @@ template <typename Control>
 			&& control.diagnostics.state == EOutputServiceRustProviderState::Ready;
 	}
 	if (!ready) return ProviderUnavailable(control, true);
+	// Do this before entering the fallible Rust call. An accepted mutation can
+	// retain a saturated revision, and a panic or partial mutation must never
+	// leave an old decoded observation eligible for a later Snapshot().
+	InvalidateSnapshotCache(control);
 	SakuraOutputProviderApplyResultV1 raw{};
 	InitializeAbiHeader(raw);
 	RecordBoundaryCall(control, EOutputProviderBoundary::Apply, nullptr);
@@ -730,6 +759,13 @@ template <typename Control>
 		return ProviderUnavailable(control, true);
 	}
 	RecordOperation(control, ffiStatus, raw);
+	if (operationStatus != SakuraOutputProviderOperationStatus::Succeeded
+		&& operationStatus != SakuraOutputProviderOperationStatus::Stopped) {
+		// The validated non-accepted result does not change Rust state. Keep the
+		// value allocated, but make it eligible again only after this boundary
+		// has established that no accepted mutation occurred.
+		RestoreSnapshotCacheIfAvailable(control);
+	}
 	if (operationStatus == SakuraOutputProviderOperationStatus::Stopped) {
 		std::lock_guard lock(control.modelMutex);
 		control.authorityStopped = true;
@@ -766,26 +802,34 @@ void CacheTerminalSnapshot(
 	std::optional<OutputServiceSnapshot> snapshot,
 	const std::uint64_t revision) noexcept
 {
-	std::lock_guard lock(control.modelMutex);
-	try {
-		if (snapshot) {
-			control.terminalSnapshot = std::move(*snapshot);
-		} else {
+	std::shared_ptr<const OutputServiceSnapshot> previousSnapshot;
+	{
+		std::lock_guard lock(control.modelMutex);
+		control.snapshotCacheValid = false;
+		// Keep the old live observation out of the terminal transition while the
+		// lock is held, but release its potentially large allocation afterward.
+		previousSnapshot = std::move(control.snapshotCache);
+		try {
+			if (snapshot) {
+				control.terminalSnapshot = std::move(*snapshot);
+			} else {
+				control.terminalSnapshot.channels.clear();
+				control.terminalSnapshot.activeChannelId.reset();
+			}
+		} catch (...) {
+			// A terminal snapshot is an observation cache. Preserve the terminal
+			// fence even if copying the complete Rust snapshot fails under pressure.
 			control.terminalSnapshot.channels.clear();
 			control.terminalSnapshot.activeChannelId.reset();
 		}
-	} catch (...) {
-		// A terminal snapshot is an observation cache. Preserve the terminal
-		// fence even if copying the complete Rust snapshot fails under pressure.
-		control.terminalSnapshot.channels.clear();
-		control.terminalSnapshot.activeChannelId.reset();
+		control.terminalSnapshot.revision = revision;
+		control.terminalSnapshot.stopped = true;
+		control.terminalSnapshot.droppedNotificationCount =
+			control.notificationDispatcher.DroppedNotificationCountLocked();
+		control.terminalSnapshotAvailable = true;
+		control.lastRevision = revision;
 	}
-	control.terminalSnapshot.revision = revision;
-	control.terminalSnapshot.stopped = true;
-	control.terminalSnapshot.droppedNotificationCount =
-		control.notificationDispatcher.DroppedNotificationCountLocked();
-	control.terminalSnapshotAvailable = true;
-	control.lastRevision = revision;
+	previousSnapshot.reset();
 }
 
 template <typename Control>
@@ -1190,6 +1234,10 @@ OutputOperationResult OutputServiceRustProvider::Stop() noexcept
 				RecordPublicResultLocked(*m_control, result, false);
 			}
 		} else {
+			// Stop is a fallible terminal transition. Invalidate before crossing
+			// the FFI boundary so a failed or saturated-revision Stop cannot
+			// expose the previous live observation.
+			InvalidateSnapshotCache(*m_control);
 #if defined(SAKURA_OUTPUT_BACKEND_RUST)
 			if (m_control->token != 0) {
 				SakuraOutputProviderApplyResultV1 raw{};
@@ -1259,6 +1307,7 @@ OutputServiceSnapshot OutputServiceRustProvider::Snapshot() const
 	}
 	try {
 		std::unique_lock mutationLock(m_control->mutationMutex);
+		std::shared_ptr<const OutputServiceSnapshot> cachedObservation;
 		{
 			std::lock_guard lock(m_control->modelMutex);
 			if (m_control->authorityStopped && m_control->terminalSnapshotAvailable) {
@@ -1269,9 +1318,44 @@ OutputServiceSnapshot OutputServiceRustProvider::Snapshot() const
 				|| m_control->diagnostics.state == EOutputServiceRustProviderState::Faulted) {
 				return {};
 			}
+			const auto droppedNotificationCount =
+				m_control->notificationDispatcher.DroppedNotificationCountLocked();
+			if (m_control->snapshotCacheValid && m_control->snapshotCache) {
+				if (!m_control->snapshotCache->stopped
+					&& m_control->snapshotCache->revision == m_control->lastRevision
+					&& m_control->snapshotCache->droppedNotificationCount == droppedNotificationCount) {
+					cachedObservation = m_control->snapshotCache;
+				}
+				// A revision or dispatcher drop-count change makes the old
+				// observation permanently stale, even if the next call races with
+				// no further mutation.
+				if (!cachedObservation) m_control->snapshotCacheValid = false;
+			}
+		}
+		if (cachedObservation) {
+			// Copy outside modelMutex. The mutation fence and shared ownership keep
+			// the immutable observation alive, while the caller still receives an
+			// independent value that cannot mutate provider or Rust state.
+			return *cachedObservation;
 		}
 #if defined(SAKURA_OUTPUT_BACKEND_RUST)
-		if (auto snapshot = ReadSnapshot(*m_control)) return std::move(*snapshot);
+		if (auto snapshot = ReadSnapshot(*m_control)) {
+			const auto observation = std::make_shared<const OutputServiceSnapshot>(std::move(*snapshot));
+			std::shared_ptr<const OutputServiceSnapshot> previousSnapshot;
+			{
+				std::lock_guard lock(m_control->modelMutex);
+				if (!m_control->authorityStopped
+					&& m_control->token != 0
+					&& m_control->diagnostics.state == EOutputServiceRustProviderState::Ready
+					&& !observation->stopped) {
+					previousSnapshot = std::move(m_control->snapshotCache);
+					m_control->snapshotCache = observation;
+					m_control->snapshotCacheValid = true;
+				}
+			}
+			previousSnapshot.reset();
+			return *observation;
+		}
 #endif
 	} catch (...) {
 		SetFault(*m_control, EOutputServiceRustProviderFault::SnapshotFailure,

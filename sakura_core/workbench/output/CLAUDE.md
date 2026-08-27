@@ -133,9 +133,13 @@ revision. Measure and write still cross the frozen receipt boundary and still
 reject stale or forged receipts; the cache only removes repeated serialization
 of the same Rust-owned state. Copied mutation entry and terminal Stop invalidate
 the cache before any fallible state change, so panic containment cannot expose
-bytes from an earlier revision. The C++ adapter continues to allocate and decode
-one caller-owned buffer and moves that decoded value to the consumer; no cached
-foreign pointer or decoded C++ authority state crosses back into Rust.
+bytes from an earlier revision. The C++ adapter keeps at most one bounded,
+immutable decoded observation cache for a ready live snapshot. Its valid bit is
+cleared before every fallible mutation and terminal Stop, while revision and
+the C++ dispatcher drop count are checked on every hit; only validated
+non-accepted results may make the retained value eligible again. Every public
+Snapshot still returns a caller-owned value copy, and no cached foreign pointer
+or decoded C++ authority state crosses back into Rust.
 
 Issue #274 remains a measurement gate, not an adoption decision. C++ is still
 the default Output authority. `SAKURA_OUTPUT_PRODUCTION_PACKAGE` is an explicit

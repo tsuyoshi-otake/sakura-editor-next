@@ -928,6 +928,98 @@ TEST(OutputServiceProviderConformance, SnapshotDeterminismStopAndPostStopResults
 	EXPECT_TRUE(cppStopped.channels.empty());
 }
 
+TEST(OutputServiceProviderConformance, RustDecodedSnapshotCachePreservesValuesAndInvalidates)
+{
+	auto providers = MakeProviderPair();
+	AssertRustProviderReady(providers);
+	const auto owner = ConformanceOwner("snapshot-cache.owner");
+	const auto create = ConformanceCreate("snapshot-cache.create", owner, "snapshot-cache.output");
+	const auto cppCreateResult = providers.cpp->CreateChannel(create);
+	const auto rustCreateResult = providers.rust->CreateChannel(create);
+	ExpectResultParity(cppCreateResult, rustCreateResult);
+	ExpectExpectedResult(rustCreateResult, EOutputOperationStatus::Succeeded,
+		EOutputOperationReason::None, 2);
+
+	const auto cppCold = providers.cpp->Snapshot();
+	const auto rustCold = providers.rust->Snapshot();
+	ExpectSnapshotParity(cppCold, rustCold);
+	ASSERT_EQ(1U, rustCold.channels.size());
+	const auto coldHealth = providers.rust->Health();
+
+	const auto rustWarm = providers.rust->Snapshot();
+	const auto warmHealth = providers.rust->Health();
+	ExpectSnapshotsExactlyEqual(rustCold, rustWarm);
+	EXPECT_EQ(coldHealth.counters.snapshotCalls + 1, warmHealth.counters.snapshotCalls);
+	EXPECT_EQ(coldHealth.counters.ffiCalls, warmHealth.counters.ffiCalls);
+
+	// Snapshot() returns a caller-owned value; mutating it must not mutate the
+	// immutable observation retained by the provider.
+	auto callerOwned = rustCold;
+	callerOwned.channels.clear();
+	callerOwned.activeChannelId.reset();
+	const auto afterCallerMutation = providers.rust->Snapshot();
+	ExpectSnapshotsExactlyEqual(rustWarm, afterCallerMutation);
+
+	const auto append = ConformanceText(
+		"snapshot-cache.append", owner, "snapshot-cache.output", "cached append");
+	const auto cppAppendResult = providers.cpp->AppendOutput(append);
+	const auto rustAppendResult = providers.rust->AppendOutput(append);
+	ExpectResultParity(cppAppendResult, rustAppendResult);
+	ExpectExpectedResult(rustAppendResult, EOutputOperationStatus::Succeeded,
+		EOutputOperationReason::None, 3);
+	const auto beforeRefresh = providers.rust->Health();
+	const auto rustRefreshed = providers.rust->Snapshot();
+	const auto afterRefresh = providers.rust->Health();
+	EXPECT_EQ(beforeRefresh.counters.snapshotCalls + 1, afterRefresh.counters.snapshotCalls);
+	EXPECT_GT(afterRefresh.counters.ffiCalls, beforeRefresh.counters.ffiCalls);
+	ASSERT_EQ(1U, rustRefreshed.channels.size());
+	EXPECT_EQ("cached append", rustRefreshed.channels.front().text);
+	ExpectSnapshotParity(providers.cpp->Snapshot(), rustRefreshed);
+
+	const auto rustRewarmed = providers.rust->Snapshot();
+	const auto afterRewarm = providers.rust->Health();
+	ExpectSnapshotsExactlyEqual(rustRefreshed, rustRewarmed);
+	EXPECT_EQ(afterRefresh.counters.ffiCalls, afterRewarm.counters.ffiCalls);
+
+	// A validated replay does not change authority state, so the retained
+	// observation can become eligible again after the apply boundary.
+	const auto replayResult = providers.rust->AppendOutput(append);
+	ExpectExpectedResult(replayResult, EOutputOperationStatus::Replayed,
+		EOutputOperationReason::None, 3);
+	const auto beforeReplaySnapshot = providers.rust->Health();
+	const auto replaySnapshot = providers.rust->Snapshot();
+	const auto afterReplaySnapshot = providers.rust->Health();
+	ExpectSnapshotsExactlyEqual(rustRefreshed, replaySnapshot);
+	EXPECT_EQ(beforeReplaySnapshot.counters.ffiCalls, afterReplaySnapshot.counters.ffiCalls);
+
+	// Invalid payload rejection also leaves the Rust observation unchanged.
+	const auto rejectedResult = providers.rust->AppendOutput(
+		ConformanceText("snapshot-cache.reject", {}, "snapshot-cache.output", "ignored"));
+	ExpectExpectedResult(rejectedResult, EOutputOperationStatus::Rejected,
+		EOutputOperationReason::InvalidOwner, 3);
+	const auto beforeRejectedSnapshot = providers.rust->Health();
+	const auto rejectedSnapshot = providers.rust->Snapshot();
+	const auto afterRejectedSnapshot = providers.rust->Health();
+	ExpectSnapshotsExactlyEqual(rustRefreshed, rejectedSnapshot);
+	EXPECT_EQ(beforeRejectedSnapshot.counters.ffiCalls, afterRejectedSnapshot.counters.ffiCalls);
+
+	const auto stopResult = providers.rust->Stop();
+	ExpectExpectedResult(stopResult, EOutputOperationStatus::Succeeded,
+		EOutputOperationReason::None, 4);
+	const auto afterStop = providers.rust->Health();
+	const auto stopped = providers.rust->Snapshot();
+	const auto afterFirstStoppedSnapshot = providers.rust->Health();
+	EXPECT_TRUE(stopped.stopped);
+	EXPECT_TRUE(stopped.channels.empty());
+	EXPECT_EQ(afterStop.counters.ffiCalls, afterFirstStoppedSnapshot.counters.ffiCalls);
+
+	const auto stoppedAgain = providers.rust->Snapshot();
+	const auto afterSecondStoppedSnapshot = providers.rust->Health();
+	ExpectSnapshotsExactlyEqual(stopped, stoppedAgain);
+	EXPECT_EQ(afterFirstStoppedSnapshot.counters.ffiCalls,
+		afterSecondStoppedSnapshot.counters.ffiCalls);
+}
+
 void RunAdvisoryFifoAndReentrancyConformance(IOutputService& service)
 {
 	std::vector<OutputServiceChange> changes;

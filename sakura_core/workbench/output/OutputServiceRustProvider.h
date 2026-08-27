@@ -59,9 +59,10 @@ struct OutputServiceRustProviderDiagnostics final {
  * @brief Sole-authority Rust implementation of IOutputService.
  *
  * Rust owns channels, owner generations, operation replay, revisions, and
- * snapshots.  This adapter owns only the ABI token, copied diagnostics, and
- * the advisory C++ listener lifetime; it never mirrors channel state or
- * performs a fallback mutation.
+ * snapshots.  This adapter owns only the ABI token, copied diagnostics, the
+ * advisory C++ listener lifetime, and one bounded immutable decoded snapshot
+ * observation cache; the cache never mirrors authority state or performs a
+ * fallback mutation.
  */
 class OutputServiceRustProvider final : public IOutputService {
 public:
