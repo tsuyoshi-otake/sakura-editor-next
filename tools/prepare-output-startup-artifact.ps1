@@ -539,7 +539,10 @@ function Invoke-GitText {
 function Get-SourceState {
     $statusText = Invoke-GitText @('status', '--porcelain=v1', '--untracked-files=all')
     $canonicalStatus = ($statusText -replace "`r`n", "`n" -replace "`r", "`n").TrimEnd("`n")
-    $statusLines = if ([string]::IsNullOrEmpty($canonicalStatus)) { @() } else { @($canonicalStatus -split "`n") }
+    $statusLines = @()
+    if (-not [string]::IsNullOrEmpty($canonicalStatus)) {
+        $statusLines = @($canonicalStatus -split "`n")
+    }
     $head = (Invoke-GitText @('rev-parse', '--verify', 'HEAD')).Trim()
     if ($head -notmatch '^[0-9a-fA-F]{40}$') { throw 'Git HEAD is not a full commit identity.' }
     return [pscustomobject][ordered]@{

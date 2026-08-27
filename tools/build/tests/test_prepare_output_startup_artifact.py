@@ -62,6 +62,7 @@ class PrepareOutputStartupArtifactContractTests(unittest.TestCase):
             "sourceHead",
             "sourceDirty",
             "sourceStatusSha256",
+            "$statusLines = @()",
             "Get-MsvcIdentity",
             "Get-RustToolchainIdentity",
             "rust/native/Cargo.lock",
