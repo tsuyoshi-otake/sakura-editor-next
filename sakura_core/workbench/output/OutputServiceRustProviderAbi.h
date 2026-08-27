@@ -131,6 +131,28 @@ struct SakuraOutputProviderApplyResultV1 final {
 	std::uint8_t reserved[7]{};
 };
 
+// ABI V1 receipt extension for the measure/write snapshot transaction.  The
+// seven export names remain unchanged, but V1 now requires the exact struct
+// sizes below (pre-receipt V1 descriptors are rejected).  All in-tree callers
+// must use this layout atomically; a future incompatible layout needs a new
+// ABI version.  The caller copies this fixed-width receipt from measure info
+// into the write buffer.  The measurement id binds it to one provider token
+// and permits multiple callers to have outstanding measurements without a
+// last-measure race.  The provider contract advances revision for every
+// accepted state mutation; the duplicated framing fields and advisory drop
+// counter complete the identity check without retaining caller memory or
+// encoding the snapshot during measurement.
+struct SakuraOutputProviderSnapshotReceiptV1 final {
+	std::uint64_t measurement_id{};
+	std::uint64_t revision{};
+	std::uint64_t dropped_notification_count{};
+	std::uint64_t channel_count{};
+	std::uint64_t encoded_size{};
+	std::uint8_t stopped{};
+	std::uint8_t active_channel_present{};
+	std::uint8_t reserved[6]{};
+};
+
 struct SakuraOutputProviderSnapshotInfoV1 final {
 	std::uint32_t struct_size{};
 	std::uint32_t abi_version{ SAKURA_OUTPUT_PROVIDER_ABI_VERSION_V1 };
@@ -142,6 +164,7 @@ struct SakuraOutputProviderSnapshotInfoV1 final {
 	std::uint64_t channel_count{};
 	std::uint64_t encoded_size{};
 	std::uint64_t reserved[2]{};
+	SakuraOutputProviderSnapshotReceiptV1 receipt{};
 };
 
 struct SakuraOutputProviderSnapshotBufferV1 final {
@@ -151,6 +174,7 @@ struct SakuraOutputProviderSnapshotBufferV1 final {
 	std::uint64_t capacity{};
 	std::uint64_t length{};
 	std::uint64_t reserved[2]{};
+	SakuraOutputProviderSnapshotReceiptV1 receipt{};
 };
 
 //! Small post-commit metadata query used for advisory notifications.
@@ -172,6 +196,7 @@ static_assert(std::is_standard_layout_v<SakuraOutputProviderLimitsV1>);
 static_assert(std::is_standard_layout_v<SakuraOutputProviderLogEntryV1>);
 static_assert(std::is_standard_layout_v<SakuraOutputProviderRequestV1>);
 static_assert(std::is_standard_layout_v<SakuraOutputProviderApplyResultV1>);
+static_assert(std::is_standard_layout_v<SakuraOutputProviderSnapshotReceiptV1>);
 static_assert(std::is_standard_layout_v<SakuraOutputProviderSnapshotInfoV1>);
 static_assert(std::is_standard_layout_v<SakuraOutputProviderSnapshotBufferV1>);
 static_assert(std::is_trivially_copyable_v<SakuraOutputProviderSpanV1>);
@@ -179,6 +204,7 @@ static_assert(std::is_trivially_copyable_v<SakuraOutputProviderLimitsV1>);
 static_assert(std::is_trivially_copyable_v<SakuraOutputProviderLogEntryV1>);
 static_assert(std::is_trivially_copyable_v<SakuraOutputProviderRequestV1>);
 static_assert(std::is_trivially_copyable_v<SakuraOutputProviderApplyResultV1>);
+static_assert(std::is_trivially_copyable_v<SakuraOutputProviderSnapshotReceiptV1>);
 static_assert(std::is_trivially_copyable_v<SakuraOutputProviderSnapshotInfoV1>);
 static_assert(std::is_trivially_copyable_v<SakuraOutputProviderSnapshotBufferV1>);
 static_assert(std::is_standard_layout_v<SakuraOutputProviderActiveChannelV1>);
@@ -188,8 +214,9 @@ static_assert(sizeof(SakuraOutputProviderLimitsV1) == 80);
 static_assert(sizeof(SakuraOutputProviderLogEntryV1) == 112);
 static_assert(sizeof(SakuraOutputProviderRequestV1) == 368);
 static_assert(sizeof(SakuraOutputProviderApplyResultV1) == 32);
-static_assert(sizeof(SakuraOutputProviderSnapshotInfoV1) == 64);
-static_assert(sizeof(SakuraOutputProviderSnapshotBufferV1) == 48);
+static_assert(sizeof(SakuraOutputProviderSnapshotReceiptV1) == 48);
+static_assert(sizeof(SakuraOutputProviderSnapshotInfoV1) == 112);
+static_assert(sizeof(SakuraOutputProviderSnapshotBufferV1) == 96);
 static_assert(sizeof(SakuraOutputProviderActiveChannelV1) == 64);
 static_assert(offsetof(SakuraOutputProviderSpanV1, data) == 8);
 static_assert(offsetof(SakuraOutputProviderSpanV1, length) == 16);
@@ -198,9 +225,14 @@ static_assert(offsetof(SakuraOutputProviderRequestV1, expected_revision) == 64);
 static_assert(offsetof(SakuraOutputProviderRequestV1, log_entries) == 320);
 static_assert(offsetof(SakuraOutputProviderApplyResultV1, revision) == 16);
 static_assert(offsetof(SakuraOutputProviderSnapshotInfoV1, dropped_notification_count) == 24);
+static_assert(offsetof(SakuraOutputProviderSnapshotInfoV1, receipt) == 64);
+static_assert(offsetof(SakuraOutputProviderSnapshotReceiptV1, revision) == 8);
+static_assert(offsetof(SakuraOutputProviderSnapshotReceiptV1, dropped_notification_count) == 16);
+static_assert(offsetof(SakuraOutputProviderSnapshotReceiptV1, stopped) == 40);
 static_assert(offsetof(SakuraOutputProviderSnapshotBufferV1, data) == 8);
 static_assert(offsetof(SakuraOutputProviderActiveChannelV1, data) == 24);
 static_assert(offsetof(SakuraOutputProviderActiveChannelV1, length) == 40);
+static_assert(offsetof(SakuraOutputProviderSnapshotBufferV1, receipt) == 48);
 
 extern "C"
 {

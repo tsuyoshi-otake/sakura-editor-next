@@ -388,6 +388,12 @@ void FillDisposeOwner(PendingRequest& pending, const OutputDisposeOwnerRequest& 
 
 [[nodiscard]] bool IsValidSnapshotInfo(const SakuraOutputProviderSnapshotInfoV1& info) noexcept
 {
+	const auto& receipt = info.receipt;
+	const auto receiptValid = receipt.measurement_id != 0
+		&& receipt.stopped <= 1
+		&& receipt.active_channel_present <= 1
+		&& std::all_of(std::begin(receipt.reserved), std::end(receipt.reserved),
+			[](const std::uint8_t value) { return value == 0; });
 	return info.struct_size == sizeof(info)
 		&& info.abi_version == SAKURA_OUTPUT_PROVIDER_ABI_VERSION_V1
 		&& info.stopped <= 1
@@ -395,16 +401,44 @@ void FillDisposeOwner(PendingRequest& pending, const OutputDisposeOwnerRequest& 
 		&& std::all_of(std::begin(info.reserved0), std::end(info.reserved0),
 			[](const std::uint8_t value) { return value == 0; })
 		&& std::all_of(std::begin(info.reserved), std::end(info.reserved),
-			[](const std::uint64_t value) { return value == 0; });
+			[](const std::uint64_t value) { return value == 0; })
+		&& receiptValid
+		&& receipt.revision == info.revision
+		&& receipt.stopped == info.stopped
+		&& receipt.active_channel_present == info.active_channel_present
+		&& receipt.dropped_notification_count == info.dropped_notification_count
+		&& receipt.channel_count == info.channel_count
+		&& receipt.encoded_size == info.encoded_size;
 }
 
 [[nodiscard]] bool IsValidSnapshotBuffer(
 	const SakuraOutputProviderSnapshotBufferV1& buffer) noexcept
 {
+	const auto& receipt = buffer.receipt;
 	return buffer.struct_size == sizeof(buffer)
 		&& buffer.abi_version == SAKURA_OUTPUT_PROVIDER_ABI_VERSION_V1
 		&& std::all_of(std::begin(buffer.reserved), std::end(buffer.reserved),
-			[](const std::uint64_t value) { return value == 0; });
+			[](const std::uint64_t value) { return value == 0; })
+		&& receipt.measurement_id != 0
+		&& receipt.stopped <= 1
+		&& receipt.active_channel_present <= 1
+		&& std::all_of(std::begin(receipt.reserved), std::end(receipt.reserved),
+			[](const std::uint8_t value) { return value == 0; });
+}
+
+[[nodiscard]] bool IsSameSnapshotReceipt(
+	const SakuraOutputProviderSnapshotReceiptV1& left,
+	const SakuraOutputProviderSnapshotReceiptV1& right) noexcept
+{
+	return left.measurement_id == right.measurement_id
+		&& left.revision == right.revision
+		&& left.dropped_notification_count == right.dropped_notification_count
+		&& left.channel_count == right.channel_count
+		&& left.encoded_size == right.encoded_size
+		&& left.stopped == right.stopped
+		&& left.active_channel_present == right.active_channel_present
+		&& std::equal(std::begin(left.reserved), std::end(left.reserved),
+			std::begin(right.reserved));
 }
 
 [[nodiscard]] bool IsValidActiveChannelHeader(
@@ -654,8 +688,10 @@ template <typename Control>
 	InitializeAbiHeader(buffer);
 	buffer.data = bytes.empty() ? nullptr : bytes.data();
 	buffer.capacity = static_cast<std::uint64_t>(bytes.size());
+	buffer.receipt = info.receipt;
 	const auto expectedData = buffer.data;
 	const auto expectedCapacity = buffer.capacity;
+	const auto expectedReceipt = buffer.receipt;
 	RecordBoundaryCall(control, EOutputProviderBoundary::SnapshotWrite, nullptr);
 	const auto written = sakura_output_provider_snapshot_write_v1(control.token, &buffer);
 	RecordBoundaryStatus(control, EOutputProviderBoundary::SnapshotWrite, written);
@@ -663,6 +699,7 @@ template <typename Control>
 		|| !IsValidSnapshotBuffer(buffer)
 		|| buffer.data != expectedData
 		|| buffer.capacity != expectedCapacity
+		|| !IsSameSnapshotReceipt(buffer.receipt, expectedReceipt)
 		|| buffer.length != info.encoded_size) {
 		SetFault(control, written == SakuraOutputProviderStatus::Ok
 			? EOutputServiceRustProviderFault::AbiFailure

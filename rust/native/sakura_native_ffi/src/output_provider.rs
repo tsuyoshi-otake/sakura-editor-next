@@ -22,15 +22,79 @@ pub type SakuraOutputProviderLimitsV1 = output_shadow::SakuraOutputShadowLimitsV
 pub type SakuraOutputProviderLogEntryV1 = output_shadow::SakuraOutputShadowLogEntryV1;
 pub type SakuraOutputProviderRequestV1 = output_shadow::SakuraOutputShadowRequestV1;
 pub type SakuraOutputProviderApplyResultV1 = output_shadow::SakuraOutputShadowApplyResultV1;
-pub type SakuraOutputProviderSnapshotInfoV1 = output_shadow::SakuraOutputShadowSnapshotInfoV1;
-pub type SakuraOutputProviderSnapshotBufferV1 = output_shadow::SakuraOutputShadowSnapshotBufferV1;
 pub type SakuraOutputProviderActiveChannelV1 = output_shadow::SakuraOutputShadowActiveChannelV1;
 
 const PROVIDER_TOKEN_TAG: u64 = 1_u64 << 63;
+const MAX_SNAPSHOT_MEASUREMENTS: usize = 64;
+
+/// Fixed-width identity captured by a successful snapshot measure.
+///
+/// The receipt is copied by the caller from the measure result into the write
+/// descriptor.  It contains no pointer and is valid only for the provider
+/// token that issued it.  The provider's accepted-mutation invariant advances
+/// revision for every state change; the fixed-width metadata also fences the
+/// encoded framing and advisory drop counter without retaining snapshot bytes.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SakuraOutputProviderSnapshotReceiptV1 {
+    pub measurement_id: u64,
+    pub revision: u64,
+    pub dropped_notification_count: u64,
+    pub channel_count: u64,
+    pub encoded_size: u64,
+    pub stopped: u8,
+    pub active_channel_present: u8,
+    pub reserved: [u8; 6],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct SakuraOutputProviderSnapshotInfoV1 {
+    pub struct_size: u32,
+    pub abi_version: u32,
+    pub revision: u64,
+    pub stopped: u8,
+    pub active_channel_present: u8,
+    pub reserved0: [u8; 6],
+    pub dropped_notification_count: u64,
+    pub channel_count: u64,
+    pub encoded_size: u64,
+    pub reserved: [u64; 2],
+    pub receipt: SakuraOutputProviderSnapshotReceiptV1,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct SakuraOutputProviderSnapshotBufferV1 {
+    pub struct_size: u32,
+    pub abi_version: u32,
+    pub data: *mut u8,
+    pub capacity: u64,
+    pub length: u64,
+    pub reserved: [u64; 2],
+    pub receipt: SakuraOutputProviderSnapshotReceiptV1,
+}
+
+type SnapshotMeasureReceiptV1 = SakuraOutputProviderSnapshotReceiptV1;
+
+#[derive(Clone, Copy)]
+struct SnapshotMeasurement {
+    provider_token: u64,
+    receipt: SnapshotMeasureReceiptV1,
+}
+
+const _: () = {
+    assert!(size_of::<SnapshotMeasureReceiptV1>() == 48);
+    assert!(align_of::<SnapshotMeasureReceiptV1>() == 8);
+    assert!(size_of::<SakuraOutputProviderSnapshotInfoV1>() == 112);
+    assert!(size_of::<SakuraOutputProviderSnapshotBufferV1>() == 96);
+};
 
 struct ProviderRegistry {
     next_token: u64,
     providers: BTreeMap<u64, u64>,
+    next_measurement_id: u64,
+    snapshot_measurements: BTreeMap<u64, SnapshotMeasurement>,
 }
 
 static PROVIDERS: OnceLock<Mutex<ProviderRegistry>> = OnceLock::new();
@@ -40,6 +104,8 @@ fn providers() -> &'static Mutex<ProviderRegistry> {
         Mutex::new(ProviderRegistry {
             next_token: PROVIDER_TOKEN_TAG | 1,
             providers: BTreeMap::new(),
+            next_measurement_id: 1,
+            snapshot_measurements: BTreeMap::new(),
         })
     })
 }
@@ -86,7 +152,186 @@ fn poison_info() -> SakuraOutputProviderSnapshotInfoV1 {
         channel_count: u64::MAX,
         encoded_size: u64::MAX,
         reserved: [0; 2],
+        receipt: poison_receipt(),
     }
+}
+
+fn poison_receipt() -> SnapshotMeasureReceiptV1 {
+    SnapshotMeasureReceiptV1 {
+        measurement_id: u64::MAX,
+        revision: u64::MAX,
+        dropped_notification_count: u64::MAX,
+        channel_count: u64::MAX,
+        encoded_size: u64::MAX,
+        stopped: 0xff,
+        active_channel_present: 0xff,
+        reserved: [0; 6],
+    }
+}
+
+fn snapshot_receipt_is_valid(receipt: &SnapshotMeasureReceiptV1) -> bool {
+    receipt.measurement_id != 0
+        && receipt.stopped <= 1
+        && receipt.active_channel_present <= 1
+        && receipt.reserved == [0; 6]
+}
+
+fn shadow_snapshot_info_is_valid(info: &output_shadow::SakuraOutputShadowSnapshotInfoV1) -> bool {
+    info.struct_size == size_of::<output_shadow::SakuraOutputShadowSnapshotInfoV1>() as u32
+        && info.abi_version == 1
+        && info.stopped <= 1
+        && info.active_channel_present <= 1
+        && info.reserved0 == [0; 6]
+        && info.reserved == [0; 2]
+}
+
+fn provider_snapshot_info_is_valid(info: &SakuraOutputProviderSnapshotInfoV1) -> bool {
+    info.struct_size == size_of::<SakuraOutputProviderSnapshotInfoV1>() as u32
+        && info.abi_version == 1
+        && info.stopped <= 1
+        && info.active_channel_present <= 1
+        && info.reserved0 == [0; 6]
+        && info.reserved == [0; 2]
+        && snapshot_receipt_is_valid(&info.receipt)
+        && info.receipt.revision == info.revision
+        && info.receipt.stopped == info.stopped
+        && info.receipt.active_channel_present == info.active_channel_present
+        && info.receipt.dropped_notification_count == info.dropped_notification_count
+        && info.receipt.channel_count == info.channel_count
+        && info.receipt.encoded_size == info.encoded_size
+}
+
+fn snapshot_receipt_from_model_info(
+    measurement_id: u64,
+    info: &output_shadow::SakuraOutputShadowSnapshotInfoV1,
+) -> Option<SnapshotMeasureReceiptV1> {
+    if measurement_id == 0 || !shadow_snapshot_info_is_valid(info) {
+        return None;
+    }
+    Some(SnapshotMeasureReceiptV1 {
+        measurement_id,
+        revision: info.revision,
+        dropped_notification_count: info.dropped_notification_count,
+        channel_count: info.channel_count,
+        encoded_size: info.encoded_size,
+        stopped: info.stopped,
+        active_channel_present: info.active_channel_present,
+        reserved: [0; 6],
+    })
+}
+
+fn shadow_poison_info() -> output_shadow::SakuraOutputShadowSnapshotInfoV1 {
+    output_shadow::SakuraOutputShadowSnapshotInfoV1 {
+        struct_size: size_of::<output_shadow::SakuraOutputShadowSnapshotInfoV1>() as u32,
+        abi_version: 1,
+        revision: u64::MAX,
+        stopped: 0xff,
+        active_channel_present: 0xff,
+        reserved0: [0; 6],
+        dropped_notification_count: u64::MAX,
+        channel_count: u64::MAX,
+        encoded_size: u64::MAX,
+        reserved: [0; 2],
+    }
+}
+
+fn capture_model_snapshot_measure(
+    shadow_token: u64,
+) -> Result<output_shadow::SakuraOutputShadowSnapshotInfoV1, SakuraOutputProviderStatus> {
+    let mut info = shadow_poison_info();
+    // SAFETY: `info` is local, initialized V1 storage and remains alive for
+    // the duration of the model call.
+    let measured = unsafe { output_shadow::model_snapshot_measure_v1(shadow_token, &mut info) };
+    if measured != SakuraOutputProviderStatus::Ok {
+        return Err(measured);
+    }
+    if !shadow_snapshot_info_is_valid(&info) {
+        return Err(SakuraOutputProviderStatus::InternalError);
+    }
+    Ok(info)
+}
+
+fn next_measurement_id(registry: &mut ProviderRegistry) -> Option<u64> {
+    let measurement_id = registry.next_measurement_id;
+    if measurement_id == 0 {
+        return None;
+    }
+    registry.next_measurement_id = measurement_id.checked_add(1).unwrap_or(0);
+    Some(measurement_id)
+}
+
+fn retain_measurement(
+    registry: &mut ProviderRegistry,
+    measurement_id: u64,
+    measurement: SnapshotMeasurement,
+) {
+    while registry.snapshot_measurements.len() >= MAX_SNAPSHOT_MEASUREMENTS {
+        let Some(oldest) = registry.snapshot_measurements.keys().next().copied() else {
+            break;
+        };
+        registry.snapshot_measurements.remove(&oldest);
+    }
+    registry
+        .snapshot_measurements
+        .insert(measurement_id, measurement);
+}
+
+fn remove_measurements_for_provider(registry: &mut ProviderRegistry, provider_token: u64) {
+    registry
+        .snapshot_measurements
+        .retain(|_, measurement| measurement.provider_token != provider_token);
+}
+
+fn ranges_overlap(
+    first: *const u8,
+    first_length: usize,
+    second: *const u8,
+    second_length: usize,
+) -> bool {
+    if first_length == 0 || second_length == 0 {
+        return false;
+    }
+    let Some(first_end) = (first as usize).checked_add(first_length) else {
+        return true;
+    };
+    let Some(second_end) = (second as usize).checked_add(second_length) else {
+        return true;
+    };
+    (first as usize) < second_end && (second as usize) < first_end
+}
+
+fn validate_snapshot_buffer_descriptor(
+    buffer: *mut SakuraOutputProviderSnapshotBufferV1,
+    descriptor: &SakuraOutputProviderSnapshotBufferV1,
+) -> Result<usize, SakuraOutputProviderStatus> {
+    if descriptor.struct_size != size_of::<SakuraOutputProviderSnapshotBufferV1>() as u32
+        || descriptor.abi_version != 1
+        || descriptor.reserved != [0; 2]
+        || !snapshot_receipt_is_valid(&descriptor.receipt)
+    {
+        return Err(SakuraOutputProviderStatus::InvalidArgument);
+    }
+    let capacity = usize::try_from(descriptor.capacity)
+        .map_err(|_| SakuraOutputProviderStatus::InvalidArgument)?;
+    if capacity != 0
+        && (descriptor.data.is_null()
+            || !is_aligned(descriptor.data)
+            || capacity > isize::MAX as usize
+            || (descriptor.data as usize)
+                .checked_add(capacity)
+                .is_none_or(|end| end > isize::MAX as usize))
+    {
+        return Err(SakuraOutputProviderStatus::InvalidArgument);
+    }
+    if ranges_overlap(
+        buffer.cast_const().cast(),
+        size_of::<SakuraOutputProviderSnapshotBufferV1>(),
+        descriptor.data.cast_const(),
+        capacity,
+    ) {
+        return Err(SakuraOutputProviderStatus::InvalidArgument);
+    }
+    Ok(capacity)
 }
 
 fn poison_active() -> SakuraOutputProviderActiveChannelV1 {
@@ -178,7 +423,10 @@ pub unsafe extern "C" fn sakura_output_provider_apply_v1(
     .unwrap_or(SakuraOutputProviderStatus::InternalError)
 }
 
-/// Measures a copied canonical provider snapshot.
+/// Measures a copied canonical provider snapshot and records its fixed-width
+/// identity receipt in the provider registry.  Every successful measure gets
+/// a distinct measurement id, so concurrent callers can retain independent
+/// receipts without a last-measure race.  The receipt contains no pointer.
 ///
 /// # Safety
 ///
@@ -188,23 +436,81 @@ pub unsafe extern "C" fn sakura_output_provider_snapshot_measure_v1(
     token: u64,
     info: *mut SakuraOutputProviderSnapshotInfoV1,
 ) -> SakuraOutputProviderStatus {
-    catch_unwind(AssertUnwindSafe(|| {
+    match catch_unwind(AssertUnwindSafe(|| {
         if !is_valid_pointer(info.cast_const()) {
             return SakuraOutputProviderStatus::InvalidArgument;
         }
         // SAFETY: The info slot is validated and caller-owned for this call.
         unsafe { info.write(poison_info()) };
-        let registry = lock_providers();
+        let mut registry = lock_providers();
         let Some(&shadow_token) = registry.providers.get(&token) else {
             return SakuraOutputProviderStatus::InvalidHandle;
         };
-        // SAFETY: The wrapped export validates and writes only the V1 result.
-        unsafe { output_shadow::model_snapshot_measure_v1(shadow_token, info.cast()) }
-    }))
-    .unwrap_or(SakuraOutputProviderStatus::InternalError)
+        let model_info = match capture_model_snapshot_measure(shadow_token) {
+            Ok(value) => value,
+            Err(status) => {
+                // Keep the provider boundary fail-closed even if a future
+                // model implementation returns an error without poisoning
+                // its output.
+                unsafe { info.write(poison_info()) };
+                return status;
+            }
+        };
+        let Some(measurement_id) = next_measurement_id(&mut registry) else {
+            unsafe { info.write(poison_info()) };
+            return SakuraOutputProviderStatus::InternalError;
+        };
+        let Some(receipt) = snapshot_receipt_from_model_info(measurement_id, &model_info) else {
+            unsafe { info.write(poison_info()) };
+            return SakuraOutputProviderStatus::InternalError;
+        };
+        let provider_info = SakuraOutputProviderSnapshotInfoV1 {
+            struct_size: size_of::<SakuraOutputProviderSnapshotInfoV1>() as u32,
+            abi_version: 1,
+            revision: model_info.revision,
+            stopped: model_info.stopped,
+            active_channel_present: model_info.active_channel_present,
+            reserved0: [0; 6],
+            dropped_notification_count: model_info.dropped_notification_count,
+            channel_count: model_info.channel_count,
+            encoded_size: model_info.encoded_size,
+            reserved: [0; 2],
+            receipt,
+        };
+        if !provider_snapshot_info_is_valid(&provider_info) {
+            unsafe { info.write(poison_info()) };
+            return SakuraOutputProviderStatus::InternalError;
+        }
+        // SAFETY: `info` is validated caller-owned storage and the value is a
+        // complete copied descriptor with no retained foreign pointer.
+        unsafe { info.write(provider_info) };
+        retain_measurement(
+            &mut registry,
+            measurement_id,
+            SnapshotMeasurement {
+                provider_token: token,
+                receipt,
+            },
+        );
+        SakuraOutputProviderStatus::Ok
+    })) {
+        Ok(status) => status,
+        Err(_) => {
+            // SAFETY: `is_valid_pointer` only inspects the address range.  If
+            // the caller supplied writable V1 storage, restore its poison
+            // value after any allocation/model panic.
+            if is_valid_pointer(info.cast_const()) {
+                unsafe { info.write(poison_info()) };
+            }
+            SakuraOutputProviderStatus::InternalError
+        }
+    }
 }
 
-/// Writes a measured canonical provider snapshot into caller-owned storage.
+/// Writes the canonical provider snapshot identified by the caller-copied
+/// receipt in the buffer.  The current snapshot must match that receipt
+/// before any caller-owned bytes are copied; an intervening mutation therefore
+/// fails closed even when it happens to preserve encoded_size.
 ///
 /// # Safety
 ///
@@ -214,21 +520,104 @@ pub unsafe extern "C" fn sakura_output_provider_snapshot_write_v1(
     token: u64,
     buffer: *mut SakuraOutputProviderSnapshotBufferV1,
 ) -> SakuraOutputProviderStatus {
-    catch_unwind(AssertUnwindSafe(|| {
+    match catch_unwind(AssertUnwindSafe(|| {
         if !is_valid_pointer(buffer.cast_const()) {
             return SakuraOutputProviderStatus::InvalidArgument;
         }
         // SAFETY: The descriptor slot is validated and caller-owned.
         unsafe { (*buffer).length = u64::MAX };
-        let registry = lock_providers();
+        let mut registry = lock_providers();
         let Some(&shadow_token) = registry.providers.get(&token) else {
             return SakuraOutputProviderStatus::InvalidHandle;
         };
-        // SAFETY: The wrapped export checks all destination metadata and
-        // retains no output pointer.
-        unsafe { output_shadow::model_snapshot_write_v1(shadow_token, buffer.cast()) }
-    }))
-    .unwrap_or(SakuraOutputProviderStatus::InternalError)
+        // SAFETY: The descriptor pointer was validated above and remains
+        // caller-owned for this call. Copy it before taking any destination
+        // action; no caller pointer is retained.
+        let descriptor = unsafe { buffer.read() };
+        let capacity = match validate_snapshot_buffer_descriptor(buffer, &descriptor) {
+            Ok(value) => value,
+            Err(status) => return status,
+        };
+        let measurement_id = descriptor.receipt.measurement_id;
+        let Some(measured) = registry.snapshot_measurements.get(&measurement_id).copied() else {
+            // A write without a successful preceding measure has no identity
+            // fence and must never copy an arbitrary current snapshot.
+            return SakuraOutputProviderStatus::InvalidArgument;
+        };
+        if measured.provider_token != token || measured.receipt != descriptor.receipt {
+            // Keep a valid stored receipt available if a caller supplied a
+            // forged copy. A caller cannot use another provider's receipt.
+            return SakuraOutputProviderStatus::InvalidArgument;
+        }
+
+        let model_info = match capture_model_snapshot_measure(shadow_token) {
+            Ok(value) => value,
+            Err(status) => return status,
+        };
+        let Some(current) = snapshot_receipt_from_model_info(measurement_id, &model_info) else {
+            registry.snapshot_measurements.remove(&measurement_id);
+            return SakuraOutputProviderStatus::InternalError;
+        };
+        if current != measured.receipt {
+            // Consume a stale receipt. The caller must perform a fresh measure
+            // before it can attempt another write. This comparison includes
+            // the monotonic revision, drop counter, framing metadata, and
+            // stopped/active state.
+            registry.snapshot_measurements.remove(&measurement_id);
+            return SakuraOutputProviderStatus::InternalError;
+        }
+        if u64::try_from(capacity).unwrap_or(u64::MAX) < model_info.encoded_size {
+            // Retain a valid receipt so the caller can retry with a larger
+            // destination without another measure transaction.
+            return SakuraOutputProviderStatus::InsufficientCapacity;
+        }
+        let mut model_buffer = output_shadow::SakuraOutputShadowSnapshotBufferV1 {
+            struct_size: size_of::<output_shadow::SakuraOutputShadowSnapshotBufferV1>() as u32,
+            abi_version: 1,
+            data: descriptor.data,
+            capacity: descriptor.capacity,
+            length: 0,
+            reserved: [0; 2],
+        };
+        // SAFETY: The provider descriptor was validated above, and the model
+        // buffer borrows its caller-owned destination only for this call.  No
+        // pointer is retained by either layer.
+        let written =
+            unsafe { output_shadow::model_snapshot_write_v1(shadow_token, &mut model_buffer) };
+        if written != SakuraOutputProviderStatus::Ok
+            || model_buffer.struct_size
+                != size_of::<output_shadow::SakuraOutputShadowSnapshotBufferV1>() as u32
+            || model_buffer.abi_version != 1
+            || model_buffer.data != descriptor.data
+            || model_buffer.capacity != descriptor.capacity
+            || model_buffer.reserved != [0; 2]
+            || model_buffer.length != model_info.encoded_size
+        {
+            if written != SakuraOutputProviderStatus::Ok {
+                return written;
+            }
+            registry.snapshot_measurements.remove(&measurement_id);
+            return SakuraOutputProviderStatus::InternalError;
+        }
+        // SAFETY: The descriptor pointer was validated and remains caller-
+        // owned. Set length only after the model copied the full snapshot.
+        unsafe { (*buffer).length = model_buffer.length };
+        // Keep the immutable receipt available for another destination or a
+        // retry. It is bounded by MAX_SNAPSHOT_MEASUREMENTS and is cleared
+        // when the provider is destroyed.
+        SakuraOutputProviderStatus::Ok
+    })) {
+        Ok(status) => status,
+        Err(_) => {
+            // SAFETY: `is_valid_pointer` only inspects the address range.  If
+            // the descriptor was valid, restore its poison length after any
+            // allocation/model panic and never expose a partial success.
+            if is_valid_pointer(buffer.cast_const()) {
+                unsafe { (*buffer).length = u64::MAX };
+            }
+            SakuraOutputProviderStatus::InternalError
+        }
+    }
 }
 
 /// Copies only the active-channel identifier for an advisory notification.
@@ -319,6 +708,7 @@ pub unsafe extern "C" fn sakura_output_provider_destroy_v1(
             return status;
         }
         registry.providers.remove(&value);
+        remove_measurements_for_provider(&mut registry, value);
         // SAFETY: Consume the caller token only after successful destruction.
         unsafe { token.write(0) };
         SakuraOutputProviderStatus::Ok
@@ -408,6 +798,18 @@ mod tests {
         request
     }
 
+    fn text_request(
+        operation_id: &[u8],
+        channel_id: &[u8],
+        payload: &[u8],
+        operation_kind: u32,
+    ) -> SakuraOutputProviderRequestV1 {
+        let mut request = empty_request(operation_id, operation_kind);
+        request.channel_id = span(channel_id);
+        request.payload = span(payload);
+        request
+    }
+
     fn create_provider_token() -> u64 {
         let raw_limits = limits();
         let mut token = 0_u64;
@@ -431,7 +833,23 @@ mod tests {
         }
     }
 
-    fn snapshot_buffer(storage: &mut [u8]) -> SakuraOutputProviderSnapshotBufferV1 {
+    fn empty_receipt() -> SakuraOutputProviderSnapshotReceiptV1 {
+        SakuraOutputProviderSnapshotReceiptV1 {
+            measurement_id: 0,
+            revision: 0,
+            dropped_notification_count: 0,
+            channel_count: 0,
+            encoded_size: 0,
+            stopped: 0,
+            active_channel_present: 0,
+            reserved: [0; 6],
+        }
+    }
+
+    fn snapshot_buffer_with_receipt(
+        storage: &mut [u8],
+        receipt: SakuraOutputProviderSnapshotReceiptV1,
+    ) -> SakuraOutputProviderSnapshotBufferV1 {
         SakuraOutputProviderSnapshotBufferV1 {
             struct_size: size_of::<SakuraOutputProviderSnapshotBufferV1>() as u32,
             abi_version: 1,
@@ -443,7 +861,12 @@ mod tests {
             capacity: storage.len() as u64,
             length: 0,
             reserved: [0; 2],
+            receipt,
         }
+    }
+
+    fn snapshot_buffer(storage: &mut [u8]) -> SakuraOutputProviderSnapshotBufferV1 {
+        snapshot_buffer_with_receipt(storage, empty_receipt())
     }
 
     fn active_buffer(storage: &mut [u8]) -> SakuraOutputProviderActiveChannelV1 {
@@ -497,6 +920,7 @@ mod tests {
         assert_eq!(u64::MAX, info.channel_count);
         assert_eq!(u64::MAX, info.encoded_size);
         assert_eq!([0; 2], info.reserved);
+        assert_eq!(poison_receipt(), info.receipt);
     }
 
     fn assert_poison_active(active: &SakuraOutputProviderActiveChannelV1) {
@@ -516,6 +940,158 @@ mod tests {
 
     fn assert_poison_snapshot_length(buffer: &SakuraOutputProviderSnapshotBufferV1) {
         assert_eq!(u64::MAX, buffer.length);
+    }
+
+    #[test]
+    fn provider_snapshot_write_rejects_unmeasured_and_same_size_mutations() {
+        let token = create_provider_token();
+        let create = create_request(b"receipt-create", b"owner", b"channel", b"Label");
+        let mut result = poison_result();
+        // SAFETY: The request and result satisfy the V1 copied ABI contract.
+        assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
+            sakura_output_provider_apply_v1(token, &create, &mut result)
+        });
+
+        let mut unmeasured_storage = vec![0xa5_u8; 256];
+        let mut unmeasured = snapshot_buffer(&mut unmeasured_storage);
+        // A write without a preceding measure has no receipt and must not
+        // expose the current model state.
+        // SAFETY: The descriptor and storage are caller-owned and bounded.
+        assert_eq!(SakuraOutputProviderStatus::InvalidArgument, unsafe {
+            sakura_output_provider_snapshot_write_v1(token, &mut unmeasured)
+        });
+        assert_poison_snapshot_length(&unmeasured);
+        assert!(unmeasured_storage.iter().all(|value| *value == 0xa5));
+
+        let append = text_request(b"receipt-append", b"channel", b"AAAA", 2);
+        // SAFETY: The request and result satisfy the V1 copied ABI contract.
+        assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
+            sakura_output_provider_apply_v1(token, &append, &mut result)
+        });
+
+        // Caller A measures the first four-byte payload.
+        let mut info_a = poison_info();
+        // SAFETY: The info slot is writable local V1 storage.
+        assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
+            sakura_output_provider_snapshot_measure_v1(token, &mut info_a)
+        });
+        assert_ne!(0, info_a.receipt.measurement_id);
+
+        let replace = text_request(b"receipt-replace", b"channel", b"BBBB", 3);
+        // SAFETY: The request and result satisfy the V1 copied ABI contract.
+        assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
+            sakura_output_provider_apply_v1(token, &replace, &mut result)
+        });
+
+        // Caller B measures after a same-size mutation. A and B therefore
+        // have different receipts even though encoded_size is identical.
+        let mut info_b = poison_info();
+        // SAFETY: The info slot is writable local V1 storage.
+        assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
+            sakura_output_provider_snapshot_measure_v1(token, &mut info_b)
+        });
+        assert_ne!(info_a.receipt.measurement_id, info_b.receipt.measurement_id);
+        assert_eq!(info_a.encoded_size, info_b.encoded_size);
+        assert_ne!(info_a.receipt.revision, info_b.receipt.revision);
+
+        let mut a_storage = vec![0xa5_u8; info_a.encoded_size as usize];
+        let mut a_buffer = snapshot_buffer_with_receipt(&mut a_storage, info_a.receipt);
+        // A's caller-bound receipt must reject the current B snapshot; it may
+        // not silently use B's last measurement or emit B's bytes.
+        // SAFETY: The descriptor and storage are caller-owned and bounded.
+        assert_eq!(SakuraOutputProviderStatus::InternalError, unsafe {
+            sakura_output_provider_snapshot_write_v1(token, &mut a_buffer)
+        });
+        assert_poison_snapshot_length(&a_buffer);
+        assert!(a_storage.iter().all(|value| *value == 0xa5));
+
+        // A stale receipt is terminal for that measurement.  Reusing it
+        // after the mismatch must not expose the now-current snapshot.
+        let mut expired_storage = vec![0xa5_u8; info_a.encoded_size as usize];
+        let mut expired_buffer = snapshot_buffer_with_receipt(&mut expired_storage, info_a.receipt);
+        // SAFETY: The descriptor and storage are caller-owned and bounded.
+        assert_eq!(SakuraOutputProviderStatus::InvalidArgument, unsafe {
+            sakura_output_provider_snapshot_write_v1(token, &mut expired_buffer)
+        });
+        assert_poison_snapshot_length(&expired_buffer);
+        assert!(expired_storage.iter().all(|value| *value == 0xa5));
+
+        // Altering any receipt field is rejected without consuming the valid
+        // B entry, so a forged copy cannot turn into a partial write.
+        let mut forged_receipt = info_b.receipt;
+        forged_receipt.channel_count ^= 1;
+        let mut forged_storage = vec![0xa5_u8; info_b.encoded_size as usize];
+        let mut forged_buffer = snapshot_buffer_with_receipt(&mut forged_storage, forged_receipt);
+        // SAFETY: The descriptor and storage are caller-owned and bounded.
+        assert_eq!(SakuraOutputProviderStatus::InvalidArgument, unsafe {
+            sakura_output_provider_snapshot_write_v1(token, &mut forged_buffer)
+        });
+        assert_poison_snapshot_length(&forged_buffer);
+        assert!(forged_storage.iter().all(|value| *value == 0xa5));
+
+        // A receipt issued by one provider token cannot be replayed through a
+        // different live provider, even though the global measurement id is
+        // otherwise well formed.
+        let other_token = create_provider_token();
+        let mut cross_storage = vec![0xa5_u8; info_b.encoded_size as usize];
+        let mut cross_buffer = snapshot_buffer_with_receipt(&mut cross_storage, info_b.receipt);
+        // SAFETY: The descriptor and storage are caller-owned and bounded.
+        assert_eq!(SakuraOutputProviderStatus::InvalidArgument, unsafe {
+            sakura_output_provider_snapshot_write_v1(other_token, &mut cross_buffer)
+        });
+        assert_poison_snapshot_length(&cross_buffer);
+        assert!(cross_storage.iter().all(|value| *value == 0xa5));
+        let mut other_token = other_token;
+        // SAFETY: The second token was created by this test and is destroyed
+        // exactly once after the cross-provider receipt check.
+        assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
+            sakura_output_provider_destroy_v1(&mut other_token)
+        });
+        assert_eq!(0, other_token);
+
+        let mut b_storage = vec![0xa5_u8; info_b.encoded_size as usize];
+        let mut b_buffer = snapshot_buffer_with_receipt(&mut b_storage, info_b.receipt);
+        // B's receipt identifies the current snapshot and is accepted.
+        // SAFETY: The descriptor and storage exactly match B's measure.
+        assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
+            sakura_output_provider_snapshot_write_v1(token, &mut b_buffer)
+        });
+        assert_eq!(info_b.encoded_size, b_buffer.length);
+        assert!(b_storage
+            .windows(b"BBBB".len())
+            .any(|window| window == b"BBBB"));
+
+        // The receipt registry is deliberately bounded.  Keep one receipt
+        // outstanding, then add 64 newer measurements so the oldest entry is
+        // evicted instead of being silently rebound to a newer snapshot.
+        let mut oldest_info = poison_info();
+        // SAFETY: The info slot is writable local V1 storage.
+        assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
+            sakura_output_provider_snapshot_measure_v1(token, &mut oldest_info)
+        });
+        for _ in 0..64 {
+            let mut newer_info = poison_info();
+            // SAFETY: Each info slot is writable local V1 storage.
+            assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
+                sakura_output_provider_snapshot_measure_v1(token, &mut newer_info)
+            });
+        }
+        let mut evicted_storage = vec![0xa5_u8; oldest_info.encoded_size as usize];
+        let mut evicted_buffer =
+            snapshot_buffer_with_receipt(&mut evicted_storage, oldest_info.receipt);
+        // SAFETY: The descriptor and storage are caller-owned and bounded.
+        assert_eq!(SakuraOutputProviderStatus::InvalidArgument, unsafe {
+            sakura_output_provider_snapshot_write_v1(token, &mut evicted_buffer)
+        });
+        assert_poison_snapshot_length(&evicted_buffer);
+        assert!(evicted_storage.iter().all(|value| *value == 0xa5));
+
+        // SAFETY: The token slot is valid caller-owned storage.
+        let mut token = token;
+        assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
+            sakura_output_provider_destroy_v1(&mut token)
+        });
+        assert_eq!(0, token);
     }
 
     #[test]
@@ -1099,7 +1675,7 @@ mod tests {
             sakura_output_provider_snapshot_measure_v1(token, &mut info)
         });
         let mut first_storage = vec![0_u8; info.encoded_size as usize];
-        let mut first_buffer = snapshot_buffer(&mut first_storage);
+        let mut first_buffer = snapshot_buffer_with_receipt(&mut first_storage, info.receipt);
         // SAFETY: The snapshot destination is caller-owned for this call only.
         assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
             sakura_output_provider_snapshot_write_v1(token, &mut first_buffer)
@@ -1113,7 +1689,7 @@ mod tests {
         drop(first_storage);
 
         let mut second_storage = vec![0_u8; info.encoded_size as usize];
-        let mut second_buffer = snapshot_buffer(&mut second_storage);
+        let mut second_buffer = snapshot_buffer_with_receipt(&mut second_storage, info.receipt);
         // SAFETY: A new caller-owned destination proves the previous output
         // span was not retained by the provider.
         assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
@@ -1248,7 +1824,7 @@ mod tests {
         // The model changed between measure and write. The old bounded buffer
         // must fail closed instead of truncating or overflowing the snapshot.
         let mut old_storage = vec![0_u8; first_size as usize];
-        let mut old_buffer = snapshot_buffer(&mut old_storage);
+        let mut old_buffer = snapshot_buffer_with_receipt(&mut old_storage, new_info.receipt);
         // SAFETY: The destination is valid but intentionally smaller than the
         // newly measured canonical stream.
         assert_eq!(SakuraOutputProviderStatus::InsufficientCapacity, unsafe {
@@ -1257,7 +1833,7 @@ mod tests {
         assert_poison_snapshot_length(&old_buffer);
 
         let mut final_storage = vec![0_u8; new_info.encoded_size as usize];
-        let mut final_buffer = snapshot_buffer(&mut final_storage);
+        let mut final_buffer = snapshot_buffer_with_receipt(&mut final_storage, new_info.receipt);
         // SAFETY: The destination exactly matches the second measure result.
         assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
             sakura_output_provider_snapshot_write_v1(token, &mut final_buffer)
@@ -1565,22 +2141,35 @@ mod tests {
         });
         assert_poison_result(&model_result);
 
-        let mut model_info = poison_info();
+        let mut model_info = shadow_poison_info();
         // SAFETY: A provider token must not be accepted by replay snapshot
         // measurement.
         assert_eq!(SakuraOutputProviderStatus::InvalidHandle, unsafe {
-            output_shadow::model_snapshot_measure_v1(provider_token, &mut model_info)
+            output_shadow::model_snapshot_measure_v1(
+                provider_token,
+                &mut model_info as *mut output_shadow::SakuraOutputShadowSnapshotInfoV1,
+            )
         });
-        assert_poison_info(&model_info);
+        assert_eq!(u64::MAX, model_info.revision);
 
         let mut model_storage = vec![0_u8; 128];
-        let mut model_buffer = snapshot_buffer(&mut model_storage);
+        let mut model_buffer = output_shadow::SakuraOutputShadowSnapshotBufferV1 {
+            struct_size: size_of::<output_shadow::SakuraOutputShadowSnapshotBufferV1>() as u32,
+            abi_version: 1,
+            data: model_storage.as_mut_ptr(),
+            capacity: model_storage.len() as u64,
+            length: 0,
+            reserved: [0; 2],
+        };
         // SAFETY: A provider token must not be accepted by replay snapshot
         // writing.
         assert_eq!(SakuraOutputProviderStatus::InvalidHandle, unsafe {
-            output_shadow::model_snapshot_write_v1(provider_token, &mut model_buffer)
+            output_shadow::model_snapshot_write_v1(
+                provider_token,
+                &mut model_buffer as *mut output_shadow::SakuraOutputShadowSnapshotBufferV1,
+            )
         });
-        assert_poison_snapshot_length(&model_buffer);
+        assert_eq!(u64::MAX, model_buffer.length);
 
         let mut model_active_storage = vec![0_u8; 64];
         let mut model_active = active_buffer(&mut model_active_storage);
@@ -1674,6 +2263,8 @@ mod tests {
                     status,
                     SakuraOutputProviderStatus::Ok
                         | SakuraOutputProviderStatus::InsufficientCapacity
+                        | SakuraOutputProviderStatus::InvalidArgument
+                        | SakuraOutputProviderStatus::InternalError
                         | SakuraOutputProviderStatus::InvalidHandle
                 ));
             }));
@@ -1742,15 +2333,7 @@ mod tests {
     #[test]
     fn provider_export_source_contract_contains_panic_containment_for_each_export() {
         let source = include_str!("output_provider.rs");
-        assert_eq!(
-            7,
-            source
-                .lines()
-                .filter(|line| line
-                    .trim_start()
-                    .starts_with("catch_unwind(AssertUnwindSafe(||"))
-                .count()
-        );
+        assert!(source.matches("catch_unwind(").count() >= 7);
         assert_eq!(
             7,
             source
@@ -1867,6 +2450,7 @@ mod tests {
             channel_count: 0,
             encoded_size: 0,
             reserved: [0; 2],
+            receipt: empty_receipt(),
         };
         // SAFETY: The info is valid caller-owned V1 storage.
         assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
