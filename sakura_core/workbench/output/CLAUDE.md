@@ -128,6 +128,15 @@ a bounded external Stop retry; it never selects or reconstructs the C++
 provider. Runtime health overlays only immutable composition metadata and does
 not infer provider state from RTTI, snapshots, or the observational candidate.
 
+The Rust model keeps at most one canonical encoded snapshot per provider
+revision. Measure and write still cross the frozen receipt boundary and still
+reject stale or forged receipts; the cache only removes repeated serialization
+of the same Rust-owned state. Copied mutation entry and terminal Stop invalidate
+the cache before any fallible state change, so panic containment cannot expose
+bytes from an earlier revision. The C++ adapter continues to allocate and decode
+one caller-owned buffer and moves that decoded value to the consumer; no cached
+foreign pointer or decoded C++ authority state crosses back into Rust.
+
 Issue #274 remains a measurement gate, not an adoption decision. C++ is still
 the default Output authority. `SAKURA_OUTPUT_PRODUCTION_PACKAGE` is an explicit
 package-release gate independent from UTF-16 packaging and currently accepts

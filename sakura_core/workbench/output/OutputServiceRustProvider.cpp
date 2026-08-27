@@ -1271,7 +1271,7 @@ OutputServiceSnapshot OutputServiceRustProvider::Snapshot() const
 			}
 		}
 #if defined(SAKURA_OUTPUT_BACKEND_RUST)
-		if (const auto snapshot = ReadSnapshot(*m_control)) return *snapshot;
+		if (auto snapshot = ReadSnapshot(*m_control)) return std::move(*snapshot);
 #endif
 	} catch (...) {
 		SetFault(*m_control, EOutputServiceRustProviderFault::SnapshotFailure,

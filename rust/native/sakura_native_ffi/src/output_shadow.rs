@@ -354,6 +354,12 @@ struct CompletedOperation {
 }
 
 #[derive(Clone, Debug)]
+struct SnapshotCache {
+    revision: u64,
+    bytes: Vec<u8>,
+}
+
+#[derive(Clone, Debug)]
 struct Service {
     limits: Limits,
     channels: BTreeMap<Vec<u8>, Channel>,
@@ -364,6 +370,7 @@ struct Service {
     revision: u64,
     dropped_notification_count: u64,
     stopped: bool,
+    snapshot_cache: Option<SnapshotCache>,
 }
 
 impl Service {
@@ -378,6 +385,7 @@ impl Service {
             revision: 1,
             dropped_notification_count: 0,
             stopped: false,
+            snapshot_cache: None,
         }
     }
 
@@ -1048,6 +1056,10 @@ impl Service {
 
     fn stop(&mut self) -> OperationResult {
         if !self.stopped {
+            // Stop is snapshot-visible even if a saturated revision cannot
+            // advance, so do not let a revision-only cache key reuse a live
+            // snapshot for the terminal state.
+            self.snapshot_cache = None;
             self.channels.clear();
             self.active_owner_generations.clear();
             self.active_channel_id = None;
@@ -1062,7 +1074,22 @@ impl Service {
         )
     }
 
-    fn snapshot_bytes(&self) -> Vec<u8> {
+    fn snapshot_bytes(&mut self) -> &[u8] {
+        // Every snapshot-visible mutation advances `revision`; the only other
+        // snapshot-visible field, `dropped_notification_count`, is immutable in
+        // this shadow. Keep that invariant when adding new mutable state.
+        if self
+            .snapshot_cache
+            .as_ref()
+            .is_some_and(|cache| cache.revision == self.revision)
+        {
+            return &self
+                .snapshot_cache
+                .as_ref()
+                .expect("matching snapshot cache exists")
+                .bytes;
+        }
+
         let mut output = Vec::new();
         output.extend_from_slice(SNAPSHOT_MAGIC);
         put_u64(&mut output, self.revision);
@@ -1096,7 +1123,15 @@ impl Service {
             }
             put_bytes(&mut output, &channel.projected_text);
         }
-        output
+        self.snapshot_cache = Some(SnapshotCache {
+            revision: self.revision,
+            bytes: output,
+        });
+        &self
+            .snapshot_cache
+            .as_ref()
+            .expect("snapshot cache was inserted")
+            .bytes
     }
 }
 
@@ -1599,6 +1634,11 @@ pub(crate) unsafe fn model_apply_v1(
     let Some(service) = registry.services.get_mut(&token) else {
         return SakuraOutputShadowStatus::InvalidHandle;
     };
+    // A future fallible mutation must never leave a partially updated model
+    // paired with bytes from the prior revision. Invalidating at the copied
+    // request boundary is conservative for rejected/replayed operations and
+    // keeps panic recovery fail-closed without changing their result.
+    service.snapshot_cache = None;
     let operation_result = service.apply(request);
     let status = if operation_result.status == SakuraOutputShadowOperationStatus::Stopped {
         SakuraOutputShadowStatus::Stopped
@@ -1637,8 +1677,8 @@ pub(crate) unsafe fn model_snapshot_measure_v1(
     }
     // SAFETY: The output pointer is non-null and aligned.
     unsafe { info.write(poison_info()) };
-    let registry = lock_registry();
-    let Some(service) = registry.services.get(&token) else {
+    let mut registry = lock_registry();
+    let Some(service) = registry.services.get_mut(&token) else {
         return SakuraOutputShadowStatus::InvalidHandle;
     };
     let bytes = service.snapshot_bytes();
@@ -1724,8 +1764,8 @@ pub(crate) unsafe fn model_snapshot_write_v1(
     ) {
         return SakuraOutputShadowStatus::InvalidArgument;
     }
-    let registry = lock_registry();
-    let Some(service) = registry.services.get(&token) else {
+    let mut registry = lock_registry();
+    let Some(service) = registry.services.get_mut(&token) else {
         return SakuraOutputShadowStatus::InvalidHandle;
     };
     let bytes = service.snapshot_bytes();
@@ -2487,6 +2527,79 @@ mod tests {
             first.stop().status
         );
         assert!(first.snapshot_bytes().starts_with(SNAPSHOT_MAGIC));
+    }
+
+    #[test]
+    fn snapshot_cache_reuses_current_revision_and_refreshes_after_mutations() {
+        let mut service = Service::new(limits());
+        assert_eq!(
+            SakuraOutputShadowOperationStatus::Succeeded,
+            service
+                .apply(create("create", 1, "channel", CHANNEL_KIND_OUTPUT))
+                .status
+        );
+
+        let before_mutation = service.snapshot_bytes().to_vec();
+        let before_mutation_revision = service.revision;
+        let cached_pointer = service
+            .snapshot_cache
+            .as_ref()
+            .expect("first snapshot is cached")
+            .bytes
+            .as_ptr();
+        assert_eq!(
+            before_mutation_revision,
+            service
+                .snapshot_cache
+                .as_ref()
+                .expect("first snapshot is cached")
+                .revision
+        );
+        assert_eq!(cached_pointer, service.snapshot_bytes().as_ptr());
+        assert_eq!(before_mutation.as_slice(), service.snapshot_bytes());
+
+        assert_eq!(
+            SakuraOutputShadowOperationStatus::Succeeded,
+            service
+                .apply(Request::Text {
+                    operation: operation("text"),
+                    owner: owner(1),
+                    channel_id: b"channel".to_vec(),
+                    text: b"new text".to_vec(),
+                    replace: true,
+                })
+                .status
+        );
+        let after_mutation = service.snapshot_bytes().to_vec();
+        assert_ne!(before_mutation, after_mutation);
+        assert_eq!(
+            service.revision,
+            service
+                .snapshot_cache
+                .as_ref()
+                .expect("mutated snapshot is cached")
+                .revision
+        );
+        assert_eq!(after_mutation.as_slice(), service.snapshot_bytes());
+
+        service.revision = u64::MAX;
+        let saturated_live = service.snapshot_bytes().to_vec();
+        assert_eq!(
+            SakuraOutputShadowOperationStatus::Succeeded,
+            service.stop().status
+        );
+        let stopped = service.snapshot_bytes().to_vec();
+        assert_ne!(saturated_live, stopped);
+        assert_eq!(u64::MAX, service.revision);
+        assert_eq!(stopped.as_slice(), service.snapshot_bytes());
+        assert_eq!(
+            service.revision,
+            service
+                .snapshot_cache
+                .as_ref()
+                .expect("stopped snapshot is cached")
+                .revision
+        );
     }
 
     #[test]
