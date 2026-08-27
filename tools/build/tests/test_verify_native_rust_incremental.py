@@ -75,13 +75,15 @@ class NativeRustIncrementalVerifierTests(unittest.TestCase):
         self.assertIn("New-EmergencyEvidenceEnvelope", text)
         self.assertIn("EVIDENCE_SCHEMA_SHARED_CHECKOUT", text)
         self.assertIn("schemaValidation", text)
+        self.assertIn("workspaceSetup", text)
         self.assertIn("bounded_phase_metadata", text)
         self.assertIn("underlyingResultType", text)
         self.assertIn("cleanupVerified", text)
         self.assertIn("MaxCleanupInspectionEntries = 1000000", text)
         self.assertIn("ConvertTo-WindowsCommandLineArgument", text)
+        self.assertIn("Resolve-ApplicationPath", text)
         self.assertIn(
-            "ConvertTo-WindowsCommandLine -Arguments (@($FilePath) + @($ArgumentList))",
+            "ConvertTo-WindowsCommandLine -Arguments (@($applicationPath) + @($ArgumentList))",
             text,
         )
         self.assertIn("$argumentValue = 'argv value with spaces'", text)
@@ -160,20 +162,27 @@ class NativeRustIncrementalVerifierTests(unittest.TestCase):
                 summary = json.loads(summary_lines[0][len("SELFTEST_JSON ") :])
                 self.assertEqual(1, summary["schemaVersion"])
                 self.assertTrue(summary["payloadFree"])
-                self.assertEqual(5, summary["workActionCount"])
+                self.assertEqual(11, summary["workActionCount"])
                 self.assertEqual("ok", summary["closureType"])
                 self.assertEqual("unexpected_consumer", summary["unexpectedClosureType"])
                 self.assertEqual(1, summary["actionCounts"]["cargo-preflight"])
                 self.assertEqual(1, summary["actionCounts"]["cargo"])
-                self.assertEqual(1, summary["actionCounts"]["unexpected_tool"])
-                for kind in ("cl", "link", "lib", "delete"):
+                self.assertEqual(2, summary["actionCounts"]["unexpected_tool"])
+                self.assertEqual(
+                    {"signcode.exe": 1, "vcpkg.exe": 1}, summary["unexpectedToolNames"]
+                )
+                self.assertFalse(summary["unexpectedToolNamesTruncated"])
+                for kind in ("cl", "link", "lib", "rc", "mt", "delete"):
                     self.assertEqual(1, summary["actionCounts"][kind])
+                self.assertEqual(2, summary["actionCounts"]["cmake"])
+                self.assertEqual(1, summary["actionCounts"]["senp-tool"])
+                self.assertEqual(1, summary["actionCounts"]["vcpkg-applocal"])
                 self.assertEqual("survivor", summary["observedSurvivorResultType"])
                 self.assertEqual(1, summary["observedSurvivorCount"])
                 self.assertEqual(0, summary["postCleanupSurvivorCount"])
                 self.assertTrue(summary["expectedCompilerHelperPolicyVerified"])
                 self.assertGreater(summary["diagnosticByteCount"], 0)
-                self.assertEqual(9, summary["diagnosticLineCount"])
+                self.assertEqual(18, summary["diagnosticLineCount"])
                 self.assertEqual(2, summary["diagnosticErrorCodes"]["MSB4019"])
                 self.assertEqual(1, summary["diagnosticErrorCodes"]["C1083"])
                 self.assertEqual(1, summary["diagnosticErrorCodes"]["LNK1104"])
@@ -181,8 +190,8 @@ class NativeRustIncrementalVerifierTests(unittest.TestCase):
                 self.assertEqual("survivor", summary["combinedFailureResultType"])
                 self.assertEqual(1, summary["combinedFailureExitCode"])
                 self.assertEqual(2, summary["combinedFailureDiagnosticErrorCodeCount"])
-                self.assertEqual(7, summary["actionRecordCount"])
-                self.assertEqual(7, summary["retainedActionCount"])
+                self.assertEqual(14, summary["actionRecordCount"])
+                self.assertEqual(14, summary["retainedActionCount"])
                 self.assertTrue(summary["actionsTruncated"])
                 self.assertEqual("unexpected_consumer", summary["truncatedClosureType"])
                 self.assertEqual("unexpected_action", summary["truncatedNoOpType"])
@@ -208,6 +217,7 @@ class NativeRustIncrementalVerifierTests(unittest.TestCase):
                 self.assertTrue(summary["immutableSnapshotShareVerified"])
                 self.assertTrue(summary["cleanupInspectionVerified"])
                 self.assertTrue(summary["argumentQuotingVerified"])
+                self.assertTrue(summary["resolvedApplicationPathVerified"])
                 self.assertTrue(summary["sharedFingerprintFailureTyped"])
                 self.assertTrue(summary["schemaFailureEnvelopeVerified"])
                 self.assertTrue(summary["emergencyEnvelopeVerified"])
@@ -220,7 +230,11 @@ class NativeRustIncrementalVerifierTests(unittest.TestCase):
                 self.assertTrue(summary["parserFailureObserved"])
                 self.assertTrue(summary["blankLineActionClassificationVerified"])
                 self.assertTrue(summary["directToolInvocationBoundaryVerified"])
+                self.assertTrue(summary["trackedArtifactStatusBoundaryVerified"])
                 self.assertTrue(summary["sourceExtensionBoundaryVerified"])
+                self.assertTrue(summary["resourceAndManifestActionClassificationVerified"])
+                self.assertTrue(summary["incrementalCompanionActionClassificationVerified"])
+                self.assertTrue(summary["unexpectedToolNameSchemaVerified"])
                 self.assertTrue(summary["vcpkgRootPinVerified"])
                 self.assertTrue(summary["packageToolSchemaVerified"])
 
@@ -234,6 +248,8 @@ class NativeRustIncrementalVerifierTests(unittest.TestCase):
         self.assertIn("cpp_provider = @('sakura_core/sakura.vcxproj')", text)
         self.assertIn("Get-NoOpViolation", text)
         self.assertIn("$script:UnexpectedActionKinds", text)
+        self.assertIn('Write-Output "PASS ${script:VerifierName}: $outputPath"', text)
+        self.assertNotIn("$evidence.cleanup.path", text)
         self.assertNotIn("Get-ChildItem -LiteralPath $RepositoryRoot -Recurse -Filter *.vcxproj", text)
 
 

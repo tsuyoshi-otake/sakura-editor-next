@@ -36,10 +36,14 @@ $ErrorActionPreference = 'Stop'
 $script:SchemaVersion = 1
 $script:VerifierName = 'verify-native-rust-incremental.ps1'
 $script:RustBuildTarget = 'BuildSakuraNativeFfi'
-$script:WorkActionKinds = @('cargo', 'rustc', 'cl', 'link', 'lib', 'delete')
+$script:WorkActionKinds = @(
+    'cargo', 'rustc', 'cl', 'link', 'lib', 'rc', 'mt', 'cmake',
+    'senp-tool', 'vcpkg-applocal', 'delete'
+)
 $script:UnexpectedActionKinds = @('cargo-preflight', 'unexpected_tool')
 $script:MaxDiagnosticErrorCodes = 32
 $script:MaxRetainedActions = 256
+$script:MaxUnexpectedToolNames = 32
 $script:MaxProcessFailureRecords = 64
 $script:MaxProcessFailureCodes = 32
 $script:MaxCleanupInspectionEntries = 1000000
@@ -1335,6 +1339,21 @@ function Get-ProjectFromLine {
     }
 }
 
+function Add-BoundedUnexpectedToolName {
+    param(
+        [Parameter(Mandatory)][Collections.IDictionary] $Names,
+        [Parameter(Mandatory)][string] $Name
+    )
+    if ($Name -notmatch '^[a-z0-9_.-]{1,64}\.exe$') { return $false }
+    if ($Names.Contains($Name)) {
+        $Names[$Name] = [int]$Names[$Name] + 1
+        return $true
+    }
+    if ($Names.Count -ge $script:MaxUnexpectedToolNames) { return $false }
+    $Names[$Name] = 1
+    return $true
+}
+
 function Get-ActionClassifications {
     <# Classify direct tool invocations only; nested Tracker command echoes do
        not start with the executable and therefore cannot create false work. #>
@@ -1350,10 +1369,15 @@ function Get-ActionClassifications {
     if ($item -isnot [IO.FileInfo]) { throw "diagnostic log is not a regular file: $LogPath" }
     $actions = [System.Collections.Generic.List[object]]::new()
     $actionCounts = [ordered]@{}
-    foreach ($knownKind in @('cargo', 'cargo-preflight', 'rustc', 'cl', 'link', 'lib', 'delete', 'unexpected_tool')) {
+    foreach ($knownKind in @(
+        'cargo', 'cargo-preflight', 'rustc', 'cl', 'link', 'lib', 'rc', 'mt',
+        'cmake', 'senp-tool', 'vcpkg-applocal', 'delete', 'unexpected_tool'
+    )) {
         $actionCounts[$knownKind] = 0
     }
     $actionKindsSeen = @{}
+    $unexpectedToolNames = [ordered]@{}
+    $unexpectedToolNamesTruncated = $false
     $actionRecordCount = 0
     $retainedActionCount = 0
     $unretainedActionCount = 0
@@ -1362,20 +1386,36 @@ function Get-ActionClassifications {
     # Compiler/linker tools require an executable suffix. Requiring the path
     # to begin the line prevents diagnostic prose such as `Using "CL" task
     # from assembly ...CppTasks.Common.dll` from being classified as work.
-    $toolPattern = '(?i)^\s*(?:\d+>)?\s*(?:(?:"[^"\r\n]*[\\/])|(?:(?:[A-Za-z]:[\\/]|\\\\)[^"\r\n]*[\\/]))?"?(?<tool>cargo(?:\.exe)?|rustc\.exe|cl\.exe|link\.exe|lib\.exe)"?\s+(?<arguments>.*)$'
+    $toolPattern = '(?i)^\s*(?:\d+>)?\s*(?:(?:"[^"\r\n]*[\\/])|(?:(?:[A-Za-z]:[\\/]|\\\\)[^"\r\n]*[\\/]))?"?(?<tool>cargo(?:\.exe)?|rustc\.exe|cl\.exe|link\.exe|lib\.exe|rc\.exe|mt\.exe|cmake\.exe|vcpkg\.exe|sakura-senp-tool\.exe|sakura-senp-host\.exe)"?\s+(?<arguments>.*)$'
+    $directExecutablePattern = '(?i)^\s*(?:\d+>)?\s*"?(?<executable>(?:(?:[A-Za-z]:[\\/]|\\\\)[^"\r\n]*[\\/])?(?<tool>[A-Za-z0-9_.-]+\.exe))"?\s+(?<arguments>.*)$'
+    # TrackedVCToolTask prints an absolute executable output item and can then
+    # print a localized status sentence beginning with that same output path.
+    # Remember only a bounded set of recent path+TaskId pairs so those status
+    # lines are not mistaken for direct product invocations.
+    $recentArtifactOutputs = @{}
+    $recentArtifactOrder = [Collections.Generic.Queue[object]]::new()
+    $maxRecentArtifactOutputs = 32
+    $lineOrdinal = 0
     # A zero-byte diagnostic log is a valid parser input for self-tests and
     # must not turn 0..-1 into an invalid negative array index.
     $encoding = [Text.UTF8Encoding]::new($false, $false)
     $reader = New-Object IO.StreamReader($LogPath, $encoding, $true)
     try {
         while (($line = $reader.ReadLine()) -ne $null) {
+            $lineOrdinal++
             $project = Get-ProjectFromLine -Line $line -Workspace $Workspace
             if ($null -ne $project) { $currentProject = $project }
 
             $action = $null
             if ($line -match $toolPattern) {
-                $tool = ([regex]::Replace([string]$Matches.tool, '(?i)\.exe$', '')).ToLowerInvariant()
+                $toolName = ([string]$Matches.tool).ToLowerInvariant()
+                $tool = ([regex]::Replace($toolName, '(?i)\.exe$', '')).ToLowerInvariant()
                 $arguments = [string]$Matches.arguments
+                if ($arguments -match '^\(TaskId:\s*\d+\)\s*$') {
+                    # An executable item printed by task-parameter diagnostics
+                    # is not a child-process command line.
+                    continue
+                }
                 $kind = $tool
                 $operation = 'invoke'
                 if ($tool -eq 'cargo' -and $arguments -match '(?i)(^|\s)--version(?:\s|$)') {
@@ -1383,6 +1423,45 @@ function Get-ActionClassifications {
                     $operation = 'version'
                 } elseif ($tool -eq 'cargo' -and $arguments -match '(?i)(^|\s)build(?:\s|$)') {
                     $operation = 'build'
+                } elseif ($tool -eq 'cmake') {
+                    if ($arguments -match '(?i)(^|\s)--build(?:\s|$)') {
+                        $operation = 'build'
+                    } elseif ($arguments -match '(?i)(^|\s)-(?:A|B|S)(?:\s|$)') {
+                        $operation = 'configure'
+                    } else {
+                        $kind = 'unexpected_tool'
+                    }
+                } elseif ($tool -eq 'vcpkg') {
+                    if ($arguments -match '(?i)^\s*z-applocal(?:\s|$)') {
+                        $kind = 'vcpkg-applocal'
+                        $operation = 'copy-runtime-dependencies'
+                    } else {
+                        $kind = 'unexpected_tool'
+                    }
+                } elseif ($tool -eq 'sakura-senp-tool') {
+                    if ($arguments -match '(?i)^\s*(?<verb>componentize|pack-builtin)(?:\s|$)') {
+                        $kind = 'senp-tool'
+                        $operation = $Matches.verb.ToLowerInvariant()
+                    } elseif ($arguments -match '(?i)"(?:[A-Za-z]:[\\/]|\\\\)[^"\r\n]*\.exe".*\(TaskId:\s*\d+\)\s*$') {
+                        # The Copy task prints a source executable followed by
+                        # its destination executable. It is artifact metadata,
+                        # not an invocation of the SENP command-line tool.
+                        continue
+                    } else {
+                        $kind = 'unexpected_tool'
+                    }
+                } elseif ($tool -eq 'sakura-senp-host') {
+                    if ($arguments -match '(?i)"(?:[A-Za-z]:[\\/]|\\\\)[^"\r\n]*\.exe".*\(TaskId:\s*\d+\)\s*$') {
+                        continue
+                    }
+                    # The product build copies the host but never executes it.
+                    # A future direct invocation is therefore unexpected until
+                    # its build-time contract is made explicit.
+                    $kind = 'unexpected_tool'
+                }
+                if ($kind -eq 'unexpected_tool' -and
+                    -not (Add-BoundedUnexpectedToolName -Names $unexpectedToolNames -Name $toolName)) {
+                    $unexpectedToolNamesTruncated = $true
                 }
                 $sourcePaths = Get-SourcePathMention -Line $line -Workspace $Workspace
                 $action = New-OrderedObject ([ordered]@{
@@ -1398,16 +1477,55 @@ function Get-ActionClassifications {
                 # mutation phases cannot silently accept a new build tool.
                 # Tracker/MSBuild plumbing is intentionally ignored; its command
                 # echo is not a tool execution performed by this phase.
-                $unknownPattern = '(?i)^\s*(?:\d+>)?\s*(?:(?:"[^"\r\n]*[\\/])|(?:(?:[A-Za-z]:[\\/]|\\\\)[^"\r\n]*[\\/]))?"?(?<tool>[A-Za-z0-9_.-]+\.exe)"?\s+(?<arguments>.*)$'
-                if ($line -match $unknownPattern) {
+                if ($line -match $directExecutablePattern) {
+                    $unknownExecutable = [string]$Matches.executable
                     $unknownTool = $Matches.tool.ToLowerInvariant()
                     $unknownArguments = [string]$Matches.arguments
                     # Diagnostic output can print an executable artifact path
                     # followed only by its task identifier. It is not a child
                     # process command line and therefore is not an action.
-                    $isArtifactMetadata = $unknownArguments -match '^\(TaskId:\s*\d+\)$'
+                    $taskOnlyMatch = [regex]::Match(
+                        $unknownArguments,
+                        '^\(TaskId:[ \t]*(?<id>\d+)\)[ \t]*$',
+                        [Text.RegularExpressions.RegexOptions]::IgnoreCase
+                    )
+                    $isAbsoluteExecutable = $unknownExecutable -match '^(?:[A-Za-z]:[\\/]|\\\\)'
+                    $normalizedExecutable = $unknownExecutable.Replace('/', '\').ToLowerInvariant()
+                    if ($taskOnlyMatch.Success -and $isAbsoluteExecutable) {
+                        $artifactKey = $taskOnlyMatch.Groups['id'].Value + '|' + $normalizedExecutable
+                        $recentArtifactOutputs[$artifactKey] = $lineOrdinal
+                        $recentArtifactOrder.Enqueue((New-OrderedObject ([ordered]@{
+                            key = $artifactKey
+                            line = $lineOrdinal
+                        })))
+                        while ($recentArtifactOrder.Count -gt $maxRecentArtifactOutputs) {
+                            $expired = $recentArtifactOrder.Dequeue()
+                            if ($recentArtifactOutputs.ContainsKey($expired.key) -and
+                                [int]$recentArtifactOutputs[$expired.key] -eq [int]$expired.line) {
+                                $recentArtifactOutputs.Remove($expired.key)
+                            }
+                        }
+                    }
+                    $taskSuffixMatch = [regex]::Match(
+                        $unknownArguments,
+                        '\(TaskId:[ \t]*(?<id>\d+)\)[ \t]*$',
+                        [Text.RegularExpressions.RegexOptions]::IgnoreCase
+                    )
+                    $isTrackedArtifactStatus = $false
+                    if (-not $taskOnlyMatch.Success -and $taskSuffixMatch.Success -and $isAbsoluteExecutable) {
+                        $artifactKey = $taskSuffixMatch.Groups['id'].Value + '|' + $normalizedExecutable
+                        if ($recentArtifactOutputs.ContainsKey($artifactKey)) {
+                            $artifactLine = [int]$recentArtifactOutputs[$artifactKey]
+                            $isTrackedArtifactStatus = $lineOrdinal -gt $artifactLine -and
+                                ($lineOrdinal - $artifactLine) -le 4
+                        }
+                    }
+                    $isArtifactMetadata = $taskOnlyMatch.Success -or $isTrackedArtifactStatus
                     if (-not $isArtifactMetadata -and
                         $unknownTool -notin @('tracker.exe', 'msbuild.exe', 'cmd.exe', 'conhost.exe', 'python.exe', 'py.exe', 'git.exe')) {
+                        if (-not (Add-BoundedUnexpectedToolName -Names $unexpectedToolNames -Name $unknownTool)) {
+                            $unexpectedToolNamesTruncated = $true
+                        }
                         $action = New-OrderedObject ([ordered]@{
                             phase = $Phase
                             kind = 'unexpected_tool'
@@ -1458,6 +1576,8 @@ function Get-ActionClassifications {
         actionsTruncated = [bool]($unretainedActionCount -gt 0)
         closureProofAvailable = [bool]($unretainedActionCount -eq 0)
         workActionCount = [int]$workActionCount
+        unexpectedToolNames = (New-OrderedObject $unexpectedToolNames)
+        unexpectedToolNamesTruncated = [bool]$unexpectedToolNamesTruncated
     }))
 }
 
@@ -1469,7 +1589,10 @@ function Get-WorkActions {
 function Get-ActionCounts {
     param([AllowNull()][AllowEmptyCollection()][object[]] $Actions = @())
     $counts = [ordered]@{}
-    foreach ($kind in @('cargo', 'cargo-preflight', 'rustc', 'cl', 'link', 'lib', 'delete', 'unexpected_tool')) {
+    foreach ($kind in @(
+        'cargo', 'cargo-preflight', 'rustc', 'cl', 'link', 'lib', 'rc', 'mt',
+        'cmake', 'senp-tool', 'vcpkg-applocal', 'delete', 'unexpected_tool'
+    )) {
         $counts[$kind] = [int]@($Actions | Where-Object { $_.kind -eq $kind }).Count
     }
     return (New-OrderedObject $counts)
@@ -1605,6 +1728,26 @@ function Complete-OwnedProcessResult {
     return $copy
 }
 
+function Resolve-ApplicationPath {
+    param([Parameter(Mandatory)][string] $FilePath)
+    if ($FilePath.IndexOf("`r", [StringComparison]::Ordinal) -ge 0 -or
+        $FilePath.IndexOf("`n", [StringComparison]::Ordinal) -ge 0) {
+        throw 'application path contains a line break'
+    }
+    if ([IO.Path]::IsPathRooted($FilePath)) {
+        $resolved = Get-FullPath $FilePath
+    } else {
+        $commands = @(Get-Command -Name $FilePath -CommandType Application -ErrorAction Stop)
+        if ($commands.Count -eq 0) { throw 'application was not found' }
+        # Get-Command can return the same executable name from more than one
+        # PATH entry. Match ordinary command resolution by selecting the first
+        # application instead of stringifying and concatenating the array.
+        $resolved = Get-FullPath ([string]$commands[0].Source)
+    }
+    if (-not [IO.File]::Exists($resolved)) { throw 'application path does not exist' }
+    return $resolved
+}
+
 
 
 function Invoke-BoundedProcess {
@@ -1626,7 +1769,8 @@ function Invoke-BoundedProcess {
     $stderrCopyTask = $null
     try {
         Initialize-OwnedProcessInterop
-        $commandLine = ConvertTo-WindowsCommandLine -Arguments (@($FilePath) + @($ArgumentList))
+        $applicationPath = Resolve-ApplicationPath $FilePath
+        $commandLine = ConvertTo-WindowsCommandLine -Arguments (@($applicationPath) + @($ArgumentList))
         $stdoutStream = [IO.File]::Open($StdOutPath, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::Read)
         $stderrStream = [IO.File]::Open($StdErrPath, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::Read)
         # CreateProcessW applies the private kill-on-close Job Object and the
@@ -1634,7 +1778,7 @@ function Invoke-BoundedProcess {
         # The target is also suspended until parent-side setup is complete, so
         # no target instruction or descendant can run outside the owned job.
         $process = [Sakura.NativeRustVerifier.OwnedProcess]::Start(
-            $FilePath, $commandLine, $WorkingDirectory)
+            $applicationPath, $commandLine, $WorkingDirectory)
         $stdoutCopyTask = $process.StandardOutputStream.CopyToAsync($stdoutStream)
         $stderrCopyTask = $process.StandardErrorStream.CopyToAsync($stderrStream)
         $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
@@ -2135,6 +2279,8 @@ function Invoke-MsbuildPhase {
     $actionsTruncated = if ($null -ne $classification) { [bool]$classification.actionsTruncated } else { $false }
     $closureProofAvailable = if ($null -ne $classification) { [bool]$classification.closureProofAvailable } else { $false }
     $workActionCount = if ($null -ne $classification) { [int]$classification.workActionCount } else { 0 }
+    $unexpectedToolNames = if ($null -ne $classification) { $classification.unexpectedToolNames } else { New-OrderedObject ([ordered]@{}) }
+    $unexpectedToolNamesTruncated = if ($null -ne $classification) { [bool]$classification.unexpectedToolNamesTruncated } else { $false }
     if ($processResult.type -ne 'ok') {
         # A build failure and a process survivor are independent facts.  Keep
         # the bounded process result as the terminal type even when parsing
@@ -2154,6 +2300,8 @@ function Invoke-MsbuildPhase {
             actionsTruncated = $actionsTruncated
             closureProofAvailable = $closureProofAvailable
             workActionCount = $workActionCount
+            unexpectedToolNames = $unexpectedToolNames
+            unexpectedToolNamesTruncated = $unexpectedToolNamesTruncated
             logAvailable = $logAvailable
         }))
     }
@@ -2172,6 +2320,8 @@ function Invoke-MsbuildPhase {
             actionsTruncated = $actionsTruncated
             closureProofAvailable = $closureProofAvailable
             workActionCount = 0
+            unexpectedToolNames = $unexpectedToolNames
+            unexpectedToolNamesTruncated = $unexpectedToolNamesTruncated
             logAvailable = $false
         }))
     }
@@ -2190,6 +2340,8 @@ function Invoke-MsbuildPhase {
             actionsTruncated = $actionsTruncated
             closureProofAvailable = $closureProofAvailable
             workActionCount = 0
+            unexpectedToolNames = $unexpectedToolNames
+            unexpectedToolNamesTruncated = $unexpectedToolNamesTruncated
             logAvailable = $true
         }))
     }
@@ -2207,6 +2359,8 @@ function Invoke-MsbuildPhase {
         actionsTruncated = $actionsTruncated
         closureProofAvailable = $closureProofAvailable
         workActionCount = $workActionCount
+        unexpectedToolNames = $unexpectedToolNames
+        unexpectedToolNamesTruncated = $unexpectedToolNamesTruncated
         logAvailable = $true
     }))
 }
@@ -2412,8 +2566,13 @@ function New-IsolatedWorktree {
     param(
         [Parameter(Mandatory)][string] $RepositoryRoot,
         [Parameter(Mandatory)][string] $RequestedRoot,
-        [Parameter(Mandatory)][int] $TimeoutSeconds
+        [Parameter(Mandatory)][int] $TimeoutSeconds,
+        [Parameter(Mandatory)][ref] $SetupEvidence
     )
+    $SetupEvidence.Value = New-OrderedObject ([ordered]@{
+        stage = 'workspace_setup'
+        result = (New-OrderedObject ([ordered]@{ type = 'process_error'; phase = 'workspace_setup' }))
+    })
     $buildTmp = Join-Path $RepositoryRoot 'build/tmp'
     $base = if ([IO.Path]::IsPathRooted($RequestedRoot)) { Get-FullPath $RequestedRoot } else { Get-FullPath (Join-Path $RepositoryRoot $RequestedRoot) }
     Assert-PathBelow -Path $base -Root $buildTmp -Context 'WorkspaceRoot' -AllowRoot | Out-Null
@@ -2439,12 +2598,25 @@ function New-IsolatedWorktree {
         # not acceptable in a bounded verifier.
         $logDirectory = Join-Path $workspace 'build/logs/native-rust-incremental'
         New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
+        $submoduleStdOut = Join-Path $logDirectory 'submodule-update.stdout.log'
+        $submoduleStdErr = Join-Path $logDirectory 'submodule-update.stderr.log'
         $submodule = Invoke-BoundedProcess -FilePath 'git.exe' `
             -ArgumentList @('submodule', 'update', '--init', '--recursive') `
             -WorkingDirectory $workspace `
-            -StdOutPath (Join-Path $logDirectory 'submodule-update.stdout.log') `
-            -StdErrPath (Join-Path $logDirectory 'submodule-update.stderr.log') `
+            -StdOutPath $submoduleStdOut -StdErrPath $submoduleStdErr `
             -TimeoutSeconds $TimeoutSeconds -Phase 'submodule_update'
+        $SetupEvidence.Value = New-OrderedObject ([ordered]@{
+            stage = 'submodule_update'
+            result = $submodule
+        })
+        try {
+            $submodule = Add-ProcessOutputMetadata -Result $submodule `
+                -StdOutPath $submoduleStdOut -StdErrPath $submoduleStdErr
+            $SetupEvidence.Value = New-OrderedObject ([ordered]@{
+                stage = 'submodule_update'
+                result = $submodule
+            })
+        } catch { }
         if ($submodule.type -ne 'ok') { throw "typed:$($submodule.type):submodule_update" }
         Assert-NoReparsePoint -Path $workspace -Context 'initialized worktree'
         return (Get-FullPath $workspace)
@@ -2674,6 +2846,38 @@ function Assert-PackageToolSchema {
     return $true
 }
 
+function Assert-UnexpectedToolNamesSchema {
+    param([Parameter(Mandatory)][object] $Phase)
+    if (-not $Phase.PSObject.Properties['unexpectedToolNames']) { return $true }
+    if (-not $Phase.PSObject.Properties['unexpectedToolNamesTruncated'] -or
+        $Phase.unexpectedToolNamesTruncated -isnot [bool]) {
+        throw 'unexpected tool-name truncation evidence is invalid'
+    }
+    $properties = @($Phase.unexpectedToolNames.PSObject.Properties)
+    if ($properties.Count -gt $script:MaxUnexpectedToolNames) {
+        throw 'unexpected tool-name evidence exceeds its bound'
+    }
+    [Int64]$recordedCount = 0
+    foreach ($property in $properties) {
+        $name = [string]$property.Name
+        if ($name -notmatch '^[a-z0-9_.-]{1,64}\.exe$') {
+            throw 'unexpected tool-name evidence is not a sanitized basename'
+        }
+        $count = [Int64]$property.Value
+        if ($count -le 0) { throw 'unexpected tool-name count is invalid' }
+        $recordedCount += $count
+    }
+    if ($Phase.PSObject.Properties['actionCounts'] -and
+        $Phase.actionCounts.PSObject.Properties['unexpected_tool']) {
+        $aggregateCount = [Int64]$Phase.actionCounts.unexpected_tool
+        if ($recordedCount -gt $aggregateCount -or
+            (-not [bool]$Phase.unexpectedToolNamesTruncated -and $recordedCount -ne $aggregateCount)) {
+            throw 'unexpected tool-name evidence does not match the action count'
+        }
+    }
+    return $true
+}
+
 function Assert-EvidenceCoreSchema {
     param([Parameter(Mandatory)][object] $Evidence)
     if ([int]$Evidence.schemaVersion -ne $script:SchemaVersion) { throw 'evidence schemaVersion is invalid' }
@@ -2684,6 +2888,7 @@ function Assert-EvidenceCoreSchema {
         if ([string]$phase.result.type -notin @('ok', 'timeout', 'missing_output', 'unexpected_consumer', 'survivor', 'build_failed', 'unexpected_action', 'artifact_changed', 'process_error')) {
             throw "phase result type is not typed: $($phase.result.type)"
         }
+        Assert-UnexpectedToolNamesSchema -Phase $phase | Out-Null
     }
 }
 
@@ -2883,6 +3088,40 @@ function New-SafeEmergencyPhase {
                 } catch { }
             }
             $safePhase.actionCounts = New-OrderedObject $safeCounts
+        }
+    } catch { }
+    try {
+        if ($Phase.PSObject.Properties['unexpectedToolNames'] -and $null -ne $Phase.unexpectedToolNames) {
+            $safeNames = [ordered]@{}
+            $namesTruncated = $false
+            try {
+                if ($Phase.PSObject.Properties['unexpectedToolNamesTruncated']) {
+                    $namesTruncated = [bool]$Phase.unexpectedToolNamesTruncated
+                }
+            } catch { $namesTruncated = $true }
+            $properties = @($Phase.unexpectedToolNames.PSObject.Properties)
+            if ($properties.Count -gt $script:MaxUnexpectedToolNames) { $namesTruncated = $true }
+            foreach ($property in @($properties | Select-Object -First $script:MaxUnexpectedToolNames)) {
+                $name = [string]$property.Name
+                if ($name -notmatch '^[a-z0-9_.-]{1,64}\.exe$') {
+                    $namesTruncated = $true
+                    continue
+                }
+                try {
+                    $count = [Int64]$property.Value
+                    if ($count -gt 0) { $safeNames[$name] = $count } else { $namesTruncated = $true }
+                } catch { $namesTruncated = $true }
+            }
+            if ($safePhase.Contains('actionCounts') -and
+                $safePhase.actionCounts.PSObject.Properties['unexpected_tool']) {
+                [Int64]$safeNameCount = 0
+                foreach ($count in $safeNames.Values) { $safeNameCount += [Int64]$count }
+                if ($safeNameCount -ne [Int64]$safePhase.actionCounts.unexpected_tool) {
+                    $namesTruncated = $true
+                }
+            }
+            $safePhase.unexpectedToolNames = New-OrderedObject $safeNames
+            $safePhase.unexpectedToolNamesTruncated = [bool]$namesTruncated
         }
     } catch { }
     try {
@@ -3107,6 +3346,7 @@ function New-BaseEvidence {
         mutations = @()
         packageTool = $null
         packageRestore = $null
+        workspaceSetup = $null
         cleanup = (New-OrderedObject ([ordered]@{ workspaceCreated = $false; workspaceCleaned = $false; kept = $false; survivors = @() }))
         failure = $null
     }))
@@ -3125,6 +3365,7 @@ function Invoke-Verifier {
     $evidence = New-BaseEvidence -RepositoryRoot $RepositoryRoot -Platform $Platform -Configuration $Configuration `
         -NoOpIterations $NoOpIterations -TimeoutSeconds $TimeoutSeconds
     $workspace = $null
+    $workspaceSetup = $null
     $buildTmp = Join-Path $RepositoryRoot 'build/tmp'
     $lastStage = 'initialization'
     $savedEnvironment = [ordered]@{}
@@ -3152,7 +3393,9 @@ function Invoke-Verifier {
         $env:CARGO_TERM_COLOR = 'never'
 
         $lastStage = 'workspace_setup'
-        $workspace = New-IsolatedWorktree -RepositoryRoot $RepositoryRoot -RequestedRoot $WorkspaceRoot -TimeoutSeconds $TimeoutSeconds
+        $workspace = New-IsolatedWorktree -RepositoryRoot $RepositoryRoot -RequestedRoot $WorkspaceRoot `
+            -TimeoutSeconds $TimeoutSeconds -SetupEvidence ([ref]$workspaceSetup)
+        $evidence.workspaceSetup = $workspaceSetup
         $evidence.cleanup.workspaceCreated = $true
         $artifacts = Get-ArtifactDefinitions -Platform $Platform -Configuration $Configuration
         $lastStage = 'package_tool'
@@ -3176,6 +3419,10 @@ function Invoke-Verifier {
         $baseline = Add-PhaseArtifactData -PhaseResult $baseline -Before @() -After $baselineSnapshot
         $baseline | Add-Member -NotePropertyName closure -NotePropertyValue (Get-ExplicitConsumerClosure -Actions $baseline.actions -ExpectedConsumers $script:ExpectedLinkConsumers.baseline -Phase 'baseline' -ActionsTruncated:$baseline.actionsTruncated)
         if ($required.type -ne 'ok') { throw "typed:$($required.type):baseline" }
+        if ($baseline.actionsTruncated -or [int]$baseline.actionCounts.'cargo-preflight' -ne 0 -or
+            [int]$baseline.actionCounts.unexpected_tool -ne 0) {
+            throw 'typed:unexpected_action:baseline:unclassified-tool'
+        }
         if ($baseline.closure.type -ne 'ok') { throw 'typed:unexpected_consumer:baseline' }
 
         for ($index = 1; $index -le $NoOpIterations; $index++) {
@@ -3214,7 +3461,11 @@ function Invoke-Verifier {
         $rustPhase | Add-Member -NotePropertyName closure -NotePropertyValue $rustClosure
         if ($rustPhase.result.type -ne 'ok') { throw "typed:$($rustPhase.result.type):rust_source" }
         if ($rustPhase.actionsTruncated) { throw 'typed:unexpected_action:rust_source:actions-truncated' }
-        $rustForbidden = @($rustPhase.actions | Where-Object { $_.kind -in @('cl', 'lib', 'delete', 'cargo-preflight', 'unexpected_tool') })
+        # A product relink invokes mt.exe to embed the generated manifest. It is
+        # a typed link companion, not an unknown tool or a C++ recompilation.
+        $rustForbidden = @($rustPhase.actions | Where-Object {
+            $_.kind -in @('cl', 'lib', 'rc', 'cmake', 'senp-tool', 'delete', 'cargo-preflight', 'unexpected_tool')
+        })
         if ($rustForbidden.Count -ne 0) { throw 'typed:unexpected_action:rust_source:forbidden-tool' }
         if (@($rustPhase.actions | Where-Object { $_.kind -eq 'cargo' -and $_.operation -eq 'build' }).Count -eq 0) { throw 'typed:unexpected_action:rust_source:no-cargo-build' }
         if ($rustClosure.type -ne 'ok') { throw 'typed:unexpected_consumer:rust_source' }
@@ -3234,7 +3485,9 @@ function Invoke-Verifier {
         $cppPhase | Add-Member -NotePropertyName closure -NotePropertyValue $cppClosure
         if ($cppPhase.result.type -ne 'ok') { throw "typed:$($cppPhase.result.type):cpp_provider" }
         if ($cppPhase.actionsTruncated) { throw 'typed:unexpected_action:cpp_provider:actions-truncated' }
-        $cppForbidden = @($cppPhase.actions | Where-Object { $_.kind -in @('cargo', 'cargo-preflight', 'rustc', 'lib', 'delete', 'unexpected_tool') })
+        $cppForbidden = @($cppPhase.actions | Where-Object {
+            $_.kind -in @('cargo', 'cargo-preflight', 'rustc', 'lib', 'rc', 'cmake', 'senp-tool', 'delete', 'unexpected_tool')
+        })
         if ($cppForbidden.Count -ne 0) { throw 'typed:unexpected_action:cpp_provider:forbidden-tool' }
         $providerCompiles = @($cppPhase.actions | Where-Object {
             $_.kind -eq 'cl' -and @($_.sourcePaths | Where-Object { $_ -match '(?i)(^|/)sakura_core/workbench/output/OutputServiceRustProvider\.cpp$' }).Count -gt 0
@@ -3249,6 +3502,7 @@ function Invoke-Verifier {
         $evidence.status = 'passed'
         $evidence.failure = $null
     } catch {
+        if ($null -ne $workspaceSetup) { $evidence.workspaceSetup = $workspaceSetup }
         $message = [string]$_.Exception.Message
         $typedMatch = [regex]::Match($message, '^typed:(?<type>[^:]+):(?<phase>[^:]+)')
         if ($typedMatch.Success) {
@@ -3269,7 +3523,8 @@ function Invoke-Verifier {
                 $cleanup = Remove-IsolatedWorktree -RepositoryRoot $RepositoryRoot -Workspace $workspace -BuildTmp $buildTmp -Keep:$KeepWorkspace
                 $evidence.cleanup.workspaceCleaned = [bool]$cleanup.cleaned
                 $evidence.cleanup.kept = [bool]$cleanup.kept
-                if ($cleanup.kept) { $evidence.cleanup.path = $cleanup.path }
+                # Keep the workspace location out of the payload-free evidence.
+                # Its exact path remains discoverable from `git worktree list`.
             } catch {
                 $evidence.status = 'failed'
                 $evidence.cleanup.workspaceCleaned = $false
@@ -3338,6 +3593,12 @@ function Invoke-SelfTest {
         $cleanupInspectionVerified = $false
         $argumentQuotingVerified = $false
         $externalSentinelPreserved = $false
+        $resolvedApplicationPathVerified = $false
+        $resolvedGitPath = Resolve-ApplicationPath 'git.exe'
+        if (-not [IO.Path]::IsPathRooted($resolvedGitPath) -or -not [IO.File]::Exists($resolvedGitPath)) {
+            throw 'self-test application resolution did not produce one existing absolute path'
+        }
+        $resolvedApplicationPathVerified = $true
         $savedAmbientVcpkgRoot = [Environment]::GetEnvironmentVariable('VCPKG_ROOT', 'Process')
         try {
             $env:VCPKG_ROOT = Join-Path $temp 'ambient-poison-vcpkg'
@@ -3361,6 +3622,15 @@ function Invoke-SelfTest {
             '  C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\bin\lib.exe /OUT:provider.lib',
             '  Deleting file "stale.obj"',
             '  C:\Program Files (x86)\Windows Kits\10\bin\rc.exe /fo"sakura.rc.res" sakura.rc',
+            '  C:\Program Files (x86)\Windows Kits\10\bin\mt.exe -manifest sakura.exe.intermediate.manifest',
+            '  "C:\Program Files\CMake\bin\cmake.exe" -A x64 -B build -S .',
+            '  "C:\Program Files\CMake\bin\cmake.exe" --build build --config Debug',
+            '  "C:\work\sakura-senp-tool.exe" componentize guest.wasm extension.wasm',
+            '  "C:\work\vcpkg.exe" z-applocal --target-binary=sakura.exe',
+            '  "C:\work\sakura-senp-tool.exe" to "C:\work\out\sakura-senp-tool.exe". (TaskId: 9)',
+            '  "C:\work\sakura-senp-host.exe" to "C:\work\out\sakura-senp-host.exe". (TaskId: 9)',
+            '  C:\Program Files\Build Tools\signcode.exe /sign sakura.exe',
+            '  C:\Program Files\vcpkg\vcpkg.exe install --x-manifest-root=.',
             'error MSB4019 C1083 LNK1104 E0425 MSB4019'
         )
         [IO.File]::WriteAllLines($log, $lines, (New-Object Text.UTF8Encoding($false)))
@@ -3377,18 +3647,57 @@ function Invoke-SelfTest {
         $classification = Get-ActionClassifications -LogPath $log -Workspace $workspace -Phase 'selftest'
         $actions = @($classification.actions)
         if ($classification.actionRecordCount -ne $actions.Count -or $classification.actionsTruncated -or
-            $classification.retainedActionCount -ne $actions.Count -or $classification.workActionCount -ne 5) {
+            $classification.retainedActionCount -ne $actions.Count -or $classification.workActionCount -ne 11) {
             throw 'self-test action aggregate/bound failed'
         }
         if (@($actions | Where-Object { $_.kind -eq 'cargo-preflight' }).Count -ne 1) { throw 'self-test cargo preflight classification failed' }
         if (@($actions | Where-Object { $_.kind -eq 'cargo' -and $_.operation -eq 'build' }).Count -ne 1) { throw 'self-test cargo build classification failed' }
-        foreach ($kind in @('cl', 'link', 'lib', 'delete')) {
+        foreach ($kind in @('cl', 'link', 'lib', 'rc', 'mt', 'delete')) {
             if (@($actions | Where-Object { $_.kind -eq $kind }).Count -ne 1) { throw "self-test action classification failed: $kind" }
         }
-        if (@($actions | Where-Object { $_.kind -eq 'unexpected_tool' }).Count -ne 1) { throw 'self-test unknown-tool classification failed' }
-        if (@(Get-WorkActions $actions).Count -ne 5) { throw 'self-test work-action filtering failed' }
+        if (@($actions | Where-Object { $_.kind -eq 'cmake' -and $_.operation -eq 'configure' }).Count -ne 1 -or
+            @($actions | Where-Object { $_.kind -eq 'cmake' -and $_.operation -eq 'build' }).Count -ne 1 -or
+            @($actions | Where-Object { $_.kind -eq 'senp-tool' -and $_.operation -eq 'componentize' }).Count -ne 1 -or
+            @($actions | Where-Object { $_.kind -eq 'vcpkg-applocal' -and $_.operation -eq 'copy-runtime-dependencies' }).Count -ne 1) {
+            throw 'self-test build-companion action classification failed'
+        }
+        if (@($actions | Where-Object { $_.kind -eq 'unexpected_tool' }).Count -ne 2 -or
+            $classification.unexpectedToolNames.'signcode.exe' -ne 1 -or
+            $classification.unexpectedToolNames.'vcpkg.exe' -ne 1 -or
+            $classification.unexpectedToolNamesTruncated) {
+            throw 'self-test bounded unknown-tool classification failed'
+        }
+        if (@(Get-WorkActions $actions).Count -ne 11) { throw 'self-test work-action filtering failed' }
         $preflightViolation = Get-NoOpViolation -Actions @($actions | Where-Object { $_.kind -eq 'cargo-preflight' }) -Phase 'no_op_selftest'
         if ($null -eq $preflightViolation -or $preflightViolation.type -ne 'unexpected_action') { throw 'self-test no-op preflight rejection failed' }
+        $resourceManifestViolation = Get-NoOpViolation -Actions @($actions | Where-Object { $_.kind -in @('rc', 'mt') }) -Phase 'no_op_resource_selftest'
+        if ($null -eq $resourceManifestViolation -or $resourceManifestViolation.type -ne 'unexpected_action') {
+            throw 'self-test no-op resource/manifest rejection failed'
+        }
+        $companionViolation = Get-NoOpViolation -Actions @($actions | Where-Object {
+            $_.kind -in @('cmake', 'senp-tool', 'vcpkg-applocal')
+        }) -Phase 'no_op_companion_selftest'
+        if ($null -eq $companionViolation -or $companionViolation.type -ne 'unexpected_action') {
+            throw 'self-test no-op build-companion rejection failed'
+        }
+        $toolNameSchemaPhase = New-OrderedObject ([ordered]@{
+            unexpectedToolNames = $classification.unexpectedToolNames
+            unexpectedToolNamesTruncated = [bool]$classification.unexpectedToolNamesTruncated
+            actionCounts = Get-ActionCounts $actions
+        })
+        Assert-UnexpectedToolNamesSchema -Phase $toolNameSchemaPhase | Out-Null
+        $badToolNameSchemaPhase = New-OrderedObject ([ordered]@{
+            unexpectedToolNames = (New-OrderedObject ([ordered]@{ '../vcpkg.exe' = 1 }))
+            unexpectedToolNamesTruncated = $false
+            actionCounts = (New-OrderedObject ([ordered]@{ unexpected_tool = 1 }))
+        })
+        $unexpectedToolNameSchemaRejected = $false
+        try {
+            Assert-UnexpectedToolNamesSchema -Phase $badToolNameSchemaPhase | Out-Null
+        } catch {
+            $unexpectedToolNameSchemaRejected = $true
+        }
+        if (-not $unexpectedToolNameSchemaRejected) { throw 'self-test unsafe tool-name schema accepted' }
         $emptyLog = Join-Path $temp 'empty.log'
         [IO.File]::WriteAllText($emptyLog, '', (New-Object Text.UTF8Encoding($false)))
         $emptyClassification = Get-ActionClassifications -LogPath $emptyLog -Workspace $workspace -Phase 'empty'
@@ -3404,7 +3713,7 @@ function Invoke-SelfTest {
             'Using "LINK" task from assembly "C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Microsoft\VC\v170\Microsoft.Build.CppTasks.Common.dll".',
             'Using "RC" task from assembly "C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Microsoft\VC\v170\rc.exe".',
             'Task Parameter:ToolExe=cl.exe',
-            '  C:\workspace\x64\Debug\sakura.exe (TaskId: 990)',
+            ('  C:\workspace\x64\Debug\sakura.exe (TaskId: 990)' + "`t  "),
             '  C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\bin\cl.exe /c source.cpp'
         )
         [IO.File]::WriteAllLines($blankLineLog, $blankLineLines, (New-Object Text.UTF8Encoding($false)))
@@ -3418,6 +3727,22 @@ function Invoke-SelfTest {
         }
         if (@(Get-SourcePathMention -Line $blankLineLines[2] -Workspace $workspace).Count -ne 0) {
             throw 'self-test source extension boundary failed'
+        }
+        $artifactBoundaryLog = Join-Path $temp 'artifact-boundary.log'
+        $artifactBoundaryLines = @(
+            ('  C:\workspace\x64\Debug\sakura.exe (TaskId: 991)' + "`t "),
+            '  C:\workspace\x64\Debug\sakura.pdb (TaskId: 991)',
+            '  C:\workspace\x64\Debug\sakura.exe does not exist; source compilation is required. (TaskId: 991)',
+            '  C:\workspace\x64\Debug\sakura.exe --verify-build-output (TaskId: 992)',
+            '  C:\workspace\x64\Debug\sakura.exe stale output from another task (TaskId: 993)'
+        )
+        [IO.File]::WriteAllLines($artifactBoundaryLog, $artifactBoundaryLines, (New-Object Text.UTF8Encoding($false)))
+        $artifactBoundaryClassification = Get-ActionClassifications -LogPath $artifactBoundaryLog `
+            -Workspace $workspace -Phase 'artifact_boundary'
+        if ($artifactBoundaryClassification.actionRecordCount -ne 2 -or
+            $artifactBoundaryClassification.actionCounts.unexpected_tool -ne 2 -or
+            $artifactBoundaryClassification.unexpectedToolNames.'sakura.exe' -ne 2) {
+            throw 'self-test executable artifact metadata boundary failed'
         }
         $largeLog = Join-Path $temp 'large.log'
         $largeLines = [System.Collections.Generic.List[string]]::new()
@@ -3870,6 +4195,8 @@ function Invoke-SelfTest {
             schemaVersion = $script:SchemaVersion
             payloadFree = $true
             actionCounts = Get-ActionCounts $actions
+            unexpectedToolNames = $classification.unexpectedToolNames
+            unexpectedToolNamesTruncated = [bool]$classification.unexpectedToolNamesTruncated
             workActionCount = [int](Get-WorkActions $actions).Count
             closureType = [string]$closure.type
             unexpectedClosureType = [string]$unexpected.type
@@ -3910,6 +4237,7 @@ function Invoke-SelfTest {
             immutableSnapshotShareVerified = [bool]$immutableSnapshotShareVerified
             cleanupInspectionVerified = [bool]$cleanupInspectionVerified
             argumentQuotingVerified = [bool]$argumentQuotingVerified
+            resolvedApplicationPathVerified = [bool]$resolvedApplicationPathVerified
             sharedFingerprintFailureTyped = $true
             schemaFailureEnvelopeVerified = $true
             emergencyEnvelopeVerified = $true
@@ -3922,7 +4250,11 @@ function Invoke-SelfTest {
             parserFailureObserved = [bool]$badOutputMetadata.parserFailed
             blankLineActionClassificationVerified = $true
             directToolInvocationBoundaryVerified = $true
+            trackedArtifactStatusBoundaryVerified = $true
             sourceExtensionBoundaryVerified = $true
+            resourceAndManifestActionClassificationVerified = $true
+            incrementalCompanionActionClassificationVerified = $true
+            unexpectedToolNameSchemaVerified = [bool]$unexpectedToolNameSchemaRejected
             vcpkgRootPinVerified = [bool]$vcpkgRootPinVerified
             packageToolSchemaVerified = $true
         }
@@ -3973,7 +4305,7 @@ try {
 $json = $evidence | ConvertTo-Json -Depth 30
 [IO.File]::WriteAllText($outputPath, $json, (New-Object Text.UTF8Encoding($false)))
 if ($evidence.status -eq 'passed') {
-    Write-Output "PASS $script:VerifierName: $outputPath"
+    Write-Output "PASS ${script:VerifierName}: $outputPath"
 } else {
     # ErrorActionPreference=Stop would turn Write-Error into exit code 1 and
     # hide the verifier's typed failure code.  Write directly to stderr.

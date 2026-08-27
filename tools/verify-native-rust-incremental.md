@@ -21,7 +21,8 @@ runs the product `sakura_core/sakura.vcxproj` directly through MSBuild with a
 per-phase diagnostic file logger. The shared source checkout is not used as
 the build working tree. On success or failure, cleanup unregisters and removes
 only the exact owned worktree; `-KeepWorkspace` is available for post-failure
-inspection and is recorded in the evidence.
+inspection. Evidence records only `cleanup.kept=true`; the raw workspace path
+is deliberately omitted and remains discoverable through `git worktree list`.
 
 Cleanup never runs `git submodule deinit` from the linked worktree because
 superproject submodule configuration is shared with the invoking checkout. If
@@ -49,10 +50,15 @@ The phases are:
 
 1. `baseline`: build `sakura_core/sakura.vcxproj` and require the Rust archive,
    Rust MSBuild stamp, provider object, and product executable. Its link must
-   be attributed to the explicit `sakura_core/sakura.vcxproj` contract.
+   be attributed to the explicit `sakura_core/sakura.vcxproj` contract. A fresh
+   baseline may configure/build CMake helper targets and run the declared SENP
+   packaging tool. `vcpkg z-applocal` is recorded separately as the product
+   link's runtime-dependency copy step.
 2. `no_op_1` through `no_op_N`: rebuild without changing a source. These
-   phases must observe no `cargo`, `rustc`, `cl`, `link`, `lib`, or actual
-   `delete` actions, no `cargo-preflight` action, no unknown executable, and
+   phases must observe no `cargo`, `rustc`, `cl`, `link`, `lib`, resource
+   compiler (`rc`), manifest embedding (`mt`), CMake, SENP packaging,
+   `vcpkg z-applocal`, or actual `delete` actions, no
+   `cargo-preflight` action, no unknown executable, and
    the tracked artifact metadata must remain unchanged. The normal backend and
    package validation path is Cargo-free after the Cargo preflight refactor;
    this assertion is the explicit evidence that no-op builds benefit from that
@@ -61,14 +67,18 @@ The phases are:
    no-op phase.
 3. `rust_source`: append one trailing LF to the isolated
    `rust/native/sakura_native_ffi/src/lib.rs`. The phase must observe a Cargo
-   build (and any Rust compiler work), no C++/archive/delete/preflight/unknown
-   tool, a Rust output change, and exactly the explicit
+   build (and any Rust compiler work), no C++/archive/resource/delete/preflight
+   or unknown tool, a Rust output change, and exactly the explicit
    `sakura_core/sakura.vcxproj` link consumer.
+   The product relink may run `mt.exe` to embed its generated manifest and
+   `vcpkg.exe z-applocal` to copy declared runtime dependencies. These are
+   recorded as typed link companions rather than accepted as unknown
+   executables. CMake and SENP generation remain forbidden in this phase.
 4. `cpp_provider`: append one trailing LF to the isolated
    `sakura_core/workbench/output/OutputServiceRustProvider.cpp`. The phase must
    compile that provider translation unit exactly once, must not compile any
-   other C++ translation unit, must not run Cargo/Rust/archive/delete/preflight
-   or an unknown tool, and must link exactly the same explicitly declared
+   other C++ translation unit, must not run Cargo/Rust/archive/resource/delete/
+   preflight or an unknown tool, and must link exactly the same explicitly declared
    product consumer.
 
 The consumer contract is intentionally fixed in the script:
@@ -97,7 +107,12 @@ order, per-phase exact aggregate action counts/classes, and bounded retained
 action records (at most 256 records per phase) with an explicit truncation
 flag. A truncated record set is never used as if complete: no-op, closure,
 and mutation matrix checks fail closed when the retained records cannot prove
-the required scope. The schema also carries bounded diagnostic log metadata
+the required scope. Unknown direct executables remain `unexpected_tool`; the
+phase also records only their sanitized basename counts in
+`unexpectedToolNames` (at most 32 distinct names) plus an explicit truncation
+flag. Paths, arguments, and command lines are not retained. This bounded
+identity is diagnostic evidence only and never authorizes a tool. The schema
+also carries bounded diagnostic log metadata
 (`byteCount`, `lineCount`, `sha256`, and capped compiler/MSBuild error-code
 counts), typed closure results, package-restore result, shared-checkout
 fingerprints, and cleanup state. A failed MSBuild phase retains its underlying
@@ -109,7 +124,18 @@ actions require a direct executable command line; MSBuild task-loading prose and
 assembly metadata are not work, and filename-extension matching cannot treat a
 prefix such as `.Common.dll` as a C source. An executable artifact path followed
 only by an MSBuild `TaskId` is output metadata rather than a child-process
-command. Process identities used internally for exact cleanup are never
+command. A localized tracker status line is also metadata only when the same
+absolute executable path and TaskId were listed as an output within the prior
+four log lines; another TaskId or a direct invocation remains fail-closed.
+Copy-task prose that starts with a source `.exe` and names a second destination
+`.exe` is artifact metadata, not an executable invocation. Known
+build companions are also verb-scoped: only CMake configure/build, SENP
+`componentize`/`pack-builtin`, and `vcpkg z-applocal` receive typed action
+kinds; another verb remains `unexpected_tool`. `rc.exe` and `mt.exe` are
+explicit work-action kinds, so a manifest relink is distinguishable from an
+unclassified executable while no-op phases still reject either tool. Baseline
+also fails closed on any remaining
+`unexpected_tool` or Cargo preflight action. Process identities used internally for exact cleanup are never
 serialized: evidence contains only typed results, counts, and sanitized survivor
 executable-name counts, never PIDs, creation dates, command lines, or paths.
 Captured stdout/stderr are opened with read-sharing only while hashing and
@@ -168,6 +194,13 @@ well as redirected-output drain. If verified close or drain fails, an otherwise
 successful invocation is replaced with typed `process_error`; cleanup failure
 is never hidden by a successful build result.
 
+Every executable is resolved to an existing absolute application path before
+`CreateProcessW` is called. This keeps a bare tool name such as `git.exe` from
+being mistaken for an `lpApplicationName` that Windows cannot start, while the
+quoted command line still begins with that same resolved executable. If PATH
+contains multiple applications with the same name, the normal first-match
+command resolution is used explicitly; candidate paths are never concatenated.
+
 MSVC can intentionally leave its exact descendant `mspdbsrv.exe` alive after
 MSBuild exits because the project uses `/FS`. It is accepted only while it is
 still an active member of the invocation's private Job Object. The verifier
@@ -195,6 +228,12 @@ normal sanitizer or its final validation throws, a fixed emergency envelope
 still retains each completed phase name and typed result together with bounded
 exit, action, diagnostic-code, and survivor counts. It discards variable text,
 paths, commands, raw process identities, and process names.
+
+Worktree setup is evidence-bearing as well. Before an owned worktree is removed
+after failure, the verifier copies the `submodule_update` typed result and its
+bounded stdout/stderr count, hash, and failure-code metadata into
+`workspaceSetup`. A setup failure therefore remains diagnosable even though its
+temporary logs and worktree are correctly deleted.
 
 The shared fingerprint covers more than the superproject status. It hashes the
 fixed `.gitmodules` set, each gitlink and initialization state, each submodule
