@@ -9,6 +9,8 @@
 
 #![allow(dead_code)]
 
+#[cfg(test)]
+use std::cell::Cell;
 use std::collections::{BTreeMap, VecDeque};
 use std::mem::{align_of, size_of};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -54,6 +56,11 @@ const LOG_WARNING: u32 = 3;
 const LOG_ERROR: u32 = 4;
 
 const SNAPSHOT_MAGIC: &[u8] = b"SAKURA_OUTPUT_MODEL_V1\0";
+
+#[cfg(test)]
+thread_local! {
+    static FINGERPRINT_CONSTRUCTION_COUNT: Cell<usize> = const { Cell::new(0) };
+}
 
 /// Errors in the ABI call itself. Operation-level failures are returned in
 /// `SakuraOutputShadowApplyResultV1` so rejected requests remain observable.
@@ -347,6 +354,21 @@ impl OperationResult {
     }
 }
 
+enum ApplyOutcome {
+    NotAccepted(OperationResult),
+    Accepted {
+        operation_id: Vec<u8>,
+        fingerprint: Vec<u8>,
+        result: OperationResult,
+    },
+}
+
+impl From<OperationResult> for ApplyOutcome {
+    fn from(result: OperationResult) -> Self {
+        Self::NotAccepted(result)
+    }
+}
+
 #[derive(Clone, Debug)]
 struct CompletedOperation {
     fingerprint: Vec<u8>,
@@ -389,16 +411,19 @@ impl Service {
         }
     }
 
-    fn current(
+    fn current<T>(
         &self,
         status: SakuraOutputShadowOperationStatus,
         reason: SakuraOutputShadowReason,
-    ) -> OperationResult {
-        OperationResult {
+    ) -> T
+    where
+        T: From<OperationResult>,
+    {
+        T::from(OperationResult {
             status,
             reason,
             revision: self.revision,
-        }
+        })
     }
 
     fn stopped_result(&self) -> OperationResult {
@@ -425,38 +450,31 @@ impl Service {
         );
     }
 
-    fn replay_or_conflict(
-        &self,
-        operation: &Operation,
-        fingerprint: &[u8],
-    ) -> Option<OperationResult> {
-        let found = self.completed_operations.get(&operation.id)?;
-        if found.fingerprint != fingerprint {
-            return Some(self.current(
-                SakuraOutputShadowOperationStatus::Conflict,
-                SakuraOutputShadowReason::OperationIdConflict,
-            ));
-        }
-        let mut result = found.result;
-        result.status = SakuraOutputShadowOperationStatus::Replayed;
-        Some(result)
-    }
-
     fn apply(&mut self, request: Request) -> OperationResult {
         if self.stopped {
             return self.stopped_result();
         }
 
         let operation = request.operation();
-        let operation_id = operation.id.clone();
         if !is_valid_operation_id(&operation.id) {
             return self.current(
                 SakuraOutputShadowOperationStatus::Rejected,
                 SakuraOutputShadowReason::InvalidOperationId,
             );
         }
-        let fingerprint = fingerprint(&request);
-        if let Some(result) = self.replay_or_conflict(operation, &fingerprint) {
+        if let Some(found) = self.completed_operations.get(&operation.id) {
+            // A remembered ID must retain replay/conflict precedence over every
+            // later validation, including stale expected revisions. The
+            // canonical bytes are therefore still built on this path.
+            let fingerprint = fingerprint(&request);
+            if found.fingerprint != fingerprint {
+                return self.current(
+                    SakuraOutputShadowOperationStatus::Conflict,
+                    SakuraOutputShadowReason::OperationIdConflict,
+                );
+            }
+            let mut result = found.result;
+            result.status = SakuraOutputShadowOperationStatus::Replayed;
             return result;
         }
         if operation.expected_revision != Some(self.revision)
@@ -468,7 +486,7 @@ impl Service {
             );
         }
 
-        let result = match request {
+        let outcome = match request {
             Request::CreateChannel {
                 operation,
                 owner,
@@ -499,22 +517,28 @@ impl Service {
             } => self.apply_channel(&operation, owner, channel_id, kind, preserve_focus),
             Request::DisposeOwner { operation, owner } => self.dispose_owner(&operation, owner),
         };
-
-        if result.status == SakuraOutputShadowOperationStatus::Succeeded {
-            self.remember(operation_id, fingerprint, result);
+        match outcome {
+            ApplyOutcome::NotAccepted(result) => result,
+            ApplyOutcome::Accepted {
+                operation_id,
+                fingerprint,
+                result,
+            } => {
+                self.remember(operation_id, fingerprint, result);
+                result
+            }
         }
-        result
     }
 
     fn create_channel(
         &mut self,
-        _operation: &Operation,
+        operation: &Operation,
         owner: Owner,
         channel_id: Vec<u8>,
         label: Vec<u8>,
         kind: u8,
         metadata: Metadata,
-    ) -> OperationResult {
+    ) -> ApplyOutcome {
         if !is_valid_owner(&owner) {
             return self.current(
                 SakuraOutputShadowOperationStatus::Rejected,
@@ -600,6 +624,9 @@ impl Service {
             );
         }
 
+        let operation_id = operation.id.clone();
+        let fingerprint =
+            fingerprint_create_channel(operation, &owner, &channel_id, &label, kind, &metadata);
         if adopts_new_generation {
             self.channels
                 .retain(|_, channel| channel.owner.id != owner.id);
@@ -631,20 +658,25 @@ impl Service {
         );
         self.select_fallback();
         self.revision += 1;
-        self.current(
+        let result = self.current(
             SakuraOutputShadowOperationStatus::Succeeded,
             SakuraOutputShadowReason::None,
-        )
+        );
+        ApplyOutcome::Accepted {
+            operation_id,
+            fingerprint,
+            result,
+        }
     }
 
     fn apply_text(
         &mut self,
-        _operation: &Operation,
+        operation: &Operation,
         owner: Owner,
         channel_id: Vec<u8>,
         text: Vec<u8>,
         replace: bool,
-    ) -> OperationResult {
+    ) -> ApplyOutcome {
         if !is_valid_bounded_text(&text, self.limits.maximum_payload_bytes) {
             return self.current(
                 SakuraOutputShadowOperationStatus::Rejected,
@@ -680,6 +712,8 @@ impl Service {
                 SakuraOutputShadowReason::None,
             );
         }
+        let operation_id = operation.id.clone();
+        let fingerprint = fingerprint_text(operation, &owner, &channel_id, &text, replace);
         let maximum_text_bytes_per_channel = self.limits.maximum_text_bytes_per_channel;
         let channel = self
             .channels
@@ -697,19 +731,24 @@ impl Service {
             &mut channel.dropped_character_count,
         );
         self.revision += 1;
-        self.current(
+        let result = self.current(
             SakuraOutputShadowOperationStatus::Succeeded,
             SakuraOutputShadowReason::None,
-        )
+        );
+        ApplyOutcome::Accepted {
+            operation_id,
+            fingerprint,
+            result,
+        }
     }
 
     fn append_log(
         &mut self,
-        _operation: &Operation,
+        operation: &Operation,
         owner: Owner,
         channel_id: Vec<u8>,
         entries: Vec<LogEntry>,
-    ) -> OperationResult {
+    ) -> ApplyOutcome {
         if entries.is_empty() {
             return self.current(
                 SakuraOutputShadowOperationStatus::NotApplicable,
@@ -752,6 +791,8 @@ impl Service {
                 SakuraOutputShadowReason::None,
             );
         }
+        let operation_id = operation.id.clone();
+        let fingerprint = fingerprint_append_log(operation, &owner, &channel_id, &entries);
         let maximum_log_entries_per_channel = self.limits.maximum_log_entries_per_channel;
         let maximum_text_bytes_per_channel = self.limits.maximum_text_bytes_per_channel;
         let channel = self
@@ -769,22 +810,27 @@ impl Service {
         }
         rebuild_log_projection(channel, maximum_text_bytes_per_channel);
         self.revision += 1;
-        self.current(
+        let result = self.current(
             SakuraOutputShadowOperationStatus::Succeeded,
             SakuraOutputShadowReason::None,
-        )
+        );
+        ApplyOutcome::Accepted {
+            operation_id,
+            fingerprint,
+            result,
+        }
     }
 
     fn apply_channel(
         &mut self,
-        _operation: &Operation,
+        operation: &Operation,
         owner: Owner,
         channel_id: Vec<u8>,
         kind: u32,
         preserve_focus: bool,
-    ) -> OperationResult {
+    ) -> ApplyOutcome {
         if kind == OP_CLEAR {
-            return self.clear_channel(&owner, &channel_id);
+            return self.clear_channel(operation, &owner, &channel_id);
         }
         if kind == OP_SHOW {
             if !self.channel_matches(&owner, &channel_id, None) {
@@ -796,6 +842,9 @@ impl Service {
                     SakuraOutputShadowReason::None,
                 );
             }
+            let operation_id = operation.id.clone();
+            let fingerprint =
+                fingerprint_channel(operation, &owner, &channel_id, kind, preserve_focus);
             let channel = self
                 .channels
                 .get_mut(&channel_id)
@@ -804,10 +853,15 @@ impl Service {
             channel.last_show_preserved_focus = preserve_focus;
             self.active_channel_id = Some(channel.id.clone());
             self.revision += 1;
-            return self.current(
+            let result = self.current(
                 SakuraOutputShadowOperationStatus::Succeeded,
                 SakuraOutputShadowReason::None,
             );
+            return ApplyOutcome::Accepted {
+                operation_id,
+                fingerprint,
+                result,
+            };
         }
         if !self.channel_matches(&owner, &channel_id, None) {
             return self.validation_result_any(&owner, &channel_id);
@@ -830,6 +884,9 @@ impl Service {
                     SakuraOutputShadowReason::None,
                 );
             }
+            let operation_id = operation.id.clone();
+            let fingerprint =
+                fingerprint_channel(operation, &owner, &channel_id, kind, preserve_focus);
             let channel = self
                 .channels
                 .get_mut(&channel_id)
@@ -840,10 +897,15 @@ impl Service {
                 self.select_fallback();
             }
             self.revision += 1;
-            return self.current(
+            let result = self.current(
                 SakuraOutputShadowOperationStatus::Succeeded,
                 SakuraOutputShadowReason::None,
             );
+            return ApplyOutcome::Accepted {
+                operation_id,
+                fingerprint,
+                result,
+            };
         }
         if self.revision == u64::MAX {
             return self.current(
@@ -851,19 +913,31 @@ impl Service {
                 SakuraOutputShadowReason::None,
             );
         }
+        let operation_id = operation.id.clone();
+        let fingerprint = fingerprint_channel(operation, &owner, &channel_id, kind, preserve_focus);
         self.channels.remove(&channel_id);
         if self.active_channel_id.as_ref() == Some(&channel_id) {
             self.active_channel_id = None;
             self.select_fallback();
         }
         self.revision += 1;
-        self.current(
+        let result = self.current(
             SakuraOutputShadowOperationStatus::Succeeded,
             SakuraOutputShadowReason::None,
-        )
+        );
+        ApplyOutcome::Accepted {
+            operation_id,
+            fingerprint,
+            result,
+        }
     }
 
-    fn clear_channel(&mut self, owner: &Owner, channel_id: &[u8]) -> OperationResult {
+    fn clear_channel(
+        &mut self,
+        operation: &Operation,
+        owner: &Owner,
+        channel_id: &[u8],
+    ) -> ApplyOutcome {
         if !self.channel_matches(owner, channel_id, None) {
             return self.validation_result_any(owner, channel_id);
         }
@@ -888,6 +962,8 @@ impl Service {
                 SakuraOutputShadowReason::None,
             );
         }
+        let operation_id = operation.id.clone();
+        let fingerprint = fingerprint_channel(operation, owner, channel_id, OP_CLEAR, false);
         let channel = self
             .channels
             .get_mut(channel_id)
@@ -897,13 +973,18 @@ impl Service {
         channel.projected_text.clear();
         channel.dropped_character_count = 0;
         self.revision += 1;
-        self.current(
+        let result = self.current(
             SakuraOutputShadowOperationStatus::Succeeded,
             SakuraOutputShadowReason::None,
-        )
+        );
+        ApplyOutcome::Accepted {
+            operation_id,
+            fingerprint,
+            result,
+        }
     }
 
-    fn dispose_owner(&mut self, _operation: &Operation, owner: Owner) -> OperationResult {
+    fn dispose_owner(&mut self, operation: &Operation, owner: Owner) -> ApplyOutcome {
         if !is_valid_owner(&owner) {
             return self.current(
                 SakuraOutputShadowOperationStatus::Rejected,
@@ -934,6 +1015,8 @@ impl Service {
                 SakuraOutputShadowReason::None,
             );
         }
+        let operation_id = operation.id.clone();
+        let fingerprint = fingerprint_dispose_owner(operation, &owner);
         self.channels.retain(|_, channel| {
             channel.owner.id != owner.id || channel.owner.generation != owner.generation
         });
@@ -943,10 +1026,15 @@ impl Service {
         self.active_channel_id = None;
         self.select_fallback();
         self.revision += 1;
-        self.current(
+        let result = self.current(
             SakuraOutputShadowOperationStatus::Succeeded,
             SakuraOutputShadowReason::None,
-        )
+        );
+        ApplyOutcome::Accepted {
+            operation_id,
+            fingerprint,
+            result,
+        }
     }
 
     fn channel_matches(&self, owner: &Owner, channel_id: &[u8], expected_kind: Option<u8>) -> bool {
@@ -970,7 +1058,7 @@ impl Service {
         owner: &Owner,
         channel_id: &[u8],
         expected_kind: u8,
-    ) -> OperationResult {
+    ) -> ApplyOutcome {
         if !is_valid_owner(owner) {
             return self.current(
                 SakuraOutputShadowOperationStatus::Rejected,
@@ -1007,7 +1095,7 @@ impl Service {
         )
     }
 
-    fn validation_result_any(&self, owner: &Owner, channel_id: &[u8]) -> OperationResult {
+    fn validation_result_any(&self, owner: &Owner, channel_id: &[u8]) -> ApplyOutcome {
         if !is_valid_owner(owner) {
             return self.current(
                 SakuraOutputShadowOperationStatus::Rejected,
@@ -2229,8 +2317,112 @@ fn append_fingerprint_owner(target: &mut Vec<u8>, owner: &Owner) {
     put_u64(target, owner.generation);
 }
 
+fn fingerprint_buffer() -> Vec<u8> {
+    #[cfg(test)]
+    FINGERPRINT_CONSTRUCTION_COUNT.with(|count| count.set(count.get() + 1));
+    Vec::new()
+}
+
+fn append_fingerprint_header(
+    target: &mut Vec<u8>,
+    tag: &[u8],
+    operation: &Operation,
+    owner: &Owner,
+    channel_id: &[u8],
+) {
+    target.extend_from_slice(tag);
+    append_fingerprint_operation(target, operation);
+    append_fingerprint_owner(target, owner);
+    append_fingerprint_bytes(target, channel_id);
+}
+
+fn fingerprint_create_channel(
+    operation: &Operation,
+    owner: &Owner,
+    channel_id: &[u8],
+    label: &[u8],
+    kind: u8,
+    metadata: &Metadata,
+) -> Vec<u8> {
+    let mut output = fingerprint_buffer();
+    append_fingerprint_header(&mut output, b"create;", operation, owner, channel_id);
+    append_fingerprint_bytes(&mut output, label);
+    output.push(kind);
+    put_optional_bytes(&mut output, metadata.language_id.as_deref());
+    put_optional_bytes(&mut output, metadata.source.as_deref());
+    output
+}
+
+fn fingerprint_text(
+    operation: &Operation,
+    owner: &Owner,
+    channel_id: &[u8],
+    text: &[u8],
+    replace: bool,
+) -> Vec<u8> {
+    let mut output = fingerprint_buffer();
+    append_fingerprint_header(
+        &mut output,
+        if replace {
+            b"replace-output;"
+        } else {
+            b"append-output;"
+        },
+        operation,
+        owner,
+        channel_id,
+    );
+    append_fingerprint_bytes(&mut output, text);
+    output
+}
+
+fn fingerprint_append_log(
+    operation: &Operation,
+    owner: &Owner,
+    channel_id: &[u8],
+    entries: &[LogEntry],
+) -> Vec<u8> {
+    let mut output = fingerprint_buffer();
+    append_fingerprint_header(&mut output, b"append-log;", operation, owner, channel_id);
+    for entry in entries {
+        put_u32(&mut output, entry.level);
+        append_fingerprint_bytes(&mut output, &entry.message);
+        put_optional_bytes(&mut output, entry.source.as_deref());
+    }
+    output
+}
+
+fn fingerprint_channel(
+    operation: &Operation,
+    owner: &Owner,
+    channel_id: &[u8],
+    kind: u32,
+    preserve_focus: bool,
+) -> Vec<u8> {
+    let tag = match kind {
+        OP_CLEAR => b"clear;".as_slice(),
+        OP_SHOW => b"show;".as_slice(),
+        OP_HIDE => b"hide;".as_slice(),
+        OP_DISPOSE => b"dispose;".as_slice(),
+        _ => b"channel;".as_slice(),
+    };
+    let mut output = fingerprint_buffer();
+    append_fingerprint_header(&mut output, tag, operation, owner, channel_id);
+    if kind == OP_SHOW {
+        output.push(u8::from(preserve_focus));
+    }
+    output
+}
+
+fn fingerprint_dispose_owner(operation: &Operation, owner: &Owner) -> Vec<u8> {
+    let mut output = fingerprint_buffer();
+    output.extend_from_slice(b"dispose-owner;");
+    append_fingerprint_operation(&mut output, operation);
+    append_fingerprint_owner(&mut output, owner);
+    output
+}
+
 fn fingerprint(request: &Request) -> Vec<u8> {
-    let mut output = Vec::new();
     match request {
         Request::CreateChannel {
             operation,
@@ -2239,78 +2431,29 @@ fn fingerprint(request: &Request) -> Vec<u8> {
             label,
             kind,
             metadata,
-        } => {
-            output.extend_from_slice(b"create;");
-            append_fingerprint_operation(&mut output, operation);
-            append_fingerprint_owner(&mut output, owner);
-            append_fingerprint_bytes(&mut output, channel_id);
-            append_fingerprint_bytes(&mut output, label);
-            output.push(*kind);
-            put_optional_bytes(&mut output, metadata.language_id.as_deref());
-            put_optional_bytes(&mut output, metadata.source.as_deref());
-        }
+        } => fingerprint_create_channel(operation, owner, channel_id, label, *kind, metadata),
         Request::Text {
             operation,
             owner,
             channel_id,
             text,
             replace,
-        } => {
-            output.extend_from_slice(if *replace {
-                b"replace-output;"
-            } else {
-                b"append-output;"
-            });
-            append_fingerprint_operation(&mut output, operation);
-            append_fingerprint_owner(&mut output, owner);
-            append_fingerprint_bytes(&mut output, channel_id);
-            append_fingerprint_bytes(&mut output, text);
-        }
+        } => fingerprint_text(operation, owner, channel_id, text, *replace),
         Request::AppendLog {
             operation,
             owner,
             channel_id,
             entries,
-        } => {
-            output.extend_from_slice(b"append-log;");
-            append_fingerprint_operation(&mut output, operation);
-            append_fingerprint_owner(&mut output, owner);
-            append_fingerprint_bytes(&mut output, channel_id);
-            for entry in entries {
-                put_u32(&mut output, entry.level);
-                append_fingerprint_bytes(&mut output, &entry.message);
-                put_optional_bytes(&mut output, entry.source.as_deref());
-            }
-        }
+        } => fingerprint_append_log(operation, owner, channel_id, entries),
         Request::Channel {
             operation,
             owner,
             channel_id,
             kind,
             preserve_focus,
-        } => {
-            let tag = match *kind {
-                OP_CLEAR => b"clear;".as_slice(),
-                OP_SHOW => b"show;".as_slice(),
-                OP_HIDE => b"hide;".as_slice(),
-                OP_DISPOSE => b"dispose;".as_slice(),
-                _ => b"channel;".as_slice(),
-            };
-            output.extend_from_slice(tag);
-            append_fingerprint_operation(&mut output, operation);
-            append_fingerprint_owner(&mut output, owner);
-            append_fingerprint_bytes(&mut output, channel_id);
-            if *kind == OP_SHOW {
-                output.push(u8::from(*preserve_focus));
-            }
-        }
-        Request::DisposeOwner { operation, owner } => {
-            output.extend_from_slice(b"dispose-owner;");
-            append_fingerprint_operation(&mut output, operation);
-            append_fingerprint_owner(&mut output, owner);
-        }
+        } => fingerprint_channel(operation, owner, channel_id, *kind, *preserve_focus),
+        Request::DisposeOwner { operation, owner } => fingerprint_dispose_owner(operation, owner),
     }
-    output
 }
 
 #[cfg(test)]
@@ -2374,6 +2517,347 @@ mod tests {
             kind,
             preserve_focus: true,
         }
+    }
+
+    fn channel_request_with_values(
+        operation: Operation,
+        owner: Owner,
+        kind: u32,
+        preserve_focus: bool,
+    ) -> Request {
+        Request::Channel {
+            operation,
+            owner,
+            channel_id: b"chan".to_vec(),
+            kind,
+            preserve_focus,
+        }
+    }
+
+    fn reset_fingerprint_count() {
+        FINGERPRINT_CONSTRUCTION_COUNT.with(|count| count.set(0));
+    }
+
+    fn fingerprint_count() -> usize {
+        FINGERPRINT_CONSTRUCTION_COUNT.with(Cell::get)
+    }
+
+    fn fingerprint_hex(request: &Request, expected: &str) {
+        let expected = expected
+            .split_whitespace()
+            .map(|byte| u8::from_str_radix(byte, 16).expect("valid fingerprint hex"))
+            .collect::<Vec<_>>();
+        assert_eq!(expected, fingerprint(request));
+    }
+
+    #[test]
+    fn unknown_ids_defer_fingerprint_until_semantically_accepted() {
+        reset_fingerprint_count();
+        let mut service = Service::new(limits());
+
+        let rejected = Request::CreateChannel {
+            operation: operation("rejected"),
+            owner: owner(0),
+            channel_id: b"rejected-channel".to_vec(),
+            label: b"Label".to_vec(),
+            kind: CHANNEL_KIND_OUTPUT,
+            metadata: Metadata {
+                language_id: None,
+                source: None,
+            },
+        };
+        assert_eq!(
+            SakuraOutputShadowOperationStatus::Rejected,
+            service.apply(rejected).status
+        );
+        assert_eq!(0, fingerprint_count());
+        assert!(!service
+            .completed_operations
+            .contains_key(b"rejected".as_slice()));
+
+        let mut stale = create("stale", 1, "stale-channel", CHANNEL_KIND_OUTPUT);
+        if let Request::CreateChannel { operation, .. } = &mut stale {
+            operation.expected_revision = Some(service.revision + 1);
+        }
+        assert_eq!(
+            SakuraOutputShadowOperationStatus::StaleRevision,
+            service.apply(stale).status
+        );
+        assert_eq!(0, fingerprint_count());
+        assert!(!service
+            .completed_operations
+            .contains_key(b"stale".as_slice()));
+
+        assert_eq!(
+            SakuraOutputShadowOperationStatus::Succeeded,
+            service
+                .apply(create("seed", 1, "seed-channel", CHANNEL_KIND_OUTPUT))
+                .status
+        );
+        reset_fingerprint_count();
+        let not_applicable = Request::Text {
+            operation: operation("not-applicable"),
+            owner: owner(1),
+            channel_id: b"seed-channel".to_vec(),
+            text: Vec::new(),
+            replace: false,
+        };
+        assert_eq!(
+            SakuraOutputShadowOperationStatus::NotApplicable,
+            service.apply(not_applicable).status
+        );
+        assert_eq!(0, fingerprint_count());
+        assert!(!service
+            .completed_operations
+            .contains_key(b"not-applicable".as_slice()));
+
+        let accepted = create("accepted", 1, "accepted-channel", CHANNEL_KIND_OUTPUT);
+        assert_eq!(
+            SakuraOutputShadowOperationStatus::Succeeded,
+            service.apply(accepted).status
+        );
+        assert_eq!(1, fingerprint_count());
+        assert!(service
+            .completed_operations
+            .contains_key(b"accepted".as_slice()));
+    }
+
+    #[test]
+    fn known_ids_still_fingerprint_before_stale_and_semantic_checks() {
+        reset_fingerprint_count();
+        let mut service = Service::new(limits());
+        let mut request = create("known", 1, "known-channel", CHANNEL_KIND_OUTPUT);
+        if let Request::CreateChannel { operation, .. } = &mut request {
+            operation.expected_revision = Some(1);
+        }
+        assert_eq!(
+            SakuraOutputShadowOperationStatus::Succeeded,
+            service.apply(request.clone()).status
+        );
+        assert_eq!(1, fingerprint_count());
+
+        // The expected revision is now stale, but a byte-identical known ID
+        // still replays before that check.
+        assert_eq!(
+            SakuraOutputShadowOperationStatus::Replayed,
+            service.apply(request.clone()).status
+        );
+        assert_eq!(2, fingerprint_count());
+
+        // An altered request would fail semantic validation as well as stale
+        // revision validation, but a known ID must report a conflict first.
+        let conflict = match request {
+            Request::CreateChannel {
+                operation,
+                owner,
+                channel_id,
+                kind,
+                metadata,
+                ..
+            } => Request::CreateChannel {
+                operation,
+                owner,
+                channel_id,
+                label: Vec::new(),
+                kind,
+                metadata,
+            },
+            _ => unreachable!(),
+        };
+        let result = service.apply(conflict);
+        assert_eq!(SakuraOutputShadowOperationStatus::Conflict, result.status);
+        assert_eq!(SakuraOutputShadowReason::OperationIdConflict, result.reason);
+        assert_eq!(3, fingerprint_count());
+    }
+
+    #[test]
+    fn eviction_allows_a_fresh_operation_with_the_evicted_id() {
+        reset_fingerprint_count();
+        let mut constrained = limits();
+        constrained.maximum_remembered_operations = 1;
+        let mut service = Service::new(constrained);
+
+        assert_eq!(
+            SakuraOutputShadowOperationStatus::Succeeded,
+            service
+                .apply(create("first", 1, "first-channel", CHANNEL_KIND_OUTPUT))
+                .status
+        );
+        assert_eq!(
+            SakuraOutputShadowOperationStatus::Succeeded,
+            service
+                .apply(create("second", 1, "second-channel", CHANNEL_KIND_OUTPUT))
+                .status
+        );
+        assert!(!service
+            .completed_operations
+            .contains_key(b"first".as_slice()));
+        assert!(service
+            .completed_operations
+            .contains_key(b"second".as_slice()));
+
+        let fresh = create("first", 1, "fresh-channel", CHANNEL_KIND_OUTPUT);
+        assert_eq!(
+            SakuraOutputShadowOperationStatus::Succeeded,
+            service.apply(fresh).status
+        );
+        assert!(service
+            .completed_operations
+            .contains_key(b"first".as_slice()));
+        assert!(!service
+            .completed_operations
+            .contains_key(b"second".as_slice()));
+        assert_eq!(3, fingerprint_count());
+    }
+
+    #[test]
+    fn every_operation_kind_is_accepted_and_remembered_once() {
+        reset_fingerprint_count();
+        let mut service = Service::new(limits());
+
+        let mut apply_success = |request| {
+            let result = service.apply(request);
+            assert_eq!(SakuraOutputShadowOperationStatus::Succeeded, result.status);
+            result
+        };
+
+        apply_success(create("create-output", 1, "output", CHANNEL_KIND_OUTPUT));
+        apply_success(Request::Text {
+            operation: operation("append-output"),
+            owner: owner(1),
+            channel_id: b"output".to_vec(),
+            text: b"app".to_vec(),
+            replace: false,
+        });
+        apply_success(Request::Text {
+            operation: operation("replace-output"),
+            owner: owner(1),
+            channel_id: b"output".to_vec(),
+            text: b"rep".to_vec(),
+            replace: true,
+        });
+        apply_success(create("create-log", 1, "log", CHANNEL_KIND_LOG));
+        apply_success(Request::AppendLog {
+            operation: operation("append-log"),
+            owner: owner(1),
+            channel_id: b"log".to_vec(),
+            entries: vec![LogEntry {
+                level: LOG_INFO,
+                message: b"entry".to_vec(),
+                source: None,
+            }],
+        });
+        apply_success(channel_request("clear", "log", OP_CLEAR));
+        apply_success(channel_request("show", "log", OP_SHOW));
+        apply_success(channel_request("hide", "log", OP_HIDE));
+        apply_success(channel_request("dispose", "log", OP_DISPOSE));
+        apply_success(Request::DisposeOwner {
+            operation: operation("dispose-owner"),
+            owner: owner(1),
+        });
+
+        assert_eq!(10, fingerprint_count());
+        assert_eq!(11, service.revision);
+        assert!(service.channels.is_empty());
+        assert!(service
+            .completed_operations
+            .contains_key(b"dispose-owner".as_slice()));
+    }
+
+    #[test]
+    fn canonical_fingerprint_bytes_are_stable_for_every_request_kind() {
+        let operation_with_revision = Operation {
+            id: b"op".to_vec(),
+            expected_revision: Some(9),
+        };
+        let owner_with_generation = Owner {
+            id: b"owner".to_vec(),
+            generation: 7,
+        };
+        let metadata = Metadata {
+            language_id: Some(b"ja".to_vec()),
+            source: Some(b"src".to_vec()),
+        };
+        fingerprint_hex(
+            &Request::CreateChannel {
+                operation: operation_with_revision.clone(),
+                owner: owner_with_generation.clone(),
+                channel_id: b"chan".to_vec(),
+                label: b"Label".to_vec(),
+                kind: CHANNEL_KIND_LOG,
+                metadata: metadata.clone(),
+            },
+            "63 72 65 61 74 65 3b 02 00 00 00 00 00 00 00 6f 70 01 09 00 00 00 00 00 00 00 05 00 00 00 00 00 00 00 6f 77 6e 65 72 07 00 00 00 00 00 00 00 04 00 00 00 00 00 00 00 63 68 61 6e 05 00 00 00 00 00 00 00 4c 61 62 65 6c 01 01 02 00 00 00 00 00 00 00 6a 61 01 03 00 00 00 00 00 00 00 73 72 63",
+        );
+
+        let append = Request::Text {
+            operation: operation_with_revision.clone(),
+            owner: owner_with_generation.clone(),
+            channel_id: b"chan".to_vec(),
+            text: b"txt".to_vec(),
+            replace: false,
+        };
+        fingerprint_hex(
+            &append,
+            "61 70 70 65 6e 64 2d 6f 75 74 70 75 74 3b 02 00 00 00 00 00 00 00 6f 70 01 09 00 00 00 00 00 00 00 05 00 00 00 00 00 00 00 6f 77 6e 65 72 07 00 00 00 00 00 00 00 04 00 00 00 00 00 00 00 63 68 61 6e 03 00 00 00 00 00 00 00 74 78 74",
+        );
+        fingerprint_hex(
+            &Request::Text {
+                operation: operation_with_revision.clone(),
+                owner: owner_with_generation.clone(),
+                channel_id: b"chan".to_vec(),
+                text: b"txt".to_vec(),
+                replace: true,
+            },
+            "72 65 70 6c 61 63 65 2d 6f 75 74 70 75 74 3b 02 00 00 00 00 00 00 00 6f 70 01 09 00 00 00 00 00 00 00 05 00 00 00 00 00 00 00 6f 77 6e 65 72 07 00 00 00 00 00 00 00 04 00 00 00 00 00 00 00 63 68 61 6e 03 00 00 00 00 00 00 00 74 78 74",
+        );
+
+        let logs = Request::AppendLog {
+            operation: operation_with_revision.clone(),
+            owner: owner_with_generation.clone(),
+            channel_id: b"chan".to_vec(),
+            entries: vec![
+                LogEntry {
+                    level: LOG_INFO,
+                    message: b"m".to_vec(),
+                    source: None,
+                },
+                LogEntry {
+                    level: LOG_ERROR,
+                    message: b"err".to_vec(),
+                    source: Some(b"s".to_vec()),
+                },
+            ],
+        };
+        fingerprint_hex(
+            &logs,
+            "61 70 70 65 6e 64 2d 6c 6f 67 3b 02 00 00 00 00 00 00 00 6f 70 01 09 00 00 00 00 00 00 00 05 00 00 00 00 00 00 00 6f 77 6e 65 72 07 00 00 00 00 00 00 00 04 00 00 00 00 00 00 00 63 68 61 6e 02 00 00 00 01 00 00 00 00 00 00 00 6d 00 04 00 00 00 03 00 00 00 00 00 00 00 65 72 72 01 01 00 00 00 00 00 00 00 73",
+        );
+
+        for (kind, expected) in [
+            (OP_CLEAR, "63 6c 65 61 72 3b 02 00 00 00 00 00 00 00 6f 70 01 09 00 00 00 00 00 00 00 05 00 00 00 00 00 00 00 6f 77 6e 65 72 07 00 00 00 00 00 00 00 04 00 00 00 00 00 00 00 63 68 61 6e"),
+            (OP_SHOW, "73 68 6f 77 3b 02 00 00 00 00 00 00 00 6f 70 01 09 00 00 00 00 00 00 00 05 00 00 00 00 00 00 00 6f 77 6e 65 72 07 00 00 00 00 00 00 00 04 00 00 00 00 00 00 00 63 68 61 6e 01"),
+            (OP_HIDE, "68 69 64 65 3b 02 00 00 00 00 00 00 00 6f 70 01 09 00 00 00 00 00 00 00 05 00 00 00 00 00 00 00 6f 77 6e 65 72 07 00 00 00 00 00 00 00 04 00 00 00 00 00 00 00 63 68 61 6e"),
+            (OP_DISPOSE, "64 69 73 70 6f 73 65 3b 02 00 00 00 00 00 00 00 6f 70 01 09 00 00 00 00 00 00 00 05 00 00 00 00 00 00 00 6f 77 6e 65 72 07 00 00 00 00 00 00 00 04 00 00 00 00 00 00 00 63 68 61 6e"),
+        ] {
+            fingerprint_hex(
+                &channel_request_with_values(
+                    operation_with_revision.clone(),
+                    owner_with_generation.clone(),
+                    kind,
+                    true,
+                ),
+                expected,
+            );
+        }
+
+        fingerprint_hex(
+            &Request::DisposeOwner {
+                operation: operation_with_revision,
+                owner: owner_with_generation,
+            },
+            "64 69 73 70 6f 73 65 2d 6f 77 6e 65 72 3b 02 00 00 00 00 00 00 00 6f 70 01 09 00 00 00 00 00 00 00 05 00 00 00 00 00 00 00 6f 77 6e 65 72 07 00 00 00 00 00 00 00",
+        );
     }
 
     #[test]
