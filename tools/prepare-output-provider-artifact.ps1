@@ -223,6 +223,16 @@ function Resolve-Executable {
   return (Assert-RegularFile $command.Source).FullName
 }
 
+function Resolve-RustcExecutable {
+  try { return Resolve-Executable 'rustc.exe' } catch { }
+  $rustup = Resolve-Executable 'rustup.exe'
+  $result = Invoke-OwnedProcess -FileName $rustup -Arguments 'which rustc' -WorkingDirectory $script:RepoRoot -ReturnOutput
+  $lines = @($result.stdout -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+  if ($lines.Count -ne 1) { throw 'The selected Rust compiler identity is ambiguous.' }
+  $rustc = [IO.Path]::GetFullPath($lines[0].Trim())
+  return (Assert-RegularFile $rustc).FullName
+}
+
 function Resolve-Dumpbin {
   try { return Resolve-Executable 'dumpbin.exe' } catch { }
   $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
@@ -452,9 +462,11 @@ function Invoke-Producer {
     $testsBefore = Get-OptionalFileIdentity $testsSource
     $objectBefore = Get-OptionalFileIdentity $objectSource
     $rustLock = Get-FileSha256 (Join-Path $script:RepoRoot 'rust/native/Cargo.lock')
+    $script:Stage = 'msvc-toolchain'
     $dumpbin = Resolve-Dumpbin
     $msvcIdentity = 'dumpbin-{0}' -f (Get-Item -LiteralPath $dumpbin).VersionInfo.FileVersion
-    $rustc = Resolve-Executable 'rustc.exe'
+    $script:Stage = 'rust-toolchain'
+    $rustc = Resolve-RustcExecutable
     $rustIdentity = (Invoke-OwnedProcess -FileName $rustc -Arguments '--version' -WorkingDirectory $script:RepoRoot -ReturnOutput).stdout.Trim()
     if ([string]::IsNullOrWhiteSpace($rustIdentity)) { throw 'Rust toolchain identity is empty.' }
     $environment = Get-EnvironmentOverrides
