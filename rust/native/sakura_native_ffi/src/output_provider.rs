@@ -27,6 +27,37 @@ pub type SakuraOutputProviderActiveChannelV1 = output_shadow::SakuraOutputShadow
 const PROVIDER_TOKEN_TAG: u64 = 1_u64 << 63;
 const MAX_SNAPSHOT_MEASUREMENTS: usize = 64;
 
+// These points are used only by the in-module adversarial tests below.  The
+// non-test implementation of `maybe_test_panic` is an inlinable no-op, so the
+// production ABI has no externally reachable panic-injection hook.
+const EXPORT_PANIC_CREATE: u8 = 1;
+const EXPORT_PANIC_APPLY: u8 = 2;
+const EXPORT_PANIC_SNAPSHOT_MEASURE: u8 = 3;
+const EXPORT_PANIC_SNAPSHOT_WRITE: u8 = 4;
+const EXPORT_PANIC_ACTIVE_CHANNEL: u8 = 5;
+const EXPORT_PANIC_STOP: u8 = 6;
+const EXPORT_PANIC_DESTROY: u8 = 7;
+
+#[cfg(test)]
+use std::cell::Cell;
+
+#[cfg(test)]
+thread_local! {
+    static FORCED_EXPORT_PANIC: Cell<u8> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+#[inline(never)]
+fn maybe_test_panic(point: u8) {
+    if FORCED_EXPORT_PANIC.with(Cell::get) == point {
+        panic!("forced provider export panic");
+    }
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn maybe_test_panic(_point: u8) {}
+
 /// Fixed-width identity captured by a successful snapshot measure.
 ///
 /// The receipt is copied by the caller from the measure result into the write
@@ -458,6 +489,46 @@ fn poison_active() -> SakuraOutputProviderActiveChannelV1 {
     }
 }
 
+fn poison_result_if_valid(result: *mut SakuraOutputProviderApplyResultV1) {
+    if is_valid_pointer(result.cast_const()) {
+        // SAFETY: The address/range check above proves that the caller-owned
+        // result slot can hold one complete V1 result for this call.
+        unsafe { result.write(poison_result()) };
+    }
+}
+
+fn poison_info_if_valid(info: *mut SakuraOutputProviderSnapshotInfoV1) {
+    if is_valid_pointer(info.cast_const()) {
+        // SAFETY: The address/range check above proves that the caller-owned
+        // info slot can hold one complete V1 descriptor for this call.
+        unsafe { info.write(poison_info()) };
+    }
+}
+
+fn poison_snapshot_length_if_valid(buffer: *mut SakuraOutputProviderSnapshotBufferV1) {
+    if is_valid_pointer(buffer.cast_const()) {
+        // SAFETY: The address/range check above proves that the caller-owned
+        // descriptor has a writable length field for this call.
+        unsafe { (*buffer).length = u64::MAX };
+    }
+}
+
+fn poison_active_if_valid(active: *mut SakuraOutputProviderActiveChannelV1) {
+    if is_valid_pointer(active.cast_const()) {
+        // SAFETY: The address/range check above proves that the caller-owned
+        // active-channel descriptor can hold one complete V1 result.
+        unsafe { active.write(poison_active()) };
+    }
+}
+
+fn zero_token_if_valid(token: *mut u64) {
+    if is_valid_pointer(token.cast_const()) {
+        // SAFETY: The address/range check above proves that the caller-owned
+        // token slot is writable for this call.
+        unsafe { token.write(0) };
+    }
+}
+
 /// Creates one callback-free Rust OutputService provider.
 ///
 /// # Safety
@@ -469,12 +540,13 @@ pub unsafe extern "C" fn sakura_output_provider_create_v1(
     limits: *const SakuraOutputProviderLimitsV1,
     token: *mut u64,
 ) -> SakuraOutputProviderStatus {
-    catch_unwind(AssertUnwindSafe(|| {
+    match catch_unwind(AssertUnwindSafe(|| {
         if !is_valid_pointer(token.cast_const()) {
             return SakuraOutputProviderStatus::InvalidArgument;
         }
         // SAFETY: The token slot is validated and caller-owned for this call.
         unsafe { token.write(0) };
+        maybe_test_panic(EXPORT_PANIC_CREATE);
         let mut shadow_token = 0_u64;
         // SAFETY: The provider-neutral model entrypoint strictly validates
         // and copies the limits.
@@ -500,8 +572,16 @@ pub unsafe extern "C" fn sakura_output_provider_create_v1(
         // SAFETY: The token slot remains caller-owned for this call.
         unsafe { token.write(provider_token) };
         SakuraOutputProviderStatus::Ok
-    }))
-    .unwrap_or(SakuraOutputProviderStatus::InternalError)
+    })) {
+        Ok(status) => status,
+        Err(_) => {
+            // A provider token is published only after the complete create
+            // transaction succeeds.  Keep the caller's token unambiguously
+            // empty if any fallible work panics before that publication.
+            zero_token_if_valid(token);
+            SakuraOutputProviderStatus::InternalError
+        }
+    }
 }
 
 /// Applies one copied mutation to the Rust provider.
@@ -516,12 +596,13 @@ pub unsafe extern "C" fn sakura_output_provider_apply_v1(
     request: *const SakuraOutputProviderRequestV1,
     result: *mut SakuraOutputProviderApplyResultV1,
 ) -> SakuraOutputProviderStatus {
-    catch_unwind(AssertUnwindSafe(|| {
+    match catch_unwind(AssertUnwindSafe(|| {
         if !is_valid_pointer(result.cast_const()) {
             return SakuraOutputProviderStatus::InvalidArgument;
         }
         // SAFETY: The result slot is validated and caller-owned for this call.
         unsafe { result.write(poison_result()) };
+        maybe_test_panic(EXPORT_PANIC_APPLY);
         let registry = lock_providers();
         let Some(&shadow_token) = registry.providers.get(&token) else {
             return SakuraOutputProviderStatus::InvalidHandle;
@@ -529,8 +610,16 @@ pub unsafe extern "C" fn sakura_output_provider_apply_v1(
         // SAFETY: The wrapped export validates all request/span/range fields
         // and copies every input before changing the Rust-owned model.
         unsafe { output_shadow::model_apply_v1(shadow_token, request.cast(), result.cast()) }
-    }))
-    .unwrap_or(SakuraOutputProviderStatus::InternalError)
+    })) {
+        Ok(status) => status,
+        Err(_) => {
+            // The model normally poisons rejected results itself.  Restore
+            // that boundary sentinel if a provider-side allocation, lock, or
+            // future model change panics after a partial result write.
+            poison_result_if_valid(result);
+            SakuraOutputProviderStatus::InternalError
+        }
+    }
 }
 
 /// Measures a copied canonical provider snapshot and records its fixed-width
@@ -552,6 +641,7 @@ pub unsafe extern "C" fn sakura_output_provider_snapshot_measure_v1(
         }
         // SAFETY: The info slot is validated and caller-owned for this call.
         unsafe { info.write(poison_info()) };
+        maybe_test_panic(EXPORT_PANIC_SNAPSHOT_MEASURE);
         let mut registry = lock_providers();
         let Some(&shadow_token) = registry.providers.get(&token) else {
             return SakuraOutputProviderStatus::InvalidHandle;
@@ -562,16 +652,16 @@ pub unsafe extern "C" fn sakura_output_provider_snapshot_measure_v1(
                 // Keep the provider boundary fail-closed even if a future
                 // model implementation returns an error without poisoning
                 // its output.
-                unsafe { info.write(poison_info()) };
+                poison_info_if_valid(info);
                 return status;
             }
         };
         let Some(measurement_id) = next_measurement_id(&mut registry) else {
-            unsafe { info.write(poison_info()) };
+            poison_info_if_valid(info);
             return SakuraOutputProviderStatus::InternalError;
         };
         let Some(receipt) = snapshot_receipt_from_model_info(measurement_id, &model_info) else {
-            unsafe { info.write(poison_info()) };
+            poison_info_if_valid(info);
             return SakuraOutputProviderStatus::InternalError;
         };
         let provider_info = SakuraOutputProviderSnapshotInfoV1 {
@@ -588,7 +678,7 @@ pub unsafe extern "C" fn sakura_output_provider_snapshot_measure_v1(
             receipt,
         };
         if !provider_snapshot_info_is_valid(&provider_info) {
-            unsafe { info.write(poison_info()) };
+            poison_info_if_valid(info);
             return SakuraOutputProviderStatus::InternalError;
         }
         // SAFETY: `info` is validated caller-owned storage and the value is a
@@ -609,9 +699,7 @@ pub unsafe extern "C" fn sakura_output_provider_snapshot_measure_v1(
             // SAFETY: `is_valid_pointer` only inspects the address range.  If
             // the caller supplied writable V1 storage, restore its poison
             // value after any allocation/model panic.
-            if is_valid_pointer(info.cast_const()) {
-                unsafe { info.write(poison_info()) };
-            }
+            poison_info_if_valid(info);
             SakuraOutputProviderStatus::InternalError
         }
     }
@@ -625,6 +713,11 @@ pub unsafe extern "C" fn sakura_output_provider_snapshot_measure_v1(
 /// # Safety
 ///
 /// `buffer` and its destination span follow the V1 copied output contract.
+/// `length` is the only output field. On every rejected or panicking call it
+/// is set to `u64::MAX`; the input descriptor fields (`data`, `capacity`, and
+/// `receipt`) remain untouched so the caller can diagnose or retry the same
+/// request. Destination bytes are never considered valid unless the returned
+/// status is `Ok`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sakura_output_provider_snapshot_write_v1(
     token: u64,
@@ -635,7 +728,8 @@ pub unsafe extern "C" fn sakura_output_provider_snapshot_write_v1(
             return SakuraOutputProviderStatus::InvalidArgument;
         }
         // SAFETY: The descriptor slot is validated and caller-owned.
-        unsafe { (*buffer).length = u64::MAX };
+        poison_snapshot_length_if_valid(buffer);
+        maybe_test_panic(EXPORT_PANIC_SNAPSHOT_WRITE);
         let mut registry = lock_providers();
         let Some(&shadow_token) = registry.providers.get(&token) else {
             return SakuraOutputProviderStatus::InvalidHandle;
@@ -722,9 +816,7 @@ pub unsafe extern "C" fn sakura_output_provider_snapshot_write_v1(
             // SAFETY: `is_valid_pointer` only inspects the address range.  If
             // the descriptor was valid, restore its poison length after any
             // allocation/model panic and never expose a partial success.
-            if is_valid_pointer(buffer.cast_const()) {
-                unsafe { (*buffer).length = u64::MAX };
-            }
+            poison_snapshot_length_if_valid(buffer);
             SakuraOutputProviderStatus::InternalError
         }
     }
@@ -742,10 +834,11 @@ pub unsafe extern "C" fn sakura_output_provider_active_channel_v1(
     token: u64,
     active: *mut SakuraOutputProviderActiveChannelV1,
 ) -> SakuraOutputProviderStatus {
-    catch_unwind(AssertUnwindSafe(|| {
+    match catch_unwind(AssertUnwindSafe(|| {
         if !is_valid_pointer(active.cast_const()) {
             return SakuraOutputProviderStatus::InvalidArgument;
         }
+        maybe_test_panic(EXPORT_PANIC_ACTIVE_CHANNEL);
         let registry = lock_providers();
         let Some(&shadow_token) = registry.providers.get(&token) else {
             // SAFETY: The active descriptor was validated and remains
@@ -758,8 +851,15 @@ pub unsafe extern "C" fn sakura_output_provider_active_channel_v1(
         // SAFETY: The wrapped export validates descriptor/range fields and
         // copies no destination pointer into the model.
         unsafe { output_shadow::read_active_channel_internal(shadow_token, active.cast()) }
-    }))
-    .unwrap_or(SakuraOutputProviderStatus::InternalError)
+    })) {
+        Ok(status) => status,
+        Err(_) => {
+            // The model wrapper owns the normal descriptor poisoning path;
+            // this outer boundary also covers panics before it is entered.
+            poison_active_if_valid(active);
+            SakuraOutputProviderStatus::InternalError
+        }
+    }
 }
 
 /// Stops one provider.  Stop is idempotent and leaves a valid stopped token
@@ -773,20 +873,28 @@ pub unsafe extern "C" fn sakura_output_provider_stop_v1(
     token: u64,
     result: *mut SakuraOutputProviderApplyResultV1,
 ) -> SakuraOutputProviderStatus {
-    catch_unwind(AssertUnwindSafe(|| {
+    match catch_unwind(AssertUnwindSafe(|| {
         if !is_valid_pointer(result.cast_const()) {
             return SakuraOutputProviderStatus::InvalidArgument;
         }
         // SAFETY: The result slot is validated and caller-owned.
         unsafe { result.write(poison_result()) };
+        maybe_test_panic(EXPORT_PANIC_STOP);
         let registry = lock_providers();
         let Some(&shadow_token) = registry.providers.get(&token) else {
             return SakuraOutputProviderStatus::InvalidHandle;
         };
         // SAFETY: The wrapped export performs terminal-state handling.
         unsafe { output_shadow::model_stop_v1(shadow_token, result.cast()) }
-    }))
-    .unwrap_or(SakuraOutputProviderStatus::InternalError)
+    })) {
+        Ok(status) => status,
+        Err(_) => {
+            // Stop publishes a complete operation result only on success.
+            // Restore the poison result if a lock/model operation panics.
+            poison_result_if_valid(result);
+            SakuraOutputProviderStatus::InternalError
+        }
+    }
 }
 
 /// Destroys one provider token and consumes the caller's token on success.
@@ -798,10 +906,11 @@ pub unsafe extern "C" fn sakura_output_provider_stop_v1(
 pub unsafe extern "C" fn sakura_output_provider_destroy_v1(
     token: *mut u64,
 ) -> SakuraOutputProviderStatus {
-    catch_unwind(AssertUnwindSafe(|| {
+    match catch_unwind(AssertUnwindSafe(|| {
         if !is_valid_pointer(token.cast_const()) {
             return SakuraOutputProviderStatus::InvalidArgument;
         }
+        maybe_test_panic(EXPORT_PANIC_DESTROY);
         // SAFETY: The token slot is validated and caller-owned.
         let value = unsafe { token.read() };
         if value == 0 {
@@ -822,8 +931,14 @@ pub unsafe extern "C" fn sakura_output_provider_destroy_v1(
         // SAFETY: Consume the caller token only after successful destruction.
         unsafe { token.write(0) };
         SakuraOutputProviderStatus::Ok
-    }))
-    .unwrap_or(SakuraOutputProviderStatus::InternalError)
+    })) {
+        Ok(status) => status,
+        Err(_) => {
+            // Destruction consumes the caller token only after success.  A
+            // panic therefore leaves the original opaque value untouched.
+            SakuraOutputProviderStatus::InternalError
+        }
+    }
 }
 
 #[cfg(test)]
@@ -995,6 +1110,15 @@ mod tests {
             length: 0,
             reserved: [0; 2],
         }
+    }
+
+    fn with_export_panic<T>(point: u8, operation: impl FnOnce() -> T) -> T {
+        FORCED_EXPORT_PANIC.with(|forced| {
+            let previous = forced.replace(point);
+            let result = operation();
+            forced.set(previous);
+            result
+        })
     }
 
     fn assert_poison_result(result: &SakuraOutputProviderApplyResultV1) {
@@ -1198,6 +1322,7 @@ mod tests {
 
         // SAFETY: The token slot is valid caller-owned storage.
         let mut token = token;
+        // SAFETY: The token slot remains valid caller-owned storage.
         assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
             sakura_output_provider_destroy_v1(&mut token)
         });
@@ -2449,15 +2574,157 @@ mod tests {
     }
 
     #[test]
+    fn every_provider_export_recovers_from_its_own_panic_boundary() {
+        let raw_limits = limits();
+        let mut create_slot = u64::MAX;
+        // SAFETY: The limits and token are valid caller-owned storage. The
+        // test-only hook panics after the token is initialized but before the
+        // create transaction can publish a provider token.
+        let create_status = with_export_panic(EXPORT_PANIC_CREATE, || unsafe {
+            sakura_output_provider_create_v1(&raw_limits, &mut create_slot)
+        });
+        assert_eq!(SakuraOutputProviderStatus::InternalError, create_status);
+        assert_eq!(0, create_slot);
+
+        let token = create_provider_token();
+        let request = create_request(b"panic-boundaries", b"owner", b"channel", b"Label");
+
+        let mut apply_result = SakuraOutputProviderApplyResultV1 {
+            struct_size: 0,
+            abi_version: 0,
+            status: 0,
+            reason: 0,
+            revision: 0,
+            callback_drain_deferred: 0,
+            reserved: [0; 7],
+        };
+        // SAFETY: The request and result are valid caller-owned storage. The
+        // panic occurs after the export writes its initial poison result.
+        let apply_status = with_export_panic(EXPORT_PANIC_APPLY, || unsafe {
+            sakura_output_provider_apply_v1(token, &request, &mut apply_result)
+        });
+        assert_eq!(SakuraOutputProviderStatus::InternalError, apply_status);
+        assert_poison_result(&apply_result);
+
+        let mut info = SakuraOutputProviderSnapshotInfoV1 {
+            struct_size: 0,
+            abi_version: 0,
+            revision: 0,
+            stopped: 0,
+            active_channel_present: 0,
+            reserved0: [0; 6],
+            dropped_notification_count: 0,
+            channel_count: 0,
+            encoded_size: 0,
+            reserved: [0; 2],
+            receipt: empty_receipt(),
+        };
+        // SAFETY: The info descriptor is valid caller-owned storage. The
+        // panic occurs after the export writes its initial poison descriptor.
+        let measure_status = with_export_panic(EXPORT_PANIC_SNAPSHOT_MEASURE, || unsafe {
+            sakura_output_provider_snapshot_measure_v1(token, &mut info)
+        });
+        assert_eq!(SakuraOutputProviderStatus::InternalError, measure_status);
+        assert_poison_info(&info);
+
+        let mut snapshot_storage = [0xa5_u8; 8];
+        let mut snapshot_buffer = snapshot_buffer(&mut snapshot_storage);
+        snapshot_buffer.length = 17;
+        let snapshot_data = snapshot_buffer.data;
+        let snapshot_capacity = snapshot_buffer.capacity;
+        let snapshot_receipt = snapshot_buffer.receipt;
+        // SAFETY: The descriptor is valid caller-owned storage. The panic is
+        // injected after the length-only poison is published and before the
+        // descriptor is read for validation.
+        let write_status = with_export_panic(EXPORT_PANIC_SNAPSHOT_WRITE, || unsafe {
+            sakura_output_provider_snapshot_write_v1(token, &mut snapshot_buffer)
+        });
+        assert_eq!(SakuraOutputProviderStatus::InternalError, write_status);
+        assert_poison_snapshot_length(&snapshot_buffer);
+        assert_eq!(snapshot_data, snapshot_buffer.data);
+        assert_eq!(snapshot_capacity, snapshot_buffer.capacity);
+        assert_eq!(snapshot_receipt, snapshot_buffer.receipt);
+        assert_eq!([0xa5_u8; 8], snapshot_storage);
+
+        let mut active_storage = [0_u8; 1];
+        let mut active = active_buffer(&mut active_storage);
+        // SAFETY: The descriptor is valid caller-owned storage. The panic is
+        // injected before the wrapped model is entered, so the provider catch
+        // arm must publish the complete active-channel poison descriptor.
+        let active_status = with_export_panic(EXPORT_PANIC_ACTIVE_CHANNEL, || unsafe {
+            sakura_output_provider_active_channel_v1(token, &mut active)
+        });
+        assert_eq!(SakuraOutputProviderStatus::InternalError, active_status);
+        assert_poison_active(&active);
+
+        let mut stop_result = SakuraOutputProviderApplyResultV1 {
+            struct_size: 0,
+            abi_version: 0,
+            status: 0,
+            reason: 0,
+            revision: 0,
+            callback_drain_deferred: 0,
+            reserved: [0; 7],
+        };
+        // SAFETY: The result descriptor is valid caller-owned storage. The
+        // panic occurs after the export writes its initial poison result.
+        let stop_status = with_export_panic(EXPORT_PANIC_STOP, || unsafe {
+            sakura_output_provider_stop_v1(token, &mut stop_result)
+        });
+        assert_eq!(SakuraOutputProviderStatus::InternalError, stop_status);
+        assert_poison_result(&stop_result);
+
+        let mut destroy_slot = token;
+        // SAFETY: The token slot is valid caller-owned storage. Destruction
+        // has not started when this test-only panic is raised, so the opaque
+        // token must remain unchanged on failure.
+        let destroy_status = with_export_panic(EXPORT_PANIC_DESTROY, || unsafe {
+            sakura_output_provider_destroy_v1(&mut destroy_slot)
+        });
+        assert_eq!(SakuraOutputProviderStatus::InternalError, destroy_status);
+        assert_eq!(token, destroy_slot);
+
+        // SAFETY: The token slot is valid and the provider is destroyed once
+        // after all seven panic-boundary checks.
+        assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
+            sakura_output_provider_destroy_v1(&mut destroy_slot)
+        });
+        assert_eq!(0, destroy_slot);
+    }
+
+    #[test]
     fn provider_export_source_contract_contains_panic_containment_for_each_export() {
         let source = include_str!("output_provider.rs");
-        assert!(source.matches("catch_unwind(").count() >= 7);
+        let export_source = source
+            .split("#[cfg(test)]\nmod tests")
+            .next()
+            .unwrap_or(source);
+        let expected = [
+            "sakura_output_provider_create_v1",
+            "sakura_output_provider_apply_v1",
+            "sakura_output_provider_snapshot_measure_v1",
+            "sakura_output_provider_snapshot_write_v1",
+            "sakura_output_provider_active_channel_v1",
+            "sakura_output_provider_stop_v1",
+            "sakura_output_provider_destroy_v1",
+        ];
+        assert_eq!(7, export_source.matches("catch_unwind(").count());
         assert_eq!(
             7,
-            source
-                .matches("pub unsafe extern \"C\" fn sakura_output_provider_")
-                .count()
+            export_source.matches("pub unsafe extern \"C\" fn ").count()
         );
+        for (index, name) in expected.iter().enumerate() {
+            let marker = format!("pub unsafe extern \"C\" fn {name}");
+            let start = export_source
+                .find(&marker)
+                .unwrap_or_else(|| panic!("missing provider export {name}"));
+            let end = expected
+                .get(index + 1)
+                .and_then(|next| export_source.find(&format!("pub unsafe extern \"C\" fn {next}")))
+                .unwrap_or(export_source.len());
+            let body = &export_source[start..end];
+            assert_eq!(1, body.matches("catch_unwind(").count(), "{name}");
+        }
     }
 
     #[test]
