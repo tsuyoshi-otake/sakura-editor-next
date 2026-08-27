@@ -287,7 +287,7 @@ function Get-ProviderString {
   )
   if ($Value -isnot [string] -or [string]::IsNullOrWhiteSpace([string]$Value) -or
       [string]$Value -ne ([string]$Value).Trim() -or [string]$Value -match '[\r\n]' -or
-      [string]$Value.Length -gt 512 -or [string]$Value -match '(?i)^[A-Za-z]:\\|^\\\\') {
+      ([string]$Value).Length -gt 512 -or [string]$Value -match '(?i)^[A-Za-z]:\\|^\\\\') {
     throw "$Context must be a bounded identity string"
   }
   return [string]$Value

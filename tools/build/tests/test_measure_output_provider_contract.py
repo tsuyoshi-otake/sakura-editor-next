@@ -45,6 +45,8 @@ class MeasureOutputProviderContractTests(unittest.TestCase):
             "runtimeClosureSha256",
         ):
             self.assertIn(marker, self.text)
+        self.assertIn("([string]$Value).Length -gt 512", self.text)
+        self.assertNotIn("[string]$Value.Length -gt 512", self.text)
 
     def test_qualified_requires_a_manifest_pair_before_launch(self):
         shell = next((name for name in ("pwsh", "powershell.exe") if shutil.which(name)), None)
