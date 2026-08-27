@@ -82,6 +82,32 @@ class PairedStartupContractTests(unittest.TestCase):
             self.assertFalse(evidence["startupGatePass"])
             self.assertEqual("HOLD", evidence["adoption"]["decision"])
             self.assertFalse(evidence["adoption"]["adoptionEligible"])
+            milestones = evidence["startupMilestones"]
+            for field in (
+                "processStarted",
+                "topLevelWindowObserved",
+                "visibleObserved",
+                "captionObserved",
+                "inputIdleObserved",
+                "documentLayoutObserved",
+            ):
+                self.assertFalse(milestones[field], field)
+            for field in (
+                "processApiReturnMs",
+                "topLevelHwndMs",
+                "visibleMs",
+                "captionReadyMs",
+                "inputIdleMs",
+                "documentReadyMs",
+                "verticalScrollMaximum",
+            ):
+                self.assertIsNone(milestones[field], field)
+            self.assertEqual(
+                ["process-start", "top-level-window", "visible", "caption", "input-idle", "document-layout"],
+                milestones["missingMilestones"],
+            )
+            self.assertIsNone(milestones["timeoutStage"])
+            self.assertEqual("not-attempted", milestones["descendantAffinityState"])
 
     def test_missing_artifacts_still_write_a_typed_envelope(self):
         shell = next((name for name in ("pwsh", "powershell.exe") if shutil.which(name)), None)
@@ -120,6 +146,12 @@ class PairedStartupContractTests(unittest.TestCase):
             self.assertEqual(4, evidence["configuration"]["scheduledLaunches"])
             self.assertEqual(4, evidence["termination"]["suppressedLaunches"])
             self.assertEqual("HOLD", evidence["adoption"]["decision"])
+            milestones = evidence["startupMilestones"]
+            self.assertFalse(milestones["processStarted"])
+            self.assertFalse(milestones["topLevelWindowObserved"])
+            self.assertEqual(6, len(milestones["missingMilestones"]))
+            self.assertIsNone(milestones["timeoutStage"])
+            self.assertEqual("not-attempted", milestones["descendantAffinityState"])
 
     def test_qualified_defaults_and_collect_only_escape_hatch(self):
         self.assertRegex(self.paired_text, r"\[ValidateRange\(1,\s*1000\)\]\s*\[int\]\$WarmupLaunches")
@@ -148,6 +180,23 @@ class PairedStartupContractTests(unittest.TestCase):
         self.assertIn("roleLabels = 'caller-supplied'", self.paired_text)
         self.assertIn("buildManifestVerified = $false", self.paired_text)
         self.assertIn("New-PairedCampaignTermination", self.paired_text)
+        for marker in (
+            "startupMilestones",
+            "processStarted",
+            "topLevelWindowObserved",
+            "visibleObserved",
+            "captionObserved",
+            "inputIdleObserved",
+            "documentLayoutObserved",
+            "missingMilestones",
+            "timeoutStage",
+            "window-discovery",
+            "descendantAffinityState",
+            "not-attempted",
+            "Convert-PairedElapsedMs",
+            "New-PairedEmptyStartupMilestones",
+        ):
+            self.assertIn(marker, self.paired_text)
         self.assertIn("if ($Object -is [Collections.IDictionary])", self.paired_text)
         self.assertIn("status = if ($Termination.status -eq 'completed')", self.paired_text)
         self.assertIn("Assert-PairedEqual 'timeout' $terminatedReport.termination.failureType", self.paired_text)
@@ -297,6 +346,8 @@ class PairedStartupContractTests(unittest.TestCase):
         self.assertIn("clean checkout", startup_doc)
         self.assertIn("dumpbin", paired_doc)
         self.assertIn("dumpbin", startup_doc)
+        self.assertIn("raw error", paired_doc)
+        self.assertIn("missingMilestones", paired_doc)
 
     def test_shared_self_test_output_in_both_powershell_hosts(self):
         available = [name for name in ("powershell.exe", "pwsh") if shutil.which(name)]
@@ -377,6 +428,13 @@ class PairedStartupContractTests(unittest.TestCase):
             self.assertEqual(2, payload["campaignTermination"]["suppressedLaunches"])
             self.assertTrue(payload["performanceGates"]["syntheticPass"])
             self.assertTrue(payload["performanceGates"]["syntheticRegressionRejected"])
+            self.assertTrue(payload["startupMilestonesPayloadFree"])
+            self.assertTrue(payload["startupMilestonesWindowDiscoveryTimeoutVerified"])
+            self.assertTrue(payload["startupMilestonesReadinessTimeoutVerified"])
+            self.assertTrue(payload["startupMilestonesSuccessSchemaVerified"])
+            self.assertTrue(payload["startupMilestonesDescendantNotAttemptedVerified"])
+            self.assertTrue(payload["startupMilestonesDescendantFailureVerified"])
+            self.assertTrue(payload["startupMilestonesFailureSchemaVerified"])
 
 
 if __name__ == "__main__":

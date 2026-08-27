@@ -198,6 +198,13 @@ Each run writes one `paired-startup-<run-id>.json` report. The report contains:
 - the deterministic launch order and its SHA-256;
 - per-launch startup milestone timings (`processApiReturnMs`, `topLevelHwndMs`,
   `visibleMs`, `captionReadyMs`, `inputIdleMs`, and `documentReadyMs`);
+- per-launch `startupMilestones` presence booleans for process start, top-level
+  window, visibility, caption, input idle, and document layout, together with
+  bounded nullable timings, the nullable scrollbar maximum, and a fixed
+  `missingMilestones` allowlist;
+- timeout runs retain a typed `timeoutStage` (`window-discovery` or
+  `readiness`) when the observed milestones localize the wait. The runner does
+  not serialize the raw error; diagnosis comes from milestone presence only.
 - median, nearest-rank ceiling p95, minimum, maximum, mean, successful count,
   and excluded count for each backend and warmup/measured phase; and
 - a measured C++/Rust `documentReadyMs` paired-delta and regression summary,
@@ -210,9 +217,10 @@ Each run writes one `paired-startup-<run-id>.json` report. The report contains:
 
 `payloadFree` is true only for this fixed schema. The report intentionally does
 not contain executable/sample/profile/output paths, document text, captions,
-command lines, raw exception messages, or environment variable values.
-Failed or surviving launches remain typed records with `excluded=true` and
-null timings; they never enter the statistics. Acceptance requires every
+command lines, raw exception messages, or environment variable values. Failed
+or surviving launches remain typed records with `excluded=true`, explicit
+`startupMilestones` false/null fields when no launch evidence exists, and null
+timings; they never enter the statistics. Acceptance requires every
 scheduled warmup and measured launch to succeed, every cleanup to verify, and
 the requested affinity read-back to pass. `acceptance.qualified` reports this
 collection qualification separately from `performance.pass`; the top-level
