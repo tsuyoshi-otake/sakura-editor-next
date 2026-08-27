@@ -13,8 +13,8 @@ Run the script from the repository root and supply distinct executable paths:
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\measure-output-provider.ps1 `
   -CppTests1 .\x64\Release\tests1-cpp.exe `
   -RustTests1 .\x64\Release\tests1-rust.exe `
-  -CppBuildManifest .\build\output-provider-artifacts\cpp\output-provider-build-manifest.json `
-  -RustBuildManifest .\build\output-provider-artifacts\rust\output-provider-build-manifest.json `
+  -CppBuildManifest .\build\output-provider-artifacts\release\cpp\output-provider-build-manifest.json `
+  -RustBuildManifest .\build\output-provider-artifacts\release\rust\output-provider-build-manifest.json `
   -Configuration Release `
   -AffinityMask 1
 ```
@@ -32,10 +32,11 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\prepare-output-provider-ar
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\prepare-output-provider-artifact.ps1 `
   -Backend rust -Platform x64 -Configuration Release -OutputDirectory .\build\output-provider-artifacts
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\measure-output-provider.ps1 `
-  -CppTests1 .\build\output-provider-artifacts\cpp\tests1.exe `
-  -RustTests1 .\build\output-provider-artifacts\rust\tests1.exe `
-  -CppBuildManifest .\build\output-provider-artifacts\cpp\output-provider-build-manifest.json `
-  -RustBuildManifest .\build\output-provider-artifacts\rust\output-provider-build-manifest.json
+  -CppTests1 .\build\output-provider-artifacts\release\cpp\tests1.exe `
+  -RustTests1 .\build\output-provider-artifacts\release\rust\tests1.exe `
+  -CppBuildManifest .\build\output-provider-artifacts\release\cpp\output-provider-build-manifest.json `
+  -RustBuildManifest .\build\output-provider-artifacts\release\rust\output-provider-build-manifest.json `
+  -Configuration Release
 ```
 
 For a non-collection run both `-CppBuildManifest` and `-RustBuildManifest` are
