@@ -33,6 +33,7 @@ from sakura_build_lib.runner import (
     msbuild_command,
     msbuild_log_path,
     mingw_environment,
+    native_selector_preflight,
     run_commands,
     solution_commands,
 )
@@ -1153,13 +1154,12 @@ class Utf16PackagingContractTests(unittest.TestCase):
                     ),
                 )
 
-        for backend in ("rust", "both", " cpp ", "CPP", "unknown"):
+        for backend in ("both", "auto", "", " cpp ", "CPP", "unknown"):
             with self.subTest(backend=backend):
                 environment = {"SAKURA_UTF16_BACKEND": backend}
                 with self.assertRaisesRegex(
                     BuildError,
-                    "SAKURA_UTF16_PRODUCTION_PACKAGE=true requires "
-                    "SAKURA_UTF16_BACKEND=cpp;",
+                    "SAKURA_UTF16_BACKEND must be exactly one of cpp\\|rust",
                 ):
                     sakura_build.production_package_environment(environment)
                 self.assertEqual(backend, environment["SAKURA_UTF16_BACKEND"])
@@ -1179,13 +1179,12 @@ class Utf16PackagingContractTests(unittest.TestCase):
                     ),
                 )
 
-        for backend in ("rust", "both", " cpp ", "CPP", "unknown"):
+        for backend in ("both", "auto", "", " cpp ", "CPP", "unknown"):
             with self.subTest(output_backend=backend):
                 environment = {"SAKURA_OUTPUT_BACKEND": backend}
                 with self.assertRaisesRegex(
                     BuildError,
-                    "SAKURA_OUTPUT_PRODUCTION_PACKAGE=true requires "
-                    "SAKURA_OUTPUT_BACKEND=cpp;",
+                    "SAKURA_OUTPUT_BACKEND must be exactly one of cpp\\|rust",
                 ):
                     sakura_build.production_package_environment(environment)
                 self.assertEqual(backend, environment["SAKURA_OUTPUT_BACKEND"])
@@ -1231,12 +1230,25 @@ class Utf16PackagingContractTests(unittest.TestCase):
             )
             self.assertIn("exit /b 1", body, name)
 
-    def test_mingw_environment_and_cmake_command_force_cpp_backend(self):
+    def test_mingw_environment_rejects_non_cpp_backend(self):
+        with self.assertRaisesRegex(
+            BuildError,
+            "SAKURA_UTF16_BACKEND must be exactly one of cpp",
+        ):
+            mingw_environment(
+                {
+                    "PATH": "sentinel",
+                    "SAKURA_UTF16_BACKEND": "rust",
+                    "SAKURA_OUTPUT_BACKEND": "cpp",
+                }
+            )
+
+    def test_mingw_environment_and_cmake_command_preserve_validated_cpp_backend(self):
         environment = mingw_environment(
             {
                 "PATH": "sentinel",
-                "SAKURA_UTF16_BACKEND": "rust",
-                "SAKURA_OUTPUT_BACKEND": "rust",
+                "SAKURA_UTF16_BACKEND": "cpp",
+                "SAKURA_OUTPUT_BACKEND": "cpp",
             }
         )
         self.assertEqual("cpp", environment["SAKURA_UTF16_BACKEND"])
@@ -1249,9 +1261,135 @@ class Utf16PackagingContractTests(unittest.TestCase):
                     1,
                     run_tests=False,
                     package_cmake_config=Path("build/pkg/v/a/x64-mingw-static.cmake"),
+                    environment=environment,
                 )
         self.assertIn("-DSAKURA_UTF16_BACKEND=cpp", generated[0])
         self.assertIn("-DSAKURA_OUTPUT_BACKEND=cpp", generated[0])
+
+    def test_native_selector_preflight_defaults_only_absent_selectors(self):
+        cases = (
+            ("msvc", {}, {"SAKURA_UTF16_BACKEND": "cpp", "SAKURA_OUTPUT_BACKEND": "cpp"}),
+            (
+                "msvc",
+                {"SAKURA_UTF16_BACKEND": "rust", "SAKURA_OUTPUT_BACKEND": "cpp"},
+                {"SAKURA_UTF16_BACKEND": "rust", "SAKURA_OUTPUT_BACKEND": "cpp"},
+            ),
+            (
+                "msvc",
+                {"SAKURA_UTF16_BACKEND": "cpp", "SAKURA_OUTPUT_BACKEND": "rust"},
+                {"SAKURA_UTF16_BACKEND": "cpp", "SAKURA_OUTPUT_BACKEND": "rust"},
+            ),
+            (
+                "mingw",
+                {"SAKURA_UTF16_BACKEND": "cpp"},
+                {"SAKURA_UTF16_BACKEND": "cpp", "SAKURA_OUTPUT_BACKEND": "cpp"},
+            ),
+        )
+        for toolchain, environment, expected in cases:
+            with self.subTest(toolchain=toolchain, environment=environment):
+                self.assertEqual(expected, native_selector_preflight(toolchain, environment))
+
+    def test_native_selector_preflight_rejects_non_exact_selectors_table(self):
+        invalid_values = ("both", "auto", "", " cpp ", "CPP", "unknown")
+        cases = [
+            ("msvc", selector, value)
+            for selector in ("SAKURA_UTF16_BACKEND", "SAKURA_OUTPUT_BACKEND")
+            for value in invalid_values
+        ]
+        cases.extend(
+            ("mingw", selector, value)
+            for selector in ("SAKURA_UTF16_BACKEND", "SAKURA_OUTPUT_BACKEND")
+            for value in ("rust", *invalid_values)
+        )
+        for toolchain, selector, value in cases:
+            with self.subTest(toolchain=toolchain, selector=selector, value=value):
+                with self.assertRaises(BuildError) as raised:
+                    native_selector_preflight(toolchain, {selector: value})
+                self.assertEqual("NATIVE_BACKEND_SELECTOR_INVALID", raised.exception.code)
+
+    def test_native_selector_preflight_validates_independent_production_flags(self):
+        for selector, production_flag in (
+            ("SAKURA_UTF16_BACKEND", "SAKURA_UTF16_PRODUCTION_PACKAGE"),
+            ("SAKURA_OUTPUT_BACKEND", "SAKURA_OUTPUT_PRODUCTION_PACKAGE"),
+        ):
+            with self.subTest(selector=selector, production_flag=production_flag):
+                with self.assertRaisesRegex(
+                    BuildError,
+                    f"{production_flag}=true requires {selector}=cpp",
+                ):
+                    native_selector_preflight(
+                        "msvc",
+                        {selector: "rust", production_flag: "true"},
+                    )
+                self.assertEqual(
+                    "rust",
+                    native_selector_preflight(
+                        "msvc",
+                        {selector: "rust", production_flag: "false"},
+                    )[selector],
+                )
+
+    def test_native_selector_preflight_rejects_invalid_production_flags_table(self):
+        invalid_values = ("", "TRUE", "false ", "yes", "0", "ON", "unknown")
+        for production_flag in (
+            "SAKURA_UTF16_PRODUCTION_PACKAGE",
+            "SAKURA_OUTPUT_PRODUCTION_PACKAGE",
+        ):
+            for value in invalid_values:
+                with self.subTest(production_flag=production_flag, value=value):
+                    with self.assertRaises(BuildError) as raised:
+                        native_selector_preflight(
+                            "msvc",
+                            {production_flag: value},
+                        )
+                    self.assertEqual("NATIVE_PRODUCTION_FLAG_INVALID", raised.exception.code)
+
+    def test_invalid_native_selector_fails_before_restore_or_native_commands(self):
+        cases = (
+            ("build-dev", "x64", "Debug"),
+            ("build-sln", "x64", "Debug"),
+            ("build-all", "x64", "Release"),
+            ("build-gnu", "MinGW", "Debug"),
+        )
+        for entrypoint, platform, configuration in cases:
+            with self.subTest(entrypoint=entrypoint):
+                args = SimpleNamespace(
+                    entrypoint=entrypoint,
+                    legacy_args=[platform, configuration],
+                )
+                with patch.dict(
+                    os.environ,
+                    {
+                        "SAKURA_BUILD_JOBS": "1",
+                        "SAKURA_UTF16_BACKEND": "cpp",
+                        "SAKURA_OUTPUT_BACKEND": "both",
+                    },
+                    clear=False,
+                ), patch.object(sakura_build, "_ensure_package_closure") as restore, patch.object(
+                    sakura_build, "run_commands"
+                ) as run, patch.object(sakura_build, "cmake_commands") as cmake:
+                    with self.assertRaises(BuildError) as raised:
+                        sakura_build._run_compat(args, SimpleNamespace(repo_root=TOOLS_BUILD.parents[1]), EventWriter())
+                self.assertEqual("NATIVE_BACKEND_SELECTOR_INVALID", raised.exception.code)
+                restore.assert_not_called()
+                run.assert_not_called()
+                cmake.assert_not_called()
+
+    def test_mingw_rust_fails_before_package_restore(self):
+        args = SimpleNamespace(entrypoint="build-gnu", legacy_args=["MinGW", "Debug"])
+        with patch.dict(
+            os.environ,
+            {
+                "SAKURA_BUILD_JOBS": "1",
+                "SAKURA_UTF16_BACKEND": "rust",
+                "SAKURA_OUTPUT_BACKEND": "cpp",
+            },
+            clear=False,
+        ), patch.object(sakura_build, "_ensure_package_closure") as restore:
+            with self.assertRaises(BuildError) as raised:
+                sakura_build._run_compat(args, SimpleNamespace(repo_root=TOOLS_BUILD.parents[1]), EventWriter())
+        self.assertEqual("NATIVE_BACKEND_SELECTOR_INVALID", raised.exception.code)
+        restore.assert_not_called()
 
 
 class RunnerTests(unittest.TestCase):

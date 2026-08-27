@@ -61,6 +61,90 @@ class BuildError(RuntimeError):
         self.exit_code = exit_code
 
 
+_NATIVE_BACKEND_VARIABLES = (
+    ("SAKURA_UTF16_BACKEND", "SAKURA_UTF16_PRODUCTION_PACKAGE"),
+    ("SAKURA_OUTPUT_BACKEND", "SAKURA_OUTPUT_PRODUCTION_PACKAGE"),
+)
+_PRODUCTION_FLAG_VALUES = frozenset({"true", "false"})
+
+
+def native_selector_preflight(
+    toolchain: str,
+    environment: Mapping[str, str] | None = None,
+    *,
+    production_package: bool = False,
+) -> dict[str, str]:
+    """Validate native backend selectors before package restore or compilation.
+
+    The selectors are deliberately validated as raw environment values.  A
+    value that is present must be one of the exact lowercase spellings; only
+    an absent selector receives the native C++ default.  MSVC permits an
+    explicit Rust comparison selection, while MinGW is C++ only.  Production
+    package contexts force both independent package flags to ``true`` and
+    therefore require the corresponding C++ authority.
+
+    The returned mapping contains the resolved selectors and any supplied
+    production flags.  Callers pass it to the native command runner so a
+    validated explicit selection cannot be replaced by a later helper.
+    """
+    source = os.environ if environment is None else environment
+    normalized_toolchain = toolchain.lower()
+    if normalized_toolchain in {"msvc", "x64"}:
+        allowed_backends = ("cpp", "rust")
+    elif normalized_toolchain in {"mingw", "gnu"}:
+        allowed_backends = ("cpp",)
+    else:
+        raise BuildError(
+            "NATIVE_TOOLCHAIN_INVALID",
+            f"unsupported native toolchain: {toolchain}",
+            2,
+        )
+
+    resolved: dict[str, str] = {}
+    for selector, _production_flag in _NATIVE_BACKEND_VARIABLES:
+        if selector not in source:
+            resolved[selector] = "cpp"
+            continue
+        value = source[selector]
+        if value not in allowed_backends:
+            accepted = "|".join(allowed_backends)
+            raise BuildError(
+                "NATIVE_BACKEND_SELECTOR_INVALID",
+                f"{selector} must be exactly one of {accepted} for {toolchain}; got {value!r}",
+                2,
+            )
+        resolved[selector] = value
+
+    for selector, production_flag in _NATIVE_BACKEND_VARIABLES:
+        supplied = production_flag in source
+        value = source.get(production_flag)
+        if supplied and value not in _PRODUCTION_FLAG_VALUES:
+            raise BuildError(
+                "NATIVE_PRODUCTION_FLAG_INVALID",
+                f"{production_flag} must be exactly true or false; got {value!r}",
+                2,
+            )
+        production_enabled = production_package or value == "true"
+        if production_enabled and resolved[selector] != "cpp":
+            if selector == "SAKURA_UTF16_BACKEND":
+                code = "UTF16_PRODUCTION_BACKEND_INVALID"
+            else:
+                code = "OUTPUT_PRODUCTION_BACKEND_INVALID"
+            raise BuildError(
+                code,
+                f"{production_flag}=true requires {selector}=cpp; got {resolved[selector]}",
+                2,
+            )
+        if production_package:
+            resolved[production_flag] = "true"
+        elif supplied and value is not None:
+            # Preserve the validated canonical spelling for normal native
+            # builds so later command helpers cannot mask the caller's choice.
+            resolved[production_flag] = value
+
+    return resolved
+
+
 @dataclass(frozen=True)
 class Parallelism:
     budget: int
@@ -414,17 +498,18 @@ def msvc_environment(repo_root: Path, environment: Mapping[str, str] | None = No
 
 
 def mingw_environment(environment: Mapping[str, str] | None = None) -> dict[str, str]:
-    env = dict(environment or os.environ)
+    source = os.environ if environment is None else environment
+    validated = native_selector_preflight("mingw", source)
     prefixes = [Path(r"C:\msys64\mingw64\bin"), Path(r"C:\msys64\usr\bin")]
-    existing = env.get("PATH", "").split(os.pathsep)
+    # The selector preflight intentionally returns only native contract
+    # variables.  Keep the ambient tool search path when callers pass that
+    # partial validated mapping, while still honoring an explicit PATH.
+    existing = source.get("PATH", os.environ.get("PATH", "")).split(os.pathsep)
     normalized = {os.path.normcase(os.path.normpath(item)) for item in existing if item}
     additions = [str(path) for path in prefixes if path.is_dir() and os.path.normcase(str(path)) not in normalized]
     return {
         "PATH": os.pathsep.join(additions + existing),
-        # MinGW retains the explicit legacy C++ compatibility backend. Do not
-        # allow an ambient developer/CI Rust selection to change this path.
-        "SAKURA_UTF16_BACKEND": "cpp",
-        "SAKURA_OUTPUT_BACKEND": "cpp",
+        **validated,
     }
 
 
@@ -556,8 +641,10 @@ def cmake_commands(
     *,
     run_tests: bool,
     package_cmake_config: Path | None = None,
+    environment: Mapping[str, str] | None = None,
 ) -> list[list[str]]:
     allocate_parallelism(jobs)
+    validated = native_selector_preflight("mingw", environment)
     build_dir = repo_root / "build/MinGW"
     triplet = os.environ.get("VCPKG_TARGET_TRIPLET", "x64-mingw-static")
     toolchain = repo_root / "src/main/cmake/sakura-vcpkg-toolchain.cmake"
@@ -571,8 +658,8 @@ def cmake_commands(
         [
             cmake, "-S", str(repo_root), "-B", str(build_dir),
             f"-DCMAKE_BUILD_TYPE={configuration}", "-DBUILD_PLATFORM=MinGW",
-            "-DSAKURA_UTF16_BACKEND=cpp",
-            "-DSAKURA_OUTPUT_BACKEND=cpp",
+            f"-DSAKURA_UTF16_BACKEND={validated['SAKURA_UTF16_BACKEND']}",
+            f"-DSAKURA_OUTPUT_BACKEND={validated['SAKURA_OUTPUT_BACKEND']}",
             f"-DCMAKE_TOOLCHAIN_FILE={toolchain.as_posix()}",
             f"-DSAKURA_PACKAGE_CONFIG={active_config.as_posix()}",
             f"-DVCPKG_TARGET_TRIPLET={triplet}",

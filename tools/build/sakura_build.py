@@ -92,6 +92,7 @@ from sakura_build_lib.runner import (
     msbuild_command,
     msbuild_log_path,
     native_execution_root,
+    native_selector_preflight,
     run_commands,
     solution_commands,
     write_native_path_identity,
@@ -653,34 +654,20 @@ def production_package_environment(
 
     Production packaging uses the rollback-first C++ implementation for both
     UTF-16 and Output until their adoption gates are completed independently.
-    The removed ``both`` mode and an early Rust production selection are
-    rejected before package restore or compilation.  The selected backends and
-    their independent production-package contracts are returned explicitly so
-    a stale ambient environment cannot change the package after validation.
+    The strict native selector preflight runs before this environment is handed
+    to package restore or compilation, and the selected backends plus their
+    independent production-package contracts are returned explicitly so a
+    stale ambient environment cannot change the package after validation.
     """
-    source = os.environ if environment is None else environment
-    utf16_backend = source.get("SAKURA_UTF16_BACKEND")
-    if utf16_backend not in (None, "", "cpp"):
-        raise BuildError(
-            "UTF16_PRODUCTION_BACKEND_INVALID",
-            "SAKURA_UTF16_PRODUCTION_PACKAGE=true requires "
-            f"SAKURA_UTF16_BACKEND=cpp; got {utf16_backend}",
-            EXIT_USAGE,
-        )
-    output_backend = source.get("SAKURA_OUTPUT_BACKEND")
-    if output_backend not in (None, "", "cpp"):
-        raise BuildError(
-            "OUTPUT_PRODUCTION_BACKEND_INVALID",
-            "SAKURA_OUTPUT_PRODUCTION_PACKAGE=true requires "
-            f"SAKURA_OUTPUT_BACKEND=cpp; got {output_backend}",
-            EXIT_USAGE,
-        )
-    selected_utf16_backend = "cpp" if utf16_backend in (None, "") else utf16_backend
-    selected_output_backend = "cpp" if output_backend in (None, "") else output_backend
+    validated = native_selector_preflight(
+        "msvc",
+        environment,
+        production_package=True,
+    )
     return {
         "SAKURA_GENERATE_ASSEMBLY_LISTINGS": "1",
-        "SAKURA_UTF16_BACKEND": selected_utf16_backend,
-        "SAKURA_OUTPUT_BACKEND": selected_output_backend,
+        "SAKURA_UTF16_BACKEND": validated["SAKURA_UTF16_BACKEND"],
+        "SAKURA_OUTPUT_BACKEND": validated["SAKURA_OUTPUT_BACKEND"],
         "SAKURA_UTF16_PRODUCTION_PACKAGE": "true",
         "SAKURA_OUTPUT_PRODUCTION_PACKAGE": "true",
     }
@@ -695,7 +682,11 @@ def _run_build(args, graph, events: EventWriter) -> int:
         return 0 if result["ok"] else EXIT_BUILD
     if command in {"dev", "solution", "distribution"}:
         validate_legacy_pair(args.platform, args.configuration, "x64")
-        env = production_package_environment() if command == "distribution" else {}
+        env = (
+            production_package_environment()
+            if command == "distribution"
+            else native_selector_preflight("msvc")
+        )
         package_roots = ("sakura_app", "tests1") if command == "solution" else ("sakura_app",)
         _ensure_package_closure(
             graph,
@@ -846,6 +837,7 @@ def _run_compat(args, graph, events: EventWriter) -> int:
         raise BuildError("JOBS_INVALID", "SAKURA_BUILD_JOBS must be an integer", EXIT_USAGE) from error
     if args.entrypoint == "build-gnu":
         validate_legacy_pair(platform, configuration, "MinGW")
+        native_environment = native_selector_preflight("mingw")
         run_tests = len(values) < 3 or not values[2]
         package_result = _ensure_package_closure(
             graph,
@@ -862,17 +854,18 @@ def _run_compat(args, graph, events: EventWriter) -> int:
                 compat_jobs,
                 run_tests=run_tests,
                 package_cmake_config=Path(str(package_result["active_cmake_relative"])),
+                environment=native_environment,
             ),
             graph.repo_root,
             dry_run=False,
             events=events,
-            environment=mingw_environment(),
+            environment=mingw_environment(native_environment),
         )
     validate_legacy_pair(platform, configuration, "x64")
-    package_environment = (
+    native_environment = (
         production_package_environment()
         if args.entrypoint == "build-all"
-        else {}
+        else native_selector_preflight("msvc")
     )
     package_roots = ("sakura_app", "tests1") if args.entrypoint == "build-sln" else ("sakura_app",)
     _ensure_package_closure(
@@ -885,7 +878,7 @@ def _run_compat(args, graph, events: EventWriter) -> int:
     )
     if args.entrypoint == "build-dev":
         commands = [msbuild_command(graph.repo_root, graph.repo_root / "sakura_core/sakura.vcxproj", platform, configuration, compat_jobs, build_target=os.environ.get("SAKURA_DEV_BUILD_TARGET", "Build"))]
-        env = {}
+        env = native_environment
     elif args.entrypoint == "build-sln":
         # CI builds the solution here and packages it with a separate
         # ``zipArtifacts.bat`` step, which requires this log.
@@ -897,10 +890,10 @@ def _run_compat(args, graph, events: EventWriter) -> int:
             log_file=msbuild_log_path(graph.repo_root, platform, configuration),
             assembly_listings=assembly_listings_enabled(os.environ),
         )
-        env = {}
+        env = native_environment
     else:
         commands = distribution_commands(graph.repo_root, platform, configuration, compat_jobs)
-        env = package_environment
+        env = native_environment
     return run_commands(commands, graph.repo_root, dry_run=False, events=events, environment=env)
 
 
