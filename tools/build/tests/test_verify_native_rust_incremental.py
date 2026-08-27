@@ -26,6 +26,13 @@ class NativeRustIncrementalVerifierTests(unittest.TestCase):
         self.assertIn("BuildSakuraNativeFfi", text)
         self.assertIn("cargo-preflight", text)
         self.assertIn("unexpected_consumer", text)
+        self.assertIn("rust_output_provider", text)
+        self.assertIn("rust/native/sakura_native_ffi/src/output_provider.rs", text)
+        self.assertIn("no-rust-output-change", text)
+        self.assertIn("no-rust-archive-change", text)
+        self.assertIn("no-rust-stamp-change", text)
+        self.assertIn("rust_output_provider:forbidden-tool", text)
+        self.assertIn("rust_output_provider:link-count", text)
         self.assertIn("missing_output", text)
         self.assertIn("survivor", text)
         self.assertIn("/verbosity:diagnostic", text)
@@ -111,10 +118,12 @@ class NativeRustIncrementalVerifierTests(unittest.TestCase):
             "baseline",
             "no_op_1",
             "rust_source",
+            "rust_output_provider",
             "cpp_provider",
             "rust_archive",
             "rust_stamp",
             "provider_obj",
+            "output_provider.rs",
             "unexpected_consumer",
             "payload-free",
             "sakura_core/sakura.vcxproj",
@@ -230,6 +239,7 @@ class NativeRustIncrementalVerifierTests(unittest.TestCase):
                 self.assertTrue(summary["parserFailureObserved"])
                 self.assertTrue(summary["blankLineActionClassificationVerified"])
                 self.assertTrue(summary["directToolInvocationBoundaryVerified"])
+                self.assertTrue(summary["rustOutputProviderContractVerified"])
                 self.assertTrue(summary["trackedArtifactStatusBoundaryVerified"])
                 self.assertTrue(summary["sourceExtensionBoundaryVerified"])
                 self.assertTrue(summary["resourceAndManifestActionClassificationVerified"])
@@ -241,11 +251,13 @@ class NativeRustIncrementalVerifierTests(unittest.TestCase):
     def test_phase_order_and_expected_consumer_contract_are_literal(self) -> None:
         text = SCRIPT.read_bytes()[2:].decode("utf-16le")
         self.assertIn(
-            "phaseOrder = @('baseline') + @(1..$NoOpIterations | ForEach-Object { \"no_op_$($_)\" }) + @('rust_source', 'cpp_provider')",
+            "phaseOrder = @('baseline') + @(1..$NoOpIterations | ForEach-Object { \"no_op_$($_)\" }) + @('rust_source', 'rust_output_provider', 'cpp_provider')",
             text,
         )
         self.assertIn("rust_source = @('sakura_core/sakura.vcxproj')", text)
+        self.assertIn("rust_output_provider = @('sakura_core/sakura.vcxproj')", text)
         self.assertIn("cpp_provider = @('sakura_core/sakura.vcxproj')", text)
+        self.assertIn("rustOutputProviderContractVerified", text)
         self.assertIn("Get-NoOpViolation", text)
         self.assertIn("$script:UnexpectedActionKinds", text)
         self.assertIn('Write-Output "PASS ${script:VerifierName}: $outputPath"', text)

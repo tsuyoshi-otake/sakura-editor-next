@@ -74,7 +74,17 @@ The phases are:
    `vcpkg.exe z-applocal` to copy declared runtime dependencies. These are
    recorded as typed link companions rather than accepted as unknown
    executables. CMake and SENP generation remain forbidden in this phase.
-4. `cpp_provider`: append one trailing LF to the isolated
+4. `rust_output_provider`: append one trailing LF to the isolated
+   `rust/native/sakura_native_ffi/src/output_provider.rs`. The phase must
+   observe a Cargo build (and any Rust compiler work emitted by Cargo), no C++
+   compile, archive librarian, resource compiler, delete, Cargo preflight,
+   CMake, SENP, or unknown tool, a changed Rust archive and MSBuild stamp, and
+   exactly one link consumer: the explicit `sakura_core/sakura.vcxproj`
+   contract. A product relink may run `mt.exe` to embed its manifest and
+   `vcpkg.exe z-applocal`; these are typed link companions. The archive and
+   stamp are both required to change, so a successful Cargo invocation that
+   does not publish the native archive is a typed `artifact_changed` failure.
+5. `cpp_provider`: append one trailing LF to the isolated
    `sakura_core/workbench/output/OutputServiceRustProvider.cpp`. The phase must
    compile that provider translation unit exactly once, must not compile any
    other C++ translation unit, must not run Cargo/Rust/archive/resource/delete/
@@ -84,8 +94,9 @@ The phases are:
 The consumer contract is intentionally fixed in the script:
 
 ```text
-rust_source  -> sakura_core/sakura.vcxproj
-cpp_provider -> sakura_core/sakura.vcxproj
+rust_source         -> sakura_core/sakura.vcxproj
+rust_output_provider -> sakura_core/sakura.vcxproj
+cpp_provider        -> sakura_core/sakura.vcxproj
 ```
 
 It is not inferred by scanning project files at runtime. If MSBuild emits an

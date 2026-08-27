@@ -6,7 +6,8 @@
 .DESCRIPTION
   The verifier builds only the product project in a detached worktree.  It
   records a baseline, at least three no-op builds, one Rust source mutation,
-  and one OutputServiceRustProvider.cpp mutation.  Build output is classified
+  one Rust OutputService provider mutation, and one OutputServiceRustProvider.cpp
+  mutation.  Build output is classified
   into tool/action kinds, but command lines and source payloads are never
   copied into the evidence JSON.
 
@@ -50,6 +51,7 @@ $script:MaxCleanupInspectionEntries = 1000000
 $script:ExpectedLinkConsumers = [ordered]@{
     baseline = @('sakura_core/sakura.vcxproj')
     rust_source = @('sakura_core/sakura.vcxproj')
+    rust_output_provider = @('sakura_core/sakura.vcxproj')
     cpp_provider = @('sakura_core/sakura.vcxproj')
 }
 
@@ -2882,7 +2884,7 @@ function Assert-EvidenceCoreSchema {
     param([Parameter(Mandatory)][object] $Evidence)
     if ([int]$Evidence.schemaVersion -ne $script:SchemaVersion) { throw 'evidence schemaVersion is invalid' }
     if ($Evidence.payloadFree -isnot [bool] -or -not [bool]$Evidence.payloadFree) { throw 'evidence must be payload-free' }
-    if ($Evidence.phaseOrder.Count -lt 5) { throw 'evidence phaseOrder is incomplete' }
+    if ($Evidence.phaseOrder.Count -lt 7) { throw 'evidence phaseOrder is incomplete' }
     foreach ($phase in @($Evidence.phases)) {
         if ([string]::IsNullOrWhiteSpace([string]$phase.name)) { throw 'phase name is missing' }
         if ([string]$phase.result.type -notin @('ok', 'timeout', 'missing_output', 'unexpected_consumer', 'survivor', 'build_failed', 'unexpected_action', 'artifact_changed', 'process_error')) {
@@ -2963,9 +2965,10 @@ function New-SchemaFailureEvidence {
     $copy | Add-Member -NotePropertyName verifier -NotePropertyValue $script:VerifierName -Force
     $copy | Add-Member -NotePropertyName payloadFree -NotePropertyValue $true -Force
     $copy | Add-Member -NotePropertyName status -NotePropertyValue 'failed' -Force
-    if (-not $copy.PSObject.Properties['phaseOrder'] -or @($copy.phaseOrder).Count -lt 5) {
+    if (-not $copy.PSObject.Properties['phaseOrder'] -or @($copy.phaseOrder).Count -lt 7) {
         $copy | Add-Member -NotePropertyName phaseOrder -NotePropertyValue @(
-            'baseline', 'no_op_1', 'no_op_2', 'rust_source', 'cpp_provider'
+            'baseline', 'no_op_1', 'no_op_2', 'no_op_3', 'rust_source',
+            'rust_output_provider', 'cpp_provider'
         ) -Force
     }
     if (-not $copy.PSObject.Properties['phases']) {
@@ -3201,7 +3204,10 @@ function New-EmergencyEvidenceEnvelope {
         verifier = $script:VerifierName
         payloadFree = $true
         status = 'failed'
-        phaseOrder = @('baseline', 'no_op_1', 'no_op_2', 'rust_source', 'cpp_provider')
+        phaseOrder = @(
+            'baseline', 'no_op_1', 'no_op_2', 'no_op_3', 'rust_source',
+            'rust_output_provider', 'cpp_provider'
+        )
         phases = $phases.ToArray()
         mutations = @()
         cleanup = (New-OrderedObject ([ordered]@{
@@ -3341,7 +3347,7 @@ function New-BaseEvidence {
         }))
         sharedCheckoutBefore = Get-CheckoutFingerprint -RepositoryRoot $RepositoryRoot
         explicitExpectedConsumers = $script:ExpectedLinkConsumers
-        phaseOrder = @('baseline') + @(1..$NoOpIterations | ForEach-Object { "no_op_$($_)" }) + @('rust_source', 'cpp_provider')
+        phaseOrder = @('baseline') + @(1..$NoOpIterations | ForEach-Object { "no_op_$($_)" }) + @('rust_source', 'rust_output_provider', 'cpp_provider')
         phases = @()
         mutations = @()
         packageTool = $null
@@ -3473,6 +3479,60 @@ function Invoke-Verifier {
         $rustStampChanged = @($rustPhase.artifactChanges | Where-Object { $_.label -eq 'rust_stamp' }).Count -gt 0
         if (-not ($rustArchiveChanged -or $rustStampChanged)) { throw 'typed:artifact_changed:rust_source:no-rust-output-change' }
 
+        $lastStage = 'rust_output_provider'
+        $rustOutputProviderMutation = Append-WhitespaceMutation -Workspace $workspace `
+            -RelativePath 'rust/native/sakura_native_ffi/src/output_provider.rs'
+        $evidence.mutations += @($rustOutputProviderMutation)
+        $rustOutputProviderBefore = Get-ArtifactSnapshot -Workspace $workspace -Artifacts $artifacts
+        $rustOutputProviderPhase = Invoke-MsbuildPhase -Workspace $workspace -Phase 'rust_output_provider' `
+            -Platform $Platform -Configuration $Configuration -TimeoutSeconds $TimeoutSeconds
+        $evidence.phases += @($rustOutputProviderPhase)
+        $rustOutputProviderAfter = Get-ArtifactSnapshot -Workspace $workspace -Artifacts $artifacts
+        $rustOutputProviderPhase = Add-PhaseArtifactData -PhaseResult $rustOutputProviderPhase `
+            -Before $rustOutputProviderBefore -After $rustOutputProviderAfter
+        $rustOutputProviderClosure = Get-ExplicitConsumerClosure -Actions $rustOutputProviderPhase.actions `
+            -ExpectedConsumers $script:ExpectedLinkConsumers.rust_output_provider `
+            -Phase 'rust_output_provider' -ActionsTruncated:$rustOutputProviderPhase.actionsTruncated
+        $rustOutputProviderPhase | Add-Member -NotePropertyName closure `
+            -NotePropertyValue $rustOutputProviderClosure
+        if ($rustOutputProviderPhase.result.type -ne 'ok') {
+            throw "typed:$($rustOutputProviderPhase.result.type):rust_output_provider"
+        }
+        if ($rustOutputProviderPhase.actionsTruncated) {
+            throw 'typed:unexpected_action:rust_output_provider:actions-truncated'
+        }
+        $rustOutputProviderForbidden = @($rustOutputProviderPhase.actions | Where-Object {
+            $_.kind -in @('cl', 'lib', 'rc', 'cmake', 'senp-tool', 'delete',
+                'cargo-preflight', 'unexpected_tool')
+        })
+        if ($rustOutputProviderForbidden.Count -ne 0) {
+            throw 'typed:unexpected_action:rust_output_provider:forbidden-tool'
+        }
+        if (@($rustOutputProviderPhase.actions | Where-Object {
+            $_.kind -eq 'cargo' -and $_.operation -eq 'build'
+        }).Count -eq 0) {
+            throw 'typed:unexpected_action:rust_output_provider:no-cargo-build'
+        }
+        $rustOutputProviderLinks = @($rustOutputProviderPhase.actions | Where-Object {
+            $_.kind -eq 'link'
+        })
+        if ($rustOutputProviderLinks.Count -ne 1) {
+            throw 'typed:unexpected_consumer:rust_output_provider:link-count'
+        }
+        if ($rustOutputProviderClosure.type -ne 'ok') {
+            throw 'typed:unexpected_consumer:rust_output_provider'
+        }
+        $rustOutputProviderArchiveChanged = @($rustOutputProviderPhase.artifactChanges |
+            Where-Object { $_.label -eq 'rust_archive' }).Count -gt 0
+        $rustOutputProviderStampChanged = @($rustOutputProviderPhase.artifactChanges |
+            Where-Object { $_.label -eq 'rust_stamp' }).Count -gt 0
+        if (-not $rustOutputProviderArchiveChanged) {
+            throw 'typed:artifact_changed:rust_output_provider:no-rust-archive-change'
+        }
+        if (-not $rustOutputProviderStampChanged) {
+            throw 'typed:artifact_changed:rust_output_provider:no-rust-stamp-change'
+        }
+
         $lastStage = 'cpp_provider'
         $cppMutation = Append-WhitespaceMutation -Workspace $workspace -RelativePath 'sakura_core/workbench/output/OutputServiceRustProvider.cpp'
         $evidence.mutations += @($cppMutation)
@@ -3594,6 +3654,7 @@ function Invoke-SelfTest {
         $argumentQuotingVerified = $false
         $externalSentinelPreserved = $false
         $resolvedApplicationPathVerified = $false
+        $rustOutputProviderContractVerified = $false
         $resolvedGitPath = Resolve-ApplicationPath 'git.exe'
         if (-not [IO.Path]::IsPathRooted($resolvedGitPath) -or -not [IO.File]::Exists($resolvedGitPath)) {
             throw 'self-test application resolution did not produce one existing absolute path'
@@ -3969,7 +4030,10 @@ function Invoke-SelfTest {
         $packageEvidence = New-OrderedObject ([ordered]@{
             schemaVersion = 1
             payloadFree = $true
-            phaseOrder = @('baseline', 'no_op_1', 'no_op_2', 'no_op_3', 'package_failure_selftest')
+            phaseOrder = @(
+                'baseline', 'no_op_1', 'no_op_2', 'no_op_3', 'rust_source',
+                'rust_output_provider', 'cpp_provider', 'package_failure_selftest'
+            )
             phases = @()
             packageRestore = $packageFailureResult
             packageTool = $syntheticPackageTool
@@ -4026,7 +4090,10 @@ function Invoke-SelfTest {
         $combinedEvidence = New-OrderedObject ([ordered]@{
             schemaVersion = 1
             payloadFree = $true
-            phaseOrder = @('baseline', 'no_op_1', 'no_op_2', 'no_op_3', 'combined_failure_selftest')
+            phaseOrder = @(
+                'baseline', 'no_op_1', 'no_op_2', 'no_op_3', 'rust_source',
+                'rust_output_provider', 'cpp_provider', 'combined_failure_selftest'
+            )
             phases = @($combinedFailurePhase)
         })
         Assert-EvidenceSchema $combinedEvidence | Out-Null
@@ -4039,6 +4106,40 @@ function Invoke-SelfTest {
         if ($closure.type -ne 'ok' -or $closure.actual.Count -ne 1) { throw 'self-test explicit closure failed' }
         $unexpected = Get-ExplicitConsumerClosure -Actions $actions -ExpectedConsumers @('other.vcxproj') -Phase 'selftest'
         if ($unexpected.type -ne 'unexpected_consumer') { throw 'self-test unexpected consumer type failed' }
+        $outputProviderActions = @(
+            (New-OrderedObject ([ordered]@{
+                phase = 'rust_output_provider'; kind = 'cargo'; operation = 'build'
+                project = 'sakura_core/sakura.vcxproj'; sourcePaths = @()
+            })),
+            (New-OrderedObject ([ordered]@{
+                phase = 'rust_output_provider'; kind = 'rustc'; operation = 'invoke'
+                project = 'sakura_core/sakura.vcxproj'; sourcePaths = @()
+            })),
+            (New-OrderedObject ([ordered]@{
+                phase = 'rust_output_provider'; kind = 'link'; operation = 'invoke'
+                project = 'sakura_core/sakura.vcxproj'; sourcePaths = @()
+            })),
+            (New-OrderedObject ([ordered]@{
+                phase = 'rust_output_provider'; kind = 'vcpkg-applocal'
+                operation = 'copy-runtime-dependencies'; project = 'sakura_core/sakura.vcxproj'
+                sourcePaths = @()
+            }))
+        )
+        $outputProviderClosure = Get-ExplicitConsumerClosure -Actions $outputProviderActions `
+            -ExpectedConsumers $script:ExpectedLinkConsumers.rust_output_provider `
+            -Phase 'rust_output_provider'
+        $outputProviderForbidden = @($outputProviderActions | Where-Object {
+            $_.kind -in @('cl', 'lib', 'rc', 'cmake', 'senp-tool', 'delete',
+                'cargo-preflight', 'unexpected_tool')
+        })
+        if ($outputProviderClosure.type -ne 'ok' -or
+            @($outputProviderActions | Where-Object { $_.kind -eq 'link' }).Count -ne 1 -or
+            @($outputProviderActions | Where-Object {
+                $_.kind -eq 'cargo' -and $_.operation -eq 'build'
+            }).Count -ne 1 -or $outputProviderForbidden.Count -ne 0) {
+            throw 'self-test Rust OutputService provider phase contract failed'
+        }
+        $rustOutputProviderContractVerified = $true
         $artifactPath = Join-Path $workspace 'artifact.bin'
         [IO.File]::WriteAllBytes($artifactPath, [byte[]](1, 2, 3))
         $snapshot = Get-ArtifactSnapshot -Workspace $workspace -Artifacts @(@{ label = 'artifact'; relativePath = 'artifact.bin' })
@@ -4057,7 +4158,10 @@ function Invoke-SelfTest {
         $synthetic = New-OrderedObject ([ordered]@{
             schemaVersion = 1
             payloadFree = $true
-            phaseOrder = @('baseline', 'no_op_1', 'no_op_2', 'no_op_3', 'rust_source')
+            phaseOrder = @(
+                'baseline', 'no_op_1', 'no_op_2', 'no_op_3', 'rust_source',
+                'rust_output_provider', 'cpp_provider'
+            )
             phases = @((New-OrderedObject ([ordered]@{ name = 'baseline'; result = (New-OrderedObject ([ordered]@{ type = 'ok' })) })))
         })
         Assert-EvidenceSchema $synthetic | Out-Null
@@ -4065,7 +4169,10 @@ function Invoke-SelfTest {
             schemaVersion = 1
             payloadFree = $true
             status = 'failed'
-            phaseOrder = @('baseline', 'no_op_1', 'no_op_2', 'no_op_3', 'rust_source')
+            phaseOrder = @(
+                'baseline', 'no_op_1', 'no_op_2', 'no_op_3', 'rust_source',
+                'rust_output_provider', 'cpp_provider'
+            )
             phases = @()
             sharedCheckoutBefore = (New-OrderedObject ([ordered]@{ head = 'a'; statusSha256 = ('0' * 64) }))
             sharedCheckoutAfter = (New-OrderedObject ([ordered]@{ head = 'a'; statusSha256 = ('1' * 64) }))
@@ -4121,7 +4228,10 @@ function Invoke-SelfTest {
         $rawIdentityEvidence = New-OrderedObject ([ordered]@{
             schemaVersion = 1
             payloadFree = $true
-            phaseOrder = @('baseline', 'no_op_1', 'no_op_2', 'no_op_3', 'rust_source')
+            phaseOrder = @(
+                'baseline', 'no_op_1', 'no_op_2', 'no_op_3', 'rust_source',
+                'rust_output_provider', 'cpp_provider'
+            )
             phases = @($synthetic.phases)
             processId = 123
             commandLine = 'must-not-survive'
@@ -4250,6 +4360,7 @@ function Invoke-SelfTest {
             parserFailureObserved = [bool]$badOutputMetadata.parserFailed
             blankLineActionClassificationVerified = $true
             directToolInvocationBoundaryVerified = $true
+            rustOutputProviderContractVerified = [bool]$rustOutputProviderContractVerified
             trackedArtifactStatusBoundaryVerified = $true
             sourceExtensionBoundaryVerified = $true
             resourceAndManifestActionClassificationVerified = $true
