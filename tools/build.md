@@ -255,10 +255,17 @@ input、生成header/PCH、RC input、link object/resource/library、対象gener
 repository-relativeな証跡として保存します。証跡にはgraph、context、product、観測source/生成物/trackerの
 SHA-256を保持し、欠落、変更、別context、Build未実行のsnapshotはrepository台帳でblockerになります。
 製品trackerはvcxprojで宣言された`IntDir`を評価して解決し、`app-avx2`や`app-o1`等の兄弟variantを
-名前の類似だけで選びません。observerは内部propertyでそのBuildだけlink MAPを有効化し、宣言providerの
-archive memberが最終製品へ実際に選択されたことを記録します。Release LTCGでprovider libraryがlink command
-payloadへ現れない場合も、trackerのrepository library inputとの和集合で照合します。MAP生成propertyは証跡収集専用で、
-通常buildの出力契約へは追加しません。
+名前の類似だけで選びません。observerは内部propertyでそのBuildだけlink MAPを有効化します。MAPが得られる場合、
+`Publics by Value` の exact seven `sakura_output_provider_*_v1` rowsと各rowのcontributing archive/memberを
+provider-scoped evidenceとして保存し、MAPのhash/sizeと重複・不足を検証します。これは最終imageにprovider
+symbol setが存在するprovider ABI closureの補助証明であり、一般の`selected_archive_member_evidence`をOutput provider選択証明へ
+流用しません。Rust/C++ production selectorの識別は、既存のLTCG compile-log selector contractが担います。
+同じRust archive/memberがC++ candidate経由でもlinkされ得るため、MAPの7 symbolsや同一memberだけではselectorを
+識別できません。MAPが無い、形式を解釈できない、またはexact setを満たさない場合、Output link-size reportは
+`incomplete`/fail-closedになります。Release LTCGでprovider libraryがlink command payloadへ現れない場合も、
+trackerのrepository library inputとの和集合で照合します。MAP生成propertyは証跡収集専用で、通常buildの出力契約へは追加しません。
+product-native evidenceはschema v4のままprovider fieldsを後方互換なlink拡張として保持し、既存generic consumerの
+不在判定を変更しません。provider fieldsを使うconsumerだけがMAP形式・hash・exact setを必須として判定します。
 
 通常のBuildでgeneratorがup-to-date skipになった場合は、target schedulingの観測であってExec実行の
 観測ではありません。`--rebuild`は製品をclean rebuildして実際の`Exec` taskを観測するための証跡専用optionです。
@@ -295,8 +302,9 @@ native productを必ず使用し、`--compat-image`では残りの言語roleを�
 SHA-256をresource evidenceへ保持するため、採取後の入力変更はvalidationでstaleになります。baselineを指定しない
 従来のtop-level table観測も可能ですが、その場合は`RESOURCE_ID_COMPATIBILITY_UNOBSERVED`をblockerとして残します。
 
-Debug製品にはMAPがないため、link input setの観測だけでstatic archive内の採用memberを証明したとは
-扱いません。またgeneratorのExecと消費先を相関できても、生成規則の`Inputs`/`DEPENDS`が完全であること、
+Debug製品には通常MAPがないため、link input setの観測だけでstatic archive内の採用memberを証明したとは
+扱いません。内部propertyでMAPを採取しても、provider-scoped形式でexact symbol/memberを復元できなければ
+Output provider evidenceは未証明のままです。またgeneratorのExecと消費先を相関できても、生成規則の`Inputs`/`DEPENDS`が完全であること、
 RC inputの観測がresource table/ID互換であること、vcpkg targetの実行やtrackerの存在がrestore内容であることは
 別の証明です。これらの未宣言・未観測gateが残る間、`--strict`は終了コード5を返します。
 

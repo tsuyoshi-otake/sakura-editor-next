@@ -29,6 +29,24 @@ EVIDENCE_SCHEMA_VERSION = 4
 _OUTPUT_ROOTS = frozenset({"build", "x64", "win32", "mingw"})
 _PATH_INPUT_SUFFIXES = frozenset({".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".inl", ".inc", ".rc", ".rc2", ".obj", ".res", ".lib", ".natvis", ".manifest"})
 _HEADER_SUFFIXES = frozenset({".h", ".hh", ".hpp", ".hxx", ".inl", ".inc"})
+_OUTPUT_PROVIDER_SYMBOLS = (
+    "sakura_output_provider_active_channel_v1",
+    "sakura_output_provider_apply_v1",
+    "sakura_output_provider_create_v1",
+    "sakura_output_provider_destroy_v1",
+    "sakura_output_provider_snapshot_measure_v1",
+    "sakura_output_provider_snapshot_write_v1",
+    "sakura_output_provider_stop_v1",
+)
+_OUTPUT_PROVIDER_SYMBOL_SET = frozenset(_OUTPUT_PROVIDER_SYMBOLS)
+_OUTPUT_PROVIDER_SYMBOL_RE = re.compile(r"^sakura_output_provider_[A-Za-z0-9_]+$")
+_OUTPUT_PROVIDER_ARCHIVE_NAME = "sakura_native_ffi.lib"
+_MSVC_MAP_PUBLICS_HEADER_RE = re.compile(r"\bPublics\s+by\s+Value\b", re.IGNORECASE)
+_MSVC_MAP_PUBLIC_ROW_RE = re.compile(
+    r"^\s*[0-9A-Fa-f]+:[0-9A-Fa-f]+\s+"
+    r"(?P<symbol>\S+)\s+[0-9A-Fa-f]+\s+\S+\s+(?P<contributor>\S+)\s*$"
+)
+_MSVC_MAP_PUBLIC_ADDRESS_RE = re.compile(r"^\s*[0-9A-Fa-f]+:[0-9A-Fa-f]+\s+(?P<symbol>\S+)")
 _MONITORED_MSBUILD_TARGET = re.compile(
     r"^(?:"
     r"Generate(?:VersionHeader|FuncCodeDefine|FuncCodeEnum|SakuraExeManifest|Bregonig|Migemo|CTags|Diff|Lang_.+)"
@@ -476,6 +494,194 @@ def _selected_archive_members_from_map(
     return sorted(selected, key=str.casefold)
 
 
+def _normalize_map_contributor(token: str) -> tuple[str, str] | None:
+    """Normalize the ``Lib:Object`` contributor printed by an MSVC MAP.
+
+    Rust objects in an MSVC MAP are normally rendered as ``.rcgu.o`` members,
+    while native MSVC archive members use ``.obj``.  The archive name is
+    normalized to a basename so that a MAP's short ``lib:member`` spelling and
+    a path-qualified spelling have the same evidence identity.
+    """
+
+    value = token.strip()
+    if not value:
+        return None
+    if value.endswith(")") and "(" in value:
+        archive_token, member_token = value[:-1].rsplit("(", 1)
+    elif ":" in value:
+        archive_token, member_token = value.rsplit(":", 1)
+    else:
+        return None
+    archive_token = archive_token.strip().replace("\\", "/")
+    member_token = member_token.strip().replace("\\", "/")
+    if not archive_token or not member_token:
+        return None
+    archive_name = Path(archive_token).name
+    member_name = Path(member_token).name
+    if not archive_name or not member_name:
+        return None
+    if not archive_name.casefold().endswith(".lib"):
+        if "." in archive_name:
+            return None
+        archive_name += ".lib"
+    archive_name = archive_name.casefold()
+    if Path(member_name).suffix.lower() not in {".obj", ".o"}:
+        return None
+    return archive_name, member_name
+
+
+def _output_provider_map_rows(map_path: Path) -> list[dict[str, object]]:
+    """Read exact output-provider public rows from the MSVC MAP public table.
+
+    Only the ``Publics by Value`` table is authoritative here.  Static-symbol
+    rows and decorated C++ names can contain provider-name substrings, but are
+    not final public symbol rows and must not be counted as evidence.
+    """
+
+    rows: list[dict[str, object]] = []
+    in_publics = False
+    try:
+        with map_path.open("r", encoding="utf-8-sig", errors="replace") as stream:
+            for line in stream:
+                if not in_publics:
+                    if _MSVC_MAP_PUBLICS_HEADER_RE.search(line):
+                        in_publics = True
+                    continue
+                if re.match(r"^\s*Static symbols\s*$", line, re.IGNORECASE):
+                    break
+                row = _MSVC_MAP_PUBLIC_ROW_RE.match(line)
+                if row is not None:
+                    symbol = row.group("symbol")
+                    contributor = row.group("contributor")
+                else:
+                    address = _MSVC_MAP_PUBLIC_ADDRESS_RE.match(line)
+                    if address is None:
+                        continue
+                    symbol = address.group("symbol")
+                    contributor = None
+                if not _OUTPUT_PROVIDER_SYMBOL_RE.fullmatch(symbol):
+                    continue
+                normalized = _normalize_map_contributor(contributor) if contributor is not None else None
+                rows.append({
+                    "symbol": symbol,
+                    "archive": normalized[0] if normalized is not None else None,
+                    "member": normalized[1] if normalized is not None else None,
+                })
+    except OSError as error:
+        raise BuildError("NATIVE_PRODUCT_MAP_READ", f"could not read {map_path}: {error}", 5) from error
+    return rows
+
+
+def _output_provider_map_evidence(
+    map_path: Path,
+    map_relative: str | None,
+    map_hash: str,
+    repository_libraries: Sequence[str],
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Build provider-scoped MAP evidence without claiming selector identity.
+
+    The exact symbol set and its contributors establish that the final image's
+    MAP contains the provider boundary.  They do not distinguish a production
+    Rust selector from a linked-but-unused C++ candidate; the LTCG compile-log
+    selector contract remains the selector proof consumed by the link-size
+    analyzer.
+    """
+
+    rows = _output_provider_map_rows(map_path)
+    by_symbol: dict[str, list[dict[str, object]]] = defaultdict(list)
+    for row in rows:
+        by_symbol[str(row["symbol"])].append(row)
+    symbols = sorted(by_symbol, key=str.casefold)
+    duplicate_count = sum(max(0, len(items) - 1) for items in by_symbol.values())
+    missing_symbols = sorted(_OUTPUT_PROVIDER_SYMBOL_SET - set(symbols), key=str.casefold)
+    unexpected_symbols = sorted(set(symbols) - _OUTPUT_PROVIDER_SYMBOL_SET, key=str.casefold)
+    contributions = [
+        {
+            "symbol": str(row["symbol"]),
+            "archive": row["archive"],
+            "member": row["member"],
+        }
+        for symbol in symbols
+        for row in sorted(
+            by_symbol[symbol],
+            key=lambda item: (
+                str(item["archive"] or "").casefold(),
+                str(item["member"] or "").casefold(),
+            ),
+        )
+    ]
+    contributing_archives = sorted(
+        {str(row["archive"]) for row in rows if row["archive"] is not None},
+        key=str.casefold,
+    )
+    contributing_members = sorted(
+        {str(row["member"]) for row in rows if row["member"] is not None},
+        key=str.casefold,
+    )
+    archive_input_count = sum(
+        1
+        for value in repository_libraries
+        if Path(value.replace("\\", "/")).name.casefold() == _OUTPUT_PROVIDER_ARCHIVE_NAME
+    )
+    rows_have_contributors = bool(rows) and all(
+        row["archive"] is not None and row["member"] is not None
+        for row in rows
+    )
+    archive_identity_observed = (
+        rows_have_contributors
+        and contributing_archives == [_OUTPUT_PROVIDER_ARCHIVE_NAME]
+        and archive_input_count == 1
+    )
+    exact_symbol_set = set(symbols) == _OUTPUT_PROVIDER_SYMBOL_SET and len(symbols) == len(_OUTPUT_PROVIDER_SYMBOL_SET)
+    complete = map_relative is not None and exact_symbol_set and duplicate_count == 0 and archive_identity_observed
+    try:
+        map_size = map_path.stat().st_size
+    except OSError as error:
+        raise BuildError("NATIVE_PRODUCT_MAP_HASH", f"could not stat {map_path}: {error}", 5) from error
+    common = {
+        "provider": "output-provider",
+        "method": "msvc_map_publics_by_value_provider_rows",
+        "map": map_relative,
+        "map_hash": map_hash,
+        "map_size_bytes": map_size,
+        "archive_name": _OUTPUT_PROVIDER_ARCHIVE_NAME if archive_identity_observed else None,
+        "archive_input_count": archive_input_count,
+        "contributing_archives": contributing_archives,
+        "contributing_archive_count": len(contributing_archives),
+        "contributing_members": contributing_members,
+        "contributions": contributions,
+        "selector_proof": "ltcg_compile_log_required",
+    }
+    member_evidence = {
+        **common,
+        "observed": complete,
+        "members": contributing_members,
+        "member_count": len(contributing_members),
+        "missing_symbols": missing_symbols,
+        "unexpected_symbols": unexpected_symbols,
+        "duplicate_count": duplicate_count,
+    }
+    symbol_evidence = {
+        "provider": "output-provider",
+        "scope": "output-provider",
+        "method": "msvc_map_publics_by_value_provider_rows",
+        "map": map_relative,
+        "map_hash": map_hash,
+        "map_size_bytes": map_size,
+        "observed": complete,
+        "symbols": symbols,
+        "symbol_count": len(symbols),
+        "duplicate_count": duplicate_count,
+        "missing_symbols": missing_symbols,
+        "unexpected_symbols": unexpected_symbols,
+        "contributing_archives": contributing_archives,
+        "contributing_members": contributing_members,
+        "contributions": contributions,
+        "selector_proof": "ltcg_compile_log_required",
+    }
+    return member_evidence, symbol_evidence
+
+
 def _collect_link_record(
     repo_root: Path,
     project_dir: Path,
@@ -514,11 +720,19 @@ def _collect_link_record(
     map_relative: str | None = None
     map_hash: str | None = None
     selected_members: list[str] = []
+    output_provider_member_evidence: dict[str, object] | None = None
+    output_provider_symbol_evidence: dict[str, object] | None = None
     map_observed = map_path is not None and map_path.is_file()
     if map_observed and map_path is not None:
         map_relative = _repo_relative(repo_root, map_path)
         map_hash = _sha256_file(map_path, "NATIVE_PRODUCT_MAP_HASH")
         selected_members = _selected_archive_members_from_map(map_path, object_inputs)
+        output_provider_member_evidence, output_provider_symbol_evidence = _output_provider_map_evidence(
+            map_path,
+            map_relative,
+            map_hash,
+            repository_libraries,
+        )
     return ({
         "output": output_relative,
         "product_hash": _sha256_file(output, "NATIVE_PRODUCT_OUTPUT_HASH"),
@@ -538,6 +752,8 @@ def _collect_link_record(
             "members": selected_members,
             "member_count": len(selected_members),
         } if map_observed else None,
+        "output_provider_member_evidence": output_provider_member_evidence,
+        "output_provider_symbol_evidence": output_provider_symbol_evidence,
     }, repo_inputs)
 
 
@@ -962,6 +1178,281 @@ def write_product_native_evidence(path: Path, evidence: Mapping[str, object]) ->
         temporary.unlink(missing_ok=True)
 
 
+def _validate_output_provider_map_reference(
+    graph: SemanticGraph,
+    value: object,
+    label: str,
+    failures: list[dict[str, object]],
+) -> tuple[str | None, int | None]:
+    if not isinstance(value, dict):
+        return None, None
+    observed = value.get("observed") is True
+    strict = value.get("method") == "msvc_map_publics_by_value_provider_rows"
+    map_relative = value.get("map")
+    map_hash = value.get("map_hash")
+    map_size = value.get("map_size_bytes")
+    metadata_required = observed or strict
+    if metadata_required and (
+        not isinstance(map_relative, str)
+        or not map_relative
+        or not isinstance(map_hash, str)
+        or not isinstance(map_size, int)
+        or isinstance(map_size, bool)
+        or map_size < 0
+    ):
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MAP_METADATA_MISSING", "field": label})
+    if map_relative is None:
+        return None, None
+    if not isinstance(map_relative, str) or not map_relative:
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MAP_PATH_MISSING", "field": label})
+        return None, None
+    try:
+        map_path = (graph.repo_root / map_relative).resolve()
+    except (OSError, ValueError):
+        failures.append({
+            "code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MAP_PATH_UNSAFE",
+            "field": label,
+            "path": map_relative,
+        })
+        return None, None
+    try:
+        map_path.relative_to(graph.repo_root.resolve())
+    except ValueError:
+        failures.append({
+            "code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MAP_PATH_ESCAPE",
+            "field": label,
+            "path": map_relative,
+        })
+        return None, None
+    if not map_path.is_file():
+        failures.append({
+            "code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MAP_MISSING",
+            "field": label,
+            "path": map_relative,
+        })
+        return None, None
+    try:
+        actual_hash = _sha256_file(map_path, "NATIVE_PRODUCT_EVIDENCE_MAP_VALIDATE")
+        actual_size = map_path.stat().st_size
+    except OSError as error:
+        failures.append({
+            "code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MAP_READ",
+            "field": label,
+            "detail": str(error),
+        })
+        return None, None
+    if isinstance(map_hash, str) and map_hash != actual_hash:
+        failures.append({
+            "code": "NATIVE_PRODUCT_EVIDENCE_MAP_CHANGED",
+            "field": label,
+            "path": map_relative,
+        })
+    if isinstance(map_size, int) and not isinstance(map_size, bool) and map_size != actual_size:
+        failures.append({
+            "code": "NATIVE_PRODUCT_EVIDENCE_MAP_CHANGED",
+            "field": label,
+            "path": map_relative,
+        })
+    return map_relative, actual_size
+
+
+def _provider_contribution_rows(value: object) -> list[dict[str, object]] | None:
+    if not isinstance(value, list):
+        return None
+    rows: list[dict[str, object]] = []
+    for row in value:
+        if not isinstance(row, dict):
+            return None
+        symbol = row.get("symbol")
+        archive = row.get("archive")
+        member = row.get("member")
+        if not isinstance(symbol, str) or not symbol:
+            return None
+        if archive is not None and (not isinstance(archive, str) or not archive):
+            return None
+        if member is not None and (not isinstance(member, str) or not member):
+            return None
+        rows.append({"symbol": symbol, "archive": archive, "member": member})
+    return rows
+
+
+def _validate_output_provider_schema(
+    graph: SemanticGraph,
+    link: Mapping[str, object],
+    failures: list[dict[str, object]],
+) -> None:
+    member = link.get("output_provider_member_evidence")
+    symbols = link.get("output_provider_symbol_evidence")
+    if member is None and symbols is None:
+        return
+    if not isinstance(member, dict) or not isinstance(symbols, dict):
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_SCHEMA"})
+        return
+
+    member_map, _member_map_size = _validate_output_provider_map_reference(
+        graph, member, "member", failures
+    )
+    symbol_map, _symbol_map_size = _validate_output_provider_map_reference(
+        graph, symbols, "symbol", failures
+    )
+    if member_map is not None and symbol_map is not None and member_map != symbol_map:
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MAP_MISMATCH"})
+
+    member_method = member.get("method")
+    symbol_method = symbols.get("method")
+    member_strict = member_method == "msvc_map_publics_by_value_provider_rows"
+    symbol_strict = symbol_method == "msvc_map_publics_by_value_provider_rows"
+    if member_method is not None and not member_strict:
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MEMBER_SCHEMA"})
+    if symbol_method is not None and not symbol_strict:
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_SYMBOL_SCHEMA"})
+    if member_strict != symbol_strict:
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_SCHEMA"})
+
+    member_observed = member.get("observed")
+    symbol_observed = symbols.get("observed")
+    if not isinstance(member_observed, bool):
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MEMBER_SCHEMA"})
+    if not isinstance(symbol_observed, bool):
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_SYMBOL_SCHEMA"})
+    if isinstance(member_observed, bool) and isinstance(symbol_observed, bool) and member_observed != symbol_observed:
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_SCHEMA"})
+
+    member_scope = member.get("provider")
+    if not isinstance(member_scope, str) or member_scope.strip().lower() not in {
+        "provider", "output-provider", "output_provider",
+    }:
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MEMBER_SCHEMA"})
+    symbol_scope = symbols.get("scope")
+    if not isinstance(symbol_scope, str) or symbol_scope.strip().lower() not in {
+        "provider", "output-provider", "output_provider",
+    }:
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_SYMBOL_SCHEMA"})
+
+    members = member.get("members")
+    member_count = member.get("member_count")
+    if (
+        not isinstance(members, list)
+        or any(not isinstance(item, str) or not item.strip() for item in members)
+        or not isinstance(member_count, int)
+        or isinstance(member_count, bool)
+        or member_count != len(members)
+        or len({item.strip().replace("\\", "/") for item in members}) != len(members)
+    ):
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MEMBER_SCHEMA"})
+    member_duplicate_count = member.get("duplicate_count")
+    if (
+        not isinstance(member_duplicate_count, int)
+        or isinstance(member_duplicate_count, bool)
+        or member_duplicate_count < 0
+    ):
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MEMBER_SCHEMA"})
+    archive_input_count = member.get("archive_input_count")
+    if (
+        not isinstance(archive_input_count, int)
+        or isinstance(archive_input_count, bool)
+        or archive_input_count < 0
+    ):
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MEMBER_SCHEMA"})
+
+    provider_symbols = symbols.get("symbols")
+    symbol_count = symbols.get("symbol_count")
+    if (
+        not isinstance(provider_symbols, list)
+        or any(not isinstance(item, str) or not item for item in provider_symbols)
+        or not isinstance(symbol_count, int)
+        or isinstance(symbol_count, bool)
+        or symbol_count != len(provider_symbols)
+    ):
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_SYMBOL_SCHEMA"})
+    symbol_duplicate_count = symbols.get("duplicate_count")
+    if (
+        not isinstance(symbol_duplicate_count, int)
+        or isinstance(symbol_duplicate_count, bool)
+        or symbol_duplicate_count < 0
+    ):
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_SYMBOL_SCHEMA"})
+
+    member_contributions = _provider_contribution_rows(member.get("contributions"))
+    symbol_contributions = _provider_contribution_rows(symbols.get("contributions"))
+    if member_strict and member_contributions is None:
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MEMBER_SCHEMA"})
+    if symbol_strict and symbol_contributions is None:
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_SYMBOL_SCHEMA"})
+    if member_strict and symbol_strict and member_contributions != symbol_contributions:
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_SCHEMA"})
+
+    if member_strict and symbol_strict and isinstance(member_map, str) and member_map == symbol_map:
+        map_path = (graph.repo_root / member_map).resolve()
+        if map_path.is_file():
+            try:
+                current_map_hash = _sha256_file(map_path, "NATIVE_PRODUCT_EVIDENCE_MAP_VALIDATE")
+                repository_libraries = link.get("repository_libraries")
+                libraries = repository_libraries if isinstance(repository_libraries, list) else []
+                derived_member, derived_symbols = _output_provider_map_evidence(
+                    map_path,
+                    member_map,
+                    current_map_hash,
+                    [value for value in libraries if isinstance(value, str)],
+                )
+            except BuildError as error:
+                failures.append({
+                    "code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MAP_READ",
+                    "detail": str(error),
+                })
+            else:
+                if derived_member != member or derived_symbols != symbols:
+                    failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MAP_CONTENT_MISMATCH"})
+
+    if (
+        member_strict
+        and symbol_strict
+        and member_observed is False
+        and isinstance(archive_input_count, int)
+        and not isinstance(archive_input_count, bool)
+        and archive_input_count > 0
+    ):
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_UNPROVEN"})
+
+    if not (member_strict and symbol_strict and member_observed is True and symbol_observed is True):
+        return
+
+    if (
+        not isinstance(provider_symbols, list)
+        or any(not isinstance(item, str) or not item for item in provider_symbols)
+        or set(provider_symbols) != _OUTPUT_PROVIDER_SYMBOL_SET
+        or len(provider_symbols) != len(_OUTPUT_PROVIDER_SYMBOL_SET)
+    ):
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_SYMBOL_SCHEMA"})
+    if member_duplicate_count != 0 or symbol_duplicate_count != 0:
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_SCHEMA"})
+    if member.get("missing_symbols") != [] or member.get("unexpected_symbols") != []:
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MEMBER_SCHEMA"})
+    if symbols.get("missing_symbols") != [] or symbols.get("unexpected_symbols") != []:
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_SYMBOL_SCHEMA"})
+    if member.get("archive_name") != _OUTPUT_PROVIDER_ARCHIVE_NAME:
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MEMBER_SCHEMA"})
+    if member.get("contributing_archives") != [_OUTPUT_PROVIDER_ARCHIVE_NAME]:
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MEMBER_SCHEMA"})
+    if member.get("contributing_archive_count") != 1:
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MEMBER_SCHEMA"})
+    if not isinstance(member_contributions, list) or len(member_contributions) != len(_OUTPUT_PROVIDER_SYMBOLS):
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MEMBER_SCHEMA"})
+    else:
+        contribution_symbols = [row["symbol"] for row in member_contributions]
+        if set(contribution_symbols) != _OUTPUT_PROVIDER_SYMBOL_SET or len(contribution_symbols) != len(_OUTPUT_PROVIDER_SYMBOL_SET):
+            failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MEMBER_SCHEMA"})
+        if any(
+            row["archive"] != _OUTPUT_PROVIDER_ARCHIVE_NAME
+            or not isinstance(row["member"], str)
+            or not row["member"]
+            for row in member_contributions
+        ):
+            failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MEMBER_SCHEMA"})
+    if member.get("contributing_members") != members:
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MEMBER_SCHEMA"})
+
+
 def validate_product_native_evidence(
     graph: SemanticGraph,
     path: Path | None,
@@ -1102,6 +1593,7 @@ def validate_product_native_evidence(
                         failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_MAP_HASH_MISSING"})
                     elif _sha256_file(map_path, "NATIVE_PRODUCT_EVIDENCE_MAP_VALIDATE") != map_hash:
                         failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_MAP_CHANGED", "path": map_relative})
+    _validate_output_provider_schema(graph, link, failures)
     valid = not failures
     return {
         "status": "observed" if valid else "stale_or_mismatched",
@@ -1120,6 +1612,12 @@ def validate_product_native_evidence(
             "resource_table_observed": valid and bool(resource.get("resource_table_observed")),
             "link_input_set_observed": valid and bool(link.get("input_set_observed")),
             "selected_archive_members_observed": valid and bool(link.get("selected_archive_members_observed")),
+            "output_provider_member_evidence_observed": valid and isinstance(
+                link.get("output_provider_member_evidence"), dict
+            ) and link["output_provider_member_evidence"].get("observed") is True,
+            "output_provider_symbol_evidence_observed": valid and isinstance(
+                link.get("output_provider_symbol_evidence"), dict
+            ) and link["output_provider_symbol_evidence"].get("observed") is True,
             "package_restore_execution_observed": valid and bool(package.get("native_restore_execution_observed")),
             "package_closure_validated": valid and bool(package.get("package_closure_validated")),
         },
@@ -1143,6 +1641,8 @@ def validate_product_native_evidence(
             "resource_inputs": link.get("resource_inputs", []) if valid else [],
             "product_hash": link.get("product_hash") if valid else None,
             "selected_archive_member_evidence": link.get("selected_archive_member_evidence") if valid else None,
+            "output_provider_member_evidence": link.get("output_provider_member_evidence") if valid else None,
+            "output_provider_symbol_evidence": link.get("output_provider_symbol_evidence") if valid else None,
         },
         "generator_observation": {
             "build_target": evidence.get("build_target") if valid else None,

@@ -22,6 +22,17 @@ from sakura_build_lib.runner import BuildError  # noqa: E402
 from test_repository_inventory import _fixture, _write  # noqa: E402
 
 
+EXPECTED_OUTPUT_PROVIDER_SYMBOLS = [
+    "sakura_output_provider_active_channel_v1",
+    "sakura_output_provider_apply_v1",
+    "sakura_output_provider_create_v1",
+    "sakura_output_provider_destroy_v1",
+    "sakura_output_provider_snapshot_measure_v1",
+    "sakura_output_provider_snapshot_write_v1",
+    "sakura_output_provider_stop_v1",
+]
+
+
 def _write_tlog(path: Path, lines: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-16", newline="\n")
@@ -99,6 +110,70 @@ def _native_fixture(root: Path):
     (root / "build/x64/vcpkg").mkdir(parents=True, exist_ok=True)
     (root / "build/x64/vcpkg/fmtd.lib").write_bytes(b"fmt")
     return graph, tlog
+
+
+def _provider_map_text(
+    *,
+    symbols: list[str] | None = None,
+    duplicate_symbol: str | None = None,
+    member: str = "sakura_native_ffi-abc123.sakura_native_ffi-cgu.0.rcgu.o",
+) -> str:
+    rows = list(EXPECTED_OUTPUT_PROVIDER_SYMBOLS if symbols is None else symbols)
+    if duplicate_symbol is not None:
+        rows.append(duplicate_symbol)
+    lines = [
+        "  Address         Publics by Value              Rva+Base               Lib:Object",
+        "",
+    ]
+    for index, symbol in enumerate(rows):
+        address = f"{0x17430 + index * 0x10:08x}"
+        lines.append(
+            f" 0001:{address[-8:]}       {symbol} {0x140018430 + index * 0x10:016x} f   "
+            f"sakura_native_ffi:{member}"
+        )
+    lines.extend([
+        "",
+        " Static symbols",
+        " 0001:00000000 ?decorated_sakura_output_provider_stop_v1@@YAXXZ 0000000140000000 f app.obj",
+    ])
+    return "\r\n".join(lines) + "\r\n"
+
+
+def _provider_map_fixture(
+    root: Path,
+    *,
+    map_text: str | None = None,
+    duplicate_symbol: str | None = None,
+):
+    graph, tlog = _native_fixture(root)
+    output_dir = graph.repo_root / "build/x64/Debug/app"
+    executable = graph.repo_root / "x64/Debug/sakura.exe"
+    executable.write_bytes(b"provider-product")
+    provider_library = graph.repo_root / "build/components/sakura_native_ffi.lib"
+    provider_library.parent.mkdir(parents=True, exist_ok=True)
+    provider_library.write_bytes(b"sakura-native-ffi")
+    _write_tlog(
+        tlog / "link.command.1.tlog",
+        [
+            f"^{output_dir / 'main.obj'}|{output_dir / 'app.res'}|{provider_library}",
+            f'/OUT:"{executable}" /MAP KERNEL32.LIB',
+        ],
+    )
+    _write_tlog(
+        tlog / "link.read.1.tlog",
+        [
+            f"^{output_dir / 'main.obj'}|{output_dir / 'app.res'}|{provider_library}",
+            str(provider_library),
+            r"C:\SDK\lib\kernel32.lib",
+        ],
+    )
+    map_path = executable.with_suffix(".map")
+    map_path.write_text(
+        _provider_map_text(duplicate_symbol=duplicate_symbol) if map_text is None else map_text,
+        encoding="ascii",
+        newline="",
+    )
+    return graph, tlog, executable, map_path, provider_library
 
 
 class ProductNativeEvidenceTests(unittest.TestCase):
@@ -404,6 +479,159 @@ class ProductNativeEvidenceTests(unittest.TestCase):
             "NATIVE_PRODUCT_EVIDENCE_MAP_CHANGED",
             {item["code"] for item in validation["failures"]},
         )
+
+    def test_realistic_msvc_map_generates_provider_scoped_symbol_and_member_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            graph, _tlog, _executable, map_path, _archive = _provider_map_fixture(Path(temporary))
+            evidence = collect_product_native_evidence(
+                graph,
+                "product",
+                "msvc-x64-debug",
+                build_observed=True,
+            )
+            evidence_path = graph.repo_root / "build/evidence/native-product.json"
+            write_product_native_evidence(evidence_path, evidence)
+            validation = validate_product_native_evidence(
+                graph,
+                evidence_path,
+                "product",
+                "msvc-x64-debug",
+            )
+
+        member_evidence = evidence["link"]["output_provider_member_evidence"]
+        symbol_evidence = evidence["link"]["output_provider_symbol_evidence"]
+        self.assertTrue(member_evidence["observed"])
+        self.assertEqual("output-provider", member_evidence["provider"])
+        self.assertEqual("sakura_native_ffi.lib", member_evidence["archive_name"])
+        self.assertEqual(1, member_evidence["member_count"])
+        self.assertEqual(7, len(member_evidence["contributions"]))
+        self.assertEqual("sakura_native_ffi.lib", member_evidence["contributing_archives"][0])
+        self.assertTrue(member_evidence["members"][0].endswith(".rcgu.o"))
+        self.assertTrue(symbol_evidence["observed"])
+        self.assertEqual("output-provider", symbol_evidence["scope"])
+        self.assertEqual(EXPECTED_OUTPUT_PROVIDER_SYMBOLS, symbol_evidence["symbols"])
+        self.assertEqual(7, symbol_evidence["symbol_count"])
+        self.assertEqual(0, symbol_evidence["duplicate_count"])
+        self.assertEqual(map_path.relative_to(graph.repo_root).as_posix(), member_evidence["map"])
+        self.assertEqual(member_evidence["map_hash"], symbol_evidence["map_hash"])
+        self.assertTrue(validation["valid"])
+        self.assertTrue(validation["coverage"]["output_provider_member_evidence_observed"])
+        self.assertTrue(validation["coverage"]["output_provider_symbol_evidence_observed"])
+
+    def test_provider_map_missing_symbol_is_unproven_and_records_missing_set(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            graph, _tlog, _executable, _map_path, _archive = _provider_map_fixture(
+                Path(temporary),
+                map_text=_provider_map_text(symbols=EXPECTED_OUTPUT_PROVIDER_SYMBOLS[:-1]),
+            )
+            evidence = collect_product_native_evidence(
+                graph,
+                "product",
+                "msvc-x64-debug",
+                build_observed=True,
+            )
+            evidence_path = graph.repo_root / "build/evidence/native-product.json"
+            write_product_native_evidence(evidence_path, evidence)
+            validation = validate_product_native_evidence(
+                graph,
+                evidence_path,
+                "product",
+                "msvc-x64-debug",
+            )
+
+        member_evidence = evidence["link"]["output_provider_member_evidence"]
+        symbol_evidence = evidence["link"]["output_provider_symbol_evidence"]
+        self.assertFalse(member_evidence["observed"])
+        self.assertFalse(symbol_evidence["observed"])
+        self.assertEqual([EXPECTED_OUTPUT_PROVIDER_SYMBOLS[-1]], member_evidence["missing_symbols"])
+        self.assertEqual([EXPECTED_OUTPUT_PROVIDER_SYMBOLS[-1]], symbol_evidence["missing_symbols"])
+        self.assertEqual(6, symbol_evidence["symbol_count"])
+        self.assertFalse(validation["valid"])
+        self.assertIn(
+            "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_UNPROVEN",
+            {item["code"] for item in validation["failures"]},
+        )
+
+    def test_provider_map_duplicate_symbol_is_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            graph, _tlog, _executable, _map_path, _archive = _provider_map_fixture(
+                Path(temporary),
+                duplicate_symbol=EXPECTED_OUTPUT_PROVIDER_SYMBOLS[0],
+            )
+            evidence = collect_product_native_evidence(
+                graph,
+                "product",
+                "msvc-x64-debug",
+                build_observed=True,
+            )
+            evidence_path = graph.repo_root / "build/evidence/native-product.json"
+            write_product_native_evidence(evidence_path, evidence)
+            validation = validate_product_native_evidence(
+                graph,
+                evidence_path,
+                "product",
+                "msvc-x64-debug",
+            )
+
+        member_evidence = evidence["link"]["output_provider_member_evidence"]
+        symbol_evidence = evidence["link"]["output_provider_symbol_evidence"]
+        self.assertFalse(member_evidence["observed"])
+        self.assertFalse(symbol_evidence["observed"])
+        self.assertEqual(1, member_evidence["duplicate_count"])
+        self.assertEqual(1, symbol_evidence["duplicate_count"])
+        self.assertFalse(validation["valid"])
+        self.assertIn(
+            "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_UNPROVEN",
+            {item["code"] for item in validation["failures"]},
+        )
+
+    def test_provider_map_unexpected_symbol_breaks_exact_set(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            graph, _tlog, _executable, _map_path, _archive = _provider_map_fixture(
+                Path(temporary),
+                map_text=_provider_map_text(
+                    symbols=EXPECTED_OUTPUT_PROVIDER_SYMBOLS + ["sakura_output_provider_extra_v1"]
+                ),
+            )
+            evidence = collect_product_native_evidence(
+                graph,
+                "product",
+                "msvc-x64-debug",
+                build_observed=True,
+            )
+
+        symbol_evidence = evidence["link"]["output_provider_symbol_evidence"]
+        self.assertFalse(symbol_evidence["observed"])
+        self.assertEqual(["sakura_output_provider_extra_v1"], symbol_evidence["unexpected_symbols"])
+        self.assertEqual(8, symbol_evidence["symbol_count"])
+
+    def test_provider_map_hash_is_revalidated_after_collection(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            graph, _tlog, _executable, map_path, _archive = _provider_map_fixture(Path(temporary))
+            evidence = collect_product_native_evidence(
+                graph,
+                "product",
+                "msvc-x64-debug",
+                build_observed=True,
+            )
+            evidence_path = graph.repo_root / "build/evidence/native-product.json"
+            write_product_native_evidence(evidence_path, evidence)
+            map_path.write_text("tampered map\n", encoding="ascii", newline="")
+            validation = validate_product_native_evidence(
+                graph,
+                evidence_path,
+                "product",
+                "msvc-x64-debug",
+            )
+
+        self.assertFalse(validation["valid"])
+        provider_map_failures = {
+            item.get("field")
+            for item in validation["failures"]
+            if item["code"] == "NATIVE_PRODUCT_EVIDENCE_MAP_CHANGED"
+        }
+        self.assertIn("member", provider_map_failures)
+        self.assertIn("symbol", provider_map_failures)
 
     def test_changed_source_input_makes_evidence_stale(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
