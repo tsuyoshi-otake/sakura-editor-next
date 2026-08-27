@@ -148,10 +148,40 @@ class PairedStartupContractTests(unittest.TestCase):
         self.assertIn("roleLabels = 'caller-supplied'", self.paired_text)
         self.assertIn("buildManifestVerified = $false", self.paired_text)
         self.assertIn("New-PairedCampaignTermination", self.paired_text)
+        self.assertIn("if ($Object -is [Collections.IDictionary])", self.paired_text)
+        self.assertIn("status = if ($Termination.status -eq 'completed')", self.paired_text)
+        self.assertIn("Assert-PairedEqual 'timeout' $terminatedReport.termination.failureType", self.paired_text)
         self.assertIn("Get-PairedBuildManifest", self.paired_text)
         self.assertIn("Get-PairedRuntimeStageIdentity", self.paired_text)
+        self.assertIn("Convert-PairedRuntimeReceiptPath", self.paired_text)
+        self.assertIn("Assert-PairedRuntimeReceiptArtifactIdentity", self.paired_text)
+        self.assertIn("nested\\sakura_lang_en_US.dll", self.paired_text)
+        self.assertIn("COM[1-9]|LPT[1-9]", self.paired_text)
         self.assertIn("runtimeStageReceiptSha256", self.paired_text)
         self.assertIn("dependencyClosureSha256", self.paired_text)
+        self.assertIn("Get-PairedScriptIdentity", self.paired_text)
+        self.assertIn("Assert-PairedSourceStateUnchanged $sourceState 'Postflight'", self.paired_text)
+        self.assertIn("Assert-PairedScriptIdentityUnchanged $scriptIdentity 'Postflight'", self.paired_text)
+        self.assertIn("Assert-PairedSourceStateUnchanged $sourceState 'Final report write'", self.paired_text)
+        self.assertIn("Assert-PairedScriptIdentityUnchanged $scriptIdentity 'Final report write'", self.paired_text)
+        self.assertIn("manifestGeneratedByProducer", self.paired_text)
+        self.assertIn("atomic-directory-rename", self.paired_text)
+        self.assertIn("canonicalRuntimeStage", self.paired_text)
+        self.assertIn("selectorProof", self.paired_text)
+        self.assertIn("dumpbin-unresolved-refs-verified", self.paired_text)
+        self.assertIn("sakura_output_provider_snapshot_measure_v1", self.paired_text)
+        self.assertIn("Qualified paired evidence requires a clean checkout.", self.paired_text)
+        self.assertIn("normalizedArguments", self.paired_text)
+        self.assertIn("measurementArgumentsSchemaVersion", self.paired_text)
+        self.assertIn("measurementCommandSha256", self.paired_text)
+        self.assertIn("Get-PairedMeasurementCommandSha256 $MeasurementArguments", self.paired_text)
+        self.assertIn("$bundlePlans", self.paired_text)
+        self.assertIn("$sampleCopyPlan", self.paired_text)
+        self.assertIn("$reportTempPath", self.paired_text)
+        self.assertIn("[IO.File]::Move($reportTempPath, $reportPath)", self.paired_text)
+        self.assertIn("Assert-PairedSourceStateUnchanged $sourceState 'Post-write report'", self.paired_text)
+        self.assertIn("Assert-PairedScriptIdentityUnchanged $scriptIdentity 'Post-write report'", self.paired_text)
+        self.assertIn("cleanup-unverified", self.paired_text)
         self.assertIn("decision = 'HOLD'", self.paired_text)
         self.assertIn("adoptionEligible = $false", self.paired_text)
         self.assertIn("if ($run.status -ne 'succeeded' -or -not (Test-PairedRunCleanupVerified $run))", self.paired_text)
@@ -169,6 +199,10 @@ class PairedStartupContractTests(unittest.TestCase):
 
     def test_profile_isolation_bundle_and_sidecar_contract_are_mandatory(self):
         for marker in (
+            "Convert-StartupReceiptPath",
+            "Assert-StartupReceiptArtifactIdentity",
+            "nested\\sakura_lang_en_US.dll",
+            "COM[1-9]|LPT[1-9]",
             "$script:StartupProfileSidecarContract",
             "MultiUser=0",
             "Assert-StartupProfileSidecar",
@@ -213,6 +247,12 @@ class PairedStartupContractTests(unittest.TestCase):
         self.assertIn("-RustBuildManifest", paired_doc)
         self.assertIn("-CppRuntimeStageDirectory", paired_doc)
         self.assertIn("-RustRuntimeStageDirectory", paired_doc)
+        self.assertIn("prepare-output-startup-artifact.ps1", paired_doc)
+        self.assertIn("prepare-output-startup-artifact.ps1", startup_doc)
+        self.assertIn("checkout must be clean", paired_doc)
+        self.assertIn("clean checkout", startup_doc)
+        self.assertIn("dumpbin", paired_doc)
+        self.assertIn("dumpbin", startup_doc)
 
     def test_shared_self_test_output_in_both_powershell_hosts(self):
         available = [name for name in ("powershell.exe", "pwsh") if shutil.which(name)]
@@ -256,6 +296,13 @@ class PairedStartupContractTests(unittest.TestCase):
             self.assertTrue(payload["passed"])
             self.assertTrue(payload["noGuiLaunch"])
             self.assertEqual(70, payload["scheduleEntries"])
+            self.assertEqual(1, payload["measurementArgumentsSchemaVersion"])
+            self.assertRegex(payload["measurementCommandSha256"], r"^[0-9a-f]{64}$")
+            self.assertTrue(payload["manifestProducerContractVerified"])
+            self.assertTrue(payload["manifestSelectorProofVerified"])
+            self.assertTrue(payload["manifestCleanSourceRequired"])
+            self.assertTrue(payload["integrityRechecksVerified"])
+            self.assertTrue(payload["postWriteReportRecheckVerified"])
             self.assertEqual("nearest-rank-ceiling", payload["p95Definition"])
             self.assertTrue(payload["affinityReadBackVerified"])
             self.assertTrue(payload["cleanupTreeVerified"])

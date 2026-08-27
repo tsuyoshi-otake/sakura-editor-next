@@ -101,10 +101,51 @@ checkout, artifact hashes, explicit Output selectors, UTF-16 C++ selector,
 Debug/Release configuration, runtime-stage receipt and dependency closure,
 Windows image, power mode, parallelism, MSVC/Rust toolchains, Cargo lock,
 package plan, and build-command identities. The two manifests must agree on the
-shared environment identities. Do not hand-author these fields after a build;
-the build orchestration that creates the artifacts must emit the manifests.
-Until that reproducible producer exists and its outputs are supplied, use
-collect-only mode and treat the result as diagnostic evidence only.
+shared environment identities. The checkout must be clean. During the campaign,
+the runner rechecks the source state and both measurement-script hashes after
+the launches, immediately before report serialization, and after atomic report
+publication. A drift produces typed integrity evidence and keeps the decision
+at HOLD.
+
+Do not hand-author manifest fields after a build. Use
+`prepare-output-startup-artifact.ps1`, which owns build, selector proof,
+canonical staging, manifest generation, and atomic publication as one bounded
+transaction. It verifies the production-provider object with `dumpbin`: the
+C++ object must have no `sakura_output_provider_*` unresolved references, while
+the Rust object must reference the complete fixed v1 entry-point set. The
+receipt parser also binds every `artifact_id`, role, source, and destination to
+the canonical `build/staging/<context>/sakura-editor` and `x64/<Configuration>`
+layout; a basename-only, absolute, traversing, or otherwise ambiguous path is
+rejected.
+
+Create both Debug artifacts below one new run-specific output root, then pass
+the producer outputs to the paired runner:
+
+```powershell
+$artifactRoot = ".\build\evidence\output-startup-qualified\$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\prepare-output-startup-artifact.ps1 `
+  -Backend cpp -Platform x64 -Configuration Debug -BuildParallelism 1 `
+  -OutputDirectory $artifactRoot
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\prepare-output-startup-artifact.ps1 `
+  -Backend rust -Platform x64 -Configuration Debug -BuildParallelism 1 `
+  -OutputDirectory $artifactRoot
+
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\measure-output-startup.ps1 `
+  -CppSakuraExe "$artifactRoot\Debug\cpp\runtime-stage\sakura.exe" `
+  -RustSakuraExe "$artifactRoot\Debug\rust\runtime-stage\sakura.exe" `
+  -CppBuildManifest "$artifactRoot\Debug\cpp\build-manifest.json" `
+  -RustBuildManifest "$artifactRoot\Debug\rust\build-manifest.json" `
+  -CppRuntimeStageDirectory "$artifactRoot\Debug\cpp\runtime-stage" `
+  -RustRuntimeStageDirectory "$artifactRoot\Debug\rust\runtime-stage" `
+  -Platform x64 -Configuration Debug `
+  -StartupSample .\tools\startup-benchmark-sample.md -AffinityMask 1
+```
+
+Repeat with a different output root and `-Configuration Release` for the
+Release cell. The producer refuses to overwrite an existing backend/configuration
+transaction. A producer manifest created from a dirty checkout remains useful
+for diagnostics, but the paired runner rejects it in qualified mode.
 
 For a collect-only Debug smoke pair, build and stage one artifact at a time
 because both configurations produce `x64\Debug\sakura.exe`:
@@ -145,6 +186,7 @@ Each run writes one `paired-startup-<run-id>.json` report. The report contains:
 - the repository source state, scripts, C++ artifact, Rust artifact, verified or
   explicitly unverified provenance, runtime closure, host, sample,
   profile-policy, and per-launch profile SHA-256 identities;
+- the normalized measurement-argument schema and measurement-command SHA-256;
 - the deterministic launch order and its SHA-256;
 - per-launch startup milestone timings (`processApiReturnMs`, `topLevelHwndMs`,
   `visibleMs`, `captionReadyMs`, `inputIdleMs`, and `documentReadyMs`);

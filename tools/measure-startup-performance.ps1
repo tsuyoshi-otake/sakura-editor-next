@@ -1237,18 +1237,87 @@ function Assert-StartupNonReparsePath([string]$Path, [string]$Root) {
     }
 }
 
-function Get-StartupReceiptRelativePath([string]$Destination, [string]$ArtifactRoot) {
-    $value = [string]$Destination
-    if ([string]::IsNullOrWhiteSpace($value)) { throw 'A runtime receipt destination must be non-empty.' }
-    $normalized = $value.Replace('/', '\').Trim()
-    $marker = '\sakura-editor\'
-    $markerIndex = $normalized.LastIndexOf($marker, [StringComparison]::OrdinalIgnoreCase)
-    if ($markerIndex -ge 0) {
-        return Convert-StartupArtifactRelativePath $normalized.Substring($markerIndex + $marker.Length)
+function Convert-StartupReceiptPath([string]$Path, [string]$FieldName) {
+    if ([string]::IsNullOrWhiteSpace($Path)) { throw "A runtime receipt $FieldName must be non-empty." }
+    $normalized = $Path.Replace('/', '\')
+    if ($normalized -ne $normalized.Trim() -or $normalized.IndexOf([char]0) -ge 0) {
+        throw "A runtime receipt $FieldName contains unsafe whitespace or control data."
     }
-    $fileName = [IO.Path]::GetFileName($normalized)
-    if ([string]::IsNullOrWhiteSpace($fileName)) { throw 'A runtime receipt destination has no file name.' }
-    return Convert-StartupArtifactRelativePath $fileName
+    if ([IO.Path]::IsPathRooted($normalized) -or $normalized.IndexOf(':') -ge 0) {
+        throw "A runtime receipt $FieldName must be relative and may not contain an alternate data stream."
+    }
+    $parts = @($normalized -split '\\')
+    if ($parts.Count -eq 0 -or @($parts | Where-Object {
+            [string]::IsNullOrWhiteSpace($_) -or $_ -eq '.' -or $_ -eq '..' -or $_ -match '[\x00-\x1f<>\"|?*]' -or
+            $_ -match '[ \.]$' -or $_ -match '^(?i:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?$'
+        }).Count -gt 0) {
+        throw "A runtime receipt $FieldName contains an unsafe path component."
+    }
+    return ($parts -join '\')
+}
+
+function Get-StartupReceiptPathBinding([string]$Destination, [string]$Source, [string]$Context) {
+    if ($Context -cne 'msvc-x64-debug' -and $Context -cne 'msvc-x64-release') {
+        throw 'A runtime receipt context must be the canonical MSVC x64 context.'
+    }
+    $destinationPath = Convert-StartupReceiptPath $Destination 'destination'
+    $sourcePath = Convert-StartupReceiptPath $Source 'source'
+    $destinationPrefix = 'build/staging/{0}/sakura-editor/' -f $Context
+    $destinationPrefix = $destinationPrefix.Replace('/', '\')
+    $sourceConfiguration = if ($Context -ceq 'msvc-x64-debug') { 'Debug' } else { 'Release' }
+    $sourcePrefix = ('x64/{0}/' -f $sourceConfiguration).Replace('/', '\')
+    if (-not $destinationPath.StartsWith($destinationPrefix, [StringComparison]::Ordinal) -or
+        -not $sourcePath.StartsWith($sourcePrefix, [StringComparison]::Ordinal)) {
+        throw 'A runtime receipt source or destination is outside its canonical stage prefix.'
+    }
+    $destinationSuffix = $destinationPath.Substring($destinationPrefix.Length)
+    $sourceSuffix = $sourcePath.Substring($sourcePrefix.Length)
+    if ([string]::IsNullOrWhiteSpace($destinationSuffix) -or
+        -not [StringComparer]::Ordinal.Equals($destinationSuffix, $sourceSuffix)) {
+        throw 'A runtime receipt source and destination do not identify the same relative file.'
+    }
+    return [pscustomobject][ordered]@{
+        destination = $destinationPath
+        source = $sourcePath
+        relativePath = $destinationSuffix
+    }
+}
+
+function Assert-StartupReceiptArtifactIdentity([string]$ArtifactId, [string]$Role, [string]$RelativePath, [string]$Context) {
+    if ([string]::IsNullOrWhiteSpace($ArtifactId) -or $ArtifactId -match '[\r\n]' -or
+        [string]::IsNullOrWhiteSpace($Role) -or $Role -match '[\r\n]') {
+        throw 'A runtime receipt artifact identity must contain non-empty artifact_id and role values.'
+    }
+    if ([StringComparer]::Ordinal.Equals($RelativePath, 'sakura.exe')) {
+        if (-not [StringComparer]::Ordinal.Equals($Role, 'editor') -or
+            -not [StringComparer]::Ordinal.Equals($ArtifactId, ('sakura-editor-{0}-product' -f $Context))) {
+            throw 'The runtime receipt editor identity is not canonical.'
+        }
+        return
+    }
+    if ([StringComparer]::Ordinal.Equals($Role, 'editor') -or
+        [StringComparer]::Ordinal.Equals($ArtifactId, ('sakura-editor-{0}-product' -f $Context))) {
+        throw 'Only the canonical sakura.exe entry may use the editor identity.'
+    }
+    $knownLanguages = @{
+        'sakura_lang_en_US.dll' = [pscustomobject]@{ artifactId = 'sakura-language-en-us-resource'; role = 'language-en-us' }
+        'sakura_lang_zh_CN.dll' = [pscustomobject]@{ artifactId = 'sakura-language-zh-cn-resource'; role = 'language-zh-cn' }
+    }
+    if (($ArtifactId -ceq 'sakura-language-en-us-resource' -or $Role -ceq 'language-en-us') -and
+        -not [StringComparer]::Ordinal.Equals($RelativePath, 'sakura_lang_en_US.dll')) {
+        throw 'The runtime receipt en-US language identity must use its canonical top-level path.'
+    }
+    if (($ArtifactId -ceq 'sakura-language-zh-cn-resource' -or $Role -ceq 'language-zh-cn') -and
+        -not [StringComparer]::Ordinal.Equals($RelativePath, 'sakura_lang_zh_CN.dll')) {
+        throw 'The runtime receipt zh-CN language identity must use its canonical top-level path.'
+    }
+    if ($knownLanguages.ContainsKey($RelativePath)) {
+        $expected = $knownLanguages[$RelativePath]
+        if (-not [StringComparer]::Ordinal.Equals($ArtifactId, $expected.artifactId) -or
+            -not [StringComparer]::Ordinal.Equals($Role, $expected.role)) {
+            throw 'The runtime receipt language artifact identity is not canonical.'
+        }
+    }
 }
 
 function Get-StartupArtifactClosureManifest([string]$ArtifactRoot, [string]$ReceiptPath = $null) {
@@ -1267,18 +1336,25 @@ function Get-StartupArtifactClosureManifest([string]$ArtifactRoot, [string]$Rece
         [string]::IsNullOrWhiteSpace([string]$raw.context_id) -or [string]::IsNullOrWhiteSpace([string]$raw.staging_set_id)) {
         throw 'The runtime artifact receipt has an unsupported schema.'
     }
+    $context = [string]$raw.context_id
+    if ($context -cne 'msvc-x64-debug' -and $context -cne 'msvc-x64-release') {
+        throw 'The runtime artifact receipt context is not canonical.'
+    }
     $rawFiles = @($raw.files)
     if ($rawFiles.Count -eq 0) { throw 'The runtime artifact receipt declares no files.' }
     $files = New-Object Collections.Generic.List[object]
     $paths = @{}
     $editorCount = 0
     foreach ($rawFile in $rawFiles) {
-        foreach ($required in @('source', 'destination', 'role', 'sha256', 'size')) {
+        foreach ($required in @('artifact_id', 'source', 'destination', 'role', 'sha256', 'size')) {
             if ($null -eq $rawFile.PSObject.Properties[$required]) { throw 'The runtime artifact receipt has an incomplete file entry.' }
         }
-        if ([string]::IsNullOrWhiteSpace([string]$rawFile.source)) { throw 'The runtime artifact receipt contains an empty source.' }
-        $relativePath = Get-StartupReceiptRelativePath ([string]$rawFile.destination) $root
-        $key = $relativePath.ToUpperInvariant()
+        $binding = Get-StartupReceiptPathBinding ([string]$rawFile.destination) ([string]$rawFile.source) $context
+        $relativePath = Convert-StartupArtifactRelativePath $binding.relativePath
+        $artifactId = [string]$rawFile.artifact_id
+        $role = [string]$rawFile.role
+        Assert-StartupReceiptArtifactIdentity $artifactId $role $relativePath $context
+        $key = $binding.destination.ToUpperInvariant()
         if ($paths.ContainsKey($key)) { throw 'The runtime artifact receipt declares a duplicate file.' }
         $paths[$key] = $true
         $expectedHash = [string]$rawFile.sha256
@@ -1292,17 +1368,17 @@ function Get-StartupArtifactClosureManifest([string]$ArtifactRoot, [string]$Rece
         if ($identity.sha256 -ne $expectedHash -or [UInt64]$identity.sizeBytes -ne $expectedSize) {
             throw 'A runtime artifact receipt entry does not match its staged file.'
         }
-        $role = [string]$rawFile.role
-        if ([string]::IsNullOrWhiteSpace($role)) { throw 'The runtime artifact receipt contains an empty role.' }
         if ([StringComparer]::OrdinalIgnoreCase.Equals($role, 'editor')) { ++$editorCount }
         [void]$files.Add([pscustomobject][ordered]@{
             relativePath = $relativePath
+            canonicalRelativePath = $binding.destination
             sourcePath = $identity.path
+            artifactId = $artifactId
             role = $role
             sha256 = $expectedHash
             sizeBytes = $expectedSize
-            source = [string]$rawFile.source
-            destination = [string]$rawFile.destination
+            source = $binding.source
+            destination = $binding.destination
         })
     }
     if ($editorCount -ne 1) { throw 'The runtime artifact receipt must declare exactly one editor file.' }
@@ -1313,7 +1389,7 @@ function Get-StartupArtifactClosureManifest([string]$ArtifactRoot, [string]$Rece
     return [pscustomobject][ordered]@{
         mode = 'runtime-stage-receipt'
         schemaVersion = [int]$raw.schema_version
-        contextId = [string]$raw.context_id
+        contextId = $context
         stagingSetId = [string]$raw.staging_set_id
         rootPath = $root
         receipt = $receipt
@@ -1364,7 +1440,7 @@ function New-StartupArtifactBundle([string]$SourcePath, [string]$BundleRoot, [st
                 stagingSetId = $null
                 rootPath = Split-Path -Parent $source.path
                 receipt = $null
-                files = @([pscustomobject][ordered]@{ relativePath = 'sakura.exe'; sourcePath = $source.path; role = 'editor'; sha256 = $source.sha256; sizeBytes = [UInt64]$source.sizeBytes; source = $source.path; destination = 'sakura.exe' })
+                files = @([pscustomobject][ordered]@{ relativePath = 'sakura.exe'; canonicalRelativePath = 'sakura.exe'; sourcePath = $source.path; role = 'editor'; sha256 = $source.sha256; sizeBytes = [UInt64]$source.sizeBytes; source = $source.path; destination = 'sakura.exe' })
                 executableRelativePath = 'sakura.exe'
                 executablePath = $source.path
             }
@@ -1391,6 +1467,7 @@ function New-StartupArtifactBundle([string]$SourcePath, [string]$BundleRoot, [st
             }
             [void]$copiedFiles.Add([pscustomobject][ordered]@{
                 relativePath = [string]$closureFile.relativePath
+                canonicalRelativePath = if ($null -eq $closureFile.canonicalRelativePath) { [string]$closureFile.relativePath } else { [string]$closureFile.canonicalRelativePath }
                 sourcePath = [string]$closureFile.sourcePath
                 copiedPath = [string]$copiedFile.path
                 role = [string]$closureFile.role
@@ -1464,7 +1541,7 @@ function Get-StartupArtifactBundleVerification([object]$Bundle) {
         $copiedMatches = $copiedCurrent.sha256 -eq $closureFile.sha256 -and [UInt64]$copiedCurrent.sizeBytes -eq [UInt64]$closureFile.sizeBytes
         $sourceClosureUnchanged = $sourceClosureUnchanged -and $sourceMatches
         $copiedClosureUnchanged = $copiedClosureUnchanged -and $copiedMatches
-        [void]$closureEntries.Add([ordered]@{ relativePath = $closureFile.relativePath; role = $closureFile.role; sourceSha256 = $sourceCurrent.sha256; copiedSha256 = $copiedCurrent.sha256; sourceMatches = [bool]$sourceMatches; copiedMatches = [bool]$copiedMatches })
+        [void]$closureEntries.Add([ordered]@{ relativePath = $closureFile.relativePath; canonicalRelativePath = if ($null -eq $closureFile.canonicalRelativePath) { [string]$closureFile.relativePath } else { [string]$closureFile.canonicalRelativePath }; role = $closureFile.role; sourceSha256 = $sourceCurrent.sha256; copiedSha256 = $copiedCurrent.sha256; sourceMatches = [bool]$sourceMatches; copiedMatches = [bool]$copiedMatches })
     }
     $receiptUnchanged = $true
     if ($null -ne $Bundle.closure.receipt) {
@@ -2287,10 +2364,10 @@ function Invoke-SelfTest {
         $closureExecutableInfo = Get-Item -LiteralPath (Join-Path $closureSourceRoot 'sakura.exe') -Force
         $closureResourceInfo = Get-Item -LiteralPath (Join-Path $closureSourceRoot 'sakura_lang_en_US.dll') -Force
         $closureEntries = @(
-            [ordered]@{ artifact_id = 'selftest-product'; destination = 'build/staging/selftest/sakura-editor/sakura.exe'; role = 'editor'; source = 'selftest/sakura.exe'; sha256 = 'sha256:' + (Get-Sha256 (Join-Path $closureSourceRoot 'sakura.exe')); size = [UInt64]$closureExecutableInfo.Length },
-            [ordered]@{ artifact_id = 'selftest-language'; destination = 'build/staging/selftest/sakura-editor/sakura_lang_en_US.dll'; role = 'language-en-us'; source = 'selftest/sakura_lang_en_US.dll'; sha256 = 'sha256:' + (Get-Sha256 (Join-Path $closureSourceRoot 'sakura_lang_en_US.dll')); size = [UInt64]$closureResourceInfo.Length }
+            [ordered]@{ artifact_id = 'sakura-editor-msvc-x64-debug-product'; destination = 'build/staging/msvc-x64-debug/sakura-editor/sakura.exe'; role = 'editor'; source = 'x64/Debug/sakura.exe'; sha256 = 'sha256:' + (Get-Sha256 (Join-Path $closureSourceRoot 'sakura.exe')); size = [UInt64]$closureExecutableInfo.Length },
+            [ordered]@{ artifact_id = 'sakura-language-en-us-resource'; destination = 'build/staging/msvc-x64-debug/sakura-editor/sakura_lang_en_US.dll'; role = 'language-en-us'; source = 'x64/Debug/sakura_lang_en_US.dll'; sha256 = 'sha256:' + (Get-Sha256 (Join-Path $closureSourceRoot 'sakura_lang_en_US.dll')); size = [UInt64]$closureResourceInfo.Length }
         )
-        $closureReceipt = [ordered]@{ schema_version = 1; context_id = 'selftest'; staging_set_id = 'selftest-runtime-stage'; files = $closureEntries }
+        $closureReceipt = [ordered]@{ schema_version = 1; context_id = 'msvc-x64-debug'; staging_set_id = 'selftest-runtime-stage'; files = $closureEntries }
         $closureReceiptPath = Join-Path $closureSourceRoot '.sakura-runtime-stage.json'
         [IO.File]::WriteAllText($closureReceiptPath, ($closureReceipt | ConvertTo-Json -Depth 5), (New-Object Text.UTF8Encoding($false)))
         [IO.Directory]::CreateDirectory($closureBundleRoot) | Out-Null
@@ -2302,7 +2379,40 @@ function Invoke-SelfTest {
             -not (Test-Path -LiteralPath (Join-Path $closureBundle.bundlePath 'sakura_lang_en_US.dll'))) {
             throw 'Runtime artifact closure self-test failed.'
         }
+        if ($closureBundle.closure.files[0].canonicalRelativePath -notmatch '^build\\staging\\msvc-x64-debug\\sakura-editor\\') {
+            throw 'Runtime receipt canonical path was not retained in the closure.'
+        }
         $closureReceiptOriginal = [IO.File]::ReadAllText($closureReceiptPath)
+        $badReceiptCases = @(
+            [pscustomobject]@{ destination = 'C:\staging\sakura.exe'; source = 'x64/Debug/sakura.exe'; artifactId = 'sakura-editor-msvc-x64-debug-product' }
+            [pscustomobject]@{ destination = 'build/staging/msvc-x64-debug/sakura-editor/../sakura.exe'; source = 'x64/Debug/sakura.exe'; artifactId = 'sakura-editor-msvc-x64-debug-product' }
+            [pscustomobject]@{ destination = 'build/staging/wrong/sakura-editor/sakura.exe'; source = 'x64/Debug/sakura.exe'; artifactId = 'sakura-editor-msvc-x64-debug-product' }
+            [pscustomobject]@{ destination = 'build/staging/msvc-x64-debug/sakura-editor/sakura.exe'; source = 'x64/Release/sakura.exe'; artifactId = 'sakura-editor-msvc-x64-debug-product' }
+            [pscustomobject]@{ destination = 'build/staging/msvc-x64-debug/sakura-editor/sakura.exe'; source = 'x64/Debug/sakura.exe:ads'; artifactId = 'sakura-editor-msvc-x64-debug-product' }
+            [pscustomobject]@{ destination = 'build/staging/msvc-x64-debug/sakura-editor/sakura.exe'; source = 'x64/Debug/sakura.exe'; artifactId = 'wrong-editor-id' }
+        )
+        foreach ($badCase in $badReceiptCases) {
+            $badReceipt = $closureReceiptOriginal | ConvertFrom-Json
+            $badReceipt.files[0].destination = $badCase.destination
+            $badReceipt.files[0].source = $badCase.source
+            $badReceipt.files[0].artifact_id = $badCase.artifactId
+            [IO.File]::WriteAllText($closureReceiptPath, ($badReceipt | ConvertTo-Json -Depth 5), (New-Object Text.UTF8Encoding($false)))
+            $badRejected = $false
+            try { [void](Get-StartupArtifactClosureManifest $closureSourceRoot $closureReceiptPath) } catch { $badRejected = $true }
+            if (-not $badRejected) { throw 'Unsafe runtime receipt path self-test was accepted.' }
+        }
+        foreach ($unsafePath in @('foo \bar', 'foo.', 'NUL.dll', 'COM1.txt', 'LPT9')) {
+            $unsafePathRejected = $false
+            try { [void](Convert-StartupReceiptPath $unsafePath 'self-test') } catch { $unsafePathRejected = $true }
+            if (-not $unsafePathRejected) { throw 'Unsafe Windows runtime receipt path self-test was accepted.' }
+        }
+        $nestedLanguageRejected = $false
+        try {
+            Assert-StartupReceiptArtifactIdentity 'sakura-language-en-us-resource' 'language-en-us' 'nested\sakura_lang_en_US.dll' 'msvc-x64-debug'
+        }
+        catch { $nestedLanguageRejected = $true }
+        if (-not $nestedLanguageRejected) { throw 'Nested known language runtime receipt identity self-test was accepted.' }
+        [IO.File]::WriteAllText($closureReceiptPath, $closureReceiptOriginal, (New-Object Text.UTF8Encoding($false)))
         # ConvertTo-Json uses two spaces before values in Windows PowerShell 5.1
         # and one in PowerShell 7.  Mutate the parsed document so this tamper
         # check exercises the receipt schema on both hosts.

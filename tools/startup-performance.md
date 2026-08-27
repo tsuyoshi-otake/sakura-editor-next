@@ -66,7 +66,27 @@ backend を起動せず、その時点で campaign を停止します。JSON の
 state、artifact、Output/UTF-16 selector、Debug/Release、runtime receipt と dependency closure、Windows
 image、power mode、parallelism、MSVC/Rust toolchain、Cargo lock、package plan、build command の identity
 を含み、runner は二つの manifest の共通条件も照合します。build 後に手書きで補うものではありません。
-再現可能な manifest producer が未用意なら `-CollectOnly` だけを使い、qualified 証拠とは扱いません。
+`prepare-output-startup-artifact.ps1` が build、`dumpbin` による Output authority selector 証明、canonical
+runtime stage、manifest の atomic publish を一つの bounded transaction として所有します。qualified mode
+では clean checkout が必須です。runner は campaign 後、report serialization 直前、atomic write 直後に
+source state と両 measurement script の hash を再確認し、drift があれば typed integrity failure として
+HOLD を維持します。receipt の `artifact_id` / role / source / destination は canonical stage layout へ
+厳密に結び付けられ、basename だけの一致、absolute path、traversal、Windows の曖昧な予約名は拒否されます。
+
+Debug の qualified artifact pair は、clean checkout で同じ新規 output root を指定して次のように生成します。
+
+```powershell
+$artifactRoot = ".\build\evidence\output-startup-qualified\$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\prepare-output-startup-artifact.ps1 `
+  -Backend cpp -Platform x64 -Configuration Debug -BuildParallelism 1 -OutputDirectory $artifactRoot
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\prepare-output-startup-artifact.ps1 `
+  -Backend rust -Platform x64 -Configuration Debug -BuildParallelism 1 -OutputDirectory $artifactRoot
+```
+
+paired runner には各 `Debug\<backend>\build-manifest.json`、`runtime-stage`、その中の
+`sakura.exe` を明示します。Release cell は別の新規 output root と `-Configuration Release` で同様に
+生成します。dirty checkout や manifest producer を通していない artifact は `-CollectOnly` に限定し、
+qualified 証拠として扱いません。
 
 これとは別に `performance` が measured `documentReadyMs` の C++ / Rust paired delta を集計し、Rust の
 median は相対 2% かつ絶対 1 ms、p95 は相対 5% 以内というゲートを評価します。トップレベルの

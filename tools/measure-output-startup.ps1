@@ -61,6 +61,15 @@ $SelfTest = $runSelfTest
 
 $script:PairedSchemaVersion = 1
 $script:PairedManifestSchemaVersion = 1
+$script:PairedRustOutputProviderSymbols = @(
+    'sakura_output_provider_create_v1',
+    'sakura_output_provider_apply_v1',
+    'sakura_output_provider_snapshot_measure_v1',
+    'sakura_output_provider_snapshot_write_v1',
+    'sakura_output_provider_active_channel_v1',
+    'sakura_output_provider_stop_v1',
+    'sakura_output_provider_destroy_v1'
+)
 $script:PairedStartupTimeoutMs = 30000
 $script:PairedCloseTimeoutMs = 3000
 $script:PairedPollIntervalMs = 25
@@ -83,6 +92,11 @@ function Get-PairedProperty {
         [Parameter(Mandatory = $true)] [string[]]$Names
     )
     if ($null -eq $Object) { return $null }
+    if ($Object -is [Collections.IDictionary]) {
+        foreach ($name in $Names) {
+            if ($Object.Contains($name)) { return $Object[$name] }
+        }
+    }
     foreach ($name in $Names) {
         $property = $Object.PSObject.Properties[$name]
         if ($null -ne $property) { return $property.Value }
@@ -353,6 +367,92 @@ function Get-PairedSourceState {
     }
 }
 
+function Get-PairedScriptIdentity {
+    return [pscustomobject][ordered]@{
+        pairedRunnerSha256 = Get-Sha256 $script:PairedScriptPath
+        sharedStartupImplementationSha256 = Get-Sha256 $script:SharedStartupScriptPath
+    }
+}
+
+function Assert-PairedSourceStateUnchanged {
+    param(
+        [Parameter(Mandatory = $true)] [object]$Expected,
+        [Parameter(Mandatory = $true)] [string]$Label
+    )
+    $actual = Get-PairedSourceState
+    if ([string]$actual.head -ne [string]$Expected.head -or
+        [bool]$actual.dirty -ne [bool]$Expected.dirty -or
+        [string]$actual.statusSha256 -ne [string]$Expected.statusSha256 -or
+        [int]$actual.statusLineCount -ne [int]$Expected.statusLineCount) {
+        throw "$Label source state changed during the paired measurement."
+    }
+    return $actual
+}
+
+function Assert-PairedScriptIdentityUnchanged {
+    param(
+        [Parameter(Mandatory = $true)] [object]$Expected,
+        [Parameter(Mandatory = $true)] [string]$Label
+    )
+    $actual = Get-PairedScriptIdentity
+    if ([string]$actual.pairedRunnerSha256 -ne [string]$Expected.pairedRunnerSha256 -or
+        [string]$actual.sharedStartupImplementationSha256 -ne [string]$Expected.sharedStartupImplementationSha256) {
+        throw "$Label measurement script identity changed during the paired measurement."
+    }
+    return $actual
+}
+
+function New-PairedMeasurementArguments {
+    param(
+        [Parameter(Mandatory = $true)] [string]$First,
+        [Parameter(Mandatory = $true)] [string]$Platform,
+        [Parameter(Mandatory = $true)] [string]$Configuration,
+        [Parameter(Mandatory = $true)] [int]$Warmups,
+        [Parameter(Mandatory = $true)] [int]$Measured,
+        [Parameter(Mandatory = $true)] [UInt64]$Mask,
+        [Parameter(Mandatory = $true)] [bool]$CollectOnly
+    )
+    return [ordered]@{
+        schemaVersion = 1
+        runner = 'paired-gui-startup'
+        platform = $Platform
+        configuration = $Configuration
+        firstBackend = $First
+        warmupLaunches = [int]$Warmups
+        measuredLaunches = [int]$Measured
+        affinityMask = [UInt64]$Mask
+        collectOnly = [bool]$CollectOnly
+        startupTimeoutMs = [int]$script:PairedStartupTimeoutMs
+        closeTimeoutMs = [int]$script:PairedCloseTimeoutMs
+        pollIntervalMs = [int]$script:PairedPollIntervalMs
+        primaryMetric = $script:PairedPrimaryMetric
+        samplePolicy = 'one-fixed-hashed-file'
+        profilePolicy = 'fresh-per-launch|campaign-artifact-bundle|verified-after-each-launch'
+    }
+}
+
+function Get-PairedMeasurementCommandSha256 {
+    param([Parameter(Mandatory = $true)] [object]$Arguments)
+    $parts = New-Object Collections.Generic.List[string]
+    foreach ($entry in @($Arguments.GetEnumerator() | Sort-Object Key)) {
+        [void]$parts.Add(('{0}={1}' -f [string]$entry.Key, [string]$entry.Value))
+    }
+    return Get-TextSha256 ($parts.ToArray() -join '|')
+}
+
+function Get-PairedFailureTypeForStage {
+    param([AllowNull()] [string]$Stage)
+    if ($Stage -eq 'cleanup') { return 'cleanup-unverified' }
+    if ($Stage -eq 'postflight' -or $Stage -eq 'report-integrity' -or
+        $Stage -eq 'manifest-input' -or $Stage -eq 'runtime-stage-input' -or
+        $Stage -eq 'sample-input' -or $Stage -eq 'sample-copy' -or $Stage -eq 'bundle-input') {
+        return 'integrity'
+    }
+    if ($Stage -eq 'schema') { return 'schema' }
+    if ($Stage -eq 'write') { return 'write' }
+    return 'preflight'
+}
+
 function Get-PairedManifestField {
     param(
         [Parameter(Mandatory = $true)] [AllowNull()] [object]$Manifest,
@@ -388,7 +488,13 @@ function Get-PairedDependencyClosureSha256 {
     )
     $canonicalEntries = New-Object Collections.Generic.List[string]
     foreach ($entry in @($Entries)) {
-        $relativePath = Require-PairedManifestString (Get-PairedProperty $entry @('relativePath', 'path', 'name', 'destination')) 'dependencyClosure.relativePath'
+        $relativePath = Require-PairedManifestString (Get-PairedProperty $entry @('canonicalRelativePath', 'relativePath', 'path', 'name', 'destination')) 'dependencyClosure.relativePath'
+        $relativePath = $relativePath.Replace('/', '\')
+        $pathParts = @($relativePath -split '\\')
+        if ([IO.Path]::IsPathRooted($relativePath) -or $relativePath.IndexOf(':') -ge 0 -or
+            @($pathParts | Where-Object { [string]::IsNullOrWhiteSpace($_) -or $_ -eq '.' -or $_ -eq '..' -or $_ -match '[\x00-\x1f<>\"|?*]' }).Count -gt 0) {
+            throw 'Build manifest dependency closure contains an unsafe relative path.'
+        }
         $role = Require-PairedManifestString (Get-PairedProperty $entry @('role')) 'dependencyClosure.role'
         $hash = [string](Get-PairedProperty $entry @('sha256', 'hash'))
         $hash = $hash -replace '^(?i:sha256:)', ''
@@ -451,6 +557,14 @@ function Get-PairedBuildManifest {
     if ($null -eq $schema -or [int]$schema -ne $script:PairedManifestSchemaVersion) {
         throw "The $Backend build manifest schema is unsupported."
     }
+    $record = Require-PairedManifestString (Get-PairedManifestField $manifest @('record') @()) 'record'
+    if ($record -cne 'output-startup-build-manifest') {
+        throw "The $Backend build manifest record is not producer-generated."
+    }
+    $payloadFree = Require-PairedManifestBoolean (Get-PairedManifestField $manifest @('payloadFree') @()) 'payloadFree'
+    if (-not $payloadFree) { throw "The $Backend build manifest is not payload-free." }
+    $manifestStatus = Require-PairedManifestString (Get-PairedManifestField $manifest @('status') @()) 'status'
+    if ($manifestStatus -cne 'committed') { throw "The $Backend build manifest is not committed." }
     $role = (Require-PairedManifestString (Get-PairedManifestField $manifest @('backend', 'role') @('provenance', 'build')) 'backend').ToLowerInvariant()
     if ($role -ne $Backend) { throw "The $Backend build manifest backend does not match its role." }
     $platform = (Require-PairedManifestString (Get-PairedManifestField $manifest @('platform', 'targetPlatform') @('provenance', 'build')) 'platform').ToLowerInvariant()
@@ -463,10 +577,22 @@ function Get-PairedBuildManifest {
     $sourceHead = (Require-PairedManifestCommit (Get-PairedManifestField $manifest @('sourceHead', 'sourceCommit', 'head') @('source', 'provenance', 'build')) 'sourceHead')
     $sourceDirty = Require-PairedManifestBoolean (Get-PairedManifestField $manifest @('sourceDirty', 'dirty') @('source', 'provenance', 'build')) 'sourceDirty'
     $sourceStatusHash = Require-PairedManifestHash (Get-PairedManifestField $manifest @('sourceStatusSha256', 'statusSha256', 'dirtyStatusSha256') @('source', 'provenance', 'build')) 'sourceStatusSha256'
+    $sourceStatusLineCountValue = Get-PairedManifestField $manifest @('sourceStatusLineCount', 'statusLineCount') @('source', 'provenance', 'build')
+    if ($null -eq $sourceStatusLineCountValue -or [string]$sourceStatusLineCountValue -notmatch '^[0-9]+$') {
+        throw "Build manifest field 'sourceStatusLineCount' is missing or invalid."
+    }
+    try { $sourceStatusLineCount = [Int64]$sourceStatusLineCountValue } catch { throw "Build manifest field 'sourceStatusLineCount' is missing or invalid." }
+    if ($sourceStatusLineCount -lt 0 -or $sourceStatusLineCount -gt [Int32]::MaxValue) {
+        throw "Build manifest field 'sourceStatusLineCount' is missing or invalid."
+    }
     if ($sourceHead -ne $ExpectedSource.head.ToLowerInvariant() -or
         $sourceDirty -ne [bool]$ExpectedSource.dirty -or
-        $sourceStatusHash -ne $ExpectedSource.statusSha256.ToLowerInvariant()) {
+        $sourceStatusHash -ne $ExpectedSource.statusSha256.ToLowerInvariant() -or
+        [int]$sourceStatusLineCount -ne [int]$ExpectedSource.statusLineCount) {
         throw "The $Backend build manifest source state does not match the current checkout."
+    }
+    if ([bool]$ExpectedSource.dirty -or $sourceDirty) {
+        throw 'Qualified paired evidence requires a clean checkout.'
     }
 
     $outputBackend = (Require-PairedManifestString (Get-PairedManifestField $manifest @('outputBackend', 'outputProvider', 'output') @('selectors', 'provenance', 'build')) 'outputBackend').ToLowerInvariant()
@@ -500,18 +626,104 @@ function Get-PairedBuildManifest {
     $rustToolchain = Require-PairedManifestString (Get-PairedManifestField $manifest @('rustToolchain', 'rustVersion', 'rustIdentity') @('toolchain', 'provenance', 'build')) 'rustToolchain'
     $rustLockHash = Require-PairedManifestHash (Get-PairedManifestField $manifest @('rustLockSha256', 'lockSha256', 'cargoLockSha256') @('toolchain', 'provenance', 'build')) 'rustLockSha256'
     $packagePlanHash = Require-PairedManifestHash (Get-PairedManifestField $manifest @('packagePlanSha256', 'packagePlanHash') @('toolchain', 'provenance', 'build')) 'packagePlanSha256'
+    $powerModeHash = Require-PairedManifestHash (Get-PairedManifestField $manifest @('powerModeSha256', 'powerSha256') @('host', 'power', 'toolchain', 'provenance', 'build')) 'powerModeSha256'
     $buildCommandHash = Require-PairedManifestHash (Get-PairedManifestField $manifest @('buildCommandSha256', 'commandSha256', 'buildCommandHash') @('build', 'provenance', 'toolchain')) 'buildCommandSha256'
+    $packagePlanCommandHash = Require-PairedManifestHash (Get-PairedManifestField $manifest @('packagePlanCommandSha256', 'packageCommandSha256') @('build', 'provenance', 'toolchain')) 'packagePlanCommandSha256'
+    $runtimeStageCommandHash = Require-PairedManifestHash (Get-PairedManifestField $manifest @('runtimeStageCommandSha256', 'stageCommandSha256') @('build', 'runtimeStage', 'provenance', 'toolchain')) 'runtimeStageCommandSha256'
 
+    $canonicalRuntimeStage = Require-PairedManifestBoolean (Get-PairedManifestField $manifest @('canonicalRuntimeStage') @('runtimeStage', 'provenance', 'build')) 'canonicalRuntimeStage'
+    if (-not $canonicalRuntimeStage) { throw "The $Backend build manifest does not identify the canonical runtime stage." }
+    $transaction = Get-PairedProperty $manifest @('transaction')
+    if ($null -eq $transaction) { throw "The $Backend build manifest has no producer transaction proof." }
+    $transactionStatus = Require-PairedManifestString (Get-PairedProperty $transaction @('status')) 'transaction.status'
+    $publication = Require-PairedManifestString (Get-PairedProperty $transaction @('publication')) 'transaction.publication'
+    $beforeVerified = Require-PairedManifestBoolean (Get-PairedProperty $transaction @('artifactBeforeVerified')) 'transaction.artifactBeforeVerified'
+    $afterVerified = Require-PairedManifestBoolean (Get-PairedProperty $transaction @('artifactAfterVerified')) 'transaction.artifactAfterVerified'
+    $stageVerified = Require-PairedManifestBoolean (Get-PairedProperty $transaction @('runtimeStageVerified')) 'transaction.runtimeStageVerified'
+    $producerGenerated = Require-PairedManifestBoolean (Get-PairedProperty $transaction @('manifestGeneratedByProducer')) 'transaction.manifestGeneratedByProducer'
+    if ($transactionStatus -cne 'committed' -or $publication -cne 'atomic-directory-rename' -or
+        -not $beforeVerified -or -not $afterVerified -or -not $stageVerified -or -not $producerGenerated) {
+        throw "The $Backend build manifest transaction proof is incomplete."
+    }
+
+    $selectorProof = Get-PairedProperty $manifest @('selectorProof')
+    if ($null -eq $selectorProof) { throw "The $Backend build manifest has no selector proof." }
+    $selectorResult = Require-PairedManifestString (Get-PairedProperty $selectorProof @('result')) 'selectorProof.result'
+    if ($selectorResult -cne 'dumpbin-unresolved-refs-verified') {
+        throw "The $Backend build manifest selector proof is not a dumpbin verification."
+    }
+    $selectorOutputBackend = (Require-PairedManifestString (Get-PairedProperty $selectorProof @('outputBackend')) 'selectorProof.outputBackend').ToLowerInvariant()
+    $selectorUtf16Backend = (Require-PairedManifestString (Get-PairedProperty $selectorProof @('utf16Backend')) 'selectorProof.utf16Backend').ToLowerInvariant()
+    if ($selectorOutputBackend -ne $Backend -or $selectorUtf16Backend -ne 'cpp') {
+        throw "The $Backend build manifest selector proof has unexpected providers."
+    }
+    foreach ($flag in @('outputProductionPackage', 'utf16ProductionPackage', 'utf16BenchmarkTelemetry', 'assemblyListings')) {
+        $flagValue = Require-PairedManifestBoolean (Get-PairedProperty $selectorProof @($flag)) ('selectorProof.' + $flag)
+        if ($flagValue) { throw "The $Backend build manifest selector proof enables $flag." }
+    }
+    $selectorObjectAfter = Require-PairedManifestHash (Get-PairedProperty $selectorProof @('providerObjectSha256After')) 'selectorProof.providerObjectSha256After'
+    $selectorObjectSizeValue = Get-PairedProperty $selectorProof @('providerObjectSizeBytesAfter')
+    if ($null -eq $selectorObjectSizeValue -or [string]$selectorObjectSizeValue -notmatch '^[0-9]+$') {
+        throw 'Build manifest field selectorProof.providerObjectSizeBytesAfter is missing or invalid.'
+    }
+    try { $selectorObjectSize = [UInt64]$selectorObjectSizeValue } catch { throw 'Build manifest field selectorProof.providerObjectSizeBytesAfter is missing or invalid.' }
+    if ($selectorObjectSize -lt 1) { throw 'Build manifest field selectorProof.providerObjectSizeBytesAfter is missing or invalid.' }
+    $selectorObjectBefore = Get-PairedProperty $selectorProof @('providerObjectSha256Before')
+    if ($null -ne $selectorObjectBefore) { $selectorObjectBefore = Require-PairedManifestHash $selectorObjectBefore 'selectorProof.providerObjectSha256Before' }
+    $selectorSymbolsProperty = $selectorProof.PSObject.Properties['unresolvedProviderSymbols']
+    $selectorSymbolsPresent = $null -ne $selectorSymbolsProperty
+    if ($selectorProof -is [Collections.IDictionary]) { $selectorSymbolsPresent = $selectorProof.Contains('unresolvedProviderSymbols') }
+    if (-not $selectorSymbolsPresent) { throw 'Build manifest field selectorProof.unresolvedProviderSymbols is missing.' }
+    $selectorSymbolsValue = @(Get-PairedProperty $selectorProof @('unresolvedProviderSymbols'))
+    $rawSelectorSymbols = @($selectorSymbolsValue | ForEach-Object { ([string]$_).ToLowerInvariant() })
+    $selectorSymbols = @($rawSelectorSymbols | Sort-Object -Unique)
+    if ($rawSelectorSymbols.Count -ne $selectorSymbols.Count) {
+        throw 'The build manifest selector proof contains duplicate unresolved symbols.'
+    }
+    $selectorSymbolCountValue = Get-PairedProperty $selectorProof @('unresolvedProviderSymbolCount')
+    if ($null -eq $selectorSymbolCountValue -or [string]$selectorSymbolCountValue -notmatch '^[0-9]+$') {
+        throw 'Build manifest field selectorProof.unresolvedProviderSymbolCount is missing or invalid.'
+    }
+    try { $selectorSymbolCount = [int64]$selectorSymbolCountValue } catch { throw 'Build manifest field selectorProof.unresolvedProviderSymbolCount is missing or invalid.' }
+    if ($selectorSymbolCount -lt 0 -or $selectorSymbolCount -ne $rawSelectorSymbols.Count) {
+        throw 'The build manifest selector proof symbol count is invalid.'
+    }
+    $expectedSelectorSymbols = if ($Backend -eq 'rust') { @($script:PairedRustOutputProviderSymbols) } else { @() }
+    $expectedSelectorSymbols = @($expectedSelectorSymbols | ForEach-Object { ([string]$_).ToLowerInvariant() } | Sort-Object -Unique)
+    if ((@($selectorSymbols) -join '|') -cne (@($expectedSelectorSymbols) -join '|')) {
+        throw "The $Backend build manifest selector proof symbol set is invalid."
+    }
+    $selectorContractHash = Require-PairedManifestHash (Get-PairedProperty $selectorProof @('selectorContractSha256')) 'selectorProof.selectorContractSha256'
+    $selectorCanonical = 'output={0}|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result={1}|symbols={2}|object-after={3}' -f
+        $Backend, $selectorResult, (@($selectorSymbols) -join ','), $selectorObjectAfter
+    if ($selectorContractHash -ne (Get-TextSha256 $selectorCanonical)) {
+        throw "The $Backend build manifest selector proof contract hash is invalid."
+    }
+    $manifestSelectorHash = Require-PairedManifestHash (Get-PairedProperty $manifest @('selectorProofSha256')) 'selectorProofSha256'
+    if ($manifestSelectorHash -ne $selectorContractHash) {
+        throw "The $Backend build manifest selector proof hash does not match its contract."
+    }
+    $manifestObjectAfter = Require-PairedManifestHash (Get-PairedProperty $manifest @('providerObjectSha256After')) 'providerObjectSha256After'
+    if ($manifestObjectAfter -ne $selectorObjectAfter) {
+        throw "The $Backend build manifest provider object hash does not match its selector proof."
+    }
+    $manifestObjectBefore = Get-PairedProperty $manifest @('providerObjectSha256Before')
+    if ($null -ne $manifestObjectBefore) { [void](Require-PairedManifestHash $manifestObjectBefore 'providerObjectSha256Before') }
+
+    [void](Assert-PairedPayloadFree $manifest)
     return [pscustomobject][ordered]@{
         manifestSha256 = Get-Sha256 $manifestPath
         schemaVersion = [int]$schema
+        record = $record
+        payloadFree = [bool]$payloadFree
+        status = $manifestStatus
         backend = $role
         platform = $platform
         configuration = $configuration
         sourceHead = $sourceHead
         sourceDirty = [bool]$sourceDirty
         sourceStatusSha256 = $sourceStatusHash
-        sourceStatusLineCount = [int]$ExpectedSource.statusLineCount
+        sourceStatusLineCount = [int]$sourceStatusLineCount
         outputBackend = $outputBackend
         utf16Backend = $utf16Backend
         outputProductionPackage = [bool]$outputProduction
@@ -522,12 +734,123 @@ function Get-PairedBuildManifest {
         windowsImageIdentity = $windowsImage
         windowsImageSha256 = $windowsImageHash
         powerMode = $powerMode
+        powerModeSha256 = $powerModeHash
         buildParallelism = $buildParallelism
         msvcIdentity = $msvcIdentity
         rustToolchain = $rustToolchain
         rustLockSha256 = $rustLockHash
         packagePlanSha256 = $packagePlanHash
         buildCommandSha256 = $buildCommandHash
+        packagePlanCommandSha256 = $packagePlanCommandHash
+        runtimeStageCommandSha256 = $runtimeStageCommandHash
+        canonicalRuntimeStage = [bool]$canonicalRuntimeStage
+        transactionStatus = $transactionStatus
+        transactionPublication = $publication
+        manifestGeneratedByProducer = [bool]$producerGenerated
+        selectorProofResult = $selectorResult
+        selectorProofSha256 = $manifestSelectorHash
+        selectorProofObjectSha256After = $selectorObjectAfter
+        selectorProofObjectSizeBytesAfter = [UInt64]$selectorObjectSize
+        selectorProofObjectSha256Before = $selectorObjectBefore
+        selectorProofUnresolvedProviderSymbols = $selectorSymbols
+        selectorProofUnresolvedProviderSymbolCount = [int]$selectorSymbolCount
+    }
+}
+
+function Convert-PairedRuntimeReceiptPath {
+    param(
+        [Parameter(Mandatory = $true)] [AllowNull()] [object]$Value,
+        [Parameter(Mandatory = $true)] [string]$FieldName
+    )
+    $path = [string]$Value
+    if ([string]::IsNullOrWhiteSpace($path) -or $path -ne $path.Trim() -or $path.IndexOf([char]0) -ge 0) {
+        throw "The runtime-stage receipt $FieldName is empty or contains unsafe whitespace."
+    }
+    $normalized = $path.Replace('/', '\')
+    if ([IO.Path]::IsPathRooted($normalized) -or $normalized.IndexOf(':') -ge 0) {
+        throw "The runtime-stage receipt $FieldName must be relative and may not contain an alternate data stream."
+    }
+    $parts = @($normalized -split '\\')
+    if ($parts.Count -eq 0 -or @($parts | Where-Object {
+            [string]::IsNullOrWhiteSpace($_) -or $_ -eq '.' -or $_ -eq '..' -or $_ -match '[\x00-\x1f<>\"|?*]' -or
+            $_ -match '[ \.]$' -or $_ -match '^(?i:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?$'
+        }).Count -gt 0) {
+        throw "The runtime-stage receipt $FieldName contains an unsafe path component."
+    }
+    return ($parts -join '\')
+}
+
+function Get-PairedRuntimeReceiptPathBinding {
+    param(
+        [Parameter(Mandatory = $true)] [string]$Destination,
+        [Parameter(Mandatory = $true)] [string]$Source,
+        [Parameter(Mandatory = $true)] [string]$Context
+    )
+    if ($Context -cne 'msvc-x64-debug' -and $Context -cne 'msvc-x64-release') {
+        throw 'The runtime-stage receipt context must be the canonical MSVC x64 context.'
+    }
+    $destinationPath = Convert-PairedRuntimeReceiptPath $Destination 'destination'
+    $sourcePath = Convert-PairedRuntimeReceiptPath $Source 'source'
+    $destinationPrefix = ('build/staging/{0}/sakura-editor/' -f $Context).Replace('/', '\')
+    $configuration = if ($Context -ceq 'msvc-x64-debug') { 'Debug' } else { 'Release' }
+    $sourcePrefix = ('x64/{0}/' -f $configuration).Replace('/', '\')
+    if (-not $destinationPath.StartsWith($destinationPrefix, [StringComparison]::Ordinal) -or
+        -not $sourcePath.StartsWith($sourcePrefix, [StringComparison]::Ordinal)) {
+        throw 'The runtime-stage receipt source or destination is outside its canonical prefix.'
+    }
+    $destinationSuffix = $destinationPath.Substring($destinationPrefix.Length)
+    $sourceSuffix = $sourcePath.Substring($sourcePrefix.Length)
+    if ([string]::IsNullOrWhiteSpace($destinationSuffix) -or
+        -not [StringComparer]::Ordinal.Equals($destinationSuffix, $sourceSuffix)) {
+        throw 'The runtime-stage receipt source and destination suffixes do not match.'
+    }
+    return [pscustomobject][ordered]@{
+        destination = $destinationPath
+        source = $sourcePath
+        relativePath = $destinationSuffix
+    }
+}
+
+function Assert-PairedRuntimeReceiptArtifactIdentity {
+    param(
+        [Parameter(Mandatory = $true)] [string]$ArtifactId,
+        [Parameter(Mandatory = $true)] [string]$Role,
+        [Parameter(Mandatory = $true)] [string]$RelativePath,
+        [Parameter(Mandatory = $true)] [string]$Context
+    )
+    if ([string]::IsNullOrWhiteSpace($ArtifactId) -or $ArtifactId -match '[\r\n]' -or
+        [string]::IsNullOrWhiteSpace($Role) -or $Role -match '[\r\n]') {
+        throw 'The runtime-stage receipt artifact_id and role must be non-empty identities.'
+    }
+    if ([StringComparer]::Ordinal.Equals($RelativePath, 'sakura.exe')) {
+        if (-not [StringComparer]::Ordinal.Equals($ArtifactId, ('sakura-editor-{0}-product' -f $Context)) -or
+            -not [StringComparer]::Ordinal.Equals($Role, 'editor')) {
+            throw 'The runtime-stage receipt editor identity is not canonical.'
+        }
+        return
+    }
+    if ([StringComparer]::Ordinal.Equals($Role, 'editor') -or
+        [StringComparer]::Ordinal.Equals($ArtifactId, ('sakura-editor-{0}-product' -f $Context))) {
+        throw 'Only sakura.exe may use the runtime-stage editor identity.'
+    }
+    $knownLanguages = @{
+        'sakura_lang_en_US.dll' = [pscustomobject]@{ artifactId = 'sakura-language-en-us-resource'; role = 'language-en-us' }
+        'sakura_lang_zh_CN.dll' = [pscustomobject]@{ artifactId = 'sakura-language-zh-cn-resource'; role = 'language-zh-cn' }
+    }
+    if (($ArtifactId -ceq 'sakura-language-en-us-resource' -or $Role -ceq 'language-en-us') -and
+        -not [StringComparer]::Ordinal.Equals($RelativePath, 'sakura_lang_en_US.dll')) {
+        throw 'The runtime-stage en-US language identity must use its canonical top-level path.'
+    }
+    if (($ArtifactId -ceq 'sakura-language-zh-cn-resource' -or $Role -ceq 'language-zh-cn') -and
+        -not [StringComparer]::Ordinal.Equals($RelativePath, 'sakura_lang_zh_CN.dll')) {
+        throw 'The runtime-stage zh-CN language identity must use its canonical top-level path.'
+    }
+    if ($knownLanguages.ContainsKey($RelativePath)) {
+        $expected = $knownLanguages[$RelativePath]
+        if (-not [StringComparer]::Ordinal.Equals($ArtifactId, $expected.artifactId) -or
+            -not [StringComparer]::Ordinal.Equals($Role, $expected.role)) {
+            throw 'The runtime-stage receipt language identity is not canonical.'
+        }
     }
 }
 
@@ -555,7 +878,7 @@ function Get-PairedRuntimeStageIdentity {
     if ($null -eq $schema -or [int]$schema -ne 1) { throw 'The runtime stage receipt schema is unsupported.' }
     $expectedContext = 'msvc-x64-' + $ExpectedConfiguration.ToLowerInvariant()
     $context = [string](Get-PairedProperty $receipt @('context_id', 'contextId'))
-    if (-not [StringComparer]::OrdinalIgnoreCase.Equals($context, $expectedContext)) {
+    if (-not [StringComparer]::Ordinal.Equals($context, $expectedContext)) {
         throw 'The runtime stage receipt context does not match the paired run.'
     }
     $files = @(Get-PairedProperty $receipt @('files'))
@@ -563,21 +886,31 @@ function Get-PairedRuntimeStageIdentity {
     $editorSeen = $false
     $totalSize = [UInt64]0
     $seenNames = @{}
+    $seenDestinations = @{}
     $closureEntries = New-Object Collections.Generic.List[object]
     foreach ($entry in $files) {
+        $artifactId = Require-PairedManifestString (Get-PairedProperty $entry @('artifact_id')) 'runtimeStage.artifact_id'
         $destination = Require-PairedManifestString (Get-PairedProperty $entry @('destination')) 'runtimeStage.destination'
+        $source = Require-PairedManifestString (Get-PairedProperty $entry @('source')) 'runtimeStage.source'
         $role = Require-PairedManifestString (Get-PairedProperty $entry @('role')) 'runtimeStage.role'
+        $binding = Get-PairedRuntimeReceiptPathBinding $destination $source $context
+        $name = $binding.relativePath
+        Assert-PairedRuntimeReceiptArtifactIdentity $artifactId $role $name $context
+        if ($seenDestinations.ContainsKey($binding.destination.ToLowerInvariant())) {
+            throw 'The runtime stage receipt contains a duplicate destination.'
+        }
+        $seenDestinations[$binding.destination.ToLowerInvariant()] = $true
         $declaredHashValue = [string](Get-PairedProperty $entry @('sha256'))
         $declaredHashValue = $declaredHashValue -replace '^(?i:sha256:)', ''
         $declaredHash = Require-PairedManifestHash $declaredHashValue 'runtimeStage.sha256'
         $declaredSize = Get-PairedProperty $entry @('size', 'sizeBytes')
         if ($null -eq $declaredSize -or [UInt64]$declaredSize -lt 1) { throw 'The runtime stage receipt declares an invalid file size.' }
-        $name = [IO.Path]::GetFileName($destination)
-        if ([string]::IsNullOrWhiteSpace($name) -or $name -eq '.' -or $name -eq '..' -or $seenNames.ContainsKey($name.ToLowerInvariant())) {
+        if ([string]::IsNullOrWhiteSpace($name) -or $seenNames.ContainsKey($name.ToLowerInvariant())) {
             throw 'The runtime stage receipt contains an ambiguous file name.'
         }
         $seenNames[$name.ToLowerInvariant()] = $true
         $candidate = Join-Path $stageRoot $name
+        Assert-StartupNonReparsePath $candidate $stageRoot
         $identity = Get-PairedArtifactIdentity $candidate
         if ($identity.sha256 -ne $declaredHash -or $identity.sizeBytes -ne [UInt64]$declaredSize) {
             throw 'The runtime stage file does not match its receipt identity.'
@@ -585,7 +918,11 @@ function Get-PairedRuntimeStageIdentity {
         $totalSize += [UInt64]$declaredSize
         [void]$closureEntries.Add([pscustomobject][ordered]@{
             relativePath = $name
+            canonicalRelativePath = $binding.destination
+            artifactId = $artifactId
             role = $role
+            source = $binding.source
+            destination = $binding.destination
             sha256 = $declaredHash
             sizeBytes = [UInt64]$declaredSize
         })
@@ -868,6 +1205,7 @@ function New-PairedVerifiedProvenance {
             windowsImageIdentity = [string]$CppManifest.windowsImageIdentity
             windowsImageSha256 = [string]$CppManifest.windowsImageSha256
             powerMode = [string]$CppManifest.powerMode
+            powerModeSha256 = [string]$CppManifest.powerModeSha256
             buildParallelism = [int]$CppManifest.buildParallelism
         }
         toolchain = [ordered]@{
@@ -876,6 +1214,26 @@ function New-PairedVerifiedProvenance {
             rustLockSha256 = [string]$RustManifest.rustLockSha256
             packagePlanSha256 = [string]$CppManifest.packagePlanSha256
             buildCommandSha256 = [string]$CppManifest.buildCommandSha256
+            buildCommands = [ordered]@{
+                cpp = [string]$CppManifest.buildCommandSha256
+                rust = [string]$RustManifest.buildCommandSha256
+            }
+            packagePlanCommands = [ordered]@{
+                cpp = [string]$CppManifest.packagePlanCommandSha256
+                rust = [string]$RustManifest.packagePlanCommandSha256
+            }
+            runtimeStageCommands = [ordered]@{
+                cpp = [string]$CppManifest.runtimeStageCommandSha256
+                rust = [string]$RustManifest.runtimeStageCommandSha256
+            }
+        }
+        producerContract = [ordered]@{
+            record = 'output-startup-build-manifest'
+            status = 'committed'
+            payloadFree = $true
+            transactionPublication = 'atomic-directory-rename'
+            manifestGeneratedByProducer = $true
+            selectorProofResult = 'dumpbin-unresolved-refs-verified'
         }
         backendBuilds = [ordered]@{
             cpp = [ordered]@{
@@ -886,6 +1244,14 @@ function New-PairedVerifiedProvenance {
                 utf16Backend = [string]$CppManifest.utf16Backend
                 exeSha256 = [string]$CppManifest.exeSha256
                 dependencyClosureSha256 = [string]$CppManifest.dependencyClosureSha256
+                buildCommandSha256 = [string]$CppManifest.buildCommandSha256
+                packagePlanCommandSha256 = [string]$CppManifest.packagePlanCommandSha256
+                runtimeStageCommandSha256 = [string]$CppManifest.runtimeStageCommandSha256
+                selectorProofResult = [string]$CppManifest.selectorProofResult
+                selectorProofSha256 = [string]$CppManifest.selectorProofSha256
+                selectorProofObjectSha256After = [string]$CppManifest.selectorProofObjectSha256After
+                selectorProofUnresolvedProviderSymbols = @($CppManifest.selectorProofUnresolvedProviderSymbols)
+                selectorProofUnresolvedProviderSymbolCount = [int]$CppManifest.selectorProofUnresolvedProviderSymbolCount
             }
             rust = [ordered]@{
                 backend = [string]$RustManifest.backend
@@ -895,6 +1261,14 @@ function New-PairedVerifiedProvenance {
                 utf16Backend = [string]$RustManifest.utf16Backend
                 exeSha256 = [string]$RustManifest.exeSha256
                 dependencyClosureSha256 = [string]$RustManifest.dependencyClosureSha256
+                buildCommandSha256 = [string]$RustManifest.buildCommandSha256
+                packagePlanCommandSha256 = [string]$RustManifest.packagePlanCommandSha256
+                runtimeStageCommandSha256 = [string]$RustManifest.runtimeStageCommandSha256
+                selectorProofResult = [string]$RustManifest.selectorProofResult
+                selectorProofSha256 = [string]$RustManifest.selectorProofSha256
+                selectorProofObjectSha256After = [string]$RustManifest.selectorProofObjectSha256After
+                selectorProofUnresolvedProviderSymbols = @($RustManifest.selectorProofUnresolvedProviderSymbols)
+                selectorProofUnresolvedProviderSymbolCount = [int]$RustManifest.selectorProofUnresolvedProviderSymbolCount
             }
         }
     }
@@ -1199,10 +1573,28 @@ function New-PairedFailureEvidence {
         [int]$ScheduledLaunches = 0,
         [int]$SuccessfulLaunches = 0,
         [int]$SuppressedLaunches = 0,
-        [bool]$CollectOnly = $false
+        [bool]$CollectOnly = $false,
+        [string]$PrimaryStage = $null,
+        [string]$PrimaryType = $null,
+        [string[]]$CleanupCodes = @(),
+        [object]$MeasurementArguments = $null,
+        [string]$MeasurementCommandSha256 = $null,
+        [object]$Integrity = $null
     )
     $allowedTypes = @('preflight', 'integrity', 'launch-failure', 'cleanup-unverified', 'schema', 'write')
+    $allowedPrimaryTypes = @($allowedTypes + 'timeout', 'startup', 'affinity', 'survivor', 'profileCleanup')
     $type = if ($allowedTypes -contains $FailureType) { $FailureType } else { 'preflight' }
+    $primary = $null
+    if (-not [string]::IsNullOrWhiteSpace($PrimaryType)) {
+        $primary = [ordered]@{
+            stage = if ([string]::IsNullOrWhiteSpace($PrimaryStage)) { 'unknown' } else { $PrimaryStage }
+            type = if ($allowedPrimaryTypes -contains $PrimaryType) { $PrimaryType } else { 'preflight' }
+        }
+    }
+    $measurement = [ordered]@{
+        argumentsSchemaVersion = if ($null -eq $MeasurementArguments) { $null } else { [int]$MeasurementArguments.schemaVersion }
+        commandSha256 = if ([string]::IsNullOrWhiteSpace($MeasurementCommandSha256)) { $null } else { $MeasurementCommandSha256 }
+    }
     return [ordered]@{
         schemaVersion = $script:PairedSchemaVersion
         record = 'paired-gui-startup'
@@ -1211,6 +1603,8 @@ function New-PairedFailureEvidence {
         failure = [ordered]@{
             stage = if ([string]::IsNullOrWhiteSpace($Stage)) { 'unknown' } else { $Stage }
             type = $type
+            primary = $primary
+            cleanupCodes = @($CleanupCodes)
         }
         provenance = [ordered]@{
             status = 'unverified'
@@ -1218,6 +1612,7 @@ function New-PairedFailureEvidence {
             roleLabels = 'unverified'
             platform = $Platform
             configuration = $Configuration
+            measurement = $measurement
         }
         configuration = [ordered]@{
             mode = if ($CollectOnly) { 'collect-only' } else { 'qualified' }
@@ -1240,6 +1635,14 @@ function New-PairedFailureEvidence {
             startupGatePass = $false
             qualified = $false
         }
+        integrity = if ($null -eq $Integrity) {
+            [ordered]@{
+                sourcePostflightVerified = $false
+                scriptPostflightVerified = $false
+                reportWriteVerified = $false
+            }
+        }
+        else { $Integrity }
         startupGatePass = $false
         adoption = [ordered]@{ decision = 'HOLD'; adoptionEligible = $false }
     }
@@ -1267,6 +1670,69 @@ function Write-PairedEvidenceEnvelope {
 
 function Invoke-PairedSelfTest {
     [void](Assert-PairedAffinityMask $AffinityMask)
+    $stageSelfTestRoot = Join-Path $env:TEMP ('paired-runtime-stage-selftest-' + [Guid]::NewGuid().ToString('N'))
+    try {
+        [void][IO.Directory]::CreateDirectory($stageSelfTestRoot)
+        $stageSelfTestExe = Join-Path $stageSelfTestRoot 'sakura.exe'
+        [IO.File]::WriteAllBytes($stageSelfTestExe, [byte[]](1, 2, 3, 5, 8))
+        $stageSelfTestArtifact = Get-PairedArtifactIdentity $stageSelfTestExe
+        $stageSelfTestHash = Get-Sha256 $stageSelfTestExe
+        $stageSelfTestReceipt = [ordered]@{
+            schema_version = 1
+            context_id = 'msvc-x64-debug'
+            staging_set_id = 'paired-runtime-stage-selftest'
+            files = @([ordered]@{
+                    artifact_id = 'sakura-editor-msvc-x64-debug-product'
+                    destination = 'build/staging/msvc-x64-debug/sakura-editor/sakura.exe'
+                    role = 'editor'
+                    source = 'x64/Debug/sakura.exe'
+                    sha256 = 'sha256:' + $stageSelfTestHash
+                    size = [UInt64]5
+                })
+        }
+        $stageSelfTestReceiptPath = Join-Path $stageSelfTestRoot '.sakura-runtime-stage.json'
+        $stageSelfTestReceiptText = $stageSelfTestReceipt | ConvertTo-Json -Depth 10
+        [IO.File]::WriteAllText($stageSelfTestReceiptPath, $stageSelfTestReceiptText, (New-Object Text.UTF8Encoding($false)))
+        $stageSelfTestIdentity = Get-PairedRuntimeStageIdentity $stageSelfTestRoot 'Debug' $stageSelfTestArtifact
+        if ($stageSelfTestIdentity.fileCount -ne 1 -or $stageSelfTestIdentity.receiptSha256 -notmatch '^[0-9a-f]{64}$' -or
+            $stageSelfTestIdentity.dependencyClosureSha256 -notmatch '^[0-9a-f]{64}$') {
+            throw 'Runtime-stage receipt identity self-test failed.'
+        }
+        $stageSelfTestOriginal = [IO.File]::ReadAllText($stageSelfTestReceiptPath)
+        $badStageReceiptCases = @(
+            [pscustomobject]@{ destination = 'C:\staging\sakura.exe'; source = 'x64/Debug/sakura.exe'; artifactId = 'sakura-editor-msvc-x64-debug-product' }
+            [pscustomobject]@{ destination = 'build/staging/msvc-x64-debug/sakura-editor/../sakura.exe'; source = 'x64/Debug/sakura.exe'; artifactId = 'sakura-editor-msvc-x64-debug-product' }
+            [pscustomobject]@{ destination = 'build/staging/wrong/sakura-editor/sakura.exe'; source = 'x64/Debug/sakura.exe'; artifactId = 'sakura-editor-msvc-x64-debug-product' }
+            [pscustomobject]@{ destination = 'build/staging/msvc-x64-debug/sakura-editor/sakura.exe'; source = 'x64/Release/sakura.exe'; artifactId = 'sakura-editor-msvc-x64-debug-product' }
+            [pscustomobject]@{ destination = 'build/staging/msvc-x64-debug/sakura-editor/sakura.exe'; source = 'x64/Debug/sakura.exe:ads'; artifactId = 'sakura-editor-msvc-x64-debug-product' }
+            [pscustomobject]@{ destination = 'build/staging/msvc-x64-debug/sakura-editor/sakura.exe'; source = 'x64/Debug/sakura.exe'; artifactId = 'wrong-editor-id' }
+        )
+        foreach ($badStageCase in $badStageReceiptCases) {
+            $badStageReceipt = $stageSelfTestOriginal | ConvertFrom-Json
+            $badStageReceipt.files[0].destination = $badStageCase.destination
+            $badStageReceipt.files[0].source = $badStageCase.source
+            $badStageReceipt.files[0].artifact_id = $badStageCase.artifactId
+            [IO.File]::WriteAllText($stageSelfTestReceiptPath, ($badStageReceipt | ConvertTo-Json -Depth 10), (New-Object Text.UTF8Encoding($false)))
+            $badStageRejected = $false
+            try { [void](Get-PairedRuntimeStageIdentity $stageSelfTestRoot 'Debug' $stageSelfTestArtifact) } catch { $badStageRejected = $true }
+            if (-not $badStageRejected) { throw 'Unsafe paired runtime-stage receipt self-test was accepted.' }
+        }
+        foreach ($unsafePath in @('foo \bar', 'foo.', 'NUL.dll', 'COM1.txt', 'LPT9')) {
+            $unsafePathRejected = $false
+            try { [void](Convert-PairedRuntimeReceiptPath $unsafePath 'self-test') } catch { $unsafePathRejected = $true }
+            if (-not $unsafePathRejected) { throw 'Unsafe Windows paired runtime receipt path self-test was accepted.' }
+        }
+        $nestedLanguageRejected = $false
+        try {
+            Assert-PairedRuntimeReceiptArtifactIdentity 'sakura-language-en-us-resource' 'language-en-us' 'nested\sakura_lang_en_US.dll' 'msvc-x64-debug'
+        }
+        catch { $nestedLanguageRejected = $true }
+        if (-not $nestedLanguageRejected) { throw 'Nested known paired language runtime receipt identity self-test was accepted.' }
+        [IO.File]::WriteAllText($stageSelfTestReceiptPath, $stageSelfTestOriginal, (New-Object Text.UTF8Encoding($false)))
+    }
+    finally {
+        if (Test-Path -LiteralPath $stageSelfTestRoot) { [IO.Directory]::Delete($stageSelfTestRoot, $true) }
+    }
     $odd = Get-PairedStatistics @([double]1, 3, 2, 4, 9)
     Assert-PairedEqual 5 $odd.count 'odd statistics count'
     Assert-PairedEqual 3.0 $odd.medianMs 'odd statistics median'
@@ -1336,15 +1802,15 @@ function Invoke-PairedSelfTest {
     $completedCampaign = New-PairedCampaignTermination -TotalEntries $terminationSchedule.Count -CompletedEntries $terminationSchedule.Count -TriggerRow $null
     Assert-PairedEqual 'completed' $completedCampaign.status 'completed campaign status'
     Assert-PairedEqual 0 $completedCampaign.suppressedLaunches 'completed campaign suppression count'
-    $reportTermination = New-PairedCampaignTermination -TotalEntries $schedule.Count -CompletedEntries 1 -TriggerRow $schedule[0]
     $terminatedRun = [pscustomobject][ordered]@{
         sequence = [int]$schedule[0].sequence; pairIndex = [int]$schedule[0].pairIndex; slot = [int]$schedule[0].slot
         phase = [string]$schedule[0].phase; phaseIndex = [int]$schedule[0].phaseIndex; backend = [string]$schedule[0].backend
-        status = 'survivor'; excluded = $true; metrics = $null
-        affinity = [ordered]@{ requestedMask = [UInt64]1; processMask = $null; systemMask = $null; opened = $false; setSucceeded = $false; readBackSucceeded = $false; verified = $false; descendantsVerified = $false; errorCode = $null }
+        status = 'timeout'; excluded = $true; metrics = $null
+        affinity = [ordered]@{ requestedMask = [UInt64]1; processMask = [UInt64]1; systemMask = [UInt64]15; opened = $true; setSucceeded = $true; readBackSucceeded = $true; verified = $true; descendantsVerified = $false; errorCode = 0 }
         profileSha256 = ('c' * 64); profileState = 'missing'; profileFileCount = 0
-        processCleanupVerified = $false; profileCleanupVerified = $true; cleanupVerified = $false; survivorCount = 1
+        processCleanupVerified = $true; profileCleanupVerified = $true; cleanupVerified = $true; survivorCount = 0
     }
+    $reportTermination = New-PairedCampaignTermination -TotalEntries $schedule.Count -CompletedEntries 1 -TriggerRow $schedule[0] -TriggerRun $terminatedRun
     $selfTestProvenance = [ordered]@{
         status = 'verified'; roleLabels = 'manifest-declared'; buildManifestVerified = $true
         platform = 'x64'; configuration = 'Debug'; sourceHead = ('0' * 40); sourceDirty = $false
@@ -1367,6 +1833,110 @@ function Invoke-PairedSelfTest {
     }
     $selfTestSampleCopy = [pscustomobject][ordered]@{
         sha256 = ('b' * 64); sizeBytes = 1; physicalLines = 31; cleanupVerified = $true
+    }
+    $selfTestMeasurementArguments = New-PairedMeasurementArguments 'cpp' 'x64' 'Debug' 5 30 1 $false
+    $selfTestMeasurementCommandSha256 = Get-PairedMeasurementCommandSha256 $selfTestMeasurementArguments
+    if ($selfTestMeasurementCommandSha256 -notmatch '^[0-9a-f]{64}$') {
+        throw 'Measurement command identity self-test failed.'
+    }
+    $selfTestIntegrity = [ordered]@{
+        sourcePreflightCaptured = $true
+        sourcePostflightVerified = $true
+        scriptPreflightCaptured = $true
+        scriptPostflightVerified = $true
+        reportWriteVerified = $true
+        sourceState = [ordered]@{
+            head = ('0' * 40); dirty = $false; statusSha256 = ('a' * 64); statusLineCount = 0
+        }
+        scripts = [ordered]@{
+            pairedRunnerSha256 = ('f' * 64); sharedStartupImplementationSha256 = ('e' * 64)
+        }
+    }
+    $manifestSelfTestRoot = Join-Path $env:TEMP ('paired-build-manifest-selftest-' + [Guid]::NewGuid().ToString('N'))
+    $rustManifestAccepted = $false
+    try {
+        [void][IO.Directory]::CreateDirectory($manifestSelfTestRoot)
+        $manifestSelfTestPath = Join-Path $manifestSelfTestRoot 'build-manifest.json'
+        $manifestSelfTestSelectorObjectAfter = ('1' * 64)
+        $manifestSelfTestSelectorCanonical = 'output=cpp|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result=dumpbin-unresolved-refs-verified|symbols=|object-after={0}' -f $manifestSelfTestSelectorObjectAfter
+        $manifestSelfTestSelectorHash = Get-TextSha256 $manifestSelfTestSelectorCanonical
+        $manifestSelfTestSelectorProof = [ordered]@{
+            result = 'dumpbin-unresolved-refs-verified'; outputBackend = 'cpp'; utf16Backend = 'cpp'
+            outputProductionPackage = $false; utf16ProductionPackage = $false
+            utf16BenchmarkTelemetry = $false; assemblyListings = $false
+            providerObjectSha256After = $manifestSelfTestSelectorObjectAfter; providerObjectSizeBytesAfter = 1
+            unresolvedProviderSymbols = @(); unresolvedProviderSymbolCount = 0
+            selectorContractSha256 = $manifestSelfTestSelectorHash
+        }
+        $manifestSelfTest = [ordered]@{
+            schemaVersion = 1; record = 'output-startup-build-manifest'; payloadFree = $true; status = 'committed'
+            backend = 'cpp'; platform = 'x64'; configuration = 'Debug'
+            sourceHead = ('0' * 40); sourceDirty = $false; sourceStatusSha256 = ('a' * 64); sourceStatusLineCount = 0
+            outputBackend = 'cpp'; utf16Backend = 'cpp'; outputProductionPackage = $false; utf16ProductionPackage = $false
+            exeSha256 = ('b' * 64); dependencyClosureSha256 = ('c' * 64); runtimeStageReceiptSha256 = ('d' * 64)
+            windowsImageIdentity = 'windows-selftest'; windowsImageSha256 = ('e' * 64)
+            powerMode = 'Balanced'; powerModeSha256 = ('f' * 64); buildParallelism = 1
+            msvcIdentity = 'msvc-selftest'; rustToolchain = 'rust-selftest'; rustLockSha256 = ('a' * 64)
+            packagePlanSha256 = ('b' * 64); buildCommandSha256 = ('c' * 64)
+            packagePlanCommandSha256 = ('d' * 64); runtimeStageCommandSha256 = ('e' * 64)
+            canonicalRuntimeStage = $true
+            selectorProof = $manifestSelfTestSelectorProof; selectorProofSha256 = $manifestSelfTestSelectorHash
+            providerObjectSha256After = $manifestSelfTestSelectorObjectAfter
+            transaction = [ordered]@{
+                status = 'committed'; artifactBeforeVerified = $true; artifactAfterVerified = $true
+                runtimeStageVerified = $true; manifestGeneratedByProducer = $true; publication = 'atomic-directory-rename'
+            }
+        }
+        [IO.File]::WriteAllText($manifestSelfTestPath, ($manifestSelfTest | ConvertTo-Json -Depth 20), (New-Object Text.UTF8Encoding($false)))
+        $manifestSelfTestExpectedSource = [pscustomobject]@{
+            head = ('0' * 40); dirty = $false; statusSha256 = ('a' * 64); statusLineCount = 0
+        }
+        $manifestSelfTestExpectedArtifact = [pscustomobject]@{ sha256 = ('b' * 64); sizeBytes = 1 }
+        $manifestSelfTestResult = Get-PairedBuildManifest $manifestSelfTestPath 'cpp' 'x64' 'Debug' $manifestSelfTestExpectedSource $manifestSelfTestExpectedArtifact
+        Assert-PairedEqual 'output-startup-build-manifest' $manifestSelfTestResult.record 'producer manifest record'
+        Assert-PairedEqual $true $manifestSelfTestResult.manifestGeneratedByProducer 'producer manifest transaction marker'
+        Assert-PairedEqual 'atomic-directory-rename' $manifestSelfTestResult.transactionPublication 'producer manifest publication marker'
+        Assert-PairedEqual 'dumpbin-unresolved-refs-verified' $manifestSelfTestResult.selectorProofResult 'selector proof result'
+        Assert-PairedEqual 0 $manifestSelfTestResult.selectorProofUnresolvedProviderSymbolCount 'C++ selector proof symbol count'
+        $manifestSelfTest.status = 'unverified'
+        [IO.File]::WriteAllText($manifestSelfTestPath, ($manifestSelfTest | ConvertTo-Json -Depth 20), (New-Object Text.UTF8Encoding($false)))
+        $manifestRejected = $false
+        try { [void](Get-PairedBuildManifest $manifestSelfTestPath 'cpp' 'x64' 'Debug' $manifestSelfTestExpectedSource $manifestSelfTestExpectedArtifact) } catch { $manifestRejected = $true }
+        if (-not $manifestRejected) { throw 'Uncommitted producer manifest was accepted.' }
+        $manifestSelfTest.status = 'committed'
+        $manifestSelfTest.sourceDirty = $true
+        $manifestSelfTestExpectedSource.dirty = $true
+        [IO.File]::WriteAllText($manifestSelfTestPath, ($manifestSelfTest | ConvertTo-Json -Depth 20), (New-Object Text.UTF8Encoding($false)))
+        $dirtyManifestRejected = $false
+        try { [void](Get-PairedBuildManifest $manifestSelfTestPath 'cpp' 'x64' 'Debug' $manifestSelfTestExpectedSource $manifestSelfTestExpectedArtifact) } catch { $dirtyManifestRejected = $true }
+        if (-not $dirtyManifestRejected) { throw 'Dirty producer manifest was accepted for qualified evidence.' }
+        $manifestSelfTest.sourceDirty = $false
+        $manifestSelfTestExpectedSource.dirty = $false
+        $manifestSelfTest.backend = 'rust'
+        $manifestSelfTest.outputBackend = 'rust'
+        $rustSelectorSymbols = @($script:PairedRustOutputProviderSymbols | Sort-Object -Unique)
+        $rustSelectorCanonical = 'output=rust|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result=dumpbin-unresolved-refs-verified|symbols={0}|object-after={1}' -f
+            ($rustSelectorSymbols -join ','), $manifestSelfTestSelectorObjectAfter
+        $rustSelectorHash = Get-TextSha256 $rustSelectorCanonical
+        $manifestSelfTest.selectorProof = [ordered]@{
+            result = 'dumpbin-unresolved-refs-verified'; outputBackend = 'rust'; utf16Backend = 'cpp'
+            outputProductionPackage = $false; utf16ProductionPackage = $false
+            utf16BenchmarkTelemetry = $false; assemblyListings = $false
+            providerObjectSha256After = $manifestSelfTestSelectorObjectAfter; providerObjectSizeBytesAfter = 1
+            unresolvedProviderSymbols = $rustSelectorSymbols; unresolvedProviderSymbolCount = $rustSelectorSymbols.Count
+            selectorContractSha256 = $rustSelectorHash
+        }
+        $manifestSelfTest.selectorProofSha256 = $rustSelectorHash
+        $manifestSelfTest.providerObjectSha256After = $manifestSelfTestSelectorObjectAfter
+        [IO.File]::WriteAllText($manifestSelfTestPath, ($manifestSelfTest | ConvertTo-Json -Depth 20), (New-Object Text.UTF8Encoding($false)))
+        $rustManifestSelfTestResult = Get-PairedBuildManifest $manifestSelfTestPath 'rust' 'x64' 'Debug' $manifestSelfTestExpectedSource $manifestSelfTestExpectedArtifact
+        Assert-PairedEqual 'dumpbin-unresolved-refs-verified' $rustManifestSelfTestResult.selectorProofResult 'Rust selector proof result'
+        Assert-PairedEqual 7 $rustManifestSelfTestResult.selectorProofUnresolvedProviderSymbolCount 'Rust selector proof symbol count'
+        Assert-PairedEqual ($rustSelectorSymbols -join '|') ($rustManifestSelfTestResult.selectorProofUnresolvedProviderSymbols -join '|') 'Rust selector proof symbol set'
+        $rustManifestAccepted = $true
+    }
+    finally {
+        if (Test-Path -LiteralPath $manifestSelfTestRoot) { [IO.Directory]::Delete($manifestSelfTestRoot, $true) }
     }
     $selfTestBundles = @(
         [pscustomobject][ordered]@{
@@ -1396,14 +1966,25 @@ function Invoke-PairedSelfTest {
         -ProfilePolicy ([pscustomobject]@{ kind = 'fresh-per-launch'; sha256 = ('c' * 64); artifactIsolation = 'campaign-artifact-bundle'; deletion = 'verified-after-each-launch'; sidecarContract = $script:StartupProfileSidecarContract }) `
         -CppArtifact ([pscustomobject]@{ sha256 = ('d' * 64); sizeBytes = 1 }) -RustArtifact ([pscustomobject]@{ sha256 = ('e' * 64); sizeBytes = 1 }) `
         -Schedule $schedule -Runs @($terminatedRun) -PairedScriptHash ('f' * 64) -SharedScriptHash ('1' * 64) -Termination $reportTermination `
-        -ArtifactBundles $selfTestBundles -CollectOnly $false -Provenance $selfTestProvenance -SampleCopy $selfTestSampleCopy
+        -ArtifactBundles $selfTestBundles -CollectOnly $false -Provenance $selfTestProvenance -SampleCopy $selfTestSampleCopy `
+        -Integrity $selfTestIntegrity -MeasurementArguments $selfTestMeasurementArguments `
+        -MeasurementCommandSha256 $selfTestMeasurementCommandSha256
     [void](Assert-PairedPayloadFree $terminatedReport)
-    if ($terminatedReport.acceptance.qualified -or $terminatedReport.pass -or
-        -not $terminatedReport.acceptance.campaignTerminated -or
-        $terminatedReport.acceptance.suppressedLaunches -ne ($schedule.Count - 1) -or
-        $terminatedReport.termination.suppressedLaunches -ne ($schedule.Count - 1)) {
-        throw 'Terminated campaign report self-test did not remain nonqualified.'
-    }
+    Assert-PairedEqual $false $terminatedReport.acceptance.qualified 'terminated report qualification'
+    Assert-PairedEqual $false $terminatedReport.pass 'terminated report pass'
+    Assert-PairedEqual $true $terminatedReport.acceptance.campaignTerminated 'terminated report campaign state'
+    Assert-PairedEqual 'failed' $terminatedReport.status 'terminated report status'
+    Assert-PairedEqual 'timeout' $terminatedReport.termination.failureType 'terminated report failure type'
+    Assert-PairedEqual ($schedule.Count - 1) $terminatedReport.acceptance.suppressedLaunches 'terminated report acceptance suppression'
+    Assert-PairedEqual ($schedule.Count - 1) $terminatedReport.termination.suppressedLaunches 'terminated report termination suppression'
+    $cleanupEvidence = New-PairedFailureEvidence -Stage 'cleanup' -FailureType 'cleanup-unverified' `
+        -PrimaryStage 'launch' -PrimaryType 'timeout' -CleanupCodes @('bundle-cleanup', 'sample-cleanup') `
+        -MeasurementArguments $selfTestMeasurementArguments -MeasurementCommandSha256 $selfTestMeasurementCommandSha256 `
+        -Integrity $selfTestIntegrity
+    [void](Assert-PairedPayloadFree $cleanupEvidence)
+    Assert-PairedEqual 'cleanup-unverified' $cleanupEvidence.failure.type 'cleanup failure priority'
+    Assert-PairedEqual 'timeout' $cleanupEvidence.failure.primary.type 'cleanup original cause'
+    Assert-PairedEqual 2 $cleanupEvidence.failure.cleanupCodes.Count 'cleanup failure code count'
 
     $probe = [pscustomobject]@{
         RequestedMask = [UInt64]8; ProcessMask = [UInt64]8; SystemMask = [UInt64]15
@@ -1481,6 +2062,11 @@ function Invoke-PairedSelfTest {
     $rejectedSchema = $false
     try { [void](Assert-PairedPayloadFree $forbiddenReport) } catch { $rejectedSchema = $true }
     if (-not $rejectedSchema) { throw 'Forbidden schema property was accepted.' }
+    $measurementFunctionText = (Get-Command Invoke-PairedMeasurement -CommandType Function).ScriptBlock.ToString()
+    $postWriteReportRecheckVerified = $measurementFunctionText.Contains("Assert-PairedSourceStateUnchanged `$sourceState 'Post-write report'") -and
+        $measurementFunctionText.Contains("Assert-PairedScriptIdentityUnchanged `$scriptIdentity 'Post-write report'") -and
+        $measurementFunctionText.Contains('[IO.File]::Move($reportTempPath, $reportPath)')
+    if (-not $postWriteReportRecheckVerified) { throw 'Post-write report integrity self-test failed.' }
 
     return [ordered]@{
         selfTest = $true
@@ -1489,6 +2075,14 @@ function Invoke-PairedSelfTest {
         schemaVersion = $script:PairedSchemaVersion
         scheduleEntries = $schedule.Count
         scheduleHash = $scheduleHash
+        measurementArgumentsSchemaVersion = [int]$selfTestMeasurementArguments.schemaVersion
+        measurementCommandSha256 = [string]$selfTestMeasurementCommandSha256
+        manifestProducerContractVerified = $true
+        manifestSelectorProofVerified = [bool]$rustManifestAccepted
+        manifestCleanSourceRequired = [bool]$dirtyManifestRejected
+        integrityRechecksVerified = [bool]($selfTestIntegrity.sourcePostflightVerified -and
+            $selfTestIntegrity.scriptPostflightVerified -and $selfTestIntegrity.reportWriteVerified)
+        postWriteReportRecheckVerified = [bool]$postWriteReportRecheckVerified
         p95Definition = 'nearest-rank-ceiling'
         cleanupOrder = @($ordered | ForEach-Object { [int]$_.processId })
         cleanupTreeVerified = [bool]$cleanupTreeVerified
@@ -1590,7 +2184,10 @@ function New-PairedReport {
         [Parameter(Mandatory = $true)] [object[]]$ArtifactBundles,
         [Parameter(Mandatory = $true)] [bool]$CollectOnly,
         [Parameter(Mandatory = $true)] [object]$Provenance,
-        [Parameter(Mandatory = $true)] [object]$SampleCopy
+        [Parameter(Mandatory = $true)] [object]$SampleCopy,
+        [Parameter(Mandatory = $true)] [object]$Integrity,
+        [Parameter(Mandatory = $true)] [object]$MeasurementArguments,
+        [Parameter(Mandatory = $true)] [string]$MeasurementCommandSha256
     )
     $normalizedFirstBackend = Get-PairedCanonicalBackend $FirstBackend
     $summaries = @(
@@ -1606,18 +2203,37 @@ function New-PairedReport {
     $survivorCount = @($Runs | ForEach-Object { [int]$_.survivorCount } | Measure-Object -Sum).Sum
     if ($null -eq $survivorCount) { $survivorCount = 0 }
     $failedCount = @($Runs | Where-Object { $_.excluded }).Count
+    $integrityVerified = [bool]$Integrity.sourcePostflightVerified -and
+        [bool]$Integrity.scriptPostflightVerified -and [bool]$Integrity.reportWriteVerified
+    $measurementCommandMatches = $false
+    if ($null -ne $MeasurementArguments -and [int]$MeasurementArguments.schemaVersion -eq 1 -and
+        (Test-PairedSha256 $MeasurementCommandSha256)) {
+        try { $measurementCommandMatches = [string](Get-PairedMeasurementCommandSha256 $MeasurementArguments) -eq [string]$MeasurementCommandSha256 } catch { }
+    }
+    $measurementArgumentsVerified = $null -ne $MeasurementArguments -and
+        [int]$MeasurementArguments.schemaVersion -eq 1 -and (Test-PairedSha256 $MeasurementCommandSha256) -and $measurementCommandMatches
+    $sourceCleanVerified = -not [bool]$Provenance.sourceDirty
     $accepted = $cppMeasured.Count -ge $MeasuredLaunches -and $rustMeasured.Count -ge $MeasuredLaunches -and
         $cppWarmups.Count -ge $WarmupLaunches -and $rustWarmups.Count -ge $WarmupLaunches -and
         $failedCount -eq 0 -and [bool](@($Runs | Where-Object { -not $_.cleanupVerified }).Count -eq 0) -and
         [bool](@($ArtifactBundles | Where-Object { -not $_.sourceUnchanged -or -not $_.copiedUnchanged -or -not $_.sourceClosureUnchanged -or -not $_.copiedClosureUnchanged -or -not $_.receiptUnchanged -or -not $_.sidecarVerified -or -not $_.cleanupVerified }).Count -eq 0) -and
         [bool]$Provenance.buildManifestVerified -and
-        $Termination.status -eq 'completed' -and $Termination.suppressedLaunches -eq 0
+        $sourceCleanVerified -and
+        $Termination.status -eq 'completed' -and $Termination.suppressedLaunches -eq 0 -and
+        $integrityVerified -and $measurementArgumentsVerified
     if ($CollectOnly) { $accepted = $false }
     $performance = New-PairedPerformanceSummary $Runs $Schedule $MeasuredLaunches $accepted
+    $Provenance.measurement = [ordered]@{
+        argumentsSchemaVersion = [int]$MeasurementArguments.schemaVersion
+        commandSha256 = [string]$MeasurementCommandSha256
+        normalizedArguments = $MeasurementArguments
+    }
+    $Provenance.integrity = $Integrity
     return [ordered]@{
         schemaVersion = $script:PairedSchemaVersion
         record = 'paired-gui-startup'
         payloadFree = $true
+        status = if ($Termination.status -eq 'completed') { 'completed' } else { 'failed' }
         generatedAtUtc = [DateTime]::UtcNow.ToString('o')
         runId = $RunId
         commit = $Commit
@@ -1625,7 +2241,13 @@ function New-PairedReport {
             pairedRunnerSha256 = $PairedScriptHash
             sharedStartupImplementationSha256 = $SharedScriptHash
         }
+        measurement = [ordered]@{
+            argumentsSchemaVersion = [int]$MeasurementArguments.schemaVersion
+            commandSha256 = [string]$MeasurementCommandSha256
+            normalizedArguments = $MeasurementArguments
+        }
         provenance = $Provenance
+        integrity = $Integrity
         host = [ordered]@{
             sha256 = $HostIdentity.sha256
             osVersion = $HostIdentity.osVersion
@@ -1706,6 +2328,8 @@ function New-PairedReport {
             failedLaunches = [int]$failedCount
             campaignTerminated = [bool]($Termination.status -eq 'terminated')
             suppressedLaunches = [int]$Termination.suppressedLaunches
+            sourceCleanRequired = $true
+            sourceCleanVerified = [bool]$sourceCleanVerified
             artifactBundlesVerified = @($ArtifactBundles | Where-Object { -not $_.sourceUnchanged -or -not $_.copiedUnchanged -or -not $_.sourceClosureUnchanged -or -not $_.copiedClosureUnchanged -or -not $_.receiptUnchanged -or -not $_.sidecarVerified -or -not $_.cleanupVerified }).Count -eq 0
             scheduledLaunches = [int]$Schedule.Count
             successfulLaunches = [int](@($Runs | Where-Object { $_.status -eq 'succeeded' }).Count)
@@ -1765,9 +2389,10 @@ function Invoke-PairedMeasurement {
     $runId = '{0}-{1}' -f [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss-fff'), [Guid]::NewGuid().ToString('N').Substring(0, 8)
     $resultRoot = $null
     $reportPath = $null
+    $reportTempPath = $null
     $stage = 'preflight'
     $failure = $null
-    $cleanupFailure = $null
+    $cleanupFailure = $false
     $canonicalFirst = $null
     $canonicalPlatform = $null
     $canonicalConfiguration = $null
@@ -1776,10 +2401,31 @@ function Invoke-PairedMeasurement {
     $ordinal = @{}
     $termination = $null
     $bundles = @{}
+    $bundlePlans = @{}
     $bundleVerifications = @{}
     $bundleCleanup = @{ cpp = $false; rust = $false }
     $sampleCopy = $null
+    $sampleCopyPlan = $null
     $sampleSource = $null
+    $scriptIdentity = $null
+    $measurementArguments = $null
+    $measurementCommandSha256 = $null
+    $integrity = [ordered]@{
+        sourcePreflightCaptured = $false
+        sourcePostflightVerified = $false
+        scriptPreflightCaptured = $false
+        scriptPostflightVerified = $false
+        reportWriteVerified = $false
+        sourceState = $null
+        scripts = $null
+        postflightSourceState = $null
+        postflightScripts = $null
+        reportSourceState = $null
+        reportScripts = $null
+    }
+    $cleanupFailureCodes = New-Object Collections.Generic.List[string]
+    $primaryStage = $null
+    $primaryType = $null
     try {
         $canonicalFirst = Get-PairedCanonicalBackend $FirstBackend
         $canonicalPlatform = Get-PairedCanonicalPlatform $Platform
@@ -1829,11 +2475,30 @@ function Invoke-PairedMeasurement {
         }
         $stage = 'source-state'
         $sourceState = Get-PairedSourceState
+        $scriptIdentity = Get-PairedScriptIdentity
+        $integrity.sourcePreflightCaptured = $true
+        $integrity.scriptPreflightCaptured = $true
+        $integrity.sourceState = [ordered]@{
+            head = [string]$sourceState.head
+            dirty = [bool]$sourceState.dirty
+            statusSha256 = [string]$sourceState.statusSha256
+            statusLineCount = [int]$sourceState.statusLineCount
+        }
+        $integrity.scripts = [ordered]@{
+            pairedRunnerSha256 = [string]$scriptIdentity.pairedRunnerSha256
+            sharedStartupImplementationSha256 = [string]$scriptIdentity.sharedStartupImplementationSha256
+        }
         $hostIdentity = Get-PairedHostIdentity
         if (-not $CollectOnly) { Assert-PairedHostIdentityQualified $hostIdentity }
+        if (-not $CollectOnly -and [bool]$sourceState.dirty) {
+            throw 'Qualified paired evidence requires a clean checkout.'
+        }
         $profilePolicy = Get-PairedProfilePolicy
-        $pairedScriptHash = Get-Sha256 $script:PairedScriptPath
-        $sharedScriptHash = Get-Sha256 $script:SharedStartupScriptPath
+        $pairedScriptHash = [string]$scriptIdentity.pairedRunnerSha256
+        $sharedScriptHash = [string]$scriptIdentity.sharedStartupImplementationSha256
+        $measurementArguments = New-PairedMeasurementArguments $canonicalFirst $canonicalPlatform $canonicalConfiguration `
+            $WarmupLaunches $MeasuredLaunches $AffinityMask ([bool]$CollectOnly)
+        $measurementCommandSha256 = Get-PairedMeasurementCommandSha256 $measurementArguments
         $provenance = $null
         $cppManifest = $null
         $rustManifest = $null
@@ -1857,8 +2522,10 @@ function Invoke-PairedMeasurement {
                 $rustManifest.dependencyClosureSha256 -ne $rustStage.dependencyClosureSha256) {
                 throw 'A build manifest dependency closure does not match its runtime stage.'
             }
-            foreach ($field in @('windowsImageIdentity', 'windowsImageSha256', 'powerMode', 'buildParallelism',
-                    'msvcIdentity', 'rustToolchain', 'rustLockSha256', 'packagePlanSha256', 'buildCommandSha256')) {
+            foreach ($field in @('windowsImageIdentity', 'windowsImageSha256', 'powerMode', 'powerModeSha256', 'buildParallelism',
+                    'msvcIdentity', 'rustToolchain', 'rustLockSha256', 'packagePlanSha256', 'runtimeStageCommandSha256',
+                    'canonicalRuntimeStage', 'transactionStatus', 'transactionPublication', 'manifestGeneratedByProducer',
+                    'selectorProofResult')) {
                 if ([string]$cppManifest.$field -ne [string]$rustManifest.$field) {
                     throw "The paired build manifests disagree on $field."
                 }
@@ -1867,12 +2534,25 @@ function Invoke-PairedMeasurement {
         }
 
         $stage = 'sample-copy'
+        $sampleCopyPlan = [pscustomobject][ordered]@{
+            path = Join-Path $resultRoot ('startup-probe-sample-{0}.md' -f $runId)
+            root = $resultRoot
+            name = 'startup-probe-sample-{0}.md' -f $runId
+        }
         $sampleCopy = New-PairedSampleCopy $samplePath $resultRoot $runId $sample
         [void](Assert-PairedSampleUnchanged $sample $samplePath 'The source startup sample')
         [void](Assert-PairedSampleUnchanged $sample $sampleCopy.path 'The campaign startup sample copy')
         $stage = 'bundle-input'
-        $bundles.cpp = New-PairedArtifactBundle $cppPath $resultRoot ('startup-probe-bundle-{0}-cpp' -f $runId) $CppRuntimeStageDirectory
-        $bundles.rust = New-PairedArtifactBundle $rustPath $resultRoot ('startup-probe-bundle-{0}-rust' -f $runId) $RustRuntimeStageDirectory
+        foreach ($backend in @('cpp', 'rust')) {
+            $bundleName = 'startup-probe-bundle-{0}-{1}' -f $runId, $backend
+            $bundlePlans[$backend] = [pscustomobject][ordered]@{
+                bundlePath = Join-Path $resultRoot $bundleName
+                bundleRoot = $resultRoot
+                bundleName = $bundleName
+            }
+        }
+        $bundles.cpp = New-PairedArtifactBundle $cppPath $resultRoot $bundlePlans.cpp.bundleName $CppRuntimeStageDirectory
+        $bundles.rust = New-PairedArtifactBundle $rustPath $resultRoot $bundlePlans.rust.bundleName $RustRuntimeStageDirectory
         $stage = 'launch'
         foreach ($row in $schedule) {
             $backend = [string]$row.backend
@@ -1914,39 +2594,85 @@ function Invoke-PairedMeasurement {
         [void](Assert-PairedSampleUnchanged $sample $sampleCopy.path 'The campaign startup sample copy')
         Assert-PairedArtifactUnchanged $cppArtifact
         Assert-PairedArtifactUnchanged $rustArtifact
+        $postflightSourceState = Assert-PairedSourceStateUnchanged $sourceState 'Postflight'
+        $postflightScriptIdentity = Assert-PairedScriptIdentityUnchanged $scriptIdentity 'Postflight'
+        $integrity.sourcePostflightVerified = $true
+        $integrity.scriptPostflightVerified = $true
+        $integrity.postflightSourceState = [ordered]@{
+            head = [string]$postflightSourceState.head
+            dirty = [bool]$postflightSourceState.dirty
+            statusSha256 = [string]$postflightSourceState.statusSha256
+            statusLineCount = [int]$postflightSourceState.statusLineCount
+        }
+        $integrity.postflightScripts = [ordered]@{
+            pairedRunnerSha256 = [string]$postflightScriptIdentity.pairedRunnerSha256
+            sharedStartupImplementationSha256 = [string]$postflightScriptIdentity.sharedStartupImplementationSha256
+        }
     }
     catch { $failure = $_ }
     finally {
         foreach ($backend in @('cpp', 'rust')) {
+            $bundleToRemove = $null
             if ($bundles.ContainsKey($backend) -and $null -ne $bundles[$backend]) {
+                $bundleToRemove = $bundles[$backend]
+            }
+            elseif ($bundlePlans.ContainsKey($backend) -and $null -ne $bundlePlans[$backend]) {
+                # Keep the planned path under outer ownership as well.  The
+                # shared creator normally removes partial output itself, but
+                # this closes the gap when it fails before returning a bundle.
+                $bundleToRemove = $bundlePlans[$backend]
+            }
+            if ($null -ne $bundleToRemove) {
                 try {
-                    Remove-StartupArtifactBundle $bundles[$backend]
-                    $bundleCleanup[$backend] = -not (Test-Path -LiteralPath $bundles[$backend].bundlePath)
+                    Remove-StartupArtifactBundle $bundleToRemove
+                    $bundleCleanup[$backend] = -not (Test-Path -LiteralPath $bundleToRemove.bundlePath)
+                    if (-not $bundleCleanup[$backend]) {
+                        $cleanupFailure = $true
+                        if (-not $cleanupFailureCodes.Contains('bundle-cleanup')) { [void]$cleanupFailureCodes.Add('bundle-cleanup') }
+                    }
                 }
                 catch {
                     $bundleCleanup[$backend] = $false
-                    if ($null -eq $cleanupFailure) { $cleanupFailure = 'bundle-cleanup' }
+                    $cleanupFailure = $true
+                    if (-not $cleanupFailureCodes.Contains('bundle-cleanup')) { [void]$cleanupFailureCodes.Add('bundle-cleanup') }
                 }
             }
         }
+        $sampleToRemove = $null
         if ($null -ne $sampleCopy) {
+            $sampleToRemove = $sampleCopy
+        }
+        elseif ($null -ne $sampleCopyPlan) {
+            $sampleToRemove = [pscustomobject][ordered]@{ path = $sampleCopyPlan.path }
+        }
+        if ($null -ne $sampleToRemove) {
             try {
-                [void](Remove-PairedSampleCopy $sampleCopy $resultRoot $runId)
-                $sampleCopy.cleanupVerified = $true
+                [void](Remove-PairedSampleCopy $sampleToRemove $resultRoot $runId)
+                if ($null -ne $sampleCopy) { $sampleCopy.cleanupVerified = $true }
             }
             catch {
-                $sampleCopy.cleanupVerified = $false
-                if ($null -eq $cleanupFailure) { $cleanupFailure = 'sample-cleanup' }
+                if ($null -ne $sampleCopy) { $sampleCopy.cleanupVerified = $false }
+                $cleanupFailure = $true
+                if (-not $cleanupFailureCodes.Contains('sample-cleanup')) { [void]$cleanupFailureCodes.Add('sample-cleanup') }
             }
         }
     }
 
-    if ($null -ne $cleanupFailure -and $null -eq $failure) {
+    if ($cleanupFailure) {
+        # Cleanup is the primary observable failure because the campaign's
+        # containment proof is incomplete.  Preserve the earlier typed cause
+        # below so diagnostics do not lose the original failure.
+        $primaryStage = if ($null -ne $failure) { $stage } elseif ($null -ne $termination) { 'launch' } else { $null }
+        $primaryType = if ($null -ne $failure) { Get-PairedFailureTypeForStage $stage } elseif ($null -ne $termination -and $termination.type -ne 'none') { [string]$termination.failureType } else { $null }
         $failure = [pscustomobject]@{ Exception = [System.Exception]::new('Owned startup evidence cleanup failed.') }
         $stage = 'cleanup'
     }
     if ($null -ne $failure) {
-        $failureType = if ($stage -eq 'cleanup') { 'cleanup-unverified' } elseif ($stage -eq 'postflight' -or $stage -eq 'manifest-input' -or $stage -eq 'runtime-stage-input' -or $stage -eq 'sample-input' -or $stage -eq 'sample-copy' -or $stage -eq 'bundle-input') { 'integrity' } elseif ($stage -eq 'schema') { 'schema' } elseif ($stage -eq 'write') { 'write' } else { 'preflight' }
+        $failureType = Get-PairedFailureTypeForStage $stage
+        if ($null -eq $primaryType -and $stage -ne 'cleanup') {
+            $primaryStage = $stage
+            $primaryType = $failureType
+        }
         if ($null -eq $resultRoot) {
             try {
                 $resultRoot = [IO.Path]::GetFullPath($ResultDirectory)
@@ -1956,7 +2682,7 @@ function Invoke-PairedMeasurement {
         }
         if ($null -ne $resultRoot) {
             if ($null -eq $reportPath) { $reportPath = Join-Path $resultRoot ('paired-startup-{0}.json' -f $runId) }
-            $envelope = New-PairedFailureEvidence -Stage $stage -FailureType $failureType -FirstBackend $(if ($null -eq $canonicalFirst) { 'cpp' } else { $canonicalFirst }) -Platform $(if ($null -eq $canonicalPlatform) { 'x64' } else { $canonicalPlatform }) -Configuration $(if ($null -eq $canonicalConfiguration) { 'Debug' } else { $canonicalConfiguration }) -ScheduledLaunches $schedule.Count -SuccessfulLaunches (@($runs | Where-Object { $_.status -eq 'succeeded' }).Count) -SuppressedLaunches ([Math]::Max(0, $schedule.Count - $runs.Count)) -CollectOnly ([bool]$CollectOnly)
+            $envelope = New-PairedFailureEvidence -Stage $stage -FailureType $failureType -FirstBackend $(if ($null -eq $canonicalFirst) { 'cpp' } else { $canonicalFirst }) -Platform $(if ($null -eq $canonicalPlatform) { 'x64' } else { $canonicalPlatform }) -Configuration $(if ($null -eq $canonicalConfiguration) { 'Debug' } else { $canonicalConfiguration }) -ScheduledLaunches $schedule.Count -SuccessfulLaunches (@($runs | Where-Object { $_.status -eq 'succeeded' }).Count) -SuppressedLaunches ([Math]::Max(0, $schedule.Count - $runs.Count)) -CollectOnly ([bool]$CollectOnly) -PrimaryStage $primaryStage -PrimaryType $primaryType -CleanupCodes $cleanupFailureCodes.ToArray() -MeasurementArguments $measurementArguments -MeasurementCommandSha256 $measurementCommandSha256 -Integrity $integrity
             try { [void](Write-PairedEvidenceEnvelope $reportPath $envelope) } catch { }
         }
         return [pscustomobject][ordered]@{ exitCode = 1; pass = $false; reportPath = $reportPath }
@@ -1966,7 +2692,28 @@ function Invoke-PairedMeasurement {
         $termination = New-PairedCampaignTermination -TotalEntries $schedule.Count -CompletedEntries $runs.Count -TriggerRow $null
     }
     if ($bundleVerifications.Count -ne 2) {
-        $envelope = New-PairedFailureEvidence -Stage 'postflight' -FailureType 'integrity' -FirstBackend $canonicalFirst -Platform $canonicalPlatform -Configuration $canonicalConfiguration -ScheduledLaunches $schedule.Count -SuccessfulLaunches (@($runs | Where-Object { $_.status -eq 'succeeded' }).Count) -SuppressedLaunches ([Math]::Max(0, $schedule.Count - $runs.Count)) -CollectOnly ([bool]$CollectOnly)
+        $envelope = New-PairedFailureEvidence -Stage 'postflight' -FailureType 'integrity' -FirstBackend $canonicalFirst -Platform $canonicalPlatform -Configuration $canonicalConfiguration -ScheduledLaunches $schedule.Count -SuccessfulLaunches (@($runs | Where-Object { $_.status -eq 'succeeded' }).Count) -SuppressedLaunches ([Math]::Max(0, $schedule.Count - $runs.Count)) -CollectOnly ([bool]$CollectOnly) -Integrity $integrity -MeasurementArguments $measurementArguments -MeasurementCommandSha256 $measurementCommandSha256
+        try { [void](Write-PairedEvidenceEnvelope $reportPath $envelope) } catch { }
+        return [pscustomobject][ordered]@{ exitCode = 1; pass = $false; reportPath = $reportPath }
+    }
+    $stage = 'report-integrity'
+    try {
+        $reportSourceState = Assert-PairedSourceStateUnchanged $sourceState 'Report write'
+        $reportScriptIdentity = Assert-PairedScriptIdentityUnchanged $scriptIdentity 'Report write'
+        $integrity.reportWriteVerified = $true
+        $integrity.reportSourceState = [ordered]@{
+            head = [string]$reportSourceState.head
+            dirty = [bool]$reportSourceState.dirty
+            statusSha256 = [string]$reportSourceState.statusSha256
+            statusLineCount = [int]$reportSourceState.statusLineCount
+        }
+        $integrity.reportScripts = [ordered]@{
+            pairedRunnerSha256 = [string]$reportScriptIdentity.pairedRunnerSha256
+            sharedStartupImplementationSha256 = [string]$reportScriptIdentity.sharedStartupImplementationSha256
+        }
+    }
+    catch {
+        $envelope = New-PairedFailureEvidence -Stage 'report-integrity' -FailureType 'integrity' -FirstBackend $canonicalFirst -Platform $canonicalPlatform -Configuration $canonicalConfiguration -ScheduledLaunches $schedule.Count -SuccessfulLaunches (@($runs | Where-Object { $_.status -eq 'succeeded' }).Count) -SuppressedLaunches ([Math]::Max(0, $schedule.Count - $runs.Count)) -CollectOnly ([bool]$CollectOnly) -Integrity $integrity -MeasurementArguments $measurementArguments -MeasurementCommandSha256 $measurementCommandSha256
         try { [void](Write-PairedEvidenceEnvelope $reportPath $envelope) } catch { }
         return [pscustomobject][ordered]@{ exitCode = 1; pass = $false; reportPath = $reportPath }
     }
@@ -1982,21 +2729,76 @@ function Invoke-PairedMeasurement {
         $report = New-PairedReport -RunId $runId -Commit $sourceState.head -HostIdentity $hostIdentity -Sample $sample -SampleCopy $sampleCopy -ProfilePolicy $profilePolicy `
             -CppArtifact $cppArtifact -RustArtifact $rustArtifact -Schedule $schedule -Runs $runs.ToArray() `
             -PairedScriptHash $pairedScriptHash -SharedScriptHash $sharedScriptHash -Termination $termination `
-            -ArtifactBundles $artifactBundles -CollectOnly ([bool]$CollectOnly) -Provenance $provenance
+            -ArtifactBundles $artifactBundles -CollectOnly ([bool]$CollectOnly) -Provenance $provenance `
+            -Integrity $integrity -MeasurementArguments $measurementArguments -MeasurementCommandSha256 $measurementCommandSha256
         [void](Assert-PairedPayloadFree $report)
     }
     catch {
-        $envelope = New-PairedFailureEvidence -Stage 'schema' -FailureType 'schema' -FirstBackend $canonicalFirst -Platform $canonicalPlatform -Configuration $canonicalConfiguration -ScheduledLaunches $schedule.Count -SuccessfulLaunches (@($runs | Where-Object { $_.status -eq 'succeeded' }).Count) -SuppressedLaunches ([Math]::Max(0, $schedule.Count - $runs.Count)) -CollectOnly ([bool]$CollectOnly)
+        $envelope = New-PairedFailureEvidence -Stage 'schema' -FailureType 'schema' -FirstBackend $canonicalFirst -Platform $canonicalPlatform -Configuration $canonicalConfiguration -ScheduledLaunches $schedule.Count -SuccessfulLaunches (@($runs | Where-Object { $_.status -eq 'succeeded' }).Count) -SuppressedLaunches ([Math]::Max(0, $schedule.Count - $runs.Count)) -CollectOnly ([bool]$CollectOnly) -Integrity $integrity -MeasurementArguments $measurementArguments -MeasurementCommandSha256 $measurementCommandSha256
+        try { [void](Write-PairedEvidenceEnvelope $reportPath $envelope) } catch { }
+        return [pscustomobject][ordered]@{ exitCode = 1; pass = $false; reportPath = $reportPath }
+    }
+    # Re-read the source and both script identities immediately before report
+    # serialization.  This closes the last race after report construction and
+    # keeps a late edit from being labeled as paired evidence.
+    $stage = 'report-integrity'
+    try {
+        $integrity.reportWriteVerified = $false
+        $finalSourceState = Assert-PairedSourceStateUnchanged $sourceState 'Final report write'
+        $finalScriptIdentity = Assert-PairedScriptIdentityUnchanged $scriptIdentity 'Final report write'
+        $integrity.reportSourceState = [ordered]@{
+            head = [string]$finalSourceState.head
+            dirty = [bool]$finalSourceState.dirty
+            statusSha256 = [string]$finalSourceState.statusSha256
+            statusLineCount = [int]$finalSourceState.statusLineCount
+        }
+        $integrity.reportScripts = [ordered]@{
+            pairedRunnerSha256 = [string]$finalScriptIdentity.pairedRunnerSha256
+            sharedStartupImplementationSha256 = [string]$finalScriptIdentity.sharedStartupImplementationSha256
+        }
+        $integrity.reportWriteVerified = $true
+        # Rebind both report locations explicitly so a future report builder
+        # copy cannot lose the final pre-serialization integrity state.
+        $report.integrity = $integrity
+        $report.provenance.integrity = $integrity
+        [void](Assert-PairedPayloadFree $report)
+    }
+    catch {
+        $envelope = New-PairedFailureEvidence -Stage 'report-integrity' -FailureType 'integrity' -FirstBackend $canonicalFirst -Platform $canonicalPlatform -Configuration $canonicalConfiguration -ScheduledLaunches $schedule.Count -SuccessfulLaunches (@($runs | Where-Object { $_.status -eq 'succeeded' }).Count) -SuppressedLaunches ([Math]::Max(0, $schedule.Count - $runs.Count)) -CollectOnly ([bool]$CollectOnly) -Integrity $integrity -MeasurementArguments $measurementArguments -MeasurementCommandSha256 $measurementCommandSha256
         try { [void](Write-PairedEvidenceEnvelope $reportPath $envelope) } catch { }
         return [pscustomobject][ordered]@{ exitCode = 1; pass = $false; reportPath = $reportPath }
     }
     $stage = 'write'
+    $reportTempPath = Join-Path $resultRoot ('.paired-startup-{0}.json.tmp' -f $runId)
     try {
+        if (Test-Path -LiteralPath $reportTempPath) { throw 'The temporary paired report path already exists.' }
         $json = $report | ConvertTo-Json -Depth 20
-        [IO.File]::WriteAllText($reportPath, $json, (New-Object Text.UTF8Encoding($false)))
+        [IO.File]::WriteAllText($reportTempPath, $json, (New-Object Text.UTF8Encoding($false)))
+        if (-not [IO.File]::Exists($reportTempPath)) { throw 'The temporary paired report was not written.' }
+        [IO.File]::Move($reportTempPath, $reportPath)
+        $reportTempPath = $null
+        if (-not [IO.File]::Exists($reportPath)) { throw 'The paired report was not published.' }
     }
     catch {
-        $envelope = New-PairedFailureEvidence -Stage 'write' -FailureType 'write' -FirstBackend $canonicalFirst -Platform $canonicalPlatform -Configuration $canonicalConfiguration -ScheduledLaunches $schedule.Count -SuccessfulLaunches (@($runs | Where-Object { $_.status -eq 'succeeded' }).Count) -SuppressedLaunches ([Math]::Max(0, $schedule.Count - $runs.Count)) -CollectOnly ([bool]$CollectOnly)
+        if ($null -ne $reportTempPath -and (Test-Path -LiteralPath $reportTempPath)) {
+            try { [IO.File]::Delete($reportTempPath) } catch { }
+        }
+        $envelope = New-PairedFailureEvidence -Stage 'write' -FailureType 'write' -FirstBackend $canonicalFirst -Platform $canonicalPlatform -Configuration $canonicalConfiguration -ScheduledLaunches $schedule.Count -SuccessfulLaunches (@($runs | Where-Object { $_.status -eq 'succeeded' }).Count) -SuppressedLaunches ([Math]::Max(0, $schedule.Count - $runs.Count)) -CollectOnly ([bool]$CollectOnly) -Integrity $integrity -MeasurementArguments $measurementArguments -MeasurementCommandSha256 $measurementCommandSha256
+        try { [void](Write-PairedEvidenceEnvelope $reportPath $envelope) } catch { }
+        return [pscustomobject][ordered]@{ exitCode = 1; pass = $false; reportPath = $reportPath }
+    }
+    # Verify the published report after the atomic move.  A source or script
+    # edit during serialization/publication invalidates the success report;
+    # replace it with a typed integrity envelope instead.
+    $stage = 'report-integrity'
+    try {
+        [void](Assert-PairedSourceStateUnchanged $sourceState 'Post-write report')
+        [void](Assert-PairedScriptIdentityUnchanged $scriptIdentity 'Post-write report')
+    }
+    catch {
+        $integrity.reportWriteVerified = $false
+        try { if ([IO.File]::Exists($reportPath)) { [IO.File]::Delete($reportPath) } } catch { }
+        $envelope = New-PairedFailureEvidence -Stage 'report-integrity' -FailureType 'integrity' -FirstBackend $canonicalFirst -Platform $canonicalPlatform -Configuration $canonicalConfiguration -ScheduledLaunches $schedule.Count -SuccessfulLaunches (@($runs | Where-Object { $_.status -eq 'succeeded' }).Count) -SuppressedLaunches ([Math]::Max(0, $schedule.Count - $runs.Count)) -CollectOnly ([bool]$CollectOnly) -Integrity $integrity -MeasurementArguments $measurementArguments -MeasurementCommandSha256 $measurementCommandSha256
         try { [void](Write-PairedEvidenceEnvelope $reportPath $envelope) } catch { }
         return [pscustomobject][ordered]@{ exitCode = 1; pass = $false; reportPath = $reportPath }
     }
