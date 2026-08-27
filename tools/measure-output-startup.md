@@ -113,13 +113,18 @@ at HOLD.
 Do not hand-author manifest fields after a build. Use
 `prepare-output-startup-artifact.ps1`, which owns build, selector proof,
 canonical staging, manifest generation, and atomic publication as one bounded
-transaction. It verifies the production-provider object with `dumpbin`: the
-C++ object must have no `sakura_output_provider_*` unresolved references, while
-the Rust object must reference the complete fixed v1 entry-point set. The
-receipt parser also binds every `artifact_id`, role, source, and destination to
-the canonical `build/staging/<context>/sakura-editor` and `x64/<Configuration>`
-layout; a basename-only, absolute, traversing, or otherwise ambiguous path is
-rejected.
+transaction. The paired verifier consumes the producer's configuration-aware
+selector contract: Debug uses the `dumpbin-unresolved-refs-verified` object
+proof (`coff-symbols`) with no unresolved C++ references and the complete fixed
+v1 Rust reference set; Release uses the
+`msvc-ltcg-compile-selector-verified` proof (`msvc-ltcg-anonymous`) and binds
+the `/GL` compile-log identity and backend selector count. Both configurations
+also require the Rust archive's `dumpbin-defined-exports-verified` result,
+exactly seven defined v1 entry points, and the producer's archive-wrapped
+contract hash. The receipt parser binds every `artifact_id`, role, source, and
+destination to the canonical `build/staging/<context>/sakura-editor` and
+`x64/<Configuration>` layout; a basename-only, absolute, traversing, or
+otherwise ambiguous path is rejected.
 
 Create both Debug artifacts below one new run-specific output root, then pass
 the producer outputs to the paired runner:
@@ -231,6 +236,10 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\measure-output-startup.ps1
 It exercises median/p95 statistics, deterministic interleaving and ordering,
 the payload-free schema rejection, affinity metadata conversion and nonzero
 mask validation, exact portable-sidecar and artifact-bundle identity/cleanup,
-profile hashing/cleanup, parent-first PID identity helpers, and the paired
-performance gates. It does not launch `sakura.exe` or any other GUI process.
+profile hashing/cleanup, parent-first PID identity helpers, all four
+Debug/Release × C++/Rust selector-proof cells, archive/hash reconstruction,
+top-level mirror checks, and the paired performance gates. It also mutates
+selector result, configuration, compile-log, archive, symbol, and contract
+hash fields to verify rejection. It does not launch `sakura.exe` or any other
+GUI process.
 Do not use it as a substitute for the full 35-launch-per-backend campaign.

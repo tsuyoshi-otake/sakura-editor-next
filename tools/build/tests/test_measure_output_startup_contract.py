@@ -208,6 +208,39 @@ class PairedStartupContractTests(unittest.TestCase):
         self.assertIn("textSha256EmptyVerified", self.paired_text)
         self.assertIn("sourcePreflightSyntheticVerified", self.paired_text)
 
+    def test_selector_proof_is_configuration_aware_and_archive_bound(self):
+        for marker in (
+            "msvc-ltcg-compile-selector-verified",
+            "msvc-ltcg-compile-selector",
+            "msvc-ltcg-anonymous",
+            "dumpbin-object-undefined",
+            "coff-symbols",
+            "compileLogExistsBefore",
+            "compileLogExistsAfter",
+            "compileLogSha256Before",
+            "compileLogSha256After",
+            "compileLogSizeBytesBefore",
+            "compileLogSizeBytesAfter",
+            "compileCommandRustSelectorDefineCount",
+            "rustArchiveResult",
+            "dumpbin-defined-exports-verified",
+            "definedProviderSymbols",
+            "archive-result={1}|archive={2}|defined={3}",
+            "selectorProofVerificationMethod",
+            "manifestSelectorValidDebugCpp",
+            "manifestSelectorValidReleaseRust",
+            "manifestSelectorWrongConfigurationRejected",
+            "manifestSelectorCompileLogRejected",
+            "manifestSelectorArchiveHashRejected",
+            "manifestSelectorSymbolRejected",
+            "manifestSelectorProofHashRejected",
+            "manifestSelectorMirrorRejected",
+        ):
+            self.assertIn(marker, self.paired_text)
+        self.assertIn("The build manifest selector proof archive evidence is incomplete.", self.paired_text)
+        self.assertIn("The build manifest selector proof compile log presence and size are inconsistent.", self.paired_text)
+        self.assertIn("build manifest compile proof mirrors are stale.", self.paired_text)
+
     def test_profile_isolation_bundle_and_sidecar_contract_are_mandatory(self):
         for marker in (
             "Convert-StartupReceiptPath",
@@ -315,6 +348,22 @@ class PairedStartupContractTests(unittest.TestCase):
             self.assertTrue(payload["sourcePreflightSyntheticVerified"])
             self.assertTrue(payload["manifestProducerContractVerified"])
             self.assertTrue(payload["manifestSelectorProofVerified"])
+            for field in (
+                "manifestSelectorValidDebugCpp",
+                "manifestSelectorValidDebugRust",
+                "manifestSelectorValidReleaseCpp",
+                "manifestSelectorValidReleaseRust",
+                "manifestSelectorWrongResultRejected",
+                "manifestSelectorWrongConfigurationRejected",
+                "manifestSelectorWrongCountRejected",
+                "manifestSelectorCompileLogRejected",
+                "manifestSelectorArchiveHashRejected",
+                "manifestSelectorSymbolRejected",
+                "manifestSelectorProofHashRejected",
+                "manifestSelectorMirrorRejected",
+                "manifestSelectorTopLevelHashRejected",
+            ):
+                self.assertTrue(payload[field], field)
             self.assertTrue(payload["manifestCleanSourceRequired"])
             self.assertTrue(payload["integrityRechecksVerified"])
             self.assertTrue(payload["postWriteReportRecheckVerified"])

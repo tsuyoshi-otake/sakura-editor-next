@@ -104,6 +104,16 @@ function Get-PairedProperty {
     return $null
 }
 
+function Test-PairedPropertyPresent {
+    param(
+        [Parameter(Mandatory = $true)] [AllowNull()] [object]$Object,
+        [Parameter(Mandatory = $true)] [string]$Name
+    )
+    if ($null -eq $Object) { return $false }
+    if ($Object -is [Collections.IDictionary]) { return $Object.Contains($Name) }
+    return $null -ne $Object.PSObject.Properties[$Name]
+}
+
 function Get-PairedNestedProperty {
     param(
         [Parameter(Mandatory = $true)] [AllowNull()] [object]$Object,
@@ -556,6 +566,18 @@ function Require-PairedManifestBoolean {
     return [bool]$Value
 }
 
+function Require-PairedManifestUInt64 {
+    param(
+        [Parameter(Mandatory = $true)] [AllowNull()] [object]$Value,
+        [Parameter(Mandatory = $true)] [string]$FieldName
+    )
+    if ($null -eq $Value -or [string]$Value -notmatch '^[0-9]+$') {
+        throw "Build manifest field '$FieldName' is missing or invalid."
+    }
+    try { return [UInt64]$Value }
+    catch { throw "Build manifest field '$FieldName' is missing or invalid." }
+}
+
 function Get-PairedBuildManifest {
     param(
         [Parameter(Mandatory = $true)] [string]$Path,
@@ -665,9 +687,16 @@ function Get-PairedBuildManifest {
 
     $selectorProof = Get-PairedProperty $manifest @('selectorProof')
     if ($null -eq $selectorProof) { throw "The $Backend build manifest has no selector proof." }
+    $canonicalConfiguration = Get-PairedCanonicalConfiguration $ExpectedConfiguration
     $selectorResult = Require-PairedManifestString (Get-PairedProperty $selectorProof @('result')) 'selectorProof.result'
-    if ($selectorResult -cne 'dumpbin-unresolved-refs-verified') {
-        throw "The $Backend build manifest selector proof is not a dumpbin verification."
+    $expectedSelectorResult = if ($canonicalConfiguration -eq 'Release') {
+        'msvc-ltcg-compile-selector-verified'
+    }
+    else {
+        'dumpbin-unresolved-refs-verified'
+    }
+    if ($selectorResult -cne $expectedSelectorResult) {
+        throw "The $Backend build manifest selector proof does not match the requested configuration."
     }
     $selectorOutputBackend = (Require-PairedManifestString (Get-PairedProperty $selectorProof @('outputBackend')) 'selectorProof.outputBackend').ToLowerInvariant()
     $selectorUtf16Backend = (Require-PairedManifestString (Get-PairedProperty $selectorProof @('utf16Backend')) 'selectorProof.utf16Backend').ToLowerInvariant()
@@ -678,41 +707,144 @@ function Get-PairedBuildManifest {
         $flagValue = Require-PairedManifestBoolean (Get-PairedProperty $selectorProof @($flag)) ('selectorProof.' + $flag)
         if ($flagValue) { throw "The $Backend build manifest selector proof enables $flag." }
     }
-    $selectorObjectAfter = Require-PairedManifestHash (Get-PairedProperty $selectorProof @('providerObjectSha256After')) 'selectorProof.providerObjectSha256After'
-    $selectorObjectSizeValue = Get-PairedProperty $selectorProof @('providerObjectSizeBytesAfter')
-    if ($null -eq $selectorObjectSizeValue -or [string]$selectorObjectSizeValue -notmatch '^[0-9]+$') {
-        throw 'Build manifest field selectorProof.providerObjectSizeBytesAfter is missing or invalid.'
+    $selectorVerificationMethod = Require-PairedManifestString (Get-PairedProperty $selectorProof @('verificationMethod')) 'selectorProof.verificationMethod'
+    $selectorObjectFormat = Require-PairedManifestString (Get-PairedProperty $selectorProof @('providerObjectFormat')) 'selectorProof.providerObjectFormat'
+    $expectedVerificationMethod = if ($canonicalConfiguration -eq 'Release') { 'msvc-ltcg-compile-selector' } else { 'dumpbin-object-undefined' }
+    $expectedObjectFormat = if ($canonicalConfiguration -eq 'Release') { 'msvc-ltcg-anonymous' } else { 'coff-symbols' }
+    if ($selectorVerificationMethod -cne $expectedVerificationMethod -or $selectorObjectFormat -cne $expectedObjectFormat) {
+        throw "The $Backend build manifest selector proof method or object format is invalid for the requested configuration."
     }
-    try { $selectorObjectSize = [UInt64]$selectorObjectSizeValue } catch { throw 'Build manifest field selectorProof.providerObjectSizeBytesAfter is missing or invalid.' }
+    $selectorObjectAfter = Require-PairedManifestHash (Get-PairedProperty $selectorProof @('providerObjectSha256After')) 'selectorProof.providerObjectSha256After'
+    $selectorObjectSize = Require-PairedManifestUInt64 (Get-PairedProperty $selectorProof @('providerObjectSizeBytesAfter')) 'selectorProof.providerObjectSizeBytesAfter'
     if ($selectorObjectSize -lt 1) { throw 'Build manifest field selectorProof.providerObjectSizeBytesAfter is missing or invalid.' }
-    $selectorObjectBefore = Get-PairedProperty $selectorProof @('providerObjectSha256Before')
-    if ($null -ne $selectorObjectBefore) { $selectorObjectBefore = Require-PairedManifestHash $selectorObjectBefore 'selectorProof.providerObjectSha256Before' }
-    $selectorSymbolsProperty = $selectorProof.PSObject.Properties['unresolvedProviderSymbols']
-    $selectorSymbolsPresent = $null -ne $selectorSymbolsProperty
-    if ($selectorProof -is [Collections.IDictionary]) { $selectorSymbolsPresent = $selectorProof.Contains('unresolvedProviderSymbols') }
-    if (-not $selectorSymbolsPresent) { throw 'Build manifest field selectorProof.unresolvedProviderSymbols is missing.' }
+    if (-not (Test-PairedPropertyPresent $selectorProof 'providerObjectSha256Before')) {
+        throw 'Build manifest field selectorProof.providerObjectSha256Before is missing.'
+    }
+    $selectorObjectBeforeValue = Get-PairedProperty $selectorProof @('providerObjectSha256Before')
+    $selectorObjectBefore = if ($null -eq $selectorObjectBeforeValue) {
+        $null
+    }
+    else {
+        Require-PairedManifestHash $selectorObjectBeforeValue 'selectorProof.providerObjectSha256Before'
+    }
+
+    $compileLogExistsBefore = Require-PairedManifestBoolean (Get-PairedProperty $selectorProof @('compileLogExistsBefore')) 'selectorProof.compileLogExistsBefore'
+    $compileLogExistsAfter = Require-PairedManifestBoolean (Get-PairedProperty $selectorProof @('compileLogExistsAfter')) 'selectorProof.compileLogExistsAfter'
+    if (-not (Test-PairedPropertyPresent $selectorProof 'compileLogSha256Before') -or
+        -not (Test-PairedPropertyPresent $selectorProof 'compileLogSha256After')) {
+        throw 'Build manifest selector proof compile log hashes are missing.'
+    }
+    $compileLogHashBeforeValue = Get-PairedProperty $selectorProof @('compileLogSha256Before')
+    $compileLogHashAfterValue = Get-PairedProperty $selectorProof @('compileLogSha256After')
+    $compileLogHashBefore = if ($compileLogExistsBefore) {
+        Require-PairedManifestHash $compileLogHashBeforeValue 'selectorProof.compileLogSha256Before'
+    }
+    else {
+        if ($null -ne $compileLogHashBeforeValue) { throw 'The build manifest selector proof has a hash for a missing compile log before the build.' }
+        $null
+    }
+    $compileLogHashAfter = if ($compileLogExistsAfter) {
+        Require-PairedManifestHash $compileLogHashAfterValue 'selectorProof.compileLogSha256After'
+    }
+    else {
+        if ($null -ne $compileLogHashAfterValue) { throw 'The build manifest selector proof has a hash for a missing compile log after the build.' }
+        $null
+    }
+    $compileLogSizeBefore = Require-PairedManifestUInt64 (Get-PairedProperty $selectorProof @('compileLogSizeBytesBefore')) 'selectorProof.compileLogSizeBytesBefore'
+    $compileLogSizeAfter = Require-PairedManifestUInt64 (Get-PairedProperty $selectorProof @('compileLogSizeBytesAfter')) 'selectorProof.compileLogSizeBytesAfter'
+    if (($compileLogExistsBefore -and $compileLogSizeBefore -lt 1) -or
+        (-not $compileLogExistsBefore -and $compileLogSizeBefore -ne 0) -or
+        ($compileLogExistsAfter -and $compileLogSizeAfter -lt 1) -or
+        (-not $compileLogExistsAfter -and $compileLogSizeAfter -ne 0)) {
+        throw 'The build manifest selector proof compile log presence and size are inconsistent.'
+    }
+    $compileLogProof = Require-PairedManifestBoolean (Get-PairedProperty $selectorProof @('compileLogProof')) 'selectorProof.compileLogProof'
+    $compileCommandHasGl = Require-PairedManifestBoolean (Get-PairedProperty $selectorProof @('compileCommandHasGl')) 'selectorProof.compileCommandHasGl'
+    $compileSelectorCountValue = Require-PairedManifestUInt64 (Get-PairedProperty $selectorProof @('compileCommandRustSelectorDefineCount')) 'selectorProof.compileCommandRustSelectorDefineCount'
+    $expectedCompileSelectorCount = if ($Backend -eq 'rust') { [UInt64]1 } else { [UInt64]0 }
+    if ($canonicalConfiguration -eq 'Release') {
+        if (-not $compileLogExistsAfter -or -not $compileLogProof -or -not $compileCommandHasGl -or
+            $compileSelectorCountValue -ne $expectedCompileSelectorCount) {
+            throw "The $Backend build manifest lacks the required Release compile-selector proof."
+        }
+    }
+    elseif ($compileLogProof -or $compileCommandHasGl -or $compileSelectorCountValue -ne 0) {
+        throw "The $Backend build manifest has an invalid Debug compile-selector proof."
+    }
+    $compileSelectorCount = [int]$compileSelectorCountValue
+
+    $selectorSymbolsPropertyPresent = Test-PairedPropertyPresent $selectorProof 'unresolvedProviderSymbols'
+    if (-not $selectorSymbolsPropertyPresent) { throw 'Build manifest field selectorProof.unresolvedProviderSymbols is missing.' }
     $selectorSymbolsValue = @(Get-PairedProperty $selectorProof @('unresolvedProviderSymbols'))
-    $rawSelectorSymbols = @($selectorSymbolsValue | ForEach-Object { ([string]$_).ToLowerInvariant() })
+    $rawSelectorSymbols = @($selectorSymbolsValue | ForEach-Object {
+            if (-not (Test-PairedNonEmptyIdentity $_)) { throw 'The build manifest selector proof contains an invalid unresolved symbol.' }
+            ([string]$_).ToLowerInvariant()
+        })
     $selectorSymbols = @($rawSelectorSymbols | Sort-Object -Unique)
     if ($rawSelectorSymbols.Count -ne $selectorSymbols.Count) {
         throw 'The build manifest selector proof contains duplicate unresolved symbols.'
     }
-    $selectorSymbolCountValue = Get-PairedProperty $selectorProof @('unresolvedProviderSymbolCount')
-    if ($null -eq $selectorSymbolCountValue -or [string]$selectorSymbolCountValue -notmatch '^[0-9]+$') {
-        throw 'Build manifest field selectorProof.unresolvedProviderSymbolCount is missing or invalid.'
-    }
-    try { $selectorSymbolCount = [int64]$selectorSymbolCountValue } catch { throw 'Build manifest field selectorProof.unresolvedProviderSymbolCount is missing or invalid.' }
-    if ($selectorSymbolCount -lt 0 -or $selectorSymbolCount -ne $rawSelectorSymbols.Count) {
+    $selectorSymbolCount = Require-PairedManifestUInt64 (Get-PairedProperty $selectorProof @('unresolvedProviderSymbolCount')) 'selectorProof.unresolvedProviderSymbolCount'
+    if ($selectorSymbolCount -ne $rawSelectorSymbols.Count) {
         throw 'The build manifest selector proof symbol count is invalid.'
     }
-    $expectedSelectorSymbols = if ($Backend -eq 'rust') { @($script:PairedRustOutputProviderSymbols) } else { @() }
+    $expectedSelectorSymbols = if ($canonicalConfiguration -eq 'Debug' -and $Backend -eq 'rust') {
+        @($script:PairedRustOutputProviderSymbols)
+    }
+    else {
+        @()
+    }
     $expectedSelectorSymbols = @($expectedSelectorSymbols | ForEach-Object { ([string]$_).ToLowerInvariant() } | Sort-Object -Unique)
     if ((@($selectorSymbols) -join '|') -cne (@($expectedSelectorSymbols) -join '|')) {
-        throw "The $Backend build manifest selector proof symbol set is invalid."
+        throw "The $Backend build manifest selector proof symbol set is invalid for the requested configuration."
     }
+
+    if (-not (Test-PairedPropertyPresent $selectorProof 'rustArchiveResult') -or
+        -not (Test-PairedPropertyPresent $selectorProof 'rustArchiveSha256') -or
+        -not (Test-PairedPropertyPresent $selectorProof 'rustArchiveSizeBytes') -or
+        -not (Test-PairedPropertyPresent $selectorProof 'definedProviderSymbols') -or
+        -not (Test-PairedPropertyPresent $selectorProof 'definedProviderSymbolCount')) {
+        throw 'The build manifest selector proof archive evidence is incomplete.'
+    }
+    $archiveResult = Require-PairedManifestString (Get-PairedProperty $selectorProof @('rustArchiveResult')) 'selectorProof.rustArchiveResult'
+    if ($archiveResult -cne 'dumpbin-defined-exports-verified') {
+        throw "The $Backend build manifest selector proof archive export verification is incomplete."
+    }
+    $archiveHash = Require-PairedManifestHash (Get-PairedProperty $selectorProof @('rustArchiveSha256')) 'selectorProof.rustArchiveSha256'
+    $archiveSize = Require-PairedManifestUInt64 (Get-PairedProperty $selectorProof @('rustArchiveSizeBytes')) 'selectorProof.rustArchiveSizeBytes'
+    if ($archiveSize -lt 1) { throw 'Build manifest field selectorProof.rustArchiveSizeBytes is missing or invalid.' }
+    $definedSymbolsValue = @(Get-PairedProperty $selectorProof @('definedProviderSymbols'))
+    $rawDefinedSymbols = @($definedSymbolsValue | ForEach-Object {
+            if (-not (Test-PairedNonEmptyIdentity $_)) { throw 'The build manifest selector proof contains an invalid defined symbol.' }
+            ([string]$_).ToLowerInvariant()
+        })
+    $definedSymbols = @($rawDefinedSymbols | Sort-Object -Unique)
+    if ($rawDefinedSymbols.Count -ne $definedSymbols.Count) {
+        throw 'The build manifest selector proof contains duplicate defined symbols.'
+    }
+    $expectedDefinedSymbols = @($script:PairedRustOutputProviderSymbols | ForEach-Object { ([string]$_).ToLowerInvariant() } | Sort-Object -Unique)
+    if ((@($definedSymbols) -join '|') -cne (@($expectedDefinedSymbols) -join '|')) {
+        throw 'The build manifest selector proof defined symbol set is invalid.'
+    }
+    $definedSymbolCount = Require-PairedManifestUInt64 (Get-PairedProperty $selectorProof @('definedProviderSymbolCount')) 'selectorProof.definedProviderSymbolCount'
+    if ($definedSymbolCount -ne $rawDefinedSymbols.Count -or $definedSymbolCount -ne $expectedDefinedSymbols.Count) {
+        throw 'The build manifest selector proof defined symbol count is invalid.'
+    }
+
     $selectorContractHash = Require-PairedManifestHash (Get-PairedProperty $selectorProof @('selectorContractSha256')) 'selectorProof.selectorContractSha256'
-    $selectorCanonical = 'output={0}|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result={1}|symbols={2}|object-after={3}' -f
-        $Backend, $selectorResult, (@($selectorSymbols) -join ','), $selectorObjectAfter
+    $selectorBaseCanonical = if ($canonicalConfiguration -eq 'Release') {
+        $compileLogBeforeCanonical = if ($compileLogExistsBefore) { $compileLogHashBefore } else { 'missing' }
+        'output={0}|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result={1}|method={2}|symbols=|object-after={3}|object-format={4}|compile-log-before={5}|compile-log-before-size={6}|compile-log-after={7}|compile-log-after-size={8}|compile-gl={9}|compile-rust-selector-count={10}' -f
+            $Backend, $selectorResult, $selectorVerificationMethod, $selectorObjectAfter, $selectorObjectFormat,
+            $compileLogBeforeCanonical, $compileLogSizeBefore, $compileLogHashAfter, $compileLogSizeAfter,
+            $compileCommandHasGl, $compileSelectorCount
+    }
+    else {
+        'output={0}|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result={1}|symbols={2}|object-after={3}' -f
+            $Backend, $selectorResult, (@($selectorSymbols) -join ','), $selectorObjectAfter
+    }
+    $selectorCanonical = '{0}|archive-result={1}|archive={2}|defined={3}' -f
+        (Get-TextSha256 $selectorBaseCanonical), $archiveResult, $archiveHash, (@($definedSymbols) -join ',')
     if ($selectorContractHash -ne (Get-TextSha256 $selectorCanonical)) {
         throw "The $Backend build manifest selector proof contract hash is invalid."
     }
@@ -720,12 +852,67 @@ function Get-PairedBuildManifest {
     if ($manifestSelectorHash -ne $selectorContractHash) {
         throw "The $Backend build manifest selector proof hash does not match its contract."
     }
+
     $manifestObjectAfter = Require-PairedManifestHash (Get-PairedProperty $manifest @('providerObjectSha256After')) 'providerObjectSha256After'
     if ($manifestObjectAfter -ne $selectorObjectAfter) {
         throw "The $Backend build manifest provider object hash does not match its selector proof."
     }
-    $manifestObjectBefore = Get-PairedProperty $manifest @('providerObjectSha256Before')
-    if ($null -ne $manifestObjectBefore) { [void](Require-PairedManifestHash $manifestObjectBefore 'providerObjectSha256Before') }
+    if (-not (Test-PairedPropertyPresent $manifest 'providerObjectSha256Before')) {
+        throw "The $Backend build manifest providerObjectSha256Before mirror is missing."
+    }
+    $manifestObjectBeforeValue = Get-PairedProperty $manifest @('providerObjectSha256Before')
+    $manifestObjectBefore = if ($null -eq $manifestObjectBeforeValue) {
+        $null
+    }
+    else {
+        Require-PairedManifestHash $manifestObjectBeforeValue 'providerObjectSha256Before'
+    }
+    if ($manifestObjectBefore -ne $selectorObjectBefore) {
+        throw "The $Backend build manifest provider object before hash does not match its selector proof."
+    }
+    $manifestObjectFormat = Require-PairedManifestString (Get-PairedProperty $manifest @('providerObjectFormat')) 'providerObjectFormat'
+    $manifestVerificationMethod = Require-PairedManifestString (Get-PairedProperty $manifest @('verificationMethod')) 'verificationMethod'
+    if ($manifestObjectFormat -cne $selectorObjectFormat -or $manifestVerificationMethod -cne $selectorVerificationMethod) {
+        throw "The $Backend build manifest selector format mirrors are stale."
+    }
+    $manifestCompileLogExistsBefore = Require-PairedManifestBoolean (Get-PairedProperty $manifest @('compileLogExistsBefore')) 'compileLogExistsBefore'
+    $manifestCompileLogExistsAfter = Require-PairedManifestBoolean (Get-PairedProperty $manifest @('compileLogExistsAfter')) 'compileLogExistsAfter'
+    $manifestCompileLogHashBeforeValue = Get-PairedProperty $manifest @('compileLogSha256Before')
+    $manifestCompileLogHashAfterValue = Get-PairedProperty $manifest @('compileLogSha256After')
+    if (-not (Test-PairedPropertyPresent $manifest 'compileLogSha256Before') -or
+        -not (Test-PairedPropertyPresent $manifest 'compileLogSha256After')) {
+        throw "The $Backend build manifest compile log hash mirrors are missing."
+    }
+    $manifestCompileLogHashBefore = if ($manifestCompileLogExistsBefore) {
+        Require-PairedManifestHash $manifestCompileLogHashBeforeValue 'compileLogSha256Before'
+    }
+    else {
+        if ($null -ne $manifestCompileLogHashBeforeValue) { throw "The $Backend build manifest has a hash for a missing compile log before the build." }
+        $null
+    }
+    $manifestCompileLogHashAfter = if ($manifestCompileLogExistsAfter) {
+        Require-PairedManifestHash $manifestCompileLogHashAfterValue 'compileLogSha256After'
+    }
+    else {
+        if ($null -ne $manifestCompileLogHashAfterValue) { throw "The $Backend build manifest has a hash for a missing compile log after the build." }
+        $null
+    }
+    $manifestCompileLogSizeBefore = Require-PairedManifestUInt64 (Get-PairedProperty $manifest @('compileLogSizeBytesBefore')) 'compileLogSizeBytesBefore'
+    $manifestCompileLogSizeAfter = Require-PairedManifestUInt64 (Get-PairedProperty $manifest @('compileLogSizeBytesAfter')) 'compileLogSizeBytesAfter'
+    $manifestCompileLogProof = Require-PairedManifestBoolean (Get-PairedProperty $manifest @('compileLogProof')) 'compileLogProof'
+    $manifestCompileCommandHasGl = Require-PairedManifestBoolean (Get-PairedProperty $manifest @('compileCommandHasGl')) 'compileCommandHasGl'
+    $manifestCompileSelectorCount = Require-PairedManifestUInt64 (Get-PairedProperty $manifest @('compileCommandRustSelectorDefineCount')) 'compileCommandRustSelectorDefineCount'
+    if ($manifestCompileLogExistsBefore -ne $compileLogExistsBefore -or
+        $manifestCompileLogExistsAfter -ne $compileLogExistsAfter -or
+        $manifestCompileLogHashBefore -cne $compileLogHashBefore -or
+        $manifestCompileLogHashAfter -cne $compileLogHashAfter -or
+        $manifestCompileLogSizeBefore -ne $compileLogSizeBefore -or
+        $manifestCompileLogSizeAfter -ne $compileLogSizeAfter -or
+        $manifestCompileLogProof -ne $compileLogProof -or
+        $manifestCompileCommandHasGl -ne $compileCommandHasGl -or
+        $manifestCompileSelectorCount -ne $compileSelectorCount) {
+        throw "The $Backend build manifest compile proof mirrors are stale."
+    }
 
     [void](Assert-PairedPayloadFree $manifest)
     return [pscustomobject][ordered]@{
@@ -766,11 +953,27 @@ function Get-PairedBuildManifest {
         manifestGeneratedByProducer = [bool]$producerGenerated
         selectorProofResult = $selectorResult
         selectorProofSha256 = $manifestSelectorHash
+        selectorProofVerificationMethod = $selectorVerificationMethod
+        selectorProofProviderObjectFormat = $selectorObjectFormat
         selectorProofObjectSha256After = $selectorObjectAfter
         selectorProofObjectSizeBytesAfter = [UInt64]$selectorObjectSize
         selectorProofObjectSha256Before = $selectorObjectBefore
+        selectorProofCompileLogExistsBefore = $compileLogExistsBefore
+        selectorProofCompileLogExistsAfter = $compileLogExistsAfter
+        selectorProofCompileLogSha256Before = $compileLogHashBefore
+        selectorProofCompileLogSizeBytesBefore = [UInt64]$compileLogSizeBefore
+        selectorProofCompileLogSha256After = $compileLogHashAfter
+        selectorProofCompileLogSizeBytesAfter = [UInt64]$compileLogSizeAfter
+        selectorProofCompileLogProof = $compileLogProof
+        selectorProofCompileCommandHasGl = $compileCommandHasGl
+        selectorProofCompileCommandRustSelectorDefineCount = [int]$compileSelectorCount
         selectorProofUnresolvedProviderSymbols = $selectorSymbols
         selectorProofUnresolvedProviderSymbolCount = [int]$selectorSymbolCount
+        selectorProofRustArchiveResult = $archiveResult
+        selectorProofRustArchiveSha256 = $archiveHash
+        selectorProofRustArchiveSizeBytes = [UInt64]$archiveSize
+        selectorProofDefinedProviderSymbols = $definedSymbols
+        selectorProofDefinedProviderSymbolCount = [int]$definedSymbolCount
     }
 }
 
@@ -1250,7 +1453,7 @@ function New-PairedVerifiedProvenance {
             payloadFree = $true
             transactionPublication = 'atomic-directory-rename'
             manifestGeneratedByProducer = $true
-            selectorProofResult = 'dumpbin-unresolved-refs-verified'
+            selectorProofResult = [string]$CppManifest.selectorProofResult
         }
         backendBuilds = [ordered]@{
             cpp = [ordered]@{
@@ -1891,45 +2094,137 @@ function Invoke-PairedSelfTest {
         }
     }
     $manifestSelfTestRoot = Join-Path $env:TEMP ('paired-build-manifest-selftest-' + [Guid]::NewGuid().ToString('N'))
-    $rustManifestAccepted = $false
+    $manifestSelectorValidCases = [ordered]@{}
+    $manifestSelectorRejectedCases = [ordered]@{}
     try {
         [void][IO.Directory]::CreateDirectory($manifestSelfTestRoot)
         $manifestSelfTestPath = Join-Path $manifestSelfTestRoot 'build-manifest.json'
-        $manifestSelfTestSelectorObjectAfter = ('1' * 64)
-        $manifestSelfTestSelectorCanonical = 'output=cpp|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result=dumpbin-unresolved-refs-verified|symbols=|object-after={0}' -f $manifestSelfTestSelectorObjectAfter
-        $manifestSelfTestSelectorHash = Get-TextSha256 $manifestSelfTestSelectorCanonical
-        $manifestSelfTestSelectorProof = [ordered]@{
-            result = 'dumpbin-unresolved-refs-verified'; outputBackend = 'cpp'; utf16Backend = 'cpp'
-            outputProductionPackage = $false; utf16ProductionPackage = $false
-            utf16BenchmarkTelemetry = $false; assemblyListings = $false
-            providerObjectSha256After = $manifestSelfTestSelectorObjectAfter; providerObjectSizeBytesAfter = 1
-            unresolvedProviderSymbols = @(); unresolvedProviderSymbolCount = 0
-            selectorContractSha256 = $manifestSelfTestSelectorHash
-        }
-        $manifestSelfTest = [ordered]@{
-            schemaVersion = 1; record = 'output-startup-build-manifest'; payloadFree = $true; status = 'committed'
-            backend = 'cpp'; platform = 'x64'; configuration = 'Debug'
-            sourceHead = ('0' * 40); sourceDirty = $false; sourceStatusSha256 = ('a' * 64); sourceStatusLineCount = 0
-            outputBackend = 'cpp'; utf16Backend = 'cpp'; outputProductionPackage = $false; utf16ProductionPackage = $false
-            exeSha256 = ('b' * 64); dependencyClosureSha256 = ('c' * 64); runtimeStageReceiptSha256 = ('d' * 64)
-            windowsImageIdentity = 'windows-selftest'; windowsImageSha256 = ('e' * 64)
-            powerMode = 'Balanced'; powerModeSha256 = ('f' * 64); buildParallelism = 1
-            msvcIdentity = 'msvc-selftest'; rustToolchain = 'rust-selftest'; rustLockSha256 = ('a' * 64)
-            packagePlanSha256 = ('b' * 64); buildCommandSha256 = ('c' * 64)
-            packagePlanCommandSha256 = ('d' * 64); runtimeStageCommandSha256 = ('e' * 64)
-            canonicalRuntimeStage = $true
-            selectorProof = $manifestSelfTestSelectorProof; selectorProofSha256 = $manifestSelfTestSelectorHash
-            providerObjectSha256After = $manifestSelfTestSelectorObjectAfter
-            transaction = [ordered]@{
-                status = 'committed'; artifactBeforeVerified = $true; artifactAfterVerified = $true
-                runtimeStageVerified = $true; manifestGeneratedByProducer = $true; publication = 'atomic-directory-rename'
-            }
-        }
-        [IO.File]::WriteAllText($manifestSelfTestPath, ($manifestSelfTest | ConvertTo-Json -Depth 20), (New-Object Text.UTF8Encoding($false)))
         $manifestSelfTestExpectedSource = [pscustomobject]@{
             head = ('0' * 40); dirty = $false; statusSha256 = ('a' * 64); statusLineCount = 0
         }
         $manifestSelfTestExpectedArtifact = [pscustomobject]@{ sha256 = ('b' * 64); sizeBytes = 1 }
+        $manifestSelfTestSelectorSymbols = @($script:PairedRustOutputProviderSymbols | ForEach-Object { ([string]$_).ToLowerInvariant() } | Sort-Object -Unique)
+        $newManifestSelfTest = {
+            param([string]$SyntheticBackend, [string]$SyntheticConfiguration)
+            $release = [StringComparer]::OrdinalIgnoreCase.Equals($SyntheticConfiguration, 'Release')
+            $syntheticResult = if ($release) { 'msvc-ltcg-compile-selector-verified' } else { 'dumpbin-unresolved-refs-verified' }
+            $syntheticMethod = if ($release) { 'msvc-ltcg-compile-selector' } else { 'dumpbin-object-undefined' }
+            $syntheticFormat = if ($release) { 'msvc-ltcg-anonymous' } else { 'coff-symbols' }
+            $syntheticObjectHash = if ($SyntheticBackend -eq 'cpp') { ('1' * 64) } else { ('a' * 64) }
+            $syntheticObjectSize = if ($release) { [UInt64]2 } else { [UInt64]1 }
+            [string[]]$syntheticSelectorSymbols = @()
+            if (-not $release -and $SyntheticBackend -eq 'rust') { $syntheticSelectorSymbols = @($manifestSelfTestSelectorSymbols) }
+            $syntheticCompileBeforeExists = [bool]$release
+            $syntheticCompileAfterExists = [bool]$release
+            $syntheticCompileBeforeHash = if ($syntheticCompileBeforeExists) { ('3' * 64) } else { $null }
+            $syntheticCompileAfterHash = if ($syntheticCompileAfterExists) { ('4' * 64) } else { $null }
+            $syntheticCompileBeforeSize = if ($syntheticCompileBeforeExists) { [UInt64]3 } else { [UInt64]0 }
+            $syntheticCompileAfterSize = if ($syntheticCompileAfterExists) { [UInt64]4 } else { [UInt64]0 }
+            $syntheticCompileHasGl = [bool]$release
+            $syntheticCompileSelectorCount = if ($release -and $SyntheticBackend -eq 'rust') { 1 } else { 0 }
+            $syntheticDefinedSymbols = @($manifestSelfTestSelectorSymbols)
+            $syntheticArchiveHash = if ($SyntheticBackend -eq 'cpp') { ('2' * 64) } else { ('b' * 64) }
+            $syntheticBaseCanonical = if ($release) {
+                $syntheticCompileBeforeCanonical = if ($syntheticCompileBeforeExists) { $syntheticCompileBeforeHash } else { 'missing' }
+                'output={0}|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result={1}|method={2}|symbols=|object-after={3}|object-format={4}|compile-log-before={5}|compile-log-before-size={6}|compile-log-after={7}|compile-log-after-size={8}|compile-gl={9}|compile-rust-selector-count={10}' -f
+                    $SyntheticBackend, $syntheticResult, $syntheticMethod, $syntheticObjectHash, $syntheticFormat,
+                    $syntheticCompileBeforeCanonical, $syntheticCompileBeforeSize, $syntheticCompileAfterHash,
+                    $syntheticCompileAfterSize, $syntheticCompileHasGl, $syntheticCompileSelectorCount
+            }
+            else {
+                'output={0}|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result={1}|symbols={2}|object-after={3}' -f
+                    $SyntheticBackend, $syntheticResult, ($syntheticSelectorSymbols -join ','), $syntheticObjectHash
+            }
+            $syntheticArchiveCanonical = '{0}|archive-result=dumpbin-defined-exports-verified|archive={1}|defined={2}' -f
+                (Get-TextSha256 $syntheticBaseCanonical), $syntheticArchiveHash, ($syntheticDefinedSymbols -join ',')
+            $syntheticSelectorHash = Get-TextSha256 $syntheticArchiveCanonical
+            $syntheticSelectorProof = [ordered]@{
+                result = $syntheticResult; outputBackend = $SyntheticBackend; utf16Backend = 'cpp'
+                outputProductionPackage = $false; utf16ProductionPackage = $false
+                utf16BenchmarkTelemetry = $false; assemblyListings = $false
+                verificationMethod = $syntheticMethod; providerObjectFormat = $syntheticFormat
+                providerObjectSha256Before = $null; providerObjectSha256After = $syntheticObjectHash
+                providerObjectSizeBytesAfter = $syntheticObjectSize
+                unresolvedProviderSymbols = $syntheticSelectorSymbols
+                unresolvedProviderSymbolCount = $syntheticSelectorSymbols.Count
+                compileLogExistsBefore = $syntheticCompileBeforeExists
+                compileLogExistsAfter = $syntheticCompileAfterExists
+                compileLogSha256Before = $syntheticCompileBeforeHash
+                compileLogSizeBytesBefore = $syntheticCompileBeforeSize
+                compileLogSha256After = $syntheticCompileAfterHash
+                compileLogSizeBytesAfter = $syntheticCompileAfterSize
+                compileLogProof = $syntheticCompileHasGl
+                compileCommandHasGl = $syntheticCompileHasGl
+                compileCommandRustSelectorDefineCount = $syntheticCompileSelectorCount
+                rustArchiveResult = 'dumpbin-defined-exports-verified'
+                rustArchiveSha256 = $syntheticArchiveHash
+                rustArchiveSizeBytes = [UInt64]5
+                definedProviderSymbols = $syntheticDefinedSymbols
+                definedProviderSymbolCount = $syntheticDefinedSymbols.Count
+                selectorContractSha256 = $syntheticSelectorHash
+            }
+            return [ordered]@{
+                schemaVersion = 1; record = 'output-startup-build-manifest'; payloadFree = $true; status = 'committed'
+                backend = $SyntheticBackend; platform = 'x64'; configuration = $SyntheticConfiguration
+                sourceHead = ('0' * 40); sourceDirty = $false; sourceStatusSha256 = ('a' * 64); sourceStatusLineCount = 0
+                outputBackend = $SyntheticBackend; utf16Backend = 'cpp'; outputProductionPackage = $false; utf16ProductionPackage = $false
+                exeSha256 = ('b' * 64); dependencyClosureSha256 = ('c' * 64); runtimeStageReceiptSha256 = ('d' * 64)
+                windowsImageIdentity = 'windows-selftest'; windowsImageSha256 = ('e' * 64)
+                powerMode = 'Balanced'; powerModeSha256 = ('f' * 64); buildParallelism = 1
+                msvcIdentity = 'msvc-selftest'; rustToolchain = 'rust-selftest'; rustLockSha256 = ('a' * 64)
+                packagePlanSha256 = ('b' * 64); buildCommandSha256 = ('c' * 64)
+                packagePlanCommandSha256 = ('d' * 64); runtimeStageCommandSha256 = ('e' * 64)
+                canonicalRuntimeStage = $true
+                selectorProof = $syntheticSelectorProof; selectorProofSha256 = $syntheticSelectorHash
+                providerObjectSha256Before = $null; providerObjectSha256After = $syntheticObjectHash
+                providerObjectFormat = $syntheticFormat; verificationMethod = $syntheticMethod
+                compileLogExistsBefore = $syntheticCompileBeforeExists; compileLogExistsAfter = $syntheticCompileAfterExists
+                compileLogSha256Before = $syntheticCompileBeforeHash; compileLogSizeBytesBefore = $syntheticCompileBeforeSize
+                compileLogSha256After = $syntheticCompileAfterHash; compileLogSizeBytesAfter = $syntheticCompileAfterSize
+                compileLogProof = $syntheticCompileHasGl; compileCommandHasGl = $syntheticCompileHasGl
+                compileCommandRustSelectorDefineCount = $syntheticCompileSelectorCount
+                transaction = [ordered]@{
+                    status = 'committed'; artifactBeforeVerified = $true; artifactAfterVerified = $true
+                    runtimeStageVerified = $true; manifestGeneratedByProducer = $true; publication = 'atomic-directory-rename'
+                }
+            }
+        }
+        $writeManifestSelfTest = {
+            param([object]$SyntheticManifest)
+            [IO.File]::WriteAllText($manifestSelfTestPath, ($SyntheticManifest | ConvertTo-Json -Depth 20), (New-Object Text.UTF8Encoding($false)))
+        }
+        $cloneManifestSelfTest = {
+            param([object]$SyntheticManifest)
+            return ($SyntheticManifest | ConvertTo-Json -Depth 20 | ConvertFrom-Json)
+        }
+        $assertManifestSelfTestRejected = {
+            param([string]$Label, [object]$SyntheticManifest, [string]$SyntheticBackend, [string]$SyntheticConfiguration)
+            & $writeManifestSelfTest $SyntheticManifest
+            $rejected = $false
+            try {
+                [void](Get-PairedBuildManifest $manifestSelfTestPath $SyntheticBackend 'x64' $SyntheticConfiguration $manifestSelfTestExpectedSource $manifestSelfTestExpectedArtifact)
+            }
+            catch { $rejected = $true }
+            if (-not $rejected) { throw "Manifest selector self-test accepted $Label." }
+            return $true
+        }
+        foreach ($case in @(
+                [pscustomobject]@{ backend = 'cpp'; configuration = 'Debug'; label = 'valid Debug C++' }
+                [pscustomobject]@{ backend = 'rust'; configuration = 'Debug'; label = 'valid Debug Rust' }
+                [pscustomobject]@{ backend = 'cpp'; configuration = 'Release'; label = 'valid Release C++' }
+                [pscustomobject]@{ backend = 'rust'; configuration = 'Release'; label = 'valid Release Rust' }
+            )) {
+            $fixture = & $newManifestSelfTest $case.backend $case.configuration
+            & $writeManifestSelfTest $fixture
+            $validated = Get-PairedBuildManifest $manifestSelfTestPath $case.backend 'x64' $case.configuration $manifestSelfTestExpectedSource $manifestSelfTestExpectedArtifact
+            $manifestSelectorValidCases[('{0}-{1}' -f $case.configuration, $case.backend)] = $true
+            Assert-PairedEqual $case.backend $validated.backend ($case.label + ' backend')
+            Assert-PairedEqual $case.configuration $validated.configuration ($case.label + ' configuration')
+            $expectedResult = if ($case.configuration -eq 'Release') { 'msvc-ltcg-compile-selector-verified' } else { 'dumpbin-unresolved-refs-verified' }
+            Assert-PairedEqual $expectedResult $validated.selectorProofResult ($case.label + ' result')
+        }
+        $manifestSelfTest = & $newManifestSelfTest 'cpp' 'Debug'
+        & $writeManifestSelfTest $manifestSelfTest
         $manifestSelfTestResult = Get-PairedBuildManifest $manifestSelfTestPath 'cpp' 'x64' 'Debug' $manifestSelfTestExpectedSource $manifestSelfTestExpectedArtifact
         Assert-PairedEqual 'output-startup-build-manifest' $manifestSelfTestResult.record 'producer manifest record'
         Assert-PairedEqual $true $manifestSelfTestResult.manifestGeneratedByProducer 'producer manifest transaction marker'
@@ -1937,41 +2232,50 @@ function Invoke-PairedSelfTest {
         Assert-PairedEqual 'dumpbin-unresolved-refs-verified' $manifestSelfTestResult.selectorProofResult 'selector proof result'
         Assert-PairedEqual 0 $manifestSelfTestResult.selectorProofUnresolvedProviderSymbolCount 'C++ selector proof symbol count'
         $manifestSelfTest.status = 'unverified'
-        [IO.File]::WriteAllText($manifestSelfTestPath, ($manifestSelfTest | ConvertTo-Json -Depth 20), (New-Object Text.UTF8Encoding($false)))
-        $manifestRejected = $false
-        try { [void](Get-PairedBuildManifest $manifestSelfTestPath 'cpp' 'x64' 'Debug' $manifestSelfTestExpectedSource $manifestSelfTestExpectedArtifact) } catch { $manifestRejected = $true }
-        if (-not $manifestRejected) { throw 'Uncommitted producer manifest was accepted.' }
+        & $writeManifestSelfTest $manifestSelfTest
+        if (-not (& $assertManifestSelfTestRejected 'uncommitted producer manifest' $manifestSelfTest 'cpp' 'Debug')) { throw 'Uncommitted producer manifest rejection self-test failed.' }
         $manifestSelfTest.status = 'committed'
         $manifestSelfTest.sourceDirty = $true
         $manifestSelfTestExpectedSource.dirty = $true
-        [IO.File]::WriteAllText($manifestSelfTestPath, ($manifestSelfTest | ConvertTo-Json -Depth 20), (New-Object Text.UTF8Encoding($false)))
-        $dirtyManifestRejected = $false
-        try { [void](Get-PairedBuildManifest $manifestSelfTestPath 'cpp' 'x64' 'Debug' $manifestSelfTestExpectedSource $manifestSelfTestExpectedArtifact) } catch { $dirtyManifestRejected = $true }
-        if (-not $dirtyManifestRejected) { throw 'Dirty producer manifest was accepted for qualified evidence.' }
+        & $writeManifestSelfTest $manifestSelfTest
+        $dirtyManifestRejected = & $assertManifestSelfTestRejected 'dirty producer manifest' $manifestSelfTest 'cpp' 'Debug'
+        if (-not $dirtyManifestRejected) { throw 'Dirty producer manifest rejection self-test failed.' }
         $manifestSelfTest.sourceDirty = $false
         $manifestSelfTestExpectedSource.dirty = $false
-        $manifestSelfTest.backend = 'rust'
-        $manifestSelfTest.outputBackend = 'rust'
-        $rustSelectorSymbols = @($script:PairedRustOutputProviderSymbols | Sort-Object -Unique)
-        $rustSelectorCanonical = 'output=rust|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result=dumpbin-unresolved-refs-verified|symbols={0}|object-after={1}' -f
-            ($rustSelectorSymbols -join ','), $manifestSelfTestSelectorObjectAfter
-        $rustSelectorHash = Get-TextSha256 $rustSelectorCanonical
-        $manifestSelfTest.selectorProof = [ordered]@{
-            result = 'dumpbin-unresolved-refs-verified'; outputBackend = 'rust'; utf16Backend = 'cpp'
-            outputProductionPackage = $false; utf16ProductionPackage = $false
-            utf16BenchmarkTelemetry = $false; assemblyListings = $false
-            providerObjectSha256After = $manifestSelfTestSelectorObjectAfter; providerObjectSizeBytesAfter = 1
-            unresolvedProviderSymbols = $rustSelectorSymbols; unresolvedProviderSymbolCount = $rustSelectorSymbols.Count
-            selectorContractSha256 = $rustSelectorHash
-        }
-        $manifestSelfTest.selectorProofSha256 = $rustSelectorHash
-        $manifestSelfTest.providerObjectSha256After = $manifestSelfTestSelectorObjectAfter
-        [IO.File]::WriteAllText($manifestSelfTestPath, ($manifestSelfTest | ConvertTo-Json -Depth 20), (New-Object Text.UTF8Encoding($false)))
-        $rustManifestSelfTestResult = Get-PairedBuildManifest $manifestSelfTestPath 'rust' 'x64' 'Debug' $manifestSelfTestExpectedSource $manifestSelfTestExpectedArtifact
-        Assert-PairedEqual 'dumpbin-unresolved-refs-verified' $rustManifestSelfTestResult.selectorProofResult 'Rust selector proof result'
-        Assert-PairedEqual 7 $rustManifestSelfTestResult.selectorProofUnresolvedProviderSymbolCount 'Rust selector proof symbol count'
-        Assert-PairedEqual ($rustSelectorSymbols -join '|') ($rustManifestSelfTestResult.selectorProofUnresolvedProviderSymbols -join '|') 'Rust selector proof symbol set'
-        $rustManifestAccepted = $true
+
+        $badResultManifest = & $cloneManifestSelfTest (& $newManifestSelfTest 'cpp' 'Release')
+        $badResultManifest.selectorProof.result = 'dumpbin-unresolved-refs-verified'
+        $manifestSelectorRejectedCases.wrongResult = & $assertManifestSelfTestRejected 'wrong configuration result' $badResultManifest 'cpp' 'Release'
+        $badConfigurationManifest = & $cloneManifestSelfTest (& $newManifestSelfTest 'cpp' 'Debug')
+        $badConfigurationManifest.configuration = 'Release'
+        $manifestSelectorRejectedCases.wrongConfiguration = & $assertManifestSelfTestRejected 'wrong manifest configuration' $badConfigurationManifest 'cpp' 'Release'
+        $badCountManifest = & $cloneManifestSelfTest (& $newManifestSelfTest 'rust' 'Release')
+        $badCountManifest.selectorProof.compileCommandRustSelectorDefineCount = 0
+        $manifestSelectorRejectedCases.wrongSelectorCount = & $assertManifestSelfTestRejected 'wrong Release Rust selector count' $badCountManifest 'rust' 'Release'
+        $badCompileLogManifest = & $cloneManifestSelfTest (& $newManifestSelfTest 'cpp' 'Release')
+        $badCompileLogManifest.selectorProof.compileLogExistsAfter = $false
+        $badCompileLogManifest.selectorProof.compileLogSha256After = $null
+        $badCompileLogManifest.selectorProof.compileLogSizeBytesAfter = 0
+        $badCompileLogManifest.compileLogExistsAfter = $false
+        $badCompileLogManifest.compileLogSha256After = $null
+        $badCompileLogManifest.compileLogSizeBytesAfter = 0
+        $manifestSelectorRejectedCases.compileLog = & $assertManifestSelfTestRejected 'missing Release compile log' $badCompileLogManifest 'cpp' 'Release'
+        $badArchiveHashManifest = & $cloneManifestSelfTest (& $newManifestSelfTest 'cpp' 'Debug')
+        $badArchiveHashManifest.selectorProof.rustArchiveSha256 = 'c' * 64
+        $manifestSelectorRejectedCases.archiveHash = & $assertManifestSelfTestRejected 'tampered archive hash' $badArchiveHashManifest 'cpp' 'Debug'
+        $badSymbolManifest = & $cloneManifestSelfTest (& $newManifestSelfTest 'rust' 'Debug')
+        $badSymbolManifest.selectorProof.unresolvedProviderSymbols = @($manifestSelfTestSelectorSymbols | Select-Object -Skip 1)
+        $badSymbolManifest.selectorProof.unresolvedProviderSymbolCount = 6
+        $manifestSelectorRejectedCases.symbol = & $assertManifestSelfTestRejected 'tampered unresolved symbol set' $badSymbolManifest 'rust' 'Debug'
+        $badProofHashManifest = & $cloneManifestSelfTest (& $newManifestSelfTest 'cpp' 'Debug')
+        $badProofHashManifest.selectorProof.selectorContractSha256 = 'd' * 64
+        $manifestSelectorRejectedCases.proofHash = & $assertManifestSelfTestRejected 'tampered selector contract hash' $badProofHashManifest 'cpp' 'Debug'
+        $badMirrorManifest = & $cloneManifestSelfTest (& $newManifestSelfTest 'rust' 'Release')
+        $badMirrorManifest.providerObjectFormat = 'coff-symbols'
+        $manifestSelectorRejectedCases.topLevelMirror = & $assertManifestSelfTestRejected 'tampered top-level selector mirror' $badMirrorManifest 'rust' 'Release'
+        $badTopLevelHashManifest = & $cloneManifestSelfTest (& $newManifestSelfTest 'cpp' 'Debug')
+        $badTopLevelHashManifest.selectorProofSha256 = 'e' * 64
+        $manifestSelectorRejectedCases.topLevelHash = & $assertManifestSelfTestRejected 'tampered top-level selector hash' $badTopLevelHashManifest 'cpp' 'Debug'
     }
     finally {
         if (Test-Path -LiteralPath $manifestSelfTestRoot) { [IO.Directory]::Delete($manifestSelfTestRoot, $true) }
@@ -2123,7 +2427,20 @@ function Invoke-PairedSelfTest {
             $syntheticSourcePreflight.sourceState.statusLineCount -eq 0 -and
             $syntheticSourcePreflight.sourceState.statusSha256 -eq $emptyTextSha256)
         manifestProducerContractVerified = $true
-        manifestSelectorProofVerified = [bool]$rustManifestAccepted
+        manifestSelectorProofVerified = [bool]($manifestSelectorValidCases.Count -eq 4 -and $manifestSelectorRejectedCases.Count -eq 9)
+        manifestSelectorValidDebugCpp = [bool]$manifestSelectorValidCases['Debug-cpp']
+        manifestSelectorValidDebugRust = [bool]$manifestSelectorValidCases['Debug-rust']
+        manifestSelectorValidReleaseCpp = [bool]$manifestSelectorValidCases['Release-cpp']
+        manifestSelectorValidReleaseRust = [bool]$manifestSelectorValidCases['Release-rust']
+        manifestSelectorWrongResultRejected = [bool]$manifestSelectorRejectedCases.wrongResult
+        manifestSelectorWrongConfigurationRejected = [bool]$manifestSelectorRejectedCases.wrongConfiguration
+        manifestSelectorWrongCountRejected = [bool]$manifestSelectorRejectedCases.wrongSelectorCount
+        manifestSelectorCompileLogRejected = [bool]$manifestSelectorRejectedCases.compileLog
+        manifestSelectorArchiveHashRejected = [bool]$manifestSelectorRejectedCases.archiveHash
+        manifestSelectorSymbolRejected = [bool]$manifestSelectorRejectedCases.symbol
+        manifestSelectorProofHashRejected = [bool]$manifestSelectorRejectedCases.proofHash
+        manifestSelectorMirrorRejected = [bool]$manifestSelectorRejectedCases.topLevelMirror
+        manifestSelectorTopLevelHashRejected = [bool]$manifestSelectorRejectedCases.topLevelHash
         manifestCleanSourceRequired = [bool]$dirtyManifestRejected
         integrityRechecksVerified = [bool]($selfTestIntegrity.sourcePostflightVerified -and
             $selfTestIntegrity.scriptPostflightVerified -and $selfTestIntegrity.reportWriteVerified)
