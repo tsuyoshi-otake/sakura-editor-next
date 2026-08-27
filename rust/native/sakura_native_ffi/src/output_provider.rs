@@ -2115,6 +2115,108 @@ mod tests {
     }
 
     #[test]
+    fn provider_accepts_aliased_immutable_input_spans_and_copies_nested_values() {
+        let token = create_provider_token();
+        let mut shared_create = b"shared".to_vec();
+        let create = SakuraOutputProviderRequestV1 {
+            // All four request spans deliberately alias one immutable backing
+            // range. The provider must copy each value before returning.
+            operation_id: span(&shared_create),
+            owner_id: span(&shared_create),
+            channel_id: span(&shared_create),
+            label: span(&shared_create),
+            ..create_request(b"unused", b"unused", b"unused", b"unused")
+        };
+        let mut result = poison_result();
+        // SAFETY: The aliased spans are immutable, valid caller-owned bytes for
+        // the duration of this copied ABI call.
+        assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
+            sakura_output_provider_apply_v1(token, &create, &mut result)
+        });
+        assert_eq!(
+            SakuraOutputProviderOperationStatus::Succeeded as u32,
+            result.status
+        );
+        shared_create.fill(b'x');
+
+        let mut log_channel = create_request(b"alias-log-create", b"owner", b"log", b"Log");
+        log_channel.channel_kind = 1;
+        // SAFETY: The request and result satisfy the V1 copied ABI contract.
+        assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
+            sakura_output_provider_apply_v1(token, &log_channel, &mut result)
+        });
+        assert_eq!(
+            SakuraOutputProviderOperationStatus::Succeeded as u32,
+            result.status
+        );
+
+        let mut shared_log = b"log-entry".to_vec();
+        let aliased_entry = SakuraOutputProviderLogEntryV1 {
+            // Message and optional source deliberately alias the same immutable
+            // nested backing range; both must be copied independently.
+            flags: 1,
+            message: span(&shared_log),
+            source: span(&shared_log),
+            ..valid_log_entry(b"unused")
+        };
+        let append_log = append_log_request(
+            b"alias-log-append",
+            b"log",
+            std::slice::from_ref(&aliased_entry),
+        );
+        // SAFETY: The nested log entry and its aliased spans are immutable,
+        // valid caller-owned storage for this copied ABI call.
+        assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
+            sakura_output_provider_apply_v1(token, &append_log, &mut result)
+        });
+        assert_eq!(
+            SakuraOutputProviderOperationStatus::Succeeded as u32,
+            result.status
+        );
+        shared_log.fill(b'y');
+
+        let mut active_storage = vec![0_u8; 32];
+        let mut active = active_buffer(&mut active_storage);
+        // SAFETY: The active destination is caller-owned for this call. The
+        // earlier aliased request storage has been mutated after each call.
+        assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
+            sakura_output_provider_active_channel_v1(token, &mut active)
+        });
+        assert_eq!(b"shared", &active_storage[..active.length as usize]);
+
+        let mut info = poison_info();
+        // SAFETY: The info slot is writable local V1 storage.
+        assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
+            sakura_output_provider_snapshot_measure_v1(token, &mut info)
+        });
+        let mut storage = vec![0_u8; info.encoded_size as usize];
+        let mut buffer = snapshot_buffer_with_receipt(&mut storage, info.receipt);
+        // SAFETY: The snapshot destination is caller-owned and bounded.
+        assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
+            sakura_output_provider_snapshot_write_v1(token, &mut buffer)
+        });
+        assert!(storage
+            .windows(b"shared".len())
+            .any(|window| window == b"shared"));
+        assert!(storage
+            .windows(b"log-entry".len())
+            .any(|window| window == b"log-entry"));
+        assert!(!storage
+            .windows(b"xxxxxx".len())
+            .any(|window| window == b"xxxxxx"));
+        assert!(!storage
+            .windows(b"yyyyyyyyy".len())
+            .any(|window| window == b"yyyyyyyyy"));
+
+        let mut token = token;
+        // SAFETY: The token slot is valid caller-owned storage.
+        assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
+            sakura_output_provider_destroy_v1(&mut token)
+        });
+        assert_eq!(0, token);
+    }
+
+    #[test]
     fn provider_snapshot_measure_write_rejects_malformed_destinations() {
         let token = create_provider_token();
         let create = create_request(b"snapshot-create", b"owner", b"channel", b"Label");
