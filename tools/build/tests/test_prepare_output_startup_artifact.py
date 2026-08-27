@@ -89,6 +89,7 @@ class PrepareOutputStartupArtifactContractTests(unittest.TestCase):
             "compileCommandHasGl",
             "compileLogExistsBefore",
             "compileLogExistsAfter",
+            "$compileLogAfter = Get-OptionalFileIdentity $compileLogSource",
             "$Configuration -eq 'Release'",
             "Assert-ProviderCompileSelector $compileLogText",
             "ANONYMOUS OBJECT",
@@ -123,6 +124,7 @@ class PrepareOutputStartupArtifactContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, self.text)
         self.assertNotIn("CreateDirectory($script:LockPath)", self.text)
+        self.assertNotIn("$compileLogAfter = Get-FileIdentity $compileLogSource", self.text)
         self.assertRegex(self.text, r"\$script:SchemaVersion\s*=\s*1")
         self.assertIn("[ValidateSet('x64')]", self.text)
         self.assertIn("[ValidateSet('Debug', 'Release')]", self.text)
@@ -134,7 +136,7 @@ class PrepareOutputStartupArtifactContractTests(unittest.TestCase):
             "Get-OptionalFileIdentity $artifactSource",
             "Get-OptionalFileIdentity $compileLogSource",
             "$artifactAfter = Get-FileIdentity $artifactSource",
-            "$compileLogAfter = Get-FileIdentity $compileLogSource",
+            "$compileLogAfter = Get-OptionalFileIdentity $compileLogSource",
             "CL.command.1.tlog",
             "Release provider object and compile log were not produced by this build.",
             "artifactHashBefore",

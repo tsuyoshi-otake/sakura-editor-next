@@ -2016,7 +2016,7 @@ function Invoke-Producer {
         Assert-SourceStateEqual $sourceBefore $sourceAfterBuild
         $artifactAfter = Get-FileIdentity $artifactSource
         $providerObjectAfter = Get-FileIdentity $providerObjectSource
-        $compileLogAfter = Get-FileIdentity $compileLogSource
+        $compileLogAfter = Get-OptionalFileIdentity $compileLogSource
         if ($Configuration -eq 'Release') {
             $providerObjectItem = Get-Item -LiteralPath $providerObjectSource -Force -ErrorAction Stop
             $compileLogItem = Get-Item -LiteralPath $compileLogSource -Force -ErrorAction Stop
