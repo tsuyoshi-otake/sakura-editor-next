@@ -1455,6 +1455,9 @@
     <ClInclude Include="..\sakura_core\workbench\output\OutputServiceRustProviderAbi.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\output\OutputServiceRustSnapshotCodec.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\workbench\output\OutputServiceRustShadowAbi.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
@@ -3902,6 +3905,9 @@
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\workbench\output\OutputServiceRustProvider.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\output\OutputServiceRustSnapshotCodec.cpp">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\workbench\ports\PortForwardingService.cpp">

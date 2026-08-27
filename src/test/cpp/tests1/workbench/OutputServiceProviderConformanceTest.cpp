@@ -9,6 +9,7 @@
 #include "workbench/output/IOutputService.h"
 #include "workbench/output/OutputService.h"
 #include "workbench/output/OutputServiceRustProvider.h"
+#include "workbench/output/OutputServiceRustSnapshotCodec.h"
 
 #include <gtest/gtest.h>
 
@@ -17,6 +18,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <condition_variable>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -199,6 +201,225 @@ void ExpectSnapshotsExactlyEqual(
 {
 	ExpectSnapshotParity(expected, actual);
 	EXPECT_EQ(expected.droppedNotificationCount, actual.droppedNotificationCount);
+}
+
+void AppendSnapshotU32(std::vector<std::uint8_t>& bytes, const std::uint32_t value)
+{
+	for (std::size_t index = 0; index < sizeof(value); ++index) {
+		bytes.push_back(static_cast<std::uint8_t>(value >> (index * 8)));
+	}
+}
+
+void AppendSnapshotU64(std::vector<std::uint8_t>& bytes, const std::uint64_t value)
+{
+	for (std::size_t index = 0; index < sizeof(value); ++index) {
+		bytes.push_back(static_cast<std::uint8_t>(value >> (index * 8)));
+	}
+}
+
+void ReplaceSnapshotU64(
+	std::vector<std::uint8_t>& bytes,
+	const std::size_t offset,
+	const std::uint64_t value)
+{
+	for (std::size_t index = 0; index < sizeof(value); ++index) {
+		bytes[offset + index] = static_cast<std::uint8_t>(value >> (index * 8));
+	}
+}
+
+void ReplaceSnapshotU32(
+	std::vector<std::uint8_t>& bytes,
+	const std::size_t offset,
+	const std::uint32_t value)
+{
+	for (std::size_t index = 0; index < sizeof(value); ++index) {
+		bytes[offset + index] = static_cast<std::uint8_t>(value >> (index * 8));
+	}
+}
+
+void AppendSnapshotBytes(
+	std::vector<std::uint8_t>& bytes,
+	const std::string_view value,
+	std::size_t* const dataOffset = nullptr,
+	std::size_t* const lengthOffset = nullptr)
+{
+	if (lengthOffset) *lengthOffset = bytes.size();
+	AppendSnapshotU64(bytes, static_cast<std::uint64_t>(value.size()));
+	if (dataOffset) *dataOffset = bytes.size();
+	bytes.insert(bytes.end(), value.begin(), value.end());
+}
+
+void AppendSnapshotOptionalBytes(
+	std::vector<std::uint8_t>& bytes,
+	const std::string_view value,
+	std::size_t* const presenceOffset = nullptr,
+	std::size_t* const dataOffset = nullptr)
+{
+	if (presenceOffset) *presenceOffset = bytes.size();
+	bytes.push_back(1);
+	AppendSnapshotBytes(bytes, value, dataOffset);
+}
+
+struct EncodedSnapshotFixture final {
+	std::vector<std::uint8_t> bytes;
+	std::size_t stoppedOffset{};
+	std::size_t activePresenceOffset{};
+	std::size_t activeDataOffset{};
+	std::size_t channelCountOffset{};
+	std::size_t channelIdDataOffset{};
+	std::size_t labelDataOffset{};
+	std::size_t ownerIdDataOffset{};
+	std::size_t ownerGenerationOffset{};
+	std::size_t channelKindOffset{};
+	std::size_t languagePresenceOffset{};
+	std::size_t visibleOffset{};
+	std::size_t preservedFocusOffset{};
+	std::size_t logLevelOffset{};
+	std::size_t logMessageLengthOffset{};
+	std::size_t logMessageDataOffset{};
+};
+
+EncodedSnapshotFixture MakeEncodedSnapshotFixture()
+{
+	EncodedSnapshotFixture fixture;
+	fixture.bytes.insert(fixture.bytes.end(),
+		kOutputServiceRustSnapshotMagicV1.begin(), kOutputServiceRustSnapshotMagicV1.end());
+	AppendSnapshotU64(fixture.bytes, 7);
+	fixture.stoppedOffset = fixture.bytes.size();
+	fixture.bytes.push_back(0);
+	AppendSnapshotU64(fixture.bytes, 3);
+	fixture.activePresenceOffset = fixture.bytes.size();
+	fixture.bytes.push_back(1);
+	AppendSnapshotBytes(fixture.bytes, "z.log", &fixture.activeDataOffset);
+	fixture.channelCountOffset = fixture.bytes.size();
+	AppendSnapshotU64(fixture.bytes, 1);
+	AppendSnapshotBytes(fixture.bytes, "z.log", &fixture.channelIdDataOffset);
+	AppendSnapshotBytes(fixture.bytes, "Diagnostics", &fixture.labelDataOffset);
+	AppendSnapshotBytes(fixture.bytes, "owner.test", &fixture.ownerIdDataOffset);
+	fixture.ownerGenerationOffset = fixture.bytes.size();
+	AppendSnapshotU64(fixture.bytes, 2);
+	fixture.channelKindOffset = fixture.bytes.size();
+	fixture.bytes.push_back(static_cast<std::uint8_t>(EOutputChannelKind::Log));
+	AppendSnapshotOptionalBytes(fixture.bytes, "plaintext", &fixture.languagePresenceOffset);
+	AppendSnapshotOptionalBytes(fixture.bytes, "conformance");
+	fixture.visibleOffset = fixture.bytes.size();
+	fixture.bytes.push_back(1);
+	fixture.preservedFocusOffset = fixture.bytes.size();
+	fixture.bytes.push_back(1);
+	AppendSnapshotU64(fixture.bytes, 4);
+	AppendSnapshotBytes(fixture.bytes, "");
+	AppendSnapshotU64(fixture.bytes, 1);
+	fixture.logLevelOffset = fixture.bytes.size();
+	AppendSnapshotU32(fixture.bytes, static_cast<std::uint32_t>(EOutputLogLevel::Warning));
+	AppendSnapshotBytes(fixture.bytes, "warning", &fixture.logMessageDataOffset,
+		&fixture.logMessageLengthOffset);
+	AppendSnapshotOptionalBytes(fixture.bytes, "logger");
+	AppendSnapshotBytes(fixture.bytes, "warning");
+	return fixture;
+}
+
+TEST(OutputServiceRustSnapshotCodec, DecodesValidV1Snapshot)
+{
+	const auto fixture = MakeEncodedSnapshotFixture();
+	const auto decoded = DecodeOutputServiceRustSnapshotV1(fixture.bytes);
+	ASSERT_TRUE(decoded.has_value());
+	EXPECT_EQ(7U, decoded->revision);
+	EXPECT_FALSE(decoded->stopped);
+	EXPECT_EQ(3U, decoded->droppedNotificationCount);
+	ASSERT_EQ(std::optional<std::string>("z.log"), decoded->activeChannelId);
+	ASSERT_EQ(1U, decoded->channels.size());
+	const auto& channel = decoded->channels.front();
+	EXPECT_EQ("z.log", channel.channelId);
+	EXPECT_EQ("Diagnostics", channel.label);
+	EXPECT_EQ("owner.test", channel.owner.ownerId);
+	EXPECT_EQ(2U, channel.owner.generation);
+	EXPECT_EQ(EOutputChannelKind::Log, channel.kind);
+	EXPECT_EQ(std::optional<std::string>("plaintext"), channel.metadata.languageId);
+	EXPECT_EQ(std::optional<std::string>("conformance"), channel.metadata.source);
+	EXPECT_TRUE(channel.visible);
+	EXPECT_TRUE(channel.lastShowPreservedFocus);
+	EXPECT_EQ(4U, channel.droppedCharacterCount);
+	EXPECT_TRUE(channel.text.empty());
+	ASSERT_EQ(1U, channel.logEntries.size());
+	EXPECT_EQ(EOutputLogLevel::Warning, channel.logEntries.front().level);
+	EXPECT_EQ("warning", channel.logEntries.front().message);
+	EXPECT_EQ(std::optional<std::string>("logger"), channel.logEntries.front().source);
+	EXPECT_EQ("warning", channel.projectedText);
+}
+
+TEST(OutputServiceRustSnapshotCodec, RejectsMalformedV1Snapshots)
+{
+	const auto expectRejected = [](const char* const description, auto mutate) {
+		SCOPED_TRACE(description);
+		auto fixture = MakeEncodedSnapshotFixture();
+		mutate(fixture);
+		EXPECT_FALSE(DecodeOutputServiceRustSnapshotV1(fixture.bytes).has_value());
+	};
+
+	expectRejected("empty input", [](EncodedSnapshotFixture& fixture) {
+		fixture.bytes.clear();
+	});
+	expectRejected("truncated input", [](EncodedSnapshotFixture& fixture) {
+		fixture.bytes.pop_back();
+	});
+	expectRejected("wrong magic", [](EncodedSnapshotFixture& fixture) {
+		fixture.bytes.front() ^= 0xff;
+	});
+	expectRejected("invalid stopped boolean", [](EncodedSnapshotFixture& fixture) {
+		fixture.bytes[fixture.stoppedOffset] = 2;
+	});
+	expectRejected("invalid active presence", [](EncodedSnapshotFixture& fixture) {
+		fixture.bytes[fixture.activePresenceOffset] = 2;
+	});
+	expectRejected("invalid visible boolean", [](EncodedSnapshotFixture& fixture) {
+		fixture.bytes[fixture.visibleOffset] = 2;
+	});
+	expectRejected("invalid preserved-focus boolean", [](EncodedSnapshotFixture& fixture) {
+		fixture.bytes[fixture.preservedFocusOffset] = 2;
+	});
+	expectRejected("invalid active stable identifier", [](EncodedSnapshotFixture& fixture) {
+		fixture.bytes[fixture.activeDataOffset] = ' ';
+	});
+	expectRejected("invalid channel stable identifier", [](EncodedSnapshotFixture& fixture) {
+		fixture.bytes[fixture.channelIdDataOffset] = ' ';
+	});
+	expectRejected("invalid owner stable identifier", [](EncodedSnapshotFixture& fixture) {
+		fixture.bytes[fixture.ownerIdDataOffset] = ' ';
+	});
+	expectRejected("zero owner generation", [](EncodedSnapshotFixture& fixture) {
+		ReplaceSnapshotU64(fixture.bytes, fixture.ownerGenerationOffset, 0);
+	});
+	expectRejected("invalid channel kind", [](EncodedSnapshotFixture& fixture) {
+		fixture.bytes[fixture.channelKindOffset] = 2;
+	});
+	expectRejected("invalid optional presence", [](EncodedSnapshotFixture& fixture) {
+		fixture.bytes[fixture.languagePresenceOffset] = 2;
+	});
+	expectRejected("invalid UTF-8 label", [](EncodedSnapshotFixture& fixture) {
+		fixture.bytes[fixture.labelDataOffset] = 0xff;
+	});
+	expectRejected("invalid UTF-8 log message", [](EncodedSnapshotFixture& fixture) {
+		fixture.bytes[fixture.logMessageDataOffset] = 0xff;
+	});
+	expectRejected("invalid log level", [](EncodedSnapshotFixture& fixture) {
+		ReplaceSnapshotU32(fixture.bytes, fixture.logLevelOffset, 5);
+	});
+	expectRejected("empty log message", [](EncodedSnapshotFixture& fixture) {
+		ReplaceSnapshotU64(fixture.bytes, fixture.logMessageLengthOffset, 0);
+		fixture.bytes.erase(
+			fixture.bytes.begin() + static_cast<std::ptrdiff_t>(fixture.logMessageDataOffset),
+			fixture.bytes.begin() + static_cast<std::ptrdiff_t>(fixture.logMessageDataOffset + 7));
+	});
+	expectRejected("channel count exceeds remaining bytes", [](EncodedSnapshotFixture& fixture) {
+		ReplaceSnapshotU64(fixture.bytes, fixture.channelCountOffset,
+			std::numeric_limits<std::uint64_t>::max());
+	});
+	expectRejected("truncated active string", [](EncodedSnapshotFixture& fixture) {
+		ReplaceSnapshotU64(fixture.bytes, fixture.activeDataOffset - sizeof(std::uint64_t), 1000);
+	});
+	expectRejected("trailing bytes", [](EncodedSnapshotFixture& fixture) {
+		fixture.bytes.push_back(0);
+	});
 }
 
 template <typename Mutation>

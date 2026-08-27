@@ -626,6 +626,7 @@
 	<ClInclude Include="..\sakura_core\workbench\output\OutputServiceRustCandidate.h" />
 	<ClInclude Include="..\sakura_core\workbench\output\OutputServiceRustProvider.h" />
 	<ClInclude Include="..\sakura_core\workbench\output\OutputServiceRustProviderAbi.h" />
+	<ClInclude Include="..\sakura_core\workbench\output\OutputServiceRustSnapshotCodec.h" />
 	<ClInclude Include="..\sakura_core\workbench\output\OutputServiceRustShadowAbi.h" />
 	<ClInclude Include="..\sakura_core\workbench\ports\PortForwardingService.h" />
 	<ClInclude Include="..\sakura_core\debug\launch\LaunchConfigurationCatalog.h" />
@@ -1315,6 +1316,7 @@
 	<ClCompile Include="..\sakura_core\workbench\output\OutputServiceNotificationDispatcher.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\output\OutputServiceRustCandidate.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\output\OutputServiceRustProvider.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\output\OutputServiceRustSnapshotCodec.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\ports\PortForwardingService.cpp" />
 	<ClCompile Include="..\sakura_core\debug\dap\DapProtocolCodec.cpp" />
 	<ClCompile Include="..\sakura_core\debug\dap\DapSession.cpp" />
