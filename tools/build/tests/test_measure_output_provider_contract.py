@@ -43,6 +43,11 @@ class MeasureOutputProviderContractTests(unittest.TestCase):
             "Get-ProviderSourceState",
             "CWorkbenchRuntime.CompileSelectedOutputProviderOwnsTheRuntimeLifecycle",
             "runtimeClosureSha256",
+            "msvc-ltcg-compile-selector-verified",
+            "msvc-ltcg-compile-selector",
+            "compileLogSha256After",
+            "compileCommandRustSelectorDefineCount",
+            "Release selector proof must use the MSVC LTCG compile-selector contract.",
         ):
             self.assertIn(marker, self.text)
         self.assertIn("([string]$Value).Length -gt 512", self.text)
@@ -102,8 +107,16 @@ class MeasureOutputProviderContractTests(unittest.TestCase):
             "CWorkbenchRuntime.CompileSelectedOutputProviderOwnsTheRuntimeLifecycle",
             "tests1Sha256",
             "tests1SizeBytes",
+            "LTCG compile log hash self-test",
+            "LTCG selector macro self-test",
+            "LTCG selector method self-test",
         ):
             self.assertIn(marker, self.text)
+
+    def test_release_selector_uses_compile_tlog_contract(self):
+        self.assertIn("(Get-ProviderString $manifestConfiguration 'configuration').ToLowerInvariant() -eq 'release'", self.text)
+        self.assertIn("providerObjectFormat", self.text)
+        self.assertIn("compileCommandHasGl", self.text)
 
     def test_collect_only_without_manifests_stays_unqualified(self):
         self.assertIn("$manifestsSupplied = $cppManifestSupplied -or $rustManifestSupplied", self.text)

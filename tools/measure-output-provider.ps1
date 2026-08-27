@@ -439,7 +439,16 @@ function Get-ProviderSelectorProof {
   )
   $proof = Get-ProviderRequiredCandidate $Manifest @('selectorProof') 'selectorProof'
   $result = Get-ProviderString (Get-ProviderRequiredCandidate $proof @('result') 'selectorProof.result') 'selectorProof.result'
-  if ($result -cne 'dumpbin-unresolved-refs-verified') { throw 'selector proof did not come from dumpbin unresolved-reference verification' }
+  $isObjectProof = $result -ceq 'dumpbin-unresolved-refs-verified'
+  $isLtcgProof = $result -ceq 'msvc-ltcg-compile-selector-verified'
+  if (-not $isObjectProof -and -not $isLtcgProof) { throw 'selector proof verification result is unsupported' }
+  if ($isObjectProof) {
+    $manifestConfiguration = Get-ProviderCandidate $Manifest @('configuration')
+    if ($null -ne $manifestConfiguration -and
+        (Get-ProviderString $manifestConfiguration 'configuration').ToLowerInvariant() -eq 'release') {
+      throw 'Release selector proof must use the MSVC LTCG compile-selector contract.'
+    }
+  }
   $outputBackend = (Get-ProviderString (Get-ProviderRequiredCandidate $proof @('outputBackend') 'selectorProof.outputBackend') 'selectorProof.outputBackend').ToLowerInvariant()
   $utf16Backend = (Get-ProviderString (Get-ProviderRequiredCandidate $proof @('utf16Backend') 'selectorProof.utf16Backend') 'selectorProof.utf16Backend').ToLowerInvariant()
   if ($outputBackend -ne $Backend -or $utf16Backend -ne 'cpp') { throw 'selector proof providers are not exact' }
@@ -451,12 +460,40 @@ function Get-ProviderSelectorProof {
   $objectHash = Get-ProviderHash (Get-ProviderRequiredCandidate $proof @('providerObjectSha256After', 'objectSha256After') 'selectorProof.providerObjectSha256After') 'selectorProof.providerObjectSha256After'
   $objectSize = Get-ProviderUInt64 (Get-ProviderRequiredCandidate $proof @('providerObjectSizeBytesAfter', 'objectSizeBytesAfter') 'selectorProof.providerObjectSizeBytesAfter') 'selectorProof.providerObjectSizeBytesAfter'
   if ($objectSize -lt 1) { throw 'selector proof object size must be positive' }
+  $verificationMethod = $null
+  $providerObjectFormat = $null
+  $compileLogHashBefore = $null
+  $compileLogHashAfter = $null
+  $compileLogSize = [UInt64]0
+  $compileLogProof = $false
+  $compileHasGl = $false
+  $compileRustSelectorCount = 0
+  if ($isLtcgProof) {
+    $configuration = (Get-ProviderString (Get-ProviderRequiredCandidate $Manifest @('configuration') 'configuration') 'configuration').ToLowerInvariant()
+    if ($configuration -cne 'release') { throw 'MSVC LTCG selector proof is only valid for Release.' }
+    $verificationMethod = Get-ProviderString (Get-ProviderRequiredCandidate $proof @('verificationMethod') 'selectorProof.verificationMethod') 'selectorProof.verificationMethod'
+    if ($verificationMethod -cne 'msvc-ltcg-compile-selector') { throw 'MSVC LTCG selector proof method is invalid' }
+    $providerObjectFormat = Get-ProviderString (Get-ProviderRequiredCandidate $proof @('providerObjectFormat') 'selectorProof.providerObjectFormat') 'selectorProof.providerObjectFormat'
+    if ($providerObjectFormat -cne 'msvc-ltcg-anonymous') { throw 'MSVC LTCG selector proof object format is invalid' }
+    $compileLogHashAfter = Get-ProviderHash (Get-ProviderRequiredCandidate $proof @('compileLogSha256After') 'selectorProof.compileLogSha256After') 'selectorProof.compileLogSha256After'
+    $compileLogSize = Get-ProviderUInt64 (Get-ProviderRequiredCandidate $proof @('compileLogSizeBytesAfter') 'selectorProof.compileLogSizeBytesAfter') 'selectorProof.compileLogSizeBytesAfter'
+    if ($compileLogSize -lt 1) { throw 'selector proof compile log size must be positive' }
+    $compileLogProof = Get-ProviderBoolean (Get-ProviderRequiredCandidate $proof @('compileLogProof') 'selectorProof.compileLogProof') 'selectorProof.compileLogProof'
+    if (-not $compileLogProof) { throw 'selector proof compile log was not verified' }
+    $compileHasGl = Get-ProviderBoolean (Get-ProviderRequiredCandidate $proof @('compileCommandHasGl') 'selectorProof.compileCommandHasGl') 'selectorProof.compileCommandHasGl'
+    if (-not $compileHasGl) { throw 'selector proof compile command is not /GL' }
+    $compileRustSelectorCount = Get-ProviderUInt64 (Get-ProviderRequiredCandidate $proof @('compileCommandRustSelectorDefineCount') 'selectorProof.compileCommandRustSelectorDefineCount') 'selectorProof.compileCommandRustSelectorDefineCount' 8
+    $expectedCompileSelectorCount = if ($Backend -eq 'rust') { 1 } else { 0 }
+    if ($compileRustSelectorCount -ne $expectedCompileSelectorCount) { throw 'selector proof compile command selector does not match the backend' }
+    $compileLogBeforeValue = Get-ProviderCandidate $proof @('compileLogSha256Before')
+    if ($null -ne $compileLogBeforeValue) { $compileLogHashBefore = Get-ProviderHash $compileLogBeforeValue 'selectorProof.compileLogSha256Before' }
+  }
   $symbolsProperty = $proof.PSObject.Properties['unresolvedProviderSymbols']
   if ($null -eq $symbolsProperty) { throw 'selector proof unresolved symbol set is missing' }
   $symbols = @($symbolsProperty.Value | ForEach-Object { Get-ProviderString $_ 'selectorProof.unresolvedProviderSymbols' })
   $normalizedSymbols = @($symbols | ForEach-Object { $_.ToLowerInvariant() })
   if (@($normalizedSymbols | Sort-Object -Unique).Count -ne $normalizedSymbols.Count) { throw 'selector proof unresolved symbol set contains duplicates' }
-  $expectedSymbols = if ($Backend -eq 'rust') { @($script:ProviderSymbols | ForEach-Object { $_.ToLowerInvariant() } | Sort-Object) } else { @() }
+  $expectedSymbols = if ($Backend -eq 'rust' -and $isObjectProof) { @($script:ProviderSymbols | ForEach-Object { $_.ToLowerInvariant() } | Sort-Object) } else { @() }
   if ((@($normalizedSymbols | Sort-Object) -join '|') -cne ($expectedSymbols -join '|')) { throw 'selector proof unresolved symbol set is not exact' }
   $symbolCount = Get-ProviderUInt64 (Get-ProviderRequiredCandidate $proof @('unresolvedProviderSymbolCount') 'selectorProof.unresolvedProviderSymbolCount') 'selectorProof.unresolvedProviderSymbolCount' 1024
   if ($symbolCount -ne $normalizedSymbols.Count) { throw 'selector proof unresolved symbol count is invalid' }
@@ -474,8 +511,15 @@ function Get-ProviderSelectorProof {
   $definedCount = Get-ProviderUInt64 (Get-ProviderRequiredCandidate $proof @('definedProviderSymbolCount') 'selectorProof.definedProviderSymbolCount') 'selectorProof.definedProviderSymbolCount' 1024
   if ($definedCount -ne $expectedDefined.Count) { throw 'selector proof defined symbol count is invalid' }
   $contractHash = Get-ProviderHash (Get-ProviderRequiredCandidate $proof @('selectorContractSha256', 'contractSha256') 'selectorProof.selectorContractSha256') 'selectorProof.selectorContractSha256'
-  $baseCanonical = 'output={0}|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result={1}|symbols={2}|object-after={3}' -f
-    $Backend, $result, (@($normalizedSymbols | Sort-Object) -join ','), $objectHash
+  $baseCanonical = if ($isLtcgProof) {
+    'output={0}|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result={1}|method={2}|symbols=|object-after={3}|object-format={4}|compile-log-after={5}|compile-log-size={6}|compile-gl={7}|compile-rust-selector-count={8}' -f
+      $Backend, $result, $verificationMethod, $objectHash, $providerObjectFormat, $compileLogHashAfter,
+      $compileLogSize, $compileHasGl, $compileRustSelectorCount
+  }
+  else {
+    'output={0}|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result={1}|symbols={2}|object-after={3}' -f
+      $Backend, $result, (@($normalizedSymbols | Sort-Object) -join ','), $objectHash
+  }
   $canonical = '{0}|archive-result={1}|archive={2}|defined={3}' -f
     (Get-TextSha256 $baseCanonical), $archiveResult, $archiveHash, (@($normalizedDefined) -join ',')
   if ($contractHash -ne (Get-TextSha256 $canonical)) { throw 'selector proof contract hash is invalid' }
@@ -490,6 +534,14 @@ function Get-ProviderSelectorProof {
     providerObjectSha256Before = $objectBefore
     providerObjectSha256After = $objectHash
     providerObjectSizeBytesAfter = [UInt64]$objectSize
+    verificationMethod = $verificationMethod
+    providerObjectFormat = $providerObjectFormat
+    compileLogSha256Before = $compileLogHashBefore
+    compileLogSha256After = $compileLogHashAfter
+    compileLogSizeBytesAfter = [UInt64]$compileLogSize
+    compileLogProof = $compileLogProof
+    compileCommandHasGl = $compileHasGl
+    compileCommandRustSelectorDefineCount = [int]$compileRustSelectorCount
     unresolvedProviderSymbols = @($normalizedSymbols | Sort-Object)
     unresolvedProviderSymbolCount = [int]$symbolCount
     rustArchiveResult = $archiveResult
@@ -732,8 +784,28 @@ function New-ProviderProvenance {
       utf16Backend = 'cpp'
       outputProductionPackage = $false
       utf16ProductionPackage = $false
-      cpp = [ordered]@{ backend = 'cpp'; result = [string]$Cpp.selectorProof.result; proofSha256 = [string]$Cpp.selectorProofSha256; objectSha256 = [string]$Cpp.selectorProof.providerObjectSha256After }
-      rust = [ordered]@{ backend = 'rust'; result = [string]$Rust.selectorProof.result; proofSha256 = [string]$Rust.selectorProofSha256; objectSha256 = [string]$Rust.selectorProof.providerObjectSha256After }
+      cpp = [ordered]@{
+        backend = 'cpp'
+        result = [string]$Cpp.selectorProof.result
+        proofSha256 = [string]$Cpp.selectorProofSha256
+        objectSha256 = [string]$Cpp.selectorProof.providerObjectSha256After
+        objectFormat = Get-ProviderCandidate $Cpp.selectorProof @('providerObjectFormat')
+        compileLogSha256After = Get-ProviderCandidate $Cpp.selectorProof @('compileLogSha256After')
+        compileLogSizeBytesAfter = Get-ProviderCandidate $Cpp.selectorProof @('compileLogSizeBytesAfter')
+        compileCommandHasGl = Get-ProviderCandidate $Cpp.selectorProof @('compileCommandHasGl')
+        compileCommandRustSelectorDefineCount = Get-ProviderCandidate $Cpp.selectorProof @('compileCommandRustSelectorDefineCount')
+      }
+      rust = [ordered]@{
+        backend = 'rust'
+        result = [string]$Rust.selectorProof.result
+        proofSha256 = [string]$Rust.selectorProofSha256
+        objectSha256 = [string]$Rust.selectorProof.providerObjectSha256After
+        objectFormat = Get-ProviderCandidate $Rust.selectorProof @('providerObjectFormat')
+        compileLogSha256After = Get-ProviderCandidate $Rust.selectorProof @('compileLogSha256After')
+        compileLogSizeBytesAfter = Get-ProviderCandidate $Rust.selectorProof @('compileLogSizeBytesAfter')
+        compileCommandHasGl = Get-ProviderCandidate $Rust.selectorProof @('compileCommandHasGl')
+        compileCommandRustSelectorDefineCount = Get-ProviderCandidate $Rust.selectorProof @('compileCommandRustSelectorDefineCount')
+      }
       complete = $true
     }
     selectorProofSha256 = Get-TextSha256 ('paired-selector|cpp={0}|rust={1}' -f $Cpp.selectorProofSha256, $Rust.selectorProofSha256)
@@ -936,6 +1008,77 @@ function Invoke-SelfTest {
   }
   $validatedSelector = Get-ProviderSelectorProof -Manifest $syntheticSelectorManifest -Backend 'cpp'
   Assert-EqualValue $syntheticCppSelector.selectorContractSha256 $validatedSelector.selectorContractSha256 'selector proof self-test'
+
+  $syntheticLtcgObjectHash = 'd' * 64
+  $syntheticLtcgCompileLogHash = 'e' * 64
+  $syntheticLtcgArchiveHash = 'f' * 64
+  $syntheticLtcgDefined = @($script:ProviderSymbols)
+  $syntheticLtcgCppSelector = [pscustomobject][ordered]@{
+    result = 'msvc-ltcg-compile-selector-verified'
+    outputBackend = 'cpp'
+    utf16Backend = 'cpp'
+    outputProductionPackage = $false
+    utf16ProductionPackage = $false
+    utf16BenchmarkTelemetry = $false
+    assemblyListings = $false
+    verificationMethod = 'msvc-ltcg-compile-selector'
+    providerObjectFormat = 'msvc-ltcg-anonymous'
+    providerObjectSha256After = $syntheticLtcgObjectHash
+    providerObjectSizeBytesAfter = [UInt64]2
+    compileLogSha256Before = ('c' * 64)
+    compileLogSha256After = $syntheticLtcgCompileLogHash
+    compileLogSizeBytesAfter = [UInt64]3
+    compileLogProof = $true
+    compileCommandHasGl = $true
+    compileCommandRustSelectorDefineCount = 0
+    unresolvedProviderSymbols = @()
+    unresolvedProviderSymbolCount = 0
+    rustArchiveResult = 'dumpbin-defined-exports-verified'
+    rustArchiveSha256 = $syntheticLtcgArchiveHash
+    rustArchiveSizeBytes = [UInt64]4
+    definedProviderSymbols = $syntheticLtcgDefined
+    definedProviderSymbolCount = $syntheticLtcgDefined.Count
+  }
+  $syntheticLtcgCppBase = 'output=cpp|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result=msvc-ltcg-compile-selector-verified|method=msvc-ltcg-compile-selector|symbols=|object-after={0}|object-format=msvc-ltcg-anonymous|compile-log-after={1}|compile-log-size=3|compile-gl=True|compile-rust-selector-count=0' -f
+    $syntheticLtcgObjectHash, $syntheticLtcgCompileLogHash
+  $syntheticLtcgCppSelector | Add-Member -NotePropertyName selectorContractSha256 -NotePropertyValue (Get-TextSha256 ('{0}|archive-result={1}|archive={2}|defined={3}' -f
+      (Get-TextSha256 $syntheticLtcgCppBase), $syntheticLtcgCppSelector.rustArchiveResult, $syntheticLtcgCppSelector.rustArchiveSha256,
+      (@($syntheticLtcgDefined | ForEach-Object { $_.ToLowerInvariant() } | Sort-Object) -join ',')))
+  $syntheticLtcgCppManifest = [pscustomobject][ordered]@{
+    configuration = 'Release'
+    selectorProof = $syntheticLtcgCppSelector
+    selectorProofSha256 = $syntheticLtcgCppSelector.selectorContractSha256
+  }
+  $validatedLtcgCpp = Get-ProviderSelectorProof -Manifest $syntheticLtcgCppManifest -Backend 'cpp'
+  Assert-EqualValue 'msvc-ltcg-compile-selector-verified' $validatedLtcgCpp.result 'C++ LTCG selector proof self-test'
+  Assert-EqualValue 0 $validatedLtcgCpp.compileCommandRustSelectorDefineCount 'C++ LTCG selector count self-test'
+
+  $syntheticLtcgRustSelector = $syntheticLtcgCppSelector | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+  $syntheticLtcgRustSelector.outputBackend = 'rust'
+  $syntheticLtcgRustSelector.providerObjectSha256After = 'a' * 64
+  $syntheticLtcgRustSelector.compileCommandRustSelectorDefineCount = 1
+  $syntheticLtcgRustBase = 'output=rust|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result=msvc-ltcg-compile-selector-verified|method=msvc-ltcg-compile-selector|symbols=|object-after={0}|object-format=msvc-ltcg-anonymous|compile-log-after={1}|compile-log-size=3|compile-gl=True|compile-rust-selector-count=1' -f
+    $syntheticLtcgRustSelector.providerObjectSha256After, $syntheticLtcgCompileLogHash
+  $syntheticLtcgRustSelector.selectorContractSha256 = Get-TextSha256 ('{0}|archive-result={1}|archive={2}|defined={3}' -f
+      (Get-TextSha256 $syntheticLtcgRustBase), $syntheticLtcgRustSelector.rustArchiveResult, $syntheticLtcgRustSelector.rustArchiveSha256,
+      (@($syntheticLtcgDefined | ForEach-Object { $_.ToLowerInvariant() } | Sort-Object) -join ','))
+  $syntheticLtcgRustManifest = [pscustomobject][ordered]@{
+    configuration = 'Release'
+    selectorProof = $syntheticLtcgRustSelector
+    selectorProofSha256 = $syntheticLtcgRustSelector.selectorContractSha256
+  }
+  $validatedLtcgRust = Get-ProviderSelectorProof -Manifest $syntheticLtcgRustManifest -Backend 'rust'
+  Assert-EqualValue 'msvc-ltcg-compile-selector-verified' $validatedLtcgRust.result 'Rust LTCG selector proof self-test'
+  Assert-EqualValue 1 $validatedLtcgRust.compileCommandRustSelectorDefineCount 'Rust LTCG selector count self-test'
+  $badLtcgLog = $syntheticLtcgRustManifest | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+  $badLtcgLog.selectorProof.compileLogSha256After = 'z' * 64
+  Assert-ProviderSelfTestRejects { Get-ProviderSelectorProof -Manifest $badLtcgLog -Backend 'rust' } 'LTCG compile log hash self-test'
+  $badLtcgMacro = $syntheticLtcgRustManifest | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+  $badLtcgMacro.selectorProof.compileCommandRustSelectorDefineCount = 0
+  Assert-ProviderSelfTestRejects { Get-ProviderSelectorProof -Manifest $badLtcgMacro -Backend 'rust' } 'LTCG selector macro self-test'
+  $badLtcgMethod = $syntheticLtcgRustManifest | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+  $badLtcgMethod.selectorProof.verificationMethod = 'wrong-method'
+  Assert-ProviderSelfTestRejects { Get-ProviderSelectorProof -Manifest $badLtcgMethod -Backend 'rust' } 'LTCG selector method self-test'
   $badSelectorManifest = $syntheticSelectorManifest | ConvertTo-Json -Depth 10 | ConvertFrom-Json
   $badSelectorManifest.selectorProof.outputBackend = 'rust'
   Assert-ProviderSelfTestRejects { Get-ProviderSelectorProof -Manifest $badSelectorManifest -Backend 'cpp' } 'selector mismatch self-test'

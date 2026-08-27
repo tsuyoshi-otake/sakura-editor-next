@@ -264,43 +264,121 @@ function Get-NormalizedProviderSymbols {
   return $symbols.ToArray()
 }
 
+function Get-ProviderCompileSelector {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Text,
+    [Parameter(Mandatory = $true)] [string]$SourceName
+  )
+  $records = @($Text -split '(?m)(?=^\^)')
+  $commands = New-Object Collections.Generic.List[string]
+  foreach ($record in $records) {
+    $lines = @($record -split "`r?`n")
+    if ($lines.Count -lt 2) { continue }
+    $sourceLine = $lines[0].Trim().TrimStart([char]0xFEFF)
+    if (-not $sourceLine.StartsWith('^', [StringComparison]::Ordinal)) { continue }
+    $sourcePath = $sourceLine.Substring(1).Trim()
+    if ([IO.Path]::GetFileName($sourcePath) -ine $SourceName) { continue }
+    $command = (($lines | Select-Object -Skip 1) -join ' ').Trim()
+    if ([string]::IsNullOrWhiteSpace($command)) { continue }
+    [void]$commands.Add($command)
+  }
+  if ($commands.Count -ne 1) {
+    throw 'Compiler command log does not contain exactly one provider source command.'
+  }
+  $command = $commands[0]
+  $hasGl = [bool]($command -match '(?i)(?:^|\s)/GL(?=\s|$)')
+  if (-not $hasGl) { throw 'Provider source compile command is not an LTCG /GL command.' }
+  $rustSelectorCount = [regex]::Matches(
+    $command,
+    '(?i)(?:^|\s)/D\s+SAKURA_OUTPUT_BACKEND_RUST(?=\s|$)'
+  ).Count
+  return [pscustomobject][ordered]@{
+    hasGl = $hasGl
+    rustSelectorDefineCount = [int]$rustSelectorCount
+  }
+}
+
 function Get-SelectorProof {
   param(
     [Parameter(Mandatory = $true)] [string]$Dumpbin,
     [Parameter(Mandatory = $true)] [object]$ObjectBefore,
     [Parameter(Mandatory = $true)] [object]$ObjectAfter,
     [Parameter(Mandatory = $true)] [string]$ObjectPath,
+    [Parameter(Mandatory = $true)] [object]$CompileLogBefore,
+    [Parameter(Mandatory = $true)] [object]$CompileLogAfter,
+    [Parameter(Mandatory = $true)] [string]$CompileLogPath,
     [Parameter(Mandatory = $true)] [object]$Archive,
     [Parameter(Mandatory = $true)] [string]$ArchivePath
   )
   $objectDump = Invoke-OwnedProcess -FileName $Dumpbin -Arguments ('/symbols "{0}"' -f $ObjectPath) -WorkingDirectory $script:RepoRoot -ReturnOutput
-  $unresolved = @(Get-NormalizedProviderSymbols $objectDump.stdout)
+  $objectAnonymous = [bool]($objectDump.stdout -match '(?im)^\s*File Type:\s+ANONYMOUS OBJECT\s*$')
+  if ($Configuration -eq 'Release' -and -not $objectAnonymous) {
+    throw 'Release provider object is expected to be an MSVC LTCG anonymous object.'
+  }
+  if ($Configuration -ne 'Release' -and $objectAnonymous) {
+    throw 'Provider object proof unexpectedly became anonymous outside Release.'
+  }
+  $unresolved = @()
+  $compileSelector = $null
+  $verificationMethod = 'dumpbin-object-undefined'
+  $verificationResult = 'dumpbin-unresolved-refs-verified'
+  if ($Configuration -eq 'Release') {
+    $compileLogText = Get-Content -LiteralPath $CompileLogPath -Raw -ErrorAction Stop
+    $compileSelector = Get-ProviderCompileSelector $compileLogText 'OutputServiceRustProvider.cpp'
+    if (($Backend -eq 'rust' -and $compileSelector.rustSelectorDefineCount -ne 1) -or
+        ($Backend -eq 'cpp' -and $compileSelector.rustSelectorDefineCount -ne 0)) {
+      throw 'Provider compile command selector does not match the requested backend.'
+    }
+    $verificationMethod = 'msvc-ltcg-compile-selector'
+    $verificationResult = 'msvc-ltcg-compile-selector-verified'
+  }
+  else {
+    $unresolved = @(Get-NormalizedProviderSymbols $objectDump.stdout)
+  }
   $archiveDump = Invoke-OwnedProcess -FileName $Dumpbin -Arguments ('/symbols "{0}"' -f $ArchivePath) -WorkingDirectory $script:RepoRoot -ReturnOutput
   $defined = @(Get-NormalizedProviderSymbols $archiveDump.stdout -Definitions)
   $expected = @($script:ProviderSymbols | ForEach-Object { $_.ToLowerInvariant() } | Sort-Object)
-  if ($Backend -eq 'rust') {
+  if ($Configuration -ne 'Release' -and $Backend -eq 'rust') {
     if (($unresolved -join '|') -cne ($expected -join '|')) { throw 'Rust selector proof is incomplete.' }
   }
-  elseif ($unresolved.Count -ne 0) { throw 'C++ selector unexpectedly references Rust provider exports.' }
+  elseif ($Configuration -ne 'Release' -and $unresolved.Count -ne 0) {
+    throw 'C++ selector unexpectedly references Rust provider exports.'
+  }
   if (($defined -join '|') -cne ($expected -join '|')) { throw 'Rust archive export proof is not exact.' }
-  $base = 'output={0}|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result=dumpbin-unresolved-refs-verified|symbols={1}|object-after={2}' -f
-    $Backend, ($unresolved -join ','), $ObjectAfter.sha256
+  $base = if ($Configuration -eq 'Release') {
+    'output={0}|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result={1}|method={2}|symbols=|object-after={3}|object-format={4}|compile-log-after={5}|compile-log-size={6}|compile-gl={7}|compile-rust-selector-count={8}' -f
+      $Backend, $verificationResult, $verificationMethod, $ObjectAfter.sha256,
+      'msvc-ltcg-anonymous', $CompileLogAfter.sha256, $CompileLogAfter.sizeBytes,
+      $compileSelector.hasGl, $compileSelector.rustSelectorDefineCount
+  }
+  else {
+    'output={0}|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result={1}|symbols={2}|object-after={3}' -f
+      $Backend, $verificationResult, ($unresolved -join ','), $ObjectAfter.sha256
+  }
   $baseHash = Get-TextSha256 $base
   $contract = '{0}|archive-result=dumpbin-defined-exports-verified|archive={1}|defined={2}' -f
     $baseHash, $Archive.sha256, ($defined -join ',')
   return [ordered]@{
-    result = 'dumpbin-unresolved-refs-verified'
+    result = $verificationResult
     outputBackend = $Backend
     utf16Backend = 'cpp'
     outputProductionPackage = $false
     utf16ProductionPackage = $false
     utf16BenchmarkTelemetry = $false
     assemblyListings = $false
+    verificationMethod = $verificationMethod
+    providerObjectFormat = if ($objectAnonymous) { 'msvc-ltcg-anonymous' } else { 'coff-symbols' }
     providerObjectSha256Before = if ($ObjectBefore.exists) { $ObjectBefore.sha256 } else { $null }
     providerObjectSha256After = $ObjectAfter.sha256
     providerObjectSizeBytesAfter = [UInt64]$ObjectAfter.sizeBytes
     unresolvedProviderSymbols = $unresolved
     unresolvedProviderSymbolCount = [int]$unresolved.Count
+    compileLogSha256Before = if ($CompileLogBefore.exists) { $CompileLogBefore.sha256 } else { $null }
+    compileLogSha256After = if ($Configuration -eq 'Release') { $CompileLogAfter.sha256 } else { $null }
+    compileLogSizeBytesAfter = if ($Configuration -eq 'Release') { [UInt64]$CompileLogAfter.sizeBytes } else { [UInt64]0 }
+    compileLogProof = ($Configuration -eq 'Release')
+    compileCommandHasGl = if ($null -ne $compileSelector) { [bool]$compileSelector.hasGl } else { $false }
+    compileCommandRustSelectorDefineCount = if ($null -ne $compileSelector) { [int]$compileSelector.rustSelectorDefineCount } else { 0 }
     rustArchiveResult = 'dumpbin-defined-exports-verified'
     rustArchiveSha256 = $Archive.sha256
     rustArchiveSizeBytes = [UInt64]$Archive.sizeBytes
@@ -394,6 +472,44 @@ function Invoke-SelfTest {
   $selector = Get-TextSha256 ('{0}|archive-result=dumpbin-defined-exports-verified|archive={1}|defined={2}' -f
     (Get-TextSha256 $base), ('c' * 64), (@($script:ProviderSymbols | Sort-Object) -join ','))
   if (-not (Test-Sha256 $selector)) { throw 'Selector contract self-test failed.' }
+  $rustCompileFixture = @'
+^C:\fixture\OutputServiceRustProvider.cpp
+/c /GL /D SAKURA_OUTPUT_BACKEND_RUST /D SAKURA_UTF16_RUST_CANDIDATE
+'@
+  $rustCompileSelector = Get-ProviderCompileSelector $rustCompileFixture 'OutputServiceRustProvider.cpp'
+  if (-not $rustCompileSelector.hasGl -or $rustCompileSelector.rustSelectorDefineCount -ne 1) {
+    throw 'Rust LTCG compile-selector self-test failed.'
+  }
+  $cppCompileFixture = @'
+^C:\fixture\OutputServiceRustProvider.cpp
+/c /GL /D SAKURA_UTF16_RUST_CANDIDATE
+'@
+  $cppCompileSelector = Get-ProviderCompileSelector $cppCompileFixture 'OutputServiceRustProvider.cpp'
+  if (-not $cppCompileSelector.hasGl -or $cppCompileSelector.rustSelectorDefineCount -ne 0) {
+    throw 'C++ LTCG compile-selector self-test failed.'
+  }
+  $missingGlFixture = @'
+^C:\fixture\OutputServiceRustProvider.cpp
+/c /D SAKURA_OUTPUT_BACKEND_RUST
+'@
+  $missingGlRejected = $false
+  try { [void](Get-ProviderCompileSelector $missingGlFixture 'OutputServiceRustProvider.cpp') } catch { $missingGlRejected = $true }
+  if (-not $missingGlRejected) { throw 'Non-LTCG compile-selector self-test failed.' }
+  $duplicateSelectorFixture = @'
+^C:\fixture\OutputServiceRustProvider.cpp
+/c /GL /D SAKURA_OUTPUT_BACKEND_RUST /D SAKURA_OUTPUT_BACKEND_RUST
+'@
+  $duplicateSelector = Get-ProviderCompileSelector $duplicateSelectorFixture 'OutputServiceRustProvider.cpp'
+  if ($duplicateSelector.rustSelectorDefineCount -ne 2) { throw 'Duplicate compile-selector self-test failed.' }
+  $ambiguousSourceFixture = @'
+^C:\fixture\OutputServiceRustProvider.cpp
+/c /GL /D SAKURA_OUTPUT_BACKEND_RUST
+^C:\fixture\other\OutputServiceRustProvider.cpp
+/c /GL /D SAKURA_OUTPUT_BACKEND_RUST
+'@
+  $ambiguousSourceRejected = $false
+  try { [void](Get-ProviderCompileSelector $ambiguousSourceFixture 'OutputServiceRustProvider.cpp') } catch { $ambiguousSourceRejected = $true }
+  if (-not $ambiguousSourceRejected) { throw 'Ambiguous source compile-selector self-test failed.' }
   $root = Join-Path ([IO.Path]::GetTempPath()) ('sakura-output-provider-selftest-{0}' -f ([Guid]::NewGuid().ToString('N')))
   [void][IO.Directory]::CreateDirectory($root)
   try {
@@ -457,10 +573,12 @@ function Invoke-Producer {
     $context = 'msvc-x64-{0}' -f $Configuration.ToLowerInvariant()
     $testsSource = Join-Path $script:RepoRoot ('x64/{0}/tests1.exe' -f $Configuration)
     $objectSource = Join-Path $script:RepoRoot ('build/x64/{0}/sakura_core/OutputServiceRustProvider.obj' -f $Configuration)
+    $compileLogSource = Join-Path $script:RepoRoot ('build/x64/{0}/sakura_core/sakura.tlog/CL.command.1.tlog' -f $Configuration)
     $rustProfile = if ($Configuration -eq 'Debug') { 'debug' } else { 'release' }
     $archiveSource = Join-Path $script:RepoRoot ('build/x64/{0}/rust/native/x86_64-pc-windows-msvc/{1}/sakura_native_ffi.lib' -f $Configuration, $rustProfile)
     $testsBefore = Get-OptionalFileIdentity $testsSource
     $objectBefore = Get-OptionalFileIdentity $objectSource
+    $compileLogBefore = Get-OptionalFileIdentity $compileLogSource
     $rustLock = Get-FileSha256 (Join-Path $script:RepoRoot 'rust/native/Cargo.lock')
     $script:Stage = 'msvc-toolchain'
     $dumpbin = Resolve-Dumpbin
@@ -486,17 +604,26 @@ function Invoke-Producer {
     $buildCommandHash = Get-TextSha256 ('build-sln.bat|x64|{0}|SAKURA_OUTPUT_BACKEND={1}|SAKURA_UTF16_BACKEND=cpp|SAKURA_OUTPUT_PRODUCTION_PACKAGE=false|SAKURA_UTF16_PRODUCTION_PACKAGE=false|SAKURA_UTF16_BENCHMARK_TELEMETRY=false|SAKURA_GENERATE_ASSEMBLY_LISTINGS=false|SKIP_CREATE_GITHASH=1|SAKURA_BUILD_JOBS={2}|MSBUILDDISABLENODEREUSE=1|VSLANG=1033' -f $Configuration, $Backend, $BuildParallelism)
     $cmd = Resolve-Executable 'cmd.exe'
     $script:Stage = 'build'
+    $buildStartedUtc = [DateTime]::UtcNow
     [void](Invoke-OwnedProcess -FileName $cmd -Arguments ('/d /s /c "call build-sln.bat x64 {0}"' -f $Configuration) -WorkingDirectory $script:RepoRoot -Environment $environment)
     Assert-SourceStateEqual $sourceBefore (Get-SourceState)
     $testsAfter = Get-FileIdentity $testsSource
     $objectAfter = Get-FileIdentity $objectSource
+    $compileLogAfter = Get-FileIdentity $compileLogSource
+    $objectAfterItem = Assert-RegularFile $objectSource
+    $compileLogAfterItem = Assert-RegularFile $compileLogSource
+    if ($Configuration -eq 'Release' -and
+        ($objectAfterItem.LastWriteTimeUtc -le $buildStartedUtc -or
+         $compileLogAfterItem.LastWriteTimeUtc -le $buildStartedUtc)) {
+      throw 'Release provider object and compile log were not produced by this build.'
+    }
     $archive = Get-FileIdentity $archiveSource
     $copiedTests = Join-Path $transaction 'tests1.exe'
     [IO.File]::Copy($testsSource, $copiedTests, $false)
     $copiedIdentity = Get-FileIdentity $copiedTests
     if ($copiedIdentity.sha256 -cne $testsAfter.sha256 -or $copiedIdentity.sizeBytes -ne $testsAfter.sizeBytes) { throw 'Copied tests1 identity changed.' }
     $script:Stage = 'selector-proof'
-    $selectorProof = Get-SelectorProof $dumpbin $objectBefore $objectAfter $objectSource $archive $archiveSource
+    $selectorProof = Get-SelectorProof $dumpbin $objectBefore $objectAfter $objectSource $compileLogBefore $compileLogAfter $compileLogSource $archive $archiveSource
     $probeCommandHash = Get-TextSha256 ('tests1.exe|--gtest_filter={0}|--gtest_color=no|backend={1}' -f $script:ProbeFilter, $Backend)
     $script:Stage = 'runtime-probe'
     [void](Invoke-OwnedProcess -FileName $copiedTests -Arguments ('--gtest_filter={0} --gtest_color=no' -f $script:ProbeFilter) -WorkingDirectory $transaction)

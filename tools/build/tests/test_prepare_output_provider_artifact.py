@@ -70,11 +70,33 @@ class PrepareOutputProviderArtifactTests(unittest.TestCase):
             self.assertIn(symbol, self.text)
         for marker in (
             "dumpbin-unresolved-refs-verified",
+            "msvc-ltcg-compile-selector-verified",
             "dumpbin-defined-exports-verified",
+            "Get-ProviderCompileSelector",
+            "msvc-ltcg-anonymous",
+            "compileLogSha256After",
+            "compileCommandRustSelectorDefineCount",
+            "Provider object proof unexpectedly became anonymous outside Release.",
             "selectorContractSha256",
             "archive-result=dumpbin-defined-exports-verified",
         ):
             self.assertIn(marker, self.text)
+
+    def test_release_ltcg_proof_is_not_skipped(self):
+        compile_log_path = "sakura.tlog/CL.command.1.tlog"
+        self.assertIn("$Configuration -eq 'Release' -and -not $objectAnonymous", self.text)
+        self.assertIn("$Configuration -ne 'Release' -and $objectAnonymous", self.text)
+        self.assertIn(compile_log_path, self.text)
+        self.assertIn("Get-ProviderCompileSelector $compileLogText 'OutputServiceRustProvider.cpp'", self.text)
+        self.assertIn("msvc-ltcg-compile-selector", self.text)
+        self.assertIn("compileLogAfterItem.LastWriteTimeUtc -le $buildStartedUtc", self.text)
+        self.assertIn("compileCommandRustSelectorDefineCount", self.text)
+
+    def test_release_selector_uses_compile_tlog_contract(self):
+        self.assertIn("$compileLogSource", self.text)
+        self.assertIn("$compileLogBefore", self.text)
+        self.assertIn("$compileLogAfter", self.text)
+        self.assertIn("Provider compile command selector does not match the requested backend.", self.text)
 
     def test_probe_and_copy_use_transaction_artifact(self):
         self.assertIn(

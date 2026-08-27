@@ -44,7 +44,9 @@ required. Supplying only one is rejected before any benchmark process starts.
 The runner validates the producer v1 record, committed transaction, clean and
 identical source state, x64/configuration/backend selectors, UTF-16 C++
 selector, non-production flags, tests1 SHA-256/size, selector object/archive
-proof, host/power/toolchain/package/command proof, and the standalone provider
+proof (Release `/GL` uses the source-specific compile-selector receipt rather
+than claiming unresolved references from an anonymous object), host/power/
+toolchain/package/command proof, and the standalone provider
 probe (`CWorkbenchRuntime.CompileSelectedOutputProviderOwnsTheRuntimeLifecycle`)
 and explicit `runtimeClosureMode=exe-only`/`runtimeClosureSha256`. It rechecks both manifest identities and the current source state before
 each launch and after the campaign. A pair mismatch (including source, host,

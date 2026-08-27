@@ -31,12 +31,25 @@ to the configuration rather than the backend because both builds overwrite
 1. verifies that the clean source, Windows identity, and power identity stayed
    fixed;
 2. immediately copies `tests1.exe` into a private transaction;
-3. checks `OutputServiceRustProvider.obj` unresolved references (none for C++,
-   exactly the frozen seven v1 exports for Rust);
+3. proves the selected provider at the object/compile boundary. Debug and
+   non-LTCG objects use `dumpbin /symbols` directly and require the frozen
+   seven provider imports for Rust (and none for C++). Release MSVC `/GL`
+   objects intentionally report `File Type: ANONYMOUS OBJECT`; the producer
+   therefore fails closed unless the fresh `sakura.tlog/CL.command.1.tlog`
+   contains exactly one `OutputServiceRustProvider.cpp` compile command with
+   `/GL`, exactly one standalone `/D SAKURA_OUTPUT_BACKEND_RUST` for Rust, or
+   no such selector definition for C++. The tlog and provider object hashes,
+   sizes, and object format are recorded in the payload-free selector receipt.
+   This is a compile-selector proof, not an unresolved-reference claim;
 4. checks that the one native Rust archive defines exactly those seven exports;
 5. runs the copied executable with
    `CWorkbenchRuntime.CompileSelectedOutputProviderOwnsTheRuntimeLifecycle`;
 6. publishes the directory by one atomic rename.
+
+The Release compile-selector receipt, exact seven archive definitions, and
+successful runtime ownership probe are separate required proofs. A compile
+selector or archive receipt alone cannot establish semantic provider ownership;
+the runner validates all three before accepting a qualified pair.
 
 The manifest record is `output-provider-build-manifest` schema v1. It contains
 only bounded identities, hashes, counts, statuses, selectors, and transaction
