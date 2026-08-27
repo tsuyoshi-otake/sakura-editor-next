@@ -78,6 +78,11 @@ class PrepareOutputStartupArtifactContractTests(unittest.TestCase):
             "$dumpbin = Resolve-Dumpbin $comspec",
             "Get-SelectorProof $providerObjectBefore $providerObjectAfter",
             "dumpbin-unresolved-refs-verified",
+            "Get-ProviderArchiveProof",
+            "Add-ProviderArchiveProof",
+            "dumpbin-defined-exports-verified",
+            "definedProviderSymbols",
+            "archiveExportsVerified",
             "$expected.Sort([StringComparer]::Ordinal)",
             "$unorderedRustSymbols",
             "rustSelectorProofVerified",
@@ -162,6 +167,8 @@ class PrepareOutputStartupArtifactContractTests(unittest.TestCase):
             self.assertTrue(payload["noBuildLaunched"])
             self.assertTrue(payload["selectorVerified"])
             self.assertTrue(payload["selectorProofVerified"])
+            self.assertTrue(payload["archiveExportsVerified"])
+            self.assertTrue(payload["archiveExactSetRejected"])
             self.assertTrue(payload["runtimeStageVerified"])
             self.assertTrue(payload["manifestPayloadFreeVerified"])
             self.assertTrue(payload["boundedProcessOwnershipVerified"])

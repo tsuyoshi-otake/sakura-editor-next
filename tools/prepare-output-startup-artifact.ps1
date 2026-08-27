@@ -1142,6 +1142,83 @@ function Get-SelectorProof {
     }
 }
 
+function Get-ProviderArchiveProof {
+    param(
+        [Parameter(Mandatory = $true)] [string]$ArchivePath,
+        [Parameter(Mandatory = $true)] [string]$DumpbinPath,
+        [Parameter(Mandatory = $true)] [string]$ComSpec,
+        [Parameter(Mandatory = $true)] [string]$EnvironmentBlock,
+        [Parameter(Mandatory = $true)] [string]$WorkingDirectory,
+        [Parameter(Mandatory = $true)] [string]$OutputPath,
+        [Parameter(Mandatory = $true)] [int]$Timeout
+    )
+    $archive = Get-FileIdentity $ArchivePath
+    $errorPath = '{0}.stderr' -f $OutputPath
+    try {
+        $commandText = '{0} /symbols {1} > {2} 2> {3}' -f
+            (ConvertTo-WindowsCommandLineArgument $DumpbinPath),
+            (ConvertTo-WindowsCommandLineArgument $ArchivePath),
+            (ConvertTo-WindowsCommandLineArgument $OutputPath),
+            (ConvertTo-WindowsCommandLineArgument $errorPath)
+        [void](Invoke-OwnedCommand $ComSpec (New-CmdCommandLine $commandText $ComSpec) $WorkingDirectory $EnvironmentBlock $Timeout)
+        Assert-RegularFile $OutputPath
+        $symbols = New-Object Collections.Generic.List[string]
+        foreach ($line in @(Get-Content -LiteralPath $OutputPath)) {
+            $match = [regex]::Match([string]$line, '(?i)^\s*[0-9A-F]+\s+[0-9A-F]+\s+SECT[0-9A-F]+\s+notype\s+\(\)\s+External\s+\|\s+(sakura_output_provider_[A-Za-z0-9_]+)\s*$')
+            if ($match.Success) {
+                $symbol = $match.Groups[1].Value.ToLowerInvariant()
+                if (-not $symbols.Contains($symbol)) { [void]$symbols.Add($symbol) }
+            }
+        }
+        $symbols.Sort([StringComparer]::Ordinal)
+        $expected = New-Object Collections.Generic.List[string]
+        foreach ($expectedSymbol in $script:OutputProviderSymbols) {
+            [void]$expected.Add(([string]$expectedSymbol).ToLowerInvariant())
+        }
+        $expected.Sort([StringComparer]::Ordinal)
+        if (($symbols.ToArray() -join '|') -cne ($expected.ToArray() -join '|')) {
+            throw 'The Rust native archive does not define exactly the fixed Output provider v1 entrypoint set.'
+        }
+        return [ordered]@{
+            result = 'dumpbin-defined-exports-verified'
+            rustArchiveSha256 = [string]$archive.sha256
+            rustArchiveSizeBytes = [UInt64]$archive.sizeBytes
+            definedProviderSymbols = $symbols.ToArray()
+            definedProviderSymbolCount = [int]$symbols.Count
+        }
+    }
+    finally {
+        foreach ($temporary in @($OutputPath, $errorPath)) {
+            if (Test-Path -LiteralPath $temporary) {
+                try { [IO.File]::Delete($temporary) } catch { }
+            }
+        }
+    }
+}
+
+function Add-ProviderArchiveProof {
+    param(
+        [Parameter(Mandatory = $true)] [object]$SelectorProof,
+        [Parameter(Mandatory = $true)] [object]$ArchiveProof
+    )
+    $symbols = @($ArchiveProof.definedProviderSymbols | ForEach-Object { ([string]$_).ToLowerInvariant() } | Sort-Object -Unique)
+    $expected = @($script:OutputProviderSymbols | ForEach-Object { ([string]$_).ToLowerInvariant() } | Sort-Object -Unique)
+    if ([string]$ArchiveProof.result -cne 'dumpbin-defined-exports-verified' -or
+        -not (Test-Sha256 $ArchiveProof.rustArchiveSha256) -or
+        [UInt64]$ArchiveProof.rustArchiveSizeBytes -lt 1 -or
+        ($symbols -join '|') -cne ($expected -join '|')) {
+        throw 'The Rust native archive proof is incomplete.'
+    }
+    $SelectorProof['rustArchiveResult'] = [string]$ArchiveProof.result
+    $SelectorProof['rustArchiveSha256'] = [string]$ArchiveProof.rustArchiveSha256
+    $SelectorProof['rustArchiveSizeBytes'] = [UInt64]$ArchiveProof.rustArchiveSizeBytes
+    $SelectorProof['definedProviderSymbols'] = $symbols
+    $SelectorProof['definedProviderSymbolCount'] = [int]$symbols.Count
+    $SelectorProof['selectorContractSha256'] = Get-TextSha256 ('{0}|archive-result={1}|archive={2}|defined={3}' -f
+        $SelectorProof.selectorContractSha256, $ArchiveProof.result, $ArchiveProof.rustArchiveSha256, ($symbols -join ','))
+    return $SelectorProof
+}
+
 function New-BuildManifest {
     param(
         [Parameter(Mandatory = $true)] [object]$Source,
@@ -1289,6 +1366,9 @@ function Assert-BuildManifest {
     $expectedProofResult = [string](Get-PropertyValue $ExpectedSelectorProof @('result'))
     $actualProofSymbols = @((Get-PropertyValue $selectorProof @('unresolvedProviderSymbols')) | ForEach-Object { ([string]$_).ToLowerInvariant() } | Sort-Object -Unique)
     $expectedProofSymbols = @((Get-PropertyValue $ExpectedSelectorProof @('unresolvedProviderSymbols')) | ForEach-Object { ([string]$_).ToLowerInvariant() } | Sort-Object -Unique)
+    $actualDefinedSymbols = @((Get-PropertyValue $selectorProof @('definedProviderSymbols')) | ForEach-Object { ([string]$_).ToLowerInvariant() } | Sort-Object -Unique)
+    $expectedDefinedSymbols = @((Get-PropertyValue $ExpectedSelectorProof @('definedProviderSymbols')) | ForEach-Object { ([string]$_).ToLowerInvariant() } | Sort-Object -Unique)
+    $canonicalDefinedSymbols = @($script:OutputProviderSymbols | ForEach-Object { ([string]$_).ToLowerInvariant() } | Sort-Object -Unique)
     if ($null -eq $selectorProof -or
         [string](Get-PropertyValue $selectorProof @('result')) -cne $expectedProofResult -or
         [string](Get-PropertyValue $selectorProof @('outputBackend')) -cne $Backend -or
@@ -1303,7 +1383,14 @@ function Assert-BuildManifest {
         [bool](Get-PropertyValue $selectorProof @('assemblyListings')) -or
         [string](Get-PropertyValue $selectorProof @('selectorContractSha256')) -ne [string]$ExpectedSelectorProof.selectorContractSha256 -or
         [string](Get-PropertyValue $selectorProof @('providerObjectSha256After')) -ne [string]$ExpectedSelectorProof.providerObjectSha256After -or
-        (@($actualProofSymbols) -join '|') -cne (@($expectedProofSymbols) -join '|')) {
+        [string](Get-PropertyValue $selectorProof @('rustArchiveResult')) -cne 'dumpbin-defined-exports-verified' -or
+        -not (Test-Sha256 (Get-PropertyValue $selectorProof @('rustArchiveSha256'))) -or
+        [string](Get-PropertyValue $selectorProof @('rustArchiveSha256')) -ne [string]$ExpectedSelectorProof.rustArchiveSha256 -or
+        [UInt64](Get-PropertyValue $selectorProof @('rustArchiveSizeBytes')) -lt 1 -or
+        [int](Get-PropertyValue $selectorProof @('definedProviderSymbolCount')) -ne $canonicalDefinedSymbols.Count -or
+        (@($actualProofSymbols) -join '|') -cne (@($expectedProofSymbols) -join '|') -or
+        (@($actualDefinedSymbols) -join '|') -cne (@($expectedDefinedSymbols) -join '|') -or
+        (@($actualDefinedSymbols) -join '|') -cne (@($canonicalDefinedSymbols) -join '|')) {
         throw 'The generated build manifest selector proof is stale or incomplete.'
     }
     $selectorHash = Get-PropertyValue $manifest @('selectorProofSha256')
@@ -1437,7 +1524,29 @@ function Invoke-SelfTest {
         catch { $nestedLanguageRejected = $true }
         if (-not $nestedLanguageRejected) { throw 'Nested known producer language runtime receipt identity self-test was accepted.' }
         $sourceState = [pscustomobject][ordered]@{ head = ('0' * 40); dirty = $false; statusSha256 = ('1' * 64); statusLineCount = 0 }
+        $syntheticArchiveProof = [ordered]@{
+            result = 'dumpbin-defined-exports-verified'
+            rustArchiveSha256 = ('9' * 64)
+            rustArchiveSizeBytes = [UInt64]1
+            definedProviderSymbols = $script:OutputProviderSymbols
+            definedProviderSymbolCount = [int]$script:OutputProviderSymbols.Count
+        }
+        $archiveExactSetRejected = $false
+        $syntheticExtraArchiveProof = [ordered]@{
+            result = 'dumpbin-defined-exports-verified'
+            rustArchiveSha256 = ('9' * 64)
+            rustArchiveSizeBytes = [UInt64]1
+            definedProviderSymbols = @($script:OutputProviderSymbols) + @('sakura_output_provider_future_v1')
+            definedProviderSymbolCount = [int]$script:OutputProviderSymbols.Count + 1
+        }
+        try {
+            $unusedSelectorProof = New-SelectorProof ([pscustomobject]@{ exists = $false; sha256 = $null; sizeBytes = [UInt64]0 }) $artifact
+            [void](Add-ProviderArchiveProof $unusedSelectorProof $syntheticExtraArchiveProof)
+        }
+        catch { $archiveExactSetRejected = $true }
+        if (-not $archiveExactSetRejected) { throw 'Self-test accepted an extra Rust Output provider archive export.' }
         $selectorProof = New-SelectorProof ([pscustomobject]@{ exists = $false; sha256 = $null; sizeBytes = [UInt64]0 }) $artifact
+        $selectorProof = Add-ProviderArchiveProof $selectorProof $syntheticArchiveProof
         $manifest = New-BuildManifest $sourceState ([pscustomobject]@{ exists = $false; sha256 = $null; sizeBytes = [UInt64]0 }) $artifact $stage 'windows-selftest' ('2' * 64) 'active-power-plan:selftest' ('3' * 64) 'msvc-selftest' 'rust-selftest' ('4' * 64) ('5' * 64) ('6' * 64) ('7' * 64) ('8' * 64) $selectorProof
         $manifestPath = Join-Path $transaction 'build-manifest.json'
         Write-JsonAtomic $manifestPath $manifest
@@ -1457,9 +1566,12 @@ function Invoke-SelfTest {
                 $script:OutputProviderSymbols[2]
             )
             $rustProof = New-SelectorProof ([pscustomobject]@{ exists = $false; sha256 = $null; sizeBytes = [UInt64]0 }) $artifact $unorderedRustSymbols 'dumpbin-unresolved-refs-verified'
+            $rustProof = Add-ProviderArchiveProof $rustProof $syntheticArchiveProof
             $expectedRustSymbols = @($unorderedRustSymbols | ForEach-Object { ([string]$_).ToLowerInvariant() } | Sort-Object)
             if ((@($rustProof.unresolvedProviderSymbols) -join '|') -cne ($expectedRustSymbols -join '|') -or
-                [string]$rustProof.result -cne 'dumpbin-unresolved-refs-verified') {
+                [string]$rustProof.result -cne 'dumpbin-unresolved-refs-verified' -or
+                [string]$rustProof.rustArchiveResult -cne 'dumpbin-defined-exports-verified' -or
+                (@($rustProof.definedProviderSymbols) -join '|') -cne ($expectedRustSymbols -join '|')) {
                 throw 'Self-test Rust selector proof normalization failed.'
             }
             $rustSelectorProofVerified = $true
@@ -1503,6 +1615,8 @@ function Invoke-SelfTest {
             sourceFingerprintVerified = $true
             selectorProofVerified = $true
             rustSelectorProofVerified = $rustSelectorProofVerified
+            archiveExportsVerified = $true
+            archiveExactSetRejected = $archiveExactSetRejected
             cleanupEnvelopeVerified = $cleanupEnvelopeVerified
             exclusiveLockVerified = $exclusiveLockVerified
             runtimeStageVerified = $true
@@ -1554,6 +1668,8 @@ function Invoke-Producer {
         $context = 'msvc-x64-{0}' -f $Configuration.ToLowerInvariant()
         $artifactSource = Join-Path $script:RepoRoot ('x64/{0}/sakura.exe' -f $Configuration)
         $providerObjectSource = Join-Path $script:RepoRoot ('build/{0}/{1}/sakura_core/OutputServiceRustProvider.obj' -f $Platform, $Configuration)
+        $rustProfile = if ($Configuration -eq 'Debug') { 'debug' } else { 'release' }
+        $rustArchiveSource = Join-Path $script:RepoRoot ('build/{0}/{1}/rust/native/x86_64-pc-windows-msvc/{2}/sakura_native_ffi.lib' -f $Platform, $Configuration, $rustProfile)
         $canonicalStage = Join-Path $script:RepoRoot ('build/staging/{0}/sakura-editor' -f $context)
         $buildBatch = Join-Path $script:RepoRoot 'build-dev.bat'
         $buildScript = Join-Path $script:RepoRoot 'tools/build/sakura_build.py'
@@ -1617,9 +1733,12 @@ function Invoke-Producer {
         Assert-SourceStateEqual $sourceBefore $sourceAfterBuild
         $artifactAfter = Get-FileIdentity $artifactSource
         $providerObjectAfter = Get-FileIdentity $providerObjectSource
+        $archiveProofOutput = Join-Path $transactionRoot 'archive-proof.txt'
         $selectorProofOutput = Join-Path $transactionRoot 'selector-proof.txt'
         $script:Stage = 'selector-proof'
+        $archiveProof = Get-ProviderArchiveProof $rustArchiveSource $dumpbin $comspec $environmentBlock $script:RepoRoot $archiveProofOutput $TimeoutSeconds
         $selectorProof = Get-SelectorProof $providerObjectBefore $providerObjectAfter $providerObjectSource $dumpbin $comspec $environmentBlock $script:RepoRoot $selectorProofOutput $TimeoutSeconds
+        $selectorProof = Add-ProviderArchiveProof $selectorProof $archiveProof
         if ([string]$selectorProof.result -cne 'dumpbin-unresolved-refs-verified') { throw 'The Output selector proof did not come from dumpbin unresolved-reference verification.' }
         if ([UInt64]$artifactAfter.sizeBytes -lt 1) { throw 'The built sakura.exe is empty.' }
         $script:Stage = 'runtime-stage'
@@ -1675,11 +1794,13 @@ function Invoke-Producer {
             artifactAfterVerified = $true
             runtimeStageVerified = $true
             selectorProofVerified = $true
+            archiveExportsVerified = $true
             manifestVerified = $true
             transactionVerified = $true
             manifestSha256 = Get-Sha256 $finalManifest
             artifactSha256 = [string]$artifactAfter.sha256
             providerObjectSha256 = [string]$selectorProof.providerObjectSha256After
+            rustArchiveSha256 = [string]$selectorProof.rustArchiveSha256
             selectorProofSha256 = [string]$selectorProof.selectorContractSha256
             runtimeStageReceiptSha256 = [string]$finalStageSnapshot.receiptSha256
             dependencyClosureSha256 = [string]$finalStageSnapshot.dependencyClosureSha256
