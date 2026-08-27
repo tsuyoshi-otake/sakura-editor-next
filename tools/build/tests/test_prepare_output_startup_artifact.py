@@ -64,6 +64,8 @@ class PrepareOutputStartupArtifactContractTests(unittest.TestCase):
             "sourceStatusSha256",
             "$statusLines = @()",
             "Get-MsvcIdentity",
+            "Resolve-RustcExecutable",
+            "& $rustup which rustc",
             "Get-RustToolchainIdentity",
             "rust/native/Cargo.lock",
             "packagePlanSha256",

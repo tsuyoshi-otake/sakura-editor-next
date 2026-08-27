@@ -577,6 +577,30 @@ function Resolve-Executable {
     return $path
 }
 
+function Resolve-RustcExecutable {
+    try { return Resolve-Executable 'rustc.exe' } catch { }
+    $rustup = Resolve-Executable 'rustup.exe'
+    $line = $null
+    $exitCode = -1
+    $oldErrorAction = $ErrorActionPreference
+    Push-Location $script:RepoRoot
+    try {
+        $ErrorActionPreference = 'SilentlyContinue'
+        $line = (& $rustup which rustc 2>$null | Select-Object -First 1)
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $oldErrorAction
+        Pop-Location
+    }
+    if ($exitCode -ne 0 -or [string]::IsNullOrWhiteSpace([string]$line)) {
+        throw 'The selected Rust compiler is unavailable.'
+    }
+    $rustc = Get-CanonicalPath ([string]$line).Trim()
+    Assert-RegularFile $rustc
+    return $rustc
+}
+
 function Get-MsvcIdentity {
     $candidate = $null
     foreach ($name in @('cl.exe', 'MSBuild.exe', 'msbuild.exe')) {
@@ -609,7 +633,7 @@ function Get-MsvcIdentity {
 }
 
 function Get-RustToolchainIdentity {
-    $rustc = Resolve-Executable 'rustc.exe'
+    $rustc = Resolve-RustcExecutable
     $oldErrorAction = $ErrorActionPreference
     try {
         $ErrorActionPreference = 'SilentlyContinue'
