@@ -56,6 +56,11 @@ from sakura_build_lib.resource_id_compatibility import (
     require_resource_id_baseline_version_advance,
     write_resource_id_baseline,
 )
+from sakura_build_lib.output_evidence_ledger import (
+    DEFAULT_LEDGER_DIRECTORY,
+    append_output_evidence,
+    verify_output_evidence_ledger,
+)
 from sakura_build_lib.runtime_stage import stage_runtime_artifacts
 from sakura_build_lib.repository_inventory import (
     collect_repository_inventory,
@@ -359,6 +364,45 @@ def parser() -> argparse.ArgumentParser:
         "--output",
         type=Path,
         default=Path("tools/build/baselines/sakura_resource_ids.json"),
+    )
+
+    evidence = commands.add_parser(
+        "evidence",
+        help="append or verify payload-free adoption evidence",
+    )
+    evidence_commands = evidence.add_subparsers(dest="evidence_command", required=True)
+    evidence_append = evidence_commands.add_parser(
+        "output-append",
+        help="derive and append one immutable Output adoption attempt record",
+    )
+    evidence_append.add_argument(
+        "--source",
+        "--input",
+        dest="source",
+        type=Path,
+        required=True,
+        help="producer-generated payload-free evidence JSON",
+    )
+    evidence_append.add_argument(
+        "--ledger-dir",
+        type=Path,
+        default=DEFAULT_LEDGER_DIRECTORY,
+        help="append-only ledger directory (default: build/evidence/output-adoption-ledger)",
+    )
+    evidence_append.add_argument(
+        "--backend",
+        choices=("cpp", "rust", "paired"),
+        help="optional assertion; the backend is always derived from source evidence",
+    )
+    evidence_verify = evidence_commands.add_parser(
+        "output-verify",
+        help="verify Output adoption ledger records, hashes, and chain",
+    )
+    evidence_verify.add_argument(
+        "--ledger-dir",
+        type=Path,
+        default=DEFAULT_LEDGER_DIRECTORY,
+        help="append-only ledger directory (default: build/evidence/output-adoption-ledger)",
     )
 
     package = commands.add_parser(
@@ -1223,6 +1267,20 @@ def main(argv: list[str] | None = None) -> int:
             result = validate_package_restore(graph, (args.component,), args.context)
             output(_package_result_for_output(result), args.format)
             return 0 if result["valid"] else EXIT_GRAPH
+        if args.command == "evidence":
+            ledger_directory = _repository_path(repo, args.ledger_dir, "--ledger-dir")
+            if args.evidence_command == "output-append":
+                source_path = _repository_path(repo, args.source, "--source")
+                result = append_output_evidence(
+                    ledger_directory,
+                    source_path,
+                    backend=args.backend,
+                )
+                output(result, args.format)
+                return 0
+            result = verify_output_evidence_ledger(ledger_directory)
+            output(result, args.format)
+            return 0 if result["ok"] else EXIT_RATCHET
         if args.command == "inventory":
             destination = args.output if args.output.is_absolute() else repo / args.output
             try:

@@ -15,6 +15,7 @@
     - [ビルドで使用する環境変数](#ビルドで使用する環境変数)
     - [ビルドに使用されるバッチファイル](#ビルドに使用されるバッチファイル)
     - [x64 ビルドの増分検証](#x64-ビルドの増分検証)
+    - [Output採用証跡台帳](#output採用証跡台帳)
     - [単体テストの実行](#単体テストの実行)
     - [カバレッジマップによる影響テスト選択](#カバレッジマップによる影響テスト選択)
     - [デバッグ方法](#デバッグ方法)
@@ -572,6 +573,43 @@ Windows Terminal の取り込みファイルの SHA-256 を検証するには、
 ```
 
 binlog と診断ログは `artifacts/build-verification/` に保存されます。個別の非公開 `.cpp` を確認する場合は `-ProbeCpp <path>` を加えます。対象が含まれる `.vcxproj` を表示し、一時的に更新時刻を進めてビルドした後、元の更新時刻へ復元します。テスト後にこのリポジトリに関連するプロセスだけを報告するには、`-ListSurvivors` を使用します。このスクリプトはプロセスを終了しません。
+
+### Output採用証跡台帳
+
+Issue #274 の Output provider比較結果は、producerが出力したpayload-free JSONをそのまま採用判定へ渡さず、
+canonical JSONから再導出した不変レコードへ追記します。台帳は `records/` 配下に
+`record-00000001-<record-sha256-prefix>.json` の形で保存されます。各レコードはsource evidenceのSHA-256、
+前レコードのSHA-256、sequence、backend、`x64`/`Debug|Release`、source/selector/host/toolchain/package/corpus/command
+のhashまたは有界なmetadata、artifact hash、結果statusを持ちます。ファイル名のexclusive create、canonical hash、
+前レコードhash chainを検証するため、既存レコードの上書きや削除を前提にしません。`path`、raw command、text、
+content等のpayload-bearing fieldは入力時に拒否し、failure/skipped/survivorを含む結果も破棄しません。
+append時は台帳rootの`.append.lock`をexclusive createしてverify・sequence決定・record作成を一つのtransactionに
+直列化します。プロセスが途中終了してlockまたは不完全recordを残した場合も自動復旧せず、verifyが検出して
+fail-closedします。内容を確認してから、台帳所有者が原因を解消したうえで明示的に再実行してください。
+
+backendはCLIのラベルを根拠にせず、source evidenceに含まれるartifact/provider観測、selector、configurationから
+正規化します。paired reportやprovider analysisは両providerのartifactが観測された場合だけ `paired` として保持します。
+必要なprovenanceが無い既存証跡（例: `verifier`だけを持つnative incremental evidence）は履歴として記録できますが、
+欠落metadataを補完せず `complete=false` のままです。台帳の採用判定は常に `decision=HOLD`、
+`adoptionEligible=false` であり、性能passやCLIの成功終了だけでproduction providerを切り替えません。
+
+```cmd
+rem payload-free producer evidenceを検査し、Output採用台帳へ一度だけ追記する
+py -3 tools/build/sakura_build.py evidence output-append ^
+  --source build/evidence/output-startup-smoke-<run>\results\paired-startup-<run>.json ^
+  --ledger-dir build/evidence/output-adoption-ledger
+
+rem レコード名、schema、canonical hash、source重複、sequence/hash chainを検証する
+py -3 tools/build/sakura_build.py --format json evidence output-verify ^
+  --ledger-dir build/evidence/output-adoption-ledger
+```
+
+`output-append` は既存台帳が一件でも壊れている場合、または同じsource evidence SHA-256が既にある場合に
+fail-closedします。`output-verify` は欠落sequence、改竄されたrecord、別hashのファイル名、symlink/reparse point、
+一時ファイル、未知のrecord fieldを検出し、payloadを表示せず型付きfailure codeだけをJSONで返します。台帳が空の場合の
+headは `genesis` です。これはC1eの採用GO判定ではなく、Debug/Release・cpp/rustの実測、correctness/build/package/
+provider workload/compatibility各gateと、Issue #274が要求する明示的なGO/NO-GO決定を後続工程で結び付けるための
+append-only receiptです。
 
 ### 単体テストの実行
 
