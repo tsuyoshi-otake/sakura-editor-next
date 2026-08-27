@@ -264,6 +264,10 @@ TEST(OutputServiceNotificationDispatcher, UnsubscribeDoesNotDrainActiveCallback)
 	std::promise<void> releasePromise;
 	auto releaseFuture = releasePromise.get_future().share();
 	std::optional<OutputServiceSubscriptionId> subscriptionId;
+	{
+		std::lock_guard lock(modelMutex);
+		EXPECT_FALSE(dispatcher.HasSubscriptionsLocked());
+	}
 
 	subscriptionId = dispatcher.Subscribe([&](const OutputServiceChange& change) {
 		revisions.push_back(change.revision);
@@ -271,6 +275,10 @@ TEST(OutputServiceNotificationDispatcher, UnsubscribeDoesNotDrainActiveCallback)
 		releaseFuture.wait();
 	});
 	ASSERT_TRUE(subscriptionId);
+	{
+		std::lock_guard lock(modelMutex);
+		EXPECT_TRUE(dispatcher.HasSubscriptionsLocked());
+	}
 
 	bool shouldDrain{};
 	{
@@ -291,6 +299,10 @@ TEST(OutputServiceNotificationDispatcher, UnsubscribeDoesNotDrainActiveCallback)
 	});
 	const auto unsubscribeReturnedWhileActive = unsubscribeFuture.wait_for(2s) == std::future_status::ready;
 	EXPECT_TRUE(unsubscribeReturnedWhileActive);
+	{
+		std::lock_guard lock(modelMutex);
+		EXPECT_FALSE(dispatcher.HasSubscriptionsLocked());
+	}
 
 	releasePromise.set_value();
 	drainer.join();

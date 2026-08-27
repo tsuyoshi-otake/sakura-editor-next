@@ -66,6 +66,9 @@ public:
 	//! Starts/continues delivery.  Call only after releasing the provider lock.
 	void Drain() noexcept;
 
+	//! Reports whether an advisory listener is registered; caller holds the owner lock.
+	[[nodiscard]] bool HasSubscriptionsLocked() const noexcept;
+
 	//! Waits for an external caller to observe callback quiescence.  A callback
 	//! on the dispatch thread returns true instead of waiting on itself.
 	[[nodiscard]] bool WaitForDrain() noexcept;

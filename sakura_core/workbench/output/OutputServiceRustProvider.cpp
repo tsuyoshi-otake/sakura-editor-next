@@ -13,7 +13,6 @@
 #include <array>
 #include <condition_variable>
 #include <limits>
-#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -380,6 +379,13 @@ struct OutputServiceRustProvider::Control final {
 	std::mutex mutationMutex;
 	std::uint64_t token{};
 	std::uint64_t lastRevision{ 1 };
+	// Rust's active channel is observable only through this adapter. Keep a
+	// small provider-local fact so content-only commits do not cross the FFI
+	// boundary just to reproduce an unchanged advisory field. An operation
+	// whose fallback selection is not knowable marks this fact unknown until a
+	// listener requires a fresh query (or Snapshot() refreshes it).
+	std::optional<std::string> knownActiveChannelId;
+	bool activeChannelKnown{ true };
 	// This is a bounded, immutable observation cache only. The valid bit is
 	// cleared before every fallible authority mutation, so a saturated revision
 	// or partial mutation can never make an old observation look current.
@@ -407,15 +413,16 @@ template <typename Control, typename Invoke>
 	Invoke&& invoke) noexcept
 {
 	// The native provider exports are callback-free and do not call back into
-	// Control. Keep the diagnostic update and the ABI call in one short critical
-	// section so a boundary does not require separate lock/unlock pairs for its
-	// call and status record. Allocation and decoding remain outside this lock.
-	std::lock_guard lock(control.modelMutex);
-	SaturatingIncrement(control.diagnostics.counters.ffiCalls);
-	if (counter) SaturatingIncrement(control.diagnostics.counters.*counter);
-	control.diagnostics.lastBoundary = boundary;
+	// Control. Keep modelMutex out of the FFI call; the diagnostic update is a
+	// single short critical section after the boundary returns.
 	const auto status = invoke();
-	control.diagnostics.lastFfiStatus = status;
+	{
+		std::lock_guard lock(control.modelMutex);
+		SaturatingIncrement(control.diagnostics.counters.ffiCalls);
+		if (counter) SaturatingIncrement(control.diagnostics.counters.*counter);
+		control.diagnostics.lastBoundary = boundary;
+		control.diagnostics.lastFfiStatus = status;
+	}
 	return status;
 }
 
@@ -433,6 +440,8 @@ void SetFault(
 	if (!control.authorityStopped) control.diagnostics.state = EOutputServiceRustProviderState::Faulted;
 	control.diagnostics.fault = fault;
 	control.snapshotCacheValid = false;
+	control.knownActiveChannelId.reset();
+	control.activeChannelKnown = false;
 	control.diagnostics.lastBoundary = boundary;
 	control.diagnostics.failureBoundary = boundary;
 	control.diagnostics.lastFfiStatus = ffiStatus;
@@ -454,7 +463,51 @@ void RestoreSnapshotCacheIfAvailable(Control& control) noexcept
 		&& control.diagnostics.state == EOutputServiceRustProviderState::Ready
 		&& control.snapshotCache) {
 		control.snapshotCacheValid = true;
+		if (!control.activeChannelKnown) {
+			control.knownActiveChannelId = control.snapshotCache->activeChannelId;
+			control.activeChannelKnown = true;
+		}
 	}
+}
+
+//! Updates the adapter's advisory active-channel fact after an accepted commit.
+//! Returns true when the post-commit value is known without an ABI query.
+template <typename Control>
+[[nodiscard]] bool UpdateKnownActiveChannelAfterAcceptedLocked(
+	Control& control,
+	const EOutputChangeKind changeKind,
+	const std::optional<std::string>& channelId)
+{
+	switch (changeKind) {
+	case EOutputChangeKind::ContentAppended:
+	case EOutputChangeKind::ContentReplaced:
+	case EOutputChangeKind::ContentCleared:
+		// These commits never alter Rust's active-channel selection.
+		return control.activeChannelKnown;
+	case EOutputChangeKind::ChannelShown:
+		if (!channelId) break;
+		control.knownActiveChannelId = *channelId;
+		control.activeChannelKnown = true;
+		return true;
+	case EOutputChangeKind::ChannelHidden:
+	case EOutputChangeKind::ChannelDisposed:
+		// Hiding or disposing a non-active channel leaves selection unchanged;
+		// removing the active channel may select a fallback that only Rust knows.
+		if (control.activeChannelKnown
+			&& (!control.knownActiveChannelId
+				|| (channelId && *control.knownActiveChannelId != *channelId))) {
+			return true;
+		}
+		break;
+	case EOutputChangeKind::ChannelCreated:
+	case EOutputChangeKind::OwnerDisposed:
+		// Creation can replace an owner generation, and owner disposal always
+		// runs Rust's fallback selector. Both need an authoritative query.
+		break;
+	}
+	control.knownActiveChannelId.reset();
+	control.activeChannelKnown = false;
+	return false;
 }
 
 template <typename Control>
@@ -636,6 +689,8 @@ template <typename Control>
 	{
 		std::lock_guard lock(control.modelMutex);
 		snapshot->droppedNotificationCount = control.notificationDispatcher.DroppedNotificationCountLocked();
+		control.knownActiveChannelId = snapshot->activeChannelId;
+		control.activeChannelKnown = true;
 		control.lastRevision = snapshot->revision;
 	}
 	return snapshot;
@@ -793,6 +848,8 @@ template <typename Control>
 		std::lock_guard lock(control.modelMutex);
 		control.authorityStopped = true;
 		control.diagnostics.state = EOutputServiceRustProviderState::Stopped;
+		control.knownActiveChannelId.reset();
+		control.activeChannelKnown = true;
 		control.notificationDispatcher.StopLocked();
 	}
 	OutputOperationResult result{
@@ -801,15 +858,48 @@ template <typename Control>
 		raw.revision,
 		raw.callback_drain_deferred != 0 };
 	if (operationStatus == SakuraOutputProviderOperationStatus::Succeeded) {
-		std::optional<std::string> activeChannelId;
-		const auto activeQuerySucceeded = ReadActiveChannel(control, result.revision, activeChannelId);
-		bool drain{};
-		if (activeQuerySucceeded) {
+		bool activeQueryNeeded{};
+		{
 			std::lock_guard lock(control.modelMutex);
-			if (control.diagnostics.state == EOutputServiceRustProviderState::Ready) {
-				drain = control.notificationDispatcher.QueueLocked(
-					result.revision, changeKind, channelId, activeChannelId);
+			// Content-only commits and known non-active hides/disposals can reuse
+			// the provider-local fact. If no listener is present, leave an
+			// uncertain transition unknown and defer the query until one is needed.
+			const auto activeKnown = UpdateKnownActiveChannelAfterAcceptedLocked(
+				control, changeKind, channelId);
+			activeQueryNeeded = control.notificationDispatcher.HasSubscriptionsLocked() && !activeKnown;
+		}
+
+		bool activeQuerySucceeded = true;
+		bool drain{};
+		for (;;) {
+			if (activeQueryNeeded) {
+				std::optional<std::string> queriedActiveChannelId;
+				activeQuerySucceeded = ReadActiveChannel(
+					control, result.revision, queriedActiveChannelId);
+				if (!activeQuerySucceeded) break;
+				{
+					std::lock_guard lock(control.modelMutex);
+					control.knownActiveChannelId = std::move(queriedActiveChannelId);
+					control.activeChannelKnown = true;
+				}
+				activeQueryNeeded = false;
 			}
+			if (!activeQuerySucceeded) break;
+			std::lock_guard lock(control.modelMutex);
+			if (!control.notificationDispatcher.HasSubscriptionsLocked()
+				|| control.diagnostics.state != EOutputServiceRustProviderState::Ready) {
+				break;
+			}
+			if (!control.activeChannelKnown) {
+				// A listener may have registered after the first check. Re-query
+				// before queueing so that this accepted commit retains advisory
+				// snapshot parity even in that registration race.
+				activeQueryNeeded = true;
+				continue;
+			}
+			drain = control.notificationDispatcher.QueueLocked(
+				result.revision, changeKind, channelId, control.knownActiveChannelId);
+			break;
 		}
 		mutationLock.unlock();
 		if (drain) control.notificationDispatcher.Drain();
@@ -850,6 +940,8 @@ void CacheTerminalSnapshot(
 		control.terminalSnapshot.droppedNotificationCount =
 			control.notificationDispatcher.DroppedNotificationCountLocked();
 		control.terminalSnapshotAvailable = true;
+		control.knownActiveChannelId.reset();
+		control.activeChannelKnown = true;
 		control.lastRevision = revision;
 	}
 	previousSnapshot.reset();
@@ -1283,15 +1375,12 @@ OutputOperationResult OutputServiceRustProvider::Stop() noexcept
 					result = { static_cast<EOutputOperationStatus>(raw.status),
 						static_cast<EOutputOperationReason>(raw.reason), raw.revision,
 						raw.callback_drain_deferred != 0 };
-					std::optional<OutputServiceSnapshot> terminalSnapshot;
-					try {
-						terminalSnapshot = ReadSnapshot(*m_control);
-					} catch (...) {
-						SetFault(*m_control, EOutputServiceRustProviderFault::SnapshotFailure,
-							EOutputProviderBoundary::SnapshotDecode,
-							SakuraOutputProviderStatus::InternalError);
-					}
-					CacheTerminalSnapshot(*m_control, std::move(terminalSnapshot), result.revision);
+					// A validated Rust Stop is the terminal transition receipt: Rust
+					// clears every channel and active selection before returning it.
+					// Synthesize the provider-neutral stopped snapshot from that receipt
+					// instead of crossing the two-call snapshot ABI while callbacks may
+					// still be borrowing this provider.
+					CacheTerminalSnapshot(*m_control, std::nullopt, result.revision);
 				}
 			} else {
 				CacheTerminalSnapshot(*m_control, std::nullopt, result.revision);

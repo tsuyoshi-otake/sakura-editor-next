@@ -551,7 +551,9 @@ TEST(OutputServiceProviderConformance, ActiveChannelAtStableIdLimitMatchesCppAut
 	ExpectSnapshotsExactlyEqual(cppSnapshot, rustSnapshot);
 	ASSERT_TRUE(rustSnapshot.activeChannelId.has_value());
 	EXPECT_EQ(channelId, *rustSnapshot.activeChannelId);
-	EXPECT_EQ(1U, providers.rust->Health().counters.activeChannelCalls);
+	// No advisory listeners are registered, so the Rust adapter does not need
+	// an active-channel query merely to complete the accepted mutation.
+	EXPECT_EQ(0U, providers.rust->Health().counters.activeChannelCalls);
 }
 
 TEST(OutputServiceProviderConformance, ReplayConflictStaleRevisionAndNotApplicableAreTyped)
@@ -1023,6 +1025,7 @@ TEST(OutputServiceProviderConformance, RustDecodedSnapshotCachePreservesValuesAn
 	ExpectSnapshotsExactlyEqual(rustRefreshed, rejectedSnapshot);
 	EXPECT_EQ(beforeRejectedSnapshot.counters.ffiCalls, afterRejectedSnapshot.counters.ffiCalls);
 
+	const auto beforeStop = providers.rust->Health();
 	const auto stopResult = providers.rust->Stop();
 	ExpectExpectedResult(stopResult, EOutputOperationStatus::Succeeded,
 		EOutputOperationReason::None, 4);
@@ -1031,6 +1034,11 @@ TEST(OutputServiceProviderConformance, RustDecodedSnapshotCachePreservesValuesAn
 	const auto afterFirstStoppedSnapshot = providers.rust->Health();
 	EXPECT_TRUE(stopped.stopped);
 	EXPECT_TRUE(stopped.channels.empty());
+	// A validated Stop result is the terminal snapshot receipt: Stop and token
+	// destruction are the only ABI calls; no post-stop snapshot round-trip is
+	// needed to establish the same empty/stopped observation.
+	EXPECT_EQ(beforeStop.counters.ffiCalls + 2, afterStop.counters.ffiCalls);
+	EXPECT_EQ(beforeStop.counters.snapshotCalls, afterStop.counters.snapshotCalls);
 	EXPECT_EQ(afterStop.counters.ffiCalls, afterFirstStoppedSnapshot.counters.ffiCalls);
 
 	const auto stoppedAgain = providers.rust->Snapshot();

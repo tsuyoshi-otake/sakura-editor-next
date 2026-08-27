@@ -173,4 +173,9 @@ void OutputServiceNotificationDispatcher::Drain() noexcept
 	}
 }
 
+bool OutputServiceNotificationDispatcher::HasSubscriptionsLocked() const noexcept
+{
+	return !m_subscriptions.empty();
+}
+
 } // namespace workbench::output
