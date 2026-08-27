@@ -494,28 +494,28 @@ impl Service {
                 label,
                 kind,
                 metadata,
-            } => self.create_channel(&operation, owner, channel_id, label, kind, metadata),
+            } => self.create_channel(operation, owner, channel_id, label, kind, metadata),
             Request::Text {
                 operation,
                 owner,
                 channel_id,
                 text,
                 replace,
-            } => self.apply_text(&operation, owner, channel_id, text, replace),
+            } => self.apply_text(operation, owner, channel_id, text, replace),
             Request::AppendLog {
                 operation,
                 owner,
                 channel_id,
                 entries,
-            } => self.append_log(&operation, owner, channel_id, entries),
+            } => self.append_log(operation, owner, channel_id, entries),
             Request::Channel {
                 operation,
                 owner,
                 channel_id,
                 kind,
                 preserve_focus,
-            } => self.apply_channel(&operation, owner, channel_id, kind, preserve_focus),
-            Request::DisposeOwner { operation, owner } => self.dispose_owner(&operation, owner),
+            } => self.apply_channel(operation, owner, channel_id, kind, preserve_focus),
+            Request::DisposeOwner { operation, owner } => self.dispose_owner(operation, owner),
         };
         match outcome {
             ApplyOutcome::NotAccepted(result) => result,
@@ -532,7 +532,7 @@ impl Service {
 
     fn create_channel(
         &mut self,
-        operation: &Operation,
+        operation: Operation,
         owner: Owner,
         channel_id: Vec<u8>,
         label: Vec<u8>,
@@ -624,9 +624,8 @@ impl Service {
             );
         }
 
-        let operation_id = operation.id.clone();
         let fingerprint =
-            fingerprint_create_channel(operation, &owner, &channel_id, &label, kind, &metadata);
+            fingerprint_create_channel(&operation, &owner, &channel_id, &label, kind, &metadata);
         if adopts_new_generation {
             self.channels
                 .retain(|_, channel| channel.owner.id != owner.id);
@@ -663,7 +662,7 @@ impl Service {
             SakuraOutputShadowReason::None,
         );
         ApplyOutcome::Accepted {
-            operation_id,
+            operation_id: operation.id,
             fingerprint,
             result,
         }
@@ -671,7 +670,7 @@ impl Service {
 
     fn apply_text(
         &mut self,
-        operation: &Operation,
+        operation: Operation,
         owner: Owner,
         channel_id: Vec<u8>,
         text: Vec<u8>,
@@ -712,8 +711,7 @@ impl Service {
                 SakuraOutputShadowReason::None,
             );
         }
-        let operation_id = operation.id.clone();
-        let fingerprint = fingerprint_text(operation, &owner, &channel_id, &text, replace);
+        let fingerprint = fingerprint_text(&operation, &owner, &channel_id, &text, replace);
         let maximum_text_bytes_per_channel = self.limits.maximum_text_bytes_per_channel;
         let channel = self
             .channels
@@ -736,7 +734,7 @@ impl Service {
             SakuraOutputShadowReason::None,
         );
         ApplyOutcome::Accepted {
-            operation_id,
+            operation_id: operation.id,
             fingerprint,
             result,
         }
@@ -744,7 +742,7 @@ impl Service {
 
     fn append_log(
         &mut self,
-        operation: &Operation,
+        operation: Operation,
         owner: Owner,
         channel_id: Vec<u8>,
         entries: Vec<LogEntry>,
@@ -791,8 +789,7 @@ impl Service {
                 SakuraOutputShadowReason::None,
             );
         }
-        let operation_id = operation.id.clone();
-        let fingerprint = fingerprint_append_log(operation, &owner, &channel_id, &entries);
+        let fingerprint = fingerprint_append_log(&operation, &owner, &channel_id, &entries);
         let maximum_log_entries_per_channel = self.limits.maximum_log_entries_per_channel;
         let maximum_text_bytes_per_channel = self.limits.maximum_text_bytes_per_channel;
         let channel = self
@@ -815,7 +812,7 @@ impl Service {
             SakuraOutputShadowReason::None,
         );
         ApplyOutcome::Accepted {
-            operation_id,
+            operation_id: operation.id,
             fingerprint,
             result,
         }
@@ -823,7 +820,7 @@ impl Service {
 
     fn apply_channel(
         &mut self,
-        operation: &Operation,
+        operation: Operation,
         owner: Owner,
         channel_id: Vec<u8>,
         kind: u32,
@@ -842,9 +839,8 @@ impl Service {
                     SakuraOutputShadowReason::None,
                 );
             }
-            let operation_id = operation.id.clone();
             let fingerprint =
-                fingerprint_channel(operation, &owner, &channel_id, kind, preserve_focus);
+                fingerprint_channel(&operation, &owner, &channel_id, kind, preserve_focus);
             let channel = self
                 .channels
                 .get_mut(&channel_id)
@@ -858,7 +854,7 @@ impl Service {
                 SakuraOutputShadowReason::None,
             );
             return ApplyOutcome::Accepted {
-                operation_id,
+                operation_id: operation.id,
                 fingerprint,
                 result,
             };
@@ -884,9 +880,8 @@ impl Service {
                     SakuraOutputShadowReason::None,
                 );
             }
-            let operation_id = operation.id.clone();
             let fingerprint =
-                fingerprint_channel(operation, &owner, &channel_id, kind, preserve_focus);
+                fingerprint_channel(&operation, &owner, &channel_id, kind, preserve_focus);
             let channel = self
                 .channels
                 .get_mut(&channel_id)
@@ -902,7 +897,7 @@ impl Service {
                 SakuraOutputShadowReason::None,
             );
             return ApplyOutcome::Accepted {
-                operation_id,
+                operation_id: operation.id,
                 fingerprint,
                 result,
             };
@@ -913,8 +908,8 @@ impl Service {
                 SakuraOutputShadowReason::None,
             );
         }
-        let operation_id = operation.id.clone();
-        let fingerprint = fingerprint_channel(operation, &owner, &channel_id, kind, preserve_focus);
+        let fingerprint =
+            fingerprint_channel(&operation, &owner, &channel_id, kind, preserve_focus);
         self.channels.remove(&channel_id);
         if self.active_channel_id.as_ref() == Some(&channel_id) {
             self.active_channel_id = None;
@@ -926,7 +921,7 @@ impl Service {
             SakuraOutputShadowReason::None,
         );
         ApplyOutcome::Accepted {
-            operation_id,
+            operation_id: operation.id,
             fingerprint,
             result,
         }
@@ -934,7 +929,7 @@ impl Service {
 
     fn clear_channel(
         &mut self,
-        operation: &Operation,
+        operation: Operation,
         owner: &Owner,
         channel_id: &[u8],
     ) -> ApplyOutcome {
@@ -962,8 +957,7 @@ impl Service {
                 SakuraOutputShadowReason::None,
             );
         }
-        let operation_id = operation.id.clone();
-        let fingerprint = fingerprint_channel(operation, owner, channel_id, OP_CLEAR, false);
+        let fingerprint = fingerprint_channel(&operation, owner, channel_id, OP_CLEAR, false);
         let channel = self
             .channels
             .get_mut(channel_id)
@@ -978,13 +972,13 @@ impl Service {
             SakuraOutputShadowReason::None,
         );
         ApplyOutcome::Accepted {
-            operation_id,
+            operation_id: operation.id,
             fingerprint,
             result,
         }
     }
 
-    fn dispose_owner(&mut self, operation: &Operation, owner: Owner) -> ApplyOutcome {
+    fn dispose_owner(&mut self, operation: Operation, owner: Owner) -> ApplyOutcome {
         if !is_valid_owner(&owner) {
             return self.current(
                 SakuraOutputShadowOperationStatus::Rejected,
@@ -1015,8 +1009,7 @@ impl Service {
                 SakuraOutputShadowReason::None,
             );
         }
-        let operation_id = operation.id.clone();
-        let fingerprint = fingerprint_dispose_owner(operation, &owner);
+        let fingerprint = fingerprint_dispose_owner(&operation, &owner);
         self.channels.retain(|_, channel| {
             channel.owner.id != owner.id || channel.owner.generation != owner.generation
         });
@@ -1031,7 +1024,7 @@ impl Service {
             SakuraOutputShadowReason::None,
         );
         ApplyOutcome::Accepted {
-            operation_id,
+            operation_id: operation.id,
             fingerprint,
             result,
         }
@@ -2317,10 +2310,112 @@ fn append_fingerprint_owner(target: &mut Vec<u8>, owner: &Owner) {
     put_u64(target, owner.generation);
 }
 
-fn fingerprint_buffer() -> Vec<u8> {
+fn fingerprint_bytes_capacity(value: &[u8]) -> Option<usize> {
+    size_of::<u64>().checked_add(value.len())
+}
+
+fn fingerprint_optional_bytes_capacity(value: Option<&[u8]>) -> Option<usize> {
+    1_usize.checked_add(match value {
+        Some(value) => fingerprint_bytes_capacity(value)?,
+        None => 0,
+    })
+}
+
+fn fingerprint_operation_capacity(operation: &Operation) -> Option<usize> {
+    fingerprint_bytes_capacity(&operation.id)?
+        .checked_add(1)?
+        .checked_add(if operation.expected_revision.is_some() {
+            size_of::<u64>()
+        } else {
+            0
+        })
+}
+
+fn fingerprint_owner_capacity(owner: &Owner) -> Option<usize> {
+    fingerprint_bytes_capacity(&owner.id)?.checked_add(size_of::<u64>())
+}
+
+fn fingerprint_header_capacity(
+    tag: &[u8],
+    operation: &Operation,
+    owner: &Owner,
+    channel_id: &[u8],
+) -> Option<usize> {
+    tag.len()
+        .checked_add(fingerprint_operation_capacity(operation)?)?
+        .checked_add(fingerprint_owner_capacity(owner)?)?
+        .checked_add(fingerprint_bytes_capacity(channel_id)?)
+}
+
+fn fingerprint_buffer(capacity: usize) -> Vec<u8> {
     #[cfg(test)]
     FINGERPRINT_CONSTRUCTION_COUNT.with(|count| count.set(count.get() + 1));
-    Vec::new()
+    Vec::with_capacity(capacity)
+}
+
+fn fingerprint_create_channel_capacity(
+    operation: &Operation,
+    owner: &Owner,
+    channel_id: &[u8],
+    label: &[u8],
+    metadata: &Metadata,
+) -> Option<usize> {
+    let mut capacity = fingerprint_header_capacity(b"create;", operation, owner, channel_id)?;
+    capacity = capacity.checked_add(fingerprint_bytes_capacity(label)?)?;
+    capacity = capacity.checked_add(1)?;
+    capacity = capacity.checked_add(fingerprint_optional_bytes_capacity(
+        metadata.language_id.as_deref(),
+    )?)?;
+    capacity = capacity.checked_add(fingerprint_optional_bytes_capacity(
+        metadata.source.as_deref(),
+    )?)?;
+    Some(capacity)
+}
+
+fn fingerprint_text_capacity(
+    tag: &[u8],
+    operation: &Operation,
+    owner: &Owner,
+    channel_id: &[u8],
+    text: &[u8],
+) -> Option<usize> {
+    fingerprint_header_capacity(tag, operation, owner, channel_id)?
+        .checked_add(fingerprint_bytes_capacity(text)?)
+}
+
+fn fingerprint_append_log_capacity(
+    operation: &Operation,
+    owner: &Owner,
+    channel_id: &[u8],
+    entries: &[LogEntry],
+) -> Option<usize> {
+    let mut capacity = fingerprint_header_capacity(b"append-log;", operation, owner, channel_id)?;
+    for entry in entries {
+        capacity = capacity.checked_add(size_of::<u32>())?;
+        capacity = capacity.checked_add(fingerprint_bytes_capacity(&entry.message)?)?;
+        capacity = capacity.checked_add(fingerprint_optional_bytes_capacity(
+            entry.source.as_deref(),
+        )?)?;
+    }
+    Some(capacity)
+}
+
+fn fingerprint_channel_capacity(
+    tag: &[u8],
+    operation: &Operation,
+    owner: &Owner,
+    channel_id: &[u8],
+    include_preserve_focus: bool,
+) -> Option<usize> {
+    fingerprint_header_capacity(tag, operation, owner, channel_id)?
+        .checked_add(usize::from(include_preserve_focus))
+}
+
+fn fingerprint_dispose_owner_capacity(operation: &Operation, owner: &Owner) -> Option<usize> {
+    b"dispose-owner;"
+        .len()
+        .checked_add(fingerprint_operation_capacity(operation)?)?
+        .checked_add(fingerprint_owner_capacity(owner)?)
 }
 
 fn append_fingerprint_header(
@@ -2344,7 +2439,10 @@ fn fingerprint_create_channel(
     kind: u8,
     metadata: &Metadata,
 ) -> Vec<u8> {
-    let mut output = fingerprint_buffer();
+    let capacity =
+        fingerprint_create_channel_capacity(operation, owner, channel_id, label, metadata)
+            .expect("fingerprint capacity must fit usize");
+    let mut output = fingerprint_buffer(capacity);
     append_fingerprint_header(&mut output, b"create;", operation, owner, channel_id);
     append_fingerprint_bytes(&mut output, label);
     output.push(kind);
@@ -2360,18 +2458,15 @@ fn fingerprint_text(
     text: &[u8],
     replace: bool,
 ) -> Vec<u8> {
-    let mut output = fingerprint_buffer();
-    append_fingerprint_header(
-        &mut output,
-        if replace {
-            b"replace-output;"
-        } else {
-            b"append-output;"
-        },
-        operation,
-        owner,
-        channel_id,
-    );
+    let tag = if replace {
+        b"replace-output;".as_slice()
+    } else {
+        b"append-output;".as_slice()
+    };
+    let capacity = fingerprint_text_capacity(tag, operation, owner, channel_id, text)
+        .expect("fingerprint capacity must fit usize");
+    let mut output = fingerprint_buffer(capacity);
+    append_fingerprint_header(&mut output, tag, operation, owner, channel_id);
     append_fingerprint_bytes(&mut output, text);
     output
 }
@@ -2382,7 +2477,9 @@ fn fingerprint_append_log(
     channel_id: &[u8],
     entries: &[LogEntry],
 ) -> Vec<u8> {
-    let mut output = fingerprint_buffer();
+    let capacity = fingerprint_append_log_capacity(operation, owner, channel_id, entries)
+        .expect("fingerprint capacity must fit usize");
+    let mut output = fingerprint_buffer(capacity);
     append_fingerprint_header(&mut output, b"append-log;", operation, owner, channel_id);
     for entry in entries {
         put_u32(&mut output, entry.level);
@@ -2406,7 +2503,9 @@ fn fingerprint_channel(
         OP_DISPOSE => b"dispose;".as_slice(),
         _ => b"channel;".as_slice(),
     };
-    let mut output = fingerprint_buffer();
+    let capacity = fingerprint_channel_capacity(tag, operation, owner, channel_id, kind == OP_SHOW)
+        .expect("fingerprint capacity must fit usize");
+    let mut output = fingerprint_buffer(capacity);
     append_fingerprint_header(&mut output, tag, operation, owner, channel_id);
     if kind == OP_SHOW {
         output.push(u8::from(preserve_focus));
@@ -2415,7 +2514,9 @@ fn fingerprint_channel(
 }
 
 fn fingerprint_dispose_owner(operation: &Operation, owner: &Owner) -> Vec<u8> {
-    let mut output = fingerprint_buffer();
+    let capacity = fingerprint_dispose_owner_capacity(operation, owner)
+        .expect("fingerprint capacity must fit usize");
+    let mut output = fingerprint_buffer(capacity);
     output.extend_from_slice(b"dispose-owner;");
     append_fingerprint_operation(&mut output, operation);
     append_fingerprint_owner(&mut output, owner);
@@ -2453,6 +2554,62 @@ fn fingerprint(request: &Request) -> Vec<u8> {
             preserve_focus,
         } => fingerprint_channel(operation, owner, channel_id, *kind, *preserve_focus),
         Request::DisposeOwner { operation, owner } => fingerprint_dispose_owner(operation, owner),
+    }
+}
+
+#[cfg(test)]
+fn fingerprint_capacity(request: &Request) -> Option<usize> {
+    match request {
+        Request::CreateChannel {
+            operation,
+            owner,
+            channel_id,
+            label,
+            metadata,
+            ..
+        } => fingerprint_create_channel_capacity(operation, owner, channel_id, label, metadata),
+        Request::Text {
+            operation,
+            owner,
+            channel_id,
+            text,
+            replace,
+        } => fingerprint_text_capacity(
+            if *replace {
+                b"replace-output;"
+            } else {
+                b"append-output;"
+            },
+            operation,
+            owner,
+            channel_id,
+            text,
+        ),
+        Request::AppendLog {
+            operation,
+            owner,
+            channel_id,
+            entries,
+        } => fingerprint_append_log_capacity(operation, owner, channel_id, entries),
+        Request::Channel {
+            operation,
+            owner,
+            channel_id,
+            kind,
+            ..
+        } => {
+            let tag = match *kind {
+                OP_CLEAR => b"clear;".as_slice(),
+                OP_SHOW => b"show;".as_slice(),
+                OP_HIDE => b"hide;".as_slice(),
+                OP_DISPOSE => b"dispose;".as_slice(),
+                _ => b"channel;".as_slice(),
+            };
+            fingerprint_channel_capacity(tag, operation, owner, channel_id, *kind == OP_SHOW)
+        }
+        Request::DisposeOwner { operation, owner } => {
+            fingerprint_dispose_owner_capacity(operation, owner)
+        }
     }
 }
 
@@ -2547,6 +2704,7 @@ mod tests {
             .split_whitespace()
             .map(|byte| u8::from_str_radix(byte, 16).expect("valid fingerprint hex"))
             .collect::<Vec<_>>();
+        assert_eq!(Some(expected.len()), fingerprint_capacity(request));
         assert_eq!(expected, fingerprint(request));
     }
 
