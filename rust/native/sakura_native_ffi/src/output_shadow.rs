@@ -1227,7 +1227,17 @@ fn ranges_overlap(
     (first as usize) < second_end && (second as usize) < first_end
 }
 
-fn copy_span(span: SakuraOutputShadowSpanV1) -> Result<Vec<u8>, SakuraOutputShadowStatus> {
+#[derive(Clone, Copy, Debug)]
+struct ValidatedSpan {
+    data: *const u8,
+    length: usize,
+}
+
+/// Validates only the fixed span descriptor fields and converts the bounded
+/// length.  Address validation is deliberately a second stage so callers can
+/// reject operation-inapplicable non-empty spans without ever touching their
+/// pointed-to bytes.
+fn validate_span_shape(span: SakuraOutputShadowSpanV1) -> Result<usize, SakuraOutputShadowStatus> {
     if !validate_struct_header(
         span.struct_size,
         span.abi_version,
@@ -1236,9 +1246,18 @@ fn copy_span(span: SakuraOutputShadowSpanV1) -> Result<Vec<u8>, SakuraOutputShad
     {
         return Err(SakuraOutputShadowStatus::InvalidArgument);
     }
-    let length = checked_len(span.length).ok_or(SakuraOutputShadowStatus::InvalidArgument)?;
+    checked_len(span.length).ok_or(SakuraOutputShadowStatus::InvalidArgument)
+}
+
+fn validate_span_range(
+    span: SakuraOutputShadowSpanV1,
+    length: usize,
+) -> Result<ValidatedSpan, SakuraOutputShadowStatus> {
     if length == 0 {
-        return Ok(Vec::new());
+        return Ok(ValidatedSpan {
+            data: span.data,
+            length,
+        });
     }
     if span.data.is_null() || !is_aligned(span.data) || length > isize::MAX as usize {
         return Err(SakuraOutputShadowStatus::InvalidArgument);
@@ -1247,9 +1266,51 @@ fn copy_span(span: SakuraOutputShadowSpanV1) -> Result<Vec<u8>, SakuraOutputShad
         .checked_add(length)
         .filter(|end| *end <= isize::MAX as usize)
         .ok_or(SakuraOutputShadowStatus::InvalidArgument)?;
+    Ok(ValidatedSpan {
+        data: span.data,
+        length,
+    })
+}
+
+fn copy_validated_span(span: ValidatedSpan) -> Vec<u8> {
+    if span.length == 0 {
+        return Vec::new();
+    }
     // SAFETY: The ABI contract requires an immutable initialized byte span for
     // this call. Null, alignment, length, and address overflow were checked.
-    Ok(unsafe { slice::from_raw_parts(span.data, length) }.to_vec())
+    unsafe { slice::from_raw_parts(span.data, span.length) }.to_vec()
+}
+
+fn copy_span(span: SakuraOutputShadowSpanV1) -> Result<Vec<u8>, SakuraOutputShadowStatus> {
+    let length = validate_span_shape(span)?;
+    let span = validate_span_range(span, length)?;
+    Ok(copy_validated_span(span))
+}
+
+fn copy_shaped_span(
+    span: SakuraOutputShadowSpanV1,
+    length: usize,
+) -> Result<Vec<u8>, SakuraOutputShadowStatus> {
+    let span = validate_span_range(span, length)?;
+    Ok(copy_validated_span(span))
+}
+
+fn copy_operation_and_owner(
+    raw: SakuraOutputShadowRequestV1,
+    operation_id_length: usize,
+    owner_id_length: usize,
+    expected_revision: Option<u64>,
+) -> Result<(Operation, Owner), SakuraOutputShadowStatus> {
+    Ok((
+        Operation {
+            id: copy_shaped_span(raw.operation_id, operation_id_length)?,
+            expected_revision,
+        },
+        Owner {
+            id: copy_shaped_span(raw.owner_id, owner_id_length)?,
+            generation: raw.owner_generation,
+        },
+    ))
 }
 
 fn read_log_entries(
@@ -1332,13 +1393,17 @@ fn read_request(
     {
         return Err(SakuraOutputShadowStatus::InvalidArgument);
     }
-    let operation_id = copy_span(raw.operation_id)?;
-    let owner_id = copy_span(raw.owner_id)?;
-    let channel_id = copy_span(raw.channel_id)?;
-    let label = copy_span(raw.label)?;
-    let language_id = copy_span(raw.metadata_language_id)?;
-    let source = copy_span(raw.metadata_source)?;
-    let payload = copy_span(raw.payload)?;
+    // Validate every fixed span descriptor before selecting an operation. This
+    // keeps the pointer-free stage deterministic and lets the operation arms
+    // use lengths for their empty/inapplicable-field checks without allocating
+    // copies of those fields.
+    let operation_id_length = validate_span_shape(raw.operation_id)?;
+    let owner_id_length = validate_span_shape(raw.owner_id)?;
+    let channel_id_length = validate_span_shape(raw.channel_id)?;
+    let label_length = validate_span_shape(raw.label)?;
+    let language_id_length = validate_span_shape(raw.metadata_language_id)?;
+    let source_length = validate_span_shape(raw.metadata_source)?;
+    let payload_length = validate_span_shape(raw.payload)?;
     let expected_revision = if raw.flags & REQUEST_HAS_EXPECTED_REVISION != 0 {
         Some(raw.expected_revision)
     } else {
@@ -1347,18 +1412,10 @@ fn read_request(
         }
         None
     };
-    let operation = Operation {
-        id: operation_id,
-        expected_revision,
-    };
-    let owner = Owner {
-        id: owner_id,
-        generation: raw.owner_generation,
-    };
     let kind = raw.operation_kind;
     match kind {
         OP_CREATE_CHANNEL => {
-            if raw.payload.length != 0
+            if payload_length != 0
                 || raw.log_entry_count != 0
                 || !raw.log_entries.is_null()
                 || raw.flags & REQUEST_PRESERVE_FOCUS != 0
@@ -1366,36 +1423,44 @@ fn read_request(
             {
                 return Err(SakuraOutputShadowStatus::InvalidArgument);
             }
+            if (raw.flags & REQUEST_LANGUAGE_PRESENT == 0 && language_id_length != 0)
+                || (raw.flags & REQUEST_SOURCE_PRESENT == 0 && source_length != 0)
+            {
+                return Err(SakuraOutputShadowStatus::InvalidArgument);
+            }
+            let (operation, owner) = copy_operation_and_owner(
+                raw,
+                operation_id_length,
+                owner_id_length,
+                expected_revision,
+            )?;
             let metadata = Metadata {
                 language_id: if raw.flags & REQUEST_LANGUAGE_PRESENT != 0 {
-                    Some(language_id)
+                    Some(copy_shaped_span(
+                        raw.metadata_language_id,
+                        language_id_length,
+                    )?)
                 } else {
-                    if raw.metadata_language_id.length != 0 {
-                        return Err(SakuraOutputShadowStatus::InvalidArgument);
-                    }
                     None
                 },
                 source: if raw.flags & REQUEST_SOURCE_PRESENT != 0 {
-                    Some(source)
+                    Some(copy_shaped_span(raw.metadata_source, source_length)?)
                 } else {
-                    if raw.metadata_source.length != 0 {
-                        return Err(SakuraOutputShadowStatus::InvalidArgument);
-                    }
                     None
                 },
             };
             Ok(Request::CreateChannel {
                 operation,
                 owner,
-                channel_id,
-                label,
+                channel_id: copy_shaped_span(raw.channel_id, channel_id_length)?,
+                label: copy_shaped_span(raw.label, label_length)?,
                 kind: raw.channel_kind as u8,
                 metadata,
             })
         }
         OP_APPEND_OUTPUT | OP_REPLACE_OUTPUT => {
-            if !language_id.is_empty()
-                || !source.is_empty()
+            if language_id_length != 0
+                || source_length != 0
                 || raw.log_entry_count != 0
                 || !raw.log_entries.is_null()
                 || raw.flags
@@ -1405,19 +1470,29 @@ fn read_request(
             {
                 return Err(SakuraOutputShadowStatus::InvalidArgument);
             }
+            // Text operations historically ignore `label` contents, but the
+            // ABI still requires every non-empty span to be addressable. Keep
+            // that validation without copying the ignored bytes.
+            validate_span_range(raw.label, label_length)?;
+            let (operation, owner) = copy_operation_and_owner(
+                raw,
+                operation_id_length,
+                owner_id_length,
+                expected_revision,
+            )?;
             Ok(Request::Text {
                 operation,
                 owner,
-                channel_id,
-                text: payload,
+                channel_id: copy_shaped_span(raw.channel_id, channel_id_length)?,
+                text: copy_shaped_span(raw.payload, payload_length)?,
                 replace: kind == OP_REPLACE_OUTPUT,
             })
         }
         OP_APPEND_LOG => {
-            if !label.is_empty()
-                || !language_id.is_empty()
-                || !source.is_empty()
-                || raw.payload.length != 0
+            if label_length != 0
+                || language_id_length != 0
+                || source_length != 0
+                || payload_length != 0
                 || raw.flags
                     & (REQUEST_PRESERVE_FOCUS | REQUEST_LANGUAGE_PRESENT | REQUEST_SOURCE_PRESENT)
                     != 0
@@ -1425,18 +1500,24 @@ fn read_request(
             {
                 return Err(SakuraOutputShadowStatus::InvalidArgument);
             }
+            let (operation, owner) = copy_operation_and_owner(
+                raw,
+                operation_id_length,
+                owner_id_length,
+                expected_revision,
+            )?;
             Ok(Request::AppendLog {
                 operation,
                 owner,
-                channel_id,
+                channel_id: copy_shaped_span(raw.channel_id, channel_id_length)?,
                 entries: read_log_entries(raw.log_entries, raw.log_entry_count)?,
             })
         }
         OP_CLEAR | OP_HIDE | OP_DISPOSE => {
-            if !label.is_empty()
-                || !language_id.is_empty()
-                || !source.is_empty()
-                || !payload.is_empty()
+            if label_length != 0
+                || language_id_length != 0
+                || source_length != 0
+                || payload_length != 0
                 || raw.log_entry_count != 0
                 || !raw.log_entries.is_null()
                 || raw.flags
@@ -1446,19 +1527,25 @@ fn read_request(
             {
                 return Err(SakuraOutputShadowStatus::InvalidArgument);
             }
+            let (operation, owner) = copy_operation_and_owner(
+                raw,
+                operation_id_length,
+                owner_id_length,
+                expected_revision,
+            )?;
             Ok(Request::Channel {
                 operation,
                 owner,
-                channel_id,
+                channel_id: copy_shaped_span(raw.channel_id, channel_id_length)?,
                 kind,
                 preserve_focus: false,
             })
         }
         OP_SHOW => {
-            if !label.is_empty()
-                || !language_id.is_empty()
-                || !source.is_empty()
-                || !payload.is_empty()
+            if label_length != 0
+                || language_id_length != 0
+                || source_length != 0
+                || payload_length != 0
                 || raw.log_entry_count != 0
                 || !raw.log_entries.is_null()
                 || raw.flags & (REQUEST_LANGUAGE_PRESENT | REQUEST_SOURCE_PRESENT) != 0
@@ -1466,20 +1553,26 @@ fn read_request(
             {
                 return Err(SakuraOutputShadowStatus::InvalidArgument);
             }
+            let (operation, owner) = copy_operation_and_owner(
+                raw,
+                operation_id_length,
+                owner_id_length,
+                expected_revision,
+            )?;
             Ok(Request::Channel {
                 operation,
                 owner,
-                channel_id,
+                channel_id: copy_shaped_span(raw.channel_id, channel_id_length)?,
                 kind,
                 preserve_focus: raw.flags & REQUEST_PRESERVE_FOCUS != 0,
             })
         }
         OP_DISPOSE_OWNER => {
-            if !channel_id.is_empty()
-                || !label.is_empty()
-                || !language_id.is_empty()
-                || !source.is_empty()
-                || !payload.is_empty()
+            if channel_id_length != 0
+                || label_length != 0
+                || language_id_length != 0
+                || source_length != 0
+                || payload_length != 0
                 || raw.log_entry_count != 0
                 || !raw.log_entries.is_null()
                 || raw.flags
@@ -1489,6 +1582,12 @@ fn read_request(
             {
                 return Err(SakuraOutputShadowStatus::InvalidArgument);
             }
+            let (operation, owner) = copy_operation_and_owner(
+                raw,
+                operation_id_length,
+                owner_id_length,
+                expected_revision,
+            )?;
             Ok(Request::DisposeOwner { operation, owner })
         }
         _ => Err(SakuraOutputShadowStatus::InvalidArgument),
@@ -2728,6 +2827,74 @@ mod tests {
         assert_eq!(SakuraOutputShadowStatus::InvalidHandle, unsafe {
             sakura_output_shadow_destroy_v1(&mut token)
         });
+    }
+
+    #[test]
+    fn span_shape_validation_defers_address_check_until_selected_copy() {
+        let invalid_address = usize::MAX as *const u8;
+        let empty = span(invalid_address, 0);
+        assert_eq!(0, validate_span_shape(empty).expect("empty shape is valid"));
+        assert_eq!(Ok(Vec::new()), copy_shaped_span(empty, 0));
+
+        let payload = b"payload";
+        let selected = span(payload.as_ptr(), payload.len());
+        let selected_length = validate_span_shape(selected).expect("payload shape is valid");
+        assert_eq!(
+            Ok(payload.to_vec()),
+            copy_shaped_span(selected, selected_length)
+        );
+
+        let invalid = span(invalid_address, 1);
+        let invalid_length = validate_span_shape(invalid).expect("length shape is valid");
+        assert_eq!(
+            Err(SakuraOutputShadowStatus::InvalidArgument),
+            copy_shaped_span(invalid, invalid_length)
+        );
+    }
+
+    #[test]
+    fn text_request_validates_but_does_not_copy_ignored_label() {
+        let operation_id = b"operation";
+        let owner_id = b"owner";
+        let channel_id = b"channel";
+        let label = b"ignored label";
+        let payload = b"payload";
+        let request = SakuraOutputShadowRequestV1 {
+            struct_size: size_of::<SakuraOutputShadowRequestV1>() as u32,
+            abi_version: ABI_VERSION_V1,
+            operation_kind: OP_APPEND_OUTPUT,
+            channel_kind: u32::from(CHANNEL_KIND_OUTPUT),
+            flags: 0,
+            operation_id: span(operation_id.as_ptr(), operation_id.len()),
+            expected_revision: 0,
+            owner_id: span(owner_id.as_ptr(), owner_id.len()),
+            owner_generation: 1,
+            channel_id: span(channel_id.as_ptr(), channel_id.len()),
+            label: span(label.as_ptr(), label.len()),
+            metadata_language_id: span(ptr::null(), 0),
+            metadata_source: span(ptr::null(), 0),
+            payload: span(payload.as_ptr(), payload.len()),
+            log_entries: ptr::null(),
+            log_entry_count: 0,
+            reserved: [0; 4],
+        };
+
+        match read_request(&request).expect("text request with an ignored label is valid") {
+            Request::Text { text, replace, .. } => {
+                assert_eq!(payload, text.as_slice());
+                assert!(!replace);
+            }
+            _ => panic!("expected text request"),
+        }
+
+        let invalid_label = SakuraOutputShadowRequestV1 {
+            label: span(usize::MAX as *const u8, 1),
+            ..request
+        };
+        assert!(matches!(
+            read_request(&invalid_label),
+            Err(SakuraOutputShadowStatus::InvalidArgument)
+        ));
     }
 
     #[test]
