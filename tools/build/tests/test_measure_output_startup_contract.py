@@ -506,6 +506,28 @@ class PairedStartupContractTests(unittest.TestCase):
         self.assertIn("processEnumerationRetryContractSelfTestVerified", self.shared_text)
         self.assertIn("realProcessEnumerationSelfTestVerified", self.shared_text)
 
+    def test_shared_affinity_verification_targets_only_fresh_current_live_records(self):
+        for marker in (
+            "function Get-StartupAffinityVerificationPlan",
+            "$historicalById = @{}",
+            "$currentById = @{}",
+            "The current-live affinity process set is unavailable.",
+            "The current-live affinity process set is empty.",
+            "contains duplicate process",
+            "contains unknown process",
+            "does not match its historical identity",
+            "Validate the complete current set before performing any native read-back.",
+            "Get-TrackedOwnedProcesses $owned",
+            "Get-StartupAffinityVerificationPlan $owned $currentRecords",
+            "foreach ($record in $affinityVerificationPlan)",
+            "Read-ProcessAffinityVerified -ProcessId ([int]$record.Id) -Mask $AffinityMask",
+            "affinityCurrentSetSelfTestVerified",
+            "affinityInvalidCurrentSetSelfTestVerified",
+            "affinityExpiredHistoricalExcludedSelfTestVerified",
+        ):
+            self.assertIn(marker, self.shared_text)
+        self.assertNotIn("function Get-StartupAffinityCurrentMatchCount", self.shared_text)
+
     def test_empty_source_status_hash_contract_is_explicit(self):
         self.assertIn("function New-PairedSourceState", self.paired_text)
         self.assertIn("[AllowEmptyString()] [object]$Value", self.paired_text)
@@ -642,6 +664,9 @@ class PairedStartupContractTests(unittest.TestCase):
             self.assertTrue(payload["processEnumerationContractSelfTestVerified"])
             self.assertTrue(payload["realProcessEnumerationSelfTestVerified"])
             self.assertTrue(payload["realMultiMemberJobQuerySelfTestVerified"])
+            self.assertTrue(payload["affinityCurrentSetSelfTestVerified"])
+            self.assertTrue(payload["affinityInvalidCurrentSetSelfTestVerified"])
+            self.assertTrue(payload["affinityExpiredHistoricalExcludedSelfTestVerified"])
             self.assertTrue(payload["workingDirectorySelfTestVerified"])
 
     def test_self_test_output_in_both_powershell_hosts(self):

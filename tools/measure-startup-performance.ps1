@@ -2086,23 +2086,93 @@ function Set-StartupAffinityLiveSetMetadata {
     return $Metadata
 }
 
-function Get-StartupAffinityCurrentMatchCount {
+function Get-StartupAffinityVerificationPlan {
     param(
-        [Parameter(Mandatory = $true)] [int]$ProcessId,
+        [AllowNull()] [object]$HistoricalRecords,
         [AllowNull()] [object]$CurrentRecords
     )
-    $count = 0
-    try {
-        foreach ($candidate in @($CurrentRecords)) {
-            if ($null -eq $candidate) { continue }
-            $candidateId = Convert-StartupObservationInt (Get-StartupObservationProperty $candidate 'Id')
-            if ($candidateId -eq $ProcessId) {
-                $count = Add-StartupSaturatingCount $count 1 $startupObservationMaxCount
-            }
+    if ($null -eq $HistoricalRecords -or -not ($HistoricalRecords -is [Collections.IDictionary])) {
+        throw 'The historical affinity process set is unavailable.'
+    }
+    if ($null -eq $CurrentRecords) {
+        throw 'The current-live affinity process set is unavailable.'
+    }
+
+    $historicalById = @{}
+    foreach ($historicalEntry in @($HistoricalRecords.GetEnumerator())) {
+        if ($null -eq $historicalEntry -or $null -eq $historicalEntry.Value) {
+            throw 'The historical affinity process set contains an unavailable record.'
+        }
+        $historicalIdValue = Get-StartupObservationProperty $historicalEntry.Value 'Id'
+        if ($null -eq $historicalIdValue -or $historicalIdValue -is [bool]) {
+            throw 'The historical affinity process set contains a malformed process identity.'
+        }
+        try { $historicalId = [int]$historicalIdValue } catch { throw 'The historical affinity process set contains a malformed process identity.' }
+        if ($historicalId -le 0 -or $historicalById.ContainsKey($historicalId)) {
+            throw 'The historical affinity process set contains a duplicate or invalid process identity.'
+        }
+        try { $historicalKey = [int]$historicalEntry.Key } catch { throw 'The historical affinity process set key is malformed.' }
+        if ($historicalKey -ne $historicalId) {
+            throw "The historical affinity process set key does not match process $historicalId."
+        }
+        $historicalCreationValue = Get-StartupObservationProperty $historicalEntry.Value 'Creation'
+        $historicalPath = Get-StartupObservationProperty $historicalEntry.Value 'ImagePath'
+        if ($null -eq $historicalCreationValue -or [string]::IsNullOrWhiteSpace([string]$historicalPath)) {
+            throw "The historical affinity process $historicalId has an incomplete identity."
+        }
+        try { $historicalCreation = [long]$historicalCreationValue } catch { throw "The historical affinity process $historicalId has a malformed creation identity." }
+        $historicalById[$historicalId] = [pscustomobject][ordered]@{
+            record = $historicalEntry.Value
+            creation = $historicalCreation
+            imagePath = [string]$historicalPath
         }
     }
-    catch { return 0 }
-    return $count
+    if ($historicalById.Count -eq 0) {
+        throw 'The historical affinity process set is empty.'
+    }
+
+    $currentRecordsArray = @($CurrentRecords)
+    if ($currentRecordsArray.Count -eq 0) {
+        throw 'The current-live affinity process set is empty.'
+    }
+    $currentById = @{}
+    $plan = New-Object Collections.Generic.List[object]
+    foreach ($current in $currentRecordsArray) {
+        if ($null -eq $current) {
+            throw 'The current-live affinity process set contains an unavailable record.'
+        }
+        $currentIdValue = Get-StartupObservationProperty $current 'Id'
+        if ($null -eq $currentIdValue -or $currentIdValue -is [bool]) {
+            throw 'The current-live affinity process set contains a malformed process identity.'
+        }
+        try { $currentId = [int]$currentIdValue } catch { throw 'The current-live affinity process set contains a malformed process identity.' }
+        if ($currentId -le 0) {
+            throw 'The current-live affinity process set contains an invalid process identity.'
+        }
+        if ($currentById.ContainsKey($currentId)) {
+            throw "The current-live affinity process set contains duplicate process $currentId."
+        }
+        if (-not $historicalById.ContainsKey($currentId)) {
+            throw "The current-live affinity process set contains unknown process $currentId."
+        }
+        $historical = $historicalById[$currentId]
+        $currentCreationValue = Get-StartupObservationProperty $current 'Creation'
+        $currentPath = Get-StartupObservationProperty $current 'ImagePath'
+        if ($null -eq $currentCreationValue -or [string]::IsNullOrWhiteSpace([string]$currentPath)) {
+            throw "The current-live affinity process $currentId has an incomplete identity."
+        }
+        try { $currentCreation = [long]$currentCreationValue } catch { throw "The current-live affinity process $currentId has a malformed creation identity." }
+        if ($historical.creation -ne $currentCreation -or -not (Test-SamePath $currentPath $historical.imagePath)) {
+            throw "The current-live affinity process $currentId does not match its historical identity."
+        }
+        $currentById[$currentId] = $true
+        [void]$plan.Add($current)
+    }
+
+    # Validate the complete current set before performing any native read-back.
+    # This prevents malformed, duplicate, unknown, or identity-reused records
+    # from producing a partial affinity result.
+    return $plan.ToArray()
 }
 
 function Set-ProcessAffinityVerified([int]$ProcessId, [UInt64]$Mask) {
@@ -4314,13 +4384,15 @@ function Invoke-StartupMeasurement([string]$Condition, [int]$Iteration, [string]
                 [void](Set-StartupAffinityLiveSetMetadata $result.affinity $historicalAffinityCount $snapshotLiveRecords.Count 'process-snapshot')
                 $currentRecords = @(Get-TrackedOwnedProcesses $owned)
                 [void](Set-StartupAffinityLiveSetMetadata $result.affinity $historicalAffinityCount $currentRecords.Count 'tracked-sweep')
-                foreach ($record in @($owned.Values)) {
-                    $currentMatchCount = Get-StartupAffinityCurrentMatchCount ([int]$record.Id) $currentRecords
-                    if ($currentMatchCount -ne 1) {
-                        $result.affinity.failureType = 'identity'
-                        $result.affinity.failureErrorCode = 13
-                        throw "Could not verify the identity of run-owned process $($record.Id) while checking affinity."
-                    }
+                try {
+                    $affinityVerificationPlan = @(Get-StartupAffinityVerificationPlan $owned $currentRecords)
+                }
+                catch {
+                    $result.affinity.failureType = 'identity'
+                    $result.affinity.failureErrorCode = 13
+                    throw
+                }
+                foreach ($record in $affinityVerificationPlan) {
                     [void](Read-ProcessAffinityVerified -ProcessId ([int]$record.Id) -Mask $AffinityMask)
                 }
                 $result.affinity.descendantsVerified = $true
@@ -4996,25 +5068,92 @@ function Invoke-SelfTest {
     }
     $affinityMetadataSelfTest = Get-AffinityMetadata $affinitySelfTestProbe
     [void](Set-StartupAffinityLiveSetMetadata $affinityMetadataSelfTest 5 4 'tracked-sweep')
-    $affinityMetadataSelfTest.failureType = 'identity'
-    $affinityMetadataSelfTest.failureErrorCode = 13
-    $affinityMetadataSelfTest.verified = $false
-    $affinityHistoricalRecordsSelfTest = @(
-        [pscustomobject]@{ Id = 1 }, [pscustomobject]@{ Id = 2 }, [pscustomobject]@{ Id = 3 },
-        [pscustomobject]@{ Id = 4 }, [pscustomobject]@{ Id = 5 }
-    )
+    $affinityHistoricalRecordsSelfTest = @{}
+    for ($affinityId = 1; $affinityId -le 5; $affinityId++) {
+        $affinityHistoricalRecordsSelfTest[$affinityId] = [pscustomobject]@{
+            Id = $affinityId; ParentId = 0; Creation = [long](1000 + $affinityId)
+            ImagePath = "C:\startup-affinity-selftest\process-$affinityId.exe"
+        }
+    }
     $affinityCurrentRecordsSelfTest = @(
-        [pscustomobject]@{ Id = 1 }, [pscustomobject]@{ Id = 2 },
-        [pscustomobject]@{ Id = 3 }, [pscustomobject]@{ Id = 4 }
+        [pscustomobject]@{ Id = 1; ParentId = 0; Creation = [long]1001; ImagePath = 'C:\startup-affinity-selftest\process-1.exe' }
+        [pscustomobject]@{ Id = 2; ParentId = 1; Creation = [long]1002; ImagePath = 'C:\startup-affinity-selftest\process-2.exe' }
+        [pscustomobject]@{ Id = 3; ParentId = 1; Creation = [long]1003; ImagePath = 'C:\startup-affinity-selftest\process-3.exe' }
+        [pscustomobject]@{ Id = 4; ParentId = 2; Creation = [long]1004; ImagePath = 'C:\startup-affinity-selftest\process-4.exe' }
     )
-    $affinityMissingHistoricalMatchCount = Get-StartupAffinityCurrentMatchCount 5 $affinityCurrentRecordsSelfTest
+    $affinityReadBackIdsSelfTest = New-Object Collections.Generic.List[int]
+    $affinityReadBackSelfTest = {
+        param($Record, $Mask)
+        if ([UInt64]$Mask -ne [UInt64]1) { throw 'Synthetic affinity read-back mask mismatch.' }
+        [void]$affinityReadBackIdsSelfTest.Add([int]$Record.Id)
+    }
+    $affinityCurrentPlanSelfTest = @(Get-StartupAffinityVerificationPlan $affinityHistoricalRecordsSelfTest $affinityCurrentRecordsSelfTest)
+    foreach ($record in $affinityCurrentPlanSelfTest) {
+        [void](& $affinityReadBackSelfTest $record ([UInt64]1))
+    }
+    $affinityPlanIdsSelfTest = @($affinityReadBackIdsSelfTest.ToArray())
+    $affinityCurrentSetSelfTestVerified = $affinityCurrentPlanSelfTest.Count -eq 4 -and
+        $affinityReadBackIdsSelfTest.Count -eq 4 -and ($affinityPlanIdsSelfTest -join ',') -eq '1,2,3,4' -and
+        -not ($affinityPlanIdsSelfTest -contains 5)
+    if (-not $affinityCurrentSetSelfTestVerified) { throw 'Current-live affinity verification plan self-test failed.' }
+
+    $affinityEmptyRejected = $false
+    try { [void](Get-StartupAffinityVerificationPlan $affinityHistoricalRecordsSelfTest @()) }
+    catch { $affinityEmptyRejected = $true }
+    $affinityNullRejected = $false
+    try { [void](Get-StartupAffinityVerificationPlan $affinityHistoricalRecordsSelfTest $null) }
+    catch { $affinityNullRejected = $true }
+    $affinityUnknownRejected = $false
+    try {
+        [void](Get-StartupAffinityVerificationPlan $affinityHistoricalRecordsSelfTest @(
+            $affinityCurrentRecordsSelfTest
+            [pscustomobject]@{ Id = 99; ParentId = 0; Creation = [long]1099; ImagePath = 'C:\startup-affinity-selftest\unknown.exe' }
+        ))
+    }
+    catch { $affinityUnknownRejected = $true }
+    $affinityDuplicateRejected = $false
+    try {
+        [void](Get-StartupAffinityVerificationPlan $affinityHistoricalRecordsSelfTest @(
+            $affinityCurrentRecordsSelfTest[0]
+            $affinityCurrentRecordsSelfTest[1]
+            $affinityCurrentRecordsSelfTest[1]
+            $affinityCurrentRecordsSelfTest[2]
+            $affinityCurrentRecordsSelfTest[3]
+        ))
+    }
+    catch { $affinityDuplicateRejected = $true }
+    $affinityCreationMismatchRejected = $false
+    try {
+        [void](Get-StartupAffinityVerificationPlan $affinityHistoricalRecordsSelfTest @(
+            $affinityCurrentRecordsSelfTest[0]
+            $affinityCurrentRecordsSelfTest[1]
+            $affinityCurrentRecordsSelfTest[2]
+            [pscustomobject]@{ Id = 4; ParentId = 2; Creation = [long]9999; ImagePath = 'C:\startup-affinity-selftest\process-4.exe' }
+        ))
+    }
+    catch { $affinityCreationMismatchRejected = $true }
+    $affinityPathMismatchRejected = $false
+    try {
+        [void](Get-StartupAffinityVerificationPlan $affinityHistoricalRecordsSelfTest @(
+            $affinityCurrentRecordsSelfTest[0]
+            $affinityCurrentRecordsSelfTest[1]
+            $affinityCurrentRecordsSelfTest[2]
+            [pscustomobject]@{ Id = 4; ParentId = 2; Creation = [long]1004; ImagePath = 'C:\startup-affinity-selftest\replacement.exe' }
+        ))
+    }
+    catch { $affinityPathMismatchRejected = $true }
+    $affinityInvalidCurrentSetSelfTestVerified = $affinityEmptyRejected -and $affinityNullRejected -and
+        $affinityUnknownRejected -and $affinityDuplicateRejected -and $affinityCreationMismatchRejected -and
+        $affinityPathMismatchRejected
+    if (-not $affinityInvalidCurrentSetSelfTestVerified) { throw 'Invalid current-live affinity set self-test failed.' }
+
+    $affinityMetadataSelfTest.descendantsVerified = $true
     $affinityHistoricalCountsVerified = $affinityMetadataSelfTest.historicalOwnedCount -eq 5 -and
         $affinityMetadataSelfTest.currentLiveCount -eq 4 -and
         $affinityMetadataSelfTest.expiredHistoricalCount -eq 1 -and
         $affinityMetadataSelfTest.liveSetSource -eq 'tracked-sweep' -and
-        (Get-StartupAffinityCurrentMatchCount $affinityHistoricalRecordsSelfTest[0].Id $affinityCurrentRecordsSelfTest) -eq 1 -and
-        $affinityMissingHistoricalMatchCount -eq 0 -and
-        -not $affinityMetadataSelfTest.verified
+        $affinityMetadataSelfTest.verified -and $affinityMetadataSelfTest.descendantsVerified -and
+        $affinityCurrentSetSelfTestVerified -and $affinityInvalidCurrentSetSelfTestVerified
     if (-not $affinityHistoricalCountsVerified) { throw 'Historical/current affinity count self-test failed.' }
     $syntheticFailedQuery = [StartupProbeJobResult][pscustomobject][ordered]@{
         Attempted = $true
@@ -5219,6 +5358,10 @@ function Invoke-SelfTest {
         trackedIdentityStillPresentSelfTestVerified = [bool]$identityStillPresentVerified
         trackedIdentityCensusUnavailableSelfTestVerified = [bool]$identityUnavailableVerified
         affinityHistoricalCountsSelfTestVerified = [bool]$affinityHistoricalCountsVerified
+        affinityCurrentSetSelfTestVerified = [bool]$affinityCurrentSetSelfTestVerified
+        affinityInvalidCurrentSetSelfTestVerified = [bool]$affinityInvalidCurrentSetSelfTestVerified
+        affinityExpiredHistoricalExcludedSelfTestVerified = [bool]($affinityCurrentSetSelfTestVerified -and
+            -not ($affinityPlanIdsSelfTest -contains 5))
         realProcessEnumerationSelfTestVerified = [bool]$realProcessEnumerationSelfTestVerified
         realMultiMemberJobQuerySelfTestVerified = [bool]$realMultiMemberJobQuerySelfTestVerified
         cleanupObservationSelfTestVerified = [bool]$cleanupObservationSelfTestVerified

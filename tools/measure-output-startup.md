@@ -63,6 +63,18 @@ PID, creation identity, executable identity, and job membership are checked,
 parents are stopped before children, and an exact bundle image-path sweep must
 be empty after cleanup.
 
+The final descendant-affinity check uses only the fresh current-live records
+returned by `Get-TrackedOwnedProcesses` after its complete typed process census
+and exact PID/creation/image-path identity checks. Historical records missing
+from that current set are expected exits and are not affinity read-back targets.
+The current set itself must be nonempty and must contain only unique, known
+records with matching creation and image-path identities; a null/empty set,
+unknown or duplicate PID, identity mismatch, failed census/identity query, or
+failed affinity read-back remains a fail-closed launch failure. The bounded
+no-GUI self-test plans and reads back exactly four current records from a
+five-record historical set, while proving that its one expired record is not
+read back.
+
 Each launch also creates a unique run-owned startup-trace directory below the
 copied artifact bundle and passes it to the shared startup probe. The probe
 reads the trace before returning; the paired runner then retains only an
@@ -423,5 +435,9 @@ symbol, and contract hash fields to verify rejection. It does not launch
 `pwsh` when validating the two supported PowerShell hosts.
 The self-test also exercises the additive cleanup telemetry schema: old-report
 fallbacks, bounded integer and enum rejection, first-cause retention, process
-enumeration equations, and affinity historical/current/expired count checks.
+enumeration equations, and affinity historical/current/expired count checks. Its
+affinity plan uses five historical records and four exact current-live records,
+performs four read-backs only, rejects null/empty, unknown, duplicate, and
+creation/image-path-mismatched current sets, and confirms that the one expired
+historical record is not a failure target.
 Do not use it as a substitute for the full 35-launch-per-backend campaign.

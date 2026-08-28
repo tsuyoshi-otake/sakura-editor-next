@@ -41,6 +41,12 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\measure-output-startup.ps1
 プロセスは suspended 状態で作成し、run-owned の kill-on-close Job Object へ割り当て、CPU affinity を
 設定して read-back した後にだけ resume します。bundle を working directory とし、cleanup 後は Job
 membership と exact bundle image path の両方で残存がないことを確認します。
+最終の descendant affinity 検証は、完全な typed process census と PID / creation / image-path の exact identity
+検証を通過した `Get-TrackedOwnedProcesses` の fresh current-live records だけを対象にします。current set に
+存在しない historical record は終了済みの expected exit として扱い、affinity read-back の対象にしません。
+current set が null / empty、未知または重複 PID、creation / path mismatch である場合、census / identity query / read-back
+が失敗した場合は fail closed です。no-GUI self-test は 5 historical records から exact current 4 件だけを計画して read-back
+し、expired である 1 件を read-back しないことも確認します。
 
 ### paired runner の legacy path budget
 
@@ -202,7 +208,9 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\measure-output-startup.ps1
 `-SelfTest` は GUI を起動しません。通常の `measure-startup-performance.ps1` は単一の
 `sakura.exe` のマイルストーン比較用であり、ペア証拠の既定 35 回 / backend の代用ではありません。
 paired の self-test は旧 report fallback、bounded integer / enum、first-cause、process enumeration
-equations、affinity の historical/current/expired 整合も検証します。
+equations、affinity の historical/current/expired 整合も検証します。さらに 5 historical / 4 exact
+current の affinity plan が current 4 件だけを read-back し、null / empty、unknown、duplicate、creation / path
+mismatch を reject し、expired historical 1 件を失敗扱いにしないことを固定します。
 
 ## 前提条件
 
