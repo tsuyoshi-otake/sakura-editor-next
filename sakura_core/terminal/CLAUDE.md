@@ -501,3 +501,27 @@ above ours makes the comparison unavailable, not merely noisy.
 in the pure geometry header rather than in `CTerminalWnd`'s `Impl`: the window
 class is not linked into `tests1`, so an invariant that lives there cannot be
 tested at all.
+
+## Metadata-only live loop diagnostics (2026-08-28, #276)
+
+`TerminalSession` owns the opt-in PTY trace because it is the only boundary that
+can distinguish fresh backend reads, terminal-protocol writes, applied resizes,
+and UI drains without guessing from paint activity. `TerminalTabManager` adds
+bounded model/scrollback summaries, and `CTerminalWnd` adds the resulting
+viewport projection. Preserve these invariants:
+
+- Never write terminal bytes, launch arguments, titles, or working-directory
+  text. Byte sequences are represented only by counts and SHA-256 digests.
+- Keep normal-session overhead to scalar cumulative counters and a throttled
+  activation-event probe. Hashing and file I/O are trace-only work.
+- The JSONL writer stays off the PTY and UI threads, uses a bounded event queue,
+  and retains only two 8 MiB generations per session. Shutdown owns and cancels
+  a stalled synchronous writer; it must never detach.
+- A live process is activated through
+  `Local\SakuraEditorNext.TerminalTrace.<pid>`; the helper is
+  `tools/enable-terminal-trace.ps1`. Startup tracing uses
+  `SAKURA_TERMINAL_TRACE_DIR`.
+- A 1000-line scrollback limit is an amplifier, not a root-cause conclusion. It
+  enters continuous eviction earlier. Preserve session-age, first/last eviction,
+  cumulative append/evict, limit, and viewport fields so a trace can prove which
+  boundary is actually cycling.

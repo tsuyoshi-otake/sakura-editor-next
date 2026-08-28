@@ -102,6 +102,7 @@ public:
 
 	[[nodiscard]] HWND GetHwnd() const noexcept;
 	[[nodiscard]] TerminalSize GetTerminalSize() const noexcept;
+	[[nodiscard]] TerminalViewportDiagnosticSnapshot GetViewportDiagnostic() const noexcept;
 	[[nodiscard]] bool HasSelection() const noexcept;
 	[[nodiscard]] bool CopySelectionToClipboard();
 	[[nodiscard]] bool PasteFromClipboard();

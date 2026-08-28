@@ -2237,6 +2237,17 @@ TerminalSize CTerminalWnd::GetTerminalSize() const noexcept
 	return m_impl->terminalSize;
 }
 
+TerminalViewportDiagnosticSnapshot CTerminalWnd::GetViewportDiagnostic() const noexcept
+{
+	const auto viewport = m_impl->Viewport();
+	return {
+		.scrollOffset = m_impl->scrollOffset,
+		.topRow = viewport.topRow,
+		.totalRows = viewport.totalRows,
+		.visibleRows = viewport.visibleRows,
+	};
+}
+
 bool CTerminalWnd::HasSelection() const noexcept
 {
 	return m_impl->HasSelection();

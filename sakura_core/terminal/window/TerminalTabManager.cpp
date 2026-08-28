@@ -47,7 +47,7 @@ struct TerminalTabManager::Impl {
 			parser = std::make_unique<TerminalParser>(*model, input.get(), [this](std::string_view response) {
 				if( !retirement || !retirement->Session() || response.empty() ) return;
 				static_cast<void>(retirement->Session()->QueueInput(std::span<const std::uint8_t>(
-					reinterpret_cast<const std::uint8_t*>(response.data()), response.size())));
+					reinterpret_cast<const std::uint8_t*>(response.data()), response.size()), TerminalInputSource::Protocol));
 			});
 		}
 
@@ -103,7 +103,7 @@ struct TerminalTabManager::Impl {
 		if( bytes.empty() ) return TerminalQueueInputResult::Accepted;
 		if( !tab.Session() ) return TerminalQueueInputResult::NotRunning;
 		if( tab.pendingProtocolInput.empty() ) {
-			const auto result = tab.Session()->QueueInput(bytes);
+			const auto result = tab.Session()->QueueInput(bytes, TerminalInputSource::Protocol);
 			if( result != TerminalQueueInputResult::QueueFull ) return result;
 		}
 		// Parser replies run on the UI thread. Preserve their order in a bounded
@@ -129,7 +129,7 @@ struct TerminalTabManager::Impl {
 			if( eventCallback ) eventCallback({ TerminalTabEventKind::StateChanged, tab.id, tab.state, tab.errorCode });
 			return TerminalQueueInputResult::NotRunning;
 		}
-		const auto result = tab.Session()->QueueInput(tab.pendingProtocolInput);
+		const auto result = tab.Session()->QueueInput(tab.pendingProtocolInput, TerminalInputSource::Protocol);
 		if( result == TerminalQueueInputResult::Accepted ) {
 			tab.pendingProtocolInput.clear();
 			tab.protocolInputRejected = false;
@@ -410,6 +410,21 @@ TerminalDrainResult TerminalTabManager::DrainOutput( std::uint64_t tabId )
 	}
 	result.scrollbackChange = tab->model->ConsumeScrollbackChange();
 	result.dirtyRows = tab->model->ConsumeDirtyRows();
+	tab->Session()->RecordModelDiagnostic({
+		.bytesDrained = result.bytesDrained,
+		.scrollbackAppended = result.scrollbackChange.Appended(),
+		.scrollbackEvicted = result.scrollbackChange.Evicted(),
+		.scrollbackRows = tab->model->ScrollbackSize(),
+		.scrollbackLimit = tab->model->ScrollbackLimit(),
+		.dirtyRows = result.dirtyRows.size(),
+		.columns = tab->model->Columns(),
+		.rows = tab->model->RowCount(),
+		.scrollbackCleared = result.scrollbackChange.Cleared(),
+		.protocolInputPending = result.protocolInputPending,
+		.protocolInputRejected = result.protocolInputRejected,
+		.synchronizedOutputCommitted = result.synchronizedOutputCommitted,
+		.alternateScreen = tab->model->IsAlternateScreen(),
+	});
 	return result;
 }
 
@@ -431,6 +446,15 @@ TerminalQueueInputResult TerminalTabManager::FlushPendingProtocolInput( std::uin
 	if( m_impl->closed ) return TerminalQueueInputResult::NotRunning;
 	auto* tab = m_impl->Find(tabId);
 	return tab ? m_impl->FlushPendingProtocolInput(*tab) : TerminalQueueInputResult::NotRunning;
+}
+
+void TerminalTabManager::RecordViewportDiagnostic(
+	std::uint64_t tabId,
+	const TerminalViewportDiagnosticSnapshot& snapshot ) noexcept
+{
+	if( m_impl->closed ) return;
+	auto* tab = m_impl->Find(tabId);
+	if( tab && tab->Session() ) tab->Session()->RecordViewportDiagnostic(snapshot);
 }
 
 bool TerminalTabManager::HasPendingProtocolInput( std::uint64_t tabId ) const noexcept

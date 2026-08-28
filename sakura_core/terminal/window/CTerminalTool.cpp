@@ -1368,6 +1368,7 @@ struct CTerminalTool::Impl {
 		if( auto* pane = FindPane(tabId); pane && pane->window ) {
 			PaintTerminalOutput(*pane->window, manager->Model(tabId), result,
 				pane->needsFullRepaint, pane->synchronizedOutputSince);
+			manager->RecordViewportDiagnostic(tabId, pane->window->GetViewportDiagnostic());
 		}
 	}
 

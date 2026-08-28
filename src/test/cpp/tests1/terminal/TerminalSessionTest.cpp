@@ -8,7 +8,10 @@
 #include <atomic>
 #include <condition_variable>
 #include <deque>
+#include <filesystem>
+#include <fstream>
 #include <mutex>
+#include <sstream>
 #include <string_view>
 #include <thread>
 
@@ -315,6 +318,37 @@ TEST(TerminalSession, CloseUsesBoundedGraceThenJobFallbackAndIsIdempotent)
 	EXPECT_EQ(terminal::CTerminalSession::kGracefulCloseTimeout, waits[0]);
 	EXPECT_EQ(terminal::CTerminalSession::kForcedCloseTimeout, waits[1]);
 	EXPECT_EQ((std::vector<terminal::TerminalSessionState>{ terminal::TerminalSessionState::Starting, terminal::TerminalSessionState::Running, terminal::TerminalSessionState::Closing, terminal::TerminalSessionState::Exited }), states);
+}
+
+class TerminalTraceTestDirectory final {
+public:
+	TerminalTraceTestDirectory()
+	{
+		static std::atomic<std::uint64_t> sequence{ 0 };
+		m_path = std::filesystem::temp_directory_path() /
+			(L"sakura-terminal-trace-test-" + std::to_wstring(::GetCurrentProcessId()) + L"-" +
+				std::to_wstring(sequence.fetch_add(1, std::memory_order_relaxed) + 1));
+		std::filesystem::create_directories(m_path);
+	}
+
+	~TerminalTraceTestDirectory()
+	{
+		std::error_code error;
+		std::filesystem::remove_all(m_path, error);
+	}
+
+	[[nodiscard]] const std::filesystem::path& Path() const noexcept { return m_path; }
+
+private:
+	std::filesystem::path m_path;
+};
+
+std::string ReadTextFile( const std::filesystem::path& path )
+{
+	std::ifstream stream(path, std::ios::binary);
+	std::ostringstream contents;
+	contents << stream.rdbuf();
+	return contents.str();
 }
 
 TEST(TerminalSession, BeginCloseIsNonblockingAndWaitReturnsOnlyAfterNormalQuiescence)
@@ -875,6 +909,154 @@ TEST(ConPtyTerminalBackend, DiscoveredPowerShellExecutesTypedCommand)
 	EXPECT_TRUE(reachedEof);
 	EXPECT_EQ(terminal::TerminalBackendExitStatus::Exited, backend->WaitForExit(1s).status);
 	backend->Close();
+}
+
+TEST(TerminalSession, DiagnosticTraceCorrelatesPtyProtocolEvictionAndViewportWithoutRawContent)
+{
+	TerminalTraceTestDirectory traceDirectory;
+	auto backend = std::make_unique<FakeTerminalBackend>();
+	auto* fake = backend.get();
+	terminal::TerminalDiagnosticOptions diagnostics;
+	diagnostics.directory = traceDirectory.Path().wstring();
+	std::wstring tracePath;
+	{
+		terminal::CTerminalSession session(std::move(backend), {}, diagnostics);
+		tracePath = session.GetDiagnosticTracePath();
+		ASSERT_FALSE(tracePath.empty());
+		ASSERT_TRUE(session.Start(DefaultLaunchOptions()).succeeded);
+
+		const std::string rawProbe = "terminal-private-probe-49317";
+		fake->PushData(std::vector<std::uint8_t>(rawProbe.begin(), rawProbe.end()));
+		ASSERT_TRUE(WaitUntil([&] { return session.GetQueuedOutputBytes() == rawProbe.size(); }));
+		const auto drained = session.DrainOutput();
+		ASSERT_EQ(rawProbe.size(), drained.size());
+
+		const std::array<std::uint8_t, 4> protocolReply{ 0x1b, '[', '0', 'n' };
+		ASSERT_EQ(terminal::TerminalQueueInputResult::Accepted,
+			session.QueueInput(protocolReply, terminal::TerminalInputSource::Protocol));
+		ASSERT_TRUE(WaitUntil([&] { return fake->WrittenByteCount() == protocolReply.size(); }));
+		ASSERT_TRUE(session.RequestResize({ 132, 48 }));
+		ASSERT_TRUE(WaitUntil([&] { return !fake->Resizes().empty(); }));
+
+		session.RecordModelDiagnostic({
+			.bytesDrained = drained.size(),
+			.scrollbackAppended = 3,
+			.scrollbackEvicted = 2,
+			.scrollbackRows = 1000,
+			.scrollbackLimit = 1000,
+			.dirtyRows = 24,
+			.columns = 132,
+			.rows = 48,
+		});
+		session.RecordViewportDiagnostic({
+			.scrollOffset = 7,
+			.topRow = 1017,
+			.totalRows = 1048,
+			.visibleRows = 24,
+		});
+		session.Close();
+	}
+
+	const auto trace = ReadTextFile(tracePath);
+	EXPECT_NE(std::string::npos, trace.find("\"raw_content\":false"));
+	EXPECT_NE(std::string::npos, trace.find("\"kind\":\"pty_read\""));
+	EXPECT_NE(std::string::npos, trace.find("\"kind\":\"pty_write\""));
+	EXPECT_NE(std::string::npos, trace.find("\"source\":\"protocol\""));
+	EXPECT_NE(std::string::npos, trace.find("\"kind\":\"resize_apply\""));
+	EXPECT_NE(std::string::npos, trace.find("\"scrollback_evicted\":2"));
+	EXPECT_NE(std::string::npos, trace.find("\"scrollback_limit\":1000"));
+	EXPECT_NE(std::string::npos, trace.find("\"scroll_offset\":7"));
+	EXPECT_NE(std::string::npos, trace.find("\"sha256\":\""));
+	EXPECT_EQ(std::string::npos, trace.find("terminal-private-probe-49317"));
+}
+
+TEST(TerminalSession, DiagnosticTraceRotatesWithinTwoBoundedFiles)
+{
+	TerminalTraceTestDirectory traceDirectory;
+	auto backend = std::make_unique<FakeTerminalBackend>();
+	terminal::TerminalDiagnosticOptions diagnostics;
+	diagnostics.directory = traceDirectory.Path().wstring();
+	diagnostics.maximumFileBytes = 4096;
+	diagnostics.maximumQueuedEvents = 64;
+	std::filesystem::path tracePath;
+	{
+		terminal::CTerminalSession session(std::move(backend), {}, diagnostics);
+		tracePath = session.GetDiagnosticTracePath();
+		ASSERT_FALSE(tracePath.empty());
+		for( std::size_t index = 0; index < 500; ++index ) {
+			session.RecordModelDiagnostic({
+				.bytesDrained = index,
+				.scrollbackAppended = 1,
+				.scrollbackEvicted = 1,
+				.scrollbackRows = 1000,
+				.scrollbackLimit = 1000,
+			});
+		}
+	}
+
+	const auto previousPath = tracePath.parent_path() /
+		(tracePath.stem().wstring() + L".previous.jsonl");
+	ASSERT_TRUE(std::filesystem::is_regular_file(tracePath));
+	ASSERT_TRUE(std::filesystem::is_regular_file(previousPath));
+	EXPECT_LE(std::filesystem::file_size(tracePath), diagnostics.maximumFileBytes);
+	EXPECT_LE(std::filesystem::file_size(previousPath), diagnostics.maximumFileBytes);
+	std::size_t fileCount = 0;
+	for( const auto& entry : std::filesystem::directory_iterator(traceDirectory.Path()) ) {
+		if( entry.is_regular_file() ) ++fileCount;
+	}
+	EXPECT_EQ(2u, fileCount);
+}
+
+TEST(TerminalSession, DiagnosticTraceCanBeActivatedAfterEvictionHasAlreadyStarted)
+{
+	TerminalTraceTestDirectory traceDirectory;
+	auto backend = std::make_unique<FakeTerminalBackend>();
+	std::filesystem::path tracePath;
+	std::filesystem::path controlPath;
+	{
+		terminal::CTerminalSession session(
+			std::move(backend), {}, terminal::TerminalDiagnosticOptions{});
+		ASSERT_TRUE(session.Start(DefaultLaunchOptions()).succeeded);
+		session.RecordModelDiagnostic({
+			.scrollbackAppended = 9,
+			.scrollbackEvicted = 9,
+			.scrollbackRows = 1000,
+			.scrollbackLimit = 1000,
+		});
+		EXPECT_TRUE(session.GetDiagnosticTracePath().empty());
+
+		const auto controlDirectory = std::filesystem::temp_directory_path() / L"sakura-editor";
+		std::filesystem::create_directories(controlDirectory);
+		controlPath = controlDirectory /
+			(L"terminal-trace-" + std::to_wstring(::GetCurrentProcessId()) + L".ini");
+		ASSERT_TRUE(::WritePrivateProfileStringW(
+			L"trace", L"directory", traceDirectory.Path().c_str(), controlPath.c_str()));
+		const auto eventName = L"Local\\SakuraEditorNext.TerminalTrace." +
+			std::to_wstring(::GetCurrentProcessId());
+		HANDLE activationEvent = ::OpenEventW(EVENT_MODIFY_STATE, FALSE, eventName.c_str());
+		ASSERT_NE(nullptr, activationEvent);
+		ASSERT_TRUE(::SetEvent(activationEvent));
+		::CloseHandle(activationEvent);
+
+		std::this_thread::sleep_for(1100ms);
+		session.RecordModelDiagnostic({
+			.scrollbackAppended = 1,
+			.scrollbackEvicted = 1,
+			.scrollbackRows = 1000,
+			.scrollbackLimit = 1000,
+		});
+		tracePath = session.GetDiagnosticTracePath();
+		ASSERT_FALSE(tracePath.empty());
+		EXPECT_EQ(traceDirectory.Path(), tracePath.parent_path());
+		session.Close();
+	}
+	std::error_code cleanupError;
+	std::filesystem::remove(controlPath, cleanupError);
+
+	const auto trace = ReadTextFile(tracePath);
+	EXPECT_NE(std::string::npos, trace.find("\"total_scrollback_evicted\":10"));
+	EXPECT_EQ(std::string::npos, trace.find("\"first_eviction_us\":0"));
+	EXPECT_NE(std::string::npos, trace.find("\"scrollback_limit\":1000"));
 }
 
 TEST(ConPtyTerminalBackend, DescribesInteractiveColorCapabilitiesToChildShell)
