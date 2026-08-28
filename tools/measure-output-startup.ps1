@@ -84,8 +84,7 @@ $script:PairedMetricNames = @(
     'inputIdleMs', 'documentReadyMs'
 )
 $script:PairedStartupMilestoneNames = @(
-    'process-start', 'top-level-window', 'visible', 'caption', 'input-idle',
-    'document-layout'
+    'process-start', 'top-level-window', 'visible', 'caption', 'document-layout'
 )
 $script:PairedDiagnosticCheckpointNames = @('0.5s', '2s', '10s', 'timeout')
 $script:PairedDiagnosticCheckpointMs = [ordered]@{
@@ -201,6 +200,36 @@ function Get-PairedProperty {
         if ($null -ne $property) { return $property.Value }
     }
     return $null
+}
+
+function Get-PairedRawPropertySlot {
+    param(
+        [Parameter(Mandatory = $true)] [AllowNull()] [object]$Object,
+        [Parameter(Mandatory = $true)] [string]$Name
+    )
+    if ($null -ne $Object) {
+        if ($Object -is [Collections.IDictionary] -and $Object.Contains($Name)) {
+            return [pscustomobject][ordered]@{ present = $true; value = $Object[$Name] }
+        }
+        $property = $Object.PSObject.Properties[$Name]
+        if ($null -ne $property) {
+            return [pscustomobject][ordered]@{ present = $true; value = $property.Value }
+        }
+    }
+    return [pscustomobject][ordered]@{ present = $false; value = $null }
+}
+
+function Get-PairedStrictBooleanProperty {
+    param(
+        [Parameter(Mandatory = $true)] [AllowNull()] [object]$Object,
+        [Parameter(Mandatory = $true)] [string]$Name
+    )
+    $slot = Get-PairedRawPropertySlot $Object $Name
+    $valid = [bool]($slot.present -and $slot.value -is [bool])
+    return [pscustomobject][ordered]@{
+        valid = $valid
+        value = [bool]($valid -and [bool]$slot.value)
+    }
 }
 
 function Test-PairedPropertyPresent {
@@ -1877,10 +1906,12 @@ function Get-PairedFailureType {
         [Parameter(Mandatory = $true)] [object]$Raw,
         [Parameter(Mandatory = $true)] [bool]$ProfileCleanupVerified
     )
-    if (-not [bool](Get-PairedProperty $Raw @('processCleanupVerified'))) { return 'survivor' }
+    $processCleanup = Get-PairedStrictBooleanProperty $Raw 'processCleanupVerified'
+    if (-not $processCleanup.valid -or -not $processCleanup.value) { return 'survivor' }
     if (-not $ProfileCleanupVerified) { return 'profileCleanup' }
-    $affinity = Get-PairedProperty $Raw @('affinity')
-    if ($null -eq $affinity -or -not [bool](Get-PairedProperty $affinity @('verified'))) { return 'affinity' }
+    $affinity = (Get-PairedRawPropertySlot $Raw 'affinity').value
+    $affinityVerified = Get-PairedStrictBooleanProperty $affinity 'verified'
+    if (-not $affinityVerified.valid -or -not $affinityVerified.value) { return 'affinity' }
     if ([string](Get-PairedProperty $Raw @('error')) -match '(?i)timed out|timeout') { return 'timeout' }
     return 'startup'
 }
@@ -1922,6 +1953,72 @@ function Convert-PairedElapsedMs {
         return $null
     }
     return [double]([Math]::Round($elapsed, 3))
+}
+
+function Convert-PairedStrictElapsedMs {
+    param([AllowNull()] [object]$Value)
+    if ($null -eq $Value -or $Value -is [bool] -or
+        -not ($Value -is [byte] -or $Value -is [sbyte] -or
+            $Value -is [int16] -or $Value -is [uint16] -or
+            $Value -is [int32] -or $Value -is [uint32] -or
+            $Value -is [int64] -or $Value -is [uint64] -or
+            $Value -is [single] -or $Value -is [double] -or $Value -is [decimal])) {
+        return $null
+    }
+    return Convert-PairedElapsedMs $Value
+}
+
+function Get-PairedStrictElapsedProperty {
+    param(
+        [Parameter(Mandatory = $true)] [object]$Raw,
+        [Parameter(Mandatory = $true)] [string]$Name
+    )
+    $slot = Get-PairedRawPropertySlot $Raw $Name
+    if (-not $slot.present) { return $null }
+    return Convert-PairedStrictElapsedMs $slot.value
+}
+
+function Convert-PairedInputIdleTelemetry {
+    param([Parameter(Mandatory = $true)] [object]$Raw)
+    $reachedSlot = Get-PairedRawPropertySlot $Raw 'inputIdleReached'
+    $timingSlot = Get-PairedRawPropertySlot $Raw 'inputIdleMs'
+    $errorSlot = Get-PairedRawPropertySlot $Raw 'inputIdleError'
+    $rawReached = $reachedSlot.value
+    $rawTiming = $timingSlot.value
+    $rawError = $errorSlot.value
+    $reachedIsBoolean = $rawReached -is [bool]
+    $reached = $reachedIsBoolean -and [bool]$rawReached
+    $timing = Convert-PairedStrictElapsedMs $rawTiming
+    $errorIsNull = $null -eq $rawError
+    $errorIsUnavailable = $rawError -is [string] -and
+        [string]::Equals([string]$rawError, 'WaitForInputIdleUnavailable', [StringComparison]::Ordinal)
+    $errorIsNotObserved = $rawError -is [string] -and
+        [string]::Equals([string]$rawError, 'WaitForInputIdleNotObserved', [StringComparison]::Ordinal)
+    $valid = [bool]($reachedSlot.present -and $timingSlot.present -and $errorSlot.present -and
+        $reachedIsBoolean -and
+        (($reached -and $null -ne $timing -and $errorIsNull) -or
+            (-not $reached -and $null -eq $rawTiming -and
+                ($errorIsNull -or $errorIsUnavailable -or $errorIsNotObserved))))
+    $successValid = [bool]($valid -and -not $errorIsNotObserved)
+    $status = if (-not $valid) {
+        'unavailable'
+    }
+    elseif ($reached) {
+        'observed'
+    }
+    elseif ($errorIsUnavailable) {
+        'unavailable'
+    }
+    else {
+        'not-observed'
+    }
+    return [pscustomobject][ordered]@{
+        valid = $valid
+        successValid = $successValid
+        observed = [bool]($valid -and $reached)
+        elapsedMs = if ($valid -and $reached) { $timing } else { $null }
+        status = $status
+    }
 }
 
 function Convert-PairedVerticalScrollMaximum {
@@ -3272,6 +3369,7 @@ function New-PairedEmptyStartupMilestones {
         captionReadyMs = $null
         inputIdleObserved = $false
         inputIdleMs = $null
+        inputIdleObservationStatus = 'not-attempted'
         documentLayoutObserved = $false
         documentReadyMs = $null
         verticalScrollMaximum = $null
@@ -3286,18 +3384,20 @@ function Convert-PairedStartupMilestones {
         [Parameter(Mandatory = $true)] [object]$Raw,
         [AllowNull()] [string]$FailureType = $null
     )
-    $processApiReturnMs = Convert-PairedElapsedMs (Get-PairedProperty $Raw @('processApiReturnMs'))
-    $topLevelHwndMs = Convert-PairedElapsedMs (Get-PairedProperty $Raw @('topLevelHwndMs'))
-    $visibleMs = Convert-PairedElapsedMs (Get-PairedProperty $Raw @('visibleMs'))
-    $captionReadyMs = Convert-PairedElapsedMs (Get-PairedProperty $Raw @('captionReadyMs'))
-    $inputIdleMs = Convert-PairedElapsedMs (Get-PairedProperty $Raw @('inputIdleMs'))
-    $documentReadyMs = Convert-PairedElapsedMs (Get-PairedProperty $Raw @('documentReadyMs'))
+    $processApiReturnMs = Get-PairedStrictElapsedProperty $Raw 'processApiReturnMs'
+    $topLevelHwndMs = Get-PairedStrictElapsedProperty $Raw 'topLevelHwndMs'
+    $visibleMs = Get-PairedStrictElapsedProperty $Raw 'visibleMs'
+    $captionReadyMs = Get-PairedStrictElapsedProperty $Raw 'captionReadyMs'
+    $inputIdleTelemetry = Convert-PairedInputIdleTelemetry $Raw
+    $documentReadyMs = Get-PairedStrictElapsedProperty $Raw 'documentReadyMs'
     $verticalScrollMaximum = Convert-PairedVerticalScrollMaximum (Get-PairedProperty $Raw @('verticalScrollMaximum'))
     $processStarted = $null -ne $processApiReturnMs
     $topLevelWindowObserved = $null -ne $topLevelHwndMs
     $visibleObserved = $null -ne $visibleMs
     $captionObserved = $null -ne $captionReadyMs
-    $inputIdleObserved = [bool](Get-PairedProperty $Raw @('inputIdleReached'))
+    $inputIdleObserved = [bool]$inputIdleTelemetry.observed
+    $inputIdleMs = $inputIdleTelemetry.elapsedMs
+    $inputIdleObservationStatus = [string]$inputIdleTelemetry.status
     $documentLayoutObserved = $null -ne $documentReadyMs
 
     $missingMilestones = New-Object Collections.Generic.List[string]
@@ -3305,7 +3405,6 @@ function Convert-PairedStartupMilestones {
     if (-not $topLevelWindowObserved) { [void]$missingMilestones.Add('top-level-window') }
     if (-not $visibleObserved) { [void]$missingMilestones.Add('visible') }
     if (-not $captionObserved) { [void]$missingMilestones.Add('caption') }
-    if (-not $inputIdleObserved) { [void]$missingMilestones.Add('input-idle') }
     if (-not $documentLayoutObserved) { [void]$missingMilestones.Add('document-layout') }
 
     $timeoutStage = $null
@@ -3314,25 +3413,26 @@ function Convert-PairedStartupMilestones {
             $timeoutStage = 'window-discovery'
         }
         elseif ($topLevelWindowObserved -and
-            -not ($visibleObserved -and $captionObserved -and $inputIdleObserved -and $documentLayoutObserved)) {
+            -not ($visibleObserved -and $captionObserved -and $documentLayoutObserved)) {
             $timeoutStage = 'readiness'
         }
     }
 
-    $affinity = Get-PairedProperty $Raw @('affinity')
+    $affinity = (Get-PairedRawPropertySlot $Raw 'affinity').value
     $requestedMask = [UInt64]0
     $requestedValue = Get-PairedProperty $affinity @('requestedMask')
     if ($null -ne $requestedValue) {
         try { $requestedMask = [UInt64]$requestedValue } catch { $requestedMask = [UInt64]0 }
     }
-    $descendantsVerified = [bool](Get-PairedProperty $affinity @('descendantsVerified'))
-    # The shared probe attempts descendant affinity only after every readiness milestone; caption implies visibility.
-    $allReadinessMilestonesObserved = $topLevelWindowObserved -and $captionObserved -and
-        $inputIdleObserved -and $documentLayoutObserved
+    $descendantsVerifiedValue = Get-PairedStrictBooleanProperty $affinity 'descendantsVerified'
+    $descendantsVerified = [bool]($descendantsVerifiedValue.valid -and $descendantsVerifiedValue.value)
+    # The shared probe attempts descendant affinity only after every hard readiness milestone.
+    $allReadinessMilestonesObserved = $processStarted -and $topLevelWindowObserved -and
+        $visibleObserved -and $captionObserved -and $documentLayoutObserved
     $descendantAffinityState = 'not-attempted'
-    if ($requestedMask -ne 0) {
+    if ($requestedMask -ne 0 -and $allReadinessMilestonesObserved) {
         if ($descendantsVerified) { $descendantAffinityState = 'verified' }
-        elseif ($allReadinessMilestonesObserved) { $descendantAffinityState = 'failed' }
+        else { $descendantAffinityState = 'failed' }
     }
 
     return [ordered]@{
@@ -3346,6 +3446,7 @@ function Convert-PairedStartupMilestones {
         captionReadyMs = $captionReadyMs
         inputIdleObserved = [bool]$inputIdleObserved
         inputIdleMs = $inputIdleMs
+        inputIdleObservationStatus = $inputIdleObservationStatus
         documentLayoutObserved = [bool]$documentLayoutObserved
         documentReadyMs = $documentReadyMs
         verticalScrollMaximum = $verticalScrollMaximum
@@ -3417,20 +3518,30 @@ function Convert-PairedAffinity {
     $base = [ordered]@{
         requestedMask = [UInt64]0; processMask = $null; systemMask = $null
         opened = $false; setSucceeded = $false; readBackSucceeded = $false; verified = $false; descendantsVerified = $false; errorCode = $null
+        contractValid = $false
     }
     if ($null -ne $Affinity) {
-        try {
-            $base.requestedMask = [UInt64]$Affinity.requestedMask
-            $base.processMask = if ($null -eq $Affinity.processMask) { $null } else { [UInt64]$Affinity.processMask }
-            $base.systemMask = if ($null -eq $Affinity.systemMask) { $null } else { [UInt64]$Affinity.systemMask }
-            $base.opened = [bool]$Affinity.opened
-            $base.setSucceeded = [bool]$Affinity.setSucceeded
-            $base.readBackSucceeded = [bool]$Affinity.readBackSucceeded
-            $base.verified = [bool]$Affinity.verified
-            $base.descendantsVerified = [bool]$Affinity.descendantsVerified
-            $base.errorCode = if ($null -eq $Affinity.errorCode) { $null } else { [int]$Affinity.errorCode }
+        $opened = Get-PairedStrictBooleanProperty $Affinity 'opened'
+        $setSucceeded = Get-PairedStrictBooleanProperty $Affinity 'setSucceeded'
+        $readBackSucceeded = Get-PairedStrictBooleanProperty $Affinity 'readBackSucceeded'
+        $verified = Get-PairedStrictBooleanProperty $Affinity 'verified'
+        $descendantsVerified = Get-PairedStrictBooleanProperty $Affinity 'descendantsVerified'
+        if ($opened.valid -and $setSucceeded.valid -and $readBackSucceeded.valid -and
+            $verified.valid -and $descendantsVerified.valid) {
+            try {
+                $base.requestedMask = [UInt64]$Affinity.requestedMask
+                $base.processMask = if ($null -eq $Affinity.processMask) { $null } else { [UInt64]$Affinity.processMask }
+                $base.systemMask = if ($null -eq $Affinity.systemMask) { $null } else { [UInt64]$Affinity.systemMask }
+                $base.opened = $opened.value
+                $base.setSucceeded = $setSucceeded.value
+                $base.readBackSucceeded = $readBackSucceeded.value
+                $base.verified = $verified.value
+                $base.descendantsVerified = $descendantsVerified.value
+                $base.errorCode = if ($null -eq $Affinity.errorCode) { $null } else { [int]$Affinity.errorCode }
+                $base.contractValid = $true
+            }
+            catch { }
         }
-        catch { }
     }
     $telemetry = Convert-PairedAffinityTelemetry $Affinity
     if ($null -eq $telemetry) { $telemetry = New-PairedAffinityTelemetryFallback }
@@ -3446,8 +3557,12 @@ function Convert-PairedLaunchResult {
         [Parameter(Mandatory = $true)] [bool]$ProfileCleanupVerified,
         [bool]$TraceCleanupVerified = $true
     )
-    $rawSuccess = [bool](Get-PairedProperty $Raw @('success'))
-    $affinity = Convert-PairedAffinity (Get-PairedProperty $Raw @('affinity'))
+    $rawSuccessValue = Get-PairedStrictBooleanProperty $Raw 'success'
+    $rawSuccess = [bool]($rawSuccessValue.valid -and $rawSuccessValue.value)
+    $processCleanupValue = Get-PairedStrictBooleanProperty $Raw 'processCleanupVerified'
+    $processCleanupVerified = [bool]($processCleanupValue.valid -and $processCleanupValue.value)
+    $rawAffinity = (Get-PairedRawPropertySlot $Raw 'affinity').value
+    $affinity = Convert-PairedAffinity $rawAffinity
     $launchJobQueryObservation = if (Test-PairedPropertyPresent $Raw 'launchJobQueryObservation') {
         $rawLaunchQuery = Get-PairedProperty $Raw @('launchJobQueryObservation')
         Convert-PairedLaunchJobQueryObservation $rawLaunchQuery
@@ -3469,8 +3584,9 @@ function Convert-PairedLaunchResult {
     $cleanupObservationSucceeded = [string](Get-PairedProperty $cleanupObservation @('status')) -eq 'succeeded'
     $diagnosticUnavailable = [string](Get-PairedProperty $startupDiagnostics @('observationStatus')) -eq 'unavailable'
     $traceUnavailable = [string](Get-PairedProperty $startupTrace @('status')) -eq 'unavailable'
-    $success = $rawSuccess -and [bool](Get-PairedProperty $Raw @('processCleanupVerified')) -and
-        $ProfileCleanupVerified -and [bool]$affinity.verified -and [bool]$TraceCleanupVerified -and
+    $success = $rawSuccessValue.valid -and $rawSuccess -and $processCleanupValue.valid -and
+        $processCleanupVerified -and $ProfileCleanupVerified -and $affinity.contractValid -and
+        $affinity.verified -and [bool]$TraceCleanupVerified -and
         -not $diagnosticUnavailable -and -not $traceUnavailable -and
         $jobIdentityObservationContractValid -and $cleanupObservationSucceeded
     $failureType = if ($success) { $null } elseif (-not $jobIdentityObservationContractValid -or
@@ -3479,7 +3595,7 @@ function Convert-PairedLaunchResult {
     # and trace are secondary evidence when the launch itself already failed;
     # they may become primary only when the raw launch otherwise succeeded.
     if (-not $success -and $rawSuccess -and $jobIdentityObservationContractValid -and $cleanupObservationSucceeded) {
-        $cleanupVerified = [bool](Get-PairedProperty $Raw @('processCleanupVerified')) -and $ProfileCleanupVerified
+        $cleanupVerified = $processCleanupVerified -and $ProfileCleanupVerified
         if ($cleanupVerified -and [bool]$affinity.verified) {
             if ($diagnosticUnavailable) { $failureType = 'diagnostic-unavailable' }
             elseif (-not [bool]$TraceCleanupVerified) { $failureType = 'trace-cleanup' }
@@ -3488,12 +3604,33 @@ function Convert-PairedLaunchResult {
     }
     $startupMilestones = Convert-PairedStartupMilestones $Raw $failureType
     $metrics = $null
+    $inputIdleTelemetry = $null
+    if ($success -and -not ($startupMilestones.processStarted -and
+            $startupMilestones.topLevelWindowObserved -and
+            $startupMilestones.visibleObserved -and
+            $startupMilestones.captionObserved -and
+            $startupMilestones.documentLayoutObserved -and
+            @($startupMilestones.missingMilestones).Count -eq 0)) {
+        $success = $false
+        $failureType = 'startup'
+    }
+    if ($success) {
+        $inputIdleTelemetry = Convert-PairedInputIdleTelemetry $Raw
+        if (-not [bool]$inputIdleTelemetry.successValid) {
+            $success = $false
+            $failureType = 'startup'
+        }
+    }
     if ($success) {
         $metrics = [ordered]@{}
         foreach ($metric in $script:PairedMetricNames) {
-            $value = Get-PairedProperty $Raw @($metric)
+            if ($metric -eq 'inputIdleMs') {
+                $metrics[$metric] = $inputIdleTelemetry.elapsedMs
+                continue
+            }
+            $value = Get-PairedStrictElapsedProperty $Raw $metric
             if ($null -eq $value) { $success = $false; $failureType = 'startup'; break }
-            $metrics[$metric] = [double]$value
+            $metrics[$metric] = $value
         }
     }
     $failureStage = if ($success) { $null } else { Get-PairedFailureStage $failureType $startupMilestones }
@@ -3517,10 +3654,10 @@ function Convert-PairedLaunchResult {
         profileSha256 = [string]$ProfileDigest.sha256
         profileState = [string]$ProfileDigest.state
         profileFileCount = [int]$ProfileDigest.fileCount
-        processCleanupVerified = [bool](Get-PairedProperty $Raw @('processCleanupVerified'))
+        processCleanupVerified = $processCleanupVerified
         profileCleanupVerified = [bool]$ProfileCleanupVerified
         traceCleanupVerified = [bool]$TraceCleanupVerified
-        cleanupVerified = [bool](Get-PairedProperty $Raw @('processCleanupVerified')) -and $ProfileCleanupVerified -and [bool]$TraceCleanupVerified -and $jobIdentityObservationContractValid -and $cleanupObservationSucceeded
+        cleanupVerified = $processCleanupVerified -and $ProfileCleanupVerified -and [bool]$TraceCleanupVerified -and $jobIdentityObservationContractValid -and $cleanupObservationSucceeded
         jobIdentityObservationContractValid = $jobIdentityObservationContractValid
         survivorCount = @(Get-PairedProperty $Raw @('survivors')).Count
     }
@@ -3694,7 +3831,9 @@ function New-PairedPhaseSummary {
     $selected = @($Runs | Where-Object { $_.backend -eq $Backend -and $_.phase -eq $Phase })
     $metricStatistics = [ordered]@{}
     foreach ($metric in $script:PairedMetricNames) {
-        $values = @($selected | Where-Object { -not $_.excluded -and $null -ne $_.metrics } | ForEach-Object { $_.metrics[$metric] })
+        $values = @($selected | Where-Object {
+                -not $_.excluded -and $null -ne $_.metrics -and $null -ne $_.metrics[$metric]
+            } | ForEach-Object { [double]$_.metrics[$metric] })
         $metricStatistics[$metric] = Get-PairedStatistics $values
     }
     return [ordered]@{
@@ -3822,7 +3961,7 @@ function Write-PairedEvidenceEnvelope {
     catch {
         # Keep a fixed literal fallback so a schema/conversion failure cannot
         # erase the fact that a typed evidence envelope was attempted.
-        $json = '{"schemaVersion":1,"record":"paired-gui-startup","payloadFree":true,"status":"failed","failure":{"stage":"schema","type":"schema"},"startupMilestones":{"processStarted":false,"processApiReturnMs":null,"topLevelWindowObserved":false,"topLevelHwndMs":null,"visibleObserved":false,"visibleMs":null,"captionObserved":false,"captionReadyMs":null,"inputIdleObserved":false,"inputIdleMs":null,"documentLayoutObserved":false,"documentReadyMs":null,"verticalScrollMaximum":null,"missingMilestones":["process-start","top-level-window","visible","caption","input-idle","document-layout"],"timeoutStage":null,"descendantAffinityState":"not-attempted"},"startupGatePass":false,"adoption":{"decision":"HOLD","adoptionEligible":false}}'
+        $json = '{"schemaVersion":1,"record":"paired-gui-startup","payloadFree":true,"status":"failed","failure":{"stage":"schema","type":"schema"},"startupMilestones":{"processStarted":false,"processApiReturnMs":null,"topLevelWindowObserved":false,"topLevelHwndMs":null,"visibleObserved":false,"visibleMs":null,"captionObserved":false,"captionReadyMs":null,"inputIdleObserved":false,"inputIdleMs":null,"inputIdleObservationStatus":"not-attempted","documentLayoutObserved":false,"documentReadyMs":null,"verticalScrollMaximum":null,"missingMilestones":["process-start","top-level-window","visible","caption","document-layout"],"timeoutStage":null,"descendantAffinityState":"not-attempted"},"startupGatePass":false,"adoption":{"decision":"HOLD","adoptionEligible":false}}'
     }
     $encoding = New-Object Text.UTF8Encoding($false)
     [IO.File]::WriteAllText($Path, $json, $encoding)
@@ -4293,7 +4432,7 @@ function Invoke-PairedSelfTest {
     }
     $selfTestWindowTimeoutRaw = [pscustomobject][ordered]@{
         success = $false; processApiReturnMs = 12.25; topLevelHwndMs = $null; visibleMs = $null
-        captionReadyMs = $null; inputIdleMs = $null; inputIdleReached = $false
+        captionReadyMs = $null; inputIdleMs = $null; inputIdleReached = $false; inputIdleError = $null
         documentReadyMs = $null; verticalScrollMaximum = $null
         affinity = $selfTestTimeoutAffinity; error = 'Timed out waiting for a run-owned TextEditorWindow.'
         processCleanupVerified = $true; survivors = @()
@@ -4308,10 +4447,10 @@ function Invoke-PairedSelfTest {
     Assert-PairedEqual $false $selfTestWindowTimeoutRun.startupMilestones.topLevelWindowObserved 'window-discovery HWND milestone'
     Assert-PairedEqual 'window-discovery' $selfTestWindowTimeoutRun.startupMilestones.timeoutStage 'window-discovery timeout stage'
     Assert-PairedEqual 'not-attempted' $selfTestWindowTimeoutRun.startupMilestones.descendantAffinityState 'window-discovery affinity state'
-    Assert-PairedEqual 5 $selfTestWindowTimeoutRun.startupMilestones.missingMilestones.Count 'window-discovery missing milestone count'
+    Assert-PairedEqual 4 $selfTestWindowTimeoutRun.startupMilestones.missingMilestones.Count 'window-discovery missing milestone count'
     $selfTestReadinessTimeoutRaw = [pscustomobject][ordered]@{
         success = $false; processApiReturnMs = 10.5; topLevelHwndMs = 18.75; visibleMs = 23.0
-        captionReadyMs = 31.5; inputIdleMs = $null; inputIdleReached = $false
+        captionReadyMs = 31.5; inputIdleMs = $null; inputIdleReached = $false; inputIdleError = 'WaitForInputIdleNotObserved'
         documentReadyMs = $null; verticalScrollMaximum = 42
         affinity = $selfTestTimeoutAffinity; error = 'Timed out waiting for startup milestones.'
         processCleanupVerified = $true; survivors = @()
@@ -4322,22 +4461,26 @@ function Invoke-PairedSelfTest {
     Assert-PairedEqual $true $selfTestReadinessTimeoutRun.startupMilestones.visibleObserved 'readiness visible milestone'
     Assert-PairedEqual $true $selfTestReadinessTimeoutRun.startupMilestones.captionObserved 'readiness caption milestone'
     Assert-PairedEqual $false $selfTestReadinessTimeoutRun.startupMilestones.inputIdleObserved 'readiness input-idle milestone'
+    Assert-PairedEqual 'not-observed' $selfTestReadinessTimeoutRun.startupMilestones.inputIdleObservationStatus 'readiness input-idle diagnostic state'
     Assert-PairedEqual 42 $selfTestReadinessTimeoutRun.startupMilestones.verticalScrollMaximum 'readiness scrollbar maximum'
     Assert-PairedEqual 'readiness' $selfTestReadinessTimeoutRun.startupMilestones.timeoutStage 'readiness timeout stage'
     Assert-PairedEqual 'not-attempted' $selfTestReadinessTimeoutRun.startupMilestones.descendantAffinityState 'readiness affinity state'
-    Assert-PairedEqual 2 $selfTestReadinessTimeoutRun.startupMilestones.missingMilestones.Count 'readiness missing milestone count'
-    $selfTestLayoutBeforeIdleRaw = [pscustomobject][ordered]@{
+    Assert-PairedEqual 1 $selfTestReadinessTimeoutRun.startupMilestones.missingMilestones.Count 'readiness missing milestone count'
+    $selfTestCaptionMissingRaw = [pscustomobject][ordered]@{
         success = $false; processApiReturnMs = 10.5; topLevelHwndMs = 18.75; visibleMs = 23.0
-        captionReadyMs = 31.5; inputIdleMs = $null; inputIdleReached = $false
+        captionReadyMs = $null; inputIdleMs = $null; inputIdleReached = $false; inputIdleError = 'WaitForInputIdleNotObserved'
         documentReadyMs = 36.0; verticalScrollMaximum = 100
         affinity = $selfTestTimeoutAffinity; error = 'Timed out waiting for startup milestones.'
         processCleanupVerified = $true; survivors = @()
     }
-    $selfTestLayoutBeforeIdleRun = Convert-PairedLaunchResult $selfTestLayoutBeforeIdleRaw $schedule[1] $selfTestTimeoutProfile $true
-    [void](Assert-PairedPayloadFree $selfTestLayoutBeforeIdleRun)
-    Assert-PairedEqual $true $selfTestLayoutBeforeIdleRun.startupMilestones.documentLayoutObserved 'layout-before-idle document milestone'
-    Assert-PairedEqual $false $selfTestLayoutBeforeIdleRun.startupMilestones.inputIdleObserved 'layout-before-idle input-idle milestone'
-    Assert-PairedEqual 'not-attempted' $selfTestLayoutBeforeIdleRun.startupMilestones.descendantAffinityState 'layout-before-idle affinity state'
+    $selfTestCaptionMissingRun = Convert-PairedLaunchResult $selfTestCaptionMissingRaw $schedule[1] $selfTestTimeoutProfile $true
+    [void](Assert-PairedPayloadFree $selfTestCaptionMissingRun)
+    Assert-PairedEqual $true $selfTestCaptionMissingRun.startupMilestones.documentLayoutObserved 'caption-missing document milestone'
+    Assert-PairedEqual $false $selfTestCaptionMissingRun.startupMilestones.captionObserved 'caption-missing caption milestone'
+    Assert-PairedEqual $false $selfTestCaptionMissingRun.startupMilestones.inputIdleObserved 'caption-missing optional input-idle observation'
+    Assert-PairedEqual 'readiness' $selfTestCaptionMissingRun.startupMilestones.timeoutStage 'caption-missing timeout stage'
+    Assert-PairedEqual 1 $selfTestCaptionMissingRun.startupMilestones.missingMilestones.Count 'caption-missing required milestone count'
+    Assert-PairedEqual 'not-attempted' $selfTestCaptionMissingRun.startupMilestones.descendantAffinityState 'caption-missing affinity state'
     $selfTestDescendantAffinityFailureRaw = [pscustomobject][ordered]@{
         success = $false; processApiReturnMs = 10.5; topLevelHwndMs = 18.75; visibleMs = 23.0
         captionReadyMs = 31.5; inputIdleMs = 34.0; inputIdleReached = $true
@@ -4367,7 +4510,7 @@ function Invoke-PairedSelfTest {
     }
     $selfTestSuccessRaw = [pscustomobject][ordered]@{
         success = $true; processApiReturnMs = 9.5; topLevelHwndMs = 14.25; visibleMs = 20.0
-        captionReadyMs = 24.75; inputIdleMs = 28.5; inputIdleReached = $true
+        captionReadyMs = 24.75; inputIdleMs = 28.5; inputIdleReached = $true; inputIdleError = $null
         documentReadyMs = 33.0; verticalScrollMaximum = 100
         affinity = [ordered]@{
             requestedMask = [UInt64]1; processMask = [UInt64]1; systemMask = [UInt64]15
@@ -4395,6 +4538,119 @@ function Invoke-PairedSelfTest {
         $selfTestSuccessRun.startupMilestones.descendantAffinityState -ne 'verified' -or
         $selfTestSuccessRun.startupMilestones.verticalScrollMaximum -ne 100) {
         throw 'Synthetic successful startup milestone schema self-test failed.'
+    }
+    $selfTestRequiredReadinessRuns = New-Object Collections.Generic.List[object]
+    foreach ($case in @(
+            [ordered]@{ field = 'processApiReturnMs'; value = $null },
+            [ordered]@{ field = 'topLevelHwndMs'; value = $null },
+            [ordered]@{ field = 'visibleMs'; value = $null },
+            [ordered]@{ field = 'captionReadyMs'; value = $null },
+            [ordered]@{ field = 'documentReadyMs'; value = $null },
+            [ordered]@{ field = 'captionReadyMs'; value = [object[]]@(24.75) },
+            [ordered]@{ field = 'documentReadyMs'; value = -1.0 }
+        )) {
+        $raw = $selfTestSuccessRaw.PSObject.Copy()
+        $raw.PSObject.Properties[[string]$case.field].Value = $case.value
+        [void]$selfTestRequiredReadinessRuns.Add(
+            (Convert-PairedLaunchResult $raw $schedule[2] $selfTestTimeoutProfile $true))
+    }
+    $selfTestRequiredReadinessRejected = @($selfTestRequiredReadinessRuns | Where-Object {
+            $_.status -ne 'startup' -or -not $_.excluded -or
+            @($_.startupMilestones.missingMilestones).Count -eq 0 -or
+            $_.startupMilestones.descendantAffinityState -ne 'not-attempted'
+        }).Count -eq 0
+    if (-not $selfTestRequiredReadinessRejected) {
+        throw 'Malformed or missing required readiness telemetry was accepted.'
+    }
+    $selfTestStrictSuccessFlagRuns = New-Object Collections.Generic.List[object]
+    foreach ($case in @(
+            [ordered]@{ target = 'root'; field = 'success'; value = 'false' },
+            [ordered]@{ target = 'root'; field = 'success'; value = [object[]]@($true) },
+            [ordered]@{ target = 'root'; field = 'processCleanupVerified'; value = 'false' },
+            [ordered]@{ target = 'root'; field = 'processCleanupVerified'; value = [object[]]@($true) },
+            [ordered]@{ target = 'affinity'; field = 'opened'; value = 'false' },
+            [ordered]@{ target = 'affinity'; field = 'setSucceeded'; value = 'false' },
+            [ordered]@{ target = 'affinity'; field = 'readBackSucceeded'; value = 'false' },
+            [ordered]@{ target = 'affinity'; field = 'verified'; value = 'false' },
+            [ordered]@{ target = 'affinity'; field = 'descendantsVerified'; value = 'false' }
+        )) {
+        $raw = $selfTestSuccessRaw.PSObject.Copy()
+        if ($case.target -eq 'root') {
+            $raw.PSObject.Properties[[string]$case.field].Value = $case.value
+        }
+        else {
+            $affinityCopy = [ordered]@{}
+            foreach ($entry in $selfTestSuccessRaw.affinity.GetEnumerator()) {
+                $affinityCopy[[string]$entry.Key] = $entry.Value
+            }
+            $affinityCopy[[string]$case.field] = $case.value
+            $raw.affinity = $affinityCopy
+        }
+        [void]$selfTestStrictSuccessFlagRuns.Add(
+            (Convert-PairedLaunchResult $raw $schedule[2] $selfTestTimeoutProfile $true))
+    }
+    $selfTestStrictSuccessFlagsRejected = @($selfTestStrictSuccessFlagRuns | Where-Object {
+            $_.status -eq 'succeeded' -or -not $_.excluded
+        }).Count -eq 0
+    if (-not $selfTestStrictSuccessFlagsRejected) {
+        throw 'Malformed success, cleanup, or affinity booleans were accepted.'
+    }
+    $selfTestOptionalInputIdleRaw = $selfTestSuccessRaw.PSObject.Copy()
+    $selfTestOptionalInputIdleRaw.inputIdleMs = $null
+    $selfTestOptionalInputIdleRaw.inputIdleReached = $false
+    $selfTestOptionalInputIdleRun = Convert-PairedLaunchResult `
+        $selfTestOptionalInputIdleRaw $schedule[2] $selfTestTimeoutProfile $true
+    [void](Assert-PairedPayloadFree $selfTestOptionalInputIdleRun)
+    $selfTestOptionalInputIdleSummary = New-PairedPhaseSummary `
+        @($selfTestOptionalInputIdleRun) $selfTestOptionalInputIdleRun.backend $selfTestOptionalInputIdleRun.phase
+    $selfTestOptionalInputIdleVerified = $selfTestOptionalInputIdleRun.status -eq 'succeeded' -and
+        -not $selfTestOptionalInputIdleRun.excluded -and
+        -not $selfTestOptionalInputIdleRun.startupMilestones.inputIdleObserved -and
+        $selfTestOptionalInputIdleRun.startupMilestones.inputIdleObservationStatus -eq 'not-observed' -and
+        $null -eq $selfTestOptionalInputIdleRun.metrics.inputIdleMs -and
+        $null -eq $selfTestOptionalInputIdleSummary.metrics.inputIdleMs -and
+        $selfTestOptionalInputIdleSummary.metrics.documentReadyMs.count -eq 1 -and
+        $selfTestOptionalInputIdleRun.startupMilestones.missingMilestones.Count -eq 0 -and
+        $selfTestOptionalInputIdleRun.startupMilestones.descendantAffinityState -eq 'verified'
+    if (-not $selfTestOptionalInputIdleVerified) {
+        throw 'Optional input-idle startup schema self-test failed.'
+    }
+    $selfTestUnavailableInputIdleRaw = $selfTestOptionalInputIdleRaw.PSObject.Copy()
+    $selfTestUnavailableInputIdleRaw.inputIdleError = 'WaitForInputIdleUnavailable'
+    $selfTestUnavailableInputIdleRun = Convert-PairedLaunchResult `
+        $selfTestUnavailableInputIdleRaw $schedule[2] $selfTestTimeoutProfile $true
+    $selfTestUnavailableInputIdleVerified = $selfTestUnavailableInputIdleRun.status -eq 'succeeded' -and
+        $selfTestUnavailableInputIdleRun.startupMilestones.inputIdleObservationStatus -eq 'unavailable' -and
+        $null -eq $selfTestUnavailableInputIdleRun.metrics.inputIdleMs
+    if (-not $selfTestUnavailableInputIdleVerified) {
+        throw 'Unavailable input-idle diagnostic incorrectly failed startup.'
+    }
+    $selfTestInputIdleContradictionRuns = New-Object Collections.Generic.List[object]
+    foreach ($case in @(
+            [ordered]@{ reached = $true; timing = $null; diagnostic = $null },
+            [ordered]@{ reached = $false; timing = 28.5; diagnostic = $null },
+            [ordered]@{ reached = 'false'; timing = $null; diagnostic = $null },
+            [ordered]@{ reached = 0; timing = $null; diagnostic = $null },
+            [ordered]@{ reached = $true; timing = '28.5'; diagnostic = $null },
+            [ordered]@{ reached = $false; timing = $null; diagnostic = 'UnexpectedInputIdleFailure' },
+            [ordered]@{ reached = $false; timing = $null; diagnostic = 'WaitForInputIdleNotObserved' },
+            [ordered]@{ reached = [object[]]@($false); timing = $null; diagnostic = $null },
+            [ordered]@{ reached = $false; timing = [object[]]@(28.5); diagnostic = $null },
+            [ordered]@{ reached = $false; timing = $null; diagnostic = [object[]]@('WaitForInputIdleUnavailable') },
+            [ordered]@{ reached = $false; timing = $null; diagnostic = [object[]]@('WaitForInputIdleUnavailable', 'extra') }
+        )) {
+        $raw = $selfTestSuccessRaw.PSObject.Copy()
+        $raw.inputIdleReached = $case.reached
+        $raw.inputIdleMs = $case.timing
+        $raw.inputIdleError = $case.diagnostic
+        [void]$selfTestInputIdleContradictionRuns.Add(
+            (Convert-PairedLaunchResult $raw $schedule[2] $selfTestTimeoutProfile $true))
+    }
+    $selfTestInputIdleContradictionsRejected = @($selfTestInputIdleContradictionRuns | Where-Object {
+            $_.status -ne 'startup' -or -not $_.excluded
+        }).Count -eq 0
+    if (-not $selfTestInputIdleContradictionsRejected) {
+        throw 'Contradictory optional input-idle telemetry was accepted.'
     }
     $selfTestDiagnosticsSuccessVerified = [bool]($selfTestSuccessRun.startupDiagnostics.observationStatus -eq 'observed' -and
         $selfTestSuccessRun.startupDiagnostics.processTreeSnapshots.Count -eq 4 -and
@@ -5054,7 +5310,7 @@ function Invoke-PairedSelfTest {
         $selfTestReadinessTimeoutRun.startupMilestones.topLevelWindowObserved -and
         $selfTestReadinessTimeoutRun.startupMilestones.timeoutStage -eq 'readiness')
     if (-not $selfTestStartupMilestonesVerified) { throw 'Synthetic startup milestone timeout self-test failed.' }
-    $selfTestDescendantStatesVerified = [bool]($selfTestLayoutBeforeIdleRun.startupMilestones.descendantAffinityState -eq 'not-attempted' -and
+    $selfTestDescendantStatesVerified = [bool]($selfTestCaptionMissingRun.startupMilestones.descendantAffinityState -eq 'not-attempted' -and
         $selfTestDescendantAffinityFailureRun.startupMilestones.descendantAffinityState -eq 'failed')
     if (-not $selfTestDescendantStatesVerified) { throw 'Synthetic descendant affinity state self-test failed.' }
     $terminatedRun = $selfTestWindowTimeoutRun
@@ -5532,11 +5788,16 @@ function Invoke-PairedSelfTest {
         startupMilestonesReadinessTimeoutVerified = [bool]$selfTestStartupMilestonesVerified
         startupMilestonesSuccessSchemaVerified = [bool]($selfTestSuccessRun.status -eq 'succeeded' -and
             $selfTestSuccessRun.startupMilestones.descendantAffinityState -eq 'verified')
+        startupRequiredReadinessRejected = [bool]$selfTestRequiredReadinessRejected
+        startupStrictSuccessFlagsRejected = [bool]$selfTestStrictSuccessFlagsRejected
+        startupInputIdleOptionalVerified = [bool]$selfTestOptionalInputIdleVerified
+        startupInputIdleUnavailableVerified = [bool]$selfTestUnavailableInputIdleVerified
+        startupInputIdleContradictionsRejected = [bool]$selfTestInputIdleContradictionsRejected
         startupMilestonesDescendantNotAttemptedVerified = [bool]$selfTestDescendantStatesVerified
         startupMilestonesDescendantFailureVerified = [bool]$selfTestDescendantStatesVerified
         startupMilestonesFailureSchemaVerified = [bool](-not $selfTestFailedRun.startupMilestones.processStarted -and
             $selfTestFailedRun.startupMilestones.timeoutStage -eq $null -and
-            $selfTestFailedRun.startupMilestones.missingMilestones.Count -eq 6)
+            $selfTestFailedRun.startupMilestones.missingMilestones.Count -eq 5)
         startupDiagnosticsSuccessSchemaVerified = [bool]$selfTestDiagnosticsSuccessVerified
         startupDiagnosticsWindowClassificationVerified = [bool]$selfTestWindowClassificationVerified
         startupDiagnosticsWindowClassificationMismatchVerified = [bool]$selfTestWindowClassificationMismatchVerified

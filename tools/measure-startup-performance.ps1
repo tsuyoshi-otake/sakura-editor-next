@@ -3801,13 +3801,15 @@ function Update-StartupReadinessState($State, [double]$ObservedMs, [bool]$Captio
     if ($ScrollMaximum -ge $ExpectedLineCount -and $null -eq $State.documentReadyMs) {
         $State.documentReadyMs = $ObservedMs
     }
-    return $null -ne $State.captionReadyMs -and $State.inputIdleReached -and $null -ne $State.documentReadyMs
+    # WaitForInputIdle is a process-level, one-time proxy that any GUI thread can
+    # satisfy.  Retain it as a diagnostic, but do not let an intermittent miss
+    # veto the externally observed caption and complete document layout.
+    return $null -ne $State.captionReadyMs -and $null -ne $State.documentReadyMs
 }
 
 function Get-StartupReadinessMissingMilestones($State, [int]$ExpectedLineCount) {
     $missing = New-Object Collections.Generic.List[string]
     if ($null -eq $State.captionReadyMs) { $missing.Add('visible document caption') }
-    if (-not $State.inputIdleReached) { $missing.Add('input idle') }
     if ($null -eq $State.documentReadyMs) {
         $missing.Add(('document layout (scrollbar maximum {0}; expected at least {1})' -f $State.verticalScrollMaximum, $ExpectedLineCount))
     }
@@ -5134,15 +5136,16 @@ function Invoke-StartupMeasurement([string]$Condition, [int]$Iteration, [string]
                 $captionReady = $selectedWindow.Visible -and
                     ([string]$selectedWindow.Caption).IndexOf($targetCaption, [StringComparison]::OrdinalIgnoreCase) -ge 0
                 $inputIdleReady = $false
-                if (-not $readiness.inputIdleReached) {
+                if (-not $readiness.inputIdleReached -and $null -eq $result.inputIdleError) {
                     try {
                         # A zero timeout observes this pass only. Keep the Process instance
                         # for the whole loop so polling does not repeatedly open a handle.
                         $inputIdleReady = [bool]$inputProcess.WaitForInputIdle(0)
                     }
                     catch {
-                        $result.inputIdleError = $_.Exception.Message
-                        throw "WaitForInputIdle failed for the selected editor process: $($result.inputIdleError)"
+                        # Input-idle is diagnostic-only.  Record one bounded typed failure,
+                        # stop probing it, and continue toward the external readiness gate.
+                        $result.inputIdleError = 'WaitForInputIdleUnavailable'
                     }
                 }
 
@@ -5171,7 +5174,9 @@ function Invoke-StartupMeasurement([string]$Condition, [int]$Iteration, [string]
             $result.verticalScrollMaximum = $readiness.verticalScrollMaximum
             if (-not $allMilestonesObserved) {
                 $missingMilestones = Get-StartupReadinessMissingMilestones $readiness $ExpectedLineCount
-                $result.inputIdleError = if (-not $readiness.inputIdleReached) { 'WaitForInputIdle did not reach idle before the startup timeout.' } else { $null }
+                if (-not $readiness.inputIdleReached -and $null -eq $result.inputIdleError) {
+                    $result.inputIdleError = 'WaitForInputIdleNotObserved'
+                }
                 [void](Add-StartupDiagnosticCheckpoint $result.startupDiagnostics 'timeout' $owned $job $watch.Elapsed.TotalMilliseconds -RootProcessHandle $processHandle -Force -FailureStage 'readiness' -FailureType 'timeout')
                 throw ('Timed out waiting for startup milestones: {0}.' -f ($missingMilestones -join '; '))
             }
@@ -5363,6 +5368,19 @@ function Invoke-SelfTest {
     if ($readinessState.captionReadyMs -ne 30 -or $readinessState.inputIdleMs -ne 10 -or $readinessState.documentReadyMs -ne 20 -or $readinessState.verticalScrollMaximum -ne 100) {
         throw 'Readiness state self-test overwrote first-observed milestone values.'
     }
+    $optionalInputIdleState = [ordered]@{
+        captionReadyMs = $null
+        inputIdleMs = $null
+        inputIdleReached = $false
+        documentReadyMs = $null
+        verticalScrollMaximum = -1
+    }
+    if (-not (Update-StartupReadinessState $optionalInputIdleState 40 $true $false 100 100) -or
+        $optionalInputIdleState.inputIdleReached -or $null -ne $optionalInputIdleState.inputIdleMs -or
+        @(Get-StartupReadinessMissingMilestones $optionalInputIdleState 100).Count -ne 0) {
+        throw 'Readiness state self-test did not keep input idle diagnostic-only.'
+    }
+    $readinessInputIdleOptionalSelfTestVerified = $true
     $diagnosticState = New-StartupDiagnosticState 1234
     $diagnosticCheckpoints = @($diagnosticState.processTreeSnapshots)
     if ($diagnosticCheckpoints.Count -ne 4 -or
@@ -7163,6 +7181,7 @@ function Invoke-SelfTest {
         failedQueryCleanupRemainsUnverified = [bool]$failedQueryCleanupRemainsUnverified
         cleanupErrorCountSelfTestVerified = [bool]$cleanupErrorCountSelfTestVerified
         gracefulTerminalCompletionSelfTestVerified = [bool]$gracefulTerminalCompletionSelfTestVerified
+        readinessInputIdleOptionalSelfTestVerified = [bool]$readinessInputIdleOptionalSelfTestVerified
         workingDirectorySelfTestVerified = $true
         startupDiagnosticsSchemaVerified = [bool]$diagnosticSchemaVerified
         startupDiagnosticBoundsVerified = [bool]$diagnosticBoundsVerified

@@ -540,7 +540,7 @@ sequenceDiagram
     W->>Q: MYWM_COMPLETE_STARTUP_WORKBENCH を post
     Q->>W: 実文書を extension へ公開<br/>表示中なら outline を一度だけ解析
     B->>E: WaitForInputIdle
-    Note right of B: inputIdleMs<br/>OS queue idle。IDT_FIRST_IDLE の証明ではない
+    Note right of B: inputIdleMs（任意診断）<br/>OS queue idle。hard readiness ではない
     B->>W: 縦 scrollbar range を poll
     Note right of B: documentReadyMs<br/>全物理行を含む layout range を確認
     B->>B: CopyFromScreen（指定時）
@@ -624,8 +624,13 @@ proxy です。
 | `visibleMs` | そのウィンドウが可視状態になった時点。 |
 | `dwmFlushMs` | DWM フラッシュ完了時点。合成へ反映を要求した指標であり、画面を人が見た時点そのものではありません。 |
 | `captionReadyMs` | `CLoadAgent::OnLoad` のファイル読込と `SetLayoutInfo` の後、`OnAfterLoad` から更新される文書タイトルを外部観測する proxy。first content pixel ではありません。 |
-| `inputIdleMs` | `WaitForInputIdle` が完了した時点。アプリ内部の `IDT_FIRST_IDLE` と同義ではありません。 |
+| `inputIdleMs` | 任意診断。`WaitForInputIdle` が required readiness の成立前に完了した場合だけ記録します。process 内の任意の GUI thread が満たし得る一回限りの OS proxy であり、アプリ内部の `IDT_FIRST_IDLE`、main UI thread、layout、paint の証明ではありません。未観測時や query unavailable 時は `null` のままでも起動成功を妨げません。 |
 | `documentReadyMs` | 本文ビューの縦スクロール範囲が入力の全物理行を含むまで拡張された時点。折返し後の layout 行数は入力の物理行数以上になるため、外部から全文レイアウト完了を確認する主指標です。 |
+
+hard readiness は、対象 editor の top-level window、可視な対象文書 caption、全文を含む
+scrollbar layout で判定します。`WaitForInputIdle` は初期化完了前に早く成立する場合と、同じ artifact でも
+外部の caption/layout/paint 完了後まで成立しない場合があるため、比較用の任意診断に限定します。
+`inputIdleMs` を `documentReadyMs` で補完・合成してはいけません。
 
 ## 結果 JSON の読み方
 
@@ -645,7 +650,8 @@ proxy です。
 `scriptVersion` をスキーマ上の版として扱い、キー名と全フィールドは生成された JSON を正本と
 してください。未知の版では、旧版の集計スクリプトで機械的に解釈しません。
 
-最終 `DwmFlush` と layout 後の 2 回目の `WaitForInputIdle` は採用していません。非アクティブな
+最終 `DwmFlush` と layout 後の 2 回目の `WaitForInputIdle` は採用していません。最初の
+`WaitForInputIdle(0)` も任意診断であり hard gate ではありません。非アクティブな
 ベンチマークウィンドウで、それぞれ約 23 秒ブロックする試行を再現したためです。どちらも
 `documentReadyMs` で確認済みの本文レイアウト完了より後の compositor / workbench の静止待ちであり、
 初回表示の回帰ゲートにすると結果を歪めます。
@@ -684,9 +690,10 @@ Sakura／その子プロセスの残存は失敗として扱い、原因を解�
 
 ## 安全性と後始末
 
-計測は全待機に timeout を設けます。timeout、ウィンドウ検出失敗、文書タイトル未到達、全文レイアウト未到達、入力待機
-失敗、または cleanup 後の survivor は試行失敗です。スクリプトが終了できるのは、成功または明示的な
-失敗という終端状態に到達した場合だけです。
+計測は全待機に timeout を設けます。timeout、ウィンドウ検出失敗、文書タイトル未到達、全文レイアウト未到達、
+または cleanup 後の survivor は試行失敗です。入力待機の未観測や query unavailable は任意診断として保持し、
+それ自体では試行を失敗にしません。スクリプトが終了できるのは、成功または明示的な失敗という終端状態に
+到達した場合だけです。
 
 root process の handle は `startupDiagnostics` の全 checkpoint と cleanup が終わるまで保持し、exit state の
 観測に使います。process handle、thread handle、Job handle はそれぞれ独立した close 分岐で処理するため、

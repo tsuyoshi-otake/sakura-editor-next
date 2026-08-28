@@ -286,9 +286,9 @@ Each run writes one `paired-startup-<run-id>.json` report. The report contains:
 - per-launch startup milestone timings (`processApiReturnMs`, `topLevelHwndMs`,
   `visibleMs`, `captionReadyMs`, `inputIdleMs`, and `documentReadyMs`);
 - per-launch `startupMilestones` presence booleans for process start, top-level
-  window, visibility, caption, input idle, and document layout, together with
-  bounded nullable timings, the nullable scrollbar maximum, and a fixed
-  `missingMilestones` allowlist;
+  window, visibility, caption, optional input-idle observation, and document
+  layout, together with bounded nullable timings, the nullable scrollbar
+  maximum, and a fixed required-only `missingMilestones` allowlist;
 - timeout runs retain a typed `timeoutStage` (`window-discovery` or
   `readiness`) when the observed milestones localize the wait. The runner does
   not serialize the raw error; diagnosis comes from milestone presence only.
@@ -323,6 +323,22 @@ succeed, every process/profile/trace cleanup to verify, and the requested
 affinity read-back to pass. `acceptance.qualified` reports this
 collection qualification separately from `performance.pass`; the top-level
 `pass` is true only when both are true. This is only the Issue #274 startup gate.
+
+`inputIdleObserved/inputIdleMs` are diagnostic-only. Windows
+`WaitForInputIdle` is a one-time process-level proxy that any GUI thread can
+satisfy; it is not proof of Sakura's main UI thread, `IDT_FIRST_IDLE`, document
+layout, or paint. A launch may therefore succeed with `inputIdleObserved=false`
+and `inputIdleMs=null` when the visible target caption and complete external
+document layout are proven. A query failure is retained as a bounded typed
+diagnostic and is not retried. Contradictory or malformed input-idle telemetry
+is still rejected from its non-enumerated raw property values; one-element
+arrays are not normalized into valid scalars. `documentReadyMs` remains the
+primary paired metric, and a missing caption or document layout remains a hard
+readiness failure.
+`inputIdleObservationStatus` distinguishes `observed`, `not-observed`,
+`unavailable`, and `not-attempted` without exposing exception text.
+The launch, process-cleanup, and affinity success flags must be raw JSON
+booleans; strings, numeric surrogates, arrays, and missing values fail closed.
 It never changes the adoption decision: correctness, provider workload,
 build/package, Debug/Release, MinGW, and hardware evidence remain separate hard
 gates. A collect-only report therefore cannot be mistaken for adoption evidence

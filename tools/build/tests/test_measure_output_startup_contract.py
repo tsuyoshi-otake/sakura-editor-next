@@ -102,8 +102,9 @@ class PairedStartupContractTests(unittest.TestCase):
                 "verticalScrollMaximum",
             ):
                 self.assertIsNone(milestones[field], field)
+            self.assertEqual("not-attempted", milestones["inputIdleObservationStatus"])
             self.assertEqual(
-                ["process-start", "top-level-window", "visible", "caption", "input-idle", "document-layout"],
+                ["process-start", "top-level-window", "visible", "caption", "document-layout"],
                 milestones["missingMilestones"],
             )
             self.assertIsNone(milestones["timeoutStage"])
@@ -149,7 +150,7 @@ class PairedStartupContractTests(unittest.TestCase):
             milestones = evidence["startupMilestones"]
             self.assertFalse(milestones["processStarted"])
             self.assertFalse(milestones["topLevelWindowObserved"])
-            self.assertEqual(6, len(milestones["missingMilestones"]))
+            self.assertEqual(5, len(milestones["missingMilestones"]))
             self.assertIsNone(milestones["timeoutStage"])
             self.assertEqual("not-attempted", milestones["descendantAffinityState"])
 
@@ -239,6 +240,15 @@ class PairedStartupContractTests(unittest.TestCase):
         self.assertIn("roleLabels = 'caller-supplied'", self.paired_text)
         self.assertIn("buildManifestVerified = $false", self.paired_text)
         self.assertIn("New-PairedCampaignTermination", self.paired_text)
+        self.assertIn("startupInputIdleOptionalVerified", self.paired_text)
+        self.assertIn("startupRequiredReadinessRejected", self.paired_text)
+        self.assertIn("startupStrictSuccessFlagsRejected", self.paired_text)
+        self.assertIn("startupInputIdleUnavailableVerified", self.paired_text)
+        self.assertIn("startupInputIdleContradictionsRejected", self.paired_text)
+        self.assertIn("Get-PairedRawPropertySlot", self.paired_text)
+        self.assertIn("[object[]]@($false)", self.paired_text)
+        self.assertIn("$metric -eq 'inputIdleMs'", self.paired_text)
+        self.assertIn("readinessInputIdleOptionalSelfTestVerified", self.shared_text)
         for marker in (
             "startupMilestones",
             "processStarted",
@@ -246,6 +256,7 @@ class PairedStartupContractTests(unittest.TestCase):
             "visibleObserved",
             "captionObserved",
             "inputIdleObserved",
+            "inputIdleObservationStatus",
             "documentLayoutObserved",
             "missingMilestones",
             "timeoutStage",
@@ -930,6 +941,7 @@ class PairedStartupContractTests(unittest.TestCase):
             self.assertTrue(payload["jobIdentityConversionFailureSelfTestVerified"])
             self.assertTrue(payload["jobIdentityContradictorySuccessSelfTestVerified"])
             self.assertTrue(payload["jobIdentityMalformedFreshQueryCasesSelfTestVerified"])
+            self.assertTrue(payload["readinessInputIdleOptionalSelfTestVerified"])
             self.assertTrue(payload["workingDirectorySelfTestVerified"])
 
     def test_self_test_output_in_both_powershell_hosts(self):
@@ -1007,6 +1019,11 @@ class PairedStartupContractTests(unittest.TestCase):
             self.assertTrue(payload["startupMilestonesWindowDiscoveryTimeoutVerified"])
             self.assertTrue(payload["startupMilestonesReadinessTimeoutVerified"])
             self.assertTrue(payload["startupMilestonesSuccessSchemaVerified"])
+            self.assertTrue(payload["startupRequiredReadinessRejected"])
+            self.assertTrue(payload["startupStrictSuccessFlagsRejected"])
+            self.assertTrue(payload["startupInputIdleOptionalVerified"])
+            self.assertTrue(payload["startupInputIdleUnavailableVerified"])
+            self.assertTrue(payload["startupInputIdleContradictionsRejected"])
             self.assertTrue(payload["startupMilestonesDescendantNotAttemptedVerified"])
             self.assertTrue(payload["startupMilestonesDescendantFailureVerified"])
             self.assertTrue(payload["startupMilestonesFailureSchemaVerified"])
