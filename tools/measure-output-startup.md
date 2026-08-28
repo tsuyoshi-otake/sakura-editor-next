@@ -63,7 +63,27 @@ PID, creation identity, executable identity, and job membership are checked,
 parents are stopped before children, and an exact bundle image-path sweep must
 be empty after cleanup.
 
-If any launch cannot verify process cleanup or profile cleanup, the campaign
+Each launch also creates a unique run-owned startup-trace directory below the
+copied artifact bundle and passes it to the shared startup probe. The probe
+reads the trace before returning; the paired runner then retains only an
+allowlisted event name, total count, and `editor`/`control`/`unknown` role
+counts. Trace paths, directory names, event details, payloads, and raw command
+data are not part of paired evidence. The directory is checked as an owned
+non-reparse path and removed in `finally`; a failed removal is
+`traceCleanupVerified=false`, makes the launch fail closed, and is treated as
+an unverified cleanup terminal state.
+
+The same result contains four fixed `startupDiagnostics` checkpoints:
+`0.5s`, `2s`, `10s`, and `timeout`. Each checkpoint is converted to bounded
+process metadata and an identity-safe root exit state/code. `active` means the
+root handle still reports `STILL_ACTIVE` (259), not that the process exited.
+If a reached checkpoint is `unavailable`, or root exit-state conversion is
+invalid, the run is typed `diagnostic-unavailable` and cannot be reported as a
+successful launch; a fast success may leave later checkpoints as
+`not-reached`. An enabled trace with empty records, or malformed trace
+observations, is likewise typed `trace-unavailable`.
+
+If any launch cannot verify process, profile, or trace cleanup, the campaign
 stops immediately before scheduling the next backend. The report retains the
 typed failed launch and a `termination` record with `type=cleanup-unverified`,
 the completed count, and the suppressed count; `acceptance.qualified` and
@@ -205,24 +225,32 @@ Each run writes one `paired-startup-<run-id>.json` report. The report contains:
 - timeout runs retain a typed `timeoutStage` (`window-discovery` or
   `readiness`) when the observed milestones localize the wait. The runner does
   not serialize the raw error; diagnosis comes from milestone presence only.
+- per-launch `startupDiagnostics` with the fixed `0.5s`, `2s`, `10s`, and
+  `timeout` checkpoints, bounded process metadata, and root exit state/code;
+  `active` is the identity-safe `STILL_ACTIVE` state and is not an exit;
+- per-launch `startupTrace` reduced to allowlisted event names, total counts,
+  and role counts only, plus `traceCleanupVerified`; and
 - median, nearest-rank ceiling p95, minimum, maximum, mean, successful count,
   and excluded count for each backend and warmup/measured phase; and
 - a measured C++/Rust `documentReadyMs` paired-delta and regression summary,
   with a median gate of at most 2% and 1 ms absolute Rust regression and a
   p95 gate of at most 5% relative regression;
 - typed launch status (`succeeded`, `timeout`, `affinity`, `survivor`,
-  `profileCleanup`, or `startup`) plus cleanup and survivor counts; and
+  `profileCleanup`, `startup`, `diagnostic-unavailable`,
+  `trace-unavailable`, or `trace-cleanup`) plus `failureStage`, cleanup, and
+  survivor counts; and
 - `startupGatePass` plus an explicit `adoption.decision=HOLD` and
   `adoptionEligible=false`.
 
 `payloadFree` is true only for this fixed schema. The report intentionally does
-not contain executable/sample/profile/output paths, document text, captions,
-command lines, raw exception messages, or environment variable values. Failed
-or surviving launches remain typed records with `excluded=true`, explicit
-`startupMilestones` false/null fields when no launch evidence exists, and null
-timings; they never enter the statistics. Acceptance requires every
-scheduled warmup and measured launch to succeed, every cleanup to verify, and
-the requested affinity read-back to pass. `acceptance.qualified` reports this
+not contain executable/sample/profile/output/trace paths, trace directory names,
+document text, captions, command lines, raw exception messages, event details,
+or environment variable values. Failed or surviving launches remain typed
+records with `excluded=true`, explicit `startupMilestones` false/null fields
+when no launch evidence exists, and null timings; they never enter the
+statistics. Acceptance requires every scheduled warmup and measured launch to
+succeed, every process/profile/trace cleanup to verify, and the requested
+affinity read-back to pass. `acceptance.qualified` reports this
 collection qualification separately from `performance.pass`; the top-level
 `pass` is true only when both are true. This is only the Issue #274 startup gate.
 It never changes the adoption decision: correctness, provider workload,
@@ -246,8 +274,10 @@ the payload-free schema rejection, affinity metadata conversion and nonzero
 mask validation, exact portable-sidecar and artifact-bundle identity/cleanup,
 profile hashing/cleanup, parent-first PID identity helpers, all four
 Debug/Release × C++/Rust selector-proof cells, archive/hash reconstruction,
-top-level mirror checks, and the paired performance gates. It also mutates
-selector result, configuration, compile-log, archive, symbol, and contract
-hash fields to verify rejection. It does not launch `sakura.exe` or any other
-GUI process.
+top-level mirror checks, the four startup-diagnostic checkpoints, payload-free
+trace allowlisting, trace-cleanup terminal states, and the paired performance
+gates. It also mutates selector result, configuration, compile-log, archive,
+symbol, and contract hash fields to verify rejection. It does not launch
+`sakura.exe` or any other GUI process. Run it with both `powershell.exe` and
+`pwsh` when validating the two supported PowerShell hosts.
 Do not use it as a substitute for the full 35-launch-per-backend campaign.

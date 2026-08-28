@@ -87,6 +87,54 @@ $script:PairedStartupMilestoneNames = @(
     'process-start', 'top-level-window', 'visible', 'caption', 'input-idle',
     'document-layout'
 )
+$script:PairedDiagnosticCheckpointNames = @('0.5s', '2s', '10s', 'timeout')
+$script:PairedDiagnosticCheckpointMs = [ordered]@{
+    '0.5s' = 500
+    '2s' = 2000
+    '10s' = 10000
+    'timeout' = 30000
+}
+$script:PairedDiagnosticMaxProcessCount = 256
+$script:PairedDiagnosticMaxImageNameLength = 260
+$script:PairedDiagnosticMaxWindowCount = 1024
+$script:PairedStartupTraceRoles = @('editor', 'control', 'unknown')
+$script:PairedStartupTraceEventAllowlist = @(
+    'process_entry', 'isa_dispatch',
+    'factory_begin', 'factory_end',
+    'control_spawn_begin', 'control_spawn_end',
+    'control_wait_begin', 'control_wait_end', 'control_wait_result',
+    'control_initialize_begin', 'control_shared_data_ready', 'control_tray_created',
+    'control_ready_event_begin', 'control_ready_event_end',
+    'editor_spawn_begin', 'editor_spawn_end',
+    'editor_wait_begin', 'editor_wait_end', 'editor_wait_result',
+    'editor_ready_event_begin', 'editor_ready_event_end',
+    'uipi_check_begin', 'uipi_check_end',
+    'read_begin', 'read_end',
+    'layout_begin', 'layout_decision', 'startup_layout_input_summary', 'layout_complete',
+    'startup_document_armed', 'startup_document_complete', 'startup_document_aborted',
+    'startup_draw_commit_begin', 'startup_draw_commit_end',
+    'startup_draw_layout_begin', 'startup_draw_layout_end',
+    'startup_draw_scroll_begin', 'startup_draw_scroll_end',
+    'startup_draw_show_begin', 'startup_draw_show_end',
+    'startup_draw_redraw_begin', 'startup_draw_redraw_end',
+    'first_content_paint_begin', 'first_content_paint_end',
+    'first_content_paint_prepare_begin', 'first_content_paint_prepare_end',
+    'first_content_paint_lines_begin', 'first_content_paint_lines_end',
+    'first_content_paint_finish_begin', 'first_content_paint_finish_end',
+    'first_content_advance_width_summary', 'first_content_draw_width_summary',
+    'first_content_text_output_summary', 'first_content_text_volume_summary',
+    'first_content_text_block_summary', 'first_content_text_block_font_summary',
+    'first_content_text_boundary_summary', 'first_content_text_scan_summary',
+    'first_content_nonblock_text_range_summary', 'first_content_nonblock_text_risk_summary',
+    'first_content_nonblock_text_other_summary', 'first_content_painted',
+    'startup_draw_minimap_paint_summary', 'startup_draw_minimap_update_summary',
+    'startup_document_subphase_summary', 'startup_read_decision_summary',
+    'startup_read_result_summary', 'startup_read_worker_summary',
+    'startup_read_worker_lifecycle_summary', 'startup_read_transfer_summary',
+    'startup_minimap_cache_summary', 'startup_minimap_build_summary',
+    'startup_make_one_line_summary', 'startup_make_one_line_work_summary',
+    'startup_make_one_line_cost_summary'
+)
 $script:ForbiddenEvidencePropertyPattern =
     '(?i)"(?:path|imagePath|commandLine|arguments|caption|text|document|profileName|sampleMarkdown|sakuraExe|outputDirectory|exception|message|detail|bundlePath|sidecarPath|profilePath|executablePath|sourcePath|manifestPath|runtimeStagePath|samplePath|dependencyPath)"\s*:'
 
@@ -1550,6 +1598,32 @@ function Get-PairedFailureType {
     return 'startup'
 }
 
+function Get-PairedFailureStage {
+    param(
+        [Parameter(Mandatory = $true)] [string]$FailureType,
+        [Parameter(Mandatory = $true)] [object]$Milestones
+    )
+    switch ($FailureType) {
+        'timeout' {
+            $timeoutStage = [string](Get-PairedProperty $Milestones @('timeoutStage'))
+            if ($timeoutStage -in @('window-discovery', 'readiness')) { return $timeoutStage }
+            return 'startup'
+        }
+        'survivor' { return 'cleanup' }
+        'profileCleanup' { return 'profile-cleanup' }
+        'affinity' { return 'affinity' }
+        'diagnostic-unavailable' { return 'diagnostics' }
+        'trace-unavailable' { return 'trace' }
+        'trace-cleanup' { return 'trace-cleanup' }
+        'startup' {
+            if (-not [bool](Get-PairedProperty $Milestones @('processStarted'))) { return 'process-start' }
+            if (-not [bool](Get-PairedProperty $Milestones @('topLevelWindowObserved'))) { return 'window-discovery' }
+            return 'readiness'
+        }
+        default { return 'startup' }
+    }
+}
+
 function Convert-PairedElapsedMs {
     param([AllowNull()] [object]$Value)
     if ($null -eq $Value) { return $null }
@@ -1573,6 +1647,350 @@ function Convert-PairedVerticalScrollMaximum {
         return $null
     }
     return [int]$maximum
+}
+
+function Convert-PairedDiagnosticPid {
+    param([AllowNull()] [object]$Value, [bool]$AllowZero = $false)
+    if ($null -eq $Value) { return $null }
+    $processId = 0L
+    try { $processId = [Int64]$Value } catch { return $null }
+    $minimum = if ($AllowZero) { 0L } else { 1L }
+    if ($processId -lt $minimum -or $processId -gt [int]::MaxValue) { return $null }
+    return [int]$processId
+}
+
+function Convert-PairedDiagnosticCreationTime {
+    param([AllowNull()] [object]$Value)
+    if ($null -eq $Value) { return $null }
+    $creation = 0L
+    try { $creation = [Int64]$Value } catch { return $null }
+    if ($creation -lt 0L) { return $null }
+    return [Int64]$creation
+}
+
+function Convert-PairedDiagnosticImageName {
+    param([AllowNull()] [object]$Value)
+    if ($null -eq $Value) { return 'unavailable' }
+    $name = [string]$Value
+    if ([string]::IsNullOrWhiteSpace($name) -or $name.Length -gt $script:PairedDiagnosticMaxImageNameLength -or
+        $name -match '[\\/:\r\n]') {
+        return 'unavailable'
+    }
+    return $name
+}
+
+function Convert-PairedDiagnosticBoolean {
+    param([AllowNull()] [object]$Value)
+    if ($Value -is [bool]) { return [bool]$Value }
+    if ($Value -is [byte] -or $Value -is [sbyte] -or $Value -is [int16] -or $Value -is [uint16] -or
+        $Value -is [int32] -or $Value -is [uint32] -or $Value -is [int64] -or $Value -is [uint64]) {
+        if ([Int64]$Value -eq 0) { return $false }
+        if ([Int64]$Value -eq 1) { return $true }
+    }
+    return $null
+}
+
+function New-PairedEmptyProcessDiagnosticSnapshot {
+    param([Parameter(Mandatory = $true)] [string]$Checkpoint)
+    return [ordered]@{
+        checkpoint = $Checkpoint
+        targetMs = [int]$script:PairedDiagnosticCheckpointMs[$Checkpoint]
+        status = 'not-reached'
+        observed = $false
+        elapsedMs = $null
+        processTree = @()
+        processCount = 0
+        processRecordsTruncated = $false
+        jobMembershipVerified = $false
+        jobMemberCount = 0
+        topLevelWindowCount = $null
+        topLevelWindowCountCapped = $false
+        rootExitState = 'not-observed'
+        rootExitCode = $null
+        rootExitErrorCode = $null
+        processExitObserved = $false
+        processExitElapsedMs = $null
+        failureStage = $null
+        failureType = $null
+    }
+}
+
+function New-PairedEmptyStartupDiagnostics {
+    $snapshots = New-Object Collections.Generic.List[object]
+    foreach ($checkpoint in @($script:PairedDiagnosticCheckpointNames)) {
+        [void]$snapshots.Add((New-PairedEmptyProcessDiagnosticSnapshot $checkpoint))
+    }
+    return [ordered]@{
+        observationStatus = 'not-attempted'
+        schemaVersion = 1
+        processTreeSnapshots = $snapshots.ToArray()
+        processExitObservation = [ordered]@{
+            observed = $false
+            elapsedMs = $null
+            pid = $null
+            source = 'run-root'
+            state = 'not-observed'
+            exitCode = $null
+            errorCode = $null
+        }
+    }
+}
+
+function New-PairedEmptyStartupTrace {
+    return [ordered]@{
+        status = 'not-attempted'
+        eventCounts = @()
+    }
+}
+
+function New-PairedUnavailableStartupTrace {
+    return [ordered]@{
+        status = 'unavailable'
+        eventCounts = @()
+    }
+}
+
+function Convert-PairedProcessDiagnosticRecord {
+    param([Parameter(Mandatory = $true)] [object]$Record)
+    $processId = Convert-PairedDiagnosticPid (Get-PairedProperty $Record @('pid', 'processId'))
+    $ppid = Convert-PairedDiagnosticPid (Get-PairedProperty $Record @('ppid', 'parentPid', 'parentProcessId')) $true
+    $creation = Convert-PairedDiagnosticCreationTime (Get-PairedProperty $Record @('creationTime', 'creation'))
+    if ($null -eq $processId -or $null -eq $ppid -or $null -eq $creation) { return $null }
+    $jobMember = Convert-PairedDiagnosticBoolean (Get-PairedProperty $Record @('jobMember', 'jobMembership'))
+    return [ordered]@{
+        pid = [int]$processId
+        ppid = [int]$ppid
+        imageName = Convert-PairedDiagnosticImageName (Get-PairedProperty $Record @('imageName', 'image'))
+        creationTime = [Int64]$creation
+        jobMember = $jobMember
+    }
+}
+
+function Convert-PairedDiagnosticExitCode {
+    param([AllowNull()] [object]$Value)
+    if ($null -eq $Value) { return $null }
+    try {
+        $code = [UInt64]$Value
+        if ($code -gt [UInt32]::MaxValue) { return $null }
+        return [UInt32]$code
+    }
+    catch { return $null }
+}
+
+function Convert-PairedDiagnosticExitState {
+    param([AllowNull()] [object]$Record)
+    $state = [string](Get-PairedProperty $Record @('state', 'exitState', 'rootExitState'))
+    if ($state -notin @('active', 'exited', 'not-observed', 'unavailable')) {
+        return [ordered]@{ state = 'unavailable'; exitCode = $null; errorCode = $null }
+    }
+    $exitCode = Convert-PairedDiagnosticExitCode (Get-PairedProperty $Record @('exitCode', 'code', 'rootExitCode'))
+    if (($state -eq 'active' -or $state -eq 'exited') -and $null -eq $exitCode) {
+        return [ordered]@{ state = 'unavailable'; exitCode = $null; errorCode = $null }
+    }
+    $errorValue = Get-PairedProperty $Record @('errorCode', 'error', 'rootExitErrorCode')
+    $errorCode = $null
+    if ($null -ne $errorValue) {
+        try {
+            $errorCode = [Int64]$errorValue
+            if ($errorCode -lt 0 -or $errorCode -gt [int]::MaxValue) { $errorCode = $null }
+            else { $errorCode = [int]$errorCode }
+        }
+        catch { $errorCode = $null }
+    }
+    return [ordered]@{ state = $state; exitCode = $exitCode; errorCode = $errorCode }
+}
+
+function Convert-PairedProcessDiagnostics {
+    param([AllowNull()] [object]$Raw)
+    $empty = New-PairedEmptyStartupDiagnostics
+    if ($null -eq $Raw) { return $empty }
+    $empty.observationStatus = 'unavailable'
+    $rawSchema = Get-PairedProperty $Raw @('schemaVersion')
+    try { if ($null -eq $rawSchema -or [int]$rawSchema -ne 1) { return $empty } } catch { return $empty }
+    $rawSnapshotsValue = Get-PairedProperty $Raw @('processTreeSnapshots', 'snapshots')
+    if ($null -eq $rawSnapshotsValue) { return $empty }
+    $rawSnapshots = @($rawSnapshotsValue)
+    $snapshotCount = 0
+    foreach ($checkpoint in @($script:PairedDiagnosticCheckpointNames)) {
+        $target = @($empty.processTreeSnapshots | Where-Object { $_.checkpoint -eq $checkpoint } | Select-Object -First 1)
+        if ($target.Count -eq 0) { continue }
+        $output = $target[0]
+        $source = @($rawSnapshots | Where-Object { [string](Get-PairedProperty $_ @('checkpoint', 'label')) -eq $checkpoint } | Select-Object -First 1)
+        if ($source.Count -eq 0) {
+            $output.status = 'unavailable'
+            continue
+        }
+        $snapshotCount++
+        $source = $source[0]
+        $status = [string](Get-PairedProperty $source @('status'))
+        if ($status -notin @('observed', 'unavailable', 'not-reached')) { $status = 'unavailable' }
+        $output.status = $status
+        $output.observed = [bool]($status -eq 'observed')
+        $output.elapsedMs = Convert-PairedElapsedMs (Get-PairedProperty $source @('elapsedMs'))
+        $exit = Convert-PairedDiagnosticExitState $source
+        $output.rootExitState = $exit.state
+        $output.rootExitCode = $exit.exitCode
+        $output.rootExitErrorCode = $exit.errorCode
+        if ($status -eq 'observed' -and $exit.state -eq 'unavailable') { $output.status = 'unavailable'; $output.observed = $false }
+        if ($status -eq 'observed') {
+            $rawTreeValue = Get-PairedProperty $source @('processTree', 'processes', 'entries')
+            $rawTree = if ($null -eq $rawTreeValue) { @() } else { @($rawTreeValue) }
+            $tree = New-Object Collections.Generic.List[object]
+            $invalid = $false
+            foreach ($record in @($rawTree | Select-Object -First $script:PairedDiagnosticMaxProcessCount)) {
+                if ($null -eq $record) { $invalid = $true; continue }
+                $converted = Convert-PairedProcessDiagnosticRecord $record
+                if ($null -eq $converted) { $invalid = $true; continue }
+                [void]$tree.Add($converted)
+            }
+            if ($invalid) { $output.status = 'unavailable'; $output.observed = $false }
+            $output.processTree = $tree.ToArray()
+            $processCountValue = Convert-PairedDiagnosticPid (Get-PairedProperty $source @('processCount')) $true
+            $output.processCount = if ($null -eq $processCountValue) { [int]$tree.Count } else { [int][Math]::Min($processCountValue, $script:PairedDiagnosticMaxProcessCount) }
+            $output.processRecordsTruncated = [bool](Get-PairedProperty $source @('processRecordsTruncated')) -or $invalid -or $rawTree.Count -gt $script:PairedDiagnosticMaxProcessCount
+            $output.jobMembershipVerified = [bool](Get-PairedProperty $source @('jobMembershipVerified'))
+            $jobMemberCount = Convert-PairedDiagnosticPid (Get-PairedProperty $source @('jobMemberCount')) $true
+            $output.jobMemberCount = if ($null -eq $jobMemberCount) { [int](@($tree | Where-Object { $_.jobMember -eq $true }).Count) } else { [int][Math]::Min($jobMemberCount, $script:PairedDiagnosticMaxProcessCount) }
+            $windowCount = Convert-PairedDiagnosticPid (Get-PairedProperty $source @('topLevelWindowCount')) $true
+            $output.topLevelWindowCount = if ($null -eq $windowCount) { $null } else { [int][Math]::Min($windowCount, $script:PairedDiagnosticMaxWindowCount) }
+            $output.topLevelWindowCountCapped = [bool](Get-PairedProperty $source @('topLevelWindowCountCapped'))
+        }
+        else {
+            $output.processTree = @()
+            $output.processCount = 0
+            $output.processRecordsTruncated = $false
+            $output.jobMembershipVerified = $false
+            $output.jobMemberCount = 0
+            $output.topLevelWindowCount = $null
+            $output.topLevelWindowCountCapped = $false
+        }
+        $output.processExitObserved = [bool](Get-PairedProperty $source @('processExitObserved'))
+        $output.processExitElapsedMs = Convert-PairedElapsedMs (Get-PairedProperty $source @('processExitElapsedMs'))
+        $output.failureStage = [string](Get-PairedProperty $source @('failureStage'))
+        $output.failureType = [string](Get-PairedProperty $source @('failureType'))
+        if ($output.failureStage -notin @('process-tree', 'window-discovery', 'readiness', 'process-start', 'cleanup', 'profile-cleanup', 'affinity', 'startup', 'diagnostics')) { $output.failureStage = $null }
+        if ($output.failureType -notin @('observation', 'timeout', 'startup', 'survivor', 'profileCleanup', 'affinity')) { $output.failureType = $null }
+    }
+    $rawExit = Get-PairedProperty $Raw @('processExitObservation', 'exitObservation')
+    if ($null -eq $rawExit) { return $empty }
+    $exitObservedValue = Convert-PairedDiagnosticBoolean (Get-PairedProperty $rawExit @('observed'))
+    $exitPid = Convert-PairedDiagnosticPid (Get-PairedProperty $rawExit @('pid', 'processId'))
+    $exitElapsed = Convert-PairedElapsedMs (Get-PairedProperty $rawExit @('elapsedMs'))
+    $exitState = Convert-PairedDiagnosticExitState $rawExit
+    $empty.processExitObservation.state = $exitState.state
+    $empty.processExitObservation.exitCode = $exitState.exitCode
+    $empty.processExitObservation.errorCode = $exitState.errorCode
+    $empty.processExitObservation.observed = [bool]($exitObservedValue -eq $true -and $null -ne $exitPid -and $exitState.state -eq 'exited')
+    $empty.processExitObservation.elapsedMs = if ($empty.processExitObservation.observed) { $exitElapsed } else { $null }
+    $empty.processExitObservation.pid = if ($empty.processExitObservation.observed) { $exitPid } else { $null }
+    $source = [string](Get-PairedProperty $rawExit @('source'))
+    $empty.processExitObservation.source = if ($source -eq 'run-root') { 'run-root' } else { 'run-root' }
+    if ($snapshotCount -ne $script:PairedDiagnosticCheckpointNames.Count -or
+        $empty.processExitObservation.state -eq 'unavailable' -or
+        ($exitObservedValue -eq $null)) {
+        $empty.observationStatus = 'unavailable'
+    }
+    elseif (@($empty.processTreeSnapshots | Where-Object { $_.status -eq 'unavailable' }).Count -gt 0) {
+        $empty.observationStatus = 'unavailable'
+    }
+    elseif (@($empty.processTreeSnapshots | Where-Object { $_.status -eq 'observed' }).Count -gt 0) {
+        $empty.observationStatus = 'observed'
+    }
+    else {
+        $empty.observationStatus = 'not-reached'
+    }
+    return $empty
+}
+
+function Convert-PairedStartupTraceEvidence {
+    param([AllowNull()] [object]$RawTrace)
+    $traceBounds = Get-StartupTraceBounds
+    if ($null -eq $RawTrace) { return New-PairedEmptyStartupTrace }
+    $enabled = Convert-PairedDiagnosticBoolean (Get-PairedProperty $RawTrace @('enabled'))
+    $collected = Convert-PairedDiagnosticBoolean (Get-PairedProperty $RawTrace @('collected'))
+    if ($enabled -eq $false) { return New-PairedEmptyStartupTrace }
+    if ($enabled -ne $true -or $collected -ne $true) { return New-PairedUnavailableStartupTrace }
+    $invalidLineCount = Get-PairedProperty $RawTrace @('invalidLineCount')
+    try {
+        if ($null -ne $invalidLineCount -and [int]$invalidLineCount -gt 0) { return New-PairedUnavailableStartupTrace }
+    }
+    catch { return New-PairedUnavailableStartupTrace }
+    $parseErrors = Get-PairedProperty $RawTrace @('parseErrors')
+    if ($null -ne $parseErrors -and @($parseErrors).Count -gt 0) { return New-PairedUnavailableStartupTrace }
+    $recordsValue = Get-PairedProperty $RawTrace @('records')
+    if ($null -eq $recordsValue) { return New-PairedUnavailableStartupTrace }
+    $recordsList = New-Object Collections.Generic.List[object]
+    $recordEnumerator = $null
+    try {
+        if ($recordsValue -is [Collections.ICollection]) {
+            $knownRecordCount = [Int64]$recordsValue.Count
+            if ($knownRecordCount -lt 1 -or $knownRecordCount -gt [Int64]$traceBounds.maxValidRecords) {
+                return New-PairedUnavailableStartupTrace
+            }
+        }
+        if ($recordsValue -is [Collections.IEnumerable] -and
+            $recordsValue -isnot [string] -and $recordsValue -isnot [Collections.IDictionary]) {
+            $recordEnumerator = $recordsValue.GetEnumerator()
+            while ($recordEnumerator.MoveNext()) {
+                if ($recordsList.Count -ge [int]$traceBounds.maxValidRecords) {
+                    return New-PairedUnavailableStartupTrace
+                }
+                [void]$recordsList.Add($recordEnumerator.Current)
+            }
+        }
+        else {
+            [void]$recordsList.Add($recordsValue)
+        }
+    }
+    catch { return New-PairedUnavailableStartupTrace }
+    finally {
+        if ($null -ne $recordEnumerator -and $recordEnumerator -is [IDisposable]) { $recordEnumerator.Dispose() }
+    }
+    if ($recordsList.Count -lt 1 -or $recordsList.Count -gt [int]$traceBounds.maxValidRecords) {
+        return New-PairedUnavailableStartupTrace
+    }
+    $validRecordCountValue = Get-PairedProperty $RawTrace @('validRecordCount')
+    $validRecordCount = $null
+    try {
+        if ($null -eq $validRecordCountValue) { return New-PairedUnavailableStartupTrace }
+        $validRecordCount = [Int64]$validRecordCountValue
+    }
+    catch { return New-PairedUnavailableStartupTrace }
+    if ($validRecordCount -lt 1 -or $validRecordCount -gt [Int64]$traceBounds.maxValidRecords -or
+        $validRecordCount -ne [Int64]$recordsList.Count) {
+        return New-PairedUnavailableStartupTrace
+    }
+    $counts = @{}
+    foreach ($record in $recordsList) {
+        if ($null -eq $record) { continue }
+        $event = [string](Get-PairedProperty $record @('event'))
+        if ($script:PairedStartupTraceEventAllowlist -notcontains $event) { continue }
+        $role = [string](Get-PairedProperty $record @('role'))
+        if ($script:PairedStartupTraceRoles -notcontains $role) { $role = 'unknown' }
+        if (-not $counts.ContainsKey($event)) {
+            $counts[$event] = [ordered]@{ count = 0; roles = @{} }
+        }
+        $counts[$event].count = [int]$counts[$event].count + 1
+        if (-not $counts[$event].roles.ContainsKey($role)) { $counts[$event].roles[$role] = 0 }
+        $counts[$event].roles[$role] = [int]$counts[$event].roles[$role] + 1
+    }
+    $eventCounts = New-Object Collections.Generic.List[object]
+    foreach ($event in @($script:PairedStartupTraceEventAllowlist)) {
+        if (-not $counts.ContainsKey($event)) { continue }
+        $roleCounts = [ordered]@{}
+        foreach ($role in @($script:PairedStartupTraceRoles)) {
+            if ($counts[$event].roles.ContainsKey($role)) { $roleCounts[$role] = [int]$counts[$event].roles[$role] }
+        }
+        [void]$eventCounts.Add([ordered]@{
+            event = $event
+            count = [int]$counts[$event].count
+            roleCounts = $roleCounts
+        })
+    }
+    return [ordered]@{
+        status = 'observed'
+        eventCounts = $eventCounts.ToArray()
+    }
 }
 
 function New-PairedEmptyStartupMilestones {
@@ -1696,12 +2114,29 @@ function Convert-PairedLaunchResult {
         [Parameter(Mandatory = $true)] [object]$Raw,
         [Parameter(Mandatory = $true)] [object]$ScheduleRow,
         [Parameter(Mandatory = $true)] [object]$ProfileDigest,
-        [Parameter(Mandatory = $true)] [bool]$ProfileCleanupVerified
+        [Parameter(Mandatory = $true)] [bool]$ProfileCleanupVerified,
+        [bool]$TraceCleanupVerified = $true
     )
     $affinity = Convert-PairedAffinity (Get-PairedProperty $Raw @('affinity'))
+    $startupDiagnostics = Convert-PairedProcessDiagnostics (Get-PairedProperty $Raw @('startupDiagnostics'))
+    $startupTrace = if (Test-PairedPropertyPresent $Raw 'startupTrace') {
+        Convert-PairedStartupTraceEvidence (Get-PairedProperty $Raw @('startupTrace'))
+    }
+    else { New-PairedEmptyStartupTrace }
+    $diagnosticUnavailable = [string](Get-PairedProperty $startupDiagnostics @('observationStatus')) -eq 'unavailable'
+    $traceUnavailable = [string](Get-PairedProperty $startupTrace @('status')) -eq 'unavailable'
     $success = [bool](Get-PairedProperty $Raw @('success')) -and [bool](Get-PairedProperty $Raw @('processCleanupVerified')) -and
-        $ProfileCleanupVerified -and [bool]$affinity.verified
+        $ProfileCleanupVerified -and [bool]$affinity.verified -and [bool]$TraceCleanupVerified -and
+        -not $diagnosticUnavailable -and -not $traceUnavailable
     $failureType = if ($success) { $null } else { Get-PairedFailureType $Raw $ProfileCleanupVerified }
+    if (-not $success) {
+        $cleanupVerified = [bool](Get-PairedProperty $Raw @('processCleanupVerified')) -and $ProfileCleanupVerified
+        if ($cleanupVerified -and [bool]$affinity.verified) {
+            if ($diagnosticUnavailable) { $failureType = 'diagnostic-unavailable' }
+            elseif (-not [bool]$TraceCleanupVerified) { $failureType = 'trace-cleanup' }
+            elseif ($traceUnavailable) { $failureType = 'trace-unavailable' }
+        }
+    }
     $startupMilestones = Convert-PairedStartupMilestones $Raw $failureType
     $metrics = $null
     if ($success) {
@@ -1712,6 +2147,7 @@ function Convert-PairedLaunchResult {
             $metrics[$metric] = [double]$value
         }
     }
+    $failureStage = if ($success) { $null } else { Get-PairedFailureStage $failureType $startupMilestones }
     return [pscustomobject][ordered]@{
         sequence = [int]$ScheduleRow.sequence
         pairIndex = [int]$ScheduleRow.pairIndex
@@ -1720,23 +2156,29 @@ function Convert-PairedLaunchResult {
         phaseIndex = [int]$ScheduleRow.phaseIndex
         backend = [string]$ScheduleRow.backend
         status = if ($success) { 'succeeded' } else { [string]$failureType }
+        failureStage = $failureStage
         excluded = -not $success
         metrics = $metrics
         startupMilestones = $startupMilestones
+        startupDiagnostics = $startupDiagnostics
+        startupTrace = $startupTrace
         affinity = $affinity
         profileSha256 = [string]$ProfileDigest.sha256
         profileState = [string]$ProfileDigest.state
         profileFileCount = [int]$ProfileDigest.fileCount
         processCleanupVerified = [bool](Get-PairedProperty $Raw @('processCleanupVerified'))
         profileCleanupVerified = [bool]$ProfileCleanupVerified
-        cleanupVerified = [bool](Get-PairedProperty $Raw @('processCleanupVerified')) -and $ProfileCleanupVerified
+        traceCleanupVerified = [bool]$TraceCleanupVerified
+        cleanupVerified = [bool](Get-PairedProperty $Raw @('processCleanupVerified')) -and $ProfileCleanupVerified -and [bool]$TraceCleanupVerified
         survivorCount = @(Get-PairedProperty $Raw @('survivors')).Count
     }
 }
 
 function Test-PairedRunCleanupVerified {
     param([Parameter(Mandatory = $true)] [object]$Run)
-    return [bool]$Run.processCleanupVerified -and [bool]$Run.profileCleanupVerified
+    $traceCleanup = Get-PairedProperty $Run @('traceCleanupVerified')
+    return [bool]$Run.processCleanupVerified -and [bool]$Run.profileCleanupVerified -and
+        $null -ne $traceCleanup -and [bool]$traceCleanup
 }
 
 function New-PairedCampaignTermination {
@@ -1930,7 +2372,7 @@ function New-PairedFailureEvidence {
         [object]$Integrity = $null
     )
     $allowedTypes = @('preflight', 'integrity', 'launch-failure', 'cleanup-unverified', 'schema', 'write')
-    $allowedPrimaryTypes = @($allowedTypes + 'timeout', 'startup', 'affinity', 'survivor', 'profileCleanup')
+    $allowedPrimaryTypes = @($allowedTypes + 'timeout', 'startup', 'affinity', 'survivor', 'profileCleanup', 'diagnostic-unavailable', 'trace-unavailable', 'trace-cleanup')
     $type = if ($allowedTypes -contains $FailureType) { $FailureType } else { 'preflight' }
     $primary = $null
     if (-not [string]::IsNullOrWhiteSpace($PrimaryType)) {
@@ -2178,12 +2620,49 @@ function Invoke-PairedSelfTest {
         opened = $true; setSucceeded = $true; readBackSucceeded = $true; verified = $true
         descendantsVerified = $false; errorCode = 0
     }
+    $selfTestDiagnosticSnapshots = New-Object Collections.Generic.List[object]
+    foreach ($checkpoint in @($script:PairedDiagnosticCheckpointNames)) {
+        $diagnosticSnapshot = New-PairedEmptyProcessDiagnosticSnapshot $checkpoint
+        $diagnosticSnapshot.status = 'observed'
+        $diagnosticSnapshot.observed = $true
+        $diagnosticSnapshot.elapsedMs = [double]$diagnosticSnapshot.targetMs
+        $diagnosticSnapshot.processTree = @([ordered]@{
+                pid = 1234; ppid = 0; imageName = 'sakura.exe'; creationTime = [Int64]1; jobMember = $true
+            })
+        $diagnosticSnapshot.processCount = 1
+        $diagnosticSnapshot.jobMembershipVerified = $true
+        $diagnosticSnapshot.jobMemberCount = 1
+        $diagnosticSnapshot.topLevelWindowCount = 1
+        $diagnosticSnapshot.rootExitState = 'active'
+        $diagnosticSnapshot.rootExitCode = [UInt32]259
+        $diagnosticSnapshot.processExitObserved = $false
+        [void]$selfTestDiagnosticSnapshots.Add($diagnosticSnapshot)
+    }
+    $selfTestStartupDiagnostics = [ordered]@{
+        schemaVersion = 1
+        processTreeSnapshots = $selfTestDiagnosticSnapshots.ToArray()
+        processExitObservation = [ordered]@{
+            observed = $false; elapsedMs = $null; pid = $null; source = 'run-root'
+            state = 'active'; exitCode = [UInt32]259; errorCode = $null
+        }
+    }
+    $selfTestStartupTrace = [ordered]@{
+        enabled = $true
+        collected = $true
+        validRecordCount = 3
+        records = @(
+            [ordered]@{ event = 'factory_begin'; role = 'editor'; detail = 'secret'; directory = 'C:\secret' }
+            [ordered]@{ event = 'factory_begin'; role = 'control'; detail = 'secret' }
+            [ordered]@{ event = 'not-allowlisted'; role = 'control'; detail = 'secret'; path = 'C:\secret' }
+        )
+    }
     $selfTestWindowTimeoutRaw = [pscustomobject][ordered]@{
         success = $false; processApiReturnMs = 12.25; topLevelHwndMs = $null; visibleMs = $null
         captionReadyMs = $null; inputIdleMs = $null; inputIdleReached = $false
         documentReadyMs = $null; verticalScrollMaximum = $null
         affinity = $selfTestTimeoutAffinity; error = 'Timed out waiting for a run-owned TextEditorWindow.'
         processCleanupVerified = $true; survivors = @()
+        startupDiagnostics = $selfTestStartupDiagnostics; startupTrace = $selfTestStartupTrace
     }
     $selfTestWindowTimeoutRun = Convert-PairedLaunchResult $selfTestWindowTimeoutRaw $schedule[0] $selfTestTimeoutProfile $true
     [void](Assert-PairedPayloadFree $selfTestWindowTimeoutRun)
@@ -2259,6 +2738,7 @@ function Invoke-PairedSelfTest {
             descendantsVerified = $true; errorCode = 0
         }
         error = $null; processCleanupVerified = $true; survivors = @()
+        startupDiagnostics = $selfTestStartupDiagnostics; startupTrace = $selfTestStartupTrace
     }
     $selfTestSuccessRun = Convert-PairedLaunchResult $selfTestSuccessRaw $schedule[2] $selfTestTimeoutProfile $true
     [void](Assert-PairedPayloadFree $selfTestSuccessRun)
@@ -2274,6 +2754,60 @@ function Invoke-PairedSelfTest {
         $selfTestSuccessRun.startupMilestones.verticalScrollMaximum -ne 100) {
         throw 'Synthetic successful startup milestone schema self-test failed.'
     }
+    $selfTestDiagnosticsSuccessVerified = [bool]($selfTestSuccessRun.startupDiagnostics.observationStatus -eq 'observed' -and
+        $selfTestSuccessRun.startupDiagnostics.processTreeSnapshots.Count -eq 4 -and
+        $selfTestSuccessRun.startupDiagnostics.processTreeSnapshots[0].rootExitState -eq 'active' -and
+        $selfTestSuccessRun.startupDiagnostics.processTreeSnapshots[0].rootExitCode -eq 259 -and
+        $selfTestSuccessRun.startupDiagnostics.processExitObservation.state -eq 'active' -and
+        $selfTestSuccessRun.startupDiagnostics.processExitObservation.exitCode -eq 259)
+    if (-not $selfTestDiagnosticsSuccessVerified) { throw 'Synthetic successful startup diagnostics schema self-test failed.' }
+    $selfTestDiagnosticsTimeoutVerified = [bool]($selfTestWindowTimeoutRun.status -eq 'timeout' -and
+        $selfTestWindowTimeoutRun.startupDiagnostics.observationStatus -eq 'observed' -and
+        $selfTestWindowTimeoutRun.failureStage -eq 'window-discovery')
+    if (-not $selfTestDiagnosticsTimeoutVerified) { throw 'Synthetic timeout startup diagnostics schema self-test failed.' }
+    $traceEventCounts = @($selfTestSuccessRun.startupTrace.eventCounts)
+    $traceJson = $selfTestSuccessRun.startupTrace | ConvertTo-Json -Depth 10 -Compress
+    $traceAllowlistRecord = @($traceEventCounts | Where-Object { $_.event -eq 'factory_begin' } | Select-Object -First 1)
+    $selfTestTraceAllowlistVerified = [bool]($selfTestSuccessRun.startupTrace.status -eq 'observed' -and
+        $traceEventCounts.Count -eq 1 -and $traceAllowlistRecord.Count -eq 1 -and
+        $traceAllowlistRecord[0].count -eq 2 -and
+        $traceAllowlistRecord[0].roleCounts.editor -eq 1 -and
+        $traceAllowlistRecord[0].roleCounts.control -eq 1 -and
+        $traceJson -notmatch '(?i)secret|detail|directory|path|not-allowlisted')
+    if (-not $selfTestTraceAllowlistVerified) { throw 'Startup trace allowlist self-test failed.' }
+    $traceBoundsSelfTest = Get-StartupTraceBounds
+    if ($traceBoundsSelfTest.maxFiles -ne 8 -or $traceBoundsSelfTest.maxBytes -ne 1048576 -or
+        $traceBoundsSelfTest.maxLines -ne 4096 -or $traceBoundsSelfTest.maxValidRecords -ne 4096 -or
+        $traceBoundsSelfTest.maxLineLength -ne 65536) {
+        throw 'Paired startup trace bounds contract self-test failed.'
+    }
+    $selfTestEmptyTrace = Convert-PairedStartupTraceEvidence ([ordered]@{
+        enabled = $true; collected = $true; validRecordCount = 0; records = @()
+    })
+    $selfTestEmptyTraceWithCount = Convert-PairedStartupTraceEvidence ([ordered]@{
+        enabled = $true; collected = $true; validRecordCount = 1; records = @()
+    })
+    $overLimitRecordArray = [Array]::CreateInstance([object], [int]($traceBoundsSelfTest.maxValidRecords + 1))
+    $selfTestOverLimitTrace = Convert-PairedStartupTraceEvidence ([ordered]@{
+        enabled = $true; collected = $true; validRecordCount = $traceBoundsSelfTest.maxValidRecords + 1; records = $overLimitRecordArray
+    })
+    $selfTestTraceEmptyVerified = [bool]($selfTestEmptyTrace.status -eq 'unavailable' -and
+        $selfTestEmptyTraceWithCount.status -eq 'unavailable' -and
+        $selfTestOverLimitTrace.status -eq 'unavailable')
+    if (-not $selfTestTraceEmptyVerified) { throw 'Empty or over-limit startup trace self-test was accepted.' }
+    $selfTestFallbackDiagnosticsVerified = [bool]($selfTestFailedRun.startupDiagnostics.schemaVersion -eq 1 -and
+        $selfTestFailedRun.startupDiagnostics.observationStatus -eq 'not-attempted' -and
+        $selfTestFailedRun.startupDiagnostics.processTreeSnapshots.Count -eq 4 -and
+        $selfTestFailedRun.startupTrace.status -eq 'not-attempted' -and
+        $selfTestFailedRun.failureStage -eq 'integrity')
+    if (-not $selfTestFallbackDiagnosticsVerified) { throw 'Synthetic fallback startup diagnostics schema self-test failed.' }
+    $unverifiedTraceCleanupRun = [pscustomobject]@{
+        processCleanupVerified = $true; profileCleanupVerified = $true; traceCleanupVerified = $false
+    }
+    $selfTestCleanupTerminalVerified = [bool]((Test-PairedRunCleanupVerified $selfTestSuccessRun) -and
+        (Test-PairedRunCleanupVerified $selfTestFailedRun) -and
+        -not (Test-PairedRunCleanupVerified $unverifiedTraceCleanupRun))
+    if (-not $selfTestCleanupTerminalVerified) { throw 'Startup trace cleanup terminal self-test failed.' }
     $selfTestStartupMilestonesVerified = [bool]($selfTestWindowTimeoutRun.startupMilestones.processStarted -and
         -not $selfTestWindowTimeoutRun.startupMilestones.topLevelWindowObserved -and
         $selfTestWindowTimeoutRun.startupMilestones.timeoutStage -eq 'window-discovery' -and
@@ -2709,7 +3243,89 @@ function Invoke-PairedSelfTest {
         startupMilestonesFailureSchemaVerified = [bool](-not $selfTestFailedRun.startupMilestones.processStarted -and
             $selfTestFailedRun.startupMilestones.timeoutStage -eq $null -and
             $selfTestFailedRun.startupMilestones.missingMilestones.Count -eq 6)
+        startupDiagnosticsSuccessSchemaVerified = [bool]$selfTestDiagnosticsSuccessVerified
+        startupDiagnosticsTimeoutSchemaVerified = [bool]$selfTestDiagnosticsTimeoutVerified
+        startupDiagnosticsFallbackSchemaVerified = [bool]$selfTestFallbackDiagnosticsVerified
+        startupTraceAllowlistPayloadFreeVerified = [bool]$selfTestTraceAllowlistVerified
+        startupTraceEmptyUnavailableVerified = [bool]$selfTestTraceEmptyVerified
+        startupTraceCleanupTerminalVerified = [bool]$selfTestCleanupTerminalVerified
     }
+}
+
+function Assert-PairedTraceDirectoryPath {
+    param(
+        [Parameter(Mandatory = $true)] [string]$TraceDirectory,
+        [Parameter(Mandatory = $true)] [string]$ExecutableDirectory,
+        [Parameter(Mandatory = $true)] [string]$TraceName
+    )
+    $resolvedTrace = Get-NormalizedPath $TraceDirectory
+    $resolvedRoot = Get-NormalizedPath $ExecutableDirectory
+    $leaf = [IO.Path]::GetFileName($resolvedTrace)
+    if ([string]::IsNullOrWhiteSpace($TraceName) -or
+        -not $TraceName.StartsWith('startup-trace-paired-', [StringComparison]::Ordinal) -or
+        -not [string]::Equals($leaf, $TraceName, [StringComparison]::OrdinalIgnoreCase) -or
+        (Get-NormalizedPath (Split-Path -Parent $TraceDirectory)) -ne $resolvedRoot) {
+        throw 'Refusing an unsafe paired startup trace directory.'
+    }
+}
+
+function New-PairedTraceDirectory {
+    param(
+        [Parameter(Mandatory = $true)] [string]$ExecutableDirectory,
+        [string]$TraceName = $null
+    )
+    $traceName = if ([string]::IsNullOrWhiteSpace($TraceName)) { 'startup-trace-paired-' + [Guid]::NewGuid().ToString('N') } else { $TraceName }
+    $traceDirectory = [IO.Path]::GetFullPath((Join-Path $ExecutableDirectory $traceName))
+    Assert-PairedTraceDirectoryPath $traceDirectory $ExecutableDirectory $traceName
+    if (Test-Path -LiteralPath $traceDirectory) { throw 'A generated paired startup trace directory already exists.' }
+    try {
+        [IO.Directory]::CreateDirectory($traceDirectory) | Out-Null
+        $item = Get-Item -LiteralPath $traceDirectory -Force -ErrorAction Stop
+        if ($item -isnot [IO.DirectoryInfo] -or (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) {
+            throw 'The paired startup trace directory must be a regular non-reparse directory.'
+        }
+        return [pscustomobject][ordered]@{ path = $traceDirectory; name = $traceName }
+    }
+    catch {
+        try {
+            if (Test-Path -LiteralPath $traceDirectory) {
+                $item = Get-Item -LiteralPath $traceDirectory -Force -ErrorAction Stop
+                if ($item -is [IO.DirectoryInfo] -and (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0)) {
+                    [IO.Directory]::Delete($traceDirectory, $true)
+                }
+            }
+        }
+        catch { }
+        throw
+    }
+}
+
+function Remove-PairedTraceDirectory {
+    param(
+        [Parameter(Mandatory = $true)] [string]$TraceDirectory,
+        [Parameter(Mandatory = $true)] [string]$ExecutableDirectory,
+        [Parameter(Mandatory = $true)] [string]$TraceName
+    )
+    Assert-PairedTraceDirectoryPath $TraceDirectory $ExecutableDirectory $TraceName
+    if (Test-Path -LiteralPath $TraceDirectory) {
+        $item = Get-Item -LiteralPath $TraceDirectory -Force -ErrorAction Stop
+        if ($item -isnot [IO.DirectoryInfo] -or (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) {
+            throw 'Refusing to delete a paired startup trace reparse point.'
+        }
+        $entries = @(Get-SafeDirectoryTreeEntries $TraceDirectory)
+        try {
+            [IO.Directory]::Delete($TraceDirectory, $true)
+        }
+        catch [UnauthorizedAccessException] {
+            foreach ($entry in @($entries | Where-Object { -not $_.IsDirectory })) {
+                if (($entry.Attributes -band [IO.FileAttributes]::ReadOnly) -ne 0) {
+                    [IO.File]::SetAttributes($entry.FullName, $entry.Attributes -band (-bnot [IO.FileAttributes]::ReadOnly))
+                }
+            }
+            [IO.Directory]::Delete($TraceDirectory, $true)
+        }
+    }
+    if (Test-Path -LiteralPath $TraceDirectory) { throw 'Paired startup trace cleanup did not remove its owned directory.' }
 }
 
 function Invoke-PairedLaunch {
@@ -2725,14 +3341,21 @@ function Invoke-PairedLaunch {
     $raw = $null
     $profileDigest = $null
     $profileCleanupVerified = $false
+    $traceDirectory = $null
+    $traceName = $null
+    $traceOwned = $false
+    $traceCleanupVerified = $true
     try {
         Assert-OwnedProfilePath $profilePath $ExecutableDirectory $ProfileName
         if (Test-Path -LiteralPath $profilePath) { throw 'A generated benchmark profile already exists.' }
         [void](Assert-StartupProfileSidecar $ExecutablePath)
-        # An empty trace directory disables trace payloads for this evidence
-        # runner; readiness remains the shared HWND/caption/idle/layout state.
+        $traceName = 'startup-trace-paired-' + [Guid]::NewGuid().ToString('N')
+        $traceDirectory = [IO.Path]::GetFullPath((Join-Path $ExecutableDirectory $traceName))
+        $traceInfo = New-PairedTraceDirectory $ExecutableDirectory $traceName
+        $traceDirectory = [string]$traceInfo.path
+        $traceOwned = $true
         $raw = Invoke-StartupMeasurement $ScheduleRow.phase $ScheduleRow.sequence $ExecutablePath $SamplePath $ExpectedLines `
-            $ProfileName $profilePath $ExecutableDirectory $false $null '' $AffinityMask
+            $ProfileName $profilePath $ExecutableDirectory $false $null $traceDirectory $AffinityMask
         $profileDigest = Get-PairedProfileDigest $profilePath
     }
     catch {
@@ -2741,6 +3364,8 @@ function Invoke-PairedLaunch {
             captionReadyMs = $null; inputIdleMs = $null; inputIdleReached = $false
             documentReadyMs = $null; verticalScrollMaximum = $null
             processCleanupVerified = $true; error = 'launch orchestration failed'
+            startupDiagnostics = New-PairedEmptyStartupDiagnostics
+            startupTrace = if ($null -ne $traceDirectory) { [ordered]@{ enabled = $true; collected = $false; records = @() } } else { $null }
             affinity = [ordered]@{
                 requestedMask = [UInt64]$AffinityMask; processMask = $null; systemMask = $null
                 opened = $false; setSucceeded = $false; readBackSucceeded = $false
@@ -2753,6 +3378,13 @@ function Invoke-PairedLaunch {
         }
     }
     finally {
+        if ($traceOwned -and $null -ne $traceDirectory) {
+            try {
+                Remove-PairedTraceDirectory $traceDirectory $ExecutableDirectory $traceName
+                $traceCleanupVerified = $true
+            }
+            catch { $traceCleanupVerified = $false }
+        }
         try {
             Remove-OwnedProfile $profilePath $ExecutableDirectory $ProfileName
             $profileCleanupVerified = -not (Test-Path -LiteralPath $profilePath)
@@ -2768,6 +3400,8 @@ function Invoke-PairedLaunch {
             captionReadyMs = $null; inputIdleMs = $null; inputIdleReached = $false
             documentReadyMs = $null; verticalScrollMaximum = $null
             processCleanupVerified = $true; error = 'launch orchestration failed'
+            startupDiagnostics = New-PairedEmptyStartupDiagnostics
+            startupTrace = if ($null -ne $traceDirectory) { [ordered]@{ enabled = $true; collected = $false; records = @() } } else { $null }
             affinity = [ordered]@{
                 requestedMask = [UInt64]$AffinityMask; processMask = $null; systemMask = $null
                 opened = $false; setSucceeded = $false; readBackSucceeded = $false
@@ -2776,7 +3410,7 @@ function Invoke-PairedLaunch {
             survivors = @()
         }
     }
-    return Convert-PairedLaunchResult $raw $ScheduleRow $profileDigest $profileCleanupVerified
+    return Convert-PairedLaunchResult $raw $ScheduleRow $profileDigest $profileCleanupVerified -TraceCleanupVerified $traceCleanupVerified
 }
 
 function New-PairedReport {
@@ -2923,6 +3557,7 @@ function New-PairedReport {
         cleanup = [ordered]@{
             allProcessCleanupVerified = @($Runs | Where-Object { -not $_.processCleanupVerified }).Count -eq 0
             allProfileCleanupVerified = @($Runs | Where-Object { -not $_.profileCleanupVerified }).Count -eq 0
+            allTraceCleanupVerified = @($Runs | Where-Object { -not (Get-PairedProperty $_ @('traceCleanupVerified')) }).Count -eq 0
             allCleanupVerified = @($Runs | Where-Object { -not $_.cleanupVerified }).Count -eq 0
             allBundleCleanupVerified = @($ArtifactBundles | Where-Object { -not $_.cleanupVerified }).Count -eq 0
             survivorCount = [int]$survivorCount
@@ -2976,7 +3611,10 @@ function New-PairedFailedRun {
         status = $Status
         excluded = $true
         metrics = $null
+        failureStage = $Status
         startupMilestones = New-PairedEmptyStartupMilestones
+        startupDiagnostics = New-PairedEmptyStartupDiagnostics
+        startupTrace = New-PairedEmptyStartupTrace
         affinity = [ordered]@{
             requestedMask = [UInt64]$AffinityMask
             processMask = $null
@@ -2993,6 +3631,7 @@ function New-PairedFailedRun {
         profileFileCount = 0
         processCleanupVerified = $ProcessCleanupVerified
         profileCleanupVerified = $ProfileCleanupVerified
+        traceCleanupVerified = $true
         cleanupVerified = $ProcessCleanupVerified -and $ProfileCleanupVerified
         survivorCount = 0
     }

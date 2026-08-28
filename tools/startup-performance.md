@@ -42,6 +42,17 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\measure-output-startup.ps1
 設定して read-back した後にだけ resume します。bundle を working directory とし、cleanup 後は Job
 membership と exact bundle image path の両方で残存がないことを確認します。
 
+各 paired launch では bundle 配下に一意な run-owned trace directory も作成します。共有 probe はそこへ
+書かれた startup trace を process cleanup 後に読み取り、paired report には allowlist 済み event 名の件数と
+`editor` / `control` / `unknown` ごとの role 件数だけを残します。trace の path、directory 名、`detail`、payload、
+raw command は report に出しません。trace directory は non-reparse の所有パスであることを確認して削除し、
+削除を検証できなければ `traceCleanupVerified=false` として launch を fail closed にします。
+
+同じ paired report の各 launch には `startupDiagnostics` があり、`0.5s`、`2s`、`10s`、`timeout` の四つの
+checkpoint ごとに、上限付き process metadata と root の exit state/code を記録します。root handle の
+`STILL_ACTIVE` (259) は `active` であり、exit とは数えません。必要な診断観測が欠ける、または不正な場合は
+`diagnostic-unavailable` として除外し、launch success を偽装しません。
+
 既定の qualified mode では各 backend の warmup 5 回 / measured 30 回を下回る指定を拒否します。
 GUI の疎通だけを確認する場合は `-CollectOnly -WarmupLaunches 1 -MeasuredLaunches 1` を明示的に
 指定できますが、その結果は `acceptance.qualified=false` および `pass=false` となり、性能証拠には
@@ -161,7 +172,9 @@ rtk proxy powershell -NoProfile -ExecutionPolicy Bypass -File tools\measure-star
 ```
 
 セルフテストは JSONL のスキーマ検査、QPC 差分からの `firstContentPaintedMs` の算出、破損行の
-隔離も確認します。Sakura 自体は起動しません。
+隔離、四つの process-diagnostic checkpoint、root exit state の `STILL_ACTIVE` 判定も確認します。
+Sakura 自体は起動しません。PowerShell 5.1 (`powershell.exe`) と PowerShell 7 (`pwsh`) の両方で
+shared script と paired script の `-SelfTest` を実行してから実測へ進めます。
 
 ## アプリ内スタートアップトレース
 
@@ -171,6 +184,11 @@ rtk proxy powershell -NoProfile -ExecutionPolicy Bypass -File tools\measure-star
 明示的に指定されたときだけ、プロセスごとの `startup-trace-<pid>.jsonl` を書きます。エディタと
 非表示コントロールプロセスは同じディレクトリに個別ファイルを出すため、プロセス間の待機や
 ready 通知も同じ測定単位で相関できます。
+
+この単体計測では、読み取った `startupTrace` の詳細を開発者向け結果へ残します。一方、Issue #274 の
+paired runner は同じ trace directory を artifact bundle 配下に run-owned として作り、読み取り後に
+allowlist 済み event 名の count と role count だけへ変換してから削除します。paired report では trace の
+path、directory、`detail`、payload、raw command は保持されず、trace cleanup の検証失敗は成功扱いになりません。
 
 この環境変数が未設定、空、または既存ディレクトリを指さない通常起動では、アプリはトレース
 ファイルやディレクトリを作成せず、イベント記録もしません。したがって通常の利用・配布ビルドの
@@ -199,6 +217,21 @@ ready 通知も同じ測定単位で相関できます。
 レンダリングを完了して初めて記録する内部時点です。外部観測の `documentReadyMs` は全文レイアウトを
 スクロール範囲で確認する完了時点なので、同じ指標ではありません。どちらも残し、初回の見え始めと全
 レイアウトの回帰を別々に比較します。
+
+### プロセス診断 checkpoint
+
+各 launch の `startupDiagnostics` には `0.5s`、`2s`、`10s`、`timeout` の四つの固定 checkpoint が
+あります。各項目は `observed` / `not-reached` / `unavailable` の終端を持ち、process tree は上限付きの
+PID、親 PID、実行ファイル名、生成時刻、Job membership だけを記録します。root process の状態は、PID
+再利用を避けるため launch 時に取得した process handle から `GetExitCodeProcess` で確認します。`STILL_ACTIVE`
+（259）は `active` として扱い、終了コードとは解釈しません。観測 API が失敗した場合は
+`unavailable` として残し、成功や終了を推測して補いません。
+
+paired runner の `startupDiagnostics` はこの schema を各 run に保ったまま、path・command line・caption・
+本文などを含まない固定フィールドへ変換します。到達した checkpoint が `unavailable` になる、または root
+exit state の変換が不正な場合は `diagnostic-unavailable` / `failureStage=diagnostics` となり、その launch は
+成功数や統計へ入りません。fast success で後続 checkpoint が `not-reached` のままなのは許容されます。
+paired trace の `records` が空の場合は `trace-unavailable` として扱われ、成功数や統計へ入りません。
 
 ### `phaseDurations` とイベントの補助値
 
@@ -426,7 +459,7 @@ proxy です。
 `cleanupVerified` です。`input` は byte 数、行数、SHA-256 を含みます。`runs` の各要素には
 `condition`、`iteration`、`processApiReturnMs`、`topLevelHwndMs`、`visibleMs`、`dwmFlushMs`、
 `captionReadyMs`、`inputIdleMs`、`documentReadyMs`、`verticalScrollMaximum`、
-`startupTrace`、`inputIdleReached`、`success`、`error`、`screenshotPath`、
+`startupDiagnostics`、`startupTrace`、`inputIdleReached`、`success`、`error`、`screenshotPath`、
 `processCleanupVerified`、`profileCleanupVerified`、`cleanupVerified` を記録します。`summaries` は
 7 マイルストーンごとに `count`、`medianMs`、`p95Ms`（nearest-rank ceiling）、`minMs`、`maxMs`、
 `meanMs` を条件別に集計します。
@@ -480,6 +513,11 @@ Sakura／その子プロセスの残存は失敗として扱い、原因を解�
 失敗、または cleanup 後の survivor は試行失敗です。スクリプトが終了できるのは、成功または明示的な
 失敗という終端状態に到達した場合だけです。
 
+root process の handle は `startupDiagnostics` の全 checkpoint と cleanup が終わるまで保持し、exit state の
+観測に使います。process handle、thread handle、Job handle はそれぞれ独立した close 分岐で処理するため、
+一つの close 失敗が別の所有資源の cleanup を省略しません。診断観測に失敗した場合も、観測不能を成功と置き換えず
+typed な unavailable として結果へ残します。
+
 cleanup の対象は当該試行が所有する Sakura プロセスと、その run-owned 子プロセスに限られます。
 無関係な Sakura、他アプリケーション、ユーザーの作業中プロセスを kill しません。既定の出力先が
 `~/tmp/` 配下なのも、リポジトリと通常のユーザーデータを汚さないためです。
@@ -491,6 +529,10 @@ finalization を完了させます。次に、同じ試行が所有する非表�
 猶予に限定します。期限内に残った場合だけ、親から先に強制終了し、最後に PID・生成時刻・実行パスを
 再照合します。可視ウィンドウが応答しない場合も、測定専用プロファイルと未編集の固定入力に限った処理
 なので、正常終了の総猶予は 3 秒です。
+
+paired runner の trace directory も run-owned cleanup の対象です。削除前に所有 root、生成名、通常ディレクトリ、
+reparse point でないことを検証し、削除後の不存在まで確認します。確認できない場合は `cleanup-unverified` として
+後続 launch を抑止し、report の qualified/pass 判定を通しません。
 
 ## 再現性の記録テンプレート
 

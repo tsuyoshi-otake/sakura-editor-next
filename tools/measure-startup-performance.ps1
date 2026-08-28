@@ -30,6 +30,30 @@ $ErrorActionPreference = 'Stop'
 $startupTimeoutMs = 30000
 $closeTimeoutMs = 3000
 $pollIntervalMs = 25
+$startupDiagnosticCheckpointNames = @('0.5s', '2s', '10s', 'timeout')
+$startupDiagnosticCheckpointMs = [ordered]@{
+    '0.5s' = 500
+    '2s' = 2000
+    '10s' = 10000
+    'timeout' = $startupTimeoutMs
+}
+$startupDiagnosticMaxProcessCount = 256
+$startupDiagnosticMaxImageNameLength = 260
+$startupDiagnosticMaxWindowCount = 1024
+
+# Keep trace parsing bounded even when a run-owned directory is corrupted or
+# an instrumented process writes unexpectedly large output.  The paired runner
+# consumes these values through Get-StartupTraceBounds, so both scripts share
+# one fixed contract without copying a second set of limits.
+function Get-StartupTraceBounds {
+    return [pscustomobject][ordered]@{
+        maxFiles = 8
+        maxBytes = [Int64]1048576
+        maxLines = 4096
+        maxValidRecords = 4096
+        maxLineLength = 65536
+    }
+}
 
 $startupProbeReferences = New-Object System.Collections.Generic.List[string]
 try {
@@ -126,6 +150,14 @@ public sealed class StartupProbeIdentityActionResult
     public int ErrorCode;
 }
 
+public sealed class StartupProbeProcessExitResult
+{
+    public bool Succeeded;
+    public bool Active;
+    public uint ExitCode;
+    public int ErrorCode;
+}
+
 public static class NativeStartupProbe
 {
     private const uint WM_CLOSE = 0x0010;
@@ -144,6 +176,7 @@ public static class NativeStartupProbe
     private const int ERROR_BAD_LENGTH = 24;
     private const int ERROR_INVALID_PARAMETER = 87;
     private const int ERROR_NOT_FOUND = 1168;
+    private const uint STILL_ACTIVE = 259;
     private const uint SIF_RANGE = 0x0001;
     private const int SB_CTL = 2;
     private const int GWL_STYLE = -16;
@@ -308,6 +341,8 @@ public static class NativeStartupProbe
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool GetProcessTimes(IntPtr process, out FILETIME creation, out FILETIME exit, out FILETIME kernel, out FILETIME user);
     [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetExitCodeProcess(IntPtr process, out uint exitCode);
+    [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr handle);
 
     public static StartupProbeWindow[] GetTopLevelWindows()
@@ -423,6 +458,27 @@ public static class NativeStartupProbe
             return result;
         }
         finally { CloseHandle(process); }
+    }
+
+    public static StartupProbeProcessExitResult QueryProcessExitState(IntPtr process)
+    {
+        var result = new StartupProbeProcessExitResult {
+            Succeeded = false,
+            Active = false,
+            ExitCode = 0,
+            ErrorCode = ERROR_INVALID_PARAMETER
+        };
+        if (process == IntPtr.Zero) return result;
+        uint exitCode;
+        if (!GetExitCodeProcess(process, out exitCode)) {
+            result.ErrorCode = Marshal.GetLastWin32Error();
+            return result;
+        }
+        result.Succeeded = true;
+        result.ExitCode = exitCode;
+        result.Active = exitCode == STILL_ACTIVE;
+        result.ErrorCode = 0;
+        return result;
     }
 
     public static StartupProbeSuspendedProcessResult CreateSuspendedProcess(string applicationPath, string commandLine, string workingDirectory, string[] environmentOverrides)
@@ -905,6 +961,223 @@ function Convert-ProcessIdentity($Process) {
         ParentId = [int]$Process.ParentProcessId
         Creation = [long]$Process.CreationTime
         ImagePath = [string]$Process.ImagePath
+    }
+}
+
+function New-StartupDiagnosticState {
+    param([int]$RootProcessId = 0)
+    $snapshots = New-Object Collections.Generic.List[object]
+    foreach ($checkpoint in @($startupDiagnosticCheckpointNames)) {
+        [void]$snapshots.Add([ordered]@{
+            checkpoint = $checkpoint
+            targetMs = [int]$startupDiagnosticCheckpointMs[$checkpoint]
+            status = 'not-reached'
+            observed = $false
+            elapsedMs = $null
+            processTree = @()
+            processCount = 0
+            processRecordsTruncated = $false
+            jobMembershipVerified = $false
+            jobMemberCount = 0
+            topLevelWindowCount = $null
+            topLevelWindowCountCapped = $false
+            rootExitState = 'not-observed'
+            rootExitCode = $null
+            rootExitErrorCode = $null
+            processExitObserved = $false
+            processExitElapsedMs = $null
+            failureStage = $null
+            failureType = $null
+        })
+    }
+    return [ordered]@{
+        schemaVersion = 1
+        rootProcessId = [int]$RootProcessId
+        processTreeSnapshots = $snapshots.ToArray()
+        processExitObservation = [ordered]@{
+            observed = $false
+            elapsedMs = $null
+            pid = if ($RootProcessId -gt 0) { [int]$RootProcessId } else { $null }
+            source = 'run-root'
+            state = 'not-observed'
+            exitCode = $null
+            errorCode = $null
+        }
+    }
+}
+
+function Convert-StartupDiagnosticElapsedMs([AllowNull()] [object]$Value) {
+    if ($null -eq $Value) { return $null }
+    $elapsed = 0.0
+    try { $elapsed = [double]$Value } catch { return $null }
+    if ([double]::IsNaN($elapsed) -or [double]::IsInfinity($elapsed) -or $elapsed -lt 0.0) { return $null }
+    return [double]([Math]::Round([Math]::Min($elapsed, [double]$startupTimeoutMs), 3))
+}
+
+function Get-StartupDiagnosticImageName($Record) {
+    $imageName = $null
+    try { $imageName = [IO.Path]::GetFileName([string]$Record.ImagePath) } catch { $imageName = $null }
+    if ([string]::IsNullOrWhiteSpace($imageName) -or $imageName.Length -gt $startupDiagnosticMaxImageNameLength -or
+        $imageName.IndexOfAny([char[]]@('\', '/', ':')) -ge 0 -or $imageName -match '[\r\n]') {
+        return 'unavailable'
+    }
+    return [string]$imageName
+}
+
+function Convert-StartupDiagnosticProcessMetadata($Record, [bool]$JobMember) {
+    return [ordered]@{
+        pid = [int]$Record.Id
+        ppid = [int]$Record.ParentId
+        imageName = Get-StartupDiagnosticImageName $Record
+        creationTime = [long]$Record.Creation
+        jobMember = [bool]$JobMember
+    }
+}
+
+function Get-StartupDiagnosticJobMembers([IntPtr]$Job) {
+    $members = @{}
+    if ($Job -eq [IntPtr]::Zero) {
+        return [pscustomobject]@{ verified = $false; members = $members }
+    }
+    $query = [NativeStartupProbe]::QueryJobProcessIds($Job)
+    if (-not $query.Succeeded -or $null -eq $query.ProcessIds) {
+        return [pscustomobject]@{ verified = $false; members = $members }
+    }
+    foreach ($processId in @($query.ProcessIds)) {
+        if ([int]$processId -gt 0) { $members[[int]$processId] = $true }
+    }
+    return [pscustomobject]@{ verified = $true; members = $members }
+}
+
+function Get-StartupDiagnosticWindowCount($ProcessIds) {
+    $count = 0
+    $capped = $false
+    foreach ($window in @([NativeStartupProbe]::GetTopLevelWindows())) {
+        if ($null -eq $ProcessIds -or -not $ProcessIds.ContainsKey([int]$window.ProcessId)) { continue }
+        if ($count -lt $startupDiagnosticMaxWindowCount) { $count++ }
+        else { $capped = $true; break }
+    }
+    return [pscustomobject]@{ count = $count; capped = $capped }
+}
+
+function Add-StartupDiagnosticCheckpoint {
+    param(
+        [Parameter(Mandatory = $true)] [object]$State,
+        [Parameter(Mandatory = $true)] [string]$Checkpoint,
+        [Parameter(Mandatory = $true)] [object]$Owned,
+        [Parameter(Mandatory = $true)] [IntPtr]$Job,
+        [Parameter(Mandatory = $true)] [double]$ElapsedMs,
+        [IntPtr]$RootProcessHandle = [IntPtr]::Zero,
+        [switch]$Force,
+        [string]$FailureStage = $null,
+        [string]$FailureType = $null
+    )
+    if (-not $startupDiagnosticCheckpointNames.Contains($Checkpoint)) { return $false }
+    $entry = @($State.processTreeSnapshots | Where-Object { $_.checkpoint -eq $Checkpoint } | Select-Object -First 1)
+    if ($entry.Count -eq 0) { return $false }
+    $snapshot = $entry[0]
+    if ([bool]$snapshot.observed -and -not $Force) { return $false }
+
+    $safeElapsedMs = Convert-StartupDiagnosticElapsedMs $ElapsedMs
+    if ($null -eq $safeElapsedMs) { $safeElapsedMs = [double]$startupTimeoutMs }
+    $jobInfo = [pscustomobject]@{ verified = $false; members = @{} }
+    $jobMembers = @{}
+    $processSnapshot = $null
+    $exitProbe = $null
+    try {
+        # Keep the handle returned by CreateProcessW until the checkpoint and
+        # cleanup phases finish.  Querying this owned handle avoids PID reuse
+        # and makes STILL_ACTIVE an explicit active state rather than an exit.
+        $exitProbe = [NativeStartupProbe]::QueryProcessExitState($RootProcessHandle)
+        if (-not $exitProbe.Succeeded) {
+            throw "Could not observe the run-root exit state (Win32 $($exitProbe.ErrorCode))."
+        }
+        $jobInfo = Get-StartupDiagnosticJobMembers $Job
+        $jobMembers = $jobInfo.members
+        $snapshot.rootExitState = if ($exitProbe.Active) { 'active' } else { 'exited' }
+        $snapshot.rootExitCode = [UInt64]$exitProbe.ExitCode
+        $snapshot.rootExitErrorCode = $null
+        $State.processExitObservation.state = $snapshot.rootExitState
+        $State.processExitObservation.exitCode = [UInt64]$exitProbe.ExitCode
+        $State.processExitObservation.errorCode = $null
+        if (-not $exitProbe.Active -and -not [bool]$State.processExitObservation.observed) {
+            $State.processExitObservation.observed = $true
+            $State.processExitObservation.elapsedMs = $safeElapsedMs
+        }
+        $processSnapshot = Get-ProcessSnapshot $Owned
+        Update-OwnedProcesses $Owned $processSnapshot
+        $processSnapshot = Get-ProcessSnapshot $Owned
+        $records = @($Owned.Values | Where-Object { Test-ProcessIdentity $_ $processSnapshot } | Sort-Object Id)
+        $processIds = @{}
+        foreach ($record in $records) { $processIds[[int]$record.Id] = $true }
+        $windowInfo = Get-StartupDiagnosticWindowCount $processIds
+        $tree = New-Object Collections.Generic.List[object]
+        $recordLimit = [Math]::Min($records.Count, $startupDiagnosticMaxProcessCount)
+        for ($index = 0; $index -lt $recordLimit; $index++) {
+            $record = $records[$index]
+            $member = [bool]$false
+            if ($jobInfo.verified) { $member = $jobMembers.ContainsKey([int]$record.Id) }
+            [void]$tree.Add((Convert-StartupDiagnosticProcessMetadata $record $member))
+        }
+        $snapshot.processTree = $tree.ToArray()
+        $snapshot.processCount = [int]$recordLimit
+        $snapshot.processRecordsTruncated = [bool]($records.Count -gt $recordLimit)
+        $snapshot.jobMembershipVerified = [bool]$jobInfo.verified
+        $snapshot.jobMemberCount = if ($jobInfo.verified) { [int](@($records | Where-Object { $jobMembers.ContainsKey([int]$_.Id) }).Count) } else { 0 }
+        $snapshot.topLevelWindowCount = [int]$windowInfo.count
+        $snapshot.topLevelWindowCountCapped = [bool]$windowInfo.capped
+        $snapshot.processExitObserved = [bool]$State.processExitObservation.observed
+        $snapshot.processExitElapsedMs = $State.processExitObservation.elapsedMs
+        $snapshot.status = 'observed'
+        $snapshot.observed = $true
+        $snapshot.elapsedMs = $safeElapsedMs
+        $snapshot.failureStage = $FailureStage
+        $snapshot.failureType = $FailureType
+        return $true
+    }
+    catch {
+        # Diagnostic collection is deliberately typed and payload-free.  The
+        # launch result remains authoritative; cleanup still performs the
+        # normal identity and Job checks below.
+        $snapshot.status = 'unavailable'
+        $snapshot.observed = $false
+        $snapshot.elapsedMs = $safeElapsedMs
+        $snapshot.processTree = @()
+        $snapshot.processCount = 0
+        $snapshot.processRecordsTruncated = $false
+        $snapshot.jobMembershipVerified = [bool]$jobInfo.verified
+        $snapshot.jobMemberCount = 0
+        $snapshot.topLevelWindowCount = $null
+        $snapshot.topLevelWindowCountCapped = $false
+        if ($null -eq $exitProbe -or -not $exitProbe.Succeeded) {
+            $snapshot.rootExitState = 'unavailable'
+            $snapshot.rootExitCode = $null
+            $snapshot.rootExitErrorCode = if ($null -ne $exitProbe) { [int]$exitProbe.ErrorCode } else { $null }
+            $State.processExitObservation.state = 'unavailable'
+            $State.processExitObservation.exitCode = $null
+            $State.processExitObservation.errorCode = $snapshot.rootExitErrorCode
+        }
+        $snapshot.processExitObserved = [bool]$State.processExitObservation.observed
+        $snapshot.processExitElapsedMs = $State.processExitObservation.elapsedMs
+        $snapshot.failureStage = 'process-tree'
+        $snapshot.failureType = 'observation'
+        return $false
+    }
+}
+
+function Update-StartupDiagnosticCheckpoints {
+    param(
+        [Parameter(Mandatory = $true)] [object]$State,
+        [Parameter(Mandatory = $true)] [object]$Owned,
+        [Parameter(Mandatory = $true)] [IntPtr]$Job,
+        [Parameter(Mandatory = $true)] [double]$ElapsedMs,
+        [IntPtr]$RootProcessHandle = [IntPtr]::Zero
+    )
+    foreach ($checkpoint in @('0.5s', '2s', '10s')) {
+        $entry = @($State.processTreeSnapshots | Where-Object { $_.checkpoint -eq $checkpoint } | Select-Object -First 1)
+        if ($entry.Count -eq 0 -or [string]$entry[0].status -ne 'not-reached') { continue }
+        if ($ElapsedMs -lt [double]$startupDiagnosticCheckpointMs[$checkpoint]) { continue }
+        [void](Add-StartupDiagnosticCheckpoint $State $checkpoint $Owned $Job $ElapsedMs -RootProcessHandle $RootProcessHandle)
     }
 }
 
@@ -1703,6 +1976,7 @@ function Get-StartupTracePhaseDurations($Records) {
 }
 
 function Get-StartupTraceSummary([string]$TraceDirectory, [int64]$LaunchQpc, [int64]$LaunchFrequency) {
+    $traceBounds = Get-StartupTraceBounds
     $summary = [ordered]@{
         enabled = $true
         collected = $false
@@ -1710,6 +1984,10 @@ function Get-StartupTraceSummary([string]$TraceDirectory, [int64]$LaunchQpc, [in
         launchQpc = $LaunchQpc
         launchFrequency = $LaunchFrequency
         files = @()
+        fileCount = 0
+        totalBytes = [Int64]0
+        lineCount = [Int64]0
+        maxLineLength = 0
         validRecordCount = 0
         invalidLineCount = 0
         parseErrors = @()
@@ -1727,42 +2005,134 @@ function Get-StartupTraceSummary([string]$TraceDirectory, [int64]$LaunchQpc, [in
         return [pscustomobject]$summary
     }
 
+    try {
+        $traceDirectoryAttributes = [IO.File]::GetAttributes($TraceDirectory)
+        if (($traceDirectoryAttributes -band [IO.FileAttributes]::Directory) -eq 0 -or
+            ($traceDirectoryAttributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            $summary.parseErrors = @([ordered]@{ file = $null; line = $null; error = 'StartupTraceDirectoryNotRegular' })
+            return [pscustomobject]$summary
+        }
+    }
+    catch {
+        $summary.parseErrors = @([ordered]@{ file = $null; line = $null; error = 'StartupTraceDirectoryUnavailable' })
+        return [pscustomobject]$summary
+    }
+
+    $traceFiles = New-Object Collections.Generic.List[object]
+    $traceEnumerator = $null
+    try {
+        # Enumerate only matching files in the directory itself.  Do not recurse
+        # or materialize an attacker-controlled list before applying the bound.
+        $traceEnumerator = [IO.Directory]::EnumerateFiles($TraceDirectory, 'startup-trace-*.jsonl', [IO.SearchOption]::TopDirectoryOnly).GetEnumerator()
+        while ($traceEnumerator.MoveNext()) {
+            $entryPath = [string]$traceEnumerator.Current
+            $entryName = [IO.Path]::GetFileName($entryPath)
+            $entryAttributes = [IO.File]::GetAttributes($entryPath)
+            if (($entryAttributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                $summary.parseErrors = @([ordered]@{ file = $entryName; line = $null; error = 'StartupTraceEntryNotRegular' })
+                $summary.collected = $false
+                return [pscustomobject]$summary
+            }
+            if (($entryAttributes -band [IO.FileAttributes]::Directory) -ne 0) {
+                continue
+            }
+            if ($traceFiles.Count -ge [int]$traceBounds.maxFiles) {
+                $summary.parseErrors = @([ordered]@{ file = $entryName; line = $null; error = 'StartupTraceBoundsExceeded:files' })
+                $summary.collected = $false
+                return [pscustomobject]$summary
+            }
+            $entryLength = [IO.FileInfo]$entryPath
+            $entryBytes = [Int64]$entryLength.Length
+            if ($entryBytes -gt [Int64]$traceBounds.maxBytes - $summary.totalBytes) {
+                $summary.parseErrors = @([ordered]@{ file = $entryName; line = $null; error = 'StartupTraceBoundsExceeded:bytes' })
+                $summary.collected = $false
+                return [pscustomobject]$summary
+            }
+            $summary.totalBytes = [Int64]($summary.totalBytes + $entryBytes)
+            [void]$traceFiles.Add([pscustomobject]@{ path = $entryPath; name = $entryName; bytes = $entryBytes })
+        }
+    }
+    catch {
+        $summary.parseErrors = @([ordered]@{ file = $null; line = $null; error = 'StartupTraceEnumerationFailed' })
+        $summary.collected = $false
+        return [pscustomobject]$summary
+    }
+    finally {
+        if ($null -ne $traceEnumerator) { $traceEnumerator.Dispose() }
+    }
+    $summary.fileCount = $traceFiles.Count
+    if ($traceFiles.Count -eq 0) {
+        $summary.parseErrors = @([ordered]@{ file = $null; line = $null; error = 'StartupTraceEmpty' })
+        $summary.collected = $false
+        return [pscustomobject]$summary
+    }
+
     $records = New-Object Collections.Generic.List[object]
-    foreach ($traceFile in @(Get-ChildItem -LiteralPath $TraceDirectory -File -Filter 'startup-trace-*.jsonl' | Sort-Object Name)) {
-        $summary.files += $traceFile.Name
+    foreach ($traceFile in @($traceFiles | Sort-Object name)) {
+        $summary.files += $traceFile.name
         $lineNumber = 0
-        foreach ($line in @(Get-Content -LiteralPath $traceFile.FullName)) {
-            $lineNumber++
-            if ([string]::IsNullOrWhiteSpace($line)) { continue }
-            try {
-                $raw = $line | ConvertFrom-Json
-                $names = @($raw.PSObject.Properties.Name)
-                $required = @('schemaVersion', 'qpc', 'frequency', 'pid', 'tid', 'role', 'event', 'value1', 'value2', 'detail')
-                foreach ($name in $required) {
-                    if ($names -notcontains $name) { throw "Missing required field '$name'." }
+        $reader = $null
+        try {
+            $utf8Strict = New-Object Text.UTF8Encoding($false, $true)
+            $reader = New-Object IO.StreamReader($traceFile.path, $utf8Strict, $true, 4096)
+            while ($null -ne ($line = $reader.ReadLine())) {
+                $lineNumber++
+                $summary.lineCount = [Int64]($summary.lineCount + 1)
+                if ($line.Length -gt $summary.maxLineLength) { $summary.maxLineLength = $line.Length }
+                if ($line.Length -gt [int]$traceBounds.maxLineLength) {
+                    $summary.parseErrors = @([ordered]@{ file = $traceFile.name; line = $lineNumber; error = 'StartupTraceBoundsExceeded:line-length' })
+                    $summary.collected = $false
+                    return [pscustomobject]$summary
                 }
-                if ([int]$raw.schemaVersion -ne 1) { throw "Unsupported schemaVersion '$($raw.schemaVersion)'." }
-                $record = [pscustomobject][ordered]@{
-                    schemaVersion = 1
-                    qpc = [int64]$raw.qpc
-                    frequency = [int64]$raw.frequency
-                    pid = [int]$raw.pid
-                    tid = [int]$raw.tid
-                    role = [string]$raw.role
-                    event = [string]$raw.event
-                    value1 = [int64]$raw.value1
-                    value2 = [int64]$raw.value2
-                    detail = [string]$raw.detail
+                if ($summary.lineCount -gt [Int64]$traceBounds.maxLines) {
+                    $summary.parseErrors = @([ordered]@{ file = $traceFile.name; line = $lineNumber; error = 'StartupTraceBoundsExceeded:lines' })
+                    $summary.collected = $false
+                    return [pscustomobject]$summary
                 }
-                if ($record.qpc -lt 0 -or $record.frequency -le 0 -or $record.pid -le 0 -or [string]::IsNullOrWhiteSpace($record.event)) {
-                    throw 'Record contains an invalid timestamp, process id, frequency, or event.'
+                if ([string]::IsNullOrWhiteSpace($line)) { continue }
+                try {
+                    $raw = $line | ConvertFrom-Json
+                    $names = @($raw.PSObject.Properties.Name)
+                    $required = @('schemaVersion', 'qpc', 'frequency', 'pid', 'tid', 'role', 'event', 'value1', 'value2', 'detail')
+                    foreach ($name in $required) {
+                        if ($names -notcontains $name) { throw "Missing required field '$name'." }
+                    }
+                    if ([int]$raw.schemaVersion -ne 1) { throw "Unsupported schemaVersion '$($raw.schemaVersion)'." }
+                    $record = [pscustomobject][ordered]@{
+                        schemaVersion = 1
+                        qpc = [int64]$raw.qpc
+                        frequency = [int64]$raw.frequency
+                        pid = [int]$raw.pid
+                        tid = [int]$raw.tid
+                        role = [string]$raw.role
+                        event = [string]$raw.event
+                        value1 = [int64]$raw.value1
+                        value2 = [int64]$raw.value2
+                        detail = [string]$raw.detail
+                    }
+                    if ($record.qpc -lt 0 -or $record.frequency -le 0 -or $record.pid -le 0 -or [string]::IsNullOrWhiteSpace($record.event)) {
+                        throw 'Record contains an invalid timestamp, process id, frequency, or event.'
+                    }
+                    if ($records.Count -ge [int]$traceBounds.maxValidRecords) {
+                        $summary.parseErrors = @([ordered]@{ file = $traceFile.name; line = $lineNumber; error = 'StartupTraceBoundsExceeded:records' })
+                        $summary.collected = $false
+                        return [pscustomobject]$summary
+                    }
+                    [void]$records.Add($record)
                 }
-                $records.Add($record)
+                catch {
+                    $summary.invalidLineCount++
+                    $summary.parseErrors += [ordered]@{ file = $traceFile.name; line = $lineNumber; error = 'StartupTraceRecordInvalid' }
+                }
             }
-            catch {
-                $summary.invalidLineCount++
-                $summary.parseErrors += [ordered]@{ file = $traceFile.Name; line = $lineNumber; error = $_.Exception.Message }
-            }
+        }
+        catch {
+            $summary.parseErrors = @([ordered]@{ file = $traceFile.name; line = $lineNumber; error = 'StartupTraceReadFailed' })
+            $summary.collected = $false
+            return [pscustomobject]$summary
+        }
+        finally {
+            if ($null -ne $reader) { $reader.Dispose() }
         }
     }
 
@@ -1913,6 +2283,7 @@ function Get-TrackedOwnedProcesses($Owned) {
 
 function Stop-OwnedProcesses($Owned, [IntPtr]$Job = [IntPtr]::Zero, [string]$ExecutablePath = $null) {
     $closeWatch = [Diagnostics.Stopwatch]::StartNew()
+    $remainingJobHandle = $Job
     $jobQuerySucceeded = $Job -eq [IntPtr]::Zero
     $jobCloseSucceeded = $Job -eq [IntPtr]::Zero
     $graceful = $false
@@ -1953,6 +2324,7 @@ function Stop-OwnedProcesses($Owned, [IntPtr]$Job = [IntPtr]::Zero, [string]$Exe
         if ($Job -ne [IntPtr]::Zero) {
             $close = [NativeStartupProbe]::CloseKillOnCloseJob($Job)
             $jobCloseSucceeded = [bool]$close.Succeeded
+            $remainingJobHandle = $close.Handle
             if (-not $jobCloseSucceeded) { [void]$cleanupErrors.Add("Could not close the run-owned job (Win32 $($close.ErrorCode)).") }
         }
     }
@@ -1999,6 +2371,7 @@ function Stop-OwnedProcesses($Owned, [IntPtr]$Job = [IntPtr]::Zero, [string]$Exe
         graceful = [bool]$graceful
         jobQuerySucceeded = [bool]$jobQuerySucceeded
         jobCloseSucceeded = [bool]$jobCloseSucceeded
+        jobHandle = $remainingJobHandle
         finalPathSweepVerified = [bool]$finalPathSweepVerified
         error = if ($cleanupErrors.Count -eq 0) { $null } else { ($cleanupErrors.ToArray() -join ' ') }
     }
@@ -2022,6 +2395,7 @@ function Invoke-StartupMeasurement([string]$Condition, [int]$Iteration, [string]
             opened = $false; setSucceeded = $false; readBackSucceeded = $false; verified = $false; descendantsVerified = $false; errorCode = $null
         }
         startupTrace = $null
+        startupDiagnostics = New-StartupDiagnosticState
         screenshotPath = $null; success = $false; error = $null
         processCleanupVerified = $false; profileCleanupVerified = $false; cleanupVerified = $false
         jobQuerySucceeded = $false; jobCloseSucceeded = $false; finalPathSweepVerified = $false; containmentVerified = $false
@@ -2068,6 +2442,7 @@ function Invoke-StartupMeasurement([string]$Condition, [int]$Iteration, [string]
         $processHandle = $suspended.ProcessHandle
         $threadHandle = $suspended.ThreadHandle
         $startedProcessId = [int]$suspended.ProcessId
+        $result.startupDiagnostics.rootProcessId = $startedProcessId
         $snapshot = Get-ProcessSnapshot @{} ([int[]]@($startedProcessId))
         if (-not $snapshot.ContainsKey($startedProcessId)) { throw "Started process $startedProcessId was not observable." }
         $seed = $snapshot[$startedProcessId]
@@ -2095,13 +2470,10 @@ function Invoke-StartupMeasurement([string]$Condition, [int]$Iteration, [string]
         if (-not $resumed.Succeeded) { throw "Could not resume the job-contained process (Win32 $($resumed.ErrorCode))." }
         $processResumed = $true
         $result.processApiReturnMs = [Math]::Round($watch.Elapsed.TotalMilliseconds, 3)
-        if (-not [NativeStartupProbe]::CloseNativeHandle($threadHandle)) { throw 'Could not close the suspended process thread handle.' }
-        $threadHandle = [IntPtr]::Zero
-        if (-not [NativeStartupProbe]::CloseNativeHandle($processHandle)) { throw 'Could not close the suspended process handle.' }
-        $processHandle = [IntPtr]::Zero
         $targetCaption = [IO.Path]::GetFileName($DocumentPath)
         $selection = @{ Window = $null }
         $editorIdentified = Wait-WithPoll {
+            [void](Update-StartupDiagnosticCheckpoints $result.startupDiagnostics $owned $job $watch.Elapsed.TotalMilliseconds -RootProcessHandle $processHandle)
             foreach ($window in @([NativeStartupProbe]::GetTopLevelWindows())) {
                 if (-not $window.ClassName.StartsWith('TextEditorWindow', [StringComparison]::Ordinal)) { continue }
                 $observedMs = [Math]::Round($watch.Elapsed.TotalMilliseconds, 3)
@@ -2116,7 +2488,10 @@ function Invoke-StartupMeasurement([string]$Condition, [int]$Iteration, [string]
             }
             return $false
         } $startupTimeoutMs
-        if (-not $editorIdentified) { throw 'Timed out waiting for a run-owned TextEditorWindow.' }
+        if (-not $editorIdentified) {
+            [void](Add-StartupDiagnosticCheckpoint $result.startupDiagnostics 'timeout' $owned $job $watch.Elapsed.TotalMilliseconds -RootProcessHandle $processHandle -Force -FailureStage 'window-discovery' -FailureType 'timeout')
+            throw 'Timed out waiting for a run-owned TextEditorWindow.'
+        }
         $selectedWindow = $selection.Window
         if ($null -eq $selectedWindow) { throw 'The selected editor window was not retained after discovery.' }
         $inputSnapshot = Get-ProcessSnapshot $owned
@@ -2136,6 +2511,7 @@ function Invoke-StartupMeasurement([string]$Condition, [int]$Iteration, [string]
             }
             $allMilestonesObserved = $false
             while ($watch.ElapsedMilliseconds -lt $startupTimeoutMs) {
+                [void](Update-StartupDiagnosticCheckpoints $result.startupDiagnostics $owned $job $watch.Elapsed.TotalMilliseconds -RootProcessHandle $processHandle)
                 $currentWindow = @([NativeStartupProbe]::GetTopLevelWindows() | Where-Object {
                     $_.Handle -eq $selectedWindow.Handle -and [int]$_.ProcessId -eq $windowPid -and
                     $_.ClassName.StartsWith('TextEditorWindow', [StringComparison]::Ordinal)
@@ -2190,6 +2566,7 @@ function Invoke-StartupMeasurement([string]$Condition, [int]$Iteration, [string]
             if (-not $allMilestonesObserved) {
                 $missingMilestones = Get-StartupReadinessMissingMilestones $readiness $ExpectedLineCount
                 $result.inputIdleError = if (-not $readiness.inputIdleReached) { 'WaitForInputIdle did not reach idle before the startup timeout.' } else { $null }
+                [void](Add-StartupDiagnosticCheckpoint $result.startupDiagnostics 'timeout' $owned $job $watch.Elapsed.TotalMilliseconds -RootProcessHandle $processHandle -Force -FailureStage 'readiness' -FailureType 'timeout')
                 throw ('Timed out waiting for startup milestones: {0}.' -f ($missingMilestones -join '; '))
             }
         }
@@ -2224,41 +2601,72 @@ function Invoke-StartupMeasurement([string]$Condition, [int]$Iteration, [string]
     }
     catch { $result.error = $_.Exception.Message }
     finally {
-        try {
-            # Any failure before ResumeSuspendedProcess leaves the process in a
-            # suspended state.  Terminate it through the still-owned native
-            # handle before closing the job; this cannot target a reused PID.
-            if ($processHandle -ne [IntPtr]::Zero) {
+        # Each owned native handle has an independent close branch.  A failure
+        # closing one handle must not skip the job containment check or the
+        # remaining handle cleanup.
+        $cleanupErrors = New-Object Collections.Generic.List[string]
+        if ($processHandle -ne [IntPtr]::Zero) {
+            try {
+                # Any failure before ResumeSuspendedProcess leaves the process
+                # suspended.  This exact handle cannot target a reused PID.
                 if (-not $processResumed) {
                     $terminated = [NativeStartupProbe]::TerminateProcessHandle($processHandle)
-                    if (-not $terminated.Succeeded -and $terminated.Existed) { throw "Could not terminate the unresumed run-owned process (Win32 $($terminated.ErrorCode))." }
+                    if (-not $terminated.Succeeded -and $terminated.Existed) {
+                        [void]$cleanupErrors.Add("Could not terminate the unresumed run-owned process (Win32 $($terminated.ErrorCode)).")
+                    }
                 }
-                if (-not [NativeStartupProbe]::CloseNativeHandle($processHandle)) { throw 'Could not close the run-owned process handle.' }
-                $processHandle = [IntPtr]::Zero
             }
-            if ($threadHandle -ne [IntPtr]::Zero) {
-                if (-not [NativeStartupProbe]::CloseNativeHandle($threadHandle)) { throw 'Could not close the run-owned thread handle.' }
-                $threadHandle = [IntPtr]::Zero
+            catch { [void]$cleanupErrors.Add("Could not terminate the unresumed run-owned process: $($_.Exception.Message)") }
+            try {
+                if (-not [NativeStartupProbe]::CloseNativeHandle($processHandle)) {
+                    [void]$cleanupErrors.Add('Could not close the run-owned process handle.')
+                }
+                else { $processHandle = [IntPtr]::Zero }
             }
-            $cleanup = Stop-OwnedProcesses $owned $job $ExePath
-            $job = [IntPtr]::Zero
+            catch { [void]$cleanupErrors.Add("Could not close the run-owned process handle: $($_.Exception.Message)") }
+        }
+        if ($threadHandle -ne [IntPtr]::Zero) {
+            try {
+                if (-not [NativeStartupProbe]::CloseNativeHandle($threadHandle)) {
+                    [void]$cleanupErrors.Add('Could not close the run-owned thread handle.')
+                }
+                else { $threadHandle = [IntPtr]::Zero }
+            }
+            catch { [void]$cleanupErrors.Add("Could not close the run-owned thread handle: $($_.Exception.Message)") }
+        }
+
+        $cleanup = $null
+        try { $cleanup = Stop-OwnedProcesses $owned $job $ExePath }
+        catch { [void]$cleanupErrors.Add("Owned process cleanup failed: $($_.Exception.Message)") }
+        if ($null -ne $cleanup) {
             $survivors = @($cleanup.survivors)
             $result.survivors = @($survivors | ForEach-Object { [ordered]@{ pid = $_.Id; creation = $_.Creation; imagePath = $_.ImagePath; parentPid = $_.ParentId } })
             $result.jobQuerySucceeded = [bool]$cleanup.jobQuerySucceeded
             $result.jobCloseSucceeded = [bool]$cleanup.jobCloseSucceeded
             $result.finalPathSweepVerified = [bool]$cleanup.finalPathSweepVerified
-            $result.processCleanupVerified = $survivors.Count -eq 0 -and [bool]$cleanup.jobQuerySucceeded -and [bool]$cleanup.jobCloseSucceeded -and [bool]$cleanup.finalPathSweepVerified -and [string]::IsNullOrWhiteSpace([string]$cleanup.error)
-            if (-not $result.processCleanupVerified) {
-                if ([string]::IsNullOrWhiteSpace([string]$cleanup.error)) { throw 'Owned Sakura processes survived or containment verification failed.' }
-                throw [string]$cleanup.error
+            if ($cleanup.PSObject.Properties['jobHandle']) { $job = [IntPtr]$cleanup.jobHandle }
+            else { $job = [IntPtr]::Zero }
+            if (-not [string]::IsNullOrWhiteSpace([string]$cleanup.error)) {
+                [void]$cleanupErrors.Add([string]$cleanup.error)
             }
         }
-        catch {
-            $result.processCleanupVerified = $false
+        if ($job -ne [IntPtr]::Zero) {
+            try {
+                $remainingJobClose = [NativeStartupProbe]::CloseKillOnCloseJob($job)
+                if ($remainingJobClose.Succeeded) { $job = [IntPtr]::Zero }
+                else { [void]$cleanupErrors.Add("Could not close the remaining run-owned job (Win32 $($remainingJobClose.ErrorCode)).") }
+            }
+            catch { [void]$cleanupErrors.Add("Could not close the remaining run-owned job: $($_.Exception.Message)") }
+        }
+        $result.processCleanupVerified = $null -ne $cleanup -and
+            @($result.survivors).Count -eq 0 -and [bool]$result.jobQuerySucceeded -and
+            [bool]$result.jobCloseSucceeded -and [bool]$result.finalPathSweepVerified -and
+            $job -eq [IntPtr]::Zero -and $cleanupErrors.Count -eq 0
+        if (-not $result.processCleanupVerified) {
             $result.success = $false
-            $cleanupError = "Process cleanup failed: $($_.Exception.Message)"
-            if ([string]::IsNullOrEmpty([string]$result.error)) { $result.error = $cleanupError }
-            else { $result.error = "$($result.error) $cleanupError" }
+            $cleanupError = if ($cleanupErrors.Count -eq 0) { 'Owned Sakura processes survived or containment verification failed.' } else { $cleanupErrors.ToArray() -join ' ' }
+            if ([string]::IsNullOrEmpty([string]$result.error)) { $result.error = "Process cleanup failed: $cleanupError" }
+            else { $result.error = "$($result.error) Process cleanup failed: $cleanupError" }
         }
     }
     if ($result.processCleanupVerified -and -not [string]::IsNullOrWhiteSpace($TraceDirectory)) {
@@ -2316,6 +2724,44 @@ function Invoke-SelfTest {
     if ($readinessState.captionReadyMs -ne 30 -or $readinessState.inputIdleMs -ne 10 -or $readinessState.documentReadyMs -ne 20 -or $readinessState.verticalScrollMaximum -ne 100) {
         throw 'Readiness state self-test overwrote first-observed milestone values.'
     }
+    $diagnosticState = New-StartupDiagnosticState 1234
+    $diagnosticCheckpoints = @($diagnosticState.processTreeSnapshots)
+    if ($diagnosticCheckpoints.Count -ne 4 -or
+        ($diagnosticCheckpoints | ForEach-Object { $_.checkpoint }) -join ',' -ne '0.5s,2s,10s,timeout' -or
+        $diagnosticCheckpoints[0].targetMs -ne 500 -or $diagnosticCheckpoints[1].targetMs -ne 2000 -or
+        $diagnosticCheckpoints[2].targetMs -ne 10000 -or $diagnosticCheckpoints[3].targetMs -ne 30000) {
+        throw 'Startup process diagnostic checkpoint self-test failed.'
+    }
+    foreach ($terminalStatus in @('unavailable', 'observed')) {
+        $terminalState = New-StartupDiagnosticState 1234
+        $terminalSnapshot = $terminalState.processTreeSnapshots[0]
+        $terminalSnapshot.status = $terminalStatus
+        $terminalSnapshot.observed = $false
+        $terminalSnapshot.elapsedMs = 123
+        $terminalSnapshot.failureStage = 'terminal-sentinel'
+        $terminalSnapshot.failureType = 'terminal-sentinel'
+        [void](Update-StartupDiagnosticCheckpoints $terminalState @{} ([IntPtr]::Zero) 600)
+        if ($terminalSnapshot.status -ne $terminalStatus -or
+            $terminalSnapshot.elapsedMs -ne 123 -or
+            $terminalSnapshot.failureStage -ne 'terminal-sentinel' -or
+            $terminalSnapshot.failureType -ne 'terminal-sentinel') {
+            throw "Startup diagnostic terminal checkpoint self-test failed for status '$terminalStatus'."
+        }
+    }
+    $diagnosticRecord = Convert-StartupDiagnosticProcessMetadata ([pscustomobject]@{
+            Id = 1234; ParentId = 12; Creation = [long]987654321; ImagePath = 'C:\Windows\sakura.exe'
+        }) $true
+    $diagnosticJson = $diagnosticRecord | ConvertTo-Json -Compress
+    if ($diagnosticRecord.pid -ne 1234 -or $diagnosticRecord.ppid -ne 12 -or
+        $diagnosticRecord.imageName -ne 'sakura.exe' -or $diagnosticRecord.creationTime -ne 987654321 -or
+        -not $diagnosticRecord.jobMember -or $diagnosticJson -match '(?i)path|commandline|caption|text') {
+        throw 'Payload-free startup process diagnostic metadata self-test failed.'
+    }
+    $diagnosticSchemaVerified = $true
+    $diagnosticTreesEmpty = @($diagnosticCheckpoints | Where-Object { @($_.processTree).Count -ne 0 }).Count -eq 0
+    $diagnosticBoundsVerified = [bool]($diagnosticCheckpoints.Count -eq 4 -and
+        $diagnosticTreesEmpty -and
+        $diagnosticState.processExitObservation.observed -eq $false)
     $base = [IO.Path]::GetFullPath((Join-Path $env:TEMP 'startup-probe-selftest'))
     Assert-OwnedProfilePath (Join-Path $base 'startup-probe-unit') $base 'startup-probe-unit'
     $rejected = $false
@@ -2463,6 +2909,36 @@ function Invoke-SelfTest {
     if ([NativeStartupProbe]::GetVerticalScrollMaximum([IntPtr]::Zero) -ne -1) { throw 'Scroll-range self-test failed.' }
     $selfTestTraceRoot = [IO.Path]::GetFullPath((Join-Path $HOME 'tmp'))
     [IO.Directory]::CreateDirectory($selfTestTraceRoot) | Out-Null
+    $traceBoundsSelfTest = Get-StartupTraceBounds
+    if ($traceBoundsSelfTest.maxFiles -ne 8 -or $traceBoundsSelfTest.maxBytes -ne 1048576 -or
+        $traceBoundsSelfTest.maxLines -ne 4096 -or $traceBoundsSelfTest.maxValidRecords -ne 4096 -or
+        $traceBoundsSelfTest.maxLineLength -ne 65536) {
+        throw 'Startup trace bounds contract self-test failed.'
+    }
+    $selfTestEmptyTraceDirectory = Join-Path $selfTestTraceRoot ('sakuracode-startup-trace-empty-selftest-' + [Guid]::NewGuid().ToString('N'))
+    $selfTestOverLimitTraceDirectory = Join-Path $selfTestTraceRoot ('sakuracode-startup-trace-overlimit-selftest-' + [Guid]::NewGuid().ToString('N'))
+    try {
+        [IO.Directory]::CreateDirectory($selfTestEmptyTraceDirectory) | Out-Null
+        $emptyTraceSummary = Get-StartupTraceSummary $selfTestEmptyTraceDirectory 1000 1000
+        if ($emptyTraceSummary.collected -or $emptyTraceSummary.fileCount -ne 0 -or
+            $emptyTraceSummary.parseErrors.Count -ne 1 -or $emptyTraceSummary.parseErrors[0].error -ne 'StartupTraceEmpty') {
+            throw 'Empty startup trace summary self-test failed.'
+        }
+        [IO.Directory]::CreateDirectory($selfTestOverLimitTraceDirectory) | Out-Null
+        $overLimitTraceFile = Join-Path $selfTestOverLimitTraceDirectory 'startup-trace-overlimit.jsonl'
+        $overLimitStream = New-Object IO.FileStream($overLimitTraceFile, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        try { $overLimitStream.SetLength([Int64]($traceBoundsSelfTest.maxBytes + 1)) }
+        finally { $overLimitStream.Dispose() }
+        $overLimitTraceSummary = Get-StartupTraceSummary $selfTestOverLimitTraceDirectory 1000 1000
+        if ($overLimitTraceSummary.collected -or $overLimitTraceSummary.totalBytes -ne 0 -or
+            $overLimitTraceSummary.parseErrors.Count -ne 1 -or $overLimitTraceSummary.parseErrors[0].error -ne 'StartupTraceBoundsExceeded:bytes') {
+            throw 'Over-limit startup trace summary self-test failed.'
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath $selfTestEmptyTraceDirectory) { [IO.Directory]::Delete($selfTestEmptyTraceDirectory, $true) }
+        if (Test-Path -LiteralPath $selfTestOverLimitTraceDirectory) { [IO.Directory]::Delete($selfTestOverLimitTraceDirectory, $true) }
+    }
     $selfTestTraceDirectory = Join-Path $selfTestTraceRoot ('sakuracode-startup-trace-selftest-' + [Guid]::NewGuid().ToString('N'))
     try {
         [IO.Directory]::CreateDirectory($selfTestTraceDirectory) | Out-Null
@@ -2530,6 +3006,8 @@ function Invoke-SelfTest {
         artifactClosureVerified = $true
         jobContainmentSelfTestVerified = [bool]$jobSelfTestClosed
         workingDirectorySelfTestVerified = $true
+        startupDiagnosticsSchemaVerified = [bool]$diagnosticSchemaVerified
+        startupDiagnosticBoundsVerified = [bool]$diagnosticBoundsVerified
         noGuiLaunch = $true
         timestampUtc = [DateTime]::UtcNow.ToString('o')
     }
