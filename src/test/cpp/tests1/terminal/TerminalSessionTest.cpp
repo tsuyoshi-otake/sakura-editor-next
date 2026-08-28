@@ -977,7 +977,10 @@ TEST(TerminalSession, DiagnosticTraceRotatesWithinTwoBoundedFiles)
 	terminal::TerminalDiagnosticOptions diagnostics;
 	diagnostics.directory = traceDirectory.Path().wstring();
 	diagnostics.maximumFileBytes = 4096;
-	diagnostics.maximumQueuedEvents = 64;
+	// This test exercises file rotation, not bounded-queue dropping. Keep every
+	// generated event so Release optimization cannot outrun the writer before
+	// enough bytes have been accepted to force a rotation.
+	diagnostics.maximumQueuedEvents = 1024;
 	std::filesystem::path tracePath;
 	{
 		terminal::CTerminalSession session(std::move(backend), {}, diagnostics);
