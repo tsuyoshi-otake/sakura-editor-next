@@ -430,11 +430,19 @@ Its equations are `recoveryAttemptCount <= identityFailureCount <=
 identityAttemptCount` and `disappearedAfterSnapshotCount +
 stillPresentAfterFailureCount <= recoveryAttemptCount`; the first typed cause
 and error code are retained. Launch containment and cleanup share this same
-object, so launch-time observations remain in the paired report. A still-
-present PID, unavailable or malformed fresh Job query, identity invocation
-exception, null/malformed identity, or conversion failure remains terminal.
-Job close, the final tracked and exact-path sweeps, the zero-survivor proof, and
-the zero-cleanup-error gate remain mandatory.
+object, so launch-time observations remain in the paired report. A still-present
+PID is never an absence proof and the resolver still throws. When initial Job
+membership was already verified and this exact counter transition occurs only
+inside optional graceful-close polling, the coordinator may stop graceful
+polling and transfer ownership to the kill-on-close Job without targeting the
+PID. The bounded fields `gracefulCloseAttempted`, `gracefulCloseSucceeded`, and
+`gracefulCloseFallbackType=identity-still-present` retain that transition while
+the earlier first-cause identity type and error remain unchanged. Initial Job
+query failure, an unavailable/malformed/exceptional fresh query, identity
+invocation/conversion failure, and every other graceful exception remain hard
+cleanup failures. Job close, the final tracked and exact-path sweeps, the
+zero-survivor proof, zero terminal cleanup errors, and a closed Job handle all
+remain mandatory after fallback.
 
 The paired converter reconciles the launch and cleanup copies of this nested
 object before declaring a run successful. An outer observation property that is
@@ -450,6 +458,25 @@ value, or a valid-but-mismatched pair is typed `cleanup-unverified`; the run is
 unsuccessful and excluded, and campaign termination suppresses later launches.
 Valid identity telemetry is additive and does not weaken the existing Job-close,
 sweep, zero-survivor, or zero-cleanup-error gates.
+
+The three graceful-close fields are another additive v1 group. All absent means
+the explicit local `not-observed` legacy state; any present field requires all
+three. Booleans, the bounded fallback enum, and cross-field equations are
+validated before cleanup can qualify. `identity-still-present` additionally
+requires an attempted cleanup, a run-owned Job, a successful initial Job query,
+a Job-close attempt, and an observed positive `stillPresentAfterFailureCount`.
+Graceful state on a non-attempted cleanup is also contradictory. Partial,
+malformed, contradictory, or unknown telemetry is `cleanup-unverified` and
+suppresses later launches.
+
+For a launch result to qualify, the normalized `cleanupObservation.status`
+must itself be `succeeded`. This terminal gate is required even for a legacy
+identity shape and even when the raw producer says
+`processCleanupVerified=true`. Consequently a partial graceful group or a
+failed Job-close observation cannot be hidden behind an older schema or a raw
+success boolean. A typed pre-launch failure may retain the explicit
+`not-attempted` cleanup state only when its structured startup milestones prove
+that no process started.
 
 These fields are additive to schema version 1. An older report with all of the
 new fields absent is readable through explicit local `unknown`,
@@ -498,4 +525,8 @@ affinity plan uses five historical records and four exact current-live records,
 performs four read-backs only, rejects null/empty, unknown, duplicate, and
 creation/image-path-mismatched current sets, and confirms that the one expired
 historical record is not a failure target.
+The same no-GUI contract also proves that the resolver still rejects a present
+member, only the exact graceful counter transition selects Job-containment
+fallback, first-cause telemetry is retained, and every terminal containment
+gate remains independently required.
 Do not use it as a substitute for the full 35-launch-per-backend campaign.

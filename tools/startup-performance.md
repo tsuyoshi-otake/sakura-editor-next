@@ -194,10 +194,16 @@ additive な `cleanupObservation.jobIdentityObservation` は
 `recoveryAttemptCount <= identityFailureCount <= identityAttemptCount`、および
 `disappearedAfterSnapshotCount + stillPresentAfterFailureCount <= recoveryAttemptCount` を検証し、
 first typed cause と error code を保持します。launch containment と cleanup は同じ object を共有するため、
-launch 時の観測も paired report に残ります。PID の残存、fresh Job query の unavailable / malformed、
-identity query の invocation exception、null / malformed identity、または strict conversion failure は
-terminal cleanup failure のままです。Job close、最終 tracked / exact-path sweep、zero survivor、
-zero cleanup-error の各 gate は引き続き必須です。
+launch 時の観測も paired report に残ります。PID の残存は disappearance proof ではなく、resolver は従来どおり
+throw します。ただし、初回 Job membership が検証済みで、任意の graceful-close polling 中に限って
+`stillPresentAfterFailureCount` がその呼出しで正確に 1 増えた場合、coordinator は graceful polling を中断し、
+PID を操作せず kill-on-close Job へ所有権を移します。`gracefulCloseAttempted=true` /
+`gracefulCloseSucceeded=false` / `gracefulCloseFallbackType=identity-still-present` を bounded な診断として
+保持し、first-cause の `jobIdentityObservation.failureType` / error code は上書きしません。初回 Job query の
+失敗、fresh Job query の unavailable / malformed / exception、identity invocation / conversion failure、その他の
+graceful 例外は terminal cleanup failure のままです。fallback 後も Job close、最終 tracked / exact-path sweep、
+zero survivor、zero terminal cleanup-error、closed Job handle の各 gate はすべて必須で、一つでも欠ければ
+fail closed です。
 
 paired converter は success 判定の前に launch と cleanup の nested object を照合します。旧 v1 のように
 両方の raw object が欠落している場合は、両方を明示的な `not-observed` に正規化して neutral とします。
@@ -213,6 +219,15 @@ schema version 1 の旧 report で追加 fields がすべて欠落している�
 zero survivors を cleanup proof へ昇格させず、raw payload も保持しません。optional fields がない旧 v1 report は
 neutral な `not-attempted` とし、present だが malformed / mismatched な Job identity object だけは上記の契約に
 より意図的に fail closed します。
+graceful fallback の 3 fields は all-present だけを current schema として受理し、旧 report の all-absent は
+`not-observed`、partial / malformed / unknown enum、または still-present counter を伴わない fallback は
+`cleanup-unverified` にします。fallback は attempted cleanup、run-owned Job、成功した初回 Job query、Job close
+attempt と組にならなければならず、非 attempted cleanup に graceful state が現れる report も拒否します。
+valid fallback でも mandatory terminal gates は緩和されません。
+launch result では正規化後の `cleanupObservation.status` 自体も `succeeded` でなければならず、旧 identity
+shape や raw の `processCleanupVerified=true` でこの gate を迂回できません。したがって partial な graceful
+fields や Job close failure は必ず `cleanup-unverified` になります。typed な pre-launch failure だけは、構造化済み
+startup milestones が process 未開始を証明する場合に限り、明示的な `not-attempted` cleanup state を保持できます。
 
 `acceptance.qualified` は必要な launch 数と cleanup がそろった収集判定です。qualified mode は
 `-CppBuildManifest` / `-RustBuildManifest` と
@@ -268,6 +283,9 @@ census を行わず、present / unavailable / malformed、invocation exception�
 launch と cleanup が同じ `jobIdentityObservation` を保持すること、affinity の historical/current/expired 整合も検証します。さらに 5 historical / 4 exact
 current の affinity plan が current 4 件だけを read-back し、null / empty、unknown、duplicate、creation / path
 mismatch を reject し、expired historical 1 件を失敗扱いにしないことを固定します。
+同じ no-GUI contract は resolver が present member を拒否し続けること、graceful の exact counter transition
+だけが Job-containment fallback を選ぶこと、first-cause telemetry が保持されること、および各 terminal gate
+が独立に必須であることも固定します。
 
 ## 前提条件
 

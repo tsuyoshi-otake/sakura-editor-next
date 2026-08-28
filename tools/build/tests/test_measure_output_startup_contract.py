@@ -454,6 +454,8 @@ class PairedStartupContractTests(unittest.TestCase):
             "foreach ($entry in $entriesValue)",
             "$attemptCount -gt 3",
             "$retryCount -ge $attemptCount",
+            "$retriedValue -isnot [bool]",
+            "[bool]$retriedValue -ne ($retryCount -gt 0)",
             "$entriesValue.Length -gt 65536",
             "$retryCountValue",
             "$seen.ContainsKey($entryId)",
@@ -627,6 +629,51 @@ class PairedStartupContractTests(unittest.TestCase):
             "jobIdentityObservationContractPresenceGateTerminationVerified",
             "New-PairedCampaignTermination",
             "laterLaunchesSuppressed",
+        ):
+            self.assertIn(marker, self.paired_text)
+
+    def test_graceful_identity_race_transfers_only_to_mandatory_job_containment(self):
+        for marker in (
+            "function Try-StartupGracefulJobIdentityFallback",
+            "function Test-StartupProcessCleanupCompletion",
+            "gracefulCloseAttempted",
+            "gracefulCloseSucceeded",
+            "gracefulCloseFallbackType",
+            "identity-still-present",
+            "Try-StartupGracefulJobIdentityFallback $cleanupObservation $stillPresentBefore",
+            "$stillPresentAfter -ne ($StillPresentBefore + 1)",
+            "$CleanupObservation.gracefulCloseFallbackType = 'identity-still-present'",
+            "gracefulIdentityFallbackSelfTestVerified",
+            "gracefulTerminalCompletionSelfTestVerified",
+        ):
+            self.assertIn(marker, self.shared_text)
+        stop_start = self.shared_text.index("function Stop-OwnedProcesses")
+        stop_end = self.shared_text.index("function Test-StartupProcessCleanupCompletion", stop_start)
+        stop_path = self.shared_text[stop_start:stop_end]
+        self.assertIn("CloseKillOnCloseJob", stop_path)
+        self.assertNotIn("TerminateProcessHandle", stop_path)
+        self.assertIn("trackedSweepVerified", self.shared_text)
+        for marker in (
+            "$script:PairedGracefulCloseFallbackTypes = @('none', 'identity-still-present')",
+            "gracefulCloseFallbackType = 'not-observed'",
+            "$gracefulPresentCount",
+            "$gracefulCloseFallbackType -eq 'identity-still-present'",
+            "jobIdentityObservation.stillPresentAfterFailureCount -eq [UInt64]0",
+            "selfTestGracefulFallbackVerified",
+            "selfTestGracefulFallbackPartialRejected",
+            "selfTestGracefulFallbackContradictoryRejected",
+            "gracefulIdentityFallbackValidVerified",
+            "gracefulIdentityFallbackPartialRejected",
+            "gracefulIdentityFallbackContradictoryRejected",
+            "$cleanupObservationSucceeded",
+            "Test-PairedStructuredObject $cleanupObservation",
+            "$prelaunchCleanupNotAttempted",
+            "$cleanupObservationStatus -eq 'not-attempted'",
+            "$processStarted -is [bool] -and -not [bool]$processStarted",
+            "selfTestOldSchemaMalformedGracefulRejected",
+            "selfTestOldSchemaFailedCloseRejected",
+            "cleanupObservationLegacyMalformedRejected",
+            "cleanupObservationTerminalStatusRequired",
         ):
             self.assertIn(marker, self.paired_text)
 

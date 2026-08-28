@@ -2269,6 +2269,9 @@ function New-StartupCleanupObservation {
         query = New-StartupJobQueryObservation
         jobCloseAttempted = $false
         jobCloseSucceeded = $false
+        gracefulCloseAttempted = $false
+        gracefulCloseSucceeded = $false
+        gracefulCloseFallbackType = 'none'
         trackedSweepAttempted = $false
         trackedSweepVerified = $false
         finalPathSweepAttempted = $false
@@ -2538,16 +2541,19 @@ function Get-StartupTrackedSweepFailureType {
             return 'enumeration-unavailable'
         }
         $attemptCountValue = Get-StartupObservationProperty $FreshProbe 'AttemptCount'
-        if ($null -eq $attemptCountValue -or $attemptCountValue -is [bool]) { return 'enumeration-unavailable' }
-        try { $attemptCount = [int]$attemptCountValue } catch { return 'enumeration-unavailable' }
+        if ($attemptCountValue -isnot [int32]) { return 'enumeration-unavailable' }
+        $attemptCount = [int]$attemptCountValue
         if ($attemptCount -lt 1 -or $attemptCount -gt 3) { return 'enumeration-unavailable' }
         $retryCountValue = Get-StartupObservationProperty $FreshProbe 'RetryCount'
-        if ($null -eq $retryCountValue -or $retryCountValue -is [bool]) { return 'enumeration-unavailable' }
-        try { $retryCount = [int]$retryCountValue } catch { return 'enumeration-unavailable' }
+        if ($retryCountValue -isnot [int32]) { return 'enumeration-unavailable' }
+        $retryCount = [int]$retryCountValue
         if ($retryCount -lt 0 -or $retryCount -ge $attemptCount) { return 'enumeration-unavailable' }
+        $retriedValue = Get-StartupObservationProperty $FreshProbe 'Retried'
+        if ($retriedValue -isnot [bool] -or [bool]$retriedValue -ne ($retryCount -gt 0)) {
+            return 'enumeration-unavailable'
+        }
         $errorValue = Get-StartupObservationProperty $FreshProbe 'ErrorCode'
-        $errorCode = Convert-StartupObservationErrorCode $errorValue
-        if ($null -eq $errorValue -or $null -eq $errorCode -or $errorCode -ne 0) {
+        if ($errorValue -isnot [int32] -or [int]$errorValue -ne 0) {
             return 'enumeration-unavailable'
         }
         $seen = @{}
@@ -2557,17 +2563,14 @@ function Get-StartupTrackedSweepFailureType {
             $entryIdValue = Get-StartupObservationProperty $entry 'ProcessId'
             $parentIdValue = Get-StartupObservationProperty $entry 'ParentProcessId'
             $imageNameValue = Get-StartupObservationProperty $entry 'ImageName'
-            if ($null -eq $entryIdValue -or $entryIdValue -is [bool] -or
-                $null -eq $parentIdValue -or $parentIdValue -is [bool] -or
+            if (-not (Test-StartupIntegralValue $entryIdValue 0 ([decimal][int]::MaxValue)) -or
+                -not (Test-StartupIntegralValue $parentIdValue 0 ([decimal][int]::MaxValue)) -or
                 $imageNameValue -isnot [string] -or [string]::IsNullOrWhiteSpace($imageNameValue) -or
                 $imageNameValue.Length -ge 260) {
                 return 'exception'
             }
-            try {
-                $entryId = [int]$entryIdValue
-                $parentId = [int]$parentIdValue
-            }
-            catch { return 'exception' }
+            $entryId = [int]$entryIdValue
+            $parentId = [int]$parentIdValue
             # PID 0 is the valid Windows System Idle Process entry.  The
             # tracked process itself is always positive, but the fresh native
             # census may legitimately contain this zero-PID record.
@@ -2619,12 +2622,12 @@ function Invoke-StartupTrackedIdentityFailure {
     }
     catch {
         $freshProbe = [pscustomobject][ordered]@{
-            Attempted = $true; AttemptCount = 1; Complete = $false; Succeeded = $false; ErrorCode = 13; RetryCount = 0; Entries = @()
+            Attempted = $true; AttemptCount = 1; Complete = $false; Succeeded = $false; ErrorCode = 13; RetryCount = 0; Retried = $false; Entries = @()
         }
     }
     if ($null -eq $freshProbe) {
         $freshProbe = [pscustomobject][ordered]@{
-            Attempted = $true; AttemptCount = 1; Complete = $false; Succeeded = $false; ErrorCode = 13; RetryCount = 0; Entries = @()
+            Attempted = $true; AttemptCount = 1; Complete = $false; Succeeded = $false; ErrorCode = 13; RetryCount = 0; Retried = $false; Entries = @()
         }
     }
     if ($null -ne $CleanupObservation) { Add-StartupProcessEnumerationObservation $CleanupObservation $freshProbe }
@@ -2677,6 +2680,27 @@ function Add-StartupCleanupError {
         if ($count -lt [int]::MaxValue) { $Observation.cleanupErrorCount = $count + 1 }
     }
     catch { }
+}
+
+function Try-StartupGracefulJobIdentityFallback {
+    param(
+        [AllowNull()] [object]$CleanupObservation,
+        [AllowNull()] [object]$StillPresentBefore
+    )
+    if ($null -eq $CleanupObservation -or $StillPresentBefore -isnot [int32] -or
+        $StillPresentBefore -lt 0 -or $StillPresentBefore -ge $startupObservationMaxCount) {
+        return $false
+    }
+    $jobIdentityObservation = Get-StartupObservationProperty $CleanupObservation 'jobIdentityObservation'
+    $stillPresentAfter = Get-StartupObservationProperty $jobIdentityObservation 'stillPresentAfterFailureCount'
+    $fallbackType = Get-StartupObservationProperty $CleanupObservation 'gracefulCloseFallbackType'
+    if ($stillPresentAfter -isnot [int32] -or
+        $stillPresentAfter -ne ($StillPresentBefore + 1) -or
+        [string]$fallbackType -ne 'none') {
+        return $false
+    }
+    $CleanupObservation.gracefulCloseFallbackType = 'identity-still-present'
+    return $true
 }
 
 function Get-StartupCleanupErrorCount {
@@ -4796,6 +4820,7 @@ function Stop-OwnedProcesses($Owned, [IntPtr]$Job = [IntPtr]::Zero, [string]$Exe
 
         # Ask parents to close before descendants.  This keeps the control process
         # from creating more work while the editor window is being dismissed.
+        $cleanupObservation.gracefulCloseAttempted = $true
         $windows = @([NativeStartupProbe]::GetTopLevelWindows() | Where-Object { $Owned.ContainsKey([int]$_.ProcessId) })
         $windowRecords = foreach ($window in $windows) {
             $record = $Owned[[int]$window.ProcessId]
@@ -4807,10 +4832,29 @@ function Stop-OwnedProcesses($Owned, [IntPtr]$Job = [IntPtr]::Zero, [string]$Exe
 
         $remainingGraceMs = [Math]::Max(1, $closeTimeoutMs - [int]$closeWatch.ElapsedMilliseconds)
         if ($Job -ne [IntPtr]::Zero) {
-            $graceful = Wait-WithPoll { @(Get-LiveOwnedProcesses $Owned $Job $cleanupObservation $cleanupObservation).Count -eq 0 } $remainingGraceMs
+            $jobIdentityObservation = Get-StartupObservationProperty $cleanupObservation 'jobIdentityObservation'
+            $stillPresentBefore = Get-StartupObservationProperty $jobIdentityObservation 'stillPresentAfterFailureCount'
+            try {
+                $graceful = Wait-WithPoll { @(Get-LiveOwnedProcesses $Owned $Job $cleanupObservation $cleanupObservation).Count -eq 0 } $remainingGraceMs
+                $cleanupObservation.gracefulCloseSucceeded = [bool]$graceful
+            }
+            catch {
+                # A Job member that remains listed after the one allowed fresh
+                # membership query is not accepted as disappeared.  During this
+                # optional graceful phase only, transfer ownership directly to
+                # the already verified kill-on-close Job.  Every other exception
+                # remains a hard cleanup error, and the mandatory terminal gates
+                # below still decide whether containment actually succeeded.
+                if ($jobQuerySucceeded -and
+                    (Try-StartupGracefulJobIdentityFallback $cleanupObservation $stillPresentBefore)) {
+                    $graceful = $false
+                }
+                else { throw }
+            }
         }
         else {
             $graceful = Wait-WithPoll { @(Get-LiveOwnedProcesses $Owned ([IntPtr]::Zero) $null $cleanupObservation).Count -eq 0 } $remainingGraceMs
+            $cleanupObservation.gracefulCloseSucceeded = [bool]$graceful
         }
     }
     catch { Add-StartupCleanupError $cleanupErrors $cleanupObservation $_.Exception.Message }
@@ -4893,6 +4937,41 @@ function Stop-OwnedProcesses($Owned, [IntPtr]$Job = [IntPtr]::Zero, [string]$Exe
         cleanupObservation = $cleanupObservation
         error = if ($cleanupErrors.Count -eq 0) { $null } else { ($cleanupErrors.ToArray() -join ' ') }
     }
+}
+
+function Test-StartupProcessCleanupCompletion {
+    param(
+        [AllowNull()] [object]$Cleanup,
+        [IntPtr]$RemainingJobHandle,
+        [int]$TerminalErrorCount
+    )
+    if ($null -eq $Cleanup -or $TerminalErrorCount -ne 0 -or
+        $RemainingJobHandle -ne [IntPtr]::Zero) {
+        return $false
+    }
+    $observation = Get-StartupObservationProperty $Cleanup 'cleanupObservation'
+    if ($null -eq $observation) { return $false }
+    $observationSurvivorCount = Get-StartupObservationProperty $observation 'survivorCount'
+    $observationCleanupErrorCount = Get-StartupObservationProperty $observation 'cleanupErrorCount'
+    if ($observationSurvivorCount -isnot [int32] -or $observationSurvivorCount -ne 0 -or
+        $observationCleanupErrorCount -isnot [int32] -or $observationCleanupErrorCount -ne 0) {
+        return $false
+    }
+    return @($Cleanup.survivors).Count -eq $observationSurvivorCount -and
+        (Get-StartupObservationProperty $Cleanup 'jobQuerySucceeded') -is [bool] -and
+        [bool](Get-StartupObservationProperty $Cleanup 'jobQuerySucceeded') -and
+        (Get-StartupObservationProperty $observation 'jobQuerySucceeded') -is [bool] -and
+        [bool](Get-StartupObservationProperty $observation 'jobQuerySucceeded') -and
+        (Get-StartupObservationProperty $Cleanup 'jobCloseSucceeded') -is [bool] -and
+        [bool](Get-StartupObservationProperty $Cleanup 'jobCloseSucceeded') -and
+        (Get-StartupObservationProperty $observation 'jobCloseSucceeded') -is [bool] -and
+        [bool](Get-StartupObservationProperty $observation 'jobCloseSucceeded') -and
+        (Get-StartupObservationProperty $observation 'trackedSweepVerified') -is [bool] -and
+        [bool](Get-StartupObservationProperty $observation 'trackedSweepVerified') -and
+        (Get-StartupObservationProperty $Cleanup 'finalPathSweepVerified') -is [bool] -and
+        [bool](Get-StartupObservationProperty $Cleanup 'finalPathSweepVerified') -and
+        (Get-StartupObservationProperty $observation 'finalPathSweepVerified') -is [bool] -and
+        [bool](Get-StartupObservationProperty $observation 'finalPathSweepVerified')
 }
 
 function Invoke-StartupMeasurement([string]$Condition, [int]$Iteration, [string]$ExePath, [string]$DocumentPath, [int]$ExpectedLineCount, [string]$ProfileName, [string]$ProfilePath, [string]$ExeDirectory, [bool]$TakeScreenshot, [string]$ScreenshotPath, [string]$TraceDirectory, [UInt64]$AffinityMask = 0) {
@@ -5220,10 +5299,8 @@ function Invoke-StartupMeasurement([string]$Condition, [int]$Iteration, [string]
         }
         $result.cleanupObservation.survivorCount = [int]@($result.survivors).Count
         $result.cleanupObservation.cleanupErrorCount = Get-StartupCleanupErrorCount $result.cleanupObservation ([Int64]$cleanupErrors.Count) $joinedCleanupErrorIncluded
-        $result.processCleanupVerified = $null -ne $cleanup -and
-            @($result.survivors).Count -eq 0 -and [bool]$result.jobQuerySucceeded -and
-            [bool]$result.jobCloseSucceeded -and [bool]$result.finalPathSweepVerified -and
-            $job -eq [IntPtr]::Zero -and $cleanupErrors.Count -eq 0
+        $result.processCleanupVerified = Test-StartupProcessCleanupCompletion `
+            $cleanup $job $cleanupErrors.Count
         if (-not $result.processCleanupVerified) {
             $result.success = $false
             $cleanupError = if ($cleanupErrors.Count -eq 0) { 'Owned Sakura processes survived or containment verification failed.' } else { $cleanupErrors.ToArray() -join ' ' }
@@ -5811,7 +5888,7 @@ function Invoke-SelfTest {
     $identityDisappearedObservation = New-StartupCleanupObservation
     $freshAbsentCensusCalls = [pscustomobject]@{ Value = 0 }
     $freshAbsentCensus = [pscustomobject][ordered]@{
-        Attempted = $true; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 0
+        Attempted = $true; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 0; Retried = $false
         Entries = [object[]]@([pscustomobject]@{ ProcessId = 2222; ParentProcessId = 0; ImageName = 'self-test.exe' })
     }
     $identityDisappearedAccepted = $false
@@ -5832,7 +5909,7 @@ function Invoke-SelfTest {
     $identityStillPresentObservation = New-StartupCleanupObservation
     $freshPresentCensusCalls = [pscustomobject]@{ Value = 0 }
     $freshPresentCensus = [pscustomobject][ordered]@{
-        Attempted = $true; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 0
+        Attempted = $true; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 0; Retried = $false
         Entries = [object[]]@([pscustomobject]@{ ProcessId = 1234; ParentProcessId = 0; ImageName = 'self-test.exe' })
     }
     $identityStillPresentThrew = $false
@@ -5857,7 +5934,7 @@ function Invoke-SelfTest {
         Invoke-StartupTrackedIdentityFailure $identityUnavailableObservation 1234 $identityFailureProbe {
             $freshUnavailableCensusCalls.Value++
             return [pscustomobject][ordered]@{
-                Attempted = $true; AttemptCount = 1; Complete = $false; Succeeded = $false; ErrorCode = 24; RetryCount = 1; Entries = $null
+                Attempted = $true; AttemptCount = 1; Complete = $false; Succeeded = $false; ErrorCode = 24; RetryCount = 1; Retried = $true; Entries = $null
             }
         } 'Synthetic tracked identity failure.'
     }
@@ -5924,20 +6001,26 @@ function Invoke-SelfTest {
     $freshMalformedCalls = [pscustomobject]@{ Value = 0 }
     $freshTooManyEntries = [Array]::CreateInstance([object], 65537)
     $freshMalformedCases = @(
-        [pscustomobject][ordered]@{ Attempted = $false; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 0; Entries = @() }
-        [pscustomobject][ordered]@{ Attempted = $true; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 0; Entries = [object[]]@(
+        [pscustomobject][ordered]@{ Attempted = $false; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 0; Retried = $false; Entries = @() }
+        [pscustomobject][ordered]@{ Attempted = $true; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 0; Retried = $false; Entries = [object[]]@(
             [pscustomobject]@{ ProcessId = 2222; ParentProcessId = 0; ImageName = 'self-test.exe' }
             [pscustomobject]@{ ProcessId = 2222; ParentProcessId = 0; ImageName = 'self-test.exe' }
         ) }
-        [pscustomobject][ordered]@{ Attempted = $true; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 0; Entries = [object[]]@(
+        [pscustomobject][ordered]@{ Attempted = $true; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 0; Retried = $false; Entries = [object[]]@(
             [pscustomobject]@{ ProcessId = 2222; ParentProcessId = 0; ImageName = '' }
         ) }
-        [pscustomobject][ordered]@{ Attempted = $true; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 0; Entries = [pscustomobject]@{ ProcessId = 2222; ParentProcessId = 0; ImageName = 'self-test.exe' } }
-        [pscustomobject][ordered]@{ Attempted = $true; AttemptCount = 0; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 0; Entries = @() }
-        [pscustomobject][ordered]@{ Attempted = $true; AttemptCount = 4; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 0; Entries = @() }
-        [pscustomobject][ordered]@{ Attempted = $true; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = -1; Entries = @() }
-        [pscustomobject][ordered]@{ Attempted = $true; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 1; Entries = @() }
-        [pscustomobject][ordered]@{ Attempted = $true; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 0; Entries = $freshTooManyEntries }
+        [pscustomobject][ordered]@{ Attempted = $true; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 0; Retried = $false; Entries = [pscustomobject]@{ ProcessId = 2222; ParentProcessId = 0; ImageName = 'self-test.exe' } }
+        [pscustomobject][ordered]@{ Attempted = $true; AttemptCount = 0; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 0; Retried = $false; Entries = @() }
+        [pscustomobject][ordered]@{ Attempted = $true; AttemptCount = 4; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 0; Retried = $false; Entries = @() }
+        [pscustomobject][ordered]@{ Attempted = $true; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = -1; Retried = $false; Entries = @() }
+        [pscustomobject][ordered]@{ Attempted = $true; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 1; Retried = $true; Entries = @() }
+        [pscustomobject][ordered]@{ Attempted = $true; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 0; Retried = $false; Entries = $freshTooManyEntries }
+        [pscustomobject][ordered]@{ Attempted = $true; AttemptCount = [double]1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 0; Retried = $false; Entries = @() }
+        [pscustomobject][ordered]@{ Attempted = $true; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = [double]0; Retried = $false; Entries = @() }
+        [pscustomobject][ordered]@{ Attempted = $true; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = [double]0; RetryCount = 0; Retried = $false; Entries = @() }
+        [pscustomobject][ordered]@{ Attempted = $true; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 0; Entries = @() }
+        [pscustomobject][ordered]@{ Attempted = $true; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 0; Retried = 'false'; Entries = @() }
+        [pscustomobject][ordered]@{ Attempted = $true; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 0; Retried = $true; Entries = @() }
     )
     $freshMalformedRejected = $true
     foreach ($freshMalformed in $freshMalformedCases) {
@@ -5950,7 +6033,8 @@ function Invoke-SelfTest {
         }
         catch { }
     }
-    $freshMalformedVerified = $freshMalformedRejected -and $freshMalformedCalls.Value -eq 9
+    $freshMalformedVerified = $freshMalformedRejected -and
+        $freshMalformedCalls.Value -eq $freshMalformedCases.Count
     if (-not $freshMalformedVerified) { throw 'Malformed fresh census self-test failed.' }
 
     # Job membership identity gaps use the same one-shot recovery, but do not
@@ -6217,6 +6301,40 @@ function Invoke-SelfTest {
         $jobIdentityStillPresentTelemetry.failureErrorCode -eq 5 -and
         $jobIdentityStillPresentObservation.trackedSweepFailureType -eq 'none'
     if (-not $jobIdentityStillPresentVerified) { throw 'Production Job identity-still-present self-test failed.' }
+
+    # The resolver above must keep throwing.  Only the optional graceful-close
+    # coordinator may consume the exact counter transition and transfer control
+    # to the kill-on-close Job.  Preserve an earlier first cause to mirror the
+    # measured Rust run (disappearance first, still-present later).
+    $gracefulFallbackObservation = New-StartupCleanupObservation
+    Set-StartupJobIdentityFailure $gracefulFallbackObservation.jobIdentityObservation 'identity-disappeared' 31
+    $gracefulFallbackObservation.jobIdentityObservation.identityAttemptCount = 2
+    $gracefulFallbackObservation.jobIdentityObservation.identityFailureCount = 2
+    $gracefulFallbackObservation.jobIdentityObservation.recoveryAttemptCount = 2
+    $gracefulFallbackObservation.jobIdentityObservation.disappearedAfterSnapshotCount = 1
+    $gracefulFallbackObservation.jobIdentityObservation.stillPresentAfterFailureCount = 0
+    $gracefulStillPresentBefore = [int]$gracefulFallbackObservation.jobIdentityObservation.stillPresentAfterFailureCount
+    $gracefulFallbackObservation.jobIdentityObservation.stillPresentAfterFailureCount = 1
+    $gracefulFallbackAccepted = Try-StartupGracefulJobIdentityFallback `
+        $gracefulFallbackObservation $gracefulStillPresentBefore
+    $gracefulFallbackRepeated = Try-StartupGracefulJobIdentityFallback `
+        $gracefulFallbackObservation $gracefulStillPresentBefore
+    $gracefulNoDeltaObservation = New-StartupCleanupObservation
+    $gracefulNoDeltaAccepted = Try-StartupGracefulJobIdentityFallback $gracefulNoDeltaObservation 0
+    $gracefulMalformedObservation = New-StartupCleanupObservation
+    $gracefulMalformedObservation.jobIdentityObservation.stillPresentAfterFailureCount = '1'
+    $gracefulMalformedAccepted = Try-StartupGracefulJobIdentityFallback $gracefulMalformedObservation 0
+    $gracefulIdentityFallbackSelfTestVerified = $gracefulFallbackAccepted -and
+        -not $gracefulFallbackRepeated -and -not $gracefulNoDeltaAccepted -and
+        -not $gracefulMalformedAccepted -and
+        $gracefulFallbackObservation.gracefulCloseFallbackType -eq 'identity-still-present' -and
+        $gracefulFallbackObservation.jobIdentityObservation.failureType -eq 'identity-disappeared' -and
+        $gracefulFallbackObservation.jobIdentityObservation.failureErrorCode -eq 31 -and
+        $gracefulNoDeltaObservation.gracefulCloseFallbackType -eq 'none' -and
+        $gracefulMalformedObservation.gracefulCloseFallbackType -eq 'none'
+    if (-not $gracefulIdentityFallbackSelfTestVerified) {
+        throw 'Graceful Job identity fallback self-test failed.'
+    }
 
     $jobIdentityUnavailableObservation = New-StartupCleanupObservation
     $jobIdentityUnavailableQueryCalls = [pscustomobject]@{ Value = 0 }
@@ -6823,6 +6941,60 @@ function Invoke-SelfTest {
     $cleanupErrorCountSelfTestVerified = $cleanupErrorCountSelfTestTotal -eq 3 -and
         $cleanupErrorCountOverflowSelfTestTotal -eq [int]::MaxValue
     if (-not $cleanupErrorCountSelfTestVerified) { throw 'Cleanup error count aggregation self-test failed.' }
+    $gracefulTerminalObservation = New-StartupCleanupObservation
+    $gracefulTerminalObservation.jobQuerySucceeded = $true
+    $gracefulTerminalObservation.jobCloseSucceeded = $true
+    $gracefulTerminalObservation.trackedSweepVerified = $true
+    $gracefulTerminalObservation.finalPathSweepVerified = $true
+    $gracefulTerminalObservation.gracefulCloseAttempted = $true
+    $gracefulTerminalObservation.gracefulCloseFallbackType = 'identity-still-present'
+    $gracefulTerminalObservation.jobIdentityObservation.identityAttemptCount = 1
+    $gracefulTerminalObservation.jobIdentityObservation.identityFailureCount = 1
+    $gracefulTerminalObservation.jobIdentityObservation.recoveryAttemptCount = 1
+    $gracefulTerminalObservation.jobIdentityObservation.stillPresentAfterFailureCount = 1
+    $gracefulTerminalObservation.jobIdentityObservation.failureType = 'identity-still-present'
+    $gracefulTerminalObservation.jobIdentityObservation.failureErrorCode = 87
+    $gracefulTerminalCleanup = [pscustomobject][ordered]@{
+        survivors = @()
+        jobQuerySucceeded = $true
+        jobCloseSucceeded = $true
+        finalPathSweepVerified = $true
+        cleanupObservation = $gracefulTerminalObservation
+    }
+    $gracefulTerminalAccepted = Test-StartupProcessCleanupCompletion `
+        $gracefulTerminalCleanup ([IntPtr]::Zero) 0
+    $gracefulTerminalCleanup.jobQuerySucceeded = $false
+    $gracefulTerminalBadQueryRejected = -not (Test-StartupProcessCleanupCompletion $gracefulTerminalCleanup ([IntPtr]::Zero) 0)
+    $gracefulTerminalCleanup.jobQuerySucceeded = $true
+    $gracefulTerminalCleanup.jobCloseSucceeded = $false
+    $gracefulTerminalBadCloseRejected = -not (Test-StartupProcessCleanupCompletion $gracefulTerminalCleanup ([IntPtr]::Zero) 0)
+    $gracefulTerminalCleanup.jobCloseSucceeded = $true
+    $gracefulTerminalObservation.trackedSweepVerified = $false
+    $gracefulTerminalBadTrackedRejected = -not (Test-StartupProcessCleanupCompletion $gracefulTerminalCleanup ([IntPtr]::Zero) 0)
+    $gracefulTerminalObservation.trackedSweepVerified = $true
+    $gracefulTerminalCleanup.finalPathSweepVerified = $false
+    $gracefulTerminalBadPathRejected = -not (Test-StartupProcessCleanupCompletion $gracefulTerminalCleanup ([IntPtr]::Zero) 0)
+    $gracefulTerminalCleanup.finalPathSweepVerified = $true
+    $gracefulTerminalCleanup.survivors = @([pscustomobject]@{ Id = 1234 })
+    $gracefulTerminalSurvivorRejected = -not (Test-StartupProcessCleanupCompletion $gracefulTerminalCleanup ([IntPtr]::Zero) 0)
+    $gracefulTerminalCleanup.survivors = @()
+    $gracefulTerminalObservation.survivorCount = 1
+    $gracefulTerminalObservationSurvivorRejected = -not (Test-StartupProcessCleanupCompletion $gracefulTerminalCleanup ([IntPtr]::Zero) 0)
+    $gracefulTerminalObservation.survivorCount = 0
+    $gracefulTerminalObservation.cleanupErrorCount = 1
+    $gracefulTerminalObservationErrorRejected = -not (Test-StartupProcessCleanupCompletion $gracefulTerminalCleanup ([IntPtr]::Zero) 0)
+    $gracefulTerminalObservation.cleanupErrorCount = 0
+    $gracefulTerminalOpenJobRejected = -not (Test-StartupProcessCleanupCompletion $gracefulTerminalCleanup ([IntPtr]1) 0)
+    $gracefulTerminalErrorRejected = -not (Test-StartupProcessCleanupCompletion $gracefulTerminalCleanup ([IntPtr]::Zero) 1)
+    $gracefulTerminalCompletionSelfTestVerified = $gracefulTerminalAccepted -and
+        $gracefulTerminalBadQueryRejected -and $gracefulTerminalBadCloseRejected -and
+        $gracefulTerminalBadTrackedRejected -and $gracefulTerminalBadPathRejected -and
+        $gracefulTerminalSurvivorRejected -and $gracefulTerminalObservationSurvivorRejected -and
+        $gracefulTerminalObservationErrorRejected -and $gracefulTerminalOpenJobRejected -and
+        $gracefulTerminalErrorRejected
+    if (-not $gracefulTerminalCompletionSelfTestVerified) {
+        throw 'Graceful fallback terminal-gate self-test failed.'
+    }
     $jobQueryRetryContractSelfTestVerified = [NativeStartupProbe]::RunJobQueryContractSelfTest()
     if (-not $jobQueryRetryContractSelfTestVerified) {
         throw 'Bounded job-query retry contract self-test failed.'
@@ -6971,6 +7143,7 @@ function Invoke-SelfTest {
         jobIdentityProductionPathSelfTestVerified = [bool]$jobIdentityProductionPathSelfTestVerified
         jobIdentityAcceptedDisappearanceSelfTestVerified = [bool]$jobIdentityAcceptedVerified
         jobIdentityStillPresentSelfTestVerified = [bool]$jobIdentityStillPresentVerified
+        gracefulIdentityFallbackSelfTestVerified = [bool]$gracefulIdentityFallbackSelfTestVerified
         jobIdentityUnavailableSelfTestVerified = [bool]$jobIdentityUnavailableVerified
         jobIdentityMalformedFreshQuerySelfTestVerified = [bool]$jobIdentityMalformedVerified
         jobIdentityInvocationExceptionSelfTestVerified = [bool]$jobIdentityInvocationExceptionVerified
@@ -6989,6 +7162,7 @@ function Invoke-SelfTest {
         cleanupObservationSelfTestVerified = [bool]$cleanupObservationSelfTestVerified
         failedQueryCleanupRemainsUnverified = [bool]$failedQueryCleanupRemainsUnverified
         cleanupErrorCountSelfTestVerified = [bool]$cleanupErrorCountSelfTestVerified
+        gracefulTerminalCompletionSelfTestVerified = [bool]$gracefulTerminalCompletionSelfTestVerified
         workingDirectorySelfTestVerified = $true
         startupDiagnosticsSchemaVerified = [bool]$diagnosticSchemaVerified
         startupDiagnosticBoundsVerified = [bool]$diagnosticBoundsVerified
