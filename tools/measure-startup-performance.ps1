@@ -1156,6 +1156,9 @@ function Convert-StartupJobQueryObservation([AllowNull()] [object]$Query) {
     if ($null -eq $Query) { return $observation }
     try {
         $observation.attempted = Convert-StartupObservationBool (Get-StartupObservationProperty $Query 'Attempted')
+        if ($Query -is [StartupProbeJobResult]) {
+            $observation.queryCount = if ($observation.attempted) { 1 } else { 0 }
+        }
         $observation.succeeded = Convert-StartupObservationBool (Get-StartupObservationProperty $Query 'Succeeded')
         $errorValue = Get-StartupObservationProperty $Query 'ErrorCode'
         $observation.errorCode = if ($null -ne $errorValue) { Convert-StartupObservationInt $errorValue } else { $null }
@@ -3308,7 +3311,8 @@ function Invoke-SelfTest {
     }
     if (-not $jobSelfTestClosed) { throw 'Kill-on-close job cleanup self-test failed.' }
     $emptyJobObservation = Convert-StartupJobQueryObservation $emptyJob
-    $emptyJobObservationSelfTestVerified = $emptyJobObservation.attempted -and $emptyJobObservation.attemptCount -ge 1 -and
+    $emptyJobObservationSelfTestVerified = $emptyJobObservation.attempted -and $emptyJobObservation.queryCount -eq 1 -and
+        $emptyJobObservation.attemptCount -ge 1 -and
         $emptyJobObservation.attempts.Count -le 8 -and $emptyJobObservation.attempts.Count -ge 1 -and
         $emptyJobObservation.attempts[0].capacityBytes -eq 0
     if (-not $emptyJobObservationSelfTestVerified) {
@@ -3326,13 +3330,14 @@ function Invoke-SelfTest {
     $noJobMembers = Get-StartupDiagnosticJobMembers ([IntPtr]::Zero)
     $noJobCleanup = Stop-OwnedProcesses @{} ([IntPtr]::Zero) $null
     $cleanupObservationSelfTestVerified = (-not $noJobMembers.verified -and $noJobMembers.queryObservation.skipped -and
+        $noJobMembers.queryObservation.queryCount -eq 0 -and
         $noJobCleanup.cleanupObservation.jobQuerySkipped -and -not $noJobCleanup.cleanupObservation.jobQueryAttempted -and
         -not $noJobCleanup.cleanupObservation.query.attempted -and $noJobCleanup.cleanupObservation.query.attempts.Count -eq 0 -and
         -not $noJobCleanup.cleanupObservation.jobCloseAttempted -and $noJobCleanup.cleanupObservation.jobCloseSucceeded)
     if (-not $cleanupObservationSelfTestVerified) {
         throw 'No-job query skip observation self-test failed.'
     }
-    $syntheticFailedQuery = [pscustomobject][ordered]@{
+    $syntheticFailedQuery = [StartupProbeJobResult][pscustomobject][ordered]@{
         Attempted = $true
         AttemptCount = 1
         CapacityBytes = [UInt64]0
@@ -3352,7 +3357,8 @@ function Invoke-SelfTest {
     }
     $syntheticFailedObservation = Convert-StartupJobQueryObservation $syntheticFailedQuery
     $syntheticFailedJson = $syntheticFailedObservation | ConvertTo-Json -Depth 8 -Compress
-    $jobQueryError234Retained = ($syntheticFailedObservation.attempted -and -not $syntheticFailedObservation.succeeded -and
+    $jobQueryError234Retained = ($syntheticFailedObservation.attempted -and $syntheticFailedObservation.queryCount -eq 1 -and
+        -not $syntheticFailedObservation.succeeded -and
         $syntheticFailedObservation.errorCode -eq 234 -and $syntheticFailedObservation.attemptCount -eq 1 -and
         $syntheticFailedObservation.attempts.Count -eq 1 -and $syntheticFailedObservation.attempts[0].errorCode -eq 234 -and
         $syntheticFailedJson -notmatch '(?i)processids|imagepath|commandline|payload')

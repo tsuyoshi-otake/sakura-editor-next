@@ -371,6 +371,16 @@ class PairedStartupContractTests(unittest.TestCase):
         self.assertIn("qualified = [bool]$accepted", self.paired_text)
         self.assertIn("startupGatePass = [bool]($accepted -and $performance.pass)", self.paired_text)
 
+    def test_shared_direct_job_query_observation_count_matches_native_attempt(self):
+        for marker in (
+            "if ($Query -is [StartupProbeJobResult])",
+            "$observation.queryCount = if ($observation.attempted) { 1 } else { 0 }",
+            "$emptyJobObservation.queryCount -eq 1",
+            "$syntheticFailedObservation.queryCount -eq 1",
+            "$noJobMembers.queryObservation.queryCount -eq 0",
+        ):
+            self.assertIn(marker, self.shared_text)
+
     def test_empty_source_status_hash_contract_is_explicit(self):
         self.assertIn("function New-PairedSourceState", self.paired_text)
         self.assertIn("[AllowEmptyString()] [object]$Value", self.paired_text)
