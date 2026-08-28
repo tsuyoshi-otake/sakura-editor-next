@@ -3387,10 +3387,7 @@ mod tests {
     #[test]
     fn provider_export_source_contract_contains_panic_containment_for_each_export() {
         let source = include_str!("output_provider.rs");
-        let export_source = source
-            .split("#[cfg(test)]\nmod tests")
-            .next()
-            .unwrap_or(source);
+        let export_source = source.split("mod tests {").next().unwrap_or(source);
         let expected = [
             "sakura_output_provider_create_v1",
             "sakura_output_provider_apply_v1",
