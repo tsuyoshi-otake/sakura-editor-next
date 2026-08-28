@@ -2123,13 +2123,17 @@ function Convert-PairedLaunchResult {
         Convert-PairedStartupTraceEvidence (Get-PairedProperty $Raw @('startupTrace'))
     }
     else { New-PairedEmptyStartupTrace }
+    $rawSuccess = [bool](Get-PairedProperty $Raw @('success'))
     $diagnosticUnavailable = [string](Get-PairedProperty $startupDiagnostics @('observationStatus')) -eq 'unavailable'
     $traceUnavailable = [string](Get-PairedProperty $startupTrace @('status')) -eq 'unavailable'
-    $success = [bool](Get-PairedProperty $Raw @('success')) -and [bool](Get-PairedProperty $Raw @('processCleanupVerified')) -and
+    $success = $rawSuccess -and [bool](Get-PairedProperty $Raw @('processCleanupVerified')) -and
         $ProfileCleanupVerified -and [bool]$affinity.verified -and [bool]$TraceCleanupVerified -and
         -not $diagnosticUnavailable -and -not $traceUnavailable
     $failureType = if ($success) { $null } else { Get-PairedFailureType $Raw $ProfileCleanupVerified }
-    if (-not $success) {
+    # The raw launch result owns primary failure classification.  Diagnostics
+    # and trace are secondary evidence when the launch itself already failed;
+    # they may become primary only when the raw launch otherwise succeeded.
+    if (-not $success -and $rawSuccess) {
         $cleanupVerified = [bool](Get-PairedProperty $Raw @('processCleanupVerified')) -and $ProfileCleanupVerified
         if ($cleanupVerified -and [bool]$affinity.verified) {
             if ($diagnosticUnavailable) { $failureType = 'diagnostic-unavailable' }
@@ -2795,6 +2799,20 @@ function Invoke-PairedSelfTest {
         $selfTestEmptyTraceWithCount.status -eq 'unavailable' -and
         $selfTestOverLimitTrace.status -eq 'unavailable')
     if (-not $selfTestTraceEmptyVerified) { throw 'Empty or over-limit startup trace self-test was accepted.' }
+    $selfTestTimeoutWithUnavailableTraceRaw = [pscustomobject][ordered]@{
+        success = $false; processApiReturnMs = 12.25; topLevelHwndMs = $null; visibleMs = $null
+        captionReadyMs = $null; inputIdleMs = $null; inputIdleReached = $false
+        documentReadyMs = $null; verticalScrollMaximum = $null
+        affinity = $selfTestTimeoutAffinity; error = 'Timed out waiting for a run-owned TextEditorWindow.'
+        processCleanupVerified = $true; survivors = @()
+        startupDiagnostics = $selfTestStartupDiagnostics
+        startupTrace = [ordered]@{ enabled = $true; collected = $true; validRecordCount = 0; records = @() }
+    }
+    $selfTestTimeoutWithUnavailableTrace = Convert-PairedLaunchResult $selfTestTimeoutWithUnavailableTraceRaw $schedule[0] $selfTestTimeoutProfile $true
+    $selfTestPrimaryFailurePrecedenceVerified = [bool]($selfTestTimeoutWithUnavailableTrace.status -eq 'timeout' -and
+        $selfTestTimeoutWithUnavailableTrace.failureStage -eq 'window-discovery' -and
+        $selfTestTimeoutWithUnavailableTrace.startupTrace.status -eq 'unavailable')
+    if (-not $selfTestPrimaryFailurePrecedenceVerified) { throw 'Raw startup failure was overwritten by unavailable trace evidence.' }
     $selfTestFallbackDiagnosticsVerified = [bool]($selfTestFailedRun.startupDiagnostics.schemaVersion -eq 1 -and
         $selfTestFailedRun.startupDiagnostics.observationStatus -eq 'not-attempted' -and
         $selfTestFailedRun.startupDiagnostics.processTreeSnapshots.Count -eq 4 -and
@@ -3245,10 +3263,11 @@ function Invoke-PairedSelfTest {
             $selfTestFailedRun.startupMilestones.missingMilestones.Count -eq 6)
         startupDiagnosticsSuccessSchemaVerified = [bool]$selfTestDiagnosticsSuccessVerified
         startupDiagnosticsTimeoutSchemaVerified = [bool]$selfTestDiagnosticsTimeoutVerified
-        startupDiagnosticsFallbackSchemaVerified = [bool]$selfTestFallbackDiagnosticsVerified
-        startupTraceAllowlistPayloadFreeVerified = [bool]$selfTestTraceAllowlistVerified
-        startupTraceEmptyUnavailableVerified = [bool]$selfTestTraceEmptyVerified
-        startupTraceCleanupTerminalVerified = [bool]$selfTestCleanupTerminalVerified
+         startupDiagnosticsFallbackSchemaVerified = [bool]$selfTestFallbackDiagnosticsVerified
+         startupTraceAllowlistPayloadFreeVerified = [bool]$selfTestTraceAllowlistVerified
+         startupTraceEmptyUnavailableVerified = [bool]$selfTestTraceEmptyVerified
+         startupTracePrimaryFailurePrecedenceVerified = [bool]$selfTestPrimaryFailurePrecedenceVerified
+         startupTraceCleanupTerminalVerified = [bool]$selfTestCleanupTerminalVerified
     }
 }
 

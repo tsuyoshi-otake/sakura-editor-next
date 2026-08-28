@@ -83,6 +83,15 @@ successful launch; a fast success may leave later checkpoints as
 `not-reached`. An enabled trace with empty records, or malformed trace
 observations, is likewise typed `trace-unavailable`.
 
+Primary failure classification follows the raw launch result. If the launch
+itself is unsuccessful, its `timeout`, `startup`, `survivor`, `profileCleanup`,
+or `affinity` status remains primary even when diagnostics or trace collection
+is unavailable; those observations remain secondary evidence. The
+`diagnostic-unavailable`, `trace-unavailable`, and `trace-cleanup` statuses are
+primary only when the raw launch succeeded and the other process/profile
+cleanup gates are verified. A trace cleanup failure still makes cleanup
+unverified and terminates the campaign.
+
 If any launch cannot verify process, profile, or trace cleanup, the campaign
 stops immediately before scheduling the next backend. The report retains the
 typed failed launch and a `termination` record with `type=cleanup-unverified`,
