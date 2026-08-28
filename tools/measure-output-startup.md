@@ -395,6 +395,20 @@ requires zero process-enumeration failures to imply `succeeded=true`,
 `currentLiveCount <= historicalOwnedCount` with
 `expiredHistoricalCount = historicalOwnedCount - currentLiveCount`.
 
+An identity query can race with an expected process exit after a complete
+tracked snapshot. The producer performs exactly one fresh, complete typed
+census in that case. If the exact PID is absent, the tracked sweep continues
+and `trackedSweepVerified=true`; the bounded `trackedSweepDisappearedAfterSnapshotCount`
+remains an observation. For compatibility with the additive v1 telemetry
+schema, the raw `trackedSweepFailureType=identity-disappeared` and its first
+error code are retained as diagnostic cause fields even though they are not a
+terminal cleanup failure. A PID that remains present, a null/exception or
+malformed identity result, or an unavailable/incomplete/duplicate/malformed
+fresh census remains fail closed and keeps the sweep unverified.
+This race recovery does not replace successful Job query/close, the final exact-path
+sweep, the zero-survivor proof, or the zero-cleanup-error gate; all of those
+cleanup gates remain required.
+
 These fields are additive to schema version 1. An older report with all of the
 new fields absent is readable through explicit local `unknown`,
 `not-observed`, and zero fallbacks. A report that contains only part of the new

@@ -2408,17 +2408,72 @@ function Get-StartupTrackedSweepFailureType {
         [AllowNull()] [object]$FreshProbe
     )
     try {
-        if ($null -eq $FreshProbe -or
-            -not [bool](Get-StartupObservationProperty $FreshProbe 'Complete') -or
-            -not [bool](Get-StartupObservationProperty $FreshProbe 'Succeeded') -or
-            $null -eq (Get-StartupObservationProperty $FreshProbe 'Entries')) {
-            return 'enumeration-unavailable'
-        }
-        foreach ($entry in @((Get-StartupObservationProperty $FreshProbe 'Entries'))) {
-            if ($null -ne $entry -and [int](Get-StartupObservationProperty $entry 'ProcessId') -eq $ProcessId) {
-                return 'identity-still-present'
+        if ($ProcessId -le 0) { return 'enumeration-unavailable' }
+        $attemptedValue = Get-StartupObservationProperty $FreshProbe 'Attempted'
+        $completeValue = Get-StartupObservationProperty $FreshProbe 'Complete'
+        $succeededValue = Get-StartupObservationProperty $FreshProbe 'Succeeded'
+        # Read Entries directly so assignment does not run the value through
+        # PowerShell's pipeline unrolling.  The raw property must itself be an
+        # Array; a scalar forged entry is never sufficient proof of absence.
+        $entriesValue = $null
+        if ($null -ne $FreshProbe) {
+            if ($FreshProbe -is [Collections.IDictionary]) {
+                if ($FreshProbe.Contains('Entries')) { $entriesValue = $FreshProbe['Entries'] }
+            }
+            else {
+                $entriesProperty = $FreshProbe.PSObject.Properties['Entries']
+                if ($null -ne $entriesProperty) { $entriesValue = $entriesProperty.Value }
             }
         }
+        if ($null -eq $FreshProbe -or
+            $attemptedValue -isnot [bool] -or -not $attemptedValue -or
+            $completeValue -isnot [bool] -or -not $completeValue -or
+            $succeededValue -isnot [bool] -or -not $succeededValue -or
+            $null -eq $entriesValue -or $entriesValue -isnot [Array] -or
+            $entriesValue.Length -gt 65536) {
+            return 'enumeration-unavailable'
+        }
+        $attemptCountValue = Get-StartupObservationProperty $FreshProbe 'AttemptCount'
+        if ($null -eq $attemptCountValue -or $attemptCountValue -is [bool]) { return 'enumeration-unavailable' }
+        try { $attemptCount = [int]$attemptCountValue } catch { return 'enumeration-unavailable' }
+        if ($attemptCount -lt 1 -or $attemptCount -gt 3) { return 'enumeration-unavailable' }
+        $retryCountValue = Get-StartupObservationProperty $FreshProbe 'RetryCount'
+        if ($null -eq $retryCountValue -or $retryCountValue -is [bool]) { return 'enumeration-unavailable' }
+        try { $retryCount = [int]$retryCountValue } catch { return 'enumeration-unavailable' }
+        if ($retryCount -lt 0 -or $retryCount -ge $attemptCount) { return 'enumeration-unavailable' }
+        $errorValue = Get-StartupObservationProperty $FreshProbe 'ErrorCode'
+        $errorCode = Convert-StartupObservationErrorCode $errorValue
+        if ($null -eq $errorValue -or $null -eq $errorCode -or $errorCode -ne 0) {
+            return 'enumeration-unavailable'
+        }
+        $seen = @{}
+        $containsTarget = $false
+        foreach ($entry in $entriesValue) {
+            if ($null -eq $entry) { return 'exception' }
+            $entryIdValue = Get-StartupObservationProperty $entry 'ProcessId'
+            $parentIdValue = Get-StartupObservationProperty $entry 'ParentProcessId'
+            $imageNameValue = Get-StartupObservationProperty $entry 'ImageName'
+            if ($null -eq $entryIdValue -or $entryIdValue -is [bool] -or
+                $null -eq $parentIdValue -or $parentIdValue -is [bool] -or
+                $imageNameValue -isnot [string] -or [string]::IsNullOrWhiteSpace($imageNameValue) -or
+                $imageNameValue.Length -ge 260) {
+                return 'exception'
+            }
+            try {
+                $entryId = [int]$entryIdValue
+                $parentId = [int]$parentIdValue
+            }
+            catch { return 'exception' }
+            # PID 0 is the valid Windows System Idle Process entry.  The
+            # tracked process itself is always positive, but the fresh native
+            # census may legitimately contain this zero-PID record.
+            if ($entryId -lt 0 -or $parentId -lt 0 -or $seen.ContainsKey($entryId)) {
+                return 'exception'
+            }
+            $seen[$entryId] = $true
+            if ($entryId -eq $ProcessId) { $containsTarget = $true }
+        }
+        if ($containsTarget) { return 'identity-still-present' }
         return 'identity-disappeared'
     }
     catch { return 'exception' }
@@ -2432,10 +2487,29 @@ function Invoke-StartupTrackedIdentityFailure {
         [AllowNull()] [scriptblock]$FreshCensus = $null,
         [Parameter(Mandatory = $true)] [string]$ErrorMessage
     )
+    # Recovery is limited to a coherent typed QueryProcessIdentity failure.
+    # Null probes, invocation-exception fallbacks, successful results, and
+    # contradictory or malformed identities never receive a fresh-absence
+    # interpretation.
+    $identitySucceededValue = Get-StartupObservationProperty $IdentityProbe 'Succeeded'
+    $identityValue = Get-StartupObservationProperty $IdentityProbe 'Identity'
+    $identityErrorValue = Get-StartupObservationProperty $IdentityProbe 'ErrorCode'
+    $identityError = Convert-StartupObservationErrorCode $identityErrorValue
+    $identityProperty = if ($null -ne $IdentityProbe) { $IdentityProbe.PSObject.Properties['Identity'] } else { $null }
+    if ($null -eq $IdentityProbe -or
+        $identitySucceededValue -isnot [bool] -or [bool]$identitySucceededValue -or
+        $null -eq $identityProperty -or $null -ne $identityValue -or
+        $null -eq $identityError -or $identityError -le 0) {
+        if ($null -ne $CleanupObservation) {
+            Set-StartupTrackedSweepFailure $CleanupObservation 'identity-unavailable' 13
+        }
+        throw $ErrorMessage
+    }
     $freshProbe = $null
     try {
-        # This is deliberately one fresh typed census.  It is evidence only:
-        # every classification still throws the caller's existing failure.
+        # This is deliberately one fresh typed census.  A complete, validated
+        # census proving the exact PID is absent is the only benign race: the
+        # process exited between the original snapshot and identity open.
         $freshProbe = if ($null -ne $FreshCensus) { & $FreshCensus } else { [NativeStartupProbe]::GetProcessEntries() }
     }
     catch {
@@ -2450,20 +2524,36 @@ function Invoke-StartupTrackedIdentityFailure {
     }
     if ($null -ne $CleanupObservation) { Add-StartupProcessEnumerationObservation $CleanupObservation $freshProbe }
     $failureType = Get-StartupTrackedSweepFailureType $ProcessId $freshProbe
-    if ($null -ne $CleanupObservation) {
-        $identityError = Convert-StartupObservationErrorCode (Get-StartupObservationProperty $IdentityProbe 'ErrorCode')
-        $freshError = Convert-StartupObservationErrorCode (Get-StartupObservationProperty $freshProbe 'ErrorCode')
-        $failureError = if ($null -ne $identityError -and $identityError -gt 0) {
-            [int]$identityError
+    $freshError = Convert-StartupObservationErrorCode (Get-StartupObservationProperty $freshProbe 'ErrorCode')
+    $failureError = if ($null -ne $identityError -and $identityError -gt 0) {
+        [int]$identityError
+    }
+    elseif ($null -ne $freshError -and $freshError -gt 0) {
+        [int]$freshError
+    }
+    else { 13 }
+    switch ($failureType) {
+        'identity-disappeared' {
+            # Keep the original identity error as bounded diagnostic evidence
+            # for the paired consumer, while allowing this sweep to continue
+            # because the typed fresh census proved exit.  This also applies
+            # when the caller did not request an observation object.
+            if ($null -ne $CleanupObservation) {
+                Set-StartupTrackedSweepFailure $CleanupObservation $failureType $failureError
+                Add-StartupTrackedSweepCount $CleanupObservation 'trackedSweepDisappearedAfterSnapshotCount'
+            }
+            return $true
         }
-        elseif ($null -ne $freshError -and $freshError -gt 0) {
-            [int]$freshError
+        'identity-still-present' {
+            if ($null -ne $CleanupObservation) {
+                Set-StartupTrackedSweepFailure $CleanupObservation $failureType $failureError
+                Add-StartupTrackedSweepCount $CleanupObservation 'trackedSweepStillPresentAfterFailureCount'
+            }
         }
-        else { 13 }
-        Set-StartupTrackedSweepFailure $CleanupObservation $failureType $failureError
-        switch ($failureType) {
-            'identity-disappeared' { Add-StartupTrackedSweepCount $CleanupObservation 'trackedSweepDisappearedAfterSnapshotCount' }
-            'identity-still-present' { Add-StartupTrackedSweepCount $CleanupObservation 'trackedSweepStillPresentAfterFailureCount' }
+        default {
+            if ($null -ne $CleanupObservation) {
+                Set-StartupTrackedSweepFailure $CleanupObservation $failureType $failureError
+            }
         }
     }
     throw $ErrorMessage
@@ -4016,23 +4106,24 @@ function Get-TrackedOwnedProcesses($Owned, [object]$CleanupObservation = $null) 
             $identityProbe = [NativeStartupProbe]::QueryProcessIdentity([int]$entry[0].ProcessId, [int]$entry[0].ParentProcessId)
         }
         catch {
-            if ($null -ne $CleanupObservation) { Add-StartupTrackedSweepCount $CleanupObservation 'trackedSweepIdentityFailureCount' }
-            $identityProbe = [pscustomobject][ordered]@{ Succeeded = $false; ErrorCode = 13; Identity = $null }
-            Invoke-StartupTrackedIdentityFailure $CleanupObservation ([int]$record.Id) $identityProbe $null `
-                "Could not verify the identity of tracked process $($record.Id) after job cleanup (Win32 13)."
+            if ($null -ne $CleanupObservation) {
+                Add-StartupTrackedSweepCount $CleanupObservation 'trackedSweepIdentityFailureCount'
+                Set-StartupTrackedSweepFailure $CleanupObservation 'identity-unavailable' 13
+            }
+            throw "Could not verify the identity of tracked process $($record.Id) after job cleanup (Win32 13)."
         }
         if (-not $identityProbe.Succeeded -or $null -eq $identityProbe.Identity) {
             if ($null -ne $CleanupObservation) { Add-StartupTrackedSweepCount $CleanupObservation 'trackedSweepIdentityFailureCount' }
-            Invoke-StartupTrackedIdentityFailure $CleanupObservation ([int]$record.Id) $identityProbe $null `
-                "Could not verify the identity of tracked process $($record.Id) after job cleanup (Win32 $($identityProbe.ErrorCode))."
+            if (Invoke-StartupTrackedIdentityFailure $CleanupObservation ([int]$record.Id) $identityProbe $null `
+                    "Could not verify the identity of tracked process $($record.Id) after job cleanup (Win32 $($identityProbe.ErrorCode)).") { continue }
         }
         try {
             $current = Convert-ProcessIdentity $identityProbe.Identity
         }
         catch {
             if ($null -ne $CleanupObservation) { Add-StartupTrackedSweepCount $CleanupObservation 'trackedSweepIdentityFailureCount' }
-            Invoke-StartupTrackedIdentityFailure $CleanupObservation ([int]$record.Id) $identityProbe $null `
-                "Could not verify the identity of tracked process $($record.Id) after job cleanup (Win32 13)."
+            if (Invoke-StartupTrackedIdentityFailure $CleanupObservation ([int]$record.Id) $identityProbe $null `
+                    "Could not verify the identity of tracked process $($record.Id) after job cleanup (Win32 13).") { continue }
         }
         if ($current.Creation -eq $record.Creation -and (Test-SamePath $current.ImagePath $record.ImagePath)) {
             [void]$records.Add($current)
@@ -5004,17 +5095,17 @@ function Invoke-SelfTest {
     $freshAbsentCensusCalls = [pscustomobject]@{ Value = 0 }
     $freshAbsentCensus = [pscustomobject][ordered]@{
         Attempted = $true; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 0
-        Entries = @([pscustomobject]@{ ProcessId = 2222; ParentProcessId = 0; ImageName = 'self-test.exe' })
+        Entries = [object[]]@([pscustomobject]@{ ProcessId = 2222; ParentProcessId = 0; ImageName = 'self-test.exe' })
     }
-    $identityDisappearedThrew = $false
+    $identityDisappearedAccepted = $false
     try {
-        Invoke-StartupTrackedIdentityFailure $identityDisappearedObservation 1234 $identityFailureProbe {
+        $identityDisappearedAccepted = [bool](Invoke-StartupTrackedIdentityFailure $identityDisappearedObservation 1234 $identityFailureProbe {
             $freshAbsentCensusCalls.Value++
             return $freshAbsentCensus
-        } 'Synthetic tracked identity failure.'
+        } 'Synthetic tracked identity failure.')
     }
-    catch { $identityDisappearedThrew = $true }
-    $identityDisappearedVerified = $identityDisappearedThrew -and $freshAbsentCensusCalls.Value -eq 1 -and
+    catch { $identityDisappearedAccepted = $false }
+    $identityDisappearedVerified = $identityDisappearedAccepted -and $freshAbsentCensusCalls.Value -eq 1 -and
         $identityDisappearedObservation.trackedSweepFailureType -eq 'identity-disappeared' -and
         $identityDisappearedObservation.trackedSweepFailureErrorCode -eq 5 -and
         $identityDisappearedObservation.trackedSweepDisappearedAfterSnapshotCount -eq 1 -and
@@ -5025,7 +5116,7 @@ function Invoke-SelfTest {
     $freshPresentCensusCalls = [pscustomobject]@{ Value = 0 }
     $freshPresentCensus = [pscustomobject][ordered]@{
         Attempted = $true; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 0
-        Entries = @([pscustomobject]@{ ProcessId = 1234; ParentProcessId = 0; ImageName = 'self-test.exe' })
+        Entries = [object[]]@([pscustomobject]@{ ProcessId = 1234; ParentProcessId = 0; ImageName = 'self-test.exe' })
     }
     $identityStillPresentThrew = $false
     try {
@@ -5060,6 +5151,90 @@ function Invoke-SelfTest {
         $identityUnavailableObservation.trackedSweepDisappearedAfterSnapshotCount -eq 0 -and
         $identityUnavailableObservation.trackedSweepStillPresentAfterFailureCount -eq 0
     if (-not $identityUnavailableVerified) { throw 'Tracked enumeration-unavailable self-test failed.' }
+
+    # The same recovery must work for the affinity path, which intentionally
+    # calls the tracked sweep without an observation object.  It still gets
+    # exactly one fresh census and accepts only a proven absence.
+    $identityNoObservationCalls = [pscustomobject]@{ Value = 0 }
+    $identityNoObservationAccepted = $false
+    try {
+        $identityNoObservationAccepted = [bool](Invoke-StartupTrackedIdentityFailure $null 1234 $identityFailureProbe {
+            $identityNoObservationCalls.Value++
+            return $freshAbsentCensus
+        } 'Synthetic tracked identity failure.')
+    }
+    catch { $identityNoObservationAccepted = $false }
+    $identityNoObservationVerified = $identityNoObservationAccepted -and $identityNoObservationCalls.Value -eq 1
+    if (-not $identityNoObservationVerified) { throw 'Tracked identity-disappeared no-observation self-test failed.' }
+
+    # Invocation exceptions, null probes, zero error codes, and contradictory
+    # typed results are not coherent identity failures and must not trigger a
+    # fresh-absence recovery.
+    $identityNoFreshCalls = [pscustomobject]@{ Value = 0 }
+    $identityExceptionThrew = $false
+    try {
+        Invoke-StartupTrackedIdentityFailure $null 1234 $null {
+            $identityNoFreshCalls.Value++
+            return $freshAbsentCensus
+        } 'Synthetic identity invocation exception.'
+    }
+    catch { $identityExceptionThrew = $true }
+    $identityZeroErrorThrew = $false
+    try {
+        Invoke-StartupTrackedIdentityFailure $null 1234 ([pscustomobject][ordered]@{ Succeeded = $false; ErrorCode = 0; Identity = $null }) {
+            $identityNoFreshCalls.Value++
+            return $freshAbsentCensus
+        } 'Synthetic zero-error identity failure.'
+    }
+    catch { $identityZeroErrorThrew = $true }
+    $identityContradictoryThrew = $false
+    try {
+        Invoke-StartupTrackedIdentityFailure $null 1234 ([pscustomobject][ordered]@{
+            Succeeded = $true; ErrorCode = 0; Identity = [pscustomobject]@{ ProcessId = 1234 }
+        }) {
+            $identityNoFreshCalls.Value++
+            return $freshAbsentCensus
+        } 'Synthetic contradictory identity result.'
+    }
+    catch { $identityContradictoryThrew = $true }
+    $identityMalformedProbeVerified = $identityExceptionThrew -and $identityZeroErrorThrew -and
+        $identityContradictoryThrew -and $identityNoFreshCalls.Value -eq 0
+    if (-not $identityMalformedProbeVerified) { throw 'Malformed tracked identity probe self-test failed.' }
+
+    # A successful fresh census must validate every entry before it can prove
+    # absence.  An incomplete result, duplicate PID, or malformed entry is a
+    # terminal failure even when the target PID is not listed.
+    $freshMalformedCalls = [pscustomobject]@{ Value = 0 }
+    $freshTooManyEntries = [Array]::CreateInstance([object], 65537)
+    $freshMalformedCases = @(
+        [pscustomobject][ordered]@{ Attempted = $false; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 0; Entries = @() }
+        [pscustomobject][ordered]@{ Attempted = $true; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 0; Entries = [object[]]@(
+            [pscustomobject]@{ ProcessId = 2222; ParentProcessId = 0; ImageName = 'self-test.exe' }
+            [pscustomobject]@{ ProcessId = 2222; ParentProcessId = 0; ImageName = 'self-test.exe' }
+        ) }
+        [pscustomobject][ordered]@{ Attempted = $true; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 0; Entries = [object[]]@(
+            [pscustomobject]@{ ProcessId = 2222; ParentProcessId = 0; ImageName = '' }
+        ) }
+        [pscustomobject][ordered]@{ Attempted = $true; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 0; Entries = [pscustomobject]@{ ProcessId = 2222; ParentProcessId = 0; ImageName = 'self-test.exe' } }
+        [pscustomobject][ordered]@{ Attempted = $true; AttemptCount = 0; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 0; Entries = @() }
+        [pscustomobject][ordered]@{ Attempted = $true; AttemptCount = 4; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 0; Entries = @() }
+        [pscustomobject][ordered]@{ Attempted = $true; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = -1; Entries = @() }
+        [pscustomobject][ordered]@{ Attempted = $true; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 1; Entries = @() }
+        [pscustomobject][ordered]@{ Attempted = $true; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 0; Entries = $freshTooManyEntries }
+    )
+    $freshMalformedRejected = $true
+    foreach ($freshMalformed in $freshMalformedCases) {
+        try {
+            Invoke-StartupTrackedIdentityFailure $null 1234 $identityFailureProbe {
+                $freshMalformedCalls.Value++
+                return $freshMalformed
+            } 'Synthetic malformed fresh census.'
+            $freshMalformedRejected = $false
+        }
+        catch { }
+    }
+    $freshMalformedVerified = $freshMalformedRejected -and $freshMalformedCalls.Value -eq 9
+    if (-not $freshMalformedVerified) { throw 'Malformed fresh census self-test failed.' }
 
     $affinitySelfTestProbe = [pscustomobject][ordered]@{
         RequestedMask = [UInt64]1; ProcessMask = [UInt64]1; SystemMask = [UInt64]15
@@ -5357,6 +5532,9 @@ function Invoke-SelfTest {
         trackedIdentityDisappearedSelfTestVerified = [bool]$identityDisappearedVerified
         trackedIdentityStillPresentSelfTestVerified = [bool]$identityStillPresentVerified
         trackedIdentityCensusUnavailableSelfTestVerified = [bool]$identityUnavailableVerified
+        trackedIdentityNoObservationSelfTestVerified = [bool]$identityNoObservationVerified
+        trackedIdentityMalformedProbeSelfTestVerified = [bool]$identityMalformedProbeVerified
+        trackedIdentityMalformedFreshCensusSelfTestVerified = [bool]$freshMalformedVerified
         affinityHistoricalCountsSelfTestVerified = [bool]$affinityHistoricalCountsVerified
         affinityCurrentSetSelfTestVerified = [bool]$affinityCurrentSetSelfTestVerified
         affinityInvalidCurrentSetSelfTestVerified = [bool]$affinityInvalidCurrentSetSelfTestVerified

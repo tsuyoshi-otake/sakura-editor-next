@@ -150,6 +150,17 @@ process enumeration で failure が 0 の場合は succeeded=true / complete=tru
 を必須とし、failure が 1 以上の場合は succeeded=false（complete は true / false のいずれも許可）と
 します。failure code は first-cause を保持します。
 
+tracked sweep の identity query が、完全な snapshot の直後に期待されたプロセス終了と競合した場合は、
+完全な typed census を正確に1回だけ再取得します。その census で対象 PID が不在なら sweep は継続し、
+`trackedSweepVerified=true` とします。bounded な
+`trackedSweepDisappearedAfterSnapshotCount` は観測値として残し、schema version 1 との互換性のため、
+raw の `trackedSweepFailureType=identity-disappeared` と first-cause error code も診断原因として保持します。
+これは terminal cleanup failure ではありません。一方、PID が残っている場合、null / exception / malformed
+identity、または fresh census が unavailable / incomplete / duplicate / malformed の場合は fail closed で
+sweep を unverified のままにします。
+この race recovery は Job query / close の成功、最終 exact-path sweep、zero survivor、zero cleanup-error の各
+cleanup gate を置き換えません。これらすべての gate は引き続き必須です。
+
 schema version 1 の旧 report で追加 fields がすべて欠落している場合は、`unknown` /
 `not-observed` / `0` の明示的な local fallback で読み込み可能です。追加 fields が一部だけ、integer が
 範囲外、enum が未知、または cross-field が不整合な新 report は local `unavailable` に fail closed

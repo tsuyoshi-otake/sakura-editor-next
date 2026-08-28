@@ -436,6 +436,52 @@ class PairedStartupContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, self.shared_text)
 
+    def test_tracked_identity_disappearance_recovery_is_typed_and_single_shot(self):
+        # A process can exit between the complete Toolhelp snapshot and its
+        # identity open.  The shared producer may recover only from a
+        # coherent typed identity failure after exactly one complete fresh
+        # census proves that exact PID is absent.  Keep the negative branches
+        # visible in this cheap contract test so a future refactor cannot turn
+        # a malformed or unavailable observation into a clean sweep.
+        for marker in (
+            "function Get-StartupTrackedSweepFailureType",
+            "$ProcessId -le 0",
+            "$attemptedValue -isnot [bool]",
+            "$entriesValue",
+            "PSObject.Properties['Entries']",
+            "$entriesProperty.Value",
+            "$entriesValue -isnot [Array]",
+            "foreach ($entry in $entriesValue)",
+            "$attemptCount -gt 3",
+            "$retryCount -ge $attemptCount",
+            "$entriesValue.Length -gt 65536",
+            "$retryCountValue",
+            "$seen.ContainsKey($entryId)",
+            "$imageNameValue.Length -ge 260",
+            "function Invoke-StartupTrackedIdentityFailure",
+            "Recovery is limited to a coherent typed QueryProcessIdentity failure.",
+            "$identitySucceededValue -isnot [bool]",
+            "$null -eq $IdentityProbe",
+            "$null -eq $identityError -or $identityError -le 0",
+            "[NativeStartupProbe]::GetProcessEntries()",
+            "return $true",
+            "if (Invoke-StartupTrackedIdentityFailure",
+            "identityDisappearedAccepted",
+            "identityNoObservationCalls",
+            "identityNoObservationVerified",
+            "freshAbsentCensusCalls.Value -eq 1",
+            "identityStillPresentThrew",
+            "identityUnavailableThrew",
+            "identityNoFreshCalls",
+            "identityMalformedProbeVerified",
+            "freshMalformedCases",
+            "freshMalformedVerified",
+            "trackedSweepDisappearedAfterSnapshotCount",
+        ):
+            self.assertIn(marker, self.shared_text)
+        self.assertIn("Set-StartupTrackedSweepFailure $CleanupObservation 'identity-unavailable' 13", self.shared_text)
+        self.assertIn("throw \"Could not verify the identity of tracked process", self.shared_text)
+
     def test_shared_job_query_retry_contract_is_bounded_and_requires_full_membership(self):
         for marker in (
             "private const int ERROR_MORE_DATA = 234;",
@@ -667,6 +713,9 @@ class PairedStartupContractTests(unittest.TestCase):
             self.assertTrue(payload["affinityCurrentSetSelfTestVerified"])
             self.assertTrue(payload["affinityInvalidCurrentSetSelfTestVerified"])
             self.assertTrue(payload["affinityExpiredHistoricalExcludedSelfTestVerified"])
+            self.assertTrue(payload["trackedIdentityNoObservationSelfTestVerified"])
+            self.assertTrue(payload["trackedIdentityMalformedProbeSelfTestVerified"])
+            self.assertTrue(payload["trackedIdentityMalformedFreshCensusSelfTestVerified"])
             self.assertTrue(payload["workingDirectorySelfTestVerified"])
 
     def test_self_test_output_in_both_powershell_hosts(self):
