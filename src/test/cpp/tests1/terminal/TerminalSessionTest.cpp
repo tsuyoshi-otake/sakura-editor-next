@@ -995,6 +995,10 @@ TEST(TerminalSession, DiagnosticTraceRotatesWithinTwoBoundedFiles)
 				.scrollbackLimit = 1000,
 			});
 		}
+		// Explicit close joins the session retirement worker. The subsequent
+		// destruction can then synchronously stop and drain the trace writer before
+		// this test inspects the rotated files.
+		session.Close();
 	}
 
 	const auto previousPath = tracePath.parent_path() /
