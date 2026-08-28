@@ -836,7 +836,7 @@ jobs:
         $simdTargets = @($simdPackage.targets)
         if (
           $simdTargets.Count -ne 1 -or
-          ($simdTargets[0].kind -join ',') -ne 'lib' -or
+          ($simdTargets[0].kind -join ',') -ne 'rlib' -or
           ($simdTargets[0].crate_types -join ',') -ne 'rlib'
         ) {
           throw 'sakura-simd must expose exactly one rlib target.'
@@ -844,7 +844,7 @@ jobs:
         $unicodeTargets = @($unicodePackage.targets)
         if (
           $unicodeTargets.Count -ne 1 -or
-          ($unicodeTargets[0].kind -join ',') -ne 'lib' -or
+          ($unicodeTargets[0].kind -join ',') -ne 'rlib' -or
           ($unicodeTargets[0].crate_types -join ',') -ne 'rlib'
         ) {
           throw 'sakura-unicode-core must expose exactly one rlib target.'

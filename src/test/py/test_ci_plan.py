@@ -208,6 +208,14 @@ class CiRustNativeWorkflowContractTests(unittest.TestCase):
             static_gate,
         )
         self.assertIn("sakura-native-ffi must own the final link edges", static_gate)
+        self.assertIn(
+            "($simdTargets[0].kind -join ',') -ne 'rlib'",
+            static_gate,
+        )
+        self.assertIn(
+            "($unicodeTargets[0].kind -join ',') -ne 'rlib'",
+            static_gate,
+        )
         self.assertIn("'..\\senp\\Cargo.toml'", static_gate)
         self.assertIn("Native workspace must expose exactly one staticlib", static_gate)
         self.assertIn("$targets[0].kind", static_gate)
