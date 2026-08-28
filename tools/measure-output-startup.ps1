@@ -1813,10 +1813,10 @@ function Convert-PairedProcessDiagnostics {
     $snapshotCount = 0
     foreach ($checkpoint in @($script:PairedDiagnosticCheckpointNames)) {
         $target = @($empty.processTreeSnapshots | Where-Object { $_.checkpoint -eq $checkpoint } | Select-Object -First 1)
-        if ($target.Count -eq 0) { continue }
+        if (@($target).Count -eq 0) { continue }
         $output = $target[0]
         $source = @($rawSnapshots | Where-Object { [string](Get-PairedProperty $_ @('checkpoint', 'label')) -eq $checkpoint } | Select-Object -First 1)
-        if ($source.Count -eq 0) {
+        if (@($source).Count -eq 0) {
             $output.status = 'unavailable'
             continue
         }
@@ -1847,7 +1847,7 @@ function Convert-PairedProcessDiagnostics {
             $output.processTree = $tree.ToArray()
             $processCountValue = Convert-PairedDiagnosticPid (Get-PairedProperty $source @('processCount')) $true
             $output.processCount = if ($null -eq $processCountValue) { [int]$tree.Count } else { [int][Math]::Min($processCountValue, $script:PairedDiagnosticMaxProcessCount) }
-            $output.processRecordsTruncated = [bool](Get-PairedProperty $source @('processRecordsTruncated')) -or $invalid -or $rawTree.Count -gt $script:PairedDiagnosticMaxProcessCount
+            $output.processRecordsTruncated = [bool](Get-PairedProperty $source @('processRecordsTruncated')) -or $invalid -or @($rawTree).Count -gt $script:PairedDiagnosticMaxProcessCount
             $output.jobMembershipVerified = [bool](Get-PairedProperty $source @('jobMembershipVerified'))
             $jobMemberCount = Convert-PairedDiagnosticPid (Get-PairedProperty $source @('jobMemberCount')) $true
             $output.jobMemberCount = if ($null -eq $jobMemberCount) { [int](@($tree | Where-Object { $_.jobMember -eq $true }).Count) } else { [int][Math]::Min($jobMemberCount, $script:PairedDiagnosticMaxProcessCount) }
@@ -2765,6 +2765,29 @@ function Invoke-PairedSelfTest {
         $selfTestSuccessRun.startupDiagnostics.processExitObservation.state -eq 'active' -and
         $selfTestSuccessRun.startupDiagnostics.processExitObservation.exitCode -eq 259)
     if (-not $selfTestDiagnosticsSuccessVerified) { throw 'Synthetic successful startup diagnostics schema self-test failed.' }
+    $selfTestSingleTreeDiagnostic = [ordered]@{
+        schemaVersion = 1
+        processTreeSnapshots = @([ordered]@{
+                checkpoint = '0.5s'; status = 'observed'; observed = $true; elapsedMs = 1.0
+                state = 'active'; exitCode = [UInt32]259; processCount = 1
+                processTree = [ordered]@{ pid = 1234; ppid = 0; creationTime = [Int64]1; imageName = 'sakura.exe'; jobMember = $true }
+                processRecordsTruncated = $false; jobMembershipVerified = $true; jobMemberCount = 1
+                topLevelWindowCount = 1; topLevelWindowCountCapped = $false
+                processExitObserved = $false; processExitElapsedMs = $null
+                failureStage = $null; failureType = $null
+            })
+        processExitObservation = [ordered]@{
+            observed = $false; elapsedMs = $null; pid = $null; source = 'run-root'
+            state = 'active'; exitCode = [UInt32]259; errorCode = $null
+        }
+    }
+    $selfTestSingleTreeConverted = Convert-PairedProcessDiagnostics $selfTestSingleTreeDiagnostic
+    $selfTestSingleTreeProcessCount = @($selfTestSingleTreeConverted.processTreeSnapshots[0].processTree).Count
+    if ($selfTestSingleTreeProcessCount -ne 1 -or
+        $selfTestSingleTreeConverted.processTreeSnapshots[0].processTree[0].pid -ne 1234) {
+        throw 'Single-record process-tree diagnostics self-test failed.'
+    }
+    $selfTestSingleTreeDiagnosticsVerified = $true
     $selfTestDiagnosticsTimeoutVerified = [bool]($selfTestWindowTimeoutRun.status -eq 'timeout' -and
         $selfTestWindowTimeoutRun.startupDiagnostics.observationStatus -eq 'observed' -and
         $selfTestWindowTimeoutRun.failureStage -eq 'window-discovery')
@@ -3262,12 +3285,13 @@ function Invoke-PairedSelfTest {
             $selfTestFailedRun.startupMilestones.timeoutStage -eq $null -and
             $selfTestFailedRun.startupMilestones.missingMilestones.Count -eq 6)
         startupDiagnosticsSuccessSchemaVerified = [bool]$selfTestDiagnosticsSuccessVerified
+        startupDiagnosticsSingleTreeVerified = [bool]$selfTestSingleTreeDiagnosticsVerified
         startupDiagnosticsTimeoutSchemaVerified = [bool]$selfTestDiagnosticsTimeoutVerified
-         startupDiagnosticsFallbackSchemaVerified = [bool]$selfTestFallbackDiagnosticsVerified
-         startupTraceAllowlistPayloadFreeVerified = [bool]$selfTestTraceAllowlistVerified
-         startupTraceEmptyUnavailableVerified = [bool]$selfTestTraceEmptyVerified
-         startupTracePrimaryFailurePrecedenceVerified = [bool]$selfTestPrimaryFailurePrecedenceVerified
-         startupTraceCleanupTerminalVerified = [bool]$selfTestCleanupTerminalVerified
+        startupDiagnosticsFallbackSchemaVerified = [bool]$selfTestFallbackDiagnosticsVerified
+        startupTraceAllowlistPayloadFreeVerified = [bool]$selfTestTraceAllowlistVerified
+        startupTraceEmptyUnavailableVerified = [bool]$selfTestTraceEmptyVerified
+        startupTracePrimaryFailurePrecedenceVerified = [bool]$selfTestPrimaryFailurePrecedenceVerified
+        startupTraceCleanupTerminalVerified = [bool]$selfTestCleanupTerminalVerified
     }
 }
 
