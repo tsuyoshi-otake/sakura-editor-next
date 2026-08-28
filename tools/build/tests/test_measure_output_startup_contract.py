@@ -482,6 +482,154 @@ class PairedStartupContractTests(unittest.TestCase):
         self.assertIn("Set-StartupTrackedSweepFailure $CleanupObservation 'identity-unavailable' 13", self.shared_text)
         self.assertIn("throw \"Could not verify the identity of tracked process", self.shared_text)
 
+    def test_job_identity_disappearance_recovery_disables_tracked_telemetry(self):
+        for marker in (
+            "function Get-JobProcessRecords",
+            "function Invoke-StartupTrackedIdentityFailure",
+            "[bool]$RecordTrackedSweepTelemetry = $true",
+            "$RecordTrackedSweepTelemetry -and $null -ne $CleanupObservation",
+            "Invoke-StartupTrackedIdentityFailure $CleanupObservation ([int]$record.Id)",
+            "-RecordTrackedSweepTelemetry:$false",
+            "jobIdentityDisappearedTelemetryDisabledObservation",
+            "jobIdentityDisappearedTelemetryDisabledAccepted",
+            "jobIdentityDisappearedTelemetryDisabledCalls.Value -eq 1",
+            "jobIdentityStillPresentTelemetryDisabledObservation",
+            "jobIdentityCensusUnavailableTelemetryDisabledObservation",
+            "jobIdentityMalformedFreshCensusTelemetryDisabledObservation",
+            "jobIdentityDisappearedTelemetryDisabledVerified",
+            "jobIdentityStillPresentTelemetryDisabledVerified",
+            "jobIdentityCensusUnavailableTelemetryDisabledVerified",
+            "jobIdentityMalformedFreshCensusTelemetryDisabledVerified",
+            "jobIdentityTelemetryDisabledSelfTestVerified",
+            "jobIdentityDisappearedTelemetryDisabledSelfTestVerified",
+            "jobIdentityStillPresentTelemetryDisabledSelfTestVerified",
+            "jobIdentityCensusUnavailableTelemetryDisabledSelfTestVerified",
+            "jobIdentityMalformedFreshCensusTelemetryDisabledSelfTestVerified",
+            "Job membership identity gaps use a fresh Job-membership query",
+            "The fresh Job-membership query is the sole recovery proof",
+            "add a second Toolhelp census here",
+        ):
+            self.assertIn(marker, self.shared_text)
+        job_start = self.shared_text.index("function Get-JobProcessRecords")
+        job_end = self.shared_text.index("function Test-ProcessIdentity", job_start)
+        job_path = self.shared_text[job_start:job_end]
+        self.assertNotIn("Add-StartupTrackedSweepCount $CleanupObservation", job_path)
+        self.assertNotIn("Invoke-StartupTrackedIdentityFailure", job_path)
+        self.assertIn("Convert-ProcessIdentity $identityProbe.Identity", job_path)
+
+    def test_job_identity_observation_schema_and_production_path_wiring(self):
+        for marker in (
+            "startupJobIdentityCounterFields",
+            "function New-StartupJobIdentityObservation",
+            "function Add-StartupJobIdentityCount",
+            "function Set-StartupJobIdentityFailure",
+            "jobIdentityObservation = New-StartupJobIdentityObservation",
+            "function Test-StartupCoherentIdentityFailure",
+            "function Test-StartupJobIdentityShape",
+            "$imagePathValue.Length -ge 32768",
+            "[int]$processIdValue -eq $RequestedProcessId",
+            "[int]$parentProcessIdValue -eq $ExpectedParentProcessId",
+            "[AllowNull()] [object]$Invokers = $null",
+            "candidateJobQueryInvoker",
+            "candidateProcessCensusInvoker",
+            "candidateIdentityQueryInvoker",
+            "jobIdentityProductionPathSelfTestVerified",
+            "jobIdentityAcceptedVerified",
+            "jobIdentityStillPresentVerified",
+            "jobIdentityUnavailableVerified",
+            "jobIdentityMalformedVerified",
+            "jobIdentityInvocationExceptionVerified",
+            "jobIdentityFreshQueryExceptionVerified",
+            "jobIdentityConversionFailureVerified",
+            "jobIdentityContradictorySuccessVerified",
+            "jobIdentityMalformedFreshQueryCasesVerified",
+            "processEnumerationMalformedEnvelopeSelfTestVerified",
+            "processEnumerationFailedEnvelopeSelfTestVerified",
+            "function Test-StartupIntegralValue",
+            "attemptedValue -is [bool]",
+            "entriesValue -is [Array]",
+            "entryIds.ContainsKey($processId)",
+            "Test-StartupIdentitySuccessEnvelope",
+            "identitySucceeded = Test-StartupIdentitySuccessEnvelope",
+            "validateJobQuery",
+            "processIdsValue -is [Array]",
+            "Test-StartupIntegralValue $rawProcessId 1",
+            "jobIdentityContradictorySuccessCases",
+            "jobIdentityMalformedFreshQueryCases",
+            "fresh Job-membership query",
+            "JobIdentityObservation = $null",
+        ):
+            self.assertIn(marker, self.shared_text)
+        for marker in (
+            "PairedCleanupTelemetryJobIdentityFailureTypes",
+            "PairedCleanupTelemetryJobIdentityFields",
+            "function New-PairedEmptyJobIdentityObservation",
+            "function New-PairedUnavailableJobIdentityObservation",
+            "function Convert-PairedJobIdentityObservation",
+            "function Test-PairedStructuredObject",
+            "function New-PairedEmptyLaunchJobQueryObservation",
+            "function Convert-PairedLaunchJobQueryObservation",
+            "jobIdentityObservation = New-PairedEmptyJobIdentityObservation",
+            "status = 'not-observed'",
+            "status = 'observed'",
+            "status = 'unavailable'",
+            "jobIdentityObservation",
+            "selfTestJobIdentityValidVerified",
+            "selfTestJobIdentityPartialRejected",
+            "selfTestJobIdentityCrossFieldRejected",
+            "selfTestJobIdentityOneSidedRejected",
+            "selfTestJobIdentityMismatchRejected",
+            "selfTestJobIdentityMalformedOuterNullRejected",
+            "selfTestJobIdentityMalformedOuterScalarRejected",
+            "jobIdentityObservationMalformedOuterSuppressionVerified",
+            "jobIdentityObservationFailureTerminationVerified",
+            "jobIdentityObservationOldSchemaNotObservedVerified",
+            "selfTestJobIdentityValidLaunchObservation",
+            "Test-PairedJobIdentityObservationEqual",
+            "Test-PairedJobIdentityObservationContract",
+            "$rawLaunchQueryPresent = Test-PairedPropertyPresent $Raw 'launchJobQueryObservation'",
+            "$rawCleanupPresent = Test-PairedPropertyPresent $Raw 'cleanupObservation'",
+            "reason = 'malformed-outer'",
+            "jobIdentityObservationContractValid",
+            "reason = 'one-sided'",
+            "reason = 'unavailable-or-mismatch'",
+            "identityFailureCount",
+            "recoveryAttemptCount",
+            "disappearedAfterSnapshotCount",
+            "stillPresentAfterFailureCount",
+            "$failures -gt $attempts",
+            "$recoveries -gt $failures",
+            "$disappeared + $present -gt $recoveries",
+            "Remove('jobIdentityObservation')",
+        ):
+            self.assertIn(marker, self.paired_text)
+        job_start = self.shared_text.index("function Get-JobProcessRecords")
+        job_end = self.shared_text.index("function Test-ProcessIdentity", job_start)
+        job_path = self.shared_text[job_start:job_end]
+        self.assertIn("$freshJobQuery = & $jobQueryInvoker $Job", job_path)
+        self.assertIn("$freshJobCheck.processIds", job_path)
+        self.assertIn("$JobIdentityObservation", job_path)
+        self.assertIn("Test-StartupJobIdentityShape", job_path)
+        self.assertIn("Set-StartupJobIdentityFailure $jobIdentityObservation 'identity-disappeared'", job_path)
+        self.assertIn("Set-StartupJobIdentityFailure $jobIdentityObservation 'identity-still-present'", job_path)
+
+    def test_paired_cleanup_gate_requires_explicit_boolean_identity_contract(self):
+        for marker in (
+            "function Test-PairedRunCleanupVerified",
+            "Test-PairedPropertyPresent $Run 'jobIdentityObservationContractValid'",
+            "$identityContract -is [bool]",
+            "$identityContractValid = $identityContractPresent -and",
+            "$selfTestMissingIdentityContractRejected",
+            "$selfTestNonBooleanIdentityContractRejected",
+            "$selfTestJobIdentityContractPresenceGateTerminationVerified",
+            "jobIdentityObservationContractMissingRejected",
+            "jobIdentityObservationContractNonBooleanRejected",
+            "jobIdentityObservationContractPresenceGateTerminationVerified",
+            "New-PairedCampaignTermination",
+            "laterLaunchesSuppressed",
+        ):
+            self.assertIn(marker, self.paired_text)
+
     def test_shared_job_query_retry_contract_is_bounded_and_requires_full_membership(self):
         for marker in (
             "private const int ERROR_MORE_DATA = 234;",
@@ -546,6 +694,7 @@ class PairedStartupContractTests(unittest.TestCase):
             "function Get-VerifiedProcessEntries",
             "-not [bool]$probe.Complete",
             "-not [bool]$probe.Succeeded",
+            "processEnumerationPidZeroSelfTestVerified",
         ):
             self.assertIn(marker, self.shared_text)
         self.assertNotIn("public static StartupProbeProcessEntry[] GetProcessEntries()", self.shared_text)
@@ -708,6 +857,9 @@ class PairedStartupContractTests(unittest.TestCase):
             self.assertTrue(payload["processEnumerationRetryContractSelfTestVerified"])
             self.assertTrue(payload["processEnumerationRetryBehaviorCorrected"])
             self.assertTrue(payload["processEnumerationContractSelfTestVerified"])
+            self.assertTrue(payload["processEnumerationMalformedEnvelopeSelfTestVerified"])
+            self.assertTrue(payload["processEnumerationFailedEnvelopeSelfTestVerified"])
+            self.assertTrue(payload["processEnumerationPidZeroSelfTestVerified"])
             self.assertTrue(payload["realProcessEnumerationSelfTestVerified"])
             self.assertTrue(payload["realMultiMemberJobQuerySelfTestVerified"])
             self.assertTrue(payload["affinityCurrentSetSelfTestVerified"])
@@ -716,6 +868,21 @@ class PairedStartupContractTests(unittest.TestCase):
             self.assertTrue(payload["trackedIdentityNoObservationSelfTestVerified"])
             self.assertTrue(payload["trackedIdentityMalformedProbeSelfTestVerified"])
             self.assertTrue(payload["trackedIdentityMalformedFreshCensusSelfTestVerified"])
+            self.assertTrue(payload["jobIdentityDisappearedTelemetryDisabledSelfTestVerified"])
+            self.assertTrue(payload["jobIdentityStillPresentTelemetryDisabledSelfTestVerified"])
+            self.assertTrue(payload["jobIdentityCensusUnavailableTelemetryDisabledSelfTestVerified"])
+            self.assertTrue(payload["jobIdentityMalformedFreshCensusTelemetryDisabledSelfTestVerified"])
+            self.assertTrue(payload["jobIdentityTelemetryDisabledSelfTestVerified"])
+            self.assertTrue(payload["jobIdentityProductionPathSelfTestVerified"])
+            self.assertTrue(payload["jobIdentityAcceptedDisappearanceSelfTestVerified"])
+            self.assertTrue(payload["jobIdentityStillPresentSelfTestVerified"])
+            self.assertTrue(payload["jobIdentityUnavailableSelfTestVerified"])
+            self.assertTrue(payload["jobIdentityMalformedFreshQuerySelfTestVerified"])
+            self.assertTrue(payload["jobIdentityInvocationExceptionSelfTestVerified"])
+            self.assertTrue(payload["jobIdentityFreshQueryExceptionSelfTestVerified"])
+            self.assertTrue(payload["jobIdentityConversionFailureSelfTestVerified"])
+            self.assertTrue(payload["jobIdentityContradictorySuccessSelfTestVerified"])
+            self.assertTrue(payload["jobIdentityMalformedFreshQueryCasesSelfTestVerified"])
             self.assertTrue(payload["workingDirectorySelfTestVerified"])
 
     def test_self_test_output_in_both_powershell_hosts(self):
@@ -804,6 +971,17 @@ class PairedStartupContractTests(unittest.TestCase):
                 "jobQueryObservationOldSchemaNeutralVerified",
                 "cleanupObservationGoodVerified",
                 "cleanupObservationMalformedVerified",
+                "jobIdentityObservationValidVerified",
+                "jobIdentityObservationLaunchValidVerified",
+                "jobIdentityObservationOldSchemaNotObservedVerified",
+                "jobIdentityObservationPartialRejected",
+                "jobIdentityObservationCrossFieldRejected",
+                "jobIdentityObservationOneSidedRejected",
+                "jobIdentityObservationMismatchRejected",
+                "jobIdentityObservationMalformedOuterNullRejected",
+                "jobIdentityObservationMalformedOuterScalarRejected",
+                "jobIdentityObservationMalformedOuterSuppressionVerified",
+                "jobIdentityObservationFailureTerminationVerified",
                 "cleanupTelemetryFirstCauseVerified",
                 "cleanupTelemetryProcessCrossFieldRejected",
                 "cleanupTelemetryProcessSuccessFlagsRejected",

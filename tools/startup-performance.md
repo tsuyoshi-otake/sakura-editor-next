@@ -150,6 +150,23 @@ process enumeration で failure が 0 の場合は succeeded=true / complete=tru
 を必須とし、failure が 1 以上の場合は succeeded=false（complete は true / false のいずれも許可）と
 します。failure code は first-cause を保持します。
 
+native process census の envelope は PowerShell の暗黙 cast を許可しません。`Attempted` / `Complete` /
+`Succeeded` は実 bool、`ErrorCode` / `AttemptCount` / `RetryCount` は実 CLR integer、`Retried` は実 bool とし、
+attempt は 1..3、retry は attempt より小さく、`Retried = (RetryCount > 0)` を必須とします。成功時だけ
+`Attempted=true` / `Complete=true` / `Succeeded=true` / `ErrorCode=0` の entries を返し、typed failure や
+partial / malformed envelope は必ず throw します。entries は bounded array、PID 0..Int32.MaxValue、親 PID
+0..Int32.MaxValue、non-empty bounded image、unique PID を検証します（PID 0 は Toolhelp の valid entry です）。
+Job query も `AttemptCount` / `AttemptNumber` / `ErrorCode` を実 Int32、byte fields を実 UInt64、process
+counts を実 UInt32、bool fields を実 bool として検証し、bounded byte/count、attempt 配列長、連番、last
+attempt との top-level 一致、`Resized` の OR、および成功時の listed/assigned/ProcessIds 整合を確認します。
+不一致、fractional / floating、string、scalar、duplicate、out-of-range metadata は decision 前に fail closed
+します。zero-capacity の初回 sizing attempt は index 0 のみで、assigned / listed は 0、`Resized=false`、
+`requiredBytes == returnLengthBytes` を必須とします。後続 data attempt は `requiredBytes == capacityBytes` と
+前回より大きい capacity を要求し、non-final は retryable failure + `Resized=true`、または
+`listedProcessCount < assignedProcessCount` の successful partial + `Resized=true` だけを許可します。
+final success は last attempt が `Succeeded=true` / `ErrorCode=0` / `Resized=false` であることを必須とし、
+中間の complete success や non-retryable failure、last attempt と top-level status / error の不一致を拒否します。
+
 tracked sweep の identity query が、完全な snapshot の直後に期待されたプロセス終了と競合した場合は、
 完全な typed census を正確に1回だけ再取得します。その census で対象 PID が不在なら sweep は継続し、
 `trackedSweepVerified=true` とします。bounded な
@@ -161,15 +178,41 @@ sweep を unverified のままにします。
 この race recovery は Job query / close の成功、最終 exact-path sweep、zero survivor、zero cleanup-error の各
 cleanup gate を置き換えません。これらすべての gate は引き続き必須です。
 
-schema version 1 の旧 report で追加 fields がすべて欠落している場合は、`unknown` /
-`not-observed` / `0` の明示的な local fallback で読み込み可能です。追加 fields が一部だけ、integer が
-範囲外、enum が未知、または cross-field が不整合な新 report は local `unavailable` に fail closed
-します。この telemetry の fallback / rejection は paired report の既存 acceptance、suppression、
-performance、`adoption.decision=HOLD` を変更しません。
-この telemetry は success expression、`Test-PairedRunCleanupVerified`、termination / suppression、
-acceptance、qualification、adoption のいずれも qualify せず、弱めもしません。failed / preflight
-launch と optional fields がない旧 v1 report は neutral な `not-attempted` として扱い、present だが
-malformed な query / cleanup は該当する局所 subobject だけを `unavailable` にします。
+Job membership path は native Job query、初回 Toolhelp census、identity query を差し替え可能な
+optional invoker seam 経由で実行します。成功した Job query と完全な初回 census の双方に member が
+現れた後、identity open が coherent な typed failure になった場合は、fresh Job-membership query を
+1 回だけ実行します。その query が正常に検証され、exact PID の不在を証明した場合だけ、それを唯一の
+recovery proof として Job record loop を継続し、期待された終了を cleanup error にしません。この Job
+経路では 2 回目の Toolhelp census を実行せず、初回 process-enumeration aggregate の意味を変更しません。
+初回 census で Job PID が欠落した場合に既存 path が行う requery は別の missing-entry check であり、
+`jobIdentityObservation` の counter scope には含めません。
+
+additive な `cleanupObservation.jobIdentityObservation` は
+`identityAttemptCount` / `identityFailureCount` / `recoveryAttemptCount` /
+`disappearedAfterSnapshotCount` / `stillPresentAfterFailureCount` /
+`failureType` / `failureErrorCode` を保持します。counter は該当する範囲（最大 4096）に bounded で、
+`recoveryAttemptCount <= identityFailureCount <= identityAttemptCount`、および
+`disappearedAfterSnapshotCount + stillPresentAfterFailureCount <= recoveryAttemptCount` を検証し、
+first typed cause と error code を保持します。launch containment と cleanup は同じ object を共有するため、
+launch 時の観測も paired report に残ります。PID の残存、fresh Job query の unavailable / malformed、
+identity query の invocation exception、null / malformed identity、または strict conversion failure は
+terminal cleanup failure のままです。Job close、最終 tracked / exact-path sweep、zero survivor、
+zero cleanup-error の各 gate は引き続き必須です。
+
+paired converter は success 判定の前に launch と cleanup の nested object を照合します。旧 v1 のように
+両方の raw object が欠落している場合は、両方を明示的な `not-observed` に正規化して neutral とします。
+一方でも present なら、両方が valid な `observed`（failure のない正しい observed state を含む）に正規化され、
+status と7 fields 全てが exact 一致しなければなりません。一方だけ present、unavailable / partial / malformed、
+cross-field 不整合、または valid だが launch / cleanup 間で不一致の場合は typed `cleanup-unverified` として
+run を success=false / excluded にし、termination が後続 launch を抑止します。valid な identity telemetry は
+additive な診断であり、既存の Job close、最終 sweep、zero survivor、zero cleanup-error gate を弱めません。
+schema version 1 の旧 report で追加 fields がすべて欠落している場合は、`unknown` / `not-observed` / `0` の
+明示的な local fallback で読み込み可能です。object が存在するのに field が一部だけ、integer が範囲外、enum
+が未知、または cross-field が不整合な新 report は local `unavailable` に fail closed し、run の qualify には
+使いません。その他の query / cleanup telemetry は従来どおり diagnostic-only で、Job query が失敗したときに
+zero survivors を cleanup proof へ昇格させず、raw payload も保持しません。optional fields がない旧 v1 report は
+neutral な `not-attempted` とし、present だが malformed / mismatched な Job identity object だけは上記の契約に
+より意図的に fail closed します。
 
 `acceptance.qualified` は必要な launch 数と cleanup がそろった収集判定です。qualified mode は
 `-CppBuildManifest` / `-RustBuildManifest` と
@@ -219,7 +262,10 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\measure-output-startup.ps1
 `-SelfTest` は GUI を起動しません。通常の `measure-startup-performance.ps1` は単一の
 `sakura.exe` のマイルストーン比較用であり、ペア証拠の既定 35 回 / backend の代用ではありません。
 paired の self-test は旧 report fallback、bounded integer / enum、first-cause、process enumeration
-equations、affinity の historical/current/expired 整合も検証します。さらに 5 historical / 4 exact
+equations、tracked 経路の identity-gap helper、および injected native-shaped invoker を使う本番
+`Get-JobProcessRecords` 経路（fresh Job-membership による exact PID 不在だけを受理し、2 回目の Toolhelp
+census を行わず、present / unavailable / malformed、invocation exception、strict conversion を拒否）を検証します。
+launch と cleanup が同じ `jobIdentityObservation` を保持すること、affinity の historical/current/expired 整合も検証します。さらに 5 historical / 4 exact
 current の affinity plan が current 4 件だけを read-back し、null / empty、unknown、duplicate、creation / path
 mismatch を reject し、expired historical 1 件を失敗扱いにしないことを固定します。
 

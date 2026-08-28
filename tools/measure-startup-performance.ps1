@@ -40,6 +40,13 @@ $startupDiagnosticCheckpointMs = [ordered]@{
 $startupDiagnosticMaxProcessCount = 256
 $startupDiagnosticMaxImageNameLength = 260
 $startupDiagnosticMaxWindowCount = 1024
+$startupProcessEnumerationMaxEntryCount = 65536
+$startupProcessEnumerationMaxAttemptCount = 3
+$startupJobQueryMaxAttemptCount = 8
+$startupJobQueryMaxBytes = [UInt64]1048576
+$startupJobQueryHeaderBytes = [UInt64]8
+$startupJobQueryMaxProcessCount = [int](($startupJobQueryMaxBytes - $startupJobQueryHeaderBytes) / [UInt64]([IntPtr]::Size))
+$startupJobQueryRetryableErrorCodes = [int[]]@(122, 24, 234)
 $startupObservationMaxCount = 4096
 $startupTrackedSweepFailureTypes = @(
     'none', 'identity-disappeared', 'identity-still-present', 'enumeration-unavailable', 'identity-unavailable', 'exception'
@@ -48,6 +55,10 @@ $startupTrackedSweepCounterFields = @(
     'trackedSweepIdentityAttemptCount', 'trackedSweepIdentityFailureCount',
     'trackedSweepDisappearedAfterSnapshotCount', 'trackedSweepStillPresentAfterFailureCount',
     'trackedSweepPassCount'
+)
+$startupJobIdentityCounterFields = @(
+    'identityAttemptCount', 'identityFailureCount', 'recoveryAttemptCount',
+    'disappearedAfterSnapshotCount', 'stillPresentAfterFailureCount'
 )
 $startupAffinityFailureTypes = @(
     'none', 'open', 'set', 'readback', 'mismatch', 'identity', 'verification', 'unavailable'
@@ -2217,6 +2228,18 @@ function Convert-ProcessIdentity($Process) {
     }
 }
 
+function New-StartupJobIdentityObservation {
+    return [ordered]@{
+        identityAttemptCount = 0
+        identityFailureCount = 0
+        recoveryAttemptCount = 0
+        disappearedAfterSnapshotCount = 0
+        stillPresentAfterFailureCount = 0
+        failureType = 'none'
+        failureErrorCode = $null
+    }
+}
+
 function New-StartupJobQueryObservation {
     return [ordered]@{
         attempted = $false
@@ -2264,6 +2287,9 @@ function New-StartupCleanupObservation {
         processEnumerationCallCount = 0
         processEnumerationCompletedCount = 0
         processEnumerationFailureCount = 0
+        # Job-membership identity races are diagnostic for the Job path and
+        # intentionally do not reuse tracked-sweep-specific counters.
+        jobIdentityObservation = New-StartupJobIdentityObservation
         trackedSweepFailureType = 'none'
         trackedSweepFailureErrorCode = $null
         trackedSweepIdentityAttemptCount = 0
@@ -2293,6 +2319,40 @@ function Get-StartupObservationProperty {
     }
     catch { }
     return $Default
+}
+
+function Test-StartupObservationPropertyPresent {
+    param(
+        [AllowNull()] [object]$Object,
+        [Parameter(Mandatory = $true)] [string]$Name
+    )
+    if ($null -eq $Object) { return $false }
+    try {
+        if ($Object -is [Collections.IDictionary]) { return [bool]$Object.Contains($Name) }
+        return $null -ne $Object.PSObject.Properties[$Name]
+    }
+    catch { return $false }
+}
+
+function Test-StartupIntegralValue {
+    param(
+        [AllowNull()] [object]$Value,
+        [Parameter(Mandatory = $true)] [decimal]$Minimum,
+        [Parameter(Mandatory = $true)] [decimal]$Maximum
+    )
+    if ($null -eq $Value -or $Value -is [bool] -or
+        ($Value -isnot [byte] -and $Value -isnot [sbyte] -and
+         $Value -isnot [int16] -and $Value -isnot [uint16] -and
+         $Value -isnot [int32] -and $Value -isnot [uint32] -and
+         $Value -isnot [int64] -and $Value -isnot [uint64])) {
+        return $false
+    }
+    try {
+        $number = [decimal]$Value
+        return $number -ge $Minimum -and $number -le $Maximum -and
+            $number -eq [decimal]::Truncate($number)
+    }
+    catch { return $false }
 }
 
 function Convert-StartupObservationInt([AllowNull()] [object]$Value) {
@@ -2402,6 +2462,50 @@ function Add-StartupTrackedSweepCount {
     catch { }
 }
 
+function Add-StartupJobIdentityCount {
+    param(
+        [AllowNull()] [object]$Observation,
+        [Parameter(Mandatory = $true)] [string]$Field,
+        [int]$Increment = 1
+    )
+    if ($startupJobIdentityCounterFields -notcontains $Field) {
+        throw "Unsupported Job identity counter field: $Field"
+    }
+    if ($null -eq $Observation) { return }
+    try {
+        $Observation.$Field = Add-StartupSaturatingCount (Get-StartupObservationProperty $Observation $Field) $Increment $startupObservationMaxCount
+    }
+    catch { }
+}
+
+function Set-StartupJobIdentityFailure {
+    param(
+        [AllowNull()] [object]$Observation,
+        [AllowNull()] [object]$FailureType,
+        [AllowNull()] [object]$ErrorCode
+    )
+    if ($null -eq $Observation) { return }
+    try {
+        $candidateType = [string]$FailureType
+        if ($candidateType -eq 'none' -or $startupTrackedSweepFailureTypes -notcontains $candidateType) {
+            $candidateType = 'exception'
+        }
+        $existingType = [string](Get-StartupObservationProperty $Observation 'failureType')
+        if ($startupTrackedSweepFailureTypes -notcontains $existingType) { $existingType = 'none' }
+        # Preserve the first typed failure and its first-cause error code.  A
+        # later member must not overwrite the race that started this recovery.
+        if ($existingType -eq 'none') { $Observation.failureType = $candidateType }
+
+        $candidateError = Convert-StartupObservationErrorCode $ErrorCode
+        if ($null -eq $candidateError -or $candidateError -eq 0) { $candidateError = 13 }
+        $existingError = Convert-StartupObservationErrorCode (Get-StartupObservationProperty $Observation 'failureErrorCode')
+        if ($null -eq $existingError -or $existingError -eq 0) {
+            $Observation.failureErrorCode = [int]$candidateError
+        }
+    }
+    catch { }
+}
+
 function Get-StartupTrackedSweepFailureType {
     param(
         [Parameter(Mandatory = $true)] [int]$ProcessId,
@@ -2485,7 +2589,8 @@ function Invoke-StartupTrackedIdentityFailure {
         [Parameter(Mandatory = $true)] [int]$ProcessId,
         [AllowNull()] [object]$IdentityProbe,
         [AllowNull()] [scriptblock]$FreshCensus = $null,
-        [Parameter(Mandatory = $true)] [string]$ErrorMessage
+        [Parameter(Mandatory = $true)] [string]$ErrorMessage,
+        [bool]$RecordTrackedSweepTelemetry = $true
     )
     # Recovery is limited to a coherent typed QueryProcessIdentity failure.
     # Null probes, invocation-exception fallbacks, successful results, and
@@ -2500,7 +2605,7 @@ function Invoke-StartupTrackedIdentityFailure {
         $identitySucceededValue -isnot [bool] -or [bool]$identitySucceededValue -or
         $null -eq $identityProperty -or $null -ne $identityValue -or
         $null -eq $identityError -or $identityError -le 0) {
-        if ($null -ne $CleanupObservation) {
+        if ($RecordTrackedSweepTelemetry -and $null -ne $CleanupObservation) {
             Set-StartupTrackedSweepFailure $CleanupObservation 'identity-unavailable' 13
         }
         throw $ErrorMessage
@@ -2538,20 +2643,20 @@ function Invoke-StartupTrackedIdentityFailure {
             # for the paired consumer, while allowing this sweep to continue
             # because the typed fresh census proved exit.  This also applies
             # when the caller did not request an observation object.
-            if ($null -ne $CleanupObservation) {
+            if ($RecordTrackedSweepTelemetry -and $null -ne $CleanupObservation) {
                 Set-StartupTrackedSweepFailure $CleanupObservation $failureType $failureError
                 Add-StartupTrackedSweepCount $CleanupObservation 'trackedSweepDisappearedAfterSnapshotCount'
             }
             return $true
         }
         'identity-still-present' {
-            if ($null -ne $CleanupObservation) {
+            if ($RecordTrackedSweepTelemetry -and $null -ne $CleanupObservation) {
                 Set-StartupTrackedSweepFailure $CleanupObservation $failureType $failureError
                 Add-StartupTrackedSweepCount $CleanupObservation 'trackedSweepStillPresentAfterFailureCount'
             }
         }
         default {
-            if ($null -ne $CleanupObservation) {
+            if ($RecordTrackedSweepTelemetry -and $null -ne $CleanupObservation) {
                 Set-StartupTrackedSweepFailure $CleanupObservation $failureType $failureError
             }
         }
@@ -2958,9 +3063,12 @@ function Update-StartupDiagnosticCheckpoints {
 }
 
 function Get-VerifiedProcessEntries {
-    param([AllowNull()] [object]$Observation = $null)
+    param(
+        [AllowNull()] [object]$Observation = $null,
+        [AllowNull()] [scriptblock]$Invoker = $null
+    )
     try {
-        $probe = [NativeStartupProbe]::GetProcessEntries()
+        $probe = if ($null -ne $Invoker) { & $Invoker } else { [NativeStartupProbe]::GetProcessEntries() }
     }
     catch {
         if ($null -ne $Observation) {
@@ -2982,14 +3090,87 @@ function Get-VerifiedProcessEntries {
         }
     }
     if ($null -ne $Observation) { Add-StartupProcessEnumerationObservation $Observation $probe }
-    if ($null -eq $probe -or -not [bool]$probe.Complete -or -not [bool]$probe.Succeeded -or
-        $null -eq $probe.Entries) {
-        $errorCode = if ($null -eq $probe) { 13 } else { [int]$probe.ErrorCode }
-        $attemptCount = if ($null -eq $probe) { 0 } else { [int]$probe.AttemptCount }
-        $retryCount = if ($null -eq $probe) { 0 } else { [int]$probe.RetryCount }
+
+    # Treat the native result as an untrusted envelope even though the default
+    # invoker is local C#.  A forged/string/partial result must never become a
+    # process-tree or identity decision through PowerShell coercion.
+    $attemptedValue = Get-StartupObservationProperty $probe 'Attempted'
+    $completeValue = Get-StartupObservationProperty $probe 'Complete'
+    $succeededValue = Get-StartupObservationProperty $probe 'Succeeded'
+    $errorValue = Get-StartupObservationProperty $probe 'ErrorCode'
+    # Read Entries through the raw property so a one-member array is not
+    # collapsed to its scalar element by PowerShell pipeline unrolling.
+    $entriesValue = $null
+    if ($null -ne $probe) {
+        if ($probe -is [Collections.IDictionary]) {
+            if ($probe.Contains('Entries')) { $entriesValue = $probe['Entries'] }
+        }
+        else {
+            $entriesProperty = $probe.PSObject.Properties['Entries']
+            if ($null -ne $entriesProperty) { $entriesValue = $entriesProperty.Value }
+        }
+    }
+    $attemptsValue = Get-StartupObservationProperty $probe 'AttemptCount'
+    $retryValue = Get-StartupObservationProperty $probe 'RetryCount'
+    $retriedValue = Get-StartupObservationProperty $probe 'Retried'
+    $attemptCountValid = Test-StartupIntegralValue $attemptsValue 1 ([decimal]$startupProcessEnumerationMaxAttemptCount)
+    $retryCountValid = Test-StartupIntegralValue $retryValue 0 ([decimal]($startupProcessEnumerationMaxAttemptCount - 1))
+    $envelopeValid = $null -ne $probe -and
+        $attemptedValue -is [bool] -and [bool]$attemptedValue -and
+        $completeValue -is [bool] -and $succeededValue -is [bool] -and
+        (Test-StartupIntegralValue $errorValue 0 ([decimal][int]::MaxValue)) -and
+        $attemptCountValid -and $retryCountValid -and $retriedValue -is [bool] -and
+        $entriesValue -is [Array] -and $entriesValue.Length -le $startupProcessEnumerationMaxEntryCount
+    if ($envelopeValid) {
+        # Get-VerifiedProcessEntries is a success-only trust boundary.  A
+        # coherent typed failure is recorded above but must still throw; its
+        # partial/empty Entries payload is never returned as a snapshot.
+        # In native-shaped terms, -not [bool]$probe.Complete or -not [bool]$probe.Succeeded is therefore always fail-closed here.
+        $errorCode = [int]$errorValue
+        $attemptCount = [int]$attemptsValue
+        $retryCount = [int]$retryValue
+        $coherentEnvelope = $attemptCount -ge 1 -and $attemptCount -le $startupProcessEnumerationMaxAttemptCount -and
+            $retryCount -ge 0 -and $retryCount -lt $attemptCount -and
+            [bool]$retriedValue -eq ($retryCount -gt 0) -and
+            (([bool]$succeededValue -and [bool]$completeValue -and $errorCode -eq 0) -or
+             (-not [bool]$succeededValue -and -not [bool]$completeValue -and $errorCode -gt 0))
+        # A coherent native failure is useful for telemetry, but this resolver
+        # returns entries only for a successful census.  Never expose the
+        # failure's (possibly empty) payload as a snapshot.
+        $envelopeValid = $coherentEnvelope -and [bool]$succeededValue
+    }
+    $entryIds = @{}
+    if ($envelopeValid) {
+        foreach ($entry in $entriesValue) {
+            if ($null -eq $entry -or $entry -is [string] -or $entry -is [ValueType] -or $entry -is [Array]) {
+                $envelopeValid = $false
+                break
+            }
+            $processIdValue = Get-StartupObservationProperty $entry 'ProcessId'
+            $parentProcessIdValue = Get-StartupObservationProperty $entry 'ParentProcessId'
+            $imageNameValue = Get-StartupObservationProperty $entry 'ImageName'
+            if (-not (Test-StartupIntegralValue $processIdValue 0 ([decimal][int]::MaxValue)) -or
+                -not (Test-StartupIntegralValue $parentProcessIdValue 0 ([decimal][int]::MaxValue)) -or
+                $imageNameValue -isnot [string] -or [string]::IsNullOrWhiteSpace($imageNameValue) -or
+                $imageNameValue.Length -ge $startupDiagnosticMaxImageNameLength) {
+                $envelopeValid = $false
+                break
+            }
+            $processId = [int]$processIdValue
+            if ($entryIds.ContainsKey($processId)) {
+                $envelopeValid = $false
+                break
+            }
+            $entryIds[$processId] = $true
+        }
+    }
+    if (-not $envelopeValid) {
+        $errorCode = if (Test-StartupIntegralValue $errorValue 1 ([decimal][int]::MaxValue)) { [int]$errorValue } else { 13 }
+        $attemptCount = if (Test-StartupIntegralValue $attemptsValue 0 ([decimal][int]::MaxValue)) { [int]$attemptsValue } else { 0 }
+        $retryCount = if (Test-StartupIntegralValue $retryValue 0 ([decimal][int]::MaxValue)) { [int]$retryValue } else { 0 }
         throw "Could not enumerate the native process snapshot (Win32 $errorCode; attempts $attemptCount; retries $retryCount)."
     }
-    return @($probe.Entries)
+    return @($entriesValue)
 }
 
 function Get-ProcessSnapshot($Owned, [int[]]$SeedIds = @(), [object]$Observation = $null) {
@@ -3052,35 +3233,485 @@ function Get-ProcessesForImagePath([string]$ImagePath, [object]$Observation = $n
     return $result
 }
 
-function Get-JobProcessRecords([IntPtr]$Job, $Owned, [object]$QueryObservation = $null, [object]$CleanupObservation = $null) {
+function Test-StartupCoherentIdentityFailure {
+    param([AllowNull()] [object]$IdentityProbe)
+    $identitySucceededValue = Get-StartupObservationProperty $IdentityProbe 'Succeeded'
+    $identityValue = Get-StartupObservationProperty $IdentityProbe 'Identity'
+    $identityErrorValue = Get-StartupObservationProperty $IdentityProbe 'ErrorCode'
+    $identityError = if (Test-StartupIntegralValue $identityErrorValue 1 ([decimal][int]::MaxValue)) { [int]$identityErrorValue } else { $null }
+    $identityProperty = if ($null -ne $IdentityProbe) {
+        if ($IdentityProbe -is [Collections.IDictionary]) { $IdentityProbe.Contains('Identity') }
+        else { $null -ne $IdentityProbe.PSObject.Properties['Identity'] }
+    }
+    return $null -ne $IdentityProbe -and
+        $identitySucceededValue -is [bool] -and -not [bool]$identitySucceededValue -and
+        $identityProperty -and $null -eq $identityValue -and
+        $null -ne $identityError -and $identityError -gt 0
+}
+
+function Test-StartupIdentitySuccessEnvelope {
+    param([AllowNull()] [object]$IdentityProbe)
+    if ($null -eq $IdentityProbe) { return $false }
+    $identityProperty = if ($IdentityProbe -is [Collections.IDictionary]) {
+        $IdentityProbe.Contains('Identity')
+    }
+    else {
+        $null -ne $IdentityProbe.PSObject.Properties['Identity']
+    }
+    $succeededValue = Get-StartupObservationProperty $IdentityProbe 'Succeeded'
+    $errorValue = Get-StartupObservationProperty $IdentityProbe 'ErrorCode'
+    $identityValue = Get-StartupObservationProperty $IdentityProbe 'Identity'
+    return $succeededValue -is [bool] -and [bool]$succeededValue -and
+        (Test-StartupIntegralValue $errorValue 0 ([decimal][int]::MaxValue)) -and
+        [int]$errorValue -eq 0 -and $identityProperty -and $null -ne $identityValue
+}
+
+function Test-StartupJobIdentityShape {
+    param(
+        [AllowNull()] [object]$Identity,
+        [Parameter(Mandatory = $true)] [int]$RequestedProcessId,
+        [Parameter(Mandatory = $true)] [int]$ExpectedParentProcessId
+    )
+    if ($null -eq $Identity -or $Identity -is [string] -or $Identity -is [ValueType] -or $Identity -is [Array]) { return $false }
+    $processIdValue = Get-StartupObservationProperty $Identity 'ProcessId'
+    $parentProcessIdValue = Get-StartupObservationProperty $Identity 'ParentProcessId'
+    $creationTimeValue = Get-StartupObservationProperty $Identity 'CreationTime'
+    $imagePathValue = Get-StartupObservationProperty $Identity 'ImagePath'
+    $intMaximum = [int]::MaxValue
+    $longMaximum = [long]::MaxValue
+    if (-not (Test-StartupIntegralValue $processIdValue 1 ([decimal]$intMaximum)) -or
+        -not (Test-StartupIntegralValue $parentProcessIdValue 0 ([decimal]$intMaximum)) -or
+        -not (Test-StartupIntegralValue $creationTimeValue 1 ([decimal]$longMaximum)) -or
+        $imagePathValue -isnot [string] -or [string]::IsNullOrWhiteSpace($imagePathValue) -or
+        $imagePathValue.Length -ge 32768) {
+        return $false
+    }
+    try {
+        return [int]$processIdValue -eq $RequestedProcessId -and
+            [int]$parentProcessIdValue -eq $ExpectedParentProcessId
+    }
+    catch { return $false }
+}
+
+function Get-JobProcessRecords([IntPtr]$Job, $Owned, [object]$QueryObservation = $null, [object]$CleanupObservation = $null, [AllowNull()] [object]$Invokers = $null, [AllowNull()] [object]$JobIdentityObservation = $null) {
     if ($Job -eq [IntPtr]::Zero) { throw 'A run-owned job handle is required.' }
-    $query = [NativeStartupProbe]::QueryJobProcessIds($Job)
+
+    # Keep the seam local to this production path.  Normal measurement calls
+    # use the native query/census/identity invokers; the no-GUI self-test can
+    # inject deterministic results without creating a process or a GUI.
+    $jobQueryInvoker = { param([IntPtr]$Handle) [NativeStartupProbe]::QueryJobProcessIds($Handle) }
+    $processCensusInvoker = { [NativeStartupProbe]::GetProcessEntries() }
+    $identityQueryInvoker = { param([int]$ProcessId, [int]$ParentProcessId) [NativeStartupProbe]::QueryProcessIdentity($ProcessId, $ParentProcessId) }
+    if ($null -ne $Invokers) {
+        $candidateJobQueryInvoker = Get-StartupObservationProperty $Invokers 'JobQuery'
+        $candidateProcessCensusInvoker = Get-StartupObservationProperty $Invokers 'ProcessCensus'
+        $candidateIdentityQueryInvoker = Get-StartupObservationProperty $Invokers 'IdentityQuery'
+        if ($candidateJobQueryInvoker -isnot [scriptblock] -or
+            $candidateProcessCensusInvoker -isnot [scriptblock] -or
+            $candidateIdentityQueryInvoker -isnot [scriptblock]) {
+            throw 'The run-owned Job resolver/invoker seam is malformed.'
+        }
+        $jobQueryInvoker = $candidateJobQueryInvoker
+        $processCensusInvoker = $candidateProcessCensusInvoker
+        $identityQueryInvoker = $candidateIdentityQueryInvoker
+    }
+    $jobIdentityObservation = if ($null -ne $JobIdentityObservation) {
+        $JobIdentityObservation
+    }
+    elseif ($null -ne $CleanupObservation) {
+        Get-StartupObservationProperty $CleanupObservation 'jobIdentityObservation'
+    }
+    else { $null }
+    $newJobQueryFailure = {
+        return [pscustomobject][ordered]@{
+            Attempted = $true; Succeeded = $false; ErrorCode = 13; ProcessIds = [int[]]@()
+            AttemptCount = 1; CapacityBytes = [UInt64]0; RequiredBytes = [UInt64]0; ReturnLengthBytes = [UInt64]0
+            AssignedProcessCount = [UInt32]0; ListedProcessCount = [UInt32]0; Resized = $false
+            Attempts = @([pscustomobject][ordered]@{
+                Attempted = $true; AttemptNumber = 1; Succeeded = $false; ErrorCode = 13
+                CapacityBytes = [UInt64]0; RequiredBytes = [UInt64]0; ReturnLengthBytes = [UInt64]0
+                AssignedProcessCount = [UInt32]0; ListedProcessCount = [UInt32]0; Resized = $false
+            })
+        }
+    }
+    $validateJobQuery = {
+        param([AllowNull()] [object]$Candidate)
+        $attemptedValue = Get-StartupObservationProperty $Candidate 'Attempted'
+        $succeededValue = Get-StartupObservationProperty $Candidate 'Succeeded'
+        # Read the raw PID-array property directly so a one-member Job result
+        # is not collapsed to a scalar by PowerShell pipeline unrolling.
+        $processIdsValue = $null
+        if ($null -ne $Candidate) {
+            if ($Candidate -is [Collections.IDictionary]) {
+                if ($Candidate.Contains('ProcessIds')) { $processIdsValue = $Candidate['ProcessIds'] }
+            }
+            else {
+                $processIdsProperty = $Candidate.PSObject.Properties['ProcessIds']
+                if ($null -ne $processIdsProperty) { $processIdsValue = $processIdsProperty.Value }
+            }
+        }
+        # Attempts is another raw array boundary.  Do not let PowerShell unwrap
+        # a one-attempt array into a scalar before validating its native shape.
+        $attemptsValue = $null
+        if ($null -ne $Candidate) {
+            if ($Candidate -is [Collections.IDictionary]) {
+                if ($Candidate.Contains('Attempts')) { $attemptsValue = $Candidate['Attempts'] }
+            }
+            else {
+                $attemptsProperty = $Candidate.PSObject.Properties['Attempts']
+                if ($null -ne $attemptsProperty) { $attemptsValue = $attemptsProperty.Value }
+            }
+        }
+        $errorRaw = Get-StartupObservationProperty $Candidate 'ErrorCode'
+        $attemptCountRaw = Get-StartupObservationProperty $Candidate 'AttemptCount'
+        $capacityRaw = Get-StartupObservationProperty $Candidate 'CapacityBytes'
+        $requiredRaw = Get-StartupObservationProperty $Candidate 'RequiredBytes'
+        $returnLengthRaw = Get-StartupObservationProperty $Candidate 'ReturnLengthBytes'
+        $assignedRaw = Get-StartupObservationProperty $Candidate 'AssignedProcessCount'
+        $listedRaw = Get-StartupObservationProperty $Candidate 'ListedProcessCount'
+        $resizedValue = Get-StartupObservationProperty $Candidate 'Resized'
+        # These types mirror StartupProbeJobResult exactly.  In particular,
+        # accepting a mathematically integral Double or Decimal here would let
+        # a forged envelope cross the Job-membership decision boundary.
+        $errorValid = $errorRaw -is [int32] -and $errorRaw -ge 0 -and $errorRaw -le [int32]::MaxValue
+        $attemptCountValid = $attemptCountRaw -is [int32] -and
+            $attemptCountRaw -ge 1 -and $attemptCountRaw -le $startupJobQueryMaxAttemptCount
+        $byteFieldsValid = $capacityRaw -is [UInt64] -and $capacityRaw -le $startupJobQueryMaxBytes -and
+            $requiredRaw -is [UInt64] -and $requiredRaw -le $startupJobQueryMaxBytes -and
+            $returnLengthRaw -is [UInt64] -and $returnLengthRaw -le $startupJobQueryMaxBytes
+        $countFieldsValid = $assignedRaw -is [UInt32] -and $assignedRaw -le [UInt32]$startupJobQueryMaxProcessCount -and
+            $listedRaw -is [UInt32] -and $listedRaw -le [UInt32]$startupJobQueryMaxProcessCount
+        $errorCode = if ($errorValid) { [int]$errorRaw } else { 13 }
+        $queryShapeValid = $null -ne $Candidate -and
+            $attemptedValue -is [bool] -and [bool]$attemptedValue -and
+            $succeededValue -is [bool] -and $resizedValue -is [bool] -and $errorValid -and
+            $attemptCountValid -and $byteFieldsValid -and $countFieldsValid -and
+            $null -ne $processIdsValue -and $processIdsValue -is [Array] -and
+            $processIdsValue.Length -le $startupJobQueryMaxProcessCount -and
+            $null -ne $attemptsValue -and $attemptsValue -is [Array] -and
+            $attemptsValue.Length -le $startupJobQueryMaxAttemptCount
+        if (-not $queryShapeValid) {
+            return [pscustomobject][ordered]@{ valid = $false; processIds = [int[]]@(); errorCode = $errorCode }
+        }
+        $attemptCount = [int]$attemptCountRaw
+        $capacityBytes = [UInt64]$capacityRaw
+        $requiredBytes = [UInt64]$requiredRaw
+        $returnLengthBytes = [UInt64]$returnLengthRaw
+        $assignedProcessCount = [UInt32]$assignedRaw
+        $listedProcessCount = [UInt32]$listedRaw
+        if ($attemptsValue.Length -ne $attemptCount) {
+            return [pscustomobject][ordered]@{ valid = $false; processIds = [int[]]@(); errorCode = 13 }
+        }
+        $attemptsValid = $true
+        $anyAttemptResized = $false
+        $previousDataCapacity = $null
+        $lastAttempt = $null
+        for ($attemptIndex = 0; $attemptIndex -lt $attemptsValue.Length; $attemptIndex++) {
+            $attempt = $attemptsValue[$attemptIndex]
+            if ($null -eq $attempt -or $attempt -is [string] -or $attempt -is [ValueType] -or $attempt -is [Array]) {
+                $attemptsValid = $false
+                break
+            }
+            $attemptAttempted = Get-StartupObservationProperty $attempt 'Attempted'
+            $attemptNumber = Get-StartupObservationProperty $attempt 'AttemptNumber'
+            $attemptSucceeded = Get-StartupObservationProperty $attempt 'Succeeded'
+            $attemptError = Get-StartupObservationProperty $attempt 'ErrorCode'
+            $attemptCapacity = Get-StartupObservationProperty $attempt 'CapacityBytes'
+            $attemptRequired = Get-StartupObservationProperty $attempt 'RequiredBytes'
+            $attemptReturnLength = Get-StartupObservationProperty $attempt 'ReturnLengthBytes'
+            $attemptAssigned = Get-StartupObservationProperty $attempt 'AssignedProcessCount'
+            $attemptListed = Get-StartupObservationProperty $attempt 'ListedProcessCount'
+            $attemptResized = Get-StartupObservationProperty $attempt 'Resized'
+            $attemptValid = $attemptAttempted -is [bool] -and [bool]$attemptAttempted -and
+                $attemptNumber -is [int32] -and $attemptNumber -eq ($attemptIndex + 1) -and
+                $attemptSucceeded -is [bool] -and $attemptError -is [int32] -and
+                $attemptError -ge 0 -and $attemptError -le [int32]::MaxValue -and
+                $attemptCapacity -is [UInt64] -and $attemptCapacity -le $startupJobQueryMaxBytes -and
+                $attemptRequired -is [UInt64] -and $attemptRequired -le $startupJobQueryMaxBytes -and
+                $attemptReturnLength -is [UInt64] -and $attemptReturnLength -le $startupJobQueryMaxBytes -and
+                $attemptAssigned -is [UInt32] -and $attemptAssigned -le [UInt32]$startupJobQueryMaxProcessCount -and
+                $attemptListed -is [UInt32] -and $attemptListed -le [UInt32]$startupJobQueryMaxProcessCount -and
+                $attemptResized -is [bool] -and $attemptListed -le $attemptAssigned
+            if ($attemptValid) {
+                $attemptCapacity = [UInt64]$attemptCapacity
+                $attemptRequired = [UInt64]$attemptRequired
+                $attemptReturnLength = [UInt64]$attemptReturnLength
+                $attemptAssigned = [UInt32]$attemptAssigned
+                $attemptListed = [UInt32]$attemptListed
+                if ($attemptCapacity -eq [UInt64]0) {
+                    # The zero-buffer sizing query is the only native attempt
+                    # allowed to have zero capacity and zero counts.  Its
+                    # required and returned lengths are the same sizing hint.
+                    $attemptValid = $attemptIndex -eq 0 -and $attemptAssigned -eq 0 -and
+                        $attemptListed -eq 0 -and $attemptRequired -eq $attemptReturnLength -and
+                        -not [bool]$attemptResized
+                }
+                else {
+                    $minimumCapacity = $startupJobQueryHeaderBytes + [UInt64]([IntPtr]::Size)
+                    $capacitySlots = ($attemptCapacity - $startupJobQueryHeaderBytes) / [UInt64]([IntPtr]::Size)
+                    $attemptValid = $attemptCapacity -ge $minimumCapacity -and
+                        $attemptRequired -eq $attemptCapacity -and
+                        [UInt64]$attemptListed -le $capacitySlots -and
+                        ($null -eq $previousDataCapacity -or $attemptCapacity -gt [UInt64]$previousDataCapacity)
+                }
+                if ($attemptValid -and [bool]$attemptSucceeded) {
+                    $attemptValid = $attemptError -eq 0
+                    if ($attemptValid) {
+                        if ($attemptReturnLength -eq [UInt64]0) {
+                            $attemptValid = $attemptAssigned -eq 0 -and $attemptListed -eq 0
+                        }
+                        else {
+                            $minimumReturn = $startupJobQueryHeaderBytes +
+                                ([UInt64]$attemptListed * [UInt64]([IntPtr]::Size))
+                            $attemptValid = $attemptReturnLength -ge $minimumReturn -and
+                                $attemptReturnLength -le $attemptCapacity
+                        }
+                    }
+                }
+                elseif ($attemptValid) {
+                    # A typed native failure must carry a nonzero Win32 code.
+                    # Retryable failures may report a return length larger than
+                    # the current buffer; the core uses that value to grow it.
+                    $attemptValid = $attemptError -gt 0
+                }
+            }
+            if ($attemptValid -and $attemptCapacity -gt [UInt64]0) {
+                $previousDataCapacity = [UInt64]$attemptCapacity
+            }
+            if ($attemptValid) {
+                $isFinalAttempt = $attemptIndex -eq ($attemptsValue.Length - 1)
+                $isRetryableFailure = -not [bool]$attemptSucceeded -and
+                    $startupJobQueryRetryableErrorCodes -contains [int]$attemptError
+                if (-not $isFinalAttempt) {
+                    if ($attemptCapacity -eq [UInt64]0) {
+                        # The first zero-buffer sizing attempt may precede a
+                        # data query, but a terminal non-retryable sizing
+                        # failure cannot have a later attempt.
+                        $attemptValid = $attemptIndex -eq 0 -and
+                            ([bool]$attemptSucceeded -or $isRetryableFailure)
+                    }
+                    elseif ([bool]$attemptSucceeded) {
+                        # A successful non-final attempt is legal only when it
+                        # was a partial list that the native loop resized.
+                        $attemptValid = $attemptListed -lt $attemptAssigned -and [bool]$attemptResized
+                    }
+                    else {
+                        # A non-final data failure must be retryable and must
+                        # carry the native loop's resize marker.
+                        $attemptValid = $isRetryableFailure -and [bool]$attemptResized
+                    }
+                }
+                elseif ([bool]$attemptSucceeded -and [bool]$attemptResized) {
+                    # A successful result is complete; a resize marker on the
+                    # final attempt is contradictory.  (A failed exhausted
+                    # attempt may retain its final resize hint.)
+                    $attemptValid = $false
+                }
+            }
+            if (-not $attemptValid) {
+                $attemptsValid = $false
+                break
+            }
+            if ([bool]$attemptResized) { $anyAttemptResized = $true }
+            $lastAttempt = $attempt
+        }
+        if (-not $attemptsValid -or $null -eq $lastAttempt) {
+            return [pscustomobject][ordered]@{ valid = $false; processIds = [int[]]@(); errorCode = 13 }
+        }
+        $lastCapacity = [UInt64](Get-StartupObservationProperty $lastAttempt 'CapacityBytes')
+        $lastRequired = [UInt64](Get-StartupObservationProperty $lastAttempt 'RequiredBytes')
+        $lastReturnLength = [UInt64](Get-StartupObservationProperty $lastAttempt 'ReturnLengthBytes')
+        $lastAssigned = [UInt32](Get-StartupObservationProperty $lastAttempt 'AssignedProcessCount')
+        $lastListed = [UInt32](Get-StartupObservationProperty $lastAttempt 'ListedProcessCount')
+        $lastSucceeded = [bool](Get-StartupObservationProperty $lastAttempt 'Succeeded')
+        $lastError = [int](Get-StartupObservationProperty $lastAttempt 'ErrorCode')
+        $lastResized = [bool](Get-StartupObservationProperty $lastAttempt 'Resized')
+        $requiredMatchesLastAttempt = $requiredBytes -eq $lastRequired
+        # QueryJobProcessIdsCore records the next growth target when a
+        # retryable final attempt exhausts the eight-call budget.  Preserve
+        # that native diagnostic while still requiring a bounded, advancing
+        # target; all other results must match the final attempt exactly.
+        if (-not $requiredMatchesLastAttempt -and $lastResized -and
+            $attemptCount -eq $startupJobQueryMaxAttemptCount -and
+            $requiredBytes -gt $lastRequired) {
+            $requiredMatchesLastAttempt = $requiredBytes -le $startupJobQueryMaxBytes
+        }
+        $queryShapeValid = $capacityBytes -eq $lastCapacity -and
+            $requiredMatchesLastAttempt -and $returnLengthBytes -eq $lastReturnLength -and
+            $assignedProcessCount -eq $lastAssigned -and $listedProcessCount -eq $lastListed -and
+            [bool]$resizedValue -eq $anyAttemptResized
+        if ([bool]$succeededValue) {
+            if ($queryShapeValid) {
+                $queryShapeValid = $errorCode -eq 0 -and $lastSucceeded -and $lastError -eq 0 -and
+                    -not $lastResized -and $assignedProcessCount -eq $listedProcessCount -and
+                    $processIdsValue.Length -eq [int]$listedProcessCount
+                if ($queryShapeValid) {
+                    if ($returnLengthBytes -eq [UInt64]0) {
+                        $queryShapeValid = $assignedProcessCount -eq 0 -and $listedProcessCount -eq 0
+                    }
+                    else {
+                        $minimumReturn = $startupJobQueryHeaderBytes +
+                            ([UInt64]$listedProcessCount * [UInt64]([IntPtr]::Size))
+                        $queryShapeValid = $capacityBytes -ge ($startupJobQueryHeaderBytes + [UInt64]([IntPtr]::Size)) -and
+                            $returnLengthBytes -ge $minimumReturn -and $returnLengthBytes -le $capacityBytes
+                    }
+                }
+            }
+        }
+        else {
+            # Failure envelopes never publish process IDs and must retain their
+            # first nonzero native error; a false success/error-zero pair is
+            # contradictory even if all metadata fields look well-typed.
+            $queryShapeValid = $queryShapeValid -and $errorCode -gt 0 -and $processIdsValue.Length -eq 0
+        }
+        $ids = New-Object Collections.Generic.List[int]
+        $seen = @{}
+        if (-not $queryShapeValid -or -not [bool]$succeededValue) {
+            return [pscustomobject][ordered]@{ valid = $false; processIds = [int[]]@(); errorCode = if ($errorCode -gt 0) { $errorCode } else { 13 } }
+        }
+        foreach ($rawProcessId in $processIdsValue) {
+            if ($null -eq $rawProcessId -or $rawProcessId -is [bool]) {
+                return [pscustomobject][ordered]@{ valid = $false; processIds = [int[]]@(); errorCode = 13 }
+            }
+            if (-not (Test-StartupIntegralValue $rawProcessId 1 ([decimal][int]::MaxValue))) {
+                return [pscustomobject][ordered]@{ valid = $false; processIds = [int[]]@(); errorCode = 13 }
+            }
+            try { $processId = [int]$rawProcessId } catch {
+                return [pscustomobject][ordered]@{ valid = $false; processIds = [int[]]@(); errorCode = 13 }
+            }
+            if ($seen.ContainsKey($processId)) {
+                return [pscustomobject][ordered]@{ valid = $false; processIds = [int[]]@(); errorCode = 13 }
+            }
+            $seen[$processId] = $true
+            [void]$ids.Add($processId)
+        }
+        return [pscustomobject][ordered]@{ valid = $true; processIds = $ids.ToArray(); errorCode = 0 }
+    }
+    $query = $null
+    try {
+        $query = & $jobQueryInvoker $Job
+    }
+    catch {
+        if ($null -ne $QueryObservation) { Add-StartupJobQueryObservation $QueryObservation (& $newJobQueryFailure) }
+        throw
+    }
     $queryMetadata = Convert-StartupJobQueryObservation $query
     if ($null -ne $QueryObservation) { Add-StartupJobQueryObservation $QueryObservation $queryMetadata }
-    if (-not $query.Succeeded -or $null -eq $query.ProcessIds) {
-        throw "Could not enumerate run-owned job processes (Win32 $($query.ErrorCode))."
+    $queryCheck = & $validateJobQuery $query
+    if (-not $queryCheck.valid) {
+        throw "Could not enumerate run-owned job processes (Win32 $($queryCheck.errorCode))."
     }
-    $entries = @(Get-VerifiedProcessEntries $CleanupObservation)
+    $entries = @(Get-VerifiedProcessEntries -Observation $CleanupObservation -Invoker $processCensusInvoker)
     $records = New-Object Collections.Generic.List[object]
-    foreach ($processId in @($query.ProcessIds)) {
+    foreach ($processId in @($queryCheck.processIds)) {
         $entry = @($entries | Where-Object { [int]$_.ProcessId -eq [int]$processId } | Select-Object -First 1)
         if ($entry.Count -eq 0) {
             # The process may have exited after the job query.  Re-query the job
             # once before declaring an identity gap; an unobservable member is not
             # a clean result.
-            $retry = [NativeStartupProbe]::QueryJobProcessIds($Job)
+            $retry = $null
+            try {
+                $retry = & $jobQueryInvoker $Job
+            }
+            catch {
+                if ($null -ne $QueryObservation) { Add-StartupJobQueryObservation $QueryObservation (& $newJobQueryFailure) }
+                throw
+            }
             $retryMetadata = Convert-StartupJobQueryObservation $retry
             if ($null -ne $QueryObservation) { Add-StartupJobQueryObservation $QueryObservation $retryMetadata }
-            if (-not $retry.Succeeded -or @($retry.ProcessIds | Where-Object { [int]$_ -eq [int]$processId }).Count -gt 0) {
+            $retryCheck = & $validateJobQuery $retry
+            if (-not $retryCheck.valid -or @($retryCheck.processIds | Where-Object { [int]$_ -eq [int]$processId }).Count -gt 0) {
                 throw "Could not observe the identity of run-owned job process $processId."
             }
             continue
         }
-        $identityProbe = [NativeStartupProbe]::QueryProcessIdentity([int]$entry[0].ProcessId, [int]$entry[0].ParentProcessId)
-        if (-not $identityProbe.Succeeded -or $null -eq $identityProbe.Identity) {
-            throw "Could not verify the identity of run-owned job process $processId (Win32 $($identityProbe.ErrorCode))."
+        if ($null -ne $jobIdentityObservation) { Add-StartupJobIdentityCount $jobIdentityObservation 'identityAttemptCount' }
+        $identityProbe = $null
+        try {
+            $identityProbe = & $identityQueryInvoker ([int]$entry[0].ProcessId) ([int]$entry[0].ParentProcessId)
         }
-        $record = Convert-ProcessIdentity $identityProbe.Identity
+        catch {
+            if ($null -ne $jobIdentityObservation) {
+                Add-StartupJobIdentityCount $jobIdentityObservation 'identityFailureCount'
+                Set-StartupJobIdentityFailure $jobIdentityObservation 'exception' 13
+            }
+            throw "Could not verify the identity of run-owned job process $processId (Win32 13)."
+        }
+        $identitySucceeded = Test-StartupIdentitySuccessEnvelope $identityProbe
+        $identityFailedCoherently = Test-StartupCoherentIdentityFailure $identityProbe
+        if (-not $identitySucceeded -and -not $identityFailedCoherently) {
+            $identityError = Convert-StartupObservationErrorCode (Get-StartupObservationProperty $identityProbe 'ErrorCode')
+            if ($null -eq $identityError -or $identityError -le 0) { $identityError = 13 }
+            if ($null -ne $jobIdentityObservation) {
+                Add-StartupJobIdentityCount $jobIdentityObservation 'identityFailureCount'
+                Set-StartupJobIdentityFailure $jobIdentityObservation 'identity-unavailable' $identityError
+            }
+            throw "Could not verify the identity of run-owned job process $processId (Win32 $identityError)."
+        }
+        if (-not $identitySucceeded) {
+            $identityError = Convert-StartupObservationErrorCode (Get-StartupObservationProperty $identityProbe 'ErrorCode')
+            if ($null -eq $identityError -or $identityError -le 0) { $identityError = 13 }
+            if ($null -ne $jobIdentityObservation) {
+                Add-StartupJobIdentityCount $jobIdentityObservation 'identityFailureCount'
+                Add-StartupJobIdentityCount $jobIdentityObservation 'recoveryAttemptCount'
+            }
+
+            # Job membership identity gaps use a fresh Job-membership query to
+            # prove that the exact
+            # member is gone.  A Toolhelp census alone cannot distinguish a stale
+            # membership result from an exited member.
+            $freshJobQuery = $null
+            try {
+                $freshJobQuery = & $jobQueryInvoker $Job
+            }
+            catch {
+                if ($null -ne $QueryObservation) { Add-StartupJobQueryObservation $QueryObservation (& $newJobQueryFailure) }
+                if ($null -ne $jobIdentityObservation) { Set-StartupJobIdentityFailure $jobIdentityObservation 'exception' 13 }
+                throw "Could not refresh run-owned job membership after identity failure for process $processId (Win32 13)."
+            }
+            $freshJobMetadata = Convert-StartupJobQueryObservation $freshJobQuery
+            if ($null -ne $QueryObservation) { Add-StartupJobQueryObservation $QueryObservation $freshJobMetadata }
+            $freshJobCheck = & $validateJobQuery $freshJobQuery
+            if (-not $freshJobCheck.valid) {
+                if ($null -ne $jobIdentityObservation) { Set-StartupJobIdentityFailure $jobIdentityObservation 'enumeration-unavailable' $freshJobCheck.errorCode }
+                throw "Could not refresh run-owned job membership after identity failure for process $processId (Win32 $($freshJobCheck.errorCode))."
+            }
+            if (@($freshJobCheck.processIds | Where-Object { [int]$_ -eq [int]$processId }).Count -gt 0) {
+                if ($null -ne $jobIdentityObservation) {
+                    Add-StartupJobIdentityCount $jobIdentityObservation 'stillPresentAfterFailureCount'
+                    Set-StartupJobIdentityFailure $jobIdentityObservation 'identity-still-present' $identityError
+                }
+                throw "Could not verify the identity of run-owned job process $processId (Win32 $identityError)."
+            }
+
+            # The fresh Job-membership query is the sole recovery proof.  Do not
+            # add a second Toolhelp census here: between two snapshots a PID may
+            # be reused, and a second census would reintroduce that ambiguity.
+            if ($null -ne $jobIdentityObservation) {
+                Add-StartupJobIdentityCount $jobIdentityObservation 'disappearedAfterSnapshotCount'
+                Set-StartupJobIdentityFailure $jobIdentityObservation 'identity-disappeared' $identityError
+            }
+            continue
+        }
+        # The conversion is kept below the recovery branch so a successful
+        # identity probe still fails closed if conversion itself is malformed.
+        if (-not (Test-StartupJobIdentityShape $identityProbe.Identity ([int]$entry[0].ProcessId) ([int]$entry[0].ParentProcessId))) {
+            if ($null -ne $jobIdentityObservation) {
+                Add-StartupJobIdentityCount $jobIdentityObservation 'identityFailureCount'
+                Set-StartupJobIdentityFailure $jobIdentityObservation 'exception' 13
+            }
+            throw "Could not validate the identity of run-owned job process $processId (Win32 13)."
+        }
+        try {
+            $record = Convert-ProcessIdentity $identityProbe.Identity
+        }
+        catch {
+            if ($null -ne $jobIdentityObservation) {
+                Add-StartupJobIdentityCount $jobIdentityObservation 'identityFailureCount'
+                Set-StartupJobIdentityFailure $jobIdentityObservation 'exception' 13
+            }
+            throw "Could not convert the identity of run-owned job process $processId (Win32 13)."
+        }
         $Owned[$record.Id] = $record
         [void]$records.Add($record)
     }
@@ -4292,6 +4923,11 @@ function Invoke-StartupMeasurement([string]$Condition, [int]$Iteration, [string]
         jobQuerySucceeded = $false; jobCloseSucceeded = $false; finalPathSweepVerified = $false; containmentVerified = $false
         survivors = @()
     }
+    # Launch containment and cleanup share one explicit additive identity-race
+    # object, so a launch-time Job query cannot lose its diagnostic before the
+    # later cleanup report is serialized.
+    $jobIdentityObservation = New-StartupJobIdentityObservation
+    $result.launchJobQueryObservation['jobIdentityObservation'] = $jobIdentityObservation
     try {
         # A missing or malformed executable-side sidecar makes Sakura resolve the
         # profile through the user's roaming configuration.  Refuse the launch
@@ -4343,7 +4979,7 @@ function Invoke-StartupMeasurement([string]$Condition, [int]$Iteration, [string]
         if (-not $assigned.Succeeded) {
             throw "Could not assign the started process to the run-owned job (Win32 $($assigned.ErrorCode))."
         }
-        $jobMembers = @(Get-JobProcessRecords $job $owned $result.launchJobQueryObservation)
+        $jobMembers = @(Get-JobProcessRecords $job $owned $result.launchJobQueryObservation $null $null $jobIdentityObservation)
         if (@($jobMembers | Where-Object { [int]$_.Id -eq [int]$startedProcessId }).Count -ne 1) {
             throw 'The started process was not present in the verified run-owned job membership.'
         }
@@ -4542,6 +5178,7 @@ function Invoke-StartupMeasurement([string]$Condition, [int]$Iteration, [string]
 
         $cleanup = $null
         $cleanupObservation = New-StartupCleanupObservation
+        $cleanupObservation.jobIdentityObservation = $jobIdentityObservation
         $result.cleanupObservation = $cleanupObservation
         $joinedCleanupErrorIncluded = $false
         try { $cleanup = Stop-OwnedProcesses $owned $job $ExePath $cleanupObservation }
@@ -5064,6 +5701,86 @@ function Invoke-SelfTest {
         $boundedEnumerationObservation.processEnumerationRetryCount -eq $startupObservationMaxCount
     if (-not $boundedEnumerationCountsVerified) { throw 'Bounded process-enumeration telemetry self-test failed.' }
 
+    # Get-VerifiedProcessEntries is the trust boundary for every Toolhelp
+    # census.  Exercise malformed initial envelopes here so string booleans,
+    # scalar Entries, duplicate/fractional PIDs, and contradictory success
+    # metadata can never be coerced into a containment decision.
+    $malformedInitialCensusTooManyEntries = [Array]::CreateInstance([object], ($startupProcessEnumerationMaxEntryCount + 1))
+    $malformedInitialCensusCases = @(
+        [pscustomobject][ordered]@{ Attempted = 'false'; Complete = $true; Succeeded = $true; ErrorCode = 0; AttemptCount = 1; RetryCount = 0; Entries = @() }
+        [pscustomobject][ordered]@{ Attempted = $true; Complete = 'true'; Succeeded = $true; ErrorCode = 0; AttemptCount = 1; RetryCount = 0; Entries = @() }
+        [pscustomobject][ordered]@{ Attempted = $true; Complete = $true; Succeeded = 'true'; ErrorCode = 0; AttemptCount = 1; RetryCount = 0; Entries = @() }
+        [pscustomobject][ordered]@{ Attempted = $true; Complete = $true; Succeeded = $true; ErrorCode = 5; AttemptCount = 1; RetryCount = 0; Entries = @() }
+        [pscustomobject][ordered]@{ Attempted = $true; Complete = $true; Succeeded = $true; ErrorCode = [double]0; AttemptCount = 1; RetryCount = 0; Entries = @() }
+        [pscustomobject][ordered]@{ Attempted = $true; Complete = $true; Succeeded = $true; ErrorCode = 0; AttemptCount = 1; RetryCount = 0; Entries = [pscustomobject]@{ ProcessId = 2222; ParentProcessId = 0; ImageName = 'self-test.exe' } }
+        [pscustomobject][ordered]@{ Attempted = $true; Complete = $true; Succeeded = $true; ErrorCode = 0; AttemptCount = 1; RetryCount = 0; Entries = [object[]]@($null) }
+        [pscustomobject][ordered]@{ Attempted = $true; Complete = $true; Succeeded = $true; ErrorCode = 0; AttemptCount = 1; RetryCount = 0; Entries = [object[]]@(
+            [pscustomobject]@{ ProcessId = 2222; ParentProcessId = 0; ImageName = 'self-test.exe' }
+            [pscustomobject]@{ ProcessId = 2222; ParentProcessId = 0; ImageName = 'self-test.exe' }
+        ) }
+        [pscustomobject][ordered]@{ Attempted = $true; Complete = $true; Succeeded = $true; ErrorCode = 0; AttemptCount = 1; RetryCount = 0; Entries = [object[]]@(
+            [pscustomobject]@{ ProcessId = 2222.5; ParentProcessId = 0; ImageName = 'self-test.exe' }
+        ) }
+        [pscustomobject][ordered]@{ Attempted = $true; Complete = $true; Succeeded = $true; ErrorCode = 0; AttemptCount = 1; RetryCount = 0; Entries = [object[]]@(
+            [pscustomobject]@{ ProcessId = '2222'; ParentProcessId = 0; ImageName = 'self-test.exe' }
+        ) }
+        [pscustomobject][ordered]@{ Attempted = $true; Complete = $true; Succeeded = $true; ErrorCode = 0; AttemptCount = 1; RetryCount = 0; Entries = [object[]]@(
+            [pscustomobject]@{ ProcessId = 2222; ParentProcessId = -1; ImageName = 'self-test.exe' }
+        ) }
+        [pscustomobject][ordered]@{ Attempted = $true; Complete = $true; Succeeded = $true; ErrorCode = 0; AttemptCount = 1; RetryCount = 0; Entries = $malformedInitialCensusTooManyEntries }
+        [pscustomobject][ordered]@{ Attempted = $true; Complete = $true; Succeeded = $true; ErrorCode = 0; AttemptCount = [double]1; RetryCount = 0; Retried = $false; Entries = @() }
+        [pscustomobject][ordered]@{ Attempted = $true; Complete = $true; Succeeded = $true; ErrorCode = 0; AttemptCount = 1; RetryCount = [double]0; Retried = $false; Entries = @() }
+        [pscustomobject][ordered]@{ Attempted = $true; Complete = $true; Succeeded = $true; ErrorCode = 0; AttemptCount = 1; RetryCount = 0; Retried = 'false'; Entries = @() }
+        [pscustomobject][ordered]@{ Attempted = $true; Complete = $true; Succeeded = $true; ErrorCode = 0; AttemptCount = 1; RetryCount = 1; Retried = $true; Entries = @() }
+        [pscustomobject][ordered]@{ Attempted = $true; Complete = $true; Succeeded = $true; ErrorCode = 0; AttemptCount = 4; RetryCount = 0; Retried = $false; Entries = @() }
+    )
+    $malformedInitialCensusRejected = $true
+    foreach ($malformedInitialCensus in $malformedInitialCensusCases) {
+        try {
+            [void](Get-VerifiedProcessEntries -Invoker { return $malformedInitialCensus })
+            $malformedInitialCensusRejected = $false
+        }
+        catch { }
+    }
+    $processEnumerationMalformedEnvelopeSelfTestVerified = [bool]$malformedInitialCensusRejected
+    if (-not $processEnumerationMalformedEnvelopeSelfTestVerified) {
+        throw 'Malformed initial process-enumeration envelope self-test failed.'
+    }
+    $processEnumerationStrictMetadataSelfTestVerified = [bool]$malformedInitialCensusRejected
+    $pidZeroProcessEnumeration = [pscustomobject][ordered]@{
+        Attempted = $true; Complete = $true; Succeeded = $true; ErrorCode = 0; AttemptCount = 1; RetryCount = 0; Retried = $false
+        Entries = [object[]]@(
+            [pscustomobject]@{ ProcessId = 0; ParentProcessId = 0; ImageName = 'System Idle Process' }
+            [pscustomobject]@{ ProcessId = 2222; ParentProcessId = 0; ImageName = 'self-test.exe' }
+        )
+    }
+    $pidZeroProcessEnumerationEntries = @(Get-VerifiedProcessEntries -Invoker { return $pidZeroProcessEnumeration })
+    $processEnumerationPidZeroSelfTestVerified = [bool]($pidZeroProcessEnumerationEntries.Count -eq 2 -and
+        [int]$pidZeroProcessEnumerationEntries[0].ProcessId -eq 0 -and
+        [int]$pidZeroProcessEnumerationEntries[1].ProcessId -eq 2222 -and
+        [string]$pidZeroProcessEnumerationEntries[0].ImageName -eq 'System Idle Process')
+    if (-not $processEnumerationPidZeroSelfTestVerified) {
+        throw 'PID 0 valid process-enumeration entry self-test failed.'
+    }
+    $failedProcessEnumerationObservation = New-StartupCleanupObservation
+    $failedProcessEnumeration = [pscustomobject][ordered]@{
+        Attempted = $true; AttemptCount = 1; Complete = $false; Succeeded = $false
+        ErrorCode = 24; RetryCount = 0; Retried = $false; Entries = [object[]]@()
+    }
+    $failedProcessEnumerationThrew = $false
+    try {
+        [void](Get-VerifiedProcessEntries -Observation $failedProcessEnumerationObservation -Invoker { return $failedProcessEnumeration })
+    }
+    catch { $failedProcessEnumerationThrew = $true }
+    $processEnumerationFailedEnvelopeSelfTestVerified = $failedProcessEnumerationThrew -and
+        $failedProcessEnumerationObservation.processEnumerationCallCount -eq 1 -and
+        $failedProcessEnumerationObservation.processEnumerationCompletedCount -eq 0 -and
+        $failedProcessEnumerationObservation.processEnumerationFailureCount -eq 1 -and
+        $failedProcessEnumerationObservation.processEnumerationErrorCode -eq 24
+    if (-not $processEnumerationFailedEnvelopeSelfTestVerified) {
+        throw 'Failed process-enumeration envelope self-test failed.'
+    }
+
     $trackedTerminalObservation = New-StartupCleanupObservation
     Set-StartupTrackedSweepFailure $trackedTerminalObservation 'identity-disappeared' 5
     Set-StartupTrackedSweepFailure $trackedTerminalObservation 'identity-still-present' 6
@@ -5235,6 +5952,713 @@ function Invoke-SelfTest {
     }
     $freshMalformedVerified = $freshMalformedRejected -and $freshMalformedCalls.Value -eq 9
     if (-not $freshMalformedVerified) { throw 'Malformed fresh census self-test failed.' }
+
+    # Job membership identity gaps use the same one-shot recovery, but do not
+    # emit tracked-sweep-specific telemetry.  The process-enumeration aggregate
+    # still records the fresh census; every non-absence result remains a terminal failure.
+    $jobIdentityDisappearedTelemetryDisabledObservation = New-StartupCleanupObservation
+    $jobIdentityDisappearedTelemetryDisabledCalls = [pscustomobject]@{ Value = 0 }
+    $jobIdentityDisappearedTelemetryDisabledAccepted = $false
+    try {
+        $jobIdentityDisappearedTelemetryDisabledAccepted = [bool](Invoke-StartupTrackedIdentityFailure `
+            $jobIdentityDisappearedTelemetryDisabledObservation 1234 $identityFailureProbe {
+                $jobIdentityDisappearedTelemetryDisabledCalls.Value++
+                return $freshAbsentCensus
+            } 'Synthetic Job identity disappearance.' -RecordTrackedSweepTelemetry:$false)
+    }
+    catch { $jobIdentityDisappearedTelemetryDisabledAccepted = $false }
+    $jobIdentityDisappearedTelemetryDisabledVerified =
+        $jobIdentityDisappearedTelemetryDisabledAccepted -and
+        $jobIdentityDisappearedTelemetryDisabledCalls.Value -eq 1 -and
+        $jobIdentityDisappearedTelemetryDisabledObservation.processEnumerationCallCount -eq 1 -and
+        $jobIdentityDisappearedTelemetryDisabledObservation.processEnumerationCompletedCount -eq 1 -and
+        $jobIdentityDisappearedTelemetryDisabledObservation.processEnumerationFailureCount -eq 0 -and
+        $jobIdentityDisappearedTelemetryDisabledObservation.trackedSweepFailureType -eq 'none' -and
+        $jobIdentityDisappearedTelemetryDisabledObservation.trackedSweepFailureErrorCode -eq $null -and
+        $jobIdentityDisappearedTelemetryDisabledObservation.trackedSweepIdentityAttemptCount -eq 0 -and
+        $jobIdentityDisappearedTelemetryDisabledObservation.trackedSweepIdentityFailureCount -eq 0 -and
+        $jobIdentityDisappearedTelemetryDisabledObservation.trackedSweepDisappearedAfterSnapshotCount -eq 0 -and
+        $jobIdentityDisappearedTelemetryDisabledObservation.trackedSweepStillPresentAfterFailureCount -eq 0 -and
+        $jobIdentityDisappearedTelemetryDisabledObservation.trackedSweepPassCount -eq 0 -and
+        $jobIdentityDisappearedTelemetryDisabledObservation.cleanupErrorCount -eq 0
+    if (-not $jobIdentityDisappearedTelemetryDisabledVerified) {
+        throw 'Job identity-disappeared telemetry suppression self-test failed.'
+    }
+
+    $jobIdentityStillPresentTelemetryDisabledObservation = New-StartupCleanupObservation
+    $jobIdentityStillPresentTelemetryDisabledCalls = [pscustomobject]@{ Value = 0 }
+    $jobIdentityStillPresentTelemetryDisabledThrew = $false
+    try {
+        Invoke-StartupTrackedIdentityFailure $jobIdentityStillPresentTelemetryDisabledObservation 1234 $identityFailureProbe {
+            $jobIdentityStillPresentTelemetryDisabledCalls.Value++
+            return $freshPresentCensus
+        } 'Synthetic Job identity-still-present failure.' -RecordTrackedSweepTelemetry:$false
+    }
+    catch { $jobIdentityStillPresentTelemetryDisabledThrew = $true }
+    $jobIdentityStillPresentTelemetryDisabledVerified =
+        $jobIdentityStillPresentTelemetryDisabledThrew -and
+        $jobIdentityStillPresentTelemetryDisabledCalls.Value -eq 1 -and
+        $jobIdentityStillPresentTelemetryDisabledObservation.trackedSweepFailureType -eq 'none' -and
+        $jobIdentityStillPresentTelemetryDisabledObservation.trackedSweepFailureErrorCode -eq $null -and
+        $jobIdentityStillPresentTelemetryDisabledObservation.trackedSweepIdentityAttemptCount -eq 0 -and
+        $jobIdentityStillPresentTelemetryDisabledObservation.trackedSweepIdentityFailureCount -eq 0 -and
+        $jobIdentityStillPresentTelemetryDisabledObservation.trackedSweepDisappearedAfterSnapshotCount -eq 0 -and
+        $jobIdentityStillPresentTelemetryDisabledObservation.trackedSweepStillPresentAfterFailureCount -eq 0 -and
+        $jobIdentityStillPresentTelemetryDisabledObservation.trackedSweepPassCount -eq 0
+    if (-not $jobIdentityStillPresentTelemetryDisabledVerified) {
+        throw 'Job identity-still-present telemetry suppression self-test failed.'
+    }
+
+    $jobIdentityCensusUnavailableTelemetryDisabledObservation = New-StartupCleanupObservation
+    $jobIdentityCensusUnavailableTelemetryDisabledCalls = [pscustomobject]@{ Value = 0 }
+    $jobIdentityCensusUnavailableTelemetryDisabledThrew = $false
+    try {
+        Invoke-StartupTrackedIdentityFailure $jobIdentityCensusUnavailableTelemetryDisabledObservation 1234 $identityFailureProbe {
+            $jobIdentityCensusUnavailableTelemetryDisabledCalls.Value++
+            return [pscustomobject][ordered]@{
+                Attempted = $true; AttemptCount = 1; Complete = $false; Succeeded = $false; ErrorCode = 24; RetryCount = 0; Entries = $null
+            }
+        } 'Synthetic unavailable Job identity census.' -RecordTrackedSweepTelemetry:$false
+    }
+    catch { $jobIdentityCensusUnavailableTelemetryDisabledThrew = $true }
+    $jobIdentityCensusUnavailableTelemetryDisabledVerified =
+        $jobIdentityCensusUnavailableTelemetryDisabledThrew -and
+        $jobIdentityCensusUnavailableTelemetryDisabledCalls.Value -eq 1 -and
+        $jobIdentityCensusUnavailableTelemetryDisabledObservation.processEnumerationFailureCount -eq 1 -and
+        $jobIdentityCensusUnavailableTelemetryDisabledObservation.trackedSweepFailureType -eq 'none' -and
+        $jobIdentityCensusUnavailableTelemetryDisabledObservation.trackedSweepFailureErrorCode -eq $null -and
+        $jobIdentityCensusUnavailableTelemetryDisabledObservation.trackedSweepIdentityAttemptCount -eq 0 -and
+        $jobIdentityCensusUnavailableTelemetryDisabledObservation.trackedSweepIdentityFailureCount -eq 0 -and
+        $jobIdentityCensusUnavailableTelemetryDisabledObservation.trackedSweepDisappearedAfterSnapshotCount -eq 0 -and
+        $jobIdentityCensusUnavailableTelemetryDisabledObservation.trackedSweepStillPresentAfterFailureCount -eq 0 -and
+        $jobIdentityCensusUnavailableTelemetryDisabledObservation.trackedSweepPassCount -eq 0
+    if (-not $jobIdentityCensusUnavailableTelemetryDisabledVerified) {
+        throw 'Job unavailable identity census telemetry suppression self-test failed.'
+    }
+
+    $jobIdentityMalformedFreshCensusTelemetryDisabledObservation = New-StartupCleanupObservation
+    $jobIdentityMalformedFreshCensusTelemetryDisabledCalls = [pscustomobject]@{ Value = 0 }
+    $jobIdentityMalformedFreshCensusTelemetryDisabledThrew = $false
+    try {
+        Invoke-StartupTrackedIdentityFailure $jobIdentityMalformedFreshCensusTelemetryDisabledObservation 1234 $identityFailureProbe {
+            $jobIdentityMalformedFreshCensusTelemetryDisabledCalls.Value++
+            return [pscustomobject][ordered]@{
+                Attempted = $true; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 0
+                Entries = [object[]]@(
+                    [pscustomobject]@{ ProcessId = 2222; ParentProcessId = 0; ImageName = 'self-test.exe' }
+                    [pscustomobject]@{ ProcessId = 2222; ParentProcessId = 0; ImageName = 'self-test.exe' }
+                )
+            }
+        } 'Synthetic malformed Job identity census.' -RecordTrackedSweepTelemetry:$false
+    }
+    catch { $jobIdentityMalformedFreshCensusTelemetryDisabledThrew = $true }
+    $jobIdentityMalformedFreshCensusTelemetryDisabledVerified =
+        $jobIdentityMalformedFreshCensusTelemetryDisabledThrew -and
+        $jobIdentityMalformedFreshCensusTelemetryDisabledCalls.Value -eq 1 -and
+        $jobIdentityMalformedFreshCensusTelemetryDisabledObservation.processEnumerationCompletedCount -eq 1 -and
+        $jobIdentityMalformedFreshCensusTelemetryDisabledObservation.processEnumerationFailureCount -eq 0 -and
+        $jobIdentityMalformedFreshCensusTelemetryDisabledObservation.trackedSweepFailureType -eq 'none' -and
+        $jobIdentityMalformedFreshCensusTelemetryDisabledObservation.trackedSweepFailureErrorCode -eq $null -and
+        $jobIdentityMalformedFreshCensusTelemetryDisabledObservation.trackedSweepIdentityAttemptCount -eq 0 -and
+        $jobIdentityMalformedFreshCensusTelemetryDisabledObservation.trackedSweepIdentityFailureCount -eq 0 -and
+        $jobIdentityMalformedFreshCensusTelemetryDisabledObservation.trackedSweepDisappearedAfterSnapshotCount -eq 0 -and
+        $jobIdentityMalformedFreshCensusTelemetryDisabledObservation.trackedSweepStillPresentAfterFailureCount -eq 0 -and
+        $jobIdentityMalformedFreshCensusTelemetryDisabledObservation.trackedSweepPassCount -eq 0
+    if (-not $jobIdentityMalformedFreshCensusTelemetryDisabledVerified) {
+        throw 'Job malformed identity census telemetry suppression self-test failed.'
+    }
+    $jobIdentityTelemetryDisabledSelfTestVerified =
+        $jobIdentityDisappearedTelemetryDisabledVerified -and
+        $jobIdentityStillPresentTelemetryDisabledVerified -and
+        $jobIdentityCensusUnavailableTelemetryDisabledVerified -and
+        $jobIdentityMalformedFreshCensusTelemetryDisabledVerified
+
+    # Exercise the production Get-JobProcessRecords path with a sentinel handle
+    # and injected native-shaped invokers.  The initial census always contains
+    # the target PID, so this cannot accidentally test the separate missing-
+    # entry Job requery path.
+    $jobIdentityTargetPid = 1234
+    $jobIdentityLaterPid = 2345
+    $makeJobIdentityQuery = {
+        param([int[]]$Ids = [int[]]@(), [bool]$Succeeded = $true, [int]$ErrorCode = 0)
+        $normalizedIds = if ($null -eq $Ids) { [int[]]@() } else { ,([int[]]$Ids) }
+        $listedCount = if ($Succeeded) { [UInt32](@($normalizedIds).Count) } else { [UInt32]0 }
+        $attempt = [pscustomobject][ordered]@{
+            Attempted = $true; AttemptNumber = 1; Succeeded = [bool]$Succeeded
+            ErrorCode = if ($Succeeded) { 0 } else { [int]$ErrorCode }
+            CapacityBytes = [UInt64]1024; RequiredBytes = [UInt64]1024; ReturnLengthBytes = [UInt64]1024
+            AssignedProcessCount = $listedCount; ListedProcessCount = $listedCount; Resized = $false
+        }
+        return [pscustomobject][ordered]@{
+            Handle = [IntPtr]1; Succeeded = [bool]$Succeeded; ErrorCode = if ($Succeeded) { 0 } else { [int]$ErrorCode }
+            ProcessIds = $normalizedIds; Attempted = $true; AttemptCount = 1
+            CapacityBytes = [UInt64]1024; RequiredBytes = [UInt64]1024; ReturnLengthBytes = [UInt64]1024
+            AssignedProcessCount = $listedCount; ListedProcessCount = $listedCount; Resized = $false
+            Attempts = @($attempt)
+        }
+    }
+    $makeJobIdentityCensus = {
+        param([object[]]$Entries, [bool]$Complete = $true, [bool]$Succeeded = $true, [int]$ErrorCode = 0)
+        return [pscustomobject][ordered]@{
+            Attempted = $true; AttemptCount = 1; Complete = [bool]$Complete; Succeeded = [bool]$Succeeded
+            ErrorCode = if ($Succeeded) { 0 } else { [int]$ErrorCode }; RetryCount = 0; Retried = $false
+            Entries = if ($null -eq $Entries) { $null } else { ,([object[]]$Entries) }
+        }
+    }
+    $jobIdentityTargetEntry = [pscustomobject]@{ ProcessId = $jobIdentityTargetPid; ParentProcessId = 0; ImageName = 'self-test.exe' }
+    $jobIdentityLaterEntry = [pscustomobject]@{ ProcessId = $jobIdentityLaterPid; ParentProcessId = $jobIdentityTargetPid; ImageName = 'self-test.exe' }
+    $jobIdentityTargetRecord = [pscustomobject]@{
+        ProcessId = $jobIdentityTargetPid; ParentProcessId = 0; CreationTime = [long]1001; ImagePath = 'C:\self-test.exe'
+    }
+    $jobIdentityLaterRecord = [pscustomobject]@{
+        ProcessId = $jobIdentityLaterPid; ParentProcessId = $jobIdentityTargetPid; CreationTime = [long]1002; ImagePath = 'C:\self-test.exe'
+    }
+    $jobIdentityLaterIdentityProbe = [pscustomobject][ordered]@{
+        Succeeded = $true; ErrorCode = 0; Identity = $jobIdentityLaterRecord
+    }
+    $jobIdentityFailureProbe = [pscustomobject][ordered]@{ Succeeded = $false; ErrorCode = 5; Identity = $null }
+    $jobIdentityInitialQuery = & $makeJobIdentityQuery ([int[]]@($jobIdentityTargetPid, $jobIdentityLaterPid))
+    $jobIdentityLaterQuery = & $makeJobIdentityQuery ([int[]]@($jobIdentityLaterPid))
+    $jobIdentityTargetQuery = & $makeJobIdentityQuery ([int[]]@($jobIdentityTargetPid))
+    $jobIdentityInitialCensus = & $makeJobIdentityCensus ([object[]]@($jobIdentityTargetEntry, $jobIdentityLaterEntry))
+    $jobIdentityLaterCensus = & $makeJobIdentityCensus ([object[]]@($jobIdentityLaterEntry))
+    $jobIdentityTargetCensus = & $makeJobIdentityCensus ([object[]]@($jobIdentityTargetEntry))
+
+    $jobIdentityAcceptedObservation = New-StartupCleanupObservation
+    $jobIdentityAcceptedQueryObservation = New-StartupJobQueryObservation
+    $jobIdentityAcceptedQueryObservation['jobIdentityObservation'] = $jobIdentityAcceptedObservation.jobIdentityObservation
+    $jobIdentityAcceptedOwned = @{}
+    $jobIdentityAcceptedQueryCalls = [pscustomobject]@{ Value = 0 }
+    $jobIdentityAcceptedCensusCalls = [pscustomobject]@{ Value = 0 }
+    $jobIdentityAcceptedIdentityCalls = [pscustomobject]@{ Value = 0 }
+    $jobIdentityAcceptedJobQuery = {
+        param([IntPtr]$Handle)
+        $jobIdentityAcceptedQueryCalls.Value++
+        if ($jobIdentityAcceptedQueryCalls.Value -eq 1) { return $jobIdentityInitialQuery }
+        return $jobIdentityLaterQuery
+    }
+    $jobIdentityAcceptedCensus = {
+        $jobIdentityAcceptedCensusCalls.Value++
+        if ($jobIdentityAcceptedCensusCalls.Value -eq 1) { return $jobIdentityInitialCensus }
+        return $jobIdentityLaterCensus
+    }
+    $jobIdentityAcceptedIdentity = {
+        param([int]$ProcessId, [int]$ParentProcessId)
+        $jobIdentityAcceptedIdentityCalls.Value++
+        if ($ProcessId -eq $jobIdentityTargetPid) { return $jobIdentityFailureProbe }
+        return $jobIdentityLaterIdentityProbe
+    }
+    $jobIdentityAcceptedInvokers = [pscustomobject][ordered]@{
+        JobQuery = $jobIdentityAcceptedJobQuery; ProcessCensus = $jobIdentityAcceptedCensus; IdentityQuery = $jobIdentityAcceptedIdentity
+    }
+    $jobIdentityAcceptedRecords = @()
+    $jobIdentityAcceptedThrew = $false
+    try {
+        $jobIdentityAcceptedRecords = @(Get-JobProcessRecords ([IntPtr]1) $jobIdentityAcceptedOwned $jobIdentityAcceptedQueryObservation $null $jobIdentityAcceptedInvokers $jobIdentityAcceptedObservation.jobIdentityObservation)
+    }
+    catch { $jobIdentityAcceptedThrew = $true }
+    $jobIdentityAcceptedTelemetry = $jobIdentityAcceptedObservation.jobIdentityObservation
+    $jobIdentityAcceptedTrackedClean = $jobIdentityAcceptedObservation.trackedSweepFailureType -eq 'none' -and
+        $jobIdentityAcceptedObservation.trackedSweepFailureErrorCode -eq $null -and
+        $jobIdentityAcceptedObservation.trackedSweepIdentityAttemptCount -eq 0 -and
+        $jobIdentityAcceptedObservation.trackedSweepIdentityFailureCount -eq 0 -and
+        $jobIdentityAcceptedObservation.trackedSweepDisappearedAfterSnapshotCount -eq 0 -and
+        $jobIdentityAcceptedObservation.trackedSweepStillPresentAfterFailureCount -eq 0 -and
+        $jobIdentityAcceptedObservation.trackedSweepPassCount -eq 0
+    $jobIdentityAcceptedVerified = -not $jobIdentityAcceptedThrew -and $jobIdentityAcceptedRecords.Count -eq 1 -and
+        $jobIdentityAcceptedRecords[0].Id -eq $jobIdentityLaterPid -and $jobIdentityAcceptedOwned.ContainsKey($jobIdentityLaterPid) -and
+        $jobIdentityAcceptedQueryCalls.Value -eq 2 -and $jobIdentityAcceptedCensusCalls.Value -eq 1 -and
+        $jobIdentityAcceptedIdentityCalls.Value -eq 2 -and $jobIdentityAcceptedQueryObservation.queryCount -eq 2 -and
+        $jobIdentityAcceptedObservation.cleanupErrorCount -eq 0 -and $jobIdentityAcceptedTrackedClean -and
+        $jobIdentityAcceptedTelemetry.identityAttemptCount -eq 2 -and
+        $jobIdentityAcceptedTelemetry.identityFailureCount -eq 1 -and
+        $jobIdentityAcceptedTelemetry.recoveryAttemptCount -eq 1 -and
+        $jobIdentityAcceptedTelemetry.disappearedAfterSnapshotCount -eq 1 -and
+        $jobIdentityAcceptedTelemetry.stillPresentAfterFailureCount -eq 0 -and
+        $jobIdentityAcceptedTelemetry.failureType -eq 'identity-disappeared' -and
+        $jobIdentityAcceptedTelemetry.failureErrorCode -eq 5
+    if (-not $jobIdentityAcceptedVerified) { throw 'Production Job identity-disappeared self-test failed.' }
+
+    $jobIdentityStillPresentObservation = New-StartupCleanupObservation
+    $jobIdentityStillPresentQueryCalls = [pscustomobject]@{ Value = 0 }
+    $jobIdentityStillPresentCensusCalls = [pscustomobject]@{ Value = 0 }
+    $jobIdentityStillPresentIdentityCalls = [pscustomobject]@{ Value = 0 }
+    $jobIdentityStillPresentJobQuery = {
+        param([IntPtr]$Handle)
+        $jobIdentityStillPresentQueryCalls.Value++
+        return $jobIdentityTargetQuery
+    }
+    $jobIdentityStillPresentCensus = {
+        $jobIdentityStillPresentCensusCalls.Value++
+        return $jobIdentityTargetCensus
+    }
+    $jobIdentityStillPresentIdentity = {
+        param([int]$ProcessId, [int]$ParentProcessId)
+        $jobIdentityStillPresentIdentityCalls.Value++
+        return $jobIdentityFailureProbe
+    }
+    $jobIdentityStillPresentInvokers = [pscustomobject][ordered]@{
+        JobQuery = $jobIdentityStillPresentJobQuery; ProcessCensus = $jobIdentityStillPresentCensus; IdentityQuery = $jobIdentityStillPresentIdentity
+    }
+    $jobIdentityStillPresentThrew = $false
+    try { [void](Get-JobProcessRecords ([IntPtr]1) @{} $jobIdentityStillPresentObservation $jobIdentityStillPresentObservation $jobIdentityStillPresentInvokers) }
+    catch { $jobIdentityStillPresentThrew = $true }
+    $jobIdentityStillPresentTelemetry = $jobIdentityStillPresentObservation.jobIdentityObservation
+    $jobIdentityStillPresentVerified = $jobIdentityStillPresentThrew -and
+        $jobIdentityStillPresentQueryCalls.Value -eq 2 -and $jobIdentityStillPresentCensusCalls.Value -eq 1 -and
+        $jobIdentityStillPresentIdentityCalls.Value -eq 1 -and $jobIdentityStillPresentObservation.query.queryCount -eq 2 -and
+        $jobIdentityStillPresentObservation.cleanupErrorCount -eq 0 -and
+        $jobIdentityStillPresentTelemetry.identityAttemptCount -eq 1 -and
+        $jobIdentityStillPresentTelemetry.identityFailureCount -eq 1 -and
+        $jobIdentityStillPresentTelemetry.recoveryAttemptCount -eq 1 -and
+        $jobIdentityStillPresentTelemetry.disappearedAfterSnapshotCount -eq 0 -and
+        $jobIdentityStillPresentTelemetry.stillPresentAfterFailureCount -eq 1 -and
+        $jobIdentityStillPresentTelemetry.failureType -eq 'identity-still-present' -and
+        $jobIdentityStillPresentTelemetry.failureErrorCode -eq 5 -and
+        $jobIdentityStillPresentObservation.trackedSweepFailureType -eq 'none'
+    if (-not $jobIdentityStillPresentVerified) { throw 'Production Job identity-still-present self-test failed.' }
+
+    $jobIdentityUnavailableObservation = New-StartupCleanupObservation
+    $jobIdentityUnavailableQueryCalls = [pscustomobject]@{ Value = 0 }
+    $jobIdentityUnavailableCensusCalls = [pscustomobject]@{ Value = 0 }
+    $jobIdentityUnavailableJobQuery = {
+        param([IntPtr]$Handle)
+        $jobIdentityUnavailableQueryCalls.Value++
+        if ($jobIdentityUnavailableQueryCalls.Value -eq 1) { return $jobIdentityTargetQuery }
+        return (& $makeJobIdentityQuery ([int[]]@()) $false 24)
+    }
+    $jobIdentityUnavailableCensus = {
+        $jobIdentityUnavailableCensusCalls.Value++
+        return $jobIdentityTargetCensus
+    }
+    $jobIdentityUnavailableInvokers = [pscustomobject][ordered]@{
+        JobQuery = $jobIdentityUnavailableJobQuery; ProcessCensus = $jobIdentityUnavailableCensus
+        IdentityQuery = { param([int]$ProcessId, [int]$ParentProcessId) return $jobIdentityFailureProbe }
+    }
+    $jobIdentityUnavailableThrew = $false
+    try { [void](Get-JobProcessRecords ([IntPtr]1) @{} $jobIdentityUnavailableObservation $jobIdentityUnavailableObservation $jobIdentityUnavailableInvokers) }
+    catch { $jobIdentityUnavailableThrew = $true }
+    $jobIdentityUnavailableTelemetry = $jobIdentityUnavailableObservation.jobIdentityObservation
+    $jobIdentityUnavailableVerified = $jobIdentityUnavailableThrew -and
+        $jobIdentityUnavailableQueryCalls.Value -eq 2 -and $jobIdentityUnavailableCensusCalls.Value -eq 1 -and
+        $jobIdentityUnavailableObservation.query.queryCount -eq 2 -and
+        $jobIdentityUnavailableTelemetry.identityAttemptCount -eq 1 -and
+        $jobIdentityUnavailableTelemetry.identityFailureCount -eq 1 -and
+        $jobIdentityUnavailableTelemetry.recoveryAttemptCount -eq 1 -and
+        $jobIdentityUnavailableTelemetry.disappearedAfterSnapshotCount -eq 0 -and
+        $jobIdentityUnavailableTelemetry.stillPresentAfterFailureCount -eq 0 -and
+        $jobIdentityUnavailableTelemetry.failureType -eq 'enumeration-unavailable' -and
+        $jobIdentityUnavailableTelemetry.failureErrorCode -eq 24 -and
+        $jobIdentityUnavailableObservation.trackedSweepFailureType -eq 'none'
+    if (-not $jobIdentityUnavailableVerified) { throw 'Production Job unavailable identity self-test failed.' }
+
+    $jobIdentityMalformedObservation = New-StartupCleanupObservation
+    $jobIdentityMalformedQueryCalls = [pscustomobject]@{ Value = 0 }
+    $jobIdentityMalformedCensusCalls = [pscustomobject]@{ Value = 0 }
+    $jobIdentityMalformedJobQuery = {
+        param([IntPtr]$Handle)
+        $jobIdentityMalformedQueryCalls.Value++
+        if ($jobIdentityMalformedQueryCalls.Value -eq 1) { return $jobIdentityTargetQuery }
+        return (& $makeJobIdentityQuery ([int[]]@($jobIdentityLaterPid, $jobIdentityLaterPid)) $true 0)
+    }
+    $jobIdentityMalformedCensus = {
+        $jobIdentityMalformedCensusCalls.Value++
+        return $jobIdentityTargetCensus
+    }
+    $jobIdentityMalformedInvokers = [pscustomobject][ordered]@{
+        JobQuery = $jobIdentityMalformedJobQuery; ProcessCensus = $jobIdentityMalformedCensus
+        IdentityQuery = { param([int]$ProcessId, [int]$ParentProcessId) return $jobIdentityFailureProbe }
+    }
+    $jobIdentityMalformedThrew = $false
+    try { [void](Get-JobProcessRecords ([IntPtr]1) @{} $jobIdentityMalformedObservation $jobIdentityMalformedObservation $jobIdentityMalformedInvokers) }
+    catch { $jobIdentityMalformedThrew = $true }
+    $jobIdentityMalformedTelemetry = $jobIdentityMalformedObservation.jobIdentityObservation
+    $jobIdentityMalformedVerified = $jobIdentityMalformedThrew -and
+        $jobIdentityMalformedQueryCalls.Value -eq 2 -and $jobIdentityMalformedCensusCalls.Value -eq 1 -and
+        $jobIdentityMalformedObservation.query.queryCount -eq 2 -and
+        $jobIdentityMalformedTelemetry.identityAttemptCount -eq 1 -and
+        $jobIdentityMalformedTelemetry.identityFailureCount -eq 1 -and
+        $jobIdentityMalformedTelemetry.recoveryAttemptCount -eq 1 -and
+        $jobIdentityMalformedTelemetry.failureType -eq 'enumeration-unavailable' -and
+        $jobIdentityMalformedTelemetry.failureErrorCode -eq 13 -and
+        $jobIdentityMalformedObservation.trackedSweepFailureType -eq 'none'
+    if (-not $jobIdentityMalformedVerified) { throw 'Production Job malformed fresh-query self-test failed.' }
+
+    $jobIdentityInvocationExceptionObservation = New-StartupCleanupObservation
+    $jobIdentityInvocationExceptionQueryCalls = [pscustomobject]@{ Value = 0 }
+    $jobIdentityInvocationExceptionCensusCalls = [pscustomobject]@{ Value = 0 }
+    $jobIdentityInvocationExceptionJobQuery = {
+        param([IntPtr]$Handle)
+        $jobIdentityInvocationExceptionQueryCalls.Value++
+        return $jobIdentityTargetQuery
+    }
+    $jobIdentityInvocationExceptionCensus = {
+        $jobIdentityInvocationExceptionCensusCalls.Value++
+        return $jobIdentityTargetCensus
+    }
+    $jobIdentityInvocationExceptionInvokers = [pscustomobject][ordered]@{
+        JobQuery = $jobIdentityInvocationExceptionJobQuery; ProcessCensus = $jobIdentityInvocationExceptionCensus
+        IdentityQuery = { param([int]$ProcessId, [int]$ParentProcessId) throw 'synthetic identity invocation exception' }
+    }
+    $jobIdentityInvocationExceptionThrew = $false
+    try { [void](Get-JobProcessRecords ([IntPtr]1) @{} $jobIdentityInvocationExceptionObservation $jobIdentityInvocationExceptionObservation $jobIdentityInvocationExceptionInvokers) }
+    catch { $jobIdentityInvocationExceptionThrew = $true }
+    $jobIdentityInvocationExceptionTelemetry = $jobIdentityInvocationExceptionObservation.jobIdentityObservation
+    $jobIdentityInvocationExceptionVerified = $jobIdentityInvocationExceptionThrew -and
+        $jobIdentityInvocationExceptionQueryCalls.Value -eq 1 -and $jobIdentityInvocationExceptionCensusCalls.Value -eq 1 -and
+        $jobIdentityInvocationExceptionTelemetry.identityAttemptCount -eq 1 -and
+        $jobIdentityInvocationExceptionTelemetry.identityFailureCount -eq 1 -and
+        $jobIdentityInvocationExceptionTelemetry.recoveryAttemptCount -eq 0 -and
+        $jobIdentityInvocationExceptionTelemetry.failureType -eq 'exception' -and
+        $jobIdentityInvocationExceptionTelemetry.failureErrorCode -eq 13 -and
+        $jobIdentityInvocationExceptionObservation.trackedSweepFailureType -eq 'none'
+    if (-not $jobIdentityInvocationExceptionVerified) { throw 'Production Job identity invocation exception self-test failed.' }
+
+    $jobIdentityFreshQueryExceptionObservation = New-StartupCleanupObservation
+    $jobIdentityFreshQueryExceptionQueryCalls = [pscustomobject]@{ Value = 0 }
+    $jobIdentityFreshQueryExceptionCensusCalls = [pscustomobject]@{ Value = 0 }
+    $jobIdentityFreshQueryExceptionJobQuery = {
+        param([IntPtr]$Handle)
+        $jobIdentityFreshQueryExceptionQueryCalls.Value++
+        if ($jobIdentityFreshQueryExceptionQueryCalls.Value -eq 1) { return $jobIdentityTargetQuery }
+        throw 'synthetic fresh Job query exception'
+    }
+    $jobIdentityFreshQueryExceptionCensus = {
+        $jobIdentityFreshQueryExceptionCensusCalls.Value++
+        return $jobIdentityTargetCensus
+    }
+    $jobIdentityFreshQueryExceptionInvokers = [pscustomobject][ordered]@{
+        JobQuery = $jobIdentityFreshQueryExceptionJobQuery; ProcessCensus = $jobIdentityFreshQueryExceptionCensus
+        IdentityQuery = { param([int]$ProcessId, [int]$ParentProcessId) return $jobIdentityFailureProbe }
+    }
+    $jobIdentityFreshQueryExceptionThrew = $false
+    try { [void](Get-JobProcessRecords ([IntPtr]1) @{} $jobIdentityFreshQueryExceptionObservation $jobIdentityFreshQueryExceptionObservation $jobIdentityFreshQueryExceptionInvokers) }
+    catch { $jobIdentityFreshQueryExceptionThrew = $true }
+    $jobIdentityFreshQueryExceptionTelemetry = $jobIdentityFreshQueryExceptionObservation.jobIdentityObservation
+    $jobIdentityFreshQueryExceptionVerified = $jobIdentityFreshQueryExceptionThrew -and
+        $jobIdentityFreshQueryExceptionQueryCalls.Value -eq 2 -and $jobIdentityFreshQueryExceptionCensusCalls.Value -eq 1 -and
+        $jobIdentityFreshQueryExceptionObservation.query.queryCount -eq 2 -and
+        $jobIdentityFreshQueryExceptionTelemetry.identityAttemptCount -eq 1 -and
+        $jobIdentityFreshQueryExceptionTelemetry.identityFailureCount -eq 1 -and
+        $jobIdentityFreshQueryExceptionTelemetry.recoveryAttemptCount -eq 1 -and
+        $jobIdentityFreshQueryExceptionTelemetry.failureType -eq 'exception' -and
+        $jobIdentityFreshQueryExceptionTelemetry.failureErrorCode -eq 13 -and
+        $jobIdentityFreshQueryExceptionObservation.trackedSweepFailureType -eq 'none'
+    if (-not $jobIdentityFreshQueryExceptionVerified) { throw 'Production Job fresh-query exception self-test failed.' }
+
+    $jobIdentityConversionFailureObservation = New-StartupCleanupObservation
+    $jobIdentityConversionFailureQueryCalls = [pscustomobject]@{ Value = 0 }
+    $jobIdentityConversionFailureCensusCalls = [pscustomobject]@{ Value = 0 }
+    $jobIdentityConversionFailureJobQuery = {
+        param([IntPtr]$Handle)
+        $jobIdentityConversionFailureQueryCalls.Value++
+        return $jobIdentityTargetQuery
+    }
+    $jobIdentityConversionFailureCensus = {
+        $jobIdentityConversionFailureCensusCalls.Value++
+        return $jobIdentityTargetCensus
+    }
+    $jobIdentityConversionFailureInvokers = [pscustomobject][ordered]@{
+        JobQuery = $jobIdentityConversionFailureJobQuery; ProcessCensus = $jobIdentityConversionFailureCensus
+        IdentityQuery = {
+            param([int]$ProcessId, [int]$ParentProcessId)
+            return [pscustomobject][ordered]@{
+                Succeeded = $true; ErrorCode = 0
+                Identity = [pscustomobject]@{ ProcessId = 'not-a-pid'; ParentProcessId = 0; CreationTime = 1001; ImagePath = 'C:\self-test.exe' }
+            }
+        }
+    }
+    $jobIdentityConversionFailureThrew = $false
+    try { [void](Get-JobProcessRecords ([IntPtr]1) @{} $jobIdentityConversionFailureObservation $jobIdentityConversionFailureObservation $jobIdentityConversionFailureInvokers) }
+    catch { $jobIdentityConversionFailureThrew = $true }
+    $jobIdentityConversionFailureTelemetry = $jobIdentityConversionFailureObservation.jobIdentityObservation
+    $jobIdentityConversionFailureVerified = $jobIdentityConversionFailureThrew -and
+        $jobIdentityConversionFailureQueryCalls.Value -eq 1 -and $jobIdentityConversionFailureCensusCalls.Value -eq 1 -and
+        $jobIdentityConversionFailureTelemetry.identityAttemptCount -eq 1 -and
+        $jobIdentityConversionFailureTelemetry.identityFailureCount -eq 1 -and
+        $jobIdentityConversionFailureTelemetry.recoveryAttemptCount -eq 0 -and
+        $jobIdentityConversionFailureTelemetry.failureType -eq 'exception' -and
+        $jobIdentityConversionFailureTelemetry.failureErrorCode -eq 13 -and
+        $jobIdentityConversionFailureObservation.trackedSweepFailureType -eq 'none'
+    if (-not $jobIdentityConversionFailureVerified) { throw 'Production Job identity conversion failure self-test failed.' }
+
+    # A contradictory identity envelope is not a coherent disappearance.  It
+    # must fail closed without attempting the fresh Job-membership recovery,
+    # even when the payload carries an otherwise valid identity record.
+    $jobIdentityContradictorySuccessCases = @(
+        [pscustomobject][ordered]@{
+            Probe = [pscustomobject][ordered]@{ Succeeded = $true; ErrorCode = 5; Identity = $jobIdentityTargetRecord }
+            ExpectedErrorCode = 5
+        }
+        [pscustomobject][ordered]@{
+            Probe = [pscustomobject][ordered]@{ Succeeded = $true; ErrorCode = 0; Identity = $null }
+            ExpectedErrorCode = 13
+        }
+    )
+    $jobIdentityContradictorySuccessRejected = $true
+    foreach ($contradictoryCase in $jobIdentityContradictorySuccessCases) {
+        $contradictoryObservation = New-StartupCleanupObservation
+        $contradictoryQueryCalls = [pscustomobject]@{ Value = 0 }
+        $contradictoryCensusCalls = [pscustomobject]@{ Value = 0 }
+        $contradictoryIdentityCalls = [pscustomobject]@{ Value = 0 }
+        $contradictoryInvokers = [pscustomobject][ordered]@{
+            JobQuery = {
+                param([IntPtr]$Handle)
+                $contradictoryQueryCalls.Value++
+                return $jobIdentityTargetQuery
+            }
+            ProcessCensus = {
+                $contradictoryCensusCalls.Value++
+                return $jobIdentityTargetCensus
+            }
+            IdentityQuery = {
+                param([int]$ProcessId, [int]$ParentProcessId)
+                $contradictoryIdentityCalls.Value++
+                return $contradictoryCase.Probe
+            }
+        }
+        $contradictoryThrew = $false
+        try {
+            [void](Get-JobProcessRecords ([IntPtr]1) @{} $contradictoryObservation $contradictoryObservation $contradictoryInvokers)
+        }
+        catch { $contradictoryThrew = $true }
+        $contradictoryTelemetry = $contradictoryObservation.jobIdentityObservation
+        if (-not ($contradictoryThrew -and $contradictoryQueryCalls.Value -eq 1 -and
+                $contradictoryCensusCalls.Value -eq 1 -and $contradictoryIdentityCalls.Value -eq 1 -and
+                $contradictoryTelemetry.identityAttemptCount -eq 1 -and
+                $contradictoryTelemetry.identityFailureCount -eq 1 -and
+                $contradictoryTelemetry.recoveryAttemptCount -eq 0 -and
+                $contradictoryTelemetry.disappearedAfterSnapshotCount -eq 0 -and
+                $contradictoryTelemetry.stillPresentAfterFailureCount -eq 0 -and
+                $contradictoryTelemetry.failureType -eq 'identity-unavailable' -and
+                $contradictoryTelemetry.failureErrorCode -eq $contradictoryCase.ExpectedErrorCode -and
+                $contradictoryObservation.trackedSweepFailureType -eq 'none')) {
+            $jobIdentityContradictorySuccessRejected = $false
+        }
+    }
+    $jobIdentityContradictorySuccessVerified = [bool]$jobIdentityContradictorySuccessRejected
+    if (-not $jobIdentityContradictorySuccessVerified) {
+        throw 'Contradictory Job identity success envelope self-test failed.'
+    }
+
+    # Fresh Job-membership results are independently untrusted.  Keep the
+    # initial census valid and containing the target, then reject each malformed
+    # fresh query before it can qualify an identity disappearance.
+    $makeMalformedFreshJobQuery = {
+        param([AllowNull()] [object]$ProcessIds, [bool]$Attempted = $true, [bool]$Succeeded = $true, [int]$ErrorCode = 0)
+        $queryCopy = $jobIdentityTargetQuery | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+        $queryCopy.Attempted = $Attempted
+        $queryCopy.Succeeded = $Succeeded
+        $queryCopy.ErrorCode = $ErrorCode
+        $queryCopy.ProcessIds = $ProcessIds
+        return $queryCopy
+    }
+    $jobIdentityMalformedFreshQueryCases = @(
+        (& $makeMalformedFreshJobQuery ([object[]]@($jobIdentityLaterPid, $jobIdentityLaterPid)))
+        (& $makeMalformedFreshJobQuery ([object[]]@([double]$jobIdentityLaterPid + 0.5)))
+        (& $makeMalformedFreshJobQuery ([object[]]@([string]$jobIdentityLaterPid)))
+        (& $makeMalformedFreshJobQuery ([object[]]@([double]$jobIdentityLaterPid)))
+        (& $makeMalformedFreshJobQuery $jobIdentityLaterPid)
+        (& $makeMalformedFreshJobQuery ([object[]]@()) $false $true 0)
+        (& $makeMalformedFreshJobQuery ([object[]]@()) $true $true 5)
+        (& $makeMalformedFreshJobQuery ([object[]]@($jobIdentityLaterPid)) $true $true 0)
+    )
+    # The final case above is a valid query and is intentionally replaced with
+    # a string Succeeded value to cover the boolean envelope too.
+    $jobIdentityMalformedFreshQueryCases[7].Succeeded = 'true'
+    $jobIdentityMalformedFreshQueryExpectedErrorCodes = [int[]]@(13, 13, 13, 13, 13, 13, 5, 13)
+    $jobIdentityMalformedFreshQueryRejected = $true
+    for ($malformedFreshIndex = 0; $malformedFreshIndex -lt $jobIdentityMalformedFreshQueryCases.Count; $malformedFreshIndex++) {
+        $malformedFreshQuery = $jobIdentityMalformedFreshQueryCases[$malformedFreshIndex]
+        $malformedFreshObservation = New-StartupCleanupObservation
+        $malformedFreshQueryCalls = [pscustomobject]@{ Value = 0 }
+        $malformedFreshCensusCalls = [pscustomobject]@{ Value = 0 }
+        $malformedFreshInvokers = [pscustomobject][ordered]@{
+            JobQuery = {
+                param([IntPtr]$Handle)
+                $malformedFreshQueryCalls.Value++
+                if ($malformedFreshQueryCalls.Value -eq 1) { return $jobIdentityTargetQuery }
+                return $malformedFreshQuery
+            }
+            ProcessCensus = {
+                $malformedFreshCensusCalls.Value++
+                return $jobIdentityTargetCensus
+            }
+            IdentityQuery = { param([int]$ProcessId, [int]$ParentProcessId) return $jobIdentityFailureProbe }
+        }
+        $malformedFreshThrew = $false
+        try {
+            [void](Get-JobProcessRecords ([IntPtr]1) @{} $malformedFreshObservation $malformedFreshObservation $malformedFreshInvokers)
+        }
+        catch { $malformedFreshThrew = $true }
+        $malformedFreshTelemetry = $malformedFreshObservation.jobIdentityObservation
+        if (-not ($malformedFreshThrew -and $malformedFreshQueryCalls.Value -eq 2 -and
+                $malformedFreshCensusCalls.Value -eq 1 -and
+                $malformedFreshObservation.query.queryCount -eq 2 -and
+                $malformedFreshTelemetry.identityAttemptCount -eq 1 -and
+                $malformedFreshTelemetry.identityFailureCount -eq 1 -and
+                $malformedFreshTelemetry.recoveryAttemptCount -eq 1 -and
+                $malformedFreshTelemetry.disappearedAfterSnapshotCount -eq 0 -and
+                $malformedFreshTelemetry.stillPresentAfterFailureCount -eq 0 -and
+                $malformedFreshTelemetry.failureType -eq 'enumeration-unavailable' -and
+                $malformedFreshTelemetry.failureErrorCode -eq $jobIdentityMalformedFreshQueryExpectedErrorCodes[$malformedFreshIndex] -and
+                $malformedFreshObservation.trackedSweepFailureType -eq 'none')) {
+            $jobIdentityMalformedFreshQueryRejected = $false
+        }
+    }
+    $jobIdentityMalformedFreshQueryCasesVerified = [bool]$jobIdentityMalformedFreshQueryRejected
+    if (-not $jobIdentityMalformedFreshQueryCasesVerified) {
+        throw 'Malformed fresh Job-query envelope self-test failed.'
+    }
+
+    # The Job query metadata is an untrusted native envelope too.  Keep the
+    # initial query and census valid (with the target present), then inject one
+    # malformed metadata field at a time into the fresh query.  These cases
+    # exercise the production Get-JobProcessRecords validator rather than a
+    # helper-only parser and must never qualify the identity disappearance.
+    $makeMalformedFreshJobQueryMetadata = {
+        param([string]$Kind)
+        $queryCopy = & $makeJobIdentityQuery ([int[]]@($jobIdentityLaterPid))
+        $makeAttempt = {
+            param([int]$Number, [bool]$Succeeded, [int]$ErrorCode, [UInt64]$Capacity,
+                [UInt64]$Required, [UInt64]$ReturnLength, [UInt32]$Assigned,
+                [UInt32]$Listed, [bool]$Resized)
+            return [pscustomobject][ordered]@{
+                Attempted = $true; AttemptNumber = [int]$Number; Succeeded = $Succeeded
+                ErrorCode = [int]$ErrorCode; CapacityBytes = [UInt64]$Capacity
+                RequiredBytes = [UInt64]$Required; ReturnLengthBytes = [UInt64]$ReturnLength
+                AssignedProcessCount = [UInt32]$Assigned; ListedProcessCount = [UInt32]$Listed
+                Resized = $Resized
+            }
+        }
+        $setSuccessfulFinal = {
+            param([object]$FinalAttempt, [object[]]$Attempts)
+            $queryCopy.Attempts = [object[]]$Attempts
+            $queryCopy.AttemptCount = [int]$Attempts.Count
+            $queryCopy.Succeeded = $true; $queryCopy.ErrorCode = [int]0
+            $queryCopy.CapacityBytes = [UInt64]$FinalAttempt.CapacityBytes
+            $queryCopy.RequiredBytes = [UInt64]$FinalAttempt.RequiredBytes
+            $queryCopy.ReturnLengthBytes = [UInt64]$FinalAttempt.ReturnLengthBytes
+            $queryCopy.AssignedProcessCount = [UInt32]$FinalAttempt.AssignedProcessCount
+            $queryCopy.ListedProcessCount = [UInt32]$FinalAttempt.ListedProcessCount
+            $queryCopy.Resized = [bool](@($Attempts | Where-Object { [bool]$_.Resized }).Count -gt 0)
+            $queryCopy.ProcessIds = [int[]]@($jobIdentityLaterPid)
+        }
+        switch ($Kind) {
+            'attempted-type' { $queryCopy.Attempted = 'true' }
+            'attempt-count-type' { $queryCopy.AttemptCount = [double]1 }
+            'attempt-count-range' { $queryCopy.AttemptCount = 9 }
+            'capacity-type' { $queryCopy.CapacityBytes = [double]1024 }
+            'capacity-range' { $queryCopy.CapacityBytes = [UInt64]1048577 }
+            'required-type' { $queryCopy.RequiredBytes = '1024' }
+            'return-length-type' { $queryCopy.ReturnLengthBytes = [double]1024 }
+            'assigned-type' { $queryCopy.AssignedProcessCount = [double]1 }
+            'listed-coherence' { $queryCopy.ListedProcessCount = [UInt32]2 }
+            'resized-type' { $queryCopy.Resized = 'false' }
+            'attempts-scalar' { $queryCopy.Attempts = $queryCopy.Attempts[0] }
+            'attempts-length' { $queryCopy.AttemptCount = 2 }
+            'attempt-number-type' { $queryCopy.Attempts[0].AttemptNumber = [double]1 }
+            'attempt-capacity-type' { $queryCopy.Attempts[0].CapacityBytes = '1024' }
+            'attempt-listed-coherence' { $queryCopy.Attempts[0].ListedProcessCount = [UInt32]2 }
+            'attempt-resized-type' { $queryCopy.Attempts[0].Resized = 'false' }
+            'last-status-mismatch' {
+                $queryCopy.Attempts[0].Succeeded = $false
+                $queryCopy.Attempts[0].ErrorCode = [int]24
+            }
+            'intermediate-complete-success' {
+                $sizing = & $makeAttempt 1 $false 122 ([UInt64]0) ([UInt64]16) ([UInt64]16) ([UInt32]0) ([UInt32]0) $false
+                $complete = & $makeAttempt 2 $true 0 ([UInt64]1024) ([UInt64]1024) ([UInt64]1024) ([UInt32]1) ([UInt32]1) $false
+                $final = & $makeAttempt 3 $true 0 ([UInt64]2048) ([UInt64]2048) ([UInt64]2048) ([UInt32]1) ([UInt32]1) $false
+                & $setSuccessfulFinal $final @($sizing, $complete, $final)
+            }
+            'intermediate-nonretryable-failure' {
+                $sizing = & $makeAttempt 1 $false 122 ([UInt64]0) ([UInt64]16) ([UInt64]16) ([UInt32]0) ([UInt32]0) $false
+                $failure = & $makeAttempt 2 $false 5 ([UInt64]1024) ([UInt64]1024) ([UInt64]1024) ([UInt32]0) ([UInt32]0) $false
+                $final = & $makeAttempt 3 $true 0 ([UInt64]2048) ([UInt64]2048) ([UInt64]2048) ([UInt32]1) ([UInt32]1) $false
+                & $setSuccessfulFinal $final @($sizing, $failure, $final)
+            }
+            'zero-sizing-return-mismatch' {
+                $mismatch = & $makeAttempt 1 $false 122 ([UInt64]0) ([UInt64]16) ([UInt64]8) ([UInt32]0) ([UInt32]0) $false
+                $queryCopy.Attempts = [object[]]@($mismatch)
+                $queryCopy.AttemptCount = [int]1; $queryCopy.Succeeded = $false; $queryCopy.ErrorCode = [int]122
+                $queryCopy.ProcessIds = [int[]]@(); $queryCopy.CapacityBytes = [UInt64]0
+                $queryCopy.RequiredBytes = [UInt64]16; $queryCopy.ReturnLengthBytes = [UInt64]8
+                $queryCopy.AssignedProcessCount = [UInt32]0; $queryCopy.ListedProcessCount = [UInt32]0
+                $queryCopy.Resized = $false
+            }
+            'data-capacity-stagnant' {
+                $sizing = & $makeAttempt 1 $false 122 ([UInt64]0) ([UInt64]16) ([UInt64]16) ([UInt32]0) ([UInt32]0) $false
+                $partial = & $makeAttempt 2 $true 0 ([UInt64]1024) ([UInt64]1024) ([UInt64]1024) ([UInt32]2) ([UInt32]1) $true
+                $final = & $makeAttempt 3 $true 0 ([UInt64]1024) ([UInt64]1024) ([UInt64]1024) ([UInt32]1) ([UInt32]1) $false
+                & $setSuccessfulFinal $final @($sizing, $partial, $final)
+            }
+            default { throw "Unknown malformed Job-query metadata case: $Kind" }
+        }
+        return $queryCopy
+    }
+    $jobIdentityMalformedFreshQueryMetadataKinds = @(
+        'attempted-type', 'attempt-count-type', 'attempt-count-range',
+        'capacity-type', 'capacity-range', 'required-type', 'return-length-type',
+        'assigned-type', 'listed-coherence', 'resized-type', 'attempts-scalar',
+            'attempts-length', 'attempt-number-type', 'attempt-capacity-type',
+        'attempt-listed-coherence', 'attempt-resized-type', 'last-status-mismatch',
+        'intermediate-complete-success', 'intermediate-nonretryable-failure',
+        'zero-sizing-return-mismatch', 'data-capacity-stagnant'
+    )
+    $jobIdentityMalformedFreshQueryMetadataCases = @(
+        foreach ($metadataKind in $jobIdentityMalformedFreshQueryMetadataKinds) {
+            & $makeMalformedFreshJobQueryMetadata $metadataKind
+        }
+    )
+    $jobIdentityMalformedFreshQueryMetadataRejected = $true
+    foreach ($malformedMetadataIndex in 0..($jobIdentityMalformedFreshQueryMetadataCases.Count - 1)) {
+        $malformedMetadataQuery = $jobIdentityMalformedFreshQueryMetadataCases[$malformedMetadataIndex]
+        $malformedMetadataObservation = New-StartupCleanupObservation
+        $malformedMetadataQueryCalls = [pscustomobject]@{ Value = 0 }
+        $malformedMetadataCensusCalls = [pscustomobject]@{ Value = 0 }
+        $malformedMetadataInvokers = [pscustomobject][ordered]@{
+            JobQuery = {
+                param([IntPtr]$Handle)
+                $malformedMetadataQueryCalls.Value++
+                if ($malformedMetadataQueryCalls.Value -eq 1) { return $jobIdentityTargetQuery }
+                return $malformedMetadataQuery
+            }
+            ProcessCensus = {
+                $malformedMetadataCensusCalls.Value++
+                return $jobIdentityTargetCensus
+            }
+            IdentityQuery = { param([int]$ProcessId, [int]$ParentProcessId) return $jobIdentityFailureProbe }
+        }
+        $malformedMetadataThrew = $false
+        try {
+            [void](Get-JobProcessRecords ([IntPtr]1) @{} $malformedMetadataObservation $malformedMetadataObservation $malformedMetadataInvokers)
+        }
+        catch { $malformedMetadataThrew = $true }
+        $malformedMetadataTelemetry = $malformedMetadataObservation.jobIdentityObservation
+        if (-not ($malformedMetadataThrew -and $malformedMetadataQueryCalls.Value -eq 2 -and
+                $malformedMetadataCensusCalls.Value -eq 1 -and
+                $malformedMetadataObservation.query.queryCount -eq 2 -and
+                $malformedMetadataTelemetry.identityAttemptCount -eq 1 -and
+                $malformedMetadataTelemetry.identityFailureCount -eq 1 -and
+                $malformedMetadataTelemetry.recoveryAttemptCount -eq 1 -and
+                $malformedMetadataTelemetry.disappearedAfterSnapshotCount -eq 0 -and
+                $malformedMetadataTelemetry.stillPresentAfterFailureCount -eq 0 -and
+                $malformedMetadataTelemetry.failureType -eq 'enumeration-unavailable' -and
+                $malformedMetadataTelemetry.failureErrorCode -eq 13 -and
+                $malformedMetadataObservation.trackedSweepFailureType -eq 'none')) {
+            $jobIdentityMalformedFreshQueryMetadataRejected = $false
+        }
+    }
+    $jobIdentityMalformedFreshQueryMetadataCasesVerified = [bool]$jobIdentityMalformedFreshQueryMetadataRejected
+    if (-not $jobIdentityMalformedFreshQueryMetadataCasesVerified) {
+        throw 'Malformed fresh Job-query metadata self-test failed.'
+    }
+
+    $jobIdentityProductionPathSelfTestVerified = $jobIdentityAcceptedVerified -and
+        $jobIdentityStillPresentVerified -and $jobIdentityUnavailableVerified -and $jobIdentityMalformedVerified -and
+        $jobIdentityInvocationExceptionVerified -and $jobIdentityFreshQueryExceptionVerified -and
+        $jobIdentityConversionFailureVerified -and $jobIdentityContradictorySuccessVerified -and
+        $jobIdentityMalformedFreshQueryCasesVerified -and $jobIdentityMalformedFreshQueryMetadataCasesVerified
 
     $affinitySelfTestProbe = [pscustomobject][ordered]@{
         RequestedMask = [UInt64]1; ProcessMask = [UInt64]1; SystemMask = [UInt64]15
@@ -5526,6 +6950,10 @@ function Invoke-SelfTest {
         processEnumerationAggregateSelfTestVerified = [bool]$successfulEnumerationAggregateVerified
         processEnumerationFirstFailureRetainedVerified = [bool]$firstFailureEnumerationRetainedVerified
         processEnumerationBoundedCountsVerified = [bool]$boundedEnumerationCountsVerified
+        processEnumerationMalformedEnvelopeSelfTestVerified = [bool]$processEnumerationMalformedEnvelopeSelfTestVerified
+        processEnumerationFailedEnvelopeSelfTestVerified = [bool]$processEnumerationFailedEnvelopeSelfTestVerified
+        processEnumerationStrictMetadataSelfTestVerified = [bool]$processEnumerationStrictMetadataSelfTestVerified
+        processEnumerationPidZeroSelfTestVerified = [bool]$processEnumerationPidZeroSelfTestVerified
         trackedSweepFirstFailureRetainedVerified = [bool]$trackedFirstFailureRetainedVerified
         trackedSweepFailureEnumsVerified = [bool]$trackedFailureEnumsVerified
         trackedSweepBoundedCountsVerified = [bool]$boundedTrackedCountsVerified
@@ -5535,6 +6963,22 @@ function Invoke-SelfTest {
         trackedIdentityNoObservationSelfTestVerified = [bool]$identityNoObservationVerified
         trackedIdentityMalformedProbeSelfTestVerified = [bool]$identityMalformedProbeVerified
         trackedIdentityMalformedFreshCensusSelfTestVerified = [bool]$freshMalformedVerified
+        jobIdentityDisappearedTelemetryDisabledSelfTestVerified = [bool]$jobIdentityDisappearedTelemetryDisabledVerified
+        jobIdentityStillPresentTelemetryDisabledSelfTestVerified = [bool]$jobIdentityStillPresentTelemetryDisabledVerified
+        jobIdentityCensusUnavailableTelemetryDisabledSelfTestVerified = [bool]$jobIdentityCensusUnavailableTelemetryDisabledVerified
+        jobIdentityMalformedFreshCensusTelemetryDisabledSelfTestVerified = [bool]$jobIdentityMalformedFreshCensusTelemetryDisabledVerified
+        jobIdentityTelemetryDisabledSelfTestVerified = [bool]$jobIdentityTelemetryDisabledSelfTestVerified
+        jobIdentityProductionPathSelfTestVerified = [bool]$jobIdentityProductionPathSelfTestVerified
+        jobIdentityAcceptedDisappearanceSelfTestVerified = [bool]$jobIdentityAcceptedVerified
+        jobIdentityStillPresentSelfTestVerified = [bool]$jobIdentityStillPresentVerified
+        jobIdentityUnavailableSelfTestVerified = [bool]$jobIdentityUnavailableVerified
+        jobIdentityMalformedFreshQuerySelfTestVerified = [bool]$jobIdentityMalformedVerified
+        jobIdentityInvocationExceptionSelfTestVerified = [bool]$jobIdentityInvocationExceptionVerified
+        jobIdentityFreshQueryExceptionSelfTestVerified = [bool]$jobIdentityFreshQueryExceptionVerified
+        jobIdentityConversionFailureSelfTestVerified = [bool]$jobIdentityConversionFailureVerified
+        jobIdentityContradictorySuccessSelfTestVerified = [bool]$jobIdentityContradictorySuccessVerified
+        jobIdentityMalformedFreshQueryCasesSelfTestVerified = [bool]$jobIdentityMalformedFreshQueryCasesVerified
+        jobIdentityMalformedFreshQueryMetadataCasesSelfTestVerified = [bool]$jobIdentityMalformedFreshQueryMetadataCasesVerified
         affinityHistoricalCountsSelfTestVerified = [bool]$affinityHistoricalCountsVerified
         affinityCurrentSetSelfTestVerified = [bool]$affinityCurrentSetSelfTestVerified
         affinityInvalidCurrentSetSelfTestVerified = [bool]$affinityInvalidCurrentSetSelfTestVerified

@@ -106,6 +106,15 @@ $script:PairedCleanupTelemetryTrackedSweepFailureTypes = @(
     'none', 'identity-disappeared', 'identity-still-present',
     'enumeration-unavailable', 'identity-unavailable', 'exception'
 )
+$script:PairedCleanupTelemetryJobIdentityFailureTypes = @(
+    'none', 'identity-disappeared', 'identity-still-present',
+    'enumeration-unavailable', 'identity-unavailable', 'exception'
+)
+$script:PairedCleanupTelemetryJobIdentityFields = @(
+    'identityAttemptCount', 'identityFailureCount', 'recoveryAttemptCount',
+    'disappearedAfterSnapshotCount', 'stillPresentAfterFailureCount',
+    'failureType', 'failureErrorCode'
+)
 $script:PairedCleanupTelemetryAffinityFailureTypes = @(
     'none', 'open', 'set', 'readback', 'mismatch', 'identity', 'verification', 'unavailable'
 )
@@ -1887,6 +1896,7 @@ function Get-PairedFailureStage {
             return 'startup'
         }
         'survivor' { return 'cleanup' }
+        'cleanup-unverified' { return 'cleanup' }
         'profileCleanup' { return 'profile-cleanup' }
         'affinity' { return 'affinity' }
         'diagnostic-unavailable' { return 'diagnostics' }
@@ -2051,6 +2061,198 @@ function New-PairedUnavailableJobQueryObservation {
     $observation = New-PairedEmptyJobQueryObservation
     $observation.status = 'unavailable'
     return $observation
+}
+
+function New-PairedEmptyLaunchJobQueryObservation {
+    $observation = New-PairedEmptyJobQueryObservation
+    $observation.jobIdentityObservation = New-PairedEmptyJobIdentityObservation
+    return $observation
+}
+
+function New-PairedEmptyJobIdentityObservation {
+    return [ordered]@{
+        status = 'not-observed'
+        identityAttemptCount = [UInt64]0
+        identityFailureCount = [UInt64]0
+        recoveryAttemptCount = [UInt64]0
+        disappearedAfterSnapshotCount = [UInt64]0
+        stillPresentAfterFailureCount = [UInt64]0
+        failureType = 'none'
+        failureErrorCode = $null
+    }
+}
+
+function New-PairedUnavailableJobIdentityObservation {
+    $observation = New-PairedEmptyJobIdentityObservation
+    $observation.status = 'unavailable'
+    $observation.failureType = 'unknown'
+    return $observation
+}
+
+function Convert-PairedJobIdentityObservation {
+    param([AllowNull()] [object]$Raw)
+    if ($null -eq $Raw -or $Raw -is [string] -or $Raw -is [ValueType] -or $Raw -is [Array]) {
+        return New-PairedUnavailableJobIdentityObservation
+    }
+    try {
+        foreach ($field in @($script:PairedCleanupTelemetryJobIdentityFields)) {
+            if (-not (Test-PairedPropertyPresent $Raw $field)) {
+                return New-PairedUnavailableJobIdentityObservation
+            }
+        }
+        $attempts = Convert-PairedCleanupTelemetryBoundedCount (Get-PairedProperty $Raw @('identityAttemptCount'))
+        $failures = Convert-PairedCleanupTelemetryBoundedCount (Get-PairedProperty $Raw @('identityFailureCount'))
+        $recoveries = Convert-PairedCleanupTelemetryBoundedCount (Get-PairedProperty $Raw @('recoveryAttemptCount'))
+        $disappeared = Convert-PairedCleanupTelemetryBoundedCount (Get-PairedProperty $Raw @('disappearedAfterSnapshotCount'))
+        $present = Convert-PairedCleanupTelemetryBoundedCount (Get-PairedProperty $Raw @('stillPresentAfterFailureCount'))
+        $failureType = Convert-PairedCleanupTelemetryEnum (Get-PairedProperty $Raw @('failureType')) $script:PairedCleanupTelemetryJobIdentityFailureTypes
+        $errorRaw = Get-PairedProperty $Raw @('failureErrorCode')
+        $errorCode = Convert-PairedCleanupTelemetryErrorCode $errorRaw
+        if ($null -eq $attempts -or $null -eq $failures -or $null -eq $recoveries -or
+            $null -eq $disappeared -or $null -eq $present -or $null -eq $failureType -or
+            ($null -ne $errorRaw -and $null -eq $errorCode) -or
+            $failures -gt $attempts -or $recoveries -gt $failures -or
+            $disappeared + $present -gt $recoveries) {
+            return New-PairedUnavailableJobIdentityObservation
+        }
+        if ($failureType -eq 'none') {
+            if ($failures -ne 0 -or $recoveries -ne 0 -or $disappeared -ne 0 -or
+                $present -ne 0 -or $null -ne $errorCode) {
+                return New-PairedUnavailableJobIdentityObservation
+            }
+        }
+        else {
+            if ($failures -eq 0 -or $null -eq $errorCode -or $errorCode -eq 0) {
+                return New-PairedUnavailableJobIdentityObservation
+            }
+            if ($failureType -eq 'identity-disappeared' -and $disappeared -eq 0) {
+                return New-PairedUnavailableJobIdentityObservation
+            }
+            if ($failureType -eq 'identity-still-present' -and $present -eq 0) {
+                return New-PairedUnavailableJobIdentityObservation
+            }
+        }
+        return [ordered]@{
+            status = 'observed'
+            identityAttemptCount = [UInt64]$attempts
+            identityFailureCount = [UInt64]$failures
+            recoveryAttemptCount = [UInt64]$recoveries
+            disappearedAfterSnapshotCount = [UInt64]$disappeared
+            stillPresentAfterFailureCount = [UInt64]$present
+            failureType = [string]$failureType
+            failureErrorCode = if ($null -eq $errorCode) { $null } else { [int]$errorCode }
+        }
+    }
+    catch { return New-PairedUnavailableJobIdentityObservation }
+}
+
+function Convert-PairedLaunchJobQueryObservation {
+    param([AllowNull()] [object]$Raw)
+    $observation = if ($null -eq $Raw) {
+        New-PairedUnavailableJobQueryObservation
+    }
+    else {
+        Convert-PairedJobQueryObservation $Raw
+    }
+    $identityObservation = if ($null -ne $Raw -and (Test-PairedPropertyPresent $Raw 'jobIdentityObservation')) {
+        Convert-PairedJobIdentityObservation (Get-PairedProperty $Raw @('jobIdentityObservation'))
+    }
+    else {
+        # v1 launch observations predate the additive Job identity object.
+        New-PairedEmptyJobIdentityObservation
+    }
+    $observation.jobIdentityObservation = $identityObservation
+    return $observation
+}
+
+function Test-PairedJobIdentityObservationEqual {
+    param(
+        [AllowNull()] [object]$Left,
+        [AllowNull()] [object]$Right
+    )
+    if ($null -eq $Left -or $null -eq $Right -or
+        [string](Get-PairedProperty $Left @('status')) -ne 'observed' -or
+        [string](Get-PairedProperty $Right @('status')) -ne 'observed') {
+        return $false
+    }
+    foreach ($field in @($script:PairedCleanupTelemetryJobIdentityFields)) {
+        if (-not (Test-PairedPropertyPresent $Left $field) -or
+            -not (Test-PairedPropertyPresent $Right $field)) {
+            return $false
+        }
+        $leftValue = Get-PairedProperty $Left @($field)
+        $rightValue = Get-PairedProperty $Right @($field)
+        if ($null -eq $leftValue -or $null -eq $rightValue) {
+            if ($null -ne $leftValue -or $null -ne $rightValue) { return $false }
+        }
+        elseif ($leftValue -ne $rightValue) {
+            return $false
+        }
+    }
+    return $true
+}
+
+function Test-PairedStructuredObject {
+    param([AllowNull()] [object]$Value)
+    # JSON objects arrive as PSCustomObject/IDictionary.  Strings, arrays, and
+    # scalar values are not valid outer observation containers, even when
+    # their value happens to be null-ish or otherwise coercible by PowerShell.
+    if ($null -eq $Value -or $Value -is [string] -or
+        $Value -is [ValueType] -or $Value -is [Array]) {
+        return $false
+    }
+    return $Value -is [Collections.IDictionary] -or
+        [string]::Equals($Value.GetType().FullName,
+            'System.Management.Automation.PSCustomObject', [StringComparison]::Ordinal)
+}
+
+function Test-PairedJobIdentityObservationContract {
+    param(
+        [Parameter(Mandatory = $true)] [object]$Raw,
+        [Parameter(Mandatory = $true)] [object]$LaunchJobQueryObservation,
+        [Parameter(Mandatory = $true)] [object]$CleanupObservation
+    )
+    $rawLaunchQueryPresent = Test-PairedPropertyPresent $Raw 'launchJobQueryObservation'
+    $rawLaunchQuery = if ($rawLaunchQueryPresent) {
+        Get-PairedProperty $Raw @('launchJobQueryObservation')
+    }
+    else { $null }
+    $rawCleanupPresent = Test-PairedPropertyPresent $Raw 'cleanupObservation'
+    $rawCleanup = if ($rawCleanupPresent) {
+        Get-PairedProperty $Raw @('cleanupObservation')
+    }
+    else { $null }
+    # An absent outer field is the only truly legacy shape.  A structured
+    # outer object without the additive nested object is also compatible with
+    # older producers.  A present null/scalar/array is malformed and must not
+    # be reinterpreted as that legacy shape.
+    if (($rawLaunchQueryPresent -and -not (Test-PairedStructuredObject $rawLaunchQuery)) -or
+        ($rawCleanupPresent -and -not (Test-PairedStructuredObject $rawCleanup))) {
+        return [pscustomobject][ordered]@{
+            valid = $false
+            launchPresent = $false
+            cleanupPresent = $false
+            reason = 'malformed-outer'
+        }
+    }
+    $launchPresent = ($null -ne $rawLaunchQuery -and
+        (Test-PairedPropertyPresent $rawLaunchQuery 'jobIdentityObservation'))
+    $cleanupPresent = ($null -ne $rawCleanup -and
+        (Test-PairedPropertyPresent $rawCleanup 'jobIdentityObservation'))
+    $launchObservation = Get-PairedProperty $LaunchJobQueryObservation @('jobIdentityObservation')
+    $cleanupObservationValue = Get-PairedProperty $CleanupObservation @('jobIdentityObservation')
+    # v1 reports omitted both additive objects.  Their normalized fallbacks are
+    # explicitly not-observed and remain neutral for the existing cleanup gate.
+    if (-not $launchPresent -and -not $cleanupPresent) {
+        return [pscustomobject][ordered]@{ valid = $true; launchPresent = $false; cleanupPresent = $false; reason = 'not-observed' }
+    }
+    if ($launchPresent -ne $cleanupPresent) {
+        return [pscustomobject][ordered]@{ valid = $false; launchPresent = $launchPresent; cleanupPresent = $cleanupPresent; reason = 'one-sided' }
+    }
+    if (-not (Test-PairedJobIdentityObservationEqual $launchObservation $cleanupObservationValue)) {
+        return [pscustomobject][ordered]@{ valid = $false; launchPresent = $launchPresent; cleanupPresent = $cleanupPresent; reason = 'unavailable-or-mismatch' }
+    }
+    return [pscustomobject][ordered]@{ valid = $true; launchPresent = $true; cleanupPresent = $true; reason = 'observed' }
 }
 
 function Test-PairedJobQueryNumeric {
@@ -2332,6 +2534,7 @@ function New-PairedEmptyCleanupObservation {
         processEnumerationCallCount = [UInt64]0
         processEnumerationCompletedCount = [UInt64]0
         processEnumerationFailureCount = [UInt64]0
+        jobIdentityObservation = New-PairedEmptyJobIdentityObservation
         trackedSweepFailureType = 'unknown'
         trackedSweepFailureErrorCode = $null
         trackedSweepIdentityAttemptCount = [UInt64]0
@@ -2355,8 +2558,9 @@ function New-PairedUnavailableCleanupObservation {
             $observation[$field] = Get-PairedProperty $Outer @($field)
         }
     }
-    $observation.status = 'unavailable'
+        $observation.status = 'unavailable'
     $observation.query = New-PairedUnavailableJobQueryObservation
+    $observation.jobIdentityObservation = New-PairedUnavailableJobIdentityObservation
     return $observation
 }
 
@@ -2548,6 +2752,21 @@ function Convert-PairedCleanupObservation {
             return New-PairedUnavailableCleanupObservation $outer
         }
         foreach ($field in @($telemetry.Keys)) { $outer[$field] = $telemetry[$field] }
+        # The Job identity-race object is a separate additive diagnostic.  A
+        # v1 report which predates it gets an explicit not-observed fallback;
+        # once the object is present, every field and cross-field equation is
+        # required so partial or malformed telemetry cannot qualify cleanup.
+        $jobIdentityObservation = if (Test-PairedPropertyPresent $Raw 'jobIdentityObservation') {
+            Convert-PairedJobIdentityObservation (Get-PairedProperty $Raw @('jobIdentityObservation'))
+        }
+        else {
+            New-PairedEmptyJobIdentityObservation
+        }
+        if ($jobIdentityObservation.status -eq 'unavailable') {
+            $outer.jobIdentityObservation = New-PairedUnavailableJobIdentityObservation
+            return New-PairedUnavailableCleanupObservation $outer
+        }
+        $outer.jobIdentityObservation = $jobIdentityObservation
         if (-not (Test-PairedPropertyPresent $Raw 'query')) {
             return New-PairedUnavailableCleanupObservation $outer
         }
@@ -3194,10 +3413,9 @@ function Convert-PairedLaunchResult {
     $affinity = Convert-PairedAffinity (Get-PairedProperty $Raw @('affinity'))
     $launchJobQueryObservation = if (Test-PairedPropertyPresent $Raw 'launchJobQueryObservation') {
         $rawLaunchQuery = Get-PairedProperty $Raw @('launchJobQueryObservation')
-        if ($null -eq $rawLaunchQuery) { New-PairedUnavailableJobQueryObservation }
-        else { Convert-PairedJobQueryObservation $rawLaunchQuery }
+        Convert-PairedLaunchJobQueryObservation $rawLaunchQuery
     }
-    else { New-PairedEmptyJobQueryObservation }
+    else { New-PairedEmptyLaunchJobQueryObservation }
     $cleanupObservation = if (Test-PairedPropertyPresent $Raw 'cleanupObservation') {
         $rawCleanupObservation = Get-PairedProperty $Raw @('cleanupObservation')
         if ($null -eq $rawCleanupObservation) { New-PairedUnavailableCleanupObservation }
@@ -3209,16 +3427,19 @@ function Convert-PairedLaunchResult {
         Convert-PairedStartupTraceEvidence (Get-PairedProperty $Raw @('startupTrace'))
     }
     else { New-PairedUnavailableStartupTrace }
+    $jobIdentityObservationContract = Test-PairedJobIdentityObservationContract $Raw $launchJobQueryObservation $cleanupObservation
+    $jobIdentityObservationContractValid = [bool]$jobIdentityObservationContract.valid
     $diagnosticUnavailable = [string](Get-PairedProperty $startupDiagnostics @('observationStatus')) -eq 'unavailable'
     $traceUnavailable = [string](Get-PairedProperty $startupTrace @('status')) -eq 'unavailable'
     $success = $rawSuccess -and [bool](Get-PairedProperty $Raw @('processCleanupVerified')) -and
         $ProfileCleanupVerified -and [bool]$affinity.verified -and [bool]$TraceCleanupVerified -and
-        -not $diagnosticUnavailable -and -not $traceUnavailable
-    $failureType = if ($success) { $null } else { Get-PairedFailureType $Raw $ProfileCleanupVerified }
+        -not $diagnosticUnavailable -and -not $traceUnavailable -and
+        $jobIdentityObservationContractValid
+    $failureType = if ($success) { $null } elseif (-not $jobIdentityObservationContractValid) { 'cleanup-unverified' } else { Get-PairedFailureType $Raw $ProfileCleanupVerified }
     # The raw launch result owns primary failure classification.  Diagnostics
     # and trace are secondary evidence when the launch itself already failed;
     # they may become primary only when the raw launch otherwise succeeded.
-    if (-not $success -and $rawSuccess) {
+    if (-not $success -and $rawSuccess -and $jobIdentityObservationContractValid) {
         $cleanupVerified = [bool](Get-PairedProperty $Raw @('processCleanupVerified')) -and $ProfileCleanupVerified
         if ($cleanupVerified -and [bool]$affinity.verified) {
             if ($diagnosticUnavailable) { $failureType = 'diagnostic-unavailable' }
@@ -3260,7 +3481,8 @@ function Convert-PairedLaunchResult {
         processCleanupVerified = [bool](Get-PairedProperty $Raw @('processCleanupVerified'))
         profileCleanupVerified = [bool]$ProfileCleanupVerified
         traceCleanupVerified = [bool]$TraceCleanupVerified
-        cleanupVerified = [bool](Get-PairedProperty $Raw @('processCleanupVerified')) -and $ProfileCleanupVerified -and [bool]$TraceCleanupVerified
+        cleanupVerified = [bool](Get-PairedProperty $Raw @('processCleanupVerified')) -and $ProfileCleanupVerified -and [bool]$TraceCleanupVerified -and $jobIdentityObservationContractValid
+        jobIdentityObservationContractValid = $jobIdentityObservationContractValid
         survivorCount = @(Get-PairedProperty $Raw @('survivors')).Count
     }
 }
@@ -3268,8 +3490,12 @@ function Convert-PairedLaunchResult {
 function Test-PairedRunCleanupVerified {
     param([Parameter(Mandatory = $true)] [object]$Run)
     $traceCleanup = Get-PairedProperty $Run @('traceCleanupVerified')
+    $identityContractPresent = Test-PairedPropertyPresent $Run 'jobIdentityObservationContractValid'
+    $identityContract = Get-PairedProperty $Run @('jobIdentityObservationContractValid')
+    $identityContractValid = $identityContractPresent -and ($identityContract -is [bool]) -and [bool]$identityContract
     return [bool]$Run.processCleanupVerified -and [bool]$Run.profileCleanupVerified -and
-        $null -ne $traceCleanup -and [bool]$traceCleanup
+        $null -ne $traceCleanup -and [bool]$traceCleanup -and
+        $identityContractValid
 }
 
 function New-PairedCampaignTermination {
@@ -3866,6 +4092,40 @@ function Invoke-PairedSelfTest {
     Assert-PairedEqual 'cleanup-unverified' $termination.type 'campaign termination type'
     Assert-PairedEqual 2 $termination.suppressedLaunches 'campaign suppressed launch count'
     if (-not $termination.excluded -or -not $termination.laterLaunchesSuppressed) { throw 'Campaign termination self-test did not suppress later launches.' }
+    $selfTestMissingIdentityContractRun = [pscustomobject][ordered]@{
+        processCleanupVerified = $true
+        profileCleanupVerified = $true
+        traceCleanupVerified = $true
+    }
+    $selfTestMissingIdentityContractTermination = New-PairedCampaignTermination -TotalEntries $terminationSchedule.Count -CompletedEntries 2 `
+        -TriggerRow $terminationSchedule[2] -TriggerRun $selfTestMissingIdentityContractRun
+    $selfTestMissingIdentityContractRejected = [bool](-not (Test-PairedRunCleanupVerified $selfTestMissingIdentityContractRun) -and
+        $selfTestMissingIdentityContractTermination.status -eq 'terminated' -and
+        $selfTestMissingIdentityContractTermination.type -eq 'cleanup-unverified' -and
+        $selfTestMissingIdentityContractTermination.failureType -eq 'cleanup-unverified' -and
+        $selfTestMissingIdentityContractTermination.excluded -and
+        $selfTestMissingIdentityContractTermination.suppressedLaunches -eq 2 -and
+        $selfTestMissingIdentityContractTermination.laterLaunchesSuppressed)
+    $selfTestNonBooleanIdentityContractRun = [pscustomobject][ordered]@{
+        processCleanupVerified = $true
+        profileCleanupVerified = $true
+        traceCleanupVerified = $true
+        jobIdentityObservationContractValid = 'true'
+    }
+    $selfTestNonBooleanIdentityContractTermination = New-PairedCampaignTermination -TotalEntries $terminationSchedule.Count -CompletedEntries 2 `
+        -TriggerRow $terminationSchedule[2] -TriggerRun $selfTestNonBooleanIdentityContractRun
+    $selfTestNonBooleanIdentityContractRejected = [bool](-not (Test-PairedRunCleanupVerified $selfTestNonBooleanIdentityContractRun) -and
+        $selfTestNonBooleanIdentityContractTermination.status -eq 'terminated' -and
+        $selfTestNonBooleanIdentityContractTermination.type -eq 'cleanup-unverified' -and
+        $selfTestNonBooleanIdentityContractTermination.failureType -eq 'cleanup-unverified' -and
+        $selfTestNonBooleanIdentityContractTermination.excluded -and
+        $selfTestNonBooleanIdentityContractTermination.suppressedLaunches -eq 2 -and
+        $selfTestNonBooleanIdentityContractTermination.laterLaunchesSuppressed)
+    $selfTestJobIdentityContractPresenceGateTerminationVerified = [bool]($selfTestMissingIdentityContractRejected -and
+        $selfTestNonBooleanIdentityContractRejected)
+    if (-not $selfTestJobIdentityContractPresenceGateTerminationVerified) {
+        throw 'Missing or non-boolean Job identity contract did not terminate and suppress later launches.'
+    }
     $completedCampaign = New-PairedCampaignTermination -TotalEntries $terminationSchedule.Count -CompletedEntries $terminationSchedule.Count -TriggerRow $null
     Assert-PairedEqual 'completed' $completedCampaign.status 'completed campaign status'
     Assert-PairedEqual 0 $completedCampaign.suppressedLaunches 'completed campaign suppression count'
@@ -3923,11 +4183,20 @@ function Invoke-PairedSelfTest {
         processEnumerationErrorCode = $null; processEnumerationRetryCount = [UInt64]1
         processEnumerationCallCount = [UInt64]2; processEnumerationCompletedCount = [UInt64]2
         processEnumerationFailureCount = [UInt64]0
+        jobIdentityObservation = [ordered]@{
+            identityAttemptCount = [UInt64]0; identityFailureCount = [UInt64]0
+            recoveryAttemptCount = [UInt64]0; disappearedAfterSnapshotCount = [UInt64]0
+            stillPresentAfterFailureCount = [UInt64]0; failureType = 'none'; failureErrorCode = $null
+        }
         trackedSweepFailureType = 'none'; trackedSweepFailureErrorCode = $null
         trackedSweepIdentityAttemptCount = [UInt64]0; trackedSweepIdentityFailureCount = [UInt64]0
         trackedSweepDisappearedAfterSnapshotCount = [UInt64]0
         trackedSweepStillPresentAfterFailureCount = [UInt64]0; trackedSweepPassCount = [UInt64]1
     }
+    $selfTestLaunchJobQuery = $selfTestGoodJobQuery | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+    Add-Member -InputObject $selfTestLaunchJobQuery -MemberType NoteProperty -Name jobIdentityObservation -Value $selfTestCleanupObservation.jobIdentityObservation
+    Add-Member -InputObject $selfTestPartialJobQuery -MemberType NoteProperty -Name jobIdentityObservation -Value $selfTestCleanupObservation.jobIdentityObservation
+    $selfTestFailedJobQuery['jobIdentityObservation'] = $selfTestCleanupObservation.jobIdentityObservation
     foreach ($checkpoint in @($script:PairedDiagnosticCheckpointNames)) {
         $diagnosticSnapshot = New-PairedEmptyProcessDiagnosticSnapshot $checkpoint
         $diagnosticSnapshot.status = 'observed'
@@ -4054,7 +4323,7 @@ function Invoke-PairedSelfTest {
             failureErrorCode = $null; liveSetSource = 'tracked-sweep'
         }
         error = $null; processCleanupVerified = $true; survivors = @()
-        launchJobQueryObservation = $selfTestGoodJobQuery
+        launchJobQueryObservation = $selfTestLaunchJobQuery
         cleanupObservation = $selfTestCleanupObservation
         startupDiagnostics = $selfTestStartupDiagnostics; startupTrace = $selfTestStartupTrace
     }
@@ -4129,6 +4398,7 @@ function Invoke-PairedSelfTest {
             $script:PairedCleanupTelemetryTrackedSweepFields)) {
         [void]$selfTestOldSchemaCleanup.PSObject.Properties.Remove($field)
     }
+    [void]$selfTestOldSchemaCleanup.PSObject.Properties.Remove('jobIdentityObservation')
     $selfTestOldSchemaRaw.cleanupObservation = $selfTestOldSchemaCleanup
     $selfTestOldSchemaAffinity = $selfTestSuccessRaw.affinity | ConvertTo-Json -Depth 10 | ConvertFrom-Json
     foreach ($field in @($script:PairedCleanupTelemetryAffinityFields)) {
@@ -4143,7 +4413,10 @@ function Invoke-PairedSelfTest {
     $selfTestOldSchemaRun = Convert-PairedLaunchResult $selfTestOldSchemaRaw $schedule[2] $selfTestTimeoutProfile $true
     $selfTestOldSchemaNeutralVerified = [bool]($selfTestOldSchemaRun.status -eq 'succeeded' -and
         $selfTestOldSchemaRun.launchJobQueryObservation.status -eq 'not-attempted' -and
+        $selfTestOldSchemaRun.launchJobQueryObservation.jobIdentityObservation.status -eq 'not-observed' -and
         $selfTestOldSchemaRun.cleanupObservation.status -eq 'succeeded' -and
+        $selfTestOldSchemaRun.cleanupObservation.jobIdentityObservation.status -eq 'not-observed' -and
+        $selfTestOldSchemaRun.jobIdentityObservationContractValid -and
         $selfTestOldSchemaRun.cleanupObservation.trackedSweepFailureType -eq 'unknown' -and
         $selfTestOldSchemaRun.affinity.failureType -eq 'unknown' -and
         $selfTestOldSchemaRun.affinity.liveSetSource -eq 'not-observed' -and
@@ -4151,6 +4424,138 @@ function Invoke-PairedSelfTest {
             $_.jobQueryObservation.status -ne 'not-attempted'
         }).Count -eq 0)
     if (-not $selfTestOldSchemaNeutralVerified) { throw 'Old-schema paired telemetry did not normalize to neutral.' }
+    $selfTestJobIdentityValidRaw = $selfTestSuccessRaw | Select-Object *
+    $selfTestJobIdentityValidCleanup = $selfTestCleanupObservation | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+    $selfTestJobIdentityValidCleanup.jobIdentityObservation.identityAttemptCount = [UInt64]2
+    $selfTestJobIdentityValidCleanup.jobIdentityObservation.identityFailureCount = [UInt64]1
+    $selfTestJobIdentityValidCleanup.jobIdentityObservation.recoveryAttemptCount = [UInt64]1
+    $selfTestJobIdentityValidCleanup.jobIdentityObservation.disappearedAfterSnapshotCount = [UInt64]1
+    $selfTestJobIdentityValidCleanup.jobIdentityObservation.failureType = 'identity-disappeared'
+    $selfTestJobIdentityValidCleanup.jobIdentityObservation.failureErrorCode = 5
+    $selfTestJobIdentityValidLaunch = $selfTestJobIdentityValidRaw.launchJobQueryObservation | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+    $selfTestJobIdentityValidLaunch.jobIdentityObservation = $selfTestJobIdentityValidCleanup.jobIdentityObservation
+    $selfTestJobIdentityValidRaw.launchJobQueryObservation = $selfTestJobIdentityValidLaunch
+    $selfTestJobIdentityValidRaw.cleanupObservation = $selfTestJobIdentityValidCleanup
+    $selfTestJobIdentityValidRun = Convert-PairedLaunchResult $selfTestJobIdentityValidRaw $schedule[2] $selfTestTimeoutProfile $true
+    $selfTestJobIdentityValidObservation = $selfTestJobIdentityValidRun.cleanupObservation.jobIdentityObservation
+    $selfTestJobIdentityValidLaunchObservation = $selfTestJobIdentityValidRun.launchJobQueryObservation.jobIdentityObservation
+    $selfTestJobIdentityValidVerified = [bool]($selfTestJobIdentityValidRun.status -eq 'succeeded' -and
+        $selfTestJobIdentityValidRun.cleanupObservation.status -eq 'succeeded' -and
+        $selfTestJobIdentityValidRun.jobIdentityObservationContractValid -and
+        $selfTestJobIdentityValidRun.cleanupVerified -and
+        (Test-PairedRunCleanupVerified $selfTestJobIdentityValidRun) -and
+        $selfTestJobIdentityValidObservation.status -eq 'observed' -and
+        $selfTestJobIdentityValidObservation.identityAttemptCount -eq 2 -and
+        $selfTestJobIdentityValidObservation.identityFailureCount -eq 1 -and
+        $selfTestJobIdentityValidObservation.recoveryAttemptCount -eq 1 -and
+        $selfTestJobIdentityValidObservation.disappearedAfterSnapshotCount -eq 1 -and
+        $selfTestJobIdentityValidObservation.stillPresentAfterFailureCount -eq 0 -and
+        $selfTestJobIdentityValidObservation.failureType -eq 'identity-disappeared' -and
+        $selfTestJobIdentityValidObservation.failureErrorCode -eq 5 -and
+        $selfTestJobIdentityValidLaunchObservation.status -eq 'observed' -and
+        $selfTestJobIdentityValidLaunchObservation.identityFailureCount -eq 1 -and
+        $selfTestJobIdentityValidLaunchObservation.failureType -eq 'identity-disappeared' -and
+        $selfTestJobIdentityValidLaunchObservation.failureErrorCode -eq 5)
+    if (-not $selfTestJobIdentityValidVerified) { throw 'Valid Job identity observation was not retained.' }
+    $selfTestJobIdentityPartialRaw = $selfTestJobIdentityValidRaw | Select-Object *
+    $selfTestJobIdentityPartialCleanup = $selfTestJobIdentityValidCleanup | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+    [void]$selfTestJobIdentityPartialCleanup.jobIdentityObservation.PSObject.Properties.Remove('failureErrorCode')
+    $selfTestJobIdentityPartialRaw.cleanupObservation = $selfTestJobIdentityPartialCleanup
+    $selfTestJobIdentityPartialRun = Convert-PairedLaunchResult $selfTestJobIdentityPartialRaw $schedule[2] $selfTestTimeoutProfile $true
+    $selfTestJobIdentityPartialTermination = New-PairedCampaignTermination -TotalEntries $terminationSchedule.Count -CompletedEntries 2 `
+        -TriggerRow $terminationSchedule[2] -TriggerRun $selfTestJobIdentityPartialRun
+    $selfTestJobIdentityPartialRejected = [bool]($selfTestJobIdentityPartialRun.status -eq 'cleanup-unverified' -and
+        $selfTestJobIdentityPartialRun.excluded -and
+        -not $selfTestJobIdentityPartialRun.jobIdentityObservationContractValid -and
+        -not $selfTestJobIdentityPartialRun.cleanupVerified -and
+        -not (Test-PairedRunCleanupVerified $selfTestJobIdentityPartialRun) -and
+        $selfTestJobIdentityPartialRun.cleanupObservation.status -eq 'unavailable' -and
+        $selfTestJobIdentityPartialRun.cleanupObservation.jobIdentityObservation.status -eq 'unavailable' -and
+        $selfTestJobIdentityPartialTermination.type -eq 'cleanup-unverified' -and
+        $selfTestJobIdentityPartialTermination.suppressedLaunches -eq 2 -and
+        $selfTestJobIdentityPartialTermination.laterLaunchesSuppressed)
+    if (-not $selfTestJobIdentityPartialRejected) { throw 'Partial Job identity observation was accepted.' }
+    $selfTestJobIdentityCrossFieldRaw = $selfTestJobIdentityValidRaw | Select-Object *
+    $selfTestJobIdentityCrossFieldCleanup = $selfTestJobIdentityValidCleanup | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+    $selfTestJobIdentityCrossFieldCleanup.jobIdentityObservation.recoveryAttemptCount = [UInt64]0
+    $selfTestJobIdentityCrossFieldRaw.cleanupObservation = $selfTestJobIdentityCrossFieldCleanup
+    $selfTestJobIdentityCrossFieldRun = Convert-PairedLaunchResult $selfTestJobIdentityCrossFieldRaw $schedule[2] $selfTestTimeoutProfile $true
+    $selfTestJobIdentityCrossFieldTermination = New-PairedCampaignTermination -TotalEntries $terminationSchedule.Count -CompletedEntries 2 `
+        -TriggerRow $terminationSchedule[2] -TriggerRun $selfTestJobIdentityCrossFieldRun
+    $selfTestJobIdentityCrossFieldRejected = [bool]($selfTestJobIdentityCrossFieldRun.status -eq 'cleanup-unverified' -and
+        $selfTestJobIdentityCrossFieldRun.excluded -and
+        -not $selfTestJobIdentityCrossFieldRun.jobIdentityObservationContractValid -and
+        -not $selfTestJobIdentityCrossFieldRun.cleanupVerified -and
+        -not (Test-PairedRunCleanupVerified $selfTestJobIdentityCrossFieldRun) -and
+        $selfTestJobIdentityCrossFieldRun.cleanupObservation.status -eq 'unavailable' -and
+        $selfTestJobIdentityCrossFieldRun.cleanupObservation.jobIdentityObservation.status -eq 'unavailable' -and
+        $selfTestJobIdentityCrossFieldTermination.type -eq 'cleanup-unverified' -and
+        $selfTestJobIdentityCrossFieldTermination.suppressedLaunches -eq 2 -and
+        $selfTestJobIdentityCrossFieldTermination.laterLaunchesSuppressed)
+    if (-not $selfTestJobIdentityCrossFieldRejected) { throw 'Cross-field Job identity observation was accepted.' }
+    $selfTestJobIdentityOneSidedRaw = $selfTestJobIdentityValidRaw | Select-Object *
+    $selfTestJobIdentityOneSidedLaunch = $selfTestJobIdentityValidRaw.launchJobQueryObservation | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+    [void]$selfTestJobIdentityOneSidedLaunch.PSObject.Properties.Remove('jobIdentityObservation')
+    $selfTestJobIdentityOneSidedRaw.launchJobQueryObservation = $selfTestJobIdentityOneSidedLaunch
+    $selfTestJobIdentityOneSidedRun = Convert-PairedLaunchResult $selfTestJobIdentityOneSidedRaw $schedule[2] $selfTestTimeoutProfile $true
+    $selfTestJobIdentityOneSidedTermination = New-PairedCampaignTermination -TotalEntries $terminationSchedule.Count -CompletedEntries 2 `
+        -TriggerRow $terminationSchedule[2] -TriggerRun $selfTestJobIdentityOneSidedRun
+    $selfTestJobIdentityOneSidedRejected = [bool]($selfTestJobIdentityOneSidedRun.status -eq 'cleanup-unverified' -and
+        $selfTestJobIdentityOneSidedRun.excluded -and
+        -not $selfTestJobIdentityOneSidedRun.jobIdentityObservationContractValid -and
+        -not (Test-PairedRunCleanupVerified $selfTestJobIdentityOneSidedRun) -and
+        $selfTestJobIdentityOneSidedTermination.type -eq 'cleanup-unverified' -and
+        $selfTestJobIdentityOneSidedTermination.suppressedLaunches -eq 2)
+    if (-not $selfTestJobIdentityOneSidedRejected) { throw 'One-sided Job identity observation was accepted.' }
+    $selfTestJobIdentityMismatchRaw = $selfTestJobIdentityValidRaw | Select-Object *
+    $selfTestJobIdentityMismatchLaunch = $selfTestJobIdentityValidRaw.launchJobQueryObservation | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+    $selfTestJobIdentityMismatchLaunch.jobIdentityObservation.identityAttemptCount = [UInt64]3
+    $selfTestJobIdentityMismatchRaw.launchJobQueryObservation = $selfTestJobIdentityMismatchLaunch
+    $selfTestJobIdentityMismatchRun = Convert-PairedLaunchResult $selfTestJobIdentityMismatchRaw $schedule[2] $selfTestTimeoutProfile $true
+    $selfTestJobIdentityMismatchTermination = New-PairedCampaignTermination -TotalEntries $terminationSchedule.Count -CompletedEntries 2 `
+        -TriggerRow $terminationSchedule[2] -TriggerRun $selfTestJobIdentityMismatchRun
+    $selfTestJobIdentityMismatchRejected = [bool]($selfTestJobIdentityMismatchRun.status -eq 'cleanup-unverified' -and
+        $selfTestJobIdentityMismatchRun.excluded -and
+        -not $selfTestJobIdentityMismatchRun.jobIdentityObservationContractValid -and
+        -not (Test-PairedRunCleanupVerified $selfTestJobIdentityMismatchRun) -and
+        $selfTestJobIdentityMismatchTermination.type -eq 'cleanup-unverified' -and
+        $selfTestJobIdentityMismatchTermination.suppressedLaunches -eq 2)
+    if (-not $selfTestJobIdentityMismatchRejected) { throw 'Mismatched Job identity observations were accepted.' }
+    $selfTestJobIdentityMalformedOuterNullRaw = $selfTestSuccessRaw | Select-Object *
+    # A present-but-null outer field is malformed telemetry, not an omitted
+    # legacy field.  Exercise the complete conversion and termination path so
+    # it cannot reach the cleanup-success or campaign-continuation path.
+    $selfTestJobIdentityMalformedOuterNullRaw.launchJobQueryObservation = $null
+    $selfTestJobIdentityMalformedOuterNullRun = Convert-PairedLaunchResult $selfTestJobIdentityMalformedOuterNullRaw $schedule[2] $selfTestTimeoutProfile $true
+    $selfTestJobIdentityMalformedOuterNullTermination = New-PairedCampaignTermination -TotalEntries $terminationSchedule.Count -CompletedEntries 2 `
+        -TriggerRow $terminationSchedule[2] -TriggerRun $selfTestJobIdentityMalformedOuterNullRun
+    $selfTestJobIdentityMalformedOuterNullRejected = [bool]($selfTestJobIdentityMalformedOuterNullRun.status -eq 'cleanup-unverified' -and
+        $selfTestJobIdentityMalformedOuterNullRun.excluded -and
+        -not $selfTestJobIdentityMalformedOuterNullRun.jobIdentityObservationContractValid -and
+        -not (Test-PairedRunCleanupVerified $selfTestJobIdentityMalformedOuterNullRun) -and
+        $selfTestJobIdentityMalformedOuterNullTermination.type -eq 'cleanup-unverified' -and
+        $selfTestJobIdentityMalformedOuterNullTermination.suppressedLaunches -eq 2 -and
+        $selfTestJobIdentityMalformedOuterNullTermination.laterLaunchesSuppressed)
+    if (-not $selfTestJobIdentityMalformedOuterNullRejected) {
+        throw 'Present-null paired observation outer was accepted.'
+    }
+    $selfTestJobIdentityMalformedOuterScalarRaw = $selfTestSuccessRaw | Select-Object *
+    # A scalar has the same fail-closed requirement as null, including when it
+    # replaces the cleanup-side outer object.
+    $selfTestJobIdentityMalformedOuterScalarRaw.cleanupObservation = 'malformed-outer'
+    $selfTestJobIdentityMalformedOuterScalarRun = Convert-PairedLaunchResult $selfTestJobIdentityMalformedOuterScalarRaw $schedule[2] $selfTestTimeoutProfile $true
+    $selfTestJobIdentityMalformedOuterScalarTermination = New-PairedCampaignTermination -TotalEntries $terminationSchedule.Count -CompletedEntries 2 `
+        -TriggerRow $terminationSchedule[2] -TriggerRun $selfTestJobIdentityMalformedOuterScalarRun
+    $selfTestJobIdentityMalformedOuterScalarRejected = [bool]($selfTestJobIdentityMalformedOuterScalarRun.status -eq 'cleanup-unverified' -and
+        $selfTestJobIdentityMalformedOuterScalarRun.excluded -and
+        -not $selfTestJobIdentityMalformedOuterScalarRun.jobIdentityObservationContractValid -and
+        -not (Test-PairedRunCleanupVerified $selfTestJobIdentityMalformedOuterScalarRun) -and
+        $selfTestJobIdentityMalformedOuterScalarTermination.type -eq 'cleanup-unverified' -and
+        $selfTestJobIdentityMalformedOuterScalarTermination.suppressedLaunches -eq 2 -and
+        $selfTestJobIdentityMalformedOuterScalarTermination.laterLaunchesSuppressed)
+    if (-not $selfTestJobIdentityMalformedOuterScalarRejected) {
+        throw 'Scalar paired observation outer was accepted.'
+    }
     $selfTestMalformedCleanupRaw = $selfTestSuccessRaw | Select-Object *
     $selfTestMalformedCleanupObservation = $selfTestCleanupObservation | ConvertTo-Json -Depth 20 | ConvertFrom-Json
     $selfTestMalformedCleanupObservation.query = [pscustomobject][ordered]@{
@@ -4158,15 +4563,17 @@ function Invoke-PairedSelfTest {
     }
     $selfTestMalformedCleanupRaw.cleanupObservation = $selfTestMalformedCleanupObservation
     $selfTestMalformedCleanupRun = Convert-PairedLaunchResult $selfTestMalformedCleanupRaw $schedule[2] $selfTestTimeoutProfile $true
-    $selfTestMalformedCleanupVerified = [bool]($selfTestMalformedCleanupRun.status -eq 'succeeded' -and
-        $selfTestMalformedCleanupRun.processCleanupVerified -and
+    $selfTestMalformedCleanupVerified = [bool]($selfTestMalformedCleanupRun.status -eq 'cleanup-unverified' -and
+        $selfTestMalformedCleanupRun.excluded -and
+        -not $selfTestMalformedCleanupRun.jobIdentityObservationContractValid -and
+        -not $selfTestMalformedCleanupRun.cleanupVerified -and
         $selfTestMalformedCleanupRun.cleanupObservation.status -eq 'unavailable' -and
         $selfTestMalformedCleanupRun.cleanupObservation.query.status -eq 'unavailable' -and
         $selfTestMalformedCleanupRun.cleanupObservation.attempted -and
         $selfTestMalformedCleanupRun.cleanupObservation.jobPresent -and
         $selfTestMalformedCleanupRun.cleanupObservation.survivorCount -eq 0 -and
         $selfTestMalformedCleanupRun.startupDiagnostics.observationStatus -eq 'observed')
-    if (-not $selfTestMalformedCleanupVerified) { throw 'Malformed cleanup telemetry changed legacy launch evidence.' }
+    if (-not $selfTestMalformedCleanupVerified) { throw 'Malformed cleanup telemetry was accepted.' }
     $selfTestFirstCauseCleanup = $selfTestCleanupObservation | ConvertTo-Json -Depth 10 | ConvertFrom-Json
     $selfTestFirstCauseCleanup.trackedSweepFailureType = 'identity-disappeared'
     $selfTestFirstCauseCleanup.trackedSweepFailureErrorCode = 5
@@ -4188,7 +4595,10 @@ function Invoke-PairedSelfTest {
     $selfTestMalformedProcessCleanup.processEnumerationCompletedCount = [UInt64]1
     $selfTestMalformedProcessRaw.cleanupObservation = $selfTestMalformedProcessCleanup
     $selfTestMalformedProcessRun = Convert-PairedLaunchResult $selfTestMalformedProcessRaw $schedule[2] $selfTestTimeoutProfile $true
-    $selfTestCleanupTelemetryProcessCrossFieldRejected = [bool]($selfTestMalformedProcessRun.status -eq 'succeeded' -and
+    $selfTestCleanupTelemetryProcessCrossFieldRejected = [bool]($selfTestMalformedProcessRun.status -eq 'cleanup-unverified' -and
+        $selfTestMalformedProcessRun.excluded -and
+        -not $selfTestMalformedProcessRun.jobIdentityObservationContractValid -and
+        -not $selfTestMalformedProcessRun.cleanupVerified -and
         $selfTestMalformedProcessRun.cleanupObservation.status -eq 'unavailable' -and
         $selfTestMalformedProcessRun.cleanupObservation.processEnumerationCallCount -eq 0 -and
         $selfTestMalformedProcessRun.cleanupObservation.trackedSweepFailureType -eq 'unknown')
@@ -4209,7 +4619,10 @@ function Invoke-PairedSelfTest {
     [void]$selfTestPartialTelemetryCleanup.PSObject.Properties.Remove('trackedSweepPassCount')
     $selfTestPartialTelemetryRaw.cleanupObservation = $selfTestPartialTelemetryCleanup
     $selfTestPartialTelemetryRun = Convert-PairedLaunchResult $selfTestPartialTelemetryRaw $schedule[2] $selfTestTimeoutProfile $true
-    $selfTestCleanupTelemetryPartialRejected = [bool]($selfTestPartialTelemetryRun.status -eq 'succeeded' -and
+    $selfTestCleanupTelemetryPartialRejected = [bool]($selfTestPartialTelemetryRun.status -eq 'cleanup-unverified' -and
+        $selfTestPartialTelemetryRun.excluded -and
+        -not $selfTestPartialTelemetryRun.jobIdentityObservationContractValid -and
+        -not $selfTestPartialTelemetryRun.cleanupVerified -and
         $selfTestPartialTelemetryRun.cleanupObservation.status -eq 'unavailable' -and
         $selfTestPartialTelemetryRun.cleanupObservation.trackedSweepFailureType -eq 'unknown')
     if (-not $selfTestCleanupTelemetryPartialRejected) { throw 'Partial cleanup telemetry schema was accepted.' }
@@ -4975,6 +5388,28 @@ function Invoke-PairedSelfTest {
         jobQueryObservationOldSchemaNeutralVerified = [bool]$selfTestOldSchemaNeutralVerified
         cleanupObservationGoodVerified = [bool]($selfTestSuccessRun.cleanupObservation.status -eq 'succeeded')
         cleanupObservationMalformedVerified = [bool]$selfTestMalformedCleanupVerified
+        jobIdentityObservationValidVerified = [bool]$selfTestJobIdentityValidVerified
+        jobIdentityObservationLaunchValidVerified = [bool]($selfTestJobIdentityValidLaunchObservation.status -eq 'observed' -and
+            $selfTestJobIdentityValidLaunchObservation.identityFailureCount -eq 1 -and
+            $selfTestJobIdentityValidLaunchObservation.failureType -eq 'identity-disappeared' -and
+            $selfTestJobIdentityValidLaunchObservation.failureErrorCode -eq 5)
+        jobIdentityObservationOldSchemaNotObservedVerified = [bool]$selfTestOldSchemaRun.cleanupObservation.jobIdentityObservation.status -eq 'not-observed'
+        jobIdentityObservationPartialRejected = [bool]$selfTestJobIdentityPartialRejected
+        jobIdentityObservationCrossFieldRejected = [bool]$selfTestJobIdentityCrossFieldRejected
+        jobIdentityObservationOneSidedRejected = [bool]$selfTestJobIdentityOneSidedRejected
+        jobIdentityObservationMismatchRejected = [bool]$selfTestJobIdentityMismatchRejected
+        jobIdentityObservationMalformedOuterNullRejected = [bool]$selfTestJobIdentityMalformedOuterNullRejected
+        jobIdentityObservationMalformedOuterScalarRejected = [bool]$selfTestJobIdentityMalformedOuterScalarRejected
+        jobIdentityObservationMalformedOuterSuppressionVerified = [bool]($selfTestJobIdentityMalformedOuterNullRejected -and
+            $selfTestJobIdentityMalformedOuterScalarRejected)
+        jobIdentityObservationFailureTerminationVerified = [bool]($selfTestJobIdentityPartialRejected -and
+            $selfTestJobIdentityCrossFieldRejected -and $selfTestJobIdentityOneSidedRejected -and
+            $selfTestJobIdentityMismatchRejected -and
+            $selfTestJobIdentityMalformedOuterNullRejected -and
+            $selfTestJobIdentityMalformedOuterScalarRejected)
+        jobIdentityObservationContractMissingRejected = [bool]$selfTestMissingIdentityContractRejected
+        jobIdentityObservationContractNonBooleanRejected = [bool]$selfTestNonBooleanIdentityContractRejected
+        jobIdentityObservationContractPresenceGateTerminationVerified = [bool]$selfTestJobIdentityContractPresenceGateTerminationVerified
         cleanupTelemetryFirstCauseVerified = [bool]$selfTestCleanupTelemetryFirstCauseVerified
         cleanupTelemetryProcessCrossFieldRejected = [bool]$selfTestCleanupTelemetryProcessCrossFieldRejected
         cleanupTelemetryProcessSuccessFlagsRejected = [bool]$selfTestCleanupTelemetryProcessSuccessFlagsRejected
@@ -5367,7 +5802,7 @@ function New-PairedFailedRun {
         failureStage = $Status
         startupMilestones = New-PairedEmptyStartupMilestones
         startupDiagnostics = New-PairedEmptyStartupDiagnostics
-        launchJobQueryObservation = New-PairedEmptyJobQueryObservation
+        launchJobQueryObservation = New-PairedEmptyLaunchJobQueryObservation
         cleanupObservation = New-PairedEmptyCleanupObservation
         startupTrace = New-PairedEmptyStartupTrace
         affinity = [ordered]@{
@@ -5394,6 +5829,7 @@ function New-PairedFailedRun {
         profileCleanupVerified = $ProfileCleanupVerified
         traceCleanupVerified = $true
         cleanupVerified = $ProcessCleanupVerified -and $ProfileCleanupVerified
+        jobIdentityObservationContractValid = $true
         survivorCount = 0
     }
 }

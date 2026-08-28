@@ -409,23 +409,61 @@ This race recovery does not replace successful Job query/close, the final exact-
 sweep, the zero-survivor proof, or the zero-cleanup-error gate; all of those
 cleanup gates remain required.
 
+The Job membership path uses an optional local invoker seam for its native Job
+query, initial Toolhelp census, and identity query. When a member is present in
+both the successful Job query and complete initial census but its identity open
+reports a coherent typed failure, it performs one fresh Job-membership query.
+That fresh query must validate successfully and prove that the exact PID is
+absent; it is the sole recovery proof. The Job record loop can then continue,
+so the expected exit does not add a cleanup error. No second Toolhelp census is
+performed in this path, and the initial process-enumeration aggregate keeps its
+existing meaning.
+The pre-existing requery used when a Job PID is absent from the initial census
+is a separate missing-entry check and is not included in
+`jobIdentityObservation`.
+
+The additive `cleanupObservation.jobIdentityObservation` object records
+`identityAttemptCount`, `identityFailureCount`, `recoveryAttemptCount`,
+`disappearedAfterSnapshotCount`, `stillPresentAfterFailureCount`,
+`failureType`, and `failureErrorCode`, all bounded to 4096 where applicable.
+Its equations are `recoveryAttemptCount <= identityFailureCount <=
+identityAttemptCount` and `disappearedAfterSnapshotCount +
+stillPresentAfterFailureCount <= recoveryAttemptCount`; the first typed cause
+and error code are retained. Launch containment and cleanup share this same
+object, so launch-time observations remain in the paired report. A still-
+present PID, unavailable or malformed fresh Job query, identity invocation
+exception, null/malformed identity, or conversion failure remains terminal.
+Job close, the final tracked and exact-path sweeps, the zero-survivor proof, and
+the zero-cleanup-error gate remain mandatory.
+
+The paired converter reconciles the launch and cleanup copies of this nested
+object before declaring a run successful. An outer observation property that is
+absent is the old v1 shape; a structured outer object without the nested object
+is also accepted for compatibility, and both normalized objects are explicit
+`not-observed` and remain neutral. When an outer property is present, it must be
+a structured JSON object: a present `null`, scalar, or array is malformed and
+is never treated as an omitted legacy field. If either nested object is present,
+both must normalize to `observed`—including the valid no-failure observed
+state—and their status plus all seven fields must match exactly. A one-sided
+object, an unavailable/partial/malformed object, an inconsistent cross-field
+value, or a valid-but-mismatched pair is typed `cleanup-unverified`; the run is
+unsuccessful and excluded, and campaign termination suppresses later launches.
+Valid identity telemetry is additive and does not weaken the existing Job-close,
+sweep, zero-survivor, or zero-cleanup-error gates.
+
 These fields are additive to schema version 1. An older report with all of the
 new fields absent is readable through explicit local `unknown`,
-`not-observed`, and zero fallbacks. A report that contains only part of the new
-field set, an out-of-range integer, an unknown enum, or an inconsistent
-cross-field value is represented as local `unavailable` evidence. Neither the
-fallback nor local rejection changes the paired report's existing acceptance,
-suppression, performance, or `adoption.decision=HOLD` behavior.
-
-Query and cleanup telemetry never participates in the success expression,
-`Test-PairedRunCleanupVerified`, termination/suppression, acceptance,
-qualification, or adoption gates. In particular, zero survivors do not prove
-cleanup when the job query failed. A failed or preflight launch receives
-neutral `not-attempted` telemetry. Reports from an older v1 producer with the
-optional fields absent also receive neutral `not-attempted` telemetry, while a
-present malformed query or cleanup subobject becomes only local
-`unavailable` evidence and leaves valid process-tree, root-exit, window, and
-legacy status/gate fields intact.
+`not-observed`, and zero fallbacks; in particular, an absent
+`jobIdentityObservation` is `not-observed`. A report that contains only part
+of that object, an out-of-range integer, an unknown enum, or an inconsistent
+cross-field value is represented as local `unavailable` evidence and cannot
+qualify the run. Other query and cleanup telemetry remains diagnostic and
+payload-free: it never turns zero survivors into a cleanup proof when the Job
+query failed, and malformed legacy subobjects retain their local `unavailable`
+state without copying raw payloads. A failed or preflight launch receives
+neutral `not-attempted` telemetry, while the paired identity-observation
+reconciliation above is deliberately fail closed for present malformed or
+mismatched objects.
 
 ## Self-test
 
@@ -449,7 +487,13 @@ symbol, and contract hash fields to verify rejection. It does not launch
 `pwsh` when validating the two supported PowerShell hosts.
 The self-test also exercises the additive cleanup telemetry schema: old-report
 fallbacks, bounded integer and enum rejection, first-cause retention, process
-enumeration equations, and affinity historical/current/expired count checks. Its
+enumeration equations, and affinity historical/current/expired count checks. It
+also runs the identity-gap helper in tracked mode and the production
+`Get-JobProcessRecords` path with injected native-shaped invokers. Job mode
+accepts only a fresh Job-membership proof of exact-PID absence, performs no
+second Toolhelp census, retains launch and cleanup identity observations in one
+object, and rejects present/unavailable/malformed, invocation-exception, and
+strict identity-conversion cases. Its
 affinity plan uses five historical records and four exact current-live records,
 performs four read-backs only, rejects null/empty, unknown, duplicate, and
 creation/image-path-mismatched current sets, and confirms that the one expired
