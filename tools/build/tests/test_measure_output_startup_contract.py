@@ -153,6 +153,65 @@ class PairedStartupContractTests(unittest.TestCase):
             self.assertIsNone(milestones["timeoutStage"])
             self.assertEqual("not-attempted", milestones["descendantAffinityState"])
 
+    def test_overlong_result_directory_is_rejected_before_gui_launch(self):
+        shell = next((name for name in ("pwsh", "powershell.exe") if shutil.which(name)), None)
+        if shell is None:
+            self.skipTest("Neither pwsh nor powershell.exe is available")
+        with tempfile.TemporaryDirectory(prefix="sakura-output-startup-path-budget-") as directory:
+            target_root_length = 140
+            base_length = len(str(Path(directory)))
+            leaf_prefix = "path-budget-"
+            leaf_length = target_root_length - base_length - 1
+            self.assertGreaterEqual(leaf_length, len(leaf_prefix))
+            overlong_root = Path(directory) / (
+                leaf_prefix + "p" * (leaf_length - len(leaf_prefix))
+            )
+            overlong_root.mkdir()
+            self.assertEqual(target_root_length, len(str(overlong_root)))
+            missing_cpp = overlong_root / "missing-cpp.exe"
+            missing_rust = overlong_root / "missing-rust.exe"
+            completed = subprocess.run(
+                [
+                    shell,
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(PAIRED),
+                    "-CppSakuraExe",
+                    str(missing_cpp),
+                    "-RustSakuraExe",
+                    str(missing_rust),
+                    "-CollectOnly",
+                    "-WarmupLaunches",
+                    "1",
+                    "-MeasuredLaunches",
+                    "1",
+                    "-ResultDirectory",
+                    str(overlong_root),
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            self.assertEqual(1, completed.returncode, completed.stderr)
+            reports = list(overlong_root.glob("paired-startup-*.json"))
+            self.assertEqual(1, len(reports))
+            self.assertLess(len(str(reports[0])), 260)
+            evidence = json.loads(reports[0].read_text(encoding="utf-8"))
+            self.assertEqual("path-budget", evidence["failure"]["stage"])
+            self.assertEqual("path-budget", evidence["failure"]["type"])
+            self.assertEqual("rejected", evidence["pathBudget"]["status"])
+            self.assertGreater(evidence["pathBudget"]["maxPlannedLength"], 259)
+            self.assertEqual(0, evidence["configuration"]["successfulLaunches"])
+            self.assertEqual(0, evidence["termination"]["completedLaunches"])
+            self.assertEqual(
+                evidence["configuration"]["scheduledLaunches"],
+                evidence["termination"]["suppressedLaunches"],
+            )
+
     def test_qualified_defaults_and_collect_only_escape_hatch(self):
         self.assertRegex(self.paired_text, r"\[ValidateRange\(1,\s*1000\)\]\s*\[int\]\$WarmupLaunches")
         self.assertRegex(self.paired_text, r"\[ValidateRange\(1,\s*1000\)\]\s*\[int\]\$MeasuredLaunches")
@@ -228,6 +287,38 @@ class PairedStartupContractTests(unittest.TestCase):
         self.assertIn("$sampleCopyPlan", self.paired_text)
         self.assertIn("$reportTempPath", self.paired_text)
         self.assertIn("[IO.File]::Move($reportTempPath, $reportPath)", self.paired_text)
+        for marker in (
+            "function Get-PairedRunPathToken",
+            "function Get-PairedPathRoleToken",
+            "function New-PairedPathPlan",
+            "function Complete-PairedPathPlan",
+            "$script:PairedWin32PathTextLimit = 259",
+            "$script:PairedWorstProfileAuthoritySuffix = '\\.sakura-platform\\profile-authority.v1.tmp.'",
+            "profile-authority.v1.tmp.",
+            "Assert-PairedPathBudget",
+            "phase = 'generated'",
+            "phase = 'finalized'",
+            "closureEntries = $closureEntries.ToArray()",
+            "closurePathsPlanned",
+            "closureFileCountCpp",
+            "closureDestinationMaxLength",
+            "StartupProfileSidecarFileName",
+            "sakura.exe.ini",
+            "launchesBySequence",
+            "$launchPlan = $pathPlan.launchesBySequence[[int]$row.sequence]",
+            "profileName = [string]$launchPlan.profileName",
+            "traceName",
+            "[Parameter(Mandatory = $true)] [string]$PlannedTraceName",
+            "$traceName = $PlannedTraceName",
+            "New-PairedTraceDirectory $ExecutableDirectory $traceName",
+            "pathBudget = Convert-PairedPathBudgetSummary",
+            "FailureType 'path-budget'",
+            "pathBudgetSubprocessNoGuiVerified",
+            "pathBudgetClosureBoundaryVerified",
+            "pathBudgetClosureFailureEnvelopeVerified",
+            "pathBudgetClosureNoBundleVerified",
+        ):
+            self.assertIn(marker, self.paired_text)
         self.assertIn("Assert-PairedSourceStateUnchanged $sourceState 'Post-write report'", self.paired_text)
         self.assertIn("Assert-PairedScriptIdentityUnchanged $scriptIdentity 'Post-write report'", self.paired_text)
         self.assertIn("cleanup-unverified", self.paired_text)
@@ -341,6 +432,10 @@ class PairedStartupContractTests(unittest.TestCase):
         self.assertIn("-CppRuntimeStageDirectory", paired_doc)
         self.assertIn("-RustRuntimeStageDirectory", paired_doc)
         self.assertIn("prepare-output-startup-artifact.ps1", paired_doc)
+        self.assertIn("two-phase", paired_doc)
+        self.assertRegex(paired_doc, r"phase\s+2")
+        self.assertIn("二段階", startup_doc)
+        self.assertIn("phase 2", startup_doc)
         self.assertIn("prepare-output-startup-artifact.ps1", startup_doc)
         self.assertIn("checkout must be clean", paired_doc)
         self.assertIn("clean checkout", startup_doc)
@@ -418,6 +513,22 @@ class PairedStartupContractTests(unittest.TestCase):
             self.assertTrue(payload["manifestCleanSourceRequired"])
             self.assertTrue(payload["integrityRechecksVerified"])
             self.assertTrue(payload["postWriteReportRecheckVerified"])
+            self.assertTrue(payload["pathPlanCompactNamesVerified"])
+            self.assertTrue(payload["pathPlanDeterministicVerified"])
+            self.assertTrue(payload["pathPlanEqualRoleTokenLengthVerified"])
+            self.assertTrue(payload["pathBudgetBoundary259Accepted"])
+            self.assertTrue(payload["pathBudgetBoundary260Rejected"])
+            self.assertTrue(payload["pathBudgetNoGuiLaunchVerified"])
+            self.assertTrue(payload["pathBudgetFailureEnvelopeVerified"])
+            self.assertTrue(payload["pathBudgetExecutableSelfTestVerified"])
+            self.assertTrue(payload["pathBudgetSubprocessNoGuiVerified"])
+            self.assertTrue(payload["pathBudgetClosureBoundaryVerified"])
+            self.assertTrue(payload["pathBudgetClosureFailureEnvelopeVerified"])
+            self.assertTrue(payload["pathBudgetClosureNoBundleVerified"])
+            self.assertTrue(payload["plannedTraceNamePropagationVerified"])
+            self.assertEqual(259, payload["pathBudget"]["limit"])
+            self.assertEqual(16, payload["pathBudget"]["tokenLength"])
+            self.assertTrue(payload["pathBudget"]["roleTokensEqualLength"])
             self.assertEqual("nearest-rank-ceiling", payload["p95Definition"])
             self.assertTrue(payload["affinityReadBackVerified"])
             self.assertTrue(payload["cleanupTreeVerified"])

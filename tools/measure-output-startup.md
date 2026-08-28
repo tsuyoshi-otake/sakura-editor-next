@@ -109,6 +109,42 @@ the completed count, and the suppressed count; `acceptance.qualified` and
 `pass` are false. This prevents a survivor or contaminated profile from
 multiplying later GUI launches.
 
+### Legacy Win32 path budget and compact campaign names
+
+The normal Win32 path-text budget is 259 characters (the terminating NUL is
+not counted). The runner keeps the existing `runId`-based sample and report
+filenames, but derives a deterministic 16-hex SHA-256 token from that same
+`runId` for the campaign-owned bundle, profile, and trace names. The evidence
+`runId` is unchanged. C++ and Rust use one-character path role tokens of equal
+length, so the two backend layouts have the same path budget.
+
+The runner uses a two-phase check. Phase 1 plans every schedule entry, tracks
+the actual maximum ordinal for each backend, and checks the generated paths on
+the ordinary Win32 path surface before artifact resolution. It includes the
+full profile path plus `\.sakura-platform\profile-authority.v1.tmp.` and 32
+hexadecimal characters. A maximum of 259 is accepted; 260 or more is rejected
+fail-closed before artifact resolution, bundle creation, or GUI launch. After
+the qualified manifests and runtime-stage receipts have been validated, phase
+2 extends the same plan with every canonical receipt-relative destination that
+the bundle copier will create under each backend bundle, plus the generated
+`sakura.exe.ini` sidecar. Collect-only mode finalizes with `sakura.exe` and its
+sidecar. The phase-2 assertion remains before sample copy, bundle creation, and
+GUI launch, so a nested closure destination cannot bypass the early check.
+
+The typed `path-budget` envelope retains one payload-free summary with a
+`phase` (`generated` or `finalized`), `maxPlannedLength`, `limit`, `margin`,
+launch/ordinal counts, token lengths, and closure counts/maximums; it never
+contains a raw path. The runner does not silently relocate to `%TEMP%` or
+change the product manifest/LongPaths settings. Legacy names that embedded the
+full timestamp/GUID remain the compatibility mapping for sample/report files;
+only the bundle/profile/trace components are compacted.
+
+If the caller's result root is so long that even the preserved report filename
+cannot be opened, the fail-closed exit is still safe but on-disk envelope
+retention cannot be guaranteed. The runner does not invent a second evidence
+location; use a result root whose report path is writable when retaining the
+typed envelope is required.
+
 Useful bounded overrides are available for local experiments:
 
 | Parameter | Default | Meaning |

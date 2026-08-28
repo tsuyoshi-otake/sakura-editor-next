@@ -99,6 +99,11 @@ $script:PairedDiagnosticMaxImageNameLength = 260
 $script:PairedDiagnosticMaxWindowCount = 1024
 $script:PairedStartupTraceMaxOrderedEvents = 256
 $script:PairedStartupTraceMaxElapsedMs = 120000
+$script:PairedWin32PathTextLimit = 259
+$script:PairedRunPathTokenLength = 16
+$script:PairedWorstProfileAuthoritySuffix = '\.sakura-platform\profile-authority.v1.tmp.' + ('0' * 32)
+$script:PairedPathRoleTokens = [ordered]@{ cpp = 'c'; rust = 'r' }
+$script:PairedLaunchInvocationCount = 0
 $script:PairedStartupTraceRoles = @('editor', 'control', 'unknown')
 $script:PairedStartupTraceEventAllowlist = @(
     'process_entry', 'isa_dispatch',
@@ -191,6 +196,246 @@ function Test-PairedNonEmptyIdentity {
     param([object]$Value)
     return $null -ne $Value -and -not [string]::IsNullOrWhiteSpace([string]$Value) -and
         [string]$Value -notmatch '[\r\n]'
+}
+
+function Get-PairedRunPathToken {
+    param([Parameter(Mandatory = $true)] [string]$RunId)
+    if ([string]::IsNullOrWhiteSpace($RunId) -or $RunId -match '[\r\n]') {
+        throw 'A non-empty run identity is required for paired path planning.'
+    }
+    $digest = Get-TextSha256 $RunId
+    if ($digest.Length -lt $script:PairedRunPathTokenLength) {
+        throw 'The paired run path token digest is unexpectedly short.'
+    }
+    return $digest.Substring(0, $script:PairedRunPathTokenLength)
+}
+
+function Get-PairedPathRoleToken {
+    param([Parameter(Mandatory = $true)] [string]$Backend)
+    $canonical = Get-PairedCanonicalBackend $Backend
+    if (-not $script:PairedPathRoleTokens.Contains($canonical)) {
+        throw "No paired path role token is defined for backend '$canonical'."
+    }
+    return [string]$script:PairedPathRoleTokens[$canonical]
+}
+
+function New-PairedPathPlan {
+    param(
+        [Parameter(Mandatory = $true)] [string]$ResultRoot,
+        [Parameter(Mandatory = $true)] [string]$RunId,
+        [Parameter(Mandatory = $true)] [object[]]$Schedule
+    )
+    $root = [IO.Path]::GetFullPath($ResultRoot)
+    $rootName = [IO.Path]::GetPathRoot($root)
+    if (-not [string]::Equals($root, $rootName, [StringComparison]::OrdinalIgnoreCase)) {
+        $root = $root.TrimEnd('\')
+    }
+    if ([string]::IsNullOrWhiteSpace($root)) { throw 'A paired result root is required for path planning.' }
+    $token = Get-PairedRunPathToken $RunId
+    $roleTokens = [ordered]@{}
+    foreach ($backend in @('cpp', 'rust')) {
+        $roleTokens[$backend] = Get-PairedPathRoleToken $backend
+    }
+    # Keep the existing report/sample filename mapping so runId remains easy
+    # to correlate in a result directory.  Only campaign-owned bundle,
+    # profile, and trace names need compaction for the product's path budget.
+    if ($RunId -notmatch '^[A-Za-z0-9-]+$') {
+        throw 'The paired run identity is not safe for a campaign filename.'
+    }
+    $sampleName = 'startup-probe-sample-{0}.md' -f $RunId
+    $reportName = 'paired-startup-{0}.json' -f $RunId
+    $reportTempName = '.paired-startup-{0}.json.tmp' -f $RunId
+    $samplePath = Join-Path $root $sampleName
+    $reportPath = Join-Path $root $reportName
+    $reportTempPath = Join-Path $root $reportTempName
+    $bundlePlans = @{}
+    foreach ($backend in @('cpp', 'rust')) {
+        $roleToken = [string]$roleTokens[$backend]
+        $bundleName = 'startup-probe-bundle-{0}-{1}' -f $token, $roleToken
+        $bundlePlans[$backend] = [pscustomobject][ordered]@{
+            bundlePath = Join-Path $root $bundleName
+            bundleRoot = $root
+            bundleName = $bundleName
+            roleToken = $roleToken
+        }
+    }
+
+    $ordinal = @{ cpp = 0; rust = 0 }
+    $launches = New-Object Collections.Generic.List[object]
+    $launchesBySequence = @{}
+    $plannedLengths = New-Object Collections.Generic.List[int]
+    foreach ($row in @($Schedule)) {
+        $backend = Get-PairedCanonicalBackend ([string]$row.backend)
+        ++$ordinal[$backend]
+        $roleToken = [string]$roleTokens[$backend]
+        $profileName = 'startup-probe-{0}-{1}-{2:D3}' -f $token, $roleToken, $ordinal[$backend]
+        $traceName = 'startup-trace-paired-{0}-{1}-{2:D3}' -f $token, $roleToken, $ordinal[$backend]
+        $bundlePath = [string]$bundlePlans[$backend].bundlePath
+        $profilePath = Join-Path $bundlePath $profileName
+        $tracePath = Join-Path $bundlePath $traceName
+        $authorityPath = $profilePath + $script:PairedWorstProfileAuthoritySuffix
+        [void]$plannedLengths.Add([int]$authorityPath.Length)
+        [void]$plannedLengths.Add([int]$tracePath.Length)
+        $launchPlan = [pscustomobject][ordered]@{
+                sequence = [int]$row.sequence
+                backend = $backend
+                ordinal = [int]$ordinal[$backend]
+                profileName = $profileName
+                profilePath = $profilePath
+                traceName = $traceName
+                tracePath = $tracePath
+                authorityPath = $authorityPath
+            }
+        [void]$launches.Add($launchPlan)
+        $launchesBySequence[[int]$row.sequence] = $launchPlan
+    }
+    foreach ($plannedPath in @($samplePath, $reportPath, $reportTempPath, $bundlePlans.cpp.bundlePath, $bundlePlans.rust.bundlePath)) {
+        [void]$plannedLengths.Add([int]$plannedPath.Length)
+    }
+    $maxPlannedLength = if ($plannedLengths.Count -eq 0) { 0 } else { [int](@($plannedLengths | Measure-Object -Maximum).Maximum) }
+    $budget = [pscustomobject][ordered]@{
+        phase = 'generated'
+        status = if ($maxPlannedLength -le $script:PairedWin32PathTextLimit) { 'accepted' } else { 'rejected' }
+        maxPlannedLength = $maxPlannedLength
+        limit = [int]$script:PairedWin32PathTextLimit
+        margin = [int]($script:PairedWin32PathTextLimit - $maxPlannedLength)
+        plannedLaunches = [int]$launches.Count
+        maxOrdinalCpp = [int]$ordinal.cpp
+        maxOrdinalRust = [int]$ordinal.rust
+        tokenLength = [int]$token.Length
+        roleTokenLength = [int]$roleTokens.cpp.Length
+        roleTokensEqualLength = [bool]($roleTokens.cpp.Length -eq $roleTokens.rust.Length)
+        authoritySuffixLength = [int]$script:PairedWorstProfileAuthoritySuffix.Length
+        closurePathsPlanned = $false
+        closureFileCountCpp = 0
+        closureFileCountRust = 0
+        closureDestinationMaxLength = 0
+        closureSidecarMaxLength = 0
+    }
+    return [pscustomobject][ordered]@{
+        root = $root
+        runToken = $token
+        sampleName = $sampleName
+        samplePath = $samplePath
+        reportPath = $reportPath
+        reportTempPath = $reportTempPath
+        bundlePlans = $bundlePlans
+        launches = $launches.ToArray()
+        launchesBySequence = $launchesBySequence
+        budget = $budget
+    }
+}
+
+function Complete-PairedPathPlan {
+    param(
+        [Parameter(Mandatory = $true)] [object]$PathPlan,
+        [Parameter(Mandatory = $false)] [AllowNull()] [object]$CppStage,
+        [Parameter(Mandatory = $false)] [AllowNull()] [object]$RustStage,
+        [Parameter(Mandatory = $true)] [bool]$CollectOnly
+    )
+    if ($null -eq $PathPlan -or $null -eq $PathPlan.budget -or $null -eq $PathPlan.bundlePlans) {
+        throw 'A paired path plan is required before closure paths can be finalized.'
+    }
+    $closureLengths = New-Object Collections.Generic.List[int]
+    $closureDestinationLengths = New-Object Collections.Generic.List[int]
+    $closureSidecarLengths = New-Object Collections.Generic.List[int]
+    $closureCounts = @{ cpp = 0; rust = 0 }
+    foreach ($backend in @('cpp', 'rust')) {
+        $stage = if ($backend -eq 'cpp') { $CppStage } else { $RustStage }
+        $relativePaths = New-Object Collections.Generic.List[string]
+        if ($CollectOnly) {
+            [void]$relativePaths.Add('sakura.exe')
+        }
+        else {
+            if ($null -eq $stage) {
+                throw "The validated runtime stage for '$backend' is required to finalize closure paths."
+            }
+            $entries = @((Get-PairedProperty $stage @('closureEntries')))
+            if ($entries.Count -eq 0) {
+                throw "The validated runtime stage for '$backend' contains no closure entries."
+            }
+            foreach ($entry in $entries) {
+                # Get-PairedRuntimeStageIdentity has already canonicalized and
+                # validated these receipt-relative destinations.  Re-use the
+                # canonical relative path rather than reparsing raw receipt data.
+                $relativePath = [string](Get-PairedProperty $entry @('relativePath'))
+                if ([string]::IsNullOrWhiteSpace($relativePath)) {
+                    throw "The validated runtime stage for '$backend' contains an empty closure destination."
+                }
+                [void]$relativePaths.Add($relativePath.Replace('/', '\'))
+            }
+        }
+        $bundlePath = [string]$PathPlan.bundlePlans[$backend].bundlePath
+        foreach ($relativePath in $relativePaths) {
+            $destinationPath = Join-Path $bundlePath $relativePath
+            [void]$closureDestinationLengths.Add([int]$destinationPath.Length)
+            [void]$closureLengths.Add([int]$destinationPath.Length)
+        }
+        $sidecarPath = Join-Path $bundlePath $script:StartupProfileSidecarFileName
+        [void]$closureSidecarLengths.Add([int]$sidecarPath.Length)
+        [void]$closureLengths.Add([int]$sidecarPath.Length)
+        $closureCounts[$backend] = [int]$relativePaths.Count
+    }
+    $generatedBudget = $PathPlan.budget
+    $generatedMax = [int](Get-PairedProperty $generatedBudget @('maxPlannedLength'))
+    $closureDestinationMax = if ($closureDestinationLengths.Count -eq 0) { 0 } else { [int](@($closureDestinationLengths | Measure-Object -Maximum).Maximum) }
+    $closureSidecarMax = if ($closureSidecarLengths.Count -eq 0) { 0 } else { [int](@($closureSidecarLengths | Measure-Object -Maximum).Maximum) }
+    $closureMax = if ($closureLengths.Count -eq 0) { 0 } else { [int](@($closureLengths | Measure-Object -Maximum).Maximum) }
+    $maxPlannedLength = [Math]::Max($generatedMax, $closureMax)
+    $PathPlan.budget = [pscustomobject][ordered]@{
+        phase = 'finalized'
+        status = if ($maxPlannedLength -le $script:PairedWin32PathTextLimit) { 'accepted' } else { 'rejected' }
+        maxPlannedLength = $maxPlannedLength
+        limit = [int]$script:PairedWin32PathTextLimit
+        margin = [int]($script:PairedWin32PathTextLimit - $maxPlannedLength)
+        plannedLaunches = [int]$PathPlan.launches.Count
+        maxOrdinalCpp = [int]$generatedBudget.maxOrdinalCpp
+        maxOrdinalRust = [int]$generatedBudget.maxOrdinalRust
+        tokenLength = [int]$generatedBudget.tokenLength
+        roleTokenLength = [int]$generatedBudget.roleTokenLength
+        roleTokensEqualLength = [bool]$generatedBudget.roleTokensEqualLength
+        authoritySuffixLength = [int]$generatedBudget.authoritySuffixLength
+        closurePathsPlanned = $true
+        closureFileCountCpp = [int]$closureCounts.cpp
+        closureFileCountRust = [int]$closureCounts.rust
+        closureDestinationMaxLength = $closureDestinationMax
+        closureSidecarMaxLength = $closureSidecarMax
+    }
+    return $PathPlan
+}
+
+function Convert-PairedPathBudgetSummary {
+    param([AllowNull()] [object]$Budget)
+    if ($null -eq $Budget) { return $null }
+    return [ordered]@{
+        phase = [string](Get-PairedProperty $Budget @('phase'))
+        status = [string](Get-PairedProperty $Budget @('status'))
+        maxPlannedLength = [int](Get-PairedProperty $Budget @('maxPlannedLength'))
+        limit = [int](Get-PairedProperty $Budget @('limit'))
+        margin = [int](Get-PairedProperty $Budget @('margin'))
+        plannedLaunches = [int](Get-PairedProperty $Budget @('plannedLaunches'))
+        maxOrdinalCpp = [int](Get-PairedProperty $Budget @('maxOrdinalCpp'))
+        maxOrdinalRust = [int](Get-PairedProperty $Budget @('maxOrdinalRust'))
+        tokenLength = [int](Get-PairedProperty $Budget @('tokenLength'))
+        roleTokenLength = [int](Get-PairedProperty $Budget @('roleTokenLength'))
+        roleTokensEqualLength = [bool](Get-PairedProperty $Budget @('roleTokensEqualLength'))
+        authoritySuffixLength = [int](Get-PairedProperty $Budget @('authoritySuffixLength'))
+        closurePathsPlanned = [bool](Get-PairedProperty $Budget @('closurePathsPlanned'))
+        closureFileCountCpp = [int](Get-PairedProperty $Budget @('closureFileCountCpp'))
+        closureFileCountRust = [int](Get-PairedProperty $Budget @('closureFileCountRust'))
+        closureDestinationMaxLength = [int](Get-PairedProperty $Budget @('closureDestinationMaxLength'))
+        closureSidecarMaxLength = [int](Get-PairedProperty $Budget @('closureSidecarMaxLength'))
+    }
+}
+
+function Assert-PairedPathBudget {
+    param([Parameter(Mandatory = $true)] [object]$Budget)
+    $summary = Convert-PairedPathBudgetSummary $Budget
+    if ($null -eq $summary -or $summary.status -ne 'accepted' -or
+        $summary.maxPlannedLength -gt $summary.limit) {
+        throw 'The paired startup path plan exceeds the normal Win32 path text limit.'
+    }
+    return $Budget
 }
 
 function Assert-PairedAffinityMask {
@@ -339,12 +584,11 @@ function New-PairedSampleCopy {
     param(
         [Parameter(Mandatory = $true)] [string]$SourcePath,
         [Parameter(Mandatory = $true)] [string]$ResultRoot,
-        [Parameter(Mandatory = $true)] [string]$RunId,
-        [Parameter(Mandatory = $true)] [object]$SourceIdentity
+        [Parameter(Mandatory = $true)] [object]$SourceIdentity,
+        [Parameter(Mandatory = $true)] [string]$SampleName
     )
-    $sampleName = 'startup-probe-sample-{0}.md' -f $RunId
-    $samplePath = Join-Path ([IO.Path]::GetFullPath($ResultRoot)) $sampleName
-    Assert-PairedOwnedSamplePath $samplePath $ResultRoot $sampleName
+    $samplePath = Join-Path ([IO.Path]::GetFullPath($ResultRoot)) $SampleName
+    Assert-PairedOwnedSamplePath $samplePath $ResultRoot $SampleName
     if (Test-Path -LiteralPath $samplePath) { throw 'The generated campaign sample already exists.' }
     [IO.File]::Copy($SourcePath, $samplePath, $false)
     try {
@@ -372,11 +616,10 @@ function Remove-PairedSampleCopy {
     param(
         [Parameter(Mandatory = $true)] [object]$SampleCopy,
         [Parameter(Mandatory = $true)] [string]$ResultRoot,
-        [Parameter(Mandatory = $true)] [string]$RunId
+        [Parameter(Mandatory = $true)] [string]$SampleName
     )
     if ($null -eq $SampleCopy) { return $true }
-    $sampleName = 'startup-probe-sample-{0}.md' -f $RunId
-    Assert-PairedOwnedSamplePath $SampleCopy.path $ResultRoot $sampleName
+    Assert-PairedOwnedSamplePath $SampleCopy.path $ResultRoot $SampleName
     $item = Get-Item -LiteralPath $SampleCopy.path -Force -ErrorAction SilentlyContinue
     if ($null -eq $item) { return $true }
     if ($item -isnot [IO.FileInfo] -or
@@ -524,6 +767,7 @@ function Get-PairedMeasurementCommandSha256 {
 function Get-PairedFailureTypeForStage {
     param([AllowNull()] [string]$Stage)
     if ($Stage -eq 'cleanup') { return 'cleanup-unverified' }
+    if ($Stage -eq 'path-budget') { return 'path-budget' }
     if ($Stage -eq 'postflight' -or $Stage -eq 'report-integrity' -or
         $Stage -eq 'manifest-input' -or $Stage -eq 'runtime-stage-input' -or
         $Stage -eq 'sample-input' -or $Stage -eq 'sample-copy' -or $Stage -eq 'bundle-input') {
@@ -1218,6 +1462,7 @@ function Get-PairedRuntimeStageIdentity {
         fileCount = [int]$files.Count
         totalSizeBytes = [UInt64]$totalSize
         configuration = $ExpectedConfiguration
+        closureEntries = $closureEntries.ToArray()
     }
 }
 
@@ -2527,9 +2772,10 @@ function New-PairedFailureEvidence {
         [string[]]$CleanupCodes = @(),
         [object]$MeasurementArguments = $null,
         [string]$MeasurementCommandSha256 = $null,
-        [object]$Integrity = $null
+        [object]$Integrity = $null,
+        [object]$PathBudget = $null
     )
-    $allowedTypes = @('preflight', 'integrity', 'launch-failure', 'cleanup-unverified', 'schema', 'write')
+    $allowedTypes = @('preflight', 'integrity', 'launch-failure', 'cleanup-unverified', 'path-budget', 'schema', 'write')
     $allowedPrimaryTypes = @($allowedTypes + 'timeout', 'startup', 'affinity', 'survivor', 'profileCleanup', 'diagnostic-unavailable', 'trace-unavailable', 'trace-cleanup')
     $type = if ($allowedTypes -contains $FailureType) { $FailureType } else { 'preflight' }
     $primary = $null
@@ -2570,6 +2816,7 @@ function New-PairedFailureEvidence {
             scheduledLaunches = [int][Math]::Max(0, $ScheduledLaunches)
             successfulLaunches = [int][Math]::Max(0, $SuccessfulLaunches)
         }
+        pathBudget = Convert-PairedPathBudgetSummary $PathBudget
         termination = [ordered]@{
             status = 'terminated'
             type = $type
@@ -2727,6 +2974,168 @@ function Invoke-PairedSelfTest {
     if ($scheduleHash -notmatch '^[0-9a-f]{64}$') { throw 'Deterministic schedule hash self-test failed.' }
     $reversedHash = Get-PairedScheduleHash @($schedule | Sort-Object sequence -Descending)
     if ($reversedHash -eq $scheduleHash) { throw 'Schedule hash ignored launch order.' }
+
+    $pathPlanSelfTestRunId = '20260828-000000-000-' + ('a' * 8)
+    $pathPlanSelfTestSchedule = @(Get-PairedSchedule -Warmups 1 -Measured 1 -First cpp)
+    $pathPlanSelfTest = New-PairedPathPlan -ResultRoot 'C:\paired-path-selftest' -RunId $pathPlanSelfTestRunId -Schedule $pathPlanSelfTestSchedule
+    $pathPlanSelfTestRepeat = New-PairedPathPlan -ResultRoot 'C:\paired-path-selftest' -RunId $pathPlanSelfTestRunId -Schedule $pathPlanSelfTestSchedule
+    if ($pathPlanSelfTest.runToken -ne $pathPlanSelfTestRepeat.runToken -or
+        $pathPlanSelfTest.sampleName -ne $pathPlanSelfTestRepeat.sampleName -or
+        $pathPlanSelfTest.bundlePlans.cpp.bundleName -ne $pathPlanSelfTestRepeat.bundlePlans.cpp.bundleName -or
+        $pathPlanSelfTest.launches[0].profileName -ne $pathPlanSelfTestRepeat.launches[0].profileName) {
+        throw 'Paired compact path planning was not deterministic.'
+    }
+    $pathPlanCompactNamesVerified = $pathPlanSelfTest.budget.tokenLength -eq $script:PairedRunPathTokenLength -and
+        $pathPlanSelfTest.launches[0].profileName.Length -lt ('startup-probe-paired-{0}-cpp-{1:D3}' -f $pathPlanSelfTestRunId, 1).Length -and
+        $pathPlanSelfTest.bundlePlans.cpp.bundleName.Length -lt ('startup-probe-bundle-{0}-cpp' -f $pathPlanSelfTestRunId).Length
+    $pathPlanRoleLengthsEqual = $pathPlanSelfTest.bundlePlans.cpp.roleToken.Length -eq $pathPlanSelfTest.bundlePlans.rust.roleToken.Length -and
+        $pathPlanSelfTest.launches[0].profileName.Length -eq $pathPlanSelfTest.launches[1].profileName.Length
+    if (-not $pathPlanCompactNamesVerified -or -not $pathPlanRoleLengthsEqual -or
+        -not $pathPlanSelfTest.budget.roleTokensEqualLength) {
+        throw 'Paired compact path role-token self-test failed.'
+    }
+    $pathBudgetOverhead = [int]$pathPlanSelfTest.budget.maxPlannedLength - [int]$pathPlanSelfTest.root.Length
+    $pathBoundaryRoot259 = 'C:\' + ('p' * (259 - $pathBudgetOverhead - 3))
+    $pathBoundaryRoot260 = 'C:\' + ('p' * (260 - $pathBudgetOverhead - 3))
+    $pathPlanBoundary259 = New-PairedPathPlan -ResultRoot $pathBoundaryRoot259 -RunId $pathPlanSelfTestRunId -Schedule $pathPlanSelfTestSchedule
+    $pathPlanBoundary260 = New-PairedPathPlan -ResultRoot $pathBoundaryRoot260 -RunId $pathPlanSelfTestRunId -Schedule $pathPlanSelfTestSchedule
+    if ($pathPlanBoundary259.budget.maxPlannedLength -ne 259 -or $pathPlanBoundary259.budget.status -ne 'accepted') {
+        throw 'The paired path budget 259-character boundary was not accepted.'
+    }
+    if ($pathPlanBoundary260.budget.maxPlannedLength -ne 260 -or $pathPlanBoundary260.budget.status -ne 'rejected') {
+        throw 'The paired path budget 260-character boundary was not rejected.'
+    }
+    [void](Assert-PairedPathBudget $pathPlanBoundary259.budget)
+    $pathBudgetBoundary260Rejected = $false
+    try { [void](Assert-PairedPathBudget $pathPlanBoundary260.budget) } catch { $pathBudgetBoundary260Rejected = $true }
+    if (-not $pathBudgetBoundary260Rejected) { throw 'The paired path budget rejected boundary was accepted.' }
+
+    # Exercise the qualified-mode closure phase with a synthetic receipt
+    # closure.  The generated authority path remains within the limit, while
+    # a nested canonical receipt destination reaches 260 only after bundle
+    # destination planning; this must reject before any bundle is created.
+    $closureBoundaryPlan = New-PairedPathPlan -ResultRoot 'C:\paired-path-closure-selftest' -RunId $pathPlanSelfTestRunId -Schedule $pathPlanSelfTestSchedule
+    $closureGeneratedMax = [int]$closureBoundaryPlan.budget.maxPlannedLength
+    $closureBundlePath = [string]$closureBoundaryPlan.bundlePlans.cpp.bundlePath
+    $closureRelativeLength = $script:PairedWin32PathTextLimit + 1 - $closureBundlePath.Length - 1
+    if ($closureGeneratedMax -gt $script:PairedWin32PathTextLimit -or $closureRelativeLength -lt 8) {
+        throw 'The qualified closure path-budget self-test could not establish its boundary.'
+    }
+    $closureLongRelativePath = 'nested\' + ('x' * ($closureRelativeLength - 7))
+    $closureEntries = @(
+        [pscustomobject]@{ relativePath = 'sakura.exe' }
+        [pscustomobject]@{ relativePath = $closureLongRelativePath }
+    )
+    $closureCppStage = [pscustomobject]@{ closureEntries = $closureEntries }
+    $closureRustStage = [pscustomobject]@{ closureEntries = $closureEntries }
+    $closureFinalPlan = Complete-PairedPathPlan -PathPlan $closureBoundaryPlan -CppStage $closureCppStage -RustStage $closureRustStage -CollectOnly $false
+    $closureFinalBudget = $closureFinalPlan.budget
+    $pathBudgetClosureBoundaryRejected = $false
+    try { [void](Assert-PairedPathBudget $closureFinalBudget) } catch { $pathBudgetClosureBoundaryRejected = $true }
+    $pathBudgetClosureBoundaryVerified = $closureGeneratedMax -le $script:PairedWin32PathTextLimit -and
+        $closureFinalBudget.phase -eq 'finalized' -and
+        $closureFinalBudget.closurePathsPlanned -and
+        $closureFinalBudget.closureFileCountCpp -eq 2 -and
+        $closureFinalBudget.closureFileCountRust -eq 2 -and
+        $closureFinalBudget.closureDestinationMaxLength -eq ($script:PairedWin32PathTextLimit + 1) -and
+        $closureFinalBudget.maxPlannedLength -eq ($script:PairedWin32PathTextLimit + 1) -and
+        $closureFinalBudget.status -eq 'rejected' -and $pathBudgetClosureBoundaryRejected
+    if (-not $pathBudgetClosureBoundaryVerified) {
+        throw 'The qualified closure path-budget boundary self-test failed.'
+    }
+    $closureFailureEvidence = New-PairedFailureEvidence -Stage 'path-budget' -FailureType 'path-budget' `
+        -ScheduledLaunches $closureFinalBudget.plannedLaunches -SuppressedLaunches $closureFinalBudget.plannedLaunches `
+        -PathBudget $closureFinalBudget
+    [void](Assert-PairedPayloadFree $closureFailureEvidence)
+    $pathBudgetClosureFailureEnvelopeVerified = $closureFailureEvidence.failure.type -eq 'path-budget' -and
+        $closureFailureEvidence.failure.stage -eq 'path-budget' -and
+        $closureFailureEvidence.pathBudget.phase -eq 'finalized' -and
+        $closureFailureEvidence.pathBudget.status -eq 'rejected' -and
+        $closureFailureEvidence.pathBudget.maxPlannedLength -eq ($script:PairedWin32PathTextLimit + 1)
+    if (-not $pathBudgetClosureFailureEnvelopeVerified) {
+        throw 'The qualified closure path-budget failure envelope self-test failed.'
+    }
+
+    # Exercise the real measurement entry point with an owned over-budget
+    # result root and deliberately missing artifacts.  Path planning must
+    # reject before artifact resolution, bundle creation, or GUI launch, and
+    # must leave a payload-free typed envelope for the caller.
+    $pathBudgetSubprocessNoGuiVerified = $false
+    $pathBudgetExecutableSelfTestVerified = $false
+    $overBudgetResultRoot = $null
+    $overBudgetResultRootOwned = $false
+    $overBudgetReportPath = $null
+    try {
+        $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\')
+        $tempLeafPrefix = 'paired-path-budget-selftest-' + [Guid]::NewGuid().ToString('N').Substring(0, 8)
+        $targetRootLength = 140
+        if ($tempRoot.Length + 1 + $tempLeafPrefix.Length -lt $targetRootLength) {
+            $tempLeaf = $tempLeafPrefix + ('p' * ($targetRootLength - $tempRoot.Length - 1 - $tempLeafPrefix.Length))
+            $overBudgetResultRoot = Join-Path $tempRoot $tempLeaf
+            [void][IO.Directory]::CreateDirectory($overBudgetResultRoot)
+            $overBudgetResultRootOwned = $true
+        }
+        else {
+            $overBudgetResultRoot = $tempRoot
+        }
+        $probePlan = New-PairedPathPlan -ResultRoot $overBudgetResultRoot -RunId $pathPlanSelfTestRunId -Schedule $pathPlanSelfTestSchedule
+        if ($probePlan.budget.status -ne 'rejected') {
+            throw 'The executable over-budget self-test root was not rejected by path planning.'
+        }
+        $launchInvocationCountBefore = [int]$script:PairedLaunchInvocationCount
+        $ResultDirectory = $overBudgetResultRoot
+        $CppSakuraExe = Join-Path $overBudgetResultRoot 'missing-cpp.exe'
+        $RustSakuraExe = Join-Path $overBudgetResultRoot 'missing-rust.exe'
+        $CppBuildManifest = $null
+        $RustBuildManifest = $null
+        $CppRuntimeStageDirectory = $null
+        $RustRuntimeStageDirectory = $null
+        $StartupSample = Join-Path (Get-PairedRepositoryRoot) 'tools/startup-benchmark-sample.md'
+        $WarmupLaunches = 1
+        $MeasuredLaunches = 1
+        $CollectOnly = $true
+        $overBudgetMeasurement = Invoke-PairedMeasurement
+        $overBudgetReportPath = [string]$overBudgetMeasurement.reportPath
+        if ($overBudgetMeasurement.exitCode -ne 1 -or [string]::IsNullOrWhiteSpace($overBudgetReportPath) -or
+            -not [IO.File]::Exists($overBudgetReportPath)) {
+            throw 'The executable over-budget self-test did not publish its failure envelope.'
+        }
+        $overBudgetReport = Get-Content -LiteralPath $overBudgetReportPath -Raw | ConvertFrom-Json
+        $pathBudgetSubprocessNoGuiVerified = [int]$script:PairedLaunchInvocationCount -eq $launchInvocationCountBefore -and
+            $overBudgetReport.failure.stage -eq 'path-budget' -and
+            $overBudgetReport.failure.type -eq 'path-budget' -and
+            $overBudgetReport.pathBudget.status -eq 'rejected' -and
+            [int]$overBudgetReport.configuration.successfulLaunches -eq 0 -and
+            [int]$overBudgetReport.termination.completedLaunches -eq 0 -and
+            [int]$overBudgetReport.termination.suppressedLaunches -eq [int]$overBudgetReport.configuration.scheduledLaunches
+        [void](Assert-PairedPayloadFree $overBudgetReport)
+        $pathBudgetExecutableSelfTestVerified = $pathBudgetSubprocessNoGuiVerified -and
+            [int]$overBudgetReport.pathBudget.limit -eq $script:PairedWin32PathTextLimit
+        if (-not $pathBudgetSubprocessNoGuiVerified -or -not $pathBudgetExecutableSelfTestVerified) {
+            throw 'The executable over-budget path-budget self-test did not prove fail-closed no-GUI behavior.'
+        }
+    }
+    finally {
+        if (-not [string]::IsNullOrWhiteSpace($overBudgetReportPath) -and [IO.File]::Exists($overBudgetReportPath)) {
+            [IO.File]::Delete($overBudgetReportPath)
+            if ([IO.File]::Exists($overBudgetReportPath)) { throw 'The over-budget self-test report survived cleanup.' }
+        }
+        if ($overBudgetResultRootOwned -and -not [string]::IsNullOrWhiteSpace($overBudgetResultRoot) -and
+            [IO.Directory]::Exists($overBudgetResultRoot)) {
+            $ownedRootItem = Get-Item -LiteralPath $overBudgetResultRoot -Force -ErrorAction Stop
+            $ownedRootParent = [IO.Path]::GetFullPath((Split-Path -Parent $overBudgetResultRoot)).TrimEnd('\')
+            $expectedRootParent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\')
+            $ownedRootLeaf = [IO.Path]::GetFileName($overBudgetResultRoot)
+            if ($ownedRootItem -isnot [IO.DirectoryInfo] -or
+                (($ownedRootItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) -or
+                -not [string]::Equals($ownedRootParent, $expectedRootParent, [StringComparison]::OrdinalIgnoreCase) -or
+                -not $ownedRootLeaf.StartsWith($tempLeafPrefix, [StringComparison]::Ordinal)) {
+                throw 'The over-budget self-test root failed its ownership check.'
+            }
+            [IO.Directory]::Delete($overBudgetResultRoot, $false)
+            if ([IO.Directory]::Exists($overBudgetResultRoot)) { throw 'The over-budget self-test root survived cleanup.' }
+        }
+    }
 
     $syntheticRuns = @(
         [pscustomobject]@{ backend = 'cpp'; phase = 'measured'; pairIndex = 6; excluded = $false; metrics = [ordered]@{ documentReadyMs = 100.0 } }
@@ -3501,6 +3910,46 @@ function Invoke-PairedSelfTest {
         $measurementFunctionText.Contains("Assert-PairedScriptIdentityUnchanged `$scriptIdentity 'Post-write report'") -and
         $measurementFunctionText.Contains('[IO.File]::Move($reportTempPath, $reportPath)')
     if (-not $postWriteReportRecheckVerified) { throw 'Post-write report integrity self-test failed.' }
+    $pathBudgetAssertIndex = $measurementFunctionText.IndexOf('Assert-PairedPathBudget $pathBudget', [StringComparison]::Ordinal)
+    $pathBudgetBundleIndex = $measurementFunctionText.IndexOf('New-PairedArtifactBundle', [StringComparison]::Ordinal)
+    $pathBudgetLaunchIndex = $measurementFunctionText.IndexOf('Invoke-PairedLaunch', [StringComparison]::Ordinal)
+    $pathBudgetNoGuiLaunchVerified = $pathBudgetAssertIndex -ge 0 -and
+        $pathBudgetBundleIndex -gt $pathBudgetAssertIndex -and $pathBudgetLaunchIndex -gt $pathBudgetAssertIndex
+    $pathBudgetClosurePlanIndex = $measurementFunctionText.IndexOf('Complete-PairedPathPlan', [StringComparison]::Ordinal)
+    $pathBudgetClosureAssertIndex = if ($pathBudgetClosurePlanIndex -ge 0) {
+        $measurementFunctionText.IndexOf('Assert-PairedPathBudget $pathBudget', $pathBudgetClosurePlanIndex + 1, [StringComparison]::Ordinal)
+    }
+    else { -1 }
+    $pathBudgetSampleCopyIndex = $measurementFunctionText.IndexOf("`$stage = 'sample-copy'", [StringComparison]::Ordinal)
+    $pathBudgetClosureBundleIndex = $measurementFunctionText.IndexOf('New-PairedArtifactBundle', $pathBudgetClosureAssertIndex + 1, [StringComparison]::Ordinal)
+    $pathBudgetClosureNoBundleVerified = $pathBudgetClosurePlanIndex -ge 0 -and
+        $pathBudgetClosureAssertIndex -gt $pathBudgetClosurePlanIndex -and
+        $pathBudgetSampleCopyIndex -gt $pathBudgetClosureAssertIndex -and
+        $pathBudgetClosureBundleIndex -gt $pathBudgetClosureAssertIndex
+    $pathBudgetFailureEvidence = New-PairedFailureEvidence -Stage 'path-budget' -FailureType 'path-budget' `
+        -ScheduledLaunches $pathPlanBoundary260.budget.plannedLaunches -SuppressedLaunches $pathPlanBoundary260.budget.plannedLaunches `
+        -PathBudget $pathPlanBoundary260.budget
+    [void](Assert-PairedPayloadFree $pathBudgetFailureEvidence)
+    $pathBudgetFailureEnvelopeVerified = $pathBudgetFailureEvidence.failure.type -eq 'path-budget' -and
+        $pathBudgetFailureEvidence.failure.stage -eq 'path-budget' -and
+        $pathBudgetFailureEvidence.pathBudget.status -eq 'rejected' -and
+        $pathBudgetFailureEvidence.pathBudget.maxPlannedLength -eq 260 -and
+        $pathBudgetFailureEvidence.pathBudget.limit -eq 259
+    if (-not $pathBudgetNoGuiLaunchVerified -or -not $pathBudgetFailureEnvelopeVerified) {
+        throw 'Paired path-budget fail-closed self-test failed.'
+    }
+    if (-not $pathBudgetClosureNoBundleVerified) {
+        throw 'The qualified closure path-budget assertion is not before bundle creation.'
+    }
+    $launchFunctionText = (Get-Command Invoke-PairedLaunch -CommandType Function).ScriptBlock.ToString()
+    $plannedTraceNamePropagationVerified =
+        $launchFunctionText.Contains('[Parameter(Mandatory = $true)] [string]$PlannedTraceName') -and
+        $launchFunctionText.Contains('$traceName = $PlannedTraceName') -and
+        $launchFunctionText.Contains('New-PairedTraceDirectory $ExecutableDirectory $traceName') -and
+        $launchFunctionText.Contains('$traceDirectory $AffinityMask')
+    if (-not $plannedTraceNamePropagationVerified) {
+        throw 'The planned paired trace name propagation self-test failed.'
+    }
 
     return [ordered]@{
         selfTest = $true
@@ -3511,6 +3960,20 @@ function Invoke-PairedSelfTest {
         scheduleHash = $scheduleHash
         measurementArgumentsSchemaVersion = [int]$selfTestMeasurementArguments.schemaVersion
         measurementCommandSha256 = [string]$selfTestMeasurementCommandSha256
+        pathPlanCompactNamesVerified = [bool]$pathPlanCompactNamesVerified
+        pathPlanDeterministicVerified = [bool]($pathPlanSelfTest.runToken -eq $pathPlanSelfTestRepeat.runToken)
+        pathPlanEqualRoleTokenLengthVerified = [bool]$pathPlanRoleLengthsEqual
+        pathBudgetBoundary259Accepted = [bool]($pathPlanBoundary259.budget.status -eq 'accepted' -and $pathPlanBoundary259.budget.maxPlannedLength -eq 259)
+        pathBudgetBoundary260Rejected = [bool]$pathBudgetBoundary260Rejected
+        pathBudgetNoGuiLaunchVerified = [bool]$pathBudgetNoGuiLaunchVerified
+        pathBudgetFailureEnvelopeVerified = [bool]$pathBudgetFailureEnvelopeVerified
+        pathBudgetExecutableSelfTestVerified = [bool]$pathBudgetExecutableSelfTestVerified
+        pathBudgetSubprocessNoGuiVerified = [bool]$pathBudgetSubprocessNoGuiVerified
+        pathBudgetClosureBoundaryVerified = [bool]$pathBudgetClosureBoundaryVerified
+        pathBudgetClosureFailureEnvelopeVerified = [bool]$pathBudgetClosureFailureEnvelopeVerified
+        pathBudgetClosureNoBundleVerified = [bool]$pathBudgetClosureNoBundleVerified
+        plannedTraceNamePropagationVerified = [bool]$plannedTraceNamePropagationVerified
+        pathBudget = Convert-PairedPathBudgetSummary $pathPlanSelfTest.budget
         textSha256EmptyVerified = [bool]($emptyTextSha256 -eq 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855')
         textSha256NonEmptyVerified = [bool]($nonEmptyTextSha256 -eq '379861ae5e8cfc84f68ff929d7abec4a9cb2a7844dfe00105610416c62936cdf')
         textSha256NullRejected = [bool]$nullTextRejected
@@ -3609,9 +4072,10 @@ function Assert-PairedTraceDirectoryPath {
 function New-PairedTraceDirectory {
     param(
         [Parameter(Mandatory = $true)] [string]$ExecutableDirectory,
-        [string]$TraceName = $null
+        [Parameter(Mandatory = $true)] [string]$TraceName
     )
-    $traceName = if ([string]::IsNullOrWhiteSpace($TraceName)) { 'startup-trace-paired-' + [Guid]::NewGuid().ToString('N') } else { $TraceName }
+    if ([string]::IsNullOrWhiteSpace($TraceName)) { throw 'A planned paired startup trace name is required.' }
+    $traceName = $TraceName
     $traceDirectory = [IO.Path]::GetFullPath((Join-Path $ExecutableDirectory $traceName))
     Assert-PairedTraceDirectoryPath $traceDirectory $ExecutableDirectory $traceName
     if (Test-Path -LiteralPath $traceDirectory) { throw 'A generated paired startup trace directory already exists.' }
@@ -3672,8 +4136,10 @@ function Invoke-PairedLaunch {
         [Parameter(Mandatory = $true)] [string]$ExecutableDirectory,
         [Parameter(Mandatory = $true)] [string]$SamplePath,
         [Parameter(Mandatory = $true)] [int]$ExpectedLines,
-        [Parameter(Mandatory = $true)] [string]$ProfileName
+        [Parameter(Mandatory = $true)] [string]$ProfileName,
+        [Parameter(Mandatory = $true)] [string]$PlannedTraceName
     )
+    ++$script:PairedLaunchInvocationCount
     $profilePath = Join-Path $ExecutableDirectory $ProfileName
     $raw = $null
     $profileDigest = $null
@@ -3686,7 +4152,8 @@ function Invoke-PairedLaunch {
         Assert-OwnedProfilePath $profilePath $ExecutableDirectory $ProfileName
         if (Test-Path -LiteralPath $profilePath) { throw 'A generated benchmark profile already exists.' }
         [void](Assert-StartupProfileSidecar $ExecutablePath)
-        $traceName = 'startup-trace-paired-' + [Guid]::NewGuid().ToString('N')
+        if ([string]::IsNullOrWhiteSpace($PlannedTraceName)) { throw 'A planned paired startup trace name is required.' }
+        $traceName = $PlannedTraceName
         $traceDirectory = [IO.Path]::GetFullPath((Join-Path $ExecutableDirectory $traceName))
         $traceInfo = New-PairedTraceDirectory $ExecutableDirectory $traceName
         $traceDirectory = [string]$traceInfo.path
@@ -3770,7 +4237,8 @@ function New-PairedReport {
         [Parameter(Mandatory = $true)] [object]$SampleCopy,
         [Parameter(Mandatory = $true)] [object]$Integrity,
         [Parameter(Mandatory = $true)] [object]$MeasurementArguments,
-        [Parameter(Mandatory = $true)] [string]$MeasurementCommandSha256
+        [Parameter(Mandatory = $true)] [string]$MeasurementCommandSha256,
+        [object]$PathBudget = $null
     )
     $normalizedFirstBackend = Get-PairedCanonicalBackend $FirstBackend
     $summaries = @(
@@ -3849,6 +4317,7 @@ function New-PairedReport {
             campaignCopyVerified = [bool]($SampleCopy.sha256 -eq $Sample.sha256 -and $SampleCopy.sizeBytes -eq $Sample.sizeBytes)
         }
         profilePolicy = [ordered]@{ kind = $ProfilePolicy.kind; sha256 = $ProfilePolicy.sha256; artifactIsolation = $ProfilePolicy.artifactIsolation; deletion = $ProfilePolicy.deletion; sidecarContract = $ProfilePolicy.sidecarContract }
+        pathBudget = Convert-PairedPathBudgetSummary $PathBudget
         artifacts = @(
             [ordered]@{ backend = 'cpp'; artifactSha256 = $CppArtifact.sha256; sizeBytes = $CppArtifact.sizeBytes }
             [ordered]@{ backend = 'rust'; artifactSha256 = $RustArtifact.sha256; sizeBytes = $RustArtifact.sizeBytes }
@@ -3987,7 +4456,8 @@ function Invoke-PairedMeasurement {
     $canonicalConfiguration = $null
     $schedule = @()
     $runs = New-Object Collections.Generic.List[object]
-    $ordinal = @{}
+    $pathPlan = $null
+    $pathBudget = $null
     $termination = $null
     $bundles = @{}
     $bundlePlans = @{}
@@ -4042,7 +4512,11 @@ function Invoke-PairedMeasurement {
             }
         }
         else { [void][IO.Directory]::CreateDirectory($resultRoot) }
-        $reportPath = Join-Path $resultRoot ('paired-startup-{0}.json' -f $runId)
+        $pathPlan = New-PairedPathPlan -ResultRoot $resultRoot -RunId $runId -Schedule $schedule
+        $pathBudget = $pathPlan.budget
+        $reportPath = [string]$pathPlan.reportPath
+        $stage = 'path-budget'
+        [void](Assert-PairedPathBudget $pathBudget)
 
         $stage = 'artifact-input'
         $cppPath = Resolve-PairedInputFile $CppSakuraExe 'CppSakuraExe'
@@ -4122,31 +4596,38 @@ function Invoke-PairedMeasurement {
             $provenance = New-PairedVerifiedProvenance $cppManifest $rustManifest $cppStage $rustStage $canonicalPlatform $canonicalConfiguration $sourceState
         }
 
+        # Finalize the path budget only after the qualified runtime receipts
+        # have been validated.  This second phase includes every canonical
+        # receipt-relative destination that the bundle copier will create,
+        # plus its sidecar (or sakura.exe plus sidecar in collect-only mode).
+        # Keep this assertion before sample copy, bundle creation, and GUI
+        # launch so an over-budget closure fails closed.
+        $stage = 'path-budget'
+        $pathPlan = Complete-PairedPathPlan -PathPlan $pathPlan -CppStage $cppStage -RustStage $rustStage -CollectOnly ([bool]$CollectOnly)
+        $pathBudget = $pathPlan.budget
+        [void](Assert-PairedPathBudget $pathBudget)
+
         $stage = 'sample-copy'
         $sampleCopyPlan = [pscustomobject][ordered]@{
-            path = Join-Path $resultRoot ('startup-probe-sample-{0}.md' -f $runId)
+            path = [string]$pathPlan.samplePath
             root = $resultRoot
-            name = 'startup-probe-sample-{0}.md' -f $runId
+            name = [string]$pathPlan.sampleName
         }
-        $sampleCopy = New-PairedSampleCopy $samplePath $resultRoot $runId $sample
+        $sampleCopy = New-PairedSampleCopy -SourcePath $samplePath -ResultRoot $resultRoot -SourceIdentity $sample -SampleName $pathPlan.sampleName
         [void](Assert-PairedSampleUnchanged $sample $samplePath 'The source startup sample')
         [void](Assert-PairedSampleUnchanged $sample $sampleCopy.path 'The campaign startup sample copy')
         $stage = 'bundle-input'
-        foreach ($backend in @('cpp', 'rust')) {
-            $bundleName = 'startup-probe-bundle-{0}-{1}' -f $runId, $backend
-            $bundlePlans[$backend] = [pscustomobject][ordered]@{
-                bundlePath = Join-Path $resultRoot $bundleName
-                bundleRoot = $resultRoot
-                bundleName = $bundleName
-            }
-        }
+        $bundlePlans = $pathPlan.bundlePlans
         $bundles.cpp = New-PairedArtifactBundle $cppPath $resultRoot $bundlePlans.cpp.bundleName $CppRuntimeStageDirectory
         $bundles.rust = New-PairedArtifactBundle $rustPath $resultRoot $bundlePlans.rust.bundleName $RustRuntimeStageDirectory
         $stage = 'launch'
         foreach ($row in $schedule) {
             $backend = [string]$row.backend
-            if (-not $ordinal.ContainsKey($backend)) { $ordinal[$backend] = 0 }
-            ++$ordinal[$backend]
+            $launchPlan = $pathPlan.launchesBySequence[[int]$row.sequence]
+            if ($null -eq $launchPlan -or [int]$launchPlan.sequence -ne [int]$row.sequence -or
+                [string]$launchPlan.backend -ne $backend) {
+                throw 'The paired path plan does not contain the expected entry for a scheduled launch.'
+            }
             $bundle = $bundles[$backend]
             $run = $null
             try {
@@ -4157,9 +4638,9 @@ function Invoke-PairedMeasurement {
                 [void](Assert-PairedSampleUnchanged $sample $sampleCopy.path 'The campaign startup sample copy')
                 $executable = $bundle.executablePath
                 $executableDirectory = $bundle.bundlePath
-                $profileName = 'startup-probe-paired-{0}-{1}-{2:D3}' -f $runId, $backend, $ordinal[$backend]
+                $profileName = [string]$launchPlan.profileName
                 Write-Host ('launch {0}/{1}: {2} {3}' -f $row.sequence, $schedule.Count, $backend, $row.phase)
-                $run = Invoke-PairedLaunch $row $executable $executableDirectory $sampleCopy.path $sampleCopy.physicalLines $profileName
+                $run = Invoke-PairedLaunch $row $executable $executableDirectory $sampleCopy.path $sampleCopy.physicalLines $profileName $launchPlan.traceName
             }
             catch {
                 # No process is owned when an integrity/preflight check fails.
@@ -4236,7 +4717,8 @@ function Invoke-PairedMeasurement {
         }
         if ($null -ne $sampleToRemove) {
             try {
-                [void](Remove-PairedSampleCopy $sampleToRemove $resultRoot $runId)
+                $sampleNameForCleanup = if ($null -ne $pathPlan) { [string]$pathPlan.sampleName } else { $null }
+                [void](Remove-PairedSampleCopy -SampleCopy $sampleToRemove -ResultRoot $resultRoot -SampleName $sampleNameForCleanup)
                 if ($null -ne $sampleCopy) { $sampleCopy.cleanupVerified = $true }
             }
             catch {
@@ -4270,8 +4752,11 @@ function Invoke-PairedMeasurement {
             catch { }
         }
         if ($null -ne $resultRoot) {
-            if ($null -eq $reportPath) { $reportPath = Join-Path $resultRoot ('paired-startup-{0}.json' -f $runId) }
-            $envelope = New-PairedFailureEvidence -Stage $stage -FailureType $failureType -FirstBackend $(if ($null -eq $canonicalFirst) { 'cpp' } else { $canonicalFirst }) -Platform $(if ($null -eq $canonicalPlatform) { 'x64' } else { $canonicalPlatform }) -Configuration $(if ($null -eq $canonicalConfiguration) { 'Debug' } else { $canonicalConfiguration }) -ScheduledLaunches $schedule.Count -SuccessfulLaunches (@($runs | Where-Object { $_.status -eq 'succeeded' }).Count) -SuppressedLaunches ([Math]::Max(0, $schedule.Count - $runs.Count)) -CollectOnly ([bool]$CollectOnly) -PrimaryStage $primaryStage -PrimaryType $primaryType -CleanupCodes $cleanupFailureCodes.ToArray() -MeasurementArguments $measurementArguments -MeasurementCommandSha256 $measurementCommandSha256 -Integrity $integrity
+            if ($null -eq $reportPath) {
+                if ($null -ne $pathPlan) { $reportPath = [string]$pathPlan.reportPath }
+                else { $reportPath = Join-Path $resultRoot ('paired-startup-{0}.json' -f $runId) }
+            }
+            $envelope = New-PairedFailureEvidence -Stage $stage -FailureType $failureType -FirstBackend $(if ($null -eq $canonicalFirst) { 'cpp' } else { $canonicalFirst }) -Platform $(if ($null -eq $canonicalPlatform) { 'x64' } else { $canonicalPlatform }) -Configuration $(if ($null -eq $canonicalConfiguration) { 'Debug' } else { $canonicalConfiguration }) -ScheduledLaunches $schedule.Count -SuccessfulLaunches (@($runs | Where-Object { $_.status -eq 'succeeded' }).Count) -SuppressedLaunches ([Math]::Max(0, $schedule.Count - $runs.Count)) -CollectOnly ([bool]$CollectOnly) -PrimaryStage $primaryStage -PrimaryType $primaryType -CleanupCodes $cleanupFailureCodes.ToArray() -MeasurementArguments $measurementArguments -MeasurementCommandSha256 $measurementCommandSha256 -Integrity $integrity -PathBudget $pathBudget
             try { [void](Write-PairedEvidenceEnvelope $reportPath $envelope) } catch { }
         }
         return [pscustomobject][ordered]@{ exitCode = 1; pass = $false; reportPath = $reportPath }
@@ -4319,7 +4804,8 @@ function Invoke-PairedMeasurement {
             -CppArtifact $cppArtifact -RustArtifact $rustArtifact -Schedule $schedule -Runs $runs.ToArray() `
             -PairedScriptHash $pairedScriptHash -SharedScriptHash $sharedScriptHash -Termination $termination `
             -ArtifactBundles $artifactBundles -CollectOnly ([bool]$CollectOnly) -Provenance $provenance `
-            -Integrity $integrity -MeasurementArguments $measurementArguments -MeasurementCommandSha256 $measurementCommandSha256
+            -Integrity $integrity -MeasurementArguments $measurementArguments -MeasurementCommandSha256 $measurementCommandSha256 `
+            -PathBudget $pathBudget
         [void](Assert-PairedPayloadFree $report)
     }
     catch {
@@ -4358,7 +4844,7 @@ function Invoke-PairedMeasurement {
         return [pscustomobject][ordered]@{ exitCode = 1; pass = $false; reportPath = $reportPath }
     }
     $stage = 'write'
-    $reportTempPath = Join-Path $resultRoot ('.paired-startup-{0}.json.tmp' -f $runId)
+    $reportTempPath = if ($null -ne $pathPlan) { [string]$pathPlan.reportTempPath } else { Join-Path $resultRoot ('.paired-startup-{0}.json.tmp' -f $runId) }
     try {
         if (Test-Path -LiteralPath $reportTempPath) { throw 'The temporary paired report path already exists.' }
         $json = $report | ConvertTo-Json -Depth 20

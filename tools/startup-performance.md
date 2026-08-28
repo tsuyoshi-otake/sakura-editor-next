@@ -42,6 +42,29 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\measure-output-startup.ps1
 設定して read-back した後にだけ resume します。bundle を working directory とし、cleanup 後は Job
 membership と exact bundle image path の両方で残存がないことを確認します。
 
+### paired runner の legacy path budget
+
+通常の Win32 path-text 上限は 259 文字（終端 NUL は数えない）です。
+paired runner は既存の `runId` に基づく sample/report のファイル名対応を維持しつつ、同じ
+`runId` の SHA-256 先頭 16 桁を campaign-owned bundle、profile、trace 名に使います。
+証拠の `runId` 自体は変わらず、C++ / Rust の path role token は同じ長さです。
+検査は二段階です。phase 1 では全 schedule entry と backend ごとの実際の最大 ordinal を先に計画し、
+artifact 解決前に profile の最悪パスへ `\.sakura-platform\profile-authority.v1.tmp.` と 32 桁の hex を
+加えた通常 Win32 path を検査します。259 文字までは受け入れ、260 文字以上は artifact 解決・bundle 作成・
+GUI 起動の前に `path-budget` として fail-closed します。qualified mode で build manifest と runtime-stage
+receipt の検証が完了した後、phase 2 は各 backend の bundle 配下に bundle copier が作る全 canonical
+receipt-relative destination と `sakura.exe.ini` sidecar を同じ計画へ追加して再検査します。collect-only は
+`sakura.exe` と sidecar を追加します。phase 2 の assertion も sample copy / bundle 作成 / GUI 起動の前にあるため、
+nested closure destination で初期検査を迂回できません。
+
+失敗 envelope は raw path を含めず、`phase`（`generated` / `finalized`）、最大長・上限・margin、launch/ordinal
+数、token 長、closure 件数と最大長だけを持つ単一の payload-free summary を保持します。`%TEMP%` への暗黙移動や
+product manifest / LongPaths 設定の変更は行いません。これは旧来のフル timestamp/GUID 名が引き起こす MAX_PATH
+超過を、所有する campaign 名だけ短縮して回避するための予算です。
+result root 自体が極端に長く、互換維持している report filename さえ開けない場合は、fail-closed の終了は安全に
+返しますが、ディスク上の envelope 保持までは保証できません。別の evidence 位置を発明せず、typed envelope を
+保持する必要がある場合は report path が書き込める result root を指定してください。
+
 各 paired launch では bundle 配下に一意な run-owned trace directory も作成します。共有 probe はそこへ
 書かれた startup trace を process cleanup 後に読み取り、paired report には allowlist 済み event 名の件数、
 `editor` / `control` / `unknown` ごとの role 件数、および最大 256 件の `orderedEvents` を残します。各 ordered
