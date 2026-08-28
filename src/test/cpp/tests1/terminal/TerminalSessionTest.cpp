@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 #include "pch.h"
 #include "terminal/PowerShellLocator.h"
 #include "terminal/session/TerminalSession.h"
