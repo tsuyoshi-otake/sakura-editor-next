@@ -105,6 +105,23 @@ public sealed class StartupProbeProcessEntry
     public string ImageName;
 }
 
+public sealed class StartupProbeProcessEntriesResult
+{
+    public bool Attempted;
+    public bool Complete;
+    public bool Succeeded;
+    public int ErrorCode;
+    public int AttemptCount;
+    public int RetryCount;
+    public bool Retried;
+    public StartupProbeProcessEntry[] Entries;
+
+    public StartupProbeProcessEntriesResult()
+    {
+        Entries = new StartupProbeProcessEntry[0];
+    }
+}
+
 public sealed class StartupProbeAffinity
 {
     public int ProcessId;
@@ -202,10 +219,14 @@ public static class NativeStartupProbe
     private const int JobObjectBasicProcessIdList = 3;
     private const int JobObjectExtendedLimitInformation = 9;
     private const int ERROR_INSUFFICIENT_BUFFER = 122;
+    private const int ERROR_NO_MORE_FILES = 18;
     private const int ERROR_BAD_LENGTH = 24;
+    private const int ERROR_INVALID_DATA = 13;
     private const int ERROR_MORE_DATA = 234;
     private const int ERROR_INVALID_PARAMETER = 87;
     private const int ERROR_NOT_FOUND = 1168;
+    private const int MAX_PROCESS_ENUMERATION_ATTEMPTS = 3;
+    private const int MAX_PROCESS_ENTRY_COUNT = 65536;
     private const int MAX_JOB_QUERY_ATTEMPT_RECORDS = 8;
     private const uint MAX_JOB_QUERY_BYTES = 1024 * 1024;
     private const uint JOB_QUERY_HEADER_BYTES = 8;
@@ -319,6 +340,9 @@ public static class NativeStartupProbe
     }
 
     private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+    private delegate IntPtr ProcessSnapshotInvoker(uint flags, uint processId, out int errorCode);
+    private delegate bool ProcessEntryInvoker(IntPtr snapshot, ref PROCESSENTRY32 entry, out int errorCode);
+    private delegate bool ProcessSnapshotCloseInvoker(IntPtr snapshot, out int errorCode);
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
@@ -418,25 +442,477 @@ public static class NativeStartupProbe
         return maximum;
     }
 
-    public static StartupProbeProcessEntry[] GetProcessEntries()
+    private static IntPtr InvokeProcessSnapshot(uint flags, uint processId, out int errorCode)
     {
-        var result = new ArrayList();
-        IntPtr snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-        if (snapshot == INVALID_HANDLE_VALUE) return (StartupProbeProcessEntry[])result.ToArray(typeof(StartupProbeProcessEntry));
-        try {
-            var entry = new PROCESSENTRY32();
-            entry.Size = unchecked((uint)Marshal.SizeOf(typeof(PROCESSENTRY32)));
-            if (!Process32FirstW(snapshot, ref entry)) return (StartupProbeProcessEntry[])result.ToArray(typeof(StartupProbeProcessEntry));
-            do {
-                result.Add(new StartupProbeProcessEntry {
-                    ProcessId = unchecked((int)entry.ProcessId),
-                    ParentProcessId = unchecked((int)entry.ParentProcessId),
-                    ImageName = entry.ExeFile
-                });
-            } while (Process32NextW(snapshot, ref entry));
+        IntPtr snapshot = CreateToolhelp32Snapshot(flags, processId);
+        errorCode = (snapshot == INVALID_HANDLE_VALUE || snapshot == IntPtr.Zero)
+            ? Marshal.GetLastWin32Error() : 0;
+        return snapshot;
+    }
+
+    private static bool InvokeProcess32First(IntPtr snapshot, ref PROCESSENTRY32 entry, out int errorCode)
+    {
+        bool succeeded = Process32FirstW(snapshot, ref entry);
+        errorCode = succeeded ? 0 : Marshal.GetLastWin32Error();
+        return succeeded;
+    }
+
+    private static bool InvokeProcess32Next(IntPtr snapshot, ref PROCESSENTRY32 entry, out int errorCode)
+    {
+        bool succeeded = Process32NextW(snapshot, ref entry);
+        errorCode = succeeded ? 0 : Marshal.GetLastWin32Error();
+        return succeeded;
+    }
+
+    private static bool InvokeProcessSnapshotClose(IntPtr snapshot, out int errorCode)
+    {
+        bool succeeded = CloseHandle(snapshot);
+        errorCode = succeeded ? 0 : Marshal.GetLastWin32Error();
+        return succeeded;
+    }
+
+    public static StartupProbeProcessEntriesResult GetProcessEntries()
+    {
+        return GetProcessEntriesCore(
+            new ProcessSnapshotInvoker(InvokeProcessSnapshot),
+            new ProcessEntryInvoker(InvokeProcess32First),
+            new ProcessEntryInvoker(InvokeProcess32Next),
+            new ProcessSnapshotCloseInvoker(InvokeProcessSnapshotClose));
+    }
+
+    private static int NormalizeProcessEnumerationError(int errorCode)
+    {
+        return errorCode == 0 ? ERROR_INVALID_DATA : errorCode;
+    }
+
+    private static bool TryAppendProcessEntry(PROCESSENTRY32 nativeEntry,
+        ArrayList entries, Hashtable idsSeen, out int errorCode)
+    {
+        errorCode = 0;
+        uint expectedSize = unchecked((uint)Marshal.SizeOf(typeof(PROCESSENTRY32)));
+        if (nativeEntry.Size != expectedSize) {
+            errorCode = ERROR_INVALID_DATA;
+            return false;
         }
-        finally { CloseHandle(snapshot); }
-        return (StartupProbeProcessEntry[])result.ToArray(typeof(StartupProbeProcessEntry));
+        // PID 0 is the real Windows System Idle Process and is therefore a
+        // valid Toolhelp entry, even though it cannot be opened for identity.
+        if (nativeEntry.ProcessId > Int32.MaxValue) {
+            errorCode = ERROR_INVALID_DATA;
+            return false;
+        }
+        if (nativeEntry.ParentProcessId > Int32.MaxValue) {
+            errorCode = ERROR_INVALID_DATA;
+            return false;
+        }
+        if (String.IsNullOrWhiteSpace(nativeEntry.ExeFile) || nativeEntry.ExeFile.Length >= 260) {
+            errorCode = ERROR_INVALID_DATA;
+            return false;
+        }
+        if (entries.Count >= MAX_PROCESS_ENTRY_COUNT) {
+            errorCode = ERROR_INSUFFICIENT_BUFFER;
+            return false;
+        }
+        int processId = unchecked((int)nativeEntry.ProcessId);
+        if (idsSeen.ContainsKey(processId)) {
+            errorCode = ERROR_INVALID_DATA;
+            return false;
+        }
+        idsSeen.Add(processId, null);
+        entries.Add(new StartupProbeProcessEntry {
+            ProcessId = processId,
+            ParentProcessId = unchecked((int)nativeEntry.ParentProcessId),
+            ImageName = nativeEntry.ExeFile
+        });
+        return true;
+    }
+
+    private static StartupProbeProcessEntriesResult GetProcessEntriesCore(
+        ProcessSnapshotInvoker snapshotInvoker, ProcessEntryInvoker firstInvoker,
+        ProcessEntryInvoker nextInvoker, ProcessSnapshotCloseInvoker closeInvoker)
+    {
+        var result = new StartupProbeProcessEntriesResult();
+        try {
+            if (snapshotInvoker == null || firstInvoker == null || nextInvoker == null || closeInvoker == null) {
+                result.ErrorCode = ERROR_INVALID_PARAMETER;
+                return result;
+            }
+            while (result.AttemptCount < MAX_PROCESS_ENUMERATION_ATTEMPTS) {
+                result.Attempted = true;
+                result.AttemptCount++;
+                bool retry = false;
+                int failureCode = ERROR_INVALID_DATA;
+                bool attemptComplete = false;
+                StartupProbeProcessEntry[] completedEntries = null;
+                IntPtr snapshot = INVALID_HANDLE_VALUE;
+                var entries = new ArrayList();
+                var idsSeen = new Hashtable();
+                try {
+                    int snapshotError = 0;
+                    snapshot = snapshotInvoker(TH32CS_SNAPPROCESS, 0, out snapshotError);
+                    if (snapshot == INVALID_HANDLE_VALUE || snapshot == IntPtr.Zero) {
+                        failureCode = NormalizeProcessEnumerationError(snapshotError);
+                        retry = failureCode == ERROR_BAD_LENGTH;
+                    } else {
+                        var nativeEntry = new PROCESSENTRY32();
+                        nativeEntry.Size = unchecked((uint)Marshal.SizeOf(typeof(PROCESSENTRY32)));
+                        int firstError = 0;
+                        bool firstSucceeded = firstInvoker(snapshot, ref nativeEntry, out firstError);
+                        if (!firstSucceeded) {
+                            failureCode = NormalizeProcessEnumerationError(firstError);
+                            if (failureCode == ERROR_NO_MORE_FILES) {
+                                attemptComplete = true;
+                                completedEntries = (StartupProbeProcessEntry[])entries.ToArray(typeof(StartupProbeProcessEntry));
+                            }
+                            else retry = failureCode == ERROR_BAD_LENGTH;
+                        } else {
+                            bool normalEnd = false;
+                            while (true) {
+                                int malformedError = 0;
+                                if (!TryAppendProcessEntry(nativeEntry, entries, idsSeen, out malformedError)) {
+                                    failureCode = malformedError;
+                                    break;
+                                }
+                                int nextError = 0;
+                                bool nextSucceeded = nextInvoker(snapshot, ref nativeEntry, out nextError);
+                                if (nextSucceeded) continue;
+                                failureCode = NormalizeProcessEnumerationError(nextError);
+                                if (failureCode == ERROR_NO_MORE_FILES) {
+                                    normalEnd = true;
+                                    break;
+                                }
+                                retry = failureCode == ERROR_BAD_LENGTH;
+                                break;
+                            }
+                            if (normalEnd) {
+                                attemptComplete = true;
+                                completedEntries = (StartupProbeProcessEntry[])entries.ToArray(typeof(StartupProbeProcessEntry));
+                            }
+                        }
+                    }
+                }
+                catch (OutOfMemoryException) {
+                    failureCode = 8;
+                    retry = false;
+                }
+                catch (OverflowException) {
+                    failureCode = ERROR_INVALID_DATA;
+                    retry = false;
+                }
+                catch (Exception) {
+                    failureCode = ERROR_INVALID_DATA;
+                    retry = false;
+                }
+                finally {
+                    if (snapshot != INVALID_HANDLE_VALUE && snapshot != IntPtr.Zero) {
+                        try {
+                            int closeError;
+                            bool closeSucceeded = closeInvoker(snapshot, out closeError);
+                            if (!closeSucceeded) {
+                                if (attemptComplete) {
+                                    failureCode = NormalizeProcessEnumerationError(closeError);
+                                }
+                                attemptComplete = false;
+                                retry = false;
+                            }
+                        }
+                        catch {
+                            if (attemptComplete) failureCode = ERROR_INVALID_DATA;
+                            attemptComplete = false;
+                            retry = false;
+                        }
+                    }
+                }
+                if (attemptComplete) {
+                    result.ErrorCode = 0;
+                    result.Complete = true;
+                    result.Succeeded = true;
+                    result.Entries = completedEntries ?? new StartupProbeProcessEntry[0];
+                    return result;
+                }
+                result.ErrorCode = failureCode;
+                if (!retry || result.AttemptCount >= MAX_PROCESS_ENUMERATION_ATTEMPTS) return result;
+                result.RetryCount++;
+                result.Retried = true;
+            }
+            if (result.ErrorCode == 0) result.ErrorCode = ERROR_BAD_LENGTH;
+        }
+        catch (OutOfMemoryException) { result.ErrorCode = 8; }
+        catch (OverflowException) { result.ErrorCode = ERROR_INVALID_DATA; }
+        catch (Exception) { result.ErrorCode = ERROR_INVALID_DATA; }
+        return result;
+    }
+
+    private static void SetSyntheticProcessEntry(ref PROCESSENTRY32 entry,
+        uint processId, uint parentProcessId, string imageName)
+    {
+        entry.Size = unchecked((uint)Marshal.SizeOf(typeof(PROCESSENTRY32)));
+        entry.ProcessId = processId;
+        entry.ParentProcessId = parentProcessId;
+        entry.ExeFile = imageName;
+    }
+
+    public static bool RunProcessEnumerationContractSelfTest()
+    {
+        // A false First call with ERROR_NO_MORE_FILES is the only valid empty
+        // enumeration.  The same injected core drives this and every case
+        // below, so the tests exercise the production retry state machine.
+        int emptySnapshotCalls = 0;
+        int emptyFirstCalls = 0;
+        int emptyNextCalls = 0;
+        int emptyCloseCalls = 0;
+        ProcessSnapshotInvoker emptySnapshot = delegate(uint flags, uint processId, out int errorCode) {
+            emptySnapshotCalls++;
+            errorCode = 0;
+            return new IntPtr(emptySnapshotCalls);
+        };
+        ProcessEntryInvoker emptyFirst = delegate(IntPtr snapshot, ref PROCESSENTRY32 entry, out int errorCode) {
+            emptyFirstCalls++;
+            errorCode = ERROR_NO_MORE_FILES;
+            return false;
+        };
+        ProcessEntryInvoker emptyNext = delegate(IntPtr snapshot, ref PROCESSENTRY32 entry, out int errorCode) {
+            emptyNextCalls++;
+            errorCode = ERROR_NO_MORE_FILES;
+            return false;
+        };
+        ProcessSnapshotCloseInvoker emptyClose = delegate(IntPtr snapshot, out int errorCode) {
+            emptyCloseCalls++;
+            errorCode = 0;
+            return true;
+        };
+        StartupProbeProcessEntriesResult emptyResult = GetProcessEntriesCore(
+            emptySnapshot, emptyFirst, emptyNext, emptyClose);
+        if (!emptyResult.Complete || !emptyResult.Succeeded || emptyResult.ErrorCode != 0 ||
+            emptyResult.AttemptCount != 1 || emptyResult.RetryCount != 0 || emptyResult.Retried ||
+            emptyResult.Entries == null || emptyResult.Entries.Length != 0 ||
+            emptySnapshotCalls != 1 || emptyFirstCalls != 1 || emptyNextCalls != 0 || emptyCloseCalls != 1) {
+            return false;
+        }
+
+        // A valid snapshot whose close operation fails cannot publish even an
+        // otherwise complete empty enumeration.
+        int closeFailureSnapshotCalls = 0;
+        int closeFailureFirstCalls = 0;
+        int closeFailureNextCalls = 0;
+        int closeFailureCloseCalls = 0;
+        ProcessSnapshotInvoker closeFailureSnapshot = delegate(uint flags, uint processId, out int errorCode) {
+            closeFailureSnapshotCalls++;
+            errorCode = 0;
+            return new IntPtr(1);
+        };
+        ProcessEntryInvoker closeFailureFirst = delegate(IntPtr snapshot, ref PROCESSENTRY32 entry, out int errorCode) {
+            closeFailureFirstCalls++;
+            errorCode = ERROR_NO_MORE_FILES;
+            return false;
+        };
+        ProcessEntryInvoker closeFailureNext = delegate(IntPtr snapshot, ref PROCESSENTRY32 entry, out int errorCode) {
+            closeFailureNextCalls++;
+            errorCode = ERROR_NO_MORE_FILES;
+            return false;
+        };
+        ProcessSnapshotCloseInvoker closeFailureClose = delegate(IntPtr snapshot, out int errorCode) {
+            closeFailureCloseCalls++;
+            errorCode = 5;
+            return false;
+        };
+        StartupProbeProcessEntriesResult closeFailureResult = GetProcessEntriesCore(
+            closeFailureSnapshot, closeFailureFirst, closeFailureNext, closeFailureClose);
+        if (closeFailureResult.Complete || closeFailureResult.Succeeded || closeFailureResult.ErrorCode != 5 ||
+            closeFailureResult.AttemptCount != 1 || closeFailureResult.RetryCount != 0 || closeFailureResult.Retried ||
+            closeFailureResult.Entries == null || closeFailureResult.Entries.Length != 0 ||
+            closeFailureSnapshotCalls != 1 || closeFailureFirstCalls != 1 || closeFailureNextCalls != 0 ||
+            closeFailureCloseCalls != 1) {
+            return false;
+        }
+
+        // A one-entry list is complete only after Next reports the normal
+        // ERROR_NO_MORE_FILES terminator.
+        int oneEntrySnapshotCalls = 0;
+        int oneEntryFirstCalls = 0;
+        int oneEntryNextCalls = 0;
+        ProcessSnapshotInvoker oneEntrySnapshot = delegate(uint flags, uint processId, out int errorCode) {
+            oneEntrySnapshotCalls++;
+            errorCode = 0;
+            return new IntPtr(oneEntrySnapshotCalls);
+        };
+        ProcessEntryInvoker oneEntryFirst = delegate(IntPtr snapshot, ref PROCESSENTRY32 entry, out int errorCode) {
+            oneEntryFirstCalls++;
+            SetSyntheticProcessEntry(ref entry, 101, 1, "one-entry.exe");
+            errorCode = 0;
+            return true;
+        };
+        ProcessEntryInvoker oneEntryNext = delegate(IntPtr snapshot, ref PROCESSENTRY32 entry, out int errorCode) {
+            oneEntryNextCalls++;
+            errorCode = ERROR_NO_MORE_FILES;
+            return false;
+        };
+        ProcessSnapshotCloseInvoker oneEntryClose = delegate(IntPtr snapshot, out int errorCode) {
+            errorCode = 0;
+            return true;
+        };
+        StartupProbeProcessEntriesResult oneEntryResult = GetProcessEntriesCore(
+            oneEntrySnapshot, oneEntryFirst, oneEntryNext, oneEntryClose);
+        if (!oneEntryResult.Complete || !oneEntryResult.Succeeded || oneEntryResult.ErrorCode != 0 ||
+            oneEntryResult.AttemptCount != 1 || oneEntryResult.RetryCount != 0 || oneEntryResult.Retried ||
+            oneEntryResult.Entries == null || oneEntryResult.Entries.Length != 1 ||
+            oneEntryResult.Entries[0].ProcessId != 101 || oneEntryResult.Entries[0].ParentProcessId != 1 ||
+            !String.Equals(oneEntryResult.Entries[0].ImageName, "one-entry.exe", StringComparison.Ordinal) ||
+            oneEntrySnapshotCalls != 1 || oneEntryFirstCalls != 1 || oneEntryNextCalls != 1) {
+            return false;
+        }
+
+        // ERROR_BAD_LENGTH on First restarts from a new snapshot, and the
+        // successful second attempt is the only attempt whose entries publish.
+        int retrySnapshotCalls = 0;
+        int retryFirstCalls = 0;
+        int retryNextCalls = 0;
+        ProcessSnapshotInvoker retrySnapshot = delegate(uint flags, uint processId, out int errorCode) {
+            retrySnapshotCalls++;
+            errorCode = 0;
+            return new IntPtr(retrySnapshotCalls);
+        };
+        ProcessEntryInvoker retryFirst = delegate(IntPtr snapshot, ref PROCESSENTRY32 entry, out int errorCode) {
+            retryFirstCalls++;
+            if (snapshot.ToInt64() == 1) {
+                errorCode = ERROR_BAD_LENGTH;
+                return false;
+            }
+            SetSyntheticProcessEntry(ref entry, 202, 1, "retry-success.exe");
+            errorCode = 0;
+            return true;
+        };
+        ProcessEntryInvoker retryNext = delegate(IntPtr snapshot, ref PROCESSENTRY32 entry, out int errorCode) {
+            retryNextCalls++;
+            errorCode = ERROR_NO_MORE_FILES;
+            return false;
+        };
+        ProcessSnapshotCloseInvoker retryClose = delegate(IntPtr snapshot, out int errorCode) {
+            errorCode = 0;
+            return true;
+        };
+        StartupProbeProcessEntriesResult retryResult = GetProcessEntriesCore(
+            retrySnapshot, retryFirst, retryNext, retryClose);
+        if (!retryResult.Complete || !retryResult.Succeeded || retryResult.ErrorCode != 0 ||
+            retryResult.AttemptCount != 2 || retryResult.RetryCount != 1 || !retryResult.Retried ||
+            retryResult.Entries == null || retryResult.Entries.Length != 1 ||
+            retryResult.Entries[0].ProcessId != 202 || retrySnapshotCalls != 2 ||
+            retryFirstCalls != 2 || retryNextCalls != 1) {
+            return false;
+        }
+
+        // ERROR_BAD_LENGTH on Next after one observed entry must restart from
+        // a fresh snapshot and discard that first attempt's entry.
+        int nextRetrySnapshotCalls = 0;
+        int nextRetryFirstCalls = 0;
+        int nextRetryNextCalls = 0;
+        int nextRetryCloseCalls = 0;
+        ProcessSnapshotInvoker nextRetrySnapshot = delegate(uint flags, uint processId, out int errorCode) {
+            nextRetrySnapshotCalls++;
+            errorCode = 0;
+            return new IntPtr(nextRetrySnapshotCalls);
+        };
+        ProcessEntryInvoker nextRetryFirst = delegate(IntPtr snapshot, ref PROCESSENTRY32 entry, out int errorCode) {
+            nextRetryFirstCalls++;
+            if (snapshot.ToInt64() == 1) {
+                SetSyntheticProcessEntry(ref entry, 212, 1, "next-retry-discarded.exe");
+            } else {
+                SetSyntheticProcessEntry(ref entry, 213, 1, "next-retry-success.exe");
+            }
+            errorCode = 0;
+            return true;
+        };
+        ProcessEntryInvoker nextRetryNext = delegate(IntPtr snapshot, ref PROCESSENTRY32 entry, out int errorCode) {
+            nextRetryNextCalls++;
+            errorCode = snapshot.ToInt64() == 1 ? ERROR_BAD_LENGTH : ERROR_NO_MORE_FILES;
+            return false;
+        };
+        ProcessSnapshotCloseInvoker nextRetryClose = delegate(IntPtr snapshot, out int errorCode) {
+            nextRetryCloseCalls++;
+            errorCode = 0;
+            return true;
+        };
+        StartupProbeProcessEntriesResult nextRetryResult = GetProcessEntriesCore(
+            nextRetrySnapshot, nextRetryFirst, nextRetryNext, nextRetryClose);
+        if (!nextRetryResult.Complete || !nextRetryResult.Succeeded || nextRetryResult.ErrorCode != 0 ||
+            nextRetryResult.AttemptCount != 2 || nextRetryResult.RetryCount != 1 || !nextRetryResult.Retried ||
+            nextRetryResult.Entries == null || nextRetryResult.Entries.Length != 1 ||
+            nextRetryResult.Entries[0].ProcessId != 213 ||
+            !String.Equals(nextRetryResult.Entries[0].ImageName, "next-retry-success.exe", StringComparison.Ordinal) ||
+            nextRetrySnapshotCalls != 2 || nextRetryFirstCalls != 2 || nextRetryNextCalls != 2 ||
+            nextRetryCloseCalls != 2) {
+            return false;
+        }
+
+        // Entries observed before a non-retryable Next failure are never
+        // published as a partial success.
+        int partialSnapshotCalls = 0;
+        int partialFirstCalls = 0;
+        int partialNextCalls = 0;
+        ProcessSnapshotInvoker partialSnapshot = delegate(uint flags, uint processId, out int errorCode) {
+            partialSnapshotCalls++;
+            errorCode = 0;
+            return new IntPtr(partialSnapshotCalls);
+        };
+        ProcessEntryInvoker partialFirst = delegate(IntPtr snapshot, ref PROCESSENTRY32 entry, out int errorCode) {
+            partialFirstCalls++;
+            SetSyntheticProcessEntry(ref entry, 303, 1, "partial-failure.exe");
+            errorCode = 0;
+            return true;
+        };
+        ProcessEntryInvoker partialNext = delegate(IntPtr snapshot, ref PROCESSENTRY32 entry, out int errorCode) {
+            partialNextCalls++;
+            errorCode = 5;
+            return false;
+        };
+        ProcessSnapshotCloseInvoker partialClose = delegate(IntPtr snapshot, out int errorCode) {
+            errorCode = 0;
+            return true;
+        };
+        StartupProbeProcessEntriesResult partialResult = GetProcessEntriesCore(
+            partialSnapshot, partialFirst, partialNext, partialClose);
+        if (partialResult.Complete || partialResult.Succeeded || partialResult.ErrorCode != 5 ||
+            partialResult.AttemptCount != 1 || partialResult.Entries == null ||
+            partialResult.Entries.Length != 0 || partialSnapshotCalls != 1 ||
+            partialFirstCalls != 1 || partialNextCalls != 1) {
+            return false;
+        }
+
+        // Three retryable failures consume the complete bounded budget.  There
+        // must be no fourth snapshot or First call after the third ERROR_BAD_LENGTH.
+        int exhaustedSnapshotCalls = 0;
+        int exhaustedFirstCalls = 0;
+        int exhaustedNextCalls = 0;
+        ProcessSnapshotInvoker exhaustedSnapshot = delegate(uint flags, uint processId, out int errorCode) {
+            exhaustedSnapshotCalls++;
+            errorCode = 0;
+            return new IntPtr(exhaustedSnapshotCalls);
+        };
+        ProcessEntryInvoker exhaustedFirst = delegate(IntPtr snapshot, ref PROCESSENTRY32 entry, out int errorCode) {
+            exhaustedFirstCalls++;
+            errorCode = ERROR_BAD_LENGTH;
+            return false;
+        };
+        ProcessEntryInvoker exhaustedNext = delegate(IntPtr snapshot, ref PROCESSENTRY32 entry, out int errorCode) {
+            exhaustedNextCalls++;
+            errorCode = ERROR_NO_MORE_FILES;
+            return false;
+        };
+        ProcessSnapshotCloseInvoker exhaustedClose = delegate(IntPtr snapshot, out int errorCode) {
+            errorCode = 0;
+            return true;
+        };
+        StartupProbeProcessEntriesResult exhaustedResult = GetProcessEntriesCore(
+            exhaustedSnapshot, exhaustedFirst, exhaustedNext, exhaustedClose);
+        if (exhaustedResult.Complete || exhaustedResult.Succeeded ||
+            exhaustedResult.ErrorCode != ERROR_BAD_LENGTH ||
+            exhaustedResult.AttemptCount != MAX_PROCESS_ENUMERATION_ATTEMPTS ||
+            exhaustedResult.RetryCount != MAX_PROCESS_ENUMERATION_ATTEMPTS - 1 ||
+            !exhaustedResult.Retried || exhaustedResult.Entries == null ||
+            exhaustedResult.Entries.Length != 0 || exhaustedSnapshotCalls != MAX_PROCESS_ENUMERATION_ATTEMPTS ||
+            exhaustedFirstCalls != MAX_PROCESS_ENUMERATION_ATTEMPTS || exhaustedNextCalls != 0) {
+            return false;
+        }
+        return true;
     }
 
     public static StartupProbeProcess GetProcessIdentity(int processId, int parentProcessId)
@@ -2025,8 +2501,20 @@ function Update-StartupDiagnosticCheckpoints {
     }
 }
 
+function Get-VerifiedProcessEntries {
+    $probe = [NativeStartupProbe]::GetProcessEntries()
+    if ($null -eq $probe -or -not [bool]$probe.Complete -or -not [bool]$probe.Succeeded -or
+        $null -eq $probe.Entries) {
+        $errorCode = if ($null -eq $probe) { 13 } else { [int]$probe.ErrorCode }
+        $attemptCount = if ($null -eq $probe) { 0 } else { [int]$probe.AttemptCount }
+        $retryCount = if ($null -eq $probe) { 0 } else { [int]$probe.RetryCount }
+        throw "Could not enumerate the native process snapshot (Win32 $errorCode; attempts $attemptCount; retries $retryCount)."
+    }
+    return @($probe.Entries)
+}
+
 function Get-ProcessSnapshot($Owned, [int[]]$SeedIds = @()) {
-    $entries = @([NativeStartupProbe]::GetProcessEntries())
+    $entries = @(Get-VerifiedProcessEntries)
     $relevant = @{}
     if ($null -ne $Owned) {
         foreach ($id in @($Owned.Keys)) { $relevant[[int]$id] = $true }
@@ -2053,7 +2541,7 @@ function Get-ProcessSnapshot($Owned, [int[]]$SeedIds = @()) {
             # race is benign only when a fresh snapshot proves it disappeared;
             # an entry that remains present but cannot be identified is never
             # silently omitted from a containment decision.
-            $stillPresent = @([NativeStartupProbe]::GetProcessEntries() | Where-Object { [int]$_.ProcessId -eq [int]$entry.ProcessId }).Count -gt 0
+            $stillPresent = @(Get-VerifiedProcessEntries | Where-Object { [int]$_.ProcessId -eq [int]$entry.ProcessId }).Count -gt 0
             if ($stillPresent) {
                 throw "Could not verify the identity of relevant process $($entry.ProcessId) (Win32 $($identityProbe.ErrorCode))."
             }
@@ -2068,14 +2556,14 @@ function Get-ProcessSnapshot($Owned, [int[]]$SeedIds = @()) {
 function Get-ProcessesForImagePath([string]$ImagePath) {
     $imageName = [IO.Path]::GetFileName($ImagePath)
     $result = @()
-    foreach ($entry in @([NativeStartupProbe]::GetProcessEntries())) {
+    foreach ($entry in @(Get-VerifiedProcessEntries)) {
         if (-not [string]::Equals([string]$entry.ImageName, $imageName, [StringComparison]::OrdinalIgnoreCase)) { continue }
         $identityProbe = [NativeStartupProbe]::QueryProcessIdentity([int]$entry.ProcessId, [int]$entry.ParentProcessId)
         if (-not $identityProbe.Succeeded -or $null -eq $identityProbe.Identity) {
             # A process disappearing between Toolhelp and OpenProcess is benign for
             # this read-only sweep.  An entry which is still present but cannot be
             # identified is never treated as clean.
-            $stillPresent = @([NativeStartupProbe]::GetProcessEntries() | Where-Object { [int]$_.ProcessId -eq [int]$entry.ProcessId }).Count -gt 0
+            $stillPresent = @(Get-VerifiedProcessEntries | Where-Object { [int]$_.ProcessId -eq [int]$entry.ProcessId }).Count -gt 0
             if ($stillPresent) { throw "Could not verify the identity of matching process $($entry.ProcessId) (Win32 $($identityProbe.ErrorCode))." }
             continue
         }
@@ -2093,7 +2581,7 @@ function Get-JobProcessRecords([IntPtr]$Job, $Owned, [object]$QueryObservation =
     if (-not $query.Succeeded -or $null -eq $query.ProcessIds) {
         throw "Could not enumerate run-owned job processes (Win32 $($query.ErrorCode))."
     }
-    $entries = @([NativeStartupProbe]::GetProcessEntries())
+    $entries = @(Get-VerifiedProcessEntries)
     $records = New-Object Collections.Generic.List[object]
     foreach ($processId in @($query.ProcessIds)) {
         $entry = @($entries | Where-Object { [int]$_.ProcessId -eq [int]$processId } | Select-Object -First 1)
@@ -3112,7 +3600,7 @@ function Get-ParentFirstProcessOrder {
 }
 
 function Get-TrackedOwnedProcesses($Owned) {
-    $entries = @([NativeStartupProbe]::GetProcessEntries())
+    $entries = @(Get-VerifiedProcessEntries)
     $records = New-Object Collections.Generic.List[object]
     foreach ($record in @($Owned.Values)) {
         $entry = @($entries | Where-Object { [int]$_.ProcessId -eq [int]$record.Id } | Select-Object -First 1)
@@ -4064,11 +4552,17 @@ function Invoke-SelfTest {
         throw 'Bounded job-query retry contract self-test failed.'
     }
     $jobQueryRetryBehaviorCorrected = [bool]$jobQueryRetryContractSelfTestVerified
+    $processEnumerationRetryContractSelfTestVerified = [NativeStartupProbe]::RunProcessEnumerationContractSelfTest()
+    if (-not $processEnumerationRetryContractSelfTestVerified) {
+        throw 'Bounded process-enumeration retry contract self-test failed.'
+    }
+    $processEnumerationRetryBehaviorCorrected = [bool]$processEnumerationRetryContractSelfTestVerified
     [void](Get-ProcessSnapshot @{} ([int[]]@($PID)))
     $snapshotWatch = [Diagnostics.Stopwatch]::StartNew()
     $snapshot = Get-ProcessSnapshot @{} ([int[]]@($PID))
     $snapshotWatch.Stop()
-    if (-not $snapshot.ContainsKey($PID)) { throw 'Native process snapshot self-test failed.' }
+    $realProcessEnumerationSelfTestVerified = $snapshot.ContainsKey($PID)
+    if (-not $realProcessEnumerationSelfTestVerified) { throw 'Native process snapshot self-test failed.' }
     if ((Get-Sha256 $PSCommandPath).Length -ne 64) { throw 'SHA-256 self-test failed.' }
     if ([NativeStartupProbe]::GetVerticalScrollMaximum([IntPtr]::Zero) -ne -1) { throw 'Scroll-range self-test failed.' }
     $selfTestTraceRoot = [IO.Path]::GetFullPath((Join-Path $HOME 'tmp'))
@@ -4174,6 +4668,10 @@ function Invoke-SelfTest {
 
         jobQueryRetryBehaviorCorrected = [bool]$jobQueryRetryBehaviorCorrected
         jobQueryRetryContractSelfTestVerified = [bool]$jobQueryRetryContractSelfTestVerified
+        processEnumerationRetryBehaviorCorrected = [bool]$processEnumerationRetryBehaviorCorrected
+        processEnumerationRetryContractSelfTestVerified = [bool]$processEnumerationRetryContractSelfTestVerified
+        processEnumerationContractSelfTestVerified = [bool]$processEnumerationRetryContractSelfTestVerified
+        realProcessEnumerationSelfTestVerified = [bool]$realProcessEnumerationSelfTestVerified
         realMultiMemberJobQuerySelfTestVerified = [bool]$realMultiMemberJobQuerySelfTestVerified
         cleanupObservationSelfTestVerified = [bool]$cleanupObservationSelfTestVerified
         failedQueryCleanupRemainsUnverified = [bool]$failedQueryCleanupRemainsUnverified

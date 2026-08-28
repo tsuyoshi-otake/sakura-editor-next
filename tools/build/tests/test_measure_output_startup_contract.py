@@ -415,6 +415,42 @@ class PairedStartupContractTests(unittest.TestCase):
         self.assertNotIn("jobQueryRetryBehaviorUnchanged", self.shared_text)
         self.assertNotIn("for (int attempt = 0; attempt < 3", self.shared_text)
 
+    def test_shared_process_enumeration_retry_contract_is_bounded_and_fail_closed(self):
+        for marker in (
+            "public sealed class StartupProbeProcessEntriesResult",
+            "public bool Complete;",
+            "public bool Succeeded;",
+            "public int ErrorCode;",
+            "public int AttemptCount;",
+            "public int RetryCount;",
+            "public bool Retried;",
+            "public StartupProbeProcessEntry[] Entries;",
+            "private const int ERROR_NO_MORE_FILES = 18;",
+            "private const int ERROR_BAD_LENGTH = 24;",
+            "private const int MAX_PROCESS_ENUMERATION_ATTEMPTS = 3;",
+            "private const int MAX_PROCESS_ENTRY_COUNT = 65536;",
+            "ProcessSnapshotInvoker",
+            "ProcessEntryInvoker",
+            "GetProcessEntriesCore",
+            "TryAppendProcessEntry",
+            "RunProcessEnumerationContractSelfTest",
+            "emptyResult",
+            "closeFailureResult",
+            "oneEntryResult",
+            "retryResult",
+            "nextRetryResult",
+            "partialResult",
+            "exhaustedResult",
+            "exhaustedSnapshotCalls != MAX_PROCESS_ENUMERATION_ATTEMPTS",
+            "function Get-VerifiedProcessEntries",
+            "-not [bool]$probe.Complete",
+            "-not [bool]$probe.Succeeded",
+        ):
+            self.assertIn(marker, self.shared_text)
+        self.assertNotIn("public static StartupProbeProcessEntry[] GetProcessEntries()", self.shared_text)
+        self.assertIn("processEnumerationRetryContractSelfTestVerified", self.shared_text)
+        self.assertIn("realProcessEnumerationSelfTestVerified", self.shared_text)
+
     def test_empty_source_status_hash_contract_is_explicit(self):
         self.assertIn("function New-PairedSourceState", self.paired_text)
         self.assertIn("[AllowEmptyString()] [object]$Value", self.paired_text)
@@ -546,6 +582,10 @@ class PairedStartupContractTests(unittest.TestCase):
             self.assertTrue(payload["jobContainmentSelfTestVerified"])
             self.assertTrue(payload["jobQueryRetryContractSelfTestVerified"])
             self.assertTrue(payload["jobQueryRetryBehaviorCorrected"])
+            self.assertTrue(payload["processEnumerationRetryContractSelfTestVerified"])
+            self.assertTrue(payload["processEnumerationRetryBehaviorCorrected"])
+            self.assertTrue(payload["processEnumerationContractSelfTestVerified"])
+            self.assertTrue(payload["realProcessEnumerationSelfTestVerified"])
             self.assertTrue(payload["realMultiMemberJobQuerySelfTestVerified"])
             self.assertTrue(payload["workingDirectorySelfTestVerified"])
 
