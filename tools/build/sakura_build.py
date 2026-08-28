@@ -68,6 +68,7 @@ from sakura_build_lib.output_link_size_evidence import (
     validate_output_link_size_evidence,
     write_output_link_size_evidence,
 )
+from sakura_build_lib.repository_path_safety import RepositoryPathSafetyError, safe_repository_path
 from sakura_build_lib.runtime_stage import stage_runtime_artifacts
 from sakura_build_lib.repository_inventory import (
     collect_repository_inventory,
@@ -146,16 +147,19 @@ def context_id(platform: str, configuration: str) -> str:
 
 
 def _repository_path(repo: Path, value: Path, label: str) -> Path:
-    path = value if value.is_absolute() else repo / value
     try:
-        path.resolve().relative_to(repo.resolve())
-    except ValueError as error:
+        return safe_repository_path(
+            repo,
+            value,
+            code="EVIDENCE_PATH_ESCAPE",
+            reject_parent_segments=True,
+        )
+    except RepositoryPathSafetyError as error:
         raise BuildError(
             "EVIDENCE_PATH_ESCAPE",
-            f"{label} must be inside the repository: {path}",
+            f"{label} must be inside the repository",
             EXIT_USAGE,
         ) from error
-    return path
 
 
 def _role_paths(repo: Path, values: list[str], option: str) -> dict[str, Path]:
@@ -324,6 +328,16 @@ def parser() -> argparse.ArgumentParser:
         action="store_true",
         help="clean and rebuild the product so generator Exec tasks can be observed",
     )
+    inventory_observe_product.add_argument(
+        "--final-image-stage-root",
+        type=Path,
+        help="create a create-new immutable EXE/MAP stage and bind the native record to it",
+    )
+    inventory_observe_product.add_argument(
+        "--final-image-backend",
+        choices=("cpp", "rust"),
+        help="Output provider selector recorded in --final-image-stage-root (required with that option)",
+    )
     inventory_observe_product.add_argument("--output", type=Path, default=Path("build/evidence/r0/native-msbuild-product.json"))
     inventory_observe_resources = inventory_commands.add_parser("observe-resources")
     inventory_observe_resources.add_argument("--context", default="msvc-x64-debug")
@@ -414,19 +428,19 @@ def parser() -> argparse.ArgumentParser:
     )
     evidence_link_size = evidence_commands.add_parser(
         "output-link-size",
-        help="compare payload-free C++/Rust Output link, MAP, archive, symbol, and image-size evidence (startup manifests required for final-image proof)",
+        help="compare payload-free C++/Rust Output link, MAP, archive, symbol, and immutable final-image evidence",
     )
     evidence_link_size.add_argument(
         "--cpp-native-evidence",
         type=Path,
         required=True,
-        help="C++ product-native evidence JSON",
+        help="C++ product-native evidence JSON bound to an immutable final-image stage",
     )
     evidence_link_size.add_argument(
         "--rust-native-evidence",
         type=Path,
         required=True,
-        help="Rust product-native evidence JSON",
+        help="Rust product-native evidence JSON bound to an immutable final-image stage",
     )
     evidence_link_size.add_argument(
         "--cpp-manifest",
@@ -1336,6 +1350,7 @@ def main(argv: list[str] | None = None) -> int:
                     rust_manifest,
                     repo_root=repo,
                     threshold_percent=args.threshold_percent,
+                    require_immutable_stage=True,
                 )
                 write_output_link_size_evidence(destination, result)
                 validation = validate_output_link_size_evidence(result)
@@ -1487,6 +1502,17 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 return 0
             if args.inventory_command == "observe-product":
+                if (args.final_image_stage_root is None) != (args.final_image_backend is None):
+                    raise BuildError(
+                        "NATIVE_PRODUCT_FINAL_IMAGE_ARGUMENT",
+                        "--final-image-stage-root and --final-image-backend must be supplied together",
+                        EXIT_USAGE,
+                    )
+                final_image_stage_root = (
+                    _repository_path(repo, args.final_image_stage_root, "--final-image-stage-root")
+                    if args.final_image_stage_root is not None
+                    else None
+                )
                 package_result = _ensure_package_closure(
                     graph,
                     (args.product,),
@@ -1504,6 +1530,8 @@ def main(argv: list[str] | None = None) -> int:
                     events,
                     build_target="Rebuild" if args.rebuild else "Build",
                     package_restore=package_result,
+                    final_image_stage_root=final_image_stage_root,
+                    final_image_backend=args.final_image_backend,
                 )
                 write_product_native_evidence(destination, result)
                 compiler = result["compiler"]

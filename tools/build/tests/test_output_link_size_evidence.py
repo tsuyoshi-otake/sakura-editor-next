@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -20,6 +21,11 @@ from sakura_build_lib.output_link_size_evidence import (  # noqa: E402
     build_output_link_size_evidence,
     validate_output_link_size_evidence,
 )
+from sakura_build_lib.output_final_image_evidence import (  # noqa: E402
+    bind_native_evidence_to_final_image,
+    stage_output_final_image,
+)
+from sakura_build_lib.product_native_evidence import product_native_evidence_hash  # noqa: E402
 
 
 EXPECTED_PROVIDER_SYMBOLS = [
@@ -39,22 +45,13 @@ def _hash(value: bytes | str) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
-def _canonical_hash(value: object) -> str:
-    return _hash(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
-
-
 def _write_json(path: Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
 
 
 def _rehash_native(native: dict[str, object]) -> None:
-    stable = {
-        key: value
-        for key, value in native.items()
-        if key not in {"schema_version", "collection_ok", "hard_evidence_hash", "hardEvidenceSha256"}
-    }
-    native["hard_evidence_hash"] = _canonical_hash(stable)
+    native["hard_evidence_hash"] = product_native_evidence_hash(native)
 
 
 def _fixture(
@@ -93,6 +90,7 @@ def _fixture(
             "link": {
                 "output": image_path.relative_to(root).as_posix(),
                 "product_hash": _hash(image_bytes),
+                "product_size_bytes": len(image_bytes),
                 "linkCommandSha256": link_command_hash,
                 "repository_libraries": ["build/lib/sakura_native_ffi.lib"],
                 "rustArchiveSha256": archive_hash,
@@ -123,6 +121,9 @@ def _fixture(
             native["link"]["output_provider_symbol_evidence"] = {
                 "observed": True,
                 "scope": "output-provider",
+                "map": map_path.relative_to(root).as_posix(),
+                "map_hash": _hash(map_bytes),
+                "map_size_bytes": len(map_bytes),
                 "symbols": list(EXPECTED_PROVIDER_SYMBOLS),
                 "symbol_count": len(EXPECTED_PROVIDER_SYMBOLS),
                 "duplicate_count": 0,
@@ -171,6 +172,7 @@ def _fixture(
             manifest.update(
                 {
                     "exeSha256": _hash(image_bytes),
+                    "artifactSha256": _hash(image_bytes),
                     "artifactSha256After": _hash(image_bytes),
                     "artifactSizeBytesAfter": len(image_bytes),
                 }
@@ -198,6 +200,184 @@ def _fixture(
 
 
 class OutputLinkSizeEvidenceTests(unittest.TestCase):
+    def test_strict_final_image_mode_rejects_unstaged_native_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cpp_native, rust_native, cpp_manifest, rust_manifest, _cpp, _rust = _fixture(
+                root, provider_scope=True, startup_manifest=True
+            )
+            report = build_output_link_size_evidence(
+                cpp_native,
+                rust_native,
+                cpp_manifest,
+                rust_manifest,
+                repo_root=root,
+                require_immutable_stage=True,
+            )
+            self.assertEqual("incomplete", report["status"])
+            self.assertIn("FINAL_IMAGE_STAGE_UNPROVEN", report["failures"])
+
+    def test_immutable_stage_is_the_revalidated_image_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cpp_native, rust_native, cpp_manifest, rust_manifest, cpp_value, rust_value = _fixture(
+                root, provider_scope=True, startup_manifest=True
+            )
+            for backend, native_path, native_value in (
+                ("cpp", cpp_native, cpp_value),
+                ("rust", rust_native, rust_value),
+            ):
+                source_native = copy.deepcopy(native_value)
+                receipt = stage_output_final_image(
+                    repo_root=root,
+                    stage_root=root / "build" / "evidence" / "final-image",
+                    backend=backend,
+                    platform="x64",
+                    configuration="Release",
+                    source_native_evidence_sha256=native_value["hard_evidence_hash"],
+                    executable_path=root / "images" / backend / "sakura.exe",
+                    map_path=root / "maps" / f"{backend}.map",
+                )
+                bound = bind_native_evidence_to_final_image(native_value, receipt)
+                self.assertEqual(source_native, native_value)
+                _write_json(native_path, bound)
+                if backend == "cpp":
+                    cpp_bound = bound
+
+            report = build_output_link_size_evidence(
+                cpp_native,
+                rust_native,
+                cpp_manifest,
+                rust_manifest,
+                repo_root=root,
+                require_immutable_stage=True,
+            )
+            self.assertEqual("complete", report["status"])
+            (root / "images" / "cpp" / "sakura.exe").unlink()
+            (root / "maps" / "cpp.map").unlink()
+            report = build_output_link_size_evidence(
+                cpp_native,
+                rust_native,
+                cpp_manifest,
+                rust_manifest,
+                repo_root=root,
+                require_immutable_stage=True,
+            )
+            self.assertEqual("complete", report["status"])
+            staged_map = root / cpp_bound["link"]["final_image_stage"]["receipt"]
+            staged_receipt = json.loads(staged_map.read_text(encoding="utf-8"))
+            (root / staged_receipt["files"]["map"]["path"]).write_bytes(b"tampered-stage-map")
+            report = build_output_link_size_evidence(
+                cpp_native,
+                rust_native,
+                cpp_manifest,
+                rust_manifest,
+                repo_root=root,
+                require_immutable_stage=True,
+            )
+            self.assertIn("FINAL_IMAGE_STAGE_TAMPERED", report["failures"])
+
+    def test_final_image_backend_label_cannot_override_manifest_selector(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cpp_native, rust_native, cpp_manifest, rust_manifest, cpp_value, rust_value = _fixture(
+                root, provider_scope=True, startup_manifest=True
+            )
+            # Deliberately stage the C++ observation in the Rust partition.  A
+            # staging label alone is not selector proof; strict link-size
+            # validation must compare it with the manifest's C++ selector.
+            cpp_receipt = stage_output_final_image(
+                repo_root=root,
+                stage_root=root / "build" / "evidence" / "final-image",
+                backend="rust",
+                platform="x64",
+                configuration="Release",
+                source_native_evidence_sha256=cpp_value["hard_evidence_hash"],
+                executable_path=root / "images" / "cpp" / "sakura.exe",
+                map_path=root / "maps" / "cpp.map",
+            )
+            _write_json(cpp_native, bind_native_evidence_to_final_image(cpp_value, cpp_receipt))
+            rust_receipt = stage_output_final_image(
+                repo_root=root,
+                stage_root=root / "build" / "evidence" / "final-image",
+                backend="rust",
+                platform="x64",
+                configuration="Release",
+                source_native_evidence_sha256=rust_value["hard_evidence_hash"],
+                executable_path=root / "images" / "rust" / "sakura.exe",
+                map_path=root / "maps" / "rust.map",
+            )
+            _write_json(rust_native, bind_native_evidence_to_final_image(rust_value, rust_receipt))
+            report = build_output_link_size_evidence(
+                cpp_native,
+                rust_native,
+                cpp_manifest,
+                rust_manifest,
+                repo_root=root,
+                require_immutable_stage=True,
+            )
+            self.assertIn("FINAL_IMAGE_STAGE_SELECTOR_MISMATCH", report["failures"])
+
+    def test_reliable_native_output_selector_must_agree_when_present(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cpp_native, rust_native, cpp_manifest, rust_manifest, cpp_value, _rust = _fixture(
+                root, provider_scope=True, startup_manifest=True
+            )
+            cpp_value["outputBackend"] = "rust"
+            _rehash_native(cpp_value)
+            _write_json(cpp_native, cpp_value)
+            report = build_output_link_size_evidence(
+                cpp_native,
+                rust_native,
+                cpp_manifest,
+                rust_manifest,
+                repo_root=root,
+            )
+            self.assertIn("SELECTOR_MISMATCH", report["failures"])
+
+    def test_present_but_invalid_native_selector_is_unproven(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cpp_native, rust_native, cpp_manifest, rust_manifest, cpp_value, _rust = _fixture(
+                root, provider_scope=True, startup_manifest=True
+            )
+            cpp_value["outputBackend"] = "not-a-provider"
+            _rehash_native(cpp_value)
+            _write_json(cpp_native, cpp_value)
+            report = build_output_link_size_evidence(cpp_native, rust_native, cpp_manifest, rust_manifest, repo_root=root)
+            self.assertIn("NATIVE_SELECTOR_UNPROVEN", report["failures"])
+
+    def test_manifest_identity_aliases_must_agree(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cpp_native, rust_native, cpp_manifest, rust_manifest, _cpp, _rust = _fixture(
+                root, provider_scope=True, startup_manifest=True
+            )
+            manifest = json.loads(cpp_manifest.read_text(encoding="utf-8"))
+            manifest["artifactSha256"] = _hash("conflicting-image")
+            _write_json(cpp_manifest, manifest)
+            report = build_output_link_size_evidence(cpp_native, rust_native, cpp_manifest, rust_manifest, repo_root=root)
+            self.assertIn("FINAL_IMAGE_MANIFEST_IDENTITY_MISMATCH", report["failures"])
+
+    def test_map_reparse_ancestor_is_unproven(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cpp_native, rust_native, cpp_manifest, rust_manifest, cpp_value, _rust = _fixture(
+                root, provider_scope=True, startup_manifest=True
+            )
+            alias = root / "maps-alias"
+            try:
+                os.symlink(root / "maps", alias, target_is_directory=True)
+            except OSError:
+                self.skipTest("symbolic links are unavailable on this Windows host")
+            member = cpp_value["link"]["output_provider_member_evidence"]
+            member["map"] = "maps-alias/cpp.map"
+            _rehash_native(cpp_value)
+            _write_json(cpp_native, cpp_value)
+            report = build_output_link_size_evidence(cpp_native, rust_native, cpp_manifest, rust_manifest, repo_root=root)
+            self.assertIn("MAP_PATH_UNSAFE", report["failures"])
+
     def test_realistic_native_shape_does_not_overclaim_generic_archive_proof(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -357,11 +537,16 @@ class OutputLinkSizeEvidenceTests(unittest.TestCase):
             rust_image = root / "images" / "rust" / "sakura.exe"
             rust_bytes = rust_image.read_bytes()
             rust_value["link"]["product_hash"] = _hash(rust_bytes)
+            rust_value["link"]["product_size_bytes"] = len(rust_bytes)
             _rehash_native(rust_value)
             _write_json(rust_native, rust_value)
             rust_manifest_value = json.loads(rust_manifest.read_text(encoding="utf-8"))
             rust_manifest_value["exeSha256"] = _hash(rust_bytes)
+            rust_manifest_value["artifactSha256"] = _hash(rust_bytes)
+            rust_manifest_value["artifactSha256After"] = _hash(rust_bytes)
+            rust_manifest_value["artifactHashAfter"] = _hash(rust_bytes)
             rust_manifest_value["artifactSizeBytesAfter"] = len(rust_bytes)
+            rust_manifest_value["artifactSizeAfter"] = len(rust_bytes)
             _write_json(rust_manifest, rust_manifest_value)
             report = build_output_link_size_evidence(cpp_native, rust_native, cpp_manifest, rust_manifest, repo_root=root)
             self.assertEqual("complete", report["status"])
@@ -428,17 +613,21 @@ class OutputLinkSizeEvidenceTests(unittest.TestCase):
             cpp_native, rust_native, cpp_manifest, rust_manifest, cpp_value, rust_value = _fixture(
                 root, provider_scope=True, startup_manifest=True
             )
-            relative_prefix = root.relative_to(REPOSITORY_ROOT).as_posix()
             for backend, native_path, native_value in (
                 ("cpp", cpp_native, cpp_value),
                 ("rust", rust_native, rust_value),
             ):
-                native_value["link"]["output"] = f"{relative_prefix}/images/{backend}/sakura.exe"
-                native_value["link"]["output_provider_member_evidence"]["map"] = (
-                    f"{relative_prefix}/maps/{backend}.map"
+                receipt = stage_output_final_image(
+                    repo_root=REPOSITORY_ROOT,
+                    stage_root=root / "staged-final-images",
+                    backend=backend,
+                    platform="x64",
+                    configuration="Release",
+                    source_native_evidence_sha256=native_value["hard_evidence_hash"],
+                    executable_path=root / "images" / backend / "sakura.exe",
+                    map_path=root / "maps" / f"{backend}.map",
                 )
-                _rehash_native(native_value)
-                _write_json(native_path, native_value)
+                _write_json(native_path, bind_native_evidence_to_final_image(native_value, receipt))
             output_path = root / "evidence" / "output-link-size.json"
             command = [
                 sys.executable,

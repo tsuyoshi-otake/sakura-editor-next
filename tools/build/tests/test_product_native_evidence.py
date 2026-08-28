@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -14,6 +15,7 @@ if str(TOOLS_BUILD) not in sys.path:
 
 from sakura_build_lib.product_native_evidence import (  # noqa: E402
     collect_product_native_evidence,
+    product_native_evidence_hash,
     validate_product_native_evidence,
     write_product_native_evidence,
 )
@@ -177,6 +179,71 @@ def _provider_map_fixture(
 
 
 class ProductNativeEvidenceTests(unittest.TestCase):
+    def test_validation_rejects_absolute_and_parent_freshness_keys(self) -> None:
+        for unsafe_kind in ("absolute", "parent"):
+            with self.subTest(unsafe_kind=unsafe_kind), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                graph, _tlog = _native_fixture(root)
+                evidence = collect_product_native_evidence(
+                    graph,
+                    "product",
+                    "msvc-x64-debug",
+                    build_observed=True,
+                )
+                source_inputs = evidence["freshness"]["source_inputs"]
+                original_key, original_hash = next(iter(source_inputs.items()))
+                del source_inputs[original_key]
+                unsafe_key = str(root / original_key) if unsafe_kind == "absolute" else "../" + original_key
+                source_inputs[unsafe_key] = original_hash
+                evidence["hard_evidence_hash"] = product_native_evidence_hash(evidence)
+                evidence_path = root / "build/evidence/native-product.json"
+                write_product_native_evidence(evidence_path, evidence)
+                validation = validate_product_native_evidence(
+                    graph,
+                    evidence_path,
+                    "product",
+                    "msvc-x64-debug",
+                )
+                self.assertIn(
+                    "NATIVE_PRODUCT_EVIDENCE_INPUT_PATH_UNSAFE",
+                    {item["code"] for item in validation["failures"]},
+                )
+
+    def test_validation_rejects_reparse_ancestor_in_freshness_key(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            graph, _tlog = _native_fixture(root)
+            alias = root / "source-alias"
+            try:
+                os.symlink(root / "app", alias, target_is_directory=True)
+            except OSError:
+                self.skipTest("symbolic links are unavailable on this Windows host")
+            evidence = collect_product_native_evidence(
+                graph,
+                "product",
+                "msvc-x64-debug",
+                build_observed=True,
+            )
+            source_inputs = evidence["freshness"]["source_inputs"]
+            original_key, original_hash = next(
+                (key, value) for key, value in source_inputs.items() if str(key).startswith("app/")
+            )
+            del source_inputs[original_key]
+            source_inputs["source-alias/" + original_key.split("/", 1)[1]] = original_hash
+            evidence["hard_evidence_hash"] = product_native_evidence_hash(evidence)
+            evidence_path = root / "build/evidence/native-product.json"
+            write_product_native_evidence(evidence_path, evidence)
+            validation = validate_product_native_evidence(
+                graph,
+                evidence_path,
+                "product",
+                "msvc-x64-debug",
+            )
+            self.assertIn(
+                "NATIVE_PRODUCT_EVIDENCE_INPUT_PATH_UNSAFE",
+                {item["code"] for item in validation["failures"]},
+            )
+
     def test_declared_intdir_selects_product_tlogs_over_release_variants(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             graph, tlog = _native_fixture(Path(temporary))

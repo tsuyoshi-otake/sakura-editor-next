@@ -17,11 +17,12 @@ import subprocess
 import uuid
 import xml.etree.ElementTree as ET
 from collections import defaultdict
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Mapping, Sequence
 
 from .model import SemanticGraph, evaluate_condition
 from .package_restore import validate_package_restore
+from .repository_path_safety import RepositoryPathSafetyError, safe_repository_path
 from .runner import BuildError, EventWriter, msbuild_command
 
 
@@ -224,6 +225,46 @@ def _sha256_json(value: object) -> str:
     return _sha256_bytes(serialized.encode("utf-8"))
 
 
+def product_native_evidence_payload(evidence: Mapping[str, object]) -> dict[str, object]:
+    """Return the canonical, hashable payload of one native observation."""
+
+    return {
+        key: value
+        for key, value in evidence.items()
+        if key not in {"schema_version", "collection_ok", "hard_evidence_hash", "hardEvidenceSha256"}
+    }
+
+
+def product_native_evidence_source_payload(evidence: Mapping[str, object]) -> dict[str, object]:
+    """Return the source payload with a final-image binding removed.
+
+    A final-image receipt is an observation made after the native product
+    record was produced.  It must not change the source record's canonical
+    identity or make its original link/MAP observations unverifiable.
+    """
+
+    payload = product_native_evidence_payload(evidence)
+    link = payload.get("link")
+    if isinstance(link, Mapping):
+        source_link = dict(link)
+        source_link.pop("final_image_stage", None)
+        source_link.pop("finalImageStage", None)
+        payload["link"] = source_link
+    return payload
+
+
+def product_native_evidence_hash(evidence: Mapping[str, object]) -> str:
+    """Hash a native observation using the producer's canonical serializer."""
+
+    return _sha256_json(product_native_evidence_payload(evidence))
+
+
+def product_native_evidence_source_hash(evidence: Mapping[str, object]) -> str:
+    """Hash the canonical source-native record, excluding stage binding data."""
+
+    return _sha256_json(product_native_evidence_source_payload(evidence))
+
+
 def _sha256_file(path: Path, code: str) -> str:
     try:
         return _sha256_bytes(path.read_bytes())
@@ -292,6 +333,23 @@ def _path_value(repo_root: Path, project_dir: Path, value: str) -> tuple[str, st
     if relative is None:
         return "external", os.path.normpath(str(path.resolve(strict=False)))
     return ("generated" if _is_output_path(relative) else "source"), relative
+
+
+def _unsafe_relative_reference(value: object) -> bool:
+    """Reject absolute or parent-containing keys from untrusted evidence."""
+
+    if not isinstance(value, str) or not value:
+        return True
+    normalized = value.replace("\\", "/")
+    path = Path(normalized)
+    windows = PureWindowsPath(value)
+    return (
+        path.is_absolute()
+        or windows.is_absolute()
+        or bool(windows.anchor)
+        or any(part == ".." for part in path.parts)
+        or any(part == ".." for part in windows.parts)
+    )
 
 
 def _single_path_line(value: str) -> bool:
@@ -1006,7 +1064,9 @@ def collect_product_native_evidence(
         "schema_version": EVIDENCE_SCHEMA_VERSION,
         "collection_ok": True,
         **stable_payload,
-        "hard_evidence_hash": _sha256_json(stable_payload),
+        "hard_evidence_hash": product_native_evidence_hash(
+            {"schema_version": EVIDENCE_SCHEMA_VERSION, "collection_ok": True, **stable_payload}
+        ),
     }
 
 
@@ -1044,6 +1104,8 @@ def observe_product_native_evidence(
     *,
     build_target: str = "Build",
     package_restore: Mapping[str, object] | None = None,
+    final_image_stage_root: Path | None = None,
+    final_image_backend: str | None = None,
 ) -> dict[str, object]:
     if timeout_seconds < 1:
         raise BuildError("TIMEOUT_INVALID", "--timeout-seconds must be at least 1", 2)
@@ -1145,7 +1207,7 @@ def observe_product_native_evidence(
                 "MSBuild succeeded without producing its unique diagnostic log",
                 5,
             )
-        return collect_product_native_evidence(
+        result = collect_product_native_evidence(
             graph,
             product_id,
             context_id,
@@ -1154,6 +1216,39 @@ def observe_product_native_evidence(
             diagnostic_log_path=diagnostic_log,
             package_restore=package_restore,
         )
+        if final_image_stage_root is not None or final_image_backend is not None:
+            if final_image_stage_root is None or final_image_backend not in {"cpp", "rust"}:
+                raise BuildError(
+                    "NATIVE_PRODUCT_FINAL_IMAGE_ARGUMENT",
+                    "--final-image-stage-root and --final-image-backend must be supplied together",
+                    2,
+                )
+            link = result.get("link")
+            if not isinstance(link, dict):
+                raise BuildError("NATIVE_PRODUCT_FINAL_IMAGE_INPUT", "native link observation is missing", 5)
+            output = link.get("output")
+            selected = link.get("output_provider_member_evidence") or link.get("selected_archive_member_evidence")
+            map_value = selected.get("map") if isinstance(selected, dict) else None
+            if not isinstance(output, str) or not isinstance(map_value, str):
+                raise BuildError(
+                    "NATIVE_PRODUCT_FINAL_IMAGE_INPUT",
+                    "native observation does not identify both the final image and MAP",
+                    5,
+                )
+            from .output_final_image_evidence import bind_native_evidence_to_final_image, stage_output_final_image
+
+            receipt = stage_output_final_image(
+                repo_root=graph.repo_root,
+                stage_root=final_image_stage_root,
+                backend=final_image_backend,
+                platform=context.platform,
+                configuration=context.configuration,
+                source_native_evidence_sha256=str(result["hard_evidence_hash"]),
+                executable_path=graph.repo_root / output,
+                map_path=graph.repo_root / map_value,
+            )
+            result = bind_native_evidence_to_final_image(result, receipt)
+        return result
     finally:
         diagnostic_log.unlink(missing_ok=True)
         try:
@@ -1206,20 +1301,23 @@ def _validate_output_provider_map_reference(
     if not isinstance(map_relative, str) or not map_relative:
         failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MAP_PATH_MISSING", "field": label})
         return None, None
-    try:
-        map_path = (graph.repo_root / map_relative).resolve()
-    except (OSError, ValueError):
+    if _unsafe_relative_reference(map_relative):
         failures.append({
-            "code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MAP_PATH_UNSAFE",
+            "code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MAP_PATH_ESCAPE",
             "field": label,
             "path": map_relative,
         })
         return None, None
     try:
-        map_path.relative_to(graph.repo_root.resolve())
-    except ValueError:
+        map_path = safe_repository_path(
+            graph.repo_root,
+            map_relative,
+            code="NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MAP_PATH_UNSAFE",
+            reject_parent_segments=True,
+        )
+    except RepositoryPathSafetyError:
         failures.append({
-            "code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MAP_PATH_ESCAPE",
+            "code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MAP_PATH_UNSAFE",
             "field": label,
             "path": map_relative,
         })
@@ -1509,8 +1607,28 @@ def validate_product_native_evidence(
         if not isinstance(hashes, dict):
             failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_HASH_GROUP_MISSING", "group": group})
             continue
-        for relative, expected_hash in sorted(hashes.items()):
-            input_path = graph.repo_root / str(relative)
+        for relative, expected_hash in sorted(hashes.items(), key=lambda item: str(item[0])):
+            if _unsafe_relative_reference(relative):
+                failures.append({
+                    "code": "NATIVE_PRODUCT_EVIDENCE_INPUT_PATH_UNSAFE",
+                    "group": group,
+                    "path": relative,
+                })
+                continue
+            try:
+                input_path = safe_repository_path(
+                    graph.repo_root,
+                    relative,
+                    code="NATIVE_PRODUCT_EVIDENCE_INPUT_PATH_UNSAFE",
+                    reject_parent_segments=True,
+                )
+            except RepositoryPathSafetyError:
+                failures.append({
+                    "code": "NATIVE_PRODUCT_EVIDENCE_INPUT_PATH_UNSAFE",
+                    "group": group,
+                    "path": relative,
+                })
+                continue
             if not input_path.is_file():
                 failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_INPUT_MISSING", "group": group, "path": relative})
                 continue
@@ -1518,11 +1636,7 @@ def validate_product_native_evidence(
             if actual_hash != expected_hash:
                 failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_INPUT_CHANGED", "group": group, "path": relative})
 
-    stable_payload = {
-        key: value for key, value in evidence.items()
-        if key not in {"schema_version", "collection_ok", "hard_evidence_hash"}
-    }
-    if evidence.get("hard_evidence_hash") != _sha256_json(stable_payload):
+    if evidence.get("hard_evidence_hash") != product_native_evidence_hash(evidence):
         failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_HASH_MISMATCH"})
     compiler = evidence.get("compiler") if isinstance(evidence.get("compiler"), dict) else {}
     resource = evidence.get("resource_compiler") if isinstance(evidence.get("resource_compiler"), dict) else {}
@@ -1559,13 +1673,22 @@ def validate_product_native_evidence(
     if not isinstance(product_relative, str) or not product_relative:
         failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_PRODUCT_PATH_MISSING"})
     else:
-        product_path = (graph.repo_root / product_relative).resolve()
-        try:
-            product_path.relative_to(graph.repo_root.resolve())
-        except ValueError:
+        if _unsafe_relative_reference(product_relative):
             failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_PRODUCT_PATH_ESCAPE", "path": product_relative})
         else:
-            if not product_path.is_file():
+            try:
+                product_path = safe_repository_path(
+                    graph.repo_root,
+                    product_relative,
+                    code="NATIVE_PRODUCT_EVIDENCE_PRODUCT_PATH_UNSAFE",
+                    reject_parent_segments=True,
+                )
+            except RepositoryPathSafetyError:
+                failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_PRODUCT_PATH_UNSAFE", "path": product_relative})
+                product_path = None
+            if product_path is None:
+                pass
+            elif not product_path.is_file():
                 failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_PRODUCT_MISSING", "path": product_relative})
             elif not isinstance(link.get("product_hash"), str):
                 failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_PRODUCT_HASH_MISSING"})
@@ -1580,12 +1703,18 @@ def validate_product_native_evidence(
             map_hash = selected_evidence.get("map_hash")
             if not isinstance(map_relative, str) or not map_relative:
                 failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_MAP_PATH_MISSING"})
+            elif _unsafe_relative_reference(map_relative):
+                failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_MAP_PATH_ESCAPE", "path": map_relative})
             else:
-                map_path = (graph.repo_root / map_relative).resolve()
                 try:
-                    map_path.relative_to(graph.repo_root.resolve())
-                except ValueError:
-                    failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_MAP_PATH_ESCAPE", "path": map_relative})
+                    map_path = safe_repository_path(
+                        graph.repo_root,
+                        map_relative,
+                        code="NATIVE_PRODUCT_EVIDENCE_MAP_PATH_UNSAFE",
+                        reject_parent_segments=True,
+                    )
+                except RepositoryPathSafetyError:
+                    failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_MAP_PATH_UNSAFE", "path": map_relative})
                 else:
                     if not map_path.is_file():
                         failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_MAP_MISSING", "path": map_relative})

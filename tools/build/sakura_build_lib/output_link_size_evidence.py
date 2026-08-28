@@ -6,6 +6,13 @@ bounded identities, counts, and result codes.  Paths, linker command lines,
 MAP text, and archive member names never enter the generated report.  Generic
 archive/member and export observations are not treated as Output-provider
 selection proof; that proof must be explicitly provider-scoped.
+
+The backend stored by final-image staging is only a partition and caller
+assertion.  It is not trusted as provider-selection evidence by itself.  The
+strict consumer cross-checks the startup manifest selector (and any reliable
+native selector fields when present) against the expected backend and the
+staged receipt; absent native selector fields are intentionally reported only
+through the manifest/stage contract, never filled by a heuristic.
 """
 
 from __future__ import annotations
@@ -18,6 +25,13 @@ import re
 from pathlib import Path
 from typing import Mapping, Sequence
 
+from .output_final_image_evidence import (
+    OutputFinalImageEvidenceError,
+    RECORD_KIND as FINAL_IMAGE_RECORD_KIND,
+    validate_output_final_image_stage,
+)
+from .product_native_evidence import product_native_evidence_hash, product_native_evidence_source_hash
+from .repository_path_safety import RepositoryPathSafetyError, safe_repository_path
 from .runner import BuildError
 
 
@@ -126,6 +140,13 @@ _FAILURE_CODES = frozenset(
         "FINAL_IMAGE_MISMATCH",
         "FINAL_IMAGE_TAMPERED",
         "FINAL_IMAGE_PATH_UNSAFE",
+        "FINAL_IMAGE_STAGE_UNPROVEN",
+        "FINAL_IMAGE_STAGE_TAMPERED",
+        "FINAL_IMAGE_STAGE_PATH_UNSAFE",
+        "FINAL_IMAGE_STAGE_SELECTOR_MISMATCH",
+        "FINAL_IMAGE_STAGE_BINDING_MISMATCH",
+        "FINAL_IMAGE_MANIFEST_IDENTITY_UNPROVEN",
+        "FINAL_IMAGE_MANIFEST_IDENTITY_MISMATCH",
         "LINK_COMMAND_UNPROVEN",
         "MAP_UNPROVEN",
         "MAP_PATH_UNSAFE",
@@ -238,18 +259,17 @@ def _float_value(value: object) -> float | None:
 def _path_from_reference(repo_root: Path | None, reference: object) -> Path | None:
     if repo_root is None or not isinstance(reference, str) or not reference.strip():
         return None
-    root = repo_root.resolve()
-    candidate = Path(reference)
-    if not candidate.is_absolute():
-        candidate = root / candidate
     try:
-        resolved = candidate.resolve(strict=False)
-        resolved.relative_to(root)
-    except (OSError, ValueError):
+        return safe_repository_path(
+            repo_root,
+            reference,
+            code="OUTPUT_LINK_SIZE_PATH_UNSAFE",
+            reject_parent_segments=True,
+            reject_absolute=True,
+            require_regular_file=True,
+        )
+    except RepositoryPathSafetyError:
         return None
-    if candidate.is_symlink() or not candidate.is_file():
-        return None
-    return candidate
 
 
 def _file_identity(repo_root: Path | None, reference: object) -> tuple[str, int] | None:
@@ -458,6 +478,15 @@ def _native_selector_descriptor(
     }
     if all(all(value is None for value in values) for values in raw_values.values()):
         return
+    for field, values in raw_values.items():
+        for value in values:
+            if value is None:
+                continue
+            if field in {"outputBackend", "utf16Backend"}:
+                if not isinstance(value, str) or value.strip().lower() not in {"cpp", "rust"}:
+                    _add_failure(failures, "NATIVE_SELECTOR_UNPROVEN")
+            elif _bool_value(value) is None:
+                _add_failure(failures, "NATIVE_SELECTOR_UNPROVEN")
     output_backend_values = [
         str(value).strip().lower() for value in raw_values["outputBackend"] if isinstance(value, str)
     ]
@@ -495,8 +524,10 @@ def _native_hard_hash_matches(native: Mapping[str, object]) -> bool:
     observed = _normalise_hash(_get(native, "hard_evidence_hash", "hardEvidenceSha256"))
     if observed is None:
         return False
-    stable = {key: value for key, value in native.items() if key not in {"schema_version", "collection_ok", "hard_evidence_hash", "hardEvidenceSha256"}}
-    return observed == _normalise_hash(_sha256_json(stable))
+    try:
+        return observed == _normalise_hash(product_native_evidence_hash(native))
+    except (TypeError, ValueError):
+        return False
 
 
 def _validate_native_input_shape(native: Mapping[str, object], failures: list[str]) -> None:
@@ -531,8 +562,119 @@ def _native_link_command_hash(native: Mapping[str, object]) -> str | None:
     return matches[0] if len(matches) == 1 else None
 
 
+def _validate_native_final_image_stage(
+    native: Mapping[str, object],
+    repo_root: Path | None,
+    backend: str,
+    platform: str | None,
+    configuration: str | None,
+    failures: list[str],
+    *,
+    required: bool,
+) -> Mapping[str, object] | None:
+    link = _mapping(_get(native, "link"))
+    stage = _mapping(_get(link, "final_image_stage", "finalImageStage"))
+    if not stage:
+        if required:
+            _add_failure(failures, "FINAL_IMAGE_STAGE_UNPROVEN")
+        return None
+    if set(stage) != {"record", "receipt", "receiptSha256", "sourceNativeEvidenceSha256"} or stage.get("record") != FINAL_IMAGE_RECORD_KIND:
+        _add_failure(failures, "FINAL_IMAGE_STAGE_UNPROVEN")
+        return None
+    receipt_reference = _get(stage, "receipt", "receiptPath")
+    receipt_hash = _normalise_hash(_get(stage, "receiptSha256", "receipt_hash"))
+    source_hash = _normalise_hash(_get(stage, "sourceNativeEvidenceSha256", "source_native_evidence_sha256"))
+    if not isinstance(receipt_reference, str) or not receipt_reference or receipt_hash is None or source_hash is None:
+        _add_failure(failures, "FINAL_IMAGE_STAGE_UNPROVEN")
+        return None
+    if repo_root is None:
+        _add_failure(failures, "FINAL_IMAGE_STAGE_UNPROVEN")
+        return None
+    try:
+        source_native_hash = _normalise_hash(product_native_evidence_source_hash(native))
+    except (TypeError, ValueError):
+        source_native_hash = None
+    if source_native_hash is None or source_native_hash != source_hash:
+        _add_failure(failures, "FINAL_IMAGE_STAGE_BINDING_MISMATCH")
+    try:
+        summary = validate_output_final_image_stage(
+            repo_root / receipt_reference,
+            repo_root=repo_root,
+            expected_backend=backend,
+            expected_platform=platform,
+            expected_configuration=configuration,
+            expected_native_hash=source_hash,
+        )
+    except OutputFinalImageEvidenceError as error:
+        code = {
+            "OUTPUT_FINAL_IMAGE_RECEIPT_PATH_UNSAFE": "FINAL_IMAGE_STAGE_PATH_UNSAFE",
+            "OUTPUT_FINAL_IMAGE_FILE_PATH_UNSAFE": "FINAL_IMAGE_STAGE_PATH_UNSAFE",
+            "OUTPUT_FINAL_IMAGE_SOURCE_PATH_UNSAFE": "FINAL_IMAGE_STAGE_PATH_UNSAFE",
+            "OUTPUT_FINAL_IMAGE_SELECTOR_MISMATCH": "FINAL_IMAGE_STAGE_SELECTOR_MISMATCH",
+            "OUTPUT_FINAL_IMAGE_NATIVE_MISMATCH": "FINAL_IMAGE_STAGE_BINDING_MISMATCH",
+            "OUTPUT_FINAL_IMAGE_TAMPERED": "FINAL_IMAGE_STAGE_TAMPERED",
+        }.get(error.code, "FINAL_IMAGE_STAGE_UNPROVEN")
+        _add_failure(failures, code)
+        return None
+    if _normalise_hash(summary["receiptSha256"]) != receipt_hash:
+        _add_failure(failures, "FINAL_IMAGE_STAGE_TAMPERED")
+    if _normalise_hash(summary["files"]["exe"]["sha256"]) != _normalise_hash(_get(link, "product_hash", "productSha256", "outputSha256")):
+        _add_failure(failures, "FINAL_IMAGE_STAGE_BINDING_MISMATCH")
+    if summary["files"]["exe"]["sizeBytes"] != _int_value(_get(link, "product_size_bytes", "productSizeBytes", "outputSizeBytes")):
+        _add_failure(failures, "FINAL_IMAGE_STAGE_BINDING_MISMATCH")
+    output_reference = _get(link, "output", "productPath", "outputPath")
+    if not isinstance(output_reference, str) or Path(output_reference).name.casefold() != "sakura.exe":
+        _add_failure(failures, "FINAL_IMAGE_STAGE_BINDING_MISMATCH")
+    elif repo_root is not None:
+        try:
+            # Original identity paths need not still exist, but they must be
+            # lexical repository-relative paths without a reparse ancestor.
+            safe_repository_path(
+                repo_root,
+                output_reference,
+                code="OUTPUT_LINK_SIZE_PATH_UNSAFE",
+                reject_parent_segments=True,
+                reject_absolute=True,
+            )
+        except RepositoryPathSafetyError:
+            _add_failure(failures, "FINAL_IMAGE_STAGE_PATH_UNSAFE")
+    for key in (
+        "selected_archive_member_evidence",
+        "output_provider_member_evidence",
+        "output_provider_symbol_evidence",
+        "selectedArchiveMemberEvidence",
+        "outputProviderMemberEvidence",
+        "outputProviderSymbolEvidence",
+    ):
+        value = link.get(key)
+        if not isinstance(value, Mapping):
+            continue
+        map_reference = _get(value, "map", "mapPath")
+        if not isinstance(map_reference, str) or not map_reference:
+            _add_failure(failures, "FINAL_IMAGE_STAGE_BINDING_MISMATCH")
+        elif repo_root is not None:
+            try:
+                safe_repository_path(
+                    repo_root,
+                    map_reference,
+                    code="OUTPUT_LINK_SIZE_PATH_UNSAFE",
+                    reject_parent_segments=True,
+                    reject_absolute=True,
+                )
+            except RepositoryPathSafetyError:
+                _add_failure(failures, "FINAL_IMAGE_STAGE_PATH_UNSAFE")
+        if _normalise_hash(_get(value, "map_hash", "mapHash", "mapSha256")) != _normalise_hash(summary["files"]["map"]["sha256"]):
+            _add_failure(failures, "FINAL_IMAGE_STAGE_BINDING_MISMATCH")
+        for size_key in ("map_size_bytes", "mapSizeBytes"):
+            if size_key in value and value.get(size_key) != summary["files"]["map"]["sizeBytes"]:
+                _add_failure(failures, "FINAL_IMAGE_STAGE_BINDING_MISMATCH")
+    if _normalise_hash(stage.get("sourceNativeEvidenceSha256")) != _normalise_hash(summary["sourceNativeEvidenceSha256"]):
+        _add_failure(failures, "FINAL_IMAGE_STAGE_TAMPERED")
+    return summary
+
+
 def _native_output_identity(
-    native: Mapping[str, object], repo_root: Path | None, failures: list[str]
+    native: Mapping[str, object], repo_root: Path | None, failures: list[str], *, stage_summary: Mapping[str, object] | None = None
 ) -> tuple[str | None, int | None]:
     link = _mapping(_get(native, "link"))
     reference = _get(link, "output", "productPath", "outputPath")
@@ -544,6 +686,15 @@ def _native_output_identity(
         _add_failure(failures, "FINAL_IMAGE_UNPROVEN")
     if reference is None:
         _add_failure(failures, "FINAL_IMAGE_UNPROVEN")
+    if stage_summary is not None:
+        staged_files = _mapping(stage_summary.get("files"))
+        staged_exe = _mapping(staged_files.get("exe"))
+        staged_hash = _normalise_hash(staged_exe.get("sha256"))
+        staged_size = _int_value(staged_exe.get("sizeBytes"))
+        if staged_hash is None or staged_size is None:
+            _add_failure(failures, "FINAL_IMAGE_STAGE_UNPROVEN")
+        else:
+            return staged_hash, staged_size
     if reference is not None and repo_root is not None:
         identity = _file_identity(repo_root, reference)
         if identity is None:
@@ -559,15 +710,22 @@ def _native_output_identity(
     return observed_hash, observed_size
 
 
-def _manifest_output_identity(manifest: Mapping[str, object]) -> tuple[str | None, int | None]:
+def _manifest_output_identity(manifest: Mapping[str, object], failures: list[str]) -> tuple[str | None, int | None]:
     # Provider manifests identify tests1.exe, not the final GUI image.  Only
     # the startup producer owns a final-image identity; never infer it from a
     # generic artifact list or a provider manifest's tests1 hash.
     if manifest.get("record") != "output-startup-build-manifest":
         return None, None
-    digest = _normalise_hash(_get(manifest, "exeSha256", "artifactSha256After", "artifactHashAfter"))
-    size = _int_value(_get(manifest, "artifactSizeBytesAfter", "artifactSizeAfter"))
-    return digest, size
+    hash_aliases = ("exeSha256", "artifactSha256", "artifactSha256After", "artifactHashAfter")
+    size_aliases = ("artifactSizeBytesAfter", "artifactSizeAfter")
+    present_hashes = [_normalise_hash(manifest[name]) for name in hash_aliases if name in manifest]
+    present_sizes = [_int_value(manifest[name]) for name in size_aliases if name in manifest]
+    if not present_hashes or any(value is None for value in present_hashes) or not present_sizes or any(value is None for value in present_sizes):
+        _add_failure(failures, "FINAL_IMAGE_MANIFEST_IDENTITY_UNPROVEN")
+        return None, None
+    if len(set(present_hashes)) != 1 or len(set(present_sizes)) != 1:
+        _add_failure(failures, "FINAL_IMAGE_MANIFEST_IDENTITY_MISMATCH")
+    return present_hashes[0], present_sizes[0]
 
 
 def _provider_member_evidence(
@@ -591,7 +749,7 @@ def _provider_member_evidence(
     if not observed:
         _add_failure(failures, "PROVIDER_MEMBER_UNPROVEN")
     map_reference = _get(member_evidence, "map", "mapPath")
-    map_hash = _normalise_hash(_get(member_evidence, "map_hash", "mapSha256"))
+    map_hash = _normalise_hash(_get(member_evidence, "map_hash", "mapHash", "mapSha256"))
     map_size = _int_value(_get(member_evidence, "map_size_bytes", "mapSizeBytes"))
     if map_reference is None:
         _add_failure(failures, "MAP_UNPROVEN")
@@ -867,6 +1025,7 @@ def build_output_link_size_evidence(
     *,
     repo_root: Path | None = None,
     threshold_percent: float = DEFAULT_SIZE_THRESHOLD_PERCENT,
+    require_immutable_stage: bool = False,
 ) -> dict[str, object]:
     """Build a bounded comparison report from four existing evidence inputs."""
 
@@ -941,11 +1100,30 @@ def build_output_link_size_evidence(
         elif not _native_hard_hash_matches(native):
             _add_failure(failures, "NATIVE_EVIDENCE_TAMPERED")
 
+    stage_summaries: dict[str, Mapping[str, object]] = {}
+    for backend in _EXPECTED_BACKENDS:
+        stage_summary = _validate_native_final_image_stage(
+            native_values[backend],
+            repo_root,
+            backend,
+            platform if isinstance(platform, str) else None,
+            configuration if isinstance(configuration, str) else None,
+            failures,
+            required=require_immutable_stage,
+        )
+        if stage_summary is not None:
+            stage_summaries[backend] = stage_summary
+
     images: dict[str, dict[str, object]] = {}
     links: dict[str, dict[str, object]] = {}
     for backend in _EXPECTED_BACKENDS:
-        native_image_hash, native_image_size = _native_output_identity(native_values[backend], repo_root, failures)
-        manifest_image_hash, manifest_image_size = _manifest_output_identity(manifest_values[backend])
+        native_image_hash, native_image_size = _native_output_identity(
+            native_values[backend],
+            repo_root,
+            failures,
+            stage_summary=stage_summaries.get(backend),
+        )
+        manifest_image_hash, manifest_image_size = _manifest_output_identity(manifest_values[backend], failures)
         if native_image_hash is not None and manifest_image_hash is not None and native_image_hash != manifest_image_hash:
             _add_failure(failures, "FINAL_IMAGE_MISMATCH")
         if native_image_size is not None and manifest_image_size is not None and native_image_size != manifest_image_size:
@@ -963,7 +1141,9 @@ def build_output_link_size_evidence(
         images[backend] = {"sha256": image_hash, "sizeBytes": image_size}
 
         map_hash, map_size, member_count, member_hash, _scope = _provider_member_evidence(
-            native_values[backend], repo_root, failures
+            native_values[backend],
+            None if require_immutable_stage else repo_root,
+            failures,
         )
         archive_hash, archive_size, archive_count = _archive_identity(native_values[backend], proofs[backend], failures)
         symbol_count, duplicate_count = _provider_symbols(native_values[backend], failures)

@@ -267,6 +267,41 @@ trackerのrepository library inputとの和集合で照合します。MAP生成p
 product-native evidenceはschema v4のままprovider fieldsを後方互換なlink拡張として保持し、既存generic consumerの
 不在判定を変更しません。provider fieldsを使うconsumerだけがMAP形式・hash・exact setを必須として判定します。
 
+最終imageをC1eのlink-size証跡へ結び付ける場合は、providerごとに`--final-image-stage-root`と
+`--final-image-backend`を明示します。observerはlink直後の`sakura.exe`とMAPを同じcreate-new transactionへコピーし、
+source hash、staged hash、sourceの再確認、receiptのfsync、directoryのatomic publishを行います。receiptにはraw payloadを
+含めず、相対path、hash、size、platform/configuration、selector、元native evidence hashだけを持たせます。既存の
+product-native JSONを上書きしてstageを表現せず、staged recordの`link.final_image_stage` bindingを発行します。binding時には
+native観測の元EXE/MAP path・hash・sizeを変更しません。bound recordのhard hashはbindingを含む値ですが、consumerはbindingを
+除いたcanonical source-native payloadを再計算し、receiptの`sourceNativeEvidenceSha256`と一致することを確認します。これにより
+元のEXE/MAPが後から消えても、stage側のhash/sizeを最終image identityとして再検証できます。
+reparse point、root escape、非regular file、既存stage、途中のsource変更は型付きfailureで停止します。
+
+```cmd
+py -3 tools/build/sakura_build.py inventory observe-product ^
+  --context msvc-x64-release --product sakura_app --rebuild ^
+  --final-image-backend cpp ^
+  --final-image-stage-root build/evidence/output-final-image ^
+  --output build/evidence/native-cpp.json
+```
+
+`--final-image-backend rust`でRust cellを別stageへ採取します。observerの通常出力（stage optionなし）は従来どおり
+source/tlog freshnessのnative observationです。`evidence output-link-size`は4入力の互換性を維持しつつ、startup
+manifestのfinal-image identityとnative recordのstage bindingが無い場合、`FINAL_IMAGE_STAGE_UNPROVEN`としてfail-closedにします。
+receipt、EXE、MAP、native hard hashのどれかが後から変更された場合も、stageを再作成せずtyped failureになります。
+
+`--final-image-backend`はstageの配置先を選ぶためのcaller assertionにすぎず、単独ではOutput providerの選択証明ではありません。
+native evidenceにselector descriptorが存在する場合はその値も検査しますが、現行のnative観測ではselector fieldsが欠落する場合があります。
+そのため厳格な`output-link-size` consumerが、startup manifestのprovider selector、expected backend、stage receipt、native hard hashを最後に突き合わせます。
+manifestまたはstage receiptが示すselectorと一致しないlabelは`FINAL_IMAGE_STAGE_SELECTOR_MISMATCH`としてfail-closedになり、欠落したnative selectorを推測で補完しません。
+
+staged/bound fixtureの単体テストはcanonical serializer、native source/bound hard hash再計算、receipt/file hash bindingの構造互換性だけを確認します。
+product-nativeの完全なvalidatorはfreshなCL/link tlogとgraph/package provenanceを必要とするため、fixtureでtlog freshnessを迂回しません。
+実機の`inventory observe-product --rebuild`成功後にのみ、生成されたnative recordを通常のproduct validatorへ渡してください。
+なお、`output-link-size`のimmutable stageは最終EXE/MAPのpair identityとnative link観測の対応だけを証明します。startup producerが発行する
+`runtimeStageReceiptSha256`（runtime DLL等のstage内容・dependency closure）はproducer/paired-runner側のruntime receipt検証が所有し、
+link-size consumerはそのreceiptを再構成したり、未提示のruntime provenanceを推測したりしません。
+
 通常のBuildでgeneratorがup-to-date skipになった場合は、target schedulingの観測であってExec実行の
 観測ではありません。`--rebuild`は製品をclean rebuildして実際の`Exec` taskを観測するための証跡専用optionです。
 全翻訳単位を再構築し、外部package処理も起動し得るため、通常の局所開発ループでは使用しません。generator
