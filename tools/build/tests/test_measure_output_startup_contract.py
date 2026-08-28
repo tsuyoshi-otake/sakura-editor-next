@@ -371,6 +371,61 @@ class PairedStartupContractTests(unittest.TestCase):
         self.assertIn("qualified = [bool]$accepted", self.paired_text)
         self.assertIn("startupGatePass = [bool]($accepted -and $performance.pass)", self.paired_text)
 
+    def test_cleanup_telemetry_consumer_schema_is_additive_and_fail_closed(self):
+        for marker in (
+            "PairedCleanupTelemetryMaxCount = 4096",
+            "PairedCleanupTelemetryProcessEnumerationFields",
+            "PairedCleanupTelemetryTrackedSweepFields",
+            "PairedCleanupTelemetryAffinityFields",
+            "function New-PairedCleanupTelemetryFallback",
+            "function Convert-PairedCleanupTelemetry",
+            "function New-PairedAffinityTelemetryFallback",
+            "function Convert-PairedAffinityTelemetry",
+            "processEnumerationAttempted",
+            "processEnumerationSucceeded",
+            "processEnumerationComplete",
+            "processEnumerationErrorCode",
+            "processEnumerationRetryCount",
+            "processEnumerationCallCount",
+            "processEnumerationCompletedCount",
+            "processEnumerationFailureCount",
+            "trackedSweepFailureType",
+            "trackedSweepFailureErrorCode",
+            "trackedSweepIdentityAttemptCount",
+            "trackedSweepIdentityFailureCount",
+            "trackedSweepDisappearedAfterSnapshotCount",
+            "trackedSweepStillPresentAfterFailureCount",
+            "trackedSweepPassCount",
+            "historicalOwnedCount",
+            "currentLiveCount",
+            "expiredHistoricalCount",
+            "failureErrorCode",
+            "liveSetSource",
+            "$expired -ne ($historical - $current)",
+            "processSum",
+            "processFailures -eq 0",
+            "-not $processSucceeded",
+            "selfTestMalformedProcessFlags.processEnumerationSucceeded = $false",
+            "selfTestMalformedProcessIncomplete.processEnumerationComplete = $false",
+            "cleanupTelemetryProcessSuccessFlagsRejected",
+            "first-cause",
+            "cleanupTelemetryFirstCauseVerified",
+            "cleanupTelemetryProcessCrossFieldRejected",
+            "cleanupTelemetryPartialRejected",
+            "cleanupTelemetryAffinityCrossFieldRejected",
+            "cleanupTelemetryBoundedIntegerRejected",
+            "cleanupTelemetryEnumRejected",
+            "failureType = 'unknown'",
+            "liveSetSource = 'not-observed'",
+        ):
+            self.assertIn(marker, self.paired_text)
+        self.assertIn("current -gt $historical", self.paired_text)
+        self.assertIn("$expired -ne ($historical - $current)", self.paired_text)
+        self.assertIn("return New-PairedUnavailableCleanupObservation $outer", self.paired_text)
+        self.assertIn("$telemetry = Convert-PairedCleanupTelemetry $Raw", self.paired_text)
+        self.assertIn("foreach ($field in @($telemetry.Keys))", self.paired_text)
+        self.assertIn("adoption = [ordered]@{", self.paired_text)
+
     def test_shared_direct_job_query_observation_count_matches_native_attempt(self):
         for marker in (
             "if ($Query -is [StartupProbeJobResult])",
@@ -675,6 +730,13 @@ class PairedStartupContractTests(unittest.TestCase):
                 "jobQueryObservationOldSchemaNeutralVerified",
                 "cleanupObservationGoodVerified",
                 "cleanupObservationMalformedVerified",
+                "cleanupTelemetryFirstCauseVerified",
+                "cleanupTelemetryProcessCrossFieldRejected",
+                "cleanupTelemetryProcessSuccessFlagsRejected",
+                "cleanupTelemetryPartialRejected",
+                "cleanupTelemetryAffinityCrossFieldRejected",
+                "cleanupTelemetryBoundedIntegerRejected",
+                "cleanupTelemetryEnumRejected",
                 "telemetryFailureNeutralVerified",
                 "telemetryPayloadFreeVerified",
                 "telemetrySuppressionGatesUnchangedVerified",

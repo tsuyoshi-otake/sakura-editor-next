@@ -101,6 +101,32 @@ $script:PairedJobQueryMaxCount = 4096
 $script:PairedJobQueryMaxBytes = [UInt64]1048576
 $script:PairedJobQueryMaxProcessCount = [UInt64]131072
 $script:PairedJobQueryMaxAttempts = 8
+$script:PairedCleanupTelemetryMaxCount = 4096
+$script:PairedCleanupTelemetryTrackedSweepFailureTypes = @(
+    'none', 'identity-disappeared', 'identity-still-present',
+    'enumeration-unavailable', 'identity-unavailable', 'exception'
+)
+$script:PairedCleanupTelemetryAffinityFailureTypes = @(
+    'none', 'open', 'set', 'readback', 'mismatch', 'identity', 'verification', 'unavailable'
+)
+$script:PairedCleanupTelemetryLiveSetSources = @(
+    'not-attempted', 'process-snapshot', 'tracked-sweep', 'unavailable'
+)
+$script:PairedCleanupTelemetryProcessEnumerationFields = @(
+    'processEnumerationAttempted', 'processEnumerationSucceeded', 'processEnumerationComplete',
+    'processEnumerationErrorCode', 'processEnumerationRetryCount', 'processEnumerationCallCount',
+    'processEnumerationCompletedCount', 'processEnumerationFailureCount'
+)
+$script:PairedCleanupTelemetryTrackedSweepFields = @(
+    'trackedSweepFailureType', 'trackedSweepFailureErrorCode',
+    'trackedSweepIdentityAttemptCount', 'trackedSweepIdentityFailureCount',
+    'trackedSweepDisappearedAfterSnapshotCount', 'trackedSweepStillPresentAfterFailureCount',
+    'trackedSweepPassCount'
+)
+$script:PairedCleanupTelemetryAffinityFields = @(
+    'historicalOwnedCount', 'currentLiveCount', 'expiredHistoricalCount',
+    'failureType', 'failureErrorCode', 'liveSetSource'
+)
 $script:PairedStartupTraceMaxOrderedEvents = 256
 $script:PairedStartupTraceMaxElapsedMs = 120000
 $script:PairedWin32PathTextLimit = 259
@@ -2072,6 +2098,41 @@ function Convert-PairedJobQueryErrorCode {
     return [int]$code
 }
 
+function Convert-PairedCleanupTelemetryBoundedCount {
+    param([AllowNull()] [object]$Value)
+    return Convert-PairedJobQueryBoundedUInt64 $Value ([UInt64]$script:PairedCleanupTelemetryMaxCount)
+}
+
+function Convert-PairedCleanupTelemetryErrorCode {
+    param([AllowNull()] [object]$Value)
+    return Convert-PairedJobQueryErrorCode $Value
+}
+
+function Convert-PairedCleanupTelemetryEnum {
+    param(
+        [AllowNull()] [object]$Value,
+        [Parameter(Mandatory = $true)] [string[]]$Allowed
+    )
+    if ($Value -isnot [string]) { return $null }
+    foreach ($candidate in @($Allowed)) {
+        if ([string]::Equals([string]$Value, [string]$candidate, [StringComparison]::Ordinal)) {
+            return [string]$candidate
+        }
+    }
+    return $null
+}
+
+function Test-PairedCleanupTelemetryFieldSetPresent {
+    param(
+        [Parameter(Mandatory = $true)] [AllowNull()] [object]$Object,
+        [Parameter(Mandatory = $true)] [string[]]$Fields
+    )
+    foreach ($field in @($Fields)) {
+        if (Test-PairedPropertyPresent $Object $field) { return $true }
+    }
+    return $false
+}
+
 function Test-PairedAnyPropertyPresent {
     param(
         [Parameter(Mandatory = $true)] [AllowNull()] [object]$Object,
@@ -2261,6 +2322,23 @@ function New-PairedEmptyCleanupObservation {
         finalPathSweepVerified = $false
         survivorCount = [UInt64]0
         cleanupErrorCount = [UInt64]0
+        # These additive fields are deliberately neutral when a v1 report was
+        # written before the shared producer emitted cleanup telemetry.
+        processEnumerationAttempted = $false
+        processEnumerationSucceeded = $false
+        processEnumerationComplete = $false
+        processEnumerationErrorCode = $null
+        processEnumerationRetryCount = [UInt64]0
+        processEnumerationCallCount = [UInt64]0
+        processEnumerationCompletedCount = [UInt64]0
+        processEnumerationFailureCount = [UInt64]0
+        trackedSweepFailureType = 'unknown'
+        trackedSweepFailureErrorCode = $null
+        trackedSweepIdentityAttemptCount = [UInt64]0
+        trackedSweepIdentityFailureCount = [UInt64]0
+        trackedSweepDisappearedAfterSnapshotCount = [UInt64]0
+        trackedSweepStillPresentAfterFailureCount = [UInt64]0
+        trackedSweepPassCount = [UInt64]0
     }
 }
 
@@ -2281,6 +2359,132 @@ function New-PairedUnavailableCleanupObservation {
     $observation.query = New-PairedUnavailableJobQueryObservation
     return $observation
 }
+
+function New-PairedCleanupTelemetryFallback {
+    return [ordered]@{
+        processEnumerationAttempted = $false
+        processEnumerationSucceeded = $false
+        processEnumerationComplete = $false
+        processEnumerationErrorCode = $null
+        processEnumerationRetryCount = [UInt64]0
+        processEnumerationCallCount = [UInt64]0
+        processEnumerationCompletedCount = [UInt64]0
+        processEnumerationFailureCount = [UInt64]0
+        trackedSweepFailureType = 'unknown'
+        trackedSweepFailureErrorCode = $null
+        trackedSweepIdentityAttemptCount = [UInt64]0
+        trackedSweepIdentityFailureCount = [UInt64]0
+        trackedSweepDisappearedAfterSnapshotCount = [UInt64]0
+        trackedSweepStillPresentAfterFailureCount = [UInt64]0
+        trackedSweepPassCount = [UInt64]0
+    }
+}
+
+function Convert-PairedCleanupTelemetry {
+    param([AllowNull()] [object]$Raw)
+    $fallback = New-PairedCleanupTelemetryFallback
+    if ($null -eq $Raw) { return $fallback }
+    $allFields = @($script:PairedCleanupTelemetryProcessEnumerationFields +
+        $script:PairedCleanupTelemetryTrackedSweepFields)
+    if (-not (Test-PairedCleanupTelemetryFieldSetPresent $Raw $allFields)) {
+        # Absence is the one compatibility case: an older v1 producer did not
+        # know these fields.  Do not infer that cleanup succeeded or failed.
+        return $fallback
+    }
+    foreach ($field in @($allFields)) {
+        if (-not (Test-PairedPropertyPresent $Raw $field)) { return $null }
+    }
+    try {
+        $processAttempted = Convert-PairedJobQueryBoolean (Get-PairedProperty $Raw @('processEnumerationAttempted'))
+        $processSucceeded = Convert-PairedJobQueryBoolean (Get-PairedProperty $Raw @('processEnumerationSucceeded'))
+        $processComplete = Convert-PairedJobQueryBoolean (Get-PairedProperty $Raw @('processEnumerationComplete'))
+        $processErrorRaw = Get-PairedProperty $Raw @('processEnumerationErrorCode')
+        $processError = Convert-PairedCleanupTelemetryErrorCode $processErrorRaw
+        $processRetry = Convert-PairedCleanupTelemetryBoundedCount (Get-PairedProperty $Raw @('processEnumerationRetryCount'))
+        $processCalls = Convert-PairedCleanupTelemetryBoundedCount (Get-PairedProperty $Raw @('processEnumerationCallCount'))
+        $processCompleted = Convert-PairedCleanupTelemetryBoundedCount (Get-PairedProperty $Raw @('processEnumerationCompletedCount'))
+        $processFailures = Convert-PairedCleanupTelemetryBoundedCount (Get-PairedProperty $Raw @('processEnumerationFailureCount'))
+        $trackedType = Convert-PairedCleanupTelemetryEnum (Get-PairedProperty $Raw @('trackedSweepFailureType')) $script:PairedCleanupTelemetryTrackedSweepFailureTypes
+        $trackedErrorRaw = Get-PairedProperty $Raw @('trackedSweepFailureErrorCode')
+        $trackedError = Convert-PairedCleanupTelemetryErrorCode $trackedErrorRaw
+        $trackedAttempts = Convert-PairedCleanupTelemetryBoundedCount (Get-PairedProperty $Raw @('trackedSweepIdentityAttemptCount'))
+        $trackedFailures = Convert-PairedCleanupTelemetryBoundedCount (Get-PairedProperty $Raw @('trackedSweepIdentityFailureCount'))
+        $trackedDisappeared = Convert-PairedCleanupTelemetryBoundedCount (Get-PairedProperty $Raw @('trackedSweepDisappearedAfterSnapshotCount'))
+        $trackedPresent = Convert-PairedCleanupTelemetryBoundedCount (Get-PairedProperty $Raw @('trackedSweepStillPresentAfterFailureCount'))
+        $trackedPasses = Convert-PairedCleanupTelemetryBoundedCount (Get-PairedProperty $Raw @('trackedSweepPassCount'))
+        if ($null -eq $processAttempted -or $null -eq $processSucceeded -or
+            $null -eq $processComplete -or $null -eq $processRetry -or
+            $null -eq $processCalls -or $null -eq $processCompleted -or
+            $null -eq $processFailures -or $null -eq $trackedType -or
+            $null -eq $trackedAttempts -or $null -eq $trackedFailures -or
+            $null -eq $trackedDisappeared -or $null -eq $trackedPresent -or
+            $null -eq $trackedPasses -or
+            ($null -ne $processErrorRaw -and $null -eq $processError) -or
+            ($null -ne $trackedErrorRaw -and $null -eq $trackedError)) {
+            return $null
+        }
+
+        # The producer saturates each bounded counter independently.  Below
+        # the cap, calls are exactly completed plus failed; at the cap, the
+        # sum may exceed the saturated call count but can never be smaller.
+        if (-not $processAttempted) {
+            if ($processSucceeded -or $processComplete -or $processRetry -ne 0 -or
+                $processCalls -ne 0 -or $processCompleted -ne 0 -or
+                $processFailures -ne 0 -or $null -ne $processError) { return $null }
+        }
+        else {
+            if ($processCalls -eq 0 -or $processCompleted -gt $processCalls -or
+                $processFailures -gt $processCalls) { return $null }
+            $processSum = [decimal]$processCompleted + [decimal]$processFailures
+            if (($processCalls -lt [UInt64]$script:PairedCleanupTelemetryMaxCount -and
+                    $processSum -ne [decimal]$processCalls) -or
+                ($processCalls -eq [UInt64]$script:PairedCleanupTelemetryMaxCount -and
+                    $processSum -lt [decimal]$processCalls)) { return $null }
+            if ($processFailures -eq 0 -and (-not $processSucceeded -or
+                    -not $processComplete -or $processCompleted -ne $processCalls)) { return $null }
+            if ($processSucceeded -and (-not $processComplete -or $processFailures -ne 0 -or
+                    $processCompleted -ne $processCalls)) { return $null }
+            if ($processFailures -gt 0) {
+                if ($null -eq $processError -or $processError -eq 0) { return $null }
+            }
+            elseif ($null -ne $processError) { return $null }
+        }
+
+        if ($trackedAttempts -lt $trackedFailures -or
+            $trackedDisappeared + $trackedPresent -gt $trackedFailures -or
+            (($trackedAttempts -gt 0 -or $trackedFailures -gt 0) -and $trackedPasses -eq 0)) {
+            return $null
+        }
+        if ($trackedType -eq 'none') {
+            if ($null -ne $trackedError -or $trackedFailures -ne 0 -or
+                $trackedDisappeared -ne 0 -or $trackedPresent -ne 0) { return $null }
+        }
+        else {
+            if ($null -eq $trackedError -or $trackedError -eq 0 -or $trackedPasses -eq 0) { return $null }
+            if ($trackedType -eq 'identity-disappeared' -and $trackedDisappeared -eq 0) { return $null }
+            if ($trackedType -eq 'identity-still-present' -and $trackedPresent -eq 0) { return $null }
+        }
+        return [ordered]@{
+            processEnumerationAttempted = [bool]$processAttempted
+            processEnumerationSucceeded = [bool]$processSucceeded
+            processEnumerationComplete = [bool]$processComplete
+            processEnumerationErrorCode = if ($null -eq $processError) { $null } else { [int]$processError }
+            processEnumerationRetryCount = [UInt64]$processRetry
+            processEnumerationCallCount = [UInt64]$processCalls
+            processEnumerationCompletedCount = [UInt64]$processCompleted
+            processEnumerationFailureCount = [UInt64]$processFailures
+            trackedSweepFailureType = [string]$trackedType
+            trackedSweepFailureErrorCode = if ($null -eq $trackedError) { $null } else { [int]$trackedError }
+            trackedSweepIdentityAttemptCount = [UInt64]$trackedAttempts
+            trackedSweepIdentityFailureCount = [UInt64]$trackedFailures
+            trackedSweepDisappearedAfterSnapshotCount = [UInt64]$trackedDisappeared
+            trackedSweepStillPresentAfterFailureCount = [UInt64]$trackedPresent
+            trackedSweepPassCount = [UInt64]$trackedPasses
+        }
+    }
+    catch { return $null }
+}
+
 function Convert-PairedCleanupObservation {
     param([AllowNull()] [object]$Raw)
     if ($null -eq $Raw) { return New-PairedUnavailableCleanupObservation }
@@ -2336,6 +2540,14 @@ function Convert-PairedCleanupObservation {
             $null -eq $survivorCount -or $null -eq $cleanupErrorCount) {
             return New-PairedUnavailableCleanupObservation
         }
+        $telemetry = Convert-PairedCleanupTelemetry $Raw
+        if ($null -eq $telemetry) {
+            # A report which advertises the additive schema but violates its
+            # shape/equations is locally unavailable.  Keep legacy cleanup
+            # evidence intact and never let malformed telemetry qualify it.
+            return New-PairedUnavailableCleanupObservation $outer
+        }
+        foreach ($field in @($telemetry.Keys)) { $outer[$field] = $telemetry[$field] }
         if (-not (Test-PairedPropertyPresent $Raw 'query')) {
             return New-PairedUnavailableCleanupObservation $outer
         }
@@ -2887,25 +3099,87 @@ function Convert-PairedStartupMilestones {
     }
 }
 
-function Convert-PairedAffinity {
-    param([object]$Affinity)
-    if ($null -eq $Affinity) {
+function New-PairedAffinityTelemetryFallback {
+    return [ordered]@{
+        historicalOwnedCount = [UInt64]0
+        currentLiveCount = [UInt64]0
+        expiredHistoricalCount = [UInt64]0
+        failureType = 'unknown'
+        failureErrorCode = $null
+        liveSetSource = 'not-observed'
+    }
+}
+
+function Convert-PairedAffinityTelemetry {
+    param([AllowNull()] [object]$Affinity)
+    $fallback = New-PairedAffinityTelemetryFallback
+    if ($null -eq $Affinity) { return $fallback }
+    if (-not (Test-PairedCleanupTelemetryFieldSetPresent $Affinity $script:PairedCleanupTelemetryAffinityFields)) {
+        # Older paired reports have the original affinity read-back fields but
+        # no live-set metadata.  Keep them readable without claiming that a
+        # historical/current process census was observed.
+        return $fallback
+    }
+    foreach ($field in @($script:PairedCleanupTelemetryAffinityFields)) {
+        if (-not (Test-PairedPropertyPresent $Affinity $field)) { return $null }
+    }
+    try {
+        $historical = Convert-PairedCleanupTelemetryBoundedCount (Get-PairedProperty $Affinity @('historicalOwnedCount'))
+        $current = Convert-PairedCleanupTelemetryBoundedCount (Get-PairedProperty $Affinity @('currentLiveCount'))
+        $expired = Convert-PairedCleanupTelemetryBoundedCount (Get-PairedProperty $Affinity @('expiredHistoricalCount'))
+        $failureType = Convert-PairedCleanupTelemetryEnum (Get-PairedProperty $Affinity @('failureType')) $script:PairedCleanupTelemetryAffinityFailureTypes
+        $failureErrorRaw = Get-PairedProperty $Affinity @('failureErrorCode')
+        $failureError = Convert-PairedCleanupTelemetryErrorCode $failureErrorRaw
+        $liveSetSource = Convert-PairedCleanupTelemetryEnum (Get-PairedProperty $Affinity @('liveSetSource')) $script:PairedCleanupTelemetryLiveSetSources
+        if ($null -eq $historical -or $null -eq $current -or $null -eq $expired -or
+            $null -eq $failureType -or $null -eq $liveSetSource -or
+            ($null -ne $failureErrorRaw -and $null -eq $failureError) -or
+            $current -gt $historical -or
+            $expired -ne ($historical - $current)) {
+            return $null
+        }
+        if ($failureType -eq 'none') {
+            if ($null -ne $failureError) { return $null }
+        }
+        elseif ($null -eq $failureError -or $failureError -eq 0) {
+            return $null
+        }
         return [ordered]@{
-            requestedMask = [UInt64]0; processMask = $null; systemMask = $null
-            opened = $false; setSucceeded = $false; readBackSucceeded = $false; verified = $false; descendantsVerified = $false; errorCode = $null
+            historicalOwnedCount = [UInt64]$historical
+            currentLiveCount = [UInt64]$current
+            expiredHistoricalCount = [UInt64]$expired
+            failureType = [string]$failureType
+            failureErrorCode = if ($null -eq $failureError) { $null } else { [int]$failureError }
+            liveSetSource = [string]$liveSetSource
         }
     }
-    return [ordered]@{
-        requestedMask = [UInt64]$Affinity.requestedMask
-        processMask = if ($null -eq $Affinity.processMask) { $null } else { [UInt64]$Affinity.processMask }
-        systemMask = if ($null -eq $Affinity.systemMask) { $null } else { [UInt64]$Affinity.systemMask }
-        opened = [bool]$Affinity.opened
-        setSucceeded = [bool]$Affinity.setSucceeded
-        readBackSucceeded = [bool]$Affinity.readBackSucceeded
-        verified = [bool]$Affinity.verified
-        descendantsVerified = [bool]$Affinity.descendantsVerified
-        errorCode = if ($null -eq $Affinity.errorCode) { $null } else { [int]$Affinity.errorCode }
+    catch { return $null }
+}
+
+function Convert-PairedAffinity {
+    param([object]$Affinity)
+    $base = [ordered]@{
+        requestedMask = [UInt64]0; processMask = $null; systemMask = $null
+        opened = $false; setSucceeded = $false; readBackSucceeded = $false; verified = $false; descendantsVerified = $false; errorCode = $null
     }
+    if ($null -ne $Affinity) {
+        try {
+            $base.requestedMask = [UInt64]$Affinity.requestedMask
+            $base.processMask = if ($null -eq $Affinity.processMask) { $null } else { [UInt64]$Affinity.processMask }
+            $base.systemMask = if ($null -eq $Affinity.systemMask) { $null } else { [UInt64]$Affinity.systemMask }
+            $base.opened = [bool]$Affinity.opened
+            $base.setSucceeded = [bool]$Affinity.setSucceeded
+            $base.readBackSucceeded = [bool]$Affinity.readBackSucceeded
+            $base.verified = [bool]$Affinity.verified
+            $base.descendantsVerified = [bool]$Affinity.descendantsVerified
+            $base.errorCode = if ($null -eq $Affinity.errorCode) { $null } else { [int]$Affinity.errorCode }
+        }
+        catch { }
+    }
+    $telemetry = Convert-PairedAffinityTelemetry $Affinity
+    if ($null -eq $telemetry) { $telemetry = New-PairedAffinityTelemetryFallback }
+    foreach ($field in @($telemetry.Keys)) { $base[$field] = $telemetry[$field] }
+    return $base
 }
 
 function Convert-PairedLaunchResult {
@@ -3645,6 +3919,14 @@ function Invoke-PairedSelfTest {
         trackedSweepAttempted = $true; trackedSweepVerified = $true
         finalPathSweepAttempted = $true; finalPathSweepVerified = $true
         survivorCount = [UInt64]0; cleanupErrorCount = [UInt64]0
+        processEnumerationAttempted = $true; processEnumerationSucceeded = $true; processEnumerationComplete = $true
+        processEnumerationErrorCode = $null; processEnumerationRetryCount = [UInt64]1
+        processEnumerationCallCount = [UInt64]2; processEnumerationCompletedCount = [UInt64]2
+        processEnumerationFailureCount = [UInt64]0
+        trackedSweepFailureType = 'none'; trackedSweepFailureErrorCode = $null
+        trackedSweepIdentityAttemptCount = [UInt64]0; trackedSweepIdentityFailureCount = [UInt64]0
+        trackedSweepDisappearedAfterSnapshotCount = [UInt64]0
+        trackedSweepStillPresentAfterFailureCount = [UInt64]0; trackedSweepPassCount = [UInt64]1
     }
     foreach ($checkpoint in @($script:PairedDiagnosticCheckpointNames)) {
         $diagnosticSnapshot = New-PairedEmptyProcessDiagnosticSnapshot $checkpoint
@@ -3767,6 +4049,9 @@ function Invoke-PairedSelfTest {
             requestedMask = [UInt64]1; processMask = [UInt64]1; systemMask = [UInt64]15
             opened = $true; setSucceeded = $true; readBackSucceeded = $true; verified = $true
             descendantsVerified = $true; errorCode = 0
+            historicalOwnedCount = [UInt64]5; currentLiveCount = [UInt64]4
+            expiredHistoricalCount = [UInt64]1; failureType = 'none'
+            failureErrorCode = $null; liveSetSource = 'tracked-sweep'
         }
         error = $null; processCleanupVerified = $true; survivors = @()
         launchJobQueryObservation = $selfTestGoodJobQuery
@@ -3839,7 +4124,17 @@ function Invoke-PairedSelfTest {
     if (-not $selfTestMalformedLocalFallbackVerified) { throw 'Malformed local job query telemetry damaged process-tree evidence.' }
     $selfTestOldSchemaRaw = $selfTestSuccessRaw | Select-Object *
     [void]$selfTestOldSchemaRaw.PSObject.Properties.Remove('launchJobQueryObservation')
-    [void]$selfTestOldSchemaRaw.PSObject.Properties.Remove('cleanupObservation')
+    $selfTestOldSchemaCleanup = $selfTestCleanupObservation | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+    foreach ($field in @($script:PairedCleanupTelemetryProcessEnumerationFields +
+            $script:PairedCleanupTelemetryTrackedSweepFields)) {
+        [void]$selfTestOldSchemaCleanup.PSObject.Properties.Remove($field)
+    }
+    $selfTestOldSchemaRaw.cleanupObservation = $selfTestOldSchemaCleanup
+    $selfTestOldSchemaAffinity = $selfTestSuccessRaw.affinity | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+    foreach ($field in @($script:PairedCleanupTelemetryAffinityFields)) {
+        [void]$selfTestOldSchemaAffinity.PSObject.Properties.Remove($field)
+    }
+    $selfTestOldSchemaRaw.affinity = $selfTestOldSchemaAffinity
     $selfTestOldSchemaDiagnostics = $selfTestStartupDiagnostics | ConvertTo-Json -Depth 20 | ConvertFrom-Json
     foreach ($snapshot in @($selfTestOldSchemaDiagnostics.processTreeSnapshots)) {
         [void]$snapshot.PSObject.Properties.Remove('jobQueryObservation')
@@ -3848,7 +4143,10 @@ function Invoke-PairedSelfTest {
     $selfTestOldSchemaRun = Convert-PairedLaunchResult $selfTestOldSchemaRaw $schedule[2] $selfTestTimeoutProfile $true
     $selfTestOldSchemaNeutralVerified = [bool]($selfTestOldSchemaRun.status -eq 'succeeded' -and
         $selfTestOldSchemaRun.launchJobQueryObservation.status -eq 'not-attempted' -and
-        $selfTestOldSchemaRun.cleanupObservation.status -eq 'not-attempted' -and
+        $selfTestOldSchemaRun.cleanupObservation.status -eq 'succeeded' -and
+        $selfTestOldSchemaRun.cleanupObservation.trackedSweepFailureType -eq 'unknown' -and
+        $selfTestOldSchemaRun.affinity.failureType -eq 'unknown' -and
+        $selfTestOldSchemaRun.affinity.liveSetSource -eq 'not-observed' -and
         @($selfTestOldSchemaRun.startupDiagnostics.processTreeSnapshots | Where-Object {
             $_.jobQueryObservation.status -ne 'not-attempted'
         }).Count -eq 0)
@@ -3869,6 +4167,70 @@ function Invoke-PairedSelfTest {
         $selfTestMalformedCleanupRun.cleanupObservation.survivorCount -eq 0 -and
         $selfTestMalformedCleanupRun.startupDiagnostics.observationStatus -eq 'observed')
     if (-not $selfTestMalformedCleanupVerified) { throw 'Malformed cleanup telemetry changed legacy launch evidence.' }
+    $selfTestFirstCauseCleanup = $selfTestCleanupObservation | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+    $selfTestFirstCauseCleanup.trackedSweepFailureType = 'identity-disappeared'
+    $selfTestFirstCauseCleanup.trackedSweepFailureErrorCode = 5
+    $selfTestFirstCauseCleanup.trackedSweepIdentityAttemptCount = [UInt64]3
+    $selfTestFirstCauseCleanup.trackedSweepIdentityFailureCount = [UInt64]1
+    $selfTestFirstCauseCleanup.trackedSweepDisappearedAfterSnapshotCount = [UInt64]1
+    $selfTestFirstCauseCleanup.trackedSweepStillPresentAfterFailureCount = [UInt64]0
+    $selfTestFirstCauseCleanup.trackedSweepPassCount = [UInt64]1
+    $selfTestFirstCauseNormalized = Convert-PairedCleanupObservation $selfTestFirstCauseCleanup
+    $selfTestCleanupTelemetryFirstCauseVerified = [bool]($selfTestFirstCauseNormalized.trackedSweepFailureType -eq 'identity-disappeared' -and
+        $selfTestFirstCauseNormalized.trackedSweepFailureErrorCode -eq 5 -and
+        $selfTestFirstCauseNormalized.trackedSweepIdentityAttemptCount -eq 3 -and
+        $selfTestFirstCauseNormalized.trackedSweepIdentityFailureCount -eq 1 -and
+        $selfTestFirstCauseNormalized.trackedSweepDisappearedAfterSnapshotCount -eq 1 -and
+        $selfTestFirstCauseNormalized.trackedSweepStillPresentAfterFailureCount -eq 0)
+    if (-not $selfTestCleanupTelemetryFirstCauseVerified) { throw 'Cleanup telemetry first-cause self-test failed.' }
+    $selfTestMalformedProcessRaw = $selfTestSuccessRaw | Select-Object *
+    $selfTestMalformedProcessCleanup = $selfTestCleanupObservation | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+    $selfTestMalformedProcessCleanup.processEnumerationCompletedCount = [UInt64]1
+    $selfTestMalformedProcessRaw.cleanupObservation = $selfTestMalformedProcessCleanup
+    $selfTestMalformedProcessRun = Convert-PairedLaunchResult $selfTestMalformedProcessRaw $schedule[2] $selfTestTimeoutProfile $true
+    $selfTestCleanupTelemetryProcessCrossFieldRejected = [bool]($selfTestMalformedProcessRun.status -eq 'succeeded' -and
+        $selfTestMalformedProcessRun.cleanupObservation.status -eq 'unavailable' -and
+        $selfTestMalformedProcessRun.cleanupObservation.processEnumerationCallCount -eq 0 -and
+        $selfTestMalformedProcessRun.cleanupObservation.trackedSweepFailureType -eq 'unknown')
+    if (-not $selfTestCleanupTelemetryProcessCrossFieldRejected) { throw 'Malformed process-enumeration cross-field telemetry was accepted.' }
+    $selfTestMalformedProcessFlags = $selfTestCleanupObservation | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+    $selfTestMalformedProcessFlags.processEnumerationSucceeded = $false
+    $selfTestMalformedProcessFlagsRejected = $null -eq (Convert-PairedCleanupTelemetry $selfTestMalformedProcessFlags)
+    $selfTestMalformedProcessIncomplete = $selfTestCleanupObservation | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+    $selfTestMalformedProcessIncomplete.processEnumerationComplete = $false
+    $selfTestMalformedProcessIncompleteRejected = $null -eq (Convert-PairedCleanupTelemetry $selfTestMalformedProcessIncomplete)
+    $selfTestCleanupTelemetryProcessSuccessFlagsRejected = [bool]($selfTestMalformedProcessFlagsRejected -and
+        $selfTestMalformedProcessIncompleteRejected)
+    if (-not $selfTestCleanupTelemetryProcessSuccessFlagsRejected) {
+        throw 'Malformed process-enumeration success flags were accepted.'
+    }
+    $selfTestPartialTelemetryRaw = $selfTestSuccessRaw | Select-Object *
+    $selfTestPartialTelemetryCleanup = $selfTestCleanupObservation | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+    [void]$selfTestPartialTelemetryCleanup.PSObject.Properties.Remove('trackedSweepPassCount')
+    $selfTestPartialTelemetryRaw.cleanupObservation = $selfTestPartialTelemetryCleanup
+    $selfTestPartialTelemetryRun = Convert-PairedLaunchResult $selfTestPartialTelemetryRaw $schedule[2] $selfTestTimeoutProfile $true
+    $selfTestCleanupTelemetryPartialRejected = [bool]($selfTestPartialTelemetryRun.status -eq 'succeeded' -and
+        $selfTestPartialTelemetryRun.cleanupObservation.status -eq 'unavailable' -and
+        $selfTestPartialTelemetryRun.cleanupObservation.trackedSweepFailureType -eq 'unknown')
+    if (-not $selfTestCleanupTelemetryPartialRejected) { throw 'Partial cleanup telemetry schema was accepted.' }
+    $selfTestMalformedAffinityRaw = $selfTestSuccessRaw | Select-Object *
+    $selfTestMalformedAffinity = $selfTestSuccessRaw.affinity | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+    $selfTestMalformedAffinity.expiredHistoricalCount = [UInt64]0
+    $selfTestMalformedAffinityRaw.affinity = $selfTestMalformedAffinity
+    $selfTestMalformedAffinityRun = Convert-PairedLaunchResult $selfTestMalformedAffinityRaw $schedule[2] $selfTestTimeoutProfile $true
+    $selfTestCleanupTelemetryAffinityCrossFieldRejected = [bool]($selfTestMalformedAffinityRun.status -eq 'succeeded' -and
+        $selfTestMalformedAffinityRun.affinity.verified -and
+        $selfTestMalformedAffinityRun.affinity.failureType -eq 'unknown' -and
+        $selfTestMalformedAffinityRun.affinity.liveSetSource -eq 'not-observed')
+    if (-not $selfTestCleanupTelemetryAffinityCrossFieldRejected) { throw 'Malformed affinity cross-field telemetry was accepted.' }
+    $selfTestMalformedBoundedCleanup = $selfTestCleanupObservation | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+    $selfTestMalformedBoundedCleanup.processEnumerationRetryCount = -1
+    $selfTestCleanupTelemetryBoundedIntegerRejected = $null -eq (Convert-PairedCleanupTelemetry $selfTestMalformedBoundedCleanup)
+    if (-not $selfTestCleanupTelemetryBoundedIntegerRejected) { throw 'Out-of-range cleanup telemetry integer was accepted.' }
+    $selfTestMalformedEnumCleanup = $selfTestCleanupObservation | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+    $selfTestMalformedEnumCleanup.trackedSweepFailureType = 'not-allowlisted'
+    $selfTestCleanupTelemetryEnumRejected = $null -eq (Convert-PairedCleanupTelemetry $selfTestMalformedEnumCleanup)
+    if (-not $selfTestCleanupTelemetryEnumRejected) { throw 'Unknown cleanup telemetry enum was accepted.' }
     $selfTestTelemetryPayloadObject = [ordered]@{
         launchJobQueryObservation = $selfTestSuccessRun.launchJobQueryObservation
         cleanupObservation = $selfTestSuccessRun.cleanupObservation
@@ -4613,6 +4975,13 @@ function Invoke-PairedSelfTest {
         jobQueryObservationOldSchemaNeutralVerified = [bool]$selfTestOldSchemaNeutralVerified
         cleanupObservationGoodVerified = [bool]($selfTestSuccessRun.cleanupObservation.status -eq 'succeeded')
         cleanupObservationMalformedVerified = [bool]$selfTestMalformedCleanupVerified
+        cleanupTelemetryFirstCauseVerified = [bool]$selfTestCleanupTelemetryFirstCauseVerified
+        cleanupTelemetryProcessCrossFieldRejected = [bool]$selfTestCleanupTelemetryProcessCrossFieldRejected
+        cleanupTelemetryProcessSuccessFlagsRejected = [bool]$selfTestCleanupTelemetryProcessSuccessFlagsRejected
+        cleanupTelemetryPartialRejected = [bool]$selfTestCleanupTelemetryPartialRejected
+        cleanupTelemetryAffinityCrossFieldRejected = [bool]$selfTestCleanupTelemetryAffinityCrossFieldRejected
+        cleanupTelemetryBoundedIntegerRejected = [bool]$selfTestCleanupTelemetryBoundedIntegerRejected
+        cleanupTelemetryEnumRejected = [bool]$selfTestCleanupTelemetryEnumRejected
         telemetryFailureNeutralVerified = [bool]$selfTestFailureNeutralVerified
         telemetryPayloadFreeVerified = [bool]$selfTestTelemetryPayloadFreeVerified
         telemetrySuppressionGatesUnchangedVerified = [bool]$selfTestSuppressionGatesUnchangedVerified
@@ -5011,6 +5380,12 @@ function New-PairedFailedRun {
             verified = $false
             descendantsVerified = $false
             errorCode = $null
+            historicalOwnedCount = [UInt64]0
+            currentLiveCount = [UInt64]0
+            expiredHistoricalCount = [UInt64]0
+            failureType = 'unknown'
+            failureErrorCode = $null
+            liveSetSource = 'not-observed'
         }
         profileSha256 = Get-TextSha256 'paired-startup-profile-unreadable-v1'
         profileState = 'unreadable'

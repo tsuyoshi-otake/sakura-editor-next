@@ -127,6 +127,28 @@ requery は別列挙で独自の budget を持ちます。
 buffer cap 超過、または 8 回の budget 枯渇は fail closed です。cleanup の identity-gap requery は
 別の列挙であり、独自の 8-call budget を持ちます。zero survivors でも query が失敗していれば cleanup
 の証明にはなりません。
+paired consumer は shared cleanup report の additive な固定 fields も保持します。cleanupObservation には
+`processEnumerationAttempted` / `processEnumerationSucceeded` / `processEnumerationComplete` /
+`processEnumerationErrorCode` / `processEnumerationRetryCount` / `processEnumerationCallCount` /
+`processEnumerationCompletedCount` / `processEnumerationFailureCount` と、
+`trackedSweepFailureType` / `trackedSweepFailureErrorCode` /
+`trackedSweepIdentityAttemptCount` / `trackedSweepIdentityFailureCount` /
+`trackedSweepDisappearedAfterSnapshotCount` / `trackedSweepStillPresentAfterFailureCount` /
+`trackedSweepPassCount` を出力します。affinity には
+`historicalOwnedCount` / `currentLiveCount` / `expiredHistoricalCount` /
+`failureType` / `failureErrorCode` / `liveSetSource` を保持します。全 integer は bounded な
+payload-free 値で、producer の enum allowlist、process enumeration の succeeded / complete / count
+equations、`currentLiveCount <= historicalOwnedCount`、および
+`expiredHistoricalCount = historicalOwnedCount - currentLiveCount` を検証します。attempted な
+process enumeration で failure が 0 の場合は succeeded=true / complete=true / completedCount=callCount
+を必須とし、failure が 1 以上の場合は succeeded=false（complete は true / false のいずれも許可）と
+します。failure code は first-cause を保持します。
+
+schema version 1 の旧 report で追加 fields がすべて欠落している場合は、`unknown` /
+`not-observed` / `0` の明示的な local fallback で読み込み可能です。追加 fields が一部だけ、integer が
+範囲外、enum が未知、または cross-field が不整合な新 report は local `unavailable` に fail closed
+します。この telemetry の fallback / rejection は paired report の既存 acceptance、suppression、
+performance、`adoption.decision=HOLD` を変更しません。
 この telemetry は success expression、`Test-PairedRunCleanupVerified`、termination / suppression、
 acceptance、qualification、adoption のいずれも qualify せず、弱めもしません。failed / preflight
 launch と optional fields がない旧 v1 report は neutral な `not-attempted` として扱い、present だが
@@ -179,6 +201,8 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\measure-output-startup.ps1
 
 `-SelfTest` は GUI を起動しません。通常の `measure-startup-performance.ps1` は単一の
 `sakura.exe` のマイルストーン比較用であり、ペア証拠の既定 35 回 / backend の代用ではありません。
+paired の self-test は旧 report fallback、bounded integer / enum、first-cause、process enumeration
+equations、affinity の historical/current/expired 整合も検証します。
 
 ## 前提条件
 

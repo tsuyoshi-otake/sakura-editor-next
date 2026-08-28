@@ -363,6 +363,34 @@ runner remains a compatibility consumer: if an older producer supplies a
 `partial` observation, it retains that diagnostic and does not retry or adjust
 it here. Zero survivors still do not prove cleanup when the job query failed.
 
+The paired consumer also retains the shared cleanup aggregate fields
+`processEnumerationAttempted`, `processEnumerationSucceeded`,
+`processEnumerationComplete`, `processEnumerationErrorCode`,
+`processEnumerationRetryCount`, `processEnumerationCallCount`,
+`processEnumerationCompletedCount`, `processEnumerationFailureCount`,
+`trackedSweepFailureType`, `trackedSweepFailureErrorCode`,
+`trackedSweepIdentityAttemptCount`, `trackedSweepIdentityFailureCount`,
+`trackedSweepDisappearedAfterSnapshotCount`,
+`trackedSweepStillPresentAfterFailureCount`, and `trackedSweepPassCount`.
+Affinity records likewise retain `historicalOwnedCount`, `currentLiveCount`,
+`expiredHistoricalCount`, `failureType`, `failureErrorCode`, and
+`liveSetSource`. All integer fields are bounded and payload-free; the consumer
+accepts only the producer enum allowlists, preserves the first nonzero failure
+code, requires the process-enumeration call/completed/failed count equations,
+requires zero process-enumeration failures to imply `succeeded=true`,
+`complete=true`, and `completedCount=callCount`; nonzero failures require
+`succeeded=false` (with either complete state), and requires
+`currentLiveCount <= historicalOwnedCount` with
+`expiredHistoricalCount = historicalOwnedCount - currentLiveCount`.
+
+These fields are additive to schema version 1. An older report with all of the
+new fields absent is readable through explicit local `unknown`,
+`not-observed`, and zero fallbacks. A report that contains only part of the new
+field set, an out-of-range integer, an unknown enum, or an inconsistent
+cross-field value is represented as local `unavailable` evidence. Neither the
+fallback nor local rejection changes the paired report's existing acceptance,
+suppression, performance, or `adoption.decision=HOLD` behavior.
+
 Query and cleanup telemetry never participates in the success expression,
 `Test-PairedRunCleanupVerified`, termination/suppression, acceptance,
 qualification, or adoption gates. In particular, zero survivors do not prove
@@ -393,4 +421,7 @@ also mutates selector result, configuration, compile-log, archive,
 symbol, and contract hash fields to verify rejection. It does not launch
 `sakura.exe` or any other GUI process. Run it with both `powershell.exe` and
 `pwsh` when validating the two supported PowerShell hosts.
+The self-test also exercises the additive cleanup telemetry schema: old-report
+fallbacks, bounded integer and enum rejection, first-cause retention, process
+enumeration equations, and affinity historical/current/expired count checks.
 Do not use it as a substitute for the full 35-launch-per-backend campaign.
