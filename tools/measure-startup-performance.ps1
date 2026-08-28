@@ -40,6 +40,21 @@ $startupDiagnosticCheckpointMs = [ordered]@{
 $startupDiagnosticMaxProcessCount = 256
 $startupDiagnosticMaxImageNameLength = 260
 $startupDiagnosticMaxWindowCount = 1024
+$startupObservationMaxCount = 4096
+$startupTrackedSweepFailureTypes = @(
+    'none', 'identity-disappeared', 'identity-still-present', 'enumeration-unavailable', 'identity-unavailable', 'exception'
+)
+$startupTrackedSweepCounterFields = @(
+    'trackedSweepIdentityAttemptCount', 'trackedSweepIdentityFailureCount',
+    'trackedSweepDisappearedAfterSnapshotCount', 'trackedSweepStillPresentAfterFailureCount',
+    'trackedSweepPassCount'
+)
+$startupAffinityFailureTypes = @(
+    'none', 'open', 'set', 'readback', 'mismatch', 'identity', 'verification', 'unavailable'
+)
+$startupAffinityLiveSetSources = @(
+    'not-attempted', 'process-snapshot', 'tracked-sweep', 'unavailable'
+)
 
 # Keep trace parsing bounded even when a run-owned directory is corrupted or
 # an instrumented process writes unexpectedly large output.  The paired runner
@@ -1968,7 +1983,64 @@ function Assert-AffinityMask([UInt64]$Mask) {
     return $Mask
 }
 
+function Add-StartupSaturatingCount {
+    param(
+        [AllowNull()] [object]$Value,
+        [AllowNull()] [object]$Increment = 1,
+        [int]$Maximum = 4096
+    )
+    try {
+        $current = if ($null -eq $Value) { [decimal]0 } else { [decimal]$Value }
+        $delta = if ($null -eq $Increment) { [decimal]0 } else { [decimal]$Increment }
+        if ($current -lt 0) { $current = 0 }
+        if ($delta -lt 0) { $delta = 0 }
+        $limit = [decimal][Math]::Max(0, $Maximum)
+        $total = $current + $delta
+        if ($total -gt $limit) { return [int]$limit }
+        return [int]$total
+    }
+    catch { return 0 }
+}
+
+function Convert-StartupObservationErrorCode {
+    param([AllowNull()] [object]$Value)
+    if ($null -eq $Value -or $Value -is [bool]) { return $null }
+    try {
+        $number = [decimal]$Value
+        if ($number -lt 0 -or $number -gt [decimal][int]::MaxValue -or
+            $number -ne [decimal]::Truncate($number)) { return $null }
+        return [int]$number
+    }
+    catch { return $null }
+}
+
+function Get-StartupAffinityFailureType {
+    param([AllowNull()] [object]$Probe)
+    if ($null -eq $Probe) { return 'unavailable' }
+    try {
+        if (-not [bool]$Probe.Opened) { return 'open' }
+        if (-not [bool]$Probe.SetSucceeded) { return 'set' }
+        if (-not [bool]$Probe.ReadBackSucceeded) { return 'readback' }
+        if (-not [bool]$Probe.Verified) { return 'mismatch' }
+        return 'none'
+    }
+    catch { return 'unavailable' }
+}
+
+function Get-StartupAffinityFailureErrorCode {
+    param(
+        [AllowNull()] [object]$Probe,
+        [AllowNull()] [object]$FailureType = $null
+    )
+    $type = if ($null -eq $FailureType) { Get-StartupAffinityFailureType $Probe } else { [string]$FailureType }
+    if ($type -eq 'none') { return $null }
+    $code = if ($null -eq $Probe) { $null } else { Convert-StartupObservationErrorCode (Get-StartupObservationProperty $Probe 'ErrorCode') }
+    if ($null -eq $code -or $code -eq 0) { return 13 }
+    return [int]$code
+}
+
 function Get-AffinityMetadata($Probe) {
+    $failureType = Get-StartupAffinityFailureType $Probe
     return [ordered]@{
         requestedMask = [UInt64]$Probe.RequestedMask
         processMask = [UInt64]$Probe.ProcessMask
@@ -1979,7 +2051,58 @@ function Get-AffinityMetadata($Probe) {
         verified = [bool]$Probe.Verified
         descendantsVerified = [bool]$Probe.DescendantsVerified
         errorCode = [int]$Probe.ErrorCode
+        historicalOwnedCount = [int]0
+        currentLiveCount = [int]0
+        expiredHistoricalCount = [int]0
+        failureType = $failureType
+        failureErrorCode = Get-StartupAffinityFailureErrorCode $Probe $failureType
+        liveSetSource = 'not-attempted'
     }
+}
+
+function Set-StartupAffinityLiveSetMetadata {
+    param(
+        [Parameter(Mandatory = $true)] [object]$Metadata,
+        [AllowNull()] [object]$HistoricalCount = 0,
+        [AllowNull()] [object]$CurrentCount = 0,
+        [AllowNull()] [object]$Source = 'unavailable'
+    )
+    try {
+        $historical = Add-StartupSaturatingCount $HistoricalCount 0 $startupObservationMaxCount
+        $current = Add-StartupSaturatingCount $CurrentCount 0 $startupObservationMaxCount
+        if ($current -gt $historical) { $current = $historical }
+        $Metadata.historicalOwnedCount = $historical
+        $Metadata.currentLiveCount = $current
+        $Metadata.expiredHistoricalCount = Add-StartupSaturatingCount ($historical - $current) 0 $startupObservationMaxCount
+        $sourceText = [string]$Source
+        $Metadata.liveSetSource = if ($startupAffinityLiveSetSources -contains $sourceText) { $sourceText } else { 'unavailable' }
+    }
+    catch {
+        $Metadata.historicalOwnedCount = 0
+        $Metadata.currentLiveCount = 0
+        $Metadata.expiredHistoricalCount = 0
+        $Metadata.liveSetSource = 'unavailable'
+    }
+    return $Metadata
+}
+
+function Get-StartupAffinityCurrentMatchCount {
+    param(
+        [Parameter(Mandatory = $true)] [int]$ProcessId,
+        [AllowNull()] [object]$CurrentRecords
+    )
+    $count = 0
+    try {
+        foreach ($candidate in @($CurrentRecords)) {
+            if ($null -eq $candidate) { continue }
+            $candidateId = Convert-StartupObservationInt (Get-StartupObservationProperty $candidate 'Id')
+            if ($candidateId -eq $ProcessId) {
+                $count = Add-StartupSaturatingCount $count 1 $startupObservationMaxCount
+            }
+        }
+    }
+    catch { return 0 }
+    return $count
 }
 
 function Set-ProcessAffinityVerified([int]$ProcessId, [UInt64]$Mask) {
@@ -2059,6 +2182,25 @@ function New-StartupCleanupObservation {
         finalPathSweepVerified = $false
         survivorCount = 0
         cleanupErrorCount = 0
+        # One aggregate covers every typed process census made by cleanup,
+        # including tracked and executable-path sweeps.  A successful aggregate
+        # means every observed census call completed; the first failed call's
+        # error is retained even when a later call succeeds.
+        processEnumerationAttempted = $false
+        processEnumerationSucceeded = $false
+        processEnumerationComplete = $false
+        processEnumerationErrorCode = $null
+        processEnumerationRetryCount = 0
+        processEnumerationCallCount = 0
+        processEnumerationCompletedCount = 0
+        processEnumerationFailureCount = 0
+        trackedSweepFailureType = 'none'
+        trackedSweepFailureErrorCode = $null
+        trackedSweepIdentityAttemptCount = 0
+        trackedSweepIdentityFailureCount = 0
+        trackedSweepDisappearedAfterSnapshotCount = 0
+        trackedSweepStillPresentAfterFailureCount = 0
+        trackedSweepPassCount = 0
     }
 }
 
@@ -2101,6 +2243,160 @@ function Convert-StartupObservationUInt64([AllowNull()] [object]$Value) {
 function Convert-StartupObservationBool([AllowNull()] [object]$Value) {
     if ($null -eq $Value) { return $false }
     try { return [bool]$Value } catch { return $false }
+}
+
+function Add-StartupProcessEnumerationObservation {
+    param(
+        [Parameter(Mandatory = $true)] [object]$Target,
+        [AllowNull()] [object]$Probe
+    )
+    if ($null -eq $Probe) { return }
+    try {
+        $attempted = Convert-StartupObservationBool (Get-StartupObservationProperty $Probe 'Attempted')
+        $complete = Convert-StartupObservationBool (Get-StartupObservationProperty $Probe 'Complete')
+        $succeeded = Convert-StartupObservationBool (Get-StartupObservationProperty $Probe 'Succeeded')
+        $retryCount = Convert-StartupObservationInt (Get-StartupObservationProperty $Probe 'RetryCount')
+        if ($retryCount -lt 0) { $retryCount = 0 }
+        $errorCode = Convert-StartupObservationErrorCode (Get-StartupObservationProperty $Probe 'ErrorCode')
+        $callCount = Convert-StartupObservationInt (Get-StartupObservationProperty $Target 'processEnumerationCallCount')
+        if ($callCount -lt 0) { $callCount = 0 }
+        $isFirst = $callCount -eq 0
+        $Target.processEnumerationCallCount = Add-StartupSaturatingCount $callCount 1 $startupObservationMaxCount
+        $Target.processEnumerationRetryCount = Add-StartupSaturatingCount (Get-StartupObservationProperty $Target 'processEnumerationRetryCount') $retryCount $startupObservationMaxCount
+        # A typed result is evidence that a census call was made even when the
+        # probe reports Attempted=false.  The aggregate remains incomplete in
+        # that case, so this cannot make a failed call look successful.
+        $Target.processEnumerationAttempted = $true
+        if ($complete -and $succeeded) {
+            $Target.processEnumerationCompletedCount = Add-StartupSaturatingCount (Get-StartupObservationProperty $Target 'processEnumerationCompletedCount') 1 $startupObservationMaxCount
+        }
+        else {
+            $Target.processEnumerationFailureCount = Add-StartupSaturatingCount (Get-StartupObservationProperty $Target 'processEnumerationFailureCount') 1 $startupObservationMaxCount
+            $existingError = Convert-StartupObservationErrorCode (Get-StartupObservationProperty $Target 'processEnumerationErrorCode')
+            if ($null -eq $existingError -or $existingError -eq 0) {
+                $Target.processEnumerationErrorCode = if ($null -eq $errorCode -or $errorCode -eq 0) { 13 } else { [int]$errorCode }
+            }
+        }
+        if ($isFirst) {
+            $Target.processEnumerationSucceeded = [bool]($attempted -and $complete -and $succeeded)
+            $Target.processEnumerationComplete = [bool]($attempted -and $complete)
+        }
+        else {
+            $Target.processEnumerationSucceeded = [bool](Convert-StartupObservationBool (Get-StartupObservationProperty $Target 'processEnumerationSucceeded')) -and
+                [bool]($attempted -and $complete -and $succeeded)
+            $Target.processEnumerationComplete = [bool](Convert-StartupObservationBool (Get-StartupObservationProperty $Target 'processEnumerationComplete')) -and
+                [bool]($attempted -and $complete)
+        }
+    }
+    catch { }
+}
+
+function Set-StartupTrackedSweepFailure {
+    param(
+        [AllowNull()] [object]$Observation,
+        [AllowNull()] [object]$FailureType,
+        [AllowNull()] [object]$ErrorCode
+    )
+    if ($null -eq $Observation) { return }
+    try {
+        $candidateType = [string]$FailureType
+        if ($candidateType -eq 'none' -or $startupTrackedSweepFailureTypes -notcontains $candidateType) {
+            $candidateType = 'exception'
+        }
+        $existingType = [string](Get-StartupObservationProperty $Observation 'trackedSweepFailureType')
+        if ($startupTrackedSweepFailureTypes -notcontains $existingType) { $existingType = 'none' }
+        if ($existingType -eq 'none') { $Observation.trackedSweepFailureType = $candidateType }
+
+        $candidateError = Convert-StartupObservationErrorCode $ErrorCode
+        if ($null -eq $candidateError -or $candidateError -eq 0) { $candidateError = 13 }
+        $existingError = Convert-StartupObservationErrorCode (Get-StartupObservationProperty $Observation 'trackedSweepFailureErrorCode')
+        if ($null -eq $existingError -or $existingError -eq 0) {
+            $Observation.trackedSweepFailureErrorCode = [int]$candidateError
+        }
+    }
+    catch { }
+}
+
+function Add-StartupTrackedSweepCount {
+    param(
+        [Parameter(Mandatory = $true)] [object]$Observation,
+        [Parameter(Mandatory = $true)] [string]$Field,
+        [int]$Increment = 1
+    )
+    if ($startupTrackedSweepCounterFields -notcontains $Field) {
+        throw "Unsupported tracked-sweep counter field: $Field"
+    }
+    try {
+        $Observation.$Field = Add-StartupSaturatingCount (Get-StartupObservationProperty $Observation $Field) $Increment $startupObservationMaxCount
+    }
+    catch { }
+}
+
+function Get-StartupTrackedSweepFailureType {
+    param(
+        [Parameter(Mandatory = $true)] [int]$ProcessId,
+        [AllowNull()] [object]$FreshProbe
+    )
+    try {
+        if ($null -eq $FreshProbe -or
+            -not [bool](Get-StartupObservationProperty $FreshProbe 'Complete') -or
+            -not [bool](Get-StartupObservationProperty $FreshProbe 'Succeeded') -or
+            $null -eq (Get-StartupObservationProperty $FreshProbe 'Entries')) {
+            return 'enumeration-unavailable'
+        }
+        foreach ($entry in @((Get-StartupObservationProperty $FreshProbe 'Entries'))) {
+            if ($null -ne $entry -and [int](Get-StartupObservationProperty $entry 'ProcessId') -eq $ProcessId) {
+                return 'identity-still-present'
+            }
+        }
+        return 'identity-disappeared'
+    }
+    catch { return 'exception' }
+}
+
+function Invoke-StartupTrackedIdentityFailure {
+    param(
+        [AllowNull()] [object]$CleanupObservation,
+        [Parameter(Mandatory = $true)] [int]$ProcessId,
+        [AllowNull()] [object]$IdentityProbe,
+        [AllowNull()] [scriptblock]$FreshCensus = $null,
+        [Parameter(Mandatory = $true)] [string]$ErrorMessage
+    )
+    $freshProbe = $null
+    try {
+        # This is deliberately one fresh typed census.  It is evidence only:
+        # every classification still throws the caller's existing failure.
+        $freshProbe = if ($null -ne $FreshCensus) { & $FreshCensus } else { [NativeStartupProbe]::GetProcessEntries() }
+    }
+    catch {
+        $freshProbe = [pscustomobject][ordered]@{
+            Attempted = $true; AttemptCount = 1; Complete = $false; Succeeded = $false; ErrorCode = 13; RetryCount = 0; Entries = @()
+        }
+    }
+    if ($null -eq $freshProbe) {
+        $freshProbe = [pscustomobject][ordered]@{
+            Attempted = $true; AttemptCount = 1; Complete = $false; Succeeded = $false; ErrorCode = 13; RetryCount = 0; Entries = @()
+        }
+    }
+    if ($null -ne $CleanupObservation) { Add-StartupProcessEnumerationObservation $CleanupObservation $freshProbe }
+    $failureType = Get-StartupTrackedSweepFailureType $ProcessId $freshProbe
+    if ($null -ne $CleanupObservation) {
+        $identityError = Convert-StartupObservationErrorCode (Get-StartupObservationProperty $IdentityProbe 'ErrorCode')
+        $freshError = Convert-StartupObservationErrorCode (Get-StartupObservationProperty $freshProbe 'ErrorCode')
+        $failureError = if ($null -ne $identityError -and $identityError -gt 0) {
+            [int]$identityError
+        }
+        elseif ($null -ne $freshError -and $freshError -gt 0) {
+            [int]$freshError
+        }
+        else { 13 }
+        Set-StartupTrackedSweepFailure $CleanupObservation $failureType $failureError
+        switch ($failureType) {
+            'identity-disappeared' { Add-StartupTrackedSweepCount $CleanupObservation 'trackedSweepDisappearedAfterSnapshotCount' }
+            'identity-still-present' { Add-StartupTrackedSweepCount $CleanupObservation 'trackedSweepStillPresentAfterFailureCount' }
+        }
+    }
+    throw $ErrorMessage
 }
 
 function Add-StartupCleanupError {
@@ -2502,7 +2798,30 @@ function Update-StartupDiagnosticCheckpoints {
 }
 
 function Get-VerifiedProcessEntries {
-    $probe = [NativeStartupProbe]::GetProcessEntries()
+    param([AllowNull()] [object]$Observation = $null)
+    try {
+        $probe = [NativeStartupProbe]::GetProcessEntries()
+    }
+    catch {
+        if ($null -ne $Observation) {
+            $probe = [pscustomobject][ordered]@{
+                Attempted = $true; Complete = $false; Succeeded = $false
+                AttemptCount = 1; ErrorCode = 13; RetryCount = 0; Entries = @()
+            }
+            Add-StartupProcessEnumerationObservation $Observation $probe
+        }
+        throw
+    }
+    if ($null -eq $probe) {
+        # A null native result is a failed typed census with no payload. Record
+        # it before the common validation path so fail-closed callers cannot
+        # lose the attempt from cleanup telemetry.
+        $probe = [pscustomobject][ordered]@{
+            Attempted = $true; Complete = $false; Succeeded = $false
+            AttemptCount = 1; ErrorCode = 13; RetryCount = 0; Entries = @()
+        }
+    }
+    if ($null -ne $Observation) { Add-StartupProcessEnumerationObservation $Observation $probe }
     if ($null -eq $probe -or -not [bool]$probe.Complete -or -not [bool]$probe.Succeeded -or
         $null -eq $probe.Entries) {
         $errorCode = if ($null -eq $probe) { 13 } else { [int]$probe.ErrorCode }
@@ -2513,8 +2832,8 @@ function Get-VerifiedProcessEntries {
     return @($probe.Entries)
 }
 
-function Get-ProcessSnapshot($Owned, [int[]]$SeedIds = @()) {
-    $entries = @(Get-VerifiedProcessEntries)
+function Get-ProcessSnapshot($Owned, [int[]]$SeedIds = @(), [object]$Observation = $null) {
+    $entries = @(Get-VerifiedProcessEntries $Observation)
     $relevant = @{}
     if ($null -ne $Owned) {
         foreach ($id in @($Owned.Keys)) { $relevant[[int]$id] = $true }
@@ -2541,7 +2860,7 @@ function Get-ProcessSnapshot($Owned, [int[]]$SeedIds = @()) {
             # race is benign only when a fresh snapshot proves it disappeared;
             # an entry that remains present but cannot be identified is never
             # silently omitted from a containment decision.
-            $stillPresent = @(Get-VerifiedProcessEntries | Where-Object { [int]$_.ProcessId -eq [int]$entry.ProcessId }).Count -gt 0
+            $stillPresent = @(Get-VerifiedProcessEntries $Observation | Where-Object { [int]$_.ProcessId -eq [int]$entry.ProcessId }).Count -gt 0
             if ($stillPresent) {
                 throw "Could not verify the identity of relevant process $($entry.ProcessId) (Win32 $($identityProbe.ErrorCode))."
             }
@@ -2553,17 +2872,17 @@ function Get-ProcessSnapshot($Owned, [int[]]$SeedIds = @()) {
     return $result
 }
 
-function Get-ProcessesForImagePath([string]$ImagePath) {
+function Get-ProcessesForImagePath([string]$ImagePath, [object]$Observation = $null) {
     $imageName = [IO.Path]::GetFileName($ImagePath)
     $result = @()
-    foreach ($entry in @(Get-VerifiedProcessEntries)) {
+    foreach ($entry in @(Get-VerifiedProcessEntries $Observation)) {
         if (-not [string]::Equals([string]$entry.ImageName, $imageName, [StringComparison]::OrdinalIgnoreCase)) { continue }
         $identityProbe = [NativeStartupProbe]::QueryProcessIdentity([int]$entry.ProcessId, [int]$entry.ParentProcessId)
         if (-not $identityProbe.Succeeded -or $null -eq $identityProbe.Identity) {
             # A process disappearing between Toolhelp and OpenProcess is benign for
             # this read-only sweep.  An entry which is still present but cannot be
             # identified is never treated as clean.
-            $stillPresent = @(Get-VerifiedProcessEntries | Where-Object { [int]$_.ProcessId -eq [int]$entry.ProcessId }).Count -gt 0
+            $stillPresent = @(Get-VerifiedProcessEntries $Observation | Where-Object { [int]$_.ProcessId -eq [int]$entry.ProcessId }).Count -gt 0
             if ($stillPresent) { throw "Could not verify the identity of matching process $($entry.ProcessId) (Win32 $($identityProbe.ErrorCode))." }
             continue
         }
@@ -2573,7 +2892,7 @@ function Get-ProcessesForImagePath([string]$ImagePath) {
     return $result
 }
 
-function Get-JobProcessRecords([IntPtr]$Job, $Owned, [object]$QueryObservation = $null) {
+function Get-JobProcessRecords([IntPtr]$Job, $Owned, [object]$QueryObservation = $null, [object]$CleanupObservation = $null) {
     if ($Job -eq [IntPtr]::Zero) { throw 'A run-owned job handle is required.' }
     $query = [NativeStartupProbe]::QueryJobProcessIds($Job)
     $queryMetadata = Convert-StartupJobQueryObservation $query
@@ -2581,7 +2900,7 @@ function Get-JobProcessRecords([IntPtr]$Job, $Owned, [object]$QueryObservation =
     if (-not $query.Succeeded -or $null -eq $query.ProcessIds) {
         throw "Could not enumerate run-owned job processes (Win32 $($query.ErrorCode))."
     }
-    $entries = @(Get-VerifiedProcessEntries)
+    $entries = @(Get-VerifiedProcessEntries $CleanupObservation)
     $records = New-Object Collections.Generic.List[object]
     foreach ($processId in @($query.ProcessIds)) {
         $entry = @($entries | Where-Object { [int]$_.ProcessId -eq [int]$processId } | Select-Object -First 1)
@@ -2629,11 +2948,11 @@ function Update-OwnedProcesses($Owned, $Snapshot) {
     }
 }
 
-function Get-LiveOwnedProcesses($Owned, [IntPtr]$Job = [IntPtr]::Zero, [object]$QueryObservation = $null) {
+function Get-LiveOwnedProcesses($Owned, [IntPtr]$Job = [IntPtr]::Zero, [object]$QueryObservation = $null, [object]$CleanupObservation = $null) {
     if ($Job -ne [IntPtr]::Zero) {
-        return @(Get-JobProcessRecords $Job $Owned $QueryObservation)
+        return @(Get-JobProcessRecords $Job $Owned $QueryObservation $CleanupObservation)
     }
-    $snapshot = Get-ProcessSnapshot $Owned
+    $snapshot = Get-ProcessSnapshot $Owned @() $CleanupObservation
     Update-OwnedProcesses $Owned $snapshot
     return @($Owned.Values | Where-Object { Test-ProcessIdentity $_ $snapshot })
 }
@@ -3599,17 +3918,52 @@ function Get-ParentFirstProcessOrder {
     return @($Ancestry | Sort-Object @{ Expression = { Get-OwnedProcessDepth $_ $Owned } }, Id)
 }
 
-function Get-TrackedOwnedProcesses($Owned) {
-    $entries = @(Get-VerifiedProcessEntries)
+function Get-TrackedOwnedProcesses($Owned, [object]$CleanupObservation = $null) {
+    if ($null -ne $CleanupObservation) { Add-StartupTrackedSweepCount $CleanupObservation 'trackedSweepPassCount' }
+    try {
+        $entries = @(Get-VerifiedProcessEntries $CleanupObservation)
+    }
+    catch {
+        if ($null -ne $CleanupObservation) {
+            $enumerationFailureCount = Convert-StartupObservationInt (Get-StartupObservationProperty $CleanupObservation 'processEnumerationFailureCount')
+            $enumerationError = Convert-StartupObservationErrorCode (Get-StartupObservationProperty $CleanupObservation 'processEnumerationErrorCode')
+            if ($enumerationFailureCount -gt 0) {
+                Set-StartupTrackedSweepFailure $CleanupObservation 'enumeration-unavailable' $enumerationError
+            }
+            else {
+                Set-StartupTrackedSweepFailure $CleanupObservation 'exception' 13
+            }
+        }
+        throw
+    }
     $records = New-Object Collections.Generic.List[object]
     foreach ($record in @($Owned.Values)) {
         $entry = @($entries | Where-Object { [int]$_.ProcessId -eq [int]$record.Id } | Select-Object -First 1)
         if ($entry.Count -eq 0) { continue }
-        $identityProbe = [NativeStartupProbe]::QueryProcessIdentity([int]$entry[0].ProcessId, [int]$entry[0].ParentProcessId)
-        if (-not $identityProbe.Succeeded -or $null -eq $identityProbe.Identity) {
-            throw "Could not verify the identity of tracked process $($record.Id) after job cleanup (Win32 $($identityProbe.ErrorCode))."
+        if ($null -ne $CleanupObservation) { Add-StartupTrackedSweepCount $CleanupObservation 'trackedSweepIdentityAttemptCount' }
+        $identityProbe = $null
+        try {
+            $identityProbe = [NativeStartupProbe]::QueryProcessIdentity([int]$entry[0].ProcessId, [int]$entry[0].ParentProcessId)
         }
-        $current = Convert-ProcessIdentity $identityProbe.Identity
+        catch {
+            if ($null -ne $CleanupObservation) { Add-StartupTrackedSweepCount $CleanupObservation 'trackedSweepIdentityFailureCount' }
+            $identityProbe = [pscustomobject][ordered]@{ Succeeded = $false; ErrorCode = 13; Identity = $null }
+            Invoke-StartupTrackedIdentityFailure $CleanupObservation ([int]$record.Id) $identityProbe $null `
+                "Could not verify the identity of tracked process $($record.Id) after job cleanup (Win32 13)."
+        }
+        if (-not $identityProbe.Succeeded -or $null -eq $identityProbe.Identity) {
+            if ($null -ne $CleanupObservation) { Add-StartupTrackedSweepCount $CleanupObservation 'trackedSweepIdentityFailureCount' }
+            Invoke-StartupTrackedIdentityFailure $CleanupObservation ([int]$record.Id) $identityProbe $null `
+                "Could not verify the identity of tracked process $($record.Id) after job cleanup (Win32 $($identityProbe.ErrorCode))."
+        }
+        try {
+            $current = Convert-ProcessIdentity $identityProbe.Identity
+        }
+        catch {
+            if ($null -ne $CleanupObservation) { Add-StartupTrackedSweepCount $CleanupObservation 'trackedSweepIdentityFailureCount' }
+            Invoke-StartupTrackedIdentityFailure $CleanupObservation ([int]$record.Id) $identityProbe $null `
+                "Could not verify the identity of tracked process $($record.Id) after job cleanup (Win32 13)."
+        }
         if ($current.Creation -eq $record.Creation -and (Test-SamePath $current.ImagePath $record.ImagePath)) {
             [void]$records.Add($current)
         }
@@ -3639,11 +3993,11 @@ function Stop-OwnedProcesses($Owned, [IntPtr]$Job = [IntPtr]::Zero, [string]$Exe
     $knownJobProcesses = New-Object Collections.Generic.List[object]
     try {
         if ($Job -ne [IntPtr]::Zero) {
-            foreach ($record in @(Get-JobProcessRecords $Job $Owned $cleanupObservation)) { [void]$knownJobProcesses.Add($record) }
+            foreach ($record in @(Get-JobProcessRecords $Job $Owned $cleanupObservation $cleanupObservation)) { [void]$knownJobProcesses.Add($record) }
             $jobQuerySucceeded = $true
         }
         else {
-            $snapshot = Get-ProcessSnapshot $Owned
+            $snapshot = Get-ProcessSnapshot $Owned @() $cleanupObservation
             Update-OwnedProcesses $Owned $snapshot
             foreach ($record in @($Owned.Values)) { [void]$knownJobProcesses.Add($record) }
         }
@@ -3661,10 +4015,10 @@ function Stop-OwnedProcesses($Owned, [IntPtr]$Job = [IntPtr]::Zero, [string]$Exe
 
         $remainingGraceMs = [Math]::Max(1, $closeTimeoutMs - [int]$closeWatch.ElapsedMilliseconds)
         if ($Job -ne [IntPtr]::Zero) {
-            $graceful = Wait-WithPoll { @(Get-LiveOwnedProcesses $Owned $Job $cleanupObservation).Count -eq 0 } $remainingGraceMs
+            $graceful = Wait-WithPoll { @(Get-LiveOwnedProcesses $Owned $Job $cleanupObservation $cleanupObservation).Count -eq 0 } $remainingGraceMs
         }
         else {
-            $graceful = Wait-WithPoll { @(Get-LiveOwnedProcesses $Owned).Count -eq 0 } $remainingGraceMs
+            $graceful = Wait-WithPoll { @(Get-LiveOwnedProcesses $Owned ([IntPtr]::Zero) $null $cleanupObservation).Count -eq 0 } $remainingGraceMs
         }
     }
     catch { Add-StartupCleanupError $cleanupErrors $cleanupObservation $_.Exception.Message }
@@ -3693,11 +4047,11 @@ function Stop-OwnedProcesses($Owned, [IntPtr]$Job = [IntPtr]::Zero, [string]$Exe
         try {
             $trackedSweepAttempted = $true
             $trackedSweepVerified = $false
-            $tracked = @(Get-TrackedOwnedProcesses $Owned)
+            $tracked = @(Get-TrackedOwnedProcesses $Owned $cleanupObservation)
             $trackedSweepVerified = $true
             if (-not [string]::IsNullOrWhiteSpace($ExecutablePath)) {
                 $finalPathSweepAttempted = $true
-                $pathMatches = @(Get-ProcessesForImagePath $ExecutablePath)
+                $pathMatches = @(Get-ProcessesForImagePath $ExecutablePath $cleanupObservation)
                 $finalPathSweepVerified = $true
             }
             if ($tracked.Count -eq 0 -and $pathMatches.Count -eq 0) { $settled = $true; break }
@@ -3712,11 +4066,11 @@ function Stop-OwnedProcesses($Owned, [IntPtr]$Job = [IntPtr]::Zero, [string]$Exe
         try {
             $trackedSweepAttempted = $true
             $trackedSweepVerified = $false
-            $tracked = @(Get-TrackedOwnedProcesses $Owned)
+            $tracked = @(Get-TrackedOwnedProcesses $Owned $cleanupObservation)
             $trackedSweepVerified = $true
             if (-not [string]::IsNullOrWhiteSpace($ExecutablePath)) {
                 $finalPathSweepAttempted = $true
-                $pathMatches = @(Get-ProcessesForImagePath $ExecutablePath)
+                $pathMatches = @(Get-ProcessesForImagePath $ExecutablePath $cleanupObservation)
                 $finalPathSweepVerified = $true
             }
         }
@@ -3765,6 +4119,8 @@ function Invoke-StartupMeasurement([string]$Condition, [int]$Iteration, [string]
         affinity = [ordered]@{
             requestedMask = [UInt64]$AffinityMask; processMask = $null; systemMask = $null
             opened = $false; setSucceeded = $false; readBackSucceeded = $false; verified = $false; descendantsVerified = $false; errorCode = $null
+            historicalOwnedCount = [int]0; currentLiveCount = [int]0; expiredHistoricalCount = [int]0
+            failureType = 'none'; failureErrorCode = $null; liveSetSource = 'not-attempted'
         }
         startupTrace = $null
         startupDiagnostics = New-StartupDiagnosticState
@@ -3948,13 +4304,21 @@ function Invoke-StartupMeasurement([string]$Condition, [int]$Iteration, [string]
             if ($null -ne $inputProcess) { $inputProcess.Dispose() }
         }
         if ($AffinityMask -ne 0) {
+            $historicalAffinityCount = Add-StartupSaturatingCount @($owned.Values).Count 0 $startupObservationMaxCount
+            [void](Set-StartupAffinityLiveSetMetadata $result.affinity $historicalAffinityCount 0 'unavailable')
             try {
                 $finalSnapshot = Get-ProcessSnapshot $owned
                 Update-OwnedProcesses $owned $finalSnapshot
+                $historicalAffinityCount = Add-StartupSaturatingCount @($owned.Values).Count 0 $startupObservationMaxCount
+                $snapshotLiveRecords = @($owned.Values | Where-Object { Test-ProcessIdentity $_ $finalSnapshot })
+                [void](Set-StartupAffinityLiveSetMetadata $result.affinity $historicalAffinityCount $snapshotLiveRecords.Count 'process-snapshot')
                 $currentRecords = @(Get-TrackedOwnedProcesses $owned)
+                [void](Set-StartupAffinityLiveSetMetadata $result.affinity $historicalAffinityCount $currentRecords.Count 'tracked-sweep')
                 foreach ($record in @($owned.Values)) {
-                    $current = @($currentRecords | Where-Object { [int]$_.Id -eq [int]$record.Id })
-                    if ($current.Count -ne 1) {
+                    $currentMatchCount = Get-StartupAffinityCurrentMatchCount ([int]$record.Id) $currentRecords
+                    if ($currentMatchCount -ne 1) {
+                        $result.affinity.failureType = 'identity'
+                        $result.affinity.failureErrorCode = 13
                         throw "Could not verify the identity of run-owned process $($record.Id) while checking affinity."
                     }
                     [void](Read-ProcessAffinityVerified -ProcessId ([int]$record.Id) -Mask $AffinityMask)
@@ -3964,6 +4328,10 @@ function Invoke-StartupMeasurement([string]$Condition, [int]$Iteration, [string]
             catch {
                 $result.affinity.descendantsVerified = $false
                 $result.affinity.verified = $false
+                if ([string]$result.affinity.failureType -eq 'none') {
+                    $result.affinity.failureType = 'verification'
+                    $result.affinity.failureErrorCode = 13
+                }
                 throw
             }
         }
@@ -4474,10 +4842,180 @@ function Invoke-SelfTest {
         $noJobMembers.queryObservation.queryCount -eq 0 -and
         $noJobCleanup.cleanupObservation.jobQuerySkipped -and -not $noJobCleanup.cleanupObservation.jobQueryAttempted -and
         -not $noJobCleanup.cleanupObservation.query.attempted -and $noJobCleanup.cleanupObservation.query.attempts.Count -eq 0 -and
-        -not $noJobCleanup.cleanupObservation.jobCloseAttempted -and $noJobCleanup.cleanupObservation.jobCloseSucceeded)
+        -not $noJobCleanup.cleanupObservation.jobCloseAttempted -and $noJobCleanup.cleanupObservation.jobCloseSucceeded -and
+        $noJobCleanup.cleanupObservation.processEnumerationAttempted -and
+        $noJobCleanup.cleanupObservation.processEnumerationSucceeded -and
+        $noJobCleanup.cleanupObservation.processEnumerationComplete -and
+        $noJobCleanup.cleanupObservation.processEnumerationCallCount -ge 1 -and
+        $noJobCleanup.cleanupObservation.processEnumerationCompletedCount -ge 1 -and
+        $noJobCleanup.cleanupObservation.processEnumerationFailureCount -eq 0 -and
+        $noJobCleanup.cleanupObservation.processEnumerationErrorCode -eq $null -and
+        $noJobCleanup.cleanupObservation.trackedSweepPassCount -ge 1)
     if (-not $cleanupObservationSelfTestVerified) {
         throw 'No-job query skip observation self-test failed.'
     }
+
+    # Cleanup process-census telemetry is an aggregate over calls, not a new
+    # decision surface.  Verify success, first-failure retention, saturation,
+    # and the identity-gap classification/throw contract without serializing
+    # any synthetic process identity.
+    $successfulEnumerationObservation = New-StartupCleanupObservation
+    $successfulEnumeration = [pscustomobject][ordered]@{
+        Attempted = $true; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 1; Entries = @()
+    }
+    $syntheticEnumerationShapeVerified = $null -ne $successfulEnumeration.PSObject.Properties['AttemptCount']
+    if (-not $syntheticEnumerationShapeVerified) { throw 'Synthetic process-enumeration result shape self-test failed.' }
+    Add-StartupProcessEnumerationObservation $successfulEnumerationObservation $successfulEnumeration
+    Add-StartupProcessEnumerationObservation $successfulEnumerationObservation $successfulEnumeration
+    $successfulEnumerationAggregateVerified = $successfulEnumerationObservation.processEnumerationAttempted -and
+        $successfulEnumerationObservation.processEnumerationSucceeded -and
+        $successfulEnumerationObservation.processEnumerationComplete -and
+        $successfulEnumerationObservation.processEnumerationCallCount -eq 2 -and
+        $successfulEnumerationObservation.processEnumerationCompletedCount -eq 2 -and
+        $successfulEnumerationObservation.processEnumerationFailureCount -eq 0 -and
+        $successfulEnumerationObservation.processEnumerationRetryCount -eq 2
+    if (-not $successfulEnumerationAggregateVerified) { throw 'Successful process-enumeration aggregate self-test failed.' }
+    $firstFailureEnumerationObservation = New-StartupCleanupObservation
+    $firstEnumerationFailure = [pscustomobject][ordered]@{
+        Attempted = $true; AttemptCount = 1; Complete = $false; Succeeded = $false; ErrorCode = 24; RetryCount = 2; Entries = @()
+    }
+    $laterEnumerationFailure = [pscustomobject][ordered]@{
+        Attempted = $true; AttemptCount = 1; Complete = $false; Succeeded = $false; ErrorCode = 5; RetryCount = [int]::MaxValue; Entries = @()
+    }
+    Add-StartupProcessEnumerationObservation $firstFailureEnumerationObservation $firstEnumerationFailure
+    Add-StartupProcessEnumerationObservation $firstFailureEnumerationObservation $laterEnumerationFailure
+    Add-StartupProcessEnumerationObservation $firstFailureEnumerationObservation $successfulEnumeration
+    $firstFailureEnumerationRetainedVerified = -not $firstFailureEnumerationObservation.processEnumerationSucceeded -and
+        -not $firstFailureEnumerationObservation.processEnumerationComplete -and
+        $firstFailureEnumerationObservation.processEnumerationErrorCode -eq 24 -and
+        $firstFailureEnumerationObservation.processEnumerationFailureCount -eq 2 -and
+        $firstFailureEnumerationObservation.processEnumerationCompletedCount -eq 1 -and
+        $firstFailureEnumerationObservation.processEnumerationRetryCount -eq $startupObservationMaxCount
+    if (-not $firstFailureEnumerationRetainedVerified) { throw 'First process-enumeration failure retention self-test failed.' }
+    $boundedEnumerationObservation = New-StartupCleanupObservation
+    for ($enumerationIndex = 0; $enumerationIndex -lt ($startupObservationMaxCount + 64); $enumerationIndex++) {
+        Add-StartupProcessEnumerationObservation $boundedEnumerationObservation $laterEnumerationFailure
+    }
+    $boundedEnumerationCountsVerified = $boundedEnumerationObservation.processEnumerationCallCount -eq $startupObservationMaxCount -and
+        $boundedEnumerationObservation.processEnumerationFailureCount -eq $startupObservationMaxCount -and
+        $boundedEnumerationObservation.processEnumerationRetryCount -eq $startupObservationMaxCount
+    if (-not $boundedEnumerationCountsVerified) { throw 'Bounded process-enumeration telemetry self-test failed.' }
+
+    $trackedTerminalObservation = New-StartupCleanupObservation
+    Set-StartupTrackedSweepFailure $trackedTerminalObservation 'identity-disappeared' 5
+    Set-StartupTrackedSweepFailure $trackedTerminalObservation 'identity-still-present' 6
+    $trackedFirstFailureRetainedVerified = $trackedTerminalObservation.trackedSweepFailureType -eq 'identity-disappeared' -and
+        $trackedTerminalObservation.trackedSweepFailureErrorCode -eq 5
+    if (-not $trackedFirstFailureRetainedVerified) { throw 'First tracked-sweep failure retention self-test failed.' }
+    $trackedFailureEnumsVerified = @(
+        'none', 'identity-disappeared', 'identity-still-present', 'enumeration-unavailable',
+        'identity-unavailable', 'exception'
+    ) -join ',' -eq ($startupTrackedSweepFailureTypes -join ',')
+    if (-not $trackedFailureEnumsVerified) { throw 'Tracked-sweep failure enum self-test failed.' }
+    $boundedTrackedObservation = New-StartupCleanupObservation
+    for ($trackedIndex = 0; $trackedIndex -lt ($startupObservationMaxCount + 64); $trackedIndex++) {
+        Add-StartupTrackedSweepCount $boundedTrackedObservation 'trackedSweepIdentityAttemptCount'
+        Add-StartupTrackedSweepCount $boundedTrackedObservation 'trackedSweepIdentityFailureCount'
+        Add-StartupTrackedSweepCount $boundedTrackedObservation 'trackedSweepDisappearedAfterSnapshotCount'
+        Add-StartupTrackedSweepCount $boundedTrackedObservation 'trackedSweepStillPresentAfterFailureCount'
+        Add-StartupTrackedSweepCount $boundedTrackedObservation 'trackedSweepPassCount'
+    }
+    $boundedTrackedCountsVerified = $boundedTrackedObservation.trackedSweepIdentityAttemptCount -eq $startupObservationMaxCount -and
+        $boundedTrackedObservation.trackedSweepIdentityFailureCount -eq $startupObservationMaxCount -and
+        $boundedTrackedObservation.trackedSweepDisappearedAfterSnapshotCount -eq $startupObservationMaxCount -and
+        $boundedTrackedObservation.trackedSweepStillPresentAfterFailureCount -eq $startupObservationMaxCount -and
+        $boundedTrackedObservation.trackedSweepPassCount -eq $startupObservationMaxCount
+    if (-not $boundedTrackedCountsVerified) { throw 'Bounded tracked-sweep telemetry self-test failed.' }
+
+    $identityFailureProbe = [pscustomobject][ordered]@{ Succeeded = $false; ErrorCode = 5; Identity = $null }
+    $identityDisappearedObservation = New-StartupCleanupObservation
+    $freshAbsentCensusCalls = [pscustomobject]@{ Value = 0 }
+    $freshAbsentCensus = [pscustomobject][ordered]@{
+        Attempted = $true; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 0
+        Entries = @([pscustomobject]@{ ProcessId = 2222; ParentProcessId = 0; ImageName = 'self-test.exe' })
+    }
+    $identityDisappearedThrew = $false
+    try {
+        Invoke-StartupTrackedIdentityFailure $identityDisappearedObservation 1234 $identityFailureProbe {
+            $freshAbsentCensusCalls.Value++
+            return $freshAbsentCensus
+        } 'Synthetic tracked identity failure.'
+    }
+    catch { $identityDisappearedThrew = $true }
+    $identityDisappearedVerified = $identityDisappearedThrew -and $freshAbsentCensusCalls.Value -eq 1 -and
+        $identityDisappearedObservation.trackedSweepFailureType -eq 'identity-disappeared' -and
+        $identityDisappearedObservation.trackedSweepFailureErrorCode -eq 5 -and
+        $identityDisappearedObservation.trackedSweepDisappearedAfterSnapshotCount -eq 1 -and
+        $identityDisappearedObservation.trackedSweepStillPresentAfterFailureCount -eq 0
+    if (-not $identityDisappearedVerified) { throw 'Tracked identity-disappeared self-test failed.' }
+
+    $identityStillPresentObservation = New-StartupCleanupObservation
+    $freshPresentCensusCalls = [pscustomobject]@{ Value = 0 }
+    $freshPresentCensus = [pscustomobject][ordered]@{
+        Attempted = $true; AttemptCount = 1; Complete = $true; Succeeded = $true; ErrorCode = 0; RetryCount = 0
+        Entries = @([pscustomobject]@{ ProcessId = 1234; ParentProcessId = 0; ImageName = 'self-test.exe' })
+    }
+    $identityStillPresentThrew = $false
+    try {
+        Invoke-StartupTrackedIdentityFailure $identityStillPresentObservation 1234 $identityFailureProbe {
+            $freshPresentCensusCalls.Value++
+            return $freshPresentCensus
+        } 'Synthetic tracked identity failure.'
+    }
+    catch { $identityStillPresentThrew = $true }
+    $identityStillPresentVerified = $identityStillPresentThrew -and $freshPresentCensusCalls.Value -eq 1 -and
+        $identityStillPresentObservation.trackedSweepFailureType -eq 'identity-still-present' -and
+        $identityStillPresentObservation.trackedSweepFailureErrorCode -eq 5 -and
+        $identityStillPresentObservation.trackedSweepDisappearedAfterSnapshotCount -eq 0 -and
+        $identityStillPresentObservation.trackedSweepStillPresentAfterFailureCount -eq 1
+    if (-not $identityStillPresentVerified) { throw 'Tracked identity-still-present self-test failed.' }
+
+    $identityUnavailableObservation = New-StartupCleanupObservation
+    $freshUnavailableCensusCalls = [pscustomobject]@{ Value = 0 }
+    $identityUnavailableThrew = $false
+    try {
+        Invoke-StartupTrackedIdentityFailure $identityUnavailableObservation 1234 $identityFailureProbe {
+            $freshUnavailableCensusCalls.Value++
+            return [pscustomobject][ordered]@{
+                Attempted = $true; AttemptCount = 1; Complete = $false; Succeeded = $false; ErrorCode = 24; RetryCount = 1; Entries = $null
+            }
+        } 'Synthetic tracked identity failure.'
+    }
+    catch { $identityUnavailableThrew = $true }
+    $identityUnavailableVerified = $identityUnavailableThrew -and $freshUnavailableCensusCalls.Value -eq 1 -and
+        $identityUnavailableObservation.trackedSweepFailureType -eq 'enumeration-unavailable' -and
+        $identityUnavailableObservation.trackedSweepFailureErrorCode -eq 5 -and
+        $identityUnavailableObservation.trackedSweepDisappearedAfterSnapshotCount -eq 0 -and
+        $identityUnavailableObservation.trackedSweepStillPresentAfterFailureCount -eq 0
+    if (-not $identityUnavailableVerified) { throw 'Tracked enumeration-unavailable self-test failed.' }
+
+    $affinitySelfTestProbe = [pscustomobject][ordered]@{
+        RequestedMask = [UInt64]1; ProcessMask = [UInt64]1; SystemMask = [UInt64]15
+        Opened = $true; SetSucceeded = $true; ReadBackSucceeded = $true; Verified = $true
+        DescendantsVerified = $false; ErrorCode = 0
+    }
+    $affinityMetadataSelfTest = Get-AffinityMetadata $affinitySelfTestProbe
+    [void](Set-StartupAffinityLiveSetMetadata $affinityMetadataSelfTest 5 4 'tracked-sweep')
+    $affinityMetadataSelfTest.failureType = 'identity'
+    $affinityMetadataSelfTest.failureErrorCode = 13
+    $affinityMetadataSelfTest.verified = $false
+    $affinityHistoricalRecordsSelfTest = @(
+        [pscustomobject]@{ Id = 1 }, [pscustomobject]@{ Id = 2 }, [pscustomobject]@{ Id = 3 },
+        [pscustomobject]@{ Id = 4 }, [pscustomobject]@{ Id = 5 }
+    )
+    $affinityCurrentRecordsSelfTest = @(
+        [pscustomobject]@{ Id = 1 }, [pscustomobject]@{ Id = 2 },
+        [pscustomobject]@{ Id = 3 }, [pscustomobject]@{ Id = 4 }
+    )
+    $affinityMissingHistoricalMatchCount = Get-StartupAffinityCurrentMatchCount 5 $affinityCurrentRecordsSelfTest
+    $affinityHistoricalCountsVerified = $affinityMetadataSelfTest.historicalOwnedCount -eq 5 -and
+        $affinityMetadataSelfTest.currentLiveCount -eq 4 -and
+        $affinityMetadataSelfTest.expiredHistoricalCount -eq 1 -and
+        $affinityMetadataSelfTest.liveSetSource -eq 'tracked-sweep' -and
+        (Get-StartupAffinityCurrentMatchCount $affinityHistoricalRecordsSelfTest[0].Id $affinityCurrentRecordsSelfTest) -eq 1 -and
+        $affinityMissingHistoricalMatchCount -eq 0 -and
+        -not $affinityMetadataSelfTest.verified
+    if (-not $affinityHistoricalCountsVerified) { throw 'Historical/current affinity count self-test failed.' }
     $syntheticFailedQuery = [StartupProbeJobResult][pscustomobject][ordered]@{
         Attempted = $true
         AttemptCount = 1
@@ -4671,6 +5209,16 @@ function Invoke-SelfTest {
         processEnumerationRetryBehaviorCorrected = [bool]$processEnumerationRetryBehaviorCorrected
         processEnumerationRetryContractSelfTestVerified = [bool]$processEnumerationRetryContractSelfTestVerified
         processEnumerationContractSelfTestVerified = [bool]$processEnumerationRetryContractSelfTestVerified
+        processEnumerationAggregateSelfTestVerified = [bool]$successfulEnumerationAggregateVerified
+        processEnumerationFirstFailureRetainedVerified = [bool]$firstFailureEnumerationRetainedVerified
+        processEnumerationBoundedCountsVerified = [bool]$boundedEnumerationCountsVerified
+        trackedSweepFirstFailureRetainedVerified = [bool]$trackedFirstFailureRetainedVerified
+        trackedSweepFailureEnumsVerified = [bool]$trackedFailureEnumsVerified
+        trackedSweepBoundedCountsVerified = [bool]$boundedTrackedCountsVerified
+        trackedIdentityDisappearedSelfTestVerified = [bool]$identityDisappearedVerified
+        trackedIdentityStillPresentSelfTestVerified = [bool]$identityStillPresentVerified
+        trackedIdentityCensusUnavailableSelfTestVerified = [bool]$identityUnavailableVerified
+        affinityHistoricalCountsSelfTestVerified = [bool]$affinityHistoricalCountsVerified
         realProcessEnumerationSelfTestVerified = [bool]$realProcessEnumerationSelfTestVerified
         realMultiMemberJobQuerySelfTestVerified = [bool]$realMultiMemberJobQuerySelfTestVerified
         cleanupObservationSelfTestVerified = [bool]$cleanupObservationSelfTestVerified
