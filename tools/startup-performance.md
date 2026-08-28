@@ -106,13 +106,27 @@ paired runner の v1 optional telemetry（`launchJobQueryObservation`、各
 payload-free な numeric observation としてだけ保持します。bounded な count / byte、boolean、
 numeric Win32 error code と最大 8 件の attempt projection 以外は出力せず、PID、path、handle、
 message、command、caption、document data、raw object は query / cleanup telemetry に含めません。
-最初の sizing attempt で numeric な `errorCode=122` または `errorCode=24` が見え、その後に
-successful query へ進む場合があります。これらは Win32 error code であり byte count ではありません。
-`capacityBytes`、`requiredBytes`、`returnLengthBytes`、`assignedProcessCount`、`listedProcessCount`
-は別々の bounded 診断値です。終端エラーの numeric code（234 を含む）は保持します。
+producer の JobObjectBasicProcessIdList 列挙は、最初の sizing call を含めて一つの列挙あたり最大
+8 回の native query に制限します。再試行する Win32 error は `122`、`24`、`234` だけで、checked
+arithmetic で 1 MiB 以下のより大きな buffer target を計算できる場合に限ります。例えば retained
+evidence の `ERROR_MORE_DATA (234)` で `16 -> 40` bytes に拡張します。`capacityBytes`、
+`requiredBytes`、`returnLengthBytes`、`assignedProcessCount`、`listedProcessCount` は別々の bounded
+診断値で、各 attempt の resize と終端エラー（234 を含む）を保持します。
 
-成功しても listed が assigned より少ない場合の `partial` は診断値として残しますが、別作業 C3
-までは補正・再解釈しません。zero survivors でも query が失敗していれば cleanup の証明にはなりません。
+no-GUI の producer self-test は injected query invoker で本番と同じ retry loop を実行します。`16 -> 40` の
+`234` correction と successful partial correction はそれぞれ正確に3回（sizing、retry、final success）を使い、
+retry exhaustion は正確に8回で最後の native error を保持します。本番と self-test が共有する attempt predicate
+は9回目を拒否します。self-test ではさらに architecture 依存の buffer growth と partial response 間の
+membership 増加を同じ loop で検証し、0・負値・範囲外・重複 PID を拒否します。retry budget が native failure の直後に尽きた場合、top-level error と最後の attempt は
+その実際の retryable error を保持し、`122` は successful partial の exhaustion にだけ使います。identity-gap
+requery は別列挙で独自の budget を持ちます。
+
+成功と扱うのは `listedProcessCount == assignedProcessCount` で、header/count/capacity が整合し、全 PID
+が正の有効値かつ重複しない場合だけです。successful partial list は成功として報告せず、checked な
+拡張を行って完全な list の再 query を要求します。overflow、stagnation、malformed count、重複 PID、
+buffer cap 超過、または 8 回の budget 枯渇は fail closed です。cleanup の identity-gap requery は
+別の列挙であり、独自の 8-call budget を持ちます。zero survivors でも query が失敗していれば cleanup
+の証明にはなりません。
 この telemetry は success expression、`Test-PairedRunCleanupVerified`、termination / suppression、
 acceptance、qualification、adoption のいずれも qualify せず、弱めもしません。failed / preflight
 launch と optional fields がない旧 v1 report は neutral な `not-attempted` として扱い、present だが

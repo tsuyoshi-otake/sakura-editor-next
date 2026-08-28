@@ -331,16 +331,37 @@ paired report. The hard bounds include at most eight retained attempt records,
 bounded counts, and bounded `capacityBytes`, `requiredBytes`, and
 `returnLengthBytes`.
 
-The query sizing evidence is diagnostic only. A benign initial sizing attempt
-can report numeric `errorCode=122` or `errorCode=24` before a later successful
-query; those Win32 codes are not byte counts. `capacityBytes`,
+The producer's `JobObjectBasicProcessIdList` enumeration is bounded to at most
+eight native query calls per enumeration, including the zero-buffer sizing call.
+Only Win32 errors `122`, `24`, and `234` are retryable, and only when checked
+arithmetic produces a strictly larger target no bigger than 1 MiB. The retained
+`ERROR_MORE_DATA (234)` case grows from 16 to 40 bytes. `capacityBytes`,
 `requiredBytes`, `returnLengthBytes`, `assignedProcessCount`, and
-`listedProcessCount` remain separate bounded diagnostics and do not qualify or
-weaken cleanup. A terminal failed query keeps its numeric error (including 234)
-visible. `partial` is retained when a
-successful query lists fewer processes than assigned, but it is not corrected
-or reinterpreted until the separate C3 work; the paired runner does not retry
-or adjust that result here.
+`listedProcessCount` remain separate bounded diagnostics; every attempt records
+its resize decision and a terminal error, and none of this telemetry qualifies
+or weakens cleanup.
+
+The no-GUI producer self-test drives the same retry loop through an injected
+query invoker: the 16-to-40 `234` correction and a successful partial-list
+correction each use exactly three calls, while a retry-exhaustion script uses
+exactly eight calls and preserves the final native error. The shared attempt
+predicate rejects a ninth call; the same self-test also drives
+architecture-sized growth while membership changes between partial responses
+and rejects zero, negative, out-of-range, or duplicate PIDs. An identity-gap
+requery remains a separate enumeration with its own budget. When the budget ends after a failed native
+attempt, the top-level error and final attempt retain that actual retryable
+error; `122` is used for successful-partial exhaustion only.
+
+The producer reports success only when `listedProcessCount` equals
+`assignedProcessCount`, the header/count/capacity shape is valid, and every PID
+is positive, representable, and unique. A successful partial list is never
+reported as success: the producer performs a checked growth and requires a
+complete requery. Overflow, stagnation, malformed counts, duplicate PIDs, the
+1 MiB cap, or exhaustion of the eight-call budget fail closed. An identity-gap
+requery is a separate enumeration with its own eight-call budget. The paired
+runner remains a compatibility consumer: if an older producer supplies a
+`partial` observation, it retains that diagnostic and does not retry or adjust
+it here. Zero survivors still do not prove cleanup when the job query failed.
 
 Query and cleanup telemetry never participates in the success expression,
 `Test-PairedRunCleanupVerified`, termination/suppression, acceptance,

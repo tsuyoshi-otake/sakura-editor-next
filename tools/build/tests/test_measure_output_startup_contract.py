@@ -381,6 +381,40 @@ class PairedStartupContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, self.shared_text)
 
+    def test_shared_job_query_retry_contract_is_bounded_and_requires_full_membership(self):
+        for marker in (
+            "private const int ERROR_MORE_DATA = 234;",
+            "private const uint MAX_JOB_QUERY_BYTES = 1024 * 1024;",
+            "private const int MAX_JOB_QUERY_ATTEMPT_RECORDS = 8;",
+            "private static bool CanAttemptJobQuery",
+            "while (CanAttemptJobQuery(result.AttemptCount))",
+            "RunJobQueryContractSelfTest",
+            "JobQueryInvoker",
+            "QueryJobProcessIdsCore",
+            "BoundJobQueryByteCount",
+            "nativeByteBoundsValid",
+            "requiredBytes > capacity",
+            "moreDataCalls != 3",
+            "partialCalls != 3",
+            "partialNextCapacity",
+            "exhaustedCalls != MAX_JOB_QUERY_ATTEMPT_RECORDS",
+            "CanAttemptJobQuery(exhaustedCalls)",
+            "var idsSeen = new Hashtable();",
+            "idsSeen.ContainsKey(id)",
+            "if (listed != assigned)",
+            "membershipFirstRetryCapacity",
+            "membershipSecondRetryCapacity",
+            "membershipFinalComplete",
+            "invalidProcessIds",
+            "jobQueryRetryBehaviorCorrected",
+            "realMultiMemberJobQuerySelfTestVerified",
+            "multiMemberIdsMatch",
+            "multiMemberFinalComplete",
+        ):
+            self.assertIn(marker, self.shared_text)
+        self.assertNotIn("jobQueryRetryBehaviorUnchanged", self.shared_text)
+        self.assertNotIn("for (int attempt = 0; attempt < 3", self.shared_text)
+
     def test_empty_source_status_hash_contract_is_explicit(self):
         self.assertIn("function New-PairedSourceState", self.paired_text)
         self.assertIn("[AllowEmptyString()] [object]$Value", self.paired_text)
@@ -510,6 +544,9 @@ class PairedStartupContractTests(unittest.TestCase):
             self.assertTrue(payload["artifactBundleCleanupVerified"])
             self.assertTrue(payload["artifactClosureVerified"])
             self.assertTrue(payload["jobContainmentSelfTestVerified"])
+            self.assertTrue(payload["jobQueryRetryContractSelfTestVerified"])
+            self.assertTrue(payload["jobQueryRetryBehaviorCorrected"])
+            self.assertTrue(payload["realMultiMemberJobQuerySelfTestVerified"])
             self.assertTrue(payload["workingDirectorySelfTestVerified"])
 
     def test_self_test_output_in_both_powershell_hosts(self):

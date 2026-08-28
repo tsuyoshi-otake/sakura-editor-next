@@ -203,9 +203,12 @@ public static class NativeStartupProbe
     private const int JobObjectExtendedLimitInformation = 9;
     private const int ERROR_INSUFFICIENT_BUFFER = 122;
     private const int ERROR_BAD_LENGTH = 24;
+    private const int ERROR_MORE_DATA = 234;
     private const int ERROR_INVALID_PARAMETER = 87;
     private const int ERROR_NOT_FOUND = 1168;
     private const int MAX_JOB_QUERY_ATTEMPT_RECORDS = 8;
+    private const uint MAX_JOB_QUERY_BYTES = 1024 * 1024;
+    private const uint JOB_QUERY_HEADER_BYTES = 8;
     private const uint STILL_ACTIVE = 259;
     private const uint SIF_RANGE = 0x0001;
     private const int SB_CTL = 2;
@@ -686,15 +689,20 @@ public static class NativeStartupProbe
         finally { CloseHandle(process); }
     }
 
+    private static uint BoundJobQueryByteCount(uint value)
+    {
+        return value > MAX_JOB_QUERY_BYTES ? MAX_JOB_QUERY_BYTES : value;
+    }
+
     private static void RecordJobQueryAttempt(StartupProbeJobResult result, bool succeeded, int errorCode,
         uint capacityBytes, uint requiredBytes, uint returnLengthBytes, uint assignedProcessCount,
         uint listedProcessCount, bool resized)
     {
         result.Attempted = true;
         result.AttemptCount++;
-        result.CapacityBytes = capacityBytes;
-        result.RequiredBytes = requiredBytes;
-        result.ReturnLengthBytes = returnLengthBytes;
+        result.CapacityBytes = BoundJobQueryByteCount(capacityBytes);
+        result.RequiredBytes = BoundJobQueryByteCount(requiredBytes);
+        result.ReturnLengthBytes = BoundJobQueryByteCount(returnLengthBytes);
         result.AssignedProcessCount = assignedProcessCount;
         result.ListedProcessCount = listedProcessCount;
         result.Resized = result.Resized || resized;
@@ -707,9 +715,9 @@ public static class NativeStartupProbe
                 AttemptNumber = result.AttemptCount,
                 Succeeded = succeeded,
                 ErrorCode = succeeded ? 0 : errorCode,
-                CapacityBytes = capacityBytes,
-                RequiredBytes = requiredBytes,
-                ReturnLengthBytes = returnLengthBytes,
+                CapacityBytes = BoundJobQueryByteCount(capacityBytes),
+                RequiredBytes = BoundJobQueryByteCount(requiredBytes),
+                ReturnLengthBytes = BoundJobQueryByteCount(returnLengthBytes),
                 AssignedProcessCount = assignedProcessCount,
                 ListedProcessCount = listedProcessCount,
                 Resized = resized
@@ -719,71 +727,573 @@ public static class NativeStartupProbe
         catch { }
     }
 
+    private static bool IsRetryableJobQueryError(int errorCode)
+    {
+        return errorCode == ERROR_INSUFFICIENT_BUFFER || errorCode == ERROR_BAD_LENGTH || errorCode == ERROR_MORE_DATA;
+    }
+
+    private static bool TryGetLargerJobQueryCapacity(uint currentCapacity, uint returnedBytes,
+        uint assignedProcessCount, out uint nextCapacity)
+    {
+        nextCapacity = 0;
+        try {
+            ulong candidate = returnedBytes;
+            ulong byCount = checked(JOB_QUERY_HEADER_BYTES + checked((ulong)assignedProcessCount * (ulong)IntPtr.Size));
+            if (byCount > candidate) candidate = byCount;
+
+            // A retry must always make progress.  The kernel may return an
+            // unchanged/zero length for ERROR_BAD_LENGTH or ERROR_MORE_DATA,
+            // so use checked geometric growth when the returned hints do not
+            // provide a larger buffer.
+            if (candidate <= currentCapacity) {
+                candidate = checked((ulong)currentCapacity * 2UL);
+            }
+            if (candidate <= currentCapacity || candidate > MAX_JOB_QUERY_BYTES || candidate > UInt32.MaxValue) return false;
+            nextCapacity = (uint)candidate;
+            return true;
+        }
+        catch (OverflowException) { return false; }
+    }
+
+    private static bool IsJobQueryCountsAndCapacityValid(uint capacityBytes,
+        uint assignedProcessCount, uint listedProcessCount)
+    {
+        try {
+            if (capacityBytes < JOB_QUERY_HEADER_BYTES || capacityBytes > MAX_JOB_QUERY_BYTES) return false;
+            if (listedProcessCount > assignedProcessCount) return false;
+            ulong capacitySlots = (capacityBytes - JOB_QUERY_HEADER_BYTES) / (ulong)IntPtr.Size;
+            return (ulong)listedProcessCount <= capacitySlots;
+        }
+        catch (OverflowException) { return false; }
+    }
+
+    private static bool IsJobQueryReturnLengthValid(uint capacityBytes, uint returnLengthBytes,
+        uint listedProcessCount)
+    {
+        try {
+            if (capacityBytes < JOB_QUERY_HEADER_BYTES || capacityBytes > MAX_JOB_QUERY_BYTES) return false;
+            ulong minimumReturn = checked(JOB_QUERY_HEADER_BYTES + checked((ulong)listedProcessCount * (ulong)IntPtr.Size));
+            // Some Windows versions report zero bytes for an empty list even
+            // though the two count fields were returned.  The caller separately
+            // verifies that assigned is also zero for that exact empty shape.
+            if (returnLengthBytes == 0) return listedProcessCount == 0;
+            return returnLengthBytes >= minimumReturn && returnLengthBytes <= capacityBytes;
+        }
+        catch (OverflowException) { return false; }
+    }
+
+    private static bool IsJobQueryShapeStructurallyValid(uint capacityBytes, uint returnLengthBytes,
+        uint assignedProcessCount, uint listedProcessCount)
+    {
+        if (!IsJobQueryCountsAndCapacityValid(capacityBytes, assignedProcessCount, listedProcessCount)) return false;
+        if (returnLengthBytes == 0) return assignedProcessCount == 0 && listedProcessCount == 0;
+        return IsJobQueryReturnLengthValid(capacityBytes, returnLengthBytes, listedProcessCount);
+    }
+
+    // This predicate is shared by the production enumeration and the
+    // no-GUI contract self-test.  The sizing call consumes attempt zero, so
+    // each enumeration may issue attempts 0 through 7 and never a ninth call.
+    private static bool CanAttemptJobQuery(int attemptCount)
+    {
+        return attemptCount >= 0 && attemptCount < MAX_JOB_QUERY_ATTEMPT_RECORDS;
+    }
+
+    // Keep the bounded arithmetic, retry loop, and malformed-shape branches
+    // executable in the no-GUI self-test without exposing them as a
+    // measurement API.  The injected invokers exercise QueryJobProcessIdsCore
+    // itself, including its shared attempt predicate and telemetry journal.
+    public static bool RunJobQueryContractSelfTest()
+    {
+        uint next;
+        if (!IsRetryableJobQueryError(ERROR_INSUFFICIENT_BUFFER) ||
+            !IsRetryableJobQueryError(ERROR_BAD_LENGTH) ||
+            !IsRetryableJobQueryError(ERROR_MORE_DATA) ||
+            IsRetryableJobQueryError(ERROR_INVALID_PARAMETER)) return false;
+
+        // Reproduce the observed ERROR_MORE_DATA correction: sizing reports
+        // 16, the first data query reports 234 and requires 40, then a complete
+        // list succeeds.  This is exactly three native calls: sizing, retry,
+        // and final success.
+        int moreDataCalls = 0;
+        JobQueryInvoker moreDataInvoker = delegate(IntPtr job, IntPtr buffer, uint capacity,
+            out uint returnLength, out int errorCode) {
+            int call = moreDataCalls++;
+            if (call == 0 && capacity == 0) {
+                returnLength = 16;
+                errorCode = ERROR_BAD_LENGTH;
+                return false;
+            }
+            if (call == 1 && capacity == 16) {
+                returnLength = 40;
+                errorCode = ERROR_MORE_DATA;
+                return false;
+            }
+            if (call == 2 && capacity == 40 && buffer != IntPtr.Zero) {
+                WriteSyntheticJobList(buffer, capacity, 2, 2, 101, 102);
+                returnLength = 24;
+                errorCode = 0;
+                return true;
+            }
+            returnLength = 0;
+            errorCode = ERROR_INVALID_PARAMETER;
+            return false;
+        };
+        StartupProbeJobResult moreDataResult = QueryJobProcessIdsCore(new IntPtr(1), moreDataInvoker);
+        if (!moreDataResult.Succeeded || moreDataCalls != 3 ||
+            moreDataResult.AttemptCount != 3 || moreDataResult.Attempts.Length != 3 ||
+            moreDataResult.Attempts[0].CapacityBytes != 0 ||
+            moreDataResult.Attempts[1].CapacityBytes != 16 ||
+            moreDataResult.Attempts[1].ErrorCode != ERROR_MORE_DATA ||
+            !moreDataResult.Attempts[1].Resized ||
+            moreDataResult.Attempts[2].CapacityBytes != 40 ||
+            moreDataResult.Attempts[2].ListedProcessCount != 2 ||
+            moreDataResult.ProcessIds.Length != 2 ||
+            moreDataResult.ProcessIds[0] != 101 || moreDataResult.ProcessIds[1] != 102) return false;
+
+        // A successful partial list is not success: the same production loop
+        // must grow and accept only the subsequent complete list.  This is
+        // also exactly three native calls.  Derive both architecture-sensitive
+        // capacities from the production growth helper.
+        uint partialNextCapacity;
+        if (!TryGetLargerJobQueryCapacity(16, 16, 2, out partialNextCapacity) ||
+            partialNextCapacity <= 16) return false;
+        uint partialFinalReturnLength = checked(JOB_QUERY_HEADER_BYTES + (2U * (uint)IntPtr.Size));
+        int partialCalls = 0;
+        JobQueryInvoker partialInvoker = delegate(IntPtr job, IntPtr buffer, uint capacity,
+            out uint returnLength, out int errorCode) {
+            int call = partialCalls++;
+            if (call == 0 && capacity == 0) {
+                returnLength = 16;
+                errorCode = ERROR_INSUFFICIENT_BUFFER;
+                return false;
+            }
+            if (call == 1 && capacity == 16 && buffer != IntPtr.Zero) {
+                WriteSyntheticJobList(buffer, capacity, 2, 1, 201, 0);
+                returnLength = 16;
+                errorCode = 0;
+                return true;
+            }
+            if (call == 2 && capacity == partialNextCapacity && buffer != IntPtr.Zero) {
+                WriteSyntheticJobList(buffer, capacity, 2, 2, 201, 202);
+                returnLength = partialFinalReturnLength;
+                errorCode = 0;
+                return true;
+            }
+            returnLength = 0;
+            errorCode = ERROR_INVALID_PARAMETER;
+            return false;
+        };
+        StartupProbeJobResult partialResult = QueryJobProcessIdsCore(new IntPtr(1), partialInvoker);
+        if (!partialResult.Succeeded || partialCalls != 3 ||
+            partialResult.AttemptCount != 3 || partialResult.Attempts.Length != 3 ||
+            partialResult.Attempts[0].CapacityBytes != 0 ||
+            partialResult.Attempts[1].CapacityBytes != 16 ||
+            partialResult.Attempts[1].AssignedProcessCount != 2 ||
+            partialResult.Attempts[1].ListedProcessCount != 1 ||
+            !partialResult.Attempts[1].Resized ||
+            partialResult.Attempts[2].CapacityBytes != partialNextCapacity ||
+            partialResult.Attempts[2].AssignedProcessCount != 2 ||
+            partialResult.Attempts[2].ReturnLengthBytes != partialFinalReturnLength ||
+            partialResult.Attempts[2].ListedProcessCount != 2 ||
+            partialResult.ProcessIds.Length != 2 ||
+            partialResult.ProcessIds[0] != 201 || partialResult.ProcessIds[1] != 202) return false;
+
+        // A retryable failure on the final permitted call must preserve that
+        // native error at both the top level and the final bounded attempt.
+        int exhaustedCalls = 0;
+        JobQueryInvoker exhaustedInvoker = delegate(IntPtr job, IntPtr buffer, uint capacity,
+            out uint returnLength, out int errorCode) {
+            int call = exhaustedCalls++;
+            if (call == 0 && capacity == 0) {
+                returnLength = 16;
+                errorCode = ERROR_INSUFFICIENT_BUFFER;
+                return false;
+            }
+            if (call >= 1 && call < MAX_JOB_QUERY_ATTEMPT_RECORDS) {
+                uint expectedCapacity = (uint)(16U << (call - 1));
+                if (capacity == expectedCapacity) {
+                    returnLength = 0;
+                    errorCode = ERROR_MORE_DATA;
+                    return false;
+                }
+            }
+            returnLength = 0;
+            errorCode = ERROR_INVALID_PARAMETER;
+            return false;
+        };
+        StartupProbeJobResult exhaustedResult = QueryJobProcessIdsCore(new IntPtr(1), exhaustedInvoker);
+        if (exhaustedCalls != MAX_JOB_QUERY_ATTEMPT_RECORDS ||
+            exhaustedResult.AttemptCount != MAX_JOB_QUERY_ATTEMPT_RECORDS ||
+            exhaustedResult.Attempts.Length != MAX_JOB_QUERY_ATTEMPT_RECORDS ||
+            exhaustedResult.Succeeded ||
+            exhaustedResult.ErrorCode != ERROR_MORE_DATA ||
+            exhaustedResult.Attempts[MAX_JOB_QUERY_ATTEMPT_RECORDS - 1].ErrorCode != ERROR_MORE_DATA ||
+            CanAttemptJobQuery(exhaustedCalls)) return false;
+
+        // The shared budget predicate allows exactly eight attempts, including
+        // the sizing call, and rejects both negative and exhausted counts.
+        for (int attempt = 0; attempt < MAX_JOB_QUERY_ATTEMPT_RECORDS; ++attempt) {
+            if (!CanAttemptJobQuery(attempt)) return false;
+        }
+        if (CanAttemptJobQuery(-1) || CanAttemptJobQuery(MAX_JOB_QUERY_ATTEMPT_RECORDS)) return false;
+        int budgetCalls = 0;
+        while (CanAttemptJobQuery(budgetCalls)) ++budgetCalls;
+        if (budgetCalls != MAX_JOB_QUERY_ATTEMPT_RECORDS ||
+            CanAttemptJobQuery(budgetCalls)) return false;
+
+        // Keep the checked arithmetic and malformed invariants executable.
+        if (TryGetLargerJobQueryCapacity(MAX_JOB_QUERY_BYTES, MAX_JOB_QUERY_BYTES, 0, out next) ||
+            TryGetLargerJobQueryCapacity(16, 0, UInt32.MaxValue, out next)) return false;
+        if (IsJobQueryCountsAndCapacityValid(32, 1, 2) ||
+            IsJobQueryCountsAndCapacityValid(16, 3, 3) ||
+            !IsJobQueryCountsAndCapacityValid(32, 2, 2) ||
+            IsJobQueryReturnLengthValid(32, 8, 2)) return false;
+        if (!IsJobQueryShapeStructurallyValid(32, 24, 2, 1) ||
+            !IsJobQueryShapeStructurallyValid(16, 0, 0, 0) ||
+            IsJobQueryShapeStructurallyValid(16, 0, 1, 0) ||
+            IsJobQueryShapeStructurallyValid(32, 8, 2, 2)) return false;
+
+        // A listed count larger than assigned is rejected without exposing
+        // IDs, independently from the return-length and duplicate checks.
+        int listedMalformedCalls = 0;
+        JobQueryInvoker listedMalformedInvoker = delegate(IntPtr job, IntPtr buffer, uint capacity,
+            out uint returnLength, out int errorCode) {
+            int call = listedMalformedCalls++;
+            if (call == 0) {
+                // Two ULONG_PTR entries need 24 bytes on x64 (and still fit
+                // within 24 bytes on x86); keep the malformed-count case
+                // isolated without writing beyond its allocation.
+                returnLength = 24;
+                errorCode = ERROR_INSUFFICIENT_BUFFER;
+                return false;
+            }
+            WriteSyntheticJobList(buffer, capacity, 1, 2, 301, 302);
+            returnLength = 24;
+            errorCode = 0;
+            return true;
+        };
+        StartupProbeJobResult listedMalformedResult = QueryJobProcessIdsCore(new IntPtr(1), listedMalformedInvoker);
+        if (listedMalformedCalls != 2 || listedMalformedResult.Succeeded ||
+            listedMalformedResult.ErrorCode != ERROR_BAD_LENGTH ||
+            listedMalformedResult.ProcessIds.Length != 0) return false;
+
+        // A returned byte count beyond the supplied capacity is a separate
+        // structural failure.
+        int returnMalformedCalls = 0;
+        JobQueryInvoker returnMalformedInvoker = delegate(IntPtr job, IntPtr buffer, uint capacity,
+            out uint returnLength, out int errorCode) {
+            int call = returnMalformedCalls++;
+            if (call == 0) {
+                returnLength = 16;
+                errorCode = ERROR_INSUFFICIENT_BUFFER;
+                return false;
+            }
+            WriteSyntheticJobList(buffer, capacity, 1, 1, 401, 0);
+            returnLength = 24;
+            errorCode = 0;
+            return true;
+        };
+        StartupProbeJobResult returnMalformedResult = QueryJobProcessIdsCore(new IntPtr(1), returnMalformedInvoker);
+        if (returnMalformedCalls != 2 || returnMalformedResult.Succeeded ||
+            returnMalformedResult.ErrorCode != ERROR_BAD_LENGTH ||
+            returnMalformedResult.ProcessIds.Length != 0) return false;
+
+        // Membership can grow between successful partial responses.  This
+        // drives the same production retry loop with capacities derived from
+        // IntPtr.Size and the checked growth helper, rather than architecture
+        // specific constants.
+        uint membershipFirstRetryCapacity;
+        if (!TryGetLargerJobQueryCapacity(16, 16, 2, out membershipFirstRetryCapacity) ||
+            membershipFirstRetryCapacity <= 16) return false;
+        uint membershipSecondRetryCapacity;
+        if (!TryGetLargerJobQueryCapacity(membershipFirstRetryCapacity,
+            membershipFirstRetryCapacity, 3, out membershipSecondRetryCapacity) ||
+            membershipSecondRetryCapacity <= membershipFirstRetryCapacity) return false;
+        uint membershipPartialReturnLength = checked(JOB_QUERY_HEADER_BYTES +
+            (2U * (uint)IntPtr.Size));
+        uint membershipFinalReturnLength = checked(JOB_QUERY_HEADER_BYTES +
+            (3U * (uint)IntPtr.Size));
+        int membershipCalls = 0;
+        JobQueryInvoker membershipInvoker = delegate(IntPtr job, IntPtr buffer, uint capacity,
+            out uint returnLength, out int errorCode) {
+            int call = membershipCalls++;
+            if (call == 0 && capacity == 0) {
+                returnLength = 16;
+                errorCode = ERROR_INSUFFICIENT_BUFFER;
+                return false;
+            }
+            if (call == 1 && capacity == 16 && buffer != IntPtr.Zero) {
+                WriteSyntheticJobList(buffer, capacity, 2, 1, 601, 602, 0);
+                returnLength = 16;
+                errorCode = 0;
+                return true;
+            }
+            if (call == 2 && capacity == membershipFirstRetryCapacity && buffer != IntPtr.Zero) {
+                WriteSyntheticJobList(buffer, capacity, 3, 2, 601, 602, 603);
+                returnLength = membershipPartialReturnLength;
+                errorCode = 0;
+                return true;
+            }
+            if (call == 3 && capacity == membershipSecondRetryCapacity && buffer != IntPtr.Zero) {
+                WriteSyntheticJobList(buffer, capacity, 3, 3, 601, 602, 603);
+                returnLength = membershipFinalReturnLength;
+                errorCode = 0;
+                return true;
+            }
+            returnLength = 0;
+            errorCode = ERROR_INVALID_PARAMETER;
+            return false;
+        };
+        StartupProbeJobResult membershipResult = QueryJobProcessIdsCore(new IntPtr(1), membershipInvoker);
+        bool membershipFinalComplete = membershipResult.Succeeded &&
+            membershipResult.AttemptCount == 4 &&
+            membershipResult.AssignedProcessCount == 3 &&
+            membershipResult.ListedProcessCount == 3 &&
+            membershipResult.ProcessIds.Length == 3 &&
+            membershipResult.ProcessIds[0] == 601 &&
+            membershipResult.ProcessIds[1] == 602 &&
+            membershipResult.ProcessIds[2] == 603;
+        if (!membershipFinalComplete || membershipCalls != 4 ||
+            membershipResult.Attempts.Length != 4 ||
+            membershipResult.Attempts[1].CapacityBytes != 16 ||
+            membershipResult.Attempts[1].AssignedProcessCount != 2 ||
+            membershipResult.Attempts[1].ListedProcessCount != 1 ||
+            !membershipResult.Attempts[1].Resized ||
+            membershipResult.Attempts[2].CapacityBytes != membershipFirstRetryCapacity ||
+            membershipResult.Attempts[2].AssignedProcessCount != 3 ||
+            membershipResult.Attempts[2].ListedProcessCount != 2 ||
+            !membershipResult.Attempts[2].Resized ||
+            membershipResult.Attempts[3].CapacityBytes != membershipSecondRetryCapacity ||
+            membershipResult.Attempts[3].ReturnLengthBytes != membershipFinalReturnLength ||
+            !membershipResult.Attempts[3].Succeeded) return false;
+
+        // Zero, negative, and out-of-range process identifiers are all
+        // rejected before any identifier array is published.
+        long[] invalidProcessIds = new long[] { 0L, -1L, ((long)Int32.MaxValue) + 1L };
+        for (int invalidIndex = 0; invalidIndex < invalidProcessIds.Length; ++invalidIndex) {
+            long invalidProcessId = invalidProcessIds[invalidIndex];
+            int invalidCalls = 0;
+            JobQueryInvoker invalidPidInvoker = delegate(IntPtr job, IntPtr buffer, uint capacity,
+                out uint returnLength, out int errorCode) {
+                int call = invalidCalls++;
+                if (call == 0 && capacity == 0) {
+                    returnLength = 16;
+                    errorCode = ERROR_INSUFFICIENT_BUFFER;
+                    return false;
+                }
+                WriteSyntheticJobList(buffer, capacity, 1, 1, invalidProcessId, 0L);
+                returnLength = checked(JOB_QUERY_HEADER_BYTES + (uint)IntPtr.Size);
+                errorCode = 0;
+                return true;
+            };
+            StartupProbeJobResult invalidPidResult = QueryJobProcessIdsCore(new IntPtr(1), invalidPidInvoker);
+            if (invalidCalls != 2 || invalidPidResult.Succeeded ||
+                invalidPidResult.ErrorCode != ERROR_BAD_LENGTH ||
+                invalidPidResult.ProcessIds.Length != 0) return false;
+        }
+        // Duplicate positive process IDs are rejected in O(N) expected time,
+        // and the partially built ID array is never published.
+        int duplicateCalls = 0;
+        JobQueryInvoker duplicateInvoker = delegate(IntPtr job, IntPtr buffer, uint capacity,
+            out uint returnLength, out int errorCode) {
+            int call = duplicateCalls++;
+            if (call == 0) {
+                returnLength = 24;
+                errorCode = ERROR_INSUFFICIENT_BUFFER;
+                return false;
+            }
+            WriteSyntheticJobList(buffer, capacity, 2, 2, 501, 501);
+            returnLength = 24;
+            errorCode = 0;
+            return true;
+        };
+        StartupProbeJobResult duplicateResult = QueryJobProcessIdsCore(new IntPtr(1), duplicateInvoker);
+        if (duplicateCalls != 2 || duplicateResult.Succeeded ||
+            duplicateResult.ErrorCode != ERROR_BAD_LENGTH ||
+            duplicateResult.ProcessIds.Length != 0) return false;
+        return true;
+    }
+
+    private static void WriteSyntheticJobList(IntPtr buffer, uint capacity, uint assigned, uint listed,
+        long firstProcessId, long secondProcessId)
+    {
+        WriteSyntheticJobList(buffer, capacity, assigned, listed, firstProcessId, secondProcessId, 0);
+    }
+
+    private static void WriteSyntheticJobList(IntPtr buffer, uint capacity, uint assigned, uint listed,
+        long firstProcessId, long secondProcessId, long thirdProcessId)
+    {
+        ulong requiredBytes;
+        try {
+            if (buffer == IntPtr.Zero || listed > 3) throw new InvalidOperationException();
+            requiredBytes = checked((ulong)JOB_QUERY_HEADER_BYTES +
+                checked((ulong)listed * (ulong)IntPtr.Size));
+        }
+        catch {
+            throw new InvalidOperationException();
+        }
+        if (requiredBytes > capacity) throw new InvalidOperationException();
+        Marshal.WriteInt32(buffer, 0, unchecked((int)assigned));
+        Marshal.WriteInt32(buffer, 4, unchecked((int)listed));
+        if (listed > 0) Marshal.WriteIntPtr(buffer, (int)JOB_QUERY_HEADER_BYTES, new IntPtr(firstProcessId));
+        if (listed > 1) Marshal.WriteIntPtr(buffer, (int)(JOB_QUERY_HEADER_BYTES + (uint)IntPtr.Size), new IntPtr(secondProcessId));
+        if (listed > 2) Marshal.WriteIntPtr(buffer,
+            checked((int)(JOB_QUERY_HEADER_BYTES + (2U * (uint)IntPtr.Size))),
+            new IntPtr(thirdProcessId));
+    }
+
+    private delegate bool JobQueryInvoker(IntPtr job, IntPtr buffer, uint capacity,
+        out uint returnLength, out int errorCode);
+
+    private static bool InvokeNativeJobQuery(IntPtr job, IntPtr buffer, uint capacity,
+        out uint returnLength, out int errorCode)
+    {
+        bool succeeded = QueryInformationJobObject(job, JobObjectBasicProcessIdList,
+            buffer, capacity, out returnLength);
+        errorCode = succeeded ? 0 : Marshal.GetLastWin32Error();
+        return succeeded;
+    }
+
     public static StartupProbeJobResult QueryJobProcessIds(IntPtr job)
     {
+        return QueryJobProcessIdsCore(job, new JobQueryInvoker(InvokeNativeJobQuery));
+    }
+
+    private static StartupProbeJobResult QueryJobProcessIdsCore(IntPtr job, JobQueryInvoker query)
+    {
         var result = new StartupProbeJobResult { Handle = job, Succeeded = false, ErrorCode = 0, ProcessIds = new int[0] };
-        if (job == IntPtr.Zero) { result.ErrorCode = 6; return result; }
-        uint required = 0;
-        bool initialSucceeded = QueryInformationJobObject(job, JobObjectBasicProcessIdList, IntPtr.Zero, 0, out required);
-        int lastError = Marshal.GetLastWin32Error();
-        RecordJobQueryAttempt(result, initialSucceeded, lastError, 0, required, required, 0, 0, false);
-        result.RequiredBytes = required;
-        if (required < 8 && lastError != ERROR_INSUFFICIENT_BUFFER && lastError != ERROR_BAD_LENGTH) {
-            result.ErrorCode = lastError;
-            return result;
-        }
-        // The API reports ERROR_BAD_LENGTH and a zero return length for an
-        // empty job on Windows.  The two ULONG header fields are followed by
-        // a variable-length ULONG_PTR array; passing only the header back to
-        // the second query is rejected with ERROR_BAD_LENGTH on x64.  Always
-        // reserve room for the first array slot, including the empty case.
-        uint minimumSize = unchecked((uint)(8 + IntPtr.Size));
-        if (required < minimumSize) required = minimumSize;
-        for (int attempt = 0; attempt < 3; ++attempt) {
-            if (required > 1024 * 1024) { result.ErrorCode = 8; return result; }
-            IntPtr buffer = Marshal.AllocHGlobal(unchecked((int)required));
-            try {
-                uint returned;
-                bool querySucceeded = QueryInformationJobObject(job, JobObjectBasicProcessIdList, buffer, required, out returned);
-                int error = Marshal.GetLastWin32Error();
-                uint assigned = 0;
-                uint listed = 0;
-                if (querySucceeded) {
-                    assigned = unchecked((uint)Marshal.ReadInt32(buffer, 0));
-                    listed = unchecked((uint)Marshal.ReadInt32(buffer, 4));
-                }
-                bool resized = !querySucceeded &&
-                    (error == ERROR_INSUFFICIENT_BUFFER || error == ERROR_BAD_LENGTH) && returned > required;
-                RecordJobQueryAttempt(result, querySucceeded, error, required, required, returned, assigned, listed, resized);
-                if (!querySucceeded) {
-                    if (resized) {
-                        required = returned;
-                        result.RequiredBytes = required;
-                        continue;
-                    }
-                    result.ErrorCode = error;
-                    return result;
-                }
-                ulong capacity = unchecked(((ulong)required - 8UL) / (ulong)IntPtr.Size);
-                if (listed > assigned || (ulong)listed > capacity) {
-                    result.ErrorCode = ERROR_BAD_LENGTH;
-                    return result;
-                }
-                var ids = new int[unchecked((int)listed)];
-                for (uint i = 0; i < listed; ++i) {
-                    IntPtr value = Marshal.ReadIntPtr(buffer, 8 + unchecked((int)(i * (uint)IntPtr.Size)));
-                    long processId = value.ToInt64();
-                    if (processId <= 0 || processId > Int32.MaxValue) { result.ErrorCode = ERROR_BAD_LENGTH; return result; }
-                    ids[unchecked((int)i)] = unchecked((int)processId);
-                }
-                result.ProcessIds = ids;
-                result.Succeeded = true;
+        try {
+            if (job == IntPtr.Zero || query == null) { result.ErrorCode = 6; return result; }
+            uint required = 0;
+            int sizingError = 0;
+            bool initialSucceeded = query(job, IntPtr.Zero, 0, out required, out sizingError);
+            int lastNativeError = initialSucceeded ? 0 : sizingError;
+            bool lastQuerySucceeded = initialSucceeded;
+            uint boundedRequired = BoundJobQueryByteCount(required);
+            RecordJobQueryAttempt(result, initialSucceeded, sizingError, 0, boundedRequired, boundedRequired, 0, 0, false);
+            result.RequiredBytes = boundedRequired;
+            if (!initialSucceeded && !IsRetryableJobQueryError(sizingError)) {
+                result.ErrorCode = sizingError;
                 return result;
             }
-            finally { Marshal.FreeHGlobal(buffer); }
+            // The API reports ERROR_BAD_LENGTH and a zero return length for an
+            // empty job on Windows.  The two ULONG header fields are followed by
+            // a variable-length ULONG_PTR array; passing only the header back to
+            // the second query is rejected with ERROR_BAD_LENGTH on x64.  Always
+            // reserve room for the first array slot, including the empty case.
+            uint minimumSize = checked((uint)(JOB_QUERY_HEADER_BYTES + (uint)IntPtr.Size));
+            if (required < minimumSize) required = minimumSize;
+            if (required > MAX_JOB_QUERY_BYTES) {
+                // Keep the native sizing error when the query failed; the
+                // bounded capacity refusal is reported as 8 only for an
+                // anomalous successful sizing response.
+                result.ErrorCode = initialSucceeded ? 8 : sizingError;
+                return result;
+            }
+
+            // The attempt budget includes the zero-buffer sizing query above.
+            // A cleanup identity-gap check may start a separate enumeration;
+            // that caller-level retry has its own QueryJobProcessIds budget.
+            while (CanAttemptJobQuery(result.AttemptCount)) {
+                IntPtr buffer = IntPtr.Zero;
+                try {
+                    buffer = Marshal.AllocHGlobal(unchecked((int)required));
+                    if (buffer == IntPtr.Zero) { result.ErrorCode = 8; return result; }
+                    uint returned;
+                    int error;
+                    bool querySucceeded = query(job, buffer, required, out returned, out error);
+                    if (querySucceeded) {
+                        lastQuerySucceeded = true;
+                    } else {
+                        lastQuerySucceeded = false;
+                        lastNativeError = error;
+                    }
+                    bool nativeByteBoundsValid = required <= MAX_JOB_QUERY_BYTES && returned <= MAX_JOB_QUERY_BYTES;
+                    uint boundedReturned = BoundJobQueryByteCount(returned);
+                    uint assigned = 0;
+                    uint listed = 0;
+                    if (querySucceeded) {
+                        assigned = unchecked((uint)Marshal.ReadInt32(buffer, 0));
+                        listed = unchecked((uint)Marshal.ReadInt32(buffer, 4));
+                    }
+                    bool resized = false;
+                    uint nextRequired = 0;
+                    if (!querySucceeded && IsRetryableJobQueryError(error)) {
+                        resized = TryGetLargerJobQueryCapacity(required, returned, 0, out nextRequired);
+                    }
+                    RecordJobQueryAttempt(result, querySucceeded, error,
+                        BoundJobQueryByteCount(required), BoundJobQueryByteCount(required),
+                        boundedReturned, assigned, listed, resized);
+                    if (!nativeByteBoundsValid) {
+                        // The native result is retained as a typed failure, but
+                        // no over-capacity byte value enters telemetry or the
+                        // retry arithmetic.
+                        result.ErrorCode = querySucceeded ? ERROR_BAD_LENGTH : error;
+                        return result;
+                    }
+                    if (!querySucceeded) {
+                        if (resized) {
+                            required = nextRequired;
+                            result.RequiredBytes = required;
+                            continue;
+                        }
+                        result.ErrorCode = error;
+                        return result;
+                    }
+                    if (!IsJobQueryShapeStructurallyValid(required, returned, assigned, listed)) {
+                        result.ErrorCode = ERROR_BAD_LENGTH;
+                        return result;
+                    }
+                    if (listed != assigned) {
+                        if (!TryGetLargerJobQueryCapacity(required, returned, assigned, out nextRequired)) {
+                            result.ErrorCode = ERROR_INSUFFICIENT_BUFFER;
+                            return result;
+                        }
+                        result.Resized = true;
+                        required = nextRequired;
+                        result.RequiredBytes = required;
+                        // Mark this successful-but-partial attempt as the source
+                        // of the resize in its bounded journal entry.  The final
+                        // complete attempt is the only one that can succeed.
+                        if (result.Attempts != null && result.Attempts.Length > 0) {
+                            result.Attempts[result.Attempts.Length - 1].Resized = true;
+                        }
+                        continue;
+                    }
+                    var ids = new int[unchecked((int)listed)];
+                    // Hashtable is the non-generic O(1) set available to both
+                    // Windows PowerShell 5.1 and pwsh's constrained Add-Type
+                    // reference set; allocation failure is caught below.
+                    var idsSeen = new Hashtable();
+                    for (uint i = 0; i < listed; ++i) {
+                        int offset = checked((int)(JOB_QUERY_HEADER_BYTES + checked((ulong)i * (ulong)IntPtr.Size)));
+                        IntPtr value = Marshal.ReadIntPtr(buffer, offset);
+                        long processId = value.ToInt64();
+                        if (processId <= 0 || processId > Int32.MaxValue) { result.ErrorCode = ERROR_BAD_LENGTH; return result; }
+                        int id = unchecked((int)processId);
+                        if (idsSeen.ContainsKey(id)) { result.ErrorCode = ERROR_BAD_LENGTH; return result; }
+                        idsSeen.Add(id, null);
+                        ids[unchecked((int)i)] = id;
+                    }
+                    result.ProcessIds = ids;
+                    result.Succeeded = true;
+                    return result;
+                }
+                finally {
+                    if (buffer != IntPtr.Zero) Marshal.FreeHGlobal(buffer);
+                }
+            }
+            // Preserve the final native retryable error when the bounded
+            // budget is exhausted.  ERROR_INSUFFICIENT_BUFFER is reserved for
+            // a successful-but-partial enumeration with no larger target.
+            result.ErrorCode = lastQuerySucceeded
+                ? ERROR_INSUFFICIENT_BUFFER
+                : lastNativeError;
+            return result;
         }
-        result.ErrorCode = ERROR_INSUFFICIENT_BUFFER;
-        return result;
+        catch (OutOfMemoryException) { result.ErrorCode = 8; return result; }
+        catch (OverflowException) { result.ErrorCode = ERROR_BAD_LENGTH; return result; }
+        catch (Exception) { result.ErrorCode = ERROR_BAD_LENGTH; return result; }
     }
 
     public static StartupProbeJobResult CloseKillOnCloseJob(IntPtr job)
@@ -3327,6 +3837,149 @@ function Invoke-SelfTest {
         }
     }
     if (-not $jobQueryObservationSelfTestVerified) { throw 'Job query observation field self-test failed.' }
+    # Enter the owning try/finally immediately after creation.  Even if either
+    # verification list allocation fails, the job handle remains covered by the
+    # kill-on-close cleanup fence.
+    $multiMemberJob = [NativeStartupProbe]::CreateKillOnCloseJob()
+    $multiMemberChildren = $null
+    $multiMemberExpectedIds = $null
+    $multiMemberJobQuery = $null
+    $realMultiMemberJobQuerySelfTestVerified = $false
+    $multiMemberCleanupVerified = $false
+    try {
+        if (-not $multiMemberJob.Succeeded -or $multiMemberJob.Handle -eq [IntPtr]::Zero) {
+            throw 'Multi-member kill-on-close job creation self-test failed.'
+        }
+        $multiMemberChildren = New-Object Collections.Generic.List[object]
+        $multiMemberExpectedIds = New-Object Collections.Generic.List[int]
+        $multiMemberCommandLine = '"{0}" /c pause' -f $env:ComSpec
+        for ($memberIndex = 0; $memberIndex -lt 2; $memberIndex++) {
+            $child = [NativeStartupProbe]::CreateSuspendedProcess(
+                $env:ComSpec, $multiMemberCommandLine, $env:SystemRoot, [string[]]@())
+            if (-not $child.Succeeded -or $child.ProcessHandle -eq [IntPtr]::Zero -or
+                $child.ThreadHandle -eq [IntPtr]::Zero -or $child.ProcessId -le 0) {
+                throw 'Multi-member suspended process creation self-test failed.'
+            }
+            try {
+                [void]$multiMemberChildren.Add($child)
+                [void]$multiMemberExpectedIds.Add([int]$child.ProcessId)
+            }
+            catch {
+                # If list growth itself fails, close this untracked child
+                # before the outer job fence is retried.
+                try { [void][NativeStartupProbe]::TerminateProcessHandle($child.ProcessHandle) } catch { }
+                try { [void][NativeStartupProbe]::CloseNativeHandle($child.ThreadHandle) } catch { }
+                try { [void][NativeStartupProbe]::CloseNativeHandle($child.ProcessHandle) } catch { }
+                throw
+            }
+            $childAssigned = [NativeStartupProbe]::AssignProcessToKillOnCloseJob(
+                $multiMemberJob.Handle, $child.ProcessId)
+            if (-not $childAssigned.Succeeded) {
+                throw 'Multi-member job assignment self-test failed.'
+            }
+        }
+        $multiMemberJobQuery = [NativeStartupProbe]::QueryJobProcessIds($multiMemberJob.Handle)
+        $multiMemberIds = @($multiMemberJobQuery.ProcessIds | ForEach-Object { [int]$_ })
+        $multiMemberActualSorted = @($multiMemberIds | Sort-Object)
+        $multiMemberExpectedSorted = @($multiMemberExpectedIds | Sort-Object)
+        $multiMemberIdsMatch = ($multiMemberActualSorted -join ',') -eq ($multiMemberExpectedSorted -join ',')
+        $multiMemberAttemptsInBounds = $true
+        foreach ($multiMemberAttempt in @($multiMemberJobQuery.Attempts)) {
+            if ($null -eq $multiMemberAttempt -or
+                [UInt64]$multiMemberAttempt.CapacityBytes -gt 1048576 -or
+                [UInt64]$multiMemberAttempt.RequiredBytes -gt 1048576 -or
+                [UInt64]$multiMemberAttempt.ReturnLengthBytes -gt 1048576) {
+                $multiMemberAttemptsInBounds = $false
+                break
+            }
+        }
+        $multiMemberFinalAttempt = @($multiMemberJobQuery.Attempts)[-1]
+        $multiMemberFinalComplete = $null -ne $multiMemberFinalAttempt -and
+            $multiMemberFinalAttempt.Succeeded -and
+            $multiMemberFinalAttempt.AssignedProcessCount -eq 2 -and
+            $multiMemberFinalAttempt.ListedProcessCount -eq 2
+        $realMultiMemberJobQuerySelfTestVerified = $multiMemberJobQuery.Succeeded -and
+            $multiMemberJobQuery.AttemptCount -ge 1 -and $multiMemberJobQuery.AttemptCount -le 8 -and
+            $multiMemberJobQuery.AssignedProcessCount -eq 2 -and
+            $multiMemberJobQuery.ListedProcessCount -eq 2 -and
+            [UInt64]$multiMemberJobQuery.CapacityBytes -le 1048576 -and
+            [UInt64]$multiMemberJobQuery.RequiredBytes -le 1048576 -and
+            [UInt64]$multiMemberJobQuery.ReturnLengthBytes -le 1048576 -and
+            $multiMemberIds.Count -eq 2 -and
+            $multiMemberIds[0] -gt 0 -and $multiMemberIds[1] -gt 0 -and
+            $multiMemberIds[0] -ne $multiMemberIds[1] -and
+            $multiMemberIdsMatch -and $multiMemberAttemptsInBounds -and
+            $multiMemberFinalComplete
+        if (-not $realMultiMemberJobQuerySelfTestVerified) {
+            throw 'Multi-member job query self-test failed.'
+        }
+    }
+    finally {
+        # Closing the kill-on-close job is the primary fence.  Termination is
+        # asynchronous, so retain each exact process handle and prove an exit
+        # before closing it; this self-test must not leave suspended cmd.exe
+        # children behind even when an earlier assertion throws.
+        $multiMemberJobCloseSucceeded = $false
+        if ($null -ne $multiMemberJob -and $multiMemberJob.Handle -ne [IntPtr]::Zero) {
+            try {
+                $multiMemberJobClose = [NativeStartupProbe]::CloseKillOnCloseJob($multiMemberJob.Handle)
+                $multiMemberJobCloseSucceeded = [bool]$multiMemberJobClose.Succeeded
+            }
+            catch { $multiMemberJobCloseSucceeded = $false }
+        }
+        $multiMemberChildrenExited = $true
+        for ($childIndex = 0; $null -ne $multiMemberChildren -and $childIndex -lt $multiMemberChildren.Count; $childIndex++) {
+            $child = $multiMemberChildren[$childIndex]
+            if ($null -eq $child -or $child.ProcessHandle -eq [IntPtr]::Zero) { continue }
+            $exitObserved = $false
+            $exitWatch = [Diagnostics.Stopwatch]::StartNew()
+            while ($exitWatch.ElapsedMilliseconds -lt 3000) {
+                try {
+                    $exitProbe = [NativeStartupProbe]::QueryProcessExitState($child.ProcessHandle)
+                    if ($exitProbe.Succeeded -and -not $exitProbe.Active) {
+                        $exitObserved = $true
+                        break
+                    }
+                }
+                catch { }
+                Start-Sleep -Milliseconds 10
+            }
+            if (-not $exitObserved) {
+                try { [void][NativeStartupProbe]::TerminateProcessHandle($child.ProcessHandle) } catch { }
+                $exitWatch.Restart()
+                while ($exitWatch.ElapsedMilliseconds -lt 1000) {
+                    try {
+                        $exitProbe = [NativeStartupProbe]::QueryProcessExitState($child.ProcessHandle)
+                        if ($exitProbe.Succeeded -and -not $exitProbe.Active) {
+                            $exitObserved = $true
+                            break
+                        }
+                    }
+                    catch { }
+                    Start-Sleep -Milliseconds 10
+                }
+            }
+            if (-not $exitObserved) { $multiMemberChildrenExited = $false }
+            if ($child.ThreadHandle -ne [IntPtr]::Zero) {
+                try { [void][NativeStartupProbe]::CloseNativeHandle($child.ThreadHandle) } catch { }
+            }
+            try { [void][NativeStartupProbe]::CloseNativeHandle($child.ProcessHandle) } catch { }
+        }
+        if (-not $multiMemberJobCloseSucceeded -and
+            $null -ne $multiMemberJob -and $multiMemberJob.Handle -ne [IntPtr]::Zero) {
+            try {
+                # A transient first CloseHandle failure is retried and its
+                # actual result is part of the cleanup proof.
+                $multiMemberJobCloseRetry = [NativeStartupProbe]::CloseKillOnCloseJob($multiMemberJob.Handle)
+                $multiMemberJobCloseSucceeded = [bool]$multiMemberJobCloseRetry.Succeeded
+            }
+            catch { $multiMemberJobCloseSucceeded = $false }
+        }
+        $multiMemberCleanupVerified = $multiMemberJobCloseSucceeded -and $multiMemberChildrenExited
+    }
+    if (-not $multiMemberCleanupVerified) {
+        throw 'Multi-member job cleanup self-test could not prove child exit.'
+    }
     $noJobMembers = Get-StartupDiagnosticJobMembers ([IntPtr]::Zero)
     $noJobCleanup = Stop-OwnedProcesses @{} ([IntPtr]::Zero) $null
     $cleanupObservationSelfTestVerified = (-not $noJobMembers.verified -and $noJobMembers.queryObservation.skipped -and
@@ -3406,12 +4059,11 @@ function Invoke-SelfTest {
     $cleanupErrorCountSelfTestVerified = $cleanupErrorCountSelfTestTotal -eq 3 -and
         $cleanupErrorCountOverflowSelfTestTotal -eq [int]::MaxValue
     if (-not $cleanupErrorCountSelfTestVerified) { throw 'Cleanup error count aggregation self-test failed.' }
-    $sharedScriptText = [IO.File]::ReadAllText($PSCommandPath)
-    $unsupportedResizeErrorName = 'ERROR_' + 'MORE_DATA'
-    $jobQueryRetryBehaviorUnchanged = $sharedScriptText.IndexOf($unsupportedResizeErrorName, [StringComparison]::Ordinal) -lt 0
-    if (-not $jobQueryRetryBehaviorUnchanged) {
-        throw 'Unsupported job-query sizing error unexpectedly became retryable.'
+    $jobQueryRetryContractSelfTestVerified = [NativeStartupProbe]::RunJobQueryContractSelfTest()
+    if (-not $jobQueryRetryContractSelfTestVerified) {
+        throw 'Bounded job-query retry contract self-test failed.'
     }
+    $jobQueryRetryBehaviorCorrected = [bool]$jobQueryRetryContractSelfTestVerified
     [void](Get-ProcessSnapshot @{} ([int[]]@($PID)))
     $snapshotWatch = [Diagnostics.Stopwatch]::StartNew()
     $snapshot = Get-ProcessSnapshot @{} ([int[]]@($PID))
@@ -3519,7 +4171,10 @@ function Invoke-SelfTest {
         jobContainmentSelfTestVerified = [bool]$jobSelfTestClosed
         jobQueryObservationSelfTestVerified = [bool]$jobQueryObservationSelfTestVerified
         jobQueryError234Retained = [bool]$jobQueryError234Retained
-        jobQueryRetryBehaviorUnchanged = [bool]$jobQueryRetryBehaviorUnchanged
+
+        jobQueryRetryBehaviorCorrected = [bool]$jobQueryRetryBehaviorCorrected
+        jobQueryRetryContractSelfTestVerified = [bool]$jobQueryRetryContractSelfTestVerified
+        realMultiMemberJobQuerySelfTestVerified = [bool]$realMultiMemberJobQuerySelfTestVerified
         cleanupObservationSelfTestVerified = [bool]$cleanupObservationSelfTestVerified
         failedQueryCleanupRemainsUnverified = [bool]$failedQueryCleanupRemainsUnverified
         cleanupErrorCountSelfTestVerified = [bool]$cleanupErrorCountSelfTestVerified
