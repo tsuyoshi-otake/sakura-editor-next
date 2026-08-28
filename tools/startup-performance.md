@@ -99,6 +99,25 @@ backend を起動せず、その時点で campaign を停止します。JSON の
 `cleanup-unverified`、完了数、抑止数を残し、`acceptance.qualified` と `pass` は false になります。
 これにより残存プロセスや汚染された profile による後続 launch の増殖を防ぎます。
 
+### Job-query / cleanup telemetry（診断専用）
+
+paired runner の v1 optional telemetry（`launchJobQueryObservation`、各
+`startupDiagnostics` checkpoint の `jobQueryObservation`、`cleanupObservation`）は、
+payload-free な numeric observation としてだけ保持します。bounded な count / byte、boolean、
+numeric Win32 error code と最大 8 件の attempt projection 以外は出力せず、PID、path、handle、
+message、command、caption、document data、raw object は query / cleanup telemetry に含めません。
+最初の sizing attempt で numeric な `errorCode=122` または `errorCode=24` が見え、その後に
+successful query へ進む場合があります。これらは Win32 error code であり byte count ではありません。
+`capacityBytes`、`requiredBytes`、`returnLengthBytes`、`assignedProcessCount`、`listedProcessCount`
+は別々の bounded 診断値です。終端エラーの numeric code（234 を含む）は保持します。
+
+成功しても listed が assigned より少ない場合の `partial` は診断値として残しますが、別作業 C3
+までは補正・再解釈しません。zero survivors でも query が失敗していれば cleanup の証明にはなりません。
+この telemetry は success expression、`Test-PairedRunCleanupVerified`、termination / suppression、
+acceptance、qualification、adoption のいずれも qualify せず、弱めもしません。failed / preflight
+launch と optional fields がない旧 v1 report は neutral な `not-attempted` として扱い、present だが
+malformed な query / cleanup は該当する局所 subobject だけを `unavailable` にします。
+
 `acceptance.qualified` は必要な launch 数と cleanup がそろった収集判定です。qualified mode は
 `-CppBuildManifest` / `-RustBuildManifest` と
 `-CppRuntimeStageDirectory` / `-RustRuntimeStageDirectory` を必須とします。manifest は現在の source

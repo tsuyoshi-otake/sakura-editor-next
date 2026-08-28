@@ -97,6 +97,10 @@ $script:PairedDiagnosticCheckpointMs = [ordered]@{
 $script:PairedDiagnosticMaxProcessCount = 256
 $script:PairedDiagnosticMaxImageNameLength = 260
 $script:PairedDiagnosticMaxWindowCount = 1024
+$script:PairedJobQueryMaxCount = 4096
+$script:PairedJobQueryMaxBytes = [UInt64]1048576
+$script:PairedJobQueryMaxProcessCount = [UInt64]131072
+$script:PairedJobQueryMaxAttempts = 8
 $script:PairedStartupTraceMaxOrderedEvents = 256
 $script:PairedStartupTraceMaxElapsedMs = 120000
 $script:PairedWin32PathTextLimit = 259
@@ -1997,6 +2001,390 @@ function Convert-PairedDiagnosticWindowCount {
     catch { return $null }
 }
 
+function New-PairedEmptyJobQueryObservation {
+    return [ordered]@{
+        status = 'not-attempted'
+        attempted = $false
+        skipped = $false
+        succeeded = $false
+        errorCode = $null
+        queryCount = [int]0
+        attemptCount = [int]0
+        capacityBytes = [UInt64]0
+        requiredBytes = [UInt64]0
+        returnLengthBytes = [UInt64]0
+        assignedProcessCount = [UInt64]0
+        listedProcessCount = [UInt64]0
+        resized = $false
+        attempts = @()
+        attemptsTruncated = $false
+    }
+}
+
+function New-PairedUnavailableJobQueryObservation {
+    $observation = New-PairedEmptyJobQueryObservation
+    $observation.status = 'unavailable'
+    return $observation
+}
+
+function Test-PairedJobQueryNumeric {
+    param([AllowNull()] [object]$Value)
+    return $Value -is [byte] -or $Value -is [sbyte] -or
+        $Value -is [int16] -or $Value -is [uint16] -or
+        $Value -is [int32] -or $Value -is [uint32] -or
+        $Value -is [int64] -or $Value -is [uint64] -or
+        $Value -is [single] -or $Value -is [double] -or $Value -is [decimal]
+}
+
+function Convert-PairedJobQueryBoolean {
+    param([AllowNull()] [object]$Value)
+    if ($Value -is [bool]) { return [bool]$Value }
+    if (-not (Test-PairedJobQueryNumeric $Value)) { return $null }
+    try {
+        $number = [decimal]$Value
+        if ($number -eq 0) { return $false }
+        if ($number -eq 1) { return $true }
+    }
+    catch { return $null }
+    return $null
+}
+
+function Convert-PairedJobQueryBoundedUInt64 {
+    param(
+        [AllowNull()] [object]$Value,
+        [Parameter(Mandatory = $true)] [UInt64]$Maximum
+    )
+    if (-not (Test-PairedJobQueryNumeric $Value) -or $Value -is [bool]) { return $null }
+    try {
+        $number = [decimal]$Value
+        if ($number -lt 0 -or $number -gt [decimal]$Maximum -or
+            $number -ne [decimal]::Truncate($number)) { return $null }
+        return [UInt64]$number
+    }
+    catch { return $null }
+}
+
+function Convert-PairedJobQueryErrorCode {
+    param([AllowNull()] [object]$Value)
+    if ($null -eq $Value) { return $null }
+    $code = Convert-PairedJobQueryBoundedUInt64 $Value ([UInt64][int]::MaxValue)
+    if ($null -eq $code) { return $null }
+    return [int]$code
+}
+
+function Test-PairedAnyPropertyPresent {
+    param(
+        [Parameter(Mandatory = $true)] [AllowNull()] [object]$Object,
+        [Parameter(Mandatory = $true)] [string[]]$Names
+    )
+    foreach ($name in $Names) {
+        if (Test-PairedPropertyPresent $Object $name) { return $true }
+    }
+    return $false
+}
+
+function Convert-PairedJobQueryObservation {
+    param([AllowNull()] [object]$Raw)
+    if ($null -eq $Raw) { return New-PairedUnavailableJobQueryObservation }
+    try {
+        if ($Raw -is [string] -or $Raw -is [ValueType] -or $Raw -is [Array]) {
+            return New-PairedUnavailableJobQueryObservation
+        }
+        $requiredFields = @(
+            'attempted', 'skipped', 'succeeded', 'errorCode', 'queryCount',
+            'attemptCount', 'capacityBytes', 'requiredBytes', 'returnLengthBytes',
+            'assignedProcessCount', 'listedProcessCount', 'resized', 'attempts',
+            'attemptsTruncated'
+        )
+        foreach ($field in $requiredFields) {
+            if (-not (Test-PairedPropertyPresent $Raw $field)) {
+                return New-PairedUnavailableJobQueryObservation
+            }
+        }
+        $attempted = Convert-PairedJobQueryBoolean (Get-PairedProperty $Raw @('attempted'))
+        $skipped = Convert-PairedJobQueryBoolean (Get-PairedProperty $Raw @('skipped'))
+        $succeeded = Convert-PairedJobQueryBoolean (Get-PairedProperty $Raw @('succeeded'))
+        $resized = Convert-PairedJobQueryBoolean (Get-PairedProperty $Raw @('resized'))
+        $attemptsTruncated = Convert-PairedJobQueryBoolean (Get-PairedProperty $Raw @('attemptsTruncated'))
+        $queryCount = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $Raw @('queryCount')) ([UInt64]$script:PairedJobQueryMaxCount)
+        $attemptCount = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $Raw @('attemptCount')) ([UInt64]$script:PairedJobQueryMaxCount)
+        $capacityBytes = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $Raw @('capacityBytes')) $script:PairedJobQueryMaxBytes
+        $requiredBytes = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $Raw @('requiredBytes')) $script:PairedJobQueryMaxBytes
+        $returnLengthBytes = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $Raw @('returnLengthBytes')) $script:PairedJobQueryMaxBytes
+        $assignedProcessCount = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $Raw @('assignedProcessCount')) $script:PairedJobQueryMaxProcessCount
+        $listedProcessCount = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $Raw @('listedProcessCount')) $script:PairedJobQueryMaxProcessCount
+        $errorRaw = Get-PairedProperty $Raw @('errorCode')
+        $errorCode = Convert-PairedJobQueryErrorCode $errorRaw
+        if ($null -eq $attempted -or $null -eq $skipped -or $null -eq $succeeded -or
+            $null -eq $resized -or $null -eq $attemptsTruncated -or
+            $null -eq $queryCount -or $null -eq $attemptCount -or
+            $null -eq $capacityBytes -or $null -eq $requiredBytes -or
+            $null -eq $returnLengthBytes -or $null -eq $assignedProcessCount -or
+            $null -eq $listedProcessCount -or
+            ($null -ne $errorRaw -and $null -eq $errorCode) -or
+            $listedProcessCount -gt $assignedProcessCount) {
+            return New-PairedUnavailableJobQueryObservation
+        }
+        $rawAttemptsValue = Get-PairedProperty $Raw @('attempts')
+        if ($null -eq $rawAttemptsValue) { return New-PairedUnavailableJobQueryObservation }
+        $rawAttempts = @($rawAttemptsValue)
+        $boundedAttempts = New-Object Collections.Generic.List[object]
+        $attemptLimit = [Math]::Min([int]$rawAttempts.Count, [int]$script:PairedJobQueryMaxAttempts)
+        for ($index = 0; $index -lt $attemptLimit; $index++) {
+            $attempt = $rawAttempts[$index]
+            if ($null -eq $attempt -or $attempt -is [string] -or $attempt -is [ValueType] -or $attempt -is [Array]) {
+                return New-PairedUnavailableJobQueryObservation
+            }
+            $attemptFields = @(
+                'attempted', 'attemptNumber', 'succeeded', 'errorCode',
+                'capacityBytes', 'requiredBytes', 'returnLengthBytes',
+                'assignedProcessCount', 'listedProcessCount', 'resized'
+            )
+            foreach ($field in $attemptFields) {
+                if (-not (Test-PairedPropertyPresent $attempt $field)) {
+                    return New-PairedUnavailableJobQueryObservation
+                }
+            }
+            $attemptObserved = Convert-PairedJobQueryBoolean (Get-PairedProperty $attempt @('attempted'))
+            $attemptNumber = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $attempt @('attemptNumber')) ([UInt64]$script:PairedJobQueryMaxAttempts)
+            $attemptSucceeded = Convert-PairedJobQueryBoolean (Get-PairedProperty $attempt @('succeeded'))
+            $attemptErrorRaw = Get-PairedProperty $attempt @('errorCode')
+            $attemptError = Convert-PairedJobQueryErrorCode $attemptErrorRaw
+            $attemptCapacity = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $attempt @('capacityBytes')) $script:PairedJobQueryMaxBytes
+            $attemptRequired = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $attempt @('requiredBytes')) $script:PairedJobQueryMaxBytes
+            $attemptReturn = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $attempt @('returnLengthBytes')) $script:PairedJobQueryMaxBytes
+            $attemptAssigned = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $attempt @('assignedProcessCount')) $script:PairedJobQueryMaxProcessCount
+            $attemptListed = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $attempt @('listedProcessCount')) $script:PairedJobQueryMaxProcessCount
+            $attemptResized = Convert-PairedJobQueryBoolean (Get-PairedProperty $attempt @('resized'))
+            if ($null -eq $attemptObserved -or $null -eq $attemptNumber -or $attemptNumber -eq 0 -or
+                $null -eq $attemptSucceeded -or $null -eq $attemptCapacity -or
+                $null -eq $attemptRequired -or $null -eq $attemptReturn -or
+                $null -eq $attemptAssigned -or $null -eq $attemptListed -or
+                $null -eq $attemptResized -or
+                ($null -ne $attemptErrorRaw -and $null -eq $attemptError) -or
+                -not $attemptObserved -or $attemptListed -gt $attemptAssigned) {
+                return New-PairedUnavailableJobQueryObservation
+            }
+            if ($attemptSucceeded) {
+                if ($null -eq $attemptError -or $attemptError -ne 0) {
+                    return New-PairedUnavailableJobQueryObservation
+                }
+            }
+            elseif ($null -eq $attemptError -or $attemptError -eq 0) {
+                return New-PairedUnavailableJobQueryObservation
+            }
+            [void]$boundedAttempts.Add([ordered]@{
+                    attempted = [bool]$attemptObserved
+                    attemptNumber = [int]$attemptNumber
+                    succeeded = [bool]$attemptSucceeded
+                    errorCode = $attemptError
+                    capacityBytes = [UInt64]$attemptCapacity
+                    requiredBytes = [UInt64]$attemptRequired
+                    returnLengthBytes = [UInt64]$attemptReturn
+                    assignedProcessCount = [UInt64]$attemptAssigned
+                    listedProcessCount = [UInt64]$attemptListed
+                    resized = [bool]$attemptResized
+                })
+        }
+        if (-not $attempted) {
+            if ($succeeded -or $attemptCount -ne 0 -or $rawAttempts.Count -ne 0 -or
+                $attemptsTruncated -or $null -ne $errorRaw -or $capacityBytes -ne 0 -or
+                $requiredBytes -ne 0 -or $returnLengthBytes -ne 0 -or
+                $assignedProcessCount -ne 0 -or $listedProcessCount -ne 0 -or $resized) {
+                return New-PairedUnavailableJobQueryObservation
+            }
+            if ($skipped -and $queryCount -eq 0) {
+                # A skipped query may be represented before a caller records
+                # its invocation count; both forms are neutral evidence.
+                $queryCount = [UInt64]0
+            }
+        }
+        else {
+            if ($skipped -or $queryCount -eq 0 -or $attemptCount -eq 0 -or
+                $rawAttempts.Count -eq 0 -or $attemptCount -lt [UInt64]$rawAttempts.Count) {
+                return New-PairedUnavailableJobQueryObservation
+            }
+            if ($succeeded) {
+                if ($null -eq $errorCode -or $errorCode -ne 0) {
+                    return New-PairedUnavailableJobQueryObservation
+                }
+            }
+            elseif ($null -eq $errorCode -or $errorCode -eq 0) {
+                return New-PairedUnavailableJobQueryObservation
+            }
+        }
+        if ($skipped -and ($attempted -or $succeeded -or $attemptCount -ne 0 -or
+            $rawAttempts.Count -ne 0 -or $attemptsTruncated -or $null -ne $errorRaw)) {
+            return New-PairedUnavailableJobQueryObservation
+        }
+        $status = 'not-attempted'
+        if ($attempted) {
+            if ($succeeded) {
+                $status = if ($listedProcessCount -lt $assignedProcessCount) { 'partial' } else { 'succeeded' }
+            }
+            else { $status = 'failed' }
+        }
+        return [ordered]@{
+            status = $status
+            attempted = [bool]$attempted
+            skipped = [bool]$skipped
+            succeeded = [bool]$succeeded
+            errorCode = if ($attempted) { $errorCode } else { $null }
+            queryCount = [int]$queryCount
+            attemptCount = [int]$attemptCount
+            capacityBytes = [UInt64]$capacityBytes
+            requiredBytes = [UInt64]$requiredBytes
+            returnLengthBytes = [UInt64]$returnLengthBytes
+            assignedProcessCount = [UInt64]$assignedProcessCount
+            listedProcessCount = [UInt64]$listedProcessCount
+            resized = [bool]$resized
+            attempts = $boundedAttempts.ToArray()
+            attemptsTruncated = [bool]($attemptsTruncated -or $rawAttempts.Count -gt [int]$script:PairedJobQueryMaxAttempts)
+        }
+    }
+    catch { return New-PairedUnavailableJobQueryObservation }
+}
+function New-PairedEmptyCleanupObservation {
+    return [ordered]@{
+        status = 'not-attempted'
+        attempted = $false
+        jobPresent = $false
+        jobQueryAttempted = $false
+        jobQuerySkipped = $false
+        jobQuerySucceeded = $false
+        query = New-PairedEmptyJobQueryObservation
+        jobCloseAttempted = $false
+        jobCloseSucceeded = $false
+        trackedSweepAttempted = $false
+        trackedSweepVerified = $false
+        finalPathSweepAttempted = $false
+        finalPathSweepVerified = $false
+        survivorCount = [UInt64]0
+        cleanupErrorCount = [UInt64]0
+    }
+}
+
+function New-PairedUnavailableCleanupObservation {
+    param([AllowNull()] [object]$Outer = $null)
+    $observation = New-PairedEmptyCleanupObservation
+    if ($null -ne $Outer) {
+        foreach ($field in @(
+                'attempted', 'jobPresent', 'jobQueryAttempted', 'jobQuerySkipped',
+                'jobQuerySucceeded', 'jobCloseAttempted', 'jobCloseSucceeded',
+                'trackedSweepAttempted', 'trackedSweepVerified',
+                'finalPathSweepAttempted', 'finalPathSweepVerified',
+                'survivorCount', 'cleanupErrorCount')) {
+            $observation[$field] = Get-PairedProperty $Outer @($field)
+        }
+    }
+    $observation.status = 'unavailable'
+    $observation.query = New-PairedUnavailableJobQueryObservation
+    return $observation
+}
+function Convert-PairedCleanupObservation {
+    param([AllowNull()] [object]$Raw)
+    if ($null -eq $Raw) { return New-PairedUnavailableCleanupObservation }
+    try {
+        if ($Raw -is [string] -or $Raw -is [ValueType] -or $Raw -is [Array]) {
+            return New-PairedUnavailableCleanupObservation
+        }
+        $requiredFields = @(
+            'attempted', 'jobPresent', 'jobQueryAttempted', 'jobQuerySkipped',
+            'jobQuerySucceeded', 'jobCloseAttempted', 'jobCloseSucceeded',
+            'trackedSweepAttempted', 'trackedSweepVerified',
+            'finalPathSweepAttempted', 'finalPathSweepVerified',
+            'survivorCount', 'cleanupErrorCount'
+        )
+        foreach ($field in $requiredFields) {
+            if (-not (Test-PairedPropertyPresent $Raw $field)) {
+                return New-PairedUnavailableCleanupObservation
+            }
+        }
+        $attempted = Convert-PairedJobQueryBoolean (Get-PairedProperty $Raw @('attempted'))
+        $jobPresent = Convert-PairedJobQueryBoolean (Get-PairedProperty $Raw @('jobPresent'))
+        $jobQueryAttempted = Convert-PairedJobQueryBoolean (Get-PairedProperty $Raw @('jobQueryAttempted'))
+        $jobQuerySkipped = Convert-PairedJobQueryBoolean (Get-PairedProperty $Raw @('jobQuerySkipped'))
+        $jobQuerySucceeded = Convert-PairedJobQueryBoolean (Get-PairedProperty $Raw @('jobQuerySucceeded'))
+        $jobCloseAttempted = Convert-PairedJobQueryBoolean (Get-PairedProperty $Raw @('jobCloseAttempted'))
+        $jobCloseSucceeded = Convert-PairedJobQueryBoolean (Get-PairedProperty $Raw @('jobCloseSucceeded'))
+        $trackedSweepAttempted = Convert-PairedJobQueryBoolean (Get-PairedProperty $Raw @('trackedSweepAttempted'))
+        $trackedSweepVerified = Convert-PairedJobQueryBoolean (Get-PairedProperty $Raw @('trackedSweepVerified'))
+        $finalPathSweepAttempted = Convert-PairedJobQueryBoolean (Get-PairedProperty $Raw @('finalPathSweepAttempted'))
+        $finalPathSweepVerified = Convert-PairedJobQueryBoolean (Get-PairedProperty $Raw @('finalPathSweepVerified'))
+        $survivorCount = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $Raw @('survivorCount')) $script:PairedJobQueryMaxProcessCount
+        $cleanupErrorCount = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $Raw @('cleanupErrorCount')) ([UInt64]$script:PairedJobQueryMaxCount)
+        $outer = [ordered]@{
+            attempted = $attempted
+            jobPresent = $jobPresent
+            jobQueryAttempted = $jobQueryAttempted
+            jobQuerySkipped = $jobQuerySkipped
+            jobQuerySucceeded = $jobQuerySucceeded
+            jobCloseAttempted = $jobCloseAttempted
+            jobCloseSucceeded = $jobCloseSucceeded
+            trackedSweepAttempted = $trackedSweepAttempted
+            trackedSweepVerified = $trackedSweepVerified
+            finalPathSweepAttempted = $finalPathSweepAttempted
+            finalPathSweepVerified = $finalPathSweepVerified
+            survivorCount = $survivorCount
+            cleanupErrorCount = $cleanupErrorCount
+        }
+        if ($null -eq $attempted -or $null -eq $jobPresent -or $null -eq $jobQueryAttempted -or
+            $null -eq $jobQuerySkipped -or $null -eq $jobQuerySucceeded -or
+            $null -eq $jobCloseAttempted -or $null -eq $jobCloseSucceeded -or
+            $null -eq $trackedSweepAttempted -or $null -eq $trackedSweepVerified -or
+            $null -eq $finalPathSweepAttempted -or $null -eq $finalPathSweepVerified -or
+            $null -eq $survivorCount -or $null -eq $cleanupErrorCount) {
+            return New-PairedUnavailableCleanupObservation
+        }
+        if (-not (Test-PairedPropertyPresent $Raw 'query')) {
+            return New-PairedUnavailableCleanupObservation $outer
+        }
+        $queryRaw = Get-PairedProperty $Raw @('query')
+        $query = if ($null -eq $queryRaw) { New-PairedUnavailableJobQueryObservation } else { Convert-PairedJobQueryObservation $queryRaw }
+        if ($query.status -eq 'unavailable') {
+            return New-PairedUnavailableCleanupObservation $outer
+        }
+        if ($jobQueryAttempted -ne [bool]$query.attempted -or
+            $jobQuerySkipped -ne [bool]$query.skipped) {
+            return New-PairedUnavailableCleanupObservation $outer
+        }
+        if ($query.attempted -and $jobQuerySucceeded -ne [bool]$query.succeeded) {
+            return New-PairedUnavailableCleanupObservation $outer
+        }
+        if (-not $attempted) {
+            if ($jobPresent -or $jobQueryAttempted -or $jobQuerySkipped -or $jobQuerySucceeded -or
+                $jobCloseAttempted -or $jobCloseSucceeded -or $trackedSweepAttempted -or $trackedSweepVerified -or
+                $finalPathSweepAttempted -or $finalPathSweepVerified -or $survivorCount -ne 0 -or
+                $cleanupErrorCount -ne 0) {
+                return New-PairedUnavailableCleanupObservation $outer
+            }
+        }
+        else {
+            if ($jobCloseSucceeded -and -not $jobCloseAttempted -and $jobPresent) {
+                return New-PairedUnavailableCleanupObservation $outer
+            }
+            if ($trackedSweepVerified -and -not $trackedSweepAttempted) {
+                return New-PairedUnavailableCleanupObservation $outer
+            }
+            if ($finalPathSweepVerified -and -not $finalPathSweepAttempted) {
+                return New-PairedUnavailableCleanupObservation $outer
+            }
+        }
+        $status = 'not-attempted'
+        if ($attempted) {
+            $failed = -not $jobQuerySucceeded -or -not $jobCloseSucceeded -or
+                -not $trackedSweepVerified -or -not $finalPathSweepVerified -or
+                $survivorCount -gt 0 -or $cleanupErrorCount -gt 0
+            if ($failed) { $status = 'failed' }
+            elseif ($query.status -eq 'partial') { $status = 'partial' }
+            else { $status = 'succeeded' }
+        }
+        $outer.status = $status
+        $outer.query = $query
+        return $outer
+    }
+    catch { return New-PairedUnavailableCleanupObservation }
+}
 function New-PairedEmptyProcessDiagnosticSnapshot {
     param([Parameter(Mandatory = $true)] [string]$Checkpoint)
     return [ordered]@{
@@ -2022,6 +2410,7 @@ function New-PairedEmptyProcessDiagnosticSnapshot {
         processExitElapsedMs = $null
         failureStage = $null
         failureType = $null
+        jobQueryObservation = New-PairedEmptyJobQueryObservation
     }
 }
 
@@ -2140,6 +2529,17 @@ function Convert-PairedProcessDiagnostics {
         if ($status -notin @('observed', 'unavailable', 'not-reached')) { $status = 'unavailable' }
         $output.status = $status
         $output.observed = [bool]($status -eq 'observed')
+        $rawQueryPresent = Test-PairedPropertyPresent $source 'jobQueryObservation'
+        if ($rawQueryPresent) {
+            $rawQuery = Get-PairedProperty $source @('jobQueryObservation')
+            $output.jobQueryObservation = if ($null -eq $rawQuery) {
+                New-PairedUnavailableJobQueryObservation
+            }
+            else { Convert-PairedJobQueryObservation $rawQuery }
+        }
+        else {
+            $output.jobQueryObservation = New-PairedEmptyJobQueryObservation
+        }
         $output.elapsedMs = Convert-PairedElapsedMs (Get-PairedProperty $source @('elapsedMs'))
         $exit = Convert-PairedDiagnosticExitState $source
         $output.rootExitState = $exit.state
@@ -2518,6 +2918,18 @@ function Convert-PairedLaunchResult {
     )
     $rawSuccess = [bool](Get-PairedProperty $Raw @('success'))
     $affinity = Convert-PairedAffinity (Get-PairedProperty $Raw @('affinity'))
+    $launchJobQueryObservation = if (Test-PairedPropertyPresent $Raw 'launchJobQueryObservation') {
+        $rawLaunchQuery = Get-PairedProperty $Raw @('launchJobQueryObservation')
+        if ($null -eq $rawLaunchQuery) { New-PairedUnavailableJobQueryObservation }
+        else { Convert-PairedJobQueryObservation $rawLaunchQuery }
+    }
+    else { New-PairedEmptyJobQueryObservation }
+    $cleanupObservation = if (Test-PairedPropertyPresent $Raw 'cleanupObservation') {
+        $rawCleanupObservation = Get-PairedProperty $Raw @('cleanupObservation')
+        if ($null -eq $rawCleanupObservation) { New-PairedUnavailableCleanupObservation }
+        else { Convert-PairedCleanupObservation $rawCleanupObservation }
+    }
+    else { New-PairedEmptyCleanupObservation }
     $startupDiagnostics = Convert-PairedProcessDiagnostics (Get-PairedProperty $Raw @('startupDiagnostics'))
     $startupTrace = if (Test-PairedPropertyPresent $Raw 'startupTrace') {
         Convert-PairedStartupTraceEvidence (Get-PairedProperty $Raw @('startupTrace'))
@@ -2564,6 +2976,8 @@ function Convert-PairedLaunchResult {
         metrics = $metrics
         startupMilestones = $startupMilestones
         startupDiagnostics = $startupDiagnostics
+        launchJobQueryObservation = $launchJobQueryObservation
+        cleanupObservation = $cleanupObservation
         startupTrace = $startupTrace
         affinity = $affinity
         profileSha256 = [string]$ProfileDigest.sha256
@@ -3188,6 +3602,50 @@ function Invoke-PairedSelfTest {
         descendantsVerified = $false; errorCode = 0
     }
     $selfTestDiagnosticSnapshots = New-Object Collections.Generic.List[object]
+    $selfTestGoodJobQuery = [ordered]@{
+        attempted = $true; skipped = $false; succeeded = $true; errorCode = 0
+        queryCount = 1; attemptCount = 2; capacityBytes = [UInt64]122; requiredBytes = [UInt64]122
+        returnLengthBytes = [UInt64]24; assignedProcessCount = [UInt64]1; listedProcessCount = [UInt64]1
+        resized = $true
+        attempts = @(
+            [ordered]@{
+                attempted = $true; attemptNumber = 1; succeeded = $false; errorCode = 234
+                capacityBytes = [UInt64]0; requiredBytes = [UInt64]122; returnLengthBytes = [UInt64]122
+                assignedProcessCount = [UInt64]0; listedProcessCount = [UInt64]0; resized = $true
+            }
+            [ordered]@{
+                attempted = $true; attemptNumber = 2; succeeded = $true; errorCode = 0
+                capacityBytes = [UInt64]122; requiredBytes = [UInt64]122; returnLengthBytes = [UInt64]24
+                assignedProcessCount = [UInt64]1; listedProcessCount = [UInt64]1; resized = $false
+            }
+        )
+        attemptsTruncated = $false
+    }
+    $selfTestPartialJobQuery = $selfTestGoodJobQuery | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+    $selfTestPartialJobQuery.assignedProcessCount = [UInt64]2
+    $selfTestPartialJobQuery.listedProcessCount = [UInt64]1
+    $selfTestPartialJobQuery.attempts[1].assignedProcessCount = [UInt64]2
+    $selfTestPartialJobQuery.attempts[1].listedProcessCount = [UInt64]1
+    $selfTestFailedJobQuery = [ordered]@{
+        attempted = $true; skipped = $false; succeeded = $false; errorCode = 234
+        queryCount = 1; attemptCount = 1; capacityBytes = [UInt64]0; requiredBytes = [UInt64]122
+        returnLengthBytes = [UInt64]122; assignedProcessCount = [UInt64]2; listedProcessCount = [UInt64]0
+        resized = $false
+        attempts = @([ordered]@{
+            attempted = $true; attemptNumber = 1; succeeded = $false; errorCode = 234
+            capacityBytes = [UInt64]0; requiredBytes = [UInt64]122; returnLengthBytes = [UInt64]122
+            assignedProcessCount = [UInt64]2; listedProcessCount = [UInt64]0; resized = $false
+        })
+        attemptsTruncated = $false
+    }
+    $selfTestCleanupObservation = [ordered]@{
+        attempted = $true; jobPresent = $true; jobQueryAttempted = $true; jobQuerySkipped = $false
+        jobQuerySucceeded = $true; query = $selfTestGoodJobQuery
+        jobCloseAttempted = $true; jobCloseSucceeded = $true
+        trackedSweepAttempted = $true; trackedSweepVerified = $true
+        finalPathSweepAttempted = $true; finalPathSweepVerified = $true
+        survivorCount = [UInt64]0; cleanupErrorCount = [UInt64]0
+    }
     foreach ($checkpoint in @($script:PairedDiagnosticCheckpointNames)) {
         $diagnosticSnapshot = New-PairedEmptyProcessDiagnosticSnapshot $checkpoint
         $diagnosticSnapshot.status = 'observed'
@@ -3199,6 +3657,7 @@ function Invoke-PairedSelfTest {
         $diagnosticSnapshot.processCount = 1
         $diagnosticSnapshot.jobMembershipVerified = $true
         $diagnosticSnapshot.jobMemberCount = 1
+        $diagnosticSnapshot.jobQueryObservation = $selfTestGoodJobQuery
         $diagnosticSnapshot.topLevelWindowCount = 3
         $diagnosticSnapshot.editorWindowCount = 1
         $diagnosticSnapshot.dialogWindowCount = 1
@@ -3310,6 +3769,8 @@ function Invoke-PairedSelfTest {
             descendantsVerified = $true; errorCode = 0
         }
         error = $null; processCleanupVerified = $true; survivors = @()
+        launchJobQueryObservation = $selfTestGoodJobQuery
+        cleanupObservation = $selfTestCleanupObservation
         startupDiagnostics = $selfTestStartupDiagnostics; startupTrace = $selfTestStartupTrace
     }
     $selfTestSuccessRun = Convert-PairedLaunchResult $selfTestSuccessRaw $schedule[2] $selfTestTimeoutProfile $true
@@ -3333,6 +3794,113 @@ function Invoke-PairedSelfTest {
         $selfTestSuccessRun.startupDiagnostics.processExitObservation.state -eq 'active' -and
         $selfTestSuccessRun.startupDiagnostics.processExitObservation.exitCode -eq 259)
     if (-not $selfTestDiagnosticsSuccessVerified) { throw 'Synthetic successful startup diagnostics schema self-test failed.' }
+    $selfTestPartialRaw = $selfTestSuccessRaw | Select-Object *
+    $selfTestPartialRaw.launchJobQueryObservation = $selfTestPartialJobQuery
+    $selfTestPartialRun = Convert-PairedLaunchResult $selfTestPartialRaw $schedule[2] $selfTestTimeoutProfile $true
+    $selfTestError234Raw = $selfTestSuccessRaw | Select-Object *
+    $selfTestFailedCleanupObservation = $selfTestCleanupObservation | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+    $selfTestFailedCleanupObservation.jobQuerySucceeded = $false
+    $selfTestFailedCleanupObservation.query = $selfTestFailedJobQuery
+    $selfTestError234Raw.launchJobQueryObservation = $selfTestFailedJobQuery
+    $selfTestError234Raw.cleanupObservation = $selfTestFailedCleanupObservation
+    $selfTestError234Raw.processCleanupVerified = $false
+    $selfTestError234Raw.survivors = @()
+    $selfTestError234Run = Convert-PairedLaunchResult $selfTestError234Raw $schedule[2] $selfTestTimeoutProfile $true
+    $selfTestGoodQueryVerified = [bool]($selfTestSuccessRun.status -eq 'succeeded' -and
+        $selfTestSuccessRun.launchJobQueryObservation.status -eq 'succeeded' -and
+        $selfTestSuccessRun.cleanupObservation.status -eq 'succeeded' -and
+        $selfTestSuccessRun.startupDiagnostics.processTreeSnapshots[0].jobQueryObservation.status -eq 'succeeded')
+    $selfTestPartialQueryVerified = [bool]($selfTestPartialRun.status -eq 'succeeded' -and
+        $selfTestPartialRun.launchJobQueryObservation.status -eq 'partial' -and
+        $selfTestPartialRun.launchJobQueryObservation.succeeded -and
+        $selfTestPartialRun.launchJobQueryObservation.listedProcessCount -lt
+            $selfTestPartialRun.launchJobQueryObservation.assignedProcessCount)
+    $selfTestError234Verified = [bool]($selfTestError234Run.status -eq 'survivor' -and
+        $selfTestError234Run.launchJobQueryObservation.status -eq 'failed' -and
+        $selfTestError234Run.launchJobQueryObservation.errorCode -eq 234 -and
+        $selfTestError234Run.cleanupObservation.status -eq 'failed' -and
+        $selfTestError234Run.cleanupObservation.query.errorCode -eq 234)
+    if (-not $selfTestGoodQueryVerified -or -not $selfTestPartialQueryVerified -or -not $selfTestError234Verified) {
+        throw 'Paired job query observation normalization self-test failed.'
+    }
+    $selfTestMalformedJobQueryDiagnostics = $selfTestStartupDiagnostics | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+    $selfTestMalformedJobQueryDiagnostics.processTreeSnapshots[0].jobQueryObservation =
+        [pscustomobject][ordered]@{ payload = 'secret'; pid = 1234; path = 'C:\secret' }
+    $selfTestMalformedJobQueryRun = Convert-PairedProcessDiagnostics $selfTestMalformedJobQueryDiagnostics
+    $selfTestMalformedLocalFallbackVerified = [bool](
+        $selfTestMalformedJobQueryRun.observationStatus -eq 'observed' -and
+        $selfTestMalformedJobQueryRun.processTreeSnapshots[0].status -eq 'observed' -and
+        $selfTestMalformedJobQueryRun.processTreeSnapshots[0].jobQueryObservation.status -eq 'unavailable' -and
+        @($selfTestMalformedJobQueryRun.processTreeSnapshots[0].processTree).Count -eq 1 -and
+        $selfTestMalformedJobQueryRun.processTreeSnapshots[0].processTree[0].pid -eq 1234 -and
+        $selfTestMalformedJobQueryRun.processTreeSnapshots[0].rootExitState -eq 'active' -and
+        $selfTestMalformedJobQueryRun.processTreeSnapshots[0].rootExitCode -eq 259 -and
+        $selfTestMalformedJobQueryRun.processTreeSnapshots[0].topLevelWindowCount -eq 3)
+    if (-not $selfTestMalformedLocalFallbackVerified) { throw 'Malformed local job query telemetry damaged process-tree evidence.' }
+    $selfTestOldSchemaRaw = $selfTestSuccessRaw | Select-Object *
+    [void]$selfTestOldSchemaRaw.PSObject.Properties.Remove('launchJobQueryObservation')
+    [void]$selfTestOldSchemaRaw.PSObject.Properties.Remove('cleanupObservation')
+    $selfTestOldSchemaDiagnostics = $selfTestStartupDiagnostics | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+    foreach ($snapshot in @($selfTestOldSchemaDiagnostics.processTreeSnapshots)) {
+        [void]$snapshot.PSObject.Properties.Remove('jobQueryObservation')
+    }
+    $selfTestOldSchemaRaw.startupDiagnostics = $selfTestOldSchemaDiagnostics
+    $selfTestOldSchemaRun = Convert-PairedLaunchResult $selfTestOldSchemaRaw $schedule[2] $selfTestTimeoutProfile $true
+    $selfTestOldSchemaNeutralVerified = [bool]($selfTestOldSchemaRun.status -eq 'succeeded' -and
+        $selfTestOldSchemaRun.launchJobQueryObservation.status -eq 'not-attempted' -and
+        $selfTestOldSchemaRun.cleanupObservation.status -eq 'not-attempted' -and
+        @($selfTestOldSchemaRun.startupDiagnostics.processTreeSnapshots | Where-Object {
+            $_.jobQueryObservation.status -ne 'not-attempted'
+        }).Count -eq 0)
+    if (-not $selfTestOldSchemaNeutralVerified) { throw 'Old-schema paired telemetry did not normalize to neutral.' }
+    $selfTestMalformedCleanupRaw = $selfTestSuccessRaw | Select-Object *
+    $selfTestMalformedCleanupObservation = $selfTestCleanupObservation | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+    $selfTestMalformedCleanupObservation.query = [pscustomobject][ordered]@{
+        payload = 'secret'; path = 'C:\secret'; handle = 1234
+    }
+    $selfTestMalformedCleanupRaw.cleanupObservation = $selfTestMalformedCleanupObservation
+    $selfTestMalformedCleanupRun = Convert-PairedLaunchResult $selfTestMalformedCleanupRaw $schedule[2] $selfTestTimeoutProfile $true
+    $selfTestMalformedCleanupVerified = [bool]($selfTestMalformedCleanupRun.status -eq 'succeeded' -and
+        $selfTestMalformedCleanupRun.processCleanupVerified -and
+        $selfTestMalformedCleanupRun.cleanupObservation.status -eq 'unavailable' -and
+        $selfTestMalformedCleanupRun.cleanupObservation.query.status -eq 'unavailable' -and
+        $selfTestMalformedCleanupRun.cleanupObservation.attempted -and
+        $selfTestMalformedCleanupRun.cleanupObservation.jobPresent -and
+        $selfTestMalformedCleanupRun.cleanupObservation.survivorCount -eq 0 -and
+        $selfTestMalformedCleanupRun.startupDiagnostics.observationStatus -eq 'observed')
+    if (-not $selfTestMalformedCleanupVerified) { throw 'Malformed cleanup telemetry changed legacy launch evidence.' }
+    $selfTestTelemetryPayloadObject = [ordered]@{
+        launchJobQueryObservation = $selfTestSuccessRun.launchJobQueryObservation
+        cleanupObservation = $selfTestSuccessRun.cleanupObservation
+        diagnosticJobQueryObservations = @($selfTestSuccessRun.startupDiagnostics.processTreeSnapshots |
+            ForEach-Object { $_.jobQueryObservation })
+    }
+    $selfTestTelemetryPayload = $selfTestTelemetryPayloadObject | ConvertTo-Json -Depth 20 -Compress
+    $selfTestTelemetryPayloadFreeVerified = $true
+    try { [void](Assert-PairedPayloadFree $selfTestTelemetryPayloadObject) }
+    catch { $selfTestTelemetryPayloadFreeVerified = $false }
+    $selfTestTelemetryPayloadFreeVerified = [bool]($selfTestTelemetryPayloadFreeVerified -and
+        $selfTestTelemetryPayload -notmatch '(?i)"(?:pid|path|handle|payload|command|caption|document|message|secret)"\s*:' -and
+        $selfTestTelemetryPayload -notmatch '(?i)[A-Za-z]:\\\\|\\\\\\\\')
+    if (-not $selfTestTelemetryPayloadFreeVerified) { throw 'Paired telemetry payload-free self-test failed.' }
+    $selfTestFailureNeutralVerified = [bool]($selfTestFailedRun.launchJobQueryObservation.status -eq 'not-attempted' -and
+        $selfTestFailedRun.cleanupObservation.status -eq 'not-attempted' -and
+        @($selfTestFailedRun.startupDiagnostics.processTreeSnapshots | Where-Object {
+            $_.jobQueryObservation.status -ne 'not-attempted'
+        }).Count -eq 0)
+    if (-not $selfTestFailureNeutralVerified) { throw 'Failed/preflight paired telemetry was not neutral.' }
+    $selfTestError234Termination = New-PairedCampaignTermination -TotalEntries $terminationSchedule.Count -CompletedEntries 2 `
+        -TriggerRow $terminationSchedule[2] -TriggerRun $selfTestError234Run
+    $selfTestSuppressionGatesUnchangedVerified = [bool](-not (Test-PairedRunCleanupVerified $selfTestError234Run) -and
+        $selfTestError234Run.survivorCount -eq 0 -and
+        $selfTestError234Termination.type -eq 'cleanup-unverified' -and
+        $selfTestError234Termination.failureType -eq 'cleanup-unverified' -and
+        $selfTestError234Termination.suppressedLaunches -eq 2 -and
+        $selfTestError234Termination.laterLaunchesSuppressed -and
+        -not $selfTestError234Run.cleanupVerified)
+    if (-not $selfTestSuppressionGatesUnchangedVerified) {
+        throw 'Telemetry changed paired suppression or cleanup gates.'
+    }
     $selfTestMissingTraceRaw = $selfTestSuccessRaw | Select-Object *
     [void]$selfTestMissingTraceRaw.PSObject.Properties.Remove('startupTrace')
     $selfTestMissingTraceRun = Convert-PairedLaunchResult $selfTestMissingTraceRaw $schedule[2] $selfTestTimeoutProfile $true
@@ -4038,6 +4606,16 @@ function Invoke-PairedSelfTest {
         startupDiagnosticsSingleTreeVerified = [bool]$selfTestSingleTreeDiagnosticsVerified
         startupDiagnosticsTimeoutSchemaVerified = [bool]$selfTestDiagnosticsTimeoutVerified
         startupDiagnosticsFallbackSchemaVerified = [bool]$selfTestFallbackDiagnosticsVerified
+        jobQueryObservationGoodVerified = [bool]$selfTestGoodQueryVerified
+        jobQueryObservationPartialVerified = [bool]$selfTestPartialQueryVerified
+        jobQueryObservationError234Verified = [bool]$selfTestError234Verified
+        jobQueryObservationMalformedLocalFallbackVerified = [bool]$selfTestMalformedLocalFallbackVerified
+        jobQueryObservationOldSchemaNeutralVerified = [bool]$selfTestOldSchemaNeutralVerified
+        cleanupObservationGoodVerified = [bool]($selfTestSuccessRun.cleanupObservation.status -eq 'succeeded')
+        cleanupObservationMalformedVerified = [bool]$selfTestMalformedCleanupVerified
+        telemetryFailureNeutralVerified = [bool]$selfTestFailureNeutralVerified
+        telemetryPayloadFreeVerified = [bool]$selfTestTelemetryPayloadFreeVerified
+        telemetrySuppressionGatesUnchangedVerified = [bool]$selfTestSuppressionGatesUnchangedVerified
         startupTraceAllowlistPayloadFreeVerified = [bool]$selfTestTraceAllowlistVerified
         startupTraceOrderedEventsVerified = [bool]$selfTestTraceOrderedEventsVerified
         startupTraceOrderedEventsTruncatedVerified = [bool]$selfTestTraceOrderedEventsTruncatedVerified
@@ -4420,6 +4998,8 @@ function New-PairedFailedRun {
         failureStage = $Status
         startupMilestones = New-PairedEmptyStartupMilestones
         startupDiagnostics = New-PairedEmptyStartupDiagnostics
+        launchJobQueryObservation = New-PairedEmptyJobQueryObservation
+        cleanupObservation = New-PairedEmptyCleanupObservation
         startupTrace = New-PairedEmptyStartupTrace
         affinity = [ordered]@{
             requestedMask = [UInt64]$AffinityMask

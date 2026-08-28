@@ -337,6 +337,40 @@ class PairedStartupContractTests(unittest.TestCase):
         self.assertNotRegex(self.paired_text, r"Get-ChildItem[^\r\n]*-Recurse")
         self.assertNotRegex(self.shared_text, r"Get-ChildItem[^\r\n]*-Recurse")
 
+    def test_job_query_cleanup_telemetry_contract_is_bounded_and_diagnostic_only(self):
+        for marker in (
+            "function New-PairedEmptyJobQueryObservation",
+            "function Convert-PairedJobQueryObservation",
+            "function New-PairedEmptyCleanupObservation",
+            "function Convert-PairedCleanupObservation",
+            "$script:PairedJobQueryMaxCount = 4096",
+            "$script:PairedJobQueryMaxBytes = [UInt64]1048576",
+            "$script:PairedJobQueryMaxProcessCount = [UInt64]131072",
+            "$script:PairedJobQueryMaxAttempts = 8",
+            "launchJobQueryObservation",
+            "cleanupObservation",
+            "jobQueryObservation",
+            "attemptsTruncated",
+            "errorCode = 234",
+            "status = 'not-attempted'",
+            "status = 'partial'",
+            "status = 'failed'",
+            "status = 'unavailable'",
+            "New-PairedUnavailableJobQueryObservation",
+            "New-PairedUnavailableCleanupObservation",
+        ):
+            self.assertIn(marker, self.paired_text)
+        # Producer JSON is lowercase; the paired converter must not invent a
+        # second PascalCase schema.  Keep the old-v1 behavior as absence,
+        # rather than accepting a guessed alternate field spelling.
+        for marker in ("@('attempted', 'Attempted')", "@('succeeded', 'Succeeded')", "@('errorCode', 'ErrorCode')"):
+            self.assertNotIn(marker, self.paired_text)
+        self.assertNotIn("ERROR_MORE_DATA", self.paired_text)
+        self.assertIn("if ($run.status -ne 'succeeded' -or -not (Test-PairedRunCleanupVerified $run))", self.paired_text)
+        self.assertIn("$script:PairedSchemaVersion = 1", self.paired_text)
+        self.assertIn("qualified = [bool]$accepted", self.paired_text)
+        self.assertIn("startupGatePass = [bool]($accepted -and $performance.pass)", self.paired_text)
+
     def test_empty_source_status_hash_contract_is_explicit(self):
         self.assertIn("function New-PairedSourceState", self.paired_text)
         self.assertIn("[AllowEmptyString()] [object]$Value", self.paired_text)
@@ -546,6 +580,19 @@ class PairedStartupContractTests(unittest.TestCase):
             self.assertTrue(payload["startupMilestonesDescendantNotAttemptedVerified"])
             self.assertTrue(payload["startupMilestonesDescendantFailureVerified"])
             self.assertTrue(payload["startupMilestonesFailureSchemaVerified"])
+            for field in (
+                "jobQueryObservationGoodVerified",
+                "jobQueryObservationPartialVerified",
+                "jobQueryObservationError234Verified",
+                "jobQueryObservationMalformedLocalFallbackVerified",
+                "jobQueryObservationOldSchemaNeutralVerified",
+                "cleanupObservationGoodVerified",
+                "cleanupObservationMalformedVerified",
+                "telemetryFailureNeutralVerified",
+                "telemetryPayloadFreeVerified",
+                "telemetrySuppressionGatesUnchangedVerified",
+            ):
+                self.assertTrue(payload[field], field)
 
 
 if __name__ == "__main__":

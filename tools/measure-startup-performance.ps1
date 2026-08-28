@@ -126,12 +126,41 @@ public sealed class StartupProbeProcessIdentityResult
     public StartupProbeProcess Identity;
 }
 
+public sealed class StartupProbeJobQueryAttempt
+{
+    public bool Attempted;
+    public int AttemptNumber;
+    public bool Succeeded;
+    public int ErrorCode;
+    public ulong CapacityBytes;
+    public ulong RequiredBytes;
+    public ulong ReturnLengthBytes;
+    public uint AssignedProcessCount;
+    public uint ListedProcessCount;
+    public bool Resized;
+}
+
 public sealed class StartupProbeJobResult
 {
     public IntPtr Handle;
     public bool Succeeded;
     public int ErrorCode;
     public int[] ProcessIds;
+    public bool Attempted;
+    public int AttemptCount;
+    public ulong CapacityBytes;
+    public ulong RequiredBytes;
+    public ulong ReturnLengthBytes;
+    public uint AssignedProcessCount;
+    public uint ListedProcessCount;
+    public bool Resized;
+    public StartupProbeJobQueryAttempt[] Attempts;
+
+    public StartupProbeJobResult()
+    {
+        ProcessIds = new int[0];
+        Attempts = new StartupProbeJobQueryAttempt[0];
+    }
 }
 
 public sealed class StartupProbeSuspendedProcessResult
@@ -176,6 +205,7 @@ public static class NativeStartupProbe
     private const int ERROR_BAD_LENGTH = 24;
     private const int ERROR_INVALID_PARAMETER = 87;
     private const int ERROR_NOT_FOUND = 1168;
+    private const int MAX_JOB_QUERY_ATTEMPT_RECORDS = 8;
     private const uint STILL_ACTIVE = 259;
     private const uint SIF_RANGE = 0x0001;
     private const int SB_CTL = 2;
@@ -656,13 +686,48 @@ public static class NativeStartupProbe
         finally { CloseHandle(process); }
     }
 
+    private static void RecordJobQueryAttempt(StartupProbeJobResult result, bool succeeded, int errorCode,
+        uint capacityBytes, uint requiredBytes, uint returnLengthBytes, uint assignedProcessCount,
+        uint listedProcessCount, bool resized)
+    {
+        result.Attempted = true;
+        result.AttemptCount++;
+        result.CapacityBytes = capacityBytes;
+        result.RequiredBytes = requiredBytes;
+        result.ReturnLengthBytes = returnLengthBytes;
+        result.AssignedProcessCount = assignedProcessCount;
+        result.ListedProcessCount = listedProcessCount;
+        result.Resized = result.Resized || resized;
+        try {
+            if (result.Attempts == null || result.Attempts.Length >= MAX_JOB_QUERY_ATTEMPT_RECORDS) return;
+            var observations = new StartupProbeJobQueryAttempt[result.Attempts.Length + 1];
+            Array.Copy(result.Attempts, observations, result.Attempts.Length);
+            observations[observations.Length - 1] = new StartupProbeJobQueryAttempt {
+                Attempted = true,
+                AttemptNumber = result.AttemptCount,
+                Succeeded = succeeded,
+                ErrorCode = succeeded ? 0 : errorCode,
+                CapacityBytes = capacityBytes,
+                RequiredBytes = requiredBytes,
+                ReturnLengthBytes = returnLengthBytes,
+                AssignedProcessCount = assignedProcessCount,
+                ListedProcessCount = listedProcessCount,
+                Resized = resized
+            };
+            result.Attempts = observations;
+        }
+        catch { }
+    }
+
     public static StartupProbeJobResult QueryJobProcessIds(IntPtr job)
     {
         var result = new StartupProbeJobResult { Handle = job, Succeeded = false, ErrorCode = 0, ProcessIds = new int[0] };
         if (job == IntPtr.Zero) { result.ErrorCode = 6; return result; }
         uint required = 0;
-        QueryInformationJobObject(job, JobObjectBasicProcessIdList, IntPtr.Zero, 0, out required);
+        bool initialSucceeded = QueryInformationJobObject(job, JobObjectBasicProcessIdList, IntPtr.Zero, 0, out required);
         int lastError = Marshal.GetLastWin32Error();
+        RecordJobQueryAttempt(result, initialSucceeded, lastError, 0, required, required, 0, 0, false);
+        result.RequiredBytes = required;
         if (required < 8 && lastError != ERROR_INSUFFICIENT_BUFFER && lastError != ERROR_BAD_LENGTH) {
             result.ErrorCode = lastError;
             return result;
@@ -679,17 +744,26 @@ public static class NativeStartupProbe
             IntPtr buffer = Marshal.AllocHGlobal(unchecked((int)required));
             try {
                 uint returned;
-                if (!QueryInformationJobObject(job, JobObjectBasicProcessIdList, buffer, required, out returned)) {
-                    int error = Marshal.GetLastWin32Error();
-                    if ((error == ERROR_INSUFFICIENT_BUFFER || error == ERROR_BAD_LENGTH) && returned > required) {
+                bool querySucceeded = QueryInformationJobObject(job, JobObjectBasicProcessIdList, buffer, required, out returned);
+                int error = Marshal.GetLastWin32Error();
+                uint assigned = 0;
+                uint listed = 0;
+                if (querySucceeded) {
+                    assigned = unchecked((uint)Marshal.ReadInt32(buffer, 0));
+                    listed = unchecked((uint)Marshal.ReadInt32(buffer, 4));
+                }
+                bool resized = !querySucceeded &&
+                    (error == ERROR_INSUFFICIENT_BUFFER || error == ERROR_BAD_LENGTH) && returned > required;
+                RecordJobQueryAttempt(result, querySucceeded, error, required, required, returned, assigned, listed, resized);
+                if (!querySucceeded) {
+                    if (resized) {
                         required = returned;
+                        result.RequiredBytes = required;
                         continue;
                     }
                     result.ErrorCode = error;
                     return result;
                 }
-                uint assigned = unchecked((uint)Marshal.ReadInt32(buffer, 0));
-                uint listed = unchecked((uint)Marshal.ReadInt32(buffer, 4));
                 ulong capacity = unchecked(((ulong)required - 8UL) / (ulong)IntPtr.Size);
                 if (listed > assigned || (ulong)listed > capacity) {
                     result.ErrorCode = ERROR_BAD_LENGTH;
@@ -964,6 +1038,227 @@ function Convert-ProcessIdentity($Process) {
     }
 }
 
+function New-StartupJobQueryObservation {
+    return [ordered]@{
+        attempted = $false
+        skipped = $false
+        succeeded = $false
+        errorCode = $null
+        queryCount = 0
+        attemptCount = 0
+        capacityBytes = [UInt64]0
+        requiredBytes = [UInt64]0
+        returnLengthBytes = [UInt64]0
+        assignedProcessCount = [UInt64]0
+        listedProcessCount = [UInt64]0
+        resized = $false
+        attempts = @()
+        attemptsTruncated = $false
+    }
+}
+
+function New-StartupCleanupObservation {
+    return [ordered]@{
+        attempted = $false
+        jobPresent = $false
+        jobQueryAttempted = $false
+        jobQuerySkipped = $false
+        jobQuerySucceeded = $false
+        query = New-StartupJobQueryObservation
+        jobCloseAttempted = $false
+        jobCloseSucceeded = $false
+        trackedSweepAttempted = $false
+        trackedSweepVerified = $false
+        finalPathSweepAttempted = $false
+        finalPathSweepVerified = $false
+        survivorCount = 0
+        cleanupErrorCount = 0
+    }
+}
+
+function Get-StartupObservationProperty {
+    param(
+        [AllowNull()] [object]$Object,
+        [Parameter(Mandatory = $true)] [string]$Name,
+        [AllowNull()] [object]$Default = $null
+    )
+    try {
+        if ($null -ne $Object) {
+            if ($Object -is [Collections.IDictionary]) {
+                if ($Object.Contains($Name)) { return $Object[$Name] }
+            }
+            else {
+                $property = $Object.PSObject.Properties[$Name]
+                if ($null -ne $property) { return $property.Value }
+            }
+        }
+    }
+    catch { }
+    return $Default
+}
+
+function Convert-StartupObservationInt([AllowNull()] [object]$Value) {
+    if ($null -eq $Value) { return 0 }
+    try { return [int]$Value } catch { return 0 }
+}
+
+function Convert-StartupObservationUInt64([AllowNull()] [object]$Value) {
+    if ($null -eq $Value) { return [UInt64]0 }
+    try {
+        $number = [decimal]$Value
+        if ($number -lt 0 -or $number -gt [decimal][UInt64]::MaxValue) { return [UInt64]0 }
+        return [UInt64]$number
+    }
+    catch { return [UInt64]0 }
+}
+
+function Convert-StartupObservationBool([AllowNull()] [object]$Value) {
+    if ($null -eq $Value) { return $false }
+    try { return [bool]$Value } catch { return $false }
+}
+
+function Add-StartupCleanupError {
+    param(
+        [Parameter(Mandatory = $true)] [object]$Errors,
+        [Parameter(Mandatory = $true)] [object]$Observation,
+        [AllowNull()] [object]$Message
+    )
+    [void]$Errors.Add([string]$Message)
+    try {
+        $count = Convert-StartupObservationInt (Get-StartupObservationProperty $Observation 'cleanupErrorCount')
+        if ($count -lt 0) { $count = 0 }
+        if ($count -lt [int]::MaxValue) { $Observation.cleanupErrorCount = $count + 1 }
+    }
+    catch { }
+}
+
+function Get-StartupCleanupErrorCount {
+    param(
+        [AllowNull()] [object]$CleanupObservation,
+        [AllowNull()] [object]$OuterErrorCount = 0,
+        [bool]$JoinedCleanupErrorIncluded = $false
+    )
+    $internal = [decimal]0
+    try { $internal = [decimal](Get-StartupObservationProperty $CleanupObservation 'cleanupErrorCount') } catch { $internal = [decimal]0 }
+    if ($internal -lt 0) { $internal = [decimal]0 }
+    if ($internal -gt [decimal][int]::MaxValue) { $internal = [decimal][int]::MaxValue }
+    $outer = [decimal]0
+    try { $outer = [decimal]$OuterErrorCount } catch { $outer = [decimal]0 }
+    if ($outer -lt 0) { $outer = [decimal]0 }
+    if ($JoinedCleanupErrorIncluded -and $outer -gt 0) { $outer-- }
+    $total = $internal + $outer
+    if ($total -gt [decimal][int]::MaxValue) { return [int]::MaxValue }
+    return [int]$total
+}
+
+function Convert-StartupJobQueryObservation([AllowNull()] [object]$Query) {
+    $observation = New-StartupJobQueryObservation
+    if ($null -eq $Query) { return $observation }
+    try {
+        $observation.attempted = Convert-StartupObservationBool (Get-StartupObservationProperty $Query 'Attempted')
+        $observation.succeeded = Convert-StartupObservationBool (Get-StartupObservationProperty $Query 'Succeeded')
+        $errorValue = Get-StartupObservationProperty $Query 'ErrorCode'
+        $observation.errorCode = if ($null -ne $errorValue) { Convert-StartupObservationInt $errorValue } else { $null }
+        $observation.attemptCount = [Math]::Max(0, (Convert-StartupObservationInt (Get-StartupObservationProperty $Query 'AttemptCount')))
+        $observation.capacityBytes = Convert-StartupObservationUInt64 (Get-StartupObservationProperty $Query 'CapacityBytes')
+        $observation.requiredBytes = Convert-StartupObservationUInt64 (Get-StartupObservationProperty $Query 'RequiredBytes')
+        $observation.returnLengthBytes = Convert-StartupObservationUInt64 (Get-StartupObservationProperty $Query 'ReturnLengthBytes')
+        $observation.assignedProcessCount = Convert-StartupObservationUInt64 (Get-StartupObservationProperty $Query 'AssignedProcessCount')
+        $observation.listedProcessCount = Convert-StartupObservationUInt64 (Get-StartupObservationProperty $Query 'ListedProcessCount')
+        $observation.resized = Convert-StartupObservationBool (Get-StartupObservationProperty $Query 'Resized')
+        $rawAttempts = @()
+        $rawAttemptValue = Get-StartupObservationProperty $Query 'Attempts'
+        if ($null -ne $rawAttemptValue) { $rawAttempts = @($rawAttemptValue) }
+        $observation.attemptsTruncated = $rawAttempts.Count -gt 8
+        $boundedAttempts = New-Object Collections.Generic.List[object]
+        $attemptLimit = [Math]::Min($rawAttempts.Count, 8)
+        for ($index = 0; $index -lt $attemptLimit; $index++) {
+            $attempt = $rawAttempts[$index]
+            if ($null -eq $attempt) { continue }
+            $attemptError = Get-StartupObservationProperty $attempt 'ErrorCode' 0
+            [void]$boundedAttempts.Add([ordered]@{
+                attempted = Convert-StartupObservationBool (Get-StartupObservationProperty $attempt 'Attempted')
+                attemptNumber = [Math]::Max(0, (Convert-StartupObservationInt (Get-StartupObservationProperty $attempt 'AttemptNumber')))
+                succeeded = Convert-StartupObservationBool (Get-StartupObservationProperty $attempt 'Succeeded')
+                errorCode = Convert-StartupObservationInt $attemptError
+                capacityBytes = Convert-StartupObservationUInt64 (Get-StartupObservationProperty $attempt 'CapacityBytes')
+                requiredBytes = Convert-StartupObservationUInt64 (Get-StartupObservationProperty $attempt 'RequiredBytes')
+                returnLengthBytes = Convert-StartupObservationUInt64 (Get-StartupObservationProperty $attempt 'ReturnLengthBytes')
+                assignedProcessCount = Convert-StartupObservationUInt64 (Get-StartupObservationProperty $attempt 'AssignedProcessCount')
+                listedProcessCount = Convert-StartupObservationUInt64 (Get-StartupObservationProperty $attempt 'ListedProcessCount')
+                resized = Convert-StartupObservationBool (Get-StartupObservationProperty $attempt 'Resized')
+            })
+        }
+        $observation.attempts = $boundedAttempts.ToArray()
+    }
+    catch { return (New-StartupJobQueryObservation) }
+    return $observation
+}
+
+function Add-StartupJobQueryObservation {
+    param(
+        [Parameter(Mandatory = $true)] [object]$Target,
+        [AllowNull()] [object]$Observation
+    )
+    if ($null -eq $Observation) { return }
+    try {
+        $normalizedObservation = Convert-StartupJobQueryObservation $Observation
+        $summaryTarget = $false
+        if ($Target -is [Collections.IDictionary]) { $summaryTarget = $Target.Contains('query') }
+        else { $summaryTarget = $null -ne $Target.PSObject.Properties['query'] }
+        if ($summaryTarget) {
+            $aggregate = Get-StartupObservationProperty $Target 'query'
+            if ($null -eq $aggregate) {
+                $aggregate = New-StartupJobQueryObservation
+                $Target.query = $aggregate
+            }
+        }
+        else {
+            $aggregate = $Target
+        }
+        $aggregate.queryCount = (Convert-StartupObservationInt (Get-StartupObservationProperty $aggregate 'queryCount')) + 1
+        $observationAttempted = Convert-StartupObservationBool (Get-StartupObservationProperty $normalizedObservation 'attempted')
+        if ($observationAttempted) {
+            if ($summaryTarget) {
+                $Target.jobQueryAttempted = $true
+                $Target.jobQuerySkipped = $false
+            }
+            $aggregate.attempted = $true
+            $aggregate.skipped = $false
+            $aggregate.succeeded = Convert-StartupObservationBool (Get-StartupObservationProperty $normalizedObservation 'succeeded')
+            $aggregate.errorCode = Get-StartupObservationProperty $normalizedObservation 'errorCode'
+            $aggregate.capacityBytes = Convert-StartupObservationUInt64 (Get-StartupObservationProperty $normalizedObservation 'capacityBytes')
+            $aggregate.requiredBytes = Convert-StartupObservationUInt64 (Get-StartupObservationProperty $normalizedObservation 'requiredBytes')
+            $aggregate.returnLengthBytes = Convert-StartupObservationUInt64 (Get-StartupObservationProperty $normalizedObservation 'returnLengthBytes')
+            $aggregate.assignedProcessCount = Convert-StartupObservationUInt64 (Get-StartupObservationProperty $normalizedObservation 'assignedProcessCount')
+            $aggregate.listedProcessCount = Convert-StartupObservationUInt64 (Get-StartupObservationProperty $normalizedObservation 'listedProcessCount')
+            $aggregate.resized = (Convert-StartupObservationBool (Get-StartupObservationProperty $aggregate 'resized')) -or
+                (Convert-StartupObservationBool (Get-StartupObservationProperty $normalizedObservation 'resized'))
+        }
+        elseif ((Convert-StartupObservationBool (Get-StartupObservationProperty $normalizedObservation 'skipped')) -and
+            -not (Convert-StartupObservationBool (Get-StartupObservationProperty $aggregate 'attempted'))) {
+            $aggregate.skipped = $true
+            if ($summaryTarget) { $Target.jobQuerySkipped = $true }
+        }
+        $aggregate.attemptCount = (Convert-StartupObservationInt (Get-StartupObservationProperty $aggregate 'attemptCount')) +
+            (Convert-StartupObservationInt (Get-StartupObservationProperty $normalizedObservation 'attemptCount'))
+        $aggregate.attemptsTruncated = (Convert-StartupObservationBool (Get-StartupObservationProperty $aggregate 'attemptsTruncated')) -or
+            (Convert-StartupObservationBool (Get-StartupObservationProperty $normalizedObservation 'attemptsTruncated'))
+        $boundedAttempts = New-Object Collections.Generic.List[object]
+        $aggregateAttempts = Get-StartupObservationProperty $aggregate 'attempts'
+        $observationAttempts = Get-StartupObservationProperty $normalizedObservation 'attempts'
+        foreach ($attempt in @($aggregateAttempts) + @($observationAttempts)) {
+            if ($boundedAttempts.Count -ge 8) {
+                $aggregate.attemptsTruncated = $true
+                break
+            }
+            if ($null -ne $attempt) { [void]$boundedAttempts.Add($attempt) }
+        }
+        $aggregate.attempts = $boundedAttempts.ToArray()
+    }
+    catch { }
+}
+
 function New-StartupDiagnosticState {
     param([int]$RootProcessId = 0)
     $snapshots = New-Object Collections.Generic.List[object]
@@ -979,6 +1274,7 @@ function New-StartupDiagnosticState {
             processRecordsTruncated = $false
             jobMembershipVerified = $false
             jobMemberCount = 0
+            jobQueryObservation = New-StartupJobQueryObservation
             topLevelWindowCount = $null
             topLevelWindowCountCapped = $false
             editorWindowCount = $null
@@ -1040,16 +1336,19 @@ function Convert-StartupDiagnosticProcessMetadata($Record, [bool]$JobMember) {
 function Get-StartupDiagnosticJobMembers([IntPtr]$Job) {
     $members = @{}
     if ($Job -eq [IntPtr]::Zero) {
-        return [pscustomobject]@{ verified = $false; members = $members }
+        $skipped = New-StartupJobQueryObservation
+        $skipped.skipped = $true
+        return [pscustomobject]@{ verified = $false; members = $members; queryObservation = $skipped }
     }
     $query = [NativeStartupProbe]::QueryJobProcessIds($Job)
+    $queryObservation = Convert-StartupJobQueryObservation $query
     if (-not $query.Succeeded -or $null -eq $query.ProcessIds) {
-        return [pscustomobject]@{ verified = $false; members = $members }
+        return [pscustomobject]@{ verified = $false; members = $members; queryObservation = $queryObservation }
     }
     foreach ($processId in @($query.ProcessIds)) {
         if ([int]$processId -gt 0) { $members[[int]$processId] = $true }
     }
-    return [pscustomobject]@{ verified = $true; members = $members }
+    return [pscustomobject]@{ verified = $true; members = $members; queryObservation = $queryObservation }
 }
 
 function Get-StartupDiagnosticWindowCount {
@@ -1104,7 +1403,7 @@ function Add-StartupDiagnosticCheckpoint {
 
     $safeElapsedMs = Convert-StartupDiagnosticElapsedMs $ElapsedMs
     if ($null -eq $safeElapsedMs) { $safeElapsedMs = [double]$startupTimeoutMs }
-    $jobInfo = [pscustomobject]@{ verified = $false; members = @{} }
+    $jobInfo = [pscustomobject]@{ verified = $false; members = @{}; queryObservation = (New-StartupJobQueryObservation) }
     $jobMembers = @{}
     $processSnapshot = $null
     $exitProbe = $null
@@ -1118,6 +1417,7 @@ function Add-StartupDiagnosticCheckpoint {
         }
         $jobInfo = Get-StartupDiagnosticJobMembers $Job
         $jobMembers = $jobInfo.members
+        $snapshot.jobQueryObservation = $jobInfo.queryObservation
         $snapshot.rootExitState = if ($exitProbe.Active) { 'active' } else { 'exited' }
         $snapshot.rootExitCode = [UInt64]$exitProbe.ExitCode
         $snapshot.rootExitErrorCode = $null
@@ -1174,6 +1474,7 @@ function Add-StartupDiagnosticCheckpoint {
         $snapshot.processRecordsTruncated = $false
         $snapshot.jobMembershipVerified = [bool]$jobInfo.verified
         $snapshot.jobMemberCount = 0
+        $snapshot.jobQueryObservation = $jobInfo.queryObservation
         $snapshot.topLevelWindowCount = $null
         $snapshot.topLevelWindowCountCapped = $false
         $snapshot.editorWindowCount = $null
@@ -1271,9 +1572,11 @@ function Get-ProcessesForImagePath([string]$ImagePath) {
     return $result
 }
 
-function Get-JobProcessRecords([IntPtr]$Job, $Owned) {
+function Get-JobProcessRecords([IntPtr]$Job, $Owned, [object]$QueryObservation = $null) {
     if ($Job -eq [IntPtr]::Zero) { throw 'A run-owned job handle is required.' }
     $query = [NativeStartupProbe]::QueryJobProcessIds($Job)
+    $queryMetadata = Convert-StartupJobQueryObservation $query
+    if ($null -ne $QueryObservation) { Add-StartupJobQueryObservation $QueryObservation $queryMetadata }
     if (-not $query.Succeeded -or $null -eq $query.ProcessIds) {
         throw "Could not enumerate run-owned job processes (Win32 $($query.ErrorCode))."
     }
@@ -1286,6 +1589,8 @@ function Get-JobProcessRecords([IntPtr]$Job, $Owned) {
             # once before declaring an identity gap; an unobservable member is not
             # a clean result.
             $retry = [NativeStartupProbe]::QueryJobProcessIds($Job)
+            $retryMetadata = Convert-StartupJobQueryObservation $retry
+            if ($null -ne $QueryObservation) { Add-StartupJobQueryObservation $QueryObservation $retryMetadata }
             if (-not $retry.Succeeded -or @($retry.ProcessIds | Where-Object { [int]$_ -eq [int]$processId }).Count -gt 0) {
                 throw "Could not observe the identity of run-owned job process $processId."
             }
@@ -1323,9 +1628,9 @@ function Update-OwnedProcesses($Owned, $Snapshot) {
     }
 }
 
-function Get-LiveOwnedProcesses($Owned, [IntPtr]$Job = [IntPtr]::Zero) {
+function Get-LiveOwnedProcesses($Owned, [IntPtr]$Job = [IntPtr]::Zero, [object]$QueryObservation = $null) {
     if ($Job -ne [IntPtr]::Zero) {
-        return @(Get-JobProcessRecords $Job $Owned)
+        return @(Get-JobProcessRecords $Job $Owned $QueryObservation)
     }
     $snapshot = Get-ProcessSnapshot $Owned
     Update-OwnedProcesses $Owned $snapshot
@@ -2311,17 +2616,29 @@ function Get-TrackedOwnedProcesses($Owned) {
     return $records.ToArray()
 }
 
-function Stop-OwnedProcesses($Owned, [IntPtr]$Job = [IntPtr]::Zero, [string]$ExecutablePath = $null) {
+function Stop-OwnedProcesses($Owned, [IntPtr]$Job = [IntPtr]::Zero, [string]$ExecutablePath = $null, [object]$QueryObservation = $null) {
     $closeWatch = [Diagnostics.Stopwatch]::StartNew()
     $remainingJobHandle = $Job
     $jobQuerySucceeded = $Job -eq [IntPtr]::Zero
     $jobCloseSucceeded = $Job -eq [IntPtr]::Zero
+    $cleanupObservation = if ($null -ne $QueryObservation) { $QueryObservation } else { New-StartupCleanupObservation }
+    $cleanupObservation.attempted = $true
+    $cleanupObservation.jobPresent = $Job -ne [IntPtr]::Zero
+    if ($Job -eq [IntPtr]::Zero) {
+        $cleanupObservation.jobQuerySkipped = $true
+        $skippedQuery = New-StartupJobQueryObservation
+        $skippedQuery.skipped = $true
+        Add-StartupJobQueryObservation $cleanupObservation $skippedQuery
+    }
+    else {
+        $cleanupObservation.jobQuerySkipped = $false
+    }
     $graceful = $false
     $cleanupErrors = New-Object Collections.Generic.List[string]
     $knownJobProcesses = New-Object Collections.Generic.List[object]
     try {
         if ($Job -ne [IntPtr]::Zero) {
-            foreach ($record in @(Get-JobProcessRecords $Job $Owned)) { [void]$knownJobProcesses.Add($record) }
+            foreach ($record in @(Get-JobProcessRecords $Job $Owned $cleanupObservation)) { [void]$knownJobProcesses.Add($record) }
             $jobQuerySucceeded = $true
         }
         else {
@@ -2343,19 +2660,21 @@ function Stop-OwnedProcesses($Owned, [IntPtr]$Job = [IntPtr]::Zero, [string]$Exe
 
         $remainingGraceMs = [Math]::Max(1, $closeTimeoutMs - [int]$closeWatch.ElapsedMilliseconds)
         if ($Job -ne [IntPtr]::Zero) {
-            $graceful = Wait-WithPoll { @(Get-LiveOwnedProcesses $Owned $Job).Count -eq 0 } $remainingGraceMs
+            $graceful = Wait-WithPoll { @(Get-LiveOwnedProcesses $Owned $Job $cleanupObservation).Count -eq 0 } $remainingGraceMs
         }
         else {
             $graceful = Wait-WithPoll { @(Get-LiveOwnedProcesses $Owned).Count -eq 0 } $remainingGraceMs
         }
     }
-    catch { [void]$cleanupErrors.Add($_.Exception.Message) }
+    catch { Add-StartupCleanupError $cleanupErrors $cleanupObservation $_.Exception.Message }
     finally {
         if ($Job -ne [IntPtr]::Zero) {
+            $cleanupObservation.jobCloseAttempted = $true
             $close = [NativeStartupProbe]::CloseKillOnCloseJob($Job)
             $jobCloseSucceeded = [bool]$close.Succeeded
             $remainingJobHandle = $close.Handle
-            if (-not $jobCloseSucceeded) { [void]$cleanupErrors.Add("Could not close the run-owned job (Win32 $($close.ErrorCode)).") }
+            $cleanupObservation.jobCloseSucceeded = [bool]$jobCloseSucceeded
+            if (-not $jobCloseSucceeded) { Add-StartupCleanupError $cleanupErrors $cleanupObservation "Could not close the run-owned job (Win32 $($close.ErrorCode))." }
         }
     }
 
@@ -2366,36 +2685,57 @@ function Stop-OwnedProcesses($Owned, [IntPtr]$Job = [IntPtr]::Zero, [string]$Exe
     $tracked = @()
     $pathMatches = @()
     $finalPathSweepVerified = $false
+    $trackedSweepAttempted = $false
+    $trackedSweepVerified = $false
+    $finalPathSweepAttempted = $false
     while ($closeWatch.ElapsedMilliseconds -lt $closeTimeoutMs) {
         try {
+            $trackedSweepAttempted = $true
+            $trackedSweepVerified = $false
             $tracked = @(Get-TrackedOwnedProcesses $Owned)
+            $trackedSweepVerified = $true
             if (-not [string]::IsNullOrWhiteSpace($ExecutablePath)) {
+                $finalPathSweepAttempted = $true
                 $pathMatches = @(Get-ProcessesForImagePath $ExecutablePath)
                 $finalPathSweepVerified = $true
             }
             if ($tracked.Count -eq 0 -and $pathMatches.Count -eq 0) { $settled = $true; break }
         }
         catch {
-            [void]$cleanupErrors.Add($_.Exception.Message)
+            Add-StartupCleanupError $cleanupErrors $cleanupObservation $_.Exception.Message
             break
         }
         Start-Sleep -Milliseconds $pollIntervalMs
     }
     if (-not $settled) {
         try {
+            $trackedSweepAttempted = $true
+            $trackedSweepVerified = $false
             $tracked = @(Get-TrackedOwnedProcesses $Owned)
+            $trackedSweepVerified = $true
             if (-not [string]::IsNullOrWhiteSpace($ExecutablePath)) {
+                $finalPathSweepAttempted = $true
                 $pathMatches = @(Get-ProcessesForImagePath $ExecutablePath)
                 $finalPathSweepVerified = $true
             }
         }
-        catch { [void]$cleanupErrors.Add($_.Exception.Message) }
+        catch {
+            Add-StartupCleanupError $cleanupErrors $cleanupObservation $_.Exception.Message
+        }
     }
     $survivorsById = @{}
     foreach ($record in @($tracked + $pathMatches)) { $survivorsById[[int]$record.Id] = $record }
-    if (-not $jobQuerySucceeded) { [void]$cleanupErrors.Add('Run-owned job membership was not verified.') }
-    if (-not $jobCloseSucceeded) { [void]$cleanupErrors.Add('Run-owned job containment was not closed successfully.') }
-    if (-not $finalPathSweepVerified) { [void]$cleanupErrors.Add('The final exact executable-path sweep was not completed.') }
+    if (-not $jobQuerySucceeded) { Add-StartupCleanupError $cleanupErrors $cleanupObservation 'Run-owned job membership was not verified.' }
+    if (-not $jobCloseSucceeded) { Add-StartupCleanupError $cleanupErrors $cleanupObservation 'Run-owned job containment was not closed successfully.' }
+    if (-not $finalPathSweepVerified) { Add-StartupCleanupError $cleanupErrors $cleanupObservation 'The final exact executable-path sweep was not completed.' }
+    $cleanupObservation.jobQuerySucceeded = [bool]$jobQuerySucceeded
+    $cleanupObservation.jobCloseSucceeded = [bool]$jobCloseSucceeded
+    $cleanupObservation.trackedSweepAttempted = [bool]$trackedSweepAttempted
+    $cleanupObservation.trackedSweepVerified = [bool]$trackedSweepVerified
+    $cleanupObservation.finalPathSweepAttempted = [bool]$finalPathSweepAttempted
+    $cleanupObservation.finalPathSweepVerified = [bool]$finalPathSweepVerified
+    $cleanupObservation.survivorCount = [int]$survivorsById.Count
+    $cleanupObservation.cleanupErrorCount = [int]$cleanupErrors.Count
     return [pscustomobject][ordered]@{
         survivors = @($survivorsById.Values)
         graceful = [bool]$graceful
@@ -2403,6 +2743,7 @@ function Stop-OwnedProcesses($Owned, [IntPtr]$Job = [IntPtr]::Zero, [string]$Exe
         jobCloseSucceeded = [bool]$jobCloseSucceeded
         jobHandle = $remainingJobHandle
         finalPathSweepVerified = [bool]$finalPathSweepVerified
+        cleanupObservation = $cleanupObservation
         error = if ($cleanupErrors.Count -eq 0) { $null } else { ($cleanupErrors.ToArray() -join ' ') }
     }
 }
@@ -2426,6 +2767,8 @@ function Invoke-StartupMeasurement([string]$Condition, [int]$Iteration, [string]
         }
         startupTrace = $null
         startupDiagnostics = New-StartupDiagnosticState
+        launchJobQueryObservation = New-StartupJobQueryObservation
+        cleanupObservation = $null
         screenshotPath = $null; success = $false; error = $null
         processCleanupVerified = $false; profileCleanupVerified = $false; cleanupVerified = $false
         jobQuerySucceeded = $false; jobCloseSucceeded = $false; finalPathSweepVerified = $false; containmentVerified = $false
@@ -2482,7 +2825,7 @@ function Invoke-StartupMeasurement([string]$Condition, [int]$Iteration, [string]
         if (-not $assigned.Succeeded) {
             throw "Could not assign the started process to the run-owned job (Win32 $($assigned.ErrorCode))."
         }
-        $jobMembers = @(Get-JobProcessRecords $job $owned)
+        $jobMembers = @(Get-JobProcessRecords $job $owned $result.launchJobQueryObservation)
         if (@($jobMembers | Where-Object { [int]$_.Id -eq [int]$startedProcessId }).Count -ne 1) {
             throw 'The started process was not present in the verified run-owned job membership.'
         }
@@ -2666,8 +3009,14 @@ function Invoke-StartupMeasurement([string]$Condition, [int]$Iteration, [string]
         }
 
         $cleanup = $null
-        try { $cleanup = Stop-OwnedProcesses $owned $job $ExePath }
-        catch { [void]$cleanupErrors.Add("Owned process cleanup failed: $($_.Exception.Message)") }
+        $cleanupObservation = New-StartupCleanupObservation
+        $result.cleanupObservation = $cleanupObservation
+        $joinedCleanupErrorIncluded = $false
+        try { $cleanup = Stop-OwnedProcesses $owned $job $ExePath $cleanupObservation }
+        catch {
+            $result.cleanupObservation = $cleanupObservation
+            [void]$cleanupErrors.Add("Owned process cleanup failed: $($_.Exception.Message)")
+        }
         if ($null -ne $cleanup) {
             $survivors = @($cleanup.survivors)
             $result.survivors = @($survivors | ForEach-Object { [ordered]@{ pid = $_.Id; creation = $_.Creation; imagePath = $_.ImagePath; parentPid = $_.ParentId } })
@@ -2676,18 +3025,32 @@ function Invoke-StartupMeasurement([string]$Condition, [int]$Iteration, [string]
             $result.finalPathSweepVerified = [bool]$cleanup.finalPathSweepVerified
             if ($cleanup.PSObject.Properties['jobHandle']) { $job = [IntPtr]$cleanup.jobHandle }
             else { $job = [IntPtr]::Zero }
+            if ($cleanup.PSObject.Properties['cleanupObservation']) { $result.cleanupObservation = $cleanup.cleanupObservation }
             if (-not [string]::IsNullOrWhiteSpace([string]$cleanup.error)) {
                 [void]$cleanupErrors.Add([string]$cleanup.error)
+                $joinedCleanupErrorIncluded = $true
             }
         }
         if ($job -ne [IntPtr]::Zero) {
             try {
+                $result.cleanupObservation.jobCloseAttempted = $true
                 $remainingJobClose = [NativeStartupProbe]::CloseKillOnCloseJob($job)
-                if ($remainingJobClose.Succeeded) { $job = [IntPtr]::Zero }
-                else { [void]$cleanupErrors.Add("Could not close the remaining run-owned job (Win32 $($remainingJobClose.ErrorCode)).") }
+                if ($remainingJobClose.Succeeded) {
+                    $job = [IntPtr]::Zero
+                    $result.cleanupObservation.jobCloseSucceeded = $true
+                }
+                else {
+                    $result.cleanupObservation.jobCloseSucceeded = $false
+                    [void]$cleanupErrors.Add("Could not close the remaining run-owned job (Win32 $($remainingJobClose.ErrorCode)).")
+                }
             }
-            catch { [void]$cleanupErrors.Add("Could not close the remaining run-owned job: $($_.Exception.Message)") }
+            catch {
+                $result.cleanupObservation.jobCloseSucceeded = $false
+                [void]$cleanupErrors.Add("Could not close the remaining run-owned job: $($_.Exception.Message)")
+            }
         }
+        $result.cleanupObservation.survivorCount = [int]@($result.survivors).Count
+        $result.cleanupObservation.cleanupErrorCount = Get-StartupCleanupErrorCount $result.cleanupObservation ([Int64]$cleanupErrors.Count) $joinedCleanupErrorIncluded
         $result.processCleanupVerified = $null -ne $cleanup -and
             @($result.survivors).Count -eq 0 -and [bool]$result.jobQuerySucceeded -and
             [bool]$result.jobCloseSucceeded -and [bool]$result.finalPathSweepVerified -and
@@ -2944,6 +3307,105 @@ function Invoke-SelfTest {
         $jobSelfTestClosed = [bool]$jobSelfTestCloseResult.Succeeded
     }
     if (-not $jobSelfTestClosed) { throw 'Kill-on-close job cleanup self-test failed.' }
+    $emptyJobObservation = Convert-StartupJobQueryObservation $emptyJob
+    $emptyJobObservationSelfTestVerified = $emptyJobObservation.attempted -and $emptyJobObservation.attemptCount -ge 1 -and
+        $emptyJobObservation.attempts.Count -le 8 -and $emptyJobObservation.attempts.Count -ge 1 -and
+        $emptyJobObservation.attempts[0].capacityBytes -eq 0
+    if (-not $emptyJobObservationSelfTestVerified) {
+        throw 'Bounded empty-job query observation self-test failed.'
+    }
+    $jobQueryObservationSelfTestVerified = $emptyJobObservationSelfTestVerified
+    foreach ($observationField in @('attempted', 'attemptCount', 'capacityBytes', 'requiredBytes',
+            'returnLengthBytes', 'assignedProcessCount', 'listedProcessCount', 'resized', 'attempts')) {
+        if (-not $emptyJobObservation.Contains($observationField)) {
+            $jobQueryObservationSelfTestVerified = $false
+            break
+        }
+    }
+    if (-not $jobQueryObservationSelfTestVerified) { throw 'Job query observation field self-test failed.' }
+    $noJobMembers = Get-StartupDiagnosticJobMembers ([IntPtr]::Zero)
+    $noJobCleanup = Stop-OwnedProcesses @{} ([IntPtr]::Zero) $null
+    $cleanupObservationSelfTestVerified = (-not $noJobMembers.verified -and $noJobMembers.queryObservation.skipped -and
+        $noJobCleanup.cleanupObservation.jobQuerySkipped -and -not $noJobCleanup.cleanupObservation.jobQueryAttempted -and
+        -not $noJobCleanup.cleanupObservation.query.attempted -and $noJobCleanup.cleanupObservation.query.attempts.Count -eq 0 -and
+        -not $noJobCleanup.cleanupObservation.jobCloseAttempted -and $noJobCleanup.cleanupObservation.jobCloseSucceeded)
+    if (-not $cleanupObservationSelfTestVerified) {
+        throw 'No-job query skip observation self-test failed.'
+    }
+    $syntheticFailedQuery = [pscustomobject][ordered]@{
+        Attempted = $true
+        AttemptCount = 1
+        CapacityBytes = [UInt64]0
+        RequiredBytes = [UInt64]8
+        ReturnLengthBytes = [UInt64]8
+        AssignedProcessCount = [UInt64]2
+        ListedProcessCount = [UInt64]0
+        Resized = $false
+        Succeeded = $false
+        ErrorCode = 234
+        Attempts = @([pscustomobject][ordered]@{
+                Attempted = $true; AttemptNumber = 1; Succeeded = $false; ErrorCode = 234
+                CapacityBytes = [UInt64]0; RequiredBytes = [UInt64]8; ReturnLengthBytes = [UInt64]8
+                AssignedProcessCount = [UInt64]2; ListedProcessCount = [UInt64]0; Resized = $false
+            })
+        ProcessIds = @([int]1234)
+    }
+    $syntheticFailedObservation = Convert-StartupJobQueryObservation $syntheticFailedQuery
+    $syntheticFailedJson = $syntheticFailedObservation | ConvertTo-Json -Depth 8 -Compress
+    $jobQueryError234Retained = ($syntheticFailedObservation.attempted -and -not $syntheticFailedObservation.succeeded -and
+        $syntheticFailedObservation.errorCode -eq 234 -and $syntheticFailedObservation.attemptCount -eq 1 -and
+        $syntheticFailedObservation.attempts.Count -eq 1 -and $syntheticFailedObservation.attempts[0].errorCode -eq 234 -and
+        $syntheticFailedJson -notmatch '(?i)processids|imagepath|commandline|payload')
+    if (-not $jobQueryError234Retained) {
+        throw 'Failed job query observation self-test failed.'
+    }
+    $malformedQuery = [pscustomobject][ordered]@{
+        Attempted = $true
+        Succeeded = $false
+        ErrorCode = [pscustomobject]@{}
+        AttemptCount = [pscustomobject]@{}
+        CapacityBytes = [pscustomobject]@{}
+        RequiredBytes = [pscustomobject]@{}
+        ReturnLengthBytes = [pscustomobject]@{}
+        AssignedProcessCount = [pscustomobject]@{}
+        ListedProcessCount = [pscustomobject]@{}
+        Resized = [pscustomobject]@{}
+        Attempts = [pscustomobject][ordered]@{ payload = 'secret'; ProcessIds = @([int]1234) }
+        ProcessIds = @([int]1234)
+    }
+    $malformedObservation = Convert-StartupJobQueryObservation $malformedQuery
+    $malformedObservationJson = $malformedObservation | ConvertTo-Json -Depth 8 -Compress
+    $malformedObservationSelfTestVerified = $malformedObservation.attempts.Count -le 8 -and
+        $malformedObservationJson -notmatch '(?i)processids|imagepath|commandline|payload'
+    if (-not $malformedObservationSelfTestVerified) { throw 'Malformed job query observation self-test failed.' }
+    $jobQueryObservationSelfTestVerified = $jobQueryObservationSelfTestVerified -and $malformedObservationSelfTestVerified
+    $failedCleanupObservation = New-StartupCleanupObservation
+    $failedCleanupObservation.jobPresent = $true
+    $failedCleanupObservation.jobQueryAttempted = $true
+    $failedCleanupObservation.jobQuerySucceeded = $false
+    $failedCleanupObservation.jobCloseSucceeded = $true
+    $failedCleanupObservation.finalPathSweepVerified = $true
+    $failedCleanupObservation.survivorCount = 0
+    $failedProcessCleanupVerified = $failedCleanupObservation.survivorCount -eq 0 -and
+        $failedCleanupObservation.jobQuerySucceeded -and $failedCleanupObservation.jobCloseSucceeded -and
+        $failedCleanupObservation.finalPathSweepVerified
+    $failedQueryCleanupRemainsUnverified = -not $failedProcessCleanupVerified
+    if (-not $failedQueryCleanupRemainsUnverified) { throw 'Failed job query with no survivors was treated as verified cleanup.' }
+    $cleanupErrorCountSelfTestObservation = New-StartupCleanupObservation
+    $cleanupErrorCountSelfTestObservation.cleanupErrorCount = 2
+    $cleanupErrorCountSelfTestTotal = Get-StartupCleanupErrorCount $cleanupErrorCountSelfTestObservation 2 $true
+    $cleanupErrorCountOverflowSelfTestObservation = New-StartupCleanupObservation
+    $cleanupErrorCountOverflowSelfTestObservation.cleanupErrorCount = [int]::MaxValue
+    $cleanupErrorCountOverflowSelfTestTotal = Get-StartupCleanupErrorCount $cleanupErrorCountOverflowSelfTestObservation ([Int64][int]::MaxValue)
+    $cleanupErrorCountSelfTestVerified = $cleanupErrorCountSelfTestTotal -eq 3 -and
+        $cleanupErrorCountOverflowSelfTestTotal -eq [int]::MaxValue
+    if (-not $cleanupErrorCountSelfTestVerified) { throw 'Cleanup error count aggregation self-test failed.' }
+    $sharedScriptText = [IO.File]::ReadAllText($PSCommandPath)
+    $unsupportedResizeErrorName = 'ERROR_' + 'MORE_DATA'
+    $jobQueryRetryBehaviorUnchanged = $sharedScriptText.IndexOf($unsupportedResizeErrorName, [StringComparison]::Ordinal) -lt 0
+    if (-not $jobQueryRetryBehaviorUnchanged) {
+        throw 'Unsupported job-query sizing error unexpectedly became retryable.'
+    }
     [void](Get-ProcessSnapshot @{} ([int[]]@($PID)))
     $snapshotWatch = [Diagnostics.Stopwatch]::StartNew()
     $snapshot = Get-ProcessSnapshot @{} ([int[]]@($PID))
@@ -3049,6 +3511,12 @@ function Invoke-SelfTest {
         artifactBundleCleanupVerified = [bool]$bundleCleanupVerified
         artifactClosureVerified = $true
         jobContainmentSelfTestVerified = [bool]$jobSelfTestClosed
+        jobQueryObservationSelfTestVerified = [bool]$jobQueryObservationSelfTestVerified
+        jobQueryError234Retained = [bool]$jobQueryError234Retained
+        jobQueryRetryBehaviorUnchanged = [bool]$jobQueryRetryBehaviorUnchanged
+        cleanupObservationSelfTestVerified = [bool]$cleanupObservationSelfTestVerified
+        failedQueryCleanupRemainsUnverified = [bool]$failedQueryCleanupRemainsUnverified
+        cleanupErrorCountSelfTestVerified = [bool]$cleanupErrorCountSelfTestVerified
         workingDirectorySelfTestVerified = $true
         startupDiagnosticsSchemaVerified = [bool]$diagnosticSchemaVerified
         startupDiagnosticBoundsVerified = [bool]$diagnosticBoundsVerified

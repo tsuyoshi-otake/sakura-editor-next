@@ -319,6 +319,39 @@ even if its smoke timings happen to satisfy the synthetic thresholds.
 The console prints the report path. The path is a retrieval aid and is not part
 of the JSON payload.
 
+## Job-query and cleanup telemetry
+
+The paired runner accepts the optional v1 `launchJobQueryObservation`,
+`startupDiagnostics.*.jobQueryObservation`, and `cleanupObservation` fields
+when a producer supplies them. These observations are deliberately
+payload-free and numeric: bounded attempt/count/byte fields, booleans, and
+the numeric Win32 error code are retained; PIDs, paths, handles, messages,
+commands, captions, document data, and raw objects are never copied into the
+paired report. The hard bounds include at most eight retained attempt records,
+bounded counts, and bounded `capacityBytes`, `requiredBytes`, and
+`returnLengthBytes`.
+
+The query sizing evidence is diagnostic only. A benign initial sizing attempt
+can report numeric `errorCode=122` or `errorCode=24` before a later successful
+query; those Win32 codes are not byte counts. `capacityBytes`,
+`requiredBytes`, `returnLengthBytes`, `assignedProcessCount`, and
+`listedProcessCount` remain separate bounded diagnostics and do not qualify or
+weaken cleanup. A terminal failed query keeps its numeric error (including 234)
+visible. `partial` is retained when a
+successful query lists fewer processes than assigned, but it is not corrected
+or reinterpreted until the separate C3 work; the paired runner does not retry
+or adjust that result here.
+
+Query and cleanup telemetry never participates in the success expression,
+`Test-PairedRunCleanupVerified`, termination/suppression, acceptance,
+qualification, or adoption gates. In particular, zero survivors do not prove
+cleanup when the job query failed. A failed or preflight launch receives
+neutral `not-attempted` telemetry. Reports from an older v1 producer with the
+optional fields absent also receive neutral `not-attempted` telemetry, while a
+present malformed query or cleanup subobject becomes only local
+`unavailable` evidence and leaves valid process-tree, root-exit, window, and
+legacy status/gate fields intact.
+
 ## Self-test
 
 Run the helper self-test before a real campaign:
