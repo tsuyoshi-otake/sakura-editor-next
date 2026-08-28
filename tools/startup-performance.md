@@ -244,6 +244,12 @@ source state と両 measurement script の hash を再確認し、drift があ�
 HOLD を維持します。receipt の `artifact_id` / role / source / destination は canonical stage layout へ
 厳密に結び付けられ、basename だけの一致、absolute path、traversal、Windows の曖昧な予約名は拒否されます。
 
+producer の source-state failure envelope は payload-free のまま、`failure.stage` に大分類、
+`failure.substage` に失敗した source-state substep、`failure.code` に安定した機械可読コードを記録します。
+Rust toolchain identity の取得では、Windows PowerShell 5.1 の pipeline による `$LASTEXITCODE` の上書きを
+避けるため native command の終了コードを出力変換より先に取得し、出力は bounded な単一行として検証します。
+失敗時に Rust の version 出力、path、command、例外本文は manifest へコピーしません。
+
 Debug の qualified artifact pair は、clean checkout で同じ新規 output root を指定して次のように生成します。
 
 ```powershell

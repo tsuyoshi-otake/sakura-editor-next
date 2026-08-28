@@ -45,6 +45,8 @@ $script:LockPath = $null
 $script:LockHandle = $null
 $script:LockOwned = $false
 $script:TransactionRoot = $null
+$script:FailureCode = $null
+$script:FailureSubstage = $null
 $script:RepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $script:OutputProviderSymbols = @(
     'sakura_output_provider_create_v1',
@@ -500,6 +502,64 @@ function Assert-RegularFile {
     }
 }
 
+function Set-ProducerFailureContext {
+    param(
+        [Parameter(Mandatory = $true)] [string]$Code,
+        [Parameter(Mandatory = $true)] [string]$Substage
+    )
+    $script:FailureCode = $Code
+    $script:FailureSubstage = $Substage
+}
+
+function Invoke-NativeOutputCapture {
+    param(
+        [Parameter(Mandatory = $true)] [string]$Executable,
+        [Parameter(Mandatory = $true)] [string[]]$Arguments,
+        [ValidateRange(1, 64)] [int]$MaxLines = 8,
+        [ValidateRange(1, 8192)] [int]$MaxChars = 2048
+    )
+    $oldErrorAction = $ErrorActionPreference
+    $rawOutput = $null
+    $exitCode = -1
+    try {
+        $ErrorActionPreference = 'SilentlyContinue'
+        # Keep this assignment and LASTEXITCODE read adjacent.  Windows
+        # PowerShell changes LASTEXITCODE when a pipeline runs after a native
+        # process, even if that process itself returned zero.
+        $rawOutput = & $Executable @Arguments 2>$null
+        $exitCode = $LASTEXITCODE
+    }
+    catch {
+        $exitCode = -1
+    }
+    finally { $ErrorActionPreference = $oldErrorAction }
+
+    $lines = @($rawOutput)
+    $charCount = [Int64]0
+    $bounded = $true
+    foreach ($entry in $lines) {
+        if ($null -eq $entry) {
+            $bounded = $false
+            continue
+        }
+        $lineText = [string]$entry
+        $charCount += [Int64]$lineText.Length
+        if ($lineText.Length -gt $MaxChars -or $charCount -gt $MaxChars) { $bounded = $false }
+    }
+    if ($lines.Count -gt $MaxLines) { $bounded = $false }
+
+    $retainedLines = @()
+    $retainedCount = [Math]::Min($lines.Count, $MaxLines)
+    for ($index = 0; $index -lt $retainedCount; $index++) { $retainedLines += [string]$lines[$index] }
+    return [pscustomobject][ordered]@{
+        exitCode = [int]$exitCode
+        lines = $retainedLines
+        lineCount = [int]$lines.Count
+        charCount = [Int64]$charCount
+        bounded = [bool]$bounded
+    }
+}
+
 function Get-FileIdentity {
     param([Parameter(Mandatory = $true)] [string]$Path)
     Assert-RegularFile $Path
@@ -578,25 +638,21 @@ function Resolve-Executable {
 }
 
 function Resolve-RustcExecutable {
+    Set-ProducerFailureContext 'RUST_TOOLCHAIN_RESOLUTION' 'rust-toolchain-resolve'
     try { return Resolve-Executable 'rustc.exe' } catch { }
     $rustup = Resolve-Executable 'rustup.exe'
-    $line = $null
-    $exitCode = -1
-    $oldErrorAction = $ErrorActionPreference
     Push-Location $script:RepoRoot
     try {
-        $ErrorActionPreference = 'SilentlyContinue'
-        $line = (& $rustup which rustc 2>$null | Select-Object -First 1)
-        $exitCode = $LASTEXITCODE
+        $captured = Invoke-NativeOutputCapture $rustup @('which', 'rustc') 4 1024
     }
-    finally {
-        $ErrorActionPreference = $oldErrorAction
-        Pop-Location
-    }
-    if ($exitCode -ne 0 -or [string]::IsNullOrWhiteSpace([string]$line)) {
+    finally { Pop-Location }
+    $rustcLine = if ($captured.lineCount -eq 1) { ([string]$captured.lines[0]).Trim() } else { $null }
+    if ($captured.exitCode -ne 0 -or -not $captured.bounded -or
+        $captured.lineCount -ne 1 -or [string]::IsNullOrWhiteSpace($rustcLine) -or
+        $rustcLine.Length -gt 1024 -or $rustcLine -match '[\r\n]') {
         throw 'The selected Rust compiler is unavailable.'
     }
-    $rustc = Get-CanonicalPath ([string]$line).Trim()
+    $rustc = Get-CanonicalPath $rustcLine
     Assert-RegularFile $rustc
     return $rustc
 }
@@ -632,19 +688,37 @@ function Get-MsvcIdentity {
     return ('msvc-file-version:{0}' -f $version.Trim())
 }
 
-function Get-RustToolchainIdentity {
-    $rustc = Resolve-RustcExecutable
-    $oldErrorAction = $ErrorActionPreference
-    try {
-        $ErrorActionPreference = 'SilentlyContinue'
-        $line = (& $rustc --version 2>$null | Select-Object -First 1)
-        $exitCode = $LASTEXITCODE
+function Convert-RustToolchainCaptureToIdentity {
+    param([Parameter(Mandatory = $true)] [object]$Capture)
+    if ($null -eq $Capture -or $null -eq $Capture.exitCode -or
+        $null -eq $Capture.lineCount -or $null -eq $Capture.lines -or
+        $null -eq $Capture.bounded) {
+        Set-ProducerFailureContext 'RUST_TOOLCHAIN_IDENTITY_MALFORMED' 'rust-toolchain-identity'
+        throw 'Rust toolchain identity capture is malformed.'
     }
-    finally { $ErrorActionPreference = $oldErrorAction }
-    if ($exitCode -ne 0 -or [string]::IsNullOrWhiteSpace([string]$line)) { throw 'Rust toolchain identity is unavailable.' }
-    $identity = ([string]$line).Trim()
-    if ($identity -match '[\r\n]') { throw 'Rust toolchain identity is malformed.' }
+    $lines = @($Capture.lines)
+    if ([int]$Capture.exitCode -ne 0) {
+        Set-ProducerFailureContext 'RUST_TOOLCHAIN_IDENTITY_COMMAND_FAILED' 'rust-toolchain-identity'
+        throw 'Rust toolchain identity command failed.'
+    }
+    if (-not [bool]$Capture.bounded -or [int]$Capture.lineCount -ne 1 -or
+        $lines.Count -ne 1 -or [string]::IsNullOrWhiteSpace([string]$lines[0])) {
+        Set-ProducerFailureContext 'RUST_TOOLCHAIN_IDENTITY_MALFORMED' 'rust-toolchain-identity'
+        throw 'Rust toolchain identity is malformed.'
+    }
+    $identity = ([string]$lines[0]).Trim()
+    if ($identity.Length -gt 512 -or $identity -match '[\r\n]') {
+        Set-ProducerFailureContext 'RUST_TOOLCHAIN_IDENTITY_MALFORMED' 'rust-toolchain-identity'
+        throw 'Rust toolchain identity is malformed.'
+    }
     return $identity
+}
+
+function Get-RustToolchainIdentity {
+    Set-ProducerFailureContext 'RUST_TOOLCHAIN_IDENTITY' 'rust-toolchain-identity'
+    $rustc = Resolve-RustcExecutable
+    $captured = Invoke-NativeOutputCapture $rustc @('--version') 4 512
+    return Convert-RustToolchainCaptureToIdentity $captured
 }
 
 function Get-WindowsImageIdentity {
@@ -1686,12 +1760,18 @@ function New-FailureEnvelope {
         [Parameter(Mandatory = $true)] [string]$Type,
         [AllowNull()] [string]$PrimaryStage = $null,
         [AllowNull()] [string]$PrimaryType = $null,
-        [AllowNull()] [object]$Cleanup = $null
+        [AllowNull()] [object]$Cleanup = $null,
+        [AllowNull()] [string]$FailureCode = $null,
+        [AllowNull()] [string]$FailureSubstage = $null
     )
     $failure = [ordered]@{ stage = $script:Stage; type = $Type }
+    if (-not [string]::IsNullOrWhiteSpace($FailureCode)) { $failure.code = $FailureCode }
+    if (-not [string]::IsNullOrWhiteSpace($FailureSubstage)) { $failure.substage = $FailureSubstage }
     if ($Type -eq 'cleanup-unverified') {
         $failure.primaryStage = if ($null -ne $PrimaryStage) { $PrimaryStage } else { $script:Stage }
         $failure.primaryType = if ($null -ne $PrimaryType) { $PrimaryType } else { 'unknown' }
+        if (-not [string]::IsNullOrWhiteSpace($FailureCode)) { $failure.primaryCode = $FailureCode }
+        if (-not [string]::IsNullOrWhiteSpace($FailureSubstage)) { $failure.primarySubstage = $FailureSubstage }
     }
     $envelope = [ordered]@{
         schemaVersion = $script:SchemaVersion
@@ -1850,6 +1930,65 @@ function Invoke-SelfTest {
         try { [void](Assert-ProviderObjectFormat $anonymousObjectDump 'Debug') } catch { $formatFailures++ }
         if ($formatFailures -ne 2) { throw 'Self-test accepted a provider object format for the wrong configuration.' }
         $wrongConfigObjectFormatRejected = $true
+        $nativeExitCodeCaptureVerified = $false
+        $rustToolchainExitZeroVerified = $false
+        $rustToolchainNonzeroRejected = $false
+        $rustToolchainMalformedRejected = $false
+        $rustToolchainFailureCodeVerified = $false
+        $comspec = $null
+        if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+            $comspec = Resolve-Executable 'cmd.exe'
+            $zeroCapture = Invoke-NativeOutputCapture $comspec @('/d', '/s', '/c', 'exit 0') 4 256
+            if ($zeroCapture.exitCode -ne 0 -or -not $zeroCapture.bounded -or $zeroCapture.lineCount -ne 0) {
+                throw 'Self-test failed to preserve a native zero exit code.'
+            }
+            $nonzeroCapture = Invoke-NativeOutputCapture $comspec @('/d', '/s', '/c', 'exit 7') 4 256
+            if ($nonzeroCapture.exitCode -ne 7) { throw 'Self-test failed to preserve a native nonzero exit code.' }
+            $multilineCapture = Invoke-NativeOutputCapture $comspec @('/d', '/s', '/c', 'echo rustc-one&echo rustc-two') 4 256
+            if ($multilineCapture.lineCount -ne 2) { throw 'Self-test did not retain native multiline output for validation.' }
+            $tooManyCapture = Invoke-NativeOutputCapture $comspec @('/d', '/s', '/c', 'for /L %i in (1,1,5) do @echo rustc-line') 4 256
+            if ($tooManyCapture.bounded) { throw 'Self-test accepted native output beyond its bound.' }
+            $nativeExitCodeCaptureVerified = $true
+
+            $rustcSelfTest = Resolve-RustcExecutable
+            $rustcVersionCapture = Invoke-NativeOutputCapture $rustcSelfTest @('--version') 4 512
+            if ($rustcVersionCapture.exitCode -ne 0) { throw 'Self-test Rust compiler returned a nonzero exit code.' }
+            if ([string]::IsNullOrWhiteSpace((Convert-RustToolchainCaptureToIdentity $rustcVersionCapture))) {
+                throw 'Self-test Rust compiler identity was empty.'
+            }
+            $rustToolchainExitZeroVerified = $true
+
+            $successCapture = [pscustomobject][ordered]@{
+                exitCode = 0
+                lines = @('rustc 1.96.0 (self-test)')
+                lineCount = 1
+                bounded = $true
+            }
+            if ((Convert-RustToolchainCaptureToIdentity $successCapture) -cne 'rustc 1.96.0 (self-test)') {
+                throw 'Self-test Rust toolchain success conversion failed.'
+            }
+            try { [void](Convert-RustToolchainCaptureToIdentity $nonzeroCapture) }
+            catch {
+                if ($script:FailureCode -cne 'RUST_TOOLCHAIN_IDENTITY_COMMAND_FAILED' -or
+                    $script:FailureSubstage -cne 'rust-toolchain-identity') { throw 'Self-test Rust nonzero failure code was unstable.' }
+                $rustToolchainNonzeroRejected = $true
+            }
+            if (-not $rustToolchainNonzeroRejected) { throw 'Self-test accepted a failed Rust toolchain command.' }
+            try { [void](Convert-RustToolchainCaptureToIdentity $multilineCapture) }
+            catch {
+                if ($script:FailureCode -cne 'RUST_TOOLCHAIN_IDENTITY_MALFORMED' -or
+                    $script:FailureSubstage -cne 'rust-toolchain-identity') { throw 'Self-test Rust malformed failure code was unstable.' }
+                $rustToolchainMalformedRejected = $true
+            }
+            if (-not $rustToolchainMalformedRejected) { throw 'Self-test accepted multiline Rust toolchain output.' }
+            $typedEnvelope = New-FailureEnvelope 'preflight' 'source-state' 'preflight' $null 'RUST_TOOLCHAIN_IDENTITY_MALFORMED' 'rust-toolchain-identity'
+            $typedFailure = Get-PropertyValue $typedEnvelope @('failure')
+            if ([string](Get-PropertyValue $typedFailure @('code')) -cne 'RUST_TOOLCHAIN_IDENTITY_MALFORMED' -or
+                [string](Get-PropertyValue $typedFailure @('substage')) -cne 'rust-toolchain-identity') {
+                throw 'Self-test typed Rust failure envelope failed.'
+            }
+            $rustToolchainFailureCodeVerified = $true
+        }
         $cleanupEnvelopeVerified = $false
         $syntheticCleanup = [ordered]@{
             attempted = $true
@@ -1861,10 +2000,11 @@ function Invoke-SelfTest {
             remainingCount = 2
             failureCount = 1
         }
-        $cleanupEnvelope = New-FailureEnvelope 'cleanup-unverified' 'self-test' 'synthetic-primary' $syntheticCleanup
+        $cleanupEnvelope = New-FailureEnvelope 'cleanup-unverified' 'self-test' 'synthetic-primary' $syntheticCleanup 'SELF_TEST_PRIMARY_FAILURE' 'self-test-primary'
         if ([string](Get-PropertyValue $cleanupEnvelope @('status')) -cne 'failed' -or
             [string](Get-PropertyValue (Get-PropertyValue $cleanupEnvelope @('failure')) @('type')) -cne 'cleanup-unverified' -or
             [string](Get-PropertyValue (Get-PropertyValue $cleanupEnvelope @('failure')) @('primaryType')) -cne 'synthetic-primary' -or
+            [string](Get-PropertyValue (Get-PropertyValue $cleanupEnvelope @('failure')) @('primaryCode')) -cne 'SELF_TEST_PRIMARY_FAILURE' -or
             [int](Get-PropertyValue (Get-PropertyValue $cleanupEnvelope @('cleanup')) @('remainingCount')) -ne 2) {
             throw 'Self-test cleanup failure envelope semantics failed.'
         }
@@ -1872,7 +2012,6 @@ function Invoke-SelfTest {
         $cleanupEnvelopeVerified = $true
         $jobVerified = $false
         if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
-            $comspec = Resolve-Executable 'cmd.exe'
             $overrides = @{ SAKURA_OUTPUT_BACKEND = 'cpp'; SAKURA_UTF16_BACKEND = 'cpp'; SAKURA_OUTPUT_PRODUCTION_PACKAGE = 'false'; SAKURA_UTF16_PRODUCTION_PACKAGE = 'false'; SKIP_CREATE_GITHASH = '1'; SAKURA_BUILD_JOBS = '1'; MSBUILDDISABLENODEREUSE = '1' }
             $block = New-EnvironmentBlock $overrides
             [void](Invoke-OwnedCommand $comspec (New-CmdCommandLine 'exit 0' $comspec) $script:RepoRoot $block 30)
@@ -1897,6 +2036,11 @@ function Invoke-SelfTest {
             archiveExportsVerified = $true
             archiveExactSetRejected = $archiveExactSetRejected
             cleanupEnvelopeVerified = $cleanupEnvelopeVerified
+            nativeExitCodeCaptureVerified = $nativeExitCodeCaptureVerified
+            rustToolchainExitZeroVerified = $rustToolchainExitZeroVerified
+            rustToolchainNonzeroRejected = $rustToolchainNonzeroRejected
+            rustToolchainMalformedRejected = $rustToolchainMalformedRejected
+            rustToolchainFailureCodeVerified = $rustToolchainFailureCodeVerified
             exclusiveLockVerified = $exclusiveLockVerified
             runtimeStageVerified = $true
             transactionVerified = $true
@@ -1921,11 +2065,14 @@ function Invoke-Producer {
     $movedFinalRoot = $false
     $failureType = $null
     $failureStage = $null
+    $failureCode = $null
+    $failureSubstage = $null
     $successSummary = $null
     $cleanupVerified = $true
     $cleanupFailureCount = 0
     try {
         $script:Stage = 'preflight'
+        Set-ProducerFailureContext 'PRODUCER_PREFLIGHT' 'preflight'
         Assert-BackendSelector
         if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'The producer requires Windows.' }
         $outputRoot = Get-OutputRoot $OutputDirectory
@@ -1957,17 +2104,29 @@ function Invoke-Producer {
         Assert-RegularFile $buildBatch
         Assert-RegularFile $buildScript
         $script:Stage = 'source-state'
+        Set-ProducerFailureContext 'SOURCE_STATE' 'source-state'
+        Set-ProducerFailureContext 'SOURCE_GIT_STATE' 'git-state'
         $sourceBefore = Get-SourceState
+        Set-ProducerFailureContext 'ARTIFACT_BEFORE_IDENTITY' 'artifact-before'
         $artifactBefore = Get-OptionalFileIdentity $artifactSource
+        Set-ProducerFailureContext 'PROVIDER_OBJECT_BEFORE_IDENTITY' 'provider-object-before'
         $providerObjectBefore = Get-OptionalFileIdentity $providerObjectSource
+        Set-ProducerFailureContext 'COMPILE_LOG_BEFORE_IDENTITY' 'compile-log-before'
         $compileLogBefore = Get-OptionalFileIdentity $compileLogSource
+        Set-ProducerFailureContext 'WINDOWS_IMAGE_IDENTITY' 'windows-image'
         $windowsBefore = Get-WindowsImageIdentity
+        Set-ProducerFailureContext 'POWER_MODE_IDENTITY' 'power-mode'
         $powerBefore = Get-PowerModeIdentity
+        Set-ProducerFailureContext 'MSVC_TOOLCHAIN_IDENTITY' 'msvc-toolchain'
         $msvcIdentity = Get-MsvcIdentity
+        Set-ProducerFailureContext 'RUST_TOOLCHAIN_IDENTITY' 'rust-toolchain-identity'
         $rustToolchain = Get-RustToolchainIdentity
+        Set-ProducerFailureContext 'RUST_LOCK_IDENTITY' 'rust-lock'
         $lockPath = Join-Path $script:RepoRoot 'rust/native/Cargo.lock'
         $rustLockSha256 = Get-Sha256 $lockPath
+        Set-ProducerFailureContext 'COMMAND_SHELL_RESOLUTION' 'command-shell'
         $comspec = Resolve-Executable 'cmd.exe'
+        Set-ProducerFailureContext 'PYTHON_RESOLUTION' 'python'
         $py = Resolve-Executable 'py.exe'
         $environmentOverrides = @{
             SAKURA_OUTPUT_BACKEND = $Backend
@@ -1982,6 +2141,7 @@ function Invoke-Producer {
             VSLANG = '1033'
         }
         $environmentBlock = New-EnvironmentBlock $environmentOverrides
+        Set-ProducerFailureContext 'DUMPBIN_RESOLUTION' 'dumpbin'
         $dumpbinProbePath = Join-Path $transactionRoot 'dumpbin-path.txt'
         $dumpbin = Resolve-Dumpbin $comspec $script:RepoRoot $environmentBlock $TimeoutSeconds $dumpbinProbePath
         $packagePlanCommandText = '{0} -3 {1} --format json package plan sakura_app --context {2}' -f
@@ -1990,6 +2150,7 @@ function Invoke-Producer {
             $context
         $packagePlanPath = Join-Path $transactionRoot 'package-plan.json'
         $script:Stage = 'package-plan'
+        Set-ProducerFailureContext 'PACKAGE_PLAN' 'package-plan'
         $packagePlanCommand = New-CmdCommandLine ($packagePlanCommandText + ' > ' + (ConvertTo-WindowsCommandLineArgument $packagePlanPath) + ' 2> ' + (ConvertTo-WindowsCommandLineArgument (Join-Path $transactionRoot 'package-plan.stderr'))) $comspec
         [void](Invoke-OwnedCommand $comspec $packagePlanCommand $script:RepoRoot $environmentBlock $TimeoutSeconds)
         Assert-RegularFile $packagePlanPath
@@ -2008,6 +2169,7 @@ function Invoke-Producer {
         $buildCommandSha256 = Get-TextSha256 ('build-dev.bat|x64|{0}|SAKURA_OUTPUT_BACKEND={1}|SAKURA_UTF16_BACKEND=cpp|SAKURA_OUTPUT_PRODUCTION_PACKAGE=false|SAKURA_UTF16_PRODUCTION_PACKAGE=false|SAKURA_UTF16_BENCHMARK_TELEMETRY=false|SAKURA_GENERATE_ASSEMBLY_LISTINGS=false|SKIP_CREATE_GITHASH=1|SAKURA_BUILD_JOBS={2}|MSBUILDDISABLENODEREUSE=1' -f $Configuration, $Backend, $BuildParallelism)
         $runtimeStageCommandSha256 = Get-TextSha256 ('stage-runtime|{0}|sakura_app|canonical' -f $context)
         $script:Stage = 'build'
+        Set-ProducerFailureContext 'BUILD' 'build'
         $script:BuildStarted = $true
         $buildStartedUtc = [DateTime]::UtcNow
         $buildCommandText = '{0} x64 {1}' -f (ConvertTo-WindowsCommandLineArgument $buildBatch), $Configuration
@@ -2028,6 +2190,7 @@ function Invoke-Producer {
         $archiveProofOutput = Join-Path $transactionRoot 'archive-proof.txt'
         $selectorProofOutput = Join-Path $transactionRoot 'selector-proof.txt'
         $script:Stage = 'selector-proof'
+        Set-ProducerFailureContext 'SELECTOR_PROOF' 'selector-proof'
         $archiveProof = Get-ProviderArchiveProof $rustArchiveSource $dumpbin $comspec $environmentBlock $script:RepoRoot $archiveProofOutput $TimeoutSeconds
         $selectorProof = Get-SelectorProof $providerObjectBefore $providerObjectAfter $providerObjectSource $dumpbin $comspec $environmentBlock $script:RepoRoot $selectorProofOutput $TimeoutSeconds $compileLogBefore $compileLogAfter $compileLogSource
         $selectorProof = Add-ProviderArchiveProof $selectorProof $archiveProof
@@ -2035,6 +2198,7 @@ function Invoke-Producer {
         if ([string]$selectorProof.result -cne $expectedSelectorResult) { throw 'The Output selector proof did not use the expected configuration-specific verification.' }
         if ([UInt64]$artifactAfter.sizeBytes -lt 1) { throw 'The built sakura.exe is empty.' }
         $script:Stage = 'runtime-stage'
+        Set-ProducerFailureContext 'RUNTIME_STAGE' 'runtime-stage'
         $stageCommandText = '{0} -3 {1} --format json stage runtime --context {2} --product sakura_app' -f
             (ConvertTo-WindowsCommandLineArgument $py),
             (ConvertTo-WindowsCommandLineArgument $buildScript),
@@ -2056,11 +2220,13 @@ function Invoke-Producer {
         $manifest = New-BuildManifest $sourceBefore $artifactBefore $artifactAfter $copiedStage $windowsBefore.identity $windowsBefore.sha256 $powerBefore.identity $powerBefore.sha256 $msvcIdentity $rustToolchain $rustLockSha256 $packagePlanValue $buildCommandSha256 $packagePlanCommandSha256 $runtimeStageCommandSha256 $selectorProof
         $manifestPath = Join-Path $transactionRoot 'build-manifest.json'
         $script:Stage = 'manifest'
+        Set-ProducerFailureContext 'MANIFEST' 'manifest'
         Write-JsonAtomic $manifestPath $manifest
         [void](Assert-BuildManifest $manifestPath $sourceBefore $artifactAfter $copiedStage $selectorProof)
         if ((Get-Sha256 $artifactSource) -ne [string]$artifactAfter.sha256) { throw 'The selected artifact changed after manifest generation.' }
         if (Test-Path -LiteralPath $finalRoot) { throw 'The selected output transaction appeared during production.' }
         $script:Stage = 'publication'
+        Set-ProducerFailureContext 'PUBLICATION' 'publication'
         [IO.Directory]::Move($transactionRoot, $finalRoot)
         $movedFinalRoot = $true
         $finalManifest = Join-Path $finalRoot 'build-manifest.json'
@@ -2111,6 +2277,8 @@ function Invoke-Producer {
             default { 'preflight' }
         }
         $failureStage = $script:Stage
+        $failureCode = $script:FailureCode
+        $failureSubstage = $script:FailureSubstage
         $script:ProducerExitCode = 1
     }
     finally {
@@ -2150,8 +2318,10 @@ function Invoke-Producer {
     }
     if ($null -ne $failureType -or -not $cleanupVerified) {
         $envelopeType = if ($cleanupVerified) { $failureType } else { 'cleanup-unverified' }
+        $envelopeFailureCode = if ($null -ne $failureType) { $failureCode } else { $null }
+        $envelopeFailureSubstage = if ($null -ne $failureType) { $failureSubstage } else { $null }
         try {
-            Write-Output ((New-FailureEnvelope $envelopeType $failureStage $failureType $cleanup) | ConvertTo-Json -Compress -Depth 10)
+            Write-Output ((New-FailureEnvelope $envelopeType $failureStage $failureType $cleanup $envelopeFailureCode $envelopeFailureSubstage) | ConvertTo-Json -Compress -Depth 10)
         }
         catch { }
         $script:ProducerExitCode = 1

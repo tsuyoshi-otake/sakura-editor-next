@@ -65,7 +65,7 @@ class PrepareOutputStartupArtifactContractTests(unittest.TestCase):
             "$statusLines = @()",
             "Get-MsvcIdentity",
             "Resolve-RustcExecutable",
-            "& $rustup which rustc",
+            "Invoke-NativeOutputCapture $rustup @('which', 'rustc')",
             "Get-RustToolchainIdentity",
             "rust/native/Cargo.lock",
             "packagePlanSha256",
@@ -163,6 +163,31 @@ class PrepareOutputStartupArtifactContractTests(unittest.TestCase):
         self.assertIn("refusing overwrite", self.text)
         self.assertIn("Assert-PayloadFreeManifest", self.text)
 
+    def test_native_exit_code_capture_and_typed_failure_contract_is_explicit(self) -> None:
+        for marker in (
+            "function Invoke-NativeOutputCapture",
+            "$rawOutput = & $Executable @Arguments 2>$null",
+            "$exitCode = $LASTEXITCODE",
+            "function Convert-RustToolchainCaptureToIdentity",
+            "RUST_TOOLCHAIN_IDENTITY_COMMAND_FAILED",
+            "RUST_TOOLCHAIN_IDENTITY_MALFORMED",
+            "rustToolchainNonzeroRejected",
+            "rustToolchainMalformedRejected",
+            "rustToolchainFailureCodeVerified",
+            "rustToolchainExitZeroVerified",
+            "primaryCode",
+            "FailureSubstage",
+        ):
+            self.assertIn(marker, self.text)
+        self.assertRegex(
+            self.text,
+            r"\$rawOutput = & \$Executable @Arguments 2>\$null\r?\n\s+\$exitCode = \$LASTEXITCODE",
+        )
+        self.assertNotRegex(
+            self.text,
+            r"\$rawOutput\s*=\s*& \$Executable @Arguments[^\r\n]*\|",
+        )
+
     def test_self_test_is_bounded_and_does_not_launch_build(self) -> None:
         hosts = powershell_hosts()
         if not hosts:
@@ -208,6 +233,11 @@ class PrepareOutputStartupArtifactContractTests(unittest.TestCase):
             self.assertTrue(payload["manifestPayloadFreeVerified"])
             self.assertTrue(payload["boundedProcessOwnershipVerified"])
             self.assertTrue(payload["canonicalClosureVerified"])
+            self.assertTrue(payload["nativeExitCodeCaptureVerified"])
+            self.assertTrue(payload["rustToolchainExitZeroVerified"])
+            self.assertTrue(payload["rustToolchainNonzeroRejected"])
+            self.assertTrue(payload["rustToolchainMalformedRejected"])
+            self.assertTrue(payload["rustToolchainFailureCodeVerified"])
 
     def test_invalid_selector_is_a_typed_payload_free_failure(self) -> None:
         hosts = powershell_hosts()
@@ -249,6 +279,8 @@ class PrepareOutputStartupArtifactContractTests(unittest.TestCase):
             self.assertEqual("failed", failure["status"])
             self.assertEqual("preflight", failure["failure"]["stage"])
             self.assertEqual("preflight", failure["failure"]["type"])
+            self.assertEqual("PRODUCER_PREFLIGHT", failure["failure"]["code"])
+            self.assertEqual("preflight", failure["failure"]["substage"])
             self.assertTrue(failure["payloadFree"])
             self.assertNotIn(str(ROOT), completed.stdout)
             self.assertNotIn(str(ROOT), completed.stderr)
