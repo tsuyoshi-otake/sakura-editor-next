@@ -981,6 +981,9 @@ function New-StartupDiagnosticState {
             jobMemberCount = 0
             topLevelWindowCount = $null
             topLevelWindowCountCapped = $false
+            editorWindowCount = $null
+            dialogWindowCount = $null
+            otherWindowCount = $null
             rootExitState = 'not-observed'
             rootExitCode = $null
             rootExitErrorCode = $null
@@ -1049,15 +1052,36 @@ function Get-StartupDiagnosticJobMembers([IntPtr]$Job) {
     return [pscustomobject]@{ verified = $true; members = $members }
 }
 
-function Get-StartupDiagnosticWindowCount($ProcessIds) {
+function Get-StartupDiagnosticWindowCount {
+    param(
+        [Parameter(Mandatory = $true)] [object]$ProcessIds,
+        [AllowNull()] [object[]]$Windows = $null
+    )
+    if ($null -eq $Windows) { $Windows = @([NativeStartupProbe]::GetTopLevelWindows()) }
     $count = 0
+    $editorCount = 0
+    $dialogCount = 0
+    $otherCount = 0
     $capped = $false
-    foreach ($window in @([NativeStartupProbe]::GetTopLevelWindows())) {
+    foreach ($window in @($Windows)) {
         if ($null -eq $ProcessIds -or -not $ProcessIds.ContainsKey([int]$window.ProcessId)) { continue }
-        if ($count -lt $startupDiagnosticMaxWindowCount) { $count++ }
-        else { $capped = $true; break }
+        if ($count -ge $startupDiagnosticMaxWindowCount) {
+            $capped = $true
+            break
+        }
+        $className = [string]$window.ClassName
+        if ($className.StartsWith('TextEditorWindow', [StringComparison]::Ordinal)) { $editorCount++ }
+        elseif ($className.Equals('#32770', [StringComparison]::Ordinal)) { $dialogCount++ }
+        else { $otherCount++ }
+        $count++
     }
-    return [pscustomobject]@{ count = $count; capped = $capped }
+    return [pscustomobject][ordered]@{
+        count = $count
+        capped = $capped
+        editorWindowCount = $editorCount
+        dialogWindowCount = $dialogCount
+        otherWindowCount = $otherCount
+    }
 }
 
 function Add-StartupDiagnosticCheckpoint {
@@ -1126,6 +1150,9 @@ function Add-StartupDiagnosticCheckpoint {
         $snapshot.jobMemberCount = if ($jobInfo.verified) { [int](@($records | Where-Object { $jobMembers.ContainsKey([int]$_.Id) }).Count) } else { 0 }
         $snapshot.topLevelWindowCount = [int]$windowInfo.count
         $snapshot.topLevelWindowCountCapped = [bool]$windowInfo.capped
+        $snapshot.editorWindowCount = [int]$windowInfo.editorWindowCount
+        $snapshot.dialogWindowCount = [int]$windowInfo.dialogWindowCount
+        $snapshot.otherWindowCount = [int]$windowInfo.otherWindowCount
         $snapshot.processExitObserved = [bool]$State.processExitObservation.observed
         $snapshot.processExitElapsedMs = $State.processExitObservation.elapsedMs
         $snapshot.status = 'observed'
@@ -1149,6 +1176,9 @@ function Add-StartupDiagnosticCheckpoint {
         $snapshot.jobMemberCount = 0
         $snapshot.topLevelWindowCount = $null
         $snapshot.topLevelWindowCountCapped = $false
+        $snapshot.editorWindowCount = $null
+        $snapshot.dialogWindowCount = $null
+        $snapshot.otherWindowCount = $null
         if ($null -eq $exitProbe -or -not $exitProbe.Succeeded) {
             $snapshot.rootExitState = 'unavailable'
             $snapshot.rootExitCode = $null
@@ -2757,6 +2787,20 @@ function Invoke-SelfTest {
         -not $diagnosticRecord.jobMember -or $diagnosticJson -match '(?i)path|commandline|caption|text') {
         throw 'Payload-free startup process diagnostic metadata self-test failed.'
     }
+    $windowClassification = Get-StartupDiagnosticWindowCount @{ 1234 = $true } @(
+        [pscustomobject]@{ ProcessId = 1234; ClassName = 'TextEditorWindowSelfTest' }
+        [pscustomobject]@{ ProcessId = 1234; ClassName = '#32770' }
+        [pscustomobject]@{ ProcessId = 1234; ClassName = 'OtherWindowSelfTest' }
+        [pscustomobject]@{ ProcessId = 4321; ClassName = 'TextEditorWindowIgnored' }
+    )
+    if ($windowClassification.count -ne 3 -or $windowClassification.capped -or
+        $windowClassification.editorWindowCount -ne 1 -or
+        $windowClassification.dialogWindowCount -ne 1 -or
+        $windowClassification.otherWindowCount -ne 1 -or
+        ($windowClassification.editorWindowCount + $windowClassification.dialogWindowCount + $windowClassification.otherWindowCount) -ne $windowClassification.count) {
+        throw 'Owned top-level window classification self-test failed.'
+    }
+    $windowClassificationVerified = $true
     $diagnosticSchemaVerified = $true
     $diagnosticTreesEmpty = @($diagnosticCheckpoints | Where-Object { @($_.processTree).Count -ne 0 }).Count -eq 0
     $diagnosticBoundsVerified = [bool]($diagnosticCheckpoints.Count -eq 4 -and
@@ -3008,6 +3052,7 @@ function Invoke-SelfTest {
         workingDirectorySelfTestVerified = $true
         startupDiagnosticsSchemaVerified = [bool]$diagnosticSchemaVerified
         startupDiagnosticBoundsVerified = [bool]$diagnosticBoundsVerified
+        startupDiagnosticWindowClassificationVerified = [bool]$windowClassificationVerified
         noGuiLaunch = $true
         timestampUtc = [DateTime]::UtcNow.ToString('o')
     }

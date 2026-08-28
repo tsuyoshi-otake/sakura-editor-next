@@ -1690,6 +1690,21 @@ function Convert-PairedDiagnosticBoolean {
     return $null
 }
 
+function Convert-PairedDiagnosticWindowCount {
+    param([AllowNull()] [object]$Value)
+    if ($null -eq $Value -or $Value -is [bool]) { return $null }
+    try {
+        $count = [double]$Value
+        if ([double]::IsNaN($count) -or [double]::IsInfinity($count) -or
+            [Math]::Truncate($count) -ne $count -or $count -lt 0.0 -or
+            $count -gt [double]$script:PairedDiagnosticMaxWindowCount) {
+            return $null
+        }
+        return [int]$count
+    }
+    catch { return $null }
+}
+
 function New-PairedEmptyProcessDiagnosticSnapshot {
     param([Parameter(Mandatory = $true)] [string]$Checkpoint)
     return [ordered]@{
@@ -1705,6 +1720,9 @@ function New-PairedEmptyProcessDiagnosticSnapshot {
         jobMemberCount = 0
         topLevelWindowCount = $null
         topLevelWindowCountCapped = $false
+        editorWindowCount = $null
+        dialogWindowCount = $null
+        otherWindowCount = $null
         rootExitState = 'not-observed'
         rootExitCode = $null
         rootExitErrorCode = $null
@@ -1851,9 +1869,32 @@ function Convert-PairedProcessDiagnostics {
             $output.jobMembershipVerified = [bool](Get-PairedProperty $source @('jobMembershipVerified'))
             $jobMemberCount = Convert-PairedDiagnosticPid (Get-PairedProperty $source @('jobMemberCount')) $true
             $output.jobMemberCount = if ($null -eq $jobMemberCount) { [int](@($tree | Where-Object { $_.jobMember -eq $true }).Count) } else { [int][Math]::Min($jobMemberCount, $script:PairedDiagnosticMaxProcessCount) }
-            $windowCount = Convert-PairedDiagnosticPid (Get-PairedProperty $source @('topLevelWindowCount')) $true
-            $output.topLevelWindowCount = if ($null -eq $windowCount) { $null } else { [int][Math]::Min($windowCount, $script:PairedDiagnosticMaxWindowCount) }
-            $output.topLevelWindowCountCapped = [bool](Get-PairedProperty $source @('topLevelWindowCountCapped'))
+            $windowCount = Convert-PairedDiagnosticWindowCount (Get-PairedProperty $source @('topLevelWindowCount'))
+            $editorWindowCount = Convert-PairedDiagnosticWindowCount (Get-PairedProperty $source @('editorWindowCount'))
+            $dialogWindowCount = Convert-PairedDiagnosticWindowCount (Get-PairedProperty $source @('dialogWindowCount'))
+            $otherWindowCount = Convert-PairedDiagnosticWindowCount (Get-PairedProperty $source @('otherWindowCount'))
+            $windowCountCapped = Convert-PairedDiagnosticBoolean (Get-PairedProperty $source @('topLevelWindowCountCapped'))
+            $windowClassificationValid = $null -ne $windowCount -and
+                $null -ne $editorWindowCount -and $null -ne $dialogWindowCount -and
+                $null -ne $otherWindowCount -and
+                $null -ne $windowCountCapped -and
+                ($editorWindowCount + $dialogWindowCount + $otherWindowCount) -eq $windowCount
+            if ($windowClassificationValid) {
+                $output.topLevelWindowCount = $windowCount
+                $output.topLevelWindowCountCapped = $windowCountCapped
+                $output.editorWindowCount = $editorWindowCount
+                $output.dialogWindowCount = $dialogWindowCount
+                $output.otherWindowCount = $otherWindowCount
+            }
+            else {
+                $output.status = 'unavailable'
+                $output.observed = $false
+                $output.topLevelWindowCount = $null
+                $output.topLevelWindowCountCapped = $false
+                $output.editorWindowCount = $null
+                $output.dialogWindowCount = $null
+                $output.otherWindowCount = $null
+            }
         }
         else {
             $output.processTree = @()
@@ -1863,6 +1904,9 @@ function Convert-PairedProcessDiagnostics {
             $output.jobMemberCount = 0
             $output.topLevelWindowCount = $null
             $output.topLevelWindowCountCapped = $false
+            $output.editorWindowCount = $null
+            $output.dialogWindowCount = $null
+            $output.otherWindowCount = $null
         }
         $output.processExitObserved = [bool](Get-PairedProperty $source @('processExitObserved'))
         $output.processExitElapsedMs = Convert-PairedElapsedMs (Get-PairedProperty $source @('processExitElapsedMs'))
@@ -2636,7 +2680,10 @@ function Invoke-PairedSelfTest {
         $diagnosticSnapshot.processCount = 1
         $diagnosticSnapshot.jobMembershipVerified = $true
         $diagnosticSnapshot.jobMemberCount = 1
-        $diagnosticSnapshot.topLevelWindowCount = 1
+        $diagnosticSnapshot.topLevelWindowCount = 3
+        $diagnosticSnapshot.editorWindowCount = 1
+        $diagnosticSnapshot.dialogWindowCount = 1
+        $diagnosticSnapshot.otherWindowCount = 1
         $diagnosticSnapshot.rootExitState = 'active'
         $diagnosticSnapshot.rootExitCode = [UInt32]259
         $diagnosticSnapshot.processExitObserved = $false
@@ -2765,29 +2812,49 @@ function Invoke-PairedSelfTest {
         $selfTestSuccessRun.startupDiagnostics.processExitObservation.state -eq 'active' -and
         $selfTestSuccessRun.startupDiagnostics.processExitObservation.exitCode -eq 259)
     if (-not $selfTestDiagnosticsSuccessVerified) { throw 'Synthetic successful startup diagnostics schema self-test failed.' }
-    $selfTestSingleTreeDiagnostic = [ordered]@{
-        schemaVersion = 1
-        processTreeSnapshots = @([ordered]@{
-                checkpoint = '0.5s'; status = 'observed'; observed = $true; elapsedMs = 1.0
-                state = 'active'; exitCode = [UInt32]259; processCount = 1
-                processTree = [ordered]@{ pid = 1234; ppid = 0; creationTime = [Int64]1; imageName = 'sakura.exe'; jobMember = $true }
-                processRecordsTruncated = $false; jobMembershipVerified = $true; jobMemberCount = 1
-                topLevelWindowCount = 1; topLevelWindowCountCapped = $false
-                processExitObserved = $false; processExitElapsedMs = $null
-                failureStage = $null; failureType = $null
-            })
-        processExitObservation = [ordered]@{
-            observed = $false; elapsedMs = $null; pid = $null; source = 'run-root'
-            state = 'active'; exitCode = [UInt32]259; errorCode = $null
-        }
+    $selfTestWindowClassificationVerified = [bool]($selfTestSuccessRun.startupDiagnostics.processTreeSnapshots[0].topLevelWindowCount -eq 3 -and
+        $selfTestSuccessRun.startupDiagnostics.processTreeSnapshots[0].editorWindowCount -eq 1 -and
+        $selfTestSuccessRun.startupDiagnostics.processTreeSnapshots[0].dialogWindowCount -eq 1 -and
+        $selfTestSuccessRun.startupDiagnostics.processTreeSnapshots[0].otherWindowCount -eq 1 -and
+        ($selfTestSuccessRun.startupDiagnostics.processTreeSnapshots[0].editorWindowCount +
+            $selfTestSuccessRun.startupDiagnostics.processTreeSnapshots[0].dialogWindowCount +
+            $selfTestSuccessRun.startupDiagnostics.processTreeSnapshots[0].otherWindowCount) -eq
+        $selfTestSuccessRun.startupDiagnostics.processTreeSnapshots[0].topLevelWindowCount)
+    if (-not $selfTestWindowClassificationVerified) { throw 'Synthetic top-level window classification self-test failed.' }
+    $selfTestMismatchedDiagnostics = $selfTestStartupDiagnostics | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+    $selfTestMismatchedDiagnostics.processTreeSnapshots[0].editorWindowCount = 2
+    $selfTestMismatchedDiagnosticsRun = Convert-PairedProcessDiagnostics $selfTestMismatchedDiagnostics
+    $selfTestWindowClassificationMismatchVerified = [bool]($selfTestMismatchedDiagnosticsRun.observationStatus -eq 'unavailable' -and
+        $selfTestMismatchedDiagnosticsRun.processTreeSnapshots[0].status -eq 'unavailable' -and
+        $null -eq $selfTestMismatchedDiagnosticsRun.processTreeSnapshots[0].topLevelWindowCount -and
+        $null -eq $selfTestMismatchedDiagnosticsRun.processTreeSnapshots[0].editorWindowCount -and
+        $null -eq $selfTestMismatchedDiagnosticsRun.processTreeSnapshots[0].dialogWindowCount -and
+        $null -eq $selfTestMismatchedDiagnosticsRun.processTreeSnapshots[0].otherWindowCount)
+    if (-not $selfTestWindowClassificationMismatchVerified) { throw 'Mismatched top-level window classification was accepted.' }
+    $selfTestSingleTreeDiagnostic = $selfTestStartupDiagnostics | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+    foreach ($snapshot in @($selfTestSingleTreeDiagnostic.processTreeSnapshots)) {
+        $snapshot.topLevelWindowCount = 3
+        $snapshot.topLevelWindowCountCapped = $false
+        $snapshot.editorWindowCount = 1
+        $snapshot.dialogWindowCount = 1
+        $snapshot.otherWindowCount = 1
     }
     $selfTestSingleTreeConverted = Convert-PairedProcessDiagnostics $selfTestSingleTreeDiagnostic
     $selfTestSingleTreeProcessCount = @($selfTestSingleTreeConverted.processTreeSnapshots[0].processTree).Count
     if ($selfTestSingleTreeProcessCount -ne 1 -or
+        $selfTestSingleTreeConverted.processTreeSnapshots[0].status -ne 'observed' -or
+        $selfTestSingleTreeConverted.observationStatus -ne 'observed' -or
         $selfTestSingleTreeConverted.processTreeSnapshots[0].processTree[0].pid -ne 1234) {
         throw 'Single-record process-tree diagnostics self-test failed.'
     }
     $selfTestSingleTreeDiagnosticsVerified = $true
+    $selfTestMalformedCappedDiagnostics = $selfTestStartupDiagnostics | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+    $selfTestMalformedCappedDiagnostics.processTreeSnapshots[0].topLevelWindowCountCapped = 'not-a-boolean'
+    $selfTestMalformedCappedRun = Convert-PairedProcessDiagnostics $selfTestMalformedCappedDiagnostics
+    $selfTestMalformedCappedVerified = [bool]($selfTestMalformedCappedRun.observationStatus -eq 'unavailable' -and
+        $selfTestMalformedCappedRun.processTreeSnapshots[0].status -eq 'unavailable' -and
+        $null -eq $selfTestMalformedCappedRun.processTreeSnapshots[0].topLevelWindowCount)
+    if (-not $selfTestMalformedCappedVerified) { throw 'Malformed top-level window capped flag was accepted.' }
     $selfTestDiagnosticsTimeoutVerified = [bool]($selfTestWindowTimeoutRun.status -eq 'timeout' -and
         $selfTestWindowTimeoutRun.startupDiagnostics.observationStatus -eq 'observed' -and
         $selfTestWindowTimeoutRun.failureStage -eq 'window-discovery')
@@ -3285,6 +3352,9 @@ function Invoke-PairedSelfTest {
             $selfTestFailedRun.startupMilestones.timeoutStage -eq $null -and
             $selfTestFailedRun.startupMilestones.missingMilestones.Count -eq 6)
         startupDiagnosticsSuccessSchemaVerified = [bool]$selfTestDiagnosticsSuccessVerified
+        startupDiagnosticsWindowClassificationVerified = [bool]$selfTestWindowClassificationVerified
+        startupDiagnosticsWindowClassificationMismatchVerified = [bool]$selfTestWindowClassificationMismatchVerified
+        startupDiagnosticsWindowClassificationMalformedCappedVerified = [bool]$selfTestMalformedCappedVerified
         startupDiagnosticsSingleTreeVerified = [bool]$selfTestSingleTreeDiagnosticsVerified
         startupDiagnosticsTimeoutSchemaVerified = [bool]$selfTestDiagnosticsTimeoutVerified
         startupDiagnosticsFallbackSchemaVerified = [bool]$selfTestFallbackDiagnosticsVerified
