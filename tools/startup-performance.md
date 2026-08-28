@@ -43,10 +43,15 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\measure-output-startup.ps1
 membership と exact bundle image path の両方で残存がないことを確認します。
 
 各 paired launch では bundle 配下に一意な run-owned trace directory も作成します。共有 probe はそこへ
-書かれた startup trace を process cleanup 後に読み取り、paired report には allowlist 済み event 名の件数と
-`editor` / `control` / `unknown` ごとの role 件数だけを残します。trace の path、directory 名、`detail`、payload、
-raw command は report に出しません。trace directory は non-reparse の所有パスであることを確認して削除し、
-削除を検証できなければ `traceCleanupVerified=false` として launch を fail closed にします。
+書かれた startup trace を process cleanup 後に読み取り、paired report には allowlist 済み event 名の件数、
+`editor` / `control` / `unknown` ごとの role 件数、および最大 256 件の `orderedEvents` を残します。各 ordered
+item は `ordinal`、allowlist 済み `event`、`role`、`value1`、`value2`、QPC から算出した `elapsedMs` だけを持ち、
+上限到達時は `orderedEventsTruncated=true` になります。trace の path、directory 名、`detail`、payload、raw command
+は report に出しません。QPC の launch clock と frequency が互換でない、空、または malformed な trace は
+`trace-unavailable` として fail closed にします。elapsed の診断上限は launch timeout とは別の 120 秒です。なお、これらの trace は診断専用であり、event の順序や件数は
+readiness 成功を証明しません。RAII の `editor_ready` event は early return 経路でも発行され得ます。trace directory
+は non-reparse の所有パスであることを確認して削除し、削除を検証できなければ `traceCleanupVerified=false` として
+launch を fail closed にします。
 
 同じ paired report の各 launch には `startupDiagnostics` があり、`0.5s`、`2s`、`10s`、`timeout` の四つの
 checkpoint ごとに、上限付き process metadata と root の exit state/code を記録します。root handle の
@@ -172,7 +177,8 @@ rtk proxy powershell -NoProfile -ExecutionPolicy Bypass -File tools\measure-star
 ```
 
 セルフテストは JSONL のスキーマ検査、QPC 差分からの `firstContentPaintedMs` の算出、破損行の
-隔離、四つの process-diagnostic checkpoint、root exit state の `STILL_ACTIVE` 判定も確認します。
+隔離、四つの process-diagnostic checkpoint、root exit state の `STILL_ACTIVE` 判定、paired trace の
+allowlist 順序・role/value・elapsed 変換・256 件上限・malformed/clock 不整合の fail-closed も確認します。
 Sakura 自体は起動しません。PowerShell 5.1 (`powershell.exe`) と PowerShell 7 (`pwsh`) の両方で
 shared script と paired script の `-SelfTest` を実行してから実測へ進めます。
 
@@ -187,8 +193,11 @@ ready 通知も同じ測定単位で相関できます。
 
 この単体計測では、読み取った `startupTrace` の詳細を開発者向け結果へ残します。一方、Issue #274 の
 paired runner は同じ trace directory を artifact bundle 配下に run-owned として作り、読み取り後に
-allowlist 済み event 名の count と role count だけへ変換してから削除します。paired report では trace の
-path、directory、`detail`、payload、raw command は保持されず、trace cleanup の検証失敗は成功扱いになりません。
+allowlist 済み event 名の count、role count、最大 256 件の順序付き診断 projection へ変換してから削除します。
+paired report の ordered item は `ordinal`、`event`、`role`、`value1`、`value2`、`elapsedMs` に限定され、trace の
+path、directory、`detail`、payload、raw command は保持されません。trace が空または clock 不整合なら
+`trace-unavailable` となり、trace cleanup の検証失敗も成功扱いになりません。この projection は診断専用で、
+readiness や Rust 採用の証拠ではありません。
 
 この環境変数が未設定、空、または既存ディレクトリを指さない通常起動では、アプリはトレース
 ファイルやディレクトリを作成せず、イベント記録もしません。したがって通常の利用・配布ビルドの
@@ -228,10 +237,13 @@ PID、親 PID、実行ファイル名、生成時刻、Job membership だけを�
 `unavailable` として残し、成功や終了を推測して補いません。
 
 paired runner の `startupDiagnostics` はこの schema を各 run に保ったまま、path・command line・caption・
-本文などを含まない固定フィールドへ変換します。到達した checkpoint が `unavailable` になる、または root
+本文などを含まない固定フィールドへ変換します。`startupTrace` も allowlist と固定 ordered item fields だけへ
+変換し、最大件数を超えた場合は `orderedEventsTruncated` を設定します。到達した checkpoint が `unavailable` になる、または root
 exit state の変換が不正な場合は `diagnostic-unavailable` / `failureStage=diagnostics` となり、その launch は
 成功数や統計へ入りません。fast success で後続 checkpoint が `not-reached` のままなのは許容されます。
-paired trace の `records` が空の場合は `trace-unavailable` として扱われ、成功数や統計へ入りません。
+paired trace の `records` が空、malformed、または launch QPC clock と互換でない場合は `trace-unavailable` として
+扱われ、成功数や統計へ入りません。trace が unavailable でも raw launch が timeout/survivor/startup failure なら、
+その raw failure が primary のまま保持され、trace status は副次診断です。
 
 ### `phaseDurations` とイベントの補助値
 

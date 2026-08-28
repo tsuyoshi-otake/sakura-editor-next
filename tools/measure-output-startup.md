@@ -66,10 +66,20 @@ be empty after cleanup.
 Each launch also creates a unique run-owned startup-trace directory below the
 copied artifact bundle and passes it to the shared startup probe. The probe
 reads the trace before returning; the paired runner then retains only an
-allowlisted event name, total count, and `editor`/`control`/`unknown` role
-counts. Trace paths, directory names, event details, payloads, and raw command
-data are not part of paired evidence. The directory is checked as an owned
-non-reparse path and removed in `finally`; a failed removal is
+allowlisted event name, total count, `editor`/`control`/`unknown` role counts,
+and a bounded ordered event projection of at most 256 items. Each ordered item
+contains only `ordinal`, the allowlisted `event`, `role`, `value1`, `value2`,
+and QPC-relative `elapsedMs`; `orderedEventsTruncated` records that the cap
+was reached. The elapsed-time conversion requires a compatible launch QPC
+clock and accepts a separate bounded diagnostic window through cleanup, rather
+than using the launch timeout as its upper bound (the current diagnostic cap is
+120 seconds). An empty, malformed, or
+clock-incompatible trace is `trace-unavailable`. Trace paths, directory names,
+event details, payloads, and raw command data are not part of paired evidence.
+These trace fields are diagnostics only: event order and counts do not prove
+successful readiness, and RAII `editor_ready` events can be emitted on an
+early-return path. The directory is checked as an owned non-reparse path and
+removed in `finally`; a failed removal is
 `traceCleanupVerified=false`, makes the launch fail closed, and is treated as
 an unverified cleanup terminal state.
 
@@ -237,8 +247,9 @@ Each run writes one `paired-startup-<run-id>.json` report. The report contains:
 - per-launch `startupDiagnostics` with the fixed `0.5s`, `2s`, `10s`, and
   `timeout` checkpoints, bounded process metadata, and root exit state/code;
   `active` is the identity-safe `STILL_ACTIVE` state and is not an exit;
-- per-launch `startupTrace` reduced to allowlisted event names, total counts,
-  and role counts only, plus `traceCleanupVerified`; and
+- per-launch `startupTrace` reduced to allowlisted event names, total and role
+  counts, a maximum-256-item `orderedEvents` projection, and the
+  `orderedEventsTruncated` flag, plus `traceCleanupVerified`; and
 - median, nearest-rank ceiling p95, minimum, maximum, mean, successful count,
   and excluded count for each backend and warmup/measured phase; and
 - a measured C++/Rust `documentReadyMs` paired-delta and regression summary,
@@ -253,8 +264,10 @@ Each run writes one `paired-startup-<run-id>.json` report. The report contains:
 
 `payloadFree` is true only for this fixed schema. The report intentionally does
 not contain executable/sample/profile/output/trace paths, trace directory names,
-document text, captions, command lines, raw exception messages, event details,
-or environment variable values. Failed or surviving launches remain typed
+document text, captions, command lines, raw exception messages, event `detail`,
+or raw trace records. Ordered trace items are limited to the fixed fields
+`ordinal`, allowlisted `event`, `role`, `value1`, `value2`, and `elapsedMs`.
+Failed or surviving launches remain typed
 records with `excluded=true`, explicit `startupMilestones` false/null fields
 when no launch evidence exists, and null timings; they never enter the
 statistics. Acceptance requires every scheduled warmup and measured launch to
@@ -284,8 +297,9 @@ mask validation, exact portable-sidecar and artifact-bundle identity/cleanup,
 profile hashing/cleanup, parent-first PID identity helpers, all four
 Debug/Release × C++/Rust selector-proof cells, archive/hash reconstruction,
 top-level mirror checks, the four startup-diagnostic checkpoints, payload-free
-trace allowlisting, trace-cleanup terminal states, and the paired performance
-gates. It also mutates selector result, configuration, compile-log, archive,
+trace allowlisting, ordered-event ordering/truncation and malformed-clock
+rejection, trace-cleanup terminal states, and the paired performance gates. It
+also mutates selector result, configuration, compile-log, archive,
 symbol, and contract hash fields to verify rejection. It does not launch
 `sakura.exe` or any other GUI process. Run it with both `powershell.exe` and
 `pwsh` when validating the two supported PowerShell hosts.

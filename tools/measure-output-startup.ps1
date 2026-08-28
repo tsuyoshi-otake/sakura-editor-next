@@ -97,6 +97,8 @@ $script:PairedDiagnosticCheckpointMs = [ordered]@{
 $script:PairedDiagnosticMaxProcessCount = 256
 $script:PairedDiagnosticMaxImageNameLength = 260
 $script:PairedDiagnosticMaxWindowCount = 1024
+$script:PairedStartupTraceMaxOrderedEvents = 256
+$script:PairedStartupTraceMaxElapsedMs = 120000
 $script:PairedStartupTraceRoles = @('editor', 'control', 'unknown')
 $script:PairedStartupTraceEventAllowlist = @(
     'process_entry', 'isa_dispatch',
@@ -1690,6 +1692,51 @@ function Convert-PairedDiagnosticBoolean {
     return $null
 }
 
+function Convert-PairedTraceInt64 {
+    param([AllowNull()] [object]$Value)
+    if ($null -eq $Value -or $Value -is [bool]) { return $null }
+    try {
+        $number = [decimal]$Value
+        if ($number -ne [decimal]::Truncate($number) -or
+            $number -lt [decimal][Int64]::MinValue -or $number -gt [decimal][Int64]::MaxValue) {
+            return $null
+        }
+        return [Int64]$number
+    }
+    catch { return $null }
+}
+
+function Test-PairedTraceAllowlistedEvent {
+    param([AllowNull()] [object]$Value)
+    if ($Value -isnot [string]) { return $false }
+    foreach ($allowedEvent in @($script:PairedStartupTraceEventAllowlist)) {
+        if ([string]::Equals([string]$Value, [string]$allowedEvent, [StringComparison]::Ordinal)) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Convert-PairedTraceRole {
+    param([AllowNull()] [object]$Value)
+    if ($Value -isnot [string] -or [string]::IsNullOrWhiteSpace($Value)) { return $null }
+    foreach ($allowedRole in @($script:PairedStartupTraceRoles)) {
+        if ([string]::Equals([string]$Value, [string]$allowedRole, [StringComparison]::Ordinal)) {
+            return [string]$allowedRole
+        }
+    }
+    # Keep the output schema canonical even when a producer uses a case variant
+    # of a known role.  The role is diagnostic-only, so an unrecognized spelling
+    # belongs in the bounded unknown bucket rather than leaking mixed casing or
+    # making an otherwise usable trace unavailable.
+    foreach ($allowedRole in @($script:PairedStartupTraceRoles)) {
+        if ([string]::Equals([string]$Value, [string]$allowedRole, [StringComparison]::OrdinalIgnoreCase)) {
+            return 'unknown'
+        }
+    }
+    return 'unknown'
+}
+
 function Convert-PairedDiagnosticWindowCount {
     param([AllowNull()] [object]$Value)
     if ($null -eq $Value -or $Value -is [bool]) { return $null }
@@ -1758,6 +1805,8 @@ function New-PairedEmptyStartupTrace {
     return [ordered]@{
         status = 'not-attempted'
         eventCounts = @()
+        orderedEvents = @()
+        orderedEventsTruncated = $false
     }
 }
 
@@ -1765,6 +1814,8 @@ function New-PairedUnavailableStartupTrace {
     return [ordered]@{
         status = 'unavailable'
         eventCounts = @()
+        orderedEvents = @()
+        orderedEventsTruncated = $false
     }
 }
 
@@ -1949,16 +2000,19 @@ function Convert-PairedProcessDiagnostics {
 function Convert-PairedStartupTraceEvidence {
     param([AllowNull()] [object]$RawTrace)
     $traceBounds = Get-StartupTraceBounds
-    if ($null -eq $RawTrace) { return New-PairedEmptyStartupTrace }
+    if ($null -eq $RawTrace) { return New-PairedUnavailableStartupTrace }
     $enabled = Convert-PairedDiagnosticBoolean (Get-PairedProperty $RawTrace @('enabled'))
     $collected = Convert-PairedDiagnosticBoolean (Get-PairedProperty $RawTrace @('collected'))
-    if ($enabled -eq $false) { return New-PairedEmptyStartupTrace }
+    if ($enabled -eq $false) { return New-PairedUnavailableStartupTrace }
     if ($enabled -ne $true -or $collected -ne $true) { return New-PairedUnavailableStartupTrace }
-    $invalidLineCount = Get-PairedProperty $RawTrace @('invalidLineCount')
-    try {
-        if ($null -ne $invalidLineCount -and [int]$invalidLineCount -gt 0) { return New-PairedUnavailableStartupTrace }
+    $invalidLineCountValue = Get-PairedProperty $RawTrace @('invalidLineCount')
+    if ($null -ne $invalidLineCountValue) {
+        $invalidLineCount = Convert-PairedTraceInt64 $invalidLineCountValue
+        if ($null -eq $invalidLineCount -or $invalidLineCount -lt 0 -or
+            $invalidLineCount -gt [Int64]$traceBounds.maxLines -or $invalidLineCount -gt 0) {
+            return New-PairedUnavailableStartupTrace
+        }
     }
-    catch { return New-PairedUnavailableStartupTrace }
     $parseErrors = Get-PairedProperty $RawTrace @('parseErrors')
     if ($null -ne $parseErrors -and @($parseErrors).Count -gt 0) { return New-PairedUnavailableStartupTrace }
     $recordsValue = Get-PairedProperty $RawTrace @('records')
@@ -1993,30 +2047,65 @@ function Convert-PairedStartupTraceEvidence {
     if ($recordsList.Count -lt 1 -or $recordsList.Count -gt [int]$traceBounds.maxValidRecords) {
         return New-PairedUnavailableStartupTrace
     }
-    $validRecordCountValue = Get-PairedProperty $RawTrace @('validRecordCount')
-    $validRecordCount = $null
-    try {
-        if ($null -eq $validRecordCountValue) { return New-PairedUnavailableStartupTrace }
-        $validRecordCount = [Int64]$validRecordCountValue
+    $launchQpc = Convert-PairedTraceInt64 (Get-PairedProperty $RawTrace @('launchQpc'))
+    $launchFrequency = Convert-PairedTraceInt64 (Get-PairedProperty $RawTrace @('launchFrequency'))
+    if ($null -eq $launchQpc -or $launchQpc -lt 0 -or $null -eq $launchFrequency -or $launchFrequency -le 0) {
+        return New-PairedUnavailableStartupTrace
     }
-    catch { return New-PairedUnavailableStartupTrace }
+    $validRecordCountValue = Get-PairedProperty $RawTrace @('validRecordCount')
+    $validRecordCount = Convert-PairedTraceInt64 $validRecordCountValue
+    if ($null -eq $validRecordCount) { return New-PairedUnavailableStartupTrace }
     if ($validRecordCount -lt 1 -or $validRecordCount -gt [Int64]$traceBounds.maxValidRecords -or
         $validRecordCount -ne [Int64]$recordsList.Count) {
         return New-PairedUnavailableStartupTrace
     }
     $counts = @{}
+    $orderedCandidates = New-Object Collections.Generic.List[object]
+    $sourceOrdinal = 0
     foreach ($record in $recordsList) {
-        if ($null -eq $record) { continue }
-        $event = [string](Get-PairedProperty $record @('event'))
-        if ($script:PairedStartupTraceEventAllowlist -notcontains $event) { continue }
-        $role = [string](Get-PairedProperty $record @('role'))
-        if ($script:PairedStartupTraceRoles -notcontains $role) { $role = 'unknown' }
-        if (-not $counts.ContainsKey($event)) {
-            $counts[$event] = [ordered]@{ count = 0; roles = @{} }
+        ++$sourceOrdinal
+        if ($null -eq $record) { return New-PairedUnavailableStartupTrace }
+        $schemaVersion = Convert-PairedTraceInt64 (Get-PairedProperty $record @('schemaVersion'))
+        $recordQpc = Convert-PairedTraceInt64 (Get-PairedProperty $record @('qpc'))
+        $recordFrequency = Convert-PairedTraceInt64 (Get-PairedProperty $record @('frequency'))
+        $eventValue = Get-PairedProperty $record @('event')
+        $roleValue = Get-PairedProperty $record @('role')
+        $value1 = Convert-PairedTraceInt64 (Get-PairedProperty $record @('value1'))
+        $value2 = Convert-PairedTraceInt64 (Get-PairedProperty $record @('value2'))
+        if ($null -eq $schemaVersion -or $schemaVersion -ne 1 -or
+            $null -eq $recordQpc -or $recordQpc -lt $launchQpc -or
+            $null -eq $recordFrequency -or $recordFrequency -ne $launchFrequency -or
+            $eventValue -isnot [string] -or [string]::IsNullOrWhiteSpace($eventValue) -or
+            $eventValue.Length -gt 128 -or $roleValue -isnot [string] -or
+            [string]::IsNullOrWhiteSpace($roleValue) -or $null -eq $value1 -or $null -eq $value2) {
+            return New-PairedUnavailableStartupTrace
         }
-        $counts[$event].count = [int]$counts[$event].count + 1
-        if (-not $counts[$event].roles.ContainsKey($role)) { $counts[$event].roles[$role] = 0 }
-        $counts[$event].roles[$role] = [int]$counts[$event].roles[$role] + 1
+        $elapsedMs = (($recordQpc - $launchQpc) * 1000.0) / [double]$launchFrequency
+        if ([double]::IsNaN($elapsedMs) -or [double]::IsInfinity($elapsedMs) -or
+            $elapsedMs -lt 0.0 -or $elapsedMs -gt [double]$script:PairedStartupTraceMaxElapsedMs) {
+            return New-PairedUnavailableStartupTrace
+        }
+        $event = [string]$eventValue
+        $role = Convert-PairedTraceRole $roleValue
+        if ($null -eq $role) { return New-PairedUnavailableStartupTrace }
+        $eventIsAllowlisted = Test-PairedTraceAllowlistedEvent $event
+        if ($eventIsAllowlisted) {
+            if (-not $counts.ContainsKey($event)) {
+                $counts[$event] = [ordered]@{ count = 0; roles = @{} }
+            }
+            $counts[$event].count = [int]$counts[$event].count + 1
+            if (-not $counts[$event].roles.ContainsKey($role)) { $counts[$event].roles[$role] = 0 }
+            $counts[$event].roles[$role] = [int]$counts[$event].roles[$role] + 1
+            [void]$orderedCandidates.Add([pscustomobject]@{
+                    sourceOrdinal = [int]$sourceOrdinal
+                    qpc = [Int64]$recordQpc
+                    event = $event
+                    role = $role
+                    value1 = [Int64]$value1
+                    value2 = [Int64]$value2
+                    elapsedMs = [double]([Math]::Round($elapsedMs, 3))
+                })
+        }
     }
     $eventCounts = New-Object Collections.Generic.List[object]
     foreach ($event in @($script:PairedStartupTraceEventAllowlist)) {
@@ -2029,11 +2118,32 @@ function Convert-PairedStartupTraceEvidence {
             event = $event
             count = [int]$counts[$event].count
             roleCounts = $roleCounts
-        })
+            })
+    }
+    $orderedEvents = New-Object Collections.Generic.List[object]
+    $orderedEventsTruncated = $false
+    foreach ($candidate in @($orderedCandidates | Sort-Object -Property @(
+            @{ Expression = { [Int64]$_.qpc }; Ascending = $true },
+            @{ Expression = { [int]$_.sourceOrdinal }; Ascending = $true }
+        ))) {
+        if ($orderedEvents.Count -ge [int]$script:PairedStartupTraceMaxOrderedEvents) {
+            $orderedEventsTruncated = $true
+            continue
+        }
+        [void]$orderedEvents.Add([ordered]@{
+                ordinal = [int]($orderedEvents.Count + 1)
+                event = [string]$candidate.event
+                role = [string]$candidate.role
+                value1 = [Int64]$candidate.value1
+                value2 = [Int64]$candidate.value2
+                elapsedMs = [double]$candidate.elapsedMs
+            })
     }
     return [ordered]@{
         status = 'observed'
         eventCounts = $eventCounts.ToArray()
+        orderedEvents = $orderedEvents.ToArray()
+        orderedEventsTruncated = [bool]$orderedEventsTruncated
     }
 }
 
@@ -2161,13 +2271,13 @@ function Convert-PairedLaunchResult {
         [Parameter(Mandatory = $true)] [bool]$ProfileCleanupVerified,
         [bool]$TraceCleanupVerified = $true
     )
+    $rawSuccess = [bool](Get-PairedProperty $Raw @('success'))
     $affinity = Convert-PairedAffinity (Get-PairedProperty $Raw @('affinity'))
     $startupDiagnostics = Convert-PairedProcessDiagnostics (Get-PairedProperty $Raw @('startupDiagnostics'))
     $startupTrace = if (Test-PairedPropertyPresent $Raw 'startupTrace') {
         Convert-PairedStartupTraceEvidence (Get-PairedProperty $Raw @('startupTrace'))
     }
-    else { New-PairedEmptyStartupTrace }
-    $rawSuccess = [bool](Get-PairedProperty $Raw @('success'))
+    else { New-PairedUnavailableStartupTrace }
     $diagnosticUnavailable = [string](Get-PairedProperty $startupDiagnostics @('observationStatus')) -eq 'unavailable'
     $traceUnavailable = [string](Get-PairedProperty $startupTrace @('status')) -eq 'unavailable'
     $success = $rawSuccess -and [bool](Get-PairedProperty $Raw @('processCleanupVerified')) -and
@@ -2700,11 +2810,13 @@ function Invoke-PairedSelfTest {
     $selfTestStartupTrace = [ordered]@{
         enabled = $true
         collected = $true
+        launchQpc = [Int64]1000
+        launchFrequency = [Int64]1000
         validRecordCount = 3
         records = @(
-            [ordered]@{ event = 'factory_begin'; role = 'editor'; detail = 'secret'; directory = 'C:\secret' }
-            [ordered]@{ event = 'factory_begin'; role = 'control'; detail = 'secret' }
-            [ordered]@{ event = 'not-allowlisted'; role = 'control'; detail = 'secret'; path = 'C:\secret' }
+            [ordered]@{ schemaVersion = 1; qpc = [Int64]1020; frequency = [Int64]1000; pid = 123; tid = 7; event = 'factory_begin'; role = 'editor'; value1 = [Int64]11; value2 = [Int64]-2; detail = 'secret'; directory = 'C:\secret' }
+            [ordered]@{ schemaVersion = 1; qpc = [Int64]1020; frequency = [Int64]1000; pid = 124; tid = 8; event = 'factory_begin'; role = 'control'; value1 = [Int64]22; value2 = [Int64]33; detail = 'secret' }
+            [ordered]@{ schemaVersion = 1; qpc = [Int64]1010; frequency = [Int64]1000; pid = 124; tid = 8; event = 'not-allowlisted'; role = 'control'; value1 = [Int64]44; value2 = [Int64]55; detail = 'secret'; path = 'C:\secret' }
         )
     }
     $selfTestWindowTimeoutRaw = [pscustomobject][ordered]@{
@@ -2812,6 +2924,23 @@ function Invoke-PairedSelfTest {
         $selfTestSuccessRun.startupDiagnostics.processExitObservation.state -eq 'active' -and
         $selfTestSuccessRun.startupDiagnostics.processExitObservation.exitCode -eq 259)
     if (-not $selfTestDiagnosticsSuccessVerified) { throw 'Synthetic successful startup diagnostics schema self-test failed.' }
+    $selfTestMissingTraceRaw = $selfTestSuccessRaw | Select-Object *
+    [void]$selfTestMissingTraceRaw.PSObject.Properties.Remove('startupTrace')
+    $selfTestMissingTraceRun = Convert-PairedLaunchResult $selfTestMissingTraceRaw $schedule[2] $selfTestTimeoutProfile $true
+    $selfTestDisabledTraceRaw = $selfTestSuccessRaw | Select-Object *
+    $selfTestDisabledTraceRaw.startupTrace = [ordered]@{ enabled = $false; collected = $false; validRecordCount = 0; records = @() }
+    $selfTestDisabledTraceRun = Convert-PairedLaunchResult $selfTestDisabledTraceRaw $schedule[2] $selfTestTimeoutProfile $true
+    $selfTestTimeoutMissingTraceRaw = $selfTestWindowTimeoutRaw | Select-Object *
+    [void]$selfTestTimeoutMissingTraceRaw.PSObject.Properties.Remove('startupTrace')
+    $selfTestTimeoutMissingTraceRun = Convert-PairedLaunchResult $selfTestTimeoutMissingTraceRaw $schedule[0] $selfTestTimeoutProfile $true
+    $selfTestTraceRequiredForSuccessVerified = [bool](
+        $selfTestMissingTraceRun.status -eq 'trace-unavailable' -and $selfTestMissingTraceRun.excluded -and
+        $selfTestMissingTraceRun.startupTrace.status -eq 'unavailable' -and
+        $selfTestDisabledTraceRun.status -eq 'trace-unavailable' -and $selfTestDisabledTraceRun.excluded -and
+        $selfTestDisabledTraceRun.startupTrace.status -eq 'unavailable' -and
+        $selfTestTimeoutMissingTraceRun.status -eq 'timeout' -and $selfTestTimeoutMissingTraceRun.excluded -and
+        $selfTestTimeoutMissingTraceRun.startupTrace.status -eq 'unavailable')
+    if (-not $selfTestTraceRequiredForSuccessVerified) { throw 'Missing or disabled startup trace requirement self-test failed.' }
     $selfTestWindowClassificationVerified = [bool]($selfTestSuccessRun.startupDiagnostics.processTreeSnapshots[0].topLevelWindowCount -eq 3 -and
         $selfTestSuccessRun.startupDiagnostics.processTreeSnapshots[0].editorWindowCount -eq 1 -and
         $selfTestSuccessRun.startupDiagnostics.processTreeSnapshots[0].dialogWindowCount -eq 1 -and
@@ -2869,11 +2998,99 @@ function Invoke-PairedSelfTest {
         $traceAllowlistRecord[0].roleCounts.control -eq 1 -and
         $traceJson -notmatch '(?i)secret|detail|directory|path|not-allowlisted')
     if (-not $selfTestTraceAllowlistVerified) { throw 'Startup trace allowlist self-test failed.' }
+    $selfTestMixedCaseTrace = [ordered]@{
+        enabled = $true; collected = $true; launchQpc = [Int64]1000; launchFrequency = [Int64]1000
+        validRecordCount = 1; records = @([ordered]@{
+                schemaVersion = 1; qpc = [Int64]1020; frequency = [Int64]1000
+                pid = 123; tid = 7; event = 'Factory_Begin'; role = 'EDITOR'
+                value1 = [Int64]1; value2 = [Int64]2
+            })
+    }
+    $selfTestMixedCaseTraceResult = Convert-PairedStartupTraceEvidence $selfTestMixedCaseTrace
+    $selfTestMixedCaseRoleTrace = $selfTestMixedCaseTrace | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+    $selfTestMixedCaseRoleTrace.records[0].event = 'factory_begin'
+    $selfTestMixedCaseRoleTraceResult = Convert-PairedStartupTraceEvidence $selfTestMixedCaseRoleTrace
+    $selfTestTraceOrdinalCaseVerified = [bool]($selfTestMixedCaseTraceResult.status -eq 'observed' -and
+        @($selfTestMixedCaseTraceResult.eventCounts).Count -eq 0 -and
+        @($selfTestMixedCaseTraceResult.orderedEvents).Count -eq 0 -and
+        $selfTestMixedCaseRoleTraceResult.status -eq 'observed' -and
+        @($selfTestMixedCaseRoleTraceResult.eventCounts).Count -eq 1 -and
+        $selfTestMixedCaseRoleTraceResult.eventCounts[0].event -eq 'factory_begin' -and
+        $selfTestMixedCaseRoleTraceResult.eventCounts[0].roleCounts.unknown -eq 1 -and
+        @($selfTestMixedCaseRoleTraceResult.orderedEvents).Count -eq 1 -and
+        $selfTestMixedCaseRoleTraceResult.orderedEvents[0].role -eq 'unknown' -and
+        ($selfTestMixedCaseTraceResult | ConvertTo-Json -Depth 10 -Compress) -notmatch '(?i)Factory_Begin|EDITOR' -and
+        ($selfTestMixedCaseRoleTraceResult | ConvertTo-Json -Depth 10 -Compress) -notmatch '(?i)EDITOR')
+    if (-not $selfTestTraceOrdinalCaseVerified) { throw 'Case-sensitive startup trace allowlist self-test failed.' }
+    $selfTestReorderedTrace = $selfTestStartupTrace | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+    $selfTestReorderedRecords = @($selfTestReorderedTrace.records)
+    $selfTestReorderedTrace.records = @($selfTestReorderedRecords[1], $selfTestReorderedRecords[0], $selfTestReorderedRecords[2])
+    $selfTestDeterministicTieTrace = Convert-PairedStartupTraceEvidence $selfTestReorderedTrace
+    $selfTestDeterministicTieTraceRepeat = Convert-PairedStartupTraceEvidence $selfTestReorderedTrace
+    $selfTestTraceDeterministicTieVerified = [bool]($selfTestDeterministicTieTrace.status -eq 'observed' -and
+        $selfTestDeterministicTieTrace.orderedEvents[0].role -eq 'control' -and
+        $selfTestDeterministicTieTrace.orderedEvents[1].role -eq 'editor' -and
+        (($selfTestDeterministicTieTrace | ConvertTo-Json -Depth 10 -Compress) -eq
+            ($selfTestDeterministicTieTraceRepeat | ConvertTo-Json -Depth 10 -Compress)))
+    if (-not $selfTestTraceDeterministicTieVerified) { throw 'Deterministic startup trace tie ordering self-test failed.' }
+    $orderedEvents = @($selfTestSuccessRun.startupTrace.orderedEvents)
+    $orderedEventsJson = $selfTestSuccessRun.startupTrace.orderedEvents | ConvertTo-Json -Depth 10 -Compress
+    $selfTestTraceOrderedEventsVerified = [bool]($orderedEvents.Count -eq 2 -and
+        -not [bool]$selfTestSuccessRun.startupTrace.orderedEventsTruncated -and
+        $orderedEvents[0].ordinal -eq 1 -and $orderedEvents[0].event -eq 'factory_begin' -and
+        $orderedEvents[0].role -eq 'editor' -and $orderedEvents[0].value1 -eq 11 -and
+        $orderedEvents[0].value2 -eq -2 -and $orderedEvents[0].elapsedMs -eq 20 -and
+        $orderedEvents[1].ordinal -eq 2 -and $orderedEvents[1].role -eq 'control' -and
+        $orderedEvents[1].value1 -eq 22 -and $orderedEvents[1].value2 -eq 33 -and
+        $orderedEvents[1].elapsedMs -eq 20 -and
+        $orderedEventsJson -notmatch '(?i)detail|pid|tid|path|command|caption|hwnd|secret|not-allowlisted')
+    if (-not $selfTestTraceOrderedEventsVerified) { throw 'Ordered startup trace event self-test failed.' }
+    $orderedTraceRecords = New-Object Collections.Generic.List[object]
+    for ($index = 0; $index -le [int]$script:PairedStartupTraceMaxOrderedEvents; $index++) {
+        [void]$orderedTraceRecords.Add([ordered]@{
+                schemaVersion = 1; qpc = [Int64](1001 + $index); frequency = [Int64]1000
+                pid = 123; tid = 7; event = 'factory_begin'; role = 'editor'
+                value1 = [Int64]$index; value2 = [Int64](-$index); detail = 'secret'
+            })
+    }
+    $selfTestTruncatedTrace = Convert-PairedStartupTraceEvidence ([ordered]@{
+            enabled = $true; collected = $true; launchQpc = [Int64]1000; launchFrequency = [Int64]1000
+            validRecordCount = $orderedTraceRecords.Count; records = $orderedTraceRecords.ToArray()
+        })
+    $truncatedEvents = @($selfTestTruncatedTrace.orderedEvents)
+    $selfTestTraceOrderedEventsTruncatedVerified = [bool]($selfTestTruncatedTrace.status -eq 'observed' -and
+        $truncatedEvents.Count -eq [int]$script:PairedStartupTraceMaxOrderedEvents -and
+        [bool]$selfTestTruncatedTrace.orderedEventsTruncated -and
+        $truncatedEvents[0].ordinal -eq 1 -and
+        $truncatedEvents[$truncatedEvents.Count - 1].ordinal -eq [int]$script:PairedStartupTraceMaxOrderedEvents)
+    if (-not $selfTestTraceOrderedEventsTruncatedVerified) { throw 'Ordered startup trace truncation self-test failed.' }
+    $selfTestPostTimeoutTrace = Convert-PairedStartupTraceEvidence ([ordered]@{
+            enabled = $true; collected = $true; launchQpc = [Int64]1000; launchFrequency = [Int64]1000
+            validRecordCount = 1; records = @([ordered]@{
+                    schemaVersion = 1; qpc = [Int64]31001; frequency = [Int64]1000
+                    pid = 123; tid = 7; event = 'editor_ready_event_end'; role = 'editor'
+                    value1 = [Int64]1; value2 = [Int64]2
+                })
+        })
+    $selfTestTracePostTimeoutVerified = [bool]($selfTestPostTimeoutTrace.status -eq 'observed' -and
+        @($selfTestPostTimeoutTrace.orderedEvents).Count -eq 1 -and
+        $selfTestPostTimeoutTrace.orderedEvents[0].elapsedMs -eq 30001)
+    if (-not $selfTestTracePostTimeoutVerified) { throw 'Post-timeout startup trace self-test failed.' }
+    $selfTestMalformedTrace = $selfTestStartupTrace | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+    $selfTestMalformedTrace.records[0].frequency = [Int64]2000
+    $selfTestMalformedTraceResult = Convert-PairedStartupTraceEvidence $selfTestMalformedTrace
+    $selfTestTraceMalformedVerified = [bool]($selfTestMalformedTraceResult.status -eq 'unavailable' -and
+        @($selfTestMalformedTraceResult.orderedEvents).Count -eq 0 -and
+        -not [bool]$selfTestMalformedTraceResult.orderedEventsTruncated)
+    if (-not $selfTestTraceMalformedVerified) { throw 'Malformed startup trace self-test was accepted.' }
     $traceBoundsSelfTest = Get-StartupTraceBounds
     if ($traceBoundsSelfTest.maxFiles -ne 8 -or $traceBoundsSelfTest.maxBytes -ne 1048576 -or
         $traceBoundsSelfTest.maxLines -ne 4096 -or $traceBoundsSelfTest.maxValidRecords -ne 4096 -or
         $traceBoundsSelfTest.maxLineLength -ne 65536) {
         throw 'Paired startup trace bounds contract self-test failed.'
+    }
+    if ([int]$script:PairedStartupTraceMaxElapsedMs -ne 120000) {
+        throw 'Paired startup trace elapsed-time bound contract self-test failed.'
     }
     $selfTestEmptyTrace = Convert-PairedStartupTraceEvidence ([ordered]@{
         enabled = $true; collected = $true; validRecordCount = 0; records = @()
@@ -3359,6 +3576,13 @@ function Invoke-PairedSelfTest {
         startupDiagnosticsTimeoutSchemaVerified = [bool]$selfTestDiagnosticsTimeoutVerified
         startupDiagnosticsFallbackSchemaVerified = [bool]$selfTestFallbackDiagnosticsVerified
         startupTraceAllowlistPayloadFreeVerified = [bool]$selfTestTraceAllowlistVerified
+        startupTraceOrderedEventsVerified = [bool]$selfTestTraceOrderedEventsVerified
+        startupTraceOrderedEventsTruncatedVerified = [bool]$selfTestTraceOrderedEventsTruncatedVerified
+        startupTracePostTimeoutVerified = [bool]$selfTestTracePostTimeoutVerified
+        startupTraceOrderedEventsMalformedVerified = [bool]$selfTestTraceMalformedVerified
+        startupTraceRequiredForSuccessVerified = [bool]$selfTestTraceRequiredForSuccessVerified
+        startupTraceOrdinalCaseVerified = [bool]$selfTestTraceOrdinalCaseVerified
+        startupTraceDeterministicTieVerified = [bool]$selfTestTraceDeterministicTieVerified
         startupTraceEmptyUnavailableVerified = [bool]$selfTestTraceEmptyVerified
         startupTracePrimaryFailurePrecedenceVerified = [bool]$selfTestPrimaryFailurePrecedenceVerified
         startupTraceCleanupTerminalVerified = [bool]$selfTestCleanupTerminalVerified
