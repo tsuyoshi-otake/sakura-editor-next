@@ -30,6 +30,11 @@ param(
     [Alias('BuildTimeoutSeconds')]
     [ValidateRange(1, 7200)]
     [int]$TimeoutSeconds = 1800,
+    [ValidateRange(1, 7200)]
+    [int]$PackageTimeoutSeconds = 1800,
+    [switch]$QualifiedFinalImage,
+    [AllowNull()]
+    [string]$FinalImageStageRoot,
     [switch]$SelfTest
 )
 
@@ -47,6 +52,8 @@ $script:LockOwned = $false
 $script:TransactionRoot = $null
 $script:FailureCode = $null
 $script:FailureSubstage = $null
+$script:FinalImageStageRoot = $null
+$script:FinalImageStageRootOwned = $false
 $script:RepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $script:OutputProviderSymbols = @(
     'sakura_output_provider_create_v1',
@@ -74,6 +81,22 @@ public sealed class SakuraOutputStartupProcessResult
     public int ProcessId;
 }
 
+public sealed class SakuraOutputStartupFileIdentityResult
+{
+    public bool Succeeded;
+    public int ErrorCode;
+    public ulong VolumeSerialNumber;
+    public ulong FileIndex;
+}
+
+public sealed class SakuraOutputStartupFileDeleteResult
+{
+    public bool Succeeded;
+    public bool IdentityAvailable;
+    public bool IdentityMatched;
+    public int ErrorCode;
+}
+
 public static class SakuraOutputStartupNative
 {
     private const uint CREATE_SUSPENDED = 0x00000004;
@@ -85,6 +108,13 @@ public static class SakuraOutputStartupNative
     private const uint STILL_ACTIVE = 259;
     private const int JobObjectExtendedLimitInformation = 9;
     private const uint STARTF_USESHOWWINDOW = 0x00000001;
+    private const uint DELETE_ACCESS = 0x00010000;
+    private const uint FILE_READ_ATTRIBUTES = 0x00000080;
+    private const uint FILE_SHARE_READ = 0x00000001;
+    private const uint OPEN_EXISTING = 3;
+    private const uint FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000;
+    private const int FileDispositionInfo = 4;
+    private static readonly IntPtr INVALID_HANDLE_VALUE = new IntPtr(-1);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct JOBOBJECT_BASIC_LIMIT_INFORMATION
@@ -154,6 +184,30 @@ public static class SakuraOutputStartupNative
         public int dwThreadId;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct BY_HANDLE_FILE_INFORMATION
+    {
+        public uint FileAttributes;
+        public uint CreationTimeLow;
+        public uint CreationTimeHigh;
+        public uint LastAccessTimeLow;
+        public uint LastAccessTimeHigh;
+        public uint LastWriteTimeLow;
+        public uint LastWriteTimeHigh;
+        public uint VolumeSerialNumber;
+        public uint FileSizeHigh;
+        public uint FileSizeLow;
+        public uint NumberOfLinks;
+        public uint FileIndexHigh;
+        public uint FileIndexLow;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FILE_DISPOSITION_INFO
+    {
+        public byte DeleteFile;
+    }
+
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "CreateJobObjectW")]
     private static extern IntPtr CreateJobObject(IntPtr attributes, string name);
 
@@ -191,6 +245,126 @@ public static class SakuraOutputStartupNative
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr handle);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "CreateFileW")]
+    private static extern IntPtr CreateFile(
+        string fileName,
+        uint desiredAccess,
+        uint shareMode,
+        IntPtr securityAttributes,
+        uint creationDisposition,
+        uint flagsAndAttributes,
+        IntPtr templateFile);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetFileInformationByHandle(
+        IntPtr file,
+        out BY_HANDLE_FILE_INFORMATION fileInformation);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetFileInformationByHandle(
+        IntPtr file,
+        int fileInformationClass,
+        IntPtr fileInformation,
+        uint bufferSize);
+
+    private static bool IsInvalidHandle(IntPtr handle)
+    {
+        return handle == IntPtr.Zero || handle == INVALID_HANDLE_VALUE;
+    }
+
+    private static SakuraOutputStartupFileIdentityResult ReadFileIdentity(IntPtr handle)
+    {
+        var result = new SakuraOutputStartupFileIdentityResult { Succeeded = false, ErrorCode = 0 };
+        if (IsInvalidHandle(handle))
+        {
+            result.ErrorCode = 6;
+            return result;
+        }
+        BY_HANDLE_FILE_INFORMATION information;
+        if (!GetFileInformationByHandle(handle, out information))
+        {
+            result.ErrorCode = Marshal.GetLastWin32Error();
+            return result;
+        }
+        result.Succeeded = true;
+        result.VolumeSerialNumber = information.VolumeSerialNumber;
+        result.FileIndex = ((ulong)information.FileIndexHigh << 32) | information.FileIndexLow;
+        return result;
+    }
+
+    public static SakuraOutputStartupFileIdentityResult GetFileIdentity(IntPtr handle)
+    {
+        return ReadFileIdentity(handle);
+    }
+
+    public static SakuraOutputStartupFileDeleteResult DeleteOwnedFileIfIdentity(
+        string path,
+        ulong expectedVolumeSerialNumber,
+        ulong expectedFileIndex)
+    {
+        var result = new SakuraOutputStartupFileDeleteResult
+        {
+            Succeeded = false,
+            IdentityAvailable = false,
+            IdentityMatched = false,
+            ErrorCode = 0
+        };
+        IntPtr handle = CreateFile(
+            path,
+            DELETE_ACCESS | FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ,
+            IntPtr.Zero,
+            OPEN_EXISTING,
+            FILE_FLAG_OPEN_REPARSE_POINT,
+            IntPtr.Zero);
+        if (IsInvalidHandle(handle))
+        {
+            result.ErrorCode = Marshal.GetLastWin32Error();
+            return result;
+        }
+        try
+        {
+            var identity = ReadFileIdentity(handle);
+            if (!identity.Succeeded)
+            {
+                result.ErrorCode = identity.ErrorCode;
+                return result;
+            }
+            result.IdentityAvailable = true;
+            result.IdentityMatched = identity.VolumeSerialNumber == expectedVolumeSerialNumber &&
+                identity.FileIndex == expectedFileIndex;
+            if (!result.IdentityMatched) return result;
+
+            var disposition = new FILE_DISPOSITION_INFO { DeleteFile = 1 };
+            IntPtr nativeDisposition = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(FILE_DISPOSITION_INFO)));
+            try
+            {
+                Marshal.StructureToPtr(disposition, nativeDisposition, false);
+                if (!SetFileInformationByHandle(
+                    handle,
+                    FileDispositionInfo,
+                    nativeDisposition,
+                    unchecked((uint)Marshal.SizeOf(typeof(FILE_DISPOSITION_INFO))))
+                )
+                {
+                    result.ErrorCode = Marshal.GetLastWin32Error();
+                    return result;
+                }
+            }
+            finally { Marshal.FreeHGlobal(nativeDisposition); }
+            result.Succeeded = true;
+            return result;
+        }
+        finally
+        {
+            if (!CloseHandle(handle) && result.Succeeded)
+            {
+                result.Succeeded = false;
+                result.ErrorCode = Marshal.GetLastWin32Error();
+            }
+        }
+    }
 
     public static IntPtr CreateKillOnCloseJob()
     {
@@ -802,6 +976,30 @@ function New-CmdCommandLine {
     return ('{0} /d /s /c "{1}"' -f (ConvertTo-WindowsCommandLineArgument $ComSpec), $CommandText)
 }
 
+function New-QualifiedObserverCommand {
+    param(
+        [Parameter(Mandatory = $true)] [string]$PythonLauncher,
+        [Parameter(Mandatory = $true)] [string]$BuildScript,
+        [Parameter(Mandatory = $true)] [string]$Context,
+        [Parameter(Mandatory = $true)] [int]$Jobs,
+        [Parameter(Mandatory = $true)] [int]$Timeout,
+        [Parameter(Mandatory = $true)] [int]$PackageTimeout,
+        [Parameter(Mandatory = $true)] [ValidateSet('cpp', 'rust')] [string]$ProviderBackend,
+        [Parameter(Mandatory = $true)] [string]$FinalImageRoot,
+        [Parameter(Mandatory = $true)] [string]$NativeEvidenceOutput
+    )
+    return ('{0} -3 {1} --format json inventory observe-product --context {2} --product sakura_app --jobs {3} --timeout-seconds {4} --package-timeout-seconds {5} --rebuild --final-image-backend {6} --final-image-stage-root {7} --output {8}' -f
+        (ConvertTo-WindowsCommandLineArgument $PythonLauncher),
+        (ConvertTo-WindowsCommandLineArgument $BuildScript),
+        (ConvertTo-WindowsCommandLineArgument $Context),
+        $Jobs,
+        $Timeout,
+        $PackageTimeout,
+        (ConvertTo-WindowsCommandLineArgument $ProviderBackend),
+        (ConvertTo-WindowsCommandLineArgument $FinalImageRoot),
+        (ConvertTo-WindowsCommandLineArgument $NativeEvidenceOutput))
+}
+
 function New-EnvironmentBlock {
     param([Parameter(Mandatory = $true)] [hashtable]$Overrides)
     $values = @{}
@@ -910,6 +1108,29 @@ function Assert-BackendSelector {
     }
     if ($BuildParallelism -lt 1 -or $BuildParallelism -gt 256) { throw 'BuildParallelism is outside its bounded range.' }
     if ($TimeoutSeconds -lt 1 -or $TimeoutSeconds -gt 7200) { throw 'TimeoutSeconds is outside its bounded range.' }
+    if ($PackageTimeoutSeconds -lt 1 -or $PackageTimeoutSeconds -gt 7200) { throw 'PackageTimeoutSeconds is outside its bounded range.' }
+    if ($QualifiedFinalImage -and [string]::IsNullOrWhiteSpace($FinalImageStageRoot)) {
+        throw 'Qualified final-image production requires FinalImageStageRoot.'
+    }
+    if (-not $QualifiedFinalImage -and -not [string]::IsNullOrWhiteSpace($FinalImageStageRoot)) {
+        throw 'FinalImageStageRoot requires QualifiedFinalImage.'
+    }
+}
+
+function Assert-QualifiedSourceState {
+    param([Parameter(Mandatory = $true)] [object]$Source)
+    $statusLineCount = if ($null -ne $Source) { Get-PropertyValue $Source @('statusLineCount') } else { $null }
+    if ($null -eq $Source -or
+        (Get-PropertyValue $Source @('head')) -notmatch '^[0-9a-fA-F]{40}$' -or
+        (Get-PropertyValue $Source @('dirty')) -isnot [bool] -or
+        [bool](Get-PropertyValue $Source @('dirty')) -or
+        $null -eq $statusLineCount -or
+        $statusLineCount -is [bool] -or
+        [string]$statusLineCount -notmatch '^[0-9]+$' -or
+        [int]$statusLineCount -ne 0 -or
+        -not (Test-Sha256 (Get-PropertyValue $Source @('statusSha256')))) {
+        throw 'Qualified final-image production requires a clean exact source state.'
+    }
 }
 
 function Get-OutputRoot {
@@ -1016,6 +1237,411 @@ function Get-RuntimeStageSnapshot {
         receiptPath = $receiptPath
         entries = $entries.ToArray()
     }
+}
+
+function Get-OwnedFileIdentity {
+    param([Parameter(Mandatory = $true)] [IO.FileStream]$Stream)
+    if ($null -eq $Stream -or $Stream.SafeFileHandle.IsClosed -or $Stream.SafeFileHandle.IsInvalid) {
+        throw 'The producer file identity handle is closed or invalid.'
+    }
+    $nativeResult = [SakuraOutputStartupNative]::GetFileIdentity($Stream.SafeFileHandle.DangerousGetHandle())
+    if ($null -eq $nativeResult) { throw 'The producer file identity result was empty.' }
+    $nativeKeys = @($nativeResult.PSObject.Properties | ForEach-Object { $_.Name })
+    $expectedNativeKeys = @('ErrorCode', 'FileIndex', 'Succeeded', 'VolumeSerialNumber')
+    [Array]::Sort($nativeKeys, [StringComparer]::Ordinal)
+    [Array]::Sort($expectedNativeKeys, [StringComparer]::Ordinal)
+    if (($nativeKeys -join '|') -cne ($expectedNativeKeys -join '|') -or
+        $nativeResult.Succeeded -isnot [bool] -or
+        $nativeResult.ErrorCode -isnot [int] -or
+        $nativeResult.VolumeSerialNumber -isnot [UInt64] -or
+        $nativeResult.FileIndex -isnot [UInt64]) {
+        throw 'The producer file identity result schema is not exact.'
+    }
+    if (-not [bool]$nativeResult.Succeeded) {
+        throw ('GetFileInformationByHandle failed with Win32 error {0}.' -f [int]$nativeResult.ErrorCode)
+    }
+    return [pscustomobject][ordered]@{
+        volumeSerialNumber = [UInt64]$nativeResult.VolumeSerialNumber
+        fileIndex = [UInt64]$nativeResult.FileIndex
+    }
+}
+
+function Test-OwnedFileIdentityEqual {
+    param(
+        [Parameter(Mandatory = $true)] [AllowNull()] [object]$Expected,
+        [Parameter(Mandatory = $true)] [AllowNull()] [object]$Actual
+    )
+    if ($null -eq $Expected -or $null -eq $Actual) { return $false }
+    try {
+        $expectedVolume = Get-PropertyValue $Expected @('volumeSerialNumber')
+        $expectedIndex = Get-PropertyValue $Expected @('fileIndex')
+        $actualVolume = Get-PropertyValue $Actual @('volumeSerialNumber')
+        $actualIndex = Get-PropertyValue $Actual @('fileIndex')
+        if ($null -eq $expectedVolume -or $null -eq $expectedIndex -or
+            $null -eq $actualVolume -or $null -eq $actualIndex) { return $false }
+        return [UInt64]$expectedVolume -eq [UInt64]$actualVolume -and
+            [UInt64]$expectedIndex -eq [UInt64]$actualIndex
+    }
+    catch { return $false }
+}
+
+function Assert-OwnedFileIdentity {
+    param(
+        [Parameter(Mandatory = $true)] [IO.FileStream]$Stream,
+        [Parameter(Mandatory = $true)] [AllowNull()] [object]$ExpectedIdentity,
+        [Parameter(Mandatory = $true)] [ValidatePattern('^[a-z][a-z0-9-]{0,63}$')] [string]$BarrierSubstage
+    )
+    try { $actualIdentity = Get-OwnedFileIdentity $Stream }
+    catch {
+        Set-ProducerFailureContext 'OUTPUT_FINAL_IMAGE_VERIFY_FILE_IDENTITY_UNAVAILABLE' $BarrierSubstage
+        throw
+    }
+    if (-not (Test-OwnedFileIdentityEqual $ExpectedIdentity $actualIdentity)) {
+        Set-ProducerFailureContext 'OUTPUT_FINAL_IMAGE_VERIFY_FILE_IDENTITY_CHANGED' $BarrierSubstage
+        throw 'The final-image verification output file identity changed before it was read.'
+    }
+    return $actualIdentity
+}
+
+function Open-VerifiedOwnedOutput {
+    param(
+        [Parameter(Mandatory = $true)] [string]$Path,
+        [Parameter(Mandatory = $true)] [AllowNull()] [object]$ExpectedIdentity,
+        [Parameter(Mandatory = $true)] [ValidatePattern('^[a-z][a-z0-9-]{0,63}$')] [string]$BarrierSubstage
+    )
+    Assert-RegularFile $Path
+    Assert-NoReparseAncestors $Path
+    $stream = $null
+    try {
+        # Sharing read only keeps the identity-checked file from being
+        # replaced, rewritten, or deleted while the bounded parser reads it.
+        $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+        [void](Assert-OwnedFileIdentity $stream $ExpectedIdentity $BarrierSubstage)
+        return $stream
+    }
+    catch {
+        if ($null -ne $stream) {
+            try { $stream.Dispose() } catch { }
+            $stream = $null
+        }
+        throw
+    }
+}
+
+function Remove-VerifiedOwnedOutput {
+    param(
+        [Parameter(Mandatory = $true)] [string]$Path,
+        [Parameter(Mandatory = $true)] [AllowNull()] [object]$ExpectedIdentity,
+        [Parameter(Mandatory = $true)] [ValidatePattern('^[a-z][a-z0-9-]{0,63}$')] [string]$BarrierSubstage
+    )
+    $previousFailureCode = $script:FailureCode
+    $previousFailureSubstage = $script:FailureSubstage
+    Set-ProducerFailureContext 'OUTPUT_FINAL_IMAGE_VERIFY_FILE_IDENTITY_UNAVAILABLE' $BarrierSubstage
+    try {
+        Assert-RegularFile $Path
+        Assert-NoReparseAncestors $Path
+    }
+    catch {
+        Set-ProducerFailureContext 'OUTPUT_FINAL_IMAGE_VERIFY_FILE_IDENTITY_UNAVAILABLE' $BarrierSubstage
+        throw
+    }
+    $expectedVolumeSerialNumber = [UInt64](Get-PropertyValue $ExpectedIdentity @('volumeSerialNumber'))
+    $expectedFileIndex = [UInt64](Get-PropertyValue $ExpectedIdentity @('fileIndex'))
+    $deleteResult = [SakuraOutputStartupNative]::DeleteOwnedFileIfIdentity($Path, $expectedVolumeSerialNumber, $expectedFileIndex)
+    if ($null -eq $deleteResult) { throw 'The producer owned-file delete result was empty.' }
+    $deleteKeys = @($deleteResult.PSObject.Properties | ForEach-Object { $_.Name })
+    $expectedDeleteKeys = @('ErrorCode', 'IdentityAvailable', 'IdentityMatched', 'Succeeded')
+    [Array]::Sort($deleteKeys, [StringComparer]::Ordinal)
+    [Array]::Sort($expectedDeleteKeys, [StringComparer]::Ordinal)
+    if (($deleteKeys -join '|') -cne ($expectedDeleteKeys -join '|') -or
+        $deleteResult.Succeeded -isnot [bool] -or
+        $deleteResult.IdentityAvailable -isnot [bool] -or
+        $deleteResult.IdentityMatched -isnot [bool] -or
+        $deleteResult.ErrorCode -isnot [int]) {
+        throw 'The producer owned-file delete result schema is not exact.'
+    }
+    if (-not [bool]$deleteResult.IdentityAvailable) {
+        Set-ProducerFailureContext 'OUTPUT_FINAL_IMAGE_VERIFY_FILE_IDENTITY_UNAVAILABLE' $BarrierSubstage
+        throw ('Owned final-image verification output identity could not be reopened (Win32 error {0}).' -f [int]$deleteResult.ErrorCode)
+    }
+    if (-not [bool]$deleteResult.IdentityMatched) {
+        Set-ProducerFailureContext 'OUTPUT_FINAL_IMAGE_VERIFY_FILE_IDENTITY_CHANGED' $BarrierSubstage
+        throw 'The final-image verification output file identity changed before cleanup.'
+    }
+    if (-not [bool]$deleteResult.Succeeded) {
+        Set-ProducerFailureContext 'OUTPUT_FINAL_IMAGE_VERIFY_FILE_CLEANUP_FAILED' $BarrierSubstage
+        throw ('Owned final-image verification output cleanup failed (Win32 error {0}).' -f [int]$deleteResult.ErrorCode)
+    }
+    if (Test-Path -LiteralPath $Path) {
+        Set-ProducerFailureContext 'OUTPUT_FINAL_IMAGE_VERIFY_FILE_CLEANUP_FAILED' $BarrierSubstage
+        throw 'Owned final-image verification output cleanup did not complete.'
+    }
+    $script:FailureCode = $previousFailureCode
+    $script:FailureSubstage = $previousFailureSubstage
+    return $true
+}
+
+function Read-OwnedBoundedUtf8Text {
+    param(
+        [Parameter(Mandatory = $true)] [IO.Stream]$Stream,
+        [Parameter(Mandatory = $true)] [ValidateRange(1, 1048576)] [Int64]$MaximumBytes
+    )
+    if (-not $Stream.CanRead -or -not $Stream.CanSeek) { throw 'The owned final-image verification output stream is not readable.' }
+    [void]$Stream.Flush()
+    [void]$Stream.Seek(0, [IO.SeekOrigin]::Begin)
+    $buffer = New-Object byte[] 8192
+    $captured = [IO.MemoryStream]::new()
+    try {
+        while ($true) {
+            [Int64]$remaining = $MaximumBytes - $captured.Length
+            if ($remaining -lt 0) { throw 'Bounded final-image verification output exceeded its maximum size.' }
+            [Int32]$readLimit = [int][Math]::Min([Int64]$buffer.Length, $remaining + 1)
+            $read = $Stream.Read($buffer, 0, $readLimit)
+            if ($read -le 0) { break }
+            if ($captured.Length + $read -gt $MaximumBytes) {
+                throw 'Bounded final-image verification output exceeded its maximum size.'
+            }
+            $captured.Write($buffer, 0, $read)
+        }
+        return (New-Object Text.UTF8Encoding($false, $true)).GetString($captured.ToArray())
+    }
+    finally {
+        $captured.Dispose()
+    }
+}
+
+function Invoke-QualifiedFinalImageVerification {
+    param(
+        [Parameter(Mandatory = $true)] [string]$PythonLauncher,
+        [Parameter(Mandatory = $true)] [string]$BuildScript,
+        [Parameter(Mandatory = $true)] [string]$NativeEvidencePath,
+        [Parameter(Mandatory = $true)] [string]$OwnedStageRoot,
+        [Parameter(Mandatory = $true)] [ValidateSet('cpp', 'rust')] [string]$ExpectedBackend,
+        [Parameter(Mandatory = $true)] [ValidateSet('x64')] [string]$ExpectedPlatform,
+        [Parameter(Mandatory = $true)] [ValidateSet('Debug', 'Release')] [string]$ExpectedConfiguration,
+        [Parameter(Mandatory = $true)] [object]$ExpectedArtifact,
+        [Parameter(Mandatory = $true)] [string]$ComSpec,
+        [Parameter(Mandatory = $true)] [string]$EnvironmentBlock,
+        [Parameter(Mandatory = $true)] [int]$TimeoutSeconds,
+        [Parameter(Mandatory = $true)] [ValidatePattern('^[a-z][a-z0-9-]{0,63}$')] [string]$BarrierSubstage
+    )
+    Assert-RegularDirectory $OwnedStageRoot
+    Assert-NoReparseAncestors $OwnedStageRoot
+    $nativeEvidenceCanonical = Get-CanonicalPath $NativeEvidencePath
+    Assert-RegularFile $nativeEvidenceCanonical
+    $nativeEvidenceParent = Split-Path -Parent $nativeEvidenceCanonical
+    Assert-RegularDirectory $nativeEvidenceParent
+    Assert-NoReparseAncestors $nativeEvidenceParent
+    $temporary = Join-Path $nativeEvidenceParent ('.output-final-image-verify-{0}.json' -f ([Guid]::NewGuid().ToString('N')))
+    Assert-NoReparseAncestors $temporary
+    $temporaryStream = $null
+    $temporaryOwned = $false
+    $temporaryIdentity = $null
+    try {
+        $temporaryStream = [IO.FileStream]::new(
+            $temporary,
+            [IO.FileMode]::CreateNew,
+            [IO.FileAccess]::ReadWrite,
+            [IO.FileShare]::ReadWrite,
+            4096,
+            [IO.FileOptions]::SequentialScan)
+        $temporaryOwned = $true
+        try { $temporaryIdentity = Get-OwnedFileIdentity $temporaryStream }
+        catch {
+            Set-ProducerFailureContext 'OUTPUT_FINAL_IMAGE_VERIFY_FILE_IDENTITY_UNAVAILABLE' $BarrierSubstage
+            throw
+        }
+        # cmd.exe must be able to open the path for redirection.  Close the
+        # CreateNew handle before invoking it.  The saved handle identity is
+        # checked again before any child output is parsed.
+        $temporaryStream.Dispose()
+        $temporaryStream = $null
+        $commandText = '{0} -3 {1} --format json evidence output-final-image-verify --native-evidence {2} --stage-root {3} --backend {4} --platform {5} --configuration {6} --artifact-sha256 {7} --artifact-size-bytes {8}' -f
+            (ConvertTo-WindowsCommandLineArgument $PythonLauncher),
+            (ConvertTo-WindowsCommandLineArgument $BuildScript),
+            (ConvertTo-WindowsCommandLineArgument $nativeEvidenceCanonical),
+            (ConvertTo-WindowsCommandLineArgument $OwnedStageRoot),
+            (ConvertTo-WindowsCommandLineArgument $ExpectedBackend),
+            (ConvertTo-WindowsCommandLineArgument $ExpectedPlatform),
+            (ConvertTo-WindowsCommandLineArgument $ExpectedConfiguration),
+            (ConvertTo-WindowsCommandLineArgument ([string]$ExpectedArtifact.sha256)),
+            ([UInt64]$ExpectedArtifact.sizeBytes).ToString([Globalization.CultureInfo]::InvariantCulture)
+        $commandText = $commandText + ' > ' + (ConvertTo-WindowsCommandLineArgument $temporary) + ' 2> NUL'
+        $commandError = $null
+        Set-ProducerFailureContext 'OUTPUT_FINAL_IMAGE_VERIFY_OUTPUT_INVALID' $BarrierSubstage
+        try {
+            [void](Invoke-OwnedCommand $ComSpec (New-CmdCommandLine $commandText $ComSpec) $script:RepoRoot $EnvironmentBlock $TimeoutSeconds)
+        }
+        catch {
+            $commandError = $_
+        }
+        if ($null -ne $commandError) {
+            try {
+                $temporaryStream = Open-VerifiedOwnedOutput $temporary $temporaryIdentity $BarrierSubstage
+                $failureText = Read-OwnedBoundedUtf8Text $temporaryStream (16 * 1024)
+                $failureResult = $failureText | ConvertFrom-Json -ErrorAction Stop
+                if ($null -eq $failureResult -or $failureResult -is [Array]) { throw 'Failure output is not an object.' }
+                $failureKeys = @($failureResult.PSObject.Properties | ForEach-Object { $_.Name })
+                $expectedFailureKeys = @('failureCode', 'ok', 'payloadFree', 'record')
+                [Array]::Sort($failureKeys, [StringComparer]::Ordinal)
+                [Array]::Sort($expectedFailureKeys, [StringComparer]::Ordinal)
+                if (($failureKeys -join '|') -cne ($expectedFailureKeys -join '|') -or
+                    $failureResult.ok -isnot [bool] -or [bool]$failureResult.ok -or
+                    $failureResult.payloadFree -isnot [bool] -or -not [bool]$failureResult.payloadFree -or
+                    [string]$failureResult.record -cne 'output-final-image-binding-validation' -or
+                    [string]$failureResult.failureCode -cnotmatch '^[A-Z][A-Z0-9_]{0,127}$') {
+                    throw 'Failure output schema is not exact.'
+                }
+                Set-ProducerFailureContext ([string]$failureResult.failureCode) $BarrierSubstage
+            }
+            catch { }
+            throw $commandError
+        }
+        $temporaryStream = Open-VerifiedOwnedOutput $temporary $temporaryIdentity $BarrierSubstage
+        $jsonText = Read-OwnedBoundedUtf8Text $temporaryStream (64 * 1024)
+        try {
+            $result = $jsonText | ConvertFrom-Json -ErrorAction Stop
+        }
+        catch { throw 'Canonical final-image verification output is not valid JSON.' }
+        $expectedKeys = @(
+            'backend',
+            'boundNativeEvidenceSha256',
+            'configuration',
+            'files',
+            'ok',
+            'payloadFree',
+            'platform',
+            'provider',
+            'receiptPath',
+            'receiptSha256',
+            'record',
+            'sourceNativeEvidenceSha256',
+            'stageId'
+        )
+        if ($null -eq $result -or $result -is [Array]) { throw 'Canonical final-image verification output is not a success object.' }
+        $actualKeys = @($result.PSObject.Properties | ForEach-Object { $_.Name })
+        [Array]::Sort($expectedKeys, [StringComparer]::Ordinal)
+        [Array]::Sort($actualKeys, [StringComparer]::Ordinal)
+        if (($actualKeys -join '|') -cne ($expectedKeys -join '|')) { throw 'Canonical final-image verification output schema is not exact.' }
+        if ($result.ok -isnot [bool] -or -not [bool]$result.ok -or
+            $result.payloadFree -isnot [bool] -or -not [bool]$result.payloadFree -or
+            [string]$result.record -cne 'output-final-image-binding-validation' -or
+            [string]$result.backend -cne $ExpectedBackend -or
+            [string]$result.platform -cne $ExpectedPlatform -or
+            [string]$result.configuration -cne $ExpectedConfiguration) {
+            throw 'Canonical final-image verification output selectors are not exact.'
+        }
+        foreach ($hashName in @('boundNativeEvidenceSha256', 'sourceNativeEvidenceSha256', 'receiptSha256')) {
+            $hashValue = [string](Get-PropertyValue $result @($hashName))
+            if ($hashValue -notmatch '^(?i:sha256:)[0-9a-fA-F]{64}$') {
+                throw 'Canonical final-image verification output contains an invalid hash.'
+            }
+        }
+        foreach ($identityName in @('stageId', 'receiptPath')) {
+            $identityValue = [string](Get-PropertyValue $result @($identityName))
+            if ([string]::IsNullOrWhiteSpace($identityValue) -or $identityValue -ne $identityValue.Trim() -or
+                $identityValue.Length -gt 2048 -or $identityValue -match '[\x00-\x1f]') {
+                throw 'Canonical final-image verification output contains an invalid identity.'
+            }
+        }
+        $files = Get-PropertyValue $result @('files')
+        if ($null -eq $files) { throw 'Canonical final-image verification output has no file identities.' }
+        $fileKeys = @($files.PSObject.Properties | ForEach-Object { $_.Name })
+        [Array]::Sort($fileKeys, [StringComparer]::Ordinal)
+        if (($fileKeys -join '|') -cne 'exe|map') { throw 'Canonical final-image verification output file schema is not exact.' }
+        foreach ($fileName in @('exe', 'map')) {
+            $file = Get-PropertyValue $files @($fileName)
+            if ($null -eq $file) { throw 'Canonical final-image verification output file identity is missing.' }
+            $keys = @($file.PSObject.Properties | ForEach-Object { $_.Name })
+            [Array]::Sort($keys, [StringComparer]::Ordinal)
+            if (($keys -join '|') -cne 'path|sha256|sizeBytes') { throw 'Canonical final-image verification output file schema is not exact.' }
+            $filePath = [string](Get-PropertyValue $file @('path'))
+            if ([string]::IsNullOrWhiteSpace($filePath) -or $filePath -ne $filePath.Trim() -or
+                $filePath.Length -gt 2048 -or $filePath -match '[\x00-\x1f]') {
+                throw 'Canonical final-image verification output file path is invalid.'
+            }
+            $fileHash = [string](Get-PropertyValue $file @('sha256'))
+            if ($fileHash -notmatch '^(?i:sha256:)[0-9a-fA-F]{64}$') { throw 'Canonical final-image verification output file hash is invalid.' }
+            $fileSizeValue = Get-PropertyValue $file @('sizeBytes')
+            if ($null -eq $fileSizeValue -or $fileSizeValue -is [bool] -or [string]$fileSizeValue -notmatch '^[0-9]+$') {
+                throw 'Canonical final-image verification output file size is invalid.'
+            }
+            try { [UInt64]$fileSize = $fileSizeValue } catch { throw 'Canonical final-image verification output file size is invalid.' }
+            if (($fileName -eq 'exe' -and $fileHash.Substring(7).ToLowerInvariant() -cne ([string]$ExpectedArtifact.sha256).ToLowerInvariant()) -or
+                ($fileName -eq 'exe' -and [UInt64]$fileSize -ne [UInt64]$ExpectedArtifact.sizeBytes)) {
+                throw 'Canonical final-image verification output executable identity is stale.'
+            }
+        }
+        $provider = Get-PropertyValue $result @('provider')
+        if ($null -eq $provider) { throw 'Canonical final-image verification output has no provider identity.' }
+        $providerKeys = @($provider.PSObject.Properties | ForEach-Object { $_.Name })
+        [Array]::Sort($providerKeys, [StringComparer]::Ordinal)
+        if (($providerKeys -join '|') -cne 'mapSha256|mapSizeBytes|memberCount|symbolCount') {
+            throw 'Canonical final-image verification output provider schema is not exact.'
+        }
+        $providerMapHash = [string](Get-PropertyValue $provider @('mapSha256'))
+        if ($providerMapHash -notmatch '^(?i:sha256:)[0-9a-fA-F]{64}$') { throw 'Canonical final-image verification output provider MAP hash is invalid.' }
+        foreach ($countName in @('mapSizeBytes', 'memberCount', 'symbolCount')) {
+            $countValue = Get-PropertyValue $provider @($countName)
+            if ($null -eq $countValue -or $countValue -is [bool] -or [string]$countValue -notmatch '^[0-9]+$') {
+                throw 'Canonical final-image verification output provider count is invalid.'
+            }
+            try { [UInt64]$unusedCount = $countValue } catch { throw 'Canonical final-image verification output provider count is invalid.' }
+        }
+        $mapFile = Get-PropertyValue $files @('map')
+        if ([string](Get-PropertyValue $mapFile @('sha256')) -cne $providerMapHash -or
+            [UInt64](Get-PropertyValue $mapFile @('sizeBytes')) -ne [UInt64](Get-PropertyValue $provider @('mapSizeBytes'))) {
+            throw 'Canonical final-image verification output provider MAP identity is stale.'
+        }
+        return $result
+    }
+    finally {
+        if ($null -ne $temporaryStream) {
+            $temporaryStream.Dispose()
+            $temporaryStream = $null
+        }
+        if ($temporaryOwned -and $null -ne $temporaryIdentity) {
+            [void](Remove-VerifiedOwnedOutput $temporary $temporaryIdentity $BarrierSubstage)
+        }
+    }
+}
+
+function Assert-QualifiedFinalImageVerificationEqual {
+    param(
+        [Parameter(Mandatory = $true)] [object]$Expected,
+        [Parameter(Mandatory = $true)] [object]$Actual
+    )
+    foreach ($name in @(
+        'backend',
+        'platform',
+        'configuration',
+        'boundNativeEvidenceSha256',
+        'sourceNativeEvidenceSha256',
+        'stageId',
+        'receiptPath',
+        'receiptSha256'
+    )) {
+        if ([string](Get-PropertyValue $Expected @($name)) -cne [string](Get-PropertyValue $Actual @($name))) {
+            throw 'Canonical final-image verification identity changed during producer transaction.'
+        }
+    }
+    foreach ($fileName in @('exe', 'map')) {
+        $expectedFile = Get-PropertyValue (Get-PropertyValue $Expected @('files')) @($fileName)
+        $actualFile = Get-PropertyValue (Get-PropertyValue $Actual @('files')) @($fileName)
+        foreach ($name in @('path', 'sha256', 'sizeBytes')) {
+            if ([string](Get-PropertyValue $expectedFile @($name)) -cne [string](Get-PropertyValue $actualFile @($name))) {
+                throw 'Canonical final-image verification file identity changed during producer transaction.'
+            }
+        }
+    }
+    $expectedProvider = Get-PropertyValue $Expected @('provider')
+    $actualProvider = Get-PropertyValue $Actual @('provider')
+    foreach ($name in @('memberCount', 'symbolCount', 'mapSha256', 'mapSizeBytes')) {
+        if ([string](Get-PropertyValue $expectedProvider @($name)) -cne [string](Get-PropertyValue $actualProvider @($name))) {
+            throw 'Canonical final-image verification provider identity changed during producer transaction.'
+        }
+    }
+    return $true
 }
 
 function Copy-RuntimeStage {
@@ -1479,9 +2105,10 @@ function New-BuildManifest {
         [Parameter(Mandatory = $true)] [string]$BuildCommandSha256,
         [Parameter(Mandatory = $true)] [string]$PackagePlanCommandSha256,
         [Parameter(Mandatory = $true)] [string]$RuntimeStageCommandSha256,
-        [Parameter(Mandatory = $true)] [object]$SelectorProof
+        [Parameter(Mandatory = $true)] [object]$SelectorProof,
+        [AllowNull()] [object]$FinalImageBinding = $null
     )
-    return [ordered]@{
+    $manifest = [ordered]@{
         schemaVersion = $script:SchemaVersion
         record = 'output-startup-build-manifest'
         payloadFree = $true
@@ -1550,6 +2177,52 @@ function New-BuildManifest {
             publication = 'atomic-directory-rename'
         }
     }
+    if ($null -ne $FinalImageBinding) {
+        $manifest.qualifiedFinalImage = $true
+        $manifest.buildTarget = 'Rebuild'
+        $manifest.qualification = 'qualified'
+        $manifest.boundNativeEvidenceSha256 = [string]$FinalImageBinding.boundNativeEvidenceSha256
+        $manifest.sourceNativeEvidenceSha256 = [string]$FinalImageBinding.sourceNativeEvidenceSha256
+        $manifest.nativeEvidenceSha256 = [string]$FinalImageBinding.boundNativeEvidenceSha256
+        $manifest.nativeEvidenceSourceSha256 = [string]$FinalImageBinding.sourceNativeEvidenceSha256
+        $manifest.finalImageStage = [ordered]@{
+            record = 'output-final-image-stage'
+            stageId = [string]$FinalImageBinding.stageId
+            receiptPath = [string]$FinalImageBinding.receiptPath
+            receipt = [string]$FinalImageBinding.receiptPath
+            receiptSha256 = [string]$FinalImageBinding.receiptSha256
+            sourceNativeEvidenceSha256 = [string]$FinalImageBinding.sourceNativeEvidenceSha256
+            exeSha256 = [string]$FinalImageBinding.files.exe.sha256
+            exeSizeBytes = [UInt64]$FinalImageBinding.files.exe.sizeBytes
+            mapSha256 = [string]$FinalImageBinding.files.map.sha256
+            mapSizeBytes = [UInt64]$FinalImageBinding.files.map.sizeBytes
+            provider = [ordered]@{
+                memberCount = [int]$FinalImageBinding.provider.memberCount
+                symbolCount = [int]$FinalImageBinding.provider.symbolCount
+                mapSha256 = [string]$FinalImageBinding.provider.mapSha256
+                mapSizeBytes = [UInt64]$FinalImageBinding.provider.mapSizeBytes
+            }
+        }
+        $manifest.finalImageStageId = [string]$FinalImageBinding.stageId
+        $manifest.finalImageReceiptPath = [string]$FinalImageBinding.receiptPath
+        $manifest.finalImageReceiptSha256 = [string]$FinalImageBinding.receiptSha256
+        $manifest.finalImageExeSha256 = [string]$FinalImageBinding.files.exe.sha256
+        $manifest.finalImageExeSizeBytes = [UInt64]$FinalImageBinding.files.exe.sizeBytes
+        $manifest.finalImageMapSha256 = [string]$FinalImageBinding.files.map.sha256
+        $manifest.finalImageMapSizeBytes = [UInt64]$FinalImageBinding.files.map.sizeBytes
+        $manifest.finalImageProvider = [ordered]@{
+            memberCount = [int]$FinalImageBinding.provider.memberCount
+            symbolCount = [int]$FinalImageBinding.provider.symbolCount
+            mapSha256 = [string]$FinalImageBinding.provider.mapSha256
+            mapSizeBytes = [UInt64]$FinalImageBinding.provider.mapSizeBytes
+        }
+    }
+    else {
+        $manifest.qualifiedFinalImage = $false
+        $manifest.buildTarget = 'Build'
+        $manifest.qualification = 'non-qualified'
+    }
+    return $manifest
 }
 
 function Assert-BuildManifest {
@@ -1558,7 +2231,8 @@ function Assert-BuildManifest {
         [Parameter(Mandatory = $true)] [object]$ExpectedSource,
         [Parameter(Mandatory = $true)] [object]$ExpectedArtifact,
         [Parameter(Mandatory = $true)] [object]$ExpectedStage,
-        [Parameter(Mandatory = $true)] [object]$ExpectedSelectorProof
+        [Parameter(Mandatory = $true)] [object]$ExpectedSelectorProof,
+        [AllowNull()] [object]$ExpectedFinalImageBinding = $null
     )
     Assert-RegularFile $Path
     try { $manifest = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -ErrorAction Stop }
@@ -1582,6 +2256,17 @@ function Assert-BuildManifest {
         [bool]$manifest.sourceDirty -ne [bool]$ExpectedSource.dirty -or
         [string]$manifest.sourceStatusSha256 -ne [string]$ExpectedSource.statusSha256) {
         throw 'The generated build manifest source identity is stale.'
+    }
+    if ($null -ne $ExpectedFinalImageBinding) {
+        $manifestStatusLineCount = Get-PropertyValue $manifest @('sourceStatusLineCount')
+        if ($manifest.sourceDirty -isnot [bool] -or
+            [bool]$manifest.sourceDirty -or
+            $null -eq $manifestStatusLineCount -or
+            $manifestStatusLineCount -is [bool] -or
+            [string]$manifestStatusLineCount -notmatch '^[0-9]+$' -or
+            [int]$manifestStatusLineCount -ne 0) {
+            throw 'The qualified build manifest does not bind a clean source state.'
+        }
     }
     $manifestArtifactHash = [string](Get-PropertyValue $manifest @('exeSha256', 'artifactSha256'))
     $manifestArtifactAfter = [string](Get-PropertyValue $manifest @('artifactSha256After', 'artifactHashAfter'))
@@ -1708,6 +2393,94 @@ function Assert-BuildManifest {
     if (-not (Test-Sha256 $selectorHash) -or [string]$selectorHash -ne [string]$ExpectedSelectorProof.selectorContractSha256) {
         throw 'The generated build manifest selector proof hash is invalid.'
     }
+    $qualified = Get-PropertyValue $manifest @('qualifiedFinalImage')
+    if ($qualified -isnot [bool]) { throw 'The generated build manifest qualified marker is invalid.' }
+    if ($null -ne $ExpectedFinalImageBinding) {
+        if (-not [bool]$qualified -or
+            [string](Get-PropertyValue $manifest @('buildTarget')) -cne 'Rebuild' -or
+            [string](Get-PropertyValue $manifest @('qualification')) -cne 'qualified') {
+            throw 'The generated build manifest is not a qualified Rebuild.'
+        }
+        $expectedBoundHash = [string](Get-PropertyValue $ExpectedFinalImageBinding @('boundNativeEvidenceSha256'))
+        $expectedSourceHash = [string](Get-PropertyValue $ExpectedFinalImageBinding @('sourceNativeEvidenceSha256'))
+        if ([string](Get-PropertyValue $manifest @('boundNativeEvidenceSha256')) -cne $expectedBoundHash -or
+            [string](Get-PropertyValue $manifest @('sourceNativeEvidenceSha256')) -cne $expectedSourceHash -or
+            [string](Get-PropertyValue $manifest @('nativeEvidenceSha256')) -cne $expectedBoundHash -or
+            [string](Get-PropertyValue $manifest @('nativeEvidenceSourceSha256')) -cne $expectedSourceHash) {
+            throw 'The generated build manifest native evidence binding is stale.'
+        }
+        $expectedStageId = [string](Get-PropertyValue $ExpectedFinalImageBinding @('stageId'))
+        $expectedReceiptPath = [string](Get-PropertyValue $ExpectedFinalImageBinding @('receiptPath'))
+        $expectedReceiptHash = [string](Get-PropertyValue $ExpectedFinalImageBinding @('receiptSha256'))
+        $expectedFiles = Get-PropertyValue $ExpectedFinalImageBinding @('files')
+        $expectedExe = Get-PropertyValue $expectedFiles @('exe')
+        $expectedMap = Get-PropertyValue $expectedFiles @('map')
+        $expectedExeHash = [string](Get-PropertyValue $expectedExe @('sha256'))
+        $expectedExeSize = [UInt64](Get-PropertyValue $expectedExe @('sizeBytes'))
+        $expectedMapHash = [string](Get-PropertyValue $expectedMap @('sha256'))
+        $expectedMapSize = [UInt64](Get-PropertyValue $expectedMap @('sizeBytes'))
+        $expectedProvider = Get-PropertyValue $ExpectedFinalImageBinding @('provider')
+        $manifestStage = Get-PropertyValue $manifest @('finalImageStage')
+        $manifestStageKeys = if ($null -ne $manifestStage) { @($manifestStage.PSObject.Properties | ForEach-Object { $_.Name }) } else { @() }
+        $expectedManifestStageKeys = @('exeSha256', 'exeSizeBytes', 'mapSha256', 'mapSizeBytes', 'provider', 'receipt', 'receiptPath', 'receiptSha256', 'record', 'sourceNativeEvidenceSha256', 'stageId')
+        [Array]::Sort($manifestStageKeys, [StringComparer]::Ordinal)
+        [Array]::Sort($expectedManifestStageKeys, [StringComparer]::Ordinal)
+        if ($null -eq $manifestStage -or
+            ($manifestStageKeys -join '|') -cne ($expectedManifestStageKeys -join '|') -or
+            [string](Get-PropertyValue $manifestStage @('record')) -cne 'output-final-image-stage' -or
+            [string](Get-PropertyValue $manifestStage @('stageId')) -cne $expectedStageId -or
+            [string](Get-PropertyValue $manifestStage @('receiptPath')) -cne $expectedReceiptPath -or
+            [string](Get-PropertyValue $manifestStage @('receipt')) -cne $expectedReceiptPath -or
+            [string](Get-PropertyValue $manifestStage @('receiptSha256')) -cne $expectedReceiptHash -or
+            [string](Get-PropertyValue $manifestStage @('sourceNativeEvidenceSha256')) -cne $expectedSourceHash -or
+            [string](Get-PropertyValue $manifestStage @('exeSha256')) -cne $expectedExeHash -or
+            [UInt64](Get-PropertyValue $manifestStage @('exeSizeBytes')) -ne $expectedExeSize -or
+            [string](Get-PropertyValue $manifestStage @('mapSha256')) -cne $expectedMapHash -or
+            [UInt64](Get-PropertyValue $manifestStage @('mapSizeBytes')) -ne $expectedMapSize) {
+            throw 'The qualified final-image receipt binding is stale.'
+        }
+        $manifestStageProvider = Get-PropertyValue $manifestStage @('provider')
+        $manifestTopProvider = Get-PropertyValue $manifest @('finalImageProvider')
+        $expectedProviderKeys = @('mapSha256', 'mapSizeBytes', 'memberCount', 'symbolCount')
+        foreach ($providerObject in @($manifestStageProvider, $manifestTopProvider)) {
+            if ($null -eq $providerObject) { throw 'The qualified final-image provider identity is missing.' }
+            $providerKeys = @($providerObject.PSObject.Properties | ForEach-Object { $_.Name })
+            [Array]::Sort($providerKeys, [StringComparer]::Ordinal)
+            [Array]::Sort($expectedProviderKeys, [StringComparer]::Ordinal)
+            if (($providerKeys -join '|') -cne ($expectedProviderKeys -join '|')) {
+                throw 'The qualified final-image provider schema is not exact.'
+            }
+        }
+        foreach ($providerObject in @($manifestStageProvider, $manifestTopProvider)) {
+            if ([int](Get-PropertyValue $providerObject @('memberCount')) -ne [int](Get-PropertyValue $expectedProvider @('memberCount')) -or
+                [int](Get-PropertyValue $providerObject @('symbolCount')) -ne [int](Get-PropertyValue $expectedProvider @('symbolCount')) -or
+                [string](Get-PropertyValue $providerObject @('mapSha256')) -cne [string](Get-PropertyValue $expectedProvider @('mapSha256')) -or
+                [UInt64](Get-PropertyValue $providerObject @('mapSizeBytes')) -ne [UInt64](Get-PropertyValue $expectedProvider @('mapSizeBytes'))) {
+                throw 'The qualified final-image provider identity is stale.'
+            }
+        }
+        $expectedExeBareHash = $expectedExeHash -replace '^(?i:sha256:)', ''
+        if ([string](Get-PropertyValue $manifest @('finalImageStageId')) -cne $expectedStageId -or
+            [string](Get-PropertyValue $manifest @('finalImageReceiptPath')) -cne $expectedReceiptPath -or
+            [string](Get-PropertyValue $manifest @('finalImageReceiptSha256')) -cne $expectedReceiptHash -or
+            [string](Get-PropertyValue $manifest @('finalImageExeSha256')) -cne $expectedExeHash -or
+            [UInt64](Get-PropertyValue $manifest @('finalImageExeSizeBytes')) -ne $expectedExeSize -or
+            [string](Get-PropertyValue $manifest @('finalImageMapSha256')) -cne $expectedMapHash -or
+            [UInt64](Get-PropertyValue $manifest @('finalImageMapSizeBytes')) -ne $expectedMapSize -or
+            [string]$manifest.exeSha256 -cne $expectedExeBareHash -or
+            [UInt64]$manifest.artifactSizeBytesAfter -ne $expectedExeSize) {
+            throw 'The qualified final-image executable identity is not bound to the manifest.'
+        }
+    }
+    elseif ([bool]$qualified) {
+        throw 'The generated build manifest claims qualified mode without a final-image binding.'
+    }
+    else {
+        if ([string](Get-PropertyValue $manifest @('buildTarget')) -cne 'Build' -or
+            [string](Get-PropertyValue $manifest @('qualification')) -cne 'non-qualified') {
+            throw 'The generated non-qualified build manifest marker is not explicit.'
+        }
+    }
     [void](Assert-PayloadFreeManifest $manifest)
     return $manifest
 }
@@ -1764,7 +2537,13 @@ function New-FailureEnvelope {
         [AllowNull()] [string]$FailureCode = $null,
         [AllowNull()] [string]$FailureSubstage = $null
     )
-    $failure = [ordered]@{ stage = $script:Stage; type = $Type }
+    $failure = [ordered]@{
+        stage = $script:Stage
+        type = $Type
+        adoption = 'HOLD'
+        decision = 'HOLD'
+        adoptionEligible = $false
+    }
     if (-not [string]::IsNullOrWhiteSpace($FailureCode)) { $failure.code = $FailureCode }
     if (-not [string]::IsNullOrWhiteSpace($FailureSubstage)) { $failure.substage = $FailureSubstage }
     if ($Type -eq 'cleanup-unverified') {
@@ -1815,6 +2594,35 @@ function Invoke-SelfTest {
         $source = Join-Path $root 'sakura.exe'
         [IO.File]::WriteAllBytes($source, [byte[]](1, 2, 3, 5, 8))
         $artifact = Get-FileIdentity $source
+        $temporaryIdentityVerified = $false
+        $temporaryIdentityMismatchRejected = $false
+        if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+            $identitySourcePath = Join-Path $root 'identity-source.tmp'
+            $identityReplacementPath = Join-Path $root 'identity-replacement.tmp'
+            $identityStream = $null
+            try {
+                $identityStream = [IO.FileStream]::new($identitySourcePath, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::ReadWrite, 4096, [IO.FileOptions]::SequentialScan)
+                $identityRecord = Get-OwnedFileIdentity $identityStream
+            }
+            finally {
+                if ($null -ne $identityStream) { $identityStream.Dispose(); $identityStream = $null }
+            }
+            [IO.File]::WriteAllText($identityReplacementPath, 'replacement')
+            $replacementStream = $null
+            try {
+                $replacementStream = [IO.File]::Open($identityReplacementPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+                try { [void](Assert-OwnedFileIdentity $replacementStream $identityRecord 'self-test') }
+                catch { $temporaryIdentityMismatchRejected = $true }
+            }
+            finally {
+                if ($null -ne $replacementStream) { $replacementStream.Dispose(); $replacementStream = $null }
+            }
+            if (-not $temporaryIdentityMismatchRejected) { throw 'Self-test accepted a replacement final-image verification file identity.' }
+            [void](Remove-VerifiedOwnedOutput $identitySourcePath $identityRecord 'self-test')
+            Assert-RegularFile $identityReplacementPath
+            [IO.File]::Delete($identityReplacementPath)
+            $temporaryIdentityVerified = $true
+        }
         $receipt = Join-Path $root '.sakura-runtime-stage.json'
         $entryHash = Get-Sha256 $source
         $receiptValue = [ordered]@{
@@ -1843,6 +2651,11 @@ function Invoke-SelfTest {
         catch { $nestedLanguageRejected = $true }
         if (-not $nestedLanguageRejected) { throw 'Nested known producer language runtime receipt identity self-test was accepted.' }
         $sourceState = [pscustomobject][ordered]@{ head = ('0' * 40); dirty = $false; statusSha256 = ('1' * 64); statusLineCount = 0 }
+        $qualifiedDirtySourceRejected = $false
+        $dirtySourceState = [pscustomobject][ordered]@{ head = ('0' * 40); dirty = $true; statusSha256 = ('1' * 64); statusLineCount = 0 }
+        try { Assert-QualifiedSourceState $dirtySourceState }
+        catch { $qualifiedDirtySourceRejected = $true }
+        if (-not $qualifiedDirtySourceRejected) { throw 'Self-test accepted a dirty source state for qualified production.' }
         $syntheticArchiveProof = [ordered]@{
             result = 'dumpbin-defined-exports-verified'
             rustArchiveSha256 = ('9' * 64)
@@ -2026,6 +2839,9 @@ function Invoke-SelfTest {
             selectorVerified = $true
             sourceFingerprintVerified = $true
             selectorProofVerified = $true
+            qualifiedDirtySourceRejected = $qualifiedDirtySourceRejected
+            temporaryIdentityVerified = $temporaryIdentityVerified
+            temporaryIdentityMismatchRejected = $temporaryIdentityMismatchRejected
             rustSelectorProofVerified = $rustSelectorProofVerified
             rustLtcgSelectorVerified = $rustLtcgSelectorVerified
             cppLtcgSelectorVerified = $cppLtcgSelectorVerified
@@ -2061,6 +2877,8 @@ function Invoke-SelfTest {
 function Invoke-Producer {
     $transactionRoot = $null
     $finalRoot = $null
+    $finalImageStageRootPath = $null
+    $finalImageStageRootOwned = $false
     $published = $false
     $movedFinalRoot = $false
     $failureType = $null
@@ -2068,6 +2886,7 @@ function Invoke-Producer {
     $failureCode = $null
     $failureSubstage = $null
     $successSummary = $null
+    $successJson = $null
     $cleanupVerified = $true
     $cleanupFailureCount = 0
     try {
@@ -2082,6 +2901,19 @@ function Invoke-Producer {
         Assert-RegularDirectory $configurationRoot
         $finalRoot = Join-Path $configurationRoot $Backend
         if (Test-Path -LiteralPath $finalRoot) { throw 'The selected output transaction already exists; refusing overwrite.' }
+        if ($QualifiedFinalImage) {
+            $finalImageStageRootPath = Get-OutputRoot $FinalImageStageRoot
+            if ((Test-PathBelow $finalImageStageRootPath $configurationRoot) -or
+                (Test-PathBelow $configurationRoot $finalImageStageRootPath) -or
+                (Test-Path -LiteralPath $finalImageStageRootPath)) {
+                throw 'The qualified final-image stage root must be a new directory outside the producer transaction root.'
+            }
+            [void][IO.Directory]::CreateDirectory($finalImageStageRootPath)
+            $finalImageStageRootOwned = $true
+            $script:FinalImageStageRoot = $finalImageStageRootPath
+            $script:FinalImageStageRootOwned = $true
+            Assert-RegularDirectory $finalImageStageRootPath
+        }
         $lockRoot = Join-Path $outputRoot '.locks'
         Assert-NoReparseAncestors $lockRoot
         [void][IO.Directory]::CreateDirectory($lockRoot)
@@ -2101,12 +2933,13 @@ function Invoke-Producer {
         $canonicalStage = Join-Path $script:RepoRoot ('build/staging/{0}/sakura-editor' -f $context)
         $buildBatch = Join-Path $script:RepoRoot 'build-dev.bat'
         $buildScript = Join-Path $script:RepoRoot 'tools/build/sakura_build.py'
-        Assert-RegularFile $buildBatch
+        if (-not $QualifiedFinalImage) { Assert-RegularFile $buildBatch }
         Assert-RegularFile $buildScript
         $script:Stage = 'source-state'
         Set-ProducerFailureContext 'SOURCE_STATE' 'source-state'
         Set-ProducerFailureContext 'SOURCE_GIT_STATE' 'git-state'
         $sourceBefore = Get-SourceState
+        if ($QualifiedFinalImage) { Assert-QualifiedSourceState $sourceBefore }
         Set-ProducerFailureContext 'ARTIFACT_BEFORE_IDENTITY' 'artifact-before'
         $artifactBefore = Get-OptionalFileIdentity $artifactSource
         Set-ProducerFailureContext 'PROVIDER_OBJECT_BEFORE_IDENTITY' 'provider-object-before'
@@ -2166,20 +2999,53 @@ function Invoke-Producer {
             [IO.File]::Delete($packagePlanStderr)
         }
         $packagePlanCommandSha256 = Get-TextSha256 ('package-plan|{0}|{1}|{2}' -f $Backend, $Platform.ToLowerInvariant(), $Configuration)
-        $buildCommandSha256 = Get-TextSha256 ('build-dev.bat|x64|{0}|SAKURA_OUTPUT_BACKEND={1}|SAKURA_UTF16_BACKEND=cpp|SAKURA_OUTPUT_PRODUCTION_PACKAGE=false|SAKURA_UTF16_PRODUCTION_PACKAGE=false|SAKURA_UTF16_BENCHMARK_TELEMETRY=false|SAKURA_GENERATE_ASSEMBLY_LISTINGS=false|SKIP_CREATE_GITHASH=1|SAKURA_BUILD_JOBS={2}|MSBUILDDISABLENODEREUSE=1' -f $Configuration, $Backend, $BuildParallelism)
+        $sourceAfterPackagePlan = Get-SourceState
+        Assert-SourceStateEqual $sourceBefore $sourceAfterPackagePlan
+        if ($QualifiedFinalImage) { Assert-QualifiedSourceState $sourceAfterPackagePlan }
+        $buildCommandDescriptor = if ($QualifiedFinalImage) {
+            'inventory-observe-product|Rebuild|msvc-x64-{0}|sakura_app|output={1}|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|SKIP_CREATE_GITHASH=1|timeout={2}|package-timeout={3}|jobs={4}|MSBUILDDISABLENODEREUSE=1|final-image=required' -f
+                $Configuration.ToLowerInvariant(), $Backend, $TimeoutSeconds, $PackageTimeoutSeconds, $BuildParallelism
+        }
+        else {
+            'build-dev.bat|x64|{0}|SAKURA_OUTPUT_BACKEND={1}|SAKURA_UTF16_BACKEND=cpp|SAKURA_OUTPUT_PRODUCTION_PACKAGE=false|SAKURA_UTF16_PRODUCTION_PACKAGE=false|SAKURA_UTF16_BENCHMARK_TELEMETRY=false|SAKURA_GENERATE_ASSEMBLY_LISTINGS=false|SKIP_CREATE_GITHASH=1|SAKURA_BUILD_JOBS={2}|MSBUILDDISABLENODEREUSE=1' -f $Configuration, $Backend, $BuildParallelism
+        }
+        $buildCommandSha256 = Get-TextSha256 $buildCommandDescriptor
         $runtimeStageCommandSha256 = Get-TextSha256 ('stage-runtime|{0}|sakura_app|canonical' -f $context)
         $script:Stage = 'build'
         Set-ProducerFailureContext 'BUILD' 'build'
         $script:BuildStarted = $true
         $buildStartedUtc = [DateTime]::UtcNow
-        $buildCommandText = '{0} x64 {1}' -f (ConvertTo-WindowsCommandLineArgument $buildBatch), $Configuration
-        [void](Invoke-OwnedCommand $comspec (New-CmdCommandLine $buildCommandText $comspec) $script:RepoRoot $environmentBlock $TimeoutSeconds)
+        $nativeEvidencePath = Join-Path $transactionRoot 'native-product.json'
+        $observerOuterTimeoutSeconds = $TimeoutSeconds
+        $buildCommandText = if ($QualifiedFinalImage) {
+            $observerCommand = New-QualifiedObserverCommand $py $buildScript $context $BuildParallelism $TimeoutSeconds $PackageTimeoutSeconds $Backend $finalImageStageRootPath $nativeEvidencePath
+            $observerCommand + ' > ' + (ConvertTo-WindowsCommandLineArgument (Join-Path $transactionRoot 'native-product.stdout')) +
+                ' 2> ' + (ConvertTo-WindowsCommandLineArgument (Join-Path $transactionRoot 'native-product.stderr'))
+            # observe-product runs its package closure before the Rebuild. The
+            # outer owner therefore needs both bounded phases plus grace.
+            $observerWorkTimeoutSeconds = [Int64]$TimeoutSeconds + [Int64]$PackageTimeoutSeconds
+            $observerOuterTimeoutSeconds = [int][Math]::Min([Int64]::MaxValue, ($observerWorkTimeoutSeconds + 60))
+        }
+        else {
+            '{0} x64 {1}' -f (ConvertTo-WindowsCommandLineArgument $buildBatch), $Configuration
+        }
+        [void](Invoke-OwnedCommand $comspec (New-CmdCommandLine $buildCommandText $comspec) $script:RepoRoot $environmentBlock $observerOuterTimeoutSeconds)
         $sourceAfterBuild = Get-SourceState
         Assert-SourceStateEqual $sourceBefore $sourceAfterBuild
+        if ($QualifiedFinalImage) { Assert-QualifiedSourceState $sourceAfterBuild }
         $artifactAfter = Get-FileIdentity $artifactSource
+        $finalImageBinding = $null
+        if ($QualifiedFinalImage) {
+            $finalImageBinding = Invoke-QualifiedFinalImageVerification $py $buildScript $nativeEvidencePath $finalImageStageRootPath $Backend $Platform $Configuration $artifactAfter $comspec $environmentBlock $TimeoutSeconds 'build-final-image-verify'
+            $firstFinalImageBinding = $finalImageBinding
+            [void](Assert-QualifiedFinalImageVerificationEqual $firstFinalImageBinding $finalImageBinding)
+        }
         $providerObjectAfter = Get-FileIdentity $providerObjectSource
         $compileLogAfter = Get-OptionalFileIdentity $compileLogSource
-        if ($Configuration -eq 'Release') {
+        foreach ($nativeTemporary in @((Join-Path $transactionRoot 'native-product.stdout'), (Join-Path $transactionRoot 'native-product.stderr'))) {
+            if (Test-Path -LiteralPath $nativeTemporary) { Assert-RegularFile $nativeTemporary; [IO.File]::Delete($nativeTemporary) }
+        }
+        if (-not $QualifiedFinalImage -and $Configuration -eq 'Release') {
             $providerObjectItem = Get-Item -LiteralPath $providerObjectSource -Force -ErrorAction Stop
             $compileLogItem = Get-Item -LiteralPath $compileLogSource -Force -ErrorAction Stop
             if ($providerObjectItem.LastWriteTimeUtc -le $buildStartedUtc -or
@@ -2217,26 +3083,35 @@ function Invoke-Producer {
         $windowsAfter = Get-WindowsImageIdentity
         $powerAfter = Get-PowerModeIdentity
         if ($windowsAfter.sha256 -ne $windowsBefore.sha256 -or $powerAfter.sha256 -ne $powerBefore.sha256) { throw 'Host or power identity changed during production.' }
-        $manifest = New-BuildManifest $sourceBefore $artifactBefore $artifactAfter $copiedStage $windowsBefore.identity $windowsBefore.sha256 $powerBefore.identity $powerBefore.sha256 $msvcIdentity $rustToolchain $rustLockSha256 $packagePlanValue $buildCommandSha256 $packagePlanCommandSha256 $runtimeStageCommandSha256 $selectorProof
         $manifestPath = Join-Path $transactionRoot 'build-manifest.json'
         $script:Stage = 'manifest'
         Set-ProducerFailureContext 'MANIFEST' 'manifest'
+        if ($QualifiedFinalImage) {
+            $manifestFinalImageBinding = Invoke-QualifiedFinalImageVerification $py $buildScript $nativeEvidencePath $finalImageStageRootPath $Backend $Platform $Configuration $artifactAfter $comspec $environmentBlock $TimeoutSeconds 'manifest-final-image-verify'
+            [void](Assert-QualifiedFinalImageVerificationEqual $firstFinalImageBinding $manifestFinalImageBinding)
+            $finalImageBinding = $manifestFinalImageBinding
+        }
+        $manifest = New-BuildManifest $sourceBefore $artifactBefore $artifactAfter $copiedStage $windowsBefore.identity $windowsBefore.sha256 $powerBefore.identity $powerBefore.sha256 $msvcIdentity $rustToolchain $rustLockSha256 $packagePlanValue $buildCommandSha256 $packagePlanCommandSha256 $runtimeStageCommandSha256 $selectorProof $finalImageBinding
         Write-JsonAtomic $manifestPath $manifest
-        [void](Assert-BuildManifest $manifestPath $sourceBefore $artifactAfter $copiedStage $selectorProof)
+        [void](Assert-BuildManifest $manifestPath $sourceBefore $artifactAfter $copiedStage $selectorProof $finalImageBinding)
         if ((Get-Sha256 $artifactSource) -ne [string]$artifactAfter.sha256) { throw 'The selected artifact changed after manifest generation.' }
         if (Test-Path -LiteralPath $finalRoot) { throw 'The selected output transaction appeared during production.' }
         $script:Stage = 'publication'
         Set-ProducerFailureContext 'PUBLICATION' 'publication'
         [IO.Directory]::Move($transactionRoot, $finalRoot)
         $movedFinalRoot = $true
+        if ($QualifiedFinalImage) {
+            $publishedNativeEvidencePath = Join-Path $finalRoot 'native-product.json'
+            $publishedFinalImageBinding = Invoke-QualifiedFinalImageVerification $py $buildScript $publishedNativeEvidencePath $finalImageStageRootPath $Backend $Platform $Configuration $artifactAfter $comspec $environmentBlock $TimeoutSeconds 'publication-final-image-verify'
+            [void](Assert-QualifiedFinalImageVerificationEqual $firstFinalImageBinding $publishedFinalImageBinding)
+            $finalImageBinding = $publishedFinalImageBinding
+        }
         $finalManifest = Join-Path $finalRoot 'build-manifest.json'
         $finalStage = Join-Path $finalRoot 'runtime-stage'
         $finalStageSnapshot = Get-RuntimeStageSnapshot $finalStage $context $artifactAfter
-        [void](Assert-BuildManifest $finalManifest $sourceBefore $artifactAfter $finalStageSnapshot $selectorProof)
+        [void](Assert-BuildManifest $finalManifest $sourceBefore $artifactAfter $finalStageSnapshot $selectorProof $finalImageBinding)
         if ((Get-Sha256 $artifactSource) -ne [string]$artifactAfter.sha256) { throw 'The selected artifact changed after publication.' }
         Assert-SourceStateEqual $sourceBefore (Get-SourceState)
-        $published = $true
-        $script:Published = $true
         $summary = [ordered]@{
             schemaVersion = $script:SchemaVersion
             record = 'output-startup-build-producer'
@@ -2245,6 +3120,9 @@ function Invoke-Producer {
             backend = $Backend
             platform = $Platform.ToLowerInvariant()
             configuration = $Configuration
+            qualifiedFinalImage = [bool]$QualifiedFinalImage
+            buildTarget = if ($QualifiedFinalImage) { 'Rebuild' } else { 'Build' }
+            qualification = if ($QualifiedFinalImage) { 'qualified' } else { 'non-qualified' }
             outputBackend = $Backend
             utf16Backend = 'cpp'
             productionFlags = $false
@@ -2263,8 +3141,28 @@ function Invoke-Producer {
             selectorProofSha256 = [string]$selectorProof.selectorContractSha256
             runtimeStageReceiptSha256 = [string]$finalStageSnapshot.receiptSha256
             dependencyClosureSha256 = [string]$finalStageSnapshot.dependencyClosureSha256
+            boundNativeEvidenceSha256 = if ($QualifiedFinalImage) { [string]$finalImageBinding.boundNativeEvidenceSha256 } else { $null }
+            sourceNativeEvidenceSha256 = if ($QualifiedFinalImage) { [string]$finalImageBinding.sourceNativeEvidenceSha256 } else { $null }
+            finalImageStageId = if ($QualifiedFinalImage) { [string]$finalImageBinding.stageId } else { $null }
+            finalImageReceiptPath = if ($QualifiedFinalImage) { [string]$finalImageBinding.receiptPath } else { $null }
+            finalImageReceiptSha256 = if ($QualifiedFinalImage) { [string]$finalImageBinding.receiptSha256 } else { $null }
+            finalImageExeSha256 = if ($QualifiedFinalImage) { [string]$finalImageBinding.files.exe.sha256 } else { $null }
+            finalImageExeSizeBytes = if ($QualifiedFinalImage) { [UInt64]$finalImageBinding.files.exe.sizeBytes } else { $null }
+            finalImageMapSha256 = if ($QualifiedFinalImage) { [string]$finalImageBinding.files.map.sha256 } else { $null }
+            finalImageMapSizeBytes = if ($QualifiedFinalImage) { [UInt64]$finalImageBinding.files.map.sizeBytes } else { $null }
+            finalImageProvider = if ($QualifiedFinalImage) { [ordered]@{
+                memberCount = [int]$finalImageBinding.provider.memberCount
+                symbolCount = [int]$finalImageBinding.provider.symbolCount
+                mapSha256 = [string]$finalImageBinding.provider.mapSha256
+                mapSizeBytes = [UInt64]$finalImageBinding.provider.mapSizeBytes
+            } } else { $null }
         }
         $successSummary = $summary
+        [void](Assert-PayloadFreeManifest $summary)
+        $successJson = $summary | ConvertTo-Json -Compress -Depth 10
+        if ([string]::IsNullOrWhiteSpace($successJson)) { throw 'The producer success summary serialized to an empty payload.' }
+        $published = $true
+        $script:Published = $true
     }
     catch {
         $failureType = switch ($script:Stage) {
@@ -2283,6 +3181,10 @@ function Invoke-Producer {
     }
     finally {
         if (-not $published) {
+            if ($finalImageStageRootOwned -and $null -ne $finalImageStageRootPath) {
+                try { [void](Remove-OwnedDirectory $finalImageStageRootPath) }
+                catch { $cleanupVerified = $false; $cleanupFailureCount++ }
+            }
             if ($movedFinalRoot) {
                 try { [void](Remove-OwnedDirectory $finalRoot) }
                 catch { $cleanupVerified = $false; $cleanupFailureCount++ }
@@ -2299,10 +3201,13 @@ function Invoke-Producer {
     }
     $finalRootExists = if ($null -ne $finalRoot) { [bool](Test-Path -LiteralPath $finalRoot) } else { $false }
     $transactionRootExists = if ($null -ne $transactionRoot) { [bool](Test-Path -LiteralPath $transactionRoot) } else { $false }
+    $finalImageStageRootExists = if ($null -ne $finalImageStageRootPath) { [bool](Test-Path -LiteralPath $finalImageStageRootPath) } else { $false }
     $lockExists = if ($null -ne $script:LockPath) { [bool](Test-Path -LiteralPath $script:LockPath) } else { $false }
     $unexpectedFinalRoot = (-not $published) -and $finalRootExists
+    $unexpectedFinalImageStageRoot = (-not $published) -and $finalImageStageRootExists
     $remainingCount = 0
     if ($unexpectedFinalRoot) { $remainingCount++ }
+    if ($unexpectedFinalImageStageRoot) { $remainingCount++ }
     if ($transactionRootExists) { $remainingCount++ }
     if ($lockExists) { $remainingCount++ }
     if ($remainingCount -ne 0) { $cleanupVerified = $false }
@@ -2311,6 +3216,8 @@ function Invoke-Producer {
         verified = [bool]$cleanupVerified
         finalRootExists = $finalRootExists
         finalRootExpected = [bool]$published
+        finalImageStageRootExists = $finalImageStageRootExists
+        finalImageStageRootExpected = [bool]$published
         transactionRootExists = $transactionRootExists
         lockExists = $lockExists
         remainingCount = [int]$remainingCount
@@ -2327,7 +3234,7 @@ function Invoke-Producer {
         $script:ProducerExitCode = 1
         return
     }
-    Write-Output ($successSummary | ConvertTo-Json -Compress -Depth 10)
+    Write-Output $successJson
     $script:ProducerExitCode = 0
 }
 

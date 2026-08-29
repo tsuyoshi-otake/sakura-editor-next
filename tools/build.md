@@ -295,6 +295,67 @@ native evidenceにselector descriptorが存在する場合はその値も検査�
 そのため厳格な`output-link-size` consumerが、startup manifestのprovider selector、expected backend、stage receipt、native hard hashを最後に突き合わせます。
 manifestまたはstage receiptが示すselectorと一致しないlabelは`FINAL_IMAGE_STAGE_SELECTOR_MISMATCH`としてfail-closedになり、欠落したnative selectorを推測で補完しません。
 
+### no-build final-image verify barrier
+
+既に生成済みの bound product-native evidence と immutable final-image stage を、build / package
+restore / graph evaluation なしで再検証する場合は、次の専用 barrier を使います。
+
+```cmd
+py -3 tools/build/sakura_build.py --format json evidence output-final-image-verify ^
+  --native-evidence build/evidence/native-cpp.json ^
+  --stage-root build/evidence/output-final-image/cpp ^
+  --backend cpp --platform x64 --configuration Release ^
+  --artifact-sha256 <sakura.exe-sha256> ^
+  --artifact-size-bytes <sakura.exe-size-bytes>
+```
+
+この subcommand は parser dispatch 直後に bounded native JSON と stage の EXE/MAP/receipt だけを
+読み、semantic graph、build manifest、package plan、MSBuild、Cargo、`inventory observe-product`
+を読み込み／起動しません。成功時の JSON schema は次の固定 field を持ちます（raw payload は含みません）。
+
+```json
+{
+  "ok": true,
+  "payloadFree": true,
+  "record": "output-final-image-binding-validation",
+  "backend": "cpp",
+  "platform": "x64",
+  "configuration": "Release",
+  "boundNativeEvidenceSha256": "sha256:<64-hex>",
+  "sourceNativeEvidenceSha256": "sha256:<64-hex>",
+  "stageId": "<stage-id>",
+  "receiptPath": "<repository-relative-receipt>",
+  "receiptSha256": "sha256:<64-hex>",
+  "files": {
+    "exe": {"path": "<path>", "sha256": "sha256:<64-hex>", "sizeBytes": 1},
+    "map": {"path": "<path>", "sha256": "sha256:<64-hex>", "sizeBytes": 1}
+  },
+  "provider": {"mapSha256": "sha256:<64-hex>", "mapSizeBytes": 1, "memberCount": 1, "symbolCount": 1}
+}
+```
+
+成功の終了コードは `0` です。入力 path、selector、artifact size、またはその他の usage
+不整合は終了コード `2` とし、bound evidence、receipt、EXE/MAP、provider summary の不一致・改竄・
+検証不能は終了コード `5` とします。失敗は必ず次の payload-free typed envelope だけを返します。
+
+```json
+{
+  "ok": false,
+  "payloadFree": true,
+  "record": "output-final-image-binding-validation",
+  "failureCode": "<stable-code>"
+}
+```
+
+canonical JSON、native hash、receipt の所有者は `sakura_build_lib/output_final_image_evidence.py`
+です。PowerShell producer はこの CLI を薄い process boundary として呼び、receipt / hash を再実装しません。
+qualified producer の呼出しは observer の Rebuild を一回だけ行い、barrier を (1) observer 後、
+(2) manifest生成・publication 前、(3) transaction directory の atomic move 後（move 済み native
+evidence を入力）に、ちょうど三回実行します。いずれかが失敗した場合は publication を採用せず、
+transaction / stage の所有 cleanup を確認します。cleanup を確認できない場合は
+`cleanup-unverified` として残存数と主原因を保持し、採用判定は `decision=HOLD` /
+`adoptionEligible=false` のままです。
+
 staged/bound fixtureの単体テストはcanonical serializer、native source/bound hard hash再計算、receipt/file hash bindingの構造互換性だけを確認します。
 product-nativeの完全なvalidatorはfreshなCL/link tlogとgraph/package provenanceを必要とするため、fixtureでtlog freshnessを迂回しません。
 実機の`inventory observe-product --rebuild`成功後にのみ、生成されたnative recordを通常のproduct validatorへ渡してください。

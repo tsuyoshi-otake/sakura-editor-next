@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+import hashlib
 import json
 import os
 import shutil
@@ -10,18 +12,27 @@ from pathlib import Path
 
 
 TOOLS_BUILD = Path(__file__).resolve().parents[1]
+REPOSITORY_ROOT = TOOLS_BUILD.parents[1]
 if str(TOOLS_BUILD) not in sys.path:
     sys.path.insert(0, str(TOOLS_BUILD))
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
 
 from sakura_build_lib.product_native_evidence import (  # noqa: E402
     collect_product_native_evidence,
     product_native_evidence_hash,
+    product_native_evidence_source_hash,
+    validate_output_provider_evidence_for_final_image,
     validate_product_native_evidence,
     write_product_native_evidence,
 )
+from sakura_build_lib.output_final_image_evidence import (  # noqa: E402
+    bind_native_evidence_to_final_image,
+    stage_output_final_image,
+)
 from sakura_build_lib.repository_inventory import collect_repository_inventory  # noqa: E402
 from sakura_build_lib.runner import BuildError  # noqa: E402
-from test_repository_inventory import _fixture, _write  # noqa: E402
+from tools.build.tests.test_repository_inventory import _fixture, _write  # noqa: E402
 
 
 EXPECTED_OUTPUT_PROVIDER_SYMBOLS = [
@@ -146,6 +157,7 @@ def _provider_map_fixture(
     *,
     map_text: str | None = None,
     duplicate_symbol: str | None = None,
+    duplicate_archive_input: bool = False,
 ):
     graph, tlog = _native_fixture(root)
     output_dir = graph.repo_root / "build/x64/Debug/app"
@@ -154,11 +166,15 @@ def _provider_map_fixture(
     provider_library = graph.repo_root / "build/components/sakura_native_ffi.lib"
     provider_library.parent.mkdir(parents=True, exist_ok=True)
     provider_library.write_bytes(b"sakura-native-ffi")
+    link_command = f'/OUT:"{executable}" /MAP'
+    if duplicate_archive_input:
+        link_command += f' "{provider_library}" "{provider_library}"'
+    link_command += " KERNEL32.LIB"
     _write_tlog(
         tlog / "link.command.1.tlog",
         [
             f"^{output_dir / 'main.obj'}|{output_dir / 'app.res'}|{provider_library}",
-            f'/OUT:"{executable}" /MAP KERNEL32.LIB',
+            link_command,
         ],
     )
     _write_tlog(
@@ -550,6 +566,13 @@ class ProductNativeEvidenceTests(unittest.TestCase):
     def test_realistic_msvc_map_generates_provider_scoped_symbol_and_member_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             graph, _tlog, _executable, map_path, _archive = _provider_map_fixture(Path(temporary))
+            expected_map_size = map_path.stat().st_size
+            expected_archive_hash = "sha256:" + hashlib.sha256(_archive.read_bytes()).hexdigest()
+            expected_archive_size = _archive.stat().st_size
+            expected_output = graph.repo_root / "x64/Debug/sakura.exe"
+            expected_link_command_hash = "sha256:" + hashlib.sha256(
+                f'/OUT:"{expected_output}" /MAP KERNEL32.LIB'.encode("utf-8")
+            ).hexdigest()
             evidence = collect_product_native_evidence(
                 graph,
                 "product",
@@ -581,9 +604,160 @@ class ProductNativeEvidenceTests(unittest.TestCase):
         self.assertEqual(0, symbol_evidence["duplicate_count"])
         self.assertEqual(map_path.relative_to(graph.repo_root).as_posix(), member_evidence["map"])
         self.assertEqual(member_evidence["map_hash"], symbol_evidence["map_hash"])
+        self.assertEqual(expected_map_size, evidence["link"]["selected_archive_member_evidence"]["map_size_bytes"])
+        self.assertEqual(expected_map_size, member_evidence["map_size_bytes"])
+        self.assertEqual(expected_map_size, symbol_evidence["map_size_bytes"])
+        self.assertEqual(len(b"provider-product"), evidence["link"]["product_size_bytes"])
+        self.assertEqual(expected_archive_hash, evidence["link"]["rustArchiveSha256"])
+        self.assertEqual(expected_archive_size, evidence["link"]["rustArchiveSizeBytes"])
+        self.assertEqual(1, evidence["link"]["rustArchiveCount"])
+        self.assertEqual(expected_link_command_hash, evidence["link"]["linkCommandSha256"])
         self.assertTrue(validation["valid"])
         self.assertTrue(validation["coverage"]["output_provider_member_evidence_observed"])
         self.assertTrue(validation["coverage"]["output_provider_symbol_evidence_observed"])
+
+    def test_realistic_msvc_map_collector_shape_binds_to_final_image(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            graph, _tlog, executable, map_path, _archive = _provider_map_fixture(Path(temporary))
+            evidence = collect_product_native_evidence(
+                graph,
+                "product",
+                "msvc-x64-debug",
+                build_observed=True,
+            )
+            receipt = stage_output_final_image(
+                repo_root=graph.repo_root,
+                stage_root=graph.repo_root / "staged-final-images",
+                backend="rust",
+                platform="x64",
+                configuration="Debug",
+                source_native_evidence_sha256=evidence["hard_evidence_hash"],
+                executable_path=executable,
+                map_path=map_path,
+                native_evidence=evidence,
+            )
+            bound = bind_native_evidence_to_final_image(evidence, receipt)
+
+        self.assertTrue(validate_output_provider_evidence_for_final_image(evidence["link"])["valid"])
+        self.assertEqual(receipt["sourceNativeEvidenceSha256"], product_native_evidence_source_hash(bound))
+        self.assertEqual(bound["hard_evidence_hash"], product_native_evidence_hash(bound))
+
+    def test_duplicate_identical_provider_archive_arguments_are_unproven(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            graph, _tlog, _executable, _map_path, _archive = _provider_map_fixture(
+                Path(temporary),
+                duplicate_archive_input=True,
+            )
+            evidence = collect_product_native_evidence(
+                graph,
+                "product",
+                "msvc-x64-debug",
+                build_observed=True,
+            )
+
+        link = evidence["link"]
+        self.assertEqual(2, link["rustArchiveCount"])
+        self.assertIsNone(link["rustArchiveSha256"])
+        self.assertIsNone(link["rustArchiveSizeBytes"])
+        self.assertFalse(link["output_provider_member_evidence"]["observed"])
+        validation = validate_output_provider_evidence_for_final_image(link)
+        self.assertFalse(validation["valid"])
+        self.assertIn(
+            "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_UNPROVEN",
+            {item["code"] for item in validation["failures"]},
+        )
+
+    def test_final_image_provider_requires_selected_members_observed_as_bool_true(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            graph, _tlog, _executable, _map_path, _archive = _provider_map_fixture(Path(temporary))
+            evidence = collect_product_native_evidence(
+                graph,
+                "product",
+                "msvc-x64-debug",
+                build_observed=True,
+            )
+            original = evidence["link"]
+            for value in (False, 1, "true", None):
+                link = copy.deepcopy(original)
+                link["selected_archive_members_observed"] = value
+                validation = validate_output_provider_evidence_for_final_image(link)
+                self.assertFalse(validation["valid"], value)
+                self.assertIn(
+                    "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_UNPROVEN",
+                    {item["code"] for item in validation["failures"]},
+                )
+
+    def test_final_image_provider_requires_strict_map_sizes_for_all_records(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            graph, _tlog, _executable, _map_path, _archive = _provider_map_fixture(Path(temporary))
+            evidence = collect_product_native_evidence(
+                graph,
+                "product",
+                "msvc-x64-debug",
+                build_observed=True,
+            )
+            original = evidence["link"]
+            for key in (
+                "selected_archive_member_evidence",
+                "output_provider_member_evidence",
+                "output_provider_symbol_evidence",
+            ):
+                for value in (True, "not-an-integer", -1):
+                    link = copy.deepcopy(original)
+                    link[key]["map_size_bytes"] = value
+                    validation = validate_output_provider_evidence_for_final_image(link)
+                    self.assertFalse(validation["valid"], (key, value))
+                    self.assertIn(
+                        "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MAP_SCHEMA",
+                        {item["code"] for item in validation["failures"]},
+                    )
+
+    def test_final_image_provider_requires_three_map_identities_to_consensus(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            graph, _tlog, _executable, _map_path, _archive = _provider_map_fixture(Path(temporary))
+            evidence = collect_product_native_evidence(
+                graph,
+                "product",
+                "msvc-x64-debug",
+                build_observed=True,
+            )
+            original = evidence["link"]
+            for key, field, value in (
+                ("selected_archive_member_evidence", "map", "x64/Debug/other.map"),
+                ("output_provider_member_evidence", "map_hash", "sha256:" + "0" * 64),
+                ("output_provider_symbol_evidence", "map_size_bytes", 0),
+            ):
+                link = copy.deepcopy(original)
+                link[key][field] = value
+                validation = validate_output_provider_evidence_for_final_image(link)
+                self.assertFalse(validation["valid"], (key, field))
+                self.assertIn(
+                    "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MAP_MISMATCH",
+                    {item["code"] for item in validation["failures"]},
+                )
+
+    def test_final_image_provider_requires_product_link_and_archive_identity_types(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            graph, _tlog, _executable, _map_path, _archive = _provider_map_fixture(Path(temporary))
+            evidence = collect_product_native_evidence(
+                graph,
+                "product",
+                "msvc-x64-debug",
+                build_observed=True,
+            )
+            original = evidence["link"]
+            for key, value, code in (
+                ("product_size_bytes", True, "NATIVE_PRODUCT_EVIDENCE_OUTPUT_IDENTITY_SCHEMA"),
+                ("product_hash", "not-a-sha256", "NATIVE_PRODUCT_EVIDENCE_OUTPUT_IDENTITY_SCHEMA"),
+                ("linkCommandSha256", "not-a-sha256", "NATIVE_PRODUCT_EVIDENCE_LINK_COMMAND_SCHEMA"),
+                ("rustArchiveSizeBytes", False, "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_ARCHIVE_SCHEMA"),
+                ("rustArchiveCount", True, "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_ARCHIVE_SCHEMA"),
+            ):
+                link = copy.deepcopy(original)
+                link[key] = value
+                validation = validate_output_provider_evidence_for_final_image(link)
+                self.assertFalse(validation["valid"], key)
+                self.assertIn(code, {item["code"] for item in validation["failures"]})
 
     def test_provider_map_missing_symbol_is_unproven_and_records_missing_set(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -4,6 +4,7 @@ import copy
 import hashlib
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -19,12 +20,98 @@ from sakura_build_lib.output_final_image_evidence import (  # noqa: E402
     OutputFinalImageEvidenceError,
     bind_native_evidence_to_final_image,
     stage_output_final_image,
+    validate_bound_native_evidence_for_final_image,
     validate_output_final_image_stage,
 )
 from sakura_build_lib.product_native_evidence import (  # noqa: E402
+    validate_output_provider_evidence_for_final_image,
     product_native_evidence_hash,
     product_native_evidence_source_hash,
 )
+
+
+_EXPECTED_PROVIDER_SYMBOLS = [
+    "sakura_output_provider_active_channel_v1",
+    "sakura_output_provider_apply_v1",
+    "sakura_output_provider_create_v1",
+    "sakura_output_provider_destroy_v1",
+    "sakura_output_provider_snapshot_measure_v1",
+    "sakura_output_provider_snapshot_write_v1",
+    "sakura_output_provider_stop_v1",
+]
+
+
+def _strict_native_fixture() -> dict[str, object]:
+    executable = b"cpp-final-image"
+    map_bytes = b"cpp-map\n"
+    provider_contributions = [
+        {"symbol": symbol, "archive": "sakura_native_ffi.lib", "member": "provider.obj"}
+        for symbol in _EXPECTED_PROVIDER_SYMBOLS
+    ]
+    native: dict[str, object] = {
+        "schema_version": 4,
+        "collection_ok": True,
+        "build_observed": True,
+        "build_target": "Rebuild",
+        "product_id": "sakura_app",
+        "context_id": "msvc-x64-release",
+        "backend": "msbuild",
+        "link": {
+            "output": "producer/sakura.exe",
+            "product_hash": hashlib.sha256(executable).hexdigest(),
+            "product_size_bytes": len(executable),
+            "selected_archive_members_observed": True,
+            "linkCommandSha256": "sha256:" + "c" * 64,
+            "rustArchiveSha256": "sha256:" + "b" * 64,
+            "rustArchiveSizeBytes": 1,
+            "rustArchiveCount": 1,
+            "selected_archive_member_evidence": {
+                "map": "producer/sakura.map",
+                "map_hash": hashlib.sha256(map_bytes).hexdigest(),
+                "map_size_bytes": len(map_bytes),
+            },
+            "output_provider_member_evidence": {
+                "observed": True,
+                "provider": "output-provider",
+                "method": "msvc_map_publics_by_value_provider_rows",
+                "map": "producer/sakura.map",
+                "map_hash": hashlib.sha256(map_bytes).hexdigest(),
+                "map_size_bytes": len(map_bytes),
+                "archive_name": "sakura_native_ffi.lib",
+                "archive_input_count": 1,
+                "contributing_archives": ["sakura_native_ffi.lib"],
+                "contributing_archive_count": 1,
+                "contributing_members": ["provider.obj"],
+                "members": ["provider.obj"],
+                "member_count": 1,
+                "missing_symbols": [],
+                "unexpected_symbols": [],
+                "duplicate_count": 0,
+                "contributions": provider_contributions,
+                "selector_proof": "ltcg_compile_log_required",
+            },
+            "output_provider_symbol_evidence": {
+                "observed": True,
+                "provider": "output-provider",
+                "scope": "output-provider",
+                "method": "msvc_map_publics_by_value_provider_rows",
+                "map": "producer/sakura.map",
+                "map_hash": hashlib.sha256(map_bytes).hexdigest(),
+                "map_size_bytes": len(map_bytes),
+                "symbols": list(_EXPECTED_PROVIDER_SYMBOLS),
+                "symbol_count": len(_EXPECTED_PROVIDER_SYMBOLS),
+                "duplicate_count": 0,
+                "missing_symbols": [],
+                "unexpected_symbols": [],
+                "contributing_archives": ["sakura_native_ffi.lib"],
+                "contributing_members": ["provider.obj"],
+                "contributions": provider_contributions,
+                "selector_proof": "ltcg_compile_log_required",
+            },
+        },
+    }
+    native["hard_evidence_hash"] = product_native_evidence_hash(native)
+    return native
 
 
 class OutputFinalImageEvidenceTests(unittest.TestCase):
@@ -41,6 +128,7 @@ class OutputFinalImageEvidenceTests(unittest.TestCase):
         root: Path,
         backend: str = "cpp",
         source_native_evidence_sha256: str | None = None,
+        native_evidence: dict[str, object] | None = None,
     ) -> dict[str, object]:
         executable, map_file = self._source_files(root)
         return stage_output_final_image(
@@ -52,6 +140,7 @@ class OutputFinalImageEvidenceTests(unittest.TestCase):
             source_native_evidence_sha256=source_native_evidence_sha256 or "sha256:" + "a" * 64,
             executable_path=executable,
             map_path=map_file,
+            native_evidence=native_evidence,
         )
 
     def test_stage_is_create_new_backend_scoped_and_revalidates_files(self) -> None:
@@ -221,6 +310,52 @@ class OutputFinalImageEvidenceTests(unittest.TestCase):
                     map_path=map_file,
                 )
 
+    def test_strict_native_stage_and_binding_are_backend_neutral(self) -> None:
+        for backend in ("cpp", "rust"):
+            with self.subTest(backend=backend), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                native = _strict_native_fixture()
+                self.assertEqual(
+                    {"valid": True, "failures": []},
+                    validate_output_provider_evidence_for_final_image(native["link"]),
+                )
+                receipt = self._stage(
+                    root,
+                    backend=backend,
+                    source_native_evidence_sha256=native["hard_evidence_hash"],
+                    native_evidence=native,
+                )
+                bound = bind_native_evidence_to_final_image(native, receipt)
+                self.assertEqual(
+                    receipt["sourceNativeEvidenceSha256"],
+                    product_native_evidence_source_hash(bound),
+                )
+                self.assertEqual(bound["hard_evidence_hash"], product_native_evidence_hash(bound))
+
+    def test_strict_native_stage_rejects_unproven_provider_without_publishing(self) -> None:
+        for case in ("missing", "false", "malformed"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                native = _strict_native_fixture()
+                link = native["link"]
+                self.assertIsInstance(link, dict)
+                if case == "missing":
+                    del link["output_provider_member_evidence"]
+                elif case == "false":
+                    link["output_provider_member_evidence"]["observed"] = False
+                    link["output_provider_symbol_evidence"]["observed"] = False
+                else:
+                    link["output_provider_symbol_evidence"]["map_size_bytes"] = "not-an-integer"
+                native["hard_evidence_hash"] = product_native_evidence_hash(native)
+                with self.assertRaises(OutputFinalImageEvidenceError) as raised:
+                    self._stage(
+                        root,
+                        source_native_evidence_sha256=native["hard_evidence_hash"],
+                        native_evidence=native,
+                    )
+                self.assertEqual("OUTPUT_FINAL_IMAGE_NATIVE_SCHEMA", raised.exception.code)
+                self.assertFalse((root / "staged-final-images").exists())
+
     def test_native_binding_preserves_source_identity_and_binds_all_known_map_records(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -228,6 +363,19 @@ class OutputFinalImageEvidenceTests(unittest.TestCase):
             map_bytes = b"cpp-map\n"
             executable_hash = hashlib.sha256(executable_bytes).hexdigest()
             map_hash = hashlib.sha256(map_bytes).hexdigest()
+            provider_symbols = [
+                "sakura_output_provider_active_channel_v1",
+                "sakura_output_provider_apply_v1",
+                "sakura_output_provider_create_v1",
+                "sakura_output_provider_destroy_v1",
+                "sakura_output_provider_snapshot_measure_v1",
+                "sakura_output_provider_snapshot_write_v1",
+                "sakura_output_provider_stop_v1",
+            ]
+            provider_contributions = [
+                {"symbol": symbol, "archive": "sakura_native_ffi.lib", "member": "provider.obj"}
+                for symbol in provider_symbols
+            ]
             original = {
                 "schema_version": 4,
                 "collection_ok": True,
@@ -235,17 +383,49 @@ class OutputFinalImageEvidenceTests(unittest.TestCase):
                     "output": "producer/sakura.exe",
                     "product_hash": executable_hash,
                     "product_size_bytes": len(executable_bytes),
+                    "selected_archive_members_observed": True,
+                    "linkCommandSha256": "sha256:" + "c" * 64,
+                    "rustArchiveSha256": "sha256:" + "b" * 64,
+                    "rustArchiveSizeBytes": 1,
+                    "rustArchiveCount": 1,
                     "selected_archive_member_evidence": {"map": "producer/sakura.map", "map_hash": map_hash, "map_size_bytes": len(map_bytes)},
-                    "output_provider_member_evidence": {"map": "producer/sakura.map", "map_hash": map_hash, "map_size_bytes": len(map_bytes)},
-                    "output_provider_symbol_evidence": {
+                    "output_provider_member_evidence": {
                         "observed": True,
-                        "scope": "output-provider",
+                        "provider": "output-provider",
+                        "method": "msvc_map_publics_by_value_provider_rows",
                         "map": "producer/sakura.map",
                         "map_hash": map_hash,
                         "map_size_bytes": len(map_bytes),
-                        "symbols": ["sakura_output_provider_apply_v1"],
-                        "symbol_count": 1,
+                        "archive_name": "sakura_native_ffi.lib",
+                        "archive_input_count": 1,
+                        "contributing_archives": ["sakura_native_ffi.lib"],
+                        "contributing_archive_count": 1,
+                        "contributing_members": ["provider.obj"],
+                        "members": ["provider.obj"],
+                        "member_count": 1,
+                        "missing_symbols": [],
+                        "unexpected_symbols": [],
                         "duplicate_count": 0,
+                        "contributions": provider_contributions,
+                        "selector_proof": "ltcg_compile_log_required",
+                    },
+                    "output_provider_symbol_evidence": {
+                        "observed": True,
+                        "provider": "output-provider",
+                        "scope": "output-provider",
+                        "method": "msvc_map_publics_by_value_provider_rows",
+                        "map": "producer/sakura.map",
+                        "map_hash": map_hash,
+                        "map_size_bytes": len(map_bytes),
+                        "symbols": provider_symbols,
+                        "symbol_count": len(provider_symbols),
+                        "duplicate_count": 0,
+                        "missing_symbols": [],
+                        "unexpected_symbols": [],
+                        "contributing_archives": ["sakura_native_ffi.lib"],
+                        "contributing_members": ["provider.obj"],
+                        "contributions": provider_contributions,
+                        "selector_proof": "ltcg_compile_log_required",
                     },
                     "outputProviderSymbolEvidence": {
                         "map": "producer/sakura.map",
@@ -255,6 +435,7 @@ class OutputFinalImageEvidenceTests(unittest.TestCase):
                 },
             }
             original["hard_evidence_hash"] = product_native_evidence_hash(original)
+            self.assertTrue(validate_output_provider_evidence_for_final_image(original["link"])["valid"])
             receipt = self._stage(root, source_native_evidence_sha256=original["hard_evidence_hash"])
             before = copy.deepcopy(original)
             bound = bind_native_evidence_to_final_image(original, receipt)
@@ -280,6 +461,205 @@ class OutputFinalImageEvidenceTests(unittest.TestCase):
             (root / "producer" / "sakura.map").unlink()
             self.assertTrue(validate_output_final_image_stage(root / receipt["receiptPath"], repo_root=root)["ok"])
             json.dumps(bound, ensure_ascii=False, sort_keys=True)
+
+    def _qualified_bound_fixture(self, root: Path) -> tuple[dict[str, object], dict[str, object], Path]:
+        native = _strict_native_fixture()
+        executable, _map_file = self._source_files(root)
+        receipt = self._stage(
+            root,
+            source_native_evidence_sha256=native["hard_evidence_hash"],
+            native_evidence=native,
+        )
+        bound = bind_native_evidence_to_final_image(native, receipt)
+        native_path = root / "build" / "evidence" / "native-bound.json"
+        native_path.parent.mkdir(parents=True, exist_ok=True)
+        native_path.write_text(json.dumps(bound, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+        return bound, receipt, executable
+
+    def test_bound_native_validation_returns_only_bounded_payload_free_identities(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            bound, receipt, executable = self._qualified_bound_fixture(root)
+            executable_hash = hashlib.sha256(executable.read_bytes()).hexdigest()
+            result = validate_bound_native_evidence_for_final_image(
+                bound,
+                repo_root=root,
+                expected_stage_root=root / "staged-final-images",
+                expected_backend="cpp",
+                expected_platform="x64",
+                expected_configuration="Release",
+                expected_artifact_sha256=executable_hash,
+                expected_artifact_size_bytes=executable.stat().st_size,
+            )
+            self.assertEqual(
+                {
+                    "ok",
+                    "payloadFree",
+                    "record",
+                    "backend",
+                    "platform",
+                    "configuration",
+                    "boundNativeEvidenceSha256",
+                    "sourceNativeEvidenceSha256",
+                    "stageId",
+                    "receiptPath",
+                    "receiptSha256",
+                    "files",
+                    "provider",
+                },
+                set(result),
+            )
+            self.assertTrue(result["ok"])
+            self.assertTrue(result["payloadFree"])
+            self.assertEqual(bound["hard_evidence_hash"], result["boundNativeEvidenceSha256"])
+            self.assertEqual(receipt["receiptPath"], result["receiptPath"])
+            self.assertEqual(7, result["provider"]["symbolCount"])
+            self.assertEqual(hashlib.sha256(b"cpp-map\n").hexdigest(), result["provider"]["mapSha256"][7:])
+
+            # Receipt derivation and explicit receipt paths/mappings must lead
+            # to the same on-disk canonical receipt.
+            receipt_path = root / receipt["receiptPath"]
+            self.assertEqual(
+                result,
+                validate_bound_native_evidence_for_final_image(
+                    bound,
+                    repo_root=root,
+                    expected_stage_root=root / "staged-final-images",
+                    expected_backend="cpp",
+                    expected_platform="x64",
+                    expected_configuration="Release",
+                    expected_artifact_sha256="sha256:" + executable_hash,
+                    expected_artifact_size_bytes=int(executable.stat().st_size),
+                    receipt=receipt_path,
+                ),
+            )
+
+    def test_bound_native_validation_rejects_tampering_and_bool_artifact_size(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            bound, _receipt, executable = self._qualified_bound_fixture(root)
+            executable_hash = hashlib.sha256(executable.read_bytes()).hexdigest()
+            common = {
+                "repo_root": root,
+                "expected_stage_root": root / "staged-final-images",
+                "expected_backend": "cpp",
+                "expected_platform": "x64",
+                "expected_configuration": "Release",
+                "expected_artifact_sha256": executable_hash,
+                "expected_artifact_size_bytes": executable.stat().st_size,
+            }
+            with self.assertRaises(OutputFinalImageEvidenceError) as raised:
+                validate_bound_native_evidence_for_final_image(bound, **common | {"expected_artifact_size_bytes": True})
+            self.assertEqual("OUTPUT_FINAL_IMAGE_ARTIFACT_ARGUMENT", raised.exception.code)
+            self.assertEqual(2, raised.exception.exit_code)
+
+            tampered = copy.deepcopy(bound)
+            tampered["link"]["final_image_stage"]["receiptSha256"] = "0" * 64
+            tampered["hard_evidence_hash"] = product_native_evidence_hash(tampered)
+            with self.assertRaises(OutputFinalImageEvidenceError) as raised:
+                validate_bound_native_evidence_for_final_image(tampered, **common)
+            self.assertEqual("OUTPUT_FINAL_IMAGE_BINDING_MISMATCH", raised.exception.code)
+            self.assertNotIn("receipt", str(raised.exception).lower())
+
+    def test_bound_native_validation_rejects_unowned_root_aliases_and_existing_unsafe_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            bound, _receipt, executable = self._qualified_bound_fixture(root)
+            common = {
+                "repo_root": root,
+                "expected_stage_root": root / "staged-final-images",
+                "expected_backend": "cpp",
+                "expected_platform": "x64",
+                "expected_configuration": "Release",
+                "expected_artifact_sha256": hashlib.sha256(executable.read_bytes()).hexdigest(),
+                "expected_artifact_size_bytes": executable.stat().st_size,
+            }
+            with self.assertRaises(OutputFinalImageEvidenceError) as raised:
+                validate_bound_native_evidence_for_final_image(bound, **common | {"expected_stage_root": root})
+            self.assertEqual("OUTPUT_FINAL_IMAGE_STAGE_ROOT_UNSAFE", raised.exception.code)
+
+            aliased = copy.deepcopy(bound)
+            aliased["link"]["outputPath"] = aliased["link"]["output"]
+            with self.assertRaises(OutputFinalImageEvidenceError) as raised:
+                validate_bound_native_evidence_for_final_image(aliased, **common)
+            self.assertEqual("OUTPUT_FINAL_IMAGE_NATIVE_SCHEMA", raised.exception.code)
+
+            executable.unlink()
+            executable.mkdir()
+            with self.assertRaises(OutputFinalImageEvidenceError) as raised:
+                validate_bound_native_evidence_for_final_image(bound, **common)
+            self.assertEqual("OUTPUT_FINAL_IMAGE_ARTIFACT_UNPROVEN", raised.exception.code)
+
+    def test_output_final_image_verify_cli_is_no_build_and_payload_free(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _bound, receipt, executable = self._qualified_bound_fixture(root)
+            native_path = root / "build" / "evidence" / "native-bound.json"
+            cli = TOOLS_BUILD / "sakura_build.py"
+            command = [
+                sys.executable,
+                str(cli),
+                "--repo-root",
+                str(root),
+                "--format",
+                "json",
+                "evidence",
+                "output-final-image-verify",
+                "--native-evidence",
+                str(native_path),
+                "--stage-root",
+                str(root / "staged-final-images"),
+                "--backend",
+                "cpp",
+                "--platform",
+                "x64",
+                "--configuration",
+                "Release",
+                "--artifact-sha256",
+                hashlib.sha256(executable.read_bytes()).hexdigest(),
+                "--artifact-size-bytes",
+                str(executable.stat().st_size),
+            ]
+            completed = subprocess.run(command, cwd=TOOLS_BUILD, capture_output=True, text=True, check=False)
+            self.assertEqual(0, completed.returncode, completed.stderr)
+            result = json.loads(completed.stdout)
+            self.assertEqual(
+                {
+                    "ok",
+                    "payloadFree",
+                    "record",
+                    "backend",
+                    "platform",
+                    "configuration",
+                    "boundNativeEvidenceSha256",
+                    "sourceNativeEvidenceSha256",
+                    "stageId",
+                    "receiptPath",
+                    "receiptSha256",
+                    "files",
+                    "provider",
+                },
+                set(result),
+            )
+            self.assertTrue(result["ok"])
+            self.assertTrue(result["payloadFree"])
+            self.assertEqual(receipt["receiptPath"], result["receiptPath"])
+            self.assertNotIn("cpp-final-image", completed.stdout)
+            self.assertNotIn("provider.obj", completed.stdout)
+
+            command[command.index(hashlib.sha256(executable.read_bytes()).hexdigest())] = "f" * 64
+            failed = subprocess.run(command, cwd=TOOLS_BUILD, capture_output=True, text=True, check=False)
+            self.assertEqual(5, failed.returncode)
+            failure = json.loads(failed.stdout)
+            self.assertEqual(
+                {
+                    "ok": False,
+                    "payloadFree": True,
+                    "record": "output-final-image-binding-validation",
+                    "failureCode": "OUTPUT_FINAL_IMAGE_ARTIFACT_MISMATCH",
+                },
+                failure,
+            )
 
     def test_binding_rejects_receipt_and_native_records_from_different_attempts(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

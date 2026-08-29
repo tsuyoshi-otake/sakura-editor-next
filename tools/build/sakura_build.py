@@ -68,6 +68,11 @@ from sakura_build_lib.output_link_size_evidence import (
     validate_output_link_size_evidence,
     write_output_link_size_evidence,
 )
+from sakura_build_lib.output_final_image_evidence import (
+    OutputFinalImageEvidenceError,
+    load_bounded_json,
+    validate_bound_native_evidence_for_final_image,
+)
 from sakura_build_lib.repository_path_safety import RepositoryPathSafetyError, safe_repository_path
 from sakura_build_lib.runtime_stage import stage_runtime_artifacts
 from sakura_build_lib.repository_inventory import (
@@ -200,6 +205,16 @@ def output(value: object, output_format: str) -> None:
         print(value)
     else:
         print(json.dumps(value, ensure_ascii=False, sort_keys=True))
+
+
+def _nonnegative_int(value: str) -> int:
+    try:
+        parsed = int(value, 10)
+    except (TypeError, ValueError) as error:
+        raise argparse.ArgumentTypeError("must be a non-negative integer") from error
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be a non-negative integer")
+    return parsed
 
 
 def add_execution_options(parser: argparse.ArgumentParser) -> None:
@@ -465,6 +480,48 @@ def parser() -> argparse.ArgumentParser:
         type=float,
         default=DEFAULT_SIZE_THRESHOLD_PERCENT,
         help="maximum Rust image-size increase (default: 5)",
+    )
+    evidence_final_image_verify = evidence_commands.add_parser(
+        "output-final-image-verify",
+        help="verify one bound native record and its owned immutable final-image stage without building",
+    )
+    evidence_final_image_verify.add_argument(
+        "--native-evidence",
+        type=Path,
+        required=True,
+        help="bound product-native evidence JSON",
+    )
+    evidence_final_image_verify.add_argument(
+        "--stage-root",
+        type=Path,
+        required=True,
+        help="owned immutable final-image stage root",
+    )
+    evidence_final_image_verify.add_argument(
+        "--backend",
+        choices=("cpp", "rust"),
+        required=True,
+    )
+    evidence_final_image_verify.add_argument(
+        "--platform",
+        choices=("x64",),
+        required=True,
+    )
+    evidence_final_image_verify.add_argument(
+        "--configuration",
+        choices=("Debug", "Release"),
+        required=True,
+    )
+    evidence_final_image_verify.add_argument(
+        "--artifact-sha256",
+        required=True,
+        help="expected final executable SHA-256 (bare or sha256:-prefixed)",
+    )
+    evidence_final_image_verify.add_argument(
+        "--artifact-size-bytes",
+        type=_nonnegative_int,
+        required=True,
+        help="expected final executable size in bytes",
     )
 
     package = commands.add_parser(
@@ -1007,6 +1064,62 @@ def _git_source_state(repo: Path) -> tuple[str, bool]:
     return completed.stdout.strip(), bool(status.stdout.strip())
 
 
+def _run_output_final_image_verify(args, repo: Path) -> int:
+    """Run the payload-free final-image barrier without loading the graph."""
+
+    usage_codes = {
+        "EVIDENCE_PATH_ESCAPE",
+        "OUTPUT_FINAL_IMAGE_INPUT_PATH_UNSAFE",
+        "OUTPUT_FINAL_IMAGE_STAGE_ROOT_UNSAFE",
+        "OUTPUT_FINAL_IMAGE_ARTIFACT_ARGUMENT",
+        "OUTPUT_FINAL_IMAGE_SELECTOR_INVALID",
+    }
+    try:
+        native_path = _repository_path(repo, args.native_evidence, "--native-evidence")
+        stage_root = _repository_path(repo, args.stage_root, "--stage-root")
+        native = load_bounded_json(
+            native_path,
+            repo_root=repo,
+            path_code="OUTPUT_FINAL_IMAGE_INPUT_PATH_UNSAFE",
+            parse_code="OUTPUT_FINAL_IMAGE_INPUT_PARSE",
+        )
+        result = validate_bound_native_evidence_for_final_image(
+            native,
+            repo_root=repo,
+            expected_stage_root=stage_root,
+            expected_backend=args.backend,
+            expected_platform=args.platform,
+            expected_configuration=args.configuration,
+            expected_artifact_sha256=args.artifact_sha256,
+            expected_artifact_size_bytes=args.artifact_size_bytes,
+        )
+    except (OutputFinalImageEvidenceError, BuildError) as error:
+        code = getattr(error, "code", "OUTPUT_FINAL_IMAGE_VALIDATION_ERROR")
+        output(
+            {
+                "ok": False,
+                "payloadFree": True,
+                "record": "output-final-image-binding-validation",
+                "failureCode": code,
+            },
+            "json",
+        )
+        return EXIT_USAGE if code in usage_codes or getattr(error, "exit_code", 5) == EXIT_USAGE else 5
+    except Exception:
+        output(
+            {
+                "ok": False,
+                "payloadFree": True,
+                "record": "output-final-image-binding-validation",
+                "failureCode": "OUTPUT_FINAL_IMAGE_VALIDATION_ERROR",
+            },
+            "json",
+        )
+        return 5
+    output(result, "json")
+    return 0
+
+
 def _run_test_coverage_map(args, repo: Path) -> int:
     def resolve(value: Path) -> Path:
         return value if value.is_absolute() else repo / value
@@ -1240,6 +1353,8 @@ def main(argv: list[str] | None = None) -> int:
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     args = parser().parse_args(_normalize_global_options(raw_argv))
     repo = args.repo_root.resolve()
+    if args.command == "evidence" and args.evidence_command == "output-final-image-verify":
+        return _run_output_final_image_verify(args, repo)
     manifest = args.manifest.resolve() if args.manifest else None
     stream = None
     try:

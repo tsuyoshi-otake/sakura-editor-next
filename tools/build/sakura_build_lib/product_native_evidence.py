@@ -220,6 +220,19 @@ def _sha256_bytes(value: bytes) -> str:
     return "sha256:" + hashlib.sha256(value).hexdigest()
 
 
+def _normalise_sha256(value: object) -> str | None:
+    """Normalize a SHA-256 value without depending on another evidence module."""
+
+    if not isinstance(value, str):
+        return None
+    text = value.strip().lower()
+    if text.startswith("sha256:"):
+        text = text[7:]
+    if len(text) != 64 or any(char not in "0123456789abcdef" for char in text):
+        return None
+    return text
+
+
 def _sha256_json(value: object) -> str:
     serialized = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return _sha256_bytes(serialized.encode("utf-8"))
@@ -270,6 +283,16 @@ def _sha256_file(path: Path, code: str) -> str:
         return _sha256_bytes(path.read_bytes())
     except OSError as error:
         raise BuildError(code, f"could not hash {path}: {error}", 5) from error
+
+
+def _file_identity(path: Path, code: str) -> tuple[str, int]:
+    """Return one observed file hash and size from the same read operation."""
+
+    try:
+        data = path.read_bytes()
+    except OSError as error:
+        raise BuildError(code, f"could not hash {path}: {error}", 5) from error
+    return _sha256_bytes(data), len(data)
 
 
 def _read_tracker(path: Path) -> str:
@@ -750,10 +773,18 @@ def _collect_link_record(
     if not command_records:
         raise BuildError("NATIVE_PRODUCT_LINK_COMMAND_EMPTY", f"no link record in {command_tlog}", 5)
     command = " ".join(command_records[0][1])
+    provider_archive_command_values = [
+        (match.group(1) or match.group(2)).replace("\\", "/")
+        for match in re.finditer(r'(?i)(?:"([^"]+\.lib)"|(?<!\S)([^"\s]+\.lib)(?!\S))', command)
+        if Path((match.group(1) or match.group(2)).replace("\\", "/")).name.casefold() == _OUTPUT_PROVIDER_ARCHIVE_NAME
+    ]
     raw_inputs: list[str] = []
     for match in re.finditer(r'(?i)(?:^|\s)/MANIFESTINPUT:(?:"([^"]+)"|(\S+))', command):
         raw_inputs.append(match.group(1) or match.group(2))
-    for headers, payload in _tracker_records(read_tlog):
+    raw_inputs.extend(provider_archive_command_values)
+    read_records = _tracker_records(read_tlog)
+    link_input_headers = [value for headers, _payload in read_records for value in headers]
+    for headers, payload in read_records:
         raw_inputs.extend(headers)
         raw_inputs.extend(line for line in payload if _single_path_line(line))
     repo_inputs: set[str] = set()
@@ -771,29 +802,55 @@ def _collect_link_record(
     if output is None or not output.is_file():
         raise BuildError("NATIVE_PRODUCT_OUTPUT_MISSING", f"observed link output is missing: {output}", 5)
     output_relative = _repo_relative(repo_root, output)
+    product_hash, product_size = _file_identity(output, "NATIVE_PRODUCT_OUTPUT_HASH")
     object_inputs = sorted(value for value in repo_inputs if Path(value).suffix.lower() == ".obj")
     resource_inputs = sorted(value for value in repo_inputs if Path(value).suffix.lower() == ".res")
     repository_libraries = sorted(value for value in repo_inputs if Path(value).suffix.lower() == ".lib")
+    provider_archive_input_values = provider_archive_command_values or [
+        value
+        for value in link_input_headers
+        if Path(value.replace("\\", "/")).name.casefold() == _OUTPUT_PROVIDER_ARCHIVE_NAME
+    ]
+    if not provider_archive_input_values:
+        provider_archive_input_values = [
+            value
+            for value in repository_libraries
+            if Path(value.replace("\\", "/")).name.casefold() == _OUTPUT_PROVIDER_ARCHIVE_NAME
+        ]
+    provider_archive_input_count = len(provider_archive_input_values)
+    provider_archive_hash: str | None = None
+    provider_archive_size: int | None = None
+    if provider_archive_input_count == 1:
+        provider_archive_raw = provider_archive_input_values[0]
+        archive_kind, provider_archive_relative = _path_value(repo_root, project_dir, provider_archive_raw)
+        if archive_kind in {"source", "generated"}:
+            provider_archive_hash, provider_archive_size = _file_identity(
+                repo_root / provider_archive_relative,
+                "NATIVE_PRODUCT_ARCHIVE_HASH",
+            )
     map_path = _link_map_output(command, project_dir, output)
     map_relative: str | None = None
     map_hash: str | None = None
+    map_size: int | None = None
     selected_members: list[str] = []
     output_provider_member_evidence: dict[str, object] | None = None
     output_provider_symbol_evidence: dict[str, object] | None = None
     map_observed = map_path is not None and map_path.is_file()
     if map_observed and map_path is not None:
         map_relative = _repo_relative(repo_root, map_path)
-        map_hash = _sha256_file(map_path, "NATIVE_PRODUCT_MAP_HASH")
+        map_hash, map_size = _file_identity(map_path, "NATIVE_PRODUCT_MAP_HASH")
         selected_members = _selected_archive_members_from_map(map_path, object_inputs)
         output_provider_member_evidence, output_provider_symbol_evidence = _output_provider_map_evidence(
             map_path,
             map_relative,
             map_hash,
-            repository_libraries,
+            provider_archive_input_values,
         )
     return ({
         "output": output_relative,
-        "product_hash": _sha256_file(output, "NATIVE_PRODUCT_OUTPUT_HASH"),
+        "product_hash": product_hash,
+        "product_size_bytes": product_size,
+        "linkCommandSha256": _sha256_bytes(command.encode("utf-8")),
         "repo_inputs": sorted(repo_inputs),
         "object_inputs": object_inputs,
         "resource_inputs": resource_inputs,
@@ -807,11 +864,15 @@ def _collect_link_record(
             "method": "msvc_map_minus_direct_link_inputs",
             "map": map_relative,
             "map_hash": map_hash,
+            "map_size_bytes": map_size,
             "members": selected_members,
             "member_count": len(selected_members),
         } if map_observed else None,
         "output_provider_member_evidence": output_provider_member_evidence,
         "output_provider_symbol_evidence": output_provider_symbol_evidence,
+        "rustArchiveSha256": provider_archive_hash,
+        "rustArchiveSizeBytes": provider_archive_size,
+        "rustArchiveCount": provider_archive_input_count,
     }, repo_inputs)
 
 
@@ -1226,9 +1287,16 @@ def observe_product_native_evidence(
             link = result.get("link")
             if not isinstance(link, dict):
                 raise BuildError("NATIVE_PRODUCT_FINAL_IMAGE_INPUT", "native link observation is missing", 5)
+            provider_validation = validate_output_provider_evidence_for_final_image(link, graph=graph)
+            if not provider_validation["valid"]:
+                raise BuildError(
+                    "NATIVE_PRODUCT_FINAL_IMAGE_PROVIDER_UNPROVEN",
+                    "native output-provider MAP evidence is not qualified for final-image staging",
+                    5,
+                )
             output = link.get("output")
-            selected = link.get("output_provider_member_evidence") or link.get("selected_archive_member_evidence")
-            map_value = selected.get("map") if isinstance(selected, dict) else None
+            provider_member = link.get("output_provider_member_evidence")
+            map_value = provider_member.get("map") if isinstance(provider_member, dict) else None
             if not isinstance(output, str) or not isinstance(map_value, str):
                 raise BuildError(
                     "NATIVE_PRODUCT_FINAL_IMAGE_INPUT",
@@ -1246,6 +1314,7 @@ def observe_product_native_evidence(
                 source_native_evidence_sha256=str(result["hard_evidence_hash"]),
                 executable_path=graph.repo_root / output,
                 map_path=graph.repo_root / map_value,
+                native_evidence=result,
             )
             result = bind_native_evidence_to_final_image(result, receipt)
         return result
@@ -1549,6 +1618,267 @@ def _validate_output_provider_schema(
             failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MEMBER_SCHEMA"})
     if member.get("contributing_members") != members:
         failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MEMBER_SCHEMA"})
+
+
+def _validate_final_image_link_contract(
+    graph: SemanticGraph | None,
+    link: Mapping[str, object],
+    failures: list[dict[str, object]],
+) -> None:
+    """Validate the strict native link contract used by final-image staging.
+
+    This deliberately does not call :func:`_validate_output_provider_schema`.
+    That helper is the compatibility validator for ordinary native inventory,
+    where provider MAP evidence is optional and older records may omit the
+    newer identity fields.  Final-image staging has a separate, closed
+    contract whose three MAP records and raw archive count must all agree.
+    """
+
+    def _canonical_map_identity(value: object, label: str) -> tuple[str, str, int] | None:
+        if not isinstance(value, Mapping):
+            failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MAP_SCHEMA", "field": label})
+            return None
+        map_reference = value.get("map")
+        map_hash = _normalise_sha256(value.get("map_hash"))
+        map_size = value.get("map_size_bytes")
+        if (
+            not isinstance(map_reference, str)
+            or not map_reference
+            or _unsafe_relative_reference(map_reference)
+            or map_hash is None
+            or not isinstance(map_size, int)
+            or isinstance(map_size, bool)
+            or map_size < 0
+        ):
+            failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MAP_SCHEMA", "field": label})
+            return None
+        return map_reference.replace("\\", "/").casefold(), map_hash, map_size
+
+    def _strict_int(value: object) -> bool:
+        return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+    # The selected-member projection is required independently of the two
+    # provider projections.  In particular, do not infer this boolean from a
+    # present MAP record: a stale or hand-authored record must fail closed.
+    if link.get("selected_archive_members_observed") is not True:
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_UNPROVEN"})
+    selected = link.get("selected_archive_member_evidence")
+    member = link.get("output_provider_member_evidence")
+    symbols = link.get("output_provider_symbol_evidence")
+    selected_identity = _canonical_map_identity(selected, "selected")
+    member_identity = _canonical_map_identity(member, "member")
+    symbol_identity = _canonical_map_identity(symbols, "symbol")
+    identities = [identity for identity in (selected_identity, member_identity, symbol_identity) if identity is not None]
+    if len(identities) != 3:
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_UNPROVEN"})
+    elif len(set(identities)) != 1:
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MAP_MISMATCH"})
+
+    if not isinstance(member, Mapping) or not isinstance(symbols, Mapping):
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_UNPROVEN"})
+    else:
+        if member.get("observed") is not True or symbols.get("observed") is not True:
+            failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_UNPROVEN"})
+        if member.get("method") != "msvc_map_publics_by_value_provider_rows":
+            failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MEMBER_SCHEMA"})
+        if symbols.get("method") != "msvc_map_publics_by_value_provider_rows":
+            failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_SYMBOL_SCHEMA"})
+        if member.get("provider") not in {"provider", "output-provider", "output_provider"}:
+            failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MEMBER_SCHEMA"})
+        if symbols.get("provider") not in {"provider", "output-provider", "output_provider"}:
+            failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_SYMBOL_SCHEMA"})
+        if symbols.get("scope") not in {"provider", "output-provider", "output_provider"}:
+            failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_SYMBOL_SCHEMA"})
+
+        provider_symbols = symbols.get("symbols")
+        symbol_count = symbols.get("symbol_count")
+        if (
+            not isinstance(provider_symbols, list)
+            or any(not isinstance(symbol, str) or not symbol for symbol in provider_symbols)
+            or not _strict_int(symbol_count)
+            or symbol_count != len(provider_symbols)
+            or symbol_count != len(_OUTPUT_PROVIDER_SYMBOLS)
+            or set(provider_symbols) != _OUTPUT_PROVIDER_SYMBOL_SET
+        ):
+            failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_SYMBOL_SCHEMA"})
+        for evidence, label in ((member, "member"), (symbols, "symbol")):
+            duplicate_count = evidence.get("duplicate_count")
+            if not _strict_int(duplicate_count) or duplicate_count != 0:
+                failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_SCHEMA", "field": label})
+            if evidence.get("missing_symbols") != [] or evidence.get("unexpected_symbols") != []:
+                failures.append({"code": f"NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_{label.upper()}_SCHEMA"})
+
+        members = member.get("members")
+        member_count = member.get("member_count")
+        member_names = {
+            item.replace("\\", "/").casefold()
+            for item in members
+            if isinstance(item, str)
+        } if isinstance(members, list) else set()
+        if (
+            not isinstance(members, list)
+            or not members
+            or any(not isinstance(item, str) or not item for item in members)
+            or len(set(item.replace("\\", "/").casefold() for item in members)) != len(members)
+            or not _strict_int(member_count)
+            or member_count != len(members)
+            or member.get("contributing_members") != members
+            or symbols.get("contributing_members") != members
+        ):
+            failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MEMBER_SCHEMA"})
+        archive_input_count = member.get("archive_input_count")
+        if not _strict_int(archive_input_count) or archive_input_count != 1:
+            failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MEMBER_SCHEMA"})
+
+        if (
+            member.get("archive_name") != _OUTPUT_PROVIDER_ARCHIVE_NAME
+            or member.get("contributing_archives") != [_OUTPUT_PROVIDER_ARCHIVE_NAME]
+            or member.get("contributing_archive_count") != 1
+            or symbols.get("contributing_archives") != [_OUTPUT_PROVIDER_ARCHIVE_NAME]
+        ):
+            failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MEMBER_SCHEMA"})
+
+        member_contributions = _provider_contribution_rows(member.get("contributions"))
+        symbol_contributions = _provider_contribution_rows(symbols.get("contributions"))
+        if (
+            member_contributions is None
+            or symbol_contributions is None
+            or member_contributions != symbol_contributions
+            or len(member_contributions) != len(_OUTPUT_PROVIDER_SYMBOLS)
+            or {row["symbol"] for row in member_contributions} != _OUTPUT_PROVIDER_SYMBOL_SET
+            or any(
+                row["archive"] != _OUTPUT_PROVIDER_ARCHIVE_NAME
+                or not isinstance(row["member"], str)
+                or not row["member"]
+                or row["member"].replace("\\", "/").casefold() not in member_names
+                for row in member_contributions or []
+            )
+        ):
+            failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MEMBER_SCHEMA"})
+
+    output_reference = link.get("output")
+    output_hash = _normalise_sha256(link.get("product_hash"))
+    output_size = link.get("product_size_bytes")
+    if (
+        not isinstance(output_reference, str)
+        or not output_reference
+        or _unsafe_relative_reference(output_reference)
+        or Path(output_reference).name.casefold() != "sakura.exe"
+        or output_hash is None
+        or not _strict_int(output_size)
+    ):
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_IDENTITY_SCHEMA"})
+    link_command_hash = _normalise_sha256(link.get("linkCommandSha256"))
+    if link_command_hash is None:
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_LINK_COMMAND_SCHEMA"})
+
+    archive_hash = _normalise_sha256(link.get("rustArchiveSha256"))
+    archive_size = link.get("rustArchiveSizeBytes")
+    archive_count = link.get("rustArchiveCount")
+    if archive_hash is None or not _strict_int(archive_size) or not _strict_int(archive_count) or archive_count != 1:
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_ARCHIVE_SCHEMA"})
+    if isinstance(member, Mapping):
+        member_archive_count = member.get("archive_input_count")
+        if not _strict_int(member_archive_count) or member_archive_count != archive_count:
+            failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_ARCHIVE_SCHEMA"})
+
+    # A repository-library list is a deduplicated convenience projection, so it
+    # cannot replace the raw top-level count.  When present, however, it must
+    # not introduce a second provider archive identity.
+    libraries = link.get("repository_libraries")
+    archive_paths = [
+        item
+        for item in libraries
+        if isinstance(item, str)
+        and Path(item.replace("\\", "/")).name.casefold() == _OUTPUT_PROVIDER_ARCHIVE_NAME
+    ] if isinstance(libraries, list) else []
+    if isinstance(libraries, list) and len(archive_paths) != 1:
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_ARCHIVE_UNPROVEN"})
+
+    if graph is None:
+        return
+
+    # Rehash the source MAP when the graph is available.  This also binds the
+    # selected-member projection, which ordinary validation intentionally does
+    # not require to be provider-scoped.
+    map_path_value = selected.get("map") if isinstance(selected, Mapping) else None
+    if not isinstance(map_path_value, str) or not map_path_value or _unsafe_relative_reference(map_path_value):
+        return
+    try:
+        map_path = safe_repository_path(
+            graph.repo_root,
+            map_path_value,
+            code="NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MAP_PATH_UNSAFE",
+            reject_parent_segments=True,
+        )
+        actual_map_hash, actual_map_size = _file_identity(
+            map_path,
+            "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MAP_READ",
+        )
+    except (BuildError, RepositoryPathSafetyError):
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MAP_UNPROVEN"})
+    else:
+        actual_map_hash = _normalise_sha256(actual_map_hash)
+        expected_identity = selected_identity
+        if (
+            expected_identity is None
+            or actual_map_hash != expected_identity[1]
+            or actual_map_size != expected_identity[2]
+        ):
+            failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MAP_MISMATCH"})
+
+    # Rehash the source archive whenever graph-backed validation is requested;
+    # without a path in repository_libraries there is no trustworthy source
+    # identity to read, so the final-image proof remains unproven.
+    if len(archive_paths) != 1:
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_ARCHIVE_UNPROVEN"})
+        return
+    try:
+        archive_path = safe_repository_path(
+            graph.repo_root,
+            archive_paths[0],
+            code="NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_ARCHIVE_PATH_UNSAFE",
+            reject_parent_segments=True,
+        )
+        actual_archive_hash, actual_archive_size = _file_identity(
+            archive_path,
+            "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_ARCHIVE_READ",
+        )
+    except (BuildError, RepositoryPathSafetyError):
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_ARCHIVE_UNPROVEN"})
+        return
+    if (
+        _normalise_sha256(actual_archive_hash) != archive_hash
+        or actual_archive_size != archive_size
+    ):
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_ARCHIVE_MISMATCH"})
+
+
+def validate_output_provider_evidence_for_final_image(
+    link: Mapping[str, object],
+    *,
+    graph: SemanticGraph | None = None,
+) -> dict[str, object]:
+    """Validate the strict provider MAP contract required for final-image staging.
+
+    Ordinary native inventory validation intentionally accepts a missing
+    provider projection because a MAP is optional there.  Final-image staging
+    has a stronger contract: both provider projections must be observed and
+    must prove the exact provider v1 symbol/member set.  ``graph`` is supplied
+    by the collector path so the source MAP can be re-hashed; binding callers
+    can omit it because the staged receipt supplies the immutable MAP identity.
+    """
+
+    if not isinstance(link, Mapping):
+        return {
+            "valid": False,
+            "failures": [{"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_SCHEMA"}],
+        }
+    failures: list[dict[str, object]] = []
+    _validate_final_image_link_contract(graph, link, failures)
+    if failures:
+        return {"valid": False, "failures": failures}
+    return {"valid": True, "failures": []}
 
 
 def validate_product_native_evidence(

@@ -109,24 +109,47 @@ def _fixture(
             },
         }
         if provider_scope:
+            provider_contributions = [
+                {"symbol": symbol, "archive": "sakura_native_ffi.lib", "member": member_name}
+                for symbol in EXPECTED_PROVIDER_SYMBOLS
+            ]
             native["link"]["output_provider_member_evidence"] = {
                 "observed": True,
                 "provider": "output-provider",
+                "method": "msvc_map_publics_by_value_provider_rows",
                 "map": map_path.relative_to(root).as_posix(),
                 "map_hash": _hash(map_bytes),
                 "map_size_bytes": len(map_bytes),
+                "archive_name": "sakura_native_ffi.lib",
+                "archive_input_count": 1,
+                "contributing_archives": ["sakura_native_ffi.lib"],
+                "contributing_archive_count": 1,
+                "contributing_members": [member_name],
                 "members": [member_name],
                 "member_count": 1,
+                "missing_symbols": [],
+                "unexpected_symbols": [],
+                "duplicate_count": 0,
+                "contributions": provider_contributions,
+                "selector_proof": "ltcg_compile_log_required",
             }
             native["link"]["output_provider_symbol_evidence"] = {
                 "observed": True,
+                "provider": "output-provider",
                 "scope": "output-provider",
+                "method": "msvc_map_publics_by_value_provider_rows",
                 "map": map_path.relative_to(root).as_posix(),
                 "map_hash": _hash(map_bytes),
                 "map_size_bytes": len(map_bytes),
                 "symbols": list(EXPECTED_PROVIDER_SYMBOLS),
                 "symbol_count": len(EXPECTED_PROVIDER_SYMBOLS),
                 "duplicate_count": 0,
+                "missing_symbols": [],
+                "unexpected_symbols": [],
+                "contributing_archives": ["sakura_native_ffi.lib"],
+                "contributing_members": [member_name],
+                "contributions": provider_contributions,
+                "selector_proof": "ltcg_compile_log_required",
             }
         _rehash_native(native)
         natives[backend] = native

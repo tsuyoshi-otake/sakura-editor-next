@@ -250,20 +250,67 @@ Rust toolchain identity の取得では、Windows PowerShell 5.1 の pipeline �
 避けるため native command の終了コードを出力変換より先に取得し、出力は bounded な単一行として検証します。
 失敗時に Rust の version 出力、path、command、例外本文は manifest へコピーしません。
 
-Debug の qualified artifact pair は、clean checkout で同じ新規 output root を指定して次のように生成します。
+### qualified producer の最終イメージ証跡
+
+Issue #274 の qualified producer は、既存の `build-dev.bat` を呼び出す経路とは別の
+明示的な opt-in です。clean な exact source checkout で `-QualifiedFinalImage` と新規の
+`-FinalImageStageRoot` を指定してください。qualified 実行は package plan の後に canonical
+`inventory observe-product --rebuild --final-image-backend ... --final-image-stage-root ...`
+を一度だけ実行します。observer 内の package closure と Rebuild は順番に実行されるため、
+`PackageTimeoutSeconds + TimeoutSeconds + grace` が外側の所有 timeout になります。qualified
+branch では `build-dev.bat` や別の二度目の build を実行しません。
+
+qualified producer の `output-final-image-verify` barrier は `tools/build/sakura_build.py` の
+no-build CLI を必ず呼びます。呼出しはちょうど三つで、(1) observer 完了直後、(2) manifest の
+atomic write / publication 前、(3) transaction directory の move 後に、move 後の native evidence
+path を使って実行します。これは同じ Rebuild を繰り返す三回の build ではなく、一回の observer
+結果を三つの ownership 境界で再検証する順序です。barrier は graph や manifest を読みません。
+
+barrier の成功 result は `ok=true` / `payloadFree=true` / `record=output-final-image-binding-validation`
+と、`qualified` の `buildTarget=Rebuild` に対応する `boundNativeEvidenceSha256`、
+`sourceNativeEvidenceSha256`、`stageId`、receipt path/hash、EXE/MAP の `path`・SHA-256・size、
+provider summary を持ちます。PowerShell はこの canonical JSON、hash、receipt を実装せず、Python
+validator の結果を manifest / summary に束ねます。producer manifest と成功 summary は
+`qualifiedFinalImage=true`、`buildTarget=Rebuild`、bound/source native hash、receipt path/hash/stageId、
+EXE/MAP identity、provider summary を保存します。
+
+失敗時は producer が所有する transaction root と final-image stage root を削除し、残存数を含む
+payload-free の typed envelope を返します。cleanup の検証不能は `cleanup-unverified` として主原因を
+保持し、publication を完了扱いにせず adoption は常に `decision=HOLD` / `adoptionEligible=false` です。
+qualified 成功時だけ final-image stage root を保持します。source drift、selector / platform /
+configuration 不一致、receipt / MAP / artifact の mismatch、cleanup 検証不能はすべて fail closed です。
+これは性能計測の `GO` や Rust 採用決定ではなく、後続の runtime-stage / paired GUI / ledger 検証に
+渡す immutable な producer 証跡です。
+
+Debug の qualified artifact pair は、clean checkout で backend ごとに新規 stage root を指定して次のように生成します。
 
 ```powershell
 $artifactRoot = ".\build\evidence\output-startup-qualified\$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+$cppFinalImageRoot = ".\build\evidence\output-final-image\$(Get-Date -Format 'yyyyMMdd-HHmmss')-cpp"
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\prepare-output-startup-artifact.ps1 `
-  -Backend cpp -Platform x64 -Configuration Debug -BuildParallelism 1 -OutputDirectory $artifactRoot
+  -Backend cpp -Platform x64 -Configuration Debug -BuildParallelism 1 -OutputDirectory $artifactRoot `
+  -QualifiedFinalImage -FinalImageStageRoot $cppFinalImageRoot `
+  -TimeoutSeconds 1800 -PackageTimeoutSeconds 1800
+$rustFinalImageRoot = ".\build\evidence\output-final-image\$(Get-Date -Format 'yyyyMMdd-HHmmss')-rust"
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\prepare-output-startup-artifact.ps1 `
-  -Backend rust -Platform x64 -Configuration Debug -BuildParallelism 1 -OutputDirectory $artifactRoot
+  -Backend rust -Platform x64 -Configuration Debug -BuildParallelism 1 -OutputDirectory $artifactRoot `
+  -QualifiedFinalImage -FinalImageStageRoot $rustFinalImageRoot `
+  -TimeoutSeconds 1800 -PackageTimeoutSeconds 1800
 ```
 
-paired runner には各 `Debug\<backend>\build-manifest.json`、`runtime-stage`、その中の
-`sakura.exe` を明示します。Release cell は別の新規 output root と `-Configuration Release` で同様に
-生成します。dirty checkout や manifest producer を通していない artifact は `-CollectOnly` に限定し、
-qualified 証拠として扱いません。
+各 backend の `Debug\<backend>\build-manifest.json`、`runtime-stage`、その中の `sakura.exe` に加えて、
+producer の final-image receipt / native evidence を paired runner と ledger の入力に明示します。
+Release cell は別の新規 output root と `-Configuration Release`、別の新規 final-image stage root で
+同様に生成します。dirty checkout や manifest producer を通していない artifact は `-CollectOnly` に
+限定し、qualified 証拠として扱いません。producer の `-SelfTest` は両方の PowerShell host で
+build / Cargo / Python / runtime-stage / GUI を起動せずに transaction、cleanup、manifest、
+Rust toolchain exit-code の契約だけを検証します。
+
+`-QualifiedFinalImage` を指定しない既存経路は引き続き `build-dev.bat x64 <Configuration>` の
+通常 Build であり、manifest / summary に `qualifiedFinalImage=false`、`buildTarget=Build`、
+`qualification=non-qualified` を明示します。
+この non-qualified 経路では final-image stage と三つの barrier を要求しません。dirty checkout や
+stage root を伴わない既存の開発用 artifact は、qualified 証拠へ昇格させず従来どおり非 qualified として扱います。
 
 これとは別に `performance` が measured `documentReadyMs` の C++ / Rust paired delta を集計し、Rust の
 median は相対 2% かつ絶対 1 ms、p95 は相対 5% 以内というゲートを評価します。トップレベルの
