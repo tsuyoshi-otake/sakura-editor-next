@@ -1,8 +1,9 @@
 """Contract checks for the explicit Output startup-artifact producer.
 
 The producer owns a potentially expensive MSVC build.  These tests therefore
-exercise its static contract and the opt-in PowerShell self-test only; they do
-not invoke a native build, Cargo, or the runtime-stage command.
+exercise its static contract, opt-in PowerShell self-test, and a bounded
+file-identity probe; they do not invoke a native build, Cargo, or the
+runtime-stage command.
 """
 
 from __future__ import annotations
@@ -115,6 +116,24 @@ def powershell_function_body(text: str, name: str) -> str:
         raise AssertionError(f"PowerShell function {name!r} has no body")
     closing = _matching_powershell_brace(text, opening)
     return text[opening + 1 : closing]
+
+
+def powershell_function_definition(text: str, name: str) -> str:
+    return f"function {name} {{{powershell_function_body(text, name)}}}"
+
+
+def powershell_add_type_definition(text: str) -> str:
+    match = re.search(
+        r"(?ms)Add-Type\s+-TypeDefinition\s+@'\r?\n(?P<source>.*?)\r?\n'@",
+        text,
+    )
+    if match is None:
+        raise AssertionError("The producer native helper Add-Type block is missing")
+    return "Add-Type -TypeDefinition @'\n" + match.group("source") + "\n'@"
+
+
+def powershell_single_quoted(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
 
 
 def powershell_functions(text: str) -> list[tuple[str, str]]:
@@ -754,6 +773,293 @@ class PrepareOutputStartupArtifactContractTests(unittest.TestCase):
             self.assertTrue(payload["rustToolchainNonzeroRejected"])
             self.assertTrue(payload["rustToolchainMalformedRejected"])
             self.assertTrue(payload["rustToolchainFailureCodeVerified"])
+
+    def test_owned_output_rejects_close_after_regular_hardlink_and_reparse_replacements(self) -> None:
+        """Exercise the production identity helpers against real Windows files.
+
+        The producer intentionally keeps these helpers private.  This probe
+        loads their definitions from the checked-in script into a disposable
+        PowerShell process and changes the path only after the original stream
+        (and its captured native file identity) has been closed.  It therefore
+        tests the same helper, without exposing a production hook or launching
+        any build/runtime process.
+        """
+
+        hosts = powershell_hosts()
+        if not hosts:
+            self.skipTest("Neither powershell.exe nor pwsh is available")
+
+        helper_names = (
+            "Get-PropertyValue",
+            "Get-CanonicalPath",
+            "Assert-NoReparseAncestors",
+            "Assert-RegularFile",
+            "Set-ProducerFailureContext",
+            "Get-OwnedFileIdentity",
+            "Test-OwnedFileIdentityEqual",
+            "Assert-OwnedFileIdentity",
+            "Open-VerifiedOwnedOutput",
+            "Remove-VerifiedOwnedOutput",
+        )
+        native_definition = powershell_add_type_definition(self.text)
+        function_definitions = "\n\n".join(
+            powershell_function_definition(self.text, name) for name in helper_names
+        )
+
+        replacement_native_definition = r"""
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class SakuraOutputStartupReplacementNative
+{
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "CreateHardLinkW")]
+    private static extern bool CreateHardLink(
+        string fileName, string existingFileName, IntPtr securityAttributes);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "CreateSymbolicLinkW")]
+    private static extern bool CreateSymbolicLink(
+        string symbolicLinkFileName, string targetFileName, uint flags);
+
+    public static int CreateHardLinkForTest(string fileName, string existingFileName)
+    {
+        return CreateHardLink(fileName, existingFileName, IntPtr.Zero)
+            ? 0
+            : Marshal.GetLastWin32Error();
+    }
+
+    public static int CreateSymbolicLinkForTest(string linkName, string targetName)
+    {
+        // Windows 10+ permits this non-elevated test link when the
+        // unprivileged-create flag is supplied.
+        return CreateSymbolicLink(linkName, targetName, 2)
+            ? 0
+            : Marshal.GetLastWin32Error();
+    }
+}
+'@
+""".strip()
+
+        replacement_script = r"""
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+$script:FailureCode = $null
+$script:FailureSubstage = $null
+
+function Write-TestText {
+    param(
+        [Parameter(Mandatory = $true)] [string]$Path,
+        [Parameter(Mandatory = $true)] [string]$Value
+    )
+    [IO.File]::WriteAllText($Path, $Value, [Text.UTF8Encoding]::new($false))
+}
+
+function Get-TestIdentity {
+    param([Parameter(Mandatory = $true)] [string]$Path)
+    $stream = $null
+    try {
+        $stream = [IO.File]::Open(
+            $Path,
+            [IO.FileMode]::Open,
+            [IO.FileAccess]::ReadWrite,
+            [IO.FileShare]::ReadWrite)
+        return (Get-OwnedFileIdentity $stream)
+    }
+    finally {
+        if ($null -ne $stream) { $stream.Dispose() }
+    }
+}
+
+function Remove-TestTree {
+    param([Parameter(Mandatory = $true)] [string]$Path)
+    if (-not [IO.Directory]::Exists($Path)) { return }
+    foreach ($entry in [IO.Directory]::EnumerateFileSystemEntries($Path)) {
+        $item = Get-Item -LiteralPath $entry -Force -ErrorAction Stop
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+            $item -is [IO.FileInfo]) {
+            [IO.File]::Delete($entry)
+        }
+        else {
+            [IO.Directory]::Delete($entry, $true)
+        }
+    }
+    [IO.Directory]::Delete($Path)
+}
+
+function Invoke-ReplacementCase {
+    param(
+        [Parameter(Mandatory = $true)] [ValidateSet('regular', 'hardlink', 'reparse')] [string]$Kind,
+        [Parameter(Mandatory = $true)] [string]$Base
+    )
+    $caseRoot = Join-Path $Base $Kind
+    [void][IO.Directory]::CreateDirectory($caseRoot)
+    $path = Join-Path $caseRoot 'candidate.tmp'
+    $originalPath = Join-Path $caseRoot 'original.keep'
+    $replacementPath = Join-Path $caseRoot 'replacement.target'
+    Write-TestText $path 'original'
+    $expectedIdentity = Get-TestIdentity $path
+    [IO.File]::Move($path, $originalPath)
+    Write-TestText $replacementPath 'replacement'
+
+    if ($Kind -eq 'regular') {
+        [IO.File]::Copy($replacementPath, $path, $false)
+    }
+    elseif ($Kind -eq 'hardlink') {
+        $errorCode = [SakuraOutputStartupReplacementNative]::CreateHardLinkForTest($path, $replacementPath)
+        if ($errorCode -ne 0) { throw ('hardlink creation failed with Win32 error {0}.' -f $errorCode) }
+    }
+    else {
+        $errorCode = [SakuraOutputStartupReplacementNative]::CreateSymbolicLinkForTest($path, $replacementPath)
+        if ($errorCode -ne 0) {
+            return [pscustomobject][ordered]@{
+                kind = $Kind
+                supported = $false
+                createErrorCode = [int]$errorCode
+            }
+        }
+    }
+
+    $replacementIdentity = $null
+    if ($Kind -ne 'reparse') {
+        $replacementIdentity = Get-TestIdentity $path
+    }
+    $script:FailureCode = $null
+    $openRejected = $false
+    $openFailureCode = $null
+    $opened = $null
+    try {
+        $opened = Open-VerifiedOwnedOutput $path $expectedIdentity 'identity-probe'
+    }
+    catch {
+        $openRejected = $true
+        $openFailureCode = $script:FailureCode
+    }
+    finally {
+        if ($null -ne $opened) { $opened.Dispose() }
+    }
+
+    $script:FailureCode = $null
+    $removeRejected = $false
+    $removeFailureCode = $null
+    try {
+        [void](Remove-VerifiedOwnedOutput $path $expectedIdentity 'identity-probe')
+    }
+    catch {
+        $removeRejected = $true
+        $removeFailureCode = $script:FailureCode
+    }
+
+    $pathItem = Get-Item -LiteralPath $path -Force -ErrorAction Stop
+    $identityChanged = $true
+    if ($Kind -ne 'reparse') {
+        $identityChanged = -not (Test-OwnedFileIdentityEqual $expectedIdentity $replacementIdentity)
+    }
+    return [pscustomobject][ordered]@{
+        kind = $Kind
+        supported = $true
+        identityChanged = [bool]$identityChanged
+        openRejected = [bool]$openRejected
+        openFailureCode = $openFailureCode
+        removeRejected = [bool]$removeRejected
+        removeFailureCode = $removeFailureCode
+        pathPresent = $true
+        pathIsReparse = (($pathItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)
+        pathText = [IO.File]::ReadAllText($path)
+        originalPreserved = [IO.File]::Exists($originalPath)
+        replacementTargetPreserved = [IO.File]::Exists($replacementPath)
+    }
+}
+
+$root = __ROOT_PATH__
+$results = [ordered]@{}
+$cleanupSucceeded = $false
+try {
+    [void][IO.Directory]::CreateDirectory($root)
+    foreach ($kind in @('regular', 'hardlink', 'reparse')) {
+        $results[$kind] = Invoke-ReplacementCase $kind $root
+    }
+}
+finally {
+    Remove-TestTree $root
+    $cleanupSucceeded = $true
+}
+$results['cleanupSucceeded'] = [bool]$cleanupSucceeded
+$results['remainingRoot'] = [IO.Directory]::Exists($root) -or [IO.File]::Exists($root)
+$results | ConvertTo-Json -Compress -Depth 8
+""".strip()
+
+        for shell in hosts:
+            with self.subTest(shell=shell):
+                with tempfile.TemporaryDirectory(prefix="sakura-output-startup-identity-") as directory:
+                    root = Path(directory) / "cases"
+                    probe = Path(directory) / "identity-probe.ps1"
+                    script = "\n\n".join(
+                        (
+                            native_definition,
+                            function_definitions,
+                            replacement_native_definition,
+                            replacement_script.replace(
+                                "__ROOT_PATH__", powershell_single_quoted(str(root))
+                            ),
+                        )
+                    )
+                    probe.write_text(script, encoding="utf-8", newline="\r\n")
+                    completed = subprocess.run(
+                        [
+                            shell,
+                            "-NoProfile",
+                            "-NonInteractive",
+                            "-ExecutionPolicy",
+                            "Bypass",
+                            "-File",
+                            str(probe),
+                        ],
+                        cwd=ROOT,
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        timeout=30,
+                        check=False,
+                    )
+                    self.assertEqual(0, completed.returncode, completed.stderr)
+                    lines = [line for line in completed.stdout.splitlines() if line.strip()]
+                    self.assertEqual(1, len(lines), completed.stdout)
+                    payload = json.loads(lines[0])
+                    self.assertTrue(payload["cleanupSucceeded"])
+                    self.assertFalse(payload["remainingRoot"])
+
+                    for kind in ("regular", "hardlink"):
+                        case = payload[kind]
+                        self.assertTrue(case["supported"])
+                        self.assertTrue(case["identityChanged"])
+                        self.assertTrue(case["openRejected"])
+                        self.assertTrue(case["removeRejected"])
+                        self.assertEqual(
+                            "OUTPUT_FINAL_IMAGE_VERIFY_FILE_IDENTITY_CHANGED",
+                            case["removeFailureCode"],
+                        )
+                        self.assertTrue(case["pathPresent"])
+                        self.assertFalse(case["pathIsReparse"])
+                        self.assertEqual("replacement", case["pathText"])
+                        self.assertTrue(case["originalPreserved"])
+                        self.assertTrue(case["replacementTargetPreserved"])
+
+                    reparse = payload["reparse"]
+                    if not reparse["supported"]:
+                        self.assertEqual(1314, reparse["createErrorCode"])
+                        continue
+                    self.assertTrue(reparse["openRejected"])
+                    self.assertTrue(reparse["removeRejected"])
+                    self.assertEqual(
+                        "OUTPUT_FINAL_IMAGE_VERIFY_FILE_IDENTITY_UNAVAILABLE",
+                        reparse["removeFailureCode"],
+                    )
+                    self.assertTrue(reparse["pathPresent"])
+                    self.assertTrue(reparse["pathIsReparse"])
+                    self.assertEqual("replacement", reparse["pathText"])
+                    self.assertTrue(reparse["originalPreserved"])
+                    self.assertTrue(reparse["replacementTargetPreserved"])
 
     def test_invalid_selector_is_a_typed_payload_free_failure(self) -> None:
         hosts = powershell_hosts()
