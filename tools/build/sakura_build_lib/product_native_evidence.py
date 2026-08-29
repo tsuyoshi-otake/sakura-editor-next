@@ -1287,7 +1287,11 @@ def observe_product_native_evidence(
             link = result.get("link")
             if not isinstance(link, dict):
                 raise BuildError("NATIVE_PRODUCT_FINAL_IMAGE_INPUT", "native link observation is missing", 5)
-            provider_validation = validate_output_provider_evidence_for_final_image(link, graph=graph)
+            provider_validation = validate_output_provider_evidence_for_final_image(
+                link,
+                graph=graph,
+                expected_backend=final_image_backend,
+            )
             if not provider_validation["valid"]:
                 raise BuildError(
                     "NATIVE_PRODUCT_FINAL_IMAGE_PROVIDER_UNPROVEN",
@@ -1624,6 +1628,7 @@ def _validate_final_image_link_contract(
     graph: SemanticGraph | None,
     link: Mapping[str, object],
     failures: list[dict[str, object]],
+    expected_backend: str | None,
 ) -> None:
     """Validate the strict native link contract used by final-image staging.
 
@@ -1674,10 +1679,22 @@ def _validate_final_image_link_contract(
     elif len(set(identities)) != 1:
         failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MAP_MISMATCH"})
 
+    if expected_backend not in (None, "cpp", "rust"):
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_SCHEMA"})
+
     if not isinstance(member, Mapping) or not isinstance(symbols, Mapping):
         failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_UNPROVEN"})
     else:
-        if member.get("observed") is not True or symbols.get("observed") is not True:
+        member_observed = member.get("observed")
+        symbol_observed = symbols.get("observed")
+        negative_cpp = (
+            expected_backend == "cpp"
+            and member_observed is False
+            and symbol_observed is False
+        )
+        if member_observed is not True and not negative_cpp:
+            failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_UNPROVEN"})
+        if symbol_observed is not True and not negative_cpp:
             failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_UNPROVEN"})
         if member.get("method") != "msvc_map_publics_by_value_provider_rows":
             failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MEMBER_SCHEMA"})
@@ -1692,22 +1709,6 @@ def _validate_final_image_link_contract(
 
         provider_symbols = symbols.get("symbols")
         symbol_count = symbols.get("symbol_count")
-        if (
-            not isinstance(provider_symbols, list)
-            or any(not isinstance(symbol, str) or not symbol for symbol in provider_symbols)
-            or not _strict_int(symbol_count)
-            or symbol_count != len(provider_symbols)
-            or symbol_count != len(_OUTPUT_PROVIDER_SYMBOLS)
-            or set(provider_symbols) != _OUTPUT_PROVIDER_SYMBOL_SET
-        ):
-            failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_SYMBOL_SCHEMA"})
-        for evidence, label in ((member, "member"), (symbols, "symbol")):
-            duplicate_count = evidence.get("duplicate_count")
-            if not _strict_int(duplicate_count) or duplicate_count != 0:
-                failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_SCHEMA", "field": label})
-            if evidence.get("missing_symbols") != [] or evidence.get("unexpected_symbols") != []:
-                failures.append({"code": f"NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_{label.upper()}_SCHEMA"})
-
         members = member.get("members")
         member_count = member.get("member_count")
         member_names = {
@@ -1715,46 +1716,121 @@ def _validate_final_image_link_contract(
             for item in members
             if isinstance(item, str)
         } if isinstance(members, list) else set()
-        if (
-            not isinstance(members, list)
-            or not members
-            or any(not isinstance(item, str) or not item for item in members)
-            or len(set(item.replace("\\", "/").casefold() for item in members)) != len(members)
-            or not _strict_int(member_count)
-            or member_count != len(members)
-            or member.get("contributing_members") != members
-            or symbols.get("contributing_members") != members
-        ):
-            failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MEMBER_SCHEMA"})
         archive_input_count = member.get("archive_input_count")
-        if not _strict_int(archive_input_count) or archive_input_count != 1:
-            failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MEMBER_SCHEMA"})
-
-        if (
-            member.get("archive_name") != _OUTPUT_PROVIDER_ARCHIVE_NAME
-            or member.get("contributing_archives") != [_OUTPUT_PROVIDER_ARCHIVE_NAME]
-            or member.get("contributing_archive_count") != 1
-            or symbols.get("contributing_archives") != [_OUTPUT_PROVIDER_ARCHIVE_NAME]
-        ):
-            failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MEMBER_SCHEMA"})
-
         member_contributions = _provider_contribution_rows(member.get("contributions"))
         symbol_contributions = _provider_contribution_rows(symbols.get("contributions"))
-        if (
-            member_contributions is None
-            or symbol_contributions is None
-            or member_contributions != symbol_contributions
-            or len(member_contributions) != len(_OUTPUT_PROVIDER_SYMBOLS)
-            or {row["symbol"] for row in member_contributions} != _OUTPUT_PROVIDER_SYMBOL_SET
-            or any(
-                row["archive"] != _OUTPUT_PROVIDER_ARCHIVE_NAME
-                or not isinstance(row["member"], str)
-                or not row["member"]
-                or row["member"].replace("\\", "/").casefold() not in member_names
-                for row in member_contributions or []
-            )
-        ):
-            failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MEMBER_SCHEMA"})
+
+        if negative_cpp:
+            expected_missing = sorted(_OUTPUT_PROVIDER_SYMBOL_SET, key=str.casefold)
+            # An LTCG C++ image may legitimately discard the unused Rust
+            # provider exports.  Accept that only as a complete negative
+            # projection: all provider rows, members, and contributions are
+            # empty, while the one archive input and the three MAP identities
+            # remain bound.  A MAP by itself is not selector proof; callers
+            # must pair this shape with the backend's compile-selector proof.
+            if (
+                provider_symbols != []
+                or not _strict_int(symbol_count)
+                or symbol_count != 0
+                or members != []
+                or not _strict_int(member_count)
+                or member_count != 0
+                or member.get("contributing_members") != []
+                or symbols.get("contributing_members") != []
+                or member_contributions != []
+                or symbol_contributions != []
+                or member.get("contributing_archives") != []
+                or symbols.get("contributing_archives") != []
+                or not _strict_int(member.get("contributing_archive_count"))
+                or member.get("contributing_archive_count") != 0
+                or "archive_name" not in member
+                or member.get("archive_name") is not None
+                or (
+                    "archive_name" in symbols
+                    and symbols.get("archive_name") is not None
+                )
+                or (
+                    "contributing_archive_count" in symbols
+                    and (
+                        not _strict_int(symbols.get("contributing_archive_count"))
+                        or symbols.get("contributing_archive_count") != 0
+                    )
+                )
+                or not _strict_int(archive_input_count)
+                or archive_input_count != 1
+                or member.get("missing_symbols") != expected_missing
+                or symbols.get("missing_symbols") != expected_missing
+                or member.get("unexpected_symbols") != []
+                or symbols.get("unexpected_symbols") != []
+                or not _strict_int(member.get("duplicate_count"))
+                or member.get("duplicate_count") != 0
+                or not _strict_int(symbols.get("duplicate_count"))
+                or symbols.get("duplicate_count") != 0
+            ):
+                failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_SCHEMA"})
+        else:
+            if (
+                not isinstance(provider_symbols, list)
+                or any(not isinstance(symbol, str) or not symbol for symbol in provider_symbols)
+                or not _strict_int(symbol_count)
+                or symbol_count != len(provider_symbols)
+                or symbol_count != len(_OUTPUT_PROVIDER_SYMBOLS)
+                or set(provider_symbols) != _OUTPUT_PROVIDER_SYMBOL_SET
+            ):
+                failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_SYMBOL_SCHEMA"})
+            for evidence, label in ((member, "member"), (symbols, "symbol")):
+                duplicate_count = evidence.get("duplicate_count")
+                if not _strict_int(duplicate_count) or duplicate_count != 0:
+                    failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_SCHEMA", "field": label})
+                if evidence.get("missing_symbols") != [] or evidence.get("unexpected_symbols") != []:
+                    failures.append({"code": f"NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_{label.upper()}_SCHEMA"})
+
+            if (
+                not isinstance(members, list)
+                or not members
+                or len(members) != 1
+                or any(not isinstance(item, str) or not item for item in members)
+                or len(set(item.replace("\\", "/").casefold() for item in members)) != len(members)
+                or not _strict_int(member_count)
+                or member_count != 1
+                or member.get("contributing_members") != members
+                or symbols.get("contributing_members") != members
+            ):
+                failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MEMBER_SCHEMA"})
+            if not _strict_int(archive_input_count) or archive_input_count != 1:
+                failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MEMBER_SCHEMA"})
+
+            if (
+                member.get("archive_name") != _OUTPUT_PROVIDER_ARCHIVE_NAME
+                or member.get("contributing_archives") != [_OUTPUT_PROVIDER_ARCHIVE_NAME]
+                or not _strict_int(member.get("contributing_archive_count"))
+                or member.get("contributing_archive_count") != 1
+                or symbols.get("contributing_archives") != [_OUTPUT_PROVIDER_ARCHIVE_NAME]
+                or (
+                    "contributing_archive_count" in symbols
+                    and (
+                        not _strict_int(symbols.get("contributing_archive_count"))
+                        or symbols.get("contributing_archive_count") != 1
+                    )
+                )
+            ):
+                failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MEMBER_SCHEMA"})
+
+            if (
+                member_contributions is None
+                or symbol_contributions is None
+                or member_contributions != symbol_contributions
+                or len(member_contributions) != len(_OUTPUT_PROVIDER_SYMBOLS)
+                or {row["symbol"] for row in member_contributions} != _OUTPUT_PROVIDER_SYMBOL_SET
+                or any(
+                    row["archive"] != _OUTPUT_PROVIDER_ARCHIVE_NAME
+                    or not isinstance(row["member"], str)
+                    or not row["member"]
+                    or row["member"].replace("\\", "/").casefold() not in member_names
+                    for row in member_contributions or []
+                )
+            ):
+                failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_MEMBER_SCHEMA"})
 
     output_reference = link.get("output")
     output_hash = _normalise_sha256(link.get("product_hash"))
@@ -1858,15 +1934,22 @@ def validate_output_provider_evidence_for_final_image(
     link: Mapping[str, object],
     *,
     graph: SemanticGraph | None = None,
+    expected_backend: str | None = None,
 ) -> dict[str, object]:
     """Validate the strict provider MAP contract required for final-image staging.
 
     Ordinary native inventory validation intentionally accepts a missing
     provider projection because a MAP is optional there.  Final-image staging
-    has a stronger contract: both provider projections must be observed and
-    must prove the exact provider v1 symbol/member set.  ``graph`` is supplied
-    by the collector path so the source MAP can be re-hashed; binding callers
-    can omit it because the staged receipt supplies the immutable MAP identity.
+    has a stronger contract: Rust (and the default ``None`` mode) requires
+    both provider projections to be observed and to prove the exact provider
+    v1 symbol/member set.  A C++ final image may use the explicit negative
+    projection emitted by LTCG when those unused Rust exports are discarded;
+    that shape still requires one archive input, empty provider rows, and all
+    three MAP identities.  It is not selector proof by itself: callers must
+    pair it with the backend-specific compile-selector proof.  ``graph`` is
+    supplied by the collector path so the source MAP can be re-hashed; binding
+    callers can omit it because the staged receipt supplies the immutable MAP
+    identity.
     """
 
     if not isinstance(link, Mapping):
@@ -1875,7 +1958,7 @@ def validate_output_provider_evidence_for_final_image(
             "failures": [{"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_SCHEMA"}],
         }
     failures: list[dict[str, object]] = []
-    _validate_final_image_link_contract(graph, link, failures)
+    _validate_final_image_link_contract(graph, link, failures, expected_backend)
     if failures:
         return {"valid": False, "failures": failures}
     return {"valid": True, "failures": []}

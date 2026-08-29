@@ -54,6 +54,43 @@ def _rehash_native(native: dict[str, object]) -> None:
     native["hard_evidence_hash"] = product_native_evidence_hash(native)
 
 
+def _make_cpp_ltcg_negative_provider(native: dict[str, object]) -> None:
+    """Replace provider rows with the complete Release/LTCG negative proof."""
+
+    link = native["link"]
+    member = link["output_provider_member_evidence"]
+    symbols = link["output_provider_symbol_evidence"]
+    member.update(
+        {
+            "observed": False,
+            "archive_name": None,
+            "contributing_archives": [],
+            "contributing_archive_count": 0,
+            "contributing_members": [],
+            "members": [],
+            "member_count": 0,
+            "missing_symbols": list(EXPECTED_PROVIDER_SYMBOLS),
+            "unexpected_symbols": [],
+            "duplicate_count": 0,
+            "contributions": [],
+        }
+    )
+    symbols.update(
+        {
+            "observed": False,
+            "symbols": [],
+            "symbol_count": 0,
+            "duplicate_count": 0,
+            "missing_symbols": list(EXPECTED_PROVIDER_SYMBOLS),
+            "unexpected_symbols": [],
+            "contributing_archives": [],
+            "contributing_members": [],
+            "contributions": [],
+        }
+    )
+    _rehash_native(native)
+
+
 def _fixture(
     root: Path,
     *,
@@ -446,6 +483,105 @@ class OutputLinkSizeEvidenceTests(unittest.TestCase):
             for secret in ("sakura.exe", ".map", "output_provider.obj", "images/cpp"):
                 self.assertNotIn(secret, serialized)
             self.assertTrue(validate_output_link_size_evidence(report)["ok"])
+
+    def test_release_cpp_ltcg_negative_projection_keeps_actual_zero_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cpp_native, rust_native, cpp_manifest, rust_manifest, cpp_value, _rust = _fixture(
+                root,
+                provider_scope=True,
+                startup_manifest=True,
+                configuration="Release",
+            )
+            _make_cpp_ltcg_negative_provider(cpp_value)
+            _write_json(cpp_native, cpp_value)
+            report = build_output_link_size_evidence(
+                cpp_native,
+                rust_native,
+                cpp_manifest,
+                rust_manifest,
+                repo_root=root,
+            )
+            self.assertEqual("complete", report["status"])
+            self.assertTrue(report["sizeGate"]["pass"])
+            self.assertEqual(0, report["link"]["cpp"]["selectedMemberCount"])
+            self.assertEqual(0, report["link"]["cpp"]["providerSymbolCount"])
+            self.assertEqual(0, report["link"]["cpp"]["duplicateProviderSymbolCount"])
+            self.assertEqual(1, report["link"]["cpp"]["staticRustArchiveCount"])
+            self.assertTrue(validate_output_link_size_evidence(report)["ok"])
+
+            malformed = copy.deepcopy(cpp_value)
+            malformed["link"]["output_provider_member_evidence"]["members"] = ["partial.obj"]
+            malformed["link"]["output_provider_member_evidence"]["member_count"] = 1
+            _rehash_native(malformed)
+            _write_json(cpp_native, malformed)
+            report = build_output_link_size_evidence(
+                cpp_native,
+                rust_native,
+                cpp_manifest,
+                rust_manifest,
+                repo_root=root,
+            )
+            self.assertEqual("incomplete", report["status"])
+            self.assertIn("PROVIDER_MEMBER_UNPROVEN", report["failures"])
+
+    def test_malformed_positive_provider_projection_cannot_complete_link_size_report(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cpp_native, rust_native, cpp_manifest, rust_manifest, cpp_value, _rust = _fixture(
+                root,
+                provider_scope=True,
+                startup_manifest=True,
+                configuration="Release",
+            )
+            original = copy.deepcopy(cpp_value)
+            member = original["link"]["output_provider_member_evidence"]
+            symbols = original["link"]["output_provider_symbol_evidence"]
+            first_member = member["members"][0]
+            two_members = [first_member, "other-provider.obj"]
+            contributions = [
+                {
+                    "symbol": symbol,
+                    "archive": "sakura_native_ffi.lib",
+                    "member": two_members[index % 2],
+                }
+                for index, symbol in enumerate(EXPECTED_PROVIDER_SYMBOLS)
+            ]
+            member["members"] = two_members
+            member["member_count"] = 2
+            member["contributing_members"] = two_members
+            member["contributions"] = contributions
+            symbols["contributing_members"] = two_members
+            symbols["contributions"] = contributions
+            _rehash_native(original)
+            _write_json(cpp_native, original)
+            report = build_output_link_size_evidence(
+                cpp_native,
+                rust_native,
+                cpp_manifest,
+                rust_manifest,
+                repo_root=root,
+            )
+            self.assertEqual("incomplete", report["status"])
+            self.assertIn("PROVIDER_MEMBER_UNPROVEN", report["failures"])
+
+            for evidence_name in (
+                "output_provider_member_evidence",
+                "output_provider_symbol_evidence",
+            ):
+                for value in (True, 1.0):
+                    malformed = copy.deepcopy(cpp_value)
+                    malformed["link"][evidence_name]["contributing_archive_count"] = value
+                    _rehash_native(malformed)
+                    _write_json(cpp_native, malformed)
+                    report = build_output_link_size_evidence(
+                        cpp_native,
+                        rust_native,
+                        cpp_manifest,
+                        rust_manifest,
+                        repo_root=root,
+                    )
+                    self.assertEqual("incomplete", report["status"], (evidence_name, value))
 
     def test_debug_startup_manifest_uses_unresolved_selector_contract(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

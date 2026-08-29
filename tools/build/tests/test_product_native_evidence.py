@@ -616,6 +616,132 @@ class ProductNativeEvidenceTests(unittest.TestCase):
         self.assertTrue(validation["coverage"]["output_provider_member_evidence_observed"])
         self.assertTrue(validation["coverage"]["output_provider_symbol_evidence_observed"])
 
+    def test_final_image_cpp_accepts_only_the_complete_ltcg_negative_projection(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            graph, _tlog, _executable, _map_path, _archive = _provider_map_fixture(
+                Path(temporary),
+                map_text=_provider_map_text(symbols=[]),
+            )
+            evidence = collect_product_native_evidence(
+                graph,
+                "product",
+                "msvc-x64-debug",
+                build_observed=True,
+            )
+            link = evidence["link"]
+            self.assertFalse(validate_output_provider_evidence_for_final_image(link)["valid"])
+            self.assertTrue(
+                validate_output_provider_evidence_for_final_image(
+                    link,
+                    graph=graph,
+                    expected_backend="cpp",
+                )["valid"]
+            )
+            self.assertFalse(
+                validate_output_provider_evidence_for_final_image(
+                    link,
+                    expected_backend="rust",
+                )["valid"]
+            )
+            self.assertEqual([], link["output_provider_member_evidence"]["members"])
+            self.assertEqual(0, link["output_provider_member_evidence"]["member_count"])
+            self.assertEqual([], link["output_provider_symbol_evidence"]["symbols"])
+            self.assertEqual(0, link["output_provider_symbol_evidence"]["symbol_count"])
+            self.assertEqual(1, link["output_provider_member_evidence"]["archive_input_count"])
+
+            for path, field, value in (
+                ("output_provider_symbol_evidence", "symbols", [EXPECTED_OUTPUT_PROVIDER_SYMBOLS[0]]),
+                ("output_provider_member_evidence", "members", ["unexpected.obj"]),
+                ("output_provider_member_evidence", "archive_name", "sakura_native_ffi.lib"),
+                ("output_provider_member_evidence", "archive_input_count", 2),
+                ("output_provider_member_evidence", "member_count", False),
+                ("output_provider_member_evidence", "contributing_archive_count", False),
+                ("output_provider_member_evidence", "missing_symbols", []),
+                ("output_provider_symbol_evidence", "symbol_count", False),
+                ("output_provider_symbol_evidence", "duplicate_count", 1),
+            ):
+                malformed = copy.deepcopy(link)
+                malformed[path][field] = value
+                self.assertFalse(
+                    validate_output_provider_evidence_for_final_image(
+                        malformed,
+                        expected_backend="cpp",
+                    )["valid"],
+                    (path, field),
+                )
+            missing_archive_name = copy.deepcopy(link)
+            del missing_archive_name["output_provider_member_evidence"]["archive_name"]
+            self.assertFalse(
+                validate_output_provider_evidence_for_final_image(
+                    missing_archive_name,
+                    expected_backend="cpp",
+                )["valid"]
+            )
+            symbol_archive_count = copy.deepcopy(link)
+            symbol_archive_count["output_provider_symbol_evidence"]["contributing_archive_count"] = 1
+            self.assertFalse(
+                validate_output_provider_evidence_for_final_image(
+                    symbol_archive_count,
+                    expected_backend="cpp",
+                )["valid"]
+            )
+            mixed = copy.deepcopy(link)
+            mixed["output_provider_member_evidence"]["observed"] = True
+            self.assertFalse(
+                validate_output_provider_evidence_for_final_image(
+                    mixed,
+                    expected_backend="cpp",
+                )["valid"]
+            )
+
+    def test_final_image_positive_provider_requires_one_member_and_strict_archive_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            graph, _tlog, _executable, _map_path, _archive = _provider_map_fixture(Path(temporary))
+            evidence = collect_product_native_evidence(
+                graph,
+                "product",
+                "msvc-x64-debug",
+                build_observed=True,
+            )
+            original = evidence["link"]
+            one_member = original["output_provider_member_evidence"]["members"][0]
+            two_members = [one_member, "other-provider.obj"]
+            contributions = [
+                {
+                    "symbol": symbol,
+                    "archive": "sakura_native_ffi.lib",
+                    "member": two_members[index % 2],
+                }
+                for index, symbol in enumerate(EXPECTED_OUTPUT_PROVIDER_SYMBOLS)
+            ]
+            two_member_link = copy.deepcopy(original)
+            two_member_link["output_provider_member_evidence"]["members"] = two_members
+            two_member_link["output_provider_member_evidence"]["member_count"] = 2
+            two_member_link["output_provider_member_evidence"]["contributing_members"] = two_members
+            two_member_link["output_provider_member_evidence"]["contributions"] = contributions
+            two_member_link["output_provider_symbol_evidence"]["contributing_members"] = two_members
+            two_member_link["output_provider_symbol_evidence"]["contributions"] = contributions
+            for backend in (None, "cpp", "rust"):
+                validation = validate_output_provider_evidence_for_final_image(
+                    two_member_link,
+                    expected_backend=backend,
+                )
+                self.assertFalse(validation["valid"], backend)
+
+            for evidence_name in (
+                "output_provider_member_evidence",
+                "output_provider_symbol_evidence",
+            ):
+                for value in (True, 1.0):
+                    malformed = copy.deepcopy(original)
+                    malformed[evidence_name]["contributing_archive_count"] = value
+                    for backend in (None, "cpp", "rust"):
+                        validation = validate_output_provider_evidence_for_final_image(
+                            malformed,
+                            expected_backend=backend,
+                        )
+                        self.assertFalse(validation["valid"], (evidence_name, value, backend))
+
     def test_realistic_msvc_map_collector_shape_binds_to_final_image(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             graph, _tlog, executable, map_path, _archive = _provider_map_fixture(Path(temporary))

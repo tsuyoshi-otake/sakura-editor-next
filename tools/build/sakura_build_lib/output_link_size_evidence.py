@@ -30,7 +30,11 @@ from .output_final_image_evidence import (
     RECORD_KIND as FINAL_IMAGE_RECORD_KIND,
     validate_output_final_image_stage,
 )
-from .product_native_evidence import product_native_evidence_hash, product_native_evidence_source_hash
+from .product_native_evidence import (
+    product_native_evidence_hash,
+    product_native_evidence_source_hash,
+    validate_output_provider_evidence_for_final_image,
+)
 from .repository_path_safety import RepositoryPathSafetyError, safe_repository_path
 from .runner import BuildError
 
@@ -729,7 +733,11 @@ def _manifest_output_identity(manifest: Mapping[str, object], failures: list[str
 
 
 def _provider_member_evidence(
-    native: Mapping[str, object], repo_root: Path | None, failures: list[str]
+    native: Mapping[str, object],
+    repo_root: Path | None,
+    failures: list[str],
+    *,
+    expected_backend: str,
 ) -> tuple[str | None, int | None, int | None, str | None, str | None]:
     link = _mapping(_get(native, "link"))
     member_evidence = _mapping(
@@ -746,7 +754,23 @@ def _provider_member_evidence(
             _get(native, "output_provider_member_evidence", "outputProviderMemberEvidence")
         )
     observed = _get(member_evidence, "observed", "providerSpecific", "outputProvider") is True
-    if not observed:
+    symbol_evidence = _mapping(
+        _get(
+            link,
+            "output_provider_symbol_evidence",
+            "outputProviderSymbolEvidence",
+            "provider_symbol_evidence",
+            "providerSymbolEvidence",
+        )
+    )
+    if not symbol_evidence:
+        symbol_evidence = _mapping(_get(native, "output_provider_symbol_evidence", "outputProviderSymbolEvidence"))
+    negative_cpp = (
+        expected_backend == "cpp"
+        and _get(member_evidence, "observed", "providerSpecific", "outputProvider") is False
+        and _get(symbol_evidence, "observed", "providerSpecific", "outputProvider") is False
+    )
+    if not observed and not negative_cpp:
         _add_failure(failures, "PROVIDER_MEMBER_UNPROVEN")
     map_reference = _get(member_evidence, "map", "mapPath")
     map_hash = _normalise_hash(_get(member_evidence, "map_hash", "mapHash", "mapSha256"))
@@ -771,7 +795,7 @@ def _provider_member_evidence(
     members = _get(member_evidence, "members", "selectedMembers")
     member_count = _int_value(_get(member_evidence, "member_count", "memberCount"))
     member_hash: str | None = None
-    if not isinstance(members, list) or not members or len(members) > MAX_MEMBER_COUNT:
+    if not isinstance(members, list) or (not members and not negative_cpp) or len(members) > MAX_MEMBER_COUNT:
         _add_failure(failures, "PROVIDER_MEMBER_UNPROVEN")
     elif any(not isinstance(item, str) or not item.strip() for item in members):
         _add_failure(failures, "PROVIDER_MEMBER_UNPROVEN")
@@ -783,6 +807,8 @@ def _provider_member_evidence(
             member_hash = _sha256_bytes("\n".join(sorted(normalized, key=str.casefold)).encode("utf-8"))
             if member_count != len(normalized):
                 _add_failure(failures, "SELECTED_MEMBER_COUNT_MISMATCH")
+    if negative_cpp and members == [] and member_count != 0:
+        _add_failure(failures, "SELECTED_MEMBER_COUNT_MISMATCH")
     scope = _get(member_evidence, "archive", "library", "provider")
     if not isinstance(scope, str) or scope.strip().lower() not in {"provider", "output-provider", "output_provider"}:
         _add_failure(failures, "PROVIDER_MEMBER_SCOPE_UNPROVEN")
@@ -831,7 +857,9 @@ def _archive_identity(
     return archive_hash, archive_size, count
 
 
-def _provider_symbols(native: Mapping[str, object], failures: list[str]) -> tuple[int | None, int | None]:
+def _provider_symbols(
+    native: Mapping[str, object], failures: list[str], *, expected_backend: str
+) -> tuple[int | None, int | None]:
     link = _mapping(_get(native, "link"))
     evidence = _mapping(
         _get(
@@ -844,14 +872,38 @@ def _provider_symbols(native: Mapping[str, object], failures: list[str]) -> tupl
     )
     if not evidence:
         evidence = _mapping(_get(native, "output_provider_symbol_evidence", "outputProviderSymbolEvidence"))
-    if _get(evidence, "observed", "providerSpecific", "outputProvider") is not True:
+    link_member = _mapping(
+        _get(
+            link,
+            "output_provider_member_evidence",
+            "outputProviderMemberEvidence",
+            "provider_member_evidence",
+            "providerMemberEvidence",
+        )
+    )
+    if not link_member:
+        link_member = _mapping(_get(native, "output_provider_member_evidence", "outputProviderMemberEvidence"))
+    negative_cpp = (
+        expected_backend == "cpp"
+        and _get(evidence, "observed", "providerSpecific", "outputProvider") is False
+        and _get(link_member, "observed", "providerSpecific", "outputProvider") is False
+    )
+    if _get(evidence, "observed", "providerSpecific", "outputProvider") is not True and not negative_cpp:
         _add_failure(failures, "FINAL_PROVIDER_SYMBOL_UNPROVEN")
-        return None, None
     scope = _get(evidence, "scope", "provider", "kind")
     if not isinstance(scope, str) or scope.strip().lower() not in {"provider", "output-provider", "output_provider"}:
         _add_failure(failures, "FINAL_PROVIDER_SYMBOL_SCOPE_UNPROVEN")
     symbols = _get(evidence, "symbols", "definedSymbols", "definedProviderSymbols")
     symbol_count = _int_value(_get(evidence, "symbol_count", "symbolCount", "definedProviderSymbolCount"))
+    if negative_cpp and symbols == []:
+        if symbol_count != 0:
+            _add_failure(failures, "PROVIDER_SYMBOL_SET_MISMATCH")
+        duplicate = _int_value(_get(evidence, "duplicate_count", "duplicateCount", "duplicateProviderSymbolCount"))
+        if duplicate is None:
+            _add_failure(failures, "PROVIDER_SYMBOL_DUPLICATE_COUNT_UNPROVEN")
+        elif duplicate > 0:
+            _add_failure(failures, "DUPLICATE_PROVIDER_SYMBOLS")
+        return 0, duplicate
     if not isinstance(symbols, list) or any(not isinstance(item, str) for item in symbols):
         _add_failure(failures, "FINAL_PROVIDER_SYMBOL_UNPROVEN")
         symbol_count = None
@@ -869,6 +921,43 @@ def _provider_symbols(native: Mapping[str, object], failures: list[str]) -> tupl
     elif duplicate > 0:
         _add_failure(failures, "DUPLICATE_PROVIDER_SYMBOLS")
     return symbol_count, duplicate
+
+
+def _record_provider_contract_failures(
+    validation: object, failures: list[str]
+) -> None:
+    """Project native final-image provider failures into this report's codes.
+
+    ``product_native_evidence`` is the source of truth for the full provider
+    projection contract.  This report deliberately exposes only its bounded
+    failure vocabulary, so retain the category without copying the native
+    payload or silently accepting a malformed negative C++ projection.
+    """
+
+    if not isinstance(validation, Mapping) or validation.get("valid") is not True:
+        provider_failures = (
+            validation.get("failures")
+            if isinstance(validation, Mapping)
+            else None
+        )
+        codes = {
+            item.get("code")
+            for item in provider_failures
+            if isinstance(item, Mapping) and isinstance(item.get("code"), str)
+        } if isinstance(provider_failures, list) else set()
+        mapped = False
+        if any("SYMBOL" in code for code in codes):
+            _add_failure(failures, "FINAL_PROVIDER_SYMBOL_UNPROVEN")
+            mapped = True
+        if any("MEMBER" in code or "UNPROVEN" in code for code in codes):
+            _add_failure(failures, "PROVIDER_MEMBER_UNPROVEN")
+            mapped = True
+        if any("MAP" in code for code in codes):
+            _add_failure(failures, "MAP_UNPROVEN")
+            mapped = True
+        if not mapped:
+            _add_failure(failures, "PROVIDER_MEMBER_UNPROVEN")
+            _add_failure(failures, "FINAL_PROVIDER_SYMBOL_UNPROVEN")
 
 
 def _consensus(values: Sequence[object]) -> object:
@@ -1099,6 +1188,18 @@ def build_output_link_size_evidence(
             _add_failure(failures, "NATIVE_EVIDENCE_HASH_UNPROVEN")
         elif not _native_hard_hash_matches(native):
             _add_failure(failures, "NATIVE_EVIDENCE_TAMPERED")
+        # The MAP projection is not selector proof by itself.  Validate its
+        # backend-aware shape here, after the manifest selector above has been
+        # checked: Rust remains exact 7/1, while C++ may use only the complete
+        # LTCG negative 0/0 projection.
+        try:
+            provider_validation = validate_output_provider_evidence_for_final_image(
+                _get(native, "link"),
+                expected_backend=backend,
+            )
+        except Exception:
+            provider_validation = None
+        _record_provider_contract_failures(provider_validation, failures)
 
     stage_summaries: dict[str, Mapping[str, object]] = {}
     for backend in _EXPECTED_BACKENDS:
@@ -1144,9 +1245,12 @@ def build_output_link_size_evidence(
             native_values[backend],
             None if require_immutable_stage else repo_root,
             failures,
+            expected_backend=backend,
         )
         archive_hash, archive_size, archive_count = _archive_identity(native_values[backend], proofs[backend], failures)
-        symbol_count, duplicate_count = _provider_symbols(native_values[backend], failures)
+        symbol_count, duplicate_count = _provider_symbols(
+            native_values[backend], failures, expected_backend=backend
+        )
         link_command_hash = _native_link_command_hash(native_values[backend])
         if link_command_hash is None:
             _add_failure(failures, "LINK_COMMAND_UNPROVEN")

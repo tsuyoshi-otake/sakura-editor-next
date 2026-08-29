@@ -114,6 +114,45 @@ def _strict_native_fixture() -> dict[str, object]:
     return native
 
 
+def _cpp_ltcg_negative_native_fixture() -> dict[str, object]:
+    """Build the complete C++/LTCG proof that unused Rust exports are absent."""
+
+    native = _strict_native_fixture()
+    member = native["link"]["output_provider_member_evidence"]
+    symbols = native["link"]["output_provider_symbol_evidence"]
+    expected_missing = list(_EXPECTED_PROVIDER_SYMBOLS)
+    member.update(
+        {
+            "observed": False,
+            "archive_name": None,
+            "contributing_archives": [],
+            "contributing_archive_count": 0,
+            "contributing_members": [],
+            "members": [],
+            "member_count": 0,
+            "missing_symbols": expected_missing,
+            "unexpected_symbols": [],
+            "duplicate_count": 0,
+            "contributions": [],
+        }
+    )
+    symbols.update(
+        {
+            "observed": False,
+            "symbols": [],
+            "symbol_count": 0,
+            "duplicate_count": 0,
+            "missing_symbols": expected_missing,
+            "unexpected_symbols": [],
+            "contributing_archives": [],
+            "contributing_members": [],
+            "contributions": [],
+        }
+    )
+    native["hard_evidence_hash"] = product_native_evidence_hash(native)
+    return native
+
+
 class OutputFinalImageEvidenceTests(unittest.TestCase):
     def _source_files(self, root: Path) -> tuple[Path, Path]:
         executable = root / "producer" / "sakura.exe"
@@ -331,6 +370,106 @@ class OutputFinalImageEvidenceTests(unittest.TestCase):
                     product_native_evidence_source_hash(bound),
                 )
                 self.assertEqual(bound["hard_evidence_hash"], product_native_evidence_hash(bound))
+
+    def test_cpp_ltcg_negative_provider_projection_preserves_zero_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            native = _cpp_ltcg_negative_native_fixture()
+            link = native["link"]
+            self.assertFalse(validate_output_provider_evidence_for_final_image(link)["valid"])
+            self.assertTrue(
+                validate_output_provider_evidence_for_final_image(
+                    link,
+                    expected_backend="cpp",
+                )["valid"]
+            )
+            self.assertFalse(
+                validate_output_provider_evidence_for_final_image(
+                    link,
+                    expected_backend="rust",
+                )["valid"]
+            )
+            receipt = self._stage(
+                root,
+                backend="cpp",
+                source_native_evidence_sha256=native["hard_evidence_hash"],
+                native_evidence=native,
+            )
+            bound = bind_native_evidence_to_final_image(native, receipt)
+            executable = root / "producer" / "sakura.exe"
+            result = validate_bound_native_evidence_for_final_image(
+                bound,
+                repo_root=root,
+                expected_stage_root=root / "staged-final-images",
+                expected_backend="cpp",
+                expected_platform="x64",
+                expected_configuration="Release",
+                expected_artifact_sha256=hashlib.sha256(executable.read_bytes()).hexdigest(),
+                expected_artifact_size_bytes=executable.stat().st_size,
+            )
+            self.assertEqual(0, result["provider"]["memberCount"])
+            self.assertEqual(0, result["provider"]["symbolCount"])
+            self.assertEqual(hashlib.sha256(b"cpp-map\n").hexdigest(), result["provider"]["mapSha256"][7:])
+            with self.assertRaises(OutputFinalImageEvidenceError) as raised:
+                self._stage(
+                    root,
+                    backend="rust",
+                    source_native_evidence_sha256=native["hard_evidence_hash"],
+                    native_evidence=native,
+                )
+            self.assertEqual("OUTPUT_FINAL_IMAGE_NATIVE_SCHEMA", raised.exception.code)
+
+    def test_positive_provider_projection_rejects_multiple_members_and_noninteger_archive_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            original = _strict_native_fixture()
+            member = original["link"]["output_provider_member_evidence"]
+            symbols = original["link"]["output_provider_symbol_evidence"]
+            two_members = [member["members"][0], "other-provider.obj"]
+            contributions = [
+                {
+                    "symbol": symbol,
+                    "archive": "sakura_native_ffi.lib",
+                    "member": two_members[index % 2],
+                }
+                for index, symbol in enumerate(_EXPECTED_PROVIDER_SYMBOLS)
+            ]
+            member["members"] = two_members
+            member["member_count"] = 2
+            member["contributing_members"] = two_members
+            member["contributions"] = contributions
+            symbols["contributing_members"] = two_members
+            symbols["contributions"] = contributions
+            original["hard_evidence_hash"] = product_native_evidence_hash(original)
+            with self.assertRaises(OutputFinalImageEvidenceError) as raised:
+                self._stage(
+                    root,
+                    backend="cpp",
+                    source_native_evidence_sha256=original["hard_evidence_hash"],
+                    native_evidence=original,
+                )
+            self.assertEqual("OUTPUT_FINAL_IMAGE_NATIVE_SCHEMA", raised.exception.code)
+
+            for evidence_name in (
+                "output_provider_member_evidence",
+                "output_provider_symbol_evidence",
+            ):
+                for value in (True, 1.0):
+                    malformed = _strict_native_fixture()
+                    malformed["link"][evidence_name]["contributing_archive_count"] = value
+                    malformed["hard_evidence_hash"] = product_native_evidence_hash(malformed)
+                    with self.assertRaises(OutputFinalImageEvidenceError) as raised:
+                        self._stage(
+                            root,
+                            backend="cpp",
+                            source_native_evidence_sha256=malformed["hard_evidence_hash"],
+                            native_evidence=malformed,
+                        )
+                    self.assertEqual(
+                        "OUTPUT_FINAL_IMAGE_NATIVE_SCHEMA",
+                        raised.exception.code,
+                        (evidence_name, value),
+                    )
 
     def test_strict_native_stage_rejects_unproven_provider_without_publishing(self) -> None:
         for case in ("missing", "false", "malformed"):

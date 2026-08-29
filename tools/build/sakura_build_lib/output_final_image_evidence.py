@@ -513,7 +513,7 @@ def stage_output_final_image(
 
         link = native_evidence.get("link")
         provider_validation = (
-            validate_output_provider_evidence_for_final_image(link)
+            validate_output_provider_evidence_for_final_image(link, expected_backend=backend)
             if isinstance(link, Mapping)
             else {"valid": False}
         )
@@ -721,7 +721,10 @@ def bind_native_evidence_to_final_image(
     ):
         raise OutputFinalImageEvidenceError("OUTPUT_FINAL_IMAGE_NATIVE_MISMATCH", "native EXE identity does not match receipt")
 
-    provider_validation = validate_output_provider_evidence_for_final_image(link)
+    provider_validation = validate_output_provider_evidence_for_final_image(
+        link,
+        expected_backend=normalized["backend"],
+    )
     if not provider_validation["valid"]:
         raise OutputFinalImageEvidenceError(
             "OUTPUT_FINAL_IMAGE_NATIVE_SCHEMA",
@@ -1028,7 +1031,10 @@ def validate_bound_native_evidence_for_final_image(
                 "OUTPUT_FINAL_IMAGE_NATIVE_SCHEMA",
             )
     try:
-        provider_validation = validate_output_provider_evidence_for_final_image(link)
+        provider_validation = validate_output_provider_evidence_for_final_image(
+            link,
+            expected_backend=expected_backend,
+        )
     except Exception as error:
         raise _typed_failure("OUTPUT_FINAL_IMAGE_PROVIDER_UNPROVEN") from error
     if (
