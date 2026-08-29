@@ -63,6 +63,7 @@ mkdir %INSTALLER_WORK%\license\seti\
 mkdir %INSTALLER_WORK%\license\fmt\
 mkdir %INSTALLER_WORK%\license\ms-gsl\
 mkdir %INSTALLER_WORK%\license\wil\
+mkdir %INSTALLER_WORK%\terminal-tools\
 
 set BREGONIG_DLL=bregonig.dll
 set MIGEMO_DLL=migemo.dll
@@ -83,6 +84,10 @@ if not exist "%platform%\%configuration%\%SENP_TOOL_EXE%" (
 )
 if not exist "%platform%\%configuration%\%SENP_HOST_EXE%" (
 	echo error: %platform%\%configuration%\%SENP_HOST_EXE% was not staged by the product build.
+	exit /b 1
+)
+for %%T in (sakura-tmux.exe tmux.exe sakura-harness.exe) do if not exist "%platform%\%configuration%\terminal-tools\%%T" (
+	echo error: %platform%\%configuration%\terminal-tools\%%T was not staged by the product build.
 	exit /b 1
 )
 if not exist "%BREGONIG_LICENSE_DIR%\bsd_license.txt" (
@@ -162,6 +167,7 @@ copy /Y /B help\macro\macro.chm                             %INSTALLER_WORK%\ > 
 
 copy /Y /B %platform%\%configuration%\*.exe                 %INSTALLER_WORK%\ > NUL
 copy /Y /B %platform%\%configuration%\*.dll                 %INSTALLER_WORK%\ > NUL
+copy /Y /B %platform%\%configuration%\terminal-tools\*.exe  %INSTALLER_WORK%\terminal-tools\ > NUL || (echo error copying terminal harness tools && exit /b 1)
 
 if not exist "build\logs" mkdir build\logs
 py -3 "%~dp0tools\verify_runtime_artifact_identity.py" --staged "%platform%\%configuration%" --installer-work "%INSTALLER_WORK%" --clean-extract "installer\temp\runtime-identity-%platform%-%configuration%-work" --report "build\logs\runtime-artifact-identity-%platform%-%configuration%-installer-work.json" || (echo error: staged runtime files do not match the installer work directory && exit /b 1)

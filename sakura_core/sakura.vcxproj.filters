@@ -96,6 +96,9 @@
     <Filter Include="Cpp Source Files\terminal">
       <UniqueIdentifier>{31051744-76c5-4f83-b65b-1988019d1b7c}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Cpp Source Files\terminal\runtime">
+      <UniqueIdentifier>{e1d1442d-74d0-4c1d-a26b-52ff560fda26}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Cpp Source Files\terminal\window">
       <UniqueIdentifier>{b8c06cdf-2969-48be-883a-c56ad6a838fd}</UniqueIdentifier>
     </Filter>
@@ -1656,8 +1659,50 @@
     <ClInclude Include="..\sakura_core\terminal\session\TerminalSession.h">
       <Filter>Cpp Source Files\terminal</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\terminal\session\TerminalEnvironment.h">
+      <Filter>Cpp Source Files\terminal</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\terminal\TerminalSessionRetirementService.h">
       <Filter>Cpp Source Files\terminal</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\terminal\runtime\ITerminalRuntimeService.h">
+      <Filter>Cpp Source Files\terminal\runtime</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\terminal\runtime\TerminalRuntimeTypes.h">
+      <Filter>Cpp Source Files\terminal\runtime</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\terminal\runtime\TerminalInstance.h">
+      <Filter>Cpp Source Files\terminal\runtime</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\terminal\runtime\TerminalCollectionModel.h">
+      <Filter>Cpp Source Files\terminal\runtime</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\terminal\runtime\TerminalInputBatch.h">
+      <Filter>Cpp Source Files\terminal\runtime</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\terminal\runtime\TerminalCaptureIndex.h">
+      <Filter>Cpp Source Files\terminal\runtime</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\terminal\runtime\TerminalCaptureExtraction.h">
+      <Filter>Cpp Source Files\terminal\runtime</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\terminal\runtime\TerminalRuntimeService.h">
+      <Filter>Cpp Source Files\terminal\runtime</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\terminal\DefaultTerminalLaunchProfileService.h">
+      <Filter>Cpp Source Files\terminal</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\terminal\tmux\TmuxRuntimeAdapter.h">
+      <Filter>Cpp Source Files\terminal</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\terminal\tmux\TmuxWaitChannelService.h">
+      <Filter>Cpp Source Files\terminal</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\tasks\RuntimeTaskTerminalSessionFactory.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\_main\TerminalHarnessProcessRuntime.h">
+      <Filter>Cpp Source Files\_main</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\terminal\window\CTerminalTool.h">
       <Filter>Cpp Source Files\terminal\window</Filter>
@@ -3479,6 +3524,42 @@
     </ClCompile>
     <ClCompile Include="..\sakura_core\terminal\session\TerminalSession.cpp">
       <Filter>Cpp Source Files\terminal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\terminal\session\TerminalEnvironment.cpp">
+      <Filter>Cpp Source Files\terminal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\terminal\runtime\TerminalInstance.cpp">
+      <Filter>Cpp Source Files\terminal\runtime</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\terminal\runtime\TerminalCollectionModel.cpp">
+      <Filter>Cpp Source Files\terminal\runtime</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\terminal\runtime\TerminalInputBatch.cpp">
+      <Filter>Cpp Source Files\terminal\runtime</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\terminal\runtime\TerminalCaptureIndex.cpp">
+      <Filter>Cpp Source Files\terminal\runtime</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\terminal\runtime\TerminalCaptureExtraction.cpp">
+      <Filter>Cpp Source Files\terminal\runtime</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\terminal\runtime\TerminalRuntimeService.cpp">
+      <Filter>Cpp Source Files\terminal\runtime</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\terminal\DefaultTerminalLaunchProfileService.cpp">
+      <Filter>Cpp Source Files\terminal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\terminal\tmux\TmuxRuntimeAdapter.cpp">
+      <Filter>Cpp Source Files\terminal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\terminal\tmux\TmuxWaitChannelService.cpp">
+      <Filter>Cpp Source Files\terminal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\tasks\RuntimeTaskTerminalSessionFactory.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\_main\TerminalHarnessProcessRuntime.cpp">
+      <Filter>Cpp Source Files\_main</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\terminal\window\CTerminalTool.cpp">
       <Filter>Cpp Source Files\terminal\window</Filter>

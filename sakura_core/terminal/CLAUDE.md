@@ -1,5 +1,28 @@
 # P3 Terminal and Task Backend Guidance
 
+## Sakura-scoped tmux facade and Harness Bridge (Issue #277)
+
+The editor process owns one shared `CTerminalRuntimeService` and one authenticated
+Harness Bridge. Terminal panels and Task runs are projections/clients of that
+runtime; they must not create a second terminal authority. The bridge is a
+current-user, editor-local named-pipe boundary whose capability, immutable
+profile/editor/runtime coordinates, PID creation time, and Job membership all
+have to match. Missing or stale identity fails closed.
+
+`terminal-tools/sakura-tmux.exe` and its byte-identical `tmux.exe` alias expose
+only the documented tmux 3.7c command subset. This is a fork extension, not an
+upstream tmux server and not a VS Code capability. `sakura-harness.exe` owns the
+separate structured message/run namespace; do not advertise those operations as
+tmux commands. Unsupported commands and options must terminate explicitly with
+nonzero status instead of approximating a different Sakura action.
+
+Only interactive integrated-terminal children receive the three capability
+environment variables and a prepend of the package-owned `terminal-tools`
+directory. Task children explicitly remove those variables and never receive
+the shim path. Do not mutate the editor process, user, or system PATH. Terminal
+content and structured payloads remain absent from diagnostics; queues, capture,
+input, waits, frames, argv, stdin, and responses all retain hard bounds.
+
 ## Ownership
 
 The terminal session service owns PTY/process creation, environment, input,

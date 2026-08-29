@@ -27,6 +27,7 @@
 namespace platform::controlipc {
 class CEditorControlPlatformRuntime;
 }
+class CTerminalHarnessProcessRuntime;
 
 /*-----------------------------------------------------------------------
 クラスの宣言
@@ -41,6 +42,10 @@ public:
 	//コンストラクタ・デストラクタ
 	CNormalProcess( HINSTANCE hInstance, LPCWSTR lpCmdLine );
 	~CNormalProcess();
+	[[nodiscard]] std::shared_ptr<terminal::CTerminalRuntimeService>
+		GetTerminalRuntimeService() const noexcept override;
+	[[nodiscard]] std::shared_ptr<terminal::CDefaultTerminalLaunchProfileService>
+		GetTerminalLaunchProfiles() const noexcept override;
 
 protected:
 	//プロセスハンドラ
@@ -55,10 +60,12 @@ protected:
 private:
 	bool StartEditorControlPlatform();
 	void StopEditorControlPlatform() noexcept;
+	void StopTerminalHarnessRuntime() noexcept;
 
 	CEditApp*	m_pcEditApp = nullptr;	//2007.10.23 kobake
 	CMigemo		m_cMigemo;
 	std::unique_ptr<platform::controlipc::CEditorControlPlatformRuntime> m_editorControlPlatformRuntime;
+	std::unique_ptr<CTerminalHarnessProcessRuntime> m_terminalHarnessRuntime;
 };
 
 #endif /* SAKURA_CNORMALPROCESS_F2808B31_61DC_4BE0_8661_9626478AC7F9_H_ */

@@ -3,7 +3,8 @@
 Issue #183: a green compile does not prove the tested bregonig.dll / migemo.dll
 is the DLL that packaging ships. This tool hashes the staged files, extracts
 packaging outputs into a fresh directory, and compares the bytes. Issue #260
-extends that same fail-closed contract to the two required SENP executables.
+extends that same fail-closed contract to the two required SENP executables,
+and Issue #277 extends it to the three scoped terminal orchestration tools.
 
 It is invoked from build-installer.bat and zipArtifacts.bat. A source-level
 script inspection is not a substitute for this comparison.
@@ -27,6 +28,9 @@ RUNTIME_NAMES = (
     "migemo.dll",
     "sakura-senp-tool.exe",
     "sakura-senp-host.exe",
+    "sakura-tmux.exe",
+    "tmux.exe",
+    "sakura-harness.exe",
 )
 CHUNK = 1024 * 1024
 

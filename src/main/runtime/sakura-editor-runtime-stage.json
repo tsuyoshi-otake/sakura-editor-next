@@ -22,6 +22,24 @@
           "destination": "build/staging/msvc-x64-debug/sakura-editor/sakura_lang_zh_CN.dll",
           "role": "language-zh-cn",
           "source": "x64/Debug/sakura_lang_zh_CN.dll"
+        },
+        {
+          "artifact_id": "sakura-terminal-tools-msvc-x64-debug-product",
+          "destination": "build/staging/msvc-x64-debug/sakura-editor/terminal-tools/sakura-tmux.exe",
+          "role": "terminal-tmux-facade",
+          "source": "x64/Debug/terminal-tools/sakura-tmux.exe"
+        },
+        {
+          "artifact_id": "sakura-terminal-tools-msvc-x64-debug-product",
+          "destination": "build/staging/msvc-x64-debug/sakura-editor/terminal-tools/tmux.exe",
+          "role": "terminal-tmux-alias",
+          "source": "x64/Debug/terminal-tools/tmux.exe"
+        },
+        {
+          "artifact_id": "sakura-terminal-tools-msvc-x64-debug-product",
+          "destination": "build/staging/msvc-x64-debug/sakura-editor/terminal-tools/sakura-harness.exe",
+          "role": "terminal-harness-client",
+          "source": "x64/Debug/terminal-tools/sakura-harness.exe"
         }
       ]
     },
@@ -46,6 +64,24 @@
           "destination": "build/staging/msvc-x64-release/sakura-editor/sakura_lang_zh_CN.dll",
           "role": "language-zh-cn",
           "source": "x64/Release/sakura_lang_zh_CN.dll"
+        },
+        {
+          "artifact_id": "sakura-terminal-tools-msvc-x64-release-product",
+          "destination": "build/staging/msvc-x64-release/sakura-editor/terminal-tools/sakura-tmux.exe",
+          "role": "terminal-tmux-facade",
+          "source": "x64/Release/terminal-tools/sakura-tmux.exe"
+        },
+        {
+          "artifact_id": "sakura-terminal-tools-msvc-x64-release-product",
+          "destination": "build/staging/msvc-x64-release/sakura-editor/terminal-tools/tmux.exe",
+          "role": "terminal-tmux-alias",
+          "source": "x64/Release/terminal-tools/tmux.exe"
+        },
+        {
+          "artifact_id": "sakura-terminal-tools-msvc-x64-release-product",
+          "destination": "build/staging/msvc-x64-release/sakura-editor/terminal-tools/sakura-harness.exe",
+          "role": "terminal-harness-client",
+          "source": "x64/Release/terminal-tools/sakura-harness.exe"
         }
       ]
     }

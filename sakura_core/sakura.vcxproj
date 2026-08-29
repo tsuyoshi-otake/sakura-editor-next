@@ -41,6 +41,10 @@
   </PropertyGroup>
   <PropertyGroup Label="BuildOptions">
     <SAKURA_GENERATE_ASSEMBLY_LISTINGS Condition="'$(SAKURA_GENERATE_ASSEMBLY_LISTINGS)'==''">false</SAKURA_GENERATE_ASSEMBLY_LISTINGS>
+    <SakuraTerminalToolsContext Condition="'$(Configuration)'=='Debug'">msvc-x64-debug</SakuraTerminalToolsContext>
+    <SakuraTerminalToolsContext Condition="'$(Configuration)'=='Release'">msvc-x64-release</SakuraTerminalToolsContext>
+    <SakuraTerminalToolsExe>..\build\components\$(SakuraTerminalToolsContext)\sakura_terminal_tools\bin\sakura_terminal_tools.exe</SakuraTerminalToolsExe>
+    <SakuraTerminalToolsOutDir>$(SakuraSharedOutDir)terminal-tools\</SakuraTerminalToolsOutDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)'=='Debug'">
     <LinkIncremental>false</LinkIncremental>
@@ -550,7 +554,21 @@
     <ClInclude Include="..\sakura_core\terminal\vendor\windows_terminal\src\terminal\parser\IStateMachineEngine.hpp" />
     <ClInclude Include="..\sakura_core\terminal\vendor\windows_terminal\src\terminal\parser\stateMachine.hpp" />
     <ClInclude Include="..\sakura_core\terminal\session\TerminalSession.h" />
+    <ClInclude Include="..\sakura_core\terminal\session\TerminalEnvironment.h" />
     <ClInclude Include="..\sakura_core\terminal\TerminalSessionRetirementService.h" />
+    <ClInclude Include="..\sakura_core\terminal\runtime\ITerminalRuntimeService.h" />
+    <ClInclude Include="..\sakura_core\terminal\runtime\TerminalRuntimeTypes.h" />
+    <ClInclude Include="..\sakura_core\terminal\runtime\TerminalInstance.h" />
+    <ClInclude Include="..\sakura_core\terminal\runtime\TerminalCollectionModel.h" />
+    <ClInclude Include="..\sakura_core\terminal\runtime\TerminalInputBatch.h" />
+    <ClInclude Include="..\sakura_core\terminal\runtime\TerminalCaptureIndex.h" />
+    <ClInclude Include="..\sakura_core\terminal\runtime\TerminalCaptureExtraction.h" />
+    <ClInclude Include="..\sakura_core\terminal\runtime\TerminalRuntimeService.h" />
+    <ClInclude Include="..\sakura_core\terminal\DefaultTerminalLaunchProfileService.h" />
+    <ClInclude Include="..\sakura_core\terminal\tmux\TmuxRuntimeAdapter.h" />
+    <ClInclude Include="..\sakura_core\terminal\tmux\TmuxWaitChannelService.h" />
+    <ClInclude Include="..\sakura_core\workbench\tasks\RuntimeTaskTerminalSessionFactory.h" />
+    <ClInclude Include="..\sakura_core\_main\TerminalHarnessProcessRuntime.h" />
     <ClInclude Include="..\sakura_core\terminal\window\CTerminalTool.h" />
     <ClInclude Include="..\sakura_core\terminal\window\CTerminalWnd.h" />
     <ClInclude Include="..\sakura_core\terminal\window\TerminalNativeFrameBridge.h" />
@@ -1259,6 +1277,18 @@
     <ClCompile Include="..\sakura_core\terminal\parser\TerminalParser.cpp" />
     <ClCompile Include="..\sakura_core\terminal\session\ConPtyTerminalBackend.cpp" />
     <ClCompile Include="..\sakura_core\terminal\session\TerminalSession.cpp" />
+    <ClCompile Include="..\sakura_core\terminal\session\TerminalEnvironment.cpp" />
+    <ClCompile Include="..\sakura_core\terminal\runtime\TerminalInstance.cpp" />
+    <ClCompile Include="..\sakura_core\terminal\runtime\TerminalCollectionModel.cpp" />
+    <ClCompile Include="..\sakura_core\terminal\runtime\TerminalInputBatch.cpp" />
+    <ClCompile Include="..\sakura_core\terminal\runtime\TerminalCaptureIndex.cpp" />
+    <ClCompile Include="..\sakura_core\terminal\runtime\TerminalCaptureExtraction.cpp" />
+    <ClCompile Include="..\sakura_core\terminal\runtime\TerminalRuntimeService.cpp" />
+    <ClCompile Include="..\sakura_core\terminal\DefaultTerminalLaunchProfileService.cpp" />
+    <ClCompile Include="..\sakura_core\terminal\tmux\TmuxRuntimeAdapter.cpp" />
+    <ClCompile Include="..\sakura_core\terminal\tmux\TmuxWaitChannelService.cpp" />
+    <ClCompile Include="..\sakura_core\workbench\tasks\RuntimeTaskTerminalSessionFactory.cpp" />
+    <ClCompile Include="..\sakura_core\_main\TerminalHarnessProcessRuntime.cpp" />
     <ClCompile Include="..\sakura_core\terminal\window\CTerminalTool.cpp" />
     <ClCompile Include="..\sakura_core\terminal\window\CTerminalWnd.cpp" />
     <ClCompile Include="..\sakura_core\terminal\window\TerminalBuiltinGlyphRenderer.cpp" />
@@ -1462,6 +1492,14 @@
   </ItemGroup>
   <Import Project="..\src\main\modules\generated\msbuild\consumers\sakura_app.props"
           Condition="Exists('..\src\main\modules\generated\msbuild\consumers\sakura_app.props')" />
+  <ItemGroup>
+    <ProjectReference Include="..\src\main\modules\generated\msbuild\projects\sakura_terminal_tools.vcxproj">
+      <Project>{13D93858-8EF3-58DE-B9CC-EF4293BD907A}</Project>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
+      <UseLibraryDependencyInputs>false</UseLibraryDependencyInputs>
+    </ProjectReference>
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
@@ -1523,6 +1561,18 @@
   <Target Name="GenerateDiff" Condition="!Exists('$(SakuraSharedOutDir)diff.exe')" AfterTargets="Link">
     <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' --build '$(CMakeToolsPath)' --config $(Configuration) --target generate_diffutils -- /nologo /nr:false /p:TrackFileAccess=false&quot;" EnvironmentVariables="$(CMakeBuildEnvironmentVariables)" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" WorkingDirectory="..\" />
   </Target>
+  <Target Name="StageSakuraTerminalTools"
+          AfterTargets="Link"
+          Inputs="$(SakuraTerminalToolsExe)"
+          Outputs="$(SakuraTerminalToolsOutDir)sakura-tmux.exe;$(SakuraTerminalToolsOutDir)tmux.exe;$(SakuraTerminalToolsOutDir)sakura-harness.exe">
+    <Error Condition="!Exists('$(SakuraTerminalToolsExe)')"
+           Code="SAKURA0277"
+           Text="The generated Sakura terminal tools executable was not built: $(SakuraTerminalToolsExe)" />
+    <MakeDir Directories="$(SakuraTerminalToolsOutDir)" />
+    <Copy SourceFiles="$(SakuraTerminalToolsExe)" DestinationFiles="$(SakuraTerminalToolsOutDir)sakura-tmux.exe" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(SakuraTerminalToolsExe)" DestinationFiles="$(SakuraTerminalToolsOutDir)tmux.exe" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(SakuraTerminalToolsExe)" DestinationFiles="$(SakuraTerminalToolsOutDir)sakura-harness.exe" SkipUnchangedFiles="true" />
+  </Target>
   <Target Name="RemoveSakuraExe" Condition="Exists('$(TargetPath)')" DependsOnTargets="GenerateSakuraExeManifest" BeforeTargets="Link" Inputs="@(ClCompile);@(ResourceCompile);$(CMakeToolsBuildDir)sakura.exe.manifest;$(MSBuildAllProjects)" Outputs="$(TargetPath)">
     <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File &quot;$(MSBuildProjectDirectory)\..\tools\Remove-FileWithRetry.ps1&quot; -LiteralPath &quot;$(TargetPath)&quot;" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
   </Target>
@@ -1543,6 +1593,9 @@
       <Clean Include="$(SakuraSharedOutDir)bregonig.dll" />
       <Clean Include="$(SakuraSharedOutDir)migemo.dll" />
       <Clean Include="$(SakuraSharedOutDir)ctags.exe" />
+      <Clean Include="$(SakuraTerminalToolsOutDir)sakura-tmux.exe" />
+      <Clean Include="$(SakuraTerminalToolsOutDir)tmux.exe" />
+      <Clean Include="$(SakuraTerminalToolsOutDir)sakura-harness.exe" />
     </ItemGroup>
     <ItemGroup>
       <Clean Include="$(SakuraTestSupportLibrary)" />

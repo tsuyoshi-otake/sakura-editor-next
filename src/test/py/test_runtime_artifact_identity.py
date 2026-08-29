@@ -38,6 +38,9 @@ class RuntimeArtifactIdentityTests(unittest.TestCase):
             "migemo.dll": b"migemo-bytes",
             "sakura-senp-tool.exe": b"senp-tool-bytes",
             "sakura-senp-host.exe": b"senp-host-bytes",
+            "sakura-tmux.exe": b"sakura-tmux-bytes",
+            "tmux.exe": b"tmux-alias-bytes",
+            "sakura-harness.exe": b"harness-client-bytes",
         }
         for name, payload in payloads.items():
             (staged / name).write_bytes(payload)

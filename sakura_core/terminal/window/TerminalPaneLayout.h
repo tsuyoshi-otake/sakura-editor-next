@@ -2,6 +2,7 @@
 #pragma once
 
 #include "TerminalTabPresentation.h"
+#include "terminal/runtime/TerminalRuntimeTypes.h"
 
 #include <Windows.h>
 
@@ -11,14 +12,6 @@
 #include <vector>
 
 namespace terminal {
-
-//! Flat terminal-group orientation. VS Code's bottom Panel defaults to
-//! horizontal (side-by-side) panes; Sakura also allows vertical (stacked) panes
-//! as an intentional divergence from upstream's single-axis Panel restriction.
-enum class TerminalPaneOrientation : std::uint8_t {
-	Horizontal,
-	Vertical,
-};
 
 struct TerminalPaneLayoutInput {
 	RECT content{};

@@ -75,6 +75,7 @@
 #include "markdown/MarkdownRemoteImageFetcher.h"
 #include "markdown/MarkdownPreviewLayout.h"
 #include "terminal/window/CTerminalTool.h"
+#include "_main/CProcess.h"
 #include "terminal/model/TerminalModel.h"
 #include "theme/CThemeService.h"
 #include "theme/CColorThemeRegistry.h"
@@ -2912,7 +2913,13 @@ bool CEditWnd::InitializeWorkbench()
 
 	m_bottomWorkbenchPanel = std::make_unique<workbench::CWorkbenchPanelHost>(
 		workbench::WorkbenchEdge::Bottom, settings.m_nBottomPanelExtent96, commitExtent);
-	auto bottomPanelTool = std::make_unique<workbench::panel::CBottomPanelTool>();
+	terminal::TerminalTabManagerDependencies terminalDependencies;
+	if (auto* process = CProcess::getInstance()) {
+		terminalDependencies.runtimeService = process->GetTerminalRuntimeService();
+		terminalDependencies.launchProfiles = process->GetTerminalLaunchProfiles();
+	}
+	auto bottomPanelTool = std::make_unique<workbench::panel::CBottomPanelTool>(
+		std::move(terminalDependencies));
 	m_bottomPanelTool = bottomPanelTool.get();
 	m_terminalTool = bottomPanelTool->Terminal();
 	bottomPanelTool->SetTabSelectionCallback(

@@ -8,10 +8,8 @@
 #include "terminal/window/TerminalTabManager.h"
 
 #include "terminal/input/SakuraTerminalInputAdapter.h"
-#include "terminal/parser/TerminalParser.h"
 
 #include <algorithm>
-#include <filesystem>
 #include <limits>
 #include <utility>
 #include <windows.h>
@@ -21,13 +19,6 @@ namespace {
 
 constexpr wchar_t kDefaultTabLabel[] = L"PowerShell";
 
-std::wstring InitialTabLabel( const TerminalLaunchOptions& options )
-{
-	const std::filesystem::path executable(options.executablePath);
-	const auto stem = executable.stem().wstring();
-	return stem.empty() ? std::wstring(kDefaultTabLabel) : stem;
-}
-
 TerminalSize NormalizeSize( TerminalSize size ) noexcept
 {
 	size.columns = std::max<std::uint16_t>(1, size.columns);
@@ -35,53 +26,35 @@ TerminalSize NormalizeSize( TerminalSize size ) noexcept
 	return size;
 }
 
+HarnessOperationId MakeOperationId( const std::uint64_t value ) noexcept
+{
+	HarnessOperationId result;
+	for( std::size_t index = 0; index < sizeof(value) && index < result.value.size(); ++index ) {
+		result.value[index] = static_cast<std::uint8_t>(value >> (index * 8));
+	}
+	return result;
+}
+
 } // namespace
 
 struct TerminalTabManager::Impl {
 	struct Tab {
-		Tab( std::uint64_t tabId, TerminalSize size, std::size_t scrollbackLimit )
-			: id(tabId)
-			, input(std::make_unique<SakuraTerminalInputAdapter>())
-			, model(std::make_unique<TerminalModel>(size.columns, size.rows, scrollbackLimit))
-		{
-			parser = std::make_unique<TerminalParser>(*model, input.get(), [this](std::string_view response) {
-				if( !retirement || !retirement->Session() || response.empty() ) return;
-				static_cast<void>(retirement->Session()->QueueInput(std::span<const std::uint8_t>(
-					reinterpret_cast<const std::uint8_t*>(response.data()), response.size()), TerminalInputSource::Protocol));
-			});
-		}
-
 		std::uint64_t id{};
-		std::wstring processName{ kDefaultTabLabel };
-		std::wstring profileLabel{ kDefaultTabLabel };
-		//! Raw OSC 0/2 title. Empty until the process sets one; never a display title.
-		std::wstring sequenceTitle;
-		std::wstring initialWorkingDirectory;
-		std::unique_ptr<SakuraTerminalInputAdapter> input;
-		std::unique_ptr<TerminalModel> model;
-		std::unique_ptr<TerminalParser> parser;
-		std::unique_ptr<TerminalSessionRetirementLease> retirement;
-		TerminalSessionState state{ TerminalSessionState::Idle };
-		std::uint32_t errorCode{};
-		std::vector<std::uint8_t> pendingProtocolInput;
-		bool protocolInputRejected{};
-
-		CTerminalSession* Session() noexcept
-		{
-			return retirement ? retirement->Session() : nullptr;
-		}
-
-		const CTerminalSession* Session() const noexcept
-		{
-			return retirement ? retirement->Session() : nullptr;
-		}
+		TerminalInstanceId instanceId;
+		TerminalSessionId sessionId;
+		TerminalWindowId windowId;
+		TerminalPaneId paneId;
 	};
 
 	TerminalTabManagerDependencies dependencies;
 	TerminalTabEventCallback eventCallback;
+	std::shared_ptr<CTerminalRuntimeService> runtimeService;
+	TerminalSubscription runtimeSubscription;
+	bool ownsRuntimeService{};
 	std::vector<std::unique_ptr<Tab>> tabs;
 	std::optional<std::uint64_t> activeTabId;
 	std::uint64_t nextTabId{ 1 };
+	std::uint64_t nextReplacementId{ 1 };
 	std::size_t scrollbackLimit{ TerminalModel::kDefaultScrollbackLines };
 	bool closed{};
 	bool startedAnySession{};
@@ -98,133 +71,23 @@ struct TerminalTabManager::Impl {
 		return found == tabs.end() ? nullptr : found->get();
 	}
 
-	TerminalQueueInputResult QueueProtocolInput( Tab& tab, std::span<const std::uint8_t> bytes )
+	void OnRuntimeEvent( const TerminalInstanceEvent& event ) noexcept
 	{
-		if( bytes.empty() ) return TerminalQueueInputResult::Accepted;
-		if( !tab.Session() ) return TerminalQueueInputResult::NotRunning;
-		if( tab.pendingProtocolInput.empty() ) {
-			const auto result = tab.Session()->QueueInput(bytes, TerminalInputSource::Protocol);
-			if( result != TerminalQueueInputResult::QueueFull ) return result;
-		}
-		// Parser replies run on the UI thread. Preserve their order in a bounded
-		// local queue and make backpressure observable rather than dropping a
-		// DSR/DA response behind the session input limit.
-		if( bytes.size() > CTerminalSession::kInputLimitBytes - tab.pendingProtocolInput.size() ) {
-			tab.protocolInputRejected = true;
-			tab.errorCode = ERROR_BUFFER_OVERFLOW;
-			if( eventCallback ) eventCallback({ TerminalTabEventKind::StateChanged, tab.id, tab.state, tab.errorCode });
-			return TerminalQueueInputResult::QueueFull;
-		}
-		tab.pendingProtocolInput.insert(tab.pendingProtocolInput.end(), bytes.begin(), bytes.end());
-		return TerminalQueueInputResult::QueueFull;
-	}
-
-	TerminalQueueInputResult FlushPendingProtocolInput( Tab& tab )
-	{
-		if( tab.pendingProtocolInput.empty() ) return TerminalQueueInputResult::Accepted;
-		if( !tab.Session() ) {
-			tab.pendingProtocolInput.clear();
-			tab.protocolInputRejected = true;
-			tab.errorCode = ERROR_OPERATION_ABORTED;
-			if( eventCallback ) eventCallback({ TerminalTabEventKind::StateChanged, tab.id, tab.state, tab.errorCode });
-			return TerminalQueueInputResult::NotRunning;
-		}
-		const auto result = tab.Session()->QueueInput(tab.pendingProtocolInput, TerminalInputSource::Protocol);
-		if( result == TerminalQueueInputResult::Accepted ) {
-			tab.pendingProtocolInput.clear();
-			tab.protocolInputRejected = false;
-			if( tab.errorCode == ERROR_BUFFER_OVERFLOW ) tab.errorCode = 0;
-		} else if( result == TerminalQueueInputResult::NotRunning ) {
-			// The session owns no future writer once it has stopped. Finalize this
-			// deferred protocol payload here so the UI retry timer cannot become an
-			// accidental terminal state.
-			tab.pendingProtocolInput.clear();
-			tab.protocolInputRejected = true;
-			tab.errorCode = ERROR_OPERATION_ABORTED;
-			if( eventCallback ) eventCallback({ TerminalTabEventKind::StateChanged, tab.id, tab.state, tab.errorCode });
-		}
-		return result;
-	}
-
-	bool Start(
-		Tab& tab,
-		TerminalSize rawSize,
-		std::wstring_view workingDirectory,
-		std::unique_ptr<TerminalSessionRetirementLease> retirement = {} )
-	{
-		const auto size = NormalizeSize(rawSize);
-		tab.input = std::make_unique<SakuraTerminalInputAdapter>();
-		tab.model = std::make_unique<TerminalModel>(size.columns, size.rows, scrollbackLimit);
-		tab.parser = std::make_unique<TerminalParser>(*tab.model, tab.input.get(), [this, tabPtr = &tab](std::string_view response) {
-			if( response.empty() ) return;
-			static_cast<void>(QueueProtocolInput(*tabPtr, std::span<const std::uint8_t>(
-				reinterpret_cast<const std::uint8_t*>(response.data()), response.size())));
+		const auto found = std::find_if(tabs.begin(), tabs.end(), [&](const auto& tab) {
+			return tab->instanceId == event.coordinate.instanceId;
 		});
-		tab.state = TerminalSessionState::Starting;
-		tab.errorCode = 0;
-		if( !dependencies.resolveLaunch || !dependencies.createSession ) {
-			tab.state = TerminalSessionState::Failed;
-			tab.errorCode = ERROR_INVALID_FUNCTION;
-			if( eventCallback ) eventCallback({ TerminalTabEventKind::StateChanged, tab.id, tab.state, tab.errorCode });
-			return false;
-		}
-		auto launch = dependencies.resolveLaunch(size, workingDirectory);
-		if( !launch || launch->executablePath.empty() ) {
-			tab.state = TerminalSessionState::Failed;
-			tab.errorCode = ERROR_FILE_NOT_FOUND;
-			if( eventCallback ) eventCallback({ TerminalTabEventKind::StateChanged, tab.id, tab.state, tab.errorCode });
-			return false;
-		}
-		launch->initialSize = size;
-		if( launch->workingDirectory.empty() ) launch->workingDirectory.assign(workingDirectory);
-		tab.processName = InitialTabLabel(*launch);
-		tab.profileLabel = tab.processName;
-		tab.sequenceTitle.clear();
-		tab.initialWorkingDirectory = launch->workingDirectory;
-		if( !retirement ) retirement = TerminalSessionRetirementLease::TryCreate();
-		if( !retirement ) {
-			tab.state = TerminalSessionState::Failed;
-			tab.errorCode = ERROR_NOT_ENOUGH_MEMORY;
-			if( eventCallback ) eventCallback({ TerminalTabEventKind::StateChanged, tab.id, tab.state, tab.errorCode });
-			return false;
-		}
-		const auto callback = eventCallback;
-		const auto id = tab.id;
-		TerminalSessionCallbacks callbacks;
-		callbacks.outputAvailable = [callback, id] {
-			if( callback ) callback({ TerminalTabEventKind::OutputAvailable, id, TerminalSessionState::Running, 0 });
-		};
-		callbacks.stateChanged = [callback, id](TerminalSessionState state, std::uint32_t errorCode) {
-			if( callback ) callback({ TerminalTabEventKind::StateChanged, id, state, errorCode });
-		};
-		auto session = dependencies.createSession(std::move(callbacks));
-		if( !session ) {
-			tab.state = TerminalSessionState::Failed;
-			tab.errorCode = ERROR_NOT_ENOUGH_MEMORY;
-			if( eventCallback ) eventCallback({ TerminalTabEventKind::StateChanged, tab.id, tab.state, tab.errorCode });
-			return false;
-		}
-		retirement->Adopt(std::move(session));
-		tab.retirement = std::move(retirement);
-		startedAnySession = true;
-		TerminalStartResult result;
+		if (found == tabs.end() || !eventCallback) return;
+		TerminalTabEvent translated;
+		translated.kind = event.kind == TerminalInstanceEventKind::OutputAvailable
+			? TerminalTabEventKind::OutputAvailable : TerminalTabEventKind::StateChanged;
+		translated.tabId = (*found)->id;
+		translated.state = event.sessionState;
+		translated.errorCode = event.errorCode;
 		try {
-			result = tab.retirement->Session()->Start(*launch);
+			eventCallback(translated);
 		} catch( ... ) {
-			const auto retired = tab.retirement->RetireNow();
-			if( !retired.Accepted() ) std::terminate();
-			tab.retirement.reset();
-			throw;
+			// A projection callback is advisory and must not unwind a session worker.
 		}
-		tab.state = tab.retirement->Session()->GetState();
-		tab.errorCode = result.succeeded ? 0 : result.errorCode;
-		if( eventCallback ) eventCallback({ TerminalTabEventKind::StateChanged, tab.id, tab.state, tab.errorCode });
-		if( !result.succeeded ) {
-			const auto retired = tab.retirement->RetireNow();
-			if( !retired.Accepted() ) std::terminate();
-			tab.retirement.reset();
-		}
-		return result.succeeded;
 	}
 };
 
@@ -233,6 +96,22 @@ TerminalTabManager::TerminalTabManager( TerminalTabManagerDependencies dependenc
 {
 	m_impl->dependencies = std::move(dependencies);
 	m_impl->eventCallback = std::move(eventCallback);
+	if( m_impl->dependencies.runtimeService ) {
+		m_impl->runtimeService = std::move(m_impl->dependencies.runtimeService);
+		m_impl->ownsRuntimeService = false;
+	} else {
+		TerminalRuntimeServiceDependencies runtimeDependencies;
+		runtimeDependencies.createSession = m_impl->dependencies.createSession;
+		runtimeDependencies.resolveLaunch = m_impl->dependencies.resolveLaunch;
+		runtimeDependencies.decorateLaunch = m_impl->dependencies.decorateLaunch;
+		m_impl->runtimeService = std::make_shared<CTerminalRuntimeService>(std::move(runtimeDependencies));
+		m_impl->ownsRuntimeService = true;
+	}
+	if( m_impl->runtimeService ) {
+		m_impl->runtimeSubscription = m_impl->runtimeService->Subscribe([impl = m_impl.get()](const TerminalInstanceEvent& event) {
+			if( impl ) impl->OnRuntimeEvent(event);
+		});
+	}
 }
 
 TerminalTabManager::~TerminalTabManager()
@@ -253,8 +132,27 @@ std::optional<std::uint64_t> TerminalTabManager::AddTab( TerminalSize size, std:
 	if( m_impl->closed || m_impl->nextTabId == std::numeric_limits<std::uint64_t>::max() ) return std::nullopt;
 	try {
 		const auto id = m_impl->nextTabId++;
-		auto tab = std::make_unique<Impl::Tab>(id, NormalizeSize(size), m_impl->scrollbackLimit);
-		m_impl->Start(*tab, size, workingDirectory);
+		auto tab = std::make_unique<Impl::Tab>();
+		tab->id = id;
+		TerminalSessionCreateRequest request;
+		request.operationId = MakeOperationId(id);
+		request.name = std::to_string(id);
+		TerminalLaunchOptions launch;
+		launch.initialSize = NormalizeSize(size);
+		launch.workingDirectory.assign(workingDirectory);
+		request.launch = std::move(launch);
+		const auto created = m_impl->runtimeService
+			? m_impl->runtimeService->CreateSession(request) : TerminalTopologyResult{};
+		if( !created.instanceId || !created.instanceId->IsValid() ) return std::nullopt;
+		tab->instanceId = *created.instanceId;
+		if( created.sessionId ) tab->sessionId = *created.sessionId;
+		if( created.windowId ) tab->windowId = *created.windowId;
+		if( created.paneId ) tab->paneId = *created.paneId;
+		if( auto* model = m_impl->runtimeService->Model(tab->instanceId) ) {
+			model->SetScrollbackLimit(m_impl->scrollbackLimit);
+			static_cast<void>(model->ConsumeScrollbackChange());
+		}
+		m_impl->startedAnySession = true;
 		m_impl->tabs.emplace_back(std::move(tab));
 		m_impl->activeTabId = id;
 		return id;
@@ -265,7 +163,17 @@ std::optional<std::uint64_t> TerminalTabManager::AddTab( TerminalSize size, std:
 
 bool TerminalTabManager::SelectTab( std::uint64_t tabId ) noexcept
 {
-	if( m_impl->closed || m_impl->Find(tabId) == nullptr ) return false;
+	if( m_impl->closed ) return false;
+	const auto* tab = m_impl->Find(tabId);
+	if( tab == nullptr ) return false;
+	if( m_impl->runtimeService && tab->paneId.IsValid() ) {
+		TerminalPaneSelectRequest request;
+		request.operationId = MakeOperationId(tabId);
+		request.paneId = tab->paneId;
+		const auto selected = m_impl->runtimeService->SelectPane(request);
+		if( selected.code != TerminalRuntimeOperationCode::Succeeded
+			&& selected.code != TerminalRuntimeOperationCode::TargetMissing) return false;
+	}
 	m_impl->activeTabId = tabId;
 	return true;
 }
@@ -275,22 +183,36 @@ bool TerminalTabManager::RestartTab( std::uint64_t tabId, TerminalSize size, std
 	if( m_impl->closed ) return false;
 	auto* tab = m_impl->Find(tabId);
 	if( tab == nullptr ) return false;
-	// Reserve the replacement before handing off the old session.  At the
-	// admission bound a failed reservation must leave the current terminal
-	// untouched rather than losing it while waiting for a retirement slot.
-	auto replacement = TerminalSessionRetirementLease::TryCreate();
-	if( !replacement ) return false;
-	if( tab->retirement ) {
-		const auto retired = tab->retirement->RetireNow();
-		if( !retired.Accepted() ) std::terminate();
-		tab->retirement.reset();
+	TerminalSessionCreateRequest request;
+	request.operationId = MakeOperationId(tabId);
+	request.name = std::to_string(tabId) + "-replacement-" + std::to_string(m_impl->nextReplacementId++);
+	TerminalLaunchOptions launch;
+	launch.initialSize = NormalizeSize(size);
+	launch.workingDirectory.assign(workingDirectory);
+	request.launch = std::move(launch);
+	const auto created = m_impl->runtimeService
+		? m_impl->runtimeService->CreateSession(request) : TerminalTopologyResult{};
+	if( !created.instanceId || !created.instanceId->IsValid() ) return false;
+	const auto oldInstance = tab->instanceId;
+	const auto oldSession = tab->sessionId;
+	tab->instanceId = *created.instanceId;
+	if( created.sessionId ) tab->sessionId = *created.sessionId;
+	if( created.windowId ) tab->windowId = *created.windowId;
+	if( created.paneId ) tab->paneId = *created.paneId;
+	if( auto* model = m_impl->runtimeService->Model(tab->instanceId) ) {
+		model->SetScrollbackLimit(m_impl->scrollbackLimit);
+		static_cast<void>(model->ConsumeScrollbackChange());
 	}
-	tab->processName = kDefaultTabLabel;
-	tab->profileLabel = kDefaultTabLabel;
-	// A restart must not let the previous process's OSC title describe the new one.
-	tab->sequenceTitle.clear();
-	tab->initialWorkingDirectory.clear();
-	return m_impl->Start(*tab, size, workingDirectory, std::move(replacement));
+	m_impl->startedAnySession = true;
+	if( m_impl->runtimeService && oldSession.IsValid() ) {
+		TerminalSessionCloseRequest closeRequest;
+		closeRequest.operationId = MakeOperationId(tabId ^ 0x8000000000000000ULL);
+		closeRequest.sessionId = oldSession;
+		static_cast<void>(m_impl->runtimeService->CloseSession(closeRequest));
+	} else if( m_impl->runtimeService ) {
+		m_impl->runtimeService->BeginCloseInstance(oldInstance, TerminalInstanceCloseReason::Explicit);
+	}
+	return created.code == TerminalRuntimeOperationCode::Succeeded;
 }
 
 bool TerminalTabManager::DeleteTab( std::uint64_t tabId ) noexcept
@@ -298,10 +220,13 @@ bool TerminalTabManager::DeleteTab( std::uint64_t tabId ) noexcept
 	if( m_impl->closed ) return false;
 	const auto found = std::find_if( m_impl->tabs.begin(), m_impl->tabs.end(), [tabId](const auto& tab) { return tab->id == tabId; } );
 	if( found == m_impl->tabs.end() ) return false;
-	if( (*found)->retirement ) {
-		const auto retired = (*found)->retirement->RetireNow();
-		if( !retired.Accepted() ) std::terminate();
-		(*found)->retirement.reset();
+	if( m_impl->runtimeService && (*found)->sessionId.IsValid() ) {
+		TerminalSessionCloseRequest request;
+		request.operationId = MakeOperationId(tabId);
+		request.sessionId = (*found)->sessionId;
+		static_cast<void>(m_impl->runtimeService->CloseSession(request));
+	} else if( m_impl->runtimeService ) {
+		m_impl->runtimeService->BeginCloseInstance((*found)->instanceId);
 	}
 	const auto index = static_cast<std::size_t>(found - m_impl->tabs.begin());
 	m_impl->tabs.erase(found);
@@ -323,11 +248,17 @@ TerminalTabClearResult TerminalTabManager::ClearTabs( std::chrono::steady_clock:
 	// the nonblocking handoff, so no reporting deadline can make this method wait.
 	static_cast<void>(deadline);
 	result.clearedTabCount = m_impl->tabs.size();
-	for( auto& tab : m_impl->tabs ) {
-		if( !tab->retirement ) continue;
-		const auto retired = tab->retirement->RetireNow();
-		if( !retired.Accepted() ) std::terminate();
-		tab->retirement.reset();
+	if( m_impl->runtimeService ) {
+		for( const auto& tab : m_impl->tabs ) {
+			if( !tab->sessionId.IsValid() ) {
+				m_impl->runtimeService->BeginCloseInstance(tab->instanceId);
+				continue;
+			}
+			TerminalSessionCloseRequest request;
+			request.operationId = MakeOperationId(tab->id);
+			request.sessionId = tab->sessionId;
+			static_cast<void>(m_impl->runtimeService->CloseSession(request));
+		}
 	}
 	m_impl->tabs.clear();
 	m_impl->activeTabId.reset();
@@ -339,8 +270,9 @@ void TerminalTabManager::Resize( TerminalSize rawSize )
 	if( m_impl->closed ) return;
 	const auto size = NormalizeSize(rawSize);
 	for( auto& tab : m_impl->tabs ) {
-		tab->model->Resize(size.columns, size.rows);
-		if( tab->Session() ) tab->Session()->RequestResize(size);
+		if( auto* instance = m_impl->runtimeService->Instance(tab->instanceId) ) {
+			static_cast<void>(instance->Resize(size));
+		}
 	}
 }
 
@@ -350,9 +282,8 @@ bool TerminalTabManager::ResizeTab( std::uint64_t tabId, TerminalSize rawSize )
 	auto* tab = m_impl->Find(tabId);
 	if( tab == nullptr ) return false;
 	const auto size = NormalizeSize(rawSize);
-	tab->model->Resize(size.columns, size.rows);
-	if( tab->Session() ) tab->Session()->RequestResize(size);
-	return true;
+	auto* instance = m_impl->runtimeService->Instance(tab->instanceId);
+	return instance != nullptr && instance->Resize(size).succeeded;
 }
 
 std::vector<TerminalTabScrollbackChange> TerminalTabManager::SetScrollbackLimit( std::size_t lines )
@@ -362,9 +293,11 @@ std::vector<TerminalTabScrollbackChange> TerminalTabManager::SetScrollbackLimit(
 	m_impl->scrollbackLimit = std::min(lines, TerminalModel::kMaxScrollbackLines);
 	changes.reserve(m_impl->tabs.size());
 	for( auto& tab : m_impl->tabs ) {
-		tab->model->SetScrollbackLimit(m_impl->scrollbackLimit);
-		auto change = tab->model->ConsumeScrollbackChange();
-		if( change.Changed() ) changes.push_back({ tab->id, change });
+		if( auto* model = m_impl->runtimeService->Model(tab->instanceId) ) {
+			model->SetScrollbackLimit(m_impl->scrollbackLimit);
+			auto change = model->ConsumeScrollbackChange();
+			if( change.Changed() ) changes.push_back({ tab->id, change });
+		}
 	}
 	return changes;
 }
@@ -377,9 +310,18 @@ std::size_t TerminalTabManager::ScrollbackLimit() const noexcept
 void TerminalTabManager::Close() noexcept
 {
 	if( !m_impl || m_impl->closed ) return;
-	const auto deadline = std::chrono::steady_clock::now()
-		+ CTerminalSession::kGracefulCloseTimeout + CTerminalSession::kForcedCloseTimeout;
-	static_cast<void>(ClearTabs(deadline));
+	if( m_impl->ownsRuntimeService ) {
+		const auto deadline = std::chrono::steady_clock::now()
+			+ CTerminalSession::kGracefulCloseTimeout + CTerminalSession::kForcedCloseTimeout;
+		static_cast<void>(ClearTabs(deadline));
+		if( m_impl->runtimeService ) m_impl->runtimeService->BeginClose();
+	} else {
+		// The shared runtime outlives this projection. Destroy only the tab
+		// projection and subscription; logical sessions/instances remain live.
+		m_impl->tabs.clear();
+		m_impl->activeTabId.reset();
+	}
+	m_impl->runtimeSubscription.Reset();
 	m_impl->closed = true;
 	m_impl->tabs.clear();
 	m_impl->activeTabId.reset();
@@ -390,41 +332,17 @@ TerminalDrainResult TerminalTabManager::DrainOutput( std::uint64_t tabId )
 	TerminalDrainResult result;
 	if( m_impl->closed ) return result;
 	auto* tab = m_impl->Find(tabId);
-	if( tab == nullptr || !tab->Session() ) return result;
+	if( tab == nullptr || !m_impl->runtimeService ) return result;
 	result.found = true;
 	result.active = m_impl->activeTabId == tabId;
-	const auto beforeTitle = tab->model->Title();
-	static_cast<void>(m_impl->FlushPendingProtocolInput(*tab));
-	const auto beforeSynchronizedCommit = tab->model->SynchronizedOutputCommitGeneration();
-	const auto bytes = tab->Session()->DrainOutput();
-	result.bytesDrained = bytes.size();
-	if( !bytes.empty() ) tab->parser->Feed(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
-	static_cast<void>(m_impl->FlushPendingProtocolInput(*tab));
-	result.protocolInputPending = !tab->pendingProtocolInput.empty();
-	result.protocolInputRejected = tab->protocolInputRejected;
-	result.synchronizedOutputCommitted =
-		tab->model->SynchronizedOutputCommitGeneration() != beforeSynchronizedCommit;
-	if( tab->model->Title() != beforeTitle ) {
-		tab->sequenceTitle = tab->model->Title();
-		result.sequenceChanged = true;
-	}
-	result.scrollbackChange = tab->model->ConsumeScrollbackChange();
-	result.dirtyRows = tab->model->ConsumeDirtyRows();
-	tab->Session()->RecordModelDiagnostic({
-		.bytesDrained = result.bytesDrained,
-		.scrollbackAppended = result.scrollbackChange.Appended(),
-		.scrollbackEvicted = result.scrollbackChange.Evicted(),
-		.scrollbackRows = tab->model->ScrollbackSize(),
-		.scrollbackLimit = tab->model->ScrollbackLimit(),
-		.dirtyRows = result.dirtyRows.size(),
-		.columns = tab->model->Columns(),
-		.rows = tab->model->RowCount(),
-		.scrollbackCleared = result.scrollbackChange.Cleared(),
-		.protocolInputPending = result.protocolInputPending,
-		.protocolInputRejected = result.protocolInputRejected,
-		.synchronizedOutputCommitted = result.synchronizedOutputCommitted,
-		.alternateScreen = tab->model->IsAlternateScreen(),
-	});
+	const auto drained = m_impl->runtimeService->DrainOutput(tab->instanceId);
+	result.sequenceChanged = drained.sequenceChanged;
+	result.synchronizedOutputCommitted = drained.synchronizedOutputCommitted;
+	result.protocolInputPending = drained.protocolInputPending;
+	result.protocolInputRejected = drained.protocolInputRejected;
+	result.bytesDrained = drained.bytesDrained;
+	result.scrollbackChange = drained.scrollbackChange;
+	result.dirtyRows = drained.dirtyRows;
 	return result;
 }
 
@@ -438,14 +356,20 @@ TerminalQueueInputResult TerminalTabManager::QueueInput( std::uint64_t tabId, st
 {
 	if( m_impl->closed ) return TerminalQueueInputResult::NotRunning;
 	auto* tab = m_impl->Find(tabId);
-	return tab && tab->Session() ? tab->Session()->QueueInput(bytes) : TerminalQueueInputResult::NotRunning;
+	if( !tab || !m_impl->runtimeService ) return TerminalQueueInputResult::NotRunning;
+	auto* instance = m_impl->runtimeService->Instance(tab->instanceId);
+	return instance ? instance->QueueInput(bytes)
+		: TerminalQueueInputResult::NotRunning;
 }
 
 TerminalQueueInputResult TerminalTabManager::FlushPendingProtocolInput( std::uint64_t tabId )
 {
 	if( m_impl->closed ) return TerminalQueueInputResult::NotRunning;
 	auto* tab = m_impl->Find(tabId);
-	return tab ? m_impl->FlushPendingProtocolInput(*tab) : TerminalQueueInputResult::NotRunning;
+	if( !tab || !m_impl->runtimeService ) return TerminalQueueInputResult::NotRunning;
+	auto* instance = m_impl->runtimeService->Instance(tab->instanceId);
+	return instance ? instance->FlushPendingProtocolInput()
+		: TerminalQueueInputResult::NotRunning;
 }
 
 void TerminalTabManager::RecordViewportDiagnostic(
@@ -454,21 +378,27 @@ void TerminalTabManager::RecordViewportDiagnostic(
 {
 	if( m_impl->closed ) return;
 	auto* tab = m_impl->Find(tabId);
-	if( tab && tab->Session() ) tab->Session()->RecordViewportDiagnostic(snapshot);
+	if( tab && m_impl->runtimeService ) {
+		if( auto* instance = m_impl->runtimeService->Instance(tab->instanceId) ) {
+			instance->RecordViewportDiagnostic(snapshot);
+		}
+	}
 }
 
 bool TerminalTabManager::HasPendingProtocolInput( std::uint64_t tabId ) const noexcept
 {
 	if( m_impl->closed ) return false;
 	const auto* tab = m_impl->Find(tabId);
-	return tab != nullptr && !tab->pendingProtocolInput.empty();
+	const auto* instance = tab && m_impl->runtimeService
+		? m_impl->runtimeService->Instance(tab->instanceId) : nullptr;
+	return instance != nullptr && instance->HasPendingProtocolInput();
 }
 
 const TerminalModel* TerminalTabManager::Model( std::uint64_t tabId ) const noexcept
 {
 	if( m_impl->closed ) return nullptr;
 	const auto* tab = m_impl->Find(tabId);
-	return tab ? tab->model.get() : nullptr;
+	return tab && m_impl->runtimeService ? m_impl->runtimeService->Model(tab->instanceId) : nullptr;
 }
 
 TerminalModel* TerminalTabManager::Model( std::uint64_t tabId ) noexcept
@@ -480,7 +410,7 @@ const TerminalModel* TerminalTabManager::ActiveModel() const noexcept
 {
 	if( m_impl->closed || !m_impl->activeTabId ) return nullptr;
 	const auto* tab = m_impl->Find(*m_impl->activeTabId);
-	return tab ? tab->model.get() : nullptr;
+	return tab && m_impl->runtimeService ? m_impl->runtimeService->Model(tab->instanceId) : nullptr;
 }
 
 TerminalModel* TerminalTabManager::ActiveModel() noexcept
@@ -492,7 +422,7 @@ const SakuraTerminalInputAdapter* TerminalTabManager::ActiveInputAdapter() const
 {
 	if( m_impl->closed || !m_impl->activeTabId ) return nullptr;
 	const auto* tab = m_impl->Find(*m_impl->activeTabId);
-	return tab ? tab->input.get() : nullptr;
+	return tab && m_impl->runtimeService ? m_impl->runtimeService->InputAdapter(tab->instanceId) : nullptr;
 }
 
 SakuraTerminalInputAdapter* TerminalTabManager::ActiveInputAdapter() noexcept
@@ -504,7 +434,7 @@ const SakuraTerminalInputAdapter* TerminalTabManager::InputAdapter( std::uint64_
 {
 	if( m_impl->closed ) return nullptr;
 	const auto* tab = m_impl->Find(tabId);
-	return tab ? tab->input.get() : nullptr;
+	return tab && m_impl->runtimeService ? m_impl->runtimeService->InputAdapter(tab->instanceId) : nullptr;
 }
 
 SakuraTerminalInputAdapter* TerminalTabManager::InputAdapter( std::uint64_t tabId ) noexcept
@@ -523,10 +453,13 @@ std::vector<TerminalTabSnapshot> TerminalTabManager::Snapshot() const
 	if( m_impl->closed ) return result;
 	result.reserve(m_impl->tabs.size());
 	for( const auto& tab : m_impl->tabs ) {
-		const auto state = tab->Session() ? tab->Session()->GetState() : tab->state;
-		const auto error = tab->errorCode != 0 ? tab->errorCode : tab->Session() ? tab->Session()->GetLastError() : 0;
-		result.push_back({ tab->id, tab->processName, tab->profileLabel, tab->sequenceTitle,
-			tab->initialWorkingDirectory, state, error, m_impl->activeTabId == tab->id });
+		const auto* instance = m_impl->runtimeService
+			? m_impl->runtimeService->Instance(tab->instanceId) : nullptr;
+		if( !instance ) continue;
+		const auto snapshot = instance->Snapshot();
+		result.push_back({ tab->id, snapshot.processName, snapshot.profileLabel, snapshot.sequenceTitle,
+			snapshot.initialWorkingDirectory, snapshot.sessionState, snapshot.errorCode,
+			m_impl->activeTabId == tab->id });
 	}
 	return result;
 }

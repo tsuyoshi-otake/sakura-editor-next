@@ -7,8 +7,7 @@
 #pragma once
 
 #include "terminal/model/TerminalModel.h"
-#include "terminal/TerminalSessionRetirementService.h"
-#include "terminal/session/TerminalSession.h"
+#include "terminal/runtime/TerminalRuntimeService.h"
 
 #include <chrono>
 #include <cstdint>
@@ -23,6 +22,7 @@
 namespace terminal {
 
 class SakuraTerminalInputAdapter;
+class CDefaultTerminalLaunchProfileService;
 
 enum class TerminalTabEventKind : std::uint8_t {
 	OutputAvailable,
@@ -99,6 +99,14 @@ using TerminalTabEventCallback = std::function<void(const TerminalTabEvent& even
 struct TerminalTabManagerDependencies {
 	TerminalSessionFactory createSession;
 	TerminalLaunchResolver resolveLaunch;
+	//! An existing runtime authority may be supplied by the workbench. When it
+	//! is absent, the manager creates one and keeps it alive independently of
+	//! the terminal projection.
+	std::shared_ptr<CTerminalRuntimeService> runtimeService;
+	//! Shared profile catalog owned by the editor process. UI profile commands
+	//! and runtime launches must mutate/read this same policy object.
+	std::shared_ptr<CDefaultTerminalLaunchProfileService> launchProfiles;
+	TerminalRuntimeLaunchDecorator decorateLaunch;
 };
 
 //! UI-thread-owned terminal tab/session collection.

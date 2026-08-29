@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -31,11 +32,25 @@ struct TerminalSize {
 	std::uint16_t rows = 30;
 };
 
+//! One explicit environment mutation for a terminal child. A missing value
+//! removes the variable. Names are compared case-insensitively on Windows.
+struct TerminalEnvironmentOverride {
+	std::wstring name;
+	std::optional<std::wstring> value;
+};
+
 struct TerminalLaunchOptions {
 	std::wstring executablePath;
 	std::vector<std::wstring> arguments;
 	std::wstring workingDirectory;
 	TerminalSize initialSize;
+	//! Applied only to this ConPTY child and its descendants. The Sakura host
+	//! process environment is never mutated.
+	std::vector<TerminalEnvironmentOverride> environmentOverrides;
+	//! Absolute installation-owned directories prepended to the child PATH
+	//! after overrides are applied. Empty, relative, and semicolon-containing
+	//! entries are rejected before CreateProcess.
+	std::vector<std::wstring> prependPathDirectories;
 };
 
 struct TerminalStartResult {
@@ -79,6 +94,18 @@ struct TerminalBackendOperationResult {
 	std::uint32_t errorCode = 0;
 };
 
+//! Immutable identity of the root process created by a terminal backend.
+//! Creation time prevents PID reuse from authorizing a later process.
+struct TerminalBackendProcessIdentity {
+	std::uint32_t processId = 0;
+	std::uint64_t creationTime = 0;
+
+	[[nodiscard]] bool IsValid() const noexcept
+	{
+		return processId != 0 && creationTime != 0;
+	}
+};
+
 //! Result of observing the launched root process after all job-owned
 //! descendants have exited.  `exitCode` is meaningful only for `Exited`.
 enum class TerminalBackendExitStatus {
@@ -107,6 +134,19 @@ public:
 	virtual TerminalBackendExitResult WaitForExit( std::chrono::milliseconds timeout ) noexcept = 0;
 	virtual void ForceTerminate() noexcept = 0;
 	virtual void Close() noexcept = 0;
+	//! Security observation seam used by the local Harness Bridge. Backends that
+	//! cannot prove process identity or job membership fail closed.
+	[[nodiscard]] virtual std::optional<TerminalBackendProcessIdentity> GetProcessIdentity() const noexcept
+	{
+		return std::nullopt;
+	}
+	[[nodiscard]] virtual bool OwnsProcess(
+		std::uint32_t processId, std::uint64_t creationTime ) const noexcept
+	{
+		(void)processId;
+		(void)creationTime;
+		return false;
+	}
 };
 
 // Creates the Windows 11 ConPTY implementation. Its Win32 types stay private
@@ -274,6 +314,9 @@ public:
 	std::size_t GetQueuedOutputBytes() const noexcept;
 	std::size_t GetQueuedInputBytes() const noexcept;
 	bool IsOutputNotificationPending() const noexcept;
+	[[nodiscard]] std::optional<TerminalBackendProcessIdentity> GetProcessIdentity() const noexcept;
+	[[nodiscard]] bool OwnsProcess(
+		std::uint32_t processId, std::uint64_t creationTime ) const noexcept;
 
 private:
 	struct Impl;

@@ -11,6 +11,17 @@ list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/workbench/editor/selec
 list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/filesystem/CFileService.cpp")
 list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/filesystem/CWin32FileSystemProvider.cpp")
 list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/filesystem/FileSystemFactory.cpp")
+list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/harnessbridge/HarnessBridgeAuthenticatedSession.cpp")
+list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/harnessbridge/HarnessBridgeBroker.cpp")
+list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/harnessbridge/HarnessBridgeCapability.cpp")
+list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/harnessbridge/HarnessBridgeClientSession.cpp")
+list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/harnessbridge/HarnessBridgeEndpoint.cpp")
+list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/harnessbridge/HarnessBridgeEnvironment.cpp")
+list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/harnessbridge/HarnessBridgeNamedPipeTransport.cpp")
+list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/harnessbridge/HarnessBridgeOperationDispatcher.cpp")
+list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/harnessbridge/HarnessBridgeProtocol.cpp")
+list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/harnessbridge/HarnessBridgeSecurity.cpp")
+list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/harnessbridge/HarnessBridgeServiceHost.cpp")
 list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/request/RequestService.cpp")
 list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/request/win32/WinHttpRequestRuntime.cpp")
 list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/request/win32/WinHttpSystemProxyResolver.cpp")
@@ -19,6 +30,13 @@ list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/serialization
 list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/storage/CAtomicFileStorageService.cpp")
 list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/storage/StorageSnapshotCache.cpp")
 list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/storage/StorageTypes.cpp")
+list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/terminal/cli/SakuraHarnessCli.cpp")
+list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/terminal/cli/SakuraTmuxCli.cpp")
+list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/terminal/tmux/TmuxArgumentParser.cpp")
+list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/terminal/tmux/TmuxCli.cpp")
+list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/terminal/tmux/TmuxCommandDispatcher.cpp")
+list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/terminal/tmux/TmuxFormatEvaluator.cpp")
+list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/terminal/tmux/TmuxTargetResolver.cpp")
 list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/uri/UriIdentity.cpp")
 list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/window/Win32EditorFrameAdapter.cpp")
 
@@ -190,6 +208,44 @@ if(NOT TARGET sakura_filesystem)
   endif()
 endif()
 
+if(NOT TARGET sakura_harnessbridge)
+  add_library(sakura_harnessbridge STATIC
+    "${CMAKE_SOURCE_DIR}/sakura_core/platform/harnessbridge/HarnessBridgeAuthenticatedSession.cpp"
+    "${CMAKE_SOURCE_DIR}/sakura_core/platform/harnessbridge/HarnessBridgeBroker.cpp"
+    "${CMAKE_SOURCE_DIR}/sakura_core/platform/harnessbridge/HarnessBridgeCapability.cpp"
+    "${CMAKE_SOURCE_DIR}/sakura_core/platform/harnessbridge/HarnessBridgeClientSession.cpp"
+    "${CMAKE_SOURCE_DIR}/sakura_core/platform/harnessbridge/HarnessBridgeEndpoint.cpp"
+    "${CMAKE_SOURCE_DIR}/sakura_core/platform/harnessbridge/HarnessBridgeEnvironment.cpp"
+    "${CMAKE_SOURCE_DIR}/sakura_core/platform/harnessbridge/HarnessBridgeNamedPipeTransport.cpp"
+    "${CMAKE_SOURCE_DIR}/sakura_core/platform/harnessbridge/HarnessBridgeOperationDispatcher.cpp"
+    "${CMAKE_SOURCE_DIR}/sakura_core/platform/harnessbridge/HarnessBridgeProtocol.cpp"
+    "${CMAKE_SOURCE_DIR}/sakura_core/platform/harnessbridge/HarnessBridgeSecurity.cpp"
+    "${CMAKE_SOURCE_DIR}/sakura_core/platform/harnessbridge/HarnessBridgeServiceHost.cpp"
+    "${CMAKE_SOURCE_DIR}/sakura_core/include/sakura/harnessbridge/HarnessBridgeAuthenticatedSession.h"
+    "${CMAKE_SOURCE_DIR}/sakura_core/include/sakura/harnessbridge/HarnessBridgeBroker.h"
+    "${CMAKE_SOURCE_DIR}/sakura_core/include/sakura/harnessbridge/HarnessBridgeCapability.h"
+    "${CMAKE_SOURCE_DIR}/sakura_core/include/sakura/harnessbridge/HarnessBridgeClientSession.h"
+    "${CMAKE_SOURCE_DIR}/sakura_core/include/sakura/harnessbridge/HarnessBridgeEndpoint.h"
+    "${CMAKE_SOURCE_DIR}/sakura_core/include/sakura/harnessbridge/HarnessBridgeEnvironment.h"
+    "${CMAKE_SOURCE_DIR}/sakura_core/include/sakura/harnessbridge/HarnessBridgeOperationDispatcher.h"
+    "${CMAKE_SOURCE_DIR}/sakura_core/include/sakura/harnessbridge/HarnessBridgeProtocol.h"
+    "${CMAKE_SOURCE_DIR}/sakura_core/include/sakura/harnessbridge/HarnessBridgeSecurity.h"
+    "${CMAKE_SOURCE_DIR}/sakura_core/include/sakura/harnessbridge/HarnessBridgeServiceHost.h"
+    "${CMAKE_SOURCE_DIR}/sakura_core/include/sakura/harnessbridge/HarnessBridgeTransport.h"
+  )
+  target_include_directories(sakura_harnessbridge PUBLIC "${CMAKE_SOURCE_DIR}/sakura_core/include")
+  target_compile_features(sakura_harnessbridge PRIVATE cxx_std_20)
+  target_link_libraries(sakura_harnessbridge PUBLIC advapi32 bcrypt)
+  if(MSVC)
+    set_property(TARGET sakura_harnessbridge PROPERTY MSVC_RUNTIME_LIBRARY "$<$<CONFIG:Debug>:MultiThreadedDebug>$<$<CONFIG:Release>:MultiThreaded>")
+    target_compile_options(sakura_harnessbridge PRIVATE "$<$<CONFIG:Debug>:/source-charset:utf-8>" "$<$<CONFIG:Debug>:/execution-charset:utf-8>" "$<$<CONFIG:Debug>:/Zp8>" "$<$<CONFIG:Debug>:/Zc:wchar_t>" "$<$<CONFIG:Debug>:/FI${CMAKE_SOURCE_DIR}/src/main/modules/generated/abi/cmake-msvc-x64-debug/sakura_harnessbridge.h>" "$<$<CONFIG:Release>:/source-charset:utf-8>" "$<$<CONFIG:Release>:/execution-charset:utf-8>" "$<$<CONFIG:Release>:/Zp8>" "$<$<CONFIG:Release>:/Zc:wchar_t>" "$<$<CONFIG:Release>:/FI${CMAKE_SOURCE_DIR}/src/main/modules/generated/abi/cmake-msvc-x64-release/sakura_harnessbridge.h>")
+    target_compile_definitions(sakura_harnessbridge PRIVATE "$<$<CONFIG:Debug>:_ITERATOR_DEBUG_LEVEL=2>" "$<$<CONFIG:Debug>:_WIN32_WINNT=0x0A00>" "$<$<CONFIG:Debug>:NOMINMAX>" "$<$<CONFIG:Debug>:UNICODE>" "$<$<CONFIG:Debug>:_UNICODE>" "$<$<CONFIG:Release>:_ITERATOR_DEBUG_LEVEL=0>" "$<$<CONFIG:Release>:_WIN32_WINNT=0x0A00>" "$<$<CONFIG:Release>:NOMINMAX>" "$<$<CONFIG:Release>:UNICODE>" "$<$<CONFIG:Release>:_UNICODE>")
+  elseif(MINGW)
+    target_compile_options(sakura_harnessbridge PRIVATE "$<$<CONFIG:Debug>:-fpack-struct=8>" "$<$<CONFIG:Debug>:-include>" "$<$<CONFIG:Debug>:${CMAKE_SOURCE_DIR}/src/main/modules/generated/abi/mingw-x64-debug/sakura_harnessbridge.h>" "$<$<CONFIG:Release>:-fpack-struct=8>" "$<$<CONFIG:Release>:-include>" "$<$<CONFIG:Release>:${CMAKE_SOURCE_DIR}/src/main/modules/generated/abi/mingw-x64-release/sakura_harnessbridge.h>")
+    target_compile_definitions(sakura_harnessbridge PRIVATE "$<$<CONFIG:Debug>:_WIN32_WINNT=0x0A00>" "$<$<CONFIG:Debug>:NOMINMAX>" "$<$<CONFIG:Debug>:UNICODE>" "$<$<CONFIG:Debug>:_UNICODE>" "$<$<CONFIG:Release>:_WIN32_WINNT=0x0A00>" "$<$<CONFIG:Release>:NOMINMAX>" "$<$<CONFIG:Release>:UNICODE>" "$<$<CONFIG:Release>:_UNICODE>")
+  endif()
+endif()
+
 if(NOT TARGET sakura_request)
   add_library(sakura_request STATIC
     "${CMAKE_SOURCE_DIR}/sakura_core/platform/request/RequestService.cpp"
@@ -270,6 +326,52 @@ if(NOT TARGET sakura_storage)
   elseif(MINGW)
     target_compile_options(sakura_storage PRIVATE "$<$<CONFIG:Debug>:-fpack-struct=8>" "$<$<CONFIG:Debug>:-include>" "$<$<CONFIG:Debug>:${CMAKE_SOURCE_DIR}/src/main/modules/generated/abi/mingw-x64-debug/sakura_storage.h>" "$<$<CONFIG:Release>:-fpack-struct=8>" "$<$<CONFIG:Release>:-include>" "$<$<CONFIG:Release>:${CMAKE_SOURCE_DIR}/src/main/modules/generated/abi/mingw-x64-release/sakura_storage.h>")
     target_compile_definitions(sakura_storage PRIVATE "$<$<CONFIG:Debug>:_WIN32_WINNT=0x0A00>" "$<$<CONFIG:Debug>:NOMINMAX>" "$<$<CONFIG:Debug>:UNICODE>" "$<$<CONFIG:Debug>:_UNICODE>" "$<$<CONFIG:Release>:_WIN32_WINNT=0x0A00>" "$<$<CONFIG:Release>:NOMINMAX>" "$<$<CONFIG:Release>:UNICODE>" "$<$<CONFIG:Release>:_UNICODE>")
+  endif()
+endif()
+
+if(NOT TARGET sakura_terminal_cli)
+  add_library(sakura_terminal_cli STATIC
+    "${CMAKE_SOURCE_DIR}/sakura_core/terminal/cli/SakuraHarnessCli.cpp"
+    "${CMAKE_SOURCE_DIR}/sakura_core/terminal/cli/SakuraTmuxCli.cpp"
+    "${CMAKE_SOURCE_DIR}/sakura_core/terminal/cli/SakuraCliTypes.h"
+    "${CMAKE_SOURCE_DIR}/sakura_core/terminal/cli/SakuraHarnessCli.h"
+    "${CMAKE_SOURCE_DIR}/sakura_core/terminal/cli/SakuraTmuxCli.h"
+  )
+  target_include_directories(sakura_terminal_cli PUBLIC "${CMAKE_SOURCE_DIR}/sakura_core")
+  target_compile_features(sakura_terminal_cli PRIVATE cxx_std_20)
+  if(MSVC)
+    set_property(TARGET sakura_terminal_cli PROPERTY MSVC_RUNTIME_LIBRARY "$<$<CONFIG:Debug>:MultiThreadedDebug>$<$<CONFIG:Release>:MultiThreaded>")
+    target_compile_options(sakura_terminal_cli PRIVATE "$<$<CONFIG:Debug>:/source-charset:utf-8>" "$<$<CONFIG:Debug>:/execution-charset:utf-8>" "$<$<CONFIG:Debug>:/Zp8>" "$<$<CONFIG:Debug>:/Zc:wchar_t>" "$<$<CONFIG:Debug>:/FI${CMAKE_SOURCE_DIR}/src/main/modules/generated/abi/cmake-msvc-x64-debug/sakura_terminal_cli.h>" "$<$<CONFIG:Release>:/source-charset:utf-8>" "$<$<CONFIG:Release>:/execution-charset:utf-8>" "$<$<CONFIG:Release>:/Zp8>" "$<$<CONFIG:Release>:/Zc:wchar_t>" "$<$<CONFIG:Release>:/FI${CMAKE_SOURCE_DIR}/src/main/modules/generated/abi/cmake-msvc-x64-release/sakura_terminal_cli.h>")
+    target_compile_definitions(sakura_terminal_cli PRIVATE "$<$<CONFIG:Debug>:_ITERATOR_DEBUG_LEVEL=2>" "$<$<CONFIG:Debug>:_WIN32_WINNT=0x0A00>" "$<$<CONFIG:Debug>:NOMINMAX>" "$<$<CONFIG:Debug>:UNICODE>" "$<$<CONFIG:Debug>:_UNICODE>" "$<$<CONFIG:Release>:_ITERATOR_DEBUG_LEVEL=0>" "$<$<CONFIG:Release>:_WIN32_WINNT=0x0A00>" "$<$<CONFIG:Release>:NOMINMAX>" "$<$<CONFIG:Release>:UNICODE>" "$<$<CONFIG:Release>:_UNICODE>")
+  elseif(MINGW)
+    target_compile_options(sakura_terminal_cli PRIVATE "$<$<CONFIG:Debug>:-fpack-struct=8>" "$<$<CONFIG:Debug>:-include>" "$<$<CONFIG:Debug>:${CMAKE_SOURCE_DIR}/src/main/modules/generated/abi/mingw-x64-debug/sakura_terminal_cli.h>" "$<$<CONFIG:Release>:-fpack-struct=8>" "$<$<CONFIG:Release>:-include>" "$<$<CONFIG:Release>:${CMAKE_SOURCE_DIR}/src/main/modules/generated/abi/mingw-x64-release/sakura_terminal_cli.h>")
+    target_compile_definitions(sakura_terminal_cli PRIVATE "$<$<CONFIG:Debug>:_WIN32_WINNT=0x0A00>" "$<$<CONFIG:Debug>:NOMINMAX>" "$<$<CONFIG:Debug>:UNICODE>" "$<$<CONFIG:Debug>:_UNICODE>" "$<$<CONFIG:Release>:_WIN32_WINNT=0x0A00>" "$<$<CONFIG:Release>:NOMINMAX>" "$<$<CONFIG:Release>:UNICODE>" "$<$<CONFIG:Release>:_UNICODE>")
+  endif()
+endif()
+
+if(NOT TARGET sakura_terminal_tmux_core)
+  add_library(sakura_terminal_tmux_core STATIC
+    "${CMAKE_SOURCE_DIR}/sakura_core/terminal/tmux/TmuxArgumentParser.cpp"
+    "${CMAKE_SOURCE_DIR}/sakura_core/terminal/tmux/TmuxCli.cpp"
+    "${CMAKE_SOURCE_DIR}/sakura_core/terminal/tmux/TmuxCommandDispatcher.cpp"
+    "${CMAKE_SOURCE_DIR}/sakura_core/terminal/tmux/TmuxFormatEvaluator.cpp"
+    "${CMAKE_SOURCE_DIR}/sakura_core/terminal/tmux/TmuxTargetResolver.cpp"
+    "${CMAKE_SOURCE_DIR}/sakura_core/terminal/tmux/TmuxArgumentParser.h"
+    "${CMAKE_SOURCE_DIR}/sakura_core/terminal/tmux/TmuxCli.h"
+    "${CMAKE_SOURCE_DIR}/sakura_core/terminal/tmux/TmuxCommandDispatcher.h"
+    "${CMAKE_SOURCE_DIR}/sakura_core/terminal/tmux/TmuxCommandTypes.h"
+    "${CMAKE_SOURCE_DIR}/sakura_core/terminal/tmux/TmuxFormatEvaluator.h"
+    "${CMAKE_SOURCE_DIR}/sakura_core/terminal/tmux/TmuxTargetResolver.h"
+  )
+  target_include_directories(sakura_terminal_tmux_core PUBLIC "${CMAKE_SOURCE_DIR}/sakura_core")
+  target_compile_features(sakura_terminal_tmux_core PRIVATE cxx_std_20)
+  if(MSVC)
+    set_property(TARGET sakura_terminal_tmux_core PROPERTY MSVC_RUNTIME_LIBRARY "$<$<CONFIG:Debug>:MultiThreadedDebug>$<$<CONFIG:Release>:MultiThreaded>")
+    target_compile_options(sakura_terminal_tmux_core PRIVATE "$<$<CONFIG:Debug>:/source-charset:utf-8>" "$<$<CONFIG:Debug>:/execution-charset:utf-8>" "$<$<CONFIG:Debug>:/Zp8>" "$<$<CONFIG:Debug>:/Zc:wchar_t>" "$<$<CONFIG:Debug>:/FI${CMAKE_SOURCE_DIR}/src/main/modules/generated/abi/cmake-msvc-x64-debug/sakura_terminal_tmux_core.h>" "$<$<CONFIG:Release>:/source-charset:utf-8>" "$<$<CONFIG:Release>:/execution-charset:utf-8>" "$<$<CONFIG:Release>:/Zp8>" "$<$<CONFIG:Release>:/Zc:wchar_t>" "$<$<CONFIG:Release>:/FI${CMAKE_SOURCE_DIR}/src/main/modules/generated/abi/cmake-msvc-x64-release/sakura_terminal_tmux_core.h>")
+    target_compile_definitions(sakura_terminal_tmux_core PRIVATE "$<$<CONFIG:Debug>:_ITERATOR_DEBUG_LEVEL=2>" "$<$<CONFIG:Debug>:_WIN32_WINNT=0x0A00>" "$<$<CONFIG:Debug>:NOMINMAX>" "$<$<CONFIG:Debug>:UNICODE>" "$<$<CONFIG:Debug>:_UNICODE>" "$<$<CONFIG:Release>:_ITERATOR_DEBUG_LEVEL=0>" "$<$<CONFIG:Release>:_WIN32_WINNT=0x0A00>" "$<$<CONFIG:Release>:NOMINMAX>" "$<$<CONFIG:Release>:UNICODE>" "$<$<CONFIG:Release>:_UNICODE>")
+  elseif(MINGW)
+    target_compile_options(sakura_terminal_tmux_core PRIVATE "$<$<CONFIG:Debug>:-fpack-struct=8>" "$<$<CONFIG:Debug>:-include>" "$<$<CONFIG:Debug>:${CMAKE_SOURCE_DIR}/src/main/modules/generated/abi/mingw-x64-debug/sakura_terminal_tmux_core.h>" "$<$<CONFIG:Release>:-fpack-struct=8>" "$<$<CONFIG:Release>:-include>" "$<$<CONFIG:Release>:${CMAKE_SOURCE_DIR}/src/main/modules/generated/abi/mingw-x64-release/sakura_terminal_tmux_core.h>")
+    target_compile_definitions(sakura_terminal_tmux_core PRIVATE "$<$<CONFIG:Debug>:_WIN32_WINNT=0x0A00>" "$<$<CONFIG:Debug>:NOMINMAX>" "$<$<CONFIG:Debug>:UNICODE>" "$<$<CONFIG:Debug>:_UNICODE>" "$<$<CONFIG:Release>:_WIN32_WINNT=0x0A00>" "$<$<CONFIG:Release>:NOMINMAX>" "$<$<CONFIG:Release>:UNICODE>" "$<$<CONFIG:Release>:_UNICODE>")
   endif()
 endif()
 

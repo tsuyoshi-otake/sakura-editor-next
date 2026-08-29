@@ -9,7 +9,7 @@
 #include "CSelectLang.h"
 #include "sakura_rc.h"
 
-#include "terminal/PowerShellLocator.h"
+#include "terminal/DefaultTerminalLaunchProfileService.h"
 #include "terminal/input/TerminalShortcutPreset.h"
 #include "terminal/window/TerminalHeaderLayout.h"
 #include "terminal/window/TerminalPaneLayout.h"
@@ -96,41 +96,6 @@ struct NotificationGate {
 	bool alive{ true };
 	bool stateWakePending{};
 	std::unordered_set<std::uint64_t> outputWakePending;
-};
-
-class DefaultLaunchResolver final {
-public:
-	DefaultLaunchResolver()
-		: locator(provider)
-		, catalog(locator)
-	{
-	}
-
-	std::optional<TerminalLaunchOptions> Resolve( TerminalSize size, std::wstring_view workingDirectory )
-	{
-		const auto profile = catalog.ResolveProfile();
-		if( !profile ) return std::nullopt;
-		TerminalLaunchOptions options;
-		options.executablePath = profile->path;
-		options.arguments.emplace_back(L"-NoLogo");
-		options.workingDirectory.assign(workingDirectory);
-		options.initialSize = size;
-		return options;
-	}
-
-	void Redetect() noexcept
-	{
-		catalog.Redetect();
-	}
-
-	std::vector<TerminalProfile> Profiles() { return catalog.Profiles(); }
-	std::optional<TerminalProfile> SelectedProfile() { return catalog.ResolveProfile(); }
-	bool SelectProfile( std::wstring_view path ) { return catalog.SelectProfile(path); }
-
-private:
-	NativePowerShellLocatorProvider provider;
-	PowerShellLocator locator;
-	TerminalProfileCatalog catalog;
 };
 
 std::wstring FormatProfileLabel( const TerminalProfile& profile )
@@ -308,16 +273,18 @@ struct CTerminalTool::Impl {
 	explicit Impl( TerminalTabManagerDependencies dependencies )
 		: gate(std::make_shared<NotificationGate>())
 	{
+		profileService = dependencies.launchProfiles
+			? dependencies.launchProfiles
+			: std::make_shared<CDefaultTerminalLaunchProfileService>();
 		if( !dependencies.createSession ) {
 			dependencies.createSession = [](TerminalSessionCallbacks callbacks) {
 				return std::make_unique<CTerminalSession>(CreateConPtyTerminalBackend(), std::move(callbacks));
 			};
 		}
 		if( !dependencies.resolveLaunch ) {
-			usesDefaultResolver = true;
-			dependencies.resolveLaunch = [this](TerminalSize size, std::wstring_view workingDirectory) {
-				EnsureDefaultResolver();
-				return defaultResolver->Resolve(size, workingDirectory);
+			const auto profiles = profileService;
+			dependencies.resolveLaunch = [profiles](TerminalSize size, std::wstring_view workingDirectory) {
+				return profiles->Resolve(size, workingDirectory);
 			};
 		}
 		const std::weak_ptr<NotificationGate> weakGate = gate;
@@ -352,7 +319,7 @@ struct CTerminalTool::Impl {
 	}
 
 	std::shared_ptr<NotificationGate> gate;
-	std::unique_ptr<DefaultLaunchResolver> defaultResolver;
+	std::shared_ptr<CDefaultTerminalLaunchProfileService> profileService;
 	std::unique_ptr<TerminalTabManager> manager;
 	TerminalNativeFrameBridgePtr nativeFrameBridge;
 	std::uint64_t nativeDeviceEpoch = 1;
@@ -389,7 +356,6 @@ struct CTerminalTool::Impl {
 	std::wstring workingDirectory;
 	bool active{};
 	bool closed{};
-	bool usesDefaultResolver{};
 	bool protocolInputRetryScheduled{};
 	std::optional<std::size_t> draggingPaneDivider;
 	bool terminalTabsFocused{};
@@ -411,11 +377,6 @@ struct CTerminalTool::Impl {
 	TerminalShortcutPreset shortcutPreset{ TerminalShortcutPreset::Screen };
 	bool shortcutPrefixArmed{};
 	std::function<void(TerminalShortcutPreset)> shortcutPresetSink;
-
-	void EnsureDefaultResolver()
-	{
-		if( !defaultResolver ) defaultResolver = std::make_unique<DefaultLaunchResolver>();
-	}
 
 	TerminalPaneGroup* ActiveGroup() noexcept
 	{
@@ -941,8 +902,8 @@ struct CTerminalTool::Impl {
 			if( auto title = TabTitle(*found); !title.empty() ) return title;
 			if( !found->profileLabel.empty() ) return found->profileLabel;
 		}
-		if( defaultResolver ) {
-			if( const auto selected = defaultResolver->SelectedProfile() ) {
+		if( profileService ) {
+			if( const auto selected = profileService->SelectedProfile() ) {
 				const auto stem = std::filesystem::path(selected->path).stem().wstring();
 				if( !stem.empty() ) return stem;
 			}
@@ -1457,12 +1418,12 @@ struct CTerminalTool::Impl {
 			::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 			::AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(shortcutsMenu), LS(STR_TERMINAL_SHORTCUTS));
 		}
-		if( defaultResolver ) {
+		if( profileService ) {
 			const HMENU profilesMenu = ::CreatePopupMenu();
 			if( profilesMenu ) {
 				profileCommandPaths.clear();
-				const auto selected = defaultResolver->SelectedProfile();
-				for( const auto& profile : defaultResolver->Profiles() ) {
+				const auto selected = profileService->SelectedProfile();
+				for( const auto& profile : profileService->Profiles() ) {
 					const UINT command = kCommandProfileFirst + static_cast<UINT>(profileCommandPaths.size());
 					const bool checked = selected && _wcsicmp(selected->path.c_str(), profile.path.c_str()) == 0;
 					::AppendMenuW(profilesMenu, MF_STRING | (checked ? MF_CHECKED : 0), command,
@@ -1765,9 +1726,9 @@ struct CTerminalTool::Impl {
 		case WM_COMMAND:
 			if( const UINT command = LOWORD(wParam);
 				command >= kCommandProfileFirst && command < kCommandProfileFirst + profileCommandPaths.size() ) {
-				if( defaultResolver ) {
+				if( profileService ) {
 					const auto index = static_cast<std::size_t>(command - kCommandProfileFirst);
-					(void)defaultResolver->SelectProfile(profileCommandPaths[index]);
+					(void)profileService->SelectProfile(profileCommandPaths[index]);
 				}
 				return 0;
 			}
@@ -1788,7 +1749,7 @@ struct CTerminalTool::Impl {
 			case kCommandNewTerminal: AddTerminal(); break;
 			case kCommandRestartTerminal: if( const auto id = FocusedTabId() ) RestartTerminal(*id); break;
 			case kCommandCloseTerminal: if( const auto id = FocusedTabId() ) DeleteTerminal(*id); break;
-			case kCommandRedetectPowerShell: if( defaultResolver ) defaultResolver->Redetect(); break;
+			case kCommandRedetectPowerShell: if( profileService ) profileService->Redetect(); break;
 			case kCommandSplitTerminal: SplitTerminalRight(); break;
 			case kCommandSplitTerminalDown: SplitTerminalDown(); break;
 			case kCommandCloseSplit: CloseTerminalSplit(); break;
@@ -2478,9 +2439,8 @@ bool CTerminalTool::DispatchShortcutPresetKey( const TerminalPresetKey& key )
 
 void CTerminalTool::RedetectPowerShell()
 {
-	if( !m_impl->closed && m_impl->usesDefaultResolver ) {
-		m_impl->EnsureDefaultResolver();
-		m_impl->defaultResolver->Redetect();
+	if( !m_impl->closed && m_impl->profileService ) {
+		m_impl->profileService->Redetect();
 	}
 }
 

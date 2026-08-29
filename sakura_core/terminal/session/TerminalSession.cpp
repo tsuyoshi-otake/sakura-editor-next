@@ -1211,6 +1211,20 @@ TerminalSessionCloseResult CTerminalSession::WaitForClose( const std::chrono::st
 	return impl ? impl->WaitForClose(deadline) : TerminalSessionCloseResult{};
 }
 
+std::optional<TerminalBackendProcessIdentity> CTerminalSession::GetProcessIdentity() const noexcept
+{
+	const auto impl = m_impl;
+	if( !impl || !impl->backend ) return std::nullopt;
+	return impl->backend->GetProcessIdentity();
+}
+
+bool CTerminalSession::OwnsProcess(
+	const std::uint32_t processId, const std::uint64_t creationTime ) const noexcept
+{
+	const auto impl = m_impl;
+	return impl && impl->backend && impl->backend->OwnsProcess(processId, creationTime);
+}
+
 TerminalQueueInputResult CTerminalSession::QueueInput(
 	std::span<const std::uint8_t> bytes,
 	TerminalInputSource source )

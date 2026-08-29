@@ -73,7 +73,7 @@ public:
 		std::function<bool()> isMaximized;
 	};
 
-	CBottomPanelTool();
+	explicit CBottomPanelTool(terminal::TerminalTabManagerDependencies terminalDependencies = {});
 	~CBottomPanelTool() override;
 	CBottomPanelTool(const CBottomPanelTool&) = delete;
 	CBottomPanelTool& operator=(const CBottomPanelTool&) = delete;

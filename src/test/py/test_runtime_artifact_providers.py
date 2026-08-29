@@ -149,6 +149,15 @@ class BronOracleTests(unittest.TestCase):
         self.assertIn('Source: "sakura\\bregonig.dll"', text)
         self.assertIn('Source: "sakura\\migemo.dll"', text)
 
+    def test_terminal_orchestration_tools_are_packaged_in_their_scoped_directory(self) -> None:
+        installer = _read(SAKURA_ISS)
+        self.assertIn('Source: "sakura\\terminal-tools\\*.exe"', installer)
+        for script in (BUILD_INSTALLER, ZIP_ARTIFACTS):
+            text = _read(script)
+            self.assertIn("terminal-tools", text)
+            for name in ("sakura-tmux.exe", "tmux.exe", "sakura-harness.exe"):
+                self.assertIn(name, text)
+
 
 class MinizProductGraphTests(unittest.TestCase):
     def test_generate_miniz_is_tests1_only(self) -> None:

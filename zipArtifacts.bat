@@ -207,6 +207,7 @@ mkdir %WORKDIR_EXE%\license\seti\
 mkdir %WORKDIR_EXE%\license\fmt\
 mkdir %WORKDIR_EXE%\license\ms-gsl\
 mkdir %WORKDIR_EXE%\license\wil\
+mkdir %WORKDIR_EXE%\terminal-tools\
 mkdir %WORKDIR_DEV%
 mkdir %WORKDIR_INST%
 call :copyRequired "%platform%\%configuration%\sakura.exe" "%WORKDIR_EXE%\" "sakura executable"
@@ -214,6 +215,12 @@ if errorlevel 1 exit /b 1
 call :copyRequired "%platform%\%configuration%\sakura-senp-tool.exe" "%WORKDIR_EXE%\" "SENP management executable"
 if errorlevel 1 exit /b 1
 call :copyRequired "%platform%\%configuration%\sakura-senp-host.exe" "%WORKDIR_EXE%\" "SENP runtime host"
+if errorlevel 1 exit /b 1
+call :copyRequired "%platform%\%configuration%\terminal-tools\sakura-tmux.exe" "%WORKDIR_EXE%\terminal-tools\" "Sakura tmux facade"
+if errorlevel 1 exit /b 1
+call :copyRequired "%platform%\%configuration%\terminal-tools\tmux.exe" "%WORKDIR_EXE%\terminal-tools\" "tmux compatibility alias"
+if errorlevel 1 exit /b 1
+call :copyRequired "%platform%\%configuration%\terminal-tools\sakura-harness.exe" "%WORKDIR_EXE%\terminal-tools\" "structured harness client"
 if errorlevel 1 exit /b 1
 call :copyRequired "%platform%\%configuration%\*.dll" "%WORKDIR_EXE%\" "runtime DLLs"
 if errorlevel 1 exit /b 1

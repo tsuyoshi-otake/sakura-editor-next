@@ -51,6 +51,18 @@
     <Filter Include="Test Files\terminal">
       <UniqueIdentifier>{1e1bdd3c-4abc-489a-813e-3009a5c42279}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Test Files\terminal\runtime">
+      <UniqueIdentifier>{282e140c-2942-477e-ab8f-2d1a33451052}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Test Files\terminal\tmux">
+      <UniqueIdentifier>{737cf423-86a8-41ed-b91c-1db7c4690277}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Test Files\terminal\cli">
+      <UniqueIdentifier>{a410e78e-5a7d-4c60-a72b-95813e8a0277}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Test Files\platform\harnessbridge">
+      <UniqueIdentifier>{fbb74c5f-e9ad-4f92-8482-6186301d0277}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Test Files\terminal\window">
       <UniqueIdentifier>{42ddcfc4-d630-4dfd-a90f-2be4829db080}</UniqueIdentifier>
     </Filter>
@@ -519,10 +531,67 @@
     <ClCompile Include="..\src\test\cpp\tests1\terminal\TerminalSessionTest.cpp">
       <Filter>Test Files\terminal</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\TerminalEnvironmentTest.cpp">
+      <Filter>Test Files\terminal</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\terminal\TerminalSessionRetirementServiceTest.cpp">
       <Filter>Test Files\terminal</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\runtime\TerminalInstanceLifecycleTest.cpp">
+      <Filter>Test Files\terminal\runtime</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\runtime\TerminalCollectionModelTest.cpp">
+      <Filter>Test Files\terminal\runtime</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\runtime\TerminalInputBatchTest.cpp">
+      <Filter>Test Files\terminal\runtime</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\runtime\TerminalCaptureIndexTest.cpp">
+      <Filter>Test Files\terminal\runtime</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\runtime\TerminalCaptureExtractionTest.cpp">
+      <Filter>Test Files\terminal\runtime</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\runtime\TerminalRuntimeServiceTest.cpp">
+      <Filter>Test Files\terminal\runtime</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\tmux\TmuxCompatibilityTest.cpp">
+      <Filter>Test Files\terminal\tmux</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\tmux\TmuxRuntimeAdapterTest.cpp">
+      <Filter>Test Files\terminal\tmux</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\cli\SakuraTmuxCliTest.cpp">
+      <Filter>Test Files\terminal\cli</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\cli\SakuraHarnessCliTest.cpp">
+      <Filter>Test Files\terminal\cli</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\harnessbridge\HarnessBridgeAuthenticatedSessionTest.cpp">
+      <Filter>Test Files\platform\harnessbridge</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\harnessbridge\HarnessBridgeBrokerTest.cpp">
+      <Filter>Test Files\platform\harnessbridge</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\harnessbridge\HarnessBridgeEnvironmentTest.cpp">
+      <Filter>Test Files\platform\harnessbridge</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\harnessbridge\HarnessBridgeOperationDispatcherTest.cpp">
+      <Filter>Test Files\platform\harnessbridge</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\harnessbridge\HarnessBridgeProtocolTest.cpp">
+      <Filter>Test Files\platform\harnessbridge</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\harnessbridge\HarnessBridgeSecurityTest.cpp">
+      <Filter>Test Files\platform\harnessbridge</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\harnessbridge\HarnessBridgeServiceHostTest.cpp">
+      <Filter>Test Files\platform\harnessbridge</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\terminal\ConPtyCloseIntegrationTest.cpp">
+      <Filter>Test Files\terminal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\HarnessOrchestrationAcceptanceTest.cpp">
       <Filter>Test Files\terminal</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\terminal\TerminalShortcutPresetTest.cpp">

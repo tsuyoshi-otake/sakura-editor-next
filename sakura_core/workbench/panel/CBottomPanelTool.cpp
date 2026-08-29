@@ -131,7 +131,12 @@ void RefreshProblemsColumnTitles(HWND list) noexcept
 } // namespace
 
 struct CBottomPanelTool::Impl {
-	std::unique_ptr<terminal::CTerminalTool> terminal = std::make_unique<terminal::CTerminalTool>();
+	explicit Impl(terminal::TerminalTabManagerDependencies dependencies)
+		: terminal(std::make_unique<terminal::CTerminalTool>(std::move(dependencies)))
+	{
+	}
+
+	std::unique_ptr<terminal::CTerminalTool> terminal;
 	HWND window = nullptr;
 	HWND terminalButton = nullptr;
 	HWND problemsButton = nullptr;
@@ -539,7 +544,8 @@ struct CBottomPanelTool::Impl {
 	}
 };
 
-CBottomPanelTool::CBottomPanelTool() : m_impl(std::make_unique<Impl>()) {}
+CBottomPanelTool::CBottomPanelTool(terminal::TerminalTabManagerDependencies terminalDependencies)
+	: m_impl(std::make_unique<Impl>(std::move(terminalDependencies))) {}
 CBottomPanelTool::~CBottomPanelTool() { Close(); }
 
 bool CBottomPanelTool::Create(HWND parent)

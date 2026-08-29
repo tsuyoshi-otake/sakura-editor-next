@@ -24,6 +24,7 @@
 #include "CNormalProcess.h"
 
 #include "_main/CProcessFactory.h"
+#include "_main/TerminalHarnessProcessRuntime.h"
 
 #include "CCommandLine.h"
 #include "CControlTray.h"
@@ -58,6 +59,7 @@
 #include "workbench/editor/persistence/EditorWorkingCopyLifecycleBridge.h"
 #include "workbench/editor/persistence/WorkingCopyPersistenceTypes.h"
 #include "workbench/tasks/TaskTerminalSessionFactory.h"
+#include "workbench/tasks/RuntimeTaskTerminalSessionFactory.h"
 
 #include <limits>
 
@@ -216,6 +218,9 @@ CNormalProcess::~CNormalProcess()
 	CPluginManager::resetInstance();
 
 	CEditApp::resetInstance();
+	// The bridge stops accepting work before the process-owned terminal jobs are
+	// joined. CEditApp above has already released every UI and Task borrower.
+	StopTerminalHarnessRuntime();
 	// Workbench, plugin, and extension consumers must release their platform
 	// references before the process-owned discovery/client/cache composition.
 	StopEditorControlPlatform();
@@ -493,6 +498,32 @@ bool CNormalProcess::InitializeProcess()
 			L"作業コピーの永続化スコープを確定できませんでした。");
 		return false;
 	}
+
+	// The terminal authority is process-owned and starts after the immutable
+	// profile/workspace identity is known, before plugins, Task, or HWND
+	// projections can observe it.
+	try {
+		wchar_t modulePath[32768]{};
+		const DWORD moduleLength = ::GetModuleFileNameW(nullptr, modulePath,
+			static_cast<DWORD>(std::size(modulePath)));
+		if (moduleLength == 0 || moduleLength >= std::size(modulePath)) return false;
+		TerminalHarnessProcessRuntimeOptions terminalOptions;
+		terminalOptions.profileId = platformIdentity->profileId;
+		terminalOptions.profileGeneration = platformIdentity->minimumGeneration;
+		terminalOptions.defaultWorkingDirectory = std::filesystem::current_path();
+		terminalOptions.terminalToolsDirectory =
+			std::filesystem::path(modulePath).parent_path() / L"terminal-tools";
+		m_terminalHarnessRuntime =
+			std::make_unique<CTerminalHarnessProcessRuntime>(std::move(terminalOptions));
+		std::wstring terminalDiagnostic;
+		if (!m_terminalHarnessRuntime->Start(terminalDiagnostic)) {
+			::OutputDebugStringW(L"Terminal Harness unavailable: ");
+			::OutputDebugStringW(terminalDiagnostic.c_str());
+			::OutputDebugStringW(L"\n");
+		}
+	} catch (...) {
+		return false;
+	}
 	// プラグイン読み込み
 	MY_TRACETIME( cRunningTimer, L"Before Init Jack" );
 	/* ジャック初期化 */
@@ -522,8 +553,10 @@ bool CNormalProcess::InitializeProcess()
 	workbenchDependencies.statusbarVisibilityMementoStore =
 		std::make_unique<CControlPlatformStatusbarVisibilityMementoStore>(
 			*m_editorControlPlatformRuntime, platformIdentity->profileId);
-	workbenchDependencies.taskExecutionSessionFactory =
-		workbench::tasks::CreateDefaultTaskTerminalSessionFactory();
+	workbenchDependencies.taskExecutionSessionFactory = m_terminalHarnessRuntime
+		? workbench::tasks::CreateRuntimeTaskTerminalSessionFactory(
+			m_terminalHarnessRuntime->RuntimeService(), m_terminalHarnessRuntime->LaunchProfiles())
+		: nullptr;
 	const auto extensionProfileHome = bootstrap.context->UserDataProfile().Resources().ProfileHome().ToWindowsPath();
 	if (!extensionProfileHome) {
 		TopErrorMessage(nullptr,
@@ -926,6 +959,25 @@ void CNormalProcess::StopEditorControlPlatform() noexcept
 		::OutputDebugStringW(L"Editor control platform runtime shutdown raised an unexpected exception.\n");
 	}
 	m_editorControlPlatformRuntime.reset();
+}
+
+void CNormalProcess::StopTerminalHarnessRuntime() noexcept
+{
+	if (!m_terminalHarnessRuntime) return;
+	m_terminalHarnessRuntime->Stop();
+	m_terminalHarnessRuntime.reset();
+}
+
+std::shared_ptr<terminal::CTerminalRuntimeService>
+CNormalProcess::GetTerminalRuntimeService() const noexcept
+{
+	return m_terminalHarnessRuntime ? m_terminalHarnessRuntime->RuntimeService() : nullptr;
+}
+
+std::shared_ptr<terminal::CDefaultTerminalLaunchProfileService>
+CNormalProcess::GetTerminalLaunchProfiles() const noexcept
+{
+	return m_terminalHarnessRuntime ? m_terminalHarnessRuntime->LaunchProfiles() : nullptr;
 }
 
 // -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //

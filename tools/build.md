@@ -197,6 +197,9 @@ py -3 tools/build/sakura_build.py stage runtime --context msvc-x64-debug --produ
 `build/staging/<context>/sakura-editor/.sakura-runtime-stage.json` は staged source/destination/sha256 を持つ
 deterministic receipt です。runtime asset の証跡は source が残っていることだけではなく、このreceiptと staged
 content が現在の graph/output に一致することを確認します。
+統合ターミナルの orchestration client は `terminal-tools/` 配下の `sakura-tmux.exe`、`tmux.exe`、
+`sakura-harness.exe` として stage されます。このディレクトリは Sakura の interactive terminal child にだけ
+PATH prepend され、Task、親プロセス、システム／ユーザー PATH は変更しません。
 manifest の runtime edge witness はこの静的 stage 設定を指し、まだ link されていない product output を
 `generate --check` 時に要求しません。output の存在・内容は `stage runtime` と receipt 検証で fail-closed に確認します。
 

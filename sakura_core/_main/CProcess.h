@@ -18,6 +18,7 @@
 #pragma once
 
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -25,6 +26,11 @@
 #include "global.h"
 #include "util/design_template.h"
 #include "env/CShareData.h"
+
+namespace terminal {
+class CDefaultTerminalLaunchProfileService;
+class CTerminalRuntimeService;
+}
 
 /*-----------------------------------------------------------------------
 クラスの宣言
@@ -59,6 +65,10 @@ public:
 	HWND			GetMainWindow() const{ return m_hWnd; }
 
 	[[nodiscard]] const CShareData* GetShareDataPtr() const { return &m_cShareData; }
+	[[nodiscard]] virtual std::shared_ptr<terminal::CTerminalRuntimeService>
+		GetTerminalRuntimeService() const noexcept { return {}; }
+	[[nodiscard]] virtual std::shared_ptr<terminal::CDefaultTerminalLaunchProfileService>
+		GetTerminalLaunchProfiles() const noexcept { return {}; }
 
 private:
 	HINSTANCE	m_hInstance;

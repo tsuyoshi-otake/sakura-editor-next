@@ -1,5 +1,6 @@
 /*! @file */
 #include "StdAfx.h"
+#include "terminal/session/TerminalEnvironment.h"
 #include "terminal/session/TerminalSession.h"
 
 #include <algorithm>
@@ -115,64 +116,6 @@ std::vector<wchar_t> BuildCommandLine( const TerminalLaunchOptions& options )
 	std::vector<wchar_t> mutableCommandLine(commandLine.begin(), commandLine.end());
 	mutableCommandLine.push_back(L'\0');
 	return mutableCommandLine;
-}
-
-//! Build the environment for an embedded ConPTY session.
-//!
-//! Sakura can itself be launched from a non-interactive host such as an agent
-//! runner.  Those hosts commonly export `NO_COLOR=1` and `TERM=dumb`; blindly
-//! inheriting them makes every interactive child (including Claude Code) turn
-//! off ANSI output even though this child has a real ConPTY.  Keep all other
-//! inherited variables, but describe the capabilities of the terminal we own.
-std::vector<wchar_t> BuildTerminalEnvironmentBlock() noexcept
-{
-	std::vector<wchar_t> block;
-	LPWCH raw = ::GetEnvironmentStringsW();
-	if( raw == nullptr ) return block;
-	try {
-		std::vector<std::wstring> entries;
-		bool termPresent = false;
-		bool colorTermPresent = false;
-		bool termProgramPresent = false;
-		for( const wchar_t* entry = raw; *entry != L'\0'; entry += std::wcslen(entry) + 1 ) {
-			std::wstring value(entry);
-			const auto separator = value.find(L'=');
-			if( separator == std::wstring::npos ) continue;
-			const std::wstring name = value.substr(0, separator);
-			const std::wstring variableValue = value.substr(separator + 1);
-			if( _wcsicmp(name.c_str(), L"NO_COLOR") == 0 ) continue;
-			if( _wcsicmp(name.c_str(), L"TERM") == 0 ) {
-				termPresent = true;
-				if( variableValue.empty() || _wcsicmp(variableValue.c_str(), L"dumb") == 0 ) {
-					value = name + L"=xterm-256color";
-				}
-			} else if( _wcsicmp(name.c_str(), L"COLORTERM") == 0 ) {
-				colorTermPresent = true;
-				if( variableValue.empty() ) value = name + L"=truecolor";
-			} else if( _wcsicmp(name.c_str(), L"TERM_PROGRAM") == 0 ) {
-				termProgramPresent = true;
-			}
-			entries.push_back(std::move(value));
-		}
-		if( !termPresent ) entries.emplace_back(L"TERM=xterm-256color");
-		if( !colorTermPresent ) entries.emplace_back(L"COLORTERM=truecolor");
-		if( !termProgramPresent ) entries.emplace_back(L"TERM_PROGRAM=sakura-editor");
-		std::sort(entries.begin(), entries.end(), [](const std::wstring& left, const std::wstring& right) {
-			return _wcsicmp(left.c_str(), right.c_str()) < 0;
-		});
-		std::size_t characterCount = 1;
-		for( const auto& entry : entries ) characterCount += entry.size() + 1;
-		block.reserve(characterCount);
-		for( const auto& entry : entries ) {
-			block.insert(block.end(), entry.begin(), entry.end());
-			block.push_back(L'\0');
-		}
-		block.push_back(L'\0');
-	} catch( ... ) {
-		block.clear();
-	}
-	::FreeEnvironmentStringsW(raw);
-	return block;
 }
 
 UniqueHandle DuplicateLocalHandle( HANDLE source )
@@ -296,14 +239,26 @@ public:
 		startup.lpAttributeList = attributes;
 		PROCESS_INFORMATION processInfo{};
 		auto commandLine = BuildCommandLine(options);
-		auto environmentBlock = BuildTerminalEnvironmentBlock();
+		auto environment = BuildTerminalEnvironmentBlock(options);
+		if( !environment.Succeeded() ) {
+			const auto error = environment.status == TerminalEnvironmentBuildStatus::TooLarge
+				? ERROR_BUFFER_OVERFLOW : ERROR_INVALID_DATA;
+			return StartFailure(error, L"Build terminal environment");
+		}
 		const DWORD creationFlags = EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT;
 		const wchar_t* workingDirectory = options.workingDirectory.empty() ? nullptr : options.workingDirectory.c_str();
 		if( !::CreateProcessW(options.executablePath.c_str(), commandLine.data(), nullptr, nullptr, FALSE, creationFlags,
-			environmentBlock.empty() ? nullptr : environmentBlock.data(), workingDirectory,
+			environment.block.data(), workingDirectory,
 			&startup.StartupInfo, &processInfo) ) return StartFailure(::GetLastError(), L"Create terminal process");
 		UniqueHandle process(processInfo.hProcess);
 		UniqueHandle primaryThread(processInfo.hThread);
+		FILETIME creationTime{}, exitTime{}, kernelTime{}, userTime{};
+		if( !::GetProcessTimes(process.Get(), &creationTime, &exitTime, &kernelTime, &userTime) ) {
+			return StartFailure(::GetLastError(), L"Query terminal process identity");
+		}
+		ULARGE_INTEGER creationValue{};
+		creationValue.LowPart = creationTime.dwLowDateTime;
+		creationValue.HighPart = creationTime.dwHighDateTime;
 		// The job-list attribute assigns the process atomically at creation, so a
 		// fast shell cannot spawn descendants before job ownership is established.
 		// The process is already running here and has consumed the ConPTY attribute.
@@ -315,8 +270,39 @@ public:
 		m_process = std::move(process);
 		m_job = std::move(job);
 		m_pseudoConsole = std::move(pseudoConsole);
+		m_rootProcessIdentity = TerminalBackendProcessIdentity{
+			processInfo.dwProcessId, creationValue.QuadPart };
 		m_started = true;
 		return TerminalStartResult::Success();
+	}
+
+	std::optional<TerminalBackendProcessIdentity> GetProcessIdentity() const noexcept override
+	{
+		const std::lock_guard lock(m_mutex);
+		return m_rootProcessIdentity && m_rootProcessIdentity->IsValid()
+			? m_rootProcessIdentity : std::nullopt;
+	}
+
+	bool OwnsProcess(
+		const std::uint32_t processId, const std::uint64_t creationTime ) const noexcept override
+	{
+		if( processId == 0 || creationTime == 0 ) return false;
+		UniqueHandle job;
+		{
+			const std::lock_guard lock(m_mutex);
+			job = DuplicateLocalHandle(m_job.Get());
+		}
+		if( !job ) return false;
+		UniqueHandle process(::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId));
+		if( !process ) return false;
+		FILETIME observedCreation{}, exitTime{}, kernelTime{}, userTime{};
+		if( !::GetProcessTimes(process.Get(), &observedCreation, &exitTime, &kernelTime, &userTime) ) return false;
+		ULARGE_INTEGER observed{};
+		observed.LowPart = observedCreation.dwLowDateTime;
+		observed.HighPart = observedCreation.dwHighDateTime;
+		if( observed.QuadPart != creationTime ) return false;
+		BOOL member = FALSE;
+		return ::IsProcessInJob(process.Get(), job.Get(), &member) != FALSE && member != FALSE;
 	}
 
 	TerminalBackendReadResult ReadOutput( std::span<std::uint8_t> destination, std::chrono::milliseconds timeout ) override
@@ -526,7 +512,7 @@ private:
 		}
 	}
 
-	std::mutex m_mutex;
+	mutable std::mutex m_mutex;
 	UniqueHandle m_input;
 	UniqueHandle m_output;
 	UniqueHandle m_process;
@@ -534,6 +520,7 @@ private:
 	UniquePseudoConsole m_pseudoConsole;
 	std::thread m_pseudoConsoleCloseThread;
 	std::optional<std::uint32_t> m_rootExitCode;
+	std::optional<TerminalBackendProcessIdentity> m_rootProcessIdentity;
 	bool m_started = false;
 	bool m_closed = false;
 };

@@ -106,5 +106,6 @@ canonical CLIはMSBuildのノード再利用を無効にするため、正常終
 * if 文の条件判定を元に、成果物のファイル名、フォルダー名を構築して環境変数に設定する
     - 設定される環境変数については [こちら](build-envvars.md#zipartifactsbat-で設定する環境変数) を参照してください。
 * 作業用フォルダーに必要なファイルをコピーする
+    - Issue #277 の `sakura-tmux.exe`、`tmux.exe`、`sakura-harness.exe` は、グローバル PATH と混ざらないよう `EXE\terminal-tools\` に保持する。インストーラも `{app}\terminal-tools\` へ同じ3ファイルを配置する。
 * [tools\zip\zip.bat](./zip/zip.bat) を使用して作業用フォルダーの中身を zip ファイルにまとめる
     - [7-Zip](https://7-zip.opensource.jp/) が利用できる場合は 7z.exe を、利用できない場合は PowerShell を利用してファイルを作成します。

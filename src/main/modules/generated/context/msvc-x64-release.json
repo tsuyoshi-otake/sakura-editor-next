@@ -11,6 +11,7 @@
     "sakura-module-generated-projections",
     "sakura-native-ffi-staticlib",
     "sakura-resource-id-contract",
+    "sakura-terminal-tools-msvc-x64-release-product",
     "sakura-vendored-third-party-source-set"
   ],
   "active_components": [
@@ -33,6 +34,7 @@
     "sakura_editor_selection_tests",
     "sakura_filesystem",
     "sakura_filesystem_tests",
+    "sakura_harnessbridge",
     "sakura_language_en_us_resources",
     "sakura_language_zh_cn_resources",
     "sakura_request",
@@ -45,6 +47,9 @@
     "sakura_shareddata_contract_tests",
     "sakura_storage",
     "sakura_storage_tests",
+    "sakura_terminal_cli",
+    "sakura_terminal_tmux_core",
+    "sakura_terminal_tools",
     "sakura_uri",
     "sakura_uri_tests",
     "sakura_win32_editor_frame",
@@ -64,9 +69,20 @@
     "sakura-app-to-root-vcpkg-package-set",
     "sakura-app-to-msvc-x64-release-runtime-stage",
     "msvc-x64-release-runtime-stage-to-product",
+    "msvc-x64-release-runtime-stage-to-terminal-tools",
     "msvc-x64-release-runtime-stage-to-en-us-resource",
     "msvc-x64-release-runtime-stage-to-zh-cn-resource",
     "tests1-to-sakura-app",
+    "sakura-harnessbridge-to-terminal-tmux-core",
+    "sakura-terminal-cli-to-terminal-tmux-core",
+    "sakura-terminal-cli-to-harnessbridge",
+    "sakura-terminal-tools-to-terminal-cli",
+    "sakura-terminal-tools-to-harnessbridge",
+    "sakura-app-to-terminal-tmux-core",
+    "sakura-app-to-harnessbridge",
+    "tests1-to-terminal-cli",
+    "tests1-to-terminal-tmux-core",
+    "tests1-to-harnessbridge",
     "sakura-app-to-sakura-uri",
     "tests1-to-sakura-uri",
     "sakura-uri-tests-to-sakura-uri",
@@ -170,7 +186,7 @@
     "utf16-scan-backend": "sakura-utf16-cpp-provider"
   },
   "projection_schema": 1,
-  "semantic_graph_hash": "sha256:21b67017d638ad89d2255c9b761379c70d7ac4f5a21b63d0f900d2bc6ddebe56",
+  "semantic_graph_hash": "sha256:793ecc68de8208adea72676639cbe922bfb8b8c070ec2d4d2cc82dce65fe0f53",
   "staging_sets": [
     "sakura-editor-msvc-x64-release-runtime-stage"
   ]
