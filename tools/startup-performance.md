@@ -452,6 +452,25 @@ PID、親 PID、実行ファイル名、生成時刻、Job membership だけを�
 （259）は `active` として扱い、終了コードとは解釈しません。観測 API が失敗した場合は
 `unavailable` として残し、成功や終了を推測して補いません。
 
+各 checkpoint には、観測に失敗した境界を bounded な
+`failureSubstage` と数値の `failureErrorCode` として併記します。`failureSubstage` は
+`root-exit`、`job-membership`、`process-census-first` / `process-identity-first`、
+`process-census-second` / `process-identity-second`、`window-enumeration`、
+`projection-finalize`（または `none`）の固定 allowlist だけを受け付け、未知の値、
+型違い、範囲外の error code は `unavailable` として fail closed にします。この substage
+の照合は大文字小文字を区別する ordinal 比較で行い、`process-identity` のような
+総称値は受け付けません。
+成功した後でも process census や window enumeration が失敗し得るため、この情報は
+成功を推測するためではなく、`diagnostic-unavailable` の一次境界を payload-free に
+切り分けるためのものです。
+`failureSubstage` と `failureErrorCode` の組み合わせも checkpoint の状態と照合します。
+`unavailable` は `none` 以外の substage と正の error code、`not-reached` は `none` と null
+の error code を要求します。`observed` は `none`/null、または
+`jobMembershipVerified=false`・bounded な Job query の failed・正の error code による
+意図した Job-membership warning だけを許可し、その error code は
+`jobQueryObservation.errorCode` と一致しなければなりません。両フィールドがともに欠落する場合は
+legacy v1 として互換に扱いますが、片側だけの欠落やその他の矛盾は fail closed です。
+
 paired runner の `startupDiagnostics` はこの schema を各 run に保ったまま、path・command line・caption・
 本文などを含まない固定フィールドへ変換します。`startupTrace` も allowlist と固定 ordered item fields だけへ
 変換し、最大件数を超えた場合は `orderedEventsTruncated` を設定します。到達した checkpoint が `unavailable` になる、または root

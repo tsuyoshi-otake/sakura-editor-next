@@ -96,6 +96,12 @@ $script:PairedDiagnosticCheckpointMs = [ordered]@{
 $script:PairedDiagnosticMaxProcessCount = 256
 $script:PairedDiagnosticMaxImageNameLength = 260
 $script:PairedDiagnosticMaxWindowCount = 1024
+$script:PairedDiagnosticFailureSubstages = @(
+    'none', 'root-exit', 'job-membership',
+    'process-census-first', 'process-identity-first',
+    'process-census-second', 'process-identity-second',
+    'window-enumeration', 'projection-finalize'
+)
 $script:PairedJobQueryMaxCount = 4096
 $script:PairedJobQueryMaxBytes = [UInt64]1048576
 $script:PairedJobQueryMaxProcessCount = [UInt64]131072
@@ -2975,6 +2981,8 @@ function New-PairedEmptyProcessDiagnosticSnapshot {
         processExitElapsedMs = $null
         failureStage = $null
         failureType = $null
+        failureSubstage = 'none'
+        failureErrorCode = $null
         jobQueryObservation = New-PairedEmptyJobQueryObservation
     }
 }
@@ -3068,6 +3076,111 @@ function Convert-PairedDiagnosticExitState {
     return [ordered]@{ state = $state; exitCode = $exitCode; errorCode = $errorCode }
 }
 
+function Convert-PairedDiagnosticFailureTelemetry {
+    param([AllowNull()] [object]$Source)
+    $substageSlot = Get-PairedRawPropertySlot $Source 'failureSubstage'
+    $errorSlot = Get-PairedRawPropertySlot $Source 'failureErrorCode'
+    $result = [ordered]@{
+        valid = $true
+        present = [bool]($substageSlot.present -or $errorSlot.present)
+        substage = 'none'
+        errorCode = $null
+    }
+    # Absence of both additive fields is the only legacy-v1 compatibility
+    # case.  A one-sided field or an unknown value is malformed and must make
+    # the checkpoint unavailable instead of being silently normalized.
+    if ($substageSlot.present -ne $errorSlot.present) { $result.valid = $false; return $result }
+    if (-not $substageSlot.present) { return $result }
+    $substageAllowed = $false
+    if ($substageSlot.value -is [string]) {
+        foreach ($allowed in @($script:PairedDiagnosticFailureSubstages)) {
+            if ([StringComparer]::Ordinal.Equals([string]$substageSlot.value, [string]$allowed)) {
+                $substageAllowed = $true
+                break
+            }
+        }
+    }
+    if (-not $substageAllowed) {
+        $result.valid = $false
+        return $result
+    }
+    $result.substage = [string]$substageSlot.value
+    if ($null -ne $errorSlot.value) {
+        $value = $errorSlot.value
+        $integerType = $value -is [byte] -or $value -is [sbyte] -or
+            $value -is [int16] -or $value -is [uint16] -or
+            $value -is [int32] -or $value -is [uint32] -or
+            $value -is [int64] -or $value -is [uint64]
+        if (-not $integerType) {
+            $result.valid = $false
+            return $result
+        }
+        try {
+            $number = [decimal]$value
+            if ($number -lt 0 -or $number -gt [decimal][int]::MaxValue -or
+                $number -ne [decimal]::Truncate($number)) {
+                $result.valid = $false
+                return $result
+            }
+            $result.errorCode = [int]$number
+        }
+        catch {
+            $result.valid = $false
+            return $result
+        }
+    }
+    if ([StringComparer]::Ordinal.Equals([string]$result.substage, 'none')) {
+        if ($null -ne $result.errorCode) { $result.valid = $false }
+    }
+    elseif ($null -eq $result.errorCode -or $result.errorCode -le 0) {
+        $result.valid = $false
+    }
+    return $result
+}
+
+function Test-PairedDiagnosticFailureTelemetryState {
+    param(
+        [Parameter(Mandatory = $true)] [string]$Status,
+        [Parameter(Mandatory = $true)] [bool]$StatusValid,
+        [Parameter(Mandatory = $true)] [object]$Telemetry,
+        [AllowNull()] [object]$JobQueryObservation,
+        [AllowNull()] [object]$JobMembershipValue,
+        [AllowNull()] [object]$JobMembershipRawValue,
+        [Parameter(Mandatory = $true)] [bool]$JobMembershipPresent
+    )
+    if (-not [bool]$Telemetry.valid) { return $false }
+    # Reports written before the additive fields existed remain compatible.
+    if (-not [bool]$Telemetry.present) { return $true }
+    if (-not $StatusValid) { return $false }
+    $substage = [string]$Telemetry.substage
+    $errorCode = $Telemetry.errorCode
+    $isNone = [StringComparer]::Ordinal.Equals($substage, 'none')
+    $hasPositiveError = $null -ne $errorCode -and $errorCode -is [int] -and $errorCode -gt 0
+    if ([StringComparer]::Ordinal.Equals($Status, 'unavailable')) {
+        return -not $isNone -and $hasPositiveError
+    }
+    if ([StringComparer]::Ordinal.Equals($Status, 'not-reached')) {
+        return $isNone -and $null -eq $errorCode
+    }
+    if ([StringComparer]::Ordinal.Equals($Status, 'observed')) {
+        if ($isNone -and $null -eq $errorCode) { return $true }
+        if (-not [StringComparer]::Ordinal.Equals($substage, 'job-membership') -or
+            -not $hasPositiveError -or -not $JobMembershipPresent -or
+            $JobMembershipRawValue -isnot [bool] -or [bool]$JobMembershipRawValue) {
+            return $false
+        }
+        $queryStatus = [string](Get-PairedProperty $JobQueryObservation @('status'))
+        $queryAttempted = Convert-PairedDiagnosticBoolean (Get-PairedProperty $JobQueryObservation @('attempted'))
+        $querySucceeded = Convert-PairedDiagnosticBoolean (Get-PairedProperty $JobQueryObservation @('succeeded'))
+        $queryErrorCode = Convert-PairedJobQueryErrorCode (Get-PairedProperty $JobQueryObservation @('errorCode'))
+        return [StringComparer]::Ordinal.Equals($queryStatus, 'failed') -and
+            $queryAttempted -eq $true -and $querySucceeded -eq $false -and
+            $null -ne $queryErrorCode -and $queryErrorCode -gt 0 -and
+            $queryErrorCode -eq $errorCode
+    }
+    return $false
+}
+
 function Convert-PairedProcessDiagnostics {
     param([AllowNull()] [object]$Raw)
     $empty = New-PairedEmptyStartupDiagnostics
@@ -3090,10 +3203,27 @@ function Convert-PairedProcessDiagnostics {
         }
         $snapshotCount++
         $source = $source[0]
-        $status = [string](Get-PairedProperty $source @('status'))
-        if ($status -notin @('observed', 'unavailable', 'not-reached')) { $status = 'unavailable' }
+        $rawStatus = Get-PairedProperty $source @('status')
+        $status = [string]$rawStatus
+        $statusValid = $false
+        foreach ($allowedStatus in @('observed', 'unavailable', 'not-reached')) {
+            if ($rawStatus -is [string] -and
+                [StringComparer]::Ordinal.Equals($status, $allowedStatus)) {
+                $statusValid = $true
+                break
+            }
+        }
+        if (-not $statusValid) { $status = 'unavailable' }
         $output.status = $status
         $output.observed = [bool]($status -eq 'observed')
+        $failureTelemetry = Convert-PairedDiagnosticFailureTelemetry $source
+        $output.failureSubstage = [string]$failureTelemetry.substage
+        $output.failureErrorCode = $failureTelemetry.errorCode
+        if (-not [bool]$failureTelemetry.valid) {
+            $status = 'unavailable'
+            $output.status = 'unavailable'
+            $output.observed = $false
+        }
         $rawQueryPresent = Test-PairedPropertyPresent $source 'jobQueryObservation'
         if ($rawQueryPresent) {
             $rawQuery = Get-PairedProperty $source @('jobQueryObservation')
@@ -3105,13 +3235,26 @@ function Convert-PairedProcessDiagnostics {
         else {
             $output.jobQueryObservation = New-PairedEmptyJobQueryObservation
         }
+        $jobMembershipSlot = Get-PairedRawPropertySlot $source 'jobMembershipVerified'
+        $jobMembershipValue = if ($jobMembershipSlot.present) {
+            Convert-PairedDiagnosticBoolean $jobMembershipSlot.value
+        }
+        else { $null }
+        if (-not (Test-PairedDiagnosticFailureTelemetryState $status $statusValid $failureTelemetry `
+                $output.jobQueryObservation $jobMembershipValue $jobMembershipSlot.value $jobMembershipSlot.present)) {
+            $status = 'unavailable'
+            $output.status = 'unavailable'
+            $output.observed = $false
+        }
         $output.elapsedMs = Convert-PairedElapsedMs (Get-PairedProperty $source @('elapsedMs'))
         $exit = Convert-PairedDiagnosticExitState $source
         $output.rootExitState = $exit.state
         $output.rootExitCode = $exit.exitCode
         $output.rootExitErrorCode = $exit.errorCode
-        if ($status -eq 'observed' -and $exit.state -eq 'unavailable') { $output.status = 'unavailable'; $output.observed = $false }
-        if ($status -eq 'observed') {
+        if ([StringComparer]::Ordinal.Equals($status, 'observed') -and $exit.state -eq 'unavailable') {
+            $output.status = 'unavailable'; $output.observed = $false
+        }
+        if ([StringComparer]::Ordinal.Equals($status, 'observed')) {
             $rawTreeValue = Get-PairedProperty $source @('processTree', 'processes', 'entries')
             $rawTree = if ($null -eq $rawTreeValue) { @() } else { @($rawTreeValue) }
             $tree = New-Object Collections.Generic.List[object]
@@ -3127,7 +3270,7 @@ function Convert-PairedProcessDiagnostics {
             $processCountValue = Convert-PairedDiagnosticPid (Get-PairedProperty $source @('processCount')) $true
             $output.processCount = if ($null -eq $processCountValue) { [int]$tree.Count } else { [int][Math]::Min($processCountValue, $script:PairedDiagnosticMaxProcessCount) }
             $output.processRecordsTruncated = [bool](Get-PairedProperty $source @('processRecordsTruncated')) -or $invalid -or @($rawTree).Count -gt $script:PairedDiagnosticMaxProcessCount
-            $output.jobMembershipVerified = [bool](Get-PairedProperty $source @('jobMembershipVerified'))
+            $output.jobMembershipVerified = if ($null -eq $jobMembershipValue) { $false } else { [bool]$jobMembershipValue }
             $jobMemberCount = Convert-PairedDiagnosticPid (Get-PairedProperty $source @('jobMemberCount')) $true
             $output.jobMemberCount = if ($null -eq $jobMemberCount) { [int](@($tree | Where-Object { $_.jobMember -eq $true }).Count) } else { [int][Math]::Min($jobMemberCount, $script:PairedDiagnosticMaxProcessCount) }
             $windowCount = Convert-PairedDiagnosticWindowCount (Get-PairedProperty $source @('topLevelWindowCount'))
@@ -3175,6 +3318,16 @@ function Convert-PairedProcessDiagnostics {
         $output.failureType = [string](Get-PairedProperty $source @('failureType'))
         if ($output.failureStage -notin @('process-tree', 'window-discovery', 'readiness', 'process-start', 'cleanup', 'profile-cleanup', 'affinity', 'startup', 'diagnostics')) { $output.failureStage = $null }
         if ($output.failureType -notin @('observation', 'timeout', 'startup', 'survivor', 'profileCleanup', 'affinity')) { $output.failureType = $null }
+        if ($failureTelemetry.present -and
+            [StringComparer]::Ordinal.Equals([string]$output.status, 'unavailable') -and
+            ([StringComparer]::Ordinal.Equals([string]$output.failureSubstage, 'none') -or
+                $null -eq $output.failureErrorCode -or $output.failureErrorCode -le 0)) {
+            # A later decoder failure can turn a previously observed source
+            # into unavailable. Keep the converted snapshot internally
+            # consistent without exposing the malformed source payload.
+            $output.failureSubstage = 'projection-finalize'
+            $output.failureErrorCode = [int]13
+        }
     }
     $rawExit = Get-PairedProperty $Raw @('processExitObservation', 'exitObservation')
     if ($null -eq $rawExit) { return $empty }
@@ -4659,6 +4812,164 @@ function Invoke-PairedSelfTest {
         $selfTestSuccessRun.startupDiagnostics.processExitObservation.state -eq 'active' -and
         $selfTestSuccessRun.startupDiagnostics.processExitObservation.exitCode -eq 259)
     if (-not $selfTestDiagnosticsSuccessVerified) { throw 'Synthetic successful startup diagnostics schema self-test failed.' }
+    $selfTestDiagnosticCensusFailureRaw = $selfTestSuccessRaw | ConvertTo-Json -Depth 30 | ConvertFrom-Json
+    $selfTestDiagnosticCensusFailureRaw.startupDiagnostics.processTreeSnapshots[0].status = 'unavailable'
+    $selfTestDiagnosticCensusFailureRaw.startupDiagnostics.processTreeSnapshots[0].observed = $false
+    $selfTestDiagnosticCensusFailureRaw.startupDiagnostics.processTreeSnapshots[0].failureSubstage = 'process-census-first'
+    $selfTestDiagnosticCensusFailureRaw.startupDiagnostics.processTreeSnapshots[0].failureErrorCode = [int]13
+    $selfTestDiagnosticCensusFailureRun = Convert-PairedLaunchResult `
+        $selfTestDiagnosticCensusFailureRaw $schedule[2] $selfTestTimeoutProfile $true
+    $selfTestDiagnosticWindowFailureRaw = $selfTestSuccessRaw | ConvertTo-Json -Depth 30 | ConvertFrom-Json
+    $selfTestDiagnosticWindowFailureRaw.startupDiagnostics.processTreeSnapshots[0].status = 'unavailable'
+    $selfTestDiagnosticWindowFailureRaw.startupDiagnostics.processTreeSnapshots[0].observed = $false
+    $selfTestDiagnosticWindowFailureRaw.startupDiagnostics.processTreeSnapshots[0].failureSubstage = 'window-enumeration'
+    $selfTestDiagnosticWindowFailureRaw.startupDiagnostics.processTreeSnapshots[0].failureErrorCode = [int]13
+    $selfTestDiagnosticWindowFailureRun = Convert-PairedLaunchResult `
+        $selfTestDiagnosticWindowFailureRaw $schedule[2] $selfTestTimeoutProfile $true
+    $selfTestDiagnosticMalformedRaw = $selfTestSuccessRaw | ConvertTo-Json -Depth 30 | ConvertFrom-Json
+    $selfTestDiagnosticMalformedRaw.startupDiagnostics.processTreeSnapshots[0].failureSubstage = 'synthetic-unknown'
+    $selfTestDiagnosticMalformedRaw.startupDiagnostics.processTreeSnapshots[0].failureErrorCode = [double]13
+    $selfTestDiagnosticMalformedRun = Convert-PairedLaunchResult `
+        $selfTestDiagnosticMalformedRaw $schedule[2] $selfTestTimeoutProfile $true
+    $selfTestDiagnosticSubstageFailureVerified = [bool](
+        $selfTestDiagnosticCensusFailureRun.status -eq 'diagnostic-unavailable' -and
+        $selfTestDiagnosticCensusFailureRun.excluded -and
+        $selfTestDiagnosticCensusFailureRun.startupDiagnostics.observationStatus -eq 'unavailable' -and
+        $selfTestDiagnosticCensusFailureRun.startupDiagnostics.processTreeSnapshots[0].failureSubstage -eq 'process-census-first' -and
+        $selfTestDiagnosticCensusFailureRun.startupDiagnostics.processTreeSnapshots[0].failureErrorCode -eq 13 -and
+        $selfTestDiagnosticWindowFailureRun.status -eq 'diagnostic-unavailable' -and
+        $selfTestDiagnosticWindowFailureRun.excluded -and
+        $selfTestDiagnosticWindowFailureRun.startupDiagnostics.processTreeSnapshots[0].failureSubstage -eq 'window-enumeration' -and
+        $selfTestDiagnosticWindowFailureRun.startupDiagnostics.processTreeSnapshots[0].failureErrorCode -eq 13)
+    $selfTestDiagnosticSubstageMalformedRejected = [bool](
+        $selfTestDiagnosticMalformedRun.status -eq 'diagnostic-unavailable' -and
+        $selfTestDiagnosticMalformedRun.excluded -and
+        $selfTestDiagnosticMalformedRun.startupDiagnostics.observationStatus -eq 'unavailable')
+    if (-not $selfTestDiagnosticSubstageFailureVerified -or -not $selfTestDiagnosticSubstageMalformedRejected) {
+        throw 'Diagnostic substage conversion or fail-closed self-test failed.'
+    }
+    $selfTestCloneDiagnosticRaw = {
+        return ($selfTestSuccessRaw | ConvertTo-Json -Depth 30 | ConvertFrom-Json)
+    }.GetNewClosure()
+    $selfTestObservedJobWarningRaw = & $selfTestCloneDiagnosticRaw
+    $selfTestObservedJobWarningSnapshot = @($selfTestObservedJobWarningRaw.startupDiagnostics.processTreeSnapshots)[0]
+    $selfTestObservedJobWarningSnapshot.status = 'observed'
+    $selfTestObservedJobWarningSnapshot.observed = $true
+    $selfTestObservedJobWarningSnapshot.failureSubstage = 'job-membership'
+    $selfTestObservedJobWarningSnapshot.failureErrorCode = [int]5
+    $selfTestObservedJobWarningSnapshot.jobMembershipVerified = $false
+    $selfTestObservedJobWarningSnapshot.jobMemberCount = 0
+    $selfTestObservedJobWarningQuery = $selfTestFailedJobQuery | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+    $selfTestObservedJobWarningQuery.errorCode = [int]5
+    $selfTestObservedJobWarningQuery.attempts[0].errorCode = [int]5
+    $selfTestObservedJobWarningSnapshot.jobQueryObservation = $selfTestObservedJobWarningQuery
+    if ($selfTestObservedJobWarningSnapshot.processTree.Count -gt 0) {
+        $selfTestObservedJobWarningSnapshot.processTree[0].jobMember = $false
+    }
+    $selfTestObservedJobWarningRun = Convert-PairedLaunchResult `
+        $selfTestObservedJobWarningRaw $schedule[2] $selfTestTimeoutProfile $true
+    $selfTestLegacyObservedRaw = & $selfTestCloneDiagnosticRaw
+    foreach ($snapshot in @($selfTestLegacyObservedRaw.startupDiagnostics.processTreeSnapshots)) {
+        [void]$snapshot.PSObject.Properties.Remove('failureSubstage')
+        [void]$snapshot.PSObject.Properties.Remove('failureErrorCode')
+    }
+    $selfTestLegacyObservedRun = Convert-PairedLaunchResult `
+        $selfTestLegacyObservedRaw $schedule[2] $selfTestTimeoutProfile $true
+    $selfTestLegacyUnavailableRaw = & $selfTestCloneDiagnosticRaw
+    $selfTestLegacyUnavailableSnapshot = @($selfTestLegacyUnavailableRaw.startupDiagnostics.processTreeSnapshots)[0]
+    $selfTestLegacyUnavailableSnapshot.status = 'unavailable'
+    $selfTestLegacyUnavailableSnapshot.observed = $false
+    [void]$selfTestLegacyUnavailableSnapshot.PSObject.Properties.Remove('failureSubstage')
+    [void]$selfTestLegacyUnavailableSnapshot.PSObject.Properties.Remove('failureErrorCode')
+    $selfTestLegacyUnavailableDiagnostics = Convert-PairedProcessDiagnostics `
+        $selfTestLegacyUnavailableRaw.startupDiagnostics
+    $selfTestLegacyNotReachedRaw = & $selfTestCloneDiagnosticRaw
+    foreach ($snapshot in @($selfTestLegacyNotReachedRaw.startupDiagnostics.processTreeSnapshots)) {
+        $snapshot.status = 'not-reached'
+        $snapshot.observed = $false
+        [void]$snapshot.PSObject.Properties.Remove('failureSubstage')
+        [void]$snapshot.PSObject.Properties.Remove('failureErrorCode')
+    }
+    $selfTestLegacyNotReachedDiagnostics = Convert-PairedProcessDiagnostics `
+        $selfTestLegacyNotReachedRaw.startupDiagnostics
+    $selfTestDiagnosticMalformedCombinationRuns = New-Object Collections.Generic.List[object]
+    $selfTestObservedJobWarningMismatchRejected = $false
+    foreach ($case in @(
+            [ordered]@{ name = 'observed-window'; status = 'observed'; substage = 'window-enumeration'; error = [int]13 }
+            [ordered]@{ name = 'not-reached-failure'; status = 'not-reached'; substage = 'process-census-first'; error = [int]13 }
+            [ordered]@{ name = 'unavailable-none'; status = 'unavailable'; substage = 'none'; error = $null }
+            [ordered]@{ name = 'boolean-error'; status = 'unavailable'; substage = 'process-census-first'; error = [bool]$true }
+            [ordered]@{ name = 'numeric-job-warning'; status = 'observed'; substage = 'job-membership'; error = [int]5; jobMembershipVerified = [int]0; jobQueryError = [int]5 }
+            [ordered]@{ name = 'mismatched-job-warning'; status = 'observed'; substage = 'job-membership'; error = [int]5; jobMembershipVerified = $false; jobQueryError = [int]6 }
+            [ordered]@{ name = 'zero-error'; status = 'unavailable'; substage = 'process-census-first'; error = [int]0 }
+            [ordered]@{ name = 'negative-error'; status = 'unavailable'; substage = 'process-census-first'; error = [int]-1 }
+            [ordered]@{ name = 'mixed-case-substage'; status = 'unavailable'; substage = 'Process-Census-First'; error = [int]13 }
+            [ordered]@{ name = 'missing-error'; status = 'unavailable'; substage = 'process-census-first'; error = [int]13; removeError = $true }
+            [ordered]@{ name = 'missing-substage'; status = 'unavailable'; substage = 'process-census-first'; error = [int]13; removeSubstage = $true }
+        )) {
+        $raw = & $selfTestCloneDiagnosticRaw
+        $snapshot = @($raw.startupDiagnostics.processTreeSnapshots)[0]
+        $snapshot.status = $case.status
+        $snapshot.observed = [bool]($case.status -eq 'observed')
+        $snapshot.failureSubstage = $case.substage
+        $snapshot.failureErrorCode = $case.error
+        if (Test-PairedPropertyPresent $case 'jobMembershipVerified') {
+            $snapshot.jobMembershipVerified = Get-PairedProperty $case @('jobMembershipVerified')
+            $warningQuery = $selfTestFailedJobQuery
+            if (Test-PairedPropertyPresent $case 'jobQueryError') {
+                $warningQuery = $selfTestFailedJobQuery | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+                $warningErrorCode = [int](Get-PairedProperty $case @('jobQueryError'))
+                $warningQuery.errorCode = $warningErrorCode
+                $warningQuery.attempts[0].errorCode = $warningErrorCode
+            }
+            $snapshot.jobQueryObservation = $warningQuery
+            if ($snapshot.processTree.Count -gt 0) {
+                foreach ($record in @($snapshot.processTree)) { $record.jobMember = $false }
+            }
+        }
+        $removeError = Get-PairedProperty $case @('removeError')
+        $removeSubstage = Get-PairedProperty $case @('removeSubstage')
+        if ($removeError -eq $true) { [void]$snapshot.PSObject.Properties.Remove('failureErrorCode') }
+        if ($removeSubstage -eq $true) { [void]$snapshot.PSObject.Properties.Remove('failureSubstage') }
+        $malformedCombinationRun = Convert-PairedLaunchResult $raw $schedule[2] $selfTestTimeoutProfile $true
+        [void]$selfTestDiagnosticMalformedCombinationRuns.Add($malformedCombinationRun)
+        if ($case.name -eq 'mismatched-job-warning') {
+            $selfTestObservedJobWarningMismatchRejected = [bool]($malformedCombinationRun.status -eq 'diagnostic-unavailable' -and
+                $malformedCombinationRun.excluded -and
+                $malformedCombinationRun.startupDiagnostics.observationStatus -eq 'unavailable')
+        }
+    }
+    $selfTestObservedJobWarningVerified = [bool](
+        $selfTestObservedJobWarningRun.status -eq 'succeeded' -and
+        -not $selfTestObservedJobWarningRun.excluded -and
+        $selfTestObservedJobWarningRun.startupDiagnostics.observationStatus -eq 'observed' -and
+        $selfTestObservedJobWarningRun.startupDiagnostics.processTreeSnapshots[0].status -eq 'observed' -and
+        -not $selfTestObservedJobWarningRun.startupDiagnostics.processTreeSnapshots[0].jobMembershipVerified -and
+        $selfTestObservedJobWarningRun.startupDiagnostics.processTreeSnapshots[0].jobQueryObservation.status -eq 'failed' -and
+        $selfTestObservedJobWarningRun.startupDiagnostics.processTreeSnapshots[0].failureSubstage -eq 'job-membership' -and
+        $selfTestObservedJobWarningRun.startupDiagnostics.processTreeSnapshots[0].failureErrorCode -eq 5)
+    $selfTestLegacyDiagnosticCompatibilityVerified = [bool](
+        $selfTestLegacyObservedRun.status -eq 'succeeded' -and
+        -not $selfTestLegacyObservedRun.excluded -and
+        $selfTestLegacyObservedRun.startupDiagnostics.observationStatus -eq 'observed' -and
+        $selfTestLegacyObservedRun.startupDiagnostics.processTreeSnapshots[0].failureSubstage -eq 'none' -and
+        $null -eq $selfTestLegacyObservedRun.startupDiagnostics.processTreeSnapshots[0].failureErrorCode -and
+        $selfTestLegacyUnavailableDiagnostics.observationStatus -eq 'unavailable' -and
+        $selfTestLegacyUnavailableDiagnostics.processTreeSnapshots[0].status -eq 'unavailable' -and
+        $selfTestLegacyNotReachedDiagnostics.observationStatus -eq 'not-reached' -and
+        @($selfTestLegacyNotReachedDiagnostics.processTreeSnapshots |
+            Where-Object { $_.status -ne 'not-reached' }).Count -eq 0)
+    $selfTestDiagnosticMalformedCombinationsRejected = @(
+        $selfTestDiagnosticMalformedCombinationRuns |
+            Where-Object { $_.status -ne 'diagnostic-unavailable' -or -not $_.excluded -or
+                $_.startupDiagnostics.observationStatus -ne 'unavailable' }
+    ).Count -eq 0
+    if (-not $selfTestObservedJobWarningVerified -or
+        -not $selfTestLegacyDiagnosticCompatibilityVerified -or
+        -not $selfTestDiagnosticMalformedCombinationsRejected -or
+        -not $selfTestObservedJobWarningMismatchRejected) {
+        throw 'Diagnostic telemetry cross-field self-test failed.'
+    }
     $selfTestPartialRaw = $selfTestSuccessRaw | Select-Object *
     $selfTestPartialRaw.launchJobQueryObservation = $selfTestPartialJobQuery
     $selfTestPartialRun = Convert-PairedLaunchResult $selfTestPartialRaw $schedule[2] $selfTestTimeoutProfile $true
@@ -5805,6 +6116,12 @@ function Invoke-PairedSelfTest {
         startupDiagnosticsSingleTreeVerified = [bool]$selfTestSingleTreeDiagnosticsVerified
         startupDiagnosticsTimeoutSchemaVerified = [bool]$selfTestDiagnosticsTimeoutVerified
         startupDiagnosticsFallbackSchemaVerified = [bool]$selfTestFallbackDiagnosticsVerified
+        startupDiagnosticsSubstageFailureVerified = [bool]$selfTestDiagnosticSubstageFailureVerified
+        startupDiagnosticsSubstageMalformedRejected = [bool]$selfTestDiagnosticSubstageMalformedRejected
+        startupDiagnosticsCrossFieldWarningVerified = [bool]$selfTestObservedJobWarningVerified
+        startupDiagnosticsCrossFieldWarningMismatchRejected = [bool]$selfTestObservedJobWarningMismatchRejected
+        startupDiagnosticsLegacyCompatibilityVerified = [bool]$selfTestLegacyDiagnosticCompatibilityVerified
+        startupDiagnosticsMalformedCombinationsRejected = [bool]$selfTestDiagnosticMalformedCombinationsRejected
         jobQueryObservationGoodVerified = [bool]$selfTestGoodQueryVerified
         jobQueryObservationPartialVerified = [bool]$selfTestPartialQueryVerified
         jobQueryObservationError234Verified = [bool]$selfTestError234Verified

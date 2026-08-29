@@ -37,6 +37,12 @@ $startupDiagnosticCheckpointMs = [ordered]@{
     '10s' = 10000
     'timeout' = $startupTimeoutMs
 }
+$startupDiagnosticFailureSubstages = @(
+    'none', 'root-exit', 'job-membership',
+    'process-census-first', 'process-identity-first',
+    'process-census-second', 'process-identity-second',
+    'window-enumeration', 'projection-finalize'
+)
 $startupDiagnosticMaxProcessCount = 256
 $startupDiagnosticMaxImageNameLength = 260
 $startupDiagnosticMaxWindowCount = 1024
@@ -2025,6 +2031,40 @@ function Convert-StartupObservationErrorCode {
     catch { return $null }
 }
 
+function Test-StartupDiagnosticFailureSubstage {
+    param([AllowNull()] [object]$Value)
+    if ($Value -isnot [string]) { return $false }
+    foreach ($allowed in @($startupDiagnosticFailureSubstages)) {
+        if ([StringComparer]::Ordinal.Equals([string]$Value, [string]$allowed)) { return $true }
+    }
+    return $false
+}
+
+function Set-StartupDiagnosticPhase {
+    param(
+        [AllowNull()] [object]$Phase,
+        [Parameter(Mandatory = $true)] [string]$Substage,
+        [AllowNull()] [object]$ErrorCode = $null
+    )
+    if ($null -eq $Phase) { return }
+    $Phase.substage = $Substage
+    $normalized = Convert-StartupObservationErrorCode $ErrorCode
+    $Phase.errorCode = if ($null -eq $normalized -or $normalized -eq 0) { $null } else { [int]$normalized }
+}
+
+function New-StartupDiagnosticProcessObservation {
+    return [ordered]@{
+        processEnumerationAttempted = $false
+        processEnumerationSucceeded = $false
+        processEnumerationComplete = $false
+        processEnumerationErrorCode = $null
+        processEnumerationRetryCount = 0
+        processEnumerationCallCount = 0
+        processEnumerationCompletedCount = 0
+        processEnumerationFailureCount = 0
+    }
+}
+
 function Get-StartupAffinityFailureType {
     param([AllowNull()] [object]$Probe)
     if ($null -eq $Probe) { return 'unavailable' }
@@ -2861,6 +2901,8 @@ function New-StartupDiagnosticState {
             processExitElapsedMs = $null
             failureStage = $null
             failureType = $null
+            failureSubstage = 'none'
+            failureErrorCode = $null
         })
     }
     return [ordered]@{
@@ -2967,7 +3009,8 @@ function Add-StartupDiagnosticCheckpoint {
         [IntPtr]$RootProcessHandle = [IntPtr]::Zero,
         [switch]$Force,
         [string]$FailureStage = $null,
-        [string]$FailureType = $null
+        [string]$FailureType = $null,
+        [AllowNull()] [object]$Invokers = $null
     )
     if (-not $startupDiagnosticCheckpointNames.Contains($Checkpoint)) { return $false }
     $entry = @($State.processTreeSnapshots | Where-Object { $_.checkpoint -eq $Checkpoint } | Select-Object -First 1)
@@ -2981,17 +3024,42 @@ function Add-StartupDiagnosticCheckpoint {
     $jobMembers = @{}
     $processSnapshot = $null
     $exitProbe = $null
+    $processObservation = New-StartupDiagnosticProcessObservation
+    $diagnosticPhase = [ordered]@{ substage = 'root-exit'; errorCode = $null }
+    $nonfatalSubstage = 'none'
+    $nonfatalErrorCode = $null
     try {
         # Keep the handle returned by CreateProcessW until the checkpoint and
         # cleanup phases finish.  Querying this owned handle avoids PID reuse
         # and makes STILL_ACTIVE an explicit active state rather than an exit.
-        $exitProbe = [NativeStartupProbe]::QueryProcessExitState($RootProcessHandle)
+        $exitInvoker = Get-StartupObservationProperty $Invokers 'ExitProbe'
+        $exitProbe = if ($exitInvoker -is [scriptblock]) {
+            & $exitInvoker $RootProcessHandle
+        }
+        else {
+            [NativeStartupProbe]::QueryProcessExitState($RootProcessHandle)
+        }
         if (-not $exitProbe.Succeeded) {
+            $exitErrorCode = Convert-StartupObservationErrorCode (Get-StartupObservationProperty $exitProbe 'ErrorCode')
+            $exitFailureErrorCode = if ($null -eq $exitErrorCode -or $exitErrorCode -eq 0) { 13 } else { [int]$exitErrorCode }
+            Set-StartupDiagnosticPhase $diagnosticPhase 'root-exit' $exitFailureErrorCode
             throw "Could not observe the run-root exit state (Win32 $($exitProbe.ErrorCode))."
         }
-        $jobInfo = Get-StartupDiagnosticJobMembers $Job
+        Set-StartupDiagnosticPhase $diagnosticPhase 'job-membership'
+        $jobInvoker = Get-StartupObservationProperty $Invokers 'JobMembers'
+        $jobInfo = if ($jobInvoker -is [scriptblock]) {
+            & $jobInvoker $Job
+        }
+        else {
+            Get-StartupDiagnosticJobMembers $Job
+        }
         $jobMembers = $jobInfo.members
         $snapshot.jobQueryObservation = $jobInfo.queryObservation
+        if (-not [bool]$jobInfo.verified -and $Job -ne [IntPtr]::Zero) {
+            $nonfatalSubstage = 'job-membership'
+            $jobErrorCode = Convert-StartupObservationErrorCode (Get-StartupObservationProperty $jobInfo.queryObservation 'errorCode')
+            $nonfatalErrorCode = if ($null -eq $jobErrorCode -or $jobErrorCode -eq 0) { 13 } else { [int]$jobErrorCode }
+        }
         $snapshot.rootExitState = if ($exitProbe.Active) { 'active' } else { 'exited' }
         $snapshot.rootExitCode = [UInt64]$exitProbe.ExitCode
         $snapshot.rootExitErrorCode = $null
@@ -3002,13 +3070,44 @@ function Add-StartupDiagnosticCheckpoint {
             $State.processExitObservation.observed = $true
             $State.processExitObservation.elapsedMs = $safeElapsedMs
         }
-        $processSnapshot = Get-ProcessSnapshot $Owned
+        Set-StartupDiagnosticPhase $diagnosticPhase 'process-census-first'
+        $firstProcessInvoker = Get-StartupObservationProperty $Invokers 'ProcessSnapshotFirst'
+        $identityInvoker = Get-StartupObservationProperty $Invokers 'ProcessIdentity'
+        $processEntriesInvoker = Get-StartupObservationProperty $Invokers 'ProcessEntries'
+        $processSnapshot = if ($firstProcessInvoker -is [scriptblock]) {
+            & $firstProcessInvoker $Owned $diagnosticPhase
+        }
+        else {
+            Get-ProcessSnapshot $Owned @() $processObservation $diagnosticPhase 'process-census-first' `
+                $identityInvoker $processEntriesInvoker
+        }
         Update-OwnedProcesses $Owned $processSnapshot
-        $processSnapshot = Get-ProcessSnapshot $Owned
+        Set-StartupDiagnosticPhase $diagnosticPhase 'process-census-second'
+        $secondProcessInvoker = Get-StartupObservationProperty $Invokers 'ProcessSnapshotSecond'
+        $processSnapshot = if ($secondProcessInvoker -is [scriptblock]) {
+            & $secondProcessInvoker $Owned $diagnosticPhase
+        }
+        else {
+            Get-ProcessSnapshot $Owned @() $processObservation $diagnosticPhase 'process-census-second' `
+                $identityInvoker $processEntriesInvoker
+        }
+        Set-StartupDiagnosticPhase $diagnosticPhase 'projection-finalize'
         $records = @($Owned.Values | Where-Object { Test-ProcessIdentity $_ $processSnapshot } | Sort-Object Id)
         $processIds = @{}
         foreach ($record in $records) { $processIds[[int]$record.Id] = $true }
-        $windowInfo = Get-StartupDiagnosticWindowCount $processIds
+        Set-StartupDiagnosticPhase $diagnosticPhase 'window-enumeration'
+        $windowInvoker = Get-StartupObservationProperty $Invokers 'WindowCount'
+        $windowInfo = if ($windowInvoker -is [scriptblock]) {
+            & $windowInvoker $processIds
+        }
+        else {
+            Get-StartupDiagnosticWindowCount $processIds
+        }
+        Set-StartupDiagnosticPhase $diagnosticPhase 'projection-finalize'
+        $projectionInvoker = Get-StartupObservationProperty $Invokers 'ProjectionFinalize'
+        if ($projectionInvoker -is [scriptblock]) {
+            & $projectionInvoker $records $windowInfo
+        }
         $tree = New-Object Collections.Generic.List[object]
         $recordLimit = [Math]::Min($records.Count, $startupDiagnosticMaxProcessCount)
         for ($index = 0; $index -lt $recordLimit; $index++) {
@@ -3034,6 +3133,8 @@ function Add-StartupDiagnosticCheckpoint {
         $snapshot.elapsedMs = $safeElapsedMs
         $snapshot.failureStage = $FailureStage
         $snapshot.failureType = $FailureType
+        $snapshot.failureSubstage = if ($nonfatalSubstage -eq 'none') { 'none' } else { $nonfatalSubstage }
+        $snapshot.failureErrorCode = if ($nonfatalSubstage -eq 'none') { $null } else { [int]$nonfatalErrorCode }
         return $true
     }
     catch {
@@ -3054,10 +3155,23 @@ function Add-StartupDiagnosticCheckpoint {
         $snapshot.editorWindowCount = $null
         $snapshot.dialogWindowCount = $null
         $snapshot.otherWindowCount = $null
+        $failureSubstage = [string](Get-StartupObservationProperty $diagnosticPhase 'substage')
+        if (-not (Test-StartupDiagnosticFailureSubstage $failureSubstage)) { $failureSubstage = 'projection-finalize' }
+        $failureErrorCode = Convert-StartupObservationErrorCode (Get-StartupObservationProperty $diagnosticPhase 'errorCode')
+        if ($null -eq $failureErrorCode -or $failureErrorCode -eq 0) {
+            $failureErrorCode = Convert-StartupObservationErrorCode (Get-StartupObservationProperty $processObservation 'processEnumerationErrorCode')
+        }
+        if ($null -eq $failureErrorCode -or $failureErrorCode -eq 0) {
+            $failureErrorCode = 13
+        }
         if ($null -eq $exitProbe -or -not $exitProbe.Succeeded) {
             $snapshot.rootExitState = 'unavailable'
             $snapshot.rootExitCode = $null
-            $snapshot.rootExitErrorCode = if ($null -ne $exitProbe) { [int]$exitProbe.ErrorCode } else { $null }
+            $snapshot.rootExitErrorCode = if ($null -ne $exitProbe) {
+                $exitErrorCode = Convert-StartupObservationErrorCode (Get-StartupObservationProperty $exitProbe 'ErrorCode')
+                if ($null -eq $exitErrorCode) { [int]$failureErrorCode } else { [int]$exitErrorCode }
+            }
+            else { [int]$failureErrorCode }
             $State.processExitObservation.state = 'unavailable'
             $State.processExitObservation.exitCode = $null
             $State.processExitObservation.errorCode = $snapshot.rootExitErrorCode
@@ -3066,6 +3180,8 @@ function Add-StartupDiagnosticCheckpoint {
         $snapshot.processExitElapsedMs = $State.processExitObservation.elapsedMs
         $snapshot.failureStage = 'process-tree'
         $snapshot.failureType = 'observation'
+        $snapshot.failureSubstage = $failureSubstage
+        $snapshot.failureErrorCode = [int]$failureErrorCode
         return $false
     }
 }
@@ -3197,8 +3313,89 @@ function Get-VerifiedProcessEntries {
     return @($entriesValue)
 }
 
-function Get-ProcessSnapshot($Owned, [int[]]$SeedIds = @(), [object]$Observation = $null) {
-    $entries = @(Get-VerifiedProcessEntries $Observation)
+function Resolve-StartupProcessIdentity {
+    param(
+        [Parameter(Mandatory = $true)] [object]$Entry,
+        [AllowNull()] [object]$IdentityProbe,
+        [AllowNull()] [object]$Observation,
+        [AllowNull()] [object]$DiagnosticPhase,
+        [Parameter(Mandatory = $true)] [string]$DiagnosticCensusSubstage,
+        [AllowNull()] [string]$IdentitySubstage,
+        [AllowNull()] [scriptblock]$FreshEntriesInvoker = $null
+    )
+    $identitySucceeded = Test-StartupIdentitySuccessEnvelope $IdentityProbe
+    $identity = Get-StartupObservationProperty $IdentityProbe 'Identity'
+    $entryProcessId = [int](Get-StartupObservationProperty $Entry 'ProcessId')
+    $entryParentProcessId = [int](Get-StartupObservationProperty $Entry 'ParentProcessId')
+    if ($identitySucceeded) {
+        # A successful native envelope is still untrusted at this boundary:
+        # validate its complete identity and the exact census PID/PPID before
+        # allowing it to become an owned process record.
+        if (Test-StartupJobIdentityShape $identity $entryProcessId $entryParentProcessId) {
+            try {
+                return Convert-ProcessIdentity $identity
+            }
+            catch {
+                if ($null -ne $DiagnosticPhase) {
+                    Set-StartupDiagnosticPhase $DiagnosticPhase $IdentitySubstage 13
+                }
+                throw "Could not convert the identity of relevant process $entryProcessId."
+            }
+        }
+        $identityErrorCode = Convert-StartupObservationErrorCode (Get-StartupObservationProperty $IdentityProbe 'ErrorCode')
+        if ($null -eq $identityErrorCode -or $identityErrorCode -eq 0) { $identityErrorCode = 13 }
+        if ($null -ne $DiagnosticPhase) {
+            Set-StartupDiagnosticPhase $DiagnosticPhase $IdentitySubstage $identityErrorCode
+        }
+        throw "Could not validate the identity of relevant process $entryProcessId."
+    }
+    # A malformed or contradictory envelope is not a coherent disappearance.
+    # Do not use a fresh census to turn invalid success data into acceptance.
+    if (-not (Test-StartupCoherentIdentityFailure $IdentityProbe)) {
+        $identityErrorCode = Convert-StartupObservationErrorCode (Get-StartupObservationProperty $IdentityProbe 'ErrorCode')
+        if ($null -eq $identityErrorCode -or $identityErrorCode -eq 0) { $identityErrorCode = 13 }
+        if ($null -ne $DiagnosticPhase) {
+            Set-StartupDiagnosticPhase $DiagnosticPhase $IdentitySubstage $identityErrorCode
+        }
+        throw "Could not verify the identity of relevant process $entryProcessId."
+    }
+    $identityErrorCode = Convert-StartupObservationErrorCode (Get-StartupObservationProperty $IdentityProbe 'ErrorCode')
+    if ($null -eq $identityErrorCode -or $identityErrorCode -eq 0) { $identityErrorCode = 13 }
+    # The identity failure is retained only while checking whether the entry is
+    # still present. A fresh census transition clears it so a benign
+    # disappearance cannot contaminate the next census/window phase.
+    if ($null -ne $DiagnosticPhase) { Set-StartupDiagnosticPhase $DiagnosticPhase $DiagnosticCensusSubstage }
+    $freshEntries = @(Get-VerifiedProcessEntries $Observation $FreshEntriesInvoker)
+    $stillPresent = @($freshEntries | Where-Object {
+        [int](Get-StartupObservationProperty $_ 'ProcessId') -eq [int](Get-StartupObservationProperty $Entry 'ProcessId')
+    }).Count -gt 0
+    if ($stillPresent) {
+        if ($null -ne $DiagnosticPhase) {
+            Set-StartupDiagnosticPhase $DiagnosticPhase $IdentitySubstage $identityErrorCode
+        }
+        throw "Could not verify the identity of relevant process $((Get-StartupObservationProperty $Entry 'ProcessId')) (Win32 $($IdentityProbe.ErrorCode))."
+    }
+    return $null
+}
+
+function Get-ProcessSnapshot(
+    $Owned,
+    [int[]]$SeedIds = @(),
+    [object]$Observation = $null,
+    [AllowNull()] [object]$DiagnosticPhase = $null,
+    [string]$DiagnosticCensusSubstage = 'process-census-first',
+    [AllowNull()] [scriptblock]$IdentityInvoker = $null,
+    [AllowNull()] [scriptblock]$ProcessEntriesInvoker = $null
+) {
+    $identitySubstage = if ([StringComparer]::Ordinal.Equals($DiagnosticCensusSubstage, 'process-census-first')) {
+        'process-identity-first'
+    }
+    elseif ([StringComparer]::Ordinal.Equals($DiagnosticCensusSubstage, 'process-census-second')) {
+        'process-identity-second'
+    }
+    else { $null }
+    if ($null -ne $DiagnosticPhase) { Set-StartupDiagnosticPhase $DiagnosticPhase $DiagnosticCensusSubstage }
+    $entries = @(Get-VerifiedProcessEntries $Observation $ProcessEntriesInvoker)
     $relevant = @{}
     if ($null -ne $Owned) {
         foreach ($id in @($Owned.Keys)) { $relevant[[int]$id] = $true }
@@ -3219,19 +3416,18 @@ function Get-ProcessSnapshot($Owned, [int[]]$SeedIds = @(), [object]$Observation
     $result = @{}
     foreach ($entry in $entries) {
         if (-not $relevant.ContainsKey([int]$entry.ProcessId)) { continue }
-        $identityProbe = [NativeStartupProbe]::QueryProcessIdentity([int]$entry.ProcessId, [int]$entry.ParentProcessId)
-        if (-not $identityProbe.Succeeded -or $null -eq $identityProbe.Identity) {
-            # A process can disappear between Toolhelp32 and OpenProcess.  That
-            # race is benign only when a fresh snapshot proves it disappeared;
-            # an entry that remains present but cannot be identified is never
-            # silently omitted from a containment decision.
-            $stillPresent = @(Get-VerifiedProcessEntries $Observation | Where-Object { [int]$_.ProcessId -eq [int]$entry.ProcessId }).Count -gt 0
-            if ($stillPresent) {
-                throw "Could not verify the identity of relevant process $($entry.ProcessId) (Win32 $($identityProbe.ErrorCode))."
-            }
-            continue
+        if ($null -ne $DiagnosticPhase -and $null -ne $identitySubstage) {
+            Set-StartupDiagnosticPhase $DiagnosticPhase $identitySubstage
         }
-        $record = Convert-ProcessIdentity $identityProbe.Identity
+        $identityProbe = if ($null -ne $IdentityInvoker) {
+            & $IdentityInvoker $entry
+        }
+        else {
+            [NativeStartupProbe]::QueryProcessIdentity([int]$entry.ProcessId, [int]$entry.ParentProcessId)
+        }
+        $record = Resolve-StartupProcessIdentity $entry $identityProbe $Observation $DiagnosticPhase `
+            $DiagnosticCensusSubstage $identitySubstage $ProcessEntriesInvoker
+        if ($null -eq $record) { continue }
         $result[$record.Id] = $record
     }
     return $result
@@ -7029,6 +7225,254 @@ function Invoke-SelfTest {
     $snapshotWatch.Stop()
     $realProcessEnumerationSelfTestVerified = $snapshot.ContainsKey($PID)
     if (-not $realProcessEnumerationSelfTestVerified) { throw 'Native process snapshot self-test failed.' }
+
+    # Exercise the diagnostic checkpoint boundary without starting a process.
+    # A successful Job membership observation followed by a census/window
+    # failure must remain unavailable, with the failure substage and numeric
+    # error retained instead of collapsing to a generic process-tree label.
+    $diagnosticFakeExit = [pscustomobject]@{
+        Succeeded = $true; Active = $true; ExitCode = [UInt32]259; ErrorCode = 0
+    }
+    $diagnosticFakeExitFailure = [pscustomobject]@{
+        Succeeded = $false; Active = $false; ExitCode = [UInt32]0; ErrorCode = 5
+    }
+    $diagnosticFakeQuery = New-StartupJobQueryObservation
+    $diagnosticFakeQuery.attempted = $true
+    $diagnosticFakeQuery.succeeded = $true
+    $diagnosticFakeQuery.errorCode = 0
+    $diagnosticFakeQuery.queryCount = 1
+    $diagnosticFakeQuery.attemptCount = 1
+    $diagnosticFakeQuery.attempts = @([ordered]@{
+            attempted = $true; attemptNumber = 1; succeeded = $true; errorCode = 0
+            capacityBytes = [UInt64]0; requiredBytes = [UInt64]0; returnLengthBytes = [UInt64]0
+            assignedProcessCount = [UInt64]0; listedProcessCount = [UInt64]0; resized = $false
+        })
+    $diagnosticFakeJob = [pscustomobject]@{
+        verified = $true; members = @{}; queryObservation = $diagnosticFakeQuery
+    }
+    $diagnosticBaseExitInvoker = { param($Handle) $diagnosticFakeExit }.GetNewClosure()
+    $diagnosticBaseJobInvoker = { param($Handle) $diagnosticFakeJob }.GetNewClosure()
+    $diagnosticCheckpointInvoker = {
+        param(
+            [Parameter(Mandatory = $true)] [string]$ExpectedSubstage,
+            [AllowNull()] [scriptblock]$ExitInvoker = $null,
+            [AllowNull()] [scriptblock]$JobInvoker = $null,
+            [AllowNull()] [scriptblock]$FirstProcessInvoker = $null,
+            [AllowNull()] [scriptblock]$SecondProcessInvoker = $null,
+            [AllowNull()] [scriptblock]$WindowInvoker = $null,
+            [AllowNull()] [scriptblock]$ProjectionInvoker = $null,
+            [int]$ExpectedErrorCode = 13
+        )
+        $testState = New-StartupDiagnosticState 1234
+        $testInvokers = [ordered]@{
+            ExitProbe = if ($null -eq $ExitInvoker) { $diagnosticBaseExitInvoker } else { $ExitInvoker }
+            JobMembers = if ($null -eq $JobInvoker) { $diagnosticBaseJobInvoker } else { $JobInvoker }
+        }
+        if ($null -ne $FirstProcessInvoker) { $testInvokers.ProcessSnapshotFirst = $FirstProcessInvoker }
+        if ($null -ne $SecondProcessInvoker) { $testInvokers.ProcessSnapshotSecond = $SecondProcessInvoker }
+        if ($null -ne $WindowInvoker) { $testInvokers.WindowCount = $WindowInvoker }
+        if ($null -ne $ProjectionInvoker) { $testInvokers.ProjectionFinalize = $ProjectionInvoker }
+        [void](Add-StartupDiagnosticCheckpoint -State $testState -Checkpoint '2s' -Owned @{} -Job ([IntPtr]1) `
+                -ElapsedMs 2000 -Invokers $testInvokers)
+        $testSnapshot = @($testState.processTreeSnapshots | Where-Object { $_.checkpoint -eq '2s' })[0]
+        if ($null -eq $testSnapshot -or $testSnapshot.status -ne 'unavailable' -or
+            $testSnapshot.observed -or $testSnapshot.failureSubstage -ne $ExpectedSubstage -or
+            $testSnapshot.failureErrorCode -ne $ExpectedErrorCode) {
+            throw "Diagnostic substage self-test failed for $ExpectedSubstage."
+        }
+        return $testSnapshot
+    }.GetNewClosure()
+    $diagnosticRootFailureSnapshot = & $diagnosticCheckpointInvoker 'root-exit' `
+        ({ param($Handle) $diagnosticFakeExitFailure }.GetNewClosure()) $null $null $null $null $null 5
+    $diagnosticJobFailureSnapshot = & $diagnosticCheckpointInvoker 'job-membership' $null `
+        ({ throw 'synthetic Job membership failure' }.GetNewClosure())
+    $diagnosticCensusFirstFailureSnapshot = & $diagnosticCheckpointInvoker 'process-census-first' $null $null `
+        ({ param($Owned, $Phase) throw 'synthetic first process census failure' }.GetNewClosure())
+    $diagnosticIdentityFirstFailureSnapshot = & $diagnosticCheckpointInvoker 'process-identity-first' $null $null `
+        ({ param($Owned, $Phase) $Phase.substage = 'process-identity-first'; throw 'synthetic first identity failure' }.GetNewClosure())
+    $diagnosticCensusSecondFailureSnapshot = & $diagnosticCheckpointInvoker 'process-census-second' $null $null `
+        ({ param($Owned, $Phase) return @{} }.GetNewClosure()) `
+        ({ param($Owned, $Phase) throw 'synthetic second process census failure' }.GetNewClosure())
+    $diagnosticIdentitySecondFailureSnapshot = & $diagnosticCheckpointInvoker 'process-identity-second' $null $null `
+        ({ param($Owned, $Phase) return @{} }.GetNewClosure()) `
+        ({ param($Owned, $Phase) $Phase.substage = 'process-identity-second'; throw 'synthetic second identity failure' }.GetNewClosure())
+    $diagnosticWindowFailureSnapshot = & $diagnosticCheckpointInvoker 'window-enumeration' $null $null `
+        ({ param($Owned, $Phase) return @{} }.GetNewClosure()) `
+        ({ param($Owned, $Phase) return @{} }.GetNewClosure()) `
+        ({ param($ProcessIds) throw 'synthetic window enumeration failure' }.GetNewClosure())
+    $diagnosticProjectionFailureSnapshot = & $diagnosticCheckpointInvoker 'projection-finalize' $null $null `
+        ({ param($Owned, $Phase) return @{} }.GetNewClosure()) `
+        ({ param($Owned, $Phase) return @{} }.GetNewClosure()) `
+        ({ param($ProcessIds) [pscustomobject]@{ count = 0; capped = $false; editorWindowCount = 0; dialogWindowCount = 0; otherWindowCount = 0 } }.GetNewClosure()) `
+        ({ param($Records, $WindowInfo) throw 'synthetic projection failure' }.GetNewClosure())
+    $diagnosticCheckpointSubstageSelfTestVerified = [bool](
+        $diagnosticRootFailureSnapshot.failureErrorCode -eq 5 -and
+        $diagnosticJobFailureSnapshot.failureErrorCode -eq 13 -and
+        $diagnosticCensusFirstFailureSnapshot.jobQueryObservation.succeeded -and
+        $diagnosticCensusFirstFailureSnapshot.jobMembershipVerified -and
+        $diagnosticCensusSecondFailureSnapshot.jobQueryObservation.succeeded -and
+        $diagnosticWindowFailureSnapshot.jobQueryObservation.succeeded -and
+        $diagnosticProjectionFailureSnapshot.jobQueryObservation.succeeded)
+    if (-not $diagnosticCheckpointSubstageSelfTestVerified) {
+        throw 'Diagnostic checkpoint substage self-test did not preserve successful Job evidence.'
+    }
+    $diagnosticProcessEntry = [pscustomobject][ordered]@{
+        ProcessId = [int]1234; ParentProcessId = [int]0; ImageName = 'sakura.exe'
+    }
+    $diagnosticProcessEntriesProbe = {
+        param([object[]]$Entries)
+        [pscustomobject][ordered]@{
+            Attempted = $true; Complete = $true; Succeeded = $true; ErrorCode = [int]0
+            AttemptCount = [int]1; RetryCount = [int]0; Retried = $false; Entries = $Entries
+        }
+    }.GetNewClosure()
+    $diagnosticIdentityFailure = [pscustomobject][ordered]@{
+        Succeeded = $false; Identity = $null; ErrorCode = [int]5
+    }
+    $diagnosticStillPresentPhase = [ordered]@{ substage = 'process-identity-first'; errorCode = $null }
+    $diagnosticStillPresentCaught = $false
+    try {
+        Set-StartupDiagnosticPhase $diagnosticStillPresentPhase 'process-identity-first'
+        [void](Resolve-StartupProcessIdentity $diagnosticProcessEntry $diagnosticIdentityFailure `
+            (New-StartupDiagnosticProcessObservation) $diagnosticStillPresentPhase `
+            'process-census-first' 'process-identity-first' `
+            ({ & $diagnosticProcessEntriesProbe ([object[]]@($diagnosticProcessEntry)) }.GetNewClosure()))
+    }
+    catch { $diagnosticStillPresentCaught = $true }
+    $diagnosticStillPresentSecondPhase = [ordered]@{ substage = 'process-identity-second'; errorCode = $null }
+    $diagnosticStillPresentSecondCaught = $false
+    try {
+        Set-StartupDiagnosticPhase $diagnosticStillPresentSecondPhase 'process-identity-second'
+        [void](Resolve-StartupProcessIdentity $diagnosticProcessEntry $diagnosticIdentityFailure `
+            (New-StartupDiagnosticProcessObservation) $diagnosticStillPresentSecondPhase `
+            'process-census-second' 'process-identity-second' `
+            ({ & $diagnosticProcessEntriesProbe ([object[]]@($diagnosticProcessEntry)) }.GetNewClosure()))
+    }
+    catch { $diagnosticStillPresentSecondCaught = $true }
+    $diagnosticProductionIdentityStillPresentSelfTestVerified = [bool](
+        $diagnosticStillPresentCaught -and
+        [StringComparer]::Ordinal.Equals([string]$diagnosticStillPresentPhase.substage, 'process-identity-first') -and
+        $diagnosticStillPresentPhase.errorCode -eq 5 -and
+        $diagnosticStillPresentSecondCaught -and
+        [StringComparer]::Ordinal.Equals([string]$diagnosticStillPresentSecondPhase.substage, 'process-identity-second') -and
+        $diagnosticStillPresentSecondPhase.errorCode -eq 5)
+    if (-not $diagnosticProductionIdentityStillPresentSelfTestVerified) {
+        throw 'Production process identity still-present self-test failed.'
+    }
+    $diagnosticIdentityOwned = @{
+        1234 = [pscustomobject][ordered]@{
+            Id = [int]1234; ParentId = [int]0; Creation = [Int64]1; ImagePath = 'C:\sakura.exe'
+        }
+    }
+    $diagnosticValidIdentity = [pscustomobject][ordered]@{
+        ProcessId = [int]1234; ParentProcessId = [int]0; CreationTime = [Int64]1; ImagePath = 'C:\sakura.exe'
+    }
+    $diagnosticMalformedIdentityCases = @(
+        [ordered]@{
+            name = 'string-success'
+            probe = [pscustomobject][ordered]@{ Succeeded = 'true'; ErrorCode = [int]0; Identity = $diagnosticValidIdentity }
+            expectedErrorCode = [int]13
+        }
+        [ordered]@{
+            name = 'success-error'
+            probe = [pscustomobject][ordered]@{ Succeeded = $true; ErrorCode = [int]5; Identity = $diagnosticValidIdentity }
+            expectedErrorCode = [int]5
+        }
+        [ordered]@{
+            name = 'pid-mismatch'
+            probe = [pscustomobject][ordered]@{
+                Succeeded = $true; ErrorCode = [int]0
+                Identity = [pscustomobject][ordered]@{
+                    ProcessId = [int]4321; ParentProcessId = [int]0; CreationTime = [Int64]1; ImagePath = 'C:\sakura.exe'
+                }
+            }
+            expectedErrorCode = [int]13
+        }
+        [ordered]@{
+            name = 'ppid-mismatch'
+            probe = [pscustomobject][ordered]@{
+                Succeeded = $true; ErrorCode = [int]0
+                Identity = [pscustomobject][ordered]@{
+                    ProcessId = [int]1234; ParentProcessId = [int]4321; CreationTime = [Int64]1; ImagePath = 'C:\sakura.exe'
+                }
+            }
+            expectedErrorCode = [int]13
+        }
+    )
+    $diagnosticMalformedIdentitySelfTestVerified = $true
+    foreach ($identityCase in @($diagnosticMalformedIdentityCases)) {
+        $identityCensusCalls = [pscustomobject]@{ value = 0 }
+        $identityQueryCalls = [pscustomobject]@{ value = 0 }
+        $identityEntriesInvoker = {
+            $identityCensusCalls.value++
+            & $diagnosticProcessEntriesProbe ([object[]]@($diagnosticProcessEntry))
+        }.GetNewClosure()
+        $identityInvoker = {
+            param($Entry)
+            $identityQueryCalls.value++
+            return $identityCase.probe
+        }.GetNewClosure()
+        $identityPhase = [ordered]@{ substage = 'process-census-first'; errorCode = $null }
+        $identityCaught = $false
+        try {
+            [void](Get-ProcessSnapshot $diagnosticIdentityOwned @() (New-StartupDiagnosticProcessObservation) `
+                $identityPhase 'process-census-first' $identityInvoker $identityEntriesInvoker)
+        }
+        catch { $identityCaught = $true }
+        if (-not ($identityCaught -and $identityCensusCalls.value -eq 1 -and
+                $identityQueryCalls.value -eq 1 -and
+                [StringComparer]::Ordinal.Equals([string]$identityPhase.substage, 'process-identity-first') -and
+                $identityPhase.errorCode -eq $identityCase.expectedErrorCode)) {
+            $diagnosticMalformedIdentitySelfTestVerified = $false
+        }
+    }
+    if (-not $diagnosticMalformedIdentitySelfTestVerified) {
+        throw 'Malformed process identity success envelope was accepted or retried.'
+    }
+    # Get-VerifiedProcessEntries invokes an injected census without arguments.
+    # Keep the counter in a mutable object so the GetNewClosure child scope
+    # updates the value observed by this self-test.
+    $diagnosticDisappearanceEntriesCallCounter = [pscustomobject]@{ value = 0 }
+    $diagnosticUnrelatedProcessEntry = [pscustomobject][ordered]@{
+        ProcessId = [int]5678; ParentProcessId = [int]0; ImageName = 'other.exe'
+    }
+    $diagnosticDisappearanceEntriesInvoker = {
+        $diagnosticDisappearanceEntriesCallCounter.value++
+        $entries = if ($diagnosticDisappearanceEntriesCallCounter.value -eq 1) {
+            [object[]]@($diagnosticProcessEntry)
+        }
+        else { [object[]]@($diagnosticUnrelatedProcessEntry) }
+        & $diagnosticProcessEntriesProbe $entries
+    }.GetNewClosure()
+    $diagnosticDisappearanceIdentityInvoker = ({ param($Entry) $diagnosticIdentityFailure }.GetNewClosure())
+    $diagnosticDisappearanceWindowInvoker = ({ param($ProcessIds) throw 'synthetic window enumeration failure after disappearance' }.GetNewClosure())
+    $diagnosticDisappearanceState = New-StartupDiagnosticState 1234
+    $diagnosticDisappearanceOwned = @{
+        1234 = [pscustomobject][ordered]@{
+            Id = [int]1234; ParentId = [int]0; Creation = [Int64]1; ImagePath = 'C:\sakura.exe'
+        }
+    }
+    $diagnosticDisappearanceInvokers = [ordered]@{
+        ExitProbe = $diagnosticBaseExitInvoker
+        JobMembers = $diagnosticBaseJobInvoker
+        ProcessIdentity = $diagnosticDisappearanceIdentityInvoker
+        ProcessEntries = $diagnosticDisappearanceEntriesInvoker
+        WindowCount = $diagnosticDisappearanceWindowInvoker
+    }
+    [void](Add-StartupDiagnosticCheckpoint -State $diagnosticDisappearanceState -Checkpoint '2s' `
+        -Owned $diagnosticDisappearanceOwned -Job ([IntPtr]1) -ElapsedMs 2000 `
+        -Invokers $diagnosticDisappearanceInvokers)
+    $diagnosticDisappearanceSnapshot = @($diagnosticDisappearanceState.processTreeSnapshots |
+        Where-Object { $_.checkpoint -eq '2s' })[0]
+    $diagnosticProductionDisappearanceWindowSelfTestVerified = [bool](
+        $diagnosticDisappearanceEntriesCallCounter.value -ge 3 -and
+        $diagnosticDisappearanceSnapshot.status -eq 'unavailable' -and
+        [StringComparer]::Ordinal.Equals([string]$diagnosticDisappearanceSnapshot.failureSubstage, 'window-enumeration') -and
+        $diagnosticDisappearanceSnapshot.failureErrorCode -eq 13 -and
+        $diagnosticDisappearanceSnapshot.jobQueryObservation.succeeded)
+    if (-not $diagnosticProductionDisappearanceWindowSelfTestVerified) {
+        throw 'Benign identity disappearance leaked into the window diagnostic phase.'
+    }
     if ((Get-Sha256 $PSCommandPath).Length -ne 64) { throw 'SHA-256 self-test failed.' }
     if ([NativeStartupProbe]::GetVerticalScrollMaximum([IntPtr]::Zero) -ne -1) { throw 'Scroll-range self-test failed.' }
     $selfTestTraceRoot = [IO.Path]::GetFullPath((Join-Path $HOME 'tmp'))
@@ -7186,6 +7630,10 @@ function Invoke-SelfTest {
         startupDiagnosticsSchemaVerified = [bool]$diagnosticSchemaVerified
         startupDiagnosticBoundsVerified = [bool]$diagnosticBoundsVerified
         startupDiagnosticWindowClassificationVerified = [bool]$windowClassificationVerified
+        startupDiagnosticSubstageSelfTestVerified = [bool]$diagnosticCheckpointSubstageSelfTestVerified
+        startupDiagnosticProductionIdentityStillPresentSelfTestVerified = [bool]$diagnosticProductionIdentityStillPresentSelfTestVerified
+        startupDiagnosticProductionMalformedIdentitySelfTestVerified = [bool]$diagnosticMalformedIdentitySelfTestVerified
+        startupDiagnosticProductionDisappearanceWindowSelfTestVerified = [bool]$diagnosticProductionDisappearanceWindowSelfTestVerified
         noGuiLaunch = $true
         timestampUtc = [DateTime]::UtcNow.ToString('o')
     }

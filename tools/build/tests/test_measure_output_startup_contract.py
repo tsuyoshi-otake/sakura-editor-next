@@ -348,6 +348,55 @@ class PairedStartupContractTests(unittest.TestCase):
         self.assertNotRegex(self.paired_text, r"Get-ChildItem[^\r\n]*-Recurse")
         self.assertNotRegex(self.shared_text, r"Get-ChildItem[^\r\n]*-Recurse")
 
+    def test_diagnostic_substage_and_error_telemetry_is_bounded_and_fail_closed(self):
+        for marker in (
+            "failureSubstage = 'none'",
+            "failureErrorCode = $null",
+            "process-census-first",
+            "process-identity-first",
+            "process-census-second",
+            "process-identity-second",
+            "window-enumeration",
+            "projection-finalize",
+            "New-StartupDiagnosticProcessObservation",
+            "DiagnosticPhase",
+            "ProcessSnapshotFirst",
+            "ProcessSnapshotSecond",
+            "ProjectionFinalize",
+            "diagnosticCheckpointSubstageSelfTestVerified",
+            "Resolve-StartupProcessIdentity",
+            "ProcessIdentity",
+            "ProcessEntries",
+            "Test-StartupDiagnosticFailureSubstage",
+            "Set-StartupDiagnosticPhase",
+            "diagnosticProductionIdentityStillPresentSelfTestVerified",
+            "diagnosticMalformedIdentitySelfTestVerified",
+            "diagnosticProductionDisappearanceWindowSelfTestVerified",
+        ):
+            self.assertIn(marker, self.shared_text)
+        self.assertNotIn("'process-identity',", self.shared_text)
+        for marker in (
+            "PairedDiagnosticFailureSubstages",
+            "Convert-PairedDiagnosticFailureTelemetry",
+            "Test-PairedDiagnosticFailureTelemetryState",
+            "failureSubstage",
+            "failureErrorCode",
+            "startupDiagnosticsSubstageFailureVerified",
+            "startupDiagnosticsSubstageMalformedRejected",
+            "startupDiagnosticsCrossFieldWarningVerified",
+            "startupDiagnosticsCrossFieldWarningMismatchRejected",
+            "startupDiagnosticsLegacyCompatibilityVerified",
+            "startupDiagnosticsMalformedCombinationsRejected",
+            "mismatched-job-warning",
+            "synthetic-unknown",
+        ):
+            self.assertIn(marker, self.paired_text)
+        self.assertNotIn("'process-identity',", self.paired_text)
+        for document in (PAIRED_DOC.read_text(encoding="utf-8"), STARTUP_DOC.read_text(encoding="utf-8")):
+            self.assertIn("failureSubstage", document)
+            self.assertIn("failureErrorCode", document)
+            self.assertIn("ordinal", document.lower())
+
     def test_job_query_cleanup_telemetry_contract_is_bounded_and_diagnostic_only(self):
         for marker in (
             "function New-PairedEmptyJobQueryObservation",
@@ -942,6 +991,10 @@ class PairedStartupContractTests(unittest.TestCase):
             self.assertTrue(payload["jobIdentityContradictorySuccessSelfTestVerified"])
             self.assertTrue(payload["jobIdentityMalformedFreshQueryCasesSelfTestVerified"])
             self.assertTrue(payload["readinessInputIdleOptionalSelfTestVerified"])
+            self.assertTrue(payload["startupDiagnosticSubstageSelfTestVerified"])
+            self.assertTrue(payload["startupDiagnosticProductionIdentityStillPresentSelfTestVerified"])
+            self.assertTrue(payload["startupDiagnosticProductionMalformedIdentitySelfTestVerified"])
+            self.assertTrue(payload["startupDiagnosticProductionDisappearanceWindowSelfTestVerified"])
             self.assertTrue(payload["workingDirectorySelfTestVerified"])
 
     def test_self_test_output_in_both_powershell_hosts(self):
@@ -1027,6 +1080,12 @@ class PairedStartupContractTests(unittest.TestCase):
             self.assertTrue(payload["startupMilestonesDescendantNotAttemptedVerified"])
             self.assertTrue(payload["startupMilestonesDescendantFailureVerified"])
             self.assertTrue(payload["startupMilestonesFailureSchemaVerified"])
+            self.assertTrue(payload["startupDiagnosticsSubstageFailureVerified"])
+            self.assertTrue(payload["startupDiagnosticsSubstageMalformedRejected"])
+            self.assertTrue(payload["startupDiagnosticsCrossFieldWarningVerified"])
+            self.assertTrue(payload["startupDiagnosticsCrossFieldWarningMismatchRejected"])
+            self.assertTrue(payload["startupDiagnosticsLegacyCompatibilityVerified"])
+            self.assertTrue(payload["startupDiagnosticsMalformedCombinationsRejected"])
             for field in (
                 "jobQueryObservationGoodVerified",
                 "jobQueryObservationPartialVerified",

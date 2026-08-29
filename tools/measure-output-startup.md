@@ -105,6 +105,28 @@ successful launch; a fast success may leave later checkpoints as
 `not-reached`. An enabled trace with empty records, or malformed trace
 observations, is likewise typed `trace-unavailable`.
 
+Each checkpoint also carries bounded `failureSubstage` and numeric
+`failureErrorCode` telemetry. The substage is restricted to the fixed
+allowlist `root-exit`, `job-membership`, `process-census-first`,
+`process-identity-first`, `process-census-second`, `process-identity-second`,
+`window-enumeration`, `projection-finalize`, or `none`; unknown, malformed, or
+out-of-range values fail closed. Matching is ordinal and case-sensitive, and
+the generic `process-identity` value is not accepted. A successful Job query therefore does not
+make a later process-census or window-enumeration failure look successful: the
+checkpoint remains `unavailable`, the launch is typed
+`diagnostic-unavailable`, and it is excluded from qualified statistics. The
+telemetry is payload-free and is used only to identify the failed observation
+boundary, not to infer readiness or process success.
+
+The two failure fields are cross-checked with the checkpoint state. `unavailable`
+requires a non-`none` substage and a positive error code; `not-reached` requires
+`none` and a null error. `observed` accepts `none`/null, or only the intentional
+Job-membership warning: `jobMembershipVerified=false` together with a bounded
+failed Job query and a positive error code equal to `jobQueryObservation.errorCode`.
+Both additive fields may be omitted
+together for legacy v1 reports; a one-sided field or any other contradiction
+fails closed.
+
 Primary failure classification follows the raw launch result. If the launch
 itself is unsuccessful, its `timeout`, `startup`, `survivor`, `profileCleanup`,
 or `affinity` status remains primary even when diagnostics or trace collection
