@@ -381,6 +381,14 @@ class OutputFinalImageEvidenceTests(unittest.TestCase):
                 validate_output_provider_evidence_for_final_image(
                     link,
                     expected_backend="cpp",
+                    configuration="Release",
+                )["valid"]
+            )
+            self.assertFalse(
+                validate_output_provider_evidence_for_final_image(
+                    link,
+                    expected_backend="cpp",
+                    configuration="Debug",
                 )["valid"]
             )
             self.assertFalse(

@@ -1291,6 +1291,7 @@ def observe_product_native_evidence(
                 link,
                 graph=graph,
                 expected_backend=final_image_backend,
+                configuration=context.configuration,
             )
             if not provider_validation["valid"]:
                 raise BuildError(
@@ -1629,6 +1630,7 @@ def _validate_final_image_link_contract(
     link: Mapping[str, object],
     failures: list[dict[str, object]],
     expected_backend: str | None,
+    configuration: str | None,
 ) -> None:
     """Validate the strict native link contract used by final-image staging.
 
@@ -1689,6 +1691,7 @@ def _validate_final_image_link_contract(
         symbol_observed = symbols.get("observed")
         negative_cpp = (
             expected_backend == "cpp"
+            and configuration == "Release"
             and member_observed is False
             and symbol_observed is False
         )
@@ -1935,6 +1938,7 @@ def validate_output_provider_evidence_for_final_image(
     *,
     graph: SemanticGraph | None = None,
     expected_backend: str | None = None,
+    configuration: str | None = None,
 ) -> dict[str, object]:
     """Validate the strict provider MAP contract required for final-image staging.
 
@@ -1943,13 +1947,16 @@ def validate_output_provider_evidence_for_final_image(
     has a stronger contract: Rust (and the default ``None`` mode) requires
     both provider projections to be observed and to prove the exact provider
     v1 symbol/member set.  A C++ final image may use the explicit negative
-    projection emitted by LTCG when those unused Rust exports are discarded;
-    that shape still requires one archive input, empty provider rows, and all
-    three MAP identities.  It is not selector proof by itself: callers must
-    pair it with the backend-specific compile-selector proof.  ``graph`` is
-    supplied by the collector path so the source MAP can be re-hashed; binding
-    callers can omit it because the staged receipt supplies the immutable MAP
-    identity.
+    projection emitted by Release LTCG when those unused Rust exports are
+    discarded; that shape still requires one archive input, empty provider
+    rows, and all three MAP identities.  It is not selector proof by itself:
+    callers must pair it with the backend-specific compile-selector proof.
+    ``graph`` is supplied by the collector path so the source MAP can be
+    re-hashed; binding callers can omit it because the staged receipt supplies
+    the immutable MAP identity.  ``configuration`` is an independent caller
+    assertion used to keep the negative projection Release-only; the strict
+    link-size consumer validates the corresponding LTCG selector proof before
+    invoking this validator.
     """
 
     if not isinstance(link, Mapping):
@@ -1958,7 +1965,7 @@ def validate_output_provider_evidence_for_final_image(
             "failures": [{"code": "NATIVE_PRODUCT_EVIDENCE_OUTPUT_PROVIDER_SCHEMA"}],
         }
     failures: list[dict[str, object]] = []
-    _validate_final_image_link_contract(graph, link, failures, expected_backend)
+    _validate_final_image_link_contract(graph, link, failures, expected_backend, configuration)
     if failures:
         return {"valid": False, "failures": failures}
     return {"valid": True, "failures": []}

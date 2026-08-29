@@ -738,6 +738,7 @@ def _provider_member_evidence(
     failures: list[str],
     *,
     expected_backend: str,
+    configuration: str | None,
 ) -> tuple[str | None, int | None, int | None, str | None, str | None]:
     link = _mapping(_get(native, "link"))
     member_evidence = _mapping(
@@ -767,6 +768,7 @@ def _provider_member_evidence(
         symbol_evidence = _mapping(_get(native, "output_provider_symbol_evidence", "outputProviderSymbolEvidence"))
     negative_cpp = (
         expected_backend == "cpp"
+        and configuration == "Release"
         and _get(member_evidence, "observed", "providerSpecific", "outputProvider") is False
         and _get(symbol_evidence, "observed", "providerSpecific", "outputProvider") is False
     )
@@ -858,7 +860,11 @@ def _archive_identity(
 
 
 def _provider_symbols(
-    native: Mapping[str, object], failures: list[str], *, expected_backend: str
+    native: Mapping[str, object],
+    failures: list[str],
+    *,
+    expected_backend: str,
+    configuration: str | None,
 ) -> tuple[int | None, int | None]:
     link = _mapping(_get(native, "link"))
     evidence = _mapping(
@@ -885,6 +891,7 @@ def _provider_symbols(
         link_member = _mapping(_get(native, "output_provider_member_evidence", "outputProviderMemberEvidence"))
     negative_cpp = (
         expected_backend == "cpp"
+        and configuration == "Release"
         and _get(evidence, "observed", "providerSpecific", "outputProvider") is False
         and _get(link_member, "observed", "providerSpecific", "outputProvider") is False
     )
@@ -1196,6 +1203,7 @@ def build_output_link_size_evidence(
             provider_validation = validate_output_provider_evidence_for_final_image(
                 _get(native, "link"),
                 expected_backend=backend,
+                configuration=configuration if isinstance(configuration, str) else None,
             )
         except Exception:
             provider_validation = None
@@ -1246,10 +1254,14 @@ def build_output_link_size_evidence(
             None if require_immutable_stage else repo_root,
             failures,
             expected_backend=backend,
+            configuration=configuration if isinstance(configuration, str) else None,
         )
         archive_hash, archive_size, archive_count = _archive_identity(native_values[backend], proofs[backend], failures)
         symbol_count, duplicate_count = _provider_symbols(
-            native_values[backend], failures, expected_backend=backend
+            native_values[backend],
+            failures,
+            expected_backend=backend,
+            configuration=configuration if isinstance(configuration, str) else None,
         )
         link_command_hash = _native_link_command_hash(native_values[backend])
         if link_command_hash is None:

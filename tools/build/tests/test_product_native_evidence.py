@@ -635,6 +635,15 @@ class ProductNativeEvidenceTests(unittest.TestCase):
                     link,
                     graph=graph,
                     expected_backend="cpp",
+                    configuration="Release",
+                )["valid"]
+            )
+            self.assertFalse(
+                validate_output_provider_evidence_for_final_image(
+                    link,
+                    graph=graph,
+                    expected_backend="cpp",
+                    configuration="Debug",
                 )["valid"]
             )
             self.assertFalse(

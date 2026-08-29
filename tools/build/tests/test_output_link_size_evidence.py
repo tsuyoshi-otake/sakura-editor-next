@@ -525,6 +525,30 @@ class OutputLinkSizeEvidenceTests(unittest.TestCase):
             self.assertEqual("incomplete", report["status"])
             self.assertIn("PROVIDER_MEMBER_UNPROVEN", report["failures"])
 
+    def test_debug_cpp_negative_projection_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cpp_native, rust_native, cpp_manifest, rust_manifest, cpp_value, _rust = _fixture(
+                root,
+                provider_scope=True,
+                startup_manifest=True,
+                configuration="Debug",
+            )
+            _make_cpp_ltcg_negative_provider(cpp_value)
+            _write_json(cpp_native, cpp_value)
+            report = build_output_link_size_evidence(
+                cpp_native,
+                rust_native,
+                cpp_manifest,
+                rust_manifest,
+                repo_root=root,
+            )
+
+            self.assertEqual("incomplete", report["status"])
+            self.assertFalse(report["sizeGate"]["pass"])
+            self.assertIn("PROVIDER_MEMBER_UNPROVEN", report["failures"])
+            self.assertIn("FINAL_PROVIDER_SYMBOL_UNPROVEN", report["failures"])
+
     def test_malformed_positive_provider_projection_cannot_complete_link_size_report(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

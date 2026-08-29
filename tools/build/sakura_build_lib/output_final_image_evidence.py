@@ -513,7 +513,11 @@ def stage_output_final_image(
 
         link = native_evidence.get("link")
         provider_validation = (
-            validate_output_provider_evidence_for_final_image(link, expected_backend=backend)
+            validate_output_provider_evidence_for_final_image(
+                link,
+                expected_backend=backend,
+                configuration=configuration,
+            )
             if isinstance(link, Mapping)
             else {"valid": False}
         )
@@ -724,6 +728,7 @@ def bind_native_evidence_to_final_image(
     provider_validation = validate_output_provider_evidence_for_final_image(
         link,
         expected_backend=normalized["backend"],
+        configuration=normalized["configuration"],
     )
     if not provider_validation["valid"]:
         raise OutputFinalImageEvidenceError(
@@ -1034,6 +1039,7 @@ def validate_bound_native_evidence_for_final_image(
         provider_validation = validate_output_provider_evidence_for_final_image(
             link,
             expected_backend=expected_backend,
+            configuration=expected_configuration,
         )
     except Exception as error:
         raise _typed_failure("OUTPUT_FINAL_IMAGE_PROVIDER_UNPROVEN") from error
