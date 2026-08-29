@@ -2418,10 +2418,12 @@ function Set-StartupIdentityReconciliation {
     if ($null -eq $reconciliation) { return $false }
     $operationValue = [string]$Operation
     $observerRoleValue = [string]$ObserverRole
+    $operationAllowlisted = $startupIdentityOperations -contains $operationValue
+    $observerRoleAllowlisted = $startupIdentityObserverRoles -contains $observerRoleValue
     $reconciliation.attempted = $true
     $reconciliation.accepted = $false
-    $reconciliation.operation = if ($startupIdentityOperations -contains $operationValue) { $operationValue } else { $operationValue }
-    $reconciliation.observerRole = if ($startupIdentityObserverRoles -contains $observerRoleValue) { $observerRoleValue } else { $observerRoleValue }
+    $reconciliation.operation = if ($operationAllowlisted) { $operationValue } else { 'exception' }
+    $reconciliation.observerRole = if ($observerRoleAllowlisted) { $observerRoleValue } else { 'none' }
     if ($observerRoleValue -eq 'exact-path') {
         $reconciliation.reason = 'exact-path-failure'
         return $false
@@ -2430,12 +2432,12 @@ function Set-StartupIdentityReconciliation {
         $reconciliation.reason = 'job-empty-not-proven'
         return $false
     }
-    if ($startupIdentityOperations -notcontains $operationValue -or
+    if (-not $operationAllowlisted -or
         $startupIdentityReconciliationOperations -notcontains $operationValue) {
         $reconciliation.reason = 'operation-not-allowlisted'
         return $false
     }
-    if ($startupIdentityObserverRoles -notcontains $observerRoleValue -or
+    if (-not $observerRoleAllowlisted -or
         $startupIdentityReconciliationObserverRoles -notcontains $observerRoleValue) {
         $reconciliation.reason = 'observer-not-allowlisted'
         return $false
@@ -3680,6 +3682,269 @@ function Test-StartupJobIdentityShape {
     catch { return $false }
 }
 
+function Test-StartupStrictJobQueryEnvelope {
+    param([AllowNull()] [object]$Candidate)
+    $attemptedValue = Get-StartupObservationProperty $Candidate 'Attempted'
+    $succeededValue = Get-StartupObservationProperty $Candidate 'Succeeded'
+    # Read the raw PID-array property directly so a one-member Job result
+    # is not collapsed to a scalar by PowerShell pipeline unrolling.
+    $processIdsValue = $null
+    if ($null -ne $Candidate) {
+        if ($Candidate -is [Collections.IDictionary]) {
+            if ($Candidate.Contains('ProcessIds')) { $processIdsValue = $Candidate['ProcessIds'] }
+        }
+        else {
+            $processIdsProperty = $Candidate.PSObject.Properties['ProcessIds']
+            if ($null -ne $processIdsProperty) { $processIdsValue = $processIdsProperty.Value }
+        }
+    }
+    # Attempts is another raw array boundary.  Do not let PowerShell unwrap
+    # a one-attempt array into a scalar before validating its native shape.
+    $attemptsValue = $null
+    if ($null -ne $Candidate) {
+        if ($Candidate -is [Collections.IDictionary]) {
+            if ($Candidate.Contains('Attempts')) { $attemptsValue = $Candidate['Attempts'] }
+        }
+        else {
+            $attemptsProperty = $Candidate.PSObject.Properties['Attempts']
+            if ($null -ne $attemptsProperty) { $attemptsValue = $attemptsProperty.Value }
+        }
+    }
+    $errorRaw = Get-StartupObservationProperty $Candidate 'ErrorCode'
+    $attemptCountRaw = Get-StartupObservationProperty $Candidate 'AttemptCount'
+    $capacityRaw = Get-StartupObservationProperty $Candidate 'CapacityBytes'
+    $requiredRaw = Get-StartupObservationProperty $Candidate 'RequiredBytes'
+    $returnLengthRaw = Get-StartupObservationProperty $Candidate 'ReturnLengthBytes'
+    $assignedRaw = Get-StartupObservationProperty $Candidate 'AssignedProcessCount'
+    $listedRaw = Get-StartupObservationProperty $Candidate 'ListedProcessCount'
+    $resizedValue = Get-StartupObservationProperty $Candidate 'Resized'
+    # These types mirror StartupProbeJobResult exactly.  In particular,
+    # accepting a mathematically integral Double or Decimal here would let
+    # a forged envelope cross the Job-membership decision boundary.
+    $errorValid = $errorRaw -is [int32] -and $errorRaw -ge 0 -and $errorRaw -le [int32]::MaxValue
+    $attemptCountValid = $attemptCountRaw -is [int32] -and
+        $attemptCountRaw -ge 1 -and $attemptCountRaw -le $startupJobQueryMaxAttemptCount
+    $byteFieldsValid = $capacityRaw -is [UInt64] -and $capacityRaw -le $startupJobQueryMaxBytes -and
+        $requiredRaw -is [UInt64] -and $requiredRaw -le $startupJobQueryMaxBytes -and
+        $returnLengthRaw -is [UInt64] -and $returnLengthRaw -le $startupJobQueryMaxBytes
+    $countFieldsValid = $assignedRaw -is [UInt32] -and $assignedRaw -le [UInt32]$startupJobQueryMaxProcessCount -and
+        $listedRaw -is [UInt32] -and $listedRaw -le [UInt32]$startupJobQueryMaxProcessCount
+    $errorCode = if ($errorValid) { [int]$errorRaw } else { 13 }
+    $queryShapeValid = $null -ne $Candidate -and
+        $attemptedValue -is [bool] -and [bool]$attemptedValue -and
+        $succeededValue -is [bool] -and $resizedValue -is [bool] -and $errorValid -and
+        $attemptCountValid -and $byteFieldsValid -and $countFieldsValid -and
+        $null -ne $processIdsValue -and $processIdsValue -is [Array] -and
+        $processIdsValue.Length -le $startupJobQueryMaxProcessCount -and
+        $null -ne $attemptsValue -and $attemptsValue -is [Array] -and
+        $attemptsValue.Length -le $startupJobQueryMaxAttemptCount
+    if (-not $queryShapeValid) {
+        return [pscustomobject][ordered]@{ valid = $false; processIds = [int[]]@(); errorCode = $errorCode; reason = 'top-level-shape' }
+    }
+    $attemptCount = [int]$attemptCountRaw
+    $capacityBytes = [UInt64]$capacityRaw
+    $requiredBytes = [UInt64]$requiredRaw
+    $returnLengthBytes = [UInt64]$returnLengthRaw
+    $assignedProcessCount = [UInt32]$assignedRaw
+    $listedProcessCount = [UInt32]$listedRaw
+    if ($attemptsValue.Length -ne $attemptCount) {
+        return [pscustomobject][ordered]@{ valid = $false; processIds = [int[]]@(); errorCode = 13; reason = 'attempt-count-equation' }
+    }
+    $attemptsValid = $true
+    $anyAttemptResized = $false
+    $previousDataCapacity = $null
+    $lastAttempt = $null
+    for ($attemptIndex = 0; $attemptIndex -lt $attemptsValue.Length; $attemptIndex++) {
+        $attempt = $attemptsValue[$attemptIndex]
+        if ($null -eq $attempt -or $attempt -is [string] -or $attempt -is [ValueType] -or $attempt -is [Array]) {
+            $attemptsValid = $false
+            break
+        }
+        $attemptAttempted = Get-StartupObservationProperty $attempt 'Attempted'
+        $attemptNumber = Get-StartupObservationProperty $attempt 'AttemptNumber'
+        $attemptSucceeded = Get-StartupObservationProperty $attempt 'Succeeded'
+        $attemptError = Get-StartupObservationProperty $attempt 'ErrorCode'
+        $attemptCapacity = Get-StartupObservationProperty $attempt 'CapacityBytes'
+        $attemptRequired = Get-StartupObservationProperty $attempt 'RequiredBytes'
+        $attemptReturnLength = Get-StartupObservationProperty $attempt 'ReturnLengthBytes'
+        $attemptAssigned = Get-StartupObservationProperty $attempt 'AssignedProcessCount'
+        $attemptListed = Get-StartupObservationProperty $attempt 'ListedProcessCount'
+        $attemptResized = Get-StartupObservationProperty $attempt 'Resized'
+        $attemptValid = $attemptAttempted -is [bool] -and [bool]$attemptAttempted -and
+            $attemptNumber -is [int32] -and $attemptNumber -eq ($attemptIndex + 1) -and
+            $attemptSucceeded -is [bool] -and $attemptError -is [int32] -and
+            $attemptError -ge 0 -and $attemptError -le [int32]::MaxValue -and
+            $attemptCapacity -is [UInt64] -and $attemptCapacity -le $startupJobQueryMaxBytes -and
+            $attemptRequired -is [UInt64] -and $attemptRequired -le $startupJobQueryMaxBytes -and
+            $attemptReturnLength -is [UInt64] -and $attemptReturnLength -le $startupJobQueryMaxBytes -and
+            $attemptAssigned -is [UInt32] -and $attemptAssigned -le [UInt32]$startupJobQueryMaxProcessCount -and
+            $attemptListed -is [UInt32] -and $attemptListed -le [UInt32]$startupJobQueryMaxProcessCount -and
+            $attemptResized -is [bool] -and $attemptListed -le $attemptAssigned
+        if ($attemptValid) {
+            $attemptCapacity = [UInt64]$attemptCapacity
+            $attemptRequired = [UInt64]$attemptRequired
+            $attemptReturnLength = [UInt64]$attemptReturnLength
+            $attemptAssigned = [UInt32]$attemptAssigned
+            $attemptListed = [UInt32]$attemptListed
+            if ($attemptCapacity -eq [UInt64]0) {
+                # The zero-buffer sizing query is the only native attempt
+                # allowed to have zero capacity and zero counts.  Its
+                # required and returned lengths are the same sizing hint.
+                $attemptValid = $attemptIndex -eq 0 -and $attemptAssigned -eq 0 -and
+                    $attemptListed -eq 0 -and $attemptRequired -eq $attemptReturnLength -and
+                    -not [bool]$attemptResized
+            }
+            else {
+                $minimumCapacity = $startupJobQueryHeaderBytes + [UInt64]([IntPtr]::Size)
+                $capacitySlots = ($attemptCapacity - $startupJobQueryHeaderBytes) / [UInt64]([IntPtr]::Size)
+                $attemptValid = $attemptCapacity -ge $minimumCapacity -and
+                    $attemptRequired -eq $attemptCapacity -and
+                    [UInt64]$attemptListed -le $capacitySlots -and
+                    ($null -eq $previousDataCapacity -or $attemptCapacity -gt [UInt64]$previousDataCapacity)
+            }
+            if ($attemptValid -and [bool]$attemptSucceeded) {
+                $attemptValid = $attemptError -eq 0
+                if ($attemptValid) {
+                    if ($attemptReturnLength -eq [UInt64]0) {
+                        $attemptValid = $attemptAssigned -eq 0 -and $attemptListed -eq 0
+                    }
+                    else {
+                        $minimumReturn = $startupJobQueryHeaderBytes +
+                            ([UInt64]$attemptListed * [UInt64]([IntPtr]::Size))
+                        $attemptValid = $attemptReturnLength -ge $minimumReturn -and
+                            $attemptReturnLength -le $attemptCapacity
+                    }
+                }
+            }
+            elseif ($attemptValid) {
+                # A typed native failure must carry a nonzero Win32 code.
+                # Retryable failures may report a return length larger than
+                # the current buffer; the core uses that value to grow it.
+                $attemptValid = $attemptError -gt 0
+            }
+        }
+        if ($attemptValid -and $attemptCapacity -gt [UInt64]0) {
+            $previousDataCapacity = [UInt64]$attemptCapacity
+        }
+        if ($attemptValid) {
+            $isFinalAttempt = $attemptIndex -eq ($attemptsValue.Length - 1)
+            $isRetryableFailure = -not [bool]$attemptSucceeded -and
+                $startupJobQueryRetryableErrorCodes -contains [int]$attemptError
+            if (-not $isFinalAttempt) {
+                if ($attemptCapacity -eq [UInt64]0) {
+                    # The first zero-buffer sizing attempt may precede a
+                    # data query, but a terminal non-retryable sizing
+                    # failure cannot have a later attempt.
+                    $attemptValid = $attemptIndex -eq 0 -and
+                        ([bool]$attemptSucceeded -or $isRetryableFailure)
+                }
+                elseif ([bool]$attemptSucceeded) {
+                    # A successful non-final attempt is legal only when it
+                    # was a partial list that the native loop resized.
+                    $attemptValid = $attemptListed -lt $attemptAssigned -and [bool]$attemptResized
+                }
+                else {
+                    # A non-final data failure must be retryable and must
+                    # carry the native loop's resize marker.
+                    $attemptValid = $isRetryableFailure -and [bool]$attemptResized
+                }
+            }
+            elseif ([bool]$attemptSucceeded -and [bool]$attemptResized) {
+                # A successful result is complete; a resize marker on the
+                # final attempt is contradictory.  (A failed exhausted
+                # attempt may retain its final resize hint.)
+                $attemptValid = $false
+            }
+        }
+        if (-not $attemptValid) {
+            $attemptsValid = $false
+            break
+        }
+        if ([bool]$attemptResized) { $anyAttemptResized = $true }
+        $lastAttempt = $attempt
+    }
+    if (-not $attemptsValid -or $null -eq $lastAttempt) {
+        return [pscustomobject][ordered]@{ valid = $false; processIds = [int[]]@(); errorCode = 13; reason = 'attempt-equation' }
+    }
+    $lastCapacity = [UInt64](Get-StartupObservationProperty $lastAttempt 'CapacityBytes')
+    $lastRequired = [UInt64](Get-StartupObservationProperty $lastAttempt 'RequiredBytes')
+    $lastReturnLength = [UInt64](Get-StartupObservationProperty $lastAttempt 'ReturnLengthBytes')
+    $lastAssigned = [UInt32](Get-StartupObservationProperty $lastAttempt 'AssignedProcessCount')
+    $lastListed = [UInt32](Get-StartupObservationProperty $lastAttempt 'ListedProcessCount')
+    $lastSucceeded = [bool](Get-StartupObservationProperty $lastAttempt 'Succeeded')
+    $lastError = [int](Get-StartupObservationProperty $lastAttempt 'ErrorCode')
+    $lastResized = [bool](Get-StartupObservationProperty $lastAttempt 'Resized')
+    $requiredMatchesLastAttempt = $requiredBytes -eq $lastRequired
+    # QueryJobProcessIdsCore records the next growth target when a
+    # retryable final attempt exhausts the eight-call budget.  Preserve
+    # that native diagnostic while still requiring a bounded, advancing
+    # target; all other results must match the final attempt exactly.
+    if (-not $requiredMatchesLastAttempt -and $lastResized -and
+        $attemptCount -eq $startupJobQueryMaxAttemptCount -and
+        $requiredBytes -gt $lastRequired) {
+        $requiredMatchesLastAttempt = $requiredBytes -le $startupJobQueryMaxBytes
+    }
+    $queryShapeValid = $capacityBytes -eq $lastCapacity -and
+        $requiredMatchesLastAttempt -and $returnLengthBytes -eq $lastReturnLength -and
+        $assignedProcessCount -eq $lastAssigned -and $listedProcessCount -eq $lastListed -and
+        [bool]$resizedValue -eq $anyAttemptResized
+    if (-not $queryShapeValid) {
+        return [pscustomobject][ordered]@{
+            valid = $false; processIds = [int[]]@(); errorCode = if ($errorCode -gt 0) { $errorCode } else { 13 }
+            reason = 'top-level-final-equation'
+        }
+    }
+    if ([bool]$succeededValue) {
+        if ($queryShapeValid) {
+            $queryShapeValid = $errorCode -eq 0 -and $lastSucceeded -and $lastError -eq 0 -and
+                -not $lastResized -and $assignedProcessCount -eq $listedProcessCount -and
+                $processIdsValue.Length -eq [int]$listedProcessCount
+            if ($queryShapeValid) {
+                if ($returnLengthBytes -eq [UInt64]0) {
+                    $queryShapeValid = $assignedProcessCount -eq 0 -and $listedProcessCount -eq 0
+                }
+                else {
+                    $minimumReturn = $startupJobQueryHeaderBytes +
+                        ([UInt64]$listedProcessCount * [UInt64]([IntPtr]::Size))
+                    $queryShapeValid = $capacityBytes -ge ($startupJobQueryHeaderBytes + [UInt64]([IntPtr]::Size)) -and
+                        $returnLengthBytes -ge $minimumReturn -and $returnLengthBytes -le $capacityBytes
+                }
+            }
+        }
+    }
+    else {
+        # Failure envelopes never publish process IDs and must retain their
+        # first nonzero native error; a false success/error-zero pair is
+        # contradictory even if all metadata fields look well-typed.
+        $queryShapeValid = $queryShapeValid -and $errorCode -gt 0 -and $processIdsValue.Length -eq 0
+    }
+    $ids = New-Object Collections.Generic.List[int]
+    $seen = @{}
+    if (-not $queryShapeValid -or -not [bool]$succeededValue) {
+        return [pscustomobject][ordered]@{
+            valid = $false; processIds = [int[]]@(); errorCode = if ($errorCode -gt 0) { $errorCode } else { 13 }
+            reason = if ([bool]$succeededValue) { 'terminal-status-equation' } else { 'query-failed' }
+        }
+    }
+    foreach ($rawProcessId in $processIdsValue) {
+        if ($null -eq $rawProcessId -or $rawProcessId -is [bool]) {
+            return [pscustomobject][ordered]@{ valid = $false; processIds = [int[]]@(); errorCode = 13; reason = 'process-id-type' }
+        }
+        if (-not (Test-StartupIntegralValue $rawProcessId 1 ([decimal][int]::MaxValue))) {
+            return [pscustomobject][ordered]@{ valid = $false; processIds = [int[]]@(); errorCode = 13; reason = 'process-id-range' }
+        }
+        try { $processId = [int]$rawProcessId } catch {
+            return [pscustomobject][ordered]@{ valid = $false; processIds = [int[]]@(); errorCode = 13; reason = 'process-id-range' }
+        }
+        if ($seen.ContainsKey($processId)) {
+            return [pscustomobject][ordered]@{ valid = $false; processIds = [int[]]@(); errorCode = 13; reason = 'process-id-duplicate' }
+        }
+        $seen[$processId] = $true
+        [void]$ids.Add($processId)
+    }
+    return [pscustomobject][ordered]@{ valid = $true; processIds = $ids.ToArray(); errorCode = 0; reason = 'none' }
+}
+
 function Get-JobProcessRecords([IntPtr]$Job, $Owned, [object]$QueryObservation = $null, [object]$CleanupObservation = $null, [AllowNull()] [object]$Invokers = $null, [AllowNull()] [object]$JobIdentityObservation = $null, [string]$ObserverRole = 'launch-job-member') {
     if ($Job -eq [IntPtr]::Zero) { throw 'A run-owned job handle is required.' }
     if ($startupIdentityObserverRoles -notcontains $ObserverRole -or $ObserverRole -eq 'none') {
@@ -3724,259 +3989,7 @@ function Get-JobProcessRecords([IntPtr]$Job, $Owned, [object]$QueryObservation =
             })
         }
     }
-    $validateJobQuery = {
-        param([AllowNull()] [object]$Candidate)
-        $attemptedValue = Get-StartupObservationProperty $Candidate 'Attempted'
-        $succeededValue = Get-StartupObservationProperty $Candidate 'Succeeded'
-        # Read the raw PID-array property directly so a one-member Job result
-        # is not collapsed to a scalar by PowerShell pipeline unrolling.
-        $processIdsValue = $null
-        if ($null -ne $Candidate) {
-            if ($Candidate -is [Collections.IDictionary]) {
-                if ($Candidate.Contains('ProcessIds')) { $processIdsValue = $Candidate['ProcessIds'] }
-            }
-            else {
-                $processIdsProperty = $Candidate.PSObject.Properties['ProcessIds']
-                if ($null -ne $processIdsProperty) { $processIdsValue = $processIdsProperty.Value }
-            }
-        }
-        # Attempts is another raw array boundary.  Do not let PowerShell unwrap
-        # a one-attempt array into a scalar before validating its native shape.
-        $attemptsValue = $null
-        if ($null -ne $Candidate) {
-            if ($Candidate -is [Collections.IDictionary]) {
-                if ($Candidate.Contains('Attempts')) { $attemptsValue = $Candidate['Attempts'] }
-            }
-            else {
-                $attemptsProperty = $Candidate.PSObject.Properties['Attempts']
-                if ($null -ne $attemptsProperty) { $attemptsValue = $attemptsProperty.Value }
-            }
-        }
-        $errorRaw = Get-StartupObservationProperty $Candidate 'ErrorCode'
-        $attemptCountRaw = Get-StartupObservationProperty $Candidate 'AttemptCount'
-        $capacityRaw = Get-StartupObservationProperty $Candidate 'CapacityBytes'
-        $requiredRaw = Get-StartupObservationProperty $Candidate 'RequiredBytes'
-        $returnLengthRaw = Get-StartupObservationProperty $Candidate 'ReturnLengthBytes'
-        $assignedRaw = Get-StartupObservationProperty $Candidate 'AssignedProcessCount'
-        $listedRaw = Get-StartupObservationProperty $Candidate 'ListedProcessCount'
-        $resizedValue = Get-StartupObservationProperty $Candidate 'Resized'
-        # These types mirror StartupProbeJobResult exactly.  In particular,
-        # accepting a mathematically integral Double or Decimal here would let
-        # a forged envelope cross the Job-membership decision boundary.
-        $errorValid = $errorRaw -is [int32] -and $errorRaw -ge 0 -and $errorRaw -le [int32]::MaxValue
-        $attemptCountValid = $attemptCountRaw -is [int32] -and
-            $attemptCountRaw -ge 1 -and $attemptCountRaw -le $startupJobQueryMaxAttemptCount
-        $byteFieldsValid = $capacityRaw -is [UInt64] -and $capacityRaw -le $startupJobQueryMaxBytes -and
-            $requiredRaw -is [UInt64] -and $requiredRaw -le $startupJobQueryMaxBytes -and
-            $returnLengthRaw -is [UInt64] -and $returnLengthRaw -le $startupJobQueryMaxBytes
-        $countFieldsValid = $assignedRaw -is [UInt32] -and $assignedRaw -le [UInt32]$startupJobQueryMaxProcessCount -and
-            $listedRaw -is [UInt32] -and $listedRaw -le [UInt32]$startupJobQueryMaxProcessCount
-        $errorCode = if ($errorValid) { [int]$errorRaw } else { 13 }
-        $queryShapeValid = $null -ne $Candidate -and
-            $attemptedValue -is [bool] -and [bool]$attemptedValue -and
-            $succeededValue -is [bool] -and $resizedValue -is [bool] -and $errorValid -and
-            $attemptCountValid -and $byteFieldsValid -and $countFieldsValid -and
-            $null -ne $processIdsValue -and $processIdsValue -is [Array] -and
-            $processIdsValue.Length -le $startupJobQueryMaxProcessCount -and
-            $null -ne $attemptsValue -and $attemptsValue -is [Array] -and
-            $attemptsValue.Length -le $startupJobQueryMaxAttemptCount
-        if (-not $queryShapeValid) {
-            return [pscustomobject][ordered]@{ valid = $false; processIds = [int[]]@(); errorCode = $errorCode }
-        }
-        $attemptCount = [int]$attemptCountRaw
-        $capacityBytes = [UInt64]$capacityRaw
-        $requiredBytes = [UInt64]$requiredRaw
-        $returnLengthBytes = [UInt64]$returnLengthRaw
-        $assignedProcessCount = [UInt32]$assignedRaw
-        $listedProcessCount = [UInt32]$listedRaw
-        if ($attemptsValue.Length -ne $attemptCount) {
-            return [pscustomobject][ordered]@{ valid = $false; processIds = [int[]]@(); errorCode = 13 }
-        }
-        $attemptsValid = $true
-        $anyAttemptResized = $false
-        $previousDataCapacity = $null
-        $lastAttempt = $null
-        for ($attemptIndex = 0; $attemptIndex -lt $attemptsValue.Length; $attemptIndex++) {
-            $attempt = $attemptsValue[$attemptIndex]
-            if ($null -eq $attempt -or $attempt -is [string] -or $attempt -is [ValueType] -or $attempt -is [Array]) {
-                $attemptsValid = $false
-                break
-            }
-            $attemptAttempted = Get-StartupObservationProperty $attempt 'Attempted'
-            $attemptNumber = Get-StartupObservationProperty $attempt 'AttemptNumber'
-            $attemptSucceeded = Get-StartupObservationProperty $attempt 'Succeeded'
-            $attemptError = Get-StartupObservationProperty $attempt 'ErrorCode'
-            $attemptCapacity = Get-StartupObservationProperty $attempt 'CapacityBytes'
-            $attemptRequired = Get-StartupObservationProperty $attempt 'RequiredBytes'
-            $attemptReturnLength = Get-StartupObservationProperty $attempt 'ReturnLengthBytes'
-            $attemptAssigned = Get-StartupObservationProperty $attempt 'AssignedProcessCount'
-            $attemptListed = Get-StartupObservationProperty $attempt 'ListedProcessCount'
-            $attemptResized = Get-StartupObservationProperty $attempt 'Resized'
-            $attemptValid = $attemptAttempted -is [bool] -and [bool]$attemptAttempted -and
-                $attemptNumber -is [int32] -and $attemptNumber -eq ($attemptIndex + 1) -and
-                $attemptSucceeded -is [bool] -and $attemptError -is [int32] -and
-                $attemptError -ge 0 -and $attemptError -le [int32]::MaxValue -and
-                $attemptCapacity -is [UInt64] -and $attemptCapacity -le $startupJobQueryMaxBytes -and
-                $attemptRequired -is [UInt64] -and $attemptRequired -le $startupJobQueryMaxBytes -and
-                $attemptReturnLength -is [UInt64] -and $attemptReturnLength -le $startupJobQueryMaxBytes -and
-                $attemptAssigned -is [UInt32] -and $attemptAssigned -le [UInt32]$startupJobQueryMaxProcessCount -and
-                $attemptListed -is [UInt32] -and $attemptListed -le [UInt32]$startupJobQueryMaxProcessCount -and
-                $attemptResized -is [bool] -and $attemptListed -le $attemptAssigned
-            if ($attemptValid) {
-                $attemptCapacity = [UInt64]$attemptCapacity
-                $attemptRequired = [UInt64]$attemptRequired
-                $attemptReturnLength = [UInt64]$attemptReturnLength
-                $attemptAssigned = [UInt32]$attemptAssigned
-                $attemptListed = [UInt32]$attemptListed
-                if ($attemptCapacity -eq [UInt64]0) {
-                    # The zero-buffer sizing query is the only native attempt
-                    # allowed to have zero capacity and zero counts.  Its
-                    # required and returned lengths are the same sizing hint.
-                    $attemptValid = $attemptIndex -eq 0 -and $attemptAssigned -eq 0 -and
-                        $attemptListed -eq 0 -and $attemptRequired -eq $attemptReturnLength -and
-                        -not [bool]$attemptResized
-                }
-                else {
-                    $minimumCapacity = $startupJobQueryHeaderBytes + [UInt64]([IntPtr]::Size)
-                    $capacitySlots = ($attemptCapacity - $startupJobQueryHeaderBytes) / [UInt64]([IntPtr]::Size)
-                    $attemptValid = $attemptCapacity -ge $minimumCapacity -and
-                        $attemptRequired -eq $attemptCapacity -and
-                        [UInt64]$attemptListed -le $capacitySlots -and
-                        ($null -eq $previousDataCapacity -or $attemptCapacity -gt [UInt64]$previousDataCapacity)
-                }
-                if ($attemptValid -and [bool]$attemptSucceeded) {
-                    $attemptValid = $attemptError -eq 0
-                    if ($attemptValid) {
-                        if ($attemptReturnLength -eq [UInt64]0) {
-                            $attemptValid = $attemptAssigned -eq 0 -and $attemptListed -eq 0
-                        }
-                        else {
-                            $minimumReturn = $startupJobQueryHeaderBytes +
-                                ([UInt64]$attemptListed * [UInt64]([IntPtr]::Size))
-                            $attemptValid = $attemptReturnLength -ge $minimumReturn -and
-                                $attemptReturnLength -le $attemptCapacity
-                        }
-                    }
-                }
-                elseif ($attemptValid) {
-                    # A typed native failure must carry a nonzero Win32 code.
-                    # Retryable failures may report a return length larger than
-                    # the current buffer; the core uses that value to grow it.
-                    $attemptValid = $attemptError -gt 0
-                }
-            }
-            if ($attemptValid -and $attemptCapacity -gt [UInt64]0) {
-                $previousDataCapacity = [UInt64]$attemptCapacity
-            }
-            if ($attemptValid) {
-                $isFinalAttempt = $attemptIndex -eq ($attemptsValue.Length - 1)
-                $isRetryableFailure = -not [bool]$attemptSucceeded -and
-                    $startupJobQueryRetryableErrorCodes -contains [int]$attemptError
-                if (-not $isFinalAttempt) {
-                    if ($attemptCapacity -eq [UInt64]0) {
-                        # The first zero-buffer sizing attempt may precede a
-                        # data query, but a terminal non-retryable sizing
-                        # failure cannot have a later attempt.
-                        $attemptValid = $attemptIndex -eq 0 -and
-                            ([bool]$attemptSucceeded -or $isRetryableFailure)
-                    }
-                    elseif ([bool]$attemptSucceeded) {
-                        # A successful non-final attempt is legal only when it
-                        # was a partial list that the native loop resized.
-                        $attemptValid = $attemptListed -lt $attemptAssigned -and [bool]$attemptResized
-                    }
-                    else {
-                        # A non-final data failure must be retryable and must
-                        # carry the native loop's resize marker.
-                        $attemptValid = $isRetryableFailure -and [bool]$attemptResized
-                    }
-                }
-                elseif ([bool]$attemptSucceeded -and [bool]$attemptResized) {
-                    # A successful result is complete; a resize marker on the
-                    # final attempt is contradictory.  (A failed exhausted
-                    # attempt may retain its final resize hint.)
-                    $attemptValid = $false
-                }
-            }
-            if (-not $attemptValid) {
-                $attemptsValid = $false
-                break
-            }
-            if ([bool]$attemptResized) { $anyAttemptResized = $true }
-            $lastAttempt = $attempt
-        }
-        if (-not $attemptsValid -or $null -eq $lastAttempt) {
-            return [pscustomobject][ordered]@{ valid = $false; processIds = [int[]]@(); errorCode = 13 }
-        }
-        $lastCapacity = [UInt64](Get-StartupObservationProperty $lastAttempt 'CapacityBytes')
-        $lastRequired = [UInt64](Get-StartupObservationProperty $lastAttempt 'RequiredBytes')
-        $lastReturnLength = [UInt64](Get-StartupObservationProperty $lastAttempt 'ReturnLengthBytes')
-        $lastAssigned = [UInt32](Get-StartupObservationProperty $lastAttempt 'AssignedProcessCount')
-        $lastListed = [UInt32](Get-StartupObservationProperty $lastAttempt 'ListedProcessCount')
-        $lastSucceeded = [bool](Get-StartupObservationProperty $lastAttempt 'Succeeded')
-        $lastError = [int](Get-StartupObservationProperty $lastAttempt 'ErrorCode')
-        $lastResized = [bool](Get-StartupObservationProperty $lastAttempt 'Resized')
-        $requiredMatchesLastAttempt = $requiredBytes -eq $lastRequired
-        # QueryJobProcessIdsCore records the next growth target when a
-        # retryable final attempt exhausts the eight-call budget.  Preserve
-        # that native diagnostic while still requiring a bounded, advancing
-        # target; all other results must match the final attempt exactly.
-        if (-not $requiredMatchesLastAttempt -and $lastResized -and
-            $attemptCount -eq $startupJobQueryMaxAttemptCount -and
-            $requiredBytes -gt $lastRequired) {
-            $requiredMatchesLastAttempt = $requiredBytes -le $startupJobQueryMaxBytes
-        }
-        $queryShapeValid = $capacityBytes -eq $lastCapacity -and
-            $requiredMatchesLastAttempt -and $returnLengthBytes -eq $lastReturnLength -and
-            $assignedProcessCount -eq $lastAssigned -and $listedProcessCount -eq $lastListed -and
-            [bool]$resizedValue -eq $anyAttemptResized
-        if ([bool]$succeededValue) {
-            if ($queryShapeValid) {
-                $queryShapeValid = $errorCode -eq 0 -and $lastSucceeded -and $lastError -eq 0 -and
-                    -not $lastResized -and $assignedProcessCount -eq $listedProcessCount -and
-                    $processIdsValue.Length -eq [int]$listedProcessCount
-                if ($queryShapeValid) {
-                    if ($returnLengthBytes -eq [UInt64]0) {
-                        $queryShapeValid = $assignedProcessCount -eq 0 -and $listedProcessCount -eq 0
-                    }
-                    else {
-                        $minimumReturn = $startupJobQueryHeaderBytes +
-                            ([UInt64]$listedProcessCount * [UInt64]([IntPtr]::Size))
-                        $queryShapeValid = $capacityBytes -ge ($startupJobQueryHeaderBytes + [UInt64]([IntPtr]::Size)) -and
-                            $returnLengthBytes -ge $minimumReturn -and $returnLengthBytes -le $capacityBytes
-                    }
-                }
-            }
-        }
-        else {
-            # Failure envelopes never publish process IDs and must retain their
-            # first nonzero native error; a false success/error-zero pair is
-            # contradictory even if all metadata fields look well-typed.
-            $queryShapeValid = $queryShapeValid -and $errorCode -gt 0 -and $processIdsValue.Length -eq 0
-        }
-        $ids = New-Object Collections.Generic.List[int]
-        $seen = @{}
-        if (-not $queryShapeValid -or -not [bool]$succeededValue) {
-            return [pscustomobject][ordered]@{ valid = $false; processIds = [int[]]@(); errorCode = if ($errorCode -gt 0) { $errorCode } else { 13 } }
-        }
-        foreach ($rawProcessId in $processIdsValue) {
-            if ($null -eq $rawProcessId -or $rawProcessId -is [bool]) {
-                return [pscustomobject][ordered]@{ valid = $false; processIds = [int[]]@(); errorCode = 13 }
-            }
-            if (-not (Test-StartupIntegralValue $rawProcessId 1 ([decimal][int]::MaxValue))) {
-                return [pscustomobject][ordered]@{ valid = $false; processIds = [int[]]@(); errorCode = 13 }
-            }
-            try { $processId = [int]$rawProcessId } catch {
-                return [pscustomobject][ordered]@{ valid = $false; processIds = [int[]]@(); errorCode = 13 }
-            }
-            if ($seen.ContainsKey($processId)) {
-                return [pscustomobject][ordered]@{ valid = $false; processIds = [int[]]@(); errorCode = 13 }
-            }
-            $seen[$processId] = $true
-            [void]$ids.Add($processId)
-        }
-        return [pscustomobject][ordered]@{ valid = $true; processIds = $ids.ToArray(); errorCode = 0 }
-    }
+    $validateJobQuery = { param([AllowNull()] [object]$Candidate) Test-StartupStrictJobQueryEnvelope $Candidate }
     $query = $null
     try {
         $query = & $jobQueryInvoker $Job
@@ -5193,100 +5206,28 @@ function Get-TrackedOwnedProcesses($Owned, [object]$CleanupObservation = $null, 
 
 function Convert-StartupTerminalJobQuery {
     param([AllowNull()] [object]$Candidate)
-    $invalid = {
-        param(
-            [ValidateSet('missing-envelope', 'top-level-shape', 'count-equation', 'process-id-shape',
-                'attempt-shape', 'terminal-attempt-equation', 'normalized-query-equation')]
-            [string]$Reason,
-            [int]$ErrorCode = 13
-        )
+    $strictEnvelope = Test-StartupStrictJobQueryEnvelope $Candidate
+    if (-not $strictEnvelope.valid) {
         return [pscustomobject][ordered]@{
             valid = $false
-            errorCode = [int]$ErrorCode
-            reason = $Reason
+            errorCode = [int]$strictEnvelope.errorCode
+            reason = [string]$strictEnvelope.reason
             memberCount = $null
             observation = New-StartupJobQueryObservation
         }
     }
-    if ($null -eq $Candidate) { return (& $invalid 'missing-envelope') }
-    $attempted = Get-StartupObservationProperty $Candidate 'Attempted'
-    $succeeded = Get-StartupObservationProperty $Candidate 'Succeeded'
-    $errorCode = Get-StartupObservationProperty $Candidate 'ErrorCode'
-    $attemptCount = Get-StartupObservationProperty $Candidate 'AttemptCount'
-    $assigned = Get-StartupObservationProperty $Candidate 'AssignedProcessCount'
-    $listed = Get-StartupObservationProperty $Candidate 'ListedProcessCount'
-    $capacity = Get-StartupObservationProperty $Candidate 'CapacityBytes'
-    $required = Get-StartupObservationProperty $Candidate 'RequiredBytes'
-    $returnLength = Get-StartupObservationProperty $Candidate 'ReturnLengthBytes'
-    $resized = Get-StartupObservationProperty $Candidate 'Resized'
-    $processIds = $null
-    $attempts = $null
-    if ($Candidate -is [Collections.IDictionary]) {
-        if ($Candidate.Contains('ProcessIds')) { $processIds = $Candidate['ProcessIds'] }
-        if ($Candidate.Contains('Attempts')) { $attempts = $Candidate['Attempts'] }
-    }
-    else {
-        $processIdsProperty = $Candidate.PSObject.Properties['ProcessIds']
-        $attemptsProperty = $Candidate.PSObject.Properties['Attempts']
-        if ($null -ne $processIdsProperty) { $processIds = $processIdsProperty.Value }
-        if ($null -ne $attemptsProperty) { $attempts = $attemptsProperty.Value }
-    }
-    if ($attempted -isnot [bool] -or -not [bool]$attempted -or
-        $succeeded -isnot [bool] -or -not [bool]$succeeded -or
-        $errorCode -isnot [int32] -or [int]$errorCode -ne 0 -or
-        $attemptCount -isnot [int32] -or [int]$attemptCount -lt 1 -or [int]$attemptCount -gt $startupJobQueryMaxAttemptCount -or
-        $resized -isnot [bool] -or $processIds -isnot [Array] -or $attempts -isnot [Array] -or
-        $attempts.Length -ne [int]$attemptCount -or
-        -not (Test-StartupIntegralValue $assigned 0 ([decimal]$startupJobQueryMaxProcessCount)) -or
-        -not (Test-StartupIntegralValue $listed 0 ([decimal]$startupJobQueryMaxProcessCount)) -or
-        -not (Test-StartupIntegralValue $capacity 0 ([decimal]$startupJobQueryMaxBytes)) -or
-        -not (Test-StartupIntegralValue $required 0 ([decimal]$startupJobQueryMaxBytes)) -or
-        -not (Test-StartupIntegralValue $returnLength 0 ([decimal]$startupJobQueryMaxBytes))) {
-        return (& $invalid 'top-level-shape')
-    }
-    $memberCount = [int]$listed
-    if ([UInt64]$assigned -ne [UInt64]$listed -or $processIds.Length -ne $memberCount) { return (& $invalid 'count-equation') }
-    $seen = @{}
-    foreach ($processId in $processIds) {
-        if (-not (Test-StartupIntegralValue $processId 1 ([decimal][int]::MaxValue))) { return (& $invalid 'process-id-shape') }
-        $numericId = [int]$processId
-        if ($seen.ContainsKey($numericId)) { return (& $invalid 'process-id-shape') }
-        $seen[$numericId] = $true
-    }
-    for ($index = 0; $index -lt $attempts.Length; $index++) {
-        $attempt = $attempts[$index]
-        if ($null -eq $attempt -or
-            (Get-StartupObservationProperty $attempt 'Attempted') -isnot [bool] -or
-            -not [bool](Get-StartupObservationProperty $attempt 'Attempted') -or
-            (Get-StartupObservationProperty $attempt 'AttemptNumber') -isnot [int32] -or
-            [int](Get-StartupObservationProperty $attempt 'AttemptNumber') -ne ($index + 1) -or
-            (Get-StartupObservationProperty $attempt 'Succeeded') -isnot [bool] -or
-            (Get-StartupObservationProperty $attempt 'ErrorCode') -isnot [int32] -or
-            (Get-StartupObservationProperty $attempt 'Resized') -isnot [bool] -or
-            -not (Test-StartupIntegralValue (Get-StartupObservationProperty $attempt 'CapacityBytes') 0 ([decimal]$startupJobQueryMaxBytes)) -or
-            -not (Test-StartupIntegralValue (Get-StartupObservationProperty $attempt 'RequiredBytes') 0 ([decimal]$startupJobQueryMaxBytes)) -or
-            -not (Test-StartupIntegralValue (Get-StartupObservationProperty $attempt 'ReturnLengthBytes') 0 ([decimal]$startupJobQueryMaxBytes)) -or
-            -not (Test-StartupIntegralValue (Get-StartupObservationProperty $attempt 'AssignedProcessCount') 0 ([decimal]$startupJobQueryMaxProcessCount)) -or
-            -not (Test-StartupIntegralValue (Get-StartupObservationProperty $attempt 'ListedProcessCount') 0 ([decimal]$startupJobQueryMaxProcessCount))) {
-            return (& $invalid 'attempt-shape')
-        }
-    }
-    $lastAttempt = $attempts[-1]
-    if (-not [bool](Get-StartupObservationProperty $lastAttempt 'Succeeded') -or
-        [int](Get-StartupObservationProperty $lastAttempt 'ErrorCode') -ne 0 -or
-        [bool](Get-StartupObservationProperty $lastAttempt 'Resized') -or
-        [UInt64](Get-StartupObservationProperty $lastAttempt 'CapacityBytes') -ne [UInt64]$capacity -or
-        [UInt64](Get-StartupObservationProperty $lastAttempt 'ReturnLengthBytes') -ne [UInt64]$returnLength -or
-        [UInt64](Get-StartupObservationProperty $lastAttempt 'AssignedProcessCount') -ne [UInt64]$assigned -or
-        [UInt64](Get-StartupObservationProperty $lastAttempt 'ListedProcessCount') -ne [UInt64]$listed -or
-        ([UInt64]$returnLength -gt 0 -and [UInt64]$returnLength -gt [UInt64]$capacity)) {
-        return (& $invalid 'terminal-attempt-equation')
-    }
     $observation = Convert-StartupJobQueryObservation $Candidate
+    $memberCount = [int]$strictEnvelope.processIds.Length
     if (-not $observation.attempted -or -not $observation.succeeded -or $observation.queryCount -ne 1 -or
-        $observation.attemptCount -ne [int]$attemptCount -or $observation.assignedProcessCount -ne [UInt64]$assigned -or
-        $observation.listedProcessCount -ne [UInt64]$listed) {
-        return (& $invalid 'normalized-query-equation')
+        $observation.errorCode -ne 0 -or $observation.assignedProcessCount -ne [UInt64]$memberCount -or
+        $observation.listedProcessCount -ne [UInt64]$memberCount) {
+        return [pscustomobject][ordered]@{
+            valid = $false
+            errorCode = 13
+            reason = 'normalized-query-equation'
+            memberCount = $null
+            observation = New-StartupJobQueryObservation
+        }
     }
     return [pscustomobject][ordered]@{
         valid = $true
@@ -5341,6 +5282,9 @@ function Test-StartupContainmentProofV2 {
         $normalizedAttempts = $terminalQuery['attempts']
         if ($normalizedAttempts -isnot [Array] -or $normalizedAttempts.Length -gt $startupJobQueryMaxAttemptCount -or
             $normalizedAttempts.Length -ne [int]$terminalQuery.attemptCount) { return $false }
+        $previousDataCapacity = $null
+        $anyAttemptResized = $false
+        $lastAttempt = $null
         for ($attemptIndex = 0; $attemptIndex -lt $normalizedAttempts.Length; $attemptIndex++) {
             $normalizedAttempt = $normalizedAttempts[$attemptIndex]
             if ($normalizedAttempt -isnot [Collections.IDictionary]) { return $false }
@@ -5349,14 +5293,79 @@ function Test-StartupContainmentProofV2 {
             if ((@($normalizedAttempt.Keys | Sort-Object) -join ',') -ne (@($expectedAttemptFields | Sort-Object) -join ',')) { return $false }
             if ($normalizedAttempt.attempted -isnot [bool] -or $normalizedAttempt.succeeded -isnot [bool] -or
                 $normalizedAttempt.resized -isnot [bool] -or $normalizedAttempt.errorCode -isnot [int32] -or
-                $normalizedAttempt.attemptNumber -isnot [int32] -or [int]$normalizedAttempt.attemptNumber -ne ($attemptIndex + 1)) { return $false }
+                $normalizedAttempt.attemptNumber -isnot [int32] -or [int]$normalizedAttempt.attemptNumber -ne ($attemptIndex + 1) -or
+                -not [bool]$normalizedAttempt.attempted -or [int]$normalizedAttempt.errorCode -lt 0) { return $false }
             foreach ($attemptUInt64Field in @('capacityBytes', 'requiredBytes', 'returnLengthBytes', 'assignedProcessCount', 'listedProcessCount')) {
-                if ((Get-StartupObservationProperty $normalizedAttempt $attemptUInt64Field) -isnot [UInt64]) { return $false }
+                $attemptUInt64Value = Get-StartupObservationProperty $normalizedAttempt $attemptUInt64Field
+                if ($attemptUInt64Value -isnot [UInt64]) { return $false }
             }
+            if ($normalizedAttempt.capacityBytes -gt $startupJobQueryMaxBytes -or
+                $normalizedAttempt.requiredBytes -gt $startupJobQueryMaxBytes -or
+                $normalizedAttempt.returnLengthBytes -gt $startupJobQueryMaxBytes -or
+                $normalizedAttempt.assignedProcessCount -gt [UInt64]$startupJobQueryMaxProcessCount -or
+                $normalizedAttempt.listedProcessCount -gt [UInt64]$startupJobQueryMaxProcessCount -or
+                $normalizedAttempt.listedProcessCount -gt $normalizedAttempt.assignedProcessCount) { return $false }
+            if ($normalizedAttempt.capacityBytes -eq [UInt64]0) {
+                if ($attemptIndex -ne 0 -or $normalizedAttempt.assignedProcessCount -ne [UInt64]0 -or
+                    $normalizedAttempt.listedProcessCount -ne [UInt64]0 -or
+                    $normalizedAttempt.requiredBytes -ne $normalizedAttempt.returnLengthBytes -or
+                    [bool]$normalizedAttempt.resized) { return $false }
+            }
+            else {
+                $minimumCapacity = $startupJobQueryHeaderBytes + [UInt64]([IntPtr]::Size)
+                $capacitySlots = ($normalizedAttempt.capacityBytes - $startupJobQueryHeaderBytes) / [UInt64]([IntPtr]::Size)
+                if ($normalizedAttempt.capacityBytes -lt $minimumCapacity -or
+                    $normalizedAttempt.requiredBytes -ne $normalizedAttempt.capacityBytes -or
+                    $normalizedAttempt.listedProcessCount -gt $capacitySlots -or
+                    ($null -ne $previousDataCapacity -and $normalizedAttempt.capacityBytes -le [UInt64]$previousDataCapacity)) { return $false }
+                $previousDataCapacity = [UInt64]$normalizedAttempt.capacityBytes
+            }
+            if ([bool]$normalizedAttempt.succeeded) {
+                if ($normalizedAttempt.errorCode -ne 0) { return $false }
+                if ($normalizedAttempt.returnLengthBytes -eq [UInt64]0) {
+                    if ($normalizedAttempt.assignedProcessCount -ne [UInt64]0 -or
+                        $normalizedAttempt.listedProcessCount -ne [UInt64]0) { return $false }
+                }
+                else {
+                    $minimumReturn = $startupJobQueryHeaderBytes +
+                        ($normalizedAttempt.listedProcessCount * [UInt64]([IntPtr]::Size))
+                    if ($normalizedAttempt.returnLengthBytes -lt $minimumReturn -or
+                        $normalizedAttempt.returnLengthBytes -gt $normalizedAttempt.capacityBytes) { return $false }
+                }
+            }
+            elseif ($normalizedAttempt.errorCode -le 0) { return $false }
+            $isFinalAttempt = $attemptIndex -eq ($normalizedAttempts.Length - 1)
+            $isRetryableFailure = -not [bool]$normalizedAttempt.succeeded -and
+                $startupJobQueryRetryableErrorCodes -contains [int]$normalizedAttempt.errorCode
+            if (-not $isFinalAttempt) {
+                if ($normalizedAttempt.capacityBytes -eq [UInt64]0) {
+                    if ($attemptIndex -ne 0 -or (-not [bool]$normalizedAttempt.succeeded -and -not $isRetryableFailure)) { return $false }
+                }
+                elseif ([bool]$normalizedAttempt.succeeded) {
+                    if ($normalizedAttempt.listedProcessCount -ge $normalizedAttempt.assignedProcessCount -or
+                        -not [bool]$normalizedAttempt.resized) { return $false }
+                }
+                elseif (-not $isRetryableFailure -or -not [bool]$normalizedAttempt.resized) { return $false }
+            }
+            elseif ([bool]$normalizedAttempt.succeeded -and [bool]$normalizedAttempt.resized) { return $false }
+            if ([bool]$normalizedAttempt.resized) { $anyAttemptResized = $true }
+            $lastAttempt = $normalizedAttempt
         }
         if ([bool]$terminalQuery.attempted -ne ([int]$terminalQuery.queryCount -eq 1) -or
             [bool]$terminalQuery.skipped -and [bool]$terminalQuery.attempted -or
             [bool]$terminalQuery.succeeded -and ($queryError -isnot [int32] -or [int]$queryError -ne 0)) { return $false }
+        if ([bool]$terminalQuery.attempted) {
+            if ($null -eq $lastAttempt -or $terminalQuery.capacityBytes -ne $lastAttempt.capacityBytes -or
+                $terminalQuery.requiredBytes -ne $lastAttempt.requiredBytes -or
+                $terminalQuery.returnLengthBytes -ne $lastAttempt.returnLengthBytes -or
+                $terminalQuery.assignedProcessCount -ne $lastAttempt.assignedProcessCount -or
+                $terminalQuery.listedProcessCount -ne $lastAttempt.listedProcessCount -or
+                [bool]$terminalQuery.resized -ne $anyAttemptResized -or
+                [bool]$terminalQuery.succeeded -ne [bool]$lastAttempt.succeeded -or
+                [int]$queryError -ne [int]$lastAttempt.errorCode) { return $false }
+        }
+        elseif ($terminalQuery.queryCount -ne 0 -or $terminalQuery.attemptCount -ne 0 -or $normalizedAttempts.Length -ne 0 -or
+            $null -ne $queryError -or [bool]$terminalQuery.succeeded -or [bool]$terminalQuery.resized) { return $false }
         $memberCount = Get-StartupObservationProperty $Proof 'terminalJobMemberCount'
         if ($null -ne $memberCount -and ($memberCount -isnot [int32] -or [int]$memberCount -lt 0)) { return $false }
         $querySucceeded = (Get-StartupObservationProperty $terminalQuery 'succeeded') -is [bool] -and [bool]$terminalQuery.succeeded
@@ -5383,6 +5392,14 @@ function Test-StartupContainmentProofV2 {
             if (($Proof.terminalState -eq 'verified-graceful-job-empty') -ne ($Proof.mode -eq 'graceful-job-empty')) { return $false }
             if (($Proof.terminalState -eq 'verified-explicit-job-termination') -ne ($Proof.mode -eq 'explicit-job-termination')) { return $false }
         }
+        elseif ([bool]$Proof.jobEmptyProven -and $Proof.terminalState -ne 'rejected-job-close') { return $false }
+        if ($Proof.terminalState -eq 'verified-graceful-job-empty' -and
+            ([bool]$Proof.terminationAttempted -or [bool]$Proof.terminationSucceeded -or $null -ne $terminationError)) { return $false }
+        if ($Proof.terminalState -eq 'verified-explicit-job-termination' -and
+            (-not [bool]$Proof.terminationAttempted -or -not [bool]$Proof.terminationSucceeded -or $null -ne $terminationError)) { return $false }
+        if ($Proof.terminalState -eq 'rejected-termination-failed' -and
+            (-not [bool]$Proof.terminationAttempted -or [bool]$Proof.terminationSucceeded -or
+                $terminationError -isnot [int32] -or [int]$terminationError -le 0 -or [bool]$Proof.jobEmptyProven)) { return $false }
         $reconciliation = Get-StartupObservationProperty $Proof 'identityReconciliation'
         if ($null -eq $reconciliation -or $reconciliation -isnot [Collections.IDictionary]) { return $false }
         $expectedReconciliationFields = @('attempted', 'accepted', 'operation', 'observerRole', 'reason')
@@ -5401,10 +5418,57 @@ function Test-StartupContainmentProofV2 {
                 $startupIdentityReconciliationObserverRoles -notcontains [string]$reconciliation.observerRole -or
                 $reconciliation.reason -ne 'job-empty-and-allowlisted-post-close-history') { return $false }
         }
+        else {
+            switch ([string]$reconciliation.reason) {
+                'job-empty-not-proven' { if ([bool]$Proof.jobEmptyProven) { return $false } }
+                'operation-not-allowlisted' {
+                    if ($startupIdentityReconciliationOperations -contains [string]$reconciliation.operation) { return $false }
+                }
+                'observer-not-allowlisted' {
+                    if ($startupIdentityReconciliationObserverRoles -contains [string]$reconciliation.observerRole) { return $false }
+                }
+                'exact-path-failure' { if ($reconciliation.observerRole -ne 'exact-path') { return $false } }
+                default { return $false }
+            }
+        }
         $proofJson = $Proof | ConvertTo-Json -Depth 10 -Compress
         return $proofJson -notmatch '(?i)processids|\bpid\b|imagepath|commandline|payload|raw'
     }
     catch { return $false }
+}
+
+function Convert-StartupTerminationActionEnvelope {
+    param([AllowNull()] [object]$Candidate)
+    $attempted = Get-StartupObservationProperty $Candidate 'Attempted'
+    $succeeded = Get-StartupObservationProperty $Candidate 'Succeeded'
+    $errorCode = Get-StartupObservationProperty $Candidate 'ErrorCode'
+    $shapeValid = $null -ne $Candidate -and $attempted -is [bool] -and [bool]$attempted -and
+        $succeeded -is [bool] -and $errorCode -is [int32]
+    $equationValid = $shapeValid -and (([bool]$succeeded -and [int]$errorCode -eq 0) -or
+        (-not [bool]$succeeded -and [int]$errorCode -gt 0))
+    return [pscustomobject][ordered]@{
+        valid = [bool]$equationValid
+        succeeded = [bool]($equationValid -and [bool]$succeeded)
+        errorCode = if ($equationValid) { [int]$errorCode } else { 13 }
+    }
+}
+
+function Convert-StartupCloseActionEnvelope {
+    param([AllowNull()] [object]$Candidate)
+    $succeeded = Get-StartupObservationProperty $Candidate 'Succeeded'
+    $errorCode = Get-StartupObservationProperty $Candidate 'ErrorCode'
+    $handle = Get-StartupObservationProperty $Candidate 'Handle'
+    $shapeValid = $null -ne $Candidate -and $succeeded -is [bool] -and
+        $errorCode -is [int32] -and $handle -is [IntPtr]
+    $equationValid = $shapeValid -and (([bool]$succeeded -and [int]$errorCode -eq 0 -and
+            [IntPtr]$handle -eq [IntPtr]::Zero) -or
+        (-not [bool]$succeeded -and [int]$errorCode -gt 0))
+    return [pscustomobject][ordered]@{
+        valid = [bool]$equationValid
+        succeeded = [bool]($equationValid -and [bool]$succeeded)
+        errorCode = if ($equationValid) { [int]$errorCode } else { 13 }
+        handle = if ($shapeValid) { [IntPtr]$handle } else { [IntPtr]::Zero }
+    }
 }
 
 function Invoke-StartupJobCleanupStateMachine {
@@ -5456,7 +5520,11 @@ function Invoke-StartupJobCleanupStateMachine {
         $requiresTermination = $true
         for ($gracefulPoll = 0; $gracefulPoll -lt $startupContainmentMaxOuterPolls -and
                 $stateWatch.ElapsedMilliseconds -lt $TimeoutMs; $gracefulPoll++) {
-            try { $graceful = [bool](& $gracefulInvoker) }
+            try {
+                $gracefulValue = & $gracefulInvoker
+                if ($gracefulValue -isnot [bool]) { $graceful = $false; break }
+                $graceful = [bool]$gracefulValue
+            }
             catch { $graceful = $false; break }
             if ($graceful) {
                 $terminalCandidate = $null
@@ -5479,11 +5547,10 @@ function Invoke-StartupJobCleanupStateMachine {
             $proof.terminationAttempted = $true
             $termination = $null
             try { $termination = & $terminateInvoker $Job } catch { $termination = $null }
-            $terminationSucceededValue = Get-StartupObservationProperty $termination 'Succeeded'
-            $terminationErrorValue = Get-StartupObservationProperty $termination 'ErrorCode'
-            if ($terminationSucceededValue -isnot [bool] -or -not [bool]$terminationSucceededValue) {
+            $terminationEnvelope = Convert-StartupTerminationActionEnvelope $termination
+            if (-not $terminationEnvelope.valid -or -not $terminationEnvelope.succeeded) {
                 $proof.terminationSucceeded = $false
-                $proof.terminationErrorCode = if ($terminationErrorValue -is [int32] -and [int]$terminationErrorValue -gt 0) { [int]$terminationErrorValue } else { 13 }
+                $proof.terminationErrorCode = if ($terminationEnvelope.errorCode -gt 0) { [int]$terminationEnvelope.errorCode } else { 13 }
                 $proof.terminalState = 'rejected-termination-failed'
             }
             else {
@@ -5526,8 +5593,8 @@ function Invoke-StartupJobCleanupStateMachine {
             $CleanupObservation.jobCloseAttempted = $true
             try {
                 $closeResult = & $closeInvoker $Job
-                $closeSucceeded = (Get-StartupObservationProperty $closeResult 'Succeeded') -is [bool] -and
-                    [bool](Get-StartupObservationProperty $closeResult 'Succeeded')
+                $closeEnvelope = Convert-StartupCloseActionEnvelope $closeResult
+                $closeSucceeded = $closeEnvelope.valid -and $closeEnvelope.succeeded
                 if ($closeSucceeded) { $remainingHandle = [IntPtr]::Zero }
             }
             catch { $closeSucceeded = $false }
@@ -6509,6 +6576,37 @@ function Invoke-SelfTest {
     if (-not $syntheticMemberQueryCheck.valid -or $syntheticMemberQueryCheck.memberCount -ne 1) {
         throw "Synthetic terminal Job query fixture failed '$($syntheticMemberQueryCheck.reason)'."
     }
+    $requiredMismatchQuery = & $newTerminalJobQuery ([int[]]@())
+    $requiredMismatchQuery.RequiredBytes = [UInt64]($requiredMismatchQuery.RequiredBytes + [UInt64]8)
+    $requiredMismatchStrictCheck = Test-StartupStrictJobQueryEnvelope $requiredMismatchQuery
+    $requiredMismatchTerminalCheck = Convert-StartupTerminalJobQuery $requiredMismatchQuery
+    $strictTerminalJobQuerySelfTestVerified = -not $requiredMismatchStrictCheck.valid -and
+        $requiredMismatchStrictCheck.reason -eq 'top-level-final-equation' -and
+        -not $requiredMismatchTerminalCheck.valid -and
+        $requiredMismatchTerminalCheck.reason -eq 'top-level-final-equation'
+    if (-not $strictTerminalJobQuerySelfTestVerified) {
+        throw 'Terminal Job query accepted mismatched top-level and final-attempt RequiredBytes.'
+    }
+
+    $malformedGracefulState = [pscustomobject]@{ query = 0; terminate = 0; close = 0 }
+    $malformedGracefulInvokers = [pscustomobject]@{
+        ObserveGraceful = { 'true' }
+        QueryJob = { $malformedGracefulState.query++; & $newTerminalJobQuery ([int[]]@()) }
+        TerminateJob = { $malformedGracefulState.terminate++; & $newTerminationSuccess }
+        CloseJob = { $malformedGracefulState.close++; & $newCloseSuccess }
+        Delay = { param([int]$Milliseconds) }
+    }
+    $malformedGracefulResult = Invoke-StartupJobCleanupStateMachine ([IntPtr]1) @{} `
+        (New-StartupCleanupObservation) $malformedGracefulInvokers 250
+    $strictGracefulObservationSelfTestVerified = -not $malformedGracefulResult.graceful -and
+        $malformedGracefulState.terminate -eq 1 -and $malformedGracefulState.query -eq 1 -and
+        $malformedGracefulState.close -eq 1 -and
+        $malformedGracefulResult.proof.terminalState -eq 'verified-explicit-job-termination' -and
+        $malformedGracefulResult.proof.mode -eq 'explicit-job-termination' -and
+        (Test-StartupContainmentProofV2 $malformedGracefulResult.proof)
+    if (-not $strictGracefulObservationSelfTestVerified) {
+        throw 'Malformed graceful observation influenced a graceful containment transition.'
+    }
 
     $identityFailureState = [pscustomobject]@{ query = 0; terminate = 0; close = 0 }
     $identityFailureObservation = New-StartupCleanupObservation
@@ -6619,7 +6717,7 @@ function Invoke-SelfTest {
     $terminationFailureInvokers = [pscustomobject]@{
         ObserveGraceful = { $false }
         QueryJob = { & $newTerminalJobQuery ([int[]]@()) }
-        TerminateJob = { $terminationFailureState.terminate++; [pscustomobject]@{ Succeeded = $false; ErrorCode = 5 } }
+        TerminateJob = { $terminationFailureState.terminate++; [pscustomobject]@{ Attempted = $true; Succeeded = $false; ErrorCode = [int]5 } }
         CloseJob = { $terminationFailureState.close++; & $newCloseSuccess }
         Delay = { param([int]$Milliseconds) }
     }
@@ -6644,6 +6742,94 @@ function Invoke-SelfTest {
     }
     $exceptionResult = Invoke-StartupJobCleanupStateMachine ([IntPtr]1) @{} `
         (New-StartupCleanupObservation) $exceptionInvokers 250
+
+    $malformedTerminationActions = @(
+        [pscustomobject][ordered]@{ Attempted = $false; Succeeded = $true; ErrorCode = [int]5 }
+        [pscustomobject][ordered]@{ Attempted = $true; Succeeded = 'true'; ErrorCode = [int]0 }
+        [pscustomobject][ordered]@{ Attempted = $true; Succeeded = $true; ErrorCode = [UInt32]0 }
+        [pscustomobject][ordered]@{ Attempted = $true; Succeeded = $true; ErrorCode = [int]5 }
+        [pscustomobject][ordered]@{ Attempted = $true; Succeeded = $false; ErrorCode = [int]0 }
+    )
+    $malformedTerminationActionsRejected = $true
+    foreach ($malformedTerminationAction in $malformedTerminationActions) {
+        $terminationActionForCase = $malformedTerminationAction
+        $malformedTerminationState = [pscustomobject]@{ terminate = 0; query = 0; close = 0 }
+        $malformedTerminationInvokers = [pscustomobject]@{
+            ObserveGraceful = { $false }
+            QueryJob = { $malformedTerminationState.query++; & $newTerminalJobQuery ([int[]]@()) }.GetNewClosure()
+            TerminateJob = { $malformedTerminationState.terminate++; return $terminationActionForCase }.GetNewClosure()
+            CloseJob = { $malformedTerminationState.close++; & $newCloseSuccess }.GetNewClosure()
+            Delay = { param([int]$Milliseconds) }
+        }
+        $malformedTerminationResult = Invoke-StartupJobCleanupStateMachine ([IntPtr]1) @{} `
+            (New-StartupCleanupObservation) $malformedTerminationInvokers 250
+        if ($malformedTerminationResult.proof.terminalState -ne 'rejected-termination-failed' -or
+            $malformedTerminationResult.proof.terminationSucceeded -or
+            $malformedTerminationResult.proof.terminationErrorCode -le 0 -or
+            $malformedTerminationState.terminate -ne 1 -or $malformedTerminationState.query -ne 0 -or
+            $malformedTerminationState.close -ne 1 -or -not $malformedTerminationResult.closeSucceeded -or
+            $malformedTerminationResult.remainingJobHandle -ne [IntPtr]::Zero -or
+            -not (Test-StartupContainmentProofV2 $malformedTerminationResult.proof)) {
+            $malformedTerminationActionsRejected = $false
+        }
+    }
+
+    $malformedCloseActions = @(
+        [pscustomobject][ordered]@{ Succeeded = $true; ErrorCode = [int]5; Handle = [IntPtr]1 }
+        [pscustomobject][ordered]@{ Succeeded = $true; ErrorCode = [int]0; Handle = [IntPtr]1 }
+        [pscustomobject][ordered]@{ Succeeded = 'true'; ErrorCode = [int]0; Handle = [IntPtr]::Zero }
+        [pscustomobject][ordered]@{ Succeeded = $true; ErrorCode = [UInt32]0; Handle = [IntPtr]::Zero }
+        [pscustomobject][ordered]@{ Succeeded = $true; ErrorCode = [int]0; Handle = [int]0 }
+        [pscustomobject][ordered]@{ Succeeded = $false; ErrorCode = [int]0; Handle = [IntPtr]1 }
+    )
+    $malformedCloseActionsRejected = $true
+    foreach ($malformedCloseAction in $malformedCloseActions) {
+        $closeActionForCase = $malformedCloseAction
+        $malformedCloseState = [pscustomobject]@{ terminate = 0; query = 0; close = 0 }
+        $malformedCloseInvokers = [pscustomobject]@{
+            ObserveGraceful = { $false }
+            QueryJob = { $malformedCloseState.query++; & $newTerminalJobQuery ([int[]]@()) }.GetNewClosure()
+            TerminateJob = { $malformedCloseState.terminate++; & $newTerminationSuccess }.GetNewClosure()
+            CloseJob = { $malformedCloseState.close++; return $closeActionForCase }.GetNewClosure()
+            Delay = { param([int]$Milliseconds) }
+        }
+        $malformedCloseResult = Invoke-StartupJobCleanupStateMachine ([IntPtr]1) @{} `
+            (New-StartupCleanupObservation) $malformedCloseInvokers 250
+        if ($malformedCloseResult.proof.terminalState -ne 'rejected-job-close' -or
+            $malformedCloseResult.closeSucceeded -or $malformedCloseResult.remainingJobHandle -ne [IntPtr]1 -or
+            -not $malformedCloseResult.proof.jobEmptyProven -or
+            $malformedCloseState.terminate -ne 1 -or $malformedCloseState.query -ne 1 -or
+            $malformedCloseState.close -ne 1 -or -not (Test-StartupContainmentProofV2 $malformedCloseResult.proof)) {
+            $malformedCloseActionsRejected = $false
+        }
+    }
+    $exactEnvelopeReproState = [pscustomobject]@{ terminate = 0; query = 0; close = 0 }
+    $exactEnvelopeReproInvokers = [pscustomobject]@{
+        ObserveGraceful = { $false }
+        QueryJob = { $exactEnvelopeReproState.query++; & $newTerminalJobQuery ([int[]]@()) }
+        TerminateJob = {
+            $exactEnvelopeReproState.terminate++
+            [pscustomobject][ordered]@{ Attempted = $false; Succeeded = $true; ErrorCode = [int]5 }
+        }
+        CloseJob = {
+            $exactEnvelopeReproState.close++
+            [pscustomobject][ordered]@{ Succeeded = $true; ErrorCode = [int]5; Handle = [IntPtr]1 }
+        }
+        Delay = { param([int]$Milliseconds) }
+    }
+    $exactEnvelopeReproResult = Invoke-StartupJobCleanupStateMachine ([IntPtr]1) @{} `
+        (New-StartupCleanupObservation) $exactEnvelopeReproInvokers 250
+    $strictNativeEnvelopeSelfTestVerified = $malformedTerminationActionsRejected -and
+        $malformedCloseActionsRejected -and $exactEnvelopeReproState.terminate -eq 1 -and
+        $exactEnvelopeReproState.query -eq 0 -and $exactEnvelopeReproState.close -eq 1 -and
+        $exactEnvelopeReproResult.proof.terminalState -eq 'rejected-job-close' -and
+        -not $exactEnvelopeReproResult.proof.jobEmptyProven -and
+        -not $exactEnvelopeReproResult.closeSucceeded -and
+        $exactEnvelopeReproResult.remainingJobHandle -eq [IntPtr]1 -and
+        (Test-StartupContainmentProofV2 $exactEnvelopeReproResult.proof)
+    if (-not $strictNativeEnvelopeSelfTestVerified) {
+        throw 'Malformed termination or close action envelope crossed the containment decision boundary.'
+    }
 
     $containmentFailureBranchesSelfTestVerified =
         (Test-StartupContainmentProofV2 $memberRemainsResult.proof) -and
@@ -6674,14 +6860,37 @@ function Invoke-SelfTest {
     $exactPathProof.jobEmptyProven = $true
     $exactPathRejected = -not (Set-StartupIdentityReconciliation $exactPathProof 'open-process' 'exact-path') -and
         $exactPathProof.identityReconciliation.reason -eq 'exact-path-failure'
-    $unknownOperationProof = New-StartupContainmentProof
-    $unknownOperationProof.jobEmptyProven = $true
-    $unknownOperationRejected = -not (Set-StartupIdentityReconciliation $unknownOperationProof 'unknown-operation' 'post-close-tracked-history') -and
-        -not (Test-StartupContainmentProofV2 $unknownOperationProof)
-    $unknownObserverProof = New-StartupContainmentProof
-    $unknownObserverProof.jobEmptyProven = $true
-    $unknownObserverRejected = -not (Set-StartupIdentityReconciliation $unknownObserverProof 'open-process' 'unknown-observer') -and
-        -not (Test-StartupContainmentProofV2 $unknownObserverProof)
+    $newVerifiedProofForRejectedReconciliation = {
+        $candidateProof = New-StartupContainmentProof
+        $candidateProof.mode = 'explicit-job-termination'
+        $candidateProof.terminalState = 'verified-explicit-job-termination'
+        $candidateProof.terminationAttempted = $true
+        $candidateProof.terminationSucceeded = $true
+        $candidateProof.terminalJobQuery = $explicitProof.terminalJobQuery
+        $candidateProof.terminalJobMemberCount = 0
+        $candidateProof.jobEmptyProven = $true
+        return $candidateProof
+    }
+    $unknownOperationProof = & $newVerifiedProofForRejectedReconciliation
+    $unknownOperationRejected = -not (Set-StartupIdentityReconciliation $unknownOperationProof `
+            'arbitrary-operation-secret' 'post-close-tracked-history') -and
+        $unknownOperationProof.identityReconciliation.operation -eq 'exception' -and
+        $unknownOperationProof.identityReconciliation.observerRole -eq 'post-close-tracked-history' -and
+        $unknownOperationProof.identityReconciliation.reason -eq 'operation-not-allowlisted' -and
+        (Test-StartupContainmentProofV2 $unknownOperationProof)
+    $unknownObserverProof = & $newVerifiedProofForRejectedReconciliation
+    $unknownObserverRejected = -not (Set-StartupIdentityReconciliation $unknownObserverProof `
+            'open-process' 'arbitrary-observer-secret') -and
+        $unknownObserverProof.identityReconciliation.operation -eq 'open-process' -and
+        $unknownObserverProof.identityReconciliation.observerRole -eq 'none' -and
+        $unknownObserverProof.identityReconciliation.reason -eq 'observer-not-allowlisted' -and
+        (Test-StartupContainmentProofV2 $unknownObserverProof)
+    $rejectedReconciliationJson = @($unknownOperationProof, $unknownObserverProof) | ConvertTo-Json -Depth 10 -Compress
+    $boundedRejectedReconciliationSelfTestVerified = $unknownOperationRejected -and $unknownObserverRejected -and
+        $rejectedReconciliationJson -notmatch 'arbitrary-(operation|observer)-secret'
+    if (-not $boundedRejectedReconciliationSelfTestVerified) {
+        throw 'Rejected identity reconciliation retained unbounded operation or observer telemetry.'
+    }
     $containmentEnumAndPayloadSelfTestVerified = $exactPathRejected -and $unknownOperationRejected -and
         $unknownObserverRejected -and (Test-StartupContainmentProofV2 $explicitProof) -and
         ($startupIdentityOperations -join ',') -eq 'none,open-process,query-image-path,get-process-times,exception' -and
@@ -8450,6 +8659,10 @@ function Invoke-SelfTest {
         realProcessEnumerationSelfTestVerified = [bool]$realProcessEnumerationSelfTestVerified
         realMultiMemberJobQuerySelfTestVerified = [bool]$realMultiMemberJobQuerySelfTestVerified
         realMultiMemberJobTerminationSelfTestVerified = [bool]$realMultiMemberJobTerminationSelfTestVerified
+        strictTerminalJobQuerySelfTestVerified = [bool]$strictTerminalJobQuerySelfTestVerified
+        strictGracefulObservationSelfTestVerified = [bool]$strictGracefulObservationSelfTestVerified
+        strictNativeEnvelopeSelfTestVerified = [bool]$strictNativeEnvelopeSelfTestVerified
+        boundedRejectedReconciliationSelfTestVerified = [bool]$boundedRejectedReconciliationSelfTestVerified
         openProcessIdentityEscalationSelfTestVerified = [bool]$openProcessIdentityEscalationSelfTestVerified
         verifiedExplicitTerminationSelfTestVerified = [bool]$verifiedExplicitTerminationSelfTestVerified
         containmentFailureBranchesSelfTestVerified = [bool]$containmentFailureBranchesSelfTestVerified

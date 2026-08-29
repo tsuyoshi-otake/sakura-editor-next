@@ -187,6 +187,15 @@ member 残存、termination failure、CloseHandle failure はそれぞれ typed 
 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` は全 branch の fail-safe として維持しますが、close による暗黙 terminate
 自体は proof ではありません。
 
+graceful observer の戻り値は実 CLR bool だけを受理し、string、number、複数値を truthy として cast しません。
+malformed graceful result は graceful proof を作らず、strict な exact-Job termination/query path へ進みます。
+`TerminateJobObject` result は実 bool の `Attempted=true` / `Succeeded` と実 Int32 `ErrorCode` を要求し、success
+は error 0、failure は正の error の場合だけ valid です。`CloseHandle` result も実 bool / Int32 / IntPtr を要求し、
+success は error 0 かつ returned handle zero の場合だけです。malformed result や nonzero returned handle は
+remaining handle を zero にせず reject します。terminal Job query は通常の Job membership resolver と同じ単一の
+strict validator を通り、各 attempt の型・size/count/resize/growth、last/top-level equality（`RequiredBytes` を含む）、
+status/error、unique process ID の全 equation が一致しない限り proof に昇格しません。
+
 `containmentProof` は payload-free で、`version`、`mode`、`terminalState`、
 `terminationAttempted` / `terminationSucceeded` / `terminationErrorCode`、正規化した
 `terminalJobQuery`、`terminalJobMemberCount`、`jobEmptyProven`、`identityReconciliation` だけを含みます。
@@ -205,6 +214,8 @@ allowlist に入り、fresh typed census でも対象が消えている場合だ
 `identityReconciliation` は attempted/accepted、operation、observerRole、reason のみを記録します。
 exact-path observer failure は常に unreconciled terminal failure です。任意の error 5、PID/path の不在、
 zero survivor、または CloseHandle success だけを cleanup proof へ昇格させません。
+unknown operation / observer role は拒否前にそれぞれ allowlisted sentinel `exception` / `none` へ正規化するため、
+caller が渡した任意文字列が rejected `containmentProof` に残ることもありません。
 
 v2 より前の `jobQuerySucceeded`、`jobCloseSucceeded`、tracked/exact-path sweep、zero survivor、raw の
 `processCleanupVerified=true` は診断互換性のため読み取れても、containment authority としては無効です。
@@ -403,8 +414,10 @@ rtk proxy powershell -NoProfile -ExecutionPolicy Bypass -File tools\measure-star
 隔離、四つの process-diagnostic checkpoint、root exit state の `STILL_ACTIVE` 判定、paired trace の
 allowlist 順序・role/value・elapsed 変換・256 件上限・malformed/clock 不整合の fail-closed も確認します。
 さらに v2 containment state machine の全 terminal branch、operation/observer enum、payload-free shape、
-query/time bound、および実際の non-GUI 2-member Job に対する TerminateJobObject 後の queryable handle と
-zero membership before close を検証します。`-SelfTest` は Sakura、MSBuild、CMake、Cargo、Python、package
+query/time bound、strict termination/close/graceful envelopes、top-level/final-attempt `RequiredBytes` mismatch の
+拒否、rejected reconciliation の bounded sentinel、および実際の non-GUI 2-member Job に対する
+TerminateJobObject 後の queryable handle と zero membership before close を検証します。`-SelfTest` は
+Sakura、MSBuild、CMake、Cargo、Python、package
 restore、runtime stage、GUI を起動せず、build artifact も生成しません。PowerShell 5.1
 (`powershell.exe`) と PowerShell 7 (`pwsh`) の両方で
 shared script と paired script の `-SelfTest` を実行してから実測へ進めます。
