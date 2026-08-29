@@ -121,6 +121,43 @@ $script:PairedCleanupTelemetryJobIdentityFields = @(
     'failureType', 'failureErrorCode'
 )
 $script:PairedGracefulCloseFallbackTypes = @('none', 'identity-still-present')
+$script:PairedContainmentProofFields = @(
+    'version', 'mode', 'terminalState', 'terminationAttempted', 'terminationSucceeded',
+    'terminationErrorCode', 'terminalJobQuery', 'terminalJobMemberCount',
+    'jobEmptyProven', 'identityReconciliation'
+)
+$script:PairedContainmentModes = @('graceful-job-empty', 'explicit-job-termination', 'unavailable')
+$script:PairedContainmentTerminalStates = @(
+    'not-attempted', 'verified-graceful-job-empty', 'verified-explicit-job-termination',
+    'rejected-job-unavailable', 'rejected-termination-failed', 'rejected-terminal-job-query',
+    'rejected-job-members-remain', 'rejected-job-close', 'rejected-post-close-observation', 'exception'
+)
+$script:PairedContainmentAcceptedTerminalStates = @(
+    'verified-graceful-job-empty', 'verified-explicit-job-termination'
+)
+$script:PairedContainmentJobQueryFields = @(
+    'attempted', 'skipped', 'succeeded', 'errorCode', 'queryCount', 'attemptCount',
+    'capacityBytes', 'requiredBytes', 'returnLengthBytes', 'assignedProcessCount',
+    'listedProcessCount', 'resized', 'attempts', 'attemptsTruncated'
+)
+$script:PairedContainmentJobQueryAttemptFields = @(
+    'attempted', 'attemptNumber', 'succeeded', 'errorCode', 'capacityBytes',
+    'requiredBytes', 'returnLengthBytes', 'assignedProcessCount',
+    'listedProcessCount', 'resized'
+)
+$script:PairedContainmentReconciliationFields = @(
+    'attempted', 'accepted', 'operation', 'observerRole', 'reason'
+)
+$script:PairedContainmentIdentityOperations = @(
+    'none', 'open-process', 'query-image-path', 'get-process-times', 'exception'
+)
+$script:PairedContainmentIdentityObserverRoles = @(
+    'none', 'launch-job-member', 'graceful-job-member', 'post-close-tracked-history', 'exact-path'
+)
+$script:PairedContainmentReconciliationReasons = @(
+    'none', 'job-empty-and-allowlisted-post-close-history', 'job-empty-not-proven',
+    'operation-not-allowlisted', 'observer-not-allowlisted', 'exact-path-failure', 'malformed'
+)
 $script:PairedCleanupTelemetryAffinityFailureTypes = @(
     'none', 'open', 'set', 'readback', 'mismatch', 'identity', 'verification', 'unavailable'
 )
@@ -2381,6 +2418,15 @@ function Convert-PairedJobQueryBoolean {
     return $null
 }
 
+function Convert-PairedContainmentRawBoolean {
+    param([AllowNull()] [object]$Value)
+    # The containment proof is security-sensitive evidence.  Do not widen
+    # JSON numeric 0/1 (or any other scalar) into a Boolean before the
+    # producer's v2 equations see the raw value.
+    if ($Value -is [bool]) { return [bool]$Value }
+    return $null
+}
+
 function Convert-PairedJobQueryBoundedUInt64 {
     param(
         [AllowNull()] [object]$Value,
@@ -2448,6 +2494,272 @@ function Test-PairedAnyPropertyPresent {
         if (Test-PairedPropertyPresent $Object $name) { return $true }
     }
     return $false
+}
+
+function Test-PairedExactPropertySet {
+    param(
+        [Parameter(Mandatory = $true)] [AllowNull()] [object]$Object,
+        [Parameter(Mandatory = $true)] [string[]]$Expected
+    )
+    if (-not (Test-PairedStructuredObject $Object)) { return $false }
+    $actual = if ($Object -is [Collections.IDictionary]) {
+        @($Object.Keys | ForEach-Object { [string]$_ })
+    }
+    else {
+        @($Object.PSObject.Properties | ForEach-Object { [string]$_.Name })
+    }
+    return $actual.Count -eq $Expected.Count -and
+        (@($actual | Sort-Object) -join ',') -ceq (@($Expected | Sort-Object) -join ',')
+}
+
+function New-PairedContainmentProofProjection {
+    param([Parameter(Mandatory = $true)] [string]$Status)
+    return [ordered]@{
+        status = $Status
+        version = $null
+        mode = 'unavailable'
+        terminalState = 'not-attempted'
+        terminationAttempted = $false
+        terminationSucceeded = $false
+        terminationErrorCode = $null
+        terminalJobQuery = $null
+        terminalJobMemberCount = $null
+        jobEmptyProven = $false
+        identityReconciliation = $null
+        authorityAccepted = $false
+    }
+}
+
+function Convert-PairedContainmentJobQuery {
+    param([AllowNull()] [object]$Raw)
+    if (-not (Test-PairedExactPropertySet $Raw $script:PairedContainmentJobQueryFields)) { return $null }
+    $attemptsSlot = Get-PairedRawPropertySlot $Raw 'attempts'
+    if (-not $attemptsSlot.present -or $attemptsSlot.value -isnot [Array] -or
+        $attemptsSlot.value.Length -gt $script:PairedJobQueryMaxAttempts) { return $null }
+    foreach ($field in @('attempted', 'skipped', 'succeeded', 'resized', 'attemptsTruncated')) {
+        $slot = Get-PairedRawPropertySlot $Raw $field
+        if (-not $slot.present -or $null -eq (Convert-PairedContainmentRawBoolean $slot.value)) {
+            return $null
+        }
+    }
+    foreach ($attempt in @($attemptsSlot.value)) {
+        if (-not (Test-PairedExactPropertySet $attempt $script:PairedContainmentJobQueryAttemptFields)) {
+            return $null
+        }
+        foreach ($field in @('attempted', 'succeeded', 'resized')) {
+            $slot = Get-PairedRawPropertySlot $attempt $field
+            if (-not $slot.present -or $null -eq (Convert-PairedContainmentRawBoolean $slot.value)) {
+                return $null
+            }
+        }
+    }
+
+    if ($attemptsSlot.value.Length -eq 0) {
+        $attempted = Convert-PairedContainmentRawBoolean (Get-PairedProperty $Raw @('attempted'))
+        $skipped = Convert-PairedContainmentRawBoolean (Get-PairedProperty $Raw @('skipped'))
+        $succeeded = Convert-PairedContainmentRawBoolean (Get-PairedProperty $Raw @('succeeded'))
+        $resized = Convert-PairedContainmentRawBoolean (Get-PairedProperty $Raw @('resized'))
+        $truncated = Convert-PairedContainmentRawBoolean (Get-PairedProperty $Raw @('attemptsTruncated'))
+        $queryCount = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $Raw @('queryCount')) ([UInt64]$script:PairedJobQueryMaxCount)
+        $attemptCount = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $Raw @('attemptCount')) ([UInt64]$script:PairedJobQueryMaxCount)
+        $capacity = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $Raw @('capacityBytes')) $script:PairedJobQueryMaxBytes
+        $required = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $Raw @('requiredBytes')) $script:PairedJobQueryMaxBytes
+        $returned = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $Raw @('returnLengthBytes')) $script:PairedJobQueryMaxBytes
+        $assigned = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $Raw @('assignedProcessCount')) $script:PairedJobQueryMaxProcessCount
+        $listed = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $Raw @('listedProcessCount')) $script:PairedJobQueryMaxProcessCount
+        $errorSlot = Get-PairedRawPropertySlot $Raw 'errorCode'
+        if ($null -eq $attempted -or $null -eq $skipped -or $null -eq $succeeded -or
+            $null -eq $resized -or $null -eq $truncated -or $null -eq $queryCount -or
+            $null -eq $attemptCount -or $null -eq $capacity -or $null -eq $required -or
+            $null -eq $returned -or $null -eq $assigned -or $null -eq $listed -or
+            $null -ne $errorSlot.value -or $attempted -or $skipped -or $succeeded -or
+            $resized -or $truncated -or $queryCount -ne 0 -or $attemptCount -ne 0 -or
+            $capacity -ne 0 -or $required -ne 0 -or $returned -ne 0 -or
+            $assigned -ne 0 -or $listed -ne 0) { return $null }
+        return [ordered]@{
+            attempted = $false; skipped = $false; succeeded = $false; errorCode = $null
+            queryCount = [int32]0; attemptCount = [int32]0
+            capacityBytes = [UInt64]0; requiredBytes = [UInt64]0; returnLengthBytes = [UInt64]0
+            assignedProcessCount = [UInt64]0; listedProcessCount = [UInt64]0
+            resized = $false; attempts = [object[]]@(); attemptsTruncated = $false
+        }
+    }
+
+    $converted = Convert-PairedJobQueryObservation $Raw
+    if ($null -eq $converted -or $converted.status -eq 'unavailable') { return $null }
+    return [ordered]@{
+        attempted = [bool]$converted.attempted
+        skipped = [bool]$converted.skipped
+        succeeded = [bool]$converted.succeeded
+        errorCode = if ($null -eq $converted.errorCode) { $null } else { [int32]$converted.errorCode }
+        queryCount = [int32]$converted.queryCount
+        attemptCount = [int32]$converted.attemptCount
+        capacityBytes = [UInt64]$converted.capacityBytes
+        requiredBytes = [UInt64]$converted.requiredBytes
+        returnLengthBytes = [UInt64]$converted.returnLengthBytes
+        assignedProcessCount = [UInt64]$converted.assignedProcessCount
+        listedProcessCount = [UInt64]$converted.listedProcessCount
+        resized = [bool]$converted.resized
+        attempts = [object[]]@($converted.attempts)
+        attemptsTruncated = [bool]$converted.attemptsTruncated
+    }
+}
+
+function Convert-PairedContainmentProofV2 {
+    param([AllowNull()] [object]$Raw)
+    $unavailable = New-PairedContainmentProofProjection 'unavailable'
+    if (-not (Test-PairedExactPropertySet $Raw $script:PairedContainmentProofFields)) { return $unavailable }
+    try {
+        $version = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $Raw @('version')) ([UInt64]2)
+        $mode = Convert-PairedCleanupTelemetryEnum (Get-PairedProperty $Raw @('mode')) $script:PairedContainmentModes
+        $terminalState = Convert-PairedCleanupTelemetryEnum `
+            (Get-PairedProperty $Raw @('terminalState')) $script:PairedContainmentTerminalStates
+        $terminationAttempted = Convert-PairedContainmentRawBoolean (Get-PairedProperty $Raw @('terminationAttempted'))
+        $terminationSucceeded = Convert-PairedContainmentRawBoolean (Get-PairedProperty $Raw @('terminationSucceeded'))
+        $jobEmptyProven = Convert-PairedContainmentRawBoolean (Get-PairedProperty $Raw @('jobEmptyProven'))
+        $terminationErrorSlot = Get-PairedRawPropertySlot $Raw 'terminationErrorCode'
+        $terminationError = Convert-PairedJobQueryErrorCode $terminationErrorSlot.value
+        $memberSlot = Get-PairedRawPropertySlot $Raw 'terminalJobMemberCount'
+        $memberCount = Convert-PairedJobQueryBoundedUInt64 $memberSlot.value $script:PairedJobQueryMaxProcessCount
+        $terminalQuery = Convert-PairedContainmentJobQuery (Get-PairedProperty $Raw @('terminalJobQuery'))
+        $reconciliationRaw = Get-PairedProperty $Raw @('identityReconciliation')
+        if ($version -ne 2 -or $null -eq $mode -or $null -eq $terminalState -or
+            $null -eq $terminationAttempted -or $null -eq $terminationSucceeded -or
+            $null -eq $jobEmptyProven -or
+            ($null -ne $terminationErrorSlot.value -and $null -eq $terminationError) -or
+            ($null -ne $memberSlot.value -and $null -eq $memberCount) -or $null -eq $terminalQuery -or
+            -not (Test-PairedExactPropertySet $reconciliationRaw $script:PairedContainmentReconciliationFields)) {
+            return $unavailable
+        }
+        $reconciliationAttempted = Convert-PairedContainmentRawBoolean (Get-PairedProperty $reconciliationRaw @('attempted'))
+        $reconciliationAccepted = Convert-PairedContainmentRawBoolean (Get-PairedProperty $reconciliationRaw @('accepted'))
+        $operation = Convert-PairedCleanupTelemetryEnum `
+            (Get-PairedProperty $reconciliationRaw @('operation')) $script:PairedContainmentIdentityOperations
+        $observerRole = Convert-PairedCleanupTelemetryEnum `
+            (Get-PairedProperty $reconciliationRaw @('observerRole')) $script:PairedContainmentIdentityObserverRoles
+        $reason = Convert-PairedCleanupTelemetryEnum `
+            (Get-PairedProperty $reconciliationRaw @('reason')) $script:PairedContainmentReconciliationReasons
+        if ($null -eq $reconciliationAttempted -or $null -eq $reconciliationAccepted -or
+            $null -eq $operation -or $null -eq $observerRole -or $null -eq $reason) { return $unavailable }
+        $candidate = [ordered]@{
+            version = [int32]$version
+            mode = [string]$mode
+            terminalState = [string]$terminalState
+            terminationAttempted = [bool]$terminationAttempted
+            terminationSucceeded = [bool]$terminationSucceeded
+            terminationErrorCode = if ($null -eq $terminationErrorSlot.value) { $null } else { [int32]$terminationError }
+            terminalJobQuery = $terminalQuery
+            terminalJobMemberCount = if ($null -eq $memberSlot.value) { $null } else { [int32]$memberCount }
+            jobEmptyProven = [bool]$jobEmptyProven
+            identityReconciliation = [ordered]@{
+                attempted = [bool]$reconciliationAttempted
+                accepted = [bool]$reconciliationAccepted
+                operation = [string]$operation
+                observerRole = [string]$observerRole
+                reason = [string]$reason
+            }
+        }
+        if (-not (Test-StartupContainmentProofV2 $candidate)) { return $unavailable }
+        $projection = New-PairedContainmentProofProjection 'valid'
+        foreach ($field in @($script:PairedContainmentProofFields)) { $projection[$field] = $candidate[$field] }
+        $projection.authorityAccepted = [bool]($candidate.jobEmptyProven -and
+            $script:PairedContainmentAcceptedTerminalStates -contains [string]$candidate.terminalState)
+        [void](Assert-PairedPayloadFree $projection)
+        return $projection
+    }
+    catch { return $unavailable }
+}
+
+function Test-PairedContainmentAuthority {
+    param([AllowNull()] [object]$Proof)
+    try {
+        if (-not (Test-PairedStructuredObject $Proof)) { return $false }
+        $expectedProjectionFields = @('status') + @($script:PairedContainmentProofFields) + @('authorityAccepted')
+        if (-not (Test-PairedExactPropertySet $Proof $expectedProjectionFields)) { return $false }
+        $status = Get-PairedRawPropertySlot $Proof 'status'
+        $authority = Get-PairedRawPropertySlot $Proof 'authorityAccepted'
+        if (-not $status.present -or $status.value -isnot [string] -or
+            [string]$status.value -ne 'valid' -or -not $authority.present -or
+            $null -eq (Convert-PairedContainmentRawBoolean $authority.value) -or
+            -not [bool]$authority.value) {
+            return $false
+        }
+
+        # Rebuild the producer-shaped dictionary from the normalized
+        # projection.  This deliberately ignores local status/gate claims and
+        # sends the canonical v2 shape back through the producer validator.
+        # Re-apply the same scalar normalizers used by the projection so JSON
+        # clones cannot fail merely because their integer widths changed.
+        $version = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $Proof @('version')) ([UInt64]2)
+        $mode = Convert-PairedCleanupTelemetryEnum (Get-PairedProperty $Proof @('mode')) $script:PairedContainmentModes
+        $terminalState = Convert-PairedCleanupTelemetryEnum `
+            (Get-PairedProperty $Proof @('terminalState')) $script:PairedContainmentTerminalStates
+        $terminationAttempted = Convert-PairedContainmentRawBoolean `
+            (Get-PairedProperty $Proof @('terminationAttempted'))
+        $terminationSucceeded = Convert-PairedContainmentRawBoolean `
+            (Get-PairedProperty $Proof @('terminationSucceeded'))
+        $terminationErrorSlot = Get-PairedRawPropertySlot $Proof 'terminationErrorCode'
+        $terminationError = Convert-PairedJobQueryErrorCode $terminationErrorSlot.value
+        $memberSlot = Get-PairedRawPropertySlot $Proof 'terminalJobMemberCount'
+        $memberCount = Convert-PairedJobQueryBoundedUInt64 $memberSlot.value $script:PairedJobQueryMaxProcessCount
+        $jobEmptyProven = Convert-PairedContainmentRawBoolean (Get-PairedProperty $Proof @('jobEmptyProven'))
+        $terminalQuery = Convert-PairedContainmentJobQuery (Get-PairedProperty $Proof @('terminalJobQuery'))
+        if ($null -eq $terminalQuery) { return $false }
+        $reconciliationRaw = Get-PairedProperty $Proof @('identityReconciliation')
+        if (-not (Test-PairedExactPropertySet $reconciliationRaw $script:PairedContainmentReconciliationFields)) { return $false }
+        $reconciliationAttempted = Convert-PairedContainmentRawBoolean (
+            Get-PairedProperty $reconciliationRaw @('attempted'))
+        $reconciliationAccepted = Convert-PairedContainmentRawBoolean (
+            Get-PairedProperty $reconciliationRaw @('accepted'))
+        $operation = Convert-PairedCleanupTelemetryEnum `
+            (Get-PairedProperty $reconciliationRaw @('operation')) $script:PairedContainmentIdentityOperations
+        $observerRole = Convert-PairedCleanupTelemetryEnum `
+            (Get-PairedProperty $reconciliationRaw @('observerRole')) $script:PairedContainmentIdentityObserverRoles
+        $reason = Convert-PairedCleanupTelemetryEnum `
+            (Get-PairedProperty $reconciliationRaw @('reason')) $script:PairedContainmentReconciliationReasons
+        if ($null -eq $version -or $null -eq $mode -or $null -eq $terminalState -or
+            $null -eq $terminationAttempted -or $null -eq $terminationSucceeded -or
+            ($null -ne $terminationErrorSlot.value -and $null -eq $terminationError) -or
+            ($null -ne $memberSlot.value -and $null -eq $memberCount) -or
+            $null -eq $jobEmptyProven -or $null -eq $reconciliationAttempted -or
+            $null -eq $reconciliationAccepted -or $null -eq $operation -or
+            $null -eq $observerRole -or $null -eq $reason) {
+            return $false
+        }
+        $candidate = [ordered]@{
+            version = [int32]$version
+            mode = [string]$mode
+            terminalState = [string]$terminalState
+            terminationAttempted = [bool]$terminationAttempted
+            terminationSucceeded = [bool]$terminationSucceeded
+            terminationErrorCode = if ($null -eq $terminationErrorSlot.value) { $null } else { [int32]$terminationError }
+            terminalJobQuery = $terminalQuery
+            terminalJobMemberCount = if ($null -eq $memberSlot.value) { $null } else { [int32]$memberCount }
+            jobEmptyProven = [bool]$jobEmptyProven
+        }
+        $reconciliation = [ordered]@{
+            attempted = [bool]$reconciliationAttempted
+            accepted = [bool]$reconciliationAccepted
+            operation = [string]$operation
+            observerRole = [string]$observerRole
+            reason = [string]$reason
+        }
+        $candidate.identityReconciliation = $reconciliation
+        if (-not (Test-StartupContainmentProofV2 $candidate)) { return $false }
+        return [bool]($candidate.jobEmptyProven -and
+            $script:PairedContainmentAcceptedTerminalStates -contains [string]$candidate.terminalState)
+    }
+    catch { return $false }
+}
+
+function Test-PairedRunContainmentAuthority {
+    param([Parameter(Mandatory = $true)] [object]$Run)
+    try {
+        $proofSlot = Get-PairedRawPropertySlot $Run 'containmentProof'
+        if (-not $proofSlot.present) { return $false }
+        return [bool](Test-PairedContainmentAuthority $proofSlot.value)
+    }
+    catch { return $false }
 }
 
 function Convert-PairedJobQueryObservation {
@@ -3727,6 +4039,11 @@ function Convert-PairedLaunchResult {
         else { Convert-PairedCleanupObservation $rawCleanupObservation }
     }
     else { New-PairedEmptyCleanupObservation }
+    $containmentProofPresent = Test-PairedPropertyPresent $Raw 'containmentProof'
+    $containmentProof = if ($containmentProofPresent) {
+        Convert-PairedContainmentProofV2 (Get-PairedProperty $Raw @('containmentProof'))
+    }
+    else { New-PairedContainmentProofProjection 'legacy-unqualified' }
     $startupDiagnostics = Convert-PairedProcessDiagnostics (Get-PairedProperty $Raw @('startupDiagnostics'))
     $startupTrace = if (Test-PairedPropertyPresent $Raw 'startupTrace') {
         Convert-PairedStartupTraceEvidence (Get-PairedProperty $Raw @('startupTrace'))
@@ -3735,19 +4052,33 @@ function Convert-PairedLaunchResult {
     $jobIdentityObservationContract = Test-PairedJobIdentityObservationContract $Raw $launchJobQueryObservation $cleanupObservation
     $jobIdentityObservationContractValid = [bool]$jobIdentityObservationContract.valid
     $cleanupObservationSucceeded = [string](Get-PairedProperty $cleanupObservation @('status')) -eq 'succeeded'
+    $containmentAuthorityValid = [bool](Test-PairedRunContainmentAuthority ([pscustomobject]@{
+        containmentProof = $containmentProof
+    }))
+    $containmentProofContractValid = [bool]($containmentProofPresent -and
+        $containmentAuthorityValid -and $cleanupObservationSucceeded -and
+            (Get-PairedProperty $cleanupObservation @('jobCloseAttempted')) -is [bool] -and
+            [bool](Get-PairedProperty $cleanupObservation @('jobCloseAttempted')) -and
+            (Get-PairedProperty $cleanupObservation @('jobCloseSucceeded')) -is [bool] -and
+            [bool](Get-PairedProperty $cleanupObservation @('jobCloseSucceeded')))
     $diagnosticUnavailable = [string](Get-PairedProperty $startupDiagnostics @('observationStatus')) -eq 'unavailable'
     $traceUnavailable = [string](Get-PairedProperty $startupTrace @('status')) -eq 'unavailable'
     $success = $rawSuccessValue.valid -and $rawSuccess -and $processCleanupValue.valid -and
         $processCleanupVerified -and $ProfileCleanupVerified -and $affinity.contractValid -and
         $affinity.verified -and [bool]$TraceCleanupVerified -and
         -not $diagnosticUnavailable -and -not $traceUnavailable -and
-        $jobIdentityObservationContractValid -and $cleanupObservationSucceeded
+        $jobIdentityObservationContractValid -and $cleanupObservationSucceeded -and
+        $containmentProofContractValid
     $failureType = if ($success) { $null } elseif (-not $jobIdentityObservationContractValid -or
-        ($rawSuccess -and -not $cleanupObservationSucceeded)) { 'cleanup-unverified' } else { Get-PairedFailureType $Raw $ProfileCleanupVerified }
+        ($rawSuccess -and (-not $cleanupObservationSucceeded -or -not $containmentProofContractValid))) {
+        'cleanup-unverified'
+    }
+    else { Get-PairedFailureType $Raw $ProfileCleanupVerified }
     # The raw launch result owns primary failure classification.  Diagnostics
     # and trace are secondary evidence when the launch itself already failed;
     # they may become primary only when the raw launch otherwise succeeded.
-    if (-not $success -and $rawSuccess -and $jobIdentityObservationContractValid -and $cleanupObservationSucceeded) {
+    if (-not $success -and $rawSuccess -and $jobIdentityObservationContractValid -and
+        $cleanupObservationSucceeded -and $containmentProofContractValid) {
         $cleanupVerified = $processCleanupVerified -and $ProfileCleanupVerified
         if ($cleanupVerified -and [bool]$affinity.verified) {
             if ($diagnosticUnavailable) { $failureType = 'diagnostic-unavailable' }
@@ -3802,6 +4133,7 @@ function Convert-PairedLaunchResult {
         startupDiagnostics = $startupDiagnostics
         launchJobQueryObservation = $launchJobQueryObservation
         cleanupObservation = $cleanupObservation
+        containmentProof = $containmentProof
         startupTrace = $startupTrace
         affinity = $affinity
         profileSha256 = [string]$ProfileDigest.sha256
@@ -3810,18 +4142,27 @@ function Convert-PairedLaunchResult {
         processCleanupVerified = $processCleanupVerified
         profileCleanupVerified = [bool]$ProfileCleanupVerified
         traceCleanupVerified = [bool]$TraceCleanupVerified
-        cleanupVerified = $processCleanupVerified -and $ProfileCleanupVerified -and [bool]$TraceCleanupVerified -and $jobIdentityObservationContractValid -and $cleanupObservationSucceeded
+        cleanupVerified = $processCleanupVerified -and $ProfileCleanupVerified -and [bool]$TraceCleanupVerified -and
+            $jobIdentityObservationContractValid -and $cleanupObservationSucceeded -and $containmentProofContractValid
         jobIdentityObservationContractValid = $jobIdentityObservationContractValid
+        containmentProofContractValid = $containmentProofContractValid
         survivorCount = @(Get-PairedProperty $Raw @('survivors')).Count
     }
 }
 
 function Test-PairedRunCleanupVerified {
     param([Parameter(Mandatory = $true)] [object]$Run)
-    $traceCleanup = Get-PairedProperty $Run @('traceCleanupVerified')
+    $processCleanup = Get-PairedStrictBooleanProperty $Run 'processCleanupVerified'
+    $profileCleanup = Get-PairedStrictBooleanProperty $Run 'profileCleanupVerified'
+    $traceCleanup = Get-PairedStrictBooleanProperty $Run 'traceCleanupVerified'
     $identityContractPresent = Test-PairedPropertyPresent $Run 'jobIdentityObservationContractValid'
     $identityContract = Get-PairedProperty $Run @('jobIdentityObservationContractValid')
     $identityContractValid = $identityContractPresent -and ($identityContract -is [bool]) -and [bool]$identityContract
+    $containmentContractPresent = Test-PairedPropertyPresent $Run 'containmentProofContractValid'
+    $containmentContract = Get-PairedProperty $Run @('containmentProofContractValid')
+    $containmentContractValid = $containmentContractPresent -and
+        ($containmentContract -is [bool]) -and [bool]$containmentContract
+    $containmentAuthorityValid = Test-PairedRunContainmentAuthority $Run
     $cleanupObservation = Get-PairedProperty $Run @('cleanupObservation')
     $cleanupObservationStructured = Test-PairedStructuredObject $cleanupObservation
     $cleanupObservationStatus = [string](Get-PairedProperty $cleanupObservation @('status'))
@@ -3834,9 +4175,11 @@ function Test-PairedRunCleanupVerified {
         $processStarted -is [bool] -and -not [bool]$processStarted
     $cleanupObservationVerified = $cleanupObservationStructured -and
         ($cleanupObservationStatus -eq 'succeeded' -or $prelaunchCleanupNotAttempted)
-    return [bool]$Run.processCleanupVerified -and [bool]$Run.profileCleanupVerified -and
-        $null -ne $traceCleanup -and [bool]$traceCleanup -and
-        $identityContractValid -and $cleanupObservationVerified
+    return [bool]($processCleanup.valid -and $processCleanup.value -and
+        $profileCleanup.valid -and $profileCleanup.value -and
+        $traceCleanup.valid -and $traceCleanup.value -and
+        $identityContractValid -and $containmentContractValid -and $cleanupObservationVerified -and
+        $containmentAuthorityValid)
 }
 
 function New-PairedCampaignTermination {
@@ -4646,6 +4989,12 @@ function Invoke-PairedSelfTest {
     Assert-PairedEqual 'failed' $selfTestDescendantAffinityFailureRun.startupMilestones.descendantAffinityState 'completed-readiness affinity state'
     $selfTestFailedRun = New-PairedFailedRun $schedule[2] 'integrity' $true $true
     [void](Assert-PairedPayloadFree $selfTestFailedRun)
+    $selfTestContainmentFailedRunAuthorityRejected = [bool](
+        $selfTestFailedRun.containmentProof.status -eq 'legacy-unqualified' -and
+        -not $selfTestFailedRun.containmentProofContractValid -and
+        -not $selfTestFailedRun.cleanupVerified -and
+        -not (Test-PairedRunContainmentAuthority $selfTestFailedRun) -and
+        -not (Test-PairedRunCleanupVerified $selfTestFailedRun))
     if ($selfTestFailedRun.startupMilestones.processStarted -or
         $selfTestFailedRun.startupMilestones.topLevelWindowObserved -or
         $selfTestFailedRun.startupMilestones.visibleObserved -or
@@ -4661,6 +5010,74 @@ function Invoke-PairedSelfTest {
         $null -ne $selfTestFailedRun.startupMilestones.verticalScrollMaximum) {
         throw 'Synthetic failed-run startup milestone schema self-test failed.'
     }
+    $newContainmentTerminalQuery = {
+        param([int]$MemberCount)
+        $returnLength = if ($MemberCount -eq 0) { [UInt64]0 } else {
+            [UInt64](8 + ($MemberCount * [IntPtr]::Size))
+        }
+        $capacity = $returnLength
+        return [ordered]@{
+            attempted = $true; skipped = $false; succeeded = $true; errorCode = 0
+            queryCount = 1; attemptCount = 1; capacityBytes = $capacity; requiredBytes = $capacity
+            returnLengthBytes = $returnLength; assignedProcessCount = [UInt64]$MemberCount
+            listedProcessCount = [UInt64]$MemberCount; resized = $false
+            attempts = [object[]]@([ordered]@{
+                attempted = $true; attemptNumber = 1; succeeded = $true; errorCode = 0
+                capacityBytes = $capacity; requiredBytes = $capacity; returnLengthBytes = $returnLength
+                assignedProcessCount = [UInt64]$MemberCount; listedProcessCount = [UInt64]$MemberCount
+                resized = $false
+            })
+            attemptsTruncated = $false
+        }
+    }
+    $newContainmentProof = {
+        param([string]$Mode, [string]$TerminalState, [bool]$TerminationAttempted,
+            [bool]$TerminationSucceeded, [AllowNull()] [object]$TerminationError,
+            [AllowNull()] [object]$TerminalQuery, [AllowNull()] [object]$MemberCount,
+            [bool]$JobEmptyProven)
+        return [ordered]@{
+            version = 2; mode = $Mode; terminalState = $TerminalState
+            terminationAttempted = $TerminationAttempted; terminationSucceeded = $TerminationSucceeded
+            terminationErrorCode = $TerminationError; terminalJobQuery = $TerminalQuery
+            terminalJobMemberCount = $MemberCount; jobEmptyProven = $JobEmptyProven
+            identityReconciliation = [ordered]@{
+                attempted = $false; accepted = $false; operation = 'none'; observerRole = 'none'; reason = 'none'
+            }
+        }
+    }
+    $cloneContainmentProof = {
+        param([object]$Proof)
+        return $Proof | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+    }
+    $convertContainmentRun = {
+        param([AllowNull()] [object]$Proof, [bool]$PropertyPresent = $true, [AllowNull()] [object]$Cleanup = $null)
+        $raw = $selfTestSuccessRaw.PSObject.Copy()
+        if ($null -ne $Cleanup) { $raw.cleanupObservation = $Cleanup }
+        if ($PropertyPresent) {
+            Add-Member -InputObject $raw -MemberType NoteProperty -Name containmentProof -Value $Proof -Force
+        }
+        else {
+            [void]$raw.PSObject.Properties.Remove('containmentProof')
+        }
+        return Convert-PairedLaunchResult $raw $schedule[2] $selfTestTimeoutProfile $true
+    }
+    $emptyTerminalQuery = & $newContainmentTerminalQuery 0
+    $memberTerminalQuery = & $newContainmentTerminalQuery 1
+    $noTerminalQuery = [ordered]@{
+        attempted = $false; skipped = $false; succeeded = $false; errorCode = $null
+        queryCount = 0; attemptCount = 0; capacityBytes = [UInt64]0; requiredBytes = [UInt64]0
+        returnLengthBytes = [UInt64]0; assignedProcessCount = [UInt64]0; listedProcessCount = [UInt64]0
+        resized = $false; attempts = [object[]]@(); attemptsTruncated = $false
+    }
+    $gracefulContainmentProof = & $newContainmentProof 'graceful-job-empty' `
+        'verified-graceful-job-empty' $false $false $null $emptyTerminalQuery 0 $true
+    $explicitContainmentProof = & $newContainmentProof 'explicit-job-termination' `
+        'verified-explicit-job-termination' $true $true $null $emptyTerminalQuery 0 $true
+
+    # Build the canonical success fixture only after its producer-shaped
+    # containment proof exists.  Every success-derived mutation therefore
+    # starts from a proof-bearing run and cannot accidentally exercise a
+    # legacy-unqualified success path.
     $selfTestSuccessRaw = [pscustomobject][ordered]@{
         success = $true; processApiReturnMs = 9.5; topLevelHwndMs = 14.25; visibleMs = 20.0
         captionReadyMs = 24.75; inputIdleMs = 28.5; inputIdleReached = $true; inputIdleError = $null
@@ -4676,6 +5093,7 @@ function Invoke-PairedSelfTest {
         error = $null; processCleanupVerified = $true; survivors = @()
         launchJobQueryObservation = $selfTestLaunchJobQuery
         cleanupObservation = $selfTestCleanupObservation
+        containmentProof = $gracefulContainmentProof
         startupDiagnostics = $selfTestStartupDiagnostics; startupTrace = $selfTestStartupTrace
     }
     $selfTestSuccessRun = Convert-PairedLaunchResult $selfTestSuccessRaw $schedule[2] $selfTestTimeoutProfile $true
@@ -4691,6 +5109,283 @@ function Invoke-PairedSelfTest {
         $selfTestSuccessRun.startupMilestones.descendantAffinityState -ne 'verified' -or
         $selfTestSuccessRun.startupMilestones.verticalScrollMaximum -ne 100) {
         throw 'Synthetic successful startup milestone schema self-test failed.'
+    }
+    $gracefulContainmentRun = & $convertContainmentRun $gracefulContainmentProof
+    $explicitContainmentRun = & $convertContainmentRun $explicitContainmentProof
+    $selfTestContainmentPositiveV2Verified = [bool](
+        $gracefulContainmentRun.status -eq 'succeeded' -and $gracefulContainmentRun.cleanupVerified -and
+        $gracefulContainmentRun.containmentProof.status -eq 'valid' -and
+        $gracefulContainmentRun.containmentProof.authorityAccepted -and
+        $explicitContainmentRun.status -eq 'succeeded' -and $explicitContainmentRun.cleanupVerified -and
+        $explicitContainmentRun.containmentProof.status -eq 'valid' -and
+        $explicitContainmentRun.containmentProof.authorityAccepted)
+    if (-not $selfTestContainmentPositiveV2Verified) {
+        throw 'Positive containmentProof v2 fixtures did not qualify.'
+    }
+
+    $terminationFailureProof = & $newContainmentProof 'unavailable' `
+        'rejected-termination-failed' $true $false 5 $noTerminalQuery $null $false
+    $memberProof = & $newContainmentProof 'unavailable' `
+        'rejected-job-members-remain' $true $true $null $memberTerminalQuery 1 $false
+    $invalidCloseT0M = & $cloneContainmentProof $memberProof
+    $invalidCloseT0M.terminationAttempted = $false
+    $invalidCloseT0M.terminationSucceeded = $false
+    $invalidCloseT0M.terminationErrorCode = $null
+    $impossibleContainmentProofs = @(
+        (& $cloneContainmentProof $explicitContainmentProof),
+        (& $cloneContainmentProof $explicitContainmentProof),
+        (& $cloneContainmentProof $terminationFailureProof),
+        (& $cloneContainmentProof $explicitContainmentProof),
+        $invalidCloseT0M,
+        (& $cloneContainmentProof $terminationFailureProof),
+        (& $cloneContainmentProof $explicitContainmentProof)
+    )
+    $impossibleContainmentProofs[0].terminalState = 'rejected-job-unavailable'
+    $impossibleContainmentProofs[1].terminalState = 'rejected-termination-failed'
+    $impossibleContainmentProofs[2].terminalState = 'rejected-terminal-job-query'
+    $impossibleContainmentProofs[3].terminalState = 'rejected-job-members-remain'
+    $impossibleContainmentProofs[4].terminalState = 'rejected-job-close'
+    $impossibleContainmentProofs[5].terminalState = 'rejected-post-close-observation'
+    $impossibleContainmentProofs[6].terminalState = 'exception'
+    $selfTestContainmentImpossibleEquationsRejected = $impossibleContainmentProofs.Count -eq 7
+    foreach ($impossibleProof in $impossibleContainmentProofs) {
+        $impossibleRun = & $convertContainmentRun $impossibleProof
+        if ($impossibleRun.containmentProof.status -ne 'unavailable' -or
+            $impossibleRun.containmentProofContractValid -or $impossibleRun.cleanupVerified -or
+            $impossibleRun.status -eq 'succeeded') {
+            $selfTestContainmentImpossibleEquationsRejected = $false
+            break
+        }
+    }
+    if (-not $selfTestContainmentImpossibleEquationsRejected) {
+        throw 'An impossible containmentProof v2 terminal-state equation qualified.'
+    }
+
+    $postCloseProof = & $cloneContainmentProof $gracefulContainmentProof
+    $postCloseProof.terminalState = 'rejected-post-close-observation'
+    $postCloseRun = & $convertContainmentRun $postCloseProof
+    $selfTestContainmentRejectedPostCloseRejected = [bool](
+        $postCloseRun.containmentProof.status -eq 'valid' -and
+        -not $postCloseRun.containmentProof.authorityAccepted -and
+        -not $postCloseRun.containmentProofContractValid -and -not $postCloseRun.cleanupVerified -and
+        $postCloseRun.status -ne 'succeeded')
+    if (-not $selfTestContainmentRejectedPostCloseRejected) {
+        throw 'A rejected-post-close-observation proof granted cleanup authority.'
+    }
+
+    $partialProof = [ordered]@{ version = 2; mode = 'graceful-job-empty' }
+    $extraFieldProof = & $cloneContainmentProof $gracefulContainmentProof
+    Add-Member -InputObject $extraFieldProof -MemberType NoteProperty -Name rawPayload -Value 'forbidden'
+    $wrongVersionProof = & $cloneContainmentProof $gracefulContainmentProof
+    $wrongVersionProof.version = 1
+    $terminationContradictionProof = & $cloneContainmentProof $gracefulContainmentProof
+    $terminationContradictionProof.terminationSucceeded = $true
+    $jobEmptyContradictionProof = & $cloneContainmentProof $gracefulContainmentProof
+    $jobEmptyContradictionProof.jobEmptyProven = $false
+    $memberCountContradictionProof = & $cloneContainmentProof $gracefulContainmentProof
+    $memberCountContradictionProof.terminalJobMemberCount = 1
+    $queryContradictionProof = & $cloneContainmentProof $gracefulContainmentProof
+    $queryContradictionProof.terminalJobQuery.assignedProcessCount = 1
+    $reconciliationContradictionProof = & $cloneContainmentProof $gracefulContainmentProof
+    $reconciliationContradictionProof.identityReconciliation.attempted = $true
+    $reconciliationContradictionProof.identityReconciliation.accepted = $true
+    $maliciousContainmentProofs = @(
+        $null, 'scalar-proof', $partialProof, $extraFieldProof, $wrongVersionProof,
+        $terminationContradictionProof, $jobEmptyContradictionProof,
+        $memberCountContradictionProof, $queryContradictionProof, $reconciliationContradictionProof
+    )
+    $selfTestContainmentPresentMalformedRejected = $maliciousContainmentProofs.Count -eq 10
+    foreach ($maliciousProof in $maliciousContainmentProofs) {
+        $maliciousRun = & $convertContainmentRun $maliciousProof
+        if ($maliciousRun.containmentProof.status -ne 'unavailable' -or
+            $maliciousRun.containmentProofContractValid -or $maliciousRun.cleanupVerified -or
+            $maliciousRun.status -eq 'succeeded') {
+            $selfTestContainmentPresentMalformedRejected = $false
+            break
+        }
+    }
+    $oldSchemaContainmentRun = & $convertContainmentRun $null $false
+    $oldSchemaContainmentTermination = New-PairedCampaignTermination -TotalEntries $schedule.Count -CompletedEntries 2 `
+        -TriggerRow $schedule[2] -TriggerRun $oldSchemaContainmentRun
+    $selfTestContainmentMissingLegacyRejected = [bool](
+        $oldSchemaContainmentRun.status -eq 'cleanup-unverified' -and
+        -not $oldSchemaContainmentRun.cleanupVerified -and
+        $oldSchemaContainmentRun.containmentProof.status -eq 'legacy-unqualified' -and
+        -not $oldSchemaContainmentRun.containmentProofContractValid -and
+        -not (Test-PairedRunContainmentAuthority $oldSchemaContainmentRun))
+    $selfTestContainmentCampaignSuppressionVerified = [bool](
+        $oldSchemaContainmentTermination.status -eq 'terminated' -and
+        $oldSchemaContainmentTermination.type -eq 'cleanup-unverified' -and
+        $oldSchemaContainmentTermination.laterLaunchesSuppressed -and
+        $oldSchemaContainmentTermination.suppressedLaunches -eq ($schedule.Count - 2))
+
+    # A graceful-close fallback is diagnostic compatibility telemetry.  Give it
+    # a coherent observed identity race and an otherwise successful cleanup,
+    # then remove the producer proof: fallback telemetry must not mint
+    # containment or cleanup authority on its own.
+    $fallbackOnlyCleanup = $selfTestCleanupObservation | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+    $fallbackOnlyCleanup.gracefulCloseSucceeded = $false
+    $fallbackOnlyCleanup.gracefulCloseFallbackType = 'identity-still-present'
+    $fallbackOnlyCleanup.jobIdentityObservation.identityAttemptCount = [UInt64]1
+    $fallbackOnlyCleanup.jobIdentityObservation.identityFailureCount = [UInt64]1
+    $fallbackOnlyCleanup.jobIdentityObservation.recoveryAttemptCount = [UInt64]1
+    $fallbackOnlyCleanup.jobIdentityObservation.disappearedAfterSnapshotCount = [UInt64]0
+    $fallbackOnlyCleanup.jobIdentityObservation.stillPresentAfterFailureCount = [UInt64]1
+    $fallbackOnlyCleanup.jobIdentityObservation.failureType = 'identity-still-present'
+    $fallbackOnlyCleanup.jobIdentityObservation.failureErrorCode = 5
+    $fallbackOnlyRun = & $convertContainmentRun $null $false $fallbackOnlyCleanup
+    $selfTestContainmentFallbackOnlyRejected = [bool](
+        $fallbackOnlyRun.cleanupObservation.status -eq 'succeeded' -and
+        $fallbackOnlyRun.cleanupObservation.gracefulCloseFallbackType -eq 'identity-still-present' -and
+        $fallbackOnlyRun.containmentProof.status -eq 'legacy-unqualified' -and
+        -not $fallbackOnlyRun.containmentProofContractValid -and
+        -not $fallbackOnlyRun.cleanupVerified -and
+        -not (Test-PairedRunContainmentAuthority $fallbackOnlyRun) -and
+        $fallbackOnlyRun.status -eq 'cleanup-unverified')
+
+    # Exercise every containment Boolean position with every non-Boolean JSON
+    # family.  The raw converter must reject numeric 0/1, strings, arrays, and
+    # structured objects before normalization, even though older diagnostic
+    # converters accept some of those representations.
+    $containmentBooleanTargets = @(
+        [pscustomobject]@{ scope = 'root'; field = 'terminationAttempted' }
+        [pscustomobject]@{ scope = 'root'; field = 'terminationSucceeded' }
+        [pscustomobject]@{ scope = 'root'; field = 'jobEmptyProven' }
+        [pscustomobject]@{ scope = 'query'; field = 'attempted' }
+        [pscustomobject]@{ scope = 'query'; field = 'skipped' }
+        [pscustomobject]@{ scope = 'query'; field = 'succeeded' }
+        [pscustomobject]@{ scope = 'query'; field = 'resized' }
+        [pscustomobject]@{ scope = 'query'; field = 'attemptsTruncated' }
+        [pscustomobject]@{ scope = 'attempt'; field = 'attempted' }
+        [pscustomobject]@{ scope = 'attempt'; field = 'succeeded' }
+        [pscustomobject]@{ scope = 'attempt'; field = 'resized' }
+        [pscustomobject]@{ scope = 'reconciliation'; field = 'attempted' }
+        [pscustomobject]@{ scope = 'reconciliation'; field = 'accepted' }
+    )
+    $containmentBooleanMutationCases = @(
+        [pscustomobject]@{ family = 'numeric'; value = [int32]0 }
+        [pscustomobject]@{ family = 'numeric'; value = [int32]1 }
+        [pscustomobject]@{ family = 'string'; value = 'false' }
+        [pscustomobject]@{ family = 'string'; value = 'true' }
+        [pscustomobject]@{ family = 'array'; value = [object[]]@($false, $true) }
+        [pscustomobject]@{ family = 'object'; value = [pscustomobject][ordered]@{ value = $false } }
+    )
+    $containmentBooleanCases = New-Object Collections.Generic.List[object]
+    $selfTestContainmentBooleanFamiliesRejected = $true
+    foreach ($target in $containmentBooleanTargets) {
+        foreach ($mutation in $containmentBooleanMutationCases) {
+            $mutatedProof = & $cloneContainmentProof $gracefulContainmentProof
+            $targetObject = switch ([string]$target.scope) {
+                'root' { $mutatedProof }
+                'query' { $mutatedProof.terminalJobQuery }
+                'attempt' { $mutatedProof.terminalJobQuery.attempts[0] }
+                'reconciliation' { $mutatedProof.identityReconciliation }
+                default { $null }
+            }
+            if ($null -eq $targetObject) { throw 'Containment Boolean target was not found.' }
+            $targetObject.PSObject.Properties[[string]$target.field].Value = $mutation.value
+            [void]$containmentBooleanCases.Add([pscustomobject]@{
+                    scope = [string]$target.scope
+                    field = [string]$target.field
+                    family = [string]$mutation.family
+                })
+            $mutatedRun = & $convertContainmentRun $mutatedProof
+            if ($mutatedRun.containmentProof.status -ne 'unavailable' -or
+                $mutatedRun.containmentProofContractValid -or $mutatedRun.cleanupVerified -or
+                $mutatedRun.status -eq 'succeeded' -or
+                (Test-PairedRunContainmentAuthority $mutatedRun)) {
+                $selfTestContainmentBooleanFamiliesRejected = $false
+                throw ('A non-Boolean containment Boolean representation qualified: ' +
+                    [string]$target.scope + '.' + [string]$target.field +
+                    ' family=' + [string]$mutation.family)
+            }
+        }
+    }
+    $selfTestContainmentNumericBooleansRejected = [bool](@($containmentBooleanCases | Where-Object {
+                $_.family -eq 'numeric'
+            }).Count -eq 26)
+    $selfTestContainmentBooleanFamilyCaseCount = [int]$containmentBooleanCases.Count
+    $selfTestContainmentBooleanFamiliesRejected = [bool]($selfTestContainmentBooleanFamiliesRejected -and
+        $containmentBooleanCases.Count -eq 78 -and
+        @($containmentBooleanCases | Where-Object { $_.family -eq 'numeric' }).Count -eq 26 -and
+        @($containmentBooleanCases | Where-Object { $_.family -eq 'string' }).Count -eq 26 -and
+        @($containmentBooleanCases | Where-Object { $_.family -eq 'array' }).Count -eq 13 -and
+        @($containmentBooleanCases | Where-Object { $_.family -eq 'object' }).Count -eq 13)
+    if (-not $selfTestContainmentBooleanFamiliesRejected) {
+        throw 'A non-Boolean containment Boolean representation qualified.'
+    }
+
+    # The normalized projection is also untrusted at its authority boundary.
+    # Keep every local success, cleanup, and contract flag true while mutating
+    # only authorityAccepted, then require both independent authority checks to
+    # reject every non-Boolean family.
+    $projectionAuthorityAcceptedMutationCases = @(
+        [pscustomobject]@{ family = 'numeric'; value = [int32]0 }
+        [pscustomobject]@{ family = 'numeric'; value = [int32]1 }
+        [pscustomobject]@{ family = 'string'; value = 'false' }
+        [pscustomobject]@{ family = 'string'; value = 'true' }
+        [pscustomobject]@{ family = 'array'; value = [object[]]@($true, $false) }
+        [pscustomobject]@{ family = 'object'; value = [pscustomobject][ordered]@{ value = $true } }
+    )
+    $selfTestContainmentProjectionAuthorityAcceptedCaseCount = [int]$projectionAuthorityAcceptedMutationCases.Count
+    $selfTestContainmentProjectionAuthorityAcceptedRejected = [bool]($projectionAuthorityAcceptedMutationCases.Count -eq 6)
+    foreach ($mutation in $projectionAuthorityAcceptedMutationCases) {
+        $projectionRun = $selfTestSuccessRun | ConvertTo-Json -Depth 30 | ConvertFrom-Json
+        $projectionRun.status = 'succeeded'
+        $projectionRun.excluded = $false
+        $projectionRun.cleanupVerified = $true
+        $projectionRun.processCleanupVerified = $true
+        $projectionRun.profileCleanupVerified = $true
+        $projectionRun.traceCleanupVerified = $true
+        $projectionRun.jobIdentityObservationContractValid = $true
+        $projectionRun.containmentProofContractValid = $true
+        $projectionRun.containmentProof.authorityAccepted = $mutation.value
+        if ((Test-PairedRunContainmentAuthority $projectionRun) -or
+            (Test-PairedRunCleanupVerified $projectionRun)) {
+            $selfTestContainmentProjectionAuthorityAcceptedRejected = $false
+            break
+        }
+    }
+    if (-not $selfTestContainmentProjectionAuthorityAcceptedRejected) {
+        throw 'A non-Boolean normalized containment authorityAccepted value qualified.'
+    }
+
+    # Local run gates are derived claims, not authority.  A stale true gate
+    # paired with a tampered proof and a false gate paired with a valid proof
+    # must both fail the independent cleanup check.
+    $tamperedProofRun = $selfTestSuccessRun | ConvertTo-Json -Depth 30 | ConvertFrom-Json
+    $tamperedProofRun.status = 'succeeded'
+    $tamperedProofRun.excluded = $false
+    $tamperedProofRun.cleanupVerified = $true
+    $tamperedProofRun.containmentProofContractValid = $true
+    $tamperedProofRun.containmentProof.terminalState = 'rejected-post-close-observation'
+    $tamperedProofRun.containmentProof.authorityAccepted = $true
+    $tamperedGateRun = $selfTestSuccessRun | ConvertTo-Json -Depth 30 | ConvertFrom-Json
+    $tamperedGateRun.status = 'succeeded'
+    $tamperedGateRun.excluded = $false
+    $tamperedGateRun.cleanupVerified = $true
+    $tamperedGateRun.containmentProofContractValid = $false
+    $selfTestContainmentTamperedLocalGatesRejected = [bool](
+        -not (Test-PairedRunCleanupVerified $tamperedProofRun) -and
+        -not (Test-PairedRunCleanupVerified $tamperedGateRun) -and
+        (Test-PairedRunContainmentAuthority $tamperedGateRun))
+
+    $failedCloseCleanup = $selfTestCleanupObservation | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+    $failedCloseCleanup.jobCloseSucceeded = $false
+    $failedCloseRun = & $convertContainmentRun $gracefulContainmentProof $true $failedCloseCleanup
+    $selfTestContainmentCloseCrossFieldRejected = [bool](
+        -not $failedCloseRun.containmentProofContractValid -and -not $failedCloseRun.cleanupVerified -and
+        $failedCloseRun.status -ne 'succeeded')
+    if (-not $selfTestContainmentPresentMalformedRejected -or
+        -not $selfTestContainmentMissingLegacyRejected -or
+        -not $selfTestContainmentCampaignSuppressionVerified -or
+        -not $selfTestContainmentFallbackOnlyRejected -or
+        -not $selfTestContainmentNumericBooleansRejected -or
+        -not $selfTestContainmentBooleanFamiliesRejected -or
+        -not $selfTestContainmentProjectionAuthorityAcceptedRejected -or
+        -not $selfTestContainmentTamperedLocalGatesRejected -or
+        -not $selfTestContainmentCloseCrossFieldRejected) {
+        throw 'Containment proof presence or cross-field compatibility self-test failed.'
     }
     $selfTestRequiredReadinessRuns = New-Object Collections.Generic.List[object]
     foreach ($case in @(
@@ -5612,7 +6307,7 @@ function Invoke-PairedSelfTest {
         processCleanupVerified = $true; profileCleanupVerified = $true; traceCleanupVerified = $false
     }
     $selfTestCleanupTerminalVerified = [bool]((Test-PairedRunCleanupVerified $selfTestSuccessRun) -and
-        (Test-PairedRunCleanupVerified $selfTestFailedRun) -and
+        -not (Test-PairedRunCleanupVerified $selfTestFailedRun) -and
         -not (Test-PairedRunCleanupVerified $unverifiedTraceCleanupRun))
     if (-not $selfTestCleanupTerminalVerified) { throw 'Startup trace cleanup terminal self-test failed.' }
     $selfTestStartupMilestonesVerified = [bool]($selfTestWindowTimeoutRun.startupMilestones.processStarted -and
@@ -5876,6 +6571,52 @@ function Invoke-PairedSelfTest {
             sidecarMultiUser = 0; sidecarVerified = $true; cleanupVerified = $true
         }
     )
+    # Reports must independently revalidate every run's producer-shaped proof;
+    # stale local gates cannot make a tampered run qualify.  Populate a complete
+    # canonical campaign, then alter only one proof terminal state while
+    # leaving its local succeeded/cleanup claims true.
+    $selfTestContainmentReportRuns = New-Object Collections.Generic.List[object]
+    foreach ($scheduleRow in $schedule) {
+        $reportRun = $selfTestSuccessRun | ConvertTo-Json -Depth 30 | ConvertFrom-Json
+        $reportRun.sequence = [int]$scheduleRow.sequence
+        $reportRun.pairIndex = [int]$scheduleRow.pairIndex
+        $reportRun.slot = [int]$scheduleRow.slot
+        $reportRun.phase = [string]$scheduleRow.phase
+        $reportRun.phaseIndex = [int]$scheduleRow.phaseIndex
+        $reportRun.backend = [string]$scheduleRow.backend
+        $metricCopy = [ordered]@{}
+        foreach ($metric in $script:PairedMetricNames) {
+            $metricCopy[[string]$metric] = [double](Get-PairedProperty $reportRun.metrics @([string]$metric))
+        }
+        $reportRun.metrics = $metricCopy
+        [void]$selfTestContainmentReportRuns.Add($reportRun)
+    }
+    $selfTestContainmentReportRuns[17].status = 'succeeded'
+    $selfTestContainmentReportRuns[17].excluded = $false
+    $selfTestContainmentReportRuns[17].cleanupVerified = $true
+    $selfTestContainmentReportRuns[17].containmentProofContractValid = $true
+    $selfTestContainmentReportRuns[17].containmentProof.terminalState = 'rejected-post-close-observation'
+    $selfTestContainmentReportRuns[17].containmentProof.authorityAccepted = $true
+    $selfTestContainmentReportTermination = New-PairedCampaignTermination `
+        -TotalEntries $schedule.Count -CompletedEntries $schedule.Count -TriggerRow $null
+    $selfTestContainmentReport = New-PairedReport -RunId 'selftest-containment-authority' -Commit ('0' * 40) `
+        -HostIdentity ([pscustomobject]@{ sha256 = ('a' * 64); osVersion = 'test'; cpuManufacturer = 'test'; cpuModel = 'test'; physicalCores = 1; logicalProcessors = 1; architecture = 'X64' }) `
+        -Sample ([pscustomobject]@{ sha256 = ('b' * 64); sizeBytes = 1; physicalLines = 31 }) `
+        -ProfilePolicy ([pscustomobject]@{ kind = 'fresh-per-launch'; sha256 = ('c' * 64); artifactIsolation = 'campaign-artifact-bundle'; deletion = 'verified-after-each-launch'; sidecarContract = $script:StartupProfileSidecarContract }) `
+        -CppArtifact ([pscustomobject]@{ sha256 = ('d' * 64); sizeBytes = 1 }) -RustArtifact ([pscustomobject]@{ sha256 = ('e' * 64); sizeBytes = 1 }) `
+        -Schedule $schedule -Runs $selfTestContainmentReportRuns.ToArray() -PairedScriptHash ('f' * 64) -SharedScriptHash ('1' * 64) `
+        -Termination $selfTestContainmentReportTermination -ArtifactBundles $selfTestBundles -CollectOnly $false `
+        -Provenance $selfTestProvenance -SampleCopy $selfTestSampleCopy -Integrity $selfTestIntegrity `
+        -MeasurementArguments $selfTestMeasurementArguments -MeasurementCommandSha256 $selfTestMeasurementCommandSha256
+    [void](Assert-PairedPayloadFree $selfTestContainmentReport)
+    $selfTestContainmentReportRejectionVerified = [bool](
+        -not $selfTestContainmentReport.acceptance.qualified -and
+        -not $selfTestContainmentReport.pass -and
+        -not $selfTestContainmentReport.cleanup.allCleanupVerified -and
+        -not (Test-PairedRunContainmentAuthority $selfTestContainmentReportRuns[17]))
+    if (-not $selfTestContainmentReportRejectionVerified) {
+        throw 'A report accepted a tampered containment authority.'
+    }
     $terminatedReport = New-PairedReport -RunId 'selftest' -Commit ('0' * 40) `
         -HostIdentity ([pscustomobject]@{ sha256 = ('a' * 64); osVersion = 'test'; cpuManufacturer = 'test'; cpuModel = 'test'; physicalCores = 1; logicalProcessors = 1; architecture = 'X64' }) `
         -Sample ([pscustomobject]@{ sha256 = ('b' * 64); sizeBytes = 1; physicalLines = 31 }) `
@@ -5890,7 +6631,7 @@ function Invoke-PairedSelfTest {
     Assert-PairedEqual $false $terminatedReport.pass 'terminated report pass'
     Assert-PairedEqual $true $terminatedReport.acceptance.campaignTerminated 'terminated report campaign state'
     Assert-PairedEqual 'failed' $terminatedReport.status 'terminated report status'
-    Assert-PairedEqual 'timeout' $terminatedReport.termination.failureType 'terminated report failure type'
+    Assert-PairedEqual 'cleanup-unverified' $terminatedReport.termination.failureType 'terminated report failure type'
     Assert-PairedEqual ($schedule.Count - 1) $terminatedReport.acceptance.suppressedLaunches 'terminated report acceptance suppression'
     Assert-PairedEqual ($schedule.Count - 1) $terminatedReport.termination.suppressedLaunches 'terminated report termination suppression'
     $cleanupEvidence = New-PairedFailureEvidence -Stage 'cleanup' -FailureType 'cleanup-unverified' `
@@ -6128,6 +6869,22 @@ function Invoke-PairedSelfTest {
         jobQueryObservationMalformedLocalFallbackVerified = [bool]$selfTestMalformedLocalFallbackVerified
         jobQueryObservationOldSchemaNeutralVerified = [bool]$selfTestOldSchemaNeutralVerified
         cleanupObservationGoodVerified = [bool]($selfTestSuccessRun.cleanupObservation.status -eq 'succeeded')
+        containmentProofPositiveV2Verified = [bool]$selfTestContainmentPositiveV2Verified
+        containmentProofImpossibleEquationsRejected = [bool]$selfTestContainmentImpossibleEquationsRejected
+        containmentProofRejectedPostCloseRejected = [bool]$selfTestContainmentRejectedPostCloseRejected
+        containmentProofPresentMalformedRejected = [bool]$selfTestContainmentPresentMalformedRejected
+        containmentProofMissingLegacyRejected = [bool]$selfTestContainmentMissingLegacyRejected
+        containmentProofCampaignSuppressionVerified = [bool]$selfTestContainmentCampaignSuppressionVerified
+        containmentProofFallbackOnlyRejected = [bool]$selfTestContainmentFallbackOnlyRejected
+        containmentProofNumericBooleansRejected = [bool]$selfTestContainmentNumericBooleansRejected
+        containmentProofBooleanFamiliesRejected = [bool]$selfTestContainmentBooleanFamiliesRejected
+        containmentProofBooleanFamilyCaseCount = [int]$selfTestContainmentBooleanFamilyCaseCount
+        containmentProofProjectionAuthorityAcceptedRejected = [bool]$selfTestContainmentProjectionAuthorityAcceptedRejected
+        containmentProofProjectionAuthorityAcceptedCaseCount = [int]$selfTestContainmentProjectionAuthorityAcceptedCaseCount
+        containmentProofTamperedLocalGatesRejected = [bool]$selfTestContainmentTamperedLocalGatesRejected
+        containmentProofReportRejectionVerified = [bool]$selfTestContainmentReportRejectionVerified
+        containmentProofFailedRunAuthorityRejected = [bool]$selfTestContainmentFailedRunAuthorityRejected
+        containmentProofCloseCrossFieldRejected = [bool]$selfTestContainmentCloseCrossFieldRejected
         cleanupObservationMalformedVerified = [bool]$selfTestMalformedCleanupVerified
         cleanupObservationLegacyMalformedRejected = [bool]$selfTestOldSchemaMalformedGracefulRejected
         cleanupObservationTerminalStatusRequired = [bool]$selfTestOldSchemaFailedCloseRejected
@@ -6392,9 +7149,20 @@ function New-PairedReport {
     $measurementArgumentsVerified = $null -ne $MeasurementArguments -and
         [int]$MeasurementArguments.schemaVersion -eq 1 -and (Test-PairedSha256 $MeasurementCommandSha256) -and $measurementCommandMatches
     $sourceCleanVerified = -not [bool]$Provenance.sourceDirty
+    $containmentAuthorityVerified = @($Runs | Where-Object {
+            -not (Test-PairedRunContainmentAuthority $_)
+        }).Count -eq 0
+    $containmentGateVerified = @($Runs | Where-Object {
+            $gate = Get-PairedStrictBooleanProperty $_ 'containmentProofContractValid'
+            -not ($gate.valid -and $gate.value)
+        }).Count -eq 0
+    $runCleanupVerified = @($Runs | Where-Object {
+            -not (Test-PairedRunCleanupVerified $_)
+        }).Count -eq 0
     $accepted = $cppMeasured.Count -ge $MeasuredLaunches -and $rustMeasured.Count -ge $MeasuredLaunches -and
         $cppWarmups.Count -ge $WarmupLaunches -and $rustWarmups.Count -ge $WarmupLaunches -and
-        $failedCount -eq 0 -and [bool](@($Runs | Where-Object { -not $_.cleanupVerified }).Count -eq 0) -and
+        $failedCount -eq 0 -and $runCleanupVerified -and $containmentAuthorityVerified -and
+        $containmentGateVerified -and
         [bool](@($ArtifactBundles | Where-Object { -not $_.sourceUnchanged -or -not $_.copiedUnchanged -or -not $_.sourceClosureUnchanged -or -not $_.copiedClosureUnchanged -or -not $_.receiptUnchanged -or -not $_.sidecarVerified -or -not $_.cleanupVerified }).Count -eq 0) -and
         [bool]$Provenance.buildManifestVerified -and
         $sourceCleanVerified -and
@@ -6492,7 +7260,7 @@ function New-PairedReport {
             allProcessCleanupVerified = @($Runs | Where-Object { -not $_.processCleanupVerified }).Count -eq 0
             allProfileCleanupVerified = @($Runs | Where-Object { -not $_.profileCleanupVerified }).Count -eq 0
             allTraceCleanupVerified = @($Runs | Where-Object { -not (Get-PairedProperty $_ @('traceCleanupVerified')) }).Count -eq 0
-            allCleanupVerified = @($Runs | Where-Object { -not $_.cleanupVerified }).Count -eq 0
+            allCleanupVerified = [bool]$runCleanupVerified
             allBundleCleanupVerified = @($ArtifactBundles | Where-Object { -not $_.cleanupVerified }).Count -eq 0
             survivorCount = [int]$survivorCount
         }
@@ -6550,6 +7318,7 @@ function New-PairedFailedRun {
         startupDiagnostics = New-PairedEmptyStartupDiagnostics
         launchJobQueryObservation = New-PairedEmptyLaunchJobQueryObservation
         cleanupObservation = New-PairedEmptyCleanupObservation
+        containmentProof = New-PairedContainmentProofProjection 'legacy-unqualified'
         startupTrace = New-PairedEmptyStartupTrace
         affinity = [ordered]@{
             requestedMask = [UInt64]$AffinityMask
@@ -6574,8 +7343,12 @@ function New-PairedFailedRun {
         processCleanupVerified = $ProcessCleanupVerified
         profileCleanupVerified = $ProfileCleanupVerified
         traceCleanupVerified = $true
-        cleanupVerified = $ProcessCleanupVerified -and $ProfileCleanupVerified
+        # A synthetic failed run has no producer containment proof.  Preserve
+        # cleanup inputs for diagnostics, but never mint proof or cleanup
+        # authority in this consumer-owned fallback envelope.
+        cleanupVerified = $false
         jobIdentityObservationContractValid = $true
+        containmentProofContractValid = $false
         survivorCount = 0
     }
 }

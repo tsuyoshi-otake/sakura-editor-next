@@ -269,7 +269,7 @@ class PairedStartupContractTests(unittest.TestCase):
             self.assertIn(marker, self.paired_text)
         self.assertIn("if ($Object -is [Collections.IDictionary])", self.paired_text)
         self.assertIn("status = if ($Termination.status -eq 'completed')", self.paired_text)
-        self.assertIn("Assert-PairedEqual 'timeout' $terminatedReport.termination.failureType", self.paired_text)
+        self.assertIn("Assert-PairedEqual 'cleanup-unverified' $terminatedReport.termination.failureType", self.paired_text)
         self.assertIn("Get-PairedBuildManifest", self.paired_text)
         self.assertIn("Get-PairedRuntimeStageIdentity", self.paired_text)
         self.assertIn("Convert-PairedRuntimeReceiptPath", self.paired_text)
@@ -488,13 +488,13 @@ class PairedStartupContractTests(unittest.TestCase):
 
     def test_shared_direct_job_query_observation_count_matches_native_attempt(self):
         for marker in (
-            "if ($Query -is [StartupProbeJobResult])",
             "$observation.queryCount = if ($observation.attempted) { 1 } else { 0 }",
             "$emptyJobObservation.queryCount -eq 1",
             "$syntheticFailedObservation.queryCount -eq 1",
             "$noJobMembers.queryObservation.queryCount -eq 0",
         ):
             self.assertIn(marker, self.shared_text)
+        self.assertNotIn("if ($Query -is [StartupProbeJobResult])", self.shared_text)
 
     def test_tracked_identity_disappearance_recovery_is_typed_and_single_shot(self):
         # A process can exit between the complete Toolhelp snapshot and its
@@ -607,15 +607,16 @@ class PairedStartupContractTests(unittest.TestCase):
             "jobIdentityMalformedFreshQueryCasesVerified",
             "processEnumerationMalformedEnvelopeSelfTestVerified",
             "processEnumerationFailedEnvelopeSelfTestVerified",
-            "function Test-StartupIntegralValue",
+            "function Test-StartupStrictJobQueryEnvelope",
             "attemptedValue -is [bool]",
             "entriesValue -is [Array]",
             "entryIds.ContainsKey($processId)",
             "Test-StartupIdentitySuccessEnvelope",
             "identitySucceeded = Test-StartupIdentitySuccessEnvelope",
             "validateJobQuery",
-            "processIdsValue -is [Array]",
-            "Test-StartupIntegralValue $rawProcessId 1",
+            "$processIdsValue.GetType() -eq [System.Int32[]]",
+            "$rawProcessId.GetType() -ne [System.Int32]",
+            "$rawProcessId -lt 1 -or $rawProcessId -gt [int]::MaxValue",
             "jobIdentityContradictorySuccessCases",
             "jobIdentityMalformedFreshQueryCases",
             "fresh Job-membership query",
@@ -674,10 +675,17 @@ class PairedStartupContractTests(unittest.TestCase):
         self.assertIn("Test-StartupJobIdentityShape", job_path)
         self.assertIn("Set-StartupJobIdentityFailure $jobIdentityObservation 'identity-disappeared'", job_path)
         self.assertIn("Set-StartupJobIdentityFailure $jobIdentityObservation 'identity-still-present'", job_path)
+        self.assertNotIn("if ($Query -is [StartupProbeJobResult])", self.shared_text)
+        self.assertNotIn("processIdsValue -is [Array]", self.shared_text)
+        self.assertNotIn("Test-StartupIntegralValue $rawProcessId 1", self.shared_text)
 
     def test_paired_cleanup_gate_requires_explicit_boolean_identity_contract(self):
         for marker in (
             "function Test-PairedRunCleanupVerified",
+            "Test-PairedRunContainmentAuthority $Run",
+            "$containmentAuthorityVerified = @($Runs | Where-Object",
+            "$runCleanupVerified = @($Runs | Where-Object",
+            "containmentProofReportRejectionVerified",
             "Test-PairedPropertyPresent $Run 'jobIdentityObservationContractValid'",
             "$identityContract -is [bool]",
             "$identityContractValid = $identityContractPresent -and",
@@ -692,6 +700,74 @@ class PairedStartupContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, self.paired_text)
 
+    def test_paired_containment_proof_v2_is_exact_bounded_and_authoritative(self):
+        for marker in (
+            "function Test-PairedExactPropertySet",
+            "function Convert-PairedContainmentRawBoolean",
+            "function Convert-PairedContainmentJobQuery",
+            "function Convert-PairedContainmentProofV2",
+            "function Test-PairedContainmentAuthority",
+            "function Test-PairedRunContainmentAuthority",
+            "PairedContainmentProofFields",
+            "PairedContainmentAcceptedTerminalStates",
+            "'verified-graceful-job-empty', 'verified-explicit-job-termination'",
+            "'rejected-post-close-observation', 'exception'",
+            "Test-StartupContainmentProofV2 $candidate",
+            "$containmentProofPresent = Test-PairedPropertyPresent $Raw 'containmentProof'",
+            "$containmentAuthorityValid = [bool](Test-PairedRunContainmentAuthority",
+            "containmentProofContractValid = $containmentProofContractValid",
+            "Test-PairedPropertyPresent $Run 'containmentProofContractValid'",
+            "containmentProofPositiveV2Verified",
+            "containmentProofImpossibleEquationsRejected",
+            "containmentProofRejectedPostCloseRejected",
+            "containmentProofPresentMalformedRejected",
+            "containmentProofMissingLegacyRejected",
+            "containmentProofCampaignSuppressionVerified",
+            "containmentProofFallbackOnlyRejected",
+            "containmentProofNumericBooleansRejected",
+            "containmentBooleanMutationCases",
+            "family = 'numeric'",
+            "family = 'string'",
+            "family = 'array'",
+            "family = 'object'",
+            "containmentBooleanCases.Count -eq 78",
+            "selfTestContainmentBooleanFamilyCaseCount",
+            "containmentProofBooleanFamiliesRejected",
+            "projectionAuthorityAcceptedMutationCases",
+            "Test-PairedRunContainmentAuthority $projectionRun",
+            "Test-PairedRunCleanupVerified $projectionRun",
+            "selfTestContainmentProjectionAuthorityAcceptedRejected",
+            "selfTestContainmentProjectionAuthorityAcceptedCaseCount",
+            "containmentProofProjectionAuthorityAcceptedRejected",
+            "containmentProofTamperedLocalGatesRejected",
+            "containmentProofReportRejectionVerified",
+            "containmentProofFailedRunAuthorityRejected",
+            "containmentProofCloseCrossFieldRejected",
+            "rawPayload",
+        ):
+            self.assertIn(marker, self.paired_text)
+        self.assertNotIn("containmentProofMissingLegacyAccepted", self.paired_text)
+        self.assertNotIn("New-PairedContainmentProofProjection 'absent'", self.paired_text)
+        containment_start = self.paired_text.index("function Convert-PairedContainmentJobQuery")
+        containment_end = self.paired_text.index("function Convert-PairedContainmentProofV2", containment_start)
+        containment_converter = self.paired_text[containment_start:containment_end]
+        self.assertIn("Convert-PairedContainmentRawBoolean", containment_converter)
+        self.assertNotIn("Convert-PairedJobQueryBoolean", containment_converter)
+        for terminal_state in (
+            "not-attempted",
+            "verified-graceful-job-empty",
+            "verified-explicit-job-termination",
+            "rejected-job-unavailable",
+            "rejected-termination-failed",
+            "rejected-terminal-job-query",
+            "rejected-job-members-remain",
+            "rejected-job-close",
+            "rejected-post-close-observation",
+            "exception",
+        ):
+            self.assertIn(terminal_state, self.paired_text)
+        self.assertIn("containmentProof.version=2", PAIRED_DOC.read_text(encoding="utf-8"))
+
     def test_graceful_identity_race_transfers_only_to_mandatory_job_containment(self):
         for marker in (
             "function Try-StartupGracefulJobIdentityFallback",
@@ -700,7 +776,8 @@ class PairedStartupContractTests(unittest.TestCase):
             "gracefulCloseSucceeded",
             "gracefulCloseFallbackType",
             "identity-still-present",
-            "Try-StartupGracefulJobIdentityFallback $cleanupObservation $stillPresentBefore",
+            "function Invoke-StartupJobCleanupStateMachine",
+            "Invoke-StartupJobCleanupStateMachine $Job $Owned $cleanupObservation",
             "$stillPresentAfter -ne ($StillPresentBefore + 1)",
             "$CleanupObservation.gracefulCloseFallbackType = 'identity-still-present'",
             "gracefulIdentityFallbackSelfTestVerified",
@@ -710,8 +787,11 @@ class PairedStartupContractTests(unittest.TestCase):
         stop_start = self.shared_text.index("function Stop-OwnedProcesses")
         stop_end = self.shared_text.index("function Test-StartupProcessCleanupCompletion", stop_start)
         stop_path = self.shared_text[stop_start:stop_end]
-        self.assertIn("CloseKillOnCloseJob", stop_path)
+        state_start = self.shared_text.index("function Invoke-StartupJobCleanupStateMachine")
+        state_path = self.shared_text[state_start:stop_start]
+        self.assertIn("CloseKillOnCloseJob", state_path)
         self.assertNotIn("TerminateProcessHandle", stop_path)
+        self.assertNotIn("Try-StartupGracefulJobIdentityFallback", stop_path)
         self.assertIn("trackedSweepVerified", self.shared_text)
         for marker in (
             "$script:PairedGracefulCloseFallbackTypes = @('none', 'identity-still-present')",
@@ -1074,6 +1154,25 @@ class PairedStartupContractTests(unittest.TestCase):
             self.assertTrue(payload["performanceGates"]["syntheticPass"])
             self.assertTrue(payload["performanceGates"]["syntheticRegressionRejected"])
             self.assertTrue(payload["startupMilestonesPayloadFree"])
+            for field in (
+                "containmentProofPositiveV2Verified",
+                "containmentProofImpossibleEquationsRejected",
+                "containmentProofRejectedPostCloseRejected",
+                "containmentProofPresentMalformedRejected",
+                "containmentProofMissingLegacyRejected",
+                "containmentProofCampaignSuppressionVerified",
+                "containmentProofFallbackOnlyRejected",
+                "containmentProofNumericBooleansRejected",
+                "containmentProofBooleanFamiliesRejected",
+                "containmentProofTamperedLocalGatesRejected",
+                "containmentProofReportRejectionVerified",
+                "containmentProofFailedRunAuthorityRejected",
+                "containmentProofCloseCrossFieldRejected",
+            ):
+                self.assertTrue(payload[field], field)
+            self.assertEqual(78, payload["containmentProofBooleanFamilyCaseCount"])
+            self.assertTrue(payload["containmentProofProjectionAuthorityAcceptedRejected"])
+            self.assertEqual(6, payload["containmentProofProjectionAuthorityAcceptedCaseCount"])
             self.assertTrue(payload["startupMilestonesWindowDiscoveryTimeoutVerified"])
             self.assertTrue(payload["startupMilestonesReadinessTimeoutVerified"])
             self.assertTrue(payload["startupMilestonesSuccessSchemaVerified"])

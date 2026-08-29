@@ -369,6 +369,54 @@ even if its smoke timings happen to satisfy the synthetic thresholds.
 The console prints the report path. The path is a retrieval aid and is not part
 of the JSON payload.
 
+## Containment proof and cleanup authority
+
+The paired consumer recognizes the producer's additive root
+`containmentProof.version=2` contract. When the root property is present, the
+consumer requires the exact ten-field proof, the exact terminal Job-query and
+attempt shapes, and the exact five-field identity-reconciliation shape. Every
+number is normalized through the existing bounded Job-query limits; every
+containment Boolean is strict at the raw root, query, attempt, and
+identity-reconciliation positions, so numeric `0` and `1` are not widened into
+evidence. Extra properties, arbitrary strings, PIDs, paths, handles, raw
+payloads, and producer exception text are neither accepted nor retained.
+
+The v2 modes are `graceful-job-empty`, `explicit-job-termination`, and
+`unavailable`. Its exhaustive terminal states are `not-attempted`,
+`verified-graceful-job-empty`, `verified-explicit-job-termination`,
+`rejected-job-unavailable`, `rejected-termination-failed`,
+`rejected-terminal-job-query`, `rejected-job-members-remain`,
+`rejected-job-close`, `rejected-post-close-observation`, and `exception`.
+The consumer applies the producer's full termination/query/member-count,
+Job-empty, and identity-reconciliation equations after normalization. A
+well-typed but unreachable combination is unavailable evidence, not a weaker
+proof. `Test-PairedContainmentAuthority` and
+`Test-PairedRunContainmentAuthority` are the central authority checks: they
+reconstruct the normalized producer-shaped v2 proof and revalidate it through
+`Test-StartupContainmentProofV2`, independently of local status or gate claims.
+
+Only `verified-graceful-job-empty` and
+`verified-explicit-job-termination`, with `jobEmptyProven=true`, may grant
+cleanup authority. The normalized cleanup observation must also be
+`succeeded`, and its Job close must have been attempted and succeeded. A valid
+rejection state—including `rejected-post-close-observation`—remains bounded
+diagnostic evidence but cannot make a launch successful or cleanup verified.
+The legacy `gracefulCloseAttempted`, `gracefulCloseSucceeded`, and
+`gracefulCloseFallbackType` fields remain diagnostic compatibility fields;
+they never substitute for v2 authority.
+
+Compatibility is deliberately presence-sensitive. A producer result on which
+the root `containmentProof` property is genuinely absent projects to
+`legacy-unqualified`; it can never authorize success, cleanup, campaign
+completion, or report qualification. Such a run is `cleanup-unverified` and
+suppresses later campaign launches. Once the property is present, `null`, a
+scalar, an array, a partial object, an unknown field, a malformed nested
+object, or any cross-field contradiction remains `unavailable` and fails
+closed. The paired report independently requires present valid authority for
+every run, rather than trusting local `status`, `cleanupVerified`, or
+`containmentProofContractValid` claims. The report stores only the fixed
+normalized projection plus local `status`/`authorityAccepted` flags.
+
 ## Job-query and cleanup telemetry
 
 The paired runner accepts the optional v1 `launchJobQueryObservation`,
@@ -566,5 +614,12 @@ historical record is not a failure target.
 The same no-GUI contract also proves that the resolver still rejects a present
 member, only the exact graceful counter transition selects Job-containment
 fallback, first-cause telemetry is retained, and every terminal containment
-gate remains independently required.
+gate remains independently required. Containment selftests additionally reject
+numeric `0`/`1`, strings, arrays, and structured objects at every
+root/query/attempt/reconciliation Boolean position, and mutate normalized
+`containmentProof.authorityAccepted` through the same non-Boolean families while
+local success, cleanup, and contract flags remain true. They project an absent
+proof as `legacy-unqualified`, suppress a campaign after an unqualified run,
+reject fallback-only and tampered local gates, and verify that both cleanup
+authority and the report independently reject invalid authority.
 Do not use it as a substitute for the full 35-launch-per-backend campaign.
