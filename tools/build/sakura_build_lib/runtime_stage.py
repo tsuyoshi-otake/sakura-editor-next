@@ -57,6 +57,12 @@ def _relative_path(repo_root: Path, value: object, location: str, *, must_exist:
     return normalized
 
 
+def _is_strict_descendant(path: Path, parent: Path) -> bool:
+    """Return whether *path* is below *parent*, excluding the parent itself."""
+
+    return path != parent and parent in path.parents
+
+
 def _load_stage_document(repo_root: Path, path: Path) -> dict[str, Mapping[str, object]]:
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -221,7 +227,10 @@ def _stage_specification(
                 5,
             )
         receipt_parent = Path(receipt).parent
-        if any(Path(entry["destination"]).parent != receipt_parent for entry in normalized_entries):
+        if any(
+            not _is_strict_descendant(Path(entry["destination"]), receipt_parent)
+            for entry in normalized_entries
+        ):
             raise BuildError(
                 "RUNTIME_STAGE_LAYOUT",
                 f"runtime staging set {stage_id} must keep payload and receipt under one owned directory",

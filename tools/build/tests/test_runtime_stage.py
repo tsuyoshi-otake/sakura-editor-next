@@ -11,9 +11,9 @@ TOOLS_BUILD = Path(__file__).resolve().parents[1]
 if str(TOOLS_BUILD) not in sys.path:
     sys.path.insert(0, str(TOOLS_BUILD))
 
-from sakura_build_lib.model import Artifact, CompileProfiles, Component, Context, Edge, SemanticGraph  # noqa: E402
+from sakura_build_lib.model import Artifact, CompileProfiles, Component, Context, Edge, SemanticGraph, load_semantic_graph  # noqa: E402
 from sakura_build_lib.runner import BuildError  # noqa: E402
-from sakura_build_lib.runtime_stage import observe_runtime_stage, stage_runtime_artifacts  # noqa: E402
+from sakura_build_lib.runtime_stage import _stage_specification, observe_runtime_stage, stage_runtime_artifacts  # noqa: E402
 
 
 def _write(path: Path, content: bytes | str) -> None:
@@ -24,7 +24,12 @@ def _write(path: Path, content: bytes | str) -> None:
         path.write_text(content, encoding="utf-8", newline="\n")
 
 
-def _graph(root: Path, *, include_resource_edge: bool = True) -> SemanticGraph:
+def _graph(
+    root: Path,
+    *,
+    include_resource_edge: bool = True,
+    destination_paths: tuple[str, str] | None = None,
+) -> SemanticGraph:
     context = Context("msvc-x64-debug", "x64", "x64", "Debug", "msvc", "msbuild", "development", ())
     product = Component(
         "sakura_app",
@@ -46,6 +51,13 @@ def _graph(root: Path, *, include_resource_edge: bool = True) -> SemanticGraph:
     )
     _write(root / "out/sakura.exe", b"product")
     _write(root / "out/sakura_lang_en_US.dll", b"language")
+    if destination_paths is None:
+        destination_paths = (
+            "build/staging/debug/sakura.exe",
+            "build/staging/debug/sakura_lang_en_US.dll",
+        )
+    product_destination, language_destination = destination_paths
+    receipt_destination = "build/staging/debug/.sakura-runtime-stage.json"
     stage_document = {
         "schema_version": 1,
         "staging_sets": [
@@ -57,13 +69,13 @@ def _graph(root: Path, *, include_resource_edge: bool = True) -> SemanticGraph:
                         "artifact_id": "sakura-debug-product",
                         "role": "product",
                         "source": "out/sakura.exe",
-                        "destination": "build/staging/debug/sakura.exe",
+                        "destination": product_destination,
                     },
                     {
                         "artifact_id": "sakura-debug-language-en",
                         "role": "language-en",
                         "source": "out/sakura_lang_en_US.dll",
-                        "destination": "build/staging/debug/sakura_lang_en_US.dll",
+                        "destination": language_destination,
                     },
                 ],
             }
@@ -82,9 +94,9 @@ def _graph(root: Path, *, include_resource_edge: bool = True) -> SemanticGraph:
         "staging_set",
         ("runtime-stage.json",),
         (
-            "build/staging/debug/sakura.exe",
-            "build/staging/debug/sakura_lang_en_US.dll",
-            "build/staging/debug/.sakura-runtime-stage.json",
+            product_destination,
+            language_destination,
+            receipt_destination,
         ),
         "copy",
         True,
@@ -135,6 +147,56 @@ class RuntimeStageTests(unittest.TestCase):
             observed = observe_runtime_stage(graph, "sakura_app", "msvc-x64-debug")
             self.assertFalse(observed["valid"])
             self.assertIn("RUNTIME_STAGE_CONTENT_MISMATCH", {item["code"] for item in observed["failures"]})
+
+    def test_stage_accepts_payloads_nested_below_receipt_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            graph = _graph(
+                Path(temporary),
+                destination_paths=(
+                    "build/staging/debug/sakura.exe",
+                    "build/staging/debug/terminal-tools/sakura_lang_en_US.dll",
+                ),
+            )
+
+            staged = stage_runtime_artifacts(graph, "sakura_app", "msvc-x64-debug")
+
+            self.assertEqual("staged", staged["status"])
+            self.assertTrue(observe_runtime_stage(graph, "sakura_app", "msvc-x64-debug")["valid"])
+
+    def test_stage_rejects_sibling_or_outside_receipt_directory(self) -> None:
+        invalid_destinations = (
+            ("sibling", "build/staging/other/sakura.exe"),
+            ("outside", "build/other/sakura.exe"),
+            ("receipt-parent", "build/staging/debug"),
+            ("sibling-prefix", "build/staging/debug-evil/sakura.exe"),
+        )
+        for label, product_destination in invalid_destinations:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temporary:
+                graph = _graph(
+                    Path(temporary),
+                    destination_paths=(
+                        product_destination,
+                        "build/staging/debug/sakura_lang_en_US.dll",
+                    ),
+                )
+
+                with self.assertRaises(BuildError) as raised:
+                    stage_runtime_artifacts(graph, "sakura_app", "msvc-x64-debug")
+                self.assertEqual("RUNTIME_STAGE_LAYOUT", raised.exception.code)
+
+    def test_canonical_runtime_stage_accepts_terminal_tools_layout(self) -> None:
+        repository_root = Path(__file__).resolve().parents[3]
+        graph = load_semantic_graph(repository_root)
+
+        specifications = _stage_specification(graph, "sakura_app", "msvc-x64-debug")
+
+        self.assertEqual(1, len(specifications))
+        destinations = {str(entry["destination"]) for entry in specifications[0]["entries"]}
+        self.assertIn("build/staging/msvc-x64-debug/sakura-editor/sakura.exe", destinations)
+        self.assertIn(
+            "build/staging/msvc-x64-debug/sakura-editor/terminal-tools/sakura-tmux.exe",
+            destinations,
+        )
 
     def test_stage_rejects_undeclared_provider_edge(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

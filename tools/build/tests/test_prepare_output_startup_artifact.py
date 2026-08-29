@@ -251,6 +251,16 @@ class PrepareOutputStartupArtifactContractTests(unittest.TestCase):
 
     def test_transaction_and_fail_closed_identity_contract_is_explicit(self) -> None:
         for marker in (
+            "function Get-RuntimeStageTreeEntries",
+            "Collections.Generic.Stack[string]",
+            "EnumerateFileSystemEntries($currentDirectory)",
+            "$DeclaredDirectories.ContainsKey($relativeKey)",
+            "$maximumActualEntryCount = 4096",
+            "$destinationParent = [IO.Path]::GetDirectoryName($destination)",
+            "runtimeStageMixedLayoutVerified",
+            "runtimeStageUndeclaredNestedFileRejected",
+            "runtimeStageUndeclaredNestedDirectoryRejected",
+            "runtimeStageReparseRejected",
             "Get-OptionalFileIdentity $artifactSource",
             "Get-OptionalFileIdentity $compileLogSource",
             "$artifactAfter = Get-FileIdentity $artifactSource",
@@ -765,6 +775,10 @@ class PrepareOutputStartupArtifactContractTests(unittest.TestCase):
             self.assertTrue(payload["archiveExportsVerified"])
             self.assertTrue(payload["archiveExactSetRejected"])
             self.assertTrue(payload["runtimeStageVerified"])
+            self.assertTrue(payload["runtimeStageMixedLayoutVerified"])
+            self.assertTrue(payload["runtimeStageUndeclaredNestedFileRejected"])
+            self.assertTrue(payload["runtimeStageUndeclaredNestedDirectoryRejected"])
+            self.assertTrue(payload["runtimeStageReparseRejected"])
             self.assertTrue(payload["manifestPayloadFreeVerified"])
             self.assertTrue(payload["boundedProcessOwnershipVerified"])
             self.assertTrue(payload["canonicalClosureVerified"])

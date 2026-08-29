@@ -1140,6 +1140,64 @@ function Get-OutputRoot {
     return $root
 }
 
+function Get-RuntimeStageTreeEntries {
+    param(
+        [Parameter(Mandatory = $true)] [string]$StageRoot,
+        [Parameter(Mandatory = $true)] [hashtable]$DeclaredFiles,
+        [Parameter(Mandatory = $true)] [hashtable]$DeclaredDirectories
+    )
+    $canonicalRoot = Get-CanonicalPath $StageRoot
+    Assert-NoReparseAncestors $canonicalRoot
+    $pendingDirectories = New-Object 'Collections.Generic.Stack[string]'
+    $pendingDirectories.Push($canonicalRoot)
+    $actualEntries = New-Object Collections.Generic.List[object]
+    $actualPayloadFileCount = 0
+    $maximumActualEntryCount = 4096
+    while ($pendingDirectories.Count -gt 0) {
+        $currentDirectory = $pendingDirectories.Pop()
+        foreach ($actualPath in [IO.Directory]::EnumerateFileSystemEntries($currentDirectory)) {
+            $actualEntryCount = $actualEntries.Count + 1
+            if ($actualEntryCount -gt $maximumActualEntryCount) {
+                throw 'The runtime stage contains too many entries.'
+            }
+            $actualItem = Get-Item -LiteralPath $actualPath -Force -ErrorAction Stop
+            if (($actualItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw 'The runtime stage contains a reparse point.'
+            }
+            $actualCanonicalPath = Get-CanonicalPath $actualPath
+            $relativePath = $actualCanonicalPath.Substring($canonicalRoot.Length).TrimStart('\')
+            $relativeKey = $relativePath.ToLowerInvariant()
+            if ($actualItem -is [IO.DirectoryInfo]) {
+                if (-not $DeclaredDirectories.ContainsKey($relativeKey)) {
+                    throw 'The runtime stage contains an undeclared directory.'
+                }
+                [void]$actualEntries.Add([pscustomobject][ordered]@{
+                    relativePath = $relativePath
+                    isDirectory = $true
+                })
+                $pendingDirectories.Push($actualCanonicalPath)
+                continue
+            }
+            if ($actualItem -isnot [IO.FileInfo]) {
+                throw 'The runtime stage contains an unsupported filesystem entry.'
+            }
+            $isReceipt = [StringComparer]::OrdinalIgnoreCase.Equals($relativePath, '.sakura-runtime-stage.json')
+            if (-not $isReceipt -and -not $DeclaredFiles.ContainsKey($relativeKey)) {
+                throw 'The runtime stage contains an undeclared file.'
+            }
+            if (-not $isReceipt) { $actualPayloadFileCount++ }
+            [void]$actualEntries.Add([pscustomobject][ordered]@{
+                relativePath = $relativePath
+                isDirectory = $false
+            })
+        }
+    }
+    if ($actualPayloadFileCount -ne $DeclaredFiles.Count) {
+        throw 'The runtime stage file closure does not match its receipt.'
+    }
+    return $actualEntries.ToArray()
+}
+
 function Get-RuntimeStageSnapshot {
     param(
         [Parameter(Mandatory = $true)] [string]$StageRoot,
@@ -1147,6 +1205,7 @@ function Get-RuntimeStageSnapshot {
         [Parameter(Mandatory = $true)] [object]$ExpectedArtifact
     )
     Assert-RegularDirectory $StageRoot
+    Assert-NoReparseAncestors $StageRoot
     $receiptPath = Join-Path $StageRoot '.sakura-runtime-stage.json'
     Assert-RegularFile $receiptPath
     try { $receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json -ErrorAction Stop }
@@ -1159,6 +1218,8 @@ function Get-RuntimeStageSnapshot {
     if ($files.Count -eq 0) { throw 'The canonical runtime-stage receipt declares no files.' }
     $seen = @{}
     $seenNames = @{}
+    $declaredFiles = @{}
+    $declaredDirectories = @{}
     $entries = New-Object Collections.Generic.List[object]
     $editorSeen = $false
     $totalSize = [UInt64]0
@@ -1177,6 +1238,20 @@ function Get-RuntimeStageSnapshot {
         $seen[$binding.destination.ToLowerInvariant()] = $true
         if ($seenNames.ContainsKey($name.ToLowerInvariant())) { throw 'The canonical runtime-stage receipt has an ambiguous staged file name.' }
         $seenNames[$name.ToLowerInvariant()] = $true
+        $pathComponents = @($name -split '\\')
+        if ($pathComponents.Count -gt 1) {
+            $directoryPath = ''
+            for ($componentIndex = 0; $componentIndex -lt $pathComponents.Count - 1; $componentIndex++) {
+                $directoryPath = if ($componentIndex -eq 0) {
+                    $pathComponents[$componentIndex]
+                }
+                else {
+                    Join-Path $directoryPath $pathComponents[$componentIndex]
+                }
+                $declaredDirectories[$directoryPath.ToLowerInvariant()] = $true
+            }
+        }
+        $declaredFiles[$name.ToLowerInvariant()] = $true
         $declaredHash = ([string](Get-PropertyValue $entry @('sha256', 'hash'))) -replace '^(?i:sha256:)', ''
         if (-not (Test-Sha256 $declaredHash)) { throw 'The canonical runtime-stage receipt has an invalid file hash.' }
         $declaredSizeValue = Get-PropertyValue $entry @('size', 'sizeBytes')
@@ -1207,16 +1282,7 @@ function Get-RuntimeStageSnapshot {
         }
     }
     if (-not $editorSeen) { throw 'The canonical runtime-stage receipt has no sakura.exe editor entry.' }
-    foreach ($actual in [IO.Directory]::EnumerateFileSystemEntries((Get-CanonicalPath $StageRoot))) {
-        $actualItem = Get-Item -LiteralPath $actual -Force -ErrorAction Stop
-        if (($actualItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'The runtime stage contains a reparse point.' }
-        $actualName = [IO.Path]::GetFileName($actual)
-        if (-not [StringComparer]::OrdinalIgnoreCase.Equals($actualName, '.sakura-runtime-stage.json') -and
-            -not $seenNames.ContainsKey($actualName.ToLowerInvariant())) {
-            throw 'The runtime stage contains an undeclared file.'
-        }
-        if ($actualItem -is [IO.DirectoryInfo]) { throw 'The runtime stage contains an undeclared directory.' }
-    }
+    [void](Get-RuntimeStageTreeEntries $StageRoot $declaredFiles $declaredDirectories)
     $canonicalLines = New-Object Collections.Generic.List[string]
     foreach ($entry in $entries) {
         [void]$canonicalLines.Add(('{0}|{1}|{2}|{3}' -f
@@ -1654,6 +1720,12 @@ function Copy-RuntimeStage {
     foreach ($entry in @($Snapshot.entries)) {
         $source = Join-Path $SourceRoot $entry.name
         $destination = Join-Path $DestinationRoot $entry.name
+        $destinationParent = [IO.Path]::GetDirectoryName($destination)
+        if ([string]::IsNullOrWhiteSpace($destinationParent)) { throw 'The runtime-stage destination parent is invalid.' }
+        Assert-NoReparseAncestors $destinationParent
+        [void][IO.Directory]::CreateDirectory($destinationParent)
+        Assert-RegularDirectory $destinationParent
+        Assert-NoReparseAncestors $destinationParent
         [IO.File]::Copy($source, $destination, $false)
     }
     [IO.File]::Copy((Join-Path $SourceRoot '.sakura-runtime-stage.json'), (Join-Path $DestinationRoot '.sakura-runtime-stage.json'), $false)
@@ -2623,20 +2695,74 @@ function Invoke-SelfTest {
         }
         $receipt = Join-Path $root '.sakura-runtime-stage.json'
         $entryHash = Get-Sha256 $source
+        $languageSource = Join-Path $root 'sakura_lang_en_US.dll'
+        [IO.File]::WriteAllBytes($languageSource, [byte[]](13, 21, 34))
+        $languageArtifact = Get-FileIdentity $languageSource
+        $terminalDirectory = Join-Path $root 'terminal-tools'
+        [void][IO.Directory]::CreateDirectory($terminalDirectory)
+        $terminalSource = Join-Path $terminalDirectory 'foo.exe'
+        [IO.File]::WriteAllBytes($terminalSource, [byte[]](55, 89, 144))
+        $terminalArtifact = Get-FileIdentity $terminalSource
         $receiptValue = [ordered]@{
             schema_version = 1
             context_id = 'msvc-x64-debug'
             staging_set_id = 'selftest-runtime-stage'
-            files = @([ordered]@{ artifact_id = 'sakura-editor-msvc-x64-debug-product'; destination = 'build/staging/msvc-x64-debug/sakura-editor/sakura.exe'; role = 'editor'; source = 'x64/Debug/sakura.exe'; sha256 = ('sha256:' + $entryHash); size = 5 })
+            files = @(
+                [ordered]@{ artifact_id = 'sakura-editor-msvc-x64-debug-product'; destination = 'build/staging/msvc-x64-debug/sakura-editor/sakura.exe'; role = 'editor'; source = 'x64/Debug/sakura.exe'; sha256 = ('sha256:' + $entryHash); size = 5 },
+                [ordered]@{ artifact_id = 'sakura-language-en-us-resource'; destination = 'build/staging/msvc-x64-debug/sakura-editor/sakura_lang_en_US.dll'; role = 'language-en-us'; source = 'x64/Debug/sakura_lang_en_US.dll'; sha256 = ('sha256:' + $languageArtifact.sha256); size = [UInt64]$languageArtifact.sizeBytes },
+                [ordered]@{ artifact_id = 'sakura-terminal-tools-msvc-x64-debug-product'; destination = 'build/staging/msvc-x64-debug/sakura-editor/terminal-tools/foo.exe'; role = 'terminal-tool'; source = 'x64/Debug/terminal-tools/foo.exe'; sha256 = ('sha256:' + $terminalArtifact.sha256); size = [UInt64]$terminalArtifact.sizeBytes }
+            )
         }
         Write-JsonAtomic $receipt $receiptValue
         $stage = Get-RuntimeStageSnapshot $root 'msvc-x64-debug' $artifact
+        $runtimeStageMixedLayoutVerified = $false
+        $runtimeStageUndeclaredNestedFileRejected = $false
+        $runtimeStageUndeclaredNestedDirectoryRejected = $false
+        $runtimeStageReparseRejected = $false
+        $mklinkExitCode = -1
+        $undeclaredNestedFile = Join-Path $terminalDirectory 'undeclared.bin'
+        [IO.File]::WriteAllBytes($undeclaredNestedFile, [byte[]](1, 3, 3, 7))
+        try { [void](Get-RuntimeStageSnapshot $root 'msvc-x64-debug' $artifact) }
+        catch { $runtimeStageUndeclaredNestedFileRejected = $true }
+        finally { if (Test-Path -LiteralPath $undeclaredNestedFile) { [IO.File]::Delete($undeclaredNestedFile) } }
+        if (-not $runtimeStageUndeclaredNestedFileRejected) { throw 'Self-test accepted an undeclared nested runtime-stage file.' }
+        $undeclaredNestedDirectory = Join-Path $terminalDirectory 'undeclared-directory'
+        [void][IO.Directory]::CreateDirectory($undeclaredNestedDirectory)
+        try { [void](Get-RuntimeStageSnapshot $root 'msvc-x64-debug' $artifact) }
+        catch { $runtimeStageUndeclaredNestedDirectoryRejected = $true }
+        finally { if (Test-Path -LiteralPath $undeclaredNestedDirectory) { [IO.Directory]::Delete($undeclaredNestedDirectory, $false) } }
+        if (-not $runtimeStageUndeclaredNestedDirectoryRejected) { throw 'Self-test accepted an undeclared nested runtime-stage directory.' }
+        if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+            $reparseTarget = Join-Path (Split-Path -Parent $root) ('reparse-target-{0}' -f ([Guid]::NewGuid().ToString('N')))
+            $reparsePath = Join-Path $root 'unexpected-reparse'
+            Assert-NoReparseAncestors $reparseTarget
+            [void][IO.Directory]::CreateDirectory($reparseTarget)
+            $mklinkCommand = 'mklink /J "{0}" "{1}" >nul 2>nul' -f $reparsePath, $reparseTarget
+            $null = & (Resolve-Executable 'cmd.exe') /d /s /c $mklinkCommand
+            $mklinkExitCode = $LASTEXITCODE
+            if ($mklinkExitCode -eq 0) {
+                try { [void](Get-RuntimeStageSnapshot $root 'msvc-x64-debug' $artifact) }
+                catch { $runtimeStageReparseRejected = $true }
+                finally { if (Test-Path -LiteralPath $reparsePath) { [IO.Directory]::Delete($reparsePath, $false) } }
+            }
+            if (Test-Path -LiteralPath $reparseTarget) { [IO.Directory]::Delete($reparseTarget, $true) }
+        }
+        if (-not $runtimeStageReparseRejected -and [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT -and $mklinkExitCode -eq 0) {
+            throw 'Self-test accepted a reparse point in the runtime-stage closure.'
+        }
         $transaction = Join-Path $root 'transaction'
         [void][IO.Directory]::CreateDirectory($transaction)
         $transactionStage = Join-Path $transaction 'runtime-stage'
         [void](Copy-RuntimeStage $root $transactionStage $stage)
         $copiedStage = Get-RuntimeStageSnapshot $transactionStage 'msvc-x64-debug' $artifact
         if ($copiedStage.receiptSha256 -ne $stage.receiptSha256 -or $copiedStage.dependencyClosureSha256 -ne $stage.dependencyClosureSha256) { throw 'Self-test runtime closure identity failed.' }
+        if (-not (Test-Path -LiteralPath (Join-Path $transactionStage 'terminal-tools\foo.exe') -PathType Leaf)) {
+            throw 'Self-test runtime-stage copy did not preserve the nested payload path.'
+        }
+        if (-not (Test-Path -LiteralPath (Join-Path $transactionStage 'sakura_lang_en_US.dll') -PathType Leaf)) {
+            throw 'Self-test runtime-stage copy did not preserve the top-level payload path.'
+        }
+        $runtimeStageMixedLayoutVerified = $true
         foreach ($unsafePath in @('foo \bar', 'foo.', 'NUL.dll', 'COM1.txt', 'LPT9')) {
             $unsafePathRejected = $false
             try { [void](Convert-RuntimeReceiptPath $unsafePath 'self-test') } catch { $unsafePathRejected = $true }
@@ -2857,6 +2983,10 @@ function Invoke-SelfTest {
             rustToolchainFailureCodeVerified = $rustToolchainFailureCodeVerified
             exclusiveLockVerified = $exclusiveLockVerified
             runtimeStageVerified = $true
+            runtimeStageMixedLayoutVerified = $runtimeStageMixedLayoutVerified
+            runtimeStageUndeclaredNestedFileRejected = $runtimeStageUndeclaredNestedFileRejected
+            runtimeStageUndeclaredNestedDirectoryRejected = $runtimeStageUndeclaredNestedDirectoryRejected
+            runtimeStageReparseRejected = $runtimeStageReparseRejected
             transactionVerified = $true
             manifestSchemaVerified = $true
             manifestPayloadFreeVerified = $true
