@@ -826,6 +826,10 @@ class PairedStartupContractTests(unittest.TestCase):
             "affinityCurrentSetSelfTestVerified",
             "affinityInvalidCurrentSetSelfTestVerified",
             "affinityExpiredHistoricalExcludedSelfTestVerified",
+            "function Test-StartupDescendantCreationOrder",
+            "Test-StartupDescendantCreationOrder $parent $record",
+            "Test-StartupDescendantCreationOrder $parent $candidate",
+            "descendantCreationOrderSelfTestVerified",
         ):
             self.assertIn(marker, self.shared_text)
         self.assertNotIn("function Get-StartupAffinityCurrentMatchCount", self.shared_text)
@@ -972,6 +976,7 @@ class PairedStartupContractTests(unittest.TestCase):
             self.assertTrue(payload["affinityCurrentSetSelfTestVerified"])
             self.assertTrue(payload["affinityInvalidCurrentSetSelfTestVerified"])
             self.assertTrue(payload["affinityExpiredHistoricalExcludedSelfTestVerified"])
+            self.assertTrue(payload["descendantCreationOrderSelfTestVerified"])
             self.assertTrue(payload["trackedIdentityNoObservationSelfTestVerified"])
             self.assertTrue(payload["trackedIdentityMalformedProbeSelfTestVerified"])
             self.assertTrue(payload["trackedIdentityMalformedFreshCensusSelfTestVerified"])

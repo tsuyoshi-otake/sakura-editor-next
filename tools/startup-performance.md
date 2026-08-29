@@ -47,6 +47,12 @@ membership と exact bundle image path の両方で残存がないことを確�
 current set が null / empty、未知または重複 PID、creation / path mismatch である場合、census / identity query / read-back
 が失敗した場合は fail closed です。no-GUI self-test は 5 historical records から exact current 4 件だけを計画して read-back
 し、expired である 1 件を read-back しないことも確認します。
+Toolhelp の PID / PPID 閉包は候補集合に過ぎず、既存の run-owned parent から新しい descendant を `Owned` へ昇格する
+前に、child の identity が parent の identity と一致し、child の creation time が parent より過去でないことを検証します。
+Windows の FILETIME は観測時の分解能により同一 tick になり得るため、同時刻は許可し、parent より古い時刻だけを
+stale PID reuse として除外します。拒否された候補を親とする descendant も昇格させず、creation の欠落・型不正は
+fail closed です。`descendantCreationOrderSelfTestVerified` は、過去・同時刻・新しい実子、拒否候補の子、malformed
+identity をこの境界で検証した no-GUI self-test の boolean です。
 
 ### paired runner の legacy path budget
 

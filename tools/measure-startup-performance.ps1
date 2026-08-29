@@ -3430,7 +3430,48 @@ function Get-ProcessSnapshot(
         if ($null -eq $record) { continue }
         $result[$record.Id] = $record
     }
-    return $result
+
+    # The Toolhelp PID/PPID closure above is intentionally only a candidate
+    # set.  PPIDs can be reused, so a candidate must also have a temporally
+    # possible edge to a verified parent before it is exposed as a snapshot.
+    # Keep already-owned roots usable when their parent is no longer present;
+    # their identity is still the caller's prior ownership record and the
+    # descendant edge is checked against that record below.
+    $rootIds = @{}
+    if ($null -ne $Owned) {
+        foreach ($id in @($Owned.Keys)) { $rootIds[[int]$id] = $true }
+    }
+    foreach ($id in @($SeedIds)) { $rootIds[[int]$id] = $true }
+    $accepted = @{}
+    foreach ($id in @($rootIds.Keys)) {
+        $numericId = [int]$id
+        if ($result.ContainsKey($numericId)) { $accepted[$numericId] = $result[$numericId] }
+    }
+
+    $changed = $true
+    while ($changed) {
+        $changed = $false
+        foreach ($record in @($result.Values)) {
+            $recordId = [int]$record.Id
+            if ($accepted.ContainsKey($recordId)) { continue }
+            $parentId = [int]$record.ParentId
+            $parent = $null
+            if ($accepted.ContainsKey($parentId)) {
+                $parent = $accepted[$parentId]
+            }
+            elseif (-not $result.ContainsKey($parentId) -and $null -ne $Owned -and $Owned.ContainsKey($parentId)) {
+                $parent = $Owned[$parentId]
+            }
+            # A parent present in the current candidate set but not accepted
+            # yet must be handled by a later pass; a parent rejected for an
+            # impossible edge must never be used as an alternate root.
+            if ($null -eq $parent) { continue }
+            if (-not (Test-StartupDescendantCreationOrder $parent $record)) { continue }
+            $accepted[$recordId] = $record
+            $changed = $true
+        }
+    }
+    return $accepted
 }
 
 function Get-ProcessesForImagePath([string]$ImagePath, [object]$Observation = $null) {
@@ -3944,6 +3985,37 @@ function Test-ProcessIdentity($Record, $Snapshot) {
     return $current.Creation -eq $Record.Creation -and (Test-SamePath $current.ImagePath $Record.ImagePath)
 }
 
+function Test-StartupDescendantCreationOrder {
+    param(
+        [AllowNull()] [object]$Parent,
+        [AllowNull()] [object]$Child
+    )
+    if ($null -eq $Parent -or $null -eq $Child) { return $false }
+    $parentIdValue = Get-StartupObservationProperty $Parent 'Id'
+    $childIdValue = Get-StartupObservationProperty $Child 'Id'
+    $childParentIdValue = Get-StartupObservationProperty $Child 'ParentId'
+    $parentCreationValue = Get-StartupObservationProperty $Parent 'Creation'
+    $childCreationValue = Get-StartupObservationProperty $Child 'Creation'
+    $intMaximum = [decimal][int]::MaxValue
+    $longMaximum = [decimal][long]::MaxValue
+    if (-not (Test-StartupIntegralValue $parentIdValue 1 $intMaximum) -or
+        -not (Test-StartupIntegralValue $childIdValue 1 $intMaximum) -or
+        -not (Test-StartupIntegralValue $childParentIdValue 1 $intMaximum) -or
+        -not (Test-StartupIntegralValue $parentCreationValue 1 $longMaximum) -or
+        -not (Test-StartupIntegralValue $childCreationValue 1 $longMaximum)) {
+        return $false
+    }
+    try {
+        if ([int]$childParentIdValue -ne [int]$parentIdValue) { return $false }
+        # FILETIME observations can share a tick when the underlying clock is
+        # coarser than the 100 ns representation.  Equality is therefore
+        # temporally possible; only a child strictly older than its parent is
+        # impossible and is rejected as a stale PID/PPID link.
+        return [long]$childCreationValue -ge [long]$parentCreationValue
+    }
+    catch { return $false }
+}
+
 function Update-OwnedProcesses($Owned, $Snapshot) {
     $changed = $true
     while ($changed) {
@@ -3953,6 +4025,7 @@ function Update-OwnedProcesses($Owned, $Snapshot) {
             if (-not $Owned.ContainsKey($candidate.ParentId)) { continue }
             $parent = $Owned[$candidate.ParentId]
             if (-not (Test-ProcessIdentity $parent $Snapshot)) { continue }
+            if (-not (Test-StartupDescendantCreationOrder $parent $candidate)) { continue }
             $Owned[$candidate.Id] = $candidate
             $changed = $true
         }
@@ -6992,6 +7065,76 @@ function Invoke-SelfTest {
         $jobIdentityConversionFailureVerified -and $jobIdentityContradictorySuccessVerified -and
         $jobIdentityMalformedFreshQueryCasesVerified -and $jobIdentityMalformedFreshQueryMetadataCasesVerified
 
+    $descendantCreationParentSelfTest = [pscustomobject]@{ Id = 100; Creation = [long]1000 }
+    $descendantCreationEqualSelfTest = [pscustomobject]@{ Id = 101; ParentId = 100; Creation = [long]1000 }
+    $descendantCreationNewerSelfTest = [pscustomobject]@{ Id = 102; ParentId = 100; Creation = [long]1001 }
+    $descendantCreationOlderSelfTest = [pscustomobject]@{ Id = 103; ParentId = 100; Creation = [long]999 }
+    $descendantCreationMalformedSelfTest = [pscustomobject]@{ Id = 104; ParentId = 100; Creation = 'malformed' }
+    $descendantCreationMismatchedParentSelfTest = [pscustomobject]@{ Id = 105; ParentId = 999; Creation = [long]1001 }
+    if (-not (Test-StartupDescendantCreationOrder $descendantCreationParentSelfTest $descendantCreationEqualSelfTest) -or
+        -not (Test-StartupDescendantCreationOrder $descendantCreationParentSelfTest $descendantCreationNewerSelfTest) -or
+        (Test-StartupDescendantCreationOrder $descendantCreationParentSelfTest $descendantCreationOlderSelfTest) -or
+        (Test-StartupDescendantCreationOrder $descendantCreationParentSelfTest $descendantCreationMalformedSelfTest) -or
+        (Test-StartupDescendantCreationOrder $descendantCreationParentSelfTest $descendantCreationMismatchedParentSelfTest) -or
+        (Test-StartupDescendantCreationOrder $null $descendantCreationNewerSelfTest)) {
+        throw 'Descendant creation-order gate self-test failed.'
+    }
+
+    $descendantEntriesSelfTest = @(
+        [pscustomobject][ordered]@{ ProcessId = 100; ParentProcessId = 0; ImageName = 'root.exe' }
+        [pscustomobject][ordered]@{ ProcessId = 101; ParentProcessId = 100; ImageName = 'equal-child.exe' }
+        [pscustomobject][ordered]@{ ProcessId = 102; ParentProcessId = 100; ImageName = 'new-child.exe' }
+        [pscustomobject][ordered]@{ ProcessId = 103; ParentProcessId = 100; ImageName = 'stale-child.exe' }
+        [pscustomobject][ordered]@{ ProcessId = 104; ParentProcessId = 103; ImageName = 'stale-grandchild.exe' }
+    )
+    $descendantIdentitySelfTest = @{
+        100 = [pscustomobject][ordered]@{ ProcessId = 100; ParentProcessId = 0; CreationTime = [long]1000; ImagePath = 'C:\startup-descendant-selftest\root.exe' }
+        101 = [pscustomobject][ordered]@{ ProcessId = 101; ParentProcessId = 100; CreationTime = [long]1000; ImagePath = 'C:\startup-descendant-selftest\equal-child.exe' }
+        102 = [pscustomobject][ordered]@{ ProcessId = 102; ParentProcessId = 100; CreationTime = [long]1001; ImagePath = 'C:\startup-descendant-selftest\new-child.exe' }
+        103 = [pscustomobject][ordered]@{ ProcessId = 103; ParentProcessId = 100; CreationTime = [long]999; ImagePath = 'C:\startup-descendant-selftest\stale-child.exe' }
+        104 = [pscustomobject][ordered]@{ ProcessId = 104; ParentProcessId = 103; CreationTime = [long]1002; ImagePath = 'C:\startup-descendant-selftest\stale-grandchild.exe' }
+    }
+    $descendantProcessEntriesInvokerSelfTest = {
+        return [pscustomobject][ordered]@{
+            Attempted = $true; Complete = $true; Succeeded = $true; ErrorCode = 0
+            AttemptCount = 1; RetryCount = 0; Retried = $false
+            Entries = $descendantEntriesSelfTest
+        }
+    }
+    $descendantIdentityInvokerSelfTest = {
+        param($Entry)
+        $entryId = [int](Get-StartupObservationProperty $Entry 'ProcessId')
+        return [pscustomobject][ordered]@{
+            Succeeded = $true; ErrorCode = 0; Identity = $descendantIdentitySelfTest[$entryId]
+        }
+    }
+    $descendantSnapshotSelfTest = Get-ProcessSnapshot @{} ([int[]]@(100)) $null $null 'process-census-first' `
+        $descendantIdentityInvokerSelfTest $descendantProcessEntriesInvokerSelfTest
+    $descendantSnapshotIdsSelfTest = @($descendantSnapshotSelfTest.Keys | Sort-Object | ForEach-Object { [int]$_ })
+    $descendantSnapshotSelfTestVerified = ($descendantSnapshotIdsSelfTest -join ',') -eq '100,101,102' -and
+        -not $descendantSnapshotSelfTest.ContainsKey(103) -and -not $descendantSnapshotSelfTest.ContainsKey(104)
+
+    $descendantOwnedSelfTest = @{
+        100 = [pscustomobject][ordered]@{ Id = 100; ParentId = 0; Creation = [long]1000; ImagePath = 'C:\startup-descendant-selftest\root.exe' }
+    }
+    $descendantOwnedSnapshotSelfTest = @{
+        100 = $descendantOwnedSelfTest[100]
+        101 = [pscustomobject][ordered]@{ Id = 101; ParentId = 100; Creation = [long]1000; ImagePath = 'C:\startup-descendant-selftest\equal-child.exe' }
+        102 = [pscustomobject][ordered]@{ Id = 102; ParentId = 100; Creation = [long]1001; ImagePath = 'C:\startup-descendant-selftest\new-child.exe' }
+        103 = [pscustomobject][ordered]@{ Id = 103; ParentId = 100; Creation = [long]999; ImagePath = 'C:\startup-descendant-selftest\stale-child.exe' }
+        104 = [pscustomobject][ordered]@{ Id = 104; ParentId = 103; Creation = [long]1002; ImagePath = 'C:\startup-descendant-selftest\stale-grandchild.exe' }
+        105 = [pscustomobject][ordered]@{ Id = 105; ParentId = 100; Creation = 'malformed'; ImagePath = 'C:\startup-descendant-selftest\malformed-child.exe' }
+    }
+    Update-OwnedProcesses $descendantOwnedSelfTest $descendantOwnedSnapshotSelfTest
+    $descendantOwnedIdsSelfTest = @($descendantOwnedSelfTest.Keys | Sort-Object | ForEach-Object { [int]$_ })
+    $descendantOwnedSelfTestVerified = ($descendantOwnedIdsSelfTest -join ',') -eq '100,101,102' -and
+        -not $descendantOwnedSelfTest.ContainsKey(103) -and -not $descendantOwnedSelfTest.ContainsKey(104) -and
+        -not $descendantOwnedSelfTest.ContainsKey(105)
+    $descendantCreationOrderSelfTestVerified = [bool]($descendantSnapshotSelfTestVerified -and $descendantOwnedSelfTestVerified)
+    if (-not $descendantCreationOrderSelfTestVerified) {
+        throw 'Descendant creation-order ownership self-test failed.'
+    }
+
     $affinitySelfTestProbe = [pscustomobject][ordered]@{
         RequestedMask = [UInt64]1; ProcessMask = [UInt64]1; SystemMask = [UInt64]15
         Opened = $true; SetSucceeded = $true; ReadBackSucceeded = $true; Verified = $true
@@ -7614,6 +7757,7 @@ function Invoke-SelfTest {
         jobIdentityContradictorySuccessSelfTestVerified = [bool]$jobIdentityContradictorySuccessVerified
         jobIdentityMalformedFreshQueryCasesSelfTestVerified = [bool]$jobIdentityMalformedFreshQueryCasesVerified
         jobIdentityMalformedFreshQueryMetadataCasesSelfTestVerified = [bool]$jobIdentityMalformedFreshQueryMetadataCasesVerified
+        descendantCreationOrderSelfTestVerified = [bool]$descendantCreationOrderSelfTestVerified
         affinityHistoricalCountsSelfTestVerified = [bool]$affinityHistoricalCountsVerified
         affinityCurrentSetSelfTestVerified = [bool]$affinityCurrentSetSelfTestVerified
         affinityInvalidCurrentSetSelfTestVerified = [bool]$affinityInvalidCurrentSetSelfTestVerified
