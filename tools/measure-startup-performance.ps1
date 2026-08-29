@@ -3076,11 +3076,15 @@ function Get-StartupDiagnosticJobMembers([IntPtr]$Job) {
         return [pscustomobject]@{ verified = $false; members = $members; queryObservation = $skipped }
     }
     $query = [NativeStartupProbe]::QueryJobProcessIds($Job)
+    # Establish the native ProcessIds contract before creating any normalized
+    # observation.  Diagnostic telemetry may be recorded after rejection, but
+    # it must never be the first consumer of a raw Job query.
+    $queryCheck = Test-StartupStrictJobQueryEnvelope $query
     $queryObservation = Convert-StartupJobQueryObservation $query
-    if (-not $query.Succeeded -or $null -eq $query.ProcessIds) {
+    if (-not $queryCheck.valid -or -not $query.Succeeded -or $null -eq $query.ProcessIds) {
         return [pscustomobject]@{ verified = $false; members = $members; queryObservation = $queryObservation }
     }
-    foreach ($processId in @($query.ProcessIds)) {
+    foreach ($processId in @($queryCheck.processIds)) {
         if ([int]$processId -gt 0) { $members[[int]$processId] = $true }
     }
     return [pscustomobject]@{ verified = $true; members = $members; queryObservation = $queryObservation }
@@ -3730,11 +3734,25 @@ function Test-StartupStrictJobQueryEnvelope {
     $countFieldsValid = $assignedRaw -is [UInt32] -and $assignedRaw -le [UInt32]$startupJobQueryMaxProcessCount -and
         $listedRaw -is [UInt32] -and $listedRaw -le [UInt32]$startupJobQueryMaxProcessCount
     $errorCode = if ($errorValid) { [int]$errorRaw } else { 13 }
+    # ProcessIds is the native CLR boundary.  Do not accept a merely enumerable
+    # value here: QueryJobProcessIds returns exactly System.Int32[] and that
+    # type must be established before any value is normalized or used as Job
+    # membership evidence.  In particular, object[], Int64[], UInt32[],
+    # Double[], multidimensional arrays, and arrays with a non-zero lower bound
+    # are not equivalent native contracts, even when their values look integral.
+    $processIdsArrayTypeValid = $false
+    if ($null -ne $processIdsValue) {
+        try {
+            $processIdsArrayTypeValid = $processIdsValue.GetType() -eq [System.Int32[]] -and
+                $processIdsValue.Rank -eq 1 -and $processIdsValue.GetLowerBound(0) -eq 0
+        }
+        catch { $processIdsArrayTypeValid = $false }
+    }
     $queryShapeValid = $null -ne $Candidate -and
         $attemptedValue -is [bool] -and [bool]$attemptedValue -and
         $succeededValue -is [bool] -and $resizedValue -is [bool] -and $errorValid -and
         $attemptCountValid -and $byteFieldsValid -and $countFieldsValid -and
-        $null -ne $processIdsValue -and $processIdsValue -is [Array] -and
+        $processIdsArrayTypeValid -and
         $processIdsValue.Length -le $startupJobQueryMaxProcessCount -and
         $null -ne $attemptsValue -and $attemptsValue -is [Array] -and
         $attemptsValue.Length -le $startupJobQueryMaxAttemptCount
@@ -3927,10 +3945,14 @@ function Test-StartupStrictJobQueryEnvelope {
         }
     }
     foreach ($rawProcessId in $processIdsValue) {
-        if ($null -eq $rawProcessId -or $rawProcessId -is [bool]) {
+        # Keep this explicit element check beside the exact array check.  It is
+        # redundant for today's sealed Int32[] implementation, but documents
+        # and enforces the element contract before normalization if this seam is
+        # ever supplied by a different CLR boundary.
+        if ($null -eq $rawProcessId -or $rawProcessId.GetType() -ne [System.Int32]) {
             return [pscustomobject][ordered]@{ valid = $false; processIds = [int[]]@(); errorCode = 13; reason = 'process-id-type' }
         }
-        if (-not (Test-StartupIntegralValue $rawProcessId 1 ([decimal][int]::MaxValue))) {
+        if ($rawProcessId -lt 1 -or $rawProcessId -gt [int]::MaxValue) {
             return [pscustomobject][ordered]@{ valid = $false; processIds = [int[]]@(); errorCode = 13; reason = 'process-id-range' }
         }
         try { $processId = [int]$rawProcessId } catch {
@@ -3998,9 +4020,9 @@ function Get-JobProcessRecords([IntPtr]$Job, $Owned, [object]$QueryObservation =
         if ($null -ne $QueryObservation) { Add-StartupJobQueryObservation $QueryObservation (& $newJobQueryFailure) }
         throw
     }
+    $queryCheck = & $validateJobQuery $query
     $queryMetadata = Convert-StartupJobQueryObservation $query
     if ($null -ne $QueryObservation) { Add-StartupJobQueryObservation $QueryObservation $queryMetadata }
-    $queryCheck = & $validateJobQuery $query
     if (-not $queryCheck.valid) {
         throw "Could not enumerate run-owned job processes (Win32 $($queryCheck.errorCode))."
     }
@@ -4020,9 +4042,9 @@ function Get-JobProcessRecords([IntPtr]$Job, $Owned, [object]$QueryObservation =
                 if ($null -ne $QueryObservation) { Add-StartupJobQueryObservation $QueryObservation (& $newJobQueryFailure) }
                 throw
             }
+            $retryCheck = & $validateJobQuery $retry
             $retryMetadata = Convert-StartupJobQueryObservation $retry
             if ($null -ne $QueryObservation) { Add-StartupJobQueryObservation $QueryObservation $retryMetadata }
-            $retryCheck = & $validateJobQuery $retry
             if (-not $retryCheck.valid -or @($retryCheck.processIds | Where-Object { [int]$_ -eq [int]$processId }).Count -gt 0) {
                 throw "Could not observe the identity of run-owned job process $processId."
             }
@@ -4074,9 +4096,9 @@ function Get-JobProcessRecords([IntPtr]$Job, $Owned, [object]$QueryObservation =
                 if ($null -ne $jobIdentityObservation) { Set-StartupJobIdentityFailure $jobIdentityObservation 'exception' 13 'exception' $ObserverRole }
                 throw "Could not refresh run-owned job membership after identity failure for process $processId (Win32 13)."
             }
+            $freshJobCheck = & $validateJobQuery $freshJobQuery
             $freshJobMetadata = Convert-StartupJobQueryObservation $freshJobQuery
             if ($null -ne $QueryObservation) { Add-StartupJobQueryObservation $QueryObservation $freshJobMetadata }
-            $freshJobCheck = & $validateJobQuery $freshJobQuery
             if (-not $freshJobCheck.valid) {
                 if ($null -ne $jobIdentityObservation) { Set-StartupJobIdentityFailure $jobIdentityObservation 'enumeration-unavailable' $freshJobCheck.errorCode $identityOperation $ObserverRole }
                 throw "Could not refresh run-owned job membership after identity failure for process $processId (Win32 $($freshJobCheck.errorCode))."
@@ -5369,37 +5391,125 @@ function Test-StartupContainmentProofV2 {
         $memberCount = Get-StartupObservationProperty $Proof 'terminalJobMemberCount'
         if ($null -ne $memberCount -and ($memberCount -isnot [int32] -or [int]$memberCount -lt 0)) { return $false }
         $querySucceeded = (Get-StartupObservationProperty $terminalQuery 'succeeded') -is [bool] -and [bool]$terminalQuery.succeeded
-        if ($querySucceeded) {
-            if ($memberCount -isnot [int32] -or [int]$memberCount -ne [int]$terminalQuery.listedProcessCount -or
-                [UInt64]$terminalQuery.assignedProcessCount -ne [UInt64]$terminalQuery.listedProcessCount -or
-                [bool]$Proof.jobEmptyProven -ne ([int]$memberCount -eq 0)) { return $false }
+
+        # Reduce the two independently observable native boundaries to a small
+        # closed vocabulary before applying the terminal-state equations.  N is
+        # a query that was not made, E is a valid empty query, and M is a valid
+        # query with one or more members.  T0 is no termination attempt, TS is a
+        # successful termination, and TF is a typed termination failure.  No
+        # other combination is a proof state, even if each individual field is
+        # well typed.
+        $queryClass = 'invalid'
+        if (-not [bool]$terminalQuery.attempted) {
+            $queryClass = 'N'
+            if ([bool]$terminalQuery.skipped -or [bool]$terminalQuery.succeeded -or
+                [bool]$terminalQuery.attemptsTruncated -or
+                $terminalQuery.queryCount -ne 0 -or $terminalQuery.attemptCount -ne 0 -or
+                $terminalQuery.attempts.Length -ne 0 -or $null -ne $queryError -or
+                [bool]$terminalQuery.resized -or
+                $terminalQuery.capacityBytes -ne [UInt64]0 -or
+                $terminalQuery.requiredBytes -ne [UInt64]0 -or
+                $terminalQuery.returnLengthBytes -ne [UInt64]0 -or
+                $terminalQuery.assignedProcessCount -ne [UInt64]0 -or
+                $terminalQuery.listedProcessCount -ne [UInt64]0 -or
+                $null -ne $memberCount -or [bool]$Proof.jobEmptyProven) { return $false }
         }
-        elseif ($null -ne $memberCount -or [bool]$Proof.jobEmptyProven) { return $false }
-        if ([bool]$Proof.jobEmptyProven) {
-            if (-not $querySucceeded -or $memberCount -isnot [int32] -or [int]$memberCount -ne 0 -or
-                $terminalQuery.assignedProcessCount -ne [UInt64]0 -or $terminalQuery.listedProcessCount -ne [UInt64]0) { return $false }
-            $expectedMode = if ([bool]$Proof.terminationAttempted -and [bool]$Proof.terminationSucceeded) {
-                'explicit-job-termination'
+        elseif (-not $querySucceeded -or [bool]$terminalQuery.skipped -or
+            [bool]$terminalQuery.attemptsTruncated -or $terminalQuery.queryCount -ne 1 -or
+            $queryError -isnot [int32] -or [int]$queryError -ne 0 -or
+            $memberCount -isnot [int32] -or
+            [int]$memberCount -ne [int]$terminalQuery.listedProcessCount -or
+            [UInt64]$terminalQuery.assignedProcessCount -ne [UInt64]$terminalQuery.listedProcessCount) {
+            return $false
+        }
+        else {
+            $queryClass = if ([int]$memberCount -eq 0) { 'E' } else { 'M' }
+            if ([bool]$Proof.jobEmptyProven -ne ($queryClass -eq 'E')) { return $false }
+        }
+
+        $terminationClass = 'invalid'
+        if (-not [bool]$Proof.terminationAttempted -and
+            -not [bool]$Proof.terminationSucceeded -and $null -eq $terminationError) {
+            $terminationClass = 'T0'
+        }
+        elseif ([bool]$Proof.terminationAttempted -and [bool]$Proof.terminationSucceeded -and
+            $null -eq $terminationError) {
+            $terminationClass = 'TS'
+        }
+        elseif ([bool]$Proof.terminationAttempted -and
+            -not [bool]$Proof.terminationSucceeded -and
+            $terminationError -is [int32] -and [int]$terminationError -gt 0) {
+            $terminationClass = 'TF'
+        }
+        if ($terminationClass -eq 'invalid' -or $queryClass -eq 'invalid') { return $false }
+
+        # Every accepted terminal state has an explicit equation.  Rejection
+        # states intentionally enumerate their reachable union: a failed close
+        # can overwrite a no-query, empty-query, or member-query predecessor,
+        # while a post-close observation rejection can only overwrite one of
+        # the two verified empty-query states.
+        $stateEquationValid = switch ([string]$Proof.terminalState) {
+            'not-attempted' {
+                [string]$Proof.mode -eq 'unavailable' -and $terminationClass -eq 'T0' -and
+                    $queryClass -eq 'N' -and -not [bool]$Proof.jobEmptyProven -and $null -eq $memberCount
             }
-            elseif (-not [bool]$Proof.terminationAttempted) { 'graceful-job-empty' }
-            else { return $false }
-            if ([string]$Proof.mode -ne $expectedMode) { return $false }
+            'verified-graceful-job-empty' {
+                [string]$Proof.mode -eq 'graceful-job-empty' -and $terminationClass -eq 'T0' -and
+                    $queryClass -eq 'E' -and [bool]$Proof.jobEmptyProven -and [int]$memberCount -eq 0
+            }
+            'verified-explicit-job-termination' {
+                [string]$Proof.mode -eq 'explicit-job-termination' -and $terminationClass -eq 'TS' -and
+                    $queryClass -eq 'E' -and [bool]$Proof.jobEmptyProven -and [int]$memberCount -eq 0
+            }
+            'rejected-job-unavailable' {
+                [string]$Proof.mode -eq 'unavailable' -and $terminationClass -eq 'T0' -and
+                    $queryClass -eq 'N' -and -not [bool]$Proof.jobEmptyProven -and $null -eq $memberCount
+            }
+            'rejected-termination-failed' {
+                [string]$Proof.mode -eq 'unavailable' -and $terminationClass -eq 'TF' -and
+                    -not [bool]$Proof.jobEmptyProven -and
+                    (($queryClass -eq 'N' -and $null -eq $memberCount) -or
+                     ($queryClass -eq 'M' -and [int]$memberCount -gt 0))
+            }
+            'rejected-terminal-job-query' {
+                [string]$Proof.mode -eq 'unavailable' -and $terminationClass -eq 'TS' -and
+                    $queryClass -eq 'N' -and -not [bool]$Proof.jobEmptyProven -and $null -eq $memberCount
+            }
+            'rejected-job-members-remain' {
+                [string]$Proof.mode -eq 'unavailable' -and $terminationClass -eq 'TS' -and
+                    $queryClass -eq 'M' -and -not [bool]$Proof.jobEmptyProven -and [int]$memberCount -gt 0
+            }
+            'rejected-job-close' {
+                (($terminationClass -eq 'T0' -and $queryClass -eq 'N' -and
+                    [string]$Proof.mode -eq 'unavailable' -and -not [bool]$Proof.jobEmptyProven -and $null -eq $memberCount) -or
+                 ($terminationClass -eq 'TS' -and $queryClass -eq 'N' -and
+                    [string]$Proof.mode -eq 'unavailable' -and -not [bool]$Proof.jobEmptyProven -and $null -eq $memberCount) -or
+                 ($terminationClass -eq 'TF' -and $queryClass -eq 'N' -and
+                    [string]$Proof.mode -eq 'unavailable' -and -not [bool]$Proof.jobEmptyProven -and $null -eq $memberCount) -or
+                 ($terminationClass -eq 'TS' -and $queryClass -eq 'M' -and
+                    [string]$Proof.mode -eq 'unavailable' -and -not [bool]$Proof.jobEmptyProven -and [int]$memberCount -gt 0) -or
+                 ($terminationClass -eq 'TF' -and $queryClass -eq 'M' -and
+                    [string]$Proof.mode -eq 'unavailable' -and -not [bool]$Proof.jobEmptyProven -and [int]$memberCount -gt 0) -or
+                 ($terminationClass -eq 'T0' -and $queryClass -eq 'E' -and
+                    [string]$Proof.mode -eq 'graceful-job-empty' -and [bool]$Proof.jobEmptyProven -and [int]$memberCount -eq 0) -or
+                 ($terminationClass -eq 'TS' -and $queryClass -eq 'E' -and
+                    [string]$Proof.mode -eq 'explicit-job-termination' -and [bool]$Proof.jobEmptyProven -and [int]$memberCount -eq 0))
+            }
+            'rejected-post-close-observation' {
+                (($terminationClass -eq 'T0' -and $queryClass -eq 'E' -and
+                    [string]$Proof.mode -eq 'graceful-job-empty' -and [bool]$Proof.jobEmptyProven -and [int]$memberCount -eq 0) -or
+                 ($terminationClass -eq 'TS' -and $queryClass -eq 'E' -and
+                    [string]$Proof.mode -eq 'explicit-job-termination' -and [bool]$Proof.jobEmptyProven -and [int]$memberCount -eq 0))
+            }
+            'exception' {
+                (($terminationClass -eq 'T0' -and $queryClass -eq 'N' -and
+                    [string]$Proof.mode -eq 'unavailable' -and -not [bool]$Proof.jobEmptyProven -and $null -eq $memberCount) -or
+                 ($terminationClass -eq 'TS' -and $queryClass -eq 'M' -and
+                    [string]$Proof.mode -eq 'unavailable' -and -not [bool]$Proof.jobEmptyProven -and [int]$memberCount -gt 0))
+            }
+            default { $false }
         }
-        elseif ([string]$Proof.mode -ne 'unavailable') { return $false }
-        $verifiedState = [string]$Proof.terminalState -in @('verified-graceful-job-empty', 'verified-explicit-job-termination')
-        if ($verifiedState) {
-            if (-not [bool]$Proof.jobEmptyProven) { return $false }
-            if (($Proof.terminalState -eq 'verified-graceful-job-empty') -ne ($Proof.mode -eq 'graceful-job-empty')) { return $false }
-            if (($Proof.terminalState -eq 'verified-explicit-job-termination') -ne ($Proof.mode -eq 'explicit-job-termination')) { return $false }
-        }
-        elseif ([bool]$Proof.jobEmptyProven -and $Proof.terminalState -ne 'rejected-job-close') { return $false }
-        if ($Proof.terminalState -eq 'verified-graceful-job-empty' -and
-            ([bool]$Proof.terminationAttempted -or [bool]$Proof.terminationSucceeded -or $null -ne $terminationError)) { return $false }
-        if ($Proof.terminalState -eq 'verified-explicit-job-termination' -and
-            (-not [bool]$Proof.terminationAttempted -or -not [bool]$Proof.terminationSucceeded -or $null -ne $terminationError)) { return $false }
-        if ($Proof.terminalState -eq 'rejected-termination-failed' -and
-            (-not [bool]$Proof.terminationAttempted -or [bool]$Proof.terminationSucceeded -or
-                $terminationError -isnot [int32] -or [int]$terminationError -le 0 -or [bool]$Proof.jobEmptyProven)) { return $false }
+        if (-not [bool]$stateEquationValid) { return $false }
         $reconciliation = Get-StartupObservationProperty $Proof 'identityReconciliation'
         if ($null -eq $reconciliation -or $reconciliation -isnot [Collections.IDictionary]) { return $false }
         $expectedReconciliationFields = @('attempted', 'accepted', 'operation', 'observerRole', 'reason')
@@ -6353,7 +6463,10 @@ function Invoke-SelfTest {
     $jobSelfTestClosed = $false
     try {
         $emptyJob = [NativeStartupProbe]::QueryJobProcessIds($jobSelfTest.Handle)
-        if (-not $emptyJob.Succeeded -or $null -eq $emptyJob.ProcessIds -or $emptyJob.ProcessIds.Count -ne 0) { throw 'Empty kill-on-close job query self-test failed.' }
+        $emptyJobStrictEnvelope = Test-StartupStrictJobQueryEnvelope $emptyJob
+        if (-not $emptyJob.Succeeded -or $null -eq $emptyJob.ProcessIds -or
+            $emptyJob.ProcessIds.GetType() -ne [System.Int32[]] -or $emptyJob.ProcessIds.Count -ne 0 -or
+            -not $emptyJobStrictEnvelope.valid) { throw 'Empty kill-on-close job query self-test failed.' }
     }
     finally {
         $jobSelfTestCloseResult = [NativeStartupProbe]::CloseKillOnCloseJob($jobSelfTest.Handle)
@@ -6420,6 +6533,7 @@ function Invoke-SelfTest {
             }
         }
         $multiMemberJobQuery = [NativeStartupProbe]::QueryJobProcessIds($multiMemberJob.Handle)
+        $multiMemberStrictEnvelope = Test-StartupStrictJobQueryEnvelope $multiMemberJobQuery
         $multiMemberIds = @($multiMemberJobQuery.ProcessIds | ForEach-Object { [int]$_ })
         $multiMemberActualSorted = @($multiMemberIds | Sort-Object)
         $multiMemberExpectedSorted = @($multiMemberExpectedIds | Sort-Object)
@@ -6443,6 +6557,8 @@ function Invoke-SelfTest {
             $multiMemberJobQuery.AttemptCount -ge 1 -and $multiMemberJobQuery.AttemptCount -le 8 -and
             $multiMemberJobQuery.AssignedProcessCount -eq 2 -and
             $multiMemberJobQuery.ListedProcessCount -eq 2 -and
+            $multiMemberJobQuery.ProcessIds.GetType() -eq [System.Int32[]] -and
+            $multiMemberStrictEnvelope.valid -and
             [UInt64]$multiMemberJobQuery.CapacityBytes -le 1048576 -and
             [UInt64]$multiMemberJobQuery.RequiredBytes -le 1048576 -and
             [UInt64]$multiMemberJobQuery.ReturnLengthBytes -le 1048576 -and
@@ -6575,6 +6691,75 @@ function Invoke-SelfTest {
     $syntheticMemberQueryCheck = Convert-StartupTerminalJobQuery $syntheticMemberQueryFixture
     if (-not $syntheticMemberQueryCheck.valid -or $syntheticMemberQueryCheck.memberCount -ne 1) {
         throw "Synthetic terminal Job query fixture failed '$($syntheticMemberQueryCheck.reason)'."
+    }
+
+    # Keep a raw native-shaped query clone for boundary tests.  The clone is
+    # deliberately assembled with the original CLR scalar types so changing
+    # only ProcessIds cannot accidentally make a malformed PID case pass or
+    # fail because of unrelated metadata drift.
+    $cloneTerminalJobQuery = {
+        param([object]$Source)
+        $sourceAttempt = @($Source.Attempts)[0]
+        return [pscustomobject][ordered]@{
+            Attempted = $Source.Attempted; Succeeded = $Source.Succeeded; ErrorCode = $Source.ErrorCode
+            ProcessIds = $Source.ProcessIds; AttemptCount = $Source.AttemptCount
+            CapacityBytes = $Source.CapacityBytes; RequiredBytes = $Source.RequiredBytes
+            ReturnLengthBytes = $Source.ReturnLengthBytes; AssignedProcessCount = $Source.AssignedProcessCount
+            ListedProcessCount = $Source.ListedProcessCount; Resized = $Source.Resized
+            Attempts = [object[]]@([pscustomobject][ordered]@{
+                Attempted = $sourceAttempt.Attempted; AttemptNumber = $sourceAttempt.AttemptNumber
+                Succeeded = $sourceAttempt.Succeeded; ErrorCode = $sourceAttempt.ErrorCode
+                CapacityBytes = $sourceAttempt.CapacityBytes; RequiredBytes = $sourceAttempt.RequiredBytes
+                ReturnLengthBytes = $sourceAttempt.ReturnLengthBytes
+                AssignedProcessCount = $sourceAttempt.AssignedProcessCount
+                ListedProcessCount = $sourceAttempt.ListedProcessCount; Resized = $sourceAttempt.Resized
+            })
+        }
+    }
+    $validNativePidEnvelope = Test-StartupStrictJobQueryEnvelope $syntheticMemberQueryFixture
+    $validNativePidTerminal = Convert-StartupTerminalJobQuery $syntheticMemberQueryFixture
+    $maliciousPidCases = @(
+        [pscustomobject]@{ Name = 'object-array'; Value = [object[]]@([int]1234) }
+        [pscustomobject]@{ Name = 'int64-array'; Value = [int64[]]@(1234) }
+        [pscustomobject]@{ Name = 'uint32-array'; Value = [uint32[]]@(1234) }
+        [pscustomobject]@{ Name = 'double-array'; Value = [double[]]@(1234) }
+        [pscustomobject]@{ Name = 'fractional-object-array'; Value = [object[]]@([double]1234.5) }
+        [pscustomobject]@{ Name = 'duplicate-int32-array'; Value = [int[]]@(1234, 1234) }
+        [pscustomobject]@{ Name = 'multidimensional-int32-array'; Value = $null }
+        [pscustomobject]@{ Name = 'nonzero-lower-bound-int32-array'; Value = $null }
+    )
+    $multiDimensionalPidArray = [Array]::CreateInstance([int], [int[]]@(1, 1))
+    $multiDimensionalPidArray.SetValue([int]1234, 0, 0)
+    $maliciousPidCases[6].Value = $multiDimensionalPidArray
+    $nonzeroLowerBoundPidArray = [Array]::CreateInstance([int], [int[]]@(1), [int[]]@(1))
+    $nonzeroLowerBoundPidArray.SetValue([int]1234, 1)
+    $maliciousPidCases[7].Value = $nonzeroLowerBoundPidArray
+    $duplicatePidQueryFixture = & $newTerminalJobQuery ([int[]]@(1234, 1234))
+    $strictNativePidArraySelfTestVerified = [bool]($validNativePidEnvelope.valid -and
+        $validNativePidTerminal.valid -and
+        $syntheticMemberQueryFixture.ProcessIds.GetType() -eq [System.Int32[]])
+    $duplicatePidRejected = $false
+    foreach ($maliciousPidCase in $maliciousPidCases) {
+        $pidSourceFixture = if ($maliciousPidCase.Name -eq 'duplicate-int32-array') {
+            $duplicatePidQueryFixture
+        }
+        else { $syntheticMemberQueryFixture }
+        $maliciousPidFixture = & $cloneTerminalJobQuery $pidSourceFixture
+        $maliciousPidFixture.ProcessIds = $maliciousPidCase.Value
+        $maliciousStrictResult = Test-StartupStrictJobQueryEnvelope $maliciousPidFixture
+        $maliciousTerminalResult = Convert-StartupTerminalJobQuery $maliciousPidFixture
+        if ($maliciousPidCase.Name -eq 'duplicate-int32-array') {
+            $duplicatePidRejected = -not $maliciousStrictResult.valid -and
+                $maliciousStrictResult.reason -eq 'process-id-duplicate'
+        }
+        if ($maliciousStrictResult.valid -or $maliciousTerminalResult.valid) {
+            $strictNativePidArraySelfTestVerified = $false
+            break
+        }
+    }
+    $strictNativePidArraySelfTestVerified = $strictNativePidArraySelfTestVerified -and $duplicatePidRejected
+    if (-not $strictNativePidArraySelfTestVerified) {
+        throw 'Native ProcessIds exact Int32[] contract self-test accepted a malformed PID array.'
     }
     $requiredMismatchQuery = & $newTerminalJobQuery ([int[]]@())
     $requiredMismatchQuery.RequiredBytes = [UInt64]($requiredMismatchQuery.RequiredBytes + [UInt64]8)
@@ -6829,6 +7014,168 @@ function Invoke-SelfTest {
         (Test-StartupContainmentProofV2 $exactEnvelopeReproResult.proof)
     if (-not $strictNativeEnvelopeSelfTestVerified) {
         throw 'Malformed termination or close action envelope crossed the containment decision boundary.'
+    }
+
+    # Clone proof dictionaries without a JSON round-trip.  JSON would widen
+    # Int32/UInt64 fields and would therefore make a state-equation fixture
+    # exercise deserialization rather than the actual proof validator.
+    $cloneContainmentProof = {
+        param([object]$Source)
+        $sourceQuery = Get-StartupObservationProperty $Source 'terminalJobQuery'
+        $sourceAttempts = @((Get-StartupObservationProperty $sourceQuery 'attempts'))
+        $clonedAttempts = New-Object Collections.Generic.List[object]
+        foreach ($sourceAttempt in $sourceAttempts) {
+            [void]$clonedAttempts.Add([ordered]@{
+                attempted = [bool]$sourceAttempt.attempted
+                attemptNumber = [int32]$sourceAttempt.attemptNumber
+                succeeded = [bool]$sourceAttempt.succeeded
+                errorCode = [int32]$sourceAttempt.errorCode
+                capacityBytes = [UInt64]$sourceAttempt.capacityBytes
+                requiredBytes = [UInt64]$sourceAttempt.requiredBytes
+                returnLengthBytes = [UInt64]$sourceAttempt.returnLengthBytes
+                assignedProcessCount = [UInt64]$sourceAttempt.assignedProcessCount
+                listedProcessCount = [UInt64]$sourceAttempt.listedProcessCount
+                resized = [bool]$sourceAttempt.resized
+            })
+        }
+        $sourceMemberCount = Get-StartupObservationProperty $Source 'terminalJobMemberCount'
+        $sourceTerminationError = Get-StartupObservationProperty $Source 'terminationErrorCode'
+        $sourceReconciliation = Get-StartupObservationProperty $Source 'identityReconciliation'
+        return [ordered]@{
+            version = [int32]$Source.version
+            mode = [string]$Source.mode
+            terminalState = [string]$Source.terminalState
+            terminationAttempted = [bool]$Source.terminationAttempted
+            terminationSucceeded = [bool]$Source.terminationSucceeded
+            terminationErrorCode = if ($null -eq $sourceTerminationError) { $null } else { [int32]$sourceTerminationError }
+            terminalJobQuery = [ordered]@{
+                attempted = [bool]$sourceQuery.attempted
+                skipped = [bool]$sourceQuery.skipped
+                succeeded = [bool]$sourceQuery.succeeded
+                errorCode = if ($null -eq $sourceQuery.errorCode) { $null } else { [int32]$sourceQuery.errorCode }
+                queryCount = [int32]$sourceQuery.queryCount
+                attemptCount = [int32]$sourceQuery.attemptCount
+                capacityBytes = [UInt64]$sourceQuery.capacityBytes
+                requiredBytes = [UInt64]$sourceQuery.requiredBytes
+                returnLengthBytes = [UInt64]$sourceQuery.returnLengthBytes
+                assignedProcessCount = [UInt64]$sourceQuery.assignedProcessCount
+                listedProcessCount = [UInt64]$sourceQuery.listedProcessCount
+                resized = [bool]$sourceQuery.resized
+                attempts = [object[]]$clonedAttempts.ToArray()
+                attemptsTruncated = [bool]$sourceQuery.attemptsTruncated
+            }
+            terminalJobMemberCount = if ($null -eq $sourceMemberCount) { $null } else { [int32]$sourceMemberCount }
+            jobEmptyProven = [bool]$Source.jobEmptyProven
+            identityReconciliation = [ordered]@{
+                attempted = [bool]$sourceReconciliation.attempted
+                accepted = [bool]$sourceReconciliation.accepted
+                operation = [string]$sourceReconciliation.operation
+                observerRole = [string]$sourceReconciliation.observerRole
+                reason = [string]$sourceReconciliation.reason
+            }
+        }
+    }
+    $newContainmentStateProof = {
+        param([object]$Source, [string]$TerminalState)
+        $candidate = & $cloneContainmentProof $Source
+        $candidate.terminalState = $TerminalState
+        return $candidate
+    }
+    $gracefulTerminalFixture = & $newTerminalJobQuery ([int[]]@())
+    $gracefulTerminalCheck = Convert-StartupTerminalJobQuery $gracefulTerminalFixture
+    if (-not $gracefulTerminalCheck.valid -or $gracefulTerminalCheck.memberCount -ne 0) {
+        throw 'Synthetic empty terminal Job query fixture failed.'
+    }
+    $gracefulProof = New-StartupContainmentProof
+    $gracefulProof.mode = 'graceful-job-empty'
+    $gracefulProof.terminalState = 'verified-graceful-job-empty'
+    $gracefulProof.terminalJobQuery = $gracefulTerminalCheck.observation
+    $gracefulProof.terminalJobMemberCount = [int32]0
+    $gracefulProof.jobEmptyProven = $true
+
+    # Positive fixtures cover every terminal state and every predecessor that
+    # rejected-job-close may overwrite.  The latter is intentionally a union,
+    # not a single generic "close failed" shape.
+    $closeFromT0N = & $newContainmentStateProof $exceptionResult.proof 'rejected-job-close'
+    $closeFromTSN = & $newContainmentStateProof $malformedResult.proof 'rejected-job-close'
+    $closeFromTFN = & $newContainmentStateProof $terminationFailureResult.proof 'rejected-job-close'
+    $closeFromTSM = & $newContainmentStateProof $memberRemainsResult.proof 'rejected-job-close'
+    $closeFromTFM = & $cloneContainmentProof $memberRemainsResult.proof
+    $closeFromTFM.terminationSucceeded = $false
+    $closeFromTFM.terminationErrorCode = [int32]5
+    $closeFromTFM.terminalState = 'rejected-job-close'
+    $closeFromT0E = & $newContainmentStateProof $gracefulProof 'rejected-job-close'
+    $closeFromTSE = & $newContainmentStateProof $explicitProof 'rejected-job-close'
+    $postCloseProof = & $newContainmentStateProof $gracefulProof 'rejected-post-close-observation'
+    $exceptionAfterMemberProof = & $newContainmentStateProof $memberRemainsResult.proof 'exception'
+    $rejectedUnavailableProof = New-StartupContainmentProof
+    $rejectedUnavailableProof.terminalState = 'rejected-job-unavailable'
+    $containmentPositiveTerminalCases = @(
+        [pscustomobject]@{ Name = 'not-attempted'; Proof = New-StartupContainmentProof }
+        [pscustomobject]@{ Name = 'verified-graceful-job-empty'; Proof = $gracefulProof }
+        [pscustomobject]@{ Name = 'verified-explicit-job-termination'; Proof = $explicitProof }
+        [pscustomobject]@{ Name = 'rejected-job-unavailable'; Proof = $rejectedUnavailableProof }
+        [pscustomobject]@{ Name = 'rejected-termination-failed'; Proof = $terminationFailureResult.proof }
+        [pscustomobject]@{ Name = 'rejected-terminal-job-query'; Proof = $malformedResult.proof }
+        [pscustomobject]@{ Name = 'rejected-job-members-remain'; Proof = $memberRemainsResult.proof }
+        [pscustomobject]@{ Name = 'rejected-job-close-t0-n'; Proof = $closeFromT0N }
+        [pscustomobject]@{ Name = 'rejected-job-close-ts-n'; Proof = $closeFromTSN }
+        [pscustomobject]@{ Name = 'rejected-job-close-tf-n'; Proof = $closeFromTFN }
+        [pscustomobject]@{ Name = 'rejected-job-close-ts-m'; Proof = $closeFromTSM }
+        [pscustomobject]@{ Name = 'rejected-job-close-tf-m'; Proof = $closeFromTFM }
+        [pscustomobject]@{ Name = 'rejected-job-close-t0-e'; Proof = $closeFromT0E }
+        [pscustomobject]@{ Name = 'rejected-job-close-ts-e'; Proof = $closeFromTSE }
+        [pscustomobject]@{ Name = 'rejected-post-close-observation'; Proof = $postCloseProof }
+        [pscustomobject]@{ Name = 'exception-t0-n'; Proof = $exceptionResult.proof }
+        [pscustomobject]@{ Name = 'exception-ts-m'; Proof = $exceptionAfterMemberProof }
+    )
+    $containmentPositiveTerminalStatesSelfTestVerified = $true
+    foreach ($positiveCase in $containmentPositiveTerminalCases) {
+        if (-not (Test-StartupContainmentProofV2 $positiveCase.Proof) -or
+            [string]$positiveCase.Proof.terminalState -notin $startupContainmentTerminalStates) {
+            $containmentPositiveTerminalStatesSelfTestVerified = $false
+            break
+        }
+    }
+    if (-not $containmentPositiveTerminalStatesSelfTestVerified) {
+        throw 'A reachable containment terminal-state proof fixture was rejected.'
+    }
+
+    # Keep the prior P1 regression separate from the seven impossible rows so
+    # the self-test names exactly which state-machine guarantee it protects.
+    $priorP1Proof = & $newContainmentStateProof $gracefulProof 'rejected-job-close'
+    $priorP1Proof.mode = 'explicit-job-termination'
+    $priorP1Rejected = -not (Test-StartupContainmentProofV2 $priorP1Proof)
+    $impossibleCloseT0MProof = & $newContainmentStateProof $memberRemainsResult.proof 'rejected-job-close'
+    $impossibleCloseT0MProof.terminationAttempted = $false
+    $impossibleCloseT0MProof.terminationSucceeded = $false
+    $impossibleCloseT0MProof.terminationErrorCode = $null
+    $impossibleRejectionCases = @(
+        [pscustomobject]@{ Name = 'rejected-job-unavailable-with-explicit-success'; Proof = & $newContainmentStateProof $explicitProof 'rejected-job-unavailable' }
+        [pscustomobject]@{ Name = 'rejected-termination-failed-with-successful-termination'; Proof = & $newContainmentStateProof $explicitProof 'rejected-termination-failed' }
+        [pscustomobject]@{ Name = 'rejected-terminal-job-query-after-termination-failure'; Proof = & $newContainmentStateProof $terminationFailureResult.proof 'rejected-terminal-job-query' }
+        [pscustomobject]@{ Name = 'rejected-job-members-remain-with-empty-query'; Proof = & $newContainmentStateProof $explicitProof 'rejected-job-members-remain' }
+        [pscustomobject]@{ Name = 'rejected-job-close-with-unattempted-member-query'; Proof = $impossibleCloseT0MProof }
+        [pscustomobject]@{ Name = 'rejected-post-close-observation-without-empty-proof'; Proof = & $newContainmentStateProof $malformedResult.proof 'rejected-post-close-observation' }
+        [pscustomobject]@{ Name = 'exception-with-successful-empty-proof'; Proof = & $newContainmentStateProof $explicitProof 'exception' }
+    )
+    $impossibleRejectionCasesRejected = $true
+    foreach ($impossibleCase in $impossibleRejectionCases) {
+        $candidateCleanup = [pscustomobject][ordered]@{
+            survivors = @(); jobQuerySucceeded = $true; jobCloseSucceeded = $true
+            finalPathSweepVerified = $true; containmentProof = $impossibleCase.Proof
+            cleanupObservation = $explicitObservation
+        }
+        if ((Test-StartupContainmentProofV2 $impossibleCase.Proof) -or
+            (Test-StartupProcessCleanupCompletion $candidateCleanup ([IntPtr]::Zero) 0)) {
+            $impossibleRejectionCasesRejected = $false
+            break
+        }
+    }
+    $containmentImpossibleRejectionSelfTestVerified = $priorP1Rejected -and
+        $impossibleRejectionCases.Count -eq 7 -and $impossibleRejectionCasesRejected
+    if (-not $containmentImpossibleRejectionSelfTestVerified) {
+        throw 'Containment proof accepted the prior P1 or an impossible rejection-state combination.'
     }
 
     $containmentFailureBranchesSelfTestVerified =
@@ -8660,8 +9007,11 @@ function Invoke-SelfTest {
         realMultiMemberJobQuerySelfTestVerified = [bool]$realMultiMemberJobQuerySelfTestVerified
         realMultiMemberJobTerminationSelfTestVerified = [bool]$realMultiMemberJobTerminationSelfTestVerified
         strictTerminalJobQuerySelfTestVerified = [bool]$strictTerminalJobQuerySelfTestVerified
+        strictNativePidArraySelfTestVerified = [bool]$strictNativePidArraySelfTestVerified
         strictGracefulObservationSelfTestVerified = [bool]$strictGracefulObservationSelfTestVerified
         strictNativeEnvelopeSelfTestVerified = [bool]$strictNativeEnvelopeSelfTestVerified
+        containmentPositiveTerminalStatesSelfTestVerified = [bool]$containmentPositiveTerminalStatesSelfTestVerified
+        containmentImpossibleRejectionSelfTestVerified = [bool]$containmentImpossibleRejectionSelfTestVerified
         boundedRejectedReconciliationSelfTestVerified = [bool]$boundedRejectedReconciliationSelfTestVerified
         openProcessIdentityEscalationSelfTestVerified = [bool]$openProcessIdentityEscalationSelfTestVerified
         verifiedExplicitTerminationSelfTestVerified = [bool]$verifiedExplicitTerminationSelfTestVerified

@@ -172,6 +172,11 @@ attempt との top-level 一致、`Resized` の OR、および成功時の liste
 `listedProcessCount < assignedProcessCount` の successful partial + `Resized=true` だけを許可します。
 final success は last attempt が `Succeeded=true` / `ErrorCode=0` / `Resized=false` であることを必須とし、
 中間の complete success や non-retryable failure、last attempt と top-level status / error の不一致を拒否します。
+native の `ProcessIds` は normalization より前に CLR 型を厳密に確認し、`System.Int32[]`、一次元、lower bound
+0、かつ各要素が実 `System.Int32` である場合だけ受理します。従って `object[]`、`Int64[]`、`UInt32[]`、
+`Double[]`、fractional value、multidimensional array、non-zero-lower-bound array、duplicate PID は
+すべて fail closed です。空配列、複数 member、native buffer growth を伴う複数 attempt はこの型契約を
+満たす限り有効です。
 
 ### Job containment proof v2
 
@@ -205,6 +210,27 @@ termination 未試行なら mode は `graceful-job-empty`、試行かつ成功�
 `explicit-job-termination` でなければなりません。`unavailable` は empty proof がない場合だけです。
 verified terminal state は mode と一対一で、未知 enum、bool/integer の暗黙 cast、partial field、または
 cross-field equation の不一致を拒否します。
+
+validator は termination を `T0`（未試行）、`TS`（試行して成功）、`TF`（試行して正の error）に、terminal
+query を `N`（未実行）、`E`（成功して member 0）、`M`（成功して member 1 以上）に分類し、下表の行だけを
+受理します。各行は mode、termination、query、member count、`jobEmptyProven` の全 equation です。
+
+| terminalState | 受理する equation |
+|---|---|
+| `not-attempted` / `rejected-job-unavailable` | `unavailable`, `T0`, `N`, member `null`, `jobEmptyProven=false` |
+| `verified-graceful-job-empty` | `graceful-job-empty`, `T0`, `E`, member `0`, `jobEmptyProven=true` |
+| `verified-explicit-job-termination` | `explicit-job-termination`, `TS`, `E`, member `0`, `jobEmptyProven=true` |
+| `rejected-termination-failed` | `unavailable`, `TF`, `N`（member `null`）または `M`（member `>0`）、`jobEmptyProven=false` |
+| `rejected-terminal-job-query` | `unavailable`, `TS`, `N`, member `null`, `jobEmptyProven=false` |
+| `rejected-job-members-remain` | `unavailable`, `TS`, `M`, member `>0`, `jobEmptyProven=false` |
+| `rejected-job-close` | close 前の到達可能な `T0/TS/TF × N`、`TS/TF × M`、`T0/E` graceful、`TS/E` explicit の union |
+| `rejected-post-close-observation` | `T0/E` graceful または `TS/E` explicit の valid empty proof（cleanup はなお rejected） |
+| `exception` | `T0/N` または `TS/M`、いずれも `unavailable`、`jobEmptyProven=false` |
+
+`rejected-job-close` は CloseHandle failure が predecessor state を上書きするため、empty proof の有無を
+一律に否定しません。一方 `rejected-post-close-observation` は構造上 valid な empty proof を保持できますが、
+post-close sweep / survivor / error gate の失敗により cleanup authority にはなりません。SelfTest は全行の
+positive fixture に加えて prior P1 と七つの impossible rejection combination を検証します。
 
 `QueryProcessIdentity` failure telemetry は payload を持たない operation enum
 `none` / `open-process` / `query-image-path` / `get-process-times` / `exception` と、明示的な observer role
