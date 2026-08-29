@@ -52,8 +52,6 @@ $script:LockOwned = $false
 $script:TransactionRoot = $null
 $script:FailureCode = $null
 $script:FailureSubstage = $null
-$script:FinalImageStageRoot = $null
-$script:FinalImageStageRootOwned = $false
 $script:RepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $script:OutputProviderSymbols = @(
     'sakura_output_provider_create_v1',
@@ -2910,8 +2908,6 @@ function Invoke-Producer {
             }
             [void][IO.Directory]::CreateDirectory($finalImageStageRootPath)
             $finalImageStageRootOwned = $true
-            $script:FinalImageStageRoot = $finalImageStageRootPath
-            $script:FinalImageStageRootOwned = $true
             Assert-RegularDirectory $finalImageStageRootPath
         }
         $lockRoot = Join-Path $outputRoot '.locks'

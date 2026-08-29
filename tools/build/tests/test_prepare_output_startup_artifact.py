@@ -587,6 +587,72 @@ class PrepareOutputStartupArtifactContractTests(unittest.TestCase):
             r"(?i)qualifiedFinalImage\s*=\s*(?:\[[^\r\n\]]+\]\s*)?\$(?:QualifiedFinalImage|false)",
         )
 
+    def test_qualified_stage_root_parameter_is_not_shadowed_by_cleanup_state(self) -> None:
+        self.assertRegex(self.text, r"(?m)^\s*\[string\]\$FinalImageStageRoot,")
+        self.assertNotRegex(self.text, r"\$script:FinalImageStageRoot(?:Owned)?\s*=")
+
+    def test_qualified_cli_binding_reaches_bounded_preflight_without_build(self) -> None:
+        hosts = powershell_hosts()
+        if not hosts:
+            self.skipTest("Neither powershell.exe nor pwsh is available")
+        for shell in hosts:
+            with self.subTest(shell=shell):
+                with tempfile.TemporaryDirectory(prefix="sakura-output-startup-binding-") as directory:
+                    token = Path(directory).name
+                    owned_root = ROOT / "build" / "tmp" / f"producer-qualified-binding-{token}"
+                    self.assertFalse(owned_root.exists())
+                    relative_root = Path("build") / "tmp" / owned_root.name
+                    relative_output = relative_root / "producer"
+                    configuration_root = owned_root / "producer" / "Debug"
+                    try:
+                        completed = subprocess.run(
+                            [
+                                shell,
+                                "-NoProfile",
+                                "-NonInteractive",
+                                "-ExecutionPolicy",
+                                "Bypass",
+                                "-File",
+                                str(PRODUCER),
+                                "-Backend",
+                                "cpp",
+                                "-OutputDirectory",
+                                relative_output.as_posix(),
+                                "-QualifiedFinalImage",
+                                "-FinalImageStageRoot",
+                                relative_root.as_posix(),
+                            ],
+                            cwd=ROOT,
+                            capture_output=True,
+                            text=True,
+                            encoding="utf-8",
+                            errors="replace",
+                            timeout=30,
+                            check=False,
+                        )
+                        self.assertEqual(1, completed.returncode, completed.stderr)
+                        lines = [line for line in completed.stdout.splitlines() if line.strip()]
+                        self.assertEqual(1, len(lines), completed.stdout)
+                        failure = json.loads(lines[0])
+                        self.assertEqual(1, failure["schemaVersion"])
+                        self.assertEqual("failed", failure["status"])
+                        self.assertEqual("preflight", failure["failure"]["stage"])
+                        self.assertEqual("PRODUCER_PREFLIGHT", failure["failure"]["code"])
+                        self.assertTrue(failure["payloadFree"])
+                        # The stage-root argument is an ancestor of the producer root,
+                        # so the retained parameter reaches the bounded relationship
+                        # check after OutputDirectory creates this test-only path.  A
+                        # shadowed parameter fails earlier and never creates it.
+                        self.assertTrue(configuration_root.is_dir())
+                        self.assertFalse((configuration_root / "cpp").exists())
+                        self.assertFalse((configuration_root / ".cpp-transaction").exists())
+                    finally:
+                        if owned_root.exists():
+                            self.assertTrue(owned_root.is_dir())
+                            self.assertFalse(owned_root.is_symlink())
+                            shutil.rmtree(owned_root)
+                    self.assertFalse(owned_root.exists())
+
     def test_failure_cleanup_is_payload_free_and_holds_adoption(self) -> None:
         failure = powershell_function_body(self.text, "New-FailureEnvelope")
         producer = powershell_function_body(self.text, "Invoke-Producer")
