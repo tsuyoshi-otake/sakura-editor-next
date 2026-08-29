@@ -173,43 +173,44 @@ attempt との top-level 一致、`Resized` の OR、および成功時の liste
 final success は last attempt が `Succeeded=true` / `ErrorCode=0` / `Resized=false` であることを必須とし、
 中間の complete success や non-retryable failure、last attempt と top-level status / error の不一致を拒否します。
 
-tracked sweep の identity query が、完全な snapshot の直後に期待されたプロセス終了と競合した場合は、
-完全な typed census を正確に1回だけ再取得します。その census で対象 PID が不在なら sweep は継続し、
-`trackedSweepVerified=true` とします。bounded な
-`trackedSweepDisappearedAfterSnapshotCount` は観測値として残し、schema version 1 との互換性のため、
-raw の `trackedSweepFailureType=identity-disappeared` と first-cause error code も診断原因として保持します。
-これは terminal cleanup failure ではありません。一方、PID が残っている場合、null / exception / malformed
-identity、または fresh census が unavailable / incomplete / duplicate / malformed の場合は fail closed で
-sweep を unverified のままにします。
-この race recovery は Job query / close の成功、最終 exact-path sweep、zero survivor、zero cleanup-error の各
-cleanup gate を置き換えません。これらすべての gate は引き続き必須です。
+### Job containment proof v2
 
-Job membership path は native Job query、初回 Toolhelp census、identity query を差し替え可能な
-optional invoker seam 経由で実行します。成功した Job query と完全な初回 census の双方に member が
-現れた後、identity open が coherent な typed failure になった場合は、fresh Job-membership query を
-1 回だけ実行します。その query が正常に検証され、exact PID の不在を証明した場合だけ、それを唯一の
-recovery proof として Job record loop を継続し、期待された終了を cleanup error にしません。この Job
-経路では 2 回目の Toolhelp census を実行せず、初回 process-enumeration aggregate の意味を変更しません。
-初回 census で Job PID が欠落した場合に既存 path が行う requery は別の missing-entry check であり、
-`jobIdentityObservation` の counter scope には含めません。
+`processCleanupVerified=true` の必要条件は、run-owned Job handle がまだ query 可能な間に得た
+`containmentProof.version=2` です。cleanup は最初に parent-first の graceful close を要求し、最大 8 回の
+bounded observation を行います。fresh で structurally valid な `JobObjectBasicProcessIdList` が empty を
+示せば `mode=graceful-job-empty` です。member が残る、identity observation が失敗する、または graceful
+observation が完了しない場合は PID 単位の terminate を行わず、exact Job handle に対して
+`TerminateJobObject` を正確に 1 回だけ呼びます。成功後も handle を閉じず、同じ 3 秒 budget と最大 8 回の
+outer membership poll の中で fresh query が zero member を示すまで待ちます。その後にだけ
+`mode=explicit-job-termination` を確定し、finally で Job handle を閉じます。query failure / malformed shape、
+member 残存、termination failure、CloseHandle failure はそれぞれ typed terminal rejection です。
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` は全 branch の fail-safe として維持しますが、close による暗黙 terminate
+自体は proof ではありません。
 
-additive な `cleanupObservation.jobIdentityObservation` は
-`identityAttemptCount` / `identityFailureCount` / `recoveryAttemptCount` /
-`disappearedAfterSnapshotCount` / `stillPresentAfterFailureCount` /
-`failureType` / `failureErrorCode` を保持します。counter は該当する範囲（最大 4096）に bounded で、
-`recoveryAttemptCount <= identityFailureCount <= identityAttemptCount`、および
-`disappearedAfterSnapshotCount + stillPresentAfterFailureCount <= recoveryAttemptCount` を検証し、
-first typed cause と error code を保持します。launch containment と cleanup は同じ object を共有するため、
-launch 時の観測も paired report に残ります。PID の残存は disappearance proof ではなく、resolver は従来どおり
-throw します。ただし、初回 Job membership が検証済みで、任意の graceful-close polling 中に限って
-`stillPresentAfterFailureCount` がその呼出しで正確に 1 増えた場合、coordinator は graceful polling を中断し、
-PID を操作せず kill-on-close Job へ所有権を移します。`gracefulCloseAttempted=true` /
-`gracefulCloseSucceeded=false` / `gracefulCloseFallbackType=identity-still-present` を bounded な診断として
-保持し、first-cause の `jobIdentityObservation.failureType` / error code は上書きしません。初回 Job query の
-失敗、fresh Job query の unavailable / malformed / exception、identity invocation / conversion failure、その他の
-graceful 例外は terminal cleanup failure のままです。fallback 後も Job close、最終 tracked / exact-path sweep、
-zero survivor、zero terminal cleanup-error、closed Job handle の各 gate はすべて必須で、一つでも欠ければ
-fail closed です。
+`containmentProof` は payload-free で、`version`、`mode`、`terminalState`、
+`terminationAttempted` / `terminationSucceeded` / `terminationErrorCode`、正規化した
+`terminalJobQuery`、`terminalJobMemberCount`、`jobEmptyProven`、`identityReconciliation` だけを含みます。
+PID、path、command line、handle、raw query object は含みません。`jobEmptyProven=true` は必ず successful な
+terminal query、`terminalJobMemberCount=0`、assigned/listed count と zero の一致を要求します。
+termination 未試行なら mode は `graceful-job-empty`、試行かつ成功なら
+`explicit-job-termination` でなければなりません。`unavailable` は empty proof がない場合だけです。
+verified terminal state は mode と一対一で、未知 enum、bool/integer の暗黙 cast、partial field、または
+cross-field equation の不一致を拒否します。
+
+`QueryProcessIdentity` failure telemetry は payload を持たない operation enum
+`none` / `open-process` / `query-image-path` / `get-process-times` / `exception` と、明示的な observer role
+`launch-job-member` / `graceful-job-member` / `post-close-tracked-history` / `exact-path` を保持します。
+post-close tracked-history の identity failure は、先に `jobEmptyProven=true` が成立し、operation と role が
+allowlist に入り、fresh typed census でも対象が消えている場合だけ reconcile できます。
+`identityReconciliation` は attempted/accepted、operation、observerRole、reason のみを記録します。
+exact-path observer failure は常に unreconciled terminal failure です。任意の error 5、PID/path の不在、
+zero survivor、または CloseHandle success だけを cleanup proof へ昇格させません。
+
+v2 より前の `jobQuerySucceeded`、`jobCloseSucceeded`、tracked/exact-path sweep、zero survivor、raw の
+`processCleanupVerified=true` は診断互換性のため読み取れても、containment authority としては無効です。
+present な v2 object が malformed、unknown、または equation 不一致なら fail closed です。v2 が valid でも、
+post-close tracked sweep、exact-path sweep、zero survivor、zero cleanup error、closed Job handle の既存 gate は
+すべて必要で、一つでも欠ければ `rejected-post-close-observation` になります。
 
 paired converter は success 判定の前に launch と cleanup の nested object を照合します。旧 v1 のように
 両方の raw object が欠落している場合は、両方を明示的な `not-observed` に正規化して neutral とします。
@@ -401,7 +402,11 @@ rtk proxy powershell -NoProfile -ExecutionPolicy Bypass -File tools\measure-star
 セルフテストは JSONL のスキーマ検査、QPC 差分からの `firstContentPaintedMs` の算出、破損行の
 隔離、四つの process-diagnostic checkpoint、root exit state の `STILL_ACTIVE` 判定、paired trace の
 allowlist 順序・role/value・elapsed 変換・256 件上限・malformed/clock 不整合の fail-closed も確認します。
-Sakura 自体は起動しません。PowerShell 5.1 (`powershell.exe`) と PowerShell 7 (`pwsh`) の両方で
+さらに v2 containment state machine の全 terminal branch、operation/observer enum、payload-free shape、
+query/time bound、および実際の non-GUI 2-member Job に対する TerminateJobObject 後の queryable handle と
+zero membership before close を検証します。`-SelfTest` は Sakura、MSBuild、CMake、Cargo、Python、package
+restore、runtime stage、GUI を起動せず、build artifact も生成しません。PowerShell 5.1
+(`powershell.exe`) と PowerShell 7 (`pwsh`) の両方で
 shared script と paired script の `-SelfTest` を実行してから実測へ進めます。
 
 ## アプリ内スタートアップトレース
@@ -718,7 +723,9 @@ scrollbar layout で判定します。`WaitForInputIdle` は初期化完了前�
 `condition`、`iteration`、`processApiReturnMs`、`topLevelHwndMs`、`visibleMs`、`dwmFlushMs`、
 `captionReadyMs`、`inputIdleMs`、`documentReadyMs`、`verticalScrollMaximum`、
 `startupDiagnostics`、`startupTrace`、`inputIdleReached`、`success`、`error`、`screenshotPath`、
-`processCleanupVerified`、`profileCleanupVerified`、`cleanupVerified` を記録します。`summaries` は
+`containmentProof`、`processCleanupVerified`、`profileCleanupVerified`、`cleanupVerified` を記録します。
+`containmentProof.version=2` がない、または `jobEmptyProven=false` の run は、他の cleanup field が clean でも
+`processCleanupVerified=false` です。`summaries` は
 7 マイルストーンごとに `count`、`medianMs`、`p95Ms`（nearest-rank ceiling）、`minMs`、`maxMs`、
 `meanMs` を条件別に集計します。
 `CaptureScreenshot` 時の画像名は
