@@ -303,7 +303,7 @@ producer の final-image receipt / native evidence を paired runner と ledger 
 Release cell は別の新規 output root と `-Configuration Release`、別の新規 final-image stage root で
 同様に生成します。dirty checkout や manifest producer を通していない artifact は `-CollectOnly` に
 限定し、qualified 証拠として扱いません。producer の `-SelfTest` は両方の PowerShell host で
-build / Cargo / Python / runtime-stage / GUI を起動せずに transaction、cleanup、manifest、
+MSBuild、Cargo、Python、runtime-stage コマンド、GUI を起動せずに transaction、cleanup、manifest、
 Rust toolchain exit-code の契約だけを検証します。
 
 `-QualifiedFinalImage` を指定しない既存経路は引き続き `build-dev.bat x64 <Configuration>` の
