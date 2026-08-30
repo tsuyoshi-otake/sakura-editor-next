@@ -179,9 +179,13 @@ class ReleasePromotionWorkflowContractTests(unittest.TestCase):
 
     def test_smoke_validates_contract_before_archive_or_process_execution(self) -> None:
         source = _read_powershell(SMOKE_SCRIPT)
+        validator = _function_body(source, "Assert-ReleaseBuildContract")
         validation = source.index("Assert-ReleaseBuildContract -Provenance $provenance")
         archive = source.index("$installerArchive = Get-ArchiveRecord", validation)
         process = source.index("$installerProcess = Start-Process", validation)
+        self.assertNotIn(".Contains(", validator)
+        self.assertNotRegex(validator, r"PSObject\.Properties\[")
+        self.assertIn("$property.Name -cne $entry.Name", validator)
         self.assertLess(validation, archive)
         self.assertLess(validation, process)
 
@@ -223,6 +227,11 @@ class ReleaseBuildContractExecutableTests(unittest.TestCase):
             non_string = dict(EXACT_BUILD_CONTRACT)
             non_string[key] = True
             tampered.append({"build_contract": non_string})
+            wrong_case = {
+                (name.upper() if name == key else name): value
+                for name, value in EXACT_BUILD_CONTRACT.items()
+            }
+            tampered.append({"build_contract": wrong_case})
 
         for host in _powershell_hosts():
             for provenance in tampered:

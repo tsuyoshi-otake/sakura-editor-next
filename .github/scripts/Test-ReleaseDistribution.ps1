@@ -48,38 +48,36 @@ function Read-RequiredJson {
 function Assert-ReleaseBuildContract {
     param([Parameter(Mandatory)] $Provenance)
 
-    $contractProperty = $Provenance.PSObject.Properties['build_contract']
-    if ($null -eq $contractProperty -or $null -eq $contractProperty.Value) {
+    $contractProperties = @($Provenance.PSObject.Properties | Where-Object {
+        $_.Name -ceq 'build_contract'
+    })
+    if ($contractProperties.Count -ne 1 -or $null -eq $contractProperties[0].Value) {
         throw "Release provenance is missing required property 'build_contract'."
     }
-    $contract = $contractProperty.Value
-    $expected = [ordered]@{
-        platform = 'x64'
-        configuration = 'Release'
-        utf16_backend = 'cpp'
-        output_backend = 'cpp'
-        utf16_production_package = 'true'
-        output_production_package = 'true'
-    }
+    $contract = $contractProperties[0].Value
+    $expected = @(
+        [pscustomobject]@{ Name = 'platform'; Value = 'x64' }
+        [pscustomobject]@{ Name = 'configuration'; Value = 'Release' }
+        [pscustomobject]@{ Name = 'utf16_backend'; Value = 'cpp' }
+        [pscustomobject]@{ Name = 'output_backend'; Value = 'cpp' }
+        [pscustomobject]@{ Name = 'utf16_production_package'; Value = 'true' }
+        [pscustomobject]@{ Name = 'output_production_package'; Value = 'true' }
+    )
     $properties = @($contract.PSObject.Properties)
     if ($properties.Count -ne $expected.Count) {
         throw "Release build contract must contain exactly $($expected.Count) properties."
     }
-    foreach ($property in $properties) {
-        if (-not $expected.Contains($property.Name)) {
-            throw "Release build contract contains unexpected property '$($property.Name)'."
-        }
-    }
-    foreach ($entry in $expected.GetEnumerator()) {
-        $property = $contract.PSObject.Properties[$entry.Key]
-        if ($null -eq $property) {
-            throw "Release build contract is missing required property '$($entry.Key)'."
+    for ($index = 0; $index -lt $expected.Count; ++$index) {
+        $property = $properties[$index]
+        $entry = $expected[$index]
+        if ($property.Name -cne $entry.Name) {
+            throw "Release build contract property $index is '$($property.Name)', expected exact name '$($entry.Name)'."
         }
         if (-not ($property.Value -is [string])) {
-            throw "Release build contract property '$($entry.Key)' must be a string."
+            throw "Release build contract property '$($entry.Name)' must be a string."
         }
         if ($property.Value -cne $entry.Value) {
-            throw "Release build contract property '$($entry.Key)' is '$($property.Value)', expected exact value '$($entry.Value)'."
+            throw "Release build contract property '$($entry.Name)' is '$($property.Value)', expected exact value '$($entry.Value)'."
         }
     }
 }
