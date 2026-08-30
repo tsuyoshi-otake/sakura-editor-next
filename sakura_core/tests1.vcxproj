@@ -223,6 +223,7 @@
     <ClCompile Include="..\src\test\cpp\tests1\textmate\OnigmoRegexEngineTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\senp\SenpLanguageServiceTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkbenchPanelHostTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\ViewContainerPagePoolTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkbenchRuntimeTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\WorkspaceConfigurationDocumentParserTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\WorkspaceWindowTransitionServiceTest.cpp" />

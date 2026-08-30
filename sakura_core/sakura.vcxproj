@@ -692,6 +692,9 @@
 	<ClInclude Include="..\sakura_core\workbench\explorer\ExplorerResourcePath.h" />
 	<ClInclude Include="..\sakura_core\workbench\viewcontainer\CViewContainerHost.h" />
 	<ClInclude Include="..\sakura_core\workbench\viewcontainer\CViewContainerPages.h" />
+	<ClInclude Include="..\sakura_core\workbench\viewcontainer\IViewContainerPage.h" />
+	<ClInclude Include="..\sakura_core\workbench\viewcontainer\ViewContainerPagePool.h" />
+	<ClInclude Include="..\sakura_core\workbench\viewcontainer\ViewContainerPageRegistry.h" />
 	<ClInclude Include="..\sakura_core\workbench\panel\CBottomPanelTool.h" />
 	<ClInclude Include="..\sakura_core\workbench\outline\COutlineWorkbenchTool.h" />
 	<ClInclude Include="..\sakura_core\workbench\account\AccountDiscovery.h" />
@@ -1380,6 +1383,8 @@
 	<ClCompile Include="..\sakura_core\workbench\explorer\CExplorerTool.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\viewcontainer\CViewContainerHost.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\viewcontainer\CViewContainerPages.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\viewcontainer\ViewContainerPagePool.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\viewcontainer\ViewContainerPageRegistry.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\extensions\CExtensionsWorkbenchTool.cpp" />
 	<ClCompile Include="..\sakura_core\senp\SenpLanguageService.cpp" />
 	<ClCompile Include="..\sakura_core\senp\SenpManagementService.cpp" />

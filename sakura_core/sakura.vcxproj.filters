@@ -1210,6 +1210,15 @@
 	<ClInclude Include="..\sakura_core\workbench\viewcontainer\CViewContainerPages.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\viewcontainer\IViewContainerPage.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\viewcontainer\ViewContainerPagePool.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\viewcontainer\ViewContainerPageRegistry.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\outline\COutlineWorkbenchTool.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
@@ -3179,6 +3188,12 @@
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\viewcontainer\CViewContainerPages.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\viewcontainer\ViewContainerPagePool.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\viewcontainer\ViewContainerPageRegistry.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\extensions\CExtensionsWorkbenchTool.cpp">
