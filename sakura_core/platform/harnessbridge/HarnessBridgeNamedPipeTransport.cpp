@@ -118,7 +118,7 @@ public:
 		stopping.store(true, std::memory_order_release);
 		if (stopEvent) ::SetEvent(stopEvent);
 		if (acceptThread.joinable()) {
-			::CancelSynchronousIo(acceptThread.native_handle());
+			::CancelSynchronousIo(reinterpret_cast<HANDLE>(acceptThread.native_handle()));
 			acceptThread.join();
 		}
 		std::vector<std::shared_ptr<Session>> owned;
@@ -127,7 +127,7 @@ public:
 			owned.swap(sessions);
 		}
 		for (const auto& session : owned) if (session->thread.joinable()) {
-			::CancelSynchronousIo(session->thread.native_handle());
+			::CancelSynchronousIo(reinterpret_cast<HANDLE>(session->thread.native_handle()));
 		}
 		for (const auto& session : owned) {
 			if (session->thread.joinable()) session->thread.join();
