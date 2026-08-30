@@ -45,6 +45,45 @@ function Read-RequiredJson {
     return $json
 }
 
+function Assert-ReleaseBuildContract {
+    param([Parameter(Mandatory)] $Provenance)
+
+    $contractProperty = $Provenance.PSObject.Properties['build_contract']
+    if ($null -eq $contractProperty -or $null -eq $contractProperty.Value) {
+        throw "Release provenance is missing required property 'build_contract'."
+    }
+    $contract = $contractProperty.Value
+    $expected = [ordered]@{
+        platform = 'x64'
+        configuration = 'Release'
+        utf16_backend = 'cpp'
+        output_backend = 'cpp'
+        utf16_production_package = 'true'
+        output_production_package = 'true'
+    }
+    $properties = @($contract.PSObject.Properties)
+    if ($properties.Count -ne $expected.Count) {
+        throw "Release build contract must contain exactly $($expected.Count) properties."
+    }
+    foreach ($property in $properties) {
+        if (-not $expected.Contains($property.Name)) {
+            throw "Release build contract contains unexpected property '$($property.Name)'."
+        }
+    }
+    foreach ($entry in $expected.GetEnumerator()) {
+        $property = $contract.PSObject.Properties[$entry.Key]
+        if ($null -eq $property) {
+            throw "Release build contract is missing required property '$($entry.Key)'."
+        }
+        if (-not ($property.Value -is [string])) {
+            throw "Release build contract property '$($entry.Key)' must be a string."
+        }
+        if ($property.Value -cne $entry.Value) {
+            throw "Release build contract property '$($entry.Key)' is '$($property.Value)', expected exact value '$($entry.Value)'."
+        }
+    }
+}
+
 function Assert-SafeLeafName {
     param(
         [Parameter(Mandatory)] [string] $Name,
@@ -386,6 +425,7 @@ try {
     if ($null -eq $sourceEvidence -or $null -eq $provenance.source -or $null -eq $provenance.payload) {
         throw 'Release evidence is missing a required top-level object.'
     }
+    Assert-ReleaseBuildContract -Provenance $provenance
 
     $sourceTag = Get-RequiredStringProperty -Object $sourceEvidence -Name 'tag_name' -Description 'Release source evidence'
     $sourceSha = Get-RequiredStringProperty -Object $sourceEvidence -Name 'source_sha' -Description 'Release source evidence'

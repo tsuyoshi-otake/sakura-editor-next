@@ -113,6 +113,14 @@ Outputも同様にMSBuildでは`/p:SAKURA_OUTPUT_BACKEND=cpp|rust`、CMakeでは
 Outputのproduction判定はUTF-16のproductionフラグから推測せず、Rust採用は別のC1e gateで更新します。
 `both`など未知のモードもCargo・コンパイル・パッケージ処理の前に拒否します。
 
+release promotionのexact Release compileは、通常ビルドへ影響させないstep-local環境で
+`SAKURA_UTF16_BACKEND=cpp`、`SAKURA_OUTPUT_BACKEND=cpp`、
+`SAKURA_UTF16_PRODUCTION_PACKAGE=true`、`SAKURA_OUTPUT_PRODUCTION_PACKAGE=true`の4値を
+`build-sln.bat`より前に設定します。旧tag向けの`GITHUB_SHA`差し替えは従来どおりそのcmd子プロセスだけに
+限定します。release provenanceは`x64`/`Release`と4値を`build_contract`へ記録し、distribution smokeは
+archive展開やinstaller/application起動より前に、欠落、文字列以外、大小文字違い、`rust`、`false`を拒否します。
+これはC++ production authorityを証明するrelease専用contractであり、Issue #274のRust Output採用はHOLDのままです。
+
 ## ビルド手順
 
 ### 実行ファイルのみ

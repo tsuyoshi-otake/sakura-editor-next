@@ -574,7 +574,9 @@ jobs:
       if: ${{ inputs.release_promotion }}
       env:
         SAKURA_UTF16_BACKEND: cpp
+        SAKURA_OUTPUT_BACKEND: cpp
         SAKURA_UTF16_PRODUCTION_PACKAGE: true
+        SAKURA_OUTPUT_PRODUCTION_PACKAGE: true
       run: |
         set "GITHUB_SHA=${{ env.RELEASE_SOURCE_SHA }}"
         call build-sln.bat ${{ matrix.platform }} ${{ matrix.config }}
@@ -665,10 +667,20 @@ jobs:
       if: ${{ matrix.config == 'Release' && inputs.release_promotion }}
       env:
         RELEASE_TAG: ${{ inputs.release_tag }}
+        SAKURA_UTF16_BACKEND: cpp
+        SAKURA_OUTPUT_BACKEND: cpp
+        SAKURA_UTF16_PRODUCTION_PACKAGE: true
+        SAKURA_OUTPUT_PRODUCTION_PACKAGE: true
       run: >-
         .\release-orchestration\.github\scripts\Write-ReleaseProvenance.ps1
         -SourceSha "${{ inputs.source_sha }}"
         -ReleaseTag "$env:RELEASE_TAG"
+        -Platform "${{ matrix.platform }}"
+        -Configuration "${{ matrix.config }}"
+        -Utf16Backend "$env:SAKURA_UTF16_BACKEND"
+        -OutputBackend "$env:SAKURA_OUTPUT_BACKEND"
+        -Utf16ProductionPackage "$env:SAKURA_UTF16_PRODUCTION_PACKAGE"
+        -OutputProductionPackage "$env:SAKURA_OUTPUT_PRODUCTION_PACKAGE"
         -OutputPath release-provenance.json
 
     - name: Upload release provenance

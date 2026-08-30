@@ -8,6 +8,12 @@ param(
     [ValidatePattern('^v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)-build\.(?:[1-9][0-9]*)$')]
     [string] $ReleaseTag,
 
+    [Parameter(Mandatory)] [string] $Platform,
+    [Parameter(Mandatory)] [string] $Configuration,
+    [Parameter(Mandatory)] [string] $Utf16Backend,
+    [Parameter(Mandatory)] [string] $OutputBackend,
+    [Parameter(Mandatory)] [string] $Utf16ProductionPackage,
+    [Parameter(Mandatory)] [string] $OutputProductionPackage,
     [Parameter(Mandatory)]
     [string] $OutputPath
 )
@@ -133,6 +139,28 @@ function Write-Utf8NoBomFile {
 }
 
 $sourceSha = $SourceSha.ToLowerInvariant()
+$buildContract = [ordered]@{
+    platform = $Platform
+    configuration = $Configuration
+    utf16_backend = $Utf16Backend
+    output_backend = $OutputBackend
+    utf16_production_package = $Utf16ProductionPackage
+    output_production_package = $OutputProductionPackage
+}
+$expectedBuildContract = [ordered]@{
+    platform = 'x64'
+    configuration = 'Release'
+    utf16_backend = 'cpp'
+    output_backend = 'cpp'
+    utf16_production_package = 'true'
+    output_production_package = 'true'
+}
+foreach ($entry in $expectedBuildContract.GetEnumerator()) {
+    $actual = [string] $buildContract[$entry.Key]
+    if ($actual -cne $entry.Value) {
+        throw "Release build contract '$($entry.Key)' is '$actual', expected exact value '$($entry.Value)'."
+    }
+}
 $tagMatch = [regex]::Match(
     $ReleaseTag,
     '^v(?<major>0|[1-9][0-9]*)\.(?<minor>0|[1-9][0-9]*)\.(?<patch>0|[1-9][0-9]*)-build\.(?<revision>[1-9][0-9]*)$'
@@ -208,6 +236,7 @@ $result = [ordered]@{
         revision_count = $revisionCount
         file_version = $expectedFileVersion
     }
+    build_contract = $buildContract
     payload = [ordered]@{
         application = $application
         installer = $installer

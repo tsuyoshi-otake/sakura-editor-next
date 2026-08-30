@@ -73,6 +73,11 @@ CMakeには同じ目的のcache option `SAKURA_SKIP_MODULES_CHECK=ON` がある�
 |SAKURA_MSBUILD_BINLOG|未設定（無効）|診断専用。`msbuild_command` が構築するすべての MSBuild 呼び出し（`build-dev.bat`/`build-sln.bat`/`build-all.bat`）に `/bl:<パス>` を追加し、MSBuild バイナリログを指定パスへ出力する。値は空文字列であってはならず、設定した場合は空白のみの値も含めて明示的エラーになる。ビルド最適化・アセンブリ一覧・LTCG・ビルドターゲットには影響しない。計測が終わったら解除する。|
 |SAKURA_MSBUILD_PERFORMANCE_SUMMARY|未設定（無効）|診断専用。`1` または `true` の場合、`msbuild_command` が構築するすべての MSBuild 呼び出しに `/clp:PerformanceSummary` を追加し、コンソールログの末尾にタスク別実行時間の要約を出力する。`0` または `false` は明示的に無効（未設定と同じ挙動）。それ以外の値は明示的エラーになる（無効値を暗黙に無効側へ倒さない）。ビルド最適化・アセンブリ一覧・LTCG・ビルドターゲットには影響しない。|
 
+release promotionだけは、exact `x64`/`Release` compileのstep内で4つのselector/production変数を
+`cpp`/`cpp`/`true`/`true`へ明示します。通常のDebug/Release branchやjob-global環境には昇格させません。
+同じexact値はrelease provenanceの`build_contract`へ記録され、distribution smokeがpayload実行前に
+型と大小文字を含めて照合します。Rust Outputのproduction採用を許可するものではなく、Issue #274はHOLDです。
+
 ## zipArtifacts.bat で設定する環境変数
 
 ### 生成する環境変数
