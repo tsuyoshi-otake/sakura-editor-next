@@ -44,6 +44,7 @@ struct FakePageState final {
 	std::vector<FakeStep> failures;
 	std::optional<ViewContainerPageHost> attachedHost;
 	ViewContainerNativeHandle parent{};
+	ViewContainerNativeHandle nestedParent{};
 	bool focused{};
 	bool closed{};
 	int factoryCalls{};
@@ -72,6 +73,7 @@ public:
 	{
 		m_state->attachedHost.reset();
 		m_state->parent = 0;
+		m_state->nestedParent = 0;
 		m_state->focused = false;
 		--m_state->livePages;
 		++m_state->destructCalls;
@@ -106,6 +108,7 @@ public:
 			return EViewContainerPageReparentStatus::Failed;
 		}
 		m_state->parent = nativeParent;
+		m_state->nestedParent = nativeParent;
 		return EViewContainerPageReparentStatus::Reparented;
 	}
 
@@ -139,6 +142,7 @@ public:
 		m_state->closed = true;
 		m_state->attachedHost.reset();
 		m_state->parent = 0;
+		m_state->nestedParent = 0;
 		m_state->focused = false;
 		return EViewContainerPageCloseStatus::Closed;
 	}
@@ -201,16 +205,20 @@ TEST(ViewContainerPagePool, RepeatedAcquireCreatesOneLogicalPage)
 	EXPECT_EQ(0, state->livePages);
 }
 
-TEST(ViewContainerPagePool, CoversAttachMoveDetachAndReattachTransitionsWithoutDoubleAttachment)
+TEST(ViewContainerPagePool, KeepsOneLogicalPageAndAllOwnedWindowsAcrossBothSideBars)
 {
 	auto state = std::make_shared<FakePageState>();
 	auto registry = RegistryWith(state);
 	ViewContainerPagePool pool(registry);
 	const auto sideBar = SideBarHost();
 	const auto auxiliary = AuxiliaryHost();
+	const auto logicalPage = pool.Acquire(kContainerId).page;
+	ASSERT_NE(nullptr, logicalPage);
 
 	EXPECT_EQ(EViewContainerPagePoolAttachStatus::Attached,
 		pool.Attach(kContainerId, sideBar).status);
+	EXPECT_EQ(logicalPage, pool.Acquire(kContainerId).page);
+	EXPECT_EQ(sideBar.nativeParent, state->nestedParent);
 	const auto attachCalls = state->calls.size();
 	EXPECT_EQ(EViewContainerPagePoolAttachStatus::AlreadyAttached,
 		pool.Attach(kContainerId, sideBar).status);
@@ -221,11 +229,13 @@ TEST(ViewContainerPagePool, CoversAttachMoveDetachAndReattachTransitionsWithoutD
 		pool.Attach(kContainerId, auxiliary).status);
 	EXPECT_EQ(std::optional(auxiliary), state->attachedHost);
 	EXPECT_EQ(auxiliary.nativeParent, state->parent);
+	EXPECT_EQ(auxiliary.nativeParent, state->nestedParent);
 	EXPECT_TRUE(state->focused);
 
 	EXPECT_EQ(EViewContainerPagePoolDetachStatus::Detached, pool.Detach(kContainerId).status);
 	EXPECT_FALSE(state->attachedHost);
 	EXPECT_EQ(0U, state->parent);
+	EXPECT_EQ(0U, state->nestedParent);
 	EXPECT_FALSE(state->focused);
 	EXPECT_EQ(EViewContainerPagePoolDetachStatus::AlreadyDetached,
 		pool.Detach(kContainerId).status);
@@ -234,7 +244,10 @@ TEST(ViewContainerPagePool, CoversAttachMoveDetachAndReattachTransitionsWithoutD
 		pool.Attach(kContainerId, sideBar).status);
 	EXPECT_EQ(std::optional(sideBar), state->attachedHost);
 	EXPECT_EQ(sideBar.nativeParent, state->parent);
+	EXPECT_EQ(sideBar.nativeParent, state->nestedParent);
 	EXPECT_TRUE(state->focused);
+	EXPECT_EQ(logicalPage, pool.Acquire(kContainerId).page);
+	EXPECT_EQ(1, state->factoryCalls);
 }
 
 TEST(ViewContainerPagePool, RejectsUnsupportedDestinationBeforeCreatingAPage)
@@ -250,6 +263,32 @@ TEST(ViewContainerPagePool, RejectsUnsupportedDestinationBeforeCreatingAPage)
 	EXPECT_EQ(EViewContainerPageCleanupOwner::None, result.cleanupOwner);
 	EXPECT_EQ(0, state->factoryCalls);
 	EXPECT_EQ(0U, pool.Size());
+	EXPECT_TRUE(state->calls.empty());
+	EXPECT_EQ(0U, state->parent);
+	EXPECT_EQ(0U, state->nestedParent);
+}
+
+TEST(ViewContainerPagePool, RejectsUnsupportedDestinationWithoutTouchingAnExistingPage)
+{
+	auto state = std::make_shared<FakePageState>();
+	auto registry = RegistryWith(state);
+	ViewContainerPagePool pool(registry);
+	const auto sideBar = SideBarHost();
+	ASSERT_EQ(EViewContainerPagePoolAttachStatus::Attached,
+		pool.Attach(kContainerId, sideBar).status);
+	state->focused = true;
+	state->calls.clear();
+	const ViewContainerPageHost panel{ "workbench.parts.panel",
+		layout::EViewContainerLocation::Panel, 303 };
+
+	const auto result = pool.Attach(kContainerId, panel);
+	EXPECT_EQ(EViewContainerPagePoolAttachStatus::DestinationNotSupported, result.status);
+	EXPECT_TRUE(state->calls.empty());
+	EXPECT_EQ(std::optional(sideBar), state->attachedHost);
+	EXPECT_EQ(sideBar.nativeParent, state->parent);
+	EXPECT_EQ(sideBar.nativeParent, state->nestedParent);
+	EXPECT_TRUE(state->focused);
+	EXPECT_EQ(1, state->factoryCalls);
 }
 
 TEST(ViewContainerPagePool, EveryForwardMoveFailureRestoresTheOldAttachmentAndFocus)
@@ -280,6 +319,7 @@ TEST(ViewContainerPagePool, EveryForwardMoveFailureRestoresTheOldAttachmentAndFo
 		EXPECT_EQ(std::optional(oldHost), result.finalState->host);
 		EXPECT_EQ(std::optional(oldHost), state->attachedHost);
 		EXPECT_EQ(oldHost.nativeParent, state->parent);
+		EXPECT_EQ(oldHost.nativeParent, state->nestedParent);
 		EXPECT_TRUE(state->focused);
 		EXPECT_EQ(EViewContainerPageCleanupOwner::PagePool, result.cleanupOwner);
 		EXPECT_TRUE(state->failures.empty());
@@ -307,7 +347,35 @@ TEST(ViewContainerPagePool, RollbackFailureIsExplicitAndLeavesAKnownSingleAttach
 	EXPECT_FALSE(result.finalState->host);
 	EXPECT_FALSE(state->attachedHost);
 	EXPECT_EQ(AuxiliaryHost().nativeParent, state->parent);
+	EXPECT_EQ(AuxiliaryHost().nativeParent, state->nestedParent);
 	EXPECT_EQ(EViewContainerPageCleanupOwner::PagePool, result.cleanupOwner);
+}
+
+TEST(ViewContainerPagePool, RollbackDetachFailureReportsTheDestinationAsTheStableOwner)
+{
+	auto state = std::make_shared<FakePageState>();
+	auto registry = RegistryWith(state);
+	ViewContainerPagePool pool(registry);
+	const auto oldHost = SideBarHost();
+	const auto destination = AuxiliaryHost();
+	ASSERT_EQ(EViewContainerPagePoolAttachStatus::Attached,
+		pool.Attach(kContainerId, oldHost).status);
+	state->focused = true;
+	// Forward focus restore fails after destination attach. Rollback then cannot
+	// detach that destination, so callers must not attach another page beside it.
+	state->failures = { FakeStep::RestoreFocus, FakeStep::Detach };
+
+	const auto result = pool.Attach(kContainerId, destination);
+	EXPECT_EQ(EViewContainerPagePoolAttachStatus::RollbackFailed, result.status);
+	EXPECT_EQ(EViewContainerPageTransitionStage::RestoreFocus, result.failedStage);
+	EXPECT_EQ(EViewContainerPageTransitionStage::Detach, result.rollbackFailedStage);
+	ASSERT_TRUE(result.finalState);
+	EXPECT_EQ(EViewContainerPageStableState::Attached, result.finalState->state);
+	EXPECT_EQ(std::optional(destination), result.finalState->host);
+	EXPECT_EQ(std::optional(destination), state->attachedHost);
+	EXPECT_EQ(destination.nativeParent, state->parent);
+	EXPECT_EQ(destination.nativeParent, state->nestedParent);
+	EXPECT_FALSE(state->focused);
 }
 
 TEST(ViewContainerPagePool, FailedDetachReparentRollsBackTheOldAttachmentAndFocus)
@@ -329,6 +397,7 @@ TEST(ViewContainerPagePool, FailedDetachReparentRollsBackTheOldAttachmentAndFocu
 	EXPECT_EQ(EViewContainerPageStableState::Attached, result.finalState->state);
 	EXPECT_EQ(std::optional(oldHost), state->attachedHost);
 	EXPECT_EQ(oldHost.nativeParent, state->parent);
+	EXPECT_EQ(oldHost.nativeParent, state->nestedParent);
 	EXPECT_TRUE(state->focused);
 }
 

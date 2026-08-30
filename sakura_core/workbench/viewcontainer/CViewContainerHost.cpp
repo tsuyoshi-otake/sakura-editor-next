@@ -207,7 +207,8 @@ void CViewContainerHost::Deactivate()
 
 bool CViewContainerHost::PreTranslateMessage(MSG& message)
 {
-	if (!m_pages || !m_pages->IsUsable() || m_page.empty() || !OwnsPage(m_page)) return false;
+	if (!m_pages || !m_pages->IsUsable() || m_page.empty() || !OwnsPage(m_page)
+		|| !m_pages->IsMessageTarget(m_page, message.hwnd)) return false;
 	if (m_page == pageIds::SourceControl) {
 		auto* scm = m_pages->SourceControl();
 		return scm != nullptr && scm->PreTranslateMessage(message);
@@ -223,27 +224,72 @@ bool CViewContainerHost::PreTranslateMessage(MSG& message)
 	if (m_page != pageIds::Explorer) return false;
 	auto* outline = m_pages->Outline();
 	auto* explorer = m_pages->Explorer();
-	return (m_pages->IsOutlineExpanded() && outline != nullptr && outline->PreTranslateMessage(message))
-		|| (explorer != nullptr && explorer->PreTranslateMessage(message));
+	const auto belongsTo = [&message](HWND root) noexcept {
+		return root != nullptr && (message.hwnd == root || ::IsChild(root, message.hwnd));
+	};
+	if (m_pages->IsOutlineExpanded() && outline != nullptr
+		&& belongsTo(outline->GetHwnd())) {
+		return outline->PreTranslateMessage(message);
+	}
+	return explorer != nullptr && belongsTo(explorer->GetHwnd())
+		&& explorer->PreTranslateMessage(message);
 }
 
 void CViewContainerHost::Close()
 {
 	if (m_closed) return;
-	m_closed = true;
 	// The pages are shared with the other side bar and are owned elsewhere. Detaching
 	// them before this window dies keeps their HWNDs valid for the surviving host.
+	bool attachedPagePreserved = false;
 	if (m_pages && m_pages->IsUsable()) {
 		for (const auto& id : m_pages->PageIds()) {
 			if (m_pages->AttachedHost(id) == m_window) {
-				m_pages->Attach(id, nullptr, "workbench.window.detached");
+				const auto detached = m_pages->Detach(id);
+				const bool stillAttached = detached.finalState
+					? FinalStateOwnsHost(detached.finalState)
+					: m_pages->AttachedHost(id) == m_window;
+				if (!detached.Succeeded() && stillAttached) {
+					attachedPagePreserved = true;
+				}
 			}
 		}
+	}
+	if (attachedPagePreserved) {
+		// Destroying this HWND would recursively destroy the pool-owned wrapper. Leave
+		// an inert child for the page owner to detach or close. Park it outside the
+		// enclosing Panel host so that parent's teardown cannot destroy the wrapper.
+		m_closed = true;
+		bool preservedOutsideOwner = false;
+		if (m_window != nullptr && ::IsWindow(m_window)) {
+			const HWND parkingParent = m_pages ? m_pages->ParkingParent() : nullptr;
+			if (parkingParent != nullptr && ::IsWindow(parkingParent)) {
+				if (::GetParent(m_window) == parkingParent) {
+					preservedOutsideOwner = true;
+				} else {
+					::SetLastError(ERROR_SUCCESS);
+					const HWND previousParent = ::SetParent(m_window, parkingParent);
+					preservedOutsideOwner = (previousParent != nullptr
+						|| ::GetLastError() == ERROR_SUCCESS)
+						&& ::GetParent(m_window) == parkingParent;
+				}
+			}
+			::ShowWindow(m_window, SW_HIDE);
+			::SetWindowLongPtrW(m_window, GWLP_USERDATA, 0);
+		}
+		m_closeStatus = preservedOutsideOwner
+			? EViewContainerHostCloseStatus::DetachedPagePreserved
+			: EViewContainerHostCloseStatus::DetachedPagePreservationFailed;
+		m_window = nullptr;
+		m_backBuffer.Reset();
+		ReleaseCodiconFont();
+		return;
 	}
 	if (m_window != nullptr && ::IsWindow(m_window)) ::DestroyWindow(m_window);
 	m_window = nullptr;
 	m_backBuffer.Reset();
 	ReleaseCodiconFont();
+	m_closeStatus = EViewContainerHostCloseStatus::Closed;
+	m_closed = true;
 }
 
 void CViewContainerHost::SetPalette(const theme::ThemePalette& palette)
@@ -316,7 +362,11 @@ void CViewContainerHost::FocusOutline()
 {
 	// Outline is a View nested in the Explorer ViewContainer, so focusing it also
 	// selects that container. This mirrors VS Code's `outline.focus`.
-	ShowPage(pageIds::Explorer);
+	const auto shown = ShowPage(pageIds::Explorer);
+	if (shown != EViewContainerHostPageStatus::Applied
+		&& shown != EViewContainerHostPageStatus::AlreadyApplied) {
+		return;
+	}
 	// Focus is a projection/activation operation, not a user expansion request.
 	SetOutlineExpanded(true);
 	if (m_pages) {
@@ -324,14 +374,119 @@ void CViewContainerHost::FocusOutline()
 	}
 }
 
-void CViewContainerHost::ShowPage(const std::string_view containerId)
+EViewContainerHostPageStatus CViewContainerHost::ShowPage(
+	const std::string_view containerId)
 {
-	if (m_closed || !m_pages) return;
-	// A container with no page in the pool would leave this Part claiming to render something
-	// that has no window, so it degrades to the empty state instead.
-	m_page = m_pages->Contains(containerId) ? std::string(containerId) : std::string{};
-	if (!m_page.empty() && m_pages->IsUsable()) {
-		m_pages->Attach(m_page, m_window, m_logicalHostId);
+	if (m_closed || !m_pages || !m_pages->IsUsable()) {
+		return EViewContainerHostPageStatus::InvalidHost;
+	}
+	std::string desired;
+	try {
+		desired.assign(containerId);
+	} catch (...) {
+		return EViewContainerHostPageStatus::AttachFailed;
+	}
+	if (!desired.empty() && !m_pages->Contains(desired)) {
+		return EViewContainerHostPageStatus::UnknownContainer;
+	}
+	const auto host = PageHost();
+	if (!desired.empty() && !host) return EViewContainerHostPageStatus::InvalidHost;
+
+	if (desired.empty()) {
+		std::string previous;
+		try {
+			previous = m_page;
+		} catch (...) {
+			return EViewContainerHostPageStatus::DetachFailed;
+		}
+		if (!previous.empty() && OwnsPage(previous)) {
+			const auto detached = m_pages->Detach(previous);
+			if (!detached.Succeeded()) {
+				const bool previousAttached = detached.finalState
+					? FinalStateOwnsHost(detached.finalState) : OwnsPage(previous);
+				ProjectActualPage(desired, previous, false, previousAttached);
+				return EViewContainerHostPageStatus::DetachFailed;
+			}
+		}
+		m_page.clear();
+		LayoutChildren();
+		if (m_window) ::InvalidateRect(m_window, nullptr, FALSE);
+		return EViewContainerHostPageStatus::Cleared;
+	}
+	if (m_page == desired && OwnsPage(desired)) {
+		LayoutChildren();
+		return EViewContainerHostPageStatus::AlreadyApplied;
+	}
+
+	std::string previous;
+	try {
+		previous = m_page;
+	} catch (...) {
+		return EViewContainerHostPageStatus::AttachFailed;
+	}
+	const bool detachedPrevious = !previous.empty() && previous != desired && OwnsPage(previous);
+	if (detachedPrevious) {
+		const auto detached = m_pages->Detach(previous);
+		if (!detached.Succeeded()) {
+			const bool previousAttached = detached.finalState
+				? FinalStateOwnsHost(detached.finalState) : OwnsPage(previous);
+			ProjectActualPage(desired, previous, false, previousAttached);
+			return EViewContainerHostPageStatus::DetachFailed;
+		}
+	}
+	const auto attached = m_pages->Attach(desired, *host);
+	if (!attached.Succeeded()) {
+		// A failed pool transition can still terminate with the destination attached
+		// when rollback detachment fails. Never attach the previous page beside it.
+		bool desiredAttached = attached.finalState
+			? FinalStateOwnsHost(attached.finalState) : OwnsPage(desired);
+		if (desiredAttached) {
+			const auto detachedDesired = m_pages->Detach(desired);
+			desiredAttached = detachedDesired.finalState
+				? FinalStateOwnsHost(detachedDesired.finalState) : OwnsPage(desired);
+			if (desiredAttached) {
+				ProjectActualPage(desired, previous, true, false);
+				return EViewContainerHostPageStatus::CompensationFailed;
+			}
+		}
+		if (detachedPrevious) {
+			const auto compensation = m_pages->Attach(previous, *host);
+			if (!compensation.Succeeded()) {
+				const bool previousAttached = compensation.finalState
+					? FinalStateOwnsHost(compensation.finalState) : OwnsPage(previous);
+				ProjectActualPage(desired, previous, false, previousAttached);
+				return EViewContainerHostPageStatus::CompensationFailed;
+			}
+			ProjectActualPage(desired, previous, false, true);
+			return EViewContainerHostPageStatus::AttachFailed;
+		}
+		ProjectActualPage(desired, previous, false, false);
+		return EViewContainerHostPageStatus::AttachFailed;
+	}
+	m_page = std::move(desired);
+	LayoutChildren();
+	if (m_window) ::InvalidateRect(m_window, nullptr, FALSE);
+	return EViewContainerHostPageStatus::Applied;
+}
+
+bool CViewContainerHost::FinalStateOwnsHost(
+	const std::optional<ViewContainerPageState>& state) const noexcept
+{
+	return state && state->state == EViewContainerPageStableState::Attached
+		&& state->host && state->host->nativeParent
+		== reinterpret_cast<ViewContainerNativeHandle>(m_window);
+}
+
+void CViewContainerHost::ProjectActualPage(
+	std::string& desired, std::string& previous,
+	const bool desiredAttached, const bool previousAttached) noexcept
+{
+	if (desiredAttached && !desired.empty()) {
+		m_page.swap(desired);
+	} else if (previousAttached && !previous.empty()) {
+		m_page.swap(previous);
+	} else {
+		m_page.clear();
 	}
 	LayoutChildren();
 	if (m_window) ::InvalidateRect(m_window, nullptr, FALSE);
@@ -341,6 +496,25 @@ bool CViewContainerHost::OwnsPage(const std::string_view containerId) const noex
 {
 	return m_pages != nullptr && m_window != nullptr && !containerId.empty()
 		&& m_pages->AttachedHost(containerId) == m_window;
+}
+
+std::optional<ViewContainerPageHost> CViewContainerHost::PageHost() const noexcept
+{
+	if (m_window == nullptr || !::IsWindow(m_window)) return std::nullopt;
+	layout::EViewContainerLocation location;
+	if (m_logicalHostId == layout::ids::part::Sidebar) {
+		location = layout::EViewContainerLocation::Sidebar;
+	} else if (m_logicalHostId == layout::ids::part::Auxiliarybar) {
+		location = layout::EViewContainerLocation::AuxiliaryBar;
+	} else {
+		return std::nullopt;
+	}
+	try {
+		return ViewContainerPageHost{ m_logicalHostId, location,
+			reinterpret_cast<ViewContainerNativeHandle>(m_window) };
+	} catch (...) {
+		return std::nullopt;
+	}
 }
 
 int CViewContainerHost::OutlineHeaderHeightPixels(unsigned int dpi) noexcept
@@ -430,8 +604,8 @@ void CViewContainerHost::LayoutChildren()
 		invalidateHeaderChange();
 		return;
 	}
-
 	if (m_page == pageIds::SourceControl) {
+		m_pages->LayoutPage(m_page, client);
 		if (auto* scm = m_pages->SourceControl()) scm->Layout(client, m_dpi);
 		m_pages->SetPageVisible(pageIds::SourceControl, true);
 		m_pages->NotifyPageLayout(pageIds::SourceControl);
@@ -440,6 +614,7 @@ void CViewContainerHost::LayoutChildren()
 		return;
 	}
 	if (m_page == pageIds::Search) {
+		m_pages->LayoutPage(m_page, client);
 		if (auto* view = m_pages->Search()) view->Layout(client, m_dpi);
 		m_pages->SetPageVisible(pageIds::Search, true);
 		m_pages->NotifyPageLayout(pageIds::Search);
@@ -448,6 +623,7 @@ void CViewContainerHost::LayoutChildren()
 		return;
 	}
 	if (m_page == pageIds::Extensions) {
+		m_pages->LayoutPage(m_page, client);
 		if (auto* view = m_pages->Extensions()) view->Layout(client, m_dpi);
 		m_pages->SetPageVisible(pageIds::Extensions, true);
 		m_pages->NotifyPageLayout(pageIds::Extensions);
@@ -478,6 +654,7 @@ void CViewContainerHost::LayoutChildren()
 		client.bottom - outlineHeight };
 	const RECT explorerBounds{ client.left, client.top, client.right, m_outlineHeader.top };
 	const RECT outlineBounds{ client.left, m_outlineHeader.bottom, client.right, client.bottom };
+	m_pages->LayoutPage(m_page, client, &m_outlineHeader);
 	explorer->Layout(explorerBounds, m_dpi);
 	outline->Layout(outlineBounds, m_dpi);
 	m_pages->SetPageVisible(pageIds::Explorer, true);

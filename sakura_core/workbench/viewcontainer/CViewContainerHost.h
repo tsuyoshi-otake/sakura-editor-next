@@ -12,11 +12,31 @@
 #include "workbench/viewcontainer/CViewContainerPages.h"
 
 #include <functional>
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 
 namespace workbench::viewcontainer {
+
+enum class EViewContainerHostPageStatus : std::uint8_t {
+	Applied,
+	AlreadyApplied,
+	Cleared,
+	UnknownContainer,
+	InvalidHost,
+	DetachFailed,
+	AttachFailed,
+	CompensationFailed,
+};
+
+enum class EViewContainerHostCloseStatus : std::uint8_t {
+	Open,
+	Closed,
+	DetachedPagePreserved,
+	DetachedPagePreservationFailed,
+};
 
 /*!
 	@brief One side-bar Part that renders whichever ViewContainer currently lives in it.
@@ -62,14 +82,18 @@ public:
 	[[nodiscard]] bool RequestOutlineExpanded(bool expanded) noexcept;
 	void FocusOutline();
 
-	//! Renders one ViewContainer, or the empty state when `containerId` is empty or names a
-	//! container the pool does not render. This applies an already-decided model fact and
-	//! borrows the page from the shared pool.
-	void ShowPage(std::string_view containerId);
+	//! Renders one ViewContainer, or the empty state when `containerId` is empty. Unknown
+	//! containers and transition failures leave the prior projection unchanged. This applies
+	//! an already-decided model fact and borrows the page from the shared pool.
+	EViewContainerHostPageStatus ShowPage(std::string_view containerId);
 	//! The ViewContainer this Part renders, or empty for the empty state. The view points at
 	//! this host's own storage and stays valid until the next `ShowPage`.
 	[[nodiscard]] std::string_view ActivePage() const noexcept { return m_page; }
 	[[nodiscard]] bool IsOutlineExpanded() const noexcept;
+	[[nodiscard]] EViewContainerHostCloseStatus CloseStatus() const noexcept
+	{
+		return m_closeStatus;
+	}
 
 	[[nodiscard]] HWND GetHwnd() const noexcept { return m_window; }
 	[[nodiscard]] static int OutlineHeaderHeightPixels(unsigned int dpi) noexcept;
@@ -89,6 +113,11 @@ private:
 	[[nodiscard]] bool IsOutlineHeaderPoint(POINT point) const noexcept;
 	//! True when this host, and not the other side bar, currently owns the page window.
 	[[nodiscard]] bool OwnsPage(std::string_view containerId) const noexcept;
+	[[nodiscard]] std::optional<ViewContainerPageHost> PageHost() const noexcept;
+	[[nodiscard]] bool FinalStateOwnsHost(
+		const std::optional<ViewContainerPageState>& state) const noexcept;
+	void ProjectActualPage(std::string& desired, std::string& previous,
+		bool desiredAttached, bool previousAttached) noexcept;
 
 	std::shared_ptr<CViewContainerPages> m_pages;
 	std::string m_logicalHostId;
@@ -106,6 +135,7 @@ private:
 	rendering::CGdiBackBuffer m_backBuffer;
 	//! The rendered ViewContainer's ID, empty for none.
 	std::string m_page;
+	EViewContainerHostCloseStatus m_closeStatus{ EViewContainerHostCloseStatus::Open };
 	bool m_closed = false;
 };
 
