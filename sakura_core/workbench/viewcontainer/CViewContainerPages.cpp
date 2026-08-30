@@ -410,9 +410,83 @@ private:
 	bool m_closeInvoked = false;
 };
 
+ContributedViewContainerPageHost::ContributedViewContainerPageHost(
+	ViewContainerPagePool& pool) noexcept
+	: m_pool(pool)
+{
+}
+
+bool ContributedViewContainerPageHost::Initialize(
+	const std::span<const std::string> containerIds) noexcept
+{
+	if (m_usable) return false;
+	for (const auto& containerId : containerIds) {
+		const auto acquired = m_pool.Acquire(containerId);
+		if (!acquired.Succeeded()
+			|| dynamic_cast<IViewContainerPageProjection*>(acquired.page) == nullptr) {
+			// No physical host may advertise a contribution that cannot project a
+			// native root. Retire every retained product before reporting failure.
+			(void)m_pool.Shutdown();
+			return false;
+		}
+	}
+	m_usable = true;
+	return true;
+}
+
+void ContributedViewContainerPageHost::Close() noexcept
+{
+	m_usable = false;
+}
+
+IViewContainerPageProjection* ContributedViewContainerPageHost::Projection(
+	const std::string_view containerId) noexcept
+{
+	if (!m_usable) return nullptr;
+	const auto acquired = m_pool.Acquire(containerId);
+	return acquired.Succeeded()
+		? dynamic_cast<IViewContainerPageProjection*>(acquired.page) : nullptr;
+}
+
+void ContributedViewContainerPageHost::Activate(
+	const std::string_view containerId) noexcept
+{
+	if (auto* projection = Projection(containerId)) projection->ActivateProjection();
+}
+
+void ContributedViewContainerPageHost::Deactivate(
+	const std::string_view containerId) noexcept
+{
+	if (auto* projection = Projection(containerId)) projection->DeactivateProjection();
+}
+
+bool ContributedViewContainerPageHost::PreTranslate(
+	const std::string_view containerId, MSG& message) noexcept
+{
+	auto* projection = Projection(containerId);
+	return projection != nullptr && projection->PreTranslateProjection(message);
+}
+
+void ContributedViewContainerPageHost::Layout(const std::string_view containerId,
+	const RECT& hostBounds, const RECT& contentBounds, const unsigned int dpi) noexcept
+{
+	if (auto* projection = Projection(containerId)) {
+		projection->LayoutProjection(hostBounds, contentBounds, dpi);
+	}
+}
+
+void ContributedViewContainerPageHost::SetVisible(
+	const std::string_view containerId, const bool visible) noexcept
+{
+	if (auto* projection = Projection(containerId)) {
+		projection->SetProjectionVisible(visible);
+	}
+}
+
 CViewContainerPages::CViewContainerPages(CDlgFuncList& dialog)
 	: m_dialog(dialog)
 	, m_pool(m_registry)
+	, m_contributedPages(m_pool)
 {
 	m_pages.push_back({ std::string(pageIds::Explorer), STR_WORKBENCH_EXPLORER_TITLE,
 		PageKind::Explorer, nullptr });
@@ -429,6 +503,34 @@ CViewContainerPages::~CViewContainerPages()
 	Close();
 }
 
+ViewContainerPageRegistrationResult CViewContainerPages::RegisterContributedPages(
+	std::vector<ViewContainerPageDescriptor> descriptors) noexcept
+{
+	if (descriptors.empty()) {
+		return { EViewContainerPageRegistrationStatus::NotApplicable, 0 };
+	}
+	if (m_created || m_closed) {
+		return { EViewContainerPageRegistrationStatus::Failed, 0 };
+	}
+	try {
+		for (const auto& descriptor : descriptors) {
+			if (Find(descriptor.containerId) != nullptr) {
+				return { EViewContainerPageRegistrationStatus::DuplicateContainerId, 0 };
+			}
+		}
+		auto candidate = m_pendingContributions;
+		candidate.insert(candidate.end(), descriptors.begin(), descriptors.end());
+		ViewContainerPageRegistry validation;
+		const auto validated = validation.RegisterBatch(candidate);
+		if (!validated.Succeeded()) return { validated.status, 0 };
+		const auto added = descriptors.size();
+		m_pendingContributions.swap(candidate);
+		return { EViewContainerPageRegistrationStatus::Registered, added };
+	} catch (...) {
+		return { EViewContainerPageRegistrationStatus::Failed, 0 };
+	}
+}
+
 bool CViewContainerPages::Create(HWND owner)
 {
 	if (m_closed || m_created || owner == nullptr) return false;
@@ -438,21 +540,36 @@ bool CViewContainerPages::Create(HWND owner)
 		layout::EViewContainerLocation::AuxiliaryBar,
 	};
 	std::vector<ViewContainerPageDescriptor> descriptors;
-	descriptors.reserve(m_pages.size());
+	descriptors.reserve(m_pages.size() + m_pendingContributions.size());
 	for (const auto& page : m_pages) {
 		descriptors.push_back({ page.id, sideBars,
 			[this, kind = page.kind]() { return CreatePage(kind); } });
 	}
+	m_contributedPageIds.clear();
+	m_contributedPageIds.reserve(m_pendingContributions.size());
+	for (const auto& descriptor : m_pendingContributions) {
+		descriptors.push_back(descriptor);
+		m_contributedPageIds.push_back(descriptor.containerId);
+	}
+	std::vector<std::string> registeredPageIds;
+	registeredPageIds.reserve(descriptors.size());
+	for (const auto& descriptor : descriptors) registeredPageIds.push_back(descriptor.containerId);
 	if (!m_registry.RegisterBatch(std::move(descriptors)).Succeeded()) {
 		Close();
 		return false;
 	}
+	m_registeredPageIds = std::move(registeredPageIds);
 	for (const auto& page : m_pages) {
 		if (!m_pool.Acquire(page.id).Succeeded()) {
 			Close();
 			return false;
 		}
 	}
+	if (!m_contributedPages.Initialize(m_contributedPageIds)) {
+		Close();
+		return false;
+	}
+	m_pendingContributions.clear();
 	ApplySearchTexts();
 	m_created = true;
 	return true;
@@ -462,6 +579,7 @@ void CViewContainerPages::Close()
 {
 	if (m_closed) return;
 	m_closed = true;
+	m_contributedPages.Close();
 	(void)m_pool.Shutdown();
 	m_created = false;
 	m_owner = nullptr;
@@ -549,8 +667,11 @@ void CViewContainerPages::SetPageVisible(std::string_view containerId, bool visi
 {
 	if (!IsUsable()) return;
 	Page* page = Find(containerId);
-	if (page == nullptr || page->adapter == nullptr) return;
-	page->adapter->SetVisible(visible);
+	if (page != nullptr && page->adapter != nullptr) {
+		page->adapter->SetVisible(visible);
+	} else {
+		m_contributedPages.SetVisible(containerId, visible);
+	}
 }
 
 void CViewContainerPages::NotifyPageLayout(std::string_view containerId)
@@ -609,15 +730,19 @@ CViewContainerPages::CommitGdiFrame()
 
 bool CViewContainerPages::Contains(std::string_view containerId) const noexcept
 {
-	return Find(containerId) != nullptr;
+	return m_registry.Find(containerId) != nullptr;
+}
+
+bool CViewContainerPages::SupportsLocation(const std::string_view containerId,
+	const layout::EViewContainerLocation location) const noexcept
+{
+	const auto* descriptor = m_registry.Find(containerId);
+	return descriptor != nullptr && descriptor->supportedLocations.Contains(location);
 }
 
 std::vector<std::string> CViewContainerPages::PageIds() const
 {
-	std::vector<std::string> ids;
-	ids.reserve(m_pages.size());
-	for (const auto& page : m_pages) ids.push_back(page.id);
-	return ids;
+	return m_registeredPageIds;
 }
 
 HWND CViewContainerPages::AttachedHost(std::string_view containerId) const noexcept
@@ -637,6 +762,106 @@ bool CViewContainerPages::IsMessageTarget(
 	const Page* page = Find(containerId);
 	return page != nullptr && page->adapter != nullptr && AttachedHost(containerId) != nullptr
 		&& page->adapter->OwnsWindow(target);
+}
+
+void CViewContainerPages::ActivatePage(const std::string_view containerId) noexcept
+{
+	if (!IsUsable() || AttachedHost(containerId) == nullptr) return;
+	if (containerId == pageIds::SourceControl) {
+		if (auto* page = SourceControl()) page->Activate();
+	} else if (containerId == pageIds::Search) {
+		if (auto* page = Search()) page->Activate();
+	} else if (containerId == pageIds::Extensions) {
+		if (auto* page = Extensions()) page->Activate();
+	} else if (containerId == pageIds::Explorer) {
+		if (auto* page = Explorer()) page->Activate();
+	} else {
+		m_contributedPages.Activate(containerId);
+	}
+}
+
+void CViewContainerPages::DeactivatePage(const std::string_view containerId) noexcept
+{
+	if (!IsUsable() || AttachedHost(containerId) == nullptr) return;
+	if (containerId == pageIds::SourceControl) {
+		if (auto* page = SourceControl()) page->Deactivate();
+	} else if (containerId == pageIds::Search) {
+		if (auto* page = Search()) page->Deactivate();
+	} else if (containerId == pageIds::Extensions) {
+		if (auto* page = Extensions()) page->Deactivate();
+	} else if (containerId == pageIds::Explorer) {
+		if (auto* page = Explorer()) page->Deactivate();
+		if (auto* outline = Outline()) outline->Deactivate();
+	} else {
+		m_contributedPages.Deactivate(containerId);
+	}
+}
+
+bool CViewContainerPages::PreTranslatePage(
+	const std::string_view containerId, MSG& message) noexcept
+{
+	if (!IsUsable() || AttachedHost(containerId) == nullptr) return false;
+	if (Find(containerId) == nullptr) {
+		return m_contributedPages.PreTranslate(containerId, message);
+	}
+	if (!IsMessageTarget(containerId, message.hwnd)) return false;
+	if (containerId == pageIds::SourceControl) {
+		auto* page = SourceControl();
+		return page != nullptr && page->PreTranslateMessage(message);
+	}
+	if (containerId == pageIds::Search) {
+		auto* page = Search();
+		return page != nullptr && page->PreTranslateMessage(message);
+	}
+	if (containerId == pageIds::Extensions) {
+		auto* page = Extensions();
+		return page != nullptr && page->PreTranslateMessage(message);
+	}
+	if (containerId != pageIds::Explorer) return false;
+	const auto belongsTo = [&message](HWND root) noexcept {
+		return root != nullptr && (message.hwnd == root || ::IsChild(root, message.hwnd));
+	};
+	if (IsOutlineExpanded()) {
+		if (auto* outline = Outline(); outline != nullptr && belongsTo(outline->GetHwnd())) {
+			return outline->PreTranslateMessage(message);
+		}
+	}
+	auto* explorer = Explorer();
+	return explorer != nullptr && belongsTo(explorer->GetHwnd())
+		&& explorer->PreTranslateMessage(message);
+}
+
+void CViewContainerPages::LayoutPageContent(const std::string_view containerId,
+	const RECT& bounds, const unsigned int dpi) noexcept
+{
+	if (!IsUsable() || AttachedHost(containerId) == nullptr) return;
+	if (containerId == pageIds::SourceControl) {
+		if (auto* page = SourceControl()) page->Layout(bounds, dpi);
+	} else if (containerId == pageIds::Search) {
+		if (auto* page = Search()) page->Layout(bounds, dpi);
+	} else if (containerId == pageIds::Extensions) {
+		if (auto* page = Extensions()) page->Layout(bounds, dpi);
+	} else if (containerId == pageIds::Explorer) {
+		auto* explorer = Explorer();
+		auto* outline = Outline();
+		if (explorer == nullptr || outline == nullptr) return;
+		const LONG height = std::max(0L, bounds.bottom - bounds.top);
+		const LONG outlineHeight = IsOutlineExpanded() ? height / 3 : 0;
+		const RECT explorerBounds{ bounds.left, bounds.top, bounds.right,
+			bounds.bottom - outlineHeight };
+		const RECT outlineBounds{ bounds.left, explorerBounds.bottom,
+			bounds.right, bounds.bottom };
+		explorer->Layout(explorerBounds, dpi);
+		outline->Layout(outlineBounds, dpi);
+	}
+}
+
+void CViewContainerPages::LayoutPageProjection(const std::string_view containerId,
+	const RECT& hostBounds, const RECT& contentBounds, const unsigned int dpi) noexcept
+{
+	if (!IsUsable() || AttachedHost(containerId) == nullptr
+		|| Find(containerId) != nullptr) return;
+	m_contributedPages.Layout(containerId, hostBounds, contentBounds, dpi);
 }
 
 void CViewContainerPages::LayoutPage(

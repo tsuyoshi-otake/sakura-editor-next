@@ -258,8 +258,8 @@ adding one-off HWND branches. Unsupported capabilities are explicit.
   a tab means implementing its view projection, not re-adding the button.
 - Run and Debug, Ports, Debug Console, reorder within a bar, moving the whole Panel
   (`workbench.action.movePanelToSecondarySideBar`), and panel position/alignment
-  remain typed unsupported boundaries. A generic contribution renderer and
-  unified command/context route are still required. Moving a built-in Activity
+  remain typed unsupported boundaries. A unified command/context route is still
+  required. Moving a built-in Activity
   Bar ViewContainer between the Primary and the Secondary Side Bar is now
   supported and projected; see [`win32/CLAUDE.md`](win32/CLAUDE.md) for the
   location-set mapping and [`../window/CLAUDE.md`](../window/CLAUDE.md) for the
@@ -283,6 +283,17 @@ were clean.
 - A host offers dialog-message translation only to the page content it actually
   owns. A message belonging to another surface is never offered to it, so
   Tab/arrow navigation inside one control cannot swallow input meant for another.
+- I06 adds a bounded native companion registration seam beside the frozen
+  `IViewContainerPage` and `ViewContainerPagePool` contracts. A contributed page
+  declares its own supported location set and must implement native projection
+  callbacks for layout, visibility, activation, and message routing; registration
+  closes all retained products and fails before publication when it does not. The Primary
+  Side Bar, Panel, and Auxiliary Bar query that same descriptor/pool authority;
+  no host invents a second capability list. The established built-in descriptors
+  remain SideBar/AuxiliaryBar-only unless upstream behavior is verified separately.
+- Contributed layout is one atomic native callback carrying host-relative root
+  bounds and wrapper-local child bounds. The Panel wrapper begins below its own
+  header; side-bar root and child bounds are the same complete client rectangle.
 
 ## Phase 3/5 Dual-Profile and Command Checkpoint (2026-07-31)
 

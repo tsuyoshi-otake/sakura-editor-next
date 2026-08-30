@@ -22,6 +22,10 @@
 #include <string>
 #include <string_view>
 
+namespace workbench::viewcontainer {
+class IViewContainerPageHostService;
+}
+
 namespace workbench::panel {
 
 //! Non-owning shorthand for the repository's single canonical VS Code
@@ -66,12 +70,14 @@ enum class BottomPanelTab { Problems, Output, Terminal };
 enum class EBottomPanelPageAttachStatus : std::uint8_t {
 	Attached,
 	AlreadyAttached,
+	Failed,
 	Closed,
 };
 
 enum class EBottomPanelPageDetachStatus : std::uint8_t {
 	Detached,
 	AlreadyDetached,
+	Failed,
 	Closed,
 };
 
@@ -80,6 +86,13 @@ struct BottomPanelVerticalLayout final {
 	int contentTop = 0;
 	int contentHeight = 0;
 	int outputSelectorHeight = 0;
+};
+
+struct BottomPanelPageLayout final {
+	//! Wrapper coordinates are relative to the physical Panel host.
+	RECT wrapperBounds{};
+	//! Page-content coordinates are relative to the reparented wrapper.
+	RECT contentBounds{};
 };
 
 //! Normalizes the panel's vertical geometry before it reaches child HWNDs.
@@ -98,6 +111,17 @@ struct BottomPanelVerticalLayout final {
 		headerHeight,
 		contentHeight,
 		(std::min)(contentHeight, preferredOutputSelectorHeight),
+	};
+}
+
+[[nodiscard]] constexpr BottomPanelPageLayout CalculateBottomPanelPageLayout(
+	int availableWidth, const BottomPanelVerticalLayout& vertical) noexcept
+{
+	availableWidth = (std::max)(0, availableWidth);
+	return {
+		.wrapperBounds = { 0, vertical.contentTop, availableWidth,
+			vertical.contentTop + vertical.contentHeight },
+		.contentBounds = { 0, 0, availableWidth, vertical.contentHeight },
 	};
 }
 
@@ -120,7 +144,8 @@ public:
 		std::function<bool()> isMaximized;
 	};
 
-	explicit CBottomPanelTool(terminal::TerminalTabManagerDependencies terminalDependencies = {});
+	explicit CBottomPanelTool(terminal::TerminalTabManagerDependencies terminalDependencies = {},
+		std::shared_ptr<viewcontainer::IViewContainerPageHostService> sharedPages = {});
 	~CBottomPanelTool() override;
 	CBottomPanelTool(const CBottomPanelTool&) = delete;
 	CBottomPanelTool& operator=(const CBottomPanelTool&) = delete;
@@ -150,6 +175,9 @@ public:
 	void RefreshStrings();
 	//! Applies already-committed model state. This never calls the selection callback.
 	[[nodiscard]] bool ApplyActiveContainer(std::string_view containerId);
+	//! Capability is derived from either a specialized Panel adapter or a registered
+	//! retained page descriptor that explicitly includes the Panel location.
+	[[nodiscard]] bool SupportsContainer(std::string_view containerId) const noexcept;
 	//! Sends one user request to the stable-ID owner. Apply, attachment, activation,
 	//! and focus remain separate even when the callback accepts the request.
 	[[nodiscard]] bool RequestContainerSelection(std::string_view containerId) noexcept;

@@ -141,7 +141,7 @@
 #include "workbench/scm/GitSyncCommands.h"
 #include "workbench/problems/MarkerPositionAdapter.h"
 #include "workbench/layout/WorkbenchLayoutStateService.h"
-#include "workbench/win32/BuiltinPartProjection.h"
+#include "workbench/win32/PaneCompositeProjectionService.h"
 #include "workbench/win32/ProblemsOutputPanelProjection.h"
 #include <sakura/filesystem/FileSystemFactory.h>
 #include <sakura/uri/UriIdentity.h>
@@ -2919,31 +2919,13 @@ bool CEditWnd::InitializeWorkbench()
 		terminalDependencies.launchProfiles = process->GetTerminalLaunchProfiles();
 	}
 	auto bottomPanelTool = std::make_unique<workbench::panel::CBottomPanelTool>(
-		std::move(terminalDependencies));
+		std::move(terminalDependencies), m_viewContainerPages);
 	m_bottomPanelTool = bottomPanelTool.get();
 	m_terminalTool = bottomPanelTool->Terminal();
-	bottomPanelTool->SetTabSelectionCallback(
-		[this](workbench::panel::BottomPanelTab tab) {
-			if (m_workbenchRuntime == nullptr) return true;
-			switch (tab) {
-			case workbench::panel::BottomPanelTab::Terminal:
-				return ActivateBuiltinWorkbenchView(workbench::layout::ids::view::Terminal, false);
-			case workbench::panel::BottomPanelTab::Problems:
-				break;
-			case workbench::panel::BottomPanelTab::Output:
-				break;
-			default:
-				return false;
-			}
-			const std::string_view commandId = tab == workbench::panel::BottomPanelTab::Problems
-				? "workbench.actions.view.problems"
-				: "workbench.action.output.toggleOutput";
-			bool handled = false;
-			const bool succeeded = TryExecuteWorkbenchStableCommand(commandId, handled);
-			if (handled) return succeeded;
-			return tab == workbench::panel::BottomPanelTab::Problems
-				? ActivateBuiltinWorkbenchView(workbench::layout::ids::view::Problems, false)
-				: ActivateBuiltinWorkbenchView(workbench::layout::ids::view::Output, false);
+	bottomPanelTool->SetContainerSelectionCallback(
+		[this](const std::string_view containerId) {
+			return m_workbenchRuntime == nullptr
+				|| ActivateWorkbenchViewContainer(containerId, false);
 		});
 	bottomPanelTool->SetPanelActions({
 		.closePanel = [this]() {
@@ -2971,6 +2953,10 @@ bool CEditWnd::InitializeWorkbench()
 		m_bottomPanelTool = nullptr;
 		m_terminalTool = nullptr;
 		m_bottomWorkbenchPanel.reset();
+	}
+	if (!InitializePaneCompositeProjection()) {
+		CloseWorkbench();
+		return false;
 	}
 
 	m_activityBar = std::make_unique<workbench::CActivityBar>([this](std::string_view containerId) {
@@ -3011,13 +2997,7 @@ bool CEditWnd::InitializeWorkbench()
 				SetWorkbenchPanelVisible(workbench::WorkbenchEdge::Right, false, false);
 				return;
 			}
-			namespace pageIds = workbench::viewcontainer::pageIds;
-			std::string_view viewId;
-			if (containerId == pageIds::Explorer) viewId = workbench::layout::ids::view::Explorer;
-			else if (containerId == pageIds::Search) viewId = workbench::layout::ids::view::Search;
-			else if (containerId == pageIds::SourceControl) viewId = workbench::layout::ids::view::SourceControl;
-			else if (containerId == pageIds::Extensions) viewId = workbench::layout::ids::view::ExtensionsInstalled;
-			if (!viewId.empty()) static_cast<void>(ActivateBuiltinWorkbenchView(viewId, true));
+			static_cast<void>(ActivateWorkbenchViewContainer(containerId, true));
 		});
 	const auto showGlobalAction = [this](std::string_view actionId, POINT screenPoint) {
 		if (m_customFrame == nullptr) return;
@@ -5790,7 +5770,7 @@ void CEditWnd::CloseWorkbench() noexcept
 	if (m_bottomPanelTool) {
 		m_bottomPanelTool->SetProblemActivationCallback({});
 		m_bottomPanelTool->SetOutputChannelSelectionCallback({});
-		m_bottomPanelTool->SetTabSelectionCallback({});
+		m_bottomPanelTool->SetContainerSelectionCallback({});
 	}
 	m_cStatusBar.SetWorkbenchCommandCallback({});
 	m_cStatusBar.SetStatusbarVisibilityCallback({});
@@ -5798,6 +5778,11 @@ void CEditWnd::CloseWorkbench() noexcept
 	theme::CThemeService::ClearActiveColorThemePalette();
 	if (m_activityBar) m_activityBar->Close();
 	if (m_auxiliaryActivityBar) m_auxiliaryActivityBar->Close();
+	// Stop staged projection and detach its pages before the page pool or any
+	// physical host is closed. The service borrows all three hosts and is gone
+	// before their destruction begins.
+	if (m_paneCompositeProjection) (void)m_paneCompositeProjection->Close();
+	m_paneCompositeProjection.reset();
 	// The shared pages are borrowed by both side-bar hosts, so they must be destroyed
 	// before either host window that may still be their parent.
 	if (m_viewContainerPages) m_viewContainerPages->Close();
@@ -5986,6 +5971,227 @@ bool CEditWnd::ApplyInitialWorkbenchLayoutState()
 	return ApplyCurrentWorkbenchLayoutState(true, true);
 }
 
+bool CEditWnd::InitializePaneCompositeProjection()
+{
+	if (m_paneCompositeProjection != nullptr) return true;
+	if (m_leftWorkbenchPanel == nullptr || m_bottomWorkbenchPanel == nullptr
+		|| m_rightWorkbenchPanel == nullptr || m_sidebarHost == nullptr
+		|| m_auxiliaryBarHost == nullptr || m_bottomPanelTool == nullptr
+		|| m_viewContainerPages == nullptr) {
+		return false;
+	}
+	using Location = workbench::layout::EWorkbenchViewContainerLocation;
+	using Binding = workbench::win32::PaneCompositeHostBinding;
+	const auto makeBinding = [this](const Location location) {
+		Binding binding;
+		binding.location = location;
+		binding.supportsContainer = [this, location](const std::string_view containerId) {
+			if (location == Location::Panel) {
+				return m_bottomPanelTool != nullptr
+					&& m_bottomPanelTool->SupportsContainer(containerId);
+			}
+			if (m_viewContainerPages == nullptr) return false;
+			const auto pageLocation = location == Location::SideBar
+				? workbench::layout::EViewContainerLocation::Sidebar
+				: workbench::layout::EViewContainerLocation::AuxiliaryBar;
+			return m_viewContainerPages->SupportsLocation(containerId, pageLocation);
+		};
+		binding.canApply = [this](const workbench::win32::PaneCompositeHostState& state) {
+			return CanApplyPaneCompositeHostState(state);
+		};
+		binding.readState = [this, location] {
+			return ReadPaneCompositeHostState(location);
+		};
+		binding.applyState = [this](const workbench::win32::PaneCompositeHostState& state) {
+			return ApplyPaneCompositeHostState(state);
+		};
+		binding.closeProjection = [this, location] {
+			return ClosePaneCompositeHostProjection(location);
+		};
+		return binding;
+	};
+	try {
+		m_paneCompositeProjection =
+			std::make_unique<workbench::win32::PaneCompositeProjectionService>(
+				std::array<Binding, workbench::win32::kPaneCompositeHostCount>{
+					makeBinding(Location::SideBar),
+					makeBinding(Location::Panel),
+					makeBinding(Location::AuxiliaryBar),
+				});
+		return true;
+	} catch (...) {
+		m_paneCompositeProjection.reset();
+		return false;
+	}
+}
+
+std::optional<workbench::win32::PaneCompositeHostState>
+CEditWnd::ReadPaneCompositeHostState(
+	const workbench::layout::EWorkbenchViewContainerLocation location) const noexcept
+{
+	using Location = workbench::layout::EWorkbenchViewContainerLocation;
+	workbench::CWorkbenchPanelHost* part = nullptr;
+	workbench::viewcontainer::CViewContainerHost* sideBar = nullptr;
+	std::string_view partId;
+	switch (location) {
+	case Location::SideBar:
+		part = m_leftWorkbenchPanel.get();
+		sideBar = m_sidebarHost;
+		partId = workbench::layout::ids::part::Sidebar;
+		break;
+	case Location::Panel:
+		part = m_bottomWorkbenchPanel.get();
+		partId = workbench::layout::ids::part::Panel;
+		break;
+	case Location::AuxiliaryBar:
+		part = m_rightWorkbenchPanel.get();
+		sideBar = m_auxiliaryBarHost;
+		partId = workbench::layout::ids::part::Auxiliarybar;
+		break;
+	}
+	if (part == nullptr) return std::nullopt;
+	workbench::win32::PaneCompositeHostState state;
+	state.location = location;
+	try {
+		state.partId = partId;
+		state.visible = part->GetState() != workbench::WorkbenchPanelState::Hidden;
+		if (part->GetExtentDip() > 0) {
+			state.committedExtentDip = static_cast<std::uint32_t>(part->GetExtentDip());
+		}
+		if (location == Location::Panel) {
+			if (m_bottomPanelTool == nullptr) return std::nullopt;
+			const auto active = m_bottomPanelTool->ActiveContainerId();
+			if (!active.empty()) state.activeContainerId = std::string(active);
+			if (const auto attached = m_bottomPanelTool->AttachedContainerId()) {
+				state.attachedContainerId = std::string(*attached);
+			}
+		} else {
+			if (sideBar == nullptr || m_viewContainerPages == nullptr) return std::nullopt;
+			const auto active = sideBar->ActivePage();
+			if (!active.empty()) {
+				state.activeContainerId = std::string(active);
+				if (m_viewContainerPages->AttachedHost(active) == sideBar->GetHwnd()) {
+					state.attachedContainerId = std::string(active);
+				}
+			}
+		}
+		return state;
+	} catch (...) {
+		return std::nullopt;
+	}
+}
+
+bool CEditWnd::CanApplyPaneCompositeHostState(
+	const workbench::win32::PaneCompositeHostState& state) const noexcept
+{
+	using Location = workbench::layout::EWorkbenchViewContainerLocation;
+	if (state.committedExtentDip
+		&& (*state.committedExtentDip == 0
+			|| *state.committedExtentDip
+				> workbench::layout::kMaximumWorkbenchLayoutCommittedExtentDip)) {
+		return false;
+	}
+	const auto expectedPart = state.location == Location::SideBar
+		? workbench::layout::ids::part::Sidebar
+		: state.location == Location::Panel
+			? workbench::layout::ids::part::Panel
+			: workbench::layout::ids::part::Auxiliarybar;
+	if (state.partId != expectedPart) return false;
+	if (state.attachedContainerId && state.activeContainerId != state.attachedContainerId) {
+		return false;
+	}
+	if (state.location == Location::Panel) {
+		return m_bottomWorkbenchPanel != nullptr && m_bottomPanelTool != nullptr
+			&& state.activeContainerId
+			&& m_bottomPanelTool->SupportsContainer(*state.activeContainerId);
+	}
+	if (m_viewContainerPages == nullptr
+		|| (state.location == Location::SideBar && (m_leftWorkbenchPanel == nullptr
+			|| m_sidebarHost == nullptr))
+		|| (state.location == Location::AuxiliaryBar && (m_rightWorkbenchPanel == nullptr
+			|| m_auxiliaryBarHost == nullptr))) {
+		return false;
+	}
+	if (!state.activeContainerId) return !state.attachedContainerId;
+	const auto pageLocation = state.location == Location::SideBar
+		? workbench::layout::EViewContainerLocation::Sidebar
+		: workbench::layout::EViewContainerLocation::AuxiliaryBar;
+	return m_viewContainerPages->SupportsLocation(*state.activeContainerId, pageLocation);
+}
+
+workbench::win32::EPaneCompositeHostApplyStatus CEditWnd::ApplyPaneCompositeHostState(
+	const workbench::win32::PaneCompositeHostState& state) noexcept
+{
+	using ApplyStatus = workbench::win32::EPaneCompositeHostApplyStatus;
+	using Location = workbench::layout::EWorkbenchViewContainerLocation;
+	if (!CanApplyPaneCompositeHostState(state)) return ApplyStatus::Failed;
+	try {
+		workbench::CWorkbenchPanelHost* part = nullptr;
+		if (state.location == Location::Panel) {
+			part = m_bottomWorkbenchPanel.get();
+			if (!m_bottomPanelTool->ApplyActiveContainer(*state.activeContainerId)) {
+				return ApplyStatus::Failed;
+			}
+			if (state.attachedContainerId) {
+				const auto attached = m_bottomPanelTool->AttachActivePage();
+				if (attached == workbench::panel::EBottomPanelPageAttachStatus::Closed
+					|| attached == workbench::panel::EBottomPanelPageAttachStatus::Failed) {
+					return ApplyStatus::Failed;
+				}
+			} else {
+				const auto detached = m_bottomPanelTool->DetachActivePage();
+				if (detached == workbench::panel::EBottomPanelPageDetachStatus::Closed
+					|| detached == workbench::panel::EBottomPanelPageDetachStatus::Failed) {
+					return ApplyStatus::Failed;
+				}
+			}
+		} else {
+			auto* host = state.location == Location::SideBar
+				? m_sidebarHost : m_auxiliaryBarHost;
+			part = state.location == Location::SideBar
+				? m_leftWorkbenchPanel.get() : m_rightWorkbenchPanel.get();
+			if (host == nullptr || part == nullptr) return ApplyStatus::Failed;
+			const auto pageStatus = host->ShowPage(
+				state.attachedContainerId ? std::string_view(*state.attachedContainerId)
+					: std::string_view{});
+			if (pageStatus != workbench::viewcontainer::EViewContainerHostPageStatus::Applied
+				&& pageStatus != workbench::viewcontainer::EViewContainerHostPageStatus::AlreadyApplied
+				&& pageStatus != workbench::viewcontainer::EViewContainerHostPageStatus::Cleared) {
+				return ApplyStatus::Failed;
+			}
+		}
+		if (part == nullptr) return ApplyStatus::Failed;
+		if (state.committedExtentDip) {
+			part->ApplyExtentDip(static_cast<int>(*state.committedExtentDip));
+		}
+		if (state.visible) part->Show(); else part->Hide();
+		return ApplyStatus::Applied;
+	} catch (...) {
+		return ApplyStatus::Failed;
+	}
+}
+
+bool CEditWnd::ClosePaneCompositeHostProjection(
+	const workbench::layout::EWorkbenchViewContainerLocation location) noexcept
+{
+	using Location = workbench::layout::EWorkbenchViewContainerLocation;
+	try {
+		if (location == Location::Panel) {
+			if (m_bottomPanelTool == nullptr) return true;
+			const auto status = m_bottomPanelTool->DetachActivePage();
+			return status == workbench::panel::EBottomPanelPageDetachStatus::Detached
+				|| status == workbench::panel::EBottomPanelPageDetachStatus::AlreadyDetached;
+		}
+		auto* host = location == Location::SideBar ? m_sidebarHost : m_auxiliaryBarHost;
+		if (host == nullptr) return true;
+		const auto status = host->ShowPage({});
+		return status == workbench::viewcontainer::EViewContainerHostPageStatus::Cleared
+			|| status == workbench::viewcontainer::EViewContainerHostPageStatus::AlreadyApplied;
+	} catch (...) {
+		return false;
+	}
+}
+
 bool CEditWnd::ApplyCurrentWorkbenchLayoutState(bool finalizeProjection,
 	bool broadcastMirrorChanges, bool* mirrorChanged)
 {
@@ -5996,16 +6202,15 @@ bool CEditWnd::ApplyCurrentWorkbenchLayoutState(bool finalizeProjection,
 	}
 
 	workbench::layout::WorkbenchLayoutStateSnapshot snapshot;
-	workbench::win32::BuiltinWorkbenchProjectionResult projectionResult;
 	try {
 		snapshot = m_workbenchRuntime->LayoutState().Snapshot();
-		projectionResult = workbench::win32::ProjectBuiltinWorkbench(snapshot);
 	}
 	catch (...) {
 		return false;
 	}
-	if (!projectionResult.Succeeded()) return false;
-	const auto& projection = *projectionResult.projection;
+	if (m_paneCompositeProjection == nullptr) return false;
+	const auto prepared = m_paneCompositeProjection->Prepare(snapshot);
+	if (!prepared.Succeeded()) return false;
 	if (m_workbenchContextKeyService != nullptr) {
 		const bool recentlyOpenedAvailable = HasRecentlyOpenedItems();
 		const auto contextResult = m_workbenchContextKeyService->SetCoreProjection(
@@ -6013,21 +6218,21 @@ bool CEditWnd::ApplyCurrentWorkbenchLayoutState(bool finalizeProjection,
 			recentlyOpenedAvailable, BuildWorkbenchScmCommandContext(), BuildWorkbenchUpdateCommandContext());
 		if (!contextResult.Succeeded()
 			&& contextResult.status != workbench::commands::EWorkbenchContextMutationStatus::NotApplicable) {
+			(void)m_paneCompositeProjection->Cancel(*prepared.token);
 			return false;
 		}
 	}
+	const auto committed = m_paneCompositeProjection->Commit(*prepared.token);
+	if (!committed.Succeeded()) return false;
+	const auto* projection = m_paneCompositeProjection->LastCommittedProjection();
+	if (projection == nullptr) return false;
 
-	const auto applyPart = [](workbench::CWorkbenchPanelHost& host,
-		const workbench::win32::BuiltinPartProjectionState& part) {
-		if (part.committedExtentDip) {
-			host.ApplyExtentDip(static_cast<int>(*part.committedExtentDip));
-		}
-		if (part.visible) host.Show(); else host.Hide();
-	};
-	applyPart(*m_leftWorkbenchPanel, projection.parts.left);
-	applyPart(*m_bottomWorkbenchPanel, projection.parts.bottom);
-	applyPart(*m_rightWorkbenchPanel, projection.parts.right);
-	if (!projection.parts.bottom.visible) m_bottomWorkbenchMaximized = false;
+	const auto outline = std::ranges::find(snapshot.views,
+		workbench::layout::ids::view::Outline, &workbench::layout::WorkbenchViewState::viewId);
+	if (outline != snapshot.views.end()) SetOutlineExpandedInHosts(outline->visible);
+	SyncViewContainers(&snapshot);
+	RefreshSidebarTitles();
+	if (!projection->hosts[1].visible) m_bottomWorkbenchMaximized = false;
 	auto& settings = m_pShareData->m_Common.m_sWorkbench;
 	bool changed = false;
 	const auto updateVisible = [&changed](BOOL& destination, bool visible) {
@@ -6041,169 +6246,58 @@ bool CEditWnd::ApplyCurrentWorkbenchLayoutState(bool finalizeProjection,
 		destination = extentDip;
 		changed = true;
 	};
-	updateVisible(settings.m_bLeftPanelVisible, projection.parts.left.visible);
+	updateVisible(settings.m_bLeftPanelVisible, projection->hosts[0].visible);
 	updateExtent(settings.m_nLeftPanelExtent96, m_leftWorkbenchPanel->GetExtentDip());
-	updateVisible(settings.m_bBottomPanelVisible, projection.parts.bottom.visible);
+	updateVisible(settings.m_bBottomPanelVisible, projection->hosts[1].visible);
 	updateExtent(settings.m_nBottomPanelExtent96, m_bottomWorkbenchPanel->GetExtentDip());
-	updateVisible(settings.m_bAuxiliaryBarVisible, projection.parts.right.visible);
+	updateVisible(settings.m_bAuxiliaryBarVisible, projection->hosts[2].visible);
 	updateExtent(settings.m_nAuxiliaryBarExtent96, m_rightWorkbenchPanel->GetExtentDip());
 	if (mirrorChanged != nullptr) *mirrorChanged = changed;
-
-	const bool surfacesApplied = ApplyBuiltinWorkbenchSurfaces(snapshot, projection.surfaces);
-	if (finalizeProjection) FinalizeWorkbenchPanelProjection(&projection.surfaces);
-	if (surfacesApplied && finalizeProjection) {
-		ApplyBuiltinWorkbenchFocus(projection.surfaces);
+	std::string_view activeActivityContainer;
+	if (projection->hosts[0].visible && projection->hosts[0].activeContainerId) {
+		activeActivityContainer = *projection->hosts[0].activeContainerId;
 	}
+	if (m_activityBar) m_activityBar->SetSelectedItem(activeActivityContainer);
+	if (finalizeProjection) FinalizeWorkbenchPanelProjection();
+	if (finalizeProjection && projection->focus) ApplyPaneCompositeFocus(*projection->focus);
 	if (changed && broadcastMirrorChanges) BroadcastWorkbenchSettings();
-	return surfacesApplied;
-}
-
-bool CEditWnd::ApplyBuiltinWorkbenchSurfaces(
-	const workbench::layout::WorkbenchLayoutStateSnapshot& snapshot,
-	const workbench::win32::BuiltinActiveSurfaceProjection& projection)
-{
-	if (m_workbenchRuntime == nullptr || m_sidebarHost == nullptr || m_auxiliaryBarHost == nullptr
-		|| m_bottomPanelTool == nullptr) {
-		return false;
-	}
-
-	const auto outline = std::ranges::find(snapshot.views,
-		workbench::layout::ids::view::Outline, &workbench::layout::WorkbenchViewState::viewId);
-	if (outline != snapshot.views.end()) {
-		SetOutlineExpandedInHosts(outline->visible);
-	}
-
-	// A page must exist before a host can be told to render it, so reconcile the built-in pool first.
-	SyncViewContainers(&snapshot);
-
-	// Both side bars are the same composite concept in VS Code, so each resolves its own
-	// active container independently and a container may legitimately live in either one.
-	std::string_view sidebarPage;
-	std::string_view auxiliaryPage;
-	if (projection.sidebar) {
-		sidebarPage = SidebarPageForActiveSurface(*projection.sidebar);
-		if (sidebarPage.empty()) return false;
-	}
-	if (projection.auxiliaryBar) {
-		auxiliaryPage = SidebarPageForActiveSurface(*projection.auxiliaryBar);
-		if (auxiliaryPage.empty()) return false;
-	}
-	// A contributed ViewContainer has no built-in surface to be projected onto, so its identity
-	// comes straight from the layout state instead. Consulting the projection first leaves every
-	// built-in path byte-for-byte unchanged; only a container it cannot name reaches this.
-	const auto renderableContainer =
-		[this](const std::optional<std::string>& containerId) -> std::string_view {
-		if (!containerId || m_viewContainerPages == nullptr) return {};
-		return m_viewContainerPages->Contains(*containerId) ? std::string_view(*containerId)
-															: std::string_view();
-	};
-	if (sidebarPage.empty()) sidebarPage = renderableContainer(snapshot.activeContainers.sideBar);
-	if (auxiliaryPage.empty()) {
-		auxiliaryPage = renderableContainer(snapshot.activeContainers.auxiliaryBar);
-	}
-	// One ViewContainer has exactly one location; two hosts claiming it is incoherent.
-	if (!sidebarPage.empty() && sidebarPage == auxiliaryPage) return false;
-	ApplyAuxiliaryBarPage(auxiliaryPage);
-	if (!sidebarPage.empty()) {
-		ApplySidebarPage(sidebarPage);
-	} else if (!auxiliaryPage.empty() && m_sidebarHost->ActivePage() == auxiliaryPage) {
-		// The container this side bar used to render has moved out, and no replacement is
-		// active, so the Primary Side Bar is genuinely empty.
-		m_sidebarHost->ShowPage({});
-		RefreshSidebarTitles();
-	}
-
-	if (projection.panel) {
-		switch (*projection.panel) {
-		case workbench::win32::BuiltinActiveSurface::Terminal:
-			m_bottomPanelTool->SetActiveTab(
-				workbench::panel::BottomPanelTab::Terminal);
-			break;
-		case workbench::win32::BuiltinActiveSurface::Problems:
-			m_bottomPanelTool->SetActiveTab(
-				workbench::panel::BottomPanelTab::Problems);
-			break;
-		case workbench::win32::BuiltinActiveSurface::Output:
-			m_bottomPanelTool->SetActiveTab(
-				workbench::panel::BottomPanelTab::Output);
-			break;
-		default:
-			return false;
-		}
-	}
-
-	const auto partVisible = [&snapshot](std::string_view partId) {
-		const auto part = std::ranges::find(snapshot.parts, partId,
-			&workbench::layout::WorkbenchPartState::partId);
-		return part != snapshot.parts.end() && part->visible;
-	};
-	// The Activity Bar belongs to the Primary Side Bar. A container that moved to the
-	// Secondary Side Bar has no Activity Bar entry at all, so it can never be selected here.
-	std::string_view activeContainer;
-	if (partVisible(workbench::layout::ids::part::Sidebar)) {
-		activeContainer = sidebarPage;
-	}
-	if (m_activityBar) m_activityBar->SetSelectedItem(activeContainer);
 	return true;
 }
 
-std::string_view CEditWnd::SidebarPageForActiveSurface(
-	workbench::win32::BuiltinActiveSurface surface) noexcept
+void CEditWnd::ApplyPaneCompositeFocus(
+	const workbench::win32::PaneCompositeFocusProjection& focus)
 {
-	namespace pageIds = workbench::viewcontainer::pageIds;
-	switch (surface) {
-	case workbench::win32::BuiltinActiveSurface::Explorer:
-	case workbench::win32::BuiltinActiveSurface::Outline:
-		return pageIds::Explorer;
-	case workbench::win32::BuiltinActiveSurface::Search:
-		return pageIds::Search;
-	case workbench::win32::BuiltinActiveSurface::SourceControl:
-		return pageIds::SourceControl;
-	case workbench::win32::BuiltinActiveSurface::Extensions:
-		return pageIds::Extensions;
-	default:
-		break;
-	}
-	return {};
-}
-
-void CEditWnd::ApplyBuiltinWorkbenchFocus(
-	const workbench::win32::BuiltinActiveSurfaceProjection& projection)
-{
-	if (projection.focus) {
-		switch (*projection.focus) {
-		case workbench::win32::BuiltinActiveSurface::Explorer:
-		case workbench::win32::BuiltinActiveSurface::Search:
-		case workbench::win32::BuiltinActiveSurface::SourceControl:
-		case workbench::win32::BuiltinActiveSurface::Extensions:
-		{
-			// Focus follows the container, and the container decides which Part hosts it.
-			const auto page = SidebarPageForActiveSurface(*projection.focus);
-			auto* host = page.empty() ? nullptr : PanelHostFor(HostShowingPage(page));
-			if (host != nullptr) host->ActivateTool();
-			break;
+	using Location = workbench::layout::EWorkbenchViewContainerLocation;
+	if (focus.partId == workbench::layout::ids::part::Editor) {
+		if (m_emptyEditorSurface != nullptr && m_emptyEditorSurface->IsVisible()) {
+			m_emptyEditorSurface->Focus();
+		} else if (HasActiveEditorInput() && GetActiveView().GetHwnd() != nullptr
+			&& ::IsWindowVisible(GetActiveView().GetHwnd())) {
+			::SetFocus(GetActiveView().GetHwnd());
 		}
-		case workbench::win32::BuiltinActiveSurface::Outline:
-			if (auto* explorerHost = HostShowingPage(
-				workbench::viewcontainer::pageIds::Explorer)) {
-				explorerHost->FocusOutline();
-			}
-			break;
-		case workbench::win32::BuiltinActiveSurface::Terminal:
-		case workbench::win32::BuiltinActiveSurface::Problems:
-		case workbench::win32::BuiltinActiveSurface::Output:
-			if (m_bottomWorkbenchPanel) m_bottomWorkbenchPanel->ActivateTool();
-			break;
-		case workbench::win32::BuiltinActiveSurface::Editor:
-			if (m_emptyEditorSurface != nullptr && m_emptyEditorSurface->IsVisible()) {
-				m_emptyEditorSurface->Focus();
-			} else if (HasActiveEditorInput() && GetActiveView().GetHwnd() != nullptr
-				&& ::IsWindowVisible(GetActiveView().GetHwnd())) {
-				::SetFocus(GetActiveView().GetHwnd());
-			}
-			break;
-		}
+		return;
 	}
+	if (!focus.location) return;
+	if (*focus.location == Location::Panel) {
+		if (m_bottomWorkbenchPanel) m_bottomWorkbenchPanel->ActivateTool();
+		return;
+	}
+	if (focus.viewId == workbench::layout::ids::view::Outline
+		&& focus.containerId == workbench::layout::ids::viewContainer::Explorer) {
+		if (auto* explorerHost = HostShowingPage(*focus.containerId)) {
+			explorerHost->FocusOutline();
+		}
+		return;
+	}
+	if (focus.containerId) {
+		if (auto* host = PanelHostFor(HostShowingPage(*focus.containerId))) {
+			host->ActivateTool();
+		}
+		return;
+	}
+	auto* host = *focus.location == Location::SideBar
+		? m_leftWorkbenchPanel.get() : m_rightWorkbenchPanel.get();
+	if (host != nullptr) host->ActivateTool();
 }
 
 void CEditWnd::OnWorkbenchLayoutStateChanged()
@@ -6531,8 +6625,7 @@ void CEditWnd::OnWorkbenchServiceProjectionChanged()
 	}
 }
 
-void CEditWnd::FinalizeWorkbenchPanelProjection(
-	const workbench::win32::BuiltinActiveSurfaceProjection* runtimeProjection)
+void CEditWnd::FinalizeWorkbenchPanelProjection()
 {
 	const auto& settings = m_pShareData->m_Common.m_sWorkbench;
 	const bool leftVisible = m_leftWorkbenchPanel != nullptr
@@ -6577,8 +6670,9 @@ void CEditWnd::FinalizeWorkbenchPanelProjection(
 	}
 	const bool terminalSelected = m_workbenchRuntime == nullptr
 		? settings.m_eActiveTool == WORKBENCH_TOOL_TERMINAL
-		: runtimeProjection != nullptr
-			&& runtimeProjection->panel == workbench::win32::BuiltinActiveSurface::Terminal;
+		: m_bottomPanelTool != nullptr
+			&& m_bottomPanelTool->ActiveContainerId()
+				== workbench::layout::ids::viewContainer::Terminal;
 	if (bottomVisible && terminalSelected && m_terminalTool != nullptr) {
 		// Restoring a visible terminal must produce its first prompt without the
 		// user pressing '+'. Keep focus where startup/shared-setting propagation
@@ -7452,30 +7546,19 @@ bool CEditWnd::ActivateBuiltinWorkbenchView(std::string_view viewId, bool reques
 		;
 	if (!supported) return false;
 	try {
-		auto snapshot = m_workbenchRuntime->LayoutState().Snapshot();
-		auto operationId = NextWorkbenchLayoutOperationId("activate-view");
-		if (!operationId) return false;
-		auto result = m_workbenchRuntime->LayoutState().ActivateView({
-			.operation = {
-				.operationId = std::move(*operationId),
-				.expectedRevision = snapshot.revision,
-			},
-			.viewId = std::string(viewId),
-		});
-		if (result.status != workbench::layout::EWorkbenchLayoutOperationStatus::Succeeded
-			&& result.status != workbench::layout::EWorkbenchLayoutOperationStatus::NotApplicable) {
-			return false;
-		}
-		snapshot = std::move(result.snapshot);
-
+		const auto snapshot = m_workbenchRuntime->LayoutState().Snapshot();
 		const auto view = std::ranges::find(snapshot.views, viewId,
 			&workbench::layout::WorkbenchViewState::viewId);
 		if (view == snapshot.views.end()) return false;
 		const auto container = std::ranges::find(snapshot.containers, view->containerId,
 			&workbench::layout::WorkbenchViewContainerState::containerId);
 		if (container == snapshot.containers.end()) return false;
-		const std::string resolvedContainerId = container->containerId;
-		const std::string resolvedViewId = view->viewId;
+		if (m_paneCompositeProjection == nullptr) return false;
+		const auto supportedLocations =
+			m_paneCompositeProjection->SupportedLocations(container->containerId);
+		if (!supportedLocations.complete || !supportedLocations.Contains(container->location)) {
+			return false;
+		}
 
 		std::string_view partId;
 		switch (container->location) {
@@ -7490,41 +7573,102 @@ bool CEditWnd::ActivateBuiltinWorkbenchView(std::string_view viewId, bool reques
 			break;
 		}
 		if (partId.empty()) return false;
-
 		const auto part = std::ranges::find(snapshot.parts, partId,
 			&workbench::layout::WorkbenchPartState::partId);
 		if (part == snapshot.parts.end()) return false;
+		auto operationId = NextWorkbenchLayoutOperationId("activate-view");
+		if (!operationId) return false;
+		std::vector<workbench::layout::WorkbenchLayoutTransactionChange> changes;
+		changes.emplace_back(workbench::layout::WorkbenchLayoutActivateViewChange{
+			.viewId = std::string(viewId),
+		});
 		if (!part->visible) {
-			operationId = NextWorkbenchLayoutOperationId("reveal-active-view-part");
-			if (!operationId) return false;
-			result = m_workbenchRuntime->LayoutState().SetPartVisibility({
-				.operation = {
-					.operationId = std::move(*operationId),
-					.expectedRevision = snapshot.revision,
-				},
+			changes.emplace_back(workbench::layout::WorkbenchLayoutSetPartVisibilityChange{
 				.partId = std::string(partId),
 				.visible = true,
 			});
-			if (result.status != workbench::layout::EWorkbenchLayoutOperationStatus::Succeeded
-				&& result.status != workbench::layout::EWorkbenchLayoutOperationStatus::NotApplicable) {
-				return false;
-			}
-			snapshot = std::move(result.snapshot);
 		}
-
-		if (!requestFocus) return true;
-		operationId = NextWorkbenchLayoutOperationId("focus-active-view");
-		if (!operationId) return false;
-		result = m_workbenchRuntime->LayoutState().SetFocus({
+		if (requestFocus) {
+			changes.emplace_back(workbench::layout::WorkbenchLayoutSetFocusChange{
+				.focus = {
+					.partId = std::string(partId),
+					.containerId = container->containerId,
+					.viewId = view->viewId,
+				},
+			});
+		}
+		const auto result = m_workbenchRuntime->LayoutState().ApplyTransaction({
 			.operation = {
 				.operationId = std::move(*operationId),
 				.expectedRevision = snapshot.revision,
 			},
-			.focus = {
+			.changes = std::move(changes),
+		});
+		return result.status == workbench::layout::EWorkbenchLayoutOperationStatus::Succeeded
+			|| result.status == workbench::layout::EWorkbenchLayoutOperationStatus::NotApplicable;
+	}
+	catch (...) {
+		return false;
+	}
+}
+
+bool CEditWnd::ActivateWorkbenchViewContainer(
+	const std::string_view containerId, const bool requestFocus)
+{
+	if (m_workbenchRuntime == nullptr || m_paneCompositeProjection == nullptr
+		|| containerId.empty()) return false;
+	try {
+		const auto snapshot = m_workbenchRuntime->LayoutState().Snapshot();
+		const auto container = std::ranges::find(snapshot.containers, containerId,
+			&workbench::layout::WorkbenchViewContainerState::containerId);
+		if (container == snapshot.containers.end()) return false;
+		const auto supportedLocations =
+			m_paneCompositeProjection->SupportedLocations(containerId);
+		if (!supportedLocations.complete || !supportedLocations.Contains(container->location)) {
+			return false;
+		}
+		std::string_view partId;
+		switch (container->location) {
+		case workbench::layout::EWorkbenchViewContainerLocation::SideBar:
+			partId = workbench::layout::ids::part::Sidebar;
+			break;
+		case workbench::layout::EWorkbenchViewContainerLocation::Panel:
+			partId = workbench::layout::ids::part::Panel;
+			break;
+		case workbench::layout::EWorkbenchViewContainerLocation::AuxiliaryBar:
+			partId = workbench::layout::ids::part::Auxiliarybar;
+			break;
+		}
+		const auto part = std::ranges::find(snapshot.parts, partId,
+			&workbench::layout::WorkbenchPartState::partId);
+		if (part == snapshot.parts.end()) return false;
+		auto operationId = NextWorkbenchLayoutOperationId("activate-view-container");
+		if (!operationId) return false;
+		std::vector<workbench::layout::WorkbenchLayoutTransactionChange> changes;
+		changes.emplace_back(workbench::layout::WorkbenchLayoutActivateContainerChange{
+			.containerId = std::string(containerId),
+		});
+		if (!part->visible) {
+			changes.emplace_back(workbench::layout::WorkbenchLayoutSetPartVisibilityChange{
 				.partId = std::string(partId),
-				.containerId = resolvedContainerId,
-				.viewId = resolvedViewId,
+				.visible = true,
+			});
+		}
+		if (requestFocus) {
+			changes.emplace_back(workbench::layout::WorkbenchLayoutSetFocusChange{
+				.focus = {
+					.partId = std::string(partId),
+					.containerId = std::string(containerId),
+					.viewId = container->activeViewId,
+				},
+			});
+		}
+		const auto result = m_workbenchRuntime->LayoutState().ApplyTransaction({
+			.operation = {
+				.operationId = std::move(*operationId),
+				.expectedRevision = snapshot.revision,
 			},
+			.changes = std::move(changes),
 		});
 		return result.status == workbench::layout::EWorkbenchLayoutOperationStatus::Succeeded
 			|| result.status == workbench::layout::EWorkbenchLayoutOperationStatus::NotApplicable;
@@ -8026,8 +8170,9 @@ void CEditWnd::ActivateSidebarPage(const std::string_view containerId, bool togg
 	}
 	if (m_workbenchRuntime != nullptr) {
 		if (m_resizingWorkbenchPanel != nullptr) CancelWorkbenchResize();
-		if (requestedView.empty()) return;
-		const bool activated = ActivateBuiltinWorkbenchView(requestedView, true);
+		const bool activated = requestedView.empty()
+			? ActivateWorkbenchViewContainer(containerId, true)
+			: ActivateBuiltinWorkbenchView(requestedView, true);
 		if (!activated) {
 			// A click that reaches here has already passed the "this container has a page"
 			// check, so a rejected activation is a real model failure, not an ordinary
@@ -8935,39 +9080,58 @@ void CEditWnd::MoveViewContainerToEdge(const std::string_view containerId,
 		? workbench::layout::EWorkbenchViewContainerLocation::AuxiliaryBar
 		: workbench::layout::EWorkbenchViewContainerLocation::SideBar;
 	try {
-		auto snapshot = m_workbenchRuntime->LayoutState().Snapshot();
+		const auto snapshot = m_workbenchRuntime->LayoutState().Snapshot();
 		const auto container = std::ranges::find(snapshot.containers, containerId,
 			&workbench::layout::WorkbenchViewContainerState::containerId);
 		if (container == snapshot.containers.end() || container->location == location) return;
+		if (m_paneCompositeProjection == nullptr) return;
+		const auto supportedLocations =
+			m_paneCompositeProjection->SupportedLocations(containerId);
+		if (!supportedLocations.complete || !supportedLocations.Contains(location)) return;
+		const std::string_view partId = location
+			== workbench::layout::EWorkbenchViewContainerLocation::SideBar
+			? workbench::layout::ids::part::Sidebar
+			: workbench::layout::ids::part::Auxiliarybar;
+		const auto part = std::ranges::find(snapshot.parts, partId,
+			&workbench::layout::WorkbenchPartState::partId);
+		if (part == snapshot.parts.end()) return;
 
 		if (m_resizingWorkbenchPanel != nullptr) CancelWorkbenchResize();
 		auto operationId = NextWorkbenchLayoutOperationId("move-view-container");
 		if (!operationId) return;
-		auto result = m_workbenchRuntime->LayoutState().MoveContainer({
+		std::vector<workbench::layout::WorkbenchLayoutTransactionChange> changes;
+		changes.emplace_back(workbench::layout::WorkbenchLayoutMoveContainerChange{
+			.containerId = std::string(containerId),
+			.location = location,
+			.order = container->order,
+		});
+		changes.emplace_back(workbench::layout::WorkbenchLayoutActivateContainerChange{
+			.containerId = std::string(containerId),
+		});
+		if (!part->visible) {
+			changes.emplace_back(workbench::layout::WorkbenchLayoutSetPartVisibilityChange{
+				.partId = std::string(partId),
+				.visible = true,
+			});
+		}
+		changes.emplace_back(workbench::layout::WorkbenchLayoutSetFocusChange{
+			.focus = {
+				.partId = std::string(partId),
+				.containerId = std::string(containerId),
+				.viewId = container->activeViewId,
+			},
+		});
+		const auto result = m_workbenchRuntime->LayoutState().ApplyTransaction({
 			.operation = {
 				.operationId = std::move(*operationId),
 				.expectedRevision = snapshot.revision,
 			},
-			.containerId = std::string(containerId),
-			.location = location,
-			.order = container->order,
+			.changes = std::move(changes),
 		});
 		if (result.status != workbench::layout::EWorkbenchLayoutOperationStatus::Succeeded
 			&& result.status != workbench::layout::EWorkbenchLayoutOperationStatus::NotApplicable) {
 			return;
 		}
-		snapshot = std::move(result.snapshot);
-
-		// Open the moved built-in container in its new home and reveal that Part if needed.
-		namespace pageIds = workbench::viewcontainer::pageIds;
-		std::string_view viewId;
-		if (containerId == pageIds::Explorer) viewId = workbench::layout::ids::view::Explorer;
-		else if (containerId == pageIds::Search) viewId = workbench::layout::ids::view::Search;
-		else if (containerId == pageIds::SourceControl) viewId = workbench::layout::ids::view::SourceControl;
-		else if (containerId == pageIds::Extensions) viewId = workbench::layout::ids::view::ExtensionsInstalled;
-		if (viewId.empty()) return;
-		const bool activated = ActivateBuiltinWorkbenchView(viewId, true);
-		if (!activated) return;
 
 		bool mirrorChanged = false;
 		if (!ApplyCurrentWorkbenchLayoutState(true, false, &mirrorChanged)) {

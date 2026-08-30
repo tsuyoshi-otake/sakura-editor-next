@@ -14,6 +14,13 @@ snapshot. Do not add new peer-coordinate inference to `OnSize2`. Destroying or
 hiding a window surface must explicitly transfer focus and must not terminate a
 backend whose service owner remains active.
 
+The I06 Pane Composite adapter binds all three physical Parts to one staged
+projection. Side bars and the Panel query the retained native page registry for
+their supported locations; the Panel keeps its horizontal Part chrome separate
+from page content and applies host-relative wrapper plus wrapper-local child
+coordinates in one required companion callback below that header. Existing
+built-in location declarations are not widened by this native seam.
+
 ## Committed layout must invalidate the whole frame (2026-08-05, #17)
 
 - A committed geometry change invalidates the frame **once, synchronously**,

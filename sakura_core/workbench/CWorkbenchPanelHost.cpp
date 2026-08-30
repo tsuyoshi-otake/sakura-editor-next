@@ -10,6 +10,7 @@
 #include "workbench/icons/CCodiconFont.h"
 #include "workbench/icons/CodiconGlyphTable.h"
 #include "workbench/icons/LabelRunPainter.h"
+#include "workbench/layout/WorkbenchLayoutStateTypes.h"
 
 #include <windowsx.h>
 
@@ -760,7 +761,8 @@ void CWorkbenchPanelHost::ShowHeaderMenu()
 
 int CWorkbenchPanelHost::ClampExtent(int extentDip) noexcept
 {
-	return std::clamp(extentDip, 0, 10000);
+	return std::clamp(extentDip, 0,
+		static_cast<int>(layout::kMaximumWorkbenchLayoutCommittedExtentDip));
 }
 
 } // namespace workbench

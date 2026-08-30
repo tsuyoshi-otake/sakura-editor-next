@@ -165,74 +165,19 @@ void CViewContainerHost::Activate()
 {
 	if (m_page.empty() || !m_pages || !m_pages->IsUsable()) return;
 	if (!OwnsPage(m_page)) return;
-	if (m_page == pageIds::SourceControl) {
-		if (auto* scm = m_pages->SourceControl()) scm->Activate();
-		return;
-	}
-	if (m_page == pageIds::Search) {
-		if (auto* view = m_pages->Search()) view->Activate();
-		return;
-	}
-	if (m_page == pageIds::Extensions) {
-		if (auto* view = m_pages->Extensions()) view->Activate();
-		return;
-	}
-	if (m_page == pageIds::Explorer) {
-		if (auto* explorer = m_pages->Explorer()) explorer->Activate();
-		return;
-	}
+	m_pages->ActivatePage(m_page);
 }
 
 void CViewContainerHost::Deactivate()
 {
 	if (!m_pages || !m_pages->IsUsable() || m_page.empty() || !OwnsPage(m_page)) return;
-	if (m_page == pageIds::SourceControl) {
-		if (auto* scm = m_pages->SourceControl()) scm->Deactivate();
-		return;
-	}
-	if (m_page == pageIds::Search) {
-		if (auto* view = m_pages->Search()) view->Deactivate();
-		return;
-	}
-	if (m_page == pageIds::Extensions) {
-		if (auto* view = m_pages->Extensions()) view->Deactivate();
-		return;
-	}
-	if (m_page == pageIds::Explorer) {
-		if (auto* explorer = m_pages->Explorer()) explorer->Deactivate();
-		if (auto* outline = m_pages->Outline()) outline->Deactivate();
-		return;
-	}
+	m_pages->DeactivatePage(m_page);
 }
 
 bool CViewContainerHost::PreTranslateMessage(MSG& message)
 {
-	if (!m_pages || !m_pages->IsUsable() || m_page.empty() || !OwnsPage(m_page)
-		|| !m_pages->IsMessageTarget(m_page, message.hwnd)) return false;
-	if (m_page == pageIds::SourceControl) {
-		auto* scm = m_pages->SourceControl();
-		return scm != nullptr && scm->PreTranslateMessage(message);
-	}
-	if (m_page == pageIds::Search) {
-		auto* view = m_pages->Search();
-		return view != nullptr && view->PreTranslateMessage(message);
-	}
-	if (m_page == pageIds::Extensions) {
-		auto* view = m_pages->Extensions();
-		return view != nullptr && view->PreTranslateMessage(message);
-	}
-	if (m_page != pageIds::Explorer) return false;
-	auto* outline = m_pages->Outline();
-	auto* explorer = m_pages->Explorer();
-	const auto belongsTo = [&message](HWND root) noexcept {
-		return root != nullptr && (message.hwnd == root || ::IsChild(root, message.hwnd));
-	};
-	if (m_pages->IsOutlineExpanded() && outline != nullptr
-		&& belongsTo(outline->GetHwnd())) {
-		return outline->PreTranslateMessage(message);
-	}
-	return explorer != nullptr && belongsTo(explorer->GetHwnd())
-		&& explorer->PreTranslateMessage(message);
+	return m_pages && m_pages->IsUsable() && !m_page.empty() && OwnsPage(m_page)
+		&& m_pages->PreTranslatePage(m_page, message);
 }
 
 void CViewContainerHost::Close()
@@ -632,6 +577,10 @@ void CViewContainerHost::LayoutChildren()
 		return;
 	}
 	if (m_page != pageIds::Explorer) {
+		// Side-bar client and contributed wrapper coordinates are equivalent:
+		// both start at the host origin and occupy the complete client.
+		m_pages->LayoutPageProjection(m_page, client, client, m_dpi);
+		m_pages->SetPageVisible(m_page, true);
 		m_outlineHeader = {};
 		invalidateHeaderChange();
 		return;

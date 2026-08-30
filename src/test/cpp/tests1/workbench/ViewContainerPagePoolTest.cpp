@@ -8,8 +8,11 @@
 
 #include <gtest/gtest.h>
 
+#include "workbench/panel/CBottomPanelTool.h"
+#include "workbench/viewcontainer/CViewContainerPages.h"
 #include "workbench/viewcontainer/ViewContainerPagePool.h"
 
+#include <array>
 #include <memory>
 #include <optional>
 #include <string>
@@ -51,6 +54,10 @@ struct FakePageState final {
 	int livePages{};
 	int destructCalls{};
 	int closeCalls{};
+	std::optional<RECT> projectionHostBounds;
+	std::optional<RECT> projectionContentBounds;
+	unsigned int projectionDpi{};
+	int projectionLayoutCalls{};
 
 	[[nodiscard]] bool ShouldFail(const FakeStep step)
 	{
@@ -61,7 +68,7 @@ struct FakePageState final {
 	}
 };
 
-class FakePage final : public IViewContainerPage {
+class FakePage final : public IViewContainerPage, public IViewContainerPageProjection {
 public:
 	FakePage(std::shared_ptr<FakePageState> state, std::string containerId)
 		: m_state(std::move(state)), m_containerId(std::move(containerId))
@@ -147,6 +154,70 @@ public:
 		return EViewContainerPageCloseStatus::Closed;
 	}
 
+	void ActivateProjection() noexcept override {}
+	void DeactivateProjection() noexcept override {}
+	[[nodiscard]] bool PreTranslateProjection(MSG&) noexcept override { return false; }
+	void LayoutProjection(const RECT& hostBounds, const RECT& contentBounds,
+		const unsigned int dpi) noexcept override
+	{
+		m_state->projectionHostBounds = hostBounds;
+		m_state->projectionContentBounds = contentBounds;
+		m_state->projectionDpi = dpi;
+		++m_state->projectionLayoutCalls;
+	}
+	void SetProjectionVisible(bool) noexcept override {}
+
+private:
+	std::shared_ptr<FakePageState> m_state;
+	std::string m_containerId;
+};
+
+class FakePageWithoutProjection final : public IViewContainerPage {
+public:
+	FakePageWithoutProjection(std::shared_ptr<FakePageState> state, std::string containerId)
+		: m_state(std::move(state)), m_containerId(std::move(containerId))
+	{
+		++m_state->livePages;
+	}
+
+	~FakePageWithoutProjection() override
+	{
+		--m_state->livePages;
+		++m_state->destructCalls;
+	}
+
+	[[nodiscard]] std::string_view ContainerId() const noexcept override { return m_containerId; }
+	[[nodiscard]] ViewContainerFocusCaptureResult CaptureFocusToken() noexcept override
+	{
+		return { EViewContainerFocusCaptureStatus::NoFocus, std::nullopt };
+	}
+	[[nodiscard]] EViewContainerPageDetachStatus Detach(
+		const ViewContainerPageHost&) noexcept override
+	{
+		return EViewContainerPageDetachStatus::Detached;
+	}
+	[[nodiscard]] EViewContainerPageReparentStatus Reparent(
+		ViewContainerNativeHandle) noexcept override
+	{
+		return EViewContainerPageReparentStatus::Reparented;
+	}
+	[[nodiscard]] EViewContainerPageAttachStatus Attach(
+		const ViewContainerPageHost&) noexcept override
+	{
+		return EViewContainerPageAttachStatus::Attached;
+	}
+	[[nodiscard]] EViewContainerFocusRestoreStatus RestoreFocusToken(
+		ViewContainerFocusToken) noexcept override
+	{
+		return EViewContainerFocusRestoreStatus::Restored;
+	}
+	[[nodiscard]] EViewContainerPageCloseStatus Close() noexcept override
+	{
+		++m_state->closeCalls;
+		m_state->closed = true;
+		return EViewContainerPageCloseStatus::Closed;
+	}
+
 private:
 	std::shared_ptr<FakePageState> m_state;
 	std::string m_containerId;
@@ -183,6 +254,74 @@ ViewContainerPageHost AuxiliaryHost()
 {
 	return { "workbench.parts.auxiliarybar", layout::EViewContainerLocation::AuxiliaryBar, 202 };
 }
+
+ViewContainerPageHost PanelHost()
+{
+	return { "workbench.parts.panel", layout::EViewContainerLocation::Panel, 303 };
+}
+
+class FakePaneCompositePageHostService final : public IViewContainerPageHostService {
+public:
+	explicit FakePaneCompositePageHostService(std::shared_ptr<FakePageState> state)
+		: m_state(std::move(state)), m_pool(m_registry)
+	{
+		const auto registered = m_registry.RegisterBatch({ Descriptor(m_state,
+			std::string(kContainerId), {
+				layout::EViewContainerLocation::Sidebar,
+				layout::EViewContainerLocation::Panel,
+				layout::EViewContainerLocation::AuxiliaryBar,
+			}) });
+		m_usable = registered.Succeeded() && m_pool.Acquire(kContainerId).Succeeded();
+	}
+
+	[[nodiscard]] bool IsUsable() const noexcept override { return m_usable; }
+	[[nodiscard]] ViewContainerPagePoolAttachResult Attach(const std::string_view containerId,
+		const ViewContainerPageHost& host) noexcept override
+	{
+		return m_pool.Attach(containerId, host);
+	}
+	[[nodiscard]] ViewContainerPagePoolDetachResult Detach(
+		const std::string_view containerId) noexcept override
+	{
+		return m_pool.Detach(containerId);
+	}
+	[[nodiscard]] HWND AttachedHost(const std::string_view containerId) const noexcept override
+	{
+		const auto state = m_pool.State(containerId);
+		return state.state && state.state->host
+			? reinterpret_cast<HWND>(state.state->host->nativeParent) : nullptr;
+	}
+	[[nodiscard]] bool SupportsLocation(const std::string_view containerId,
+		const layout::EViewContainerLocation location) const noexcept override
+	{
+		const auto* descriptor = m_registry.Find(containerId);
+		return descriptor != nullptr && descriptor->supportedLocations.Contains(location);
+	}
+	[[nodiscard]] std::vector<std::string> PageIds() const override
+	{
+		return { std::string(kContainerId) };
+	}
+	void ActivatePage(std::string_view) noexcept override {}
+	void DeactivatePage(std::string_view) noexcept override {}
+	[[nodiscard]] bool PreTranslatePage(std::string_view, MSG&) noexcept override { return false; }
+	void LayoutPageProjection(std::string_view, const RECT& hostBounds,
+		const RECT& contentBounds, unsigned int) noexcept override
+	{
+		wrapperBounds = hostBounds;
+		pageContentBounds = contentBounds;
+	}
+	void SetPageVisible(std::string_view, bool visible) override { pageVisible = visible; }
+	void NotifyPageLayout(std::string_view) override { ++layoutNotifications; }
+
+	ViewContainerPageRegistry m_registry;
+	std::shared_ptr<FakePageState> m_state;
+	ViewContainerPagePool m_pool;
+	RECT wrapperBounds{};
+	RECT pageContentBounds{};
+	bool pageVisible{};
+	int layoutNotifications{};
+	bool m_usable{};
+};
 
 TEST(ViewContainerPagePool, RepeatedAcquireCreatesOneLogicalPage)
 {
@@ -248,6 +387,200 @@ TEST(ViewContainerPagePool, KeepsOneLogicalPageAndAllOwnedWindowsAcrossBothSideB
 	EXPECT_TRUE(state->focused);
 	EXPECT_EQ(logicalPage, pool.Acquire(kContainerId).page);
 	EXPECT_EQ(1, state->factoryCalls);
+}
+
+TEST(ViewContainerPagePool, MovesOneRetainedPageAcrossAllThreePaneCompositeHosts)
+{
+	auto state = std::make_shared<FakePageState>();
+	ViewContainerPageRegistry registry;
+	ASSERT_EQ(EViewContainerPageRegistrationStatus::Registered,
+		registry.RegisterBatch({ Descriptor(state, std::string(kContainerId), {
+			layout::EViewContainerLocation::Sidebar,
+			layout::EViewContainerLocation::Panel,
+			layout::EViewContainerLocation::AuxiliaryBar,
+		}) }).status);
+	ViewContainerPagePool pool(registry);
+	const auto* retainedPage = pool.Acquire(kContainerId).page;
+	ASSERT_NE(nullptr, retainedPage);
+
+	const std::array hosts{ SideBarHost(), PanelHost(), AuxiliaryHost() };
+	for (std::size_t index = 0; index < hosts.size(); ++index) {
+		if (index != 0) state->focused = true;
+		const auto attached = pool.Attach(kContainerId, hosts[index]);
+		ASSERT_EQ(EViewContainerPagePoolAttachStatus::Attached, attached.status);
+		EXPECT_EQ(retainedPage, pool.Acquire(kContainerId).page);
+		ASSERT_TRUE(state->attachedHost.has_value());
+		EXPECT_EQ(hosts[index], *state->attachedHost);
+		EXPECT_EQ(hosts[index].nativeParent, state->parent);
+		EXPECT_EQ(hosts[index].nativeParent, state->nestedParent);
+		if (index != 0) EXPECT_TRUE(state->focused);
+	}
+	EXPECT_EQ(1, state->factoryCalls);
+	EXPECT_EQ(1, state->livePages);
+}
+
+TEST(ViewContainerPagePool, PanelHostFocusRestoreFailureReturnsToThePrimaryHost)
+{
+	auto state = std::make_shared<FakePageState>();
+	ViewContainerPageRegistry registry;
+	ASSERT_EQ(EViewContainerPageRegistrationStatus::Registered,
+		registry.RegisterBatch({ Descriptor(state, std::string(kContainerId), {
+			layout::EViewContainerLocation::Sidebar,
+			layout::EViewContainerLocation::Panel,
+			layout::EViewContainerLocation::AuxiliaryBar,
+		}) }).status);
+	ViewContainerPagePool pool(registry);
+	const auto* retainedPage = pool.Acquire(kContainerId).page;
+	ASSERT_NE(nullptr, retainedPage);
+	ASSERT_EQ(EViewContainerPagePoolAttachStatus::Attached,
+		pool.Attach(kContainerId, SideBarHost()).status);
+	state->focused = true;
+	state->failures.push_back(FakeStep::RestoreFocus);
+
+	const auto failed = pool.Attach(kContainerId, PanelHost());
+	EXPECT_EQ(EViewContainerPagePoolAttachStatus::FocusRestoreFailed, failed.status);
+	ASSERT_TRUE(failed.finalState.has_value());
+	ASSERT_TRUE(failed.finalState->host.has_value());
+	EXPECT_EQ(SideBarHost(), *failed.finalState->host);
+	EXPECT_EQ(retainedPage, pool.Acquire(kContainerId).page);
+	ASSERT_TRUE(state->attachedHost.has_value());
+	EXPECT_EQ(SideBarHost(), *state->attachedHost);
+	EXPECT_TRUE(state->focused);
+	EXPECT_EQ(1, state->factoryCalls);
+}
+
+TEST(ViewContainerPagePool, ProductionContributionHostRoutesRootAndLocalContentTogether)
+{
+	auto state = std::make_shared<FakePageState>();
+	ViewContainerPageRegistry registry;
+	ASSERT_EQ(EViewContainerPageRegistrationStatus::Registered,
+		registry.RegisterBatch({ Descriptor(state, std::string(kContainerId), {
+			layout::EViewContainerLocation::Sidebar,
+			layout::EViewContainerLocation::Panel,
+			layout::EViewContainerLocation::AuxiliaryBar,
+		}) }).status);
+	ViewContainerPagePool pool(registry);
+	ContributedViewContainerPageHost host(pool);
+	const std::array ids{ std::string(kContainerId) };
+	ASSERT_TRUE(host.Initialize(ids));
+	ASSERT_TRUE(host.IsUsable());
+	ASSERT_EQ(EViewContainerPagePoolAttachStatus::Attached,
+		pool.Attach(kContainerId, SideBarHost()).status);
+	const RECT sideBarClient{ 0, 0, 320, 500 };
+	host.Layout(kContainerId, sideBarClient, sideBarClient, 96);
+	ASSERT_TRUE(state->projectionHostBounds.has_value());
+	EXPECT_EQ(0, state->projectionHostBounds->left);
+	EXPECT_EQ(0, state->projectionHostBounds->top);
+	EXPECT_EQ(320, state->projectionHostBounds->right);
+	EXPECT_EQ(500, state->projectionHostBounds->bottom);
+	ASSERT_TRUE(state->projectionContentBounds.has_value());
+	EXPECT_EQ(0, state->projectionContentBounds->left);
+	EXPECT_EQ(0, state->projectionContentBounds->top);
+	EXPECT_EQ(320, state->projectionContentBounds->right);
+	EXPECT_EQ(500, state->projectionContentBounds->bottom);
+	EXPECT_EQ(96U, state->projectionDpi);
+	EXPECT_EQ(1, state->projectionLayoutCalls);
+
+	ASSERT_EQ(EViewContainerPagePoolAttachStatus::Attached,
+		pool.Attach(kContainerId, PanelHost()).status);
+
+	const RECT wrapper{ 0, 34, 640, 200 };
+	const RECT content{ 0, 0, 640, 166 };
+	host.Layout(kContainerId, wrapper, content, 144);
+
+	ASSERT_TRUE(state->projectionHostBounds.has_value());
+	EXPECT_EQ(0, state->projectionHostBounds->left);
+	EXPECT_EQ(34, state->projectionHostBounds->top);
+	EXPECT_EQ(640, state->projectionHostBounds->right);
+	EXPECT_EQ(200, state->projectionHostBounds->bottom);
+	ASSERT_TRUE(state->projectionContentBounds.has_value());
+	EXPECT_EQ(0, state->projectionContentBounds->left);
+	EXPECT_EQ(0, state->projectionContentBounds->top);
+	EXPECT_EQ(640, state->projectionContentBounds->right);
+	EXPECT_EQ(166, state->projectionContentBounds->bottom);
+	EXPECT_EQ(144U, state->projectionDpi);
+	EXPECT_EQ(2, state->projectionLayoutCalls);
+	EXPECT_EQ(1, state->factoryCalls);
+}
+
+TEST(ViewContainerPagePool, ProductionContributionHostFailsClosedWithoutNativeCompanion)
+{
+	auto state = std::make_shared<FakePageState>();
+	ViewContainerPageRegistry registry;
+	ViewContainerPageDescriptor descriptor{
+		.containerId = std::string(kContainerId),
+		.supportedLocations = {
+			layout::EViewContainerLocation::Sidebar,
+			layout::EViewContainerLocation::Panel,
+			layout::EViewContainerLocation::AuxiliaryBar,
+		},
+		.factory = [state]() -> std::unique_ptr<IViewContainerPage> {
+			++state->factoryCalls;
+			return std::make_unique<FakePageWithoutProjection>(
+				state, std::string(kContainerId));
+		},
+	};
+	ASSERT_EQ(EViewContainerPageRegistrationStatus::Registered,
+		registry.RegisterBatch({ std::move(descriptor) }).status);
+	ViewContainerPagePool pool(registry);
+	ContributedViewContainerPageHost host(pool);
+	const std::array ids{ std::string(kContainerId) };
+
+	EXPECT_FALSE(host.Initialize(ids));
+	EXPECT_FALSE(host.IsUsable());
+	EXPECT_EQ(1, state->factoryCalls);
+	EXPECT_EQ(1, state->closeCalls);
+	EXPECT_EQ(1, state->destructCalls);
+	EXPECT_EQ(0, state->livePages);
+	const auto terminal = pool.State(kContainerId);
+	ASSERT_EQ(EViewContainerPageStateStatus::Found, terminal.status);
+	ASSERT_TRUE(terminal.state.has_value());
+	EXPECT_EQ(EViewContainerPageStableState::Closed, terminal.state->state);
+	EXPECT_EQ(EViewContainerPageAcquireStatus::PoolClosed,
+		pool.Acquire(kContainerId).status);
+	EXPECT_EQ(EViewContainerPagePoolShutdownStatus::AlreadyClosed,
+		pool.Shutdown().status);
+}
+
+TEST(ViewContainerPagePool, BottomPanelAdapterPropagatesFocusFailureAndUsesWrapperLocalContent)
+{
+	auto state = std::make_shared<FakePageState>();
+	auto pages = std::make_shared<FakePaneCompositePageHostService>(state);
+	ASSERT_TRUE(pages->IsUsable());
+	ASSERT_EQ(EViewContainerPagePoolAttachStatus::Attached,
+		pages->Attach(kContainerId, SideBarHost()).status);
+	state->focused = true;
+	state->failures.push_back(FakeStep::RestoreFocus);
+
+	const HWND parent = ::CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED,
+		0, 0, 640, 200, nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
+	ASSERT_NE(nullptr, parent);
+	workbench::panel::CBottomPanelTool panel({}, pages);
+	ASSERT_TRUE(panel.Create(parent));
+	ASSERT_TRUE(panel.ApplyActiveContainer(kContainerId));
+	EXPECT_EQ(workbench::panel::EBottomPanelPageAttachStatus::Failed,
+		panel.AttachActivePage());
+	ASSERT_TRUE(state->attachedHost.has_value());
+	EXPECT_EQ(SideBarHost(), *state->attachedHost);
+	EXPECT_TRUE(state->focused);
+
+	ASSERT_EQ(workbench::panel::EBottomPanelPageAttachStatus::Attached,
+		panel.AttachActivePage());
+	panel.Layout(RECT{ 0, 0, 640, 200 }, 96);
+	EXPECT_EQ(0, pages->wrapperBounds.left);
+	EXPECT_EQ(34, pages->wrapperBounds.top);
+	EXPECT_EQ(640, pages->wrapperBounds.right);
+	EXPECT_EQ(200, pages->wrapperBounds.bottom);
+	EXPECT_EQ(0, pages->pageContentBounds.left);
+	EXPECT_EQ(0, pages->pageContentBounds.top);
+	EXPECT_EQ(640, pages->pageContentBounds.right);
+	EXPECT_EQ(166, pages->pageContentBounds.bottom);
+	EXPECT_TRUE(pages->pageVisible);
+	EXPECT_GT(pages->layoutNotifications, 0);
+	EXPECT_EQ(1, state->factoryCalls);
+
+	panel.Close();
+	::DestroyWindow(parent);
 }
 
 TEST(ViewContainerPagePool, RejectsUnsupportedDestinationBeforeCreatingAPage)

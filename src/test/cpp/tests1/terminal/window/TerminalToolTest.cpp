@@ -406,6 +406,16 @@ TEST(TerminalTool, BottomPanelLayoutNeverInvertsContentWhileShrinking)
 	EXPECT_EQ(34, visible.contentTop);
 	EXPECT_EQ(166, visible.contentHeight);
 	EXPECT_EQ(28, visible.outputSelectorHeight);
+
+	const auto page = workbench::panel::CalculateBottomPanelPageLayout(640, visible);
+	EXPECT_EQ(0, page.wrapperBounds.left);
+	EXPECT_EQ(34, page.wrapperBounds.top);
+	EXPECT_EQ(640, page.wrapperBounds.right);
+	EXPECT_EQ(200, page.wrapperBounds.bottom);
+	EXPECT_EQ(0, page.contentBounds.left);
+	EXPECT_EQ(0, page.contentBounds.top);
+	EXPECT_EQ(640, page.contentBounds.right);
+	EXPECT_EQ(166, page.contentBounds.bottom);
 }
 
 TEST(BottomPanelComposite, UsesCanonicalContainerIdsAndKeepsUserRequestsSeparateFromApply)

@@ -123,12 +123,15 @@ class AccountDiscoveryService;
 namespace layout {
 class IWorkbenchLayoutSubscription;
 struct WorkbenchLayoutStateSnapshot;
+enum class EWorkbenchViewContainerLocation : std::uint8_t;
 }
 namespace icons {
 }
 namespace win32 {
-struct BuiltinActiveSurfaceProjection;
-enum class BuiltinActiveSurface : std::uint8_t;
+class PaneCompositeProjectionService;
+struct PaneCompositeFocusProjection;
+struct PaneCompositeHostState;
+enum class EPaneCompositeHostApplyStatus : std::uint8_t;
 }
 namespace commands {
 class WorkbenchCommandRegistry;
@@ -722,11 +725,19 @@ private:
 	[[nodiscard]] bool ApplyInitialWorkbenchLayoutState();
 	[[nodiscard]] bool ApplyCurrentWorkbenchLayoutState(bool finalizeProjection,
 		bool broadcastMirrorChanges, bool* mirrorChanged = nullptr);
-	[[nodiscard]] bool ApplyBuiltinWorkbenchSurfaces(
-		const workbench::layout::WorkbenchLayoutStateSnapshot& snapshot,
-		const workbench::win32::BuiltinActiveSurfaceProjection& projection);
-	void ApplyBuiltinWorkbenchFocus(
-		const workbench::win32::BuiltinActiveSurfaceProjection& projection);
+	[[nodiscard]] bool InitializePaneCompositeProjection();
+	[[nodiscard]] std::optional<workbench::win32::PaneCompositeHostState>
+		ReadPaneCompositeHostState(
+			workbench::layout::EWorkbenchViewContainerLocation location) const noexcept;
+	[[nodiscard]] bool CanApplyPaneCompositeHostState(
+		const workbench::win32::PaneCompositeHostState& state) const noexcept;
+	[[nodiscard]] workbench::win32::EPaneCompositeHostApplyStatus
+		ApplyPaneCompositeHostState(
+			const workbench::win32::PaneCompositeHostState& state) noexcept;
+	[[nodiscard]] bool ClosePaneCompositeHostProjection(
+		workbench::layout::EWorkbenchViewContainerLocation location) noexcept;
+	void ApplyPaneCompositeFocus(
+		const workbench::win32::PaneCompositeFocusProjection& focus);
 	void OnWorkbenchLayoutStateChanged();
 	void OnWorkbenchServiceProjectionChanged();
 	[[nodiscard]] bool InitializeWorkbenchServiceProjection();
@@ -740,8 +751,7 @@ private:
 	//! UI-thread terminal for `MYWM_WORKBENCH_UPDATE_STATE_CHANGED`: re-reads the
 	//! committed state, refreshes the context projection, and repaints the title.
 	void OnWorkbenchUpdateStateChanged();
-	void FinalizeWorkbenchPanelProjection(
-		const workbench::win32::BuiltinActiveSurfaceProjection* runtimeProjection = nullptr);
+	void FinalizeWorkbenchPanelProjection();
 	void RedrawWorkbenchFrameForCommittedLayout(bool immediate);
 	[[nodiscard]] bool InitializeFrameRuntime() noexcept;
 	void UpdateFrameRuntimeCadence(bool invalidateSource = false) noexcept;
@@ -952,6 +962,8 @@ private:
 	[[nodiscard]] bool SetBuiltinPartExtent(std::string_view partId, int extentDip);
 	[[nodiscard]] bool SetBuiltinViewVisibility(std::string_view viewId, bool visible);
 	[[nodiscard]] bool ActivateBuiltinWorkbenchView(std::string_view viewId, bool requestFocus);
+	[[nodiscard]] bool ActivateWorkbenchViewContainer(
+		std::string_view containerId, bool requestFocus);
 	[[nodiscard]] bool IsBuiltinWorkbenchViewActive(std::string_view viewId) const;
 	//! True when `containerId` is the active ViewContainer of a visible Primary Side Bar.
 	[[nodiscard]] bool IsSidebarViewContainerActive(std::string_view containerId) const;
@@ -1014,10 +1026,6 @@ private:
 	[[nodiscard]] bool IsOutlineViewExpanded() const noexcept;
 	//! Applies already-committed Outline visibility to whichever host renders Explorer.
 	void SetOutlineExpandedInHosts(bool expanded);
-	//! The ViewContainer behind one projected side-bar surface, empty when the surface does
-	//! not belong to a side bar at all.
-	[[nodiscard]] static std::string_view SidebarPageForActiveSurface(
-		workbench::win32::BuiltinActiveSurface surface) noexcept;
 	/*!
 		@brief Rebuilds the Activity Bar strip and the side-bar page pool from the registry.
 
@@ -1243,6 +1251,9 @@ private:
 	//! Both side bars borrow their ViewContainer controls from this shared pool, so a
 	//! container survives being moved from one physical Part to the other.
 	std::shared_ptr<workbench::viewcontainer::CViewContainerPages> m_viewContainerPages;
+	//! Single staged native projection owner for Primary Side Bar, Panel, and Auxiliary Bar.
+	std::unique_ptr<workbench::win32::PaneCompositeProjectionService>
+		m_paneCompositeProjection;
 	//! Opaque window-owned frame bridge. The concrete state includes the bounded
 	//! finalizer reservation and stays out of this composition header.
 	std::unique_ptr<CEditWndFrameRuntimeState> m_frameRuntimeState;

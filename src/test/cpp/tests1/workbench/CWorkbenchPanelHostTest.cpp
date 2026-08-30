@@ -238,6 +238,20 @@ TEST(WorkbenchPanelHost, SharedExtentApplicationDoesNotPersistOrEnterResize)
 	EXPECT_EQ(0, persistCount);
 }
 
+TEST(WorkbenchPanelHost, AcceptsTheCompletePersistedLayoutExtentDomain)
+{
+	workbench::CWorkbenchPanelHost host(workbench::WorkbenchEdge::Right, 260);
+	for (const int extent : { 10'000, 10'001, 65'535 }) {
+		host.ApplyExtentDip(extent);
+		EXPECT_EQ(extent, host.GetExtentDip());
+		EXPECT_EQ(extent, host.GetPendingExtentDip());
+	}
+
+	host.ApplyExtentDip(65'536);
+	EXPECT_EQ(65'535, host.GetExtentDip());
+	EXPECT_EQ(65'535, host.GetPendingExtentDip());
+}
+
 TEST(WorkbenchPanelHost, OwnsViewContainerTitleOverflowGeometry)
 {
 	workbench::CWorkbenchPanelHost host(workbench::WorkbenchEdge::Left, 280);

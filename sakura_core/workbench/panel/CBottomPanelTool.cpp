@@ -8,6 +8,7 @@
 #include "workbench/panel/CBottomPanelTool.h"
 #include "CSelectLang.h"
 #include "workbench/rendering/CGdiBackBuffer.h"
+#include "workbench/viewcontainer/CViewContainerPages.h"
 
 #include <CommCtrl.h>
 #include <Richedit.h>
@@ -158,12 +159,15 @@ void RefreshProblemsColumnTitles(HWND list) noexcept
 } // namespace
 
 struct CBottomPanelTool::Impl {
-	explicit Impl(terminal::TerminalTabManagerDependencies dependencies)
+	explicit Impl(terminal::TerminalTabManagerDependencies dependencies,
+		std::shared_ptr<viewcontainer::IViewContainerPageHostService> retainedPages)
 		: terminal(std::make_unique<terminal::CTerminalTool>(std::move(dependencies)))
+		, sharedPages(std::move(retainedPages))
 	{
 	}
 
 	std::unique_ptr<terminal::CTerminalTool> terminal;
+	std::shared_ptr<viewcontainer::IViewContainerPageHostService> sharedPages;
 	HWND window = nullptr;
 	HWND terminalButton = nullptr;
 	HWND problemsButton = nullptr;
@@ -181,8 +185,8 @@ struct CBottomPanelTool::Impl {
 	HBRUSH panelBrush = nullptr;
 	HBRUSH raisedBrush = nullptr;
 	rendering::CGdiBackBuffer backBuffer;
-	std::string_view activeContainerId = containerIds::Terminal;
-	std::optional<std::string_view> attachedContainerId;
+	std::string activeContainerId{ containerIds::Terminal };
+	std::optional<std::string> attachedContainerId;
 	ProblemActivationCallback problemActivation;
 	OutputChannelSelectionCallback outputChannelSelection;
 	ContainerSelectionCallback containerSelection;
@@ -327,25 +331,69 @@ struct CBottomPanelTool::Impl {
 
 	[[nodiscard]] bool IsActivePageAttached() const noexcept
 	{
-		return attachedContainerId && *attachedContainerId == activeContainerId;
+		if (!attachedContainerId || *attachedContainerId != activeContainerId) return false;
+		return !IsSharedPage(activeContainerId) || OwnsSharedPage(activeContainerId);
 	}
 
 	void DeactivatePage(const std::string_view containerId) noexcept
 	{
 		if (containerId == containerIds::Terminal) terminal->Deactivate();
+		else if (IsSharedPage(containerId)) sharedPages->DeactivatePage(containerId);
+	}
+
+	[[nodiscard]] bool IsSharedPage(const std::string_view containerId) const noexcept
+	{
+		return sharedPages != nullptr && sharedPages->IsUsable()
+			&& sharedPages->SupportsLocation(containerId,
+				layout::EViewContainerLocation::Panel);
+	}
+
+	[[nodiscard]] bool SupportsContainer(const std::string_view containerId) const noexcept
+	{
+		return CanonicalSupportedContainerId(containerId).has_value()
+			|| IsSharedPage(containerId);
+	}
+
+	[[nodiscard]] bool OwnsSharedPage(const std::string_view containerId) const noexcept
+	{
+		return IsSharedPage(containerId) && window != nullptr
+			&& sharedPages->AttachedHost(containerId) == window;
+	}
+
+	[[nodiscard]] std::optional<viewcontainer::ViewContainerPageHost> SharedPageHost() const noexcept
+	{
+		if (window == nullptr || !::IsWindow(window)) return std::nullopt;
+		try {
+			return viewcontainer::ViewContainerPageHost{
+				std::string(layout::ids::part::Panel),
+				layout::EViewContainerLocation::Panel,
+				reinterpret_cast<viewcontainer::ViewContainerNativeHandle>(window),
+			};
+		} catch (...) {
+			return std::nullopt;
+		}
+	}
+
+	[[nodiscard]] bool AttachSharedPage(const std::string_view containerId) noexcept
+	{
+		const auto host = SharedPageHost();
+		if (!host || !IsSharedPage(containerId)) return false;
+		const auto result = sharedPages->Attach(containerId, *host);
+		return result.Succeeded() && OwnsSharedPage(containerId);
+	}
+
+	[[nodiscard]] bool DetachSharedPage(const std::string_view containerId) noexcept
+	{
+		if (!OwnsSharedPage(containerId)) return true;
+		(void)sharedPages->Detach(containerId);
+		return !OwnsSharedPage(containerId);
 	}
 
 	bool ApplyActiveContainer(const std::string_view requestedContainerId)
 	{
 		if (closed) return false;
-		const auto canonical = CanonicalSupportedContainerId(requestedContainerId);
-		if (!canonical) return false;
-		if (activeContainerId != *canonical) {
-			const bool followsSelection = IsActivePageAttached();
-			if (followsSelection) DeactivatePage(activeContainerId);
-			activeContainerId = *canonical;
-			if (followsSelection) attachedContainerId = activeContainerId;
-		}
+		if (!SupportsContainer(requestedContainerId)) return false;
+		if (activeContainerId != requestedContainerId) activeContainerId = requestedContainerId;
 		const bool showTerminal = activeContainerId == containerIds::Terminal;
 		::SendMessageW(terminalButton, BM_SETSTATE, showTerminal, 0);
 		::SendMessageW(problemsButton, BM_SETSTATE,
@@ -361,8 +409,33 @@ struct CBottomPanelTool::Impl {
 	{
 		if (closed) return EBottomPanelPageAttachStatus::Closed;
 		if (IsActivePageAttached()) return EBottomPanelPageAttachStatus::AlreadyAttached;
-		if (attachedContainerId) DeactivatePage(*attachedContainerId);
-		attachedContainerId = activeContainerId;
+		std::optional<std::string> previous;
+		try {
+			previous = attachedContainerId;
+		} catch (...) {
+			return EBottomPanelPageAttachStatus::Failed;
+		}
+		if (previous) {
+			DeactivatePage(*previous);
+			if (IsSharedPage(*previous) && !DetachSharedPage(*previous)) {
+				return EBottomPanelPageAttachStatus::Failed;
+			}
+			attachedContainerId.reset();
+		}
+		if (IsSharedPage(activeContainerId) && !AttachSharedPage(activeContainerId)) {
+			if (previous) {
+				const bool restored = !IsSharedPage(*previous) || AttachSharedPage(*previous);
+				if (restored) attachedContainerId = std::move(*previous);
+			}
+			LayoutChildren();
+			return EBottomPanelPageAttachStatus::Failed;
+		}
+		try {
+			attachedContainerId = activeContainerId;
+		} catch (...) {
+			if (IsSharedPage(activeContainerId)) (void)DetachSharedPage(activeContainerId);
+			return EBottomPanelPageAttachStatus::Failed;
+		}
 		LayoutChildren();
 		return EBottomPanelPageAttachStatus::Attached;
 	}
@@ -372,6 +445,9 @@ struct CBottomPanelTool::Impl {
 		if (closed) return EBottomPanelPageDetachStatus::Closed;
 		if (!attachedContainerId) return EBottomPanelPageDetachStatus::AlreadyDetached;
 		DeactivatePage(*attachedContainerId);
+		if (IsSharedPage(*attachedContainerId) && !DetachSharedPage(*attachedContainerId)) {
+			return EBottomPanelPageDetachStatus::Failed;
+		}
 		attachedContainerId.reset();
 		LayoutChildren();
 		return EBottomPanelPageDetachStatus::Detached;
@@ -451,7 +527,15 @@ struct CBottomPanelTool::Impl {
 			--remainingTabs;
 		}
 
-		RECT content{ 0, vertical.contentTop, width, vertical.contentTop + vertical.contentHeight };
+		const auto pageLayout = CalculateBottomPanelPageLayout(width, vertical);
+		const RECT content = pageLayout.wrapperBounds;
+		if (sharedPages && sharedPages->IsUsable()) {
+			for (const auto& containerId : sharedPages->PageIds()) {
+				if (sharedPages->AttachedHost(containerId) != window) continue;
+				if (IsActivePageAttached() && containerId == activeContainerId) continue;
+				sharedPages->SetPageVisible(containerId, false);
+			}
+		}
 		place(problemsList, 0, vertical.contentTop, width, vertical.contentHeight,
 			IsActivePageAttached() && activeContainerId == containerIds::Problems);
 		place(outputSelector, 0, vertical.contentTop, width, vertical.outputSelectorHeight,
@@ -495,6 +579,11 @@ struct CBottomPanelTool::Impl {
 		}
 		if (IsActivePageAttached() && activeContainerId == containerIds::Terminal) {
 			terminal->Layout(content, dpi);
+		} else if (IsActivePageAttached() && IsSharedPage(activeContainerId)) {
+			sharedPages->LayoutPageProjection(activeContainerId,
+				pageLayout.wrapperBounds, pageLayout.contentBounds, dpi);
+			sharedPages->SetPageVisible(activeContainerId, true);
+			sharedPages->NotifyPageLayout(activeContainerId);
 		}
 		::RedrawWindow(window, nullptr, nullptr,
 			RDW_INVALIDATE | RDW_NOERASE | RDW_ALLCHILDREN);
@@ -614,8 +703,9 @@ struct CBottomPanelTool::Impl {
 	}
 };
 
-CBottomPanelTool::CBottomPanelTool(terminal::TerminalTabManagerDependencies terminalDependencies)
-	: m_impl(std::make_unique<Impl>(std::move(terminalDependencies))) {}
+CBottomPanelTool::CBottomPanelTool(terminal::TerminalTabManagerDependencies terminalDependencies,
+	std::shared_ptr<viewcontainer::IViewContainerPageHostService> sharedPages)
+	: m_impl(std::make_unique<Impl>(std::move(terminalDependencies), std::move(sharedPages))) {}
 CBottomPanelTool::~CBottomPanelTool() { Close(); }
 
 bool CBottomPanelTool::Create(HWND parent)
@@ -661,6 +751,9 @@ void CBottomPanelTool::Activate()
 	if (m_impl->activeContainerId == containerIds::Terminal) m_impl->terminal->Activate();
 	else if (m_impl->activeContainerId == containerIds::Problems) ::SetFocus(m_impl->problemsList);
 	else if (m_impl->activeContainerId == containerIds::Output) ::SetFocus(m_impl->outputText);
+	else if (m_impl->IsSharedPage(m_impl->activeContainerId)) {
+		m_impl->sharedPages->ActivatePage(m_impl->activeContainerId);
+	}
 }
 
 void CBottomPanelTool::Deactivate()
@@ -672,15 +765,23 @@ void CBottomPanelTool::Deactivate()
 
 bool CBottomPanelTool::PreTranslateMessage(MSG& message)
 {
-	return m_impl && !m_impl->closed && m_impl->IsActivePageAttached()
-		&& m_impl->activeContainerId == containerIds::Terminal
-		&& m_impl->terminal->PreTranslateMessage(message);
+	if (!m_impl || m_impl->closed || !m_impl->IsActivePageAttached()) return false;
+	if (m_impl->activeContainerId == containerIds::Terminal) {
+		return m_impl->terminal->PreTranslateMessage(message);
+	}
+	return m_impl->IsSharedPage(m_impl->activeContainerId)
+		&& m_impl->sharedPages->PreTranslatePage(m_impl->activeContainerId, message);
 }
 
 void CBottomPanelTool::Close()
 {
 	if (!m_impl || m_impl->closed) return;
-	if (m_impl->attachedContainerId) m_impl->DeactivatePage(*m_impl->attachedContainerId);
+	if (m_impl->attachedContainerId) {
+		m_impl->DeactivatePage(*m_impl->attachedContainerId);
+		if (m_impl->IsSharedPage(*m_impl->attachedContainerId)) {
+			(void)m_impl->DetachSharedPage(*m_impl->attachedContainerId);
+		}
+	}
 	m_impl->attachedContainerId.reset();
 	m_impl->closed = true;
 	m_impl->problemActivation = {};
@@ -780,23 +881,27 @@ bool CBottomPanelTool::ApplyActiveContainer(const std::string_view containerId)
 	return m_impl && m_impl->ApplyActiveContainer(containerId);
 }
 
+bool CBottomPanelTool::SupportsContainer(const std::string_view containerId) const noexcept
+{
+	return m_impl && !m_impl->closed && m_impl->SupportsContainer(containerId);
+}
+
 bool CBottomPanelTool::RequestContainerSelection(const std::string_view containerId) noexcept
 {
 	if (!m_impl || m_impl->closed) return false;
-	const auto canonical = CanonicalSupportedContainerId(containerId);
-	if (!canonical) return false;
+	if (!m_impl->SupportsContainer(containerId)) return false;
 	if (m_impl->containerSelection) {
 		try {
 			// A valid user request is delivered exactly once. Selection, attachment,
 			// activation, and focus wait for their distinct committed paths.
-			return m_impl->containerSelection(*canonical);
+			return m_impl->containerSelection(containerId);
 		}
 		catch (...) {
 			return false;
 		}
 	}
 	try {
-		return m_impl->ApplyActiveContainer(*canonical);
+		return m_impl->ApplyActiveContainer(containerId);
 	}
 	catch (...) {
 		return false;
@@ -820,7 +925,8 @@ EBottomPanelPageDetachStatus CBottomPanelTool::DetachActivePage() noexcept
 
 std::optional<std::string_view> CBottomPanelTool::AttachedContainerId() const noexcept
 {
-	return m_impl ? m_impl->attachedContainerId : std::nullopt;
+	if (!m_impl || !m_impl->attachedContainerId) return std::nullopt;
+	return std::string_view(*m_impl->attachedContainerId);
 }
 
 void CBottomPanelTool::SetActiveTab(const BottomPanelTab tab)

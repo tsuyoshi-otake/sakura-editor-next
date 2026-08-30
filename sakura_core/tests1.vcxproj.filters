@@ -317,6 +317,9 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\BuiltinPartProjectionTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\PaneCompositeProjectionServiceTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ProblemsOutputPanelProjectionTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
