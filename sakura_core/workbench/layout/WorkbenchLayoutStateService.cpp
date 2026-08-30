@@ -15,6 +15,7 @@
 #include <array>
 #include <atomic>
 #include <limits>
+#include <stdexcept>
 #include <string_view>
 #include <utility>
 
@@ -66,6 +67,17 @@ void AppendOperation(std::string& output, const WorkbenchLayoutOperationMetadata
 	case EViewContainerLocation::AuxiliaryBar: return EWorkbenchViewContainerLocation::AuxiliaryBar;
 	}
 	return EWorkbenchViewContainerLocation::SideBar;
+}
+
+[[nodiscard]] EViewContainerLocation ToContributionLocation(
+	EWorkbenchViewContainerLocation value) noexcept
+{
+	switch (value) {
+	case EWorkbenchViewContainerLocation::SideBar: return EViewContainerLocation::Sidebar;
+	case EWorkbenchViewContainerLocation::Panel: return EViewContainerLocation::Panel;
+	case EWorkbenchViewContainerLocation::AuxiliaryBar: return EViewContainerLocation::AuxiliaryBar;
+	}
+	return static_cast<EViewContainerLocation>(255);
 }
 
 [[nodiscard]] EWorkbenchPartPosition DefaultPartPosition(std::string_view id) noexcept
@@ -264,7 +276,7 @@ struct WorkbenchLayoutSubscriptionState {
 
 struct WorkbenchLayoutStateService::ContributionIndex {
 	struct Part { bool supportsVisibility = false; EWorkbenchPartPosition position = EWorkbenchPartPosition::Center; };
-	struct Container { EWorkbenchViewContainerLocation location = EWorkbenchViewContainerLocation::SideBar; std::int32_t order = 0; bool hideIfEmpty = false; bool canMove = false; };
+	struct Container { EWorkbenchViewContainerLocation location = EWorkbenchViewContainerLocation::SideBar; std::int32_t order = 0; bool hideIfEmpty = false; SupportedViewContainerLocations supportedLocations; };
 	struct View { std::string defaultContainerId; std::int32_t order = 0; bool canToggleVisibility = false; bool canMove = false; };
 	std::map<std::string, Part> parts;
 	std::map<std::string, Container> containers;
@@ -333,6 +345,8 @@ void Deliver(const std::shared_ptr<WorkbenchLayoutSubscriptionState>& state,
 std::unique_ptr<WorkbenchLayoutStateService::ContributionIndex> WorkbenchLayoutStateService::MakeContributionIndex(
 	const WorkbenchContributionSnapshot& contributions)
 {
+	if (!WorkbenchContributionRegistry::IsValidContributionSnapshot(contributions))
+		throw std::invalid_argument("invalid workbench contribution snapshot");
 	auto index = std::make_unique<ContributionIndex>();
 	for (const auto& registered : contributions.parts) index->parts.emplace(registered.descriptor.id,
 		ContributionIndex::Part{ .supportsVisibility = registered.descriptor.supportsVisibility,
@@ -340,7 +354,7 @@ std::unique_ptr<WorkbenchLayoutStateService::ContributionIndex> WorkbenchLayoutS
 	for (const auto& registered : contributions.viewContainers) index->containers.emplace(registered.descriptor.id,
 		ContributionIndex::Container{ .location = ToStateLocation(registered.descriptor.location),
 			.order = registered.descriptor.order, .hideIfEmpty = registered.descriptor.hideIfEmpty,
-			.canMove = registered.descriptor.canMove });
+			.supportedLocations = registered.descriptor.supportedLocations });
 	for (const auto& registered : contributions.views) index->views.emplace(registered.descriptor.id,
 		ContributionIndex::View{ .defaultContainerId = registered.descriptor.containerId,
 			.order = registered.descriptor.order, .canToggleVisibility = registered.descriptor.canToggleVisibility,
@@ -486,6 +500,15 @@ WorkbenchLayoutHydrationResult WorkbenchLayoutStateService::HydrateInitialState(
 		return { .status = EWorkbenchLayoutHydrationStatus::AlreadyHydrated, .snapshot = SnapshotLocked() };
 	if (!IsValidPersistedSnapshot(persisted))
 		return { .status = EWorkbenchLayoutHydrationStatus::InvalidSnapshot, .snapshot = SnapshotLocked() };
+	for (const auto& container : persisted.containers) {
+		const auto descriptor = m_contributionIndex->containers.find(container.containerId);
+		if (descriptor != m_contributionIndex->containers.end()
+			&& !descriptor->second.supportedLocations.Contains(
+				ToContributionLocation(container.location))) {
+			return { .status = EWorkbenchLayoutHydrationStatus::InvalidSnapshot,
+				.snapshot = SnapshotLocked() };
+		}
+	}
 
 	try {
 		auto nextParts = m_parts;
@@ -756,7 +779,7 @@ void WorkbenchLayoutStateService::DrainNotifications()
 struct WorkbenchLayoutStateMutator {
 	template <class TRequest, class TAction>
 	static WorkbenchLayoutOperationResult Run(WorkbenchLayoutStateService& service, const TRequest& request,
-		std::string fingerprint, TAction&& action)
+		std::string fingerprint, TAction&& action, const bool rememberUnsupported = true)
 	{
 	std::optional<WorkbenchLayoutChangeBatch> batch;
 	WorkbenchLayoutOperationResult result;
@@ -778,7 +801,8 @@ struct WorkbenchLayoutStateMutator {
 				result = service.ResultLocked(EWorkbenchLayoutOperationStatus::Failed, EWorkbenchLayoutOperationReason::InternalFailure);
 			}
 		}
-		service.RememberCompletedLocked(request.operation.operationId, std::move(fingerprint), result);
+		if (rememberUnsupported || result.status != EWorkbenchLayoutOperationStatus::Unsupported)
+			service.RememberCompletedLocked(request.operation.operationId, std::move(fingerprint), result);
 		if (result.changeBatch) { batch = result.changeBatch; drain = service.EnqueueNotification(*batch); }
 	}
 	if (drain) service.DrainNotifications();
@@ -1028,8 +1052,9 @@ WorkbenchLayoutOperationResult WorkbenchLayoutStateService::MoveContainer(const 
 	auto fingerprint = FingerprintPrefix("move-container", request.operation); AppendField(fingerprint, request.containerId); AppendUnsigned(fingerprint, static_cast<std::uint8_t>(request.location)); AppendField(fingerprint, std::to_string(request.order));
 	return WorkbenchLayoutStateMutator::Run(*this, request, std::move(fingerprint), [&]() {
 		if (!WorkbenchContributionRegistry::IsValidStableId(request.containerId) || !IsValidLocation(request.location)) return ResultLocked(EWorkbenchLayoutOperationStatus::Invalid, EWorkbenchLayoutOperationReason::InvalidRequest);
-		if (!m_contributionIndex->containers.contains(request.containerId)) return ResultLocked(EWorkbenchLayoutOperationStatus::UnknownId, EWorkbenchLayoutOperationReason::UnknownContainer);
-		if (!m_contributionIndex->containers.at(request.containerId).canMove)
+		const auto descriptor = m_contributionIndex->containers.find(request.containerId);
+		if (descriptor == m_contributionIndex->containers.end()) return ResultLocked(EWorkbenchLayoutOperationStatus::UnknownId, EWorkbenchLayoutOperationReason::UnknownContainer);
+		if (!descriptor->second.supportedLocations.Contains(ToContributionLocation(request.location)))
 			return ResultLocked(EWorkbenchLayoutOperationStatus::Unsupported, EWorkbenchLayoutOperationReason::CapabilityNotSupported);
 		auto& container = m_containers.at(request.containerId);
 		if (container.location == request.location && container.order == request.order)
@@ -1064,7 +1089,7 @@ WorkbenchLayoutOperationResult WorkbenchLayoutStateService::MoveContainer(const 
 				.partId = m_focus.partId, .containerId = m_focus.containerId, .viewId = m_focus.viewId });
 		}
 		return CommitLocked(std::move(changes));
-	});
+	}, false);
 }
 
 WorkbenchLayoutOperationResult WorkbenchLayoutStateService::MoveView(const MoveWorkbenchViewRequest& request)
@@ -1199,12 +1224,22 @@ WorkbenchLayoutOperationResult WorkbenchLayoutStateService::Reconcile(const Work
 			else nextParts.at(id).position = descriptor.position;
 		}
 		for (auto it = nextContainers.begin(); it != nextContainers.end();) { if (!next->containers.contains(it->first)) it = nextContainers.erase(it); else ++it; }
-		for (const auto& [id, descriptor] : next->containers) if (!nextContainers.contains(id)) {
-			if (const auto deferred = nextDeferredContainers.find(id); deferred != nextDeferredContainers.end()) {
-				nextContainers.emplace(id, deferred->second);
-				nextDeferredContainers.erase(deferred);
-			} else nextContainers.emplace(id,
-				WorkbenchViewContainerState{ .containerId = id, .location = descriptor.location, .order = descriptor.order, .visible = !descriptor.hideIfEmpty });
+		for (const auto& [id, descriptor] : next->containers) {
+			if (!nextContainers.contains(id)) {
+				if (const auto deferred = nextDeferredContainers.find(id);
+					deferred != nextDeferredContainers.end()) {
+					nextContainers.emplace(id, deferred->second);
+					nextDeferredContainers.erase(deferred);
+				} else nextContainers.emplace(id,
+					WorkbenchViewContainerState{ .containerId = id, .location = descriptor.location,
+						.order = descriptor.order, .visible = !descriptor.hideIfEmpty });
+			}
+			auto& container = nextContainers.at(id);
+			if (!descriptor.supportedLocations.Contains(
+				ToContributionLocation(container.location))) {
+				container.location = descriptor.location;
+				container.order = descriptor.order;
+			}
 		}
 		for (auto it = nextViews.begin(); it != nextViews.end();) { if (!next->views.contains(it->first)) it = nextViews.erase(it); else ++it; }
 		for (const auto& [id, descriptor] : next->views) {

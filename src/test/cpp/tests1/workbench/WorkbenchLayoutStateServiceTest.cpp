@@ -23,11 +23,45 @@ namespace {
 WorkbenchContributionSnapshot Contribute(WorkbenchContributionRegistry& registry)
 {
 	auto snapshot = registry.Snapshot();
-	snapshot.viewContainers.push_back({ { .id = "sample.movable", .title = "Movable", .location = EViewContainerLocation::Sidebar, .order = 40 } });
-	snapshot.viewContainers.push_back({ { .id = "sample.fixed", .title = "Fixed", .location = EViewContainerLocation::Panel, .order = 50, .canMove = false } });
+	snapshot.viewContainers.push_back({ { .id = "sample.movable", .title = "Movable", .location = EViewContainerLocation::Sidebar, .order = 40,
+		.supportedLocations = { EViewContainerLocation::Sidebar, EViewContainerLocation::Panel } } });
+	snapshot.viewContainers.push_back({ { .id = "sample.fixed", .title = "Fixed", .location = EViewContainerLocation::Panel, .order = 50,
+		.supportedLocations = { EViewContainerLocation::Panel } } });
 	snapshot.views.push_back({ { .id = "sample.movable.view", .containerId = "sample.movable", .title = "Movable view", .order = 20, .canToggleVisibility = true, .canMove = true } });
 	snapshot.views.push_back({ { .id = "sample.fixed.view", .containerId = "sample.fixed", .title = "Fixed view", .order = 10, .canToggleVisibility = false, .canMove = false } });
 	return snapshot;
+}
+
+const WorkbenchViewContainerDescriptor& ContainerDescriptor(
+	const WorkbenchContributionSnapshot& snapshot, std::string_view id)
+{
+	const auto found = std::find_if(snapshot.viewContainers.begin(), snapshot.viewContainers.end(),
+		[id](const auto& value) { return value.descriptor.id == id; });
+	EXPECT_NE(snapshot.viewContainers.end(), found);
+	return found->descriptor;
+}
+
+WorkbenchViewContainerDescriptor& ContainerDescriptor(
+	WorkbenchContributionSnapshot& snapshot, std::string_view id)
+{
+	const auto found = std::find_if(snapshot.viewContainers.begin(), snapshot.viewContainers.end(),
+		[id](const auto& value) { return value.descriptor.id == id; });
+	EXPECT_NE(snapshot.viewContainers.end(), found);
+	return found->descriptor;
+}
+
+void ExpectSameSnapshot(const WorkbenchLayoutStateSnapshot& expected,
+	const WorkbenchLayoutStateSnapshot& actual)
+{
+	EXPECT_EQ(expected.schemaVersion, actual.schemaVersion);
+	EXPECT_EQ(expected.generation, actual.generation);
+	EXPECT_EQ(expected.revision, actual.revision);
+	EXPECT_EQ(expected.parts, actual.parts);
+	EXPECT_EQ(expected.containers, actual.containers);
+	EXPECT_EQ(expected.views, actual.views);
+	EXPECT_EQ(expected.activeContainers, actual.activeContainers);
+	EXPECT_EQ(expected.panelAlignment, actual.panelAlignment);
+	EXPECT_EQ(expected.focus, actual.focus);
 }
 
 const WorkbenchPartState& Part(const WorkbenchLayoutStateSnapshot& snapshot, std::string_view id)
@@ -64,6 +98,85 @@ bool HasContainer(const WorkbenchLayoutStateSnapshot& snapshot, std::string_view
 bool HasView(const WorkbenchLayoutStateSnapshot& snapshot, std::string_view id)
 {
 	return std::any_of(snapshot.views.begin(), snapshot.views.end(), [id](const auto& value) { return value.viewId == id; });
+}
+
+TEST(WorkbenchContributionRegistry, BuiltinsDeclareOnlyValidatedSupportedLocations)
+{
+	WorkbenchContributionRegistry registry;
+	const auto snapshot = registry.Snapshot();
+	ASSERT_TRUE(WorkbenchContributionRegistry::IsValidContributionSnapshot(snapshot));
+
+	const auto& explorer = ContainerDescriptor(snapshot, ids::viewContainer::Explorer);
+	EXPECT_TRUE(explorer.supportedLocations.Contains(EViewContainerLocation::Sidebar));
+	EXPECT_TRUE(explorer.supportedLocations.Contains(EViewContainerLocation::AuxiliaryBar));
+	EXPECT_FALSE(explorer.supportedLocations.Contains(EViewContainerLocation::Panel));
+
+	const auto& problems = ContainerDescriptor(snapshot, ids::viewContainer::Problems);
+	EXPECT_TRUE(problems.supportedLocations.Contains(EViewContainerLocation::Panel));
+	EXPECT_FALSE(problems.supportedLocations.Contains(EViewContainerLocation::Sidebar));
+	EXPECT_FALSE(problems.supportedLocations.Contains(EViewContainerLocation::AuxiliaryBar));
+}
+
+TEST(WorkbenchContributionRegistry, RejectsEmptyInvalidAndPartialDescriptorBatches)
+{
+	WorkbenchContributionRegistry registry;
+	const auto original = registry.Snapshot();
+
+	auto empty = original;
+	auto& emptyDescriptor = ContainerDescriptor(empty, ids::viewContainer::Explorer);
+	emptyDescriptor.supportedLocations = {};
+	EXPECT_FALSE(WorkbenchContributionRegistry::IsValidContributionSnapshot(empty));
+
+	auto invalid = original;
+	auto& invalidDescriptor = ContainerDescriptor(invalid, ids::viewContainer::Explorer);
+	invalidDescriptor.supportedLocations = { EViewContainerLocation::Sidebar,
+		static_cast<EViewContainerLocation>(255) };
+	EXPECT_FALSE(WorkbenchContributionRegistry::IsValidContributionSnapshot(invalid));
+
+	auto missingDefault = original;
+	auto& missingDefaultDescriptor = ContainerDescriptor(missingDefault, ids::viewContainer::Explorer);
+	missingDefaultDescriptor.supportedLocations = { EViewContainerLocation::AuxiliaryBar };
+	EXPECT_FALSE(WorkbenchContributionRegistry::IsValidContributionSnapshot(missingDefault));
+
+	auto invalidDefault = original;
+	auto& invalidDefaultDescriptor = ContainerDescriptor(invalidDefault, ids::viewContainer::Explorer);
+	invalidDefaultDescriptor.location = static_cast<EViewContainerLocation>(255);
+	EXPECT_FALSE(WorkbenchContributionRegistry::IsValidContributionSnapshot(invalidDefault));
+
+	auto duplicate = original;
+	duplicate.viewContainers.push_back(duplicate.viewContainers.front());
+	EXPECT_FALSE(WorkbenchContributionRegistry::IsValidContributionSnapshot(duplicate));
+
+	const auto unchanged = registry.Snapshot();
+	EXPECT_EQ(original.parts.size(), unchanged.parts.size());
+	EXPECT_EQ(original.viewContainers.size(), unchanged.viewContainers.size());
+	EXPECT_EQ(original.views.size(), unchanged.views.size());
+	EXPECT_EQ(ContainerDescriptor(original, ids::viewContainer::Explorer).id,
+		ContainerDescriptor(unchanged, ids::viewContainer::Explorer).id);
+}
+
+TEST(WorkbenchContributionRegistry, InvalidReconcileBatchCannotPartiallyRegister)
+{
+	WorkbenchContributionRegistry registry;
+	WorkbenchLayoutStateService state(registry.Snapshot());
+	const auto before = state.Snapshot();
+	const auto mementoBefore = state.MementoSnapshot();
+	std::vector<WorkbenchLayoutChangeBatch> notifications;
+	auto subscription = state.Subscribe(
+		[&notifications](const auto& batch) { notifications.push_back(batch); });
+	ASSERT_TRUE(subscription);
+
+	auto invalid = registry.Snapshot();
+	ContainerDescriptor(invalid, ids::viewContainer::Explorer).supportedLocations = {};
+	const auto result = state.Reconcile(invalid, {
+		.operation = { .operationId = "reject-invalid-contribution-batch" },
+	});
+
+	EXPECT_EQ(EWorkbenchLayoutOperationStatus::Failed, result.status);
+	EXPECT_EQ(EWorkbenchLayoutOperationReason::InternalFailure, result.reason);
+	ExpectSameSnapshot(before, state.Snapshot());
+	ExpectSameSnapshot(mementoBefore, state.MementoSnapshot());
+	EXPECT_TRUE(notifications.empty());
 }
 
 TEST(WorkbenchLayoutStateService, InitializesCanonicalIdsAndKeepsRightPartSeparateFromOutlineView)
@@ -273,6 +386,57 @@ TEST(WorkbenchLayoutStateService, AppliesCapabilitiesAndUsesStableViewMoveState)
 	EXPECT_EQ(EWorkbenchLayoutOperationStatus::Unsupported, fixedContainer.status);
 }
 
+TEST(WorkbenchLayoutStateService, UnsupportedContainerLocationPreservesAllIntentBeforeAllowedMove)
+{
+	WorkbenchContributionRegistry registry;
+	WorkbenchLayoutStateService state(registry.Snapshot());
+	const auto before = state.Snapshot();
+	const auto mementoBefore = state.MementoSnapshot();
+	std::vector<WorkbenchLayoutChangeBatch> notifications;
+	auto subscription = state.Subscribe(
+		[&notifications](const auto& batch) { notifications.push_back(batch); });
+	ASSERT_TRUE(subscription);
+
+	const auto unsupported = state.MoveContainer({
+		.operation = { .operationId = "move-explorer-supported-contract", .expectedRevision = 0 },
+		.containerId = std::string(ids::viewContainer::Explorer),
+		.location = EWorkbenchViewContainerLocation::Panel,
+		.order = 71,
+	});
+	EXPECT_EQ(EWorkbenchLayoutOperationStatus::Unsupported, unsupported.status);
+	EXPECT_EQ(EWorkbenchLayoutOperationReason::CapabilityNotSupported, unsupported.reason);
+	EXPECT_FALSE(unsupported.replayed);
+	EXPECT_FALSE(unsupported.changeBatch.has_value());
+	ExpectSameSnapshot(before, unsupported.snapshot);
+	ExpectSameSnapshot(before, state.Snapshot());
+	ExpectSameSnapshot(mementoBefore, state.MementoSnapshot());
+	EXPECT_TRUE(notifications.empty());
+
+	// Reusing the exact operation ID with a supported destination proves that the
+	// rejected destination did not consume replay intent.
+	const auto allowed = state.MoveContainer({
+		.operation = { .operationId = "move-explorer-supported-contract", .expectedRevision = 0 },
+		.containerId = std::string(ids::viewContainer::Explorer),
+		.location = EWorkbenchViewContainerLocation::AuxiliaryBar,
+		.order = 72,
+	});
+	ASSERT_EQ(EWorkbenchLayoutOperationStatus::Succeeded, allowed.status);
+	EXPECT_FALSE(allowed.replayed);
+	EXPECT_EQ(1U, allowed.revision);
+	ASSERT_TRUE(allowed.changeBatch.has_value());
+	EXPECT_EQ(0U, allowed.changeBatch->baseRevision);
+	EXPECT_EQ(1U, allowed.changeBatch->revision);
+	ASSERT_FALSE(allowed.changeBatch->changes.empty());
+	EXPECT_EQ(EWorkbenchLayoutChangeKind::ContainerMoved,
+		allowed.changeBatch->changes.front().kind);
+	EXPECT_EQ(EWorkbenchViewContainerLocation::AuxiliaryBar,
+		Container(allowed.snapshot, ids::viewContainer::Explorer).location);
+	ASSERT_EQ(1U, notifications.size());
+	EXPECT_EQ(0U, notifications.front().baseRevision);
+	EXPECT_EQ(1U, notifications.front().revision);
+	EXPECT_EQ(allowed.changeBatch->changes.size(), notifications.front().changes.size());
+}
+
 TEST(WorkbenchLayoutStateService, EnforcesCasAndExactBoundedReplay)
 {
 	WorkbenchContributionRegistry registry;
@@ -394,6 +558,32 @@ TEST(WorkbenchLayoutStateService, HydratesValidMementoAtomicallyWithoutRevisionO
 	EXPECT_TRUE(HasView(hydrated.snapshot, "deferred.view"));
 	EXPECT_FALSE(hydrated.snapshot.focus.viewId);
 	EXPECT_EQ(EWorkbenchPanelAlignment::Right, hydrated.snapshot.panelAlignment);
+	EXPECT_TRUE(notifications.empty());
+}
+
+TEST(WorkbenchLayoutStateService, HydrationRejectsUnsupportedRegisteredLocationAtomically)
+{
+	WorkbenchContributionRegistry registry;
+	WorkbenchLayoutStateService state(registry.Snapshot());
+	const auto before = state.Snapshot();
+	const auto mementoBefore = state.MementoSnapshot();
+	std::vector<WorkbenchLayoutChangeBatch> notifications;
+	auto subscription = state.Subscribe(
+		[&notifications](const auto& batch) { notifications.push_back(batch); });
+	ASSERT_TRUE(subscription);
+
+	auto persisted = before;
+	auto explorer = std::find_if(persisted.containers.begin(), persisted.containers.end(),
+		[](const auto& container) { return container.containerId == ids::viewContainer::Explorer; });
+	ASSERT_NE(persisted.containers.end(), explorer);
+	explorer->location = EWorkbenchViewContainerLocation::Panel;
+	explorer->order = -91;
+
+	const auto hydrated = state.HydrateInitialState(persisted);
+	EXPECT_EQ(EWorkbenchLayoutHydrationStatus::InvalidSnapshot, hydrated.status);
+	ExpectSameSnapshot(before, hydrated.snapshot);
+	ExpectSameSnapshot(before, state.Snapshot());
+	ExpectSameSnapshot(mementoBefore, state.MementoSnapshot());
 	EXPECT_TRUE(notifications.empty());
 }
 

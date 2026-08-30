@@ -10,6 +10,8 @@
 #include "workbench/layout/WorkbenchIds.h"
 
 #include <algorithm>
+#include <stdexcept>
+#include <unordered_set>
 
 namespace workbench::layout {
 namespace {
@@ -62,6 +64,12 @@ void SortById(std::vector<T>& values)
 	});
 }
 
+[[nodiscard]] bool IsValidLocation(EViewContainerLocation value) noexcept
+{
+	return value == EViewContainerLocation::Sidebar || value == EViewContainerLocation::Panel
+		|| value == EViewContainerLocation::AuxiliaryBar;
+}
+
 } // namespace
 
 WorkbenchContributionRegistry::WorkbenchContributionRegistry()
@@ -70,8 +78,10 @@ WorkbenchContributionRegistry::WorkbenchContributionRegistry()
 		m_snapshot.parts.push_back({ { std::string(id), std::string(title), supportsVisibility } });
 	};
 	const auto addContainer = [this](std::string_view id, std::string_view title,
-		const EViewContainerLocation location, const std::int32_t order) {
-		m_snapshot.viewContainers.push_back({ { std::string(id), std::string(title), location, order } });
+		const EViewContainerLocation location, const std::int32_t order,
+		SupportedViewContainerLocations supportedLocations) {
+		m_snapshot.viewContainers.push_back({ { .id = std::string(id), .title = std::string(title),
+			.location = location, .order = order, .supportedLocations = supportedLocations } });
 	};
 	const auto addView = [this](std::string_view id, std::string_view containerId,
 		std::string_view title, const std::int32_t order) {
@@ -87,16 +97,19 @@ WorkbenchContributionRegistry::WorkbenchContributionRegistry()
 	addPart(ids::part::Statusbar, "Status Bar");
 	addPart(ids::part::Sessions, "Sessions");
 
-	addContainer(ids::viewContainer::Explorer, "Explorer", EViewContainerLocation::Sidebar, 10);
-	addContainer(ids::viewContainer::Search, "Search", EViewContainerLocation::Sidebar, 20);
-	addContainer(ids::viewContainer::RunAndDebug, "Run and Debug", EViewContainerLocation::Sidebar, 30);
-	addContainer(ids::viewContainer::SourceControl, "Source Control", EViewContainerLocation::Sidebar, 40);
-	addContainer(ids::viewContainer::Extensions, "Extensions", EViewContainerLocation::Sidebar, 50);
-	addContainer(ids::viewContainer::Problems, "Problems", EViewContainerLocation::Panel, 10);
-	addContainer(ids::viewContainer::Output, "Output", EViewContainerLocation::Panel, 20);
-	addContainer(ids::viewContainer::Terminal, "Terminal", EViewContainerLocation::Panel, 30);
-	addContainer(ids::viewContainer::Ports, "Ports", EViewContainerLocation::Panel, 40);
-	addContainer(ids::viewContainer::DebugConsole, "Debug Console", EViewContainerLocation::Panel, 50);
+	const SupportedViewContainerLocations sideBars{
+		EViewContainerLocation::Sidebar, EViewContainerLocation::AuxiliaryBar };
+	const SupportedViewContainerLocations panel{ EViewContainerLocation::Panel };
+	addContainer(ids::viewContainer::Explorer, "Explorer", EViewContainerLocation::Sidebar, 10, sideBars);
+	addContainer(ids::viewContainer::Search, "Search", EViewContainerLocation::Sidebar, 20, sideBars);
+	addContainer(ids::viewContainer::RunAndDebug, "Run and Debug", EViewContainerLocation::Sidebar, 30, sideBars);
+	addContainer(ids::viewContainer::SourceControl, "Source Control", EViewContainerLocation::Sidebar, 40, sideBars);
+	addContainer(ids::viewContainer::Extensions, "Extensions", EViewContainerLocation::Sidebar, 50, sideBars);
+	addContainer(ids::viewContainer::Problems, "Problems", EViewContainerLocation::Panel, 10, panel);
+	addContainer(ids::viewContainer::Output, "Output", EViewContainerLocation::Panel, 20, panel);
+	addContainer(ids::viewContainer::Terminal, "Terminal", EViewContainerLocation::Panel, 30, panel);
+	addContainer(ids::viewContainer::Ports, "Ports", EViewContainerLocation::Panel, 40, panel);
+	addContainer(ids::viewContainer::DebugConsole, "Debug Console", EViewContainerLocation::Panel, 50, panel);
 
 	addView(ids::view::Explorer, ids::viewContainer::Explorer, "Explorer", 10);
 	addView(ids::view::Outline, ids::viewContainer::Explorer, "Outline", 20);
@@ -120,11 +133,53 @@ WorkbenchContributionRegistry::WorkbenchContributionRegistry()
 	SortById(m_snapshot.parts);
 	SortById(m_snapshot.viewContainers);
 	SortById(m_snapshot.views);
+	if (!IsValidContributionSnapshot(m_snapshot))
+		throw std::logic_error("invalid built-in workbench contributions");
 }
 
 bool WorkbenchContributionRegistry::IsValidStableId(const std::string_view value) noexcept
 {
 	return IsPrintableUtf8(value);
+}
+
+bool WorkbenchContributionRegistry::IsValidViewContainerDescriptor(
+	const WorkbenchViewContainerDescriptor& descriptor) noexcept
+{
+	return IsValidStableId(descriptor.id) && IsValidLocation(descriptor.location)
+		&& descriptor.supportedLocations.IsValid()
+		&& descriptor.supportedLocations.Contains(descriptor.location);
+}
+
+bool WorkbenchContributionRegistry::IsValidContributionSnapshot(
+	const WorkbenchContributionSnapshot& snapshot) noexcept
+{
+	try {
+		std::unordered_set<std::string_view> partIds;
+		partIds.reserve(snapshot.parts.size());
+		for (const auto& registered : snapshot.parts) {
+			if (!IsValidStableId(registered.descriptor.id)
+				|| !partIds.emplace(registered.descriptor.id).second) return false;
+		}
+
+		std::unordered_set<std::string_view> containerIds;
+		containerIds.reserve(snapshot.viewContainers.size());
+		for (const auto& registered : snapshot.viewContainers) {
+			if (!IsValidViewContainerDescriptor(registered.descriptor)
+				|| !containerIds.emplace(registered.descriptor.id).second) return false;
+		}
+
+		std::unordered_set<std::string_view> viewIds;
+		viewIds.reserve(snapshot.views.size());
+		for (const auto& registered : snapshot.views) {
+			if (!IsValidStableId(registered.descriptor.id)
+				|| !IsValidStableId(registered.descriptor.containerId)
+				|| !containerIds.contains(registered.descriptor.containerId)
+				|| !viewIds.emplace(registered.descriptor.id).second) return false;
+		}
+		return true;
+	} catch (...) {
+		return false;
+	}
 }
 
 } // namespace workbench::layout
