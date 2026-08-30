@@ -21,6 +21,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'Format-ReleasePromotionNotes.ps1')
 
 function Get-RequiredStringProperty {
     param(
@@ -288,6 +289,15 @@ try {
         $sourceVersion -ne $provenanceVersion) {
         throw 'Publication inputs do not identify the same validated tag, source SHA, and file version.'
     }
+    $requiredChecksProperty = $sourceEvidence.PSObject.Properties['required_checks']
+    if ($null -eq $requiredChecksProperty) {
+        throw "Release source evidence is missing required property 'required_checks'."
+    }
+    $notes = Format-ReleasePromotionNotes `
+        -SourceTag $sourceTag `
+        -SourceSha $sourceSha `
+        -FileVersion $sourceVersion `
+        -RequiredChecks $requiredChecksProperty.Value
 
     $env:GH_TOKEN = $Token
     $existingRelease = Get-ExistingRelease -Tag $TagName -Repo $Repository
@@ -351,25 +361,7 @@ try {
     $assetPaths.Add($publishedSourceEvidence)
     $assetPaths.Add($publishedProvenance)
 
-    $requiredCheckNames = @($sourceEvidence.required_checks | ForEach-Object {
-        Get-RequiredStringProperty -Object $_ -Name 'name' -Description 'Required check evidence'
-    } | Sort-Object)
-    if ($requiredCheckNames.Count -eq 0) {
-        throw 'Release source evidence did not record any required checks.'
-    }
     $notesPath = Join-Path $outputDirectory 'release-notes.md'
-    $notes = @(
-        "## Verified release promotion",
-        '',
-        "- Source tag: ``$sourceTag``",
-        "- Source SHA: ``$($sourceSha.ToLowerInvariant())``",
-        "- File version: ``$sourceVersion``",
-        '',
-        'The source SHA passed the required main-branch checks before packaging. The packaged installer was provenance-checked, installed into an isolated directory, opened with a real document, and uninstalled before this release was published.',
-        '',
-        'Required source checks:',
-        ($requiredCheckNames | ForEach-Object { "- $_" })
-    ) -join "`n"
     Write-Utf8NoBomFile -Path $notesPath -Content $notes
 
     $expectedAssets = @{}
