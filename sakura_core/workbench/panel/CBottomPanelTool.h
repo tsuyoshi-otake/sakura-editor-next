@@ -11,15 +11,45 @@
 #include "terminal/window/CTerminalTool.h"
 #include "theme/CThemeService.h"
 #include "workbench/IWorkbenchTool.h"
+#include "workbench/layout/WorkbenchIds.h"
 #include "workbench/win32/ProblemsOutputPanelProjection.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 
 namespace workbench::panel {
+
+//! Non-owning shorthand for the repository's single canonical VS Code
+//! ViewContainer-ID authority. In particular, upstream Terminal is `terminal`;
+//! the Panel must not invent a physical-Part-qualified replacement ID.
+namespace containerIds = layout::ids::viewContainer;
+
+enum class EBottomPanelContainerSupport : std::uint8_t {
+	Supported,
+	Unsupported,
+	Invalid,
+};
+
+//! Ports and Debug Console are known upstream containers, but this fork has no
+//! production page authority for either one. Unknown IDs are invalid rather
+//! than aliases for Terminal.
+[[nodiscard]] constexpr EBottomPanelContainerSupport ClassifyBottomPanelContainer(
+	const std::string_view containerId) noexcept
+{
+	if (containerId == containerIds::Problems || containerId == containerIds::Output
+		|| containerId == containerIds::Terminal) {
+		return EBottomPanelContainerSupport::Supported;
+	}
+	if (containerId == containerIds::Ports || containerId == containerIds::DebugConsole) {
+		return EBottomPanelContainerSupport::Unsupported;
+	}
+	return EBottomPanelContainerSupport::Invalid;
+}
 
 //! Panel view containers follow VS Code's left-to-right order. VS Code also
 //! contributes Ports and Debug Console to this Part; both are omitted here.
@@ -30,6 +60,20 @@ namespace workbench::panel {
 //! rendered inert. The divergence and its reason are recorded in
 //! workbench/CLAUDE.md; the pure Ports and Debug Console models are untouched.
 enum class BottomPanelTab { Problems, Output, Terminal };
+
+//! Typed I06 seam for moving the selected page into or out of the physical
+//! Panel host. Neither transition owns the page model or TerminalInstance.
+enum class EBottomPanelPageAttachStatus : std::uint8_t {
+	Attached,
+	AlreadyAttached,
+	Closed,
+};
+
+enum class EBottomPanelPageDetachStatus : std::uint8_t {
+	Detached,
+	AlreadyDetached,
+	Closed,
+};
 
 struct BottomPanelVerticalLayout final {
 	int headerHeight = 0;
@@ -62,8 +106,11 @@ public:
 	using ProblemActivationCallback = std::function<void(const win32::ProblemsPanelEntry&)>;
 	//! Commits a user-originated Output channel selection to the owning model.
 	using OutputChannelSelectionCallback = std::function<bool(const std::string& channelId)>;
-	//! Commits a user-originated tab selection to the owning model. Return false
-	//! to veto it; the value has no HWND or layout/model dependency.
+	//! Commits a user-originated ViewContainer selection to the owning model.
+	//! The callback receives one canonical ID and is never called by Apply.
+	using ContainerSelectionCallback = std::function<bool(std::string_view containerId)>;
+	//! I06 compatibility conversion for the current CEditWnd composition. New
+	//! callers use ContainerSelectionCallback and stable IDs.
 	using TabSelectionCallback = std::function<bool(BottomPanelTab tab)>;
 
 	//! Common actions owned by the physical VS Code Panel Part, not by a panel view.
@@ -93,6 +140,7 @@ public:
 	void SetOutputSnapshot(win32::OutputPanelSnapshot snapshot);
 	void SetProblemActivationCallback(ProblemActivationCallback callback);
 	void SetOutputChannelSelectionCallback(OutputChannelSelectionCallback callback);
+	void SetContainerSelectionCallback(ContainerSelectionCallback callback);
 	void SetTabSelectionCallback(TabSelectionCallback callback);
 	//! Sets the common Panel Part chrome actions. The callbacks are invoked only for
 	//! user input; committed visibility/extent state still arrives through the model.
@@ -101,6 +149,17 @@ public:
 	//! Refreshes localized panel chrome without replacing committed snapshots.
 	void RefreshStrings();
 	//! Applies already-committed model state. This never calls the selection callback.
+	[[nodiscard]] bool ApplyActiveContainer(std::string_view containerId);
+	//! Sends one user request to the stable-ID owner. Apply, attachment, activation,
+	//! and focus remain separate even when the callback accepts the request.
+	[[nodiscard]] bool RequestContainerSelection(std::string_view containerId) noexcept;
+	[[nodiscard]] std::string_view ActiveContainerId() const noexcept;
+	//! Attaches/detaches only the selected page projection. These operations never
+	//! stop a service, close a terminal session, or change selection/focus.
+	[[nodiscard]] EBottomPanelPageAttachStatus AttachActivePage() noexcept;
+	[[nodiscard]] EBottomPanelPageDetachStatus DetachActivePage() noexcept;
+	[[nodiscard]] std::optional<std::string_view> AttachedContainerId() const noexcept;
+	//! Compatibility conversions retained until CEditWnd migrates in I06.
 	void SetActiveTab(BottomPanelTab tab);
 	//! Sends a user request to the owner. With a callback installed, native state is
 	//! changed only when the next committed model snapshot is projected back.

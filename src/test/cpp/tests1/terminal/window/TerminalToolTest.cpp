@@ -408,6 +408,181 @@ TEST(TerminalTool, BottomPanelLayoutNeverInvertsContentWhileShrinking)
 	EXPECT_EQ(28, visible.outputSelectorHeight);
 }
 
+TEST(BottomPanelComposite, UsesCanonicalContainerIdsAndKeepsUserRequestsSeparateFromApply)
+{
+	using namespace workbench::panel;
+
+	// These values come from WorkbenchIds, the repository's one accepted copy of
+	// the upstream VS Code ViewContainer IDs. Terminal is deliberately `terminal`.
+	EXPECT_EQ(std::string_view("terminal"), containerIds::Terminal);
+	EXPECT_EQ(std::string_view("workbench.panel.markers"), containerIds::Problems);
+	EXPECT_EQ(std::string_view("workbench.panel.output"), containerIds::Output);
+	EXPECT_EQ(std::string_view("~remote.forwardedPortsContainer"), containerIds::Ports);
+	EXPECT_EQ(std::string_view("workbench.panel.repl"), containerIds::DebugConsole);
+	EXPECT_EQ(EBottomPanelContainerSupport::Supported,
+		ClassifyBottomPanelContainer(containerIds::Terminal));
+	EXPECT_EQ(EBottomPanelContainerSupport::Supported,
+		ClassifyBottomPanelContainer(containerIds::Problems));
+	EXPECT_EQ(EBottomPanelContainerSupport::Supported,
+		ClassifyBottomPanelContainer(containerIds::Output));
+	EXPECT_EQ(EBottomPanelContainerSupport::Unsupported,
+		ClassifyBottomPanelContainer(containerIds::Ports));
+	EXPECT_EQ(EBottomPanelContainerSupport::Unsupported,
+		ClassifyBottomPanelContainer(containerIds::DebugConsole));
+	EXPECT_EQ(EBottomPanelContainerSupport::Invalid,
+		ClassifyBottomPanelContainer("workbench.panel.unknown"));
+
+	CBottomPanelTool panel;
+	EXPECT_EQ(containerIds::Terminal, panel.ActiveContainerId());
+	EXPECT_FALSE(panel.AttachedContainerId().has_value());
+	ASSERT_NE(nullptr, panel.Terminal());
+	EXPECT_EQ(0u, panel.Terminal()->TabCount());
+
+	int callbackCalls = 0;
+	std::string_view lastRequested;
+	panel.SetContainerSelectionCallback([&](const std::string_view containerId) {
+		++callbackCalls;
+		lastRequested = containerId;
+		return true;
+	});
+	EXPECT_TRUE(panel.RequestContainerSelection(containerIds::Problems));
+	EXPECT_EQ(1, callbackCalls);
+	EXPECT_EQ(containerIds::Problems, lastRequested);
+	// Accepted user intent does not optimistically apply selection or focus.
+	EXPECT_EQ(containerIds::Terminal, panel.ActiveContainerId());
+	EXPECT_EQ(0u, panel.Terminal()->TabCount());
+
+	EXPECT_TRUE(panel.ApplyActiveContainer(containerIds::Problems));
+	EXPECT_EQ(1, callbackCalls);
+	EXPECT_EQ(containerIds::Problems, panel.ActiveContainerId());
+	// A repeated valid user request is still delivered exactly once.
+	EXPECT_TRUE(panel.RequestContainerSelection(containerIds::Problems));
+	EXPECT_EQ(2, callbackCalls);
+	panel.SetContainerSelectionCallback([&](const std::string_view containerId) {
+		++callbackCalls;
+		lastRequested = containerId;
+		return false;
+	});
+	EXPECT_FALSE(panel.RequestContainerSelection(containerIds::Output));
+	EXPECT_EQ(3, callbackCalls);
+	EXPECT_EQ(containerIds::Output, lastRequested);
+	EXPECT_EQ(containerIds::Problems, panel.ActiveContainerId());
+
+	EXPECT_FALSE(panel.RequestContainerSelection(containerIds::Ports));
+	EXPECT_FALSE(panel.RequestContainerSelection(containerIds::DebugConsole));
+	EXPECT_FALSE(panel.RequestContainerSelection("workbench.panel.unknown"));
+	EXPECT_FALSE(panel.ApplyActiveContainer(containerIds::Ports));
+	EXPECT_FALSE(panel.ApplyActiveContainer("workbench.panel.unknown"));
+	EXPECT_EQ(3, callbackCalls);
+	EXPECT_EQ(containerIds::Problems, panel.ActiveContainerId());
+	EXPECT_FALSE(panel.AttachedContainerId().has_value());
+	EXPECT_EQ(0u, panel.Terminal()->TabCount());
+
+	panel.Close();
+}
+
+TEST(BottomPanelComposite, DetachSwitchAndMessageRoutingPreserveTerminalUntilExplicitClose)
+{
+	using namespace workbench::panel;
+
+	ToolHarness harness;
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	const HWND focusOwner = ::CreateWindowExW(0, L"STATIC", L"focus owner",
+		WS_CHILD | WS_VISIBLE | WS_TABSTOP, 0, 0, 40, 20, parent, nullptr,
+		::GetModuleHandleW(nullptr), nullptr);
+	ASSERT_NE(nullptr, focusOwner);
+	::ShowWindow(parent, SW_SHOWNOACTIVATE);
+
+	CBottomPanelTool panel(harness.Dependencies());
+	ASSERT_TRUE(panel.Create(parent));
+	panel.Layout({ 0, 0, 640, 320 }, 96);
+	workbench::win32::ProblemsPanelSnapshot problems;
+	problems.revision = 3;
+	problems.entries.push_back({ L"file:///C:/workspace/main.cpp", { 1, 2, 1, 8 },
+		workbench::win32::EProblemsPanelSeverity::Error, L"error", L"compiler", L"main.cpp:2:3" });
+	panel.SetProblemsSnapshot(std::move(problems));
+	workbench::win32::OutputPanelSnapshot output;
+	output.revision = 4;
+	output.activeChannelId = "git";
+	output.channels.push_back({ "git", L"Git", L"git status", true, true });
+	panel.SetOutputSnapshot(std::move(output));
+	ASSERT_EQ(std::optional<std::string>("git"), panel.SelectedOutputChannelId());
+	ASSERT_EQ(std::optional<std::string_view>(containerIds::Terminal),
+		panel.AttachedContainerId());
+	panel.Activate();
+	ASSERT_EQ(1u, harness.backends.size());
+	ASSERT_EQ(1u, panel.Terminal()->TabCount());
+
+	ScopedNeutralKeyboardState keyboard;
+	ASSERT_TRUE(keyboard.Applied());
+	ASSERT_TRUE(keyboard.SetDown(VK_CONTROL));
+	ASSERT_TRUE(keyboard.SetDown(VK_SHIFT));
+	MSG split{};
+	split.hwnd = panel.Terminal()->GetHwnd();
+	split.message = WM_KEYDOWN;
+	split.wParam = '5';
+	EXPECT_TRUE(panel.PreTranslateMessage(split));
+	ASSERT_EQ(2u, harness.backends.size());
+	EXPECT_EQ(2u, panel.Terminal()->TabCount());
+
+	::SetFocus(focusOwner);
+	ASSERT_EQ(focusOwner, ::GetFocus());
+	EXPECT_FALSE(panel.RequestContainerSelection(containerIds::Ports));
+	EXPECT_FALSE(panel.ApplyActiveContainer(containerIds::DebugConsole));
+	EXPECT_FALSE(panel.RequestContainerSelection("workbench.panel.unknown"));
+	EXPECT_EQ(containerIds::Terminal, panel.ActiveContainerId());
+	EXPECT_EQ(focusOwner, ::GetFocus());
+	EXPECT_EQ(0, harness.backends[0]->closeCalls.load());
+	EXPECT_EQ(0, harness.backends[1]->closeCalls.load());
+	EXPECT_TRUE(panel.ApplyActiveContainer(containerIds::Problems));
+	EXPECT_EQ(focusOwner, ::GetFocus());
+	EXPECT_FALSE(panel.PreTranslateMessage(split));
+	EXPECT_EQ(2u, harness.backends.size());
+	EXPECT_EQ(0, harness.backends[0]->closeCalls.load());
+	EXPECT_EQ(0, harness.backends[1]->closeCalls.load());
+
+	EXPECT_EQ(EBottomPanelPageDetachStatus::Detached, panel.DetachActivePage());
+	EXPECT_EQ(EBottomPanelPageDetachStatus::AlreadyDetached, panel.DetachActivePage());
+	EXPECT_FALSE(panel.AttachedContainerId().has_value());
+	panel.Activate();
+	EXPECT_EQ(focusOwner, ::GetFocus());
+	EXPECT_EQ(0, harness.backends[0]->closeCalls.load());
+	EXPECT_EQ(0, harness.backends[1]->closeCalls.load());
+
+	EXPECT_EQ(EBottomPanelPageAttachStatus::Attached, panel.AttachActivePage());
+	EXPECT_EQ(EBottomPanelPageAttachStatus::AlreadyAttached, panel.AttachActivePage());
+	ASSERT_EQ(std::optional<std::string_view>(containerIds::Problems),
+		panel.AttachedContainerId());
+	panel.Activate();
+	EXPECT_NE(focusOwner, ::GetFocus());
+
+	EXPECT_TRUE(panel.ApplyActiveContainer(containerIds::Output));
+	EXPECT_EQ(containerIds::Output, panel.ActiveContainerId());
+	EXPECT_TRUE(panel.ApplyActiveContainer(containerIds::Terminal));
+	EXPECT_EQ(containerIds::Terminal, panel.ActiveContainerId());
+	EXPECT_EQ(0, harness.backends[0]->closeCalls.load());
+	EXPECT_EQ(0, harness.backends[1]->closeCalls.load());
+
+	EXPECT_EQ(EBottomPanelPageDetachStatus::Detached, panel.DetachActivePage());
+	EXPECT_FALSE(panel.PreTranslateMessage(split));
+	EXPECT_EQ(2u, harness.backends.size());
+	EXPECT_EQ(EBottomPanelPageAttachStatus::Attached, panel.AttachActivePage());
+	EXPECT_TRUE(panel.PreTranslateMessage(split));
+	ASSERT_EQ(3u, harness.backends.size());
+	EXPECT_EQ(3u, panel.Terminal()->TabCount());
+
+	panel.Close();
+	panel.Close();
+	for (const auto& backend : harness.backends) {
+		EXPECT_TRUE(WaitUntil([&] { return backend->closeCalls.load() == 1; }));
+		EXPECT_EQ(1, backend->closeCalls.load());
+	}
+	EXPECT_EQ(EBottomPanelPageAttachStatus::Closed, panel.AttachActivePage());
+	EXPECT_EQ(EBottomPanelPageDetachStatus::Closed, panel.DetachActivePage());
+	::DestroyWindow(parent);
+}
+
 TEST(TerminalTool, RendererInvalidatesWhenRestoredFromZeroHeight)
 {
 	const HWND parent = CreateHiddenParentWindow();

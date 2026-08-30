@@ -77,14 +77,41 @@ void FillHeaderRule(HDC dc, const RECT& cell, int headerHeight, unsigned int dpi
 	::DeleteObject(brush);
 }
 
-BottomPanelTab TabForButtonId(UINT_PTR id) noexcept
+std::string_view ContainerIdForButtonId(UINT_PTR id) noexcept
 {
 	switch (id) {
-	case kProblemsButton: return BottomPanelTab::Problems;
-	case kOutputButton: return BottomPanelTab::Output;
-	case kTerminalButton: return BottomPanelTab::Terminal;
-	default: return BottomPanelTab::Terminal;
+	case kProblemsButton: return containerIds::Problems;
+	case kOutputButton: return containerIds::Output;
+	case kTerminalButton: return containerIds::Terminal;
+	default: return {};
 	}
+}
+
+std::optional<std::string_view> ContainerIdForTab(const BottomPanelTab tab) noexcept
+{
+	switch (tab) {
+	case BottomPanelTab::Problems: return containerIds::Problems;
+	case BottomPanelTab::Output: return containerIds::Output;
+	case BottomPanelTab::Terminal: return containerIds::Terminal;
+	}
+	return std::nullopt;
+}
+
+std::optional<BottomPanelTab> TabForContainerId(const std::string_view containerId) noexcept
+{
+	if (containerId == containerIds::Problems) return BottomPanelTab::Problems;
+	if (containerId == containerIds::Output) return BottomPanelTab::Output;
+	if (containerId == containerIds::Terminal) return BottomPanelTab::Terminal;
+	return std::nullopt;
+}
+
+std::optional<std::string_view> CanonicalSupportedContainerId(
+	const std::string_view containerId) noexcept
+{
+	if (containerId == containerIds::Problems) return containerIds::Problems;
+	if (containerId == containerIds::Output) return containerIds::Output;
+	if (containerId == containerIds::Terminal) return containerIds::Terminal;
+	return std::nullopt;
 }
 
 bool EnsureClass(HINSTANCE instance)
@@ -154,10 +181,11 @@ struct CBottomPanelTool::Impl {
 	HBRUSH panelBrush = nullptr;
 	HBRUSH raisedBrush = nullptr;
 	rendering::CGdiBackBuffer backBuffer;
-	BottomPanelTab active = BottomPanelTab::Terminal;
+	std::string_view activeContainerId = containerIds::Terminal;
+	std::optional<std::string_view> attachedContainerId;
 	ProblemActivationCallback problemActivation;
 	OutputChannelSelectionCallback outputChannelSelection;
-	TabSelectionCallback tabSelection;
+	ContainerSelectionCallback containerSelection;
 	win32::ProblemsPanelSnapshot problems;
 	win32::OutputPanelSnapshot outputs;
 	std::optional<std::string> selectedOutputChannelId;
@@ -205,9 +233,9 @@ struct CBottomPanelTool::Impl {
 		const UINT_PTR id = static_cast<UINT_PTR>(item.CtlID);
 		const bool action = IsPanelActionId(id);
 		const bool tab = IsPanelTabId(id);
-		const BottomPanelTab buttonTab = TabForButtonId(id);
+		const std::string_view buttonContainerId = ContainerIdForButtonId(id);
 		const bool disabled = (item.itemState & ODS_DISABLED) != 0;
-		const bool activeTab = tab && active == buttonTab;
+		const bool activeTab = tab && activeContainerId == buttonContainerId;
 		const bool pressed = (item.itemState & ODS_SELECTED) != 0;
 		const HBRUSH background = (activeTab || pressed) ? raisedBrush : panelBrush;
 		if (background) ::FillRect(item.hDC, &item.rcItem, background);
@@ -297,17 +325,56 @@ struct CBottomPanelTool::Impl {
 		::DrawTextW(item.hDC, label, -1, &text, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
 	}
 
-	void ApplyActiveTab(BottomPanelTab tab)
+	[[nodiscard]] bool IsActivePageAttached() const noexcept
 	{
-		if (closed) return;
-		active = tab;
-		const bool showTerminal = tab == BottomPanelTab::Terminal;
+		return attachedContainerId && *attachedContainerId == activeContainerId;
+	}
+
+	void DeactivatePage(const std::string_view containerId) noexcept
+	{
+		if (containerId == containerIds::Terminal) terminal->Deactivate();
+	}
+
+	bool ApplyActiveContainer(const std::string_view requestedContainerId)
+	{
+		if (closed) return false;
+		const auto canonical = CanonicalSupportedContainerId(requestedContainerId);
+		if (!canonical) return false;
+		if (activeContainerId != *canonical) {
+			const bool followsSelection = IsActivePageAttached();
+			if (followsSelection) DeactivatePage(activeContainerId);
+			activeContainerId = *canonical;
+			if (followsSelection) attachedContainerId = activeContainerId;
+		}
+		const bool showTerminal = activeContainerId == containerIds::Terminal;
 		::SendMessageW(terminalButton, BM_SETSTATE, showTerminal, 0);
-		::SendMessageW(problemsButton, BM_SETSTATE, tab == BottomPanelTab::Problems, 0);
-		::SendMessageW(outputButton, BM_SETSTATE, tab == BottomPanelTab::Output, 0);
-		if (!showTerminal) terminal->Deactivate();
+		::SendMessageW(problemsButton, BM_SETSTATE,
+			activeContainerId == containerIds::Problems, 0);
+		::SendMessageW(outputButton, BM_SETSTATE,
+			activeContainerId == containerIds::Output, 0);
 		LayoutChildren();
 		if (window) ::InvalidateRect(window, nullptr, FALSE);
+		return true;
+	}
+
+	EBottomPanelPageAttachStatus AttachActivePage() noexcept
+	{
+		if (closed) return EBottomPanelPageAttachStatus::Closed;
+		if (IsActivePageAttached()) return EBottomPanelPageAttachStatus::AlreadyAttached;
+		if (attachedContainerId) DeactivatePage(*attachedContainerId);
+		attachedContainerId = activeContainerId;
+		LayoutChildren();
+		return EBottomPanelPageAttachStatus::Attached;
+	}
+
+	EBottomPanelPageDetachStatus DetachActivePage() noexcept
+	{
+		if (closed) return EBottomPanelPageDetachStatus::Closed;
+		if (!attachedContainerId) return EBottomPanelPageDetachStatus::AlreadyDetached;
+		DeactivatePage(*attachedContainerId);
+		attachedContainerId.reset();
+		LayoutChildren();
+		return EBottomPanelPageDetachStatus::Detached;
 	}
 
 	void LayoutChildren()
@@ -386,15 +453,16 @@ struct CBottomPanelTool::Impl {
 
 		RECT content{ 0, vertical.contentTop, width, vertical.contentTop + vertical.contentHeight };
 		place(problemsList, 0, vertical.contentTop, width, vertical.contentHeight,
-			active == BottomPanelTab::Problems);
+			IsActivePageAttached() && activeContainerId == containerIds::Problems);
 		place(outputSelector, 0, vertical.contentTop, width, vertical.outputSelectorHeight,
-			active == BottomPanelTab::Output);
+			IsActivePageAttached() && activeContainerId == containerIds::Output);
 		place(outputText, 0, vertical.contentTop + vertical.outputSelectorHeight, width,
-			vertical.contentHeight - vertical.outputSelectorHeight, active == BottomPanelTab::Output);
+			vertical.contentHeight - vertical.outputSelectorHeight,
+			IsActivePageAttached() && activeContainerId == containerIds::Output);
 		// CTerminalTool::Layout uses SWP_SHOWWINDOW for its own root. Keep an
 		// inactive terminal hidden in this transaction and only invoke that layout
 		// after the chrome transaction when Terminal is the committed tab.
-		if (active != BottomPanelTab::Terminal) {
+		if (!IsActivePageAttached() || activeContainerId != containerIds::Terminal) {
 			place(terminal->GetHwnd(), 0, vertical.contentTop, width, vertical.contentHeight, false);
 		}
 		const UINT positionFlags = SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOREDRAW | SWP_NOCOPYBITS;
@@ -425,7 +493,9 @@ struct CBottomPanelTool::Impl {
 					positionFlags | visibility);
 			}
 		}
-		if (active == BottomPanelTab::Terminal) terminal->Layout(content, dpi);
+		if (IsActivePageAttached() && activeContainerId == containerIds::Terminal) {
+			terminal->Layout(content, dpi);
+		}
 		::RedrawWindow(window, nullptr, nullptr,
 			RDW_INVALIDATE | RDW_NOERASE | RDW_ALLCHILDREN);
 	}
@@ -562,6 +632,7 @@ bool CBottomPanelTool::Create(HWND parent)
 		return false;
 	}
 	m_impl->terminal->SetPanelHeaderHost(m_impl->window);
+	(void)m_impl->AttachActivePage();
 	return true;
 }
 
@@ -586,30 +657,35 @@ void CBottomPanelTool::Layout(const RECT& contentRect, unsigned int dpi)
 
 void CBottomPanelTool::Activate()
 {
-	if (!m_impl || m_impl->closed) return;
-	if (m_impl->active == BottomPanelTab::Terminal) m_impl->terminal->Activate();
-	else if (m_impl->active == BottomPanelTab::Problems) ::SetFocus(m_impl->problemsList);
-	else ::SetFocus(m_impl->outputText);
+	if (!m_impl || m_impl->closed || !m_impl->IsActivePageAttached()) return;
+	if (m_impl->activeContainerId == containerIds::Terminal) m_impl->terminal->Activate();
+	else if (m_impl->activeContainerId == containerIds::Problems) ::SetFocus(m_impl->problemsList);
+	else if (m_impl->activeContainerId == containerIds::Output) ::SetFocus(m_impl->outputText);
 }
 
 void CBottomPanelTool::Deactivate()
 {
-	if (m_impl && !m_impl->closed) m_impl->terminal->Deactivate();
+	if (m_impl && !m_impl->closed && m_impl->IsActivePageAttached()) {
+		m_impl->DeactivatePage(m_impl->activeContainerId);
+	}
 }
 
 bool CBottomPanelTool::PreTranslateMessage(MSG& message)
 {
-	return m_impl && !m_impl->closed && m_impl->active == BottomPanelTab::Terminal &&
-		m_impl->terminal->PreTranslateMessage(message);
+	return m_impl && !m_impl->closed && m_impl->IsActivePageAttached()
+		&& m_impl->activeContainerId == containerIds::Terminal
+		&& m_impl->terminal->PreTranslateMessage(message);
 }
 
 void CBottomPanelTool::Close()
 {
 	if (!m_impl || m_impl->closed) return;
+	if (m_impl->attachedContainerId) m_impl->DeactivatePage(*m_impl->attachedContainerId);
+	m_impl->attachedContainerId.reset();
 	m_impl->closed = true;
 	m_impl->problemActivation = {};
 	m_impl->outputChannelSelection = {};
-	m_impl->tabSelection = {};
+	m_impl->containerSelection = {};
 	m_impl->problems = {};
 	m_impl->outputs = {};
 	m_impl->selectedOutputChannelId.reset();
@@ -662,9 +738,23 @@ void CBottomPanelTool::SetOutputChannelSelectionCallback(OutputChannelSelectionC
 	if (m_impl && !m_impl->closed) m_impl->outputChannelSelection = std::move(callback);
 }
 
+void CBottomPanelTool::SetContainerSelectionCallback(ContainerSelectionCallback callback)
+{
+	if (m_impl && !m_impl->closed) m_impl->containerSelection = std::move(callback);
+}
+
 void CBottomPanelTool::SetTabSelectionCallback(TabSelectionCallback callback)
 {
-	if (m_impl && !m_impl->closed) m_impl->tabSelection = std::move(callback);
+	if (!m_impl || m_impl->closed) return;
+	if (!callback) {
+		m_impl->containerSelection = {};
+		return;
+	}
+	m_impl->containerSelection = [callback = std::move(callback)](
+		const std::string_view containerId) {
+		const auto tab = TabForContainerId(containerId);
+		return tab && callback(*tab);
+	};
 }
 
 void CBottomPanelTool::SetPanelActions(PanelActions actions)
@@ -685,37 +775,74 @@ void CBottomPanelTool::RefreshStrings()
 	m_impl->RefreshProblems();
 	if (m_impl->window) ::InvalidateRect(m_impl->window, nullptr, FALSE);
 }
-void CBottomPanelTool::SetActiveTab(BottomPanelTab tab)
+bool CBottomPanelTool::ApplyActiveContainer(const std::string_view containerId)
 {
-	if (m_impl) m_impl->ApplyActiveTab(tab);
+	return m_impl && m_impl->ApplyActiveContainer(containerId);
 }
 
-bool CBottomPanelTool::RequestTabSelection(BottomPanelTab tab) noexcept
+bool CBottomPanelTool::RequestContainerSelection(const std::string_view containerId) noexcept
 {
 	if (!m_impl || m_impl->closed) return false;
-	if (m_impl->active == tab) return true;
-	if (m_impl->tabSelection) {
+	const auto canonical = CanonicalSupportedContainerId(containerId);
+	if (!canonical) return false;
+	if (m_impl->containerSelection) {
 		try {
-			if (!m_impl->tabSelection(tab)) return false;
+			// A valid user request is delivered exactly once. Selection, attachment,
+			// activation, and focus wait for their distinct committed paths.
+			return m_impl->containerSelection(*canonical);
 		}
 		catch (...) {
 			return false;
 		}
-		// The callback owns the committed state. The next model snapshot will call
-		// SetActiveTab and update the native controls atomically with the rest of the
-		// Workbench projection.
-		return true;
 	}
-	m_impl->ApplyActiveTab(tab);
-	return true;
+	try {
+		return m_impl->ApplyActiveContainer(*canonical);
+	}
+	catch (...) {
+		return false;
+	}
 }
 
-void CBottomPanelTool::ShowProblems() { SetActiveTab(BottomPanelTab::Problems); }
-void CBottomPanelTool::ShowOutput() { SetActiveTab(BottomPanelTab::Output); }
+std::string_view CBottomPanelTool::ActiveContainerId() const noexcept
+{
+	return m_impl ? m_impl->activeContainerId : std::string_view{};
+}
+
+EBottomPanelPageAttachStatus CBottomPanelTool::AttachActivePage() noexcept
+{
+	return m_impl ? m_impl->AttachActivePage() : EBottomPanelPageAttachStatus::Closed;
+}
+
+EBottomPanelPageDetachStatus CBottomPanelTool::DetachActivePage() noexcept
+{
+	return m_impl ? m_impl->DetachActivePage() : EBottomPanelPageDetachStatus::Closed;
+}
+
+std::optional<std::string_view> CBottomPanelTool::AttachedContainerId() const noexcept
+{
+	return m_impl ? m_impl->attachedContainerId : std::nullopt;
+}
+
+void CBottomPanelTool::SetActiveTab(const BottomPanelTab tab)
+{
+	if (const auto containerId = ContainerIdForTab(tab)) {
+		(void)ApplyActiveContainer(*containerId);
+	}
+}
+
+bool CBottomPanelTool::RequestTabSelection(const BottomPanelTab tab) noexcept
+{
+	const auto containerId = ContainerIdForTab(tab);
+	return containerId && RequestContainerSelection(*containerId);
+}
+
+void CBottomPanelTool::ShowProblems() { (void)ApplyActiveContainer(containerIds::Problems); }
+void CBottomPanelTool::ShowOutput() { (void)ApplyActiveContainer(containerIds::Output); }
 
 BottomPanelTab CBottomPanelTool::ActiveTab() const noexcept
 {
-	return m_impl ? m_impl->active : BottomPanelTab::Terminal;
+	const auto tab = m_impl ? TabForContainerId(m_impl->activeContainerId) : std::nullopt;
+	return tab.value_or(BottomPanelTab::Terminal);
 }
 
 bool CBottomPanelTool::RequestOutputChannelSelection(const std::string& channelId) noexcept
@@ -787,14 +914,14 @@ LRESULT CALLBACK CBottomPanelTool::WindowProc(HWND window, UINT message, WPARAM 
 			WS_CHILD | WS_TABSTOP | WS_VSCROLL | WS_HSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | ES_AUTOHSCROLL,
 			0, 0, 0, 0, window, reinterpret_cast<HMENU>(kOutputText), instance, nullptr);
 		impl.ApplyControlPalette();
-		impl.ApplyActiveTab(BottomPanelTab::Terminal);
+		(void)impl.ApplyActiveContainer(containerIds::Terminal);
 		return 0;
 	}
 	case WM_COMMAND:
 		switch (LOWORD(wParam)) {
-		case kTerminalButton: (void)self->RequestTabSelection(BottomPanelTab::Terminal); return 0;
-		case kProblemsButton: (void)self->RequestTabSelection(BottomPanelTab::Problems); return 0;
-		case kOutputButton: (void)self->RequestTabSelection(BottomPanelTab::Output); return 0;
+		case kTerminalButton: (void)self->RequestContainerSelection(containerIds::Terminal); return 0;
+		case kProblemsButton: (void)self->RequestContainerSelection(containerIds::Problems); return 0;
+		case kOutputButton: (void)self->RequestContainerSelection(containerIds::Output); return 0;
 		case kPanelMaximizeButton:
 			if (HIWORD(wParam) == BN_CLICKED && impl.panelActions.toggleMaximize) {
 				impl.panelActions.toggleMaximize();
