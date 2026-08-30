@@ -470,6 +470,13 @@ The paired consumer also retains the shared cleanup aggregate fields
 `trackedSweepIdentityAttemptCount`, `trackedSweepIdentityFailureCount`,
 `trackedSweepDisappearedAfterSnapshotCount`,
 `trackedSweepStillPresentAfterFailureCount`, and `trackedSweepPassCount`.
+The additive delayed tracked-history group is
+`trackedSweepDelayedReconciliationState`,
+`trackedSweepDelayedReconciliationAttemptCount`,
+`trackedSweepDelayedReconciliationDelayCount`,
+`trackedSweepDelayedReconciliationElapsedMs`, and
+`trackedSweepPidReuseCount`. The state enum is exactly
+`not-attempted`, `accepted`, `exhausted`, `unavailable`, or `exception`.
 Affinity records likewise retain `historicalOwnedCount`, `currentLiveCount`,
 `expiredHistoricalCount`, `failureType`, `failureErrorCode`, and
 `liveSetSource`. All integer fields are bounded and payload-free; the consumer
@@ -482,18 +489,53 @@ requires zero process-enumeration failures to imply `succeeded=true`,
 `expiredHistoricalCount = historicalOwnedCount - currentLiveCount`.
 
 An identity query can race with an expected process exit after a complete
-tracked snapshot. The producer performs exactly one fresh, complete typed
-census in that case. If the exact PID is absent, the tracked sweep continues
-and `trackedSweepVerified=true`; the bounded `trackedSweepDisappearedAfterSnapshotCount`
-remains an observation. For compatibility with the additive v1 telemetry
-schema, the raw `trackedSweepFailureType=identity-disappeared` and its first
-error code are retained as diagnostic cause fields even though they are not a
-terminal cleanup failure. A PID that remains present, a null/exception or
-malformed identity result, or an unavailable/incomplete/duplicate/malformed
-fresh census remains fail closed and keeps the sweep unverified.
-This race recovery does not replace successful Job query/close, the final exact-path
-sweep, the zero-survivor proof, or the zero-cleanup-error gate; all of those
-cleanup gates remain required.
+tracked snapshot. Post-close reconciliation has one global bound: the existing
+3-second close timeout, 25-ms poll interval, and at most eight outer passes.
+Each pass takes one complete typed census and makes at most one strict identity
+query for every tracked PID that is still present. A prior successful query is
+never cached: PID, parent, creation, and canonical image are queried and compared
+again on every pass.
+A coherent typed identity failure (for example Win32 error 5) while that PID is
+still present is provisional: the producer keeps the full expected
+PID/parent/creation/canonical-image identity in memory only, records the first
+legacy failure cause, delays one bounded pass, and retries the census. A typed
+PID absence on a later pass can resolve the pending identity only when the v2
+proof is schema-valid, its terminal state is exactly
+`verified-graceful-job-empty` or `verified-explicit-job-termination`,
+`jobEmptyProven=true`, Job close succeeded, and the remaining handle is zero.
+Those same conditions are required before pending state can be created. A close
+failure or invalid proof may still run secondary observers but cannot create or
+accept pending history. A successful identity
+whose PID, parent, creation, or canonical image differs is terminal PID reuse,
+not absence; malformed, unavailable, exceptional, or exhausted observations
+are terminal as well. Once all pending identities resolve, the mandatory exact
+image-path sweep must still return zero and every existing Job/query/close,
+survivor, and cleanup-error gate remains required.
+
+The delayed group is diagnostic and payload-free. `not-attempted` requires all
+four counters/elapsed values to be zero. `accepted` requires failure type
+`identity-still-present`, `F == S`, `1 <= D <= S`, `P > 0`,
+`1 <= RA == RD <= 7`, and `R == 0`, where `A` is identity attempts, `F` is
+identity failures, `D` is disappeared-after-snapshot, `S` is still-present,
+`P` is sweep passes, `RA` is delayed reconciliation attempts, `RD` is delayed
+reconciliation delays, and `R` is PID reuse. It also requires an accepted
+`identityReconciliation` proof with the exact allowlisted operation,
+`post-close-tracked-history` role, and accepted reason. The canonical accepted
+producer fixture is `A=1,F=1,D=1,S=1,P=2,RA=1,RD=1,R=0`: one identity failure
+may be observed still-present and then disappear on the delayed pass. The
+legacy `D+S <= F` equation applies only outside delayed state `accepted`; it
+must not reject this exact accepted transition. PID reuse count cannot exceed
+tracked identity failures. `exhausted` requires a prior still-present
+observation and `attemptCount == delayCount`; 0/0 is permitted for time-budget
+exhaustion. `attemptCount <= 8`, `delayCount <= 7`, and
+`elapsedMs <= 3000`; `exhausted`, `unavailable`, and `exception` can never
+authorize cleanup. If all five delayed fields are absent, the consumer exposes
+legacy `not-observed` only when the old evidence carries no delayed-success
+contradiction. `not-observed` or `not-attempted` rejects an attempted or accepted
+proof reconciliation. A partial group, malformed type, unknown enum, negative,
+fractional, overflowing, contradictory count, or malformed terminal equation is
+rejected rather than normalized into qualifying evidence; legacy fields remain
+readable but cannot qualify delayed success.
 
 The Job membership path uses an optional local invoker seam for its native Job
 query, initial Toolhelp census, and identity query. When a member is present in

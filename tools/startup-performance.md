@@ -146,7 +146,14 @@ paired consumer は shared cleanup report の additive な固定 fields も保�
 `trackedSweepFailureType` / `trackedSweepFailureErrorCode` /
 `trackedSweepIdentityAttemptCount` / `trackedSweepIdentityFailureCount` /
 `trackedSweepDisappearedAfterSnapshotCount` / `trackedSweepStillPresentAfterFailureCount` /
-`trackedSweepPassCount` を出力します。affinity には
+`trackedSweepPassCount` を出力します。post-close の delayed tracked-history
+reconciliation は additive な次の5 fields を出力します。
+`trackedSweepDelayedReconciliationState`（`not-attempted` / `accepted` /
+`exhausted` / `unavailable` / `exception`）、
+`trackedSweepDelayedReconciliationAttemptCount`、
+`trackedSweepDelayedReconciliationDelayCount`、
+`trackedSweepDelayedReconciliationElapsedMs`、および
+`trackedSweepPidReuseCount` です。affinity には
 `historicalOwnedCount` / `currentLiveCount` / `expiredHistoricalCount` /
 `failureType` / `failureErrorCode` / `liveSetSource` を保持します。全 integer は bounded な
 payload-free 値で、producer の enum allowlist、process enumeration の succeeded / complete / count
@@ -155,6 +162,47 @@ equations、`currentLiveCount <= historicalOwnedCount`、および
 process enumeration で failure が 0 の場合は succeeded=true / complete=true / completedCount=callCount
 を必須とし、failure が 1 以上の場合は succeeded=false（complete は true / false のいずれも許可）と
 します。failure code は first-cause を保持します。
+
+post-close の tracked sweep は、既存の closeTimeoutMs=3000、pollIntervalMs=25、
+最大8 outer pass という一つの global bound だけを使います。各 pass で complete census
+を1回だけ行い、present な全 tracked PID ごとに strict identity query を最大1回だけ
+行います。前の pass の成功 identity は cache せず、各 pass で PID / parent / creation /
+canonical image の4 fields を再取得・再比較します。Error 5 など coherent な
+typed identity failure が census 上で PID present と続いた場合は provisional とし、
+期待する PID / parent / creation / canonical image identity は memory-only の
+pending state に保持します。pending の作成と後続 pass の typed PID absence の accept は、
+schema-valid proof が `verified-graceful-job-empty` または
+`verified-explicit-job-termination`、`jobEmptyProven=true`、Job close success、かつ
+remaining handle zero の全てを満たす場合だけ可能です。close failure や invalid proof でも
+secondary observer は実行しますが、pending を作成・accept しません。成功した
+identity でも PID、parent、creation、canonical image のいずれかが不一致なら PID reuse
+の terminal reject であり、absence とは扱いません。malformed / unavailable /
+exception / exhaustion も terminal reject です。pending が全て解決した後にも exact
+image-path sweep は必須で、Job/query/close、survivor、cleanup-error の既存 gates は
+一つも緩和しません。
+
+delayed fields の equation は bounded です。`not-attempted` は4 counter/elapsed
+値が全て0、`accepted` は failure type が `identity-still-present`、
+`F == S`、`1 <= D <= S`、`P > 0`、`1 <= RA == RD <= 7`、
+`R == 0` を要求します。ここで A は identity attempts、F は identity failures、
+D は disappeared-after-snapshot、S は still-present、P は sweep passes、RA は
+delayed reconciliation attempts、RD は delayed reconciliation delays、R は PID reuse
+です。さらに proof の identity reconciliation accepted と allowlist の operation / role /
+reason が必須です。canonical な accepted producer fixture は
+`A=1,F=1,D=1,S=1,P=2,RA=1,RD=1,R=0` で、1回の identity failure がまず
+still-present と観測され、delayed pass で disappearance になります。legacy の
+`D+S <= F` equation は delayed state が `accepted` 以外の場合だけ適用し、
+この accepted transition を reject してはいけません。`trackedSweepPidReuseCount <= trackedSweepIdentityFailureCount` も必須です。
+`exhausted` は prior still-present と attempt=delay を要求し、time budget exhaustion の
+0/0 は許可します。attempt は8以下、delay は7以下、elapsed は3000ms以下です。
+`exhausted` / `unavailable` / `exception` は authorize に使えません。paired consumer
+で5 fields が全て欠落する旧 evidence は delayed-success contradiction が無い場合
+だけ legacy `not-observed` として読めます。ただし `not-observed` / `not-attempted` と
+attempted または accepted な proof reconciliation の組み合わせは reject します。partial、
+型不正、unknown enum、負値 / fractional / overflow、矛盾した count / terminal equation は
+reject し、qualifying evidence へ正規化しません。旧 fields は読めても delayed success の
+根拠にはしません。いずれの delayed field も PID、path、
+creation、raw message を serialize しません。
 
 native process census の envelope は PowerShell の暗黙 cast を許可しません。`Attempted` / `Complete` /
 `Succeeded` は実 bool、`ErrorCode` / `AttemptCount` / `RetryCount` は実 CLR integer、`Retried` は実 bool とし、
@@ -235,8 +283,9 @@ positive fixture に加えて prior P1 と七つの impossible rejection combina
 `QueryProcessIdentity` failure telemetry は payload を持たない operation enum
 `none` / `open-process` / `query-image-path` / `get-process-times` / `exception` と、明示的な observer role
 `launch-job-member` / `graceful-job-member` / `post-close-tracked-history` / `exact-path` を保持します。
-post-close tracked-history の identity failure は、先に `jobEmptyProven=true` が成立し、operation と role が
-allowlist に入り、fresh typed census でも対象が消えている場合だけ reconcile できます。
+post-close tracked-history の identity failure は、schema-valid verified terminal proof、
+`jobEmptyProven=true`、successful Job close、remaining handle zero が成立し、operation と role が
+allowlist に入り、後続の typed census でも対象が消えている場合だけ reconcile できます。
 `identityReconciliation` は attempted/accepted、operation、observerRole、reason のみを記録します。
 exact-path observer failure は常に unreconciled terminal failure です。任意の error 5、PID/path の不在、
 zero survivor、または CloseHandle success だけを cleanup proof へ昇格させません。

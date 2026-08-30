@@ -107,6 +107,12 @@ $script:PairedJobQueryMaxBytes = [UInt64]1048576
 $script:PairedJobQueryMaxProcessCount = [UInt64]131072
 $script:PairedJobQueryMaxAttempts = 8
 $script:PairedCleanupTelemetryMaxCount = 4096
+$script:PairedCleanupTelemetryDelayedReconciliationStates = @(
+    'not-attempted', 'accepted', 'exhausted', 'unavailable', 'exception'
+)
+$script:PairedCleanupTelemetryDelayedReconciliationAttemptMax = 8
+$script:PairedCleanupTelemetryDelayedReconciliationDelayMax = 7
+$script:PairedCleanupTelemetryDelayedReconciliationElapsedMax = 3000
 $script:PairedCleanupTelemetryTrackedSweepFailureTypes = @(
     'none', 'identity-disappeared', 'identity-still-present',
     'enumeration-unavailable', 'identity-unavailable', 'exception'
@@ -156,7 +162,11 @@ $script:PairedContainmentIdentityObserverRoles = @(
 )
 $script:PairedContainmentReconciliationReasons = @(
     'none', 'job-empty-and-allowlisted-post-close-history', 'job-empty-not-proven',
-    'operation-not-allowlisted', 'observer-not-allowlisted', 'exact-path-failure', 'malformed'
+    'operation-not-allowlisted', 'observer-not-allowlisted', 'exact-path-failure',
+    'containment-authority-not-proven', 'malformed'
+)
+$script:PairedContainmentReconciliationOperations = @(
+    'open-process', 'query-image-path', 'get-process-times'
 )
 $script:PairedCleanupTelemetryAffinityFailureTypes = @(
     'none', 'open', 'set', 'readback', 'mismatch', 'identity', 'verification', 'unavailable'
@@ -174,6 +184,13 @@ $script:PairedCleanupTelemetryTrackedSweepFields = @(
     'trackedSweepIdentityAttemptCount', 'trackedSweepIdentityFailureCount',
     'trackedSweepDisappearedAfterSnapshotCount', 'trackedSweepStillPresentAfterFailureCount',
     'trackedSweepPassCount'
+)
+$script:PairedCleanupTelemetryDelayedReconciliationFields = @(
+    'trackedSweepDelayedReconciliationState',
+    'trackedSweepDelayedReconciliationAttemptCount',
+    'trackedSweepDelayedReconciliationDelayCount',
+    'trackedSweepDelayedReconciliationElapsedMs',
+    'trackedSweepPidReuseCount'
 )
 $script:PairedCleanupTelemetryAffinityFields = @(
     'historicalOwnedCount', 'currentLiveCount', 'expiredHistoricalCount',
@@ -2762,6 +2779,44 @@ function Test-PairedRunContainmentAuthority {
     catch { return $false }
 }
 
+function Test-PairedDelayedReconciliationCrossField {
+    param(
+        [AllowNull()] [object]$CleanupObservation,
+        [AllowNull()] [object]$ContainmentProof
+    )
+    try {
+        if (-not (Test-PairedStructuredObject $CleanupObservation) -or
+            -not (Test-PairedStructuredObject $ContainmentProof)) { return $false }
+        $state = [string](Get-PairedProperty $CleanupObservation @('trackedSweepDelayedReconciliationState'))
+        $reconciliation = Get-PairedProperty $ContainmentProof @('identityReconciliation')
+        if (-not (Test-PairedExactPropertySet $reconciliation $script:PairedContainmentReconciliationFields)) {
+            return $false
+        }
+        $attempted = Get-PairedProperty $reconciliation @('attempted')
+        $accepted = Get-PairedProperty $reconciliation @('accepted')
+        if ($attempted -isnot [bool] -or $accepted -isnot [bool]) { return $false }
+        if ($state -in @('not-observed', 'not-attempted')) {
+            return [bool](-not $attempted -and -not $accepted -and
+                [string](Get-PairedProperty $reconciliation @('operation')) -eq 'none' -and
+                [string](Get-PairedProperty $reconciliation @('observerRole')) -eq 'none' -and
+                [string](Get-PairedProperty $reconciliation @('reason')) -eq 'none')
+        }
+        if ($state -eq 'accepted') {
+            return [bool]($attempted -and $accepted -and
+                $script:PairedContainmentReconciliationOperations -contains
+                    [string](Get-PairedProperty $reconciliation @('operation')) -and
+                [string](Get-PairedProperty $reconciliation @('observerRole')) -eq
+                    'post-close-tracked-history' -and
+                [string](Get-PairedProperty $reconciliation @('reason')) -eq
+                    'job-empty-and-allowlisted-post-close-history')
+        }
+        # Exhausted, unavailable, and exception are terminal diagnostic states.
+        # They are never cleanup authority, regardless of proof contents.
+        return $false
+    }
+    catch { return $false }
+}
+
 function Convert-PairedJobQueryObservation {
     param([AllowNull()] [object]$Raw)
     if ($null -eq $Raw) { return New-PairedUnavailableJobQueryObservation }
@@ -2961,6 +3016,11 @@ function New-PairedEmptyCleanupObservation {
         trackedSweepDisappearedAfterSnapshotCount = [UInt64]0
         trackedSweepStillPresentAfterFailureCount = [UInt64]0
         trackedSweepPassCount = [UInt64]0
+        trackedSweepDelayedReconciliationState = 'not-observed'
+        trackedSweepDelayedReconciliationAttemptCount = [UInt64]0
+        trackedSweepDelayedReconciliationDelayCount = [UInt64]0
+        trackedSweepDelayedReconciliationElapsedMs = [UInt64]0
+        trackedSweepPidReuseCount = [UInt64]0
     }
 }
 
@@ -2974,11 +3034,21 @@ function New-PairedUnavailableCleanupObservation {
                 'gracefulCloseAttempted', 'gracefulCloseSucceeded', 'gracefulCloseFallbackType',
                 'trackedSweepAttempted', 'trackedSweepVerified',
                 'finalPathSweepAttempted', 'finalPathSweepVerified',
-                'survivorCount', 'cleanupErrorCount')) {
+                'survivorCount', 'cleanupErrorCount',
+                'trackedSweepDelayedReconciliationState',
+                'trackedSweepDelayedReconciliationAttemptCount',
+                'trackedSweepDelayedReconciliationDelayCount',
+                'trackedSweepDelayedReconciliationElapsedMs',
+                'trackedSweepPidReuseCount')) {
             $observation[$field] = Get-PairedProperty $Outer @($field)
         }
     }
-        $observation.status = 'unavailable'
+    $observation.status = 'unavailable'
+    $observation.trackedSweepDelayedReconciliationState = 'unavailable'
+    $observation.trackedSweepDelayedReconciliationAttemptCount = [UInt64]0
+    $observation.trackedSweepDelayedReconciliationDelayCount = [UInt64]0
+    $observation.trackedSweepDelayedReconciliationElapsedMs = [UInt64]0
+    $observation.trackedSweepPidReuseCount = [UInt64]0
     $observation.query = New-PairedUnavailableJobQueryObservation
     $observation.jobIdentityObservation = New-PairedUnavailableJobIdentityObservation
     return $observation
@@ -3001,6 +3071,11 @@ function New-PairedCleanupTelemetryFallback {
         trackedSweepDisappearedAfterSnapshotCount = [UInt64]0
         trackedSweepStillPresentAfterFailureCount = [UInt64]0
         trackedSweepPassCount = [UInt64]0
+        trackedSweepDelayedReconciliationState = 'not-observed'
+        trackedSweepDelayedReconciliationAttemptCount = [UInt64]0
+        trackedSweepDelayedReconciliationDelayCount = [UInt64]0
+        trackedSweepDelayedReconciliationElapsedMs = [UInt64]0
+        trackedSweepPidReuseCount = [UInt64]0
     }
 }
 
@@ -3008,15 +3083,30 @@ function Convert-PairedCleanupTelemetry {
     param([AllowNull()] [object]$Raw)
     $fallback = New-PairedCleanupTelemetryFallback
     if ($null -eq $Raw) { return $fallback }
-    $allFields = @($script:PairedCleanupTelemetryProcessEnumerationFields +
+    $baseFields = @($script:PairedCleanupTelemetryProcessEnumerationFields +
         $script:PairedCleanupTelemetryTrackedSweepFields)
-    if (-not (Test-PairedCleanupTelemetryFieldSetPresent $Raw $allFields)) {
+    $delayedFields = @($script:PairedCleanupTelemetryDelayedReconciliationFields)
+    $basePresent = Test-PairedCleanupTelemetryFieldSetPresent $Raw $baseFields
+    $delayedPresent = Test-PairedCleanupTelemetryFieldSetPresent $Raw $delayedFields
+    if (-not $basePresent -and -not $delayedPresent) {
         # Absence is the one compatibility case: an older v1 producer did not
-        # know these fields.  Do not infer that cleanup succeeded or failed.
+        # know these fields.  The delayed group is explicitly not-observed;
+        # old evidence remains readable but cannot qualify delayed success.
         return $fallback
     }
-    foreach ($field in @($allFields)) {
+    foreach ($field in @($baseFields)) {
         if (-not (Test-PairedPropertyPresent $Raw $field)) { return $null }
+    }
+    $delayedPresentCount = @($delayedFields | Where-Object { Test-PairedPropertyPresent $Raw $_ }).Count
+    if ($delayedPresentCount -ne 0 -and $delayedPresentCount -ne $delayedFields.Count) {
+        # Partial additive telemetry is not a legacy report.  It is malformed
+        # and must be unavailable/unqualified.
+        return $null
+    }
+    foreach ($field in @($delayedFields)) {
+        if ($delayedPresentCount -eq $delayedFields.Count -and -not (Test-PairedPropertyPresent $Raw $field)) {
+            return $null
+        }
     }
     try {
         $processAttempted = Convert-PairedJobQueryBoolean (Get-PairedProperty $Raw @('processEnumerationAttempted'))
@@ -3036,6 +3126,29 @@ function Convert-PairedCleanupTelemetry {
         $trackedDisappeared = Convert-PairedCleanupTelemetryBoundedCount (Get-PairedProperty $Raw @('trackedSweepDisappearedAfterSnapshotCount'))
         $trackedPresent = Convert-PairedCleanupTelemetryBoundedCount (Get-PairedProperty $Raw @('trackedSweepStillPresentAfterFailureCount'))
         $trackedPasses = Convert-PairedCleanupTelemetryBoundedCount (Get-PairedProperty $Raw @('trackedSweepPassCount'))
+        $delayedState = 'not-observed'
+        $delayedAttempts = [UInt64]0
+        $delayedDelays = [UInt64]0
+        $delayedElapsed = [UInt64]0
+        $delayedPidReuse = [UInt64]0
+        if ($delayedPresentCount -eq $delayedFields.Count) {
+            $delayedState = Convert-PairedCleanupTelemetryEnum `
+                (Get-PairedProperty $Raw @('trackedSweepDelayedReconciliationState')) `
+                $script:PairedCleanupTelemetryDelayedReconciliationStates
+            $delayedAttempts = Convert-PairedJobQueryBoundedUInt64 `
+                (Get-PairedProperty $Raw @('trackedSweepDelayedReconciliationAttemptCount')) `
+                ([UInt64]$script:PairedCleanupTelemetryDelayedReconciliationAttemptMax)
+            $delayedDelays = Convert-PairedJobQueryBoundedUInt64 `
+                (Get-PairedProperty $Raw @('trackedSweepDelayedReconciliationDelayCount')) `
+                ([UInt64]$script:PairedCleanupTelemetryDelayedReconciliationDelayMax)
+            $delayedElapsed = Convert-PairedJobQueryBoundedUInt64 `
+                (Get-PairedProperty $Raw @('trackedSweepDelayedReconciliationElapsedMs')) `
+                ([UInt64]$script:PairedCleanupTelemetryDelayedReconciliationElapsedMax)
+            $delayedPidReuse = Convert-PairedCleanupTelemetryBoundedCount `
+                (Get-PairedProperty $Raw @('trackedSweepPidReuseCount'))
+            if ($null -eq $delayedState -or $null -eq $delayedAttempts -or $null -eq $delayedDelays -or
+                $null -eq $delayedElapsed -or $null -eq $delayedPidReuse) { return $null }
+        }
         if ($null -eq $processAttempted -or $null -eq $processSucceeded -or
             $null -eq $processComplete -or $null -eq $processRetry -or
             $null -eq $processCalls -or $null -eq $processCompleted -or
@@ -3075,7 +3188,9 @@ function Convert-PairedCleanupTelemetry {
         }
 
         if ($trackedAttempts -lt $trackedFailures -or
-            $trackedDisappeared + $trackedPresent -gt $trackedFailures -or
+            ($delayedState -ne 'accepted' -and
+                $trackedDisappeared + $trackedPresent -gt $trackedFailures) -or
+            $delayedPidReuse -gt $trackedFailures -or
             (($trackedAttempts -gt 0 -or $trackedFailures -gt 0) -and $trackedPasses -eq 0)) {
             return $null
         }
@@ -3087,6 +3202,45 @@ function Convert-PairedCleanupTelemetry {
             if ($null -eq $trackedError -or $trackedError -eq 0 -or $trackedPasses -eq 0) { return $null }
             if ($trackedType -eq 'identity-disappeared' -and $trackedDisappeared -eq 0) { return $null }
             if ($trackedType -eq 'identity-still-present' -and $trackedPresent -eq 0) { return $null }
+        }
+        # A v1 producer can carry an identity-race outcome in the legacy
+        # fields while omitting the additive delayed-reconciliation group.
+        # Keep those fields readable, but mark the delayed state unavailable:
+        # old evidence must never qualify a delayed post-close success.
+        if ($delayedPresentCount -eq 0 -and
+            ($trackedType -ne 'none' -or $trackedFailures -gt 0 -or
+                $trackedDisappeared -gt 0 -or $trackedPresent -gt 0)) {
+            $delayedState = 'unavailable'
+        }
+        if ($delayedPresentCount -eq $delayedFields.Count) {
+            if ($delayedDelays -gt $delayedAttempts) { return $null }
+            switch ([string]$delayedState) {
+                'not-attempted' {
+                    if ($delayedAttempts -ne 0 -or $delayedDelays -ne 0 -or
+                        $delayedElapsed -ne 0 -or $delayedPidReuse -ne 0) { return $null }
+                    if ($trackedType -ne 'none' -or $trackedFailures -ne 0 -or
+                        $trackedDisappeared -ne 0 -or $trackedPresent -ne 0) {
+                        return $null
+                    }
+                }
+                'accepted' {
+                    if ($trackedType -ne 'identity-still-present' -or
+                        $trackedFailures -ne $trackedPresent -or
+                        $trackedDisappeared -lt 1 -or
+                        $trackedDisappeared -gt $trackedPresent -or
+                        $trackedPasses -le 0 -or
+                        $delayedAttempts -lt 1 -or
+                        $delayedAttempts -gt [UInt64]$script:PairedCleanupTelemetryDelayedReconciliationDelayMax -or
+                        $delayedAttempts -ne $delayedDelays -or
+                        $delayedPidReuse -ne 0) { return $null }
+                }
+                'exhausted' {
+                    if ($trackedPresent -eq 0 -or $delayedAttempts -ne $delayedDelays) { return $null }
+                }
+                'unavailable' { }
+                'exception' { }
+                default { return $null }
+            }
         }
         return [ordered]@{
             processEnumerationAttempted = [bool]$processAttempted
@@ -3104,6 +3258,11 @@ function Convert-PairedCleanupTelemetry {
             trackedSweepDisappearedAfterSnapshotCount = [UInt64]$trackedDisappeared
             trackedSweepStillPresentAfterFailureCount = [UInt64]$trackedPresent
             trackedSweepPassCount = [UInt64]$trackedPasses
+            trackedSweepDelayedReconciliationState = [string]$delayedState
+            trackedSweepDelayedReconciliationAttemptCount = [UInt64]$delayedAttempts
+            trackedSweepDelayedReconciliationDelayCount = [UInt64]$delayedDelays
+            trackedSweepDelayedReconciliationElapsedMs = [UInt64]$delayedElapsed
+            trackedSweepPidReuseCount = [UInt64]$delayedPidReuse
         }
     }
     catch { return $null }
@@ -3257,7 +3416,8 @@ function Convert-PairedCleanupObservation {
         if ($attempted) {
             $failed = -not $jobQuerySucceeded -or -not $jobCloseSucceeded -or
                 -not $trackedSweepVerified -or -not $finalPathSweepVerified -or
-                $survivorCount -gt 0 -or $cleanupErrorCount -gt 0
+                $survivorCount -gt 0 -or $cleanupErrorCount -gt 0 -or
+                [string](Get-PairedProperty $outer @('trackedSweepDelayedReconciliationState')) -in @('unavailable', 'exception', 'exhausted')
             if ($failed) { $status = 'failed' }
             elseif ($query.status -eq 'partial') { $status = 'partial' }
             else { $status = 'succeeded' }
@@ -4052,6 +4212,9 @@ function Convert-PairedLaunchResult {
     $jobIdentityObservationContract = Test-PairedJobIdentityObservationContract $Raw $launchJobQueryObservation $cleanupObservation
     $jobIdentityObservationContractValid = [bool]$jobIdentityObservationContract.valid
     $cleanupObservationSucceeded = [string](Get-PairedProperty $cleanupObservation @('status')) -eq 'succeeded'
+    $delayedReconciliationState = [string](Get-PairedProperty $cleanupObservation @('trackedSweepDelayedReconciliationState'))
+    $delayedReconciliationValid = Test-PairedDelayedReconciliationCrossField `
+        $cleanupObservation $containmentProof
     $containmentAuthorityValid = [bool](Test-PairedRunContainmentAuthority ([pscustomobject]@{
         containmentProof = $containmentProof
     }))
@@ -4068,9 +4231,11 @@ function Convert-PairedLaunchResult {
         $affinity.verified -and [bool]$TraceCleanupVerified -and
         -not $diagnosticUnavailable -and -not $traceUnavailable -and
         $jobIdentityObservationContractValid -and $cleanupObservationSucceeded -and
+        $delayedReconciliationValid -and
         $containmentProofContractValid
     $failureType = if ($success) { $null } elseif (-not $jobIdentityObservationContractValid -or
-        ($rawSuccess -and (-not $cleanupObservationSucceeded -or -not $containmentProofContractValid))) {
+        ($rawSuccess -and (-not $cleanupObservationSucceeded -or -not $delayedReconciliationValid -or
+            -not $containmentProofContractValid))) {
         'cleanup-unverified'
     }
     else { Get-PairedFailureType $Raw $ProfileCleanupVerified }
@@ -4078,7 +4243,7 @@ function Convert-PairedLaunchResult {
     # and trace are secondary evidence when the launch itself already failed;
     # they may become primary only when the raw launch otherwise succeeded.
     if (-not $success -and $rawSuccess -and $jobIdentityObservationContractValid -and
-        $cleanupObservationSucceeded -and $containmentProofContractValid) {
+        $cleanupObservationSucceeded -and $delayedReconciliationValid -and $containmentProofContractValid) {
         $cleanupVerified = $processCleanupVerified -and $ProfileCleanupVerified
         if ($cleanupVerified -and [bool]$affinity.verified) {
             if ($diagnosticUnavailable) { $failureType = 'diagnostic-unavailable' }
@@ -4143,7 +4308,8 @@ function Convert-PairedLaunchResult {
         profileCleanupVerified = [bool]$ProfileCleanupVerified
         traceCleanupVerified = [bool]$TraceCleanupVerified
         cleanupVerified = $processCleanupVerified -and $ProfileCleanupVerified -and [bool]$TraceCleanupVerified -and
-            $jobIdentityObservationContractValid -and $cleanupObservationSucceeded -and $containmentProofContractValid
+            $jobIdentityObservationContractValid -and $cleanupObservationSucceeded -and $delayedReconciliationValid -and
+            $containmentProofContractValid
         jobIdentityObservationContractValid = $jobIdentityObservationContractValid
         containmentProofContractValid = $containmentProofContractValid
         survivorCount = @(Get-PairedProperty $Raw @('survivors')).Count
@@ -4880,6 +5046,11 @@ function Invoke-PairedSelfTest {
         trackedSweepIdentityAttemptCount = [UInt64]0; trackedSweepIdentityFailureCount = [UInt64]0
         trackedSweepDisappearedAfterSnapshotCount = [UInt64]0
         trackedSweepStillPresentAfterFailureCount = [UInt64]0; trackedSweepPassCount = [UInt64]1
+        trackedSweepDelayedReconciliationState = 'not-attempted'
+        trackedSweepDelayedReconciliationAttemptCount = [UInt64]0
+        trackedSweepDelayedReconciliationDelayCount = [UInt64]0
+        trackedSweepDelayedReconciliationElapsedMs = [UInt64]0
+        trackedSweepPidReuseCount = [UInt64]0
     }
     $selfTestLaunchJobQuery = $selfTestGoodJobQuery | ConvertTo-Json -Depth 20 | ConvertFrom-Json
     Add-Member -InputObject $selfTestLaunchJobQuery -MemberType NoteProperty -Name jobIdentityObservation -Value $selfTestCleanupObservation.jobIdentityObservation
@@ -5712,7 +5883,8 @@ function Invoke-PairedSelfTest {
     [void]$selfTestOldSchemaRaw.PSObject.Properties.Remove('launchJobQueryObservation')
     $selfTestOldSchemaCleanup = $selfTestCleanupObservation | ConvertTo-Json -Depth 10 | ConvertFrom-Json
     foreach ($field in @($script:PairedCleanupTelemetryProcessEnumerationFields +
-            $script:PairedCleanupTelemetryTrackedSweepFields)) {
+            $script:PairedCleanupTelemetryTrackedSweepFields +
+            $script:PairedCleanupTelemetryDelayedReconciliationFields)) {
         [void]$selfTestOldSchemaCleanup.PSObject.Properties.Remove($field)
     }
     [void]$selfTestOldSchemaCleanup.PSObject.Properties.Remove('jobIdentityObservation')
@@ -6007,6 +6179,9 @@ function Invoke-PairedSelfTest {
     $selfTestFirstCauseCleanup.trackedSweepDisappearedAfterSnapshotCount = [UInt64]1
     $selfTestFirstCauseCleanup.trackedSweepStillPresentAfterFailureCount = [UInt64]0
     $selfTestFirstCauseCleanup.trackedSweepPassCount = [UInt64]1
+    foreach ($field in @($script:PairedCleanupTelemetryDelayedReconciliationFields)) {
+        [void]$selfTestFirstCauseCleanup.PSObject.Properties.Remove($field)
+    }
     $selfTestFirstCauseNormalized = Convert-PairedCleanupObservation $selfTestFirstCauseCleanup
     $selfTestCleanupTelemetryFirstCauseVerified = [bool]($selfTestFirstCauseNormalized.trackedSweepFailureType -eq 'identity-disappeared' -and
         $selfTestFirstCauseNormalized.trackedSweepFailureErrorCode -eq 5 -and
@@ -6069,6 +6244,278 @@ function Invoke-PairedSelfTest {
     $selfTestMalformedEnumCleanup.trackedSweepFailureType = 'not-allowlisted'
     $selfTestCleanupTelemetryEnumRejected = $null -eq (Convert-PairedCleanupTelemetry $selfTestMalformedEnumCleanup)
     if (-not $selfTestCleanupTelemetryEnumRejected) { throw 'Unknown cleanup telemetry enum was accepted.' }
+
+    # Delayed tracked-history reconciliation is additive telemetry.  Exercise
+    # the one accepted shape, every fail-closed shape family, and the legacy
+    # contradiction rule without placing any identity payload in the report.
+    $selfTestCloneDelayedCleanup = {
+        return $selfTestCleanupObservation | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+    }.GetNewClosure()
+    $selfTestDelayedAcceptedCleanup = & $selfTestCloneDelayedCleanup
+    $selfTestDelayedAcceptedCleanup.trackedSweepFailureType = 'identity-still-present'
+    $selfTestDelayedAcceptedCleanup.trackedSweepFailureErrorCode = [int]5
+    $selfTestDelayedAcceptedCleanup.trackedSweepIdentityAttemptCount = [UInt64]1
+    $selfTestDelayedAcceptedCleanup.trackedSweepIdentityFailureCount = [UInt64]1
+    $selfTestDelayedAcceptedCleanup.trackedSweepDisappearedAfterSnapshotCount = [UInt64]1
+    $selfTestDelayedAcceptedCleanup.trackedSweepStillPresentAfterFailureCount = [UInt64]1
+    $selfTestDelayedAcceptedCleanup.trackedSweepPassCount = [UInt64]2
+    $selfTestDelayedAcceptedCleanup.trackedSweepDelayedReconciliationState = 'accepted'
+    $selfTestDelayedAcceptedCleanup.trackedSweepDelayedReconciliationAttemptCount = [UInt64]1
+    $selfTestDelayedAcceptedCleanup.trackedSweepDelayedReconciliationDelayCount = [UInt64]1
+    $selfTestDelayedAcceptedCleanup.trackedSweepDelayedReconciliationElapsedMs = [UInt64]25
+    $selfTestDelayedAcceptedCleanup.trackedSweepPidReuseCount = [UInt64]0
+    $selfTestDelayedAcceptedRaw = $selfTestSuccessRaw | ConvertTo-Json -Depth 30 | ConvertFrom-Json
+    $selfTestDelayedAcceptedRaw.cleanupObservation = $selfTestDelayedAcceptedCleanup
+    $selfTestDelayedAcceptedRaw.containmentProof.identityReconciliation.attempted = $true
+    $selfTestDelayedAcceptedRaw.containmentProof.identityReconciliation.accepted = $true
+    $selfTestDelayedAcceptedRaw.containmentProof.identityReconciliation.operation = 'open-process'
+    $selfTestDelayedAcceptedRaw.containmentProof.identityReconciliation.observerRole = 'post-close-tracked-history'
+    $selfTestDelayedAcceptedRaw.containmentProof.identityReconciliation.reason =
+        'job-empty-and-allowlisted-post-close-history'
+    $selfTestDelayedAcceptedRun = Convert-PairedLaunchResult $selfTestDelayedAcceptedRaw `
+        $schedule[2] $selfTestTimeoutProfile $true
+    $selfTestCleanupDelayedReconciliationAcceptedVerified = [bool](
+        $selfTestDelayedAcceptedRun.status -eq 'succeeded' -and
+        -not $selfTestDelayedAcceptedRun.excluded -and
+        $selfTestDelayedAcceptedRun.cleanupObservation.status -eq 'succeeded' -and
+        $selfTestDelayedAcceptedRun.cleanupObservation.trackedSweepFailureType -eq 'identity-still-present' -and
+        $selfTestDelayedAcceptedRun.cleanupObservation.trackedSweepIdentityAttemptCount -eq 1 -and
+        $selfTestDelayedAcceptedRun.cleanupObservation.trackedSweepIdentityFailureCount -eq 1 -and
+        $selfTestDelayedAcceptedRun.cleanupObservation.trackedSweepDisappearedAfterSnapshotCount -eq 1 -and
+        $selfTestDelayedAcceptedRun.cleanupObservation.trackedSweepStillPresentAfterFailureCount -eq 1 -and
+        $selfTestDelayedAcceptedRun.cleanupObservation.trackedSweepPassCount -eq 2 -and
+        $selfTestDelayedAcceptedRun.cleanupObservation.trackedSweepDelayedReconciliationState -eq 'accepted' -and
+        $selfTestDelayedAcceptedRun.cleanupObservation.trackedSweepDelayedReconciliationAttemptCount -eq 1 -and
+        $selfTestDelayedAcceptedRun.cleanupObservation.trackedSweepDelayedReconciliationDelayCount -eq 1 -and
+        $selfTestDelayedAcceptedRun.cleanupObservation.trackedSweepPidReuseCount -eq 0 -and
+        $selfTestDelayedAcceptedRun.containmentProof.identityReconciliation.accepted)
+    if (-not $selfTestCleanupDelayedReconciliationAcceptedVerified) {
+        throw 'Accepted delayed tracked-history reconciliation did not qualify.'
+    }
+    $selfTestCloneDelayedAcceptedCleanup = {
+        return $selfTestDelayedAcceptedCleanup | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+    }.GetNewClosure()
+
+    $selfTestDelayedMalformedCases = @(
+        [pscustomobject]@{ name = 'partial'; mutation = 'partial' }
+        [pscustomobject]@{ name = 'type'; mutation = 'type' }
+        [pscustomobject]@{ name = 'unknown-enum'; mutation = 'unknown-enum' }
+        [pscustomobject]@{ name = 'negative'; mutation = 'negative' }
+        [pscustomobject]@{ name = 'fractional'; mutation = 'fractional' }
+        [pscustomobject]@{ name = 'overflow'; mutation = 'overflow' }
+        [pscustomobject]@{ name = 'attempts-greater-than-delays'; mutation = 'attempts-greater-than-delays' }
+        [pscustomobject]@{ name = 'delays-greater-than-attempts'; mutation = 'delays-greater-than-attempts' }
+        [pscustomobject]@{ name = 'missing-disappearance'; mutation = 'missing-disappearance' }
+        [pscustomobject]@{ name = 'excess-disappearance'; mutation = 'excess-disappearance' }
+        [pscustomobject]@{ name = 'excess-still-present'; mutation = 'excess-still-present' }
+        [pscustomobject]@{ name = 'not-attempted-counts'; mutation = 'not-attempted-counts' }
+        [pscustomobject]@{ name = 'accepted-without-prior'; mutation = 'accepted-without-prior' }
+        [pscustomobject]@{ name = 'pid-reuse'; mutation = 'pid-reuse' }
+        [pscustomobject]@{ name = 'pid-reuse-over-failures'; mutation = 'pid-reuse-over-failures' }
+        [pscustomobject]@{ name = 'exhausted-without-prior'; mutation = 'exhausted-without-prior' }
+        [pscustomobject]@{ name = 'exhausted-count-equation'; mutation = 'exhausted-count-equation' }
+    )
+    $selfTestCleanupDelayedReconciliationMalformedRejected = $true
+    $selfTestCleanupDelayedReconciliationLaunchRejected = $true
+    foreach ($case in @($selfTestDelayedMalformedCases)) {
+        $candidate = & $selfTestCloneDelayedAcceptedCleanup
+        switch ([string]$case.mutation) {
+            'partial' {
+                [void]$candidate.PSObject.Properties.Remove('trackedSweepDelayedReconciliationDelayCount')
+            }
+            'type' { $candidate.trackedSweepDelayedReconciliationAttemptCount = $true }
+            'unknown-enum' { $candidate.trackedSweepDelayedReconciliationState = 'unknown' }
+            'negative' { $candidate.trackedSweepDelayedReconciliationAttemptCount = [int]-1 }
+            'fractional' { $candidate.trackedSweepDelayedReconciliationElapsedMs = [double]1.5 }
+            'overflow' { $candidate.trackedSweepDelayedReconciliationElapsedMs = [decimal]3001 }
+            'attempts-greater-than-delays' {
+                $candidate.trackedSweepDelayedReconciliationAttemptCount = [UInt64]2
+                $candidate.trackedSweepDelayedReconciliationDelayCount = [UInt64]1
+            }
+            'delays-greater-than-attempts' {
+                $candidate.trackedSweepDelayedReconciliationState = 'accepted'
+                $candidate.trackedSweepDelayedReconciliationAttemptCount = [UInt64]1
+                $candidate.trackedSweepDelayedReconciliationDelayCount = [UInt64]2
+            }
+            'missing-disappearance' {
+                $candidate.trackedSweepDisappearedAfterSnapshotCount = [UInt64]0
+            }
+            'excess-disappearance' {
+                $candidate.trackedSweepDisappearedAfterSnapshotCount = [UInt64]2
+            }
+            'excess-still-present' {
+                $candidate.trackedSweepStillPresentAfterFailureCount = [UInt64]2
+            }
+            'not-attempted-counts' {
+                $candidate.trackedSweepDelayedReconciliationState = 'not-attempted'
+                $candidate.trackedSweepDelayedReconciliationAttemptCount = [UInt64]1
+            }
+            'accepted-without-prior' {
+                $candidate.trackedSweepDelayedReconciliationState = 'accepted'
+                $candidate.trackedSweepFailureType = 'none'
+                $candidate.trackedSweepFailureErrorCode = $null
+                $candidate.trackedSweepIdentityAttemptCount = [UInt64]0
+                $candidate.trackedSweepIdentityFailureCount = [UInt64]0
+                $candidate.trackedSweepDisappearedAfterSnapshotCount = [UInt64]0
+                $candidate.trackedSweepStillPresentAfterFailureCount = [UInt64]0
+                $candidate.trackedSweepPassCount = [UInt64]0
+                $candidate.trackedSweepDelayedReconciliationAttemptCount = [UInt64]1
+                $candidate.trackedSweepDelayedReconciliationDelayCount = [UInt64]1
+            }
+            'pid-reuse' {
+                $candidate.trackedSweepFailureType = 'identity-still-present'
+                $candidate.trackedSweepFailureErrorCode = [int]5
+                $candidate.trackedSweepIdentityAttemptCount = [UInt64]1
+                $candidate.trackedSweepIdentityFailureCount = [UInt64]1
+                $candidate.trackedSweepDisappearedAfterSnapshotCount = [UInt64]1
+                $candidate.trackedSweepStillPresentAfterFailureCount = [UInt64]1
+                $candidate.trackedSweepPassCount = [UInt64]2
+                $candidate.trackedSweepDelayedReconciliationState = 'accepted'
+                $candidate.trackedSweepDelayedReconciliationAttemptCount = [UInt64]1
+                $candidate.trackedSweepDelayedReconciliationDelayCount = [UInt64]1
+                $candidate.trackedSweepPidReuseCount = [UInt64]1
+            }
+            'pid-reuse-over-failures' {
+                $candidate.trackedSweepDelayedReconciliationState = 'exception'
+                $candidate.trackedSweepIdentityFailureCount = [UInt64]0
+                $candidate.trackedSweepPidReuseCount = [UInt64]1
+            }
+            'exhausted-without-prior' {
+                $candidate.trackedSweepDelayedReconciliationState = 'exhausted'
+                $candidate.trackedSweepFailureType = 'none'
+                $candidate.trackedSweepFailureErrorCode = $null
+                $candidate.trackedSweepIdentityAttemptCount = [UInt64]0
+                $candidate.trackedSweepIdentityFailureCount = [UInt64]0
+                $candidate.trackedSweepDisappearedAfterSnapshotCount = [UInt64]0
+                $candidate.trackedSweepStillPresentAfterFailureCount = [UInt64]0
+                $candidate.trackedSweepPassCount = [UInt64]0
+            }
+            'exhausted-count-equation' {
+                $candidate.trackedSweepFailureType = 'identity-still-present'
+                $candidate.trackedSweepFailureErrorCode = [int]5
+                $candidate.trackedSweepIdentityAttemptCount = [UInt64]1
+                $candidate.trackedSweepIdentityFailureCount = [UInt64]1
+                $candidate.trackedSweepDisappearedAfterSnapshotCount = [UInt64]1
+                $candidate.trackedSweepStillPresentAfterFailureCount = [UInt64]1
+                $candidate.trackedSweepPassCount = [UInt64]2
+                $candidate.trackedSweepDelayedReconciliationState = 'exhausted'
+                $candidate.trackedSweepDelayedReconciliationAttemptCount = [UInt64]1
+                $candidate.trackedSweepDelayedReconciliationDelayCount = [UInt64]0
+            }
+        }
+        $convertedCleanup = Convert-PairedCleanupObservation $candidate
+        if ($null -ne (Convert-PairedCleanupTelemetry $candidate) -or
+            $convertedCleanup.status -ne 'unavailable') {
+            $selfTestCleanupDelayedReconciliationMalformedRejected = $false
+        }
+        $candidateRaw = $selfTestDelayedAcceptedRaw | ConvertTo-Json -Depth 30 | ConvertFrom-Json
+        $candidateRaw.cleanupObservation = $candidate
+        $candidateRun = Convert-PairedLaunchResult $candidateRaw $schedule[2] $selfTestTimeoutProfile $true
+        if ($candidateRun.status -ne 'cleanup-unverified' -or
+            -not $candidateRun.excluded -or $candidateRun.cleanupVerified -or
+            $candidateRun.cleanupObservation.status -ne 'unavailable') {
+            $selfTestCleanupDelayedReconciliationLaunchRejected = $false
+        }
+    }
+    if (-not $selfTestCleanupDelayedReconciliationMalformedRejected -or
+        -not $selfTestCleanupDelayedReconciliationLaunchRejected) {
+        throw 'Malformed delayed tracked-history reconciliation telemetry was accepted.'
+    }
+    $selfTestCleanupDelayedTerminalEquationsRejected = [bool](
+        @($selfTestDelayedMalformedCases | Where-Object {
+                $_.mutation -in @('attempts-greater-than-delays', 'delays-greater-than-attempts',
+                    'missing-disappearance', 'excess-disappearance', 'excess-still-present',
+                    'pid-reuse', 'pid-reuse-over-failures', 'exhausted-without-prior',
+                    'exhausted-count-equation')
+            }).Count -eq 9 -and $selfTestCleanupDelayedReconciliationMalformedRejected -and
+        $selfTestCleanupDelayedReconciliationLaunchRejected)
+    if (-not $selfTestCleanupDelayedTerminalEquationsRejected) {
+        throw 'Malformed terminal delayed-reconciliation equations were accepted.'
+    }
+
+    $selfTestCleanupDelayedReconciliationGateRejected = $true
+    foreach ($state in @('exhausted', 'unavailable', 'exception')) {
+        $candidate = & $selfTestCloneDelayedCleanup
+        $candidate.trackedSweepFailureType = 'identity-still-present'
+        $candidate.trackedSweepFailureErrorCode = [int]5
+        $candidate.trackedSweepIdentityAttemptCount = [UInt64]1
+        $candidate.trackedSweepIdentityFailureCount = [UInt64]1
+        $candidate.trackedSweepStillPresentAfterFailureCount = [UInt64]1
+        $candidate.trackedSweepPassCount = [UInt64]2
+        $candidate.trackedSweepDelayedReconciliationState = $state
+        $candidate.trackedSweepDelayedReconciliationAttemptCount = if ($state -eq 'exhausted') { [UInt64]7 } else { [UInt64]0 }
+        $candidate.trackedSweepDelayedReconciliationDelayCount = if ($state -eq 'exhausted') { [UInt64]7 } else { [UInt64]0 }
+        $candidate.trackedSweepDelayedReconciliationElapsedMs = if ($state -eq 'exhausted') { [UInt64]100 } else { [UInt64]0 }
+        $raw = $selfTestSuccessRaw | ConvertTo-Json -Depth 30 | ConvertFrom-Json
+        $raw.cleanupObservation = $candidate
+        $run = Convert-PairedLaunchResult $raw $schedule[2] $selfTestTimeoutProfile $true
+        if ($run.status -ne 'cleanup-unverified' -or -not $run.excluded -or
+            $run.cleanupObservation.status -ne 'failed' -or $run.cleanupVerified -or
+            (Test-PairedRunCleanupVerified $run)) {
+            $selfTestCleanupDelayedReconciliationGateRejected = $false
+            break
+        }
+    }
+    if (-not $selfTestCleanupDelayedReconciliationGateRejected) {
+        throw 'Terminal delayed tracked-history reconciliation states qualified.'
+    }
+
+    $selfTestLegacyDelayedContradictionCleanup = & $selfTestCloneDelayedCleanup
+    foreach ($field in @($script:PairedCleanupTelemetryDelayedReconciliationFields)) {
+        [void]$selfTestLegacyDelayedContradictionCleanup.PSObject.Properties.Remove($field)
+    }
+    $selfTestLegacyDelayedContradictionCleanup.trackedSweepFailureType = 'identity-disappeared'
+    $selfTestLegacyDelayedContradictionCleanup.trackedSweepFailureErrorCode = [int]5
+    $selfTestLegacyDelayedContradictionCleanup.trackedSweepIdentityAttemptCount = [UInt64]3
+    $selfTestLegacyDelayedContradictionCleanup.trackedSweepIdentityFailureCount = [UInt64]1
+    $selfTestLegacyDelayedContradictionCleanup.trackedSweepDisappearedAfterSnapshotCount = [UInt64]1
+    $selfTestLegacyDelayedContradictionCleanup.trackedSweepPassCount = [UInt64]1
+    $selfTestLegacyDelayedContradictionRaw = $selfTestSuccessRaw | ConvertTo-Json -Depth 30 | ConvertFrom-Json
+    $selfTestLegacyDelayedContradictionRaw.cleanupObservation = $selfTestLegacyDelayedContradictionCleanup
+    $selfTestLegacyDelayedContradictionRun = Convert-PairedLaunchResult $selfTestLegacyDelayedContradictionRaw `
+        $schedule[2] $selfTestTimeoutProfile $true
+    $selfTestCleanupDelayedReconciliationLegacyContradictionRejected = [bool](
+        $selfTestLegacyDelayedContradictionRun.cleanupObservation.trackedSweepFailureType -eq 'identity-disappeared' -and
+        $selfTestLegacyDelayedContradictionRun.cleanupObservation.trackedSweepDelayedReconciliationState -eq 'unavailable' -and
+        $selfTestLegacyDelayedContradictionRun.cleanupObservation.status -eq 'failed' -and
+        $selfTestLegacyDelayedContradictionRun.status -eq 'cleanup-unverified' -and
+        $selfTestLegacyDelayedContradictionRun.excluded -and
+        -not $selfTestLegacyDelayedContradictionRun.cleanupVerified)
+    if (-not $selfTestCleanupDelayedReconciliationLegacyContradictionRejected) {
+        throw 'Legacy delayed-success contradiction was qualified.'
+    }
+
+    # A proof which says reconciliation was attempted/accepted must have the
+    # complete five-field delayed group and the exact accepted state.  Absence
+    # (not-observed) and an explicit not-attempted group are contradictions,
+    # not compatibility evidence.
+    $selfTestMissingDelayedAcceptedRaw = $selfTestDelayedAcceptedRaw | ConvertTo-Json -Depth 30 | ConvertFrom-Json
+    $selfTestMissingDelayedAcceptedRaw.cleanupObservation = & $selfTestCloneDelayedCleanup
+    foreach ($field in @($script:PairedCleanupTelemetryDelayedReconciliationFields)) {
+        [void]$selfTestMissingDelayedAcceptedRaw.cleanupObservation.PSObject.Properties.Remove($field)
+    }
+    $selfTestMissingDelayedAcceptedRun = Convert-PairedLaunchResult $selfTestMissingDelayedAcceptedRaw `
+        $schedule[2] $selfTestTimeoutProfile $true
+    $selfTestNotAttemptedAcceptedRaw = $selfTestDelayedAcceptedRaw | ConvertTo-Json -Depth 30 | ConvertFrom-Json
+    $selfTestNotAttemptedAcceptedRaw.cleanupObservation = & $selfTestCloneDelayedCleanup
+    $selfTestNotAttemptedAcceptedRun = Convert-PairedLaunchResult $selfTestNotAttemptedAcceptedRaw `
+        $schedule[2] $selfTestTimeoutProfile $true
+    $selfTestCleanupDelayedAbsentAcceptedProofRejected = [bool](
+        $selfTestMissingDelayedAcceptedRun.cleanupObservation.trackedSweepDelayedReconciliationState -eq 'not-observed' -and
+        $selfTestMissingDelayedAcceptedRun.status -eq 'cleanup-unverified' -and
+        $selfTestMissingDelayedAcceptedRun.excluded -and -not $selfTestMissingDelayedAcceptedRun.cleanupVerified -and
+        $selfTestNotAttemptedAcceptedRun.cleanupObservation.trackedSweepDelayedReconciliationState -eq 'not-attempted' -and
+        $selfTestNotAttemptedAcceptedRun.status -eq 'cleanup-unverified' -and
+        $selfTestNotAttemptedAcceptedRun.excluded -and -not $selfTestNotAttemptedAcceptedRun.cleanupVerified)
+    if (-not $selfTestCleanupDelayedAbsentAcceptedProofRejected) {
+        throw 'Absent or not-attempted delayed telemetry qualified an accepted reconciliation proof.'
+    }
+    $selfTestDelayedTelemetryPayloadFreeVerified = $true
+    try { [void](Assert-PairedPayloadFree $selfTestDelayedAcceptedRun) }
+    catch { $selfTestDelayedTelemetryPayloadFreeVerified = $false }
+    if (-not $selfTestDelayedTelemetryPayloadFreeVerified) {
+        throw 'Delayed tracked-history telemetry was not payload-free.'
+    }
     $selfTestTelemetryPayloadObject = [ordered]@{
         launchJobQueryObservation = $selfTestSuccessRun.launchJobQueryObservation
         cleanupObservation = $selfTestSuccessRun.cleanupObservation
@@ -6920,6 +7367,14 @@ function Invoke-PairedSelfTest {
         cleanupTelemetryAffinityCrossFieldRejected = [bool]$selfTestCleanupTelemetryAffinityCrossFieldRejected
         cleanupTelemetryBoundedIntegerRejected = [bool]$selfTestCleanupTelemetryBoundedIntegerRejected
         cleanupTelemetryEnumRejected = [bool]$selfTestCleanupTelemetryEnumRejected
+        cleanupDelayedReconciliationAcceptedVerified = [bool]$selfTestCleanupDelayedReconciliationAcceptedVerified
+        cleanupDelayedReconciliationMalformedRejected = [bool]$selfTestCleanupDelayedReconciliationMalformedRejected
+        cleanupDelayedReconciliationLaunchRejected = [bool]$selfTestCleanupDelayedReconciliationLaunchRejected
+        cleanupDelayedTerminalEquationsRejected = [bool]$selfTestCleanupDelayedTerminalEquationsRejected
+        cleanupDelayedAbsentAcceptedProofRejected = [bool]$selfTestCleanupDelayedAbsentAcceptedProofRejected
+        cleanupDelayedReconciliationGateRejected = [bool]$selfTestCleanupDelayedReconciliationGateRejected
+        cleanupDelayedReconciliationLegacyContradictionRejected = [bool]$selfTestCleanupDelayedReconciliationLegacyContradictionRejected
+        cleanupDelayedReconciliationPayloadFreeVerified = [bool]$selfTestDelayedTelemetryPayloadFreeVerified
         telemetryFailureNeutralVerified = [bool]$selfTestFailureNeutralVerified
         telemetryPayloadFreeVerified = [bool]$selfTestTelemetryPayloadFreeVerified
         telemetrySuppressionGatesUnchangedVerified = [bool]$selfTestSuppressionGatesUnchangedVerified

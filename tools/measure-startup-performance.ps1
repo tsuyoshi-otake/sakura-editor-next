@@ -60,7 +60,8 @@ $startupIdentityReconciliationOperations = @('open-process', 'query-image-path',
 $startupIdentityReconciliationObserverRoles = @('post-close-tracked-history')
 $startupIdentityReconciliationReasons = @(
     'none', 'job-empty-and-allowlisted-post-close-history', 'job-empty-not-proven',
-    'operation-not-allowlisted', 'observer-not-allowlisted', 'exact-path-failure', 'malformed'
+    'operation-not-allowlisted', 'observer-not-allowlisted', 'exact-path-failure',
+    'containment-authority-not-proven', 'malformed'
 )
 $startupContainmentModes = @('graceful-job-empty', 'explicit-job-termination', 'unavailable')
 $startupContainmentTerminalStates = @(
@@ -72,10 +73,15 @@ $startupObservationMaxCount = 4096
 $startupTrackedSweepFailureTypes = @(
     'none', 'identity-disappeared', 'identity-still-present', 'enumeration-unavailable', 'identity-unavailable', 'exception'
 )
+$startupTrackedSweepDelayedReconciliationStates = @(
+    'not-attempted', 'accepted', 'exhausted', 'unavailable', 'exception'
+)
+$startupTrackedSweepDelayedReconciliationAttemptMax = $startupContainmentMaxOuterPolls
+$startupTrackedSweepDelayedReconciliationDelayMax = $startupContainmentMaxOuterPolls - 1
 $startupTrackedSweepCounterFields = @(
     'trackedSweepIdentityAttemptCount', 'trackedSweepIdentityFailureCount',
     'trackedSweepDisappearedAfterSnapshotCount', 'trackedSweepStillPresentAfterFailureCount',
-    'trackedSweepPassCount'
+    'trackedSweepPassCount', 'trackedSweepPidReuseCount'
 )
 $startupJobIdentityCounterFields = @(
     'identityAttemptCount', 'identityFailureCount', 'recoveryAttemptCount',
@@ -2404,6 +2410,11 @@ function New-StartupCleanupObservation {
         trackedSweepDisappearedAfterSnapshotCount = 0
         trackedSweepStillPresentAfterFailureCount = 0
         trackedSweepPassCount = 0
+        trackedSweepDelayedReconciliationState = 'not-attempted'
+        trackedSweepDelayedReconciliationAttemptCount = 0
+        trackedSweepDelayedReconciliationDelayCount = 0
+        trackedSweepDelayedReconciliationElapsedMs = 0
+        trackedSweepPidReuseCount = 0
     }
 }
 
@@ -2411,11 +2422,22 @@ function Set-StartupIdentityReconciliation {
     param(
         [AllowNull()] [object]$ContainmentProof,
         [AllowNull()] [object]$Operation,
-        [AllowNull()] [object]$ObserverRole
+        [AllowNull()] [object]$ObserverRole,
+        [bool]$JobCloseSucceeded = $false,
+        [IntPtr]$RemainingJobHandle = [IntPtr]1
     )
     if ($null -eq $ContainmentProof) { return $false }
     $reconciliation = Get-StartupObservationProperty $ContainmentProof 'identityReconciliation'
     if ($null -eq $reconciliation) { return $false }
+    # Validate the untouched proof before recording this observation.  A Job
+    # query alone is never reconciliation authority: the proof must be one of
+    # the two verified empty-Job terminal states and the same cleanup state
+    # must also prove successful close with no remaining handle.
+    $containmentAuthority = (Test-StartupContainmentProofV2 $ContainmentProof) -and
+        [string](Get-StartupObservationProperty $ContainmentProof 'terminalState') -in
+            @('verified-graceful-job-empty', 'verified-explicit-job-termination') -and
+        [bool](Get-StartupObservationProperty $ContainmentProof 'jobEmptyProven') -and
+        $JobCloseSucceeded -and $RemainingJobHandle -eq [IntPtr]::Zero
     $operationValue = [string]$Operation
     $observerRoleValue = [string]$ObserverRole
     $operationAllowlisted = $startupIdentityOperations -contains $operationValue
@@ -2426,6 +2448,10 @@ function Set-StartupIdentityReconciliation {
     $reconciliation.observerRole = if ($observerRoleAllowlisted) { $observerRoleValue } else { 'none' }
     if ($observerRoleValue -eq 'exact-path') {
         $reconciliation.reason = 'exact-path-failure'
+        return $false
+    }
+    if (-not $containmentAuthority) {
+        $reconciliation.reason = 'containment-authority-not-proven'
         return $false
     }
     if (-not [bool](Get-StartupObservationProperty $ContainmentProof 'jobEmptyProven')) {
@@ -2609,6 +2635,64 @@ function Add-StartupTrackedSweepCount {
     catch { }
 }
 
+function Set-StartupTrackedSweepDelayedReconciliationState {
+    param(
+        [AllowNull()] [object]$Observation,
+        [AllowNull()] [object]$State
+    )
+    if ($null -eq $Observation) { return }
+    try {
+        $candidate = [string]$State
+        if ($startupTrackedSweepDelayedReconciliationStates -notcontains $candidate) {
+            $candidate = 'exception'
+        }
+        $existing = [string](Get-StartupObservationProperty $Observation 'trackedSweepDelayedReconciliationState')
+        if ($startupTrackedSweepDelayedReconciliationStates -notcontains $existing -or
+            $existing -eq 'not-attempted' -or
+            $candidate -in @('exhausted', 'unavailable', 'exception')) {
+            $Observation.trackedSweepDelayedReconciliationState = $candidate
+        }
+    }
+    catch { }
+}
+
+function Add-StartupTrackedSweepDelayedReconciliationCount {
+    param(
+        [Parameter(Mandatory = $true)] [object]$Observation,
+        [Parameter(Mandatory = $true)] [string]$Field,
+        [int]$Increment = 1
+    )
+    $maximum = switch ($Field) {
+        'trackedSweepDelayedReconciliationAttemptCount' { $startupTrackedSweepDelayedReconciliationAttemptMax }
+        'trackedSweepDelayedReconciliationDelayCount' { $startupTrackedSweepDelayedReconciliationDelayMax }
+        default { throw "Unsupported delayed reconciliation counter field: $Field" }
+    }
+    try {
+        $Observation.$Field = Add-StartupSaturatingCount (
+            Get-StartupObservationProperty $Observation $Field) $Increment $maximum
+    }
+    catch { }
+}
+
+function Set-StartupTrackedSweepDelayedReconciliationElapsed {
+    param(
+        [AllowNull()] [object]$Observation,
+        [AllowNull()] [object]$ElapsedMs
+    )
+    if ($null -eq $Observation) { return }
+    try {
+        if ([string](Get-StartupObservationProperty $Observation 'trackedSweepDelayedReconciliationState') -eq 'not-attempted') {
+            $Observation.trackedSweepDelayedReconciliationElapsedMs = 0
+            return
+        }
+        $number = [decimal]$ElapsedMs
+        if ($number -lt 0) { $number = 0 }
+        if ($number -gt [decimal]$closeTimeoutMs) { $number = [decimal]$closeTimeoutMs }
+        $Observation.trackedSweepDelayedReconciliationElapsedMs = [int][Math]::Truncate($number)
+    }
+    catch { }
+}
+
 function Add-StartupJobIdentityCount {
     param(
         [AllowNull()] [object]$Observation,
@@ -2747,7 +2831,9 @@ function Invoke-StartupTrackedIdentityFailure {
         [Parameter(Mandatory = $true)] [string]$ErrorMessage,
         [bool]$RecordTrackedSweepTelemetry = $true,
         [string]$ObserverRole = 'none',
-        [AllowNull()] [object]$ContainmentProof = $null
+        [AllowNull()] [object]$ContainmentProof = $null,
+        [bool]$JobCloseSucceeded = $false,
+        [IntPtr]$RemainingJobHandle = [IntPtr]1
     )
     # Recovery is limited to a coherent typed QueryProcessIdentity failure.
     # Null probes, invocation-exception fallbacks, successful results, and
@@ -2807,7 +2893,8 @@ function Invoke-StartupTrackedIdentityFailure {
                 Add-StartupTrackedSweepCount $CleanupObservation 'trackedSweepDisappearedAfterSnapshotCount'
             }
             if ($ObserverRole -eq 'post-close-tracked-history') {
-                if (-not (Set-StartupIdentityReconciliation $ContainmentProof $identityOperation $ObserverRole)) {
+                if (-not (Set-StartupIdentityReconciliation $ContainmentProof $identityOperation $ObserverRole `
+                        $JobCloseSucceeded $RemainingJobHandle)) {
                     throw $ErrorMessage
                 }
             }
@@ -3597,21 +3684,41 @@ function Get-ProcessSnapshot(
     return $accepted
 }
 
-function Get-ProcessesForImagePath([string]$ImagePath, [object]$Observation = $null) {
+function Get-ProcessesForImagePath([string]$ImagePath, [object]$Observation = $null, [AllowNull()] [object]$Invokers = $null) {
     $imageName = [IO.Path]::GetFileName($ImagePath)
+    $processCensusInvoker = $null
+    $identityQueryInvoker = $null
+    if ($null -ne $Invokers) {
+        $candidateCensus = Get-StartupObservationProperty $Invokers 'ProcessCensus'
+        $candidateIdentity = Get-StartupObservationProperty $Invokers 'IdentityQuery'
+        if ($null -ne $candidateCensus -and $candidateCensus -isnot [scriptblock]) {
+            throw 'The exact-path process census invoker seam is malformed.'
+        }
+        if ($null -ne $candidateIdentity -and $candidateIdentity -isnot [scriptblock]) {
+            throw 'The exact-path identity invoker seam is malformed.'
+        }
+        $processCensusInvoker = $candidateCensus
+        $identityQueryInvoker = $candidateIdentity
+    }
     $result = @()
-    foreach ($entry in @(Get-VerifiedProcessEntries $Observation)) {
+    foreach ($entry in @(Get-VerifiedProcessEntries $Observation $processCensusInvoker)) {
         if (-not [string]::Equals([string]$entry.ImageName, $imageName, [StringComparison]::OrdinalIgnoreCase)) { continue }
         $identityProbe = $null
         try {
-            $identityProbe = [NativeStartupProbe]::QueryProcessIdentity([int]$entry.ProcessId, [int]$entry.ParentProcessId)
+            $identityProbe = if ($null -ne $identityQueryInvoker) {
+                & $identityQueryInvoker ([int]$entry.ProcessId) ([int]$entry.ParentProcessId)
+            }
+            else {
+                [NativeStartupProbe]::QueryProcessIdentity([int]$entry.ProcessId, [int]$entry.ParentProcessId)
+            }
         }
         catch {
             $proof = Get-StartupObservationProperty $Observation 'containmentProof'
             [void](Set-StartupIdentityReconciliation $proof 'exception' 'exact-path')
             throw
         }
-        if (-not $identityProbe.Succeeded -or $null -eq $identityProbe.Identity) {
+        if (-not (Test-StartupIdentitySuccessEnvelope $identityProbe) -or
+            -not (Test-StartupJobIdentityShape $identityProbe.Identity ([int]$entry.ProcessId) ([int]$entry.ParentProcessId))) {
             # Exact-path observation is a mandatory independent gate.  Neither a
             # later PID absence nor the Job proof may reconcile its identity
             # failure, because this observer is the only exact-image-path check.
@@ -5170,10 +5277,83 @@ function Get-ParentFirstProcessOrder {
     return @($Ancestry | Sort-Object @{ Expression = { Get-OwnedProcessDepth $_ $Owned } }, Id)
 }
 
-function Get-TrackedOwnedProcesses($Owned, [object]$CleanupObservation = $null, [AllowNull()] [object]$ContainmentProof = $null) {
-    if ($null -ne $CleanupObservation) { Add-StartupTrackedSweepCount $CleanupObservation 'trackedSweepPassCount' }
+function New-StartupTrackedSweepExpectedIdentity {
+    param([Parameter(Mandatory = $true)] [object]$Record)
+    $imagePath = Get-NormalizedPath ([string](Get-StartupObservationProperty $Record 'ImagePath'))
+    return [pscustomobject][ordered]@{
+        Id = [int](Get-StartupObservationProperty $Record 'Id')
+        ParentId = [int](Get-StartupObservationProperty $Record 'ParentId')
+        Creation = [long](Get-StartupObservationProperty $Record 'Creation')
+        ImagePath = $imagePath
+        Operation = 'open-process'
+    }
+}
+
+function New-StartupTrackedSweepPendingState {
+    return [pscustomobject][ordered]@{
+        pending = @{}
+        hasPending = $false
+        priorStillPresent = $false
+    }
+}
+
+function Test-StartupTrackedIdentityShape {
+    param([AllowNull()] [object]$Identity)
     try {
-        $entries = @(Get-VerifiedProcessEntries $CleanupObservation)
+        if ($null -eq $Identity -or $Identity -is [string] -or $Identity -is [ValueType] -or $Identity -is [Array]) {
+            return $false
+        }
+        foreach ($field in @('ProcessId', 'ParentProcessId', 'CreationTime', 'ImagePath')) {
+            if (-not (Test-StartupObservationPropertyPresent $Identity $field)) { return $false }
+        }
+        $processId = Get-StartupObservationProperty $Identity 'ProcessId'
+        $parentId = Get-StartupObservationProperty $Identity 'ParentProcessId'
+        $creation = Get-StartupObservationProperty $Identity 'CreationTime'
+        $imagePath = Get-StartupObservationProperty $Identity 'ImagePath'
+        if (-not (Test-StartupIntegralValue $processId 1 ([decimal][int]::MaxValue)) -or
+            -not (Test-StartupIntegralValue $parentId 0 ([decimal][int]::MaxValue)) -or
+            -not (Test-StartupIntegralValue $creation 1 ([decimal][long]::MaxValue)) -or
+            $imagePath -isnot [string] -or [string]::IsNullOrWhiteSpace($imagePath) -or
+            $imagePath.Length -ge 32768) {
+            return $false
+        }
+        [void](Get-NormalizedPath ([string]$imagePath))
+        return $true
+    }
+    catch { return $false }
+}
+
+function Get-TrackedOwnedProcesses {
+    param(
+        [Parameter(Mandatory = $true)] [object]$Owned,
+        [object]$CleanupObservation = $null,
+        [AllowNull()] [object]$ContainmentProof = $null,
+        [AllowNull()] [object]$Invokers = $null,
+        [AllowNull()] [object]$PendingState = $null,
+        [bool]$JobCloseSucceeded = $false,
+        [IntPtr]$RemainingJobHandle = [IntPtr]1
+    )
+    if ($null -ne $CleanupObservation) { Add-StartupTrackedSweepCount $CleanupObservation 'trackedSweepPassCount' }
+    $postClose = $null -ne $ContainmentProof
+    if ($null -eq $PendingState -and $postClose) { $PendingState = New-StartupTrackedSweepPendingState }
+    $processCensusInvoker = $null
+    $identityQueryInvoker = $null
+    if ($null -ne $Invokers) {
+        $candidateCensus = Get-StartupObservationProperty $Invokers 'ProcessCensus'
+        $candidateIdentity = Get-StartupObservationProperty $Invokers 'IdentityQuery'
+        if ($null -ne $candidateCensus -and $candidateCensus -isnot [scriptblock]) {
+            throw 'The tracked-sweep process census invoker seam is malformed.'
+        }
+        if ($null -ne $candidateIdentity -and $candidateIdentity -isnot [scriptblock]) {
+            throw 'The tracked-sweep identity invoker seam is malformed.'
+        }
+        $processCensusInvoker = $candidateCensus
+        $identityQueryInvoker = $candidateIdentity
+    }
+    try {
+        # This is the sole census for one post-close reconciliation pass.  A
+        # pending identity is carried in memory and never serialized.
+        $entries = @(Get-VerifiedProcessEntries $CleanupObservation $processCensusInvoker)
     }
     catch {
         if ($null -ne $CleanupObservation) {
@@ -5181,47 +5361,143 @@ function Get-TrackedOwnedProcesses($Owned, [object]$CleanupObservation = $null, 
             $enumerationError = Convert-StartupObservationErrorCode (Get-StartupObservationProperty $CleanupObservation 'processEnumerationErrorCode')
             if ($enumerationFailureCount -gt 0) {
                 Set-StartupTrackedSweepFailure $CleanupObservation 'enumeration-unavailable' $enumerationError
+                if ($postClose) { Set-StartupTrackedSweepDelayedReconciliationState $CleanupObservation 'unavailable' }
             }
             else {
                 Set-StartupTrackedSweepFailure $CleanupObservation 'exception' 13
+                if ($postClose) { Set-StartupTrackedSweepDelayedReconciliationState $CleanupObservation 'exception' }
             }
         }
         throw
     }
     $records = New-Object Collections.Generic.List[object]
     foreach ($record in @($Owned.Values)) {
-        $entry = @($entries | Where-Object { [int]$_.ProcessId -eq [int]$record.Id } | Select-Object -First 1)
-        if ($entry.Count -eq 0) { continue }
+        $recordId = [int](Get-StartupObservationProperty $record 'Id')
+        $entry = @($entries | Where-Object { [int]$_.ProcessId -eq $recordId } | Select-Object -First 1)
+        $pending = $null
+        if ($postClose -and $null -ne $PendingState -and $PendingState.pending.ContainsKey($recordId)) {
+            $pending = $PendingState.pending[$recordId]
+        }
+        if ($entry.Count -eq 0) {
+            if ($null -eq $pending) { continue }
+            # A typed census absence is useful only after the Job was proved
+            # empty and its handle was closed.  The containment proof remains
+            # the sole authority; no PID/path is placed in the report.
+            if (-not (Set-StartupIdentityReconciliation $ContainmentProof $pending.Operation `
+                    'post-close-tracked-history' $JobCloseSucceeded $RemainingJobHandle)) {
+                if ($null -ne $CleanupObservation) { Set-StartupTrackedSweepDelayedReconciliationState $CleanupObservation 'exception' }
+                throw "Could not reconcile disappeared tracked process $recordId after job cleanup."
+            }
+            if ($null -ne $CleanupObservation) {
+                Add-StartupTrackedSweepCount $CleanupObservation 'trackedSweepDisappearedAfterSnapshotCount'
+            }
+            [void]$PendingState.pending.Remove($recordId)
+            if ($null -ne $CleanupObservation -and $PendingState.pending.Count -eq 0) {
+                Set-StartupTrackedSweepDelayedReconciliationState $CleanupObservation 'accepted'
+            }
+            continue
+        }
+
+        $expected = if ($null -ne $pending) { $pending } else { New-StartupTrackedSweepExpectedIdentity $record }
         if ($null -ne $CleanupObservation) { Add-StartupTrackedSweepCount $CleanupObservation 'trackedSweepIdentityAttemptCount' }
         $identityProbe = $null
         try {
-            $identityProbe = [NativeStartupProbe]::QueryProcessIdentity([int]$entry[0].ProcessId, [int]$entry[0].ParentProcessId)
+            $identityProbe = if ($null -ne $identityQueryInvoker) {
+                & $identityQueryInvoker ([int]$entry[0].ProcessId) ([int]$entry[0].ParentProcessId)
+            }
+            else {
+                [NativeStartupProbe]::QueryProcessIdentity([int]$entry[0].ProcessId, [int]$entry[0].ParentProcessId)
+            }
         }
         catch {
             if ($null -ne $CleanupObservation) {
                 Add-StartupTrackedSweepCount $CleanupObservation 'trackedSweepIdentityFailureCount'
                 Set-StartupTrackedSweepFailure $CleanupObservation 'identity-unavailable' 13
+                if ($postClose) { Set-StartupTrackedSweepDelayedReconciliationState $CleanupObservation 'exception' }
             }
-            throw "Could not verify the identity of tracked process $($record.Id) after job cleanup (Win32 13)."
+            throw "Could not verify the identity of tracked process $recordId after job cleanup (Win32 13)."
         }
-        if (-not $identityProbe.Succeeded -or $null -eq $identityProbe.Identity) {
-            if ($null -ne $CleanupObservation) { Add-StartupTrackedSweepCount $CleanupObservation 'trackedSweepIdentityFailureCount' }
-            if (Invoke-StartupTrackedIdentityFailure $CleanupObservation ([int]$record.Id) $identityProbe $null `
-                    "Could not verify the identity of tracked process $($record.Id) after job cleanup (Win32 $($identityProbe.ErrorCode))." `
-                    $true 'post-close-tracked-history' $ContainmentProof) { continue }
-        }
-        try {
-            $current = Convert-ProcessIdentity $identityProbe.Identity
-        }
-        catch {
-            if ($null -ne $CleanupObservation) { Add-StartupTrackedSweepCount $CleanupObservation 'trackedSweepIdentityFailureCount' }
-            if (Invoke-StartupTrackedIdentityFailure $CleanupObservation ([int]$record.Id) $identityProbe $null `
-                    "Could not verify the identity of tracked process $($record.Id) after job cleanup (Win32 13)." `
-                    $true 'post-close-tracked-history' $ContainmentProof) { continue }
-        }
-        if ($current.Creation -eq $record.Creation -and (Test-SamePath $current.ImagePath $record.ImagePath)) {
+
+        if (Test-StartupIdentitySuccessEnvelope $identityProbe) {
+            if (-not (Test-StartupTrackedIdentityShape (Get-StartupObservationProperty $identityProbe 'Identity'))) {
+                if ($null -ne $CleanupObservation) {
+                    Add-StartupTrackedSweepCount $CleanupObservation 'trackedSweepIdentityFailureCount'
+                    Set-StartupTrackedSweepFailure $CleanupObservation 'identity-unavailable' 13
+                    if ($postClose) { Set-StartupTrackedSweepDelayedReconciliationState $CleanupObservation 'exception' }
+                }
+                throw "Could not validate the identity of tracked process $recordId after job cleanup."
+            }
+            $current = Convert-ProcessIdentity (Get-StartupObservationProperty $identityProbe 'Identity')
+            $currentCanonicalPath = Get-NormalizedPath ([string]$current.ImagePath)
+            $identityMatches = $current.Id -eq [int]$expected.Id -and
+                $current.ParentId -eq [int]$expected.ParentId -and
+                $current.Creation -eq [long]$expected.Creation -and
+                $currentCanonicalPath -eq [string]$expected.ImagePath
+            if (-not $identityMatches) {
+                if ($null -ne $CleanupObservation) {
+                    Add-StartupTrackedSweepCount $CleanupObservation 'trackedSweepIdentityFailureCount'
+                    Add-StartupTrackedSweepCount $CleanupObservation 'trackedSweepPidReuseCount'
+                    Set-StartupTrackedSweepFailure $CleanupObservation 'identity-still-present' 13
+                    if ($postClose) { Set-StartupTrackedSweepDelayedReconciliationState $CleanupObservation 'exception' }
+                }
+                throw "Could not validate the identity of tracked process $recordId after job cleanup (PID reuse)."
+            }
             [void]$records.Add($current)
+            continue
         }
+
+        $coherentFailure = Test-StartupCoherentIdentityFailure $identityProbe
+        if ($null -ne $CleanupObservation) { Add-StartupTrackedSweepCount $CleanupObservation 'trackedSweepIdentityFailureCount' }
+        $identityError = Convert-StartupObservationErrorCode (Get-StartupObservationProperty $identityProbe 'ErrorCode')
+        if ($null -eq $identityError -or $identityError -eq 0) { $identityError = 13 }
+        $identityOperation = [string](Get-StartupObservationProperty $identityProbe 'Operation' 'exception')
+        if ($startupIdentityOperations -notcontains $identityOperation) { $identityOperation = 'exception' }
+        if (-not $coherentFailure) {
+            if ($null -ne $CleanupObservation) {
+                Set-StartupTrackedSweepFailure $CleanupObservation 'identity-unavailable' $identityError
+                if ($postClose) { Set-StartupTrackedSweepDelayedReconciliationState $CleanupObservation 'exception' }
+            }
+            throw "Could not verify the identity of tracked process $recordId after job cleanup (Win32 $identityError)."
+        }
+
+        if ($postClose -and $startupIdentityReconciliationOperations -notcontains $identityOperation) {
+            if ($null -ne $CleanupObservation) {
+                Set-StartupTrackedSweepFailure $CleanupObservation 'identity-unavailable' $identityError
+                Set-StartupTrackedSweepDelayedReconciliationState $CleanupObservation 'exception'
+            }
+            throw "Could not verify the identity of tracked process $recordId after job cleanup (unsupported operation)."
+        }
+
+        if (-not $postClose) {
+            # Preserve the pre-existing one-shot recovery semantics for the
+            # pre-close affinity observer.  Post-close cleanup uses the shared
+            # bounded pending map below and never enters this branch.
+            if (Invoke-StartupTrackedIdentityFailure $CleanupObservation ([int]$record.Id) $identityProbe $null `
+                    "Could not verify the identity of tracked process $recordId after job cleanup (Win32 $identityError)." `
+                    $true 'post-close-tracked-history' $ContainmentProof) { continue }
+        }
+
+        Set-StartupTrackedSweepFailure $CleanupObservation 'identity-still-present' $identityError
+        if ($null -eq $pending) {
+            if (-not ((Test-StartupContainmentProofV2 $ContainmentProof) -and
+                    [string](Get-StartupObservationProperty $ContainmentProof 'terminalState') -in
+                        @('verified-graceful-job-empty', 'verified-explicit-job-termination') -and
+                    [bool](Get-StartupObservationProperty $ContainmentProof 'jobEmptyProven') -and
+                    $JobCloseSucceeded -and $RemainingJobHandle -eq [IntPtr]::Zero)) {
+                [void](Set-StartupIdentityReconciliation $ContainmentProof $identityOperation `
+                    'post-close-tracked-history' $JobCloseSucceeded $RemainingJobHandle)
+                Set-StartupTrackedSweepDelayedReconciliationState $CleanupObservation 'exception'
+                throw "Could not reconcile tracked process $recordId without authoritative Job finalization."
+            }
+            $pending = New-StartupTrackedSweepExpectedIdentity $record
+            $pending.Operation = $identityOperation
+            $PendingState.pending[$recordId] = $pending
+        }
+        $PendingState.priorStillPresent = $true
+        Add-StartupTrackedSweepCount $CleanupObservation 'trackedSweepStillPresentAfterFailureCount'
+    }
+    if ($postClose -and $null -ne $PendingState) {
+        $PendingState.hasPending = $PendingState.pending.Count -gt 0
     }
     return $records.ToArray()
 }
@@ -5538,6 +5814,9 @@ function Test-StartupContainmentProofV2 {
                     if ($startupIdentityReconciliationObserverRoles -contains [string]$reconciliation.observerRole) { return $false }
                 }
                 'exact-path-failure' { if ($reconciliation.observerRole -ne 'exact-path') { return $false } }
+                'containment-authority-not-proven' {
+                    if ($reconciliation.observerRole -ne 'post-close-tracked-history') { return $false }
+                }
                 default { return $false }
             }
         }
@@ -5738,6 +6017,7 @@ function Stop-OwnedProcesses($Owned, [IntPtr]$Job = [IntPtr]::Zero, [string]$Exe
     $finalPathSweepAttempted = $false
     $finalPathSweepVerified = $false
     $state = $null
+    $trackedReconciliationState = New-StartupTrackedSweepPendingState
 
     try {
         # Graceful close remains best-effort.  The Job state machine below owns
@@ -5781,27 +6061,80 @@ function Stop-OwnedProcesses($Owned, [IntPtr]$Job = [IntPtr]::Zero, [string]$Exe
 
     # These observers are secondary consistency checks.  A tracked-history
     # identity gap is reconcilable only through the v2 proof helper; an exact
-    # path observer failure always throws and remains terminal.
+    # path observer failure always throws and remains terminal.  The pending
+    # map is deliberately kept outside CleanupObservation: it contains the
+    # expected PID/PPID/creation/path identity and must never be serialized.
+    $postCloseDelayInvoker = $null
+    if ($null -ne $StateMachineInvokers) {
+        $candidatePostCloseDelay = Get-StartupObservationProperty $StateMachineInvokers 'PostCloseDelay'
+        if ($null -ne $candidatePostCloseDelay -and $candidatePostCloseDelay -isnot [scriptblock]) {
+            Add-StartupCleanupError $cleanupErrors $cleanupObservation 'The post-close delay invoker seam is malformed.'
+        }
+        elseif ($null -ne $candidatePostCloseDelay) {
+            $postCloseDelayInvoker = $candidatePostCloseDelay
+        }
+        elseif ((Get-StartupObservationProperty $StateMachineInvokers 'Delay') -is [scriptblock]) {
+            $postCloseDelayInvoker = Get-StartupObservationProperty $StateMachineInvokers 'Delay'
+        }
+    }
+    if ($null -eq $postCloseDelayInvoker) {
+        $postCloseDelayInvoker = { param([int]$DelayMs) Start-Sleep -Milliseconds $DelayMs }
+    }
     $settled = $false
+    $delayedWatch = [Diagnostics.Stopwatch]::StartNew()
     for ($sweepPoll = 0; $sweepPoll -lt $startupContainmentMaxOuterPolls -and
             ($sweepPoll -eq 0 -or $closeWatch.ElapsedMilliseconds -lt $closeTimeoutMs); $sweepPoll++) {
         try {
             $trackedSweepAttempted = $true
             $trackedSweepVerified = $false
-            $tracked = @(Get-TrackedOwnedProcesses $Owned $cleanupObservation $proof)
+            if ($sweepPoll -gt 0 -and $trackedReconciliationState.pending.Count -gt 0) {
+                Add-StartupTrackedSweepDelayedReconciliationCount $cleanupObservation `
+                    'trackedSweepDelayedReconciliationAttemptCount'
+            }
+            $tracked = @(Get-TrackedOwnedProcesses $Owned $cleanupObservation $proof `
+                $StateMachineInvokers $trackedReconciliationState $jobCloseSucceeded $remainingJobHandle)
+            if ($trackedReconciliationState.pending.Count -gt 0) {
+                if ($sweepPoll + 1 -ge $startupContainmentMaxOuterPolls -or
+                    $closeWatch.ElapsedMilliseconds -ge $closeTimeoutMs) {
+                    Set-StartupTrackedSweepDelayedReconciliationState $cleanupObservation 'exhausted'
+                    break
+                }
+                Add-StartupTrackedSweepDelayedReconciliationCount $cleanupObservation `
+                    'trackedSweepDelayedReconciliationDelayCount'
+                & $postCloseDelayInvoker $pollIntervalMs
+                Set-StartupTrackedSweepDelayedReconciliationElapsed $cleanupObservation $delayedWatch.ElapsedMilliseconds
+                continue
+            }
             $trackedSweepVerified = $true
             if (-not [string]::IsNullOrWhiteSpace($ExecutablePath)) {
                 $finalPathSweepAttempted = $true
-                $pathMatches = @(Get-ProcessesForImagePath $ExecutablePath $cleanupObservation)
+                $pathMatches = @(Get-ProcessesForImagePath $ExecutablePath $cleanupObservation $StateMachineInvokers)
                 $finalPathSweepVerified = $true
             }
             if ($tracked.Count -eq 0 -and $pathMatches.Count -eq 0) { $settled = $true; break }
         }
         catch {
+            if ($trackedReconciliationState.pending.Count -gt 0) {
+                $enumerationFailures = Convert-StartupObservationInt (
+                    Get-StartupObservationProperty $cleanupObservation 'processEnumerationFailureCount')
+                Set-StartupTrackedSweepDelayedReconciliationState $cleanupObservation `
+                    $(if ($enumerationFailures -gt 0) { 'unavailable' } else { 'exception' })
+            }
             Add-StartupCleanupError $cleanupErrors $cleanupObservation $_.Exception.Message
             break
         }
-        if ($sweepPoll + 1 -lt $startupContainmentMaxOuterPolls) { Start-Sleep -Milliseconds $pollIntervalMs }
+        if ($sweepPoll + 1 -lt $startupContainmentMaxOuterPolls -and
+            $closeWatch.ElapsedMilliseconds -lt $closeTimeoutMs) {
+            & $postCloseDelayInvoker $pollIntervalMs
+        }
+    }
+    if ($trackedReconciliationState.pending.Count -gt 0 -and
+        [string](Get-StartupObservationProperty $cleanupObservation 'trackedSweepDelayedReconciliationState') -eq 'not-attempted') {
+        Set-StartupTrackedSweepDelayedReconciliationState $cleanupObservation 'exhausted'
+    }
+    if ([int](Get-StartupObservationProperty $cleanupObservation 'trackedSweepDelayedReconciliationAttemptCount') -gt 0 -or
+        [int](Get-StartupObservationProperty $cleanupObservation 'trackedSweepDelayedReconciliationDelayCount') -gt 0) {
+        Set-StartupTrackedSweepDelayedReconciliationElapsed $cleanupObservation $delayedWatch.ElapsedMilliseconds
     }
     $survivorsById = @{}
     foreach ($record in @($tracked + $pathMatches)) { $survivorsById[[int]$record.Id] = $record }
@@ -6834,7 +7167,8 @@ function Invoke-SelfTest {
                 Attempted = $true; Complete = $true; Succeeded = $true; ErrorCode = 0
                 AttemptCount = 1; RetryCount = 0; Retried = $false; Entries = [object[]]@()
             } } `
-        'Synthetic post-close tracked-history identity failure.' $true 'post-close-tracked-history' $explicitProof
+        'Synthetic post-close tracked-history identity failure.' $true 'post-close-tracked-history' $explicitProof `
+        $true ([IntPtr]::Zero)
     $explicitObservation.containmentProof = $explicitProof
     $explicitObservation.jobQuerySucceeded = $true
     $explicitObservation.jobCloseSucceeded = $true
@@ -7220,14 +7554,14 @@ function Invoke-SelfTest {
     }
     $unknownOperationProof = & $newVerifiedProofForRejectedReconciliation
     $unknownOperationRejected = -not (Set-StartupIdentityReconciliation $unknownOperationProof `
-            'arbitrary-operation-secret' 'post-close-tracked-history') -and
+            'arbitrary-operation-secret' 'post-close-tracked-history' $true ([IntPtr]::Zero)) -and
         $unknownOperationProof.identityReconciliation.operation -eq 'exception' -and
         $unknownOperationProof.identityReconciliation.observerRole -eq 'post-close-tracked-history' -and
         $unknownOperationProof.identityReconciliation.reason -eq 'operation-not-allowlisted' -and
         (Test-StartupContainmentProofV2 $unknownOperationProof)
     $unknownObserverProof = & $newVerifiedProofForRejectedReconciliation
     $unknownObserverRejected = -not (Set-StartupIdentityReconciliation $unknownObserverProof `
-            'open-process' 'arbitrary-observer-secret') -and
+            'open-process' 'arbitrary-observer-secret' $true ([IntPtr]::Zero)) -and
         $unknownObserverProof.identityReconciliation.operation -eq 'open-process' -and
         $unknownObserverProof.identityReconciliation.observerRole -eq 'none' -and
         $unknownObserverProof.identityReconciliation.reason -eq 'observer-not-allowlisted' -and
@@ -7531,6 +7865,302 @@ function Invoke-SelfTest {
     $identityMalformedProbeVerified = $identityExceptionThrew -and $identityZeroErrorThrew -and
         $identityContradictoryThrew -and $identityNoFreshCalls.Value -eq 0
     if (-not $identityMalformedProbeVerified) { throw 'Malformed tracked identity probe self-test failed.' }
+
+    # Post-close tracked history uses one shared outer-pass census.  A coherent
+    # Error 5 identity result is provisional only while the complete census
+    # still contains that PID; a later typed absence can be accepted solely by
+    # the verified Job proof.  The expected identity remains in this pending
+    # state only and is never copied into cleanup telemetry.
+    $reconciliationOwned = @{
+        1234 = [pscustomobject]@{ Id = 1234; ParentId = 0; Creation = [long]1001; ImagePath = 'C:\self-test.exe' }
+    }
+    $reconciliationState = [pscustomobject]@{ census = 0; identity = 0; delay = 0 }
+    $reconciliationInvokers = [pscustomobject]@{
+        ObserveGraceful = { $false }
+        QueryJob = { & $newTerminalJobQuery ([int[]]@()) }
+        TerminateJob = { & $newTerminationSuccess }
+        CloseJob = { & $newCloseSuccess }
+        Delay = { param([int]$Milliseconds) }
+        PostCloseDelay = { param([int]$Milliseconds) $reconciliationState.delay++ }
+        ProcessCensus = {
+            $reconciliationState.census++
+            [object[]]$entries = New-Object object[] 0
+            if ($reconciliationState.census -eq 1) {
+                $entries = [object[]]@([pscustomobject]@{ ProcessId = 1234; ParentProcessId = 0; ImageName = 'self-test.exe' })
+            }
+            return [pscustomobject][ordered]@{
+                Attempted = $true; Complete = $true; Succeeded = $true; ErrorCode = 0
+                AttemptCount = 1; RetryCount = 0; Retried = $false; Entries = $entries
+            }
+        }.GetNewClosure()
+        IdentityQuery = {
+            $reconciliationState.identity++
+            return [pscustomobject][ordered]@{ Succeeded = $false; ErrorCode = 5; Operation = 'open-process'; Identity = $null }
+        }.GetNewClosure()
+    }
+    $reconciliationResult = Stop-OwnedProcesses $reconciliationOwned ([IntPtr]1) 'C:\self-test.exe' $null $reconciliationInvokers
+    $reconciliationObservation = $reconciliationResult.cleanupObservation
+    $reconciliationJson = $reconciliationObservation | ConvertTo-Json -Depth 10 -Compress
+    $reconciliationCounterTuple = [ordered]@{
+        A = [UInt64]$reconciliationObservation.trackedSweepIdentityAttemptCount
+        F = [UInt64]$reconciliationObservation.trackedSweepIdentityFailureCount
+        D = [UInt64]$reconciliationObservation.trackedSweepDisappearedAfterSnapshotCount
+        S = [UInt64]$reconciliationObservation.trackedSweepStillPresentAfterFailureCount
+        P = [UInt64]$reconciliationObservation.trackedSweepPassCount
+        RA = [UInt64]$reconciliationObservation.trackedSweepDelayedReconciliationAttemptCount
+        RD = [UInt64]$reconciliationObservation.trackedSweepDelayedReconciliationDelayCount
+        R = [UInt64]$reconciliationObservation.trackedSweepPidReuseCount
+    }
+    $trackedSweepDelayedReconciliationTupleSelfTestVerified = [bool](
+        $reconciliationCounterTuple.A -eq 1 -and
+        $reconciliationCounterTuple.F -eq 1 -and
+        $reconciliationCounterTuple.D -eq 1 -and
+        $reconciliationCounterTuple.S -eq 1 -and
+        $reconciliationCounterTuple.P -eq 2 -and
+        $reconciliationCounterTuple.RA -eq 1 -and
+        $reconciliationCounterTuple.RD -eq 1 -and
+        $reconciliationCounterTuple.R -eq 0)
+    $delayedReconciliationSelfTestVerified =
+        $null -eq $reconciliationResult.error -and
+        $reconciliationResult.survivors.Count -eq 0 -and
+        $reconciliationResult.jobQuerySucceeded -and $reconciliationResult.jobCloseSucceeded -and
+        $reconciliationResult.finalPathSweepVerified -and
+        $reconciliationObservation.trackedSweepAttempted -and $reconciliationObservation.trackedSweepVerified -and
+        $reconciliationObservation.finalPathSweepAttempted -and $reconciliationObservation.finalPathSweepVerified -and
+        $reconciliationObservation.trackedSweepFailureType -eq 'identity-still-present' -and
+        $reconciliationObservation.trackedSweepFailureErrorCode -eq 5 -and
+        $trackedSweepDelayedReconciliationTupleSelfTestVerified -and
+        $reconciliationObservation.trackedSweepDelayedReconciliationState -eq 'accepted' -and
+        $reconciliationObservation.trackedSweepDelayedReconciliationAttemptCount -eq 1 -and
+        $reconciliationObservation.trackedSweepDelayedReconciliationDelayCount -eq 1 -and
+        $reconciliationObservation.trackedSweepDelayedReconciliationElapsedMs -le $closeTimeoutMs -and
+        $reconciliationObservation.trackedSweepPidReuseCount -eq 0 -and
+        $reconciliationState.census -eq 3 -and $reconciliationState.identity -eq 1 -and
+        $reconciliationState.delay -eq 1 -and
+        $reconciliationResult.containmentProof.identityReconciliation.accepted -and
+        $reconciliationResult.containmentProof.identityReconciliation.reason -eq 'job-empty-and-allowlisted-post-close-history' -and
+        $reconciliationJson -notmatch '(?i)1234|self-test\.exe|imagepath|creation|parentid|raw|payload'
+    if (-not $delayedReconciliationSelfTestVerified) {
+        throw 'Bounded post-close delayed tracked-history reconciliation self-test failed.'
+    }
+
+    # Even an empty terminal Job query cannot authorize pending history when
+    # closing the Job failed and the handle remains live.  Secondary observers
+    # still run, but the first coherent identity failure must fail closed
+    # without entering the delayed reconciliation loop.
+    $failedCloseReconciliationState = [pscustomobject]@{ census = 0; identity = 0; delay = 0 }
+    $failedCloseReconciliationInvokers = [pscustomobject]@{
+        ObserveGraceful = { $true }
+        QueryJob = { & $newTerminalJobQuery ([int[]]@()) }
+        TerminateJob = { & $newTerminationSuccess }
+        CloseJob = { [pscustomobject][ordered]@{ Succeeded = $false; ErrorCode = 6; Handle = [IntPtr]1 } }
+        Delay = { param([int]$Milliseconds) }
+        PostCloseDelay = { param([int]$Milliseconds) $failedCloseReconciliationState.delay++ }
+        ProcessCensus = {
+            $failedCloseReconciliationState.census++
+            return [pscustomobject][ordered]@{
+                Attempted = $true; Complete = $true; Succeeded = $true; ErrorCode = 0
+                AttemptCount = 1; RetryCount = 0; Retried = $false
+                Entries = [object[]]@([pscustomobject]@{ ProcessId = 1234; ParentProcessId = 0; ImageName = 'self-test.exe' })
+            }
+        }.GetNewClosure()
+        IdentityQuery = {
+            $failedCloseReconciliationState.identity++
+            return [pscustomobject][ordered]@{ Succeeded = $false; ErrorCode = 5; Operation = 'open-process'; Identity = $null }
+        }.GetNewClosure()
+    }
+    $failedCloseReconciliationResult = Stop-OwnedProcesses $reconciliationOwned ([IntPtr]1) $null $null `
+        $failedCloseReconciliationInvokers
+    $failedCloseReconciliationObservation = $failedCloseReconciliationResult.cleanupObservation
+    $failedCloseReconciliationRejectedSelfTestVerified = [bool](
+        $null -ne $failedCloseReconciliationResult.error -and
+        -not $failedCloseReconciliationResult.jobCloseSucceeded -and
+        $failedCloseReconciliationResult.jobHandle -eq [IntPtr]1 -and
+        $failedCloseReconciliationResult.containmentProof.terminalState -eq 'rejected-job-close' -and
+        $failedCloseReconciliationResult.containmentProof.identityReconciliation.attempted -and
+        -not $failedCloseReconciliationResult.containmentProof.identityReconciliation.accepted -and
+        $failedCloseReconciliationResult.containmentProof.identityReconciliation.reason -eq
+            'containment-authority-not-proven' -and
+        $failedCloseReconciliationObservation.trackedSweepDelayedReconciliationState -eq 'exception' -and
+        $failedCloseReconciliationObservation.trackedSweepDelayedReconciliationAttemptCount -eq 0 -and
+        $failedCloseReconciliationObservation.trackedSweepDelayedReconciliationDelayCount -eq 0 -and
+        $failedCloseReconciliationState.census -eq 1 -and
+        $failedCloseReconciliationState.identity -eq 1 -and
+        $failedCloseReconciliationState.delay -eq 0)
+    if (-not $failedCloseReconciliationRejectedSelfTestVerified) {
+        throw 'An empty Job with failed close authorized tracked-history reconciliation.'
+    }
+
+    # A successful identity on one pass is not cached.  If the same PID is
+    # still enumerated later, query all identity fields again and treat changed
+    # creation/path as terminal PID reuse.
+    $repeatedIdentityState = [pscustomobject]@{ census = 0; identity = 0; delay = 0 }
+    $repeatedIdentityInvokers = [pscustomobject]@{
+        ObserveGraceful = { $false }
+        QueryJob = { & $newTerminalJobQuery ([int[]]@()) }
+        TerminateJob = { & $newTerminationSuccess }
+        CloseJob = { & $newCloseSuccess }
+        Delay = { param([int]$Milliseconds) }
+        PostCloseDelay = { param([int]$Milliseconds) $repeatedIdentityState.delay++ }
+        ProcessCensus = {
+            $repeatedIdentityState.census++
+            return [pscustomobject][ordered]@{
+                Attempted = $true; Complete = $true; Succeeded = $true; ErrorCode = 0
+                AttemptCount = 1; RetryCount = 0; Retried = $false
+                Entries = [object[]]@([pscustomobject]@{ ProcessId = 1234; ParentProcessId = 0; ImageName = 'self-test.exe' })
+            }
+        }.GetNewClosure()
+        IdentityQuery = {
+            $repeatedIdentityState.identity++
+            $creation = if ($repeatedIdentityState.identity -eq 1) { [long]1001 } else { [long]1002 }
+            $path = if ($repeatedIdentityState.identity -eq 1) { 'C:\self-test.exe' } else { 'C:\other.exe' }
+            return [pscustomobject][ordered]@{
+                Succeeded = $true; ErrorCode = 0; Operation = 'open-process'
+                Identity = [pscustomobject][ordered]@{
+                    ProcessId = 1234; ParentProcessId = 0; CreationTime = $creation; ImagePath = $path
+                }
+            }
+        }.GetNewClosure()
+    }
+    $repeatedIdentityResult = Stop-OwnedProcesses $reconciliationOwned ([IntPtr]1) $null $null `
+        $repeatedIdentityInvokers
+    $repeatedIdentityObservation = $repeatedIdentityResult.cleanupObservation
+    $trackedSweepRepeatedIdentityMismatchSelfTestVerified = [bool](
+        $null -ne $repeatedIdentityResult.error -and
+        $repeatedIdentityState.census -eq 2 -and $repeatedIdentityState.identity -eq 2 -and
+        $repeatedIdentityState.delay -eq 1 -and
+        $repeatedIdentityObservation.trackedSweepIdentityAttemptCount -eq 2 -and
+        $repeatedIdentityObservation.trackedSweepIdentityFailureCount -eq 1 -and
+        $repeatedIdentityObservation.trackedSweepPidReuseCount -eq 1 -and
+        $repeatedIdentityObservation.trackedSweepFailureType -eq 'identity-still-present' -and
+        $repeatedIdentityObservation.trackedSweepDelayedReconciliationState -eq 'exception' -and
+        -not $repeatedIdentityResult.containmentProof.identityReconciliation.accepted)
+    if (-not $trackedSweepRepeatedIdentityMismatchSelfTestVerified) {
+        throw 'A later changed identity reused a prior successful tracked PID query.'
+    }
+
+    # A direct successful identity is terminal unless all four identity fields
+    # match the expected record.  Exercise PID, parent, creation, and path
+    # mismatches independently; none may be silently treated as absent.
+    $directIdentityMismatchCases = @(
+        [pscustomobject]@{ Name = 'pid'; ProcessId = 4321; ParentProcessId = 0; CreationTime = [long]1001; ImagePath = 'C:\self-test.exe' }
+        [pscustomobject]@{ Name = 'parent'; ProcessId = 1234; ParentProcessId = 77; CreationTime = [long]1001; ImagePath = 'C:\self-test.exe' }
+        [pscustomobject]@{ Name = 'creation'; ProcessId = 1234; ParentProcessId = 0; CreationTime = [long]1002; ImagePath = 'C:\self-test.exe' }
+        [pscustomobject]@{ Name = 'path'; ProcessId = 1234; ParentProcessId = 0; CreationTime = [long]1001; ImagePath = 'C:\other.exe' }
+    )
+    $directIdentityMismatchSelfTestVerified = $true
+    foreach ($mismatchCase in $directIdentityMismatchCases) {
+        $mismatchObservation = New-StartupCleanupObservation
+        $mismatchInvokers = [pscustomobject]@{
+            ProcessCensus = {
+                return [pscustomobject][ordered]@{
+                    Attempted = $true; Complete = $true; Succeeded = $true; ErrorCode = 0
+                    AttemptCount = 1; RetryCount = 0; Retried = $false
+                    Entries = [object[]]@([pscustomobject]@{ ProcessId = 1234; ParentProcessId = 0; ImageName = 'self-test.exe' })
+                }
+            }
+            IdentityQuery = {
+                return [pscustomobject][ordered]@{
+                    Succeeded = $true; ErrorCode = 0; Operation = 'open-process'
+                    Identity = [pscustomobject][ordered]@{
+                        ProcessId = $mismatchCase.ProcessId; ParentProcessId = $mismatchCase.ParentProcessId
+                        CreationTime = $mismatchCase.CreationTime; ImagePath = $mismatchCase.ImagePath
+                    }
+                }
+            }.GetNewClosure()
+        }
+        $mismatchThrew = $false
+        try { [void](Get-TrackedOwnedProcesses $reconciliationOwned $mismatchObservation $null $mismatchInvokers) }
+        catch { $mismatchThrew = $true }
+        if (-not $mismatchThrew -or $mismatchObservation.trackedSweepPidReuseCount -ne 1 -or
+            $mismatchObservation.trackedSweepFailureType -ne 'identity-still-present' -or
+            $mismatchObservation.trackedSweepIdentityAttemptCount -ne 1) {
+            $directIdentityMismatchSelfTestVerified = $false
+            break
+        }
+    }
+    if (-not $directIdentityMismatchSelfTestVerified) {
+        throw 'Direct successful tracked identity mismatch was not terminal.'
+    }
+
+    # Exhaustion is exactly eight complete present passes.  There must be no
+    # ninth identity callback and no exact-path sweep after unresolved pending
+    # history; the verified Job/close proof alone cannot authorize success.
+    $exhaustionState = [pscustomobject]@{ census = 0; identity = 0; delay = 0 }
+    $exhaustionInvokers = [pscustomobject]@{
+        ObserveGraceful = { $false }
+        QueryJob = { & $newTerminalJobQuery ([int[]]@()) }
+        TerminateJob = { & $newTerminationSuccess }
+        CloseJob = { & $newCloseSuccess }
+        Delay = { param([int]$Milliseconds) }
+        PostCloseDelay = { param([int]$Milliseconds) $exhaustionState.delay++ }
+        ProcessCensus = {
+            $exhaustionState.census++
+            return [pscustomobject][ordered]@{
+                Attempted = $true; Complete = $true; Succeeded = $true; ErrorCode = 0
+                AttemptCount = 1; RetryCount = 0; Retried = $false
+                Entries = [object[]]@([pscustomobject]@{ ProcessId = 1234; ParentProcessId = 0; ImageName = 'self-test.exe' })
+            }
+        }.GetNewClosure()
+        IdentityQuery = {
+            $exhaustionState.identity++
+            return [pscustomobject][ordered]@{ Succeeded = $false; ErrorCode = 5; Operation = 'open-process'; Identity = $null }
+        }.GetNewClosure()
+    }
+    $exhaustionResult = Stop-OwnedProcesses $reconciliationOwned ([IntPtr]1) 'C:\self-test.exe' $null $exhaustionInvokers
+    $exhaustionObservation = $exhaustionResult.cleanupObservation
+    $delayedReconciliationExhaustionSelfTestVerified =
+        $null -ne $exhaustionResult.error -and
+        $exhaustionObservation.trackedSweepPassCount -eq $startupContainmentMaxOuterPolls -and
+        $exhaustionObservation.trackedSweepDelayedReconciliationState -eq 'exhausted' -and
+        $exhaustionObservation.trackedSweepDelayedReconciliationAttemptCount -le $startupContainmentMaxOuterPolls -and
+        $exhaustionObservation.trackedSweepDelayedReconciliationDelayCount -eq ($startupContainmentMaxOuterPolls - 1) -and
+        $exhaustionObservation.trackedSweepVerified -eq $false -and
+        $exhaustionObservation.finalPathSweepVerified -eq $false -and
+        $exhaustionState.census -eq $startupContainmentMaxOuterPolls -and
+        $exhaustionState.identity -eq $startupContainmentMaxOuterPolls -and
+        $exhaustionState.delay -eq ($startupContainmentMaxOuterPolls - 1) -and
+        $exhaustionObservation.trackedSweepPidReuseCount -eq 0
+    if (-not $delayedReconciliationExhaustionSelfTestVerified) {
+        throw 'Bounded delayed tracked-history exhaustion self-test failed.'
+    }
+
+    # Malformed success identity and malformed complete-census envelopes are
+    # terminal and never become provisional delayed state.
+    $malformedTrackedIdentityObservation = New-StartupCleanupObservation
+    $malformedTrackedIdentityInvokers = [pscustomobject]@{
+        ProcessCensus = {
+            return [pscustomobject][ordered]@{
+                Attempted = $true; Complete = $true; Succeeded = $true; ErrorCode = 0
+                AttemptCount = 1; RetryCount = 0; Retried = $false
+                Entries = [object[]]@([pscustomobject]@{ ProcessId = 1234; ParentProcessId = 0; ImageName = 'self-test.exe' })
+            }
+        }
+        IdentityQuery = {
+            return [pscustomobject][ordered]@{ Succeeded = $true; ErrorCode = 0; Operation = 'open-process'; Identity = [pscustomobject]@{ ProcessId = 1234 } }
+        }
+    }
+    $malformedTrackedIdentityThrew = $false
+    try { [void](Get-TrackedOwnedProcesses $reconciliationOwned $malformedTrackedIdentityObservation $null $malformedTrackedIdentityInvokers) }
+    catch { $malformedTrackedIdentityThrew = $true }
+    $malformedTrackedCensusObservation = New-StartupCleanupObservation
+    $malformedTrackedCensusInvokers = [pscustomobject]@{
+        ProcessCensus = {
+            return [pscustomobject][ordered]@{
+                Attempted = $true; Complete = $true; Succeeded = $true; ErrorCode = 0
+                AttemptCount = 1; RetryCount = 0; Retried = $false; Entries = [pscustomobject]@{}
+            }
+        }
+    }
+    $malformedTrackedCensusThrew = $false
+    try { [void](Get-TrackedOwnedProcesses $reconciliationOwned $malformedTrackedCensusObservation $null $malformedTrackedCensusInvokers) }
+    catch { $malformedTrackedCensusThrew = $true }
+    $trackedDelayedMalformedSelfTestVerified = $malformedTrackedIdentityThrew -and
+        $malformedTrackedIdentityObservation.trackedSweepFailureType -eq 'identity-unavailable' -and
+        $malformedTrackedCensusThrew -and $malformedTrackedCensusObservation.processEnumerationCallCount -eq 1
+    if (-not $trackedDelayedMalformedSelfTestVerified) {
+        throw 'Malformed delayed tracked-history identity/census self-test failed.'
+    }
 
     # A successful fresh census must validate every entry before it can prove
     # absence.  An incomplete result, duplicate PID, or malformed entry is a
@@ -8980,6 +9610,13 @@ function Invoke-SelfTest {
         trackedIdentityNoObservationSelfTestVerified = [bool]$identityNoObservationVerified
         trackedIdentityMalformedProbeSelfTestVerified = [bool]$identityMalformedProbeVerified
         trackedIdentityMalformedFreshCensusSelfTestVerified = [bool]$freshMalformedVerified
+        trackedSweepDelayedReconciliationSelfTestVerified = [bool]$delayedReconciliationSelfTestVerified
+        trackedSweepDelayedReconciliationTupleSelfTestVerified = [bool]$trackedSweepDelayedReconciliationTupleSelfTestVerified
+        trackedSweepDelayedReconciliationExhaustionSelfTestVerified = [bool]$delayedReconciliationExhaustionSelfTestVerified
+        failedCloseReconciliationRejectedSelfTestVerified = [bool]$failedCloseReconciliationRejectedSelfTestVerified
+        trackedSweepRepeatedIdentityMismatchSelfTestVerified = [bool]$trackedSweepRepeatedIdentityMismatchSelfTestVerified
+        trackedSweepDirectIdentityMismatchSelfTestVerified = [bool]$directIdentityMismatchSelfTestVerified
+        trackedSweepDelayedMalformedSelfTestVerified = [bool]$trackedDelayedMalformedSelfTestVerified
         jobIdentityDisappearedTelemetryDisabledSelfTestVerified = [bool]$jobIdentityDisappearedTelemetryDisabledVerified
         jobIdentityStillPresentTelemetryDisabledSelfTestVerified = [bool]$jobIdentityStillPresentTelemetryDisabledVerified
         jobIdentityCensusUnavailableTelemetryDisabledSelfTestVerified = [bool]$jobIdentityCensusUnavailableTelemetryDisabledVerified

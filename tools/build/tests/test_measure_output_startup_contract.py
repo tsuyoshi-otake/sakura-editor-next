@@ -1,6 +1,7 @@
 """Contract checks for the payload-free paired GUI startup evidence runner."""
 
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -456,6 +457,24 @@ class PairedStartupContractTests(unittest.TestCase):
             "trackedSweepDisappearedAfterSnapshotCount",
             "trackedSweepStillPresentAfterFailureCount",
             "trackedSweepPassCount",
+            "PairedCleanupTelemetryDelayedReconciliationStates",
+            "PairedCleanupTelemetryDelayedReconciliationAttemptMax = 8",
+            "PairedCleanupTelemetryDelayedReconciliationDelayMax = 7",
+            "PairedCleanupTelemetryDelayedReconciliationElapsedMax = 3000",
+            "PairedCleanupTelemetryDelayedReconciliationFields",
+            "trackedSweepDelayedReconciliationState",
+            "trackedSweepDelayedReconciliationAttemptCount",
+            "trackedSweepDelayedReconciliationDelayCount",
+            "trackedSweepDelayedReconciliationElapsedMs",
+            "trackedSweepPidReuseCount",
+            "($delayedState -ne 'accepted' -and",
+            "$trackedType -ne 'identity-still-present'",
+            "$trackedFailures -ne $trackedPresent",
+            "$trackedDisappeared -lt 1",
+            "$trackedDisappeared -gt $trackedPresent",
+            "$trackedPasses -le 0",
+            "$delayedAttempts -gt [UInt64]$script:PairedCleanupTelemetryDelayedReconciliationDelayMax",
+            "$delayedAttempts -ne $delayedDelays",
             "historicalOwnedCount",
             "currentLiveCount",
             "expiredHistoricalCount",
@@ -475,6 +494,14 @@ class PairedStartupContractTests(unittest.TestCase):
             "cleanupTelemetryAffinityCrossFieldRejected",
             "cleanupTelemetryBoundedIntegerRejected",
             "cleanupTelemetryEnumRejected",
+            "cleanupDelayedReconciliationAcceptedVerified",
+            "cleanupDelayedReconciliationMalformedRejected",
+            "cleanupDelayedReconciliationLaunchRejected",
+            "cleanupDelayedTerminalEquationsRejected",
+            "cleanupDelayedAbsentAcceptedProofRejected",
+            "cleanupDelayedReconciliationGateRejected",
+            "cleanupDelayedReconciliationLegacyContradictionRejected",
+            "cleanupDelayedReconciliationPayloadFreeVerified",
             "failureType = 'unknown'",
             "liveSetSource = 'not-observed'",
         ):
@@ -484,6 +511,24 @@ class PairedStartupContractTests(unittest.TestCase):
         self.assertIn("return New-PairedUnavailableCleanupObservation $outer", self.paired_text)
         self.assertIn("$telemetry = Convert-PairedCleanupTelemetry $Raw", self.paired_text)
         self.assertIn("foreach ($field in @($telemetry.Keys))", self.paired_text)
+        self.assertIn("delayedPresentCount -eq 0", self.paired_text)
+        self.assertIn("old evidence must never qualify a delayed post-close success", self.paired_text)
+        self.assertIn("$delayedDelays -gt $delayedAttempts", self.paired_text)
+        self.assertIn("$delayedPidReuse -ne 0", self.paired_text)
+        self.assertIn("$delayedPidReuse -gt $trackedFailures", self.paired_text)
+        self.assertIn("$delayedAttempts -ne $delayedDelays", self.paired_text)
+        self.assertIn("function Test-PairedDelayedReconciliationCrossField", self.paired_text)
+        self.assertIn("post-close-tracked-history", self.paired_text)
+        for marker in (
+            "attempts-greater-than-delays",
+            "delays-greater-than-attempts",
+            "missing-disappearance",
+            "excess-disappearance",
+            "excess-still-present",
+            "pid-reuse",
+            "cleanupDelayedReconciliationLaunchRejected",
+        ):
+            self.assertIn(marker, self.paired_text)
         self.assertIn("adoption = [ordered]@{", self.paired_text)
 
     def test_shared_direct_job_query_observation_count_matches_native_attempt(self):
@@ -539,10 +584,40 @@ class PairedStartupContractTests(unittest.TestCase):
             "freshMalformedCases",
             "freshMalformedVerified",
             "trackedSweepDisappearedAfterSnapshotCount",
+            "function New-StartupTrackedSweepPendingState",
+            "function New-StartupTrackedSweepExpectedIdentity",
+            "function Test-StartupTrackedIdentityShape",
+            "trackedSweepDelayedReconciliationState",
+            "trackedSweepDelayedReconciliationAttemptCount",
+            "trackedSweepDelayedReconciliationDelayCount",
+            "trackedSweepDelayedReconciliationElapsedMs",
+            "trackedSweepPidReuseCount",
+            "trackedSweepDelayedReconciliationSelfTestVerified",
+            "trackedSweepDelayedReconciliationTupleSelfTestVerified",
+            "reconciliationCounterTuple.A -eq 1",
+            "reconciliationCounterTuple.F -eq 1",
+            "reconciliationCounterTuple.D -eq 1",
+            "reconciliationCounterTuple.S -eq 1",
+            "reconciliationCounterTuple.P -eq 2",
+            "reconciliationCounterTuple.RA -eq 1",
+            "reconciliationCounterTuple.RD -eq 1",
+            "reconciliationCounterTuple.R -eq 0",
+            "trackedSweepDelayedReconciliationExhaustionSelfTestVerified",
+            "failedCloseReconciliationRejectedSelfTestVerified",
+            "trackedSweepRepeatedIdentityMismatchSelfTestVerified",
+            "trackedSweepDirectIdentityMismatchSelfTestVerified",
+            "trackedSweepDelayedMalformedSelfTestVerified",
+            "PostCloseDelay",
+            "startupContainmentMaxOuterPolls",
+            "trackedReconciliationState.pending.Count",
+            "final exact executable-path sweep",
         ):
             self.assertIn(marker, self.shared_text)
         self.assertIn("Set-StartupTrackedSweepFailure $CleanupObservation 'identity-unavailable' 13", self.shared_text)
         self.assertIn("throw \"Could not verify the identity of tracked process", self.shared_text)
+        self.assertIn("containment-authority-not-proven", self.shared_text)
+        self.assertIn("$JobCloseSucceeded -and $RemainingJobHandle -eq [IntPtr]::Zero", self.shared_text)
+        self.assertNotIn("PendingState.resolved", self.shared_text)
 
     def test_job_identity_disappearance_recovery_disables_tracked_telemetry(self):
         for marker in (
@@ -746,6 +821,42 @@ class PairedStartupContractTests(unittest.TestCase):
             "rawPayload",
         ):
             self.assertIn(marker, self.paired_text)
+
+    def test_containment_and_delayed_additive_field_sets_remain_exact(self):
+        def field_set(name: str) -> list[str]:
+            match = re.search(
+                rf"\$script:{name} = @\(\r\n(?P<body>.*?)\r\n\)",
+                self.paired_text,
+                re.DOTALL,
+            )
+            self.assertIsNotNone(match, name)
+            return re.findall(r"'([^']+)'", match.group("body"))
+
+        self.assertEqual(
+            [
+                "version",
+                "mode",
+                "terminalState",
+                "terminationAttempted",
+                "terminationSucceeded",
+                "terminationErrorCode",
+                "terminalJobQuery",
+                "terminalJobMemberCount",
+                "jobEmptyProven",
+                "identityReconciliation",
+            ],
+            field_set("PairedContainmentProofFields"),
+        )
+        self.assertEqual(
+            [
+                "trackedSweepDelayedReconciliationState",
+                "trackedSweepDelayedReconciliationAttemptCount",
+                "trackedSweepDelayedReconciliationDelayCount",
+                "trackedSweepDelayedReconciliationElapsedMs",
+                "trackedSweepPidReuseCount",
+            ],
+            field_set("PairedCleanupTelemetryDelayedReconciliationFields"),
+        )
         self.assertNotIn("containmentProofMissingLegacyAccepted", self.paired_text)
         self.assertNotIn("New-PairedContainmentProofProjection 'absent'", self.paired_text)
         containment_start = self.paired_text.index("function Convert-PairedContainmentJobQuery")
@@ -1060,6 +1171,13 @@ class PairedStartupContractTests(unittest.TestCase):
             self.assertTrue(payload["trackedIdentityNoObservationSelfTestVerified"])
             self.assertTrue(payload["trackedIdentityMalformedProbeSelfTestVerified"])
             self.assertTrue(payload["trackedIdentityMalformedFreshCensusSelfTestVerified"])
+            self.assertTrue(payload["trackedSweepDelayedReconciliationSelfTestVerified"])
+            self.assertTrue(payload["trackedSweepDelayedReconciliationTupleSelfTestVerified"])
+            self.assertTrue(payload["trackedSweepDelayedReconciliationExhaustionSelfTestVerified"])
+            self.assertTrue(payload["failedCloseReconciliationRejectedSelfTestVerified"])
+            self.assertTrue(payload["trackedSweepRepeatedIdentityMismatchSelfTestVerified"])
+            self.assertTrue(payload["trackedSweepDirectIdentityMismatchSelfTestVerified"])
+            self.assertTrue(payload["trackedSweepDelayedMalformedSelfTestVerified"])
             self.assertTrue(payload["jobIdentityDisappearedTelemetryDisabledSelfTestVerified"])
             self.assertTrue(payload["jobIdentityStillPresentTelemetryDisabledSelfTestVerified"])
             self.assertTrue(payload["jobIdentityCensusUnavailableTelemetryDisabledSelfTestVerified"])
@@ -1216,6 +1334,14 @@ class PairedStartupContractTests(unittest.TestCase):
                 "cleanupTelemetryAffinityCrossFieldRejected",
                 "cleanupTelemetryBoundedIntegerRejected",
                 "cleanupTelemetryEnumRejected",
+                "cleanupDelayedReconciliationAcceptedVerified",
+                "cleanupDelayedReconciliationMalformedRejected",
+                "cleanupDelayedReconciliationLaunchRejected",
+                "cleanupDelayedTerminalEquationsRejected",
+                "cleanupDelayedAbsentAcceptedProofRejected",
+                "cleanupDelayedReconciliationGateRejected",
+                "cleanupDelayedReconciliationLegacyContradictionRejected",
+                "cleanupDelayedReconciliationPayloadFreeVerified",
                 "telemetryFailureNeutralVerified",
                 "telemetryPayloadFreeVerified",
                 "telemetrySuppressionGatesUnchangedVerified",
