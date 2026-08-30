@@ -55,7 +55,16 @@ function Get-TextSha256 {
 
 function Get-FileSha256 {
   param([Parameter(Mandatory = $true)] [string]$Path)
-  return (Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+  $sha = [Security.Cryptography.SHA256]::Create()
+  $stream = $null
+  try {
+    $stream = [IO.File]::OpenRead($Path)
+    return ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-', '').ToLowerInvariant()
+  }
+  finally {
+    if ($null -ne $stream) { $stream.Dispose() }
+    $sha.Dispose()
+  }
 }
 
 function Test-Sha256 {
@@ -107,6 +116,23 @@ function Get-FileIdentity {
   $identity = Get-OptionalFileIdentity $Path
   if (-not $identity.exists -or $identity.sizeBytes -lt 1) { throw 'Required artifact is missing or empty.' }
   return $identity
+}
+
+function Invalidate-ProviderObjectForBuild {
+  param([Parameter(Mandatory = $true)] [string]$Path)
+  Assert-NoReparseAncestors $Path
+  if ([IO.Directory]::Exists($Path)) {
+    throw 'Provider object fence target is not a regular file.'
+  }
+  if ([IO.File]::Exists($Path)) {
+    [void](Assert-RegularFile $Path)
+    try { [IO.File]::Delete($Path) }
+    catch { throw 'Provider object fence could not invalidate the exact object.' }
+  }
+  if ([IO.File]::Exists($Path) -or [IO.Directory]::Exists($Path)) {
+    throw 'Provider object fence did not prove exact object absence.'
+  }
+  return $true
 }
 
 function Get-SourceState {
@@ -308,8 +334,12 @@ function Get-SelectorProof {
     [Parameter(Mandatory = $true)] [object]$CompileLogAfter,
     [Parameter(Mandatory = $true)] [string]$CompileLogPath,
     [Parameter(Mandatory = $true)] [object]$Archive,
-    [Parameter(Mandatory = $true)] [string]$ArchivePath
+    [Parameter(Mandatory = $true)] [string]$ArchivePath,
+    [Parameter(Mandatory = $true)] [bool]$ProviderObjectAbsentBeforeBuild
   )
+  if (-not $ProviderObjectAbsentBeforeBuild) {
+    throw 'Provider selector proof requires an exact pre-build object-absence proof.'
+  }
   $objectDump = Invoke-OwnedProcess -FileName $Dumpbin -Arguments ('/symbols "{0}"' -f $ObjectPath) -WorkingDirectory $script:RepoRoot -ReturnOutput
   $objectAnonymous = [bool]($objectDump.stdout -match '(?im)^\s*File Type:\s+ANONYMOUS OBJECT\s*$')
   if ($Configuration -eq 'Release' -and -not $objectAnonymous) {
@@ -346,13 +376,13 @@ function Get-SelectorProof {
   }
   if (($defined -join '|') -cne ($expected -join '|')) { throw 'Rust archive export proof is not exact.' }
   $base = if ($Configuration -eq 'Release') {
-    'output={0}|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result={1}|method={2}|symbols=|object-after={3}|object-format={4}|compile-log-after={5}|compile-log-size={6}|compile-gl={7}|compile-rust-selector-count={8}' -f
+    'output={0}|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result={1}|method={2}|symbols=|object-after={3}|object-format={4}|compile-log-after={5}|compile-log-size={6}|compile-gl={7}|compile-rust-selector-count={8}|object-freshness-method=exact-object-absence-v1|object-absent-before-build=true' -f
       $Backend, $verificationResult, $verificationMethod, $ObjectAfter.sha256,
       'msvc-ltcg-anonymous', $CompileLogAfter.sha256, $CompileLogAfter.sizeBytes,
       $compileSelector.hasGl, $compileSelector.rustSelectorDefineCount
   }
   else {
-    'output={0}|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result={1}|symbols={2}|object-after={3}' -f
+    'output={0}|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result={1}|symbols={2}|object-after={3}|object-freshness-method=exact-object-absence-v1|object-absent-before-build=true' -f
       $Backend, $verificationResult, ($unresolved -join ','), $ObjectAfter.sha256
   }
   $baseHash = Get-TextSha256 $base
@@ -379,6 +409,8 @@ function Get-SelectorProof {
     compileLogProof = ($Configuration -eq 'Release')
     compileCommandHasGl = if ($null -ne $compileSelector) { [bool]$compileSelector.hasGl } else { $false }
     compileCommandRustSelectorDefineCount = if ($null -ne $compileSelector) { [int]$compileSelector.rustSelectorDefineCount } else { 0 }
+    providerObjectFreshnessMethod = 'exact-object-absence-v1'
+    providerObjectAbsentBeforeBuild = [bool]$ProviderObjectAbsentBeforeBuild
     rustArchiveResult = 'dumpbin-defined-exports-verified'
     rustArchiveSha256 = $Archive.sha256
     rustArchiveSizeBytes = [UInt64]$Archive.sizeBytes
@@ -441,6 +473,9 @@ function Assert-ProducedManifest {
       [string]$manifest.runtimeClosureMode -cne 'exe-only' -or
       [string]$manifest.runtimeClosureSha256 -cne $ExpectedClosure -or
       [string]$manifest.selectorProofSha256 -cne [string]$ExpectedSelector.selectorContractSha256 -or
+      [string]$manifest.selectorProof.providerObjectFreshnessMethod -cne 'exact-object-absence-v1' -or
+      $manifest.selectorProof.providerObjectAbsentBeforeBuild -isnot [bool] -or
+      -not [bool]$manifest.selectorProof.providerObjectAbsentBeforeBuild -or
       [string]$manifest.runtimeProviderProbe.testFilter -cne $script:ProbeFilter -or
       [string]$manifest.transaction.publication -cne 'atomic-directory-rename') {
     throw 'Produced provider manifest failed its read-back contract.'
@@ -468,7 +503,7 @@ function Invoke-SelfTest {
   $artifactHash = 'a' * 64
   $closure = Get-TextSha256 ('exe-only|tests1={0}|size=1' -f $artifactHash)
   if (-not (Test-Sha256 $closure)) { throw 'Runtime closure self-test failed.' }
-  $base = 'output=cpp|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result=dumpbin-unresolved-refs-verified|symbols=|object-after={0}' -f ('b' * 64)
+  $base = 'output=cpp|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result=dumpbin-unresolved-refs-verified|symbols=|object-after={0}|object-freshness-method=exact-object-absence-v1|object-absent-before-build=true' -f ('b' * 64)
   $selector = Get-TextSha256 ('{0}|archive-result=dumpbin-defined-exports-verified|archive={1}|defined={2}' -f
     (Get-TextSha256 $base), ('c' * 64), (@($script:ProviderSymbols | Sort-Object) -join ','))
   if (-not (Test-Sha256 $selector)) { throw 'Selector contract self-test failed.' }
@@ -513,6 +548,20 @@ function Invoke-SelfTest {
   $root = Join-Path ([IO.Path]::GetTempPath()) ('sakura-output-provider-selftest-{0}' -f ([Guid]::NewGuid().ToString('N')))
   [void][IO.Directory]::CreateDirectory($root)
   try {
+    $fenceObject = Join-Path $root 'OutputServiceRustProvider.obj'
+    $fenceTlog = Join-Path $root 'CL.command.1.tlog'
+    [IO.File]::WriteAllBytes($fenceObject, [byte[]](1, 2, 3))
+    [IO.File]::WriteAllBytes($fenceTlog, [byte[]](4, 5, 6))
+    if (-not (Get-OptionalFileIdentity $fenceObject).exists) { throw 'Provider object fence setup self-test failed.' }
+    if (-not (Invalidate-ProviderObjectForBuild $fenceObject)) { throw 'Provider object fence deletion self-test failed.' }
+    if ([IO.File]::Exists($fenceObject) -or [IO.Directory]::Exists($fenceObject)) { throw 'Provider object fence deletion self-test left its target.' }
+    if (-not (Invalidate-ProviderObjectForBuild $fenceObject)) { throw 'Provider object fence idempotence self-test failed.' }
+    if (-not [IO.File]::Exists($fenceTlog)) { throw 'Provider object fence touched the compile log.' }
+    $nonRegularFence = Join-Path $root 'non-regular.obj'
+    [void][IO.Directory]::CreateDirectory($nonRegularFence)
+    $nonRegularRejected = $false
+    try { [void](Invalidate-ProviderObjectForBuild $nonRegularFence) } catch { $nonRegularRejected = $true }
+    if (-not $nonRegularRejected) { throw 'Provider object fence non-regular target self-test failed.' }
     $lockPath = Join-Path $root 'configuration.lock'
     $first = Acquire-ExclusiveLock $lockPath
     try {
@@ -603,6 +652,9 @@ function Invoke-Producer {
     $packageCommandHash = Get-TextSha256 ('package-plan|{0}|x64|{1}' -f $Backend, $Configuration)
     $buildCommandHash = Get-TextSha256 ('build-sln.bat|x64|{0}|SAKURA_OUTPUT_BACKEND={1}|SAKURA_UTF16_BACKEND=cpp|SAKURA_OUTPUT_PRODUCTION_PACKAGE=false|SAKURA_UTF16_PRODUCTION_PACKAGE=false|SAKURA_UTF16_BENCHMARK_TELEMETRY=false|SAKURA_GENERATE_ASSEMBLY_LISTINGS=false|SKIP_CREATE_GITHASH=1|SAKURA_BUILD_JOBS={2}|MSBUILDDISABLENODEREUSE=1|VSLANG=1033' -f $Configuration, $Backend, $BuildParallelism)
     $cmd = Resolve-Executable 'cmd.exe'
+    $script:Stage = 'provider-compile-fence'
+    $providerObjectAbsentBeforeBuild = Invalidate-ProviderObjectForBuild $objectSource
+    if (-not $providerObjectAbsentBeforeBuild) { throw 'Provider object fence did not prove exact object absence.' }
     $script:Stage = 'build'
     $buildStartedUtc = [DateTime]::UtcNow
     [void](Invoke-OwnedProcess -FileName $cmd -Arguments ('/d /s /c "call build-sln.bat x64 {0}"' -f $Configuration) -WorkingDirectory $script:RepoRoot -Environment $environment)
@@ -612,6 +664,9 @@ function Invoke-Producer {
     $compileLogAfter = Get-FileIdentity $compileLogSource
     $objectAfterItem = Assert-RegularFile $objectSource
     $compileLogAfterItem = Assert-RegularFile $compileLogSource
+    if ($objectAfterItem.LastWriteTimeUtc -le $buildStartedUtc) {
+      throw 'Provider object was not produced after the exact pre-build absence fence.'
+    }
     if ($Configuration -eq 'Release' -and
         ($objectAfterItem.LastWriteTimeUtc -le $buildStartedUtc -or
          $compileLogAfterItem.LastWriteTimeUtc -le $buildStartedUtc)) {
@@ -623,7 +678,7 @@ function Invoke-Producer {
     $copiedIdentity = Get-FileIdentity $copiedTests
     if ($copiedIdentity.sha256 -cne $testsAfter.sha256 -or $copiedIdentity.sizeBytes -ne $testsAfter.sizeBytes) { throw 'Copied tests1 identity changed.' }
     $script:Stage = 'selector-proof'
-    $selectorProof = Get-SelectorProof $dumpbin $objectBefore $objectAfter $objectSource $compileLogBefore $compileLogAfter $compileLogSource $archive $archiveSource
+    $selectorProof = Get-SelectorProof $dumpbin $objectBefore $objectAfter $objectSource $compileLogBefore $compileLogAfter $compileLogSource $archive $archiveSource $providerObjectAbsentBeforeBuild
     $probeCommandHash = Get-TextSha256 ('tests1.exe|--gtest_filter={0}|--gtest_color=no|backend={1}' -f $script:ProbeFilter, $Backend)
     $script:Stage = 'runtime-probe'
     [void](Invoke-OwnedProcess -FileName $copiedTests -Arguments ('--gtest_filter={0} --gtest_color=no' -f $script:ProbeFilter) -WorkingDirectory $transaction)

@@ -45,13 +45,22 @@ The runner validates the producer v1 record, committed transaction, clean and
 identical source state, x64/configuration/backend selectors, UTF-16 C++
 selector, non-production flags, tests1 SHA-256/size, selector object/archive
 proof (Release `/GL` uses the source-specific compile-selector receipt rather
-than claiming unresolved references from an anonymous object), host/power/
+than claiming unresolved references from an anonymous object), the exact
+pre-build provider-object absence receipt (`exact-object-absence-v1`, raw
+boolean `providerObjectAbsentBeforeBuild=true`), host/power/
 toolchain/package/command proof, and the standalone provider
 probe (`CWorkbenchRuntime.CompileSelectedOutputProviderOwnsTheRuntimeLifecycle`)
 and explicit `runtimeClosureMode=exe-only`/`runtimeClosureSha256`. It rechecks both manifest identities and the current source state before
 each launch and after the campaign. A pair mismatch (including source, host,
 power, MSVC/Rust toolchain, Cargo lock, package plan, or build parallelism) is
 fail-closed.
+
+The freshness receipt is mandatory for both Debug and Release manifests. It is
+bound into each provider's `selectorContractSha256`; missing, non-Boolean,
+false, or differently named/valued fields are rejected. This prevents a stale
+provider object left by an interrupted build from being relabeled as a current
+measurement input. The runner does not accept a manual build outside the
+producer's configuration lock as evidence.
 
 The default run uses seven interleaved C++/Rust process pairs, two warmup
 blocks, ten measured blocks, 256 Snapshot calls per snapshot block, and 512

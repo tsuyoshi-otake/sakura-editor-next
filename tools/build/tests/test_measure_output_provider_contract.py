@@ -48,6 +48,9 @@ class MeasureOutputProviderContractTests(unittest.TestCase):
             "compileLogSha256After",
             "compileCommandRustSelectorDefineCount",
             "Release selector proof must use the MSVC LTCG compile-selector contract.",
+            "providerObjectFreshnessMethod",
+            "providerObjectAbsentBeforeBuild",
+            "exact-object-absence-v1",
         ):
             self.assertIn(marker, self.text)
         self.assertIn("([string]$Value).Length -gt 512", self.text)
@@ -117,6 +120,31 @@ class MeasureOutputProviderContractTests(unittest.TestCase):
         self.assertIn("(Get-ProviderString $manifestConfiguration 'configuration').ToLowerInvariant() -eq 'release'", self.text)
         self.assertIn("providerObjectFormat", self.text)
         self.assertIn("compileCommandHasGl", self.text)
+
+    def test_selector_receipt_requires_exact_prebuild_absence_for_both_configs(self):
+        for marker in (
+            "Get-ProviderBoolean (Get-ProviderRequiredCandidate $proof @('providerObjectAbsentBeforeBuild')",
+            "selector proof does not prove exact pre-build object absence",
+            "selector proof object freshness method is unsupported",
+            "object-freshness-method=exact-object-absence-v1",
+            "object-absent-before-build=true",
+            "legacy freshness receipt self-test",
+            "wrong freshness method self-test",
+            "false freshness receipt self-test",
+            "non-boolean freshness receipt self-test",
+        ):
+            self.assertIn(marker, self.text)
+        self.assertGreaterEqual(self.text.count("providerObjectFreshnessMethod = 'exact-object-absence-v1'"), 2)
+        self.assertGreaterEqual(self.text.count("providerObjectAbsentBeforeBuild = $true"), 2)
+
+    def test_provenance_propagates_freshness_receipt(self):
+        for marker in (
+            "providerObjectFreshnessMethod = [string]$Cpp.selectorProof.providerObjectFreshnessMethod",
+            "providerObjectAbsentBeforeBuild = [bool]$Cpp.selectorProof.providerObjectAbsentBeforeBuild",
+            "providerObjectFreshnessMethod = [string]$Rust.selectorProof.providerObjectFreshnessMethod",
+            "providerObjectAbsentBeforeBuild = [bool]$Rust.selectorProof.providerObjectAbsentBeforeBuild",
+        ):
+            self.assertIn(marker, self.text)
 
     def test_collect_only_without_manifests_stays_unqualified(self):
         self.assertIn("$manifestsSupplied = $cppManifestSupplied -or $rustManifestSupplied", self.text)

@@ -457,6 +457,14 @@ function Get-ProviderSelectorProof {
       throw "selector proof enables $field"
     }
   }
+  $freshnessMethod = Get-ProviderString (Get-ProviderRequiredCandidate $proof @('providerObjectFreshnessMethod') 'selectorProof.providerObjectFreshnessMethod') 'selectorProof.providerObjectFreshnessMethod'
+  if ($freshnessMethod -cne 'exact-object-absence-v1') {
+    throw 'selector proof object freshness method is unsupported'
+  }
+  $objectAbsentBeforeBuild = Get-ProviderBoolean (Get-ProviderRequiredCandidate $proof @('providerObjectAbsentBeforeBuild') 'selectorProof.providerObjectAbsentBeforeBuild') 'selectorProof.providerObjectAbsentBeforeBuild'
+  if (-not $objectAbsentBeforeBuild) {
+    throw 'selector proof does not prove exact pre-build object absence'
+  }
   $objectHash = Get-ProviderHash (Get-ProviderRequiredCandidate $proof @('providerObjectSha256After', 'objectSha256After') 'selectorProof.providerObjectSha256After') 'selectorProof.providerObjectSha256After'
   $objectSize = Get-ProviderUInt64 (Get-ProviderRequiredCandidate $proof @('providerObjectSizeBytesAfter', 'objectSizeBytesAfter') 'selectorProof.providerObjectSizeBytesAfter') 'selectorProof.providerObjectSizeBytesAfter'
   if ($objectSize -lt 1) { throw 'selector proof object size must be positive' }
@@ -512,12 +520,12 @@ function Get-ProviderSelectorProof {
   if ($definedCount -ne $expectedDefined.Count) { throw 'selector proof defined symbol count is invalid' }
   $contractHash = Get-ProviderHash (Get-ProviderRequiredCandidate $proof @('selectorContractSha256', 'contractSha256') 'selectorProof.selectorContractSha256') 'selectorProof.selectorContractSha256'
   $baseCanonical = if ($isLtcgProof) {
-    'output={0}|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result={1}|method={2}|symbols=|object-after={3}|object-format={4}|compile-log-after={5}|compile-log-size={6}|compile-gl={7}|compile-rust-selector-count={8}' -f
+    'output={0}|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result={1}|method={2}|symbols=|object-after={3}|object-format={4}|compile-log-after={5}|compile-log-size={6}|compile-gl={7}|compile-rust-selector-count={8}|object-freshness-method=exact-object-absence-v1|object-absent-before-build=true' -f
       $Backend, $result, $verificationMethod, $objectHash, $providerObjectFormat, $compileLogHashAfter,
       $compileLogSize, $compileHasGl, $compileRustSelectorCount
   }
   else {
-    'output={0}|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result={1}|symbols={2}|object-after={3}' -f
+    'output={0}|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result={1}|symbols={2}|object-after={3}|object-freshness-method=exact-object-absence-v1|object-absent-before-build=true' -f
       $Backend, $result, (@($normalizedSymbols | Sort-Object) -join ','), $objectHash
   }
   $canonical = '{0}|archive-result={1}|archive={2}|defined={3}' -f
@@ -542,6 +550,8 @@ function Get-ProviderSelectorProof {
     compileLogProof = $compileLogProof
     compileCommandHasGl = $compileHasGl
     compileCommandRustSelectorDefineCount = [int]$compileRustSelectorCount
+    providerObjectFreshnessMethod = $freshnessMethod
+    providerObjectAbsentBeforeBuild = $objectAbsentBeforeBuild
     unresolvedProviderSymbols = @($normalizedSymbols | Sort-Object)
     unresolvedProviderSymbolCount = [int]$symbolCount
     rustArchiveResult = $archiveResult
@@ -790,6 +800,8 @@ function New-ProviderProvenance {
         proofSha256 = [string]$Cpp.selectorProofSha256
         objectSha256 = [string]$Cpp.selectorProof.providerObjectSha256After
         objectFormat = Get-ProviderCandidate $Cpp.selectorProof @('providerObjectFormat')
+        providerObjectFreshnessMethod = [string]$Cpp.selectorProof.providerObjectFreshnessMethod
+        providerObjectAbsentBeforeBuild = [bool]$Cpp.selectorProof.providerObjectAbsentBeforeBuild
         compileLogSha256After = Get-ProviderCandidate $Cpp.selectorProof @('compileLogSha256After')
         compileLogSizeBytesAfter = Get-ProviderCandidate $Cpp.selectorProof @('compileLogSizeBytesAfter')
         compileCommandHasGl = Get-ProviderCandidate $Cpp.selectorProof @('compileCommandHasGl')
@@ -801,6 +813,8 @@ function New-ProviderProvenance {
         proofSha256 = [string]$Rust.selectorProofSha256
         objectSha256 = [string]$Rust.selectorProof.providerObjectSha256After
         objectFormat = Get-ProviderCandidate $Rust.selectorProof @('providerObjectFormat')
+        providerObjectFreshnessMethod = [string]$Rust.selectorProof.providerObjectFreshnessMethod
+        providerObjectAbsentBeforeBuild = [bool]$Rust.selectorProof.providerObjectAbsentBeforeBuild
         compileLogSha256After = Get-ProviderCandidate $Rust.selectorProof @('compileLogSha256After')
         compileLogSizeBytesAfter = Get-ProviderCandidate $Rust.selectorProof @('compileLogSizeBytesAfter')
         compileCommandHasGl = Get-ProviderCandidate $Rust.selectorProof @('compileCommandHasGl')
@@ -967,6 +981,8 @@ function Invoke-SelfTest {
     assemblyListings = $false
     providerObjectSha256After = ('9' * 64)
     providerObjectSizeBytesAfter = [UInt64]1
+    providerObjectFreshnessMethod = 'exact-object-absence-v1'
+    providerObjectAbsentBeforeBuild = $true
     unresolvedProviderSymbols = @()
     unresolvedProviderSymbolCount = 0
     rustArchiveResult = 'dumpbin-defined-exports-verified'
@@ -975,7 +991,7 @@ function Invoke-SelfTest {
     definedProviderSymbols = @($script:ProviderSymbols)
     definedProviderSymbolCount = $script:ProviderSymbols.Count
   }
-  $syntheticCppBase = 'output=cpp|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result=dumpbin-unresolved-refs-verified|symbols=|object-after={0}' -f $syntheticCppSelector.providerObjectSha256After
+  $syntheticCppBase = 'output=cpp|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result=dumpbin-unresolved-refs-verified|symbols=|object-after={0}|object-freshness-method=exact-object-absence-v1|object-absent-before-build=true' -f $syntheticCppSelector.providerObjectSha256After
   $syntheticCppSelector | Add-Member -NotePropertyName selectorContractSha256 -NotePropertyValue (Get-TextSha256 ('{0}|archive-result={1}|archive={2}|defined={3}' -f
       (Get-TextSha256 $syntheticCppBase), $syntheticCppSelector.rustArchiveResult, $syntheticCppSelector.rustArchiveSha256,
       (@($syntheticCppSelector.definedProviderSymbols | ForEach-Object { $_.ToLowerInvariant() } | Sort-Object) -join ',')))
@@ -989,6 +1005,8 @@ function Invoke-SelfTest {
     assemblyListings = $false
     providerObjectSha256After = ('b' * 64)
     providerObjectSizeBytesAfter = [UInt64]1
+    providerObjectFreshnessMethod = 'exact-object-absence-v1'
+    providerObjectAbsentBeforeBuild = $true
     unresolvedProviderSymbols = @($script:ProviderSymbols)
     unresolvedProviderSymbolCount = $script:ProviderSymbols.Count
     rustArchiveResult = 'dumpbin-defined-exports-verified'
@@ -997,7 +1015,7 @@ function Invoke-SelfTest {
     definedProviderSymbols = @($script:ProviderSymbols)
     definedProviderSymbolCount = $script:ProviderSymbols.Count
   })
-  $syntheticRustBase = 'output=rust|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result=dumpbin-unresolved-refs-verified|symbols={0}|object-after={1}' -f
+  $syntheticRustBase = 'output=rust|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result=dumpbin-unresolved-refs-verified|symbols={0}|object-after={1}|object-freshness-method=exact-object-absence-v1|object-absent-before-build=true' -f
     (@($syntheticRustSelector.unresolvedProviderSymbols | ForEach-Object { $_.ToLowerInvariant() } | Sort-Object) -join ','), $syntheticRustSelector.providerObjectSha256After
   $syntheticRustSelector | Add-Member -NotePropertyName selectorContractSha256 -NotePropertyValue (Get-TextSha256 ('{0}|archive-result={1}|archive={2}|defined={3}' -f
       (Get-TextSha256 $syntheticRustBase), $syntheticRustSelector.rustArchiveResult, $syntheticRustSelector.rustArchiveSha256,
@@ -1008,6 +1026,18 @@ function Invoke-SelfTest {
   }
   $validatedSelector = Get-ProviderSelectorProof -Manifest $syntheticSelectorManifest -Backend 'cpp'
   Assert-EqualValue $syntheticCppSelector.selectorContractSha256 $validatedSelector.selectorContractSha256 'selector proof self-test'
+  $legacySelector = $syntheticSelectorManifest | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+  [void]$legacySelector.selectorProof.PSObject.Properties.Remove('providerObjectFreshnessMethod')
+  Assert-ProviderSelfTestRejects { Get-ProviderSelectorProof -Manifest $legacySelector -Backend 'cpp' } 'legacy freshness receipt self-test'
+  $wrongFreshnessMethod = $syntheticSelectorManifest | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+  $wrongFreshnessMethod.selectorProof.providerObjectFreshnessMethod = 'mtime-only'
+  Assert-ProviderSelfTestRejects { Get-ProviderSelectorProof -Manifest $wrongFreshnessMethod -Backend 'cpp' } 'wrong freshness method self-test'
+  $falseFreshness = $syntheticSelectorManifest | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+  $falseFreshness.selectorProof.providerObjectAbsentBeforeBuild = $false
+  Assert-ProviderSelfTestRejects { Get-ProviderSelectorProof -Manifest $falseFreshness -Backend 'cpp' } 'false freshness receipt self-test'
+  $nonBooleanFreshness = $syntheticSelectorManifest | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+  $nonBooleanFreshness.selectorProof.providerObjectAbsentBeforeBuild = 'true'
+  Assert-ProviderSelfTestRejects { Get-ProviderSelectorProof -Manifest $nonBooleanFreshness -Backend 'cpp' } 'non-boolean freshness receipt self-test'
 
   $syntheticLtcgObjectHash = 'd' * 64
   $syntheticLtcgCompileLogHash = 'e' * 64
@@ -1025,6 +1055,8 @@ function Invoke-SelfTest {
     providerObjectFormat = 'msvc-ltcg-anonymous'
     providerObjectSha256After = $syntheticLtcgObjectHash
     providerObjectSizeBytesAfter = [UInt64]2
+    providerObjectFreshnessMethod = 'exact-object-absence-v1'
+    providerObjectAbsentBeforeBuild = $true
     compileLogSha256Before = ('c' * 64)
     compileLogSha256After = $syntheticLtcgCompileLogHash
     compileLogSizeBytesAfter = [UInt64]3
@@ -1039,7 +1071,7 @@ function Invoke-SelfTest {
     definedProviderSymbols = $syntheticLtcgDefined
     definedProviderSymbolCount = $syntheticLtcgDefined.Count
   }
-  $syntheticLtcgCppBase = 'output=cpp|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result=msvc-ltcg-compile-selector-verified|method=msvc-ltcg-compile-selector|symbols=|object-after={0}|object-format=msvc-ltcg-anonymous|compile-log-after={1}|compile-log-size=3|compile-gl=True|compile-rust-selector-count=0' -f
+  $syntheticLtcgCppBase = 'output=cpp|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result=msvc-ltcg-compile-selector-verified|method=msvc-ltcg-compile-selector|symbols=|object-after={0}|object-format=msvc-ltcg-anonymous|compile-log-after={1}|compile-log-size=3|compile-gl=True|compile-rust-selector-count=0|object-freshness-method=exact-object-absence-v1|object-absent-before-build=true' -f
     $syntheticLtcgObjectHash, $syntheticLtcgCompileLogHash
   $syntheticLtcgCppSelector | Add-Member -NotePropertyName selectorContractSha256 -NotePropertyValue (Get-TextSha256 ('{0}|archive-result={1}|archive={2}|defined={3}' -f
       (Get-TextSha256 $syntheticLtcgCppBase), $syntheticLtcgCppSelector.rustArchiveResult, $syntheticLtcgCppSelector.rustArchiveSha256,
@@ -1057,7 +1089,7 @@ function Invoke-SelfTest {
   $syntheticLtcgRustSelector.outputBackend = 'rust'
   $syntheticLtcgRustSelector.providerObjectSha256After = 'a' * 64
   $syntheticLtcgRustSelector.compileCommandRustSelectorDefineCount = 1
-  $syntheticLtcgRustBase = 'output=rust|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result=msvc-ltcg-compile-selector-verified|method=msvc-ltcg-compile-selector|symbols=|object-after={0}|object-format=msvc-ltcg-anonymous|compile-log-after={1}|compile-log-size=3|compile-gl=True|compile-rust-selector-count=1' -f
+  $syntheticLtcgRustBase = 'output=rust|utf16=cpp|output-production=false|utf16-production=false|telemetry=false|listings=false|result=msvc-ltcg-compile-selector-verified|method=msvc-ltcg-compile-selector|symbols=|object-after={0}|object-format=msvc-ltcg-anonymous|compile-log-after={1}|compile-log-size=3|compile-gl=True|compile-rust-selector-count=1|object-freshness-method=exact-object-absence-v1|object-absent-before-build=true' -f
     $syntheticLtcgRustSelector.providerObjectSha256After, $syntheticLtcgCompileLogHash
   $syntheticLtcgRustSelector.selectorContractSha256 = Get-TextSha256 ('{0}|archive-result={1}|archive={2}|defined={3}' -f
       (Get-TextSha256 $syntheticLtcgRustBase), $syntheticLtcgRustSelector.rustArchiveResult, $syntheticLtcgRustSelector.rustArchiveSha256,

@@ -98,6 +98,42 @@ class PrepareOutputProviderArtifactTests(unittest.TestCase):
         self.assertIn("$compileLogAfter", self.text)
         self.assertIn("Provider compile command selector does not match the requested backend.", self.text)
 
+    def test_provider_object_freshness_fence_is_exact_and_bounded(self):
+        for marker in (
+            "provider-compile-fence",
+            "Invalidate-ProviderObjectForBuild $objectSource",
+            "Provider object fence did not prove exact object absence.",
+            "providerObjectFreshnessMethod = 'exact-object-absence-v1'",
+            "providerObjectAbsentBeforeBuild = [bool]$ProviderObjectAbsentBeforeBuild",
+            "Provider object was not produced after the exact pre-build absence fence.",
+            "[IO.File]::Delete($Path)",
+        ):
+            self.assertIn(marker, self.text)
+        self.assertNotIn("[IO.File]::Delete($compileLogSource)", self.text)
+        self.assertLess(
+            self.text.index("$objectBefore = Get-OptionalFileIdentity $objectSource"),
+            self.text.index("Invalidate-ProviderObjectForBuild $objectSource"),
+        )
+        self.assertLess(
+            self.text.index("Invalidate-ProviderObjectForBuild $objectSource"),
+            self.text.index("$buildStartedUtc = [DateTime]::UtcNow"),
+        )
+        self.assertLess(
+            self.text.index("$buildStartedUtc = [DateTime]::UtcNow"),
+            self.text.index("build-sln.bat x64"),
+        )
+
+    def test_selftest_covers_object_fence_and_legacy_shape_markers(self):
+        for marker in (
+            "Provider object fence setup self-test failed.",
+            "Provider object fence deletion self-test failed.",
+            "Provider object fence idempotence self-test failed.",
+            "Provider object fence touched the compile log.",
+            "Provider object fence non-regular target self-test failed.",
+            "exact-object-absence-v1",
+        ):
+            self.assertIn(marker, self.text)
+
     def test_probe_and_copy_use_transaction_artifact(self):
         self.assertIn(
             "CWorkbenchRuntime.CompileSelectedOutputProviderOwnsTheRuntimeLifecycle",
