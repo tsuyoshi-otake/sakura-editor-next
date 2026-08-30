@@ -6259,7 +6259,14 @@ bool CEditWnd::ApplyCurrentWorkbenchLayoutState(bool finalizeProjection,
 	}
 	if (m_activityBar) m_activityBar->SetSelectedItem(activeActivityContainer);
 	if (finalizeProjection) FinalizeWorkbenchPanelProjection();
-	if (finalizeProjection && projection->focus) ApplyPaneCompositeFocus(*projection->focus);
+	if (finalizeProjection && projection->focus) {
+		ApplyPaneCompositeFocus(*projection->focus);
+		// Focus is intentionally applied only after final native bounds exist, but
+		// WM_SETFOCUS can invalidate button, caret, and selection pixels after the
+		// geometry commit has already painted. Publish that terminal visual state
+		// before returning the atomic projection to its caller.
+		RedrawWorkbenchFrameForCommittedLayout(true);
+	}
 	if (changed && broadcastMirrorChanges) BroadcastWorkbenchSettings();
 	return true;
 }
@@ -7286,14 +7293,34 @@ void CEditWnd::RedrawWorkbenchFrameForCommittedLayout(bool immediate)
 	::GetClientRect(GetHwnd(), &client);
 	const std::array<RECT, 4> geometry{ client, hostRect(m_leftWorkbenchPanel.get()),
 		hostRect(m_bottomWorkbenchPanel.get()), hostRect(m_rightWorkbenchPanel.get()) };
+	bool partVisibilityChanged = false;
+	if (m_appliedWorkbenchHostGeometry) {
+		for (std::size_t index = 1; index < geometry.size(); ++index) {
+			partVisibilityChanged =
+				(::IsRectEmpty(&(*m_appliedWorkbenchHostGeometry)[index]) != FALSE)
+				!= (::IsRectEmpty(&geometry[index]) != FALSE);
+			if (partVisibilityChanged) break;
+		}
+	}
 	const bool changed = immediate || !m_appliedWorkbenchHostGeometry
 		|| !std::ranges::equal(*m_appliedWorkbenchHostGeometry, geometry,
 			[](const RECT& lhs, const RECT& rhs) { return ::EqualRect(&lhs, &rhs) != FALSE; });
 	m_appliedWorkbenchHostGeometry = geometry;
 	if (!changed) return;
+	// Retained surfaces normally keep their last complete pixels until the new
+	// geometry cohort is ready, so geometry-only commits deliberately skip the
+	// background erase. A physical Part visibility transition is different: the
+	// hidden HWND cannot repaint the pixels previously composed at that boundary,
+	// and SWP_NOREDRAW leaves the parent/child clipping change without a complete
+	// update region. Dual CopyFromScreen/PrintWindow captures measured a whole
+	// Panel remaining stale until a frame-and-erase redraw. All three Part states
+	// and child bounds are already committed here, so this one synchronous strict
+	// redraw cannot expose an intermediate layout.
+	UINT redrawFlags = RDW_INVALIDATE | RDW_ALLCHILDREN
+		| (immediate ? RDW_UPDATENOW : 0);
+	redrawFlags |= partVisibilityChanged ? (RDW_FRAME | RDW_ERASE) : RDW_NOERASE;
 	::RedrawWindow(GetHwnd(), nullptr, nullptr,
-		RDW_INVALIDATE | RDW_NOERASE | RDW_ALLCHILDREN
-			| (immediate ? RDW_UPDATENOW : 0));
+		redrawFlags);
 	if (immediate) {
 		// RDW_UPDATENOW completes WM_PAINT dispatch, but child controls can leave
 		// their final GDI commands in this UI thread's batch. Publish those commands
