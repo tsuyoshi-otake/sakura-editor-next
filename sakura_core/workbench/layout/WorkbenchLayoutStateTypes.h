@@ -12,6 +12,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 //! HWND-independent, stable-ID layout state for the workbench.
@@ -22,6 +23,8 @@ inline constexpr std::uint32_t kWorkbenchLayoutStateSchemaVersion = 2;
 inline constexpr std::size_t kMaxWorkbenchLayoutIdLength = 160;
 inline constexpr std::size_t kMaxWorkbenchLayoutOperationIdLength = 160;
 inline constexpr std::size_t kMaxWorkbenchLayoutCompletedOperations = 256;
+//! A command may coordinate several logical changes, but the validation and copy cost stays bounded.
+inline constexpr std::size_t kMaxWorkbenchLayoutTransactionChanges = 32;
 //! Non-zero persisted divider extents are bounded so every accepted state is memento-encodable.
 inline constexpr std::uint32_t kMaximumWorkbenchLayoutCommittedExtentDip = 65'535;
 
@@ -136,6 +139,7 @@ enum class EWorkbenchLayoutOperationReason : std::uint8_t {
 	InconsistentHierarchy,
 	TargetNotVisible,
 	TargetNotActive,
+	InjectedFailure,
 	InternalFailure,
 };
 
@@ -164,6 +168,53 @@ struct WorkbenchLayoutOperationMetadata {
 	std::string operationId;
 	std::optional<std::uint64_t> expectedRevision;
 };
+
+//! Transaction changes deliberately exclude Editor opening and native-window work.
+struct WorkbenchLayoutSetPartVisibilityChange {
+	std::string partId;
+	bool visible = true;
+};
+
+struct WorkbenchLayoutRevealContainerChange {
+	std::string containerId;
+};
+
+struct WorkbenchLayoutActivateContainerChange {
+	std::string containerId;
+};
+
+struct WorkbenchLayoutRevealViewChange {
+	std::string viewId;
+};
+
+struct WorkbenchLayoutSetViewVisibilityChange {
+	std::string viewId;
+	bool visible = true;
+};
+
+struct WorkbenchLayoutActivateViewChange {
+	std::string viewId;
+};
+
+struct WorkbenchLayoutMoveContainerChange {
+	std::string containerId;
+	EWorkbenchViewContainerLocation location = EWorkbenchViewContainerLocation::SideBar;
+	std::int32_t order = 0;
+};
+
+struct WorkbenchLayoutSetFocusChange {
+	WorkbenchFocusState focus;
+};
+
+using WorkbenchLayoutTransactionChange = std::variant<
+	WorkbenchLayoutSetPartVisibilityChange,
+	WorkbenchLayoutRevealContainerChange,
+	WorkbenchLayoutActivateContainerChange,
+	WorkbenchLayoutRevealViewChange,
+	WorkbenchLayoutSetViewVisibilityChange,
+	WorkbenchLayoutActivateViewChange,
+	WorkbenchLayoutMoveContainerChange,
+	WorkbenchLayoutSetFocusChange>;
 
 enum class EWorkbenchLayoutChangeKind : std::uint8_t {
 	Initialized,
@@ -197,6 +248,8 @@ struct WorkbenchLayoutOperationResult {
 	EWorkbenchLayoutOperationReason reason = EWorkbenchLayoutOperationReason::None;
 	std::uint64_t revision = 0;
 	bool replayed = false;
+	//! Identifies the rejected logical change when validation or injected execution fails.
+	std::optional<std::size_t> failedChangeIndex;
 	//! Present only for a successful revision-changing operation.
 	std::optional<WorkbenchLayoutChangeBatch> changeBatch;
 	//! The final stable state for every result, including failed requests.

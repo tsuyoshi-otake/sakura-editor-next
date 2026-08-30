@@ -94,6 +94,11 @@ struct ReconcileWorkbenchContributionsRequest {
 	WorkbenchLayoutOperationMetadata operation;
 };
 
+struct ApplyWorkbenchLayoutTransactionRequest {
+	WorkbenchLayoutOperationMetadata operation;
+	std::vector<WorkbenchLayoutTransactionChange> changes;
+};
+
 /*!
 	@brief Revisioned, pure layout state derived from stable workbench contribution IDs.
 
@@ -133,12 +138,16 @@ public:
 	[[nodiscard]] WorkbenchLayoutOperationResult MoveView(const MoveWorkbenchViewRequest& request);
 	[[nodiscard]] WorkbenchLayoutOperationResult SetFocus(const SetWorkbenchFocusRequest& request);
 	[[nodiscard]] WorkbenchLayoutOperationResult SetPanelAlignment(const SetWorkbenchPanelAlignmentRequest& request);
+	/*! @brief Validates a bounded sequence against a shadow state and commits it as one revision. */
+	[[nodiscard]] WorkbenchLayoutOperationResult ApplyTransaction(
+		const ApplyWorkbenchLayoutTransactionRequest& request);
 	[[nodiscard]] WorkbenchLayoutOperationResult Reconcile(const WorkbenchContributionSnapshot& contributions,
 		const ReconcileWorkbenchContributionsRequest& request);
 	[[nodiscard]] std::unique_ptr<IWorkbenchLayoutSubscription> Subscribe(WorkbenchLayoutChangeCallback callback);
 
 private:
 	friend struct WorkbenchLayoutStateMutator;
+	friend struct WorkbenchLayoutStateServiceTestAccess;
 	struct ContributionIndex;
 	struct CompletedOperation;
 
@@ -201,6 +210,8 @@ private:
 	std::mutex m_notificationMutex;
 	std::deque<WorkbenchLayoutChangeBatch> m_notificationQueue;
 	bool m_dispatchingNotifications = false;
+	//! Private deterministic failure seam. Production has no setter; the focused test owns access.
+	std::function<bool(std::size_t)> m_transactionChangeHookForTesting;
 };
 
 } // namespace workbench::layout

@@ -18,6 +18,15 @@
 #include "workbench/layout/WorkbenchLayoutStateService.h"
 
 namespace workbench::layout {
+
+struct WorkbenchLayoutStateServiceTestAccess {
+	static void SetTransactionChangeHook(WorkbenchLayoutStateService& service,
+		std::function<bool(std::size_t)> hook)
+	{
+		service.m_transactionChangeHookForTesting = std::move(hook);
+	}
+};
+
 namespace {
 
 WorkbenchContributionSnapshot Contribute(WorkbenchContributionRegistry& registry)
@@ -98,6 +107,260 @@ bool HasContainer(const WorkbenchLayoutStateSnapshot& snapshot, std::string_view
 bool HasView(const WorkbenchLayoutStateSnapshot& snapshot, std::string_view id)
 {
 	return std::any_of(snapshot.views.begin(), snapshot.views.end(), [id](const auto& value) { return value.viewId == id; });
+}
+
+std::vector<WorkbenchLayoutTransactionChange> AtomicLayoutChanges()
+{
+	return {
+		WorkbenchLayoutSetPartVisibilityChange{
+			.partId = std::string(ids::part::Auxiliarybar), .visible = true },
+		WorkbenchLayoutMoveContainerChange{
+			.containerId = std::string(ids::viewContainer::Explorer),
+			.location = EWorkbenchViewContainerLocation::AuxiliaryBar, .order = 72 },
+		WorkbenchLayoutActivateViewChange{ .viewId = std::string(ids::view::Outline) },
+		WorkbenchLayoutSetFocusChange{ .focus = {
+			.partId = std::string(ids::part::Auxiliarybar),
+			.containerId = std::string(ids::viewContainer::Explorer),
+			.viewId = std::string(ids::view::Outline) } },
+	};
+}
+
+TEST(WorkbenchLayoutTransaction, CommitsOneRevisionAndOneOrderedCallbackThenReplaysExactly)
+{
+	WorkbenchContributionRegistry registry;
+	WorkbenchLayoutStateService state(registry.Snapshot());
+	std::vector<WorkbenchLayoutChangeBatch> notifications;
+	auto subscription = state.Subscribe(
+		[&notifications](const auto& batch) { notifications.push_back(batch); });
+	ASSERT_TRUE(subscription);
+	const ApplyWorkbenchLayoutTransactionRequest request{
+		.operation = { .operationId = "atomic-layout-success", .expectedRevision = 0 },
+		.changes = AtomicLayoutChanges(),
+	};
+
+	const auto committed = state.ApplyTransaction(request);
+	ASSERT_EQ(EWorkbenchLayoutOperationStatus::Succeeded, committed.status);
+	EXPECT_EQ(1U, committed.revision);
+	EXPECT_FALSE(committed.replayed);
+	EXPECT_FALSE(committed.failedChangeIndex);
+	ASSERT_TRUE(committed.changeBatch);
+	EXPECT_EQ(0U, committed.changeBatch->baseRevision);
+	EXPECT_EQ(1U, committed.changeBatch->revision);
+	ASSERT_EQ(6U, committed.changeBatch->changes.size());
+	EXPECT_EQ(EWorkbenchLayoutChangeKind::PartVisibilityChanged,
+		committed.changeBatch->changes[0].kind);
+	EXPECT_EQ(EWorkbenchLayoutChangeKind::ContainerMoved,
+		committed.changeBatch->changes[1].kind);
+	EXPECT_EQ(EWorkbenchLayoutChangeKind::ContainerActivated,
+		committed.changeBatch->changes[2].kind);
+	EXPECT_EQ(EWorkbenchLayoutChangeKind::ContainerActivated,
+		committed.changeBatch->changes[3].kind);
+	EXPECT_EQ(EWorkbenchLayoutChangeKind::ViewRevealed,
+		committed.changeBatch->changes[4].kind);
+	EXPECT_EQ(EWorkbenchLayoutChangeKind::FocusChanged,
+		committed.changeBatch->changes[5].kind);
+	EXPECT_TRUE(Part(committed.snapshot, ids::part::Auxiliarybar).visible);
+	EXPECT_EQ(EWorkbenchViewContainerLocation::AuxiliaryBar,
+		Container(committed.snapshot, ids::viewContainer::Explorer).location);
+	EXPECT_EQ(std::string(ids::view::Outline),
+		*Container(committed.snapshot, ids::viewContainer::Explorer).activeViewId);
+	EXPECT_EQ(std::string(ids::part::Auxiliarybar), *committed.snapshot.focus.partId);
+	ASSERT_EQ(1U, notifications.size());
+	EXPECT_EQ(committed.changeBatch->changes.size(), notifications.front().changes.size());
+
+	const auto replayed = state.ApplyTransaction(request);
+	EXPECT_EQ(EWorkbenchLayoutOperationStatus::Succeeded, replayed.status);
+	EXPECT_TRUE(replayed.replayed);
+	EXPECT_EQ(1U, replayed.revision);
+	EXPECT_EQ(1U, notifications.size());
+	ExpectSameSnapshot(committed.snapshot, state.Snapshot());
+
+	auto conflicting = request;
+	conflicting.changes.back() = WorkbenchLayoutSetFocusChange{
+		.focus = { .partId = std::string(ids::part::Editor) } };
+	const auto conflict = state.ApplyTransaction(conflicting);
+	EXPECT_EQ(EWorkbenchLayoutOperationStatus::Conflict, conflict.status);
+	EXPECT_EQ(EWorkbenchLayoutOperationReason::OperationIdConflict, conflict.reason);
+	EXPECT_EQ(1U, notifications.size());
+	ExpectSameSnapshot(committed.snapshot, state.Snapshot());
+}
+
+TEST(WorkbenchLayoutTransaction, InjectedFailureAtEveryIndexLeavesNoPartialStateOrIntent)
+{
+	WorkbenchContributionRegistry registry;
+	const auto changes = AtomicLayoutChanges();
+	for (std::size_t failureIndex = 0; failureIndex < changes.size(); ++failureIndex) {
+		WorkbenchLayoutStateService state(registry.Snapshot());
+		const auto before = state.Snapshot();
+		const auto mementoBefore = state.MementoSnapshot();
+		std::vector<WorkbenchLayoutChangeBatch> notifications;
+		auto subscription = state.Subscribe(
+			[&notifications](const auto& batch) { notifications.push_back(batch); });
+		ASSERT_TRUE(subscription);
+		WorkbenchLayoutStateServiceTestAccess::SetTransactionChangeHook(state,
+			[failureIndex](const std::size_t index) { return index != failureIndex; });
+		const ApplyWorkbenchLayoutTransactionRequest request{
+			.operation = { .operationId = "atomic-index-failure", .expectedRevision = 0 },
+			.changes = changes,
+		};
+
+		const auto failed = state.ApplyTransaction(request);
+		EXPECT_EQ(EWorkbenchLayoutOperationStatus::Failed, failed.status);
+		EXPECT_EQ(EWorkbenchLayoutOperationReason::InjectedFailure, failed.reason);
+		ASSERT_TRUE(failed.failedChangeIndex);
+		EXPECT_EQ(failureIndex, *failed.failedChangeIndex);
+		EXPECT_FALSE(failed.changeBatch);
+		ExpectSameSnapshot(before, failed.snapshot);
+		ExpectSameSnapshot(before, state.Snapshot());
+		ExpectSameSnapshot(mementoBefore, state.MementoSnapshot());
+		EXPECT_TRUE(notifications.empty());
+
+		// The failed attempt consumed neither state nor replay intent.
+		WorkbenchLayoutStateServiceTestAccess::SetTransactionChangeHook(state, {});
+		const auto retry = state.ApplyTransaction(request);
+		EXPECT_EQ(EWorkbenchLayoutOperationStatus::Succeeded, retry.status);
+		EXPECT_FALSE(retry.replayed);
+		EXPECT_EQ(1U, retry.revision);
+		EXPECT_EQ(1U, notifications.size());
+	}
+}
+
+TEST(WorkbenchLayoutTransaction, ThrowingIndexedPathIsTypedAndDoesNotConsumeReplayIntent)
+{
+	WorkbenchContributionRegistry registry;
+	WorkbenchLayoutStateService state(registry.Snapshot());
+	const auto before = state.Snapshot();
+	const auto mementoBefore = state.MementoSnapshot();
+	std::vector<WorkbenchLayoutChangeBatch> notifications;
+	auto subscription = state.Subscribe(
+		[&notifications](const auto& batch) { notifications.push_back(batch); });
+	ASSERT_TRUE(subscription);
+	WorkbenchLayoutStateServiceTestAccess::SetTransactionChangeHook(state,
+		[](const std::size_t index) {
+			if (index == 2U) throw std::runtime_error("injected transaction failure");
+			return true;
+		});
+	const ApplyWorkbenchLayoutTransactionRequest request{
+		.operation = { .operationId = "atomic-index-throw", .expectedRevision = 0 },
+		.changes = AtomicLayoutChanges(),
+	};
+
+	const auto failed = state.ApplyTransaction(request);
+	EXPECT_EQ(EWorkbenchLayoutOperationStatus::Failed, failed.status);
+	EXPECT_EQ(EWorkbenchLayoutOperationReason::InternalFailure, failed.reason);
+	ASSERT_TRUE(failed.failedChangeIndex);
+	EXPECT_EQ(2U, *failed.failedChangeIndex);
+	ExpectSameSnapshot(before, state.Snapshot());
+	ExpectSameSnapshot(mementoBefore, state.MementoSnapshot());
+	EXPECT_TRUE(notifications.empty());
+
+	WorkbenchLayoutStateServiceTestAccess::SetTransactionChangeHook(state, {});
+	const auto retry = state.ApplyTransaction(request);
+	EXPECT_EQ(EWorkbenchLayoutOperationStatus::Succeeded, retry.status);
+	EXPECT_FALSE(retry.replayed);
+	EXPECT_EQ(1U, notifications.size());
+}
+
+TEST(WorkbenchLayoutTransaction, RejectsInvalidUnknownUnsupportedAndStaleSequencesAtomically)
+{
+	WorkbenchContributionRegistry registry;
+	const auto assertRejected = [&](const std::vector<WorkbenchLayoutTransactionChange>& changes,
+		const EWorkbenchLayoutOperationStatus expectedStatus,
+		const EWorkbenchLayoutOperationReason expectedReason,
+		const std::size_t expectedIndex) {
+		WorkbenchLayoutStateService state(registry.Snapshot());
+		const auto before = state.Snapshot();
+		const auto mementoBefore = state.MementoSnapshot();
+		std::vector<WorkbenchLayoutChangeBatch> notifications;
+		auto subscription = state.Subscribe(
+			[&notifications](const auto& batch) { notifications.push_back(batch); });
+		EXPECT_TRUE(subscription);
+		const auto rejected = state.ApplyTransaction({
+			.operation = { .operationId = "atomic-rejected", .expectedRevision = 0 },
+			.changes = changes,
+		});
+		EXPECT_EQ(expectedStatus, rejected.status);
+		EXPECT_EQ(expectedReason, rejected.reason);
+		ASSERT_TRUE(rejected.failedChangeIndex);
+		EXPECT_EQ(expectedIndex, *rejected.failedChangeIndex);
+		ExpectSameSnapshot(before, state.Snapshot());
+		ExpectSameSnapshot(mementoBefore, state.MementoSnapshot());
+		EXPECT_TRUE(notifications.empty());
+	};
+	const WorkbenchLayoutTransactionChange validPrefix = WorkbenchLayoutSetPartVisibilityChange{
+		.partId = std::string(ids::part::Panel), .visible = true };
+	assertRejected({ validPrefix, WorkbenchLayoutSetPartVisibilityChange{
+		.partId = std::string("bad\0part", 8), .visible = true } },
+		EWorkbenchLayoutOperationStatus::Invalid,
+		EWorkbenchLayoutOperationReason::InvalidRequest, 1U);
+	assertRejected({ validPrefix, WorkbenchLayoutActivateContainerChange{
+		.containerId = "unknown.container" } },
+		EWorkbenchLayoutOperationStatus::UnknownId,
+		EWorkbenchLayoutOperationReason::UnknownContainer, 1U);
+	assertRejected({ validPrefix, WorkbenchLayoutMoveContainerChange{
+		.containerId = std::string(ids::viewContainer::Explorer),
+		.location = EWorkbenchViewContainerLocation::Panel, .order = 80 } },
+		EWorkbenchLayoutOperationStatus::Unsupported,
+		EWorkbenchLayoutOperationReason::CapabilityNotSupported, 1U);
+
+	WorkbenchLayoutStateService staleState(registry.Snapshot());
+	const auto before = staleState.Snapshot();
+	const auto stale = staleState.ApplyTransaction({
+		.operation = { .operationId = "atomic-stale", .expectedRevision = 9 },
+		.changes = AtomicLayoutChanges(),
+	});
+	EXPECT_EQ(EWorkbenchLayoutOperationStatus::Conflict, stale.status);
+	EXPECT_EQ(EWorkbenchLayoutOperationReason::RevisionConflict, stale.reason);
+	EXPECT_FALSE(stale.failedChangeIndex);
+	ExpectSameSnapshot(before, staleState.Snapshot());
+	const auto corrected = staleState.ApplyTransaction({
+		.operation = { .operationId = "atomic-stale", .expectedRevision = 0 },
+		.changes = AtomicLayoutChanges(),
+	});
+	EXPECT_EQ(EWorkbenchLayoutOperationStatus::Succeeded, corrected.status);
+	EXPECT_FALSE(corrected.replayed);
+}
+
+TEST(WorkbenchLayoutTransaction, RejectsEmptyAndOversizedInputAndKeepsReplayBounded)
+{
+	WorkbenchContributionRegistry registry;
+	WorkbenchLayoutStateService state(registry.Snapshot(), 1, 1);
+	const auto before = state.Snapshot();
+	const auto empty = state.ApplyTransaction({
+		.operation = { .operationId = "atomic-empty", .expectedRevision = 0 },
+	});
+	EXPECT_EQ(EWorkbenchLayoutOperationStatus::Invalid, empty.status);
+	EXPECT_EQ(EWorkbenchLayoutOperationReason::InvalidRequest, empty.reason);
+	ExpectSameSnapshot(before, state.Snapshot());
+
+	std::vector<WorkbenchLayoutTransactionChange> oversized(
+		kMaxWorkbenchLayoutTransactionChanges + 1U,
+		WorkbenchLayoutSetPartVisibilityChange{
+			.partId = std::string(ids::part::Panel), .visible = true });
+	const auto tooLarge = state.ApplyTransaction({
+		.operation = { .operationId = "atomic-oversized", .expectedRevision = 0 },
+		.changes = std::move(oversized),
+	});
+	EXPECT_EQ(EWorkbenchLayoutOperationStatus::Invalid, tooLarge.status);
+	ExpectSameSnapshot(before, state.Snapshot());
+
+	const ApplyWorkbenchLayoutTransactionRequest first{
+		.operation = { .operationId = "atomic-replay-first", .expectedRevision = 0 },
+		.changes = { WorkbenchLayoutSetPartVisibilityChange{
+			.partId = std::string(ids::part::Panel), .visible = true } },
+	};
+	ASSERT_EQ(EWorkbenchLayoutOperationStatus::Succeeded, state.ApplyTransaction(first).status);
+	ASSERT_EQ(EWorkbenchLayoutOperationStatus::Succeeded,
+		state.ApplyTransaction({
+			.operation = { .operationId = "atomic-replay-second", .expectedRevision = 1 },
+			.changes = { WorkbenchLayoutSetPartVisibilityChange{
+				.partId = std::string(ids::part::Panel), .visible = false } },
+		}).status);
+	const auto evicted = state.ApplyTransaction(first);
+	EXPECT_EQ(EWorkbenchLayoutOperationStatus::Conflict, evicted.status);
+	EXPECT_EQ(EWorkbenchLayoutOperationReason::RevisionConflict, evicted.reason);
+	EXPECT_FALSE(evicted.replayed);
+	EXPECT_EQ(2U, state.Snapshot().revision);
 }
 
 TEST(WorkbenchContributionRegistry, BuiltinsDeclareOnlyValidatedSupportedLocations)

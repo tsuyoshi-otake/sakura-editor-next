@@ -17,6 +17,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 
 namespace workbench::layout {
@@ -338,6 +339,35 @@ void Deliver(const std::shared_ptr<WorkbenchLayoutSubscriptionState>& state,
 	AppendField(result, operation);
 	AppendOperation(result, metadata);
 	return result;
+}
+
+void AppendTransactionChange(std::string& output, const WorkbenchLayoutTransactionChange& change)
+{
+	AppendUnsigned(output, change.index());
+	std::visit([&output](const auto& value) {
+		using TValue = std::decay_t<decltype(value)>;
+		if constexpr (std::is_same_v<TValue, WorkbenchLayoutSetPartVisibilityChange>) {
+			AppendField(output, value.partId);
+			AppendField(output, value.visible ? "1" : "0");
+		} else if constexpr (std::is_same_v<TValue, WorkbenchLayoutRevealContainerChange>
+			|| std::is_same_v<TValue, WorkbenchLayoutActivateContainerChange>) {
+			AppendField(output, value.containerId);
+		} else if constexpr (std::is_same_v<TValue, WorkbenchLayoutRevealViewChange>
+			|| std::is_same_v<TValue, WorkbenchLayoutActivateViewChange>) {
+			AppendField(output, value.viewId);
+		} else if constexpr (std::is_same_v<TValue, WorkbenchLayoutSetViewVisibilityChange>) {
+			AppendField(output, value.viewId);
+			AppendField(output, value.visible ? "1" : "0");
+		} else if constexpr (std::is_same_v<TValue, WorkbenchLayoutMoveContainerChange>) {
+			AppendField(output, value.containerId);
+			AppendUnsigned(output, static_cast<std::uint8_t>(value.location));
+			AppendField(output, std::to_string(value.order));
+		} else if constexpr (std::is_same_v<TValue, WorkbenchLayoutSetFocusChange>) {
+			AppendField(output, value.focus.partId.value_or(""));
+			AppendField(output, value.focus.containerId.value_or(""));
+			AppendField(output, value.focus.viewId.value_or(""));
+		}
+	}, change);
 }
 
 } // namespace
@@ -820,6 +850,295 @@ struct WorkbenchLayoutStateMutator {
 	}
 		return std::nullopt;
 	}
+
+	struct TransactionShadow {
+		explicit TransactionShadow(const WorkbenchLayoutStateService& service)
+			: parts(service.m_parts)
+			, containers(service.m_containers)
+			, views(service.m_views)
+			, viewsByContainer(service.m_viewsByContainer)
+			, activeContainers(service.m_activeContainers)
+			, deferredActiveContainers(service.m_deferredActiveContainers)
+			, deferredActiveViews(service.m_deferredActiveViews)
+			, deferredFocus(service.m_deferredFocus)
+			, focus(service.m_focus)
+		{
+		}
+
+		std::map<std::string, WorkbenchPartState> parts;
+		std::map<std::string, WorkbenchViewContainerState> containers;
+		std::map<std::string, WorkbenchViewState> views;
+		std::map<std::string, std::set<std::pair<std::int32_t, std::string>>> viewsByContainer;
+		WorkbenchActiveContainerState activeContainers;
+		WorkbenchActiveContainerState deferredActiveContainers;
+		std::map<std::string, std::string> deferredActiveViews;
+		std::optional<WorkbenchFocusState> deferredFocus;
+		WorkbenchFocusState focus;
+	};
+
+	struct TransactionFailure {
+		EWorkbenchLayoutOperationStatus status = EWorkbenchLayoutOperationStatus::Failed;
+		EWorkbenchLayoutOperationReason reason = EWorkbenchLayoutOperationReason::InternalFailure;
+	};
+
+	[[nodiscard]] static std::optional<std::string> FirstVisibleView(
+		const TransactionShadow& shadow, const std::string& containerId)
+	{
+		const auto indexed = shadow.viewsByContainer.find(containerId);
+		if (indexed == shadow.viewsByContainer.end()) return std::nullopt;
+		for (const auto& [order, id] : indexed->second) {
+			(void)order;
+			const auto view = shadow.views.find(id);
+			if (view != shadow.views.end() && view->second.visible) return id;
+		}
+		return std::nullopt;
+	}
+
+	[[nodiscard]] static std::optional<TransactionFailure> ApplyTransactionChange(
+		const WorkbenchLayoutStateService& service,
+		TransactionShadow& shadow,
+		const WorkbenchLayoutTransactionChange& change,
+		std::vector<WorkbenchLayoutChange>& changes)
+	{
+		return std::visit([&](const auto& value) -> std::optional<TransactionFailure> {
+			using TValue = std::decay_t<decltype(value)>;
+			if constexpr (std::is_same_v<TValue, WorkbenchLayoutSetPartVisibilityChange>) {
+				if (!WorkbenchContributionRegistry::IsValidStableId(value.partId))
+					return TransactionFailure{ EWorkbenchLayoutOperationStatus::Invalid,
+						EWorkbenchLayoutOperationReason::InvalidRequest };
+				const auto descriptor = service.m_contributionIndex->parts.find(value.partId);
+				if (descriptor == service.m_contributionIndex->parts.end())
+					return TransactionFailure{ EWorkbenchLayoutOperationStatus::UnknownId,
+						EWorkbenchLayoutOperationReason::UnknownPart };
+				if (!descriptor->second.supportsVisibility)
+					return TransactionFailure{ EWorkbenchLayoutOperationStatus::Unsupported,
+						EWorkbenchLayoutOperationReason::CapabilityNotSupported };
+				auto& part = shadow.parts.at(value.partId);
+				if (part.visible != value.visible) {
+					part.visible = value.visible;
+					changes.push_back({ .kind = EWorkbenchLayoutChangeKind::PartVisibilityChanged,
+						.partId = value.partId });
+				}
+			} else if constexpr (std::is_same_v<TValue, WorkbenchLayoutRevealContainerChange>) {
+				if (!WorkbenchContributionRegistry::IsValidStableId(value.containerId))
+					return TransactionFailure{ EWorkbenchLayoutOperationStatus::Invalid,
+						EWorkbenchLayoutOperationReason::InvalidRequest };
+				if (!service.m_contributionIndex->containers.contains(value.containerId))
+					return TransactionFailure{ EWorkbenchLayoutOperationStatus::UnknownId,
+						EWorkbenchLayoutOperationReason::UnknownContainer };
+				auto& container = shadow.containers.at(value.containerId);
+				auto& active = ActiveContainerFor(shadow.activeContainers, container.location);
+				auto& deferred = ActiveContainerFor(shadow.deferredActiveContainers, container.location);
+				if (!container.visible) {
+					container.visible = true;
+					changes.push_back({ .kind = EWorkbenchLayoutChangeKind::ContainerRevealed,
+						.containerId = value.containerId });
+				}
+				if (!active || (deferred && *deferred == value.containerId)) {
+					active = value.containerId;
+					if (deferred && *deferred == value.containerId) deferred.reset();
+					changes.push_back({ .kind = EWorkbenchLayoutChangeKind::ContainerActivated,
+						.containerId = value.containerId });
+				}
+			} else if constexpr (std::is_same_v<TValue, WorkbenchLayoutActivateContainerChange>) {
+				if (!WorkbenchContributionRegistry::IsValidStableId(value.containerId))
+					return TransactionFailure{ EWorkbenchLayoutOperationStatus::Invalid,
+						EWorkbenchLayoutOperationReason::InvalidRequest };
+				if (!service.m_contributionIndex->containers.contains(value.containerId))
+					return TransactionFailure{ EWorkbenchLayoutOperationStatus::UnknownId,
+						EWorkbenchLayoutOperationReason::UnknownContainer };
+				auto& container = shadow.containers.at(value.containerId);
+				auto& active = ActiveContainerFor(shadow.activeContainers, container.location);
+				auto& deferred = ActiveContainerFor(shadow.deferredActiveContainers, container.location);
+				const bool selectedViewIsLive = container.activeViewId
+					&& shadow.views.contains(*container.activeViewId)
+					&& shadow.views.at(*container.activeViewId).containerId == value.containerId
+					&& shadow.views.at(*container.activeViewId).visible;
+				const auto selectedView = selectedViewIsLive
+					? container.activeViewId : FirstVisibleView(shadow, value.containerId);
+				const bool alreadyActive = active && *active == value.containerId;
+				const bool hasDeferredIntent = deferred.has_value()
+					|| shadow.deferredActiveViews.contains(value.containerId);
+				const bool revealed = !container.visible;
+				const bool selectionChanged = container.activeViewId != selectedView;
+				container.visible = true;
+				container.activeViewId = selectedView;
+				active = value.containerId;
+				deferred.reset();
+				shadow.deferredActiveViews.erase(value.containerId);
+				if (revealed) changes.push_back({ .kind = EWorkbenchLayoutChangeKind::ContainerRevealed,
+					.containerId = value.containerId });
+				if (!alreadyActive || selectionChanged || hasDeferredIntent)
+					changes.push_back({ .kind = EWorkbenchLayoutChangeKind::ContainerActivated,
+						.containerId = value.containerId });
+			} else if constexpr (std::is_same_v<TValue, WorkbenchLayoutRevealViewChange>) {
+				if (!WorkbenchContributionRegistry::IsValidStableId(value.viewId))
+					return TransactionFailure{ EWorkbenchLayoutOperationStatus::Invalid,
+						EWorkbenchLayoutOperationReason::InvalidRequest };
+				const auto descriptor = service.m_contributionIndex->views.find(value.viewId);
+				if (descriptor == service.m_contributionIndex->views.end())
+					return TransactionFailure{ EWorkbenchLayoutOperationStatus::UnknownId,
+						EWorkbenchLayoutOperationReason::UnknownView };
+				auto& view = shadow.views.at(value.viewId);
+				auto& container = shadow.containers.at(view.containerId);
+				if (!view.visible && !descriptor->second.canToggleVisibility)
+					return TransactionFailure{ EWorkbenchLayoutOperationStatus::Unsupported,
+						EWorkbenchLayoutOperationReason::CapabilityNotSupported };
+				auto& active = ActiveContainerFor(shadow.activeContainers, container.location);
+				auto& deferredContainer = ActiveContainerFor(
+					shadow.deferredActiveContainers, container.location);
+				const auto deferredView = shadow.deferredActiveViews.find(view.containerId);
+				const bool materializeView = deferredView != shadow.deferredActiveViews.end()
+					&& deferredView->second == value.viewId;
+				const bool materializeContainer = !active
+					|| (deferredContainer && *deferredContainer == view.containerId);
+				const bool revealed = !view.visible || !container.visible;
+				view.visible = true;
+				container.visible = true;
+				if (revealed || materializeView || materializeContainer)
+					changes.push_back({ .kind = EWorkbenchLayoutChangeKind::ViewRevealed,
+						.containerId = view.containerId, .viewId = value.viewId });
+				if (materializeView) {
+					container.activeViewId = value.viewId;
+					shadow.deferredActiveViews.erase(deferredView);
+				}
+				if (materializeContainer) {
+					active = view.containerId;
+					if (deferredContainer && *deferredContainer == view.containerId)
+						deferredContainer.reset();
+					changes.push_back({ .kind = EWorkbenchLayoutChangeKind::ContainerActivated,
+						.containerId = view.containerId });
+				}
+			} else if constexpr (std::is_same_v<TValue, WorkbenchLayoutSetViewVisibilityChange>) {
+				if (!WorkbenchContributionRegistry::IsValidStableId(value.viewId))
+					return TransactionFailure{ EWorkbenchLayoutOperationStatus::Invalid,
+						EWorkbenchLayoutOperationReason::InvalidRequest };
+				const auto descriptor = service.m_contributionIndex->views.find(value.viewId);
+				if (descriptor == service.m_contributionIndex->views.end())
+					return TransactionFailure{ EWorkbenchLayoutOperationStatus::UnknownId,
+						EWorkbenchLayoutOperationReason::UnknownView };
+				if (!descriptor->second.canToggleVisibility)
+					return TransactionFailure{ EWorkbenchLayoutOperationStatus::Unsupported,
+						EWorkbenchLayoutOperationReason::CapabilityNotSupported };
+				auto& view = shadow.views.at(value.viewId);
+				if (view.visible != value.visible) {
+					view.visible = value.visible;
+					auto& container = shadow.containers.at(view.containerId);
+					if (!view.visible && container.activeViewId
+						&& *container.activeViewId == value.viewId) {
+						container.activeViewId = FirstVisibleView(shadow, view.containerId);
+					}
+					if (view.visible) {
+						const auto deferred = shadow.deferredActiveViews.find(view.containerId);
+						if (deferred != shadow.deferredActiveViews.end()
+							&& deferred->second == value.viewId) {
+							container.activeViewId = value.viewId;
+							shadow.deferredActiveViews.erase(deferred);
+						}
+					}
+					changes.push_back({ .kind = EWorkbenchLayoutChangeKind::ViewRevealed,
+						.containerId = view.containerId, .viewId = value.viewId });
+				}
+			} else if constexpr (std::is_same_v<TValue, WorkbenchLayoutActivateViewChange>) {
+				if (!WorkbenchContributionRegistry::IsValidStableId(value.viewId))
+					return TransactionFailure{ EWorkbenchLayoutOperationStatus::Invalid,
+						EWorkbenchLayoutOperationReason::InvalidRequest };
+				const auto descriptor = service.m_contributionIndex->views.find(value.viewId);
+				if (descriptor == service.m_contributionIndex->views.end())
+					return TransactionFailure{ EWorkbenchLayoutOperationStatus::UnknownId,
+						EWorkbenchLayoutOperationReason::UnknownView };
+				auto& view = shadow.views.at(value.viewId);
+				auto& container = shadow.containers.at(view.containerId);
+				if (!view.visible && !descriptor->second.canToggleVisibility)
+					return TransactionFailure{ EWorkbenchLayoutOperationStatus::Unsupported,
+						EWorkbenchLayoutOperationReason::CapabilityNotSupported };
+				auto& active = ActiveContainerFor(shadow.activeContainers, container.location);
+				auto& deferred = ActiveContainerFor(shadow.deferredActiveContainers, container.location);
+				const bool alreadyActive = active && *active == view.containerId;
+				const bool hasDeferredIntent = deferred.has_value()
+					|| shadow.deferredActiveViews.contains(view.containerId);
+				const bool changed = !container.visible || !view.visible
+					|| container.activeViewId != std::optional<std::string>{ value.viewId };
+				view.visible = true;
+				container.visible = true;
+				container.activeViewId = value.viewId;
+				active = view.containerId;
+				deferred.reset();
+				shadow.deferredActiveViews.erase(view.containerId);
+				if (changed) changes.push_back({ .kind = EWorkbenchLayoutChangeKind::ViewRevealed,
+					.containerId = view.containerId, .viewId = value.viewId });
+				if (!alreadyActive || hasDeferredIntent)
+					changes.push_back({ .kind = EWorkbenchLayoutChangeKind::ContainerActivated,
+						.containerId = view.containerId });
+			} else if constexpr (std::is_same_v<TValue, WorkbenchLayoutMoveContainerChange>) {
+				if (!WorkbenchContributionRegistry::IsValidStableId(value.containerId)
+					|| !IsValidLocation(value.location))
+					return TransactionFailure{ EWorkbenchLayoutOperationStatus::Invalid,
+						EWorkbenchLayoutOperationReason::InvalidRequest };
+				const auto descriptor = service.m_contributionIndex->containers.find(value.containerId);
+				if (descriptor == service.m_contributionIndex->containers.end())
+					return TransactionFailure{ EWorkbenchLayoutOperationStatus::UnknownId,
+						EWorkbenchLayoutOperationReason::UnknownContainer };
+				if (!descriptor->second.supportedLocations.Contains(ToContributionLocation(value.location)))
+					return TransactionFailure{ EWorkbenchLayoutOperationStatus::Unsupported,
+						EWorkbenchLayoutOperationReason::CapabilityNotSupported };
+				auto& container = shadow.containers.at(value.containerId);
+				if (container.location != value.location || container.order != value.order) {
+					const auto formerLocation = container.location;
+					const bool wasActive = ActiveContainerFor(shadow.activeContainers, formerLocation)
+						== std::optional<std::string>{ value.containerId };
+					container.location = value.location;
+					container.order = value.order;
+					changes.push_back({ .kind = EWorkbenchLayoutChangeKind::ContainerMoved,
+						.containerId = value.containerId });
+					if (wasActive && formerLocation != value.location) {
+						const auto fallback = FirstVisibleContainer(shadow.containers, formerLocation);
+						ActiveContainerFor(shadow.activeContainers, formerLocation) = fallback;
+						ActiveContainerFor(shadow.activeContainers, value.location) = value.containerId;
+						ActiveContainerFor(shadow.deferredActiveContainers, formerLocation).reset();
+						ActiveContainerFor(shadow.deferredActiveContainers, value.location).reset();
+						if (fallback) changes.push_back({ .kind = EWorkbenchLayoutChangeKind::ContainerActivated,
+							.containerId = *fallback });
+						changes.push_back({ .kind = EWorkbenchLayoutChangeKind::ContainerActivated,
+							.containerId = value.containerId });
+					} else if (!ActiveContainerFor(shadow.activeContainers, value.location)
+						&& container.visible) {
+						ActiveContainerFor(shadow.activeContainers, value.location) = value.containerId;
+						changes.push_back({ .kind = EWorkbenchLayoutChangeKind::ContainerActivated,
+							.containerId = value.containerId });
+					}
+				}
+			} else if constexpr (std::is_same_v<TValue, WorkbenchLayoutSetFocusChange>) {
+				if (!IsValidFocus(value.focus))
+					return TransactionFailure{ EWorkbenchLayoutOperationStatus::Invalid,
+						EWorkbenchLayoutOperationReason::InvalidRequest };
+				if (value.focus.partId
+					&& !service.m_contributionIndex->parts.contains(*value.focus.partId))
+					return TransactionFailure{ EWorkbenchLayoutOperationStatus::UnknownId,
+						EWorkbenchLayoutOperationReason::UnknownPart };
+				if (value.focus.containerId
+					&& !service.m_contributionIndex->containers.contains(*value.focus.containerId))
+					return TransactionFailure{ EWorkbenchLayoutOperationStatus::UnknownId,
+						EWorkbenchLayoutOperationReason::UnknownContainer };
+				if (value.focus.viewId
+					&& !service.m_contributionIndex->views.contains(*value.focus.viewId))
+					return TransactionFailure{ EWorkbenchLayoutOperationStatus::UnknownId,
+						EWorkbenchLayoutOperationReason::UnknownView };
+				const auto liveReason = ValidateLiveFocus(value.focus, shadow.parts,
+					shadow.containers, shadow.views, shadow.activeContainers);
+				if (liveReason != EWorkbenchLayoutOperationReason::None)
+					return TransactionFailure{ EWorkbenchLayoutOperationStatus::Invalid, liveReason };
+				if (shadow.focus != value.focus || shadow.deferredFocus) {
+					shadow.focus = value.focus;
+					shadow.deferredFocus.reset();
+					changes.push_back({ .kind = EWorkbenchLayoutChangeKind::FocusChanged,
+						.partId = value.focus.partId, .containerId = value.focus.containerId,
+						.viewId = value.focus.viewId });
+				}
+			}
+			return std::nullopt;
+		}, change);
+	}
 };
 
 WorkbenchLayoutOperationResult WorkbenchLayoutStateService::SetPartVisibility(const SetWorkbenchPartVisibilityRequest& request)
@@ -1159,6 +1478,170 @@ WorkbenchLayoutOperationResult WorkbenchLayoutStateService::SetPanelAlignment(co
 		m_panelAlignment = request.alignment;
 		return CommitLocked({ { .kind = EWorkbenchLayoutChangeKind::Reconciled } });
 	});
+}
+
+WorkbenchLayoutOperationResult WorkbenchLayoutStateService::ApplyTransaction(
+	const ApplyWorkbenchLayoutTransactionRequest& request)
+{
+	WorkbenchLayoutOperationResult result;
+	bool drain = false;
+	{
+		std::scoped_lock lock(m_mutex);
+		if (!WorkbenchContributionRegistry::IsValidStableId(request.operation.operationId))
+			return ResultLocked(EWorkbenchLayoutOperationStatus::Invalid,
+				EWorkbenchLayoutOperationReason::InvalidOperationId);
+		if (request.changes.empty()
+			|| request.changes.size() > kMaxWorkbenchLayoutTransactionChanges) {
+			return ResultLocked(EWorkbenchLayoutOperationStatus::Invalid,
+				EWorkbenchLayoutOperationReason::InvalidRequest);
+		}
+
+		std::optional<std::size_t> applyingIndex;
+		try {
+			auto fingerprint = FingerprintPrefix("layout-transaction", request.operation);
+			AppendUnsigned(fingerprint, request.changes.size());
+			for (const auto& change : request.changes) AppendTransactionChange(fingerprint, change);
+
+			bool handled = false;
+			result = CheckOperationLocked(request.operation, fingerprint, handled);
+			if (handled) return result;
+			if (!IsExpectedRevisionCurrentLocked(request.operation))
+				return ResultLocked(EWorkbenchLayoutOperationStatus::Conflict,
+					EWorkbenchLayoutOperationReason::RevisionConflict);
+			if (m_revision == std::numeric_limits<std::uint64_t>::max())
+				return ResultLocked(EWorkbenchLayoutOperationStatus::Conflict,
+					EWorkbenchLayoutOperationReason::RevisionExhausted);
+
+			WorkbenchLayoutStateMutator::TransactionShadow shadow(*this);
+			std::vector<WorkbenchLayoutChange> changes;
+			changes.reserve(request.changes.size() * 2U + 1U);
+			for (std::size_t index = 0; index < request.changes.size(); ++index) {
+				applyingIndex = index;
+				if (m_transactionChangeHookForTesting
+					&& !m_transactionChangeHookForTesting(index)) {
+					auto failed = ResultLocked(EWorkbenchLayoutOperationStatus::Failed,
+						EWorkbenchLayoutOperationReason::InjectedFailure);
+					failed.failedChangeIndex = index;
+					return failed;
+				}
+				if (const auto failure = WorkbenchLayoutStateMutator::ApplyTransactionChange(
+					*this, shadow, request.changes[index], changes)) {
+					auto failed = ResultLocked(failure->status, failure->reason);
+					failed.failedChangeIndex = index;
+					return failed;
+				}
+			}
+
+			if (ValidateLiveFocus(shadow.focus, shadow.parts, shadow.containers,
+				shadow.views, shadow.activeContainers) != EWorkbenchLayoutOperationReason::None) {
+				shadow.focus = FallbackFocus(shadow.parts, shadow.containers,
+					shadow.views, shadow.activeContainers);
+				shadow.deferredFocus.reset();
+				changes.push_back({ .kind = EWorkbenchLayoutChangeKind::FocusChanged,
+					.partId = shadow.focus.partId, .containerId = shadow.focus.containerId,
+					.viewId = shadow.focus.viewId });
+			}
+			applyingIndex.reset();
+
+			if (changes.empty()) {
+				result = ResultLocked(EWorkbenchLayoutOperationStatus::NotApplicable,
+					EWorkbenchLayoutOperationReason::AlreadyInRequestedState);
+				auto nextCompletedOperations = m_completedOperations;
+				auto nextCompletedOperationOrder = m_completedOperationOrder;
+				nextCompletedOperations.emplace(request.operation.operationId,
+					CompletedOperation{ .fingerprint = std::move(fingerprint), .result = result });
+				nextCompletedOperationOrder.push_back(request.operation.operationId);
+				while (nextCompletedOperationOrder.size() > m_maxCompletedOperations) {
+					nextCompletedOperations.erase(nextCompletedOperationOrder.front());
+					nextCompletedOperationOrder.pop_front();
+				}
+				m_completedOperations.swap(nextCompletedOperations);
+				m_completedOperationOrder.swap(nextCompletedOperationOrder);
+				return result;
+			}
+
+			const auto baseRevision = m_revision;
+			const auto nextRevision = baseRevision + 1U;
+			WorkbenchLayoutStateSnapshot nextSnapshot{
+				.generation = m_generation,
+				.revision = nextRevision,
+				.activeContainers = shadow.activeContainers,
+				.panelAlignment = m_panelAlignment,
+				.focus = shadow.focus,
+			};
+			nextSnapshot.parts.reserve(shadow.parts.size() + m_deferredParts.size());
+			nextSnapshot.containers.reserve(shadow.containers.size() + m_deferredContainers.size());
+			nextSnapshot.views.reserve(shadow.views.size() + m_deferredViews.size());
+			for (const auto& [id, value] : shadow.parts) { (void)id; nextSnapshot.parts.push_back(value); }
+			for (const auto& [id, value] : shadow.containers) { (void)id; nextSnapshot.containers.push_back(value); }
+			for (const auto& [id, value] : shadow.views) { (void)id; nextSnapshot.views.push_back(value); }
+			for (const auto& [id, value] : m_deferredParts) { (void)id; nextSnapshot.parts.push_back(value); }
+			for (const auto& [id, value] : m_deferredContainers) { (void)id; nextSnapshot.containers.push_back(value); }
+			for (const auto& [id, value] : m_deferredViews) { (void)id; nextSnapshot.views.push_back(value); }
+
+			WorkbenchLayoutChangeBatch batch{
+				.generation = m_generation,
+				.baseRevision = baseRevision,
+				.revision = nextRevision,
+				.changes = std::move(changes),
+			};
+			result = {
+				.status = EWorkbenchLayoutOperationStatus::Succeeded,
+				.revision = nextRevision,
+				.changeBatch = batch,
+				.snapshot = nextSnapshot,
+			};
+
+			// Stage replay, rollback, and notification intent before changing any live field.
+			auto nextCompletedOperations = m_completedOperations;
+			auto nextCompletedOperationOrder = m_completedOperationOrder;
+			nextCompletedOperations.emplace(request.operation.operationId,
+				CompletedOperation{ .fingerprint = std::move(fingerprint), .result = result });
+			nextCompletedOperationOrder.push_back(request.operation.operationId);
+			while (nextCompletedOperationOrder.size() > m_maxCompletedOperations) {
+				nextCompletedOperations.erase(nextCompletedOperationOrder.front());
+				nextCompletedOperationOrder.pop_front();
+			}
+			auto nextStableSnapshot = nextSnapshot;
+			auto nextStableDeferredFocus = shadow.deferredFocus;
+			auto nextStableDeferredActiveViews = shadow.deferredActiveViews;
+			auto nextStableDeferredViewPlacements = m_deferredViewPlacements;
+			auto nextStableDeferredActiveContainers = shadow.deferredActiveContainers;
+
+			std::scoped_lock notificationLock(m_notificationMutex);
+			auto nextNotificationQueue = m_notificationQueue;
+			nextNotificationQueue.push_back(batch);
+			drain = !m_dispatchingNotifications;
+
+			// All remaining operations are allocator-preserving swaps or scalar assignments.
+			m_parts.swap(shadow.parts);
+			m_containers.swap(shadow.containers);
+			m_views.swap(shadow.views);
+			m_viewsByContainer.swap(shadow.viewsByContainer);
+			std::swap(m_activeContainers, shadow.activeContainers);
+			std::swap(m_deferredActiveContainers, shadow.deferredActiveContainers);
+			m_deferredActiveViews.swap(shadow.deferredActiveViews);
+			std::swap(m_deferredFocus, shadow.deferredFocus);
+			std::swap(m_focus, shadow.focus);
+			m_revision = nextRevision;
+			std::swap(m_lastStableSnapshot, nextStableSnapshot);
+			std::swap(m_lastStableDeferredFocus, nextStableDeferredFocus);
+			m_lastStableDeferredActiveViews.swap(nextStableDeferredActiveViews);
+			m_lastStableDeferredViewPlacements.swap(nextStableDeferredViewPlacements);
+			std::swap(m_lastStableDeferredActiveContainers, nextStableDeferredActiveContainers);
+			m_completedOperations.swap(nextCompletedOperations);
+			m_completedOperationOrder.swap(nextCompletedOperationOrder);
+			m_notificationQueue.swap(nextNotificationQueue);
+			if (drain) m_dispatchingNotifications = true;
+		} catch (...) {
+			result = ResultLocked(EWorkbenchLayoutOperationStatus::Failed,
+				EWorkbenchLayoutOperationReason::InternalFailure);
+			result.failedChangeIndex = applyingIndex;
+			return result;
+		}
+	}
+	if (drain) DrainNotifications();
+	return result;
 }
 
 WorkbenchLayoutOperationResult WorkbenchLayoutStateService::Reconcile(const WorkbenchContributionSnapshot& contributions,
