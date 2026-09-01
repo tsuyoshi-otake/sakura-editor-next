@@ -15,6 +15,8 @@
 
 namespace terminal::tmux {
 
+class TmuxWaitChannelServiceTestProbe;
+
 struct TmuxWaitChannelLimits final {
 	std::size_t maximumChannels{ 256 };
 	std::size_t maximumWaiters{ 128 };
@@ -63,6 +65,11 @@ public:
 	[[nodiscard]] bool IsStopping() const noexcept;
 
 private:
+	friend class TmuxWaitChannelServiceTestProbe;
+
+	[[nodiscard]] std::size_t PendingWaiterCountForTesting(std::string_view channel) const noexcept;
+	[[nodiscard]] std::size_t PendingLockerCountForTesting(std::string_view channel) const noexcept;
+
 	struct State;
 	std::shared_ptr<State> m_state;
 };

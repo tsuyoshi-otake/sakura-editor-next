@@ -16,11 +16,41 @@
 #include <thread>
 #include <vector>
 
+namespace terminal::tmux {
+
+class TmuxWaitChannelServiceTestProbe final {
+public:
+	[[nodiscard]] static std::size_t PendingWaiterCount(
+		const TmuxWaitChannelService& service, const std::string_view channel) noexcept
+	{
+		return service.PendingWaiterCountForTesting(channel);
+	}
+
+	[[nodiscard]] static std::size_t PendingLockerCount(
+		const TmuxWaitChannelService& service, const std::string_view channel) noexcept
+	{
+		return service.PendingLockerCountForTesting(channel);
+	}
+};
+
+} // namespace terminal::tmux
+
 namespace {
 
 using namespace terminal;
 using namespace terminal::tmux;
 using namespace std::chrono_literals;
+
+template<typename Observe>
+bool WaitForObservedCount(Observe&& observe, const std::size_t expected,
+	const std::chrono::steady_clock::time_point deadline)
+{
+	do {
+		if (observe() == expected) return true;
+		std::this_thread::yield();
+	} while (std::chrono::steady_clock::now() < deadline);
+	return observe() == expected;
+}
 
 template<typename Id>
 Id MakeId(const std::uint64_t value)
@@ -196,19 +226,23 @@ TmuxRuntimeAdapter MakeAdapter(FakeRuntimeService& runtime, TmuxWaitChannelServi
 TEST(TmuxWaitChannelService, SignalReleasesAllWaitersAndPendingSignalIsConsumed)
 {
 	TmuxWaitChannelService service;
-	std::atomic<int> ready{};
 	TmuxWaitResult first;
 	TmuxWaitResult second;
 	std::thread waiter1([&] {
-		++ready;
 		first = service.Wait("ready", std::chrono::steady_clock::now() + 2s);
 	});
 	std::thread waiter2([&] {
-		++ready;
 		second = service.Wait("ready", std::chrono::steady_clock::now() + 2s);
 	});
-	while (ready.load() != 2) std::this_thread::yield();
-	std::this_thread::sleep_for(10ms);
+	const auto waitersRegistered = WaitForObservedCount(
+		[&] { return TmuxWaitChannelServiceTestProbe::PendingWaiterCount(service, "ready"); },
+		2, std::chrono::steady_clock::now() + 2s);
+	if (!waitersRegistered) {
+		service.BeginShutdown();
+		waiter1.join();
+		waiter2.join();
+	}
+	ASSERT_TRUE(waitersRegistered);
 	EXPECT_TRUE(service.Signal("ready").Succeeded());
 	waiter1.join();
 	waiter2.join();
@@ -225,25 +259,55 @@ TEST(TmuxWaitChannelService, LockTransfersInFifoOrderAndShutdownWakesBlockedWait
 {
 	TmuxWaitChannelService service;
 	ASSERT_TRUE(service.Lock("lock", std::chrono::steady_clock::now() + 100ms).Succeeded());
-	std::atomic<int> ready{};
 	TmuxWaitResult first;
 	TmuxWaitResult second;
-	std::thread locker1([&] { ++ready; first = service.Lock("lock", std::chrono::steady_clock::now() + 2s); });
-	std::thread locker2([&] { ++ready; second = service.Lock("lock", std::chrono::steady_clock::now() + 2s); });
-	while (ready.load() != 2) std::this_thread::yield();
-	std::this_thread::sleep_for(10ms);
-	ASSERT_TRUE(service.Unlock("lock").Succeeded());
+	std::thread locker1([&] { first = service.Lock("lock", std::chrono::steady_clock::now() + 2s); });
+	const auto firstRegistered = WaitForObservedCount(
+		[&] { return TmuxWaitChannelServiceTestProbe::PendingLockerCount(service, "lock"); },
+		1, std::chrono::steady_clock::now() + 2s);
+	if (!firstRegistered) {
+		service.BeginShutdown();
+		locker1.join();
+		FAIL() << "First locker did not register before its deadline.";
+	}
+	std::thread locker2([&] { second = service.Lock("lock", std::chrono::steady_clock::now() + 2s); });
+	const auto secondRegistered = WaitForObservedCount(
+		[&] { return TmuxWaitChannelServiceTestProbe::PendingLockerCount(service, "lock"); },
+		2, std::chrono::steady_clock::now() + 2s);
+	if (!secondRegistered) {
+		service.BeginShutdown();
+		locker1.join();
+		locker2.join();
+		FAIL() << "Second locker did not register behind the first locker.";
+	}
+	if (!service.Unlock("lock").Succeeded()) {
+		service.BeginShutdown();
+		locker1.join();
+		locker2.join();
+		FAIL() << "Initial lock could not transfer to the first queued locker.";
+	}
 	locker1.join();
-	ASSERT_TRUE(first.Succeeded());
-	ASSERT_TRUE(service.Unlock("lock").Succeeded());
+	if (!first.Succeeded()) {
+		service.BeginShutdown();
+		locker2.join();
+		FAIL() << "First queued locker did not receive the lock.";
+	}
+	if (!service.Unlock("lock").Succeeded()) {
+		service.BeginShutdown();
+		locker2.join();
+		FAIL() << "First queued locker could not transfer to the second locker.";
+	}
 	locker2.join();
 	EXPECT_TRUE(second.Succeeded());
 	ASSERT_TRUE(service.Lock("shutdown", std::chrono::steady_clock::now() + 100ms).Succeeded());
 	TmuxWaitResult stopped;
 	std::thread blocked([&] { stopped = service.Lock("shutdown", std::chrono::steady_clock::now() + 2s); });
-	std::this_thread::sleep_for(10ms);
+	const auto blockedRegistered = WaitForObservedCount(
+		[&] { return TmuxWaitChannelServiceTestProbe::PendingLockerCount(service, "shutdown"); },
+		1, std::chrono::steady_clock::now() + 2s);
 	service.BeginShutdown();
 	blocked.join();
+	ASSERT_TRUE(blockedRegistered);
 	EXPECT_EQ(TmuxWaitCode::Stopped, stopped.code);
 }
 

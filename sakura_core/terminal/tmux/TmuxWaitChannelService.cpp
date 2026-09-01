@@ -253,4 +253,24 @@ bool TmuxWaitChannelService::IsStopping() const noexcept
 	return state->stopping;
 }
 
+std::size_t TmuxWaitChannelService::PendingWaiterCountForTesting(const std::string_view channelName) const noexcept
+{
+	const auto state = m_state;
+	if (!state) return 0;
+	std::lock_guard lock(state->mutex);
+	const auto found = std::find_if(state->channels.begin(), state->channels.end(),
+		[channelName](const auto& entry) { return entry.first == channelName; });
+	return found == state->channels.end() ? 0 : found->second->waiters;
+}
+
+std::size_t TmuxWaitChannelService::PendingLockerCountForTesting(const std::string_view channelName) const noexcept
+{
+	const auto state = m_state;
+	if (!state) return 0;
+	std::lock_guard lock(state->mutex);
+	const auto found = std::find_if(state->channels.begin(), state->channels.end(),
+		[channelName](const auto& entry) { return entry.first == channelName; });
+	return found == state->channels.end() ? 0 : found->second->lockers.size();
+}
+
 } // namespace terminal::tmux
