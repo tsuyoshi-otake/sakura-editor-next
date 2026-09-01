@@ -100,7 +100,7 @@ class ReleasePromotionSourceCheckTests(unittest.TestCase):
         selftest_exit = self.text.index("if ($SelfTest)")
         self.assertLess(selftest_exit, self.text.index("$tagMatch = [regex]::Match"))
         self.assertLess(selftest_exit, self.text.index("Invoke-Git -Arguments"))
-        self.assertLess(selftest_exit, self.text.index("Invoke-RestMethod"))
+        self.assertLess(selftest_exit, self.text.index("Invoke-WebRequest"))
 
         for contract in (
             "all nine trusted checks must be recorded",
@@ -119,6 +119,27 @@ class ReleasePromotionSourceCheckTests(unittest.TestCase):
         ):
             self.assertIn(contract, self.text)
 
+    def test_api_json_preserves_exact_timestamp_strings(self) -> None:
+        helper_start = self.text.index("function ConvertFrom-GitHubJson")
+        helper_end = self.text.index("function Get-RequiredSourceCheckNames", helper_start)
+        helper = self.text[helper_start:helper_end]
+
+        self.assertIn("Get-Command ConvertFrom-Json", helper)
+        self.assertIn("$convertFromJson.Parameters.ContainsKey('DateKind')", helper)
+        self.assertIn("$parameters.DateKind = 'String'", helper)
+        self.assertIn("return ConvertFrom-Json @parameters", helper)
+        self.assertNotIn("Invoke-RestMethod", self.text)
+        self.assertIn("Invoke-WebRequest -Method Get", self.text)
+        self.assertIn(
+            "$checkRunsResponse = ConvertFrom-GitHubJson -Json ([string] $checkRunsHttpResponse.Content)",
+            self.text,
+        )
+        self.assertIn(
+            "GitHub JSON timestamps must remain strings on every supported PowerShell host",
+            self.text,
+        )
+        self.assertIn("GitHub JSON timestamp text must be preserved exactly", self.text)
+
     def test_timestamp_grammar_is_ascii_bounded_and_selftested(self) -> None:
         guard = f"$Value -cnotmatch '{TIMESTAMP_GUARD}'"
         guard_index = self.text.index(guard)
@@ -134,6 +155,11 @@ class ReleasePromotionSourceCheckTests(unittest.TestCase):
         self.assertIn("$missingStartedAt.PSObject.Properties.Remove('started_at')", self.text)
         self.assertIn("$null,", self.text)
         self.assertIn("'must not be later than completed_at'", self.text)
+        self.assertIn("$conclusion -ceq 'skipped'", self.text)
+        self.assertIn("$reverseTimestampSkew -le [TimeSpan]::FromSeconds(1)", self.text)
+        self.assertIn("$oneSecondSkippedSkew", self.text)
+        self.assertIn("$twoSecondSkippedSkew", self.text)
+        self.assertIn("$successfulTimestampSkew", self.text)
 
     def test_no_network_selftest_passes_on_every_available_powershell_host(self) -> None:
         hosts: list[str] = []

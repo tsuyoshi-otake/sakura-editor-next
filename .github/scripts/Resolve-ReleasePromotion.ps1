@@ -49,6 +49,19 @@ function Write-Utf8NoBomFile {
     [IO.File]::WriteAllText($fullPath, $Content, [Text.UTF8Encoding]::new($false))
 }
 
+function ConvertFrom-GitHubJson {
+    param(
+        [Parameter(Mandatory)] [string] $Json
+    )
+
+    $parameters = @{ InputObject = $Json }
+    $convertFromJson = Get-Command ConvertFrom-Json -ErrorAction Stop
+    if ($convertFromJson.Parameters.ContainsKey('DateKind')) {
+        $parameters.DateKind = 'String'
+    }
+    return ConvertFrom-Json @parameters
+}
+
 function Get-RequiredSourceCheckNames {
     return @(
         'check-encoding',
@@ -257,7 +270,10 @@ function ConvertTo-ValidatedCheckRuns {
             $conclusion = [string] $conclusionProperty.Value
             $completedAt = ConvertFrom-StrictUtcTimestamp -Value $completedAtProperty.Value `
                 -Description "$description completed_at"
-            if ($startedAt -gt $completedAt) {
+            $reverseTimestampSkew = $startedAt - $completedAt
+            $allowedSkippedTimestampSkew = $conclusion -ceq 'skipped' -and
+                $reverseTimestampSkew -le [TimeSpan]::FromSeconds(1)
+            if ($startedAt -gt $completedAt -and -not $allowedSkippedTimestampSkew) {
                 throw "$description started_at must not be later than completed_at."
             }
         }
@@ -427,6 +443,13 @@ function Invoke-SourceCheckSelfTest {
         throw "Self-test assertion failed: expected rejection containing '$ExpectedMessage'."
     }
 
+    $timestampJson = '{"started_at":"2026-09-01T14:37:41Z"}'
+    $timestampReceipt = ConvertFrom-GitHubJson -Json $timestampJson
+    Assert-True ($timestampReceipt.started_at -is [string]) `
+        'GitHub JSON timestamps must remain strings on every supported PowerShell host'
+    Assert-True ($timestampReceipt.started_at -ceq '2026-09-01T14:37:41Z') `
+        'GitHub JSON timestamp text must be preserved exactly'
+
     $allSuccess = [System.Collections.Generic.List[object]]::new()
     for ($index = 0; $index -lt $required.Count; ++$index) {
         $allSuccess.Add((New-CheckRun -Name $required[$index] -Id (1000 + $index)))
@@ -540,6 +563,24 @@ function Invoke-SourceCheckSelfTest {
     $completedBeforeStart = New-CheckRun -Name $required[0] -Id 3014 `
         -StartedAt '2026-08-30T00:20:00Z'
     Assert-MalformedFirstRunRejected $completedBeforeStart 'must not be later than completed_at'
+
+    $oneSecondSkippedSkew = New-CheckRun -Name 'unrelated-skipped-check' -Id 3034 `
+        -Status 'completed' -Conclusion 'skipped' -StartedAt '2026-08-30T00:10:01Z' `
+        -DetailsUrl "https://github.com/$repository/runs/3034" -ExternalId ''
+    @(Resolve-RequiredSourceChecks -CheckRuns (@($allSuccess) + $oneSecondSkippedSkew) `
+        -RequiredCheckNames $required -TrustedAppId $trustedAppId `
+        -Repository $repository -SourceSha $sourceSha) | Out-Null
+
+    $twoSecondSkippedSkew = New-CheckRun -Name 'unrelated-skipped-check' -Id 3035 `
+        -Status 'completed' -Conclusion 'skipped' -StartedAt '2026-08-30T00:10:02Z' `
+        -DetailsUrl "https://github.com/$repository/runs/3035" -ExternalId ''
+    Assert-Rejected -Runs (@($allSuccess) + $twoSecondSkippedSkew) `
+        -ExpectedMessage 'must not be later than completed_at'
+
+    $successfulTimestampSkew = New-CheckRun -Name $required[0] -Id 3036 `
+        -StartedAt '2026-08-30T00:10:01Z'
+    Assert-MalformedFirstRunRejected $successfulTimestampSkew `
+        'must not be later than completed_at'
 
     $malformedUnrelated = New-CheckRun -Name 'unrelated-check' -Id 'numeric-string'
     Assert-Rejected -Runs (@($allSuccess) + $malformedUnrelated) `
@@ -711,7 +752,8 @@ $headers = @{
     'X-GitHub-Api-Version' = '2022-11-28'
 }
 $checkRunsUri = "$apiRoot/repos/$Repository/commits/$sourceSha/check-runs?per_page=100&filter=latest"
-$checkRunsResponse = Invoke-RestMethod -Method Get -Uri $checkRunsUri -Headers $headers
+$checkRunsHttpResponse = Invoke-WebRequest -Method Get -Uri $checkRunsUri -Headers $headers -UseBasicParsing
+$checkRunsResponse = ConvertFrom-GitHubJson -Json ([string] $checkRunsHttpResponse.Content)
 
 # Validate the complete trusted-main source gate. MinGW remains advisory for
 # pull requests and ordinary branch protection, but both trusted main-push

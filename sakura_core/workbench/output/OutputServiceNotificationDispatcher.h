@@ -37,8 +37,9 @@ public:
 		std::size_t maximumPendingNotifications{ 512 };
 	};
 
+	OutputServiceNotificationDispatcher(std::mutex& modelMutex, std::condition_variable& drainCondition);
 	OutputServiceNotificationDispatcher(std::mutex& modelMutex, std::condition_variable& drainCondition,
-		Limits limits = {});
+		Limits limits);
 	~OutputServiceNotificationDispatcher() = default;
 
 	OutputServiceNotificationDispatcher(const OutputServiceNotificationDispatcher&) = delete;

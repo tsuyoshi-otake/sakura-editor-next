@@ -14,6 +14,12 @@
 namespace workbench::output {
 
 OutputServiceNotificationDispatcher::OutputServiceNotificationDispatcher(
+	std::mutex& modelMutex, std::condition_variable& drainCondition)
+	: OutputServiceNotificationDispatcher(modelMutex, drainCondition, Limits{})
+{
+}
+
+OutputServiceNotificationDispatcher::OutputServiceNotificationDispatcher(
 	std::mutex& modelMutex, std::condition_variable& drainCondition, Limits limits)
 	: m_modelMutex(modelMutex)
 	, m_drainCondition(drainCondition)
