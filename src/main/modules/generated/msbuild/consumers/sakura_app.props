@@ -131,6 +131,13 @@
       <SetConfiguration Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Configuration=Release</SetConfiguration>
       <SetPlatform Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Platform=x64</SetPlatform>
     </ProjectReference>
+    <ProjectReference Include="$(MSBuildProjectDirectory)\..\src\main\modules\generated\msbuild\projects\sakura_terminal_cli.vcxproj">
+      <Project>{62F1D9FB-962E-5CEE-9362-FFCD6A337614}</Project>
+      <SetConfiguration Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Configuration=Debug</SetConfiguration>
+      <SetPlatform Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Platform=x64</SetPlatform>
+      <SetConfiguration Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Configuration=Release</SetConfiguration>
+      <SetPlatform Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Platform=x64</SetPlatform>
+    </ProjectReference>
     <ProjectReference Include="$(MSBuildProjectDirectory)\..\src\main\modules\generated\msbuild\projects\sakura_terminal_tmux_core.vcxproj">
       <Project>{72627426-7505-54B3-AD35-ED90B9AFC29D}</Project>
       <SetConfiguration Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Configuration=Debug</SetConfiguration>

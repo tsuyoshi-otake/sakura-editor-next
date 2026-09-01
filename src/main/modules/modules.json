@@ -1715,6 +1715,26 @@
       ]
     },
     {
+      "id": "sakura-app-to-terminal-cli",
+      "from": "sakura_app",
+      "to": "sakura_terminal_cli",
+      "kind": "implementation",
+      "phases": ["compile", "link"],
+      "visibility": "private",
+      "propagation": "none",
+      "contract_profile": "internal-cpp-value",
+      "condition": true,
+      "required": true,
+      "witnesses": [
+        {"context": "msvc-x64-debug", "probe": "sakura_core/terminal/cli/SakuraHarnessProcessEntry.cpp"},
+        {"context": "cmake-msvc-x64-debug", "probe": "sakura_core/terminal/cli/SakuraHarnessProcessEntry.cpp"},
+        {"context": "msvc-x64-release", "probe": "sakura_core/terminal/cli/SakuraHarnessProcessEntry.cpp"},
+        {"context": "cmake-msvc-x64-release", "probe": "sakura_core/terminal/cli/SakuraHarnessProcessEntry.cpp"},
+        {"context": "mingw-x64-debug", "probe": "sakura_core/terminal/cli/SakuraHarnessProcessEntry.cpp"},
+        {"context": "mingw-x64-release", "probe": "sakura_core/terminal/cli/SakuraHarnessProcessEntry.cpp"}
+      ]
+    },
+    {
       "id": "sakura-app-to-terminal-tmux-core",
       "from": "sakura_app",
       "to": "sakura_terminal_tmux_core",

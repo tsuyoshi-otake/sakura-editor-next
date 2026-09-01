@@ -78,6 +78,7 @@
     "sakura-terminal-cli-to-harnessbridge",
     "sakura-terminal-tools-to-terminal-cli",
     "sakura-terminal-tools-to-harnessbridge",
+    "sakura-app-to-terminal-cli",
     "sakura-app-to-terminal-tmux-core",
     "sakura-app-to-harnessbridge",
     "tests1-to-terminal-cli",
@@ -186,7 +187,7 @@
     "utf16-scan-backend": "sakura-utf16-cpp-provider"
   },
   "projection_schema": 1,
-  "semantic_graph_hash": "sha256:793ecc68de8208adea72676639cbe922bfb8b8c070ec2d4d2cc82dce65fe0f53",
+  "semantic_graph_hash": "sha256:5b6c5f6f26cb093be060e8b4faf57376e20c5ad29025720a79d7eabdca954439",
   "staging_sets": [
     "sakura-editor-msvc-x64-release-runtime-stage"
   ]

@@ -21,6 +21,7 @@ target_link_libraries("${SAKURA_LEGACY_CONSUMER_LINK_TARGET}" PRIVATE sakura_req
 target_link_libraries("${SAKURA_LEGACY_CONSUMER_LINK_TARGET}" PRIVATE sakura_security)
 target_link_libraries("${SAKURA_LEGACY_CONSUMER_LINK_TARGET}" PRIVATE sakura_serialization)
 target_link_libraries("${SAKURA_LEGACY_CONSUMER_LINK_TARGET}" PRIVATE sakura_storage)
+target_link_libraries("${SAKURA_LEGACY_CONSUMER_LINK_TARGET}" PRIVATE sakura_terminal_cli)
 target_link_libraries("${SAKURA_LEGACY_CONSUMER_LINK_TARGET}" PRIVATE sakura_terminal_tmux_core)
 target_link_libraries("${SAKURA_LEGACY_CONSUMER_LINK_TARGET}" PRIVATE sakura_uri)
 target_link_libraries("${SAKURA_LEGACY_CONSUMER_LINK_TARGET}" PRIVATE sakura_win32_editor_frame)
