@@ -49150,7 +49150,7 @@
     {
       "column": 23,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 140,
+      "line": 170,
       "path": "src/test/cpp/tests1/terminal/tmux/TmuxRuntimeAdapterTest.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
@@ -50620,7 +50620,7 @@
     {
       "column": 2,
       "evidence_sha256": "sha256:0a06a841e82a3f7809b4ae59af5eda45e7e805c40e8d967bb1abef61fe1efb49",
-      "line": 184,
+      "line": 214,
       "path": "src/test/cpp/tests1/terminal/tmux/TmuxRuntimeAdapterTest.cpp",
       "rule_id": "state.mutable_member"
     },
@@ -90989,91 +90989,91 @@
     {
       "column": 48,
       "evidence_sha256": "sha256:acffafb834b03eeca03d2adf9611e52e698185260e3061b938869b01d8ab1df0",
-      "line": 167,
+      "line": 197,
       "path": "src/test/cpp/tests1/terminal/tmux/TmuxRuntimeAdapterTest.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 27,
       "evidence_sha256": "sha256:999ba9bd90c55d54e2eb67f1ac2fe73acf3c2ca7b7886559003e078e0725dcde",
-      "line": 168,
+      "line": 198,
       "path": "src/test/cpp/tests1/terminal/tmux/TmuxRuntimeAdapterTest.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 31,
       "evidence_sha256": "sha256:efb338a428e430c095846224827bec64f8863902b1217f991b89f08751ca47fd",
-      "line": 169,
+      "line": 199,
       "path": "src/test/cpp/tests1/terminal/tmux/TmuxRuntimeAdapterTest.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 30,
       "evidence_sha256": "sha256:c6c46cd2fa8d6bc6da8f9fcf9b771df94273c342f79279130ad2b32c0c65493c",
-      "line": 170,
+      "line": 200,
       "path": "src/test/cpp/tests1/terminal/tmux/TmuxRuntimeAdapterTest.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 27,
       "evidence_sha256": "sha256:5c62e09c9c5720d26612a143621b886454afe9f8cf92af7d3d5596a30e21b8a3",
-      "line": 171,
+      "line": 201,
       "path": "src/test/cpp/tests1/terminal/tmux/TmuxRuntimeAdapterTest.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 30,
       "evidence_sha256": "sha256:2171528d9b5431f93a4a289672ffd47ed53e1982faee32e4ff2d250d4fffbd95",
-      "line": 172,
+      "line": 202,
       "path": "src/test/cpp/tests1/terminal/tmux/TmuxRuntimeAdapterTest.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 28,
       "evidence_sha256": "sha256:61b1ef497602837840684e547e942575cf9dd149946df66bf5c60d517a4d099e",
-      "line": 173,
+      "line": 203,
       "path": "src/test/cpp/tests1/terminal/tmux/TmuxRuntimeAdapterTest.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 27,
       "evidence_sha256": "sha256:62ae5b5eb871f2276e62e86f5803578f2c09a7f7026ead2175feb2795f8f8fc6",
-      "line": 174,
+      "line": 204,
       "path": "src/test/cpp/tests1/terminal/tmux/TmuxRuntimeAdapterTest.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 29,
       "evidence_sha256": "sha256:43967eedb01238e907791b41f16cc75f4b1081d07737dde10eb6eb58fab0ae12",
-      "line": 175,
+      "line": 205,
       "path": "src/test/cpp/tests1/terminal/tmux/TmuxRuntimeAdapterTest.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 30,
       "evidence_sha256": "sha256:022f89474bf965549b748e870601849301b42afd0db010992f106d0c1be5e776",
-      "line": 176,
+      "line": 206,
       "path": "src/test/cpp/tests1/terminal/tmux/TmuxRuntimeAdapterTest.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 21,
       "evidence_sha256": "sha256:a6ce5d41c3dcd865df51e4247d2622cbf5e69abe2d5670b41271f8d56da4560f",
-      "line": 177,
+      "line": 207,
       "path": "src/test/cpp/tests1/terminal/tmux/TmuxRuntimeAdapterTest.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 25,
       "evidence_sha256": "sha256:3db181a0315c50f722dd3ff67e5c69ad1bb24c4f25359577096a47f4ad311537",
-      "line": 178,
+      "line": 208,
       "path": "src/test/cpp/tests1/terminal/tmux/TmuxRuntimeAdapterTest.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 21,
       "evidence_sha256": "sha256:7cd05b6228cccd2664882d615a89d1b29ad4aa352416c0e7f13f4759f1b709a2",
-      "line": 184,
+      "line": 214,
       "path": "src/test/cpp/tests1/terminal/tmux/TmuxRuntimeAdapterTest.cpp",
       "rule_id": "state.public_mutable_field"
     },
@@ -94721,7 +94721,7 @@
     "raw_delete_expression_count": 318,
     "raw_new_expression_count": 245,
     "source_file_count": 1684,
-    "source_line_count": 507164,
+    "source_line_count": 507255,
     "tracked_file_count": 1733,
     "win32_parameter_mention_count": 4609
   },
@@ -94878,8 +94878,8 @@
     ]
   },
   "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
-  "source_commit": "6da35645e16c9f6edadba85deebcbb433c70c176",
-  "source_fingerprint": "sha256:784e2154060da51205f8bf216043d0d48328ba5d1b7a80776a23f0b36804c929",
+  "source_commit": "f947df5fef14e8afb2a6e000356c408da829e53f",
+  "source_fingerprint": "sha256:2b0bb47b416c84eb502d5f77961b8bfa7c9a0a56a625a5cf35c928ca2239a0cc",
   "tracked_source_paths": [
     ".github/actions/bootstrap-vcpkg/action.yml",
     ".github/dependabot.yml",
