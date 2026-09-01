@@ -97,7 +97,7 @@ pub struct ViewContainerContribution {
     pub order: i32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ViewContainersContribution {
     #[serde(default)]
@@ -126,14 +126,6 @@ pub struct Contributions {
     pub views_containers: ViewContainersContribution,
     #[serde(default)]
     pub views: BTreeMap<String, Vec<ViewContribution>>,
-}
-
-impl Default for ViewContainersContribution {
-    fn default() -> Self {
-        Self {
-            activitybar: Vec::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
