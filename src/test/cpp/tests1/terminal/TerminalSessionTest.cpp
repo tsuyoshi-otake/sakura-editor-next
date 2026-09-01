@@ -764,6 +764,7 @@ TEST(TerminalSession, WriteFailureReachesFailedTerminalState)
 	ASSERT_TRUE(WaitUntil([&] { return session.GetState() == terminal::TerminalSessionState::Failed; }));
 	EXPECT_EQ(109u, session.GetLastError());
 	EXPECT_EQ(1u, fake->ForceTerminateCalls());
+	ASSERT_TRUE(WaitUntil([&] { return fake->CloseCalls() == 1; }));
 	EXPECT_EQ(1u, fake->CloseCalls());
 }
 

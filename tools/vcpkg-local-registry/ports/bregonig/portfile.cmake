@@ -69,8 +69,10 @@ if(VCPKG_TARGET_IS_MINGW)
   set(BREGONIG_CONFIGURE_SOURCE "${BREGONIG_MINGW_SOURCE}")
   # The product stages only bregonig.dll. Keep the GCC C++ support runtimes in
   # that image so an installed Sakura does not depend on MSYS2's bin directory.
+  # -static is also required for MinGW's winpthread support library; the narrower
+  # GCC runtime switches alone still leave libwinpthread-1.dll as an import.
   list(APPEND BREGONIG_CONFIGURE_OPTIONS
-    "-DCMAKE_SHARED_LINKER_FLAGS=-static-libgcc -static-libstdc++"
+    "-DCMAKE_SHARED_LINKER_FLAGS=-static -static-libgcc -static-libstdc++"
   )
 endif()
 

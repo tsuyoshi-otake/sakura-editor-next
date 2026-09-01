@@ -45,11 +45,12 @@ class BregonigOwnedContractTests(unittest.TestCase):
         port = _read(PORTFILE)
         contract = _read(CONTRACT)
         self.assertIn("VCPKG_TARGET_IS_MINGW", port)
-        self.assertIn("-static-libgcc -static-libstdc++", port)
+        self.assertIn("-static -static-libgcc -static-libstdc++", port)
         self.assertIn('#if defined(__MINGW32__)', contract)
         self.assertIn('"msvcrt.dll"', contract)
         self.assertNotIn('"libgcc_s_seh-1.dll"', contract)
         self.assertNotIn('"libstdc++-6.dll"', contract)
+        self.assertNotIn('"libwinpthread-1.dll"', contract)
 
     def test_snapshot_forbids_local_edits(self) -> None:
         manifest = json.loads(_read(SNAPSHOT / "SNAPSHOT.json"))
