@@ -95,6 +95,13 @@ bool ImportIsAllowed(const std::string& name)
 	if (_strnicmp(name.c_str(), "api-ms-win-crt-", 15) == 0) {
 		return true;
 	}
+#if defined(__MINGW32__)
+	// The MinGW-w64 CRT is supplied by Windows. GCC and libstdc++ remain
+	// statically linked so the installed DLL never depends on MSYS2.
+	if (_stricmp(name.c_str(), "msvcrt.dll") == 0) {
+		return true;
+	}
+#endif
 	return false;
 }
 

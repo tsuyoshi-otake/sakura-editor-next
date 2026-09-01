@@ -24,6 +24,10 @@ endif()
 # fails loudly if it stops matching, so a future snapshot cannot silently
 # build unpatched.
 set(BREGONIG_CONFIGURE_SOURCE "${BREGONIG_SOURCE_DIR}")
+set(BREGONIG_CONFIGURE_OPTIONS
+  -DBREGONIG_BUILD_TESTS=OFF
+  -DBREGONIG_BUILD_FUZZ=OFF
+)
 
 if(VCPKG_TARGET_IS_MINGW)
   set(BREGONIG_MINGW_SOURCE "${CURRENT_BUILDTREES_DIR}/src-mingw")
@@ -63,13 +67,16 @@ if(VCPKG_TARGET_IS_MINGW)
   message(STATUS "bregonig: fixed the mem_vc6.h _MSC_VER guard for the MinGW build")
 
   set(BREGONIG_CONFIGURE_SOURCE "${BREGONIG_MINGW_SOURCE}")
+  # The product stages only bregonig.dll. Keep the GCC C++ support runtimes in
+  # that image so an installed Sakura does not depend on MSYS2's bin directory.
+  list(APPEND BREGONIG_CONFIGURE_OPTIONS
+    "-DCMAKE_SHARED_LINKER_FLAGS=-static-libgcc -static-libstdc++"
+  )
 endif()
 
 vcpkg_cmake_configure(
   SOURCE_PATH "${BREGONIG_CONFIGURE_SOURCE}"
-  OPTIONS
-    -DBREGONIG_BUILD_TESTS=OFF
-    -DBREGONIG_BUILD_FUZZ=OFF
+  OPTIONS ${BREGONIG_CONFIGURE_OPTIONS}
 )
 
 vcpkg_cmake_install()

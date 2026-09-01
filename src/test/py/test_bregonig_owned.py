@@ -41,6 +41,16 @@ class BregonigOwnedContractTests(unittest.TestCase):
         self.assertTrue((SNAPSHOT / "src/bregexp.h").is_file())
         self.assertTrue((SNAPSHOT / ".github/workflows/ci.yml").is_file())
 
+    def test_mingw_provider_keeps_gcc_runtimes_out_of_the_package_boundary(self) -> None:
+        port = _read(PORTFILE)
+        contract = _read(CONTRACT)
+        self.assertIn("VCPKG_TARGET_IS_MINGW", port)
+        self.assertIn("-static-libgcc -static-libstdc++", port)
+        self.assertIn('#if defined(__MINGW32__)', contract)
+        self.assertIn('"msvcrt.dll"', contract)
+        self.assertNotIn('"libgcc_s_seh-1.dll"', contract)
+        self.assertNotIn('"libstdc++-6.dll"', contract)
+
     def test_snapshot_forbids_local_edits(self) -> None:
         manifest = json.loads(_read(SNAPSHOT / "SNAPSHOT.json"))
         self.assertFalse(manifest["localModificationAllowed"])
