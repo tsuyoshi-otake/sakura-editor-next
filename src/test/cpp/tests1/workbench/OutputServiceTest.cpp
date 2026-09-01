@@ -541,6 +541,7 @@ TEST(OutputService, AcceptedCommitFeedPublishesFreshSucceededCommitsOnceWithCopi
 	EXPECT_EQ(EOutputAcceptedCommitKind::Show, events[3].commit->kind);
 	EXPECT_EQ("show-first", std::get<OutputShowChannelRequest>(events[2].commit->data).operation.operationId);
 	EXPECT_EQ("show-fresh", std::get<OutputShowChannelRequest>(events[3].commit->data).operation.operationId);
+	ASSERT_EQ(EOutputOperationStatus::Succeeded, service.Stop().status);
 }
 
 TEST(OutputService, AcceptedCommitFeedMapsEveryAcceptedKindToItsRequestVariant)
@@ -624,6 +625,7 @@ TEST(OutputService, AcceptedCommitFeedMapsEveryAcceptedKindToItsRequestVariant)
 	EXPECT_EQ("dispose", std::get<OutputChannelMutationRequest>(events[8].commit->data).operation.operationId);
 	ASSERT_TRUE(std::holds_alternative<OutputDisposeOwnerRequest>(events[9].commit->data));
 	EXPECT_EQ(owner, std::get<OutputDisposeOwnerRequest>(events[9].commit->data).owner);
+	ASSERT_EQ(EOutputOperationStatus::Succeeded, service.Stop().status);
 }
 
 TEST(OutputService, AcceptedCommitFeedPublishesOwnerGenerationReplacementAndDisposeOwnerTombstone)
@@ -682,6 +684,7 @@ TEST(OutputService, AcceptedCommitFeedPublishesOwnerGenerationReplacementAndDisp
 	EXPECT_EQ(newOwner, std::get<OutputDisposeOwnerRequest>(events[2].commit->data).owner);
 	ASSERT_TRUE(std::holds_alternative<OutputCreateChannelRequest>(events[3].commit->data));
 	EXPECT_EQ(newestOwner, std::get<OutputCreateChannelRequest>(events[3].commit->data).owner);
+	ASSERT_EQ(EOutputOperationStatus::Succeeded, service.Stop().status);
 }
 
 TEST(OutputService, AcceptedCommitFeedTreatsAnEvictedOperationIdAsFreshAgain)
@@ -722,6 +725,7 @@ TEST(OutputService, AcceptedCommitFeedTreatsAnEvictedOperationIdAsFreshAgain)
 		ASSERT_TRUE(event.commit);
 		EXPECT_EQ(EOutputOperationStatus::Succeeded, event.commit->result.status);
 	}
+	ASSERT_EQ(EOutputOperationStatus::Succeeded, service.Stop().status);
 }
 
 TEST(OutputService, AcceptedCommitFeedExcludesReplayRejectConflictStaleNotApplicableAndStoppedOperations)
@@ -808,6 +812,7 @@ TEST(OutputService, AcceptedCommitFeedPreservesOrderingAndBootstrapCursor)
 		previousSequence = event.commit->sequence;
 		previousRevision = event.commit->postCommitRevision;
 	}
+	ASSERT_EQ(EOutputOperationStatus::Succeeded, service.Stop().status);
 }
 
 TEST(OutputService, AcceptedCommitFeedBootstrapIsAtomicAndHasNoConcurrentCommitGap)
@@ -865,6 +870,7 @@ TEST(OutputService, AcceptedCommitFeedBootstrapIsAtomicAndHasNoConcurrentCommitG
 		ASSERT_TRUE(event.commit);
 		EXPECT_EQ(expectedSequence++, event.commit->sequence);
 	}
+	ASSERT_EQ(EOutputOperationStatus::Succeeded, service.Stop().status);
 }
 
 TEST(OutputService, AcceptedCommitFeedPublishesAnExplicitGapOnBoundedOverflowAndRebootstrapRecovers)
@@ -942,6 +948,7 @@ TEST(OutputService, AcceptedCommitFeedPublishesAnExplicitGapOnBoundedOverflowAnd
 	EXPECT_EQ(EOutputAcceptedCommitFeedState::Live, recoveredEvents.front().state);
 	ASSERT_TRUE(recoveredEvents.front().commit);
 	EXPECT_EQ(4U, recoveredEvents.front().commit->sequence);
+	ASSERT_EQ(EOutputOperationStatus::Succeeded, service.Stop().status);
 }
 
 TEST(OutputService, AcceptedCommitFeedCallbacksRunOutsideTheLockReenterSafelyAndContainListenerExceptions)
@@ -983,6 +990,7 @@ TEST(OutputService, AcceptedCommitFeedCallbacksRunOutsideTheLockReenterSafelyAnd
 	EXPECT_EQ(EOutputAcceptedCommitKind::CreateChannel, events[0].commit->kind);
 	EXPECT_EQ(EOutputAcceptedCommitKind::AppendOutput, events[1].commit->kind);
 	EXPECT_EQ(events[0].commit->sequence + 1, events[1].commit->sequence);
+	ASSERT_EQ(EOutputOperationStatus::Succeeded, service.Stop().status);
 }
 
 TEST(OutputService, AcceptedCommitFeedUnsubscribeIsIdempotentAndStaleIdsCannotRemoveAnotherListener)
@@ -1222,6 +1230,7 @@ TEST(OutputService, AcceptedCommitFeedOverflowDoesNotUseTheAdvisoryNotificationD
 		ASSERT_TRUE(event.commit);
 		EXPECT_EQ(++expectedSequence, event.commit->sequence);
 	}
+	ASSERT_EQ(EOutputOperationStatus::Succeeded, service.Stop().status);
 }
 
 TEST(OutputService, ReturnsExplicitTerminalsAndReplaysOnlyTheExactOperation)
