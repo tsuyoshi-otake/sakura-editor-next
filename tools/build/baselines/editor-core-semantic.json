@@ -94735,7 +94735,7 @@
     "raw_delete_expression_count": 318,
     "raw_new_expression_count": 245,
     "source_file_count": 1684,
-    "source_line_count": 507341,
+    "source_line_count": 507349,
     "tracked_file_count": 1733,
     "win32_parameter_mention_count": 4609
   },
@@ -94892,8 +94892,8 @@
     ]
   },
   "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
-  "source_commit": "fc57fb3dd8e2472f2c56e5e0aa08cfe37e0eeb0d",
-  "source_fingerprint": "sha256:4d9e82923f70a70b57b53f4897159474b9bf04bc98c3cd036a43e5364ccfd8bb",
+  "source_commit": "fd5fa3bfe2b3b721754065f5f771f14e2a6fe294",
+  "source_fingerprint": "sha256:43a4ae1ca29b6e65cdc75173f3ffe58d6f7fd3e357e9ff5ff7d399aa178469a7",
   "tracked_source_paths": [
     ".github/actions/bootstrap-vcpkg/action.yml",
     ".github/dependabot.yml",
