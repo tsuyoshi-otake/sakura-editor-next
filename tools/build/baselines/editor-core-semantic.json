@@ -35969,28 +35969,28 @@
     {
       "column": 2,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 69,
+      "line": 75,
       "path": "sakura_core/workbench/output/OutputServiceNotificationDispatcher.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 111,
+      "line": 117,
       "path": "sakura_core/workbench/output/OutputServiceNotificationDispatcher.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 6,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 149,
+      "line": 155,
       "path": "sakura_core/workbench/output/OutputServiceNotificationDispatcher.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 4,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 166,
+      "line": 172,
       "path": "sakura_core/workbench/output/OutputServiceNotificationDispatcher.cpp",
       "rule_id": "error.catch_all"
     },
@@ -48730,14 +48730,14 @@
     {
       "column": 81,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 31,
+      "line": 37,
       "path": "sakura_core/workbench/output/OutputServiceNotificationDispatcher.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 59,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 48,
+      "line": 49,
       "path": "sakura_core/workbench/output/OutputServiceNotificationDispatcher.h",
       "rule_id": "resource.stop_required_acquisition"
     },
@@ -78093,23 +78093,16 @@
       "rule_id": "state.public_mutable_field"
     },
     {
-      "column": 10,
-      "evidence_sha256": "sha256:6747451dc5fe31e4a57d10545045a58a5516113fcd387e9f7183a685779d955d",
-      "line": 41,
-      "path": "sakura_core/workbench/output/OutputServiceNotificationDispatcher.h",
-      "rule_id": "state.public_mutable_field"
-    },
-    {
       "column": 23,
       "evidence_sha256": "sha256:3cf7c7616b0888ebc33446d1dd764173c97edaaa5e12ee479eb50ff27deacdf1",
-      "line": 84,
+      "line": 85,
       "path": "sakura_core/workbench/output/OutputServiceNotificationDispatcher.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 44,
       "evidence_sha256": "sha256:4bc45b3a78605d985961a8d8ca05da6dfb673dc825a0180d7cea1f4cbfec5365",
-      "line": 85,
+      "line": 86,
       "path": "sakura_core/workbench/output/OutputServiceNotificationDispatcher.h",
       "rule_id": "state.public_mutable_field"
     },
@@ -94699,7 +94692,7 @@
       }
     },
     "filtered_test_hint_count": 2,
-    "finding_count": 13432,
+    "finding_count": 13431,
     "finding_count_by_rule": {
       "boundary.private_include": 67,
       "boundary.win32_type": 4609,
@@ -94711,7 +94704,7 @@
       "memory.raw_new": 245,
       "resource.stop_required_acquisition": 257,
       "state.mutable_member": 129,
-      "state.public_mutable_field": 6162,
+      "state.public_mutable_field": 6161,
       "state.raw_pointer_member": 30,
       "test.filtered_or_skipped": 2
     },
@@ -94721,7 +94714,7 @@
     "raw_delete_expression_count": 318,
     "raw_new_expression_count": 245,
     "source_file_count": 1684,
-    "source_line_count": 507255,
+    "source_line_count": 507262,
     "tracked_file_count": 1733,
     "win32_parameter_mention_count": 4609
   },
@@ -94878,8 +94871,8 @@
     ]
   },
   "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
-  "source_commit": "f947df5fef14e8afb2a6e000356c408da829e53f",
-  "source_fingerprint": "sha256:2b0bb47b416c84eb502d5f77961b8bfa7c9a0a56a625a5cf35c928ca2239a0cc",
+  "source_commit": "618590bae0c4b7acba3ee5ddc7f6f0396e97dda9",
+  "source_fingerprint": "sha256:4972f7e6241f72907727b7581bd11306a363f7786226357be3bf417500cb177b",
   "tracked_source_paths": [
     ".github/actions/bootstrap-vcpkg/action.yml",
     ".github/dependabot.yml",
