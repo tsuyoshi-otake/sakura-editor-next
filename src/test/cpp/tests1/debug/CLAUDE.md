@@ -19,13 +19,14 @@ proofs separate. Passing a lower layer is not evidence for a higher layer.
 - Debug Console tests cover strict UTF-8/enums, generation fencing, operation
   replay/conflict, sequence exhaustion, transactional resource exhaustion,
   caller-driven expiry, bounded/saturated drops, retained retry ownership on
-  DisposeSession failure, and external/reentrant Stop.
+  DisposeSession failure, external/reentrant Stop, and destructor fallback that
+  never dispatches borrowed listeners.
 - Add process/pipe tests only with bounded startup and shutdown deadlines.
   After every run, prove no adapter, test, or editor process survived.
 
 The 2026-07-31 pure backend cohort
 `LaunchConfigurationCatalog.*:DapProtocolCodec.*:DapSession.*:
-DebugConsoleModel.*` passes 45/45. The DAP session uses a fake byte transport
+DebugConsoleModel.*` passes 46/46. The DAP session uses a fake byte transport
 and the Debug Console is a pure model; this does not claim a production adapter
 process/pipe, initialize/launch handshake, debug-state controller, evaluation
 adapter, or native Debug Console.

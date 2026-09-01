@@ -147,8 +147,16 @@ CDebugConsoleModel::CDebugConsoleModel(DebugConsoleLimits limits)
 
 CDebugConsoleModel::~CDebugConsoleModel()
 {
-	try { (void)Stop(); }
-	catch (...) { /* Destruction cannot propagate an allocation failure from best-effort finalization. */ }
+	// Destruction is a finalization fallback, not a lifecycle notification. An
+	// explicit Stop owns terminal listener delivery while its callback targets
+	// are still alive; a destructor must never resurrect borrowed callbacks.
+	try {
+		{
+			std::lock_guard lock(m_mutex);
+			m_listeners.clear();
+		}
+		(void)Stop();
+	} catch (...) { /* Destruction cannot propagate a synchronization or finalization failure. */ }
 }
 
 DebugConsoleModelResult CDebugConsoleModel::SessionStatusLocked(const DebugConsoleSessionGeneration generation) const noexcept

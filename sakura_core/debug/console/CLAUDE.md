@@ -18,7 +18,8 @@ exceptions. All capacity eviction and snapshot ordering must stay
 deterministic. An external Stop waits for callbacks to drain; a
 callback-originated Stop returns the typed deferred result and is finalized by
 the safe outer delivery boundary. Callbacks borrow the model, so destroying it
-inside one is unsupported.
+inside one is unsupported. Destructor fallback clears listeners before Stop and
+never dispatches borrowed callbacks; explicit Stop owns terminal delivery.
 
 Identifiers and sequence values never wrap; exhaustion is explicit and advisory
 drop counters saturate. Resource-exhausted mutations are transactional.
@@ -27,10 +28,11 @@ when terminalization cannot be retained, so a later retry owns completion.
 `Stop` and `DisposeSession` finalize pending work explicitly; neither destruction
 nor a UI disappearance is a substitute for that lifecycle signal.
 
-Verified scope: `DebugConsoleModel.*` passes 13/13, proving strict UTF-8 and enum
+Verified scope: `DebugConsoleModel.*` passes 14/14, proving strict UTF-8 and enum
 validation, session-generation fencing, bounded transcript/evaluation state,
 transactional exhaustion, caller-driven expiry, saturated drops, and
-external/reentrant Stop behavior. Residual production work: a DAP/session
+external/reentrant Stop behavior plus destructor fallback without listener
+delivery. Residual production work: a DAP/session
 adapter must forward requests/results and issue cancellation, the runtime must
 own the model, and native UI/view integration must render snapshots and own user
 interaction. None is implemented or implied here; the current Debug Console

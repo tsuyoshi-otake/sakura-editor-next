@@ -245,12 +245,23 @@ TEST(DebugConsoleModel, DisposeAndStopCancelPendingAndFenceFurtherWork)
 	EXPECT_EQ(EDebugConsoleModelStatus::Stopped, model.StartSession(5).status);
 }
 
+TEST(DebugConsoleModel, DestructorFinalizesWithoutDispatchingBorrowedListeners)
+{
+	std::size_t notifications{};
+	{
+		CDebugConsoleModel model;
+		ASSERT_EQ(EDebugConsoleModelStatus::SessionStarted, model.StartSession(1).status);
+		ASSERT_TRUE(model.Subscribe([&notifications](const auto&) { ++notifications; }));
+	}
+	EXPECT_EQ(0U, notifications);
+}
+
 TEST(DebugConsoleModel, DeliversListenersOutsideLocksWithReentrancyAndExceptionContainment)
 {
-	CDebugConsoleModel model;
-	ASSERT_EQ(EDebugConsoleModelStatus::SessionStarted, model.StartSession(1).status);
 	std::vector<EDebugConsoleNotificationKind> received;
 	bool appendedReentrant{};
+	CDebugConsoleModel model;
+	ASSERT_EQ(EDebugConsoleModelStatus::SessionStarted, model.StartSession(1).status);
 	ASSERT_TRUE(model.Subscribe([&](const DebugConsoleNotification& notification) {
 		received.push_back(notification.kind);
 		if (notification.kind == EDebugConsoleNotificationKind::OutputAppended && !appendedReentrant) {
@@ -265,6 +276,7 @@ TEST(DebugConsoleModel, DeliversListenersOutsideLocksWithReentrancyAndExceptionC
 	EXPECT_EQ("first", snapshot.transcript[0].text);
 	EXPECT_EQ("reentrant", snapshot.transcript[1].text);
 	EXPECT_GE(received.size(), 2U);
+	EXPECT_EQ(EDebugConsoleModelStatus::Stopped, model.Stop().status);
 }
 
 TEST(DebugConsoleModel, BoundsReentrantNotificationQueueAndSubscriptions)
@@ -283,6 +295,7 @@ TEST(DebugConsoleModel, BoundsReentrantNotificationQueueAndSubscriptions)
 	EXPECT_FALSE(model.Subscribe([](const DebugConsoleNotification&) {}));
 	ASSERT_EQ(EDebugConsoleModelStatus::Accepted, model.AppendOutput(1, EDebugConsoleOutputCategory::Console, "one").status);
 	EXPECT_EQ(1U, model.Snapshot().droppedNotificationCount);
+	EXPECT_EQ(EDebugConsoleModelStatus::Stopped, model.Stop().status);
 }
 
 TEST(DebugConsoleModel, StopWaitsForCrossThreadCallbackAndDefersReentrantStopToItsDispatcher)
