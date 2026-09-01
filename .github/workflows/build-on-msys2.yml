@@ -148,6 +148,12 @@ jobs:
       - name: Run unit tests
         id: run_unit_tests
         timeout-minutes: 15
+        # The pytest contract suite invokes the runner-provided git,
+        # powershell.exe, and pwsh.exe directly. Keep the broader Windows PATH
+        # scoped to this test step so MSYS2 build-tool resolution stays
+        # deterministic while those host executables remain observable.
+        env:
+          MSYS2_PATH_TYPE: inherit
         run: ./build-gnu.bat ${{ env.BuildPlatform }} ${{ env.Configuration }}
 
       - name: Try gdb backtrace on test failure

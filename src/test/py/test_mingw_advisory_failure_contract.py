@@ -59,6 +59,14 @@ class MinGWAdvisoryFailureContractTests(unittest.TestCase):
         )
         self.assertIn("id: run_unit_tests", unit_tests)
         self.assertIn("timeout-minutes: 15", unit_tests)
+        self.assertIn("MSYS2_PATH_TYPE: inherit", unit_tests)
+
+        build = _step(self.job, "Build with MinGW-w64-gcc")
+        self.assertNotIn(
+            "MSYS2_PATH_TYPE: inherit",
+            build,
+            "the broad host PATH belongs only to tests that invoke host tools",
+        )
 
     def test_debug_diagnostics_follow_failure_without_repairing_it(self) -> None:
         diagnostics = _step(self.job, "Try gdb backtrace on test failure")
