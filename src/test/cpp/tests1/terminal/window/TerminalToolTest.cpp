@@ -1189,36 +1189,42 @@ TEST(TerminalTool, SplitDownStacksNativeViewportsVertically)
 
 TEST(TerminalTool, TabPresentationSettingsUseGroupVisibilityAndMoveListLeftWithoutRestart)
 {
-	ToolHarness harness;
-	const auto parent = CreateHiddenParentWindow();
-	ASSERT_NE(nullptr, parent);
-	terminal::CTerminalTool tool(harness.Dependencies());
-	ASSERT_TRUE(tool.Create(parent));
-	tool.Layout({ 0, 0, 900, 320 }, 96);
-	tool.Activate();
-	ASSERT_TRUE(tool.SplitTerminalRight());
-	ASSERT_TRUE(tool.HasTerminalTabsList());
-	const auto startsBefore = harness.backends.size();
+	// Runtime events arrive on session workers. Repeating the complete projection
+	// lifetime makes iterator ownership and late-callback defects deterministic
+	// without sharing a manager, HWND, or backend between iterations.
+	for( int iteration = 0; iteration < 64; ++iteration ) {
+		SCOPED_TRACE(iteration);
+		ToolHarness harness;
+		const auto parent = CreateHiddenParentWindow();
+		ASSERT_NE(nullptr, parent);
+		terminal::CTerminalTool tool(harness.Dependencies());
+		ASSERT_TRUE(tool.Create(parent));
+		tool.Layout({ 0, 0, 900, 320 }, 96);
+		tool.Activate();
+		ASSERT_TRUE(tool.SplitTerminalRight());
+		ASSERT_TRUE(tool.HasTerminalTabsList());
+		const auto startsBefore = harness.backends.size();
 
-	terminal::TerminalTabPresentationSettings settings;
-	settings.hideCondition = terminal::TerminalTabsHideCondition::SingleGroup;
-	settings.location = terminal::TerminalTabsLocation::Left;
-	tool.SetTabPresentationSettings(settings);
-	EXPECT_FALSE(tool.HasTerminalTabsList());
-	EXPECT_EQ(startsBefore, harness.backends.size());
+		terminal::TerminalTabPresentationSettings settings;
+		settings.hideCondition = terminal::TerminalTabsHideCondition::SingleGroup;
+		settings.location = terminal::TerminalTabsLocation::Left;
+		tool.SetTabPresentationSettings(settings);
+		EXPECT_FALSE(tool.HasTerminalTabsList());
+		EXPECT_EQ(startsBefore, harness.backends.size());
 
-	// New Terminal creates a second group. singleGroup must use group count,
-	// not the three terminal instances now owned by the manager.
-	ASSERT_TRUE(tool.AddTerminal().has_value());
-	EXPECT_TRUE(tool.HasTerminalTabsList());
-	const RECT tabs = tool.TerminalTabsBounds();
-	EXPECT_EQ(0, tabs.left);
-	EXPECT_EQ(120, tabs.right - tabs.left);
-	EXPECT_GE(tabs.right, 0);
-	EXPECT_EQ(startsBefore + 1, harness.backends.size());
+		// New Terminal creates a second group. singleGroup must use group count,
+		// not the three terminal instances now owned by the manager.
+		ASSERT_TRUE(tool.AddTerminal().has_value());
+		EXPECT_TRUE(tool.HasTerminalTabsList());
+		const RECT tabs = tool.TerminalTabsBounds();
+		EXPECT_EQ(0, tabs.left);
+		EXPECT_EQ(120, tabs.right - tabs.left);
+		EXPECT_GE(tabs.right, 0);
+		EXPECT_EQ(startsBefore + 1, harness.backends.size());
 
-	tool.Close();
-	::DestroyWindow(parent);
+		tool.Close();
+		::DestroyWindow(parent);
+	}
 }
 
 TEST(TerminalTool, TerminalListFocusKeepsVsCodeSplitKeybindingInTheTerminalUi)

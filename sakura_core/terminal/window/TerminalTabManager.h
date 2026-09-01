@@ -111,8 +111,8 @@ struct TerminalTabManagerDependencies {
 
 //! UI-thread-owned terminal tab/session collection.
 //!
-//! Session callbacks only copy an event to the supplied callback; they never
-//! dereference this manager.  This lets HWND owners marshal work safely while
+//! Session callbacks route through shared internal state and only copy an event
+//! to the supplied callback. This lets HWND owners marshal work safely while
 //! fake backends can exercise the lifecycle without a window.
 class TerminalTabManager final {
 public:
@@ -164,7 +164,7 @@ public:
 
 private:
 	struct Impl;
-	std::unique_ptr<Impl> m_impl;
+	std::shared_ptr<Impl> m_impl;
 };
 
 } // namespace terminal

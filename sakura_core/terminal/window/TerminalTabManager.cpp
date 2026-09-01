@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <mutex>
 #include <utility>
 #include <windows.h>
 
@@ -48,6 +49,13 @@ struct TerminalTabManager::Impl {
 
 	TerminalTabManagerDependencies dependencies;
 	TerminalTabEventCallback eventCallback;
+	struct EventRoute {
+		TerminalInstanceId instanceId;
+		std::uint64_t tabId{};
+	};
+	std::mutex eventMutex;
+	std::vector<EventRoute> eventRoutes;
+	bool acceptingEvents{ true };
 	std::shared_ptr<CTerminalRuntimeService> runtimeService;
 	TerminalSubscription runtimeSubscription;
 	bool ownsRuntimeService{};
@@ -71,20 +79,64 @@ struct TerminalTabManager::Impl {
 		return found == tabs.end() ? nullptr : found->get();
 	}
 
+	void RegisterEventRoute( const TerminalInstanceId instanceId, const std::uint64_t tabId )
+	{
+		std::lock_guard lock(eventMutex);
+		if( !acceptingEvents ) return;
+		eventRoutes.push_back({ instanceId, tabId });
+	}
+
+	void ReplaceEventRoute( const TerminalInstanceId oldInstanceId,
+		const TerminalInstanceId newInstanceId, const std::uint64_t tabId )
+	{
+		std::lock_guard lock(eventMutex);
+		const auto old = std::remove_if(eventRoutes.begin(), eventRoutes.end(),
+			[oldInstanceId](const EventRoute& route) { return route.instanceId == oldInstanceId; });
+		eventRoutes.erase(old, eventRoutes.end());
+		if( acceptingEvents ) eventRoutes.push_back({ newInstanceId, tabId });
+	}
+
+	void RemoveEventRoute( const TerminalInstanceId instanceId ) noexcept
+	{
+		std::lock_guard lock(eventMutex);
+		const auto found = std::remove_if(eventRoutes.begin(), eventRoutes.end(),
+			[instanceId](const EventRoute& route) { return route.instanceId == instanceId; });
+		eventRoutes.erase(found, eventRoutes.end());
+	}
+
+	void StopEvents() noexcept
+	{
+		std::lock_guard lock(eventMutex);
+		acceptingEvents = false;
+		eventRoutes.clear();
+	}
+
+	void ClearEventRoutes() noexcept
+	{
+		std::lock_guard lock(eventMutex);
+		eventRoutes.clear();
+	}
+
 	void OnRuntimeEvent( const TerminalInstanceEvent& event ) noexcept
 	{
-		const auto found = std::find_if(tabs.begin(), tabs.end(), [&](const auto& tab) {
-			return tab->instanceId == event.coordinate.instanceId;
-		});
-		if (found == tabs.end() || !eventCallback) return;
 		TerminalTabEvent translated;
-		translated.kind = event.kind == TerminalInstanceEventKind::OutputAvailable
-			? TerminalTabEventKind::OutputAvailable : TerminalTabEventKind::StateChanged;
-		translated.tabId = (*found)->id;
-		translated.state = event.sessionState;
-		translated.errorCode = event.errorCode;
+		TerminalTabEventCallback callback;
 		try {
-			eventCallback(translated);
+			{
+				std::lock_guard lock(eventMutex);
+				if( !acceptingEvents || !eventCallback ) return;
+				const auto found = std::find_if(eventRoutes.begin(), eventRoutes.end(), [&](const EventRoute& route) {
+					return route.instanceId == event.coordinate.instanceId;
+				});
+				if( found == eventRoutes.end() ) return;
+				translated.kind = event.kind == TerminalInstanceEventKind::OutputAvailable
+					? TerminalTabEventKind::OutputAvailable : TerminalTabEventKind::StateChanged;
+				translated.tabId = found->tabId;
+				translated.state = event.sessionState;
+				translated.errorCode = event.errorCode;
+				callback = eventCallback;
+			}
+			callback(translated);
 		} catch( ... ) {
 			// A projection callback is advisory and must not unwind a session worker.
 		}
@@ -92,7 +144,7 @@ struct TerminalTabManager::Impl {
 };
 
 TerminalTabManager::TerminalTabManager( TerminalTabManagerDependencies dependencies, TerminalTabEventCallback eventCallback )
-	: m_impl(std::make_unique<Impl>())
+	: m_impl(std::make_shared<Impl>())
 {
 	m_impl->dependencies = std::move(dependencies);
 	m_impl->eventCallback = std::move(eventCallback);
@@ -108,8 +160,9 @@ TerminalTabManager::TerminalTabManager( TerminalTabManagerDependencies dependenc
 		m_impl->ownsRuntimeService = true;
 	}
 	if( m_impl->runtimeService ) {
-		m_impl->runtimeSubscription = m_impl->runtimeService->Subscribe([impl = m_impl.get()](const TerminalInstanceEvent& event) {
-			if( impl ) impl->OnRuntimeEvent(event);
+		const std::weak_ptr<Impl> weak = m_impl;
+		m_impl->runtimeSubscription = m_impl->runtimeService->Subscribe([weak](const TerminalInstanceEvent& event) {
+			if( const auto impl = weak.lock() ) impl->OnRuntimeEvent(event);
 		});
 	}
 }
@@ -154,6 +207,7 @@ std::optional<std::uint64_t> TerminalTabManager::AddTab( TerminalSize size, std:
 		}
 		m_impl->startedAnySession = true;
 		m_impl->tabs.emplace_back(std::move(tab));
+		m_impl->RegisterEventRoute(m_impl->tabs.back()->instanceId, id);
 		m_impl->activeTabId = id;
 		return id;
 	} catch( ... ) {
@@ -199,6 +253,7 @@ bool TerminalTabManager::RestartTab( std::uint64_t tabId, TerminalSize size, std
 	if( created.sessionId ) tab->sessionId = *created.sessionId;
 	if( created.windowId ) tab->windowId = *created.windowId;
 	if( created.paneId ) tab->paneId = *created.paneId;
+	m_impl->ReplaceEventRoute(oldInstance, tab->instanceId, tabId);
 	if( auto* model = m_impl->runtimeService->Model(tab->instanceId) ) {
 		model->SetScrollbackLimit(m_impl->scrollbackLimit);
 		static_cast<void>(model->ConsumeScrollbackChange());
@@ -220,6 +275,7 @@ bool TerminalTabManager::DeleteTab( std::uint64_t tabId ) noexcept
 	if( m_impl->closed ) return false;
 	const auto found = std::find_if( m_impl->tabs.begin(), m_impl->tabs.end(), [tabId](const auto& tab) { return tab->id == tabId; } );
 	if( found == m_impl->tabs.end() ) return false;
+	m_impl->RemoveEventRoute((*found)->instanceId);
 	if( m_impl->runtimeService && (*found)->sessionId.IsValid() ) {
 		TerminalSessionCloseRequest request;
 		request.operationId = MakeOperationId(tabId);
@@ -248,6 +304,7 @@ TerminalTabClearResult TerminalTabManager::ClearTabs( std::chrono::steady_clock:
 	// the nonblocking handoff, so no reporting deadline can make this method wait.
 	static_cast<void>(deadline);
 	result.clearedTabCount = m_impl->tabs.size();
+	m_impl->ClearEventRoutes();
 	if( m_impl->runtimeService ) {
 		for( const auto& tab : m_impl->tabs ) {
 			if( !tab->sessionId.IsValid() ) {
@@ -310,6 +367,8 @@ std::size_t TerminalTabManager::ScrollbackLimit() const noexcept
 void TerminalTabManager::Close() noexcept
 {
 	if( !m_impl || m_impl->closed ) return;
+	m_impl->StopEvents();
+	m_impl->runtimeSubscription.Reset();
 	if( m_impl->ownsRuntimeService ) {
 		const auto deadline = std::chrono::steady_clock::now()
 			+ CTerminalSession::kGracefulCloseTimeout + CTerminalSession::kForcedCloseTimeout;
@@ -321,7 +380,6 @@ void TerminalTabManager::Close() noexcept
 		m_impl->tabs.clear();
 		m_impl->activeTabId.reset();
 	}
-	m_impl->runtimeSubscription.Reset();
 	m_impl->closed = true;
 	m_impl->tabs.clear();
 	m_impl->activeTabId.reset();
