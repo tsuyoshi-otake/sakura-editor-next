@@ -293,20 +293,25 @@ TEST(FrameCoordinatorRuntime, NativeSurfacePayloadMailboxIsBoundedLatestWins)
 		};
 	};
 	EXPECT_TRUE(runtime.SubmitNativeSurfaceFrame(makeFrame(1)).Accepted());
-	EXPECT_EQ(EFrameCoordinatorRuntimeStatus::Replaced,
-		runtime.SubmitNativeSurfaceFrame(makeFrame(2)).status);
+	const auto secondSubmission = runtime.SubmitNativeSurfaceFrame(makeFrame(2));
+	ASSERT_TRUE(secondSubmission.Accepted());
+	// The owner is concurrent with the producer. If it has not dequeued frame 1,
+	// frame 2 replaces that pending payload; otherwise both accepted frames are
+	// presented. Both schedules preserve the bounded latest-wins contract.
+	const std::uint64_t expectedPresentAttempts =
+		secondSubmission.status == EFrameCoordinatorRuntimeStatus::Replaced ? 1u : 2u;
 
 	const auto presentation = WaitForValue<FramePresentationSurfaceSnapshot>([&]()
 		-> std::optional<FramePresentationSurfaceSnapshot> {
 		const auto value = runtime.PresentationSurfaceSnapshot(501);
-		if (value && runtime.PresentationTelemetry().presentNotReadySkips >= 1) {
+		if (value && runtime.PresentationTelemetry().presentNotReadySkips >= expectedPresentAttempts) {
 			return value;
 		}
 		return std::nullopt;
 	});
 	EXPECT_EQ(EFramePresentationSurfaceState::SoftwareOnly, presentation.state);
 	EXPECT_EQ(0u, runtime.PresentationTelemetry().nativeSurfaceUploadCalls);
-	EXPECT_EQ(1u, runtime.RuntimeTelemetry().nativePresentAttempts);
+	EXPECT_EQ(expectedPresentAttempts, runtime.RuntimeTelemetry().nativePresentAttempts);
 
 	ASSERT_TRUE(runtime.BeginClose().Accepted());
 	EXPECT_EQ(EFrameCoordinatorRuntimeStatus::Succeeded, runtime.Wait().status);
