@@ -119,15 +119,20 @@ bool CProcess::InitializeProcess()
 	@author aroka
 	@date 2002/01/16
 */
-bool CProcess::Run()
+DWORD CProcess::Run()
 {
 	if( InitializeProcess() )
 	{
 			MainLoop() ;
 			OnExitProcess();
-		return true;
+		return ERROR_SUCCESS;
 	}
-	return false;
+	return StartupFailureExitCode();
+}
+
+DWORD CProcess::StartupFailureExitCode() const noexcept
+{
+	return ERROR_PROCESS_ABORTED;
 }
 
 /*!

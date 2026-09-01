@@ -248,10 +248,15 @@ composites with `CreateCompatibleDC`/`BitBlt`, and even
   sharing the vertical toggle branch makes the horizontal bar disappear with
   its owning Side Bar and diverges from upstream's as-designed behavior.
 - Run and Debug, Ports, Debug Console, arbitrary extension-owned views,
-  reorder within a bar, moving the whole Panel
+  moving the whole Panel
   (`workbench.action.movePanelToSecondarySideBar`), and panel alignment still
   fail closed at this adapter boundary. They remain explicit Phase 5/6 gates and
   must not be approximated with legacy active-tool state.
+- A same-bar ViewContainer drag resolves to an insertion gap before the existing
+  cross-side-bar target path. It commits one bounded layout transaction that
+  renumbers the location's contributed containers while retaining non-rendered
+  containers in their relative order. Accounts and Manage are GlobalCompositeBar
+  actions and are never reorder sources or insertion targets.
 
 ## Activity Bar Accounts and Manage (GlobalCompositeBar)
 

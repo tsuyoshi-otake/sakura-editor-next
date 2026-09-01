@@ -61,6 +61,53 @@ TEST(ActivityBarEntryProjection, OptionsCanSelectTheAuxiliaryLocation)
 	EXPECT_EQ("auxiliary", entries.front().id);
 }
 
+TEST(ActivityBarEntryProjection, LiveLayoutOverridesContributionOrderAndLocation)
+{
+	layout::WorkbenchContributionSnapshot snapshot;
+	snapshot.viewContainers = {
+		Container("projects", layout::EViewContainerLocation::Sidebar, 5),
+		Container("explorer", layout::EViewContainerLocation::Sidebar, 10),
+		Container("search", layout::EViewContainerLocation::Sidebar, 20),
+	};
+	layout::WorkbenchLayoutStateSnapshot layoutState;
+	layoutState.containers = {
+		{ .containerId = "projects", .location = layout::EWorkbenchViewContainerLocation::SideBar, .order = 30 },
+		{ .containerId = "explorer", .location = layout::EWorkbenchViewContainerLocation::AuxiliaryBar, .order = 10 },
+		{ .containerId = "search", .location = layout::EWorkbenchViewContainerLocation::SideBar, .order = 0 },
+	};
+	const std::array renderable{
+		std::string_view("projects"), std::string_view("explorer"), std::string_view("search") };
+	ActivityBarProjectionOptions options{
+		.renderableBuiltins = renderable,
+		.layoutState = &layoutState,
+	};
+
+	const auto primary = ProjectActivityBarEntries(snapshot, options);
+	ASSERT_EQ(2U, primary.size());
+	EXPECT_EQ("search", primary[0].id);
+	EXPECT_EQ("projects", primary[1].id);
+	const auto auxiliary = ProjectActivityBarEntries(snapshot, options,
+		layout::EViewContainerLocation::AuxiliaryBar);
+	ASSERT_EQ(1U, auxiliary.size());
+	EXPECT_EQ("explorer", auxiliary[0].id);
+}
+
+TEST(ActivityBarEntryProjection, ReordersOnlyVisibleViewContainers)
+{
+	std::vector<ActivityBarEntry> entries{
+		{ .id = "projects", .label = L"Projects" },
+		{ .id = "hidden", .label = L"Hidden", .visible = false },
+		{ .id = "explorer", .label = L"Explorer" },
+		{ .id = std::string(kAccountsActivityId), .label = L"Accounts",
+			.kind = ActivityBarEntryKind::GlobalAction },
+	};
+
+	const auto moved = ReorderActivityBarContainers(entries, "projects", 2);
+	ASSERT_TRUE(moved.has_value());
+	EXPECT_EQ((std::vector<std::string>{ "explorer", "projects" }), *moved);
+	EXPECT_FALSE(ReorderActivityBarContainers(entries, "missing", 0).has_value());
+}
+
 TEST(ActivityBarEntryProjection, ExtensionsUsesTheStableContainerIdAndCodicon)
 {
 	layout::WorkbenchContributionSnapshot snapshot;
@@ -77,6 +124,37 @@ TEST(ActivityBarEntryProjection, ExtensionsUsesTheStableContainerIdAndCodicon)
 	EXPECT_EQ(L"extensions", entries.front().codicon);
 	EXPECT_EQ(STR_WORKBENCH_EXTENSIONS_TITLE,
 		ResolveBuiltinActivityTitleResourceId(layout::ids::viewContainer::Extensions));
+}
+
+TEST(ActivityBarEntryProjection, ProjectsUsesOneStableContainerEntryAndProjectCodicon)
+{
+	layout::WorkbenchContributionRegistry registry;
+	const std::array containers{ layout::WorkbenchViewContainerDescriptor{
+		.id = std::string(layout::ids::viewContainer::Projects),
+		.title = "Projects",
+		.location = layout::EViewContainerLocation::Sidebar,
+		.order = 5,
+		.icon = "project",
+		.supportedLocations = { layout::EViewContainerLocation::Sidebar,
+			layout::EViewContainerLocation::AuxiliaryBar },
+	} };
+	const std::array views{ layout::WorkbenchViewDescriptor{
+		.id = std::string(layout::ids::view::Projects),
+		.containerId = std::string(layout::ids::viewContainer::Projects),
+		.title = "Projects",
+		.order = 10,
+		.provider = "sakura.projects",
+	} };
+	ASSERT_TRUE(registry.RegisterExtensionContributions(containers, views));
+	const auto snapshot = registry.Snapshot();
+	const std::array renderable{ layout::ids::viewContainer::Projects };
+	ActivityBarProjectionOptions options{ .renderableBuiltins = renderable };
+
+	const auto entries = ProjectActivityBarEntries(snapshot, options);
+	ASSERT_EQ(1U, entries.size());
+	EXPECT_EQ(layout::ids::viewContainer::Projects, entries.front().id);
+	EXPECT_EQ(L"project", entries.front().codicon);
+	EXPECT_EQ(L"Projects", entries.front().label);
 }
 
 TEST(ActivityBarEntryProjection, InjectedResolverLocalizesBuiltinLabelWithoutChangingIdentity)

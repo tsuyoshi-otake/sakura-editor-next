@@ -172,44 +172,64 @@ ControlPlatformRuntimeResult CControlPlatformRuntime::Start()
 	std::optional<ControlPlatformServiceHostResult> hostResult;
 	m_state = EControlPlatformRuntimeState::Starting;
 	try {
-		profiles::ProfileAuthorityStore authority(m_options.profileDirectory,
-			m_dependencies.profileAuthorityBackend);
-		authorityResult = authority.Acquire(m_options.legacyProfileAlias);
-		if (!authorityResult->Succeeded()) {
-			RollbackStart();
-			return Result(EControlPlatformRuntimeResultCode::AuthorityFailed, std::move(authorityResult));
-		}
-
 		auto storageFactory = m_dependencies.storageFactory;
 		if (!storageFactory) storageFactory = CreateProductionStorage;
-		try {
-			m_storage = storageFactory(m_options.storageDirectory, authorityResult->authorityGeneration,
-				m_options.maximumCompletedOperations);
-		} catch (...) {
+		bool storageCreationFailed = false;
+		std::wstring storageCreationDiagnostic;
+		profiles::ProfileAuthorityStore authority(m_options.profileDirectory,
+			m_dependencies.profileAuthorityBackend);
+		authorityResult = authority.Acquire(m_options.legacyProfileAlias,
+			[&](const profiles::ProfileAuthorityCandidate& candidate) {
+				try {
+					m_storage = storageFactory(m_options.storageDirectory, candidate.authorityGeneration,
+						m_options.maximumCompletedOperations);
+				}
+				catch (...) {
+					storageCreationFailed = true;
+					storageCreationDiagnostic = L"durable storage creation failed";
+					return false;
+				}
+				if (!m_storage) {
+					storageCreationFailed = true;
+					storageCreationDiagnostic = L"storage factory returned null";
+					return false;
+				}
+				try {
+					storageOpenResult = m_storage->Open();
+				}
+				catch (...) {
+					storageOpenResult = storage::StorageAuthorityOpenResult{
+						storage::EStorageAuthorityOpenStatus::IoError,
+						"durable storage open raised an unexpected exception" };
+				}
+				if (storageOpenResult->Succeeded() && !candidate.existingIdentity
+					&& storageOpenResult->persistedStateFound) {
+					storageOpenResult = storage::StorageAuthorityOpenResult{
+						storage::EStorageAuthorityOpenStatus::OrphanedState,
+						"durable storage exists without a profile authority identity", true };
+				}
+				return storageOpenResult->Succeeded();
+			});
+		if (storageCreationFailed) {
 			RollbackStart();
 			return Result(EControlPlatformRuntimeResultCode::StorageCreateFailed, std::move(authorityResult),
-				std::nullopt, std::nullopt, L"durable storage creation failed");
+				std::nullopt, std::nullopt, std::move(storageCreationDiagnostic));
 		}
-		if (!m_storage) {
-			RollbackStart();
-			return Result(EControlPlatformRuntimeResultCode::StorageCreateFailed, std::move(authorityResult),
-				std::nullopt, std::nullopt, L"storage factory returned null");
-		}
-
-		storageOpenResult = m_storage->Open();
-		switch (storageOpenResult->status) {
-		case storage::EStorageAuthorityOpenStatus::Opened:
-		case storage::EStorageAuthorityOpenStatus::AlreadyOpen:
-			break;
-		case storage::EStorageAuthorityOpenStatus::InvalidArgument:
-		case storage::EStorageAuthorityOpenStatus::WriterBusy:
-		case storage::EStorageAuthorityOpenStatus::IoError:
-		case storage::EStorageAuthorityOpenStatus::CorruptData:
-		case storage::EStorageAuthorityOpenStatus::UnsupportedFormat:
-		default:
+		if (storageOpenResult && !storageOpenResult->Succeeded()) {
 			RollbackStart();
 			return Result(EControlPlatformRuntimeResultCode::StorageOpenFailed, std::move(authorityResult),
 				std::move(storageOpenResult));
+		}
+		if (!authorityResult->Succeeded()) {
+			RollbackStart();
+			return Result(EControlPlatformRuntimeResultCode::AuthorityFailed, std::move(authorityResult),
+				std::move(storageOpenResult));
+		}
+		if (!m_storage || !storageOpenResult || !storageOpenResult->Succeeded()) {
+			RollbackStart();
+			return Result(EControlPlatformRuntimeResultCode::UnexpectedFailure, std::move(authorityResult),
+				std::move(storageOpenResult), std::nullopt,
+				L"durable storage pre-commit validation did not reach an explicit terminal state");
 		}
 
 		profiles::ControlUserDataProfileRegistryResult profileRegistryResult;

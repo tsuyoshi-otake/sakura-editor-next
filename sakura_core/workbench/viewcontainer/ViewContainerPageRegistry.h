@@ -6,6 +6,7 @@
 */
 #pragma once
 
+#include "workbench/layout/WorkbenchContributionRegistry.h"
 #include "workbench/viewcontainer/IViewContainerPage.h"
 
 #include <cstddef>
@@ -13,6 +14,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -26,6 +28,41 @@ struct ViewContainerPageDescriptor final {
 	layout::SupportedViewContainerLocations supportedLocations;
 	ViewContainerPageFactory factory;
 };
+
+//! Product-owned implementation of one declarative host View provider. The
+//! provider id is package-visible; the factory remains process-local authority.
+struct HostViewProviderDescriptor final {
+	std::string id;
+	ViewContainerPageFactory factory;
+};
+
+enum class EHostViewPageProjectionStatus : std::uint8_t {
+	Projected,
+	NotApplicable,
+	InvalidContribution,
+	InvalidProvider,
+	UnknownProvider,
+	DuplicateContainerId,
+	Failed,
+};
+
+struct HostViewPageProjectionResult final {
+	EHostViewPageProjectionStatus status{ EHostViewPageProjectionStatus::Failed };
+	std::vector<ViewContainerPageDescriptor> descriptors;
+
+	[[nodiscard]] bool Succeeded() const noexcept
+	{
+		return status == EHostViewPageProjectionStatus::Projected
+			|| status == EHostViewPageProjectionStatus::NotApplicable;
+	}
+};
+
+//! Resolves declarative View provider ids to native page factories without
+//! granting the package HWND or process authority. One native page represents
+//! one ViewContainer; multiple host Views in the same container fail closed.
+[[nodiscard]] HostViewPageProjectionResult ProjectHostViewPages(
+	const layout::WorkbenchContributionSnapshot& snapshot,
+	std::span<const HostViewProviderDescriptor> providers) noexcept;
 
 enum class EViewContainerPageRegistrationStatus : std::uint8_t {
 	Registered,

@@ -142,24 +142,23 @@ bool CControlProcess::InitializeProcess()
 	MY_RUNNINGTIMER( cRunningTimer, L"CControlProcess::InitializeProcess" );
 	CStartupTrace::SetRole(CStartupTrace::Role::Control);
 	CStartupTrace::Mark(CStartupTrace::Event::ControlInitializeBegin);
+	const auto pszProfileName = GetProfileName();
+
+	// The launcher creates this event before spawning Control. Its presence also
+	// transfers ownership of startup-error presentation to that launcher.
+	std::wstring strInitEvent = GSTR_EVENT_SAKURA_CP_INITIALIZED;
+	strInitEvent += pszProfileName;
+	using HandleHolder = cxx::ResourceHolder<&::CloseHandle>;
+	HandleHolder hEvent{ ::OpenEventW(EVENT_MODIFY_STATE, FALSE, std::data(strInitEvent)) };
+	m_launcherOwnsStartupError = static_cast<bool>(hEvent);
 
 	// アプリケーション実行検出用(インストーラで使用)
 	m_hMutex = ::CreateMutex( nullptr, FALSE, GSTR_MUTEX_SAKURA );
 	if( nullptr == m_hMutex ){
 		ErrorBeep();
-		TopErrorMessage( nullptr, L"CreateMutex()失敗。\n終了します。" );
+		if (!m_launcherOwnsStartupError) TopErrorMessage( nullptr, L"CreateMutex()失敗。\n終了します。" );
 		return false;
 	}
-
-	const auto pszProfileName = GetProfileName();
-
-	// 初期化完了イベントの名前を組み立てる
-	std::wstring strInitEvent = GSTR_EVENT_SAKURA_CP_INITIALIZED;
-	strInitEvent += pszProfileName;
-
-	// 起動元が作成した初期化完了イベントを開く。
-	using HandleHolder = cxx::ResourceHolder<&::CloseHandle>;
-	HandleHolder hEvent{ ::OpenEventW(EVENT_MODIFY_STATE, FALSE, std::data(strInitEvent)) };
 
 	/* コントロールプロセスの目印 */
 	std::wstring strCtrlProcEvent = GSTR_MUTEX_SAKURA_CP;
@@ -167,7 +166,7 @@ bool CControlProcess::InitializeProcess()
 	m_hMutexCP = ::CreateMutex( nullptr, TRUE, strCtrlProcEvent.c_str() );
 	if( nullptr == m_hMutexCP ){
 		ErrorBeep();
-		TopErrorMessage( nullptr, L"CreateMutex()失敗。\n終了します。" );
+		if (!m_launcherOwnsStartupError) TopErrorMessage( nullptr, L"CreateMutex()失敗。\n終了します。" );
 		return false;
 	}
 	if( ERROR_ALREADY_EXISTS == ::GetLastError() ){
@@ -215,7 +214,7 @@ bool CControlProcess::InitializeProcess()
 	HWND hwnd = m_pcTray->Create( GetProcessInstance() );
 	if( !hwnd ){
 		ErrorBeep();
-		TopErrorMessage( nullptr, LS(STR_ERR_CTRLMTX3) );
+		if (!m_launcherOwnsStartupError) TopErrorMessage( nullptr, LS(STR_ERR_CTRLMTX3) );
 		return false;
 	}
 	SetMainWindow(hwnd);
@@ -323,6 +322,90 @@ CControlProcess::~CControlProcess()
 	::CloseHandle( m_hMutex );
 };
 
+DWORD CControlProcess::StartupExitCodeFor(
+	const platform::controlipc::ControlPlatformRuntimeResult& result) noexcept
+{
+	using platform::controlipc::EControlPlatformRuntimeResultCode;
+	using platform::storage::EStorageAuthorityOpenStatus;
+	using ExitCode = EControlProcessStartupExitCode;
+	if (result.code == EControlPlatformRuntimeResultCode::AuthorityFailed) {
+		return static_cast<DWORD>(ExitCode::ControlPlatformAuthorityFailed);
+	}
+	if (result.code == EControlPlatformRuntimeResultCode::StorageCreateFailed) {
+		return static_cast<DWORD>(ExitCode::ControlPlatformStorageCreateFailed);
+	}
+	if (result.code != EControlPlatformRuntimeResultCode::StorageOpenFailed
+		|| !result.storageOpenResult) {
+		return static_cast<DWORD>(ExitCode::ControlPlatformFailed);
+	}
+	switch (result.storageOpenResult->status) {
+	case EStorageAuthorityOpenStatus::WriterBusy:
+		return static_cast<DWORD>(ExitCode::ControlPlatformStorageWriterBusy);
+	case EStorageAuthorityOpenStatus::IoError:
+		return static_cast<DWORD>(ExitCode::ControlPlatformStorageIoError);
+	case EStorageAuthorityOpenStatus::CorruptData:
+		return static_cast<DWORD>(ExitCode::ControlPlatformStorageCorruptData);
+	case EStorageAuthorityOpenStatus::UnsupportedFormat:
+		return static_cast<DWORD>(ExitCode::ControlPlatformStorageUnsupportedFormat);
+	case EStorageAuthorityOpenStatus::GenerationRollback:
+		return static_cast<DWORD>(ExitCode::ControlPlatformStorageGenerationRollback);
+	case EStorageAuthorityOpenStatus::OrphanedState:
+		return static_cast<DWORD>(ExitCode::ControlPlatformStorageOrphanedState);
+	case EStorageAuthorityOpenStatus::Opened:
+	case EStorageAuthorityOpenStatus::AlreadyOpen:
+	case EStorageAuthorityOpenStatus::InvalidArgument:
+	default:
+		return static_cast<DWORD>(ExitCode::ControlPlatformFailed);
+	}
+}
+
+std::wstring_view CControlProcess::StartupFailureMessage(DWORD exitCode) noexcept
+{
+	using ExitCode = EControlProcessStartupExitCode;
+	switch (static_cast<ExitCode>(exitCode)) {
+	case ExitCode::ControlPlatformAuthorityFailed:
+		return L"プロファイルの管理情報を安全に読み書きできなかったため、起動を中止しました。\n"
+			L"プロファイル内の .sakura-platform を削除せず、バックアップしてから確認してください。";
+	case ExitCode::ControlPlatformStorageCreateFailed:
+	case ExitCode::ControlPlatformStorageIoError:
+		return L"プラットフォームの保存領域を読み書きできなかったため、起動を中止しました。\n"
+			L"空き容量とアクセス権を確認してください。保存データは変更していません。";
+	case ExitCode::ControlPlatformStorageWriterBusy:
+		return L"同じプロファイルのプラットフォーム保存領域が別のプロセスで使用中です。\n"
+			L"Sakura Editor NEXT をすべて終了してから、もう一度起動してください。";
+	case ExitCode::ControlPlatformStorageCorruptData:
+		return L"プラットフォームの保存状態を正しく読み取れなかったため、安全のため起動を中止しました。\n\n"
+			L"復旧するには、Sakura Editor NEXT をすべて終了し、プロファイル内の\n"
+			L".sakura-platform\\storage-v1.bin を削除せず別名でバックアップしてから再起動してください。\n"
+			L"sakura.ini は移動・削除しないでください。エディター設定は保持されます。";
+	case ExitCode::ControlPlatformStorageUnsupportedFormat:
+		return L"このバージョンではプラットフォームの保存形式を読み取れないため、起動を中止しました。\n"
+			L"アプリのバージョンを確認し、保存ファイルを削除せずバックアップしてください。";
+	case ExitCode::ControlPlatformStorageGenerationRollback:
+		return L"保存されたプラットフォーム状態の世代が、現在のプロファイル管理情報より新しいため、\n"
+			L"安全のため起動を中止しました。保存データは変更していません。\n\n"
+			L"復旧するには、Sakura Editor NEXT をすべて終了し、プロファイル内の\n"
+			L".sakura-platform\\storage-v1.bin を削除せず別名でバックアップしてから再起動してください。\n"
+			L"sakura.ini は移動・削除しないでください。エディター設定は保持されます。\n"
+			L"ワークベンチ配置や最近使った項目などのプラットフォーム状態は再作成されます。";
+	case ExitCode::ControlPlatformStorageOrphanedState:
+		return L"プロファイル管理情報がない状態で既存のプラットフォーム保存データが見つかったため、\n"
+			L"別のプロファイルとして誤って開かないよう起動を中止しました。保存データは変更していません。\n\n"
+			L".sakura-platform\\storage-v1.bin を削除せず別名でバックアップしてから再起動してください。\n"
+			L"sakura.ini は移動・削除しないでください。";
+	case ExitCode::ControlPlatformFailed:
+		return L"プラットフォームサービスの初期化に失敗したため、起動を中止しました。";
+	case ExitCode::InitializationFailed:
+	default:
+		return L"コントロールプロセスの初期化に失敗したため、起動を中止しました。";
+	}
+}
+
+DWORD CControlProcess::StartupFailureExitCode() const noexcept
+{
+	return m_startupExitCode;
+}
+
 bool CControlProcess::StartControlPlatform()
 {
 	using namespace platform::controlipc;
@@ -333,9 +416,10 @@ bool CControlProcess::StartControlPlatform()
 
 		const auto profileDirectory = TryGetResolvedProfileDirectory();
 		if (!profileDirectory) {
-			TopErrorMessage(nullptr,
-				L"プラットフォームサービスの初期化に失敗しました。\n"
-				L"共有設定のプロファイルディレクトリを取得できませんでした。");
+			m_startupExitCode = static_cast<DWORD>(EControlProcessStartupExitCode::ControlPlatformFailed);
+			if (!m_launcherOwnsStartupError) {
+				TopErrorMessage(nullptr, L"%ls", StartupFailureMessage(m_startupExitCode).data());
+			}
 			return false;
 		}
 		ControlPlatformRuntimeOptions options;
@@ -347,16 +431,10 @@ bool CControlProcess::StartControlPlatform()
 		const auto result = runtime->Start();
 		if (result.code != EControlPlatformRuntimeResultCode::Running &&
 			result.code != EControlPlatformRuntimeResultCode::AlreadyRunning) {
-			const int authorityStatus = result.authorityResult
-				? static_cast<int>(result.authorityResult->status) : -1;
-			const int storageStatus = result.storageOpenResult
-				? static_cast<int>(result.storageOpenResult->status) : -1;
-			const int hostStatus = result.hostResult
-				? static_cast<int>(result.hostResult->code) : -1;
-			TopErrorMessage(nullptr,
-				L"プラットフォームサービスの初期化に失敗しました。\n"
-				L"runtime=%d authority=%d storage=%d host=%d",
-				static_cast<int>(result.code), authorityStatus, storageStatus, hostStatus);
+			m_startupExitCode = StartupExitCodeFor(result);
+			if (!m_launcherOwnsStartupError) {
+				TopErrorMessage(nullptr, L"%ls", StartupFailureMessage(m_startupExitCode).data());
+			}
 			return false;
 		}
 
@@ -364,7 +442,10 @@ bool CControlProcess::StartControlPlatform()
 		return true;
 	}
 	catch (...) {
-		TopErrorMessage(nullptr, L"プラットフォームサービスの初期化中に予期しないエラーが発生しました。");
+		m_startupExitCode = static_cast<DWORD>(EControlProcessStartupExitCode::ControlPlatformFailed);
+		if (!m_launcherOwnsStartupError) {
+			TopErrorMessage(nullptr, L"%ls", StartupFailureMessage(m_startupExitCode).data());
+		}
 		return false;
 	}
 }

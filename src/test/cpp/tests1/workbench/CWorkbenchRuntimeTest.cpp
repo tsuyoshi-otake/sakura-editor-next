@@ -592,6 +592,37 @@ private:
 	std::size_t m_stopCalls{};
 };
 
+class FakeSenpManagementService final : public senp::ISenpManagementService {
+public:
+	explicit FakeSenpManagementService(senp::ManagementSnapshot snapshot)
+		: m_snapshot(std::move(snapshot))
+	{
+	}
+
+	[[nodiscard]] senp::ManagementOperationResult Start() override
+	{
+		m_snapshot.state = senp::EManagementState::Ready;
+		return { senp::EManagementOperationStatus::Succeeded, m_snapshot };
+	}
+	[[nodiscard]] senp::ManagementOperationResult InstallDeveloperPackage(
+		std::wstring_view, bool) override { return Unavailable(); }
+	[[nodiscard]] senp::ManagementOperationResult InstallBuiltInPackage(
+		std::wstring_view) override { return Unavailable(); }
+	[[nodiscard]] senp::ManagementOperationResult UninstallBuiltInPackage(
+		std::wstring_view) override { return Unavailable(); }
+	[[nodiscard]] senp::ManagementOperationResult Refresh() override { return Unavailable(); }
+	void Stop() noexcept override { m_snapshot.state = senp::EManagementState::Stopped; }
+	[[nodiscard]] senp::ManagementSnapshot Snapshot() const override { return m_snapshot; }
+
+private:
+	[[nodiscard]] senp::ManagementOperationResult Unavailable() const
+	{
+		return { senp::EManagementOperationStatus::Unavailable, m_snapshot };
+	}
+
+	senp::ManagementSnapshot m_snapshot;
+};
+
 struct RuntimeFixture final {
 	explicit RuntimeFixture(
 		WorkbenchBootstrapContext bootstrap,
@@ -600,7 +631,8 @@ struct RuntimeFixture final {
 		std::unique_ptr<FakeStatusbarVisibilityMementoStore> ownedStatusbarStore = {},
 		std::optional<outputModel::EOutputProviderKind> outputProviderKind = std::nullopt,
 		outputModel::OutputProviderCreator rustOutputProviderCreator = {},
-		outputModel::OutputProviderCreator cppOutputProviderCreator = {})
+		outputModel::OutputProviderCreator cppOutputProviderCreator = {},
+		std::unique_ptr<senp::ISenpManagementService> senpManagementService = {})
 	{
 		auto ownedFiles = std::make_unique<FakeFileService>();
 		files = ownedFiles.get();
@@ -614,6 +646,7 @@ struct RuntimeFixture final {
 		if (outputProviderKind) dependencies.outputProviderKind = *outputProviderKind;
 		dependencies.outputProviderFactory.testRustCreator = std::move(rustOutputProviderCreator);
 		dependencies.outputProviderFactory.testCppCreator = std::move(cppOutputProviderCreator);
+		dependencies.senpManagementService = std::move(senpManagementService);
 		runtime = std::make_unique<CWorkbenchRuntime>(
 			std::move(bootstrap), config::BuiltinConfigurationDescriptors(), std::move(dependencies));
 	}
@@ -1562,6 +1595,7 @@ TEST(CWorkbenchRuntime, OwnsCanonicalContributionsAndAnIndependentAuxiliaryBarLa
 
 	EXPECT_EQ(1U, contributions.revision);
 	EXPECT_EQ(10U, contributions.viewContainers.size());
+	EXPECT_EQ(contributions.viewContainers.end(), findContainer(layout::ids::viewContainer::Projects));
 	EXPECT_NE(contributions.viewContainers.end(), findContainer(layout::ids::viewContainer::Search));
 	EXPECT_NE(contributions.viewContainers.end(), findContainer(layout::ids::viewContainer::Extensions));
 	EXPECT_NE(contributions.viewContainers.end(), findContainer(layout::ids::viewContainer::RunAndDebug));
@@ -1603,6 +1637,106 @@ TEST(CWorkbenchRuntime, OwnsCanonicalContributionsAndAnIndependentAuxiliaryBarLa
 	EXPECT_EQ("Installed", extensionsInstalled->descriptor.title);
 	EXPECT_EQ(std::string(layout::ids::viewContainer::Extensions),
 		extensionsInstalled->descriptor.containerId);
+}
+
+senp::ExtensionDescriptor ProjectsExtension()
+{
+	return {
+		.id = L"sakura-projects",
+		.displayName = L"Projects",
+		.version = L"0.1.0",
+		.publisher = L"sakura.builtin",
+		.description = L"Fixture",
+		.installed = true,
+		.builtIn = true,
+		.enabled = true,
+		.viewContainers = { senp::ViewContainerContribution{
+			.id = L"sakura.view.projects",
+			.title = L"Projects",
+			.icon = L"$(project)",
+			.order = 5,
+		} },
+		.views = { senp::ViewContribution{
+			.id = L"sakura.projects",
+			.containerId = L"sakura.view.projects",
+			.title = L"Projects",
+			.provider = L"sakura.projects",
+			.order = 10,
+		} },
+		.trust = L"builtin",
+	};
+}
+
+TEST(CWorkbenchRuntime, RegistersEnabledTrustedSenpHostViewsBeforePublishingReady)
+{
+	senp::ManagementSnapshot management{
+		.state = senp::EManagementState::Created,
+		.revision = 1,
+		.extensions = { ProjectsExtension() },
+	};
+	RuntimeFixture fixture(Bootstrap(), {}, {}, {}, std::nullopt, {}, {},
+		std::make_unique<FakeSenpManagementService>(std::move(management)));
+
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+	const auto contributions = fixture.runtime->Contributions().Snapshot();
+	EXPECT_EQ(2U, contributions.revision);
+	const auto container = std::ranges::find_if(contributions.viewContainers, [](const auto& entry) {
+		return entry.descriptor.id == layout::ids::viewContainer::Projects;
+	});
+	ASSERT_NE(contributions.viewContainers.end(), container);
+	EXPECT_EQ("project", container->descriptor.icon);
+	const auto view = std::ranges::find_if(contributions.views, [](const auto& entry) {
+		return entry.descriptor.id == layout::ids::view::Projects;
+	});
+	ASSERT_NE(contributions.views.end(), view);
+	EXPECT_EQ("sakura.projects", view->descriptor.provider);
+	const auto layoutSnapshot = fixture.runtime->LayoutState().Snapshot();
+	EXPECT_NE(layoutSnapshot.containers.end(),
+		std::ranges::find(layoutSnapshot.containers,
+			std::string(layout::ids::viewContainer::Projects),
+			&layout::WorkbenchViewContainerState::containerId));
+	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
+}
+
+TEST(CWorkbenchRuntime, SkipsDisabledSenpHostViews)
+{
+	auto extension = ProjectsExtension();
+	extension.enabled = false;
+	senp::ManagementSnapshot management{
+		.state = senp::EManagementState::Created,
+		.revision = 1,
+		.extensions = { std::move(extension) },
+	};
+	RuntimeFixture fixture(Bootstrap(), {}, {}, {}, std::nullopt, {}, {},
+		std::make_unique<FakeSenpManagementService>(std::move(management)));
+
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+	const auto contributions = fixture.runtime->Contributions().Snapshot();
+	EXPECT_EQ(1U, contributions.revision);
+	EXPECT_EQ(contributions.viewContainers.end(),
+		std::ranges::find_if(contributions.viewContainers, [](const auto& entry) {
+			return entry.descriptor.id == layout::ids::viewContainer::Projects;
+		}));
+	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
+}
+
+TEST(CWorkbenchRuntime, RejectsUnknownSenpHostViewProvider)
+{
+	auto extension = ProjectsExtension();
+	extension.views.front().provider = L"sakura.unsupported-provider";
+	senp::ManagementSnapshot management{
+		.state = senp::EManagementState::Created,
+		.revision = 1,
+		.extensions = { std::move(extension) },
+	};
+	RuntimeFixture fixture(Bootstrap(), {}, {}, {}, std::nullopt, {}, {},
+		std::make_unique<FakeSenpManagementService>(std::move(management)));
+
+	const auto started = fixture.runtime->Start();
+	EXPECT_EQ(EWorkbenchRuntimeResultCode::Failed, started.code);
+	EXPECT_EQ(EWorkbenchRuntimeState::Failed, started.snapshot.state);
+	EXPECT_EQ(1U, fixture.runtime->Contributions().Snapshot().revision);
+	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
 }
 
 

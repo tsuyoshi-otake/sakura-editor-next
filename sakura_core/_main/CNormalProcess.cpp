@@ -46,6 +46,7 @@
 #include "env/CShareData.h"
 #include "config/system_constants.h"
 #include "_main/ControlPlatformWorkbenchLayoutMementoStore.h"
+#include "_main/ControlPlatformProjectCatalogStore.h"
 #include "_main/ControlPlatformRecentlyOpenedWorkspaceStore.h"
 #include "_main/ControlPlatformStatusbarVisibilityMementoStore.h"
 #include "_main/ControlPlatformWorkingCopyPersistenceStore.h"
@@ -549,6 +550,9 @@ bool CNormalProcess::InitializeProcess()
 			*m_editorControlPlatformRuntime, platformIdentity->profileId);
 	workbenchDependencies.recentlyOpenedWorkspaceStore =
 		std::make_unique<CControlPlatformRecentlyOpenedWorkspaceStore>(
+			*m_editorControlPlatformRuntime, platformIdentity->profileId);
+	workbenchDependencies.projectCatalogStore =
+		std::make_unique<CControlPlatformProjectCatalogStore>(
 			*m_editorControlPlatformRuntime, platformIdentity->profileId);
 	workbenchDependencies.statusbarVisibilityMementoStore =
 		std::make_unique<CControlPlatformStatusbarVisibilityMementoStore>(

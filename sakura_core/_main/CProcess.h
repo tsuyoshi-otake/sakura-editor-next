@@ -41,7 +41,7 @@ class CTerminalRuntimeService;
 class CProcess : public TSingleInstance<CProcess> {
 public:
 	CProcess( HINSTANCE hInstance, LPCWSTR lpCmdLine );
-	bool Run();
+	DWORD Run();
 	virtual ~CProcess(){}
 	virtual void RefreshString();
 
@@ -55,6 +55,9 @@ protected:
 	virtual bool InitializeProcess();
 	virtual bool MainLoop() = 0;
 	virtual void OnExitProcess() = 0;
+	//! Returned only when InitializeProcess() reaches a terminal failure. Derived
+	//! processes may expose a more specific launcher-observable startup outcome.
+	[[nodiscard]] virtual DWORD StartupFailureExitCode() const noexcept;
 
 protected:
 	void			SetMainWindow(HWND hwnd){ m_hWnd = hwnd; }

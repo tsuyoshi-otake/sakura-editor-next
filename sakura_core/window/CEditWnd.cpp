@@ -89,6 +89,7 @@
 #include "workbench/CWorkbenchPanelHost.h"
 #include "workbench/CWorkspaceContext.h"
 #include "workbench/IWorkbenchRuntime.h"
+#include "workbench/projects/ProjectCatalogService.h"
 #include "workbench/recent/RecentlyOpenedWorkspaceMenuProjection.h"
 #include "workbench/workspace/WorkspaceEditingService.h"
 #include "workbench/workspace/WorkspaceWindowTransitionService.h"
@@ -98,6 +99,7 @@
 #include "workbench/account/AccountDiscovery.h"
 #include "workbench/activity/ActivityBarEntryProjection.h"
 #include "workbench/activity/CActivityBar.h"
+#include "workbench/projects/CProjectsPage.h"
 #include "workbench/panel/CBottomPanelTool.h"
 #include "workbench/explorer/CExplorerTool.h"
 #include "workbench/explorer/ExplorerDeleteConfirmation.h"
@@ -685,13 +687,12 @@ constexpr int kSideBarDropEdgeDip = 48;
 }
 
 /*!
-	@brief The built-in ViewContainers the native side bar can actually open.
+	@brief Native ViewContainers available before the page registry is composed.
 
-	The layout registry declares VS Code's full built-in set, Search and Run and Debug included,
-	but `CViewContainerPages` has no page for Run and Debug yet. Projecting it onto the Activity
-	Bar would add buttons that open nothing, so the composition passes only what it can show.
+	The normal path derives renderable identities from `CViewContainerPages`, including pages
+	projected from extension contributions. This fallback is used only before that registry exists.
 */
-constexpr std::array kRenderableBuiltinContainers{
+constexpr std::array kFallbackRenderableContainers{
 	std::string_view(workbench::layout::ids::viewContainer::Explorer),
 	std::string_view(workbench::layout::ids::viewContainer::Search),
 	std::string_view(workbench::layout::ids::viewContainer::SourceControl),
@@ -2740,6 +2741,89 @@ bool CEditWnd::InitializeWorkbench()
 	};
 	auto& settings = m_pShareData->m_Common.m_sWorkbench;
 	m_viewContainerPages = std::make_shared<workbench::viewcontainer::CViewContainerPages>(m_cDlgFuncList);
+	const auto contributionSnapshot = m_workbenchRuntime->Contributions().Snapshot();
+	const std::array hostViewProviders{
+		workbench::viewcontainer::HostViewProviderDescriptor{
+			.id = "sakura.projects",
+			.factory = [this]() {
+				workbench::projects::ProjectsPageOptions options;
+				options.projects = [this]()
+					-> std::optional<std::vector<workbench::projects::ProjectEntry>> {
+					if (m_workbenchRuntime == nullptr) {
+						return std::nullopt;
+					}
+					const auto projects = m_workbenchRuntime->Projects();
+					return projects == nullptr
+						|| projects->State() != workbench::projects::EProjectCatalogState::Ready
+						? std::nullopt
+						: std::optional(projects->Snapshot());
+				};
+				options.workspace = [this]() {
+					return m_workbenchRuntime == nullptr
+						? config::WorkspaceContextSnapshot{}
+						: m_workbenchRuntime->WorkspaceContext().Snapshot();
+				};
+				options.workspaceRoot = [this]() { return GetSemanticWorkspaceRoot(); };
+				options.activateProject = [this](
+					const workbench::projects::ProjectEntry& project, const bool thisWindow) {
+					if (GetHwnd() == nullptr) return workbench::projects::EProjectsActivationStatus::Failed;
+					if (thisWindow) {
+						if (::IsIconic(GetHwnd())) ::ShowWindow(GetHwnd(), SW_RESTORE);
+						::SetForegroundWindow(GetHwnd());
+						return workbench::projects::EProjectsActivationStatus::FocusedCurrentWindow;
+					}
+					const auto path = project.uri.ToWindowsPath();
+					if (!path.value || path.value->empty()) {
+						return workbench::projects::EProjectsActivationStatus::Failed;
+					}
+					const std::wstring option = project.kind == workbench::projects::EProjectKind::Folder
+						? L"-FOLDER=\"" + *path.value + L"\""
+						: L"-WORKSPACE=\"" + *path.value + L"\"";
+					return LaunchWorkspaceTarget(option, false) == EWorkspaceWindowTransitionResult::Succeeded
+						? workbench::projects::EProjectsActivationStatus::OpenedNewWindow
+						: workbench::projects::EProjectsActivationStatus::Failed;
+				};
+				options.activateWorktree = [this](const std::wstring_view path, const bool thisWindow) {
+					if (path.empty() || GetHwnd() == nullptr) {
+						return workbench::projects::EProjectsActivationStatus::Failed;
+					}
+					if (thisWindow) {
+						if (::IsIconic(GetHwnd())) ::ShowWindow(GetHwnd(), SW_RESTORE);
+						::SetForegroundWindow(GetHwnd());
+						return workbench::projects::EProjectsActivationStatus::FocusedCurrentWindow;
+					}
+					const auto result = LaunchWorkspaceTarget(
+						L"-FOLDER=\"" + std::wstring(path) + L"\"", false);
+					return result == EWorkspaceWindowTransitionResult::Succeeded
+						? workbench::projects::EProjectsActivationStatus::OpenedNewWindow
+						: workbench::projects::EProjectsActivationStatus::Failed;
+				};
+				options.removeProject = [this](const workbench::projects::ProjectEntry& project) {
+					if (m_workbenchRuntime == nullptr) {
+						return workbench::projects::EProjectsRemovalStatus::Failed;
+					}
+					const auto projects = m_workbenchRuntime->Projects();
+					if (projects == nullptr) {
+						return workbench::projects::EProjectsRemovalStatus::Failed;
+					}
+					const auto removed = projects->Remove(project.uri);
+					return removed.outcome == workbench::projects::EProjectCatalogOutcome::Succeeded
+						? workbench::projects::EProjectsRemovalStatus::Removed
+						: workbench::projects::EProjectsRemovalStatus::Failed;
+				};
+				return workbench::projects::CreateProjectsPage(GetHwnd(), std::move(options));
+			},
+		},
+	};
+	auto projectedHostViews = workbench::viewcontainer::ProjectHostViewPages(
+		contributionSnapshot, hostViewProviders);
+	if (!projectedHostViews.Succeeded()
+		|| !m_viewContainerPages->RegisterContributedPages(
+			std::move(projectedHostViews.descriptors)).Succeeded()) {
+		m_viewContainerPages.reset();
+		CloseWorkbench();
+		return false;
+	}
 	if (!m_viewContainerPages->Create(GetHwnd())) {
 		m_viewContainerPages.reset();
 		CloseWorkbench();
@@ -2752,8 +2836,8 @@ bool CEditWnd::InitializeWorkbench()
 	m_extensionsTool = m_viewContainerPages->Extensions();
 	if (m_extensionsTool != nullptr && m_workbenchRuntime != nullptr) {
 		m_extensionsTool->SetExtensionsChangedCallback([this] {
-			// Rebuild each extension-owned projection before repainting. Package
-			// management remains the only source of enabled/installed state.
+			// Runtime and language projections can refresh in-place. Native View pages
+			// are a startup batch, so workbench contribution changes apply to the next window.
 			if (auto* runtime = GetSenpRuntime()) runtime->NotifyExtensionsChanged();
 			if (auto* languages = GetSenpLanguageService()) languages->NotifyExtensionsChanged();
 			Views_Redraw();
@@ -3037,6 +3121,9 @@ bool CEditWnd::InitializeWorkbench()
 	// bar runs the same `moveViewContainerToLocation` the Command Palette move uses.
 	m_activityBar->SetContainerDragCallback([this](std::string_view containerId, POINT screenPoint) {
 		if (m_viewContainerPages == nullptr || !m_viewContainerPages->Contains(containerId)) return;
+		if (m_activityBar != nullptr && ReorderViewContainerInActivityBar(containerId,
+			workbench::layout::EWorkbenchViewContainerLocation::SideBar,
+			*m_activityBar, screenPoint)) return;
 		if (const auto target = HitTestSideBarEdge(screenPoint);
 			target && *target != workbench::WorkbenchEdge::Left) {
 			MoveViewContainerToEdge(containerId, *target);
@@ -3045,6 +3132,9 @@ bool CEditWnd::InitializeWorkbench()
 	m_auxiliaryActivityBar->SetContainerDragCallback(
 		[this](std::string_view containerId, POINT screenPoint) {
 			if (m_viewContainerPages == nullptr || !m_viewContainerPages->Contains(containerId)) return;
+			if (m_auxiliaryActivityBar != nullptr && ReorderViewContainerInActivityBar(containerId,
+				workbench::layout::EWorkbenchViewContainerLocation::AuxiliaryBar,
+				*m_auxiliaryActivityBar, screenPoint)) return;
 			if (const auto target = HitTestSideBarEdge(screenPoint);
 				target && *target != workbench::WorkbenchEdge::Right) {
 				MoveViewContainerToEdge(containerId, *target);
@@ -7410,7 +7500,9 @@ std::wstring CEditWnd::GetSemanticWorkspaceRoot() const
 	// The native Explorer currently has one root. Do not silently collapse a
 	// multi-root workspace to its first folder; that receives a real tree model
 	// in the later view-container slice.
-	if (snapshot.kind != config::EWorkspaceKind::Folder || snapshot.folders.size() != 1) return {};
+	if ((snapshot.kind != config::EWorkspaceKind::Folder
+		&& snapshot.kind != config::EWorkspaceKind::Workspace)
+		|| snapshot.folders.size() != 1) return {};
 	const auto path = snapshot.folders.front().uri.ToWindowsPath();
 	return path ? std::move(*path.value) : std::wstring{};
 }
@@ -7431,6 +7523,10 @@ void CEditWnd::ApplySemanticWorkspaceContext()
 	// The caption carries the folder's name, so opening or closing one changes it.
 	UpdateCaption();
 	if (m_terminalTool) m_terminalTool->SetWorkingDirectory(m_workspaceContext->GetNewTerminalWorkingDirectory());
+	if (m_viewContainerPages != nullptr) {
+		m_viewContainerPages->RefreshPageContent(
+			workbench::layout::ids::viewContainer::Projects);
+	}
 }
 
 
@@ -8257,12 +8353,18 @@ void CEditWnd::ApplyAuxiliaryBarPage(const std::string_view containerId)
 
 void CEditWnd::RefreshSidebarTitles()
 {
-	// The host header is the VS Code ViewContainer title, so it follows whichever container
-	// that side bar currently renders. Only the pool knows the title of a contributed
-	// container, so it is asked rather than a table this window would have to keep in sync.
+	// Fixed pages own localized titles. Contributed pages take their fallback title from the
+	// logical contribution registry so native factories do not create a second title authority.
 	const auto titleOf = [this](std::string_view containerId) -> std::wstring {
 		if (containerId.empty() || m_viewContainerPages == nullptr) return {};
-		return m_viewContainerPages->PageTitle(containerId);
+		if (auto title = m_viewContainerPages->PageTitle(containerId); !title.empty()) return title;
+		const auto snapshot = m_workbenchRuntime != nullptr
+			? m_workbenchRuntime->Contributions().Snapshot()
+			: workbench::layout::WorkbenchContributionRegistry{}.Snapshot();
+		const auto found = std::ranges::find_if(snapshot.viewContainers,
+			[containerId](const auto& entry) { return entry.descriptor.id == containerId; });
+		if (found == snapshot.viewContainers.end()) return {};
+		return ResolveLocalizedActivityBarTitle(containerId, u8stowcs(found->descriptor.title));
 	};
 	const auto menuOf = [this](std::string_view containerId) {
 		std::vector<workbench::CWorkbenchPanelHost::HeaderMenuItem> items;
@@ -8359,45 +8461,29 @@ void CEditWnd::SetOutlineExpandedInHosts(bool expanded)
 void CEditWnd::SyncViewContainers(const workbench::layout::WorkbenchLayoutStateSnapshot* layoutState)
 {
 	if (!m_activityBar && !m_auxiliaryActivityBar && !m_viewContainerPages) return;
+	std::vector<std::string> registeredPageIds;
+	std::vector<std::string_view> renderableContainers;
+	if (m_viewContainerPages) {
+		registeredPageIds = m_viewContainerPages->PageIds();
+		renderableContainers.reserve(registeredPageIds.size());
+		for (const auto& pageId : registeredPageIds) renderableContainers.emplace_back(pageId);
+	} else {
+		renderableContainers.assign(
+			kFallbackRenderableContainers.begin(), kFallbackRenderableContainers.end());
+	}
 	const workbench::activity::ActivityBarProjectionOptions options{
-		.renderableBuiltins = kRenderableBuiltinContainers,
+		.renderableBuiltins = renderableContainers,
 		.titleResolver = ResolveLocalizedActivityBarTitle,
+		.layoutState = layoutState,
 	};
 	static const workbench::layout::WorkbenchContributionSnapshot builtinsOnly =
 		workbench::layout::WorkbenchContributionRegistry{}.Snapshot();
 	const auto contributions =
 		m_workbenchRuntime != nullptr ? m_workbenchRuntime->Contributions().Snapshot() : builtinsOnly;
-	auto entries = workbench::activity::ProjectActivityBarEntries(contributions, options);
-	const auto declaredAuxiliaryEntries = workbench::activity::ProjectActivityBarEntries(
+	auto primaryEntries = workbench::activity::ProjectActivityBarEntries(
+		contributions, options, workbench::layout::EViewContainerLocation::Sidebar);
+	auto auxiliaryEntries = workbench::activity::ProjectActivityBarEntries(
 		contributions, options, workbench::layout::EViewContainerLocation::AuxiliaryBar);
-	for (const auto& candidate : declaredAuxiliaryEntries) {
-		if (std::ranges::none_of(entries, [&candidate](const auto& entry) {
-			return entry.id == candidate.id;
-		})) {
-			entries.push_back(candidate);
-		}
-	}
-	auto primaryEntries = entries;
-	auto auxiliaryEntries = entries;
-
-	// VS Code moves the whole composite entry together with its ViewContainer: a container
-	// that now lives in the Secondary Side Bar has no Activity Bar icon at all. A greyed-out
-	// placeholder would be a fake capability, so the entry is hidden instead.
-	for (std::size_t index = 0; index < entries.size(); ++index) {
-		auto location = std::ranges::find(declaredAuxiliaryEntries, entries[index].id,
-			&workbench::activity::ActivityBarEntry::id) == declaredAuxiliaryEntries.end()
-			? workbench::layout::EWorkbenchViewContainerLocation::SideBar
-			: workbench::layout::EWorkbenchViewContainerLocation::AuxiliaryBar;
-		if (layoutState != nullptr) {
-			const auto container = std::ranges::find(layoutState->containers, entries[index].id,
-				&workbench::layout::WorkbenchViewContainerState::containerId);
-			if (container != layoutState->containers.end()) location = container->location;
-		}
-		primaryEntries[index].visible = location
-			== workbench::layout::EWorkbenchViewContainerLocation::SideBar;
-		auxiliaryEntries[index].visible = location
-			== workbench::layout::EWorkbenchViewContainerLocation::AuxiliaryBar;
-	}
 	// GlobalCompositeBar: Accounts then Manage are pinned to the vertical bar.
 	// Top/bottom placement moves both actions to the native title bar.
 	if (m_activityBarLocation == workbench::ActivityBarLocation::Default) {
@@ -9536,12 +9622,116 @@ void CEditWnd::RecordRecentlyOpenedWorkspaceAfterReady(
 {
 	if (m_workbenchRuntime == nullptr) return;
 	const auto recent = m_workbenchRuntime->RecentlyOpenedWorkspaces();
-	if (recent == nullptr) return;
-	const auto recorded = recent->RecordSuccessfulOpen({ kind, uri, std::nullopt });
-	if (recorded.outcome != workbench::recent::ERecentlyOpenedWorkspaceOutcome::Succeeded) {
-		::OutputDebugStringW(L"Sakura Editor NEXT: recently opened workspace history update failed.\n");
+	if (recent != nullptr) {
+		const auto recorded = recent->RecordSuccessfulOpen({ kind, uri, std::nullopt });
+		if (recorded.outcome != workbench::recent::ERecentlyOpenedWorkspaceOutcome::Succeeded) {
+			::OutputDebugStringW(L"Sakura Editor NEXT: recently opened workspace history update failed.\n");
+		}
+	}
+	if (const auto projects = m_workbenchRuntime->Projects(); projects != nullptr) {
+		const auto projectKind = kind == workbench::recent::ERecentlyOpenedWorkspaceKind::Folder
+			? workbench::projects::EProjectKind::Folder
+			: workbench::projects::EProjectKind::Workspace;
+		const auto recorded = projects->RecordSuccessfulOpen({ projectKind, uri, std::nullopt });
+		if (recorded.outcome != workbench::projects::EProjectCatalogOutcome::Succeeded) {
+			::OutputDebugStringW(L"Sakura Editor NEXT: project catalog update failed.\n");
+		}
+	}
+	if (m_viewContainerPages != nullptr) {
+		m_viewContainerPages->RefreshPageContent(
+			workbench::layout::ids::viewContainer::Projects);
 	}
 	(void)RefreshWorkbenchCommandContext();
+}
+
+bool CEditWnd::ReorderViewContainerInActivityBar(
+	const std::string_view containerId,
+	const workbench::layout::EWorkbenchViewContainerLocation location,
+	const workbench::CActivityBar& activityBar,
+	const POINT screenPoint)
+{
+	const auto insertionIndex = activityBar.ContainerInsertionIndexAtScreenPoint(screenPoint);
+	if (!insertionIndex) return false;
+	if (m_workbenchRuntime == nullptr || containerId.empty()) return true;
+	try {
+		const auto reordered = workbench::activity::ReorderActivityBarContainers(
+			activityBar.GetEntries(), containerId, *insertionIndex);
+		if (!reordered) return true;
+
+		const auto snapshot = m_workbenchRuntime->LayoutState().Snapshot();
+		const auto contributions = m_workbenchRuntime->Contributions().Snapshot();
+		std::vector<const workbench::layout::WorkbenchViewContainerState*> locationStates;
+		for (const auto& state : snapshot.containers) {
+			if (state.location != location) continue;
+			const auto contribution = std::ranges::find_if(contributions.viewContainers,
+				[&state](const auto& entry) { return entry.descriptor.id == state.containerId; });
+			if (contribution != contributions.viewContainers.end()) locationStates.push_back(&state);
+		}
+		std::ranges::sort(locationStates, [](const auto* left, const auto* right) {
+			if (left->order != right->order) return left->order < right->order;
+			return left->containerId < right->containerId;
+		});
+		if (locationStates.size() > workbench::layout::kMaxWorkbenchLayoutTransactionChanges) return true;
+		std::vector<std::string> locationOrder;
+		locationOrder.reserve(locationStates.size());
+		for (const auto* state : locationStates) locationOrder.push_back(state->containerId);
+		const auto originalOrder = locationOrder;
+		const auto source = std::ranges::find(locationOrder, containerId);
+		const auto visibleSource = std::ranges::find(*reordered, containerId);
+		if (source == locationOrder.end() || visibleSource == reordered->end()) return true;
+		const auto visibleIndex = static_cast<std::size_t>(visibleSource - reordered->begin());
+		locationOrder.erase(source);
+		if (visibleIndex + 1 < reordered->size()) {
+			const auto next = std::ranges::find(locationOrder, (*reordered)[visibleIndex + 1]);
+			if (next == locationOrder.end()) return true;
+			locationOrder.insert(next, std::string(containerId));
+		} else if (visibleIndex > 0) {
+			const auto previous = std::ranges::find(locationOrder, (*reordered)[visibleIndex - 1]);
+			if (previous == locationOrder.end()) return true;
+			locationOrder.insert(previous + 1, std::string(containerId));
+		} else {
+			locationOrder.insert(locationOrder.begin(), std::string(containerId));
+		}
+		if (locationOrder == originalOrder) return true;
+
+		std::vector<workbench::layout::WorkbenchLayoutTransactionChange> changes;
+		changes.reserve(locationOrder.size());
+		constexpr std::int32_t kOrderStep = 10;
+		for (std::size_t index = 0; index < locationOrder.size(); ++index) {
+			const auto state = std::ranges::find(snapshot.containers, locationOrder[index],
+				&workbench::layout::WorkbenchViewContainerState::containerId);
+			if (state == snapshot.containers.end() || state->location != location) return true;
+			const auto order = static_cast<std::int32_t>(index) * kOrderStep;
+			if (state->order == order) continue;
+			changes.emplace_back(workbench::layout::WorkbenchLayoutMoveContainerChange{
+				.containerId = locationOrder[index],
+				.location = location,
+				.order = order,
+			});
+		}
+		if (changes.empty()) return true;
+		auto operationId = NextWorkbenchLayoutOperationId("reorder-view-container");
+		if (!operationId) return true;
+		const auto result = m_workbenchRuntime->LayoutState().ApplyTransaction({
+			.operation = {
+				.operationId = std::move(*operationId),
+				.expectedRevision = snapshot.revision,
+			},
+			.changes = std::move(changes),
+		});
+		if (result.status != workbench::layout::EWorkbenchLayoutOperationStatus::Succeeded
+			&& result.status != workbench::layout::EWorkbenchLayoutOperationStatus::NotApplicable) {
+			return true;
+		}
+		bool mirrorChanged = false;
+		if (!ApplyCurrentWorkbenchLayoutState(true, false, &mirrorChanged)) {
+			::OutputDebugStringW(L"Sakura Editor NEXT: Activity Bar reorder projection failed.\n");
+			return true;
+		}
+		if (mirrorChanged) BroadcastWorkbenchSettings();
+	} catch (...) {
+	}
+	return true;
 }
 
 void CEditWnd::RecordCurrentWorkspaceAfterReady()

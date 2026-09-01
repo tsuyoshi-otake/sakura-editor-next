@@ -218,6 +218,61 @@ std::string_view ActivityBarModel::HitTest(int x, int y) const noexcept
 	return {};
 }
 
+std::optional<std::size_t> ActivityBarModel::ContainerInsertionIndexAt(
+	const int x, const int y) const noexcept
+{
+	if (x < 0 || y < 0 || x >= m_widthPixels || y >= m_heightPixels) return std::nullopt;
+	const bool vertical = m_orientation == ActivityBarOrientation::Vertical;
+	const int pointer = vertical ? y : x;
+	std::size_t insertionIndex = 0;
+	for (std::size_t index = 0; index < m_entries.size(); ++index) {
+		const auto& entry = m_entries[index];
+		if (!entry.visible || entry.IsGlobalAction()) continue;
+		const auto& bounds = m_bounds[index];
+		if (bounds.right <= bounds.left || bounds.bottom <= bounds.top) continue;
+		const int start = vertical ? bounds.top : bounds.left;
+		const int end = vertical ? bounds.bottom : bounds.right;
+		if (pointer < start + (end - start) / 2) return insertionIndex;
+		++insertionIndex;
+	}
+	return insertionIndex;
+}
+
+std::optional<ActivityBarRect> ActivityBarModel::ContainerInsertionMarker(
+	const std::size_t insertionIndex) const noexcept
+{
+	std::size_t containerCount = 0;
+	std::optional<ActivityBarRect> indexedAnchor;
+	std::optional<ActivityBarRect> lastAnchor;
+	for (std::size_t index = 0; index < m_entries.size(); ++index) {
+		if (!m_entries[index].visible || m_entries[index].IsGlobalAction()) continue;
+		const auto bounds = m_bounds[index];
+		if (bounds.right <= bounds.left || bounds.bottom <= bounds.top) continue;
+		if (containerCount == insertionIndex) indexedAnchor = bounds;
+		lastAnchor = bounds;
+		++containerCount;
+	}
+	if (containerCount == 0 || insertionIndex > containerCount) return std::nullopt;
+
+	const bool vertical = m_orientation == ActivityBarOrientation::Vertical;
+	const int thickness = std::max(1, ScaleDip(2, m_dpi));
+	const int inset = std::max(0, ScaleDip(6, m_dpi));
+	const auto& anchor = insertionIndex == containerCount ? *lastAnchor : *indexedAnchor;
+	const int coordinate = insertionIndex == containerCount
+		? (vertical ? anchor.bottom : anchor.right)
+		: (vertical ? anchor.top : anchor.left);
+	if (vertical) {
+		const int top = std::clamp(coordinate - thickness / 2, 0,
+			std::max(0, m_heightPixels - thickness));
+		return ActivityBarRect{ std::min(inset, m_widthPixels), top,
+			std::max(std::min(inset, m_widthPixels), m_widthPixels - inset), top + thickness };
+	}
+	const int left = std::clamp(coordinate - thickness / 2, 0,
+		std::max(0, m_widthPixels - thickness));
+	return ActivityBarRect{ left, std::min(inset, m_heightPixels), left + thickness,
+		std::max(std::min(inset, m_heightPixels), m_heightPixels - inset) };
+}
+
 std::string_view ActivityBarModel::MoveFocus(int direction) noexcept
 {
 	if (m_entries.empty()) return {};

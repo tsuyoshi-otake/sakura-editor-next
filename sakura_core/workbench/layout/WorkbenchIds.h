@@ -27,6 +27,9 @@ inline constexpr std::string_view Explorer = "workbench.view.explorer";
 inline constexpr std::string_view Search = "workbench.view.search";
 inline constexpr std::string_view RunAndDebug = "workbench.view.debug";
 inline constexpr std::string_view SourceControl = "workbench.view.scm";
+//! Sakura-owned saved workspace navigator. VS Code has no built-in Projects
+//! ViewContainer, so the product namespace is an intentional documented extension.
+inline constexpr std::string_view Projects = "sakura.view.projects";
 inline constexpr std::string_view Extensions = "workbench.view.extensions";
 inline constexpr std::string_view Problems = "workbench.panel.markers";
 inline constexpr std::string_view Output = "workbench.panel.output";
@@ -53,6 +56,7 @@ inline constexpr std::string_view DebugBreakpoints = "workbench.debug.breakPoint
 inline constexpr std::string_view SourceControlRepositories = "workbench.scm.repositories";
 inline constexpr std::string_view SourceControl = "workbench.scm";
 inline constexpr std::string_view SourceControlGraph = "workbench.scm.history";
+inline constexpr std::string_view Projects = "sakura.projects";
 inline constexpr std::string_view ExtensionsInstalled = "workbench.views.extensions.installed";
 inline constexpr std::string_view Problems = "workbench.panel.markers.view";
 inline constexpr std::string_view Output = "workbench.panel.output";

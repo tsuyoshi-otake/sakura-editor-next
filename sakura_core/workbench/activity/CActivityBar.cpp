@@ -255,6 +255,7 @@ void CActivityBar::Destroy() noexcept
 	m_destroying = true;
 	m_captureItem.clear();
 	m_dragging = false;
+	m_dropInsertionIndex.reset();
 	if (m_iconFont != nullptr) {
 		::DeleteObject(m_iconFont);
 		m_iconFont = nullptr;
@@ -291,6 +292,7 @@ void CActivityBar::SetEntries(std::vector<ActivityBarEntry> entries)
 {
 	// A container the user was dragging may not exist any more.
 	m_model.SetEntries(std::move(entries));
+	m_dropInsertionIndex.reset();
 	if (!m_captureItem.empty() && !m_model.Contains(m_captureItem)) {
 		m_captureItem.clear();
 		m_dragging = false;
@@ -379,6 +381,7 @@ LRESULT CALLBACK CActivityBar::WindowProc(HWND window, UINT message, WPARAM wPar
 		activityBar->m_window = nullptr;
 		activityBar->m_tooltip = nullptr;
 		activityBar->m_captureItem.clear();
+		activityBar->m_dropInsertionIndex.reset();
 		if (!activityBar->m_destroying) activityBar->m_destroyed = true;
 		::SetWindowLongPtrW(window, GWLP_USERDATA, 0);
 		return ::DefWindowProcW(window, message, wParam, lParam);
@@ -441,6 +444,7 @@ LRESULT CActivityBar::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam)
 			// is still pending.
 			m_model.SetPressedItem({});
 			m_model.SetHoveredItem({});
+			m_dropInsertionIndex = m_model.ContainerInsertionIndexAt(point.x, point.y);
 			Invalidate();
 			return 0;
 		}
@@ -458,6 +462,7 @@ LRESULT CActivityBar::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam)
 	case WM_MOUSELEAVE:
 		m_trackingMouseLeave = false;
 		m_model.SetHoveredItem({});
+		if (m_dragging) m_dropInsertionIndex.reset();
 		if (m_captureItem.empty()) m_model.SetPressedItem({});
 		Invalidate();
 		return 0;
@@ -465,6 +470,7 @@ LRESULT CActivityBar::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam)
 		const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
 		const std::string item(m_model.HitTest(point.x, point.y));
 		if (item.empty()) break;
+		m_dropInsertionIndex.reset();
 		::SetFocus(m_window);
 		m_model.SetFocusedItem(item);
 		accessibility::RaiseFocusChanged(*this, static_cast<int>(m_model.IndexOf(item)));
@@ -489,6 +495,7 @@ LRESULT CActivityBar::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam)
 		const bool dragged = m_dragging;
 		m_captureItem.clear();
 		m_dragging = false;
+		m_dropInsertionIndex.reset();
 		m_model.SetPressedItem({});
 		if (::GetCapture() == m_window) ::ReleaseCapture();
 		if (dragged) {
@@ -512,6 +519,7 @@ LRESULT CActivityBar::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam)
 	case WM_CAPTURECHANGED:
 		m_captureItem.clear();
 		m_dragging = false;
+		m_dropInsertionIndex.reset();
 		m_model.SetPressedItem({});
 		Invalidate();
 		return 0;
@@ -730,6 +738,14 @@ void CActivityBar::Paint() noexcept
 			::DeleteObject(pen);
 		}
 	}
+	if (m_dragging && m_dropInsertionIndex) {
+		if (const auto marker = m_model.ContainerInsertionMarker(*m_dropInsertionIndex)) {
+			RECT bounds{ marker->left, marker->top, marker->right, marker->bottom };
+			const HBRUSH brush = ::CreateSolidBrush(m_palette.activeIndicator);
+			::FillRect(buffer, &bounds, brush);
+			::DeleteObject(brush);
+		}
+	}
 	// Match VS Code's `activityBar.border`: a one-DIP Part edge against the
 	// Primary Side Bar (or the editor when that Side Bar is hidden).
 	const int borderWidth = std::max(1, ScaleDip(1, m_model.GetDpi()));
@@ -863,6 +879,17 @@ bool CActivityBar::FinishDrag(std::string_view containerId, POINT clientPoint) n
 	} catch (...) {
 		return false;
 	}
+}
+
+std::optional<std::size_t> CActivityBar::ContainerInsertionIndexAtScreenPoint(
+	POINT screenPoint) const noexcept
+{
+	if (m_window == nullptr || !::IsWindow(m_window)) return std::nullopt;
+	RECT client{};
+	if (::GetClientRect(m_window, &client) == FALSE
+		|| ::ScreenToClient(m_window, &screenPoint) == FALSE
+		|| ::PtInRect(&client, screenPoint) == FALSE) return std::nullopt;
+	return m_model.ContainerInsertionIndexAt(screenPoint.x, screenPoint.y);
 }
 
 bool CActivityBar::HandleNavigationKey(WPARAM key) noexcept

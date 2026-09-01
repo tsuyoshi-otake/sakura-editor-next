@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "id": "sakura-projects",
+  "displayName": "Projects",
+  "version": "0.1.0",
+  "publisher": "sakura.builtin",
+  "description": "Lists saved Folder and Workspace projects with bounded Git worktree navigation.",
+  "engines": {
+    "sakura": ">=0.1.0"
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "sakura.view.projects",
+          "title": "Projects",
+          "icon": "$(project)",
+          "order": 5
+        }
+      ]
+    },
+    "views": {
+      "sakura.view.projects": [
+        {
+          "id": "sakura.projects",
+          "name": "Projects",
+          "provider": "sakura.projects",
+          "order": 10
+        }
+      ]
+    }
+  }
+}

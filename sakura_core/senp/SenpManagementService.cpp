@@ -39,6 +39,7 @@ constexpr std::array kBuiltInResources{
 	BuiltInResource{ L"sakura-infrastructure-language-basics", 39008, 39009, true },
 	BuiltInResource{ L"sakura-configuration-language-basics", 39010, 39011, true },
 	BuiltInResource{ L"sakura-legacy-language-basics", 39012, 39013, true },
+	BuiltInResource{ L"sakura-projects", 39014, 39015, true },
 };
 constexpr DWORD kToolTimeoutMilliseconds = 30'000;
 constexpr std::size_t kMaximumToolOutputBytes = 4U * 1024U * 1024U;
@@ -259,6 +260,18 @@ const bool* BoolMember(const JsoncValue::Object& object, std::wstring_view name)
 	return found == object.end() ? nullptr : std::get_if<bool>(&found->second.Value());
 }
 
+const std::int64_t* IntegerMember(const JsoncValue::Object& object, std::wstring_view name)
+{
+	const auto found = object.find(name);
+	return found == object.end() ? nullptr : std::get_if<std::int64_t>(&found->second.Value());
+}
+
+const JsoncValue::Object* ObjectMember(const JsoncValue::Object& object, std::wstring_view name)
+{
+	const auto found = object.find(name);
+	return found == object.end() ? nullptr : std::get_if<JsoncValue::Object>(&found->second.Value());
+}
+
 const JsoncValue::Array* ArrayMember(const JsoncValue::Object& object, std::wstring_view name)
 {
 	const auto found = object.find(name);
@@ -325,6 +338,58 @@ bool ParseGrammarContributions(const JsoncValue::Object& contributes,
 	return true;
 }
 
+bool ParseWorkbenchViewContributions(const JsoncValue::Object& contributes,
+	std::vector<ViewContainerContribution>& containers,
+	std::vector<ViewContribution>& views)
+{
+	const auto* viewContainers = ObjectMember(contributes, L"viewsContainers");
+	const auto* activitybar = viewContainers == nullptr ? nullptr : ArrayMember(*viewContainers, L"activitybar");
+	const auto* viewMap = ObjectMember(contributes, L"views");
+	if (viewContainers == nullptr || activitybar == nullptr || viewMap == nullptr
+		|| activitybar->size() > 32 || viewMap->size() > 32) return false;
+
+	containers.reserve(activitybar->size());
+	for (const auto& value : *activitybar) {
+		const auto* object = std::get_if<JsoncValue::Object>(&value.Value());
+		if (object == nullptr) return false;
+		const auto* id = StringMember(*object, L"id");
+		const auto* title = StringMember(*object, L"title");
+		const auto* icon = StringMember(*object, L"icon");
+		const auto* order = IntegerMember(*object, L"order");
+		if (id == nullptr || title == nullptr || icon == nullptr || order == nullptr
+			|| *order < -10'000 || *order > 10'000) return false;
+		containers.push_back({
+			.id = *id,
+			.title = *title,
+			.icon = *icon,
+			.order = static_cast<std::int32_t>(*order),
+		});
+	}
+
+	for (const auto& [containerId, value] : *viewMap) {
+		const auto* entries = std::get_if<JsoncValue::Array>(&value.Value());
+		if (entries == nullptr || entries->empty() || entries->size() > 32) return false;
+		for (const auto& entry : *entries) {
+			const auto* object = std::get_if<JsoncValue::Object>(&entry.Value());
+			if (object == nullptr) return false;
+			const auto* id = StringMember(*object, L"id");
+			const auto* title = StringMember(*object, L"name");
+			const auto* provider = StringMember(*object, L"provider");
+			const auto* order = IntegerMember(*object, L"order");
+			if (id == nullptr || title == nullptr || provider == nullptr || order == nullptr
+				|| *order < -10'000 || *order > 10'000 || views.size() >= 128) return false;
+			views.push_back({
+				.id = *id,
+				.containerId = containerId,
+				.title = *title,
+				.provider = *provider,
+				.order = static_cast<std::int32_t>(*order),
+			});
+		}
+	}
+	return true;
+}
+
 std::optional<std::vector<ExtensionDescriptor>> ParseInstalled(std::string_view json)
 {
 	const auto parsed = platform::serialization::CJsoncDocument::Parse(json);
@@ -380,11 +445,14 @@ std::optional<std::vector<ExtensionDescriptor>> ParseInstalled(std::string_view 
 			? nullptr : std::get_if<JsoncValue::Array>(&decorationsMember->second.Value());
 		std::vector<LanguageContribution> languages;
 		std::vector<GrammarContribution> grammars;
+		std::vector<ViewContainerContribution> viewContainers;
+		std::vector<ViewContribution> views;
 		if (id == nullptr || displayName == nullptr || version == nullptr
 			|| publisher == nullptr || description == nullptr || archive->size() != 64
 			|| decorations == nullptr || contributes == nullptr
 			|| !ParseLanguageContributions(*contributes, languages)
-			|| !ParseGrammarContributions(*contributes, grammars)) return std::nullopt;
+			|| !ParseGrammarContributions(*contributes, grammars)
+			|| !ParseWorkbenchViewContributions(*contributes, viewContainers, views)) return std::nullopt;
 		result.push_back({
 			.id = *id,
 			.displayName = *displayName,
@@ -403,6 +471,8 @@ std::optional<std::vector<ExtensionDescriptor>> ParseInstalled(std::string_view 
 			.contributesIndentDecorations = !decorations->empty(),
 			.languages = std::move(languages),
 			.grammars = std::move(grammars),
+			.viewContainers = std::move(viewContainers),
+			.views = std::move(views),
 			.trust = *trust,
 		});
 	}
@@ -453,10 +523,13 @@ std::optional<ExtensionDescriptor> ParseBuiltInCandidate(std::string_view json)
 		? nullptr : std::get_if<JsoncValue::Array>(&decorationsMember->second.Value());
 	std::vector<LanguageContribution> languages;
 	std::vector<GrammarContribution> grammars;
+	std::vector<ViewContainerContribution> viewContainers;
+	std::vector<ViewContribution> views;
 	if (id == nullptr || displayName == nullptr || version == nullptr
 		|| publisher == nullptr || description == nullptr || decorations == nullptr
 		|| contributes == nullptr || !ParseLanguageContributions(*contributes, languages)
-		|| !ParseGrammarContributions(*contributes, grammars)) {
+		|| !ParseGrammarContributions(*contributes, grammars)
+		|| !ParseWorkbenchViewContributions(*contributes, viewContainers, views)) {
 		return std::nullopt;
 	}
 	return ExtensionDescriptor{
@@ -473,6 +546,8 @@ std::optional<ExtensionDescriptor> ParseBuiltInCandidate(std::string_view json)
 		.contributesIndentDecorations = !decorations->empty(),
 		.languages = std::move(languages),
 		.grammars = std::move(grammars),
+		.viewContainers = std::move(viewContainers),
+		.views = std::move(views),
 		.trust = L"builtin",
 	};
 }

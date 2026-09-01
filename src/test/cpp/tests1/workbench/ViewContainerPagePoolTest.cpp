@@ -58,6 +58,7 @@ struct FakePageState final {
 	std::optional<RECT> projectionContentBounds;
 	unsigned int projectionDpi{};
 	int projectionLayoutCalls{};
+	int projectionContentRefreshCalls{};
 
 	[[nodiscard]] bool ShouldFail(const FakeStep step)
 	{
@@ -166,6 +167,10 @@ public:
 		++m_state->projectionLayoutCalls;
 	}
 	void SetProjectionVisible(bool) noexcept override {}
+	void RefreshProjectionContent() noexcept override
+	{
+		++m_state->projectionContentRefreshCalls;
+	}
 
 private:
 	std::shared_ptr<FakePageState> m_state;
@@ -468,6 +473,7 @@ TEST(ViewContainerPagePool, ProductionContributionHostRoutesRootAndLocalContentT
 		pool.Attach(kContainerId, SideBarHost()).status);
 	const RECT sideBarClient{ 0, 0, 320, 500 };
 	host.Layout(kContainerId, sideBarClient, sideBarClient, 96);
+	host.RefreshContent(kContainerId);
 	ASSERT_TRUE(state->projectionHostBounds.has_value());
 	EXPECT_EQ(0, state->projectionHostBounds->left);
 	EXPECT_EQ(0, state->projectionHostBounds->top);
@@ -480,6 +486,7 @@ TEST(ViewContainerPagePool, ProductionContributionHostRoutesRootAndLocalContentT
 	EXPECT_EQ(500, state->projectionContentBounds->bottom);
 	EXPECT_EQ(96U, state->projectionDpi);
 	EXPECT_EQ(1, state->projectionLayoutCalls);
+	EXPECT_EQ(1, state->projectionContentRefreshCalls);
 
 	ASSERT_EQ(EViewContainerPagePoolAttachStatus::Attached,
 		pool.Attach(kContainerId, PanelHost()).status);
@@ -813,6 +820,97 @@ TEST(ViewContainerPagePool, RegistryRejectsInvalidAndDuplicateBatchesAtomically)
 	const auto duplicateExisting = registry.RegisterBatch({ Descriptor(state, "existing.container") });
 	EXPECT_EQ(EViewContainerPageRegistrationStatus::DuplicateContainerId, duplicateExisting.status);
 	EXPECT_EQ(1U, registry.Size());
+}
+
+TEST(ViewContainerPagePool, ProjectsDeclarativeHostViewsThroughRegisteredProviders)
+{
+	auto state = std::make_shared<FakePageState>();
+	layout::WorkbenchContributionRegistry contributions;
+	const std::array containers{ layout::WorkbenchViewContainerDescriptor{
+		.id = std::string(kContainerId),
+		.title = "Sample",
+		.location = layout::EViewContainerLocation::Sidebar,
+		.order = 45,
+		.icon = "worktree",
+		.supportedLocations = { layout::EViewContainerLocation::Sidebar,
+			layout::EViewContainerLocation::AuxiliaryBar },
+	} };
+	const std::array views{ layout::WorkbenchViewDescriptor{
+		.id = "sample.view",
+		.containerId = std::string(kContainerId),
+		.title = "Sample View",
+		.order = 10,
+		.provider = "sample.provider",
+	} };
+	ASSERT_TRUE(contributions.RegisterExtensionContributions(containers, views));
+	const std::array providers{ HostViewProviderDescriptor{
+		.id = "sample.provider",
+		.factory = Descriptor(state).factory,
+	} };
+
+	auto projected = ProjectHostViewPages(contributions.Snapshot(), providers);
+	ASSERT_EQ(EHostViewPageProjectionStatus::Projected, projected.status);
+	ASSERT_EQ(1U, projected.descriptors.size());
+	EXPECT_EQ(kContainerId, projected.descriptors.front().containerId);
+	EXPECT_TRUE(projected.descriptors.front().supportedLocations.Contains(
+		layout::EViewContainerLocation::AuxiliaryBar));
+	ViewContainerPageRegistry registry;
+	ASSERT_EQ(EViewContainerPageRegistrationStatus::Registered,
+		registry.RegisterBatch(std::move(projected.descriptors)).status);
+	ViewContainerPagePool pool(registry);
+	EXPECT_TRUE(pool.Acquire(kContainerId).Succeeded());
+	EXPECT_EQ(1, state->factoryCalls);
+	EXPECT_EQ(EViewContainerPagePoolShutdownStatus::Closed, pool.Shutdown().status);
+}
+
+TEST(ViewContainerPagePool, HostViewProjectionFailsClosedForUnknownAndDuplicateProviders)
+{
+	auto state = std::make_shared<FakePageState>();
+	layout::WorkbenchContributionRegistry contributions;
+	const std::array containers{ layout::WorkbenchViewContainerDescriptor{
+		.id = std::string(kContainerId),
+		.title = "Sample",
+		.location = layout::EViewContainerLocation::Sidebar,
+		.order = 45,
+		.icon = "worktree",
+		.supportedLocations = { layout::EViewContainerLocation::Sidebar },
+	} };
+	const std::array views{ layout::WorkbenchViewDescriptor{
+		.id = "sample.view",
+		.containerId = std::string(kContainerId),
+		.title = "Sample View",
+		.order = 10,
+		.provider = "sample.provider",
+	} };
+	ASSERT_TRUE(contributions.RegisterExtensionContributions(containers, views));
+	const auto snapshot = contributions.Snapshot();
+	const std::array unknownProviders{ HostViewProviderDescriptor{
+		.id = "different.provider",
+		.factory = Descriptor(state).factory,
+	} };
+	EXPECT_EQ(EHostViewPageProjectionStatus::UnknownProvider,
+		ProjectHostViewPages(snapshot, unknownProviders).status);
+	const std::array duplicateProviders{
+		HostViewProviderDescriptor{ .id = "sample.provider", .factory = Descriptor(state).factory },
+		HostViewProviderDescriptor{ .id = "sample.provider", .factory = Descriptor(state).factory },
+	};
+	EXPECT_EQ(EHostViewPageProjectionStatus::InvalidProvider,
+		ProjectHostViewPages(snapshot, duplicateProviders).status);
+
+	auto duplicateViewSnapshot = snapshot;
+	duplicateViewSnapshot.views.push_back({ layout::WorkbenchViewDescriptor{
+		.id = "sample.secondView",
+		.containerId = std::string(kContainerId),
+		.title = "Second",
+		.order = 20,
+		.provider = "sample.provider",
+	} });
+	const std::array providers{ HostViewProviderDescriptor{
+		.id = "sample.provider",
+		.factory = Descriptor(state).factory,
+	} };
+	EXPECT_EQ(EHostViewPageProjectionStatus::DuplicateContainerId,
+		ProjectHostViewPages(duplicateViewSnapshot, providers).status);
 }
 
 TEST(ViewContainerPagePool, InvalidFactoryProductIsClosedAndDestroyedWithoutPoolOwnership)

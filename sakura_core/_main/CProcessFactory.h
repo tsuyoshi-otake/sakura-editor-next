@@ -21,6 +21,13 @@
 
 class CProcess;
 
+enum class EControlProcessStartupWaitOutcome : unsigned char {
+	Ready,
+	ChildExited,
+	TimedOut,
+	WaitFailed,
+};
+
 /*-----------------------------------------------------------------------
 クラスの宣言
 -----------------------------------------------------------------------*/
@@ -37,6 +44,8 @@ class CProcessFactory {
 public:
 	static bool	IsExistControlProcess();
 	static bool	StartControlProcess();
+	[[nodiscard]] static EControlProcessStartupWaitOutcome ClassifyStartupWaitResult(
+		DWORD waitResult) noexcept;
 
 	CProcess* Create( HINSTANCE hInstance, LPCWSTR lpCmdLine );
 

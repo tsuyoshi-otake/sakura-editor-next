@@ -1003,7 +1003,7 @@ TEST_F(WinMainFuncTest, CreateControlProcess101)
 	ASSERT_THAT(hMutex, NotNull());
 
 	// コントロールプロセスを起動する
-	ASSERT_EXIT({ StartEditorProcess(std::format(LR"(-NOWIN -PROF="{:s}")", profileName)); }, ::testing::ExitedWithCode(0), ".*");	// たぶんバグです。エラー終了なのに0を返してる。
+	ASSERT_EXIT({ StartEditorProcess(std::format(LR"(-NOWIN -PROF="{:s}")", profileName)); }, ::testing::ExitedWithCode(ERROR_PROCESS_ABORTED), ".*");
 }
 
 /*!
@@ -1054,7 +1054,7 @@ TEST_F(WinMainFuncTest, CreateControlProcess102)
 	pShareData->m_nSize = sizeof(DLLSHAREDATA) + 1;
 
 	// コントロールプロセスを起動する
-	ASSERT_EXIT({ StartEditorProcess(std::format(LR"(-NOWIN -PROF="{:s}")", profileName)); }, ::testing::ExitedWithCode(0), ".*");	// たぶんバグです。エラー終了なのに0を返してる。
+	ASSERT_EXIT({ StartEditorProcess(std::format(LR"(-NOWIN -PROF="{:s}")", profileName)); }, ::testing::ExitedWithCode(ERROR_PROCESS_ABORTED), ".*");
 }
 
 /*!

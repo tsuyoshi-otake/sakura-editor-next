@@ -61,7 +61,7 @@ when any trial exceeds the measured noise floor by more than
 `-AllowedExcessPercent` (default `0.05`). Do not summarize a run using only its
 median; intermittent repaint races are failures too.
 
-Use `-ActivityBarPage Explorer`, `Search`, `SourceControl`, or `Extensions` to activate that
+Use `-ActivityBarPage Projects`, `Explorer`, `Search`, or `SourceControl` to activate that
 Primary Side Bar ViewContainer through the real Activity Bar child before the
 gesture trials. The probe fails when the Activity Bar is missing or the page
 activation does not change the visible child layout.

@@ -19,6 +19,10 @@
   decides whether the legacy application may continue without the platform
   service; it must not publish an empty replacement store under the same profile
   identity and generation.
+- Verify header bounds and checksum before classifying a future stored generation
+  as rollback. `Open()` also reports whether an existing durable document was
+  found so composition can reject orphaned state before a new profile identity is
+  committed. Neither outcome authorizes deleting or overwriting the rejected file.
 - Replay records, entries, encoded bytes, snapshot size, subscriptions, and
   revisions stay bounded. Validation completes before durable state changes, and
   a failed atomic replace leaves the last committed file authoritative.

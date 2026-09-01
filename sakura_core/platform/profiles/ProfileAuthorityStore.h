@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -46,6 +47,7 @@ enum class ProfileAuthorityStoreStatus : unsigned char {
 	CorruptRecord,
 	RandomFailed,
 	GenerationOverflow,
+	PreCommitRejected,
 	WriteFailed,
 	FlushFailed,
 	ReplaceFailed,
@@ -64,6 +66,18 @@ struct ProfileAuthorityResult {
 		return status == ProfileAuthorityStoreStatus::Succeeded;
 	}
 };
+
+//! Candidate identity fenced by the store's exclusive lock but not yet durable.
+//! A new identity may be committed only after durable dependants accept it.
+struct ProfileAuthorityCandidate {
+	ProfileAuthorityProfileId profileId;
+	std::uint64_t authorityGeneration = 0;
+	bool existingIdentity = false;
+};
+
+//! Runs while the authority store still owns its exclusive lock. Returning false
+//! rejects the candidate without changing the durable authority record.
+using ProfileAuthorityPreCommitCheck = std::function<bool(const ProfileAuthorityCandidate&)>;
 
 //! Keeps a deny-sharing writer lock alive until the control owner has either
 //! observed an existing record or durably replaced it.
@@ -116,9 +130,11 @@ public:
 	ProfileAuthorityStore& operator=(const ProfileAuthorityStore&) = delete;
 
 	//! Resolves/creates the immutable profile ID and commits a nonzero authority
-	//! generation before returning it. The caller must publish or use the returned
-	//! generation only after this method succeeds.
-	[[nodiscard]] ProfileAuthorityResult Acquire(std::wstring_view legacyProfileAlias = {});
+	//! generation before returning it. The optional check runs under the authority
+	//! lock after the candidate is complete but before it is written. The caller
+	//! must publish or use the returned generation only after this method succeeds.
+	[[nodiscard]] ProfileAuthorityResult Acquire(std::wstring_view legacyProfileAlias = {},
+		ProfileAuthorityPreCommitCheck preCommitCheck = {});
 
 private:
 	std::filesystem::path m_profileDirectory;

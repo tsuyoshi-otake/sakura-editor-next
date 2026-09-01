@@ -153,6 +153,9 @@ public:
 	[[nodiscard]] std::size_t GetButtonCount() const noexcept { return m_model.GetButtonCount(); }
 	[[nodiscard]] ActivityBarButtonInfo GetButton(std::size_t index) const noexcept { return m_model.GetButton(index); }
 	[[nodiscard]] std::string_view HitTest(int x, int y) const noexcept { return m_model.HitTest(x, y); }
+	//! Gap in the visible ViewContainer strip under a screen-coordinate drop point.
+	[[nodiscard]] std::optional<std::size_t> ContainerInsertionIndexAtScreenPoint(
+		POINT screenPoint) const noexcept;
 	[[nodiscard]] std::string_view GetFocusedItem() const noexcept { return m_model.GetFocusedItem(); }
 	//! Emits the callback for an enabled item; it does not change selected state optimistically.
 	[[nodiscard]] bool Invoke(std::string_view containerId) noexcept;
@@ -218,6 +221,7 @@ private:
 	//! Tooltip labels must outlive TTM_ADDTOOLW, which stores the pointer it was given.
 	std::vector<std::wstring> m_tooltipLabels;
 	POINT m_dragOrigin{};
+	std::optional<std::size_t> m_dropInsertionIndex;
 	bool m_dragging = false;
 	bool m_trackingMouseLeave = false;
 	bool m_destroyed = false;

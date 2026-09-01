@@ -99,9 +99,15 @@ and lifecycle rules as the rest of the native workbench.
 
 ### Contribution and Layout-State Checkpoint
 
-- `WorkbenchContributionRegistry` is the immutable process-local catalog for
-  built-in Part, ViewContainer, and View descriptors. Runtime contribution
-  registration is not supported.
+- `WorkbenchContributionRegistry` is the process-local catalog for built-in
+  Part, ViewContainer, and View descriptors. It accepts at most one validated
+  SENP startup batch before native View pages are created; registration after
+  that composition boundary is unsupported and takes effect in a new window.
+- `ProjectHostViewPages` resolves declarative View `provider` IDs through the
+  product-owned factory table and returns an atomic native-page batch. Product
+  composition registers factories, not extension ViewContainer/View IDs;
+  unknown providers, duplicate providers, and multiple native Views targeting
+  one container fail closed.
 - Use the canonical VS Code IDs in `WorkbenchIds`. A physical Part ID is never a
   View ID: in particular `workbench.parts.auxiliarybar` and `outline` describe
   different layers and must remain independently movable and visible.
@@ -117,6 +123,23 @@ and lifecycle rules as the rest of the native workbench.
 - Persisting a memento through the control-owned profile/workspace storage writer
   is a separate adapter responsibility. Do not add direct file writes or make the
   process-local layout model a storage authority.
+
+### Sakura Projects contribution
+
+- `sakura.view.projects` / `sakura.projects` is an intentional Sakura-specific
+  contribution because VS Code has no built-in Project catalog equivalent. It
+  remains a real declarative ViewContainer/View hosted in the Primary Side Bar;
+  it must not be modeled as a new physical Workbench Part.
+- A Project is a profile-scoped navigation entry pointing to an existing Folder
+  or `.code-workspace` URI. `WorkspaceContext` is still the only active workspace
+  authority, and SCM remains the only repository-state authority.
+- Git worktree discovery is a bounded child provider for the active Project.
+  Inactive Projects never fan out Git processes, and linked worktrees start
+  collapsed behind a truthful count. Unsupported multi-root Git projection stays
+  explicit instead of guessing the first folder.
+- The catalog must finish one coherent load before it can write. Invalid or
+  unsupported stored data is retained for diagnosis and may never be silently
+  replaced by startup auto-registration.
 
 ### Phase 1 Layout-Memento Persistence Checkpoint (2026-07-31)
 
@@ -256,7 +279,7 @@ adding one-off HWND branches. Unsupported capabilities are explicit.
   `LaunchConfigurationCatalog` are untouched and still pass their suites; only the
   header buttons and their `BottomPanelTab` selection paths were removed. Restoring
   a tab means implementing its view projection, not re-adding the button.
-- Run and Debug, Ports, Debug Console, reorder within a bar, moving the whole Panel
+- Run and Debug, Ports, Debug Console, moving the whole Panel
   (`workbench.action.movePanelToSecondarySideBar`), and panel position/alignment
   remain typed unsupported boundaries. A unified command/context route is still
   required. Moving a built-in Activity
@@ -264,6 +287,12 @@ adding one-off HWND branches. Unsupported capabilities are explicit.
   supported and projected; see [`win32/CLAUDE.md`](win32/CLAUDE.md) for the
   location-set mapping and [`../window/CLAUDE.md`](../window/CLAUDE.md) for the
   drag gesture and its documented edge-strip divergence.
+
+- Reordering a ViewContainer within its current Activity Bar is a model-first
+  layout transaction. The bar resolves a gap among visible ViewContainers only,
+  excluding GlobalCompositeBar actions, and the native strip immediately
+  reprojects the committed signed order values. The existing orderly-shutdown
+  layout memento persists that order; the Activity Bar does not write storage.
 
 The original focused Part/host/state/memento/runtime filter passed 68/68. After
 the active-surface integration, the state/memento/projection filter passed

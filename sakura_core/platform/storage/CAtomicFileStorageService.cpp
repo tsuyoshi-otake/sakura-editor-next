@@ -454,7 +454,7 @@ std::filesystem::path CAtomicFileStorageService::StatePath() const { return m_di
 AtomicFileStorageOpenResult CAtomicFileStorageService::Open()
 {
 	std::scoped_lock lock(m_mutex);
-	if (m_open) return { EAtomicFileStorageOpenStatus::AlreadyOpen, {} };
+	if (m_open) return { EAtomicFileStorageOpenStatus::AlreadyOpen, {}, m_persistedStateFound };
 	if (m_directory.empty() || !m_fileOperations) return { EAtomicFileStorageOpenStatus::InvalidArgument, "storage directory and file operations are required" };
 	std::string diagnostic;
 	if (!m_fileOperations->PrepareDirectory(m_directory, diagnostic)) return { EAtomicFileStorageOpenStatus::IoError, std::move(diagnostic) };
@@ -472,10 +472,12 @@ AtomicFileStorageOpenResult CAtomicFileStorageService::Open()
 	}
 	if (found) {
 		auto decoded = Decode(bytes);
+		decoded.persistedStateFound = true;
 		if (!decoded.Succeeded()) { m_writerLock.reset(); return decoded; }
 	}
+	m_persistedStateFound = found;
 	m_open = true;
-	return { EAtomicFileStorageOpenStatus::Opened, {} };
+	return { EAtomicFileStorageOpenStatus::Opened, {}, found };
 }
 
 void CAtomicFileStorageService::Close() noexcept
@@ -483,6 +485,7 @@ void CAtomicFileStorageService::Close() noexcept
 	try {
 		std::scoped_lock lock(m_mutex);
 		m_open = false;
+		m_persistedStateFound = false;
 		m_writerLock.reset();
 		m_revision = 0;
 		m_entries.clear();
@@ -624,7 +627,7 @@ AtomicFileStorageOpenResult CAtomicFileStorageService::Decode(std::span<const st
 	if (!Read(bytes, offset, version) || !Read(bytes, offset, storedGeneration) || !Read(bytes, offset, revision) ||
 		!Read(bytes, offset, entryCount) || !Read(bytes, offset, completedCount) || !Read(bytes, offset, payloadLength) || !Read(bytes, offset, checksum)) return { EAtomicFileStorageOpenStatus::CorruptData, "storage header is truncated" };
 	if (version != kFormatVersion) return { EAtomicFileStorageOpenStatus::UnsupportedFormat, "storage format version is unsupported" };
-	if (storedGeneration == 0 || storedGeneration > m_generation || entryCount > kMaximumItems
+	if (storedGeneration == 0 || entryCount > kMaximumItems
 		|| completedCount > m_maxCompletedOperations || payloadLength != bytes.size() - offset) {
 		return { EAtomicFileStorageOpenStatus::CorruptData, "storage header has invalid bounds" };
 	}
@@ -632,6 +635,10 @@ AtomicFileStorageOpenResult CAtomicFileStorageService::Decode(std::span<const st
 	checksumInput.insert(checksumInput.end(), bytes.begin() + kMagic.size(), bytes.begin() + kMagic.size() + 32);
 	checksumInput.insert(checksumInput.end(), bytes.begin() + offset, bytes.end());
 	if (Checksum(checksumInput) != checksum) return { EAtomicFileStorageOpenStatus::CorruptData, "storage checksum mismatch" };
+	if (storedGeneration > m_generation) {
+		return { EAtomicFileStorageOpenStatus::GenerationRollback,
+			"profile authority generation is behind durable storage" };
+	}
 	std::map<StorageAddress, StorageEntry> entries;
 	for (std::uint32_t i = 0; i < entryCount; ++i) { StorageEntry entry; if (!ReadEntry(bytes, offset, entry) || entry.revision > revision || !entries.emplace(entry.address, std::move(entry)).second) return { EAtomicFileStorageOpenStatus::CorruptData, "storage entry is invalid" }; }
 	std::map<std::string, CompletedOperation> completed;

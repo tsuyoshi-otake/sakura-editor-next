@@ -27,7 +27,24 @@ class CControlTray;
 
 namespace platform::controlipc {
 class CControlPlatformRuntime;
+struct ControlPlatformRuntimeResult;
 }
+
+//! Stable launcher-observable terminal outcomes for control-process startup.
+//! Values are kept in a private application range so they do not masquerade as
+//! WaitForMultipleObjects or Win32 system errors.
+enum class EControlProcessStartupExitCode : DWORD {
+	InitializationFailed = ERROR_PROCESS_ABORTED,
+	ControlPlatformFailed = 0x2000,
+	ControlPlatformAuthorityFailed,
+	ControlPlatformStorageCreateFailed,
+	ControlPlatformStorageWriterBusy,
+	ControlPlatformStorageIoError,
+	ControlPlatformStorageCorruptData,
+	ControlPlatformStorageUnsupportedFormat,
+	ControlPlatformStorageGenerationRollback,
+	ControlPlatformStorageOrphanedState,
+};
 
 /*-----------------------------------------------------------------------
 クラスの宣言
@@ -46,12 +63,16 @@ public:
 	~CControlProcess();
 
 	std::filesystem::path GetIniFileName() const override;
+	[[nodiscard]] static DWORD StartupExitCodeFor(
+		const platform::controlipc::ControlPlatformRuntimeResult& result) noexcept;
+	[[nodiscard]] static std::wstring_view StartupFailureMessage(DWORD exitCode) noexcept;
 
 protected:
 	CControlProcess();
 	bool InitializeProcess() override;
 	bool MainLoop() override;
 	void OnExitProcess() override;
+	[[nodiscard]] DWORD StartupFailureExitCode() const noexcept override;
 
 private:
 	std::filesystem::path GetPrivateIniFileName(const std::wstring& exeIniPath, const std::wstring& filename) const;
@@ -65,6 +86,8 @@ private:
 	HANDLE			m_hMutexCP = nullptr;				//!< コントロールプロセスミューテックス
 	CControlTray*	m_pcTray = nullptr;
 	std::unique_ptr<platform::controlipc::CControlPlatformRuntime> m_controlPlatformRuntime;
+	DWORD m_startupExitCode = static_cast<DWORD>(EControlProcessStartupExitCode::InitializationFailed);
+	bool m_launcherOwnsStartupError = false;
 };
 
 #endif /* SAKURA_CCONTROLPROCESS_AFB90808_4287_4A11_B7FB_9CD21CF8BFD6_H_ */

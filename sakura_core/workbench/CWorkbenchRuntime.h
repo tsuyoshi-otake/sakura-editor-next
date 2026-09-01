@@ -21,6 +21,7 @@
 #include "workbench/output/OutputProviderFactory.h"
 #include "workbench/output/OutputServiceRustCandidate.h"
 #include "workbench/problems/MarkerService.h"
+#include "workbench/projects/ProjectCatalogService.h"
 #include "workbench/recent/RecentlyOpenedWorkspaceService.h"
 #include "workbench/scm/SourceControlService.h"
 #include "workbench/statusbar/IStatusbarVisibilityMementoStore.h"
@@ -73,6 +74,9 @@ struct WorkbenchRuntimeDependencies final {
 	//! Profile/User persistence stays behind a control-process adapter. The
 	//! runtime owns the UI-independent service, never the durable backend.
 	std::unique_ptr<recent::IRecentlyOpenedWorkspaceStore> recentlyOpenedWorkspaceStore;
+	//! Separate from Open Recent: stable saved Project navigation entries use a
+	//! dedicated profile record and do not inherit MRU clear/reorder semantics.
+	std::unique_ptr<projects::IProjectCatalogStore> projectCatalogStore;
 	//! Profile-scoped package authority. The runtime composes the separate
 	//! process host only when this dependency is present.
 	std::unique_ptr<senp::ISenpManagementService> senpManagementService;
@@ -113,6 +117,7 @@ public:
 	[[nodiscard]] workspace::WorkspaceEditingResult ReplaceCurrentWorkspaceFolders(
 		const workspace::WorkspaceFoldersEditRequest& request) override;
 	[[nodiscard]] recent::IRecentlyOpenedWorkspaceService* RecentlyOpenedWorkspaces() noexcept override;
+	[[nodiscard]] projects::IProjectCatalogService* Projects() noexcept override;
 	[[nodiscard]] layout::WorkbenchContributionRegistry& Contributions() noexcept override { return m_contributions; }
 	[[nodiscard]] const layout::WorkbenchContributionRegistry& Contributions() const noexcept override { return m_contributions; }
 	[[nodiscard]] layout::WorkbenchLayoutStateService& LayoutState() noexcept override { return m_layoutState; }
@@ -200,6 +205,10 @@ private:
 	[[nodiscard]] bool IsStopRequested() const noexcept;
 	[[nodiscard]] bool IsReadyForServiceAccessLocked() const noexcept;
 	[[nodiscard]] bool InitializeOutputProvider() noexcept;
+	//! Projects only enabled, integrity-pinned built-in host Views into the
+	//! process-local contribution registry before native pages are created.
+	[[nodiscard]] bool RegisterExtensionWorkbenchContributions(
+		const senp::ManagementSnapshot& snapshot);
 	static void DispatchListener(
 		const std::shared_ptr<ListenerGate>& gate,
 		const std::function<void(CWorkbenchRuntime&)>& callback) noexcept;
@@ -240,6 +249,7 @@ private:
 	std::shared_ptr<platform::filesystem::IFileService> m_fileService;
 	std::unique_ptr<workspace::IWorkspaceEditingService> m_workspaceEditing;
 	std::unique_ptr<recent::IRecentlyOpenedWorkspaceService> m_recentlyOpenedWorkspaces;
+	std::unique_ptr<projects::IProjectCatalogService> m_projects;
 	std::unique_ptr<senp::ISenpManagementService> m_senpManagement;
 	std::unique_ptr<senp::ISenpRuntimeService> m_senpRuntime;
 	std::unique_ptr<senp::ISenpLanguageService> m_senpLanguage;

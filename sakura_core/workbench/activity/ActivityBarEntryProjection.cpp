@@ -20,6 +20,20 @@
 namespace workbench::activity {
 namespace {
 
+layout::EViewContainerLocation ContributionLocation(
+	const layout::EWorkbenchViewContainerLocation location) noexcept
+{
+	switch (location) {
+	case layout::EWorkbenchViewContainerLocation::SideBar:
+		return layout::EViewContainerLocation::Sidebar;
+	case layout::EWorkbenchViewContainerLocation::Panel:
+		return layout::EViewContainerLocation::Panel;
+	case layout::EWorkbenchViewContainerLocation::AuxiliaryBar:
+		return layout::EViewContainerLocation::AuxiliaryBar;
+	}
+	return layout::EViewContainerLocation::Panel;
+}
+
 //! Glyph identity for Sakura's own containers. Accessible labels come from the registry's
 //! localized title, so this table stays purely about which codicon.ttf glyph to draw.
 constexpr std::array kBuiltinCodicons{
@@ -83,28 +97,43 @@ std::vector<ActivityBarEntry> ProjectActivityBarEntries(
 		&& requestedLocation != layout::EViewContainerLocation::AuxiliaryBar) {
 		return {};
 	}
-	std::vector<const layout::RegisteredWorkbenchViewContainer*> rendered;
+	struct RenderedContainer {
+		const layout::RegisteredWorkbenchViewContainer* contribution = nullptr;
+		std::int32_t order = 0;
+	};
+	std::vector<RenderedContainer> rendered;
 	rendered.reserve(snapshot.viewContainers.size());
 	for (const auto& container : snapshot.viewContainers) {
-		if (container.descriptor.location != requestedLocation) continue;
+		auto location = container.descriptor.location;
+		auto order = container.descriptor.order;
+		if (options.layoutState != nullptr) {
+			const auto state = std::ranges::find(options.layoutState->containers,
+				container.descriptor.id,
+				&layout::WorkbenchViewContainerState::containerId);
+			if (state != options.layoutState->containers.end()) {
+				location = ContributionLocation(state->location);
+				order = state->order;
+			}
+		}
+		if (location != requestedLocation) continue;
 		if (std::ranges::find(options.renderableBuiltins, container.descriptor.id)
 				== options.renderableBuiltins.end()) {
 			continue;
 		}
-		rendered.push_back(&container);
+		rendered.push_back({ &container, order });
 	}
 
-	std::ranges::sort(rendered, [](const auto* left, const auto* right) {
-		if (left->descriptor.order != right->descriptor.order) {
-			return left->descriptor.order < right->descriptor.order;
+	std::ranges::sort(rendered, [](const auto& left, const auto& right) {
+		if (left.order != right.order) {
+			return left.order < right.order;
 		}
-		return left->descriptor.id < right->descriptor.id;
+		return left.contribution->descriptor.id < right.contribution->descriptor.id;
 	});
 
 	std::vector<ActivityBarEntry> entries;
 	entries.reserve(rendered.size());
-	for (const auto* container : rendered) {
-		const auto& descriptor = container->descriptor;
+	for (const auto& container : rendered) {
+		const auto& descriptor = container.contribution->descriptor;
 		const auto fallback = u8stowcs(descriptor.title.empty() ? descriptor.id : descriptor.title);
 		const auto label = options.titleResolver
 			? options.titleResolver(descriptor.id, fallback)
@@ -112,10 +141,33 @@ std::vector<ActivityBarEntry> ProjectActivityBarEntries(
 		entries.push_back({
 			.id = descriptor.id,
 			.label = label.empty() ? fallback : label,
-			.codicon = std::wstring(BuiltinContainerCodicon(descriptor.id)),
+			.codicon = descriptor.icon.empty()
+				? std::wstring(BuiltinContainerCodicon(descriptor.id)) : u8stowcs(descriptor.icon),
 		});
 	}
 	return entries;
+}
+
+std::optional<std::vector<std::string>> ReorderActivityBarContainers(
+	const std::span<const ActivityBarEntry> entries,
+	const std::string_view draggedContainerId,
+	std::size_t insertionIndex)
+{
+	if (draggedContainerId.empty()) return std::nullopt;
+	std::vector<std::string> ordered;
+	ordered.reserve(entries.size());
+	for (const auto& entry : entries) {
+		if (entry.visible && !entry.IsGlobalAction()) ordered.push_back(entry.id);
+	}
+	const auto source = std::ranges::find(ordered, draggedContainerId);
+	if (source == ordered.end()) return std::nullopt;
+	const auto sourceIndex = static_cast<std::size_t>(source - ordered.begin());
+	insertionIndex = std::min(insertionIndex, ordered.size());
+	ordered.erase(source);
+	if (sourceIndex < insertionIndex) --insertionIndex;
+	ordered.insert(ordered.begin() + static_cast<std::ptrdiff_t>(insertionIndex),
+		std::string(draggedContainerId));
+	return ordered;
 }
 
 std::vector<ActivityBarEntry> ProjectActivityBarEntries(

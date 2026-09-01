@@ -231,7 +231,7 @@ int CallWinMain(
  * @param[in] command コマンドライン文字列(exeパスを含まない)
  * @retval 0		正常終了
  * @retval 1		異常終了(asset失敗でabortした場合はこの値)
- * @retval その他	おそらくバグ。サクラエディタは0以外の終了コードを定義していない。
+ * @retval その他	初期化失敗を表すWin32またはアプリ固有の終了コード
  */
 int StartEditorProcess(const std::wstring& command)
 {

@@ -106,6 +106,7 @@ int WINAPI wWinMain(
 	//プロセスの生成とメッセージループ
 	CProcessFactory aFactory;
 	CProcess *process = nullptr;
+	DWORD processExitCode = ERROR_SUCCESS;
 	try{
 		process = aFactory.Create( hInstance, lpCmdLine );
 		MY_TRACETIME( cRunningTimer, L"ProcessObject Created" );
@@ -113,10 +114,10 @@ int WINAPI wWinMain(
 	catch(...){
 	}
 	if( nullptr != process ){
-		process->Run();
+		processExitCode = process->Run();
 		delete process;
 	}
 
 	::OleUninitialize();	// 2009.01.07 ryoji 追加
-	return 0;
+	return static_cast<int>(processExitCode);
 }

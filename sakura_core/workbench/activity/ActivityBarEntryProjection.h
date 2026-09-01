@@ -8,10 +8,12 @@
 
 #include "workbench/activity/ActivityBarModel.h"
 #include "workbench/layout/WorkbenchContributionRegistry.h"
+#include "workbench/layout/WorkbenchLayoutStateTypes.h"
 
 #include <span>
 #include <functional>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -31,10 +33,10 @@ using ActivityBarTitleResolver = std::function<std::wstring(
 /*!
 	@brief What the projection needs beyond the layout registry itself.
 
-	The layout registry is the single authority on which ViewContainers exist and where they
-	live, but it deliberately knows nothing about glyphs or about which built-in container the
-	native workbench can actually render. Both gaps are filled here by the composition, so this
-	file never has to depend on the side bar page pool.
+	The contribution registry is the authority on which ViewContainers exist and their defaults;
+	the optional layout snapshot owns the live/persisted location and order. The projection still
+	knows nothing about which built-in container the native workbench can actually render, so the
+	composition supplies that final capability boundary.
 */
 struct ActivityBarProjectionOptions {
 	/*!
@@ -49,14 +51,16 @@ struct ActivityBarProjectionOptions {
 	ActivityBarTitleResolver titleResolver;
 	//! Requested ViewContainer location. Only Sidebar and AuxiliaryBar are Activity Bar hosts.
 	layout::EViewContainerLocation location = layout::EViewContainerLocation::Sidebar;
+	//! Live/persisted placement and order. Null uses contribution defaults during bootstrap.
+	const layout::WorkbenchLayoutStateSnapshot* layoutState = nullptr;
 };
 
 /*!
 @brief Projects one requested side-bar location's ViewContainers onto Activity Bar entries.
 
-	Order follows the registry's `order` field, then the container id, so the strip is stable
-	across restarts. Panel containers are skipped; Sidebar and AuxiliaryBar are separate
-	physical side-bar hosts and can be projected independently.
+	Order and location follow the layout snapshot when present, falling back to contribution
+	defaults during bootstrap. Equal orders use the stable container id. Panel containers are
+	skipped; Sidebar and AuxiliaryBar are separate physical hosts.
 */
 [[nodiscard]] std::vector<ActivityBarEntry> ProjectActivityBarEntries(
 	const layout::WorkbenchContributionSnapshot& snapshot,
@@ -76,6 +80,16 @@ struct ActivityBarProjectionOptions {
 
 //! The bundled codicon Sakura renders for one of its own containers, empty when it has none.
 [[nodiscard]] std::wstring_view BuiltinContainerCodicon(std::string_view containerId) noexcept;
+
+/*! @brief Returns the visible ViewContainer ids after one same-bar drop.
+
+	`insertionIndex` is a gap in the pre-drop ViewContainer-only strip. Invisible
+	entries and GlobalCompositeBar actions never participate. Invalid drags fail closed.
+*/
+[[nodiscard]] std::optional<std::vector<std::string>> ReorderActivityBarContainers(
+	std::span<const ActivityBarEntry> entries,
+	std::string_view draggedContainerId,
+	std::size_t insertionIndex);
 
 /*!
 	@brief Appends VS Code's GlobalCompositeBar actions (Accounts, then Manage).

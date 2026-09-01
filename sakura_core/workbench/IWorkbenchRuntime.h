@@ -37,6 +37,10 @@ namespace workbench::recent {
 	class IRecentlyOpenedWorkspaceService;
 }
 
+namespace workbench::projects {
+	class IProjectCatalogService;
+}
+
 namespace workbench::problems {
 class MarkerService;
 }
@@ -170,6 +174,9 @@ public:
 	//! keeps existing narrow test runtimes source compatible; production exposes
 	//! it only while the runtime is ready.
 	[[nodiscard]] virtual recent::IRecentlyOpenedWorkspaceService* RecentlyOpenedWorkspaces() noexcept { return nullptr; }
+	//! Saved Project navigation catalog. Entries point to Folder or Workspace
+	//! identities; WorkspaceContext remains the only active workspace authority.
+	[[nodiscard]] virtual projects::IProjectCatalogService* Projects() noexcept { return nullptr; }
 	//! Stable-ID contributions and HWND-free layout state remain separate from native workbench adapters.
 	[[nodiscard]] virtual layout::WorkbenchContributionRegistry& Contributions() noexcept = 0;
 	[[nodiscard]] virtual const layout::WorkbenchContributionRegistry& Contributions() const noexcept = 0;

@@ -122,5 +122,62 @@ TEST(ActivityBarModel, KeyboardFocusDirectionIsIndependentOfOrientation)
 	EXPECT_EQ("one", model.FocusEdge(1));
 }
 
+TEST(ActivityBarModel, VerticalDropGapsExcludePinnedGlobalActions)
+{
+	ActivityBarModel model;
+	model.SetEntries({ ViewContainer("one"), ViewContainer("two"), GlobalAction("accounts") });
+	model.SetViewport(42, 200, 96);
+
+	EXPECT_EQ(0U, model.ContainerInsertionIndexAt(20, 0));
+	EXPECT_EQ(1U, model.ContainerInsertionIndexAt(20, 21));
+	EXPECT_EQ(1U, model.ContainerInsertionIndexAt(20, 42));
+	EXPECT_EQ(2U, model.ContainerInsertionIndexAt(20, 180));
+	EXPECT_FALSE(model.ContainerInsertionIndexAt(-1, 20).has_value());
+	EXPECT_FALSE(model.ContainerInsertionIndexAt(20, 200).has_value());
+	EXPECT_EQ((ActivityBarRect{ 6, 41, 36, 43 }), model.ContainerInsertionMarker(1));
+}
+
+TEST(ActivityBarModel, HorizontalDropGapsUseTheCompactContainerAxis)
+{
+	ActivityBarModel model(ActivityBarOrientation::Horizontal);
+	model.SetEntries({ ViewContainer("one"), ViewContainer("two"), GlobalAction("accounts") });
+	model.SetViewport(120, 35, 96);
+
+	EXPECT_EQ(0U, model.ContainerInsertionIndexAt(4, 20));
+	EXPECT_EQ(1U, model.ContainerInsertionIndexAt(17, 20));
+	EXPECT_EQ(2U, model.ContainerInsertionIndexAt(70, 20));
+	EXPECT_EQ((ActivityBarRect{ 29, 6, 31, 29 }), model.ContainerInsertionMarker(1));
+}
+
+TEST(ActivityBarDrag, NativeMouseGesturePublishesAContainerGapWithoutInvokingTheEntry)
+{
+	const HWND parent = ::CreateWindowExW(0, L"STATIC", L"", WS_POPUP,
+		100, 100, 100, 200, nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
+	ASSERT_NE(nullptr, parent);
+	int invokeCount = 0;
+	std::string draggedContainer;
+	POINT dropPoint{};
+	{
+		CActivityBar bar([&invokeCount](std::string_view) { ++invokeCount; });
+		bar.SetContainerDragCallback([&](const std::string_view containerId, const POINT point) {
+			draggedContainer = containerId;
+			dropPoint = point;
+		});
+		ASSERT_TRUE(bar.Create(parent, ::GetModuleHandleW(nullptr)));
+		bar.SetEntries({ ViewContainer("one"), ViewContainer("two"), GlobalAction("accounts") });
+		bar.Layout({ 0, 0, 42, 160 }, 96);
+
+		(void)::SendMessageW(bar.GetHwnd(), WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(21, 21));
+		(void)::SendMessageW(bar.GetHwnd(), WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(21, 84));
+		(void)::SendMessageW(bar.GetHwnd(), WM_LBUTTONUP, 0, MAKELPARAM(21, 84));
+
+		EXPECT_EQ("one", draggedContainer);
+		EXPECT_EQ(0, invokeCount);
+		ASSERT_TRUE(bar.ContainerInsertionIndexAtScreenPoint(dropPoint).has_value());
+		EXPECT_EQ(2U, *bar.ContainerInsertionIndexAtScreenPoint(dropPoint));
+	}
+	EXPECT_TRUE(::DestroyWindow(parent));
+}
+
 } // namespace
 } // namespace workbench::activity

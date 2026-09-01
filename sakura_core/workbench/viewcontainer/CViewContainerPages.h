@@ -50,6 +50,14 @@ public:
 	virtual void LayoutProjection(const RECT& hostBounds, const RECT& contentBounds,
 		unsigned int dpi) noexcept = 0;
 	virtual void SetProjectionVisible(bool visible) noexcept = 0;
+	//! Optional presentation updates for contributed native pages. Defaults keep
+	//! existing projections source-compatible while allowing a contribution to
+	//! follow the same theme and language lifecycle as built-in pages.
+	virtual void SetProjectionPalette(const theme::ThemePalette&) noexcept {}
+	virtual void RefreshProjectionStrings() noexcept {}
+	//! Content invalidation is explicit so semantic workspace changes can update
+	//! an active contributed page without polling or activating an inactive page.
+	virtual void RefreshProjectionContent() noexcept {}
 };
 
 //! Independently testable production router for contributed native products.
@@ -67,6 +75,10 @@ public:
 	void Layout(std::string_view containerId, const RECT& hostBounds,
 		const RECT& contentBounds, unsigned int dpi) noexcept;
 	void SetVisible(std::string_view containerId, bool visible) noexcept;
+	void SetPalette(std::string_view containerId,
+		const theme::ThemePalette& palette) noexcept;
+	void RefreshStrings(std::string_view containerId) noexcept;
+	void RefreshContent(std::string_view containerId) noexcept;
 
 private:
 	[[nodiscard]] IViewContainerPageProjection* Projection(
@@ -152,6 +164,7 @@ public:
 	void SetPalette(const theme::ThemePalette& palette);
 	//! Refreshes localized page chrome and child projections without reloading state.
 	void RefreshStrings();
+	void RefreshPageContent(std::string_view containerId) noexcept;
 
 	void SetOutlineExpanded(bool expanded) noexcept { m_outlineExpanded = expanded; }
 	[[nodiscard]] bool IsOutlineExpanded() const noexcept { return m_outlineExpanded; }

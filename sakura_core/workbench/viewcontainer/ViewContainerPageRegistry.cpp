@@ -8,10 +8,61 @@
 
 #include "workbench/viewcontainer/ViewContainerPageRegistry.h"
 
+#include <algorithm>
 #include <unordered_set>
 #include <utility>
 
 namespace workbench::viewcontainer {
+
+HostViewPageProjectionResult ProjectHostViewPages(
+	const layout::WorkbenchContributionSnapshot& snapshot,
+	const std::span<const HostViewProviderDescriptor> providers) noexcept
+{
+	if (!layout::WorkbenchContributionRegistry::IsValidContributionSnapshot(snapshot)) {
+		return { EHostViewPageProjectionStatus::InvalidContribution, {} };
+	}
+	try {
+		std::unordered_set<std::string_view> providerIds;
+		providerIds.reserve(providers.size());
+		for (const auto& provider : providers) {
+			if (!layout::WorkbenchContributionRegistry::IsValidStableId(provider.id)
+				|| !provider.factory || !providerIds.emplace(provider.id).second) {
+				return { EHostViewPageProjectionStatus::InvalidProvider, {} };
+			}
+		}
+
+		HostViewPageProjectionResult result{ EHostViewPageProjectionStatus::NotApplicable, {} };
+		std::unordered_set<std::string_view> projectedContainers;
+		for (const auto& registeredView : snapshot.views) {
+			const auto& view = registeredView.descriptor;
+			if (view.provider.empty()) continue;
+			const auto provider = std::ranges::find(providers, view.provider,
+				&HostViewProviderDescriptor::id);
+			if (provider == providers.end()) {
+				return { EHostViewPageProjectionStatus::UnknownProvider, {} };
+			}
+			const auto container = std::ranges::find(snapshot.viewContainers,
+				view.containerId, [](const auto& entry) -> const std::string& {
+					return entry.descriptor.id;
+				});
+			if (container == snapshot.viewContainers.end()) {
+				return { EHostViewPageProjectionStatus::InvalidContribution, {} };
+			}
+			if (!projectedContainers.emplace(container->descriptor.id).second) {
+				return { EHostViewPageProjectionStatus::DuplicateContainerId, {} };
+			}
+			result.descriptors.push_back({
+				.containerId = container->descriptor.id,
+				.supportedLocations = container->descriptor.supportedLocations,
+				.factory = provider->factory,
+			});
+			result.status = EHostViewPageProjectionStatus::Projected;
+		}
+		return result;
+	} catch (...) {
+		return { EHostViewPageProjectionStatus::Failed, {} };
+	}
+}
 
 ViewContainerPageRegistrationResult ViewContainerPageRegistry::RegisterBatch(
 	std::vector<ViewContainerPageDescriptor> descriptors) noexcept

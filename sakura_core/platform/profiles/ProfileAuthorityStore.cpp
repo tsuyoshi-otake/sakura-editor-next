@@ -167,6 +167,7 @@ struct ParsedRecord {
 	case ProfileAuthorityStoreStatus::CorruptRecord: return L"profile authority record is corrupt";
 	case ProfileAuthorityStoreStatus::RandomFailed: return L"profile authority identifier could not be generated";
 	case ProfileAuthorityStoreStatus::GenerationOverflow: return L"profile authority generation has reached its limit";
+	case ProfileAuthorityStoreStatus::PreCommitRejected: return L"profile authority candidate was rejected before commit";
 	case ProfileAuthorityStoreStatus::WriteFailed: return L"profile authority temporary write failed";
 	case ProfileAuthorityStoreStatus::FlushFailed: return L"profile authority durable flush failed";
 	case ProfileAuthorityStoreStatus::ReplaceFailed: return L"profile authority record replacement failed";
@@ -413,7 +414,8 @@ ProfileAuthorityStore::ProfileAuthorityStore(
 {
 }
 
-ProfileAuthorityResult ProfileAuthorityStore::Acquire(std::wstring_view legacyProfileAlias)
+ProfileAuthorityResult ProfileAuthorityStore::Acquire(std::wstring_view legacyProfileAlias,
+	ProfileAuthorityPreCommitCheck preCommitCheck)
 {
 	try {
 		if (m_profileDirectory.empty() || !m_backend || !IsValidUtf16(legacyProfileAlias)) {
@@ -435,6 +437,7 @@ ProfileAuthorityResult ProfileAuthorityStore::Acquire(std::wstring_view legacyPr
 		if (readStatus != ProfileAuthorityStoreStatus::Succeeded) return Failure(readStatus);
 
 		ParsedRecord record;
+		const bool existingIdentity = exists;
 		if (exists) {
 			const auto parseStatus = ParseRecord(bytes, record);
 			if (parseStatus != ProfileAuthorityStoreStatus::Succeeded) return Failure(parseStatus);
@@ -447,6 +450,9 @@ ProfileAuthorityResult ProfileAuthorityStore::Acquire(std::wstring_view legacyPr
 				return Failure(randomStatus == ProfileAuthorityStoreStatus::Succeeded ? ProfileAuthorityStoreStatus::RandomFailed : randomStatus);
 			}
 			record.generation = 1;
+		}
+		if (preCommitCheck && !preCommitCheck({ record.profileId, record.generation, existingIdentity })) {
+			return Failure(ProfileAuthorityStoreStatus::PreCommitRejected);
 		}
 
 		const auto writeStatus = m_backend->WriteRecordAtomically(

@@ -159,7 +159,10 @@ TEST(AtomicFileStorageService, RejectsPersistedGenerationAheadOfCurrentAuthority
 	}
 
 	CAtomicFileStorageService rolledBackAuthority(L"generation-test", 11, 64, files);
-	EXPECT_EQ(EAtomicFileStorageOpenStatus::CorruptData, rolledBackAuthority.Open().status);
+	const auto opened = rolledBackAuthority.Open();
+	EXPECT_EQ(EAtomicFileStorageOpenStatus::GenerationRollback, opened.status);
+	EXPECT_EQ("profile authority generation is behind durable storage", opened.diagnostic);
+	EXPECT_TRUE(opened.persistedStateFound);
 	EXPECT_FALSE(rolledBackAuthority.IsOpen());
 }
 

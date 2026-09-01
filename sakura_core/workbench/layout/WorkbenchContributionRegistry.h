@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <initializer_list>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -43,6 +44,7 @@ public:
 	{
 		return (m_bits & kInvalidBit) == 0 && (m_bits & kLocationBits) != 0;
 	}
+	[[nodiscard]] constexpr bool operator==(const SupportedViewContainerLocations&) const = default;
 
 private:
 	static constexpr std::uint8_t kSidebarBit = 1U << 0;
@@ -68,6 +70,7 @@ struct WorkbenchPartDescriptor {
 	std::string id;
 	std::string title;
 	bool supportsVisibility{ true };
+	[[nodiscard]] bool operator==(const WorkbenchPartDescriptor&) const = default;
 };
 
 struct WorkbenchViewContainerDescriptor {
@@ -75,8 +78,10 @@ struct WorkbenchViewContainerDescriptor {
 	std::string title;
 	EViewContainerLocation location{ EViewContainerLocation::Sidebar };
 	std::int32_t order{};
+	std::string icon;
 	bool hideIfEmpty{};
 	SupportedViewContainerLocations supportedLocations;
+	[[nodiscard]] bool operator==(const WorkbenchViewContainerDescriptor&) const = default;
 };
 
 struct WorkbenchViewDescriptor {
@@ -86,6 +91,10 @@ struct WorkbenchViewDescriptor {
 	std::int32_t order{};
 	bool canToggleVisibility{ true };
 	bool canMove{ true };
+	//! Empty for product-owned built-ins. Extension-contributed native Views use
+	//! a stable host provider id that the page projection resolves.
+	std::string provider;
+	[[nodiscard]] bool operator==(const WorkbenchViewDescriptor&) const = default;
 };
 
 struct RegisteredWorkbenchPart { WorkbenchPartDescriptor descriptor; };
@@ -106,6 +115,11 @@ public:
 	WorkbenchContributionRegistry();
 
 	[[nodiscard]] WorkbenchContributionSnapshot Snapshot() const { return m_snapshot; }
+	//! Atomically appends one validated startup batch. Runtime registration after
+	//! native page creation is deliberately unsupported by this checkpoint.
+	[[nodiscard]] bool RegisterExtensionContributions(
+		std::span<const WorkbenchViewContainerDescriptor> containers,
+		std::span<const WorkbenchViewDescriptor> views);
 	[[nodiscard]] static bool IsValidStableId(std::string_view value) noexcept;
 	[[nodiscard]] static bool IsValidViewContainerDescriptor(
 		const WorkbenchViewContainerDescriptor& descriptor) noexcept;
@@ -115,6 +129,7 @@ public:
 
 private:
 	WorkbenchContributionSnapshot m_snapshot;
+	bool m_extensionBatchRegistered = false;
 };
 
 } // namespace workbench::layout

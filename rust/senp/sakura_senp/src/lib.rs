@@ -90,6 +90,31 @@ pub struct GrammarContribution {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ViewContainerContribution {
+    pub id: String,
+    pub title: String,
+    pub icon: String,
+    pub order: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ViewContainersContribution {
+    #[serde(default)]
+    pub activitybar: Vec<ViewContainerContribution>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ViewContribution {
+    pub id: String,
+    pub name: String,
+    pub provider: String,
+    pub order: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Contributions {
     #[serde(default)]
     pub editor_decorations: Vec<EditorDecorationContribution>,
@@ -97,6 +122,18 @@ pub struct Contributions {
     pub languages: Vec<LanguageContribution>,
     #[serde(default)]
     pub grammars: Vec<GrammarContribution>,
+    #[serde(default)]
+    pub views_containers: ViewContainersContribution,
+    #[serde(default)]
+    pub views: BTreeMap<String, Vec<ViewContribution>>,
+}
+
+impl Default for ViewContainersContribution {
+    fn default() -> Self {
+        Self {
+            activitybar: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -467,6 +504,26 @@ fn valid_identifier(value: &str) -> bool {
         && !value.ends_with(['.', '-'])
 }
 
+fn valid_workbench_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 160
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
+        && !value.starts_with(['.', '-', '_'])
+        && !value.ends_with(['.', '-', '_'])
+}
+
+fn valid_theme_icon(value: &str) -> bool {
+    value.len() >= 4
+        && value.len() <= 132
+        && value.starts_with("$(")
+        && value.ends_with(')')
+        && value[2..value.len() - 1]
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+}
+
 fn valid_sha256(value: &str) -> bool {
     value.len() == 64
         && value
@@ -666,8 +723,68 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), SenpError> {
             "language and grammar contributions must be paired",
         ));
     }
+
+    let containers = &manifest.contributes.views_containers.activitybar;
+    if containers.len() > 32 || manifest.contributes.views.len() > 32 {
+        return Err(SenpError::new(
+            ErrorCode::InvalidManifest,
+            "too many workbench view contributions",
+        ));
+    }
+    let mut container_ids = BTreeSet::new();
+    for container in containers {
+        if !valid_workbench_identifier(&container.id)
+            || !container_ids.insert(container.id.as_str())
+            || container.title.trim().is_empty()
+            || container.title.len() > 160
+            || !valid_theme_icon(&container.icon)
+            || !(-10_000..=10_000).contains(&container.order)
+        {
+            return Err(SenpError::new(
+                ErrorCode::InvalidManifest,
+                "invalid activity bar ViewContainer contribution",
+            ));
+        }
+    }
+    let mut view_ids = BTreeSet::new();
+    let mut view_count = 0usize;
+    for (container_id, views) in &manifest.contributes.views {
+        view_count = view_count.saturating_add(views.len());
+        if !container_ids.contains(container_id.as_str()) || views.is_empty() || views.len() > 32 {
+            return Err(SenpError::new(
+                ErrorCode::InvalidManifest,
+                "View contribution references an unknown or empty ViewContainer",
+            ));
+        }
+        for view in views {
+            if !valid_workbench_identifier(&view.id)
+                || !view_ids.insert(view.id.as_str())
+                || view.name.trim().is_empty()
+                || view.name.len() > 160
+                || !valid_workbench_identifier(&view.provider)
+                || !(-10_000..=10_000).contains(&view.order)
+            {
+                return Err(SenpError::new(
+                    ErrorCode::InvalidManifest,
+                    "invalid workbench View contribution",
+                ));
+            }
+        }
+    }
+    if view_count > 128
+        || containers.is_empty() != manifest.contributes.views.is_empty()
+        || container_ids
+            .iter()
+            .any(|container_id| !manifest.contributes.views.contains_key(*container_id))
+    {
+        return Err(SenpError::new(
+            ErrorCode::InvalidManifest,
+            "ViewContainer and View contributions must form a complete bounded hierarchy",
+        ));
+    }
     if manifest.contributes.editor_decorations.is_empty()
         && manifest.contributes.languages.is_empty()
+        && containers.is_empty()
     {
         return Err(SenpError::new(
             ErrorCode::InvalidManifest,
@@ -2010,6 +2127,43 @@ mod tests {
         .unwrap();
     }
 
+    fn workbench_view_fixture(root: &Path) {
+        fs::create_dir_all(root).unwrap();
+        fs::write(
+            root.join(MANIFEST_PATH),
+            br#"{
+  "schemaVersion": 1,
+  "id": "sample-projects",
+  "displayName": "Projects",
+  "version": "0.1.0",
+  "publisher": "sakura.builtin",
+  "description": "Fixture",
+  "engines": { "sakura": ">=0.0.0" },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [{
+        "id": "sakura.view.projects",
+        "title": "Projects",
+        "icon": "$(project)",
+        "order": 45
+      }]
+    },
+    "views": {
+      "sakura.view.projects": [{
+        "id": "sakura.projects",
+        "name": "Projects",
+        "provider": "sakura.projects",
+        "order": 10
+      }]
+    }
+  }
+}"#,
+        )
+        .unwrap();
+        fs::write(root.join(README_PATH), "# Projects\n").unwrap();
+        fs::write(root.join(LICENSE_PATH), "Zlib\n").unwrap();
+    }
+
     #[test]
     fn deterministic_package_round_trips_and_installs_immutably() {
         let temp = TempDir::new().unwrap();
@@ -2198,6 +2352,33 @@ mod tests {
         fs::remove_file(source.join("assets/syntaxes/shell-unix-bash.tmLanguage.json")).unwrap();
         let error = pack_directory(&source, &temp.path().join("shell.senp"), None).unwrap_err();
         assert_eq!(error.code, ErrorCode::MissingRequiredEntry);
+    }
+
+    #[test]
+    fn declarative_workbench_view_package_round_trips_without_runtime_authority() {
+        let temp = TempDir::new().unwrap();
+        let source = temp.path().join("source");
+        workbench_view_fixture(&source);
+        let package = temp.path().join("projects.senp");
+        let hash = pack_directory(&source, &package, None).unwrap();
+        let verified = verify_package(
+            &package,
+            &TrustPolicy::BuiltIn {
+                expected_archive_sha256: hash,
+            },
+        )
+        .unwrap();
+
+        assert!(verified.manifest.runtime.is_none());
+        assert!(verified.manifest.capabilities.is_empty());
+        assert_eq!(
+            verified.manifest.contributes.views_containers.activitybar[0].id,
+            "sakura.view.projects"
+        );
+        assert_eq!(
+            verified.manifest.contributes.views["sakura.view.projects"][0].provider,
+            "sakura.projects"
+        );
     }
 
     #[test]

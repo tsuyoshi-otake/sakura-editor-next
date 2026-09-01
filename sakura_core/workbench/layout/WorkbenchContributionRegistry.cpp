@@ -10,6 +10,7 @@
 #include "workbench/layout/WorkbenchIds.h"
 
 #include <algorithm>
+#include <limits>
 #include <stdexcept>
 #include <unordered_set>
 
@@ -79,9 +80,10 @@ WorkbenchContributionRegistry::WorkbenchContributionRegistry()
 	};
 	const auto addContainer = [this](std::string_view id, std::string_view title,
 		const EViewContainerLocation location, const std::int32_t order,
-		SupportedViewContainerLocations supportedLocations) {
+		SupportedViewContainerLocations supportedLocations, std::string_view icon = {}) {
 		m_snapshot.viewContainers.push_back({ { .id = std::string(id), .title = std::string(title),
-			.location = location, .order = order, .supportedLocations = supportedLocations } });
+			.location = location, .order = order, .icon = std::string(icon),
+			.supportedLocations = supportedLocations } });
 	};
 	const auto addView = [this](std::string_view id, std::string_view containerId,
 		std::string_view title, const std::int32_t order) {
@@ -100,11 +102,11 @@ WorkbenchContributionRegistry::WorkbenchContributionRegistry()
 	const SupportedViewContainerLocations sideBars{
 		EViewContainerLocation::Sidebar, EViewContainerLocation::AuxiliaryBar };
 	const SupportedViewContainerLocations panel{ EViewContainerLocation::Panel };
-	addContainer(ids::viewContainer::Explorer, "Explorer", EViewContainerLocation::Sidebar, 10, sideBars);
-	addContainer(ids::viewContainer::Search, "Search", EViewContainerLocation::Sidebar, 20, sideBars);
-	addContainer(ids::viewContainer::RunAndDebug, "Run and Debug", EViewContainerLocation::Sidebar, 30, sideBars);
-	addContainer(ids::viewContainer::SourceControl, "Source Control", EViewContainerLocation::Sidebar, 40, sideBars);
-	addContainer(ids::viewContainer::Extensions, "Extensions", EViewContainerLocation::Sidebar, 50, sideBars);
+	addContainer(ids::viewContainer::Explorer, "Explorer", EViewContainerLocation::Sidebar, 10, sideBars, "files");
+	addContainer(ids::viewContainer::Search, "Search", EViewContainerLocation::Sidebar, 20, sideBars, "search");
+	addContainer(ids::viewContainer::RunAndDebug, "Run and Debug", EViewContainerLocation::Sidebar, 30, sideBars, "debug-alt");
+	addContainer(ids::viewContainer::SourceControl, "Source Control", EViewContainerLocation::Sidebar, 40, sideBars, "source-control");
+	addContainer(ids::viewContainer::Extensions, "Extensions", EViewContainerLocation::Sidebar, 50, sideBars, "extensions");
 	addContainer(ids::viewContainer::Problems, "Problems", EViewContainerLocation::Panel, 10, panel);
 	addContainer(ids::viewContainer::Output, "Output", EViewContainerLocation::Panel, 20, panel);
 	addContainer(ids::viewContainer::Terminal, "Terminal", EViewContainerLocation::Panel, 30, panel);
@@ -137,6 +139,31 @@ WorkbenchContributionRegistry::WorkbenchContributionRegistry()
 		throw std::logic_error("invalid built-in workbench contributions");
 }
 
+bool WorkbenchContributionRegistry::RegisterExtensionContributions(
+	const std::span<const WorkbenchViewContainerDescriptor> containers,
+	const std::span<const WorkbenchViewDescriptor> views)
+{
+	if (m_extensionBatchRegistered || (containers.empty() && views.empty())
+		|| m_snapshot.revision == (std::numeric_limits<std::uint64_t>::max)()
+		|| std::ranges::any_of(views, [](const auto& view) { return view.provider.empty(); })) return false;
+	try {
+		auto candidate = m_snapshot;
+		++candidate.revision;
+		candidate.viewContainers.reserve(candidate.viewContainers.size() + containers.size());
+		candidate.views.reserve(candidate.views.size() + views.size());
+		for (const auto& descriptor : containers) candidate.viewContainers.push_back({ descriptor });
+		for (const auto& descriptor : views) candidate.views.push_back({ descriptor });
+		SortById(candidate.viewContainers);
+		SortById(candidate.views);
+		if (!IsValidContributionSnapshot(candidate)) return false;
+		m_snapshot = std::move(candidate);
+		m_extensionBatchRegistered = true;
+		return true;
+	} catch (...) {
+		return false;
+	}
+}
+
 bool WorkbenchContributionRegistry::IsValidStableId(const std::string_view value) noexcept
 {
 	return IsPrintableUtf8(value);
@@ -146,6 +173,7 @@ bool WorkbenchContributionRegistry::IsValidViewContainerDescriptor(
 	const WorkbenchViewContainerDescriptor& descriptor) noexcept
 {
 	return IsValidStableId(descriptor.id) && IsValidLocation(descriptor.location)
+		&& (descriptor.icon.empty() || IsValidStableId(descriptor.icon))
 		&& descriptor.supportedLocations.IsValid()
 		&& descriptor.supportedLocations.Contains(descriptor.location);
 }
@@ -173,6 +201,8 @@ bool WorkbenchContributionRegistry::IsValidContributionSnapshot(
 		for (const auto& registered : snapshot.views) {
 			if (!IsValidStableId(registered.descriptor.id)
 				|| !IsValidStableId(registered.descriptor.containerId)
+				|| (!registered.descriptor.provider.empty()
+					&& !IsValidStableId(registered.descriptor.provider))
 				|| !containerIds.contains(registered.descriptor.containerId)
 				|| !viewIds.emplace(registered.descriptor.id).second) return false;
 		}

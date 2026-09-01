@@ -151,6 +151,7 @@
     <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlPlatformEndpointDiscoveryReaderTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlPlatformClientTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\EditorControlPlatformRuntimeTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlPlatformRuntimeTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\UserDataProfileRegistryTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\UserDataProfileBootstrapTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\config\ConfigurationServiceTest.cpp" />
@@ -230,6 +231,9 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\WorkspaceArtifactDocumentServiceTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\debug\LaunchConfigurationCatalogTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\WorkspaceArtifactDocumentSourceControllerTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\GitWorktreeDiscoveryTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\AgentWorkspacesModelTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\ProjectsTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\FolderTaskCatalogRegistryTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\TaskConfigurationCatalogTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\TaskExecutionServiceTest.cpp" />
@@ -372,7 +376,8 @@
     <ClCompile Include="..\src\test\cpp\tests1\test-string_ex.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-window.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-zoom.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\test-winmain.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\test-winmain.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\test-control-process-startup.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\src\test\resources\pch.h" />

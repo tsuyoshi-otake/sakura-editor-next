@@ -175,6 +175,15 @@ bool CProcessFactory::IsStartingControlProcess() const
 	return false;	// コントロールプロセスは存在していないか、まだ CreateMutex() してない
 }
 
+/* static */ EControlProcessStartupWaitOutcome CProcessFactory::ClassifyStartupWaitResult(
+	DWORD waitResult) noexcept
+{
+	if (waitResult == WAIT_OBJECT_0) return EControlProcessStartupWaitOutcome::Ready;
+	if (waitResult == WAIT_OBJECT_0 + 1) return EControlProcessStartupWaitOutcome::ChildExited;
+	if (waitResult == WAIT_TIMEOUT) return EControlProcessStartupWaitOutcome::TimedOut;
+	return EControlProcessStartupWaitOutcome::WaitFailed;
+}
+
 /*!
 	@brief コントロールプロセスを起動する
 	
@@ -273,15 +282,30 @@ bool CProcessFactory::IsStartingControlProcess() const
 	// 初期化完了を待つ
 	std::array handles{ hEvent.get(), hProcess.get()};
 	CStartupTrace::Mark(CStartupTrace::Event::ControlWaitBegin);
-	if (const auto dwRet = ::WaitForMultipleObjects(DWORD(std::size(handles)), std::data(handles), FALSE, 15000); WAIT_OBJECT_0 != dwRet) {
-		CStartupTrace::Mark(CStartupTrace::Event::ControlWaitEnd);
-		CStartupTrace::Mark(CStartupTrace::Event::ControlWaitResult, dwRet);
+	const auto waitResult = ::WaitForMultipleObjects(DWORD(std::size(handles)), std::data(handles), FALSE, 15000);
+	CStartupTrace::Mark(CStartupTrace::Event::ControlWaitEnd);
+	CStartupTrace::Mark(CStartupTrace::Event::ControlWaitResult, waitResult);
+	switch (ClassifyStartupWaitResult(waitResult)) {
+	case EControlProcessStartupWaitOutcome::Ready:
+		return true;
+	case EControlProcessStartupWaitOutcome::ChildExited:
+	{
+		DWORD exitCode = ERROR_PROCESS_ABORTED;
+		if (!::GetExitCodeProcess(hProcess.get(), &exitCode) || exitCode == STILL_ACTIVE) {
+			exitCode = ERROR_PROCESS_ABORTED;
+		}
+		TopErrorMessage(nullptr, L"%ls", CControlProcess::StartupFailureMessage(exitCode).data());
+		return false;
+	}
+	case EControlProcessStartupWaitOutcome::TimedOut:
 		// L"エディタまたはシステムがビジー状態です。\nしばらく待って開きなおしてください。
 		TopErrorMessage(nullptr, LS(STR_ERR_DLGPROCFACT5));
 		return false;
+	case EControlProcessStartupWaitOutcome::WaitFailed:
+	default:
+		TopErrorMessage(nullptr,
+			L"コントロールプロセスの初期化結果を待機できませんでした。\n"
+			L"Sakura Editor NEXT をすべて終了してから、もう一度起動してください。");
+		return false;
 	}
-	CStartupTrace::Mark(CStartupTrace::Event::ControlWaitEnd);
-	CStartupTrace::Mark(CStartupTrace::Event::ControlWaitResult, WAIT_OBJECT_0);
-
-	return true;
 }

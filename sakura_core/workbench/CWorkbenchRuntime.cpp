@@ -46,6 +46,25 @@ constexpr std::string_view kProfileDocumentKey = "profile.settings";
 constexpr std::string_view kWorkspaceDocumentPrefix = "workspace.folder.settings/";
 constexpr std::string_view kWorkspaceSettingsSourceId = "workspace.settings";
 
+std::optional<std::string> WideToUtf8Strict(const std::wstring_view value)
+{
+	if (value.empty()) return std::string{};
+	if (value.size() > static_cast<std::size_t>((std::numeric_limits<int>::max)())) return std::nullopt;
+	const auto length = ::WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, value.data(),
+		static_cast<int>(value.size()), nullptr, 0, nullptr, nullptr);
+	if (length <= 0) return std::nullopt;
+	std::string result(static_cast<std::size_t>(length), '\0');
+	if (::WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, value.data(),
+		static_cast<int>(value.size()), result.data(), length, nullptr, nullptr) != length) return std::nullopt;
+	return result;
+}
+
+std::optional<std::string> ThemeIconName(const std::wstring_view value)
+{
+	if (value.size() < 4 || !value.starts_with(L"$(") || !value.ends_with(L')')) return std::nullopt;
+	return WideToUtf8Strict(value.substr(2, value.size() - 3));
+}
+
 //! The file-source controller deliberately owns parse/apply/CAS tracking as one
 //! operation. This boundary makes a read that completes after Stop terminally
 //! cancelled before the controller can begin its post-read work.
@@ -292,6 +311,9 @@ CWorkbenchRuntime::CWorkbenchRuntime(
 	, m_recentlyOpenedWorkspaces(dependencies.recentlyOpenedWorkspaceStore
 		? std::make_unique<recent::CRecentlyOpenedWorkspaceService>(std::move(dependencies.recentlyOpenedWorkspaceStore))
 		: nullptr)
+	, m_projects(dependencies.projectCatalogStore
+		? std::make_unique<projects::CProjectCatalogService>(std::move(dependencies.projectCatalogStore))
+		: nullptr)
 	, m_senpManagement(std::move(dependencies.senpManagementService))
 	, m_senpRuntime(m_senpManagement ? senp::CreateWin32SenpRuntimeService(*m_senpManagement) : nullptr)
 	, m_senpLanguage(m_senpManagement ? senp::CreateSenpLanguageService(*m_senpManagement) : nullptr)
@@ -363,10 +385,72 @@ recent::IRecentlyOpenedWorkspaceService* CWorkbenchRuntime::RecentlyOpenedWorksp
 	return IsReadyForServiceAccessLocked() ? m_recentlyOpenedWorkspaces.get() : nullptr;
 }
 
+projects::IProjectCatalogService* CWorkbenchRuntime::Projects() noexcept
+{
+	std::lock_guard lock(m_stateMutex);
+	return IsReadyForServiceAccessLocked() ? m_projects.get() : nullptr;
+}
+
 senp::ISenpManagementService* CWorkbenchRuntime::Extensions() noexcept
 {
 	std::lock_guard lock(m_stateMutex);
 	return IsReadyForServiceAccessLocked() ? m_senpManagement.get() : nullptr;
+}
+
+bool CWorkbenchRuntime::RegisterExtensionWorkbenchContributions(
+	const senp::ManagementSnapshot& snapshot)
+{
+	std::vector<layout::WorkbenchViewContainerDescriptor> containers;
+	std::vector<layout::WorkbenchViewDescriptor> views;
+	for (const auto& extension : snapshot.extensions) {
+		if (!extension.installed || !extension.enabled || !extension.builtIn
+			|| extension.trust != L"builtin") continue;
+
+		const auto beforeContainers = containers.size();
+		const auto beforeViews = views.size();
+		for (const auto& contribution : extension.viewContainers) {
+			const auto id = WideToUtf8Strict(contribution.id);
+			const auto title = WideToUtf8Strict(contribution.title);
+			const auto icon = ThemeIconName(contribution.icon);
+			if (!id || !title || !icon) return false;
+			containers.push_back({
+				.id = *id,
+				.title = *title,
+				.location = layout::EViewContainerLocation::Sidebar,
+				.order = contribution.order,
+				.icon = *icon,
+				.supportedLocations = { layout::EViewContainerLocation::Sidebar,
+					layout::EViewContainerLocation::AuxiliaryBar },
+			});
+		}
+		for (const auto& contribution : extension.views) {
+			// Host providers are executable product code, not package authority.
+			// Unknown providers fail closed even for an integrity-pinned package.
+			if (contribution.provider != L"sakura.projects") return false;
+			const auto id = WideToUtf8Strict(contribution.id);
+			const auto containerId = WideToUtf8Strict(contribution.containerId);
+			const auto title = WideToUtf8Strict(contribution.title);
+			if (!id || !containerId || !title) return false;
+			views.push_back({
+				.id = *id,
+				.containerId = *containerId,
+				.title = *title,
+				.order = contribution.order,
+				.provider = "sakura.projects",
+			});
+		}
+		if ((containers.size() == beforeContainers) != (views.size() == beforeViews)) return false;
+	}
+	if (containers.empty() && views.empty()) return true;
+	if (!m_contributions.RegisterExtensionContributions(containers, views)) return false;
+	const auto reconciled = m_layoutState.Reconcile(m_contributions.Snapshot(), {
+		.operation = {
+			.operationId = "startup.senp.workbench-contributions",
+			.expectedRevision = m_layoutState.Snapshot().revision,
+		},
+	});
+	return reconciled.status == layout::EWorkbenchLayoutOperationStatus::Succeeded
+		|| reconciled.status == layout::EWorkbenchLayoutOperationStatus::NotApplicable;
 }
 
 senp::ISenpRuntimeService* CWorkbenchRuntime::ExtensionRuntime() noexcept
@@ -1751,6 +1835,22 @@ WorkbenchRuntimeResult CWorkbenchRuntime::Start()
 	}
 
 	try {
+		bool extensionManagementReady = false;
+		if (m_senpManagement) {
+			const auto extensionStart = m_senpManagement->Start();
+			extensionManagementReady = extensionStart.Succeeded();
+			if (!extensionManagementReady) {
+				SetDiagnostic("extensions.start", WorkbenchRuntimeDiagnostic {
+					.source = EWorkbenchRuntimeDiagnosticSource::Extensions,
+					.code = EWorkbenchRuntimeDiagnosticCode::InternalFailure,
+					.message = "SENP extension management did not reach a ready state",
+				});
+			} else if (!RegisterExtensionWorkbenchContributions(extensionStart.snapshot)) {
+				return FailStart(EWorkbenchRuntimeDiagnosticCode::LayoutReconcileFailed,
+					"validated SENP workbench contributions could not be registered atomically");
+			}
+		}
+
 		RestoreInitialLayoutMemento();
 		RestoreStatusbarVisibilityMemento();
 		if (auto terminal = terminalResult()) return std::move(*terminal);
@@ -1760,24 +1860,19 @@ WorkbenchRuntimeResult CWorkbenchRuntime::Start()
 		// rewrites storage, and remains unavailable to command context until a
 		// later successful store operation.
 		if (m_recentlyOpenedWorkspaces) (void)m_recentlyOpenedWorkspaces->Load();
+		// Saved Projects are also non-critical. A corrupt or unavailable record
+		// remains untouched and cannot prevent an editor window from becoming ready.
+		if (m_projects) (void)m_projects->Load();
 
 		if (m_senpManagement) {
-			const auto extensionStart = m_senpManagement->Start();
-			if (!extensionStart.Succeeded()) {
-				SetDiagnostic("extensions.start", WorkbenchRuntimeDiagnostic {
-					.source = EWorkbenchRuntimeDiagnosticSource::Extensions,
-					.code = EWorkbenchRuntimeDiagnosticCode::InternalFailure,
-					.message = "SENP extension management did not reach a ready state",
-				});
-			}
-			if (m_senpRuntime && !m_senpRuntime->Start()) {
+			if (extensionManagementReady && m_senpRuntime && !m_senpRuntime->Start()) {
 				SetDiagnostic("extensions.runtime", WorkbenchRuntimeDiagnostic {
 					.source = EWorkbenchRuntimeDiagnosticSource::Extensions,
 					.code = EWorkbenchRuntimeDiagnosticCode::InternalFailure,
 					.message = "SENP extension runtime did not start",
 				});
 			}
-			if (m_senpLanguage && !m_senpLanguage->Start()) {
+			if (extensionManagementReady && m_senpLanguage && !m_senpLanguage->Start()) {
 				SetDiagnostic("extensions.languages", WorkbenchRuntimeDiagnostic {
 					.source = EWorkbenchRuntimeDiagnosticSource::Extensions,
 					.code = EWorkbenchRuntimeDiagnosticCode::InternalFailure,

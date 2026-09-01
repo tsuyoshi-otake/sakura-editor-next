@@ -224,6 +224,15 @@ public:
 	[[nodiscard]] ActivityBarButtonInfo GetButton(std::size_t index) const noexcept;
 	//! Returns the id of the entry under the point, or an empty view when the point misses.
 	[[nodiscard]] std::string_view HitTest(int x, int y) const noexcept;
+	/*! @brief Resolves a pointer position to a gap in the visible ViewContainer strip.
+
+		The returned index is in ViewContainer-only order. GlobalCompositeBar actions
+		are deliberately excluded because Accounts and Manage are not movable containers.
+	*/
+	[[nodiscard]] std::optional<std::size_t> ContainerInsertionIndexAt(int x, int y) const noexcept;
+	//! Two-pixel insertion affordance for a gap returned by ContainerInsertionIndexAt().
+	[[nodiscard]] std::optional<ActivityBarRect> ContainerInsertionMarker(
+		std::size_t insertionIndex) const noexcept;
 	//! Moves focus through enabled items. A positive direction moves down/right; a negative direction moves up/left.
 	[[nodiscard]] std::string_view MoveFocus(int direction) noexcept;
 	//! Returns the requested item when it is enabled. The owner decides how to toggle the corresponding panel.

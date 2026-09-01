@@ -219,6 +219,15 @@
     <ClCompile Include="..\src\test\cpp\tests1\workbench\WorkspaceArtifactDocumentSourceControllerTest.cpp">
       <Filter>Test Files\workbench</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\GitWorktreeDiscoveryTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\AgentWorkspacesModelTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\ProjectsTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\workbench\WorkspaceResourceDescriptorsTest.cpp">
       <Filter>Test Files\workbench</Filter>
     </ClCompile>
@@ -483,6 +492,9 @@
       <Filter>Test Files\platform\controlipc</Filter>
     </ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\EditorControlPlatformRuntimeTest.cpp">
+	  <Filter>Test Files\platform\controlipc</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlPlatformRuntimeTest.cpp">
 	  <Filter>Test Files\platform\controlipc</Filter>
 	</ClCompile>
 
@@ -753,9 +765,12 @@
     <ClCompile Include="..\src\test\cpp\tests1\test-cdlgprofilemgr.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\test-winmain.cpp">
-      <Filter>Test Files</Filter>
-    </ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\test-winmain.cpp">
+	  <Filter>Test Files</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\test-control-process-startup.cpp">
+	  <Filter>Test Files</Filter>
+	</ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\test-cprofile.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>

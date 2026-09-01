@@ -100,10 +100,11 @@ struct ControlPlatformRuntimeResult {
 /*!
 	@brief Owns the durable control-platform lifetime without UI or legacy shared data.
 
-	Start order is fixed: validate resolved inputs, acquire profile authority, open
-	durable storage, load the profile registry, then start the endpoint/pipe host.
-	A failure closes everything created by that attempt and returns Stopped. Stop
-	order is the exact reverse.
+	Start order is fixed: validate resolved inputs, prepare the next profile-authority
+	candidate, open durable storage as its pre-commit check, commit the authority,
+	load the profile registry, then start the endpoint/pipe host. A failure closes
+	everything created by that attempt and returns Stopped. Stop order is the exact
+	reverse.
 */
 class CControlPlatformRuntime final {
 public:

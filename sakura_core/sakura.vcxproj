@@ -616,6 +616,9 @@
 	<ClInclude Include="..\sakura_core\workbench\CWorkbenchRuntime.h" />
 	<ClInclude Include="..\sakura_core\workbench\recent\RecentlyOpenedWorkspaceMenuProjection.h" />
 	<ClInclude Include="..\sakura_core\workbench\recent\RecentlyOpenedWorkspaceService.h" />
+	<ClInclude Include="..\sakura_core\workbench\projects\ProjectCatalogService.h" />
+	<ClInclude Include="..\sakura_core\workbench\projects\ProjectsModel.h" />
+	<ClInclude Include="..\sakura_core\workbench\projects\CProjectsPage.h" />
 	<ClInclude Include="..\sakura_core\workbench\CWorkspaceContext.h" />
 	<ClInclude Include="..\sakura_core\workbench\IWorkbenchRuntime.h" />
 	<ClInclude Include="..\sakura_core\workbench\IWorkbenchTool.h" />
@@ -699,6 +702,9 @@
 	<ClInclude Include="..\sakura_core\workbench\panel\CBottomPanelTool.h" />
 	<ClInclude Include="..\sakura_core\workbench\outline\COutlineWorkbenchTool.h" />
 	<ClInclude Include="..\sakura_core\workbench\account\AccountDiscovery.h" />
+	<ClInclude Include="..\sakura_core\workbench\agent\AgentWorkspacesModel.h" />
+	<ClInclude Include="..\sakura_core\workbench\worktree\GitWorktreePorcelainParser.h" />
+	<ClInclude Include="..\sakura_core\workbench\worktree\GitWorktreeDiscoverySource.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitCommandRunner.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitOutputChannel.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitBranchCommands.h" />
@@ -794,7 +800,8 @@
     <ClInclude Include="..\sakura_core\_main\CMutex.h" />
     <ClInclude Include="..\sakura_core\_main\CNormalProcess.h" />
     <ClInclude Include="..\sakura_core\_main\ControlPlatformWorkbenchLayoutMementoStore.h" />
-    <ClInclude Include="..\sakura_core\_main\ControlPlatformRecentlyOpenedWorkspaceStore.h" />
+	<ClInclude Include="..\sakura_core\_main\ControlPlatformRecentlyOpenedWorkspaceStore.h" />
+	<ClInclude Include="..\sakura_core\_main\ControlPlatformProjectCatalogStore.h" />
     <ClInclude Include="..\sakura_core\_main\ControlPlatformStatusbarVisibilityMementoStore.h" />
     <ClInclude Include="..\sakura_core\_main\ControlPlatformWorkingCopyPersistenceStore.h" />
     <ClInclude Include="..\sakura_core\_main\CProcess.h" />
@@ -1327,6 +1334,9 @@
 	<ClCompile Include="..\sakura_core\workbench\quickinput\CQuickInputDialog.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\CWorkbenchRuntime.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\recent\RecentlyOpenedWorkspaceService.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\projects\ProjectCatalogService.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\projects\ProjectsModel.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\projects\CProjectsPage.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\CWorkspaceContext.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\commands\WorkbenchContextKeyService.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\commands\WorkbenchCommandRegistry.cpp" />
@@ -1397,6 +1407,9 @@
 	<ClCompile Include="..\sakura_core\workbench\outline\OutlineSnapshotParser.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\account\AccountDiscovery.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\account\GhCommandRunner.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\agent\AgentWorkspacesModel.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\worktree\GitWorktreePorcelainParser.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\worktree\GitWorktreeDiscoverySource.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\scm\GitCommandRunner.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\scm\GitOutputChannel.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\scm\GitBranchCommands.cpp" />
@@ -1467,7 +1480,8 @@
     <ClCompile Include="..\sakura_core\_main\CControlTray.cpp" />
     <ClCompile Include="..\sakura_core\_main\CNormalProcess.cpp" />
     <ClCompile Include="..\sakura_core\_main\ControlPlatformWorkbenchLayoutMementoStore.cpp" />
-    <ClCompile Include="..\sakura_core\_main\ControlPlatformRecentlyOpenedWorkspaceStore.cpp" />
+	<ClCompile Include="..\sakura_core\_main\ControlPlatformRecentlyOpenedWorkspaceStore.cpp" />
+	<ClCompile Include="..\sakura_core\_main\ControlPlatformProjectCatalogStore.cpp" />
     <ClCompile Include="..\sakura_core\_main\ControlPlatformStatusbarVisibilityMementoStore.cpp" />
     <ClCompile Include="..\sakura_core\_main\ControlPlatformWorkingCopyPersistenceStore.cpp" />
     <ClCompile Include="..\sakura_core\_main\CProcess.cpp" />

@@ -483,6 +483,30 @@ void ContributedViewContainerPageHost::SetVisible(
 	}
 }
 
+void ContributedViewContainerPageHost::SetPalette(
+	const std::string_view containerId, const theme::ThemePalette& palette) noexcept
+{
+	if (auto* projection = Projection(containerId)) {
+		projection->SetProjectionPalette(palette);
+	}
+}
+
+void ContributedViewContainerPageHost::RefreshStrings(
+	const std::string_view containerId) noexcept
+{
+	if (auto* projection = Projection(containerId)) {
+		projection->RefreshProjectionStrings();
+	}
+}
+
+void ContributedViewContainerPageHost::RefreshContent(
+	const std::string_view containerId) noexcept
+{
+	if (auto* projection = Projection(containerId)) {
+		projection->RefreshProjectionContent();
+	}
+}
+
 CViewContainerPages::CViewContainerPages(CDlgFuncList& dialog)
 	: m_dialog(dialog)
 	, m_pool(m_registry)
@@ -916,6 +940,9 @@ void CViewContainerPages::SetPalette(const theme::ThemePalette& palette)
 	if (auto* scm = SourceControl()) scm->SetPalette(palette);
 	if (auto* search = Search()) search->SetPalette(palette);
 	if (auto* extensions = Extensions()) extensions->SetPalette(palette);
+	for (const auto& containerId : m_contributedPageIds) {
+		m_contributedPages.SetPalette(containerId, palette);
+	}
 }
 
 std::wstring CViewContainerPages::PageTitle(std::string_view containerId) const
@@ -931,9 +958,18 @@ void CViewContainerPages::RefreshStrings()
 	if (auto* scm = SourceControl()) scm->RefreshStrings();
 	if (auto* extensions = Extensions()) extensions->RefreshStrings();
 	ApplySearchTexts();
+	for (const auto& containerId : m_contributedPageIds) {
+		m_contributedPages.RefreshStrings(containerId);
+	}
 	for (const auto& page : m_pages) {
 		if (AttachedHost(page.id) != nullptr) RedrawVisiblePage(PageWindow(page));
 	}
+}
+
+void CViewContainerPages::RefreshPageContent(const std::string_view containerId) noexcept
+{
+	if (!IsUsable() || !Contains(containerId)) return;
+	if (Find(containerId) == nullptr) m_contributedPages.RefreshContent(containerId);
 }
 
 //! The view owns no resource ids, so the composition layer resolves every

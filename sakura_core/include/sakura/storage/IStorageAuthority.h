@@ -27,11 +27,16 @@ enum class EStorageAuthorityOpenStatus : std::uint8_t {
 	IoError,
 	CorruptData,
 	UnsupportedFormat,
+	GenerationRollback,
+	OrphanedState,
 };
 
 struct StorageAuthorityOpenResult {
 	EStorageAuthorityOpenStatus status = EStorageAuthorityOpenStatus::IoError;
 	std::string diagnostic;
+	//! True only when Open() decoded an existing durable document. Composition
+	//! uses this to reject a surviving store before minting a new profile identity.
+	bool persistedStateFound = false;
 
 	[[nodiscard]] bool Succeeded() const noexcept
 	{

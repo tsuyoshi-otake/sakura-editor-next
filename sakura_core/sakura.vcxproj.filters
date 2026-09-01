@@ -1033,6 +1033,15 @@
 	<ClInclude Include="..\sakura_core\workbench\recent\RecentlyOpenedWorkspaceService.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\projects\ProjectCatalogService.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\projects\ProjectsModel.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\projects\CProjectsPage.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\CWorkspaceContext.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
@@ -1226,6 +1235,15 @@
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\account\AccountDiscovery.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\worktree\GitWorktreePorcelainParser.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\agent\AgentWorkspacesModel.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\worktree\GitWorktreeDiscoverySource.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\scm\GitCommandRunner.h">
@@ -1899,9 +1917,12 @@
     <ClInclude Include="..\sakura_core\_main\ControlPlatformWorkbenchLayoutMementoStore.h">
       <Filter>Cpp Source Files\_main</Filter>
     </ClInclude>
-    <ClInclude Include="..\sakura_core\_main\ControlPlatformRecentlyOpenedWorkspaceStore.h">
-      <Filter>Cpp Source Files\_main</Filter>
-    </ClInclude>
+	<ClInclude Include="..\sakura_core\_main\ControlPlatformRecentlyOpenedWorkspaceStore.h">
+	  <Filter>Cpp Source Files\_main</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\_main\ControlPlatformProjectCatalogStore.h">
+	  <Filter>Cpp Source Files\_main</Filter>
+	</ClInclude>
     <ClInclude Include="..\sakura_core\_main\ControlPlatformStatusbarVisibilityMementoStore.h">
       <Filter>Cpp Source Files\_main</Filter>
     </ClInclude>
@@ -3115,6 +3136,15 @@
 	<ClCompile Include="..\sakura_core\workbench\recent\RecentlyOpenedWorkspaceService.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\projects\ProjectCatalogService.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\projects\ProjectsModel.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\projects\CProjectsPage.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\CWorkspaceContext.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
@@ -3269,6 +3299,15 @@
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\account\GhCommandRunner.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\worktree\GitWorktreePorcelainParser.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\agent\AgentWorkspacesModel.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\worktree\GitWorktreeDiscoverySource.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\scm\GitCommandRunner.cpp">
@@ -3726,9 +3765,12 @@
     <ClCompile Include="..\sakura_core\_main\ControlPlatformWorkbenchLayoutMementoStore.cpp">
       <Filter>Cpp Source Files\_main</Filter>
     </ClCompile>
-    <ClCompile Include="..\sakura_core\_main\ControlPlatformRecentlyOpenedWorkspaceStore.cpp">
-      <Filter>Cpp Source Files\_main</Filter>
-    </ClCompile>
+	<ClCompile Include="..\sakura_core\_main\ControlPlatformRecentlyOpenedWorkspaceStore.cpp">
+	  <Filter>Cpp Source Files\_main</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\_main\ControlPlatformProjectCatalogStore.cpp">
+	  <Filter>Cpp Source Files\_main</Filter>
+	</ClCompile>
     <ClCompile Include="..\sakura_core\_main\ControlPlatformStatusbarVisibilityMementoStore.cpp">
       <Filter>Cpp Source Files\_main</Filter>
     </ClCompile>

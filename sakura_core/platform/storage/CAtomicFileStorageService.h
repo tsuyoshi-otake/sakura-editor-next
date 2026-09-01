@@ -134,6 +134,7 @@ private:
 	const std::shared_ptr<IAtomicFileStorageFileOperations> m_fileOperations;
 	mutable std::mutex m_mutex;
 	bool m_open = false;
+	bool m_persistedStateFound = false;
 	std::uint64_t m_revision = 0;
 	std::map<StorageAddress, StorageEntry> m_entries;
 	std::map<std::string, CompletedOperation> m_completedOperations;

@@ -25,13 +25,20 @@ outcome. Shutdown joins bounded flush/close operations and records timeout or
 forced termination instead of silently abandoning them.
 
 For the P0 control-platform path, bind the phases in this order: resolve and load
-the final legacy profile directory; acquire `ProfileAuthorityStore`; open and
-lock `CAtomicFileStorageService`; start `CControlPlatformServiceHost` through its
-`Accepting` endpoint state; then publish the existing control-ready handoff.
+the final legacy profile directory; prepare the next `ProfileAuthorityStore`
+candidate under its exclusive lock; open and lock `CAtomicFileStorageService` as
+the candidate's pre-commit check; commit the authority only after storage accepts
+it; start `CControlPlatformServiceHost` through its `Accepting` endpoint state;
+then publish the existing control-ready handoff.
 Shutdown is the reverse: stop/join the host and withdraw the endpoint before
 closing storage and releasing authority ownership. A failed or corrupt durable
 authority/store must have an explicit terminal policy and must never silently
 mint a new identity or expose an empty replacement store under the old endpoint.
+
+When a launcher-owned control-ready event exists, the control child returns a
+typed nonzero startup exit code without presenting a modal error. The launcher
+is the single presentation owner: child exit, bounded timeout, wait failure, and
+ready-event success remain distinct terminal outcomes.
 
 After the control-ready handoff, `CNormalProcess` may read and freeze one trusted
 `ControlPlatformEndpoint` descriptor and create `CControlPlatformClient`. It must

@@ -366,13 +366,49 @@ TEST(WorkbenchLayoutTransaction, RejectsEmptyAndOversizedInputAndKeepsReplayBoun
 TEST(WorkbenchContributionRegistry, BuiltinsDeclareOnlyValidatedSupportedLocations)
 {
 	WorkbenchContributionRegistry registry;
+	const auto base = registry.Snapshot();
+	EXPECT_EQ(base.viewContainers.end(), std::ranges::find_if(base.viewContainers, [](const auto& entry) {
+		return entry.descriptor.id == ids::viewContainer::Projects;
+	}));
+	const std::array containers{ WorkbenchViewContainerDescriptor{
+		.id = std::string(ids::viewContainer::Projects),
+		.title = "Projects",
+		.location = EViewContainerLocation::Sidebar,
+		.order = 5,
+		.icon = "project",
+		.supportedLocations = { EViewContainerLocation::Sidebar,
+			EViewContainerLocation::AuxiliaryBar },
+	} };
+	const std::array views{ WorkbenchViewDescriptor{
+		.id = std::string(ids::view::Projects),
+		.containerId = std::string(ids::viewContainer::Projects),
+		.title = "Projects",
+		.order = 10,
+		.provider = "sakura.projects",
+	} };
+	ASSERT_TRUE(registry.RegisterExtensionContributions(containers, views));
+	EXPECT_FALSE(registry.RegisterExtensionContributions(containers, views));
 	const auto snapshot = registry.Snapshot();
 	ASSERT_TRUE(WorkbenchContributionRegistry::IsValidContributionSnapshot(snapshot));
+	EXPECT_EQ(2U, snapshot.revision);
 
 	const auto& explorer = ContainerDescriptor(snapshot, ids::viewContainer::Explorer);
 	EXPECT_TRUE(explorer.supportedLocations.Contains(EViewContainerLocation::Sidebar));
 	EXPECT_TRUE(explorer.supportedLocations.Contains(EViewContainerLocation::AuxiliaryBar));
 	EXPECT_FALSE(explorer.supportedLocations.Contains(EViewContainerLocation::Panel));
+
+	const auto& agent = ContainerDescriptor(snapshot, ids::viewContainer::Projects);
+	EXPECT_EQ(EViewContainerLocation::Sidebar, agent.location);
+	EXPECT_TRUE(agent.supportedLocations.Contains(EViewContainerLocation::Sidebar));
+	EXPECT_TRUE(agent.supportedLocations.Contains(EViewContainerLocation::AuxiliaryBar));
+	EXPECT_FALSE(agent.supportedLocations.Contains(EViewContainerLocation::Panel));
+	const auto worktree = std::ranges::find_if(snapshot.views, [](const auto& entry) {
+		return entry.descriptor.id == ids::view::Projects;
+	});
+	ASSERT_NE(snapshot.views.end(), worktree);
+	EXPECT_EQ(ids::viewContainer::Projects, worktree->descriptor.containerId);
+	EXPECT_EQ("sakura.projects", worktree->descriptor.provider);
+	EXPECT_EQ("project", agent.icon);
 
 	const auto& problems = ContainerDescriptor(snapshot, ids::viewContainer::Problems);
 	EXPECT_TRUE(problems.supportedLocations.Contains(EViewContainerLocation::Panel));

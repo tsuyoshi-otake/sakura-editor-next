@@ -145,6 +145,48 @@ TEST(ProfileAuthorityStore, FailureInjectionDoesNotPublishAnUncommittedGeneratio
 	EXPECT_EQ(1u, backend->writes);
 }
 
+TEST(ProfileAuthorityStore, PreCommitRejectionPreservesExistingAuthorityGeneration)
+{
+	auto backend = std::make_shared<FakeProfileAuthorityStoreBackend>();
+	backend->durableRecord = Record(kProfileId, 7);
+	const std::string before = *backend->durableRecord;
+	ProfileAuthorityStore store(L"C:\\profile", backend);
+	std::optional<ProfileAuthorityCandidate> candidate;
+
+	const auto result = store.Acquire({}, [&candidate](const ProfileAuthorityCandidate& value) {
+		candidate = value;
+		return false;
+	});
+
+	EXPECT_EQ(ProfileAuthorityStoreStatus::PreCommitRejected, result.status);
+	ASSERT_TRUE(candidate.has_value());
+	EXPECT_EQ(kProfileId, candidate->profileId);
+	EXPECT_EQ(8u, candidate->authorityGeneration);
+	EXPECT_TRUE(candidate->existingIdentity);
+	EXPECT_EQ(before, *backend->durableRecord);
+	EXPECT_EQ(0u, backend->writes);
+}
+
+TEST(ProfileAuthorityStore, PreCommitRejectionDoesNotPublishANewIdentity)
+{
+	auto backend = std::make_shared<FakeProfileAuthorityStoreBackend>();
+	ProfileAuthorityStore store(L"C:\\profile", backend);
+	std::optional<ProfileAuthorityCandidate> candidate;
+
+	const auto result = store.Acquire({}, [&candidate](const ProfileAuthorityCandidate& value) {
+		candidate = value;
+		return false;
+	});
+
+	EXPECT_EQ(ProfileAuthorityStoreStatus::PreCommitRejected, result.status);
+	ASSERT_TRUE(candidate.has_value());
+	EXPECT_EQ(kProfileId, candidate->profileId);
+	EXPECT_EQ(1u, candidate->authorityGeneration);
+	EXPECT_FALSE(candidate->existingIdentity);
+	EXPECT_FALSE(backend->durableRecord.has_value());
+	EXPECT_EQ(0u, backend->writes);
+}
+
 TEST(ProfileAuthorityStore, CreateLoadAndLockFailureInjectionAreExplicitTerminalResults)
 {
 	const struct Case {

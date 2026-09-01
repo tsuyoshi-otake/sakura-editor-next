@@ -43,7 +43,8 @@ failure with a visual placeholder or an unrelated legacy plugin path.
 
 - `README.md`, `senp.json`, `LICENSE`, and complete SHA-256 coverage are
   mandatory. `module/extension.wasm` is mandatory only when `runtime` is
-  declared; declarative language/grammar packages contain no executable code.
+  declared; declarative language/grammar and host-View packages contain no
+  executable code.
 - Built-ins are integrity-pinned; publisher trust is signature-based; unsigned
   developer packages start disabled.
 - Verification and extraction consume one bounded in-memory archive snapshot;
@@ -71,6 +72,17 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   are loaded in-process by `ISenpLanguageService`. Package management chooses
   enabled assets; the language service selects a grammar; the TextMate engine
   tokenizes; the Editor and theme service own final presentation.
+- Declarative `viewsContainers.activitybar` and `views` entries may select only
+  product-owned host providers from integrity-pinned built-ins. The package owns
+  the stable ViewContainer/View existence and metadata; the host retains Git,
+  workspace activation, HWND drawing, focus, and accessibility authority.
+  The current native page pool accepts this batch only during window startup,
+  so enable/uninstall changes apply to the next window.
+- Recorded SENP divergence: an Activity Bar ViewContainer icon is a bounded
+  `$(codicon-name)` ThemeIcon instead of VS Code's extension-relative SVG path.
+  The native Activity Bar currently renders the bundled codicon font and has no
+  safe SVG extension-asset renderer; accepting arbitrary image paths would fake
+  capability and widen the package filesystem boundary.
 - ZIP paths, counts, sizes, compression ratio, UTF-8, JSON members, ABI,
   capabilities, activation events, and contribution identifiers fail closed.
 - No WASI linker is attached in ABI v1. Runtime memory, fuel, elapsed time, IPC

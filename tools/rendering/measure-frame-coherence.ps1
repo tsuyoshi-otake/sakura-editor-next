@@ -6,7 +6,7 @@ param(
 	[int]$Trials = 10,
 	[ValidateSet('Resize', 'SideBarResize', 'Command')]
 	[string]$Gesture = 'Resize',
-	[ValidateSet('Default', 'Explorer', 'Search', 'SourceControl')]
+	[ValidateSet('Default', 'Projects', 'Explorer', 'Search', 'SourceControl')]
 	[string]$ActivityBarPage = 'Default',
 	[string]$SearchQuery,
 	[int]$FunctionCode = 0,
@@ -101,6 +101,15 @@ public static class SakuraFrameCoherenceNative
         UIntPtr result;
         return SendMessageTimeoutW(hwnd, 0x0111, new IntPtr(functionCode),
             IntPtr.Zero, 0x0002, timeoutMilliseconds, out result) != IntPtr.Zero;
+    }
+
+    public static int ReadListItemCountWithTimeout(IntPtr hwnd, uint timeoutMilliseconds)
+    {
+        UIntPtr result;
+        if (SendMessageTimeoutW(hwnd, 0x018B, IntPtr.Zero, IntPtr.Zero,
+            0x0002, timeoutMilliseconds, out result) == IntPtr.Zero) return -1;
+        ulong value = result.ToUInt64();
+        return value <= Int32.MaxValue ? (int)value : -1;
     }
 
     public static bool SendMouseWithTimeout(IntPtr hwnd, uint message, int x, int y,
@@ -611,6 +620,33 @@ function Wait-ForWindowQuiescence {
 	throw "Window did not remain visually stable for $requiredQuietMilliseconds ms within $TimeoutMilliseconds ms."
 }
 
+function Wait-ForMinimumStableListItemCount {
+	param([IntPtr]$List, [int]$Minimum, [int]$TimeoutMilliseconds)
+	$timer = [Diagnostics.Stopwatch]::StartNew()
+	$lastCount = -1
+	$stableSinceMilliseconds = -1L
+	$requiredQuietMilliseconds = 500
+	do {
+		$count = [SakuraFrameCoherenceNative]::ReadListItemCountWithTimeout(
+			$List, [uint32]$TimeoutMilliseconds)
+		if ($count -ge $Minimum) {
+			if ($count -ne $lastCount) {
+				$lastCount = $count
+				$stableSinceMilliseconds = $timer.ElapsedMilliseconds
+			}
+			elseif ($timer.ElapsedMilliseconds - $stableSinceMilliseconds -ge $requiredQuietMilliseconds) {
+				return $count
+			}
+		}
+		else {
+			$lastCount = $count
+			$stableSinceMilliseconds = -1L
+		}
+		Start-Sleep -Milliseconds 20
+	} while ($timer.ElapsedMilliseconds -lt $TimeoutMilliseconds)
+	throw "List did not reach at least $Minimum stable items within $TimeoutMilliseconds ms; last count $lastCount."
+}
+
 function Wait-ForChildLayoutChange {
 	param([IntPtr]$Window, [UInt64]$Before, [int]$TimeoutMilliseconds)
 	$timer = [Diagnostics.Stopwatch]::StartNew()
@@ -723,6 +759,7 @@ try {
 	$surfaceHostWindow = [IntPtr]::Zero
 	if ($ActivityBarPage -ne 'Default') {
 		$surfaceClass = switch ($ActivityBarPage) {
+			'Projects' { 'SakuraProjectsPage' }
 			'Explorer' { 'SakuraNativeExplorerTool' }
 			'Search' { 'SakuraNativeSearchTool' }
 			'SourceControl' { 'SakuraNativeScmTool' }
@@ -735,9 +772,10 @@ try {
 			throw 'The visible SakuraWorkbenchActivityBar child was not found.'
 		}
 		$slot = switch ($ActivityBarPage) {
-			'Explorer' { 0 }
-			'Search' { 1 }
-			'SourceControl' { 2 }
+			'Projects' { 0 }
+			'Explorer' { 1 }
+			'Search' { 2 }
+			'SourceControl' { 3 }
 		}
 		if ($surfaceWindow -eq [IntPtr]::Zero) {
 			$beforePage = [SakuraFrameCoherenceNative]::VisibleChildLayoutSignature($window)
@@ -757,6 +795,17 @@ try {
 		if ($surfaceHostWindow -eq [IntPtr]::Zero) {
 			throw "The owning Workbench Part for $ActivityBarPage was not found."
 		}
+		if ($ActivityBarPage -eq 'Projects') {
+			$projectsList = [SakuraFrameCoherenceNative]::FindVisibleChildByClass(
+				$surfaceWindow, 'ListBox')
+			if ($projectsList -eq [IntPtr]::Zero) { throw 'The Projects list control was not found.' }
+			# A Folder project backed by Git must publish at least the Project and
+			# current-worktree rows. Geometry-only quiescence cannot observe this
+			# asynchronous semantic transition.
+			$minimumProjectsRows = if ([string]::IsNullOrWhiteSpace($resolvedWorkspaceFolder)) { 1 } else { 2 }
+			[void](Wait-ForMinimumStableListItemCount $projectsList $minimumProjectsRows `
+				$ReadyTimeoutMilliseconds)
+		}
 		if ($ActivityBarPage -eq 'Search' -and -not [string]::IsNullOrWhiteSpace($SearchQuery)) {
 			$queryWindow = [SakuraFrameCoherenceNative]::FindVisibleChildByClass($surfaceWindow, 'Edit')
 			if ($queryWindow -eq [IntPtr]::Zero) { throw 'The Search query control was not found.' }
@@ -768,7 +817,7 @@ try {
 			}
 			Wait-ForWindowQuiescence $surfaceWindow $ReadyTimeoutMilliseconds
 		}
-		# The first SCM/Search publication is asynchronous and can arrive after a
+		# The first Projects/SCM/Search publication is asynchronous and can arrive after a
 		# visually quiet startup interval. Do not let that legitimate initial
 		# population become the "settled" half of the first resize comparison.
 		Start-Sleep -Milliseconds 1200

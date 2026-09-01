@@ -1033,7 +1033,7 @@ private:
 		renderable page without this window knowing that extension exists. Driving them from one
 		snapshot keeps the strip and the pool from disagreeing about which containers exist.
 		`layoutState` is nullptr before the runtime has committed any layout, in which case every
-		projected container is treated as living where its declaration put it: the Primary Side Bar.
+		projected container uses its contribution's declared location and order.
 	*/
 	void SyncViewContainers(const workbench::layout::WorkbenchLayoutStateSnapshot* layoutState);
 	/*!
@@ -1092,6 +1092,12 @@ private:
 	[[nodiscard]] std::optional<workbench::WorkbenchEdge> HitTestSideBarEdge(POINT screenPoint) const;
 	//! Runs `workbench.action.moveView` semantics for a container dropped on a side bar.
 	void MoveViewContainerToEdge(std::string_view containerId, workbench::WorkbenchEdge edge);
+	//! Reorders one ViewContainer when a composite is dropped inside its current Activity Bar.
+	[[nodiscard]] bool ReorderViewContainerInActivityBar(
+		std::string_view containerId,
+		workbench::layout::EWorkbenchViewContainerLocation location,
+		const workbench::CActivityBar& activityBar,
+		POINT screenPoint);
 	void ToggleBottomWorkbenchMaximized();
 	void SetWorkbenchZoomPercent(int percent);
 	[[nodiscard]] bool PreTranslateWorkbenchMessage(MSG& message);

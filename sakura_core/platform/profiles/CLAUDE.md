@@ -8,7 +8,9 @@
   or legacy `-PROF` alias. The alias is validation/compatibility input only and
   is never persisted as durable identity.
 - Every successful control-owner acquisition advances a nonzero authority
-  generation only after the protected metadata record is durably committed.
+  generation only after durable dependants accept the candidate and the protected
+  metadata record is durably committed. The pre-commit check runs while the
+  authority lock remains held; rejection must not advance or mint authority.
   Editors receive the ID and generation through `ControlPlatformEndpoint`; they
   never open the authority store.
 
@@ -23,6 +25,9 @@
 - Every acquisition and release branch has an explicit terminal result. Fault
   injection tests must prove that a failed flush or atomic replace cannot publish
   an uncommitted generation.
+- A surviving durable platform store is evidence that an authority identity
+  already existed. If the authority record is absent, reject that store before
+  minting a replacement identity; composition owns non-destructive recovery.
 
 ## Durable User Data Profile Registry
 

@@ -34,6 +34,23 @@ struct GrammarContribution final {
 	[[nodiscard]] bool operator==(const GrammarContribution&) const = default;
 };
 
+struct ViewContainerContribution final {
+	std::wstring id;
+	std::wstring title;
+	std::wstring icon;
+	std::int32_t order{};
+	[[nodiscard]] bool operator==(const ViewContainerContribution&) const = default;
+};
+
+struct ViewContribution final {
+	std::wstring id;
+	std::wstring containerId;
+	std::wstring title;
+	std::wstring provider;
+	std::int32_t order{};
+	[[nodiscard]] bool operator==(const ViewContribution&) const = default;
+};
+
 enum class EManagementState : std::uint8_t {
 	Created,
 	Ready,
@@ -62,6 +79,8 @@ struct ExtensionDescriptor final {
 	bool contributesIndentDecorations = false;
 	std::vector<LanguageContribution> languages;
 	std::vector<GrammarContribution> grammars;
+	std::vector<ViewContainerContribution> viewContainers;
+	std::vector<ViewContribution> views;
 	std::wstring trust;
 	[[nodiscard]] bool operator==(const ExtensionDescriptor&) const = default;
 };
