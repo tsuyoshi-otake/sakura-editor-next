@@ -85,9 +85,10 @@ public:
 			events.push_back(std::move(event));
 			ready.notify_one();
 		}
+		const Uri& Root() const noexcept { return root; }
 
-		Uri root;
 	private:
+		Uri root;
 		std::atomic<int>* cancelCount;
 		std::mutex mutex;
 		std::condition_variable ready;
@@ -308,10 +309,15 @@ TEST(WorkspaceArtifactDocumentSourceController, AdmitsAWorkspaceBurstWithinTheFi
 	EXPECT_LE(admittedWatches, workbench::WorkerRetirementService::kMaximumWorkers - 1);
 	EXPECT_EQ(EWorkspaceArtifactDocumentSourceStatus::Stopped, controller.Stop().status);
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-	while (!controller.IsRetirementFinalized() && std::chrono::steady_clock::now() < deadline) {
+	// Controller finalization precedes asynchronous reaper slot release. Drain
+	// the shared capacity so the next test cannot inherit a full retirement pool.
+	auto& retirement = workbench::WorkerRetirementService::Instance();
+	while ((!controller.IsRetirementFinalized() || retirement.ReservedOrPendingCount() != 0)
+		&& std::chrono::steady_clock::now() < deadline) {
 		std::this_thread::sleep_for(std::chrono::milliseconds(1));
 	}
 	EXPECT_TRUE(controller.IsRetirementFinalized());
+	EXPECT_EQ(0u, retirement.ReservedOrPendingCount());
 }
 
 TEST(WorkspaceArtifactDocumentSourceController, RebuildsDeduplicatedWatchTopologyAndStopsWithoutFurtherCallback)
@@ -469,7 +475,7 @@ TEST(WorkspaceArtifactDocumentSourceController, StopTransfersAStalledDispatcherW
 	{
 		std::lock_guard lock(files.watchMutex);
 		for (auto* watch : files.watches) {
-			if (watch->root.Path() == L"/C:/Workspace/.vscode") {
+			if (watch->Root().Path() == L"/C:/Workspace/.vscode") {
 				artifactWatch = watch;
 				break;
 			}

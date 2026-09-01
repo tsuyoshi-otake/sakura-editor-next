@@ -271,9 +271,17 @@ function ConvertTo-ValidatedCheckRuns {
             $completedAt = ConvertFrom-StrictUtcTimestamp -Value $completedAtProperty.Value `
                 -Description "$description completed_at"
             $reverseTimestampSkew = $startedAt - $completedAt
-            $allowedSkippedTimestampSkew = $conclusion -ceq 'skipped' -and
-                $reverseTimestampSkew -le [TimeSpan]::FromSeconds(1)
-            if ($startedAt -gt $completedAt -and -not $allowedSkippedTimestampSkew) {
+            # GitHub may synthesize a never-executed job shortly after its
+            # workflow completes. Permit only the exact seven-second anomaly
+            # observed in #284, and only for trusted, non-required Actions jobs.
+            $allowedNonRequiredGitHubSkippedTimestampSkew =
+                -not $isRequiredCheck -and
+                $appId -eq $TrustedAppId -and
+                $appSlug -ceq 'github-actions' -and
+                $isCanonicalActionsJob -and
+                $conclusion -ceq 'skipped' -and
+                $reverseTimestampSkew -le [TimeSpan]::FromSeconds(7)
+            if ($startedAt -gt $completedAt -and -not $allowedNonRequiredGitHubSkippedTimestampSkew) {
                 throw "$description started_at must not be later than completed_at."
             }
         }
@@ -564,17 +572,40 @@ function Invoke-SourceCheckSelfTest {
         -StartedAt '2026-08-30T00:20:00Z'
     Assert-MalformedFirstRunRejected $completedBeforeStart 'must not be later than completed_at'
 
-    $oneSecondSkippedSkew = New-CheckRun -Name 'unrelated-skipped-check' -Id 3034 `
-        -Status 'completed' -Conclusion 'skipped' -StartedAt '2026-08-30T00:10:01Z' `
-        -DetailsUrl "https://github.com/$repository/runs/3034" -ExternalId ''
-    @(Resolve-RequiredSourceChecks -CheckRuns (@($allSuccess) + $oneSecondSkippedSkew) `
+    $observedSkippedTimestampSkew = New-CheckRun -Name 'Publish test results' -Id 3034 `
+        -Status 'completed' -Conclusion 'skipped' -StartedAt '2026-08-30T00:10:07Z' `
+        -DetailsUrl "https://github.com/$repository/actions/runs/5000/job/3034"
+    @(Resolve-RequiredSourceChecks -CheckRuns (@($allSuccess) + $observedSkippedTimestampSkew) `
         -RequiredCheckNames $required -TrustedAppId $trustedAppId `
         -Repository $repository -SourceSha $sourceSha) | Out-Null
 
-    $twoSecondSkippedSkew = New-CheckRun -Name 'unrelated-skipped-check' -Id 3035 `
-        -Status 'completed' -Conclusion 'skipped' -StartedAt '2026-08-30T00:10:02Z' `
-        -DetailsUrl "https://github.com/$repository/runs/3035" -ExternalId ''
-    Assert-Rejected -Runs (@($allSuccess) + $twoSecondSkippedSkew) `
+    $eightSecondSkippedTimestampSkew = New-CheckRun -Name 'Publish test results' -Id 3035 `
+        -Status 'completed' -Conclusion 'skipped' -StartedAt '2026-08-30T00:10:08Z' `
+        -DetailsUrl "https://github.com/$repository/actions/runs/5000/job/3035"
+    Assert-Rejected -Runs (@($allSuccess) + $eightSecondSkippedTimestampSkew) `
+        -ExpectedMessage 'must not be later than completed_at'
+
+    $requiredSkippedTimestampSkew = New-CheckRun -Name $required[0] -Id 3037 `
+        -Status 'completed' -Conclusion 'skipped' -StartedAt '2026-08-30T00:10:07Z'
+    Assert-MalformedFirstRunRejected $requiredSkippedTimestampSkew `
+        'must not be later than completed_at'
+
+    $successfulUnrelatedTimestampSkew = New-CheckRun -Name 'unrelated-success-check' -Id 3038 `
+        -StartedAt '2026-08-30T00:10:07Z' `
+        -DetailsUrl "https://github.com/$repository/actions/runs/5000/job/3038"
+    Assert-Rejected -Runs (@($allSuccess) + $successfulUnrelatedTimestampSkew) `
+        -ExpectedMessage 'must not be later than completed_at'
+
+    $untrustedSkippedTimestampSkew = New-CheckRun -Name 'unrelated-skipped-check' -Id 3039 `
+        -AppId 99 -Status 'completed' -Conclusion 'skipped' -StartedAt '2026-08-30T00:10:07Z' `
+        -DetailsUrl "https://github.com/$repository/actions/runs/5000/job/3039"
+    Assert-Rejected -Runs (@($allSuccess) + $untrustedSkippedTimestampSkew) `
+        -ExpectedMessage 'must not be later than completed_at'
+
+    $legacySkippedTimestampSkew = New-CheckRun -Name 'unrelated-skipped-check' -Id 3040 `
+        -Status 'completed' -Conclusion 'skipped' -StartedAt '2026-08-30T00:10:07Z' `
+        -DetailsUrl "https://github.com/$repository/runs/3040" -ExternalId ''
+    Assert-Rejected -Runs (@($allSuccess) + $legacySkippedTimestampSkew) `
         -ExpectedMessage 'must not be later than completed_at'
 
     $successfulTimestampSkew = New-CheckRun -Name $required[0] -Id 3036 `
