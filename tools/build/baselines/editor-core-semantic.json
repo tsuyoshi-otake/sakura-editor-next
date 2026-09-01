@@ -32908,86 +32908,86 @@
       "rule_id": "error.catch_all"
     },
     {
-      "column": 2,
+      "column": 4,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 151,
+      "line": 159,
       "path": "sakura_core/debug/console/DebugConsoleModel.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 4,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 181,
+      "line": 189,
       "path": "sakura_core/debug/console/DebugConsoleModel.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 5,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 247,
+      "line": 255,
       "path": "sakura_core/debug/console/DebugConsoleModel.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 4,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 254,
+      "line": 262,
       "path": "sakura_core/debug/console/DebugConsoleModel.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 4,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 308,
+      "line": 316,
       "path": "sakura_core/debug/console/DebugConsoleModel.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 6,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 357,
+      "line": 365,
       "path": "sakura_core/debug/console/DebugConsoleModel.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 5,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 362,
+      "line": 370,
       "path": "sakura_core/debug/console/DebugConsoleModel.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 4,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 373,
+      "line": 381,
       "path": "sakura_core/debug/console/DebugConsoleModel.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 5,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 396,
+      "line": 404,
       "path": "sakura_core/debug/console/DebugConsoleModel.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 6,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 439,
+      "line": 447,
       "path": "sakura_core/debug/console/DebugConsoleModel.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 6,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 461,
+      "line": 469,
       "path": "sakura_core/debug/console/DebugConsoleModel.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 5,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 506,
+      "line": 514,
       "path": "sakura_core/debug/console/DebugConsoleModel.cpp",
       "rule_id": "error.catch_all"
     },
@@ -48058,7 +48058,7 @@
     {
       "column": 63,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 560,
+      "line": 568,
       "path": "sakura_core/debug/console/DebugConsoleModel.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
@@ -49022,7 +49022,7 @@
       "rule_id": "resource.stop_required_acquisition"
     },
     {
-      "column": 20,
+      "column": 21,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
       "line": 254,
       "path": "src/test/cpp/tests1/debug/DebugConsoleModelTest.cpp",
@@ -49031,35 +49031,42 @@
     {
       "column": 20,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 261,
+      "line": 265,
       "path": "src/test/cpp/tests1/debug/DebugConsoleModelTest.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 20,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 277,
+      "line": 272,
+      "path": "src/test/cpp/tests1/debug/DebugConsoleModelTest.cpp",
+      "rule_id": "resource.stop_required_acquisition"
+    },
+    {
+      "column": 20,
+      "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
+      "line": 289,
       "path": "src/test/cpp/tests1/debug/DebugConsoleModelTest.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 21,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 283,
+      "line": 295,
       "path": "src/test/cpp/tests1/debug/DebugConsoleModelTest.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 21,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 304,
+      "line": 317,
       "path": "src/test/cpp/tests1/debug/DebugConsoleModelTest.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 21,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 373,
+      "line": 386,
       "path": "src/test/cpp/tests1/debug/DebugConsoleModelTest.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
@@ -94713,7 +94720,7 @@
       }
     },
     "filtered_test_hint_count": 2,
-    "finding_count": 13434,
+    "finding_count": 13435,
     "finding_count_by_rule": {
       "boundary.private_include": 67,
       "boundary.win32_type": 4609,
@@ -94723,7 +94730,7 @@
       "global.get_edit_wnd": 258,
       "memory.raw_delete": 318,
       "memory.raw_new": 245,
-      "resource.stop_required_acquisition": 257,
+      "resource.stop_required_acquisition": 258,
       "state.mutable_member": 129,
       "state.public_mutable_field": 6164,
       "state.raw_pointer_member": 30,
@@ -94735,7 +94742,7 @@
     "raw_delete_expression_count": 318,
     "raw_new_expression_count": 245,
     "source_file_count": 1684,
-    "source_line_count": 507349,
+    "source_line_count": 507370,
     "tracked_file_count": 1733,
     "win32_parameter_mention_count": 4609
   },
@@ -94892,8 +94899,8 @@
     ]
   },
   "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
-  "source_commit": "fd5fa3bfe2b3b721754065f5f771f14e2a6fe294",
-  "source_fingerprint": "sha256:43a4ae1ca29b6e65cdc75173f3ffe58d6f7fd3e357e9ff5ff7d399aa178469a7",
+  "source_commit": "899607d3df280ad8f2a6037ad87fa7d141521ca8",
+  "source_fingerprint": "sha256:6340f0c607d1b2bc48b3fbf59dd2aff2e7e884cbc370afa9524fb8badae12b62",
   "tracked_source_paths": [
     ".github/actions/bootstrap-vcpkg/action.yml",
     ".github/dependabot.yml",
