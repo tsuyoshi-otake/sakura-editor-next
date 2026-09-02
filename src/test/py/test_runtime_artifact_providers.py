@@ -146,8 +146,23 @@ class BronOracleTests(unittest.TestCase):
 
     def test_installer_script_ships_both_staged_runtime_dlls(self) -> None:
         text = _read(SAKURA_ISS)
-        self.assertIn('Source: "sakura\\bregonig.dll"', text)
-        self.assertIn('Source: "sakura\\migemo.dll"', text)
+        for name in ("bregonig.dll", "migemo.dll"):
+            with self.subTest(runtime=name):
+                entry = next(
+                    (
+                        line
+                        for line in text.splitlines()
+                        if f'Source: "sakura\\{name}"' in line
+                    ),
+                    "",
+                )
+                self.assertTrue(entry, f"installer does not ship staged {name}")
+                self.assertRegex(
+                    entry,
+                    r"\bFlags:\s*[^;]*\bignoreversion\b",
+                    f"installer must replace product-owned {name} even when "
+                    "an existing DLL reports the same file version",
+                )
 
     def test_terminal_orchestration_tools_are_packaged_in_their_scoped_directory(self) -> None:
         installer = _read(SAKURA_ISS)

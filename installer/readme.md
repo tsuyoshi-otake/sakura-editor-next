@@ -139,6 +139,9 @@ Release と Debug の `sakura/sakura.exe`、`sakura/sakura-senp-tool.exe`、お�
 `sakura/sakura-senp-host.exe` は、それぞれの構成の `x64/<Configuration>/` から
 ステージングされます。ショートカット、
 ファイル関連付け、および既存の起動方法は従来どおり `sakura.exe` を参照します。
+`bregonig.dll` と `migemo.dll` も製品ビルドが所有するステージ済み payload です。
+同じファイルバージョンでも内容が更新されることがあるため、再インストール時は
+Inno Setup の既存ファイルを残さず、ステージ済み DLL へ置き換えます。
 
 ## インストーラのビルド
 
