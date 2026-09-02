@@ -116,20 +116,36 @@ terminal restoration, and full native task UI are also open.
 
 ## Workspace Transitions and Native IME
 
-An in-place folder transition is a terminal ownership boundary. Compare the
+An in-place folder transition is a terminal projection boundary. Compare the
 canonical `workspaceIdentityKey`; aliases of the same folder do not cross the
-boundary. When the identity changes, close every old tab/session and discard
-split and queued-input state. Recreate exactly one session in the new folder
-only when the Terminal View was visible before the transition. A hidden
-Terminal, or a Panel showing Problems/Output, stays process-free until Terminal
-is explicitly revealed. Never let a close or replacement-launch failure roll
-back an already committed workspace context.
+boundary. `CTerminalTool::SwitchWorkspace` is the window-owned API for this
+transition: callers supply the old key, new key, new default CWD, and whether
+the Terminal View should be visible after the switch.
 
-This is an explicit interim divergence from VS Code's workspace-scoped terminal
-persistence. Sakura Editor NEXT does not yet serialize/reconnect terminal
-processes, history, tabs, or splits per stable workspace/window identity. Do not
-retain a live session from the previous workspace or describe the replacement
-behavior as restoration; full per-workspace restoration remains open.
+`CTerminalTool` keeps a process-local registry keyed by
+`WorkspaceContextSnapshot::workspaceIdentityKey`. Switching workspaces detaches
+the current tab projection by typed runtime coordinates and reattaches the
+target projection without closing or restarting live PTY/runtime instances. The
+registry preserves terminal tab order, selected tab, terminal groups, recursive
+split layout, focused pane, and default CWD for future terminals in that
+workspace. A hidden target workspace with no saved terminal state stays
+process-free until Terminal is revealed.
+
+Every switch failure returns a typed `TerminalWorkspaceSwitchOutcome`. A target
+attach or first-session start failure must restore the old projection before
+the caller commits the workspace transition. Do not call `ClearTabs` or restart
+sessions as part of a normal workspace switch; destructive close remains an
+explicit terminal-close operation.
+
+Verified 2026-09-02 with 38 x64 Debug and Release `TerminalTool.*` tests:
+A->B->A preserves runtime instance IDs and recursive split/focused-pane state,
+hidden B with no state starts no process until reveal, a B start failure
+restores A before returning, destructive resets retain their old close contract,
+and tool close terminates detached sessions. `CEditWnd` prepares the keyed
+terminal projection before committing Folder or `.code-workspace` Project
+activation and restores it when workspace validation fails. Full native
+end-to-end Project-switch parity still depends on the Editor boundary documented
+by the owning workbench subsystem; terminal tests alone do not prove it.
 
 The native terminal owns Unicode IME commit delivery. Handle
 `WM_IME_COMPOSITION`/`GCS_RESULTSTR` explicitly and encode the complete UTF-16

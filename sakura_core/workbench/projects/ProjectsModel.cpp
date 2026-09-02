@@ -8,6 +8,7 @@
 #include "workbench/projects/ProjectsModel.h"
 
 #include <algorithm>
+#include <cwctype>
 #include <filesystem>
 
 namespace workbench::projects {
@@ -40,6 +41,16 @@ void AppendDescription(std::wstring& target, const std::wstring_view value)
 	if (!target.empty()) target += L" - ";
 	target += value;
 }
+
+struct CaseInsensitiveEqual final {
+	bool operator()(const std::wstring_view left, const std::wstring_view right) const noexcept
+	{
+		return left.size() == right.size()
+			&& std::ranges::equal(left, right, [](const wchar_t a, const wchar_t b) {
+				return std::towlower(a) == std::towlower(b);
+			});
+	}
+};
 
 std::wstring WorktreeLabel(const agent::AgentWorktreeRow& worktree)
 {
@@ -87,10 +98,20 @@ std::wstring ProjectDisplayName(const ProjectEntry& project)
 	return project.uri.ToString();
 }
 
+std::wstring ProjectWorktreeBranchLabel(const agent::AgentWorktreeRow& worktree)
+{
+	if (worktree.detached) {
+		return worktree.head.empty() ? L"Detached" : L"Detached @ " + worktree.head;
+	}
+	if (worktree.bare) return L"Bare";
+	return worktree.branch;
+}
+
 std::wstring ProjectsAccessibleLabel(const ProjectsRow& row)
 {
 	std::wstring result = row.label;
 	if (!row.description.empty()) result += L", " + row.description;
+	if (!row.trailing.empty()) result += L", " + row.trailing;
 	if (row.kind == EProjectsRowKind::WorktreesToggle) {
 		result += L", " + std::to_wstring(row.hiddenWorktreeCount) + L" linked worktrees";
 	}
@@ -100,11 +121,121 @@ std::wstring ProjectsAccessibleLabel(const ProjectsRow& row)
 	return result;
 }
 
+ProjectBranchSummary SummarizeProjectBranches(
+	const std::span<const ProjectRepositoryBranchObservation> observations,
+	const bool complete,
+	const bool truncated)
+{
+	ProjectBranchSummary result;
+	result.repositoryCount = observations.size();
+	if (!complete) return result;
+	if (truncated) {
+		result.status = EProjectBranchSummaryStatus::Bounded;
+		result.label = std::to_wstring(observations.size()) + L"+ repositories";
+		return result;
+	}
+	if (observations.empty()) {
+		result.status = EProjectBranchSummaryStatus::NoRepository;
+		result.label = L"No Git";
+		return result;
+	}
+	if (std::ranges::any_of(observations, [](const auto& observation) {
+		return observation.unavailable;
+	})) {
+		result.status = EProjectBranchSummaryStatus::Unavailable;
+		result.label = L"Git unavailable";
+		return result;
+	}
+	std::vector<std::wstring_view> labels;
+	labels.reserve(observations.size());
+	for (const auto& observation : observations) {
+		if (!observation.succeeded || observation.label.empty()) continue;
+		if (std::ranges::find_if(labels, [&observation](const auto existing) {
+			return CaseInsensitiveEqual{}(existing, observation.label);
+		}) == labels.end()) {
+			labels.push_back(observation.label);
+		}
+	}
+	if (labels.empty()) {
+		result.status = EProjectBranchSummaryStatus::NoRepository;
+		result.label = L"No Git";
+		return result;
+	}
+	if (labels.size() == 1) {
+		result.status = EProjectBranchSummaryStatus::Ready;
+		result.label.assign(labels.front());
+		return result;
+	}
+	result.status = EProjectBranchSummaryStatus::Mixed;
+	result.label = std::to_wstring(labels.size()) + L" branches";
+	return result;
+}
+
+ProjectBranchDiscoveryPlan PlanProjectBranchDiscovery(
+	const std::span<const ProjectBranchDiscoveryTarget> targets,
+	const std::size_t maximumRepositoriesPerProject,
+	const std::size_t maximumRequests)
+{
+	ProjectBranchDiscoveryPlan result;
+	result.truncatedProjects.resize(targets.size(), false);
+	if (maximumRepositoriesPerProject == 0 || maximumRequests == 0) {
+		for (std::size_t index = 0; index < targets.size(); ++index) {
+			result.truncatedProjects[index] = !targets[index].repositoryRoots.empty();
+		}
+		return result;
+	}
+	std::vector<std::vector<std::wstring>> roots(targets.size());
+	for (std::size_t index = 0; index < targets.size(); ++index) {
+		for (const auto& root : targets[index].repositoryRoots) {
+			if (root.empty() || std::ranges::find_if(roots[index], [&root](const auto& existing) {
+				return CaseInsensitiveEqual{}(existing, root);
+			}) != roots[index].end()) continue;
+			if (roots[index].size() == maximumRepositoriesPerProject) {
+				result.truncatedProjects[index] = true;
+				continue;
+			}
+			roots[index].push_back(root);
+		}
+	}
+	std::vector<std::size_t> order;
+	order.reserve(targets.size());
+	for (std::size_t index = 0; index < targets.size(); ++index) {
+		if (targets[index].currentProject) order.push_back(index);
+	}
+	for (std::size_t index = 0; index < targets.size(); ++index) {
+		if (!targets[index].currentProject) order.push_back(index);
+	}
+	for (std::size_t repositoryIndex = 0; repositoryIndex < maximumRepositoriesPerProject; ++repositoryIndex) {
+		for (const auto projectIndex : order) {
+			if (repositoryIndex >= roots[projectIndex].size()) continue;
+			if (result.requests.size() == maximumRequests) {
+				result.truncatedProjects[projectIndex] = true;
+				continue;
+			}
+			result.requests.push_back({
+				.projectIndex = projectIndex,
+				.repositoryIndex = repositoryIndex,
+				.identity = targets[projectIndex].identity,
+				.repositoryRoot = roots[projectIndex][repositoryIndex],
+			});
+		}
+	}
+	for (std::size_t projectIndex = 0; projectIndex < roots.size(); ++projectIndex) {
+		const auto scheduled = std::ranges::count_if(result.requests,
+			[projectIndex](const auto& request) { return request.projectIndex == projectIndex; });
+		if (static_cast<std::size_t>(scheduled) < roots[projectIndex].size()) {
+			result.truncatedProjects[projectIndex] = true;
+		}
+	}
+	return result;
+}
+
 ProjectsProjection ProjectProjects(
 	const std::span<const ProjectEntry> projects,
 	const config::WorkspaceContextSnapshot& workspace,
 	const agent::AgentWorkspacesProjectionResult* worktrees,
 	const bool worktreesExpanded,
+	const std::span<const ProjectBranchSummary> branchSummaries,
 	const std::optional<EProjectsRowKind> preferredKind,
 	const std::wstring_view preferredWorktreeIdentity)
 {
@@ -125,6 +256,8 @@ ProjectsProjection ProjectProjects(
 			.projectIndex = projectIndex,
 			.label = projectName,
 			.description = ProjectDescription(projects[projectIndex], current),
+			.trailing = projectIndex < branchSummaries.size()
+				? branchSummaries[projectIndex].label : std::wstring{},
 			.currentProject = current,
 		});
 		if (!current || worktrees == nullptr || !worktrees->Succeeded()

@@ -11,6 +11,7 @@
 #include "config/ConfigurationFileSourceController.h"
 #include "config/ConfigurationFileWatchController.h"
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -121,6 +122,11 @@ public:
 			std::lock_guard lock(mutex);
 			events.push_back(std::move(event));
 			ready.notify_one();
+		}
+		bool WaitUntilCancelled()
+		{
+			std::unique_lock lock(mutex);
+			return ready.wait_for(lock, std::chrono::seconds(2), [this] { return cancelled; });
 		}
 
 		Uri root;
@@ -397,4 +403,59 @@ TEST(ConfigurationFileWatchController, OverflowRebuildsAndStopsWithoutPostStopAp
 		std::lock_guard lock(callbackMutex);
 		EXPECT_EQ(1, callbacks);
 	}
+}
+
+TEST(ConfigurationFileWatchController, ConcurrentStopsHaveOneJoinOwnerAndRejectDispatcherReentrancy)
+{
+	FakeFileService files;
+	files.watchEnabled = true;
+	CConfigurationFileWatchController controller(files);
+	std::mutex callbackMutex;
+	std::condition_variable callbackReady;
+	bool callbackEntered = false;
+	bool releaseCallback = false;
+	config::ConfigurationFileWatchResult callbackStop;
+	ASSERT_EQ(config::EConfigurationFileWatchStatus::Started,
+		controller.Start({ .profileSettings = Resource() }, [&](EConfigurationFileWatchChange) {
+			callbackStop = controller.Stop();
+			std::unique_lock lock(callbackMutex);
+			callbackEntered = true;
+			callbackReady.notify_all();
+			callbackReady.wait(lock, [&] { return releaseCallback; });
+		}).status);
+
+	FakeFileService::FakeWatch* watch = nullptr;
+	{
+		std::lock_guard lock(files.watchMutex);
+		ASSERT_FALSE(files.watches.empty());
+		watch = files.watches.front();
+		watch->Push({ .type = EFileWatchEventType::Changed, .uri = Resource() });
+	}
+	{
+		std::unique_lock lock(callbackMutex);
+		ASSERT_TRUE(callbackReady.wait_for(lock, std::chrono::seconds(2), [&] { return callbackEntered; }));
+	}
+	EXPECT_EQ(config::EConfigurationFileWatchStatus::ReentrantStopDenied, callbackStop.status);
+
+	config::ConfigurationFileWatchResult firstStop;
+	config::ConfigurationFileWatchResult secondStop;
+	std::thread first([&] { firstStop = controller.Stop(); });
+	const bool firstCancelled = watch->WaitUntilCancelled();
+	std::atomic_bool secondStarted = false;
+	std::thread second([&] {
+		secondStarted.store(true, std::memory_order_release);
+		secondStop = controller.Stop();
+	});
+	while (!secondStarted.load(std::memory_order_acquire)) std::this_thread::yield();
+	{
+		std::lock_guard lock(callbackMutex);
+		releaseCallback = true;
+	}
+	callbackReady.notify_all();
+	first.join();
+	second.join();
+
+	ASSERT_TRUE(firstCancelled);
+	EXPECT_EQ(config::EConfigurationFileWatchStatus::Stopped, firstStop.status);
+	EXPECT_EQ(config::EConfigurationFileWatchStatus::NotStarted, secondStop.status);
 }

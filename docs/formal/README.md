@@ -8,6 +8,44 @@
 | モデル | 対象プロトコル |
 |---|---|
 | [`ControlStartupHandshake`](#controlstartuphandshake--コントロールプロセス起動ハンドシェイク) | コントロールプロセスのシングルトン化と ready イベント公開 |
+| [`ProjectSwitchState`](#projectswitchstate--プロジェクト切替と状態保持) | 同一ウィンドウでの Project 切替、dirty ガード、状態復元 |
+
+## ProjectSwitchState — プロジェクト切替と状態保持
+
+`ProjectSwitchState.tla` / `ProjectSwitchState.cfg` は、Project 切替を新規
+プロセス起動ではなく同一ウィンドウ内のトランザクションとして扱うための最小
+モデルである。各 Project は保存済み Editor 状態と Terminal 状態を別々に持ち、
+切替は現在 Project の状態を `captured` に取り、対象 Project の状態を `staged`
+に積んでから、`preparing` → `committing` → Editor のタブ順・active tab・
+group/split → Terminal のタブ順・選択・pane layout・focus・default cwd →
+`projectingWorkspace` の順に進む。論理的な Editor / Terminal 状態と実際の
+native projection を別変数にし、各要素の途中適用から rollback できることを探索する。
+途中の native 適用だけが残る状態を idle の終端として許さない。
+
+dirty ドキュメントがある場合は切替を拒否し、進行中の切替中に別の切替を重ねて
+`pending` / `captured` を上書きしない。準備前失敗と準備後 rollback はどちらも
+元の workspace / Editor / Terminal と native projection を復元する。Projects
+catalog が coherent load を完了する前の通常切替も拒否する。成功時は commit した
+対象 Project の保存済み Editor / Terminal を投影し、グローバルレイアウトと
+プロセス世代は不変とする。明示的な `Open in New Window` は別アクションであり、
+現在ウィンドウの workspace、Editor、Terminal、レイアウトを変更しない。
+
+### 検査結果 (2026-09-02, TLC 2.19 / OpenJDK 11.0.31)
+
+`tlc.cmd -config ProjectSwitchState.cfg ProjectSwitchState.tla -workers 2`
+
+**合格**。46,464 生成 / 7,552 到達状態、深さ 15、未探索キュー 0。
+`TypeOK`、`NoProcessRestart`、`TransactionPhaseInvariant`、
+`NoPartialNativeProjectionWhenIdle`、`NoLossOnAbort`、`DirtySwitchGuard`、
+`CatalogReadinessGuard`、`NonReentrantSwitch`、
+`GlobalLayoutStableDuringSwitch`、`OrdinarySwitchDoesNotOpenWindow`、
+`ExplicitWindowIsolation`、`EditorRestoration`、`TerminalRestoration`、
+`WorkspaceProjectionAfterSuccess`、`TransactionTerminates` の全性質が成立した。
+
+切替開始前の `ChangeEditor`、`SaveDocument`、`ChangeTerminal` などのユーザー操作には
+公平性を仮定しない。一方、`BeginSwitch` が要求を受理した後の内部 advance / rollback
+には弱公平性を置く。この境界により、外部入力の到着を仮定せず、開始済み transaction
+だけが成功または rollback の明示終端 `idle` へ到達することを検査する。
 
 ## ControlStartupHandshake — コントロールプロセス起動ハンドシェイク
 

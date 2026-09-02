@@ -84,6 +84,7 @@
 #include "update/IUpdateService.h"
 #include "config/ConfigurationTypes.h"
 #include "config/CConfigurationNetworkPolicy.h"
+#include "config/CWorkspaceContextService.h"
 #include "config/SettingsWritebackCoordinator.h"
 #include "config/editing/CJsoncConfigurationEditor.h"
 #include "workbench/CWorkbenchPanelHost.h"
@@ -1103,6 +1104,53 @@ private:
 	bool& m_value;
 	const bool m_previous;
 };
+
+class ScopedBooleanState final {
+public:
+	explicit ScopedBooleanState(bool& value, bool next = true) noexcept
+		: m_value(value)
+		, m_previous(value)
+	{
+		m_value = next;
+	}
+
+	~ScopedBooleanState()
+	{
+		m_value = m_previous;
+	}
+
+	ScopedBooleanState(const ScopedBooleanState&) = delete;
+	ScopedBooleanState& operator=(const ScopedBooleanState&) = delete;
+
+private:
+	bool& m_value;
+	const bool m_previous;
+};
+
+std::optional<std::wstring> PreviewProjectWorkspaceIdentity(
+	config::EWorkspaceKind kind, platform::uri::Uri uri)
+{
+	config::CWorkspaceContextService preview(L"project-switch-preview");
+	const auto before = preview.Snapshot();
+	config::WorkspaceContextResult result;
+	if (kind == config::EWorkspaceKind::Folder) {
+		result = preview.SetFolder({
+			.operation = { .operationId = "project-switch-folder-preview", .expectedRevision = before.revision },
+			.folderUri = std::move(uri),
+			.displayName = L"preview",
+		});
+	} else if (kind == config::EWorkspaceKind::Workspace) {
+		result = preview.SetWorkspace({
+			.operation = { .operationId = "project-switch-workspace-preview", .expectedRevision = before.revision },
+			.workspaceConfigUri = std::move(uri),
+		});
+	} else {
+		return std::nullopt;
+	}
+	if (result.outcome != config::EWorkspaceContextOutcome::Succeeded
+		|| result.snapshot.workspaceIdentityKey.empty()) return std::nullopt;
+	return result.snapshot.workspaceIdentityKey;
+}
 
 [[nodiscard]] std::wstring GetProcessCurrentDirectory()
 {
@@ -2764,6 +2812,24 @@ bool CEditWnd::InitializeWorkbench()
 						: m_workbenchRuntime->WorkspaceContext().Snapshot();
 				};
 				options.workspaceRoot = [this]() { return GetSemanticWorkspaceRoot(); };
+				options.repositoryRoots = [this](const workbench::projects::ProjectEntry& project)
+					-> std::optional<std::vector<std::wstring>> {
+					if (project.kind == workbench::projects::EProjectKind::Folder) {
+						const auto path = project.uri.ToWindowsPath();
+						if (!path.value || path.value->empty()) return std::nullopt;
+						return std::vector<std::wstring>{ *path.value };
+					}
+					if (m_workbenchRuntime == nullptr) return std::nullopt;
+					const auto inspected = m_workbenchRuntime->InspectWorkspaceConfiguration(project.uri);
+					if (!inspected.Succeeded()) return std::nullopt;
+					std::vector<std::wstring> roots;
+					roots.reserve(inspected.document->folders.size());
+					for (const auto& folder : inspected.document->folders) {
+						const auto path = folder.uri.ToWindowsPath();
+						if (path.value && !path.value->empty()) roots.push_back(*path.value);
+					}
+					return roots;
+				};
 				options.activateProject = [this](
 					const workbench::projects::ProjectEntry& project, const bool thisWindow) {
 					if (GetHwnd() == nullptr) return workbench::projects::EProjectsActivationStatus::Failed;
@@ -2772,6 +2838,99 @@ bool CEditWnd::InitializeWorkbench()
 						::SetForegroundWindow(GetHwnd());
 						return workbench::projects::EProjectsActivationStatus::FocusedCurrentWindow;
 					}
+					// A Project switch must never detach Terminal state or commit a new
+					// workspace while the only native Editor document has unsaved data.
+					// The explicit new-window command is a separate callback and remains
+					// available because it does not replace this window's document.
+					if (HasActiveEditorInput() && GetDocument()->m_cDocEditor.IsModified()) {
+						return workbench::projects::EProjectsActivationStatus::Failed;
+					}
+					const auto path = project.uri.ToWindowsPath();
+					if (!path.value || path.value->empty()) {
+						return workbench::projects::EProjectsActivationStatus::Failed;
+					}
+					// Folder Projects are switched in the existing window.  This keeps
+					// the process-owned workbench (layout, panel state, and extensions)
+					// alive; only the workspace-dependent projections are refreshed.
+					if (project.kind == workbench::projects::EProjectKind::Folder) {
+						return ApplyFolderWorkspace(*path.value, true) == EOpenWorkspaceFolderResult::Succeeded
+							? workbench::projects::EProjectsActivationStatus::FocusedCurrentWindow
+							: workbench::projects::EProjectsActivationStatus::Failed;
+					}
+					if (project.kind == workbench::projects::EProjectKind::Workspace
+						&& m_workbenchRuntime != nullptr) {
+						if (m_projectWorkspaceTransitionInProgress) {
+							return workbench::projects::EProjectsActivationStatus::Failed;
+						}
+						ScopedBooleanState transition(m_projectWorkspaceTransitionInProgress);
+						const auto before = m_workbenchRuntime->WorkspaceContext().Snapshot();
+						const auto targetIdentity = PreviewProjectWorkspaceIdentity(
+							config::EWorkspaceKind::Workspace, project.uri);
+						if (!targetIdentity) {
+							return workbench::projects::EProjectsActivationStatus::Failed;
+						}
+						const bool terminalWasVisible = IsWorkbenchPanelVisible(workbench::WorkbenchEdge::Bottom)
+							&& IsBuiltinWorkbenchViewActive(workbench::layout::ids::view::Terminal);
+						const auto oldTerminalDirectory = m_workspaceContext != nullptr
+							? m_workspaceContext->GetNewTerminalWorkingDirectory() : std::wstring{};
+						const auto targetTerminalDirectory = std::filesystem::path(*path.value).parent_path().wstring();
+						const bool targetProjectionExisted = m_terminalTool != nullptr
+							&& m_terminalTool->HasWorkspaceProjection(*targetIdentity);
+						bool terminalPrepared = false;
+						terminal::TerminalWorkspaceSwitchOutcome terminalOutcome =
+							terminal::TerminalWorkspaceSwitchOutcome::Unchanged;
+						if (m_terminalTool != nullptr && before.workspaceIdentityKey != *targetIdentity) {
+							const auto prepared = m_terminalTool->SwitchWorkspace({
+								before.workspaceIdentityKey, *targetIdentity, targetTerminalDirectory, false });
+							if (!prepared.Succeeded()) {
+								if (!targetProjectionExisted) m_terminalTool->DiscardWorkspaceProjection(*targetIdentity);
+								return workbench::projects::EProjectsActivationStatus::Failed;
+							}
+							terminalPrepared = true;
+							terminalOutcome = prepared.outcome;
+						}
+						const auto rollbackTerminal = [&] {
+							if (!terminalPrepared || m_terminalTool == nullptr) return;
+							const auto restored = m_terminalTool->SwitchWorkspace({
+								*targetIdentity, before.workspaceIdentityKey, oldTerminalDirectory, false });
+							if (!restored.Succeeded()) {
+								::OutputDebugStringW(L"Sakura Editor NEXT: Project terminal rollback failed.\n");
+							}
+							if (!targetProjectionExisted) m_terminalTool->DiscardWorkspaceProjection(*targetIdentity);
+						};
+						const auto accepted = m_workbenchRuntime->SwitchToWorkspaceConfiguration(project.uri);
+						if (accepted.outcome != config::EWorkspaceContextOutcome::Succeeded) {
+							rollbackTerminal();
+							return workbench::projects::EProjectsActivationStatus::Failed;
+						}
+						ApplySemanticWorkspaceContext();
+						RevealExplorerAfterWorkspaceCommit();
+						if (m_terminalTool != nullptr && terminalPrepared) {
+							if (terminalOutcome == terminal::TerminalWorkspaceSwitchOutcome::Detached) {
+								m_terminalTool->SetWorkingDirectory(m_workspaceContext->GetNewTerminalWorkingDirectory());
+							}
+							if (terminalWasVisible && !m_terminalTool->EnsureSessionStarted()) {
+								::OutputDebugStringW(L"Sakura Editor NEXT: Project terminal activation failed after workspace commit.\n");
+							}
+						}
+						if (!RefreshWorkbenchCommandContext()) {
+							// The workspace CAS is already committed. Context-key refresh is an
+							// advisory projection and must not misreport a successful switch as a
+							// failed transition whose old workspace is supposedly still active.
+							::OutputDebugStringW(L"Sakura Editor NEXT: Project workspace context refresh failed.\n");
+						}
+						return workbench::projects::EProjectsActivationStatus::FocusedCurrentWindow;
+					}
+					const std::wstring option = project.kind == workbench::projects::EProjectKind::Folder
+						? L"-FOLDER=\"" + *path.value + L"\""
+						: L"-WORKSPACE=\"" + *path.value + L"\"";
+					return LaunchWorkspaceTarget(option, false) == EWorkspaceWindowTransitionResult::Succeeded
+						? workbench::projects::EProjectsActivationStatus::OpenedNewWindow
+						: workbench::projects::EProjectsActivationStatus::Failed;
+				};
+				options.activateProjectInNewWindow = [this](
+					const workbench::projects::ProjectEntry& project) {
+					if (GetHwnd() == nullptr) return workbench::projects::EProjectsActivationStatus::Failed;
 					const auto path = project.uri.ToWindowsPath();
 					if (!path.value || path.value->empty()) {
 						return workbench::projects::EProjectsActivationStatus::Failed;
@@ -2792,10 +2951,12 @@ bool CEditWnd::InitializeWorkbench()
 						::SetForegroundWindow(GetHwnd());
 						return workbench::projects::EProjectsActivationStatus::FocusedCurrentWindow;
 					}
-					const auto result = LaunchWorkspaceTarget(
-						L"-FOLDER=\"" + std::wstring(path) + L"\"", false);
-					return result == EWorkspaceWindowTransitionResult::Succeeded
-						? workbench::projects::EProjectsActivationStatus::OpenedNewWindow
+					if (HasActiveEditorInput() && GetDocument()->m_cDocEditor.IsModified()) {
+						return workbench::projects::EProjectsActivationStatus::Failed;
+					}
+					const auto result = ApplyFolderWorkspace(std::wstring(path), true);
+					return result == EOpenWorkspaceFolderResult::Succeeded
+						? workbench::projects::EProjectsActivationStatus::FocusedCurrentWindow
 						: workbench::projects::EProjectsActivationStatus::Failed;
 				};
 				options.removeProject = [this](const workbench::projects::ProjectEntry& project) {
@@ -7522,7 +7683,9 @@ void CEditWnd::ApplySemanticWorkspaceContext()
 	UpdateWorkbenchWelcomeState();
 	// The caption carries the folder's name, so opening or closing one changes it.
 	UpdateCaption();
-	if (m_terminalTool) m_terminalTool->SetWorkingDirectory(m_workspaceContext->GetNewTerminalWorkingDirectory());
+	if (m_terminalTool && !m_projectWorkspaceTransitionInProgress) {
+		m_terminalTool->SetWorkingDirectory(m_workspaceContext->GetNewTerminalWorkingDirectory());
+	}
 	if (m_viewContainerPages != nullptr) {
 		m_viewContainerPages->RefreshPageContent(
 			workbench::layout::ids::viewContainer::Projects);
@@ -9629,12 +9792,24 @@ void CEditWnd::RecordRecentlyOpenedWorkspaceAfterReady(
 		}
 	}
 	if (const auto projects = m_workbenchRuntime->Projects(); projects != nullptr) {
-		const auto projectKind = kind == workbench::recent::ERecentlyOpenedWorkspaceKind::Folder
-			? workbench::projects::EProjectKind::Folder
-			: workbench::projects::EProjectKind::Workspace;
-		const auto recorded = projects->RecordSuccessfulOpen({ projectKind, uri, std::nullopt });
-		if (recorded.outcome != workbench::projects::EProjectCatalogOutcome::Succeeded) {
-			::OutputDebugStringW(L"Sakura Editor NEXT: project catalog update failed.\n");
+		// Runtime startup deliberately treats an unavailable control-storage cache
+		// as non-fatal.  RecordCurrentWorkspaceAfterReady is the one bounded
+		// post-ready retry point: by then the control handshake has completed, and
+		// a coherent load must precede the first catalog write.
+		if (projects->State() != workbench::projects::EProjectCatalogState::Ready) {
+			const auto loaded = projects->Load();
+			if (loaded.outcome != workbench::projects::EProjectCatalogOutcome::Succeeded) {
+				::OutputDebugStringW(L"Sakura Editor NEXT: post-ready project catalog load failed.\n");
+			}
+		}
+		if (projects->State() == workbench::projects::EProjectCatalogState::Ready) {
+			const auto projectKind = kind == workbench::recent::ERecentlyOpenedWorkspaceKind::Folder
+				? workbench::projects::EProjectKind::Folder
+				: workbench::projects::EProjectKind::Workspace;
+			const auto recorded = projects->RecordSuccessfulOpen({ projectKind, uri, std::nullopt });
+			if (recorded.outcome != workbench::projects::EProjectCatalogOutcome::Succeeded) {
+				::OutputDebugStringW(L"Sakura Editor NEXT: project catalog update failed.\n");
+			}
 		}
 	}
 	if (m_viewContainerPages != nullptr) {
@@ -9747,9 +9922,24 @@ void CEditWnd::RecordCurrentWorkspaceAfterReady()
 	}
 }
 
+void CEditWnd::RevealExplorerAfterWorkspaceCommit()
+{
+	if (m_explorerTool != nullptr) m_explorerTool->SetFilesPaneExpanded(true);
+	if (!SetWorkbenchPanelVisible(workbench::WorkbenchEdge::Left, true, true)) {
+		// WorkspaceContext is already committed. Revealing the Explorer is an
+		// advisory presentation step, so a native reveal failure cannot be exposed
+		// as a rejected switch that purportedly kept the previous workspace.
+		::OutputDebugStringW(L"Sakura Editor NEXT: Project Explorer reveal failed after workspace commit.\n");
+	}
+}
+
 EOpenWorkspaceFolderResult CEditWnd::ApplyFolderWorkspace(
 	const std::wstring& absoluteRoot, bool revealExplorer)
 {
+	if (m_projectWorkspaceTransitionInProgress) {
+		return EOpenWorkspaceFolderResult::WorkspaceContextFailed;
+	}
+	ScopedBooleanState transition(m_projectWorkspaceTransitionInProgress);
 	if (m_workspaceContext == nullptr || absoluteRoot.empty()) {
 		return EOpenWorkspaceFolderResult::WorkspaceContextFailed;
 	}
@@ -9761,6 +9951,40 @@ EOpenWorkspaceFolderResult CEditWnd::ApplyFolderWorkspace(
 			? IsBuiltinWorkbenchViewActive(workbench::layout::ids::view::Terminal)
 			: m_pShareData->m_Common.m_sWorkbench.m_eActiveTool == WORKBENCH_TOOL_TERMINAL);
 	const auto previousRoot = GetSemanticWorkspaceRoot();
+	config::WorkspaceContextSnapshot before;
+	std::optional<std::wstring> targetIdentity;
+	std::wstring oldTerminalDirectory;
+	bool targetProjectionExisted = false;
+	bool terminalPrepared = false;
+	terminal::TerminalWorkspaceSwitchOutcome terminalOutcome =
+		terminal::TerminalWorkspaceSwitchOutcome::Unchanged;
+	if (m_workbenchRuntime != nullptr) {
+		before = m_workbenchRuntime->WorkspaceContext().Snapshot();
+		targetIdentity = PreviewProjectWorkspaceIdentity(config::EWorkspaceKind::Folder, *folderUri.value);
+		if (!targetIdentity) return EOpenWorkspaceFolderResult::WorkspaceContextFailed;
+		oldTerminalDirectory = m_workspaceContext->GetNewTerminalWorkingDirectory();
+		targetProjectionExisted = m_terminalTool != nullptr
+			&& m_terminalTool->HasWorkspaceProjection(*targetIdentity);
+		if (m_terminalTool != nullptr && before.workspaceIdentityKey != *targetIdentity) {
+			const auto prepared = m_terminalTool->SwitchWorkspace({
+				before.workspaceIdentityKey, *targetIdentity, absoluteRoot, false });
+			if (!prepared.Succeeded()) {
+				if (!targetProjectionExisted) m_terminalTool->DiscardWorkspaceProjection(*targetIdentity);
+				return EOpenWorkspaceFolderResult::WorkspaceContextFailed;
+			}
+			terminalPrepared = true;
+			terminalOutcome = prepared.outcome;
+		}
+	}
+	const auto rollbackTerminal = [&] {
+		if (!terminalPrepared || m_terminalTool == nullptr || !targetIdentity) return;
+		const auto restored = m_terminalTool->SwitchWorkspace({
+			*targetIdentity, before.workspaceIdentityKey, oldTerminalDirectory, false });
+		if (!restored.Succeeded()) {
+			::OutputDebugStringW(L"Sakura Editor NEXT: Folder terminal rollback failed.\n");
+		}
+		if (!targetProjectionExisted) m_terminalTool->DiscardWorkspaceProjection(*targetIdentity);
+	};
 
 	if (m_workbenchRuntime != nullptr) {
 		auto displayName = std::filesystem::path(absoluteRoot).filename().wstring();
@@ -9772,6 +9996,7 @@ EOpenWorkspaceFolderResult CEditWnd::ApplyFolderWorkspace(
 			std::move(*folderUri.value), std::move(displayName));
 		if (accepted.outcome != config::EWorkspaceContextOutcome::Succeeded
 			&& accepted.outcome != config::EWorkspaceContextOutcome::NotApplicable) {
+			rollbackTerminal();
 			return EOpenWorkspaceFolderResult::WorkspaceContextFailed;
 		}
 	} else {
@@ -9782,15 +10007,19 @@ EOpenWorkspaceFolderResult CEditWnd::ApplyFolderWorkspace(
 	ApplySemanticWorkspaceContext();
 	const auto acceptedRoot = GetSemanticWorkspaceRoot();
 	if (acceptedRoot.empty()) return EOpenWorkspaceFolderResult::WorkspaceContextFailed;
-	if (m_terminalTool != nullptr
+	if (m_terminalTool != nullptr && terminalPrepared) {
+		if (terminalOutcome == terminal::TerminalWorkspaceSwitchOutcome::Detached) {
+			m_terminalTool->SetWorkingDirectory(m_workspaceContext->GetNewTerminalWorkingDirectory());
+		}
+		if (terminalWasVisible && !m_terminalTool->EnsureSessionStarted()) {
+			::OutputDebugStringW(L"Sakura Editor NEXT: Folder terminal activation failed after workspace commit.\n");
+		}
+	} else if (m_terminalTool != nullptr && m_workbenchRuntime == nullptr
 		&& ::CompareStringOrdinal(previousRoot.c_str(), -1, acceptedRoot.c_str(), -1, TRUE) != CSTR_EQUAL) {
-		(void)m_terminalTool->ResetForWorkspace(
-			m_workspaceContext->GetNewTerminalWorkingDirectory(), terminalWasVisible);
+		m_terminalTool->SetWorkingDirectory(m_workspaceContext->GetNewTerminalWorkingDirectory());
+		if (terminalWasVisible) static_cast<void>(m_terminalTool->EnsureSessionStarted());
 	}
-	if (revealExplorer
-		&& !SetWorkbenchPanelVisible(workbench::WorkbenchEdge::Left, true, true)) {
-		return EOpenWorkspaceFolderResult::ExplorerProjectionFailed;
-	}
+	if (revealExplorer) RevealExplorerAfterWorkspaceCommit();
 	if (m_workbenchRuntime != nullptr) {
 		const auto accepted = m_workbenchRuntime->WorkspaceContext().Snapshot();
 		if (accepted.kind == config::EWorkspaceKind::Folder && accepted.folders.size() == 1) {

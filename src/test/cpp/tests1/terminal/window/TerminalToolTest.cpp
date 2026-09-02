@@ -1370,7 +1370,7 @@ TEST(TerminalTool, NewSessionsUseNewWorkspaceButExistingSessionsKeepOriginalCwd)
 	tool.Close();
 }
 
-TEST(TerminalTool, WorkspaceResetClosesAllTabsAndCreatesOneReplacementInNewCwd)
+TEST(TerminalTool, WorkspaceSwitchPreservesLiveSessionsAndRecursiveGroupStateAcrossABA)
 {
 	ToolHarness harness;
 	terminal::CTerminalTool tool(harness.Dependencies());
@@ -1380,58 +1380,167 @@ TEST(TerminalTool, WorkspaceResetClosesAllTabsAndCreatesOneReplacementInNewCwd)
 	ASSERT_TRUE(tool.SplitTerminalRight());
 	ASSERT_EQ(3u, tool.TabCount());
 	ASSERT_TRUE(tool.HasTerminalSplit());
+	ASSERT_EQ(terminal::TerminalPaneOrientation::Horizontal, tool.ActivePaneOrientation());
+	ASSERT_TRUE(tool.SplitTerminalDown());
+	ASSERT_EQ(4u, tool.TabCount());
+	ASSERT_EQ(terminal::TerminalPaneOrientation::Vertical, tool.ActivePaneOrientation());
+	const auto originalActive = tool.ActiveTerminalId();
+	const auto originalTabs = tool.Tabs();
+	const auto originalProjection = tool.TerminalProjectionSnapshot();
+	ASSERT_EQ(4u, originalTabs.size());
+	ASSERT_EQ(4u, originalProjection.size());
+
+	const auto toB = tool.SwitchWorkspace({
+		L"folder:A",
+		L"folder:B",
+		L"C:\\second",
+		true });
+	EXPECT_EQ(terminal::TerminalWorkspaceSwitchOutcome::Created, toB.outcome);
+	EXPECT_EQ(4u, toB.savedTabCount);
+	EXPECT_EQ(0u, toB.restoredTabCount);
+	EXPECT_EQ(1u, toB.startedTabCount);
+	EXPECT_FALSE(toB.oldProjectionRestored);
+	EXPECT_EQ(1u, tool.TabCount());
+	EXPECT_FALSE(tool.HasTerminalSplit());
+	ASSERT_EQ(5u, harness.backends.size());
+	for( std::size_t index = 0; index < 4; ++index ) {
+		EXPECT_EQ(0, harness.backends[index]->closeCalls.load());
+	}
+	EXPECT_EQ(L"C:\\second", harness.backends[4]->workingDirectory);
+	EXPECT_TRUE(tool.HasWorkspaceProjection(L"folder:A"));
+
+	const auto backToA = tool.SwitchWorkspace({
+		L"folder:B",
+		L"folder:A",
+		L"C:\\first",
+		true });
+	EXPECT_EQ(terminal::TerminalWorkspaceSwitchOutcome::Attached, backToA.outcome);
+	EXPECT_EQ(1u, backToA.savedTabCount);
+	EXPECT_EQ(4u, backToA.restoredTabCount);
+	EXPECT_EQ(0u, backToA.startedTabCount);
+	EXPECT_EQ(4u, tool.TabCount());
+	EXPECT_TRUE(tool.HasTerminalSplit());
+	EXPECT_EQ(terminal::TerminalPaneOrientation::Vertical, tool.ActivePaneOrientation());
+	EXPECT_EQ(originalActive, tool.ActiveTerminalId());
+	ASSERT_EQ(5u, harness.backends.size());
+
+	const auto restoredTabs = tool.Tabs();
+	const auto restoredProjection = tool.TerminalProjectionSnapshot();
+	ASSERT_EQ(originalTabs.size(), restoredTabs.size());
+	ASSERT_EQ(originalProjection.size(), restoredProjection.size());
+	for( std::size_t index = 0; index < originalTabs.size(); ++index ) {
+		EXPECT_EQ(originalTabs[index].id, restoredTabs[index].id);
+		EXPECT_EQ(originalProjection[index].tabId, restoredProjection[index].tabId);
+		EXPECT_EQ(originalProjection[index].instanceId, restoredProjection[index].instanceId);
+	}
+	for( const auto& backend : harness.backends ) {
+		EXPECT_EQ(0, backend->closeCalls.load());
+	}
+	tool.Close();
+}
+
+TEST(TerminalTool, HiddenWorkspaceSwitchToNoStateStaysProcessFreeUntilReveal)
+{
+	ToolHarness harness;
+	terminal::CTerminalTool tool(harness.Dependencies());
+	tool.SetWorkingDirectory(L"C:\\first");
+	tool.Activate();
+	ASSERT_EQ(1u, tool.TabCount());
+
+	const auto hidden = tool.SwitchWorkspace({
+		L"folder:A",
+		L"folder:B",
+		L"C:\\second",
+		false });
+	EXPECT_EQ(terminal::TerminalWorkspaceSwitchOutcome::Detached, hidden.outcome);
+	EXPECT_EQ(1u, hidden.savedTabCount);
+	EXPECT_EQ(0u, hidden.restoredTabCount);
+	EXPECT_EQ(0u, hidden.startedTabCount);
+	EXPECT_EQ(0u, tool.TabCount());
+	ASSERT_EQ(1u, harness.backends.size());
+	EXPECT_EQ(0, harness.backends[0]->closeCalls.load());
+
+	const auto reveal = tool.SwitchWorkspace({
+		L"folder:B",
+		L"folder:B",
+		L"C:\\second",
+		true });
+	EXPECT_EQ(terminal::TerminalWorkspaceSwitchOutcome::Created, reveal.outcome);
+	EXPECT_EQ(1u, reveal.startedTabCount);
+	ASSERT_EQ(2u, harness.backends.size());
+	EXPECT_EQ(L"C:\\second", harness.backends[1]->workingDirectory);
+	tool.Close();
+}
+
+TEST(TerminalTool, WorkspaceSwitchStartFailureRestoresOldProjection)
+{
+	ToolHarness harness;
+	terminal::CTerminalTool tool(harness.Dependencies());
+	tool.SetWorkingDirectory(L"C:\\first");
+	tool.Activate();
+	const auto originalActive = tool.ActiveTerminalId();
+	const auto originalProjection = tool.TerminalProjectionSnapshot();
+	ASSERT_EQ(1u, originalProjection.size());
+	harness.failStart = true;
+
+	const auto failed = tool.SwitchWorkspace({
+		L"folder:A",
+		L"folder:B",
+		L"C:\\second",
+		true });
+	EXPECT_EQ(terminal::TerminalWorkspaceSwitchOutcome::StartFailed, failed.outcome);
+	EXPECT_TRUE(failed.oldProjectionRestored);
+	EXPECT_EQ(ERROR_ACCESS_DENIED, failed.errorCode);
+	ASSERT_EQ(1u, tool.TabCount());
+	EXPECT_EQ(originalActive, tool.ActiveTerminalId());
+	const auto restoredProjection = tool.TerminalProjectionSnapshot();
+	ASSERT_EQ(1u, restoredProjection.size());
+	EXPECT_EQ(originalProjection[0].tabId, restoredProjection[0].tabId);
+	EXPECT_EQ(originalProjection[0].instanceId, restoredProjection[0].instanceId);
+	ASSERT_EQ(2u, harness.backends.size());
+	EXPECT_EQ(L"C:\\second", harness.backends[1]->workingDirectory);
+	EXPECT_EQ(0, harness.backends[0]->closeCalls.load());
+	tool.Close();
+}
+
+TEST(TerminalTool, DestructiveWorkspaceResetClosesAllTabsAndCreatesOneReplacement)
+{
+	ToolHarness harness;
+	terminal::CTerminalTool tool(harness.Dependencies());
+	tool.SetWorkingDirectory(L"C:\\first");
+	tool.Activate();
+	ASSERT_TRUE(tool.AddTerminal().has_value());
+	ASSERT_TRUE(tool.SplitTerminalRight());
+	ASSERT_EQ(3u, tool.TabCount());
 
 	const auto reset = tool.ResetForWorkspace(L"C:\\second", true);
 	EXPECT_EQ(terminal::TerminalWorkspaceResetOutcome::Restarted, reset.outcome);
 	EXPECT_EQ(3u, reset.clearedTabCount);
 	EXPECT_FALSE(reset.closeDeadlineExceeded);
 	EXPECT_EQ(1u, tool.TabCount());
-	EXPECT_FALSE(tool.HasTerminalSplit());
 	ASSERT_EQ(4u, harness.backends.size());
 	for( std::size_t index = 0; index < 3; ++index ) {
 		EXPECT_TRUE(WaitUntil([&, index] { return harness.backends[index]->closeCalls.load() == 1; }));
 	}
 	EXPECT_EQ(L"C:\\second", harness.backends[3]->workingDirectory);
-	EXPECT_EQ(0, harness.backends[3]->closeCalls.load());
 	tool.Close();
 }
 
-TEST(TerminalTool, HiddenWorkspaceResetStaysEmptyUntilTerminalIsRevealed)
+TEST(TerminalTool, CloseTerminatesDetachedWorkspaceSessions)
 {
 	ToolHarness harness;
 	terminal::CTerminalTool tool(harness.Dependencies());
 	tool.SetWorkingDirectory(L"C:\\first");
 	tool.Activate();
-	ASSERT_EQ(1u, tool.TabCount());
+	ASSERT_TRUE(tool.AddTerminal().has_value());
+	ASSERT_EQ(2u, tool.TabCount());
+	ASSERT_TRUE(tool.SwitchWorkspace({ L"folder:A", L"folder:B", L"C:\\second", true }).Succeeded());
+	ASSERT_EQ(3u, harness.backends.size());
 
-	const auto reset = tool.ResetForWorkspace(L"C:\\second", false);
-	EXPECT_EQ(terminal::TerminalWorkspaceResetOutcome::Cleared, reset.outcome);
-	EXPECT_EQ(1u, reset.clearedTabCount);
-	EXPECT_EQ(0u, tool.TabCount());
-	ASSERT_EQ(1u, harness.backends.size());
-
-	EXPECT_TRUE(tool.EnsureSessionStarted());
-	ASSERT_EQ(2u, harness.backends.size());
-	EXPECT_EQ(L"C:\\second", harness.backends[1]->workingDirectory);
 	tool.Close();
-}
-
-TEST(TerminalTool, WorkspaceReplacementStartFailureRemainsVisibleAndTyped)
-{
-	ToolHarness harness;
-	terminal::CTerminalTool tool(harness.Dependencies());
-	tool.SetWorkingDirectory(L"C:\\first");
-	tool.Activate();
-	harness.failStart = true;
-
-	const auto reset = tool.ResetForWorkspace(L"C:\\second", true);
-	EXPECT_EQ(terminal::TerminalWorkspaceResetOutcome::RestartFailed, reset.outcome);
-	EXPECT_EQ(ERROR_ACCESS_DENIED, reset.errorCode);
-	ASSERT_EQ(1u, tool.TabCount());
-	EXPECT_EQ(terminal::TerminalSessionState::Failed, tool.Tabs()[0].state);
-	ASSERT_EQ(2u, harness.backends.size());
-	EXPECT_EQ(L"C:\\second", harness.backends[1]->workingDirectory);
-	tool.Close();
+	for( std::size_t index = 0; index < harness.backends.size(); ++index ) {
+		EXPECT_TRUE(WaitUntil([&, index] { return harness.backends[index]->closeCalls.load() == 1; }));
+	}
 }
 
 } // namespace

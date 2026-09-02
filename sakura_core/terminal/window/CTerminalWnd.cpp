@@ -386,7 +386,10 @@ private:
 					return state->closed || state->pending.has_value();
 				});
 				if (state->closed) return;
-				capture = std::move(state->pending);
+				// Moving an optional preserves its engaged state.  Consume the slot
+				// explicitly so the wait predicate becomes false after one frame;
+				// otherwise this worker spins forever on the moved-from capture.
+				capture = std::exchange(state->pending, std::nullopt);
 			}
 			const auto frame = capture ? BuildFrame(*capture) : nullptr;
 			if (!frame) continue;

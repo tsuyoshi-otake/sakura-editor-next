@@ -617,6 +617,57 @@ output::IOutputService* CWorkbenchRuntime::Output() noexcept
 	return IsReadyForServiceAccessLocked() ? m_outputProvider.get() : nullptr;
 }
 
+config::WorkspaceContextResult CWorkbenchRuntime::SwitchToWorkspaceConfiguration(
+	platform::uri::Uri workspaceConfigUri)
+{
+	const auto failed = [this](std::string reason) {
+		return config::WorkspaceContextResult{
+			.outcome = EWorkspaceContextOutcome::Failed,
+			.reason = std::move(reason),
+			.snapshot = m_workspaceContext.Snapshot(),
+		};
+	};
+	if (workspaceConfigUri.Scheme() != L"file") return failed("workspace configuration must be a file URI");
+	std::lock_guard lifecycleLock(m_lifecycleMutex);
+	{
+		std::lock_guard stateLock(m_stateMutex);
+		if (!IsReadyForServiceAccessLocked()) return failed("workbench runtime is not ready");
+	}
+	const auto read = m_fileService->Read(workspaceConfigUri,
+		{ .maximumBytes = config::CJsoncConfigurationSource::kMaximumInputBytes });
+	if (!read.Succeeded() || !read.value) return failed("workspace configuration document could not be read");
+	std::string utf8(read.value->begin(), read.value->end());
+	const auto parsed = workspace::CWorkspaceConfigurationDocumentParser::Parse(utf8, workspaceConfigUri);
+	if (!parsed.Succeeded()) return failed("workspace configuration document could not be parsed");
+	std::vector<config::WorkspaceFolderDescriptor> folders;
+	folders.reserve(parsed.document->folders.size());
+	for (const auto& folder : parsed.document->folders) folders.push_back({ folder.uri, folder.displayName });
+	const auto before = m_workspaceContext.Snapshot();
+	const auto operationId = NextWorkspaceOperationId();
+	if (!operationId) return failed("workspace operation identifier space is exhausted");
+	return m_workspaceContext.SetWorkspace({
+		.operation = { .operationId = *operationId, .expectedRevision = before.revision },
+		.workspaceConfigUri = std::move(workspaceConfigUri),
+		.folders = std::move(folders),
+	});
+}
+
+workspace::WorkspaceConfigurationParseResult CWorkbenchRuntime::InspectWorkspaceConfiguration(
+	const platform::uri::Uri& workspaceConfigUri)
+{
+	if (workspaceConfigUri.Scheme() != L"file") return {};
+	std::lock_guard lifecycleLock(m_lifecycleMutex);
+	{
+		std::lock_guard stateLock(m_stateMutex);
+		if (!IsReadyForServiceAccessLocked()) return {};
+	}
+	const auto read = m_fileService->Read(workspaceConfigUri,
+		{ .maximumBytes = config::CJsoncConfigurationSource::kMaximumInputBytes });
+	if (!read.Succeeded() || !read.value) return {};
+	const std::string utf8(read.value->begin(), read.value->end());
+	return workspace::CWorkspaceConfigurationDocumentParser::Parse(utf8, workspaceConfigUri);
+}
+
 const output::IOutputService* CWorkbenchRuntime::Output() const noexcept
 {
 	std::lock_guard lock(m_stateMutex);

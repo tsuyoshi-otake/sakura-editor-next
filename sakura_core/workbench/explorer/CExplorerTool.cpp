@@ -2136,6 +2136,19 @@ void CExplorerTool::SetRoot(std::wstring root)
 
 const std::wstring& CExplorerTool::GetRoot() const noexcept { return m_impl->root; }
 
+void CExplorerTool::SetFilesPaneExpanded(const bool expanded)
+{
+	if (m_impl->closed || m_impl->filesPaneExpanded == expanded) return;
+	m_impl->filesPaneExpanded = expanded;
+	m_impl->LayoutChildren();
+	if (m_impl->window != nullptr) ::InvalidateRect(m_impl->window, nullptr, FALSE);
+}
+
+bool CExplorerTool::IsFilesPaneExpanded() const noexcept
+{
+	return m_impl->filesPaneExpanded;
+}
+
 void CExplorerTool::SetWelcomeState(ExplorerWelcomeState state)
 {
 	if (m_impl->welcomeState == state) return;

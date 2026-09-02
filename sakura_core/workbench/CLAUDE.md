@@ -133,10 +133,18 @@ and lifecycle rules as the rest of the native workbench.
 - A Project is a profile-scoped navigation entry pointing to an existing Folder
   or `.code-workspace` URI. `WorkspaceContext` is still the only active workspace
   authority, and SCM remains the only repository-state authority.
-- Git worktree discovery is a bounded child provider for the active Project.
-  Inactive Projects never fan out Git processes, and linked worktrees start
-  collapsed behind a truthful count. Unsupported multi-root Git projection stays
-  explicit instead of guessing the first folder.
+- Git worktree discovery is a bounded, read-only child provider. The current
+  Project is scheduled first, then every catalog Project receives one fair
+  discovery slot before additional multi-root folders. One single-flight queue
+  serializes Git processes, deduplicates roots per Project, caps both roots per
+  Project and total work per refresh, and reaches an explicit terminal summary
+  on failure, supersession, or teardown. Linked worktrees remain actionable only
+  beneath the active Project and start collapsed behind a truthful count.
+- Folder Projects expose their branch or detached state before activation.
+  Multi-root workspace Projects inspect the workspace document without mutating
+  `WorkspaceContext`, then show a common branch, bounded mixed-branch summary,
+  no-repository state, or explicit unavailable state. Never infer repository
+  state from the `.code-workspace` file's parent directory.
 - The catalog must finish one coherent load before it can write. Invalid or
   unsupported stored data is retained for diagnosis and may never be silently
   replaced by startup auto-registration.

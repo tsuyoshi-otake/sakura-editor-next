@@ -91,7 +91,7 @@ private:
 	bool m_cleared{};
 };
 
-class TerminalScrollbackView final {
+class TerminalRowView final {
 public:
 	class const_iterator final {
 	public:
@@ -102,7 +102,7 @@ public:
 		using iterator_category = std::forward_iterator_tag;
 
 		const_iterator() = default;
-		const_iterator( const TerminalScrollbackView* view, std::size_t index ) noexcept
+		const_iterator( const TerminalRowView* view, std::size_t index ) noexcept
 			: m_view(view), m_index(index) {}
 		reference operator*() const noexcept { return (*m_view)[m_index]; }
 		pointer operator->() const noexcept { return &(*m_view)[m_index]; }
@@ -111,11 +111,11 @@ public:
 		friend bool operator==( const const_iterator&, const const_iterator& ) noexcept = default;
 
 	private:
-		const TerminalScrollbackView* m_view{};
+		const TerminalRowView* m_view{};
 		std::size_t m_index{};
 	};
 
-	TerminalScrollbackView( const std::deque<TerminalRow>& rows, std::size_t head ) noexcept
+	TerminalRowView( const std::deque<TerminalRow>& rows, std::size_t head ) noexcept
 		: m_rows(&rows), m_head(head) {}
 	std::size_t size() const noexcept { return m_rows->size(); }
 	bool empty() const noexcept { return m_rows->empty(); }
@@ -129,6 +129,8 @@ private:
 	const std::deque<TerminalRow>* m_rows;
 	std::size_t m_head;
 };
+
+using TerminalScrollbackView = TerminalRowView;
 
 struct TerminalModes {
 	bool cursorVisible{ true };
@@ -196,7 +198,7 @@ public:
 	//! Consumers compare generations around parser drains so a completed frame is
 	//! not lost when the same drain immediately begins the next frame.
 	std::uint64_t SynchronizedOutputCommitGeneration() const noexcept { return m_synchronizedOutputCommitGeneration; }
-	const std::deque<TerminalRow>& Rows() const noexcept { return m_rows; }
+	TerminalRowView Rows() const noexcept { return { m_rows, m_rowsHead }; }
 	TerminalScrollbackView Scrollback() const noexcept { return { m_scrollback, m_scrollbackHead }; }
 	std::vector<std::size_t> ConsumeDirtyRows();
 	TerminalScrollbackChange ConsumeScrollbackChange() noexcept;
@@ -204,8 +206,11 @@ public:
 private:
 	TerminalRow MakeBlankRow( const TerminalAttributes& attributes = {} ) const;
 	void ResetRow( TerminalRow& row, const TerminalAttributes& attributes ) const;
-	TerminalRow RecycleForBlankRow( TerminalRow&& outgoing, const TerminalAttributes& attributes );
+	void RecycleForBlankRow( TerminalRow& outgoing, const TerminalAttributes& attributes );
 	void AppendScrollbackRow( TerminalRow&& row );
+	TerminalRow& RowAt( std::size_t row ) noexcept;
+	const TerminalRow& RowAt( std::size_t row ) const noexcept;
+	void NormalizeRowsOrder();
 	void NormalizeScrollbackOrder();
 	void ClearCellRange( TerminalRow& row, std::size_t begin, std::size_t end );
 	void SetCellAttributes( TerminalRow& row, std::size_t column, std::size_t length, const TerminalAttributes& attributes );
@@ -224,11 +229,11 @@ private:
 	std::size_t m_columns;
 	std::size_t m_rowsCount;
 	std::size_t m_scrollbackLimit;
-	// Screen rows are a deque so full-screen scrolling can transfer a row to
-	// scrollback and recycle the evicted row in O(1), without vector erase/insert
-	// shifts or per-line cell-buffer allocations.  Indexed access remains O(1)
-	// for the renderer and parser.
+	// Full-screen scrolling advances this logical head and recycles the outgoing
+	// row in place.  The deque never shifts or allocates for a steady-state line;
+	// TerminalRowView preserves O(1) logical access for renderer and parser.
 	std::deque<TerminalRow> m_rows;
+	std::size_t m_rowsHead{};
 	// A bounded deque keeps steady-state eviction at the scrollback cap O(1).
 	std::deque<TerminalRow> m_scrollback;
 	std::size_t m_scrollbackHead{};

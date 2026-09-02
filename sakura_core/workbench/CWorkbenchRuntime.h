@@ -113,6 +113,8 @@ public:
 	[[nodiscard]] config::IWorkspaceContextService& WorkspaceContext() noexcept override { return m_workspaceContext; }
 	[[nodiscard]] config::WorkspaceContextResult SwitchToFolderWorkspace(
 		platform::uri::Uri folderUri, std::wstring displayName) override;
+	[[nodiscard]] config::WorkspaceContextResult SwitchToWorkspaceConfiguration(
+		platform::uri::Uri workspaceConfigUri) override;
 	[[nodiscard]] workspace::IWorkspaceEditingService* WorkspaceEditing() noexcept override { return m_workspaceEditing.get(); }
 	[[nodiscard]] workspace::WorkspaceEditingResult ReplaceCurrentWorkspaceFolders(
 		const workspace::WorkspaceFoldersEditRequest& request) override;
@@ -126,6 +128,8 @@ public:
 	[[nodiscard]] const statusbar::StatusbarViewModel& StatusbarState() const noexcept override { return m_statusbarState; }
 	[[nodiscard]] statusbar::StatusbarMementoSaveResult PersistStatusbarVisibility() override;
 	[[nodiscard]] workspace::WorkspaceConfigurationRuntimeSnapshot WorkspaceConfiguration() const override;
+	[[nodiscard]] workspace::WorkspaceConfigurationParseResult InspectWorkspaceConfiguration(
+		const platform::uri::Uri&) override;
 	[[nodiscard]] const workspace::CWorkspaceArtifactDocumentService& WorkspaceArtifacts() const noexcept override { return *m_workspaceArtifacts; }
 	[[nodiscard]] problems::MarkerService* Markers() noexcept override;
 	[[nodiscard]] const problems::MarkerService* Markers() const noexcept override;

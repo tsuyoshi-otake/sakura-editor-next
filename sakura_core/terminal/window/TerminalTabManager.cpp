@@ -117,6 +117,12 @@ struct TerminalTabManager::Impl {
 		eventRoutes.clear();
 	}
 
+	void RegisterProjectionRoutes()
+	{
+		ClearEventRoutes();
+		for( const auto& tab : tabs ) RegisterEventRoute(tab->instanceId, tab->id);
+	}
+
 	void OnRuntimeEvent( const TerminalInstanceEvent& event ) noexcept
 	{
 		TerminalTabEvent translated;
@@ -322,6 +328,87 @@ TerminalTabClearResult TerminalTabManager::ClearTabs( std::chrono::steady_clock:
 	return result;
 }
 
+TerminalDetachedTabProjection TerminalTabManager::DetachTabs() noexcept
+{
+	TerminalDetachedTabProjection result;
+	if( !m_impl || m_impl->closed ) return result;
+	result.tabs.reserve(m_impl->tabs.size());
+	for( const auto& tab : m_impl->tabs ) {
+		result.tabs.push_back({ tab->id, tab->instanceId, tab->sessionId, tab->windowId, tab->paneId });
+	}
+	result.activeTabId = m_impl->activeTabId;
+	m_impl->ClearEventRoutes();
+	m_impl->tabs.clear();
+	m_impl->activeTabId.reset();
+	return result;
+}
+
+TerminalTabProjectionAttachResult TerminalTabManager::AttachTabs(
+	TerminalDetachedTabProjection projection ) noexcept
+{
+	TerminalTabProjectionAttachResult result;
+	if( !m_impl || m_impl->closed ) return result;
+	if( !m_impl->tabs.empty() ) {
+		result.code = TerminalTabProjectionAttachCode::Busy;
+		result.errorCode = ERROR_BUSY;
+		return result;
+	}
+	try {
+		std::vector<std::uint64_t> ids;
+		ids.reserve(projection.tabs.size());
+		for( const auto& record : projection.tabs ) {
+			if( record.tabId == 0 || !record.instanceId.IsValid()
+				|| !m_impl->runtimeService || m_impl->runtimeService->Instance(record.instanceId) == nullptr ) {
+				result.code = record.tabId == 0 || !record.instanceId.IsValid()
+					? TerminalTabProjectionAttachCode::InvalidState
+					: TerminalTabProjectionAttachCode::TargetMissing;
+				result.errorCode = ERROR_NOT_FOUND;
+				return result;
+			}
+			if( std::find(ids.begin(), ids.end(), record.tabId) != ids.end() ) {
+				result.code = TerminalTabProjectionAttachCode::InvalidState;
+				result.errorCode = ERROR_DUP_NAME;
+				return result;
+			}
+			ids.push_back(record.tabId);
+		}
+		if( projection.activeTabId
+			&& std::find(ids.begin(), ids.end(), *projection.activeTabId) == ids.end() ) {
+			result.code = TerminalTabProjectionAttachCode::InvalidState;
+			result.errorCode = ERROR_NOT_FOUND;
+			return result;
+		}
+
+		for( const auto& record : projection.tabs ) {
+			auto tab = std::make_unique<Impl::Tab>();
+			tab->id = record.tabId;
+			tab->instanceId = record.instanceId;
+			tab->sessionId = record.sessionId;
+			tab->windowId = record.windowId;
+			tab->paneId = record.paneId;
+			m_impl->tabs.push_back(std::move(tab));
+			if( m_impl->nextTabId <= record.tabId ) {
+				m_impl->nextTabId = record.tabId == std::numeric_limits<std::uint64_t>::max()
+					? std::numeric_limits<std::uint64_t>::max() : record.tabId + 1;
+			}
+		}
+		m_impl->activeTabId = projection.activeTabId;
+		if( !m_impl->activeTabId && !m_impl->tabs.empty() ) m_impl->activeTabId = m_impl->tabs.front()->id;
+		m_impl->RegisterProjectionRoutes();
+		if( !m_impl->tabs.empty() ) m_impl->startedAnySession = true;
+		result.code = TerminalTabProjectionAttachCode::Succeeded;
+		result.attachedTabCount = m_impl->tabs.size();
+		return result;
+	} catch( ... ) {
+		m_impl->ClearEventRoutes();
+		m_impl->tabs.clear();
+		m_impl->activeTabId.reset();
+		result.code = TerminalTabProjectionAttachCode::InvalidState;
+		result.errorCode = ERROR_NOT_ENOUGH_MEMORY;
+		return result;
+	}
+}
+
 void TerminalTabManager::Resize( TerminalSize rawSize )
 {
 	if( m_impl->closed ) return;
@@ -518,6 +605,17 @@ std::vector<TerminalTabSnapshot> TerminalTabManager::Snapshot() const
 		result.push_back({ tab->id, snapshot.processName, snapshot.profileLabel, snapshot.sequenceTitle,
 			snapshot.initialWorkingDirectory, snapshot.sessionState, snapshot.errorCode,
 			m_impl->activeTabId == tab->id });
+	}
+	return result;
+}
+
+std::vector<TerminalTabProjectionRecord> TerminalTabManager::ProjectionSnapshot() const
+{
+	std::vector<TerminalTabProjectionRecord> result;
+	if( m_impl->closed ) return result;
+	result.reserve(m_impl->tabs.size());
+	for( const auto& tab : m_impl->tabs ) {
+		result.push_back({ tab->id, tab->instanceId, tab->sessionId, tab->windowId, tab->paneId });
 	}
 	return result;
 }

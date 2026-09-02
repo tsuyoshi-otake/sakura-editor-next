@@ -248,6 +248,36 @@ TEST(ExplorerTool, ExposesThePlannedPaletteAndKeepsRootWindowLocal)
 	EXPECT_EQ(RGB(0xEB, 0x6A, 0x9A), palette.focus);
 }
 
+TEST(ExplorerTool, ProjectRevealExpandsACollapsedFilesPane)
+{
+	TemporaryDirectory root;
+	CreateEmptyFile(root.Path() / L"visible.txt");
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	CExplorerTool tool;
+	tool.SetRoot(root.Path().wstring());
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout(RECT{ 0, 0, 300, 240 }, 96);
+	const HWND tree = ::FindWindowExW(tool.GetHwnd(), nullptr, WC_TREEVIEWW, nullptr);
+	ASSERT_NE(nullptr, tree);
+	EXPECT_TRUE(tool.IsFilesPaneExpanded());
+	EXPECT_NE(0, ::GetWindowLongPtrW(tree, GWL_STYLE) & WS_VISIBLE);
+
+	(void)::SendMessageW(tool.GetHwnd(), WM_LBUTTONUP, 0, MAKELPARAM(5, 5));
+	EXPECT_FALSE(tool.IsFilesPaneExpanded());
+	EXPECT_EQ(0, ::GetWindowLongPtrW(tree, GWL_STYLE) & WS_VISIBLE);
+
+	tool.SetFilesPaneExpanded(true);
+	EXPECT_TRUE(tool.IsFilesPaneExpanded());
+	EXPECT_NE(0, ::GetWindowLongPtrW(tree, GWL_STYLE) & WS_VISIBLE);
+	// Reapplying the successful Project projection is an idempotent no-op.
+	tool.SetFilesPaneExpanded(true);
+	EXPECT_NE(0, ::GetWindowLongPtrW(tree, GWL_STYLE) & WS_VISIBLE);
+
+	tool.Close();
+	::DestroyWindow(parent);
+}
+
 TEST(ExplorerTool, TracksEachUpstreamEmptyExplorerWelcomeVariant)
 {
 	CExplorerTool explorer;

@@ -787,6 +787,9 @@ private:
 	[[nodiscard]] bool CloseActiveEditorInput();
 	void ConfigureCustomFrameActions();
 	[[nodiscard]] bool ExecuteWorkbenchEditorCommand(std::string_view commandId);
+	//! Reveals the Explorer and expands its Files ViewPane after an already
+	//! committed Project/workspace transition. Failure remains advisory.
+	void RevealExplorerAfterWorkspaceCommit();
 	[[nodiscard]] EOpenWorkspaceFolderResult ApplyFolderWorkspace(
 		const std::wstring& absoluteRoot, bool revealExplorer);
 	[[nodiscard]] EWorkspaceWindowTransitionResult OpenWorkspaceConfiguration();
@@ -1227,6 +1230,10 @@ private:
 	//! replacement.  The subsequent close consumes it exactly once so the user is
 	//! never prompted twice after the successor has acknowledged ready.
 	bool m_workspaceReplacementClosePreflightAccepted = false;
+	//! Project activation may synchronously refresh services and native pages. A
+	//! nested activation is rejected until the one UI-thread-owned transition
+	//! reaches its explicit terminal outcome.
+	bool m_projectWorkspaceTransitionInProgress = false;
 	//! Load listeners form one synchronous native replacement transaction. The old
 	//! persistence token is captured before CLoadAgent mutates CEditDoc and completed
 	//! only after the new native document is atomically reflected in Editor Core.

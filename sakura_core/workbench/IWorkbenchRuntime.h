@@ -189,6 +189,14 @@ public:
 	//! Configuration() for effective settings and cannot accidentally merge tasks,
 	//! launch, or extension declarations into it.
 	[[nodiscard]] virtual workspace::WorkspaceConfigurationRuntimeSnapshot WorkspaceConfiguration() const = 0;
+	//! Read-only inspection for a saved .code-workspace Project.  It never
+	//! changes WorkspaceContext, configuration, watchers, or runtime revision.
+	//! A missing document is the typed fail-closed result for narrow runtimes.
+	[[nodiscard]] virtual workspace::WorkspaceConfigurationParseResult InspectWorkspaceConfiguration(
+		const platform::uri::Uri&)
+	{
+		return {};
+	}
 	//! Typed task/debug/recommendation documents stay outside Configuration().
 	//! The runtime remains their lifetime owner; consumers receive read-only
 	//! routing and last-good document state only.
@@ -204,6 +212,17 @@ public:
 	[[nodiscard]] virtual output::OutputProviderHealthSnapshot OutputProviderHealth() const noexcept
 	{
 		return {};
+	}
+	//! Enter a saved .code-workspace in this process after validating its
+	//! document. The runtime owns the read/parse/CAS sequence.
+	[[nodiscard]] virtual config::WorkspaceContextResult SwitchToWorkspaceConfiguration(
+		platform::uri::Uri)
+	{
+		return {
+			.outcome = config::EWorkspaceContextOutcome::Failed,
+			.reason = "runtime does not support an in-process workspace transition",
+			.snapshot = WorkspaceContext().Snapshot(),
+		};
 	}
 	[[nodiscard]] virtual scm::SourceControlService* Scm() noexcept = 0;
 	[[nodiscard]] virtual const scm::SourceControlService* Scm() const noexcept = 0;

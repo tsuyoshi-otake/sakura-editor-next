@@ -92,23 +92,29 @@ private:
 	struct WatchSlot;
 
 	void StartWorkersLocked();
+	[[nodiscard]] ConfigurationFileWatchResult StopLocked() noexcept;
 	void CancelAndJoinWorkers() noexcept;
 	void DispatchMain() noexcept;
 	void WorkerMain(WatchSlot* slot) noexcept;
 	void Queue(EConfigurationFileWatchChange change, bool rebuild) noexcept;
 	void RebuildTopology() noexcept;
 	[[nodiscard]] bool CanDispatch() const noexcept;
+	[[nodiscard]] bool IsDispatcherThread() const noexcept;
 	[[nodiscard]] bool IsRelevant(const WatchSlot& slot, std::size_t targetIndex,
 		const platform::filesystem::FileWatchEvent& event) const noexcept;
 	[[nodiscard]] static EConfigurationFileWatchStatus ValidateRequest(const ConfigurationFileWatchRequest& request) noexcept;
 
 	platform::filesystem::IFileService& m_fileService;
+	//! Serializes ownership-changing Start/Stop operations. State callbacks never
+	//! take this lock, so an external Stop can still join the dispatcher.
+	mutable std::mutex m_lifecycleMutex;
 	mutable std::mutex m_mutex;
 	std::condition_variable m_pending;
 	std::optional<ConfigurationFileWatchRequest> m_request;
 	ChangeCallback m_callback;
 	std::vector<std::unique_ptr<WatchSlot>> m_slots;
 	std::thread m_dispatcher;
+	std::thread::id m_dispatcherThreadId;
 	bool m_started = false;
 	bool m_stopping = false;
 	bool m_rebuildRequested = false;

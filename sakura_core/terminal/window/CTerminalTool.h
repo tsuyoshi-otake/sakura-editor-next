@@ -20,6 +20,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace terminal {
@@ -51,6 +52,41 @@ struct TerminalWorkspaceResetResult {
 	std::uint32_t errorCode{};
 };
 
+enum class TerminalWorkspaceSwitchOutcome : std::uint8_t {
+	Unchanged,
+	Detached,
+	Attached,
+	Created,
+	StartFailed,
+	AttachFailed,
+	RestoreFailed,
+	Unavailable,
+};
+
+struct TerminalWorkspaceSwitchRequest final {
+	std::wstring oldWorkspaceIdentityKey;
+	std::wstring newWorkspaceIdentityKey;
+	std::wstring newWorkingDirectory;
+	bool terminalVisible{};
+};
+
+struct TerminalWorkspaceSwitchResult final {
+	TerminalWorkspaceSwitchOutcome outcome{ TerminalWorkspaceSwitchOutcome::Unavailable };
+	std::size_t savedTabCount{};
+	std::size_t restoredTabCount{};
+	std::size_t startedTabCount{};
+	bool oldProjectionRestored{};
+	std::uint32_t errorCode{};
+
+	[[nodiscard]] constexpr bool Succeeded() const noexcept
+	{
+		return outcome == TerminalWorkspaceSwitchOutcome::Unchanged
+			|| outcome == TerminalWorkspaceSwitchOutcome::Detached
+			|| outcome == TerminalWorkspaceSwitchOutcome::Attached
+			|| outcome == TerminalWorkspaceSwitchOutcome::Created;
+	}
+};
+
 //! Bottom-panel terminal tool with recursive split groups and a right-side
 //! terminal instance list. Pane count is unbounded.
 class CTerminalTool final : public workbench::IWorkbenchTool {
@@ -80,9 +116,14 @@ public:
 	void DetachNativeFrameRuntime() noexcept;
 
 	void SetWorkingDirectory( std::wstring workingDirectory );
-	//! Rebinds the terminal authority to a new workspace. Existing sessions,
-	//! split state, and queued input are never allowed to cross this boundary.
-	//! When requested, one replacement tab is created without taking focus.
+	//! Switches the terminal projection between process-local workspace slots
+	//! keyed by WorkspaceContextSnapshot::workspaceIdentityKey. Live runtime
+	//! instances are detached and reattached by typed coordinates; a failed
+	//! target attach/start restores the old projection before returning.
+	[[nodiscard]] TerminalWorkspaceSwitchResult SwitchWorkspace(
+		TerminalWorkspaceSwitchRequest request );
+	//! Destructive identity-less reset retained for explicit teardown callers.
+	//! Normal workspace transitions call SwitchWorkspace with stable keys.
 	[[nodiscard]] TerminalWorkspaceResetResult ResetForWorkspace(
 		std::wstring workingDirectory, bool recreateSession );
 	void SetPalette( const theme::ThemePalette& palette );
@@ -142,6 +183,12 @@ public:
 	//! True after the native renderer HWND has been created.  Kept observable so
 	//! the hidden-panel startup contract can be unit-tested without a desktop.
 	[[nodiscard]] bool HasCreatedRenderer() const noexcept;
+	[[nodiscard]] std::vector<TerminalTabProjectionRecord> TerminalProjectionSnapshot() const;
+	[[nodiscard]] std::size_t WorkspaceRegistryEntryCount() const noexcept;
+	[[nodiscard]] bool HasWorkspaceProjection( std::wstring_view workspaceIdentityKey ) const noexcept;
+	//! Removes an inactive projection created only while preparing a workspace
+	//! transition that never committed. Live sessions must not be present.
+	void DiscardWorkspaceProjection( std::wstring_view workspaceIdentityKey ) noexcept;
 	[[nodiscard]] HWND GetHwnd() const noexcept;
 
 	static LRESULT CALLBACK WindowProc( HWND window, UINT message, WPARAM wParam, LPARAM lParam );

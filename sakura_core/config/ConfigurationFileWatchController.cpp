@@ -107,7 +107,12 @@ ConfigurationFileWatchResult CConfigurationFileWatchController::Start(Configurat
 {
 	const auto validity = ValidateRequest(request);
 	if (validity != EConfigurationFileWatchStatus::Started) return { validity };
-	const auto stopped = Stop();
+	// A callback cannot replace the dispatcher whose stack it is executing on.
+	// Check before taking the lifecycle lock so an external Stop that is joining
+	// this dispatcher cannot deadlock with a reentrant Start.
+	if (IsDispatcherThread()) return { EConfigurationFileWatchStatus::ReentrantStopDenied };
+	std::lock_guard lifecycleLock(m_lifecycleMutex);
+	const auto stopped = StopLocked();
 	if (!stopped.Succeeded() && stopped.status != EConfigurationFileWatchStatus::NotStarted) return stopped;
 	try {
 		{
@@ -121,7 +126,7 @@ ConfigurationFileWatchResult CConfigurationFileWatchController::Start(Configurat
 		m_dispatcher = std::thread(&CConfigurationFileWatchController::DispatchMain, this);
 		return { EConfigurationFileWatchStatus::Started };
 	} catch (...) {
-		(void)Stop();
+		(void)StopLocked();
 		return { EConfigurationFileWatchStatus::StartFailed };
 	}
 }
@@ -201,9 +206,15 @@ void CConfigurationFileWatchController::CancelAndJoinWorkers() noexcept
 
 ConfigurationFileWatchResult CConfigurationFileWatchController::Stop() noexcept
 {
-	if (m_dispatcher.joinable() && m_dispatcher.get_id() == std::this_thread::get_id()) {
-		return { EConfigurationFileWatchStatus::ReentrantStopDenied };
-	}
+	// Perform the self-join check before waiting for the lifecycle owner. An
+	// external Stop may hold that lock while joining this callback thread.
+	if (IsDispatcherThread()) return { EConfigurationFileWatchStatus::ReentrantStopDenied };
+	std::lock_guard lifecycleLock(m_lifecycleMutex);
+	return StopLocked();
+}
+
+ConfigurationFileWatchResult CConfigurationFileWatchController::StopLocked() noexcept
+{
 	{
 		std::lock_guard lock(m_mutex);
 		if (!m_started) return { EConfigurationFileWatchStatus::NotStarted };
@@ -221,6 +232,7 @@ ConfigurationFileWatchResult CConfigurationFileWatchController::Stop() noexcept
 	std::lock_guard lock(m_mutex);
 	m_started = false;
 	m_callback = {};
+	m_dispatcherThreadId = {};
 	m_profilePending = m_folderPending = m_workspacePending = m_rebuildRequested = m_rebuilding = false;
 	return { EConfigurationFileWatchStatus::Stopped };
 }
@@ -229,6 +241,12 @@ bool CConfigurationFileWatchController::CanDispatch() const noexcept
 {
 	std::lock_guard lock(m_mutex);
 	return m_started && !m_stopping;
+}
+
+bool CConfigurationFileWatchController::IsDispatcherThread() const noexcept
+{
+	std::lock_guard lock(m_mutex);
+	return m_dispatcherThreadId == std::this_thread::get_id();
 }
 
 bool CConfigurationFileWatchController::IsRelevant(
@@ -298,6 +316,10 @@ void CConfigurationFileWatchController::RebuildTopology() noexcept
 
 void CConfigurationFileWatchController::DispatchMain() noexcept
 {
+	{
+		std::lock_guard lock(m_mutex);
+		m_dispatcherThreadId = std::this_thread::get_id();
+	}
 	for (;;) {
 		bool profile = false;
 		bool folders = false;

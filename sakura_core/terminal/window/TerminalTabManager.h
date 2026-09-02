@@ -55,6 +55,38 @@ struct TerminalTabSnapshot {
 	bool active{};
 };
 
+struct TerminalTabProjectionRecord final {
+	std::uint64_t tabId{};
+	TerminalInstanceId instanceId;
+	TerminalSessionId sessionId;
+	TerminalWindowId windowId;
+	TerminalPaneId paneId;
+};
+
+struct TerminalDetachedTabProjection final {
+	std::vector<TerminalTabProjectionRecord> tabs;
+	std::optional<std::uint64_t> activeTabId;
+};
+
+enum class TerminalTabProjectionAttachCode : std::uint8_t {
+	Succeeded,
+	Closed,
+	Busy,
+	InvalidState,
+	TargetMissing,
+};
+
+struct TerminalTabProjectionAttachResult final {
+	TerminalTabProjectionAttachCode code{ TerminalTabProjectionAttachCode::Closed };
+	std::size_t attachedTabCount{};
+	std::uint32_t errorCode{};
+
+	[[nodiscard]] constexpr bool Succeeded() const noexcept
+	{
+		return code == TerminalTabProjectionAttachCode::Succeeded;
+	}
+};
+
 struct TerminalDrainResult {
 	bool found{};
 	bool active{};
@@ -133,6 +165,13 @@ public:
 	//! late notifications cannot alias replacement tabs. The deadline is retained
 	//! for source/API compatibility and is not a UI-thread wait budget.
 	[[nodiscard]] TerminalTabClearResult ClearTabs( std::chrono::steady_clock::time_point deadline ) noexcept;
+	//! Detaches the UI projection from live runtime instances without closing or
+	//! restarting them. The returned records are stable runtime coordinates that
+	//! may later be attached by the same process-local manager.
+	[[nodiscard]] TerminalDetachedTabProjection DetachTabs() noexcept;
+	//! Attaches a previously detached projection. Fails closed if any referenced
+	//! runtime instance is missing; the current projection is left untouched.
+	[[nodiscard]] TerminalTabProjectionAttachResult AttachTabs( TerminalDetachedTabProjection projection ) noexcept;
 	void Resize( TerminalSize size );
 	[[nodiscard]] bool ResizeTab( std::uint64_t tabId, TerminalSize size );
 	//! Applies the stable terminal.integrated.scrollback policy to existing tabs
@@ -159,6 +198,7 @@ public:
 	[[nodiscard]] SakuraTerminalInputAdapter* ActiveInputAdapter() noexcept;
 	[[nodiscard]] std::optional<std::uint64_t> ActiveTabId() const noexcept;
 	[[nodiscard]] std::vector<TerminalTabSnapshot> Snapshot() const;
+	[[nodiscard]] std::vector<TerminalTabProjectionRecord> ProjectionSnapshot() const;
 	[[nodiscard]] std::size_t TabCount() const noexcept;
 	[[nodiscard]] bool HasStartedAnySession() const noexcept;
 

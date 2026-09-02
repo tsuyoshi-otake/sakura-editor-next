@@ -92,24 +92,23 @@ void TerminalModel::ResetRow( TerminalRow& row, const TerminalAttributes& attrib
 	row.wrapped = false;
 }
 
-TerminalRow TerminalModel::RecycleForBlankRow( TerminalRow&& outgoing, const TerminalAttributes& attributes )
+void TerminalModel::RecycleForBlankRow( TerminalRow& outgoing, const TerminalAttributes& attributes )
 {
 	if( !m_alternateScreen && m_scrollbackLimit != 0 ) {
 		if( m_scrollback.size() == m_scrollbackLimit ) {
-			TerminalRow recycled = std::move(m_scrollback[m_scrollbackHead]);
-			m_scrollback[m_scrollbackHead] = std::move(outgoing);
+			std::swap(outgoing, m_scrollback[m_scrollbackHead]);
 			m_scrollbackHead = (m_scrollbackHead + 1) % m_scrollback.size();
 			m_pendingScrollbackChange.RecordAppended();
 			m_pendingScrollbackChange.RecordEvicted();
-			ResetRow(recycled, attributes);
-			return recycled;
+			ResetRow(outgoing, attributes);
+			return;
 		}
 		m_scrollback.push_back(std::move(outgoing));
 		m_pendingScrollbackChange.RecordAppended();
-		return MakeBlankRow(attributes);
+		outgoing = MakeBlankRow(attributes);
+		return;
 	}
 	ResetRow(outgoing, attributes);
-	return outgoing;
 }
 
 void TerminalModel::AppendScrollbackRow( TerminalRow&& row )
@@ -126,6 +125,25 @@ void TerminalModel::AppendScrollbackRow( TerminalRow&& row )
 	m_pendingScrollbackChange.RecordEvicted();
 }
 
+TerminalRow& TerminalModel::RowAt( std::size_t row ) noexcept
+{
+	return m_rows[(m_rowsHead + row) % m_rows.size()];
+}
+
+const TerminalRow& TerminalModel::RowAt( std::size_t row ) const noexcept
+{
+	return m_rows[(m_rowsHead + row) % m_rows.size()];
+}
+
+void TerminalModel::NormalizeRowsOrder()
+{
+	if( m_rowsHead == 0 || m_rows.empty() ) return;
+	std::rotate(m_rows.begin(),
+		m_rows.begin() + static_cast<std::ptrdiff_t>(m_rowsHead),
+		m_rows.end());
+	m_rowsHead = 0;
+}
+
 void TerminalModel::NormalizeScrollbackOrder()
 {
 	if( m_scrollbackHead == 0 || m_scrollback.empty() ) return;
@@ -139,6 +157,7 @@ void TerminalModel::Reset()
 {
 	const auto discardedHistory = m_scrollback.size();
 	m_rows.clear();
+	m_rowsHead = 0;
 	for( std::size_t i = 0; i < m_rowsCount; ++i ) m_rows.push_back(MakeBlankRow());
 	m_scrollback.clear();
 	m_scrollbackHead = 0;
@@ -163,6 +182,7 @@ void TerminalModel::Reset()
 
 void TerminalModel::Resize( std::size_t columns, std::size_t rows )
 {
+	NormalizeRowsOrder();
 	columns = std::max<std::size_t>(1, columns);
 	rows = std::max<std::size_t>(1, rows);
 	if( columns != m_columns ) {
@@ -245,6 +265,9 @@ bool TerminalModel::IsCombining( char32_t cp ) noexcept
 
 int TerminalModel::CodepointWidth( char32_t cp ) noexcept
 {
+	// Printable ASCII always occupies one terminal cell.  Keep the common shell
+	// output path out of the general Unicode grapheme state machine.
+	if( cp >= U' ' && cp <= U'~' ) return 1;
 	std::array<wchar_t, 2> units{};
 	const auto length = EncodeCodepoint(cp, units);
 	const auto measured = unicode::MeasureFirstGrapheme({ units.data(), length });
@@ -258,9 +281,9 @@ void TerminalModel::Print( char32_t codepoint )
 	// ordinary output retains the no-per-cell-allocation model.
 	if( m_cursorColumn != 0 ) {
 		auto previous = m_cursorColumn - 1;
-		while( previous != 0 && m_rows[m_cursorRow].cells[previous].continuation ) --previous;
-		auto& row = m_rows[m_cursorRow];
-		auto& previousCell = m_rows[m_cursorRow].cells[previous];
+		while( previous != 0 && RowAt(m_cursorRow).cells[previous].continuation ) --previous;
+		auto& row = RowAt(m_cursorRow);
+		auto& previousCell = row.cells[previous];
 		std::array<wchar_t, 2> encoded{};
 		const auto encodedLength = EncodeCodepoint(codepoint, encoded);
 		const auto combinedLength = static_cast<std::size_t>(previousCell.length) + encodedLength;
@@ -306,14 +329,14 @@ void TerminalModel::Print( char32_t codepoint )
 	const auto width = std::min<int>(static_cast<int>(m_columns), codepointWidth);
 	if( m_cursorColumn >= m_columns || (width == 2 && m_cursorColumn + 1 >= m_columns) ) {
 		if( m_modes.autowrap ) {
-			m_rows[m_cursorRow].wrapped = true;
+			RowAt(m_cursorRow).wrapped = true;
 			CarriageReturn();
 			LineFeed();
 		} else {
 			m_cursorColumn = m_columns - static_cast<std::size_t>(width);
 		}
 	}
-	auto& row = m_rows[m_cursorRow];
+	auto& row = RowAt(m_cursorRow);
 	// A printable character always replaces the entire grapheme it intersects.
 	// Preserve the rendition on a displaced half; only the newly printed cells
 	// receive the current rendition below.
@@ -374,9 +397,9 @@ void TerminalModel::ScrollUp( std::size_t lines )
 	const bool wholeMainScreen = m_scrollTop == 0 && m_scrollBottom == m_rowsCount - 1;
 	if( wholeMainScreen ) {
 		for( std::size_t i = 0; i < lines; ++i ) {
-			TerminalRow outgoing = std::move(m_rows.front());
-			m_rows.pop_front();
-			m_rows.push_back(RecycleForBlankRow(std::move(outgoing), m_attributes));
+			const auto outgoingIndex = m_rowsHead;
+			RecycleForBlankRow(m_rows[outgoingIndex], m_attributes);
+			m_rowsHead = (m_rowsHead + 1) % m_rows.size();
 		}
 		MarkDirtyRange(m_scrollTop, m_scrollBottom);
 		return;
@@ -385,6 +408,7 @@ void TerminalModel::ScrollUp( std::size_t lines )
 	// Partial DECSTBM regions are not scrollback. Rotate the row objects in
 	// place, then reset only the rows introduced at the bottom. This preserves
 	// all rows outside the region and avoids vector erase/insert churn.
+	NormalizeRowsOrder();
 	auto first = m_rows.begin() + static_cast<std::ptrdiff_t>(m_scrollTop);
 	auto last = m_rows.begin() + static_cast<std::ptrdiff_t>(m_scrollBottom + 1);
 	std::rotate(first, first + static_cast<std::ptrdiff_t>(lines), last);
@@ -396,6 +420,7 @@ void TerminalModel::ScrollDown( std::size_t lines )
 {
 	lines = std::min(lines, m_scrollBottom - m_scrollTop + 1);
 	if( lines == 0 ) return;
+	NormalizeRowsOrder();
 	const auto first = m_rows.begin() + static_cast<std::ptrdiff_t>(m_scrollTop);
 	const auto last = m_rows.begin() + static_cast<std::ptrdiff_t>(m_scrollBottom + 1);
 	std::rotate(first, last - static_cast<std::ptrdiff_t>(lines), last);
@@ -434,7 +459,7 @@ void TerminalModel::ClearCellRange( TerminalRow& row, std::size_t begin, std::si
 
 void TerminalModel::EraseLine( int mode )
 {
-	auto& row = m_rows[m_cursorRow];
+	auto& row = RowAt(m_cursorRow);
 	if( mode == 0 ) ClearCellRange(row, m_cursorColumn, m_columns);
 	else if( mode == 1 ) ClearCellRange(row, 0, std::min(m_columns, m_cursorColumn + 1));
 	else if( mode == 2 ) ClearCellRange(row, 0, m_columns);
@@ -443,15 +468,16 @@ void TerminalModel::EraseLine( int mode )
 
 void TerminalModel::EraseCharacters( std::size_t count )
 {
-	ClearCellRange(m_rows[m_cursorRow], m_cursorColumn,
+	auto& row = RowAt(m_cursorRow);
+	ClearCellRange(row, m_cursorColumn,
 		std::min(m_columns, m_cursorColumn + std::max<std::size_t>(1, count)));
-	RepairWideCells(m_rows[m_cursorRow]);
+	RepairWideCells(row);
 	MarkDirty(m_cursorRow);
 }
 
 void TerminalModel::InsertCharacters( std::size_t count )
 {
-	auto& row = m_rows[m_cursorRow];
+	auto& row = RowAt(m_cursorRow);
 	count = std::min(std::max<std::size_t>(1, count), m_columns - m_cursorColumn);
 	const auto sourceEnd = m_columns - count;
 	std::move_backward(row.cells.begin() + static_cast<std::ptrdiff_t>(m_cursorColumn),
@@ -469,7 +495,7 @@ void TerminalModel::InsertCharacters( std::size_t count )
 
 void TerminalModel::DeleteCharacters( std::size_t count )
 {
-	auto& row = m_rows[m_cursorRow];
+	auto& row = RowAt(m_cursorRow);
 	count = std::min(std::max<std::size_t>(1, count), m_columns - m_cursorColumn);
 	std::move(row.cells.begin() + static_cast<std::ptrdiff_t>(m_cursorColumn + count), row.cells.end(),
 		row.cells.begin() + static_cast<std::ptrdiff_t>(m_cursorColumn));
@@ -488,6 +514,7 @@ void TerminalModel::InsertLines( std::size_t count )
 {
 	if( m_cursorRow < m_scrollTop || m_cursorRow > m_scrollBottom ) return;
 	count = std::min(std::max<std::size_t>(1, count), m_scrollBottom - m_cursorRow + 1);
+	NormalizeRowsOrder();
 	const auto first = m_rows.begin() + static_cast<std::ptrdiff_t>(m_cursorRow);
 	const auto last = m_rows.begin() + static_cast<std::ptrdiff_t>(m_scrollBottom + 1);
 	std::rotate(first, last - static_cast<std::ptrdiff_t>(count), last);
@@ -499,6 +526,7 @@ void TerminalModel::DeleteLines( std::size_t count )
 {
 	if( m_cursorRow < m_scrollTop || m_cursorRow > m_scrollBottom ) return;
 	count = std::min(std::max<std::size_t>(1, count), m_scrollBottom - m_cursorRow + 1);
+	NormalizeRowsOrder();
 	const auto first = m_rows.begin() + static_cast<std::ptrdiff_t>(m_cursorRow);
 	const auto last = m_rows.begin() + static_cast<std::ptrdiff_t>(m_scrollBottom + 1);
 	std::rotate(first, first + static_cast<std::ptrdiff_t>(count), last);
@@ -510,10 +538,10 @@ void TerminalModel::EraseDisplay( int mode )
 {
 	if( mode == 0 ) {
 		EraseLine(0);
-		for( auto row = m_cursorRow + 1; row < m_rowsCount; ++row ) ClearCellRange(m_rows[row], 0, m_columns);
+		for( auto row = m_cursorRow + 1; row < m_rowsCount; ++row ) ClearCellRange(RowAt(row), 0, m_columns);
 		MarkDirtyRange(m_cursorRow, m_rowsCount - 1);
 	} else if( mode == 1 ) {
-		for( std::size_t row = 0; row < m_cursorRow; ++row ) ClearCellRange(m_rows[row], 0, m_columns);
+		for( std::size_t row = 0; row < m_cursorRow; ++row ) ClearCellRange(RowAt(row), 0, m_columns);
 		EraseLine(1);
 		MarkDirtyRange(0, m_cursorRow);
 	} else if( mode == 2 || mode == 3 ) {
@@ -539,6 +567,7 @@ void TerminalModel::SetAlternateScreen( bool enabled )
 {
 	if( enabled == m_alternateScreen ) return;
 	if( enabled ) {
+		NormalizeRowsOrder();
 		m_savedMainRows = std::move(m_rows);
 		m_savedMainCursorColumn = m_cursorColumn;
 		m_savedMainCursorRow = m_cursorRow;
@@ -549,6 +578,7 @@ void TerminalModel::SetAlternateScreen( bool enabled )
 		m_savedMainAttributes = m_attributes;
 		m_attributes = {};
 		m_rows.clear();
+		m_rowsHead = 0;
 		for( std::size_t i = 0; i < m_rowsCount; ++i ) m_rows.push_back(MakeBlankRow());
 		m_cursorColumn = m_cursorRow = 0;
 		m_savedCursorColumn = m_savedCursorRow = 0;
@@ -556,6 +586,7 @@ void TerminalModel::SetAlternateScreen( bool enabled )
 		m_scrollBottom = m_rowsCount - 1;
 	} else {
 		m_rows = std::move(m_savedMainRows);
+		m_rowsHead = 0;
 		m_cursorColumn = std::min(m_savedMainCursorColumn, m_columns - 1);
 		m_cursorRow = std::min(m_savedMainCursorRow, m_rowsCount - 1);
 		m_savedCursorColumn = std::min(m_savedMainSavedCursorColumn, m_columns - 1);

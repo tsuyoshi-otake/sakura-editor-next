@@ -26,6 +26,7 @@
 #include <mutex>
 #include <span>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <imm.h>
@@ -341,6 +342,24 @@ struct CTerminalTool::Impl {
 		std::size_t root{};
 	};
 
+	struct WorkspaceProjectionState final {
+		TerminalDetachedTabProjection tabs;
+		std::vector<TerminalPaneGroup> paneGroups;
+		std::optional<std::size_t> activePaneGroup;
+		std::wstring workingDirectory;
+		bool terminalTabsFocused{};
+		std::size_t terminalTabsFirstVisible{};
+		bool renderersMaterialized{};
+	};
+
+	struct WorkspaceProjectionApplyResult final {
+		bool succeeded{};
+		bool startedSession{};
+		std::size_t attachedTabCount{};
+		std::uint32_t errorCode{};
+		TerminalWorkspaceSwitchOutcome failureOutcome{ TerminalWorkspaceSwitchOutcome::AttachFailed };
+	};
+
 	std::vector<TerminalPaneGroup> paneGroups;
 	std::optional<std::size_t> activePaneGroup;
 	std::vector<TerminalPane> panes;
@@ -377,6 +396,8 @@ struct CTerminalTool::Impl {
 	TerminalShortcutPreset shortcutPreset{ TerminalShortcutPreset::Screen };
 	bool shortcutPrefixArmed{};
 	std::function<void(TerminalShortcutPreset)> shortcutPresetSink;
+	std::unordered_map<std::wstring, WorkspaceProjectionState> workspaceRegistry;
+	std::wstring currentWorkspaceIdentityKey;
 
 	TerminalPaneGroup* ActiveGroup() noexcept
 	{
@@ -774,6 +795,99 @@ struct CTerminalTool::Impl {
 	bool HasVisibleContentBounds() const noexcept
 	{
 		return bounds.right > bounds.left && bounds.bottom > bounds.top;
+	}
+
+	void PrepareProjectionDetach() noexcept
+	{
+		if( window ) {
+			::KillTimer(window, kSynchronizedOutputTimer);
+			::KillTimer(window, kProtocolInputRetryTimer);
+		}
+		for( auto& pane : panes ) {
+			if( pane.window ) pane.window->ResetSessionInputState();
+		}
+		DestroyPaneRenderers();
+		terminalTabsFocused = false;
+		protocolInputRetryScheduled = false;
+		draggingPaneDivider.reset();
+	}
+
+	WorkspaceProjectionState DetachCurrentProjection() noexcept
+	{
+		WorkspaceProjectionState state;
+		state.paneGroups = std::move(paneGroups);
+		state.activePaneGroup = activePaneGroup;
+		state.workingDirectory = workingDirectory;
+		state.terminalTabsFocused = terminalTabsFocused;
+		state.terminalTabsFirstVisible = terminalTabsFirstVisible;
+		state.renderersMaterialized = !panes.empty();
+		PrepareProjectionDetach();
+		state.tabs = manager->DetachTabs();
+		paneGroups.clear();
+		activePaneGroup.reset();
+		terminalTabsFirstVisible = 0;
+		return state;
+	}
+
+	[[nodiscard]] WorkspaceProjectionApplyResult ApplyWorkspaceProjection(
+		WorkspaceProjectionState state,
+		std::wstring nextWorkingDirectory,
+		bool renderProjection,
+		bool startWhenEmpty )
+	{
+		WorkspaceProjectionApplyResult result;
+		PrepareProjectionDetach();
+		paneGroups.clear();
+		activePaneGroup.reset();
+		terminalTabsFirstVisible = 0;
+		workingDirectory = nextWorkingDirectory.empty() ? std::move(state.workingDirectory)
+			: std::move(nextWorkingDirectory);
+		const auto attach = manager->AttachTabs(std::move(state.tabs));
+		if( !attach.Succeeded() ) {
+			result.errorCode = attach.errorCode;
+			result.failureOutcome = TerminalWorkspaceSwitchOutcome::AttachFailed;
+			return result;
+		}
+		result.attachedTabCount = attach.attachedTabCount;
+		paneGroups = std::move(state.paneGroups);
+		activePaneGroup = state.activePaneGroup;
+		terminalTabsFocused = state.terminalTabsFocused;
+		terminalTabsFirstVisible = state.terminalTabsFirstVisible;
+
+		if( startWhenEmpty && manager->TabCount() == 0 ) {
+			const auto id = EnsureSessionStarted();
+			if( !id ) {
+				result.errorCode = ERROR_NOT_ENOUGH_MEMORY;
+				result.failureOutcome = TerminalWorkspaceSwitchOutcome::StartFailed;
+				return result;
+			}
+			const auto tabs = manager->Snapshot();
+			const auto found = std::ranges::find(tabs, *id, &TerminalTabSnapshot::id);
+			if( found == tabs.end() || found->state == TerminalSessionState::Failed ) {
+				result.errorCode = found == tabs.end() ? ERROR_GEN_FAILURE : found->errorCode;
+				result.failureOutcome = TerminalWorkspaceSwitchOutcome::StartFailed;
+				return result;
+			}
+			result.startedSession = true;
+		} else if( renderProjection && window ) {
+			if( !EnsureTerminalWindow() ) {
+				result.errorCode = ERROR_NOT_ENOUGH_MEMORY;
+				result.failureOutcome = TerminalWorkspaceSwitchOutcome::AttachFailed;
+				return result;
+			}
+			LayoutChildren();
+		}
+
+		InvalidateTabs();
+		InvalidateTerminalTabs();
+		result.succeeded = true;
+		return result;
+	}
+
+	void StoreWorkspaceProjection( const std::wstring& key, WorkspaceProjectionState state )
+	{
+		if( key.empty() ) return;
+		workspaceRegistry[key] = std::move(state);
 	}
 
 	TerminalSize CurrentSize() const noexcept
@@ -1894,20 +2008,90 @@ struct CTerminalTool::Impl {
 		return true;
 	}
 
+	TerminalWorkspaceSwitchResult SwitchWorkspace( TerminalWorkspaceSwitchRequest request )
+	{
+		TerminalWorkspaceSwitchResult result;
+		if( closed ) return result;
+		const auto oldKey = request.oldWorkspaceIdentityKey.empty()
+			? currentWorkspaceIdentityKey : request.oldWorkspaceIdentityKey;
+		if( currentWorkspaceIdentityKey.empty() ) currentWorkspaceIdentityKey = oldKey;
+
+		if( oldKey == request.newWorkspaceIdentityKey ) {
+			currentWorkspaceIdentityKey = request.newWorkspaceIdentityKey;
+			workingDirectory = std::move(request.newWorkingDirectory);
+			if( request.terminalVisible && manager->TabCount() == 0 ) {
+				const auto id = EnsureSessionStarted();
+				if( !id ) {
+					result.outcome = TerminalWorkspaceSwitchOutcome::StartFailed;
+					result.errorCode = ERROR_NOT_ENOUGH_MEMORY;
+					return result;
+				}
+				const auto tabs = manager->Snapshot();
+				const auto found = std::ranges::find(tabs, *id, &TerminalTabSnapshot::id);
+				if( found == tabs.end() || found->state == TerminalSessionState::Failed ) {
+					result.outcome = TerminalWorkspaceSwitchOutcome::StartFailed;
+					result.errorCode = found == tabs.end() ? ERROR_GEN_FAILURE : found->errorCode;
+					return result;
+				}
+				result.outcome = TerminalWorkspaceSwitchOutcome::Created;
+				result.startedTabCount = 1;
+				return result;
+			}
+			InvalidateTabs();
+			InvalidateTerminalTabs();
+			result.outcome = TerminalWorkspaceSwitchOutcome::Unchanged;
+			result.restoredTabCount = manager->TabCount();
+			return result;
+		}
+
+		auto oldState = DetachCurrentProjection();
+		result.savedTabCount = oldState.tabs.tabs.size();
+		WorkspaceProjectionState targetState;
+		std::wstring targetWorkingDirectory = request.newWorkingDirectory;
+		if( const auto found = workspaceRegistry.find(request.newWorkspaceIdentityKey);
+			found != workspaceRegistry.end() ) {
+			targetState = found->second;
+			targetWorkingDirectory = targetState.workingDirectory;
+		}
+		if( targetWorkingDirectory.empty() ) targetWorkingDirectory = request.newWorkingDirectory;
+
+		const auto applied = ApplyWorkspaceProjection(
+			std::move(targetState), std::move(targetWorkingDirectory),
+			request.terminalVisible, request.terminalVisible);
+		if( applied.succeeded ) {
+			StoreWorkspaceProjection(oldKey, std::move(oldState));
+			workspaceRegistry.erase(request.newWorkspaceIdentityKey);
+			currentWorkspaceIdentityKey = std::move(request.newWorkspaceIdentityKey);
+			result.restoredTabCount = applied.attachedTabCount;
+			result.startedTabCount = applied.startedSession ? 1 : 0;
+			if( applied.startedSession ) result.outcome = TerminalWorkspaceSwitchOutcome::Created;
+			else if( applied.attachedTabCount != 0 ) result.outcome = TerminalWorkspaceSwitchOutcome::Attached;
+			else result.outcome = TerminalWorkspaceSwitchOutcome::Detached;
+			return result;
+		}
+
+		auto failedTarget = DetachCurrentProjection();
+		if( !failedTarget.tabs.tabs.empty() || !failedTarget.paneGroups.empty() ) {
+			StoreWorkspaceProjection(request.newWorkspaceIdentityKey, std::move(failedTarget));
+		}
+		const bool restoreRenderers = oldState.renderersMaterialized;
+		const auto restored = ApplyWorkspaceProjection(
+			std::move(oldState), std::wstring{}, restoreRenderers, false);
+		result.outcome = restored.succeeded
+			? applied.failureOutcome : TerminalWorkspaceSwitchOutcome::RestoreFailed;
+		result.oldProjectionRestored = restored.succeeded;
+		result.restoredTabCount = restored.attachedTabCount;
+		result.errorCode = restored.succeeded ? applied.errorCode : restored.errorCode;
+		return result;
+	}
+
 	TerminalWorkspaceResetResult ResetForWorkspace( std::wstring nextWorkingDirectory, bool recreateSession )
 	{
 		TerminalWorkspaceResetResult result;
 		if( closed ) return result;
 		workingDirectory = std::move(nextWorkingDirectory);
 
-		if( window ) {
-			::KillTimer(window, kSynchronizedOutputTimer);
-			::KillTimer(window, kProtocolInputRetryTimer);
-		}
-		for( auto& pane : panes ) {
-			if( pane.window ) pane.window->ResetSessionInputState();
-		}
-		DestroyPaneRenderers();
+		PrepareProjectionDetach();
 		paneGroups.clear();
 		activePaneGroup.reset();
 		terminalTabsFocused = false;
@@ -1946,6 +2130,20 @@ struct CTerminalTool::Impl {
 		}
 		result.outcome = TerminalWorkspaceResetOutcome::Restarted;
 		return result;
+	}
+
+	void CloseAllWorkspaceProjections() noexcept
+	{
+		const auto deadline = std::chrono::steady_clock::now()
+			+ CTerminalSession::kGracefulCloseTimeout + CTerminalSession::kForcedCloseTimeout;
+		auto activeProjection = manager->DetachTabs();
+		for( auto& entry : workspaceRegistry ) {
+			const auto attached = manager->AttachTabs(std::move(entry.second.tabs));
+			if( attached.Succeeded() ) static_cast<void>(manager->ClearTabs(deadline));
+		}
+		workspaceRegistry.clear();
+		const auto activeAttached = manager->AttachTabs(std::move(activeProjection));
+		if( activeAttached.Succeeded() ) static_cast<void>(manager->ClearTabs(deadline));
 	}
 
 	bool InsertPaneSplit( TerminalPaneGroup& group, std::uint64_t primaryId,
@@ -2306,7 +2504,6 @@ bool CTerminalTool::PreTranslateMessage( MSG& message )
 void CTerminalTool::Close()
 {
 	if( !m_impl || m_impl->closed ) return;
-	m_impl->closed = true;
 	{
 		const std::lock_guard lock(m_impl->gate->mutex);
 		m_impl->gate->alive = false;
@@ -2320,7 +2517,9 @@ void CTerminalTool::Close()
 	m_impl->DestroyPaneRenderers();
 	m_impl->paneGroups.clear();
 	m_impl->activePaneGroup.reset();
+	m_impl->CloseAllWorkspaceProjections();
 	m_impl->manager->Close();
+	m_impl->closed = true;
 	if( m_impl->headerHost && ::GetCapture() == m_impl->headerHost ) ::ReleaseCapture();
 	m_impl->headerHost = nullptr;
 	m_impl->hostedHeaderBounds = {};
@@ -2333,6 +2532,12 @@ void CTerminalTool::SetWorkingDirectory( std::wstring workingDirectory )
 	// Existing sessions keep their original CWD. This value is used only by a
 	// subsequently created or explicitly restarted tab.
 	m_impl->workingDirectory = std::move(workingDirectory);
+}
+
+TerminalWorkspaceSwitchResult CTerminalTool::SwitchWorkspace(
+	TerminalWorkspaceSwitchRequest request )
+{
+	return m_impl->SwitchWorkspace(std::move(request));
 }
 
 TerminalWorkspaceResetResult CTerminalTool::ResetForWorkspace(
@@ -2531,6 +2736,35 @@ bool CTerminalTool::HasStartedAnySession() const noexcept
 bool CTerminalTool::HasCreatedRenderer() const noexcept
 {
 	return !m_impl->panes.empty();
+}
+
+std::vector<TerminalTabProjectionRecord> CTerminalTool::TerminalProjectionSnapshot() const
+{
+	return m_impl->manager->ProjectionSnapshot();
+}
+
+std::size_t CTerminalTool::WorkspaceRegistryEntryCount() const noexcept
+{
+	return m_impl && !m_impl->closed ? m_impl->workspaceRegistry.size() : 0;
+}
+
+bool CTerminalTool::HasWorkspaceProjection( std::wstring_view workspaceIdentityKey ) const noexcept
+{
+	if( !m_impl || m_impl->closed ) return false;
+	return std::any_of(m_impl->workspaceRegistry.begin(), m_impl->workspaceRegistry.end(),
+		[workspaceIdentityKey](const auto& entry) {
+			return std::wstring_view(entry.first) == workspaceIdentityKey;
+		});
+}
+
+void CTerminalTool::DiscardWorkspaceProjection( std::wstring_view workspaceIdentityKey ) noexcept
+{
+	if( !m_impl || m_impl->closed || workspaceIdentityKey.empty()
+		|| workspaceIdentityKey == m_impl->currentWorkspaceIdentityKey ) return;
+	const auto found = m_impl->workspaceRegistry.find(std::wstring(workspaceIdentityKey));
+	if( found == m_impl->workspaceRegistry.end()
+		|| !found->second.tabs.tabs.empty() || !found->second.paneGroups.empty() ) return;
+	m_impl->workspaceRegistry.erase(found);
 }
 
 HWND CTerminalTool::GetHwnd() const noexcept

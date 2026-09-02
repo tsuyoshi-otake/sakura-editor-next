@@ -2110,6 +2110,129 @@ TEST(CWorkbenchRuntime, WorkspaceTransitionsReplaceSourcesAndStopDisposesRefresh
 	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Start().code);
 }
 
+TEST(CWorkbenchRuntime, SwitchToWorkspaceConfigurationParsesBeforeCommittingTheCanonicalContext)
+{
+	RuntimeFixture fixture(Bootstrap());
+	auto workspaceConfig = Parse(L"file:///C:/Work/project.code-workspace");
+	auto first = Parse(L"file:///C:/One");
+	auto second = Parse(L"file:///C:/Two");
+	fixture.files->Set(workspaceConfig, Bytes(R"json({
+		// The switch path accepts the same JSONC document shape as startup.
+		"folders": [
+			{ "path": "../One", "name": "one" },
+			{ "uri": "file://localhost/C:/Two", "name": "two" }
+		]
+	})json"));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+
+	const auto result = fixture.runtime->SwitchToWorkspaceConfiguration(workspaceConfig);
+	ASSERT_EQ(EWorkspaceContextOutcome::Succeeded, result.outcome);
+	EXPECT_EQ(EWorkspaceKind::Workspace, result.snapshot.kind);
+	ASSERT_TRUE(result.snapshot.workspaceConfigUri.has_value());
+	EXPECT_TRUE(UriIdentityService::IsEqual(workspaceConfig, *result.snapshot.workspaceConfigUri));
+	ASSERT_EQ(2U, result.snapshot.folders.size());
+	EXPECT_TRUE(UriIdentityService::IsEqual(first, result.snapshot.folders[0].uri));
+	EXPECT_TRUE(UriIdentityService::IsEqual(second, result.snapshot.folders[1].uri));
+	EXPECT_EQ(L"one", result.snapshot.folders[0].displayName);
+	EXPECT_EQ(L"two", result.snapshot.folders[1].displayName);
+	EXPECT_EQ(result.snapshot.workspaceIdentityKey,
+		fixture.runtime->WorkspaceContext().Snapshot().workspaceIdentityKey);
+}
+
+TEST(CWorkbenchRuntime, InspectWorkspaceConfigurationIsReadOnlyAndReturnsResolvedFolders)
+{
+	RuntimeFixture fixture(Bootstrap());
+	auto workspaceConfig = Parse(L"file:///C:/Work/preview.code-workspace");
+	auto first = Parse(L"file:///C:/One");
+	auto second = Parse(L"file:///C:/Two");
+	fixture.files->Set(workspaceConfig, Bytes(R"json({
+		"folders": [
+			{ "path": "../One", "name": "one" },
+			{ "uri": "file:///C:/Two", "name": "two" }
+		]
+	})json"));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+	const auto before = fixture.runtime->WorkspaceContext().Snapshot();
+
+	const auto inspected = fixture.runtime->InspectWorkspaceConfiguration(workspaceConfig);
+	ASSERT_TRUE(inspected.Succeeded());
+	ASSERT_EQ(2U, inspected.document->folders.size());
+	EXPECT_TRUE(UriIdentityService::IsEqual(first, inspected.document->folders[0].uri));
+	EXPECT_TRUE(UriIdentityService::IsEqual(second, inspected.document->folders[1].uri));
+	const auto after = fixture.runtime->WorkspaceContext().Snapshot();
+	EXPECT_EQ(before.revision, after.revision);
+	EXPECT_EQ(before.workspaceIdentityKey, after.workspaceIdentityKey);
+	EXPECT_EQ(before.kind, after.kind);
+}
+
+TEST(CWorkbenchRuntime, InspectWorkspaceConfigurationFailsClosedAfterStopWithoutReading)
+{
+	RuntimeFixture fixture(Bootstrap());
+	auto workspaceConfig = Parse(L"file:///C:/Work/preview.code-workspace");
+	fixture.files->Set(workspaceConfig,
+		Bytes(R"json({ "folders": [{ "uri": "file:///C:/One" }] })json"));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+	ASSERT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
+	const auto readsBefore = fixture.files->Reads().size();
+
+	EXPECT_FALSE(fixture.runtime->InspectWorkspaceConfiguration(workspaceConfig).Succeeded());
+	EXPECT_EQ(readsBefore, fixture.files->Reads().size());
+}
+
+TEST(CWorkbenchRuntime, SwitchToWorkspaceConfigurationFailureKeepsTheExactLastStableContext)
+{
+	RuntimeFixture fixture(Bootstrap());
+	auto folder = Parse(L"file:///C:/Stable");
+	auto missing = Parse(L"file:///C:/Work/missing.code-workspace");
+	auto malformed = Parse(L"file:///C:/Work/malformed.code-workspace");
+	fixture.files->Set(malformed, Bytes(R"json({ "folders": [)json"));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+	ASSERT_EQ(EWorkspaceContextOutcome::Succeeded,
+		fixture.runtime->SwitchToFolderWorkspace(folder, L"Stable").outcome);
+	const auto before = fixture.runtime->WorkspaceContext().Snapshot();
+
+	const auto wrongScheme = fixture.runtime->SwitchToWorkspaceConfiguration(Parse(L"https://example.invalid/project.code-workspace"));
+	EXPECT_EQ(EWorkspaceContextOutcome::Failed, wrongScheme.outcome);
+	EXPECT_EQ(before.revision, wrongScheme.snapshot.revision);
+	EXPECT_EQ(before.workspaceIdentityKey, wrongScheme.snapshot.workspaceIdentityKey);
+
+	const auto unreadable = fixture.runtime->SwitchToWorkspaceConfiguration(missing);
+	EXPECT_EQ(EWorkspaceContextOutcome::Failed, unreadable.outcome);
+	EXPECT_EQ(before.revision, unreadable.snapshot.revision);
+	EXPECT_EQ(before.workspaceIdentityKey, unreadable.snapshot.workspaceIdentityKey);
+
+	const auto invalid = fixture.runtime->SwitchToWorkspaceConfiguration(malformed);
+	EXPECT_EQ(EWorkspaceContextOutcome::Failed, invalid.outcome);
+	EXPECT_EQ(before.revision, invalid.snapshot.revision);
+	EXPECT_EQ(before.workspaceIdentityKey, invalid.snapshot.workspaceIdentityKey);
+
+	const auto after = fixture.runtime->WorkspaceContext().Snapshot();
+	EXPECT_EQ(before.revision, after.revision);
+	EXPECT_EQ(before.workspaceIdentityKey, after.workspaceIdentityKey);
+	EXPECT_EQ(before.kind, after.kind);
+	ASSERT_EQ(before.folders.size(), after.folders.size());
+	ASSERT_EQ(1U, after.folders.size());
+	EXPECT_TRUE(UriIdentityService::IsEqual(folder, after.folders.front().uri));
+}
+
+TEST(CWorkbenchRuntime, SwitchToWorkspaceConfigurationAfterStopDoesNotReadOrMutate)
+{
+	RuntimeFixture fixture(Bootstrap());
+	auto workspaceConfig = Parse(L"file:///C:/Work/project.code-workspace");
+	fixture.files->Set(workspaceConfig,
+		Bytes(R"json({ "folders": [{ "uri": "file:///C:/One", "name": "one" }] })json"));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+	ASSERT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
+	const auto before = fixture.runtime->WorkspaceContext().Snapshot();
+	const auto readsBefore = fixture.files->Reads().size();
+
+	const auto result = fixture.runtime->SwitchToWorkspaceConfiguration(workspaceConfig);
+	EXPECT_EQ(EWorkspaceContextOutcome::Failed, result.outcome);
+	EXPECT_EQ(before.workspaceIdentityKey, result.snapshot.workspaceIdentityKey);
+	EXPECT_EQ(before.revision, result.snapshot.revision);
+	EXPECT_EQ(readsBefore, fixture.files->Reads().size());
+}
+
 TEST(CWorkbenchRuntime, WorkspaceFolderDocumentsKeepStableControllerIdentityAcrossMembershipTransitions)
 {
 	auto workspaceConfig = Parse(L"file:///C:/Work/stable-folders.code-workspace");

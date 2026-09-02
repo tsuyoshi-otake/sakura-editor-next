@@ -15,7 +15,9 @@
 
 #include <algorithm>
 #include <chrono>
+#include <deque>
 #include <future>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -35,6 +37,8 @@ constexpr int kColumnGapDip = 8;
 constexpr int kListControlId = 1;
 constexpr UINT_PTR kListSubclassId = 0x7072;
 constexpr UINT kRemoveProjectMenuId = 1;
+constexpr std::size_t kMaximumBranchRepositoriesPerProject = 8;
+constexpr std::size_t kMaximumBranchRequestsPerRefresh = 64;
 
 int ScaleDip(const int value, const unsigned int dpi) noexcept
 {
@@ -47,15 +51,30 @@ enum class EPageState : std::uint8_t {
 	Unavailable,
 };
 
+struct ProjectBranchCacheEntry final {
+	std::vector<ProjectRepositoryBranchObservation> observations;
+	std::vector<std::optional<agent::AgentWorkspacesProjectionResult>> projections;
+	ProjectBranchSummary summary;
+	std::size_t completed{};
+	bool truncated = false;
+};
+
 class CProjectsPage final : public viewcontainer::IViewContainerPage,
 	public viewcontainer::IViewContainerPageProjection {
 public:
 	explicit CProjectsPage(ProjectsPageOptions options) :
-		m_options(std::move(options)),
-		m_discovery(std::make_unique<worktree::GitWorktreeDiscoverySource>(
-			std::make_shared<worktree::GitWorktreeListRunner>(),
-			std::make_shared<worktree::SystemGitWorktreeRetryJitterSource>()))
+		m_options(std::move(options))
 	{
+		if (m_options.gitDiscoveryFactory) {
+			m_discovery = m_options.gitDiscoveryFactory();
+		} else {
+			worktree::GitWorktreeDiscoveryLimits limits;
+			limits.commandTimeoutMilliseconds = 3000;
+			limits.retry.maximumAttempts = 1;
+			m_discovery = std::make_unique<worktree::GitWorktreeDiscoverySource>(
+				std::make_shared<worktree::GitWorktreeListRunner>(),
+				std::make_shared<worktree::SystemGitWorktreeRetryJitterSource>(), limits);
+		}
 	}
 
 	~CProjectsPage() override
@@ -67,7 +86,7 @@ public:
 	{
 		if (m_created || m_closeInvoked || parkingParent == nullptr
 			|| !::IsWindow(parkingParent) || !m_options.projects || !m_options.workspace
-			|| !m_options.workspaceRoot || !m_options.activateProject
+			|| !m_options.workspaceRoot || !m_options.repositoryRoots || !m_options.activateProject
 			|| !m_options.activateWorktree || !m_options.removeProject
 			|| !m_discovery) return false;
 		m_parkingParent = parkingParent;
@@ -412,6 +431,24 @@ private:
 	void Refresh() noexcept
 	{
 		if (!m_created || !m_discovery) return;
+		if (m_currentBranchRequest) {
+			m_restartPending = true;
+			(void)m_discovery->CancelCurrent();
+			return;
+		}
+		BeginBranchRefresh();
+	}
+
+	void BeginBranchRefresh() noexcept
+	{
+		if (m_window != nullptr) (void)::KillTimer(m_window, kRefreshTimer);
+		m_branchQueue.clear();
+		m_currentBranchRequest.reset();
+		m_refresh = {};
+		m_projectBranchKeys.clear();
+		m_branchCache.clear();
+		m_worktrees.reset();
+		m_currentWorkspaceRoot.clear();
 		try {
 			auto projects = m_options.projects();
 			if (!projects) {
@@ -423,6 +460,7 @@ private:
 			}
 			m_projects = std::move(*projects);
 			m_workspace = m_options.workspace();
+			m_currentWorkspaceRoot = m_options.workspaceRoot();
 		} catch (...) {
 			m_projects.clear();
 			m_rows.clear();
@@ -430,69 +468,131 @@ private:
 			SetState(EPageState::Unavailable);
 			return;
 		}
-		m_worktrees.reset();
-		m_worktreesUnavailable = false;
-		RebuildProjection();
 		if (m_projects.empty()) {
+			RebuildProjection();
 			SetState(EPageState::Empty);
 			return;
 		}
 		SetState(EPageState::Loaded);
-		std::wstring root;
-		try { root = m_options.workspaceRoot(); }
-		catch (...) { m_worktreesUnavailable = true; InvalidateContent(); return; }
-		if (root.empty()) {
-			m_requestRoot.clear();
-			m_pendingRoot.clear();
-			m_loadingWorktrees = false;
-			m_worktreesUnavailable = m_workspace.kind == config::EWorkspaceKind::Workspace
-				&& m_workspace.folders.size() != 1;
-			if (m_refresh.completion.valid()
-				&& m_refresh.completion.wait_for(std::chrono::milliseconds(0))
-					!= std::future_status::ready) {
-				(void)m_discovery->CancelCurrent();
-			}
-			InvalidateContent();
-			return;
-		}
-		if (m_refresh.completion.valid()
-			&& m_refresh.completion.wait_for(std::chrono::milliseconds(0))
-				!= std::future_status::ready) {
-			if (root == m_requestRoot) return;
-			m_pendingRoot = std::move(root);
-			(void)m_discovery->CancelCurrent();
-			m_loadingWorktrees = true;
-			InvalidateContent();
-			return;
-		}
-		StartRefresh(std::move(root));
-	}
 
-	void StartRefresh(std::wstring root) noexcept
-	{
 		try {
-			auto refresh = m_discovery->Refresh(root);
-			if ((refresh.admission != worktree::EGitWorktreeRefreshAdmission::Started
-				&& refresh.admission != worktree::EGitWorktreeRefreshAdmission::JoinedInFlight)
-				|| !refresh.completion.valid()) {
-				m_worktreesUnavailable = true;
-				m_loadingWorktrees = false;
+			const auto base = ProjectProjects(m_projects, m_workspace, nullptr, false);
+			m_currentProjectIndex = base.currentProjectIndex;
+			std::vector<ProjectBranchDiscoveryTarget> targets;
+			targets.reserve(m_projects.size());
+			m_projectBranchKeys.reserve(m_projects.size());
+			for (std::size_t index = 0; index < m_projects.size(); ++index) {
+				const auto identity = platform::uri::UriIdentityService::MakeComparisonKey(
+					m_projects[index].uri);
+				m_projectBranchKeys.push_back(identity);
+				ProjectBranchCacheEntry entry;
+				std::optional<std::vector<std::wstring>> roots;
+				try { roots = m_options.repositoryRoots(m_projects[index]); }
+				catch (...) { roots.reset(); }
+				if (!roots) {
+					entry.summary = {
+						.status = EProjectBranchSummaryStatus::Unavailable,
+						.label = L"Git unavailable",
+					};
+				}
+				m_branchCache.emplace(identity, std::move(entry));
+				targets.push_back({
+					.identity = identity,
+					.repositoryRoots = roots ? std::move(*roots) : std::vector<std::wstring>{},
+					.currentProject = m_currentProjectIndex && *m_currentProjectIndex == index,
+				});
+			}
+			const auto plan = PlanProjectBranchDiscovery(targets,
+				kMaximumBranchRepositoriesPerProject, kMaximumBranchRequestsPerRefresh);
+			for (const auto& request : plan.requests) {
+				auto found = m_branchCache.find(request.identity);
+				if (found == m_branchCache.end()) continue;
+				auto& entry = found->second;
+				if (entry.observations.size() <= request.repositoryIndex) {
+					entry.observations.resize(request.repositoryIndex + 1U);
+					entry.projections.resize(request.repositoryIndex + 1U);
+				}
+				m_branchQueue.push_back(request);
+			}
+			for (std::size_t index = 0; index < m_projectBranchKeys.size(); ++index) {
+				auto found = m_branchCache.find(m_projectBranchKeys[index]);
+				if (found == m_branchCache.end()) continue;
+				auto& entry = found->second;
+				entry.truncated = index < plan.truncatedProjects.size()
+					&& plan.truncatedProjects[index];
+				if (entry.summary.status == EProjectBranchSummaryStatus::Unavailable) continue;
+				entry.summary = SummarizeProjectBranches(entry.observations,
+					entry.observations.empty(), entry.truncated);
+			}
+			if (!m_branchQueue.empty()
+				&& (m_window == nullptr || ::SetTimer(m_window, kRefreshTimer,
+					kRefreshPollMilliseconds, nullptr) == 0)) {
+				while (!m_branchQueue.empty()) {
+					CompleteUnavailable(m_branchQueue.front());
+					m_branchQueue.pop_front();
+				}
+				RebuildProjection();
 				InvalidateContent();
 				return;
 			}
-			m_requestRoot = std::move(root);
-			m_refresh = std::move(refresh);
-			m_loadingWorktrees = true;
-			m_worktreesUnavailable = false;
-			InvalidateContent();
-			if (m_window != nullptr) {
-				(void)::SetTimer(m_window, kRefreshTimer, kRefreshPollMilliseconds, nullptr);
-			}
+			RebuildProjection();
+			StartNextBranchRequest();
 		} catch (...) {
-			m_loadingWorktrees = false;
-			m_worktreesUnavailable = true;
-			InvalidateContent();
+			if (m_window != nullptr) (void)::KillTimer(m_window, kRefreshTimer);
+			m_branchQueue.clear();
+			m_currentBranchRequest.reset();
+			m_branchCache.clear();
+			m_projectBranchKeys.clear();
+			m_rows.clear();
+			RebuildList();
+			SetState(EPageState::Unavailable);
 		}
+	}
+
+	void CompleteUnavailable(const ProjectBranchDiscoveryRequest& request) noexcept
+	{
+		try {
+			auto found = m_branchCache.find(request.identity);
+			if (found == m_branchCache.end()
+				|| request.repositoryIndex >= found->second.observations.size()) return;
+			auto& entry = found->second;
+			entry.observations[request.repositoryIndex].unavailable = true;
+			++entry.completed;
+			entry.summary = SummarizeProjectBranches(entry.observations,
+				entry.completed == entry.observations.size(), entry.truncated);
+		} catch (...) {
+			auto found = m_branchCache.find(request.identity);
+			if (found == m_branchCache.end()) return;
+			found->second.summary.status = EProjectBranchSummaryStatus::Unavailable;
+			found->second.summary.label.clear();
+		}
+	}
+
+	void StartNextBranchRequest() noexcept
+	{
+		while (!m_branchQueue.empty()) {
+			auto request = std::move(m_branchQueue.front());
+			m_branchQueue.pop_front();
+			worktree::GitWorktreeRefresh refresh;
+			try { refresh = m_discovery->Refresh(request.repositoryRoot); }
+			catch (...) { CompleteUnavailable(request); continue; }
+			if ((refresh.admission != worktree::EGitWorktreeRefreshAdmission::Started
+				&& refresh.admission != worktree::EGitWorktreeRefreshAdmission::JoinedInFlight)
+				|| !refresh.completion.valid()) {
+				CompleteUnavailable(request);
+				continue;
+			}
+			m_currentBranchRequest = std::move(request);
+			m_refresh = std::move(refresh);
+			RebuildProjection();
+			InvalidateContent();
+			return;
+		}
+		m_currentBranchRequest.reset();
+		m_refresh = {};
+		if (m_window != nullptr) (void)::KillTimer(m_window, kRefreshTimer);
+		RebuildProjection();
+		InvalidateContent();
 	}
 
 	void PollRefresh() noexcept
@@ -500,45 +600,74 @@ private:
 		if (!m_refresh.completion.valid()
 			|| m_refresh.completion.wait_for(std::chrono::milliseconds(0))
 				!= std::future_status::ready) return;
-		if (m_window != nullptr) (void)::KillTimer(m_window, kRefreshTimer);
-		m_loadingWorktrees = false;
-		const bool superseded = !m_pendingRoot.empty();
+		if (!m_currentBranchRequest) {
+			m_refresh = {};
+			return;
+		}
+		auto request = std::move(*m_currentBranchRequest);
+		m_currentBranchRequest.reset();
+		const bool superseded = m_restartPending;
 		try {
 			const auto& result = m_refresh.completion.get();
-			if (!superseded && !m_requestRoot.empty() && result.Succeeded()) {
-				auto projected = agent::ProjectAgentWorkspaces(result.records, m_requestRoot,
-					m_selectedWorktreeIdentity);
-				if (projected.Succeeded()) {
-					m_worktrees = std::move(projected);
-					m_worktreesUnavailable = false;
-				} else {
-					m_worktreesUnavailable = true;
+			if (!superseded) {
+				auto found = m_branchCache.find(request.identity);
+				if (found != m_branchCache.end()
+					&& request.repositoryIndex < found->second.observations.size()) {
+					auto& entry = found->second;
+					if (result.Succeeded()) {
+						auto projected = agent::ProjectAgentWorkspaces(result.records,
+							request.repositoryRoot, m_selectedWorktreeIdentity);
+						if (projected.Succeeded() && projected.currentIndex
+							&& *projected.currentIndex < projected.rows.size()) {
+							auto& observation = entry.observations[request.repositoryIndex];
+							observation.label = ProjectWorktreeBranchLabel(
+								projected.rows[*projected.currentIndex]);
+							observation.succeeded = !observation.label.empty();
+							entry.projections[request.repositoryIndex] = projected;
+							if (m_currentProjectIndex
+								&& *m_currentProjectIndex == request.projectIndex
+								&& !m_currentWorkspaceRoot.empty()
+								&& _wcsicmp(m_currentWorkspaceRoot.c_str(),
+									request.repositoryRoot.c_str()) == 0) {
+								m_worktrees = std::move(projected);
+							}
+						} else {
+							entry.observations[request.repositoryIndex].unavailable = true;
+						}
+					} else {
+						entry.observations[request.repositoryIndex].unavailable = true;
+					}
+					++entry.completed;
+					entry.summary = SummarizeProjectBranches(entry.observations,
+						entry.completed == entry.observations.size(), entry.truncated);
 				}
-			} else if (!superseded && !m_requestRoot.empty()) {
-				m_worktreesUnavailable = true;
 			}
 		} catch (...) {
-			if (!superseded && !m_requestRoot.empty()) m_worktreesUnavailable = true;
+			if (!superseded) CompleteUnavailable(request);
 		}
 		m_refresh = {};
 		if (superseded) {
-			auto pending = std::move(m_pendingRoot);
-			m_pendingRoot.clear();
-			m_worktrees.reset();
-			RebuildProjection();
-			StartRefresh(std::move(pending));
+			m_restartPending = false;
+			BeginBranchRefresh();
 			return;
 		}
 		RebuildProjection();
-		InvalidateContent();
+		StartNextBranchRequest();
 	}
 
 	void RebuildProjection() noexcept
 	{
 		try {
+			std::vector<ProjectBranchSummary> summaries;
+			summaries.reserve(m_projectBranchKeys.size());
+			for (const auto& identity : m_projectBranchKeys) {
+				const auto found = m_branchCache.find(identity);
+				summaries.push_back(found == m_branchCache.end()
+					? ProjectBranchSummary{} : found->second.summary);
+			}
 			const auto projection = ProjectProjects(m_projects, m_workspace,
 				m_worktrees ? &*m_worktrees : nullptr, m_worktreesExpanded,
-				m_selectedKind, m_selectedWorktreeIdentity);
+				summaries, m_selectedKind, m_selectedWorktreeIdentity);
 			m_rows = projection.rows;
 			m_selectedIndex = projection.selectedRowIndex;
 		} catch (...) {
@@ -682,6 +811,12 @@ private:
 
 		const HMENU menu = ::CreatePopupMenu();
 		if (menu == nullptr) return;
+		constexpr UINT kOpenProjectInNewWindowMenuId = 0x5102;
+		if (::AppendMenuW(menu, MF_STRING, kOpenProjectInNewWindowMenuId,
+			L"Open in New Window") == FALSE) {
+			::DestroyMenu(menu);
+			return;
+		}
 		if (::AppendMenuW(menu, MF_STRING, kRemoveProjectMenuId,
 			L"Remove from Projects") == FALSE) {
 			::DestroyMenu(menu);
@@ -690,7 +825,18 @@ private:
 		const UINT command = ::TrackPopupMenuEx(menu,
 			TPM_RETURNCMD | TPM_RIGHTBUTTON, popup.x, popup.y, m_list, nullptr);
 		::DestroyMenu(menu);
-		if (command == kRemoveProjectMenuId) RemoveSelectedProject();
+		if (command == kOpenProjectInNewWindowMenuId) {
+			if (!m_selectedIndex || *m_selectedIndex >= m_rows.size()) return;
+			const auto& row = m_rows[*m_selectedIndex];
+			if (row.kind != EProjectsRowKind::Project || row.projectIndex >= m_projects.size()
+				|| !m_options.activateProjectInNewWindow) return;
+			try {
+				if (m_options.activateProjectInNewWindow(m_projects[row.projectIndex])
+					== EProjectsActivationStatus::Failed) (void)::MessageBeep(MB_ICONWARNING);
+			} catch (...) {
+				(void)::MessageBeep(MB_ICONWARNING);
+			}
+		} else if (command == kRemoveProjectMenuId) RemoveSelectedProject();
 	}
 
 	void InvalidateContent() noexcept
@@ -753,8 +899,7 @@ private:
 		labelRect.right -= inset;
 		std::wstring trailing;
 		if (row.kind == EProjectsRowKind::Project) {
-			if (row.currentProject && m_loadingWorktrees) trailing = L"Loading Git...";
-			else if (row.currentProject && m_worktreesUnavailable) trailing = L"Git unavailable";
+			trailing = row.trailing;
 		} else if (row.kind == EProjectsRowKind::WorktreesToggle) {
 			trailing = std::to_wstring(row.hiddenWorktreeCount);
 			(void)::SetTextColor(item.hDC, secondary);
@@ -819,6 +964,10 @@ private:
 		if (m_discovery) (void)m_discovery->Stop();
 		m_discovery.reset();
 		m_refresh = {};
+		m_branchQueue.clear();
+		m_currentBranchRequest.reset();
+		m_branchCache.clear();
+		m_projectBranchKeys.clear();
 		m_rows.clear();
 		m_projects.clear();
 		m_worktrees.reset();
@@ -834,12 +983,16 @@ private:
 	std::vector<ProjectEntry> m_projects;
 	config::WorkspaceContextSnapshot m_workspace;
 	std::optional<agent::AgentWorkspacesProjectionResult> m_worktrees;
+	std::map<std::wstring, ProjectBranchCacheEntry> m_branchCache;
+	std::vector<std::wstring> m_projectBranchKeys;
+	std::deque<ProjectBranchDiscoveryRequest> m_branchQueue;
+	std::optional<ProjectBranchDiscoveryRequest> m_currentBranchRequest;
 	std::vector<ProjectsRow> m_rows;
 	std::optional<std::size_t> m_selectedIndex;
+	std::optional<std::size_t> m_currentProjectIndex;
 	std::optional<EProjectsRowKind> m_selectedKind;
 	std::wstring m_selectedWorktreeIdentity;
-	std::wstring m_requestRoot;
-	std::wstring m_pendingRoot;
+	std::wstring m_currentWorkspaceRoot;
 	std::optional<viewcontainer::ViewContainerPageHost> m_attachedHost;
 	theme::ThemePalette m_palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
 	theme::CThemeFont m_font;
@@ -851,8 +1004,7 @@ private:
 	unsigned int m_dpi = 96;
 	EPageState m_state{ EPageState::Empty };
 	bool m_worktreesExpanded = false;
-	bool m_loadingWorktrees = false;
-	bool m_worktreesUnavailable = false;
+	bool m_restartPending = false;
 	bool m_active = false;
 	bool m_visible = false;
 	bool m_layoutValid = true;

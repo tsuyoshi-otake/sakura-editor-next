@@ -235,6 +235,10 @@ public:
 	//! Replaces the sole, window-local root. The same path is a no-op; an empty value clears the tree.
 	void SetRoot(std::wstring root);
 	[[nodiscard]] const std::wstring& GetRoot() const noexcept;
+	//! Applies the Files ViewPane disclosure state. Project activation expands
+	//! the pane once; subsequent user-owned header clicks remain authoritative.
+	void SetFilesPaneExpanded(bool expanded);
+	[[nodiscard]] bool IsFilesPaneExpanded() const noexcept;
 	//! Selects the VS Code-compatible empty-state message and action set.
 	//! The state is only visible while no filesystem root is projected.
 	void SetWelcomeState(ExplorerWelcomeState state);
