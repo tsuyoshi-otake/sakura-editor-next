@@ -577,6 +577,11 @@ struct CExplorerTool::Impl {
 	std::map<std::wstring, int, std::less<>> iconIndices;
 	std::array<RECT, kHeaderActions.size()> headerActionRects{};
 	int hoveredHeaderAction{ -1 };
+	// A header command or disclosure requires a complete click that started on
+	// this surface. Project activation can reveal Explorer between another
+	// control's button-down and button-up; that trailing up is not our click.
+	bool headerClickArmed{};
+	int armedHeaderAction{ -1 };
 	bool trackingHeaderMouseLeave{};
 	RECT openFolderButton{};
 	RECT addFolderButton{};
@@ -2359,14 +2364,30 @@ LRESULT CALLBACK CExplorerTool::WindowProc(HWND window, UINT message, WPARAM wPa
 			::InvalidateRect(window, nullptr, FALSE);
 		}
 		return 0;
-	case WM_LBUTTONUP: {
+	case WM_LBUTTONDOWN: {
 		const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
-		if (const int action = impl.HeaderActionAt(point); action >= 0) {
-			impl.InvokeHeaderAction(action);
+		if (point.y >= 0 && point.y < impl.HeaderHeight()) {
+			impl.headerClickArmed = true;
+			impl.armedHeaderAction = impl.HeaderActionAt(point);
+			(void)::SetCapture(window);
 			return 0;
 		}
-		if (point.y < impl.HeaderHeight()) {
-			impl.ToggleFilesPane();
+		break;
+	}
+	case WM_LBUTTONUP: {
+		const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+		if (impl.headerClickArmed) {
+			const int armedAction = impl.armedHeaderAction;
+			impl.headerClickArmed = false;
+			impl.armedHeaderAction = -1;
+			if (::GetCapture() == window) (void)::ReleaseCapture();
+			const int releasedAction = impl.HeaderActionAt(point);
+			if (armedAction >= 0 && releasedAction == armedAction) {
+				impl.InvokeHeaderAction(armedAction);
+			} else if (armedAction < 0 && releasedAction < 0
+				&& point.y >= 0 && point.y < impl.HeaderHeight()) {
+				impl.ToggleFilesPane();
+			}
 			return 0;
 		}
 		if (impl.root.empty() && impl.filesPaneExpanded) {
@@ -2383,6 +2404,15 @@ LRESULT CALLBACK CExplorerTool::WindowProc(HWND window, UINT message, WPARAM wPa
 		}
 		break;
 	}
+	case WM_CANCELMODE:
+		impl.headerClickArmed = false;
+		impl.armedHeaderAction = -1;
+		if (::GetCapture() == window) (void)::ReleaseCapture();
+		return 0;
+	case WM_CAPTURECHANGED:
+		impl.headerClickArmed = false;
+		impl.armedHeaderAction = -1;
+		break;
 	case WM_SETCURSOR: {
 		POINT point{};
 		if (::GetCursorPos(&point) && ::ScreenToClient(window, &point)

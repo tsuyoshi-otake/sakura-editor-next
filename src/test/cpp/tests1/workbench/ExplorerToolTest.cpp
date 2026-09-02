@@ -248,7 +248,7 @@ TEST(ExplorerTool, ExposesThePlannedPaletteAndKeepsRootWindowLocal)
 	EXPECT_EQ(RGB(0xEB, 0x6A, 0x9A), palette.focus);
 }
 
-TEST(ExplorerTool, ProjectRevealExpandsACollapsedFilesPane)
+TEST(ExplorerTool, ProjectRevealSurvivesTheProjectsActivationMouseUp)
 {
 	TemporaryDirectory root;
 	CreateEmptyFile(root.Path() / L"visible.txt");
@@ -263,11 +263,24 @@ TEST(ExplorerTool, ProjectRevealExpandsACollapsedFilesPane)
 	EXPECT_TRUE(tool.IsFilesPaneExpanded());
 	EXPECT_NE(0, ::GetWindowLongPtrW(tree, GWL_STYLE) & WS_VISIBLE);
 
+	(void)::SendMessageW(tool.GetHwnd(), WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(5, 5));
 	(void)::SendMessageW(tool.GetHwnd(), WM_LBUTTONUP, 0, MAKELPARAM(5, 5));
 	EXPECT_FALSE(tool.IsFilesPaneExpanded());
 	EXPECT_EQ(0, ::GetWindowLongPtrW(tree, GWL_STYLE) & WS_VISIBLE);
 
 	tool.SetFilesPaneExpanded(true);
+	EXPECT_TRUE(tool.IsFilesPaneExpanded());
+	EXPECT_NE(0, ::GetWindowLongPtrW(tree, GWL_STYLE) & WS_VISIBLE);
+	// Activating a Project runs on the list's double-click notification.  Its
+	// trailing button-up can land over the newly revealed Explorer header, but
+	// it did not start a click on this surface and must not collapse the pane.
+	(void)::SendMessageW(tool.GetHwnd(), WM_LBUTTONUP, 0, MAKELPARAM(5, 5));
+	EXPECT_TRUE(tool.IsFilesPaneExpanded());
+	EXPECT_NE(0, ::GetWindowLongPtrW(tree, GWL_STYLE) & WS_VISIBLE);
+	// A cancelled header press must disarm before a later release arrives.
+	(void)::SendMessageW(tool.GetHwnd(), WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(5, 5));
+	(void)::SendMessageW(tool.GetHwnd(), WM_CANCELMODE, 0, 0);
+	(void)::SendMessageW(tool.GetHwnd(), WM_LBUTTONUP, 0, MAKELPARAM(5, 5));
 	EXPECT_TRUE(tool.IsFilesPaneExpanded());
 	EXPECT_NE(0, ::GetWindowLongPtrW(tree, GWL_STYLE) & WS_VISIBLE);
 	// Reapplying the successful Project projection is an idempotent no-op.
