@@ -35,14 +35,14 @@ SOURCE_CONFIRMED は実ソースでの観測であり、製品再現ではない
 | F15 | SOURCE_CONFIRMED | 未実装 | UpdateStagingStore.cpp / WriteManifest, StoreInstaller, RemoveOtherStagedBuilds | 固定manifest temporary/共有stage、windowごとのservice。installation ownerと複数process試験未実装。 |
 | F16 | SOURCE_CONFIRMED | 未実装 | UpdateService.cpp / AbortQuitAndInstall, RunPendingUpdate | WriteManifest失敗を無視しReadyへ戻る。disk booleanによる起動許可の失効・migration未実装。 |
 | F17 | SOURCE_CONFIRMED | 未実装 | update/UpdateComposition.cpp / Shutdown; UpdateService::~UpdateService | timer.Stop → executor.Stop。cancelはservice destructor。製品上の停止時間/依存寿命影響は未再現。 |
-| F18 | REPRODUCED (修正済み・受入未完了) | cfddbcbb2 | io/CFileLoad.cpp / FileOpen; io/CIoBridge.cpp / FileToImpl | converter生成後にnFlag代入。bridge引数は未使用。converter生成前にoptionを反映。実ファイルMIME ON/OFF/reopenがred→green、Debug/Release成功。ASan・runtime mutation未実行。 |
+| F18 | REPRODUCED (修正済み・受入未完了) | cfddbcbb2 | io/CFileLoad.cpp / FileOpen; io/CIoBridge.cpp / FileToImpl | converter生成後にnFlag代入。bridge引数は未使用。converter生成前にoptionを反映。実ファイルMIME ON/OFF/reopenがred→green、Debug/Release成功。限定11-source ASanで対象test成功。MIME適用順のruntime mutationは未完了。 |
 | F19 | REJECTED | 未実装 | charset/CCodeFactory.h / 1-argument CreateCodeBase; convert/CConvert_Code* | 指定3 callsiteの1引数factoryはunique_ptrでfull-expression終了時破棄。owning raw pointerを捨てるとの前提は誤り。2引数API全体の所有権改善は別途。 |
 | F20 | SOURCE_CONFIRMED | 未実装 | _os/OleTypes.h / SysString::Get, operator= | ACP容量がUTF-16長×2、copy代入は旧BSTRを解放しない。macro callsitesは存在。UTF-8 ACP環境/実call到達性/heap再現未実行。 |
-| F21 | REPRODUCED (部分修正) | cfddbcbb2 (部分) | io/CFileLoad.h, .cpp / constructor, Prepare | temporary設定をpointerで保持。Prepareは親のpointerへ上書き。設定snapshotを所有しPrepareへ共有、converterも共有所有。設定変更のred→greenあり。追加のPrepare状態修正はevidence.md参照（encoded EOL継承／UTF-7 offset初期化の2件red→green）。mappingは共有lease ownerへ移行（親破棄／再Prepareの製品API試験あり）。converter並行安全性・故障注入・ASan等が残りF21全体は未完了。 |
+| F21 | REPRODUCED (部分修正) | cfddbcbb2 (部分) | io/CFileLoad.h, .cpp / constructor, Prepare | temporary設定をpointerで保持。Prepareは親のpointerへ上書き。設定snapshotを所有しPrepareへ共有、converterはreaderごとのunique所有へ移行（ffc231cba）。設定変更のred→greenあり。追加のPrepare状態修正はevidence.md参照（encoded EOL継承／UTF-7 offset初期化の2件red→green）。mappingは共有lease ownerへ移行（親破棄／再Prepareの製品API試験あり）。2 workers各128行のMIME両設定、限定ASan9 tests、5故障点を加えた11 testsとcleanup guard mutant検出まで確認。backend全体の並行安全性・全failure点・性能等が残りF21全体は未完了。 |
 | F22 | SOURCE_CONFIRMED | 未実装 | CSearchWorkbenchTool.cpp / Start, worker loop | event/thread/retirement/WAIT_FAILED/通知失敗のterminal契約不足を確認。故障注入と製品到達性未検証。 |
 | H01 | IMPROVEMENT | 未実装 | window/CEditWnd.cpp / update and search projection | #18の完了範囲を全分割完了と解釈しない。縦切りcontroller抽出未着手。 |
 | H02 | IMPROVEMENT | cfddbcbb2 (部分) | io/CFileLoad.cpp / configuration reads; env/DLLSHAREDATA.h | 設定snapshotの狭い修正から開始。worker全体の共有設定snapshot化は未完了。shared-memory ABIは維持。 |
-| H03 | IMPROVEMENT | cfddbcbb2 (部分) | io/CFileLoad.cpp / Prepare, FileClose | 設定寿命とmapping/converter借用寿命を分ける。converter寿命のみ共有所有化。mapping owner/lease抽出は未着手。 |
+| H03 | IMPROVEMENT | cfddbcbb2 (部分) | io/CFileLoad.cpp / Prepare, FileClose | 設定snapshot、RAII mapped-file owner／reader lease（6ea480713）、reader固有converter（ffc231cba）へ分離。親先行破棄後の実読込と最終lease解放を検証。旧converterのdata raceは未再現、backend全体の安全性と性能A/Bは未検証。 |
 | H04 | IMPROVEMENT | 未実装 | platform and workbench child-process boundaries | Git/Gh等の既存runner棚卸し、共通化境界と実process試験が必要。installer/ConPTYを万能runnerへ統合しない。 |
 | H05 | IMPROVEMENT | 未実装 | util/os.h; _os/OleTypes.h; io/CFileLoad.cpp | 既存resource wrapperは存在。resource種別ごとの所有権棚卸しと不足修正未完了。 |
 | H06 | IMPROVEMENT | 未実装 | include/sakura/filesystem/IFileService.h; platform/uri | Uri/FileService/long path基盤を再利用する予定。Recent/session/IPC end-to-end試験未実行。 |
@@ -51,7 +51,7 @@ SOURCE_CONFIRMED は実ソースでの観測であり、製品再現ではない
 | H09 | BLOCKED | 未実装 | update/UpdateDigest; Win32UpdateLauncher; release signing | 現行digestは完全性でありpublisher保証ではない。証明書・期待publisher・配布運用の外部決定が必要。鍵操作は行わない。 |
 | H10 | IMPROVEMENT | 未実装 | CSearchWorkbenchTool / custom actions; CustomUiAutomationProvider | Search custom actionsのUIA契約・client実行未着手。他surfaceの未対応を推定しない。 |
 | H11 | IMPROVEMENT | 611f785d0 | docs/formal; .github/workflows; tools/build | TLCモデルは既存。Search世代モデル・必須architecture job・docs分類修正を実装。固定TLC正/負3ケース成功。Updater/保存protocolモデルは未完了。 |
-| H12 | IMPROVEMENT | 89ed278ec / c7c12a788 (部分) | src/test; existing fuzz/property infrastructure | repositoryにPBT/Fuzzがないと断定しない。Search preview seed 0x290の64実ファイル例を追加。Explorer非同期終了testの待機契約とRAIIを修正。runtime mutation/ASanは未完了。 |
+| H12 | IMPROVEMENT | 89ed278ec / c7c12a788 (部分) | src/test; existing fuzz/property infrastructure | repositoryにPBT/Fuzzがないと断定しない。Search preview seed 0x290の64実ファイル例を追加。Explorer非同期終了testの待機契約とRAIIを修正。Search失効、Prepare EOL/offset、FileOpen cleanupのruntime mutantsを検出し復元green。FileLoad限定ASanと5故障点の証拠を追加（297c1f006/8868a0cb6）。全campaignは未完了。 |
 | H13 | IMPROVEMENT | 未実装 | src/main/modules/modules.json; tools/build | canonical buildと既存graphを維持。private変更のrebuild閉包実測は未完了。 |
 | H14 | IMPROVEMENT | cfddbcbb2 / 89ed278ec (部分) | scoped CLAUDE.md; legacy TODOs; diagnostics | 確認した誤記/契約のみ更新する。古いTODO全件分類やpayload-free診断整備は未完了。 |
 | H15 | SOURCE_CONFIRMED | 未実装 | WorkspaceSearchEngine / CollectLineMatches, SearchFolder, ReplaceMatches | 全match収集後のbudget検査・matchごとの再走査。上限理由の説明・出力膨張・regex中断保証未完了。 |

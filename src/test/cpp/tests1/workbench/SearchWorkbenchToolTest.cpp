@@ -308,9 +308,9 @@ TEST_F(SearchRequestSafetyTest, SeededPreviewWindowsPreserveSourceCoordinatesAnd
 TEST_F(SearchRequestSafetyTest, NativeReplaceAllPreservesFilesAfterQueryInvalidation)
 {
     using workbench::search::CSearchWorkbenchTool;
-    for (int scenario = 0; scenario < 4; ++scenario) {
+    for (int scenario = 0; scenario < 8; ++scenario) {
         SCOPED_TRACE(scenario);
-        Write("needle\r\n");
+        Write(scenario == 7 ? "NEEDLE\r\n" : "needle\r\n");
         int changedCallbacks = 0;
         const cxx::ResourceHolder<&::DestroyWindow> parent{::CreateWindowExW(0, L"STATIC", L"", WS_POPUP,
             0, 0, 400, 300, nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr)};
@@ -352,14 +352,28 @@ TEST_F(SearchRequestSafetyTest, NativeReplaceAllPreservesFilesAfterQueryInvalida
         RECT client{};
         ASSERT_TRUE(::GetClientRect(tool.GetHwnd(), &client));
         const auto geometry = workbench::search::CalculateSearchWidgetGeometry(client, 96, true, 0);
+        // At 96 DPI the existing inline controls are 20 px, with a 2 px inset.
+        const auto toggle = [&](const RECT& box, int indexFromRight) {
+            ::SendMessageW(tool.GetHwnd(), WM_LBUTTONUP, 0,
+                MAKELPARAM(box.right - 2 - indexFromRight * 20 - 10,
+                    (box.top + box.bottom) / 2));
+        };
+        if (scenario >= 4 && scenario <= 6) {
+            toggle(geometry.queryBox, scenario - 3); // Regex, whole-word, case.
+            EXPECT_EQ(0, ::SendMessageW(list, LB_GETCOUNT, 0, 0));
+        }
+        if (scenario == 7) {
+            toggle(geometry.replaceBox, 1); // Preserve-case keeps accepted results.
+            ASSERT_EQ(2, ::SendMessageW(list, LB_GETCOUNT, 0, 0));
+        }
         const auto& button = geometry.replaceAll;
         ::SendMessageW(tool.GetHwnd(), WM_LBUTTONUP, 0,
             MAKELPARAM((button.left + button.right) / 2, (button.top + button.bottom) / 2));
-        EXPECT_EQ(scenario == 0 ? 1 : 0, changedCallbacks);
+        EXPECT_EQ(scenario == 0 || scenario == 7 ? 1 : 0, changedCallbacks);
         std::ifstream file(root / L"input.txt", std::ios::binary);
         ASSERT_TRUE(file.is_open());
         const std::string bytes{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
-        EXPECT_EQ(std::string("\xef\xbb\xbf") + (scenario == 0 ? "changed\r\n" : "needle\r\n"), bytes);
+        EXPECT_EQ(std::string("\xef\xbb\xbf") + (scenario == 7 ? "CHANGED\r\n" : scenario == 0 ? "changed\r\n" : "needle\r\n"), bytes);
         file.close();
         tool.Close();
         const auto retiredDeadline = ::GetTickCount64() + 10000;
@@ -368,5 +382,67 @@ TEST_F(SearchRequestSafetyTest, NativeReplaceAllPreservesFilesAfterQueryInvalida
             ::MsgWaitForMultipleObjectsEx(0, nullptr, 10, QS_POSTMESSAGE, 0);
         }
         EXPECT_EQ(0u, retirement.ReservedOrPendingCount());
+    }
+}
+
+TEST_F(SearchRequestSafetyTest, PreviewBoundaryFixturesPreserveExplicitUtf16Lengths)
+{
+    std::vector<std::wstring> inputs;
+    for (int prefix : {249, 250, 251}) {
+        for (int hit : {249, 250, 251}) {
+            inputs.push_back(std::wstring(prefix, L'x') + std::wstring(hit, L'n') + L"tail");
+        }
+    }
+    // A real surrogate pair straddles a potential window boundary.
+    inputs.push_back(std::wstring(249, L'x') + L"\U0001f600needle");
+    std::wstring raw(250, L'x');
+    raw.push_back(static_cast<wchar_t>(0xd800)); // Intentional raw UTF-16 unit.
+    raw += L"needle";
+    raw.push_back(static_cast<wchar_t>(0xdc00));
+    inputs.push_back(raw);
+    inputs.push_back(std::wstring(1, L'\0') + raw);
+    for (std::size_t i = 0; i < inputs.size(); ++i) {
+        SCOPED_TRACE(i);
+        const auto& input = inputs[i];
+        std::ofstream file(root / L"input.txt", std::ios::binary | std::ios::trunc);
+        ASSERT_TRUE(file.is_open());
+        file.put(static_cast<char>(0xff));
+        file.put(static_cast<char>(0xfe));
+        for (wchar_t unit : input) {
+            file.put(static_cast<char>(unit & 0xff));
+            file.put(static_cast<char>((unit >> 8) & 0xff));
+        }
+        file.close();
+        ASSERT_FALSE(file.fail());
+        workbench::search::SearchQuery query;
+        query.text = i < 9 ? std::wstring(249 + i % 3, L'n') : L"needle";
+        const auto result = workbench::search::RunWorkspaceSearch(root.wstring(), query, {});
+        if (input.find(L'\0') != std::wstring::npos) {
+            // Existing Search contract: embedded NUL marks a binary file.
+            EXPECT_EQ(0u, result.matchCount);
+            EXPECT_TRUE(result.files.empty());
+            continue;
+        }
+        ASSERT_EQ(1u, result.matchCount);
+        const auto& match = result.files.front().matches.front();
+        const auto offset = input.find(query.text);
+        ASSERT_NE(std::wstring::npos, offset);
+        EXPECT_EQ(offset + 1, static_cast<std::size_t>(match.column));
+        EXPECT_EQ(query.text.size(), static_cast<std::size_t>(match.length));
+        ASSERT_GE(match.previewOffset, 0);
+        ASSERT_GT(match.previewLength, 0);
+        ASSERT_LE(static_cast<std::size_t>(match.previewOffset), offset);
+        const auto start = offset - match.previewOffset;
+        EXPECT_LE(match.preview.size(), workbench::search::kSearchPreviewMaxLength);
+        EXPECT_EQ(input.substr(start, match.preview.size()), match.preview);
+        EXPECT_EQ(query.text.substr(0, match.previewLength),
+            match.preview.substr(match.previewOffset, match.previewLength));
+        const auto end = start + match.preview.size();
+        const auto isPair = [&](std::size_t left) {
+            return left + 1 < input.size() && input[left] >= 0xd800 && input[left] <= 0xdbff
+                && input[left + 1] >= 0xdc00 && input[left + 1] <= 0xdfff;
+        };
+        if (start > 0) EXPECT_FALSE(isPair(start - 1));
+        if (end > 0) EXPECT_FALSE(isPair(end - 1));
     }
 }

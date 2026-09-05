@@ -199,3 +199,23 @@ Microsoftの[ASan制約](https://learn.microsoft.com/en-us/cpp/sanitizers/asan-k
 再現script snapshots: [prepare](evidence/fileload-faults/sakura-fileload-faults-prepare.py)、[build](evidence/fileload-faults/sakura-fileload-faults-build.py)、[run](evidence/fileload-faults/sakura-fileload-faults-run.py)、[mutation](evidence/fileload-faults/sakura-fileload-faults-mutation.py)。絶対pathと前節のASan準備script、canonical Debug tlogを前提とするローカル検証記録。元のcheckout sourceと通常成果物は変更していない。
 
 これは5故障点＋1guard mutantの証拠であり、全allocation点・全Win32 failure・共有backendの競合・mapping寿命全変異を網羅したとは主張しない。Search/Clipboard/Updater等の全37項目は引き続き未完了。
+
+## 継続検証: Search optionとpreview固定境界・runtime mutation
+
+`8868a0cb6`のproduction実装に対して、`NativeReplaceAllPreservesFilesAfterQueryInvalidation`を8 scenariosへ拡張した。実際のnative toggleをクリックしてregex/wholeWord/matchCaseを変更した直後のReplace Allでは、元byte列を保持しcallbackは0回。preserveCaseだけを変更する正常経路では現在の結果を保持して`NEEDLE`から`CHANGED`へ更新しcallbackは1回。replacement-onlyの既存正常例も維持する。
+
+新しい`PreviewBoundaryFixturesPreserveExplicitUtf16Lengths`はUTF-16LE BOM付きの実ファイル12例を使用する。prefixとhitの249/250/251の9組合せ、pair、unpaired raw UTF-16、NUL入りを含む。source座標、長いhitの元length、明示長のpreview substring、最大250 code unit、実pairを窓境界で分断しないことを確認する。NULは既存Searchのbinary除外契約を確認する。
+
+初回23 tests中1件の失敗はNUL入りfileにもmatchを期待したtest側の誤りだった。`LooksBinary`による意図した除外と確認し、NULなしraw UTF-16とNUL除外のfixtureを分離した。これは製品不具合のred→greenではない。[初回結果](evidence/search-boundaries/search-boundaries-debug.log)を残す。
+
+修正後canonical Debug/Release solution buildと関連23 testsは両構成で成功（[Debug](evidence/search-boundaries/search-boundaries-final-debug.log)、[Release](evidence/search-boundaries/search-boundaries-final-release.log)）。runnerは上限120秒、所有tests1/sakura残存0。Releaseには既存CEditView警告等4件があるがbuild exit 0。
+
+続けてproduction `BuildPreview`の防御を個別に外す3 runtime mutantsをcanonical Debugで再buildし、同じSearch 6 testsで検証した。
+
+- [hit追従を除去](evidence/search-boundaries/preview-follow-hit.log): 3/6失敗。遠方hit、seeded例、固定境界例が検出。
+- [窓先頭pair保護を除去](evidence/search-boundaries/preview-start-pair.log): 1/6失敗。既存surrogate testが検出。
+- [窓末尾pair保護を除去](evidence/search-boundaries/preview-end-pair.log): 1/6失敗。同じsurrogate testが検出。
+
+production sourceはbyte単位で復元し、元hashとの一致を確認した。再build後[Search 6/6](evidence/search-boundaries/preview-restored.log)成功、[関連23/23](evidence/search-boundaries/search-boundaries-restored-debug.log)成功。各実行のexitと所有process残存0を記録した。[再現script](evidence/search-boundaries/sakura-preview-mutations.py)、[command/PID/exit/source hash](evidence/search-boundaries/preview-mutation.json)、[raw/published logとtest source hash](evidence/search-boundaries/sha256.json)を収録。scriptは今回の絶対checkoutと既存bounded runnerを前提とする検証記録で、汎用CI runnerではない。
+
+この3変異はpreviewの限定防御の証拠であり、全mutation campaignではない。F07の入力変更後にworkerが遅れて発行するcompletion、Close後受理の直接観測、他受付guard、MIME適用順、実画面dual-capture、性能A/B、最終head CIは未完了。F09/F21等と全37項目の完了へ昇格しない。公開台帳の古いmapping/converter/ASan記述を同時に同期した。
