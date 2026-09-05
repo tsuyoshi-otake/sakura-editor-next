@@ -149,3 +149,15 @@ Release solution buildも成功し、同じ関連17 testsが成功（prepare-sta
 このtestは限定された3文字コードのpolicy遷移を検証するもので、全encodingやworker間converter並行安全性、mapping寿命の証明ではない。
 
 最終Release solution buildと[18 tests](evidence/eol-policy-release.log)も成功（784ms、OwnedSurvivors=0）。checkout-invarianceとgenerate --checkも成功。Debug/Releaseのbuildは既存警告を含むがexit 0。
+
+## 継続修正: mapped-file ownerとreader lease
+
+`ceed51049`に対する`PreparedReaderRetainsMappingAfterParentDestruction`は、親破棄後のviewをVirtualQueryで検査するとMEM_FREEになり失敗した（[red](evidence/mapping-red.log)）。不正pointerをdereferenceする前のassertionで失敗させる。これはCFileLoad APIの寿命再現であり、親が最後まで生存する現在のCReadManager通常経路でUAFが起きたという主張ではない。
+
+private `MappedFile`はfile handle、mapping handle、viewをResourceHolderで所有し、readerはshared leaseとslice offsetsを保持する。最後のlease破棄でview→mapping→fileの順に解放する。GetFileTimeもownerを経由する。Prepareは範囲・source・self参照を検証してから旧readerを置換し、FileOpen/Prepareは非所有failure guardで途中状態をcloseする。mappingのcloseは親loaderの寿命から独立した。
+
+Debug solutionと[関連21 tests](evidence/mapping-final-debug.log)が成功、OwnedSurvivors=0。寿命testでは親破棄後もMEM_MAPPED/MEM_COMMITを確認して実際の先頭行を読む。reader close後はMEM_FREEを確認。追加testは旧mappingの解放、範囲拒否後のreader保持、親reopen、timestamp取得、空file、FileOpen失敗後の再利用を確認する。[初回green](evidence/mapping-green.log)と[source/log hashes](evidence/mapping-evidence.json)も収録。
+
+semantic strictは増加・新規finding・touched-scope不足なしで成功。現行converterはまだshared ownershipであり、immutable/thread-safeとは主張しない。mapped viewは外部writerに対するimmutable内容snapshotではない。Win32/allocator故障注入、限定ASan、mapping変異、全encodingの並行試験は未完了。F21/H03全体は部分対応を維持する。
+
+Release solution buildと[関連21 tests](evidence/mapping-final-release.log)も成功（927ms、OwnedSurvivors=0）。Debug最終cohortは1052ms。試験時間は性能A/Bの根拠にはしない。

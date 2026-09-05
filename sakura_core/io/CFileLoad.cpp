@@ -23,6 +23,7 @@
 #include "mem/CMemory.h"
 #include "basis/CEol.h"
 #include "io/CFileLoad.h"
+#include "cxx/ResourceHolder.hpp"
 #include "charset/charcode.h"
 #include "io/CIoBridge.h"
 #include "charset/CCodeFactory.h" ////
@@ -35,6 +36,44 @@
 /*
 	@note Win32APIで実装
 */
+
+// One mapping owner is leased by the loader and every prepared slice.
+// Member destruction releases the view before the mapping and file handles.
+class CFileLoad::MappedFile
+{
+public:
+    MappedFile(LPCWSTR path, bool ignoreLimit)
+    {
+        const auto file = ::CreateFileW(path, GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+            FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+        if (file == INVALID_HANDLE_VALUE) throw CError_FileOpen();
+        m_file.reset(file);
+        LARGE_INTEGER size{};
+        if (!::GetFileSizeEx(m_file.get(), &size) || size.QuadPart < 0)
+            throw CError_FileOpen();
+        if (!CFileLoad::IsLoadableSize(size.QuadPart, ignoreLimit))
+            throw CError_FileOpen(CError_FileOpen::TOO_BIG);
+        m_size = size.QuadPart;
+        if (m_size != 0) {
+            m_mapping.reset(::CreateFileMappingW(m_file.get(), nullptr, PAGE_READONLY, 0, 0, nullptr));
+            if (!m_mapping) throw CError_FileOpen();
+            m_view.reset(static_cast<const char*>(::MapViewOfFile(m_mapping.get(), FILE_MAP_READ, 0, 0, 0)));
+            if (!m_view) throw CError_FileOpen();
+        }
+    }
+    const char* Data() const noexcept { return m_view.get(); }
+    LONGLONG Size() const noexcept { return m_size; }
+    BOOL GetFileTime(FILETIME* create, FILETIME* access, FILETIME* write) const
+    {
+        return ::GetFileTime(m_file.get(), create, access, write);
+    }
+private:
+    cxx::ResourceHolder<&::CloseHandle> m_file{nullptr};
+    cxx::ResourceHolder<&::CloseHandle> m_mapping{nullptr};
+    cxx::ResourceHolder<&::UnmapViewOfFile, const char*> m_view{nullptr};
+    LONGLONG m_size = 0;
+};
 
 bool CFileLoad::IsLoadableSize(ULONGLONG size, bool ignoreLimit)
 {
@@ -89,7 +128,6 @@ CFileLoad::CFileLoad( const SEncodingConfig& encode )
 {
 	m_pEencoding = std::make_shared<const SEncodingConfig>(encode);
 
-	m_hFile			= nullptr;
 	m_nFileSize		= 0;
 	m_nFileDataLen	= 0;
 	m_CharCode		= CODE_DEFAULT;
@@ -110,11 +148,15 @@ CFileLoad::~CFileLoad( void )
 
 void CFileLoad::Prepare( const CFileLoad& other, size_t nReadBufOffsetBegin, size_t nReadBufOffsetEnd )
 {
-	m_pEencoding	= other.m_pEencoding;
-
-	// ファイルハンドルの所有権なし
-	m_hFile			= nullptr;
-	m_hFileMapping	= nullptr;
+    if (this == &other || !other.m_mapping || nReadBufOffsetBegin > nReadBufOffsetEnd
+        || nReadBufOffsetEnd > static_cast<size_t>(other.m_nFileSize))
+        throw CError_FileOpen();
+    FileClose();
+    // Non-owning failure guard: only closes this reader, never deletes it.
+    auto closeOnFailure = std::unique_ptr<CFileLoad, void(*)(CFileLoad*)>(
+        this, [](CFileLoad* reader) { reader->FileClose(); });
+    m_pEencoding = other.m_pEencoding;
+    m_mapping = other.m_mapping;
 
 	m_nFileSize		= other.m_nFileSize;
 	m_CharCode		= other.m_CharCode;
@@ -139,6 +181,7 @@ void CFileLoad::Prepare( const CFileLoad& other, size_t nReadBufOffsetBegin, siz
 	m_nReadBufOffsetCurrent = nReadBufOffsetBegin;
 	m_nReadBufOffsetBegin	= nReadBufOffsetBegin;
 	m_nReadBufOffsetEnd		= nReadBufOffsetEnd;
+    closeOnFailure.release();
 }
 
 /*!
@@ -153,60 +196,12 @@ void CFileLoad::Prepare( const CFileLoad& other, size_t nReadBufOffsetBegin, siz
 */
 ECodeType CFileLoad::FileOpen( LPCWSTR pFileName, bool bBigFile, ECodeType CharCode, int nFlag, bool* pbBomExist )
 {
-	HANDLE	hFile;
-	ULARGE_INTEGER	fileSize;
-
-	// FileCloseを呼んでからにしてください
-	if( nullptr != m_hFile ){
-#ifdef _DEBUG
-		::MessageBox( nullptr, L"CFileLoad::FileOpen\nFileCloseを呼んでからにしてください" , nullptr, MB_OK );
-#endif
-		throw CError_FileOpen();
-	}
-	hFile = ::CreateFile(
-		pFileName,
-		GENERIC_READ,
-		//	Oct. 18, 2002 genta FILE_SHARE_WRITE 追加
-		//	他プロセスが書き込み中のファイルを開けるように
-		FILE_SHARE_READ | FILE_SHARE_WRITE,	// 共有
-		nullptr,						// セキュリティ記述子
-		OPEN_EXISTING,				// 作成方法
-		FILE_FLAG_SEQUENTIAL_SCAN,	// ファイル属性
-		nullptr						// テンプレートファイルのハンドル
-	);
-	if( hFile == INVALID_HANDLE_VALUE ){
-		throw CError_FileOpen();
-	}
-	m_hFile = hFile;
-
-	// GetFileSizeEx は Win2K以上
-	fileSize.LowPart = ::GetFileSize( hFile, &fileSize.HighPart );
-	if( 0xFFFFFFFFU == fileSize.LowPart ){
-		DWORD lastError = ::GetLastError();
-		if( NO_ERROR != lastError ){
-			FileClose();
-			throw CError_FileOpen();
-		}
-	}
-	if (!CFileLoad::IsLoadableSize(fileSize.QuadPart, bBigFile)) {
-		// ファイルが大きすぎる(2GB位)
-		FileClose();
-		throw CError_FileOpen(CError_FileOpen::TOO_BIG);
-	}
-	m_nFileSize = fileSize.QuadPart;
-//	m_eMode = FLMODE_OPEN;
-
-	m_pReadBufTop = nullptr;
-	if( 0 < m_nFileSize ){
-		m_hFileMapping = CreateFileMapping( hFile, nullptr, PAGE_READONLY, 0, 0, nullptr );
-		if( m_hFileMapping != nullptr ){
-			m_pReadBufTop = (const char*)MapViewOfFile( m_hFileMapping, FILE_MAP_READ, 0, 0, 0 );
-		}
-		if( m_pReadBufTop == nullptr ){
-			FileClose();
-			throw CError_FileOpen();
-		}
-	}
+    if (m_mapping) throw CError_FileOpen();
+    auto closeOnFailure = std::unique_ptr<CFileLoad, void(*)(CFileLoad*)>(
+        this, [](CFileLoad* reader) { reader->FileClose(); });
+    m_mapping = std::make_shared<MappedFile>(pFileName, bBigFile);
+    m_nFileSize = m_mapping->Size();
+    m_pReadBufTop = m_mapping->Data();
 
 	if( CharCode == CODE_AUTODETECT ){
 		CCodeMediator mediator(*m_pEencoding);
@@ -271,6 +266,7 @@ ECodeType CFileLoad::FileOpen( LPCWSTR pFileName, bool bBigFile, ECodeType CharC
 	m_nReadOffset2 = 0;
 	m_nTempResult = RESULT_FAILURE;
 	m_cLineTemp.SetString(L"");
+    closeOnFailure.release();
 	return m_CharCode;
 }
 
@@ -280,20 +276,8 @@ ECodeType CFileLoad::FileOpen( LPCWSTR pFileName, bool bBigFile, ECodeType CharC
 */
 void CFileLoad::FileClose( void )
 {
-	if( m_hFile != nullptr ){
-		if( m_pReadBufTop != nullptr ){
-			(void)UnmapViewOfFile( m_pReadBufTop );
-			m_pReadBufTop = nullptr;
-		}
-		if( m_hFileMapping != nullptr ){
-			CloseHandle( m_hFileMapping );
-			m_hFileMapping = nullptr;
-		}
-		if( nullptr != m_hFile ){
-			::CloseHandle( m_hFile );
-			m_hFile = nullptr;
-		}
-	}
+    m_pReadBufTop = nullptr;
+    m_mapping.reset();
 	m_pCodeBase.reset();
 	m_nReadBufOffsetCurrent = 0;
 	m_nReadBufOffsetBegin	= 0;
@@ -305,6 +289,11 @@ void CFileLoad::FileClose( void )
 	m_nFlag 		=  0;
 	m_eMode			= FLMODE_CLOSE;
 	m_nLineIndex	= -1;
+}
+
+BOOL CFileLoad::GetFileTime(FILETIME* create, FILETIME* access, FILETIME* write)
+{
+    return m_mapping ? m_mapping->GetFileTime(create, access, write) : FALSE;
 }
 
 /*! 1行読み込み

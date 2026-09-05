@@ -38,7 +38,7 @@ SOURCE_CONFIRMED は実ソースでの観測であり、製品再現ではない
 | F18 | REPRODUCED (修正済み・受入未完了) | cfddbcbb2 | io/CFileLoad.cpp / FileOpen; io/CIoBridge.cpp / FileToImpl | converter生成後にnFlag代入。bridge引数は未使用。converter生成前にoptionを反映。実ファイルMIME ON/OFF/reopenがred→green、Debug/Release成功。ASan・runtime mutation未実行。 |
 | F19 | REJECTED | 未実装 | charset/CCodeFactory.h / 1-argument CreateCodeBase; convert/CConvert_Code* | 指定3 callsiteの1引数factoryはunique_ptrでfull-expression終了時破棄。owning raw pointerを捨てるとの前提は誤り。2引数API全体の所有権改善は別途。 |
 | F20 | SOURCE_CONFIRMED | 未実装 | _os/OleTypes.h / SysString::Get, operator= | ACP容量がUTF-16長×2、copy代入は旧BSTRを解放しない。macro callsitesは存在。UTF-8 ACP環境/実call到達性/heap再現未実行。 |
-| F21 | REPRODUCED (部分修正) | cfddbcbb2 (部分) | io/CFileLoad.h, .cpp / constructor, Prepare | temporary設定をpointerで保持。Prepareは親のpointerへ上書き。設定snapshotを所有しPrepareへ共有、converterも共有所有。設定変更のred→greenあり。追加のPrepare状態修正はevidence.md参照（encoded EOL継承／UTF-7 offset初期化の2件red→green）。mappingは依然親の借用でF21全体は未完了。 |
+| F21 | REPRODUCED (部分修正) | cfddbcbb2 (部分) | io/CFileLoad.h, .cpp / constructor, Prepare | temporary設定をpointerで保持。Prepareは親のpointerへ上書き。設定snapshotを所有しPrepareへ共有、converterも共有所有。設定変更のred→greenあり。追加のPrepare状態修正はevidence.md参照（encoded EOL継承／UTF-7 offset初期化の2件red→green）。mappingは共有lease ownerへ移行（親破棄／再Prepareの製品API試験あり）。converter並行安全性・故障注入・ASan等が残りF21全体は未完了。 |
 | F22 | SOURCE_CONFIRMED | 未実装 | CSearchWorkbenchTool.cpp / Start, worker loop | event/thread/retirement/WAIT_FAILED/通知失敗のterminal契約不足を確認。故障注入と製品到達性未検証。 |
 | H01 | IMPROVEMENT | 未実装 | window/CEditWnd.cpp / update and search projection | #18の完了範囲を全分割完了と解釈しない。縦切りcontroller抽出未着手。 |
 | H02 | IMPROVEMENT | cfddbcbb2 (部分) | io/CFileLoad.cpp / configuration reads; env/DLLSHAREDATA.h | 設定snapshotの狭い修正から開始。worker全体の共有設定snapshot化は未完了。shared-memory ABIは維持。 |

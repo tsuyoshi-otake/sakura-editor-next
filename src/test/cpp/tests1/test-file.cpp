@@ -1015,3 +1015,83 @@ TEST_F(FileLoadOptionsTest, ExtendedEolPolicyIsStableUntilReopen)
         }
     }
 }
+TEST_F(FileLoadOptionsTest, PreparedReaderRetainsMappingAfterParentDestruction)
+{
+    class ObservedReader : public CFileLoad {
+    public:
+        const void* View() const { return m_pReadBufTop; }
+    };
+    Write("first\r\nsecond\r\n");
+    ObservedReader reader;
+    const void* view = nullptr;
+    {
+        CFileLoad parent;
+        ASSERT_EQ(CODE_UTF8, parent.FileOpen(path.c_str(), false, CODE_UTF8, 0));
+        reader.Prepare(parent, 0, static_cast<std::size_t>(parent.GetFileSize()));
+        view = reader.View();
+        ASSERT_NE(nullptr, view);
+    }
+    MEMORY_BASIC_INFORMATION region{};
+    ASSERT_EQ(sizeof(region), ::VirtualQuery(view, &region, sizeof(region)));
+    // Assert the lease before dereferencing a potentially unmapped address.
+    ASSERT_EQ(static_cast<DWORD>(MEM_COMMIT), region.State);
+    ASSERT_EQ(static_cast<DWORD>(MEM_MAPPED), region.Type);
+    CNativeW line;
+    CEol eol;
+    EXPECT_EQ(RESULT_COMPLETE, reader.ReadLine(&line, &eol));
+    EXPECT_EQ(L"first\r\n", std::wstring(line.GetStringPtr(), line.GetStringLength()));
+    reader.FileClose();
+    ASSERT_EQ(sizeof(region), ::VirtualQuery(view, &region, sizeof(region)));
+    EXPECT_EQ(static_cast<DWORD>(MEM_FREE), region.State);
+}
+TEST_F(FileLoadOptionsTest, PrepareReplacesActiveMappingAndRejectsInvalidSlices)
+{
+    class ObservedReader : public CFileLoad {
+    public:
+        const void* View() const { return m_pReadBufTop; }
+    };
+    Write("first\r\nsecond\r\n");
+    CFileLoad parent;
+    ObservedReader reader;
+    ASSERT_EQ(CODE_UTF8, parent.FileOpen(path.c_str(), false, CODE_UTF8, 0));
+    ASSERT_EQ(CODE_UTF8, reader.FileOpen(path.c_str(), false, CODE_UTF8, 0));
+    const void* previousView = reader.View();
+    reader.Prepare(parent, 7, static_cast<std::size_t>(parent.GetFileSize()));
+    MEMORY_BASIC_INFORMATION region{};
+    ASSERT_EQ(sizeof(region), ::VirtualQuery(previousView, &region, sizeof(region)));
+    EXPECT_EQ(static_cast<DWORD>(MEM_FREE), region.State);
+    EXPECT_THROW(reader.Prepare(parent, 9, 7), CError_FileOpen);
+    EXPECT_THROW(reader.Prepare(parent, 0, static_cast<std::size_t>(parent.GetFileSize()) + 1), CError_FileOpen);
+    EXPECT_THROW(reader.Prepare(reader, 0, 0), CError_FileOpen);
+    FILETIME stamp{};
+    EXPECT_TRUE(reader.GetFileTime(nullptr, nullptr, &stamp));
+    parent.FileClose();
+    ASSERT_EQ(CODE_UTF8, parent.FileOpen(path.c_str(), false, CODE_UTF8, 0));
+    CNativeW line;
+    CEol eol;
+    EXPECT_EQ(RESULT_COMPLETE, reader.ReadLine(&line, &eol));
+    EXPECT_EQ(L"second\r\n", std::wstring(line.GetStringPtr(), line.GetStringLength()));
+    parent.FileClose();
+    EXPECT_THROW(reader.Prepare(parent, 0, 0), CError_FileOpen);
+    reader.FileClose();
+    EXPECT_FALSE(reader.GetFileTime(nullptr, nullptr, &stamp));
+}
+
+TEST_F(FileLoadOptionsTest, FailedOpenAndEmptyMappingCanBeReused)
+{
+    Write("");
+    CFileLoad parent, reader;
+    const auto missing = path.wstring() + L".missing";
+    EXPECT_THROW(parent.FileOpen(missing.c_str(), false, CODE_UTF8, 0), CError_FileOpen);
+    ASSERT_EQ(CODE_UTF8, parent.FileOpen(path.c_str(), false, CODE_UTF8, 0));
+    reader.Prepare(parent, 0, 0);
+    parent.FileClose();
+    CNativeW line;
+    CEol eol;
+    EXPECT_EQ(RESULT_FAILURE, reader.ReadLine(&line, &eol));
+    reader.FileClose();
+    Write("reopened\r\n");
+    ASSERT_EQ(CODE_UTF8, parent.FileOpen(path.c_str(), false, CODE_UTF8, 0));
+    EXPECT_EQ(RESULT_COMPLETE, parent.ReadLine(&line, &eol));
+    EXPECT_EQ(L"reopened\r\n", std::wstring(line.GetStringPtr(), line.GetStringLength()));
+}

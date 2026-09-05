@@ -88,13 +88,13 @@ protected:
 	static constexpr LONGLONG m_nAutoDetectReadLen = 32768LL;
 
 //	LPWSTR	m_pszFileName;	// ファイル名
-	HANDLE	m_hFile;		// ファイルハンドル
-	HANDLE	m_hFileMapping = nullptr;	// メモリマップドファイルハンドル
+	class MappedFile;
+	std::shared_ptr<const MappedFile> m_mapping;
 	LONGLONG	m_nFileSize;	// ファイルサイズ(64bit)
 	LONGLONG	m_nFileDataLen;	// ファイルデータ長からBOM長を引いたバイト数
 	int		m_nLineIndex;	// 現在ロードしている論理行(0開始)
 	ECodeType	m_CharCode;		// 文字コード
-	// Prepared readers retain converter lifetime; mapping still belongs to the parent.
+	// Converter lifetime is retained separately from the mapped-file lease.
 	std::shared_ptr<CCodeBase> m_pCodeBase;
 	EEncodingTrait	m_encodingTrait;
 	CMemory			m_memEols[3];
@@ -128,7 +128,5 @@ protected:
 // インライン関数郡
 
 // public
-inline BOOL CFileLoad::GetFileTime( FILETIME* pftCreate, FILETIME* pftLastAccess, FILETIME* pftLastWrite ){
-	return ::GetFileTime( m_hFile, pftCreate, pftLastAccess, pftLastWrite );
-}
+
 #endif /* SAKURA_CFILELOAD_B9B7A22E_8C14_4913_8B92_3B5ABA6FC0DB_H_ */
