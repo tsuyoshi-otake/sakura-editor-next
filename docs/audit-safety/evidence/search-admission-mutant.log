@@ -1,0 +1,63 @@
+Running main() from C:\Users\developer\tmp\sakura-audit-safety\src\test\resources\code-main.cpp
+Note: Google Test filter = SearchRequestSafetyTest.*
+[==========] Running 5 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 5 tests from SearchRequestSafetyTest
+[ RUN      ] SearchRequestSafetyTest.LongLinePreviewContainsTheActualMatch
+[       OK ] SearchRequestSafetyTest.LongLinePreviewContainsTheActualMatch (10 ms)
+[ RUN      ] SearchRequestSafetyTest.PreviewDoesNotSplitUtf16SurrogatePair
+[       OK ] SearchRequestSafetyTest.PreviewDoesNotSplitUtf16SurrogatePair (29 ms)
+[ RUN      ] SearchRequestSafetyTest.ClearingQueryRejectsAlreadyPostedCompletion
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(273): error: Expected equality of these values:
+  0
+  ::SendMessageW(originalList, 0x018B, 0, 0)
+    Which is: 2
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(230): 4
+
+[  FAILED  ] SearchRequestSafetyTest.ClearingQueryRejectsAlreadyPostedCompletion (80 ms)
+[ RUN      ] SearchRequestSafetyTest.SeededPreviewWindowsPreserveSourceCoordinatesAndHitText
+[       OK ] SearchRequestSafetyTest.SeededPreviewWindowsPreserveSourceCoordinatesAndHitText (454 ms)
+[ RUN      ] SearchRequestSafetyTest.NativeReplaceAllPreservesFilesAfterQueryInvalidation
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(358): error: Expected equality of these values:
+  scenario == 0 ? 1 : 0
+    Which is: 0
+  changedCallbacks
+    Which is: 1
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(312): 2
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(362): error: Expected equality of these values:
+  std::string("\xef\xbb\xbf") + (scenario == 0 ? "changed\r\n" : "needle\r\n")
+    Which is: "\xEF\xBB\xBFneedle\r\n"
+    As Text: "﻿needle\r
+"
+  bytes
+    Which is: "\xEF\xBB\xBF" "changed\r\n"
+    As Text: "﻿changed\r
+"
+With diff:
+@@ -1,2 +1,2 @@
+-\xEF\xBB\xBFneedle\r
+-"
+    As Text: "﻿needle\r
+
++\xEF\xBB\xBF" "changed\r
++"
+    As Text: "﻿changed\r
+
+
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(312): 2
+
+[  FAILED  ] SearchRequestSafetyTest.NativeReplaceAllPreservesFilesAfterQueryInvalidation (183 ms)
+[----------] 5 tests from SearchRequestSafetyTest (764 ms total)
+
+[----------] Global test environment tear-down
+[==========] 5 tests from 1 test suite ran. (787 ms total)
+[  PASSED  ] 3 tests.
+[  FAILED  ] 2 tests, listed below:
+[  FAILED  ] SearchRequestSafetyTest.ClearingQueryRejectsAlreadyPostedCompletion
+[  FAILED  ] SearchRequestSafetyTest.NativeReplaceAllPreservesFilesAfterQueryInvalidation
+
+ 2 FAILED TESTS

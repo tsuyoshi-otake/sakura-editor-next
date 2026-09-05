@@ -104,3 +104,19 @@ runtime mutation campaign、ASan、allocation/Win32 failure injection、独立co
 本変更はDraftとして扱う。全37項目の完了条件を満たしておらず、今回のループ全体はPASSではない。Search/FileLoadの局所red→green、native build、限定モデルの結果はレビューできるが、必要なruntime mutation、ASan、実画面検証、exact-head CIの不足があるため、現時点でmerge可能とは判断しない。
 
 次の実行可能な作業は、先行修正の不足検証を満たしたうえで、Clipboardの共有parser/所有権とCut成功契約、Search保存transaction、Updater protocolをそれぞれproduction経路と受入試験を伴う単位で進めること。未修正の安全性欠陥が残っているため、製品全体が安全になったとは報告しない。
+
+
+## 継続検証: native Replace All と入力失効のruntime mutation
+
+継続目標に基づき、`8ba1e04cd03373df61e4a07064614ecfacf4ca21` の製品コードに対してtestを追加した。receiptには変更前のHEADと、実際に使用したproduction/test sourceのSHA256を別々に記録している。
+
+- `ClearingQueryRejectsAlreadyPostedCompletion` にA→B→A入力変更を追加。Close分岐では元のwindow/listの`IsWindow`を検査し、破棄後のnull HWNDへの`LB_GETCOUNT`が返す0を成功と扱わなくした。元のwindowを指定して通知をdrainし、null HWNDによるthread全体のmessage取得も避けた。retirement件数0の検査は維持。
+- `NativeReplaceAllPreservesFilesAfterQueryInvalidation` は実workerの結果を採用して2行表示された後、nativeのReplace All hit targetへ`WM_LBUTTONUP`を配送する。replacementだけを変えた正常例は実ファイルが変更されcallbackが1回発火。空検索、A→B→A、root変更の3例では元のbyte列が保持されcallbackは0回。既存production入口を使用しtest専用の公開APIは追加していない。
+- runtime mutationは **ScheduleSearch内の即時InvalidateSearch呼出しだけを除去**。Debug solutionを再ビルドし、5 tests中2件が期待どおり失敗。A→B→A後に古い結果からファイルが`needle`→`changed`へ変更され、callbackが1回発火したことを新testが検出した。
+- production sourceをbyte単位で復元し、再ビルドと同じ5 testsが成功。mutation前後のrunnerで所有tests1/sakura残存0。これは1個の非等価mutationの検出証拠であり、全guardのmutation campaign完了ではない。
+
+証拠: [mutant log](evidence/search-admission-mutant.log)、[復元後log](evidence/search-admission-restored.log)、[commands／exit code／source hash receipt](evidence/search-admission-mutation.json)。
+
+Close後の結果受理自体の観測、入力変更後にworkerから遅れて発行されるcompletion、検索option／preserveCase、他guardのmutation、ASanと実画面検証は引き続き未完了。全37項目の完了判定は更新していない。
+
+最終対象cohortは [Debug](evidence/search-admission-final-debug.log) 15/15 (1002ms)、[Release](evidence/search-admission-final-release.log) 15/15 (586ms)。両構成canonical solution build成功。runnerのOwnedSurvivorsは両方0。semantic strictは新規finding／増加／touched-scope不足のいずれも0で成功。

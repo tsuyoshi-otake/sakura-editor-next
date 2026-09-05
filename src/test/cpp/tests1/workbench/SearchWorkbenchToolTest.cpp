@@ -226,7 +226,7 @@ TEST_F(SearchRequestSafetyTest, PreviewDoesNotSplitUtf16SurrogatePair)
 
 TEST_F(SearchRequestSafetyTest, ClearingQueryRejectsAlreadyPostedCompletion)
 {
-    for (int scenario = 0; scenario < 4; ++scenario) {
+    for (int scenario = 0; scenario < 5; ++scenario) {
     SCOPED_TRACE(scenario);
     using workbench::search::CSearchWorkbenchTool;
     const cxx::ResourceHolder<&::DestroyWindow> parent{::CreateWindowExW(0, L"STATIC", L"", WS_POPUP,
@@ -236,6 +236,10 @@ TEST_F(SearchRequestSafetyTest, ClearingQueryRejectsAlreadyPostedCompletion)
     ASSERT_TRUE(tool.Create(parent.get()));
     tool.SetRoot(root.wstring());
     tool.SetQueryText(L"needle");
+    const auto originalWindow = tool.GetHwnd();
+    const auto originalList = ::GetDlgItem(originalWindow, 3);
+    ASSERT_TRUE(::IsWindow(originalWindow));
+    ASSERT_TRUE(::IsWindow(originalList));
     // Hold the actual posted completion in USER32's queue, then clear input.
     constexpr UINT completed = WM_APP + 0x5e1;
     const ULONGLONG deadline = ::GetTickCount64() + 10000;
@@ -253,10 +257,21 @@ TEST_F(SearchRequestSafetyTest, ClearingQueryRejectsAlreadyPostedCompletion)
     if (scenario == 1) ::SetWindowTextW(::GetDlgItem(tool.GetHwnd(), 1), L"different");
     if (scenario == 2) tool.SetRoot(L"");
     if (scenario == 3) tool.Close();
-    while (::PeekMessageW(&message, tool.GetHwnd(), completed, completed, PM_REMOVE)) {
+    if (scenario == 4) {
+        ::SetWindowTextW(::GetDlgItem(originalWindow, 1), L"different");
+        ::SetWindowTextW(::GetDlgItem(originalWindow, 1), L"needle");
+    }
+    while (::PeekMessageW(&message, originalWindow, completed, completed, PM_REMOVE)) {
         ::DispatchMessageW(&message);
     }
-    EXPECT_EQ(0, ::SendMessageW(::GetDlgItem(tool.GetHwnd(), 3), LB_GETCOUNT, 0, 0));
+    if (scenario == 3) {
+        EXPECT_EQ(nullptr, tool.GetHwnd());
+        EXPECT_FALSE(::IsWindow(originalWindow));
+        EXPECT_FALSE(::IsWindow(originalList));
+    } else {
+        ASSERT_TRUE(::IsWindow(originalList));
+        EXPECT_EQ(0, ::SendMessageW(originalList, LB_GETCOUNT, 0, 0));
+    }
     tool.Close();
     const ULONGLONG retiredDeadline = ::GetTickCount64() + 10000;
     auto& retirement = workbench::WorkerRetirementService::Instance();
@@ -288,5 +303,70 @@ TEST_F(SearchRequestSafetyTest, SeededPreviewWindowsPreserveSourceCoordinatesAnd
         EXPECT_LE(match.preview.size(), workbench::search::kSearchPreviewMaxLength);
         EXPECT_EQ(std::wstring(match.previewLength, L'n'),
             match.preview.substr(match.previewOffset, match.previewLength));
+    }
+}
+TEST_F(SearchRequestSafetyTest, NativeReplaceAllPreservesFilesAfterQueryInvalidation)
+{
+    using workbench::search::CSearchWorkbenchTool;
+    for (int scenario = 0; scenario < 4; ++scenario) {
+        SCOPED_TRACE(scenario);
+        Write("needle\r\n");
+        int changedCallbacks = 0;
+        const cxx::ResourceHolder<&::DestroyWindow> parent{::CreateWindowExW(0, L"STATIC", L"", WS_POPUP,
+            0, 0, 400, 300, nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr)};
+        ASSERT_NE(nullptr, parent.get());
+        CSearchWorkbenchTool tool;
+        tool.SetFilesChangedCallback([&](const auto& files) {
+            ++changedCallbacks;
+            EXPECT_EQ(1u, files.size());
+        });
+        ASSERT_TRUE(tool.Create(parent.get()));
+        tool.Layout(RECT{0, 0, 400, 300}, 96);
+        tool.FocusReplace();
+        tool.SetRoot(root.wstring());
+        tool.SetQueryText(L"needle");
+        constexpr UINT completed = WM_APP + 0x5e1;
+        const auto deadline = ::GetTickCount64() + 10000;
+        MSG message{};
+        bool posted = false;
+        while (::GetTickCount64() < deadline) {
+            if (::PeekMessageW(&message, tool.GetHwnd(), completed, completed, PM_REMOVE)) {
+                ::DispatchMessageW(&message);
+                posted = true;
+                break;
+            }
+            ::MsgWaitForMultipleObjectsEx(0, nullptr, 10, QS_POSTMESSAGE, 0);
+        }
+        ASSERT_TRUE(posted);
+        const auto list = ::GetDlgItem(tool.GetHwnd(), 3);
+        ASSERT_TRUE(::IsWindow(list));
+        ASSERT_EQ(2, ::SendMessageW(list, LB_GETCOUNT, 0, 0));
+        ASSERT_TRUE(::SetWindowTextW(::GetDlgItem(tool.GetHwnd(), 2), L"changed"));
+        if (scenario == 1) tool.SetQueryText(L"");
+        if (scenario == 2) {
+            ASSERT_TRUE(::SetWindowTextW(::GetDlgItem(tool.GetHwnd(), 1), L"different"));
+            ASSERT_TRUE(::SetWindowTextW(::GetDlgItem(tool.GetHwnd(), 1), L"needle"));
+        }
+        if (scenario == 3) tool.SetRoot(L"");
+        // Invoke the actual native action before a debounce timer can run.
+        RECT client{};
+        ASSERT_TRUE(::GetClientRect(tool.GetHwnd(), &client));
+        const auto geometry = workbench::search::CalculateSearchWidgetGeometry(client, 96, true, 0);
+        const auto& button = geometry.replaceAll;
+        ::SendMessageW(tool.GetHwnd(), WM_LBUTTONUP, 0,
+            MAKELPARAM((button.left + button.right) / 2, (button.top + button.bottom) / 2));
+        EXPECT_EQ(scenario == 0 ? 1 : 0, changedCallbacks);
+        std::ifstream file(root / L"input.txt", std::ios::binary);
+        ASSERT_TRUE(file.is_open());
+        const std::string bytes{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+        EXPECT_EQ(std::string("\xef\xbb\xbf") + (scenario == 0 ? "changed\r\n" : "needle\r\n"), bytes);
+        file.close();
+        tool.Close();
+        const auto retiredDeadline = ::GetTickCount64() + 10000;
+        auto& retirement = workbench::WorkerRetirementService::Instance();
+        while (retirement.ReservedOrPendingCount() != 0 && ::GetTickCount64() < retiredDeadline) {
+            ::MsgWaitForMultipleObjectsEx(0, nullptr, 10, QS_POSTMESSAGE, 0);
+        }
+        EXPECT_EQ(0u, retirement.ReservedOrPendingCount());
     }
 }

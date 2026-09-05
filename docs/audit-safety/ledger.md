@@ -24,7 +24,7 @@ SOURCE_CONFIRMED は実ソースでの観測であり、製品再現ではない
 | F04 | NEEDS_REPRO | 未実装 | platform/filesystem/CWin32FileSystemProvider.cpp / ConditionalAtomicReplace; ReplaceMatches | DACL/ADS/属性/hardlink/reparse/UNCの実機マトリクス未実行。既存providerの能力と保存契約の照合が必要。 |
 | F05 | SOURCE_CONFIRMED | 未実装 | WorkspaceSearchEngine.cpp / ReplaceMatches; io/CBinaryStream.cpp | 独自stream保存、close/flushの故障が伝播する契約を要再設計。publish後unknownを区別するテスト未実行。 |
 | F06 | SOURCE_CONFIRMED | 未実装 | workbench/search/CSearchWorkbenchTool.cpp / RunReplace | UIから同期ReplaceMatches。filesChanged配線は存在。dirty/別process/reload/Saveの整合は未検証。 |
-| F07 | REPRODUCED (修正済み・受入未完了) | 89ed278ec | 同 / StartSearch, ScheduleSearch, kResultMessage | 空検索が世代更新前にreturn。debounce前に無効化しない。修正前のUSER32待機中completion採用を再現。世代・root・検索条件照合を実装しDebug/Release回帰テスト成功。runtime mutation・dual-capture・置換受付の追加検証は未完了。 |
+| F07 | REPRODUCED (修正済み・受入未完了) | 89ed278ec | 同 / StartSearch, ScheduleSearch, kResultMessage | 空検索が世代更新前にreturn。debounce前に無効化しない。修正前のUSER32待機中completion採用を再現。世代・root・検索条件照合を実装しDebug/Release回帰テスト成功。native Replace Allの正常／失効3例と即時失効を除去するruntime mutationを追加（evidence参照）。他guard・遅延発行・dual-captureは未完了。 |
 | F08 | NEEDS_REPRO | 未実装 | WorkspaceSearchEngine.cpp / CollectLineMatches, ReplaceMatches | 現行Bregonigでzero-width/capture/EOL意味論の再現が必要。古いコメントだけで変更しない。 |
 | F09 | REPRODUCED (修正済み・受入未完了) | 89ed278ec | 同 / BuildPreview | 行先頭250文字の切り出しで遠方hitのpreviewLengthが0。hitを含む250 code unit窓に修正。native red/green、surrogate境界、seed 0x290の64例がDebug/Releaseで成功。包括的mutationと視覚検証は未実行。 |
 | F10 | SOURCE_CONFIRMED | 未実装 | _os/CClipboard.cpp / GetText; util/os.cpp / GlobalSakura::wstring | private payloadのnative size_tをヘッダ長検査前に読む。D&D生成は終端なし、GlobalSakuraは終端分を要求する差も確認。Paste/D&D共通parserと32/64bit fixture未実装。 |
