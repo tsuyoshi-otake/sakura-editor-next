@@ -219,3 +219,17 @@ Microsoftの[ASan制約](https://learn.microsoft.com/en-us/cpp/sanitizers/asan-k
 production sourceはbyte単位で復元し、元hashとの一致を確認した。再build後[Search 6/6](evidence/search-boundaries/preview-restored.log)成功、[関連23/23](evidence/search-boundaries/search-boundaries-restored-debug.log)成功。各実行のexitと所有process残存0を記録した。[再現script](evidence/search-boundaries/sakura-preview-mutations.py)、[command/PID/exit/source hash](evidence/search-boundaries/preview-mutation.json)、[raw/published logとtest source hash](evidence/search-boundaries/sha256.json)を収録。scriptは今回の絶対checkoutと既存bounded runnerを前提とする検証記録で、汎用CI runnerではない。
 
 この3変異はpreviewの限定防御の証拠であり、全mutation campaignではない。F07の入力変更後にworkerが遅れて発行するcompletion、Close後受理の直接観測、他受付guard、MIME適用順、実画面dual-capture、性能A/B、最終head CIは未完了。F09/F21等と全37項目の完了へ昇格しない。公開台帳の古いmapping/converter/ASan記述を同時に同期した。
+
+## 継続検証: 検索完了後の遅延publicationとClose
+
+`2b3af3ef6`のnative Searchに対して、`RunWorkspaceSearch`が実ファイルから1 matchを返した直後、publication lock取得前に手動reset eventでworkerを待機させた。元のUSER32通知待機testとは異なり、入力失効／Closeの後にworkerのcompletion処理を再開する。request generationを観測tokenとし、この旧requestのdrop/publication/受理だけを数えるため、後続の正常requestとは混同しない。
+
+隔離checkoutに一時的に入れた[計測patch](evidence/search-delayed/delayed-search-injection.patch)は製品APIを増やさず、終了時にsource/testをbyte単位で復元する。試験はclear、native入力変更、A→B→A、空root、Close、regex toggle、変更なしの7 scenarios。全例で再開前に実検索のmatchCount=1を確認する。先行6例では旧requestが公開前にdropされ、旧publication/acceptedは0。Closeでは保存したHWND/listの破棄と非同期retirement完了を別に確認する。正常controlはpublication/accepted各1、結果2行を確認する。[初回green](evidence/search-delayed/delayed-search-green.log)成功。
+
+workerのpublication前generation照合だけを除くruntime mutantでは、Close以外の失効5例でdropが0/publicationが1になり[1 testが失敗](evidence/search-delayed/delayed-search-mutant.log)した。Closeはwindow-null guardで引き続きdropされた。後段の`AcceptResult`防御は維持しているため旧acceptedの期待値は失敗していない。このmutantは古い結果のpublicationを検出した証拠であり、誤表示・誤writeの再現ではない。window-null guardそのものや全acceptance guardのmutationを検証したとも主張しない。
+
+計測版へ復元・再buildして[7 scenarios成功](evidence/search-delayed/delayed-search-probe-restored.log)。さらにoriginal production/testのbyte hashへ復元、通常Debug solutionを再buildして[関連23/23成功](evidence/search-delayed/delayed-search-normal.log)。[receipt](evidence/search-delayed/delayed-search.json)にcommand/PID/exit/source hashesを記録し、original/restored hashesは一致する。各runnerの上限120秒、計測barrier10秒、EventScopeはClose後のretirementを最大12秒観測し、workerが残る間はevent handleを解放しない。全runでtimeout counter=0、所有tests1/sakura残存0。
+
+[再現script](evidence/search-delayed/sakura-delayed-search.py)はこのcheckoutと既存bounded runnerを使うローカル実験記録。[ログhash](evidence/search-delayed/sha256.json)も収録。patch表示は改行を正規化したzero-context diffであり、復元の正しさは表示差分ではなくbyte hashで確認する。常設CI regressionではなくDebug計測版の証拠である。通常Releaseの23 tests成功は前節の同一production/test sourceの結果であり、今回のevent計測をReleaseでも実行したという主張ではない。
+
+これにより入力変更後の遅延worker completionとClose後のdrop/非受理の観測を追加した。Close後に無効windowへ強制配送して`AcceptResult`のclosed分岐へ到達させた試験ではない。製品の二重防御の各guard、MIME適用順、実画面／性能／package、最終head CIは依然未完了。F07/H12全体と全37項目の完了判定は維持する。

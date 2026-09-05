@@ -1,0 +1,12 @@
+Running main() from C:\Users\developer\tmp\sakura-audit-safety\src\test\resources\code-main.cpp
+Note: Google Test filter = SearchRequestSafetyTest.DelayedWorkerPublicationAfterInvalidation
+[==========] Running 1 test from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 1 test from SearchRequestSafetyTest
+[ RUN      ] SearchRequestSafetyTest.DelayedWorkerPublicationAfterInvalidation
+[       OK ] SearchRequestSafetyTest.DelayedWorkerPublicationAfterInvalidation (122 ms)
+[----------] 1 test from SearchRequestSafetyTest (126 ms total)
+
+[----------] Global test environment tear-down
+[==========] 1 test from 1 test suite ran. (150 ms total)
+[  PASSED  ] 1 test.
