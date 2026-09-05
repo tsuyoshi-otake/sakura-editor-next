@@ -74,8 +74,18 @@ void BuildPreview(const wchar_t* line, int lineLength, int matchOffset, int matc
 	while (start < lineLength && (line[start] == L' ' || line[start] == L'\t')) ++start;
 	// Never trim past the match itself: a match inside the indentation must stay visible.
 	start = std::min(start, matchOffset);
-	int end = lineLength;
-	if (end - start > kSearchPreviewMaxLength) end = start + kSearchPreviewMaxLength;
+	// Keep the hit in the bounded window; a long hit starts at the window's
+	// beginning and retains its original source length in SearchMatch::length.
+	const int visibleHit = std::min(matchLength, kSearchPreviewMaxLength);
+	if (matchOffset - start > kSearchPreviewMaxLength - visibleHit) {
+		const int context = std::min(40, kSearchPreviewMaxLength - visibleHit);
+		start = std::max(start, matchOffset - context);
+	}
+	const auto high = [](wchar_t c) { return c >= 0xd800 && c <= 0xdbff; };
+	const auto low = [](wchar_t c) { return c >= 0xdc00 && c <= 0xdfff; };
+	if (start > 0 && start < lineLength && low(line[start]) && high(line[start - 1])) --start;
+	int end = start + std::min(lineLength - start, kSearchPreviewMaxLength);
+	if (end > start && end < lineLength && high(line[end - 1]) && low(line[end])) --end;
 	match.preview.assign(line + start, static_cast<std::size_t>(std::max(0, end - start)));
 	match.previewOffset = matchOffset - start;
 	match.previewLength = matchLength;
@@ -205,17 +215,13 @@ bool SearchOneFile(const std::wstring& fullPath, const SearchQuery& query,
 	const STypeConfigMini* type = TypeConfigFor(fullPath);
 	if (type == nullptr) return false;
 	CFileLoad loader(type->m_encoding);
-	try {
-		(void)loader.FileOpen(fullPath.c_str(), true, CODE_AUTODETECT,
-			GetDllShareData().m_Common.m_sFile.GetAutoMIMEdecode(), nullptr);
-	} catch (...) {
-		return false;
-	}
 	CNativeW lineBuffer;
 	CEol eol;
 	std::int64_t lineNumber = 0;
 	std::vector<LineHit> hits;
 	try {
+		(void)loader.FileOpen(fullPath.c_str(), true, CODE_AUTODETECT,
+			GetDllShareData().m_Common.m_sFile.GetAutoMIMEdecode(), nullptr);
 		while (loader.ReadLine(&lineBuffer, &eol) != RESULT_FAILURE) {
 			++lineNumber;
 			if (Cancelled(cancelled)) break;
@@ -243,7 +249,8 @@ bool SearchOneFile(const std::wstring& fullPath, const SearchQuery& query,
 		}
 	} catch (...) {
 		// A file that stops being readable mid-way contributes what it already
-		// produced rather than failing the whole search.
+		// produced rather than failing the whole search. An open failure contributes none.
+		return !matches.empty();
 	}
 	loader.FileClose();
 	return true;
