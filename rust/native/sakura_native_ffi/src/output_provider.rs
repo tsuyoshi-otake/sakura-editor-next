@@ -951,6 +951,18 @@ mod tests {
 
     type FieldMutation<T> = (&'static str, fn(&mut T));
 
+    // Receipts share one process-wide, 64-entry registry across provider tokens.
+    // An unrelated capacity/concurrency test can evict a measured receipt between
+    // two calls in a contract test. Isolate those test lifecycles, not the calls
+    // within a lifecycle: each concurrency test still runs its own worker threads.
+    static PROVIDER_TEST_LIFECYCLE: Mutex<()> = Mutex::new(());
+
+    fn isolate_provider_test() -> MutexGuard<'static, ()> {
+        PROVIDER_TEST_LIFECYCLE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     fn limits() -> SakuraOutputProviderLimitsV1 {
         SakuraOutputProviderLimitsV1 {
             struct_size: size_of::<SakuraOutputProviderLimitsV1>() as u32,
@@ -1259,6 +1271,7 @@ mod tests {
 
     #[test]
     fn provider_snapshot_write_rejects_unmeasured_and_same_size_mutations() {
+        let _test_lifecycle = isolate_provider_test();
         let token = create_provider_token();
         let create = create_request(b"receipt-create", b"owner", b"channel", b"Label");
         let mut result = poison_result();
@@ -1412,6 +1425,7 @@ mod tests {
 
     #[test]
     fn provider_snapshot_write_rejects_each_mutated_semantic_receipt_field_without_consuming_it() {
+        let _test_lifecycle = isolate_provider_test();
         let token = create_provider_token();
         let create = create_request(b"receipt-fields-create", b"owner", b"channel", b"Label");
         let mut result = poison_result();
@@ -1493,7 +1507,86 @@ mod tests {
     }
 
     #[test]
+    fn provider_receipt_evicted_by_another_provider_fails_closed_and_can_be_remeasured() {
+        let _test_lifecycle = isolate_provider_test();
+        let mut token = create_provider_token();
+        let mut original = poison_info();
+        // SAFETY: The token is live and the info is writable caller-owned storage.
+        assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
+            sakura_output_provider_snapshot_measure_v1(token, &mut original)
+        });
+
+        // Join is the ordering boundary: all foreign measurements happen after
+        // the original measure and before its write, with no timing assumption.
+        let (mut other_token, newest) = thread::spawn(|| {
+            let other_token = create_provider_token();
+            let mut newest = poison_info();
+            for _ in 0..MAX_SNAPSHOT_MEASUREMENTS {
+                // SAFETY: Each call uses a live token and worker-owned info.
+                assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
+                    sakura_output_provider_snapshot_measure_v1(other_token, &mut newest)
+                });
+            }
+            (other_token, newest)
+        })
+        .join()
+        .expect("foreign measurement worker must finish");
+
+        assert_eq!(
+            MAX_SNAPSHOT_MEASUREMENTS,
+            lock_providers().snapshot_measurements.len()
+        );
+        let mut old_storage = vec![0xa5_u8; original.encoded_size as usize];
+        let mut old_buffer = snapshot_buffer_with_receipt(&mut old_storage, original.receipt);
+        // SAFETY: The descriptor and destination are bounded caller-owned storage.
+        assert_eq!(SakuraOutputProviderStatus::InvalidArgument, unsafe {
+            sakura_output_provider_snapshot_write_v1(token, &mut old_buffer)
+        });
+        assert_poison_snapshot_length(&old_buffer);
+        assert_eq!(original.receipt, old_buffer.receipt);
+        assert!(old_storage.iter().all(|byte| *byte == 0xa5));
+
+        let mut newest_storage = vec![0xa5_u8; newest.encoded_size as usize];
+        let mut newest_buffer = snapshot_buffer_with_receipt(&mut newest_storage, newest.receipt);
+        // SAFETY: The foreign token remains live after the joined worker returns.
+        assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
+            sakura_output_provider_snapshot_write_v1(other_token, &mut newest_buffer)
+        });
+        assert_eq!(newest.encoded_size, newest_buffer.length);
+
+        let mut refreshed = poison_info();
+        // SAFETY: Eviction does not destroy the live provider or its model.
+        assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
+            sakura_output_provider_snapshot_measure_v1(token, &mut refreshed)
+        });
+        assert_ne!(
+            original.receipt.measurement_id,
+            refreshed.receipt.measurement_id
+        );
+        let mut refreshed_storage = vec![0xa5_u8; refreshed.encoded_size as usize];
+        let mut refreshed_buffer =
+            snapshot_buffer_with_receipt(&mut refreshed_storage, refreshed.receipt);
+        // SAFETY: The fresh receipt and bounded destination belong to this caller.
+        assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
+            sakura_output_provider_snapshot_write_v1(token, &mut refreshed_buffer)
+        });
+        assert_eq!(refreshed.encoded_size, refreshed_buffer.length);
+
+        // SAFETY: Both owned token slots are live and destroyed exactly once.
+        assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
+            sakura_output_provider_destroy_v1(&mut token)
+        });
+        // SAFETY: The joined worker transferred ownership of this live token.
+        assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
+            sakura_output_provider_destroy_v1(&mut other_token)
+        });
+        assert_eq!((0, 0), (token, other_token));
+        assert!(lock_providers().snapshot_measurements.is_empty());
+    }
+
+    #[test]
     fn provider_create_rejects_bad_headers_and_pointer_ranges() {
+        let _test_lifecycle = isolate_provider_test();
         let good_limits = limits();
         let mut token = 0xfeed_beef_u64;
 
@@ -1577,6 +1670,7 @@ mod tests {
 
     #[test]
     fn provider_every_export_rejects_invalid_top_level_pointers() {
+        let _test_lifecycle = isolate_provider_test();
         let token = create_provider_token();
         let request = create_request(b"top-level-pointers", b"owner", b"channel", b"Label");
         let mut result = poison_result();
@@ -1664,6 +1758,7 @@ mod tests {
 
     #[test]
     fn provider_apply_rejects_malformed_inputs_and_poison_outputs() {
+        let _test_lifecycle = isolate_provider_test();
         let token = create_provider_token();
         let valid = create_request(b"create", b"owner", b"channel", b"Label");
 
@@ -1965,6 +2060,7 @@ mod tests {
 
     #[test]
     fn provider_rejects_invalid_utf8_in_required_and_optional_spans() {
+        let _test_lifecycle = isolate_provider_test();
         let token = create_provider_token();
         let invalid = [0xff_u8];
         let mut result = poison_result();
@@ -2146,6 +2242,7 @@ mod tests {
 
     #[test]
     fn provider_copies_borrowed_input_and_output_spans_without_retaining_pointers() {
+        let _test_lifecycle = isolate_provider_test();
         let token = create_provider_token();
         let mut operation_id = b"copy-create".to_vec();
         let mut owner_id = b"owner".to_vec();
@@ -2236,6 +2333,7 @@ mod tests {
 
     #[test]
     fn provider_accepts_aliased_immutable_input_spans_and_copies_nested_values() {
+        let _test_lifecycle = isolate_provider_test();
         let token = create_provider_token();
         let mut shared_create = b"shared".to_vec();
         let create = SakuraOutputProviderRequestV1 {
@@ -2338,6 +2436,7 @@ mod tests {
 
     #[test]
     fn provider_snapshot_measure_write_rejects_malformed_destinations() {
+        let _test_lifecycle = isolate_provider_test();
         let token = create_provider_token();
         let create = create_request(b"snapshot-create", b"owner", b"channel", b"Label");
         let mut result = poison_result();
@@ -2490,6 +2589,7 @@ mod tests {
 
     #[test]
     fn provider_active_channel_rejects_malformed_descriptors_and_poison_outputs() {
+        let _test_lifecycle = isolate_provider_test();
         let token = create_provider_token();
         let create = create_request(b"active-create", b"owner", b"channel", b"Label");
         let mut result = poison_result();
@@ -2622,6 +2722,7 @@ mod tests {
 
     #[test]
     fn provider_destroyed_tokens_fail_closed_for_every_export() {
+        let _test_lifecycle = isolate_provider_test();
         let mut token = create_provider_token();
         let stale_token = token;
         let request = create_request(b"terminal-create", b"owner", b"channel", b"Label");
@@ -2712,6 +2813,7 @@ mod tests {
 
     #[test]
     fn provider_forged_tokens_fail_closed_for_all_exports() {
+        let _test_lifecycle = isolate_provider_test();
         let mut token = create_provider_token();
         let candidates = [
             ("zero", 0_u64),
@@ -2750,6 +2852,7 @@ mod tests {
 
     #[test]
     fn provider_cross_family_tokens_fail_closed_for_all_operations() {
+        let _test_lifecycle = isolate_provider_test();
         let provider_token = create_provider_token();
         let raw_limits = limits();
         let mut shadow_token = 0_u64;
@@ -2885,6 +2988,7 @@ mod tests {
 
     #[test]
     fn provider_exports_are_safe_under_concurrent_apply_snapshot_stop_destroy() {
+        let _test_lifecycle = isolate_provider_test();
         let token = create_provider_token();
         let barrier = Arc::new(Barrier::new(6));
         let mut handles = Vec::new();
@@ -3007,6 +3111,7 @@ mod tests {
 
     #[test]
     fn provider_concurrent_receipts_and_terminal_handles_are_bounded() {
+        let _test_lifecycle = isolate_provider_test();
         const ITERATIONS: usize = 100;
         let mut accepted_rounds = 0_usize;
 
@@ -3267,6 +3372,7 @@ mod tests {
 
     #[test]
     fn every_provider_export_recovers_from_its_own_panic_boundary() {
+        let _test_lifecycle = isolate_provider_test();
         let raw_limits = limits();
         let mut create_slot = u64::MAX;
         // SAFETY: The limits and token are valid caller-owned storage. The
@@ -3418,6 +3524,7 @@ mod tests {
 
     #[test]
     fn provider_token_family_and_terminal_snapshot_are_isolated() {
+        let _test_lifecycle = isolate_provider_test();
         let raw_limits = limits();
         let mut provider_token = 0_u64;
         // SAFETY: The limits and token are initialized caller-owned storage.

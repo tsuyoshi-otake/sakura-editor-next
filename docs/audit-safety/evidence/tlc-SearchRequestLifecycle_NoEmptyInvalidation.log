@@ -1,0 +1,81 @@
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Running breadth-first search Model-Checking with fp 82 and seed 8157382199682083344 with 2 workers on 16 cores with 491MB heap and 64MB offheap memory [pid: 32732] (Windows 11 10.0 amd64, Microsoft 11.0.31 x86_64, MSBDiskFPSet, DiskStateQueue).
+Parsing file C:\Users\developer\tmp\sakura-audit-safety\docs\formal\SearchRequestLifecycle.tla
+Parsing file C:\Users\developer\AppData\Local\Temp\Naturals.tla
+Semantic processing of module Naturals
+Semantic processing of module SearchRequestLifecycle
+Starting... (2026-09-05 21:06:05)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-09-05 21:06:05.
+Error: Invariant CurrentResults is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ pending = [revision |-> 0, generation |-> 0]
+/\ mailbox = [revision |-> 0, generation |-> 0]
+/\ revision = 1
+/\ empty = FALSE
+/\ generation = 1
+/\ unsafeReplace = FALSE
+/\ closed = FALSE
+/\ running = [revision |-> 0, generation |-> 0]
+/\ visible = 0
+
+State 2: <Debounce line 19, col 5 to line 21, col 98 of module SearchRequestLifecycle>
+/\ pending = [revision |-> 1, generation |-> 1]
+/\ mailbox = [revision |-> 0, generation |-> 0]
+/\ revision = 1
+/\ empty = FALSE
+/\ generation = 1
+/\ unsafeReplace = FALSE
+/\ closed = FALSE
+/\ running = [revision |-> 0, generation |-> 0]
+/\ visible = 0
+
+State 3: <Start line 23, col 5 to line 25, col 89 of module SearchRequestLifecycle>
+/\ pending = [revision |-> 0, generation |-> 0]
+/\ mailbox = [revision |-> 0, generation |-> 0]
+/\ revision = 1
+/\ empty = FALSE
+/\ generation = 1
+/\ unsafeReplace = FALSE
+/\ closed = FALSE
+/\ running = [revision |-> 1, generation |-> 1]
+/\ visible = 0
+
+State 4: <Edit line 13, col 5 to line 17, col 60 of module SearchRequestLifecycle>
+/\ pending = [revision |-> 0, generation |-> 0]
+/\ mailbox = [revision |-> 0, generation |-> 0]
+/\ revision = 2
+/\ empty = TRUE
+/\ generation = 1
+/\ unsafeReplace = FALSE
+/\ closed = FALSE
+/\ running = [revision |-> 1, generation |-> 1]
+/\ visible = 0
+
+State 5: <Finish line 27, col 5 to line 30, col 89 of module SearchRequestLifecycle>
+/\ pending = [revision |-> 0, generation |-> 0]
+/\ mailbox = [revision |-> 1, generation |-> 1]
+/\ revision = 2
+/\ empty = TRUE
+/\ generation = 1
+/\ unsafeReplace = FALSE
+/\ closed = FALSE
+/\ running = [revision |-> 0, generation |-> 0]
+/\ visible = 0
+
+State 6: <Apply line 32, col 5 to line 36, col 89 of module SearchRequestLifecycle>
+/\ pending = [revision |-> 0, generation |-> 0]
+/\ mailbox = [revision |-> 0, generation |-> 0]
+/\ revision = 2
+/\ empty = TRUE
+/\ generation = 1
+/\ unsafeReplace = FALSE
+/\ closed = FALSE
+/\ running = [revision |-> 0, generation |-> 0]
+/\ visible = 1
+
+130 states generated, 77 distinct states found, 24 states left on queue.
+The depth of the complete state graph search is 8.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 5 and the 95th percentile is 4).
+Finished in 00s at (2026-09-05 21:06:05)

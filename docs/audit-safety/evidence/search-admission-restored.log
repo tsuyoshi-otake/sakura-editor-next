@@ -1,0 +1,20 @@
+Running main() from C:\Users\developer\tmp\sakura-audit-safety\src\test\resources\code-main.cpp
+Note: Google Test filter = SearchRequestSafetyTest.*
+[==========] Running 5 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 5 tests from SearchRequestSafetyTest
+[ RUN      ] SearchRequestSafetyTest.LongLinePreviewContainsTheActualMatch
+[       OK ] SearchRequestSafetyTest.LongLinePreviewContainsTheActualMatch (9 ms)
+[ RUN      ] SearchRequestSafetyTest.PreviewDoesNotSplitUtf16SurrogatePair
+[       OK ] SearchRequestSafetyTest.PreviewDoesNotSplitUtf16SurrogatePair (27 ms)
+[ RUN      ] SearchRequestSafetyTest.ClearingQueryRejectsAlreadyPostedCompletion
+[       OK ] SearchRequestSafetyTest.ClearingQueryRejectsAlreadyPostedCompletion (81 ms)
+[ RUN      ] SearchRequestSafetyTest.SeededPreviewWindowsPreserveSourceCoordinatesAndHitText
+[       OK ] SearchRequestSafetyTest.SeededPreviewWindowsPreserveSourceCoordinatesAndHitText (441 ms)
+[ RUN      ] SearchRequestSafetyTest.NativeReplaceAllPreservesFilesAfterQueryInvalidation
+[       OK ] SearchRequestSafetyTest.NativeReplaceAllPreservesFilesAfterQueryInvalidation (153 ms)
+[----------] 5 tests from SearchRequestSafetyTest (721 ms total)
+
+[----------] Global test environment tear-down
+[==========] 5 tests from 1 test suite ran. (743 ms total)
+[  PASSED  ] 5 tests.

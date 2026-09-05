@@ -1,0 +1,303 @@
+# #290 先行修正の検証記録
+
+この文書は全37項目の完了報告ではない。Search の結果世代・preview、FileLoad の MIME option・設定寿命、対応する CI を実装した先行変更の記録である。全量対応表は [ledger.md](ledger.md)。未実装項目を FIXED_VERIFIED にしていない。
+
+## A. 作業基準
+
+- 調査・実装開始 SHA: `afaa395c46a3671420ef088905a3046c2966b3a5`。開始時の fork main と一致。
+- fork: `tsuyoshi-otake/sakura-editor-next`、branch: `codex/audit-safety-followups`。
+- 元 checkout のユーザー変更を避け、`C:/Users/developer/tmp/sakura-audit-safety` に隔離した。
+- Windows、MSVC 2022 14.44、x64 Debug/Release、既存 Python/pytest、Microsoft Java 11 を使用。依存 package の更新なし。gitlink は既存ローカル clone から固定 SHA を取得。
+- Issue #290 を作成し、論理単位で commit。main push、merge、release、upstream 書き込みは実施しない。
+- 主要 commit: `cfddbcbb2` (FileLoad)、`89ed278ec` (Search)、`611f785d0` (TLC/CI)、`75b47745d` (台帳)、`dd40b6cf5` (確認済み semantic identity 更新)。`c7c12a788` (Explorer非同期終了test)。後続の証跡 commit は同じ branch に含む。公開先は [Draft PR #291](https://github.com/tsuyoshi-otake/sakura-editor-next/pull/291)。
+
+## B. 全量対応と再現
+
+全 F01–F22 / H01–H15、対象 symbol、分類、commit、未完了理由は [対応台帳](ledger.md) に残した。共通 tracking Issue は [#290](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/290)。
+
+修正前製品コードと追加した native regression tests を canonical solution build でビルドし、次の5件が失敗した。[red log](evidence/native-red.log) を保存した。
+
+| ID | 修正前の観測 | 実装・現在の検証範囲 |
+|---|---|---|
+| F07 | 空検索へ変更後、既に USER32 に通知された旧 completion が再採用された | 入力変更時点で世代更新し、受理と置換受付で root/query/generation を照合。実workerの通知後に空文字・debounce入力・root変更・closeを行うnative testが成功 |
+| F09 | 遠方のhitがpreviewから消える。境界でsurrogate pairを切る | hitを含む最大250 UTF-16 code unit窓に変更。元のcolumn/lengthは保持。長いhitとsurrogate pairの試験成功 |
+| F18 | MIME optionがconverter生成より後に反映され、ON/OFF/reopenで内容が不正 | converter生成前にoption反映。実ファイルをON/OFF/ON/OFFで再openする試験成功 |
+| F21 (部分) | loader構築後に呼出元設定を変更すると自動判定も変わる | immutable設定snapshotを所有。Prepareへ設定とconverter寿命を共有。mappingは依然親の借用 |
+
+F19はREJECTED。指定された1引数factoryは既に `unique_ptr` を返し、full-expression終了時に破棄される。2引数factoryの所有権とは混同していない。
+
+## C. 設計判断・保証境界
+
+Search は worker の実行と UI の受付を分ける。pending/mailbox は引き続き depth-one。debounce は次の実行を遅らせるだけで、旧結果の失効を遅らせない。結果は検索時のrequest snapshotを持ち、UI側で照合する。replacement文字列とpreserveCaseは検索patternの同一性から除外する。
+
+FileLoad の設定は構築時snapshotとし、temporary参照を保持しない。converterの共有所有は寿命を保持するものであり、converterのthread safetyを証明するものではない。Prepareされたreaderがmappingを使う間は親loaderを閉じられないという制約が残る。
+
+Search保存は既存 `ReadVersioned` / `ConditionalAtomicReplace` へまだ接続していない。外部writerに対する厳密CAS、publish成功後のfailure/unknown、dirty working copyとの整合、backup/metadataは未解決。これらの安全性をこのPRで保証しない。
+
+Updaterの単一installation owner、admission/generation、cancel-before-join、実行許可の失効と再起動後の扱い、installer検証と起動handleの同一性は未実装。digestはpublisher署名ではない。署名運用は外部判断が必要だが、他のUpdater修正を妨げる依存ではない。
+
+Clipboard旧形式はnative size_tで、D&Dの生成は終端NULを含まない。旧32/64bitの曖昧性、GlobalSizeの余剰、raw UTF-16/embedded NULの互換性を含む共有parserが必要。今回は形式の意味を変更していない。
+
+## D. 検証結果
+
+以下は隔離repo rootから実行。ログのパスはローカルの `.codex/goal-loop/audit-safety/` と `C:/Users/developer/tmp/`。共有用の限定ログを [evidence/](evidence/) に保存した。
+
+### Native build / tests
+
+```powershell
+py -3 tools/build/sakura_build.py build solution x64 Debug --jobs 4
+py -3 tools/build/sakura_build.py build solution x64 Release --jobs 4
+
+pwsh -NoProfile -ExecutionPolicy Bypass -File C:/Users/developer/tmp/sakura-audit-run-tests.ps1 -Configuration Debug -Label debug-focused
+pwsh -NoProfile -ExecutionPolicy Bypass -File C:/Users/developer/tmp/sakura-audit-run-tests.ps1 -Configuration Release -Label release-focused
+
+pwsh -NoProfile -ExecutionPolicy Bypass -File C:/Users/developer/tmp/sakura-audit-run-tests.ps1 -Configuration Debug -Label debug-unattended-after-wait -Unattended -TimeoutSeconds 600
+```
+
+- Debug/Release solution build成功。`build-dev`だけを根拠にtest build成功と扱っていない。
+- [Debug](evidence/debug-focused.log)、[Release](evidence/release-focused.log): 各13件成功。filterは `FileLoadOptionsTest.*:SearchRequestSafetyTest.*:SearchWorkbenchToolGeometry.*`。
+- 初回unattendedは3410件中3408成功、既存benchmark 1 skip、Explorer test 1失敗。`Close()`直後にStoppedを要求していたが、productionは非同期retirementへ渡す契約だった。
+- `ExplorerTool.ProductionWorkerDisplaysJunctionsAsLeaves` は同じ最終Stopped検査を維持し、既存のPumpMessagesUntilで最大2秒待機。再実行は **3410件中3409成功、既存benchmark 1 skip、失敗0** (235267ms)。既存disabled 15件もそのまま明記する。
+- 広範囲再実行の後、同じtestの親windowをRAII化した。最終cohortは上記13件＋Explorer当該test。最終cohortは [Debug](evidence/debug-final-cohort.log) 14/14 (667ms)、[Release](evidence/release-final-cohort.log) 14/14 (541ms) 成功。両runnerのOwnedSurvivors=0。
+- unattended filterは既存 `src/test/CLAUDE.md` の除外集合をそのまま使用。新たなskipや除外追加なし。これは対話UIを含む全suite完走とは異なる。
+- runnerは全体timeout、own PID tree cleanup、終了後の該当repoのtests1/sakura再列挙を実施。実行済みnative試験のOwnedSurvivorsは0。
+
+PBTは `mt19937` seed `0x290`、64個の実ファイル、prefix 0..1999、hit長1..400で元座標とpreview内hitを検査。反例なし。shrinkerは実装しておらず、縮小反例なしをshrinking実施の意味にしない。
+
+### Python / architecture
+
+```powershell
+py -3 -m pytest src/test/py/test_ci_plan.py src/test/py/test_ci_plan_workflow.py tools/build/tests/test_architecture_gates_workflow_contracts.py tools/build/tests/test_search_lifecycle_gate.py -q
+py -3 tools/build/sakura_build.py lint checkout-invariance
+py -3 tools/build/sakura_build.py generate --check
+py -3 tools/build/sakura_build.py graph check --all-contexts
+py -3 tools/dependency_ledger.py check
+py -3 tools/build/sakura_build.py inventory semantic --strict
+pwsh -NoProfile -File src/main/ps1/check-encoding.ps1 -BaseSha afaa395c46a3671420ef088905a3046c2966b3a5
+git diff --check
+```
+
+Pythonは33 tests / 44 subtests成功。[log](evidence/python-green.log)。モデルファイルをdocs-only扱いする旧classifierに対するredは2件。LF/CRLF checkout invariance、generated metadata、6 context graph、dependency ledgerは成功。
+
+semantic ratchetでは実際の新規raw HWND/public mutable stateを最初に解消し、その後に残った既存getter/fieldのidentity移動2件を確認して公式accept-currentを使用した。基準SHA `75b47745d84bec9fd18680427739f15576e2cef9`、Issue290、理由とimmutable historyを記録。per-rule増加なし、raw delete/catch-allは各1減。scanner、閾値、touched-scope条件は変更していない。Explorer testを触った際のtouched-scope減少不足も隠さず、親windowのRAII化で対処した。最終strictはnew_findings/increases/missing_touched_reductionsすべて空、exit0。
+
+### TLC / negative tests
+
+```powershell
+py -3 tools/verify-search-lifecycle.py --jar C:/Users/developer/tmp/sakura-tlc-pin/tla2tools.jar --output .codex/goal-loop/audit-safety/tlc-final
+```
+
+- 公式v1.7.4 asset (2024-08-05公開)、SHA256 `936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88` を固定。新規release採用なし。
+- model `docs/formal/SearchRequestLifecycle.tla`、3cfgのSHA256、実際のjava command、source HEADを [receipt](evidence/tlc-evidence.json) に保存。receiptのsource HEADは実行時点であり、後続のtest/doc-only commitを含まない。
+- 正モデル: exit0、362 generated / 100 distinct / queue0 / depth13。
+- `NoEmptyInvalidation` と `NoGenerationCheck`: 各exit12、意図した `CurrentResults` invariant violation。
+- timeout、tool error、別invariant failure、探索未完了をnegative成功として認めない。Python gate testsで検査。
+- 3世代、depth-oneの有界safetyモデル。liveness、公平性、Win32通知失敗、disk I/Oを検証したものではない。
+- 必須architecture jobにTLC stepとartifactを接続。`.tla`/`.cfg`変更はdocs-only経路から除外。GitHub上のexact-head CIは別途確認が必要。
+
+### 未実行・保証しないもの
+
+runtime mutation campaign、ASan、allocation/Win32 failure injection、独立component runner、MinGW実ビルド、packaging、対話UI E2E、screen reader/UIA client、dual-captureによる実画面、性能A/B、全processのhandle/thread統計は未実行。TLC負モデルをC++ mutationの代わりとは扱わない。hidden HWND/LB_GETCOUNT検査は実際のpaintを証明しない。
+
+## E. 未完了とmerge判断
+
+本変更はDraftとして扱う。全37項目の完了条件を満たしておらず、今回のループ全体はPASSではない。Search/FileLoadの局所red→green、native build、限定モデルの結果はレビューできるが、必要なruntime mutation、ASan、実画面検証、exact-head CIの不足があるため、現時点でmerge可能とは判断しない。
+
+次の実行可能な作業は、先行修正の不足検証を満たしたうえで、Clipboardの共有parser/所有権とCut成功契約、Search保存transaction、Updater protocolをそれぞれproduction経路と受入試験を伴う単位で進めること。未修正の安全性欠陥が残っているため、製品全体が安全になったとは報告しない。
+
+
+## 継続検証: native Replace All と入力失効のruntime mutation
+
+継続目標に基づき、`8ba1e04cd03373df61e4a07064614ecfacf4ca21` の製品コードに対してtestを追加した。receiptには変更前のHEADと、実際に使用したproduction/test sourceのSHA256を別々に記録している。
+
+- `ClearingQueryRejectsAlreadyPostedCompletion` にA→B→A入力変更を追加。Close分岐では元のwindow/listの`IsWindow`を検査し、破棄後のnull HWNDへの`LB_GETCOUNT`が返す0を成功と扱わなくした。元のwindowを指定して通知をdrainし、null HWNDによるthread全体のmessage取得も避けた。retirement件数0の検査は維持。
+- `NativeReplaceAllPreservesFilesAfterQueryInvalidation` は実workerの結果を採用して2行表示された後、nativeのReplace All hit targetへ`WM_LBUTTONUP`を配送する。replacementだけを変えた正常例は実ファイルが変更されcallbackが1回発火。空検索、A→B→A、root変更の3例では元のbyte列が保持されcallbackは0回。既存production入口を使用しtest専用の公開APIは追加していない。
+- runtime mutationは **ScheduleSearch内の即時InvalidateSearch呼出しだけを除去**。Debug solutionを再ビルドし、5 tests中2件が期待どおり失敗。A→B→A後に古い結果からファイルが`needle`→`changed`へ変更され、callbackが1回発火したことを新testが検出した。
+- production sourceをbyte単位で復元し、再ビルドと同じ5 testsが成功。mutation前後のrunnerで所有tests1/sakura残存0。これは1個の非等価mutationの検出証拠であり、全guardのmutation campaign完了ではない。
+
+証拠: [mutant log](evidence/search-admission-mutant.log)、[復元後log](evidence/search-admission-restored.log)、[commands／exit code／source hash receipt](evidence/search-admission-mutation.json)。
+
+Close後の結果受理自体の観測、入力変更後にworkerから遅れて発行されるcompletion、検索option／preserveCase、他guardのmutation、ASanと実画面検証は引き続き未完了。全37項目の完了判定は更新していない。
+
+最終対象cohortは [Debug](evidence/search-admission-final-debug.log) 15/15 (1002ms)、[Release](evidence/search-admission-final-release.log) 15/15 (586ms)。両構成canonical solution build成功。runnerのOwnedSurvivorsは両方0。semantic strictは新規finding／増加／touched-scope不足のいずれも0で成功。
+
+## 継続検証: Prepareの拡張改行とUTF-7状態
+
+`25cbbe901`上に追加した2回帰テストは修正前に2/2失敗した。
+`PreparedReaderPreservesExtendedEolBoundaries`はUTF-8のNEL/LS/PSを親とprepared readerで比較し、後者だけの行結合を検出する。
+`PreparedUtf7ReaderResetsPreviousDecodedLineOffset`は同一UTF-7 Base64 segment内のNEL後に残るdecoded offsetを、Close→Prepareで再利用した際の誤読を検出する。
+
+Prepareはencoded EOL表をコピーし、decoded cacheを空にしてoffsetを0へ初期化するよう修正した。
+Debug solution buildと関連17 testsは成功、所有runner/product残存0。
+EOL表コピーだけを除去するmutant、offset初期化だけを除去するmutantはそれぞれ対応testが失敗。
+production sourceをbyte単位で復元し、Debug再buildとFileLoad 4/4成功を確認した。
+
+証拠: [修正前](evidence/prepare-state-red-final.log)、[Debug cohort](evidence/prepare-state-green.log)、[EOL mutant](evidence/prepare-mutant-eol.log)、[offset mutant](evidence/prepare-mutant-offset.log)、[復元後](evidence/prepare-state-restored.log)、[commands/source hashes](evidence/prepare-state-mutation.json)。receiptのHEADは変更前で、実際のsource/test hashを併記する。共有ログはCRLFをLFへ、残余CRを文字列`\r`へ正規化しraw/published hashを記録した。
+
+`CReadManager`は単一partitionでもPrepareを使用する。通常経路では親loaderより後にreader/futureが宣言され、workerの完了を回収してから親mappingを破棄する。ただしこの読込状態修正はmapping leaseやconverterの並行安全性を証明しない。
+
+追加gate: semantic strictは新規finding/増加0だが、CFileLoad.cppの既存3 findingsに対するtouched-scope reduction不足で失敗。baselineは変更していない。読込中の可変global EOL設定参照とopen時のEOL状態の整合を次に調べる。現段階は局所red/greenであり、PR受入完了ではない。
+
+Release solution buildも成功し、同じ関連17 testsが成功（prepare-state-release.log、1609ms）、OwnedSurvivors=0。semantic gateの未解決条件は上記のまま。
+
+## 継続修正: 読込中の拡張改行policyを固定
+
+前節のsemantic gate失敗を調査すると、UTF-8のbyte走査はopen時の`m_bEolEx`を使う一方、UTF-7のdecoded走査とUTF-16走査は毎回global設定を読み直していた。読込中の設定変更で同じfile/partitionの行分割が変わる問題を新test `ExtendedEolPolicyIsStableUntilReopen` で再現した（[red](evidence/eol-policy-red.log)）。UTF-8/UTF-7/UTF-16LE、ON→OFF/OFF→ON、親とprepared reader、reopenを同じ実ファイルtestで確認する。
+
+2か所を既存のopen時EOL状態参照へ統一した。Prepareはその状態を継承し、reopenは新しいglobal設定を取得する。新しい状態ownerや共有メモリfieldは追加しない。Debug solution buildと[関連18 tests](evidence/eol-policy-green.log)が成功、OwnedSurvivors=0。semantic strictも成功し、global読込2件減、新規findingなし、baseline変更なしとなった。[source/test hashesとログhash](evidence/eol-policy-evidence.json)を記録した。前節のsemantic失敗はこの追加修正で解消した。
+
+このtestは限定された3文字コードのpolicy遷移を検証するもので、全encodingやworker間converter並行安全性、mapping寿命の証明ではない。
+
+最終Release solution buildと[18 tests](evidence/eol-policy-release.log)も成功（784ms、OwnedSurvivors=0）。checkout-invarianceとgenerate --checkも成功。Debug/Releaseのbuildは既存警告を含むがexit 0。
+
+## 継続修正: mapped-file ownerとreader lease
+
+`ceed51049`に対する`PreparedReaderRetainsMappingAfterParentDestruction`は、親破棄後のviewをVirtualQueryで検査するとMEM_FREEになり失敗した（[red](evidence/mapping-red.log)）。不正pointerをdereferenceする前のassertionで失敗させる。これはCFileLoad APIの寿命再現であり、親が最後まで生存する現在のCReadManager通常経路でUAFが起きたという主張ではない。
+
+private `MappedFile`はfile handle、mapping handle、viewをResourceHolderで所有し、readerはshared leaseとslice offsetsを保持する。最後のlease破棄でview→mapping→fileの順に解放する。GetFileTimeもownerを経由する。Prepareは範囲・source・self参照を検証してから旧readerを置換し、FileOpen/Prepareは非所有failure guardで途中状態をcloseする。mappingのcloseは親loaderの寿命から独立した。
+
+Debug solutionと[関連21 tests](evidence/mapping-final-debug.log)が成功、OwnedSurvivors=0。寿命testでは親破棄後もMEM_MAPPED/MEM_COMMITを確認して実際の先頭行を読む。reader close後はMEM_FREEを確認。追加testは旧mappingの解放、範囲拒否後のreader保持、親reopen、timestamp取得、空file、FileOpen失敗後の再利用を確認する。[初回green](evidence/mapping-green.log)と[source/log hashes](evidence/mapping-evidence.json)も収録。
+
+semantic strictは増加・新規finding・touched-scope不足なしで成功。現行converterはまだshared ownershipであり、immutable/thread-safeとは主張しない。mapped viewは外部writerに対するimmutable内容snapshotではない。Win32/allocator故障注入、限定ASan、mapping変異、全encodingの並行試験は未完了。F21/H03全体は部分対応を維持する。
+
+Release solution buildと[関連21 tests](evidence/mapping-final-release.log)も成功（927ms、OwnedSurvivors=0）。Debug最終cohortは1052ms。試験時間は性能A/Bの根拠にはしない。
+
+## 継続改善: reader固有converter
+
+確認したCJis/CCodePageのinstance fieldsは変換設定であり、今回の調査で既存共有実装のdata raceは再現していない。CCodeBaseの非const virtual変換APIに共有安全性の契約はないため、H03としてreaderごとの所有を明確にした。Prepareは親のencoding/MIME flagsからconverterを生成し、unique_ptrで所有する。mapping/configuration leaseとは分離する。
+
+新test `PreparedReadersOwnConvertersWithInheritedMimeOptions` の[red](evidence/converter-red.log)は親とreaderのinstance同一性による失敗であり、出力破損の再現とは分類しない。改善後は3 instanceの独立を確認し、親close後に2 workersで各128行を読む。MIME ON/OFF両方の実ファイル内容とEOLが期待どおりで、Debug solutionと[関連22 tests](evidence/converter-green.log)が成功した（1153ms、OwnedSurvivors=0）。
+
+追加生成コストはpartition数Pに対してO(P)、行数Nに対する追加allocationではない。CReadManagerの既存hardware/file-size/maximum制限を保持する。性能A/Bを測ったという主張はしない。backend内のprocess-wide状態、全encoding並行実行、allocator/Win32故障注入、ASan等は別途未完了。[source/log hashes](evidence/converter-evidence.json)を収録。semantic strictはbaseline変更なしで成功。
+
+最終Release solution buildと[関連22 tests](evidence/converter-release.log)も成功（720ms、OwnedSurvivors=0）。ASan runtime librariesのローカル存在は確認したが、ASan build/runは未実行。
+
+## 継続検証: FileLoad限定ASan
+
+`ffc231cbae380a22da5d353bfd56ca15248efbfd`のFileLoad関連をMSVC14.44.35207 x64 Debugで限定計測した。通常buildのobject/PCH/exeは変更せず、`C:/Users/developer/tmp/sakura-fileload-asan`へ出力した。
+
+- 計測ソース11個: `CFileLoad.cpp`、`CIoBridge.cpp`、`CCodeBase.cpp`、`CCodeFactory.cpp`、`CJis.cpp`、`CUtf7.cpp`、`CUtf8.cpp`、`CCodePage.cpp`、`CMemory.cpp`、`CNativeW.cpp`、`test-file.cpp`。正確なsource hashesは[receipt](evidence/fileload-asan/receipt.json)。
+- canonical Debug buildのCL/link tlogからinclude/define/libraryを再現し、対象を`/fsanitize=address /Y-`で再compile。RTC、通常PCH、増分linkを使わない。STL container annotationsはmixed-object互換のため明示的に無効化。他のproduction/test/library objectは通常Debugであり、全アプリASanではない。
+- 最初のリンク再現はtlog先頭行しか読まず、main等55 symbolsが未解決で失敗。tlogの非header全行を復元して、既存ASan objectsで再link成功。製品source修正やobjectの再作成で隠していない。
+- 同じtoolchainの小さな[canary](evidence/fileload-asan/canary.cpp)は意図したheap-buffer-overflowを[検出](evidence/fileload-asan/canary-run.log)してexit1。対象objectのASan symbolsとtest exeのruntime importも[検査](evidence/fileload-asan/instrumentation-checks.json)。
+- `tests1-asan.exe --gtest_filter=FileLoadOptionsTest.*` は[9/9成功](evidence/fileload-asan/fileload-run.log)、exit0、115ms。ASan報告なし。[XML](evidence/fileload-asan/fileload.xml)と[実行command/PID/exit](evidence/fileload-asan/run-receipt.json)を収録。run上限120秒、timeout時は所有PID treeを回収。終了後CIMで計測outputと隔離repo配下の所有tests1/sakuraを照合し残存0。
+
+再現用script snapshotsは[build](evidence/fileload-asan/sakura-fileload-asan-build.py)、[run](evidence/fileload-asan/sakura-fileload-asan-run.py)、[instrumentation check](evidence/fileload-asan/sakura-asan-check.py)。これらは今回の絶対checkout/outputパスと既存canonical Debug tlogを前提とする検証記録で、汎用build CLIではない。実際に用いたresponse files、ログ変換前後の[SHA256](evidence/fileload-asan/sha256.json)を併記する。公開RSPはUTF8へ変換しており、scriptが生成する実行用RSPはUTF16。
+
+Microsoftの[ASan制約](https://learn.microsoft.com/en-us/cpp/sanitizers/asan-known-issues?view=msvc-170)と[build reference](https://learn.microsoft.com/en-us/cpp/sanitizers/asan-building?view=msvc-170)に従う。ASan成功はdata race、OS mappingの有効性、未計測コード／全encoding、allocator/Win32故障経路の証明ではない。mapping寿命は前節のVirtualQuery＋実読込で別に検証している。H12/F18/F21の限定Sanitizer証拠は追加できたが、全37項目の完了条件は未達のまま。
+
+## 継続検証: FileLoadの途中失敗と回収guard mutation
+
+`297c1f006`の製品sourceに対し、別output `C:/Users/developer/tmp/sakura-fileload-faults` のコピーだけへ5個のfault pointを注入した。製品の公開APIやglobal状態にはtest hookを追加していない。[注入patch](evidence/fileload-faults/injection.patch)は、(1)file取得後のsize取得失敗、(2)mapping作成のnull return、(3)view作成のnull return、(4)FileOpenがmappingを保持した直後のbad_alloc、(5)Prepareのconverter生成直前のbad_alloc。実際のOS資源枯渇を起こした試験ではなく、その戻り値／例外をproduction cleanupへ渡す試験である。
+
+前節同様の限定ASan計測で既存9＋注入用2の[11 tests成功](evidence/fileload-faults/fileload-run.log)。失敗後のprocess handle数、timestamp不在、view解放、同じreaderの再利用を確認する。Prepare失敗では親のtimestamp／mappingを保持してdestinationだけ閉じ、再Prepare→親close→実読込まで成功。
+
+続けて、FileOpenのcloseOnFailure guardだけをmapping取得前にdisarmするruntime mutantを作成した。[1/2 testsが失敗](evidence/fileload-faults/mutant-run.log)し、stage4でhandle176→178、timestampがまだ取得できる、MEM_COMMITのまま残る、reopenが例外になることを検出した。failure injectionの緑だけでcleanupを保証したことにせず、回収を壊す非等価変異を検出できることも確認した。
+
+注入sourceをbyte単位で復元し、対象object再compile/relink後、[11/11成功](evidence/fileload-faults/restored-run.log)（168ms、exit0、ASan報告なし）。[mutation receipt](evidence/fileload-faults/mutation-receipt.json)に前後hashと各command/exit/PIDを記録。[通常run receipt](evidence/fileload-faults/run-receipt.json)、[注入source hash](evidence/fileload-faults/injection-sources.json)、[XML](evidence/fileload-faults/restored.xml)、[log hash/cleanup](evidence/fileload-faults/sha256.json)も収録。各native試験は上限120秒、終了後CIMで対象outputと隔離repoの所有tests1/sakura残存0。
+
+再現script snapshots: [prepare](evidence/fileload-faults/sakura-fileload-faults-prepare.py)、[build](evidence/fileload-faults/sakura-fileload-faults-build.py)、[run](evidence/fileload-faults/sakura-fileload-faults-run.py)、[mutation](evidence/fileload-faults/sakura-fileload-faults-mutation.py)。絶対pathと前節のASan準備script、canonical Debug tlogを前提とするローカル検証記録。元のcheckout sourceと通常成果物は変更していない。
+
+これは5故障点＋1guard mutantの証拠であり、全allocation点・全Win32 failure・共有backendの競合・mapping寿命全変異を網羅したとは主張しない。Search/Clipboard/Updater等の全37項目は引き続き未完了。
+
+## 継続検証: Search optionとpreview固定境界・runtime mutation
+
+`8868a0cb6`のproduction実装に対して、`NativeReplaceAllPreservesFilesAfterQueryInvalidation`を8 scenariosへ拡張した。実際のnative toggleをクリックしてregex/wholeWord/matchCaseを変更した直後のReplace Allでは、元byte列を保持しcallbackは0回。preserveCaseだけを変更する正常経路では現在の結果を保持して`NEEDLE`から`CHANGED`へ更新しcallbackは1回。replacement-onlyの既存正常例も維持する。
+
+新しい`PreviewBoundaryFixturesPreserveExplicitUtf16Lengths`はUTF-16LE BOM付きの実ファイル12例を使用する。prefixとhitの249/250/251の9組合せ、pair、unpaired raw UTF-16、NUL入りを含む。source座標、長いhitの元length、明示長のpreview substring、最大250 code unit、実pairを窓境界で分断しないことを確認する。NULは既存Searchのbinary除外契約を確認する。
+
+初回23 tests中1件の失敗はNUL入りfileにもmatchを期待したtest側の誤りだった。`LooksBinary`による意図した除外と確認し、NULなしraw UTF-16とNUL除外のfixtureを分離した。これは製品不具合のred→greenではない。[初回結果](evidence/search-boundaries/search-boundaries-debug.log)を残す。
+
+修正後canonical Debug/Release solution buildと関連23 testsは両構成で成功（[Debug](evidence/search-boundaries/search-boundaries-final-debug.log)、[Release](evidence/search-boundaries/search-boundaries-final-release.log)）。runnerは上限120秒、所有tests1/sakura残存0。Releaseには既存CEditView警告等4件があるがbuild exit 0。
+
+続けてproduction `BuildPreview`の防御を個別に外す3 runtime mutantsをcanonical Debugで再buildし、同じSearch 6 testsで検証した。
+
+- [hit追従を除去](evidence/search-boundaries/preview-follow-hit.log): 3/6失敗。遠方hit、seeded例、固定境界例が検出。
+- [窓先頭pair保護を除去](evidence/search-boundaries/preview-start-pair.log): 1/6失敗。既存surrogate testが検出。
+- [窓末尾pair保護を除去](evidence/search-boundaries/preview-end-pair.log): 1/6失敗。同じsurrogate testが検出。
+
+production sourceはbyte単位で復元し、元hashとの一致を確認した。再build後[Search 6/6](evidence/search-boundaries/preview-restored.log)成功、[関連23/23](evidence/search-boundaries/search-boundaries-restored-debug.log)成功。各実行のexitと所有process残存0を記録した。[再現script](evidence/search-boundaries/sakura-preview-mutations.py)、[command/PID/exit/source hash](evidence/search-boundaries/preview-mutation.json)、[raw/published logとtest source hash](evidence/search-boundaries/sha256.json)を収録。scriptは今回の絶対checkoutと既存bounded runnerを前提とする検証記録で、汎用CI runnerではない。
+
+この3変異はpreviewの限定防御の証拠であり、全mutation campaignではない。F07の入力変更後にworkerが遅れて発行するcompletion、Close後受理の直接観測、他受付guard、MIME適用順、実画面dual-capture、性能A/B、最終head CIは未完了。F09/F21等と全37項目の完了へ昇格しない。公開台帳の古いmapping/converter/ASan記述を同時に同期した。
+
+## 継続検証: 検索完了後の遅延publicationとClose
+
+`2b3af3ef6`のnative Searchに対して、`RunWorkspaceSearch`が実ファイルから1 matchを返した直後、publication lock取得前に手動reset eventでworkerを待機させた。元のUSER32通知待機testとは異なり、入力失効／Closeの後にworkerのcompletion処理を再開する。request generationを観測tokenとし、この旧requestのdrop/publication/受理だけを数えるため、後続の正常requestとは混同しない。
+
+隔離checkoutに一時的に入れた[計測patch](evidence/search-delayed/delayed-search-injection.patch)は製品APIを増やさず、終了時にsource/testをbyte単位で復元する。試験はclear、native入力変更、A→B→A、空root、Close、regex toggle、変更なしの7 scenarios。全例で再開前に実検索のmatchCount=1を確認する。先行6例では旧requestが公開前にdropされ、旧publication/acceptedは0。Closeでは保存したHWND/listの破棄と非同期retirement完了を別に確認する。正常controlはpublication/accepted各1、結果2行を確認する。[初回green](evidence/search-delayed/delayed-search-green.log)成功。
+
+workerのpublication前generation照合だけを除くruntime mutantでは、Close以外の失効5例でdropが0/publicationが1になり[1 testが失敗](evidence/search-delayed/delayed-search-mutant.log)した。Closeはwindow-null guardで引き続きdropされた。後段の`AcceptResult`防御は維持しているため旧acceptedの期待値は失敗していない。このmutantは古い結果のpublicationを検出した証拠であり、誤表示・誤writeの再現ではない。window-null guardそのものや全acceptance guardのmutationを検証したとも主張しない。
+
+計測版へ復元・再buildして[7 scenarios成功](evidence/search-delayed/delayed-search-probe-restored.log)。さらにoriginal production/testのbyte hashへ復元、通常Debug solutionを再buildして[関連23/23成功](evidence/search-delayed/delayed-search-normal.log)。[receipt](evidence/search-delayed/delayed-search.json)にcommand/PID/exit/source hashesを記録し、original/restored hashesは一致する。各runnerの上限120秒、計測barrier10秒、EventScopeはClose後のretirementを最大12秒観測し、workerが残る間はevent handleを解放しない。全runでtimeout counter=0、所有tests1/sakura残存0。
+
+[再現script](evidence/search-delayed/sakura-delayed-search.py)はこのcheckoutと既存bounded runnerを使うローカル実験記録。[ログhash](evidence/search-delayed/sha256.json)も収録。patch表示は改行を正規化したzero-context diffであり、復元の正しさは表示差分ではなくbyte hashで確認する。常設CI regressionではなくDebug計測版の証拠である。通常Releaseの23 tests成功は前節の同一production/test sourceの結果であり、今回のevent計測をReleaseでも実行したという主張ではない。
+
+これにより入力変更後の遅延worker completionとClose後のdrop/非受理の観測を追加した。Close後に無効windowへ強制配送して`AcceptResult`のclosed分岐へ到達させた試験ではない。製品の二重防御の各guard、MIME適用順、実画面／性能／package、最終head CIは依然未完了。F07/H12全体と全37項目の完了判定は維持する。
+
+## 2026-09-06: isolate Output receipt test lifecycles after Release CI failure
+
+Target before this repair: `8d35fa298987f38b01767d22a275dcc828f1376a`.
+Tracking: Issue #290, related receipt contract #274. This is a Rust test-only
+repair; the production prefix before `#[cfg(test)] mod tests` is byte-identical
+after LF normalization. Clipboard working-tree changes are not part of it.
+
+The exact-head Release job 101319472738 in run 33970851763 failed in
+`provider_snapshot_write_rejects_each_mutated_semantic_receipt_field_without_consuming_it`:
+the original receipt returned `InvalidArgument` where `Ok` was expected after
+the forged `measurement_id` attempt. The crate had 48 passed / 1 failed, Cargo
+exit 101. The 64-entry measurement registry is shared across provider tokens.
+The existing same-size mutation test deliberately fills that registry and evicts
+old receipts. Different provider tokens therefore do not isolate test fixtures.
+
+Ten ordinary local Release workspace runs passed before the repair. To resolve
+the timing ambiguity, the diagnostic script runs the existing capacity test
+after the victim has measured and before it writes. That schedule reproduces
+the same assertion and typed status, exit 101, with no remaining test processes.
+The script restores the source byte-for-byte in `finally`. This is deterministic
+evidence of a sufficient interleaving, not a captured trace of the CI schedule.
+
+The repair gives all 17 existing runtime tests using the provider registry a
+test-only lifecycle guard. Source-only tests and the Cargo scheduler remain
+parallel. Both existing internal concurrency tests still spawn and join their
+workers, including the 100-round receipt/terminal-handle test. No old test,
+assertion, iteration count, or rejection check was removed. A new real-export
+test orders another provider's 64 measurements between measure and write,
+checks the bound and failed write's poisoned length/unchanged destination,
+then checks the foreign current receipt and a freshly measured original
+provider both succeed. Destruction removes both providers' receipts.
+
+Verification:
+
+- `cargo +1.96.0 test --workspace --locked --release --no-fail-fast -- --nocapture`:
+  ten consecutive fixed runs and one final run pass, 50 FFI + 5 SIMD + 12
+  Unicode tests, no ignored or filtered tests. The final run also verifies the
+  portable bounded runner copied into this evidence directory.
+- The same workspace command without `--release` passes Debug. A Release run
+  with `--test-threads=1` also passes as a diagnostic comparison; CI was not
+  changed to force serial scheduling.
+- Every recorded runner has a 240-second child timeout and an explicit process
+  audit after exit; all survivor arrays are empty.
+- Rustfmt check and Clippy over all workspace targets/features with `-D warnings`
+  pass. `sakura-native-ffi` product staticlib builds in dev and release for
+  `x86_64-pc-windows-msvc` pass. Toolchain and dependencies were unchanged.
+- A separate checkout at the base plus only the Rust test change passes semantic
+  strict with new/increased findings and missing touched reductions all empty,
+  baseline unchanged. Checkout-invariance, generated-output check and all-context
+  graph checks pass. This does not erase the separate Clipboard semantic failure.
+
+[Machine-readable receipt, source/log hashes and scripts](evidence/receipt-ci/receipt.json).
+The log normalization replaces CRLF with LF, escapes other CR, and strips trailing
+line whitespace. Original and published hashes are separate. Deliberate panic
+messages in successful workspace runs are the existing panic-containment tests.
+
+Reproduce normal verification from the repository root using
+`py -3 docs/audit-safety/evidence/receipt-ci/sakura-receipt-tests.py repeat --repeat 10`.
+For the diagnostic red run, copy both scripts to a temporary directory, use a
+checkout of the frozen pre-fix SHA and run `sakura-receipt-repro.py` from its root.
+It checks the pre-fix source hash and will refuse to inject into the repaired
+test suite. It uses no production hook or alternate provider implementation.
+
+The previous failing CI must be replaced by a successful check of the new
+published head before claiming the hosted gate is repaired. Full F01–F22 /
+H01–H15 acceptance, including Clipboard, Search persistence, Updater, visual and
+performance work, remains incomplete.

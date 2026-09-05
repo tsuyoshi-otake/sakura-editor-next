@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="1" failures="1" disabled="0" errors="0" time="0.187" timestamp="2026-09-05T23:02:48.971" name="AllTests">
+  <testsuite name="SearchRequestSafetyTest" tests="1" failures="1" disabled="0" skipped="0" errors="0" time="0.161" timestamp="2026-09-05T23:02:48.996">
+    <testcase name="DelayedWorkerPublicationAfterInvalidation" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp" line="479" status="run" result="completed" time="0.159" timestamp="2026-09-05T23:02:48.998" classname="SearchRequestSafetyTest">
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:523&#x0A;Expected equality of these values:&#x0A;  scenario == 6 ? 0 : 1&#x0A;    Which is: 1&#x0A;  probe::dropped.load()&#x0A;    Which is: 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(484): 0&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:523
+Expected equality of these values:
+  scenario == 6 ? 0 : 1
+    Which is: 1
+  probe::dropped.load()
+    Which is: 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(484): 0
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:524&#x0A;Expected equality of these values:&#x0A;  scenario == 6 ? 1 : 0&#x0A;    Which is: 0&#x0A;  probe::published.load()&#x0A;    Which is: 1&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(484): 0&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:524
+Expected equality of these values:
+  scenario == 6 ? 1 : 0
+    Which is: 0
+  probe::published.load()
+    Which is: 1
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(484): 0
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:523&#x0A;Expected equality of these values:&#x0A;  scenario == 6 ? 0 : 1&#x0A;    Which is: 1&#x0A;  probe::dropped.load()&#x0A;    Which is: 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(484): 1&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:523
+Expected equality of these values:
+  scenario == 6 ? 0 : 1
+    Which is: 1
+  probe::dropped.load()
+    Which is: 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(484): 1
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:524&#x0A;Expected equality of these values:&#x0A;  scenario == 6 ? 1 : 0&#x0A;    Which is: 0&#x0A;  probe::published.load()&#x0A;    Which is: 1&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(484): 1&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:524
+Expected equality of these values:
+  scenario == 6 ? 1 : 0
+    Which is: 0
+  probe::published.load()
+    Which is: 1
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(484): 1
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:523&#x0A;Expected equality of these values:&#x0A;  scenario == 6 ? 0 : 1&#x0A;    Which is: 1&#x0A;  probe::dropped.load()&#x0A;    Which is: 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(484): 2&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:523
+Expected equality of these values:
+  scenario == 6 ? 0 : 1
+    Which is: 1
+  probe::dropped.load()
+    Which is: 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(484): 2
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:524&#x0A;Expected equality of these values:&#x0A;  scenario == 6 ? 1 : 0&#x0A;    Which is: 0&#x0A;  probe::published.load()&#x0A;    Which is: 1&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(484): 2&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:524
+Expected equality of these values:
+  scenario == 6 ? 1 : 0
+    Which is: 0
+  probe::published.load()
+    Which is: 1
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(484): 2
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:523&#x0A;Expected equality of these values:&#x0A;  scenario == 6 ? 0 : 1&#x0A;    Which is: 1&#x0A;  probe::dropped.load()&#x0A;    Which is: 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(484): 3&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:523
+Expected equality of these values:
+  scenario == 6 ? 0 : 1
+    Which is: 1
+  probe::dropped.load()
+    Which is: 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(484): 3
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:524&#x0A;Expected equality of these values:&#x0A;  scenario == 6 ? 1 : 0&#x0A;    Which is: 0&#x0A;  probe::published.load()&#x0A;    Which is: 1&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(484): 3&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:524
+Expected equality of these values:
+  scenario == 6 ? 1 : 0
+    Which is: 0
+  probe::published.load()
+    Which is: 1
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(484): 3
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:523&#x0A;Expected equality of these values:&#x0A;  scenario == 6 ? 0 : 1&#x0A;    Which is: 1&#x0A;  probe::dropped.load()&#x0A;    Which is: 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(484): 5&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:523
+Expected equality of these values:
+  scenario == 6 ? 0 : 1
+    Which is: 1
+  probe::dropped.load()
+    Which is: 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(484): 5
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:524&#x0A;Expected equality of these values:&#x0A;  scenario == 6 ? 1 : 0&#x0A;    Which is: 0&#x0A;  probe::published.load()&#x0A;    Which is: 1&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(484): 5&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:524
+Expected equality of these values:
+  scenario == 6 ? 1 : 0
+    Which is: 0
+  probe::published.load()
+    Which is: 1
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(484): 5
+]]></failure>
+    </testcase>
+  </testsuite>
+</testsuites>

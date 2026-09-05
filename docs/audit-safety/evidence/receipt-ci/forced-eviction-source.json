@@ -1,0 +1,7 @@
+{
+  "original_sha256": "cb9935bdfa9acbf80fba0e65776e791656cad69b1b8a86ebb6a75c6fcc4f7928",
+  "injected_sha256": "0a508a985b5ff1ea26877c6e3ed4f9342b00c952a679f967b8c2c88d04380d0a",
+  "exit": 101,
+  "schedule": "After victim measure, execute the existing same-size mutation / 64-receipt eviction test to completion before victim write.",
+  "restored_sha256": "cb9935bdfa9acbf80fba0e65776e791656cad69b1b8a86ebb6a75c6fcc4f7928"
+}

@@ -1,0 +1,208 @@
+Running main() from C:\Users\developer\tmp\sakura-audit-safety\src\test\resources\code-main.cpp
+Note: Google Test filter = FileLoadOptionsTest.ExtendedEolPolicyIsStableUntilReopen
+[==========] Running 1 test from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 1 test from FileLoadOptionsTest
+[ RUN      ] FileLoadOptionsTest.ExtendedEolPolicyIsStableUntilReopen
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(1006): error: Expected equality of these values:
+  split ? L"first\u0085" : L"first\u0085second\r\n"
+    Which is: L"first\x85second\r\n"
+  std::wstring(line.GetStringPtr(), line.GetStringLength())
+    Which is: L"first\x85"
+With diff:
+@@ -1,2 +1,1 @@
+-L"first\x85second\r
+-"
++L"first\x85"
+
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(992): false
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(991): 5
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(1007): error: Expected equality of these values:
+  split ? EEolType::next_line : EEolType::cr_and_lf
+    Which is: CRLF
+  eol.GetType()
+    Which is: NEL
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(992): false
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(991): 5
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(1006): error: Expected equality of these values:
+  split ? L"first\u0085" : L"first\u0085second\r\n"
+    Which is: L"first\x85second\r\n"
+  std::wstring(line.GetStringPtr(), line.GetStringLength())
+    Which is: L"first\x85"
+With diff:
+@@ -1,2 +1,1 @@
+-L"first\x85second\r
+-"
++L"first\x85"
+
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(992): false
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(991): 5
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(1007): error: Expected equality of these values:
+  split ? EEolType::next_line : EEolType::cr_and_lf
+    Which is: CRLF
+  eol.GetType()
+    Which is: NEL
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(992): false
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(991): 5
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(1006): error: Expected equality of these values:
+  split ? L"first\u0085" : L"first\u0085second\r\n"
+    Which is: L"first\x85"
+  std::wstring(line.GetStringPtr(), line.GetStringLength())
+    Which is: L"first\x85second\r\n"
+With diff:
+@@ -1,1 +1,2 @@
+-L"first\x85"
++L"first\x85second\r
++"
+
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(992): true
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(991): 5
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(1007): error: Expected equality of these values:
+  split ? EEolType::next_line : EEolType::cr_and_lf
+    Which is: NEL
+  eol.GetType()
+    Which is: CRLF
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(992): true
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(991): 5
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(1006): error: Expected equality of these values:
+  split ? L"first\u0085" : L"first\u0085second\r\n"
+    Which is: L"first\x85"
+  std::wstring(line.GetStringPtr(), line.GetStringLength())
+    Which is: L"first\x85second\r\n"
+With diff:
+@@ -1,1 +1,2 @@
+-L"first\x85"
++L"first\x85second\r
++"
+
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(992): true
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(991): 5
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(1007): error: Expected equality of these values:
+  split ? EEolType::next_line : EEolType::cr_and_lf
+    Which is: NEL
+  eol.GetType()
+    Which is: CRLF
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(992): true
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(991): 5
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(1006): error: Expected equality of these values:
+  split ? L"first\u0085" : L"first\u0085second\r\n"
+    Which is: L"first\x85second\r\n"
+  std::wstring(line.GetStringPtr(), line.GetStringLength())
+    Which is: L"first\x85"
+With diff:
+@@ -1,2 +1,1 @@
+-L"first\x85second\r
+-"
++L"first\x85"
+
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(992): false
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(991): 3
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(1007): error: Expected equality of these values:
+  split ? EEolType::next_line : EEolType::cr_and_lf
+    Which is: CRLF
+  eol.GetType()
+    Which is: NEL
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(992): false
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(991): 3
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(1006): error: Expected equality of these values:
+  split ? L"first\u0085" : L"first\u0085second\r\n"
+    Which is: L"first\x85second\r\n"
+  std::wstring(line.GetStringPtr(), line.GetStringLength())
+    Which is: L"first\x85"
+With diff:
+@@ -1,2 +1,1 @@
+-L"first\x85second\r
+-"
++L"first\x85"
+
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(992): false
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(991): 3
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(1007): error: Expected equality of these values:
+  split ? EEolType::next_line : EEolType::cr_and_lf
+    Which is: CRLF
+  eol.GetType()
+    Which is: NEL
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(992): false
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(991): 3
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(1006): error: Expected equality of these values:
+  split ? L"first\u0085" : L"first\u0085second\r\n"
+    Which is: L"first\x85"
+  std::wstring(line.GetStringPtr(), line.GetStringLength())
+    Which is: L"first\x85second\r\n"
+With diff:
+@@ -1,1 +1,2 @@
+-L"first\x85"
++L"first\x85second\r
++"
+
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(992): true
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(991): 3
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(1007): error: Expected equality of these values:
+  split ? EEolType::next_line : EEolType::cr_and_lf
+    Which is: NEL
+  eol.GetType()
+    Which is: CRLF
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(992): true
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(991): 3
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(1006): error: Expected equality of these values:
+  split ? L"first\u0085" : L"first\u0085second\r\n"
+    Which is: L"first\x85"
+  std::wstring(line.GetStringPtr(), line.GetStringLength())
+    Which is: L"first\x85second\r\n"
+With diff:
+@@ -1,1 +1,2 @@
+-L"first\x85"
++L"first\x85second\r
++"
+
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(992): true
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(991): 3
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(1007): error: Expected equality of these values:
+  split ? EEolType::next_line : EEolType::cr_and_lf
+    Which is: NEL
+  eol.GetType()
+    Which is: CRLF
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(992): true
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(991): 3
+
+[  FAILED  ] FileLoadOptionsTest.ExtendedEolPolicyIsStableUntilReopen (52 ms)
+[----------] 1 test from FileLoadOptionsTest (54 ms total)
+
+[----------] Global test environment tear-down
+[==========] 1 test from 1 test suite ran. (76 ms total)
+[  PASSED  ] 0 tests.
+[  FAILED  ] 1 test, listed below:
+[  FAILED  ] FileLoadOptionsTest.ExtendedEolPolicyIsStableUntilReopen
+
+ 1 FAILED TEST

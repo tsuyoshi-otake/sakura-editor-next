@@ -1,0 +1,22 @@
+Running main() from C:\Users\developer\tmp\sakura-audit-safety\src\test\resources\code-main.cpp
+Note: Google Test filter = FileLoadOptionsTest.PreparedReaderRetainsMappingAfterParentDestruction
+[==========] Running 1 test from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 1 test from FileLoadOptionsTest
+[ RUN      ] FileLoadOptionsTest.PreparedReaderRetainsMappingAfterParentDestruction
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(1037): error: Expected equality of these values:
+  static_cast<DWORD>(0x00001000)
+    Which is: 4096
+  region.State
+    Which is: 65536
+
+[  FAILED  ] FileLoadOptionsTest.PreparedReaderRetainsMappingAfterParentDestruction (9 ms)
+[----------] 1 test from FileLoadOptionsTest (11 ms total)
+
+[----------] Global test environment tear-down
+[==========] 1 test from 1 test suite ran. (37 ms total)
+[  PASSED  ] 0 tests.
+[  FAILED  ] 1 test, listed below:
+[  FAILED  ] FileLoadOptionsTest.PreparedReaderRetainsMappingAfterParentDestruction
+
+ 1 FAILED TEST

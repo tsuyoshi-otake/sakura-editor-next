@@ -1,0 +1,83 @@
+{
+  "source_head": "8ba1e04cd03373df61e4a07064614ecfacf4ca21",
+  "production_source_sha256": "2ade5aaff5d2ab82a5b4084e371b46d1247f128ebc9b29a13fa245830ac3cb2e",
+  "test_source_sha256": "04c0d15d61e7ba1eadc1f6c891bec6a19b11e0346e4adcc7c58cad54048852ed",
+  "mutation": "Remove only ScheduleSearch immediate InvalidateSearch call",
+  "error": null,
+  "records": [
+    {
+      "command": [
+        "C:\\Users\\developer\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+        "tools/build/sakura_build.py",
+        "build",
+        "solution",
+        "x64",
+        "Debug",
+        "--jobs",
+        "4"
+      ],
+      "label": "mutant-build",
+      "exit_code": 0,
+      "elapsed_seconds": 26.02743719998398
+    },
+    {
+      "command": [
+        "pwsh",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "C:/Users/developer/tmp/sakura-audit-run-tests.ps1",
+        "-Configuration",
+        "Debug",
+        "-Filter",
+        "SearchRequestSafetyTest.*",
+        "-TimeoutSeconds",
+        "120",
+        "-Label",
+        "search-admission-mutant"
+      ],
+      "label": "mutant-tests",
+      "exit_code": 1,
+      "elapsed_seconds": 4.053127699997276
+    },
+    {
+      "command": [
+        "C:\\Users\\developer\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+        "tools/build/sakura_build.py",
+        "build",
+        "solution",
+        "x64",
+        "Debug",
+        "--jobs",
+        "4"
+      ],
+      "label": "restored-build",
+      "exit_code": 0,
+      "elapsed_seconds": 26.21816360001685
+    },
+    {
+      "command": [
+        "pwsh",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "C:/Users/developer/tmp/sakura-audit-run-tests.ps1",
+        "-Configuration",
+        "Debug",
+        "-Filter",
+        "SearchRequestSafetyTest.*",
+        "-TimeoutSeconds",
+        "120",
+        "-Label",
+        "search-admission-restored"
+      ],
+      "label": "restored-tests",
+      "exit_code": 0,
+      "elapsed_seconds": 3.5486223000043537
+    }
+  ],
+  "mutant_log_raw_sha256": "f36b100857bf0bd8d51b9a67478e11caaf3bec2ad1719701599543021abe17c6",
+  "shared_mutant_log_encoding": "CRLF line endings normalized to LF; remaining literal carriage returns escaped as backslash-r for Git whitespace checks. Raw log remains in local goal-loop artifacts."
+}

@@ -1,0 +1,135 @@
+    Finished `release` profile [optimized] target(s) in 0.02s
+     Running unittests src\lib.rs (target\release\deps\sakura_native_ffi-da4c68edb5e4fb66.exe)
+
+running 50 tests
+
+thread 'output_provider::tests::every_provider_export_recovers_from_its_own_panic_boundary' (18548) panicked at sakura_native_ffi\src\output_provider.rs:53:9:
+forced provider export panic
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'output_provider::tests::every_provider_export_recovers_from_its_own_panic_boundary' (18548) panicked at sakura_native_ffi\src\output_provider.rs:53:9:
+forced provider export panic
+test output_provider::tests::provider_export_source_contract_is_provider_only ... ok
+
+thread 'output_provider::tests::every_provider_export_recovers_from_its_own_panic_boundary' (18548) panicked at sakura_native_ffi\src\output_provider.rs:53:9:
+forced provider export panic
+
+thread 'output_provider::tests::every_provider_export_recovers_from_its_own_panic_boundary' (18548) panicked at sakura_native_ffi\src\output_provider.rs:53:9:
+forced provider export panic
+
+thread 'output_provider::tests::every_provider_export_recovers_from_its_own_panic_boundary' (18548) panicked at sakura_native_ffi\src\output_provider.rs:53:9:
+forced provider export panic
+
+thread 'output_provider::tests::every_provider_export_recovers_from_its_own_panic_boundary' (18548) panicked at sakura_native_ffi\src\output_provider.rs:53:9:
+forced provider export panic
+test output_provider::tests::provider_export_source_contract_contains_panic_containment_for_each_export ... ok
+
+thread 'output_provider::tests::every_provider_export_recovers_from_its_own_panic_boundary' (18548) panicked at sakura_native_ffi\src\output_provider.rs:53:9:
+forced provider export panic
+test output_provider::tests::every_provider_export_recovers_from_its_own_panic_boundary ... ok
+test output_provider::tests::provider_concurrent_receipts_and_terminal_handles_are_bounded ... ok
+test output_provider::tests::provider_active_channel_rejects_malformed_descriptors_and_poison_outputs ... ok
+test output_provider::tests::provider_every_export_rejects_invalid_top_level_pointers ... ok
+test output_shadow::tests::abi_token_lifecycle_snapshot_and_poisoned_capacity_are_typed ... ok
+test output_shadow::tests::canonical_fingerprint_bytes_are_stable_for_every_request_kind ... ok
+test output_provider::tests::provider_receipt_evicted_by_another_provider_fails_closed_and_can_be_remeasured ... ok
+test output_provider::tests::provider_create_rejects_bad_headers_and_pointer_ranges ... ok
+test output_provider::tests::provider_cross_family_tokens_fail_closed_for_all_operations ... ok
+test output_provider::tests::provider_destroyed_tokens_fail_closed_for_every_export ... ok
+test output_provider::tests::provider_apply_rejects_malformed_inputs_and_poison_outputs ... ok
+test output_shadow::tests::create_replay_conflict_and_expected_revision_are_distinct ...
+thread 'output_shadow::tests::invalid_spans_and_panics_are_contained' (38848) panicked at sakura_native_ffi\src\output_shadow.rs:3853:29:
+contained
+ok
+test output_provider::tests::provider_accepts_aliased_immutable_input_spans_and_copies_nested_values ... ok
+test output_shadow::tests::every_operation_kind_is_accepted_and_remembered_once ... ok
+test output_shadow::tests::fixed_abi_contract_is_stable ... ok
+test output_shadow::tests::eviction_allows_a_fresh_operation_with_the_evicted_id ... ok
+test output_shadow::tests::generation_replaces_old_channels_and_tombstone_fences_late_work ... ok
+test output_shadow::tests::known_ids_still_fingerprint_before_stale_and_semantic_checks ... ok
+test output_provider::tests::provider_exports_are_safe_under_concurrent_apply_snapshot_stop_destroy ... ok
+test output_shadow::tests::invalid_spans_and_panics_are_contained ... ok
+test output_provider::tests::provider_forged_tokens_fail_closed_for_all_exports ... ok
+test output_provider::tests::provider_copies_borrowed_input_and_output_spans_without_retaining_pointers ... ok
+
+thread 'tests::caught_panic_becomes_typed_internal_error' (41400) panicked at sakura_native_ffi\src\lib.rs:882:29:
+contained test panic
+test output_provider::tests::provider_rejects_invalid_utf8_in_required_and_optional_spans ... ok
+test output_shadow::tests::output_and_log_limits_match_trim_and_projection_rules ... ok
+test output_provider::tests::provider_snapshot_measure_write_rejects_malformed_destinations ... ok
+test output_provider::tests::provider_snapshot_write_rejects_each_mutated_semantic_receipt_field_without_consuming_it ... ok
+test output_shadow::tests::reserve_failure_is_typed_and_preserves_model_state ... ok
+test output_provider::tests::provider_snapshot_write_rejects_unmeasured_and_same_size_mutations ... ok
+test output_provider::tests::provider_token_family_and_terminal_snapshot_are_isolated ... ok
+test output_shadow::tests::snapshot_cache_reuses_current_revision_and_refreshes_after_mutations ... ok
+test output_shadow::tests::span_shape_validation_defers_address_check_until_selected_copy ... ok
+test output_shadow::tests::stop_is_terminal_and_snapshot_is_deterministic ... ok
+test output_shadow::tests::text_request_validates_but_does_not_copy_ignored_label ... ok
+test output_shadow::tests::unknown_ids_defer_fingerprint_until_semantically_accepted ... ok
+test tests::abi_layout_is_fixed ... ok
+test tests::byte_scan_capability_gate_and_invalid_span_fail_closed ... ok
+test tests::duplicate_unknown_and_missing_operations_are_rejected ... ok
+test tests::caught_panic_becomes_typed_internal_error ... ok
+test tests::identical_initialization_is_idempotent_and_conflict_is_rejected ... ok
+test tests::null_size_version_reserved_and_policy_count_are_rejected ... ok
+test tests::scan_capability_gate_and_invalid_span_fail_closed ... ok
+test tests::simd_before_initialization_fails_closed ... ok
+test tests::unsupported_capability_policy_pairs_are_rejected ... ok
+test uri_candidate::tests::abi_layout_matches_the_native_header ... ok
+test uri_candidate::tests::invalid_span_and_output_descriptors_fail_closed ... ok
+test uri_candidate::tests::output_is_poisoned_on_malformed_input ... ok
+test uri_candidate::tests::parse_and_component_encode_preserve_presence_and_serialization ... ok
+test uri_candidate::tests::strict_decode_rejects_overlong_and_cesu8 ... ok
+
+test result: ok. 50 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests src\lib.rs (target\release\deps\sakura_simd-ebf34f676f1e3abf.exe)
+
+running 5 tests
+BYTE_ISA_EXECUTION avx128=executed
+FFI_ISA_EXECUTION avx128=executed
+FFI_ISA_EXECUTION avx2=executed
+FFI_ISA_EXECUTION avx512bw=executed
+ISA_EXECUTION avx128=executed
+test tests::ffi_invalid_spans_fail_closed_before_dereference ... ok
+BYTE_ISA_EXECUTION avx2=executed
+BYTE_ISA_EXECUTION avx512bw=executed
+test tests::byte_candidates_match_scalar_at_all_alignments_and_boundaries ... ok
+ISA_EXECUTION avx2=executed
+ISA_EXECUTION avx512bw=executed
+test tests::executable_isas_match_scalar_with_reviewed_matrix ... ok
+RUST_RANDOM_DIFFERENTIAL cases=50000 avx128=executed avx2=executed avx512bw=executed avx512bw_requires_avx2=true
+test tests::deterministic_random_differential_has_at_least_fifty_thousand_cases ... ok
+test tests::scalar_reference_exhaustive_lengths_positions_and_values ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+     Running unittests src\lib.rs (target\release\deps\sakura_unicode_core-943ea1ff25c9b57a.exe)
+
+running 12 tests
+test tests::encoder_rejects_invalid_scalars_and_short_output ... ok
+test tests::ascii_is_exhaustive_and_one_byte_wide ... ok
+test tests::invalid_continuations_report_their_byte_offset ... ok
+test tests::known_boundaries_have_canonical_encodings ... ok
+test tests::malformed_leads_are_rejected ... ok
+test tests::overlong_and_non_scalar_sequences_are_rejected ... ok
+test tests::scalar_predicate_and_width_cover_boundaries ... ok
+test tests::truncation_reports_the_end_offset ... ok
+test tests::valid_sequences_can_have_trailing_scalars_for_one_value_decode ... ok
+test tests::validation_error_offsets_are_absolute ... ok
+test tests::deterministic_byte_property_matches_std_utf8 ... ok
+test tests::all_scalar_values_round_trip_without_allocation ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+   Doc-tests sakura_simd
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests sakura_unicode_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

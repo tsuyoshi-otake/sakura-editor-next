@@ -1,0 +1,94 @@
+Running main() from C:\Users\developer\tmp\sakura-audit-safety\src\test\resources\code-main.cpp
+Note: Google Test filter = FileLoadOptionsTest.PreparedReaderPreservesExtendedEolBoundaries
+[==========] Running 1 test from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 1 test from FileLoadOptionsTest
+[ RUN      ] FileLoadOptionsTest.PreparedReaderPreservesExtendedEolBoundaries
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(959): error: Expected equality of these values:
+  expected
+    Which is: L"first\x85"
+  std::wstring(readerLine.GetStringPtr(), readerLine.GetStringLength())
+    Which is: L"first\x85second\x2028third\x2029last\r\n"
+With diff:
+@@ -1,1 +1,2 @@
+-L"first\x85"
++L"first\x85second\x2028third\x2029last\r
++"
+
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(960): error: Expected equality of these values:
+  parentEol.GetType()
+    Which is: NEL
+  readerEol.GetType()
+    Which is: CRLF
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(958): error: Expected equality of these values:
+  RESULT_COMPLETE
+    Which is: 0
+  reader.ReadLine(&readerLine, &readerEol)
+    Which is: 2
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(959): error: Expected equality of these values:
+  expected
+    Which is: L"second\x2028"
+  std::wstring(readerLine.GetStringPtr(), readerLine.GetStringLength())
+    Which is: L""
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(960): error: Expected equality of these values:
+  parentEol.GetType()
+    Which is: LS
+  readerEol.GetType()
+    Which is: NONE
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(958): error: Expected equality of these values:
+  RESULT_COMPLETE
+    Which is: 0
+  reader.ReadLine(&readerLine, &readerEol)
+    Which is: 2
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(959): error: Expected equality of these values:
+  expected
+    Which is: L"third\x2029"
+  std::wstring(readerLine.GetStringPtr(), readerLine.GetStringLength())
+    Which is: L""
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(960): error: Expected equality of these values:
+  parentEol.GetType()
+    Which is: PS
+  readerEol.GetType()
+    Which is: NONE
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(958): error: Expected equality of these values:
+  RESULT_COMPLETE
+    Which is: 0
+  reader.ReadLine(&readerLine, &readerEol)
+    Which is: 2
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(959): error: Expected equality of these values:
+  expected
+    Which is: L"last\r\n"
+  std::wstring(readerLine.GetStringPtr(), readerLine.GetStringLength())
+    Which is: L""
+With diff:
+@@ -1,2 +1,1 @@
+-L"last\r
+-"
++L""
+
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(960): error: Expected equality of these values:
+  parentEol.GetType()
+    Which is: CRLF
+  readerEol.GetType()
+    Which is: NONE
+
+[  FAILED  ] FileLoadOptionsTest.PreparedReaderPreservesExtendedEolBoundaries (20 ms)
+[----------] 1 test from FileLoadOptionsTest (22 ms total)
+
+[----------] Global test environment tear-down
+[==========] 1 test from 1 test suite ran. (51 ms total)
+[  PASSED  ] 0 tests.
+[  FAILED  ] 1 test, listed below:
+[  FAILED  ] FileLoadOptionsTest.PreparedReaderPreservesExtendedEolBoundaries
+
+ 1 FAILED TEST

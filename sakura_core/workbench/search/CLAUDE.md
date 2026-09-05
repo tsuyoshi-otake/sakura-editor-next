@@ -98,3 +98,25 @@ Each entry states the constraint and the chosen behavior.
 - **The result set is bounded** and the view says so through
   `STR_WORKBENCH_SEARCH_LIMIT_HIT`. Upstream pages; a bounded scan keeps the worker
   cost fixed and the bound is reported rather than hidden.
+
+## Request identity and bounded previews (#290)
+
+Input changes invalidate pending, running and posted results before debounce.
+Empty input also advances the generation. A worker result retains its immutable
+root/query/generation identity; the UI adopts it only when that identity is
+current. Replace admission repeats this check after reading the current input.
+Replacement text and Preserve Case may change independently of search identity.
+This does not migrate Replace off the UI thread or fix its legacy persistence
+transaction; those remain unresolved parts of #290.
+
+The 250-code-unit preview window follows the match and avoids splitting valid
+UTF-16 surrogate pairs. A match longer than the window displays its prefix;
+source column and full length remain unchanged. A zero-width match retains a
+zero-length anchor at the corresponding preview offset. Replacement never
+reconstructs source offsets from the preview.
+
+`SearchRequestLifecycle` models debounce, pending/running work, posted completion,
+input/root revision changes, empty input, close and destructive admission. It is
+a bounded safety model, not a proof of Windows I/O cancellation or worker
+liveness. Its two negative configurations must violate `CurrentResults`; tool
+errors or an unrelated invariant violation do not count as expected failures.

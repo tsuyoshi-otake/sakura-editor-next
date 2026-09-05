@@ -1,0 +1,18 @@
+Running main() from C:\Users\developer\tmp\sakura-audit-safety\src\test\resources\code-main.cpp
+Note: Google Test filter = FileLoadOptionsTest.*
+[==========] Running 4 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 4 tests from FileLoadOptionsTest
+[ RUN      ] FileLoadOptionsTest.MimeOptionIsAppliedOnEachOpenAndReopen
+[       OK ] FileLoadOptionsTest.MimeOptionIsAppliedOnEachOpenAndReopen (4 ms)
+[ RUN      ] FileLoadOptionsTest.AutoDetectionUsesConstructionSnapshot
+[       OK ] FileLoadOptionsTest.AutoDetectionUsesConstructionSnapshot (1 ms)
+[ RUN      ] FileLoadOptionsTest.PreparedReaderPreservesExtendedEolBoundaries
+[       OK ] FileLoadOptionsTest.PreparedReaderPreservesExtendedEolBoundaries (2 ms)
+[ RUN      ] FileLoadOptionsTest.PreparedUtf7ReaderResetsPreviousDecodedLineOffset
+[       OK ] FileLoadOptionsTest.PreparedUtf7ReaderResetsPreviousDecodedLineOffset (2 ms)
+[----------] 4 tests from FileLoadOptionsTest (16 ms total)
+
+[----------] Global test environment tear-down
+[==========] 4 tests from 1 test suite ran. (39 ms total)
+[  PASSED  ] 4 tests.

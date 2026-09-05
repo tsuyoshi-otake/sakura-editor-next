@@ -1,0 +1,77 @@
+Running main() from C:\Users\developer\tmp\sakura-audit-safety\src\test\resources\code-main.cpp
+Note: Google Test filter = SearchRequestSafetyTest.*:FileLoadOptionsTest.*:SearchWorkbenchToolGeometry.*:ExplorerTool.ProductionWorkerDisplaysJunctionsAsLeaves
+[==========] Running 23 tests from 4 test suites.
+[----------] Global test environment set-up.
+[----------] 1 test from ExplorerTool
+[ RUN      ] ExplorerTool.ProductionWorkerDisplaysJunctionsAsLeaves
+[       OK ] ExplorerTool.ProductionWorkerDisplaysJunctionsAsLeaves (49 ms)
+[----------] 1 test from ExplorerTool (52 ms total)
+
+[----------] 7 tests from SearchWorkbenchToolGeometry
+[ RUN      ] SearchWorkbenchToolGeometry.MatchesVsCodeSearchWidgetAtDefaultDpi
+[       OK ] SearchWorkbenchToolGeometry.MatchesVsCodeSearchWidgetAtDefaultDpi (0 ms)
+[ RUN      ] SearchWorkbenchToolGeometry.ReplaceRowUsesCssMarginsAndCentersNativeEdit
+[       OK ] SearchWorkbenchToolGeometry.ReplaceRowUsesCssMarginsAndCentersNativeEdit (0 ms)
+[ RUN      ] SearchWorkbenchToolGeometry.PreservesCssRelationshipsAcrossSupportedDpi
+[       OK ] SearchWorkbenchToolGeometry.PreservesCssRelationshipsAcrossSupportedDpi (0 ms)
+[ RUN      ] SearchWorkbenchToolGeometry.MeasuredLineHeightCentersTheCaretLineNotJustTheHwnd
+[       OK ] SearchWorkbenchToolGeometry.MeasuredLineHeightCentersTheCaretLineNotJustTheHwnd (0 ms)
+[ RUN      ] SearchWorkbenchToolGeometry.MeasuredLineHeightStaysCenteredAcrossSupportedDpi
+[       OK ] SearchWorkbenchToolGeometry.MeasuredLineHeightStaysCenteredAcrossSupportedDpi (0 ms)
+[ RUN      ] SearchWorkbenchToolGeometry.LineHeightTallerThanTheBoxIsClampedToTheBox
+[       OK ] SearchWorkbenchToolGeometry.LineHeightTallerThanTheBoxIsClampedToTheBox (0 ms)
+[ RUN      ] SearchWorkbenchToolGeometry.ClampsNarrowClientWithoutNegativeEditBounds
+[       OK ] SearchWorkbenchToolGeometry.ClampsNarrowClientWithoutNegativeEditBounds (0 ms)
+[----------] 7 tests from SearchWorkbenchToolGeometry (2 ms total)
+
+[----------] 6 tests from SearchRequestSafetyTest
+[ RUN      ] SearchRequestSafetyTest.LongLinePreviewContainsTheActualMatch
+[       OK ] SearchRequestSafetyTest.LongLinePreviewContainsTheActualMatch (18 ms)
+[ RUN      ] SearchRequestSafetyTest.PreviewDoesNotSplitUtf16SurrogatePair
+[       OK ] SearchRequestSafetyTest.PreviewDoesNotSplitUtf16SurrogatePair (37 ms)
+[ RUN      ] SearchRequestSafetyTest.ClearingQueryRejectsAlreadyPostedCompletion
+[       OK ] SearchRequestSafetyTest.ClearingQueryRejectsAlreadyPostedCompletion (83 ms)
+[ RUN      ] SearchRequestSafetyTest.SeededPreviewWindowsPreserveSourceCoordinatesAndHitText
+[       OK ] SearchRequestSafetyTest.SeededPreviewWindowsPreserveSourceCoordinatesAndHitText (673 ms)
+[ RUN      ] SearchRequestSafetyTest.NativeReplaceAllPreservesFilesAfterQueryInvalidation
+[       OK ] SearchRequestSafetyTest.NativeReplaceAllPreservesFilesAfterQueryInvalidation (311 ms)
+[ RUN      ] SearchRequestSafetyTest.PreviewBoundaryFixturesPreserveExplicitUtf16Lengths
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(420): error: Expected equality of these values:
+  1u
+    Which is: 1
+  result.matchCount
+    Which is: 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(405): 10
+
+[  FAILED  ] SearchRequestSafetyTest.PreviewBoundaryFixturesPreserveExplicitUtf16Lengths (134 ms)
+[----------] 6 tests from SearchRequestSafetyTest (1263 ms total)
+
+[----------] 9 tests from FileLoadOptionsTest
+[ RUN      ] FileLoadOptionsTest.MimeOptionIsAppliedOnEachOpenAndReopen
+[       OK ] FileLoadOptionsTest.MimeOptionIsAppliedOnEachOpenAndReopen (7 ms)
+[ RUN      ] FileLoadOptionsTest.AutoDetectionUsesConstructionSnapshot
+[       OK ] FileLoadOptionsTest.AutoDetectionUsesConstructionSnapshot (1 ms)
+[ RUN      ] FileLoadOptionsTest.PreparedReaderPreservesExtendedEolBoundaries
+[       OK ] FileLoadOptionsTest.PreparedReaderPreservesExtendedEolBoundaries (6 ms)
+[ RUN      ] FileLoadOptionsTest.PreparedUtf7ReaderResetsPreviousDecodedLineOffset
+[       OK ] FileLoadOptionsTest.PreparedUtf7ReaderResetsPreviousDecodedLineOffset (6 ms)
+[ RUN      ] FileLoadOptionsTest.ExtendedEolPolicyIsStableUntilReopen
+[       OK ] FileLoadOptionsTest.ExtendedEolPolicyIsStableUntilReopen (22 ms)
+[ RUN      ] FileLoadOptionsTest.PreparedReaderRetainsMappingAfterParentDestruction
+[       OK ] FileLoadOptionsTest.PreparedReaderRetainsMappingAfterParentDestruction (4 ms)
+[ RUN      ] FileLoadOptionsTest.PrepareReplacesActiveMappingAndRejectsInvalidSlices
+[       OK ] FileLoadOptionsTest.PrepareReplacesActiveMappingAndRejectsInvalidSlices (3 ms)
+[ RUN      ] FileLoadOptionsTest.FailedOpenAndEmptyMappingCanBeReused
+[       OK ] FileLoadOptionsTest.FailedOpenAndEmptyMappingCanBeReused (6 ms)
+[ RUN      ] FileLoadOptionsTest.PreparedReadersOwnConvertersWithInheritedMimeOptions
+[       OK ] FileLoadOptionsTest.PreparedReadersOwnConvertersWithInheritedMimeOptions (125 ms)
+[----------] 9 tests from FileLoadOptionsTest (188 ms total)
+
+[----------] Global test environment tear-down
+[==========] 23 tests from 4 test suites ran. (1558 ms total)
+[  PASSED  ] 22 tests.
+[  FAILED  ] 1 test, listed below:
+[  FAILED  ] SearchRequestSafetyTest.PreviewBoundaryFixturesPreserveExplicitUtf16Lengths
+
+ 1 FAILED TEST

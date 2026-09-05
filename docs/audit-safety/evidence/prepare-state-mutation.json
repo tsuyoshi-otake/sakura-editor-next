@@ -1,0 +1,148 @@
+{
+  "source_head": "25cbbe9015e85b2b04a6cdb14e1c72ef13546eb3",
+  "production_source_sha256": "f9e3f627d54e5965dcf7be38c065aeb585d005d9de848160848d0950fede671e",
+  "test_source_sha256": "69c29ee395047770935f5231e0220cbe32513d78ac5ac8d9485f9a8181beb54c",
+  "mutations": [
+    "eol",
+    "offset"
+  ],
+  "error": null,
+  "records": [
+    {
+      "command": [
+        "C:\\Users\\developer\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+        "tools/build/sakura_build.py",
+        "build",
+        "solution",
+        "x64",
+        "Debug",
+        "--jobs",
+        "4"
+      ],
+      "label": "eol-build",
+      "exit_code": 0,
+      "elapsed_seconds": 28.34267449998879
+    },
+    {
+      "command": [
+        "pwsh",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "C:/Users/developer/tmp/sakura-audit-run-tests.ps1",
+        "-Configuration",
+        "Debug",
+        "-TimeoutSeconds",
+        "120",
+        "-Label",
+        "prepare-mutant-eol",
+        "-Filter",
+        "FileLoadOptionsTest.PreparedReaderPreservesExtendedEolBoundaries"
+      ],
+      "label": "eol-test",
+      "exit_code": 1,
+      "elapsed_seconds": 3.296906500007026
+    },
+    {
+      "command": [
+        "C:\\Users\\developer\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+        "tools/build/sakura_build.py",
+        "build",
+        "solution",
+        "x64",
+        "Debug",
+        "--jobs",
+        "4"
+      ],
+      "label": "offset-build",
+      "exit_code": 0,
+      "elapsed_seconds": 25.98756149999099
+    },
+    {
+      "command": [
+        "pwsh",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "C:/Users/developer/tmp/sakura-audit-run-tests.ps1",
+        "-Configuration",
+        "Debug",
+        "-TimeoutSeconds",
+        "120",
+        "-Label",
+        "prepare-mutant-offset",
+        "-Filter",
+        "FileLoadOptionsTest.PreparedUtf7ReaderResetsPreviousDecodedLineOffset"
+      ],
+      "label": "offset-test",
+      "exit_code": 1,
+      "elapsed_seconds": 2.4432219000009354
+    },
+    {
+      "command": [
+        "C:\\Users\\developer\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+        "tools/build/sakura_build.py",
+        "build",
+        "solution",
+        "x64",
+        "Debug",
+        "--jobs",
+        "4"
+      ],
+      "label": "restored-build",
+      "exit_code": 0,
+      "elapsed_seconds": 28.324977999989642
+    },
+    {
+      "command": [
+        "pwsh",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "C:/Users/developer/tmp/sakura-audit-run-tests.ps1",
+        "-Configuration",
+        "Debug",
+        "-TimeoutSeconds",
+        "120",
+        "-Label",
+        "prepare-state-restored",
+        "-Filter",
+        "FileLoadOptionsTest.*"
+      ],
+      "label": "restored-test",
+      "exit_code": 0,
+      "elapsed_seconds": 2.699379300000146
+    }
+  ],
+  "logs": [
+    {
+      "file": "prepare-state-red-final.log",
+      "raw_sha256": "978dd85c9f99ad40d77304124ade16719b1f2bf28d34270cffdc42d0de38d4e3",
+      "published_sha256": "19ef66c64a7b7507a3d45fad2aa827cf82a02f6164706df43c228de3ebd39bb2"
+    },
+    {
+      "file": "prepare-state-green.log",
+      "raw_sha256": "429ed3fc7146548bb76572aff5008be089902b7e5035c8dd2da3a2e5d5c61b40",
+      "published_sha256": "bcc7688b878f0c0d781220acc106501d031076d5ca173550f9753ed30b428b4e"
+    },
+    {
+      "file": "prepare-mutant-eol.log",
+      "raw_sha256": "0fca8c89dbc60d03119d3175e5c384f75fd08b93867f78b556c5f6b393772767",
+      "published_sha256": "bd326a46f5a81eff28ed4e5313c36cde042f98d42985ea70672566f6779a8ca0"
+    },
+    {
+      "file": "prepare-mutant-offset.log",
+      "raw_sha256": "0644efe7ef31323d400c0c0a90274a7325a8c9c27504b8616f87b199ee458f73",
+      "published_sha256": "5021ff6dfbe9bc76c410b3352eab5ff3598ad4d3d5b5744d65637eb206abef89"
+    },
+    {
+      "file": "prepare-state-restored.log",
+      "raw_sha256": "8ad92a67d39604034bb0492560b8d0ba1c1bd338b1138f7c7c20557fda3f7488",
+      "published_sha256": "0f21c1037d12c374571dfada08def112c3949cd4cfb5d3d4184fb266307a0379"
+    }
+  ],
+  "log_normalization": "CRLF to LF; remaining CR escaped as literal \\r"
+}

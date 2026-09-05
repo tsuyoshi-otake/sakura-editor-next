@@ -1,0 +1,26 @@
+{
+  "source_head": "6ea480713d92d8ed7941f3423eab5ab8060d86e1",
+  "sources": {
+    "sakura_core/io/CFileLoad.cpp": "aaf08b4c158506e1a32e4068d1d7699b23750e9f8e51dd2e323bc5a4c6c45eac",
+    "sakura_core/io/CFileLoad.h": "df2462e18d4c12265fe993c3e2ab7537210c71918ee887ab22601f2d1fa32506",
+    "src/test/cpp/tests1/test-file.cpp": "d31fbfd90ba481ade80e2515a784f9033f83048432280236a42a631e6f79c7d1"
+  },
+  "logs": [
+    {
+      "file": "converter-red.log",
+      "raw_sha256": "005ea032d44d0d6a80c27154089dc5b97dfbe53c5776ff8cce9e39ca73c9bbeb",
+      "published_sha256": "45698c8232312ac57f72d57bf1bdf63a6a70dccdb4c5f87db12f52a44885b206"
+    },
+    {
+      "file": "converter-green.log",
+      "raw_sha256": "ee4587e79a736ad198d22aada2c3e9a84ac31afb635bd4deac56f4f3254714c9",
+      "published_sha256": "95318296a20c01b7155f49fd226bf18b02df41f877a4b5748a5adcba4e978ded"
+    },
+    {
+      "file": "converter-release.log",
+      "raw_sha256": "8b9082e14b03281ad229c6af2c1b7577c3d40e97be4be7a81aca9beb6d824283",
+      "published_sha256": "b45aa8cbfc1b294f7f766445fbaf41eb5f28527db9f82780d8c1d44ec8cb8c28"
+    }
+  ],
+  "normalization": "CRLF to LF; remaining CR escaped as literal \\r"
+}

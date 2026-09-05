@@ -269,8 +269,9 @@ struct WorkerRequest final {
 
 //! One completed search held by the depth-one result mailbox.
 struct WorkerResult final {
+	explicit WorkerResult(WorkerRequest value) : request(std::move(value)) {}
+	const WorkerRequest request;
 	SearchResults results;
-	std::uint64_t generation = 0;
 };
 
 //! Everything shared between the window thread and the search worker.
@@ -300,6 +301,12 @@ struct SharedState final {
 		}
 	}
 };
+
+bool SameSearchPattern(const SearchQuery& left, const SearchQuery& right) noexcept
+{
+	return left.text == right.text && left.matchCase == right.matchCase
+		&& left.wholeWord == right.wholeWord && left.useRegex == right.useRegex;
+}
 
 bool EnsureClass(HINSTANCE instance);
 
@@ -336,6 +343,9 @@ struct CSearchWorkbenchTool::Impl {
 	bool closed{};
 	bool searching{};
 	SearchResults results;
+private:
+	std::optional<WorkerRequest> acceptedRequest;
+public:
 	std::unordered_set<std::wstring> collapsedFiles;
 	std::vector<Row> rows;
 	int hoverRow{ -1 };
@@ -500,19 +510,44 @@ struct CSearchWorkbenchTool::Impl {
 		QueueNoEraseInvalidate(window);
 	}
 
+	void InvalidateSearch()
+	{
+		shared->generation.fetch_add(1, std::memory_order_acq_rel);
+		{
+			std::lock_guard<std::mutex> guard(shared->mutex);
+			shared->pending = {};
+			shared->hasPending = false;
+		}
+		DropQueuedResults();
+		acceptedRequest.reset();
+		results = {};
+		searching = false;
+		RebuildRows();
+		UpdateStatusText();
+		Repaint();
+	}
+
+	void AcceptResult(std::unique_ptr<WorkerResult> result)
+	{
+		if (!result || closed || result->request.generation != shared->generation.load(std::memory_order_acquire)
+			|| result->request.root != root || !SameSearchPattern(result->request.query, model)) return;
+		acceptedRequest = result->request;
+		results = std::move(result->results);
+		collapsedFiles.clear();
+		searching = false;
+		RebuildRows();
+		UpdateStatusText();
+		Repaint();
+	}
+
 	void StartSearch()
 	{
-		if (closed || shared->wake == nullptr) return;
+		if (closed) return;
 		ReadBoxes();
-		if (model.text.empty()) {
-			results = {};
-			searching = false;
-			RebuildRows();
-			UpdateStatusText();
-			Repaint();
-			return;
-		}
-		const std::uint64_t generation = shared->generation.fetch_add(1, std::memory_order_acq_rel) + 1;
+		InvalidateSearch();
+		if (shared->wake == nullptr) return;
+		if (model.text.empty()) return;
+		const std::uint64_t generation = shared->generation.load(std::memory_order_acquire);
 		{
 			std::lock_guard<std::mutex> guard(shared->mutex);
 			shared->pending = WorkerRequest{ root, model, generation };
@@ -526,7 +561,10 @@ struct CSearchWorkbenchTool::Impl {
 
 	void ScheduleSearch()
 	{
-		if (window == nullptr) return;
+		if (window == nullptr || closed) return;
+		ReadBoxes();
+		InvalidateSearch();
+		if (model.text.empty()) { ::KillTimer(window, kTypeTimer); return; }
 		::SetTimer(window, kTypeTimer, kTypeDebounceMilliseconds, nullptr);
 	}
 
@@ -873,8 +911,10 @@ struct CSearchWorkbenchTool::Impl {
 
 	void RunReplace(const std::vector<SearchFileResult>& slice)
 	{
-		if (slice.empty() || model.text.empty()) return;
 		ReadBoxes();
+		if (slice.empty() || model.text.empty() || !acceptedRequest || closed
+			|| acceptedRequest->generation != shared->generation.load(std::memory_order_acquire)
+			|| acceptedRequest->root != root || !SameSearchPattern(acceptedRequest->query, model)) return;
 		const auto outcome = ReplaceMatches(slice, model, {});
 		if (filesChanged && outcome.replacedFiles != 0) {
 			std::vector<std::wstring> changed;
@@ -988,8 +1028,7 @@ struct CSearchWorkbenchTool::Impl {
 					request = state->pending;
 					state->hasPending = false;
 				}
-				auto result = std::make_unique<WorkerResult>();
-				result->generation = request.generation;
+				auto result = std::make_unique<WorkerResult>(request);
 				result->results = RunWorkspaceSearch(request.root, request.query, [state, &request]() {
 					return state->stopping.load(std::memory_order_acquire)
 						|| state->generation.load(std::memory_order_acquire) != request.generation;
@@ -1183,7 +1222,7 @@ void CSearchWorkbenchTool::SetRoot(std::wstring root)
 {
 	if (m_impl->root == root) return;
 	m_impl->root = std::move(root);
-	if (!m_impl->model.text.empty()) m_impl->StartSearch();
+	m_impl->StartSearch();
 }
 
 void CSearchWorkbenchTool::SetPalette(const theme::ThemePalette& palette)
@@ -1489,15 +1528,7 @@ LRESULT CALLBACK CSearchWorkbenchTool::WindowProc(HWND window, UINT message, WPA
 		return reinterpret_cast<LRESULT>(::GetStockObject(DC_BRUSH));
 	}
 	case kResultMessage: {
-		auto result = impl.TakeLatestResult();
-		if (result && result->generation == impl.shared->generation.load(std::memory_order_acquire)) {
-			impl.results = std::move(result->results);
-			impl.collapsedFiles.clear();
-			impl.searching = false;
-			impl.RebuildRows();
-			impl.UpdateStatusText();
-			impl.Repaint();
-		}
+		impl.AcceptResult(impl.TakeLatestResult());
 		return 0;
 	}
 	default:

@@ -40,3 +40,20 @@ install a panic handler.
 Output provider selection is independent of UTF-16/SIMD backend selection.
 Both paths use this same static archive, but the stateful Output lifecycle must
 not be coupled to CPU feature detection or the stateless SIMD dispatch table.
+
+## Output provider test isolation
+
+The Output provider retains at most 64 snapshot measurements per process,
+across all provider tokens. A new measurement can evict an older receipt from
+another provider. A write with an evicted receipt fails closed; the caller must
+measure again. This budget is separate from forged-receipt rejection, which
+must not consume a still-retained valid receipt.
+
+Tests using that registry hold the test-only lifecycle guard for their whole
+case. Otherwise a capacity test can evict a contract test's receipt between
+measure and write, even though they use different provider tokens. Keep the
+normal Cargo test scheduler and the worker threads inside concurrency tests;
+do not replace this isolation with a global `--test-threads=1` CI setting.
+The cross-provider eviction regression explicitly orders a foreign worker's
+measurements between a caller's measure and write, checks rejection without
+destination writes, and verifies recovery through a fresh measurement.

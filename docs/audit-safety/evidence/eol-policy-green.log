@@ -1,0 +1,55 @@
+Running main() from C:\Users\developer\tmp\sakura-audit-safety\src\test\resources\code-main.cpp
+Note: Google Test filter = FileLoadOptionsTest.*:SearchRequestSafetyTest.*:SearchWorkbenchToolGeometry.*:ExplorerTool.ProductionWorkerDisplaysJunctionsAsLeaves
+[==========] Running 18 tests from 4 test suites.
+[----------] Global test environment set-up.
+[----------] 1 test from ExplorerTool
+[ RUN      ] ExplorerTool.ProductionWorkerDisplaysJunctionsAsLeaves
+[       OK ] ExplorerTool.ProductionWorkerDisplaysJunctionsAsLeaves (47 ms)
+[----------] 1 test from ExplorerTool (50 ms total)
+
+[----------] 7 tests from SearchWorkbenchToolGeometry
+[ RUN      ] SearchWorkbenchToolGeometry.MatchesVsCodeSearchWidgetAtDefaultDpi
+[       OK ] SearchWorkbenchToolGeometry.MatchesVsCodeSearchWidgetAtDefaultDpi (0 ms)
+[ RUN      ] SearchWorkbenchToolGeometry.ReplaceRowUsesCssMarginsAndCentersNativeEdit
+[       OK ] SearchWorkbenchToolGeometry.ReplaceRowUsesCssMarginsAndCentersNativeEdit (0 ms)
+[ RUN      ] SearchWorkbenchToolGeometry.PreservesCssRelationshipsAcrossSupportedDpi
+[       OK ] SearchWorkbenchToolGeometry.PreservesCssRelationshipsAcrossSupportedDpi (0 ms)
+[ RUN      ] SearchWorkbenchToolGeometry.MeasuredLineHeightCentersTheCaretLineNotJustTheHwnd
+[       OK ] SearchWorkbenchToolGeometry.MeasuredLineHeightCentersTheCaretLineNotJustTheHwnd (0 ms)
+[ RUN      ] SearchWorkbenchToolGeometry.MeasuredLineHeightStaysCenteredAcrossSupportedDpi
+[       OK ] SearchWorkbenchToolGeometry.MeasuredLineHeightStaysCenteredAcrossSupportedDpi (0 ms)
+[ RUN      ] SearchWorkbenchToolGeometry.LineHeightTallerThanTheBoxIsClampedToTheBox
+[       OK ] SearchWorkbenchToolGeometry.LineHeightTallerThanTheBoxIsClampedToTheBox (0 ms)
+[ RUN      ] SearchWorkbenchToolGeometry.ClampsNarrowClientWithoutNegativeEditBounds
+[       OK ] SearchWorkbenchToolGeometry.ClampsNarrowClientWithoutNegativeEditBounds (0 ms)
+[----------] 7 tests from SearchWorkbenchToolGeometry (2 ms total)
+
+[----------] 5 tests from SearchRequestSafetyTest
+[ RUN      ] SearchRequestSafetyTest.LongLinePreviewContainsTheActualMatch
+[       OK ] SearchRequestSafetyTest.LongLinePreviewContainsTheActualMatch (14 ms)
+[ RUN      ] SearchRequestSafetyTest.PreviewDoesNotSplitUtf16SurrogatePair
+[       OK ] SearchRequestSafetyTest.PreviewDoesNotSplitUtf16SurrogatePair (37 ms)
+[ RUN      ] SearchRequestSafetyTest.ClearingQueryRejectsAlreadyPostedCompletion
+[       OK ] SearchRequestSafetyTest.ClearingQueryRejectsAlreadyPostedCompletion (62 ms)
+[ RUN      ] SearchRequestSafetyTest.SeededPreviewWindowsPreserveSourceCoordinatesAndHitText
+[       OK ] SearchRequestSafetyTest.SeededPreviewWindowsPreserveSourceCoordinatesAndHitText (665 ms)
+[ RUN      ] SearchRequestSafetyTest.NativeReplaceAllPreservesFilesAfterQueryInvalidation
+[       OK ] SearchRequestSafetyTest.NativeReplaceAllPreservesFilesAfterQueryInvalidation (145 ms)
+[----------] 5 tests from SearchRequestSafetyTest (927 ms total)
+
+[----------] 5 tests from FileLoadOptionsTest
+[ RUN      ] FileLoadOptionsTest.MimeOptionIsAppliedOnEachOpenAndReopen
+[       OK ] FileLoadOptionsTest.MimeOptionIsAppliedOnEachOpenAndReopen (8 ms)
+[ RUN      ] FileLoadOptionsTest.AutoDetectionUsesConstructionSnapshot
+[       OK ] FileLoadOptionsTest.AutoDetectionUsesConstructionSnapshot (1 ms)
+[ RUN      ] FileLoadOptionsTest.PreparedReaderPreservesExtendedEolBoundaries
+[       OK ] FileLoadOptionsTest.PreparedReaderPreservesExtendedEolBoundaries (6 ms)
+[ RUN      ] FileLoadOptionsTest.PreparedUtf7ReaderResetsPreviousDecodedLineOffset
+[       OK ] FileLoadOptionsTest.PreparedUtf7ReaderResetsPreviousDecodedLineOffset (2 ms)
+[ RUN      ] FileLoadOptionsTest.ExtendedEolPolicyIsStableUntilReopen
+[       OK ] FileLoadOptionsTest.ExtendedEolPolicyIsStableUntilReopen (16 ms)
+[----------] 5 tests from FileLoadOptionsTest (37 ms total)
+
+[----------] Global test environment tear-down
+[==========] 18 tests from 4 test suites ran. (1061 ms total)
+[  PASSED  ] 18 tests.

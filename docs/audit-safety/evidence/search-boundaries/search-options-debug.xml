@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="5" failures="0" disabled="0" errors="0" time="1.353" timestamp="2026-09-05T22:39:09.120" name="AllTests">
+  <testsuite name="SearchRequestSafetyTest" tests="5" failures="0" disabled="0" skipped="0" errors="0" time="1.326" timestamp="2026-09-05T22:39:09.146">
+    <testcase name="LongLinePreviewContainsTheActualMatch" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp" line="199" status="run" result="completed" time="0.015" timestamp="2026-09-05T22:39:09.148" classname="SearchRequestSafetyTest" />
+    <testcase name="PreviewDoesNotSplitUtf16SurrogatePair" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp" line="213" status="run" result="completed" time="0.042" timestamp="2026-09-05T22:39:09.167" classname="SearchRequestSafetyTest" />
+    <testcase name="ClearingQueryRejectsAlreadyPostedCompletion" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp" line="227" status="run" result="completed" time="0.088" timestamp="2026-09-05T22:39:09.209" classname="SearchRequestSafetyTest" />
+    <testcase name="SeededPreviewWindowsPreserveSourceCoordinatesAndHitText" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp" line="284" status="run" result="completed" time="0.821" timestamp="2026-09-05T22:39:09.298" classname="SearchRequestSafetyTest" />
+    <testcase name="NativeReplaceAllPreservesFilesAfterQueryInvalidation" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp" line="308" status="run" result="completed" time="0.352" timestamp="2026-09-05T22:39:10.120" classname="SearchRequestSafetyTest" />
+  </testsuite>
+</testsuites>

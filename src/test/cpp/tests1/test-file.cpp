@@ -11,6 +11,7 @@
 
 #include <cstdlib>
 #include <fstream>
+#include <future>
 
 #include <algorithm>
 
@@ -885,3 +886,252 @@ TEST(CFilePath, GetDirPath102)
 }
 
 } // namespace path_util
+
+// FileOpen owns conversion options; callers may release or change their settings.
+#include "io/CFileLoad.h"
+#include "env/ShareDataTestSuite.hpp"
+
+class FileLoadOptionsTest : public ::testing::Test, public env::ShareDataTestSuite {
+protected:
+    static void SetUpTestSuite() { SetUpShareData(); }
+    static void TearDownTestSuite() { TearDownShareData(); }
+    void SetUp() override {
+        wchar_t directory[MAX_PATH]{};
+        wchar_t name[MAX_PATH]{};
+        ASSERT_NE(0u, ::GetTempPathW(MAX_PATH, directory));
+        ASSERT_NE(0u, ::GetTempFileNameW(directory, L"sfl", 0, name));
+        path = name;
+    }
+    void TearDown() override {
+        pcShareData->GetDllShareDataPtr()->m_Common.m_sEdit.m_bEnableExtEol = originalExtendedEol;
+        EXPECT_TRUE(::DeleteFileW(path.c_str()));
+    }
+    void Write(std::string_view bytes) {
+        std::ofstream stream(path, std::ios::binary | std::ios::trunc);
+        ASSERT_TRUE(stream.is_open());
+        stream.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        stream.close();
+        ASSERT_FALSE(stream.fail());
+    }
+    const bool originalExtendedEol = pcShareData->GetDllShareDataPtr()->m_Common.m_sEdit.m_bEnableExtEol;
+    std::filesystem::path path;
+};
+
+TEST_F(FileLoadOptionsTest, MimeOptionIsAppliedOnEachOpenAndReopen)
+{
+    Write("=?ISO-2022-JP?B?YWJj?=\r\n");
+    CFileLoad loader;
+    for (int option : {1, 0, 1, 0}) {
+        ASSERT_EQ(CODE_JIS, loader.FileOpen(path.c_str(), false, CODE_JIS, option));
+        CNativeW line;
+        CEol eol;
+        EXPECT_EQ(RESULT_COMPLETE, loader.ReadLine(&line, &eol));
+        EXPECT_EQ(option ? L"abc\r\n" : L"=?ISO-2022-JP?B?YWJj?=\r\n",
+            std::wstring(line.GetStringPtr(), line.GetStringLength()));
+        EXPECT_EQ(EEolType::cr_and_lf, eol.GetType());
+        loader.FileClose();
+    }
+}
+
+TEST_F(FileLoadOptionsTest, AutoDetectionUsesConstructionSnapshot)
+{
+    Write("");
+    SEncodingConfig options{};
+    options.m_eDefaultCodetype = CODE_UTF8;
+    CFileLoad loader(options);
+    options.m_eDefaultCodetype = CODE_SJIS;
+    EXPECT_EQ(CODE_UTF8, loader.FileOpen(path.c_str(), false, CODE_AUTODETECT, 0));
+    loader.FileClose();
+}
+TEST_F(FileLoadOptionsTest, PreparedReaderPreservesExtendedEolBoundaries)
+{
+    pcShareData->GetDllShareDataPtr()->m_Common.m_sEdit.m_bEnableExtEol = true;
+    Write("first\xc2\x85second\xe2\x80\xa8third\xe2\x80\xa9last\r\n");
+    CFileLoad parent;
+    ASSERT_EQ(CODE_UTF8, parent.FileOpen(path.c_str(), false, CODE_UTF8, 0));
+    CFileLoad reader;
+    reader.Prepare(parent, 0, static_cast<std::size_t>(parent.GetFileSize()));
+    for (const auto expected : {L"first\u0085", L"second\u2028", L"third\u2029", L"last\r\n"}) {
+        CNativeW parentLine, readerLine;
+        CEol parentEol, readerEol;
+        ASSERT_EQ(RESULT_COMPLETE, parent.ReadLine(&parentLine, &parentEol));
+        EXPECT_EQ(expected, std::wstring(parentLine.GetStringPtr(), parentLine.GetStringLength()));
+        EXPECT_EQ(RESULT_COMPLETE, reader.ReadLine(&readerLine, &readerEol));
+        EXPECT_EQ(expected, std::wstring(readerLine.GetStringPtr(), readerLine.GetStringLength()));
+        EXPECT_EQ(parentEol.GetType(), readerEol.GetType());
+    }
+}
+
+TEST_F(FileLoadOptionsTest, PreparedUtf7ReaderResetsPreviousDecodedLineOffset)
+{
+    pcShareData->GetDllShareDataPtr()->m_Common.m_sEdit.m_bEnableExtEol = true;
+    Write("first+AIUAcwBlAGMAbwBuAGQ-\r\n");
+    CFileLoad parent, reader;
+    ASSERT_EQ(CODE_UTF7, parent.FileOpen(path.c_str(), false, CODE_UTF7, 0));
+    ASSERT_EQ(CODE_UTF7, reader.FileOpen(path.c_str(), false, CODE_UTF7, 0));
+    CNativeW line;
+    CEol eol;
+    ASSERT_EQ(RESULT_COMPLETE, reader.ReadLine(&line, &eol));
+    ASSERT_EQ(L"first\u0085", std::wstring(line.GetStringPtr(), line.GetStringLength()));
+    reader.FileClose();
+    reader.Prepare(parent, 0, static_cast<std::size_t>(parent.GetFileSize()));
+    EXPECT_EQ(RESULT_COMPLETE, reader.ReadLine(&line, &eol));
+    EXPECT_EQ(L"first\u0085", std::wstring(line.GetStringPtr(), line.GetStringLength()));
+    EXPECT_EQ(EEolType::next_line, eol.GetType());
+}
+
+TEST_F(FileLoadOptionsTest, ExtendedEolPolicyIsStableUntilReopen)
+{
+    struct Input { ECodeType code; std::string_view bytes; };
+    const char utf16[] = "f\0i\0r\0s\0t\0\x85\0s\0e\0c\0o\0n\0d\0\r\0\n\0";
+    for (const auto input : {
+        Input{CODE_UTF8, "first\xc2\x85second\r\n"},
+        Input{CODE_UTF7, "first+AIUAcwBlAGMAbwBuAGQ-\r\n"},
+        Input{CODE_UNICODE, std::string_view(utf16, sizeof(utf16) - 1)}}) {
+        for (bool enabled : {false, true}) {
+            SCOPED_TRACE(static_cast<int>(input.code));
+            SCOPED_TRACE(enabled);
+            Write(input.bytes);
+            auto& global = pcShareData->GetDllShareDataPtr()->m_Common.m_sEdit.m_bEnableExtEol;
+            global = enabled;
+            CFileLoad parent;
+            ASSERT_EQ(input.code, parent.FileOpen(path.c_str(), false, input.code, 0));
+            global = !enabled;
+            CFileLoad reader;
+            reader.Prepare(parent, 0, static_cast<std::size_t>(parent.GetFileSize()));
+            const auto check = [](CFileLoad& loader, bool split) {
+                CNativeW line;
+                CEol eol;
+                EXPECT_EQ(RESULT_COMPLETE, loader.ReadLine(&line, &eol));
+                EXPECT_EQ(split ? L"first\u0085" : L"first\u0085second\r\n",
+                    std::wstring(line.GetStringPtr(), line.GetStringLength()));
+                EXPECT_EQ(split ? EEolType::next_line : EEolType::cr_and_lf, eol.GetType());
+            };
+            check(parent, enabled);
+            check(reader, enabled);
+            reader.FileClose();
+            parent.FileClose();
+            ASSERT_EQ(input.code, parent.FileOpen(path.c_str(), false, input.code, 0));
+            check(parent, !enabled);
+        }
+    }
+}
+TEST_F(FileLoadOptionsTest, PreparedReaderRetainsMappingAfterParentDestruction)
+{
+    class ObservedReader : public CFileLoad {
+    public:
+        const void* View() const { return m_pReadBufTop; }
+    };
+    Write("first\r\nsecond\r\n");
+    ObservedReader reader;
+    const void* view = nullptr;
+    {
+        CFileLoad parent;
+        ASSERT_EQ(CODE_UTF8, parent.FileOpen(path.c_str(), false, CODE_UTF8, 0));
+        reader.Prepare(parent, 0, static_cast<std::size_t>(parent.GetFileSize()));
+        view = reader.View();
+        ASSERT_NE(nullptr, view);
+    }
+    MEMORY_BASIC_INFORMATION region{};
+    ASSERT_EQ(sizeof(region), ::VirtualQuery(view, &region, sizeof(region)));
+    // Assert the lease before dereferencing a potentially unmapped address.
+    ASSERT_EQ(static_cast<DWORD>(MEM_COMMIT), region.State);
+    ASSERT_EQ(static_cast<DWORD>(MEM_MAPPED), region.Type);
+    CNativeW line;
+    CEol eol;
+    EXPECT_EQ(RESULT_COMPLETE, reader.ReadLine(&line, &eol));
+    EXPECT_EQ(L"first\r\n", std::wstring(line.GetStringPtr(), line.GetStringLength()));
+    reader.FileClose();
+    ASSERT_EQ(sizeof(region), ::VirtualQuery(view, &region, sizeof(region)));
+    EXPECT_EQ(static_cast<DWORD>(MEM_FREE), region.State);
+}
+TEST_F(FileLoadOptionsTest, PrepareReplacesActiveMappingAndRejectsInvalidSlices)
+{
+    class ObservedReader : public CFileLoad {
+    public:
+        const void* View() const { return m_pReadBufTop; }
+    };
+    Write("first\r\nsecond\r\n");
+    CFileLoad parent;
+    ObservedReader reader;
+    ASSERT_EQ(CODE_UTF8, parent.FileOpen(path.c_str(), false, CODE_UTF8, 0));
+    ASSERT_EQ(CODE_UTF8, reader.FileOpen(path.c_str(), false, CODE_UTF8, 0));
+    const void* previousView = reader.View();
+    reader.Prepare(parent, 7, static_cast<std::size_t>(parent.GetFileSize()));
+    MEMORY_BASIC_INFORMATION region{};
+    ASSERT_EQ(sizeof(region), ::VirtualQuery(previousView, &region, sizeof(region)));
+    EXPECT_EQ(static_cast<DWORD>(MEM_FREE), region.State);
+    EXPECT_THROW(reader.Prepare(parent, 9, 7), CError_FileOpen);
+    EXPECT_THROW(reader.Prepare(parent, 0, static_cast<std::size_t>(parent.GetFileSize()) + 1), CError_FileOpen);
+    EXPECT_THROW(reader.Prepare(reader, 0, 0), CError_FileOpen);
+    FILETIME stamp{};
+    EXPECT_TRUE(reader.GetFileTime(nullptr, nullptr, &stamp));
+    parent.FileClose();
+    ASSERT_EQ(CODE_UTF8, parent.FileOpen(path.c_str(), false, CODE_UTF8, 0));
+    CNativeW line;
+    CEol eol;
+    EXPECT_EQ(RESULT_COMPLETE, reader.ReadLine(&line, &eol));
+    EXPECT_EQ(L"second\r\n", std::wstring(line.GetStringPtr(), line.GetStringLength()));
+    parent.FileClose();
+    EXPECT_THROW(reader.Prepare(parent, 0, 0), CError_FileOpen);
+    reader.FileClose();
+    EXPECT_FALSE(reader.GetFileTime(nullptr, nullptr, &stamp));
+}
+
+TEST_F(FileLoadOptionsTest, FailedOpenAndEmptyMappingCanBeReused)
+{
+    Write("");
+    CFileLoad parent, reader;
+    const auto missing = path.wstring() + L".missing";
+    EXPECT_THROW(parent.FileOpen(missing.c_str(), false, CODE_UTF8, 0), CError_FileOpen);
+    ASSERT_EQ(CODE_UTF8, parent.FileOpen(path.c_str(), false, CODE_UTF8, 0));
+    reader.Prepare(parent, 0, 0);
+    parent.FileClose();
+    CNativeW line;
+    CEol eol;
+    EXPECT_EQ(RESULT_FAILURE, reader.ReadLine(&line, &eol));
+    reader.FileClose();
+    Write("reopened\r\n");
+    ASSERT_EQ(CODE_UTF8, parent.FileOpen(path.c_str(), false, CODE_UTF8, 0));
+    EXPECT_EQ(RESULT_COMPLETE, parent.ReadLine(&line, &eol));
+    EXPECT_EQ(L"reopened\r\n", std::wstring(line.GetStringPtr(), line.GetStringLength()));
+}
+TEST_F(FileLoadOptionsTest, PreparedReadersOwnConvertersWithInheritedMimeOptions)
+{
+    class ObservedReader : public CFileLoad {
+    public:
+        const CCodeBase* Converter() const { return m_pCodeBase.get(); }
+    };
+    for (int mime : {0, 1}) {
+        SCOPED_TRACE(mime);
+        std::string bytes;
+        for (int i = 0; i < 128; ++i) bytes += "=?ISO-2022-JP?B?YWJj?=\r\n";
+        Write(bytes);
+        ObservedReader parent, first, second;
+        ASSERT_EQ(CODE_JIS, parent.FileOpen(path.c_str(), false, CODE_JIS, mime));
+        first.Prepare(parent, 0, bytes.size());
+        second.Prepare(parent, 0, bytes.size());
+        ASSERT_NE(nullptr, first.Converter());
+        ASSERT_NE(nullptr, second.Converter());
+        ASSERT_NE(parent.Converter(), first.Converter());
+        ASSERT_NE(parent.Converter(), second.Converter());
+        ASSERT_NE(first.Converter(), second.Converter());
+        parent.FileClose();
+        const auto read = [mime](CFileLoad& reader) {
+            for (int i = 0; i < 128; ++i) {
+                CNativeW line;
+                CEol eol;
+                if (reader.ReadLine(&line, &eol) != RESULT_COMPLETE
+                    || std::wstring(line.GetStringPtr(), line.GetStringLength()) !=
+                        (mime ? L"abc\r\n" : L"=?ISO-2022-JP?B?YWJj?=\r\n")
+                    || eol.GetType() != EEolType::cr_and_lf) return false;
+            }
+            return true;
+        };
+        // Exactly two workers; futures are collected before either reader dies.
+        auto a = std::async(std::launch::async, read, std::ref(first));
+        auto b = std::async(std::launch::async, read, std::ref(second));
+        EXPECT_TRUE(a.get());
+        EXPECT_TRUE(b.get());
+    }
+}
