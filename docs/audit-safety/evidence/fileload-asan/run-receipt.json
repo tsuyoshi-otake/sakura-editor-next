@@ -1,0 +1,42 @@
+[
+  {
+    "label": "canary-build",
+    "args": [
+      "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\cl.exe",
+      "/nologo",
+      "/Od",
+      "/MTd",
+      "/Zi",
+      "/fsanitize=address",
+      "C:\\Users\\developer\\tmp\\sakura-fileload-asan\\canary.cpp",
+      "/FeC:\\Users\\developer\\tmp\\sakura-fileload-asan\\canary.exe",
+      "/FoC:\\Users\\developer\\tmp\\sakura-fileload-asan\\canary.obj",
+      "/FdC:\\Users\\developer\\tmp\\sakura-fileload-asan\\canary.pdb",
+      "/link",
+      "/INCREMENTAL:NO"
+    ],
+    "pid": 21464,
+    "exit_code": 0,
+    "seconds": 0.18710229999851435
+  },
+  {
+    "label": "canary-run",
+    "args": [
+      "C:\\Users\\developer\\tmp\\sakura-fileload-asan\\canary.exe"
+    ],
+    "pid": 59108,
+    "exit_code": 1,
+    "seconds": 0.13047720000031404
+  },
+  {
+    "label": "fileload-run",
+    "args": [
+      "C:\\Users\\developer\\tmp\\sakura-fileload-asan\\tests1-asan.exe",
+      "--gtest_filter=FileLoadOptionsTest.*",
+      "--gtest_output=xml:C:\\Users\\developer\\tmp\\sakura-fileload-asan\\fileload.xml"
+    ],
+    "pid": 48332,
+    "exit_code": 0,
+    "seconds": 1.314245599991409
+  }
+]

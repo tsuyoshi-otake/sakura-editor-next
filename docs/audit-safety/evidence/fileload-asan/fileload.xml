@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="9" failures="0" disabled="0" errors="0" time="0.115" timestamp="2026-09-05T22:23:39.809" name="AllTests">
+  <testsuite name="FileLoadOptionsTest" tests="9" failures="0" disabled="0" skipped="0" errors="0" time="0.08" timestamp="2026-09-05T22:23:39.844">
+    <testcase name="MimeOptionIsAppliedOnEachOpenAndReopen" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp" line="920" status="run" result="completed" time="0.007" timestamp="2026-09-05T22:23:39.844" classname="FileLoadOptionsTest" />
+    <testcase name="AutoDetectionUsesConstructionSnapshot" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp" line="936" status="run" result="completed" time="0." timestamp="2026-09-05T22:23:39.852" classname="FileLoadOptionsTest" />
+    <testcase name="PreparedReaderPreservesExtendedEolBoundaries" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp" line="946" status="run" result="completed" time="0.005" timestamp="2026-09-05T22:23:39.853" classname="FileLoadOptionsTest" />
+    <testcase name="PreparedUtf7ReaderResetsPreviousDecodedLineOffset" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp" line="965" status="run" result="completed" time="0.006" timestamp="2026-09-05T22:23:39.859" classname="FileLoadOptionsTest" />
+    <testcase name="ExtendedEolPolicyIsStableUntilReopen" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp" line="983" status="run" result="completed" time="0.017" timestamp="2026-09-05T22:23:39.866" classname="FileLoadOptionsTest" />
+    <testcase name="PreparedReaderRetainsMappingAfterParentDestruction" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp" line="1019" status="run" result="completed" time="0.002" timestamp="2026-09-05T22:23:39.884" classname="FileLoadOptionsTest" />
+    <testcase name="PrepareReplacesActiveMappingAndRejectsInvalidSlices" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp" line="1048" status="run" result="completed" time="0.002" timestamp="2026-09-05T22:23:39.886" classname="FileLoadOptionsTest" />
+    <testcase name="FailedOpenAndEmptyMappingCanBeReused" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp" line="1081" status="run" result="completed" time="0.008" timestamp="2026-09-05T22:23:39.888" classname="FileLoadOptionsTest" />
+    <testcase name="PreparedReadersOwnConvertersWithInheritedMimeOptions" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp" line="1099" status="run" result="completed" time="0.026" timestamp="2026-09-05T22:23:39.897" classname="FileLoadOptionsTest" />
+  </testsuite>
+</testsuites>

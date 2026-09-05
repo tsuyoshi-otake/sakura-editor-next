@@ -171,3 +171,17 @@ Release solution buildと[関連21 tests](evidence/mapping-final-release.log)も
 追加生成コストはpartition数Pに対してO(P)、行数Nに対する追加allocationではない。CReadManagerの既存hardware/file-size/maximum制限を保持する。性能A/Bを測ったという主張はしない。backend内のprocess-wide状態、全encoding並行実行、allocator/Win32故障注入、ASan等は別途未完了。[source/log hashes](evidence/converter-evidence.json)を収録。semantic strictはbaseline変更なしで成功。
 
 最終Release solution buildと[関連22 tests](evidence/converter-release.log)も成功（720ms、OwnedSurvivors=0）。ASan runtime librariesのローカル存在は確認したが、ASan build/runは未実行。
+
+## 継続検証: FileLoad限定ASan
+
+`ffc231cbae380a22da5d353bfd56ca15248efbfd`のFileLoad関連をMSVC14.44.35207 x64 Debugで限定計測した。通常buildのobject/PCH/exeは変更せず、`C:/Users/developer/tmp/sakura-fileload-asan`へ出力した。
+
+- 計測ソース11個: `CFileLoad.cpp`、`CIoBridge.cpp`、`CCodeBase.cpp`、`CCodeFactory.cpp`、`CJis.cpp`、`CUtf7.cpp`、`CUtf8.cpp`、`CCodePage.cpp`、`CMemory.cpp`、`CNativeW.cpp`、`test-file.cpp`。正確なsource hashesは[receipt](evidence/fileload-asan/receipt.json)。
+- canonical Debug buildのCL/link tlogからinclude/define/libraryを再現し、対象を`/fsanitize=address /Y-`で再compile。RTC、通常PCH、増分linkを使わない。STL container annotationsはmixed-object互換のため明示的に無効化。他のproduction/test/library objectは通常Debugであり、全アプリASanではない。
+- 最初のリンク再現はtlog先頭行しか読まず、main等55 symbolsが未解決で失敗。tlogの非header全行を復元して、既存ASan objectsで再link成功。製品source修正やobjectの再作成で隠していない。
+- 同じtoolchainの小さな[canary](evidence/fileload-asan/canary.cpp)は意図したheap-buffer-overflowを[検出](evidence/fileload-asan/canary-run.log)してexit1。対象objectのASan symbolsとtest exeのruntime importも[検査](evidence/fileload-asan/instrumentation-checks.json)。
+- `tests1-asan.exe --gtest_filter=FileLoadOptionsTest.*` は[9/9成功](evidence/fileload-asan/fileload-run.log)、exit0、115ms。ASan報告なし。[XML](evidence/fileload-asan/fileload.xml)と[実行command/PID/exit](evidence/fileload-asan/run-receipt.json)を収録。run上限120秒、timeout時は所有PID treeを回収。終了後CIMで計測outputと隔離repo配下の所有tests1/sakuraを照合し残存0。
+
+再現用script snapshotsは[build](evidence/fileload-asan/sakura-fileload-asan-build.py)、[run](evidence/fileload-asan/sakura-fileload-asan-run.py)、[instrumentation check](evidence/fileload-asan/sakura-asan-check.py)。これらは今回の絶対checkout/outputパスと既存canonical Debug tlogを前提とする検証記録で、汎用build CLIではない。実際に用いたresponse files、ログ変換前後の[SHA256](evidence/fileload-asan/sha256.json)を併記する。公開RSPはUTF8へ変換しており、scriptが生成する実行用RSPはUTF16。
+
+Microsoftの[ASan制約](https://learn.microsoft.com/en-us/cpp/sanitizers/asan-known-issues?view=msvc-170)と[build reference](https://learn.microsoft.com/en-us/cpp/sanitizers/asan-building?view=msvc-170)に従う。ASan成功はdata race、OS mappingの有効性、未計測コード／全encoding、allocator/Win32故障経路の証明ではない。mapping寿命は前節のVirtualQuery＋実読込で別に検証している。H12/F18/F21の限定Sanitizer証拠は追加できたが、全37項目の完了条件は未達のまま。
