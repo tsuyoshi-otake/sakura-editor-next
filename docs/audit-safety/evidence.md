@@ -185,3 +185,17 @@ Release solution buildと[関連21 tests](evidence/mapping-final-release.log)も
 再現用script snapshotsは[build](evidence/fileload-asan/sakura-fileload-asan-build.py)、[run](evidence/fileload-asan/sakura-fileload-asan-run.py)、[instrumentation check](evidence/fileload-asan/sakura-asan-check.py)。これらは今回の絶対checkout/outputパスと既存canonical Debug tlogを前提とする検証記録で、汎用build CLIではない。実際に用いたresponse files、ログ変換前後の[SHA256](evidence/fileload-asan/sha256.json)を併記する。公開RSPはUTF8へ変換しており、scriptが生成する実行用RSPはUTF16。
 
 Microsoftの[ASan制約](https://learn.microsoft.com/en-us/cpp/sanitizers/asan-known-issues?view=msvc-170)と[build reference](https://learn.microsoft.com/en-us/cpp/sanitizers/asan-building?view=msvc-170)に従う。ASan成功はdata race、OS mappingの有効性、未計測コード／全encoding、allocator/Win32故障経路の証明ではない。mapping寿命は前節のVirtualQuery＋実読込で別に検証している。H12/F18/F21の限定Sanitizer証拠は追加できたが、全37項目の完了条件は未達のまま。
+
+## 継続検証: FileLoadの途中失敗と回収guard mutation
+
+`297c1f006`の製品sourceに対し、別output `C:/Users/developer/tmp/sakura-fileload-faults` のコピーだけへ5個のfault pointを注入した。製品の公開APIやglobal状態にはtest hookを追加していない。[注入patch](evidence/fileload-faults/injection.patch)は、(1)file取得後のsize取得失敗、(2)mapping作成のnull return、(3)view作成のnull return、(4)FileOpenがmappingを保持した直後のbad_alloc、(5)Prepareのconverter生成直前のbad_alloc。実際のOS資源枯渇を起こした試験ではなく、その戻り値／例外をproduction cleanupへ渡す試験である。
+
+前節同様の限定ASan計測で既存9＋注入用2の[11 tests成功](evidence/fileload-faults/fileload-run.log)。失敗後のprocess handle数、timestamp不在、view解放、同じreaderの再利用を確認する。Prepare失敗では親のtimestamp／mappingを保持してdestinationだけ閉じ、再Prepare→親close→実読込まで成功。
+
+続けて、FileOpenのcloseOnFailure guardだけをmapping取得前にdisarmするruntime mutantを作成した。[1/2 testsが失敗](evidence/fileload-faults/mutant-run.log)し、stage4でhandle176→178、timestampがまだ取得できる、MEM_COMMITのまま残る、reopenが例外になることを検出した。failure injectionの緑だけでcleanupを保証したことにせず、回収を壊す非等価変異を検出できることも確認した。
+
+注入sourceをbyte単位で復元し、対象object再compile/relink後、[11/11成功](evidence/fileload-faults/restored-run.log)（168ms、exit0、ASan報告なし）。[mutation receipt](evidence/fileload-faults/mutation-receipt.json)に前後hashと各command/exit/PIDを記録。[通常run receipt](evidence/fileload-faults/run-receipt.json)、[注入source hash](evidence/fileload-faults/injection-sources.json)、[XML](evidence/fileload-faults/restored.xml)、[log hash/cleanup](evidence/fileload-faults/sha256.json)も収録。各native試験は上限120秒、終了後CIMで対象outputと隔離repoの所有tests1/sakura残存0。
+
+再現script snapshots: [prepare](evidence/fileload-faults/sakura-fileload-faults-prepare.py)、[build](evidence/fileload-faults/sakura-fileload-faults-build.py)、[run](evidence/fileload-faults/sakura-fileload-faults-run.py)、[mutation](evidence/fileload-faults/sakura-fileload-faults-mutation.py)。絶対pathと前節のASan準備script、canonical Debug tlogを前提とするローカル検証記録。元のcheckout sourceと通常成果物は変更していない。
+
+これは5故障点＋1guard mutantの証拠であり、全allocation点・全Win32 failure・共有backendの競合・mapping寿命全変異を網羅したとは主張しない。Search/Clipboard/Updater等の全37項目は引き続き未完了。

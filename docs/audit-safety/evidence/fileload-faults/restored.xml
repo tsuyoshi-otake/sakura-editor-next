@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="11" failures="0" disabled="0" errors="0" time="0.168" timestamp="2026-09-05T22:32:43.853" name="AllTests">
+  <testsuite name="FileLoadOptionsTest" tests="11" failures="0" disabled="0" skipped="0" errors="0" time="0.131" timestamp="2026-09-05T22:32:43.890">
+    <testcase name="MimeOptionIsAppliedOnEachOpenAndReopen" file="C:\Users\developer\tmp\sakura-fileload-faults\test-file-injected.cpp" line="920" status="run" result="completed" time="0.013" timestamp="2026-09-05T22:32:43.890" classname="FileLoadOptionsTest" />
+    <testcase name="AutoDetectionUsesConstructionSnapshot" file="C:\Users\developer\tmp\sakura-fileload-faults\test-file-injected.cpp" line="936" status="run" result="completed" time="0.001" timestamp="2026-09-05T22:32:43.904" classname="FileLoadOptionsTest" />
+    <testcase name="PreparedReaderPreservesExtendedEolBoundaries" file="C:\Users\developer\tmp\sakura-fileload-faults\test-file-injected.cpp" line="946" status="run" result="completed" time="0.007" timestamp="2026-09-05T22:32:43.906" classname="FileLoadOptionsTest" />
+    <testcase name="PreparedUtf7ReaderResetsPreviousDecodedLineOffset" file="C:\Users\developer\tmp\sakura-fileload-faults\test-file-injected.cpp" line="965" status="run" result="completed" time="0.009" timestamp="2026-09-05T22:32:43.914" classname="FileLoadOptionsTest" />
+    <testcase name="ExtendedEolPolicyIsStableUntilReopen" file="C:\Users\developer\tmp\sakura-fileload-faults\test-file-injected.cpp" line="983" status="run" result="completed" time="0.022" timestamp="2026-09-05T22:32:43.923" classname="FileLoadOptionsTest" />
+    <testcase name="PreparedReaderRetainsMappingAfterParentDestruction" file="C:\Users\developer\tmp\sakura-fileload-faults\test-file-injected.cpp" line="1019" status="run" result="completed" time="0.015" timestamp="2026-09-05T22:32:43.946" classname="FileLoadOptionsTest" />
+    <testcase name="PrepareReplacesActiveMappingAndRejectsInvalidSlices" file="C:\Users\developer\tmp\sakura-fileload-faults\test-file-injected.cpp" line="1048" status="run" result="completed" time="0.006" timestamp="2026-09-05T22:32:43.961" classname="FileLoadOptionsTest" />
+    <testcase name="FailedOpenAndEmptyMappingCanBeReused" file="C:\Users\developer\tmp\sakura-fileload-faults\test-file-injected.cpp" line="1081" status="run" result="completed" time="0.004" timestamp="2026-09-05T22:32:43.968" classname="FileLoadOptionsTest" />
+    <testcase name="PreparedReadersOwnConvertersWithInheritedMimeOptions" file="C:\Users\developer\tmp\sakura-fileload-faults\test-file-injected.cpp" line="1099" status="run" result="completed" time="0.039" timestamp="2026-09-05T22:32:43.973" classname="FileLoadOptionsTest" />
+    <testcase name="InjectedOpenFailuresReleaseResourcesBeforeReuse" file="C:\Users\developer\tmp\sakura-fileload-faults\test-file-injected.cpp" line="1141" status="run" result="completed" time="0.006" timestamp="2026-09-05T22:32:44.013" classname="FileLoadOptionsTest" />
+    <testcase name="InjectedPrepareAllocationFailureReleasesOnlyDestination" file="C:\Users\developer\tmp\sakura-fileload-faults\test-file-injected.cpp" line="1176" status="run" result="completed" time="0.002" timestamp="2026-09-05T22:32:44.019" classname="FileLoadOptionsTest" />
+  </testsuite>
+</testsuites>

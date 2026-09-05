@@ -1,0 +1,83 @@
+--- a/sakura_core/io/CFileLoad.cpp
++++ injected/sakura_core/io/CFileLoad.cpp
+@@ -25,0 +26,3 @@
++#include <new>
++extern int gFileLoadFaultStage;
++extern const void* gFileLoadFaultView;
+@@ -53 +56 @@
+-        if (!::GetFileSizeEx(m_file.get(), &size) || size.QuadPart < 0)
++        if (gFileLoadFaultStage == 1 || !::GetFileSizeEx(m_file.get(), &size) || size.QuadPart < 0)
+@@ -59 +62 @@
+-            m_mapping.reset(::CreateFileMappingW(m_file.get(), nullptr, PAGE_READONLY, 0, 0, nullptr));
++            m_mapping.reset(gFileLoadFaultStage == 2 ? nullptr : ::CreateFileMappingW(m_file.get(), nullptr, PAGE_READONLY, 0, 0, nullptr));
+@@ -61 +64 @@
+-            m_view.reset(static_cast<const char*>(::MapViewOfFile(m_mapping.get(), FILE_MAP_READ, 0, 0, 0)));
++            m_view.reset(gFileLoadFaultStage == 3 ? nullptr : static_cast<const char*>(::MapViewOfFile(m_mapping.get(), FILE_MAP_READ, 0, 0, 0)));
+@@ -162,0 +166 @@
++	if (gFileLoadFaultStage == 5) throw std::bad_alloc();
+@@ -205,0 +210 @@
++    if (gFileLoadFaultStage == 4) { gFileLoadFaultView = m_pReadBufTop; throw std::bad_alloc(); }
+--- a/src/test/cpp/tests1/test-file.cpp
++++ injected/src/test/cpp/tests1/test-file.cpp
+@@ -1137 +1137,61 @@
+-}+}
++int gFileLoadFaultStage = 0;
++const void* gFileLoadFaultView = nullptr;
++
++TEST_F(FileLoadOptionsTest, InjectedOpenFailuresReleaseResourcesBeforeReuse)
++{
++    Write("payload\r\n");
++    CFileLoad reader;
++    for (int stage : {1, 2, 3, 4}) {
++        SCOPED_TRACE(stage);
++        DWORD before = 0, after = 0;
++        ASSERT_TRUE(::GetProcessHandleCount(::GetCurrentProcess(), &before));
++        gFileLoadFaultStage = stage;
++        gFileLoadFaultView = nullptr;
++        if (stage == 4) {
++            EXPECT_THROW(reader.FileOpen(path.c_str(), false, CODE_UTF8, 0), std::bad_alloc);
++        } else {
++            EXPECT_THROW(reader.FileOpen(path.c_str(), false, CODE_UTF8, 0), CError_FileOpen);
++        }
++        gFileLoadFaultStage = 0;
++        ASSERT_TRUE(::GetProcessHandleCount(::GetCurrentProcess(), &after));
++        EXPECT_EQ(before, after);
++        FILETIME stamp{};
++        EXPECT_FALSE(reader.GetFileTime(nullptr, nullptr, &stamp));
++        if (stage == 4) {
++            MEMORY_BASIC_INFORMATION region{};
++            ASSERT_NE(nullptr, gFileLoadFaultView);
++            ASSERT_EQ(sizeof(region), ::VirtualQuery(gFileLoadFaultView, &region, sizeof(region)));
++            EXPECT_EQ(static_cast<DWORD>(MEM_FREE), region.State);
++        }
++        ASSERT_EQ(CODE_UTF8, reader.FileOpen(path.c_str(), false, CODE_UTF8, 0));
++        CNativeW line;
++        CEol eol;
++        EXPECT_EQ(RESULT_COMPLETE, reader.ReadLine(&line, &eol));
++        EXPECT_EQ(L"payload\r\n", std::wstring(line.GetStringPtr(), line.GetStringLength()));
++        reader.FileClose();
++    }
++}
++
++TEST_F(FileLoadOptionsTest, InjectedPrepareAllocationFailureReleasesOnlyDestination)
++{
++    Write("payload\r\n");
++    CFileLoad parent, reader;
++    ASSERT_EQ(CODE_UTF8, parent.FileOpen(path.c_str(), false, CODE_UTF8, 0));
++    DWORD before = 0, after = 0;
++    ASSERT_TRUE(::GetProcessHandleCount(::GetCurrentProcess(), &before));
++    gFileLoadFaultStage = 5;
++    EXPECT_THROW(reader.Prepare(parent, 0, static_cast<size_t>(parent.GetFileSize())), std::bad_alloc);
++    gFileLoadFaultStage = 0;
++    ASSERT_TRUE(::GetProcessHandleCount(::GetCurrentProcess(), &after));
++    EXPECT_EQ(before, after);
++    FILETIME stamp{};
++    EXPECT_FALSE(reader.GetFileTime(nullptr, nullptr, &stamp));
++    EXPECT_TRUE(parent.GetFileTime(nullptr, nullptr, &stamp));
++    reader.Prepare(parent, 0, static_cast<size_t>(parent.GetFileSize()));
++    parent.FileClose();
++    CNativeW line;
++    CEol eol;
++    EXPECT_EQ(RESULT_COMPLETE, reader.ReadLine(&line, &eol));
++    EXPECT_EQ(L"payload\r\n", std::wstring(line.GetStringPtr(), line.GetStringLength()));
++}

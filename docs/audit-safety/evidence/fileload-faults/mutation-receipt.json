@@ -1,0 +1,69 @@
+{
+  "original_injected_source_sha256": "288178b0a6553d9476e310b5a003cb8ee4018bd1bf69a1a356927ec3ca3993fb",
+  "mutant_source_sha256": "6c53c2a5df33916d230813a6f2838eeba255a759378f624e92ad474c208b9372",
+  "mutation": "Disarm only FileOpen closeOnFailure guard before mapping acquisition",
+  "error": null,
+  "records": [
+    {
+      "args": [
+        "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\cl.exe",
+        "@C:\\Users\\developer\\tmp\\sakura-fileload-faults\\CFileLoad.rsp"
+      ],
+      "label": "mutant-compile",
+      "pid": 39408,
+      "exit_code": 0,
+      "seconds": 2.664537600008771
+    },
+    {
+      "args": [
+        "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\link.exe",
+        "@C:\\Users\\developer\\tmp\\sakura-fileload-faults\\link.rsp"
+      ],
+      "label": "mutant-link",
+      "pid": 56972,
+      "exit_code": 0,
+      "seconds": 4.800235800008522
+    },
+    {
+      "args": [
+        "C:\\Users\\developer\\tmp\\sakura-fileload-faults\\tests1-asan.exe",
+        "--gtest_filter=FileLoadOptionsTest.Injected*"
+      ],
+      "label": "mutant-run",
+      "pid": 48220,
+      "exit_code": 1,
+      "seconds": 1.175116699974751
+    },
+    {
+      "args": [
+        "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\cl.exe",
+        "@C:\\Users\\developer\\tmp\\sakura-fileload-faults\\CFileLoad.rsp"
+      ],
+      "label": "restored-compile",
+      "pid": 39684,
+      "exit_code": 0,
+      "seconds": 4.6863836999982595
+    },
+    {
+      "args": [
+        "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\link.exe",
+        "@C:\\Users\\developer\\tmp\\sakura-fileload-faults\\link.rsp"
+      ],
+      "label": "restored-link",
+      "pid": 39480,
+      "exit_code": 0,
+      "seconds": 6.245679800020298
+    },
+    {
+      "args": [
+        "C:\\Users\\developer\\tmp\\sakura-fileload-faults\\tests1-asan.exe",
+        "--gtest_filter=FileLoadOptionsTest.*",
+        "--gtest_output=xml:C:\\Users\\developer\\tmp\\sakura-fileload-faults\\restored.xml"
+      ],
+      "label": "restored-run",
+      "pid": 7964,
+      "exit_code": 0,
+      "seconds": 2.654047800024273
+    }
+  ]
+}

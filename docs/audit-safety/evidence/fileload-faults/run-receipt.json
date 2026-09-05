@@ -1,0 +1,42 @@
+[
+  {
+    "label": "canary-build",
+    "args": [
+      "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\cl.exe",
+      "/nologo",
+      "/Od",
+      "/MTd",
+      "/Zi",
+      "/fsanitize=address",
+      "C:\\Users\\developer\\tmp\\sakura-fileload-faults\\canary.cpp",
+      "/FeC:\\Users\\developer\\tmp\\sakura-fileload-faults\\canary.exe",
+      "/FoC:\\Users\\developer\\tmp\\sakura-fileload-faults\\canary.obj",
+      "/FdC:\\Users\\developer\\tmp\\sakura-fileload-faults\\canary.pdb",
+      "/link",
+      "/INCREMENTAL:NO"
+    ],
+    "pid": 48796,
+    "exit_code": 0,
+    "seconds": 0.17638349998742342
+  },
+  {
+    "label": "canary-run",
+    "args": [
+      "C:\\Users\\developer\\tmp\\sakura-fileload-faults\\canary.exe"
+    ],
+    "pid": 33076,
+    "exit_code": 1,
+    "seconds": 0.08634730000630952
+  },
+  {
+    "label": "fileload-run",
+    "args": [
+      "C:\\Users\\developer\\tmp\\sakura-fileload-faults\\tests1-asan.exe",
+      "--gtest_filter=FileLoadOptionsTest.*",
+      "--gtest_output=xml:C:\\Users\\developer\\tmp\\sakura-fileload-faults\\fileload.xml"
+    ],
+    "pid": 45676,
+    "exit_code": 0,
+    "seconds": 1.1682261999812908
+  }
+]
