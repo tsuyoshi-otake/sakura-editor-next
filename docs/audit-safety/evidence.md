@@ -161,3 +161,13 @@ Debug solutionと[関連21 tests](evidence/mapping-final-debug.log)が成功、O
 semantic strictは増加・新規finding・touched-scope不足なしで成功。現行converterはまだshared ownershipであり、immutable/thread-safeとは主張しない。mapped viewは外部writerに対するimmutable内容snapshotではない。Win32/allocator故障注入、限定ASan、mapping変異、全encodingの並行試験は未完了。F21/H03全体は部分対応を維持する。
 
 Release solution buildと[関連21 tests](evidence/mapping-final-release.log)も成功（927ms、OwnedSurvivors=0）。Debug最終cohortは1052ms。試験時間は性能A/Bの根拠にはしない。
+
+## 継続改善: reader固有converter
+
+確認したCJis/CCodePageのinstance fieldsは変換設定であり、今回の調査で既存共有実装のdata raceは再現していない。CCodeBaseの非const virtual変換APIに共有安全性の契約はないため、H03としてreaderごとの所有を明確にした。Prepareは親のencoding/MIME flagsからconverterを生成し、unique_ptrで所有する。mapping/configuration leaseとは分離する。
+
+新test `PreparedReadersOwnConvertersWithInheritedMimeOptions` の[red](evidence/converter-red.log)は親とreaderのinstance同一性による失敗であり、出力破損の再現とは分類しない。改善後は3 instanceの独立を確認し、親close後に2 workersで各128行を読む。MIME ON/OFF両方の実ファイル内容とEOLが期待どおりで、Debug solutionと[関連22 tests](evidence/converter-green.log)が成功した（1153ms、OwnedSurvivors=0）。
+
+追加生成コストはpartition数Pに対してO(P)、行数Nに対する追加allocationではない。CReadManagerの既存hardware/file-size/maximum制限を保持する。性能A/Bを測ったという主張はしない。backend内のprocess-wide状態、全encoding並行実行、allocator/Win32故障注入、ASan等は別途未完了。[source/log hashes](evidence/converter-evidence.json)を収録。semantic strictはbaseline変更なしで成功。
+
+最終Release solution buildと[関連22 tests](evidence/converter-release.log)も成功（720ms、OwnedSurvivors=0）。ASan runtime librariesのローカル存在は確認したが、ASan build/runは未実行。

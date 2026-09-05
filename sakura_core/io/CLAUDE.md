@@ -36,8 +36,9 @@ Prepare validates source ownership and range before replacing the destination;
 self-Prepare and invalid slices are rejected without changing the old reader.
 Open/Prepare failure guards close partial reader state before propagating.
 The lease does not provide a stable file-content snapshot against external
-writers. Converter lifetime is still shared; this does not establish immutable
-or thread-safe conversion. Independent stateful converters remain unfinished.
+writers. Each reader owns a separate converter constructed from the inherited
+encoding and MIME options. Prepare never shares mutable converter instances.
+This isolates instance state, not any process-wide state inside encoding backends.
 Prepared partitions copy the encoded NEL/LS/PS byte sequences along with the
 EOL flags. They start with an empty decoded-line cache and a zero decoded
 UTF-7 offset, including when a previously used reader is prepared again.

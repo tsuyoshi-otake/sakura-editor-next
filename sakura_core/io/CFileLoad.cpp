@@ -160,7 +160,8 @@ void CFileLoad::Prepare( const CFileLoad& other, size_t nReadBufOffsetBegin, siz
 
 	m_nFileSize		= other.m_nFileSize;
 	m_CharCode		= other.m_CharCode;
-	m_pCodeBase		= other.m_pCodeBase;
+	m_pCodeBase.reset(CCodeFactory::CreateCodeBase(other.m_CharCode, other.m_nFlag));
+    if (!m_pCodeBase) throw CError_FileOpen();
 	m_encodingTrait = other.m_encodingTrait;
 	m_bBomExist		= other.m_bBomExist;
 	m_nFlag 		= other.m_nFlag;

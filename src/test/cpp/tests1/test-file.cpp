@@ -11,6 +11,7 @@
 
 #include <cstdlib>
 #include <fstream>
+#include <future>
 
 #include <algorithm>
 
@@ -1094,4 +1095,43 @@ TEST_F(FileLoadOptionsTest, FailedOpenAndEmptyMappingCanBeReused)
     ASSERT_EQ(CODE_UTF8, parent.FileOpen(path.c_str(), false, CODE_UTF8, 0));
     EXPECT_EQ(RESULT_COMPLETE, parent.ReadLine(&line, &eol));
     EXPECT_EQ(L"reopened\r\n", std::wstring(line.GetStringPtr(), line.GetStringLength()));
+}
+TEST_F(FileLoadOptionsTest, PreparedReadersOwnConvertersWithInheritedMimeOptions)
+{
+    class ObservedReader : public CFileLoad {
+    public:
+        const CCodeBase* Converter() const { return m_pCodeBase.get(); }
+    };
+    for (int mime : {0, 1}) {
+        SCOPED_TRACE(mime);
+        std::string bytes;
+        for (int i = 0; i < 128; ++i) bytes += "=?ISO-2022-JP?B?YWJj?=\r\n";
+        Write(bytes);
+        ObservedReader parent, first, second;
+        ASSERT_EQ(CODE_JIS, parent.FileOpen(path.c_str(), false, CODE_JIS, mime));
+        first.Prepare(parent, 0, bytes.size());
+        second.Prepare(parent, 0, bytes.size());
+        ASSERT_NE(nullptr, first.Converter());
+        ASSERT_NE(nullptr, second.Converter());
+        ASSERT_NE(parent.Converter(), first.Converter());
+        ASSERT_NE(parent.Converter(), second.Converter());
+        ASSERT_NE(first.Converter(), second.Converter());
+        parent.FileClose();
+        const auto read = [mime](CFileLoad& reader) {
+            for (int i = 0; i < 128; ++i) {
+                CNativeW line;
+                CEol eol;
+                if (reader.ReadLine(&line, &eol) != RESULT_COMPLETE
+                    || std::wstring(line.GetStringPtr(), line.GetStringLength()) !=
+                        (mime ? L"abc\r\n" : L"=?ISO-2022-JP?B?YWJj?=\r\n")
+                    || eol.GetType() != EEolType::cr_and_lf) return false;
+            }
+            return true;
+        };
+        // Exactly two workers; futures are collected before either reader dies.
+        auto a = std::async(std::launch::async, read, std::ref(first));
+        auto b = std::async(std::launch::async, read, std::ref(second));
+        EXPECT_TRUE(a.get());
+        EXPECT_TRUE(b.get());
+    }
 }

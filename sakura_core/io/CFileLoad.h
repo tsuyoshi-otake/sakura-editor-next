@@ -94,8 +94,8 @@ protected:
 	LONGLONG	m_nFileDataLen;	// ファイルデータ長からBOM長を引いたバイト数
 	int		m_nLineIndex;	// 現在ロードしている論理行(0開始)
 	ECodeType	m_CharCode;		// 文字コード
-	// Converter lifetime is retained separately from the mapped-file lease.
-	std::shared_ptr<CCodeBase> m_pCodeBase;
+	// Each reader owns its converter; only the mapped-file lease is shared.
+	std::unique_ptr<CCodeBase> m_pCodeBase;
 	EEncodingTrait	m_encodingTrait;
 	CMemory			m_memEols[3];
 	bool	m_bEolEx;		//!< CR/LF以外のEOLが有効か

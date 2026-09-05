@@ -1,0 +1,63 @@
+Running main() from C:\Users\developer\tmp\sakura-audit-safety\src\test\resources\code-main.cpp
+Note: Google Test filter = FileLoadOptionsTest.*:SearchRequestSafetyTest.*:SearchWorkbenchToolGeometry.*:ExplorerTool.ProductionWorkerDisplaysJunctionsAsLeaves
+[==========] Running 22 tests from 4 test suites.
+[----------] Global test environment set-up.
+[----------] 1 test from ExplorerTool
+[ RUN      ] ExplorerTool.ProductionWorkerDisplaysJunctionsAsLeaves
+[       OK ] ExplorerTool.ProductionWorkerDisplaysJunctionsAsLeaves (33 ms)
+[----------] 1 test from ExplorerTool (36 ms total)
+
+[----------] 7 tests from SearchWorkbenchToolGeometry
+[ RUN      ] SearchWorkbenchToolGeometry.MatchesVsCodeSearchWidgetAtDefaultDpi
+[       OK ] SearchWorkbenchToolGeometry.MatchesVsCodeSearchWidgetAtDefaultDpi (0 ms)
+[ RUN      ] SearchWorkbenchToolGeometry.ReplaceRowUsesCssMarginsAndCentersNativeEdit
+[       OK ] SearchWorkbenchToolGeometry.ReplaceRowUsesCssMarginsAndCentersNativeEdit (0 ms)
+[ RUN      ] SearchWorkbenchToolGeometry.PreservesCssRelationshipsAcrossSupportedDpi
+[       OK ] SearchWorkbenchToolGeometry.PreservesCssRelationshipsAcrossSupportedDpi (0 ms)
+[ RUN      ] SearchWorkbenchToolGeometry.MeasuredLineHeightCentersTheCaretLineNotJustTheHwnd
+[       OK ] SearchWorkbenchToolGeometry.MeasuredLineHeightCentersTheCaretLineNotJustTheHwnd (0 ms)
+[ RUN      ] SearchWorkbenchToolGeometry.MeasuredLineHeightStaysCenteredAcrossSupportedDpi
+[       OK ] SearchWorkbenchToolGeometry.MeasuredLineHeightStaysCenteredAcrossSupportedDpi (0 ms)
+[ RUN      ] SearchWorkbenchToolGeometry.LineHeightTallerThanTheBoxIsClampedToTheBox
+[       OK ] SearchWorkbenchToolGeometry.LineHeightTallerThanTheBoxIsClampedToTheBox (0 ms)
+[ RUN      ] SearchWorkbenchToolGeometry.ClampsNarrowClientWithoutNegativeEditBounds
+[       OK ] SearchWorkbenchToolGeometry.ClampsNarrowClientWithoutNegativeEditBounds (0 ms)
+[----------] 7 tests from SearchWorkbenchToolGeometry (1 ms total)
+
+[----------] 5 tests from SearchRequestSafetyTest
+[ RUN      ] SearchRequestSafetyTest.LongLinePreviewContainsTheActualMatch
+[       OK ] SearchRequestSafetyTest.LongLinePreviewContainsTheActualMatch (7 ms)
+[ RUN      ] SearchRequestSafetyTest.PreviewDoesNotSplitUtf16SurrogatePair
+[       OK ] SearchRequestSafetyTest.PreviewDoesNotSplitUtf16SurrogatePair (8 ms)
+[ RUN      ] SearchRequestSafetyTest.ClearingQueryRejectsAlreadyPostedCompletion
+[       OK ] SearchRequestSafetyTest.ClearingQueryRejectsAlreadyPostedCompletion (58 ms)
+[ RUN      ] SearchRequestSafetyTest.SeededPreviewWindowsPreserveSourceCoordinatesAndHitText
+[       OK ] SearchRequestSafetyTest.SeededPreviewWindowsPreserveSourceCoordinatesAndHitText (360 ms)
+[ RUN      ] SearchRequestSafetyTest.NativeReplaceAllPreservesFilesAfterQueryInvalidation
+[       OK ] SearchRequestSafetyTest.NativeReplaceAllPreservesFilesAfterQueryInvalidation (157 ms)
+[----------] 5 tests from SearchRequestSafetyTest (595 ms total)
+
+[----------] 9 tests from FileLoadOptionsTest
+[ RUN      ] FileLoadOptionsTest.MimeOptionIsAppliedOnEachOpenAndReopen
+[       OK ] FileLoadOptionsTest.MimeOptionIsAppliedOnEachOpenAndReopen (7 ms)
+[ RUN      ] FileLoadOptionsTest.AutoDetectionUsesConstructionSnapshot
+[       OK ] FileLoadOptionsTest.AutoDetectionUsesConstructionSnapshot (1 ms)
+[ RUN      ] FileLoadOptionsTest.PreparedReaderPreservesExtendedEolBoundaries
+[       OK ] FileLoadOptionsTest.PreparedReaderPreservesExtendedEolBoundaries (5 ms)
+[ RUN      ] FileLoadOptionsTest.PreparedUtf7ReaderResetsPreviousDecodedLineOffset
+[       OK ] FileLoadOptionsTest.PreparedUtf7ReaderResetsPreviousDecodedLineOffset (2 ms)
+[ RUN      ] FileLoadOptionsTest.ExtendedEolPolicyIsStableUntilReopen
+[       OK ] FileLoadOptionsTest.ExtendedEolPolicyIsStableUntilReopen (9 ms)
+[ RUN      ] FileLoadOptionsTest.PreparedReaderRetainsMappingAfterParentDestruction
+[       OK ] FileLoadOptionsTest.PreparedReaderRetainsMappingAfterParentDestruction (5 ms)
+[ RUN      ] FileLoadOptionsTest.PrepareReplacesActiveMappingAndRejectsInvalidSlices
+[       OK ] FileLoadOptionsTest.PrepareReplacesActiveMappingAndRejectsInvalidSlices (2 ms)
+[ RUN      ] FileLoadOptionsTest.FailedOpenAndEmptyMappingCanBeReused
+[       OK ] FileLoadOptionsTest.FailedOpenAndEmptyMappingCanBeReused (2 ms)
+[ RUN      ] FileLoadOptionsTest.PreparedReadersOwnConvertersWithInheritedMimeOptions
+[       OK ] FileLoadOptionsTest.PreparedReadersOwnConvertersWithInheritedMimeOptions (36 ms)
+[----------] 9 tests from FileLoadOptionsTest (76 ms total)
+
+[----------] Global test environment tear-down
+[==========] 22 tests from 4 test suites ran. (720 ms total)
+[  PASSED  ] 22 tests.
