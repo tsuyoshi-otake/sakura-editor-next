@@ -83,9 +83,11 @@ std::wstring CFileLoad::GetSizeStringForHuman(ULONGLONG size)
 }
 
 /*! コンストラクタ */
+CFileLoad::CFileLoad() : CFileLoad(SEncodingConfig{}) {}
+
 CFileLoad::CFileLoad( const SEncodingConfig& encode )
 {
-	m_pEencoding = &encode;
+	m_pEencoding = std::make_shared<const SEncodingConfig>(encode);
 
 	m_hFile			= nullptr;
 	m_nFileSize		= 0;
@@ -212,9 +214,10 @@ ECodeType CFileLoad::FileOpen( LPCWSTR pFileName, bool bBigFile, ECodeType CharC
 		CharCode = CODE_DEFAULT;
 	}
 	m_CharCode = CharCode;
-	m_pCodeBase=CCodeFactory::CreateCodeBase(m_CharCode, m_nFlag);
-	m_encodingTrait = CCodePage::GetEncodingTrait(m_CharCode);
+	// The converter consumes MIME options at construction, not in CIoBridge.
 	m_nFlag = nFlag;
+	m_pCodeBase.reset(CCodeFactory::CreateCodeBase(m_CharCode, m_nFlag));
+	m_encodingTrait = CCodePage::GetEncodingTrait(m_CharCode);
 
 	m_nFileDataLen = m_nReadBufOffsetEnd = (size_t)m_nFileSize;
 	bool bBom = false;
@@ -222,7 +225,7 @@ ECodeType CFileLoad::FileOpen( LPCWSTR pFileName, bool bBigFile, ECodeType CharC
 		const int nBomCheckLen = (int)(std::min)(m_nFileSize, 10LL);
 		CMemory headData(m_pReadBufTop, nBomCheckLen);
 		CNativeW headUni;
-		CIoBridge::FileToImpl(headData, &headUni, m_pCodeBase, m_nFlag);
+		CIoBridge::FileToImpl(headData, &headUni, m_pCodeBase.get(), m_nFlag);
 		if( 1 <= headUni.GetStringLength() && headUni.GetStringPtr()[0] == 0xfeff ){
 			bBom = true;
 		}
@@ -285,11 +288,8 @@ void CFileLoad::FileClose( void )
 			::CloseHandle( m_hFile );
 			m_hFile = nullptr;
 		}
-		if( nullptr != m_pCodeBase ){
-			delete m_pCodeBase;
-			m_pCodeBase = nullptr;
-		}
 	}
+	m_pCodeBase.reset();
 	m_nReadBufOffsetCurrent = 0;
 	m_nReadBufOffsetBegin	= 0;
 	m_nReadBufOffsetEnd		= 0;
@@ -382,7 +382,7 @@ EConvertResult CFileLoad::ReadLine_core(
 	}
 
 	// 文字コード変換 cLineBuffer -> pUnicodeBuffer
-	EConvertResult eConvertResult = CIoBridge::FileToImpl(m_cLineBuffer, pUnicodeBuffer, m_pCodeBase,m_nFlag);
+	EConvertResult eConvertResult = CIoBridge::FileToImpl(m_cLineBuffer, pUnicodeBuffer, m_pCodeBase.get(),m_nFlag);
 	if(eConvertResult==RESULT_LOSESOME){
 		eRet = RESULT_LOSESOME;
 	}

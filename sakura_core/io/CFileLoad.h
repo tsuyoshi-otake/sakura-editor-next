@@ -16,6 +16,7 @@
 #pragma once
 
 #include <Windows.h>
+#include <memory>
 #include "CStream.h" //CError_FileOpen
 #include "charset/CCodeBase.h"
 #include "charset/CCodePage.h"
@@ -37,7 +38,7 @@ public:
 	static std::wstring GetSizeStringForHuman(ULONGLONG size); //!< 人にとって見やすいサイズ文字列を作る (例: "2 GB", "10 GB", "400 MB", "32 KB")
 
 public:
-	CFileLoad() : CFileLoad( SEncodingConfig{} ) {};
+	CFileLoad();
 	CFileLoad( const SEncodingConfig& encode );
 	~CFileLoad( void );
 
@@ -80,7 +81,8 @@ protected:
 	EConvertResult ReadLine_core(CNativeW* pUnicodeBuffer, CEol* pcEol);
 
 	/* メンバオブジェクト */
-	const SEncodingConfig* m_pEencoding;
+	// Immutable construction snapshot, also retained by prepared readers.
+	std::shared_ptr<const SEncodingConfig> m_pEencoding;
 
 	//! 文字コード自動検出のために読み込む最大サイズ(byte)
 	static constexpr LONGLONG m_nAutoDetectReadLen = 32768LL;
@@ -92,7 +94,8 @@ protected:
 	LONGLONG	m_nFileDataLen;	// ファイルデータ長からBOM長を引いたバイト数
 	int		m_nLineIndex;	// 現在ロードしている論理行(0開始)
 	ECodeType	m_CharCode;		// 文字コード
-	CCodeBase*	m_pCodeBase;	////
+	// Prepared readers retain converter lifetime; mapping still belongs to the parent.
+	std::shared_ptr<CCodeBase> m_pCodeBase;
 	EEncodingTrait	m_encodingTrait;
 	CMemory			m_memEols[3];
 	bool	m_bEolEx;		//!< CR/LF以外のEOLが有効か

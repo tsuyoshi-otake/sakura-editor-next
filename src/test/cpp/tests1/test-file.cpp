@@ -885,3 +885,56 @@ TEST(CFilePath, GetDirPath102)
 }
 
 } // namespace path_util
+
+// FileOpen owns conversion options; callers may release or change their settings.
+#include "io/CFileLoad.h"
+#include "env/ShareDataTestSuite.hpp"
+
+class FileLoadOptionsTest : public ::testing::Test, public env::ShareDataTestSuite {
+protected:
+    static void SetUpTestSuite() { SetUpShareData(); }
+    static void TearDownTestSuite() { TearDownShareData(); }
+    void SetUp() override {
+        wchar_t directory[MAX_PATH]{};
+        wchar_t name[MAX_PATH]{};
+        ASSERT_NE(0u, ::GetTempPathW(MAX_PATH, directory));
+        ASSERT_NE(0u, ::GetTempFileNameW(directory, L"sfl", 0, name));
+        path = name;
+    }
+    void TearDown() override { EXPECT_TRUE(::DeleteFileW(path.c_str())); }
+    void Write(std::string_view bytes) {
+        std::ofstream stream(path, std::ios::binary | std::ios::trunc);
+        ASSERT_TRUE(stream.is_open());
+        stream.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        stream.close();
+        ASSERT_FALSE(stream.fail());
+    }
+    std::filesystem::path path;
+};
+
+TEST_F(FileLoadOptionsTest, MimeOptionIsAppliedOnEachOpenAndReopen)
+{
+    Write("=?ISO-2022-JP?B?YWJj?=\r\n");
+    CFileLoad loader;
+    for (int option : {1, 0, 1, 0}) {
+        ASSERT_EQ(CODE_JIS, loader.FileOpen(path.c_str(), false, CODE_JIS, option));
+        CNativeW line;
+        CEol eol;
+        EXPECT_EQ(RESULT_COMPLETE, loader.ReadLine(&line, &eol));
+        EXPECT_EQ(option ? L"abc\r\n" : L"=?ISO-2022-JP?B?YWJj?=\r\n",
+            std::wstring(line.GetStringPtr(), line.GetStringLength()));
+        EXPECT_EQ(EEolType::cr_and_lf, eol.GetType());
+        loader.FileClose();
+    }
+}
+
+TEST_F(FileLoadOptionsTest, AutoDetectionUsesConstructionSnapshot)
+{
+    Write("");
+    SEncodingConfig options{};
+    options.m_eDefaultCodetype = CODE_UTF8;
+    CFileLoad loader(options);
+    options.m_eDefaultCodetype = CODE_SJIS;
+    EXPECT_EQ(CODE_UTF8, loader.FileOpen(path.c_str(), false, CODE_AUTODETECT, 0));
+    loader.FileClose();
+}

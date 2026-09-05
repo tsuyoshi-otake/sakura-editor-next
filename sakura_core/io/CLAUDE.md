@@ -17,3 +17,17 @@ platform layer instead of calling these classes or Win32 directly.
 - Watch notifications are advisory and revisioned callers must tolerate
   coalescing, duplication, overflow, and rescan.
 - Never let virtual/remote schemes silently fall back to local file APIs.
+
+## FileLoad options and reader ownership (#290)
+
+`CFileLoad` captures `SEncodingConfig` as an immutable owned snapshot. The caller
+may change or destroy its settings after construction. `FileOpen` applies the
+per-open MIME option before constructing the converter; `CIoBridge` delegates
+to that converter and does not decode a second time. Closing and reopening a
+loader must use the new option, not the preceding open's flag.
+
+Prepared readers retain the configuration and converter lifetime. This does
+not make a converter immutable or thread-safe and does not extend the mapped
+view lifetime: the parent loader must still outlive all readers that use its
+mapping. Mapping leases and independent stateful converters remain a separate
+unfinished ownership change; do not describe the snapshot fix as completing it.
