@@ -233,3 +233,71 @@ workerのpublication前generation照合だけを除くruntime mutantでは、Clo
 [再現script](evidence/search-delayed/sakura-delayed-search.py)はこのcheckoutと既存bounded runnerを使うローカル実験記録。[ログhash](evidence/search-delayed/sha256.json)も収録。patch表示は改行を正規化したzero-context diffであり、復元の正しさは表示差分ではなくbyte hashで確認する。常設CI regressionではなくDebug計測版の証拠である。通常Releaseの23 tests成功は前節の同一production/test sourceの結果であり、今回のevent計測をReleaseでも実行したという主張ではない。
 
 これにより入力変更後の遅延worker completionとClose後のdrop/非受理の観測を追加した。Close後に無効windowへ強制配送して`AcceptResult`のclosed分岐へ到達させた試験ではない。製品の二重防御の各guard、MIME適用順、実画面／性能／package、最終head CIは依然未完了。F07/H12全体と全37項目の完了判定は維持する。
+
+## 2026-09-06: isolate Output receipt test lifecycles after Release CI failure
+
+Target before this repair: `8d35fa298987f38b01767d22a275dcc828f1376a`.
+Tracking: Issue #290, related receipt contract #274. This is a Rust test-only
+repair; the production prefix before `#[cfg(test)] mod tests` is byte-identical
+after LF normalization. Clipboard working-tree changes are not part of it.
+
+The exact-head Release job 101319472738 in run 33970851763 failed in
+`provider_snapshot_write_rejects_each_mutated_semantic_receipt_field_without_consuming_it`:
+the original receipt returned `InvalidArgument` where `Ok` was expected after
+the forged `measurement_id` attempt. The crate had 48 passed / 1 failed, Cargo
+exit 101. The 64-entry measurement registry is shared across provider tokens.
+The existing same-size mutation test deliberately fills that registry and evicts
+old receipts. Different provider tokens therefore do not isolate test fixtures.
+
+Ten ordinary local Release workspace runs passed before the repair. To resolve
+the timing ambiguity, the diagnostic script runs the existing capacity test
+after the victim has measured and before it writes. That schedule reproduces
+the same assertion and typed status, exit 101, with no remaining test processes.
+The script restores the source byte-for-byte in `finally`. This is deterministic
+evidence of a sufficient interleaving, not a captured trace of the CI schedule.
+
+The repair gives all 17 existing runtime tests using the provider registry a
+test-only lifecycle guard. Source-only tests and the Cargo scheduler remain
+parallel. Both existing internal concurrency tests still spawn and join their
+workers, including the 100-round receipt/terminal-handle test. No old test,
+assertion, iteration count, or rejection check was removed. A new real-export
+test orders another provider's 64 measurements between measure and write,
+checks the bound and failed write's poisoned length/unchanged destination,
+then checks the foreign current receipt and a freshly measured original
+provider both succeed. Destruction removes both providers' receipts.
+
+Verification:
+
+- `cargo +1.96.0 test --workspace --locked --release --no-fail-fast -- --nocapture`:
+  ten consecutive fixed runs and one final run pass, 50 FFI + 5 SIMD + 12
+  Unicode tests, no ignored or filtered tests. The final run also verifies the
+  portable bounded runner copied into this evidence directory.
+- The same workspace command without `--release` passes Debug. A Release run
+  with `--test-threads=1` also passes as a diagnostic comparison; CI was not
+  changed to force serial scheduling.
+- Every recorded runner has a 240-second child timeout and an explicit process
+  audit after exit; all survivor arrays are empty.
+- Rustfmt check and Clippy over all workspace targets/features with `-D warnings`
+  pass. `sakura-native-ffi` product staticlib builds in dev and release for
+  `x86_64-pc-windows-msvc` pass. Toolchain and dependencies were unchanged.
+- A separate checkout at the base plus only the Rust test change passes semantic
+  strict with new/increased findings and missing touched reductions all empty,
+  baseline unchanged. Checkout-invariance, generated-output check and all-context
+  graph checks pass. This does not erase the separate Clipboard semantic failure.
+
+[Machine-readable receipt, source/log hashes and scripts](evidence/receipt-ci/receipt.json).
+The log normalization replaces CRLF with LF, escapes other CR, and strips trailing
+line whitespace. Original and published hashes are separate. Deliberate panic
+messages in successful workspace runs are the existing panic-containment tests.
+
+Reproduce normal verification from the repository root using
+`py -3 docs/audit-safety/evidence/receipt-ci/sakura-receipt-tests.py repeat --repeat 10`.
+For the diagnostic red run, copy both scripts to a temporary directory, use a
+checkout of the frozen pre-fix SHA and run `sakura-receipt-repro.py` from its root.
+It checks the pre-fix source hash and will refuse to inject into the repaired
+test suite. It uses no production hook or alternate provider implementation.
+
+The previous failing CI must be replaced by a successful check of the new
+published head before claiming the hosted gate is repaired. Full F01–F22 /
+H01–H15 acceptance, including Clipboard, Search persistence, Updater, visual and
+performance work, remains incomplete.

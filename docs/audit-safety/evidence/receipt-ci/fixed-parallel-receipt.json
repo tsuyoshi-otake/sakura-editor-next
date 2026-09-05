@@ -1,0 +1,172 @@
+[
+  {
+    "command": [
+      "cargo",
+      "+1.96.0",
+      "test",
+      "--workspace",
+      "--locked",
+      "--release",
+      "--no-fail-fast",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 7.935,
+    "log": "fixed-parallel-1.log",
+    "survivors": []
+  },
+  {
+    "command": [
+      "cargo",
+      "+1.96.0",
+      "test",
+      "--workspace",
+      "--locked",
+      "--release",
+      "--no-fail-fast",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 0.82,
+    "log": "fixed-parallel-2.log",
+    "survivors": []
+  },
+  {
+    "command": [
+      "cargo",
+      "+1.96.0",
+      "test",
+      "--workspace",
+      "--locked",
+      "--release",
+      "--no-fail-fast",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 0.856,
+    "log": "fixed-parallel-3.log",
+    "survivors": []
+  },
+  {
+    "command": [
+      "cargo",
+      "+1.96.0",
+      "test",
+      "--workspace",
+      "--locked",
+      "--release",
+      "--no-fail-fast",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 0.908,
+    "log": "fixed-parallel-4.log",
+    "survivors": []
+  },
+  {
+    "command": [
+      "cargo",
+      "+1.96.0",
+      "test",
+      "--workspace",
+      "--locked",
+      "--release",
+      "--no-fail-fast",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 0.854,
+    "log": "fixed-parallel-5.log",
+    "survivors": []
+  },
+  {
+    "command": [
+      "cargo",
+      "+1.96.0",
+      "test",
+      "--workspace",
+      "--locked",
+      "--release",
+      "--no-fail-fast",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 0.861,
+    "log": "fixed-parallel-6.log",
+    "survivors": []
+  },
+  {
+    "command": [
+      "cargo",
+      "+1.96.0",
+      "test",
+      "--workspace",
+      "--locked",
+      "--release",
+      "--no-fail-fast",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 0.831,
+    "log": "fixed-parallel-7.log",
+    "survivors": []
+  },
+  {
+    "command": [
+      "cargo",
+      "+1.96.0",
+      "test",
+      "--workspace",
+      "--locked",
+      "--release",
+      "--no-fail-fast",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 0.961,
+    "log": "fixed-parallel-8.log",
+    "survivors": []
+  },
+  {
+    "command": [
+      "cargo",
+      "+1.96.0",
+      "test",
+      "--workspace",
+      "--locked",
+      "--release",
+      "--no-fail-fast",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 0.901,
+    "log": "fixed-parallel-9.log",
+    "survivors": []
+  },
+  {
+    "command": [
+      "cargo",
+      "+1.96.0",
+      "test",
+      "--workspace",
+      "--locked",
+      "--release",
+      "--no-fail-fast",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 0.836,
+    "log": "fixed-parallel-10.log",
+    "survivors": []
+  }
+]
