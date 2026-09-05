@@ -9,7 +9,7 @@
 - 実装 branch: `codex/audit-safety-followups`、隔離 worktree: `C:/Users/developer/tmp/sakura-audit-safety`。
 - 元 checkout の変更済み memory、ConPty test、vcpkg と未追跡ファイルは維持する。
 - Windows/MSVC 2022 14.44、Python canonical build CLI。依存 gitlink は既存ローカル clone から固定 SHA を checkout。upstream fetch/push はしない。
-- 全項目の tracking Issue: [#290](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/290)。PR/commit と検証結果は後続の evidence 文書へ記録する。
+- 全項目の tracking Issue: [#290](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/290)。共通の [Draft PR #291](https://github.com/tsuyoshi-otake/sakura-editor-next/pull/291)。各行の実装commitと検証結果を evidence 文書に記録した。
 
 ## B. 全量対応表
 

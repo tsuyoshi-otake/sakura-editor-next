@@ -9,7 +9,7 @@
 - 元 checkout のユーザー変更を避け、`C:/Users/developer/tmp/sakura-audit-safety` に隔離した。
 - Windows、MSVC 2022 14.44、x64 Debug/Release、既存 Python/pytest、Microsoft Java 11 を使用。依存 package の更新なし。gitlink は既存ローカル clone から固定 SHA を取得。
 - Issue #290 を作成し、論理単位で commit。main push、merge、release、upstream 書き込みは実施しない。
-- 主要 commit: `cfddbcbb2` (FileLoad)、`89ed278ec` (Search)、`611f785d0` (TLC/CI)、`75b47745d` (台帳)、`dd40b6cf5` (確認済み semantic identity 更新)。`c7c12a788` (Explorer非同期終了test)。後続の証跡 commit は同じ branch に含む。
+- 主要 commit: `cfddbcbb2` (FileLoad)、`89ed278ec` (Search)、`611f785d0` (TLC/CI)、`75b47745d` (台帳)、`dd40b6cf5` (確認済み semantic identity 更新)。`c7c12a788` (Explorer非同期終了test)。後続の証跡 commit は同じ branch に含む。公開先は [Draft PR #291](https://github.com/tsuyoshi-otake/sakura-editor-next/pull/291)。
 
 ## B. 全量対応と再現
 
