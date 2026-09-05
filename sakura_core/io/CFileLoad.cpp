@@ -124,7 +124,12 @@ void CFileLoad::Prepare( const CFileLoad& other, size_t nReadBufOffsetBegin, siz
 	m_nFlag 		= other.m_nFlag;
 	m_bEolEx		= other.m_bEolEx;
 	m_nMaxEolLen	= other.m_nMaxEolLen;
-	m_cLineTemp		= other.m_cLineTemp;
+	for( int k = 0; k < int(std::size(m_memEols)); k++ ){
+		m_memEols[k] = other.m_memEols[k];
+	}
+	// A partition starts with no decoded line or offset from an earlier read.
+	m_cLineTemp.SetString(L"");
+	m_nReadOffset2 = 0;
 
 	m_nLineIndex	= -1;
 	m_eMode			= FLMODE_READY;
@@ -325,7 +330,7 @@ EConvertResult CFileLoad::ReadLine( CNativeW* pUnicodeBuffer, CEol* pcEol )
 	int  nRetLineLen;
 	CEol cEolTemp;
 	const wchar_t* pRet = GetNextLineW( m_cLineTemp.GetStringPtr(), m_cLineTemp.GetStringLength(),
-				&nRetLineLen, &m_nReadOffset2, &cEolTemp, GetDllShareData().m_Common.m_sEdit.m_bEnableExtEol );
+				&nRetLineLen, &m_nReadOffset2, &cEolTemp, m_bEolEx );
 	if( m_cLineTemp.GetStringLength() == m_nReadOffset2 && nOffsetTemp == 0 ){
 		// 途中に改行がない限りは、swapを使って中身のコピーを省略する
 		pUnicodeBuffer->swap(m_cLineTemp);
@@ -469,7 +474,7 @@ const char* CFileLoad::GetNextLineCharCode(
 		return nullptr;
 	}
 	const unsigned char* pUData = (const unsigned char*)pData; // signedだと符号拡張でNELがおかしくなるので
-	bool bExtEol = GetDllShareData().m_Common.m_sEdit.m_bEnableExtEol;
+	const bool bExtEol = m_bEolEx;
 	size_t nLen = nDataLen;
 	size_t neollen = 0;
 	switch( m_encodingTrait ){

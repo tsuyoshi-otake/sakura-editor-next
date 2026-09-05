@@ -120,3 +120,32 @@ runtime mutation campaign、ASan、allocation/Win32 failure injection、独立co
 Close後の結果受理自体の観測、入力変更後にworkerから遅れて発行されるcompletion、検索option／preserveCase、他guardのmutation、ASanと実画面検証は引き続き未完了。全37項目の完了判定は更新していない。
 
 最終対象cohortは [Debug](evidence/search-admission-final-debug.log) 15/15 (1002ms)、[Release](evidence/search-admission-final-release.log) 15/15 (586ms)。両構成canonical solution build成功。runnerのOwnedSurvivorsは両方0。semantic strictは新規finding／増加／touched-scope不足のいずれも0で成功。
+
+## 継続検証: Prepareの拡張改行とUTF-7状態
+
+`25cbbe901`上に追加した2回帰テストは修正前に2/2失敗した。
+`PreparedReaderPreservesExtendedEolBoundaries`はUTF-8のNEL/LS/PSを親とprepared readerで比較し、後者だけの行結合を検出する。
+`PreparedUtf7ReaderResetsPreviousDecodedLineOffset`は同一UTF-7 Base64 segment内のNEL後に残るdecoded offsetを、Close→Prepareで再利用した際の誤読を検出する。
+
+Prepareはencoded EOL表をコピーし、decoded cacheを空にしてoffsetを0へ初期化するよう修正した。
+Debug solution buildと関連17 testsは成功、所有runner/product残存0。
+EOL表コピーだけを除去するmutant、offset初期化だけを除去するmutantはそれぞれ対応testが失敗。
+production sourceをbyte単位で復元し、Debug再buildとFileLoad 4/4成功を確認した。
+
+証拠: [修正前](evidence/prepare-state-red-final.log)、[Debug cohort](evidence/prepare-state-green.log)、[EOL mutant](evidence/prepare-mutant-eol.log)、[offset mutant](evidence/prepare-mutant-offset.log)、[復元後](evidence/prepare-state-restored.log)、[commands/source hashes](evidence/prepare-state-mutation.json)。receiptのHEADは変更前で、実際のsource/test hashを併記する。共有ログはCRLFをLFへ、残余CRを文字列`\r`へ正規化しraw/published hashを記録した。
+
+`CReadManager`は単一partitionでもPrepareを使用する。通常経路では親loaderより後にreader/futureが宣言され、workerの完了を回収してから親mappingを破棄する。ただしこの読込状態修正はmapping leaseやconverterの並行安全性を証明しない。
+
+追加gate: semantic strictは新規finding/増加0だが、CFileLoad.cppの既存3 findingsに対するtouched-scope reduction不足で失敗。baselineは変更していない。読込中の可変global EOL設定参照とopen時のEOL状態の整合を次に調べる。現段階は局所red/greenであり、PR受入完了ではない。
+
+Release solution buildも成功し、同じ関連17 testsが成功（prepare-state-release.log、1609ms）、OwnedSurvivors=0。semantic gateの未解決条件は上記のまま。
+
+## 継続修正: 読込中の拡張改行policyを固定
+
+前節のsemantic gate失敗を調査すると、UTF-8のbyte走査はopen時の`m_bEolEx`を使う一方、UTF-7のdecoded走査とUTF-16走査は毎回global設定を読み直していた。読込中の設定変更で同じfile/partitionの行分割が変わる問題を新test `ExtendedEolPolicyIsStableUntilReopen` で再現した（[red](evidence/eol-policy-red.log)）。UTF-8/UTF-7/UTF-16LE、ON→OFF/OFF→ON、親とprepared reader、reopenを同じ実ファイルtestで確認する。
+
+2か所を既存のopen時EOL状態参照へ統一した。Prepareはその状態を継承し、reopenは新しいglobal設定を取得する。新しい状態ownerや共有メモリfieldは追加しない。Debug solution buildと[関連18 tests](evidence/eol-policy-green.log)が成功、OwnedSurvivors=0。semantic strictも成功し、global読込2件減、新規findingなし、baseline変更なしとなった。[source/test hashesとログhash](evidence/eol-policy-evidence.json)を記録した。前節のsemantic失敗はこの追加修正で解消した。
+
+このtestは限定された3文字コードのpolicy遷移を検証するもので、全encodingやworker間converter並行安全性、mapping寿命の証明ではない。
+
+最終Release solution buildと[18 tests](evidence/eol-policy-release.log)も成功（784ms、OwnedSurvivors=0）。checkout-invarianceとgenerate --checkも成功。Debug/Releaseのbuildは既存警告を含むがexit 0。

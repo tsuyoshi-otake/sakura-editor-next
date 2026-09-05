@@ -901,7 +901,10 @@ protected:
         ASSERT_NE(0u, ::GetTempFileNameW(directory, L"sfl", 0, name));
         path = name;
     }
-    void TearDown() override { EXPECT_TRUE(::DeleteFileW(path.c_str())); }
+    void TearDown() override {
+        pcShareData->GetDllShareDataPtr()->m_Common.m_sEdit.m_bEnableExtEol = originalExtendedEol;
+        EXPECT_TRUE(::DeleteFileW(path.c_str()));
+    }
     void Write(std::string_view bytes) {
         std::ofstream stream(path, std::ios::binary | std::ios::trunc);
         ASSERT_TRUE(stream.is_open());
@@ -909,6 +912,7 @@ protected:
         stream.close();
         ASSERT_FALSE(stream.fail());
     }
+    const bool originalExtendedEol = pcShareData->GetDllShareDataPtr()->m_Common.m_sEdit.m_bEnableExtEol;
     std::filesystem::path path;
 };
 
@@ -937,4 +941,77 @@ TEST_F(FileLoadOptionsTest, AutoDetectionUsesConstructionSnapshot)
     options.m_eDefaultCodetype = CODE_SJIS;
     EXPECT_EQ(CODE_UTF8, loader.FileOpen(path.c_str(), false, CODE_AUTODETECT, 0));
     loader.FileClose();
+}
+TEST_F(FileLoadOptionsTest, PreparedReaderPreservesExtendedEolBoundaries)
+{
+    pcShareData->GetDllShareDataPtr()->m_Common.m_sEdit.m_bEnableExtEol = true;
+    Write("first\xc2\x85second\xe2\x80\xa8third\xe2\x80\xa9last\r\n");
+    CFileLoad parent;
+    ASSERT_EQ(CODE_UTF8, parent.FileOpen(path.c_str(), false, CODE_UTF8, 0));
+    CFileLoad reader;
+    reader.Prepare(parent, 0, static_cast<std::size_t>(parent.GetFileSize()));
+    for (const auto expected : {L"first\u0085", L"second\u2028", L"third\u2029", L"last\r\n"}) {
+        CNativeW parentLine, readerLine;
+        CEol parentEol, readerEol;
+        ASSERT_EQ(RESULT_COMPLETE, parent.ReadLine(&parentLine, &parentEol));
+        EXPECT_EQ(expected, std::wstring(parentLine.GetStringPtr(), parentLine.GetStringLength()));
+        EXPECT_EQ(RESULT_COMPLETE, reader.ReadLine(&readerLine, &readerEol));
+        EXPECT_EQ(expected, std::wstring(readerLine.GetStringPtr(), readerLine.GetStringLength()));
+        EXPECT_EQ(parentEol.GetType(), readerEol.GetType());
+    }
+}
+
+TEST_F(FileLoadOptionsTest, PreparedUtf7ReaderResetsPreviousDecodedLineOffset)
+{
+    pcShareData->GetDllShareDataPtr()->m_Common.m_sEdit.m_bEnableExtEol = true;
+    Write("first+AIUAcwBlAGMAbwBuAGQ-\r\n");
+    CFileLoad parent, reader;
+    ASSERT_EQ(CODE_UTF7, parent.FileOpen(path.c_str(), false, CODE_UTF7, 0));
+    ASSERT_EQ(CODE_UTF7, reader.FileOpen(path.c_str(), false, CODE_UTF7, 0));
+    CNativeW line;
+    CEol eol;
+    ASSERT_EQ(RESULT_COMPLETE, reader.ReadLine(&line, &eol));
+    ASSERT_EQ(L"first\u0085", std::wstring(line.GetStringPtr(), line.GetStringLength()));
+    reader.FileClose();
+    reader.Prepare(parent, 0, static_cast<std::size_t>(parent.GetFileSize()));
+    EXPECT_EQ(RESULT_COMPLETE, reader.ReadLine(&line, &eol));
+    EXPECT_EQ(L"first\u0085", std::wstring(line.GetStringPtr(), line.GetStringLength()));
+    EXPECT_EQ(EEolType::next_line, eol.GetType());
+}
+
+TEST_F(FileLoadOptionsTest, ExtendedEolPolicyIsStableUntilReopen)
+{
+    struct Input { ECodeType code; std::string_view bytes; };
+    const char utf16[] = "f\0i\0r\0s\0t\0\x85\0s\0e\0c\0o\0n\0d\0\r\0\n\0";
+    for (const auto input : {
+        Input{CODE_UTF8, "first\xc2\x85second\r\n"},
+        Input{CODE_UTF7, "first+AIUAcwBlAGMAbwBuAGQ-\r\n"},
+        Input{CODE_UNICODE, std::string_view(utf16, sizeof(utf16) - 1)}}) {
+        for (bool enabled : {false, true}) {
+            SCOPED_TRACE(static_cast<int>(input.code));
+            SCOPED_TRACE(enabled);
+            Write(input.bytes);
+            auto& global = pcShareData->GetDllShareDataPtr()->m_Common.m_sEdit.m_bEnableExtEol;
+            global = enabled;
+            CFileLoad parent;
+            ASSERT_EQ(input.code, parent.FileOpen(path.c_str(), false, input.code, 0));
+            global = !enabled;
+            CFileLoad reader;
+            reader.Prepare(parent, 0, static_cast<std::size_t>(parent.GetFileSize()));
+            const auto check = [](CFileLoad& loader, bool split) {
+                CNativeW line;
+                CEol eol;
+                EXPECT_EQ(RESULT_COMPLETE, loader.ReadLine(&line, &eol));
+                EXPECT_EQ(split ? L"first\u0085" : L"first\u0085second\r\n",
+                    std::wstring(line.GetStringPtr(), line.GetStringLength()));
+                EXPECT_EQ(split ? EEolType::next_line : EEolType::cr_and_lf, eol.GetType());
+            };
+            check(parent, enabled);
+            check(reader, enabled);
+            reader.FileClose();
+            parent.FileClose();
+            ASSERT_EQ(input.code, parent.FileOpen(path.c_str(), false, input.code, 0));
+            check(parent, !enabled);
+        }
+    }
 }
