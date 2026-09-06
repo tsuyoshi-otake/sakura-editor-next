@@ -1,0 +1,20 @@
+{
+  "Debug": {
+    "trials": 30,
+    "median_input_ms": 0.64845,
+    "p95_input_ms": 1.1387,
+    "maximum_input_ms": 1.5524,
+    "maximum_difference_percent": 0.0,
+    "maximum_noise_percent": 0.0,
+    "close_and_retirement_ms": 16.0
+  },
+  "Release": {
+    "trials": 30,
+    "median_input_ms": 0.50175,
+    "p95_input_ms": 0.7524,
+    "maximum_input_ms": 0.8146,
+    "maximum_difference_percent": 0.0,
+    "maximum_noise_percent": 0.0,
+    "close_and_retirement_ms": 0.0
+  }
+}

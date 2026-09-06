@@ -5,7 +5,7 @@
 - 調査開始・実装基準: `afaa395c46a3671420ef088905a3046c2966b3a5`。
 - 2026-09-05 にローカル main と `git ls-remote origin refs/heads/main` の一致を確認。
 - fork: `tsuyoshi-otake/sakura-editor-next`。既定 branch は main。
-- 依頼に明示された branch/commit/push/PR 権限を使う。main への push、merge、release は実施しない。
+- 依頼に明示された branch/commit/push/PR 権限を使う。2026-09-06 に受入後の既存PR統合・release-promotion実行も許可済み。main直接pushとupstream書き込みは行わない。
 - 実装 branch: `codex/audit-safety-followups`、隔離 worktree: `C:/Users/developer/tmp/sakura-audit-safety`。
 - 元 checkout の変更済み memory、ConPty test、vcpkg と未追跡ファイルは維持する。
 - Windows/MSVC 2022 14.44、Python canonical build CLI。依存 gitlink は既存ローカル clone から固定 SHA を checkout。upstream fetch/push はしない。
@@ -24,9 +24,9 @@ SOURCE_CONFIRMED は実ソースでの観測であり、製品再現ではない
 | F04 | NEEDS_REPRO | 未実装 | platform/filesystem/CWin32FileSystemProvider.cpp / ConditionalAtomicReplace; ReplaceMatches | DACL/ADS/属性/hardlink/reparse/UNCの実機マトリクス未実行。既存providerの能力と保存契約の照合が必要。 |
 | F05 | SOURCE_CONFIRMED | 未実装 | WorkspaceSearchEngine.cpp / ReplaceMatches; io/CBinaryStream.cpp | 独自stream保存、close/flushの故障が伝播する契約を要再設計。publish後unknownを区別するテスト未実行。 |
 | F06 | SOURCE_CONFIRMED | 未実装 | workbench/search/CSearchWorkbenchTool.cpp / RunReplace | UIから同期ReplaceMatches。filesChanged配線は存在。dirty/別process/reload/Saveの整合は未検証。 |
-| F07 | REPRODUCED (修正済み・受入未完了) | 89ed278ec | 同 / StartSearch, ScheduleSearch, kResultMessage | 空検索が世代更新前にreturn。debounce前に無効化しない。修正前のUSER32待機中completion採用を再現。世代・root・検索条件照合を実装しDebug/Release回帰テスト成功。native Replace Allの正常／失効3例と即時失効を除去するruntime mutationを追加（evidence参照）。Debug計測版で検索後barrierを使い失効後の遅延publicationを検証、Close後drop/非受理と正常controlも成功。worker publication guard mutantを検出（evidence参照）。他guard・dual-captureは未完了。 |
+| F07 | REPRODUCED (修正済み・受入未完了) | 89ed278ec | 同 / StartSearch, ScheduleSearch, kResultMessage | 空検索が世代更新前にreturn。debounce前に無効化しない。修正前のUSER32待機中completion採用を再現。世代・root・検索条件照合を実装しDebug/Release回帰テスト成功。native Replace Allの正常／失効3例と即時失効を除去するruntime mutationを追加（evidence参照）。Debug計測版で検索後barrierを使い失効後の遅延publicationを検証、Close後drop/非受理と正常controlも成功。worker publication guard mutantを検出（evidence参照）。追加で受付4 guard変異を検出。校正したnative view描画はDebug/Release各30試行成功（release-acceptance参照）。最終head CIと配布物確認はリリース時に確認する。 |
 | F08 | NEEDS_REPRO | 未実装 | WorkspaceSearchEngine.cpp / CollectLineMatches, ReplaceMatches | 現行Bregonigでzero-width/capture/EOL意味論の再現が必要。古いコメントだけで変更しない。 |
-| F09 | REPRODUCED (修正済み・受入未完了) | 89ed278ec | 同 / BuildPreview | 行先頭250文字の切り出しで遠方hitのpreviewLengthが0。hitを含む250 code unit窓に修正。native red/green、surrogate境界、seed 0x290の64例がDebug/Releaseで成功。包括的mutationと視覚検証は未実行。 |
+| F09 | REPRODUCED (修正済み・受入未完了) | 89ed278ec | 同 / BuildPreview | 行先頭250文字の切り出しで遠方hitのpreviewLengthが0。hitを含む250 code unit窓に修正。native red/green、surrogate境界、seed 0x290の64例がDebug/Releaseで成功。3 preview変異・固定12 fixturesを検証。事前基準付き5組のRelease性能比較も基準内。全encoding/regex意味論の保証ではない（release-acceptance参照）。 |
 | F10 | SOURCE_CONFIRMED | 未実装 | _os/CClipboard.cpp / GetText; util/os.cpp / GlobalSakura::wstring | private payloadのnative size_tをヘッダ長検査前に読む。D&D生成は終端なし、GlobalSakuraは終端分を要求する差も確認。Paste/D&D共通parserと32/64bit fixture未実装。 |
 | F11 | SOURCE_CONFIRMED | 未実装 | _os/CClipboard.cpp / SetText, SetHtmlText | allocation/lock/publishの失敗・所有権をすべて伝播しない。Cutまでの失敗経路未検証。 |
 | F12 | SOURCE_CONFIRMED | 未実装 | update/UpdateService.cpp / TriggerCheck, CancelUpdate | resettable token、state検査とPublishの間にlock境界。並行API/listener再入の決定的試験未実行。 |

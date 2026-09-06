@@ -1,0 +1,21 @@
+checking docs/audit-safety/evidence/fileload-asan/canary.cpp
+OK docs/audit-safety/evidence/fileload-asan/canary.cpp
+checking sakura_core/io/CFileLoad.cpp
+OK sakura_core/io/CFileLoad.cpp
+checking sakura_core/io/CFileLoad.h
+OK sakura_core/io/CFileLoad.h
+checking sakura_core/terminal/session/TerminalSession.cpp
+OK sakura_core/terminal/session/TerminalSession.cpp
+checking sakura_core/workbench/search/CSearchWorkbenchTool.cpp
+OK sakura_core/workbench/search/CSearchWorkbenchTool.cpp
+checking sakura_core/workbench/search/WorkspaceSearchEngine.cpp
+OK sakura_core/workbench/search/WorkspaceSearchEngine.cpp
+checking src/test/cpp/tests1/test-file.cpp
+OK src/test/cpp/tests1/test-file.cpp
+checking src/test/cpp/tests1/workbench/ExplorerToolTest.cpp
+OK src/test/cpp/tests1/workbench/ExplorerToolTest.cpp
+checking src/test/cpp/tests1/workbench/SearchWorkbenchToolTest.cpp
+OK src/test/cpp/tests1/workbench/SearchWorkbenchToolTest.cpp
+checking src/test/cpp/tests1/workbench/TaskTerminalSessionFactoryTest.cpp
+OK src/test/cpp/tests1/workbench/TaskTerminalSessionFactoryTest.cpp
+Encoding check passed for 10 file(s).

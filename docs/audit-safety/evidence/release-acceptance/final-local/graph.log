@@ -1,0 +1,1 @@
+{"contexts": ["cmake-msvc-x64-debug", "cmake-msvc-x64-release", "mingw-x64-debug", "mingw-x64-release", "msvc-x64-debug", "msvc-x64-release"], "failures": [], "ok": true}

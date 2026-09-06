@@ -1,0 +1,242 @@
+[
+  {
+    "trial": 0,
+    "scenario": "clear",
+    "input_ms": 0.9917,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 1,
+    "scenario": "debounce",
+    "input_ms": 1.0775,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 2,
+    "scenario": "root",
+    "input_ms": 0.6531,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 3,
+    "scenario": "clear",
+    "input_ms": 0.7387,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 4,
+    "scenario": "debounce",
+    "input_ms": 0.7789,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 5,
+    "scenario": "root",
+    "input_ms": 0.6134,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 6,
+    "scenario": "clear",
+    "input_ms": 0.5726,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 7,
+    "scenario": "debounce",
+    "input_ms": 0.7874,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 8,
+    "scenario": "root",
+    "input_ms": 1.5524,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 9,
+    "scenario": "clear",
+    "input_ms": 0.5889,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 10,
+    "scenario": "debounce",
+    "input_ms": 0.9772,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 11,
+    "scenario": "root",
+    "input_ms": 0.6063,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 12,
+    "scenario": "clear",
+    "input_ms": 0.7832,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 13,
+    "scenario": "debounce",
+    "input_ms": 0.575,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 14,
+    "scenario": "root",
+    "input_ms": 0.6189,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 15,
+    "scenario": "clear",
+    "input_ms": 0.7409,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 16,
+    "scenario": "debounce",
+    "input_ms": 0.7973,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 17,
+    "scenario": "root",
+    "input_ms": 0.5875,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 18,
+    "scenario": "clear",
+    "input_ms": 0.904,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 19,
+    "scenario": "debounce",
+    "input_ms": 0.6,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 20,
+    "scenario": "root",
+    "input_ms": 0.9042,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 21,
+    "scenario": "clear",
+    "input_ms": 0.6438,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 22,
+    "scenario": "debounce",
+    "input_ms": 0.6342,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 23,
+    "scenario": "root",
+    "input_ms": 0.617,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 24,
+    "scenario": "clear",
+    "input_ms": 0.602,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 25,
+    "scenario": "debounce",
+    "input_ms": 0.5379,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 26,
+    "scenario": "root",
+    "input_ms": 0.6613,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 27,
+    "scenario": "clear",
+    "input_ms": 0.4649,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 28,
+    "scenario": "debounce",
+    "input_ms": 1.1387,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 29,
+    "scenario": "root",
+    "input_ms": 0.6193,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  }
+]

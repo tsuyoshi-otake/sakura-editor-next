@@ -1,0 +1,2 @@
+# Recorded evidence and replay hashes refer to exact bytes on every checkout.
+** -text -eol !working-tree-encoding

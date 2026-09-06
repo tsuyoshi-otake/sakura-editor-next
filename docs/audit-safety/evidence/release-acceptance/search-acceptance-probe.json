@@ -1,0 +1,301 @@
+{
+  "head": "01e1f25e90de833f032768e64d9929c378f53090",
+  "kind": "diagnostic identity injection at actual native acceptance and replacement boundaries; synthetic mismatches, not ordinary UI reachability",
+  "original": {
+    "sakura_core\\workbench\\search\\CSearchWorkbenchTool.cpp": "2ade5aaff5d2ab82a5b4084e371b46d1247f128ebc9b29a13fa245830ac3cb2e",
+    "src\\test\\cpp\\tests1\\workbench\\SearchWorkbenchToolTest.cpp": "0480086f908ec42477988948c18e88f955152809ccd711ba78995765c4ae8a90"
+  },
+  "runs": [
+    {
+      "label": "search-acceptance-probe-build",
+      "command": [
+        "py",
+        "-3",
+        "tools/build/sakura_build.py",
+        "build",
+        "solution",
+        "x64",
+        "Debug",
+        "--jobs",
+        "4"
+      ],
+      "exit": 0,
+      "seconds": 25.712020600010874,
+      "hashes": {
+        "sakura_core\\workbench\\search\\CSearchWorkbenchTool.cpp": "c0f88e048ed7e22d156bbb76dd0e4a92d74785dae50a0ca81e9c881eb37d3a5a",
+        "src\\test\\cpp\\tests1\\workbench\\SearchWorkbenchToolTest.cpp": "434b49e1b1b068b345e31ed0d7620b9f2a093beebf7133085c373b11586866cf"
+      }
+    },
+    {
+      "label": "search-acceptance-probe-green",
+      "command": [
+        "pwsh",
+        "-NoProfile",
+        "-File",
+        "C:/Users/developer/tmp/sakura-audit-run-tests.ps1",
+        "-Label",
+        "search-acceptance-probe-green",
+        "-Filter",
+        "SearchRequestSafetyTest.InjectedAcceptanceIdentityContract:SearchRequestSafetyTest.InjectedReplaceIdentityContract",
+        "-TimeoutSeconds",
+        "120"
+      ],
+      "exit": 0,
+      "seconds": 3.510395100020105,
+      "hashes": {
+        "sakura_core\\workbench\\search\\CSearchWorkbenchTool.cpp": "c0f88e048ed7e22d156bbb76dd0e4a92d74785dae50a0ca81e9c881eb37d3a5a",
+        "src\\test\\cpp\\tests1\\workbench\\SearchWorkbenchToolTest.cpp": "434b49e1b1b068b345e31ed0d7620b9f2a093beebf7133085c373b11586866cf"
+      }
+    },
+    {
+      "label": "search-acceptance-generation-build",
+      "command": [
+        "py",
+        "-3",
+        "tools/build/sakura_build.py",
+        "build",
+        "solution",
+        "x64",
+        "Debug",
+        "--jobs",
+        "4"
+      ],
+      "exit": 0,
+      "seconds": 26.193518599990057,
+      "hashes": {
+        "sakura_core\\workbench\\search\\CSearchWorkbenchTool.cpp": "9806f209c8eb2f30a87789e1fb539b531cd1121a896fbb9ec6dd649f3e95ac4f",
+        "src\\test\\cpp\\tests1\\workbench\\SearchWorkbenchToolTest.cpp": "434b49e1b1b068b345e31ed0d7620b9f2a093beebf7133085c373b11586866cf"
+      }
+    },
+    {
+      "label": "search-acceptance-generation",
+      "command": [
+        "pwsh",
+        "-NoProfile",
+        "-File",
+        "C:/Users/developer/tmp/sakura-audit-run-tests.ps1",
+        "-Label",
+        "search-acceptance-generation",
+        "-Filter",
+        "SearchRequestSafetyTest.InjectedAcceptanceIdentityContract:SearchRequestSafetyTest.InjectedReplaceIdentityContract",
+        "-TimeoutSeconds",
+        "120"
+      ],
+      "exit": 1,
+      "seconds": 3.334441999992123,
+      "hashes": {
+        "sakura_core\\workbench\\search\\CSearchWorkbenchTool.cpp": "9806f209c8eb2f30a87789e1fb539b531cd1121a896fbb9ec6dd649f3e95ac4f",
+        "src\\test\\cpp\\tests1\\workbench\\SearchWorkbenchToolTest.cpp": "434b49e1b1b068b345e31ed0d7620b9f2a093beebf7133085c373b11586866cf"
+      }
+    },
+    {
+      "label": "search-acceptance-root-build",
+      "command": [
+        "py",
+        "-3",
+        "tools/build/sakura_build.py",
+        "build",
+        "solution",
+        "x64",
+        "Debug",
+        "--jobs",
+        "4"
+      ],
+      "exit": 0,
+      "seconds": 26.075242099992465,
+      "hashes": {
+        "sakura_core\\workbench\\search\\CSearchWorkbenchTool.cpp": "330dde887551338f1d4a94fee9bea9a449a5f81edae2c28e524956d1542a639f",
+        "src\\test\\cpp\\tests1\\workbench\\SearchWorkbenchToolTest.cpp": "434b49e1b1b068b345e31ed0d7620b9f2a093beebf7133085c373b11586866cf"
+      }
+    },
+    {
+      "label": "search-acceptance-root",
+      "command": [
+        "pwsh",
+        "-NoProfile",
+        "-File",
+        "C:/Users/developer/tmp/sakura-audit-run-tests.ps1",
+        "-Label",
+        "search-acceptance-root",
+        "-Filter",
+        "SearchRequestSafetyTest.InjectedAcceptanceIdentityContract:SearchRequestSafetyTest.InjectedReplaceIdentityContract",
+        "-TimeoutSeconds",
+        "120"
+      ],
+      "exit": 1,
+      "seconds": 3.0096271999937017,
+      "hashes": {
+        "sakura_core\\workbench\\search\\CSearchWorkbenchTool.cpp": "330dde887551338f1d4a94fee9bea9a449a5f81edae2c28e524956d1542a639f",
+        "src\\test\\cpp\\tests1\\workbench\\SearchWorkbenchToolTest.cpp": "434b49e1b1b068b345e31ed0d7620b9f2a093beebf7133085c373b11586866cf"
+      }
+    },
+    {
+      "label": "search-acceptance-pattern-build",
+      "command": [
+        "py",
+        "-3",
+        "tools/build/sakura_build.py",
+        "build",
+        "solution",
+        "x64",
+        "Debug",
+        "--jobs",
+        "4"
+      ],
+      "exit": 0,
+      "seconds": 23.825932899984764,
+      "hashes": {
+        "sakura_core\\workbench\\search\\CSearchWorkbenchTool.cpp": "a20ca0aafa8b68eba3a4c3f2e21cf39c1e1dc7f5633b13043b9605022930b15c",
+        "src\\test\\cpp\\tests1\\workbench\\SearchWorkbenchToolTest.cpp": "434b49e1b1b068b345e31ed0d7620b9f2a093beebf7133085c373b11586866cf"
+      }
+    },
+    {
+      "label": "search-acceptance-pattern",
+      "command": [
+        "pwsh",
+        "-NoProfile",
+        "-File",
+        "C:/Users/developer/tmp/sakura-audit-run-tests.ps1",
+        "-Label",
+        "search-acceptance-pattern",
+        "-Filter",
+        "SearchRequestSafetyTest.InjectedAcceptanceIdentityContract:SearchRequestSafetyTest.InjectedReplaceIdentityContract",
+        "-TimeoutSeconds",
+        "120"
+      ],
+      "exit": 1,
+      "seconds": 3.18494790000841,
+      "hashes": {
+        "sakura_core\\workbench\\search\\CSearchWorkbenchTool.cpp": "a20ca0aafa8b68eba3a4c3f2e21cf39c1e1dc7f5633b13043b9605022930b15c",
+        "src\\test\\cpp\\tests1\\workbench\\SearchWorkbenchToolTest.cpp": "434b49e1b1b068b345e31ed0d7620b9f2a093beebf7133085c373b11586866cf"
+      }
+    },
+    {
+      "label": "search-acceptance-closed-build",
+      "command": [
+        "py",
+        "-3",
+        "tools/build/sakura_build.py",
+        "build",
+        "solution",
+        "x64",
+        "Debug",
+        "--jobs",
+        "4"
+      ],
+      "exit": 0,
+      "seconds": 23.479500000015832,
+      "hashes": {
+        "sakura_core\\workbench\\search\\CSearchWorkbenchTool.cpp": "41eda797827c8e79748ef0e2ed7b0a1a62a22d6f018e885f722d7523fa5ffa8a",
+        "src\\test\\cpp\\tests1\\workbench\\SearchWorkbenchToolTest.cpp": "434b49e1b1b068b345e31ed0d7620b9f2a093beebf7133085c373b11586866cf"
+      }
+    },
+    {
+      "label": "search-acceptance-closed",
+      "command": [
+        "pwsh",
+        "-NoProfile",
+        "-File",
+        "C:/Users/developer/tmp/sakura-audit-run-tests.ps1",
+        "-Label",
+        "search-acceptance-closed",
+        "-Filter",
+        "SearchRequestSafetyTest.InjectedAcceptanceIdentityContract:SearchRequestSafetyTest.InjectedReplaceIdentityContract",
+        "-TimeoutSeconds",
+        "120"
+      ],
+      "exit": 1,
+      "seconds": 3.0786431999877095,
+      "hashes": {
+        "sakura_core\\workbench\\search\\CSearchWorkbenchTool.cpp": "41eda797827c8e79748ef0e2ed7b0a1a62a22d6f018e885f722d7523fa5ffa8a",
+        "src\\test\\cpp\\tests1\\workbench\\SearchWorkbenchToolTest.cpp": "434b49e1b1b068b345e31ed0d7620b9f2a093beebf7133085c373b11586866cf"
+      }
+    },
+    {
+      "label": "search-acceptance-probe-restored-build",
+      "command": [
+        "py",
+        "-3",
+        "tools/build/sakura_build.py",
+        "build",
+        "solution",
+        "x64",
+        "Debug",
+        "--jobs",
+        "4"
+      ],
+      "exit": 0,
+      "seconds": 23.56836989999283,
+      "hashes": {
+        "sakura_core\\workbench\\search\\CSearchWorkbenchTool.cpp": "c0f88e048ed7e22d156bbb76dd0e4a92d74785dae50a0ca81e9c881eb37d3a5a",
+        "src\\test\\cpp\\tests1\\workbench\\SearchWorkbenchToolTest.cpp": "434b49e1b1b068b345e31ed0d7620b9f2a093beebf7133085c373b11586866cf"
+      }
+    },
+    {
+      "label": "search-acceptance-probe-restored",
+      "command": [
+        "pwsh",
+        "-NoProfile",
+        "-File",
+        "C:/Users/developer/tmp/sakura-audit-run-tests.ps1",
+        "-Label",
+        "search-acceptance-probe-restored",
+        "-Filter",
+        "SearchRequestSafetyTest.InjectedAcceptanceIdentityContract:SearchRequestSafetyTest.InjectedReplaceIdentityContract",
+        "-TimeoutSeconds",
+        "120"
+      ],
+      "exit": 0,
+      "seconds": 2.8747851999942213,
+      "hashes": {
+        "sakura_core\\workbench\\search\\CSearchWorkbenchTool.cpp": "c0f88e048ed7e22d156bbb76dd0e4a92d74785dae50a0ca81e9c881eb37d3a5a",
+        "src\\test\\cpp\\tests1\\workbench\\SearchWorkbenchToolTest.cpp": "434b49e1b1b068b345e31ed0d7620b9f2a093beebf7133085c373b11586866cf"
+      }
+    },
+    {
+      "label": "search-acceptance-normal-build",
+      "command": [
+        "py",
+        "-3",
+        "tools/build/sakura_build.py",
+        "build",
+        "solution",
+        "x64",
+        "Debug",
+        "--jobs",
+        "4"
+      ],
+      "exit": 0,
+      "seconds": 28.81456739999703,
+      "hashes": {
+        "sakura_core\\workbench\\search\\CSearchWorkbenchTool.cpp": "2ade5aaff5d2ab82a5b4084e371b46d1247f128ebc9b29a13fa245830ac3cb2e",
+        "src\\test\\cpp\\tests1\\workbench\\SearchWorkbenchToolTest.cpp": "0480086f908ec42477988948c18e88f955152809ccd711ba78995765c4ae8a90"
+      }
+    },
+    {
+      "label": "search-acceptance-normal",
+      "command": [
+        "pwsh",
+        "-NoProfile",
+        "-File",
+        "C:/Users/developer/tmp/sakura-audit-run-tests.ps1",
+        "-Label",
+        "search-acceptance-normal",
+        "-Filter",
+        "SearchRequestSafetyTest.*:FileLoadOptionsTest.*:SearchWorkbenchToolGeometry.*:ExplorerTool.ProductionWorkerDisplaysJunctionsAsLeaves",
+        "-TimeoutSeconds",
+        "120"
+      ],
+      "exit": 0,
+      "seconds": 4.419823300006101,
+      "hashes": {
+        "sakura_core\\workbench\\search\\CSearchWorkbenchTool.cpp": "2ade5aaff5d2ab82a5b4084e371b46d1247f128ebc9b29a13fa245830ac3cb2e",
+        "src\\test\\cpp\\tests1\\workbench\\SearchWorkbenchToolTest.cpp": "0480086f908ec42477988948c18e88f955152809ccd711ba78995765c4ae8a90"
+      }
+    }
+  ],
+  "restored": {
+    "sakura_core\\workbench\\search\\CSearchWorkbenchTool.cpp": "2ade5aaff5d2ab82a5b4084e371b46d1247f128ebc9b29a13fa245830ac3cb2e",
+    "src\\test\\cpp\\tests1\\workbench\\SearchWorkbenchToolTest.cpp": "0480086f908ec42477988948c18e88f955152809ccd711ba78995765c4ae8a90"
+  }
+}

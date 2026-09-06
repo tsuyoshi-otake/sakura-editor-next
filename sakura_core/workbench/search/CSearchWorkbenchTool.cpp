@@ -247,11 +247,12 @@ void QueueNoEraseInvalidate(HWND window, const RECT* region = nullptr) noexcept
 	return text;
 }
 
-//! One rendered row. Upstream's Search tree has exactly these two levels.
+//! One rendered row. Its source coordinates stay fixed until RebuildRows.
+//! Upstream's Search tree has exactly these two levels.
 struct Row final {
-	bool isFile = false;
-	std::size_t fileIndex = 0;
-	std::size_t matchIndex = 0;
+	const bool isFile{};
+	const std::size_t fileIndex{};
+	const std::size_t matchIndex{};
 };
 
 //! Which hover action of a row a point belongs to.
@@ -1418,6 +1419,19 @@ LRESULT CALLBACK CSearchWorkbenchTool::WindowProc(HWND window, UINT message, WPA
 		return 0;
 	case WM_ERASEBKGND:
 		return 1;
+	case WM_PRINTCLIENT: {
+		const HDC dc = reinterpret_cast<HDC>(wParam);
+		if (dc == nullptr) return 0;
+		const int saved = ::SaveDC(dc);
+		if (saved == 0) return 0;
+		const RECT client = impl.ClientRect();
+		FillRectangle(dc, client, impl.palette.sideBar.ToColorRef());
+		if (impl.font.Get() != nullptr) ::SelectObject(dc, impl.font.Get());
+		::SetBkMode(dc, TRANSPARENT);
+		impl.PaintWidget(dc);
+		::RestoreDC(dc, saved);
+		return 0;
+	}
 	case WM_PAINT: {
 		PAINTSTRUCT paint{};
 		const HDC target = ::BeginPaint(window, &paint);

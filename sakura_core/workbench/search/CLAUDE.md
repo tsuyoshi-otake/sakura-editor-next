@@ -120,3 +120,20 @@ input/root revision changes, empty input, close and destructive admission. It is
 a bounded safety model, not a proof of Windows I/O cancellation or worker
 liveness. Its two negative configurations must violate `CurrentResults`; tool
 errors or an unrelated invariant violation do not count as expected failures.
+
+## Current-client rendering (#290)
+
+`WM_PRINTCLIENT` paints the current widget into its borrowed DC and restores DC
+state. It must not submit that diagnostic rendering to the native surface or
+mutate the presented buffer. The normal `WM_PAINT` path remains the owner of
+frame presentation. The replay fixture contains a direct current-client regression for palette
+colors and preservation of the caller's DC state. It is a diagnostic test,
+not a test executed by the regular CI suite.
+
+On the 2026-09-06 machine, external PrintWindow captures did not detect a
+WM_PRINTCLIENT-only color canary. A zero difference from that external path is
+therefore insufficient as an independent freshness reference. The release
+acceptance fixture owns a current-render DIB in-process, while a separate
+process captures the screen and PrintWindow. Its canary must fail before normal
+zero-difference captures are accepted; see
+[`release-acceptance`](../../../docs/audit-safety/evidence/release-acceptance/README.md).

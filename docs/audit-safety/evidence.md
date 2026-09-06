@@ -2,13 +2,24 @@
 
 この文書は全37項目の完了報告ではない。Search の結果世代・preview、FileLoad の MIME option・設定寿命、対応する CI を実装した先行変更の記録である。全量対応表は [ledger.md](ledger.md)。未実装項目を FIXED_VERIFIED にしていない。
 
+## 最新の検証範囲（2026-09-06）
+
+[追加受入検証](evidence/release-acceptance/README.md) に、受付4 guard/MIME変異、
+校正したnative描画のDebug/Release各30試行、事前基準付き5組の性能比較を記録した。
+公開済み `01e1f25e90` の Native Debug/Release、MinGW Release と PR Gate は成功。
+ここで追加した current-client 描画を含む最終head CI・配布物 smoke は公開時に確認する。
+
+以下は段階ごとの履歴である。初期段階のconverter共有・mapping借用の記述は、
+後段のreader固有converter・共有mapping leaseの実装と検証で更新されている。
+保存transaction、Updater、Clipboard等の未完了範囲は全量台帳で継続管理する。
+
 ## A. 作業基準
 
 - 調査・実装開始 SHA: `afaa395c46a3671420ef088905a3046c2966b3a5`。開始時の fork main と一致。
 - fork: `tsuyoshi-otake/sakura-editor-next`、branch: `codex/audit-safety-followups`。
 - 元 checkout のユーザー変更を避け、`C:/Users/developer/tmp/sakura-audit-safety` に隔離した。
 - Windows、MSVC 2022 14.44、x64 Debug/Release、既存 Python/pytest、Microsoft Java 11 を使用。依存 package の更新なし。gitlink は既存ローカル clone から固定 SHA を取得。
-- Issue #290 を作成し、論理単位で commit。main push、merge、release、upstream 書き込みは実施しない。
+- Issue #290 を作成し、論理単位で commit。2026-09-06 のユーザー依頼により、受入後の既存PR統合とrelease-promotionによるリリースを許可済み。main直接pushとupstream書き込みは行わない。
 - 主要 commit: `cfddbcbb2` (FileLoad)、`89ed278ec` (Search)、`611f785d0` (TLC/CI)、`75b47745d` (台帳)、`dd40b6cf5` (確認済み semantic identity 更新)。`c7c12a788` (Explorer非同期終了test)。後続の証跡 commit は同じ branch に含む。公開先は [Draft PR #291](https://github.com/tsuyoshi-otake/sakura-editor-next/pull/291)。
 
 ## B. 全量対応と再現

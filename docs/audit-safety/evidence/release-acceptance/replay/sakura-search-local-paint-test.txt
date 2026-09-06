@@ -1,0 +1,140 @@
+#include "workbench/rendering/CGdiBackBuffer.h"
+#include "uiparts/CGraphics.h"
+
+TEST_F(SearchRequestSafetyTest, PrintClientRendersCurrentSearchSurfaceAndPreservesDcState)
+{
+	const cxx::ResourceHolder<&::DestroyWindow> parent{ ::CreateWindowExW(0, L"STATIC", L"", WS_POPUP,
+		0, 0, 520, 400, nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr) };
+	ASSERT_NE(nullptr, parent.get());
+	workbench::search::CSearchWorkbenchTool tool;
+	ASSERT_TRUE(tool.Create(parent.get()));
+	tool.Layout(RECT{ 0, 0, 520, 400 }, 96);
+	auto palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
+	palette.sideBar = { 0x12, 0x34, 0x56 };
+	palette.inputBackground = { 0x65, 0x43, 0x21 };
+	tool.SetPalette(palette);
+	const cxx::ResourceHolder<&::DeleteDC> reference{ ::CreateDCW(L"DISPLAY", nullptr, nullptr, nullptr) };
+	ASSERT_NE(nullptr, reference.get());
+	workbench::rendering::CGdiBackBuffer surface;
+	ASSERT_TRUE(surface.Ensure(reference.get(), 520, 400));
+	const RECT client{ 0, 0, 520, 400 };
+	ASSERT_TRUE(MyFillRect(surface.Dc(), client, RGB(255, 0, 255)));
+	const auto font = ::GetCurrentObject(surface.Dc(), OBJ_FONT);
+	const auto mode = ::GetBkMode(surface.Dc());
+	ASSERT_EQ(0, ::SendMessageW(tool.GetHwnd(), WM_PRINTCLIENT, reinterpret_cast<WPARAM>(surface.Dc()), 0));
+	EXPECT_EQ(palette.sideBar.ToColorRef(), ::GetPixel(surface.Dc(), 510, 390));
+	EXPECT_EQ(palette.inputBackground.ToColorRef(), ::GetPixel(surface.Dc(), 220, 12));
+	EXPECT_EQ(font, ::GetCurrentObject(surface.Dc(), OBJ_FONT));
+	EXPECT_EQ(mode, ::GetBkMode(surface.Dc()));
+	tool.Close();
+	auto& retirement = workbench::WorkerRetirementService::Instance();
+	const auto deadline = ::GetTickCount64() + 5000;
+	while (retirement.ReservedOrPendingCount() && ::GetTickCount64() < deadline) ::Sleep(1);
+	EXPECT_EQ(0u, retirement.ReservedOrPendingCount());
+}
+
+
+TEST_F(SearchRequestSafetyTest, DiagnosticVisibleInvalidationPaint)
+{
+    wchar_t output[MAX_PATH]{}, name[128]{};
+    ASSERT_GT(::GetEnvironmentVariableW(L"SAKURA_AUDIT_PAINT_ROOT", output, MAX_PATH),0u);
+    ASSERT_GT(::GetEnvironmentVariableW(L"SAKURA_AUDIT_PAINT_EVENTS", name, 128),0u);
+    const std::wstring eventName(name);
+    const cxx::ResourceHolder<&::CloseHandle> ready{::OpenEventW(EVENT_MODIFY_STATE,FALSE,(eventName+L"-ready").c_str())};
+    const cxx::ResourceHolder<&::CloseHandle> resume{::OpenEventW(SYNCHRONIZE,FALSE,(eventName+L"-resume").c_str())};
+    ASSERT_NE(nullptr,ready.get());
+    ASSERT_NE(nullptr,resume.get());
+    const cxx::ResourceHolder<&::DestroyWindow> parent{::CreateWindowExW(WS_EX_TOPMOST,L"STATIC",L"Sakura audit Search paint",WS_POPUP,
+        200,160,520,400,nullptr,nullptr,::GetModuleHandleW(nullptr),nullptr)};
+    ASSERT_NE(nullptr,parent.get());
+    workbench::search::CSearchWorkbenchTool tool;
+    ASSERT_TRUE(tool.Create(parent.get()));
+    tool.Layout(RECT{0,0,520,400},96);
+    tool.SetVisible(true);
+    ::ShowWindow(parent.get(),SW_SHOWNOACTIVATE);
+    ::SetWindowPos(parent.get(),HWND_TOPMOST,200,160,520,400,SWP_SHOWWINDOW|SWP_NOACTIVATE);
+    const auto pump=[&](bool timers) {
+        MSG message{};
+        while (::PeekMessageW(&message,nullptr,0,0,PM_REMOVE)) {
+            if (message.message != WM_TIMER || timers) ::DispatchMessageW(&message);
+        }
+    };
+    const auto list=::GetDlgItem(tool.GetHwnd(),3);
+    const auto renderCurrent=[&](int step) {
+        BITMAPINFO info{};
+        info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);
+        info.bmiHeader.biWidth=520; info.bmiHeader.biHeight=-400;
+        info.bmiHeader.biPlanes=1; info.bmiHeader.biBitCount=32;
+        void* bits{};
+        const cxx::ResourceHolder<&::DeleteObject,HBITMAP> bitmap{
+            ::CreateDIBSection(nullptr,&info,DIB_RGB_COLORS,&bits,nullptr,0)};
+        ASSERT_NE(nullptr,bitmap.get());
+        const cxx::ResourceHolder<&::DeleteDC> dc{::CreateCompatibleDC(nullptr)};
+        ASSERT_NE(nullptr,dc.get());
+        ::SelectObject(dc.get(),bitmap.get());
+        ::SetDCBrushColor(dc.get(),RGB(255,0,255));
+        const RECT rect{0,0,520,400};
+        ::FillRect(dc.get(),&rect,static_cast<HBRUSH>(::GetStockObject(DC_BRUSH)));
+        ::SendMessageW(tool.GetHwnd(),WM_PRINT,reinterpret_cast<WPARAM>(dc.get()),
+            PRF_CLIENT|PRF_ERASEBKGND|PRF_CHILDREN);
+        ::GdiFlush();
+        BITMAPFILEHEADER file{};
+        file.bfType=0x4d42;
+        file.bfOffBits=sizeof(file)+sizeof(BITMAPINFOHEADER);
+        file.bfSize=file.bfOffBits+520*400*4;
+        std::ofstream outputFile(std::filesystem::path(output)/(L"current-"+std::to_wstring(step)+L".bmp"),std::ios::binary);
+        outputFile.write(reinterpret_cast<const char*>(&file),sizeof(file));
+        outputFile.write(reinterpret_cast<const char*>(&info.bmiHeader),sizeof(BITMAPINFOHEADER));
+        outputFile.write(static_cast<const char*>(bits),520*400*4);
+        outputFile.close();
+        ASSERT_FALSE(outputFile.fail());
+    };
+
+    for(int trial=0;trial<30;++trial) {
+        SCOPED_TRACE(trial);
+        tool.SetRoot(root.wstring());
+        tool.SetQueryText(L"needle");
+        const auto resultDeadline=::GetTickCount64()+5000;
+        while (::SendMessageW(list,LB_GETCOUNT,0,0)!=2 && ::GetTickCount64()<resultDeadline) {
+            pump(true); ::Sleep(1);
+        }
+        ASSERT_EQ(2,::SendMessageW(list,LB_GETCOUNT,0,0));
+        // Establish a fully painted nonempty result before each actual gesture.
+        ::RedrawWindow(parent.get(),nullptr,nullptr,RDW_INVALIDATE|RDW_ERASE|RDW_ALLCHILDREN|RDW_UPDATENOW);
+        pump(false); ::Sleep(25);
+        LARGE_INTEGER frequency{},begin{},end{};
+        ASSERT_TRUE(::QueryPerformanceFrequency(&frequency));
+        ASSERT_TRUE(::QueryPerformanceCounter(&begin));
+        if(trial%3==0) tool.SetQueryText(L"");
+        if(trial%3==1) ASSERT_TRUE(::SetWindowTextW(::GetDlgItem(tool.GetHwnd(),1),L"different"));
+        if(trial%3==2) tool.SetRoot(L"");
+        ASSERT_TRUE(::QueryPerformanceCounter(&end));
+        ASSERT_EQ(0,::SendMessageW(list,LB_GETCOUNT,0,0));
+        pump(false); // Service real invalidation without firing the held debounce timer.
+        for(int phase=0;phase<2;++phase) {
+            const int step=trial*2+phase;
+            renderCurrent(step);
+            std::ofstream state(std::filesystem::path(output)/L"step.txt",std::ios::trunc);
+            state<<step<<" "<<reinterpret_cast<std::uintptr_t>(tool.GetHwnd())<<" "
+                 <<reinterpret_cast<std::uintptr_t>(parent.get())<<" "
+                 <<(1000.0*(end.QuadPart-begin.QuadPart)/frequency.QuadPart)<<"\n";
+            state.close();
+            ASSERT_FALSE(state.fail());
+            ASSERT_TRUE(::SetEvent(ready.get()));
+            const auto captureDeadline=::GetTickCount64()+10000;
+            DWORD status=WAIT_TIMEOUT;
+            while((status=::WaitForSingleObject(resume.get(),0))==WAIT_TIMEOUT && ::GetTickCount64()<captureDeadline) {
+                pump(false); ::Sleep(1);
+            }
+            ASSERT_EQ(WAIT_OBJECT_0,status);
+        }
+        ASSERT_EQ(0,::SendMessageW(list,LB_GETCOUNT,0,0));
+    }
+    const auto closeBegin=::GetTickCount64();
+    tool.Close();
+    auto& retirement=workbench::WorkerRetirementService::Instance();
+    while(retirement.ReservedOrPendingCount() && ::GetTickCount64()-closeBegin<5000) ::Sleep(1);
+    EXPECT_EQ(0u,retirement.ReservedOrPendingCount());
+    std::ofstream closeResult(std::filesystem::path(output)/L"close-ms.txt");
+    closeResult<<::GetTickCount64()-closeBegin<<"\n";
+}
