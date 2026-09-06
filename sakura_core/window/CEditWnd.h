@@ -1220,6 +1220,9 @@ private:
 	//! Presentation cache derived only by ApplyEditorCoreSnapshot.
 	bool m_hasActiveEditorInput = false;
 	bool m_editorCorePresentationInitialized = false;
+	//! Identity changes reveal an editor; content/dirty-state notifications do not.
+	std::optional<std::string> m_presentedEditorInputId;
+	std::optional<std::wstring> m_presentedEditorDocumentKey;
 	//! One unpinned Explorer preview is replaceable by the next single-click.
 	//! Double-clicking or editing clears this state, matching VS Code editor groups.
 	bool m_explorerPreviewEditor = false;

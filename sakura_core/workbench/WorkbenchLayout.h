@@ -68,7 +68,7 @@ struct WorkbenchLayoutRequest {
 	WorkbenchPanelState bottomPane = WorkbenchPanelState::Visible;
 	bool showMinimap = false;
 	bool minimapOnLeft = false;
-	//! Expands the visible bottom pane over the editor while preserving document tabs.
+	//! Expands the visible bottom pane over the complete editor, including document tabs.
 	//! This is window-local runtime state and is never persisted with pane extents.
 	bool bottomPaneMaximized = false;
 

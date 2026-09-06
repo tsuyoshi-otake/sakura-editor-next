@@ -89,20 +89,56 @@ TEST(WorkbenchLayout, BottomPaneSpansOnlyCentralEditorColumn)
 	EXPECT_GT(layout.rightPane.Width(), 0);
 }
 
-TEST(WorkbenchLayout, MaximizedBottomPaneReplacesEditorWithoutHidingDocumentTabs)
+TEST(WorkbenchLayout, MaximizedBottomPaneReplacesCompleteEditorPart)
 {
 	auto request = WorkbenchLayoutRequest{ .clientWidth = 1600, .clientHeight = 1000 };
 	request.bottomPaneMaximized = true;
+	request.showMinimap = true;
 	const auto layout = CalculateWorkbenchLayout(request);
 
-	EXPECT_GT(layout.documentTabs.Height(), 0);
+	EXPECT_EQ(0, layout.documentTabs.Height());
 	EXPECT_EQ(0, layout.editor.Height());
 	EXPECT_EQ(0, layout.minimap.Height());
+	EXPECT_EQ(0, layout.minimap.Width());
 	EXPECT_EQ(0, layout.bottomSplitter.Height());
+	EXPECT_EQ(layout.topAccessory.bottom, layout.bottomPane.top);
 	EXPECT_EQ(layout.documentTabs.bottom, layout.bottomPane.top);
 	EXPECT_EQ(layout.editor.left, layout.bottomPane.left);
 	EXPECT_EQ(layout.rightSplitter.left, layout.bottomPane.right);
 	EXPECT_GT(layout.bottomPane.Height(), 220);
+}
+
+TEST(WorkbenchLayout, MaximizedPanelIgnoresMeasuredTabAndBreadcrumbHeightsUntilRestore)
+{
+	for (const unsigned int dpi : { 96U, 144U, 192U }) {
+		for (const int tabHeight : { 0, 32, 54, 108 }) {
+			auto request = WorkbenchLayoutRequest{ .clientWidth = 1600, .clientHeight = 1000, .dpi = dpi };
+			request.documentTabsHeightPixels = tabHeight;
+			const auto original = CalculateWorkbenchLayout(request);
+			request.bottomPaneMaximized = true;
+			const auto maximized = CalculateWorkbenchLayout(request);
+			EXPECT_EQ(maximized.topAccessory.bottom, maximized.bottomPane.top);
+			EXPECT_EQ(0, maximized.documentTabs.Height());
+			EXPECT_GT(maximized.bottomPaneHeader.Height(), 0);
+			request.bottomPaneMaximized = false;
+			const auto restored = CalculateWorkbenchLayout(request);
+			EXPECT_EQ(tabHeight, restored.documentTabs.Height());
+			EXPECT_EQ(original.bottomPane.top, restored.bottomPane.top);
+			EXPECT_EQ(original.bottomPane.Height(), restored.bottomPane.Height());
+		}
+	}
+}
+
+TEST(WorkbenchLayout, HiddenPanelCannotHideEditorChromeThroughStaleMaximizedState)
+{
+	auto request = WorkbenchLayoutRequest{ .clientWidth = 1600, .clientHeight = 1000 };
+	request.bottomPaneMaximized = true;
+	request.bottomPane = WorkbenchPanelState::Hidden;
+	request.documentTabsHeightPixels = 54;
+	const auto layout = CalculateWorkbenchLayout(request);
+	EXPECT_EQ(54, layout.documentTabs.Height());
+	EXPECT_GT(layout.editor.Height(), 0);
+	EXPECT_EQ(0, layout.bottomPane.Height());
 }
 
 TEST(WorkbenchLayout, MinimapIsInsideEditorAtTheRightEdge)

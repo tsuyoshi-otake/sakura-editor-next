@@ -31,6 +31,24 @@ has already been positioned. A repaint cannot fix that geometry overlap.
 Retain the old position only for the top/bottom transition's temporary hide.
 The native regression is `src/test/integration/panel-editor-order.ps1`.
 
+## Maximized Panel owns the complete editor area (2026-09-06, #292)
+
+VS Code hides the Editor Part, including tabs and breadcrumbs, while the Panel
+is maximized; a newly visible editor restores the retained Panel extent. See
+[the upstream layout implementation](https://github.com/microsoft/vscode/blob/3631ace551296b218609f2eadc53a3606e30244e/src/vs/workbench/browser/layout.ts#L359)
+and its `toggleMaximizedPanel` method. Hide editor, minimap, preview, diff, and
+empty surfaces together without discarding their models. A zero-height splitter
+HWND is insufficient because its split boxes can still paint.
+
+The legacy bridge can replace a document while retaining its input ID. Compare
+both the active input ID and document key before restoring the Panel; content
+updates and repeated snapshots must preserve an explicit maximization.
+
+Known command integration gap: the native maximize button calls
+`ToggleBottomWorkbenchMaximized` directly. The stable
+`workbench.action.toggleMaximizedPanel` command is not registered yet, so the
+Command Palette and custom keybindings do not expose that same operation.
+
 ## Committed layout must invalidate the whole frame (2026-08-05, #17)
 
 - A committed geometry change invalidates the frame **once, synchronously**,

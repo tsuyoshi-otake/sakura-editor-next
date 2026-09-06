@@ -71,6 +71,13 @@ public static class PanelEditorOrderNative {
             throw new InvalidOperationException("WM_COMMAND failed or timed out");
     }
 
+    public static void RefreshEditorSnapshot(IntPtr window) {
+        UIntPtr result;
+        // MYWM_EDITOR_CORE_CHANGED is a presentation refresh, not a reveal request.
+        if (SendMessageTimeoutW(window, 0x8000 + 238, IntPtr.Zero, IntPtr.Zero, 2, 3000, out result) == IntPtr.Zero)
+            throw new InvalidOperationException("Editor snapshot refresh failed or timed out");
+    }
+
     public static void OpenFile(IntPtr window, string path) {
         // WM_DROPFILES transfers ownership to the editor's ordinary file-open path.
         var bytes = Encoding.Unicode.GetBytes(path + "\0\0");
@@ -151,6 +158,28 @@ function Toggle-Maximized {
     [PanelEditorOrderNative]::Command([PanelEditorOrderNative]::GetParent([IntPtr]$buttons[0].Handle), 108)
 }
 
+function Assert-EditorHidden {
+    param($Children, [string]$Stage)
+    foreach ($class in @('CTabWnd', 'SplitterWndClass', 'SakuraWorkbenchEmptyEditorSurface')) {
+        if ((Find-Child $Children $class).Visible) { throw "Editor Part child $class stayed visible: $Stage" }
+    }
+    Assert-NoOverlap $Children $Stage
+}
+
+function Assert-EditorRestored {
+    param($Children, [int]$PanelHeight, [string]$Stage)
+    $tabs = Find-Child $Children 'CTabWnd'
+    $editor = Find-Child $Children 'SplitterWndClass'
+    $panel = Find-Child $Children 'SakuraBottomPanel'
+    if (-not $tabs.Visible -or -not $editor.Visible -or $editor.Bounds.Bottom -le $editor.Bounds.Top) {
+        throw "Opening/restoring did not reveal the Editor Part: $Stage"
+    }
+    if ($panel.Bounds.Bottom - $panel.Bounds.Top -ne $PanelHeight) {
+        throw "Panel did not restore its original height: $Stage"
+    }
+    Assert-NoOverlap $Children $Stage
+}
+
 function Remove-OwnedProfile {
     param([string]$ProfileName)
     $root = [IO.Path]::GetFullPath((Join-Path $env:APPDATA 'sakura'))
@@ -193,19 +222,32 @@ try {
                     $_.Class -eq 'SakuraNativeTerminalWindow' -and $_.Visible
                 }).Count -eq 1 } 'terminal creation'
                 $before = Save-Geometry $window "$order-$trial-before"
+                $panel = Find-Child $before 'SakuraBottomPanel'
+                $originalHeight = $panel.Bounds.Bottom - $panel.Bounds.Top
                 Toggle-Maximized $window
                 $maximized = Save-Geometry $window "$order-$trial-maximized"
                 if ((Find-Child $maximized 'SakuraBottomPanel').Bounds.Top -ge
                     (Find-Child $before 'SakuraBottomPanel').Bounds.Top) { throw 'Panel did not maximize' }
+                Assert-EditorHidden $maximized "$order-$trial-maximized"
                 if ($order -eq 'terminal-first') {
                     [PanelEditorOrderNative]::OpenFile($window, $document)
                     Wait-Condition { [PanelEditorOrderNative]::Title($window) -like '*CLAUDE.md*' } 'first file'
                 }
                 $after = Save-Geometry $window "$order-$trial-after"
-                Assert-NoOverlap $after "$order-$trial"
+                if ($order -eq 'terminal-first') {
+                    Assert-EditorRestored $after $originalHeight "$order-$trial-open-reveals-editor"
+                    Toggle-Maximized $window
+                    $maximized = Save-Geometry $window "$order-$trial-maximized-again"
+                    Assert-EditorHidden $maximized "$order-$trial-maximized-again"
+                } else {
+                    Assert-EditorHidden $after "$order-$trial-remains-maximized"
+                }
+                [PanelEditorOrderNative]::RefreshEditorSnapshot($window)
+                $refreshed = Save-Geometry $window "$order-$trial-snapshot-refresh"
+                Assert-EditorHidden $refreshed "$order-$trial-snapshot-does-not-reveal"
                 Toggle-Maximized $window
                 $restored = Save-Geometry $window "$order-$trial-restored"
-                Assert-NoOverlap $restored "$order-$trial-restored"
+                Assert-EditorRestored $restored $originalHeight "$order-$trial-restored"
                 ++$completed
                 Write-Output "PASS $order trial $trial"
             } finally {

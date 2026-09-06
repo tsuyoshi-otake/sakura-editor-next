@@ -110,13 +110,15 @@ WorkbenchLayout CalculateWorkbenchLayout(const WorkbenchLayoutRequest& request) 
 	const int width = NonNegative(request.clientWidth);
 	const int height = NonNegative(request.clientHeight);
 	const unsigned int dpi = request.dpi == 0 ? kDefaultDpi : request.dpi;
+	const bool maximizedPanel = request.bottomPaneMaximized
+		&& IsShown(request.bottomPane) && request.bottomPaneHeightDip > 0;
 
 	const int titleHeight = ResolveChromeHeight(
 		request.titleBarHeightPixels, kTitleHeightDip, dpi, height);
 	const int topAccessoryHeight = ResolveChromeHeight(
 		request.topAccessoryHeightPixels, 0, dpi, height - titleHeight);
 	const int tabsHeight = ResolveChromeHeight(
-		request.documentTabsHeightPixels, kDocumentTabsHeightDip, dpi,
+		maximizedPanel ? 0 : request.documentTabsHeightPixels, kDocumentTabsHeightDip, dpi,
 		height - titleHeight - topAccessoryHeight);
 	const int statusHeight = ResolveChromeHeight(
 		request.statusBarHeightPixels, kStatusHeightDip, dpi,
@@ -153,7 +155,7 @@ WorkbenchLayout CalculateWorkbenchLayout(const WorkbenchLayoutRequest& request) 
 	int rightPane = 0;
 	const int desiredLeftPane = IsShown(request.leftPane) ? ScaleDip(request.leftPaneWidthDip, dpi) : 0;
 	const int desiredLeftSplitter = desiredLeftPane == 0 ? 0 : ScaleDip(kSplitterDip, dpi);
-	const int desiredMinimap = request.showMinimap ? ScaleDip(request.minimapWidthDip, dpi) : 0;
+	const int desiredMinimap = request.showMinimap && !maximizedPanel ? ScaleDip(request.minimapWidthDip, dpi) : 0;
 	const int desiredRightPane = IsShown(request.rightPane) ? ScaleDip(request.rightPaneWidthDip, dpi) : 0;
 	const int desiredRightSplitter = desiredRightPane == 0 ? 0 : ScaleDip(kSplitterDip, dpi);
 	const int mainWidth = width - activityWidth;
@@ -171,10 +173,9 @@ WorkbenchLayout CalculateWorkbenchLayout(const WorkbenchLayoutRequest& request) 
 	int bottomPane = 0;
 	int bottomSplitter = 0;
 	const int bottomBudget = std::max(0, bodyBottom - editorTop - editorMinimumHeight);
-	if (request.bottomPaneMaximized && desiredBottomPane > 0) {
-		// A maximized panel replaces the complete editor/minimap row.  It keeps
-		// document tabs above it and does not expose a resize splitter until it is
-		// restored, matching the explicit maximize/restore state.
+	if (maximizedPanel) {
+		// VS Code hides the complete Editor Part, including tabs and breadcrumbs,
+		// while the Panel is maximized. Its retained extent is used on restore.
 		bottomPane = std::max(0, bodyBottom - editorTop);
 		bottomSplitter = 0;
 	} else if (desiredBottomHeight <= bottomBudget) {

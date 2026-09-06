@@ -2234,16 +2234,31 @@ void CEditWnd::ApplyEditorCoreSnapshot(
 	if (m_editorServiceAdapter == nullptr) return;
 
 	const bool hasActiveInput = snapshot.group.activeInputId.has_value();
+	std::optional<std::wstring> activeDocumentKey;
+	if (hasActiveInput) {
+		const auto active = std::ranges::find_if(snapshot.group.inputs, [&snapshot](const auto& input) {
+			return input.descriptor.inputId == *snapshot.group.activeInputId;
+		});
+		if (active != snapshot.group.inputs.end()) activeDocumentKey = active->documentKey;
+	}
+	const bool activeEditorChanged = m_presentedEditorInputId != snapshot.group.activeInputId
+		|| m_presentedEditorDocumentKey != activeDocumentKey;
+	const bool restoreMaximizedPanel = m_bottomWorkbenchMaximized && hasActiveInput && activeEditorChanged;
 	// Editor tabs belong to this editor group.  Other native editor processes
 	// may exist while this group is genuinely empty; their global node count
 	// must not manufacture an Untitled tab above the empty-editor surface.
 	const bool previousShowDocumentTabs =
-		m_editorCorePresentationInitialized && m_hasActiveEditorInput;
-	const bool showDocumentTabs = hasActiveInput;
+		m_editorCorePresentationInitialized && m_hasActiveEditorInput && !m_bottomWorkbenchMaximized;
+	// VS Code reveals the Editor Part when its visible editor changes. The legacy
+	// bridge can replace a document under the same input ID, so compare both IDs.
+	if (restoreMaximizedPanel) m_bottomWorkbenchMaximized = false;
+	const bool showDocumentTabs = hasActiveInput && !m_bottomWorkbenchMaximized;
 	const bool documentTabVisibilityChanged = previousShowDocumentTabs != showDocumentTabs;
 	const bool presentationChanged = !m_editorCorePresentationInitialized
-		|| m_hasActiveEditorInput != hasActiveInput;
+		|| m_hasActiveEditorInput != hasActiveInput || restoreMaximizedPanel;
 	m_hasActiveEditorInput = hasActiveInput;
+	m_presentedEditorInputId = snapshot.group.activeInputId;
+	m_presentedEditorDocumentKey = std::move(activeDocumentKey);
 	m_editorCorePresentationInitialized = true;
 	UpdateWorkbenchWelcomeState();
 	if (!presentationChanged) return;
@@ -10391,6 +10406,19 @@ RECT CEditWnd::LayoutMarkdownPreview(int left, int top, int right, int bottom, u
 	RECT minimapBounds = minimapOnLeft
 		? RECT{ left, top, left + minimapWidth, bottom }
 		: RECT{ right - minimapWidth, top, right, bottom };
+	if (m_bottomWorkbenchMaximized) {
+		// Maximization hides the complete Editor Part, retaining its inputs and
+		// preview state for restore. Zero-height HWNDs can still paint split boxes.
+		m_markdownPreviewDivider = {};
+		if (GetHwnd() != nullptr) ::InvalidateRect(GetHwnd(), &previousDivider, FALSE);
+		if (const HWND splitter = m_cSplitterWnd.GetHwnd(); splitter != nullptr) {
+			::ShowWindow(splitter, SW_HIDE);
+		}
+		if (m_markdownPreview) m_markdownPreview->Show(false);
+		if (m_diffSurface) m_diffSurface->Hide();
+		if (m_emptyEditorSurface) m_emptyEditorSurface->Hide();
+		return minimapBounds;
+	}
 	if (!HasActiveEditorInput()) {
 		m_markdownPreviewDivider = {};
 		if (GetHwnd() != nullptr) ::InvalidateRect(GetHwnd(), &previousDivider, FALSE);
@@ -14281,7 +14309,8 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 		? m_bottomWorkbenchPanel->GetState() : workbench::WorkbenchPanelState::Hidden;
 	layoutRequest.bottomPaneMaximized = m_bottomWorkbenchMaximized
 		&& layoutRequest.bottomPane != workbench::WorkbenchPanelState::Hidden;
-	layoutRequest.showMinimap = HasActiveEditorInput() && m_cMiniMapView.GetHwnd() != nullptr;
+	layoutRequest.showMinimap = HasActiveEditorInput() && !layoutRequest.bottomPaneMaximized
+		&& m_cMiniMapView.GetHwnd() != nullptr;
 	layoutRequest.minimapOnLeft = m_miniMapOptions.side == minimap::Side::Left;
 	layoutRequest.leftPaneWidthDip = m_leftWorkbenchPanel
 		? m_leftWorkbenchPanel->GetPendingExtentDip() : m_pShareData->m_Common.m_sWorkbench.m_nLeftPanelExtent96;
@@ -14309,7 +14338,7 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 	//タブウインドウ
 	int nTabHeightBottom = 0;
 	nTabWndHeight = 0;
-	const bool showDocumentTabs = HasActiveEditorInput();
+	const bool showDocumentTabs = HasActiveEditorInput() && !layoutRequest.bottomPaneMaximized;
 	if (m_cTabWnd.GetHwnd()) {
 		::ShowWindow(m_cTabWnd.GetHwnd(), showDocumentTabs ? SW_SHOWNA : SW_HIDE);
 	}
@@ -14462,7 +14491,7 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 	if (m_leftWorkbenchPanel) m_leftWorkbenchPanel->Layout(ToWinRect(layout.leftPane), layoutRequest.dpi);
 	if (m_rightWorkbenchPanel) m_rightWorkbenchPanel->Layout(ToWinRect(layout.rightPane), layoutRequest.dpi);
 	if (m_bottomWorkbenchPanel) m_bottomWorkbenchPanel->Layout(ToWinRect(layout.bottomPane), layoutRequest.dpi);
-	if (m_cTabWnd.GetHwnd() && m_cTabWnd.m_eTabPosition == TabPosition_Top) {
+	if (showDocumentTabs && m_cTabWnd.GetHwnd() && m_cTabWnd.m_eTabPosition == TabPosition_Top) {
 		(void)PositionChildForFrame(m_cTabWnd.GetHwnd(), layout.documentTabs.left,
 			layout.documentTabs.top, layout.documentTabs.Width(), layout.documentTabs.Height());
 		m_cTabWnd.OnSize();
@@ -14541,10 +14570,10 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 				m_cStatusBar.GetStatusHwnd() != nullptr
 					&& ::IsWindowVisible(m_cStatusBar.GetStatusHwnd()));
 			setProjection(WindowRole::Editor, "workbench.parts.editor",
-				HasActiveEditorInput() && !m_pPrintPreview);
+				HasActiveEditorInput() && !m_pPrintPreview && !layoutRequest.bottomPaneMaximized);
 			setProjection(WindowRole::MarkdownPreview, "workbench.parts.editor",
 				m_markdownPreviewVisible && m_markdownPreview != nullptr
-					&& m_markdownPreview->IsCreated());
+					&& m_markdownPreview->IsCreated() && !layoutRequest.bottomPaneMaximized);
 			const bool terminalActive = layoutRequest.bottomPane
 					!= workbench::WorkbenchPanelState::Hidden
 				&& (m_workbenchRuntime != nullptr

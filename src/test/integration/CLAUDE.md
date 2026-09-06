@@ -19,7 +19,9 @@ pwsh -NoProfile -File src/test/integration/panel-editor-order.ps1 -Trials 3
 
 The script launches visible windows in fresh profiles, compares both file-open /
 Panel-maximize orders, asserts nonoverlapping document chrome and Panel headers,
-and exercises restore. It records native geometry under `~/tmp/`, uses bounded
+and exercises restore. Maximization must hide the complete Editor Part; opening
+the first file must restore the previous Panel height. Repeated editor snapshots
+must retain explicit maximization. It records native geometry under `~/tmp/`, uses bounded
 waits and commands, and checks editor/control exit and profile removal even on
 failure. `-Executable` selects another built or installed application;
 `-OutputDirectory` selects the evidence directory. It is independent of
