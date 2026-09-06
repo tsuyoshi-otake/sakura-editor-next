@@ -5,6 +5,7 @@
 	SPDX-License-Identifier: Zlib
 */
 #include "pch.h"
+#include "Funccode_enum.h"
 
 #include "workbench/commands/ApiCommandArguments.h"
 #include "workbench/commands/WorkbenchCommandRegistry.h"
@@ -1184,4 +1185,50 @@ TEST(ApiCommandArguments, AnOverLongStringIsRefusedRatherThanTruncated)
 	const std::string overLong(workbench::commands::kMaximumApiCommandStringLength + 1, 'a');
 	EXPECT_FALSE(ParseApiDiffArguments(R"([")" + overLong + R"(","b"])").has_value());
 	EXPECT_TRUE(ParseApiDiffArguments(R"([")" + overLong.substr(1) + R"(","b"])").has_value());
+}
+
+TEST(WorkbenchCommandRegistry, MaximizedPanelSharesPaletteAndPanelTitleWithoutDefaultKeybinding)
+{
+	constexpr auto id = "workbench.action.toggleMaximizedPanel";
+	WorkbenchCommandRegistry registry;
+	int calls = 0;
+	ASSERT_TRUE(registry.RegisterBuiltinCommands({
+		.toggleMaximizedPanel = [&calls]() {
+			++calls;
+			return WorkbenchCommandExecutionResult{ EWorkbenchCommandExecutionStatus::Succeeded, {} };
+		},
+	}).Succeeded());
+	const auto descriptor = registry.Find(id);
+	ASSERT_TRUE(descriptor.has_value());
+	EXPECT_EQ("Toggle Maximized Panel", descriptor->title);
+	EXPECT_EQ(STR_WORKBENCH_COMMAND_TOGGLE_MAXIMIZED_PANEL, descriptor->titleResourceId);
+	EXPECT_EQ(EWorkbenchCommandExecutorTarget::Layout, descriptor->executorTarget);
+	ASSERT_EQ(3u, descriptor->surfaceBindings.size());
+	for (const auto& [surface, slot] : {
+		std::pair{ EWorkbenchCommandSurface::CommandPalette, "workbench.action.toggleMaximizedPanel.palette" },
+		std::pair{ EWorkbenchCommandSurface::Menu, "workbench.action.toggleMaximizedPanel.panelTitle" },
+	}) {
+		const auto resolved = registry.ResolveSurface(surface, slot);
+		ASSERT_TRUE(resolved.has_value());
+		EXPECT_EQ(id, resolved->commandId);
+		EXPECT_FALSE(resolved->binding.legacyFunctionCode.has_value());
+		EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
+			registry.Execute(resolved->commandId, EnabledContext()).status);
+	}
+	EXPECT_EQ(2, calls);
+	const auto key = registry.ResolveSurface(EWorkbenchCommandSurface::Keybinding,
+		"workbench.action.toggleMaximizedPanel.key");
+	ASSERT_TRUE(key.has_value());
+	EXPECT_EQ(id, key->commandId);
+	EXPECT_EQ(30999, key->binding.legacyFunctionCode);
+	EXPECT_EQ(id, registry.ResolveLegacyFunctionCode(30999));
+	EXPECT_EQ(static_cast<int>(F_TOGGLE_MAXIMIZED_PANEL), key->binding.legacyFunctionCode);
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::NotApplicable,
+		registry.Execute(id, WorkbenchContextKeySnapshot{}).status);
+	EXPECT_EQ(2, calls);
+
+	WorkbenchCommandRegistry unsupported;
+	ASSERT_TRUE(unsupported.RegisterBuiltinCommands().Succeeded());
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Unsupported,
+		unsupported.Execute(id, EnabledContext()).status);
 }

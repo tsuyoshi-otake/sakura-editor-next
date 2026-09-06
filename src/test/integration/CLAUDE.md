@@ -26,3 +26,11 @@ waits and commands, and checks editor/control exit and profile removal even on
 failure. `-Executable` selects another built or installed application;
 `-OutputDirectory` selects the evidence directory. It is independent of
 `tests1.exe`; do not count it as a unit-test build or pixel verification.
+
+The #293 extension opens the real Command Palette with Ctrl+Shift+P, selects
+`workbench.action.toggleMaximizedPanel`, and checks both hidden-Panel reveal and
+visible-Panel maximize. Restore through the native user-keybinding alias and
+through the button must recover the same retained extent. This test requires
+foreground access to its own disposable window and releases all injected keys.
+Run it sequentially with other native/UI suites: even Explorer unit tests create
+visible windows and can take focus between foreground selection and key delivery.

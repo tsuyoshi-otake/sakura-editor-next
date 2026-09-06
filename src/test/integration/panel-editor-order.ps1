@@ -45,6 +45,48 @@ public static class PanelEditorOrderNative {
     [DllImport("kernel32.dll")] private static extern bool GlobalUnlock(IntPtr handle);
     [DllImport("kernel32.dll")] private static extern IntPtr GlobalFree(IntPtr handle);
 
+    [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
+    [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")] private static extern bool AttachThreadInput(uint from, uint to, bool attach);
+    [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr window);
+    [DllImport("user32.dll")] private static extern bool BringWindowToTop(IntPtr window);
+    [DllImport("user32.dll")] private static extern void keybd_event(byte key, byte scan, uint flags, UIntPtr extra);
+
+    public static void OpenPalette(IntPtr window) {
+        uint ignored;
+        var foreground = GetWindowThreadProcessId(GetForegroundWindow(), out ignored);
+        var current = GetCurrentThreadId();
+        bool attached = foreground != current && AttachThreadInput(current, foreground, true);
+        try {
+            BringWindowToTop(window);
+            SetForegroundWindow(window);
+        } finally { if (attached) AttachThreadInput(current, foreground, false); }
+        if (GetForegroundWindow() != window) throw new InvalidOperationException("Could not focus the owned test window");
+        try {
+            keybd_event(0x11, 0, 0, UIntPtr.Zero);
+            keybd_event(0x10, 0, 0, UIntPtr.Zero);
+            keybd_event(0x50, 0, 0, UIntPtr.Zero);
+        } finally {
+            keybd_event(0x50, 0, 2, UIntPtr.Zero);
+            keybd_event(0x10, 0, 2, UIntPtr.Zero);
+            keybd_event(0x11, 0, 2, UIntPtr.Zero);
+        }
+    }
+
+    public static long Message(IntPtr window, uint message, IntPtr wParam, IntPtr lParam) {
+        UIntPtr result;
+        if (SendMessageTimeoutW(window, message, wParam, lParam, 2, 3000, out result) == IntPtr.Zero)
+            throw new InvalidOperationException("Native message failed or timed out");
+        return (long)result.ToUInt64();
+    }
+
+    public static void Search(IntPtr input, string text) {
+        var pointer = Marshal.StringToHGlobalUni(text);
+        try { Message(input, 0x000C, IntPtr.Zero, pointer); }
+        finally { Marshal.FreeHGlobal(pointer); }
+    }
+
     public static Child[] Children(IntPtr window) {
         var children = new List<Child>();
         EnumChildWindows(window, (child, unused) => {
@@ -158,6 +200,27 @@ function Toggle-Maximized {
     [PanelEditorOrderNative]::Command([PanelEditorOrderNative]::GetParent([IntPtr]$buttons[0].Handle), 108)
 }
 
+function Invoke-MaximizePalette {
+    param([IntPtr]$Window)
+    [PanelEditorOrderNative]::OpenPalette($Window)
+    Wait-Condition { @([PanelEditorOrderNative]::Children($Window) | Where-Object {
+        $_.Class -eq 'SakuraEditor.Next.CommandPaletteOverlay' -and $_.Visible
+    }).Count -eq 1 } 'Command Palette'
+    $overlay = @([PanelEditorOrderNative]::Children($Window) | Where-Object {
+        $_.Class -eq 'SakuraEditor.Next.CommandPaletteOverlay' -and $_.Visible
+    })[0]
+    $children = [PanelEditorOrderNative]::Children([IntPtr]$overlay.Handle)
+    $inputControl = @($children | Where-Object { $_.Class -eq 'Edit' -and $_.Id -eq 100 })[0]
+    $list = @($children | Where-Object { $_.Class -eq 'ListBox' -and $_.Id -eq 101 })[0]
+    [PanelEditorOrderNative]::Search([IntPtr]$inputControl.Handle, '>workbench.action.toggleMaximizedPanel')
+    Wait-Condition { [PanelEditorOrderNative]::Message([IntPtr]$list.Handle, 0x018B, [IntPtr]::Zero, [IntPtr]::Zero) -eq 1 } 'unique maximization command'
+    # Ordinary list acceptance routes through DispatchRegisteredCommandPaletteSelection.
+    [PanelEditorOrderNative]::Command([IntPtr]$overlay.Handle, (101 -bor (2 -shl 16)))
+    Wait-Condition { @([PanelEditorOrderNative]::Children($Window) | Where-Object {
+        $_.Class -eq 'SakuraEditor.Next.CommandPaletteOverlay' -and $_.Visible
+    }).Count -eq 0 } 'Command Palette acceptance'
+}
+
 function Assert-EditorHidden {
     param($Children, [string]$Stage)
     foreach ($class in @('CTabWnd', 'SplitterWndClass', 'SakuraWorkbenchEmptyEditorSurface')) {
@@ -248,6 +311,25 @@ try {
                 Toggle-Maximized $window
                 $restored = Save-Geometry $window "$order-$trial-restored"
                 Assert-EditorRestored $restored $originalHeight "$order-$trial-restored"
+                [PanelEditorOrderNative]::Command($window, 30993) # Hide Panel before the palette command.
+                $hidden = Save-Geometry $window "$order-$trial-panel-hidden"
+                if (@($hidden | Where-Object { $_.Class -eq 'SakuraBottomPanel' -and $_.Visible }).Count -ne 0) {
+                    throw 'Panel did not hide before palette test'
+                }
+                Invoke-MaximizePalette $window
+                $paletteMaximized = Save-Geometry $window "$order-$trial-palette-reveal-maximized"
+                Assert-EditorHidden $paletteMaximized "$order-$trial-palette-reveal-maximized"
+                if ((Find-Child $paletteMaximized 'SakuraBottomPanel').Bounds.Top -ne
+                    (Find-Child $maximized 'SakuraBottomPanel').Bounds.Top) { throw 'Palette did not reveal and maximize Panel' }
+                [PanelEditorOrderNative]::Command($window, 30999) # User-keybinding compatibility alias.
+                $aliasRestored = Save-Geometry $window "$order-$trial-keybinding-alias-restored"
+                Assert-EditorRestored $aliasRestored $originalHeight "$order-$trial-keybinding-alias-restored"
+                Invoke-MaximizePalette $window
+                $paletteVisible = Save-Geometry $window "$order-$trial-palette-visible-maximized"
+                Assert-EditorHidden $paletteVisible "$order-$trial-palette-visible-maximized"
+                Toggle-Maximized $window
+                $buttonRestored = Save-Geometry $window "$order-$trial-button-restored"
+                Assert-EditorRestored $buttonRestored $originalHeight "$order-$trial-button-restored"
                 ++$completed
                 Write-Output "PASS $order trial $trial"
             } finally {

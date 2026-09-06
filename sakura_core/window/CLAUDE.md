@@ -44,10 +44,12 @@ The legacy bridge can replace a document while retaining its input ID. Compare
 both the active input ID and document key before restoring the Panel; content
 updates and repeated snapshots must preserve an explicit maximization.
 
-Known command integration gap: the native maximize button calls
-`ToggleBottomWorkbenchMaximized` directly. The stable
-`workbench.action.toggleMaximizedPanel` command is not registered yet, so the
-Command Palette and custom keybindings do not expose that same operation.
+The maximize button, Command Palette, and user-assigned native keybindings
+converge on `workbench.action.toggleMaximizedPanel` (#293). A hidden Panel is
+revealed and maximized without switching its selected container. The native
+`F_TOGGLE_MAXIMIZED_PANEL` value is only a compatibility alias; it has no default
+shortcut. An unavailable host or failed reveal returns an explicit command
+failure, never an unrelated legacy operation.
 
 ## Committed layout must invalidate the whole frame (2026-08-05, #17)
 

@@ -1101,7 +1101,7 @@ private:
 		workbench::layout::EWorkbenchViewContainerLocation location,
 		const workbench::CActivityBar& activityBar,
 		POINT screenPoint);
-	void ToggleBottomWorkbenchMaximized();
+	[[nodiscard]] bool ToggleBottomWorkbenchMaximized();
 	void SetWorkbenchZoomPercent(int percent);
 	[[nodiscard]] bool PreTranslateWorkbenchMessage(MSG& message);
 	[[nodiscard]] workbench::CWorkbenchPanelHost* HitTestWorkbenchSplitter(POINT point) const noexcept;

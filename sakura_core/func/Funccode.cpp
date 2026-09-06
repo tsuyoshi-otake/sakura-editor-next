@@ -338,6 +338,7 @@ const EFunctionCode pnFuncList_Search[] = {	//Oct. 16, 2000 JEPRO 変数名変�
 	F_OPEN_WORKSPACE_FOLDER	,	//作業フォルダーを開く
 	F_TOGGLE_LEFT_EXPLORER	,	//左エクスプローラーの表示切替
 	F_TOGGLE_RIGHT_OUTLINE	,	//右アウトラインの表示切替
+	F_TOGGLE_MAXIMIZED_PANEL, // Standard maximization command compatibility alias
 	F_TOGGLE_BOTTOM_PANEL	,	//下部パネルの表示切替
 	F_TOGGLE_SECONDARY_SIDEBAR	,	//セカンダリサイドバーの表示切替
 	F_SHOW_FOCUS_TERMINAL	,	//統合ターミナルを表示してフォーカス

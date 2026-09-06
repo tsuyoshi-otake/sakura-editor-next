@@ -19,6 +19,8 @@ namespace {
 const WorkbenchCommandOwner kBuiltinOwner{ "sakura.builtin", 1 };
 //! Integer mirror of generated F_TOGGLE_LEFT_EXPLORER. Keep source/high-bit flags out of this pure boundary.
 constexpr std::int32_t kLegacyToggleLeftExplorerFunctionCode = 30991;
+//! Compatibility alias for user-assigned native shortcuts; no default chord.
+constexpr std::int32_t kLegacyToggleMaximizedPanelFunctionCode = 30999;
 //! Integer mirror of generated F_OPEN_WORKSPACE_FOLDER. Keep this pure boundary independent of generated headers.
 constexpr std::int32_t kLegacyOpenWorkspaceFolderFunctionCode = 30997;
 //! Integer mirrors of the Funccode_x.hsrc File command allocations.
@@ -82,6 +84,23 @@ WorkbenchCommandDescriptor MakeToggleSidebarDescriptor()
 			{ EWorkbenchCommandSurface::Menu, "workbench.action.toggleSidebarVisibility.menu", kLegacyToggleLeftExplorerFunctionCode },
 			{ EWorkbenchCommandSurface::ActivityBar, "workbench.action.toggleSidebarVisibility.activity", std::nullopt },
 			{ EWorkbenchCommandSurface::Keybinding, "workbench.action.toggleSidebarVisibility.key", kLegacyToggleLeftExplorerFunctionCode },
+		},
+	};
+}
+
+WorkbenchCommandDescriptor MakeToggleMaximizedPanelDescriptor()
+{
+	return {
+		"workbench.action.toggleMaximizedPanel",
+		"Toggle Maximized Panel",
+		kBuiltinOwner,
+		"workbenchReady",
+		"workbenchReady",
+		EWorkbenchCommandExecutorTarget::Layout,
+		{
+			{ EWorkbenchCommandSurface::CommandPalette, "workbench.action.toggleMaximizedPanel.palette", std::nullopt },
+			{ EWorkbenchCommandSurface::Menu, "workbench.action.toggleMaximizedPanel.panelTitle", std::nullopt },
+			{ EWorkbenchCommandSurface::Keybinding, "workbench.action.toggleMaximizedPanel.key", kLegacyToggleMaximizedPanelFunctionCode },
 		},
 	};
 }
@@ -680,6 +699,7 @@ std::uint32_t ResolveBuiltinWorkbenchCommandTitleResourceId(std::string_view com
 	// so model-only callers still observe stable identifiers and fallback titles.
 	static constexpr std::pair<std::string_view, std::uint32_t> kTitles[] = {
 		{"workbench.action.toggleSidebarVisibility", STR_WORKBENCH_COMMAND_TOGGLE_SIDEBAR},
+		{"workbench.action.toggleMaximizedPanel", STR_WORKBENCH_COMMAND_TOGGLE_MAXIMIZED_PANEL},
 		{"workbench.view.explorer", STR_WORKBENCH_COMMAND_EXPLORER},
 		{"workbench.view.extensions", STR_WORKBENCH_COMMAND_EXTENSIONS},
 		{"workbench.actions.view.problems", STR_WORKBENCH_COMMAND_PROBLEMS},
@@ -812,6 +832,7 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterBuiltinComm
 {
 	std::vector<Entry> builtins{
 		Entry{ MakeToggleSidebarDescriptor(), std::move(executors.toggleSidebarVisibility), {} },
+		Entry{ MakeToggleMaximizedPanelDescriptor(), std::move(executors.toggleMaximizedPanel), {} },
 		Entry{ MakeActivityBarLocationDescriptor(
 			"workbench.action.activityBarLocation.default", "Move Activity Bar to Side"),
 			std::move(executors.activityBarLocationDefault), {} },

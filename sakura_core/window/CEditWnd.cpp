@@ -2155,6 +2155,7 @@ void CEditWnd::DispatchEditorFunction(EFunctionCode functionCode)
 		using namespace workbench::editor;
 		std::string_view commandId;
 		switch (baseCode) {
+		case F_TOGGLE_MAXIMIZED_PANEL: commandId = "workbench.action.toggleMaximizedPanel"; break;
 		case F_FILENEW: commandId = command_ids::NewUntitledFile; break;
 		case F_FILENEW_NEWWINDOW: commandId = command_ids::NewWindow; break;
 		case F_FILEOPEN: commandId = command_ids::OpenFile; break;
@@ -3192,7 +3193,8 @@ bool CEditWnd::InitializeWorkbench()
 			SetWorkbenchPanelVisible(workbench::WorkbenchEdge::Bottom, false, false);
 		},
 		.toggleMaximize = [this]() {
-			ToggleBottomWorkbenchMaximized();
+			bool handled = false;
+			(void)TryExecuteWorkbenchStableCommand("workbench.action.toggleMaximizedPanel", handled);
 		},
 		.isMaximized = [this]() {
 			return m_bottomWorkbenchMaximized;
@@ -3572,6 +3574,19 @@ bool CEditWnd::InitializeWorkbench()
 						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} }
 					: workbench::commands::WorkbenchCommandExecutionResult{
 						workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "sidebar layout command failed" };
+			},
+			.toggleMaximizedPanel = [this]() {
+				if (m_bottomWorkbenchPanel == nullptr) {
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Unsupported,
+						"Panel host is unavailable" };
+				}
+				return ToggleBottomWorkbenchMaximized()
+					? workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} }
+					: workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Failed,
+						"Panel maximization layout command failed" };
 			},
 			.activityBarLocationDefault = [this]() {
 				return SetActivityBarLocation(workbench::ActivityBarLocation::Default, true)
@@ -9494,19 +9509,21 @@ void CEditWnd::ToggleWorkbenchPanel(workbench::WorkbenchEdge edge, bool activate
 	SetWorkbenchPanelVisible(edge, show, activate);
 }
 
-void CEditWnd::ToggleBottomWorkbenchMaximized()
+bool CEditWnd::ToggleBottomWorkbenchMaximized()
 {
-	if (m_bottomWorkbenchPanel == nullptr
-		|| m_bottomWorkbenchPanel->GetState() == workbench::WorkbenchPanelState::Hidden) {
-		return;
-	}
+	if (m_bottomWorkbenchPanel == nullptr || GetHwnd() == nullptr) return false;
+	const bool wasHidden = m_bottomWorkbenchPanel->GetState() == workbench::WorkbenchPanelState::Hidden;
+	// Like VS Code's action, reveal a hidden Panel before maximizing it. Preserve
+	// the selected container; this command does not mean "switch to Terminal".
+	if (wasHidden && !SetWorkbenchPanelVisible(workbench::WorkbenchEdge::Bottom, true, false)) return false;
+	if (m_bottomWorkbenchPanel->GetState() == workbench::WorkbenchPanelState::Hidden) return false;
+	if (wasHidden && m_bottomWorkbenchMaximized) return true;
+	RECT client{};
+	if (::GetClientRect(GetHwnd(), &client) == FALSE) return false;
 	m_bottomWorkbenchMaximized = !m_bottomWorkbenchMaximized;
-	if (GetHwnd() != nullptr) {
-		RECT client{};
-		::GetClientRect(GetHwnd(), &client);
-		(void)OnSize2(m_nWinSizeType,
-			MAKELONG(client.right - client.left, client.bottom - client.top), false);
-	}
+	(void)OnSize2(m_nWinSizeType,
+		MAKELONG(client.right - client.left, client.bottom - client.top), false);
+	return true;
 }
 
 EWorkspaceWindowTransitionResult CEditWnd::LaunchWorkspaceTarget(

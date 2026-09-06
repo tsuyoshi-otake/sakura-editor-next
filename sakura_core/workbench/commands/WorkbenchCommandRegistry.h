@@ -125,6 +125,7 @@ struct WorkbenchBuiltinCommandExecutors {
 	WorkbenchCommandExecutor quit;
 	WorkbenchCommandExecutor openGlobalKeybindings;
 	WorkbenchCommandExecutor toggleSidebarVisibility;
+	WorkbenchCommandExecutor toggleMaximizedPanel;
 	WorkbenchCommandExecutor activityBarLocationDefault;
 	WorkbenchCommandExecutor activityBarLocationTop;
 	WorkbenchCommandExecutor activityBarLocationBottom;

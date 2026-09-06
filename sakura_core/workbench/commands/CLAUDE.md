@@ -94,6 +94,15 @@ file-operation commands (`explorer.newFile`, `explorer.newFolder`,
 
 ## Stateful Operations
 
+`workbench.action.toggleMaximizedPanel` follows VS Code's
+`browser/parts/panel/panelActions.ts`: palette and Panel-title action, no default
+shortcut, and reveal-then-maximize when the Panel is hidden. The currently
+supported Panel is bottom/center aligned, so upstream's alignment precondition
+is always satisfied; introducing Panel movement must project that precondition.
+The Keybinding surface carries only a native function-code alias for the
+existing user-assigned shortcut editor, not a default chord. The host executor
+owns layout and returns a typed failure if the reveal cannot commit.
+
 - Registration is atomic, revisioned, bounded, and conflict checked across
   command IDs and surface slots. Owner disposal removes exactly one matching
   generation.
