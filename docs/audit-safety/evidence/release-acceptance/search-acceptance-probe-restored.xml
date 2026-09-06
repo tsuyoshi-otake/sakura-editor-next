@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="2" failures="0" disabled="0" errors="0" time="0.457" timestamp="2026-09-06T14:10:44.449" name="AllTests">
+  <testsuite name="SearchRequestSafetyTest" tests="2" failures="0" disabled="0" skipped="0" errors="0" time="0.436" timestamp="2026-09-06T14:10:44.469">
+    <testcase name="InjectedAcceptanceIdentityContract" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp" line="460" status="run" result="completed" time="0.149" timestamp="2026-09-06T14:10:44.471" classname="SearchRequestSafetyTest" />
+    <testcase name="InjectedReplaceIdentityContract" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp" line="492" status="run" result="completed" time="0.282" timestamp="2026-09-06T14:10:44.622" classname="SearchRequestSafetyTest" />
+  </testsuite>
+</testsuites>

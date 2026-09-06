@@ -1,0 +1,172 @@
+[
+  {
+    "command": [
+      "cargo",
+      "+1.96.0",
+      "test",
+      "--workspace",
+      "--locked",
+      "--release",
+      "--no-fail-fast",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 9.401,
+    "log": "baseline-parallel-1.log",
+    "survivors": []
+  },
+  {
+    "command": [
+      "cargo",
+      "+1.96.0",
+      "test",
+      "--workspace",
+      "--locked",
+      "--release",
+      "--no-fail-fast",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 1.029,
+    "log": "baseline-parallel-2.log",
+    "survivors": []
+  },
+  {
+    "command": [
+      "cargo",
+      "+1.96.0",
+      "test",
+      "--workspace",
+      "--locked",
+      "--release",
+      "--no-fail-fast",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 1.135,
+    "log": "baseline-parallel-3.log",
+    "survivors": []
+  },
+  {
+    "command": [
+      "cargo",
+      "+1.96.0",
+      "test",
+      "--workspace",
+      "--locked",
+      "--release",
+      "--no-fail-fast",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 1.114,
+    "log": "baseline-parallel-4.log",
+    "survivors": []
+  },
+  {
+    "command": [
+      "cargo",
+      "+1.96.0",
+      "test",
+      "--workspace",
+      "--locked",
+      "--release",
+      "--no-fail-fast",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 0.903,
+    "log": "baseline-parallel-5.log",
+    "survivors": []
+  },
+  {
+    "command": [
+      "cargo",
+      "+1.96.0",
+      "test",
+      "--workspace",
+      "--locked",
+      "--release",
+      "--no-fail-fast",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 1.005,
+    "log": "baseline-parallel-6.log",
+    "survivors": []
+  },
+  {
+    "command": [
+      "cargo",
+      "+1.96.0",
+      "test",
+      "--workspace",
+      "--locked",
+      "--release",
+      "--no-fail-fast",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 0.992,
+    "log": "baseline-parallel-7.log",
+    "survivors": []
+  },
+  {
+    "command": [
+      "cargo",
+      "+1.96.0",
+      "test",
+      "--workspace",
+      "--locked",
+      "--release",
+      "--no-fail-fast",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 0.912,
+    "log": "baseline-parallel-8.log",
+    "survivors": []
+  },
+  {
+    "command": [
+      "cargo",
+      "+1.96.0",
+      "test",
+      "--workspace",
+      "--locked",
+      "--release",
+      "--no-fail-fast",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 0.926,
+    "log": "baseline-parallel-9.log",
+    "survivors": []
+  },
+  {
+    "command": [
+      "cargo",
+      "+1.96.0",
+      "test",
+      "--workspace",
+      "--locked",
+      "--release",
+      "--no-fail-fast",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 1.009,
+    "log": "baseline-parallel-10.log",
+    "survivors": []
+  }
+]

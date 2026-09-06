@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="6" failures="0" disabled="0" errors="0" time="1.13" timestamp="2026-09-05T22:55:39.876" name="AllTests">
+  <testsuite name="SearchRequestSafetyTest" tests="6" failures="0" disabled="0" skipped="0" errors="0" time="1.1" timestamp="2026-09-05T22:55:39.905">
+    <testcase name="LongLinePreviewContainsTheActualMatch" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp" line="199" status="run" result="completed" time="0.01" timestamp="2026-09-05T22:55:39.907" classname="SearchRequestSafetyTest" />
+    <testcase name="PreviewDoesNotSplitUtf16SurrogatePair" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp" line="213" status="run" result="completed" time="0.032" timestamp="2026-09-05T22:55:39.921" classname="SearchRequestSafetyTest" />
+    <testcase name="ClearingQueryRejectsAlreadyPostedCompletion" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp" line="227" status="run" result="completed" time="0.085" timestamp="2026-09-05T22:55:39.954" classname="SearchRequestSafetyTest" />
+    <testcase name="SeededPreviewWindowsPreserveSourceCoordinatesAndHitText" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp" line="284" status="run" result="completed" time="0.522" timestamp="2026-09-05T22:55:40.040" classname="SearchRequestSafetyTest" />
+    <testcase name="NativeReplaceAllPreservesFilesAfterQueryInvalidation" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp" line="308" status="run" result="completed" time="0.324" timestamp="2026-09-05T22:55:40.564" classname="SearchRequestSafetyTest" />
+    <testcase name="PreviewBoundaryFixturesPreserveExplicitUtf16Lengths" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp" line="388" status="run" result="completed" time="0.114" timestamp="2026-09-05T22:55:40.888" classname="SearchRequestSafetyTest" />
+  </testsuite>
+</testsuites>

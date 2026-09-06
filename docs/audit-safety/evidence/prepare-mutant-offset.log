@@ -1,0 +1,34 @@
+Running main() from C:\Users\developer\tmp\sakura-audit-safety\src\test\resources\code-main.cpp
+Note: Google Test filter = FileLoadOptionsTest.PreparedUtf7ReaderResetsPreviousDecodedLineOffset
+[==========] Running 1 test from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 1 test from FileLoadOptionsTest
+[ RUN      ] FileLoadOptionsTest.PreparedUtf7ReaderResetsPreviousDecodedLineOffset
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(977): error: Expected equality of these values:
+  RESULT_COMPLETE
+    Which is: 0
+  reader.ReadLine(&line, &eol)
+    Which is: 2
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(978): error: Expected equality of these values:
+  L"first\u0085"
+    Which is: L"first\x85"
+  std::wstring(line.GetStringPtr(), line.GetStringLength())
+    Which is: L""
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(979): error: Expected equality of these values:
+  EEolType::next_line
+    Which is: NEL
+  eol.GetType()
+    Which is: NONE
+
+[  FAILED  ] FileLoadOptionsTest.PreparedUtf7ReaderResetsPreviousDecodedLineOffset (10 ms)
+[----------] 1 test from FileLoadOptionsTest (12 ms total)
+
+[----------] Global test environment tear-down
+[==========] 1 test from 1 test suite ran. (34 ms total)
+[  PASSED  ] 0 tests.
+[  FAILED  ] 1 test, listed below:
+[  FAILED  ] FileLoadOptionsTest.PreparedUtf7ReaderResetsPreviousDecodedLineOffset
+
+ 1 FAILED TEST

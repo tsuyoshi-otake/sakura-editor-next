@@ -1,0 +1,2672 @@
+Running main() from C:\Users\developer\tmp\sakura-audit-safety\src\test\resources\code-main.cpp
+Note: Google Test filter = FileLoadOptionsTest.*:SearchRequestSafetyTest.*
+[==========] Running 5 tests from 2 test suites.
+[----------] Global test environment set-up.
+[----------] 3 tests from SearchRequestSafetyTest
+[ RUN      ] SearchRequestSafetyTest.LongLinePreviewContainsTheActualMatch
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(206): error: Expected equality of these values:
+  6
+  match.previewLength
+    Which is: 0
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(207): error: Expected equality of these values:
+  L"needle"
+  match.preview.substr(match.previewOffset, match.previewLength)
+    Which is: L""
+
+[  FAILED  ] SearchRequestSafetyTest.LongLinePreviewContainsTheActualMatch (19 ms)
+[ RUN      ] SearchRequestSafetyTest.PreviewDoesNotSplitUtf16SurrogatePair
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(221): error: Value of: match.preview.back() >= 0xd800 && match.preview.back() <= 0xdbff
+  Actual: true
+Expected: false
+
+[  FAILED  ] SearchRequestSafetyTest.PreviewDoesNotSplitUtf16SurrogatePair (494 ms)
+[ RUN      ] SearchRequestSafetyTest.ClearingQueryRejectsAlreadyPostedCompletion
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(253): error: Expected equality of these values:
+  0
+  ::SendMessageW(::GetDlgItem(tool.GetHwnd(), 3), 0x018B, 0, 0)
+    Which is: 2
+
+[  FAILED  ] SearchRequestSafetyTest.ClearingQueryRejectsAlreadyPostedCompletion (27 ms)
+[----------] 3 tests from SearchRequestSafetyTest (544 ms total)
+
+[----------] 2 tests from FileLoadOptionsTest
+[ RUN      ] FileLoadOptionsTest.MimeOptionIsAppliedOnEachOpenAndReopen
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(925): error: Expected equality of these values:
+  option ? L"abc\r\n" : L"=?ISO-2022-JP?B?YWJj?=\r\n"
+    Which is: L"abc\r\n"
+  std::wstring(line.GetStringPtr(), line.GetStringLength())
+    Which is: L"=?ISO-2022-JP?B?YWJj?=\r\n"
+With diff:
+@@ -1,2 +1,2 @@
+-L"abc\r
++L"=?ISO-2022-JP?B?YWJj?=\r
+ "
+
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(925): error: Expected equality of these values:
+  option ? L"abc\r\n" : L"=?ISO-2022-JP?B?YWJj?=\r\n"
+    Which is: L"abc\r\n"
+  std::wstring(line.GetStringPtr(), line.GetStringLength())
+    Which is: L"=?ISO-2022-JP?B?YWJj?=\r\n"
+With diff:
+@@ -1,2 +1,2 @@
+-L"abc\r
++L"=?ISO-2022-JP?B?YWJj?=\r
+ "
+
+
+[  FAILED  ] FileLoadOptionsTest.MimeOptionIsAppliedOnEachOpenAndReopen (11 ms)
+[ RUN      ] FileLoadOptionsTest.AutoDetectionUsesConstructionSnapshot
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp(938): error: Expected equality of these values:
+  CODE_UTF8
+    Which is: UTF8
+  loader.FileOpen(path.c_str(), false, CODE_AUTODETECT, 0)
+    Which is: SJIS
+
+[  FAILED  ] FileLoadOptionsTest.AutoDetectionUsesConstructionSnapshot (2 ms)
+[----------] 2 tests from FileLoadOptionsTest (14 ms total)
+
+[----------] Global test environment tear-down
+[==========] 5 tests from 2 test suites ran. (598 ms total)
+[  PASSED  ] 0 tests.
+[  FAILED  ] 5 tests, listed below:
+[  FAILED  ] SearchRequestSafetyTest.LongLinePreviewContainsTheActualMatch
+[  FAILED  ] SearchRequestSafetyTest.PreviewDoesNotSplitUtf16SurrogatePair
+[  FAILED  ] SearchRequestSafetyTest.ClearingQueryRejectsAlreadyPostedCompletion
+[  FAILED  ] FileLoadOptionsTest.MimeOptionIsAppliedOnEachOpenAndReopen
+[  FAILED  ] FileLoadOptionsTest.AutoDetectionUsesConstructionSnapshot
+
+ 5 FAILED TESTS

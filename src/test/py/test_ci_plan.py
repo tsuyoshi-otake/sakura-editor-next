@@ -58,13 +58,12 @@ class CiPlanDecisionTests(unittest.TestCase):
         self.assertEqual(result["reason_codes"], ["documentation_only"])
         self.assertEqual(result["jobs"], {"check_encoding": True, "native_build": False})
 
-    def test_formal_documents_and_evidence_are_documentation(self) -> None:
-        result = decide(
-            "docs/formal/ControlStartupHandshake.tla",
-            "docs/formal/ControlStartupHandshake_Current.cfg",
-            "docs/evidence/結果 1.json",
-        )
-        self.assertEqual(result["mode"], "docs_only")
+    def test_formal_sources_select_required_native_checks(self) -> None:
+        for path in ("docs/formal/ControlStartupHandshake.tla",
+                     "docs/formal/ControlStartupHandshake_Current.cfg"):
+            with self.subTest(path=path):
+                self.assertFull(decide(path), "native_or_unknown_change")
+        self.assertEqual(decide("docs/evidence/結果 1.json")["mode"], "docs_only")
 
     def test_native_or_unknown_change_is_full(self) -> None:
         self.assertFull(decide("sakura_core/foo.cpp"), "native_or_unknown_change")

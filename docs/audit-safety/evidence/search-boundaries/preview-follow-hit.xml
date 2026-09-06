@@ -1,0 +1,291 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="6" failures="3" disabled="0" errors="0" time="1.5" timestamp="2026-09-05T22:53:21.671" name="AllTests">
+  <testsuite name="SearchRequestSafetyTest" tests="6" failures="3" disabled="0" skipped="0" errors="0" time="1.472" timestamp="2026-09-05T22:53:21.699">
+    <testcase name="LongLinePreviewContainsTheActualMatch" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp" line="199" status="run" result="completed" time="0.017" timestamp="2026-09-05T22:53:21.701" classname="SearchRequestSafetyTest">
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:208&#x0A;Expected equality of these values:&#x0A;  6&#x0A;  match.previewLength&#x0A;    Which is: 0&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:208
+Expected equality of these values:
+  6
+  match.previewLength
+    Which is: 0
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:209&#x0A;Expected equality of these values:&#x0A;  L&quot;needle&quot;&#x0A;  match.preview.substr(match.previewOffset, match.previewLength)&#x0A;    Which is: L&quot;&quot;&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:209
+Expected equality of these values:
+  L"needle"
+  match.preview.substr(match.previewOffset, match.previewLength)
+    Which is: L""
+]]></failure>
+    </testcase>
+    <testcase name="PreviewDoesNotSplitUtf16SurrogatePair" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp" line="213" status="run" result="completed" time="0.046" timestamp="2026-09-05T22:53:21.718" classname="SearchRequestSafetyTest" />
+    <testcase name="ClearingQueryRejectsAlreadyPostedCompletion" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp" line="227" status="run" result="completed" time="0.1" timestamp="2026-09-05T22:53:21.765" classname="SearchRequestSafetyTest" />
+    <testcase name="SeededPreviewWindowsPreserveSourceCoordinatesAndHitText" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp" line="284" status="run" result="completed" time="0.706" timestamp="2026-09-05T22:53:21.866" classname="SearchRequestSafetyTest">
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 0&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 0
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 1&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 1
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 2&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 2
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 3&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 3
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 4&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 4
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 5&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 5
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 6&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 6
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 8&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 8
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 9&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 9
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 10&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 10
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 11&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 11
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 12&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 12
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 13&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 13
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 14&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 14
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 15&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 15
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 17&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 17
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 20&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 20
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 21&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 21
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 22&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 22
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 23&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 23
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 25&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 25
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 27&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 27
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 28&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 28
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 29&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 29
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 30&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 30
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 31&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 31
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 33&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 33
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 34&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 34
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 35&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 35
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 36&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 36
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 39&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 39
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 40&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 40
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 41&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 41
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 43&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 43
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 44&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 44
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 45&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 45
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 46&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 46
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 47&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 47
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 48&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 48
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 49&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 49
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 50&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 50
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 51&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 51
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 53&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 53
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 54&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 54
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 56&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 56
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 57&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 57
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 58&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 58
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 59&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 59
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 60&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 60
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 61&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 61
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 62&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 62
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 63&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:301
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(289): 63
+]]></failure>
+    </testcase>
+    <testcase name="NativeReplaceAllPreservesFilesAfterQueryInvalidation" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp" line="308" status="run" result="completed" time="0.535" timestamp="2026-09-05T22:53:22.572" classname="SearchRequestSafetyTest" />
+    <testcase name="PreviewBoundaryFixturesPreserveExplicitUtf16Lengths" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp" line="388" status="run" result="completed" time="0.062" timestamp="2026-09-05T22:53:23.108" classname="SearchRequestSafetyTest">
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:433&#x0A;Expected: (match.previewLength) &gt; (0), actual: 0 vs 0&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(405): 3&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:433
+Expected: (match.previewLength) > (0), actual: 0 vs 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(405): 3
+]]></failure>
+    </testcase>
+  </testsuite>
+</testsuites>

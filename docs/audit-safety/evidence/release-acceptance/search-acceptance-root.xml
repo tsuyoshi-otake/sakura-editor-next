@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="2" failures="2" disabled="0" errors="0" time="0.556" timestamp="2026-09-06T14:09:24.304" name="AllTests">
+  <testsuite name="SearchRequestSafetyTest" tests="2" failures="2" disabled="0" skipped="0" errors="0" time="0.533" timestamp="2026-09-06T14:09:24.327">
+    <testcase name="InjectedAcceptanceIdentityContract" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp" line="460" status="run" result="completed" time="0.204" timestamp="2026-09-06T14:09:24.329" classname="SearchRequestSafetyTest">
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:481&#x0A;Expected equality of these values:&#x0A;  scenario==0?1:0&#x0A;    Which is: 0&#x0A;  audit_acceptance::committed&#x0A;    Which is: 1&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(463): 2&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:481
+Expected equality of these values:
+  scenario==0?1:0
+    Which is: 0
+  audit_acceptance::committed
+    Which is: 1
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(463): 2
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:482&#x0A;Expected equality of these values:&#x0A;  scenario==0?2:0&#x0A;    Which is: 0&#x0A;  ::SendMessageW(::GetDlgItem(tool.GetHwnd(),3),0x018B,0,0)&#x0A;    Which is: 2&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(463): 2&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:482
+Expected equality of these values:
+  scenario==0?2:0
+    Which is: 0
+  ::SendMessageW(::GetDlgItem(tool.GetHwnd(),3),0x018B,0,0)
+    Which is: 2
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(463): 2
+]]></failure>
+    </testcase>
+    <testcase name="InjectedReplaceIdentityContract" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp" line="492" status="run" result="completed" time="0.326" timestamp="2026-09-06T14:09:24.534" classname="SearchRequestSafetyTest">
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:527&#x0A;Expected equality of these values:&#x0A;  scenario==0?1:0&#x0A;    Which is: 0&#x0A;  audit_acceptance::committed&#x0A;    Which is: 1&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(495): 2&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:527
+Expected equality of these values:
+  scenario==0?1:0
+    Which is: 0
+  audit_acceptance::committed
+    Which is: 1
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(495): 2
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:528&#x0A;Expected equality of these values:&#x0A;  scenario==0?1:0&#x0A;    Which is: 0&#x0A;  changed&#x0A;    Which is: 1&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(495): 2&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:528
+Expected equality of these values:
+  scenario==0?1:0
+    Which is: 0
+  changed
+    Which is: 1
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(495): 2
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:531&#x0A;Expected equality of these values:&#x0A;  std::string(&quot;\xef\xbb\xbf&quot;)+(scenario==0?&quot;changed\r\n&quot;:&quot;needle\r\n&quot;)&#x0A;    Which is: &quot;\xEF\xBB\xBFneedle\r\n&quot;&#x0A;    As Text: &quot;﻿needle&#x0D;&#x0A;&quot;&#x0A;  bytes&#x0A;    Which is: &quot;\xEF\xBB\xBF&quot; &quot;changed\r\n&quot;&#x0A;    As Text: &quot;﻿changed&#x0D;&#x0A;&quot;&#x0A;With diff:&#x0A;@@ -1,2 +1,2 @@&#x0A;-\xEF\xBB\xBFneedle\r&#x0A;-&quot;&#x0A;    As Text: &quot;﻿needle&#x0D;&#x0A;&#x0A;+\xEF\xBB\xBF&quot; &quot;changed\r&#x0A;+&quot;&#x0A;    As Text: &quot;﻿changed&#x0D;&#x0A;&#x0A;&#x0A;Google Test trace:&#x0A;C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(495): 2&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp:531
+Expected equality of these values:
+  std::string("\xef\xbb\xbf")+(scenario==0?"changed\r\n":"needle\r\n")
+    Which is: "\xEF\xBB\xBFneedle\r\n"
+    As Text: "﻿needle
+"
+  bytes
+    Which is: "\xEF\xBB\xBF" "changed\r\n"
+    As Text: "﻿changed
+"
+With diff:
+@@ -1,2 +1,2 @@
+-\xEF\xBB\xBFneedle\r
+-"
+    As Text: "﻿needle
+
++\xEF\xBB\xBF" "changed\r
++"
+    As Text: "﻿changed
+
+
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(495): 2
+]]></failure>
+    </testcase>
+  </testsuite>
+</testsuites>

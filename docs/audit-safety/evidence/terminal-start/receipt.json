@@ -1,0 +1,88 @@
+{
+  "base_sha": "1c9ce1c6642330bf6b10029849700171d61d9dcb",
+  "ci_failure": {
+    "run": 33973999508,
+    "job": 101327383306,
+    "test": "CTaskTerminalSessionFactory.ProcessLaunchPreservesExecutableAndArgumentTokens",
+    "suite_tests": 3394,
+    "passed": 3392,
+    "skipped": 1,
+    "failed": 1
+  },
+  "diagnostic": {
+    "old_source_sha256": "2c83dd73f00ccee3a23f4b8fb5b0750e8de889d71d7451c72f77d13affb58757",
+    "probe_source_sha256": "f96007a4267ac730530b0648021e0b3faaa52eec524ae0941ced95c35d4cfdd0",
+    "forced_old_test_exit": 1,
+    "forced_fixed_test_exit": 0,
+    "forced_fixed_test_count": 2,
+    "old_unforced_new_regression_exit": 0,
+    "old_unforced_test_label": "terminal-start-natural-red"
+  },
+  "normal": {
+    "debug_build_exit": 0,
+    "release_build_exit": 0,
+    "debug_tests": 40,
+    "release_tests": 40,
+    "test_exit": 0,
+    "immediate_completion_iterations_per_mode": 128,
+    "completion_modes": [
+      "natural exit",
+      "read failure"
+    ],
+    "owned_survivors": 0
+  },
+  "source_sha256": {
+    "sakura_core/terminal/session/TerminalSession.cpp": "28bc723ce652ff7bcb21e25507cb82c50325765cba37d94df6b88f4c445d1357",
+    "src/test/cpp/tests1/workbench/TaskTerminalSessionFactoryTest.cpp": "020b595c1695cb46e58c67093c10e07168d2bd2b78ac6530e91ae0bb1594f4ff"
+  },
+  "semantic_isolated": {
+    "new_findings": 0,
+    "increases": 0,
+    "missing_touched_reductions": 0,
+    "baseline_changed": false
+  },
+  "other_checks": {
+    "checkout_invariance_exit": 0,
+    "generate_check_exit": 0,
+    "all_context_graph_exit": 0,
+    "two_changed_cpp_files_ascii": true
+  },
+  "logs": {
+    "terminal-start-baseline": {
+      "raw_sha256": "045a758fc5e674c0cc5e6fabc69ac4c86e175b34bd85d762caf97496fb03c65b",
+      "published_sha256": "34b30737b38b3fc16fd217bc998fc1f663297a694718b02a332f91cee0cab156",
+      "survivors": 0
+    },
+    "terminal-start-probe-red": {
+      "raw_sha256": "c028ba93f8cea449bbaf462f59e6348fe5b08706995a6297ae032c752daed501",
+      "published_sha256": "27b4b4c66f12522efac3c6f45010970a0d224ddb9289a70568e349da23272f4b",
+      "survivors": 0
+    },
+    "terminal-start-natural-red": {
+      "raw_sha256": "d788180f2cda727f4eb0ac5d0d0da05698cfd4fe129bf2aaa82b56b0a5480114",
+      "published_sha256": "27446f4db11cf01aec353fd0415f0b381adae2df0720a2aeb371588045cbcb9b",
+      "survivors": 0
+    },
+    "terminal-start-probe-green": {
+      "raw_sha256": "ad5f5a9c45b57865392c76e240c707596c2d6c80ed6a48aba46947e715dc6a63",
+      "published_sha256": "8b988f7bc81350fa00f7bc904fbbda8b6912b09207513be3df8f527dbcef83d3",
+      "survivors": 0
+    },
+    "terminal-start-final-debug": {
+      "raw_sha256": "4e580f9e81381426a145e4e9d199643674778fd3b8fa7cb42eb97ac2492d21da",
+      "published_sha256": "b509625e44798d8110e6ba2c959bff44b6f35c4648e5d34dc2028536bdbf992b",
+      "survivors": 0
+    },
+    "terminal-start-final-release": {
+      "raw_sha256": "5383cd1618f51ce2d958f0713143eaf859e8166380a0d86a3adcfea30716c98e",
+      "published_sha256": "730f38199dbbc96aa0d1a72e05da1efc7ce6d317efe5e39fb2894d03882a01ce",
+      "survivors": 0
+    }
+  },
+  "limitations": [
+    "The forced schedule is a sufficient interleaving, not a captured trace of the hosted scheduler.",
+    "Unforced repetition did not reproduce the pre-fix failure locally.",
+    "Local solution builds included the separate uncommitted Clipboard work; isolated semantic verification and subsequent exact-head CI separate publication scope.",
+    "The diagnostic probe is absent from production."
+  ]
+}

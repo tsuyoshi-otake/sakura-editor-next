@@ -1,0 +1,44 @@
+{
+  "original": {
+    "sakura_core\\workbench\\search\\CSearchWorkbenchTool.cpp": "fe85727a8623f2ccc976ed439ed5aa29b62616a833973fec5aebe2c41d941544",
+    "src\\test\\cpp\\tests1\\workbench\\SearchWorkbenchToolTest.cpp": "c910b3d15cea2f52da5f0af50856a88d3164cc534543183d558fc5fbb78ba269"
+  },
+  "runs": [
+    {
+      "label": "build-canary",
+      "exit": 0,
+      "pid": 1476
+    },
+    {
+      "label": "capture-canary",
+      "exit": 1,
+      "pid": 36300
+    },
+    {
+      "label": "build-restored",
+      "exit": 0,
+      "pid": 16452
+    }
+  ],
+  "canary": {
+    "sakura_core\\workbench\\search\\CSearchWorkbenchTool.cpp": "ab5e674e69790ad346f8d310ce7d00c8850228f3718219871bc9d239f1b79149",
+    "src\\test\\cpp\\tests1\\workbench\\SearchWorkbenchToolTest.cpp": "ae2a68ec5ca33d50600b1c81e4ec77217191f00e88bed8bb187d28635cc37159"
+  },
+  "screen_probe": [
+    41,
+    49,
+    52,
+    255
+  ],
+  "current_probe": [
+    255,
+    0,
+    255,
+    255
+  ],
+  "canary_detected_trials": 30,
+  "restored": {
+    "sakura_core\\workbench\\search\\CSearchWorkbenchTool.cpp": "fe85727a8623f2ccc976ed439ed5aa29b62616a833973fec5aebe2c41d941544",
+    "src\\test\\cpp\\tests1\\workbench\\SearchWorkbenchToolTest.cpp": "c910b3d15cea2f52da5f0af50856a88d3164cc534543183d558fc5fbb78ba269"
+  }
+}

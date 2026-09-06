@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="1" failures="0" disabled="0" errors="0" time="0.162" timestamp="2026-09-05T23:02:17.508" name="AllTests">
+  <testsuite name="SearchRequestSafetyTest" tests="1" failures="0" disabled="0" skipped="0" errors="0" time="0.133" timestamp="2026-09-05T23:02:17.535">
+    <testcase name="DelayedWorkerPublicationAfterInvalidation" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp" line="479" status="run" result="completed" time="0.129" timestamp="2026-09-05T23:02:17.536" classname="SearchRequestSafetyTest" />
+  </testsuite>
+</testsuites>

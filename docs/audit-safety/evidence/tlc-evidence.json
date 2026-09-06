@@ -1,0 +1,72 @@
+{
+  "source_commit": "dd40b6cf5328c2a13daab96e670ff4f8b61ee692",
+  "tool_sha256": "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88",
+  "cases": [
+    {
+      "name": "SearchRequestLifecycle",
+      "exit_code": 0,
+      "passed": true,
+      "model_sha256": "992a22572ecd4b9d02ca4e14f521995b60d263f48032fd45a0b317bdb5ff91d0",
+      "config_sha256": "a86acab1f529aca5244f030250145d29eff7524864e29777781f06f253f3923c",
+      "command": [
+        "java",
+        "-Xmx512m",
+        "-XX:+UseParallelGC",
+        "-cp",
+        "C:\\Users\\developer\\tmp\\sakura-tlc-pin\\tla2tools.jar",
+        "tlc2.TLC",
+        "-workers",
+        "2",
+        "-metadir",
+        "C:\\Users\\developer\\tmp\\sakura-audit-safety\\.codex\\goal-loop\\audit-safety\\tlc-final\\SearchRequestLifecycle",
+        "-config",
+        "SearchRequestLifecycle.cfg",
+        "SearchRequestLifecycle.tla"
+      ]
+    },
+    {
+      "name": "SearchRequestLifecycle_NoEmptyInvalidation",
+      "exit_code": 12,
+      "passed": true,
+      "model_sha256": "992a22572ecd4b9d02ca4e14f521995b60d263f48032fd45a0b317bdb5ff91d0",
+      "config_sha256": "2032b7b0d0325387b85891e4d9b58d05c072e609014316596de8984db95192fc",
+      "command": [
+        "java",
+        "-Xmx512m",
+        "-XX:+UseParallelGC",
+        "-cp",
+        "C:\\Users\\developer\\tmp\\sakura-tlc-pin\\tla2tools.jar",
+        "tlc2.TLC",
+        "-workers",
+        "2",
+        "-metadir",
+        "C:\\Users\\developer\\tmp\\sakura-audit-safety\\.codex\\goal-loop\\audit-safety\\tlc-final\\SearchRequestLifecycle_NoEmptyInvalidation",
+        "-config",
+        "SearchRequestLifecycle_NoEmptyInvalidation.cfg",
+        "SearchRequestLifecycle.tla"
+      ]
+    },
+    {
+      "name": "SearchRequestLifecycle_NoGenerationCheck",
+      "exit_code": 12,
+      "passed": true,
+      "model_sha256": "992a22572ecd4b9d02ca4e14f521995b60d263f48032fd45a0b317bdb5ff91d0",
+      "config_sha256": "16bf6a9075a3804736e83f6c31cf68c985d0ffe2018b34d4fa79c4d6b6f29950",
+      "command": [
+        "java",
+        "-Xmx512m",
+        "-XX:+UseParallelGC",
+        "-cp",
+        "C:\\Users\\developer\\tmp\\sakura-tlc-pin\\tla2tools.jar",
+        "tlc2.TLC",
+        "-workers",
+        "2",
+        "-metadir",
+        "C:\\Users\\developer\\tmp\\sakura-audit-safety\\.codex\\goal-loop\\audit-safety\\tlc-final\\SearchRequestLifecycle_NoGenerationCheck",
+        "-config",
+        "SearchRequestLifecycle_NoGenerationCheck.cfg",
+        "SearchRequestLifecycle.tla"
+      ]
+    }
+  ]
+}

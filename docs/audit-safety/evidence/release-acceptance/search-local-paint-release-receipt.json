@@ -1,0 +1,52 @@
+{
+  "original_sha256": "c03af24b38acebc6b241b7d05b650ace5b510f27161f7fb517fe25d4b9d0b98c",
+  "runs": [
+    {
+      "label": "search-local-paint-release-build",
+      "command": [
+        "py",
+        "-3",
+        "tools/build/sakura_build.py",
+        "build",
+        "solution",
+        "x64",
+        "Release",
+        "--jobs",
+        "4"
+      ],
+      "exit": 0,
+      "seconds": 39.24030920000041
+    },
+    {
+      "label": "search-local-paint-release",
+      "command": [
+        "pwsh",
+        "-NoProfile",
+        "-File",
+        "C:/Users/developer/tmp/sakura-search-local-paint.ps1",
+        "-Configuration",
+        "Release"
+      ],
+      "exit": 0,
+      "seconds": 8.388363899999604
+    },
+    {
+      "label": "search-local-paint-release-normal-build",
+      "command": [
+        "py",
+        "-3",
+        "tools/build/sakura_build.py",
+        "build",
+        "solution",
+        "x64",
+        "Release",
+        "--jobs",
+        "4"
+      ],
+      "exit": 0,
+      "seconds": 37.6973979000004
+    }
+  ],
+  "probe_sha256": "fe872a61c4a1bfbbdc63fcf4dd568080d9f4cceff54b007d7420812bbb7185c3",
+  "restored_sha256": "c03af24b38acebc6b241b7d05b650ace5b510f27161f7fb517fe25d4b9d0b98c"
+}

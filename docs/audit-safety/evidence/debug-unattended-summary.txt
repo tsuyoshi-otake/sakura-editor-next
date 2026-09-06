@@ -1,0 +1,13 @@
+a = 3, b = 4, c = 5
+[       OK ] ParameterizedTestSampleWith3Instance/ParameterizedTestSampleWith3.test/26 (0 ms)
+[----------] 27 tests from ParameterizedTestSampleWith3Instance/ParameterizedTestSampleWith3 (7 ms total)
+
+[----------] Global test environment tear-down
+[==========] 3410 tests from 383 test suites ran. (235267 ms total)
+[  PASSED  ] 3409 tests.
+[  SKIPPED ] 1 test, listed below:
+[  SKIPPED ] TerminalLegacyRendererBaseline.EmitsConfiguredBenchmarkJson
+
+  YOU HAVE 15 DISABLED TESTS
+
+Runner elapsed: 244.5902558 seconds; OwnedSurvivors=0

@@ -1,0 +1,177 @@
+{
+  "head": "2b3af3ef672df174304bc378cd22c21fd9a32f67",
+  "original": {
+    "sakura_core\\workbench\\search\\CSearchWorkbenchTool.cpp": "2ade5aaff5d2ab82a5b4084e371b46d1247f128ebc9b29a13fa245830ac3cb2e",
+    "src\\test\\cpp\\tests1\\workbench\\SearchWorkbenchToolTest.cpp": "0480086f908ec42477988948c18e88f955152809ccd711ba78995765c4ae8a90"
+  },
+  "runs": [
+    {
+      "label": "delayed-search-build",
+      "command": [
+        "py",
+        "-3",
+        "tools/build/sakura_build.py",
+        "build",
+        "solution",
+        "x64",
+        "Debug",
+        "--jobs",
+        "4"
+      ],
+      "exit": 0,
+      "pid": 22664,
+      "seconds": 35.206297159194946,
+      "hashes": {
+        "sakura_core\\workbench\\search\\CSearchWorkbenchTool.cpp": "4d4b02d04ad4bd7e355c03cb161366128f8642b092ad989f26ad9b51cb80ffce",
+        "src\\test\\cpp\\tests1\\workbench\\SearchWorkbenchToolTest.cpp": "4b30722dcb78f2cd3f62108348a27c2a5b1e51d6802c4c998f55273c6bd8ea7c"
+      }
+    },
+    {
+      "label": "delayed-search-green",
+      "command": [
+        "pwsh",
+        "-NoProfile",
+        "-File",
+        "C:/Users/developer/tmp/sakura-audit-run-tests.ps1",
+        "-Label",
+        "delayed-search-green",
+        "-Filter",
+        "SearchRequestSafetyTest.DelayedWorkerPublicationAfterInvalidation"
+      ],
+      "exit": 0,
+      "pid": 56972,
+      "seconds": 3.3357062339782715,
+      "hashes": {
+        "sakura_core\\workbench\\search\\CSearchWorkbenchTool.cpp": "4d4b02d04ad4bd7e355c03cb161366128f8642b092ad989f26ad9b51cb80ffce",
+        "src\\test\\cpp\\tests1\\workbench\\SearchWorkbenchToolTest.cpp": "4b30722dcb78f2cd3f62108348a27c2a5b1e51d6802c4c998f55273c6bd8ea7c"
+      }
+    },
+    {
+      "label": "delayed-search-mutant-build",
+      "command": [
+        "py",
+        "-3",
+        "tools/build/sakura_build.py",
+        "build",
+        "solution",
+        "x64",
+        "Debug",
+        "--jobs",
+        "4"
+      ],
+      "exit": 0,
+      "pid": 37180,
+      "seconds": 28.40026092529297,
+      "hashes": {
+        "sakura_core\\workbench\\search\\CSearchWorkbenchTool.cpp": "5ae31c9bcef8c327d23606a191083cfa967fa0546f8764f5494b6e26841f66f3",
+        "src\\test\\cpp\\tests1\\workbench\\SearchWorkbenchToolTest.cpp": "4b30722dcb78f2cd3f62108348a27c2a5b1e51d6802c4c998f55273c6bd8ea7c"
+      }
+    },
+    {
+      "label": "delayed-search-mutant",
+      "command": [
+        "pwsh",
+        "-NoProfile",
+        "-File",
+        "C:/Users/developer/tmp/sakura-audit-run-tests.ps1",
+        "-Label",
+        "delayed-search-mutant",
+        "-Filter",
+        "SearchRequestSafetyTest.DelayedWorkerPublicationAfterInvalidation"
+      ],
+      "exit": 1,
+      "pid": 32200,
+      "seconds": 3.135388135910034,
+      "hashes": {
+        "sakura_core\\workbench\\search\\CSearchWorkbenchTool.cpp": "5ae31c9bcef8c327d23606a191083cfa967fa0546f8764f5494b6e26841f66f3",
+        "src\\test\\cpp\\tests1\\workbench\\SearchWorkbenchToolTest.cpp": "4b30722dcb78f2cd3f62108348a27c2a5b1e51d6802c4c998f55273c6bd8ea7c"
+      }
+    },
+    {
+      "label": "delayed-search-probe-restored-build",
+      "command": [
+        "py",
+        "-3",
+        "tools/build/sakura_build.py",
+        "build",
+        "solution",
+        "x64",
+        "Debug",
+        "--jobs",
+        "4"
+      ],
+      "exit": 0,
+      "pid": 13444,
+      "seconds": 28.582849979400635,
+      "hashes": {
+        "sakura_core\\workbench\\search\\CSearchWorkbenchTool.cpp": "4d4b02d04ad4bd7e355c03cb161366128f8642b092ad989f26ad9b51cb80ffce",
+        "src\\test\\cpp\\tests1\\workbench\\SearchWorkbenchToolTest.cpp": "4b30722dcb78f2cd3f62108348a27c2a5b1e51d6802c4c998f55273c6bd8ea7c"
+      }
+    },
+    {
+      "label": "delayed-search-probe-restored",
+      "command": [
+        "pwsh",
+        "-NoProfile",
+        "-File",
+        "C:/Users/developer/tmp/sakura-audit-run-tests.ps1",
+        "-Label",
+        "delayed-search-probe-restored",
+        "-Filter",
+        "SearchRequestSafetyTest.DelayedWorkerPublicationAfterInvalidation"
+      ],
+      "exit": 0,
+      "pid": 8864,
+      "seconds": 2.899303674697876,
+      "hashes": {
+        "sakura_core\\workbench\\search\\CSearchWorkbenchTool.cpp": "4d4b02d04ad4bd7e355c03cb161366128f8642b092ad989f26ad9b51cb80ffce",
+        "src\\test\\cpp\\tests1\\workbench\\SearchWorkbenchToolTest.cpp": "4b30722dcb78f2cd3f62108348a27c2a5b1e51d6802c4c998f55273c6bd8ea7c"
+      }
+    },
+    {
+      "label": "delayed-search-normal-build",
+      "command": [
+        "py",
+        "-3",
+        "tools/build/sakura_build.py",
+        "build",
+        "solution",
+        "x64",
+        "Debug",
+        "--jobs",
+        "4"
+      ],
+      "exit": 0,
+      "pid": 45508,
+      "seconds": 28.78737998008728,
+      "hashes": {
+        "sakura_core\\workbench\\search\\CSearchWorkbenchTool.cpp": "2ade5aaff5d2ab82a5b4084e371b46d1247f128ebc9b29a13fa245830ac3cb2e",
+        "src\\test\\cpp\\tests1\\workbench\\SearchWorkbenchToolTest.cpp": "0480086f908ec42477988948c18e88f955152809ccd711ba78995765c4ae8a90"
+      }
+    },
+    {
+      "label": "delayed-search-normal",
+      "command": [
+        "pwsh",
+        "-NoProfile",
+        "-File",
+        "C:/Users/developer/tmp/sakura-audit-run-tests.ps1",
+        "-Label",
+        "delayed-search-normal",
+        "-Filter",
+        "SearchRequestSafetyTest.*:FileLoadOptionsTest.*:SearchWorkbenchToolGeometry.*:ExplorerTool.ProductionWorkerDisplaysJunctionsAsLeaves"
+      ],
+      "exit": 0,
+      "pid": 42832,
+      "seconds": 4.896962404251099,
+      "hashes": {
+        "sakura_core\\workbench\\search\\CSearchWorkbenchTool.cpp": "2ade5aaff5d2ab82a5b4084e371b46d1247f128ebc9b29a13fa245830ac3cb2e",
+        "src\\test\\cpp\\tests1\\workbench\\SearchWorkbenchToolTest.cpp": "0480086f908ec42477988948c18e88f955152809ccd711ba78995765c4ae8a90"
+      }
+    }
+  ],
+  "restored": {
+    "sakura_core\\workbench\\search\\CSearchWorkbenchTool.cpp": "2ade5aaff5d2ab82a5b4084e371b46d1247f128ebc9b29a13fa245830ac3cb2e",
+    "src\\test\\cpp\\tests1\\workbench\\SearchWorkbenchToolTest.cpp": "0480086f908ec42477988948c18e88f955152809ccd711ba78995765c4ae8a90"
+  }
+}

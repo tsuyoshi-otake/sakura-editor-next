@@ -1,0 +1,87 @@
+
+#include "io/CFileLoad.h"
+#include "charset/charcode.h"
+#include <chrono>
+#include <cstdio>
+
+namespace audit_performance { extern unsigned long long converterCreations; }
+
+TEST_F(SearchRequestSafetyTest, DiagnosticReadAndPreviewCost)
+{
+    const char* destination=std::getenv("SAKURA_AUDIT_PERF_OUT");
+    const char* variant=std::getenv("SAKURA_AUDIT_PERF_VARIANT");
+    ASSERT_NE(nullptr,destination);
+    ASSERT_NE(nullptr,variant);
+    const bool borrowed=std::string(variant)=="borrowed";
+    std::ofstream report(destination);
+    ASSERT_TRUE(report.is_open());
+    report<<"kind,readers,iteration,setup_us,scan_us,lines,units,converters,preview_units,max_preview\n";
+    using clock=std::chrono::steady_clock;
+    const auto micros=[](auto a,auto b) {return std::chrono::duration<double,std::micro>(b-a).count();};
+    constexpr std::size_t lineCount=65536;
+    constexpr std::size_t lineBytes=128;
+    std::string corpus;
+    corpus.reserve(lineCount*lineBytes+131080);
+    const std::string line=std::string(126,'x')+"\r\n";
+    for(std::size_t i=0;i<lineCount;++i) corpus+=line;
+    ASSERT_EQ(8u*1024*1024,corpus.size());
+    Write(corpus);
+    for(int count : {1,2,4,8}) {
+        for(int iteration=-1;iteration<5;++iteration) {
+            SCOPED_TRACE(count);
+            SCOPED_TRACE(iteration);
+            audit_performance::converterCreations=0;
+            CFileLoad parent;
+            ASSERT_EQ(CODE_UTF8,parent.FileOpen((root/L"input.txt").c_str(),false,CODE_UTF8,0));
+            const auto begin=clock::now();
+            std::vector<std::unique_ptr<CFileLoad>> readers;
+            readers.reserve(count);
+            for(int i=0;i<count;++i) {
+                auto reader=std::make_unique<CFileLoad>();
+                reader->Prepare(parent,3+corpus.size()*i/count,3+corpus.size()*(i+1)/count);
+                readers.push_back(std::move(reader));
+            }
+            const auto prepared=clock::now();
+            std::size_t lines=0,units=0;
+            for(auto& reader:readers) {
+                CNativeW text;
+                CEol eol;
+                while(reader->ReadLine(&text,&eol)!=RESULT_FAILURE) {
+                    ++lines;units+=text.GetStringLength();
+                }
+            }
+            const auto scanned=clock::now();
+            ASSERT_EQ(lineCount,lines);
+            ASSERT_EQ(corpus.size(),units);
+            ASSERT_EQ(borrowed?1ull:static_cast<unsigned long long>(count+1),audit_performance::converterCreations);
+            if(iteration>=0) report<<"read,"<<count<<","<<iteration<<","<<micros(begin,prepared)<<","
+                <<micros(prepared,scanned)<<","<<lines<<","<<units<<","<<audit_performance::converterCreations<<",0,0\n";
+            // Baseline borrowers are read serially and die before their parent.
+            readers.clear();
+        }
+    }
+    for(std::size_t i=0;i<lineCount;i+=128) corpus.replace(i*lineBytes,6,"needle");
+    corpus+=std::string(131072,'x')+"needle\r\n";
+    Write(corpus);
+    workbench::search::SearchQuery query;
+    query.text=L"needle";
+    for(int iteration=-1;iteration<5;++iteration) {
+        const auto begin=clock::now();
+        const auto result=workbench::search::RunWorkspaceSearch(root.wstring(),query,{});
+        const auto end=clock::now();
+        ASSERT_EQ(513u,result.matchCount);
+        std::size_t units=0,maximum=0;
+        for(const auto& file:result.files) for(const auto& match:file.matches) {
+            units+=match.preview.size();
+            maximum=std::max(maximum,match.preview.size());
+            ASSERT_LE(match.preview.size(),250u);
+            if(!borrowed) EXPECT_EQ(L"needle",match.preview.substr(match.previewOffset,match.previewLength));
+        }
+        const auto& last=result.files.front().matches.back();
+        EXPECT_EQ(131073,last.column);
+        EXPECT_EQ(6,last.length);
+        if(iteration>=0) report<<"preview,1,"<<iteration<<",0,"<<micros(begin,end)<<",0,0,0,"<<units<<","<<maximum<<"\n";
+    }
+    report.close();
+    ASSERT_FALSE(report.fail());
+}

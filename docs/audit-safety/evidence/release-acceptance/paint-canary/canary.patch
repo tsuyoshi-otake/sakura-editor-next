@@ -1,0 +1,10 @@
+--- a/sakura_core/workbench/search/CSearchWorkbenchTool.cpp
++++ b/sakura_core/workbench/search/CSearchWorkbenchTool.cpp
+@@ -1428,6 +1428,7 @@
+ 		if (impl.font.Get() != nullptr) ::SelectObject(dc, impl.font.Get());
+ 		::SetBkMode(dc, TRANSPARENT);
+ 		impl.PaintWidget(dc);
++		FillRectangle(dc, client, RGB(255, 0, 255)); // Diagnostic sensor canary only.
+ 		::RestoreDC(dc, saved);
+ 		return 0;
+ 	}

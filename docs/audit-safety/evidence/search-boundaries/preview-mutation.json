@@ -1,0 +1,147 @@
+{
+  "baseHead": "8868a0cb6e64ba26a3737e0cc16439148eda4265",
+  "originalSha256": "b1a89832d3128103aec3145b03fa5e17ff10cea841a8cb758928a187451bba1f",
+  "runs": [
+    {
+      "command": [
+        "py",
+        "-3",
+        "tools/build/sakura_build.py",
+        "build",
+        "solution",
+        "x64",
+        "Debug",
+        "--jobs",
+        "4"
+      ],
+      "label": "preview-follow-hit-build",
+      "exit": 0,
+      "pid": 47448,
+      "seconds": 35.594695806503296,
+      "sourceSha256": "38c4bbae92c8d5a76962d2f38315d0348ccf46701959384dc423a30fbbbba01b"
+    },
+    {
+      "command": [
+        "pwsh",
+        "-NoProfile",
+        "-File",
+        "C:/Users/developer/tmp/sakura-audit-run-tests.ps1",
+        "-Label",
+        "preview-follow-hit",
+        "-Filter",
+        "SearchRequestSafetyTest.*"
+      ],
+      "label": "preview-follow-hit",
+      "exit": 1,
+      "pid": 56972,
+      "seconds": 5.314151287078857,
+      "sourceSha256": "38c4bbae92c8d5a76962d2f38315d0348ccf46701959384dc423a30fbbbba01b"
+    },
+    {
+      "command": [
+        "py",
+        "-3",
+        "tools/build/sakura_build.py",
+        "build",
+        "solution",
+        "x64",
+        "Debug",
+        "--jobs",
+        "4"
+      ],
+      "label": "preview-start-pair-build",
+      "exit": 0,
+      "pid": 25100,
+      "seconds": 41.403223514556885,
+      "sourceSha256": "2f4737843477471c30d926285e039f264fdcf2dfabf4a92868f109500d3fd7ff"
+    },
+    {
+      "command": [
+        "pwsh",
+        "-NoProfile",
+        "-File",
+        "C:/Users/developer/tmp/sakura-audit-run-tests.ps1",
+        "-Label",
+        "preview-start-pair",
+        "-Filter",
+        "SearchRequestSafetyTest.*"
+      ],
+      "label": "preview-start-pair",
+      "exit": 1,
+      "pid": 4736,
+      "seconds": 4.427889347076416,
+      "sourceSha256": "2f4737843477471c30d926285e039f264fdcf2dfabf4a92868f109500d3fd7ff"
+    },
+    {
+      "command": [
+        "py",
+        "-3",
+        "tools/build/sakura_build.py",
+        "build",
+        "solution",
+        "x64",
+        "Debug",
+        "--jobs",
+        "4"
+      ],
+      "label": "preview-end-pair-build",
+      "exit": 0,
+      "pid": 18308,
+      "seconds": 37.559568881988525,
+      "sourceSha256": "2414b3944c1a0b2de7f94806fa9c0714ada1606d1b24d9f7dffc671e5ae1c84f"
+    },
+    {
+      "command": [
+        "pwsh",
+        "-NoProfile",
+        "-File",
+        "C:/Users/developer/tmp/sakura-audit-run-tests.ps1",
+        "-Label",
+        "preview-end-pair",
+        "-Filter",
+        "SearchRequestSafetyTest.*"
+      ],
+      "label": "preview-end-pair",
+      "exit": 1,
+      "pid": 59908,
+      "seconds": 7.4864959716796875,
+      "sourceSha256": "2414b3944c1a0b2de7f94806fa9c0714ada1606d1b24d9f7dffc671e5ae1c84f"
+    },
+    {
+      "command": [
+        "py",
+        "-3",
+        "tools/build/sakura_build.py",
+        "build",
+        "solution",
+        "x64",
+        "Debug",
+        "--jobs",
+        "4"
+      ],
+      "label": "preview-restored-build",
+      "exit": 0,
+      "pid": 26028,
+      "seconds": 41.77436876296997,
+      "sourceSha256": "b1a89832d3128103aec3145b03fa5e17ff10cea841a8cb758928a187451bba1f"
+    },
+    {
+      "command": [
+        "pwsh",
+        "-NoProfile",
+        "-File",
+        "C:/Users/developer/tmp/sakura-audit-run-tests.ps1",
+        "-Label",
+        "preview-restored",
+        "-Filter",
+        "SearchRequestSafetyTest.*"
+      ],
+      "label": "preview-restored",
+      "exit": 0,
+      "pid": 42652,
+      "seconds": 4.861059188842773,
+      "sourceSha256": "b1a89832d3128103aec3145b03fa5e17ff10cea841a8cb758928a187451bba1f"
+    }
+  ],
+  "restoredSha256": "b1a89832d3128103aec3145b03fa5e17ff10cea841a8cb758928a187451bba1f"
+}

@@ -76,6 +76,8 @@ def _is_documentation(change: CiChangedFile) -> bool:
         return False
     path = PurePosixPath(change.path)
     lower_path = change.path.lower()
+    if path.suffix.lower() in {".tla", ".cfg"}:
+        return False
     if lower_path.startswith("docs/"):
         return True
     if path.suffix.lower() in _DOC_SUFFIXES:

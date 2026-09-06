@@ -1,0 +1,78 @@
+{
+  "search-options-debug.log": {
+    "rawSha256": "97d2eb75a78fa41b7346416d438b09a460c7331640894f32a9af264740fbee6e",
+    "publishedSha256": "97d2eb75a78fa41b7346416d438b09a460c7331640894f32a9af264740fbee6e"
+  },
+  "search-options-debug.xml": {
+    "rawSha256": "d8ebdd48cc24e561890959fd52d597d568566a0bc0413b797cd32212b867db4f",
+    "publishedSha256": "d8ebdd48cc24e561890959fd52d597d568566a0bc0413b797cd32212b867db4f"
+  },
+  "search-boundaries-debug.log": {
+    "rawSha256": "44ba4f51f570b895f5f5abac18c27f0383dab68bfeaea626582b7bc2ab710909",
+    "publishedSha256": "44ba4f51f570b895f5f5abac18c27f0383dab68bfeaea626582b7bc2ab710909"
+  },
+  "search-boundaries-debug.xml": {
+    "rawSha256": "7d204bfd781ac7465798a1e1adfd8f1cd8a76ee2d7ca559bbe10cb8cc7d7a2d4",
+    "publishedSha256": "7d204bfd781ac7465798a1e1adfd8f1cd8a76ee2d7ca559bbe10cb8cc7d7a2d4"
+  },
+  "search-boundaries-final-debug.log": {
+    "rawSha256": "a37ca4bd618275da67e3c7e38cf544bbddd564b29843a90d7270f4ee710ffb3e",
+    "publishedSha256": "a37ca4bd618275da67e3c7e38cf544bbddd564b29843a90d7270f4ee710ffb3e"
+  },
+  "search-boundaries-final-debug.xml": {
+    "rawSha256": "cbc8f24bda278341f35b9b3470deaa2f6f79e9b72c3fb88e528e0f75975910e6",
+    "publishedSha256": "cbc8f24bda278341f35b9b3470deaa2f6f79e9b72c3fb88e528e0f75975910e6"
+  },
+  "search-boundaries-final-release.log": {
+    "rawSha256": "c26b4a56d53db72b2ba2a1b31d915b968c35f77cd8f50480068749af822a62b4",
+    "publishedSha256": "c26b4a56d53db72b2ba2a1b31d915b968c35f77cd8f50480068749af822a62b4"
+  },
+  "search-boundaries-final-release.xml": {
+    "rawSha256": "697993432ab93f93221253aeaf13146f91b2d05e7deea30f9af17ccd92c6007b",
+    "publishedSha256": "697993432ab93f93221253aeaf13146f91b2d05e7deea30f9af17ccd92c6007b"
+  },
+  "preview-follow-hit.log": {
+    "rawSha256": "7d1f04e4f9eefbd4a49342ee9097c106638f88bc07a5941b3987a65b3665f503",
+    "publishedSha256": "7d1f04e4f9eefbd4a49342ee9097c106638f88bc07a5941b3987a65b3665f503"
+  },
+  "preview-follow-hit.xml": {
+    "rawSha256": "048a67cf0403228610d6fc721bc8d49bc8423e8c58e3177a341cd5e8607862f8",
+    "publishedSha256": "048a67cf0403228610d6fc721bc8d49bc8423e8c58e3177a341cd5e8607862f8"
+  },
+  "preview-start-pair.log": {
+    "rawSha256": "76870ed9f89c11e90b0d212bb59b61a0dad972825fc87681acfc1cad08b7700a",
+    "publishedSha256": "76870ed9f89c11e90b0d212bb59b61a0dad972825fc87681acfc1cad08b7700a"
+  },
+  "preview-start-pair.xml": {
+    "rawSha256": "712d8055d6273bac8aaa29d5124ef48245711672e60e3e3acc2211b1857ca9e8",
+    "publishedSha256": "712d8055d6273bac8aaa29d5124ef48245711672e60e3e3acc2211b1857ca9e8"
+  },
+  "preview-end-pair.log": {
+    "rawSha256": "c484758840f4c56334120f8ff66f86a948b4b6a1ab372b95cc4ab80e9764e81c",
+    "publishedSha256": "c484758840f4c56334120f8ff66f86a948b4b6a1ab372b95cc4ab80e9764e81c"
+  },
+  "preview-end-pair.xml": {
+    "rawSha256": "4b2587502d6bbdd0a03378caaffb69cd6d1efc2d28dac7c67d8db495ecf3c59e",
+    "publishedSha256": "4b2587502d6bbdd0a03378caaffb69cd6d1efc2d28dac7c67d8db495ecf3c59e"
+  },
+  "preview-restored.log": {
+    "rawSha256": "ef8a86c5e4b5d034aca68309181c8e9cfd057c59a11408b3fb48ce7a9f043ae8",
+    "publishedSha256": "ef8a86c5e4b5d034aca68309181c8e9cfd057c59a11408b3fb48ce7a9f043ae8"
+  },
+  "preview-restored.xml": {
+    "rawSha256": "375fa8e6055702b6a5e6954e2a3cffeff705cd0600900febda390594c45c4c7e",
+    "publishedSha256": "375fa8e6055702b6a5e6954e2a3cffeff705cd0600900febda390594c45c4c7e"
+  },
+  "search-boundaries-restored-debug.log": {
+    "rawSha256": "ecbac9a663783ed27d9561908c6f4001b9d0235b9a545a5690e9c7fc31321c6f",
+    "publishedSha256": "ecbac9a663783ed27d9561908c6f4001b9d0235b9a545a5690e9c7fc31321c6f"
+  },
+  "search-boundaries-restored-debug.xml": {
+    "rawSha256": "cb4b289e70d71eccd04bd5fa71f8b012c188af520f1327d890488c4c14e18877",
+    "publishedSha256": "cb4b289e70d71eccd04bd5fa71f8b012c188af520f1327d890488c4c14e18877"
+  },
+  "sourceSha256": {
+    "sakura_core\\workbench\\search\\WorkspaceSearchEngine.cpp": "b1a89832d3128103aec3145b03fa5e17ff10cea841a8cb758928a187451bba1f",
+    "src\\test\\cpp\\tests1\\workbench\\SearchWorkbenchToolTest.cpp": "0480086f908ec42477988948c18e88f955152809ccd711ba78995765c4ae8a90"
+  }
+}

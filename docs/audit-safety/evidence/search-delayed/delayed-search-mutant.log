@@ -1,0 +1,96 @@
+Running main() from C:\Users\developer\tmp\sakura-audit-safety\src\test\resources\code-main.cpp
+Note: Google Test filter = SearchRequestSafetyTest.DelayedWorkerPublicationAfterInvalidation
+[==========] Running 1 test from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 1 test from SearchRequestSafetyTest
+[ RUN      ] SearchRequestSafetyTest.DelayedWorkerPublicationAfterInvalidation
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(523): error: Expected equality of these values:
+  scenario == 6 ? 0 : 1
+    Which is: 1
+  probe::dropped.load()
+    Which is: 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(484): 0
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(524): error: Expected equality of these values:
+  scenario == 6 ? 1 : 0
+    Which is: 0
+  probe::published.load()
+    Which is: 1
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(484): 0
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(523): error: Expected equality of these values:
+  scenario == 6 ? 0 : 1
+    Which is: 1
+  probe::dropped.load()
+    Which is: 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(484): 1
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(524): error: Expected equality of these values:
+  scenario == 6 ? 1 : 0
+    Which is: 0
+  probe::published.load()
+    Which is: 1
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(484): 1
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(523): error: Expected equality of these values:
+  scenario == 6 ? 0 : 1
+    Which is: 1
+  probe::dropped.load()
+    Which is: 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(484): 2
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(524): error: Expected equality of these values:
+  scenario == 6 ? 1 : 0
+    Which is: 0
+  probe::published.load()
+    Which is: 1
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(484): 2
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(523): error: Expected equality of these values:
+  scenario == 6 ? 0 : 1
+    Which is: 1
+  probe::dropped.load()
+    Which is: 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(484): 3
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(524): error: Expected equality of these values:
+  scenario == 6 ? 1 : 0
+    Which is: 0
+  probe::published.load()
+    Which is: 1
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(484): 3
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(523): error: Expected equality of these values:
+  scenario == 6 ? 0 : 1
+    Which is: 1
+  probe::dropped.load()
+    Which is: 0
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(484): 5
+
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(524): error: Expected equality of these values:
+  scenario == 6 ? 1 : 0
+    Which is: 0
+  probe::published.load()
+    Which is: 1
+Google Test trace:
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(484): 5
+
+[  FAILED  ] SearchRequestSafetyTest.DelayedWorkerPublicationAfterInvalidation (159 ms)
+[----------] 1 test from SearchRequestSafetyTest (161 ms total)
+
+[----------] Global test environment tear-down
+[==========] 1 test from 1 test suite ran. (187 ms total)
+[  PASSED  ] 0 tests.
+[  FAILED  ] 1 test, listed below:
+[  FAILED  ] SearchRequestSafetyTest.DelayedWorkerPublicationAfterInvalidation
+
+ 1 FAILED TEST

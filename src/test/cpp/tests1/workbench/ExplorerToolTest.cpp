@@ -5,6 +5,7 @@
 	SPDX-License-Identifier: Zlib
 */
 #include "pch.h"
+#include "cxx/ResourceHolder.hpp"
 
 #include <gtest/gtest.h>
 
@@ -618,11 +619,11 @@ TEST(ExplorerTool, ProductionWorkerDisplaysJunctionsAsLeaves)
 	const auto junction = root.Path() / L"junction";
 	ASSERT_TRUE(CreateDirectoryJunction(junction, targetDirectory)) << ::GetLastError();
 
-	const HWND parent = CreateHiddenParentWindow();
-	ASSERT_NE(nullptr, parent);
+	const cxx::ResourceHolder<&::DestroyWindow> parent{CreateHiddenParentWindow()};
+	ASSERT_NE(nullptr, parent.get());
 	CExplorerTool tool;
 	tool.SetRoot(root.Path().wstring());
-	ASSERT_TRUE(tool.Create(parent));
+	ASSERT_TRUE(tool.Create(parent.get()));
 	const HWND tree = ::FindWindowExW(tool.GetHwnd(), nullptr, WC_TREEVIEWW, nullptr);
 	ASSERT_NE(nullptr, tree);
 	ASSERT_TRUE(PumpMessagesUntil([&] {
@@ -634,8 +635,11 @@ TEST(ExplorerTool, ProductionWorkerDisplaysJunctionsAsLeaves)
 	EXPECT_EQ(nullptr, TreeView_GetChild(tree, junctionItem));
 
 	tool.Close();
+	// Close hands the worker to bounded asynchronous retirement.
+	EXPECT_TRUE(PumpMessagesUntil([&] {
+		return tool.GetWorkerState() == workbench::explorer::ExplorerWorkerState::Stopped;
+	}, std::chrono::seconds(2)));
 	EXPECT_EQ(workbench::explorer::ExplorerWorkerState::Stopped, tool.GetWorkerState());
-	::DestroyWindow(parent);
 }
 
 TEST(ExplorerTool, ProductionWorkerRejectsOldRootsAndDebouncesDirectoryChanges)

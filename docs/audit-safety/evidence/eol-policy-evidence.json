@@ -1,0 +1,28 @@
+{
+  "source_head": "25cbbe9015e85b2b04a6cdb14e1c72ef13546eb3",
+  "production_source_sha256": "debc618e88d53a3f588b77ef80e4f55a07131a4c3c0ebe9f7469d146c3b942ef",
+  "test_source_sha256": "920d735797595491dc816728ef5ef5b17ca82768c875e2a760b3416329c1bee6",
+  "logs": [
+    {
+      "file": "eol-policy-red.log",
+      "raw_sha256": "c4f342b40a18ae9032dafb675d6ac6a999ffa8256342d3ccae0003f6ef414b81",
+      "published_sha256": "f76da2db18b2c01d10b5c899cb90d258ce62cdb6bdb516c95d60feb27b010701"
+    },
+    {
+      "file": "eol-policy-green.log",
+      "raw_sha256": "97d6632fb6ced115b2a4416816125b710f3e588d6eb97bea4e7b931c10a9cf8f",
+      "published_sha256": "bb3a6340605dc15f85634e415b2d249159c021f7130a633331da03c313f1734e"
+    },
+    {
+      "file": "eol-policy-release.log",
+      "raw_sha256": "13bab2bf457800661b55f325008ba44272ef36d13c52d1c1dd4bc73255811c00",
+      "published_sha256": "11b9a79ee38239ac7493a0c8f1f8bdc4c2e2606e7196b4ee829472cd2cdbb306"
+    },
+    {
+      "file": "prepare-state-release.log",
+      "raw_sha256": "b4a2fc180fb67947cdc252cfdae4a6fd2c1c4fc54e4811a64f2e53fbaf2e162b",
+      "published_sha256": "d8cf36ae658f213b1a05259b277f46ae8efbf2de41d3c1d15f0d2f543bf3a795"
+    }
+  ],
+  "normalization": "CRLF to LF; remaining CR escaped as literal \\r"
+}

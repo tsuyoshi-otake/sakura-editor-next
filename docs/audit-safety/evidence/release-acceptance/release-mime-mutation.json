@@ -1,0 +1,79 @@
+{
+  "head": "01e1f25e90de833f032768e64d9929c378f53090",
+  "source": "sakura_core\\io\\CFileLoad.cpp",
+  "before_sha256": "aaf08b4c158506e1a32e4068d1d7699b23750e9f8e51dd2e323bc5a4c6c45eac",
+  "runs": [
+    {
+      "label": "release-mime-mutant-build",
+      "command": [
+        "py",
+        "-3",
+        "tools/build/sakura_build.py",
+        "build",
+        "solution",
+        "x64",
+        "Debug",
+        "--jobs",
+        "4"
+      ],
+      "exit": 0,
+      "seconds": 24.70820610001101,
+      "source_sha256": "9488bf685ad2d4b8d2fdccc436196b2c835c5fc9aea00926bf1d9f88f5c055a3"
+    },
+    {
+      "label": "release-mime-mutant",
+      "command": [
+        "pwsh",
+        "-NoProfile",
+        "-File",
+        "C:/Users/developer/tmp/sakura-audit-run-tests.ps1",
+        "-Label",
+        "release-mime-mutant",
+        "-Filter",
+        "FileLoadOptionsTest.*",
+        "-TimeoutSeconds",
+        "120"
+      ],
+      "exit": 1,
+      "seconds": 2.8340833999973256,
+      "source_sha256": "9488bf685ad2d4b8d2fdccc436196b2c835c5fc9aea00926bf1d9f88f5c055a3"
+    },
+    {
+      "label": "release-mime-restored-build",
+      "command": [
+        "py",
+        "-3",
+        "tools/build/sakura_build.py",
+        "build",
+        "solution",
+        "x64",
+        "Debug",
+        "--jobs",
+        "4"
+      ],
+      "exit": 0,
+      "seconds": 24.52454489999218,
+      "source_sha256": "aaf08b4c158506e1a32e4068d1d7699b23750e9f8e51dd2e323bc5a4c6c45eac"
+    },
+    {
+      "label": "release-mime-restored",
+      "command": [
+        "pwsh",
+        "-NoProfile",
+        "-File",
+        "C:/Users/developer/tmp/sakura-audit-run-tests.ps1",
+        "-Label",
+        "release-mime-restored",
+        "-Filter",
+        "FileLoadOptionsTest.*",
+        "-TimeoutSeconds",
+        "120"
+      ],
+      "exit": 0,
+      "seconds": 2.603051099984441,
+      "source_sha256": "aaf08b4c158506e1a32e4068d1d7699b23750e9f8e51dd2e323bc5a4c6c45eac"
+    }
+  ],
+  "mutant_sha256": "9488bf685ad2d4b8d2fdccc436196b2c835c5fc9aea00926bf1d9f88f5c055a3",
+  "restored_sha256": "aaf08b4c158506e1a32e4068d1d7699b23750e9f8e51dd2e323bc5a4c6c45eac"
+}

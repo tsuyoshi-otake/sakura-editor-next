@@ -1,0 +1,35 @@
+   Compiling sakura-native-ffi v0.1.0 (C:\Users\developer\tmp\sakura-audit-safety\rust\native\sakura_native_ffi)
+    Finished `release` profile [optimized] target(s) in 6.61s
+     Running unittests src\lib.rs (target\release\deps\sakura_native_ffi-da4c68edb5e4fb66.exe)
+
+running 1 test
+
+thread 'output_provider::tests::provider_snapshot_write_rejects_each_mutated_semantic_receipt_field_without_consuming_it' (17020) panicked at sakura_native_ffi\src\output_provider.rs:1481:13:
+assertion `left == right` failed: original receipt must remain usable after mutating measurement_id
+  left: Ok
+ right: InvalidArgument
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test output_provider::tests::provider_snapshot_write_rejects_each_mutated_semantic_receipt_field_without_consuming_it ... FAILED
+
+failures:
+
+failures:
+    output_provider::tests::provider_snapshot_write_rejects_each_mutated_semantic_receipt_field_without_consuming_it
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 48 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p sakura-native-ffi --lib`
+     Running unittests src\lib.rs (target\release\deps\sakura_simd-ebf34f676f1e3abf.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target\release\deps\sakura_unicode_core-943ea1ff25c9b57a.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.00s
+
+error: 1 target failed:
+    `-p sakura-native-ffi --lib`

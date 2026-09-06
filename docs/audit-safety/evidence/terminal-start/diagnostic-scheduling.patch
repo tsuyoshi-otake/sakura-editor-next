@@ -1,0 +1,13 @@
+--- a/sakura_core/terminal/session/TerminalSession.cpp
++++ b/sakura_core/terminal/session/TerminalSession.cpp
+@@ -1175,0 +1176,10 @@
++		// Diagnostic-only scheduling barrier; never publish this probe.
++		const auto probeDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
++		for (;;) {
++			{
++				const std::lock_guard probeLock(impl->closeMutex);
++				if (impl->closeStarted) break;
++			}
++			if (std::chrono::steady_clock::now() >= probeDeadline) break;
++			std::this_thread::yield();
++		}

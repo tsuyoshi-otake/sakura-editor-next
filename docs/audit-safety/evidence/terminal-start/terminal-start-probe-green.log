@@ -1,0 +1,14 @@
+Running main() from C:\Users\developer\tmp\sakura-audit-safety\src\test\resources\code-main.cpp
+Note: Google Test filter = CTaskTerminalSessionFactory.ProcessLaunchPreservesExecutableAndArgumentTokens:CTaskTerminalSessionFactory.ImmediateWorkerCompletionPreservesSuccessfulStartAndOneTerminalResult
+[==========] Running 2 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 2 tests from CTaskTerminalSessionFactory
+[ RUN      ] CTaskTerminalSessionFactory.ProcessLaunchPreservesExecutableAndArgumentTokens
+[       OK ] CTaskTerminalSessionFactory.ProcessLaunchPreservesExecutableAndArgumentTokens (2 ms)
+[ RUN      ] CTaskTerminalSessionFactory.ImmediateWorkerCompletionPreservesSuccessfulStartAndOneTerminalResult
+[       OK ] CTaskTerminalSessionFactory.ImmediateWorkerCompletionPreservesSuccessfulStartAndOneTerminalResult (424 ms)
+[----------] 2 tests from CTaskTerminalSessionFactory (429 ms total)
+
+[----------] Global test environment tear-down
+[==========] 2 tests from 1 test suite ran. (435 ms total)
+[  PASSED  ] 2 tests.

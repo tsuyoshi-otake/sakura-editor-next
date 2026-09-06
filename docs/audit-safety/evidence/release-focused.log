@@ -1,0 +1,42 @@
+Running main() from C:\Users\developer\tmp\sakura-audit-safety\src\test\resources\code-main.cpp
+Note: Google Test filter = FileLoadOptionsTest.*:SearchRequestSafetyTest.*:SearchWorkbenchToolGeometry.*
+[==========] Running 13 tests from 3 test suites.
+[----------] Global test environment set-up.
+[----------] 7 tests from SearchWorkbenchToolGeometry
+[ RUN      ] SearchWorkbenchToolGeometry.MatchesVsCodeSearchWidgetAtDefaultDpi
+[       OK ] SearchWorkbenchToolGeometry.MatchesVsCodeSearchWidgetAtDefaultDpi (0 ms)
+[ RUN      ] SearchWorkbenchToolGeometry.ReplaceRowUsesCssMarginsAndCentersNativeEdit
+[       OK ] SearchWorkbenchToolGeometry.ReplaceRowUsesCssMarginsAndCentersNativeEdit (0 ms)
+[ RUN      ] SearchWorkbenchToolGeometry.PreservesCssRelationshipsAcrossSupportedDpi
+[       OK ] SearchWorkbenchToolGeometry.PreservesCssRelationshipsAcrossSupportedDpi (0 ms)
+[ RUN      ] SearchWorkbenchToolGeometry.MeasuredLineHeightCentersTheCaretLineNotJustTheHwnd
+[       OK ] SearchWorkbenchToolGeometry.MeasuredLineHeightCentersTheCaretLineNotJustTheHwnd (0 ms)
+[ RUN      ] SearchWorkbenchToolGeometry.MeasuredLineHeightStaysCenteredAcrossSupportedDpi
+[       OK ] SearchWorkbenchToolGeometry.MeasuredLineHeightStaysCenteredAcrossSupportedDpi (0 ms)
+[ RUN      ] SearchWorkbenchToolGeometry.LineHeightTallerThanTheBoxIsClampedToTheBox
+[       OK ] SearchWorkbenchToolGeometry.LineHeightTallerThanTheBoxIsClampedToTheBox (0 ms)
+[ RUN      ] SearchWorkbenchToolGeometry.ClampsNarrowClientWithoutNegativeEditBounds
+[       OK ] SearchWorkbenchToolGeometry.ClampsNarrowClientWithoutNegativeEditBounds (0 ms)
+[----------] 7 tests from SearchWorkbenchToolGeometry (7 ms total)
+
+[----------] 4 tests from SearchRequestSafetyTest
+[ RUN      ] SearchRequestSafetyTest.LongLinePreviewContainsTheActualMatch
+[       OK ] SearchRequestSafetyTest.LongLinePreviewContainsTheActualMatch (12 ms)
+[ RUN      ] SearchRequestSafetyTest.PreviewDoesNotSplitUtf16SurrogatePair
+[       OK ] SearchRequestSafetyTest.PreviewDoesNotSplitUtf16SurrogatePair (25 ms)
+[ RUN      ] SearchRequestSafetyTest.ClearingQueryRejectsAlreadyPostedCompletion
+[       OK ] SearchRequestSafetyTest.ClearingQueryRejectsAlreadyPostedCompletion (88 ms)
+[ RUN      ] SearchRequestSafetyTest.SeededPreviewWindowsPreserveSourceCoordinatesAndHitText
+[       OK ] SearchRequestSafetyTest.SeededPreviewWindowsPreserveSourceCoordinatesAndHitText (728 ms)
+[----------] 4 tests from SearchRequestSafetyTest (856 ms total)
+
+[----------] 2 tests from FileLoadOptionsTest
+[ RUN      ] FileLoadOptionsTest.MimeOptionIsAppliedOnEachOpenAndReopen
+[       OK ] FileLoadOptionsTest.MimeOptionIsAppliedOnEachOpenAndReopen (3 ms)
+[ RUN      ] FileLoadOptionsTest.AutoDetectionUsesConstructionSnapshot
+[       OK ] FileLoadOptionsTest.AutoDetectionUsesConstructionSnapshot (1 ms)
+[----------] 2 tests from FileLoadOptionsTest (6 ms total)
+
+[----------] Global test environment tear-down
+[==========] 13 tests from 3 test suites ran. (995 ms total)
+[  PASSED  ] 13 tests.

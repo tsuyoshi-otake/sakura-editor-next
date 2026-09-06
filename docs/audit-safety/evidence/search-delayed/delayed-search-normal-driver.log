@@ -1,0 +1,19 @@
+[       OK ] FileLoadOptionsTest.PreparedReaderPreservesExtendedEolBoundaries (5 ms)
+[ RUN      ] FileLoadOptionsTest.PreparedUtf7ReaderResetsPreviousDecodedLineOffset
+[       OK ] FileLoadOptionsTest.PreparedUtf7ReaderResetsPreviousDecodedLineOffset (7 ms)
+[ RUN      ] FileLoadOptionsTest.ExtendedEolPolicyIsStableUntilReopen
+[       OK ] FileLoadOptionsTest.ExtendedEolPolicyIsStableUntilReopen (23 ms)
+[ RUN      ] FileLoadOptionsTest.PreparedReaderRetainsMappingAfterParentDestruction
+[       OK ] FileLoadOptionsTest.PreparedReaderRetainsMappingAfterParentDestruction (8 ms)
+[ RUN      ] FileLoadOptionsTest.PrepareReplacesActiveMappingAndRejectsInvalidSlices
+[       OK ] FileLoadOptionsTest.PrepareReplacesActiveMappingAndRejectsInvalidSlices (3 ms)
+[ RUN      ] FileLoadOptionsTest.FailedOpenAndEmptyMappingCanBeReused
+[       OK ] FileLoadOptionsTest.FailedOpenAndEmptyMappingCanBeReused (7 ms)
+[ RUN      ] FileLoadOptionsTest.PreparedReadersOwnConvertersWithInheritedMimeOptions
+[       OK ] FileLoadOptionsTest.PreparedReadersOwnConvertersWithInheritedMimeOptions (123 ms)
+[----------] 9 tests from FileLoadOptionsTest (194 ms total)
+
+[----------] Global test environment tear-down
+[==========] 23 tests from 4 test suites ran. (1879 ms total)
+[  PASSED  ] 23 tests.
+ElapsedSeconds=4.4496191 OwnedSurvivors=0

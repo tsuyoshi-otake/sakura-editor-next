@@ -103,3 +103,23 @@ develop `36f0c2550` 時点の以下を対象とする。
   ミューテックス名は「勝者が生きている間だけ存在」とした。
 - ランチャープロセス自体の死亡、共有メモリのバージョン不一致失敗、放棄された
   初期化ミューテックスの回復 (`MYWM_RECOVER_APPNODE`) は対象外。
+
+## SearchRequestLifecycle (#290)
+
+Run `python tools/verify-search-lifecycle.py --jar <tla2tools.jar> --output <evidence-directory>`.
+The runner requires the SHA-256-pinned official v1.7.4 jar (TLC 2.19), limits each
+Java process to 512 MiB and 60 seconds, checks complete positive exploration,
+and requires the intended `CurrentResults` invariant counterexample in both
+negative configurations. Missing Java, timeout, wrong jar, parse errors and
+unrelated invariant failures fail the gate. Architecture gates run it
+unconditionally and upload source/model/config/tool identity plus logs.
+
+Model-to-code mapping: `Edit` is immediate `InvalidateSearch` on input/root
+change; `Debounce`/`Start` are pending worker admission; `Finish` is the bounded
+latest-result mailbox publication; `Apply` is `AcceptResult`; `Replace` is
+`RunReplace` admission; `Close` revokes the HWND/mailbox owner. The revision
+abstracts both root and search pattern; it does not model replacement content,
+file publication, operating-system notification failures or regex engine stalls.
+Three input revisions and depth-one pending/running/mailbox slots are explored.
+The empty-invalidation negative retains the old generation when input is cleared;
+the generation-check negative accepts a queued result after a newer input.

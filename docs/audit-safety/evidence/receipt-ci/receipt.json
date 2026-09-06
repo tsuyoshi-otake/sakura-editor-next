@@ -1,0 +1,174 @@
+{
+  "base_sha": "8d35fa298987f38b01767d22a275dcc828f1376a",
+  "source_path": "rust/native/sakura_native_ffi/src/output_provider.rs",
+  "original_lf_sha256": "082ff880ae0395ff7cde8bf626e59e18d7768a5b72f78d1c2b2d59276759c3ca",
+  "final_lf_sha256": "fb45899e09c27dba264d89a6cce4ee0f9c7f1f377165ecbaf6a808c123120dd0",
+  "production_prefix_equal": true,
+  "removed_test_names": [],
+  "added_test_names": [
+    "provider_receipt_evicted_by_another_provider_fails_closed_and_can_be_remeasured"
+  ],
+  "ci": {
+    "run": 33970851763,
+    "job": 101319472738,
+    "crate_passed": 48,
+    "crate_failed": 1,
+    "cargo_exit": 101,
+    "failure": "Original valid receipt write returned InvalidArgument after mutating measurement_id; expected Ok."
+  },
+  "diagnosis": "The existing capacity test can evict another test receipt between its measure and write. An ordered invocation of that actual capacity test reproduces the CI assertion. Ten ordinary baseline Release runs did not reproduce it; the exact CI interleaving was not recorded.",
+  "guarantees": "Isolation applies only to test lifecycles using the process-global registry. Product registry budget and typed rejection are unchanged. Existing worker-thread concurrency tests and default Cargo scheduling remain. The new regression covers ordered cross-provider eviction and remeasurement through exports.",
+  "test_counts": {
+    "native_ffi": 50,
+    "simd": 5,
+    "unicode_core": 12,
+    "ignored": 0,
+    "filtered_in_full_runs": 0
+  },
+  "gates": {
+    "semantic_strict_exit": 0,
+    "baseline_changed": false,
+    "new_findings": [],
+    "increases": [],
+    "missing_touched_reductions": [],
+    "semantic_source_fingerprint": "sha256:2093ce313a54f9c46a43a1c69e6dae3ffc641826320615d90c4964c04c449d12",
+    "validation_checkout": "isolated base checkout plus this Rust test change; Clipboard changes excluded",
+    "fmt_check_exit": 0,
+    "clippy_all_targets_all_features_exit": 0,
+    "checkout_invariance_exit": 0,
+    "generate_check_exit": 0,
+    "graph_all_contexts_exit": 0,
+    "release_staticlib_build_exit": 0
+  },
+  "published_log_hashes": {
+    "baseline-parallel-1.log": {
+      "raw_sha256": "a90009000a1c7ce7014b61cb4a99119b1b438adf834cf2c65c58fca43c4390aa",
+      "published_sha256": "31275eccb678f775191de49bb6376299ec1340b168747c133499a3ff8a6008a0"
+    },
+    "baseline-parallel-10.log": {
+      "raw_sha256": "3eba8da73d9b597ed6f76225abd9f7dc87df56038121ea329ec9cee45f416a85",
+      "published_sha256": "2a7c17f10a09354f879586ff5b8aba608c890d5e84dafdba36de1425134e9d9d"
+    },
+    "baseline-parallel-2.log": {
+      "raw_sha256": "d213213e7b6c34cd348f25c2f7335d63916092d87d019e13ddbbad2218b3db63",
+      "published_sha256": "3facee03228031ade48824fa5a1224898e662f26f94ec0122fe98fc2ac21335c"
+    },
+    "baseline-parallel-3.log": {
+      "raw_sha256": "c187ad8683c4fb17af12d1eac89475ee8036dbe08616009440df9efb155d2472",
+      "published_sha256": "23a75909555ed835ead104eb95888c039f86e294ac765730081c0e65e98554b0"
+    },
+    "baseline-parallel-4.log": {
+      "raw_sha256": "c85b67374ceb8919186fd3dbd1a258cdbc12ac4dcd5ec28f9a3a69419aae9ea3",
+      "published_sha256": "24b039fed97324c13bab44f2e9aeb20d6350ce2062ad662ea97b336387da2ab9"
+    },
+    "baseline-parallel-5.log": {
+      "raw_sha256": "260dc6b259760ca17c43450c29d6db05a897fd6e241d26feb64b9b976698fbaf",
+      "published_sha256": "bd85c075da615c502e8443fdec8ebc5e1fed4ac469e5611a781d593d2c6b911e"
+    },
+    "baseline-parallel-6.log": {
+      "raw_sha256": "f8fe667c7da8ec5da77c5f10df0ae110b87f12655ecf820d264fc025ca245ecd",
+      "published_sha256": "4ba4161d14126834ec2b6e9df422b7e987d276f47a18762177bd57d6f15c95d9"
+    },
+    "baseline-parallel-7.log": {
+      "raw_sha256": "0dbefcf5f705fad6b76ad4582fe5ca5282f75cd59165e3f18236ca797df50b73",
+      "published_sha256": "69aa4165d00e3e9dd13509977e689be4e384cbaf772458e2a287cea00df81b59"
+    },
+    "baseline-parallel-8.log": {
+      "raw_sha256": "5a23a0f07ef4a4c79f3c08607b3d607964af02d84f19b25e79b831a41c87d74a",
+      "published_sha256": "14f5f0ccb4ddd892ae9817cd7b314522527000567b2dd14ac49a5b3702b535ed"
+    },
+    "baseline-parallel-9.log": {
+      "raw_sha256": "6d13642e544e5d0e2ab173ce4a95e5177e0c78ba0af7156183d42e2eec6de161",
+      "published_sha256": "20806a2aa653f699fb433883aed939b2253ba5c681189791c1f135c23a0df844"
+    },
+    "baseline-parallel-receipt.json": {
+      "raw_sha256": "ca1e3eae4f9339bb3af501745aa2f92fc56e2673ab189d5223569ab1a947e03f",
+      "published_sha256": "25271c20a8aa39dbdd422924b47ffdb2b9afbff36c95c87278602adf3120d6a9"
+    },
+    "final-release-1.log": {
+      "raw_sha256": "b05f6116ee71158f0005b482a64c5cae29f8de7ec279281ccf4a0514ac2da63b",
+      "published_sha256": "45c0aa222423a785f36b03d43adc9cf0e22265dcb8ebc65d05bad5fcceb4afa5"
+    },
+    "final-release-receipt.json": {
+      "raw_sha256": "01a416dba879077bd10689c4a93f54fc9f6fcca2507238dddfefd599515a94c8",
+      "published_sha256": "f1df965a8d66f442beb558bb51cb2602f1447cc5d8d979801ae10d7daacc0a5c"
+    },
+    "fixed-debug-1.log": {
+      "raw_sha256": "181fe8af2926c9920eb61b386fc337774725644514c09e5da0b3547a25128447",
+      "published_sha256": "3f0331a14bad4ba75443b94a0844ec4e28fa15b8898dc27414f3f2d9299e1005"
+    },
+    "fixed-debug-receipt.json": {
+      "raw_sha256": "d71b8b2b6cb9ace69223d24785fb98537b6dd48561292667e90f72cca24554db",
+      "published_sha256": "5e896aa349f90adc7d46bde8feee4bb54e44597a4f4ff980af8fb80637e77364"
+    },
+    "fixed-parallel-1.log": {
+      "raw_sha256": "395be852ee44774e5ed2171efb3f7994da69082e556f2b239c9b3f961656fd2c",
+      "published_sha256": "b0610df5c27969dae88dfef33f3d4f393b2c383179305afc99f14f9514a4d5ef"
+    },
+    "fixed-parallel-10.log": {
+      "raw_sha256": "a01a776051f45b78e55616cc17c4c349fd5d26b21fc9d463beaadd74712cca56",
+      "published_sha256": "5a082cab34729f579321c4350aeee33c5006a3124ddcf3e7163bd5b06166dffa"
+    },
+    "fixed-parallel-2.log": {
+      "raw_sha256": "1de7f3a915b22a1c65e4e0ec42a9ed89cf60e76e9778c1541c96ad3268dd4cc6",
+      "published_sha256": "ef8a1c8d08a57cde0063fb57c32e76777839f357a0fa26905f2e4e4d90d30e9f"
+    },
+    "fixed-parallel-3.log": {
+      "raw_sha256": "8f6dab5d71200b24694d481687aeab43226509264324208dd158e77097cd0e3e",
+      "published_sha256": "acd6a45b06a76e37fefe7f9cf12b44a775c3b8d571a2c5a24523c49dd815d1bb"
+    },
+    "fixed-parallel-4.log": {
+      "raw_sha256": "e4db09c9f9ecdd65907c66ad654d0ff68d15188061f6c826f2c97d3be823c7e3",
+      "published_sha256": "008528c38bc2d5a2cf75e87d8e797149cc2db6a1dcaf0298afbfd7e9df109352"
+    },
+    "fixed-parallel-5.log": {
+      "raw_sha256": "070409b83debc6283021897636d43c127475c61ae20bad85b3174d616328fb27",
+      "published_sha256": "bad32d40a7705b99c9b904b9164ad9079061c91eaecf81eff95b53ccf9ddd848"
+    },
+    "fixed-parallel-6.log": {
+      "raw_sha256": "9f203fbf8c34c3d0c77f9e9babc43150bc8944033b3e0ef00aee6799f12b4a70",
+      "published_sha256": "bfb1ab05519e6802f904d2c384ea3bf64098e96d9f4fe85d4a645fdb9c50e8d3"
+    },
+    "fixed-parallel-7.log": {
+      "raw_sha256": "fe84f224e55113a9a78c4c331c6170d2d49e8d94e2ef0e16c70f6e9fafb74d35",
+      "published_sha256": "7a033debf1ed95906db238cb4110ef37ed6a2c47b31f49689af586d589f36ad4"
+    },
+    "fixed-parallel-8.log": {
+      "raw_sha256": "8a22445cd38847103a1dbe0477fe8d67b85d92e9fd7965e9a0888799d0220c62",
+      "published_sha256": "8268b02dceb7e23d0e2c9792aa74b4926896ac391d125f668e4096472f51252b"
+    },
+    "fixed-parallel-9.log": {
+      "raw_sha256": "2f56705694ab29c1977c6a05b3cc78a39832e7cb34e20292a0a89e495907f7f3",
+      "published_sha256": "e0ff65293164013531c1c04dd278930e661a40c6d7b4878d33698e956f998e9c"
+    },
+    "fixed-parallel-receipt.json": {
+      "raw_sha256": "87f9597e50ffb057e97e46477a3e99e9d5a119adde15ad82a2e5882c88eaef44",
+      "published_sha256": "a0f369a47d6909f863512f2754a3973fef2644964d72a3c11cfdd3e7ced8c04b"
+    },
+    "fixed-serial-1.log": {
+      "raw_sha256": "f83f9ad3e9fb0fea211588ce27635d5e8c8ab06a96817ef8ca11eba88f5a883d",
+      "published_sha256": "6c20e6b85d855c89c10d540c3d9b95abb1504d0937005f58eab3f7e08742b490"
+    },
+    "fixed-serial-receipt.json": {
+      "raw_sha256": "be4e13238503050d1863469091f6f4184727c92123a2a9c7d5f08b284a00d3ae",
+      "published_sha256": "ecf46f8f2e567bb419e173972cee15811bc8b1716319e276e6cfc7fa90cadd46"
+    },
+    "forced-eviction-red-1.log": {
+      "raw_sha256": "420f4bf38138e117b9800571152f890f7b688f4b959bdc4bc301c667804b065f",
+      "published_sha256": "420f4bf38138e117b9800571152f890f7b688f4b959bdc4bc301c667804b065f"
+    },
+    "forced-eviction-red-receipt.json": {
+      "raw_sha256": "8068ee3547833625820fc6f82b5ede6e587b3c7bea28cad0c1c55c493b34cf53",
+      "published_sha256": "e3a3649f78f3e52ae10bff3d793725c0d398c664918072084f87da4917f5e6bf"
+    },
+    "forced-eviction-source.json": {
+      "raw_sha256": "932167df16fd78b75d1f9d9d031ffb4046afa606c8ddb3a4df1c710502a2a712",
+      "published_sha256": "0bbf7e56ac0f17082ea1a9e9e44dcadf1747b747ae48bb5c2134235208a48d70"
+    }
+  },
+  "limitations": [
+    "Latest hosted CI remains to be run on the new published commit.",
+    "This is a test-isolation repair, not an Output production authority change or completion of the 37-item campaign.",
+    "Clipboard remains uncommitted and its semantic failure is not covered by this isolated gate success."
+  ]
+}

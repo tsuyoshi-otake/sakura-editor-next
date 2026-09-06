@@ -1,0 +1,17 @@
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Running breadth-first search Model-Checking with fp 119 and seed -4191760493524464189 with 2 workers on 16 cores with 491MB heap and 64MB offheap memory [pid: 37516] (Windows 11 10.0 amd64, Microsoft 11.0.31 x86_64, MSBDiskFPSet, DiskStateQueue).
+Parsing file C:\Users\developer\tmp\sakura-audit-safety\docs\formal\SearchRequestLifecycle.tla
+Parsing file C:\Users\developer\AppData\Local\Temp\Naturals.tla
+Semantic processing of module Naturals
+Semantic processing of module SearchRequestLifecycle
+Starting... (2026-09-05 21:06:04)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-09-05 21:06:04.
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 1.4E-15
+362 states generated, 100 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 13.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 5 and the 95th percentile is 3).
+Finished in 00s at (2026-09-05 21:06:04)

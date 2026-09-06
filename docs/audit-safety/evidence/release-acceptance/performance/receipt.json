@@ -1,0 +1,225 @@
+{
+  "head": "01e1f25e90de833f032768e64d9929c378f53090",
+  "original": {
+    "sakura_core\\io\\CFileLoad.cpp": "aaf08b4c158506e1a32e4068d1d7699b23750e9f8e51dd2e323bc5a4c6c45eac",
+    "sakura_core\\workbench\\search\\WorkspaceSearchEngine.cpp": "b1a89832d3128103aec3145b03fa5e17ff10cea841a8cb758928a187451bba1f",
+    "src\\test\\cpp\\tests1\\workbench\\SearchWorkbenchToolTest.cpp": "c910b3d15cea2f52da5f0af50856a88d3164cc534543183d558fc5fbb78ba269"
+  },
+  "runs": [
+    {
+      "label": "build-fixed",
+      "command": [
+        "py",
+        "-3",
+        "tools/build/sakura_build.py",
+        "build",
+        "solution",
+        "x64",
+        "Release",
+        "--jobs",
+        "4"
+      ],
+      "exit": 0,
+      "pid": 20000,
+      "seconds": 82.71278849999999
+    },
+    {
+      "label": "build-borrowed",
+      "command": [
+        "py",
+        "-3",
+        "tools/build/sakura_build.py",
+        "build",
+        "solution",
+        "x64",
+        "Release",
+        "--jobs",
+        "4"
+      ],
+      "exit": 0,
+      "pid": 37660,
+      "seconds": 74.97727129999998
+    },
+    {
+      "label": "pair-0-fixed",
+      "command": [
+        "C:\\Users\\developer\\tmp\\sakura-audit-safety\\x64\\Release\\tests1-audit-perf-fixed.exe",
+        "--gtest_filter=SearchRequestSafetyTest.DiagnosticReadAndPreviewCost",
+        "--gtest_output=xml:C:\\Users\\developer\\tmp\\sakura-audit-safety\\.codex\\goal-loop\\audit-safety\\release-performance\\pair-0-fixed.xml"
+      ],
+      "exit": 0,
+      "pid": 29296,
+      "seconds": 0.8835042000000612
+    },
+    {
+      "label": "pair-0-borrowed",
+      "command": [
+        "C:\\Users\\developer\\tmp\\sakura-audit-safety\\x64\\Release\\tests1-audit-perf-borrowed.exe",
+        "--gtest_filter=SearchRequestSafetyTest.DiagnosticReadAndPreviewCost",
+        "--gtest_output=xml:C:\\Users\\developer\\tmp\\sakura-audit-safety\\.codex\\goal-loop\\audit-safety\\release-performance\\pair-0-borrowed.xml"
+      ],
+      "exit": 0,
+      "pid": 12424,
+      "seconds": 0.8752031999999872
+    },
+    {
+      "label": "pair-1-borrowed",
+      "command": [
+        "C:\\Users\\developer\\tmp\\sakura-audit-safety\\x64\\Release\\tests1-audit-perf-borrowed.exe",
+        "--gtest_filter=SearchRequestSafetyTest.DiagnosticReadAndPreviewCost",
+        "--gtest_output=xml:C:\\Users\\developer\\tmp\\sakura-audit-safety\\.codex\\goal-loop\\audit-safety\\release-performance\\pair-1-borrowed.xml"
+      ],
+      "exit": 0,
+      "pid": 10876,
+      "seconds": 0.739358300000049
+    },
+    {
+      "label": "pair-1-fixed",
+      "command": [
+        "C:\\Users\\developer\\tmp\\sakura-audit-safety\\x64\\Release\\tests1-audit-perf-fixed.exe",
+        "--gtest_filter=SearchRequestSafetyTest.DiagnosticReadAndPreviewCost",
+        "--gtest_output=xml:C:\\Users\\developer\\tmp\\sakura-audit-safety\\.codex\\goal-loop\\audit-safety\\release-performance\\pair-1-fixed.xml"
+      ],
+      "exit": 0,
+      "pid": 3612,
+      "seconds": 0.7391374999999698
+    },
+    {
+      "label": "pair-2-fixed",
+      "command": [
+        "C:\\Users\\developer\\tmp\\sakura-audit-safety\\x64\\Release\\tests1-audit-perf-fixed.exe",
+        "--gtest_filter=SearchRequestSafetyTest.DiagnosticReadAndPreviewCost",
+        "--gtest_output=xml:C:\\Users\\developer\\tmp\\sakura-audit-safety\\.codex\\goal-loop\\audit-safety\\release-performance\\pair-2-fixed.xml"
+      ],
+      "exit": 0,
+      "pid": 5368,
+      "seconds": 0.7340427999999974
+    },
+    {
+      "label": "pair-2-borrowed",
+      "command": [
+        "C:\\Users\\developer\\tmp\\sakura-audit-safety\\x64\\Release\\tests1-audit-perf-borrowed.exe",
+        "--gtest_filter=SearchRequestSafetyTest.DiagnosticReadAndPreviewCost",
+        "--gtest_output=xml:C:\\Users\\developer\\tmp\\sakura-audit-safety\\.codex\\goal-loop\\audit-safety\\release-performance\\pair-2-borrowed.xml"
+      ],
+      "exit": 0,
+      "pid": 3704,
+      "seconds": 0.7386070000000018
+    },
+    {
+      "label": "pair-3-borrowed",
+      "command": [
+        "C:\\Users\\developer\\tmp\\sakura-audit-safety\\x64\\Release\\tests1-audit-perf-borrowed.exe",
+        "--gtest_filter=SearchRequestSafetyTest.DiagnosticReadAndPreviewCost",
+        "--gtest_output=xml:C:\\Users\\developer\\tmp\\sakura-audit-safety\\.codex\\goal-loop\\audit-safety\\release-performance\\pair-3-borrowed.xml"
+      ],
+      "exit": 0,
+      "pid": 444,
+      "seconds": 0.7700429999999869
+    },
+    {
+      "label": "pair-3-fixed",
+      "command": [
+        "C:\\Users\\developer\\tmp\\sakura-audit-safety\\x64\\Release\\tests1-audit-perf-fixed.exe",
+        "--gtest_filter=SearchRequestSafetyTest.DiagnosticReadAndPreviewCost",
+        "--gtest_output=xml:C:\\Users\\developer\\tmp\\sakura-audit-safety\\.codex\\goal-loop\\audit-safety\\release-performance\\pair-3-fixed.xml"
+      ],
+      "exit": 0,
+      "pid": 37512,
+      "seconds": 0.7395441000001028
+    },
+    {
+      "label": "pair-4-fixed",
+      "command": [
+        "C:\\Users\\developer\\tmp\\sakura-audit-safety\\x64\\Release\\tests1-audit-perf-fixed.exe",
+        "--gtest_filter=SearchRequestSafetyTest.DiagnosticReadAndPreviewCost",
+        "--gtest_output=xml:C:\\Users\\developer\\tmp\\sakura-audit-safety\\.codex\\goal-loop\\audit-safety\\release-performance\\pair-4-fixed.xml"
+      ],
+      "exit": 0,
+      "pid": 12792,
+      "seconds": 0.71495549999986
+    },
+    {
+      "label": "pair-4-borrowed",
+      "command": [
+        "C:\\Users\\developer\\tmp\\sakura-audit-safety\\x64\\Release\\tests1-audit-perf-borrowed.exe",
+        "--gtest_filter=SearchRequestSafetyTest.DiagnosticReadAndPreviewCost",
+        "--gtest_output=xml:C:\\Users\\developer\\tmp\\sakura-audit-safety\\.codex\\goal-loop\\audit-safety\\release-performance\\pair-4-borrowed.xml"
+      ],
+      "exit": 0,
+      "pid": 37192,
+      "seconds": 0.7405266999999185
+    },
+    {
+      "label": "process-audit",
+      "command": [
+        "pwsh",
+        "-NoProfile",
+        "-File",
+        "C:/Users/developer/tmp/sakura-perf-cleanup.ps1"
+      ],
+      "exit": 0,
+      "pid": 24772,
+      "seconds": 0.718782899999951
+    },
+    {
+      "label": "build-restored",
+      "command": [
+        "py",
+        "-3",
+        "tools/build/sakura_build.py",
+        "build",
+        "solution",
+        "x64",
+        "Release",
+        "--jobs",
+        "4"
+      ],
+      "exit": 0,
+      "pid": 16392,
+      "seconds": 81.67297329999997
+    },
+    {
+      "label": "restored-tests",
+      "command": [
+        "pwsh",
+        "-NoProfile",
+        "-File",
+        "C:/Users/developer/tmp/sakura-audit-run-tests.ps1",
+        "-Configuration",
+        "Release",
+        "-Label",
+        "release-performance-restored",
+        "-Filter",
+        "SearchRequestSafetyTest.*:FileLoadOptionsTest.*:SearchWorkbenchToolGeometry.*:ExplorerTool.ProductionWorkerDisplaysJunctionsAsLeaves",
+        "-TimeoutSeconds",
+        "120"
+      ],
+      "exit": 0,
+      "pid": 38344,
+      "seconds": 2.457245499999999
+    }
+  ],
+  "comparison": "Converter-ownership-only cost reconstruction: bounded 8-slot lifetime bookkeeping in both variants; borrowed variant shares the live parent converter, is scanned serially, and all borrowers die before the parent. It is not the entire old FileLoad implementation. Preview baseline is exact baseline BuildPreview body; its distant-hit output is knowingly incorrect.",
+  "fixed": {
+    "sources": {
+      "sakura_core\\io\\CFileLoad.cpp": "bf89f10f385ed78c882f5067cdd11bf1275e68e68a6b243a4df9feda14dc4f5d",
+      "sakura_core\\workbench\\search\\WorkspaceSearchEngine.cpp": "cc9624c980a3c52a5611a10473509e26a860ce627ca1923c986753eb935f72e2",
+      "src\\test\\cpp\\tests1\\workbench\\SearchWorkbenchToolTest.cpp": "b95edcefc54f2d5f5b06209ab066bd99b4daf9398130007309b2eeece1a07058"
+    },
+    "executable_sha256": "10aea9e7e6394d8c4164304903ce1566b114ffec4e5a1790970b825e99f0b600"
+  },
+  "borrowed": {
+    "sources": {
+      "sakura_core\\io\\CFileLoad.cpp": "259455c3f701d1d99c98a3be8b53f8e684ee8aba428f3256a2952e1fc3e639f8",
+      "sakura_core\\workbench\\search\\WorkspaceSearchEngine.cpp": "48746aac0d9a25318521069abadca0cc14e0af29bb515cc02531ff47f96408f8",
+      "src\\test\\cpp\\tests1\\workbench\\SearchWorkbenchToolTest.cpp": "b95edcefc54f2d5f5b06209ab066bd99b4daf9398130007309b2eeece1a07058"
+    },
+    "executable_sha256": "86bc06225751e1588ec7c6964a0183c8f622f218262beebdfd9427356b243707"
+  },
+  "restored": {
+    "sakura_core\\io\\CFileLoad.cpp": "aaf08b4c158506e1a32e4068d1d7699b23750e9f8e51dd2e323bc5a4c6c45eac",
+    "sakura_core\\workbench\\search\\WorkspaceSearchEngine.cpp": "b1a89832d3128103aec3145b03fa5e17ff10cea841a8cb758928a187451bba1f",
+    "src\\test\\cpp\\tests1\\workbench\\SearchWorkbenchToolTest.cpp": "c910b3d15cea2f52da5f0af50856a88d3164cc534543183d558fc5fbb78ba269"
+  }
+}

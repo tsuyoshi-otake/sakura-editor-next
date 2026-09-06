@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="2" failures="0" disabled="0" errors="0" time="7.11" timestamp="2026-09-06T16:06:55.631" name="AllTests">
+  <testsuite name="SearchRequestSafetyTest" tests="2" failures="0" disabled="0" skipped="0" errors="0" time="7.088" timestamp="2026-09-06T16:06:55.652">
+    <testcase name="PrintClientRendersCurrentSearchSurfaceAndPreservesDcState" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp" line="452" status="run" result="completed" time="0.029" timestamp="2026-09-06T16:06:55.654" classname="SearchRequestSafetyTest" />
+    <testcase name="DiagnosticVisibleInvalidationPaint" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp" line="485" status="run" result="completed" time="7.049" timestamp="2026-09-06T16:06:55.691" classname="SearchRequestSafetyTest" />
+  </testsuite>
+</testsuites>

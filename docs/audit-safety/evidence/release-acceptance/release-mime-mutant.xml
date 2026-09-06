@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="9" failures="1" disabled="0" errors="0" time="0.167" timestamp="2026-09-06T14:05:12.504" name="AllTests">
+  <testsuite name="FileLoadOptionsTest" tests="9" failures="1" disabled="0" skipped="0" errors="0" time="0.145" timestamp="2026-09-06T14:05:12.527">
+    <testcase name="MimeOptionIsAppliedOnEachOpenAndReopen" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp" line="920" status="run" result="completed" time="0.013" timestamp="2026-09-06T14:05:12.529" classname="FileLoadOptionsTest">
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp:930&#x0A;Expected equality of these values:&#x0A;  option ? L&quot;abc\r\n&quot; : L&quot;=?ISO-2022-JP?B?YWJj?=\r\n&quot;&#x0A;    Which is: L&quot;abc\r\n&quot;&#x0A;  std::wstring(line.GetStringPtr(), line.GetStringLength())&#x0A;    Which is: L&quot;=?ISO-2022-JP?B?YWJj?=\r\n&quot;&#x0A;With diff:&#x0A;@@ -1,2 +1,2 @@&#x0A;-L&quot;abc\r&#x0A;+L&quot;=?ISO-2022-JP?B?YWJj?=\r&#x0A; &quot;&#x0A;&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp:930
+Expected equality of these values:
+  option ? L"abc\r\n" : L"=?ISO-2022-JP?B?YWJj?=\r\n"
+    Which is: L"abc\r\n"
+  std::wstring(line.GetStringPtr(), line.GetStringLength())
+    Which is: L"=?ISO-2022-JP?B?YWJj?=\r\n"
+With diff:
+@@ -1,2 +1,2 @@
+-L"abc\r
++L"=?ISO-2022-JP?B?YWJj?=\r
+ "
+
+]]></failure>
+      <failure message="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp:930&#x0A;Expected equality of these values:&#x0A;  option ? L&quot;abc\r\n&quot; : L&quot;=?ISO-2022-JP?B?YWJj?=\r\n&quot;&#x0A;    Which is: L&quot;abc\r\n&quot;&#x0A;  std::wstring(line.GetStringPtr(), line.GetStringLength())&#x0A;    Which is: L&quot;=?ISO-2022-JP?B?YWJj?=\r\n&quot;&#x0A;With diff:&#x0A;@@ -1,2 +1,2 @@&#x0A;-L&quot;abc\r&#x0A;+L&quot;=?ISO-2022-JP?B?YWJj?=\r&#x0A; &quot;&#x0A;&#x0A;" type=""><![CDATA[C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp:930
+Expected equality of these values:
+  option ? L"abc\r\n" : L"=?ISO-2022-JP?B?YWJj?=\r\n"
+    Which is: L"abc\r\n"
+  std::wstring(line.GetStringPtr(), line.GetStringLength())
+    Which is: L"=?ISO-2022-JP?B?YWJj?=\r\n"
+With diff:
+@@ -1,2 +1,2 @@
+-L"abc\r
++L"=?ISO-2022-JP?B?YWJj?=\r
+ "
+
+]]></failure>
+    </testcase>
+    <testcase name="AutoDetectionUsesConstructionSnapshot" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp" line="936" status="run" result="completed" time="0.001" timestamp="2026-09-06T14:05:12.542" classname="FileLoadOptionsTest" />
+    <testcase name="PreparedReaderPreservesExtendedEolBoundaries" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp" line="946" status="run" result="completed" time="0.006" timestamp="2026-09-06T14:05:12.544" classname="FileLoadOptionsTest" />
+    <testcase name="PreparedUtf7ReaderResetsPreviousDecodedLineOffset" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp" line="965" status="run" result="completed" time="0.005" timestamp="2026-09-06T14:05:12.551" classname="FileLoadOptionsTest" />
+    <testcase name="ExtendedEolPolicyIsStableUntilReopen" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp" line="983" status="run" result="completed" time="0.017" timestamp="2026-09-06T14:05:12.556" classname="FileLoadOptionsTest" />
+    <testcase name="PreparedReaderRetainsMappingAfterParentDestruction" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp" line="1019" status="run" result="completed" time="0.004" timestamp="2026-09-06T14:05:12.574" classname="FileLoadOptionsTest" />
+    <testcase name="PrepareReplacesActiveMappingAndRejectsInvalidSlices" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp" line="1048" status="run" result="completed" time="0.002" timestamp="2026-09-06T14:05:12.579" classname="FileLoadOptionsTest" />
+    <testcase name="FailedOpenAndEmptyMappingCanBeReused" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp" line="1081" status="run" result="completed" time="0.005" timestamp="2026-09-06T14:05:12.582" classname="FileLoadOptionsTest" />
+    <testcase name="PreparedReadersOwnConvertersWithInheritedMimeOptions" file="C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\test-file.cpp" line="1099" status="run" result="completed" time="0.083" timestamp="2026-09-06T14:05:12.588" classname="FileLoadOptionsTest" />
+  </testsuite>
+</testsuites>

@@ -1,0 +1,23 @@
+{
+  "original_sha256": "fe85727a8623f2ccc976ed439ed5aa29b62616a833973fec5aebe2c41d941544",
+  "runs": [
+    {
+      "label": "build-canary",
+      "exit": 0,
+      "pid": 13360
+    },
+    {
+      "label": "capture-canary",
+      "exit": 0,
+      "pid": 38544
+    },
+    {
+      "label": "build-restored",
+      "exit": 0,
+      "pid": 40596
+    }
+  ],
+  "canary_sha256": "ab5e674e69790ad346f8d310ce7d00c8850228f3718219871bc9d239f1b79149",
+  "difference_percent": 0.0,
+  "restored_sha256": "fe85727a8623f2ccc976ed439ed5aa29b62616a833973fec5aebe2c41d941544"
+}

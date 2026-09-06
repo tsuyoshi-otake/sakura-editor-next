@@ -98,3 +98,42 @@ Each entry states the constraint and the chosen behavior.
 - **The result set is bounded** and the view says so through
   `STR_WORKBENCH_SEARCH_LIMIT_HIT`. Upstream pages; a bounded scan keeps the worker
   cost fixed and the bound is reported rather than hidden.
+
+## Request identity and bounded previews (#290)
+
+Input changes invalidate pending, running and posted results before debounce.
+Empty input also advances the generation. A worker result retains its immutable
+root/query/generation identity; the UI adopts it only when that identity is
+current. Replace admission repeats this check after reading the current input.
+Replacement text and Preserve Case may change independently of search identity.
+This does not migrate Replace off the UI thread or fix its legacy persistence
+transaction; those remain unresolved parts of #290.
+
+The 250-code-unit preview window follows the match and avoids splitting valid
+UTF-16 surrogate pairs. A match longer than the window displays its prefix;
+source column and full length remain unchanged. A zero-width match retains a
+zero-length anchor at the corresponding preview offset. Replacement never
+reconstructs source offsets from the preview.
+
+`SearchRequestLifecycle` models debounce, pending/running work, posted completion,
+input/root revision changes, empty input, close and destructive admission. It is
+a bounded safety model, not a proof of Windows I/O cancellation or worker
+liveness. Its two negative configurations must violate `CurrentResults`; tool
+errors or an unrelated invariant violation do not count as expected failures.
+
+## Current-client rendering (#290)
+
+`WM_PRINTCLIENT` paints the current widget into its borrowed DC and restores DC
+state. It must not submit that diagnostic rendering to the native surface or
+mutate the presented buffer. The normal `WM_PAINT` path remains the owner of
+frame presentation. The replay fixture contains a direct current-client regression for palette
+colors and preservation of the caller's DC state. It is a diagnostic test,
+not a test executed by the regular CI suite.
+
+On the 2026-09-06 machine, external PrintWindow captures did not detect a
+WM_PRINTCLIENT-only color canary. A zero difference from that external path is
+therefore insufficient as an independent freshness reference. The release
+acceptance fixture owns a current-render DIB in-process, while a separate
+process captures the screen and PrintWindow. Its canary must fail before normal
+zero-difference captures are accepted; see
+[`release-acceptance`](../../../docs/audit-safety/evidence/release-acceptance/README.md).

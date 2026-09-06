@@ -1,0 +1,142 @@
+--- sakura_core\workbench\search\CSearchWorkbenchTool.cpp
++++ sakura_core\workbench\search\CSearchWorkbenchTool.cpp
+@@ -39,0 +40 @@
++namespace audit_acceptance { int mode{}, phase{}, reached{}, committed{}; }
+@@ -533,0 +535 @@
++		if (audit_acceptance::phase == 1) ++audit_acceptance::committed;
+@@ -914,0 +917,16 @@
++        if (audit_acceptance::phase == 2) {
++            ++audit_acceptance::reached;
++            switch (audit_acceptance::mode) {
++            case 1: ++acceptedRequest->generation; break;
++            case 2: acceptedRequest->root += L"-stale"; break;
++            case 3: acceptedRequest->query.text += L"-stale"; break;
++            case 4: acceptedRequest->query.matchCase = !acceptedRequest->query.matchCase; break;
++            case 5: acceptedRequest->query.wholeWord = !acceptedRequest->query.wholeWord; break;
++            case 6: acceptedRequest->query.useRegex = !acceptedRequest->query.useRegex; break;
++            case 7: closed = true; break;
++            }
++        }
++        // Restore the diagnostic closed bit even when admission returns early.
++        const auto restoreClosed = std::unique_ptr<Impl, void(*)(Impl*)>(this, [](Impl* self) {
++            if (audit_acceptance::phase == 2 && audit_acceptance::mode == 7) self->closed = false;
++        });
+@@ -917,0 +936 @@
++		if (audit_acceptance::phase == 2) ++audit_acceptance::committed;
+@@ -1531 +1550,20 @@
+-		impl.AcceptResult(impl.TakeLatestResult());
++        auto result = impl.TakeLatestResult();
++        const bool wasClosed = impl.closed;
++        if (audit_acceptance::phase == 1 && result) {
++            ++audit_acceptance::reached;
++            auto request = result->request;
++            switch (audit_acceptance::mode) {
++            case 1: ++request.generation; break;
++            case 2: request.root += L"-stale"; break;
++            case 3: request.query.text += L"-stale"; break;
++            case 4: request.query.matchCase = !request.query.matchCase; break;
++            case 5: request.query.wholeWord = !request.query.wholeWord; break;
++            case 6: request.query.useRegex = !request.query.useRegex; break;
++            case 7: impl.closed = true; break;
++            }
++            auto changed = std::make_unique<WorkerResult>(std::move(request));
++            changed->results = std::move(result->results);
++            result = std::move(changed);
++        }
++        impl.AcceptResult(std::move(result));
++        impl.closed = wasClosed;
+--- src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp
++++ src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp
+@@ -448 +448,92 @@
+-}+}
++
++namespace audit_acceptance {
++extern int mode, phase, reached, committed;
++class Scope final {
++public:
++    Scope(int selected, int stage) { mode=selected; phase=stage; reached=committed=0; }
++    ~Scope() { phase=mode=0; }
++};
++}
++
++// The diagnostic build injects one mismatch after a real worker result arrives.
++TEST_F(SearchRequestSafetyTest, InjectedAcceptanceIdentityContract)
++{
++    for (int scenario=0; scenario<8; ++scenario) {
++        SCOPED_TRACE(scenario);
++        audit_acceptance::Scope scope(scenario,1);
++        const cxx::ResourceHolder<&::DestroyWindow> parent{::CreateWindowExW(0,L"STATIC",L"",WS_POPUP,
++            0,0,400,300,nullptr,nullptr,::GetModuleHandleW(nullptr),nullptr)};
++        ASSERT_NE(nullptr,parent.get());
++        workbench::search::CSearchWorkbenchTool tool;
++        ASSERT_TRUE(tool.Create(parent.get()));
++        tool.Layout(RECT{0,0,400,300},96);
++        tool.SetRoot(root.wstring());
++        tool.SetQueryText(L"needle");
++        MSG message{};
++        const auto deadline=::GetTickCount64()+5000;
++        while (!audit_acceptance::reached && ::GetTickCount64()<deadline) {
++            if (::PeekMessageW(&message,tool.GetHwnd(),WM_APP+0x5e1,WM_APP+0x5e1,PM_REMOVE))
++                ::DispatchMessageW(&message);
++            else ::Sleep(1);
++        }
++        EXPECT_EQ(1,audit_acceptance::reached);
++        EXPECT_EQ(scenario==0?1:0,audit_acceptance::committed);
++        EXPECT_EQ(scenario==0?2:0,::SendMessageW(::GetDlgItem(tool.GetHwnd(),3),LB_GETCOUNT,0,0));
++        tool.Close();
++        auto& retirement=workbench::WorkerRetirementService::Instance();
++        const auto retired=::GetTickCount64()+5000;
++        while(retirement.ReservedOrPendingCount() && ::GetTickCount64()<retired) ::Sleep(1);
++        EXPECT_EQ(0u,retirement.ReservedOrPendingCount());
++    }
++}
++
++// Injection occurs after ReadBoxes and before the destructive admission guard.
++TEST_F(SearchRequestSafetyTest, InjectedReplaceIdentityContract)
++{
++    for (int scenario=0; scenario<8; ++scenario) {
++        SCOPED_TRACE(scenario);
++        audit_acceptance::Scope scope(scenario,2);
++        Write("needle\r\n");
++        int changed=0;
++        const cxx::ResourceHolder<&::DestroyWindow> parent{::CreateWindowExW(0,L"STATIC",L"",WS_POPUP,
++            0,0,400,300,nullptr,nullptr,::GetModuleHandleW(nullptr),nullptr)};
++        ASSERT_NE(nullptr,parent.get());
++        workbench::search::CSearchWorkbenchTool tool;
++        tool.SetFilesChangedCallback([&](const auto&) { ++changed; });
++        ASSERT_TRUE(tool.Create(parent.get()));
++        tool.Layout(RECT{0,0,400,300},96);
++        tool.FocusReplace();
++        tool.SetRoot(root.wstring());
++        tool.SetQueryText(L"needle");
++        MSG message{};
++        bool posted=false;
++        const auto deadline=::GetTickCount64()+5000;
++        while (!posted && ::GetTickCount64()<deadline) {
++            if (::PeekMessageW(&message,tool.GetHwnd(),WM_APP+0x5e1,WM_APP+0x5e1,PM_REMOVE)) {
++                ::DispatchMessageW(&message); posted=true;
++            } else ::Sleep(1);
++        }
++        ASSERT_TRUE(posted);
++        ASSERT_EQ(2,::SendMessageW(::GetDlgItem(tool.GetHwnd(),3),LB_GETCOUNT,0,0));
++        ASSERT_TRUE(::SetWindowTextW(::GetDlgItem(tool.GetHwnd(),2),L"changed"));
++        RECT client{};
++        ASSERT_TRUE(::GetClientRect(tool.GetHwnd(),&client));
++        const auto geometry=workbench::search::CalculateSearchWidgetGeometry(client,96,true,0);
++        const auto& button=geometry.replaceAll;
++        ::SendMessageW(tool.GetHwnd(),WM_LBUTTONUP,0,
++            MAKELPARAM((button.left+button.right)/2,(button.top+button.bottom)/2));
++        EXPECT_EQ(1,audit_acceptance::reached);
++        EXPECT_EQ(scenario==0?1:0,audit_acceptance::committed);
++        EXPECT_EQ(scenario==0?1:0,changed);
++        std::ifstream file(root/L"input.txt",std::ios::binary);
++        const std::string bytes{std::istreambuf_iterator<char>(file),std::istreambuf_iterator<char>()};
++        EXPECT_EQ(std::string("\xef\xbb\xbf")+(scenario==0?"changed\r\n":"needle\r\n"),bytes);
++        file.close();
++        tool.Close();
++        auto& retirement=workbench::WorkerRetirementService::Instance();
++        const auto retired=::GetTickCount64()+5000;
++        while(retirement.ReservedOrPendingCount() && ::GetTickCount64()<retired) ::Sleep(1);
++        EXPECT_EQ(0u,retirement.ReservedOrPendingCount());
++    }
++}

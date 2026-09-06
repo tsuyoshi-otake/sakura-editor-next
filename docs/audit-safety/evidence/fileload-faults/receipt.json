@@ -1,0 +1,131 @@
+{
+  "head": "297c1f006f2167dd52480a7e0cee8ced56e4bc5a",
+  "instrumented_sources": {
+    "sakura_core/io/CFileLoad.cpp": "aaf08b4c158506e1a32e4068d1d7699b23750e9f8e51dd2e323bc5a4c6c45eac",
+    "sakura_core/io/CIoBridge.cpp": "90f4512ed6debf7643dc1e685226ec96a1a95ac81683aba81733f687fd85ee72",
+    "sakura_core/charset/CCodeBase.cpp": "55d831acd4e58b27704e3d6d0d648c4692af57ae5233a6bb8608eec77b746377",
+    "sakura_core/charset/CCodeFactory.cpp": "836c3734e9125d7cc5b8302e69449e64051ccb3abc410bf7d6ee1e20d5d9c57e",
+    "sakura_core/charset/CJis.cpp": "3d3203d82d4dea673cbeeaf17be4110ed2c95eef8e7550b0a30f44cd1cb46fd9",
+    "sakura_core/charset/CUtf7.cpp": "d5ab07656bdf0bb45f7d2d39c3515168a2836bcc6ca883edc28ecbb58490ff6a",
+    "sakura_core/charset/CUtf8.cpp": "bed3b005df6382c68a27e69fbef5b5528affaedf7206821d503be248fada8bb3",
+    "sakura_core/charset/CCodePage.cpp": "730ded7f7c59d2c6f992a180c84a1956e45b822c3bbe2b442341e76b6b970b50",
+    "sakura_core/mem/CMemory.cpp": "44d4cb41fccd14f5e9ec0a61a2540acf353edd8cb178680bd76ef11e3ce3d093",
+    "sakura_core/mem/CNativeW.cpp": "336c0f4fd82d8c9a89d87e62df778c836124e597dbbdad54e71d45cb29e8484f",
+    "src/test/cpp/tests1/test-file.cpp": "d31fbfd90ba481ade80e2515a784f9033f83048432280236a42a631e6f79c7d1"
+  },
+  "records": [
+    {
+      "label": "compile-CFileLoad",
+      "args": [
+        "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\cl.exe",
+        "@C:\\Users\\developer\\tmp\\sakura-fileload-faults\\CFileLoad.rsp"
+      ],
+      "exit_code": 0,
+      "seconds": 3.028694800013909
+    },
+    {
+      "label": "compile-CIoBridge",
+      "args": [
+        "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\cl.exe",
+        "@C:\\Users\\developer\\tmp\\sakura-fileload-faults\\CIoBridge.rsp"
+      ],
+      "exit_code": 0,
+      "seconds": 1.78092230000766
+    },
+    {
+      "label": "compile-CCodeBase",
+      "args": [
+        "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\cl.exe",
+        "@C:\\Users\\developer\\tmp\\sakura-fileload-faults\\CCodeBase.rsp"
+      ],
+      "exit_code": 0,
+      "seconds": 2.5746403000084683
+    },
+    {
+      "label": "compile-CCodeFactory",
+      "args": [
+        "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\cl.exe",
+        "@C:\\Users\\developer\\tmp\\sakura-fileload-faults\\CCodeFactory.rsp"
+      ],
+      "exit_code": 0,
+      "seconds": 2.366587600001367
+    },
+    {
+      "label": "compile-CJis",
+      "args": [
+        "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\cl.exe",
+        "@C:\\Users\\developer\\tmp\\sakura-fileload-faults\\CJis.rsp"
+      ],
+      "exit_code": 0,
+      "seconds": 3.1078693000017665
+    },
+    {
+      "label": "compile-CUtf7",
+      "args": [
+        "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\cl.exe",
+        "@C:\\Users\\developer\\tmp\\sakura-fileload-faults\\CUtf7.rsp"
+      ],
+      "exit_code": 0,
+      "seconds": 3.1265069999790285
+    },
+    {
+      "label": "compile-CUtf8",
+      "args": [
+        "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\cl.exe",
+        "@C:\\Users\\developer\\tmp\\sakura-fileload-faults\\CUtf8.rsp"
+      ],
+      "exit_code": 0,
+      "seconds": 2.4202938999806065
+    },
+    {
+      "label": "compile-CCodePage",
+      "args": [
+        "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\cl.exe",
+        "@C:\\Users\\developer\\tmp\\sakura-fileload-faults\\CCodePage.rsp"
+      ],
+      "exit_code": 0,
+      "seconds": 2.388377799972659
+    },
+    {
+      "label": "compile-CMemory",
+      "args": [
+        "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\cl.exe",
+        "@C:\\Users\\developer\\tmp\\sakura-fileload-faults\\CMemory.rsp"
+      ],
+      "exit_code": 0,
+      "seconds": 2.0926436000154354
+    },
+    {
+      "label": "compile-CNativeW",
+      "args": [
+        "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\cl.exe",
+        "@C:\\Users\\developer\\tmp\\sakura-fileload-faults\\CNativeW.rsp"
+      ],
+      "exit_code": 0,
+      "seconds": 1.9206477000261657
+    },
+    {
+      "label": "compile-test-file",
+      "args": [
+        "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\cl.exe",
+        "@C:\\Users\\developer\\tmp\\sakura-fileload-faults\\test-file.rsp"
+      ],
+      "exit_code": 0,
+      "seconds": 3.430205599986948
+    },
+    {
+      "label": "link",
+      "args": [
+        "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\link.exe",
+        "@C:\\Users\\developer\\tmp\\sakura-fileload-faults\\link.rsp"
+      ],
+      "exit_code": 0,
+      "seconds": 4.177479899983155
+    }
+  ],
+  "limitations": [
+    "Other production and test objects are uninstrumented",
+    "STL container annotations disabled for mixed-object compatibility",
+    "ASan does not prove race freedom or mapping validity"
+  ]
+}

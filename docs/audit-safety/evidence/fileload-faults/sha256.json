@@ -1,0 +1,46 @@
+{
+  "normalization": "CRLF to LF, residual CR escaped, trailing whitespace removed",
+  "owned_survivors": 0,
+  "files": [
+    {
+      "file": "receipt.json",
+      "raw_sha256": "9dd7461c6fee05c7c3136fe8193a318fb74c15b59044713aabcf37ae7dfbef41",
+      "published_sha256": "f85316ea3df2fb6b3737c8e0091e30bcdabb80a0e81ede415bdcf5e1f1d5766f"
+    },
+    {
+      "file": "run-receipt.json",
+      "raw_sha256": "1dbdd0e3f9c3e3eb147e63829e5e08fdb899925253a650c8725299198b3846a3",
+      "published_sha256": "760f31522ef5e006eb61c94b7f561c6beabc4d72da8b067aebe9a31205e82190"
+    },
+    {
+      "file": "injection-sources.json",
+      "raw_sha256": "52cbd022343ada17e8f422026e9be5b445a9d4f23a7ebf2fd0bd85d89b1b4e5e",
+      "published_sha256": "0b695f1e92a32ec6d8c2fa6ddcb4ea235abbeb24b1ebd7f82791792f6686e71f"
+    },
+    {
+      "file": "mutation-receipt.json",
+      "raw_sha256": "63be62e363f91cdee4ad84cf52dcb5049b4ecd70cd6963c2f44fa6190b916a90",
+      "published_sha256": "9bbb2e2c38c6c3916846172b3a1fb18de38af9be81ce7286b2917bb141db450c"
+    },
+    {
+      "file": "fileload-run.log",
+      "raw_sha256": "68b45d39f9ec33075c6104bb6c5a69adc4cf9eab41f095fffddbf075d656d6b2",
+      "published_sha256": "877c278e9fdc919784cc8618f8d4c4bb29b8c59754e92a83f33ad796c75c4a00"
+    },
+    {
+      "file": "mutant-run.log",
+      "raw_sha256": "043ff4b8f3a66638345b2d573906ea553cfdc843a1fb9464149e50f7d72a200e",
+      "published_sha256": "20d26d15cb50c66b6090a834f253aedd947d9c9e25e1eac1277590a7412def32"
+    },
+    {
+      "file": "restored-run.log",
+      "raw_sha256": "486a9515bb07f0e97306e28b1160098c34c85bcfc19d58926e1402a633846665",
+      "published_sha256": "5835bd2ba7fd530e6cccf596bc4c846d1e226b7a7aa9db30b65d97cc57ea8edd"
+    },
+    {
+      "file": "restored.xml",
+      "raw_sha256": "8fbb91aa0c0e744925bef4bb619c03673713034884fa80add02006f186a899bf",
+      "published_sha256": "83aa84408954ff517bf069566af8863b6570810e8f3543be470498cbbb37990f"
+    }
+  ]
+}

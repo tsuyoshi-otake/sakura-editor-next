@@ -1,0 +1,242 @@
+[
+  {
+    "trial": 0,
+    "scenario": "clear",
+    "input_ms": 0.5019,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 1,
+    "scenario": "debounce",
+    "input_ms": 0.6898,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 2,
+    "scenario": "root",
+    "input_ms": 0.3608,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 3,
+    "scenario": "clear",
+    "input_ms": 0.5419,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 4,
+    "scenario": "debounce",
+    "input_ms": 0.4328,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 5,
+    "scenario": "root",
+    "input_ms": 0.6196,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 6,
+    "scenario": "clear",
+    "input_ms": 0.5057,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 7,
+    "scenario": "debounce",
+    "input_ms": 0.6336,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 8,
+    "scenario": "root",
+    "input_ms": 0.3593,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 9,
+    "scenario": "clear",
+    "input_ms": 0.6724,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 10,
+    "scenario": "debounce",
+    "input_ms": 0.5298,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 11,
+    "scenario": "root",
+    "input_ms": 0.4216,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 12,
+    "scenario": "clear",
+    "input_ms": 0.406,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 13,
+    "scenario": "debounce",
+    "input_ms": 0.4307,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 14,
+    "scenario": "root",
+    "input_ms": 0.579,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 15,
+    "scenario": "clear",
+    "input_ms": 0.307,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 16,
+    "scenario": "debounce",
+    "input_ms": 0.4607,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 17,
+    "scenario": "root",
+    "input_ms": 0.6977,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 18,
+    "scenario": "clear",
+    "input_ms": 0.3663,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 19,
+    "scenario": "debounce",
+    "input_ms": 0.6644,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 20,
+    "scenario": "root",
+    "input_ms": 0.428,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 21,
+    "scenario": "clear",
+    "input_ms": 0.5016,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 22,
+    "scenario": "debounce",
+    "input_ms": 0.6573,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 23,
+    "scenario": "root",
+    "input_ms": 0.4387,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 24,
+    "scenario": "clear",
+    "input_ms": 0.367,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 25,
+    "scenario": "debounce",
+    "input_ms": 0.4338,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 26,
+    "scenario": "root",
+    "input_ms": 0.4856,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 27,
+    "scenario": "clear",
+    "input_ms": 0.505,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 28,
+    "scenario": "debounce",
+    "input_ms": 0.7524,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  },
+  {
+    "trial": 29,
+    "scenario": "root",
+    "input_ms": 0.8146,
+    "difference_percent": 0.0,
+    "noise_percent": 0.0,
+    "pass": true
+  }
+]

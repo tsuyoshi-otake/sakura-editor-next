@@ -1,0 +1,100 @@
+{
+  "normalization": "RSP UTF16 to UTF8; CRLF to LF and residual CR escaped; log trailing whitespace removed",
+  "files": [
+    {
+      "file": "receipt.json",
+      "raw_sha256": "1dff4233a23b06c1fc5e10f69d2817fa275ba37c1cee74da517215fd47ef92f5",
+      "published_sha256": "f0c77baff5ee113006ceaafd72104268fd61ab2768e0b28f33498eb6a49fa590"
+    },
+    {
+      "file": "run-receipt.json",
+      "raw_sha256": "80f416d7d4106827c36448d9492d6fa42c149f0196ba19c27e866e4c09697acb",
+      "published_sha256": "aea12336a7d89eca354eefa084e3fddf3639556caf044ca6331118e499e30e39"
+    },
+    {
+      "file": "instrumentation-checks.json",
+      "raw_sha256": "102ff18aec9d80a8bd6d6a2e001b1a13b497dcd6d51ac53c61d183fd2e7f692d",
+      "published_sha256": "eecca763026486d4819b869818b602d866b83a31cb173bbf471b655c4359f97e"
+    },
+    {
+      "file": "fileload-run.log",
+      "raw_sha256": "94e6c88f483ae476b3e49d26473074d0c1ec92e6eeb82d027d051755ea8943d6",
+      "published_sha256": "9672e7b7065653ad01a038030f046a90c1ae66f06fe7010f837a09a0989cd751"
+    },
+    {
+      "file": "fileload.xml",
+      "raw_sha256": "8576dea3b70a5f7d9e0c29394dbe26df378c679540016cc8b2af3e7ed73bd733",
+      "published_sha256": "4e26ef92526e850f223c5b8872c1173df7901fc32866a42e686ff75a6e9f2eb2"
+    },
+    {
+      "file": "canary-run.log",
+      "raw_sha256": "105f96122e2b57b5b7886e67ab002566829d4ba1a2db11d1c0b079f903b56dc0",
+      "published_sha256": "207b431d11d5f8044244d116c8cc59d48e4d2888598acf82362366053c9b6628"
+    },
+    {
+      "file": "canary.cpp",
+      "raw_sha256": "118fe9bbe77915d70242894d1603f7001db0b913a300f65e5b446cd0b2df4dcd",
+      "published_sha256": "30a9b6b06d37bbf5496263b3e29ca1cc4de9c4d64cc3f429f86e9a3837396068"
+    },
+    {
+      "file": "link.rsp",
+      "raw_sha256": "634ba82252c638bab9cbe298514535b32d325c6f7b0955250f3b7bfa15ca6abc",
+      "published_sha256": "8f22ff9b5a973a4501626cccc455e69d8c4a649878fefd256f4a722dc5a8d429"
+    },
+    {
+      "file": "CCodeBase.rsp",
+      "raw_sha256": "6bb0300f4ee3ce3fedfac68b4d63eee95acd68321bf477211c9966f3ae6dbdb4",
+      "published_sha256": "c145db79f452a3a5051094923fbc5719bfa90146864adc257a2972cb43ebfc0a"
+    },
+    {
+      "file": "CCodeFactory.rsp",
+      "raw_sha256": "451a34f34655e613915f636d03e62628b3eba2ce3c64eeae69c271eda76df149",
+      "published_sha256": "d9a25ebca8d7e94fd616b6a0afc5dfb04db8974863974215e01a05c02d1f7ad5"
+    },
+    {
+      "file": "CCodePage.rsp",
+      "raw_sha256": "0e3e018e742a2571e00b5a4623869ada76359f6da51e26a0e676089425092e8c",
+      "published_sha256": "4e6e9798f69463ac2b6a98cce48b0f645a3f64d6e5eca51c6bd70ce828e45959"
+    },
+    {
+      "file": "CFileLoad.rsp",
+      "raw_sha256": "dcee3d63871f0a28ef80555c5d4246e0a58ad8c0dd7a6507e0fdddafa4564494",
+      "published_sha256": "1091291e884c9166cdb903cb02cbe8506a2e21736dd4799bd6df22d01ac81c49"
+    },
+    {
+      "file": "CIoBridge.rsp",
+      "raw_sha256": "334cf8801be0e41b4a6e7c4ab46573cce081542a4209fe9d973de35910fa6339",
+      "published_sha256": "c7f9b8d1354877dfa518079600cd994ebf8d073e57292a0f1902188783a9350e"
+    },
+    {
+      "file": "CJis.rsp",
+      "raw_sha256": "54f4898ddcd8a5eed1e1195ce2dd12a8d7e6fba399b271d859b6dfb1595b40b2",
+      "published_sha256": "076b9395c1d9e585c64da36f95e26c7c87c6143646eee2ee9b03ffd33b9fd8be"
+    },
+    {
+      "file": "CMemory.rsp",
+      "raw_sha256": "493f1c5ff0aa1ad30cd5bb4a3a43c0df276bece5a9048e71d2f3cba0e4fa62db",
+      "published_sha256": "dfc0b490f121b276675060fb1067ea29120e20b8fcf8e15160134ed6d94e2a1e"
+    },
+    {
+      "file": "CNativeW.rsp",
+      "raw_sha256": "a6b97143d0ae49f2d2c48cd2fdf2465906b9a6a58cbce6b760e69ef113f2354a",
+      "published_sha256": "f8d6bbeb0b22d97e126c1046f6dac5ce23c3a9a45ce16ffebdb5e1b19f0b100b"
+    },
+    {
+      "file": "CUtf7.rsp",
+      "raw_sha256": "028e3bbaf5c02eaca82bbbbd1e771e7c7f27a1672fd7c27714d6772139291822",
+      "published_sha256": "bb063bd8d066e43bf3a110ebb18ad63fde7d23074aeb749ac00baccc34f1cec8"
+    },
+    {
+      "file": "CUtf8.rsp",
+      "raw_sha256": "67b506d54b9d7d9dae4a9c0b72bfc193cfa327a6133450b8a2727bfb713e33ee",
+      "published_sha256": "f9f8174b64dcd025189625ac23556e10665201ab800c1d084f4c44fb696eb5e5"
+    },
+    {
+      "file": "test-file.rsp",
+      "raw_sha256": "e7b0f8d990a2a9b2e3d1ab19d9ffa0142793c04e9d81dbeaf7abfb6b91088903",
+      "published_sha256": "ae05958cb1cc813ab2ad5f39ae30572c7d0c4f41e5245869c9d37f7b084e7e1d"
+    }
+  ]
+}

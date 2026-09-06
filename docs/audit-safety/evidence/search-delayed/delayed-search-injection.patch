@@ -1,0 +1,124 @@
+--- sakura_core\workbench\search\CSearchWorkbenchTool.cpp
++++ sakura_core\workbench\search\CSearchWorkbenchTool.cpp
+@@ -38,0 +39,8 @@
++
++
++namespace audit_delayed_search {
++HANDLE entered{}, resume{}, finished{};
++std::atomic<bool> armed{false};
++std::atomic<unsigned long long> generation{0};
++std::atomic<int> dropped{0}, published{0}, accepted{0}, timeouts{0}, matches{0};
++}
+@@ -533,0 +542 @@
++		if (result->request.generation == audit_delayed_search::generation.load()) ++audit_delayed_search::accepted;
+@@ -1035,0 +1045,9 @@
++
++                const bool observed = audit_delayed_search::armed.exchange(false);
++                if (observed) {
++                    audit_delayed_search::generation.store(request.generation);
++                    audit_delayed_search::matches.store(static_cast<int>(result->results.matchCount));
++                    ::SetEvent(audit_delayed_search::entered);
++                    if (::WaitForSingleObject(audit_delayed_search::resume, 10000) != WAIT_OBJECT_0)
++                        ++audit_delayed_search::timeouts;
++                }
+@@ -1038,0 +1057,4 @@
++                    if (observed) {
++                        ++audit_delayed_search::dropped;
++                        ::SetEvent(audit_delayed_search::finished);
++                    }
+@@ -1045,0 +1068,5 @@
++                if (observed) {
++                    ++audit_delayed_search::published;
++                    ::SetEvent(audit_delayed_search::finished);
++                }
++
+--- src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp
++++ src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp
+@@ -11,0 +12 @@
++#include <atomic>
+@@ -448 +449,85 @@
+-}+}
++
++namespace audit_delayed_search {
++extern HANDLE entered, resume, finished;
++extern std::atomic<bool> armed;
++extern std::atomic<unsigned long long> generation;
++extern std::atomic<int> dropped, published, accepted, timeouts, matches;
++struct EventScope {
++    EventScope() {
++        entered = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
++        resume = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
++        finished = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
++        generation = ~0ull;
++        dropped = published = accepted = timeouts = matches = 0;
++    }
++    ~EventScope() {
++        armed = false;
++        ::SetEvent(resume);
++        auto& retirement = workbench::WorkerRetirementService::Instance();
++        const auto deadline = ::GetTickCount64() + 12000;
++        while (retirement.ReservedOrPendingCount() && ::GetTickCount64() < deadline) ::Sleep(5);
++        EXPECT_EQ(0u, retirement.ReservedOrPendingCount());
++        if (!retirement.ReservedOrPendingCount()) {
++            ::CloseHandle(entered); ::CloseHandle(resume); ::CloseHandle(finished);
++            entered = resume = finished = nullptr;
++        }
++    }
++};
++}
++
++TEST_F(SearchRequestSafetyTest, DelayedWorkerPublicationAfterInvalidation)
++{
++    using workbench::search::CSearchWorkbenchTool;
++    namespace probe = audit_delayed_search;
++    for (int scenario = 0; scenario < 7; ++scenario) {
++        SCOPED_TRACE(scenario);
++        probe::EventScope events;
++        ASSERT_NE(nullptr, probe::entered);
++        ASSERT_NE(nullptr, probe::resume);
++        ASSERT_NE(nullptr, probe::finished);
++        const cxx::ResourceHolder<&::DestroyWindow> parent{::CreateWindowExW(0, L"STATIC", L"", WS_POPUP,
++            0, 0, 400, 300, nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr)};
++        ASSERT_NE(nullptr, parent.get());
++        CSearchWorkbenchTool tool;
++        ASSERT_TRUE(tool.Create(parent.get()));
++        tool.SetRoot(root.wstring());
++        probe::armed = true;
++        tool.SetQueryText(L"needle");
++        const auto window = tool.GetHwnd();
++        const auto list = ::GetDlgItem(window, 3);
++        ASSERT_EQ(WAIT_OBJECT_0, ::WaitForSingleObject(probe::entered, 5000));
++        ASSERT_EQ(1, probe::matches.load()); // Real search completed before invalidation.
++        if (scenario == 0) tool.SetQueryText(L"");
++        if (scenario == 1) ::SetWindowTextW(::GetDlgItem(window, 1), L"different");
++        if (scenario == 2) {
++            ::SetWindowTextW(::GetDlgItem(window, 1), L"different");
++            ::SetWindowTextW(::GetDlgItem(window, 1), L"needle");
++        }
++        if (scenario == 3) tool.SetRoot(L"");
++        if (scenario == 4) tool.Close();
++        if (scenario == 5) {
++            RECT client{};
++            ASSERT_TRUE(::GetClientRect(window, &client));
++            const auto geometry = workbench::search::CalculateSearchWidgetGeometry(client, 96, false, 0);
++            ::SendMessageW(window, WM_LBUTTONUP, 0, MAKELPARAM(geometry.queryBox.right - 32,
++                (geometry.queryBox.top + geometry.queryBox.bottom) / 2));
++        }
++        // Scenario 6 is the unchanged-query control: the delayed result must be accepted.
++        ::SetEvent(probe::resume);
++        ASSERT_EQ(WAIT_OBJECT_0, ::WaitForSingleObject(probe::finished, 5000));
++        MSG message{};
++        constexpr UINT complete = WM_APP + 0x5e1;
++        while (::PeekMessageW(&message, window, complete, complete, PM_REMOVE)) ::DispatchMessageW(&message);
++        EXPECT_EQ(0, probe::timeouts.load());
++        EXPECT_EQ(scenario == 6 ? 0 : 1, probe::dropped.load());
++        EXPECT_EQ(scenario == 6 ? 1 : 0, probe::published.load());
++        EXPECT_EQ(scenario == 6 ? 1 : 0, probe::accepted.load());
++        if (scenario == 4) {
++            EXPECT_FALSE(::IsWindow(window));
++            EXPECT_FALSE(::IsWindow(list));
++        }
++        if (scenario == 6) EXPECT_EQ(2, ::SendMessageW(list, LB_GETCOUNT, 0, 0));
++        tool.Close();
++    }
++}

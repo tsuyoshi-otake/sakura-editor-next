@@ -1,0 +1,30 @@
+Running main() from C:\Users\developer\tmp\sakura-audit-safety\src\test\resources\code-main.cpp
+Note: Google Test filter = SearchRequestSafetyTest.*
+[==========] Running 6 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 6 tests from SearchRequestSafetyTest
+[ RUN      ] SearchRequestSafetyTest.LongLinePreviewContainsTheActualMatch
+[       OK ] SearchRequestSafetyTest.LongLinePreviewContainsTheActualMatch (13 ms)
+[ RUN      ] SearchRequestSafetyTest.PreviewDoesNotSplitUtf16SurrogatePair
+C:\Users\developer\tmp\sakura-audit-safety\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp(222): error: Value of: match.preview.front() >= 0xdc00 && match.preview.front() <= 0xdfff
+  Actual: true
+Expected: false
+
+[  FAILED  ] SearchRequestSafetyTest.PreviewDoesNotSplitUtf16SurrogatePair (34 ms)
+[ RUN      ] SearchRequestSafetyTest.ClearingQueryRejectsAlreadyPostedCompletion
+[       OK ] SearchRequestSafetyTest.ClearingQueryRejectsAlreadyPostedCompletion (105 ms)
+[ RUN      ] SearchRequestSafetyTest.SeededPreviewWindowsPreserveSourceCoordinatesAndHitText
+[       OK ] SearchRequestSafetyTest.SeededPreviewWindowsPreserveSourceCoordinatesAndHitText (515 ms)
+[ RUN      ] SearchRequestSafetyTest.NativeReplaceAllPreservesFilesAfterQueryInvalidation
+[       OK ] SearchRequestSafetyTest.NativeReplaceAllPreservesFilesAfterQueryInvalidation (299 ms)
+[ RUN      ] SearchRequestSafetyTest.PreviewBoundaryFixturesPreserveExplicitUtf16Lengths
+[       OK ] SearchRequestSafetyTest.PreviewBoundaryFixturesPreserveExplicitUtf16Lengths (109 ms)
+[----------] 6 tests from SearchRequestSafetyTest (1085 ms total)
+
+[----------] Global test environment tear-down
+[==========] 6 tests from 1 test suite ran. (1116 ms total)
+[  PASSED  ] 5 tests.
+[  FAILED  ] 1 test, listed below:
+[  FAILED  ] SearchRequestSafetyTest.PreviewDoesNotSplitUtf16SurrogatePair
+
+ 1 FAILED TEST
