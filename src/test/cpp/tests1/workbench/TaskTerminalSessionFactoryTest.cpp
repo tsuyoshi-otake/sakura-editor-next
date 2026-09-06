@@ -129,6 +129,13 @@ struct CompletionCapture final {
 		return condition.wait_for(lock, std::chrono::seconds(2), [&] { return exits.size() >= count; });
 	}
 
+	std::vector<workbench::tasks::TaskSessionExit> Snapshot()
+	{
+		std::lock_guard lock(mutex);
+		return exits;
+	}
+
+private:
 	std::mutex mutex;
 	std::condition_variable condition;
 	std::vector<workbench::tasks::TaskSessionExit> exits;
@@ -204,8 +211,46 @@ TEST(CTaskTerminalSessionFactory, ProcessLaunchPreservesExecutableAndArgumentTok
 		EXPECT_EQ((std::vector<std::wstring>{ L"", L"with space", L"a'b", L"C:\\tail\\" }), state->launch.arguments);
 		EXPECT_EQ(L"C:\\work", state->launch.workingDirectory);
 	}
-	EXPECT_EQ(ETaskSessionExitKind::Exited, capture.exits.front().kind);
-	EXPECT_EQ(23, capture.exits.front().exitCode);
+	const auto observed = capture.Snapshot();
+	ASSERT_EQ(1U, observed.size());
+	EXPECT_EQ(ETaskSessionExitKind::Exited, observed.front().kind);
+	EXPECT_EQ(23, observed.front().exitCode);
+}
+
+TEST(CTaskTerminalSessionFactory, ImmediateWorkerCompletionPreservesSuccessfulStartAndOneTerminalResult)
+{
+    for (const bool failRead : { false, true }) {
+        for (unsigned int iteration = 0; iteration < 128; ++iteration) {
+            SCOPED_TRACE(iteration);
+            SCOPED_TRACE(failRead);
+            auto state = std::make_shared<RecordingBackendState>();
+            state->exit.exitCode = 23;
+            if (failRead) {
+                state->readStatus = terminal::TerminalBackendReadStatus::Failed;
+                state->readError = 901;
+            }
+            CompletionCapture capture;
+            CTaskTerminalSessionFactory factory({}, MakeCreator(state));
+            auto session = factory.Create({ [&](auto value) { capture.Receive(std::move(value)); } });
+            const auto start = session->Start(ProcessRequest());
+            EXPECT_TRUE(start.succeeded) << start.errorCode;
+            EXPECT_TRUE(capture.WaitFor(1));
+            EXPECT_EQ(workbench::tasks::ETaskExecutionSessionCloseKind::Closed,
+                session->WaitForClose(std::chrono::steady_clock::now() + std::chrono::seconds(2)).kind);
+            {
+                const auto observed = capture.Snapshot();
+                ASSERT_EQ(1U, observed.size());
+                EXPECT_EQ(failRead ? ETaskSessionExitKind::Failed : ETaskSessionExitKind::Exited,
+                    observed.front().kind);
+                if (!failRead) EXPECT_EQ(23U, observed.front().exitCode);
+            }
+            {
+                std::lock_guard lock(state->mutex);
+                EXPECT_EQ(1U, state->closeRequests);
+                EXPECT_EQ(ProcessRequest().terminalLaunchOptions.arguments, state->launch.arguments);
+            }
+        }
+    }
 }
 
 TEST(CTaskTerminalSessionFactory, ShellUsesPolicyAndDoesNotAllowMixedProcessFields)
@@ -257,11 +302,13 @@ TEST(CTaskTerminalSessionFactory, MapsNaturalCancelFailureAndCloseExactlyOnceAft
 		auto session = factory.Create({ [&](auto value) { capture.Receive(std::move(value)); } });
 		ASSERT_TRUE(session->Start(ProcessRequest()).succeeded);
 		ASSERT_TRUE(capture.WaitFor(1));
-		EXPECT_EQ(ETaskSessionExitKind::Exited, capture.exits.front().kind);
-		EXPECT_EQ(42, capture.exits.front().exitCode);
+		const auto observed = capture.Snapshot();
+		ASSERT_EQ(1U, observed.size());
+		EXPECT_EQ(ETaskSessionExitKind::Exited, observed.front().kind);
+		EXPECT_EQ(42, observed.front().exitCode);
 		EXPECT_EQ(workbench::tasks::ETaskExecutionSessionCloseKind::Closed,
 			session->WaitForClose(std::chrono::steady_clock::now() + std::chrono::seconds(1)).kind);
-		EXPECT_EQ(1U, capture.exits.size());
+		EXPECT_EQ(1U, capture.Snapshot().size());
 	}
 	// Semantic cancellation wins over the terminal's forced/closed completion kind.
 	{
@@ -274,9 +321,11 @@ TEST(CTaskTerminalSessionFactory, MapsNaturalCancelFailureAndCloseExactlyOnceAft
 		ASSERT_TRUE(session->Start(ProcessRequest()).succeeded);
 		session->RequestCancel();
 		ASSERT_TRUE(capture.WaitFor(1));
-		EXPECT_EQ(ETaskSessionExitKind::Cancelled, capture.exits.front().kind);
-		EXPECT_EQ(99, capture.exits.front().exitCode);
-		EXPECT_EQ(1U, capture.exits.size());
+		const auto observed = capture.Snapshot();
+		ASSERT_EQ(1U, observed.size());
+		EXPECT_EQ(ETaskSessionExitKind::Cancelled, observed.front().kind);
+		EXPECT_EQ(99, observed.front().exitCode);
+		EXPECT_EQ(1U, capture.Snapshot().size());
 	}
 	// An I/O failure maps to Failed once, and an ordinary close is not cancellation.
 	{
@@ -288,8 +337,8 @@ TEST(CTaskTerminalSessionFactory, MapsNaturalCancelFailureAndCloseExactlyOnceAft
 		auto session = factory.Create({ [&](auto value) { capture.Receive(std::move(value)); } });
 		ASSERT_TRUE(session->Start(ProcessRequest()).succeeded);
 		ASSERT_TRUE(capture.WaitFor(1));
-		EXPECT_EQ(ETaskSessionExitKind::Failed, capture.exits.front().kind);
-		EXPECT_EQ(1U, capture.exits.size());
+		EXPECT_EQ(ETaskSessionExitKind::Failed, capture.Snapshot().front().kind);
+		EXPECT_EQ(1U, capture.Snapshot().size());
 	}
 }
 
@@ -306,8 +355,8 @@ TEST(CTaskTerminalSessionFactory, ExplicitCloseLeavesTerminalStateFinalizationTo
 	session->BeginClose();
 	EXPECT_EQ(workbench::tasks::ETaskExecutionSessionCloseKind::Closed,
 		session->WaitForClose(std::chrono::steady_clock::now() + std::chrono::seconds(1)).kind);
-	std::lock_guard lock(capture.mutex);
-	EXPECT_TRUE(capture.exits.empty());
+	const auto observed = capture.Snapshot();
+	EXPECT_TRUE(observed.empty());
 }
 
 TEST(CTaskTerminalSessionFactoryIntegration, ConPtyProcessPublishesTheRealExitCode)
@@ -331,10 +380,10 @@ TEST(CTaskTerminalSessionFactoryIntegration, ConPtyProcessPublishesTheRealExitCo
 	ASSERT_TRUE(started.succeeded) << "Create ConPTY task process failed with " << started.errorCode;
 	ASSERT_TRUE(capture.WaitFor(1));
 	{
-		std::lock_guard lock(capture.mutex);
-		ASSERT_EQ(1U, capture.exits.size());
-		EXPECT_EQ(ETaskSessionExitKind::Exited, capture.exits.front().kind);
-		EXPECT_EQ(37U, capture.exits.front().exitCode);
+		const auto observed = capture.Snapshot();
+		ASSERT_EQ(1U, observed.size());
+		EXPECT_EQ(ETaskSessionExitKind::Exited, observed.front().kind);
+		EXPECT_EQ(37U, observed.front().exitCode);
 	}
 	EXPECT_EQ(workbench::tasks::ETaskExecutionSessionCloseKind::Closed,
 		session->WaitForClose(std::chrono::steady_clock::now() + std::chrono::seconds(1)).kind);

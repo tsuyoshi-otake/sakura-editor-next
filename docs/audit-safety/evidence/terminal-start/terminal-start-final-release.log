@@ -1,0 +1,99 @@
+Running main() from C:\Users\developer\tmp\sakura-audit-safety\src\test\resources\code-main.cpp
+Note: Google Test filter = CTaskTerminalSessionFactory.*:CTaskTerminalSessionFactoryIntegration.*:PowerShellTaskShellLaunchPolicy.*:TerminalSession.*
+[==========] Running 40 tests from 4 test suites.
+[----------] Global test environment set-up.
+[----------] 30 tests from TerminalSession
+[ RUN      ] TerminalSession.StartFailureAlwaysEndsInFailedAndCloseIsIdempotent
+[       OK ] TerminalSession.StartFailureAlwaysEndsInFailedAndCloseIsIdempotent (0 ms)
+[ RUN      ] TerminalSession.InvalidLaunchAlsoReachesFailed
+[       OK ] TerminalSession.InvalidLaunchAlsoReachesFailed (0 ms)
+[ RUN      ] TerminalSession.EndOfFileTransitionsRunningSessionToExited
+[       OK ] TerminalSession.EndOfFileTransitionsRunningSessionToExited (5 ms)
+[ RUN      ] TerminalSession.UnexpectedOutputPipeFailureTransitionsToFailed
+[       OK ] TerminalSession.UnexpectedOutputPipeFailureTransitionsToFailed (15 ms)
+[ RUN      ] TerminalSession.CloseUsesBoundedGraceThenJobFallbackAndIsIdempotent
+[       OK ] TerminalSession.CloseUsesBoundedGraceThenJobFallbackAndIsIdempotent (0 ms)
+[ RUN      ] TerminalSession.BeginCloseIsNonblockingAndWaitReturnsOnlyAfterNormalQuiescence
+[       OK ] TerminalSession.BeginCloseIsNonblockingAndWaitReturnsOnlyAfterNormalQuiescence (14 ms)
+[ RUN      ] TerminalSession.EndOfFileWaitsForRealExitAndRetainsNonzeroRootCode
+[       OK ] TerminalSession.EndOfFileWaitsForRealExitAndRetainsNonzeroRootCode (14 ms)
+[ RUN      ] TerminalSession.ExitObservationFailureBecomesOneFailedPostQuiescenceCompletion
+[       OK ] TerminalSession.ExitObservationFailureBecomesOneFailedPostQuiescenceCompletion (15 ms)
+[ RUN      ] TerminalSession.RequestedForcedCloseCompletesOnceAfterBackendCloseAndPreservesObservedCode
+[       OK ] TerminalSession.RequestedForcedCloseCompletesOnceAfterBackendCloseAndPreservesObservedCode (0 ms)
+[ RUN      ] TerminalSession.CompletionCallbackMayDestroySessionAfterQuiescence
+[       OK ] TerminalSession.CompletionCallbackMayDestroySessionAfterQuiescence (13 ms)
+[ RUN      ] TerminalSession.WaitDeadlineReportsExceededOnlyAfterForcedCloseQuiesces
+[       OK ] TerminalSession.WaitDeadlineReportsExceededOnlyAfterForcedCloseQuiesces (14 ms)
+[ RUN      ] TerminalSession.RepeatedConcurrentBeginCloseHasOneBackendCloseAndNoSurvivingWorkerOwnership
+[       OK ] TerminalSession.RepeatedConcurrentBeginCloseHasOneBackendCloseAndNoSurvivingWorkerOwnership (2 ms)
+[ RUN      ] TerminalSession.WorkerCallbackWaitDoesNotSelfDeadlockAndRetainsExternalCloseOwnership
+[       OK ] TerminalSession.WorkerCallbackWaitDoesNotSelfDeadlockAndRetainsExternalCloseOwnership (11 ms)
+[ RUN      ] TerminalSession.FastReaderCallbackPublishesItsIdentityBeforeWaitCanStartClose
+[       OK ] TerminalSession.FastReaderCallbackPublishesItsIdentityBeforeWaitCanStartClose (14 ms)
+[ RUN      ] TerminalSession.StartCallbackCloseWaitIsDeferredUntilLifecycleLockIsReleased
+[       OK ] TerminalSession.StartCallbackCloseWaitIsDeferredUntilLifecycleLockIsReleased (0 ms)
+[ RUN      ] TerminalSession.DestroyingSessionFromStartingCallbackAbortsBeforeBackendLaunch
+[       OK ] TerminalSession.DestroyingSessionFromStartingCallbackAbortsBeforeBackendLaunch (14 ms)
+[ RUN      ] TerminalSession.DestructionFromCloseCallbackRetainsImplUntilCloseWorkerCompletes
+[       OK ] TerminalSession.DestructionFromCloseCallbackRetainsImplUntilCloseWorkerCompletes (15 ms)
+[ RUN      ] TerminalSession.ExternalCloseSurvivesDestructionFromClosingCallback
+[       OK ] TerminalSession.ExternalCloseSurvivesDestructionFromClosingCallback (1 ms)
+[ RUN      ] TerminalSession.PreservesExecutableArgumentsAndWorkingDirectoryWithSpaces
+[       OK ] TerminalSession.PreservesExecutableArgumentsAndWorkingDirectoryWithSpaces (0 ms)
+[ RUN      ] TerminalSession.OutputQueueAppliesHighLowWaterBackpressureWithoutLoss
+[       OK ] TerminalSession.OutputQueueAppliesHighLowWaterBackpressureWithoutLoss (51 ms)
+[ RUN      ] TerminalSession.MillionLineOutputStaysBoundedAndLossless
+[       OK ] TerminalSession.MillionLineOutputStaysBoundedAndLossless (5 ms)
+[ RUN      ] TerminalSession.OutputNotificationHasOnlyOneMessageInFlight
+[       OK ] TerminalSession.OutputNotificationHasOnlyOneMessageInFlight (16 ms)
+[ RUN      ] TerminalSession.InputQueueRejectsOverflowWithoutDroppingAcceptedBytes
+[       OK ] TerminalSession.InputQueueRejectsOverflowWithoutDroppingAcceptedBytes (30 ms)
+[ RUN      ] TerminalSession.WriteFailureReachesFailedTerminalState
+[       OK ] TerminalSession.WriteFailureReachesFailedTerminalState (15 ms)
+[ RUN      ] TerminalSession.RapidResizeRequestsCoalesceToLatestDimensions
+[       OK ] TerminalSession.RapidResizeRequestsCoalesceToLatestDimensions (60 ms)
+[ RUN      ] TerminalSession.ResizeFailureReachesFailedTerminalState
+[       OK ] TerminalSession.ResizeFailureReachesFailedTerminalState (44 ms)
+[ RUN      ] TerminalSession.CloseBeforeStartEndsIdleSessionExplicitly
+[       OK ] TerminalSession.CloseBeforeStartEndsIdleSessionExplicitly (0 ms)
+[ RUN      ] TerminalSession.DiagnosticTraceCorrelatesPtyProtocolEvictionAndViewportWithoutRawContent
+[       OK ] TerminalSession.DiagnosticTraceCorrelatesPtyProtocolEvictionAndViewportWithoutRawContent (68 ms)
+[ RUN      ] TerminalSession.DiagnosticTraceRotatesWithinTwoBoundedFiles
+[       OK ] TerminalSession.DiagnosticTraceRotatesWithinTwoBoundedFiles (264 ms)
+[ RUN      ] TerminalSession.DiagnosticTraceCanBeActivatedAfterEvictionHasAlreadyStarted
+[       OK ] TerminalSession.DiagnosticTraceCanBeActivatedAfterEvictionHasAlreadyStarted (1127 ms)
+[----------] 30 tests from TerminalSession (1856 ms total)
+
+[----------] 2 tests from PowerShellTaskShellLaunchPolicy
+[ RUN      ] PowerShellTaskShellLaunchPolicy.PreservesCommandFragmentAndQuotesEveryArgumentToken
+[       OK ] PowerShellTaskShellLaunchPolicy.PreservesCommandFragmentAndQuotesEveryArgumentToken (0 ms)
+[ RUN      ] PowerShellTaskShellLaunchPolicy.RejectsNulAndMissingProfile
+[       OK ] PowerShellTaskShellLaunchPolicy.RejectsNulAndMissingProfile (0 ms)
+[----------] 2 tests from PowerShellTaskShellLaunchPolicy (0 ms total)
+
+[----------] 7 tests from CTaskTerminalSessionFactory
+[ RUN      ] CTaskTerminalSessionFactory.ProcessLaunchPreservesExecutableAndArgumentTokens
+[       OK ] CTaskTerminalSessionFactory.ProcessLaunchPreservesExecutableAndArgumentTokens (1 ms)
+[ RUN      ] CTaskTerminalSessionFactory.ImmediateWorkerCompletionPreservesSuccessfulStartAndOneTerminalResult
+[       OK ] CTaskTerminalSessionFactory.ImmediateWorkerCompletionPreservesSuccessfulStartAndOneTerminalResult (197 ms)
+[ RUN      ] CTaskTerminalSessionFactory.ShellUsesPolicyAndDoesNotAllowMixedProcessFields
+[       OK ] CTaskTerminalSessionFactory.ShellUsesPolicyAndDoesNotAllowMixedProcessFields (0 ms)
+[ RUN      ] CTaskTerminalSessionFactory.StartFailureAndPolicyFailureDoNotPublishAnExit
+[       OK ] CTaskTerminalSessionFactory.StartFailureAndPolicyFailureDoNotPublishAnExit (4014 ms)
+[ RUN      ] CTaskTerminalSessionFactory.MapsNaturalCancelFailureAndCloseExactlyOnceAfterQuiescence
+[       OK ] CTaskTerminalSessionFactory.MapsNaturalCancelFailureAndCloseExactlyOnceAfterQuiescence (2 ms)
+[ RUN      ] CTaskTerminalSessionFactory.ExplicitCloseLeavesTerminalStateFinalizationToTaskExecutionService
+[       OK ] CTaskTerminalSessionFactory.ExplicitCloseLeavesTerminalStateFinalizationToTaskExecutionService (0 ms)
+[ RUN      ] CTaskTerminalSessionFactory.OutputAvailableDrainsBoundedTerminalQueueIntoSink
+[       OK ] CTaskTerminalSessionFactory.OutputAvailableDrainsBoundedTerminalQueueIntoSink (0 ms)
+[----------] 7 tests from CTaskTerminalSessionFactory (4221 ms total)
+
+[----------] 1 test from CTaskTerminalSessionFactoryIntegration
+[ RUN      ] CTaskTerminalSessionFactoryIntegration.ConPtyProcessPublishesTheRealExitCode
+[       OK ] CTaskTerminalSessionFactoryIntegration.ConPtyProcessPublishesTheRealExitCode (40 ms)
+[----------] 1 test from CTaskTerminalSessionFactoryIntegration (40 ms total)
+
+[----------] Global test environment tear-down
+[==========] 40 tests from 4 test suites ran. (6125 ms total)
+[  PASSED  ] 40 tests.

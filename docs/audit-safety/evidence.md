@@ -301,3 +301,53 @@ The previous failing CI must be replaced by a successful check of the new
 published head before claiming the hosted gate is repaired. Full F01–F22 /
 H01–H15 acceptance, including Clipboard, Search persistence, Updater, visual and
 performance work, remains incomplete.
+
+
+## 2026-09-06: preserve terminal launch success across immediate worker completion
+
+The MinGW Release job 101327383306 (run 33973999508) at 1c9ce1c66
+failed the process-task argument test because Start returned failure.
+The native MSVC Debug/Release and PR gates passed at that head.
+
+FinalizeFromWorker used the same closeRequested flag as an explicit
+RequestClose. An immediately exited process or failed reader could therefore
+start its cleanup before the launching thread's final check and turn an
+already-successful backend launch into Aborted. The completed task and its
+startup result then disagreed.
+
+The repair moves the startup-abort flag to the explicit close boundary.
+Worker-owned natural/failure finalization still stops and joins the same workers
+and publishes the same single completion. Existing callback-origin cancellation,
+startup rejection and destruction tests remain. Redundant catch-all wrappers
+around the backend's noexcept Close/ForceTerminate contracts were removed in
+that finalization path. The test completion recorder now returns a locked
+snapshot instead of exposing mutable callback state.
+
+A diagnostic-only bounded barrier orders worker finalization before Start's
+last check. It reproduces the hosted assertion on the old source (one failed
+test); the fixed source passes the same schedule and a new 256-run regression
+(128 natural exits and 128 immediate reader failures). This establishes a
+sufficient interleaving; it does not claim to recover the hosted scheduling
+trace. Unforced local old-source repetitions passed, as recorded explicitly.
+
+After removing the probe, canonical x64 Debug and Release solution builds and
+all 40 selected terminal/task/shell-policy tests pass, including real ConPTY
+exit-code propagation. Every runner has a 120-second deadline and observed zero
+owned test/editor survivors. A separate checkout at the published base plus
+only these two files passes semantic strict (new/increased/touched shortages
+zero, baseline unchanged), checkout-invariance, generation and all-context graph
+checks. Both changed C++ files are ASCII. The local solution also contains the
+uncommitted Clipboard work, which is not published by this repair.
+
+[Receipt, source/log hashes](evidence/terminal-start/receipt.json) and
+[bounded scheduling probe](evidence/terminal-start/diagnostic-scheduling.patch).
+Use the canonical solution build and the filter
+CTaskTerminalSessionFactory.*:CTaskTerminalSessionFactoryIntegration.*:PowerShellTaskShellLaunchPolicy.*:TerminalSession.*
+through the bounded runner. Apply the diagnostic patch with git apply --unidiff-zero only in a disposable
+checkout, use the single failing process-task selector, then restore the exact
+saved source bytes and rebuild before normal verification. The normal-regression
+log named terminal-start-natural-red records a passing unforced pre-fix run;
+its filename is not evidence of failure.
+
+The exact repaired head still needs hosted MSVC/MinGW verification. This repair
+does not complete Clipboard, the full audit, or release acceptance.

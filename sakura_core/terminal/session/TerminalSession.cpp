@@ -636,12 +636,8 @@ struct CTerminalSession::Impl : std::enable_shared_from_this<CTerminalSession::I
 	{
 		bool expected = false;
 		if( state->backendClosed.compare_exchange_strong(expected, true) ) {
-			try {
-				terminalBackend->Close();
-			} catch( ... ) {
-				// Close is specified noexcept, but keep finalization safe even for a
-				// faulty test or third-party backend.
-			}
+			// The backend contract is noexcept; this owner performs close exactly once.
+			terminalBackend->Close();
 		}
 	}
 
@@ -687,7 +683,7 @@ struct CTerminalSession::Impl : std::enable_shared_from_this<CTerminalSession::I
 		if( StateOf(state) == TerminalSessionState::Running ) TransitionState(state, TerminalSessionState::Closing);
 		StopWorkersState(state);
 		if( terminalState == TerminalSessionState::Failed ) {
-			try { terminalBackend->ForceTerminate(); } catch( ... ) {}
+			terminalBackend->ForceTerminate();
 		}
 		TransitionState(state, terminalState, errorCode);
 		// State change remains the early UI signal.  The durable completion is
@@ -1002,7 +998,6 @@ struct CTerminalSession::Impl : std::enable_shared_from_this<CTerminalSession::I
 
 	void BeginClose() noexcept
 	{
-		shared->closeRequested.store(true, std::memory_order_release);
 		std::lock_guard lock(closeMutex);
 			if( closeStarted ) return;
 			closeStarted = true;
@@ -1046,6 +1041,9 @@ struct CTerminalSession::Impl : std::enable_shared_from_this<CTerminalSession::I
 
 	void RequestClose() noexcept
 	{
+		// Only an explicit close aborts Start. Worker exit/failure owns cleanup
+		// after a successful launch and must retain that launch result.
+		shared->closeRequested.store(true, std::memory_order_release);
 		if( shared->startedSuccessfully.load(std::memory_order_acquire) ) ClaimCompletion(shared, {});
 		BeginClose();
 	}
