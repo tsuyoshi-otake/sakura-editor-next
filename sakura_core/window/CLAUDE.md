@@ -21,6 +21,16 @@ from page content and applies host-relative wrapper plus wrapper-local child
 coordinates in one required companion callback below that header. Existing
 built-in location declarations are not widened by this native seam.
 
+## First document tab measurement (2026-09-06, #292)
+
+Set `CTabWnd::m_eTabPosition` to its destination before calling `OnSize` and
+measuring its host height. Breadcrumbs depend on that position. Measuring while
+the first tab still has `TabPosition_None` reserves only the tab row; the final
+tab layout then grows by the breadcrumb height (22 px at 96 DPI) after the Panel
+has already been positioned. A repaint cannot fix that geometry overlap.
+Retain the old position only for the top/bottom transition's temporary hide.
+The native regression is `src/test/integration/panel-editor-order.ps1`.
+
 ## Committed layout must invalidate the whole frame (2026-08-05, #17)
 
 - A committed geometry change invalidates the frame **once, synchronously**,

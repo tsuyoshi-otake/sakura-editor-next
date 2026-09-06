@@ -14317,10 +14317,14 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 	{
 		// タブ多段はSizeBox/ウィンドウ幅で高さが変わる可能性がある
 		ETabPosition tabPosition = m_pShareData->m_Common.m_sTabBar.m_eTabPosition;
+		const ETabPosition previousTabPosition = m_cTabWnd.m_eTabPosition;
+		// Breadcrumb measurement depends on the destination tab position. Publish
+		// it before OnSize so the first file reserves the complete tab host height.
+		m_cTabWnd.m_eTabPosition = tabPosition;
 		bool bHidden = false;
 		if( tabPosition == TabPosition_Top ){
 			// 上から下に移動するとゴミが表示されるので一度非表示にする
-			if( m_cTabWnd.m_eTabPosition != TabPosition_None && m_cTabWnd.m_eTabPosition != TabPosition_Top ){
+			if( previousTabPosition != TabPosition_None && previousTabPosition != TabPosition_Top ){
 				bHidden = true;
 				::ShowWindow( m_cTabWnd.GetHwnd(), SW_HIDE );
 			}
@@ -14338,7 +14342,7 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 			}
 		}else if( tabPosition == TabPosition_Bottom ){
 			// 上から下に移動するとゴミが表示されるので一度非表示にする
-			if( m_cTabWnd.m_eTabPosition != TabPosition_None && m_cTabWnd.m_eTabPosition != TabPosition_Bottom ){
+			if( previousTabPosition != TabPosition_None && previousTabPosition != TabPosition_Bottom ){
 				bHidden = true;
 				ShowWindow( m_cTabWnd.GetHwnd(), SW_HIDE );
 			}
@@ -14372,7 +14376,6 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 		if( bHidden ){
 			::ShowWindow( m_cTabWnd.GetHwnd(), SW_SHOW );
 		}
-		m_cTabWnd.m_eTabPosition = tabPosition;
 	}
 
 	//	2005.04.23 genta ファンクションキー非表示の時は移動しない
