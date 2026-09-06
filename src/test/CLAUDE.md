@@ -86,6 +86,15 @@ moving a test to a new executable; change only its runtime runner/selector
 mapping.  A discovery failure or an unexpected zero-test result must never
 replace the baseline.
 
+For an existing baseline, use `test inventory refresh-runtime` with every
+declared `--runner runner-id=executable` after Debug discovery. Confirm renames
+against source/history and pass each as an explicit
+`--remap stable-test-id=runner-id::selector`; do not delete the old stable ID and
+create a replacement. This also adds newly discovered tests and refreshes binary
+provenance. Then run `test inventory verify-runtime` with the same runner set:
+both `missing_selectors` and `unexpected_selectors` must be empty. A test-only
+rename or addition still requires this inventory update (#294).
+
 Full suite for a built configuration:
 
 ```cmd
