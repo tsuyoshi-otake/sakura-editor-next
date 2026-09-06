@@ -10428,7 +10428,7 @@ RECT CEditWnd::LayoutMarkdownPreview(int left, int top, int right, int bottom, u
 		// preview state for restore. Zero-height HWNDs can still paint split boxes.
 		m_markdownPreviewDivider = {};
 		if (GetHwnd() != nullptr) ::InvalidateRect(GetHwnd(), &previousDivider, FALSE);
-		if (const HWND splitter = m_cSplitterWnd.GetHwnd(); splitter != nullptr) {
+		if (const auto splitter = m_cSplitterWnd.GetHwnd(); splitter != nullptr) {
 			::ShowWindow(splitter, SW_HIDE);
 		}
 		if (m_markdownPreview) m_markdownPreview->Show(false);
