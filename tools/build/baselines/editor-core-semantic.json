@@ -27100,210 +27100,231 @@
     {
       "column": 18,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 27,
+      "line": 28,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 46,
+      "line": 47,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 124,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 62,
+      "line": 65,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 76,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 72,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 76,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 80,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 61,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 84,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 81,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 122,
+      "line": 148,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 122,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 137,
+      "line": 163,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 68,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 155,
+      "line": 181,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 69,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 157,
+      "line": 183,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 57,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 162,
+      "line": 188,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 41,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 169,
+      "line": 196,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 68,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 169,
+      "line": 196,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 83,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 169,
+      "line": 196,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 40,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 188,
+      "line": 218,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 67,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 188,
+      "line": 218,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 82,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 188,
+      "line": 218,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 25,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 194,
+      "line": 224,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 114,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 237,
+      "line": 278,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 58,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 243,
+      "line": 284,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 87,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 244,
+      "line": 285,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 58,
-      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 245,
-      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 62,
-      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 246,
-      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 35,
-      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 266,
-      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 59,
-      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 282,
-      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 70,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
       "line": 286,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
+      "column": 62,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 287,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 35,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 308,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 59,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 326,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 70,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 331,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
       "column": 58,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 309,
+      "line": 360,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 60,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 310,
+      "line": 361,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 59,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 311,
+      "line": 362,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 73,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 314,
+      "line": 365,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 1,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 326,
+      "line": 378,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 1,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 327,
+      "line": 379,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 80,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 331,
+      "line": 383,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "boundary.win32_type"
     },
@@ -33622,107 +33643,114 @@
       "rule_id": "boundary.win32_type"
     },
     {
+      "column": 2,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 64,
+      "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
       "column": 41,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 79,
+      "line": 88,
       "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 68,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 79,
+      "line": 88,
       "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 83,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 79,
+      "line": 88,
       "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 27,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 247,
+      "line": 293,
       "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 54,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 247,
+      "line": 293,
       "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 69,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 247,
+      "line": 293,
       "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 3,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 255,
+      "line": 301,
       "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 85,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 273,
+      "line": 319,
       "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 23,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 285,
+      "line": 331,
       "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 50,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 285,
+      "line": 331,
       "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 65,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 285,
+      "line": 331,
       "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 126,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 287,
+      "line": 333,
       "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 26,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 298,
+      "line": 344,
       "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 53,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 298,
+      "line": 344,
       "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 68,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 298,
+      "line": 344,
       "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
       "rule_id": "boundary.win32_type"
     },
@@ -36879,28 +36907,28 @@
     {
       "column": 5,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 185,
+      "line": 216,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 46,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 291,
+      "line": 339,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 59,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 321,
+      "line": 373,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 68,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 324,
+      "line": 376,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "error.catch_all"
     },
@@ -38615,7 +38643,7 @@
     {
       "column": 5,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 118,
+      "line": 127,
       "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
       "rule_id": "error.catch_all"
     },
@@ -77290,42 +77318,49 @@
     {
       "column": 20,
       "evidence_sha256": "sha256:0f6664a54f38e73a22e42f0be32a7f8c043a2a3104e42f8bbe4dabf9814333fa",
-      "line": 41,
+      "line": 42,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 15,
       "evidence_sha256": "sha256:071628307ecb0d4d3e3bcbbbdadfb92ef65baa928e713328cbe6bb9efeb01c10",
-      "line": 42,
+      "line": 43,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 11,
       "evidence_sha256": "sha256:09400d8a093220a5fe936e2b1f3cfdaa9cff25297050466847273d8b911d6273",
-      "line": 43,
+      "line": 44,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 26,
       "evidence_sha256": "sha256:5eace1f131709aeb44e231eb384b719b2719b5a4de7214b2fc10f743ea5e1264",
-      "line": 44,
+      "line": 45,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 49,
+      "evidence_sha256": "sha256:58e601f2079110b7598257561448c3f1e4a3163257c73a4c2737cbcdaff11b72",
+      "line": 49,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 27,
       "evidence_sha256": "sha256:93746092199d57b5082ce229ab8f7ba8a150a42463380b4dd4ecd4dd1fc22868",
-      "line": 53,
+      "line": 56,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 32,
       "evidence_sha256": "sha256:886794115267de9e992a78ad7de5c8c194e56721f8e13d63978947a0ba92ed6c",
-      "line": 55,
+      "line": 58,
       "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
       "rule_id": "state.public_mutable_field"
     },
@@ -97712,10 +97747,10 @@
       }
     },
     "filtered_test_hint_count": 2,
-    "finding_count": 13862,
+    "finding_count": 13867,
     "finding_count_by_rule": {
       "boundary.private_include": 67,
-      "boundary.win32_type": 4774,
+      "boundary.win32_type": 4778,
       "error.catch_all": 677,
       "global.get_dll_share_data": 710,
       "global.get_edit_doc": 7,
@@ -97724,19 +97759,19 @@
       "memory.raw_new": 247,
       "resource.stop_required_acquisition": 262,
       "state.mutable_member": 132,
-      "state.public_mutable_field": 6379,
+      "state.public_mutable_field": 6380,
       "state.raw_pointer_member": 30,
       "test.filtered_or_skipped": 2
     },
-    "include_directive_count": 10957,
+    "include_directive_count": 10958,
     "monolith_link_hint_count": 0,
     "private_include_mention_count": 67,
     "raw_delete_expression_count": 317,
     "raw_new_expression_count": 247,
     "source_file_count": 1727,
-    "source_line_count": 519899,
+    "source_line_count": 519997,
     "tracked_file_count": 1776,
-    "win32_parameter_mention_count": 4774
+    "win32_parameter_mention_count": 4778
   },
   "rule_catalog": [
     {
@@ -97891,8 +97926,8 @@
     ]
   },
   "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
-  "source_commit": "ebbfc9f39a155a75370d2896d4b9b66cea3ba426",
-  "source_fingerprint": "sha256:da15edb3525860956438c152554e33126eb3592b01c775df07e16c4e5a5f5d23",
+  "source_commit": "9176ff83227f4bdb59ffb7a7a57bcb2f680bb6b0",
+  "source_fingerprint": "sha256:2230c1726e142f9f981ccadb088a2cdaae10f8127f94f0dde323ab7bca9baef3",
   "tracked_source_paths": [
     ".github/actions/bootstrap-vcpkg/action.yml",
     ".github/dependabot.yml",
