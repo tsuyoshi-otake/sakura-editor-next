@@ -1060,119 +1060,98 @@
     {
       "column": 9,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 104,
+      "line": 113,
       "path": "sakura_core/accessibility/CustomUiAutomationProvider.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 10,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 180,
+      "line": 189,
       "path": "sakura_core/accessibility/CustomUiAutomationProvider.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 9,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 204,
+      "line": 213,
       "path": "sakura_core/accessibility/CustomUiAutomationProvider.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 9,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 256,
+      "line": 282,
       "path": "sakura_core/accessibility/CustomUiAutomationProvider.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 9,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 263,
+      "line": 289,
       "path": "sakura_core/accessibility/CustomUiAutomationProvider.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 9,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 271,
+      "line": 297,
       "path": "sakura_core/accessibility/CustomUiAutomationProvider.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 9,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 501,
+      "line": 528,
       "path": "sakura_core/accessibility/CustomUiAutomationProvider.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 9,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 513,
+      "line": 540,
       "path": "sakura_core/accessibility/CustomUiAutomationProvider.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 9,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 567,
+      "line": 594,
       "path": "sakura_core/accessibility/CustomUiAutomationProvider.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 9,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 614,
-      "path": "sakura_core/accessibility/CustomUiAutomationProvider.cpp",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 9,
-      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 647,
+      "line": 670,
       "path": "sakura_core/accessibility/CustomUiAutomationProvider.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 56,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 708,
+      "line": 731,
       "path": "sakura_core/accessibility/CustomUiAutomationProvider.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 71,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 708,
+      "line": 731,
       "path": "sakura_core/accessibility/CustomUiAutomationProvider.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 28,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 711,
+      "line": 734,
       "path": "sakura_core/accessibility/CustomUiAutomationProvider.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 28,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 717,
-      "path": "sakura_core/accessibility/CustomUiAutomationProvider.cpp",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 8,
-      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 733,
-      "path": "sakura_core/accessibility/CustomUiAutomationProvider.cpp",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 8,
-      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 749,
+      "line": 740,
       "path": "sakura_core/accessibility/CustomUiAutomationProvider.cpp",
       "rule_id": "boundary.win32_type"
     },
@@ -1186,28 +1165,42 @@
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 771,
+      "line": 772,
+      "path": "sakura_core/accessibility/CustomUiAutomationProvider.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 8,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 779,
+      "path": "sakura_core/accessibility/CustomUiAutomationProvider.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 8,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 794,
       "path": "sakura_core/accessibility/CustomUiAutomationProvider.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 24,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 48,
+      "line": 50,
       "path": "sakura_core/accessibility/CustomUiAutomationProvider.h",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 70,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 64,
+      "line": 74,
       "path": "sakura_core/accessibility/CustomUiAutomationProvider.h",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 85,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 64,
+      "line": 74,
       "path": "sakura_core/accessibility/CustomUiAutomationProvider.h",
       "rule_id": "boundary.win32_type"
     },
@@ -28647,42 +28640,35 @@
     {
       "column": 27,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 93,
+      "line": 94,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 38,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 93,
+      "line": 94,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 57,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 119,
+      "line": 120,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 64,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 125,
+      "line": 126,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 480,
-      "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 2,
-      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 705,
+      "line": 481,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
@@ -28696,308 +28682,315 @@
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 722,
+      "line": 707,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 789,
+      "line": 723,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 818,
+      "line": 790,
+      "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 2,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 819,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 20,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 859,
+      "line": 860,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 59,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 1147,
+      "line": 1148,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 24,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 1473,
+      "line": 1474,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 39,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 1473,
+      "line": 1474,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 56,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 1546,
+      "line": 1547,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 21,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 1547,
+      "line": 1548,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 64,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 1871,
+      "line": 1848,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 68,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 2449,
+      "line": 2426,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 58,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 2478,
+      "line": 2455,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 62,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 2700,
+      "line": 2677,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 62,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 2713,
+      "line": 2690,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 58,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 2860,
+      "line": 2837,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 59,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 2872,
+      "line": 2849,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 62,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 2961,
+      "line": 2938,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 23,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 2962,
+      "line": 2939,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 56,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 2975,
+      "line": 2952,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 57,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 3007,
+      "line": 2984,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 23,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 3008,
+      "line": 2985,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 51,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 3025,
+      "line": 3002,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 55,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 3082,
+      "line": 3059,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 82,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 3082,
+      "line": 3059,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 3083,
+      "line": 3060,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 67,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 3128,
+      "line": 3105,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 54,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 3152,
+      "line": 3129,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 81,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 3152,
+      "line": 3129,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 3153,
+      "line": 3130,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 32,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 3253,
+      "line": 3230,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 91,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 3274,
+      "line": 3251,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 70,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 3289,
+      "line": 3266,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 61,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 3325,
+      "line": 3302,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 67,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 3327,
+      "line": 3304,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 63,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 3330,
+      "line": 3307,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 1,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 3583,
+      "line": 3560,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 48,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 3585,
+      "line": 3562,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 75,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 3585,
+      "line": 3562,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 90,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 3585,
+      "line": 3562,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 24,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 3668,
+      "line": 3645,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 9,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 3730,
+      "line": 3707,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 40,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 3730,
+      "line": 3707,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 51,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 3732,
+      "line": 3709,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 24,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 3772,
+      "line": 3749,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "boundary.win32_type"
     },
@@ -29767,50 +29760,316 @@
     {
       "column": 24,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 101,
+      "line": 77,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.h",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 28,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 131,
+      "line": 107,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.h",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 16,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 134,
+      "line": 110,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.h",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 16,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 140,
+      "line": 116,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.h",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 67,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 141,
+      "line": 117,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.h",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 16,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 197,
+      "line": 173,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.h",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 211,
+      "line": 187,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 15,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 26,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 30,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 26,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 13,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 36,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 26,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 36,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 3,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 74,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 3,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 80,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 3,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 84,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 3,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 117,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 45,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 159,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 73,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 226,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 73,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 248,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 44,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 286,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 59,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 286,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 36,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 287,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 63,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 287,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 78,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 287,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 43,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 288,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 70,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 288,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 85,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 288,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 70,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 523,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 85,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 523,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 55,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 576,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 82,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 576,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 97,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 576,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 62,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 593,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 89,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 593,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 2,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 594,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 64,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 614,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 108,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 614,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 66,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 671,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 40,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 690,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 111,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 789,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 24,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 19,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 2,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 35,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 2,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 51,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 2,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 67,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 2,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 68,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 2,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 69,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.h",
       "rule_id": "boundary.win32_type"
     },
     {
@@ -32765,6 +33024,118 @@
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
       "line": 706,
       "path": "src/test/cpp/tests1/workbench/ProjectsTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 2,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 34,
+      "path": "src/test/cpp/tests1/workbench/SenpViewContainerTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 36,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 44,
+      "path": "src/test/cpp/tests1/workbench/SenpViewContainerTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 63,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 44,
+      "path": "src/test/cpp/tests1/workbench/SenpViewContainerTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 78,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 44,
+      "path": "src/test/cpp/tests1/workbench/SenpViewContainerTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 2,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 55,
+      "path": "src/test/cpp/tests1/workbench/SenpViewContainerTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 2,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 63,
+      "path": "src/test/cpp/tests1/workbench/SenpViewContainerTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 10,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 119,
+      "path": "src/test/cpp/tests1/workbench/SenpViewContainerTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 41,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 131,
+      "path": "src/test/cpp/tests1/workbench/SenpViewContainerTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 68,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 131,
+      "path": "src/test/cpp/tests1/workbench/SenpViewContainerTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 83,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 131,
+      "path": "src/test/cpp/tests1/workbench/SenpViewContainerTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 10,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 154,
+      "path": "src/test/cpp/tests1/workbench/SenpViewContainerTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 10,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 155,
+      "path": "src/test/cpp/tests1/workbench/SenpViewContainerTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 79,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 211,
+      "path": "src/test/cpp/tests1/workbench/SenpViewContainerTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 113,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 211,
+      "path": "src/test/cpp/tests1/workbench/SenpViewContainerTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 102,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 296,
+      "path": "src/test/cpp/tests1/workbench/SenpViewContainerTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 8,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 319,
+      "path": "src/test/cpp/tests1/workbench/SenpViewContainerTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
@@ -37059,6 +37430,34 @@
       "rule_id": "error.catch_all"
     },
     {
+      "column": 2,
+      "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
+      "line": 412,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "error.catch_all"
+    },
+    {
+      "column": 2,
+      "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
+      "line": 590,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "error.catch_all"
+    },
+    {
+      "column": 3,
+      "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
+      "line": 682,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "error.catch_all"
+    },
+    {
+      "column": 4,
+      "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
+      "line": 756,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "error.catch_all"
+    },
+    {
       "column": 6,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
       "line": 118,
@@ -37112,6 +37511,13 @@
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
       "line": 106,
       "path": "sakura_core/workbench/viewcontainer/ViewContainerPageRegistry.cpp",
+      "rule_id": "error.catch_all"
+    },
+    {
+      "column": 4,
+      "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
+      "line": 35,
+      "path": "sakura_core/workbench/viewcontainer/ViewPaneChrome.cpp",
       "rule_id": "error.catch_all"
     },
     {
@@ -44313,14 +44719,14 @@
     {
       "column": 23,
       "evidence_sha256": "sha256:95f10e703539ff6fed690a962f595fe5dfc6366a0b5fdc5feee125a6f719cad5",
-      "line": 56,
+      "line": 59,
       "path": "sakura_core/accessibility/CustomUiAutomationProvider.cpp",
       "rule_id": "memory.raw_delete"
     },
     {
       "column": 23,
       "evidence_sha256": "sha256:95f10e703539ff6fed690a962f595fe5dfc6366a0b5fdc5feee125a6f719cad5",
-      "line": 352,
+      "line": 378,
       "path": "sakura_core/accessibility/CustomUiAutomationProvider.cpp",
       "rule_id": "memory.raw_delete"
     },
@@ -48000,6 +48406,13 @@
       "rule_id": "memory.raw_new"
     },
     {
+      "column": 54,
+      "evidence_sha256": "sha256:0e71b30a9a51dc76c48fdafb97fedeeee770d7d70f8be05b2d9c23b252488a4a",
+      "line": 754,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "memory.raw_new"
+    },
+    {
       "column": 19,
       "evidence_sha256": "sha256:0a8c66c04dba99796729851891dd507d69eca1bd4cef1bc6feeeb6ee25bd59c0",
       "line": 786,
@@ -48933,7 +49346,7 @@
     {
       "column": 12,
       "evidence_sha256": "sha256:098f63ea1f79029b04e2f60dc47727e4d38a44f4c5618ac1950972a4bb1c02e6",
-      "line": 856,
+      "line": 857,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
@@ -51271,49 +51684,56 @@
     {
       "column": 6,
       "evidence_sha256": "sha256:e37d2b56911158dbb77784486448367436414eba1379dbb63ec80339c57e9d08",
-      "line": 31,
-      "path": "sakura_core/accessibility/CustomUiAutomationProvider.h",
-      "rule_id": "state.public_mutable_field"
-    },
-    {
-      "column": 15,
-      "evidence_sha256": "sha256:94a765aea66b162ec2b085f420eed15d59ce27ec430bebf13ce53cd17736a582",
       "line": 32,
       "path": "sakura_core/accessibility/CustomUiAutomationProvider.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 15,
-      "evidence_sha256": "sha256:47dde42ca7efee00771d75efb80407b50031a9c32b1051f30a040e161182f6b7",
+      "evidence_sha256": "sha256:94a765aea66b162ec2b085f420eed15d59ce27ec430bebf13ce53cd17736a582",
       "line": 33,
+      "path": "sakura_core/accessibility/CustomUiAutomationProvider.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 15,
+      "evidence_sha256": "sha256:47dde42ca7efee00771d75efb80407b50031a9c32b1051f30a040e161182f6b7",
+      "line": 34,
       "path": "sakura_core/accessibility/CustomUiAutomationProvider.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 16,
       "evidence_sha256": "sha256:9545ffc2ade5b81d65ff7e87373f77766a113f2c5c6adfeaf04db63790d489f2",
-      "line": 34,
+      "line": 35,
       "path": "sakura_core/accessibility/CustomUiAutomationProvider.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 7,
       "evidence_sha256": "sha256:66f874dbd9d0a10660a613940977def3cba4e3c9c9c27c6ff7bbc8afd3ec33e5",
-      "line": 36,
-      "path": "sakura_core/accessibility/CustomUiAutomationProvider.h",
-      "rule_id": "state.public_mutable_field"
-    },
-    {
-      "column": 7,
-      "evidence_sha256": "sha256:49bf73987ef8ca6349bd7626b4e1a3dc63df3ad68c2ad028a1c39982c03821b7",
       "line": 37,
       "path": "sakura_core/accessibility/CustomUiAutomationProvider.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 7,
-      "evidence_sha256": "sha256:a2b46ad81be9d3350f058ac1a452ac595ed8794c6479f1157eda5b6b3508b5d8",
+      "evidence_sha256": "sha256:49bf73987ef8ca6349bd7626b4e1a3dc63df3ad68c2ad028a1c39982c03821b7",
       "line": 38,
+      "path": "sakura_core/accessibility/CustomUiAutomationProvider.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:a2b46ad81be9d3350f058ac1a452ac595ed8794c6479f1157eda5b6b3508b5d8",
+      "line": 39,
+      "path": "sakura_core/accessibility/CustomUiAutomationProvider.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 22,
+      "evidence_sha256": "sha256:71f5212d75f24f4ada19bbf035f79450d537fa6e442c44e8d86d2539dec3fb50",
+      "line": 40,
       "path": "sakura_core/accessibility/CustomUiAutomationProvider.h",
       "rule_id": "state.public_mutable_field"
     },
@@ -83863,567 +84283,567 @@
     {
       "column": 32,
       "evidence_sha256": "sha256:4266b01495141dd112fc01a2353ac8b1a3459446ee8c2dc10e5726fd52490f01",
-      "line": 413,
+      "line": 414,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 14,
       "evidence_sha256": "sha256:50865344ac1c4e0b5e641e1fb25d329491ded0f3018218ecc89692667bb6de71",
-      "line": 415,
+      "line": 416,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 14,
       "evidence_sha256": "sha256:562a7a2347869bfcd82249415fbd14700054adeab2dd0893c7f5bc96b4eea5f0",
-      "line": 416,
-      "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
-      "rule_id": "state.public_mutable_field"
-    },
-    {
-      "column": 15,
-      "evidence_sha256": "sha256:c7a2df9d2806084d5c1dd84236fe8745a71e7cd7eeb5b251595d85e6c6883db0",
       "line": 417,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 15,
-      "evidence_sha256": "sha256:d9a832981ace1ccd2b71c0458aea65c16f0b6ae48135bc6eaaf5b484547bb7ba",
-      "line": 426,
+      "evidence_sha256": "sha256:c7a2df9d2806084d5c1dd84236fe8745a71e7cd7eeb5b251595d85e6c6883db0",
+      "line": 418,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
-      "column": 14,
-      "evidence_sha256": "sha256:50865344ac1c4e0b5e641e1fb25d329491ded0f3018218ecc89692667bb6de71",
+      "column": 15,
+      "evidence_sha256": "sha256:d9a832981ace1ccd2b71c0458aea65c16f0b6ae48135bc6eaaf5b484547bb7ba",
       "line": 427,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 14,
-      "evidence_sha256": "sha256:562a7a2347869bfcd82249415fbd14700054adeab2dd0893c7f5bc96b4eea5f0",
+      "evidence_sha256": "sha256:50865344ac1c4e0b5e641e1fb25d329491ded0f3018218ecc89692667bb6de71",
       "line": 428,
+      "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 14,
+      "evidence_sha256": "sha256:562a7a2347869bfcd82249415fbd14700054adeab2dd0893c7f5bc96b4eea5f0",
+      "line": 429,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 15,
       "evidence_sha256": "sha256:94a765aea66b162ec2b085f420eed15d59ce27ec430bebf13ce53cd17736a582",
-      "line": 436,
+      "line": 437,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 15,
       "evidence_sha256": "sha256:7ba927093f2a4b5bdfe59ee5ad7ef978ad2a2669dfe7a8765a1f3860c95f14b0",
-      "line": 438,
+      "line": 439,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 15,
       "evidence_sha256": "sha256:f9c26ad1ebedc97bbb6f31fbf1f02f810bd306adc2b71cc5e67e8a4d793c0fa7",
-      "line": 440,
+      "line": 441,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 26,
       "evidence_sha256": "sha256:efd961304011afb80815d900762945b43d74f58efc2e64355ff10607b17f2418",
-      "line": 442,
+      "line": 443,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 21,
       "evidence_sha256": "sha256:de0a8d70702bdff92cc392d6123d46e15dd15c2b246f5c2abfcf7ef1482ce1d8",
-      "line": 444,
+      "line": 445,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 15,
       "evidence_sha256": "sha256:2609e9b40a354718e918e31b452232b21cb626709913f5c7f9f1fe3ffbc35de6",
-      "line": 454,
+      "line": 455,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 15,
       "evidence_sha256": "sha256:840d1ccad5c7cdb753e61e5c593f5f37b080e7b2fa08c293dabab8a81eb88430",
-      "line": 455,
+      "line": 456,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 28,
       "evidence_sha256": "sha256:611c0364cc394883bb1a941e8dc57117f30c893b7035a68d45d90c1664c712d9",
-      "line": 456,
+      "line": 457,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 21,
       "evidence_sha256": "sha256:449f127a4be04d723a65ab09437a456908a43279781408f11bb80ae961988593",
-      "line": 458,
+      "line": 459,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 14,
       "evidence_sha256": "sha256:f846a141380cf0ca030648cc2f3cc202c1914ad16dfeed02fbd78e619f312db5",
-      "line": 465,
+      "line": 466,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 14,
       "evidence_sha256": "sha256:f8b3c1957f184a7028c812ac6a0900aeed97f3e2639b181c9205ad567a668df6",
-      "line": 471,
+      "line": 472,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 30,
       "evidence_sha256": "sha256:f8ee1848595d84ae39500fdff55aff6924729ac73cdcd0024d803b326f345764",
-      "line": 475,
+      "line": 476,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 13,
       "evidence_sha256": "sha256:7f15d31a724558c2e34e35fc096c1326948ce8cda70c58a91f7d3b3bbf4c1862",
-      "line": 479,
+      "line": 480,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 73,
       "evidence_sha256": "sha256:85805e5e63c8d4d5ab3d1a547f9ac23eb0b70b738f353b1708b1afd243be3f04",
-      "line": 484,
+      "line": 485,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 13,
       "evidence_sha256": "sha256:7f15d31a724558c2e34e35fc096c1326948ce8cda70c58a91f7d3b3bbf4c1862",
-      "line": 489,
+      "line": 490,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 15,
       "evidence_sha256": "sha256:4ea342bfa150350e384f5494554517754b3d9aee2d3a6f55fbd9e121f2c4f09d",
-      "line": 490,
+      "line": 491,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 24,
       "evidence_sha256": "sha256:de589abc3b14edb50945d333957943791711371eba9aff8502d135cbfca6248a",
-      "line": 494,
-      "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
-      "rule_id": "state.public_mutable_field"
-    },
-    {
-      "column": 9,
-      "evidence_sha256": "sha256:a17417ed6a6337a7ccfbe0db5dc6f225e3da41b3123ca5a787a5c8ff1497b758",
       "line": 495,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 9,
-      "evidence_sha256": "sha256:9814aa9ebb65e4bdcab9bfe2121647cd5a01a51a1c9b0f9db892e5505d05c3d9",
+      "evidence_sha256": "sha256:a17417ed6a6337a7ccfbe0db5dc6f225e3da41b3123ca5a787a5c8ff1497b758",
       "line": 496,
+      "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 9,
+      "evidence_sha256": "sha256:9814aa9ebb65e4bdcab9bfe2121647cd5a01a51a1c9b0f9db892e5505d05c3d9",
+      "line": 497,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 15,
       "evidence_sha256": "sha256:d9a832981ace1ccd2b71c0458aea65c16f0b6ae48135bc6eaaf5b484547bb7ba",
-      "line": 649,
-      "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
-      "rule_id": "state.public_mutable_field"
-    },
-    {
-      "column": 15,
-      "evidence_sha256": "sha256:ed985392da2d939988e17fb536890746d7607d11bc29419ac6b93478f8503a8d",
       "line": 650,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 15,
-      "evidence_sha256": "sha256:fb2deb2e7fa957700b6ec1a5b63f413bebf419cd42cbc53c6ead08d1146c6e2c",
+      "evidence_sha256": "sha256:ed985392da2d939988e17fb536890746d7607d11bc29419ac6b93478f8503a8d",
       "line": 651,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 15,
+      "evidence_sha256": "sha256:fb2deb2e7fa957700b6ec1a5b63f413bebf419cd42cbc53c6ead08d1146c6e2c",
+      "line": 652,
+      "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 15,
       "evidence_sha256": "sha256:bad6be332b6b9d0acd08be15d21e3e226ea72d3f4d4e89c91c0b3f2647b03565",
-      "line": 654,
+      "line": 655,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 15,
       "evidence_sha256": "sha256:c7a2df9d2806084d5c1dd84236fe8745a71e7cd7eeb5b251595d85e6c6883db0",
-      "line": 655,
+      "line": 656,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 14,
       "evidence_sha256": "sha256:b6455274d2edb681570c135a1c4061c02d3bde5ccdf49a241337a8d817cfe91d",
-      "line": 656,
+      "line": 657,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 28,
       "evidence_sha256": "sha256:a59f111850613f9060b878dc8cde997f9f327cce74703d6ffe9f674b4f60eef3",
-      "line": 661,
+      "line": 662,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 35,
       "evidence_sha256": "sha256:70e0c7d9eb57f113277ec3021344852cbf63e414b0fa1327f672e9922ba79fa8",
-      "line": 664,
+      "line": 665,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 34,
       "evidence_sha256": "sha256:85aa0ff41b499ae2e0dded907bf2ef12af77a4940c1b6702fdd30c4e04d991d5",
-      "line": 667,
+      "line": 668,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 21,
       "evidence_sha256": "sha256:d57634e9c1cd84f21bf5511b2d7782bf0df4b8901d29bba5f48aa894c630ad84",
-      "line": 668,
+      "line": 669,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 15,
       "evidence_sha256": "sha256:203364cf41be1db52ba19d70b2bf92f3e20b546ee1bacfe10cf8fcdbaf50e0c1",
-      "line": 677,
+      "line": 678,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 14,
       "evidence_sha256": "sha256:50865344ac1c4e0b5e641e1fb25d329491ded0f3018218ecc89692667bb6de71",
-      "line": 678,
+      "line": 679,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 15,
       "evidence_sha256": "sha256:c7a2df9d2806084d5c1dd84236fe8745a71e7cd7eeb5b251595d85e6c6883db0",
-      "line": 679,
+      "line": 680,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 14,
       "evidence_sha256": "sha256:b6455274d2edb681570c135a1c4061c02d3bde5ccdf49a241337a8d817cfe91d",
-      "line": 686,
+      "line": 687,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 15,
       "evidence_sha256": "sha256:bad6be332b6b9d0acd08be15d21e3e226ea72d3f4d4e89c91c0b3f2647b03565",
-      "line": 687,
+      "line": 688,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 31,
       "evidence_sha256": "sha256:c6364e0cb7f4b8115b0f8d43781fa178f4ad9f4d04113998db6975c009dd6780",
-      "line": 702,
+      "line": 703,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 14,
       "evidence_sha256": "sha256:723ef996220efa141074c52928804f5ef9e9b4f9b38e1cb5b3c23f972440eb97",
-      "line": 703,
+      "line": 704,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 65,
       "evidence_sha256": "sha256:809ef0bad3ef96054515c07ff295525c9aed9d3113c835bfb8b076c6f8e5913f",
-      "line": 704,
+      "line": 705,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 39,
       "evidence_sha256": "sha256:c44de60447802a8878f8ff787b77f03abb7d14cfe29501f06105f7735f853c8d",
-      "line": 709,
-      "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
-      "rule_id": "state.public_mutable_field"
-    },
-    {
-      "column": 39,
-      "evidence_sha256": "sha256:56378373ccffd88a9919f7d7446d5a12eb982d08d0e2ff2d48a00c61bfd4df2f",
       "line": 710,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 39,
-      "evidence_sha256": "sha256:3ddd48f1b1b255a24cb527433aef00eed7b6e2a4659f59a26179d838ba5e2e18",
+      "evidence_sha256": "sha256:56378373ccffd88a9919f7d7446d5a12eb982d08d0e2ff2d48a00c61bfd4df2f",
       "line": 711,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 39,
-      "evidence_sha256": "sha256:b8e5332d38eb934c7e99e8e7a988372b0815a143e1dc13e8477abd82c6ff3217",
+      "evidence_sha256": "sha256:3ddd48f1b1b255a24cb527433aef00eed7b6e2a4659f59a26179d838ba5e2e18",
       "line": 712,
+      "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 39,
+      "evidence_sha256": "sha256:b8e5332d38eb934c7e99e8e7a988372b0815a143e1dc13e8477abd82c6ff3217",
+      "line": 713,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 33,
       "evidence_sha256": "sha256:f7091c3307069ca2d146a91b7e1ab8797fa307c11672c5ff879670a68d4a5aaa",
-      "line": 715,
+      "line": 716,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 30,
       "evidence_sha256": "sha256:f795248cf2a39b148eb7dbd77c66e9d7c9eb550fd770abe52be0d56104bb62cb",
-      "line": 719,
+      "line": 720,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 13,
       "evidence_sha256": "sha256:2f934a9859be529fb088bd44d1e6027824d43437fd63fcf4cfd802408785ff21",
-      "line": 723,
+      "line": 724,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 15,
       "evidence_sha256": "sha256:4ea342bfa150350e384f5494554517754b3d9aee2d3a6f55fbd9e121f2c4f09d",
-      "line": 740,
-      "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
-      "rule_id": "state.public_mutable_field"
-    },
-    {
-      "column": 14,
-      "evidence_sha256": "sha256:f846a141380cf0ca030648cc2f3cc202c1914ad16dfeed02fbd78e619f312db5",
       "line": 741,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 14,
+      "evidence_sha256": "sha256:f846a141380cf0ca030648cc2f3cc202c1914ad16dfeed02fbd78e619f312db5",
+      "line": 742,
+      "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 14,
       "evidence_sha256": "sha256:f8b3c1957f184a7028c812ac6a0900aeed97f3e2639b181c9205ad567a668df6",
-      "line": 745,
+      "line": 746,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 22,
       "evidence_sha256": "sha256:67cffc81a8609732cab5de4ed81624f8a1c02a566b8c6056a4c37d46144435a4",
-      "line": 746,
+      "line": 747,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 20,
       "evidence_sha256": "sha256:d241515cad11470c41d2eeb14e1081f36145aac1293bcf73455a41235c06fd05",
-      "line": 747,
+      "line": 748,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 25,
       "evidence_sha256": "sha256:0cea5e07009a29cfaf219580a3bca2697aeafe9b656f591205641bca3cd09d68",
-      "line": 748,
+      "line": 749,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 28,
       "evidence_sha256": "sha256:8b350d287454b3f460be9bbc7305f9add6f9746687bec84dfae25db33cc288a2",
-      "line": 749,
+      "line": 750,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 26,
       "evidence_sha256": "sha256:0f892e357607e797468781d402c10911b6a87e801d11c360cdb9a35517cc83d3",
-      "line": 750,
+      "line": 751,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 37,
       "evidence_sha256": "sha256:30bb385f2918dc19375d608aae5c9652e07332f725b37bf099f5292641edd4dc",
-      "line": 752,
+      "line": 753,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 18,
       "evidence_sha256": "sha256:f5e1cd07bf842817c5075db6080c784b1786d8c9bad9b8299a6af392284fb8a3",
-      "line": 753,
+      "line": 754,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 15,
       "evidence_sha256": "sha256:edd1699d0bb4fcec426ae367bc7d6eb448b363b46a996664d2f1404cd7fc6a58",
-      "line": 754,
+      "line": 755,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 26,
       "evidence_sha256": "sha256:d2e2f49af2f7fd97384b484bea71cb961522c085f48162bb86d0cfef4d4f0e1b",
-      "line": 755,
+      "line": 756,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 35,
       "evidence_sha256": "sha256:97b7272a874758edf590515f6bcdb8b1a208ebbebec4e30cf18ff610143cec5c",
-      "line": 760,
+      "line": 761,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 22,
       "evidence_sha256": "sha256:79a4c50d170ac53015aaa0a0a5dff8cf297f63d2a3bd3fd2ae8edb6e10cd66a7",
-      "line": 763,
+      "line": 764,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 34,
       "evidence_sha256": "sha256:49eecf4f19abd81a77a0a5719d8a90e7be88e9d7375e578e5db6d7a2971227ec",
-      "line": 764,
+      "line": 765,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 12,
       "evidence_sha256": "sha256:856c0b4756464ab69fec272e6a1123d33b55fc7af843ee43a2d3cdb07090570a",
-      "line": 781,
+      "line": 782,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 23,
       "evidence_sha256": "sha256:0159708b531dd70ab77b01c6eafe84235f9281a8f0e49ffdc69864b274b970bf",
-      "line": 785,
+      "line": 786,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 30,
       "evidence_sha256": "sha256:56d6c20d4ea5a3a1487574c086f2abf31b3d5ae37e14b85c382c4cc52ac31fef",
-      "line": 790,
+      "line": 791,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 19,
       "evidence_sha256": "sha256:367ab142191bd705316bcfef511b5788dc274dbc8aa652c74ae36a61ca9ae92a",
-      "line": 791,
+      "line": 792,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 30,
       "evidence_sha256": "sha256:f8ee1848595d84ae39500fdff55aff6924729ac73cdcd0024d803b326f345764",
-      "line": 792,
+      "line": 793,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 27,
       "evidence_sha256": "sha256:52b5a4c30789bb63ea404e75e76a0cbe9bb985be65500d4cb7ebd9afc355cd96",
-      "line": 794,
+      "line": 795,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 27,
       "evidence_sha256": "sha256:aebd7f791386ab8cb6b18bc0ef7cb7d9c303b0b06034c92fb263df349d5a336e",
-      "line": 816,
+      "line": 817,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 15,
       "evidence_sha256": "sha256:9c6471e9fe25ec04dc94311ad8476caac333b2353300ec9c179dae1c52795a11",
-      "line": 820,
+      "line": 821,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 21,
       "evidence_sha256": "sha256:b88cbe2e3584307e0753ecd1337a3438d68eecde1fa414c3c9be1ed0dfdd0f40",
-      "line": 838,
+      "line": 839,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 33,
       "evidence_sha256": "sha256:6d0b8c057efbdbeb593533df871ee73b5e57f532c8c6b753863e33f35c0d0101",
-      "line": 842,
+      "line": 843,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 30,
       "evidence_sha256": "sha256:56ac4d67991cdae68007e271bc5cab682517815583c94a5914491ce9d08d5238",
-      "line": 847,
+      "line": 848,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 34,
       "evidence_sha256": "sha256:4266b01495141dd112fc01a2353ac8b1a3459446ee8c2dc10e5726fd52490f01",
-      "line": 2117,
+      "line": 2094,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 17,
       "evidence_sha256": "sha256:d9a832981ace1ccd2b71c0458aea65c16f0b6ae48135bc6eaaf5b484547bb7ba",
-      "line": 2339,
+      "line": 2316,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 16,
       "evidence_sha256": "sha256:50865344ac1c4e0b5e641e1fb25d329491ded0f3018218ecc89692667bb6de71",
-      "line": 2340,
+      "line": 2317,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 16,
       "evidence_sha256": "sha256:562a7a2347869bfcd82249415fbd14700054adeab2dd0893c7f5bc96b4eea5f0",
-      "line": 2341,
+      "line": 2318,
       "path": "sakura_core/workbench/scm/CScmWorkbenchTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
@@ -88287,35 +88707,35 @@
     {
       "column": 42,
       "evidence_sha256": "sha256:81bd5cf42f09391d5bf0b423c489020d0e532a2506f3467bb61475e19bbb7a90",
-      "line": 118,
+      "line": 94,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 17,
       "evidence_sha256": "sha256:a397d2bfd02256e758c8ccac50cd248dc69ce544c100ec263c3ffb4663e964b3",
-      "line": 119,
+      "line": 95,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 17,
       "evidence_sha256": "sha256:cfaf1013c19728b751e23b312715be8fe7cf04ec52c217c57a164aae38da5655",
-      "line": 120,
+      "line": 96,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 15,
       "evidence_sha256": "sha256:b75724acfd854c43fc97ef2982e5cca8dddcfe5608fd00cebcd692453929d9d8",
-      "line": 189,
+      "line": 165,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:c367309e2c7fe8b889639348a6c914e33ecf9f7dd968fdc56ad6a10ba0c06604",
-      "line": 190,
+      "line": 166,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.h",
       "rule_id": "state.public_mutable_field"
     },
@@ -88345,6 +88765,195 @@
       "evidence_sha256": "sha256:ca6ff91362632f32144ad84eec08da0acedf08a3633bef2b9d39b3013fc19817",
       "line": 43,
       "path": "sakura_core/workbench/viewcontainer/IViewContainerPage.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 9,
+      "evidence_sha256": "sha256:d8216b8e7ea154ea26b9d327bc62a6f1ae3efde3f058c27819080492e1f482fd",
+      "line": 69,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 9,
+      "evidence_sha256": "sha256:3c8eb2ba3b43f2dcfbba4dc5fc18d7aa7ab8748ae42b7c64a7897f31a9dff6a3",
+      "line": 70,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 62,
+      "evidence_sha256": "sha256:a70ba958c65a2a6a514f2c6a04051ba67fd3de5648923e6532f2187585f1b08f",
+      "line": 83,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 8,
+      "evidence_sha256": "sha256:4ba6c8f0f08d37fc75b3b4b3be09c75732030a10e4690695a172eed48d3e5d8a",
+      "line": 100,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 44,
+      "evidence_sha256": "sha256:044614f8c0928eed2856a0ee59e423182530c49d3cadbe399e585c59a5f40310",
+      "line": 101,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 40,
+      "evidence_sha256": "sha256:3febbf3e764b3761e876f6c20b0c7c1fd07534bb95869ec60d7ec1f60cd45924",
+      "line": 102,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 31,
+      "evidence_sha256": "sha256:4d818eb749be4b1f02f856b46a75732d5517737d024b076bad2e85970ca9c41b",
+      "line": 104,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 14,
+      "evidence_sha256": "sha256:0e147a8cb3ff925ddcdaa15adc8e33dca5b8de0433e7a102b779b256daade489",
+      "line": 112,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 28,
+      "evidence_sha256": "sha256:55a7411870f4c8f50180202bd4c587094593031e16de6a20bb1858305008cf9c",
+      "line": 113,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 16,
+      "evidence_sha256": "sha256:7ba927093f2a4b5bdfe59ee5ad7ef978ad2a2669dfe7a8765a1f3860c95f14b0",
+      "line": 114,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 34,
+      "evidence_sha256": "sha256:a2fef1d3ad53859105d9e7bb1fd1bd78fc1e05130840a0c31340e4f06d049b71",
+      "line": 115,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 44,
+      "evidence_sha256": "sha256:4701e5fc1421102b8515fd1e8690b0e9a1c8e988577cb0695575e6137dc5badc",
+      "line": 116,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 21,
+      "evidence_sha256": "sha256:d241515cad11470c41d2eeb14e1081f36145aac1293bcf73455a41235c06fd05",
+      "line": 123,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 27,
+      "evidence_sha256": "sha256:85e1bf65c42b165bc2350940af0fe65a28668d37fa8d0f2c0d719d809d3b1989",
+      "line": 128,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 42,
+      "evidence_sha256": "sha256:871a621f6234fa19b181cf6b29f08933f275433ef026744856316ce7f1a8527f",
+      "line": 129,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 37,
+      "evidence_sha256": "sha256:5a2714189cf245a4c61bc2608390b05e9b5db98d121ec16295bf4c595594fa31",
+      "line": 130,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 14,
+      "evidence_sha256": "sha256:8452a0cb7c30741c8890d5bcc5312cb4be3522465c47d2c1a1d92a2c5c1ec6c2",
+      "line": 29,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 15,
+      "evidence_sha256": "sha256:7ba927093f2a4b5bdfe59ee5ad7ef978ad2a2669dfe7a8765a1f3860c95f14b0",
+      "line": 30,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 15,
+      "evidence_sha256": "sha256:203364cf41be1db52ba19d70b2bf92f3e20b546ee1bacfe10cf8fcdbaf50e0c1",
+      "line": 31,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 34,
+      "evidence_sha256": "sha256:472e62242cec827cf37acb65f0709ef9e3dd15c8184ce430424eb435b1a90a06",
+      "line": 43,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 22,
+      "evidence_sha256": "sha256:36dae12a3bc5dbfd27ce9edaeb6dfd48830e0dec61c6a8843da25a3c41ec1950",
+      "line": 44,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 35,
+      "evidence_sha256": "sha256:848dc83cd880a6ac65bf0eed7f151bb9a8cb98db770b8a74385c945d4d170053",
+      "line": 45,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 37,
+      "evidence_sha256": "sha256:a6d8a27183aec4a087a5ea86fa24d90eed40dcd4360e9cea1ece8659470606b7",
+      "line": 52,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 56,
+      "evidence_sha256": "sha256:f1e014ca0cc3f8d9fe1a24886bcb868c86fbc104c0fbf9076bf7528074aa17f5",
+      "line": 53,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 40,
+      "evidence_sha256": "sha256:d9e14e6e264ab2f70ca30c12b910c34bff9a163fe09f70f045dc349c923da5a2",
+      "line": 54,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 14,
+      "evidence_sha256": "sha256:dbeaa05f822c7c66ea06412e1bc914feaa80cbacf9d3c1c910b7e8de4ca8e2f9",
+      "line": 65,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 14,
+      "evidence_sha256": "sha256:476387a1b8502e5b1d52ace6419b40335b0e2bfe3718ce8734bf3a91a1740ccb",
+      "line": 66,
+      "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.h",
       "rule_id": "state.public_mutable_field"
     },
     {
@@ -88471,6 +89080,13 @@
       "evidence_sha256": "sha256:07b128c2ab0d0ea1654bdc9569a7fd6b6dc17d54d090343f78d518dfe13bea0b",
       "line": 51,
       "path": "sakura_core/workbench/viewcontainer/ViewContainerPageRegistry.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 31,
+      "evidence_sha256": "sha256:8876fe1ec860fea22c8d08c159484566ec1cbcc29a53f85a13f0e81bcd83d3e7",
+      "line": 37,
+      "path": "sakura_core/workbench/viewcontainer/ViewPaneLayout.h",
       "rule_id": "state.public_mutable_field"
     },
     {
@@ -95146,7 +95762,7 @@
   },
   "inventory_kind": "editor-core-semantic",
   "metrics": {
-    "catch_all_count": 649,
+    "catch_all_count": 654,
     "direct_global_getter_calls": {
       "GetDllShareData": 709,
       "GetEditDoc": 7,
@@ -95616,31 +96232,31 @@
       }
     },
     "filtered_test_hint_count": 2,
-    "finding_count": 13563,
+    "finding_count": 13651,
     "finding_count_by_rule": {
       "boundary.private_include": 67,
-      "boundary.win32_type": 4617,
-      "error.catch_all": 649,
+      "boundary.win32_type": 4670,
+      "error.catch_all": 654,
       "global.get_dll_share_data": 709,
       "global.get_edit_doc": 7,
       "global.get_edit_wnd": 258,
       "memory.raw_delete": 317,
-      "memory.raw_new": 245,
+      "memory.raw_new": 246,
       "resource.stop_required_acquisition": 260,
       "state.mutable_member": 132,
-      "state.public_mutable_field": 6270,
+      "state.public_mutable_field": 6299,
       "state.raw_pointer_member": 30,
       "test.filtered_or_skipped": 2
     },
-    "include_directive_count": 10763,
+    "include_directive_count": 10810,
     "monolith_link_hint_count": 0,
     "private_include_mention_count": 67,
     "raw_delete_expression_count": 317,
-    "raw_new_expression_count": 245,
-    "source_file_count": 1696,
-    "source_line_count": 513330,
-    "tracked_file_count": 1745,
-    "win32_parameter_mention_count": 4617
+    "raw_new_expression_count": 246,
+    "source_file_count": 1703,
+    "source_line_count": 514902,
+    "tracked_file_count": 1752,
+    "win32_parameter_mention_count": 4670
   },
   "rule_catalog": [
     {
@@ -95795,8 +96411,8 @@
     ]
   },
   "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
-  "source_commit": "9f6c696bf3d286dfd2103c4323995e751e5bc482",
-  "source_fingerprint": "sha256:9683e054e69d9ded76a1cb429ed9c47acd559985e50f07323b54b0c379ea963d",
+  "source_commit": "fdc73b8ed4d5375ab435728a2225577c0a47e8a5",
+  "source_fingerprint": "sha256:8a79ed31d50b15674f8964c7c1c80ac637b480df3ee8cc206c6181937353d092",
   "tracked_source_paths": [
     ".github/actions/bootstrap-vcpkg/action.yml",
     ".github/dependabot.yml",
@@ -97168,10 +97784,16 @@
     "sakura_core/workbench/viewcontainer/CViewContainerPages.cpp",
     "sakura_core/workbench/viewcontainer/CViewContainerPages.h",
     "sakura_core/workbench/viewcontainer/IViewContainerPage.h",
+    "sakura_core/workbench/viewcontainer/IViewContainerPageProjection.h",
+    "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+    "sakura_core/workbench/viewcontainer/SenpViewContainer.h",
     "sakura_core/workbench/viewcontainer/ViewContainerPagePool.cpp",
     "sakura_core/workbench/viewcontainer/ViewContainerPagePool.h",
     "sakura_core/workbench/viewcontainer/ViewContainerPageRegistry.cpp",
     "sakura_core/workbench/viewcontainer/ViewContainerPageRegistry.h",
+    "sakura_core/workbench/viewcontainer/ViewPaneChrome.cpp",
+    "sakura_core/workbench/viewcontainer/ViewPaneChrome.h",
+    "sakura_core/workbench/viewcontainer/ViewPaneLayout.h",
     "sakura_core/workbench/win32/BuiltinPartProjection.cpp",
     "sakura_core/workbench/win32/BuiltinPartProjection.h",
     "sakura_core/workbench/win32/PaneCompositeProjectionService.cpp",
@@ -97481,6 +98103,7 @@
     "src/test/cpp/tests1/workbench/RecentlyOpenedWorkspaceServiceTest.cpp",
     "src/test/cpp/tests1/workbench/ScmNativeSurfaceAdapterTest.cpp",
     "src/test/cpp/tests1/workbench/SearchWorkbenchToolTest.cpp",
+    "src/test/cpp/tests1/workbench/SenpViewContainerTest.cpp",
     "src/test/cpp/tests1/workbench/SetiFileIconTest.cpp",
     "src/test/cpp/tests1/workbench/StatusbarViewModelTest.cpp",
     "src/test/cpp/tests1/workbench/TaskConfigurationCatalogTest.cpp",
@@ -97544,5 +98167,5 @@
     "tools/ppa_stub/ppa_stub.h",
     "tools/vcx-props/vcxcompat.props"
   ],
-  "tracked_source_set_sha256": "sha256:05c4fc656fb65d160aa576b594c9932e991195ae52ad249fdc2f6a6672899992"
+  "tracked_source_set_sha256": "sha256:f9831eb2dd835dfe98a1e05438af3318ed67e05a62a5906013dcbc07893ecb0b"
 }
