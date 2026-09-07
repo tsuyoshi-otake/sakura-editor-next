@@ -856,6 +856,7 @@ bool CMarkdownPreviewWnd::Create(HWND parent)
 
 void CMarkdownPreviewWnd::Close() noexcept
 {
+	m_preparationCallback = {};
 	m_sourceLineCallback = {};
 	(void)m_nativeSurface.Close();
 	m_nativeSurface.SetSink({});
@@ -935,8 +936,29 @@ bool CMarkdownPreviewWnd::QueueDocument(std::wstring source, ParseOptions option
 		state->pendingWork = PreviewWorkItem{
 			key, std::move(source), std::move(options), truncated };
 	}
+	m_deferredCompletion.reset();
 	state->condition.notify_one();
 	return true;
+}
+
+bool CMarkdownPreviewWnd::QueuePreparedDocument(std::function<Document()> prepare, PreviewRenderKey key)
+{
+	const auto state = m_workerState;
+	if (!state || !prepare) return false;
+	{
+		std::lock_guard lock(state->mutex);
+		if (!m_worker.joinable()
+			|| state->asyncState.Queue(key) == PreviewQueueAction::RejectedClosed) return false;
+		state->pendingWork = PreviewWorkItem{ key, {}, {}, false, std::move(prepare) };
+	}
+	m_deferredCompletion.reset();
+	state->condition.notify_one();
+	return true;
+}
+
+void CMarkdownPreviewWnd::SetPreparationCallback(std::function<void(PreviewRenderKey, bool)> callback)
+{
+	m_preparationCallback = std::move(callback);
 }
 
 void CMarkdownPreviewWnd::WorkerMain(
@@ -966,7 +988,7 @@ void CMarkdownPreviewWnd::WorkerMain(
 			return !state->asyncState.IsCurrent(key);
 		});
 		try {
-			completion.document = ParseMarkdown(work.source, work.options);
+			completion.document = work.prepare ? work.prepare() : ParseMarkdown(work.source, work.options);
 			completion.codeHighlights.resize(completion.document.blocks.size());
 			completion.inlineStyleRuns.resize(completion.document.blocks.size());
 			for (std::size_t index = 0; index < completion.document.blocks.size(); ++index) {
@@ -1078,6 +1100,8 @@ void CMarkdownPreviewWnd::CommitCompletedWork(
 		// images, and code-highlight generation as the last-good projection.
 		// The scheduler completion is terminal for this request; a later source
 		// revision may still be queued normally.
+		const auto callback = m_preparationCallback;
+		if (callback) callback(completion->key, false);
 		return;
 	}
 	if (m_transientLayout) {
@@ -1092,6 +1116,8 @@ void CMarkdownPreviewWnd::CommitCompletedWork(
 		&& !m_frameSurface.NotifyContent().Accepted()) {
 		// The frame fence rejected this completion (for example after close or
 		// request-id exhaustion). Do not replace the last-good document.
+		const auto callback = m_preparationCallback;
+		if (callback) callback(completion->key, false);
 		return;
 	}
 	m_document = std::move(completion->document);
@@ -1103,6 +1129,8 @@ void CMarkdownPreviewWnd::CommitCompletedWork(
 	m_sourceTruncated = completion->truncated;
 	m_renderFailed = completion->failed;
 	RebuildLayout();
+	const auto callback = m_preparationCallback;
+	if (callback) callback(completion->key, true);
 }
 
 void CMarkdownPreviewWnd::SetSourceTruncated(bool truncated)
@@ -1203,11 +1231,16 @@ void CMarkdownPreviewWnd::Layout(const RECT& bounds, unsigned int dpi, bool tran
 		RebuildPaintResources();
 		m_fontResourcesDirty = false;
 	}
+	std::optional<PreviewRenderKey> preparedKey;
 	if (m_deferredCompletion) {
 		if (m_frameSurface.IsOpen()
 			&& !m_frameSurface.NotifyContent().Accepted()) {
-			// Keep the deferred result and the currently painted document until a
-			// fresh frame request can be accepted.
+			// A closed/exhausted frame is a terminal failure, not an indefinitely
+			// deferred generation with no remaining completion owner.
+			const auto key = m_deferredCompletion->key;
+			m_deferredCompletion.reset();
+			const auto callback = m_preparationCallback;
+			if (callback) callback(key, false);
 			return;
 		}
 		m_imagesDirty = false;
@@ -1219,6 +1252,7 @@ void CMarkdownPreviewWnd::Layout(const RECT& bounds, unsigned int dpi, bool tran
 		m_layoutImagesPrepared = true;
 		m_sourceTruncated = m_deferredCompletion->truncated;
 		m_renderFailed = m_deferredCompletion->failed;
+		preparedKey = m_deferredCompletion->key;
 		m_deferredCompletion.reset();
 		m_layoutDirty = true;
 	}
@@ -1232,6 +1266,8 @@ void CMarkdownPreviewWnd::Layout(const RECT& bounds, unsigned int dpi, bool tran
 		UpdateScrollBar();
 		::InvalidateRect(m_hWnd, nullptr, FALSE);
 	}
+	const auto callback = m_preparationCallback;
+	if (preparedKey && callback) callback(*preparedKey, true);
 }
 
 void CMarkdownPreviewWnd::Show(bool visible) noexcept

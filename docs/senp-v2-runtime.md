@@ -256,3 +256,36 @@ backup・sample公開の完成を意味しない。schema 2の公開gateは維�
 
 形式モデルは[対応表](formal/senp-github-models.md)に従う抽象仕様の検査であり、
 Win32 API・具体的なwire sequence・実メモリ上限の証明ではない。
+
+
+## U04: 構造化readonly本文
+
+`SenpReadonlyDocument`は既存readonly inputのscope/resourceを保持し、runtimeで受理された
+要求をBeginへ渡す。supersede、Apply、Fail、Expire、Closeはretired contextを返し、
+compositionがsubscriberを取り消す。実process・toolの回収はbrokerの所有権のままとする。
+異なるowner/workspace/account/requestは本文を置き換えない。同一revisionのrefreshは
+全payloadが同じ場合だけ受理し、下降revisionと同一revisionの変更を区別して拒否する。
+Expire/Closeは終端で、cacheを解放して新しい要求を拒否する。
+
+構造化本文は既存の1 MiB protocol validatorをコピーなしで再利用し、最大32 sections、
+64 metadata fields、16 columns、256 rows/table、4,096 render blocksで有界にする。
+readonly inputに合わせてtitleは256 UTF-16 unitsとする。Markdownだけを解析し、
+metadata/table値は直接native tableへ渡す。NUL等のcontrol文字は表示可能な置換文字へ変換する。
+parserへdocument pathやworkspace rootは与えず、全resource referenceのpath/rootを消去して
+blockedにする。普通のMarkdown previewのStrict HTTPS設定は変更しない。
+
+`SenpReadonlyDocumentView`はroot内に既存CMarkdownPreviewWndとscrollbarを所有する。
+rootをU03のsurface switcherへbindするため、非表示・切替でoverlayだけが残らない。
+構造化本文は既存workerの1実行/最新1待ちqueueで準備し、UI側で結果をcommitする。
+新しいqueueは古いdrag-deferred結果を破棄し、staleな本文がdrag終了時に復活する経路を閉じる。
+Preparedは解析結果のcommitで、native reflowの完了は別のViewportSnapshotで確認する。
+render失敗は明示messageとなり、自動retryしない。view終了は既存の有界retirement ownerへworkerを渡す。
+
+この段階ではtext-resource sectionはtyped Unsupported。U05のtext/search/copyとU06の
+command、tab、backup、sample公開を通すまで、schema-2詳細機能をアプリから公開しない。
+検証用runtime portのfixtureをlive GitHubの本文取得と同一視しない。
+
+U04はRust peer fixtureを含む90 focused tests、3,780件のruntime inventory照合、
+同一binaryの2回起動による216描画試行で検証した。3テーマ・3 DPIの各操作を一方の起動で2回、
+他方で1回実施し、visibility/resize/scroll/refreshの実変化を観測した。
+再描画差分・PrintWindow欠落・画像fetchは0、worker retirementとprocess終了も確認した。

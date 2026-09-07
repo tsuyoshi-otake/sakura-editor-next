@@ -1380,6 +1380,12 @@
     <ClInclude Include="..\sakura_core\workbench\editor\SenpReadonlyWorkbench.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\editor\SenpReadonlyDocument.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\editor\SenpReadonlyDocumentView.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\workbench\editor\SenpEditorSurfaceSwitcher.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
@@ -3457,6 +3463,12 @@
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\workbench\editor\SenpReadonlyWorkbench.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\editor\SenpReadonlyDocument.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\editor\SenpReadonlyDocumentView.cpp">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\workbench\editor\SenpEditorSurfaceSwitcher.cpp">

@@ -39,7 +39,11 @@ legacy文書を保持して切り替える。追加18件とEditor/working-copy�
 同一binaryの2回起動・3テーマ・3 DPIによる216描画試行が合格し、再描画前後の差分は全件0%。
 3,762件のtest inventory照合とprocess終了も確認した。U03は実native controlとCEditDoc/undoの接続境界を
 検証する工程であり、CEditWndのtab/command/backup接続とsample公開はU06で検証する。
-schema 2は引き続きUnsupportedRuntimeで、Document bodyと公開・永続化adapterは後続工程。
+U04の構造化readonly本文も実装。Markdownだけを既存parserへ渡し、metadata/tableはliteral native modelへ変換する。
+scope/request/revisionのfence、同一revisionの一致検査、明示failure/expiryと既存workerのlatest-only更新を検証した。
+Rust peer fixture読取を含む90 testsと3,780件のruntime inventory照合が合格。同一binaryの2回起動で
+3テーマ・3 DPIのvisibility/resize/scroll/refresh計216描画試行が合格し、再描画差分・capture欠落・process残存は0。
+schema 2は引き続きUnsupportedRuntimeで、chunk本文と公開・永続化adapterはU05/U06の工程。
 CI workflowは追加済みで、remote CI実行はpush後の確認事項。
 G02のsemantic台帳はexact source commit `f881170f28b3c17d195c145b6f2396704cffa47a`
 から正規手順で受理した。追加35件は既定のconst equality operator 33件と
@@ -79,7 +83,7 @@ G02のsemantic台帳はexact source commit `f881170f28b3c17d195c145b6f2396704cff
 | U01 | SCMを参照したcontainer内の複数View nativeページ | G04 | `SenpViewContainer.*:ViewPaneStackLayout.*`、`verify-senp-view-rendering.ps1`、同一条件のSCM比較 | View独立、ヘッダー/余白/action整合、resize/移動/focusに描画残りなし |
 | U02 | lazy TreeDataProviderとstable item選択 | U01 | `TreeViewModel.*:SenpTreeProviderTest.*:SenpTreeView.*`、`verify-senp-view-rendering.ps1 -ProbeSet TreeViews`、SCM行密度/選択/scroll比較 | page/expand/refresh、重複・循環・stale拒否、テーマ/DPI/keyboard整合 |
 | U03 | readonly Editor input/surface切替 | G04 | `SenpReadonlyWorkbench.*`、`verify-senp-view-rendering.ps1 -ProbeSet ReadonlyEditors` | dirty/undo・選択/scrollを保持して切替、未準備surfaceは拒否、描画残りなし |
-| U04 | readonly Markdown/metadata renderer | U03 | `SenpReadonlyDocument.*`、native UI | 本文表示、script無効、local asset権限漏れ0 |
+| U04 | readonly Markdown/metadata renderer | U03 | `SenpReadonlyDocument.*`、`ReadonlyDocuments` dual capture | 本文表示、script無効、local asset権限漏れ0 |
 | U05 | chunk付きtext resourceと検索・コピー | U03 | `SenpTextResource.*` | UTF-8境界・上限・partial・失効を区別 |
 | U06 | command/menu/activation・page公開/状態永続化と汎用sample拡張 | U02/U04/U05 | sampleのnative総合試験、profileのcollapse/size復元、SCM比較の状態matrix | GitHub固有コードなしで2 View/本文/ログ表示、loading/empty/error/focus明示 |
 | T01 | Git runnerからprocess primitiveのみ抽出 | F04 | `BoundedProcessRunner.*:GitCommandRunner.*` | SCM無回帰、argv・pipe・job cleanup |

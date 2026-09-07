@@ -397,5 +397,6 @@ std::optional<std::string> Encode(const Envelope& envelope)
 }
 
 bool Validate(const Envelope& envelope) { return Encode(envelope).has_value(); }
+bool ValidateDocument(const PublishDocument& document) { return Writer().Value(document); }
 
 } // namespace senp::effect

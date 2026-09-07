@@ -13,6 +13,14 @@
 
 namespace markdown {
 
+//! Observable native viewport state; no window identity or mutable layout data.
+struct PreviewViewportSnapshot final {
+	int scrollPosition{};
+	int maximumScroll{};
+	std::size_t renderedLines{};
+	bool layoutPending{};
+};
+
 //! Logical viewport position preserved across width-dependent reflow.
 struct PreviewScrollAnchor {
 	std::size_t sourceLine = 0;

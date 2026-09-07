@@ -131,6 +131,21 @@ observable.
   the UI thread never waits for parser/highlighter/image work. Posting failure
   releases the completed value and records `Failed`.
 
+The trusted host may queue an I/O-free immutable `Document` producer through
+`QueuePreparedDocument` for structured SENP content. It uses the same worker,
+highlight/image preparation, latest-only mailbox and retirement reservation as
+ordinary Markdown source. The producer must be bounded, capture values/shared
+immutable payloads only, and never retain a window or view owner. The optional
+preparation callback runs on the UI thread, must not throw, and must be detached
+before its observer is destroyed. Prepared means the model was committed; the
+separate viewport snapshot reports asynchronous native reflow.
+
+A new source or prepared-document admission discards an older drag-deferred
+completion immediately. Otherwise committing that drag could expose an already
+superseded document while the newer worker request is running. Deferred frame
+rejection is terminal and notifies preparation failure. The native SENP tests
+verify normal/deferred/failure/stale delivery and drain the retirement owner.
+
 
 ## Declared boundaries must be per concept, not per feeling (2026-08-20, #228)
 

@@ -69,6 +69,12 @@ public:
 	//! on the persistent worker; a custom window message commits the latest key.
 	[[nodiscard]] bool QueueDocument(std::wstring source, ParseOptions options,
 		bool truncated, PreviewRenderKey key);
+	//! Trusted host-owned, bounded, I/O-free producer. Captures immutable values
+	//! only; the existing worker owns invocation and retirement after Close.
+	[[nodiscard]] bool QueuePreparedDocument(std::function<Document()> prepare, PreviewRenderKey key);
+	//! Delivered on the owning UI thread after preparation commits, not from the
+	//! worker. Clear before destroying an observer. No callback on stale results.
+	void SetPreparationCallback(std::function<void(PreviewRenderKey, bool)> callback);
 	void SetSourceTruncated(bool truncated);
 	void SetPalette(const theme::ThemePalette& palette);
 	void SetEditorFont(const LOGFONT& font, unsigned int dpi);
@@ -112,6 +118,9 @@ public:
 
 	[[nodiscard]] HWND GetHwnd() const noexcept { return m_hWnd; }
 	[[nodiscard]] bool IsCreated() const noexcept { return m_hWnd != nullptr; }
+	[[nodiscard]] PreviewViewportSnapshot ViewportSnapshot() const noexcept {
+		return { m_scrollY, m_maxScroll, m_lines.size(), m_layoutBuild.has_value() || m_deferredCompletion.has_value() };
+	}
 
 private:
 	enum class FontKind {
@@ -235,6 +244,7 @@ private:
 		std::wstring source;
 		ParseOptions options;
 		bool truncated = false;
+		std::function<Document()> prepare;
 	};
 
 	struct PreviewWorkCompletion {
@@ -382,6 +392,7 @@ private:
 	std::optional<PreviewWorkCompletion> m_deferredCompletion;
 	std::shared_ptr<IMarkdownRemoteImageFetcher> m_remoteImageFetcher;
 	std::shared_ptr<WorkerState> m_workerState;
+	std::function<void(PreviewRenderKey, bool)> m_preparationCallback;
 	std::jthread m_worker;
 	std::optional<MarkdownPreviewWorkerRetirement::Reservation> m_workerRetirement;
 	std::vector<std::optional<CodeHighlightResult>> m_codeHighlights;

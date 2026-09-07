@@ -247,5 +247,7 @@ struct Envelope final {
 [[nodiscard]] std::optional<Envelope> Decode(std::string_view json);
 [[nodiscard]] std::optional<std::string> Encode(const Envelope& envelope);
 [[nodiscard]] bool Validate(const Envelope& envelope);
+//! Validate an already-decoded document without copying its effect graph.
+[[nodiscard]] bool ValidateDocument(const PublishDocument& document);
 
 } // namespace senp::effect

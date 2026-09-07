@@ -224,3 +224,60 @@ for repeated input/resize/visibility/movement dual captures in dark, light and
 system-palette High Contrast at 96/144/192 DPI. Theme setup is outside gesture
 capture; unchanged theme/DPI resize trials must not force a fixture redraw that
 could conceal a missing production invalidation.
+
+## SENP structured readonly documents (U04, #296)
+
+`SenpReadonlyDocument` retains one authorized input's immutable published value.
+Composition calls Begin only after runtime admission, and owns its deadline.
+Every supersession, publication, failure, expiry and close returns the retired
+request context for subscriber cancellation; the broker still owns physical
+cleanup. Derived tool events may change operation ID but must retain all four
+scope/request generations. Expired and Closed never admit new requests.
+Refresh may repeat the exact same revision and payload; a conflicting same
+revision or a decreasing revision is rejected. Titles do not change identity.
+The last accepted value can remain cached during loading/failure, but the view
+projects the explicit state instead of presenting old content as a new result.
+Expiry and Close release that cache. Composition must finalize an admitted
+request with Fail/Expire/Close if an allocation exception prevents publication.
+
+`PrepareSenpReadonlyDocument` validates with the existing bounded protocol writer
+without copying the effect graph. There are at most 32 sections, 64 metadata
+fields, 16 table columns, 256 rows per table, 4,096 render blocks and a 1 MiB
+serialized document budget; the title additionally follows the readonly input's
+256 UTF-16-unit limit. Metadata and table cells become literal native table
+cells, never interpolated Markdown. NUL/control units become visible replacement
+characters. Only Markdown sections enter the existing pure parser.
+
+SENP supplies no filesystem roots and grants no image or link activation. Every
+resource reference, including nested inline/table/image references, is marked
+blocked and loses resolved paths/roots before reaching the native renderer.
+HTML uses the renderer's existing inert subset; script/style execution and
+command links remain unsupported. This is a deliberately narrower asset policy
+than the ordinary Markdown preview's Strict HTTPS images: the schema-2 document
+contract contains no asset grant. Do not change the ordinary preview defaults.
+VS Code likewise separates trusted command links and relative-resource bases in
+[`MarkdownString`](https://code.visualstudio.com/api/references/vscode-api#MarkdownString).
+The native preview's remaining rendering differences stay in
+[`../../markdown/PARITY.md`](../../markdown/PARITY.md).
+
+`SenpReadonlyDocumentView` owns a root containing the existing Markdown preview
+and its sibling overlay. Bind that root to `SenpEditorSurfaceSwitcher`; binding
+the preview alone strands the overlay when an input is hidden. Composition
+supplies a distinct logical frame surface ID, calls Sync after model transitions,
+and unbinds before closing the native view. The model/core outlive the view.
+Queueing reuses the preview's one-running/one-latest-pending worker with immutable
+captures and its existing bounded retirement owner. No Wasm/tool wait or parse
+runs in paint. Preparation failure displays an explicit error and requires an
+explicit newer request to retry. Prepared means the worker result was committed;
+`ViewportSnapshot` separately reports ongoing native reflow and actual scroll.
+
+Text-resource sections are typed Unsupported at this boundary until U05 binds
+their renderer. Text selection/copy/find, command dispatch and application tab/
+backup integration remain the U05/U06 acceptance gates; a rendered preview does
+not claim those capabilities or full VS Code text-editor accessibility.
+
+Verify `SenpReadonlyDocument.*`, the existing Markdown suites and the
+`ReadonlyDocuments` probe in `tools/verify-senp-view-rendering.ps1`. Its readiness
+check waits for both preparation and native reflow; its fingerprint reads the
+real scroll position, published generation, rendered line count and visibility.
+Test setup must expect an empty group before selecting the inactive input.

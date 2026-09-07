@@ -2,8 +2,8 @@
 
 状態: G01/G02のschema・WIT・codec、G03a/G03bのsessionと実host、G04のowner lifecycle、
 U01の複数View native pageとSCM共通header、U02のlazy Tree model/provider/native body、
-U03のreadonly input登録と保持したnative surfaceの切替を実装済み。
-Document body、page/commandの公開adapter、tool broker、GitHub拡張、v2 package受理は後続工程。
+U03のreadonly input登録と保持したnative surface切替、U04のMarkdown・metadata・table本文を実装済み。
+chunk text resource、page/commandの公開adapter、tool broker、GitHub拡張、v2 package受理は後続工程。
 作成日: 2026-09-07。
 調査対象: `5346511f26fa04cc13acdad21ff603b4813e6768` のチェックアウト。
 追跡Issue: [#296 — Design SENP v2 GitHub Issues/PR and Actions extensions using gh](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/296)。
@@ -100,7 +100,9 @@ U03では既存EditorCoreServiceのgroup内に最大16件のreadonly inputを登
 Close/owner失効、CEditDoc/undo保持とnative選択/scroll/focusを`SenpReadonlyWorkbench.*`で検証する。
 描画runnerの`ReadonlyEditors`はinput切替・resize・Editor Part非表示・surface移動を実画面で比較する。
 Save Allは全working copyを扱うWorkbenchへ渡し、readonly inputの保存とは分ける。
-本文rendererはU04/U05、アプリのtab/command/backupとsample公開はU06の完了条件に残す。
+U04は既存native Markdown previewのworkerへ構造化本文を接続し、metadata/tableを文字列のまま描画する。
+script・command linkは実行せず、local/remote画像は権限未定義のためblockedにする。
+chunk text resourceと検索・コピーはU05、アプリのtab/command/backupとsample公開はU06の完了条件に残す。
 
 ### 操作と情報状態
 
