@@ -1,0 +1,476 @@
+{
+  "source_commit": "c08c00804c34f5ac123566a0ee93743a0272518e",
+  "runner_sha256": "ef354b97eda95a24e0bb9e62a24532c3392570eaee6edd1f4b1d77cb1af896d0",
+  "tool_sha256": "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88",
+  "tool_url": "https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar",
+  "run_directory": "C:\\Users\\developer\\tmp\\senp-github-formal\\final\\797ba32a-cb2e-4e47-8394-5db0251b9227",
+  "cases": [
+    {
+      "name": "SenpGhConnection",
+      "expected_invariant": null,
+      "passed": true,
+      "expected_temporal": null,
+      "exit_code": 0,
+      "source_hashes": {
+        "SenpGhConnection.tla": "9378949f9a97518586b3d5372b6521a13aa0fafae655a7c21b4e6d194628f307",
+        "SenpGhConnection.cfg": "adebe0d083b1112f2890849f36fdabcf6cc079d2e14755e24712f5d2c769c1a1"
+      },
+      "sources_unchanged": true,
+      "command": [
+        "java",
+        "-Xmx512m",
+        "-XX:+UseParallelGC",
+        "-cp",
+        "C:\\Users\\developer\\AppData\\Local\\Programs\\TLAplus\\tla2tools.jar",
+        "tlc2.TLC",
+        "-workers",
+        "2",
+        "-metadir",
+        "C:\\Users\\developer\\tmp\\senp-github-formal\\final\\797ba32a-cb2e-4e47-8394-5db0251b9227\\SenpGhConnection\\states",
+        "-config",
+        "SenpGhConnection.cfg",
+        "SenpGhConnection.tla"
+      ],
+      "log": "C:\\Users\\developer\\tmp\\senp-github-formal\\final\\797ba32a-cb2e-4e47-8394-5db0251b9227\\SenpGhConnection\\tlc.log",
+      "log_sha256": "f850b3298eab72f488ccf03aec01239e80e7e5d6dfc0ee84c2ddd113b30ee766",
+      "exploration": {
+        "generated": 233,
+        "distinct": 137,
+        "queued": 0,
+        "depth": 7
+      },
+      "pid": 52852,
+      "exited": true,
+      "timed_out": false,
+      "elapsed_seconds": 1.176
+    },
+    {
+      "name": "SenpGhConnection_NoIdentity",
+      "expected_invariant": "IdentityBeforeGrant",
+      "passed": true,
+      "expected_temporal": null,
+      "exit_code": 12,
+      "source_hashes": {
+        "SenpGhConnection.tla": "9378949f9a97518586b3d5372b6521a13aa0fafae655a7c21b4e6d194628f307",
+        "SenpGhConnection_NoIdentity.cfg": "031c88bafa0a8b951e09f407e0ba4a6e887192dfd03b5598042c5cffa00fe24b"
+      },
+      "sources_unchanged": true,
+      "command": [
+        "java",
+        "-Xmx512m",
+        "-XX:+UseParallelGC",
+        "-cp",
+        "C:\\Users\\developer\\AppData\\Local\\Programs\\TLAplus\\tla2tools.jar",
+        "tlc2.TLC",
+        "-workers",
+        "2",
+        "-metadir",
+        "C:\\Users\\developer\\tmp\\senp-github-formal\\final\\797ba32a-cb2e-4e47-8394-5db0251b9227\\SenpGhConnection_NoIdentity\\states",
+        "-config",
+        "SenpGhConnection_NoIdentity.cfg",
+        "SenpGhConnection.tla"
+      ],
+      "log": "C:\\Users\\developer\\tmp\\senp-github-formal\\final\\797ba32a-cb2e-4e47-8394-5db0251b9227\\SenpGhConnection_NoIdentity\\tlc.log",
+      "log_sha256": "938c131f7f50f6a8db5bfbed7ab98e9786e2039b39650cae554baba63494c0f4",
+      "exploration": {
+        "generated": 47,
+        "distinct": 42,
+        "queued": 24,
+        "depth": 4
+      },
+      "pid": 12796,
+      "exited": true,
+      "timed_out": false,
+      "elapsed_seconds": 1.181
+    },
+    {
+      "name": "SenpGhConnection_NoGeneration",
+      "expected_invariant": "NoStaleConnection",
+      "passed": true,
+      "expected_temporal": null,
+      "exit_code": 12,
+      "source_hashes": {
+        "SenpGhConnection.tla": "9378949f9a97518586b3d5372b6521a13aa0fafae655a7c21b4e6d194628f307",
+        "SenpGhConnection_NoGeneration.cfg": "20374fb1900d2b9465bb88e05983be0cea4e038d8c2ced3c80372f324f761545"
+      },
+      "sources_unchanged": true,
+      "command": [
+        "java",
+        "-Xmx512m",
+        "-XX:+UseParallelGC",
+        "-cp",
+        "C:\\Users\\developer\\AppData\\Local\\Programs\\TLAplus\\tla2tools.jar",
+        "tlc2.TLC",
+        "-workers",
+        "2",
+        "-metadir",
+        "C:\\Users\\developer\\tmp\\senp-github-formal\\final\\797ba32a-cb2e-4e47-8394-5db0251b9227\\SenpGhConnection_NoGeneration\\states",
+        "-config",
+        "SenpGhConnection_NoGeneration.cfg",
+        "SenpGhConnection.tla"
+      ],
+      "log": "C:\\Users\\developer\\tmp\\senp-github-formal\\final\\797ba32a-cb2e-4e47-8394-5db0251b9227\\SenpGhConnection_NoGeneration\\tlc.log",
+      "log_sha256": "0d95ed1e703316c87968e9fbaf840dc6495d8c881ae44b0e408379c47164a911",
+      "exploration": {
+        "generated": 177,
+        "distinct": 110,
+        "queued": 33,
+        "depth": 6
+      },
+      "pid": 61108,
+      "exited": true,
+      "timed_out": false,
+      "elapsed_seconds": 1.175
+    },
+    {
+      "name": "SenpContributionOwner",
+      "expected_invariant": null,
+      "passed": true,
+      "expected_temporal": null,
+      "exit_code": 0,
+      "source_hashes": {
+        "SenpContributionOwner.tla": "eaa8b1c930b2af8fb11b20f57e7edad6fe082c0781f75484bd140ac8620f9404",
+        "SenpContributionOwner.cfg": "624cfba93f9bfa994970f7eb20fef126a102045bdafbeb8f075f3a7a16a6f2a7"
+      },
+      "sources_unchanged": true,
+      "command": [
+        "java",
+        "-Xmx512m",
+        "-XX:+UseParallelGC",
+        "-cp",
+        "C:\\Users\\developer\\AppData\\Local\\Programs\\TLAplus\\tla2tools.jar",
+        "tlc2.TLC",
+        "-workers",
+        "2",
+        "-metadir",
+        "C:\\Users\\developer\\tmp\\senp-github-formal\\final\\797ba32a-cb2e-4e47-8394-5db0251b9227\\SenpContributionOwner\\states",
+        "-config",
+        "SenpContributionOwner.cfg",
+        "SenpContributionOwner.tla"
+      ],
+      "log": "C:\\Users\\developer\\tmp\\senp-github-formal\\final\\797ba32a-cb2e-4e47-8394-5db0251b9227\\SenpContributionOwner\\tlc.log",
+      "log_sha256": "e40fdf7ba2d8e6f3cc06f38b3119c1eb099835504aeec8825e31f00fd1c6064b",
+      "exploration": {
+        "generated": 246,
+        "distinct": 84,
+        "queued": 0,
+        "depth": 14
+      },
+      "pid": 36336,
+      "exited": true,
+      "timed_out": false,
+      "elapsed_seconds": 1.253
+    },
+    {
+      "name": "SenpContributionOwner_NoGeneration",
+      "expected_invariant": "CurrentView",
+      "passed": true,
+      "expected_temporal": null,
+      "exit_code": 12,
+      "source_hashes": {
+        "SenpContributionOwner.tla": "eaa8b1c930b2af8fb11b20f57e7edad6fe082c0781f75484bd140ac8620f9404",
+        "SenpContributionOwner_NoGeneration.cfg": "6a748cecfb29ebd995bcd57e5bcc9e43a42b4cc5f6f24df2975235a96524fdfe"
+      },
+      "sources_unchanged": true,
+      "command": [
+        "java",
+        "-Xmx512m",
+        "-XX:+UseParallelGC",
+        "-cp",
+        "C:\\Users\\developer\\AppData\\Local\\Programs\\TLAplus\\tla2tools.jar",
+        "tlc2.TLC",
+        "-workers",
+        "2",
+        "-metadir",
+        "C:\\Users\\developer\\tmp\\senp-github-formal\\final\\797ba32a-cb2e-4e47-8394-5db0251b9227\\SenpContributionOwner_NoGeneration\\states",
+        "-config",
+        "SenpContributionOwner_NoGeneration.cfg",
+        "SenpContributionOwner.tla"
+      ],
+      "log": "C:\\Users\\developer\\tmp\\senp-github-formal\\final\\797ba32a-cb2e-4e47-8394-5db0251b9227\\SenpContributionOwner_NoGeneration\\tlc.log",
+      "log_sha256": "94c6e126698293714c82a3525def5f70466fa4d5261d37db4708416c13d70fdd",
+      "exploration": {
+        "generated": 134,
+        "distinct": 56,
+        "queued": 10,
+        "depth": 9
+      },
+      "pid": 57740,
+      "exited": true,
+      "timed_out": false,
+      "elapsed_seconds": 1.202
+    },
+    {
+      "name": "SenpContributionOwner_NoClear",
+      "expected_invariant": "NoRevokedView",
+      "passed": true,
+      "expected_temporal": null,
+      "exit_code": 12,
+      "source_hashes": {
+        "SenpContributionOwner.tla": "eaa8b1c930b2af8fb11b20f57e7edad6fe082c0781f75484bd140ac8620f9404",
+        "SenpContributionOwner_NoClear.cfg": "8c595a49aef98d194de74c299b6b8e8547700286d8263a0f20a4e0f4d9edde16"
+      },
+      "sources_unchanged": true,
+      "command": [
+        "java",
+        "-Xmx512m",
+        "-XX:+UseParallelGC",
+        "-cp",
+        "C:\\Users\\developer\\AppData\\Local\\Programs\\TLAplus\\tla2tools.jar",
+        "tlc2.TLC",
+        "-workers",
+        "2",
+        "-metadir",
+        "C:\\Users\\developer\\tmp\\senp-github-formal\\final\\797ba32a-cb2e-4e47-8394-5db0251b9227\\SenpContributionOwner_NoClear\\states",
+        "-config",
+        "SenpContributionOwner_NoClear.cfg",
+        "SenpContributionOwner.tla"
+      ],
+      "log": "C:\\Users\\developer\\tmp\\senp-github-formal\\final\\797ba32a-cb2e-4e47-8394-5db0251b9227\\SenpContributionOwner_NoClear\\tlc.log",
+      "log_sha256": "127c7c6e2fb444d60cbed3564a00265d5c7506682b0cfa2faed52234265c9851",
+      "exploration": {
+        "generated": 58,
+        "distinct": 29,
+        "queued": 8,
+        "depth": 6
+      },
+      "pid": 40156,
+      "exited": true,
+      "timed_out": false,
+      "elapsed_seconds": 1.157
+    },
+    {
+      "name": "SenpGhRequests",
+      "expected_invariant": null,
+      "passed": true,
+      "expected_temporal": null,
+      "exit_code": 0,
+      "source_hashes": {
+        "SenpGhRequests.tla": "f847b19811bcf468aa12f538591afbeb869ef9ec5c87e68373d07b2389181ea1",
+        "SenpGhRequests.cfg": "6796593dccacd109ab4cfab104bb78ae23132f473157e17024c31f6aa3fec719"
+      },
+      "sources_unchanged": true,
+      "command": [
+        "java",
+        "-Xmx512m",
+        "-XX:+UseParallelGC",
+        "-cp",
+        "C:\\Users\\developer\\AppData\\Local\\Programs\\TLAplus\\tla2tools.jar",
+        "tlc2.TLC",
+        "-workers",
+        "2",
+        "-metadir",
+        "C:\\Users\\developer\\tmp\\senp-github-formal\\final\\797ba32a-cb2e-4e47-8394-5db0251b9227\\SenpGhRequests\\states",
+        "-config",
+        "SenpGhRequests.cfg",
+        "SenpGhRequests.tla"
+      ],
+      "log": "C:\\Users\\developer\\tmp\\senp-github-formal\\final\\797ba32a-cb2e-4e47-8394-5db0251b9227\\SenpGhRequests\\tlc.log",
+      "log_sha256": "2e31e29998c1eb7b06a97da40ee6ffe7d42ffda42c0b1fbe329ddfb033c23142",
+      "exploration": {
+        "generated": 1145,
+        "distinct": 569,
+        "queued": 0,
+        "depth": 13
+      },
+      "pid": 21432,
+      "exited": true,
+      "timed_out": false,
+      "elapsed_seconds": 1.344
+    },
+    {
+      "name": "SenpGhRequests_NoSingleFlight",
+      "expected_invariant": "SingleFlight",
+      "passed": true,
+      "expected_temporal": null,
+      "exit_code": 12,
+      "source_hashes": {
+        "SenpGhRequests.tla": "f847b19811bcf468aa12f538591afbeb869ef9ec5c87e68373d07b2389181ea1",
+        "SenpGhRequests_NoSingleFlight.cfg": "034b02a48353ee8863c0c88e6040a664a0e3a9935565399947246da414dd7a75"
+      },
+      "sources_unchanged": true,
+      "command": [
+        "java",
+        "-Xmx512m",
+        "-XX:+UseParallelGC",
+        "-cp",
+        "C:\\Users\\developer\\AppData\\Local\\Programs\\TLAplus\\tla2tools.jar",
+        "tlc2.TLC",
+        "-workers",
+        "2",
+        "-metadir",
+        "C:\\Users\\developer\\tmp\\senp-github-formal\\final\\797ba32a-cb2e-4e47-8394-5db0251b9227\\SenpGhRequests_NoSingleFlight\\states",
+        "-config",
+        "SenpGhRequests_NoSingleFlight.cfg",
+        "SenpGhRequests.tla"
+      ],
+      "log": "C:\\Users\\developer\\tmp\\senp-github-formal\\final\\797ba32a-cb2e-4e47-8394-5db0251b9227\\SenpGhRequests_NoSingleFlight\\tlc.log",
+      "log_sha256": "e201b3ec9f8ace00357d323430465a3eeb17e8f1d251f8cf5fbf7704b2cff441",
+      "exploration": {
+        "generated": 49,
+        "distinct": 38,
+        "queued": 21,
+        "depth": 5
+      },
+      "pid": 47684,
+      "exited": true,
+      "timed_out": false,
+      "elapsed_seconds": 1.323
+    },
+    {
+      "name": "SenpGhRequests_NoLastSubscriber",
+      "expected_invariant": "SharedLeasePreserved",
+      "passed": true,
+      "expected_temporal": null,
+      "exit_code": 12,
+      "source_hashes": {
+        "SenpGhRequests.tla": "f847b19811bcf468aa12f538591afbeb869ef9ec5c87e68373d07b2389181ea1",
+        "SenpGhRequests_NoLastSubscriber.cfg": "b1bfe0a9066df34c1f1cfa6711148c149c856a398bf3c5927fda63a9aa24bfde"
+      },
+      "sources_unchanged": true,
+      "command": [
+        "java",
+        "-Xmx512m",
+        "-XX:+UseParallelGC",
+        "-cp",
+        "C:\\Users\\developer\\AppData\\Local\\Programs\\TLAplus\\tla2tools.jar",
+        "tlc2.TLC",
+        "-workers",
+        "2",
+        "-metadir",
+        "C:\\Users\\developer\\tmp\\senp-github-formal\\final\\797ba32a-cb2e-4e47-8394-5db0251b9227\\SenpGhRequests_NoLastSubscriber\\states",
+        "-config",
+        "SenpGhRequests_NoLastSubscriber.cfg",
+        "SenpGhRequests.tla"
+      ],
+      "log": "C:\\Users\\developer\\tmp\\senp-github-formal\\final\\797ba32a-cb2e-4e47-8394-5db0251b9227\\SenpGhRequests_NoLastSubscriber\\tlc.log",
+      "log_sha256": "4eecab3b4f559bdc967db1c945cdf15acd396fe07b697faa1ee80cf0e5a0b0a7",
+      "exploration": {
+        "generated": 46,
+        "distinct": 35,
+        "queued": 17,
+        "depth": 5
+      },
+      "pid": 16444,
+      "exited": true,
+      "timed_out": false,
+      "elapsed_seconds": 1.482
+    },
+    {
+      "name": "SenpGhRequests_NoCooldown",
+      "expected_invariant": "RespectRateWindow",
+      "passed": true,
+      "expected_temporal": null,
+      "exit_code": 12,
+      "source_hashes": {
+        "SenpGhRequests.tla": "f847b19811bcf468aa12f538591afbeb869ef9ec5c87e68373d07b2389181ea1",
+        "SenpGhRequests_NoCooldown.cfg": "bb7cc458282ded26445f38a7cf4ec6a47158e77685ce4cd07886558daf479aa6"
+      },
+      "sources_unchanged": true,
+      "command": [
+        "java",
+        "-Xmx512m",
+        "-XX:+UseParallelGC",
+        "-cp",
+        "C:\\Users\\developer\\AppData\\Local\\Programs\\TLAplus\\tla2tools.jar",
+        "tlc2.TLC",
+        "-workers",
+        "2",
+        "-metadir",
+        "C:\\Users\\developer\\tmp\\senp-github-formal\\final\\797ba32a-cb2e-4e47-8394-5db0251b9227\\SenpGhRequests_NoCooldown\\states",
+        "-config",
+        "SenpGhRequests_NoCooldown.cfg",
+        "SenpGhRequests.tla"
+      ],
+      "log": "C:\\Users\\developer\\tmp\\senp-github-formal\\final\\797ba32a-cb2e-4e47-8394-5db0251b9227\\SenpGhRequests_NoCooldown\\tlc.log",
+      "log_sha256": "4981ab5300d3adb36485faeb09780719147978dc35da8e53ca9535d1c6d8885a",
+      "exploration": {
+        "generated": 196,
+        "distinct": 118,
+        "queued": 54,
+        "depth": 6
+      },
+      "pid": 59172,
+      "exited": true,
+      "timed_out": false,
+      "elapsed_seconds": 1.245
+    },
+    {
+      "name": "SenpGhRequests_NoReap",
+      "expected_invariant": "TerminalOwnsNoProcess",
+      "passed": true,
+      "expected_temporal": null,
+      "exit_code": 12,
+      "source_hashes": {
+        "SenpGhRequests.tla": "f847b19811bcf468aa12f538591afbeb869ef9ec5c87e68373d07b2389181ea1",
+        "SenpGhRequests_NoReap.cfg": "1b94f4d27387c01cb4d718d6e1e145c381076b0bb00fc89cc13c1395f61724be"
+      },
+      "sources_unchanged": true,
+      "command": [
+        "java",
+        "-Xmx512m",
+        "-XX:+UseParallelGC",
+        "-cp",
+        "C:\\Users\\developer\\AppData\\Local\\Programs\\TLAplus\\tla2tools.jar",
+        "tlc2.TLC",
+        "-workers",
+        "2",
+        "-metadir",
+        "C:\\Users\\developer\\tmp\\senp-github-formal\\final\\797ba32a-cb2e-4e47-8394-5db0251b9227\\SenpGhRequests_NoReap\\states",
+        "-config",
+        "SenpGhRequests_NoReap.cfg",
+        "SenpGhRequests.tla"
+      ],
+      "log": "C:\\Users\\developer\\tmp\\senp-github-formal\\final\\797ba32a-cb2e-4e47-8394-5db0251b9227\\SenpGhRequests_NoReap\\tlc.log",
+      "log_sha256": "e76835fc1d6153e4244c2515d3ed68398550e5dc61786391b26b87e858d260c4",
+      "exploration": {
+        "generated": 85,
+        "distinct": 61,
+        "queued": 32,
+        "depth": 5
+      },
+      "pid": 37020,
+      "exited": true,
+      "timed_out": false,
+      "elapsed_seconds": 1.269
+    },
+    {
+      "name": "SenpGhRequests_NoCleanupFairness",
+      "expected_invariant": null,
+      "passed": true,
+      "expected_temporal": "EveryAcceptedTerminates",
+      "exit_code": 13,
+      "source_hashes": {
+        "SenpGhRequests.tla": "f847b19811bcf468aa12f538591afbeb869ef9ec5c87e68373d07b2389181ea1",
+        "SenpGhRequests_NoCleanupFairness.cfg": "b2344ba0ba26671a2197e5561e84c143f2852cfd074d7ac2a713e2d448f3af38"
+      },
+      "sources_unchanged": true,
+      "command": [
+        "java",
+        "-Xmx512m",
+        "-XX:+UseParallelGC",
+        "-cp",
+        "C:\\Users\\developer\\AppData\\Local\\Programs\\TLAplus\\tla2tools.jar",
+        "tlc2.TLC",
+        "-workers",
+        "2",
+        "-metadir",
+        "C:\\Users\\developer\\tmp\\senp-github-formal\\final\\797ba32a-cb2e-4e47-8394-5db0251b9227\\SenpGhRequests_NoCleanupFairness\\states",
+        "-config",
+        "SenpGhRequests_NoCleanupFairness.cfg",
+        "SenpGhRequests.tla"
+      ],
+      "log": "C:\\Users\\developer\\tmp\\senp-github-formal\\final\\797ba32a-cb2e-4e47-8394-5db0251b9227\\SenpGhRequests_NoCleanupFairness\\tlc.log",
+      "log_sha256": "8bf3394c5cfc20e584b17c4cd47af345c05c51156085d0b75e347d43a1b19448",
+      "exploration": {
+        "generated": 1145,
+        "distinct": 569,
+        "queued": 0
+      },
+      "pid": 11576,
+      "exited": true,
+      "timed_out": false,
+      "elapsed_seconds": 1.289
+    }
+  ]
+}
