@@ -17188,56 +17188,56 @@
     {
       "column": 81,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 1309,
+      "line": 1326,
       "path": "sakura_core/terminal/window/CTerminalWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 39,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 1584,
+      "line": 1601,
       "path": "sakura_core/terminal/window/CTerminalWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 54,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 1584,
+      "line": 1601,
       "path": "sakura_core/terminal/window/CTerminalWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 28,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1905,
+      "line": 1922,
       "path": "sakura_core/terminal/window/CTerminalWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 1,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 2233,
+      "line": 2250,
       "path": "sakura_core/terminal/window/CTerminalWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 44,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 2269,
+      "line": 2286,
       "path": "sakura_core/terminal/window/CTerminalWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 71,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 2269,
+      "line": 2286,
       "path": "sakura_core/terminal/window/CTerminalWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 86,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 2269,
+      "line": 2286,
       "path": "sakura_core/terminal/window/CTerminalWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
@@ -29942,84 +29942,70 @@
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 320,
+      "line": 346,
       "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 344,
+      "line": 370,
       "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 39,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 344,
+      "line": 370,
       "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 59,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 345,
+      "line": 371,
       "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 370,
+      "line": 396,
       "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 499,
+      "line": 525,
       "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 501,
+      "line": 527,
       "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 598,
+      "line": 624,
       "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 622,
+      "line": 648,
       "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 646,
-      "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 8,
-      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 666,
-      "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 43,
-      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 669,
+      "line": 672,
       "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
@@ -30031,86 +30017,93 @@
       "rule_id": "boundary.win32_type"
     },
     {
-      "column": 8,
+      "column": 43,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 713,
+      "line": 695,
       "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 715,
+      "line": 718,
       "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 720,
+      "line": 739,
       "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 742,
+      "line": 741,
       "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1029,
+      "line": 746,
       "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1041,
+      "line": 768,
       "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1043,
+      "line": 1055,
       "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1045,
+      "line": 1067,
       "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1114,
+      "line": 1069,
       "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1124,
+      "line": 1071,
       "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1126,
+      "line": 1140,
       "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1128,
+      "line": 1150,
+      "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 8,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 1152,
       "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
@@ -30124,56 +30117,63 @@
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1165,
+      "line": 1180,
       "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1167,
+      "line": 1191,
       "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1169,
+      "line": 1193,
       "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1233,
+      "line": 1195,
+      "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 8,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 1259,
       "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 53,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 1251,
+      "line": 1277,
       "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1263,
+      "line": 1289,
       "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1293,
+      "line": 1319,
       "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1332,
+      "line": 1358,
       "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
@@ -34674,7 +34674,7 @@
     {
       "column": 5,
       "evidence_sha256": "sha256:e367699682104a11434267c1cfa5915146597b5d4df8e67257e7cc66399cf08c",
-      "line": 1555,
+      "line": 1572,
       "path": "sakura_core/terminal/window/CTerminalWnd.cpp",
       "rule_id": "error.catch_all"
     },
@@ -95029,7 +95029,7 @@
     "raw_delete_expression_count": 317,
     "raw_new_expression_count": 245,
     "source_file_count": 1684,
-    "source_line_count": 510112,
+    "source_line_count": 510157,
     "tracked_file_count": 1733,
     "win32_parameter_mention_count": 4617
   },
@@ -95186,8 +95186,8 @@
     ]
   },
   "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
-  "source_commit": "d44db95294f11ae442b196415c3429ab4790b800",
-  "source_fingerprint": "sha256:f8969093b7ce795a7eaa0570716b8a0bda0153fee9b1417bff01b2c31398a9b7",
+  "source_commit": "32970e4154203f5591b68aa253d74c06f3335163",
+  "source_fingerprint": "sha256:887be8fa6234ca190affdf3c10ff8e25103808b2f0cf928874e28e7128a8d745",
   "tracked_source_paths": [
     ".github/actions/bootstrap-vcpkg/action.yml",
     ".github/dependabot.yml",
