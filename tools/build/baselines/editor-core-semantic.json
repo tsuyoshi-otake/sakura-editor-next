@@ -34030,6 +34030,20 @@
     {
       "column": 5,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
+      "line": 281,
+      "path": "sakura_core/senp/SenpEffectRuntime.cpp",
+      "rule_id": "error.catch_all"
+    },
+    {
+      "column": 4,
+      "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
+      "line": 307,
+      "path": "sakura_core/senp/SenpEffectRuntime.cpp",
+      "rule_id": "error.catch_all"
+    },
+    {
+      "column": 5,
+      "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
       "line": 228,
       "path": "sakura_core/senp/SenpLanguageService.cpp",
       "rule_id": "error.catch_all"
@@ -48301,6 +48315,20 @@
       "rule_id": "resource.stop_required_acquisition"
     },
     {
+      "column": 10,
+      "evidence_sha256": "sha256:3bdc4453749048eea7e0399d4212c283116044cc17e03d091492574bbf3088fc",
+      "line": 146,
+      "path": "sakura_core/senp/SenpEffectRuntime.cpp",
+      "rule_id": "resource.stop_required_acquisition"
+    },
+    {
+      "column": 14,
+      "evidence_sha256": "sha256:098f63ea1f79029b04e2f60dc47727e4d38a44f4c5618ac1950972a4bb1c02e6",
+      "line": 306,
+      "path": "sakura_core/senp/SenpEffectRuntime.cpp",
+      "rule_id": "resource.stop_required_acquisition"
+    },
+    {
       "column": 26,
       "evidence_sha256": "sha256:3bdc4453749048eea7e0399d4212c283116044cc17e03d091492574bbf3088fc",
       "line": 192,
@@ -50167,6 +50195,13 @@
       "evidence_sha256": "sha256:0a06a841e82a3f7809b4ae59af5eda45e7e805c40e8d967bb1abef61fe1efb49",
       "line": 66,
       "path": "sakura_core/platform/storage/CInMemoryStorageService.h",
+      "rule_id": "state.mutable_member"
+    },
+    {
+      "column": 2,
+      "evidence_sha256": "sha256:0a06a841e82a3f7809b4ae59af5eda45e7e805c40e8d967bb1abef61fe1efb49",
+      "line": 227,
+      "path": "sakura_core/senp/SenpEffectRuntime.cpp",
       "rule_id": "state.mutable_member"
     },
     {
@@ -63376,6 +63411,62 @@
       "evidence_sha256": "sha256:57d393dde29d1a248be504790e719fc7262db6d0b1acf3803f40fcd73932a8ad",
       "line": 243,
       "path": "sakura_core/senp/SenpEffectProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 33,
+      "evidence_sha256": "sha256:ffc2ef7fc30ca910894629d2163779dd154ee5af5643832dc26fe7a602e43d52",
+      "line": 129,
+      "path": "sakura_core/senp/SenpEffectRuntime.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 22,
+      "evidence_sha256": "sha256:c27e893b2f788f6e7bef789f80303dcc6b69934d4af4ab973a0f0ab3dc014c7f",
+      "line": 226,
+      "path": "sakura_core/senp/SenpEffectRuntime.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 21,
+      "evidence_sha256": "sha256:7cd05b6228cccd2664882d615a89d1b29ad4aa352416c0e7f13f4759f1b709a2",
+      "line": 227,
+      "path": "sakura_core/senp/SenpEffectRuntime.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 13,
+      "evidence_sha256": "sha256:13f2628c9fc02d014eed0ddefe349f4cc188a962a1020321122ef2b885b4ca20",
+      "line": 228,
+      "path": "sakura_core/senp/SenpEffectRuntime.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 22,
+      "evidence_sha256": "sha256:fd5934e68fb9f6c85f3d6081d39d4dfd2b2d316f2577556945df50c180609761",
+      "line": 229,
+      "path": "sakura_core/senp/SenpEffectRuntime.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 18,
+      "evidence_sha256": "sha256:ec4e22133ca616467ec899173afdb7198a3cf461e9f14e2364bc2bbd52b1e9f8",
+      "line": 230,
+      "path": "sakura_core/senp/SenpEffectRuntime.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 14,
+      "evidence_sha256": "sha256:723ef996220efa141074c52928804f5ef9e9b4f9b38e1cb5b3c23f972440eb97",
+      "line": 231,
+      "path": "sakura_core/senp/SenpEffectRuntime.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 22,
+      "evidence_sha256": "sha256:8b6da3bd272f976e03be0608a537d57bbb02463cc6cf9661d5b89fa159f5132c",
+      "line": 235,
+      "path": "sakura_core/senp/SenpEffectRuntime.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
@@ -94810,7 +94901,7 @@
   },
   "inventory_kind": "editor-core-semantic",
   "metrics": {
-    "catch_all_count": 638,
+    "catch_all_count": 640,
     "direct_global_getter_calls": {
       "GetDllShareData": 709,
       "GetEditDoc": 7,
@@ -95280,30 +95371,30 @@
       }
     },
     "filtered_test_hint_count": 2,
-    "finding_count": 13515,
+    "finding_count": 13528,
     "finding_count_by_rule": {
       "boundary.private_include": 67,
       "boundary.win32_type": 4617,
-      "error.catch_all": 638,
+      "error.catch_all": 640,
       "global.get_dll_share_data": 709,
       "global.get_edit_doc": 7,
       "global.get_edit_wnd": 258,
       "memory.raw_delete": 317,
       "memory.raw_new": 245,
-      "resource.stop_required_acquisition": 258,
-      "state.mutable_member": 131,
-      "state.public_mutable_field": 6236,
+      "resource.stop_required_acquisition": 260,
+      "state.mutable_member": 132,
+      "state.public_mutable_field": 6244,
       "state.raw_pointer_member": 30,
       "test.filtered_or_skipped": 2
     },
-    "include_directive_count": 10729,
+    "include_directive_count": 10747,
     "monolith_link_hint_count": 0,
     "private_include_mention_count": 67,
     "raw_delete_expression_count": 317,
     "raw_new_expression_count": 245,
-    "source_file_count": 1690,
-    "source_line_count": 511584,
-    "tracked_file_count": 1739,
+    "source_file_count": 1693,
+    "source_line_count": 512180,
+    "tracked_file_count": 1742,
     "win32_parameter_mention_count": 4617
   },
   "rule_catalog": [
@@ -95459,8 +95550,8 @@
     ]
   },
   "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
-  "source_commit": "9ea65bde1bc0612f1f8c786a861c3907eb1e3514",
-  "source_fingerprint": "sha256:00cc14ffb0861e5e65037ab7cd45dff8656757ab1952ec47b899fe283ae8ab3c",
+  "source_commit": "7db14e3f4e0772264a8b929354a203c182d616f0",
+  "source_fingerprint": "sha256:f13f22ee6b58d122bb238472a69e7ff9a99d773d50ede421937e85e3b9345614",
   "tracked_source_paths": [
     ".github/actions/bootstrap-vcpkg/action.yml",
     ".github/dependabot.yml",
@@ -96184,6 +96275,8 @@
     "sakura_core/sakura.vcxproj.filters",
     "sakura_core/senp/SenpEffectProtocol.cpp",
     "sakura_core/senp/SenpEffectProtocol.h",
+    "sakura_core/senp/SenpEffectRuntime.cpp",
+    "sakura_core/senp/SenpEffectRuntime.h",
     "sakura_core/senp/SenpLanguageService.cpp",
     "sakura_core/senp/SenpLanguageService.h",
     "sakura_core/senp/SenpManagementService.cpp",
@@ -96961,6 +97054,7 @@
     "src/test/cpp/tests1/senp/SenpEffectProtocolTest.cpp",
     "src/test/cpp/tests1/senp/SenpLanguageServiceTest.cpp",
     "src/test/cpp/tests1/senp/SenpRuntimeLifecycleTest.cpp",
+    "src/test/cpp/tests1/senp/SenpRuntimeProcessTest.cpp",
     "src/test/cpp/tests1/terminal/ConPtyCloseIntegrationTest.cpp",
     "src/test/cpp/tests1/terminal/HarnessOrchestrationAcceptanceTest.cpp",
     "src/test/cpp/tests1/terminal/PowerShellLocatorTest.cpp",
@@ -97202,5 +97296,5 @@
     "tools/ppa_stub/ppa_stub.h",
     "tools/vcx-props/vcxcompat.props"
   ],
-  "tracked_source_set_sha256": "sha256:c50eed476a840b2746395b26602d1b67c6eca44bb33a23eeba8051e19653c720"
+  "tracked_source_set_sha256": "sha256:5647ac83abfa3830b653a6ac2f92485aa4cb257ee8ce2c6cd83862bb6ed1f90a"
 }
