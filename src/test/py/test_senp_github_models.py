@@ -48,6 +48,20 @@ class SenpGithubModelGateTests(unittest.TestCase):
         self.assertTrue(lifecycle["timed_out"])
         self.assertTrue(lifecycle["exited"])
 
+    def test_temporal_counterexample_requires_property_config_and_cycle(self):
+        output = ("Error: Temporal properties were violated.\n"
+                  "The following behavior constitutes a counter-example:\n"
+                  "State 1: <Initial predicate>\nState 2: Stuttering\n")
+        self.assertTrue(gate.accepted_result(13, output, None, "EveryAcceptedTerminates"))
+        for code, log in ((12, output), (None, output), (13, output.replace("Stuttering", "stopped")),
+                          (13, BAD), (13, "Syntax error")):
+            self.assertFalse(gate.accepted_result(code, log, None, "EveryAcceptedTerminates"))
+        self.assertTrue(gate.sole_temporal_property("PROPERTIES EveryAcceptedTerminates\n",
+                                                   "EveryAcceptedTerminates"))
+        for config in ("PROPERTIES Other\n", "PROPERTIES EveryAcceptedTerminates Other\n",
+                       "PROPERTIES EveryAcceptedTerminates\nPROPERTIES Other\n", ""):
+            self.assertFalse(gate.sole_temporal_property(config, "EveryAcceptedTerminates"))
+
     def test_missing_tool_is_terminal(self):
         code, log, lifecycle = gate.run_case([str(ROOT / "no-such-java.exe")], ROOT, 1)
         self.assertIsNone(code)

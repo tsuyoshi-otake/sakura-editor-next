@@ -23,6 +23,7 @@ class Case:
     model: str
     config: str
     invariant: str | None = None
+    temporal: str | None = None
 
 
 CASES = (
@@ -32,6 +33,13 @@ CASES = (
     Case("owner", "SenpContributionOwner", "SenpContributionOwner"),
     Case("owner", "SenpContributionOwner", "SenpContributionOwner_NoGeneration", "CurrentView"),
     Case("owner", "SenpContributionOwner", "SenpContributionOwner_NoClear", "NoRevokedView"),
+    Case("requests", "SenpGhRequests", "SenpGhRequests"),
+    Case("requests", "SenpGhRequests", "SenpGhRequests_NoSingleFlight", "SingleFlight"),
+    Case("requests", "SenpGhRequests", "SenpGhRequests_NoLastSubscriber", "SharedLeasePreserved"),
+    Case("requests", "SenpGhRequests", "SenpGhRequests_NoCooldown", "RespectRateWindow"),
+    Case("requests", "SenpGhRequests", "SenpGhRequests_NoReap", "TerminalOwnsNoProcess"),
+    Case("requests", "SenpGhRequests", "SenpGhRequests_NoCleanupFairness",
+         temporal="EveryAcceptedTerminates"),
 )
 
 
@@ -48,7 +56,19 @@ def exploration(output: str) -> dict[str, int]:
     return result
 
 
-def accepted_result(code: int | None, output: str, invariant: str | None) -> bool:
+def sole_temporal_property(config: str, expected: str) -> bool:
+    # TLC 2.19 does not print a violated temporal property's name. Only accept
+    # its generic failure when the config checks exactly the expected property.
+    return re.findall(r"^PROPERT(?:Y|IES)\b[^\n]*", config, re.MULTILINE) == [f"PROPERTIES {expected}"]
+
+
+def accepted_result(code: int | None, output: str, invariant: str | None,
+                    temporal: str | None = None) -> bool:
+    if temporal is not None:
+        return (code == 13 and "Error: Temporal properties were violated." in output
+                and "The following behavior constitutes a counter-example:" in output
+                and re.search(r"State 1:", output) is not None
+                and re.search(r"Stuttering|Back to state", output) is not None)
     if invariant is not None:
         return (code == 12 and f"Error: Invariant {invariant} is violated." in output
                 and "The behavior up to this point is:" in output
@@ -124,14 +144,20 @@ def main() -> int:
         command = ["java", "-Xmx512m", "-XX:+UseParallelGC", "-cp", str(jar), "tlc2.TLC",
                    "-workers", "2", "-metadir", str(case_dir / "states"),
                    "-config", f"{case.config}.cfg", f"{case.model}.tla"]
-        code, log, lifecycle = run_case(command, case_dir, 60)
+        config = (case_dir / f"{case.config}.cfg").read_text(encoding="utf-8")
+        if case.temporal is not None and not sole_temporal_property(config, case.temporal):
+            code, log, lifecycle = None, "TLC_TEMPORAL_CONFIG_MISMATCH", {"exited": True}
+        else:
+            code, log, lifecycle = run_case(command, case_dir, 60)
         log_path = case_dir / "tlc.log"
         log_path.write_text(log, encoding="utf-8")
         unchanged = all(sha256(root / "docs/formal" / filename) == digest
                         for filename, digest in source_hashes.items())
-        passed = (accepted_result(code, log, case.invariant) and lifecycle["exited"] and unchanged)
+        passed = (accepted_result(code, log, case.invariant, case.temporal)
+                  and lifecycle["exited"] and unchanged)
         evidence["cases"].append({
             "name": case.config, "expected_invariant": case.invariant, "passed": passed,
+            "expected_temporal": case.temporal,
             "exit_code": code, "source_hashes": source_hashes, "sources_unchanged": unchanged,
             "command": command, "log": str(log_path), "log_sha256": sha256(log_path),
             "exploration": exploration(log), **lifecycle,
