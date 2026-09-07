@@ -223,5 +223,36 @@ G03aの受入検査は`SenpRuntimeLifecycle.*`（11件）とRustの`effect_sessi
 送信前取消、完了容量の予約、再送、ack、ID再使用、contextの全世代、deadline、失効後の受取待ちeffects、
 JSON escapeを含むキューbyte上限を検査する。旧v1 component実行とG02の双方向codec fixtureも回帰対象。
 
+## U03: readonly Editorの登録とnative切替
+
+`SenpReadonlyWorkbench`は既存のEditorCoreServiceに最大16 inputを登録し、別groupや
+独自active flagを作らない。extension ID・owner/workspace/account generation・resource IDから
+`senp:` URIを作り、同じscope/resourceは再利用する。表示titleはidentityに使わない。
+openはinactiveで、native content surfaceを準備・bindしてからShowする。操作IDはcontrollerの
+単調増加instance IDも含み、controllerの再作成で過去のreplayと衝突しない。
+
+`SenpEditorSurfaceSwitcher`は同じparent下の保持済みHWNDをinput IDへbindする。
+既存legacy surfaceも同じ選択経路を通り、本文、dirty、undo、選択とscrollを破棄しない。
+未準備・失効・別ownerのHWNDは拒否し、未知のactive inputへlegacy文書を代用しない。
+非表示やPanel最大化はinputを閉じない。所有者はcore通知をcoalesceしてApplyし、
+Close/失効後はnative bindingを回収してからsurfaceを破棄する。
+
+native callback中のCloseはprojectionが戻ってから完了する。Unbindの再入はfalseを返すので、
+呼出側はHWNDを保持して次のUI messageで再試行する。coreのCloseに失敗した登録は所有権を残し、
+Shutdownの結果をcomposition ownerが観測して明示的に再試行する。
+読取専用inputからSave/Save As/Revert/Undo/editへは進まない。Copy/Select All/Findは内容surfaceへ、
+Closeはreadonly登録へ、Save Allとglobal open/window commandはWorkbenchへ返す。
+保存・終了・backupでは選択中のreadonly inputからCEditDocを推測せず、保持したlegacy inputを参照する。
+
+追加18件と既存Editor/working-copyを含む86 tests、3,762件のinventory照合が合格。
+実native EDITのUndo実行とCEditDocのundo block保持を別々に検証した。
+`tools/verify-senp-view-rendering.ps1 -ProbeSet ReadonlyEditors`の2回の新規起動、
+dark/light/system High Contrast、96/144/192 DPI、216試行は実画面と強制再描画の差分0%。
+PrintWindow単独の欠落4件は、同じgeometryの独立noise floorと実画面差分0%で区別した。
+fixtureのtheme設定は各matrixの準備段階に限定し、同じtheme/DPIでのresize操作を強制再描画しない。
+native probeは180秒、runnerは200秒の期限とexact PID cleanupを持つ。
+この工程はsurface切替の境界を検証し、U04/U05の本文rendererやU06のCEditWnd・tab・command・
+backup・sample公開の完成を意味しない。schema 2の公開gateは維持する。
+
 形式モデルは[対応表](formal/senp-github-models.md)に従う抽象仕様の検査であり、
 Win32 API・具体的なwire sequence・実メモリ上限の証明ではない。

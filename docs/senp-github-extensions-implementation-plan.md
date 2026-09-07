@@ -34,6 +34,11 @@ page/expand/refresh、scope/limit、取消、反復開閉、native command/keybo
 同一binaryによる3回の起動、3テーマ・3 DPIのexpand/resize/scroll/refresh計288試行が合格し、
 実画面の再描画差分は全試行0%。PrintWindow単独の欠落42件は同じgeometryのnoise floorで検証した。
 3,743件のtest inventory照合、encodingとno-op buildも合格し、runner残存0。
+U03のreadonly input登録とnative surface切替も実装。同一scope/resourceを既存Editor groupで再利用し、
+legacy文書を保持して切り替える。追加18件とEditor/working-copy回帰を含む86 tests、
+同一binaryの2回起動・3テーマ・3 DPIによる216描画試行が合格し、再描画前後の差分は全件0%。
+3,762件のtest inventory照合とprocess終了も確認した。U03は実native controlとCEditDoc/undoの接続境界を
+検証する工程であり、CEditWndのtab/command/backup接続とsample公開はU06で検証する。
 schema 2は引き続きUnsupportedRuntimeで、Document bodyと公開・永続化adapterは後続工程。
 CI workflowは追加済みで、remote CI実行はpush後の確認事項。
 G02のsemantic台帳はexact source commit `f881170f28b3c17d195c145b6f2396704cffa47a`
@@ -73,7 +78,7 @@ G02のsemantic台帳はexact source commit `f881170f28b3c17d195c145b6f2396704cff
 | G04 | owner単位のcontribution登録・dispose契約とruntime回収 | G03b/F02 | `SenpViewLifecycle.*`と実Wasm owner lifecycle | 部分登録なし、更新失敗は旧owner維持、失効後の反映0、回収失敗の所有権保持 |
 | U01 | SCMを参照したcontainer内の複数View nativeページ | G04 | `SenpViewContainer.*:ViewPaneStackLayout.*`、`verify-senp-view-rendering.ps1`、同一条件のSCM比較 | View独立、ヘッダー/余白/action整合、resize/移動/focusに描画残りなし |
 | U02 | lazy TreeDataProviderとstable item選択 | U01 | `TreeViewModel.*:SenpTreeProviderTest.*:SenpTreeView.*`、`verify-senp-view-rendering.ps1 -ProbeSet TreeViews`、SCM行密度/選択/scroll比較 | page/expand/refresh、重複・循環・stale拒否、テーマ/DPI/keyboard整合 |
-| U03 | readonly Editor input/surface切替 | G04 | `SenpReadonlyWorkbench.*` | dirty/undoを保持して詳細と編集を往復 |
+| U03 | readonly Editor input/surface切替 | G04 | `SenpReadonlyWorkbench.*`、`verify-senp-view-rendering.ps1 -ProbeSet ReadonlyEditors` | dirty/undo・選択/scrollを保持して切替、未準備surfaceは拒否、描画残りなし |
 | U04 | readonly Markdown/metadata renderer | U03 | `SenpReadonlyDocument.*`、native UI | 本文表示、script無効、local asset権限漏れ0 |
 | U05 | chunk付きtext resourceと検索・コピー | U03 | `SenpTextResource.*` | UTF-8境界・上限・partial・失効を区別 |
 | U06 | command/menu/activation・page公開/状態永続化と汎用sample拡張 | U02/U04/U05 | sampleのnative総合試験、profileのcollapse/size復元、SCM比較の状態matrix | GitHub固有コードなしで2 View/本文/ログ表示、loading/empty/error/focus明示 |

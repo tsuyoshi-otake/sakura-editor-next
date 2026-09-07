@@ -167,3 +167,60 @@ exact inactive core input. The one-document native projection remains a
 capability limit, not permission to weaken the core identity/version checks.
 After that commit, the composition owner alone performs exact active placement;
 the persistence subtree does not select UI focus.
+
+## SENP readonly input and retained surface boundary (U03, #296)
+
+`SenpReadonlyWorkbench` owns up to 16 readonly registrations inside the existing
+`EditorCoreService` group. It is not another active-input model. The authorized
+composition owner supplies the extension ID and exact owner/workspace/account
+generations. A `senp:` URI includes that scope and an injective encoding of the
+bounded resource ID; titles are presentation only. The same scoped resource
+reuses its input. Operation IDs also carry a process-lifetime monotonic controller
+instance, so a replacement controller cannot replay an old operation.
+
+Open is inactive: create and bind the native content surface before selecting
+its input. The supported opens are pinned (`preview: false`), following the
+[VS Code virtual-document example](https://code.visualstudio.com/api/extension-guides/virtual-documents).
+Automatic preview-tab replacement is not a capability of this native boundary.
+The core remains the authority for order, active selection and close-neighbor
+selection. Revoke closes only the exact cohort; Shutdown rejects new work and
+retains a failed close for an explicit retry. The composition owner must observe
+Shutdown before destroying the core, content providers and native surfaces.
+
+`SenpEditorSurfaceSwitcher` binds retained, sibling HWNDs to those real core
+inputs, including the existing legacy input. Bind/Show rejects an absent or
+foreign surface before changing selection. Apply hides all projections if the
+active input has no valid binding; it never substitutes the legacy editor.
+The surface property enforces one owner and prevents a recycled HWND from being
+mistaken for its former binding. The caller owns each HWND and must successfully
+Unbind before destroying it. Unbind returns false during synchronous native
+projection callbacks; keep ownership and retry on the next UI message. Close
+requested from a callback finishes after that projection unwinds.
+
+Switching only hides, places and focuses existing windows. It never changes the
+legacy text, dirty flag, undo buffer, selection, scroll or working-copy lifetime.
+Keep content and selection/scroll state inside each retained surface. Hiding the
+complete Editor Part retains the core active input. A changed projection redraws
+the parent, including vacated bounds; an unchanged snapshot does not move or
+repaint it. Apply core notifications through a coalesced UI message, not reentrant
+observer projection. No idle timer or polling belongs to this adapter.
+
+Readonly input commands use `Route`: Copy/Select All/Find go to that surface;
+Close goes to the readonly registration; Save/Save As/Revert/Undo/edit are typed
+NotApplicable. Save All and global open/window commands go to the Workbench,
+which must enumerate retained working copies instead of treating the selected
+readonly input as CEditDoc. The native frame must also capture the retained legacy
+input for backup and save/close prompts while a readonly input is selected.
+
+U03 verifies this seam with real native controls and a real CEditDoc/undo buffer.
+U04/U05 own content rendering and chunked text; U06 owns the CEditWnd/tab/command/
+backup composition and sample-extension publication. Until U06, no schema-2
+detail capability is published by the application. Do not infer product menu or
+full CEditView parity from the seam fixtures.
+
+Verify `SenpReadonlyWorkbench.*` and existing editor/working-copy suites. The
+disabled probe uses `tools/verify-senp-view-rendering.ps1 -ProbeSet ReadonlyEditors`
+for repeated input/resize/visibility/movement dual captures in dark, light and
+system-palette High Contrast at 96/144/192 DPI. Theme setup is outside gesture
+capture; unchanged theme/DPI resize trials must not force a fixture redraw that
+could conceal a missing production invalidation.

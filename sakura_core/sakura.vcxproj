@@ -747,6 +747,8 @@
     <ClInclude Include="..\sakura_core\workbench\editor\CEditDocWorkingCopyBackend.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\CEmptyEditorSurface.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\CDiffSurface.h" />
+    <ClInclude Include="..\sakura_core\workbench\editor\SenpReadonlyWorkbench.h" />
+    <ClInclude Include="..\sakura_core\workbench\editor\SenpEditorSurfaceSwitcher.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\CEditorServiceLegacyAdapter.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\EmptyEditorSurfaceModel.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\EditorCoreService.h" />
@@ -1455,6 +1457,8 @@
     <ClCompile Include="..\sakura_core\workbench\editor\CEditDocWorkingCopyBackend.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\CEmptyEditorSurface.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\CDiffSurface.cpp" />
+    <ClCompile Include="..\sakura_core\workbench\editor\SenpReadonlyWorkbench.cpp" />
+    <ClCompile Include="..\sakura_core\workbench\editor\SenpEditorSurfaceSwitcher.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\CEditorServiceLegacyAdapter.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\EmptyEditorSurfaceModel.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\EditorCoreService.cpp" />

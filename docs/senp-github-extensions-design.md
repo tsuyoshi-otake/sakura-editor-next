@@ -1,7 +1,8 @@
 # SENP GitHub拡張 基本設計・API設計案
 
 状態: G01/G02のschema・WIT・codec、G03a/G03bのsessionと実host、G04のowner lifecycle、
-U01の複数View native pageとSCM共通header、U02のlazy Tree model/provider/native bodyを実装済み。
+U01の複数View native pageとSCM共通header、U02のlazy Tree model/provider/native body、
+U03のreadonly input登録と保持したnative surfaceの切替を実装済み。
 Document body、page/commandの公開adapter、tool broker、GitHub拡張、v2 package受理は後続工程。
 作成日: 2026-09-07。
 調査対象: `5346511f26fa04cc13acdad21ff603b4813e6768` のチェックアウト。
@@ -93,6 +94,13 @@ adapterは保持したlegacy編集surfaceと独立したreadonly surfaceを選�
 既存CEditDocへGitHub本文を代入しない。readonly inputは選択・検索・コピー・closeを提供し、
 Save/Revertは型付きNotApplicableとする。別のGitHub本文に切り替えることを「編集」として
 undo stackへ載せない。inputのrestoreはidentityだけを保存し、内容は再認証・再取得する。
+
+U03では既存EditorCoreServiceのgroup内に最大16件のreadonly inputを登録する境界と、
+保持したnative surfaceを切り替えるadapterを実装した。scope/resourceの同一性、inactive open、
+Close/owner失効、CEditDoc/undo保持とnative選択/scroll/focusを`SenpReadonlyWorkbench.*`で検証する。
+描画runnerの`ReadonlyEditors`はinput切替・resize・Editor Part非表示・surface移動を実画面で比較する。
+Save Allは全working copyを扱うWorkbenchへ渡し、readonly inputの保存とは分ける。
+本文rendererはU04/U05、アプリのtab/command/backupとsample公開はU06の完了条件に残す。
 
 ### 操作と情報状態
 

@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('ViewContainers', 'TreeViews')][string]$ProbeSet = 'ViewContainers',
+    [ValidateSet('ViewContainers', 'TreeViews', 'ReadonlyEditors')][string]$ProbeSet = 'ViewContainers',
     [string]$Tests1 = (Join-Path (Split-Path $PSScriptRoot -Parent) 'x64/Debug/tests1.exe'),
     [string]$OutputDirectory = (Join-Path $env:USERPROFILE 'tmp/senp-view-rendering'),
     [ValidateRange(1, 4)][int]$Repetitions = 1,
@@ -169,8 +169,8 @@ try {
     $start = [Diagnostics.ProcessStartInfo]::new($exe)
     $start.UseShellExecute = $false; $start.CreateNoWindow = $true; $start.WindowStyle = 'Hidden'
     $start.RedirectStandardOutput = $true; $start.RedirectStandardError = $true
-    $suite = if ($ProbeSet -eq 'TreeViews') { 'SenpTreeView' } else { 'SenpViewContainer' }
-    $caption = if ($ProbeSet -eq 'TreeViews') { 'SENP native TreeView verification' } else { 'SENP native ViewContainer verification' }
+    $suite = if ($ProbeSet -eq 'ReadonlyEditors') { 'SenpReadonlyWorkbench' } elseif ($ProbeSet -eq 'TreeViews') { 'SenpTreeView' } else { 'SenpViewContainer' }
+    $caption = if ($ProbeSet -eq 'ReadonlyEditors') { 'SENP native readonly Editor verification' } elseif ($ProbeSet -eq 'TreeViews') { 'SENP native TreeView verification' } else { 'SENP native ViewContainer verification' }
     $start.ArgumentList.Add("--gtest_filter=$suite.DISABLED_VisualCaptureProbe")
     $start.ArgumentList.Add('--gtest_also_run_disabled_tests')
     $start.Environment['SAKURA_SENP_VIEW_PROBE'] = '1'
@@ -209,12 +209,15 @@ try {
     foreach ($themeId in 0..2) { foreach ($dpi in 96, 144, 192) {
         [void](Invoke-Probe 1 (380 -bor (($dpi -bor ($themeId -shl 10)) -shl 16)))
         for ($repeat = 0; $repeat -lt $Repetitions; ++$repeat) {
-            $gestures = if ($ProbeSet -eq 'TreeViews') { @('expand', 'resize', 'scroll', 'refresh') } else { @('collapse', 'resize', 'view-move', 'container-move') }
+            $gestures = if ($ProbeSet -eq 'ReadonlyEditors') { @('input-switch', 'resize', 'editor-visibility', 'surface-move') } elseif ($ProbeSet -eq 'TreeViews') { @('expand', 'resize', 'scroll', 'refresh') } else { @('collapse', 'resize', 'view-move', 'container-move') }
             foreach ($gesture in $gestures) { foreach ($direction in 1, 0) {
-                if ($clock.Elapsed.TotalSeconds -gt 140) { throw 'Rendering run exceeded its overall deadline.' }
+                if ($clock.Elapsed.TotalSeconds -gt $(if ($ProbeSet -eq 'ReadonlyEditors') { 200 } else { 140 })) { throw 'Rendering run exceeded its overall deadline.' }
                 $before = [SenpViewProbe]::Geometry($body)
-                if ($ProbeSet -eq 'TreeViews') { $before += ':' + (Invoke-Probe 9).ToString() }
+                if ($ProbeSet -in @('TreeViews', 'ReadonlyEditors')) { $before += ':' + (Invoke-Probe 9).ToString() }
                 switch ($gesture) {
+                    'input-switch' { [void](Invoke-Probe 2 $direction) }
+                    'editor-visibility' { [void](Invoke-Probe 3 $direction) }
+                    'surface-move' { [void](Invoke-Probe 8 $direction) }
                     'expand' { [void](Invoke-Probe 2 $direction) }
                     'scroll' { [void](Invoke-Probe 3 $direction) }
                     'refresh' { [void](Invoke-Probe 8 $direction) }
@@ -224,7 +227,7 @@ try {
                     'container-move' { [void](Invoke-Probe 3 $direction) }
                 }
                 $after = [SenpViewProbe]::Geometry($body)
-                if ($ProbeSet -eq 'TreeViews') { $after += ':' + (Invoke-Probe 9).ToString() }
+                if ($ProbeSet -in @('TreeViews', 'ReadonlyEditors')) { $after += ':' + (Invoke-Probe 9).ToString() }
                 Save-Trial "theme$themeId-dpi$dpi-r$repeat-$gesture-$direction" $before $after
             }}
         }

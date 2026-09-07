@@ -1377,6 +1377,12 @@
     <ClInclude Include="..\sakura_core\workbench\editor\CDiffSurface.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\editor\SenpReadonlyWorkbench.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\editor\SenpEditorSurfaceSwitcher.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\workbench\editor\CEditorServiceLegacyAdapter.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
@@ -3448,6 +3454,12 @@
     </ClCompile>
 
     <ClCompile Include="..\sakura_core\workbench\editor\CDiffSurface.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\editor\SenpReadonlyWorkbench.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\editor\SenpEditorSurfaceSwitcher.cpp">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\workbench\editor\CEditorServiceLegacyAdapter.cpp">
