@@ -2,11 +2,13 @@
 
 対象: [#296](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/296)。
 仕様: [SENP GitHub拡張設計](senp-github-extensions-design.md)。
-今回の作業範囲は工程の詳細化とTLA+/TLCによる設計のモデル検査。
-製品のAPI・画面・GitHub拡張の実装は後続工程として区別する。
+設計の形式検証に続き、製品基盤を工程順に実装する。
 2026-09-07: D01/F01–F04は完了。正例3件・安全性負例8件・進行性負例1件が合格。
 [検証結果と対応表](formal/senp-github-models.md)、[機械可読の証跡](formal/senp-github-evidence.json)。
-G01以降は未実装。CI workflowは追加済みで、remote CI実行はpush後の確認事項。
+G01も完了。manifestのversion判別を共通入口へ移し、v1互換とv2の
+`UnsupportedRuntime`をpack/verify/installed listingで検証した。
+`cargo test -p sakura-senp --locked --offline`は16 tests合格、`cargo fmt --check`合格、runner残存0。
+G02以降は未実装。CI workflowは追加済みで、remote CI実行はpush後の確認事項。
 
 ## コミットの進め方
 

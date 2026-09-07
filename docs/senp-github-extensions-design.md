@@ -1,6 +1,6 @@
 # SENP GitHub拡張 基本設計・API設計案
 
-状態: 設計案。アプリ・拡張・APIの実装は未着手。
+状態: G01のschema/ABI判別を実装済み。v2 runtime・画面・GitHub拡張は後続工程。
 作成日: 2026-09-07。
 調査対象: `5346511f26fa04cc13acdad21ff603b4813e6768` のチェックアウト。
 追跡Issue: [#296 — Design SENP v2 GitHub Issues/PR and Actions extensions using gh](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/296)。
@@ -186,6 +186,12 @@ schema 1 / `sakura:senp/extension@1.0.0`は現在のまま扱う。
 schema 2 / `sakura:senp/extension@2.0.0`を追加し、別WIT world・明示的handshakeで選択する。
 v1へv2フィールドを黙って追加せず、未対応アプリはinstall時にUnsupportedSchema/AbiMismatchで終端する。
 既存の言語パッケージ・Indent Rainbow・Projectsを一括移行する必要はない。
+
+G01時点: 既知のschema 2/ABI 2を判別した後、未実装のruntimeは
+`UnsupportedRuntime`で拒否する。未知schemaは`UnsupportedSchema`、
+schema 2にABI 1/未知ABI/異なるmoduleを組み合わせると`AbiMismatch`。
+JSON全体の重複キー・末尾入力を検査してからversionを選び、pack・archive検証・
+installed listingが同じ入口を使う。v2 packageの公開・インストール・寄与登録はまだ許可しない。
 
 以下はv2の最小構成例。API名はこの提案の名前で、現行validatorでは受理されない。
 

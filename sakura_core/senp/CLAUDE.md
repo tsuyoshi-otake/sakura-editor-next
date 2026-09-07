@@ -41,6 +41,16 @@ failure with a visual placeholder or an unrelated legacy plugin path.
 
 ## Package and runtime invariants
 
+- Package parsing selects `schemaVersion` only after the entire JSON passes
+  duplicate-member and trailing-input checks. Schema 1 retains its existing
+  strict field/capability validation. Schema 2 with
+  `sakura:senp/extension@2.0.0` is recognized but returns the typed
+  `UnsupportedRuntime` boundary until the v2 event/effect host is implemented;
+  mismatched ABI/module pairs return `AbiMismatch`, unknown schemas return
+  `UnsupportedSchema`. Pack, archive verification, and installed-content
+  discovery use the same dispatch and must never fall back to v1 or publish
+  v2 contributions early (#296, G01).
+
 - `README.md`, `senp.json`, `LICENSE`, and complete SHA-256 coverage are
   mandatory. `module/extension.wasm` is mandatory only when `runtime` is
   declared; declarative language/grammar and host-View packages contain no

@@ -1,4 +1,4 @@
-//! SENP v1 package validation, deterministic packing, and immutable installation.
+//! SENP package version dispatch, strict validation, and immutable installation.
 
 use ed25519_dalek::{Signature, VerifyingKey};
 use serde::de::{self, DeserializeOwned, MapAccess, SeqAccess, Visitor};
@@ -16,6 +16,7 @@ use zip::{CompressionMethod, DateTime, ZipWriter};
 
 pub const FORMAT_VERSION: u32 = 1;
 pub const ABI: &str = "sakura:senp/extension@1.0.0";
+pub const ABI_V2: &str = "sakura:senp/extension@2.0.0";
 pub const MANIFEST_PATH: &str = "senp.json";
 pub const README_PATH: &str = "README.md";
 pub const LICENSE_PATH: &str = "LICENSE";
@@ -220,6 +221,7 @@ pub enum ErrorCode {
     InvalidManifest,
     UnsupportedSchema,
     AbiMismatch,
+    UnsupportedRuntime,
     InvalidSignature,
     UnsignedPackage,
     UntrustedPublisher,
@@ -896,6 +898,43 @@ fn strict_json<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, SenpError> {
         .map_err(|error| SenpError::new(ErrorCode::InvalidManifest, error.to_string()))
 }
 
+fn parse_manifest(bytes: &[u8]) -> Result<Manifest, SenpError> {
+    // Select the version before deserializing its fields, but only after strict
+    // duplicate-member and trailing-input checks have consumed the entire JSON.
+    let value: serde_json::Value = strict_json(bytes)?;
+    let schema = value
+        .get("schemaVersion")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| SenpError::new(ErrorCode::InvalidManifest, "invalid schemaVersion"))?;
+    match schema {
+        1 => {
+            let manifest: Manifest = serde_json::from_value(value)
+                .map_err(|error| SenpError::new(ErrorCode::InvalidManifest, error.to_string()))?;
+            validate_manifest(&manifest)?;
+            Ok(manifest)
+        }
+        2 => {
+            let runtime: RuntimeContract = serde_json::from_value(
+                value.get("runtime").cloned().unwrap_or_default(),
+            )
+            .map_err(|error| SenpError::new(ErrorCode::InvalidManifest, error.to_string()))?;
+            if runtime.abi != ABI_V2 || runtime.module != MODULE_PATH {
+                return Err(SenpError::new(ErrorCode::AbiMismatch, runtime.abi));
+            }
+            // G01 recognizes the version pair without admitting contributions
+            // that the event/effect host cannot execute yet. Never fall back to v1.
+            Err(SenpError::new(
+                ErrorCode::UnsupportedRuntime,
+                "SENP schema 2 event/effect runtime is not available",
+            ))
+        }
+        _ => Err(SenpError::new(
+            ErrorCode::UnsupportedSchema,
+            schema.to_string(),
+        )),
+    }
+}
+
 fn read_zip_entries<R: Read + Seek>(
     archive: &mut ZipArchive<R>,
 ) -> Result<BTreeMap<String, Vec<u8>>, SenpError> {
@@ -1074,8 +1113,7 @@ fn verify_archive_snapshot(
             return Err(SenpError::new(ErrorCode::ChecksumMismatch, path));
         }
     }
-    let manifest: Manifest = strict_json(&entries[MANIFEST_PATH])?;
-    validate_manifest(&manifest)?;
+    let manifest = parse_manifest(&entries[MANIFEST_PATH])?;
     validate_manifest_entries(&manifest, &entries)?;
 
     let signed = if let Some(signature_bytes) = entries.get(SIGNATURE_PATH) {
@@ -1132,8 +1170,7 @@ pub fn pack_directory(
     for required in [MANIFEST_PATH, README_PATH, LICENSE_PATH] {
         payloads.insert(required.to_owned(), read_source_payload(source, required)?);
     }
-    let manifest: Manifest = strict_json(&payloads[MANIFEST_PATH])?;
-    validate_manifest(&manifest)?;
+    let manifest = parse_manifest(&payloads[MANIFEST_PATH])?;
     if manifest.runtime.is_some() {
         payloads.insert(
             MODULE_PATH.to_owned(),
@@ -1696,8 +1733,7 @@ fn read_installed_content(
             return Err(SenpError::new(ErrorCode::ChecksumMismatch, path));
         }
     }
-    let manifest: Manifest = strict_json(&entries[MANIFEST_PATH])?;
-    validate_manifest(&manifest)?;
+    let manifest = parse_manifest(&entries[MANIFEST_PATH])?;
     validate_manifest_entries(&manifest, &entries)?;
     let readme = String::from_utf8(entries[README_PATH].clone())
         .map_err(|_| SenpError::new(ErrorCode::InvalidUtf8, README_PATH))?;
@@ -2379,6 +2415,163 @@ mod tests {
         let result = strict_json::<Manifest>(value).unwrap_err();
         assert_eq!(result.code, ErrorCode::InvalidManifest);
         assert!(result.detail.contains("duplicate member"));
+    }
+
+    fn versioned_manifest(schema: u32, abi: &str) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "schemaVersion": schema,
+            "id": "sample-github", "publisher": "sakura.builtin",
+            "displayName": "GitHub", "version": "0.1.0", "description": "Fixture",
+            "engines": { "sakura": ">=0.0.0" },
+            "runtime": { "abi": abi, "module": MODULE_PATH },
+            "activationEvents": ["onView:pr:github"],
+            "capabilities": ["workbench.views.tree"],
+            "contributes": {
+                "viewsContainers": { "activitybar": [{
+                    "id": "github-pull-requests", "title": "GitHub", "icon": "$(github)", "order": 6
+                }] },
+                "views": { "github-pull-requests": [{
+                    "id": "pr:github", "name": "Pull Requests", "type": "tree", "order": 10
+                }] }
+            }
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn manifest_version_dispatch_preserves_v1_and_rejects_v2_authority() {
+        let temp = TempDir::new().unwrap();
+        fixture(temp.path());
+        let bytes = fs::read(temp.path().join(MANIFEST_PATH)).unwrap();
+        assert_eq!(parse_manifest(&bytes).unwrap().runtime.unwrap().abi, ABI);
+        let crossed = String::from_utf8(bytes).unwrap().replace(ABI, ABI_V2);
+        assert_eq!(
+            parse_manifest(crossed.as_bytes()).unwrap_err().code,
+            ErrorCode::AbiMismatch
+        );
+        assert_eq!(
+            parse_manifest(&versioned_manifest(2, ABI_V2))
+                .unwrap_err()
+                .code,
+            ErrorCode::UnsupportedRuntime
+        );
+        for abi in [ABI, "sakura:senp/extension@3.0.0"] {
+            assert_eq!(
+                parse_manifest(&versioned_manifest(2, abi))
+                    .unwrap_err()
+                    .code,
+                ErrorCode::AbiMismatch
+            );
+        }
+        for schema in [0, 3, u32::MAX] {
+            assert_eq!(
+                parse_manifest(&versioned_manifest(schema, ABI_V2))
+                    .unwrap_err()
+                    .code,
+                ErrorCode::UnsupportedSchema
+            );
+        }
+        assert_eq!(
+            parse_manifest(&versioned_manifest(1, ABI))
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidManifest
+        );
+    }
+
+    #[test]
+    fn manifest_version_dispatch_never_ignores_malformed_json() {
+        for input in [
+            r#"{"schemaVersion":2,"schemaVersion":1}"#,
+            r#"{"schemaVersion":2,"runtime":{"abi":"one","abi":"two"}}"#,
+            r#"{"schemaVersion":2} {}"#,
+            r#"{"schemaVersion":"2"}"#,
+            r#"{"schemaVersion":2.0}"#,
+            r#"{"schemaVersion":-1}"#,
+            r#"{"schemaVersion":2,"runtime":null}"#,
+            r#"{"schemaVersion":2}"#,
+            r#"[]"#,
+        ] {
+            assert_eq!(
+                parse_manifest(input.as_bytes()).unwrap_err().code,
+                ErrorCode::InvalidManifest,
+                "{input}"
+            );
+        }
+    }
+
+    #[test]
+    fn v2_runtime_is_rejected_at_pack_archive_and_installed_boundaries() {
+        let temp = TempDir::new().unwrap();
+        let source = temp.path().join("source");
+        fixture(&source);
+        let package = temp.path().join("v1.senp");
+        let hash = pack_directory(&source, &package, None).unwrap();
+        let root = temp.path().join("installed");
+        install_package(
+            &package,
+            &root,
+            &TrustPolicy::BuiltIn {
+                expected_archive_sha256: hash.clone(),
+            },
+        )
+        .unwrap();
+        let manifest = versioned_manifest(2, ABI_V2);
+        fs::write(source.join(MANIFEST_PATH), &manifest).unwrap();
+        let destination = temp.path().join("unpublished.senp");
+        assert_eq!(
+            pack_directory(&source, &destination, None)
+                .unwrap_err()
+                .code,
+            ErrorCode::UnsupportedRuntime
+        );
+        assert!(!destination.exists());
+
+        let snapshot = read_archive_snapshot(&package).unwrap();
+        let mut entries =
+            read_zip_entries(&mut ZipArchive::new(Cursor::new(snapshot.bytes)).unwrap()).unwrap();
+        entries.insert(MANIFEST_PATH.into(), manifest.clone());
+        let checksums: String = entries
+            .iter()
+            .filter(|(name, _)| name.as_str() != CHECKSUM_PATH)
+            .map(|(name, bytes)| format!("{}  {name}\n", hex(&Sha256::digest(bytes))))
+            .collect();
+        entries.insert(CHECKSUM_PATH.into(), checksums.as_bytes().to_vec());
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        for (name, bytes) in &entries {
+            writer
+                .start_file(
+                    name,
+                    SimpleFileOptions::default().compression_method(CompressionMethod::Stored),
+                )
+                .unwrap();
+            writer.write_all(bytes).unwrap();
+        }
+        let bytes = writer.finish().unwrap().into_inner();
+        let foreign = temp.path().join("v2.senp");
+        fs::write(&foreign, &bytes).unwrap();
+        assert_eq!(
+            verify_package(&foreign, &TrustPolicy::DeveloperUnsigned)
+                .unwrap_err()
+                .code,
+            ErrorCode::UnsupportedRuntime
+        );
+        assert_eq!(
+            install_package(&foreign, &root, &TrustPolicy::DeveloperUnsigned)
+                .unwrap_err()
+                .code,
+            ErrorCode::UnsupportedRuntime
+        );
+        assert_eq!(list_installed(&root).unwrap()[0].manifest.schema_version, 1);
+
+        // Even with matching payload hashes, installed discovery must not admit v2.
+        let content = root.join("content").join(hash);
+        fs::write(content.join(MANIFEST_PATH), manifest).unwrap();
+        fs::write(content.join(CHECKSUM_PATH), checksums).unwrap();
+        assert_eq!(
+            list_installed(&root).unwrap_err().code,
+            ErrorCode::UnsupportedRuntime
+        );
     }
 
     #[test]
