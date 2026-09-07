@@ -222,6 +222,7 @@
     <ClCompile Include="..\src\test\cpp\tests1\textmate\TextMateScopeColorResolverTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\textmate\TextMateTokenizerTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\textmate\OnigmoRegexEngineTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\senp\SenpTextResourceTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\senp\SenpEffectProtocolTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\senp\SenpRuntimeLifecycleTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\senp\SenpRuntimeProcessTest.cpp" />
@@ -232,6 +233,7 @@
     <ClCompile Include="..\src\test\cpp\tests1\workbench\SenpViewContainerTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\workbench\SenpTreeProviderTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\workbench\SenpReadonlyWorkbenchTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\SenpTextResourceViewTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\workbench\SenpReadonlyDocumentTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\workbench\SenpTreeViewTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkbenchRuntimeTest.cpp" />

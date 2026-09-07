@@ -149,3 +149,23 @@ stale HWND/event-map state previously made only the combined run fail.
 - GoogleTest package resolution and staging must remain conditional on their declared inputs/outputs; do not add a second source-build path that runs on every `tests1` compile.
 - PPA stub, Miniz, test ZIP, and plugin assets must be produced before the consuming compile/link/resource step, but skipped on an unchanged no-op build.
 - Keep nested CMake/MSBuild node reuse and FileTracker workarounds scoped to the nested child. Parent test compilation still relies on normal MSBuild tracking.
+
+
+## Native performance and per-image diagnostics
+
+Before attributing slow native allocation to product code, inspect the target
+image's `Image File Execution Options` registry entry. Full Page Heap can be
+enabled only for `tests1.exe`, leaving a differently named process unaffected.
+Verified during #296 U05: GlobalFlag `0x02000000` and PageHeapFlags `0x3` made
+8 MiB of Rich Edit insertion take roughly 49 seconds. The identical diagnostic
+binary, copied to a task-specific temporary directory under a different name
+and verified with SHA-256, inserted 32 MiB in about 2.3 seconds including its
+test setup. This isolates instrumentation; it does not compare source versions.
+
+Keep the diagnostic setting intact. Run ordinary fault/lifecycle tests with it;
+run a timing assertion in a bounded exact-image process without that per-name
+setting. Preserve the source/copy hashes, command, timeout, exit status and
+process audit. Use the repository working directory and only suites whose
+resources do not depend on the executable directory. Do not use a copied
+runner for runtime inventory provenance; collect that from the original built
+Debug runner. Do not weaken the acceptance threshold to hide instrumentation.

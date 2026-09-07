@@ -748,7 +748,9 @@
     <ClInclude Include="..\sakura_core\workbench\editor\CEmptyEditorSurface.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\CDiffSurface.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\SenpReadonlyWorkbench.h" />
+    <ClInclude Include="..\sakura_core\senp\SenpTextResource.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\SenpReadonlyDocument.h" />
+    <ClInclude Include="..\sakura_core\workbench\editor\SenpTextResourceView.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\SenpReadonlyDocumentView.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\SenpEditorSurfaceSwitcher.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\CEditorServiceLegacyAdapter.h" />
@@ -1409,6 +1411,7 @@
 	<ClCompile Include="..\sakura_core\workbench\extensions\CExtensionsWorkbenchTool.cpp" />
 	<ClCompile Include="..\sakura_core\senp\SenpLanguageService.cpp" />
 	<ClCompile Include="..\sakura_core\senp\SenpManagementService.cpp" />
+	<ClCompile Include="..\sakura_core\senp\SenpTextResource.cpp" />
 	<ClCompile Include="..\sakura_core\senp\SenpEffectProtocol.cpp" />
 	<ClCompile Include="..\sakura_core\senp\SenpRuntimeSession.cpp" />
 	<ClCompile Include="..\sakura_core\senp\SenpEffectRuntime.cpp" />
@@ -1461,6 +1464,7 @@
     <ClCompile Include="..\sakura_core\workbench\editor\CDiffSurface.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\SenpReadonlyWorkbench.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\SenpReadonlyDocument.cpp" />
+    <ClCompile Include="..\sakura_core\workbench\editor\SenpTextResourceView.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\SenpReadonlyDocumentView.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\SenpEditorSurfaceSwitcher.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\CEditorServiceLegacyAdapter.cpp" />

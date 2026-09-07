@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('ViewContainers', 'TreeViews', 'ReadonlyEditors', 'ReadonlyDocuments')][string]$ProbeSet = 'ViewContainers',
+    [ValidateSet('ViewContainers', 'TreeViews', 'ReadonlyEditors', 'ReadonlyDocuments', 'TextResources')][string]$ProbeSet = 'ViewContainers',
     [string]$Tests1 = (Join-Path (Split-Path $PSScriptRoot -Parent) 'x64/Debug/tests1.exe'),
     [string]$OutputDirectory = (Join-Path $env:USERPROFILE 'tmp/senp-view-rendering'),
     [ValidateRange(1, 4)][int]$Repetitions = 1,
@@ -34,6 +34,7 @@ public static class SenpViewProbe {
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr window);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr window, int command);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
+    [DllImport("user32.dll", SetLastError=true)] public static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowTextW(IntPtr window, StringBuilder text, int size);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr window, out Rect rect);
     [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr window, out Rect rect);
@@ -79,7 +80,13 @@ public static class SenpViewProbe {
         int width = client.Right, height = client.Bottom;
         for (int y = 1; y < 8; ++y) for (int x = 1; x < 8; ++x) {
             Point point = new Point { X = origin.X + width * x / 8, Y = origin.Y + height * y / 8 };
-            if (GetAncestor(WindowFromPoint(point), 2) != window) throw new InvalidOperationException("Occluded trial.");
+            IntPtr covering = GetAncestor(WindowFromPoint(point), 2);
+            if (covering != window) {
+                uint coveringPid; GetWindowThreadProcessId(covering, out coveringPid);
+                StringBuilder coveringTitle = new StringBuilder(128); GetWindowTextW(covering, coveringTitle, 128);
+                throw new InvalidOperationException("Occluded trial at " + point.X + "," + point.Y
+                    + "; expected HWND=" + window + "; covering HWND=" + covering + ", PID=" + coveringPid + ", title=" + coveringTitle);
+            }
         }
         Bitmap screen = new Bitmap(width, height, PixelFormat.Format32bppArgb);
         Bitmap printed = null;
@@ -179,8 +186,8 @@ try {
     $start = [Diagnostics.ProcessStartInfo]::new($exe)
     $start.UseShellExecute = $false; $start.CreateNoWindow = $true; $start.WindowStyle = 'Hidden'
     $start.RedirectStandardOutput = $true; $start.RedirectStandardError = $true
-    $suite = if ($ProbeSet -eq 'ReadonlyDocuments') { 'SenpReadonlyDocument' } elseif ($ProbeSet -eq 'ReadonlyEditors') { 'SenpReadonlyWorkbench' } elseif ($ProbeSet -eq 'TreeViews') { 'SenpTreeView' } else { 'SenpViewContainer' }
-    $caption = if ($ProbeSet -eq 'ReadonlyDocuments') { 'SENP native document verification' } elseif ($ProbeSet -eq 'ReadonlyEditors') { 'SENP native readonly Editor verification' } elseif ($ProbeSet -eq 'TreeViews') { 'SENP native TreeView verification' } else { 'SENP native ViewContainer verification' }
+    $suite = if ($ProbeSet -eq 'TextResources') { 'SenpTextResourceViewTest' } elseif ($ProbeSet -eq 'ReadonlyDocuments') { 'SenpReadonlyDocument' } elseif ($ProbeSet -eq 'ReadonlyEditors') { 'SenpReadonlyWorkbench' } elseif ($ProbeSet -eq 'TreeViews') { 'SenpTreeView' } else { 'SenpViewContainer' }
+    $caption = if ($ProbeSet -eq 'TextResources') { 'SENP native text verification' } elseif ($ProbeSet -eq 'ReadonlyDocuments') { 'SENP native document verification' } elseif ($ProbeSet -eq 'ReadonlyEditors') { 'SENP native readonly Editor verification' } elseif ($ProbeSet -eq 'TreeViews') { 'SENP native TreeView verification' } else { 'SENP native ViewContainer verification' }
     $start.ArgumentList.Add("--gtest_filter=$suite.DISABLED_VisualCaptureProbe")
     $start.ArgumentList.Add('--gtest_also_run_disabled_tests')
     $start.Environment['SAKURA_SENP_VIEW_PROBE'] = '1'
@@ -199,6 +206,9 @@ try {
     # The helper process starts hidden; display only its identified visual
     # fixture after native preparation and the command receiver are ready.
     [void][SenpViewProbe]::ShowWindow($window, 5)
+    # Only this run-owned probe is made topmost. Its bounded cleanup destroys it;
+    # no user window is hidden, restyled or closed to obtain an unoccluded trial.
+    if (-not [SenpViewProbe]::SetWindowPos($window, [IntPtr](-1), 0, 0, 0, 0, 0x13)) { throw 'Unable to expose the owned probe window.' }
     [void][SenpViewProbe]::SetForegroundWindow($window)
     [void][SenpViewProbe]::DwmFlush()
     [void][SenpViewProbe]::SetCursorPos(5, 5)
@@ -220,12 +230,18 @@ try {
         [void](Invoke-Probe 1 (380 -bor (($dpi -bor ($themeId -shl 10)) -shl 16)))
         Wait-DocumentReady
         for ($repeat = 0; $repeat -lt $Repetitions; ++$repeat) {
-            $gestures = if ($ProbeSet -eq 'ReadonlyDocuments') { @('document-visibility', 'resize', 'scroll', 'refresh') } elseif ($ProbeSet -eq 'ReadonlyEditors') { @('input-switch', 'resize', 'editor-visibility', 'surface-move') } elseif ($ProbeSet -eq 'TreeViews') { @('expand', 'resize', 'scroll', 'refresh') } else { @('collapse', 'resize', 'view-move', 'container-move') }
+            $gestures = if ($ProbeSet -eq 'TextResources') { @('log-visibility', 'resize', 'scroll', 'find', 'append') } elseif ($ProbeSet -eq 'ReadonlyDocuments') { @('document-visibility', 'resize', 'scroll', 'refresh') } elseif ($ProbeSet -eq 'ReadonlyEditors') { @('input-switch', 'resize', 'editor-visibility', 'surface-move') } elseif ($ProbeSet -eq 'TreeViews') { @('expand', 'resize', 'scroll', 'refresh') } else { @('collapse', 'resize', 'view-move', 'container-move') }
             foreach ($gesture in $gestures) { foreach ($direction in 1, 0) {
-                if ($clock.Elapsed.TotalSeconds -gt $(if ($ProbeSet -eq 'ReadonlyDocuments') { 320 } elseif ($ProbeSet -eq 'ReadonlyEditors') { 200 } else { 140 })) { throw 'Rendering run exceeded its overall deadline.' }
+                if ($clock.Elapsed.TotalSeconds -gt $(if ($ProbeSet -eq 'TextResources') { 520 } elseif ($ProbeSet -eq 'ReadonlyDocuments') { 320 } elseif ($ProbeSet -eq 'ReadonlyEditors') { 200 } else { 140 })) { throw 'Rendering run exceeded its overall deadline.' }
+                # The preceding text append deliberately reveals the tail. Reset
+                # this next scroll gesture's baseline before measuring its change.
+                if ($ProbeSet -eq 'TextResources' -and $gesture -eq 'scroll' -and $direction -eq 1) { [void](Invoke-Probe 3 0) }
                 $before = [SenpViewProbe]::Geometry($body)
-                if ($ProbeSet -in @('TreeViews', 'ReadonlyEditors', 'ReadonlyDocuments')) { $before += ':' + (Invoke-Probe 9).ToString() }
+                if ($ProbeSet -in @('TreeViews', 'ReadonlyEditors', 'ReadonlyDocuments', 'TextResources')) { $before += ':' + (Invoke-Probe 9).ToString() }
                 switch ($gesture) {
+                    'log-visibility' { [void](Invoke-Probe 2 $direction) }
+                    'find' { [void](Invoke-Probe 10 $direction) }
+                    'append' { [void](Invoke-Probe 8 $direction) }
                     'document-visibility' { [void](Invoke-Probe 2 $direction) }
                     'input-switch' { [void](Invoke-Probe 2 $direction) }
                     'editor-visibility' { [void](Invoke-Probe 3 $direction) }
@@ -240,7 +256,7 @@ try {
                 }
                 Wait-DocumentReady
                 $after = [SenpViewProbe]::Geometry($body)
-                if ($ProbeSet -in @('TreeViews', 'ReadonlyEditors', 'ReadonlyDocuments')) { $after += ':' + (Invoke-Probe 9).ToString() }
+                if ($ProbeSet -in @('TreeViews', 'ReadonlyEditors', 'ReadonlyDocuments', 'TextResources')) { $after += ':' + (Invoke-Probe 9).ToString() }
                 Save-Trial "theme$themeId-dpi$dpi-r$repeat-$gesture-$direction" $before $after
             }}
         }

@@ -2,8 +2,9 @@
 
 状態: G01/G02のschema・WIT・codec、G03a/G03bのsessionと実host、G04のowner lifecycle、
 U01の複数View native pageとSCM共通header、U02のlazy Tree model/provider/native body、
-U03のreadonly input登録と保持したnative surface切替、U04のMarkdown・metadata・table本文を実装済み。
-chunk text resource、page/commandの公開adapter、tool broker、GitHub拡張、v2 package受理は後続工程。
+U03のreadonly input登録と保持したnative surface切替、U04のMarkdown・metadata・table本文、
+U05の有界text resourceとnative検索・コピーを実装済み。
+page/commandの公開adapter、tool broker、GitHub拡張、v2 package受理は後続工程。
 作成日: 2026-09-07。
 調査対象: `5346511f26fa04cc13acdad21ff603b4813e6768` のチェックアウト。
 追跡Issue: [#296 — Design SENP v2 GitHub Issues/PR and Actions extensions using gh](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/296)。
@@ -102,7 +103,9 @@ Close/owner失効、CEditDoc/undo保持とnative選択/scroll/focusを`SenpReado
 Save Allは全working copyを扱うWorkbenchへ渡し、readonly inputの保存とは分ける。
 U04は既存native Markdown previewのworkerへ構造化本文を接続し、metadata/tableを文字列のまま描画する。
 script・command linkは実行せず、local/remote画像は権限未定義のためblockedにする。
-chunk text resourceと検索・コピーはU05、アプリのtab/command/backupとsample公開はU06の完了条件に残す。
+U05は64 KiB chunk、32 MiB/resource、Control内64 MiBのmemory-only storeとnative readonly textを提供する。
+UTF-8の継続decode、文字選択、検索、コピー、partial/失効を検証する。
+アプリのtab/command/backup、text-section routingとsample公開はU06の完了条件に残す。
 
 ### 操作と情報状態
 

@@ -162,3 +162,37 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   handles and is assigned atomically at creation to a kill-on-close job. Each
   has explicit timeout and cleanup ownership. Paint and input paths never wait
   for the host.
+
+
+## Bounded text resource storage (U05, #296)
+
+`SenpTextResourceStore` is a single broker-thread, memory-only owner. Its exact
+scope is profile, extension ID, package digest, grant, owner/workspace/account
+generation and immutable resource revision. The broker must also prove that the
+grant is currently live before every call. Opaque handles are identities, not
+bearer credentials; a Wasm label must never reconstruct authorization.
+
+Append accepts the next byte offset and at most 64 KiB. Fixed 64 KiB pages bound
+one resource to 32 MiB and the Control store to 64 MiB of allocated payload pages,
+including unused tails, with at most 64 resource slots. Pages and their index
+grow amortized O(B); byte-sized appends do not allocate per-chunk metadata.
+Allocation is prepared before committing bytes/counters. Allocation exceptions
+leave the previous prefix intact and require the caller to Finish and stop its
+producer. Every limit/failure/cancel/expiry requires physical producer cleanup
+by the broker; the store never owns or retries a process, download or timer.
+
+Loading, Complete, Partial, Failed and Expired are separate states. A resource
+limit retains its accepted prefix with LimitExceeded, without evicting another
+reader. Finish is terminal; Expire erases all pages and leaves a tombstone until
+Release. Close reclaims every slot and rejects all work. Owners must release
+expired handles so tombstones cannot exhaust the bounded registration pool.
+
+`SenpTextResourceDecoder` performs strict incremental UTF-8 decoding in O(B),
+retaining at most three bytes. It normalizes CR/LF across chunk boundaries and
+makes control, ANSI/OSC and bidi-format input inert. A malformed or truncated
+scalar rejects the current chunk and closes the decoder. The consumer owns text
+storage and indexing; neither decoder nor store reparses earlier content.
+
+Verify `SenpTextResource.*`, including actual 32/64 MiB allocations and every
+authorization dimension. U06 owns native publication; T02/T08 still own live
+grant, download and release wiring. This store alone enables no network access.

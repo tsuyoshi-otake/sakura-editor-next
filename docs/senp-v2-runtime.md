@@ -289,3 +289,42 @@ U04はRust peer fixtureを含む90 focused tests、3,780件のruntime inventory�
 同一binaryの2回起動による216描画試行で検証した。3テーマ・3 DPIの各操作を一方の起動で2回、
 他方で1回実施し、visibility/resize/scroll/refreshの実変化を観測した。
 再描画差分・PrintWindow欠落・画像fetchは0、worker retirementとprocess終了も確認した。
+
+
+## U05: 有界text resourceとnativeログ表示
+
+`SenpTextResourceStore`はControlのbroker threadが所有するmemory-only resourceである。
+profile、extension、package digest、grant、owner/workspace/account generation、revisionを
+全操作で一致させる。opaque handleだけでは認可にならず、brokerはgrantの現在の有効性も確認する。
+64 KiB固定pageを使い、1 resource 32 MiB、Control内64 MiBの割当payload、64 handleで有界にする。
+offsetは単調増加し、1回のappend/readは64 KiB以下。1 byteずつ受け取ってもchunkごとのmetadataを増やさない。
+allocationは状態commit前に準備し、例外時のprefixを保持する。callerがFinishとproducer停止を所有する。
+上限では別resourceを暗黙evictせず、受理済みprefixをPartial/LimitExceededとして残す。
+Expireは本文を消去してtombstoneを残し、Releaseはslotを返す。Closeは全領域を回収する。
+
+decoderはUTF-8を追加分だけO(B)で処理し、保留byteは最大3。CRLF境界を正規化し、ANSI/OSC、
+NUL、control、bidi制御文字を実行せず表示用に変換する。不正・途切れたscalarは当該chunkを拒否し、
+前のprefixがあれば失敗した部分ログとして残す。
+
+`SenpTextResourceView`はSystem32のWindows Rich Editをplain text/readonlyで使用する。
+chunkの長さ・offset・scope・revisionとsourceの終端を検証して追記し、選択とscrollを保持する。
+全文置換、RTF、URL、OLE content、端末制御やnetwork処理は持たない。
+Ctrl+F、Enter/F3・Shiftで前後検索とwrap、Escape、Ctrl+A、文字単位のCopyに対応する。
+選択がないCopyは現在行をLF付きでコピーする。native readonly属性とUIA text selectionを検証する。
+Loading/空/Complete/Partial/Failed/Expiredは別表示となり、期限切れは本文と検索を消去する。
+挿入中のnative failureは不確かな表示を閉じ、native破棄からLoadingへ戻らない。
+
+U06でtext-resource sectionをrendererへ振り分け、tab/command/backupとsampleへ接続する。
+T02/T08は有効grant、download、subscriberと実processの回収を所有する。
+この工程だけではschema 2やGitHub network機能を公開しない。
+
+U05は60 focused testsと、Page Heap設定を保持したまま別名の同一binaryで実行した26件が合格。
+32 MiB全体の文字一致・長さ・追記方式の検査は最終版で7.789秒、runtime inventoryは3,807件が一致した。
+2回の新規起動で360+90の描画試行が合格。実画面の再描画差分は最大0.00309%で、
+非ゼロ1件の全変化pixel（8 pixel）は本文外の下端8 pixel以内の丸い角に限られた。
+PrintWindowだけの欠落37件は同一geometryのnoise floorと実画面の安定性で区別した。
+probe/runnerには500/520秒の期限があり、全起動のprocess終了を確認した。
+検査用windowだけを一時的に最前面へ出し、他のwindowや診断設定は変更しない。
+
+検索やコピー失敗の通知中もLoading/Partial等の取得状態を必ず先に表示する。
+WM_SETREDRAWの再開後と子windowの配置変更ではRDW_FRAMEを含め、native scrollbarも再描画する。

@@ -281,3 +281,57 @@ Verify `SenpReadonlyDocument.*`, the existing Markdown suites and the
 check waits for both preparation and native reflow; its fingerprint reads the
 real scroll position, published generation, rendered line count and visibility.
 Test setup must expect an empty group before selecting the inactive input.
+
+
+## Native readonly text resources (U05, #296)
+
+`SenpTextResourceView` binds one broker-authorized scope, handle and revision.
+It owns a plain-text, readonly Windows Rich Edit control loaded only from the
+system directory, plus a native find field and explicit status. No RTF, URL,
+OLE-content, terminal action, filesystem path or network callback enters the
+surface. The status/root/query are siblings under one owned root; bind that root
+to `SenpEditorSurfaceSwitcher` and unbind before closing it.
+
+Composition reads at most one bounded chunk outside paint and calls Apply on the
+UI thread. It owns admission, deadlines, scheduling and cancellation; there is
+no polling here. Offset, length and terminal-source fences prevent contradictory
+or late chunks while an accepted terminal prefix drains. The decoder processes
+only new bytes and the native control appends only new text. Selection and
+scroll remain stable, including under a hidden retained parent. Do not replace
+the entire document on each chunk. Native allocation failure closes an uncertain
+projection; destruction during an insertion must return Closed without reviving
+Loading. Terminal source failure retains an explicitly marked partial prefix;
+expiry erases text and search immediately. Every returned failure/Closed still
+requires composition to stop the corresponding broker subscription.
+
+Ctrl+F opens native find, Enter/F3 and Shift+Enter/Shift+F3 search next/previous
+with wrap, and Escape restores text focus. Ctrl+C/Copy uses the exact character
+selection, or the current line including LF when empty. Clipboard failures are
+reported without retry. Search/copy feedback must preserve the source-state
+prefix, including Loading and Partial warnings. Ctrl+A selects all. Paste, cut, edit, undo and redo are
+unavailable. UI Automation exposes the native text and readonly selection.
+This U05 seam uses the Windows native scrollbar; text, find and status use the
+Workbench palette/font. Before U06 publishes the surface in the application,
+bind the existing shared COverlayScrollbar to its native scroll state, as other
+Workbench surfaces do. There is no platform constraint requiring a second
+scrollbar design. This pending composition gate does not change input identity.
+
+Verify `SenpTextResourceViewTest.*` plus the `TextResources` dual-capture probe.
+The maximum-payload case appends 32 MiB in 64 KiB chunks, compares all text,
+checks native length and rejects full-document replacements. The fixture also
+injects native allocation failure and destruction during an append. The probe
+performs visibility, resize, scroll, find and append at three themes and DPIs.
+Appending deliberately reveals the tail; repeated scroll trials first restore
+their opposite baseline before checking that the measured gesture changed it.
+Root paint owns the background instead of drawing the STATIC window caption.
+After WM_SETREDRAW and child layout changes, invalidate RDW_FRAME as well as
+the client area: native scrollbar paint can otherwise remain stale across show.
+See the [Windows redraw contract](https://learn.microsoft.com/en-us/windows/win32/gdi/wm-setredraw).
+The runner makes only its own temporary probe topmost; any remaining occlusion
+fails with the covering HWND/PID/title, and bounded cleanup destroys the probe.
+
+Full Page Heap is per executable name and invalidates timing comparisons with
+an uninstrumented product. See the test guidance for exact-image measurement;
+do not silently remove a user's diagnostic settings or raise the test deadline.
+U06 still owns CEditWnd/tab/command/backup, text-section routing and sample
+publication; schema 2 remains UnsupportedRuntime until those gates pass.
