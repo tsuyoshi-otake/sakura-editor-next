@@ -61,6 +61,15 @@ protected:
 		return text;
 	}
 	void Select(LONG start, LONG end) { CHARRANGE range{ start, end }; ::SendMessageW(view->FocusWindow(), EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&range)); }
+	HWND Scrollbar(bool horizontal) {
+		for (auto child = ::GetWindow(view->Window(), GW_CHILD); child; child = ::GetWindow(child, GW_HWNDNEXT)) {
+			wchar_t name[128]{}; ::GetClassNameW(child, name, 128);
+			if (std::wstring_view(name) != L"SakuraWorkbenchOverlayScrollbar") continue;
+			RECT bounds{}; ::GetWindowRect(child, &bounds);
+			if ((bounds.right - bounds.left > bounds.bottom - bounds.top) == horizontal) return child;
+		}
+		return nullptr;
+	}
 	void TearDown() override {
 		if (switcher) { switcher->Close(); switcher.reset(); }
 		if (view) { view->Close(); view.reset(); }
@@ -144,6 +153,43 @@ TEST_F(SenpTextResourceViewTest, NativeUnicodeSearchMovesForwardBackwardAndWraps
 	EXPECT_EQ(view->Find(L"alpha", false, true), SenpTextFindResult::NotFound);
 	EXPECT_EQ(view->Find(L""), SenpTextFindResult::Invalid); EXPECT_EQ(view->Find(std::wstring(1025, L'x')), SenpTextFindResult::Invalid);
 	EXPECT_EQ(Text(), L"Alpha \u65e5 beta ALPHA \u65e5 omega");
+}
+TEST_F(SenpTextResourceViewTest, NativeSharedScrollbarsTrackBothAxesAndDragBeyondSixteenBitPositions)
+{
+	ASSERT_NO_FATAL_FAILURE(CreateNative());
+	const std::string line(100, 'x');
+	for (int chunk = 0; chunk < 10; ++chunk) {
+		std::string bytes; for (int row = 0; row < 600; ++row) bytes += line + "\n";
+		ASSERT_NO_FATAL_FAILURE(Append(bytes));
+	}
+	const auto vertical = Scrollbar(false), horizontal = Scrollbar(true);
+	ASSERT_NE(vertical, nullptr); ASSERT_NE(horizontal, nullptr);
+	EXPECT_TRUE(::IsWindowVisible(vertical)); EXPECT_TRUE(::IsWindowVisible(horizontal));
+	EXPECT_EQ(::GetWindowLongPtrW(view->FocusWindow(), GWL_STYLE) & (WS_HSCROLL | WS_VSCROLL), 0);
+	::SendMessageW(view->FocusWindow(), WM_VSCROLL, SB_TOP, 0); Pump();
+	RECT bounds{}; ::GetClientRect(vertical, &bounds);
+	::SendMessageW(vertical, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(2, 2));
+	::SendMessageW(vertical, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(2, bounds.bottom - 2));
+	::SendMessageW(vertical, WM_LBUTTONUP, 0, MAKELPARAM(2, bounds.bottom - 2)); Pump();
+	EXPECT_GT(view->Viewport().scrollY, 65535);
+	EXPECT_GT(::SendMessageW(view->FocusWindow(), EM_GETFIRSTVISIBLELINE, 0, 0), 5900);
+	EXPECT_EQ(::GetCapture(), nullptr);
+	::GetClientRect(horizontal, &bounds);
+	::SendMessageW(horizontal, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(2, 2));
+	::SendMessageW(horizontal, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(bounds.right - 2, 2));
+	::SendMessageW(horizontal, WM_LBUTTONUP, 0, MAKELPARAM(bounds.right - 2, 2)); Pump();
+	EXPECT_GT(view->Viewport().scrollX, 0);
+	const auto before = view->Viewport(); ASSERT_NO_FATAL_FAILURE(Append("tail\n", true));
+	EXPECT_EQ(view->Viewport().scrollY, before.scrollY); EXPECT_EQ(view->Viewport().scrollX, before.scrollX);
+	EXPECT_EQ(::GetWindowLongPtrW(view->FocusWindow(), GWL_STYLE) & (WS_HSCROLL | WS_VSCROLL), 0);
+
+	switcher->SetVisible(false);
+	EXPECT_FALSE(::IsWindowVisible(vertical)); EXPECT_FALSE(::IsWindowVisible(horizontal));
+	switcher->SetVisible(true); Pump();
+	EXPECT_TRUE(::IsWindowVisible(vertical)); EXPECT_TRUE(::IsWindowVisible(horizontal));
+	view->Expire(); Pump();
+	EXPECT_FALSE(::IsWindowVisible(vertical)); EXPECT_FALSE(::IsWindowVisible(horizontal));
+	view->Close(); EXPECT_FALSE(::IsWindow(vertical)); EXPECT_FALSE(::IsWindow(horizontal));
 }
 TEST_F(SenpTextResourceViewTest, NativeCopyUsesTheExactCharacterSelectionAndCurrentLineWhenEmpty)
 {

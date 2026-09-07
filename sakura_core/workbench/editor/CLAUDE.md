@@ -310,11 +310,17 @@ selection, or the current line including LF when empty. Clipboard failures are
 reported without retry. Search/copy feedback must preserve the source-state
 prefix, including Loading and Partial warnings. Ctrl+A selects all. Paste, cut, edit, undo and redo are
 unavailable. UI Automation exposes the native text and readonly selection.
-This U05 seam uses the Windows native scrollbar; text, find and status use the
-Workbench palette/font. Before U06 publishes the surface in the application,
-bind the existing shared COverlayScrollbar to its native scroll state, as other
-Workbench surfaces do. There is no platform constraint requiring a second
-scrollbar design. This pending composition gate does not change input identity.
+The text, find, status and shared COverlayScrollbar use the Workbench palette
+and DPI. Hide both native Rich Edit bars with EM_SHOWSCROLLBAR. Hidden native
+SCROLLINFO stops tracking subsequent scrolls, so use the existing ExplicitModel:
+EN_REQUESTRESIZE supplies content extent, the text client supplies viewport size,
+and EM_GETSCROLLPOS supplies the actual pixel offset. EM_SETSCROLLPOS preserves
+positions beyond the 16-bit thumb-message limit. No text scan or reparse derives
+the scroll model; content notifications, layout, find and scroll update it.
+Do not recursively project while appending or updating the two shared bars.
+Rich Edit must have WS_CLIPSIBLINGS because the shared bars overlap its client;
+without it, a later text paint erases the sibling thumbs. Destroy both bars before
+the root, or detach them when native parent destruction already owns cleanup.
 
 Verify `SenpTextResourceViewTest.*` plus the `TextResources` dual-capture probe.
 The maximum-payload case appends 32 MiB in 64 KiB chunks, compares all text,

@@ -2,6 +2,7 @@
 /* Copyright (C) 2026, Sakura Editor Organization. SPDX-License-Identifier: Zlib */
 #include "StdAfx.h"
 #include "workbench/editor/SenpTextResourceView.h"
+#include "workbench/controls/COverlayScrollbar.h"
 #include "theme/CThemeService.h"
 #include <CommCtrl.h>
 #include <Richedit.h>
@@ -44,7 +45,9 @@ struct SenpTextResourceView::Impl {
 	SenpTextResourceDecoder decoder;
 	HMODULE richEdit{};
 	HWND root{}, text{}, status{}, query{};
-	bool closed{}, findVisible{}, nativeFailure{};
+	bool closed{}, findVisible{}, nativeFailure{}, updatingScrollbars{}, appending{};
+	controls::COverlayScrollbar verticalScrollbar, horizontalScrollbar;
+	SIZE contentExtent{};
 	unsigned int dpi{ 96 };
 	std::size_t characters{}, knownLength{};
 	TextResourceState state{ TextResourceState::Loading };
@@ -60,6 +63,27 @@ struct SenpTextResourceView::Impl {
 	~Impl() { Close(); if (richEdit) ::FreeLibrary(richEdit); }
 	int Scale(int value) const noexcept { return ::MulDiv(value, dpi, 96); }
 	CHARRANGE Selection() const noexcept { CHARRANGE range{}; if (text) ::SendMessageW(text, EM_EXGETSEL, 0, reinterpret_cast<LPARAM>(&range)); return range; }
+	void UpdateScrollbars() noexcept {
+		if (closed || !text || appending || updatingScrollbars) return;
+		// Hidden Rich Edit scrollbars stop updating SCROLLINFO. Its native
+		// content-size notification and pixel position remain authoritative.
+		updatingScrollbars = true;
+		RECT client{}; ::GetClientRect(text, &client);
+		POINT point{}; ::SendMessageW(text, EM_GETSCROLLPOS, 0, reinterpret_cast<LPARAM>(&point));
+		verticalScrollbar.SetScrollModel({ contentExtent.cy, client.bottom, point.y });
+		horizontalScrollbar.SetScrollModel({ contentExtent.cx, client.right, point.x });
+		verticalScrollbar.Update(); horizontalScrollbar.Update();
+		updatingScrollbars = false;
+	}
+	void ScrollTo(int position, bool horizontal) noexcept {
+		if (closed || !text) return;
+		POINT point{}; ::SendMessageW(text, EM_GETSCROLLPOS, 0, reinterpret_cast<LPARAM>(&point));
+		if (horizontal) point.x = position; else point.y = position;
+		// Rich Edit's pixel API preserves the full position. A thumb position
+		// packed into WM_VSCROLL/WM_HSCROLL would truncate at 65,535 pixels.
+		::SendMessageW(text, EM_SETSCROLLPOS, 0, reinterpret_cast<LPARAM>(&point));
+		UpdateScrollbars();
+	}
 	void Status(const wchar_t* message = nullptr) noexcept {
 		if (!status) return;
 		const wchar_t* sourceStatus{};
@@ -87,10 +111,12 @@ struct SenpTextResourceView::Impl {
 		if (!::SetWindowPos(query, nullptr, Scale(6), Scale(3), (std::max)(0, width - Scale(12)), (std::max)(0, findHeight - Scale(6)), flags)
 			|| !::SetWindowPos(text, nullptr, 0, findHeight, width, (std::max)(0, height - statusHeight - findHeight), flags)
 			|| !::SetWindowPos(status, nullptr, Scale(6), height - statusHeight, (std::max)(0, width - Scale(12)), statusHeight, flags)) { Close(); return; }
+		UpdateScrollbars();
 		::RedrawWindow(root, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN);
 	}
 	void Close() noexcept {
 		closed = true; state = TextResourceState::Closed; decoder.Close(); characters = 0;
+		verticalScrollbar.Destroy(); horizontalScrollbar.Destroy();
 		if (root) { auto window = root; root = nullptr; ::DestroyWindow(window); }
 		text = status = query = nullptr;
 	}
@@ -105,7 +131,7 @@ struct SenpTextResourceView::Impl {
 		decoder.Close(); state = TextResourceState::Expired; end = TextResourceEnd::Revoked; characters = 0;
 		if (text) ::SetWindowTextW(text, L"");
 		if (query) ::SetWindowTextW(query, L"");
-		Status();
+		Status(); UpdateScrollbars();
 	}
 	std::wstring SelectedText(bool currentLine) const {
 		if (!text || closed || state == TextResourceState::Expired) return {};
@@ -160,6 +186,7 @@ struct SenpTextResourceView::Impl {
 			wrapped = true;
 		}
 		::SendMessageW(text, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&request.chrgText)); ::SendMessageW(text, EM_SCROLLCARET, 0, 0);
+		UpdateScrollbars();
 		Status(wrapped ? L"Search wrapped in the loaded text." : L"Match in the loaded text.");
 		return wrapped ? SenpTextFindResult::Wrapped : SenpTextFindResult::Found;
 	}
@@ -182,8 +209,11 @@ struct SenpTextResourceView::Impl {
 				if (wParam == VK_ESCAPE && self.findVisible) { self.ShowFind(false); return 0; }
 			}
 			if (message == WM_CHAR && (body || wParam == VK_RETURN || wParam == VK_ESCAPE)) return 0;
+			const auto result = ::DefSubclassProc(window, message, wParam, lParam);
+			if (body && (message == WM_VSCROLL || message == WM_HSCROLL || message == WM_MOUSEWHEEL
+				|| message == WM_MOUSEHWHEEL || message == WM_KEYDOWN || message == WM_SIZE || message == EM_SETSCROLLPOS)) self.UpdateScrollbars();
+			return result;
 		} catch (...) { self.Close(); return 0; }
-		return ::DefSubclassProc(window, message, wParam, lParam);
 	}
 	static LRESULT CALLBACK RootProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR context) {
 		auto& self = *reinterpret_cast<Impl*>(context);
@@ -192,6 +222,15 @@ struct SenpTextResourceView::Impl {
 		case WM_SETFOCUS: if (self.text) ::SetFocus(self.text); return 0;
 		case WM_COMMAND:
 			if (reinterpret_cast<HWND>(lParam) == self.text && (HIWORD(wParam) == EN_ERRSPACE || HIWORD(wParam) == EN_MAXTEXT)) self.nativeFailure = true;
+			break;
+		case WM_NOTIFY:
+			if (const auto* notification = reinterpret_cast<const NMHDR*>(lParam);
+				notification && notification->hwndFrom == self.text && notification->code == EN_REQUESTRESIZE) {
+				const auto& bounds = reinterpret_cast<const REQRESIZE*>(lParam)->rc;
+				const auto width = static_cast<std::int64_t>(bounds.right) - bounds.left, height = static_cast<std::int64_t>(bounds.bottom) - bounds.top;
+				if (width < 0 || height < 0 || width > LONG_MAX || height > LONG_MAX) { self.Close(); return 0; }
+				self.contentExtent = { static_cast<LONG>(width), static_cast<LONG>(height) }; self.UpdateScrollbars(); return 0;
+			}
 			break;
 		case WM_CTLCOLOREDIT: case WM_CTLCOLORSTATIC:
 			::SetBkColor(reinterpret_cast<HDC>(wParam), self.palette.canvas.ToColorRef());
@@ -209,6 +248,7 @@ struct SenpTextResourceView::Impl {
 			::EndPaint(window, &paint); return 0;
 		}
 		case WM_NCDESTROY:
+			self.verticalScrollbar.Detach(); self.horizontalScrollbar.Detach();
 			self.root = self.text = self.status = self.query = nullptr; self.closed = true;
 			self.state = TextResourceState::Closed; self.decoder.Close(); self.characters = 0;
 			::RemoveWindowSubclass(window, RootProcedure, 1); break;
@@ -234,6 +274,7 @@ struct SenpTextResourceView::Impl {
 		if (terminal) sourceEnd = SourceEnd{ chunk.state, chunk.end, chunk.length };
 		knownLength = chunk.length;
 		if (!decoded.text.empty()) {
+			appending = true;
 			const auto selection = Selection(); POINT scroll{}; ::SendMessageW(text, EM_GETSCROLLPOS, 0, reinterpret_cast<LPARAM>(&scroll));
 			// WM_SETREDRAW changes the child visibility bit; preserve that bit
 			// independently of whether the retained parent is currently hidden.
@@ -254,6 +295,7 @@ struct SenpTextResourceView::Impl {
 			if (closed || !text) return SenpTextViewResult::Closed;
 			if (nativeFailure) { Close(); return SenpTextViewResult::Failed; }
 			characters += decoded.text.size();
+			appending = false; UpdateScrollbars();
 		}
 		state = final ? chunk.state : TextResourceState::Loading; end = final ? chunk.end : TextResourceEnd::None; Status();
 		return SenpTextViewResult::Applied;
@@ -272,7 +314,9 @@ bool SenpTextResourceView::Create(HWND parent)
 	self.root = ::CreateWindowExW(WS_EX_CONTROLPARENT, L"STATIC", L"Read-only log", WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
 		0, 0, 1, 1, parent, nullptr, ::GetModuleHandleW(nullptr), nullptr);
 	if (!self.root || !::SetWindowSubclass(self.root, Impl::RootProcedure, 1, reinterpret_cast<DWORD_PTR>(&self))) { self.Close(); return false; }
-	self.text = ::CreateWindowExW(0, MSFTEDIT_CLASS, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | WS_HSCROLL
+	// The shared scrollbar windows overlap this sibling's client area.
+	// Clip them out of Rich Edit painting, including its scroll blits.
+	self.text = ::CreateWindowExW(0, MSFTEDIT_CLASS, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_CLIPSIBLINGS | WS_VSCROLL | WS_HSCROLL
 		| ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_READONLY | ES_NOHIDESEL, 0, 0, 1, 1, self.root, nullptr, self.richEdit, nullptr);
 	self.status = ::CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_LEFTNOWORDWRAP, 0, 0, 1, 1, self.root, nullptr, nullptr, nullptr);
 	self.query = ::CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL, 0, 0, 1, 1, self.root, nullptr, nullptr, nullptr);
@@ -281,9 +325,13 @@ bool SenpTextResourceView::Create(HWND parent)
 		|| ::SendMessageW(self.text, EM_SETTEXTMODE, TM_PLAINTEXT | TM_MULTICODEPAGE, 0) != 0) { self.Close(); return false; }
 	::SendMessageW(self.text, EM_EXLIMITTEXT, 0, static_cast<LPARAM>(SenpTextResourceStore::kResourceBytes));
 	::SendMessageW(self.text, EM_SETUNDOLIMIT, 0, 0); ::SendMessageW(self.text, EM_AUTOURLDETECT, 0, 0);
-	::SendMessageW(self.text, EM_SETEVENTMASK, 0, ENM_NONE);
+	::SendMessageW(self.text, EM_SETEVENTMASK, 0, ENM_REQUESTRESIZE);
+	::SendMessageW(self.text, EM_SHOWSCROLLBAR, SB_VERT, FALSE); ::SendMessageW(self.text, EM_SHOWSCROLLBAR, SB_HORZ, FALSE);
 	::SendMessageW(self.query, EM_LIMITTEXT, 1024, 0);
 	::SendMessageW(self.query, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(L"Find in log (Enter / Shift+Enter)"));
+	if (!self.verticalScrollbar.Create(self.root, self.text, [&self](int position) { self.ScrollTo(position, false); }, controls::OverlayScrollbarSource::ExplicitModel)
+		|| !self.horizontalScrollbar.Create(self.root, self.text, [&self](int position) { self.ScrollTo(position, true); },
+			controls::OverlayScrollbarSource::ExplicitModel, controls::OverlayScrollbarOrientation::Horizontal)) { self.Close(); return false; }
 	SetStyle(self.palette, self.dpi); self.Status(); self.LayoutChildren(); return !self.closed;
 }
 SenpTextViewResult SenpTextResourceView::Apply(const TextResourceScope& scope, const TextResourceChunk& chunk)
@@ -304,6 +352,9 @@ void SenpTextResourceView::Layout(const RECT& bounds, unsigned int dpi)
 void SenpTextResourceView::SetStyle(const theme::ThemePalette& palette, unsigned int dpi)
 {
 	auto& self = *m_impl; if (self.closed) return; self.palette = palette; self.dpi = dpi ? dpi : 96;
+	for (auto* bar : { &self.verticalScrollbar, &self.horizontalScrollbar }) {
+		bar->SetDpi(self.dpi); bar->SetColors(controls::ResolveOverlayScrollbarColors(palette, palette.canvas));
+	}
 	if (!self.editorFont.Recreate(theme::ThemeFontKind::Editor, self.dpi) || !self.chromeFont.Recreate(theme::ThemeFontKind::Chrome, self.dpi)) { self.Close(); return; }
 	if (self.text) {
 		::SendMessageW(self.text, WM_SETFONT, reinterpret_cast<WPARAM>(self.editorFont.Get()), FALSE);
@@ -312,7 +363,8 @@ void SenpTextResourceView::SetStyle(const theme::ThemePalette& palette, unsigned
 		::SendMessageW(self.text, EM_SETBKGNDCOLOR, 0, palette.canvas.ToColorRef());
 		CHARFORMAT2W format{}; format.cbSize = sizeof(format); format.dwMask = CFM_COLOR; format.crTextColor = palette.primaryText.ToColorRef();
 		::SendMessageW(self.text, EM_SETCHARFORMAT, SCF_ALL, reinterpret_cast<LPARAM>(&format));
-		::SendMessageW(self.text, EM_SETMODIFY, FALSE, 0); self.LayoutChildren();
+		::SendMessageW(self.text, EM_SETMODIFY, FALSE, 0);
+		::SendMessageW(self.text, EM_REQUESTRESIZE, 0, 0); self.LayoutChildren();
 	}
 }
 void SenpTextResourceView::ShowFind(bool visible) { m_impl->ShowFind(visible); }

@@ -328,3 +328,18 @@ probe/runnerには500/520秒の期限があり、全起動のprocess終了を確
 
 検索やコピー失敗の通知中もLoading/Partial等の取得状態を必ず先に表示する。
 WM_SETREDRAWの再開後と子windowの配置変更ではRDW_FRAMEを含め、native scrollbarも再描画する。
+
+
+### U06途中: ログの共有スクロールバー
+
+readonlyログの縦横バーを既存の`COverlayScrollbar`へ接続した。Rich Editの
+非表示nativeバーの`SCROLLINFO`は移動後に更新されないため、`EN_REQUESTRESIZE`の
+内容寸法と`EM_GETSCROLLPOS`の実位置を既存`ExplicitModel`へ渡す。64 KiBを超える
+位置のドラッグ、追記後の選択・縦横位置保持、hidden/expired/closedをnative試験で確認した。
+`WS_CLIPSIBLINGS`により本文の再描画が重なるバーを消さないようにした。
+
+同一Debug binaryで27件の関連試験、Page Heap設定を変更しない61件の回帰試験、
+別起動の180+90回のdual captureが合格。描画差の最大値は0.000000000%、
+既存0.05%閾値は変更していない。runtime inventoryは3,808件で照合する。
+これはU06の途中の変更であり、本文の選択/検索、mixed section routing、実アプリの
+tab/command/backup、owner/page公開、sampleは引き続きU06の完了条件。
