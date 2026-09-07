@@ -291,7 +291,10 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkbenchPanelHostTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
-	<ClCompile Include="..\src\test\cpp\tests1\workbench\ViewContainerPagePoolTest.cpp">
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\SenpViewContainerTest.cpp">
+      <Filter>Test Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\ViewContainerPagePoolTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkbenchRuntimeTest.cpp">

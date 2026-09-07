@@ -12,6 +12,7 @@
 #include <string>
 #include <memory>
 #include <atomic>
+#include <optional>
 
 namespace accessibility {
 
@@ -36,6 +37,7 @@ struct CustomUiAutomationNode {
 	bool enabled = true;
 	bool focused = false;
 	bool invoke = false;
+	std::optional<bool> expanded;
 };
 
 //! Pure visibility rule shared by UI Automation and MSAA providers.
@@ -57,6 +59,14 @@ public:
 	[[nodiscard]] virtual int AccessibilityFocusedNode() const noexcept = 0;
 	[[nodiscard]] virtual bool AccessibilityInvoke(int nodeId) noexcept = 0;
 	virtual void AccessibilitySetFocus(int nodeId) noexcept = 0;
+	//! Optional semantics for a native leaf control that is itself the root.
+	[[nodiscard]] virtual CustomUiAutomationNode AccessibilityRootNode() const
+	{
+		RECT bounds{};
+		::GetClientRect(AccessibilityWindow(), &bounds);
+		return { -1, AccessibilityName(), AccessibilityAutomationId(), AccessibilityControlType(), bounds, true, false, false };
+	}
+	[[nodiscard]] virtual bool AccessibilityExpandCollapse(int, bool) noexcept { return false; }
 };
 
 //! Handles UIA and OBJID_CLIENT WM_GETOBJECT requests. OBJID_CLIENT is exposed through
@@ -69,6 +79,7 @@ void RaiseFocusChanged(ICustomUiAutomationHost& host, int nodeId) noexcept;
 void RaiseFocusCleared(ICustomUiAutomationHost& host, int nodeId) noexcept;
 void RaiseInvoked(ICustomUiAutomationHost& host, int nodeId) noexcept;
 void RaiseEnabledChanged(ICustomUiAutomationHost& host, int nodeId, bool oldValue, bool newValue) noexcept;
+void RaiseExpandedChanged(ICustomUiAutomationHost& host, int nodeId, bool oldValue, bool newValue) noexcept;
 
 //! Removes keyboard mnemonics while retaining escaped ampersands for screen-reader names.
 [[nodiscard]] std::wstring StripMenuMnemonics(const std::wstring& value);

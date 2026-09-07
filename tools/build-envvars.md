@@ -89,6 +89,7 @@ release promotionだけは、exact `x64`/`Release` compileのstep内で4つのse
 |`SENP_PROTOCOL_OUTPUT`|C++またはRust codecが正規化した共通fixtureのJSONL出力先。|
 |`SENP_PROTOCOL_PEER_FILE`|反対側のcodec出力を検証するJSONL入力先。runnerは依存順に設定します。|
 |`SAKURA_SENP_TEST_COMPONENT`|旧v1の実component回帰試験に使う、Debug build済みIndent Rainbow component。|
+|`SAKURA_SENP_VIEW_PROBE`|描画runnerが専用子testだけへ`1`を設定します。disabledのnative View probeを最大120秒の外部キャプチャ対象にするtest専用変数です。通常アプリには影響しません。|
 
 詳細と実行順は[SENP v2 runtime契約](../docs/senp-v2-runtime.md)を参照してください。
 

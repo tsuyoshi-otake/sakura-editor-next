@@ -6,6 +6,8 @@
   [`editor/CLAUDE.md`](editor/CLAUDE.md)
 - Contribution layout state and durable layout mementos:
   [`layout/CLAUDE.md`](layout/CLAUDE.md)
+- Retained native ViewContainer pages and independent SENP Views:
+  [`viewcontainer/CLAUDE.md`](viewcontainer/CLAUDE.md)
 - Native projection of validated Workbench snapshots:
   [`win32/CLAUDE.md`](win32/CLAUDE.md)
 - Markdown hover rendering (`HoverWidget` / `renderMarkdown` equivalents):

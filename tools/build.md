@@ -942,6 +942,23 @@ build-gnu.bat MinGW Debug
 build-gnu.bat MinGW Release
 ```
 
+## SENP native Viewの描画検証
+
+`build-sln.bat x64 Debug`でtest targetを含めてbuildした後、次を実行する。
+
+```powershell
+pwsh -NoProfile -File tools/verify-senp-view-rendering.ps1 -Repetitions 2 -OutputDirectory "$env:USERPROFILE/tmp/senp-view-rendering"
+```
+
+専用の可視fixtureを一時表示するため、他のUI操作と同時に実行しない。
+3テーマ・96/144/192 DPIでcollapse、resize、View/container移動を往復し、
+`evidence.json`とscreen/PrintWindow/diff画像、検証processの終了証跡を保存する。
+`-Repetitions 2`は144試行。stock EDIT bodyは状態保持のfixtureで、GitHub拡張の画面ではない。
+High Contrastはsystem colorから解決したpaletteを注入し、OS設定自体は変更しない。
+PrintWindowの子control描画欠落は同一配置の追加取得を最大2回記録し、
+元の実画面が全面再描画および追加取得で変化せず、独立したnoise floorを確認できた場合のみ区別する。
+失敗画像を残し、閾値を緩めて合格にしない。通常のtest起動ではこのprobeは無効。
+
 ## 参考情報
 
 ### Chocolatey関連

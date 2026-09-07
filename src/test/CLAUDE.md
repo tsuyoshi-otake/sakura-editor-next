@@ -126,6 +126,17 @@ explicitly; this skip is never acceptance evidence. The fixtures belong in a
 temporary work directory and must not be staged into product output or installed
 as extensions. Details and limits are in `docs/senp-v2-runtime.md`.
 
+### SENP native View rendering
+
+`SenpViewContainer.*` uses short-lived native windows and owns its own COM
+apartment. The normal filter does not enable `DISABLED_VisualCaptureProbe`.
+`pwsh -NoProfile -File tools/verify-senp-view-rendering.ps1` enables that one
+probe, sets its test-only environment variable, captures actual screen pixels
+and PrintWindow, checks same-geometry redraw noise, and verifies process exit.
+The fixture has its own 120-second deadline and is never a product body provider.
+Keep UIA lifetime tests in the combined run as well as isolated debugging:
+stale HWND/event-map state previously made only the combined run fail.
+
 ## Build-Dependency Invariants
 
 - GoogleTest package resolution and staging must remain conditional on their declared inputs/outputs; do not add a second source-build path that runs on every `tests1` compile.

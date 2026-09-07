@@ -22,7 +22,14 @@ G04のowner transaction・純粋catalog登録・runtime回収契約も実装し�
 実Wasm owner更新を追加した受入runnerでnative 37件、Rust 15件が合格。
 join失敗時の再試行ループを負例で再現して修正した。native page/commandの具体的な公開は
 U01/U06、broker grantはT02、package受理はそれらの接続後に検証する。
-schema 2は引き続きUnsupportedRuntimeで、未実装の画面を公開しない。
+U01の複数View native page、SCM共通22-DIP header、独立したbody保持・collapse・移動を実装。
+native focused 71 testsで実window、UIA/MSAA、失効と回収を検証した。
+描画runnerは3テーマ・3 DPI、collapse/resize/View移動/container移動の往復を検査し、
+実画面、PrintWindow、全面再描画のnoise floorとprocess終了を記録する。
+SCM比較は固定repository fixtureで実画面差分0%。子surfaceのPrintWindow差分は
+旧headerのA/Bにも存在（旧6.00%、新5.63%、各4試行中3件）する取得側の制約で、
+全体frameと実画面の再描画前後は両版とも差分0%だった。
+schema 2は引き続きUnsupportedRuntimeで、Tree/Document bodyと公開・永続化adapterは後続工程。
 CI workflowは追加済みで、remote CI実行はpush後の確認事項。
 G02のsemantic台帳はexact source commit `f881170f28b3c17d195c145b6f2396704cffa47a`
 から正規手順で受理した。追加35件は既定のconst equality operator 33件と
@@ -59,12 +66,12 @@ G02のsemantic台帳はexact source commit `f881170f28b3c17d195c145b6f2396704cff
 | G03a | bounded dispatch・ack・要求終端のsession実装 | G02 | `SenpEffectProtocol.*:SenpRuntimeLifecycle.*`とRust `effect_session` | sequence順序・ID再送/Conflict、pendingが全て一度終端、切断後の古いevent反映0 |
 | G03b | Win32 process・期限付き双方向IPC・実Wasm接続 | G03a | `py -3 tools/verify-senp-runtime.py --offline`と終了後のprocess照合 | 読書き停止・途中frame・crash・メモリ超過でも終端、実v2 Wasm実行、child残存0 |
 | G04 | owner単位のcontribution登録・dispose契約とruntime回収 | G03b/F02 | `SenpViewLifecycle.*`と実Wasm owner lifecycle | 部分登録なし、更新失敗は旧owner維持、失効後の反映0、回収失敗の所有権保持 |
-| U01 | SCMを参照したcontainer内の複数View nativeページ | G04 | `SenpViewContainer.*`、同一条件のSCM比較、dual-capture | View独立、ヘッダー/余白/action整合、resize/移動/focusに描画残りなし |
+| U01 | SCMを参照したcontainer内の複数View nativeページ | G04 | `SenpViewContainer.*:ViewPaneStackLayout.*`、`verify-senp-view-rendering.ps1`、同一条件のSCM比較 | View独立、ヘッダー/余白/action整合、resize/移動/focusに描画残りなし |
 | U02 | lazy TreeDataProviderとstable item選択 | U01 | `SenpTreeProvider.*`、SCM行密度/選択/scroll比較 | page/expand/refresh、重複・循環・stale拒否、テーマ/DPI/keyboard整合 |
 | U03 | readonly Editor input/surface切替 | G04 | `SenpReadonlyWorkbench.*` | dirty/undoを保持して詳細と編集を往復 |
 | U04 | readonly Markdown/metadata renderer | U03 | `SenpReadonlyDocument.*`、native UI | 本文表示、script無効、local asset権限漏れ0 |
 | U05 | chunk付きtext resourceと検索・コピー | U03 | `SenpTextResource.*` | UTF-8境界・上限・partial・失効を区別 |
-| U06 | command/menu/activationと汎用sample拡張 | U02/U04/U05 | sampleのnative総合試験、SCM比較の状態matrix | GitHub固有コードなしで2 View/本文/ログ表示、loading/empty/error/focus明示 |
+| U06 | command/menu/activation・page公開/状態永続化と汎用sample拡張 | U02/U04/U05 | sampleのnative総合試験、profileのcollapse/size復元、SCM比較の状態matrix | GitHub固有コードなしで2 View/本文/ログ表示、loading/empty/error/focus明示 |
 | T01 | Git runnerからprocess primitiveのみ抽出 | F04 | `BoundedProcessRunner.*:GitCommandRunner.*` | SCM無回帰、argv・pipe・job cleanup |
 | T02 | Control brokerのowner/grant認可 | T01/G03b/G04 | `SenpToolGrants.*` | 別owner/profile/digest/失効handleを拒否 |
 | T03 | gh検出・version・read-only argv/env policy | T02 | `GhToolPolicy.*` | shell/任意flag/別repo/env注入0、未導入は明示状態 |

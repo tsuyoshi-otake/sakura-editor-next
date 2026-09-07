@@ -15,6 +15,7 @@
 #include "workbench/search/CSearchWorkbenchTool.h"
 #include "workbench/rendering/FrameSurfaceCommitState.h"
 #include "workbench/viewcontainer/ViewContainerPagePool.h"
+#include "workbench/viewcontainer/IViewContainerPageProjection.h"
 
 #include <cstdint>
 #include <memory>
@@ -34,31 +35,6 @@ inline constexpr std::string_view SourceControl = layout::ids::viewContainer::So
 inline constexpr std::string_view Search = layout::ids::viewContainer::Search;
 inline constexpr std::string_view Extensions = layout::ids::viewContainer::Extensions;
 } // namespace pageIds
-
-//! Required Win32 projection companion for contributed IViewContainerPage products.
-//! The retained page/pool contract stays presentation-neutral. Native contribution
-//! registration fails closed unless its product also implements this interface.
-class IViewContainerPageProjection {
-public:
-	virtual ~IViewContainerPageProjection() = default;
-	virtual void ActivateProjection() noexcept = 0;
-	virtual void DeactivateProjection() noexcept = 0;
-	[[nodiscard]] virtual bool PreTranslateProjection(MSG& message) noexcept = 0;
-	//! Places the reparented native root in host coordinates, then lays out its
-	//! children in root-local coordinates. Keeping both rectangles in one call
-	//! prevents a physical host from applying only half of the geometry contract.
-	virtual void LayoutProjection(const RECT& hostBounds, const RECT& contentBounds,
-		unsigned int dpi) noexcept = 0;
-	virtual void SetProjectionVisible(bool visible) noexcept = 0;
-	//! Optional presentation updates for contributed native pages. Defaults keep
-	//! existing projections source-compatible while allowing a contribution to
-	//! follow the same theme and language lifecycle as built-in pages.
-	virtual void SetProjectionPalette(const theme::ThemePalette&) noexcept {}
-	virtual void RefreshProjectionStrings() noexcept {}
-	//! Content invalidation is explicit so semantic workspace changes can update
-	//! an active contributed page without polling or activating an inactive page.
-	virtual void RefreshProjectionContent() noexcept {}
-};
 
 //! Independently testable production router for contributed native products.
 //! It borrows the retained pool, validates every contribution before publication,

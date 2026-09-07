@@ -112,6 +112,50 @@ Pollはworker終了後にだけjoinする。join失敗を次のPollで再試行�
 失敗joinを一度再試行できる。processの実終了を確認できなければfalseを返し、成功扱いやdetachはしない。
 G03同様、OS故障まで含むcleanup完了の保証ではない。
 
+## native ViewContainer/Viewの投影（U01）
+
+[CSenpViewContainers](../sakura_core/workbench/viewcontainer/SenpViewContainer.h)はowner generationごとに
+全containerとView本文を非表示で準備する。本文factoryはnative compositionの必須入力で、
+未対応の本文をplaceholderで代用しない。PagePoolはcontainerをPartへ取り付け、View本文は
+独立して保持する。同じowner内でViewを移動して元containerを閉じても、そのViewのHWND・
+選択・折り畳み状態は残る。全ownerのCloseはcallbackを先に失効し、本文を含むnative資源を回収する。
+
+配置・visibilityは確定済みlayout snapshotから反映する。未知の移動先や重複Viewは
+windowを動かす前に拒否し、native移動失敗は元parentへ補償する。補償不能・予期しない
+HWND破棄は`IsUsable == false`またはCloseという明示的な終端になる。
+最大64 Viewの最低高さと比例配分をO(N)で計算し、収まらない場合は外側のscrollを使う。
+
+SCMと共有する見出しは、[VS Code paneview.css](https://github.com/microsoft/vscode/blob/e6aeab60511647b9b00f0bf2f0f02b15f278abb5/src/vs/base/browser/ui/splitview/paneview.css)
+を確認して22 DIPへそろえた。16-DIP icon、11-DIP uppercase title、CJKのnormal weight、
+title actionのpadding/gapも共通化する。Enter/Space/Left/Rightで開閉し、Up/Downで隣の見出しへ
+移る。本文と見出しのfocus通知をまとめ、無効commandは実行しない。
+既存UIA/MSAA providerへ展開状態を追加し、実クライアントの操作と破棄後の拒否を検査した。
+単独では通ったUIA testが一括実行で失敗したため、[Microsoftの破棄契約](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationcoreapi/nf-uiautomationcoreapi-uiareturnrawelementprovider)
+に従ってWM_DESTROYでWindows側のHWND/event mapも解放する。
+
+この段階ではnative body portとpage lifetimeが対象で、U02のTree本文やU06の動的公開はまだ
+接続しない。別cohortへのView移動はnative retention契約がないため`Unsupported`。
+collapse/sizeはSnapshotで回収でき、初期値を構築時に渡せるが、永続化はU06のcompositionが担う。
+schema 2のpackage gateは引き続きUnsupportedRuntimeである。
+
+```powershell
+build-sln.bat x64 Debug
+pwsh -NoProfile -ExecutionPolicy Bypass -File tools/verify-senp-view-rendering.ps1 -Repetitions 2
+```
+
+描画runnerはdisabledの専用probeだけを明示実行し、`SAKURA_SENP_VIEW_PROBE=1`を子processに設定する。
+probeは120秒で自ら終了し、driverは140秒を上限としてfinallyで起動PIDを回収・再照合する。
+`-Tests1`、`-OutputDirectory`、`-Repetitions`（1–4）、`-AllowedExcessPercent`（既定0.05）を受け取る。
+既定出力は`~/tmp/senp-view-rendering/`。実アプリのprofile・設定・packageは変更しない。
+
+CopyFromScreen/PrintWindow、同じ形状での全面再描画後のnoise floor、再描画前後の実画面を保存する。
+初回表示はpaintを強制せず実画面3 frameの安定を待ち、各試行は遮蔽gridと実geometry変化を検査する。
+stock EDIT本文がresize直後のPrintWindowでだけ文字を省く場合は、実画面が全面再描画前後で一致し、
+その後のPrintWindowとも一致した場合に限り`printOnlyOmission`として分離する。画像は残す。
+Dark/Light/システムHigh Contrast palette × 96/144/192 DPIで、折り畳み・幅変更・View移動・
+container移動を反復する。High Contrastはpalette投影の検査で、OSの設定を変更する検査ではない。
+専用本文のEDITは選択・scroll・HWND保持を観測するfixtureであり、完成したGitHub画面ではない。
+
 ## 再現可能な実プロセス検査
 
 ```powershell

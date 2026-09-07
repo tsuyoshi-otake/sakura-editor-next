@@ -1,7 +1,8 @@
 # SENP GitHub拡張 基本設計・API設計案
 
-状態: G01/G02のschema・WIT・codec、G03a/G03bのsessionと実host、G04のowner lifecycle契約を実装済み。
-native page/commandの公開adapter、tool broker、GitHub拡張、v2 package受理は後続工程。
+状態: G01/G02のschema・WIT・codec、G03a/G03bのsessionと実host、G04のowner lifecycle、
+U01の複数View native pageとSCM共通headerを実装済み。
+Tree/Document body、page/commandの公開adapter、tool broker、GitHub拡張、v2 package受理は後続工程。
 作成日: 2026-09-07。
 調査対象: `5346511f26fa04cc13acdad21ff603b4813e6768` のチェックアウト。
 追跡Issue: [#296 — Design SENP v2 GitHub Issues/PR and Actions extensions using gh](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/296)。
@@ -112,13 +113,13 @@ undo stackへ載せない。inputのrestoreはidentityだけを保存し、内�
 サイドバー内の各Viewは、既存の
 [`CScmWorkbenchTool`](../sakura_core/workbench/scm/CScmWorkbenchTool.cpp)の
 密度、余白、ヘッダー、選択状態、タイトルアクションを参照して設計する。
-以下は調査時点のコードで確認した参照値。実装では共有テーマとDPI変換を使い、
+以下は調査とU01実装で確認した参照値。共有テーマとDPI変換を使い、
 同じ役割の寸法・色を汎用View側に重複定義しない。抽出は表示primitiveに限定し、
 Gitの状態・refresh worker・SCM resource groupをGitHub拡張へ持ち込まない。
 
 | 要素 | SCMで確認した基準 | GitHub Viewへの適用 |
 |---|---|---|
-| Viewヘッダー | `kScmViewHeaderHeightDip = 30`、左右inset 10 DIP、16 DIPの開閉アイコン、その後4 DIP | 開閉、タイトル、右寄せactionを同じ行に置く。長いタイトルはaction領域の手前で省略 |
+| Viewヘッダー | U01でSCMの旧30 DIPをVS Codeの22 DIPに統一。16 DIPの開閉アイコン、左右margin 2 DIP、11 DIPの大文字title | 共通`ViewPaneChrome`で開閉、タイトル、右寄せactionを同じ行に置く。長いタイトルはaction領域の手前で省略 |
 | 一覧の密度 | repository/graph行22 DIP、行inset 10 DIP、icon 16 DIP | Issue/PR/Workflow/Run/Jobは一行の要約とし、主labelと補助descriptionを分ける。長い本文は詳細Editorに置く |
 | 色と文字 | `CThemeService`、`ThemeFontKind::Chrome`、`palette.sideBar/primaryText/descriptionText/border` | 色・フォントをテーマから解決。セクション境界は既存の細線。独自のカードや影を足さない |
 | hoverと選択 | hover/非focus選択は`palette.raised`、focus選択は`palette.accent/highlightText` | hover・選択・キーボードfocusを区別。更新後もstable item IDで選択を保持 |
@@ -135,7 +136,10 @@ U01/U02/U06では同一テーマ・DPI・サイドバー幅のSCMを横に並べ
 折り畳み、resize、View移動を受入fixtureに含める。
 描画の確認は[dual-capture手順](../.claude/skills/stale-pixel-verification/SKILL.md)で
 画面上のpixelとPrintWindowを比較し、寸法・状態・アクセシビリティの確認を併用する。
-本設計段階ではSCMコードを調査しただけで、新Viewの実表示を検証済みとはしない。
+U01では実native子windowによるcollapse、View/container移動、focus、UIA/MSAA、
+3テーマ・3 DPIのdual-captureを検証した。bodyはstock EDITの保持状態を検査するfixtureで、
+GitHub一覧・本文の実装済み画面ではない。SCMの実画面は変更前後とも全面再描画との差分0%。
+SCM子surfaceのPrintWindow差分は変更前にも約6%あり、実画面の描画不良と区別して記録する。
 
 記録する差異: nativeの読取専用Document APIはVS Code Webview APIではない。
 任意HTML/JS/CSSを受け取らない。アイコンは現在のSENPのThemeIcon制約を継続する。

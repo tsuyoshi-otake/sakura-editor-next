@@ -13,6 +13,7 @@
 #include "workbench/scm/GitScmMenus.h"
 #include "workbench/scm/GitScmPublisher.h"
 #include "workbench/scm/ScmViewStackLayout.h"
+#include "workbench/viewcontainer/ViewPaneChrome.h"
 
 #include "theme/CThemeService.h"
 #include "workbench/IconMetrics.h"
@@ -62,15 +63,15 @@ constexpr std::size_t kMaximumStatusBytes = 4u * 1024u * 1024u;
 //! Current VS Code stacks independent Repositories, Changes, and Graph Views
 //! inside the Source Control ViewContainer.  This native host draws matching
 //! section headers inside its single SCM HWND.
-constexpr int kScmViewHeaderHeightDip = 30;
+constexpr int kScmViewHeaderHeightDip = viewcontainer::kViewPaneHeaderDip;
 //! One repository row, matching upstream's `ListDelegate.getHeight` for the
 //! `repository` template.
-constexpr int kRepositoryRowHeightDip = 22;
+constexpr int kRepositoryRowHeightDip = viewcontainer::kViewPaneRowDip;
 //! The row's own left/right inset, shared with all View headers so their labels
 //! and their content line up.
-constexpr int kRowInsetDip = 10;
+constexpr int kRowInsetDip = viewcontainer::kViewPaneRowInsetDip;
 //! `.scm-provider > .icon`, which is `$(repo)` for a provider with no `iconPath`.
-constexpr int kRepositoryIconDip = 16;
+constexpr int kRepositoryIconDip = viewcontainer::kViewPaneIconDip;
 constexpr int kRepositoryIconGapDip = 6;
 //! Padding inside one toolbar button, on each side of its rendered label.
 constexpr int kActionInsetDip = 6;
@@ -158,9 +159,9 @@ constexpr int kGraphDefaultBodyHeightDip = 180;
 constexpr int kGraphMinimumBodyHeightDip = 44;
 constexpr int kChangesMinimumBodyHeightDip = 66;
 //! `.monaco-sash` is 4px, centred on the boundary it drags.
-constexpr int kSashHeightDip = 4;
+constexpr int kSashHeightDip = viewcontainer::kViewPaneSashDip;
 //! One history row, upstream's `HistoryItemRenderer` height.
-constexpr int kGraphRowHeightDip = 22;
+constexpr int kGraphRowHeightDip = viewcontainer::kViewPaneRowDip;
 //! Horizontal distance between two swimlanes, and the commit circle's radius.
 constexpr int kGraphLaneWidthDip = 11;
 constexpr int kGraphCircleRadiusDip = 4;
@@ -1784,34 +1785,10 @@ struct CScmWorkbenchTool::Impl {
 	void PaintViewHeader(HDC dc, RECT bounds, EScmTextKey key, std::wstring_view fallback,
 		bool collapsed)
 	{
-		if (bounds.right <= bounds.left || bounds.bottom <= bounds.top) return;
-		// Every pane header but the first draws the side bar's section separator,
-		// the same one the Outline header draws in the Explorer container.  The
-		// topmost pane has the view container's own title above it, so a line
-		// there would double that boundary.
 		RECT client{};
 		if (window) ::GetClientRect(window, &client);
-		if (bounds.top > client.top) {
-			const HPEN separator = ::CreatePen(PS_SOLID, 1, palette.border.ToColorRef());
-			const HGDIOBJ previousPen = ::SelectObject(dc, separator);
-			::MoveToEx(dc, bounds.left, bounds.top, nullptr);
-			::LineTo(dc, bounds.right, bounds.top);
-			::SelectObject(dc, previousPen);
-			::DeleteObject(separator);
-		}
-		const int headerInset = icons::ScaleDip(kRowInsetDip, dpi);
-		const int twistieSide = icons::ScaleDip(16, dpi);
-		const LONG twistieTop = bounds.top + (bounds.bottom - bounds.top - twistieSide) / 2;
-		const RECT twistie{ bounds.left + headerInset, twistieTop,
-			bounds.left + headerInset + twistieSide, twistieTop + twistieSide };
-		DrawScmIcon(dc, collapsed ? L"chevron-right" : L"chevron-down", twistie,
-			palette.secondaryText.ToColorRef());
-		bounds.left = twistie.right + icons::ScaleDip(4, dpi);
-		if (bounds.right <= bounds.left) return;
 		const std::wstring title = ResolveViewTitle(key, fallback);
-		::SetTextColor(dc, palette.primaryText.ToColorRef());
-		::DrawTextW(dc, title.c_str(), static_cast<int>(title.size()), &bounds,
-			DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+		viewcontainer::PaintViewPaneHeader(dc, bounds, title, collapsed, bounds.top > client.top, dpi, palette);
 	}
 	void PaintGraph(HDC dc)
 	{

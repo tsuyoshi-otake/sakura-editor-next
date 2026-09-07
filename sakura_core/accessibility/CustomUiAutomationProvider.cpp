@@ -24,7 +24,8 @@ constexpr int kRootNode = -1;
 class CustomUiAutomationProvider final : public IRawElementProviderSimple,
 	public IRawElementProviderFragment,
 	public IRawElementProviderFragmentRoot,
-	public IInvokeProvider {
+	public IInvokeProvider,
+	public IExpandCollapseProvider {
 public:
 	CustomUiAutomationProvider(ICustomUiAutomationHost& host, int nodeId) noexcept
 		: m_host(host), m_lifetime(host.AccessibilityLifetime()), m_nodeId(nodeId)
@@ -41,8 +42,10 @@ public:
 			*object = static_cast<IRawElementProviderFragment*>(this);
 		} else if (m_nodeId == kRootNode && iid == __uuidof(IRawElementProviderFragmentRoot)) {
 			*object = static_cast<IRawElementProviderFragmentRoot*>(this);
-		} else if (HostAvailable() && m_nodeId != kRootNode && iid == __uuidof(IInvokeProvider) && Node().invoke) {
+		} else if (HostAvailable() && iid == __uuidof(IInvokeProvider) && Node().invoke) {
 			*object = static_cast<IInvokeProvider*>(this);
+		} else if (HostAvailable() && iid == __uuidof(IExpandCollapseProvider) && Node().expanded.has_value()) {
+			*object = static_cast<IExpandCollapseProvider*>(this);
 		}
 		if (*object == nullptr) return E_NOINTERFACE;
 		AddRef();
@@ -68,8 +71,11 @@ public:
 	{
 		if (pattern == nullptr) return E_INVALIDARG;
 		*pattern = nullptr;
-		if (HostAvailable() && patternId == UIA_InvokePatternId && m_nodeId != kRootNode && Node().invoke) {
+		if (HostAvailable() && patternId == UIA_InvokePatternId && Node().invoke) {
 			*pattern = static_cast<IInvokeProvider*>(this);
+			AddRef();
+		} else if (HostAvailable() && patternId == UIA_ExpandCollapsePatternId && Node().expanded.has_value()) {
+			*pattern = static_cast<IExpandCollapseProvider*>(this);
 			AddRef();
 		}
 		return S_OK;
@@ -92,6 +98,9 @@ public:
 		case UIA_IsOffscreenPropertyId: value->vt = VT_BOOL; value->boolVal = IsOffscreen(node.bounds) ? VARIANT_TRUE : VARIANT_FALSE; break;
 		case UIA_BoundingRectanglePropertyId: SetBoundingRectangle(value, node.bounds); break;
 		case UIA_ProviderDescriptionPropertyId: SetBstr(value, L"Sakura Editor NEXT custom UI Automation provider"); break;
+		case UIA_ExpandCollapseExpandCollapseStatePropertyId:
+			if (node.expanded) { value->vt = VT_I4; value->lVal = *node.expanded ? ExpandCollapseState_Expanded : ExpandCollapseState_Collapsed; }
+			break;
 		default: break;
 		}
 		return S_OK;
@@ -175,7 +184,7 @@ public:
 
 	HRESULT STDMETHODCALLTYPE SetFocus() override
 	{
-		if (HostAvailable() && m_nodeId != kRootNode && Node().enabled) {
+		if (HostAvailable() && (m_nodeId != kRootNode || Node().invoke || Node().expanded.has_value()) && Node().enabled) {
 			m_host.AccessibilitySetFocus(m_nodeId);
 			const HWND window = m_host.AccessibilityWindow();
 			if (window != nullptr && ::IsWindow(window)) ::SetFocus(window);
@@ -214,19 +223,37 @@ public:
 		if (provider == nullptr) return E_INVALIDARG;
 		if (!HostAvailable()) return UIA_E_ELEMENTNOTAVAILABLE;
 		const int focused = m_host.AccessibilityFocusedNode();
-		*provider = focused == -1 ? nullptr : NewProvider(focused);
+		*provider = focused == -1 && !Node().focused ? nullptr : NewProvider(focused);
 		return S_OK;
 	}
 
 	HRESULT STDMETHODCALLTYPE Invoke() override
 	{
 		if (!HostAvailable()) return UIA_E_ELEMENTNOTAVAILABLE;
-		if (m_nodeId == kRootNode || !Node().enabled || !Node().invoke) return UIA_E_NOTSUPPORTED;
+		if (!Node().enabled || !Node().invoke) return UIA_E_NOTSUPPORTED;
 		if (!m_host.AccessibilityInvoke(m_nodeId)) return UIA_E_ELEMENTNOTAVAILABLE;
+		return S_OK;
+	}
+	HRESULT STDMETHODCALLTYPE Expand() override { return ExpandCollapse(true); }
+	HRESULT STDMETHODCALLTYPE Collapse() override { return ExpandCollapse(false); }
+	HRESULT STDMETHODCALLTYPE get_ExpandCollapseState(ExpandCollapseState* state) override
+	{
+		if (!state) return E_INVALIDARG;
+		if (!HostAvailable()) return UIA_E_ELEMENTNOTAVAILABLE;
+		const auto expanded = Node().expanded;
+		*state = !expanded ? ExpandCollapseState_LeafNode : *expanded ? ExpandCollapseState_Expanded : ExpandCollapseState_Collapsed;
 		return S_OK;
 	}
 
 private:
+	HRESULT ExpandCollapse(bool expanded)
+	{
+		if (!HostAvailable()) return UIA_E_ELEMENTNOTAVAILABLE;
+		const auto node = Node();
+		if (!node.expanded) return UIA_E_NOTSUPPORTED;
+		if (!node.enabled) return UIA_E_ELEMENTNOTENABLED;
+		return m_host.AccessibilityExpandCollapse(m_nodeId, expanded) ? S_OK : UIA_E_ELEMENTNOTAVAILABLE;
+	}
 	[[nodiscard]] bool HostAvailable() const noexcept
 	{
 		return m_lifetime != nullptr && m_lifetime->IsAlive();
@@ -243,8 +270,7 @@ private:
 	{
 		if (!HostAvailable()) return { m_nodeId, L"", L"", UIA_CustomControlTypeId, {}, false, false, false };
 		if (m_nodeId == kRootNode) {
-			return { kRootNode, m_host.AccessibilityName(), m_host.AccessibilityAutomationId(),
-				m_host.AccessibilityControlType(), ClientBounds(), true, false, false };
+			return m_host.AccessibilityRootNode();
 		}
 		return m_host.AccessibilityNode(m_nodeId);
 	}
@@ -427,8 +453,9 @@ public:
 		if (!node) return E_INVALIDARG;
 		long value = 0;
 		if (!node->enabled) value |= STATE_SYSTEM_UNAVAILABLE;
-		if (node->enabled && node->id != kRootNode) value |= STATE_SYSTEM_FOCUSABLE;
+		if (node->enabled && (node->id != kRootNode || node->invoke || node->expanded.has_value())) value |= STATE_SYSTEM_FOCUSABLE;
 		if (node->focused) value |= STATE_SYSTEM_FOCUSED;
+		if (node->expanded) value |= *node->expanded ? STATE_SYSTEM_EXPANDED : STATE_SYSTEM_COLLAPSED;
 		if (IsOffscreen(node->bounds)) value |= STATE_SYSTEM_INVISIBLE;
 		state->vt = VT_I4;
 		state->lVal = value;
@@ -610,11 +637,7 @@ private:
 	}
 	[[nodiscard]] CustomUiAutomationNode RootNode() const
 	{
-		RECT bounds{};
-		const HWND window = HostAvailable() ? m_host.AccessibilityWindow() : nullptr;
-		if (window != nullptr && ::IsWindow(window)) ::GetClientRect(window, &bounds);
-		return { kRootNode, m_host.AccessibilityName(), m_host.AccessibilityAutomationId(),
-			m_host.AccessibilityControlType(), bounds, true, false, false };
+		return m_host.AccessibilityRootNode();
 	}
 	[[nodiscard]] std::optional<CustomUiAutomationNode> NodeFor(VARIANT child) const
 	{
@@ -770,6 +793,20 @@ void RaiseEnabledChanged(ICustomUiAutomationHost& host, int nodeId, bool oldValu
 	provider->Release();
 	const HWND window = host.AccessibilityWindow();
 	if (window != nullptr && ::IsWindow(window)) ::NotifyWinEvent(EVENT_OBJECT_STATECHANGE, window, OBJID_CLIENT, CHILDID_SELF);
+}
+
+void RaiseExpandedChanged(ICustomUiAutomationHost& host, int nodeId, bool oldValue, bool newValue) noexcept
+{
+	IRawElementProviderSimple* provider = NewSimpleProvider(host, nodeId);
+	if (!provider) return;
+	VARIANT previous{}, current{};
+	previous.vt = current.vt = VT_I4;
+	previous.lVal = oldValue ? ExpandCollapseState_Expanded : ExpandCollapseState_Collapsed;
+	current.lVal = newValue ? ExpandCollapseState_Expanded : ExpandCollapseState_Collapsed;
+	(void)::UiaRaiseAutomationPropertyChangedEvent(provider, UIA_ExpandCollapseExpandCollapseStatePropertyId, previous, current);
+	provider->Release();
+	if (const auto window = host.AccessibilityWindow(); window && ::IsWindow(window))
+		::NotifyWinEvent(EVENT_OBJECT_STATECHANGE, window, OBJID_CLIENT, CHILDID_SELF);
 }
 
 std::wstring StripMenuMnemonics(const std::wstring& value)
