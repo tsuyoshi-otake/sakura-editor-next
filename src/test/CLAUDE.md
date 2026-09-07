@@ -134,6 +134,13 @@ apartment. The normal filter does not enable `DISABLED_VisualCaptureProbe`.
 probe, sets its test-only environment variable, captures actual screen pixels
 and PrintWindow, checks same-geometry redraw noise, and verifies process exit.
 The fixture has its own 120-second deadline and is never a product body provider.
+`SenpTreeView.*` mounts the real native Tree body in a ViewContainer. Add
+`-ProbeSet TreeViews` to the same rendering script for the separately enabled
+Tree probe. It covers repeated expansion, resize, scroll and refresh; its
+typed runtime port supplies delayed result fixtures, not live GitHub data.
+Queue both pointer down and its up/cancel terminal before dispatching native
+control tests. TreeView's drag-detection loop otherwise waits inside a
+synchronous down message. Never leave such a test process running after failure.
 Keep UIA lifetime tests in the combined run as well as isolated debugging:
 stale HWND/event-map state previously made only the combined run fail.
 

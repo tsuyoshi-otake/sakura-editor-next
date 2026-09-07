@@ -1,4 +1,5 @@
 param(
+    [ValidateSet('ViewContainers', 'TreeViews')][string]$ProbeSet = 'ViewContainers',
     [string]$Tests1 = (Join-Path (Split-Path $PSScriptRoot -Parent) 'x64/Debug/tests1.exe'),
     [string]$OutputDirectory = (Join-Path $env:USERPROFILE 'tmp/senp-view-rendering'),
     [ValidateRange(1, 4)][int]$Repetitions = 1,
@@ -44,12 +45,12 @@ public static class SenpViewProbe {
     [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr window, IntPtr dc, uint flags);
     [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr SendMessageTimeoutW(IntPtr window, uint message, IntPtr wparam, IntPtr lparam, uint flags, uint timeout, out IntPtr result);
     [DllImport("dwmapi.dll")] public static extern int DwmFlush();
-    public static IntPtr Find(uint pid) {
+    public static IntPtr Find(uint pid, string caption) {
         IntPtr found = IntPtr.Zero;
         EnumWindows((window, unused) => { uint candidate; GetWindowThreadProcessId(window, out candidate);
             if (candidate != pid) return true;
             StringBuilder title = new StringBuilder(128); GetWindowTextW(window, title, 128);
-            if (title.ToString() != "SENP native ViewContainer verification") return true;
+            if (title.ToString() != caption) return true;
             found = window; return false; }, IntPtr.Zero);
         return found;
     }
@@ -123,14 +124,14 @@ public static class SenpViewProbe {
 
 $process = $null; $window = [IntPtr]::Zero
 $results = [Collections.Generic.List[object]]::new()
-$receipt = [ordered]@{ status = 'failed'; tests1 = $exe; binarySha256 = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash; trials = $results; cleanupConfirmed = $false }
+$receipt = [ordered]@{ status = 'failed'; probeSet = $ProbeSet; tests1 = $exe; binarySha256 = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash; trials = $results; cleanupConfirmed = $false }
 function Invoke-Probe([int]$Command, [long]$Parameter = 0) {
     $value = [SenpViewProbe]::Send($window, 0x8296, $Command, $Parameter)
     if ($value -eq [IntPtr]::Zero) { throw "Probe operation $Command failed." }
     return $value
 }
 function Save-Trial([string]$Name, [string]$Before, [string]$After) {
-    if ($Before -eq $After) { throw "Gesture $Name did not change native geometry." }
+    if ($Before -eq $After) { throw "Gesture $Name did not change native geometry or row state." }
     [void][SenpViewProbe]::DwmFlush()
     $pair = [SenpViewProbe]::Capture($window)
     $floor = $null
@@ -168,7 +169,9 @@ try {
     $start = [Diagnostics.ProcessStartInfo]::new($exe)
     $start.UseShellExecute = $false; $start.CreateNoWindow = $true; $start.WindowStyle = 'Hidden'
     $start.RedirectStandardOutput = $true; $start.RedirectStandardError = $true
-    $start.ArgumentList.Add('--gtest_filter=SenpViewContainer.DISABLED_VisualCaptureProbe')
+    $suite = if ($ProbeSet -eq 'TreeViews') { 'SenpTreeView' } else { 'SenpViewContainer' }
+    $caption = if ($ProbeSet -eq 'TreeViews') { 'SENP native TreeView verification' } else { 'SENP native ViewContainer verification' }
+    $start.ArgumentList.Add("--gtest_filter=$suite.DISABLED_VisualCaptureProbe")
     $start.ArgumentList.Add('--gtest_also_run_disabled_tests')
     $start.Environment['SAKURA_SENP_VIEW_PROBE'] = '1'
     $process = [Diagnostics.Process]::Start($start)
@@ -177,7 +180,7 @@ try {
     $ready = [Diagnostics.Stopwatch]::StartNew()
     $backoff = 10
     while ($ready.ElapsedMilliseconds -lt 10000 -and -not $process.HasExited) {
-        $window = [SenpViewProbe]::Find($process.Id)
+        $window = [SenpViewProbe]::Find($process.Id, $caption)
         if ($window -ne [IntPtr]::Zero -and [SenpViewProbe]::Send($window, 0x8296, 0, 0) -ne [IntPtr]::Zero) { break }
         Start-Sleep -Milliseconds $backoff; $backoff = [Math]::Min(200, $backoff * 2)
     }
@@ -206,16 +209,22 @@ try {
     foreach ($themeId in 0..2) { foreach ($dpi in 96, 144, 192) {
         [void](Invoke-Probe 1 (380 -bor (($dpi -bor ($themeId -shl 10)) -shl 16)))
         for ($repeat = 0; $repeat -lt $Repetitions; ++$repeat) {
-            foreach ($gesture in 'collapse', 'resize', 'view-move', 'container-move') { foreach ($direction in 1, 0) {
+            $gestures = if ($ProbeSet -eq 'TreeViews') { @('expand', 'resize', 'scroll', 'refresh') } else { @('collapse', 'resize', 'view-move', 'container-move') }
+            foreach ($gesture in $gestures) { foreach ($direction in 1, 0) {
                 if ($clock.Elapsed.TotalSeconds -gt 140) { throw 'Rendering run exceeded its overall deadline.' }
                 $before = [SenpViewProbe]::Geometry($body)
+                if ($ProbeSet -eq 'TreeViews') { $before += ':' + (Invoke-Probe 9).ToString() }
                 switch ($gesture) {
+                    'expand' { [void](Invoke-Probe 2 $direction) }
+                    'scroll' { [void](Invoke-Probe 3 $direction) }
+                    'refresh' { [void](Invoke-Probe 8 $direction) }
                     'collapse' { [void][SenpViewProbe]::Send($header, 0xF5, 0, 0) }
                     'resize' { $width = if ($direction) { 95 } else { 380 }; [void](Invoke-Probe 1 ($width -bor (($dpi -bor ($themeId -shl 10)) -shl 16))) }
                     'view-move' { [void](Invoke-Probe 2 $direction) }
                     'container-move' { [void](Invoke-Probe 3 $direction) }
                 }
                 $after = [SenpViewProbe]::Geometry($body)
+                if ($ProbeSet -eq 'TreeViews') { $after += ':' + (Invoke-Probe 9).ToString() }
                 Save-Trial "theme$themeId-dpi$dpi-r$repeat-$gesture-$direction" $before $after
             }}
         }

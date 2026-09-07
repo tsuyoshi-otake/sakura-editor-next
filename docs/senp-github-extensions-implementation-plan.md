@@ -29,7 +29,12 @@ native focused 71 testsで実window、UIA/MSAA、失効と回収を検証した�
 SCM比較は固定repository fixtureで実画面差分0%。子surfaceのPrintWindow差分は
 旧headerのA/Bにも存在（旧6.00%、新5.63%、各4試行中3件）する取得側の制約で、
 全体frameと実画面の再描画前後は両版とも差分0%だった。
-schema 2は引き続きUnsupportedRuntimeで、Tree/Document bodyと公開・永続化adapterは後続工程。
+U02のlazy Tree model/providerと実Win32 Tree bodyも実装。追加25件、既存View/SCMを含む96 testsで
+page/expand/refresh、scope/limit、取消、反復開閉、native command/keyboard、focus/scroll保持とUIAが合格。
+同一binaryによる3回の起動、3テーマ・3 DPIのexpand/resize/scroll/refresh計288試行が合格し、
+実画面の再描画差分は全試行0%。PrintWindow単独の欠落42件は同じgeometryのnoise floorで検証した。
+3,743件のtest inventory照合、encodingとno-op buildも合格し、runner残存0。
+schema 2は引き続きUnsupportedRuntimeで、Document bodyと公開・永続化adapterは後続工程。
 CI workflowは追加済みで、remote CI実行はpush後の確認事項。
 G02のsemantic台帳はexact source commit `f881170f28b3c17d195c145b6f2396704cffa47a`
 から正規手順で受理した。追加35件は既定のconst equality operator 33件と
@@ -67,7 +72,7 @@ G02のsemantic台帳はexact source commit `f881170f28b3c17d195c145b6f2396704cff
 | G03b | Win32 process・期限付き双方向IPC・実Wasm接続 | G03a | `py -3 tools/verify-senp-runtime.py --offline`と終了後のprocess照合 | 読書き停止・途中frame・crash・メモリ超過でも終端、実v2 Wasm実行、child残存0 |
 | G04 | owner単位のcontribution登録・dispose契約とruntime回収 | G03b/F02 | `SenpViewLifecycle.*`と実Wasm owner lifecycle | 部分登録なし、更新失敗は旧owner維持、失効後の反映0、回収失敗の所有権保持 |
 | U01 | SCMを参照したcontainer内の複数View nativeページ | G04 | `SenpViewContainer.*:ViewPaneStackLayout.*`、`verify-senp-view-rendering.ps1`、同一条件のSCM比較 | View独立、ヘッダー/余白/action整合、resize/移動/focusに描画残りなし |
-| U02 | lazy TreeDataProviderとstable item選択 | U01 | `SenpTreeProvider.*`、SCM行密度/選択/scroll比較 | page/expand/refresh、重複・循環・stale拒否、テーマ/DPI/keyboard整合 |
+| U02 | lazy TreeDataProviderとstable item選択 | U01 | `TreeViewModel.*:SenpTreeProviderTest.*:SenpTreeView.*`、`verify-senp-view-rendering.ps1 -ProbeSet TreeViews`、SCM行密度/選択/scroll比較 | page/expand/refresh、重複・循環・stale拒否、テーマ/DPI/keyboard整合 |
 | U03 | readonly Editor input/surface切替 | G04 | `SenpReadonlyWorkbench.*` | dirty/undoを保持して詳細と編集を往復 |
 | U04 | readonly Markdown/metadata renderer | U03 | `SenpReadonlyDocument.*`、native UI | 本文表示、script無効、local asset権限漏れ0 |
 | U05 | chunk付きtext resourceと検索・コピー | U03 | `SenpTextResource.*` | UTF-8境界・上限・partial・失効を区別 |

@@ -954,6 +954,9 @@ pwsh -NoProfile -File tools/verify-senp-view-rendering.ps1 -Repetitions 2 -Outpu
 3テーマ・96/144/192 DPIでcollapse、resize、View/container移動を往復し、
 `evidence.json`とscreen/PrintWindow/diff画像、検証processの終了証跡を保存する。
 `-Repetitions 2`は144試行。stock EDIT bodyは状態保持のfixtureで、GitHub拡張の画面ではない。
+`-ProbeSet TreeViews`を加えると実TreeView bodyのexpand/resize/scroll/refreshを同じ144試行で検証する。
+各操作の前後でnative rowのtext/state、first visibleとgeometryを観測し、取得結果を模したfixtureで
+表示・更新経路を検査する。GitHubのlive data接続を検査するものではない。
 High Contrastはsystem colorから解決したpaletteを注入し、OS設定自体は変更しない。
 PrintWindowの子control描画欠落は同一配置の追加取得を最大2回記録し、
 元の実画面が全面再描画および追加取得で変化せず、独立したnoise floorを確認できた場合のみ区別する。

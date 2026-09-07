@@ -17,6 +17,10 @@
 - The body owns its descendants and discards `interactionChanged` on Close.
   Report descendant focus and mouse entry/exit changes so the projection can
   coalesce one posted refresh. There are no polling timers or host I/O here.
+- A fatal native body failure calls `projectionFailed`; this marks the cohort
+  unusable without deleting the body during its own callback. Discard this
+  callback on Close too. A provider's ordinary loading/error state is not a
+  native projection failure.
 - `ViewPaneLayout` bounds the stack to 64 panes; layout distributes surplus in
   O(N), preserves minimum extents, and scrolls the container when they exceed
   available height. Even a viewport shorter than a header must have valid scroll

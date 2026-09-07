@@ -1,8 +1,8 @@
 # SENP GitHub拡張 基本設計・API設計案
 
 状態: G01/G02のschema・WIT・codec、G03a/G03bのsessionと実host、G04のowner lifecycle、
-U01の複数View native pageとSCM共通headerを実装済み。
-Tree/Document body、page/commandの公開adapter、tool broker、GitHub拡張、v2 package受理は後続工程。
+U01の複数View native pageとSCM共通header、U02のlazy Tree model/provider/native bodyを実装済み。
+Document body、page/commandの公開adapter、tool broker、GitHub拡張、v2 package受理は後続工程。
 作成日: 2026-09-07。
 調査対象: `5346511f26fa04cc13acdad21ff603b4813e6768` のチェックアウト。
 追跡Issue: [#296 — Design SENP v2 GitHub Issues/PR and Actions extensions using gh](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/296)。

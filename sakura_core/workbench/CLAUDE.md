@@ -8,6 +8,8 @@
   [`layout/CLAUDE.md`](layout/CLAUDE.md)
 - Retained native ViewContainer pages and independent SENP Views:
   [`viewcontainer/CLAUDE.md`](viewcontainer/CLAUDE.md)
+- Lazy Tree View state, SENP subscribers and native hierarchy projection:
+  [`tree/CLAUDE.md`](tree/CLAUDE.md)
 - Native projection of validated Workbench snapshots:
   [`win32/CLAUDE.md`](win32/CLAUDE.md)
 - Markdown hover rendering (`HoverWidget` / `renderMarkdown` equivalents):

@@ -133,8 +133,8 @@ title actionのpadding/gapも共通化する。Enter/Space/Left/Rightで開閉�
 単独では通ったUIA testが一括実行で失敗したため、[Microsoftの破棄契約](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationcoreapi/nf-uiautomationcoreapi-uiareturnrawelementprovider)
 に従ってWM_DESTROYでWindows側のHWND/event mapも解放する。
 
-この段階ではnative body portとpage lifetimeが対象で、U02のTree本文やU06の動的公開はまだ
-接続しない。別cohortへのView移動はnative retention契約がないため`Unsupported`。
+U01ではnative body portとpage lifetimeを扱い、U02のTree本文は以下の境界で接続する。
+U06の動的公開はまだ接続しない。別cohortへのView移動はnative retention契約がないため`Unsupported`。
 collapse/sizeはSnapshotで回収でき、初期値を構築時に渡せるが、永続化はU06のcompositionが担う。
 schema 2のpackage gateは引き続きUnsupportedRuntimeである。
 
@@ -145,7 +145,8 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File tools/verify-senp-view-rendering.p
 
 描画runnerはdisabledの専用probeだけを明示実行し、`SAKURA_SENP_VIEW_PROBE=1`を子processに設定する。
 probeは120秒で自ら終了し、driverは140秒を上限としてfinallyで起動PIDを回収・再照合する。
-`-Tests1`、`-OutputDirectory`、`-Repetitions`（1–4）、`-AllowedExcessPercent`（既定0.05）を受け取る。
+`-ProbeSet`（ViewContainers/TreeViews）、`-Tests1`、`-OutputDirectory`、`-Repetitions`（1–4）、
+`-AllowedExcessPercent`（既定0.05）を受け取る。
 既定出力は`~/tmp/senp-view-rendering/`。実アプリのprofile・設定・packageは変更しない。
 
 CopyFromScreen/PrintWindow、同じ形状での全面再描画後のnoise floor、再描画前後の実画面を保存する。
@@ -155,6 +156,43 @@ stock EDIT本文がresize直後のPrintWindowでだけ文字を省く場合は�
 Dark/Light/システムHigh Contrast palette × 96/144/192 DPIで、折り畳み・幅変更・View移動・
 container移動を反復する。High Contrastはpalette投影の検査で、OSの設定を変更する検査ではない。
 専用本文のEDITは選択・scroll・HWND保持を観測するfixtureであり、完成したGitHub画面ではない。
+
+## lazy Tree View（U02）
+
+[TreeViewModel](../sakura_core/workbench/tree/TreeViewModel.h)はOS/SENP非依存で、stable ID、
+親子関係、展開・選択、page/refreshと取消ticketを所有する。2,000 items、深さ16、256 items/page、
+保持文字列・metadata計8 MiB、同時8 parent loadsを上限とする。page全体を検証し、変更するnodeと
+兄弟列だけを準備してから反映する。全payloadの複製を避け、重複・循環・付替え・古いrevisionや
+cursor不整合は既存snapshotを残して失敗にする。refreshはstable IDの選択と利用者の展開を保持する。
+
+[SenpTreeProvider](../sakura_core/workbench/tree/SenpTreeProvider.h)はvisible rootから必要な枝だけを
+非同期で取得し、葉・閉じた枝・非表示Viewは取得しない。同じ親の処理を重複させず、30秒の期限、
+hide/collapse/refresh/owner失効でsubscriberを終端する。busy/error/timeoutは明示retryまで再送しない。
+native portがowner全体でrequest generationを発行し、派生tool結果のoperation IDが変わっても
+owner/workspace/account/requestのscopeを照合する。実toolの回収はbrokerが引き続き所有する。
+
+[CSenpTreeView](../sakura_core/workbench/tree/SenpTreeView.h)は実Win32 TreeViewをU01 bodyへ載せる。
+22-DIP row、16-DIP icon、label/description、SCM共通palette/overlay scrollbarを使い、Loading、
+Empty、Retry、Load moreはextension item IDと分離したnative状態行とする。選択だけではcommandを
+実行せず、対になったclickまたはEnterで実行する。command付きの枝はtwistieでのみ開閉する。
+native hierarchy/keyboard/MSAA/UIA ExpandCollapseを使う。native accessible nameはlabelとdescription、
+詳細tooltipはinfo tipに対応し、VS Codeのtooltip優先aria nameとは異なる。このWin32側の制約は
+[所属境界](../sakura_core/workbench/tree/CLAUDE.md)に記録する。
+
+`TVM_EXPAND`は初回展開後に通知を省くため、要求入口でもmodelへ反映する。scroll復元時に閉じた枝の
+子を指定すると親が自動展開されるので、閉じた親へanchorを戻す。native stateはbitを明示的にmaskする。
+native生成・描画の致命的失敗はbodyを破棄して`projectionFailed`でcohortへ伝え、普通の取得失敗とは分ける。
+
+```powershell
+build-sln.bat x64 Debug
+pwsh -NoProfile -File tools/verify-senp-view-rendering.ps1 -ProbeSet TreeViews -Repetitions 2
+```
+
+通常の`TreeViewModel.*:SenpTreeProviderTest.*:SenpTreeView.*`は25 tests。
+実ウィンドウでlazy load、page/retry、取消、反復開閉、command、focus/scroll維持、owner失敗とUIAを検証する。
+別起動の描画probeは3テーマ・3 DPIでexpand/resize/scroll/refreshを往復し、実native row text/stateと
+geometryの変化を確認してからdual captureする。provider portのfixtureであり、GitHubのlive dataや
+Wasm/tool brokerの結合はU06/T工程で検査する。v2 package gateは引き続きUnsupportedRuntime。
 
 ## 再現可能な実プロセス検査
 

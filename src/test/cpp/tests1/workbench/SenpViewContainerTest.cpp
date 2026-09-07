@@ -39,7 +39,7 @@ public:
 	EViewContainerLocation Location() const noexcept { return m_location; }
 	bool Focus() noexcept override { ::SetFocus(m_window); return ::GetFocus() == m_window; }
 	bool PreTranslate(MSG&) noexcept override { return false; }
-	void Close() noexcept override { m_host.interactionChanged = {}; if (m_window) ::DestroyWindow(m_window); m_window = nullptr; }
+	void Close() noexcept override { m_host.interactionChanged = {}; m_host.projectionFailed = {}; if (m_window) ::DestroyWindow(m_window); m_window = nullptr; }
 private:
 	static LRESULT CALLBACK Procedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR data)
 	{

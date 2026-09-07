@@ -230,6 +230,8 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkbenchPanelHostTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\workbench\ViewContainerPagePoolTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\workbench\SenpViewContainerTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\SenpTreeProviderTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\SenpTreeViewTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkbenchRuntimeTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\WorkspaceConfigurationDocumentParserTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\WorkspaceWindowTransitionServiceTest.cpp" />

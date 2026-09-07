@@ -3232,6 +3232,15 @@
 	<ClCompile Include="..\sakura_core\workbench\viewcontainer\ViewPaneChrome.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\tree\TreeViewModel.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\tree\SenpTreeProvider.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\tree\SenpTreeView.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\viewcontainer\ViewContainerPagePool.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>

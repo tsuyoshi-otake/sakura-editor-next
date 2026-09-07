@@ -1397,6 +1397,9 @@
 	<ClCompile Include="..\sakura_core\workbench\viewcontainer\CViewContainerPages.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\viewcontainer\SenpViewContainer.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\viewcontainer\ViewPaneChrome.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\tree\TreeViewModel.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\tree\SenpTreeProvider.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\tree\SenpTreeView.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\viewcontainer\ViewContainerPagePool.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\viewcontainer\ViewContainerPageRegistry.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\extensions\CExtensionsWorkbenchTool.cpp" />

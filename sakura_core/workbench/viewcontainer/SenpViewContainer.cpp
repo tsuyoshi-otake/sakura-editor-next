@@ -225,7 +225,7 @@ struct CSenpViewContainers::Impl {
 				info.lpszText = const_cast<LPWSTR>(L"");
 				if (!::SendMessageW(pane.tooltip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&info))) return false;
 			}
-			pane.body = pane.definition.createBody({ pane.root.window, [this, &pane] { ScheduleInteraction(pane); } });
+			pane.body = pane.definition.createBody({ pane.root.window, [this, &pane] { ScheduleInteraction(pane); }, [this]() noexcept { Fault(); } });
 			if (!pane.body || !::IsWindow(pane.body->Window()) || ::GetParent(pane.body->Window()) != pane.root.window) return false;
 			pane.body->SetVisible(false); pane.bodyLocation = Location(*pane.container);
 			pane.body->SetPalette(palette, pane.bodyLocation);

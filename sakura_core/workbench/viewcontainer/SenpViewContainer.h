@@ -37,6 +37,10 @@ struct SenpViewBodyHost final {
 	//! state changes. The projection coalesces this into one posted UI update.
 	//! The body must discard this callback on Close; it never outlives the body.
 	std::function<void()> interactionChanged;
+	//! Report a fatal native-body failure. The native callback must not throw
+	//! or destroy the calling body; it marks the publication cohort unusable.
+	//! Discard on Close together with interactionChanged.
+	std::function<void()> projectionFailed;
 };
 using SenpViewBodyFactory = std::function<std::unique_ptr<ISenpViewBody>(SenpViewBodyHost host)>;
 struct SenpNativeViewDefinition final {
