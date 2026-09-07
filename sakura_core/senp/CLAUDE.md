@@ -45,7 +45,7 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   duplicate-member and trailing-input checks. Schema 1 retains its existing
   strict field/capability validation. Schema 2 with
   `sakura:senp/extension@2.0.0` is recognized but returns the typed
-  `UnsupportedRuntime` boundary until the v2 event/effect host is implemented;
+  `UnsupportedRuntime` boundary until v2 owner/contribution/capability validation is wired;
   mismatched ABI/module pairs return `AbiMismatch`, unknown schemas return
   `UnsupportedSchema`. Pack, archive verification, and installed-content
   discovery use the same dispatch and must never fall back to v1 or publish
@@ -66,6 +66,17 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   The shared accepted/rejected fixtures and bidirectional exchange procedure
   live in `rust/senp/fixtures/README.md`. G02 adds the contract only; v2 package
   publication and dispatch remain unavailable until the lifecycle is wired.
+
+- G03a's `CSenpRuntimeSession` and Rust `effect_session::Session` own explicit
+  invocation terminals, ordered sequences, bounded ack receipts and replay.
+  The native owner mints monotonic `s<session>:o<ticket>` IDs independently of
+  transport sequence, which is assigned only on send; dropping an unsent
+  cancellation must leave no sequence gap. A returned effect batch completes
+  a Wasm invocation, not its tool reads or user command. Pending plus undrained
+  outcomes is bounded to 16. Revocation and protocol/transport failure also
+  clear effects from already-completed outcomes waiting for their consumer.
+  Consumers that already took a result still require the contribution-owner
+  generation fence. See `docs/senp-v2-runtime.md` for the full contract.
 
 - `README.md`, `senp.json`, `LICENSE`, and complete SHA-256 coverage are
   mandatory. `module/extension.wasm` is mandatory only when `runtime` is

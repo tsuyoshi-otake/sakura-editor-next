@@ -717,6 +717,9 @@
     <ClCompile Include="..\src\test\cpp\tests1\senp\SenpEffectProtocolTest.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\senp\SenpRuntimeLifecycleTest.cpp">
+      <Filter>Test Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\senp\SenpLanguageServiceTest.cpp">
       <Filter>Test Files\textmate</Filter>
     </ClCompile>

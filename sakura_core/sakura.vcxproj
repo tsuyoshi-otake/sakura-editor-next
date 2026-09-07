@@ -1401,6 +1401,7 @@
 	<ClCompile Include="..\sakura_core\senp\SenpLanguageService.cpp" />
 	<ClCompile Include="..\sakura_core\senp\SenpManagementService.cpp" />
 	<ClCompile Include="..\sakura_core\senp\SenpEffectProtocol.cpp" />
+	<ClCompile Include="..\sakura_core\senp\SenpRuntimeSession.cpp" />
 	<ClCompile Include="..\sakura_core\senp\SenpRuntimeService.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\panel\CBottomPanelTool.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\outline\COutlineWorkbenchTool.cpp" />

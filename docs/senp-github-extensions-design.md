@@ -288,7 +288,8 @@ v2では既存4 MiBのIPC上限より小さい1 MiB/frame・65,536 JSON nodesを
 256 KiBのMarkdown sectionとし、送信側にも集約上限を適用する。
 [共通fixtureと往復手順](../rust/senp/fixtures/README.md)でcasing、Unicode、数値、
 page状態とbatch内のread ID再使用を検査する。sequenceの順序・再送とackの所有は
-G03のsession実装で検査する。WITの存在だけでv2 packageを実行可能とはしない。
+G03aの[session実装](senp-v2-runtime.md)で検査する。G03bはWin32 processとの接続を担う。
+WITや低位runtimeの存在だけでv2 packageを実行可能とはしない。
 
 完了eventはackまで有界queueで保持する。満杯なら新規要求をBusyで拒否し、
 未通知の完了を捨てない。host切断時は全pendingをHostUnavailableで終端し、

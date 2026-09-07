@@ -11,6 +11,8 @@ use std::time::Duration;
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Config, Engine, Store, StoreLimits, StoreLimitsBuilder};
 
+mod runtime_v2;
+
 wasmtime::component::bindgen!({
     path: "../wit/senp-extension.wit",
     world: "extension",
@@ -257,7 +259,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut arguments = std::env::args_os().skip(1);
     if arguments.next().as_deref() != Some(std::ffi::OsStr::new("--component")) {
         return Err(
-            "usage: sakura-senp-host --component <extension.wasm> --component-sha256 <sha256>"
+            "usage: sakura-senp-host --component <extension.wasm> --component-sha256 <sha256> [--protocol 2]"
                 .into(),
         );
     }
@@ -273,8 +275,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("missing component SHA-256")?
         .into_string()
         .map_err(|_| "component SHA-256 is not Unicode")?;
-    if arguments.next().is_some() {
-        return Err("unexpected argument".into());
+    match arguments.next() {
+        None => {} // Existing invocation selects v1 explicitly by its default.
+        Some(option) if option == "--protocol" => {
+            if arguments.next().as_deref() != Some(std::ffi::OsStr::new("2"))
+                || arguments.next().is_some()
+            {
+                return Err("unsupported protocol option".into());
+            }
+            return runtime_v2::run(component, &component_sha256);
+        }
+        Some(_) => return Err("unexpected argument".into()),
     }
     let mut runtime = Runtime::load(component, &component_sha256)?;
     let mut input = io::stdin().lock();
