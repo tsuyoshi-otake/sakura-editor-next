@@ -4,6 +4,9 @@
 仕様: [SENP GitHub拡張設計](senp-github-extensions-design.md)。
 今回の作業範囲は工程の詳細化とTLA+/TLCによる設計のモデル検査。
 製品のAPI・画面・GitHub拡張の実装は後続工程として区別する。
+2026-09-07: D01/F01–F04は完了。正例3件・安全性負例8件・進行性負例1件が合格。
+[検証結果と対応表](formal/senp-github-models.md)、[機械可読の証跡](formal/senp-github-evidence.json)。
+G01以降は未実装。CI workflowは追加済みで、remote CI実行はpush後の確認事項。
 
 ## コミットの進め方
 
@@ -28,18 +31,18 @@
 | D01 | 設計と本工程表を保存 | #296 | local link/JSON例と`git diff --check` | 壊れた参照0、実装済みと未実装を区別 |
 | F01 | 認証candidate/接続解除のTLA+、有界TLC runnerとgate検証 | D01 | `verify-senp-github-models.py --model connection` | 正例全探索・liveness合格、本人照合省略/旧candidate採用の反例 |
 | F02 | owner登録・失効・世代付き結果のTLA+ | F01 | 同runner `--model owner` | 原子的登録、失効後の結果拒否、回収のliveness、負例 |
-| F03 | 共有要求・購読解除・cooldown・cleanupのTLA+ | F01 | 同runner `--model requests` | single-flight、他subscriber保護、期限内終端、負例 |
+| F03 | 共有要求・購読解除・cooldown・cleanupのTLA+ | F01 | 同runner `--model requests` | single-flight、他subscriber保護、deadline停止処理と受理要求の終端、負例 |
 | F04 | 全モデルをCI必須gateへ追加、結果と対応表を保存 | F02/F03 | runner全件、unit test、checkout-invariance | hash-pinned tool、狙った反例、終了済みprocess、evidenceのhash |
 | G01 | schema 2/ABI判別と既存v1互換 | F04 | `cargo test -p sakura-senp --locked` | 旧package合格、未知schema/ABI拒否 |
 | G02 | WIT event/effectとC++/Rust往復fixture | G01 | `SenpEffectProtocol.*`とRust host tests | casing、sequence、上限、ID再使用を検査 |
 | G03 | bounded dispatch・ack・host終了のsession実装 | G02 | `SenpEffectProtocol.*:SenpRuntimeLifecycle.*` | pendingが全て一度終端、切断後の古いevent反映0 |
 | G04 | owner単位のcontribution登録・dispose | G03/F02 | `SenpViewLifecycle.*` | 部分登録なし、失効・更新失敗の所有権保持 |
-| U01 | container内の複数View nativeページ | G04 | `SenpViewContainer.*`、dual-capture | View独立、resize/移動/focusに描画残りなし |
-| U02 | lazy TreeDataProviderとstable item選択 | U01 | `SenpTreeProvider.*` | page/expand/refresh、重複・循環・stale拒否 |
+| U01 | SCMを参照したcontainer内の複数View nativeページ | G04 | `SenpViewContainer.*`、同一条件のSCM比較、dual-capture | View独立、ヘッダー/余白/action整合、resize/移動/focusに描画残りなし |
+| U02 | lazy TreeDataProviderとstable item選択 | U01 | `SenpTreeProvider.*`、SCM行密度/選択/scroll比較 | page/expand/refresh、重複・循環・stale拒否、テーマ/DPI/keyboard整合 |
 | U03 | readonly Editor input/surface切替 | G04 | `SenpReadonlyWorkbench.*` | dirty/undoを保持して詳細と編集を往復 |
 | U04 | readonly Markdown/metadata renderer | U03 | `SenpReadonlyDocument.*`、native UI | 本文表示、script無効、local asset権限漏れ0 |
 | U05 | chunk付きtext resourceと検索・コピー | U03 | `SenpTextResource.*` | UTF-8境界・上限・partial・失効を区別 |
-| U06 | command/menu/activationと汎用sample拡張 | U02/U04/U05 | sampleのnative総合試験 | GitHub固有コードなしで2 View/本文/ログ表示 |
+| U06 | command/menu/activationと汎用sample拡張 | U02/U04/U05 | sampleのnative総合試験、SCM比較の状態matrix | GitHub固有コードなしで2 View/本文/ログ表示、loading/empty/error/focus明示 |
 | T01 | Git runnerからprocess primitiveのみ抽出 | F04 | `BoundedProcessRunner.*:GitCommandRunner.*` | SCM無回帰、argv・pipe・job cleanup |
 | T02 | Control brokerのowner/grant認可 | T01/G03 | `SenpToolGrants.*` | 別owner/profile/digest/失効handleを拒否 |
 | T03 | gh検出・version・read-only argv/env policy | T02 | `GhToolPolicy.*` | shell/任意flag/別repo/env注入0、未導入は明示状態 |
@@ -69,7 +72,7 @@ U06は実動するsample、E03/E04/E07は本文やログまで読める縦切り
 |---|---|---|
 | `SenpGhConnection` | 本人照合前の接続公開禁止、接続解除前のcandidate再採用禁止、旧接続維持、開始済み操作の終端 | identity fence / generation fence |
 | `SenpContributionOwner` | 原子的contribution登録、失効後の表示/権限なし、遅延結果の世代整合、停止ownerの回収 | result generation fence / revoke時の表示消去 |
-| `SenpGhRequests` | 一意resourceの実行1本、他subscriberをcancelしない、cooldown中のdispatchなし、process回収後の終端、全受理要求の終端 | last-subscriber条件 / cooldown / cleanup ownership |
+| `SenpGhRequests` | 一意resourceの実行1本、他subscriberをcancelしない、cooldown中のdispatchなし、process回収後の終端、全受理要求の終端 | dedupe / last-subscriber条件 / cooldown / cleanup ownership / cleanup公平性 |
 
 初回は有限の小さい集合を全探索する。無限数のwindowや実際の秒数を証明したとはしない。
 外部ユーザーの操作・network成功は公平とは仮定せず、受理後の内部advance/timeout/cleanupに
@@ -83,7 +86,7 @@ JSON parser、TLS、実メモリ上限を含めない。それらはunit/integra
 
 ## 検査の実行と記録
 
-作成予定の共通runnerを使う:
+共通runnerを使う:
 
 ```powershell
 py -3 tools/verify-senp-github-models.py --jar C:/Users/developer/AppData/Local/Programs/TLAplus/tla2tools.jar --output C:/Users/developer/tmp/senp-github-formal
@@ -92,10 +95,11 @@ py -3 tools/verify-senp-github-models.py --jar C:/Users/developer/AppData/Local/
 既存Search gateと同じ公式tla2tools v1.7.4 / TLC 2.19をSHA-256で固定する。
 各Javaに512 MiB、60秒、workers 2を設定し、state/outputは指定した作業ディレクトリへ置く。
 正例はexit 0、全探索完了、queue 0を要求する。
-安全性負例はexit 12と指定invariant名、進行性負例は指定したtemporal violationとtraceを要求する。
+安全性負例はexit 12と指定invariant名を要求する。進行性負例はexit 13、
+temporal violationと循環traceに加え、configのPROPERTIESが指定した1条件だけであることを要求する。
 tool不在・hash不一致・構文エラー・timeoutは失敗。
 
 証跡にはmodel/config/runner/toolのhash、source commit、command、終了code、
 生成/到達状態数、探索深さ、所要時間、負例の対象を記録する。
 再利用した既存の`docs/formal/states/`を消さず、検査ごとに固有のmetadirを使う。
-この文書を実施済みにする時は実行結果の証跡へリンクする。
+証跡は今回実行した入力byteに対する記録。改行コードを含め入力が変わった場合は再実行する。

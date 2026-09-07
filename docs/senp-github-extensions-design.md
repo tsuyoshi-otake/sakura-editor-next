@@ -5,6 +5,7 @@
 調査対象: `5346511f26fa04cc13acdad21ff603b4813e6768` のチェックアウト。
 追跡Issue: [#296 — Design SENP v2 GitHub Issues/PR and Actions extensions using gh](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/296)。
 詳細工程: [小さなコミットとTLA+/TLCの検証計画](senp-github-extensions-implementation-plan.md)。
+形式検証: [有限モデル・反例・実行結果](formal/senp-github-models.md)。
 
 関連: [SENP基盤 #251](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/251)、
 [process・integrity境界 #255](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/255)、
@@ -104,6 +105,36 @@ undo stackへ載せない。inputのrestoreはidentityだけを保存し、内�
 - 手動refreshは表示中の範囲が対象。折り畳まれた全Workflowの全履歴を巡回しない。
 - キーボード、focus、tooltip、UIA名、テーマ、DPI、View移動は既存Workbench契約に従う。
   Ctrl+B / Ctrl+J / Ctrl+Alt+Bは既存Part操作のまま。
+
+### SCMを参照するサイドバーのデザイン
+
+サイドバー内の各Viewは、既存の
+[`CScmWorkbenchTool`](../sakura_core/workbench/scm/CScmWorkbenchTool.cpp)の
+密度、余白、ヘッダー、選択状態、タイトルアクションを参照して設計する。
+以下は調査時点のコードで確認した参照値。実装では共有テーマとDPI変換を使い、
+同じ役割の寸法・色を汎用View側に重複定義しない。抽出は表示primitiveに限定し、
+Gitの状態・refresh worker・SCM resource groupをGitHub拡張へ持ち込まない。
+
+| 要素 | SCMで確認した基準 | GitHub Viewへの適用 |
+|---|---|---|
+| Viewヘッダー | `kScmViewHeaderHeightDip = 30`、左右inset 10 DIP、16 DIPの開閉アイコン、その後4 DIP | 開閉、タイトル、右寄せactionを同じ行に置く。長いタイトルはaction領域の手前で省略 |
+| 一覧の密度 | repository/graph行22 DIP、行inset 10 DIP、icon 16 DIP | Issue/PR/Workflow/Run/Jobは一行の要約とし、主labelと補助descriptionを分ける。長い本文は詳細Editorに置く |
+| 色と文字 | `CThemeService`、`ThemeFontKind::Chrome`、`palette.sideBar/primaryText/descriptionText/border` | 色・フォントをテーマから解決。セクション境界は既存の細線。独自のカードや影を足さない |
+| hoverと選択 | hover/非focus選択は`palette.raised`、focus選択は`palette.accent/highlightText` | hover・選択・キーボードfocusを区別。更新後もstable item IDで選択を保持 |
+| タイトルaction | SCMの右寄せtoolbar、tooltip、実行対象に応じたcommand | refresh・状態filter・repository選択を実動するcommandに結ぶ。ラベルとhit領域を重ねない |
+| スクロール | [`COverlayScrollbar`](../sakura_core/workbench/controls/COverlayScrollbar.h)、テーマからの色解決、明示的wheel処理 | Viewごとのscroll位置を維持。thumb・wheel・keyboard・focus移動を検証 |
+| 状態の意味 | welcome/statusと実データ行の分離 | 取得前・loading・0件・未認証・権限不足・失敗・古いsnapshotを明示。成功/失敗を色だけで伝えない |
+
+SCMの見た目を参照しても、上記の公式ViewContainer/View IDとGitHubの情報構造を守る。
+SCM側にもVS Codeとの差異が見つかった場合は、VS Codeの実動作を確認した上で
+汎用表示の契約を決め、必要な差異をowning subsystemの`CLAUDE.md`に記録する。
+
+U01/U02/U06では同一テーマ・DPI・サイドバー幅のSCMを横に並べて比較する。
+100/150/200% DPI、Light/Dark/High Contrast、狭い幅と長いタイトル、hover/focus/選択、
+折り畳み、resize、View移動を受入fixtureに含める。
+描画の確認は[dual-capture手順](../.claude/skills/stale-pixel-verification/SKILL.md)で
+画面上のpixelとPrintWindowを比較し、寸法・状態・アクセシビリティの確認を併用する。
+本設計段階ではSCMコードを調査しただけで、新Viewの実表示を検証済みとはしない。
 
 記録する差異: nativeの読取専用Document APIはVS Code Webview APIではない。
 任意HTML/JS/CSSを受け取らない。アイコンは現在のSENPのThemeIcon制約を継続する。
