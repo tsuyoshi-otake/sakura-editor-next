@@ -36,6 +36,8 @@
 
 ## Workflow Changes
 
+- `architecture-gates.yml` downloads the shared official tla2tools v1.7.4 JAR once; both Search and SENP runners verify its SHA-256 before execution. The SENP gate checks three positive safety/liveness models plus eight invariant counterexamples and one cleanup-liveness counterexample. Its Python gate tests reject incomplete output, the wrong failure, missing tooling, and timeouts. Each direct Java child has a 60-second limit and is killed/reaped on timeout; unique per-case state directories and evidence/log uploads retain diagnostics without modifying model sources. Keep the SENP step required and the evidence upload under `always()`; these design models do not replace native implementation or UI tests (#296).
+
 - Preserve the distinction between local speed optimizations and release/CI completeness.
 - Keep action permissions and downloaded tooling narrowly scoped. Pin or update actions deliberately and retain any existing commit pin where the workflow uses one.
 - Verify YAML structure and inspect every changed matrix branch; a condition that works for Release must not accidentally add work to Debug jobs.

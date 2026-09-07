@@ -39,12 +39,16 @@ jobs:
       - name: Verify dependency ledger
         run: python3 tools/dependency_ledger.py check
 
-      - name: Verify Search lifecycle and intentional counterexamples
-        timeout-minutes: 5
+      - name: Download pinned TLC tool
+        timeout-minutes: 2
         run: |
           curl --fail --location --max-time 60 \
             https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar \
             --output "$RUNNER_TEMP/tla2tools.jar"
+
+      - name: Verify Search lifecycle and intentional counterexamples
+        timeout-minutes: 5
+        run: |
           python3 tools/verify-search-lifecycle.py \
             --jar "$RUNNER_TEMP/tla2tools.jar" --output "$RUNNER_TEMP/search-lifecycle"
 
@@ -54,4 +58,21 @@ jobs:
         with:
           name: search-lifecycle-${{ github.sha }}
           path: ${{ runner.temp }}/search-lifecycle/*.*
+          if-no-files-found: error
+
+      - name: Verify SENP GitHub models and gate failures
+        timeout-minutes: 15
+        run: |
+          python3 -m unittest discover -s src/test/py -p test_senp_github_models.py -v
+          python3 tools/verify-senp-github-models.py \
+            --jar "$RUNNER_TEMP/tla2tools.jar" --output "$RUNNER_TEMP/senp-github"
+
+      - name: Upload SENP GitHub model evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: senp-github-models-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/senp-github/evidence.json
+            ${{ runner.temp }}/senp-github/**/tlc.log
           if-no-files-found: error
