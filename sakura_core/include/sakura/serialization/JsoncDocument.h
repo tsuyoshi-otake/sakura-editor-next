@@ -82,6 +82,9 @@ public:
 	static constexpr std::size_t kMaximumObjectKeyLength = 64U * 1024U;
 
 	[[nodiscard]] static JsoncDocumentParseResult Parse(std::string_view utf8);
+	//! Strict IPC JSON: same limits and duplicate/Unicode checks, without BOM,
+	//! comments or trailing commas. Configuration parsing retains JSONC behavior.
+	[[nodiscard]] static JsoncDocumentParseResult ParseStrict(std::string_view utf8);
 };
 
 } // namespace platform::serialization

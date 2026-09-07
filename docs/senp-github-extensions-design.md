@@ -275,6 +275,20 @@ resource request generationを付ける。表示先はこれらの一致を確�
 wire envelopeにはprotocol versionとsequenceを付け、v1/v2を推測で判定しない。
 同一ID・同一payloadの再送は同じ結果を返し、異なるpayloadの再使用はConflict。
 
+G02のcodec/WITは実装済み。wireはUTF-8の厳密JSONで、固定recordの全memberを
+必須とし、unionを`{"type":"caseName","data":{...}}`で表す。未知member/case、
+重複キー、コメント、BOM、末尾カンマを拒否する。各envelopeは`protocol: 2`、
+正の`sequence`と`sessionGeneration`を持つ。整数は両言語で正確に扱える
+`0..INT64_MAX`、owner generationも正とする。account generationの0は未採用状態であり、
+signed-outの判定には使わない。
+
+v2では既存4 MiBのIPC上限より小さい1 MiB/frame・65,536 JSON nodesを適用する。
+最大64 effects/batch、256 items/page、32 document sections、64 KiBのtool結果文字列、
+256 KiBのMarkdown sectionとし、送信側にも集約上限を適用する。
+[共通fixtureと往復手順](../rust/senp/fixtures/README.md)でcasing、Unicode、数値、
+page状態とbatch内のread ID再使用を検査する。sequenceの順序・再送とackの所有は
+G03のsession実装で検査する。WITの存在だけでv2 packageを実行可能とはしない。
+
 完了eventはackまで有界queueで保持する。満杯なら新規要求をBusyで拒否し、
 未通知の完了を捨てない。host切断時は全pendingをHostUnavailableで終端し、
 再接続は新generationとsnapshotから開始する。eventの際限ない再送はしない。

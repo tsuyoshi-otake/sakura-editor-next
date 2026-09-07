@@ -51,6 +51,22 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   discovery use the same dispatch and must never fall back to v1 or publish
   v2 contributions early (#296, G01).
 
+- The v2 event/effect wire contract is `SenpEffectProtocol` and
+  `sakura_senp_host::effect_protocol`, with separate WIT bindings under
+  `rust/senp/wit/v2/`. All records require every named member; variants use
+  `type`/`data` and reject unknown cases. The transport uses strict JSON, not
+  configuration JSONC. Frames are at most 1 MiB and 65,536 JSON nodes; counters
+  are exact nonnegative integers up to `INT64_MAX`, with positive sequence,
+  session generation and owner generation. Account generation zero means no
+  adopted account yet, not proof of a signed-out user. A batch rejects duplicate
+  read IDs and command completions. Session replay, sequence ordering and ack
+  ownership belong to the session state machine, not the stateless codec.
+- Validate aggregate output budgets while traversing/serializing the typed
+  graph. Do not first clone it or build an unbounded intermediate JSON tree.
+  The shared accepted/rejected fixtures and bidirectional exchange procedure
+  live in `rust/senp/fixtures/README.md`. G02 adds the contract only; v2 package
+  publication and dispatch remain unavailable until the lifecycle is wired.
+
 - `README.md`, `senp.json`, `LICENSE`, and complete SHA-256 coverage are
   mandatory. `module/extension.wasm` is mandatory only when `runtime` is
   declared; declarative language/grammar and host-View packages contain no

@@ -18,7 +18,7 @@ namespace {
 
 class JsoncParser final {
 public:
-	explicit JsoncParser(std::string_view input) : m_input(input) {}
+	explicit JsoncParser(std::string_view input, bool strict = false) : m_input(input), m_strict(strict) {}
 
 	std::optional<JsoncValue> ParseDocument()
 	{
@@ -58,7 +58,7 @@ private:
 	{
 		while (!m_diagnostic) {
 			while (Peek() == ' ' || Peek() == '\t' || Peek() == '\r' || Peek() == '\n') ++m_position;
-			if (Peek() != '/' || !Has(2)) return;
+			if (m_strict || Peek() != '/' || !Has(2)) return;
 			if (m_input[m_position + 1] == '/') {
 				m_position += 2;
 				while (Has() && Peek() != '\r' && Peek() != '\n') ++m_position;
@@ -230,7 +230,7 @@ private:
 			if (Peek() == '}') { ++m_position; return JsoncValue(std::move(object)); }
 			if (!Consume(',')) return std::nullopt;
 			SkipTrivia();
-			if (Peek() == '}') { ++m_position; return JsoncValue(std::move(object)); }
+			if (!m_strict && Peek() == '}') { ++m_position; return JsoncValue(std::move(object)); }
 		}
 		return std::nullopt;
 	}
@@ -248,7 +248,7 @@ private:
 			if (Peek() == ']') { ++m_position; return JsoncValue(std::move(array)); }
 			if (!Consume(',')) return std::nullopt;
 			SkipTrivia();
-			if (Peek() == ']') { ++m_position; return JsoncValue(std::move(array)); }
+			if (!m_strict && Peek() == ']') { ++m_position; return JsoncValue(std::move(array)); }
 		}
 		return std::nullopt;
 	}
@@ -264,13 +264,14 @@ private:
 		if (Peek() == '.') { real = true; ++m_position; const auto fraction = m_position; while (Peek() >= '0' && Peek() <= '9') ++m_position; if (fraction == m_position) { Fail(EJsoncDiagnosticCode::InvalidNumber, "missing JSON fractional digits"); return std::nullopt; } }
 		if (Peek() == 'e' || Peek() == 'E') { real = true; ++m_position; if (Peek() == '+' || Peek() == '-') ++m_position; const auto exponent = m_position; while (Peek() >= '0' && Peek() <= '9') ++m_position; if (exponent == m_position) { Fail(EJsoncDiagnosticCode::InvalidNumber, "missing JSON exponent digits"); return std::nullopt; } }
 		const auto text = m_input.substr(begin, m_position - begin);
-		if (!real) { std::int64_t integer = 0; const auto converted = std::from_chars(text.data(), text.data() + text.size(), integer); if (converted.ec == std::errc{} && converted.ptr == text.data() + text.size()) return JsoncValue(integer); }
+		if (!real && !(m_strict && text == "-0")) { std::int64_t integer = 0; const auto converted = std::from_chars(text.data(), text.data() + text.size(), integer); if (converted.ec == std::errc{} && converted.ptr == text.data() + text.size()) return JsoncValue(integer); }
 		double number = 0; const auto converted = std::from_chars(text.data(), text.data() + text.size(), number);
 		if (converted.ec != std::errc{} || converted.ptr != text.data() + text.size() || !std::isfinite(number)) { Fail(EJsoncDiagnosticCode::InvalidNumber, "JSON number is outside the supported finite range"); return std::nullopt; }
 		return JsoncValue(number);
 	}
 
 	std::string_view m_input;
+	bool m_strict = false;
 	std::size_t m_position = 0;
 	std::size_t m_nodes = 0;
 	std::optional<JsoncDiagnostic> m_diagnostic;
@@ -313,6 +314,17 @@ JsoncDocumentParseResult CJsoncDocument::Parse(std::string_view utf8)
 	if (!diagnostic) diagnostic = JsoncDiagnostic { EJsoncDiagnosticCode::UnexpectedToken, 0, "JSONC parsing failed" };
 	diagnostic->byteOffset += byteOrderMarkBytes;
 	return { std::nullopt, std::move(diagnostic) };
+}
+
+JsoncDocumentParseResult CJsoncDocument::ParseStrict(std::string_view utf8)
+{
+	if (utf8.size() > kMaximumInputBytes) return { std::nullopt, JsoncDiagnostic { EJsoncDiagnosticCode::InputTooLarge, 0, "JSON input exceeds the configured byte limit" } };
+	JsoncDiagnostic utf8Diagnostic;
+	if (!ValidateUtf8(utf8, utf8Diagnostic)) return { std::nullopt, std::move(utf8Diagnostic) };
+	JsoncParser parser(utf8, true);
+	auto value = parser.ParseDocument();
+	if (value) return { std::move(value), std::nullopt };
+	return { std::nullopt, parser.TakeDiagnostic() };
 }
 
 } // namespace platform::serialization

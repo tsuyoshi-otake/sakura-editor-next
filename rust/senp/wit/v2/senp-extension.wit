@@ -1,0 +1,156 @@
+package sakura:senp@2.0.0;
+
+// No imports and no WASI. All I/O is requested as bounded effects.
+interface event-effects {
+    enum collapsible-state { leaf, collapsed, expanded }
+    enum completion-status { succeeded, cancelled, failed, timed-out, host-unavailable }
+    enum page-status { complete, partial, empty, failed }
+    enum text-status { loading, complete, partial, expired, failed }
+    enum stop-reason { disabled, updated, shutdown, protocol-error, host-unavailable }
+    record operation-context {
+        operation-id: string,
+        owner-generation: u64,
+        workspace-revision: u64,
+        account-generation: u64,
+        request-generation: u64,
+    }
+    record field {
+        name: string,
+        value: string,
+    }
+    record remote {
+        name: string,
+        url: string,
+    }
+    record repository {
+        root-id: string,
+        branch: string,
+        remotes: list<remote>,
+    }
+    record tree-item {
+        id: string,
+        label: string,
+        description: string,
+        tooltip: string,
+        icon: string,
+        collapsible-state: collapsible-state,
+        command-id: string,
+        arguments: list<string>,
+    }
+    record tree-request {
+        view-id: string,
+        parent-id: string,
+        cursor: string,
+    }
+    record document-request {
+        resource-id: string,
+    }
+    record command-invoked {
+        command-id: string,
+        arguments: list<string>,
+    }
+    record tool-completed {
+        read-id: string,
+        status: completion-status,
+        data: string,
+        message: string,
+    }
+    record workspace-changed {
+        repositories: list<repository>,
+    }
+    record cancel {
+        operation-id: string,
+    }
+    record visibility-changed {
+        view-id: string,
+        visible: bool,
+    }
+    record start-tool-read {
+        read-id: string,
+        tool-id: string,
+        operation: string,
+        arguments: list<field>,
+    }
+    record publish-tree-page {
+        view-id: string,
+        parent-id: string,
+        items: list<tree-item>,
+        next-cursor: string,
+        revision: u64,
+        status: page-status,
+        message: string,
+    }
+    record markdown-section {
+        text: string,
+    }
+    record metadata-section {
+        fields: list<field>,
+    }
+    record table-row {
+        cells: list<string>,
+    }
+    record table-section {
+        columns: list<string>,
+        rows: list<table-row>,
+    }
+    record text-resource-section {
+        handle: string,
+        length: u64,
+        status: text-status,
+    }
+    record complete-command {
+        status: completion-status,
+        message: string,
+    }
+    record invalidate-tree {
+        view-id: string,
+    }
+    record open-document {
+        resource-id: string,
+    }
+    record release-resource {
+        handle: string,
+    }
+    record activation {
+        context: operation-context,
+        extension-id: string,
+    }
+    variant document-section {
+        markdown(markdown-section),
+        metadata(metadata-section),
+        table(table-section),
+        text-resource(text-resource-section),
+    }
+    variant event {
+        tree-request(tree-request),
+        document-request(document-request),
+        command-invoked(command-invoked),
+        tool-completed(tool-completed),
+        workspace-changed(workspace-changed),
+        cancel(cancel),
+        visibility-changed(visibility-changed),
+    }
+    record publish-document {
+        resource-id: string,
+        title: string,
+        revision: u64,
+        sections: list<document-section>,
+    }
+    variant effect {
+        start-tool-read(start-tool-read),
+        publish-tree-page(publish-tree-page),
+        publish-document(publish-document),
+        complete-command(complete-command),
+        invalidate-tree(invalidate-tree),
+        open-document(open-document),
+        release-resource(release-resource),
+    }
+
+    activate: func(context: activation) -> list<effect>;
+    on-event: func(context: operation-context, event: event) -> list<effect>;
+    deactivate: func(reason: stop-reason);
+}
+
+world extension {
+    export event-effects;
+}

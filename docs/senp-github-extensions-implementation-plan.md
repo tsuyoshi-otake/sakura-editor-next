@@ -8,7 +8,11 @@
 G01も完了。manifestのversion判別を共通入口へ移し、v1互換とv2の
 `UnsupportedRuntime`をpack/verify/installed listingで検証した。
 `cargo test -p sakura-senp --locked --offline`は16 tests合格、`cargo fmt --check`合格、runner残存0。
-G02以降は未実装。CI workflowは追加済みで、remote CI実行はpush後の確認事項。
+2026-09-08: G02のWIT/event/effect codecも実装。共通fixture 71件（受理26・拒否45）、
+WITとの型変換、C++/Rustの双方向JSON交換が合格し、両出力のSHA-256が一致した。
+native 14 tests、旧component実行を含むRust host 8 testsが合格。1 MiBと65,536 nodesの
+集約上限を送受信へ適用し、JSONC設定互換を保持した。G03以降は未実装。
+CI workflowは追加済みで、remote CI実行はpush後の確認事項。
 
 ## コミットの進め方
 
@@ -36,8 +40,8 @@ G02以降は未実装。CI workflowは追加済みで、remote CI実行はpush�
 | F03 | 共有要求・購読解除・cooldown・cleanupのTLA+ | F01 | 同runner `--model requests` | single-flight、他subscriber保護、deadline停止処理と受理要求の終端、負例 |
 | F04 | 全モデルをCI必須gateへ追加、結果と対応表を保存 | F02/F03 | runner全件、unit test、checkout-invariance | hash-pinned tool、狙った反例、終了済みprocess、evidenceのhash |
 | G01 | schema 2/ABI判別と既存v1互換 | F04 | `cargo test -p sakura-senp --locked` | 旧package合格、未知schema/ABI拒否 |
-| G02 | WIT event/effectとC++/Rust往復fixture | G01 | `SenpEffectProtocol.*`とRust host tests | casing、sequence、上限、ID再使用を検査 |
-| G03 | bounded dispatch・ack・host終了のsession実装 | G02 | `SenpEffectProtocol.*:SenpRuntimeLifecycle.*` | pendingが全て一度終端、切断後の古いevent反映0 |
+| G02 | WIT event/effectとC++/Rust往復fixture | G01 | `SenpEffectProtocol.*`とRust host tests、相互serializer出力の読取 | casing、sequenceの整数範囲、集約上限、batch内ID再使用、WIT型変換を検査 |
+| G03 | bounded dispatch・ack・host終了のsession実装 | G02 | `SenpEffectProtocol.*:SenpRuntimeLifecycle.*` | sequence順序・ID再送/Conflict、pendingが全て一度終端、切断後の古いevent反映0 |
 | G04 | owner単位のcontribution登録・dispose | G03/F02 | `SenpViewLifecycle.*` | 部分登録なし、失効・更新失敗の所有権保持 |
 | U01 | SCMを参照したcontainer内の複数View nativeページ | G04 | `SenpViewContainer.*`、同一条件のSCM比較、dual-capture | View独立、ヘッダー/余白/action整合、resize/移動/focusに描画残りなし |
 | U02 | lazy TreeDataProviderとstable item選択 | U01 | `SenpTreeProvider.*`、SCM行密度/選択/scroll比較 | page/expand/refresh、重複・循環・stale拒否、テーマ/DPI/keyboard整合 |
