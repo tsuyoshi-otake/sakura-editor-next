@@ -59,7 +59,9 @@ class SenpGithubModelGateTests(unittest.TestCase):
         self.assertTrue(gate.sole_temporal_property("PROPERTIES EveryAcceptedTerminates\n",
                                                    "EveryAcceptedTerminates"))
         for config in ("PROPERTIES Other\n", "PROPERTIES EveryAcceptedTerminates Other\n",
-                       "PROPERTIES EveryAcceptedTerminates\nPROPERTIES Other\n", ""):
+                       "PROPERTIES EveryAcceptedTerminates\nPROPERTIES Other\n",
+                       "PROPERTIES EveryAcceptedTerminates\n Other\nCHECK_DEADLOCK FALSE\n",
+                       " PROPERTY Other\nPROPERTIES EveryAcceptedTerminates\n", ""):
             self.assertFalse(gate.sole_temporal_property(config, "EveryAcceptedTerminates"))
 
     def test_missing_tool_is_terminal(self):

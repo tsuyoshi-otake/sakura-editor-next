@@ -59,7 +59,11 @@ def exploration(output: str) -> dict[str, int]:
 def sole_temporal_property(config: str, expected: str) -> bool:
     # TLC 2.19 does not print a violated temporal property's name. Only accept
     # its generic failure when the config checks exactly the expected property.
-    return re.findall(r"^PROPERT(?:Y|IES)\b[^\n]*", config, re.MULTILINE) == [f"PROPERTIES {expected}"]
+    # Restrict the supported config tail as well: TLC permits a property list
+    # to continue on following lines, so matching only its first line is unsafe.
+    return (len(re.findall(r"\bPROPERT(?:Y|IES)\b", config)) == 1
+            and re.search(r"(?m)^PROPERTIES " + re.escape(expected)
+                          + r"\n(?:CHECK_DEADLOCK FALSE\n?)?\Z", config) is not None)
 
 
 def accepted_result(code: int | None, output: str, invariant: str | None,
