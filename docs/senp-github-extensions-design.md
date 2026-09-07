@@ -1,6 +1,7 @@
 # SENP GitHub拡張 基本設計・API設計案
 
-状態: G01のschema/ABI判別を実装済み。v2 runtime・画面・GitHub拡張は後続工程。
+状態: G01のschema/ABI判別、G02のv2 WIT/event/effect契約を実装済み。
+v2 dispatch/lifecycle・画面・GitHub拡張は後続工程。
 作成日: 2026-09-07。
 調査対象: `5346511f26fa04cc13acdad21ff603b4813e6768` のチェックアウト。
 追跡Issue: [#296 — Design SENP v2 GitHub Issues/PR and Actions extensions using gh](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/296)。

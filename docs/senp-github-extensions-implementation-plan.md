@@ -13,6 +13,10 @@ WITとの型変換、C++/Rustの双方向JSON交換が合格し、両出力のSH
 native 14 tests、旧component実行を含むRust host 8 testsが合格。1 MiBと65,536 nodesの
 集約上限を送受信へ適用し、JSONC設定互換を保持した。G03以降は未実装。
 CI workflowは追加済みで、remote CI実行はpush後の確認事項。
+G02のsemantic台帳はexact source commit `f881170f28b3c17d195c145b6f2396704cffa47a`
+から正規手順で受理した。追加35件は既定のconst equality operator 33件と
+`static constexpr` 2件の誤検出と確認し、JSONC APIの既存報告13件を保持する理由も
+台帳履歴に保存した。exact source SHAが必要な証跡は製品コードに続く小さなcommitとする。
 
 ## コミットの進め方
 

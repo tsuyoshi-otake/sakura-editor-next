@@ -63134,6 +63134,251 @@
       "rule_id": "state.public_mutable_field"
     },
     {
+      "column": 24,
+      "evidence_sha256": "sha256:56b0be84c2a74c70c27dfb27b462230070de3039b95dd0f5a89f7a9d75956f31",
+      "line": 226,
+      "path": "sakura_core/senp/SenpEffectProtocol.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 24,
+      "evidence_sha256": "sha256:55782909a15b6f2b88211fbcc07f12da69635c3c51164f731db3d6ed8139d54d",
+      "line": 295,
+      "path": "sakura_core/senp/SenpEffectProtocol.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:298c1786593e4297b1bd4e53b207d2ebacdc7671431f4857dc69478a68874b70",
+      "line": 34,
+      "path": "sakura_core/senp/SenpEffectProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:39e9473243c7b038105ebc7ef786369d542d72a5114df2e7c76e247f7a747114",
+      "line": 40,
+      "path": "sakura_core/senp/SenpEffectProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:cfcd7aee3fd846503e1aed487b8940b0fd0086a1e598144f2c82ee27954837e3",
+      "line": 46,
+      "path": "sakura_core/senp/SenpEffectProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:3be2b0bfb223fce6e32da4541251abf98a2dcfca45c4b6e99cc5b91a1cff0039",
+      "line": 53,
+      "path": "sakura_core/senp/SenpEffectProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:c11cdc6b13f815d8090dc2ee9895a159d5c95a6d719948abe0102eb17c6fadfd",
+      "line": 65,
+      "path": "sakura_core/senp/SenpEffectProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:10b1136c9ab6585fb614681dd1c942780cc7880608f009b0c49644ae57804fc4",
+      "line": 72,
+      "path": "sakura_core/senp/SenpEffectProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:8d3ca5a4337c7c883d78ca9c18a83342755b24e8c48e36a3864e64ad87138830",
+      "line": 77,
+      "path": "sakura_core/senp/SenpEffectProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:5c86284cd71be40adf84604fd7832f4b1ea707b895b53cde0852b57fccd8c2be",
+      "line": 83,
+      "path": "sakura_core/senp/SenpEffectProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:74205304f37e1e390460567ff15209b7e0fe546011c674eb10d64e21d4f8dd06",
+      "line": 91,
+      "path": "sakura_core/senp/SenpEffectProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:239f9c3be6c890abe95212ccc852693ec0884d0ca3108de2fcb0c1cfa868c099",
+      "line": 96,
+      "path": "sakura_core/senp/SenpEffectProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:38a901dec599c311c5432c26114b92b90b727110903a62d6039060a37c95e384",
+      "line": 101,
+      "path": "sakura_core/senp/SenpEffectProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:b4fe429766413b11e14dcf51d2a7bbf72fa6f24eac31da70c3128e10cb7ceba7",
+      "line": 107,
+      "path": "sakura_core/senp/SenpEffectProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:265a17f8db981951da405f20adb6f4e04de61af654a14294e6c9b04e53062cab",
+      "line": 115,
+      "path": "sakura_core/senp/SenpEffectProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:3d9de206bb7511bb350e47aaea19f7b40aa177f9497e1bf4fd253181c8a64251",
+      "line": 126,
+      "path": "sakura_core/senp/SenpEffectProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:57d2a332725fb9ed5768491cd36ba42d4fab5f57af60f028fb4563942be64815",
+      "line": 131,
+      "path": "sakura_core/senp/SenpEffectProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:f88cb1e93713aee3ca65dab6aaabc436eb6dcaec832ecefe9d3f6422dd320b73",
+      "line": 136,
+      "path": "sakura_core/senp/SenpEffectProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:a8000c7745498d1e691265300a0506711eb569a718f15294cd85749b809799f3",
+      "line": 141,
+      "path": "sakura_core/senp/SenpEffectProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:775001908e112be4b660ad0dd3ae9aecdd9df1ac6816c751d05406e18ac99900",
+      "line": 147,
+      "path": "sakura_core/senp/SenpEffectProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:59b47d965ca73918fd9c06ca1f02ece555512af02c5b6d9ef58e3e5b69133efa",
+      "line": 154,
+      "path": "sakura_core/senp/SenpEffectProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:bd2b2a649d5d8f4fe5f5b0e6ef192bf95dded37293bc72891c82ecc043329e37",
+      "line": 160,
+      "path": "sakura_core/senp/SenpEffectProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:4e6d4320a672ee2eae3e4afab1a66dca4581dc0a1cdc57e3d3bbf941071093cb",
+      "line": 165,
+      "path": "sakura_core/senp/SenpEffectProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:e719f9091a5083c3eeab0b807d465d6f43145154c0642eda257e59768fccf935",
+      "line": 170,
+      "path": "sakura_core/senp/SenpEffectProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:1065a64706723c65d4f9c1c4f887d7e1890570412945f6a715435e1e0f6e2f33",
+      "line": 175,
+      "path": "sakura_core/senp/SenpEffectProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:2544b4b8e2648cdb1891dbdede322b857b369b73f67ed7ad32f8fc1254931b12",
+      "line": 180,
+      "path": "sakura_core/senp/SenpEffectProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:1ebe86fa1bca655809391eba3a67c4b563029b228fe727f29e9df9377cce6f95",
+      "line": 186,
+      "path": "sakura_core/senp/SenpEffectProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:7292628bc1b6f8473fdc81a2262ec569e42fabf062a91b475136c0d5dcd23922",
+      "line": 191,
+      "path": "sakura_core/senp/SenpEffectProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:7e41c9c876d549e8a08746ec00378f54d7c06d675b990c2d60975aeac9e91706",
+      "line": 196,
+      "path": "sakura_core/senp/SenpEffectProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:2e8d82101054c2bd648ddb974b27d2665badeb101197f60908d4edac5923629a",
+      "line": 202,
+      "path": "sakura_core/senp/SenpEffectProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:1fc52f2118587bbc9da8918e8ba605c7b5647873f2b258d001791924ce0e64d5",
+      "line": 207,
+      "path": "sakura_core/senp/SenpEffectProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:b7442127569ec7249c7167f7832c5734f72c5d5a0c7fc52912c548f2059b94a2",
+      "line": 219,
+      "path": "sakura_core/senp/SenpEffectProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:dd7eb16da925da4dfaa38d3541aac532870d486d7cbcf729d39312547c32a38e",
+      "line": 225,
+      "path": "sakura_core/senp/SenpEffectProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:24649de2616eca93924a9a5e541de3be5862c1467bc24c2f51b565dc9b0d7fc1",
+      "line": 233,
+      "path": "sakura_core/senp/SenpEffectProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:57d393dde29d1a248be504790e719fc7262db6d0b1acf3803f40fcd73932a8ad",
+      "line": 243,
+      "path": "sakura_core/senp/SenpEffectProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
       "column": 15,
       "evidence_sha256": "sha256:667ccdac1a684626db52584402e8ab5d3212a6000ce0f4c8a6ba846596356a99",
       "line": 103,
@@ -95007,7 +95252,7 @@
       }
     },
     "filtered_test_hint_count": 2,
-    "finding_count": 13476,
+    "finding_count": 13511,
     "finding_count_by_rule": {
       "boundary.private_include": 67,
       "boundary.win32_type": 4617,
@@ -95019,18 +95264,18 @@
       "memory.raw_new": 245,
       "resource.stop_required_acquisition": 258,
       "state.mutable_member": 131,
-      "state.public_mutable_field": 6197,
+      "state.public_mutable_field": 6232,
       "state.raw_pointer_member": 30,
       "test.filtered_or_skipped": 2
     },
-    "include_directive_count": 10696,
+    "include_directive_count": 10718,
     "monolith_link_hint_count": 0,
     "private_include_mention_count": 67,
     "raw_delete_expression_count": 317,
     "raw_new_expression_count": 245,
-    "source_file_count": 1684,
-    "source_line_count": 510157,
-    "tracked_file_count": 1733,
+    "source_file_count": 1687,
+    "source_line_count": 510944,
+    "tracked_file_count": 1736,
     "win32_parameter_mention_count": 4617
   },
   "rule_catalog": [
@@ -95186,8 +95431,8 @@
     ]
   },
   "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
-  "source_commit": "32970e4154203f5591b68aa253d74c06f3335163",
-  "source_fingerprint": "sha256:887be8fa6234ca190affdf3c10ff8e25103808b2f0cf928874e28e7128a8d745",
+  "source_commit": "f881170f28b3c17d195c145b6f2396704cffa47a",
+  "source_fingerprint": "sha256:e35d4109cd98ded61375c925ed662625a836361036d444a79aa33b5adc43c572",
   "tracked_source_paths": [
     ".github/actions/bootstrap-vcpkg/action.yml",
     ".github/dependabot.yml",
@@ -95909,6 +96154,8 @@
     "sakura_core/recent/SShare_History.h",
     "sakura_core/sakura.vcxproj",
     "sakura_core/sakura.vcxproj.filters",
+    "sakura_core/senp/SenpEffectProtocol.cpp",
+    "sakura_core/senp/SenpEffectProtocol.h",
     "sakura_core/senp/SenpLanguageService.cpp",
     "sakura_core/senp/SenpLanguageService.h",
     "sakura_core/senp/SenpManagementService.cpp",
@@ -96681,6 +96928,7 @@
     "src/test/cpp/tests1/platform/profiles/ProfileBootstrapSnapshotTest.cpp",
     "src/test/cpp/tests1/platform/request/WinHttpRequestRuntimeTest.cpp",
     "src/test/cpp/tests1/platform/request/WinHttpSystemProxyResolverTest.cpp",
+    "src/test/cpp/tests1/senp/SenpEffectProtocolTest.cpp",
     "src/test/cpp/tests1/senp/SenpLanguageServiceTest.cpp",
     "src/test/cpp/tests1/terminal/ConPtyCloseIntegrationTest.cpp",
     "src/test/cpp/tests1/terminal/HarnessOrchestrationAcceptanceTest.cpp",
@@ -96923,5 +97171,5 @@
     "tools/ppa_stub/ppa_stub.h",
     "tools/vcx-props/vcxcompat.props"
   ],
-  "tracked_source_set_sha256": "sha256:d2b25178f489b851a5ea15bf919b62b47e14c7e86d09667f567528b12b198379"
+  "tracked_source_set_sha256": "sha256:7aa97b9c794884ac39baa2a1cc2bf06ecdabcd689f837580ad765116295536a0"
 }
