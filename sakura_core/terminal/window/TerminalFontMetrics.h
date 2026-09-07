@@ -12,7 +12,7 @@
 
 namespace terminal {
 
-//! Windows Terminal-compatible terminal font and cell geometry.
+//! Nominal terminal font and cell geometry, before native font measurement.
 struct TerminalFontMetrics {
 	int fontPixelHeight{ 1 };
 	int cellWidth{ 1 };
@@ -37,6 +37,8 @@ namespace detail {
 //! line height 1.2.  Keeping this calculation independent of GDI's
 //! tmAveCharWidth prevents integer average-width rounding from inserting a
 //! visible gap between every terminal cell.
+//! The native renderer must raise cellHeight to fit its realized regular and
+//! bold font line boxes. An em-size multiplier alone can clip GDI descenders.
 [[nodiscard]] constexpr TerminalFontMetrics CalculateTerminalFontMetrics(
 	int pointSize, unsigned int dpi) noexcept
 {

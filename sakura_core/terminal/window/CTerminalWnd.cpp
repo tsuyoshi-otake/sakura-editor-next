@@ -895,6 +895,23 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 		boldFont = createFont(face, FW_BOLD, FIXED_PITCH | FF_MODERN);
 		cellWidth = metrics.cellWidth;
 		cellHeight = metrics.cellHeight;
+		// GDI's line box can exceed the nominal em-size multiplier (Cascadia
+		// Mono is 16 pixels tall at a 12-pixel em). Reserve the entire line box:
+		// shifting text upward instead would trade clipped descenders for clipped
+		// accents. Measure only when fonts change, never in the paint hot path.
+		if( const HDC dc = ::GetDC(window) ) {
+			for( const HFONT candidate : { font, boldFont } ) {
+				if( candidate == nullptr ) continue;
+				const auto previous = ::SelectObject(dc, candidate);
+				if( previous == nullptr || previous == HGDI_ERROR ) continue;
+				TEXTMETRICW measured{};
+				if( ::GetTextMetricsW(dc, &measured) ) {
+					cellHeight = std::max(cellHeight, static_cast<int>(measured.tmHeight));
+				}
+				::SelectObject(dc, previous);
+			}
+			::ReleaseDC(window, dc);
+		}
 		// DirectWrite consumes model-owned cells for shaped fallback only.  It
 		// never measures a font back into the terminal's PTY grid geometry.
 		terminalFontFamily.assign(face == nullptr ? L"" : face);

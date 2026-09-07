@@ -297,19 +297,45 @@ TEST(TerminalTool, RendererSizesPtyFromTheGridInsideTheApportionedPadding)
 
 	terminal::TerminalSize observed{};
 	renderer.SetResizeSink([&observed](terminal::TerminalSize size) { observed = size; });
-	constexpr unsigned int dpi = 144;
-	const auto font = theme::CThemeService::FontSpec(theme::ThemeFontKind::Terminal);
-	const auto metrics = terminal::CalculateTerminalFontMetrics(font.pointSize, dpi);
-	const auto geometry = terminal::TerminalViewportGeometry::FromDpi(dpi);
-	constexpr std::uint16_t expectedColumns = 10;
-	constexpr std::uint16_t expectedRows = 4;
-	const RECT bounds{ 0, 0,
-		geometry.GridOriginX() + metrics.cellWidth * expectedColumns + geometry.padding,
-		geometry.GridOriginY() + metrics.cellHeight * expectedRows + geometry.padding };
+	const auto spec = theme::CThemeService::FontSpec(theme::ThemeFontKind::Terminal);
+	const auto family = theme::CThemeService::ResolveFontFamily(theme::ThemeFontKind::Terminal);
+	// Revisit 96 DPI to exercise recreation as well as first realization. Use
+	// enough rows that sizing from the old 1.2-em estimate cannot round to the
+	// same row count as the actual font line box.
+	for( const unsigned int dpi : { 96U, 120U, 144U, 192U, 240U, 96U } ) {
+		SCOPED_TRACE(dpi);
+		auto metrics = terminal::CalculateTerminalFontMetrics(spec.pointSize, dpi);
+		const HDC dc = ::CreateCompatibleDC(nullptr);
+		EXPECT_NE(nullptr, dc);
+		if( dc == nullptr ) continue;
+		for( const int weight : { spec.weight, static_cast<int>(FW_BOLD) } ) {
+			const HFONT font = ::CreateFontW(-metrics.fontPixelHeight, 0, 0, 0, weight,
+				FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
+				CLEARTYPE_NATURAL_QUALITY, FIXED_PITCH | FF_MODERN, family);
+			EXPECT_NE(nullptr, font);
+			if( font == nullptr ) continue;
+			const auto previous = ::SelectObject(dc, font);
+			TEXTMETRICW measured{};
+			EXPECT_TRUE(::GetTextMetricsW(dc, &measured));
+			metrics.cellHeight = std::max(metrics.cellHeight,
+				static_cast<int>(measured.tmAscent + measured.tmDescent));
+			::SelectObject(dc, previous);
+			::DeleteObject(font);
+		}
+		::DeleteDC(dc);
+		const auto geometry = terminal::TerminalViewportGeometry::FromDpi(dpi);
+		constexpr std::uint16_t expectedColumns = 10;
+		constexpr std::uint16_t expectedRows = 20;
+		const RECT bounds{ 0, 0,
+			geometry.GridOriginX() + metrics.cellWidth * expectedColumns + geometry.padding,
+			geometry.GridOriginY() + metrics.cellHeight * expectedRows + geometry.padding };
 
-	renderer.Layout(bounds, dpi);
-	EXPECT_EQ(expectedColumns, observed.columns);
-	EXPECT_EQ(expectedRows, observed.rows);
+		renderer.Layout(bounds, dpi);
+		EXPECT_EQ(expectedColumns, observed.columns);
+		EXPECT_EQ(expectedRows, observed.rows);
+		EXPECT_EQ(observed.columns, renderer.GetTerminalSize().columns);
+		EXPECT_EQ(observed.rows, renderer.GetTerminalSize().rows);
+	}
 
 	renderer.Close();
 	::DestroyWindow(parent);

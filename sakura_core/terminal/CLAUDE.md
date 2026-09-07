@@ -210,6 +210,26 @@ terminal, although VS Code lists both commands in its default
 
 ## DirectWrite Damage Rendering
 
+### Native font line boxes (Issue #295)
+
+`CalculateTerminalFontMetrics` supplies nominal em size, fixed cell advances,
+and minimum line height. When `CTerminalWnd` realizes its regular and bold GDI
+fonts, raise the shared `cellHeight` to at least both realized `tmHeight`
+values. Measure once at font creation/DPI change, not during painting. The
+same height must drive PTY rows, paint rectangles, caret/IME placement, hit
+testing, and invalidation. Never fix descender clipping by shifting text above
+the cell: that can clip accents instead.
+
+This follows the measured-font boundary in VS Code's xterm.js
+[`CharSizeService`](https://github.com/xtermjs/xterm.js/blob/master/src/browser/services/CharSizeService.ts),
+which derives height from font bounding ascent plus descent. Native GDI has
+different line metrics from browser/DirectWrite typography: the installed
+Cascadia Mono at a 12-pixel em has a 16-pixel GDI line box, exceeding the old
+14-pixel estimate. The native grid therefore reserves 16 pixels at 96 DPI
+rather than shrinking the 9-point font or cutting its glyphs. Column advances
+remain unchanged. Fallback clusters remain bounded by the primary grid and do
+not resize the PTY opportunistically during a paint.
+
 Terminal render-plan rectangles use absolute client coordinates. Bind the
 `ID2D1DCRenderTarget` to the stable full client/back-buffer rectangle even when
 Win32 reports a one-row `PAINTSTRUCT::rcPaint`; keep the render plan, HDC clip,
