@@ -3,6 +3,7 @@
 #include "pch.h"
 #include <gtest/gtest.h>
 #include "senp/SenpEffectRuntime.h"
+#include "senp/SenpContributionOwners.h"
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -180,6 +181,81 @@ TEST_F(SenpRuntimeProcess, FailedLaunchAndImmediateStopStillProduceOneTerminalOu
 		EXPECT_EQ(result->status, missing ? InvocationStatus::HostUnavailable : InvocationStatus::Cancelled);
 		VerifyExit(runtime);
 		EXPECT_FALSE(runtime.TakeCompleted());
+	}
+}
+
+TEST_F(SenpRuntimeProcess, ContributionOwnerUpdateFailureAndShutdownKeepPhysicalCleanup)
+{
+	struct Publication final : ISenpOwnerPublication {
+		std::size_t& applied;
+		explicit Publication(std::size_t& count) : applied(count) {}
+		bool Validate(const InvocationResult& result) const noexcept override { return result.effects.size() <= 1; }
+		bool Commit() noexcept override { return true; }
+		bool Apply(InvocationResult) noexcept override { ++applied; return true; }
+		void Revoke(StopReason) noexcept override {}
+	};
+	auto launch = Launch();
+	launch.hostExecutable = (fixtures / L"sakura-senp-host.exe").native();
+	launch.modulePath = (fixtures / L"extension.wasm").native();
+	std::ifstream digest(fixtures / L"extension.sha256");
+	std::string hash;
+	digest >> hash;
+	ASSERT_EQ(hash.size(), 64U);
+	launch.moduleSha256.assign(hash.begin(), hash.end());
+	std::size_t applied{};
+	CSenpEffectRuntime* latest{}; // Borrow only while the just-activated owner is live.
+	CSenpContributionOwners owners([&](EffectRuntimeLaunch value) {
+		auto runtime = std::make_unique<CSenpEffectRuntime>(std::move(value));
+		latest = runtime.get();
+		return runtime;
+	});
+	const auto prepare = [&](EffectRuntimeLaunch value) {
+		return owners.Prepare(std::move(value), std::wstring(64, L'a'),
+			[&](const auto&, const auto*) { return std::make_unique<Publication>(applied); }, Clock::now());
+	};
+	const auto awaitTransition = [&]() -> std::optional<OwnerChangeResult> {
+		const auto deadline = Clock::now() + 12s;
+		while (Clock::now() < deadline) {
+			owners.Poll(Clock::now());
+			if (auto terminal = owners.TakeTransition()) return terminal;
+			::Sleep(5);
+		}
+		return {};
+	};
+	const auto first = prepare(launch);
+	ASSERT_EQ(first.status, OwnerChangeStatus::Accepted);
+	const auto started = awaitTransition();
+	ASSERT_TRUE(started);
+	ASSERT_EQ(started->status, OwnerChangeStatus::Activated);
+	ASSERT_TRUE(owners.IsCurrent(first.owner));
+	const auto firstPid = latest->Snapshot().processId;
+	ASSERT_NE(firstPid, 0U);
+	auto bad = launch;
+	bad.moduleSha256 = std::wstring(64, L'0');
+	ASSERT_EQ(prepare(std::move(bad)).status, OwnerChangeStatus::Accepted);
+	const auto failed = awaitTransition();
+	ASSERT_TRUE(failed);
+	EXPECT_EQ(failed->status, OwnerChangeStatus::Failed);
+	EXPECT_TRUE(owners.IsCurrent(first.owner));
+	const auto updated = prepare(launch);
+	ASSERT_EQ(updated.status, OwnerChangeStatus::Accepted);
+	const auto activated = awaitTransition();
+	ASSERT_TRUE(activated);
+	ASSERT_EQ(activated->status, OwnerChangeStatus::Activated);
+	EXPECT_FALSE(owners.IsCurrent(first.owner));
+	EXPECT_TRUE(owners.IsCurrent(updated.owner));
+	const auto secondPid = latest->Snapshot().processId;
+	EXPECT_NE(firstPid, secondPid);
+	EXPECT_EQ(applied, 2U);
+	ASSERT_TRUE(owners.Revoke(launch.extensionId, StopReason::Disabled));
+	EXPECT_FALSE(owners.IsCurrent(updated.owner));
+	EXPECT_TRUE(owners.Close());
+	EXPECT_EQ(owners.Snapshot().retiring, 0U);
+	EXPECT_EQ(owners.Snapshot().cleanupFailed, 0U);
+	for (auto pid : { firstPid, secondPid }) {
+		const auto process = ::OpenProcess(SYNCHRONIZE, FALSE, pid);
+		if (process) { EXPECT_EQ(::WaitForSingleObject(process, 0), WAIT_OBJECT_0); ::CloseHandle(process); }
+		else EXPECT_EQ(::GetLastError(), ERROR_INVALID_PARAMETER);
 	}
 }
 

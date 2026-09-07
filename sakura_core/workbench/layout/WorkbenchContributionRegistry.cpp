@@ -12,12 +12,29 @@
 #include <algorithm>
 #include <limits>
 #include <stdexcept>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace workbench::layout {
 namespace {
 
 constexpr std::size_t kMaxStableIdBytes = 160;
+constexpr std::size_t kMaxContributionOwners = 64;
+constexpr std::size_t kMaxOwnerContainers = 16;
+constexpr std::size_t kMaxOwnerViews = 64;
+constexpr std::uint64_t kMaxOwnerGeneration = INT64_MAX;
+
+bool IsBuiltIn(const WorkbenchContributionOwner& owner) noexcept
+{
+	return owner.ownerId.empty() && owner.generation == 0;
+}
+
+void EraseOwner(WorkbenchContributionSnapshot& snapshot, const std::string_view ownerId)
+{
+	std::erase_if(snapshot.viewContainers, [ownerId](const auto& entry) { return entry.owner.ownerId == ownerId; });
+	std::erase_if(snapshot.views, [ownerId](const auto& entry) { return entry.owner.ownerId == ownerId; });
+	std::erase_if(snapshot.owners, [ownerId](const auto& owner) { return owner.ownerId == ownerId; });
+}
 
 bool IsPrintableUtf8(std::string_view value) noexcept
 {
@@ -144,7 +161,7 @@ bool WorkbenchContributionRegistry::RegisterExtensionContributions(
 	const std::span<const WorkbenchViewDescriptor> views)
 {
 	if (m_extensionBatchRegistered || (containers.empty() && views.empty())
-		|| m_snapshot.revision == (std::numeric_limits<std::uint64_t>::max)()
+		|| m_snapshot.revision >= UINT64_MAX - kMaxContributionOwners
 		|| std::ranges::any_of(views, [](const auto& view) { return view.provider.empty(); })) return false;
 	try {
 		auto candidate = m_snapshot;
@@ -169,6 +186,104 @@ bool WorkbenchContributionRegistry::IsValidStableId(const std::string_view value
 	return IsPrintableUtf8(value);
 }
 
+PrepareWorkbenchContributionsResult WorkbenchContributionRegistry::PrepareOwnerReplacement(
+	WorkbenchContributionOwner replacement, const std::uint64_t expectedGeneration,
+	const std::span<const WorkbenchViewContainerDescriptor> containers,
+	const std::span<const WorkbenchViewDescriptor> views) const noexcept
+{
+	using Status = EWorkbenchContributionChangeStatus;
+	if (!IsValidStableId(replacement.ownerId) || replacement.generation == 0
+		|| replacement.generation > kMaxOwnerGeneration
+		|| containers.size() > kMaxOwnerContainers || views.size() > kMaxOwnerViews
+		|| std::ranges::any_of(views, [](const auto& view) { return view.provider.empty() || view.title.size() > 1024; })
+		|| std::ranges::any_of(containers, [](const auto& container) { return container.title.size() > 1024; })) {
+		return { Status::Invalid, {} };
+	}
+	const auto current = std::ranges::find(m_snapshot.owners, replacement.ownerId, &WorkbenchContributionOwner::ownerId);
+	if ((current == m_snapshot.owners.end() ? 0 : current->generation) != expectedGeneration
+		|| replacement.generation <= m_lastOwnerGeneration) return { Status::Conflict, {} };
+	if (m_snapshot.revision >= UINT64_MAX - kMaxContributionOwners
+		|| (current == m_snapshot.owners.end() && m_snapshot.owners.size() >= kMaxContributionOwners)) {
+		return { Status::Exhausted, {} };
+	}
+	try {
+		auto change = std::make_unique<PreparedWorkbenchContributions>();
+		change->m_registry = this;
+		change->m_baseRevision = m_snapshot.revision;
+		change->m_lastGeneration = replacement.generation;
+		change->m_snapshot = m_snapshot;
+		auto& candidate = change->m_snapshot;
+		EraseOwner(candidate, replacement.ownerId);
+		candidate.owners.push_back(replacement);
+		std::ranges::sort(candidate.owners, {}, &WorkbenchContributionOwner::ownerId);
+		for (const auto& descriptor : containers) candidate.viewContainers.push_back({ descriptor, replacement });
+		for (const auto& descriptor : views) candidate.views.push_back({ descriptor, replacement });
+		SortById(candidate.viewContainers);
+		SortById(candidate.views);
+		++candidate.revision;
+		std::unordered_map<std::string_view, const WorkbenchContributionOwner*> targets;
+		for (const auto& container : candidate.viewContainers) targets.emplace(container.descriptor.id, &container.owner);
+		for (const auto& view : views) {
+			const auto target = targets.find(view.containerId);
+			if (target != targets.end() && !IsBuiltIn(*target->second) && *target->second != replacement)
+				return { Status::Unsupported, {} };
+		}
+		if (!IsValidContributionSnapshot(candidate)) return { Status::Invalid, {} };
+		return { Status::Prepared, std::move(change) };
+	} catch (...) {
+		return { Status::Failed, {} };
+	}
+}
+
+PrepareWorkbenchContributionsResult WorkbenchContributionRegistry::PrepareOwnerDisposal(
+	const WorkbenchContributionOwner& owner) const noexcept
+{
+	using Status = EWorkbenchContributionChangeStatus;
+	if (!IsOwnerCurrent(owner)) return { Status::Conflict, {} };
+	if (m_snapshot.revision == UINT64_MAX) return { Status::Exhausted, {} };
+	try {
+		auto change = std::make_unique<PreparedWorkbenchContributions>();
+		change->m_registry = this;
+		change->m_baseRevision = m_snapshot.revision;
+		change->m_lastGeneration = m_lastOwnerGeneration;
+		change->m_snapshot = m_snapshot;
+		EraseOwner(change->m_snapshot, owner.ownerId);
+		++change->m_snapshot.revision;
+		if (!IsValidContributionSnapshot(change->m_snapshot)) return { Status::Invalid, {} };
+		return { Status::Prepared, std::move(change) };
+	} catch (...) {
+		return { Status::Failed, {} };
+	}
+}
+
+EWorkbenchContributionChangeStatus WorkbenchContributionRegistry::Commit(
+	std::unique_ptr<PreparedWorkbenchContributions> change) noexcept
+{
+	using Status = EWorkbenchContributionChangeStatus;
+	if (!change || change->m_registry != this) return Status::Invalid;
+	if (change->m_baseRevision != m_snapshot.revision) return Status::Conflict;
+	// No allocation, callback, or native work remains after the revision check.
+	m_snapshot = std::move(change->m_snapshot);
+	m_lastOwnerGeneration = change->m_lastGeneration;
+	return Status::Committed;
+}
+
+EWorkbenchContributionChangeStatus WorkbenchContributionRegistry::DisposeOwner(
+	const WorkbenchContributionOwner& owner) noexcept
+{
+	using Status = EWorkbenchContributionChangeStatus;
+	if (!IsOwnerCurrent(owner)) return Status::Conflict;
+	if (m_snapshot.revision == UINT64_MAX) return Status::Exhausted;
+	EraseOwner(m_snapshot, owner.ownerId);
+	++m_snapshot.revision;
+	return Status::Committed;
+}
+
+bool WorkbenchContributionRegistry::IsOwnerCurrent(const WorkbenchContributionOwner& owner) const noexcept
+{
+	return !IsBuiltIn(owner) && std::ranges::find(m_snapshot.owners, owner) != m_snapshot.owners.end();
+}
+
 bool WorkbenchContributionRegistry::IsValidViewContainerDescriptor(
 	const WorkbenchViewContainerDescriptor& descriptor) noexcept
 {
@@ -182,6 +297,16 @@ bool WorkbenchContributionRegistry::IsValidContributionSnapshot(
 	const WorkbenchContributionSnapshot& snapshot) noexcept
 {
 	try {
+		if (snapshot.owners.size() > kMaxContributionOwners) return false;
+		std::unordered_map<std::string_view, std::uint64_t> ownerIds;
+		for (const auto& owner : snapshot.owners) {
+			if (!IsValidStableId(owner.ownerId) || owner.generation == 0 || owner.generation > kMaxOwnerGeneration
+				|| !ownerIds.emplace(owner.ownerId, owner.generation).second) return false;
+		}
+		const auto validOwner = [&ownerIds](const WorkbenchContributionOwner& owner) {
+			const auto found = ownerIds.find(owner.ownerId);
+			return IsBuiltIn(owner) || (found != ownerIds.end() && found->second == owner.generation);
+		};
 		std::unordered_set<std::string_view> partIds;
 		partIds.reserve(snapshot.parts.size());
 		for (const auto& registered : snapshot.parts) {
@@ -189,22 +314,28 @@ bool WorkbenchContributionRegistry::IsValidContributionSnapshot(
 				|| !partIds.emplace(registered.descriptor.id).second) return false;
 		}
 
-		std::unordered_set<std::string_view> containerIds;
+		std::unordered_map<std::string_view, const WorkbenchContributionOwner*> containerIds;
 		containerIds.reserve(snapshot.viewContainers.size());
 		for (const auto& registered : snapshot.viewContainers) {
 			if (!IsValidViewContainerDescriptor(registered.descriptor)
-				|| !containerIds.emplace(registered.descriptor.id).second) return false;
+				|| !validOwner(registered.owner)
+				|| !containerIds.emplace(registered.descriptor.id, &registered.owner).second) return false;
 		}
 
 		std::unordered_set<std::string_view> viewIds;
 		viewIds.reserve(snapshot.views.size());
 		for (const auto& registered : snapshot.views) {
 			if (!IsValidStableId(registered.descriptor.id)
+				|| !validOwner(registered.owner)
 				|| !IsValidStableId(registered.descriptor.containerId)
 				|| (!registered.descriptor.provider.empty()
 					&& !IsValidStableId(registered.descriptor.provider))
 				|| !containerIds.contains(registered.descriptor.containerId)
 				|| !viewIds.emplace(registered.descriptor.id).second) return false;
+			const auto& containerOwner = *containerIds.at(registered.descriptor.containerId);
+			// A built-in container may host extension Views. An extension cannot
+			// borrow another owner's container and prevent its independent disposal.
+			if (!IsBuiltIn(containerOwner) && containerOwner != registered.owner) return false;
 		}
 		return true;
 	} catch (...) {

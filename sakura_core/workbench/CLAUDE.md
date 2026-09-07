@@ -100,9 +100,11 @@ and lifecycle rules as the rest of the native workbench.
 ### Contribution and Layout-State Checkpoint
 
 - `WorkbenchContributionRegistry` is the process-local catalog for built-in
-  Part, ViewContainer, and View descriptors. It accepts at most one validated
-  SENP startup batch before native View pages are created; registration after
-  that composition boundary is unsupported and takes effect in a new window.
+  Part, ViewContainer, and View descriptors. The v1 native composition still
+  accepts at most one SENP startup batch. G04 adds unpublished owner-generation
+  candidates, revision-checked publication and allocation-free exact-owner
+  disposal to the pure catalog. Native dynamic page composition is a separate
+  boundary; a catalog candidate alone must never publish an unsupported page.
 - `ProjectHostViewPages` resolves declarative View `provider` IDs through the
   product-owned factory table and returns an atomic native-page batch. Product
   composition registers factories, not extension ViewContainer/View IDs;

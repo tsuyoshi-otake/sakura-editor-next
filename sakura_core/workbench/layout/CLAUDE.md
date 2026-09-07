@@ -8,6 +8,32 @@ but do not depend on HWND, native editor controls, profile paths, storage, IPC,
 or process identity. A composition adapter outside this directory performs all
 durable I/O.
 
+## Extension Contribution Ownership (Issue #296)
+
+- Registry access and publication are serialized by the native composition
+  owner. Prepare copies and validates a whole candidate without changing live
+  descriptors; Commit checks registry identity and base revision before a
+  non-allocating move. Abandoning a candidate preserves the old owner.
+- Registered Views and ViewContainers carry a native-issued owner/generation.
+  Built-ins and the legacy v1 startup batch remain unowned. Dynamic owners are
+  bounded to 64, with at most 16 containers and 64 Views each. Generations are
+  globally increasing within this catalog, including after disposal; stale
+  preparation is rejected and never retried automatically.
+- `DisposeOwner` removes exactly the matching generation without allocating or
+  calling observers. New registration reserves 64 revision values for terminal
+  owner removal. No View may retain a dependency on a disposed foreign owner.
+- Recorded unsupported SENP boundary: v2 supports its own containers and
+  product-owned containers. A different extension's container returns typed
+  `Unsupported`; an unknown destination is invalid. VS Code supports foreign
+  containers and moves remaining Views into Explorer when a container is
+  removed, then restores their original container when it returns (verified
+  against `viewsExtensionPoint.ts` at
+  `e6aeab60511647b9b00f0bf2f0f02b15f278abb5`). The current native page pool lacks
+  cross-provider View retention and fallback relocation transactions, so SENP
+  must not claim or approximate that capability. Implement both lifetimes and
+  relocation before widening this boundary. This restriction does not apply to
+  normal user movement of an already supported View/Part in the layout model.
+
 ## Phase 1 Layout-Memento Persistence Checkpoint (2026-07-31)
 
 - The adapter persists one profile-scoped `workbench.layout` key at `Machine`

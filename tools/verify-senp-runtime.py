@@ -112,12 +112,13 @@ def main() -> int:
             env["SENP_PROTOCOL_PEER_FILE"] = str(rust_peer)
             env["SENP_PROTOCOL_OUTPUT"] = str(cpp_peer)
             xml = output / "native-results.xml"
-            run("native-tests", [str(tests), "--gtest_filter=SenpRuntimeLifecycle.*:SenpRuntimeProcess.*:SenpEffectProtocol.*",
+            run("native-tests", [str(tests), "--gtest_filter=SenpRuntimeLifecycle.*:SenpRuntimeProcess.*:SenpEffectProtocol.*:SenpViewLifecycle.*",
                 f"--gtest_output=xml:{xml}"], ROOT, 120, env)
             report = ET.parse(xml).getroot()
             cases = report.findall(".//testcase")
             process_cases = [case for case in cases if case.get("classname") == "SenpRuntimeProcess"]
-            if len(process_cases) != 5 or any(case.find("skipped") is not None or case.find("failure") is not None for case in cases):
+            owner_cases = [case for case in cases if case.get("classname") == "SenpViewLifecycle"]
+            if len(process_cases) != 6 or len(owner_cases) < 15 or any(case.find("skipped") is not None or case.find("failure") is not None for case in cases):
                 raise RuntimeError("required process cases are missing, skipped or failed")
             env["SENP_PROTOCOL_PEER_FILE"] = str(cpp_peer)
             env["SENP_PROTOCOL_OUTPUT"] = str(rust_peer)

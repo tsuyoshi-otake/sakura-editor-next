@@ -1,7 +1,7 @@
 # SENP GitHub拡張 基本設計・API設計案
 
-状態: G01のschema/ABI判別、G02のv2 WIT/event/effect契約を実装済み。
-v2 dispatch/lifecycle・画面・GitHub拡張は後続工程。
+状態: G01/G02のschema・WIT・codec、G03a/G03bのsessionと実host、G04のowner lifecycle契約を実装済み。
+native page/commandの公開adapter、tool broker、GitHub拡張、v2 package受理は後続工程。
 作成日: 2026-09-07。
 調査対象: `5346511f26fa04cc13acdad21ff603b4813e6768` のチェックアウト。
 追跡Issue: [#296 — Design SENP v2 GitHub Issues/PR and Actions extensions using gh](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/296)。
@@ -307,6 +307,13 @@ Viewの折り畳み・Partの非表示・container移動はdisposeではない�
 同じView instanceと選択/展開を保持し、非表示はpollingの購読だけを外す。
 updateは新digestの検証・起動準備後にownerを置換する。失敗は旧版維持、
 新たなcapabilityが必要な場合は承認待ちで旧権限を拡大しない。
+
+G04は純粋catalogのowner候補とruntime/publication transactionを実装する。
+publication adapterなしではUnsupportedとなりhostも起動しない。画面・command・grantの
+具体的な投影はU01/U06/T02で接続する。SENPの初期範囲は自分またはproduct-owned containerで、
+別extensionのcontainerはtyped Unsupportedとする。VS Codeのcross-provider保持と
+container消失時のExplorer移動はnative page poolの未対応境界として記録し、黙って近似しない。
+[ownerと回収の実装契約](senp-v2-runtime.md)。
 
 ## 6. GitHub CLI境界と認証
 

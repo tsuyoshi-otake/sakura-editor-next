@@ -7,6 +7,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <initializer_list>
 #include <span>
 #include <string>
@@ -98,8 +99,22 @@ struct WorkbenchViewDescriptor {
 };
 
 struct RegisteredWorkbenchPart { WorkbenchPartDescriptor descriptor; };
-struct RegisteredWorkbenchViewContainer { WorkbenchViewContainerDescriptor descriptor; };
-struct RegisteredWorkbenchView { WorkbenchViewDescriptor descriptor; };
+//! A native-issued, process-local identity. Empty/zero denotes a built-in.
+//! Generations never enter a durable layout memento.
+struct WorkbenchContributionOwner {
+	std::string ownerId;
+	std::uint64_t generation{};
+	[[nodiscard]] bool operator==(const WorkbenchContributionOwner&) const = default;
+};
+
+struct RegisteredWorkbenchViewContainer {
+	WorkbenchViewContainerDescriptor descriptor;
+	WorkbenchContributionOwner owner;
+};
+struct RegisteredWorkbenchView {
+	WorkbenchViewDescriptor descriptor;
+	WorkbenchContributionOwner owner;
+};
 
 //! Deterministic, ID-sorted declarations for the built-in workbench.
 struct WorkbenchContributionSnapshot {
@@ -107,9 +122,35 @@ struct WorkbenchContributionSnapshot {
 	std::vector<RegisteredWorkbenchPart> parts;
 	std::vector<RegisteredWorkbenchViewContainer> viewContainers;
 	std::vector<RegisteredWorkbenchView> views;
+	std::vector<WorkbenchContributionOwner> owners;
 };
 
-//! Immutable registry for Sakura Editor NEXT's built-in Parts, ViewContainers and Views.
+enum class EWorkbenchContributionChangeStatus : std::uint8_t {
+	Prepared, Committed, Invalid, Conflict, Exhausted, Failed, Unsupported,
+};
+
+class WorkbenchContributionRegistry;
+
+//! An unpublished catalog candidate. Destruction aborts preparation. Consumers
+//! may validate native page/layout candidates against its immutable snapshot.
+class PreparedWorkbenchContributions final {
+public:
+	[[nodiscard]] const WorkbenchContributionSnapshot& Snapshot() const noexcept { return m_snapshot; }
+private:
+	friend class WorkbenchContributionRegistry;
+	WorkbenchContributionSnapshot m_snapshot;
+	std::uint64_t m_baseRevision{};
+	std::uint64_t m_lastGeneration{};
+	const WorkbenchContributionRegistry* m_registry{};
+};
+
+struct PrepareWorkbenchContributionsResult {
+	EWorkbenchContributionChangeStatus status{ EWorkbenchContributionChangeStatus::Failed };
+	std::unique_ptr<PreparedWorkbenchContributions> change;
+};
+
+//! Catalog access and publication are serialized by the native composition
+//! owner. Preparation does not mutate the live catalog or invoke callbacks.
 class WorkbenchContributionRegistry final {
 public:
 	WorkbenchContributionRegistry();
@@ -120,6 +161,22 @@ public:
 	[[nodiscard]] bool RegisterExtensionContributions(
 		std::span<const WorkbenchViewContainerDescriptor> containers,
 		std::span<const WorkbenchViewDescriptor> views);
+	//! expectedGeneration zero means the owner must be absent. A replacement
+	//! generation must exceed every generation previously committed here, even
+	//! after disposal. Parallel preparations may conflict and are never retried.
+	[[nodiscard]] PrepareWorkbenchContributionsResult PrepareOwnerReplacement(
+		WorkbenchContributionOwner replacement, std::uint64_t expectedGeneration,
+		std::span<const WorkbenchViewContainerDescriptor> containers,
+		std::span<const WorkbenchViewDescriptor> views) const noexcept;
+	[[nodiscard]] PrepareWorkbenchContributionsResult PrepareOwnerDisposal(
+		const WorkbenchContributionOwner& owner) const noexcept;
+	//! Revocation has no allocation or callbacks. Registration reserves revision
+	//! capacity for the removal of every live owner, including allocation failure.
+	[[nodiscard]] EWorkbenchContributionChangeStatus DisposeOwner(
+		const WorkbenchContributionOwner& owner) noexcept;
+	[[nodiscard]] EWorkbenchContributionChangeStatus Commit(
+		std::unique_ptr<PreparedWorkbenchContributions> change) noexcept;
+	[[nodiscard]] bool IsOwnerCurrent(const WorkbenchContributionOwner& owner) const noexcept;
 	[[nodiscard]] static bool IsValidStableId(std::string_view value) noexcept;
 	[[nodiscard]] static bool IsValidViewContainerDescriptor(
 		const WorkbenchViewContainerDescriptor& descriptor) noexcept;
@@ -130,6 +187,7 @@ public:
 private:
 	WorkbenchContributionSnapshot m_snapshot;
 	bool m_extensionBatchRegistered = false;
+	std::uint64_t m_lastOwnerGeneration{};
 };
 
 } // namespace workbench::layout

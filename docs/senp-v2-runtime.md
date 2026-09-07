@@ -1,7 +1,8 @@
 # SENP v2 runtime session（#296）
 
-G03aはv2の要求・応答・終了状態、G03bはWin32 workerとの接続を実装する。
-packageからのowner登録と寄与の公開はG04で接続する。低位のhostを実行できても、
+G03aはv2の要求・応答・終了状態、G03bはWin32 workerとの接続、G04は
+owner登録候補・置換・失効・回収の契約を実装する。native page/commandとbroker grantの
+adapterはU01/U06/T02で接続する。低位のhostとownerを実行できても、
 schema 2 packageのinstall/enableを許可したことにはならない。
 
 ## 所有と終端
@@ -74,6 +75,43 @@ workerはjob終了とprocessの終了確認を終えてから`workerExited`を�
 OVERLAPPEDとbufferを解放する。ここにはOSのlocal pipe completion契約への依存が残る。
 壊れたkernel/driverまで含む厳密な実時間上限を、アプリのdeadlineだけで保証するものではない。
 
+## ownerの登録・更新・失効（G04）
+
+[CSenpContributionOwners](../sakura_core/senp/SenpContributionOwners.h)は、nativeが検証した
+path/digestと、全descriptor/page/commandを準備するpublication transactionを受け取る。
+publicationがない場合はhostを起動する前に`Unsupported`を返す。候補を作り、hostの
+activateとeffect検証が成功してから公開する。準備失敗・期限切れ・候補の競合では旧ownerを維持する。
+generationは単調増加で、extension ID、package digest、workspace/account revisionと一緒に保持する。
+
+[WorkbenchContributionRegistry](../sakura_core/workbench/layout/WorkbenchContributionRegistry.h)は
+ownerごとの完全なcatalog候補を作り、registry identityとbase revisionを照合して公開する。
+候補の破棄は何も公開しない。各View/ViewContainerはownerを持ち、組み込みや他ownerのID衝突は拒否する。
+解除は割り当てを行わず正確なgenerationだけを取り除く。登録側は64 owner分の終端revisionを予約し、
+revision枯渇を理由に解除不能なownerを残さない。検証はID indexを使うO(N)で、owner登録は最大64、
+各ownerのcontainerは16、Viewは64。v1の起動時batchは従来どおり。
+
+SENPの対応先は自分のcontainerまたはproduct-owned containerに限定する。
+別extensionのcontainerは`Unsupported`、未知のcontainerはInvalid。
+実際のVS Codeは、container消失時に残りのViewsをExplorerへ移動し、再登録時に元へ戻す。
+[参照したupstream実装](https://github.com/microsoft/vscode/blob/e6aeab60511647b9b00f0bf2f0f02b15f278abb5/src/vs/workbench/api/browser/viewsExtensionPoint.ts)。
+このcross-provider保持とfallback移動は現在のnative page poolが扱えないため、対応済みとして
+表示しない。制限と解除条件はlayoutの`CLAUDE.md`へ記録した。
+
+runtimeの上限4にはactiveだけでなくpreparing・retiring・cleanup-failedを含める。
+受理した準備は16件のtransition receiptの1枠を先に予約し、結果を取り出すまで枠を保持する。
+満杯ではhostを追加せずBusy。Pollは各instance最大16件を取り出す有界drainで、I/O待ちや
+自動restartを行わない。呼出しのスケジュールはnative compositionの責務。
+
+失効はownerを非currentにし、publication側のgrant・command・可視内容・購読を取り消し、
+高位のtool/UI要求を終端してからhostのStopを要求する。結果の反映は毎回ownerと
+workspace/accountを照合する。既に外へ取り出した値も、使用直前の`IsCurrent`が必要。
+View折り畳みやPart非表示は失効ではない。
+
+Pollはworker終了後にだけjoinする。join失敗を次のPollで再試行せず、cleanup-failedとして
+所有権と上限枠を保持する。Closeは全ownerを失効・Stopしてからjoinし、明示的なClose一回につき
+失敗joinを一度再試行できる。processの実終了を確認できなければfalseを返し、成功扱いやdetachはしない。
+G03同様、OS故障まで含むcleanup完了の保証ではない。
+
 ## 再現可能な実プロセス検査
 
 ```powershell
@@ -87,14 +125,15 @@ buildし、既定では`~/tmp/senp-runtime-fixtures/`へ置く。`--output-dir`�
 `--prepare-only`はfixture作成だけで、結果は`prepared`となり検査合格とはしない。
 native helperは`test-fixtures` featureでのみbuildし、package catalogや配布先へ入れない。
 
-runnerが`SAKURA_SENP_RUNTIME_FIXTURES`を設定して5つの`SenpRuntimeProcess` testsを実行する。
+runnerが`SAKURA_SENP_RUNTIME_FIXTURES`を設定して6つの`SenpRuntimeProcess` testsを実行する。
 変数がない通常の単体実行ではこのsuiteは明示的にskipするが、受入runnerはskipを不合格にする。
 実componentのactivate/on-event/fuel trap、読取り停止、書込み停止、partial/oversized frame、
-crash、jobメモリ上限、複数pendingのdeadline、同時Stop/Join、起動失敗を検査する。
+crash、jobメモリ上限、複数pendingのdeadline、同時Stop/Join、起動失敗に加え、
+実Wasmのowner更新・digest不一致での旧版維持・全process回収を検査する。
 副作用はテスト用job/processと作業ディレクトリだけで、package installや可視windowの起動はない。
 
 Rust codec出力→C++読取・出力→Rust読取の順で交換し、両言語の正規化byteも比較する。
-旧v1 component実行を含め、native 21件とRust host 15件が合格した。
+owner/catalog 15件と旧v1 component実行を含め、native 37件とRust host 15件が合格した。
 runnerはchildごとの期限・log SHA-256・終了codeと、実行後のprocess照合を`evidence.json`へ保存する。
 これはローカルの受入記録であり、未実行のremote CIを合格と扱わない。
 

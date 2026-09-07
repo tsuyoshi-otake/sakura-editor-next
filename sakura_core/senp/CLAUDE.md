@@ -64,8 +64,9 @@ failure with a visual placeholder or an unrelated legacy plugin path.
 - Validate aggregate output budgets while traversing/serializing the typed
   graph. Do not first clone it or build an unbounded intermediate JSON tree.
   The shared accepted/rejected fixtures and bidirectional exchange procedure
-  live in `rust/senp/fixtures/README.md`. G02 adds the contract only; v2 package
-  publication and dispatch remain unavailable until the lifecycle is wired.
+  live in `rust/senp/fixtures/README.md`. G02 adds the contract; G03 dispatches it
+  through the explicit low-level v2 host. Package publication remains gated on
+  the native projection and capability-validation stages.
 
 - G03a's `CSenpRuntimeSession` and Rust `effect_session::Session` own explicit
   invocation terminals, ordered sequences, bounded ack receipts and replay.
@@ -88,6 +89,28 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   exit observations are distinct from a requested stop. No automatic restart.
   `tools/verify-senp-runtime.py` owns the adversarial native peer and actual
   Wasm component fixtures; they must never enter the package/distribution catalog.
+
+- G04's `CSenpContributionOwners` owns preparation, activation, replacement,
+  revocation and retirement of at most four runtime instances, counting every
+  preparing/retiring/failed-cleanup instance. It reserves one of 16 terminal
+  transition receipts before starting a host. Preparation failure preserves the
+  old owner. Revoke removes the owner from the current set, clears that exact
+  publication's authority/content/subscribers, then requests host Stop.
+- `ISenpOwnerPublication` is a mandatory native transaction, not a Wasm import.
+  Preparation must validate every descriptor/page/command before Commit; false
+  Commit leaves the previous publication unchanged. Revoke owns termination of
+  higher-level tool/UI requests. An absent native adapter is Unsupported before
+  any host launch. The G04 catalog/runtime tests do not enable package-derived
+  pages: native pages, commands and broker grants are wired by U01/U06/T02.
+- Poll performs at most 16 completion reads per instance, never waits or starts
+  external work, and checks owner/workspace/account before Apply. Composition
+  must schedule bounded drains while it owns instances; hide/collapse is not
+  revoke. Join is attempted only after worker exit; a failed attempt remains
+  in an explicit cleanup-failed slot without an automatic retry loop. Close
+  revokes/stops all instances before joining any, may retry a failed join once,
+  and reports unconfirmed process exit instead of freeing capacity. Generations
+  and digest/scope identity never authorize a retained result unless IsCurrent
+  is still true at its publication boundary.
 
 - `README.md`, `senp.json`, `LICENSE`, and complete SHA-256 coverage are
   mandatory. `module/extension.wasm` is mandatory only when `runtime` is

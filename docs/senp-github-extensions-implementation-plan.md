@@ -17,7 +17,12 @@ G03aのsession実装・11件のnative lifecycle tests・6件のRust dispatch tes
 [session契約](senp-v2-runtime.md)にack、再送、取消と未回収結果の失効規則を保存した。
 G03bのnative worker/jobと双方向の期限付きIPCも接続した。実Wasm、読書き停止、
 crash、メモリ超過、同時Stop/Joinを含む受入runnerでnative 21件とRust host 15件が合格し、
-skip・子process残存は0。package由来のowner公開（G04）以降は未実装。
+skip・子process残存は0。
+G04のowner transaction・純粋catalog登録・runtime回収契約も実装し、owner/catalog 15件と
+実Wasm owner更新を追加した受入runnerでnative 37件、Rust 15件が合格。
+join失敗時の再試行ループを負例で再現して修正した。native page/commandの具体的な公開は
+U01/U06、broker grantはT02、package受理はそれらの接続後に検証する。
+schema 2は引き続きUnsupportedRuntimeで、未実装の画面を公開しない。
 CI workflowは追加済みで、remote CI実行はpush後の確認事項。
 G02のsemantic台帳はexact source commit `f881170f28b3c17d195c145b6f2396704cffa47a`
 から正規手順で受理した。追加35件は既定のconst equality operator 33件と
@@ -53,7 +58,7 @@ G02のsemantic台帳はexact source commit `f881170f28b3c17d195c145b6f2396704cff
 | G02 | WIT event/effectとC++/Rust往復fixture | G01 | `SenpEffectProtocol.*`とRust host tests、相互serializer出力の読取 | casing、sequenceの整数範囲、集約上限、batch内ID再使用、WIT型変換を検査 |
 | G03a | bounded dispatch・ack・要求終端のsession実装 | G02 | `SenpEffectProtocol.*:SenpRuntimeLifecycle.*`とRust `effect_session` | sequence順序・ID再送/Conflict、pendingが全て一度終端、切断後の古いevent反映0 |
 | G03b | Win32 process・期限付き双方向IPC・実Wasm接続 | G03a | `py -3 tools/verify-senp-runtime.py --offline`と終了後のprocess照合 | 読書き停止・途中frame・crash・メモリ超過でも終端、実v2 Wasm実行、child残存0 |
-| G04 | owner単位のcontribution登録・dispose | G03b/F02 | `SenpViewLifecycle.*` | 部分登録なし、失効・更新失敗の所有権保持 |
+| G04 | owner単位のcontribution登録・dispose契約とruntime回収 | G03b/F02 | `SenpViewLifecycle.*`と実Wasm owner lifecycle | 部分登録なし、更新失敗は旧owner維持、失効後の反映0、回収失敗の所有権保持 |
 | U01 | SCMを参照したcontainer内の複数View nativeページ | G04 | `SenpViewContainer.*`、同一条件のSCM比較、dual-capture | View独立、ヘッダー/余白/action整合、resize/移動/focusに描画残りなし |
 | U02 | lazy TreeDataProviderとstable item選択 | U01 | `SenpTreeProvider.*`、SCM行密度/選択/scroll比較 | page/expand/refresh、重複・循環・stale拒否、テーマ/DPI/keyboard整合 |
 | U03 | readonly Editor input/surface切替 | G04 | `SenpReadonlyWorkbench.*` | dirty/undoを保持して詳細と編集を往復 |
@@ -61,7 +66,7 @@ G02のsemantic台帳はexact source commit `f881170f28b3c17d195c145b6f2396704cff
 | U05 | chunk付きtext resourceと検索・コピー | U03 | `SenpTextResource.*` | UTF-8境界・上限・partial・失効を区別 |
 | U06 | command/menu/activationと汎用sample拡張 | U02/U04/U05 | sampleのnative総合試験、SCM比較の状態matrix | GitHub固有コードなしで2 View/本文/ログ表示、loading/empty/error/focus明示 |
 | T01 | Git runnerからprocess primitiveのみ抽出 | F04 | `BoundedProcessRunner.*:GitCommandRunner.*` | SCM無回帰、argv・pipe・job cleanup |
-| T02 | Control brokerのowner/grant認可 | T01/G03 | `SenpToolGrants.*` | 別owner/profile/digest/失効handleを拒否 |
+| T02 | Control brokerのowner/grant認可 | T01/G03b/G04 | `SenpToolGrants.*` | 別owner/profile/digest/失効handleを拒否 |
 | T03 | gh検出・version・read-only argv/env policy | T02 | `GhToolPolicy.*` | shell/任意flag/別repo/env注入0、未導入は明示状態 |
 | T04 | gh接続状態・account固定・identity検証 | T03/F01 | `GhConnectionLifecycle.*` | Unknownをsigned-outにしない、account混在0 |
 | T05 | 有界web login・cancel・接続解除UI | T04 | fake ghとopt-in認証試験 | 全分岐終端、共有gh logoutなし、code表示/保管先表示 |

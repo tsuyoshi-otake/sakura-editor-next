@@ -25,22 +25,37 @@ struct EffectRuntimeSnapshot final {
 	bool processExitConfirmed{};
 };
 
+//! Lifecycle port between contribution ownership and isolated process I/O.
+//! Implementations own every resource acquired by Start, including failures.
+class ISenpEffectRuntime {
+public:
+	virtual ~ISenpEffectRuntime() = default;
+	[[nodiscard]] virtual InvocationAdmission Start() = 0;
+	[[nodiscard]] virtual InvocationAdmission Submit(effect::OperationContext context, effect::Event event,
+		CSenpRuntimeSession::Time deadline) = 0;
+	virtual bool Cancel(std::wstring_view operationId) = 0;
+	virtual void Stop(effect::StopReason reason) = 0;
+	virtual void Join() = 0;
+	[[nodiscard]] virtual std::optional<InvocationResult> TakeCompleted() = 0;
+	[[nodiscard]] virtual EffectRuntimeSnapshot Snapshot() const = 0;
+};
+
 //! One worker and one job per owner. Paint/input callers only enqueue or drain;
 //! Join belongs to explicit owner teardown. A stopped instance never restarts.
-class CSenpEffectRuntime final {
+class CSenpEffectRuntime final : public ISenpEffectRuntime {
 public:
 	explicit CSenpEffectRuntime(EffectRuntimeLaunch launch);
-	~CSenpEffectRuntime();
+	~CSenpEffectRuntime() override;
 	CSenpEffectRuntime(const CSenpEffectRuntime&) = delete;
 	CSenpEffectRuntime& operator=(const CSenpEffectRuntime&) = delete;
-	[[nodiscard]] InvocationAdmission Start();
+	[[nodiscard]] InvocationAdmission Start() override;
 	[[nodiscard]] InvocationAdmission Submit(effect::OperationContext context, effect::Event event,
-		CSenpRuntimeSession::Time deadline);
-	bool Cancel(std::wstring_view operationId);
-	void Stop(effect::StopReason reason);
-	void Join();
-	[[nodiscard]] std::optional<InvocationResult> TakeCompleted();
-	[[nodiscard]] EffectRuntimeSnapshot Snapshot() const;
+		CSenpRuntimeSession::Time deadline) override;
+	bool Cancel(std::wstring_view operationId) override;
+	void Stop(effect::StopReason reason) override;
+	void Join() override;
+	[[nodiscard]] std::optional<InvocationResult> TakeCompleted() override;
+	[[nodiscard]] EffectRuntimeSnapshot Snapshot() const override;
 
 private:
 	struct Impl;
