@@ -29,6 +29,9 @@ CASES = (
     Case("connection", "SenpGhConnection", "SenpGhConnection"),
     Case("connection", "SenpGhConnection", "SenpGhConnection_NoIdentity", "IdentityBeforeGrant"),
     Case("connection", "SenpGhConnection", "SenpGhConnection_NoGeneration", "NoStaleConnection"),
+    Case("owner", "SenpContributionOwner", "SenpContributionOwner"),
+    Case("owner", "SenpContributionOwner", "SenpContributionOwner_NoGeneration", "CurrentView"),
+    Case("owner", "SenpContributionOwner", "SenpContributionOwner_NoClear", "NoRevokedView"),
 )
 
 
