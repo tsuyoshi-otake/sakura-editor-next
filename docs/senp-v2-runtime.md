@@ -1,6 +1,6 @@
 # SENP v2 runtime session（#296）
 
-G03aはv2の要求・応答・終了状態を実装する。Win32 workerとの接続はG03b、
+G03aはv2の要求・応答・終了状態、G03bはWin32 workerとの接続を実装する。
 packageからのowner登録と寄与の公開はG04で接続する。低位のhostを実行できても、
 schema 2 packageのinstall/enableを許可したことにはならない。
 
@@ -47,6 +47,56 @@ Wasm memoryは32 MiB、fuelは1,000万、epochは10 msごと・20 ticks。
 instantiateにもWasm実行が含まれるため、epoch clockはinstantiateより先に開始して失敗時もjoinする。
 WITからliftしたhost値とコンパイルのメモリ・時間はWasm Storeの制限だけでは覆えないため、
 G03bのnative jobとIPC期限が追加の所有者になる。
+
+## Win32 processの所有
+
+[CSenpEffectRuntime](../sakura_core/senp/SenpEffectRuntime.h)は1つのsession・worker・jobを所有する。
+管理側が検証したmoduleのpath/digestとhost pathをnativeの構成時に渡す。
+extensionのevent/effectから実行ファイルや引数を指定する経路はない。
+`Start`・`Submit`・`Cancel`・結果取得はhostのI/Oを待たず、workerだけがpipeを操作する。
+`Stop`は非同期で終了を要求し、`Join`はStopも行って唯一のjoin所有者を確保する。
+destructorもStop/Joinを担当する。workerから利用者callbackを呼ばないためjoin再入は発生しない。
+
+parent側はOVERLAPPED付きのローカルbyte pipeを使用する。読取り・書込みを同じ絶対期限へ
+束ね、部分frameのたびに期限を延ばさない。handshakeは最大10秒、通常の交換は最大1秒で、
+要求deadlineが早ければそれに従う。終了処理は250 msの猶予を使う。取消や期限切れでの
+I/O失敗はsession全体を終了し、他の受理済み要求も明示的な失敗にする。
+待機中はevent/process handleを待ち、idle pollingや自動再起動を行わない。
+
+pipeは現在のユーザーだけのDACL、最初のinstance、remote拒否で作成する。
+子へ継承するhandleはstdin/stdout/stderrの3つに限定し、jobへ原子的に割り当てて起動する。
+jobはkill-on-close、process数1、process memory 512 MiB。設定を読み戻して一致しなければ起動しない。
+workerはjob終了とprocessの終了確認を終えてから`workerExited`を通知する。
+`processExitConfirmed`は実際のwait結果であり、停止要求を出しただけではtrueにしない。
+
+[`CancelIoEx`](https://learn.microsoft.com/en-us/windows/win32/api/ioapiset/nf-ioapiset-cancelioex)は
+取消の要求であってI/O完了ではない。pipe peerを終了させた上でkernelの完了を回収してから
+OVERLAPPEDとbufferを解放する。ここにはOSのlocal pipe completion契約への依存が残る。
+壊れたkernel/driverまで含む厳密な実時間上限を、アプリのdeadlineだけで保証するものではない。
+
+## 再現可能な実プロセス検査
+
+```powershell
+build-sln.bat x64 Debug
+py -3 tools/verify-senp-runtime.py --offline
+```
+
+[runner](../tools/verify-senp-runtime.py)は既存lockfileで専用peerと実WIT v2 Wasm componentを
+buildし、既定では`~/tmp/senp-runtime-fixtures/`へ置く。`--output-dir`で保存先、`--tests1`で
+検査対象を指定できる。`--offline`は事前に取得済みのlocked dependencyだけを使う。
+`--prepare-only`はfixture作成だけで、結果は`prepared`となり検査合格とはしない。
+native helperは`test-fixtures` featureでのみbuildし、package catalogや配布先へ入れない。
+
+runnerが`SAKURA_SENP_RUNTIME_FIXTURES`を設定して5つの`SenpRuntimeProcess` testsを実行する。
+変数がない通常の単体実行ではこのsuiteは明示的にskipするが、受入runnerはskipを不合格にする。
+実componentのactivate/on-event/fuel trap、読取り停止、書込み停止、partial/oversized frame、
+crash、jobメモリ上限、複数pendingのdeadline、同時Stop/Join、起動失敗を検査する。
+副作用はテスト用job/processと作業ディレクトリだけで、package installや可視windowの起動はない。
+
+Rust codec出力→C++読取・出力→Rust読取の順で交換し、両言語の正規化byteも比較する。
+旧v1 component実行を含め、native 21件とRust host 15件が合格した。
+runnerはchildごとの期限・log SHA-256・終了codeと、実行後のprocess照合を`evidence.json`へ保存する。
+これはローカルの受入記録であり、未実行のremote CIを合格と扱わない。
 
 G03aの受入検査は`SenpRuntimeLifecycle.*`（11件）とRustの`effect_session`（6件）。
 送信前取消、完了容量の予約、再送、ack、ID再使用、contextの全世代、deadline、失効後の受取待ちeffects、

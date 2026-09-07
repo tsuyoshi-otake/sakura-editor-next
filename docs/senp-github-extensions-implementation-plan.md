@@ -15,7 +15,9 @@ native 14 tests、旧component実行を含むRust host 8 testsが合格。1 MiB�
 G03は責務に沿ってG03a（要求状態）とG03b（Win32 process接続）へ分割し、全34工程とする。
 G03aのsession実装・11件のnative lifecycle tests・6件のRust dispatch testsが合格。
 [session契約](senp-v2-runtime.md)にack、再送、取消と未回収結果の失効規則を保存した。
-G03b以降の完了は別途記録する。
+G03bのnative worker/jobと双方向の期限付きIPCも接続した。実Wasm、読書き停止、
+crash、メモリ超過、同時Stop/Joinを含む受入runnerでnative 21件とRust host 15件が合格し、
+skip・子process残存は0。package由来のowner公開（G04）以降は未実装。
 CI workflowは追加済みで、remote CI実行はpush後の確認事項。
 G02のsemantic台帳はexact source commit `f881170f28b3c17d195c145b6f2396704cffa47a`
 から正規手順で受理した。追加35件は既定のconst equality operator 33件と
@@ -50,7 +52,7 @@ G02のsemantic台帳はexact source commit `f881170f28b3c17d195c145b6f2396704cff
 | G01 | schema 2/ABI判別と既存v1互換 | F04 | `cargo test -p sakura-senp --locked` | 旧package合格、未知schema/ABI拒否 |
 | G02 | WIT event/effectとC++/Rust往復fixture | G01 | `SenpEffectProtocol.*`とRust host tests、相互serializer出力の読取 | casing、sequenceの整数範囲、集約上限、batch内ID再使用、WIT型変換を検査 |
 | G03a | bounded dispatch・ack・要求終端のsession実装 | G02 | `SenpEffectProtocol.*:SenpRuntimeLifecycle.*`とRust `effect_session` | sequence順序・ID再送/Conflict、pendingが全て一度終端、切断後の古いevent反映0 |
-| G03b | Win32 process・期限付き双方向IPC・実Wasm接続 | G03a | native process fixture runnerと終了後のprocess照合 | 読書き停止・途中frame・crash・メモリ超過でも終端、実v2 Wasm実行、child残存0 |
+| G03b | Win32 process・期限付き双方向IPC・実Wasm接続 | G03a | `py -3 tools/verify-senp-runtime.py --offline`と終了後のprocess照合 | 読書き停止・途中frame・crash・メモリ超過でも終端、実v2 Wasm実行、child残存0 |
 | G04 | owner単位のcontribution登録・dispose | G03b/F02 | `SenpViewLifecycle.*` | 部分登録なし、失効・更新失敗の所有権保持 |
 | U01 | SCMを参照したcontainer内の複数View nativeページ | G04 | `SenpViewContainer.*`、同一条件のSCM比較、dual-capture | View独立、ヘッダー/余白/action整合、resize/移動/focusに描画残りなし |
 | U02 | lazy TreeDataProviderとstable item選択 | U01 | `SenpTreeProvider.*`、SCM行密度/選択/scroll比較 | page/expand/refresh、重複・循環・stale拒否、テーマ/DPI/keyboard整合 |

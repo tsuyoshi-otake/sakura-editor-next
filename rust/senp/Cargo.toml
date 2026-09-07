@@ -4,6 +4,7 @@ members = [
     "sakura_senp",
     "sakura_senp_host",
     "sakura_senp_tool",
+    "tests/effect_guest",
 ]
 resolver = "2"
 

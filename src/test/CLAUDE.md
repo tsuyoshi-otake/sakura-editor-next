@@ -113,6 +113,19 @@ x64\Debug\tests1.exe --gtest_filter=-MacroMgrTest.*:CPpaTest.*:SelectFileTest.*:
 - Use `--gtest_list_tests` before changing automation filters; suite names can change.
 - After automated execution, verify that `tests1.exe`, test-launched `sakura.exe`, and their parent runners have exited. Terminate parent processes first if a failed test can respawn a child.
 
+### SENP v2 process acceptance
+
+After rebuilding Debug, run `py -3 tools/verify-senp-runtime.py --offline` for
+the real SENP v2 process boundary. The runner builds an explicit test-only
+native peer and WIT component under the existing Cargo lock, sets
+`SAKURA_SENP_RUNTIME_FIXTURES`, runs the native lifecycle/process/codec suites,
+and verifies both directions of the C++/Rust codec exchange. It rejects skipped
+or missing process cases and records child exits and surviving processes.
+Without that fixture directory, ordinary `SenpRuntimeProcess` execution skips
+explicitly; this skip is never acceptance evidence. The fixtures belong in a
+temporary work directory and must not be staged into product output or installed
+as extensions. Details and limits are in `docs/senp-v2-runtime.md`.
+
 ## Build-Dependency Invariants
 
 - GoogleTest package resolution and staging must remain conditional on their declared inputs/outputs; do not add a second source-build path that runs on every `tests1` compile.

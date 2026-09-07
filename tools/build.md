@@ -17,6 +17,7 @@
     - [x64 ビルドの増分検証](#x64-ビルドの増分検証)
     - [Output採用証跡台帳](#output採用証跡台帳)
     - [単体テストの実行](#単体テストの実行)
+    - [SENP v2 runtimeの受入検査](#senp-v2-runtimeの受入検査)
     - [カバレッジマップによる影響テスト選択](#カバレッジマップによる影響テスト選択)
     - [デバッグ方法](#デバッグ方法)
     - [アセンブリ一覧の生成](#アセンブリ一覧の生成)
@@ -779,6 +780,16 @@ x64\Debug\tests1.exe --gtest_filter=-MacroMgrTest.*:CPpaTest.*:SelectFileTest.*:
 このフィルターは UI・外部連携を含むテストを省くため、最終確認では必要なテストを別途実行してください。
 
 GitHub-hosted runner は非対話セッションのため、標準 CI でも同じフィルターを環境変数 `GTEST_FILTER` から適用します。CI では CTest と Actions の両方に上限時間を設け、失敗時を含めてリポジトリ配下の `tests1.exe`、`sakura.exe`、および関連するカバレッジプロセスを検査・終了します。完全な UI・連携テストは、対話可能な Windows セッションで別途実行してください。
+
+### SENP v2 runtimeの受入検査
+
+`build-sln.bat x64 Debug`の後、`py -3 tools/verify-senp-runtime.py --offline`で、
+実Wasm hostと応答停止・異常終了するpipe peerを検査できます。可視windowの起動やpackageの
+インストールは行いません。locked dependencyのcacheが未準備の場合だけ`--offline`を省略します。
+fixtureとlogは既定で`~/tmp/`へ保存し、childの期限、受入testのskip拒否、process回収を検査します。
+`--output-dir`で専用保存先、`--tests1`で再build済みrunnerを指定できます。
+`--prepare-only`はfixture作成だけで、検査合格とはしません。
+テスト用環境変数とv1/v2境界は[runtime契約](../docs/senp-v2-runtime.md)を参照してください。
 
 ### カバレッジマップによる影響テスト選択（オフライン診断）
 

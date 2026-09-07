@@ -3247,6 +3247,9 @@
 	<ClCompile Include="..\sakura_core\senp\SenpRuntimeSession.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
+	<ClCompile Include="..\sakura_core\senp\SenpEffectRuntime.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
 	<ClCompile Include="..\sakura_core\senp\SenpRuntimeService.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>

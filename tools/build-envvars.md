@@ -78,6 +78,20 @@ release promotionだけは、exact `x64`/`Release` compileのstep内で4つのse
 同じexact値はrelease provenanceの`build_contract`へ記録され、distribution smokeがpayload実行前に
 型と大小文字を含めて照合します。Rust Outputのproduction採用を許可するものではなく、Issue #274はHOLDです。
 
+## SENP v2受入検査の環境変数
+
+`tools/verify-senp-runtime.py`が子testの環境へ設定する変数です。通常のアプリ起動や
+配布内容を変更するbuild optionではありません。
+
+|変数|用途|
+|---|---|
+|`SAKURA_SENP_RUNTIME_FIXTURES`|専用native peer、実v2 Wasm component、scenarioを含む作業ディレクトリ。未設定時は`SenpRuntimeProcess`がskipし、受入runnerはskipを不合格にします。|
+|`SENP_PROTOCOL_OUTPUT`|C++またはRust codecが正規化した共通fixtureのJSONL出力先。|
+|`SENP_PROTOCOL_PEER_FILE`|反対側のcodec出力を検証するJSONL入力先。runnerは依存順に設定します。|
+|`SAKURA_SENP_TEST_COMPONENT`|旧v1の実component回帰試験に使う、Debug build済みIndent Rainbow component。|
+
+詳細と実行順は[SENP v2 runtime契約](../docs/senp-v2-runtime.md)を参照してください。
+
 ## zipArtifacts.bat で設定する環境変数
 
 ### 生成する環境変数

@@ -78,6 +78,17 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   Consumers that already took a result still require the contribution-owner
   generation fence. See `docs/senp-v2-runtime.md` for the full contract.
 
+- G03b's `CSenpEffectRuntime` owns one worker and one atomically assigned job;
+  only that worker performs host I/O. Both pipe directions use OVERLAPPED I/O
+  under one absolute frame deadline; cancellation drains kernel completion
+  before freeing its buffers. The job enforces a 512 MiB process memory cap
+  in addition to Wasm Store limits, active-process limit 1 and kill-on-close.
+  Do not reuse v1's synchronous writer for v2. Stop requests cancellation;
+  Join serializes the sole thread join and also requests Stop. Process/worker
+  exit observations are distinct from a requested stop. No automatic restart.
+  `tools/verify-senp-runtime.py` owns the adversarial native peer and actual
+  Wasm component fixtures; they must never enter the package/distribution catalog.
+
 - `README.md`, `senp.json`, `LICENSE`, and complete SHA-256 coverage are
   mandatory. `module/extension.wasm` is mandatory only when `runtime` is
   declared; declarative language/grammar and host-View packages contain no

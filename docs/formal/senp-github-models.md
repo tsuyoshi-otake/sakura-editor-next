@@ -59,7 +59,7 @@ workers 2で最初の反例に停止するため、負例の探索途中の状�
 |---|---|---|
 | `Begin/VerifyIdentity/Publish/Disconnect` | T04/T05、Control brokerのconnection candidateとgrant公開 | `GhConnectionLifecycle.*`、fake gh、本人不一致・cancel・disconnect後の遅延完了 |
 | `Prepare/BuildStage/CommitUpdate/AbortUpdate` | G04、ownerのcontribution transaction | `SenpViewLifecycle.*`、部分登録不可、準備失敗で旧版維持 |
-| `FinishRead/Apply/Revoke/Drain` | G03aの`CSenpRuntimeSession::Receive/Stop/TransportFailed`とG04のowner fence | `SenpRuntimeLifecycle.*`で遅着・未回収effectsの破棄を検査。G03bのworker回収とG04の可視内容・権限回収は別の実装境界 |
+| `FinishRead/Apply/Revoke/Drain` | G03aの`CSenpRuntimeSession::Receive/Stop/TransportFailed`、G03bの`CSenpEffectRuntime::Stop/Join`、G04のowner fence | `SenpRuntimeLifecycle.*`で遅着・未回収effectsを破棄。`SenpRuntimeProcess.*`で実worker/jobを回収。G04の可視内容・権限回収は次の実装境界 |
 | `Subscribe/Dispatch/Unsubscribe` | T07、Control brokerの共有要求と購読lease | `GhReadScheduler.*`、複数window合流、最後の購読解除だけでcancel |
 | `ReceiveRateLimit/Tick/Expire` | T07、deadline・Retry-After・cooldown | fake clock、provider window、backoff/jitter、queue中timeout |
 | `Cleanup/TerminalOwnsNoProcess/EveryAcceptedTerminates` | T01/T07/T08、process runnerとcompletion所有権 | `BoundedProcessRunner.*:GhLogResource.*`、pipe飽和、子孫kill/reap、cancel/timeoutの一度終端 |
