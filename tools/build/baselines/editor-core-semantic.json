@@ -27098,6 +27098,237 @@
       "rule_id": "boundary.win32_type"
     },
     {
+      "column": 18,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 27,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 2,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 46,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 124,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 62,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 81,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 122,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 122,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 137,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 68,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 155,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 69,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 157,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 57,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 162,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 41,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 169,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 68,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 169,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 83,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 169,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 40,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 188,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 67,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 188,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 82,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 188,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 25,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 194,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 114,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 237,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 58,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 243,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 87,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 244,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 58,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 245,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 62,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 246,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 35,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 266,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 59,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 282,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 70,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 286,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 58,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 309,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 60,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 310,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 59,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 311,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 73,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 314,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 1,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 326,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 1,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 327,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 80,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 331,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 28,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 36,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 16,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 48,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 16,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 49,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
       "line": 308,
@@ -33372,6 +33603,132 @@
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 29,
+      "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 135,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 60,
+      "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 138,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 63,
+      "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 41,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 79,
+      "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 68,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 79,
+      "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 83,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 79,
+      "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 27,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 247,
+      "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 54,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 247,
+      "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 69,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 247,
+      "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 3,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 255,
+      "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 85,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 273,
+      "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 23,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 285,
+      "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 50,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 285,
+      "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 65,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 285,
+      "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 126,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 287,
+      "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 26,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 298,
+      "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 53,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 298,
+      "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 68,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 298,
+      "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 2,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
       "line": 52,
       "path": "src/test/cpp/tests1/workbench/SenpTreeViewTest.cpp",
       "rule_id": "boundary.win32_type"
@@ -36520,6 +36877,34 @@
       "rule_id": "error.catch_all"
     },
     {
+      "column": 5,
+      "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
+      "line": 185,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "error.catch_all"
+    },
+    {
+      "column": 46,
+      "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
+      "line": 291,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "error.catch_all"
+    },
+    {
+      "column": 59,
+      "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
+      "line": 321,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "error.catch_all"
+    },
+    {
+      "column": 68,
+      "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
+      "line": 324,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "error.catch_all"
+    },
+    {
       "column": 4,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
       "line": 38,
@@ -38225,6 +38610,13 @@
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
       "line": 103,
       "path": "src/test/cpp/tests1/workbench/SenpReadonlyWorkbenchTest.cpp",
+      "rule_id": "error.catch_all"
+    },
+    {
+      "column": 5,
+      "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
+      "line": 118,
+      "path": "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
       "rule_id": "error.catch_all"
     },
     {
@@ -65094,6 +65486,104 @@
       "rule_id": "state.public_mutable_field"
     },
     {
+      "column": 8,
+      "evidence_sha256": "sha256:ae086375d4a77e9f096aac558484dc72a48595c8d685098e8ef37cc6ebe8a4cd",
+      "line": 40,
+      "path": "sakura_core/senp/SenpTextResource.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 21,
+      "evidence_sha256": "sha256:0f6664a54f38e73a22e42f0be32a7f8c043a2a3104e42f8bbe4dabf9814333fa",
+      "line": 42,
+      "path": "sakura_core/senp/SenpTextResource.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 38,
+      "evidence_sha256": "sha256:4f6364e486bd154429e700a4773322340680b49b7412099faef99934cef9222f",
+      "line": 43,
+      "path": "sakura_core/senp/SenpTextResource.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 45,
+      "evidence_sha256": "sha256:ce5f5eb0557f00b4b3c5a2d0418d8f753c3ac7fb9fd397253f365e3102f765cc",
+      "line": 48,
+      "path": "sakura_core/senp/SenpTextResource.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 53,
+      "evidence_sha256": "sha256:7693676dafca75302bb759c8d1c6814be18168a1155e5e7fdeee04f67ebd3e4e",
+      "line": 15,
+      "path": "sakura_core/senp/SenpTextResource.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:b8ebaf70622444bd5dac1e23c351c24b9dfe83dd938f2f6ad3a00245c326e379",
+      "line": 17,
+      "path": "sakura_core/senp/SenpTextResource.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 15,
+      "evidence_sha256": "sha256:071628307ecb0d4d3e3bcbbbdadfb92ef65baa928e713328cbe6bb9efeb01c10",
+      "line": 24,
+      "path": "sakura_core/senp/SenpTextResource.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 15,
+      "evidence_sha256": "sha256:071628307ecb0d4d3e3bcbbbdadfb92ef65baa928e713328cbe6bb9efeb01c10",
+      "line": 30,
+      "path": "sakura_core/senp/SenpTextResource.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 14,
+      "evidence_sha256": "sha256:162b2c1ba6ea8fddb6da96e3a44da387f25c6e90613e4f693ea60dcdb5fc04eb",
+      "line": 33,
+      "path": "sakura_core/senp/SenpTextResource.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 31,
+      "evidence_sha256": "sha256:439c8f4d9e7f722b4501dc5f409190ebf6818212f17fa1c7aa18ba0248f4e04b",
+      "line": 45,
+      "path": "sakura_core/senp/SenpTextResource.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 31,
+      "evidence_sha256": "sha256:1551bdf2cd1dea739b7ca96fbc0d1e7bf891c9716fc25bba236582eee89217d7",
+      "line": 46,
+      "path": "sakura_core/senp/SenpTextResource.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 31,
+      "evidence_sha256": "sha256:3c38577d8826980c0164385d19a47a19727fb3ffd12e5df8d45e3064b1b336ba",
+      "line": 47,
+      "path": "sakura_core/senp/SenpTextResource.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 31,
+      "evidence_sha256": "sha256:3d4c9a34eeee29832f587e237eebaff879063baf356861e63e7426ffb60abda7",
+      "line": 48,
+      "path": "sakura_core/senp/SenpTextResource.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 15,
+      "evidence_sha256": "sha256:ed985392da2d939988e17fb536890746d7607d11bc29419ac6b93478f8503a8d",
+      "line": 71,
+      "path": "sakura_core/senp/SenpTextResource.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
       "column": 34,
       "evidence_sha256": "sha256:dabc4dccf40e60f51d377fa956c70b5b102aa3ef4762ff734e9fc62d8dd293ae",
       "line": 10,
@@ -76795,6 +77285,55 @@
       "evidence_sha256": "sha256:1e354800025de2647bbd72c23cb8f3fb99b7637f28fe97a1d167c97961e098e8",
       "line": 40,
       "path": "sakura_core/workbench/editor/SenpReadonlyWorkbench.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 20,
+      "evidence_sha256": "sha256:0f6664a54f38e73a22e42f0be32a7f8c043a2a3104e42f8bbe4dabf9814333fa",
+      "line": 41,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 15,
+      "evidence_sha256": "sha256:071628307ecb0d4d3e3bcbbbdadfb92ef65baa928e713328cbe6bb9efeb01c10",
+      "line": 42,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 11,
+      "evidence_sha256": "sha256:09400d8a093220a5fe936e2b1f3cfdaa9cff25297050466847273d8b911d6273",
+      "line": 43,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 26,
+      "evidence_sha256": "sha256:5eace1f131709aeb44e231eb384b719b2719b5a4de7214b2fc10f743ea5e1264",
+      "line": 44,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 27,
+      "evidence_sha256": "sha256:93746092199d57b5082ce229ab8f7ba8a150a42463380b4dd4ecd4dd1fc22868",
+      "line": 53,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 32,
+      "evidence_sha256": "sha256:886794115267de9e992a78ad7de5c8c194e56721f8e13d63978947a0ba92ed6c",
+      "line": 55,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 8,
+      "evidence_sha256": "sha256:bc76656de7e4fd7f9b8fed46e280a7f8e07847033f8255bb43f8a2326c53a4fe",
+      "line": 31,
+      "path": "sakura_core/workbench/editor/SenpTextResourceView.h",
       "rule_id": "state.public_mutable_field"
     },
     {
@@ -96700,7 +97239,7 @@
   },
   "inventory_kind": "editor-core-semantic",
   "metrics": {
-    "catch_all_count": 672,
+    "catch_all_count": 677,
     "direct_global_getter_calls": {
       "GetDllShareData": 710,
       "GetEditDoc": 7,
@@ -97173,11 +97712,11 @@
       }
     },
     "filtered_test_hint_count": 2,
-    "finding_count": 13785,
+    "finding_count": 13862,
     "finding_count_by_rule": {
       "boundary.private_include": 67,
-      "boundary.win32_type": 4723,
-      "error.catch_all": 672,
+      "boundary.win32_type": 4774,
+      "error.catch_all": 677,
       "global.get_dll_share_data": 710,
       "global.get_edit_doc": 7,
       "global.get_edit_wnd": 258,
@@ -97185,19 +97724,19 @@
       "memory.raw_new": 247,
       "resource.stop_required_acquisition": 262,
       "state.mutable_member": 132,
-      "state.public_mutable_field": 6358,
+      "state.public_mutable_field": 6379,
       "state.raw_pointer_member": 30,
       "test.filtered_or_skipped": 2
     },
-    "include_directive_count": 10919,
+    "include_directive_count": 10957,
     "monolith_link_hint_count": 0,
     "private_include_mention_count": 67,
     "raw_delete_expression_count": 317,
     "raw_new_expression_count": 247,
-    "source_file_count": 1721,
-    "source_line_count": 518665,
-    "tracked_file_count": 1770,
-    "win32_parameter_mention_count": 4723
+    "source_file_count": 1727,
+    "source_line_count": 519899,
+    "tracked_file_count": 1776,
+    "win32_parameter_mention_count": 4774
   },
   "rule_catalog": [
     {
@@ -97352,8 +97891,8 @@
     ]
   },
   "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
-  "source_commit": "d4eecbdd3f175d68246cf7c48d1d9f775424f4d4",
-  "source_fingerprint": "sha256:31cd2f55bcb9f6839e8f17d1636a53abfaa62cf16130c4eefba630b8161a8279",
+  "source_commit": "ebbfc9f39a155a75370d2896d4b9b66cea3ba426",
+  "source_fingerprint": "sha256:da15edb3525860956438c152554e33126eb3592b01c775df07e16c4e5a5f5d23",
   "tracked_source_paths": [
     ".github/actions/bootstrap-vcpkg/action.yml",
     ".github/dependabot.yml",
@@ -98089,6 +98628,8 @@
     "sakura_core/senp/SenpRuntimeService.h",
     "sakura_core/senp/SenpRuntimeSession.cpp",
     "sakura_core/senp/SenpRuntimeSession.h",
+    "sakura_core/senp/SenpTextResource.cpp",
+    "sakura_core/senp/SenpTextResource.h",
     "sakura_core/terminal/DefaultTerminalLaunchProfileService.cpp",
     "sakura_core/terminal/DefaultTerminalLaunchProfileService.h",
     "sakura_core/terminal/PowerShellLocator.cpp",
@@ -98538,6 +99079,8 @@
     "sakura_core/workbench/editor/SenpReadonlyDocumentView.h",
     "sakura_core/workbench/editor/SenpReadonlyWorkbench.cpp",
     "sakura_core/workbench/editor/SenpReadonlyWorkbench.h",
+    "sakura_core/workbench/editor/SenpTextResourceView.cpp",
+    "sakura_core/workbench/editor/SenpTextResourceView.h",
     "sakura_core/workbench/editor/WorkbenchCommandPaletteModel.h",
     "sakura_core/workbench/editor/WorkbenchKeybindingState.h",
     "sakura_core/workbench/editor/document/DocumentSession.cpp",
@@ -98879,6 +99422,7 @@
     "src/test/cpp/tests1/senp/SenpLanguageServiceTest.cpp",
     "src/test/cpp/tests1/senp/SenpRuntimeLifecycleTest.cpp",
     "src/test/cpp/tests1/senp/SenpRuntimeProcessTest.cpp",
+    "src/test/cpp/tests1/senp/SenpTextResourceTest.cpp",
     "src/test/cpp/tests1/senp/SenpViewLifecycleTest.cpp",
     "src/test/cpp/tests1/terminal/ConPtyCloseIntegrationTest.cpp",
     "src/test/cpp/tests1/terminal/HarnessOrchestrationAcceptanceTest.cpp",
@@ -99060,6 +99604,7 @@
     "src/test/cpp/tests1/workbench/SearchWorkbenchToolTest.cpp",
     "src/test/cpp/tests1/workbench/SenpReadonlyDocumentTest.cpp",
     "src/test/cpp/tests1/workbench/SenpReadonlyWorkbenchTest.cpp",
+    "src/test/cpp/tests1/workbench/SenpTextResourceViewTest.cpp",
     "src/test/cpp/tests1/workbench/SenpTreeProviderTest.cpp",
     "src/test/cpp/tests1/workbench/SenpTreeViewTest.cpp",
     "src/test/cpp/tests1/workbench/SenpViewContainerTest.cpp",
@@ -99126,5 +99671,5 @@
     "tools/ppa_stub/ppa_stub.h",
     "tools/vcx-props/vcxcompat.props"
   ],
-  "tracked_source_set_sha256": "sha256:11a3c5a0763d4a81acdf0bfea275627bc840e41d1568c0f01d3ec7baa10e7d95"
+  "tracked_source_set_sha256": "sha256:e0b47eb57f91407b0acf811c1d72f7f9c852a9961900ccf1917cf7f82821343b"
 }
