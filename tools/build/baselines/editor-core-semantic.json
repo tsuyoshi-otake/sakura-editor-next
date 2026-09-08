@@ -35955,7 +35955,7 @@
     {
       "column": 4,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 239,
+      "line": 244,
       "path": "sakura_core/senp/SenpToolGrants.cpp",
       "rule_id": "error.catch_all"
     },
@@ -99260,7 +99260,7 @@
     "raw_delete_expression_count": 317,
     "raw_new_expression_count": 248,
     "source_file_count": 1792,
-    "source_line_count": 535858,
+    "source_line_count": 535886,
     "tracked_file_count": 1841,
     "win32_parameter_mention_count": 4872
   },
@@ -99417,8 +99417,8 @@
     ]
   },
   "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
-  "source_commit": "56a11dcd14f4d07e90409a53257ed10fd0680658",
-  "source_fingerprint": "sha256:51047f0fa517a64efede100deb94c936e2d35f78830f94b4344306e09a2105e7",
+  "source_commit": "62b851c95b7d78f5441fe5b5a981fc8a76f5484e",
+  "source_fingerprint": "sha256:a8a5327fe6360294eca4c3c4ed901a8e138e12be952f708656862843a4de4a09",
   "tracked_source_paths": [
     ".github/actions/bootstrap-vcpkg/action.yml",
     ".github/dependabot.yml",
