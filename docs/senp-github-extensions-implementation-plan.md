@@ -60,7 +60,10 @@ T03はPATHの相対/CWD候補を拒否して絶対`gh.exe`だけを検出し、�
 拡張が渡せるのは検証済みhost/repository/path segmentだけで、実行argvは固定REST GET、
 ambient token・host/repository・debug・pager・browser・editor・TTY/socket/config overrideは子環境から除く。
 `GhToolPolicy.*:BoundedProcessRunner.*:GitCommandRunner.*`の21件、3,871件のinventory、no-op buildが合格した。
-T04がaccount candidateと一時credential、T06がquery/HTTP envelopeを追加するまでnetwork機能は公開しない。
+T04はUnknownを認証なしへ短絡せず、明示config sourceからaccountを選択してprivate pipeでtokenを得た後、
+固定`user` endpointのlogin一致を確認したcandidateだけをgeneration付きで公開する。切替失敗時は旧接続を保持し、
+切断・本人再認証要求・account置換では旧credentialとprofile grantを失効する。遅着candidateはepochで拒否する。
+T06がquery/HTTP envelopeを追加するまでrepository network機能は公開しない。
 G02のsemantic台帳はexact source commit `f881170f28b3c17d195c145b6f2396704cffa47a`
 から正規手順で受理した。追加35件は既定のconst equality operator 33件と
 `static constexpr` 2件の誤検出と確認し、JSONC APIの既存報告13件を保持する理由も

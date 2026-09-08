@@ -33,6 +33,11 @@ class BoundedProcessRequest final {
 public:
 	BoundedProcessRequest(std::wstring executablePath, std::wstring workingDirectory,
 		std::vector<std::wstring> arguments);
+	~BoundedProcessRequest();
+	BoundedProcessRequest(BoundedProcessRequest&&) noexcept = default;
+	BoundedProcessRequest& operator=(BoundedProcessRequest&&) noexcept = default;
+	BoundedProcessRequest(const BoundedProcessRequest&) = delete;
+	BoundedProcessRequest& operator=(const BoundedProcessRequest&) = delete;
 
 	void SetStandardInput(std::string value) { m_standardInput = std::move(value); }
 	void SetEnvironmentOverrides(std::vector<std::pair<std::wstring, std::wstring>> value)

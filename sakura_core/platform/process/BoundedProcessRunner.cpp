@@ -55,6 +55,28 @@ struct AttributeListGuard final {
 	~AttributeListGuard() { if (value != nullptr) ::DeleteProcThreadAttributeList(value); }
 };
 
+class WideEnvironmentGuard final {
+public:
+	explicit WideEnvironmentGuard(std::vector<std::wstring>& values) noexcept : m_values(&values) {}
+	explicit WideEnvironmentGuard(std::vector<wchar_t>& block) noexcept : m_block(&block) {}
+	~WideEnvironmentGuard()
+	{
+		if (m_values) {
+			for (auto& value : *m_values) {
+				if (!value.empty()) ::SecureZeroMemory(value.data(), value.size() * sizeof(wchar_t));
+			}
+		}
+		if (m_block && !m_block->empty()) {
+			::SecureZeroMemory(m_block->data(), m_block->size() * sizeof(wchar_t));
+		}
+	}
+	WideEnvironmentGuard(const WideEnvironmentGuard&) = delete;
+	WideEnvironmentGuard& operator=(const WideEnvironmentGuard&) = delete;
+private:
+	std::vector<std::wstring>* m_values{};
+	std::vector<wchar_t>* m_block{};
+};
+
 bool NeedsQuoting(std::wstring_view value) noexcept
 {
 	return value.empty() || value.find_first_of(L" \t\n\v\"") != std::wstring_view::npos;
@@ -89,6 +111,7 @@ std::vector<wchar_t> BuildEnvironmentBlock(
 	const std::vector<std::wstring>& removals)
 {
 	std::vector<std::wstring> entries;
+	const WideEnvironmentGuard entriesGuard(entries);
 	wchar_t* const parent = ::GetEnvironmentStringsW();
 	if (parent != nullptr) {
 		for (const wchar_t* cursor = parent; *cursor != L'\0';) {
@@ -176,6 +199,14 @@ BoundedProcessRequest::BoundedProcessRequest(std::wstring executablePath, std::w
 	  m_workingDirectory(std::move(workingDirectory)),
 	  m_arguments(std::move(arguments))
 {
+}
+
+BoundedProcessRequest::~BoundedProcessRequest()
+{
+	if (!m_standardInput.empty()) ::SecureZeroMemory(m_standardInput.data(), m_standardInput.size());
+	for (auto& entry : m_environmentOverrides) {
+		if (!entry.second.empty()) ::SecureZeroMemory(entry.second.data(), entry.second.size() * sizeof(wchar_t));
+	}
 }
 
 std::wstring QuoteWindowsArgument(std::wstring_view value)
@@ -298,6 +329,7 @@ try {
 	}
 
 	auto environment = BuildEnvironmentBlock(request.EnvironmentOverrides(), request.EnvironmentRemovals());
+	const WideEnvironmentGuard environmentGuard(environment);
 	STARTUPINFOEXW startup{};
 	startup.StartupInfo.cb = sizeof(startup);
 	startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;

@@ -224,6 +224,7 @@
     <ClCompile Include="..\src\test\cpp\tests1\textmate\OnigmoRegexEngineTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\senp\SenpTextResourceTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\senp\SenpToolGrantsTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\senp\GhConnectionLifecycleTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\senp\GhToolPolicyTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\senp\SenpEffectProtocolTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\senp\SenpRuntimeLifecycleTest.cpp" />

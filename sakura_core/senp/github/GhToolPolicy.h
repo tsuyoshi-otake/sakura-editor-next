@@ -72,6 +72,16 @@ public:
 		std::vector<std::wstring> arguments, std::vector<std::pair<std::wstring, std::wstring>> environmentOverrides,
 		std::vector<std::wstring> environmentRemovals, std::uint32_t timeoutMilliseconds,
 		std::size_t maximumOutputBytes, std::size_t maximumErrorBytes);
+	~GhProcessInvocation()
+	{
+		for (auto& entry : m_environmentOverrides) {
+			if (!entry.second.empty()) ::SecureZeroMemory(entry.second.data(), entry.second.size() * sizeof(wchar_t));
+		}
+	}
+	GhProcessInvocation(const GhProcessInvocation&) = default;
+	GhProcessInvocation& operator=(const GhProcessInvocation&) = default;
+	GhProcessInvocation(GhProcessInvocation&&) noexcept = default;
+	GhProcessInvocation& operator=(GhProcessInvocation&&) noexcept = default;
 	[[nodiscard]] const std::wstring& ExecutablePath() const noexcept { return m_executablePath; }
 	[[nodiscard]] const std::wstring& WorkingDirectory() const noexcept { return m_workingDirectory; }
 	[[nodiscard]] const std::vector<std::wstring>& Arguments() const noexcept { return m_arguments; }
@@ -97,6 +107,7 @@ public:
 	[[nodiscard]] int ExitCode() const noexcept { return m_exitCode; }
 	[[nodiscard]] const std::vector<std::uint8_t>& StandardOutput() const noexcept { return m_standardOutput; }
 	[[nodiscard]] const std::vector<std::uint8_t>& StandardError() const noexcept { return m_standardError; }
+	[[nodiscard]] std::vector<std::uint8_t> TakeStandardOutput() noexcept { return std::move(m_standardOutput); }
 private:
 	platform::process::EBoundedProcessStatus m_status{ platform::process::EBoundedProcessStatus::InvalidRequest };
 	int m_exitCode{ -1 };

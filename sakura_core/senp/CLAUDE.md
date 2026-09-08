@@ -200,9 +200,18 @@ invocation. Repository identity and path segments are validated separately;
 extensions never provide flags, cwd, stdin, headers, executable paths, or
 environment values. Ambient GitHub tokens, repository/host selectors, debug,
 pager, browser, editor, forced-TTY, socket, and config-directory overrides are
-removed in the bounded child environment. T04 will add a verified account
-candidate; T06 will add bounded query and HTTP-envelope parsing. Do not widen
-this policy into a generic command runner.
+removed in the bounded child environment. `CGhConnectionLifecycle` owns the
+T04 account candidate. An initial snapshot stays Unknown until a complete
+`gh auth status --json hosts` check proves authentication is absent. The
+selected account is pinned to an explicit profile config directory; its token
+travels only through native private pipes and a scrubbed child environment.
+The candidate becomes Connected only after the fixed `user` endpoint reports
+the same login. Timeout, malformed output, and candidate failure preserve an
+existing usable account. Replacement, confirmed reauthentication, disconnect,
+and close revoke retained credential leases and every profile grant. A late
+candidate cannot cross the connection epoch. T06 will add bounded query and
+HTTP-envelope parsing. Do not widen either policy into a generic command
+runner.
 
 Append accepts the next byte offset and at most 64 KiB. Fixed 64 KiB pages bound
 one resource to 32 MiB and the Control store to 64 MiB of allocated payload pages,

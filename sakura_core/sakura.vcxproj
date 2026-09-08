@@ -751,6 +751,7 @@
     <ClInclude Include="..\sakura_core\workbench\editor\SenpReadonlyWorkbench.h" />
     <ClInclude Include="..\sakura_core\senp\SenpTextResource.h" />
     <ClInclude Include="..\sakura_core\senp\SenpToolGrants.h" />
+	<ClInclude Include="..\sakura_core\senp\github\GhConnectionLifecycle.h" />
     <ClInclude Include="..\sakura_core\senp\github\GhToolPolicy.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\SenpReadonlyDocument.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\SenpTextResourceView.h" />
@@ -1424,6 +1425,7 @@
 	<ClCompile Include="..\sakura_core\senp\SenpManagementService.cpp" />
 	<ClCompile Include="..\sakura_core\senp\SenpTextResource.cpp" />
 	<ClCompile Include="..\sakura_core\senp\SenpToolGrants.cpp" />
+	<ClCompile Include="..\sakura_core\senp\github\GhConnectionLifecycle.cpp" />
 	<ClCompile Include="..\sakura_core\senp\github\GhToolPolicy.cpp" />
 	<ClCompile Include="..\sakura_core\senp\SenpEffectProtocol.cpp" />
 	<ClCompile Include="..\sakura_core\senp\SenpRuntimeSession.cpp" />
