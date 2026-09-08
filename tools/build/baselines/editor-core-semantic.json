@@ -36998,6 +36998,20 @@
     {
       "column": 4,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
+      "line": 125,
+      "path": "sakura_core/workbench/SenpOwnerProjection.cpp",
+      "rule_id": "error.catch_all"
+    },
+    {
+      "column": 4,
+      "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
+      "line": 180,
+      "path": "sakura_core/workbench/SenpOwnerProjection.cpp",
+      "rule_id": "error.catch_all"
+    },
+    {
+      "column": 4,
+      "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
       "line": 151,
       "path": "sakura_core/workbench/WorkerRetirementService.h",
       "rule_id": "error.catch_all"
@@ -97911,7 +97925,7 @@
   },
   "inventory_kind": "editor-core-semantic",
   "metrics": {
-    "catch_all_count": 708,
+    "catch_all_count": 710,
     "direct_global_getter_calls": {
       "GetDllShareData": 710,
       "GetEditDoc": 7,
@@ -98384,11 +98398,11 @@
       }
     },
     "filtered_test_hint_count": 2,
-    "finding_count": 13958,
+    "finding_count": 13960,
     "finding_count_by_rule": {
       "boundary.private_include": 67,
       "boundary.win32_type": 4834,
-      "error.catch_all": 708,
+      "error.catch_all": 710,
       "global.get_dll_share_data": 710,
       "global.get_edit_doc": 7,
       "global.get_edit_wnd": 258,
@@ -98400,14 +98414,14 @@
       "state.raw_pointer_member": 30,
       "test.filtered_or_skipped": 2
     },
-    "include_directive_count": 11022,
+    "include_directive_count": 11033,
     "monolith_link_hint_count": 0,
     "private_include_mention_count": 67,
     "raw_delete_expression_count": 317,
     "raw_new_expression_count": 247,
-    "source_file_count": 1741,
-    "source_line_count": 523338,
-    "tracked_file_count": 1790,
+    "source_file_count": 1744,
+    "source_line_count": 523849,
+    "tracked_file_count": 1793,
     "win32_parameter_mention_count": 4834
   },
   "rule_catalog": [
@@ -98563,8 +98577,8 @@
     ]
   },
   "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
-  "source_commit": "31357a6c3526c9cc6b8d52a19168cf9b2619d7ad",
-  "source_fingerprint": "sha256:b087a4af0ad63b50e5cba416667833d9dfa68017a15515e1232906f50f36b21b",
+  "source_commit": "663551395359b237686816f723ce54714eb71d47",
+  "source_fingerprint": "sha256:2375a402c95a90415fe7c5f7b537722e52c2f9dbb1e7a27becb55d21f4f18e99",
   "tracked_source_paths": [
     ".github/actions/bootstrap-vcpkg/action.yml",
     ".github/dependabot.yml",
@@ -99689,6 +99703,8 @@
     "sakura_core/workbench/IconMetrics.h",
     "sakura_core/workbench/SenpEffectCoordinator.cpp",
     "sakura_core/workbench/SenpEffectCoordinator.h",
+    "sakura_core/workbench/SenpOwnerProjection.cpp",
+    "sakura_core/workbench/SenpOwnerProjection.h",
     "sakura_core/workbench/ViewsWelcomeMetrics.h",
     "sakura_core/workbench/WorkbenchBootstrapContext.cpp",
     "sakura_core/workbench/WorkbenchBootstrapContext.h",
@@ -100286,6 +100302,7 @@
     "src/test/cpp/tests1/workbench/ScmNativeSurfaceAdapterTest.cpp",
     "src/test/cpp/tests1/workbench/SearchWorkbenchToolTest.cpp",
     "src/test/cpp/tests1/workbench/SenpEffectCoordinatorTest.cpp",
+    "src/test/cpp/tests1/workbench/SenpOwnerProjectionTest.cpp",
     "src/test/cpp/tests1/workbench/SenpReadonlyDocumentHostTest.cpp",
     "src/test/cpp/tests1/workbench/SenpReadonlyDocumentTest.cpp",
     "src/test/cpp/tests1/workbench/SenpReadonlyEditorControllerTest.cpp",
@@ -100357,5 +100374,5 @@
     "tools/ppa_stub/ppa_stub.h",
     "tools/vcx-props/vcxcompat.props"
   ],
-  "tracked_source_set_sha256": "sha256:8c26dff629e95557e699663476f56fc1d884f315b1e0dfb06e862d399de70fd6"
+  "tracked_source_set_sha256": "sha256:8fef66a25c2c1ee523a746c924a799244cdf03e73495767960c1d1897cf1ae33"
 }
