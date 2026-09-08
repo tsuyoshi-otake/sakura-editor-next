@@ -2,6 +2,11 @@
 
 - `IViewContainerPage`/`ViewContainerPagePool` owns the one-page-per-container
   mounting contract. A physical Part hosts a page; it is never a View identity.
+- `ProjectHostViewPages` groups Views only when their product-owned provider
+  supplies `factoryForContainer`. It calls that factory once per container and
+  publishes one page descriptor. A singleton `factory` still rejects a second
+  View, and mixed providers in one container fail closed. This distinction keeps
+  the ViewContainer/View layers intact instead of fabricating one page per View.
 - `CSenpViewContainers` prepares one generation of native containers and Views
   hidden before publication. Every View requires a real native body factory;
   missing providers, malformed batches and unsupported destinations fail closed.

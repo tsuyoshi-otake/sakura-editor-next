@@ -33,7 +33,11 @@ struct ViewContainerPageDescriptor final {
 //! provider id is package-visible; the factory remains process-local authority.
 struct HostViewProviderDescriptor final {
 	std::string id;
+	//! Singleton providers use factory. A provider that projects a real
+	//! ViewContainer with multiple Views supplies factoryForContainer instead;
+	//! it is called once for each matching container before registry publication.
 	ViewContainerPageFactory factory;
+	std::function<ViewContainerPageFactory(std::string_view containerId)> factoryForContainer;
 };
 
 enum class EHostViewPageProjectionStatus : std::uint8_t {
@@ -46,9 +50,20 @@ enum class EHostViewPageProjectionStatus : std::uint8_t {
 	Failed,
 };
 
-struct HostViewPageProjectionResult final {
-	EHostViewPageProjectionStatus status{ EHostViewPageProjectionStatus::Failed };
-	std::vector<ViewContainerPageDescriptor> descriptors;
+class HostViewPageProjectionResult final {
+private:
+	std::vector<ViewContainerPageDescriptor> m_descriptors;
+
+public:
+	HostViewPageProjectionResult(EHostViewPageProjectionStatus status,
+		std::vector<ViewContainerPageDescriptor> descriptors) noexcept;
+	HostViewPageProjectionResult(const HostViewPageProjectionResult& other);
+	HostViewPageProjectionResult(HostViewPageProjectionResult&& other) noexcept;
+	HostViewPageProjectionResult& operator=(const HostViewPageProjectionResult&) = delete;
+	HostViewPageProjectionResult& operator=(HostViewPageProjectionResult&&) = delete;
+
+	const EHostViewPageProjectionStatus status{ EHostViewPageProjectionStatus::Failed };
+	const std::vector<ViewContainerPageDescriptor>& descriptors;
 
 	[[nodiscard]] bool Succeeded() const noexcept
 	{
@@ -59,7 +74,8 @@ struct HostViewPageProjectionResult final {
 
 //! Resolves declarative View provider ids to native page factories without
 //! granting the package HWND or process authority. One native page represents
-//! one ViewContainer; multiple host Views in the same container fail closed.
+//! one ViewContainer. Multiple Views require one matching container factory;
+//! singleton factories continue to reject duplicate container projection.
 [[nodiscard]] HostViewPageProjectionResult ProjectHostViewPages(
 	const layout::WorkbenchContributionSnapshot& snapshot,
 	std::span<const HostViewProviderDescriptor> providers) noexcept;

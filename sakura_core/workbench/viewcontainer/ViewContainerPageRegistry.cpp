@@ -9,10 +9,32 @@
 #include "workbench/viewcontainer/ViewContainerPageRegistry.h"
 
 #include <algorithm>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 
 namespace workbench::viewcontainer {
+
+HostViewPageProjectionResult::HostViewPageProjectionResult(
+	const EHostViewPageProjectionStatus statusValue,
+	std::vector<ViewContainerPageDescriptor> descriptorValues) noexcept
+	: m_descriptors(std::move(descriptorValues))
+	, status(statusValue)
+	, descriptors(m_descriptors)
+{
+}
+
+HostViewPageProjectionResult::HostViewPageProjectionResult(
+	const HostViewPageProjectionResult& other)
+	: HostViewPageProjectionResult(other.status, other.m_descriptors)
+{
+}
+
+HostViewPageProjectionResult::HostViewPageProjectionResult(
+	HostViewPageProjectionResult&& other) noexcept
+	: HostViewPageProjectionResult(other.status, std::move(other.m_descriptors))
+{
+}
 
 HostViewPageProjectionResult ProjectHostViewPages(
 	const layout::WorkbenchContributionSnapshot& snapshot,
@@ -26,13 +48,14 @@ HostViewPageProjectionResult ProjectHostViewPages(
 		providerIds.reserve(providers.size());
 		for (const auto& provider : providers) {
 			if (!layout::WorkbenchContributionRegistry::IsValidStableId(provider.id)
-				|| !provider.factory || !providerIds.emplace(provider.id).second) {
+				|| static_cast<bool>(provider.factory) == static_cast<bool>(provider.factoryForContainer)
+				|| !providerIds.emplace(provider.id).second) {
 				return { EHostViewPageProjectionStatus::InvalidProvider, {} };
 			}
 		}
 
-		HostViewPageProjectionResult result{ EHostViewPageProjectionStatus::NotApplicable, {} };
-		std::unordered_set<std::string_view> projectedContainers;
+		std::vector<ViewContainerPageDescriptor> descriptors;
+		std::unordered_map<std::string_view, std::string_view> projectedContainers;
 		for (const auto& registeredView : snapshot.views) {
 			const auto& view = registeredView.descriptor;
 			if (view.provider.empty()) continue;
@@ -48,17 +71,24 @@ HostViewPageProjectionResult ProjectHostViewPages(
 			if (container == snapshot.viewContainers.end()) {
 				return { EHostViewPageProjectionStatus::InvalidContribution, {} };
 			}
-			if (!projectedContainers.emplace(container->descriptor.id).second) {
-				return { EHostViewPageProjectionStatus::DuplicateContainerId, {} };
+			const auto [projected, inserted] = projectedContainers.emplace(container->descriptor.id, provider->id);
+			if (!inserted) {
+				if (projected->second != provider->id || !provider->factoryForContainer)
+					return { EHostViewPageProjectionStatus::DuplicateContainerId, {} };
+				continue;
 			}
-			result.descriptors.push_back({
+			auto factory = provider->factoryForContainer
+				? provider->factoryForContainer(container->descriptor.id) : provider->factory;
+			if (!factory) return { EHostViewPageProjectionStatus::InvalidProvider, {} };
+			descriptors.push_back({
 				.containerId = container->descriptor.id,
 				.supportedLocations = container->descriptor.supportedLocations,
-				.factory = provider->factory,
+				.factory = std::move(factory),
 			});
-			result.status = EHostViewPageProjectionStatus::Projected;
 		}
-		return result;
+		const auto status = descriptors.empty() ? EHostViewPageProjectionStatus::NotApplicable
+			: EHostViewPageProjectionStatus::Projected;
+		return { status, std::move(descriptors) };
 	} catch (...) {
 		return { EHostViewPageProjectionStatus::Failed, {} };
 	}
@@ -100,12 +130,8 @@ ViewContainerPageRegistrationResult ViewContainerPageRegistry::RegisterBatch(
 const ViewContainerPageDescriptor* ViewContainerPageRegistry::Find(
 	const std::string_view containerId) const noexcept
 {
-	try {
-		const auto found = m_descriptors.find(containerId);
-		return found != m_descriptors.end() ? &found->second : nullptr;
-	} catch (...) {
-		return nullptr;
-	}
+	const auto found = m_descriptors.find(containerId);
+	return found != m_descriptors.end() ? &found->second : nullptr;
 }
 
 } // namespace workbench::viewcontainer

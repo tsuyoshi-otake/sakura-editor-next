@@ -435,6 +435,11 @@ TextPatternと全pageを横断する検索は実装済みとは扱わない。
 Empty、Failedを返し、commandからMarkdown/metadata/tableとLoading text resourceを含む詳細documentを開く。
 network、filesystem、GitHub、`gh`には依存しない。
 
+2つのViewは共通のproduct-owned provider ID `senp.tree`を参照する。startup page projectionは
+`factoryForContainer`を持つproviderに限り、同じcontainerの複数Viewを1つのnative pageへまとめる。
+factoryはcontainerごとに1回だけ呼ばれ、異なるproviderの混在やsingleton factoryの重複は拒否する。
+これによりViewごとに物理pageを偽造せず、VS Codeと同じViewContainer/Viewの階層を維持する。
+
 unit testに加え、`wasm32-unknown-unknown`のcore moduleを`componentize`し、実
 `sakura-senp-host --protocol 2`へHello、Activate、TreeRequestをframe送信して、activationの2 invalidationと
 Projectsの2 itemを確認した。この段階はguest側の縦切りであり、owner effectをnative View/page/editorへ

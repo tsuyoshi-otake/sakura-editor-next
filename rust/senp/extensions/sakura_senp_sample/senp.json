@@ -20,8 +20,8 @@
     },
     "views": {
       "sample.senp": [
-        { "id": "sample.projects", "name": "Projects", "provider": "sample.projects", "order": 10 },
-        { "id": "sample.states", "name": "States", "provider": "sample.states", "order": 20 }
+        { "id": "sample.projects", "name": "Projects", "provider": "senp.tree", "order": 10 },
+        { "id": "sample.states", "name": "States", "provider": "senp.tree", "order": 20 }
       ]
     }
   }
