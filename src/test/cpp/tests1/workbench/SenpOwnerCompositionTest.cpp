@@ -9,6 +9,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <deque>
 #include <map>
 
 namespace workbench {
@@ -35,10 +36,12 @@ public:
 		senp::effect::StartToolRead read)
 	{
 		if (read.toolId != L"github" || read.operation != L"repositoryRead"
-			|| m_toolTerminal || m_toolResponse.empty()) return false;
+			|| m_toolTerminal || m_toolResponses.empty()) return false;
 		m_lastRead = read;
 		m_toolTerminal = SenpToolReadTerminal{ context, {
-			read.readId, senp::effect::CompletionStatus::Succeeded, m_toolResponse, L"" } };
+			read.readId, senp::effect::CompletionStatus::Succeeded,
+			std::move(m_toolResponses.front()), L"" } };
+		m_toolResponses.pop_front();
 		++m_toolReads;
 		return true;
 	}
@@ -53,7 +56,12 @@ public:
 		if (m_toolTerminal && m_toolTerminal->Context().requestGeneration == context.requestGeneration)
 			m_toolTerminal.reset();
 	}
-	void SetToolResponse(std::wstring value) { m_toolResponse = std::move(value); }
+	void SetToolResponse(std::wstring value)
+	{
+		m_toolResponses.clear();
+		m_toolResponses.push_back(std::move(value));
+	}
+	void EnqueueToolResponse(std::wstring value) { m_toolResponses.push_back(std::move(value)); }
 	void Revoke() noexcept { ++m_revokes; }
 	[[nodiscard]] int Begins() const noexcept { return m_begins; }
 	[[nodiscard]] int Publishes() const noexcept { return m_publishes; }
@@ -69,7 +77,7 @@ private:
 	senp::effect::CompleteCommand m_completion;
 	senp::effect::StartToolRead m_lastRead;
 	std::optional<SenpToolReadTerminal> m_toolTerminal;
-	std::wstring m_toolResponse;
+	std::deque<std::wstring> m_toolResponses;
 	int m_begins{}, m_publishes{}, m_completions{}, m_revokes{}, m_toolReads{};
 };
 
@@ -278,7 +286,10 @@ TEST_F(SenpOwnerComposition, RealGithubIssueReadReachesTheNativeTreeProvider)
 	ASSERT_TRUE(pages.Create(m_owner));
 	CSenpOwnerComposition composition(catalog, pages);
 	auto target = std::make_shared<CompositionTargetState>();
-	target->SetToolResponse(LR"({"body":[{"id":11,"number":7,"title":"Visible issue","state":"open","user":{"login":"octocat"},"labels":[{"name":"bug"}],"html_url":"https://github.com/o/r/issues/7"},{"id":12,"number":8,"title":"Filtered PR","state":"open","user":{"login":"hubot"},"labels":[],"html_url":"https://github.com/o/r/pull/8","pull_request":{}}],"nextPage":2})");
+	target->SetToolResponse(LR"({"body":[{"id":11,"number":7,"title":"Visible issue","state":"open","user":{"login":"octocat"},"labels":[{"name":"bug"}],"html_url":"https://github.com/o/r/issues/7","comments":2},{"id":12,"number":8,"title":"Filtered PR","state":"open","user":{"login":"hubot"},"labels":[],"html_url":"https://github.com/o/r/pull/8","comments":0,"pull_request":{}}],"nextPage":2})");
+	target->EnqueueToolResponse(LR"({"id":11,"number":7,"title":"Visible issue","state":"open","user":{"login":"octocat"},"labels":[{"name":"bug"}],"html_url":"https://github.com/o/r/issues/7","comments":2,"body":"Issue body","created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-02T00:00:00Z"})");
+	target->EnqueueToolResponse(LR"({"body":[{"id":91,"user":{"login":"hubot"},"body":"Comment body","html_url":"https://github.com/o/r/issues/7#issuecomment-91","created_at":"2026-09-02T01:00:00Z","updated_at":"2026-09-02T01:00:00Z"}],"nextPage":2})");
+	target->EnqueueToolResponse(LR"({"id":91,"user":{"login":"hubot"},"body":"Comment body","html_url":"https://github.com/o/r/issues/7#issuecomment-91","created_at":"2026-09-02T01:00:00Z","updated_at":"2026-09-02T01:00:00Z"})");
 	std::map<std::wstring, std::shared_ptr<tree::SenpTreeProvider>, std::less<>> providers;
 	layout::WorkbenchViewContainerDescriptor container{
 		"github-pull-requests", "GitHub", layout::EViewContainerLocation::Sidebar, 6,
@@ -290,7 +301,7 @@ TEST_F(SenpOwnerComposition, RealGithubIssueReadReachesTheNativeTreeProvider)
 		std::vector<std::string>{});
 	trees.emplace_back(layout::WorkbenchViewDescriptor{
 		"issues:github", "github-pull-requests", "Issues", 20, true, true, "senp.tree" },
-		std::vector<std::string>{});
+		std::vector<std::string>{ "github.openIssue", "github.openIssueComment" });
 	SenpOwnerPublicationOptions publication(
 		m_owner, { std::move(container) }, std::move(trees),
 		std::make_unique<CompositionTarget>(target), [](std::string_view) { return true; },
@@ -323,12 +334,41 @@ TEST_F(SenpOwnerComposition, RealGithubIssueReadReachesTheNativeTreeProvider)
 	EXPECT_EQ(1, target->ToolReads());
 	EXPECT_EQ(L"issues:open:1", target->LastRead().readId);
 	const auto& model = providers.at(L"issues:github")->Model();
-	const auto issue = model.Node(L"issue:11");
+	const auto issue = model.Node(L"issue:11:7");
 	ASSERT_TRUE(issue);
 	EXPECT_EQ(L"#7 Visible issue", issue->item.label);
 	const auto root = model.Node(L"");
 	ASSERT_TRUE(root);
 	EXPECT_EQ(L"issues:open:2", root->nextCursor);
+
+	ASSERT_TRUE(providers.at(L"issues:github")->Select(L"issue:11:7"));
+	ASSERT_TRUE(providers.at(L"issues:github")->Execute(L"issue:11:7"));
+	ASSERT_TRUE(Await(composition, [&] { return target->Publishes() == 1; }));
+	EXPECT_EQ(L"#7 Visible issue", target->Document().title);
+	ASSERT_EQ(2U, target->Document().sections.size());
+	ASSERT_TRUE(std::holds_alternative<senp::effect::MarkdownSection>(
+		target->Document().sections[1]));
+	EXPECT_EQ(L"Issue body", std::get<senp::effect::MarkdownSection>(
+		target->Document().sections[1]).text);
+
+	ASSERT_EQ(tree::TreeResult::Applied, providers.at(L"issues:github")->SetExpanded(
+		L"issue:11:7", true, Clock::now()));
+	ASSERT_TRUE(Await(composition, [&] {
+		return providers.at(L"issues:github")->Model().Node(L"comment:91").has_value();
+	}));
+	const auto comment = providers.at(L"issues:github")->Model().Node(L"comment:91");
+	ASSERT_TRUE(comment);
+	EXPECT_EQ(L"comments:2", providers.at(L"issues:github")->Model().Node(
+		L"issue:11:7")->nextCursor);
+	ASSERT_TRUE(providers.at(L"issues:github")->Select(L"comment:91"));
+	ASSERT_TRUE(providers.at(L"issues:github")->Execute(L"comment:91"));
+	ASSERT_TRUE(Await(composition, [&] { return target->Publishes() == 2; }));
+	EXPECT_EQ(L"Comment by @hubot", target->Document().title);
+	ASSERT_TRUE(std::holds_alternative<senp::effect::MarkdownSection>(
+		target->Document().sections[1]));
+	EXPECT_EQ(L"Comment body", std::get<senp::effect::MarkdownSection>(
+		target->Document().sections[1]).text);
+	EXPECT_EQ(4, target->ToolReads());
 	EXPECT_TRUE(composition.Close());
 	EXPECT_EQ(1, target->Revokes());
 	pages.Close();

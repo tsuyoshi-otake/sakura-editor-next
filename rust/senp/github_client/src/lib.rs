@@ -7,6 +7,7 @@ use std::fmt;
 
 pub const MAXIMUM_PAGE_ITEMS: usize = 100;
 pub const MAXIMUM_RESPONSE_BYTES: usize = 64 * 1024;
+const MAXIMUM_BODY_BYTES: usize = 60 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IssueState {
@@ -40,6 +41,7 @@ pub struct Issue {
     pub author: String,
     pub labels: Vec<String>,
     pub html_url: String,
+    pub comments: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -47,6 +49,30 @@ pub struct IssuePage {
     pub issues: Vec<Issue>,
     pub next_page: Option<u32>,
     pub excluded_pull_requests: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IssueDetail {
+    pub issue: Issue,
+    pub body: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Comment {
+    pub id: u64,
+    pub author: String,
+    pub body: String,
+    pub html_url: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CommentPage {
+    pub comments: Vec<Comment>,
+    pub next_page: Option<u32>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -86,8 +112,33 @@ struct ApiIssue {
     #[serde(default)]
     labels: Vec<ApiLabel>,
     html_url: String,
+    comments: u32,
+    #[serde(default)]
+    body: Option<String>,
+    #[serde(default)]
+    created_at: Option<String>,
+    #[serde(default)]
+    updated_at: Option<String>,
     #[serde(default)]
     pull_request: PullRequestMarker,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CommentEnvelope {
+    body: Vec<ApiComment>,
+    #[serde(default)]
+    next_page: Option<u32>,
+}
+
+#[derive(Deserialize)]
+struct ApiComment {
+    id: u64,
+    user: ApiUser,
+    body: String,
+    html_url: String,
+    created_at: String,
+    updated_at: String,
 }
 
 #[derive(Deserialize)]
@@ -192,6 +243,33 @@ fn bounded_text(value: &str, maximum: usize) -> bool {
     !value.is_empty() && value.len() <= maximum && !value.contains('\0')
 }
 
+fn valid_issue(value: &ApiIssue) -> bool {
+    value.id > 0
+        && value.number > 0
+        && bounded_text(&value.title, 1024)
+        && bounded_text(&value.user.login, 128)
+        && bounded_text(&value.html_url, 2048)
+        && value.html_url.starts_with("https://")
+        && value.labels.len() <= 32
+        && value
+            .labels
+            .iter()
+            .all(|label| bounded_text(&label.name, 128))
+}
+
+fn issue(value: ApiIssue, state: IssueState) -> Issue {
+    Issue {
+        id: value.id,
+        number: value.number,
+        title: value.title,
+        state,
+        author: value.user.login,
+        labels: value.labels.into_iter().map(|label| label.name).collect(),
+        html_url: value.html_url,
+        comments: value.comments,
+    }
+}
+
 pub fn parse_issue_page(data: &str, filter: IssueState) -> Result<IssuePage, ParseError> {
     if data.len() > MAXIMUM_RESPONSE_BYTES {
         return Err(ParseError::LimitExceeded);
@@ -210,31 +288,11 @@ pub fn parse_issue_page(data: &str, filter: IssueState) -> Result<IssuePage, Par
             continue;
         }
         let state = IssueState::parse(&value.state).ok_or(ParseError::InvalidItem)?;
-        if value.id == 0
-            || value.number == 0
-            || !ids.insert(value.id)
-            || !bounded_text(&value.title, 1024)
-            || !bounded_text(&value.user.login, 128)
-            || !bounded_text(&value.html_url, 2048)
-            || !value.html_url.starts_with("https://")
-            || value.labels.len() > 32
-            || value
-                .labels
-                .iter()
-                .any(|label| !bounded_text(&label.name, 128))
-        {
+        if !ids.insert(value.id) || !valid_issue(&value) {
             return Err(ParseError::InvalidItem);
         }
         if state == filter {
-            issues.push(Issue {
-                id: value.id,
-                number: value.number,
-                title: value.title,
-                state,
-                author: value.user.login,
-                labels: value.labels.into_iter().map(|label| label.name).collect(),
-                html_url: value.html_url,
-            });
+            issues.push(issue(value, state));
         }
     }
     Ok(IssuePage {
@@ -244,11 +302,104 @@ pub fn parse_issue_page(data: &str, filter: IssueState) -> Result<IssuePage, Par
     })
 }
 
+pub fn parse_issue_detail(data: &str) -> Result<IssueDetail, ParseError> {
+    if data.len() > MAXIMUM_RESPONSE_BYTES {
+        return Err(ParseError::LimitExceeded);
+    }
+    let value: ApiIssue = strict_json(data)?;
+    if matches!(value.pull_request, PullRequestMarker::Present) || !valid_issue(&value) {
+        return Err(ParseError::InvalidItem);
+    }
+    let state = IssueState::parse(&value.state).ok_or(ParseError::InvalidItem)?;
+    let body = value.body.clone();
+    let created_at = value.created_at.clone().ok_or(ParseError::InvalidItem)?;
+    let updated_at = value.updated_at.clone().ok_or(ParseError::InvalidItem)?;
+    if body
+        .as_deref()
+        .is_some_and(|text| text.len() > MAXIMUM_BODY_BYTES || text.contains('\0'))
+        || !bounded_text(&created_at, 64)
+        || !bounded_text(&updated_at, 64)
+    {
+        return Err(ParseError::InvalidItem);
+    }
+    Ok(IssueDetail {
+        issue: issue(value, state),
+        body,
+        created_at,
+        updated_at,
+    })
+}
+
+pub fn parse_comment_page(data: &str) -> Result<CommentPage, ParseError> {
+    if data.len() > MAXIMUM_RESPONSE_BYTES {
+        return Err(ParseError::LimitExceeded);
+    }
+    let envelope: CommentEnvelope = strict_json(data)?;
+    if envelope.body.len() > MAXIMUM_PAGE_ITEMS || envelope.next_page.is_some_and(|page| page == 0)
+    {
+        return Err(ParseError::InvalidEnvelope);
+    }
+    let mut ids = BTreeSet::new();
+    let mut comments = Vec::with_capacity(envelope.body.len());
+    for value in envelope.body {
+        if value.id == 0
+            || !ids.insert(value.id)
+            || !bounded_text(&value.user.login, 128)
+            || value.body.len() > MAXIMUM_BODY_BYTES
+            || value.body.contains('\0')
+            || !bounded_text(&value.html_url, 2048)
+            || !value.html_url.starts_with("https://")
+            || !bounded_text(&value.created_at, 64)
+            || !bounded_text(&value.updated_at, 64)
+        {
+            return Err(ParseError::InvalidItem);
+        }
+        comments.push(Comment {
+            id: value.id,
+            author: value.user.login,
+            body: value.body,
+            html_url: value.html_url,
+            created_at: value.created_at,
+            updated_at: value.updated_at,
+        });
+    }
+    Ok(CommentPage {
+        comments,
+        next_page: envelope.next_page,
+    })
+}
+
+pub fn parse_comment_detail(data: &str) -> Result<Comment, ParseError> {
+    if data.len() > MAXIMUM_RESPONSE_BYTES {
+        return Err(ParseError::LimitExceeded);
+    }
+    let value: ApiComment = strict_json(data)?;
+    if value.id == 0
+        || !bounded_text(&value.user.login, 128)
+        || value.body.len() > MAXIMUM_BODY_BYTES
+        || value.body.contains('\0')
+        || !bounded_text(&value.html_url, 2048)
+        || !value.html_url.starts_with("https://")
+        || !bounded_text(&value.created_at, 64)
+        || !bounded_text(&value.updated_at, 64)
+    {
+        return Err(ParseError::InvalidItem);
+    }
+    Ok(Comment {
+        id: value.id,
+        author: value.user.login,
+        body: value.body,
+        html_url: value.html_url,
+        created_at: value.created_at,
+        updated_at: value.updated_at,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const MIXED: &str = r#"{"body":[{"id":11,"number":7,"title":"First issue","state":"open","user":{"login":"octocat"},"labels":[{"name":"bug"}],"html_url":"https://github.com/o/r/issues/7"},{"id":12,"number":8,"title":"A pull request","state":"open","user":{"login":"hubot"},"labels":[],"html_url":"https://github.com/o/r/pull/8","pull_request":{"url":"https://api.github.com/repos/o/r/pulls/8"}}],"nextPage":2,"ignored":"allowed"}"#;
+    const MIXED: &str = r#"{"body":[{"id":11,"number":7,"title":"First issue","state":"open","user":{"login":"octocat"},"labels":[{"name":"bug"}],"html_url":"https://github.com/o/r/issues/7","comments":2},{"id":12,"number":8,"title":"A pull request","state":"open","user":{"login":"hubot"},"labels":[],"html_url":"https://github.com/o/r/pull/8","comments":0,"pull_request":{"url":"https://api.github.com/repos/o/r/pulls/8"}}],"nextPage":2,"ignored":"allowed"}"#;
 
     #[test]
     fn excludes_pull_requests_without_consuming_the_next_page() {
@@ -256,8 +407,22 @@ mod tests {
         assert_eq!(page.issues.len(), 1);
         assert_eq!(page.issues[0].number, 7);
         assert_eq!(page.issues[0].labels, ["bug"]);
+        assert_eq!(page.issues[0].comments, 2);
         assert_eq!(page.excluded_pull_requests, 1);
         assert_eq!(page.next_page, Some(2));
+    }
+
+    #[test]
+    fn parses_issue_body_and_paged_comments_with_explicit_empty_values() {
+        let detail = r#"{"id":11,"number":7,"title":"First issue","state":"open","user":{"login":"octocat"},"labels":[],"html_url":"https://github.com/o/r/issues/7","comments":1,"body":null,"created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-02T00:00:00Z"}"#;
+        let issue = parse_issue_detail(detail).unwrap();
+        assert_eq!(issue.body, None);
+        assert_eq!(issue.issue.comments, 1);
+
+        let page = parse_comment_page(r#"{"body":[{"id":91,"user":{"login":"hubot"},"body":"A comment","html_url":"https://github.com/o/r/issues/7#issuecomment-91","created_at":"2026-09-02T01:00:00Z","updated_at":"2026-09-02T01:00:00Z"}],"nextPage":2}"#).unwrap();
+        assert_eq!(page.comments.len(), 1);
+        assert_eq!(page.next_page, Some(2));
+        assert_eq!(parse_comment_detail(r#"{"id":91,"user":{"login":"hubot"},"body":"A comment","html_url":"https://github.com/o/r/issues/7#issuecomment-91","created_at":"2026-09-02T01:00:00Z","updated_at":"2026-09-02T01:00:00Z"}"#).unwrap(), page.comments[0]);
     }
 
     #[test]

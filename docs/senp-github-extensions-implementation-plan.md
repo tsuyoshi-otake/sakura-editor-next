@@ -159,6 +159,16 @@ state/sort/direction/per_page/pageだけを要求し、`pull_request` markerを�
 実componentをnative runtimeから呼び、`StartToolRead`から`ToolCompleted`を経て`issues:github`の
 `PublishTreePage`になる往復を受入runnerで検証する。PR一覧と本文はE03/E04まで公開しない。
 | E03 | Issue本文・コメントの詳細 | E02/U04 | fixtureとopt-in本文表示 | 本文/コメントpage、空と失敗の区別 |
+
+E03ではIssue rowのstable database IDとIssue番号を分離したidentityにし、選択時は
+`github.openIssue`から`github-issue:<number>` readonly documentを開く。document requestが
+固定`issues/{number}` readを開始し、本文、状態、author、時刻、comment数、URLを有界DTOとして
+表示する。Issue展開は`issues/{number}/comments`を20件ずつ読み、next cursorを保持する。
+comment選択はdatabase IDを使う固定`issues/comments/{id}` readから独立documentを開く。
+本文null、空comment、空page、partial page、read/parse failureはそれぞれ明示的なterminal表示にする。
+実Wasm componentからnative tool target、Tree provider、readonly document publicationまでの往復を
+受入runnerで検証する。tool completionでoperation IDが変わってもowner/request generationを保持し、
+元のdocument contextだけへpublish/failureを返す。
 | E04 | PR一覧・本文・base/head/merged状態 | E03 | fixtureとPR View実表示 | Issue番号との混線0、別forkの暗黙取得なし |
 | E05 | Actions Workflow/Run/Attemptの一覧 | E01/U06 | 新crate testsとActions View | WorkflowとRunを区別、attempt固定 |
 | E06 | Job/Step状態とreadonly概要 | E05 | matrix/unknown/nullのfixture | job名でidentityを代用しない、進行中を成功にしない |

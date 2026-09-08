@@ -282,6 +282,16 @@ that requires explicit host resolution. Empty workspaces, unsupported roots,
 no repository, multiple roots, remote removal, and stale workspace generations
 must remain observable rather than becoming an empty GitHub view.
 
+The built-in GitHub Issues guest owns E03's endpoint-specific issue and comment
+DTOs. An Issue row keeps the database ID and repository Issue number as separate
+identity fields. Selection opens `github-issue:<number>` and reads only
+`issues/{number}`; expansion pages `issues/{number}/comments`; a comment document
+uses its database ID with `issues/comments/{id}`. The guest never embeds a body
+in command arguments. It validates the 64-KiB SENP completion envelope, 60-KiB
+body bound, required HTTPS URLs and timestamps before publishing. Null Issue
+bodies, empty comments, empty pages, partial pages and failed reads are distinct
+terminal presentations.
+
 Append accepts the next byte offset and at most 64 KiB. Fixed 64 KiB pages bound
 one resource to 32 MiB and the Control store to 64 MiB of allocated payload pages,
 including unused tails, with at most 64 resource slots. Pages and their index

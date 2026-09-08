@@ -134,7 +134,7 @@ TEST_F(SenpRuntimeProcess, RealGithubIssuesComponentPublishesTheFilteredPageAndN
 	EXPECT_EQ(read.toolId, L"github");
 	EXPECT_EQ(read.operation, L"repositoryRead");
 
-	const std::wstring response = LR"({"body":[{"id":11,"number":7,"title":"Visible issue","state":"open","user":{"login":"octocat"},"labels":[{"name":"bug"}],"html_url":"https://github.com/o/r/issues/7"},{"id":12,"number":8,"title":"Filtered PR","state":"open","user":{"login":"hubot"},"labels":[],"html_url":"https://github.com/o/r/pull/8","pull_request":{}}],"nextPage":2})";
+	const std::wstring response = LR"({"body":[{"id":11,"number":7,"title":"Visible issue","state":"open","user":{"login":"octocat"},"labels":[{"name":"bug"}],"html_url":"https://github.com/o/r/issues/7","comments":2},{"id":12,"number":8,"title":"Filtered PR","state":"open","user":{"login":"hubot"},"labels":[],"html_url":"https://github.com/o/r/pull/8","comments":0,"pull_request":{}}],"nextPage":2})";
 	ASSERT_EQ(runtime.Submit(Context(), ToolCompleted{ read.readId, CompletionStatus::Succeeded,
 		response, L"" }, Clock::now() + 2s).status, AdmissionStatus::Accepted);
 	auto displayed = WaitResult(runtime);
@@ -144,7 +144,7 @@ TEST_F(SenpRuntimeProcess, RealGithubIssuesComponentPublishesTheFilteredPageAndN
 	const auto& page = std::get<PublishTreePage>(displayed->effects[0]);
 	EXPECT_EQ(page.viewId, L"issues:github");
 	EXPECT_EQ(page.items.size(), 1U);
-	EXPECT_EQ(page.items[0].id, L"issue:11");
+	EXPECT_EQ(page.items[0].id, L"issue:11:7");
 	EXPECT_EQ(page.items[0].label, L"#7 Visible issue");
 	EXPECT_EQ(page.nextCursor, L"issues:open:2");
 	EXPECT_EQ(page.status, PageStatus::Partial);

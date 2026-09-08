@@ -505,6 +505,13 @@ next pageを保持して「次を読み込む」を出す。filterの結果0件�
 API versionは初回`2022-11-28`を明示し、[API versionの方針](https://docs.github.com/en/rest/about-the-rest-api/api-versions)
 に従ってfixtureを更新してから変更する。未知response fieldは許容し、必須fieldの型不整合はParseError。
 
+E03のIssue item identityはGitHub database IDとIssue番号を両方保持する。本文は選択後の
+`issues/{number}`だけからreadonly documentへ投影し、list payloadへ混ぜない。comment treeは
+Issue番号でpage取得し、各comment documentはdatabase IDの`issues/comments/{id}`から再取得する。
+これにより同じrepository内の表示番号とglobal comment identityを混同しない。SENP eventの
+64 KiB総量、本文60 KiB、page 100件の上限を越えるresponseはpublish前に拒否する。本文null、
+空comment、空page、next page付きpartial、tool/parse failureは同じ空表示へ畳み込まない。
+
 ### Actionsのログで約束する範囲
 
 JobログAPIは短命のredirect先からplain textを取得する契約。

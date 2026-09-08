@@ -389,6 +389,12 @@ never accepts a broker callback into the coordinator. Reentrant close from a
 native target is deferred until the active drain/admission callback reaches a
 terminal state.
 
+A tool completion is a derived operation and therefore can have a different
+operation ID from its originating Tree or Document request. Match a derived
+document publication or failure by the preserved owner and request generations,
+then call the native document target with the original admitted context. Never
+publish it using the derived context or match it by resource ID alone.
+
 `CSenpOwnerPublicationHub` is that UI-thread publication boundary. It prepares
 the owner projection, hidden grouped ViewContainer HWNDs, the immutable
 workbench catalog candidate, and the matching native page candidate before the

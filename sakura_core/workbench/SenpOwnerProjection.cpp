@@ -13,6 +13,12 @@ bool SameContext(const senp::effect::OperationContext& left,
 {
 	return left == right;
 }
+bool SameRequest(const senp::effect::OperationContext& left,
+	const senp::effect::OperationContext& right) noexcept
+{
+	return left.ownerGeneration == right.ownerGeneration
+		&& left.requestGeneration == right.requestGeneration;
+}
 }
 
 class CSenpOwnerProjection::RuntimePort final : public tree::ISenpTreeRuntime {
@@ -190,13 +196,16 @@ ESenpEffectTargetStatus CSenpOwnerProjection::Apply(const senp::effect::Operatio
 			if (!known) m_documentQueue.push_back(std::move(value.resourceId));
 			return PreserveLineage(context, ESenpEffectTargetStatus::Applied);
 		} else if constexpr (std::is_same_v<T, senp::effect::PublishDocument>) {
-			const auto found = m_documents.find(context.operationId);
-			if (found == m_documents.end() || !SameContext(found->second.first, context)
-				|| found->second.second != value.resourceId)
+			const auto found = std::ranges::find_if(m_documents, [&](const auto& document) {
+				return SameRequest(document.second.first, context)
+					&& document.second.second == value.resourceId;
+			});
+			if (found == m_documents.end())
 				return ESenpEffectTargetStatus::Rejected;
-			const bool accepted = m_target.PublishDocument(context, std::move(value));
+			const auto original = found->second.first;
+			const bool accepted = m_target.PublishDocument(original, std::move(value));
 			m_documents.erase(found);
-			return PreserveLineage(context, accepted
+			return PreserveLineage(original, accepted
 				? ESenpEffectTargetStatus::Applied : ESenpEffectTargetStatus::Rejected);
 		} else if constexpr (std::is_same_v<T, senp::effect::CompleteCommand>) {
 			return PreserveLineage(context, m_target.CompleteCommand(context, std::move(value))
@@ -253,9 +262,11 @@ void CSenpOwnerProjection::Cancel(const senp::effect::OperationContext& context)
 bool CSenpOwnerProjection::Failed(const senp::effect::OperationContext& context,
 	const senp::InvocationStatus status, const senp::CSenpRuntimeSession::Time now) noexcept
 {
-	const auto document = m_documents.find(context.operationId);
+	const auto document = std::ranges::find_if(m_documents, [&](const auto& value) {
+		return SameRequest(value.second.first, context);
+	});
 	if (document != m_documents.end()) {
-		const bool accepted = m_target.FailDocument(context, status);
+		const bool accepted = m_target.FailDocument(document->second.first, status);
 		m_documents.erase(document);
 		return accepted;
 	}
