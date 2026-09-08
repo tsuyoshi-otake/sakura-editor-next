@@ -521,6 +521,13 @@ head forkへの暗黙fallback、追加remote解決、Issue endpointの同番号i
 
 ### Actionsのログで約束する範囲
 
+Actionsの一覧は`body.workflows` / `body.workflow_runs`を専用DTOで読み、WorkflowとRunを
+別identityにする。Runの展開でAttemptを新しい順に最大20件ずつ返す。初回のattempt総数を
+cursorに保存し、次page取得中にrerunが増えても既存pageの境界を変えない。試行詳細は
+`actions/runs/{run-id}/attempts/{attempt}`を固定して取得する。状態のunknown値とnull結論は
+保持し、進行中・結論未確定を成功と表示しない。Current Branchはworkspace eventで単一の
+確定branchを得た場合だけ読める。未配信・detached・複数候補では暗黙にmainや先頭rootを選ばない。
+
 JobログAPIは短命のredirect先からplain textを取得する契約。
 ghを通じて取得し、signed URLは保存・表示せず、tokenの別host転送が起きないことをfixtureで検証する。
 [Workflow jobs API](https://docs.github.com/en/rest/actions/workflow-jobs#download-job-logs-for-a-workflow-run)

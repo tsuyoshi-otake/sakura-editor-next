@@ -1980,6 +1980,13 @@ class TestInventoryTests(unittest.TestCase):
         self.assertEqual({"runner_id": "tests1", "selector": "PlainSuite.Works"}, plain["runtime"])
         self.assertEqual("disabled", tests[0]["status"])
 
+    def test_discovery_keeps_unicode_separators_inside_parameter_comments(self):
+        tests = parse_gtest_list(
+            "Suite.\r\n  Value/0  # GetParam() = '\u0085\u2028\u2029'\r\n"
+            "  Value/1  # GetParam() = 'ordinary'\n", "tests1")
+        self.assertEqual(["Suite.Value/0", "Suite.Value/1"],
+                         [item["runtime"]["selector"] for item in tests])
+
     def test_discovery_zero_tests_is_failure(self):
         with self.assertRaisesRegex(TestInventoryError, "zero tests"):
             parse_gtest_list("Running main() from code-main.cpp\n", "tests1")

@@ -185,6 +185,12 @@ base/headのrepository・branch・commitをreadonly metadataに保持するが�
 取得し、head repositoryへの暗黙readやrepository切替を行わない。実Wasm componentからnativeの
 `pr:github` TreeとPR documentまで通す受入試験でこの境界を確認する。
 
+E05は独立Actions crateからWorkflows→Run→Attempt→試行固定のreadonly概要までを実Wasmと
+native providerで検証する。Current Branchは単一repositoryの確定branchだけを対象とし、
+detached/未確定/複数候補は明示的な失敗状態にする。production workspace eventの配信はR01で
+接続する。WorkflowはRunの有無によらず保持し、unknown statusやnull conclusionを成功へ変換しない。
+Attemptは最初に観測した総数をcursorに固定して20件ずつ返し、rerunによる重複・欠落を防ぐ。
+
 大きな工程を赤い状態で積み上げるための分割ではない。
 例えばG01はv2の未実装能力をUnsupportedで返し、UIボタンをまだ公開しない。
 U06は実動するsample、E03/E04/E07は本文やログまで読める縦切りとして検証する。

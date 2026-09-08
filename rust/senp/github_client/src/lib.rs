@@ -1,5 +1,7 @@
 //! Bounded GitHub REST DTO conversion shared by the built-in SENP extensions.
 
+pub mod actions;
+
 use serde::de::{self, DeserializeOwned, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::Deserialize;
 use std::collections::BTreeSet;

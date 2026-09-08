@@ -56,7 +56,9 @@ def parse_gtest_list(output: str, runner_id: str) -> list[dict[str, Any]]:
     tests: list[dict[str, Any]] = []
     current_suite: str | None = None
     selectors: set[str] = set()
-    for number, raw_line in enumerate(output.splitlines(), start=1):
+    # GTest comments can contain literal NEL/LS/PS test data. Only physical
+    # LF-delimited output lines establish suites and selectors.
+    for number, raw_line in enumerate(output.split("\n"), start=1):
         if not raw_line.strip():
             continue
         if not raw_line[0].isspace():

@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 2,
+  "id": "sakura-github-actions",
+  "displayName": "GitHub Actions",
+  "version": "0.1.0",
+  "publisher": "sakura.builtin",
+  "description": "Browse repository workflows and run attempts.",
+  "engines": { "sakura": ">=0.1.0" },
+  "runtime": { "abi": "sakura:senp/extension@2.0.0", "module": "module/extension.wasm" },
+  "activationEvents": ["onView:github-actions.current-branch", "onView:github-actions.workflows"],
+  "capabilities": ["workbench.views.tree", "workbench.documents.readonly", "workbench.commands", "workspace.repositories.read", "tools.github.repository.read"],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [{ "id": "github-actions", "title": "GitHub Actions", "icon": "$(play-circle)", "order": 7 }]
+    },
+    "views": {
+      "github-actions": [
+        { "id": "github-actions.current-branch", "name": "Current Branch", "provider": "senp.tree", "order": 10 },
+        { "id": "github-actions.workflows", "name": "Workflows", "provider": "senp.tree", "order": 20 }
+      ]
+    }
+  }
+}

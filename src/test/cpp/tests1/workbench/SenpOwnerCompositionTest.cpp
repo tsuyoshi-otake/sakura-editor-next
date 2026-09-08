@@ -404,5 +404,97 @@ TEST_F(SenpOwnerComposition, RealGithubIssuesAndPullRequestsReachNativeProviders
 	pages.Close();
 }
 
+TEST_F(SenpOwnerComposition, RealGithubActionsReachNativeProviders)
+{
+	const auto fixtureEnvironment = _wgetenv(L"SAKURA_SENP_RUNTIME_FIXTURES");
+	if (!fixtureEnvironment || !*fixtureEnvironment) GTEST_SKIP() << "SENP runtime fixtures are not configured";
+	const std::filesystem::path fixtures(fixtureEnvironment);
+	const auto host = fixtures / L"sakura-senp-host.exe";
+	const auto component = fixtures / L"github-actions-extension.wasm";
+	std::ifstream digestFile(fixtures / L"github-actions-extension.sha256");
+	std::string digest;
+	digestFile >> digest;
+	ASSERT_TRUE(std::filesystem::is_regular_file(host));
+	ASSERT_TRUE(std::filesystem::is_regular_file(component));
+	ASSERT_EQ(64U, digest.size());
+
+	layout::WorkbenchContributionRegistry catalog;
+	CDlgFuncList dialog;
+	viewcontainer::CViewContainerPages pages(dialog);
+	ASSERT_TRUE(pages.Create(m_owner));
+	CSenpOwnerComposition composition(catalog, pages);
+	auto target = std::make_shared<CompositionTargetState>();
+	target->EnqueueToolResponse(LR"({"body":{"total_count":1,"workflows":[{"id":31,"name":"Build","path":".github/workflows/build.yml","state":"active","html_url":"https://github.com/o/r/actions/workflows/build.yml"}]}})");
+	target->EnqueueToolResponse(LR"({"body":{"total_count":1,"workflow_runs":[{"id":51,"workflow_id":31,"run_number":8,"run_attempt":2,"name":"Build","display_title":"Build changes","event":"push","head_branch":"main","head_sha":"abcd","status":"in_progress","conclusion":null,"created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-02T00:00:00Z","run_started_at":null,"html_url":"https://github.com/o/r/actions/runs/51"}]}})");
+	target->EnqueueToolResponse(LR"({"id":51,"workflow_id":31,"run_number":8,"run_attempt":2,"name":"Build","display_title":"Build changes","event":"push","head_branch":"main","head_sha":"abcd","status":"in_progress","conclusion":null,"created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-02T00:00:00Z","run_started_at":null,"html_url":"https://github.com/o/r/actions/runs/51"})");
+	target->EnqueueToolResponse(LR"({"id":51,"workflow_id":31,"run_number":8,"run_attempt":1,"name":"Build","display_title":"Build changes","event":"push","head_branch":"main","head_sha":"abcd","status":"in_progress","conclusion":null,"created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-02T00:00:00Z","run_started_at":null,"html_url":"https://github.com/o/r/actions/runs/51"})");
+	std::map<std::wstring, std::shared_ptr<tree::SenpTreeProvider>, std::less<>> providers;
+	layout::WorkbenchViewContainerDescriptor container{
+		"github-actions", "GitHub Actions", layout::EViewContainerLocation::Sidebar, 6,
+		"$(play-circle)", false, { layout::EViewContainerLocation::Sidebar },
+	};
+	std::vector<SenpOwnerTreeContribution> trees;
+	trees.emplace_back(layout::WorkbenchViewDescriptor{
+        "github-actions.workflows", "github-actions", "Workflows", 10, true, true, "senp.tree" },
+        std::vector<std::string>{ "github-actions.workflow.run.open" });
+    trees.emplace_back(layout::WorkbenchViewDescriptor{
+        "github-actions.current-branch", "github-actions", "Current Branch", 20, true, true, "senp.tree" },
+        std::vector<std::string>{ "github-actions.workflow.run.open" });
+	SenpOwnerPublicationOptions publication(
+		m_owner, { std::move(container) }, std::move(trees),
+		std::make_unique<CompositionTarget>(target), [](std::string_view) { return true; },
+		[&providers](viewcontainer::SenpViewBodyHost host,
+			std::shared_ptr<tree::SenpTreeProvider> provider, std::wstring) {
+			providers.emplace(std::wstring(provider->ViewId()), provider);
+			auto body = std::make_unique<CompositionBody>(std::move(host));
+			return body->Window() ? std::unique_ptr<viewcontainer::ISenpViewBody>(std::move(body)) : nullptr;
+		});
+	const auto now = Clock::now();
+	const auto accepted = composition.Activate({
+		.hostExecutable = host.native(), .modulePath = component.native(),
+		.moduleSha256 = std::wstring(digest.begin(), digest.end()),
+		.extensionId = L"sakura-github-actions",
+		.context = { .workspaceRevision = 3, .accountGeneration = 4 },
+	}, std::wstring(digest.begin(), digest.end()), std::move(publication), now);
+	ASSERT_EQ(senp::OwnerChangeStatus::Accepted, accepted.status);
+	std::optional<senp::OwnerChangeResult> transition;
+	ASSERT_TRUE(Await(composition, [&] {
+		transition = composition.TakeTransition();
+		return transition.has_value();
+	}));
+	ASSERT_EQ(senp::OwnerChangeStatus::Activated, transition->status);
+	ASSERT_EQ(2U, providers.size());
+
+
+    const auto provider = providers.at(L"github-actions.workflows");
+    provider->SetVisible(true, Clock::now());
+    ASSERT_TRUE(Await(composition, [&] { return provider->Model().Node(L"workflow:31").has_value(); }));
+    EXPECT_EQ(L"actions/workflows", target->LastRead().arguments.front().value);
+    ASSERT_EQ(tree::TreeResult::Applied, provider->SetExpanded(L"workflow:31", true, Clock::now()));
+    ASSERT_TRUE(Await(composition, [&] { return provider->Model().Node(L"run:51").has_value(); }));
+    EXPECT_EQ(L"actions/workflows/31/runs", target->LastRead().arguments.front().value);
+    ASSERT_EQ(tree::TreeResult::Applied, provider->SetExpanded(L"run:51", true, Clock::now()));
+    ASSERT_TRUE(Await(composition, [&] { return provider->Model().Node(L"attempt:51:1").has_value(); }));
+    EXPECT_TRUE(provider->Model().Node(L"attempt:51:2").has_value());
+    EXPECT_EQ(L"actions/runs/51", target->LastRead().arguments.front().value);
+    ASSERT_TRUE(provider->Select(L"attempt:51:1"));
+    ASSERT_TRUE(provider->Execute(L"attempt:51:1"));
+    ASSERT_TRUE(Await(composition, [&] { return target->Publishes() == 1; }));
+    EXPECT_EQ(L"github-actions-run:51:1", target->Document().resourceId);
+    ASSERT_TRUE(std::holds_alternative<senp::effect::MetadataSection>(target->Document().sections[0]));
+    const auto& fields = std::get<senp::effect::MetadataSection>(target->Document().sections[0]).fields;
+    EXPECT_TRUE(std::ranges::any_of(fields, [](const auto& field) {
+        return field.name == L"Attempt" && field.value == L"1";
+    }));
+    EXPECT_TRUE(std::ranges::any_of(fields, [](const auto& field) {
+        return field.name == L"State" && field.value == L"in_progress";
+    }));
+    EXPECT_EQ(L"actions/runs/51/attempts/1", target->LastRead().arguments.front().value);
+    EXPECT_EQ(4, target->ToolReads());
+    EXPECT_TRUE(composition.Close());
+    EXPECT_EQ(1, target->Revokes());
+    pages.Close();
+}
+
 } // namespace
 } // namespace workbench

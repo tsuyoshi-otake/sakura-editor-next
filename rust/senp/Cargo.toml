@@ -3,6 +3,7 @@ members = [
     "github_client",
     "extensions/sakura_indent_rainbow",
     "extensions/sakura_github_pull_requests",
+    "extensions/sakura_github_actions",
     "extensions/sakura_senp_sample",
     "sakura_senp",
     "sakura_senp_host",

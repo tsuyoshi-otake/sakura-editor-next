@@ -302,6 +302,18 @@ A head in another fork never changes the selected repository or authorizes an
 implicit read from that fork. Draft, closed-unmerged, and merged states remain
 distinct in tree and document publication.
 
+The separate Actions guest owns Workflow, Run and Attempt identities. Wrapped
+list responses contain `body.workflows` or `body.workflow_runs`, not a bare
+array. A run retains its workflow ID, database ID and attempt number. Attempt
+pagination pins its initial count and never silently switches an older attempt
+to the latest rerun. Current Branch requires a single verified repository branch;
+detached, unavailable and ambiguous selections are explicit terminal states.
+No run status or null conclusion may be promoted to success. The upstream
+`github-actions.workflow.run.open` command deliberately opens a native read-only
+attempt document here, as requested for this platform's in-app Actions reading
+workflow; upstream opens the browser. The command and View identifiers remain
+upstream identifiers. Production workspace events and packaging are R01 gates.
+
 Append accepts the next byte offset and at most 64 KiB. Fixed 64 KiB pages bound
 one resource to 32 MiB and the Control store to 64 MiB of allocated payload pages,
 including unused tails, with at most 64 resource slots. Pages and their index
