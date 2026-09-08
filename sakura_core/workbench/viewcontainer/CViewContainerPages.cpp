@@ -527,32 +527,161 @@ CViewContainerPages::~CViewContainerPages()
 	Close();
 }
 
-ViewContainerPageRegistrationResult CViewContainerPages::RegisterContributedPages(
+CViewContainerPages::PreparedContributedPages::PreparedContributedPages(
+	CViewContainerPages* const owner, const std::uint64_t baseRevision,
+	const bool preparedAfterCreate, const EViewContainerPageRegistrationStatus status,
+	const std::size_t preparedCount,
+	std::vector<ViewContainerPageDescriptor> pendingContributions,
+	std::vector<std::string> contributedPageIds,
+	std::vector<std::string> registeredPageIds,
+	std::optional<ViewContainerPageRegistry::PreparedBatch> registryBatch) noexcept
+	: m_owner(owner)
+	, m_baseRevision(baseRevision)
+	, m_preparedAfterCreate(preparedAfterCreate)
+	, m_status(status)
+	, m_preparedCount(preparedCount)
+	, m_pendingContributions(std::move(pendingContributions))
+	, m_contributedPageIds(std::move(contributedPageIds))
+	, m_registeredPageIds(std::move(registeredPageIds))
+	, m_registryBatch(std::move(registryBatch))
+{
+}
+
+CViewContainerPages::PreparedContributedPages::PreparedContributedPages(
+	PreparedContributedPages&& other) noexcept
+	: m_owner(std::exchange(other.m_owner, nullptr))
+	, m_baseRevision(other.m_baseRevision)
+	, m_preparedAfterCreate(other.m_preparedAfterCreate)
+	, m_status(other.m_status)
+	, m_preparedCount(other.m_preparedCount)
+	, m_pendingContributions(std::move(other.m_pendingContributions))
+	, m_contributedPageIds(std::move(other.m_contributedPageIds))
+	, m_registeredPageIds(std::move(other.m_registeredPageIds))
+	, m_registryBatch(std::move(other.m_registryBatch))
+	, m_consumed(other.m_consumed)
+{
+	other.m_consumed = true;
+}
+
+CViewContainerPages::PreparedContributedPages&
+CViewContainerPages::PreparedContributedPages::operator=(
+	PreparedContributedPages&& other) noexcept
+{
+	if (this == &other) return *this;
+	m_owner = std::exchange(other.m_owner, nullptr);
+	m_baseRevision = other.m_baseRevision;
+	m_preparedAfterCreate = other.m_preparedAfterCreate;
+	m_status = other.m_status;
+	m_preparedCount = other.m_preparedCount;
+	m_pendingContributions = std::move(other.m_pendingContributions);
+	m_contributedPageIds = std::move(other.m_contributedPageIds);
+	m_registeredPageIds = std::move(other.m_registeredPageIds);
+	m_registryBatch = std::move(other.m_registryBatch);
+	m_consumed = other.m_consumed;
+	other.m_consumed = true;
+	return *this;
+}
+
+CViewContainerPages::PreparedContributedPages CViewContainerPages::PrepareContributedPages(
 	std::vector<ViewContainerPageDescriptor> descriptors) noexcept
 {
 	if (descriptors.empty()) {
-		return { EViewContainerPageRegistrationStatus::NotApplicable, 0 };
+		return { this, m_contributionRevision, m_created,
+			EViewContainerPageRegistrationStatus::NotApplicable, 0, {}, {}, {}, std::nullopt };
 	}
-	if (m_created || m_closed) {
-		return { EViewContainerPageRegistrationStatus::Failed, 0 };
+	if (m_closed) {
+		return { this, m_contributionRevision, m_created,
+			EViewContainerPageRegistrationStatus::Failed, 0, {}, {}, {}, std::nullopt };
 	}
 	try {
 		for (const auto& descriptor : descriptors) {
 			if (Find(descriptor.containerId) != nullptr) {
-				return { EViewContainerPageRegistrationStatus::DuplicateContainerId, 0 };
+				return { this, m_contributionRevision, m_created,
+					EViewContainerPageRegistrationStatus::DuplicateContainerId,
+					0, {}, {}, {}, std::nullopt };
 			}
 		}
-		auto candidate = m_pendingContributions;
-		candidate.insert(candidate.end(), descriptors.begin(), descriptors.end());
-		ViewContainerPageRegistry validation;
-		const auto validated = validation.RegisterBatch(candidate);
-		if (!validated.Succeeded()) return { validated.status, 0 };
+		auto pendingContributions = m_pendingContributions;
+		pendingContributions.insert(pendingContributions.end(),
+			descriptors.begin(), descriptors.end());
+		auto contributedPageIds = m_contributedPageIds;
+		auto registeredPageIds = m_registeredPageIds;
+		if (m_created) {
+			contributedPageIds.reserve(contributedPageIds.size() + descriptors.size());
+			registeredPageIds.reserve(registeredPageIds.size() + descriptors.size());
+			for (const auto& descriptor : descriptors) {
+				contributedPageIds.push_back(descriptor.containerId);
+				registeredPageIds.push_back(descriptor.containerId);
+			}
+		}
+
+		std::optional<ViewContainerPageRegistry::PreparedBatch> registryBatch;
 		const auto added = descriptors.size();
-		m_pendingContributions.swap(candidate);
-		return { EViewContainerPageRegistrationStatus::Registered, added };
+		if (m_created) {
+			registryBatch.emplace(m_registry.PrepareBatch(std::move(descriptors)));
+			if (!registryBatch->Succeeded()) {
+				return { this, m_contributionRevision, true, registryBatch->Status(),
+					0, {}, {}, {}, std::nullopt };
+			}
+		} else {
+			ViewContainerPageRegistry validation;
+			auto validated = validation.PrepareBatch(pendingContributions);
+			if (!validated.Succeeded()) {
+				return { this, m_contributionRevision, false, validated.Status(),
+					0, {}, {}, {}, std::nullopt };
+			}
+		}
+		return { this, m_contributionRevision, m_created,
+			EViewContainerPageRegistrationStatus::Registered, added,
+			std::move(pendingContributions), std::move(contributedPageIds),
+			std::move(registeredPageIds), std::move(registryBatch) };
 	} catch (...) {
+		return { this, m_contributionRevision, m_created,
+			EViewContainerPageRegistrationStatus::Failed, 0, {}, {}, {}, std::nullopt };
+	}
+}
+
+bool CViewContainerPages::CanCommit(const PreparedContributedPages& prepared) const noexcept
+{
+	if (prepared.m_owner != this || prepared.m_consumed
+		|| prepared.m_baseRevision != m_contributionRevision || !prepared.Succeeded()
+		|| m_closed || prepared.m_preparedAfterCreate != m_created) {
+		return false;
+	}
+	return prepared.m_status == EViewContainerPageRegistrationStatus::NotApplicable
+		|| !m_created || (prepared.m_registryBatch
+		&& m_registry.CanCommit(*prepared.m_registryBatch));
+}
+
+ViewContainerPageRegistrationResult CViewContainerPages::Commit(
+	PreparedContributedPages&& prepared) noexcept
+{
+	if (!CanCommit(prepared)) {
 		return { EViewContainerPageRegistrationStatus::Failed, 0 };
 	}
+	prepared.m_consumed = true;
+	if (prepared.m_status == EViewContainerPageRegistrationStatus::NotApplicable) {
+		return { EViewContainerPageRegistrationStatus::NotApplicable, 0 };
+	}
+	if (m_created) {
+		const auto registered = m_registry.Commit(std::move(*prepared.m_registryBatch));
+		if (!registered.Succeeded()) {
+			return { EViewContainerPageRegistrationStatus::Failed, 0 };
+		}
+	}
+	m_pendingContributions.swap(prepared.m_pendingContributions);
+	m_contributedPageIds.swap(prepared.m_contributedPageIds);
+	m_registeredPageIds.swap(prepared.m_registeredPageIds);
+	++m_contributionRevision;
+	return { EViewContainerPageRegistrationStatus::Registered, prepared.m_preparedCount };
+}
+
+ViewContainerPageRegistrationResult CViewContainerPages::RegisterContributedPages(
+	std::vector<ViewContainerPageDescriptor> descriptors) noexcept
+{
+	auto prepared = PrepareContributedPages(std::move(descriptors));
+	if (!prepared.Succeeded()) return { prepared.Status(), 0 };
+	return Commit(std::move(prepared));
 }
 
 bool CViewContainerPages::Create(HWND owner)
@@ -593,9 +722,9 @@ bool CViewContainerPages::Create(HWND owner)
 		Close();
 		return false;
 	}
-	m_pendingContributions.clear();
 	ApplySearchTexts();
 	m_created = true;
+	++m_contributionRevision;
 	return true;
 }
 

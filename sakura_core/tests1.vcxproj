@@ -232,6 +232,7 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkbenchPanelHostTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\workbench\ViewContainerPagePoolTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\workbench\ViewContainerPageRegistryTransactionTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\ContributedPageTransactionTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\workbench\HostViewContainerProjectionTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\workbench\SenpViewContainerTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\workbench\SenpTreeProviderTest.cpp" />

@@ -6,6 +6,10 @@
   `Commit`. Preparation owns every allocation and captures the registry revision;
   commit is one non-throwing swap and rejects stale, foreign, or reused batches.
   This is the native half of a larger catalog/page publication transaction.
+- `CViewContainerPages::PrepareContributedPages` applies the same fence to its
+  canonical contribution and page-id sets. Before `Create` it stages startup
+  factories without advertising pages; afterward it appends the live registry
+  and all Part-facing IDs in one allocation-free commit.
 - `ProjectHostViewPages` groups Views only when their product-owned provider
   supplies `factoryForContainer`. It calls that factory once per container and
   publishes one page descriptor. A singleton `factory` still rejects a second

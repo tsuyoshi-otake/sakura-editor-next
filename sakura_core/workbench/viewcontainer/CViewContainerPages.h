@@ -100,8 +100,56 @@ public:
 	CViewContainerPages(const CViewContainerPages&) = delete;
 	CViewContainerPages& operator=(const CViewContainerPages&) = delete;
 
-	//! Adds native companion page factories before Create. The complete pending
-	//! batch is validated atomically and built-in IDs remain reserved.
+	class PreparedContributedPages final {
+	public:
+		PreparedContributedPages(PreparedContributedPages&& other) noexcept;
+		PreparedContributedPages& operator=(PreparedContributedPages&& other) noexcept;
+		PreparedContributedPages(const PreparedContributedPages&) = delete;
+		PreparedContributedPages& operator=(const PreparedContributedPages&) = delete;
+
+		[[nodiscard]] EViewContainerPageRegistrationStatus Status() const noexcept
+		{
+			return m_status;
+		}
+		[[nodiscard]] std::size_t PreparedCount() const noexcept { return m_preparedCount; }
+		[[nodiscard]] bool Succeeded() const noexcept
+		{
+			return m_status == EViewContainerPageRegistrationStatus::Registered
+				|| m_status == EViewContainerPageRegistrationStatus::NotApplicable;
+		}
+
+	private:
+		friend class CViewContainerPages;
+		PreparedContributedPages(CViewContainerPages* owner, std::uint64_t baseRevision,
+			bool preparedAfterCreate, EViewContainerPageRegistrationStatus status,
+			std::size_t preparedCount,
+			std::vector<ViewContainerPageDescriptor> pendingContributions,
+			std::vector<std::string> contributedPageIds,
+			std::vector<std::string> registeredPageIds,
+			std::optional<ViewContainerPageRegistry::PreparedBatch> registryBatch) noexcept;
+
+		CViewContainerPages* m_owner{};
+		std::uint64_t m_baseRevision{};
+		bool m_preparedAfterCreate{};
+		EViewContainerPageRegistrationStatus m_status{
+			EViewContainerPageRegistrationStatus::Failed };
+		std::size_t m_preparedCount{};
+		std::vector<ViewContainerPageDescriptor> m_pendingContributions;
+		std::vector<std::string> m_contributedPageIds;
+		std::vector<std::string> m_registeredPageIds;
+		std::optional<ViewContainerPageRegistry::PreparedBatch> m_registryBatch;
+		bool m_consumed{};
+	};
+
+	//! Prepares either the startup contribution set or a live registry append.
+	//! The returned candidate owns all allocations required by Commit.
+	[[nodiscard]] PreparedContributedPages PrepareContributedPages(
+		std::vector<ViewContainerPageDescriptor> descriptors) noexcept;
+	[[nodiscard]] bool CanCommit(const PreparedContributedPages& prepared) const noexcept;
+	[[nodiscard]] ViewContainerPageRegistrationResult Commit(
+		PreparedContributedPages&& prepared) noexcept;
+
+	//! Adds native companion page factories through the transactional API.
 	[[nodiscard]] ViewContainerPageRegistrationResult RegisterContributedPages(
 		std::vector<ViewContainerPageDescriptor> descriptors) noexcept;
 	[[nodiscard]] bool Create(HWND owner);
@@ -184,6 +232,7 @@ private:
 	std::vector<ViewContainerPageDescriptor> m_pendingContributions;
 	std::vector<std::string> m_contributedPageIds;
 	std::vector<std::string> m_registeredPageIds;
+	std::uint64_t m_contributionRevision{};
 	HWND m_owner = nullptr;
 	bool m_outlineExpanded = true;
 	bool m_created = false;
