@@ -112,8 +112,15 @@ and lifecycle rules as the rest of the native workbench.
 - `ProjectHostViewPages` resolves declarative View `provider` IDs through the
   product-owned factory table and returns an atomic native-page batch. Product
   composition registers factories, not extension ViewContainer/View IDs;
-  unknown providers, duplicate providers, and multiple native Views targeting
-  one container fail closed.
+  unknown providers and duplicate providers fail closed. A singleton provider
+  still rejects multiple Views targeting one container; a grouped provider may
+  create exactly one native page for all matching Views in that ViewContainer.
+- `CSenpEffectCoordinator` adapts one current SENP owner to Tree, document,
+  visibility, command, and derived-tool event admission. Owner publication only
+  queues validated terminals. `Drain` runs after owner `Poll`, calls native
+  targets at most 16 times, releases ordinary lineages, and retains a lineage
+  only when the target explicitly owns later derived work. A rejected target
+  is a terminal result whose caller owns owner revocation.
 - Use the canonical VS Code IDs in `WorkbenchIds`. A physical Part ID is never a
   View ID: in particular `workbench.parts.auxiliarybar` and `outline` describe
   different layers and must remain independently movable and visible.

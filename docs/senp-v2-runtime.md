@@ -122,6 +122,13 @@ ownerの`Poll`中は再入を拒否するため、publicationの`Apply`はconsum
 Tree/document/commandへ反映し、派生処理がなければ明示的に`Finish`する。この順序により、Tree page
 反映の末尾で次の可視loadが必要になっても、途中のBusyを実際のprovider failureへ変換しない。
 
+[CSenpEffectCoordinator](../sakura_core/workbench/SenpEffectCoordinator.h)はこの順序をnative consumer向けに
+固定するUI-thread adapterである。Tree要求、document要求、visibility通知、commandと派生`ToolCompleted`を
+同じowner-scoped brokerへ送り、`Poll`後の`Drain`だけがtyped effect/failure callbackを呼ぶ。通常terminalは
+その場でlineageを解放する。tool readを開始したtargetだけが`Retained`を返し、後続の派生eventまたは明示
+`Finish`まで同じlineageを保持する。target拒否は`Rejected` terminalとなり、呼出側compositionがownerを失効
+させる。callback中のCloseは遅延し、Drain自身がqueue取消を完了して`Closed`を返す。
+
 ## native ViewContainer/Viewの投影（U01）
 
 [CSenpViewContainers](../sakura_core/workbench/viewcontainer/SenpViewContainer.h)はowner generationごとに
