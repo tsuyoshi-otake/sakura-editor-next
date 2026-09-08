@@ -1401,6 +1401,9 @@
 	<ClInclude Include="..\sakura_core\senp\github\GhLogResource.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\senp\github\GhRepositorySelection.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
     <ClInclude Include="..\sakura_core\senp\github\GhToolPolicy.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
@@ -3335,6 +3338,9 @@
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\senp\github\GhLogResource.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\senp\github\GhRepositorySelection.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\senp\github\GhToolPolicy.cpp">

@@ -262,6 +262,18 @@ must finish every created resource on all returns and exceptions. Do not infer
 whether a 404 means pending generation, missing permission or deletion; expose
 the ambiguous `UnavailableOrNotFound` terminal.
 
+`CGhRepositorySelection` owns E01's workspace-to-GitHub repository snapshot.
+It consumes the immutable workspace context rather than SCM HWND or refresh
+state and performs only fixed passive `rev-parse` and `remote --verbose` Git
+reads. File roots and repository roots are canonicalized independently;
+duplicate workspace roots inside one repository retain their root identities
+but share one repository candidate. Fork and upstream remotes remain separate
+choices, and neither `origin` nor `upstream` has implicit priority. Only a
+literal GitHub SSH hostname is resolved: an SSH alias remains a typed choice
+that requires explicit host resolution. Empty workspaces, unsupported roots,
+no repository, multiple roots, remote removal, and stale workspace generations
+must remain observable rather than becoming an empty GitHub view.
+
 Append accepts the next byte offset and at most 64 KiB. Fixed 64 KiB pages bound
 one resource to 32 MiB and the Control store to 64 MiB of allocated payload pages,
 including unused tails, with at most 64 resource slots. Pages and their index

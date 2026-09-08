@@ -145,6 +145,11 @@ T08のnative境界はjob IDを正の整数として検証し、`gh api --hostnam
 text resource、結果には現れない。stdoutを64 KiB以下のchunkとして32 MiBまで追記し、stderrと
 gh内部の短命redirect URLは保持しない。作成後の全分岐はRAII completionでterminal化する。
 | E01 | repository snapshotとremote選択 | T06 | `GhRepositorySelection.*` | multi-root/fork/SSH alias/remote削除の区別 |
+
+E01ではrevision付きWorkspace snapshotを入力に、SCM HWNDへ依存しないpassive Git adapterを実装した。
+workspace rootとrepository rootを別々に正規化し、同じrepository内の複数rootはまとめるがroot identityは保持する。
+forkの`origin`と親の`upstream`は異なるrepository候補のまま選択を要求し、名前による優先はしない。
+literal `github.com`以外のSSH hostはaliasとして未解決にし、workspace/remote削除とstale generationを別terminalにした。
 | E02 | 共通github-clientとIssue一覧 | E01/U06 | 新crate testsとIssue View実表示 | PR除外後のnext page保持、状態filter |
 | E03 | Issue本文・コメントの詳細 | E02/U04 | fixtureとopt-in本文表示 | 本文/コメントpage、空と失敗の区別 |
 | E04 | PR一覧・本文・base/head/merged状態 | E03 | fixtureとPR View実表示 | Issue番号との混線0、別forkの暗黙取得なし |

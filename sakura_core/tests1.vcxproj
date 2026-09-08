@@ -229,6 +229,7 @@
 	<ClCompile Include="..\src\test\cpp\tests1\senp\GhRepositoryReadTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\senp\GhReadSchedulerTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\senp\GhLogResourceTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\senp\GhRepositorySelectionTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\senp\GhToolPolicyTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\senp\SenpEffectProtocolTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\senp\SenpRuntimeLifecycleTest.cpp" />

@@ -471,6 +471,12 @@ URLのowner/repo/hostを解析し、APIでrepository IDとcanonical full_nameを
 SSH aliasはgithub.comと推測せず、未解決候補として明示指定を求める。
 非GitHub、対象repositoryなし、複数root、remote削除を別の状態にする。
 
+E01のnative実装は`CGhRepositorySelection`がrevision付きWorkspace snapshotを受け取り、
+固定されたpassive `rev-parse` / `remote --verbose` readだけを実行する。workspace rootと
+repository rootのidentityを別に保持し、同じrepository配下の複数rootは1候補へまとめる。
+`origin`/`upstream`を名前で優先せず、forkと親が異なれば明示選択にする。SSHはliteral
+`github.com`だけを直接解決し、aliasはhost指定が追加されるまで未解決terminalにする。
+
 ### API対応表
 
 全て明示的host・repository付きの`gh api --method GET`。パスの組立とquery検証はbroker、
