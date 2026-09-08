@@ -213,6 +213,19 @@ candidate cannot cross the connection epoch. T06 will add bounded query and
 HTTP-envelope parsing. Do not widen either policy into a generic command
 runner.
 
+`CGhLoginSession` owns T05's UI-neutral web-login model. It launches only the
+measured `gh auth login --hostname <host> --web --skip-ssh-key` shape with an
+explicit profile configuration directory, closed stdin, a five-minute deadline,
+bounded output, and the process runner's kill-on-close job. The bounded output
+observer publishes device-code and URL text while the process is active; control
+bytes or observer failure terminate as UnsupportedInteractiveFlow. Exit zero is
+only a candidate: T04 must still re-enumerate and verify the account identity
+before the session reports success. Cancel, timeout, UI close, disconnect and
+every process failure publish explicit terminals. Disconnect revokes Sakura's
+credential lease and grants but never runs `gh auth logout`; the presentation
+must disclose that shared gh authentication remains and show the CLI-reported
+credential storage source.
+
 Append accepts the next byte offset and at most 64 KiB. Fixed 64 KiB pages bound
 one resource to 32 MiB and the Control store to 64 MiB of allocated payload pages,
 including unused tails, with at most 64 resource slots. Pages and their index

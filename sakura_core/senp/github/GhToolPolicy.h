@@ -72,6 +72,11 @@ public:
 		std::vector<std::wstring> arguments, std::vector<std::pair<std::wstring, std::wstring>> environmentOverrides,
 		std::vector<std::wstring> environmentRemovals, std::uint32_t timeoutMilliseconds,
 		std::size_t maximumOutputBytes, std::size_t maximumErrorBytes);
+	GhProcessInvocation(std::wstring executablePath, std::wstring workingDirectory,
+		std::vector<std::wstring> arguments, std::vector<std::pair<std::wstring, std::wstring>> environmentOverrides,
+		std::vector<std::wstring> environmentRemovals, std::uint32_t timeoutMilliseconds,
+		std::size_t maximumOutputBytes, std::size_t maximumErrorBytes,
+		std::shared_ptr<platform::process::IBoundedProcessOutputObserver> outputObserver);
 	~GhProcessInvocation()
 	{
 		for (auto& entry : m_environmentOverrides) {
@@ -90,11 +95,16 @@ public:
 	[[nodiscard]] std::uint32_t TimeoutMilliseconds() const noexcept { return m_timeoutMilliseconds; }
 	[[nodiscard]] std::size_t MaximumOutputBytes() const noexcept { return m_maximumOutputBytes; }
 	[[nodiscard]] std::size_t MaximumErrorBytes() const noexcept { return m_maximumErrorBytes; }
+	[[nodiscard]] const std::shared_ptr<platform::process::IBoundedProcessOutputObserver>& OutputObserver() const noexcept
+	{
+		return m_outputObserver;
+	}
 private:
 	std::wstring m_executablePath, m_workingDirectory;
 	std::vector<std::wstring> m_arguments;
 	std::vector<std::pair<std::wstring, std::wstring>> m_environmentOverrides;
 	std::vector<std::wstring> m_environmentRemovals;
+	std::shared_ptr<platform::process::IBoundedProcessOutputObserver> m_outputObserver;
 	std::uint32_t m_timeoutMilliseconds{};
 	std::size_t m_maximumOutputBytes{}, m_maximumErrorBytes{};
 };

@@ -58,6 +58,7 @@ EGitExecutionStatus MapStatus(platform::process::EBoundedProcessStatus status) n
 	case platform::process::EBoundedProcessStatus::TimedOut: return EGitExecutionStatus::TimedOut;
 	case platform::process::EBoundedProcessStatus::Cancelled: return EGitExecutionStatus::Cancelled;
 	case platform::process::EBoundedProcessStatus::OutputLimitExceeded: return EGitExecutionStatus::OutputLimitExceeded;
+	case platform::process::EBoundedProcessStatus::ObserverRejected: return EGitExecutionStatus::LaunchFailed;
 	}
 	return EGitExecutionStatus::LaunchFailed;
 }

@@ -135,6 +135,7 @@ GhConnectionTerminal ProcessTerminal(const platform::process::EBoundedProcessSta
 	case platform::process::EBoundedProcessStatus::TimedOut: return GhConnectionTerminal::TimedOut;
 	case platform::process::EBoundedProcessStatus::Cancelled: return GhConnectionTerminal::Cancelled;
 	case platform::process::EBoundedProcessStatus::OutputLimitExceeded: return GhConnectionTerminal::OutputLimitExceeded;
+	case platform::process::EBoundedProcessStatus::ObserverRejected: return GhConnectionTerminal::Failed;
 	case platform::process::EBoundedProcessStatus::InvalidRequest: return GhConnectionTerminal::InvalidRequest;
 	case platform::process::EBoundedProcessStatus::LaunchFailed: return GhConnectionTerminal::Failed;
 	case platform::process::EBoundedProcessStatus::Failed: return GhConnectionTerminal::Failed;

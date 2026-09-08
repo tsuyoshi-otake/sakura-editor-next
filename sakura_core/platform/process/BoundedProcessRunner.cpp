@@ -142,22 +142,36 @@ std::vector<wchar_t> BuildEnvironmentBlock(
 	return block;
 }
 
-bool DrainPipe(HANDLE pipe, std::vector<std::uint8_t>& sink, std::size_t budget)
+enum class DrainStatus : std::uint8_t { Complete, OutputLimitExceeded, ObserverRejected };
+
+DrainStatus DrainPipe(HANDLE pipe, std::vector<std::uint8_t>& sink, const std::size_t budget,
+	const EBoundedProcessStream stream, const std::shared_ptr<IBoundedProcessOutputObserver>& observer)
 {
 	for (;;) {
 		DWORD available{};
-		if (!::PeekNamedPipe(pipe, nullptr, 0, nullptr, &available, nullptr) || available == 0) return true;
-		if (sink.size() >= budget) return false;
+		if (!::PeekNamedPipe(pipe, nullptr, 0, nullptr, &available, nullptr) || available == 0) {
+			return DrainStatus::Complete;
+		}
+		if (sink.size() >= budget) return DrainStatus::OutputLimitExceeded;
 		std::array<std::uint8_t, 16384> buffer{};
 		const DWORD wanted = std::min<DWORD>(available, static_cast<DWORD>(buffer.size()));
 		DWORD read{};
-		if (!::ReadFile(pipe, buffer.data(), wanted, &read, nullptr) || read == 0) return true;
+		if (!::ReadFile(pipe, buffer.data(), wanted, &read, nullptr) || read == 0) return DrainStatus::Complete;
 		const std::size_t room = budget - sink.size();
 		if (read > room) {
 			sink.insert(sink.end(), buffer.begin(), buffer.begin() + room);
-			return false;
+			return DrainStatus::OutputLimitExceeded;
 		}
 		sink.insert(sink.end(), buffer.begin(), buffer.begin() + read);
+		if (observer) {
+			try {
+				if (!observer->OnOutput(stream, std::span<const std::uint8_t>(buffer.data(), read))) {
+					return DrainStatus::ObserverRejected;
+				}
+			} catch (...) {
+				return DrainStatus::ObserverRejected;
+			}
+		}
 	}
 }
 
@@ -368,9 +382,13 @@ try {
 	auto status = EBoundedProcessStatus::Succeeded;
 	bool exited = false;
 	for (;;) {
-		if (!DrainPipe(outputRead.Get(), result.m_standardOutput, request.MaximumStandardOutputBytes())
-			|| !DrainPipe(errorRead.Get(), result.m_standardError, request.MaximumStandardErrorBytes())) {
-			status = EBoundedProcessStatus::OutputLimitExceeded;
+		const auto outputStatus = DrainPipe(outputRead.Get(), result.m_standardOutput,
+			request.MaximumStandardOutputBytes(), EBoundedProcessStream::StandardOutput, request.OutputObserver());
+		const auto errorStatus = DrainPipe(errorRead.Get(), result.m_standardError,
+			request.MaximumStandardErrorBytes(), EBoundedProcessStream::StandardError, request.OutputObserver());
+		if (outputStatus != DrainStatus::Complete || errorStatus != DrainStatus::Complete) {
+			status = outputStatus == DrainStatus::ObserverRejected || errorStatus == DrainStatus::ObserverRejected
+				? EBoundedProcessStatus::ObserverRejected : EBoundedProcessStatus::OutputLimitExceeded;
 			break;
 		}
 		if (exited) break;

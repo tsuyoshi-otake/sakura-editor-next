@@ -12,6 +12,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -27,6 +29,16 @@ enum class EBoundedProcessStatus : std::uint8_t {
 	TimedOut,
 	Cancelled,
 	OutputLimitExceeded,
+	ObserverRejected,
+};
+
+enum class EBoundedProcessStream : std::uint8_t { StandardOutput, StandardError };
+
+class IBoundedProcessOutputObserver {
+public:
+	virtual ~IBoundedProcessOutputObserver() = default;
+	[[nodiscard]] virtual bool OnOutput(EBoundedProcessStream stream,
+		std::span<const std::uint8_t> bytes) = 0;
 };
 
 class BoundedProcessRequest final {
@@ -51,6 +63,10 @@ public:
 	void SetTimeoutMilliseconds(std::uint32_t value) noexcept { m_timeoutMilliseconds = value; }
 	void SetMaximumStandardOutputBytes(std::size_t value) noexcept { m_maximumStandardOutputBytes = value; }
 	void SetMaximumStandardErrorBytes(std::size_t value) noexcept { m_maximumStandardErrorBytes = value; }
+	void SetOutputObserver(std::shared_ptr<IBoundedProcessOutputObserver> value) noexcept
+	{
+		m_outputObserver = std::move(value);
+	}
 
 	[[nodiscard]] const std::wstring& ExecutablePath() const noexcept { return m_executablePath; }
 	[[nodiscard]] const std::wstring& WorkingDirectory() const noexcept { return m_workingDirectory; }
@@ -67,6 +83,10 @@ public:
 	[[nodiscard]] std::uint32_t TimeoutMilliseconds() const noexcept { return m_timeoutMilliseconds; }
 	[[nodiscard]] std::size_t MaximumStandardOutputBytes() const noexcept { return m_maximumStandardOutputBytes; }
 	[[nodiscard]] std::size_t MaximumStandardErrorBytes() const noexcept { return m_maximumStandardErrorBytes; }
+	[[nodiscard]] const std::shared_ptr<IBoundedProcessOutputObserver>& OutputObserver() const noexcept
+	{
+		return m_outputObserver;
+	}
 
 private:
 	std::wstring m_executablePath;
@@ -75,6 +95,7 @@ private:
 	std::string m_standardInput;
 	std::vector<std::pair<std::wstring, std::wstring>> m_environmentOverrides;
 	std::vector<std::wstring> m_environmentRemovals;
+	std::shared_ptr<IBoundedProcessOutputObserver> m_outputObserver;
 	std::uint32_t m_timeoutMilliseconds{ 15000 };
 	std::size_t m_maximumStandardOutputBytes{ 4u * 1024u * 1024u };
 	std::size_t m_maximumStandardErrorBytes{ 64u * 1024u };

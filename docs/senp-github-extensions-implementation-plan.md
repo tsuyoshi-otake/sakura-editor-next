@@ -111,6 +111,16 @@ G02のsemantic台帳はexact source commit `f881170f28b3c17d195c145b6f2396704cff
 | T04 | gh接続状態・account固定・identity検証 | T03/F01 | `GhConnectionLifecycle.*` | Unknownをsigned-outにしない、account混在0 |
 | T05 | 有界web login・cancel・接続解除UI | T04 | fake ghとopt-in認証試験 | 全分岐終端、共有gh logoutなし、code表示/保管先表示 |
 | T06 | HTTP envelope・page・ETag・read DTO | T04 | `GhRepositoryRead.*` | 304、403/404、必須field、部分pageを区別 |
+
+T05の実装境界は`CGhLoginSession`とする。固定web login argv、専用
+`GH_CONFIG_DIR`、5分deadline、64 KiBずつのstdout/stderr上限、cancel event、
+job cleanupを一つのoperationとして所有する。device code/URLを含む出力は
+bounded observerから`SigningIn` snapshotへ逐次公開するが、制御文字やobserver
+拒否は`UnsupportedInteractiveFlow`で停止する。process exit 0だけでは接続済みに
+せず、T04のstructured status/token/`user` identity検証を再実行してから公開する。
+接続解除はSakura内のcredential leaseとgrantだけを失効させ、`gh auth logout`は
+実行しない。snapshotは共有gh認証を維持する説明と、ghが報告したtokenSourceを
+必ず表示できる形で保持する。
 | T07 | single-flight・fair queue・cooldown・可視poll | T06/F03 | `GhReadScheduler.*` | 複数windowでも重複1本、最後のunsubscribeでcancel |
 | T08 | jobログのredirect・chunk受信・cleanup | T06/U05 | `GhLogResource.*` | credential転送0、上限、途中失敗、URL非保持 |
 | E01 | repository snapshotとremote選択 | T06 | `GhRepositorySelection.*` | multi-root/fork/SSH alias/remote削除の区別 |

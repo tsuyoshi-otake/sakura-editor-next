@@ -127,6 +127,7 @@ GhRepositoryReadStatus ReadTerminal(const platform::process::EBoundedProcessStat
 	case platform::process::EBoundedProcessStatus::TimedOut: return GhRepositoryReadStatus::TimedOut;
 	case platform::process::EBoundedProcessStatus::Cancelled: return GhRepositoryReadStatus::Cancelled;
 	case platform::process::EBoundedProcessStatus::OutputLimitExceeded: return GhRepositoryReadStatus::OutputLimitExceeded;
+	case platform::process::EBoundedProcessStatus::ObserverRejected: return GhRepositoryReadStatus::LaunchFailed;
 	}
 	return GhRepositoryReadStatus::LaunchFailed;
 }
@@ -166,6 +167,17 @@ GhProcessInvocation::GhProcessInvocation(std::wstring executablePath, std::wstri
 	m_environmentRemovals(std::move(environmentRemovals)), m_timeoutMilliseconds(timeoutMilliseconds),
 	m_maximumOutputBytes(maximumOutputBytes), m_maximumErrorBytes(maximumErrorBytes) {}
 
+GhProcessInvocation::GhProcessInvocation(std::wstring executablePath, std::wstring workingDirectory,
+	std::vector<std::wstring> arguments, std::vector<std::pair<std::wstring, std::wstring>> environmentOverrides,
+	std::vector<std::wstring> environmentRemovals, const std::uint32_t timeoutMilliseconds,
+	const std::size_t maximumOutputBytes, const std::size_t maximumErrorBytes,
+	std::shared_ptr<platform::process::IBoundedProcessOutputObserver> outputObserver) :
+	m_executablePath(std::move(executablePath)), m_workingDirectory(std::move(workingDirectory)),
+	m_arguments(std::move(arguments)), m_environmentOverrides(std::move(environmentOverrides)),
+	m_environmentRemovals(std::move(environmentRemovals)), m_outputObserver(std::move(outputObserver)),
+	m_timeoutMilliseconds(timeoutMilliseconds), m_maximumOutputBytes(maximumOutputBytes),
+	m_maximumErrorBytes(maximumErrorBytes) {}
+
 GhProcessOutcome::GhProcessOutcome(const platform::process::EBoundedProcessStatus status, const int exitCode,
 	std::vector<std::uint8_t> standardOutput, std::vector<std::uint8_t> standardError) :
 	m_status(status), m_exitCode(exitCode), m_standardOutput(std::move(standardOutput)),
@@ -185,6 +197,7 @@ GhProcessOutcome CWindowsGhToolPlatform::Run(const GhProcessInvocation& invocati
 	request.SetTimeoutMilliseconds(invocation.TimeoutMilliseconds());
 	request.SetMaximumStandardOutputBytes(invocation.MaximumOutputBytes());
 	request.SetMaximumStandardErrorBytes(invocation.MaximumErrorBytes());
+	request.SetOutputObserver(invocation.OutputObserver());
 	const auto result = platform::process::RunBoundedProcess(request, stop);
 	return { result.Status(), result.ExitCode(), result.StandardOutput(), result.StandardError() };
 }

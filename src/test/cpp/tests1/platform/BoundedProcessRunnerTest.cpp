@@ -58,6 +58,22 @@ void WriteAll(HANDLE handle, std::string_view value)
 	ASSERT_EQ(value.size(), written);
 }
 
+class RecordingObserver final : public IBoundedProcessOutputObserver {
+public:
+	explicit RecordingObserver(const bool accept = true) noexcept : m_accept(accept) {}
+	bool OnOutput(const EBoundedProcessStream stream, const std::span<const std::uint8_t> bytes) override
+	{
+		auto& value = stream == EBoundedProcessStream::StandardOutput ? m_output : m_error;
+		value.append(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+		return m_accept;
+	}
+	[[nodiscard]] const std::string& Output() const noexcept { return m_output; }
+	[[nodiscard]] const std::string& Error() const noexcept { return m_error; }
+private:
+	bool m_accept{};
+	std::string m_output, m_error;
+};
+
 } // namespace
 
 TEST(BoundedProcessRunnerChild, ExercisesRequestedBoundary)
@@ -129,6 +145,23 @@ TEST(BoundedProcessRunner, CapturesSeparatedStreamsAndClosesStandardInput)
 	EXPECT_EQ(0, result.ExitCode());
 	EXPECT_NE(std::string::npos, Bytes(result.StandardOutput()).find("stdout:payload"));
 	EXPECT_NE(std::string::npos, Bytes(result.StandardError()).find("stderr:owned-environment"));
+}
+
+TEST(BoundedProcessRunner, PublishesLiveSeparatedChunksAndTerminatesWhenRejected)
+{
+	auto observer = std::make_shared<RecordingObserver>();
+	auto request = ChildRequest(L"echo");
+	request.SetStandardInput("observed");
+	request.SetOutputObserver(observer);
+	EXPECT_EQ(EBoundedProcessStatus::Succeeded, RunBoundedProcess(request, nullptr).Status());
+	EXPECT_NE(std::string::npos, observer->Output().find("stdout:observed"));
+	EXPECT_NE(std::string::npos, observer->Error().find("stderr:owned-environment"));
+
+	auto rejecting = std::make_shared<RecordingObserver>(false);
+	auto rejectedRequest = ChildRequest(L"echo");
+	rejectedRequest.SetOutputObserver(rejecting);
+	EXPECT_EQ(EBoundedProcessStatus::ObserverRejected,
+		RunBoundedProcess(rejectedRequest, nullptr).Status());
 }
 
 TEST(BoundedProcessRunner, StreamsInputLargerThanThePipeWithoutDeadlock)
