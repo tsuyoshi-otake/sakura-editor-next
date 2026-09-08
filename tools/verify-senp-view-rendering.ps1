@@ -28,7 +28,9 @@ using System.Text;
 public static class SenpViewProbe {
     [StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left, Top, Right, Bottom; }
     [StructLayout(LayoutKind.Sequential)] public struct Point { public int X, Y; }
+    [StructLayout(LayoutKind.Sequential)] public struct MonitorInfo { public uint Size; public Rect Monitor, Work; public uint Flags; }
     public delegate bool EnumProc(IntPtr window, IntPtr parameter);
+    public delegate bool MonitorEnumProc(IntPtr monitor, IntPtr dc, IntPtr rect, IntPtr parameter);
     [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc callback, IntPtr parameter);
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint pid);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr window);
@@ -39,6 +41,8 @@ public static class SenpViewProbe {
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr window, out Rect rect);
     [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr window, out Rect rect);
     [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr window, ref Point point);
+    [DllImport("user32.dll")] public static extern bool EnumDisplayMonitors(IntPtr dc, IntPtr clip, MonitorEnumProc callback, IntPtr parameter);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern bool GetMonitorInfoW(IntPtr monitor, ref MonitorInfo info);
     [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(Point point);
     [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr window, uint flags);
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
@@ -73,13 +77,56 @@ public static class SenpViewProbe {
             return image;
         } catch { image.Dispose(); throw; }
     }
+    static bool IsUnoccluded(IntPtr window) {
+        Rect client; Point origin = new Point();
+        if (!GetClientRect(window, out client) || !ClientToScreen(window, ref origin)) return false;
+        for (int y = 1; y < 16; ++y) for (int x = 1; x < 16; ++x) {
+            Point point = new Point { X = origin.X + client.Right * x / 16, Y = origin.Y + client.Bottom * y / 16 };
+            if (GetAncestor(WindowFromPoint(point), 2) != window) return false;
+        }
+        return true;
+    }
+    public static Point PlaceInsideWorkArea(IntPtr window) {
+        Rect outer;
+        if (!GetWindowRect(window, out outer)) throw new InvalidOperationException("Probe geometry unavailable.");
+        int width = outer.Right - outer.Left, height = outer.Bottom - outer.Top;
+        Rect[] workAreas = new Rect[16]; int workAreaCount = 0;
+        if (!EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (monitor, dc, rect, parameter) => {
+            MonitorInfo info = new MonitorInfo { Size = (uint)Marshal.SizeOf<MonitorInfo>() };
+            if (GetMonitorInfoW(monitor, ref info) && workAreaCount < workAreas.Length) workAreas[workAreaCount++] = info.Work;
+            return true;
+        }, IntPtr.Zero)) throw new InvalidOperationException("Desktop work areas unavailable.");
+        for (int left = 0; left < workAreaCount; ++left) for (int right = left + 1; right < workAreaCount; ++right) {
+            if (workAreas[right].Bottom <= workAreas[left].Bottom) continue;
+            Rect swap = workAreas[left]; workAreas[left] = workAreas[right]; workAreas[right] = swap;
+        }
+        for (int areaIndex = 0; areaIndex < workAreaCount; ++areaIndex) {
+            Rect work = workAreas[areaIndex];
+            if (width > work.Right - work.Left || height > work.Bottom - work.Top) continue;
+            int[] xs = { work.Left + 16, work.Right - width - 16, work.Left + (work.Right - work.Left - width) / 2 };
+            int[] ys = { work.Bottom - height - 16, work.Top + 16, work.Top + (work.Bottom - work.Top - height) / 2 };
+            foreach (int y in ys) foreach (int x in xs) {
+                if (x < work.Left || y < work.Top || x + width > work.Right || y + height > work.Bottom) continue;
+                if (!SetWindowPos(window, (IntPtr)(-1), x, y, 0, 0, 0x11)) continue;
+                DwmFlush();
+                if (!IsUnoccluded(window)) continue;
+                Point[] parking = {
+                    new Point { X = work.Right - 2, Y = work.Bottom - 2 },
+                    new Point { X = work.Left + 2, Y = work.Top + 2 }
+                };
+                foreach (Point point in parking)
+                    if (point.X < x || point.X >= x + width || point.Y < y || point.Y >= y + height) return point;
+            }
+        }
+        throw new InvalidOperationException("No unoccluded work-area placement is available for the owned probe window.");
+    }
     public static Bitmap[] Capture(IntPtr window) {
         Rect client, outer; Point origin = new Point();
         if (!GetClientRect(window, out client) || !GetWindowRect(window, out outer) || !ClientToScreen(window, ref origin))
             throw new InvalidOperationException("Capture geometry unavailable.");
         int width = client.Right, height = client.Bottom;
-        for (int y = 1; y < 8; ++y) for (int x = 1; x < 8; ++x) {
-            Point point = new Point { X = origin.X + width * x / 8, Y = origin.Y + height * y / 8 };
+        for (int y = 1; y < 16; ++y) for (int x = 1; x < 16; ++x) {
+            Point point = new Point { X = origin.X + width * x / 16, Y = origin.Y + height * y / 16 };
             IntPtr covering = GetAncestor(WindowFromPoint(point), 2);
             if (covering != window) {
                 uint coveringPid; GetWindowThreadProcessId(covering, out coveringPid);
@@ -221,16 +268,16 @@ try {
     [void][SenpViewProbe]::ShowWindow($window, 5)
     # Only this run-owned probe is made topmost. Its bounded cleanup destroys it;
     # no user window is hidden, restyled or closed to obtain an unoccluded trial.
-    if (-not [SenpViewProbe]::SetWindowPos($window, [IntPtr](-1), 0, 0, 0, 0, 0x13)) { throw 'Unable to expose the owned probe window.' }
+    $cursorParkingPoint = [SenpViewProbe]::PlaceInsideWorkArea($window)
     [void][SenpViewProbe]::SetForegroundWindow($window)
     [void][SenpViewProbe]::DwmFlush()
-    [void][SenpViewProbe]::SetCursorPos(5, 5)
+    [void][SenpViewProbe]::SetCursorPos($cursorParkingPoint.X, $cursorParkingPoint.Y)
     # Observe the show-animation settling without PrintWindow or forced paint.
     # Stable native rectangles alone cannot prove the composited frame is ready.
     $settling = [Diagnostics.Stopwatch]::StartNew(); $stableFrames = 0
     $previous = [SenpViewProbe]::Screen($window)
     try {
-        while ($stableFrames -lt 3 -and $settling.ElapsedMilliseconds -lt 3000) {
+        while ($stableFrames -lt 3 -and $settling.ElapsedMilliseconds -lt 5000) {
             [void][SenpViewProbe]::DwmFlush()
             $current = [SenpViewProbe]::Screen($window)
             if ([SenpViewProbe]::Difference($previous, $current, $null) -le 0.001) { ++$stableFrames } else { $stableFrames = 0 }
