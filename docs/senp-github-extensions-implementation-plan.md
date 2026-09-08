@@ -121,6 +121,14 @@ bounded observerから`SigningIn` snapshotへ逐次公開するが、制御文�
 接続解除はSakura内のcredential leaseとgrantだけを失効させ、`gh auth logout`は
 実行しない。snapshotは共有gh認証を維持する説明と、ghが報告したtokenSourceを
 必ず表示できる形で保持する。
+
+T06は`CGhToolPolicy::PrepareRepositoryRead`と`CGhRepositoryReader`で分ける。
+前者だけが許可queryのpercent encode、page/per_page上限、ETag header、固定endpoint
+argvを組み立て、後者はT04の検証済みcredential leaseでのみ実行する。`--include`出力は
+64 KiB header / 4 MiB全体の一つのHTTP envelopeとして解析し、Link URLを追わず
+検証済みnext page番号だけを返す。200はJSON content type、strict JSON、object/array
+rootを必須とし、304/401/403/404、malformed envelope、malformed JSON、process terminalを
+別結果にする。endpoint固有の必須fieldとDTO変換はE02以降の拡張側責務に残す。
 | T07 | single-flight・fair queue・cooldown・可視poll | T06/F03 | `GhReadScheduler.*` | 複数windowでも重複1本、最後のunsubscribeでcancel |
 | T08 | jobログのredirect・chunk受信・cleanup | T06/U05 | `GhLogResource.*` | credential転送0、上限、途中失敗、URL非保持 |
 | E01 | repository snapshotとremote選択 | T06 | `GhRepositorySelection.*` | multi-root/fork/SSH alias/remote削除の区別 |

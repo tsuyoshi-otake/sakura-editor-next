@@ -5,6 +5,7 @@
 #include "platform/process/WindowsExecutableResolver.h"
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <limits>
 
@@ -49,6 +50,27 @@ bool IsAsciiName(const std::wstring_view value, const std::size_t maximum) noexc
 	});
 }
 
+bool IsPositiveDecimal(const std::wstring_view value, const std::uint64_t maximum) noexcept
+{
+	if (value.empty()) return false;
+	std::uint64_t number{};
+	for (const wchar_t character : value) {
+		if (character < L'0' || character > L'9'
+			|| number > (maximum - static_cast<std::uint64_t>(character - L'0')) / 10U) return false;
+		number = number * 10U + static_cast<std::uint64_t>(character - L'0');
+	}
+	return number > 0;
+}
+
+bool IsEntityTag(const std::wstring_view value) noexcept
+{
+	const std::size_t begin = value.starts_with(L"W/\"") ? 3 : 1;
+	if (value.size() <= begin || value.back() != L'"') return false;
+	return std::ranges::all_of(value.substr(begin, value.size() - begin - 1), [](const wchar_t character) {
+		return character >= 0x21 && character <= 0x7e && character != L'"';
+	});
+}
+
 bool IsHostname(const std::wstring_view value) noexcept
 {
 	if (value.empty() || value.size() > 253 || value.front() == L'.' || value.back() == L'.') return false;
@@ -77,14 +99,80 @@ bool IsRequest(const GhRepositoryReadRequest& request) noexcept
 		if (!IsAsciiName(segment, 128)) return false;
 		endpointLength += segment.size() + 1;
 	}
-	return endpointLength <= 2048;
+	if (endpointLength > 2048 || request.Query().size() > 16) return false;
+	static constexpr std::array<std::wstring_view, 15> allowedQuery{
+		L"actor", L"branch", L"created", L"direction", L"event", L"exclude_pull_requests",
+		L"filter", L"head_sha", L"page", L"per_page", L"sort", L"state", L"status",
+		L"workflow_id", L"attempt",
+	};
+	for (std::size_t index{}; index < request.Query().size(); ++index) {
+		const auto& [name, value] = request.Query()[index];
+		if (std::ranges::find(allowedQuery, name) == allowedQuery.end() || value.empty() || value.size() > 128
+			|| !std::ranges::all_of(value, [](const wchar_t character) {
+				return character >= 0x20 && character <= 0x7e;
+			})) return false;
+		if ((name == L"page" && !IsPositiveDecimal(value, std::numeric_limits<std::uint32_t>::max()))
+			|| (name == L"per_page" && !IsPositiveDecimal(value, 100))
+			|| ((name == L"workflow_id" || name == L"attempt")
+				&& !IsPositiveDecimal(value, std::numeric_limits<std::uint64_t>::max()))) return false;
+		if (endpointLength > 4096 - name.size() - value.size() * 3 - 2) return false;
+		endpointLength += name.size() + value.size() * 3 + 2;
+		for (std::size_t other = index + 1; other < request.Query().size(); ++other) {
+			if (request.Query()[other].first == name) return false;
+		}
+	}
+	if (request.IfNoneMatch()) {
+		const auto& value = *request.IfNoneMatch();
+		const bool quoted = value.size() >= 2 && value.front() == L'"' && value.back() == L'"';
+		const bool weakQuoted = value.size() >= 4 && value.starts_with(L"W/\"") && value.back() == L'"';
+		if ((!quoted && !weakQuoted) || value.size() > 256 || !IsEntityTag(value)) return false;
+	}
+	return true;
+}
+
+std::wstring PercentEncode(const std::wstring_view value)
+{
+	constexpr wchar_t hex[] = L"0123456789ABCDEF";
+	std::wstring encoded;
+	encoded.reserve(value.size());
+	for (const wchar_t character : value) {
+		if ((character >= L'a' && character <= L'z') || (character >= L'A' && character <= L'Z')
+			|| (character >= L'0' && character <= L'9') || character == L'-' || character == L'_'
+			|| character == L'.' || character == L'~') {
+			encoded.push_back(character);
+		} else {
+			const auto byte = static_cast<unsigned int>(character);
+			encoded.push_back(L'%');
+			encoded.push_back(hex[(byte >> 4U) & 0x0fU]);
+			encoded.push_back(hex[byte & 0x0fU]);
+		}
+	}
+	return encoded;
 }
 
 std::wstring Endpoint(const GhRepositoryReadRequest& request)
 {
 	std::wstring value = L"repos/" + request.Owner() + L"/" + request.Repository();
 	for (const auto& segment : request.ResourceSegments()) value += L"/" + segment;
+	for (std::size_t index{}; index < request.Query().size(); ++index) {
+		value += index == 0 ? L"?" : L"&";
+		value += request.Query()[index].first + L"=" + PercentEncode(request.Query()[index].second);
+	}
 	return value;
+}
+
+std::vector<std::wstring> ReadArguments(const GhRepositoryReadRequest& request)
+{
+	std::vector<std::wstring> arguments{
+		L"api", L"--hostname", request.Hostname(), L"--method", L"GET", L"--include",
+		L"--header", L"X-GitHub-Api-Version: 2022-11-28",
+	};
+	if (request.IfNoneMatch()) {
+		arguments.push_back(L"--header");
+		arguments.push_back(L"If-None-Match: " + *request.IfNoneMatch());
+	}
+	arguments.push_back(Endpoint(request));
+	return arguments;
 }
 
 std::optional<GhToolVersion> ParseVersion(const std::vector<std::uint8_t>& bytes) noexcept
@@ -157,6 +245,16 @@ GhRepositoryReadRequest::GhRepositoryReadRequest(std::wstring hostname, std::wst
 	std::wstring repository, std::vector<std::wstring> resourceSegments) :
 	m_hostname(std::move(hostname)), m_owner(std::move(owner)), m_repository(std::move(repository)),
 	m_resourceSegments(std::move(resourceSegments)) {}
+
+GhRepositoryReadRequest::GhRepositoryReadRequest(std::wstring hostname, std::wstring owner,
+	std::wstring repository, std::vector<std::wstring> resourceSegments,
+	std::vector<std::pair<std::wstring, std::wstring>> query,
+	std::optional<std::wstring> ifNoneMatch) : m_hostname(std::move(hostname)), m_owner(std::move(owner)),
+	m_repository(std::move(repository)), m_resourceSegments(std::move(resourceSegments)),
+	m_query(std::move(query)), m_ifNoneMatch(std::move(ifNoneMatch)) {}
+
+GhPreparedRepositoryRead::GhPreparedRepositoryRead(const GhRepositoryReadStatus status,
+	std::vector<std::wstring> arguments) : m_status(status), m_arguments(std::move(arguments)) {}
 
 GhProcessInvocation::GhProcessInvocation(std::wstring executablePath, std::wstring workingDirectory,
 	std::vector<std::wstring> arguments, std::vector<std::pair<std::wstring, std::wstring>> environmentOverrides,
@@ -236,26 +334,32 @@ try {
 GhRepositoryReadResult CGhToolPolicy::ReadRepository(const GhToolProbe& probe,
 	const GhRepositoryReadRequest& request, HANDLE stop) const
 try {
-	if (!m_platform || !platform::IsAbsoluteWindowsPath(m_workingDirectory) || !IsRequest(request)) {
-		return { GhRepositoryReadStatus::InvalidRequest, -1, {}, {} };
+	const auto prepared = PrepareRepositoryRead(probe, request);
+	if (prepared.Status() != GhRepositoryReadStatus::Succeeded) {
+		return { prepared.Status(), -1, {}, {} };
 	}
-	if (probe.Status() == GhToolAvailability::UnsupportedVersion) {
-		return { GhRepositoryReadStatus::UnsupportedVersion, -1, {}, {} };
-	}
-	if (probe.Status() != GhToolAvailability::Available || !probe.Version()
-		|| !probe.Version()->Supported() || !platform::IsAbsoluteWindowsPath(probe.ExecutablePath())) {
-		return { GhRepositoryReadStatus::ToolUnavailable, -1, {}, {} };
-	}
-	const std::vector<std::wstring> arguments{
-		L"api", L"--hostname", request.Hostname(), L"--method", L"GET", L"--include",
-		L"--header", L"X-GitHub-Api-Version: 2022-11-28", Endpoint(request),
-	};
 	const auto outcome = m_platform->Run(Invocation(probe.ExecutablePath(), m_workingDirectory,
-		arguments, kReadTimeoutMilliseconds, kReadOutputBytes, kErrorBytes), stop);
+		prepared.Arguments(), kReadTimeoutMilliseconds, kReadOutputBytes, kErrorBytes), stop);
 	return { ReadTerminal(outcome.Status()), outcome.ExitCode(),
 		outcome.StandardOutput(), outcome.StandardError() };
 } catch (...) {
 	return { GhRepositoryReadStatus::LaunchFailed, -1, {}, {} };
+}
+
+GhPreparedRepositoryRead CGhToolPolicy::PrepareRepositoryRead(const GhToolProbe& probe,
+	const GhRepositoryReadRequest& request) const
+{
+	if (!platform::IsAbsoluteWindowsPath(m_workingDirectory) || !IsRequest(request)) {
+		return { GhRepositoryReadStatus::InvalidRequest, {} };
+	}
+	if (probe.Status() == GhToolAvailability::UnsupportedVersion) {
+		return { GhRepositoryReadStatus::UnsupportedVersion, {} };
+	}
+	if (probe.Status() != GhToolAvailability::Available || !probe.Version()
+		|| !probe.Version()->Supported() || !platform::IsAbsoluteWindowsPath(probe.ExecutablePath())) {
+		return { GhRepositoryReadStatus::ToolUnavailable, {} };
+	}
+	return { GhRepositoryReadStatus::Succeeded, ReadArguments(request) };
 }
 
 } // namespace senp::github

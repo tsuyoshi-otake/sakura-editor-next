@@ -53,17 +53,37 @@ private:
 	friend class CGhToolPolicy;
 };
 
+enum class GhRepositoryReadStatus : std::uint8_t;
+
 class GhRepositoryReadRequest final {
 public:
 	GhRepositoryReadRequest(std::wstring hostname, std::wstring owner,
 		std::wstring repository, std::vector<std::wstring> resourceSegments);
+	GhRepositoryReadRequest(std::wstring hostname, std::wstring owner,
+		std::wstring repository, std::vector<std::wstring> resourceSegments,
+		std::vector<std::pair<std::wstring, std::wstring>> query,
+		std::optional<std::wstring> ifNoneMatch);
 	[[nodiscard]] const std::wstring& Hostname() const noexcept { return m_hostname; }
 	[[nodiscard]] const std::wstring& Owner() const noexcept { return m_owner; }
 	[[nodiscard]] const std::wstring& Repository() const noexcept { return m_repository; }
 	[[nodiscard]] const std::vector<std::wstring>& ResourceSegments() const noexcept { return m_resourceSegments; }
+	[[nodiscard]] const std::vector<std::pair<std::wstring, std::wstring>>& Query() const noexcept { return m_query; }
+	[[nodiscard]] const std::optional<std::wstring>& IfNoneMatch() const noexcept { return m_ifNoneMatch; }
 private:
 	std::wstring m_hostname, m_owner, m_repository;
 	std::vector<std::wstring> m_resourceSegments;
+	std::vector<std::pair<std::wstring, std::wstring>> m_query;
+	std::optional<std::wstring> m_ifNoneMatch;
+};
+
+class GhPreparedRepositoryRead final {
+public:
+	GhPreparedRepositoryRead(GhRepositoryReadStatus status, std::vector<std::wstring> arguments);
+	[[nodiscard]] GhRepositoryReadStatus Status() const noexcept { return m_status; }
+	[[nodiscard]] const std::vector<std::wstring>& Arguments() const noexcept { return m_arguments; }
+private:
+	GhRepositoryReadStatus m_status;
+	std::vector<std::wstring> m_arguments;
 };
 
 class GhProcessInvocation final {
@@ -172,6 +192,8 @@ public:
 	[[nodiscard]] GhToolProbe Probe(HANDLE stop) const;
 	[[nodiscard]] GhRepositoryReadResult ReadRepository(const GhToolProbe& probe,
 		const GhRepositoryReadRequest& request, HANDLE stop) const;
+	[[nodiscard]] GhPreparedRepositoryRead PrepareRepositoryRead(const GhToolProbe& probe,
+		const GhRepositoryReadRequest& request) const;
 private:
 	std::shared_ptr<const IGhToolPlatform> m_platform;
 	std::wstring m_workingDirectory;

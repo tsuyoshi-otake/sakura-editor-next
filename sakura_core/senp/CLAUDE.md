@@ -226,6 +226,18 @@ credential lease and grants but never runs `gh auth logout`; the presentation
 must disclose that shared gh authentication remains and show the CLI-reported
 credential storage source.
 
+`CGhRepositoryReader` owns T06's one-page response boundary. Query names come
+from a closed allowlist, values are percent-encoded, numeric page controls are
+bounded, and conditional requests accept only a validated entity tag. The
+reader executes the policy-built argv only through a T04 authenticated lease.
+It parses the bounded `gh api --include` output as one HTTP envelope, never
+follows a Link URL, and exposes only a validated next-page number. A 200 body
+must have GitHub JSON content type, strict UTF-8 JSON, and an object or array
+root. 304, 401, 403 and 404 remain distinct even when gh exits nonzero; malformed
+headers, duplicate relevant headers, scalar JSON, and process terminals fail
+closed without publishing a body. Endpoint-specific DTO fields remain owned by
+the extension SDK stages after T06.
+
 Append accepts the next byte offset and at most 64 KiB. Fixed 64 KiB pages bound
 one resource to 32 MiB and the Control store to 64 MiB of allocated payload pages,
 including unused tails, with at most 64 resource slots. Pages and their index
