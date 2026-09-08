@@ -30537,21 +30537,14 @@
     {
       "column": 34,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 687,
+      "line": 710,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 1,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 755,
-      "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.cpp",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 9,
-      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 847,
+      "line": 778,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.cpp",
       "rule_id": "boundary.win32_type"
     },
@@ -30563,30 +30556,37 @@
       "rule_id": "boundary.win32_type"
     },
     {
+      "column": 9,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 893,
+      "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
       "column": 1,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 901,
+      "line": 924,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 26,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 909,
+      "line": 932,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 38,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 913,
+      "line": 936,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 36,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 974,
+      "line": 997,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.cpp",
       "rule_id": "boundary.win32_type"
     },
@@ -30600,42 +30600,42 @@
     {
       "column": 28,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 155,
+      "line": 157,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.h",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 16,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 158,
+      "line": 160,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.h",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 16,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 164,
+      "line": 166,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.h",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 67,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 165,
+      "line": 167,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.h",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 16,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 221,
+      "line": 223,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.h",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 236,
+      "line": 238,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.h",
       "rule_id": "boundary.win32_type"
     },
@@ -37229,28 +37229,28 @@
     {
       "column": 5,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 98,
+      "line": 100,
       "path": "sakura_core/workbench/SenpOwnerPublication.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 5,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 141,
+      "line": 143,
       "path": "sakura_core/workbench/SenpOwnerPublication.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 5,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 157,
+      "line": 159,
       "path": "sakura_core/workbench/SenpOwnerPublication.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 4,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 228,
+      "line": 234,
       "path": "sakura_core/workbench/SenpOwnerPublication.cpp",
       "rule_id": "error.catch_all"
     },
@@ -39161,7 +39161,7 @@
     {
       "column": 4,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 766,
+      "line": 789,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.cpp",
       "rule_id": "error.catch_all"
     },
@@ -39210,21 +39210,21 @@
     {
       "column": 5,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 365,
+      "line": 376,
       "path": "sakura_core/workbench/viewcontainer/ViewContainerPagePool.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 5,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 391,
+      "line": 402,
       "path": "sakura_core/workbench/viewcontainer/ViewContainerPagePool.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 5,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 411,
+      "line": 422,
       "path": "sakura_core/workbench/viewcontainer/ViewContainerPagePool.cpp",
       "rule_id": "error.catch_all"
     },
@@ -53042,7 +53042,7 @@
     {
       "column": 2,
       "evidence_sha256": "sha256:0a06a841e82a3f7809b4ae59af5eda45e7e805c40e8d967bb1abef61fe1efb49",
-      "line": 542,
+      "line": 553,
       "path": "sakura_core/workbench/viewcontainer/ViewContainerPagePool.cpp",
       "rule_id": "state.mutable_member"
     },
@@ -91311,14 +91311,14 @@
     {
       "column": 15,
       "evidence_sha256": "sha256:b75724acfd854c43fc97ef2982e5cca8dddcfe5608fd00cebcd692453929d9d8",
-      "line": 213,
+      "line": 215,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:c367309e2c7fe8b889639348a6c914e33ecf9f7dd968fdc56ad6a10ba0c06604",
-      "line": 214,
+      "line": 216,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.h",
       "rule_id": "state.public_mutable_field"
     },
@@ -98875,7 +98875,7 @@
     "raw_delete_expression_count": 317,
     "raw_new_expression_count": 247,
     "source_file_count": 1783,
-    "source_line_count": 532988,
+    "source_line_count": 533099,
     "tracked_file_count": 1832,
     "win32_parameter_mention_count": 4847
   },
@@ -99032,8 +99032,8 @@
     ]
   },
   "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
-  "source_commit": "ad8470f85ecf0c9f959de7a6a4de4a3f1664ea92",
-  "source_fingerprint": "sha256:989b56c78e708513b65cb3a089695bff93c95470963f3941e07c05144c62e9cb",
+  "source_commit": "b79f26c219132709e3a0cccd6ab3e4fa73919155",
+  "source_fingerprint": "sha256:cf8305a42de273816429139cfc0aeff502a62ab7ed1ad7bbb26b6f9e6b10cf20",
   "tracked_source_paths": [
     ".github/actions/bootstrap-vcpkg/action.yml",
     ".github/dependabot.yml",
