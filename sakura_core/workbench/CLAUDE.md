@@ -389,7 +389,9 @@ workbench catalog candidate, and the matching native page candidate before the
 runtime starts. Commit first preflights both revision fences and then performs
 only allocation-free swaps. `ISenpOwnerPublication::Apply` validates and queues
 activation invalidations or runtime results while the owner service is entered;
-composition must call `CSenpOwnerPublicationHub::Pump` only after owner `Poll`.
+`CSenpOwnerComposition` is the sole window-local scheduler and always completes
+owner `Poll` before it calls `CSenpOwnerPublicationHub::Pump`. Close stops every
+runtime before it closes the publication hub and its borrowed native resources.
 Until dynamic page removal/replacement is implemented, replacement preparation
 fails closed and revocation leaves only inert weak page factories behind.
 

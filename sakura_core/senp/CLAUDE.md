@@ -103,9 +103,11 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   any host launch. The G04 catalog/runtime tests do not enable package-derived
   pages: native pages, commands and broker grants are wired by U01/U06/T02.
 - Poll performs at most 16 completion reads per instance, never waits or starts
-  external work, and checks owner/workspace/account before Apply. Composition
-  must schedule bounded drains while it owns instances; hide/collapse is not
-  revoke. Join is attempted only after worker exit; a failed attempt remains
+  external work, and checks owner/workspace/account before Apply. The window-local
+  `CSenpOwnerComposition` calls owner Poll first and publication Pump second on
+  each bounded UI-thread tick; this ordering prevents provider follow-up admission
+  from reentering the owner service. Hide/collapse is not revoke. Join is attempted
+  only after worker exit; a failed attempt remains
   in an explicit cleanup-failed slot without an automatic retry loop. Close
   revokes/stops all instances before joining any, may retry a failed join once,
   and reports unconfirmed process exit instead of freeing capacity. Generations

@@ -1411,6 +1411,7 @@
 	<ClCompile Include="..\sakura_core\workbench\tree\SenpTreeView.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\SenpEffectCoordinator.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\SenpOwnerProjection.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\SenpOwnerComposition.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\SenpOwnerPublication.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\viewcontainer\ViewContainerPagePool.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\viewcontainer\ViewContainerPageRegistry.cpp" />

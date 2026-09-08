@@ -109,8 +109,10 @@ U06途中でtext-section routingは`SenpReadonlyDocumentHost`へ接続した。�
 broker-authorized text resourceを1つのreadonly input内でnative pageとして保持し、page selectorは
 document内部の移動として扱う。権限が解決できない、または失効した場合は全pageを消去する。
 U06途中でCEditWnd、同じEditor Core groupのopaque-ID tab、stable command、保持したlegacy working-copyの
-backupへ接続した。最後のreadonly inputが閉じると従来process-window tabへ戻る。sample owner/page公開と
-実アプリのend-to-end確認はU06の完了条件に残す。
+backupへ接続した。最後のreadonly inputが閉じると従来process-window tabへ戻る。window-local owner
+compositionはowner Pollを終えてからpublication Pumpを呼び、実sample componentの2 View、command、4 section
+documentまでを実hostで検証する。package-derived descriptorとCEditWnd timer/lifecycleのend-to-end確認は
+U06の完了条件に残す。
 
 ### 操作と情報状態
 

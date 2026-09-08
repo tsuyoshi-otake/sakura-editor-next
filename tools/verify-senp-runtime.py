@@ -91,11 +91,17 @@ def main() -> int:
             ROOT / "rust/senp", 600)
         run("build-guest", cargo + ["-p", "senp-effect-guest-fixture", "--target", "wasm32-unknown-unknown"],
             ROOT / "rust/senp", 600)
+        run("build-sample", cargo + ["-p", "sakura-senp-sample", "--target", "wasm32-unknown-unknown"],
+            ROOT / "rust/senp", 600)
         for name in ("sakura-senp-host.exe", "senp-host-fixture.exe"):
             shutil.copy2(target / "debug" / name, output / name)
         run("componentize", [str(target / "debug/sakura-senp-tool.exe"), "componentize",
             str(target / "wasm32-unknown-unknown/debug/senp_effect_guest_fixture.wasm"), str(output / "extension.wasm")], ROOT, 30)
         (output / "extension.sha256").write_text(hashlib.sha256((output / "extension.wasm").read_bytes()).hexdigest() + "\n", encoding="ascii")
+        run("componentize-sample", [str(target / "debug/sakura-senp-tool.exe"), "componentize",
+            str(target / "wasm32-unknown-unknown/debug/sakura_senp_sample.wasm"), str(output / "sample-extension.wasm")], ROOT, 30)
+        (output / "sample-extension.sha256").write_text(
+            hashlib.sha256((output / "sample-extension.wasm").read_bytes()).hexdigest() + "\n", encoding="ascii")
         for scenario in ("echo", "blocked-read", "blocked-write", "partial", "oversized", "crash", "memory-limit"):
             (output / f"{scenario}.wasm").write_bytes(b"native pipe test scenario; not a Wasm component")
         if args.prepare_only:
@@ -112,13 +118,15 @@ def main() -> int:
             env["SENP_PROTOCOL_PEER_FILE"] = str(rust_peer)
             env["SENP_PROTOCOL_OUTPUT"] = str(cpp_peer)
             xml = output / "native-results.xml"
-            run("native-tests", [str(tests), "--gtest_filter=SenpRuntimeLifecycle.*:SenpRuntimeProcess.*:SenpEffectProtocol.*:SenpViewLifecycle.*",
+            run("native-tests", [str(tests), "--gtest_filter=SenpRuntimeLifecycle.*:SenpRuntimeProcess.*:SenpEffectProtocol.*:SenpViewLifecycle.*:SenpOwnerComposition.*",
                 f"--gtest_output=xml:{xml}"], ROOT, 120, env)
             report = ET.parse(xml).getroot()
             cases = report.findall(".//testcase")
             process_cases = [case for case in cases if case.get("classname") == "SenpRuntimeProcess"]
             owner_cases = [case for case in cases if case.get("classname") == "SenpViewLifecycle"]
-            if len(process_cases) != 6 or len(owner_cases) < 15 or any(case.find("skipped") is not None or case.find("failure") is not None for case in cases):
+            composition_cases = [case for case in cases if case.get("classname") == "SenpOwnerComposition"]
+            if len(process_cases) != 6 or len(owner_cases) < 15 or len(composition_cases) != 1 \
+                    or any(case.find("skipped") is not None or case.find("failure") is not None for case in cases):
                 raise RuntimeError("required process cases are missing, skipped or failed")
             env["SENP_PROTOCOL_PEER_FILE"] = str(cpp_peer)
             env["SENP_PROTOCOL_OUTPUT"] = str(rust_peer)
