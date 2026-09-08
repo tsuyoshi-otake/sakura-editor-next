@@ -554,6 +554,9 @@
 	<ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlSenpRpcTest.cpp">
 	  <Filter>Test Files\platform\controlipc</Filter>
 	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlSenpBrokerTest.cpp">
+	  <Filter>Test Files\platform\controlipc</Filter>
+	</ClCompile>
 
 
 

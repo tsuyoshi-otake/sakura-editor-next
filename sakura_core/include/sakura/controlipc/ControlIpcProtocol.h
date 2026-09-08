@@ -182,6 +182,9 @@ enum class EControlIpcFieldTag : std::uint16_t {
 	StorageMutation = 9,
 	//! Private bounded ControlProfileRpc request/response record.
 	ProfilePayload = 19,
+	//! Private bounded ControlSenpRpc request/response record. Additive: a peer
+	//! that does not know this tag rejects the frame instead of misreading it.
+	SenpPayload = 20,
 };
 
 struct ControlIpcError {
