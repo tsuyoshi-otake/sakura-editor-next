@@ -19,10 +19,24 @@ struct SenpPreparedDocument final {
 	SenpDocumentResult result{ SenpDocumentResult::Invalid };
 	markdown::Document document;
 };
+class SenpStructuredSectionRange final {
+public:
+	SenpStructuredSectionRange() = default;
+	SenpStructuredSectionRange(std::size_t first, std::size_t count) : m_first(first), m_count(count) {}
+	[[nodiscard]] std::size_t First() const noexcept { return m_first; }
+	[[nodiscard]] std::size_t Count() const noexcept { return m_count; }
+private:
+	std::size_t m_first{}, m_count{};
+};
+[[nodiscard]] inline bool operator==(const SenpStructuredSectionRange& left,
+	const SenpStructuredSectionRange& right) noexcept {
+	return left.First() == right.First() && left.Count() == right.Count();
+}
 
 //! I/O-free bounded conversion. Only Markdown sections are parsed. All metadata
 //! and table cells stay literal. No local or remote asset is ever admitted.
-[[nodiscard]] SenpPreparedDocument PrepareSenpReadonlyDocument(const senp::effect::PublishDocument& document);
+[[nodiscard]] SenpPreparedDocument PrepareSenpReadonlyDocument(const senp::effect::PublishDocument& document,
+	std::optional<SenpStructuredSectionRange> range = std::nullopt);
 
 //! UI-thread value owner for one already-authorized readonly input. Runtime
 //! admission, deadlines, cancellation and core title updates belong to composition.

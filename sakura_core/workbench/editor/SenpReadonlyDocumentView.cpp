@@ -30,7 +30,9 @@ std::wstring StatusText(SenpDocumentState state)
 	}
 }
 }
-struct SenpReadonlyDocumentView::Impl {
+class SenpReadonlyDocumentView::Impl {
+	std::optional<SenpStructuredSectionRange> sectionRange;
+public:
 	SenpReadonlyDocument& model;
 	markdown::CMarkdownPreviewWnd preview;
 	HWND root{}, query{}, status{};
@@ -43,7 +45,8 @@ struct SenpReadonlyDocumentView::Impl {
 	SenpDocumentViewState state{ SenpDocumentViewState::Unavailable };
 	std::optional<std::uint64_t> queued;
 	std::uint64_t prepared{};
-	Impl(SenpReadonlyDocument& value, rendering::FrameSurfaceId surfaceId) : model(value), preview({}, surfaceId)
+	Impl(SenpReadonlyDocument& value, rendering::FrameSurfaceId surfaceId, std::optional<SenpStructuredSectionRange> range)
+		: model(value), preview({}, surfaceId), sectionRange(range)
 	{
 		if (!surfaceId) throw std::invalid_argument("A SENP document needs a distinct surface identity.");
 	}
@@ -166,8 +169,8 @@ struct SenpReadonlyDocumentView::Impl {
 		const auto content = model.State() == SenpDocumentState::Ready ? model.Content() : nullptr;
 		const auto statusText = StatusText(model.State());
 		std::function<markdown::Document()> prepare;
-		if (content) prepare = [content] {
-			auto result = PrepareSenpReadonlyDocument(*content);
+		if (content) prepare = [content, range = sectionRange] {
+			auto result = PrepareSenpReadonlyDocument(*content, range);
 			if (result.result != SenpDocumentResult::Accepted) throw std::runtime_error("SENP document preparation failed.");
 			return std::move(result.document);
 		};
@@ -181,8 +184,10 @@ struct SenpReadonlyDocumentView::Impl {
 	}
 };
 
+SenpReadonlyDocumentView::SenpReadonlyDocumentView(SenpReadonlyDocument& model, rendering::FrameSurfaceId id,
+	SenpStructuredSectionRange range) : m_impl(std::make_unique<Impl>(model, id, range)) {}
 SenpReadonlyDocumentView::SenpReadonlyDocumentView(SenpReadonlyDocument& model, rendering::FrameSurfaceId id)
-	: m_impl(std::make_unique<Impl>(model, id)) {}
+	: m_impl(std::make_unique<Impl>(model, id, std::nullopt)) {}
 SenpReadonlyDocumentView::~SenpReadonlyDocumentView() { m_impl->Close(); }
 bool SenpReadonlyDocumentView::Create(HWND parent)
 {

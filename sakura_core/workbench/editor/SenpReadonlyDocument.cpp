@@ -40,16 +40,16 @@ markdown::TableRow Row(const std::vector<std::wstring>& values, bool header)
 	for (const auto& value : values) row.cells.push_back({ value, {} });
 	return row;
 }
-bool Supports(const senp::effect::PublishDocument& document)
-{
-	return std::ranges::none_of(document.sections, [](const auto& section) { return std::holds_alternative<senp::effect::TextResourceSection>(section); });
-}
 }
 
-SenpPreparedDocument PrepareSenpReadonlyDocument(const senp::effect::PublishDocument& source)
+SenpPreparedDocument PrepareSenpReadonlyDocument(const senp::effect::PublishDocument& source,
+	std::optional<SenpStructuredSectionRange> range)
 {
 	if (!senp::effect::ValidateDocument(source) || !Title(source.title)) return {};
-	if (!Supports(source)) return { SenpDocumentResult::Unsupported, {} };
+	const auto first = range ? range->First() : 0, count = range ? range->Count() : source.sections.size();
+	if (first > source.sections.size() || count > source.sections.size() - first) return {};
+	for (auto index = first; index < first + count; ++index)
+		if (std::holds_alternative<senp::effect::TextResourceSection>(source.sections[index])) return { SenpDocumentResult::Unsupported, {} };
 	markdown::Document result;
 	result.capabilities.localImageProjection = markdown::CapabilityStatus::Unsupported;
 	result.capabilities.secureRemoteImageProjection = markdown::CapabilityStatus::Unsupported;
@@ -57,7 +57,8 @@ SenpPreparedDocument PrepareSenpReadonlyDocument(const senp::effect::PublishDocu
 	result.capabilities.scrollPreviewWithEditor = markdown::CapabilityStatus::Unsupported;
 	markdown::Block heading; heading.kind = markdown::BlockKind::Heading; heading.level = 1; heading.text = source.title;
 	result.blocks.push_back(std::move(heading));
-	for (const auto& section : source.sections) {
+	for (auto index = first; index < first + count; ++index) {
+		const auto& section = source.sections[index];
 		if (const auto* text = std::get_if<senp::effect::MarkdownSection>(&section)) {
 			markdown::ParseOptions options;
 			options.limits.maximumInputCharacters = 262144;
@@ -130,7 +131,6 @@ SenpDocumentTransition SenpReadonlyDocument::Apply(const senp::effect::Operation
 	if (!Matches(context)) return { SenpDocumentResult::Stale, {} };
 	if (document.resourceId != m_input.resourceId || !Title(document.title) || !senp::effect::ValidateDocument(document))
 		return Finish(SenpDocumentState::Failed, SenpDocumentResult::Invalid);
-	if (!Supports(document)) return Finish(SenpDocumentState::Failed, SenpDocumentResult::Unsupported);
 	if (document.revision < m_lastRevision) return Finish(SenpDocumentState::Failed, SenpDocumentResult::Stale);
 	if (document.revision == m_lastRevision && (!m_content || *m_content != document))
 		return Finish(SenpDocumentState::Failed, SenpDocumentResult::Invalid);

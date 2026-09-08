@@ -287,10 +287,27 @@ the native focus frame changed during PrintWindow and produced a real one-pixel
 screen difference. Layout commits the query/status and preview redraw together.
 Verify the full parent transaction again when binding it into application layout.
 
-Text-resource sections remain typed Unsupported in this structured renderer;
-U06 still owns mixed section routing through the separate U05 text surface.
-Application tab/command/backup integration and full text accessibility are also
-pending. The rendered selection does not claim a UI Automation TextPattern.
+`SenpReadonlyDocumentHost` groups adjacent structured sections and routes each
+text-resource section to a retained `SenpTextResourceView`. Multiple pages use
+an ordered native section selector; a one-page document has no extra chrome.
+The selector is document-internal navigation, not an Editor tab or ViewContainer.
+Switching pages preserves each native selection, search and scroll state.
+
+The host accepts only broker-projected `TextResourceScope` values matching all
+document owner dimensions. Labels and document revisions never reconstruct that
+authority. Resolve the complete bounded cohort before exposing a body, recheck
+every resource on Sync and command/read entry, and erase all pages if any grant
+is missing or revoked. Read only the visible Loading page, one 64 KiB request at
+a time; an empty nonterminal response waits for an explicit producer notification.
+Composition owns I/O, deadlines and finalization of every taken request even if
+the host is replaced or closed. Duplicate scope/handle pages share one retained
+native body and one read stream.
+
+The structured renderer alone still rejects text-resource ranges. The generic
+document model retains validated opaque references so the host can partition
+them without fake child documents. Application tab/command/backup integration
+and full cross-page text accessibility remain pending. The rendered selection
+does not claim a UI Automation TextPattern.
 
 Verify `SenpReadonlyDocument.*`, the existing Markdown suites and the
 `ReadonlyDocuments` probe in `tools/verify-senp-view-rendering.ps1`. Its readiness
@@ -355,5 +372,5 @@ fails with the covering HWND/PID/title, and bounded cleanup destroys the probe.
 Full Page Heap is per executable name and invalidates timing comparisons with
 an uninstrumented product. See the test guidance for exact-image measurement;
 do not silently remove a user's diagnostic settings or raise the test deadline.
-U06 still owns CEditWnd/tab/command/backup, text-section routing and sample
+U06 still owns CEditWnd/tab/command/backup and sample
 publication; schema 2 remains UnsupportedRuntime until those gates pass.

@@ -105,7 +105,10 @@ U04は既存native Markdown previewのworkerへ構造化本文を接続し、met
 script・command linkは実行せず、local/remote画像は権限未定義のためblockedにする。
 U05は64 KiB chunk、32 MiB/resource、Control内64 MiBのmemory-only storeとnative readonly textを提供する。
 UTF-8の継続decode、文字選択、検索、コピー、partial/失効を検証する。
-アプリのtab/command/backup、text-section routingとsample公開はU06の完了条件に残す。
+U06途中でtext-section routingは`SenpReadonlyDocumentHost`へ接続した。隣接する構造化sectionと
+broker-authorized text resourceを1つのreadonly input内でnative pageとして保持し、page selectorは
+document内部の移動として扱う。権限が解決できない、または失効した場合は全pageを消去する。
+アプリのtab/command/backupとsample公開はU06の完了条件に残す。
 
 ### 操作と情報状態
 

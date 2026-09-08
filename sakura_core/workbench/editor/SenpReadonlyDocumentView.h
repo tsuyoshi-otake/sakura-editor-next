@@ -19,6 +19,8 @@ enum class SenpDocumentViewState : std::uint8_t { Unavailable, Preparing, Prepar
 class SenpReadonlyDocumentView final {
 public:
 	SenpReadonlyDocumentView(SenpReadonlyDocument& model, rendering::FrameSurfaceId surfaceId);
+	SenpReadonlyDocumentView(SenpReadonlyDocument& model, rendering::FrameSurfaceId surfaceId,
+		SenpStructuredSectionRange range);
 	~SenpReadonlyDocumentView();
 	SenpReadonlyDocumentView(const SenpReadonlyDocumentView&) = delete;
 	SenpReadonlyDocumentView& operator=(const SenpReadonlyDocumentView&) = delete;
@@ -40,7 +42,7 @@ public:
 	[[nodiscard]] std::uint64_t PreparedGeneration() const noexcept;
 	[[nodiscard]] markdown::PreviewViewportSnapshot ViewportSnapshot() const noexcept;
 private:
-	struct Impl;
+	class Impl;
 	std::unique_ptr<Impl> m_impl;
 };
 

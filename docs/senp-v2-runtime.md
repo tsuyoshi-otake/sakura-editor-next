@@ -373,3 +373,28 @@ PrintWindowだけの欠落
 0件は同一geometryのnoise floorで区別し、既存0.05%閾値は変更していない。
 runnerとbuild processの終了を確認した。通常アプリの巨大段落測定は起動後のdocument確認に
 到達せず測定値を得ていないため、性能合格とは扱わず、実アプリ統合時の検証に残す。
+
+### U06途中: 構造化本文とログの混在routing
+
+`SenpReadonlyDocumentHost`は1つのreadonly inputを、隣接するMarkdown/metadata/tableの本文pageと、
+各text-resource pageへ順序を保って分割する。pageが複数ある場合だけnative COMBOBOXを表示し、
+1 pageでは追加chromeを出さない。このsection selectorはdocument内部の移動であり、Editor tabや
+ViewContainerを増やさない。戻ったpageは同じnative HWNDを使い、選択、検索、scrollを保持する。
+
+text-resourceの権限はWasmのhandleやdocument revisionから組み立てず、broker側adapterが返す
+profile/package digest/grant/revision付きscopeを使う。owner/workspace/accountの全次元を照合し、
+表示、command、readの前にgrantがcurrentか再確認する。どれか1件でも解決不能・失効なら、旧本文と
+ログを全て消してDeniedにする。読み込み要求は表示中のLoading pageだけ、同時に1件、最大64 KiBとし、
+空の非終端応答後はproducerからの明示通知まで再要求しない。同一scope/handleを複数sectionが参照する
+場合は1つのnative bodyとread streamを共有する。I/O、deadline、取得済み要求のfinalizeはcompositionが
+所有し、hostの世代更新やcloseで暗黙に完了扱いにしない。
+
+分離したDebug solution buildは警告0・error 0。混在hostを含むdocument試験23件、追加後のhost試験5件、
+既存focus試験の単独再実行が合格した。暗色/明色/High Contrast、96/144/192 DPIでsection切替、resize、
+表示、find、selectionを2反復したdual captureは180/180件合格し、probe processの終了も確認した。
+最初の描画runは外側surfaceを縮めた旧領域にselector/scrollbarが残ることを検出し、outer moveの再描画と
+親theme transactionを修正した後に同じ閾値で合格した。既存32 MiBログ性能試験は変更後binaryの単独実行で
+60.37秒となり、既存60秒条件を0.37秒超えた。閾値は変更せず、混在host固有の合格とは分けて残余とする。
+
+実アプリのtab/command/backup、owner/page公開、sampleはU06に残る。独自Markdown rendererのUIA
+TextPatternと全pageを横断する検索は実装済みとは扱わない。

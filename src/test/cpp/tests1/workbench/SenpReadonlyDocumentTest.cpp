@@ -244,14 +244,20 @@ TEST_F(SenpReadonlyDocument, EmptyContentIsValidAndControlUnitsRemainVisible)
 	document.title = L"bad\ntitle"; EXPECT_EQ(SenpDocumentResult::Invalid, PrepareSenpReadonlyDocument(document).result);
 }
 
-TEST_F(SenpReadonlyDocument, TextResourcesRemainTypedUnsupportedUntilTheirOwnRendererIsBound)
+TEST_F(SenpReadonlyDocument, GenericModelRetainsTextReferencesWhileStructuredRendererRejectsThem)
 {
 	auto document = Document(); document.sections.push_back(senp::effect::TextResourceSection{ L"log-1", 10, senp::effect::TextStatus::Complete });
 	EXPECT_EQ(SenpDocumentResult::Unsupported, PrepareSenpReadonlyDocument(document).result);
 	ASSERT_EQ(SenpDocumentResult::Accepted, model.Begin(Request()).result);
 	auto result = model.Apply(Request(), document);
-	EXPECT_EQ(SenpDocumentResult::Unsupported, result.result); EXPECT_TRUE(result.retired);
-	EXPECT_EQ(SenpDocumentState::Failed, model.State()); EXPECT_FALSE(model.Content());
+	EXPECT_EQ(SenpDocumentResult::Accepted, result.result); EXPECT_TRUE(result.retired);
+	EXPECT_EQ(SenpDocumentState::Ready, model.State()); EXPECT_EQ(document, *model.Content());
+	const auto details = PrepareSenpReadonlyDocument(document, SenpStructuredSectionRange{ 0, 3 });
+	EXPECT_EQ(SenpDocumentResult::Accepted, details.result);
+	EXPECT_EQ(SenpDocumentResult::Unsupported,
+		PrepareSenpReadonlyDocument(document, SenpStructuredSectionRange{ 3, 1 }).result);
+	EXPECT_EQ(SenpDocumentResult::Invalid,
+		PrepareSenpReadonlyDocument(document, SenpStructuredSectionRange{ 4, 1 }).result);
 }
 
 TEST_F(SenpReadonlyDocument, ReplacingARequestReturnsItsCancellationOwnerAndRejectsLateResults)
