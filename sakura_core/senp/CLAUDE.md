@@ -182,6 +182,17 @@ generation and immutable resource revision. The broker must also prove that the
 grant is currently live before every call. Opaque handles are identities, not
 bearer credentials; a Wasm label must never reconstruct authorization.
 
+`CSenpToolGrants` is the Control-owned authorization gate behind that live-grant
+check. Issuance starts from an OS-observed IPC session ID and peer PID and asks a
+trusted package authority for the enabled extension digest, management revision,
+and approved capabilities. It never promotes Editor-supplied owner fields into
+authority. Every use rechecks the connection, complete owner scope, expiry, and
+current trusted authority. Session loss, owner replacement, profile shutdown,
+and broker shutdown have explicit revocation paths. The 64-record limit and
+five-minute lifetime bound abandoned grants. T03 adds the provider policy; this
+registry alone cannot construct an executable, argv, environment, or network
+request.
+
 Append accepts the next byte offset and at most 64 KiB. Fixed 64 KiB pages bound
 one resource to 32 MiB and the Control store to 64 MiB of allocated payload pages,
 including unused tails, with at most 64 resource slots. Pages and their index

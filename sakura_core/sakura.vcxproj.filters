@@ -1383,6 +1383,9 @@
     <ClInclude Include="..\sakura_core\senp\SenpTextResource.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\senp\SenpToolGrants.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\workbench\editor\SenpReadonlyDocument.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
@@ -3296,6 +3299,9 @@
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\senp\SenpTextResource.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\senp\SenpToolGrants.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\senp\SenpEffectProtocol.cpp">

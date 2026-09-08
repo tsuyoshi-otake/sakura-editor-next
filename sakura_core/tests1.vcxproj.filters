@@ -768,6 +768,9 @@
     <ClCompile Include="..\src\test\cpp\tests1\senp\SenpTextResourceTest.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\senp\SenpToolGrantsTest.cpp">
+      <Filter>Test Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\senp\SenpEffectProtocolTest.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>
