@@ -112,6 +112,16 @@ Pollはworker終了後にだけjoinする。join失敗を次のPollで再試行�
 失敗joinを一度再試行できる。processの実終了を確認できなければfalseを返し、成功扱いやdetachはしない。
 G03同様、OS故障まで含むcleanup完了の保証ではない。
 
+[CSenpOwnerRequests](../sakura_core/senp/SenpOwnerRequests.h)はcurrent ownerとnative consumerの間で
+owner全体のrequest generationを発行する。Busyなど未受理の要求ではgenerationを消費しない。
+`ToolCompleted`などの派生eventは新しいoperation IDを持つが、元要求のowner/workspace/account/request
+scopeを維持する。最大16 lineageとterminalを保持し、取消は同じlineageの全invocationを対象にする。
+
+ownerの`Poll`中は再入を拒否するため、publicationの`Apply`はconsumer callbackを直接呼ばず、
+検証済みterminalをこのbrokerへ積むだけにする。native compositionは`Poll`が戻った後に取り出して
+Tree/document/commandへ反映し、派生処理がなければ明示的に`Finish`する。この順序により、Tree page
+反映の末尾で次の可視loadが必要になっても、途中のBusyを実際のprovider failureへ変換しない。
+
 ## native ViewContainer/Viewの投影（U01）
 
 [CSenpViewContainers](../sakura_core/workbench/viewcontainer/SenpViewContainer.h)はowner generationごとに

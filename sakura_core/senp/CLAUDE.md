@@ -111,6 +111,14 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   and reports unconfirmed process exit instead of freeing capacity. Generations
   and digest/scope identity never authorize a retained result unless IsCurrent
   is still true at its publication boundary.
+- `CSenpOwnerRequests` is the UI-thread bridge from one current owner to its
+  native consumers. It increments the owner-wide request generation only after
+  admission, gives derived tool completions a new operation ID under the same
+  lineage, and bounds live lineages and queued terminals to 16. Publication
+  `Apply` may only enqueue through `Publish`; consumers drain after owner `Poll`
+  returns, then either derive more work or explicitly `Finish`. Cancelling a
+  lineage suppresses already-queued delivery and cancels every live invocation.
+  Close this broker before destroying its borrowed owner service.
 
 - `README.md`, `senp.json`, `LICENSE`, and complete SHA-256 coverage are
   mandatory. `module/extension.wasm` is mandatory only when `runtime` is

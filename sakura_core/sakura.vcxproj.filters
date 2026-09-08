@@ -3295,6 +3295,9 @@
 	<ClCompile Include="..\sakura_core\senp\SenpContributionOwners.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
+	<ClCompile Include="..\sakura_core\senp\SenpOwnerRequests.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
 	<ClCompile Include="..\sakura_core\senp\SenpRuntimeService.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
