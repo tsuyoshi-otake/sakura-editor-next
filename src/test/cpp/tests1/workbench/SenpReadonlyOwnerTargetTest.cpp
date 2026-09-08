@@ -79,6 +79,35 @@ TEST_F(SenpReadonlyOwnerTargetTest, PublishesRefreshesAndRevokesNativeDocument)
 	EXPECT_EQ(std::string("legacy"), *core.Snapshot().group.activeInputId);
 }
 
+TEST_F(SenpReadonlyOwnerTargetTest, StyleObserverExpiresOnRevokeAndDestruction)
+{
+	const auto palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Light);
+	LOGFONT font{};
+	(void)::GetObjectW(::GetStockObject(DEFAULT_GUI_FONT), sizeof(font), &font);
+	SenpReadonlyOwnerStyleSink revoked, destroyed;
+	{
+		CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 940000);
+		revoked = target.StyleSink();
+		ASSERT_TRUE(revoked(palette, font, 144));
+		const senp::effect::OperationContext request{ L"styled.document", 3, 4, 5, 1 };
+		ASSERT_TRUE(target.BeginDocument(L"issue/296", request));
+		ASSERT_TRUE(target.PublishDocument(request, { L"issue/296", L"Styled document", 1,
+			{ senp::effect::MetadataSection{ { { L"State", L"Ready" } } } } }));
+		ASSERT_TRUE(revoked(palette, font, 192));
+		EXPECT_EQ(1U, target.DocumentCount());
+		target.Revoke();
+		EXPECT_FALSE(revoked(palette, font, 96));
+		EXPECT_EQ(0U, target.DocumentCount());
+	}
+	EXPECT_FALSE(revoked(palette, font, 96));
+	{
+		CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 950000);
+		destroyed = target.StyleSink();
+		ASSERT_TRUE(destroyed(palette, font, 96));
+	}
+	EXPECT_FALSE(destroyed(palette, font, 96));
+}
+
 TEST_F(SenpReadonlyOwnerTargetTest, RejectsForeignTerminalAndSurvivesExternalCoreClose)
 {
 	CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 930000);

@@ -1,5 +1,27 @@
 # P4 Window Adapter Guidance
 
+## SENP v2 window lifecycle
+
+`CEditWnd` creates `CSenpWindowExtensions` after the native page pool and readonly
+editor controller exist, before initial layout. V2 package declarations bypass
+the runtime's legacy host-provider startup batch. Package changes and explicit
+workspace changes synchronize declarations and authority, then reconcile the
+existing Layout service; native View visibility follows the committed Part
+projection before final geometry and focus. Focus requests update the Layout
+model using the declared View ID.
+
+The existing 500 ms edit timer polls the bounded owner composition. It performs
+no package discovery, filesystem read, or account refresh on each tick. A failed
+sync or projection retires the extension composition; ordinary timer polling
+does not restart it. Close revokes native authority before readonly editors,
+pages and command callbacks disappear, retaining failed physical runtime cleanup
+for an explicit later close. Surface IDs occupy a bounded, non-reused SENP range.
+Readonly style observers hold weak lifetime gates and are pruned after revoke.
+
+Account generation zero means no adopted Control account. This connection does
+not authorize GitHub reads or replace the pending Control grant-client boundary.
+Schema-v2 package admission remains gated on complete end-to-end verification.
+
 ## Restricted Mode retirement (2026-08-15, #172)
 
 Workspace Trust / Restricted Mode compatibility has been retired. The native window no longer owns a trust banner, status-bar entry, Workspace Trust editor page, startup prompt, or untrusted-file load gate. Normal file loading proceeds through the existing CLoadAgent path without a trust decision. Do not reintroduce these surfaces or gate loads on workspace trust unless a new, explicitly approved product capability replaces them.

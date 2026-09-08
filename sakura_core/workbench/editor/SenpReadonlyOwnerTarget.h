@@ -15,6 +15,8 @@ namespace workbench::editor {
 using SenpOwnerCommandCompleted = std::function<bool(const senp::effect::OperationContext&,
 	const senp::effect::CompleteCommand&)>;
 using SenpOwnerResourceReleased = std::function<bool(std::wstring_view)>;
+//! UI-thread-only observer. False means its owner has been revoked or destroyed.
+using SenpReadonlyOwnerStyleSink = std::function<bool(const theme::ThemePalette&, const LOGFONT&, unsigned int)>;
 
 enum class SenpReadonlyOwnerTargetState : std::uint8_t {
 	Ready, Invalid, ModelBeginFailed, ModelApplyFailed, HostFailed, EditorOpenFailed, EditorStoreFailed,
@@ -51,6 +53,7 @@ public:
 	void Revoke() noexcept override;
 
 	void SetStyle(const theme::ThemePalette& palette, const LOGFONT& font, unsigned int dpi) noexcept;
+	[[nodiscard]] SenpReadonlyOwnerStyleSink StyleSink() const;
 	[[nodiscard]] std::optional<std::string> InputId(std::wstring_view resourceId) const;
 	[[nodiscard]] SenpReadonlyDocumentHost* Host(std::wstring_view resourceId) const noexcept;
 	[[nodiscard]] std::size_t DocumentCount() const noexcept;
@@ -71,6 +74,7 @@ private:
 	SenpTextResourceView::CopySink m_copy;
 	SenpOwnerCommandCompleted m_commandCompleted;
 	SenpOwnerResourceReleased m_resourceReleased;
+	std::shared_ptr<CSenpReadonlyOwnerTarget*> m_styleLifetime;
 	std::map<std::wstring, Pending, std::less<>> m_pending;
 	std::map<std::wstring, std::shared_ptr<Document>, std::less<>> m_documents;
 	std::size_t m_surfaceBlocks{};

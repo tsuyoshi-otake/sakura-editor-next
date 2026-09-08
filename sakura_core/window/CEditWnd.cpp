@@ -128,6 +128,8 @@
 #include "workbench/editor/CEmptyEditorSurface.h"
 #include "workbench/editor/EditorCommandIds.h"
 #include "workbench/editor/SenpReadonlyEditorController.h"
+#include "workbench/editor/SenpReadonlyOwnerTarget.h"
+#include "workbench/SenpWindowExtensions.h"
 #include "workbench/editor/WorkbenchCommandPaletteModel.h"
 #include "workbench/editor/EditorWorkingCopyCoordinator.h"
 #include "workbench/editor/persistence/EditorWorkingCopyLifecycleBridge.h"
@@ -3091,10 +3093,11 @@ bool CEditWnd::InitializeWorkbench()
 	m_extensionsTool = m_viewContainerPages->Extensions();
 	if (m_extensionsTool != nullptr && m_workbenchRuntime != nullptr) {
 		m_extensionsTool->SetExtensionsChangedCallback([this] {
-			// Runtime and language projections can refresh in-place. Native View pages
-			// are a startup batch, so workbench contribution changes apply to the next window.
+			// V2 declarations and authority update together in the window owner.
+			// Legacy host-provided contributions remain a startup batch.
 			if (auto* runtime = GetSenpRuntime()) runtime->NotifyExtensionsChanged();
 			if (auto* languages = GetSenpLanguageService()) languages->NotifyExtensionsChanged();
+			if (!SynchronizeSenpWindowExtensions()) StopSenpWindowExtensions();
 			Views_Redraw();
 		});
 		m_extensionsTool->SetManagementService(m_workbenchRuntime->Extensions());
@@ -4066,6 +4069,10 @@ bool CEditWnd::InitializeWorkbench()
 		}
 	}
 
+	if (!InitializeSenpWindowExtensions()) {
+		CloseWorkbench();
+		return false;
+	}
 	(void)ApplyWorkbenchTheme();
 	ApplyWorkbenchSettingsFromSharedData(false);
 	if (!ApplyInitialWorkbenchLayoutState()) {
@@ -6071,8 +6078,111 @@ void CEditWnd::SetStatusbarEntryHidden(std::string_view id, bool hidden)
 	LayoutStatusBarParts();
 }
 
+bool CEditWnd::InitializeSenpWindowExtensions()
+{
+	if (!m_workbenchRuntime || !m_viewContainerPages || !m_senpReadonlyEditors) return true;
+	const auto* management = m_workbenchRuntime->Extensions();
+	if (!management) return true;
+	const auto availability = management->Snapshot().state;
+	if (availability != senp::EManagementState::Ready
+		&& availability != senp::EManagementState::ReadyWithDiagnostics) return true;
+	if (m_senpWindowExtensions) return false;
+	std::array<wchar_t, 32768> executable{};
+	const auto length = ::GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size()));
+	if (!length || length >= executable.size()) return false;
+	const auto host = (std::filesystem::path(std::wstring(executable.data(), length)).parent_path()
+		/ L"sakura-senp-host.exe").native();
+	m_senpWindowExtensions = std::make_unique<workbench::CSenpWindowExtensions>(
+		m_workbenchRuntime->Contributions(), *m_viewContainerPages, GetHwnd(), host,
+		[this](const senp::ExtensionDescriptor&, const senp::ContributionOwnerIdentity& owner)
+			-> std::unique_ptr<workbench::ISenpOwnerProjectionTarget> {
+			// Each owner reserves every possible document/page surface ID up front.
+			// Never recycle IDs after revoke; frame finalization can outlive its owner.
+			constexpr std::uint64_t block = workbench::editor::SenpReadonlyWorkbench::kMaximumInputs * 32;
+			constexpr std::uint64_t base = 0x53454e5000000001ULL;
+			if (!m_senpReadonlyEditors || m_senpSurfaceSequence >= 0xffffffffULL / block) return {};
+			const auto first = base + m_senpSurfaceSequence++ * block;
+			auto target = std::make_unique<workbench::editor::CSenpReadonlyOwnerTarget>(
+				owner, *m_senpReadonlyEditors, GetHwnd(), first);
+			const auto mode = m_pShareData->m_Common.m_sWindow.m_bDarkMode
+				? theme::ThemeMode::Dark : theme::ThemeMode::Light;
+			m_senpStyleSinks.push_back(target->StyleSink());
+			ApplySenpWindowStyle(theme::CThemeService::EffectivePalette(mode));
+			return target;
+		},
+		[this](std::string_view viewId) {
+			if (!m_senpWindowExtensionsActive || !m_workbenchRuntime) return false;
+			const auto operation = NextWorkbenchLayoutOperationId("senp.focus-view");
+			if (!operation) return false;
+			const auto result = m_workbenchRuntime->LayoutState().SetFocus({
+				.operation = { *operation, m_workbenchRuntime->LayoutState().Snapshot().revision },
+				.focus = { .viewId = std::string(viewId) },
+			});
+			return result.status == workbench::layout::EWorkbenchLayoutOperationStatus::Succeeded
+				|| result.status == workbench::layout::EWorkbenchLayoutOperationStatus::NotApplicable;
+		});
+	m_senpWindowExtensionsActive = true;
+	return SynchronizeSenpWindowExtensions();
+}
+
+bool CEditWnd::SynchronizeSenpWindowExtensions() try
+{
+	if (!m_senpWindowExtensionsActive) return true;
+	if (!m_workbenchRuntime || !m_workbenchRuntime->Extensions()) return false;
+	const auto status = m_senpWindowExtensions->Synchronize(m_workbenchRuntime->Extensions()->Snapshot(),
+		m_workbenchRuntime->WorkspaceContext().Snapshot().revision,
+		0, std::chrono::steady_clock::now());
+	// Zero has no adopted account authority. GitHub reads remain unsupported
+	// until the Control-owned authenticated grant client is connected.
+	if (status != workbench::SenpWindowExtensionsStatus::Synchronized) return false;
+	const auto operation = NextWorkbenchLayoutOperationId("senp.reconcile-contributions");
+	if (!operation) return false;
+	const auto result = m_workbenchRuntime->LayoutState().Reconcile(m_workbenchRuntime->Contributions().Snapshot(), {
+		.operation = { *operation, m_workbenchRuntime->LayoutState().Snapshot().revision },
+	});
+	return result.status == workbench::layout::EWorkbenchLayoutOperationStatus::Succeeded
+		|| result.status == workbench::layout::EWorkbenchLayoutOperationStatus::NotApplicable;
+} catch (...) {
+	// Every caller retires the window owner on failure, including exceptions.
+	return false;
+}
+
+void CEditWnd::StopSenpWindowExtensions() noexcept
+{
+	const bool wasActive = std::exchange(m_senpWindowExtensionsActive, false);
+	m_senpStyleSinks.clear();
+	if (m_senpWindowExtensions) {
+		if (m_senpWindowExtensions->Close()) m_senpWindowExtensions.reset();
+		else ::OutputDebugStringW(L"Sakura Editor NEXT: SENP authority closed; runtime cleanup retained for explicit close.\n");
+	}
+	if (!wasActive || !m_workbenchRuntime) return;
+	try {
+		const auto operation = NextWorkbenchLayoutOperationId("senp.retire-contributions");
+		if (operation) {
+			const auto result = m_workbenchRuntime->LayoutState().Reconcile(m_workbenchRuntime->Contributions().Snapshot(), {
+				.operation = { *operation, m_workbenchRuntime->LayoutState().Snapshot().revision },
+			});
+			if (result.status == workbench::layout::EWorkbenchLayoutOperationStatus::Succeeded
+				|| result.status == workbench::layout::EWorkbenchLayoutOperationStatus::NotApplicable) return;
+		}
+	} catch (...) {
+		// Authority and native callbacks are already closed. A later layout
+		// application fails closed if its stale model still names removed pages.
+	}
+	::OutputDebugStringW(L"Sakura Editor NEXT: SENP authority closed; contribution layout reconciliation failed.\n");
+}
+
+void CEditWnd::ApplySenpWindowStyle(const theme::ThemePalette& palette)
+{
+	LOGFONT font{};
+	(void)::GetObjectW(::GetStockObject(DEFAULT_GUI_FONT), sizeof(font), &font);
+	const auto dpi = ::GetDpiForWindow(GetHwnd());
+	std::erase_if(m_senpStyleSinks, [&](const auto& sink) { return !sink(palette, font, dpi); });
+}
+
 void CEditWnd::CloseWorkbench() noexcept
 {
+	StopSenpWindowExtensions();
 	if (m_gitBranchCommandSession) {
 		m_gitBranchCommandSession->store(false);
 		m_gitBranchCommandSession.reset();
@@ -6269,6 +6379,7 @@ bool CEditWnd::ApplyWorkbenchTheme(std::wstring_view previewTheme)
 	::DrawMenuBar(GetHwnd());
 	if (m_customFrame) m_customFrame->SetThemeMode(mode);
 	const auto palette = theme::CThemeService::EffectivePalette(mode);
+	ApplySenpWindowStyle(palette);
 	m_cStatusBar.SetPalette(palette);
 	if (m_commandPaletteOverlay) m_commandPaletteOverlay->SetPalette(palette);
 	if (m_cTabWnd.GetHwnd()) m_cTabWnd.UpdateTheme();
@@ -6598,6 +6709,10 @@ bool CEditWnd::ApplyCurrentWorkbenchLayoutState(bool finalizeProjection,
 	if (!committed.Succeeded()) return false;
 	const auto* projection = m_paneCompositeProjection->LastCommittedProjection();
 	if (projection == nullptr) return false;
+	if (m_senpWindowExtensionsActive && !m_senpWindowExtensions->ApplyLayout(snapshot)) {
+		StopSenpWindowExtensions();
+		return false;
+	}
 
 	const auto outline = std::ranges::find(snapshot.views,
 		workbench::layout::ids::view::Outline, &workbench::layout::WorkbenchViewState::viewId);
@@ -6657,6 +6772,8 @@ void CEditWnd::ApplyPaneCompositeFocus(
 		return;
 	}
 	if (!focus.location) return;
+	if (focus.viewId && m_senpWindowExtensionsActive
+		&& m_senpWindowExtensions->FocusView(*focus.viewId)) return;
 	if (*focus.location == Location::Panel) {
 		if (m_bottomWorkbenchPanel) m_bottomWorkbenchPanel->ActivateTool();
 		return;
@@ -7798,6 +7915,7 @@ void CEditWnd::ApplySemanticWorkspaceContext()
 		else m_workspaceContext->SetExplicitRoot(root);
 	}
 	if (m_explorerTool) m_explorerTool->SetRoot(root);
+	if (!SynchronizeSenpWindowExtensions()) StopSenpWindowExtensions();
 	if (m_scmTool) {
 		m_scmTool->SetRoot(root);
 	}
@@ -15856,6 +15974,10 @@ void CEditWnd::OnEditTimer( void )
 	// タイマーの呼び出し間隔を 500msに変更。300*10→500*6にする。 20060128 aroka
 	IncrementTimerCount(6);
 	UpdateMarkdownPreviewIfNeeded();
+	if (m_senpWindowExtensionsActive
+		&& !m_senpWindowExtensions->Poll(std::chrono::steady_clock::now())) {
+		StopSenpWindowExtensions();
+	}
 	if (m_workingCopyLifecycleBridge && !m_workingCopyBackendEffectInProgress) {
 		(void)m_workingCopyLifecycleBridge->Flush(::GetTickCount64(), false);
 	}

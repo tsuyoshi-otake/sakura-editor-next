@@ -403,6 +403,8 @@ bool CWorkbenchRuntime::RegisterExtensionWorkbenchContributions(
 	std::vector<layout::WorkbenchViewContainerDescriptor> containers;
 	std::vector<layout::WorkbenchViewDescriptor> views;
 	for (const auto& extension : snapshot.extensions) {
+		// V2 declarations belong to the editor window's lazy runtime owner.
+		if (extension.runtime.schemaVersion == 2) continue;
 		if (!extension.installed || !extension.enabled || !extension.builtIn
 			|| extension.trust != L"builtin") continue;
 

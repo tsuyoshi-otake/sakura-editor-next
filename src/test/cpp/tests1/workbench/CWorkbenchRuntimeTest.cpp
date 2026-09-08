@@ -1698,6 +1698,32 @@ TEST(CWorkbenchRuntime, RegistersEnabledTrustedSenpHostViewsBeforePublishingRead
 	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
 }
 
+TEST(CWorkbenchRuntime, LeavesV2DeclarationsToWindowOwnerWithoutFailingLegacyStartup)
+{
+	auto extension = ProjectsExtension();
+	extension.runtime.schemaVersion = 2;
+	extension.runtime.abi = L"sakura:senp/extension@2.0.0";
+	extension.views.front().provider = L"senp.tree";
+	senp::ManagementSnapshot management{
+		.state = senp::EManagementState::Created,
+		.revision = 1,
+		.extensions = { std::move(extension) },
+	};
+	RuntimeFixture fixture(Bootstrap(), {}, {}, {}, std::nullopt, {}, {},
+		std::make_unique<FakeSenpManagementService>(std::move(management)));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+	const auto contributions = fixture.runtime->Contributions().Snapshot();
+	EXPECT_EQ(1U, contributions.revision);
+	EXPECT_EQ(contributions.viewContainers.end(),
+		std::ranges::find_if(contributions.viewContainers, [](const auto& entry) {
+			return entry.descriptor.id == layout::ids::viewContainer::Projects;
+		}));
+	ASSERT_NE(nullptr, fixture.runtime->Extensions());
+	ASSERT_EQ(1U, fixture.runtime->Extensions()->Snapshot().extensions.size());
+	EXPECT_EQ(2U, fixture.runtime->Extensions()->Snapshot().extensions.front().runtime.schemaVersion);
+	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
+}
+
 TEST(CWorkbenchRuntime, SkipsDisabledSenpHostViews)
 {
 	auto extension = ProjectsExtension();

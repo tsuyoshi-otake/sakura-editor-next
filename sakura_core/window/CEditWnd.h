@@ -95,6 +95,7 @@ enum class TerminalShortcutPreset : std::uint8_t;
 }
 namespace theme {
 class CColorThemeRegistry;
+struct ThemePalette;
 }
 namespace markdown {
 class CMarkdownPreviewWnd;
@@ -112,6 +113,7 @@ class ISenpRuntimeService;
 }
 namespace workbench {
 class CActivityBar;
+class CSenpWindowExtensions;
 class IWorkbenchRuntime;
 class CWorkbenchPanelHost;
 class CWorkspaceContext;
@@ -722,6 +724,10 @@ private:
 	void PostDeferredStartupWorkbenchIfReady();
 	void CompleteDeferredStartupWorkbench();
 	void CloseWorkbench() noexcept;
+	[[nodiscard]] bool InitializeSenpWindowExtensions();
+	[[nodiscard]] bool SynchronizeSenpWindowExtensions();
+	void StopSenpWindowExtensions() noexcept;
+	void ApplySenpWindowStyle(const theme::ThemePalette& palette);
 	//! Applies the committed theme, or one non-persistent Quick Pick preview.
 	//! An invalid explicit preview leaves the currently painted theme untouched.
 	[[nodiscard]] bool ApplyWorkbenchTheme(std::wstring_view previewTheme = {});
@@ -1274,6 +1280,11 @@ private:
 	//! Both side bars borrow their ViewContainer controls from this shared pool, so a
 	//! container survives being moved from one physical Part to the other.
 	std::shared_ptr<workbench::viewcontainer::CViewContainerPages> m_viewContainerPages;
+	//! Revoked before the borrowed pages and readonly editor controller are closed.
+	std::unique_ptr<workbench::CSenpWindowExtensions> m_senpWindowExtensions;
+	std::uint64_t m_senpSurfaceSequence{};
+	bool m_senpWindowExtensionsActive{};
+	std::vector<std::function<bool(const theme::ThemePalette&, const LOGFONT&, unsigned int)>> m_senpStyleSinks;
 	//! Single staged native projection owner for Primary Side Bar, Panel, and Auxiliary Bar.
 	std::unique_ptr<workbench::win32::PaneCompositeProjectionService>
 		m_paneCompositeProjection;

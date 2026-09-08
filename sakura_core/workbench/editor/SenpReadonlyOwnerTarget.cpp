@@ -65,7 +65,8 @@ CSenpReadonlyOwnerTarget::CSenpReadonlyOwnerTarget(senp::ContributionOwnerIdenti
 	SenpOwnerResourceReleased resourceReleased)
 	: m_owner(std::move(owner)), m_editors(editors), m_parent(parent),
 	  m_firstSurfaceId(firstSurfaceId), m_resources(resources), m_copy(std::move(copy)),
-	  m_commandCompleted(std::move(commandCompleted)), m_resourceReleased(std::move(resourceReleased))
+	  m_commandCompleted(std::move(commandCompleted)), m_resourceReleased(std::move(resourceReleased)),
+	  m_styleLifetime(std::make_shared<CSenpReadonlyOwnerTarget*>(this))
 {
 	if (!ExtensionId(m_owner.extensionId, m_scope.extensionId)) {
 		m_revoked = true;
@@ -212,6 +213,17 @@ bool CSenpReadonlyOwnerTarget::ReleaseResource(std::wstring_view handle) noexcep
 	try { return m_resourceReleased(handle); } catch (...) { return false; }
 }
 
+SenpReadonlyOwnerStyleSink CSenpReadonlyOwnerTarget::StyleSink() const
+{
+	return [lifetime = std::weak_ptr(m_styleLifetime)](const theme::ThemePalette& palette,
+		const LOGFONT& font, unsigned int dpi) noexcept {
+		const auto alive = lifetime.lock();
+		if (!alive || !*alive || (*alive)->m_revoked || dpi < 48 || dpi > 768) return false;
+		(*alive)->SetStyle(palette, font, dpi);
+		return *alive != nullptr;
+	};
+}
+
 void CSenpReadonlyOwnerTarget::SetStyle(const theme::ThemePalette& palette,
 	const LOGFONT& font, const unsigned int dpi) noexcept
 {
@@ -244,6 +256,7 @@ std::size_t CSenpReadonlyOwnerTarget::DocumentCount() const noexcept
 void CSenpReadonlyOwnerTarget::Revoke() noexcept
 {
 	if (m_revoked) return;
+	*m_styleLifetime = nullptr;
 	m_revoked = true; m_pending.clear();
 	m_state = SenpReadonlyOwnerTargetState::Revoked;
 	(void)m_editors.Revoke(m_scope);
