@@ -6,6 +6,8 @@
 #include "env/ShareDataTestSuite.hpp"
 #include "outline/CDlgFuncList.h"
 #include "workbench/SenpOwnerPublication.h"
+#include "workbench/SenpViewDeclarations.h"
+#include "workbench/SenpExtensionActivation.h"
 
 #include <deque>
 
@@ -194,6 +196,88 @@ protected:
 
 	HWND m_owner{};
 };
+
+TEST_F(SenpOwnerPublicationTest, NativeDeclarationsPublishBeforeRuntimeAndSurviveItsRevocation)
+{
+	layout::WorkbenchContributionRegistry catalog;
+	CDlgFuncList dialog;
+	viewcontainer::CViewContainerPages pages(dialog);
+	ASSERT_TRUE(pages.Create(m_owner));
+	int activations{};
+	CSenpViewDeclarations declarations(catalog, pages, m_owner,
+		[&](std::wstring_view, bool) { ++activations; return SenpExtensionActivationState::Preparing; },
+		[](std::string_view) { return true; });
+	const std::vector<layout::WorkbenchViewContainerDescriptor> containers{
+		{ "sample.senp", "Sample", layout::EViewContainerLocation::Sidebar, 10, "", false,
+			{ layout::EViewContainerLocation::Sidebar } } };
+	const std::vector<layout::WorkbenchViewDescriptor> views{
+		{ "sample.projects", "sample.senp", "Projects", 10, true, true, "senp.tree" } };
+	ASSERT_EQ(SenpViewDeclarationStatus::Registered, declarations.Register({ "sample.extension", 100 }, containers, views));
+	EXPECT_TRUE(pages.Contains("sample.senp")); EXPECT_EQ(0, activations);
+	const auto revision = catalog.Snapshot().revision;
+	EXPECT_EQ(SenpViewDeclarationStatus::Unchanged, declarations.Register({ "sample.extension", 101 }, containers, views));
+	EXPECT_EQ(revision, catalog.Snapshot().revision);
+	senp::CSenpContributionOwners owners([](senp::EffectRuntimeLaunch launch) {
+		return std::make_unique<Runtime>(std::move(launch), std::vector<senp::effect::Effect>{});
+	});
+	CSenpOwnerPublicationHub hub(owners, catalog, pages);
+	auto target = std::make_shared<TargetState>();
+	auto change = owners.Prepare(Launch(), std::wstring(64, L'b'),
+		[&](const auto& candidate, const auto* previous) {
+			return hub.Prepare(candidate, previous, SenpOwnerPublicationOptions(
+				{ { views.front(), { "sample.open" } } }, std::make_unique<Target>(target),
+				[&](const auto& owner, auto trees) { return declarations.Bind(owner, std::move(trees)); }));
+		}, Clock::now());
+	ASSERT_EQ(senp::OwnerChangeStatus::Accepted, change.status);
+	owners.Poll(Clock::now()); ASSERT_TRUE(hub.Pump(Clock::now()));
+	ASSERT_TRUE(owners.IsCurrent(change.owner));
+	ASSERT_TRUE(declarations.Pump(L"sample.extension", SenpExtensionActivationState::Active));
+	EXPECT_EQ(revision, catalog.Snapshot().revision);
+	EXPECT_TRUE(owners.Revoke(L"sample.extension", senp::effect::StopReason::Disabled));
+	ASSERT_TRUE(declarations.Pump(L"sample.extension", SenpExtensionActivationState::Disabled));
+	EXPECT_TRUE(pages.Contains("sample.senp")); EXPECT_EQ(revision, catalog.Snapshot().revision);
+	EXPECT_EQ(100U, catalog.Snapshot().owners.front().generation);
+	EXPECT_EQ(1, target->revoked);
+	hub.Close();
+	ASSERT_TRUE(declarations.Remove(L"sample.extension"));
+	EXPECT_FALSE(pages.Contains("sample.senp")); EXPECT_TRUE(catalog.Snapshot().owners.empty());
+	ASSERT_EQ(SenpViewDeclarationStatus::Registered, declarations.Register({ "sample.extension", 101 }, containers, views));
+	EXPECT_TRUE(pages.Contains("sample.senp")); EXPECT_EQ(0, activations);
+	declarations.Close();
+	EXPECT_FALSE(pages.Contains("sample.senp")); EXPECT_TRUE(catalog.Snapshot().owners.empty());
+	EXPECT_EQ(SenpViewDeclarationStatus::Stopped, declarations.Register({ "sample.extension", 102 }, containers, views));
+	pages.Close();
+}
+
+TEST_F(SenpOwnerPublicationTest, NativeDeclarationConflictsPreserveCatalogAndOtherPages)
+{
+	layout::WorkbenchContributionRegistry catalog;
+	CDlgFuncList dialog;
+	viewcontainer::CViewContainerPages pages(dialog);
+	ASSERT_TRUE(pages.Create(m_owner));
+	CSenpViewDeclarations declarations(catalog, pages, m_owner,
+		[](std::wstring_view, bool) { return SenpExtensionActivationState::Preparing; },
+		[](std::string_view) { return true; });
+	std::vector<layout::WorkbenchViewContainerDescriptor> containers{
+		{ "sample.senp", "Sample", layout::EViewContainerLocation::Sidebar, 10, "", false,
+			{ layout::EViewContainerLocation::Sidebar } } };
+	std::vector<layout::WorkbenchViewDescriptor> views{
+		{ "sample.projects", "sample.senp", "Projects", 10, true, true, "senp.tree" } };
+	ASSERT_EQ(SenpViewDeclarationStatus::Registered, declarations.Register({ "sample.extension", 1 }, containers, views));
+	const auto revision = catalog.Snapshot().revision;
+	views.front().title = "Changed declaration";
+	EXPECT_EQ(SenpViewDeclarationStatus::Conflict, declarations.Register({ "sample.extension", 2 }, containers, views));
+	EXPECT_EQ(SenpViewDeclarationStatus::Failed, declarations.Register({ "foreign.extension", 2 }, containers, views));
+	ASSERT_TRUE(pages.RegisterContributedPages({ { "reserved.page", { layout::EViewContainerLocation::Sidebar },
+		[]() -> std::unique_ptr<viewcontainer::IViewContainerPage> { return {}; } } }).Succeeded());
+	containers.front().id = "reserved.page"; views.front().id = "reserved.view"; views.front().containerId = "reserved.page";
+	EXPECT_EQ(SenpViewDeclarationStatus::Failed, declarations.Register({ "foreign.extension", 2 }, containers, views));
+	EXPECT_EQ(revision, catalog.Snapshot().revision); EXPECT_EQ(1U, catalog.Snapshot().owners.size());
+	EXPECT_TRUE(pages.Contains("sample.senp")); EXPECT_TRUE(pages.Contains("reserved.page"));
+	declarations.Close();
+	EXPECT_FALSE(pages.Contains("sample.senp")); EXPECT_TRUE(pages.Contains("reserved.page"));
+	EXPECT_TRUE(catalog.Snapshot().owners.empty()); pages.Close();
+}
 
 TEST_F(SenpOwnerPublicationTest, AtomicallyPublishesCatalogPagesAndQueuedActivation)
 {

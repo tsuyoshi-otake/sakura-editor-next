@@ -430,6 +430,18 @@ The opt-in `DeclaredTreeViews` rendering probe verifies activation status,
 runtime binding, resizing and visibility with the dual-capture protocol. This
 component does not itself register declarations in the workbench catalog.
 
+`CSenpViewDeclarations` owns those native declaration cohorts together with their
+catalog and page registrations. Registration prepares real hidden bodies, both
+revision-fenced candidates, and the retaining map node before either authority
+commits. Unchanged descriptors retain their cohort; conflicting structural edits
+preserve the old registration and report Conflict. That result is an incomplete
+live structural-update boundary, not permission to remove the old cohort first.
+Runtime Bind checks the independently current declaration owner. The window must
+stop the extension runtime before removing a declaration, and stop all runtime
+owners before closing this registry and the borrowed page service. Exact-owner
+cleanup preserves foreign pages and registrations. Its injected native callbacks
+must not pump messages or destroy the owning window/registry while entered.
+
 ## Phase 6 Service Foundations Checkpoint (2026-07-31)
 
 - `CWorkbenchRuntime` owns the process-local Marker and Output authorities.
