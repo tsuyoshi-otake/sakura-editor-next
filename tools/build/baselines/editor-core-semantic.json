@@ -35232,6 +35232,13 @@
       "rule_id": "error.catch_all"
     },
     {
+      "column": 5,
+      "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
+      "line": 148,
+      "path": "sakura_core/platform/controlipc/ControlPlatformRpcServerAdapter.cpp",
+      "rule_id": "error.catch_all"
+    },
+    {
       "column": 4,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
       "line": 71,
@@ -35297,84 +35304,84 @@
     {
       "column": 4,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 88,
+      "line": 91,
       "path": "sakura_core/platform/controlipc/ControlPlatformServiceHost.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 5,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 143,
+      "line": 146,
       "path": "sakura_core/platform/controlipc/ControlPlatformServiceHost.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 5,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 154,
+      "line": 157,
       "path": "sakura_core/platform/controlipc/ControlPlatformServiceHost.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 5,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 170,
+      "line": 173,
       "path": "sakura_core/platform/controlipc/ControlPlatformServiceHost.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 5,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 183,
+      "line": 186,
       "path": "sakura_core/platform/controlipc/ControlPlatformServiceHost.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 5,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 189,
+      "line": 192,
       "path": "sakura_core/platform/controlipc/ControlPlatformServiceHost.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 5,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 203,
+      "line": 206,
       "path": "sakura_core/platform/controlipc/ControlPlatformServiceHost.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 5,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 215,
+      "line": 218,
       "path": "sakura_core/platform/controlipc/ControlPlatformServiceHost.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 4,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 226,
+      "line": 229,
       "path": "sakura_core/platform/controlipc/ControlPlatformServiceHost.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 5,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 252,
+      "line": 255,
       "path": "sakura_core/platform/controlipc/ControlPlatformServiceHost.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 4,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 281,
+      "line": 284,
       "path": "sakura_core/platform/controlipc/ControlPlatformServiceHost.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 5,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 285,
+      "line": 288,
       "path": "sakura_core/platform/controlipc/ControlPlatformServiceHost.cpp",
       "rule_id": "error.catch_all"
     },
@@ -52769,7 +52776,7 @@
     {
       "column": 2,
       "evidence_sha256": "sha256:0a06a841e82a3f7809b4ae59af5eda45e7e805c40e8d967bb1abef61fe1efb49",
-      "line": 138,
+      "line": 141,
       "path": "sakura_core/platform/controlipc/ControlPlatformServiceHost.h",
       "rule_id": "state.mutable_member"
     },
@@ -58614,126 +58621,126 @@
     {
       "column": 16,
       "evidence_sha256": "sha256:a6a451571057d14b6718fe0b9471dc3f320bc282bb2272dd5c3342fa2ab6e0c6",
-      "line": 131,
-      "path": "sakura_core/include/sakura/controlipc/ControlIpcProtocol.h",
-      "rule_id": "state.public_mutable_field"
-    },
-    {
-      "column": 16,
-      "evidence_sha256": "sha256:b35a94b34c35492596441716b56e3c3292554062bd04d14a73d8e125ecffa4b1",
-      "line": 132,
-      "path": "sakura_core/include/sakura/controlipc/ControlIpcProtocol.h",
-      "rule_id": "state.public_mutable_field"
-    },
-    {
-      "column": 18,
-      "evidence_sha256": "sha256:7f44d892859c1284007d014e2dddcdf27df6f3fb175e8131a3916d0724d43dc5",
-      "line": 133,
-      "path": "sakura_core/include/sakura/controlipc/ControlIpcProtocol.h",
-      "rule_id": "state.public_mutable_field"
-    },
-    {
-      "column": 19,
-      "evidence_sha256": "sha256:9b468d1ea416c105f0899942672bc5a77e8bd43cf29c6ea9fed2af61455e780b",
       "line": 134,
       "path": "sakura_core/include/sakura/controlipc/ControlIpcProtocol.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 16,
-      "evidence_sha256": "sha256:9fad2ee773ff79c742d7e5694f74f534da7e63d7441437c6a5253770eca3b508",
+      "evidence_sha256": "sha256:b35a94b34c35492596441716b56e3c3292554062bd04d14a73d8e125ecffa4b1",
       "line": 135,
       "path": "sakura_core/include/sakura/controlipc/ControlIpcProtocol.h",
       "rule_id": "state.public_mutable_field"
     },
     {
-      "column": 16,
-      "evidence_sha256": "sha256:39297d55d64e16a4d683eb0746ab17227bb1e6d534be01f4a80a3da6eda3e46c",
+      "column": 18,
+      "evidence_sha256": "sha256:7f44d892859c1284007d014e2dddcdf27df6f3fb175e8131a3916d0724d43dc5",
       "line": 136,
       "path": "sakura_core/include/sakura/controlipc/ControlIpcProtocol.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 19,
+      "evidence_sha256": "sha256:9b468d1ea416c105f0899942672bc5a77e8bd43cf29c6ea9fed2af61455e780b",
+      "line": 137,
+      "path": "sakura_core/include/sakura/controlipc/ControlIpcProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 16,
+      "evidence_sha256": "sha256:9fad2ee773ff79c742d7e5694f74f534da7e63d7441437c6a5253770eca3b508",
+      "line": 138,
+      "path": "sakura_core/include/sakura/controlipc/ControlIpcProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 16,
+      "evidence_sha256": "sha256:39297d55d64e16a4d683eb0746ab17227bb1e6d534be01f4a80a3da6eda3e46c",
+      "line": 139,
+      "path": "sakura_core/include/sakura/controlipc/ControlIpcProtocol.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 19,
       "evidence_sha256": "sha256:fb4baaadf3006675b86d19accbcf24cf4d0825515810878c8cd5880ee627b69a",
-      "line": 140,
+      "line": 143,
       "path": "sakura_core/include/sakura/controlipc/ControlIpcProtocol.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 28,
       "evidence_sha256": "sha256:24aaf40a7e125f0b9beb0ca9857f9fa3cf157e601107c07c7367d6e9eb114bb9",
-      "line": 141,
+      "line": 144,
       "path": "sakura_core/include/sakura/controlipc/ControlIpcProtocol.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 27,
       "evidence_sha256": "sha256:58714ebba62b648e21b66bfed8ffe2422c51b364d54c6969670d847597035bbf",
-      "line": 145,
+      "line": 148,
       "path": "sakura_core/include/sakura/controlipc/ControlIpcProtocol.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 31,
       "evidence_sha256": "sha256:185787ab900616e622952b9419f93322703b87af5feb4b3291aec5a10a7f273a",
-      "line": 146,
+      "line": 149,
       "path": "sakura_core/include/sakura/controlipc/ControlIpcProtocol.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 27,
       "evidence_sha256": "sha256:af7d030477f63da48eb21fe304ce3330fa7b02e0127ad27b6919ce322f1e3a22",
-      "line": 150,
+      "line": 153,
       "path": "sakura_core/include/sakura/controlipc/ControlIpcProtocol.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 28,
       "evidence_sha256": "sha256:8362de9b8f98a615f449eae8db8d774ee53fe2557eed9e13ad96c488365448ff",
-      "line": 151,
+      "line": 154,
       "path": "sakura_core/include/sakura/controlipc/ControlIpcProtocol.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 16,
       "evidence_sha256": "sha256:0cacb4972533cf3869cb26506cc96323ff7a535dec905c7807a4722d78e2c735",
-      "line": 157,
+      "line": 160,
       "path": "sakura_core/include/sakura/controlipc/ControlIpcProtocol.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 28,
       "evidence_sha256": "sha256:24915171f20130f2ae858475499e17d41c5265e3ed3fd11c1517932d95974c7d",
-      "line": 158,
+      "line": 161,
       "path": "sakura_core/include/sakura/controlipc/ControlIpcProtocol.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 32,
       "evidence_sha256": "sha256:45d84fcec19e7098bf62015a01c2d663d1b0f052ee2420e35b09d84ede27383c",
-      "line": 164,
+      "line": 167,
       "path": "sakura_core/include/sakura/controlipc/ControlIpcProtocol.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 19,
       "evidence_sha256": "sha256:57b8842cf3856ada2d47e44797ac63101ea1226366608a5c6a8dd06f64e5cae0",
-      "line": 165,
+      "line": 168,
       "path": "sakura_core/include/sakura/controlipc/ControlIpcProtocol.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 28,
       "evidence_sha256": "sha256:92815b4deb3a36683a2042fa10eb70f4b86deebef3a924081091e164d242257d",
-      "line": 185,
+      "line": 188,
       "path": "sakura_core/include/sakura/controlipc/ControlIpcProtocol.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 14,
       "evidence_sha256": "sha256:2ee4005a621698a49ee8683d3c0867ee1e18b5cbdd0e645a7cbeaea2d4289fa7",
-      "line": 186,
+      "line": 189,
       "path": "sakura_core/include/sakura/controlipc/ControlIpcProtocol.h",
       "rule_id": "state.public_mutable_field"
     },
@@ -63820,6 +63827,13 @@
       "rule_id": "state.public_mutable_field"
     },
     {
+      "column": 44,
+      "evidence_sha256": "sha256:735855c3755c4485d17b3a588275697d91fe8b96230bcaa2ec973d2ac1031d6d",
+      "line": 50,
+      "path": "sakura_core/platform/controlipc/ControlPlatformRpcServerAdapter.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
       "column": 14,
       "evidence_sha256": "sha256:aa023d2ffa3ee47bf98fc373b7361ac0c5deeabe6990c2d6dda9a18cdea038cb",
       "line": 58,
@@ -63991,6 +64005,20 @@
       "column": 29,
       "evidence_sha256": "sha256:b4ea09c2341268e729b53af0321737b00b5700e86630658f6d3e99eb2d600945",
       "line": 76,
+      "path": "sakura_core/platform/controlipc/ControlPlatformServiceHost.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 44,
+      "evidence_sha256": "sha256:735855c3755c4485d17b3a588275697d91fe8b96230bcaa2ec973d2ac1031d6d",
+      "line": 114,
+      "path": "sakura_core/platform/controlipc/ControlPlatformServiceHost.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 44,
+      "evidence_sha256": "sha256:735855c3755c4485d17b3a588275697d91fe8b96230bcaa2ec973d2ac1031d6d",
+      "line": 119,
       "path": "sakura_core/platform/controlipc/ControlPlatformServiceHost.h",
       "rule_id": "state.public_mutable_field"
     },
@@ -94468,14 +94496,14 @@
     {
       "column": 29,
       "evidence_sha256": "sha256:8362de9b8f98a615f449eae8db8d774ee53fe2557eed9e13ad96c488365448ff",
-      "line": 134,
+      "line": 163,
       "path": "src/test/cpp/tests1/platform/controlipc/ControlIpcProtocolTest.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 28,
       "evidence_sha256": "sha256:793d3320e7ab85a044ae1e35011acc69074f45b133b2a2d864b191f1930e6a6f",
-      "line": 135,
+      "line": 164,
       "path": "src/test/cpp/tests1/platform/controlipc/ControlIpcProtocolTest.cpp",
       "rule_id": "state.public_mutable_field"
     },
@@ -98737,7 +98765,7 @@
   },
   "inventory_kind": "editor-core-semantic",
   "metrics": {
-    "catch_all_count": 741,
+    "catch_all_count": 742,
     "direct_global_getter_calls": {
       "GetDllShareData": 710,
       "GetEditDoc": 7,
@@ -99210,11 +99238,11 @@
       }
     },
     "filtered_test_hint_count": 2,
-    "finding_count": 14076,
+    "finding_count": 14080,
     "finding_count_by_rule": {
       "boundary.private_include": 67,
       "boundary.win32_type": 4872,
-      "error.catch_all": 741,
+      "error.catch_all": 742,
       "global.get_dll_share_data": 710,
       "global.get_edit_doc": 7,
       "global.get_edit_wnd": 258,
@@ -99222,18 +99250,18 @@
       "memory.raw_new": 248,
       "resource.stop_required_acquisition": 286,
       "state.mutable_member": 132,
-      "state.public_mutable_field": 6406,
+      "state.public_mutable_field": 6409,
       "state.raw_pointer_member": 30,
       "test.filtered_or_skipped": 2
     },
-    "include_directive_count": 11309,
+    "include_directive_count": 11313,
     "monolith_link_hint_count": 0,
     "private_include_mention_count": 67,
     "raw_delete_expression_count": 317,
     "raw_new_expression_count": 248,
-    "source_file_count": 1791,
-    "source_line_count": 535509,
-    "tracked_file_count": 1840,
+    "source_file_count": 1792,
+    "source_line_count": 535858,
+    "tracked_file_count": 1841,
     "win32_parameter_mention_count": 4872
   },
   "rule_catalog": [
@@ -99389,8 +99417,8 @@
     ]
   },
   "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
-  "source_commit": "f93cf6efd3a892d2662299431facc934a88c7e01",
-  "source_fingerprint": "sha256:96ee8d0b8cd932812d47153b90e3862478acb5ef62839d37e074cc21e8d1afdf",
+  "source_commit": "56a11dcd14f4d07e90409a53257ed10fd0680658",
+  "source_fingerprint": "sha256:51047f0fa517a64efede100deb94c936e2d35f78830f94b4344306e09a2105e7",
   "tracked_source_paths": [
     ".github/actions/bootstrap-vcpkg/action.yml",
     ".github/dependabot.yml",
@@ -100944,6 +100972,7 @@
     "src/test/cpp/tests1/platform/controlipc/ControlPlatformEndpointDiscoveryReaderTest.cpp",
     "src/test/cpp/tests1/platform/controlipc/ControlPlatformEndpointTest.cpp",
     "src/test/cpp/tests1/platform/controlipc/ControlPlatformRuntimeTest.cpp",
+    "src/test/cpp/tests1/platform/controlipc/ControlPlatformSenpRpcTest.cpp",
     "src/test/cpp/tests1/platform/controlipc/ControlStorageRpcServerAdapterTest.cpp",
     "src/test/cpp/tests1/platform/controlipc/ControlStorageRpcTest.cpp",
     "src/test/cpp/tests1/platform/controlipc/EditorControlPlatformRuntimeTest.cpp",
@@ -101233,5 +101262,5 @@
     "tools/ppa_stub/ppa_stub.h",
     "tools/vcx-props/vcxcompat.props"
   ],
-  "tracked_source_set_sha256": "sha256:e954a345a8ab7caf8f6763a7ac9c65a61591b5bc529350cb92a1f18eb48fbc39"
+  "tracked_source_set_sha256": "sha256:c3821ea2f6b200088815a2c6be2ac6d26bd3f4a13a9aa2945a2344a89b6aca6e"
 }
