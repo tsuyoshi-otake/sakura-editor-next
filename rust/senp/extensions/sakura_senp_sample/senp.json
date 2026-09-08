@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 2,
+  "id": "sakura-senp-sample",
+  "displayName": "SENP v2 Sample",
+  "version": "0.1.0",
+  "publisher": "sakura.builtin",
+  "description": "Exercises generic SENP tree, document, and text-resource surfaces without GitHub.",
+  "engines": { "sakura": ">=0.1.0" },
+  "runtime": {
+    "abi": "sakura:senp/extension@2.0.0",
+    "module": "module/extension.wasm"
+  },
+  "activationEvents": ["onView:sample.projects", "onView:sample.states"],
+  "capabilities": ["workbench.views.tree", "workbench.documents.readonly", "workbench.commands"],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        { "id": "sample.senp", "title": "SENP Sample", "icon": "$(beaker)", "order": 90 }
+      ]
+    },
+    "views": {
+      "sample.senp": [
+        { "id": "sample.projects", "name": "Projects", "provider": "sample.projects", "order": 10 },
+        { "id": "sample.states", "name": "States", "provider": "sample.states", "order": 20 }
+      ]
+    }
+  }
+}

@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "extensions/sakura_indent_rainbow",
+    "extensions/sakura_senp_sample",
     "sakura_senp",
     "sakura_senp_host",
     "sakura_senp_tool",

@@ -417,3 +417,15 @@ readonly titleはtop-level captionにも反映し、終了時はtab callbackをc
 
 owner/page公開、GitHub-free sampleと実アプリのend-to-end検証はU06に残る。独自Markdown rendererのUIA
 TextPatternと全pageを横断する検索は実装済みとは扱わない。
+
+### U06途中: GitHub非依存の実v2 guest
+
+`sakura-senp-sample`はWASI/importを持たない実Componentとして、`sample.senp` container内の
+`sample.projects`と`sample.states`という2つのTree Viewを実装する。固定fixtureだけでroot、2 page、
+Empty、Failedを返し、commandからMarkdown/metadata/tableとLoading text resourceを含む詳細documentを開く。
+network、filesystem、GitHub、`gh`には依存しない。
+
+unit testに加え、`wasm32-unknown-unknown`のcore moduleを`componentize`し、実
+`sakura-senp-host --protocol 2`へHello、Activate、TreeRequestをframe送信して、activationの2 invalidationと
+Projectsの2 itemを確認した。この段階はguest側の縦切りであり、owner effectをnative View/page/editorへ
+transactionalに公開するadapterと実アプリend-to-endはU06に残る。
