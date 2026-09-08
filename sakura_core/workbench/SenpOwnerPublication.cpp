@@ -47,10 +47,15 @@ public:
 	bool Initialize(SenpOwnerPublicationOptions options) noexcept
 	{
 		try {
-			if (!m_target || !::IsWindow(options.ParkingParent()) || options.Containers().empty()) return false;
+			if (!m_target) return false;
+			const bool declared = static_cast<bool>(options.DeclaredTreeFactory());
+			if (!declared && (!::IsWindow(options.ParkingParent()) || options.Containers().empty())) return false;
 			m_projection = std::make_unique<CSenpOwnerProjection>(m_hub.m_owners, m_owner, *m_target);
 
 			auto trees = options.TakeTrees();
+			if (trees.empty() || trees.size() > 64) return false;
+			std::vector<SenpOwnerBoundTree> bindings;
+			if (declared) bindings.reserve(trees.size());
 			std::vector<layout::WorkbenchViewDescriptor> views;
 			std::vector<viewcontainer::SenpNativeViewDefinition> nativeViews;
 			views.reserve(trees.size());
@@ -71,6 +76,10 @@ public:
 				auto provider = m_projection->Tree(*viewId);
 				if (!provider) return false;
 				m_viewIds.push_back(*viewId);
+				if (declared) {
+					bindings.emplace_back(*viewId, std::move(provider));
+					continue;
+				}
 				auto bodyFactory = options.TreeBodyFactory();
 				nativeViews.push_back({ descriptor,
 					[bodyFactory = std::move(bodyFactory), provider, title = *title](
@@ -79,6 +88,11 @@ public:
 						return tree::CSenpTreeView::Create({ std::move(host), provider, title });
 					}, {}, false });
 				views.push_back(std::move(descriptor));
+			}
+
+			if (declared) {
+				m_declaredTrees = options.DeclaredTreeFactory()(m_owner, std::move(bindings));
+				return m_declaredTrees && m_declaredTrees->CanCommit();
 			}
 
 			for (const auto& container : options.Containers()) m_containerIds.push_back(container.id);
@@ -119,7 +133,13 @@ public:
 
 	bool Commit() noexcept
 	{
-		if (m_closed || m_committed || !m_catalogChange || !m_pageChange
+		if (m_closed || m_committed) return false;
+		if (m_declaredTrees) {
+			if (!m_declaredTrees->CanCommit() || !m_declaredTrees->Commit()) return false;
+			m_committed = true;
+			return true;
+		}
+		if (!m_catalogChange || !m_pageChange
 			|| !m_hub.m_contributions.CanCommit(*m_catalogChange)
 			|| !m_hub.m_pages.CanCommit(*m_pageChange)) return false;
 		const auto pages = m_hub.m_pages.Commit(std::move(*m_pageChange));
@@ -149,6 +169,7 @@ public:
 	{
 		if (m_closed || !m_committed) return ProjectionStatus::Closed;
 		try {
+			if (m_declaredTrees && !m_declaredTrees->Pump()) return ProjectionStatus::Rejected;
 			for (const auto& id : m_invalidations) {
 				const auto provider = m_projection->Tree(id);
 				if (!provider) return ProjectionStatus::Rejected;
@@ -166,12 +187,13 @@ public:
 		if (m_closed) return;
 		m_closed = true;
 		m_invalidations.clear();
-		if (m_committed && m_hub.m_contributions.IsOwnerCurrent(m_catalogOwner)) {
+		if (!m_declaredTrees && m_committed && m_hub.m_contributions.IsOwnerCurrent(m_catalogOwner)) {
 			(void)m_hub.m_pages.RemoveContributedPages(m_containerIds);
 		}
+		if (m_declaredTrees) m_declaredTrees->Close();
 		if (m_views) m_views->Close();
 		if (m_projection) m_projection->Close();
-		if (m_committed) (void)m_hub.m_contributions.DisposeOwner(m_catalogOwner);
+		if (!m_declaredTrees && m_committed) (void)m_hub.m_contributions.DisposeOwner(m_catalogOwner);
 		m_committed = false;
 	}
 
@@ -189,6 +211,7 @@ private:
 	std::unique_ptr<ISenpOwnerProjectionTarget> m_target;
 	std::unique_ptr<CSenpOwnerProjection> m_projection;
 	std::shared_ptr<viewcontainer::CSenpViewContainers> m_views;
+	std::unique_ptr<ISenpDeclaredTreePublication> m_declaredTrees;
 	std::unique_ptr<layout::PreparedWorkbenchContributions> m_catalogChange;
 	std::optional<viewcontainer::CViewContainerPages::PreparedContributedPages> m_pageChange;
 	std::vector<std::string> m_containerIds;
@@ -221,7 +244,7 @@ std::unique_ptr<senp::ISenpOwnerPublication> CSenpOwnerPublicationHub::Prepare(
 	const senp::ContributionOwnerIdentity* previous,
 	SenpOwnerPublicationOptions options) noexcept
 {
-	if (m_closed || previous || candidate.generation <= 0) return {};
+	if (m_closed || (previous && !options.DeclaredTreeFactory()) || candidate.generation <= 0) return {};
 	const auto ownerId = ToUtf8Strict(candidate.extensionId);
 	if (!ownerId) return {};
 	try {

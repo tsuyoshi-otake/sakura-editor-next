@@ -404,8 +404,16 @@ activation invalidations or runtime results while the owner service is entered;
 `CSenpOwnerComposition` is the sole window-local scheduler and always completes
 owner `Poll` before it calls `CSenpOwnerPublicationHub::Pump`. Close stops every
 runtime before it closes the publication hub and its borrowed native resources.
-Until dynamic page removal/replacement is implemented, replacement preparation
-fails closed and revocation leaves only inert weak page factories behind.
+Legacy native publications remove their exact owner's contributed page factories
+and retained pages on revocation. Runtime replacement uses the separate
+`ISenpDeclaredTreePublication` transaction: window-owned declarations retain their
+catalog and bodies while a prepared runtime generation binds new tree providers.
+Commit must change only prepared binding authority; native visibility and provider
+requests belong to Pump after owner Poll. A failed commit preserves the previous
+generation. Close must fence its exact runtime identity, so a retiring publication
+cannot clear its successor or dispose the declaration catalog, even when their
+extension ID and generation happen to match. Native declaration composition is a
+separate integration responsibility; the binding port alone does not publish UI.
 
 ## Phase 6 Service Foundations Checkpoint (2026-07-31)
 

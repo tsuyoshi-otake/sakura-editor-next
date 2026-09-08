@@ -28,8 +28,41 @@ private:
 using SenpTreeBodyFactory = std::function<std::unique_ptr<viewcontainer::ISenpViewBody>(
 	viewcontainer::SenpViewBodyHost, std::shared_ptr<tree::SenpTreeProvider>, std::wstring)>;
 
+//! A runtime binding is distinct from the persistent declarative View body.
+class SenpOwnerBoundTree final {
+public:
+	SenpOwnerBoundTree(std::wstring viewId, std::shared_ptr<tree::SenpTreeProvider> provider) noexcept
+		: m_viewId(std::move(viewId)), m_provider(std::move(provider)) {}
+	[[nodiscard]] std::wstring_view ViewId() const noexcept { return m_viewId; }
+	[[nodiscard]] const std::shared_ptr<tree::SenpTreeProvider>& Provider() const noexcept { return m_provider; }
+private:
+	std::wstring m_viewId;
+	std::shared_ptr<tree::SenpTreeProvider> m_provider;
+};
+
+//! Prepared binding into already-published native declarations. Preparation
+//! owns allocation; Commit changes binding authority without runtime submissions
+//! or message pumping. Pump projects the committed binding after owner Poll.
+//! Close revokes only its exact runtime generation and retains declaration UI.
+class ISenpDeclaredTreePublication {
+public:
+	virtual ~ISenpDeclaredTreePublication() = default;
+	[[nodiscard]] virtual bool CanCommit() const noexcept = 0;
+	[[nodiscard]] virtual bool Commit() noexcept = 0;
+	[[nodiscard]] virtual bool Pump() noexcept = 0;
+	virtual void Close() noexcept = 0;
+};
+using SenpDeclaredTreeFactory = std::function<std::unique_ptr<ISenpDeclaredTreePublication>(
+	const senp::ContributionOwnerIdentity&, std::vector<SenpOwnerBoundTree>)>;
+
 class SenpOwnerPublicationOptions final {
 public:
+	//! Binds a runtime into declarations owned independently by the window.
+	SenpOwnerPublicationOptions(std::vector<SenpOwnerTreeContribution> trees,
+		std::unique_ptr<ISenpOwnerProjectionTarget> target,
+		SenpDeclaredTreeFactory bindDeclaredTrees) noexcept
+		: m_trees(std::move(trees)), m_target(std::move(target)),
+		m_bindDeclaredTrees(std::move(bindDeclaredTrees)) {}
 	SenpOwnerPublicationOptions(HWND parkingParent,
 		std::vector<layout::WorkbenchViewContainerDescriptor> containers,
 		std::vector<SenpOwnerTreeContribution> trees,
@@ -39,6 +72,7 @@ public:
 		: m_parkingParent(parkingParent), m_containers(std::move(containers)),
 		m_trees(std::move(trees)), m_target(std::move(target)),
 		m_requestFocus(std::move(requestFocus)), m_createTreeBody(std::move(createTreeBody)) {}
+	[[nodiscard]] const SenpDeclaredTreeFactory& DeclaredTreeFactory() const noexcept { return m_bindDeclaredTrees; }
 	[[nodiscard]] HWND ParkingParent() const noexcept { return m_parkingParent; }
 	[[nodiscard]] const std::vector<layout::WorkbenchViewContainerDescriptor>& Containers() const noexcept { return m_containers; }
 	[[nodiscard]] std::vector<SenpOwnerTreeContribution> TakeTrees() noexcept { return std::move(m_trees); }
@@ -52,6 +86,7 @@ private:
 	std::unique_ptr<ISenpOwnerProjectionTarget> m_target;
 	std::function<bool(std::string_view)> m_requestFocus;
 	SenpTreeBodyFactory m_createTreeBody;
+	SenpDeclaredTreeFactory m_bindDeclaredTrees;
 };
 
 //! UI-thread registry for owner publications retained by CSenpContributionOwners.

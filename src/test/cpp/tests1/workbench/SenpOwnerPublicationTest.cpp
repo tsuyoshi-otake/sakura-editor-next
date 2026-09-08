@@ -97,6 +97,62 @@ private:
 	senp::EffectRuntimeSnapshot m_state;
 };
 
+struct DeclaredState final {
+	std::optional<senp::ContributionOwnerIdentity> owner;
+	std::vector<SenpOwnerBoundTree> bindings;
+	bool permitCommit{ true };
+	int pumped{};
+	int cleared{};
+};
+
+class DeclaredPublication final : public ISenpDeclaredTreePublication {
+public:
+	DeclaredPublication(std::shared_ptr<DeclaredState> state,
+		senp::CSenpContributionOwners& owners, senp::ContributionOwnerIdentity owner,
+		std::vector<SenpOwnerBoundTree> bindings)
+		: m_state(std::move(state)), m_owners(owners), m_owner(std::move(owner)),
+		m_previous(m_state->owner), m_bindings(std::move(bindings)) {}
+	bool CanCommit() const noexcept override
+	{
+		return !m_closed && !m_committed && m_state->permitCommit && m_state->owner == m_previous;
+	}
+	bool Commit() noexcept override
+	{
+		if (!CanCommit()) return false;
+		m_state->owner = std::move(m_owner);
+		m_state->bindings = std::move(m_bindings);
+		m_generation = m_state->owner->generation;
+		m_committed = true;
+		return true;
+	}
+	bool Pump() noexcept override
+	{
+		if (!m_committed || m_closed || !m_state->owner
+			|| m_state->owner->generation != m_generation) return false;
+		EXPECT_TRUE(m_owners.IsCurrent(*m_state->owner));
+		++m_state->pumped;
+		return true;
+	}
+	void Close() noexcept override
+	{
+		if (m_closed) return;
+		m_closed = true;
+		if (!m_committed || !m_state->owner || m_state->owner->generation != m_generation) return;
+		m_state->owner.reset();
+		m_state->bindings.clear();
+		++m_state->cleared;
+	}
+private:
+	std::shared_ptr<DeclaredState> m_state;
+	senp::CSenpContributionOwners& m_owners;
+	senp::ContributionOwnerIdentity m_owner;
+	std::optional<senp::ContributionOwnerIdentity> m_previous;
+	std::vector<SenpOwnerBoundTree> m_bindings;
+	std::int64_t m_generation{};
+	bool m_committed{};
+	bool m_closed{};
+};
+
 class SenpOwnerPublicationTest : public testing::Test, public env::ShareDataTestSuite {
 protected:
 	static void SetUpTestSuite() { SetUpShareData(); }
@@ -226,6 +282,87 @@ TEST_F(SenpOwnerPublicationTest, RevisionConflictPublishesNeitherCandidate)
 	EXPECT_EQ(senp::OwnerChangeStatus::Failed, terminal->status);
 	EXPECT_EQ(1, target->revoked);
 	pages.Close();
+}
+
+TEST_F(SenpOwnerPublicationTest, DeclaredBindingsRetainCatalogAcrossReplacementFailureAndRevocation)
+{
+	senp::CSenpContributionOwners owners([](senp::EffectRuntimeLaunch launch) {
+		return std::make_unique<Runtime>(std::move(launch), std::vector<senp::effect::Effect>{});
+	});
+	layout::WorkbenchContributionRegistry catalog;
+	const layout::WorkbenchContributionOwner declarationOwner{ "sample.extension", 1 };
+	const layout::WorkbenchViewContainerDescriptor container{
+		"sample.senp", "Sample", layout::EViewContainerLocation::Sidebar, 10, "", false,
+		{ layout::EViewContainerLocation::Sidebar } };
+	const layout::WorkbenchViewDescriptor view{
+		"sample.projects", container.id, "Projects", 10, true, true, "senp.tree" };
+	auto declaration = catalog.PrepareOwnerReplacement(declarationOwner, 0,
+		std::span(&container, 1), std::span(&view, 1));
+	ASSERT_EQ(layout::EWorkbenchContributionChangeStatus::Prepared, declaration.status);
+	ASSERT_EQ(layout::EWorkbenchContributionChangeStatus::Committed, catalog.Commit(std::move(declaration.change)));
+	CDlgFuncList dialog;
+	viewcontainer::CViewContainerPages pages(dialog);
+	CSenpOwnerPublicationHub hub(owners, catalog, pages);
+	auto state = std::make_shared<DeclaredState>();
+	auto target = std::make_shared<TargetState>();
+	auto prepare = [&](wchar_t digest) {
+		return owners.Prepare(Launch(), std::wstring(64, digest),
+			[&](const auto& candidate, const auto* previous) {
+				return hub.Prepare(candidate, previous, SenpOwnerPublicationOptions{
+					{ { view, { "sample.open" } } }, std::make_unique<Target>(target),
+					[&](const auto& owner, auto bindings) {
+						return std::make_unique<DeclaredPublication>(state, owners, owner, std::move(bindings));
+					} });
+			}, Clock::now());
+	};
+	auto initial = prepare(L'b');
+	ASSERT_EQ(senp::OwnerChangeStatus::Accepted, initial.status);
+	EXPECT_FALSE(state->owner);
+	owners.Poll(Clock::now());
+	ASSERT_TRUE(owners.IsCurrent(initial.owner));
+	EXPECT_EQ(0, state->pumped);
+	ASSERT_TRUE(hub.Pump(Clock::now()));
+	EXPECT_EQ(1, state->pumped);
+	ASSERT_EQ(1U, state->bindings.size());
+	EXPECT_EQ(L"sample.projects", state->bindings.front().ViewId());
+	auto originalProvider = state->bindings.front().Provider();
+	ASSERT_TRUE(owners.TakeTransition());
+
+	auto rejected = prepare(L'c');
+	ASSERT_EQ(senp::OwnerChangeStatus::Accepted, rejected.status);
+	state->permitCommit = false;
+	owners.Poll(Clock::now());
+	auto failed = owners.TakeTransition();
+	ASSERT_TRUE(failed);
+	EXPECT_EQ(senp::OwnerChangeStatus::Failed, failed->status);
+	EXPECT_TRUE(owners.IsCurrent(initial.owner));
+	EXPECT_EQ(originalProvider, state->bindings.front().Provider());
+	EXPECT_EQ(0, state->cleared);
+	EXPECT_TRUE(catalog.IsOwnerCurrent(declarationOwner));
+
+	state->permitCommit = true;
+	auto replacement = prepare(L'd');
+	ASSERT_EQ(senp::OwnerChangeStatus::Accepted, replacement.status);
+	owners.Poll(Clock::now());
+	ASSERT_TRUE(owners.IsCurrent(replacement.owner));
+	ASSERT_TRUE(state->owner);
+	EXPECT_EQ(replacement.owner, *state->owner);
+	EXPECT_NE(originalProvider, state->bindings.front().Provider());
+	EXPECT_EQ(0, state->cleared);
+	EXPECT_EQ(2, target->revoked);
+	ASSERT_TRUE(hub.Pump(Clock::now()));
+	EXPECT_TRUE(catalog.IsOwnerCurrent(declarationOwner));
+	ASSERT_TRUE(owners.Revoke(L"sample.extension", senp::effect::StopReason::Disabled));
+	EXPECT_FALSE(state->owner);
+	EXPECT_TRUE(state->bindings.empty());
+	EXPECT_EQ(1, state->cleared);
+	EXPECT_EQ(3, target->revoked);
+	EXPECT_TRUE(catalog.IsOwnerCurrent(declarationOwner));
+	EXPECT_EQ(1, std::ranges::count_if(catalog.Snapshot().views,
+		[](const auto& item) { return item.descriptor.id == "sample.projects"; }));
+	EXPECT_TRUE(owners.Close());
+	hub.Close();
+	EXPECT_EQ(1, state->cleared);
 }
 
 } // namespace
