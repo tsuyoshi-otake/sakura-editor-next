@@ -141,6 +141,14 @@ non-accepted results may make the retained value eligible again. Every public
 Snapshot still returns a caller-owned value copy, and no cached foreign pointer
 or decoded C++ authority state crosses back into Rust.
 
+A cached Snapshot read linearizes when its revision, validity and advisory drop
+count are checked under the provider locks. Pin that immutable observation with
+shared ownership, then release both locks before its O(N) caller-owned copy.
+Likewise, after publishing a newly decoded observation, retire the previous
+cache and copy the result outside the mutation fence. Concurrent mutations or
+Stop may retire the provider's reference but must not alter an in-flight read's
+captured value; subsequent reads still revalidate against current state.
+
 Issue #274 remains a measurement gate, not an adoption decision. C++ is still
 the default Output authority. `SAKURA_OUTPUT_PRODUCTION_PACKAGE` is an explicit
 package-release gate independent from UTF-16 packaging and currently accepts

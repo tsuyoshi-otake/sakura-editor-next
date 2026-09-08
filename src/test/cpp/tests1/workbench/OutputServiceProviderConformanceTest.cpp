@@ -950,6 +950,97 @@ TEST(OutputServiceProviderConformance, SnapshotDeterminismStopAndPostStopResults
 	EXPECT_TRUE(cppStopped.channels.empty());
 }
 
+void VerifyConcurrentSnapshotRetirement(IOutputService& service)
+{
+	using namespace std::chrono_literals;
+	constexpr std::size_t readerCount = 4;
+	constexpr std::size_t readCount = 96;
+	constexpr std::size_t appendCount = 32;
+	constexpr std::size_t initialBytes = 32U << 10;
+	const auto owner = ConformanceOwner("snapshot-readers.owner");
+	ASSERT_EQ(EOutputOperationStatus::Succeeded, service.CreateChannel(
+		ConformanceCreate("snapshot-readers.create", owner, "snapshot-readers.output")).status);
+	ASSERT_EQ(EOutputOperationStatus::Succeeded, service.AppendOutput(
+		ConformanceText("snapshot-readers.seed", owner, "snapshot-readers.output",
+			std::string(initialBytes, 'x'))).status);
+	const auto pinned = service.Snapshot();
+	ASSERT_EQ(3U, pinned.revision);
+	ASSERT_EQ(1U, pinned.channels.size());
+
+	const auto verify = [&](const OutputServiceSnapshot& snapshot) {
+		if (snapshot.stopped) {
+			EXPECT_EQ(4U + appendCount, snapshot.revision);
+			EXPECT_TRUE(snapshot.channels.empty());
+			EXPECT_FALSE(snapshot.activeChannelId);
+			return;
+		}
+		EXPECT_GE(snapshot.revision, 3U);
+		EXPECT_LE(snapshot.revision, 3U + appendCount);
+		if (snapshot.channels.size() != 1 || snapshot.revision < 3U) {
+			ADD_FAILURE() << "Snapshot must contain one complete committed revision";
+			return;
+		}
+		const auto& channel = snapshot.channels.front();
+		EXPECT_EQ("snapshot-readers.output", channel.channelId);
+		EXPECT_EQ(initialBytes + snapshot.revision - 3U, channel.text.size());
+		EXPECT_EQ(channel.text, channel.projectedText);
+		EXPECT_TRUE(std::all_of(channel.text.begin(), channel.text.end(), [](char c) { return c == 'x'; }));
+	};
+
+	std::mutex gateMutex;
+	std::condition_variable gateCondition;
+	std::size_t ready{};
+	bool start{};
+	std::vector<OutputServiceSnapshot> retained(readerCount);
+	std::vector<std::jthread> readers;
+	readers.reserve(readerCount);
+	for (std::size_t index = 0; index < readerCount; ++index) {
+		readers.emplace_back([&, index] {
+			try {
+				retained[index] = service.Snapshot();
+				verify(retained[index]);
+				{
+					std::unique_lock lock(gateMutex);
+					++ready;
+					gateCondition.notify_all();
+					if (!gateCondition.wait_for(lock, 2s, [&] { return start; })) {
+						ADD_FAILURE() << "Snapshot reader start deadline expired";
+						return;
+					}
+				}
+				std::uint64_t lastRevision = retained[index].revision;
+				for (std::size_t read = 0; read < readCount; ++read) {
+					const auto snapshot = service.Snapshot();
+					verify(snapshot);
+					EXPECT_GE(snapshot.revision, lastRevision);
+					lastRevision = snapshot.revision;
+				}
+			} catch (...) {
+				ADD_FAILURE() << "Concurrent snapshot reader threw";
+			}
+		});
+	}
+	{
+		std::unique_lock lock(gateMutex);
+		EXPECT_TRUE(gateCondition.wait_for(lock, 2s, [&] { return ready == readerCount; }));
+		start = true;
+	}
+	gateCondition.notify_all();
+	for (std::size_t index = 0; index < appendCount; ++index) {
+		EXPECT_EQ(EOutputOperationStatus::Succeeded, service.AppendOutput(
+			ConformanceText("snapshot-readers.append-" + std::to_string(index),
+				owner, "snapshot-readers.output", "x")).status);
+	}
+	EXPECT_EQ(EOutputOperationStatus::Succeeded, service.Stop().status);
+	for (auto& reader : readers) reader.join();
+	verify(service.Snapshot());
+	// Cache replacement and terminal token destruction must not mutate copies
+	// retained by readers, including the revision captured before they started.
+	for (const auto& snapshot : retained) ExpectSnapshotsExactlyEqual(pinned, snapshot);
+	verify(pinned);
+	EXPECT_EQ(3U, pinned.revision);
+}
+
 TEST(OutputServiceProviderConformance, RustDecodedSnapshotCachePreservesValuesAndInvalidates)
 {
 	auto providers = MakeProviderPair();
@@ -1046,6 +1137,11 @@ TEST(OutputServiceProviderConformance, RustDecodedSnapshotCachePreservesValuesAn
 	ExpectSnapshotsExactlyEqual(stopped, stoppedAgain);
 	EXPECT_EQ(afterFirstStoppedSnapshot.counters.ffiCalls,
 		afterSecondStoppedSnapshot.counters.ffiCalls);
+
+	auto concurrentProviders = MakeProviderPair();
+	AssertRustProviderReady(concurrentProviders);
+	VerifyConcurrentSnapshotRetirement(*concurrentProviders.cpp);
+	VerifyConcurrentSnapshotRetirement(*concurrentProviders.rust);
 }
 
 void RunAdvisoryFifoAndReentrancyConformance(IOutputService& service)

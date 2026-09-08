@@ -1416,15 +1416,12 @@ OutputOperationResult OutputServiceRustProvider::Stop() noexcept
 OutputServiceSnapshot OutputServiceRustProvider::Snapshot() const
 {
 	if (!m_control) return {};
-	{
-		std::lock_guard lock(m_control->modelMutex);
-		SaturatingIncrement(m_control->diagnostics.counters.snapshotCalls);
-	}
 	try {
 		std::unique_lock mutationLock(m_control->mutationMutex);
 		std::shared_ptr<const OutputServiceSnapshot> cachedObservation;
 		{
 			std::lock_guard lock(m_control->modelMutex);
+			SaturatingIncrement(m_control->diagnostics.counters.snapshotCalls);
 			if (m_control->authorityStopped && m_control->terminalSnapshotAvailable) {
 				return m_control->terminalSnapshot;
 			}
@@ -1448,9 +1445,11 @@ OutputServiceSnapshot OutputServiceRustProvider::Snapshot() const
 			}
 		}
 		if (cachedObservation) {
-			// Copy outside modelMutex. The mutation fence and shared ownership keep
-			// the immutable observation alive, while the caller still receives an
-			// independent value that cannot mutate provider or Rust state.
+			// Validation above is the read's linearization point. Shared ownership
+			// pins that immutable revision even if a mutation or Stop retires the
+			// cache. Do not serialize the O(N) caller-owned copy (or its retained
+			// observation's eventual destruction) with other reads or mutations.
+			mutationLock.unlock();
 			return *cachedObservation;
 		}
 #if defined(SAKURA_OUTPUT_BACKEND_RUST)
@@ -1468,6 +1467,7 @@ OutputServiceSnapshot OutputServiceRustProvider::Snapshot() const
 					m_control->snapshotCacheValid = true;
 				}
 			}
+			mutationLock.unlock();
 			previousSnapshot.reset();
 			return *observation;
 		}
