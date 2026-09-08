@@ -117,8 +117,9 @@ document内部の移動として扱う。権限が解決できない、または
 U06途中でCEditWnd、同じEditor Core groupのopaque-ID tab、stable command、保持したlegacy working-copyの
 backupへ接続した。最後のreadonly inputが閉じると従来process-window tabへ戻る。window-local owner
 compositionはowner Pollを終えてからpublication Pumpを呼び、実sample componentの2 View、command、4 section
-documentまでを実hostで検証する。package-derived descriptorとCEditWnd timer/lifecycleのend-to-end確認は
-U06の完了条件に残す。
+documentまでを実hostで検証する。package-derived descriptor、CEditWnd timer/lifecycle、theme/focus/layoutも
+接続し、既存catalogの実アプリ描画回帰を確認した。v2 packageの実アプリ受理とControl brokerを含む
+end-to-end確認はU06の完了条件に残す。
 
 ### 操作と情報状態
 

@@ -70,21 +70,24 @@ public:
 	SessionHandler(ControlStorageRpcSessionIdentity identity, const ControlIpcSessionContext& context,
 		std::shared_ptr<storage::IStorageAuthority> storage,
 		std::shared_ptr<profiles::ControlUserDataProfileRegistry> profiles,
-		std::shared_ptr<Gate> gate) :
+		std::shared_ptr<Gate> gate, std::shared_ptr<IControlIpcFrameHandler> senp) :
 		m_storageSession(std::move(identity), *storage),
 		m_storage(std::move(storage)), m_profiles(std::move(profiles)),
-		m_profileSession(m_storageSession.GetIdentity(), m_profiles), m_gate(std::move(gate))
+		m_profileSession(m_storageSession.GetIdentity(), m_profiles), m_gate(std::move(gate)),
+		m_context(context), m_senp(std::move(senp))
 	{
-		(void)context;
 	}
 
-	ControlIpcFrameDispatchResult HandleFrame(const ControlIpcSessionContext&, const ControlIpcFrame& frame) override
+	ControlIpcFrameDispatchResult HandleFrame(const ControlIpcSessionContext& context, const ControlIpcFrame& frame) override
 	{
 		std::shared_lock lock(m_gate->mutex);
 		const auto generation = m_storageSession.GetIdentity().generation;
-		if (m_gate->state != EControlPlatformRpcServerAdapterState::Accepting) {
+		if (m_closed || m_gate->state != EControlPlatformRpcServerAdapterState::Accepting) {
+			m_closed = true;
+			m_senpSession.reset();
 			return { { ErrorResponse(frame, EControlIpcTerminalStatus::ServerStopping, generation) }, EControlIpcSessionDecision::Close };
 		}
+		if (frame.header.kind == EControlIpcKind::SenpRequest) return ProcessSenp(context, frame);
 
 		if (IsStorageKind(frame.header.kind)) {
 			auto response = m_storageSession.Process(frame);
@@ -103,18 +106,68 @@ public:
 	}
 
 private:
+	ControlIpcFrameDispatchResult ProcessSenp(const ControlIpcSessionContext& context, const ControlIpcFrame& frame)
+	{
+		const auto generation = m_storageSession.GetIdentity().generation;
+		const auto fail = [&](EControlIpcTerminalStatus status, bool close = false) {
+			if (close) { m_closed = true; m_senpSession.reset(); }
+			return ControlIpcFrameDispatchResult{ { ErrorResponse(frame, status, generation) },
+				close ? EControlIpcSessionDecision::Close : EControlIpcSessionDecision::KeepOpen };
+		};
+		if (!m_storageHelloCompleted) return fail(EControlIpcTerminalStatus::InvalidRequest);
+		if (context.sessionId != m_context.sessionId || context.clientProcessId != m_context.clientProcessId
+			|| m_context.sessionId == 0 || m_context.clientProcessId == 0) return fail(EControlIpcTerminalStatus::AccessDenied, true);
+		if (frame.header.majorVersion != kControlIpcMajorVersion) return fail(EControlIpcTerminalStatus::UnsupportedVersion, true);
+		if (frame.header.generation != generation) return fail(EControlIpcTerminalStatus::GenerationMismatch, true);
+		if (frame.header.requestId == 0 || frame.header.flags != EControlIpcFlags::Request
+			|| frame.payload.size() > kControlIpcMaximumFrameBytes - kControlIpcHeaderBytes)
+			return fail(EControlIpcTerminalStatus::InvalidRequest, true);
+		if (!m_senp) return fail(EControlIpcTerminalStatus::UnsupportedVersion);
+		try {
+			// The transport's captured peer is authoritative, never a payload PID.
+			// No automatic retry follows a refused or throwing factory.
+			if (!m_senpSession) m_senpSession = m_senp->CreateSession(m_context);
+			if (!m_senpSession) return fail(EControlIpcTerminalStatus::ResourceExhausted, true);
+			auto result = m_senpSession->HandleFrame(m_context, frame);
+			if (result.responseFrames.size() != 1
+				|| (result.decision != EControlIpcSessionDecision::KeepOpen && result.decision != EControlIpcSessionDecision::Close))
+				return fail(EControlIpcTerminalStatus::InternalError, true);
+			const auto& response = result.responseFrames.front();
+			if ((response.header.kind != EControlIpcKind::SenpResponse && response.header.kind != EControlIpcKind::Error)
+				|| response.header.majorVersion != kControlIpcMajorVersion || response.header.generation != generation
+				|| response.header.requestId != frame.header.requestId
+				|| response.header.flags != (EControlIpcFlags::Response | EControlIpcFlags::Terminal)
+				|| response.payload.size() > kControlIpcMaximumFrameBytes - kControlIpcHeaderBytes
+				|| (response.header.kind == EControlIpcKind::Error && !DecodeControlIpcError(response.payload)))
+				return fail(EControlIpcTerminalStatus::InternalError, true);
+			if (result.decision == EControlIpcSessionDecision::Close) {
+				m_closed = true;
+				m_senpSession.reset();
+			}
+			return result;
+		} catch (...) {
+			// Destruction owns grant revocation; close prevents retry or reuse.
+			return fail(EControlIpcTerminalStatus::InternalError, true);
+		}
+	}
+
 	CControlStorageRpcSession m_storageSession;
 	std::shared_ptr<profiles::ControlUserDataProfileRegistry> m_profiles;
 	CControlProfileRpcSession m_profileSession;
 	bool m_storageHelloCompleted = false;
 	std::shared_ptr<storage::IStorageAuthority> m_storage;
 	std::shared_ptr<Gate> m_gate;
+	const ControlIpcSessionContext m_context;
+	std::shared_ptr<IControlIpcFrameHandler> m_senp;
+	std::unique_ptr<IControlIpcSessionHandler> m_senpSession;
+	bool m_closed{};
 };
 
 CControlPlatformRpcServerAdapter::CControlPlatformRpcServerAdapter(ControlStorageRpcSessionIdentity identity,
 	std::shared_ptr<storage::IStorageAuthority> storage,
-	std::shared_ptr<profiles::ControlUserDataProfileRegistry> profiles) :
-	m_storage(std::move(storage)), m_profiles(std::move(profiles))
+	std::shared_ptr<profiles::ControlUserDataProfileRegistry> profiles,
+	std::shared_ptr<IControlIpcFrameHandler> senp) :
+	m_storage(std::move(storage)), m_profiles(std::move(profiles)), m_senp(std::move(senp))
 {
 	if (!m_storage || !m_profiles) throw std::invalid_argument("Control platform RPC adapter requires storage and profile registry");
 	ValidateIdentity(identity);
@@ -159,7 +212,7 @@ std::unique_ptr<IControlIpcSessionHandler> CControlPlatformRpcServerAdapter::Cre
 {
 	std::shared_lock lock(m_gate->mutex);
 	if (m_gate->state != EControlPlatformRpcServerAdapterState::Accepting) return nullptr;
-	return std::make_unique<SessionHandler>(m_identity, session, m_storage, m_profiles, m_gate);
+	return std::make_unique<SessionHandler>(m_identity, session, m_storage, m_profiles, m_gate, m_senp);
 }
 
 } // namespace platform::controlipc

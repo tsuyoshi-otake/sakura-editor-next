@@ -198,3 +198,29 @@ direction rejection, and sticky decode failure with explicit reset. The fixture
 and runner are compatibility evidence only; they do not authorize changing
 Control IPC wire shape, endpoint generation/profile identity, or persistence
 keys without a versioned contract decision and golden migration plan.
+
+## SENP Connection Routing (Issue #296)
+
+SENP adds kind 20 (`SenpRequest`) and kind 21 (`SenpResponse`) without changing
+the v1 header, existing kind values, or Hello bytes. The SENP payload has its own
+version. `ControlIpcProtocol.SenpEnvelopeAddsFixedKindsWithoutChangingVersionOneHeader`
+pins both new frame bytes and direction rules. Older peers reject these kinds;
+the client must report unsupported and must not downgrade or retry automatically.
+
+The composite adapter creates one lazy SENP session only after storage Hello has
+confirmed the Control profile. It captures the transport's session ID and peer
+PID at creation, verifies the same peer and Control generation on every request,
+and never constructs authority from a payload PID. The service host accepts an
+optional Control-composed handler through the transport interface, so platform
+code does not depend on the SENP runtime or workbench. Missing composition returns
+UnsupportedVersion and leaves ordinary storage operations available.
+
+Factory refusal, exceptions, malformed response envelopes and explicit close
+release the SENP session before returning one terminal response and close the
+pipe. They never recreate the handler. Pipe destruction releases that connection
+without disturbing another connection. The shared stopping gate drains active
+dispatch, then pipe-server shutdown destroys all retained sessions. A concrete
+SENP session must revoke grants before releasing its peer and own cancellation
+cleanup for its subscriptions. Process work must run on bounded Control workers;
+frame dispatch is admission/polling only. The concrete package authority, GitHub
+broker and Editor client are subsequent composition gates.

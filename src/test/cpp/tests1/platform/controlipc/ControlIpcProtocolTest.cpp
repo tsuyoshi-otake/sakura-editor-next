@@ -43,6 +43,35 @@ void SetLe32(std::vector<std::uint8_t>& bytes, std::size_t offset, std::uint32_t
 	for (std::size_t index = 0; index < 4; ++index) bytes[offset + index] = static_cast<std::uint8_t>(value >> (index * 8));
 }
 
+TEST(ControlIpcProtocol, SenpEnvelopeAddsFixedKindsWithoutChangingVersionOneHeader)
+{
+	const auto request = MakeFrame(EControlIpcKind::SenpRequest, EControlIpcFlags::Request, 41, 9, { 1, 0 });
+	const std::vector<std::uint8_t> golden{
+		30, 0, 0, 0, 'S', 'C', 'I', 'P', 1, 0, 0, 0, 20, 0, 1, 0,
+		41, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0, 1, 0,
+	};
+	EXPECT_EQ(golden, Encode(request));
+	CControlIpcFrameDecoder decoder;
+	const auto decoded = decoder.Feed(golden);
+	ASSERT_EQ(EControlIpcDecodeOutcome::Decoded, decoded.outcome);
+	ASSERT_EQ(1U, decoded.frames.size());
+	EXPECT_EQ(EControlIpcKind::SenpRequest, decoded.frames.front().header.kind);
+	EXPECT_EQ(request.payload, decoded.frames.front().payload);
+	auto response = request;
+	response.header.kind = EControlIpcKind::SenpResponse;
+	response.header.flags = EControlIpcFlags::Response | EControlIpcFlags::Terminal;
+	auto responseGolden = golden;
+	responseGolden[12] = 21;
+	responseGolden[14] = 6;
+	EXPECT_EQ(responseGolden, Encode(response));
+	response.header.flags = EControlIpcFlags::Request;
+	EXPECT_EQ(EControlIpcEncodeOutcome::InvalidFlags, EncodeControlIpcFrame(response).outcome);
+	auto wrongDirection = golden;
+	wrongDirection[14] = 6;
+	CControlIpcFrameDecoder rejected;
+	EXPECT_EQ(EControlIpcDecodeOutcome::InvalidFlags, rejected.Feed(wrongDirection).outcome);
+}
+
 TEST(ControlIpcProtocol, EncodesVersionedLittleEndianHeaderAndDecodesFragmentedInput)
 {
 	const auto input = MakeFrame(EControlIpcKind::StorageApplyRequest, EControlIpcFlags::Request, 0x0102030405060708ULL,

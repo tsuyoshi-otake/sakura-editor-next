@@ -37,13 +37,17 @@ enum class EControlPlatformRpcServerAdapterState : std::uint8_t {
 	@brief Adapts one authenticated transport to storage and profile sessions.
 
 	Storage Hello is the sole connection handshake and must complete successfully
-	before profile requests are dispatched.
+	before profile or SENP requests are dispatched. A SENP handler must perform
+	bounded, nonblocking admission/poll operations here; process execution belongs
+	to its Control-owned workers. Its session destructor revokes grants and joins
+	or transfers cancellation cleanup before releasing the observed peer.
 */
 class CControlPlatformRpcServerAdapter final : public IControlIpcFrameHandler {
 public:
 	CControlPlatformRpcServerAdapter(ControlStorageRpcSessionIdentity identity,
 		std::shared_ptr<storage::IStorageAuthority> storage,
-		std::shared_ptr<profiles::ControlUserDataProfileRegistry> profiles);
+		std::shared_ptr<profiles::ControlUserDataProfileRegistry> profiles,
+		std::shared_ptr<IControlIpcFrameHandler> senp = {});
 	~CControlPlatformRpcServerAdapter() override;
 	CControlPlatformRpcServerAdapter(const CControlPlatformRpcServerAdapter&) = delete;
 	CControlPlatformRpcServerAdapter& operator=(const CControlPlatformRpcServerAdapter&) = delete;
@@ -63,6 +67,9 @@ private:
 	ControlStorageRpcSessionIdentity m_identity;
 	std::shared_ptr<storage::IStorageAuthority> m_storage;
 	std::shared_ptr<profiles::ControlUserDataProfileRegistry> m_profiles;
+	//! Control-composed service only. Each accepted pipe owns one lazy session;
+	//! its destruction must revoke that connection before releasing its peer.
+	std::shared_ptr<IControlIpcFrameHandler> m_senp;
 	std::shared_ptr<Gate> m_gate;
 };
 

@@ -49,6 +49,7 @@ template<typename T>
 	case EControlIpcKind::SecretCapabilityIssueRequest:
 	case EControlIpcKind::SecretCapabilityRevokeSessionRequest:
 	case EControlIpcKind::ProfileRequest:
+	case EControlIpcKind::SenpRequest:
 	case EControlIpcKind::CancelAck:
 	case EControlIpcKind::Error:
 	case EControlIpcKind::SecretGetResponse:
@@ -56,6 +57,7 @@ template<typename T>
 	case EControlIpcKind::SecretCapabilityIssueResponse:
 	case EControlIpcKind::SecretCapabilityRevokeSessionResponse:
 	case EControlIpcKind::ProfileResponse:
+	case EControlIpcKind::SenpResponse:
 		return true;
 	}
 	return false;
@@ -93,6 +95,7 @@ template<typename T>
 	case EControlIpcKind::SecretCapabilityIssueRequest:
 	case EControlIpcKind::SecretCapabilityRevokeSessionRequest:
 	case EControlIpcKind::ProfileRequest:
+	case EControlIpcKind::SenpRequest:
 		return EControlIpcFlags::Request;
 	case EControlIpcKind::HelloAck:
 	case EControlIpcKind::StorageSnapshotResponse:
@@ -104,6 +107,7 @@ template<typename T>
 	case EControlIpcKind::SecretCapabilityIssueResponse:
 	case EControlIpcKind::SecretCapabilityRevokeSessionResponse:
 	case EControlIpcKind::ProfileResponse:
+	case EControlIpcKind::SenpResponse:
 		return EControlIpcFlags::Response;
 	}
 	return EControlIpcFlags::None;

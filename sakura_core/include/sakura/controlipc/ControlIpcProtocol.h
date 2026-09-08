@@ -49,6 +49,9 @@ enum class EControlIpcKind : std::uint16_t {
 	//! Versioned, control-owned user-data profile command envelope.
 	ProfileRequest = 18,
 	ProfileResponse = 19,
+	//! Additive SENP payload-v1 envelope; requires the same successful Hello.
+	SenpRequest = 20,
+	SenpResponse = 21,
 };
 
 enum class EControlIpcFlags : std::uint16_t {

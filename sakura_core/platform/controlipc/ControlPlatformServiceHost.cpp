@@ -65,18 +65,21 @@ ControlPlatformServiceHostDependencies ProductionDependencies()
 
 CControlPlatformServiceHost::CControlPlatformServiceHost(ControlPlatformServiceHostOptions options,
 	std::shared_ptr<storage::IStorageAuthority> storage,
-	std::shared_ptr<profiles::ControlUserDataProfileRegistry> profiles) :
-	CControlPlatformServiceHost(std::move(options), std::move(storage), std::move(profiles), ProductionDependencies())
+	std::shared_ptr<profiles::ControlUserDataProfileRegistry> profiles,
+	std::shared_ptr<IControlIpcFrameHandler> senp) :
+	CControlPlatformServiceHost(std::move(options), std::move(storage), std::move(profiles), ProductionDependencies(), std::move(senp))
 {
 }
 
 	CControlPlatformServiceHost::CControlPlatformServiceHost(ControlPlatformServiceHostOptions options,
 	std::shared_ptr<storage::IStorageAuthority> storage,
 	std::shared_ptr<profiles::ControlUserDataProfileRegistry> profiles,
-	ControlPlatformServiceHostDependencies dependencies) :
+	ControlPlatformServiceHostDependencies dependencies,
+	std::shared_ptr<IControlIpcFrameHandler> senp) :
 	m_options(std::move(options)),
 	m_storage(std::move(storage)),
 	m_profiles(std::move(profiles)),
+	m_senp(std::move(senp)),
 	m_dependencies(std::move(dependencies))
 {
 }
@@ -179,7 +182,7 @@ ControlPlatformServiceHostResult CControlPlatformServiceHost::Start()
 		try {
 			m_adapter = std::make_shared<CControlPlatformRpcServerAdapter>(
 				ControlStorageRpcSessionIdentity{ m_options.profileId, m_options.authorityGeneration },
-				m_storage, m_profiles);
+				m_storage, m_profiles, m_senp);
 		} catch (...) {
 			RollbackStart();
 			return Result(EControlPlatformServiceHostResultCode::AdapterCreateFailed, L"control platform RPC adapter creation failed");

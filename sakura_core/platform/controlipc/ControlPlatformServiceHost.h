@@ -110,11 +110,13 @@ class CControlPlatformServiceHost final {
 public:
 	CControlPlatformServiceHost(ControlPlatformServiceHostOptions options,
 		std::shared_ptr<storage::IStorageAuthority> storage,
-		std::shared_ptr<profiles::ControlUserDataProfileRegistry> profiles);
+		std::shared_ptr<profiles::ControlUserDataProfileRegistry> profiles,
+		std::shared_ptr<IControlIpcFrameHandler> senp = {});
 	CControlPlatformServiceHost(ControlPlatformServiceHostOptions options,
 		std::shared_ptr<storage::IStorageAuthority> storage,
 		std::shared_ptr<profiles::ControlUserDataProfileRegistry> profiles,
-		ControlPlatformServiceHostDependencies dependencies);
+		ControlPlatformServiceHostDependencies dependencies,
+		std::shared_ptr<IControlIpcFrameHandler> senp = {});
 	~CControlPlatformServiceHost();
 	CControlPlatformServiceHost(const CControlPlatformServiceHost&) = delete;
 	CControlPlatformServiceHost& operator=(const CControlPlatformServiceHost&) = delete;
@@ -134,6 +136,7 @@ private:
 	const ControlPlatformServiceHostOptions m_options;
 	const std::shared_ptr<storage::IStorageAuthority> m_storage;
 	const std::shared_ptr<profiles::ControlUserDataProfileRegistry> m_profiles;
+	const std::shared_ptr<IControlIpcFrameHandler> m_senp;
 	const ControlPlatformServiceHostDependencies m_dependencies;
 	mutable std::mutex m_mutex;
 	EControlPlatformServiceHostState m_state = EControlPlatformServiceHostState::Stopped;

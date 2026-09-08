@@ -53,13 +53,20 @@ U06のGitHub非依存sample guestは実v2 Componentとして2 View、page/empty/
 実hostとのHello/Activate/TreeRequest往復まで検証した。native owner publicationはcatalog/pageの二重revision
 preflight、poll後queue drain、exact owner revokeまで実装した。window-local compositionはowner Pollとprojection
 Pumpを順序付け、実sampleで2 Viewのroot、command、4 sectionのreadonly documentまで一往復する。
-CEditWndのtimer/lifecycle、package-derived descriptor、状態永続化の結合は引き続きU06に残る。
+CEditWndへpackage-derived descriptor、遅延起動、既存timerでのPoll、theme/focus/layoutと終了処理を接続した。
+17件のlifecycle/startup/style検証、3,953件のinventory、実アプリのPanel切替・resize計12描画試行が合格。
+描画の最大再描画差分は0.002715%（既存閾値0.05%）。これは既存catalogの回帰検証であり、
+v2 packageの実アプリ受理、GitHub tool、command完了、text resource、状態永続化の結合は未完了。
 package-derived descriptorの前提として、v2 manifestのView起動条件・能力・commandを検証し、
 管理snapshotにschema/ABIと各宣言を保持する境界を追加した。実3拡張のmanifestと旧v1を含む
 Rust 18件、native decoderと管理情報の既存利用側69件が合格。v2のpackage公開は引き続き
-UnsupportedRuntimeで停止し、実windowの起動・終了接続を完了するまで受理を有効化しない。
+UnsupportedRuntimeで停止し、上記の実アプリ結合検証を完了するまで受理を有効化しない。
 T01はGit固有policyから有界process runnerを分離し、T02はControl-owned grantをIPC接続、profile、
 package digest、owner/workspace/account generation、capability、management revision、有効期限へ束縛した。
+Control IPCには既存Hello後のSENP専用要求・応答を追加し、OSが確認した接続ごとに一つのsessionを保持する。
+拒否・例外・不正応答はsession破棄と一つの終端応答を伴い、自動再生成しない。43件のIPC/grant検証と
+3,961件のinventory照合が合格。Controlの具体的なpackage authority/brokerとEditor clientは続く結合工程で、
+handler未構成時はUnsupportedVersionを返す。
 T03はPATHの相対/CWD候補を拒否して絶対`gh.exe`だけを検出し、実測した2.93.0を厳密に選択する。
 拡張が渡せるのは検証済みhost/repository/path segmentだけで、実行argvは固定REST GET、
 ambient token・host/repository・debug・pager・browser・editor・TTY/socket/config overrideは子環境から除く。
