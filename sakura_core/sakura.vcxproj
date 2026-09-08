@@ -525,6 +525,7 @@
     <ClInclude Include="..\sakura_core\include\sakura\serialization\JsoncDocument.h" />
     <ClInclude Include="..\sakura_core\platform\controlipc\ControlPlatformRpcServerAdapter.h" />
 	<ClInclude Include="..\sakura_core\platform\controlipc\ControlProfileRpc.h" />
+	<ClInclude Include="..\sakura_core\platform\controlipc\ControlSenpRpc.h" />
     <ClInclude Include="..\sakura_core\platform\controlipc\ControlStorageRpc.h" />
     <ClInclude Include="..\sakura_core\platform\controlipc\ControlStorageRpcServerAdapter.h" />
     <ClInclude Include="..\sakura_core\platform\controlipc\ControlPlatformEndpointDiscoveryReader.h" />
@@ -1257,6 +1258,7 @@
     <ClCompile Include="..\sakura_core\platform\serialization\JsoncDocument.cpp" />
     <ClCompile Include="..\sakura_core\platform\controlipc\ControlPlatformRpcServerAdapter.cpp" />
 	<ClCompile Include="..\sakura_core\platform\controlipc\ControlProfileRpc.cpp" />
+	<ClCompile Include="..\sakura_core\platform\controlipc\ControlSenpRpc.cpp" />
     <ClCompile Include="..\sakura_core\platform\controlipc\ControlStorageRpc.cpp" />
     <ClCompile Include="..\sakura_core\platform\controlipc\ControlStorageRpcServerAdapter.cpp" />
     <ClCompile Include="..\sakura_core\platform\controlipc\ControlPlatformEndpointDiscoveryReader.cpp" />

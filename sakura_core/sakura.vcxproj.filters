@@ -1648,6 +1648,9 @@
 	<ClInclude Include="..\sakura_core\platform\controlipc\ControlProfileRpc.h">
 	  <Filter>Cpp Source Files\platform</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\platform\controlipc\ControlSenpRpc.h">
+	  <Filter>Cpp Source Files\platform</Filter>
+	</ClInclude>
 
     <ClInclude Include="..\sakura_core\platform\controlipc\ControlStorageRpc.h">
       <Filter>Cpp Source Files\platform</Filter>
@@ -3665,6 +3668,9 @@
       <Filter>Cpp Source Files\platform</Filter>
     </ClCompile>
 	<ClCompile Include="..\sakura_core\platform\controlipc\ControlProfileRpc.cpp">
+	  <Filter>Cpp Source Files\platform</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\platform\controlipc\ControlSenpRpc.cpp">
 	  <Filter>Cpp Source Files\platform</Filter>
 	</ClCompile>
 
