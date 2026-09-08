@@ -98,6 +98,11 @@ protected:
 		for (const auto value : { static_cast<std::uint64_t>(viewport.scrollPosition), view->PreparedGeneration(),
 			static_cast<std::uint64_t>(viewport.renderedLines), static_cast<std::uint64_t>(::IsWindowVisible(view->Window())) }) hash = (hash ^ value) * 16777619;
 		for (const auto value : WindowText(view->FocusWindow())) hash = (hash ^ value) * 16777619;
+		for (const auto value : view->SelectedText()) hash = (hash ^ value) * 16777619;
+		for (auto child = ::GetWindow(view->Window(), GW_CHILD); child; child = ::GetWindow(child, GW_HWNDNEXT)) {
+			wchar_t name[64]{}; ::GetClassNameW(child, name, 64);
+			if (::lstrcmpiW(name, L"Edit") == 0) hash = (hash ^ ::IsWindowVisible(child)) * 16777619;
+		}
 		return static_cast<LRESULT>((hash & 0x7fffffffffffffff) | 1);
 	}
 	static LRESULT CALLBACK ProbeProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR context) {
@@ -143,6 +148,20 @@ protected:
 				return self.view->Sync();
 			}
 			case 9: return self.Fingerprint();
+			case 10:
+				self.view->ShowFind(lParam != 0);
+				if (lParam) {
+					const auto result = self.view->Find(L"Verification");
+					return result == markdown::PreviewFindResult::Found || result == markdown::PreviewFindResult::Wrapped;
+				}
+				return 1;
+			case 11:
+				if (lParam) self.view->SelectAll();
+				else {
+					::SendMessageW(self.view->FocusWindow(), WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(1, 1));
+					::SendMessageW(self.view->FocusWindow(), WM_LBUTTONUP, 0, MAKELPARAM(1, 1));
+				}
+				return 1;
 			default: return 0;
 			}
 		} catch (...) { return 0; }
@@ -415,6 +434,122 @@ TEST_F(SenpReadonlyDocument, NativePreparedWorkerReportsFailuresAndDeferredCommi
 	EXPECT_EQ(1u, delivered.size()); preview.Layout({ 0, 0, 400, 200 }, 96);
 	ASSERT_TRUE(PumpUntil([&] { return delivered.size() == 2; })); EXPECT_TRUE(delivered[1].second);
 	preview.Layout({ 0, 0, 450, 200 }, 96); EXPECT_EQ(2u, delivered.size()); preview.Close();
+}
+TEST_F(SenpReadonlyDocument, NativeRenderedSelectionFindAndCopyPreserveTextAcrossReflow)
+{
+	ASSERT_NO_FATAL_FAILURE(CreateNative());
+	const std::wstring paragraph = L"one two three four five six seven eight nine ten \u65e5\u672c\u8a9e \u03a9mega one two";
+	Published document{ L"issue/7", L"Selection", 1, {
+		senp::effect::MarkdownSection{ paragraph },
+		senp::effect::TableSection{ { L"Column A", L"Column B" }, { { { L"literal **value**", L"second cell" } } } }
+	} };
+	ASSERT_NO_FATAL_FAILURE(Publish(document));
+	ASSERT_TRUE(PumpUntil([&] { return !view->ViewportSnapshot().layoutPending; }));
+	view->SelectAll();
+	const auto complete = view->SelectedText();
+	EXPECT_EQ(complete, L"Selection\n" + paragraph + L"\nColumn A\tColumn B\nliteral **value**\tsecond cell\n\n");
+	std::wstring copied; int copies{};
+	view->SetCopySink([&](std::wstring_view text) { copied = text; ++copies; return true; });
+	ASSERT_TRUE(view->Copy()); EXPECT_EQ(copied, complete);
+	ASSERT_EQ(markdown::PreviewFindResult::Wrapped, view->Find(L"one two"));
+	EXPECT_EQ(view->SelectedText(), L"one two");
+	EXPECT_EQ(markdown::PreviewFindResult::Invalid, view->Find(std::wstring(1, L'\xd800')));
+	EXPECT_EQ(view->SelectedText(), L"one two");
+	ASSERT_EQ(SenpSurfaceProjection::Applied, switcher->Layout({ 0, 0, 180, 440 }));
+	ASSERT_TRUE(PumpUntil([&] { return !view->ViewportSnapshot().layoutPending; }));
+	EXPECT_EQ(view->SelectedText(), L"one two");
+	view->SelectAll(); EXPECT_EQ(view->SelectedText(), complete);
+	ASSERT_EQ(markdown::PreviewFindResult::Wrapped, view->Find(L"\u03c9MEGA", false, false));
+	EXPECT_EQ(view->SelectedText(), L"\u03a9mega");
+	EXPECT_EQ(markdown::PreviewFindResult::NotFound, view->Find(L"\u03c9MEGA", false, true));
+	ASSERT_EQ(markdown::PreviewFindResult::Found, view->Find(L"one two"));
+	ASSERT_EQ(markdown::PreviewFindResult::Found, view->Find(L"one two", true));
+	::SendMessageW(view->FocusWindow(), WM_COPY, 0, 0);
+	EXPECT_EQ(copies, 2); EXPECT_EQ(copied, L"one two");
+	view->SetCopySink([](std::wstring_view) { return false; }); EXPECT_FALSE(view->Copy());
+	::SendMessageW(view->FocusWindow(), WM_COPY, 0, 0);
+	bool failureShown{};
+	for (auto child = ::GetWindow(view->Window(), GW_CHILD); child; child = ::GetWindow(child, GW_HWNDNEXT)) {
+		wchar_t text[128]{}; ::GetWindowTextW(child, text, 128);
+		if (::IsWindowVisible(child) && std::wstring_view(text) == L"The selection could not be copied. Try again.") failureShown = true;
+	}
+	EXPECT_TRUE(failureShown);
+	view->ShowFind(true);
+	ASSERT_EQ(SenpDocumentResult::Accepted, model.Expire().result); ASSERT_TRUE(view->Sync());
+	EXPECT_TRUE(view->SelectedText().empty()); EXPECT_FALSE(view->Copy());
+	EXPECT_EQ(markdown::PreviewFindResult::Unavailable, view->Find(L"one two"));
+	ASSERT_TRUE(PumpUntil([&] { return !view->ViewportSnapshot().layoutPending && view->State() == SenpDocumentViewState::Prepared; }));
+	EXPECT_TRUE(view->SelectedText().empty());
+}
+TEST_F(SenpReadonlyDocument, NativePreviewMouseSelectionAndCancellationOwnCapture)
+{
+	ASSERT_NO_FATAL_FAILURE(CreateNative());
+	markdown::CMarkdownPreviewWnd preview({}, 700297);
+	ASSERT_TRUE(preview.Create(parent)); preview.Layout({ 0, 0, 600, 300 }, 96); preview.Show(true);
+	preview.SetDocument(markdown::ParseMarkdown(L"alpha beta gamma"));
+	ASSERT_TRUE(PumpUntil([&] { return !preview.ViewportSnapshot().layoutPending; }));
+	const auto window = preview.GetHwnd();
+	::SendMessageW(window, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(26, 20));
+	EXPECT_EQ(::GetCapture(), window);
+	::SendMessageW(window, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(400, 20));
+	::SendMessageW(window, WM_LBUTTONUP, 0, MAKELPARAM(400, 20));
+	EXPECT_NE(::GetCapture(), window); EXPECT_EQ(preview.SelectedText(), L"alpha beta gamma");
+	::SendMessageW(window, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(26, 20));
+	::SendMessageW(window, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(400, 20));
+	::SendMessageW(window, WM_CANCELMODE, 0, 0);
+	EXPECT_NE(::GetCapture(), window);
+	const auto retained = preview.SelectedText();
+	::SendMessageW(window, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(26, 20));
+	EXPECT_EQ(preview.SelectedText(), retained);
+	preview.Layout({ 0, 0, 140, 300 }, 96);
+	ASSERT_TRUE(PumpUntil([&] { return !preview.ViewportSnapshot().layoutPending; }));
+	EXPECT_EQ(preview.SelectedText(), retained);
+	ASSERT_TRUE(preview.QueuePreparedDocument([] { return markdown::ParseMarkdown(L"new body"); }, { 1, 0 }));
+	EXPECT_TRUE(preview.SelectedText().empty());
+	EXPECT_EQ(preview.FindText(L"alpha"), markdown::PreviewFindResult::Unavailable);
+	preview.Close(); EXPECT_NE(::GetCapture(), window); EXPECT_TRUE(preview.SelectedText().empty());
+}
+TEST_F(SenpReadonlyDocument, NativeFindKeyboardAndHiddenRefreshKeepFocusOwnership)
+{
+	ASSERT_NO_FATAL_FAILURE(CreateNative());
+	ASSERT_NO_FATAL_FAILURE(Publish());
+	ASSERT_TRUE(PumpUntil([&] { return !view->ViewportSnapshot().layoutPending; }));
+	HWND query{};
+	for (auto child = ::GetWindow(view->Window(), GW_CHILD); child; child = ::GetWindow(child, GW_HWNDNEXT)) {
+		wchar_t name[64]{}; ::GetClassNameW(child, name, 64);
+		if (::lstrcmpiW(name, L"Edit") == 0) query = child;
+	}
+	ASSERT_NE(query, nullptr); EXPECT_FALSE(::IsWindowVisible(query));
+	struct KeyboardState final {
+		BYTE original[256]{};
+		KeyboardState() { ::GetKeyboardState(original); }
+		~KeyboardState() { ::SetKeyboardState(original); }
+	} keyboard;
+	BYTE control[256]{}; control[VK_CONTROL] = 0x80;
+	ASSERT_TRUE(::SetKeyboardState(control));
+	::SendMessageW(view->FocusWindow(), WM_KEYDOWN, 'F', 0);
+	ASSERT_TRUE(::SetKeyboardState(keyboard.original));
+	EXPECT_TRUE(::IsWindowVisible(query)); EXPECT_EQ(::GetFocus(), query);
+	::SetWindowTextW(query, L"unsaved text");
+	::SendMessageW(query, WM_KEYDOWN, VK_RETURN, 0);
+	EXPECT_EQ(view->SelectedText(), L"unsaved text");
+	::SendMessageW(query, WM_KEYDOWN, VK_ESCAPE, 0);
+	EXPECT_FALSE(::IsWindowVisible(query)); EXPECT_EQ(::GetFocus(), view->FocusWindow());
+	const auto other = ::CreateWindowExW(0, L"EDIT", L"Retained other input", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+		0, 0, 10, 10, parent, nullptr, nullptr, nullptr);
+	ASSERT_NE(other, nullptr); ::SetFocus(other);
+	switcher->SetVisible(false);
+	ASSERT_EQ(SenpDocumentResult::Accepted, model.Begin(Request(2)).result);
+	ASSERT_TRUE(view->Sync()); EXPECT_EQ(::GetFocus(), other);
+	EXPECT_TRUE(view->SelectedText().empty());
+	::DestroyWindow(other);
+	ASSERT_NO_FATAL_FAILURE(Publish(Document(3), Request(3)));
+	ASSERT_TRUE(PumpUntil([&] { return !view->ViewportSnapshot().layoutPending; }));
+	view->SelectAll();
+	view->SetCopySink([](std::wstring_view) -> bool { throw std::runtime_error("clipboard failure"); });
+	::SendMessageW(view->FocusWindow(), WM_COPY, 0, 0);
+	EXPECT_EQ(SenpDocumentViewState::Closed, view->State());
+	EXPECT_EQ(nullptr, view->Window()); EXPECT_EQ(nullptr, view->FocusWindow());
 }
 
 TEST_F(SenpReadonlyDocument, NativePreparedContentPerformsZeroRemoteImageFetches)

@@ -1322,6 +1322,7 @@
     <ClCompile Include="..\sakura_core\theme\CColorThemeRegistry.cpp" />
     <ClCompile Include="..\sakura_core\theme\TextMateScopeColorResolver.cpp" />
 	<ClCompile Include="..\sakura_core\markdown\CMarkdownPreviewWnd.cpp" />
+	<ClCompile Include="..\sakura_core\markdown\CMarkdownPreviewWndSelection.cpp" />
 	<ClCompile Include="..\sakura_core\markdown\MarkdownRemoteImageFetcher.cpp" />
 	<ClCompile Include="..\sakura_core\markdown\MarkdownCodeHighlighter.cpp" />
 	<ClCompile Include="..\sakura_core\markdown\MarkdownParser.cpp" />

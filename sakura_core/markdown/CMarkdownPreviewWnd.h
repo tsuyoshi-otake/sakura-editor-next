@@ -42,6 +42,8 @@ struct ThemePalette;
 namespace markdown {
 
 class IMarkdownRemoteImageFetcher;
+enum class PreviewFindResult { Found, Wrapped, NotFound, Invalid, Unavailable };
+enum class PreviewFindAction { Show, Next, Previous };
 
 //! A cached, GDI-only Markdown preview child window.
 //!
@@ -115,6 +117,15 @@ public:
 	}
 	void RevealSourceLine(std::size_t sourceLine);
 	void SetSourceLineCallback(std::function<void(std::size_t)> callback);
+	//! Selection addresses rendered Unicode text, independently of soft wrapping.
+	void SelectAllText() noexcept;
+	[[nodiscard]] std::wstring SelectedText() const;
+	[[nodiscard]] bool CopySelection();
+	[[nodiscard]] PreviewFindResult FindText(std::wstring_view query, bool previous = false, bool matchCase = false);
+	void SetFindCallback(std::function<void(PreviewFindAction)> callback);
+	void SetCopySink(std::function<bool(std::wstring_view)> sink);
+	//! Routes native copy keys through the owning document command and feedback.
+	void SetCopyCommand(std::function<void()> callback);
 
 	[[nodiscard]] HWND GetHwnd() const noexcept { return m_hWnd; }
 	[[nodiscard]] bool IsCreated() const noexcept { return m_hWnd != nullptr; }
@@ -160,6 +171,8 @@ private:
 		COLORREF primaryText = RGB(32, 32, 32);
 		COLORREF secondaryText = RGB(96, 96, 96);
 		COLORREF link = RGB(0, 102, 204);
+		COLORREF selectionBackground = RGB(0, 120, 215);
+		COLORREF selectionText = RGB(255, 255, 255);
 	};
 
 	struct RenderLine {
@@ -175,6 +188,7 @@ private:
 		int width = 0;
 		std::size_t sourceLine = 0;
 		std::vector<CodeHighlightToken> codeTokens;
+		std::size_t textOffset = std::wstring::npos;
 	};
 
 	struct CachedImage {
@@ -230,6 +244,7 @@ private:
 		std::size_t nextBlock = 0;
 		std::optional<PreviewScrollAnchor> scrollAnchor;
 		std::vector<RenderLine> lines;
+		std::wstring selectionText;
 		std::vector<CachedImage> images;
 		std::vector<mermaid::Diagram> diagrams;
 		std::size_t decodedImagePixels = 0;
@@ -289,6 +304,12 @@ private:
 	void NotifySourceLineForScroll();
 	void Paint(HDC dc, const RECT& paintRect);
 	void DrawLine(HDC dc, const RenderLine& line, int top) const;
+	void DrawSelection(HDC dc, const RenderLine& line, int top) const;
+	[[nodiscard]] int TextPositionX(HDC dc, const RenderLine& line, std::size_t position) const;
+	[[nodiscard]] std::size_t HitText(POINT point) const;
+	[[nodiscard]] bool HandleSelectionMessage(UINT message, WPARAM wParam, LPARAM lParam);
+	void ResetTextSelection() noexcept;
+	void EndTextSelection() noexcept;
 	void AppendWrappedText(HDC dc, const Block& block, FontKind font, LineKind kind,
 		int left, int availableWidth, int* top, int continuationLeft = -1,
 		int continuationWidth = 0, const CodeHighlightResult* codeHighlight = nullptr,
@@ -341,6 +362,12 @@ private:
 
 	HWND m_hWnd = nullptr;
 	Document m_document;
+	std::wstring m_selectionText;
+	std::size_t m_selectionAnchor{}, m_selectionCaret{};
+	bool m_selecting{}, m_selectionAvailable{}, m_selectionContentCurrent{};
+	std::function<void(PreviewFindAction)> m_findCallback;
+	std::function<bool(std::wstring_view)> m_copySink;
+	std::function<void()> m_copyCommand;
 	LOGFONT m_editorFont{};
 	unsigned int m_editorFontDpi = 96;
 	unsigned int m_dpi = 96;

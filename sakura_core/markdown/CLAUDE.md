@@ -265,3 +265,40 @@ this preview has no horizontal scrolling and would otherwise cut it off silently
 The capability was split into `mermaidFlowchartRendering` (`Supported`) and
 `mermaidNonFlowchartRendering` (`Unsupported`) for the reason recorded in the
 section above: one flag cannot express one family drawn and the rest literal.
+
+
+## Rendered text selection and host find (U06 checkpoint, #296)
+
+`CMarkdownPreviewWndSelection.cpp` owns the native rendered-text interaction.
+RenderLine offsets point into one reading-order text index assembled by the
+existing bounded layout continuation. Soft wrapping adds no artificial newline;
+hard breaks, literal block boundaries and table tabs remain in the index.
+Geometry-sorted table paint rows keep their original reading-order offsets.
+Reflow retains the selection range; new document admission invalidates it before
+worker completion can expose the new generation. Commit publishes lines and
+their index together. Index construction is one O(N) pass within the existing
+32-row/2-ms slices, with no new worker, timer or paint-time parse.
+
+Mouse drag and Shift-click use measured glyph positions; selection endpoints do
+not split a UTF-16 surrogate pair. Ctrl+A selects the rendered text and Ctrl+C /
+WM_COPY copy the selected range as CF_UNICODETEXT. A host copy-command callback
+owns visible feedback, while a copy sink permits deterministic tests. Cancel,
+capture loss, hiding, focus loss and closing end capture explicitly. Closing and
+native destruction detach all interaction callbacks and discard the index.
+
+The host owns find chrome and calls FindText; the preview owns case-sensitive or
+ordinal-insensitive matching, wrap, selection and reveal. Queries are limited to
+1,024 well-formed UTF-16 units with no NUL. Ctrl+F/F3 are routed only when a host
+find callback exists. No ordinary Markdown application find integration or full
+UI Automation TextPattern is declared by this checkpoint.
+
+Use the platform selection colors: upstream webview pre/index.html and the
+Markdown media/markdown.css do not override text selection colors. This is
+distinct from the source editor's selection decoration tokens. Existing image,
+diagram and rendering limitations remain documented in PARITY.md.
+
+Verify the native SenpReadonlyDocument selection/reflow, mouse cancellation,
+find/focus and throwing-copy lifecycle cases plus the Markdown regression
+suites. The ReadonlyDocuments dual-capture probe observes real selection and
+find-control visibility along with scroll, refresh, size and root visibility.
+Keep its unoccluded-screen, gesture-change, noise-floor and cleanup gates intact.

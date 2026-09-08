@@ -856,6 +856,9 @@ bool CMarkdownPreviewWnd::Create(HWND parent)
 
 void CMarkdownPreviewWnd::Close() noexcept
 {
+	ResetTextSelection();
+	m_selectionText.clear();
+	m_findCallback = {}; m_copyCommand = {}; m_copySink = {};
 	m_preparationCallback = {};
 	m_sourceLineCallback = {};
 	(void)m_nativeSurface.Close();
@@ -907,6 +910,8 @@ void CMarkdownPreviewWnd::SetDocument(Document document)
 		return;
 	}
 	m_deferredCompletion.reset();
+	ResetTextSelection();
+	m_selectionContentCurrent = true;
 	m_document = std::move(document);
 	m_codeHighlights.clear();
 	m_inlineStyleRuns.clear();
@@ -937,6 +942,7 @@ bool CMarkdownPreviewWnd::QueueDocument(std::wstring source, ParseOptions option
 			key, std::move(source), std::move(options), truncated };
 	}
 	m_deferredCompletion.reset();
+	ResetTextSelection();
 	state->condition.notify_one();
 	return true;
 }
@@ -952,6 +958,7 @@ bool CMarkdownPreviewWnd::QueuePreparedDocument(std::function<Document()> prepar
 		state->pendingWork = PreviewWorkItem{ key, {}, {}, false, std::move(prepare) };
 	}
 	m_deferredCompletion.reset();
+	ResetTextSelection();
 	state->condition.notify_one();
 	return true;
 }
@@ -1120,6 +1127,8 @@ void CMarkdownPreviewWnd::CommitCompletedWork(
 		if (callback) callback(completion->key, false);
 		return;
 	}
+	ResetTextSelection();
+	m_selectionContentCurrent = true;
 	m_document = std::move(completion->document);
 	m_codeHighlights = std::move(completion->codeHighlights);
 	m_inlineStyleRuns = std::move(completion->inlineStyleRuns);
@@ -1159,6 +1168,9 @@ void CMarkdownPreviewWnd::SetPalette(const theme::ThemePalette& palette)
 	m_colors.primaryText = palette.primaryText.ToColorRef();
 	m_colors.secondaryText = palette.secondaryText.ToColorRef();
 	m_colors.link = palette.accent.ToColorRef();
+	// Upstream webview/Markdown CSS leaves native text selection to the platform.
+	m_colors.selectionBackground = ::GetSysColor(COLOR_HIGHLIGHT);
+	m_colors.selectionText = ::GetSysColor(COLOR_HIGHLIGHTTEXT);
 	m_overlayColors = workbench::controls::ResolveOverlayScrollbarColors(palette, palette.canvas);
 	UpdateOverlayScrollbar();
 	RebuildPaintResources();
@@ -1244,6 +1256,8 @@ void CMarkdownPreviewWnd::Layout(const RECT& bounds, unsigned int dpi, bool tran
 			return;
 		}
 		m_imagesDirty = false;
+		ResetTextSelection();
+		m_selectionContentCurrent = true;
 		m_document = std::move(m_deferredCompletion->document);
 		m_codeHighlights = std::move(m_deferredCompletion->codeHighlights);
 		m_inlineStyleRuns = std::move(m_deferredCompletion->inlineStyleRuns);
@@ -1300,6 +1314,8 @@ LRESULT CALLBACK CMarkdownPreviewWnd::WindowProc(HWND hwnd, UINT message, WPARAM
 
 LRESULT CMarkdownPreviewWnd::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam)
 {
+	try { if (HandleSelectionMessage(message, wParam, lParam)) return 0; }
+	catch (...) { Close(); return 0; }
 	switch (message) {
 	case kCommitPreviewWorkMessage:
 		CommitCompletedWork(wParam, lParam);
@@ -1311,6 +1327,9 @@ LRESULT CMarkdownPreviewWnd::HandleMessage(UINT message, WPARAM wParam, LPARAM l
 		return 0;
 
 	case WM_NCDESTROY: {
+		ResetTextSelection();
+		m_selectionText.clear();
+		m_findCallback = {}; m_copyCommand = {}; m_copySink = {};
 		CancelLayoutBuild();
 		(void)m_nativeSurface.Close();
 		m_nativeSurface.SetSink({});
@@ -1634,6 +1653,7 @@ void CMarkdownPreviewWnd::ContinueLayoutBuild()
 		// Existing paint data remains the last-known-good generation. Helpers use
 		// the member vectors, so expose staging only while this UI slice executes.
 		m_lines.swap(build.lines);
+		m_selectionText.swap(build.selectionText);
 		m_images.swap(build.images);
 		m_diagrams.swap(build.diagrams);
 		std::swap(m_decodedImagePixels, build.decodedImagePixels);
@@ -1661,6 +1681,7 @@ void CMarkdownPreviewWnd::ContinueLayoutBuild()
 				}
 				if (!ContinueWrappedText(dc, build, codeHighlight, sliceDeadline,
 					&remainingLineBudget)) return false;
+				m_selectionText += L'\n';
 				if (build.blockTextOffset > literalBlock.text.size()) return true;
 				if (remainingLineBudget == 0 || std::chrono::steady_clock::now() >= sliceDeadline) {
 					return false;
@@ -1932,6 +1953,7 @@ void CMarkdownPreviewWnd::ContinueLayoutBuild()
 				break;
 			}
 			if (!blockComplete) break;
+			if (!m_selectionText.empty()) m_selectionText += L'\n';
 			++build.nextBlock;
 			build.wrappedText.reset();
 			build.blockTextOffset = 0;
@@ -1962,6 +1984,7 @@ void CMarkdownPreviewWnd::ContinueLayoutBuild()
 		}
 		catch (...) {
 			m_lines.swap(build.lines);
+			m_selectionText.swap(build.selectionText);
 			m_images.swap(build.images);
 			m_diagrams.swap(build.diagrams);
 			std::swap(m_decodedImagePixels, build.decodedImagePixels);
@@ -1971,6 +1994,7 @@ void CMarkdownPreviewWnd::ContinueLayoutBuild()
 			return;
 		}
 		m_lines.swap(build.lines);
+		m_selectionText.swap(build.selectionText);
 		m_images.swap(build.images);
 		m_diagrams.swap(build.diagrams);
 		std::swap(m_decodedImagePixels, build.decodedImagePixels);
@@ -1995,6 +2019,10 @@ void CMarkdownPreviewWnd::CommitLayoutBuild()
 	m_layoutBuild.reset();
 	DeleteImages();
 	m_lines = std::move(completed.lines);
+	m_selectionText = std::move(completed.selectionText);
+	m_selectionAvailable = m_selectionContentCurrent;
+	m_selectionAnchor = std::min(m_selectionAnchor, m_selectionText.size());
+	m_selectionCaret = std::min(m_selectionCaret, m_selectionText.size());
 	m_images = std::move(completed.images);
 	m_diagrams = std::move(completed.diagrams);
 	m_decodedImagePixels = completed.decodedImagePixels;
@@ -2506,6 +2534,7 @@ void CMarkdownPreviewWnd::DrawLine(HDC dc, const RenderLine& line, int top) cons
 		if (position < line.text.size()) {
 			drawSegment(std::wstring_view(line.text).substr(position), 0, false, false);
 		}
+		DrawSelection(dc, line, top);
 		return;
 	}
 
@@ -2520,6 +2549,7 @@ void CMarkdownPreviewWnd::DrawLine(HDC dc, const RenderLine& line, int top) cons
 		drawSegment(std::wstring_view(line.text).substr(run.start, run.length), style,
 			run.Has(InlineStyleFlag::Code), run.Has(InlineStyleFlag::Image));
 	}
+	DrawSelection(dc, line, top);
 }
 
 int CMarkdownPreviewWnd::MeasureRenderLine(HDC dc, const RenderLine& line) const
@@ -2663,6 +2693,7 @@ void CMarkdownPreviewWnd::AppendTable(HDC dc, const Block& block, int left, int 
 						columnLeft[column] + border + cellPadX, columnWidth[column], &cellTop);
 				}
 			}
+			m_selectionText += column + 1 < columnCount ? L'\t' : L'\n';
 			cellRanges.emplace_back(cellStart, m_lines.size());
 			rowBottom = std::max(rowBottom, cellTop);
 		}
@@ -2907,8 +2938,14 @@ bool CMarkdownPreviewWnd::ContinueWrappedText(HDC dc, LayoutBuildState& build,
 		while (length > 0 && IsWrapSpace(charAt(state.start + length - 1))) {
 			--length;
 		}
+		const auto sourceStart = state.start;
+		auto nextStart = std::min(textSize(), state.start + std::max<std::size_t>(1, length));
+		while (nextStart < textSize()
+			&& (IsWrapSpace(charAt(nextStart)) || charAt(nextStart) == L'\n')) ++nextStart;
 		RenderLine renderLine;
+		renderLine.textOffset = m_selectionText.size();
 		renderLine.text = copyRange(state.start, length);
+		m_selectionText += copyRange(sourceStart, nextStart - sourceStart);
 		const auto& styleRuns = state.preparedRuns != nullptr
 			? *state.preparedRuns : state.normalizedRuns;
 		renderLine.styleRuns = ClipInlineStyleRuns(styleRuns, state.start, length);
@@ -2930,11 +2967,7 @@ bool CMarkdownPreviewWnd::ContinueWrappedText(HDC dc, LayoutBuildState& build,
 			build.wrappedText.reset();
 			return true;
 		}
-		state.start += std::max<std::size_t>(1, length);
-		while (state.start < textSize()
-			&& (IsWrapSpace(charAt(state.start)) || charAt(state.start) == L'\n')) {
-			++state.start;
-		}
+		state.start = nextStart;
 		if (state.nextForcedBreak != std::wstring::npos && state.start > state.nextForcedBreak) {
 			state.nextForcedBreak = findBreak(state.start);
 		}

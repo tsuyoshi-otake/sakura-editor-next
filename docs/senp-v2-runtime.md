@@ -343,3 +343,33 @@ readonlyログの縦横バーを既存の`COverlayScrollbar`へ接続した。Ri
 既存0.05%閾値は変更していない。runtime inventoryは3,808件で照合する。
 これはU06の途中の変更であり、本文の選択/検索、mixed section routing、実アプリの
 tab/command/backup、owner/page公開、sampleは引き続きU06の完了条件。
+
+
+### U06途中: 構造化本文の選択・コピー・検索
+
+native Markdown rendererの実文字位置から本文を選択し、Ctrl+A、Ctrl+C/WM_COPY、
+Shift-clickを処理する。折り返しでコピー文字列を変えず、元の改行と表のセル区切りを保持する。
+選択用indexは既存の有界layout continuationで構築し、paint中のparseやworkerを追加しない。
+新しいdocumentの受理時に古い選択・コピー・検索を無効にし、workerとreflowの完了後に公開する。
+
+SENP本文にはCtrl+F、Enter/F3、Shiftによる前検索、wrap、Escapeのnative find操作を接続した。
+検索語は1,024 UTF-16 unitに制限し、不正なsurrogateを拒否する。コピーの失敗はstatusに表示し、
+callbackの例外で不確かな表示を閉じる。hidden refreshは他のcontrolからfocusを奪わず、
+閉じる・capture cancellation・native破棄の各経路で所有者が操作を終端させる。
+
+find入力は既存CInputBoxGeometryと親描画のWorkbench frameを使う。native EDITの
+WS_EX_CLIENTEDGEではPrintWindow時にfocus境界が変化し、画面に1 pixelの差が出たため、
+Searchと同じ入力枠の所有方式で修正した。移動後のquery/statusと本文を一緒に再描画する。
+
+これは構造化本文surfaceの途中の変更であり、mixed section routing、実アプリのtab/command/
+backup、owner/page公開とsampleはU06に残る。独自rendererのUIA TextPatternと通常の
+Markdownアプリの検索統合は未実装であり、ログのnative Rich Editの機能とは区別する。
+
+構造化本文checkpointは分離した作業ツリーでDebug solutionをビルドし、120件の関連回帰試験が
+合格した。最後に加えたthrowing-copyのnative終端も含む。runtime inventoryは3,811件が一致。
+同じbinaryの別起動による216+108回のdual captureが合格し、実画面の再描画差は最大
+0.003969334%、非ゼロ1件だった。全変化14 pixelは本文外の右下端8 pixel以内に限られた。
+PrintWindowだけの欠落
+0件は同一geometryのnoise floorで区別し、既存0.05%閾値は変更していない。
+runnerとbuild processの終了を確認した。通常アプリの巨大段落測定は起動後のdocument確認に
+到達せず測定値を得ていないため、性能合格とは扱わず、実アプリ統合時の検証に残す。

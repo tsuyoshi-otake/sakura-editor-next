@@ -271,10 +271,26 @@ runs in paint. Preparation failure displays an explicit error and requires an
 explicit newer request to retry. Prepared means the worker result was committed;
 `ViewportSnapshot` separately reports ongoing native reflow and actual scroll.
 
-Text-resource sections are typed Unsupported at this boundary until U05 binds
-their renderer. Text selection/copy/find, command dispatch and application tab/
-backup integration remain the U05/U06 acceptance gates; a rendered preview does
-not claim those capabilities or full VS Code text-editor accessibility.
+The structured surface supports rendered-text mouse selection, Shift-click,
+Ctrl+A and exact-selection Copy. Its retained reading-order index preserves hard
+breaks and table cell separators across width reflow; a new model admission
+immediately makes old text unavailable to selection, copy and find. Native
+Ctrl+F opens the shared-style find input; Enter/F3 and Shift search forward/back
+with wrap, and Escape restores body focus. Search is bounded to 1,024 UTF-16
+units and rejects malformed surrogate sequences. Copy failure is observable in
+the status; exceptions close the uncertain native projection. Find, copy and
+preparation callbacks are detached before native destruction.
+
+The find input uses CInputBoxGeometry and a parent-painted Workbench frame,
+matching Search's ownership of its native EDIT. Do not use WS_EX_CLIENTEDGE:
+the native focus frame changed during PrintWindow and produced a real one-pixel
+screen difference. Layout commits the query/status and preview redraw together.
+Verify the full parent transaction again when binding it into application layout.
+
+Text-resource sections remain typed Unsupported in this structured renderer;
+U06 still owns mixed section routing through the separate U05 text surface.
+Application tab/command/backup integration and full text accessibility are also
+pending. The rendered selection does not claim a UI Automation TextPattern.
 
 Verify `SenpReadonlyDocument.*`, the existing Markdown suites and the
 `ReadonlyDocuments` probe in `tools/verify-senp-view-rendering.ps1`. Its readiness

@@ -8,6 +8,7 @@
 #include "markdown/MarkdownPreviewScrollMap.h"
 
 namespace theme { struct ThemePalette; }
+namespace markdown { enum class PreviewFindResult; }
 namespace workbench::editor {
 
 enum class SenpDocumentViewState : std::uint8_t { Unavailable, Preparing, Prepared, Failed, Closed };
@@ -27,6 +28,12 @@ public:
 	void Layout(const RECT& bounds, unsigned int dpi);
 	void Show(bool visible) noexcept;
 	void Close() noexcept;
+	void SelectAll() noexcept;
+	[[nodiscard]] std::wstring SelectedText() const;
+	[[nodiscard]] bool Copy();
+	void SetCopySink(std::function<bool(std::wstring_view)> sink);
+	void ShowFind(bool visible);
+	[[nodiscard]] markdown::PreviewFindResult Find(std::wstring_view query, bool previous = false, bool matchCase = false);
 	[[nodiscard]] HWND Window() const noexcept;
 	[[nodiscard]] HWND FocusWindow() const noexcept;
 	[[nodiscard]] SenpDocumentViewState State() const noexcept;

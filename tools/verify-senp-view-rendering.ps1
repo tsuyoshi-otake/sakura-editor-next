@@ -88,20 +88,33 @@ public static class SenpViewProbe {
                     + "; expected HWND=" + window + "; covering HWND=" + covering + ", PID=" + coveringPid + ", title=" + coveringTitle);
             }
         }
-        Bitmap screen = new Bitmap(width, height, PixelFormat.Format32bppArgb);
-        Bitmap printed = null;
+        string stage = "screen allocation";
+        Bitmap screen = null, printed = null;
         try {
+            screen = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+            stage = "CopyFromScreen";
             using (Graphics graphics = Graphics.FromImage(screen)) graphics.CopyFromScreen(origin.X, origin.Y, 0, 0, new Size(width, height), CopyPixelOperation.SourceCopy);
+            stage = "window allocation";
             using (Bitmap full = new Bitmap(outer.Right - outer.Left, outer.Bottom - outer.Top, PixelFormat.Format32bppArgb)) {
+                stage = "PrintWindow";
                 using (Graphics graphics = Graphics.FromImage(full)) {
                     IntPtr dc = graphics.GetHdc();
                     try { if (!PrintWindow(window, dc, 2)) throw new InvalidOperationException("PrintWindow failed."); }
                     finally { graphics.ReleaseHdc(dc); }
                 }
-                printed = full.Clone(new Rectangle(origin.X - outer.Left, origin.Y - outer.Top, width, height), PixelFormat.Format32bppArgb);
+                stage = "client crop";
+                Rectangle crop = new Rectangle(origin.X - outer.Left, origin.Y - outer.Top, width, height);
+                if (crop.Left < 0 || crop.Top < 0 || crop.Right > full.Width || crop.Bottom > full.Height)
+                    throw new InvalidOperationException("Client rectangle exceeds the window bitmap.");
+                printed = full.Clone(crop, PixelFormat.Format32bppArgb);
             }
             return new Bitmap[] { screen, printed };
-        } catch { screen.Dispose(); if (printed != null) printed.Dispose(); throw; }
+        } catch (Exception error) {
+            if (screen != null) screen.Dispose(); if (printed != null) printed.Dispose();
+            throw new InvalidOperationException("Capture failed at " + stage + "; client=" + width + "x" + height
+                + "; origin=" + origin.X + "," + origin.Y + "; outer=" + outer.Left + "," + outer.Top + "," + outer.Right + "," + outer.Bottom
+                + "; " + error.Message, error);
+        }
     }
     public static double Difference(Bitmap a, Bitmap b, string heatPath) {
         if (a.Size != b.Size) throw new InvalidOperationException("Capture dimensions changed.");
@@ -230,7 +243,7 @@ try {
         [void](Invoke-Probe 1 (380 -bor (($dpi -bor ($themeId -shl 10)) -shl 16)))
         Wait-DocumentReady
         for ($repeat = 0; $repeat -lt $Repetitions; ++$repeat) {
-            $gestures = if ($ProbeSet -eq 'TextResources') { @('log-visibility', 'resize', 'scroll', 'find', 'append') } elseif ($ProbeSet -eq 'ReadonlyDocuments') { @('document-visibility', 'resize', 'scroll', 'refresh') } elseif ($ProbeSet -eq 'ReadonlyEditors') { @('input-switch', 'resize', 'editor-visibility', 'surface-move') } elseif ($ProbeSet -eq 'TreeViews') { @('expand', 'resize', 'scroll', 'refresh') } else { @('collapse', 'resize', 'view-move', 'container-move') }
+            $gestures = if ($ProbeSet -eq 'TextResources') { @('log-visibility', 'resize', 'scroll', 'find', 'append') } elseif ($ProbeSet -eq 'ReadonlyDocuments') { @('document-visibility', 'resize', 'scroll', 'refresh', 'find', 'selection') } elseif ($ProbeSet -eq 'ReadonlyEditors') { @('input-switch', 'resize', 'editor-visibility', 'surface-move') } elseif ($ProbeSet -eq 'TreeViews') { @('expand', 'resize', 'scroll', 'refresh') } else { @('collapse', 'resize', 'view-move', 'container-move') }
             foreach ($gesture in $gestures) { foreach ($direction in 1, 0) {
                 if ($clock.Elapsed.TotalSeconds -gt $(if ($ProbeSet -eq 'TextResources') { 520 } elseif ($ProbeSet -eq 'ReadonlyDocuments') { 320 } elseif ($ProbeSet -eq 'ReadonlyEditors') { 200 } else { 140 })) { throw 'Rendering run exceeded its overall deadline.' }
                 # The preceding text append deliberately reveals the tail. Reset
@@ -240,6 +253,7 @@ try {
                 if ($ProbeSet -in @('TreeViews', 'ReadonlyEditors', 'ReadonlyDocuments', 'TextResources')) { $before += ':' + (Invoke-Probe 9).ToString() }
                 switch ($gesture) {
                     'log-visibility' { [void](Invoke-Probe 2 $direction) }
+                    'selection' { [void](Invoke-Probe 11 $direction) }
                     'find' { [void](Invoke-Probe 10 $direction) }
                     'append' { [void](Invoke-Probe 8 $direction) }
                     'document-visibility' { [void](Invoke-Probe 2 $direction) }

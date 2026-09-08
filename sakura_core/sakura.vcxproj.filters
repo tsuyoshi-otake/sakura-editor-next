@@ -3723,6 +3723,9 @@
     <ClCompile Include="..\sakura_core\markdown\CMarkdownPreviewWnd.cpp">
       <Filter>Cpp Source Files\markdown</Filter>
     </ClCompile>
+    <ClCompile Include="..\sakura_core\markdown\CMarkdownPreviewWndSelection.cpp">
+      <Filter>Cpp Source Files\markdown</Filter>
+    </ClCompile>
     <ClCompile Include="..\sakura_core\markdown\MarkdownRemoteImageFetcher.cpp">
       <Filter>Cpp Source Files\markdown</Filter>
     </ClCompile>
