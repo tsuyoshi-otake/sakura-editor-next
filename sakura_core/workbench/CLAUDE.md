@@ -415,6 +415,21 @@ cannot clear its successor or dispose the declaration catalog, even when their
 extension ID and generation happen to match. Native declaration composition is a
 separate integration responsibility; the binding port alone does not publish UI.
 
+`CSenpDeclaredTreeViews` supplies persistent native bodies for one declaration
+cohort. The outer HWND survives runtime replacement and revocation. Preparation
+creates hidden real TreeView children; Commit only transfers binding authority,
+and Pump replaces native children and starts visible provider requests after
+owner Poll. Every prepared candidate has a predecessor fence, so a losing
+candidate can close only its own hidden children. Closing an old publication
+cannot revoke its successor. Declaration Close owns final native cleanup.
+Visibility posts a deduplicated activation request; painting and layout never
+activate extensions. Failed and capacity-busy states offer an explicit Retry;
+disabled, unsupported and stopped states stay terminal without automatic retry.
+The window must Pump the actual activation state even after runtime revocation.
+The opt-in `DeclaredTreeViews` rendering probe verifies activation status,
+runtime binding, resizing and visibility with the dual-capture protocol. This
+component does not itself register declarations in the workbench catalog.
+
 ## Phase 6 Service Foundations Checkpoint (2026-07-31)
 
 - `CWorkbenchRuntime` owns the process-local Marker and Output authorities.

@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('ViewContainers', 'TreeViews', 'ReadonlyEditors', 'ReadonlyDocuments', 'MixedDocuments', 'TextResources')][string]$ProbeSet = 'ViewContainers',
+    [ValidateSet('ViewContainers', 'TreeViews', 'DeclaredTreeViews', 'ReadonlyEditors', 'ReadonlyDocuments', 'MixedDocuments', 'TextResources')][string]$ProbeSet = 'ViewContainers',
     [string]$Tests1 = (Join-Path (Split-Path $PSScriptRoot -Parent) 'x64/Debug/tests1.exe'),
     [string]$OutputDirectory = (Join-Path $env:USERPROFILE 'tmp/senp-view-rendering'),
     [ValidateRange(1, 4)][int]$Repetitions = 1,
@@ -246,8 +246,8 @@ try {
     $start = [Diagnostics.ProcessStartInfo]::new($exe)
     $start.UseShellExecute = $false; $start.CreateNoWindow = $true; $start.WindowStyle = 'Hidden'
     $start.RedirectStandardOutput = $true; $start.RedirectStandardError = $true
-    $suite = if ($ProbeSet -eq 'TextResources') { 'SenpTextResourceViewTest' } elseif ($ProbeSet -eq 'MixedDocuments') { 'SenpReadonlyDocumentHostTest' } elseif ($ProbeSet -eq 'ReadonlyDocuments') { 'SenpReadonlyDocument' } elseif ($ProbeSet -eq 'ReadonlyEditors') { 'SenpReadonlyWorkbench' } elseif ($ProbeSet -eq 'TreeViews') { 'SenpTreeView' } else { 'SenpViewContainer' }
-    $caption = if ($ProbeSet -eq 'TextResources') { 'SENP native text verification' } elseif ($ProbeSet -eq 'MixedDocuments') { 'Mixed SENP document' } elseif ($ProbeSet -eq 'ReadonlyDocuments') { 'SENP native document verification' } elseif ($ProbeSet -eq 'ReadonlyEditors') { 'SENP native readonly Editor verification' } elseif ($ProbeSet -eq 'TreeViews') { 'SENP native TreeView verification' } else { 'SENP native ViewContainer verification' }
+    $suite = if ($ProbeSet -eq 'DeclaredTreeViews') { 'SenpDeclaredTreeViewsTest' } elseif ($ProbeSet -eq 'TextResources') { 'SenpTextResourceViewTest' } elseif ($ProbeSet -eq 'MixedDocuments') { 'SenpReadonlyDocumentHostTest' } elseif ($ProbeSet -eq 'ReadonlyDocuments') { 'SenpReadonlyDocument' } elseif ($ProbeSet -eq 'ReadonlyEditors') { 'SenpReadonlyWorkbench' } elseif ($ProbeSet -eq 'TreeViews') { 'SenpTreeView' } else { 'SenpViewContainer' }
+    $caption = if ($ProbeSet -eq 'DeclaredTreeViews') { 'SENP declared TreeView verification' } elseif ($ProbeSet -eq 'TextResources') { 'SENP native text verification' } elseif ($ProbeSet -eq 'MixedDocuments') { 'Mixed SENP document' } elseif ($ProbeSet -eq 'ReadonlyDocuments') { 'SENP native document verification' } elseif ($ProbeSet -eq 'ReadonlyEditors') { 'SENP native readonly Editor verification' } elseif ($ProbeSet -eq 'TreeViews') { 'SENP native TreeView verification' } else { 'SENP native ViewContainer verification' }
     $start.ArgumentList.Add("--gtest_filter=$suite.DISABLED_VisualCaptureProbe")
     $start.ArgumentList.Add('--gtest_also_run_disabled_tests')
     $start.Environment['SAKURA_SENP_VIEW_PROBE'] = '1'
@@ -290,15 +290,18 @@ try {
         [void](Invoke-Probe 1 (380 -bor (($dpi -bor ($themeId -shl 10)) -shl 16)))
         Wait-DocumentReady
         for ($repeat = 0; $repeat -lt $Repetitions; ++$repeat) {
-            $gestures = if ($ProbeSet -eq 'TextResources') { @('log-visibility', 'resize', 'scroll', 'find', 'append') } elseif ($ProbeSet -eq 'MixedDocuments') { @('section-switch', 'resize', 'mixed-visibility', 'find', 'selection') } elseif ($ProbeSet -eq 'ReadonlyDocuments') { @('document-visibility', 'resize', 'scroll', 'refresh', 'find', 'selection') } elseif ($ProbeSet -eq 'ReadonlyEditors') { @('input-switch', 'resize', 'editor-visibility', 'surface-move') } elseif ($ProbeSet -eq 'TreeViews') { @('expand', 'resize', 'scroll', 'refresh') } else { @('collapse', 'resize', 'view-move', 'container-move') }
+            $gestures = if ($ProbeSet -eq 'DeclaredTreeViews') { @('activation-state', 'resize', 'runtime-binding', 'declaration-visibility') } elseif ($ProbeSet -eq 'TextResources') { @('log-visibility', 'resize', 'scroll', 'find', 'append') } elseif ($ProbeSet -eq 'MixedDocuments') { @('section-switch', 'resize', 'mixed-visibility', 'find', 'selection') } elseif ($ProbeSet -eq 'ReadonlyDocuments') { @('document-visibility', 'resize', 'scroll', 'refresh', 'find', 'selection') } elseif ($ProbeSet -eq 'ReadonlyEditors') { @('input-switch', 'resize', 'editor-visibility', 'surface-move') } elseif ($ProbeSet -eq 'TreeViews') { @('expand', 'resize', 'scroll', 'refresh') } else { @('collapse', 'resize', 'view-move', 'container-move') }
             foreach ($gesture in $gestures) { foreach ($direction in 1, 0) {
                 if ($clock.Elapsed.TotalSeconds -gt $(if ($ProbeSet -eq 'TextResources') { 520 } elseif ($ProbeSet -eq 'ReadonlyDocuments') { 320 } elseif ($ProbeSet -eq 'ReadonlyEditors') { 200 } else { 140 })) { throw 'Rendering run exceeded its overall deadline.' }
                 # The preceding text append deliberately reveals the tail. Reset
                 # this next scroll gesture's baseline before measuring its change.
                 if ($ProbeSet -eq 'TextResources' -and $gesture -eq 'scroll' -and $direction -eq 1) { [void](Invoke-Probe 3 0) }
                 $before = [SenpViewProbe]::Geometry($body)
-                if ($ProbeSet -in @('TreeViews', 'ReadonlyEditors', 'ReadonlyDocuments', 'MixedDocuments', 'TextResources')) { $before += ':' + (Invoke-Probe 9).ToString() }
+                if ($ProbeSet -in @('TreeViews', 'DeclaredTreeViews', 'ReadonlyEditors', 'ReadonlyDocuments', 'MixedDocuments', 'TextResources')) { $before += ':' + (Invoke-Probe 9).ToString() }
                 switch ($gesture) {
+                    'activation-state' { [void](Invoke-Probe 2 $direction) }
+                    'runtime-binding' { [void](Invoke-Probe 3 $direction) }
+                    'declaration-visibility' { [void](Invoke-Probe 8 $direction) }
                     'log-visibility' { [void](Invoke-Probe 2 $direction) }
                     'mixed-visibility' { [void](Invoke-Probe 3 $direction) }
                     'section-switch' { [void](Invoke-Probe 2 $direction) }
@@ -319,7 +322,7 @@ try {
                 }
                 Wait-DocumentReady
                 $after = [SenpViewProbe]::Geometry($body)
-                if ($ProbeSet -in @('TreeViews', 'ReadonlyEditors', 'ReadonlyDocuments', 'MixedDocuments', 'TextResources')) { $after += ':' + (Invoke-Probe 9).ToString() }
+                if ($ProbeSet -in @('TreeViews', 'DeclaredTreeViews', 'ReadonlyEditors', 'ReadonlyDocuments', 'MixedDocuments', 'TextResources')) { $after += ':' + (Invoke-Probe 9).ToString() }
                 Save-Trial "theme$themeId-dpi$dpi-r$repeat-$gesture-$direction" $before $after
             }}
         }

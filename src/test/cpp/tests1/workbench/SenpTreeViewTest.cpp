@@ -3,6 +3,8 @@
 #include "pch.h"
 #include <gtest/gtest.h>
 #include "workbench/tree/SenpTreeView.h"
+#include "workbench/SenpDeclaredTreeViews.h"
+#include "workbench/SenpExtensionActivation.h"
 #include "workbench/viewcontainer/ViewContainerPagePool.h"
 #include "workbench/layout/WorkbenchLayoutStateService.h"
 #include <CommCtrl.h>
@@ -276,5 +278,197 @@ TEST_F(SenpTreeView, DISABLED_VisualCaptureProbe)
 	}
 	::RemoveWindowSubclass(window, ProbeProcedure, 296); EXPECT_TRUE(probeDone); EXPECT_TRUE(owner->IsUsable()); EXPECT_TRUE(body->IsUsable());
 }
+class SenpDeclaredTreeViewsTest : public SenpTreeView {
+protected:
+	std::shared_ptr<CSenpDeclaredTreeViews> declarations;
+	std::unique_ptr<ISenpViewBody> declaredBody;
+	std::unique_ptr<ISenpDeclaredTreePublication> visualPublication;
+	std::int64_t visualGeneration{};
+	int activationRequests{}, retryRequests{};
+	void CreateDeclaration()
+	{
+		declarations = CSenpDeclaredTreeViews::Create(L"test.extension",
+			{ { "test.tree", "test.container", "Projects", 0, true, true, "senp.tree" } },
+			[this](std::wstring_view viewId, bool retry) {
+				EXPECT_EQ(L"test.tree", viewId); ++activationRequests; if (retry) ++retryRequests;
+				return SenpExtensionActivationState::Preparing;
+			});
+		ASSERT_NE(nullptr, declarations);
+		declaredBody = declarations->CreateBody(L"test.tree", { left, {}, {} });
+		ASSERT_NE(nullptr, declaredBody);
+		declaredBody->Layout({ 0, 0, 380, 420 }, 96);
+	}
+	void TearDown() override
+	{
+		if (visualPublication) visualPublication->Close();
+		visualPublication.reset();
+		if (declarations) declarations->Close();
+		declaredBody.reset(); declarations.reset(); SenpTreeView::TearDown();
+	}
+	std::wstring Status() const
+	{
+		wchar_t text[512]{}; ::GetWindowTextW(::GetDlgItem(declaredBody->Window(), 1), text, _countof(text)); return text;
+	}
+	static senp::ContributionOwnerIdentity Identity(std::int64_t generation)
+	{ return { L"test.extension", std::wstring(64, L'a'), generation, 2, 3 }; }
+	void BindVisual()
+	{
+		runtime = std::make_shared<NativeTreeRuntime>();
+		provider = std::make_shared<SenpTreeProvider>(SenpTreeProviderOptions{ L"test.tree", { 1, 2, 3 }, { L"test.open" }, runtime });
+		auto replacement = declarations->PrepareBinding(Identity(++visualGeneration), { { L"test.tree", provider } });
+		ASSERT_NE(nullptr, replacement); ASSERT_TRUE(replacement->Commit());
+		if (visualPublication) visualPublication->Close();
+		visualPublication = std::move(replacement);
+		ASSERT_TRUE(visualPublication->Pump());
+		ASSERT_TRUE(declarations->Pump(SenpExtensionActivationState::Active));
+		const HWND root = ::FindWindowExW(declaredBody->Window(), nullptr, L"SakuraSenpTreeView", nullptr);
+		tree = ::FindWindowExW(root, nullptr, WC_TREEVIEWW, nullptr);
+		ASSERT_NE(nullptr, tree); Complete(ProbeItems());
+	}
+	void UnbindVisual(SenpExtensionActivationState state)
+	{
+		if (visualPublication) visualPublication->Close();
+		visualPublication.reset(); ASSERT_TRUE(declarations->Pump(state)); tree = nullptr;
+	}
+	LRESULT DeclarationFingerprint() const
+	{
+		std::uint64_t hash = 2166136261;
+		for (const auto letter : Status()) hash = (hash ^ letter) * 16777619;
+		hash ^= static_cast<std::uint64_t>(::IsWindowVisible(declaredBody->Window())) << 20;
+		if (::IsWindow(tree)) hash ^= static_cast<std::uint64_t>(TreeView_GetCount(tree)) << 10;
+		return static_cast<LRESULT>((hash & 0x7fffffffffffffff) | 1);
+	}
+	static LRESULT CALLBACK DeclarationProbe(HWND window, UINT message, WPARAM w, LPARAM l, UINT_PTR, DWORD_PTR data)
+	{
+		if (message != WM_APP + 0x296) return ::DefSubclassProc(window, message, w, l);
+		auto& self = *reinterpret_cast<SenpDeclaredTreeViewsTest*>(data);
+		switch (w) {
+		case 0: return self.declarations->IsUsable();
+		case 1: {
+			const int width = LOWORD(l); const unsigned int dpi = HIWORD(l) & 0x3ff, themeId = HIWORD(l) >> 10;
+			if (width < 40 || width > 380 || dpi < 96 || dpi > 192 || themeId > 2) return 0;
+			auto palette = themeId == 2 ? theme::CThemeService::HighContrastPalette()
+				: theme::CThemeService::PaletteFor(themeId == 1 ? theme::ThemeMode::Light : theme::ThemeMode::Dark);
+			self.UnbindVisual(SenpExtensionActivationState::Preparing);
+			self.declaredBody->SetPalette(palette, EViewContainerLocation::Sidebar);
+			self.declaredBody->Layout({ 0, 0, width, 620 }, dpi); DispatchTreeMessages(); return self.declarations->IsUsable();
+		}
+		case 2: self.UnbindVisual(l ? SenpExtensionActivationState::Failed : SenpExtensionActivationState::Preparing); DispatchTreeMessages(); return 1;
+		case 3: if (l) self.BindVisual(); else self.UnbindVisual(SenpExtensionActivationState::Failed); DispatchTreeMessages(); return 1;
+		case 4: self.probeDone = true; return 1;
+		case 5: return reinterpret_cast<LRESULT>(self.declaredBody->Window());
+		case 7: return reinterpret_cast<LRESULT>(::GetDlgItem(self.declaredBody->Window(), 2));
+		case 8: self.declaredBody->SetVisible(!l); DispatchTreeMessages(); return 1;
+		case 9: return self.DeclarationFingerprint();
+		}
+		return 0;
+	}
+};
+
+TEST_F(SenpDeclaredTreeViewsTest, ActivationIsPostedAndFailureRequiresExplicitRetry)
+{
+	CreateDeclaration(); ASSERT_NE(nullptr, declaredBody);
+	EXPECT_EQ(0, activationRequests);
+	declaredBody->SetVisible(true);
+	EXPECT_EQ(0, activationRequests);
+	DispatchTreeMessages();
+	EXPECT_EQ(1, activationRequests);
+	EXPECT_EQ(L"Activating extension...", Status());
+	for (int i = 0; i < 5; ++i) { declaredBody->SetVisible(false); declaredBody->SetVisible(true); DispatchTreeMessages(); }
+	EXPECT_EQ(1, activationRequests);
+	ASSERT_TRUE(declarations->Pump(SenpExtensionActivationState::Failed));
+	const HWND retry = ::GetDlgItem(declaredBody->Window(), 2);
+	EXPECT_TRUE(::GetWindowLongPtrW(retry, GWL_STYLE) & WS_VISIBLE);
+	EXPECT_TRUE(::IsWindowEnabled(retry));
+	::SendMessageW(retry, BM_CLICK, 0, 0); ::SendMessageW(retry, BM_CLICK, 0, 0);
+	EXPECT_FALSE(::IsWindowEnabled(retry));
+	DispatchTreeMessages();
+	EXPECT_EQ(2, activationRequests); EXPECT_EQ(1, retryRequests);
+	EXPECT_EQ(L"Activating extension...", Status());
+	ASSERT_TRUE(declarations->Pump(SenpExtensionActivationState::Failed));
+	::SendMessageW(retry, BM_CLICK, 0, 0);
+	declaredBody->SetVisible(false); DispatchTreeMessages();
+	declaredBody->SetVisible(true); DispatchTreeMessages();
+	EXPECT_EQ(2, activationRequests); EXPECT_TRUE(::IsWindowEnabled(retry));
+	ASSERT_TRUE(declarations->Pump(SenpExtensionActivationState::Disabled));
+	EXPECT_FALSE(::GetWindowLongPtrW(retry, GWL_STYLE) & WS_VISIBLE);
+	const HWND retained = declaredBody->Window();
+	declarations->Close(); DispatchTreeMessages();
+	EXPECT_FALSE(::IsWindow(retained)); EXPECT_EQ(2, activationRequests);
+	EXPECT_FALSE(declarations->Pump(SenpExtensionActivationState::Dormant));
+}
+
+TEST_F(SenpDeclaredTreeViewsTest, RuntimeReplacementDefersNativeSwapAndRetainsDeclarationBody)
+{
+	CreateDeclaration(); ASSERT_NE(nullptr, declaredBody);
+	const HWND retained = declaredBody->Window();
+	declaredBody->SetVisible(true); DispatchTreeMessages();
+	auto initial = declarations->PrepareBinding(Identity(1), { { L"test.tree", provider } });
+	ASSERT_NE(nullptr, initial); ASSERT_TRUE(initial->Commit());
+	EXPECT_TRUE(runtime->calls.empty());
+	ASSERT_TRUE(initial->Pump()); DispatchTreeMessages();
+	ASSERT_EQ(1U, runtime->calls.size());
+	const HWND firstTree = ::FindWindowExW(retained, nullptr, L"SakuraSenpTreeView", nullptr);
+	ASSERT_NE(nullptr, firstTree);
+	EXPECT_FALSE(declarations->PrepareBinding(Identity(1), { { L"test.tree", provider } }));
+	auto newerRuntime = std::make_shared<NativeTreeRuntime>();
+	auto newerProvider = std::make_shared<SenpTreeProvider>(SenpTreeProviderOptions{ L"test.tree", { 1, 2, 3 }, {}, newerRuntime });
+	auto replacement = declarations->PrepareBinding(Identity(2), { { L"test.tree", newerProvider } });
+	ASSERT_NE(nullptr, replacement); ASSERT_TRUE(replacement->Commit());
+	initial->Close();
+	EXPECT_TRUE(::IsWindow(firstTree)); EXPECT_TRUE(newerRuntime->calls.empty());
+	ASSERT_TRUE(replacement->Pump()); DispatchTreeMessages();
+	EXPECT_EQ(retained, declaredBody->Window()); EXPECT_FALSE(::IsWindow(firstTree));
+	EXPECT_TRUE(provider->Model().IsClosed()); EXPECT_EQ(1U, runtime->cancelled.size());
+	EXPECT_EQ(1U, newerRuntime->calls.size());
+	const HWND secondTree = ::FindWindowExW(retained, nullptr, L"SakuraSenpTreeView", nullptr);
+	ASSERT_NE(nullptr, secondTree);
+	replacement->Close();
+	EXPECT_TRUE(::IsWindow(secondTree));
+	ASSERT_TRUE(declarations->Pump(SenpExtensionActivationState::Failed));
+	EXPECT_FALSE(::IsWindow(secondTree)); EXPECT_TRUE(newerProvider->Model().IsClosed());
+	EXPECT_EQ(retained, declaredBody->Window()); EXPECT_TRUE(::IsWindow(retained));
+	EXPECT_EQ(L"The extension could not be activated.", Status());
+	EXPECT_FALSE(replacement->Pump());
+}
+
+TEST_F(SenpDeclaredTreeViewsTest, LosingPreparedCandidateCannotCloseWinningRuntime)
+{
+	CreateDeclaration(); ASSERT_NE(nullptr, declaredBody);
+	declaredBody->SetVisible(true); DispatchTreeMessages();
+	auto winner = declarations->PrepareBinding(Identity(1), { { L"test.tree", provider } });
+	ASSERT_NE(nullptr, winner);
+	auto losingRuntime = std::make_shared<NativeTreeRuntime>();
+	auto losingProvider = std::make_shared<SenpTreeProvider>(SenpTreeProviderOptions{ L"test.tree", { 1, 2, 3 }, {}, losingRuntime });
+	auto loser = declarations->PrepareBinding(Identity(2), { { L"test.tree", losingProvider } });
+	ASSERT_NE(nullptr, loser); ASSERT_TRUE(loser->CanCommit());
+	ASSERT_TRUE(winner->Commit()); ASSERT_TRUE(winner->Pump()); DispatchTreeMessages();
+	const HWND winningTree = ::FindWindowExW(declaredBody->Window(), nullptr, L"SakuraSenpTreeView", nullptr);
+	ASSERT_NE(nullptr, winningTree);
+	EXPECT_FALSE(loser->CanCommit()); EXPECT_FALSE(loser->Commit());
+	loser->Close();
+	EXPECT_TRUE(losingRuntime->calls.empty()); EXPECT_TRUE(losingProvider->Model().IsClosed());
+	EXPECT_FALSE(provider->Model().IsClosed()); EXPECT_TRUE(runtime->cancelled.empty());
+	EXPECT_TRUE(::IsWindow(winningTree)); EXPECT_TRUE(winner->Pump());
+	EXPECT_EQ(1U, runtime->calls.size());
+}
+
+TEST_F(SenpDeclaredTreeViewsTest, DISABLED_VisualCaptureProbe)
+{
+	wchar_t enabled[2]{};
+	if (::GetEnvironmentVariableW(L"SAKURA_SENP_VIEW_PROBE", enabled, 2) != 1 || enabled[0] != L'1')
+		GTEST_SKIP() << "Use tools/verify-senp-view-rendering.ps1 -ProbeSet DeclaredTreeViews";
+	CreateDeclaration(); ASSERT_NE(nullptr, declaredBody);
+	::SetWindowTextW(window, L"SENP declared TreeView verification");
+	declaredBody->SetVisible(true); DispatchTreeMessages();
+	ASSERT_TRUE(::SetWindowSubclass(window, DeclarationProbe, 297, reinterpret_cast<DWORD_PTR>(this)));
+	const auto deadline = ::GetTickCount64() + 120000;
+	while (!probeDone && ::GetTickCount64() < deadline && declarations->IsUsable()) {
+		(void)::MsgWaitForMultipleObjectsEx(0, nullptr, 50, QS_ALLINPUT, MWMO_INPUTAVAILABLE); DispatchTreeMessages();
+	}
+	::RemoveWindowSubclass(window, DeclarationProbe, 297);
+	EXPECT_TRUE(probeDone); EXPECT_TRUE(declarations->IsUsable());
+}
+
 } // namespace
 } // namespace workbench::tree
