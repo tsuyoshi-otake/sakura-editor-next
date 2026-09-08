@@ -311,6 +311,7 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\SearchWorkbenchToolTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\OverlayScrollbarTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\FileDecorationTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\platform\BoundedProcessRunnerTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\GitSourceControlTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\GitLineStagingTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\GitSyncCommandsTest.cpp" />

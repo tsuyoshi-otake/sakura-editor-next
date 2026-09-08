@@ -396,6 +396,9 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\FileDecorationTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\platform\BoundedProcessRunnerTest.cpp">
+	  <Filter>Test Files\platform</Filter>
+	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\GitSourceControlTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>

@@ -52,6 +52,22 @@ profile descriptors, storage, request/proxy, and credentials.
   one observable terminal result.
 - Keep all tests deterministic and free of UI and live network access.
 
+## Bounded child processes
+
+`process/BoundedProcessRunner` is the shared Windows process boundary for tools
+that need exact executable launch, separate stdout/stderr capture, stdin, a
+deadline, or cancellation. It validates request and command-line bounds before
+launch, gives the child only its three standard handles, and assigns the root
+atomically to a kill-on-close job. Completion, nonzero exit, invalid input,
+launch failure, timeout, cancellation, and either stream limit are distinct
+terminal states. Environment changes are explicit name/value overrides; tool
+adapters own tool-specific policy and executable discovery.
+
+The runner owns the complete child tree. On every timeout, cancellation, limit,
+or root-process exit it terminates remaining job members and joins the stdin
+writer before returning. Tests that start descendants must verify the recorded
+PID is gone or signalled, then audit for surviving repository test processes.
+
 ## P0 Implementation Checkpoint (2026-07-31)
 
 - Implemented and unit-tested: typed service registration and dependency-ordered

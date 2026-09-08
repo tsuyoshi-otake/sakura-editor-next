@@ -1448,6 +1448,11 @@ divergence is a bug.
 `RunGit` is the only way this subsystem starts a git process. It is bounded and
 cancellable, and its terminal state is typed.
 
+The Git layer owns repository policy, `git.exe` discovery, effective arguments,
+and Git-specific environment settings. It delegates pipe, job, deadline, and
+process-tree mechanics to `platform/process/BoundedProcessRunner`; other tool
+adapters must use that platform boundary directly instead of depending on SCM.
+
 - Terminal states are distinct on purpose: `GitUnavailable`, `LaunchFailed`,
   `TimedOut`, `Cancelled`, `OutputLimitExceeded`, `InvalidRequest`, `Failed`,
   `Succeeded`. An empty change list means "clean" **only** when the refresh
