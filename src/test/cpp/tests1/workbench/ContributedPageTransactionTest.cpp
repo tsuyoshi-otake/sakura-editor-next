@@ -88,10 +88,11 @@ TEST_F(ContributedPageTransaction, KeepsRegisterApiAsTransactionalConvenience)
 
 TEST_F(ContributedPageTransaction, PublishesBatchIntoCreatedRegistry)
 {
-	using WindowOwner = std::unique_ptr<std::remove_pointer_t<HWND>, decltype(&::DestroyWindow)>;
-	WindowOwner owner(::CreateWindowExW(0, L"STATIC", L"", WS_POPUP,
-		0, 0, 320, 240, nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr),
-		&::DestroyWindow);
+	const auto ownerHandle = ::CreateWindowExW(0, L"STATIC", L"", WS_POPUP,
+		0, 0, 320, 240, nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
+	using WindowOwner = std::unique_ptr<std::remove_pointer_t<decltype(ownerHandle)>,
+		decltype(&::DestroyWindow)>;
+	WindowOwner owner(ownerHandle, &::DestroyWindow);
 	ASSERT_NE(nullptr, owner.get());
 	CDlgFuncList dialog;
 	CViewContainerPages pages(dialog);
