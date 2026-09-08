@@ -30516,56 +30516,56 @@
     {
       "column": 34,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 558,
+      "line": 687,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 1,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 626,
+      "line": 755,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 9,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 718,
+      "line": 847,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 9,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 741,
+      "line": 870,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 1,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 772,
+      "line": 901,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 26,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 780,
+      "line": 909,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 38,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 784,
+      "line": 913,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 36,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 845,
+      "line": 974,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.cpp",
       "rule_id": "boundary.win32_type"
     },
@@ -30579,42 +30579,42 @@
     {
       "column": 28,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 107,
+      "line": 155,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.h",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 16,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 110,
+      "line": 158,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.h",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 16,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 116,
+      "line": 164,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.h",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 67,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 117,
+      "line": 165,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.h",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 16,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 173,
+      "line": 221,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.h",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 187,
+      "line": 236,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.h",
       "rule_id": "boundary.win32_type"
     },
@@ -39000,14 +39000,14 @@
     {
       "column": 4,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 553,
+      "line": 638,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 4,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 637,
+      "line": 766,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.cpp",
       "rule_id": "error.catch_all"
     },
@@ -90919,14 +90919,14 @@
     {
       "column": 15,
       "evidence_sha256": "sha256:b75724acfd854c43fc97ef2982e5cca8dddcfe5608fd00cebcd692453929d9d8",
-      "line": 165,
+      "line": 213,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:c367309e2c7fe8b889639348a6c914e33ecf9f7dd968fdc56ad6a10ba0c06604",
-      "line": 166,
+      "line": 214,
       "path": "sakura_core/workbench/viewcontainer/CViewContainerPages.h",
       "rule_id": "state.public_mutable_field"
     },
@@ -98477,14 +98477,14 @@
       "state.raw_pointer_member": 30,
       "test.filtered_or_skipped": 2
     },
-    "include_directive_count": 11055,
+    "include_directive_count": 11065,
     "monolith_link_hint_count": 0,
     "private_include_mention_count": 67,
     "raw_delete_expression_count": 317,
     "raw_new_expression_count": 247,
-    "source_file_count": 1748,
-    "source_line_count": 524492,
-    "tracked_file_count": 1797,
+    "source_file_count": 1749,
+    "source_line_count": 524789,
+    "tracked_file_count": 1798,
     "win32_parameter_mention_count": 4838
   },
   "rule_catalog": [
@@ -98640,8 +98640,8 @@
     ]
   },
   "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
-  "source_commit": "d762f03262f802274f97423f8964b2da2a12cc89",
-  "source_fingerprint": "sha256:85dff720c7dc71824c8ee31748f881c8538d4eeb18ba27a0972db098af5f6f64",
+  "source_commit": "1cdc3f2158c541c97b66bf3fc596c604b9f74552",
+  "source_fingerprint": "sha256:64c00c1d90ae7958d0a4afd57338c3aa8ceee8d056977244dc1803f91be0381f",
   "tracked_source_paths": [
     ".github/actions/bootstrap-vcpkg/action.yml",
     ".github/dependabot.yml",
@@ -100310,6 +100310,7 @@
     "src/test/cpp/tests1/workbench/CWorkbenchRuntimeTest.cpp",
     "src/test/cpp/tests1/workbench/CWorkspaceContextTest.cpp",
     "src/test/cpp/tests1/workbench/CommandPaletteOverlayTest.cpp",
+    "src/test/cpp/tests1/workbench/ContributedPageTransactionTest.cpp",
     "src/test/cpp/tests1/workbench/ControlPlatformWorkbenchLayoutMementoStoreTest.cpp",
     "src/test/cpp/tests1/workbench/ControlPlatformWorkingCopyPersistenceStoreTest.cpp",
     "src/test/cpp/tests1/workbench/EditorCoreRecoveredInputAdopterTest.cpp",
@@ -100441,5 +100442,5 @@
     "tools/ppa_stub/ppa_stub.h",
     "tools/vcx-props/vcxcompat.props"
   ],
-  "tracked_source_set_sha256": "sha256:bd64938ad19d44f0256ef5ace155e8a796c47cd4267bbb8cecf9a3ecf5ab3696"
+  "tracked_source_set_sha256": "sha256:4c9e67bf46c9e000e9faa6d420704dc13bf3904d6d2886190b9b7db483f78384"
 }
