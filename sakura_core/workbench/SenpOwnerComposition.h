@@ -7,6 +7,11 @@
 
 namespace workbench {
 
+//! Called once with the generation allocated by contribution ownership, before
+//! runtime Start. A rejected/throwing factory publishes no native resources.
+using SenpOwnerPublicationFactory = std::function<std::optional<SenpOwnerPublicationOptions>(
+	const senp::ContributionOwnerIdentity&)>;
+
 //! Window-local owner lifecycle. This is the sole scheduler boundary between
 //! runtime polling and native effect projection: Poll always leaves the owner
 //! service before the publication hub may submit follow-up work.
@@ -23,6 +28,9 @@ public:
 
 	[[nodiscard]] senp::OwnerChangeResult Activate(senp::EffectRuntimeLaunch launch,
 		std::wstring packageDigest, SenpOwnerPublicationOptions publication,
+		senp::CSenpRuntimeSession::Time now) noexcept;
+	[[nodiscard]] senp::OwnerChangeResult Activate(senp::EffectRuntimeLaunch launch,
+		std::wstring packageDigest, SenpOwnerPublicationFactory publication,
 		senp::CSenpRuntimeSession::Time now) noexcept;
 	//! One bounded UI-thread tick. False means projection failure or a closed/busy composition.
 	[[nodiscard]] bool Poll(senp::CSenpRuntimeSession::Time now) noexcept;

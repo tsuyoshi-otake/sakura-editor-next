@@ -362,3 +362,10 @@ Native package-authority decoding retains schema/ABI, activation, capability and
 command metadata in RuntimeContribution for later window composition. Decoding
 does not enable a package, publish an owner, or issue a tool grant. Both installed
 and available built-in records use the same runtime-metadata decoder.
+
+Native publication targets that retain an owner must be constructed through
+the CSenpOwnerComposition publication factory. Contribution ownership allocates
+the generation before invoking that synchronous factory; the caller's launch
+generation is not authoritative. The factory receives the same identity as the
+runtime and accepted receipt. Empty/rejected/throwing factories start no host,
+and reentrant activation/close cannot interrupt the outer preparation.

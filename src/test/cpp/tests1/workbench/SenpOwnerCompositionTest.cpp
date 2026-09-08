@@ -12,10 +12,44 @@
 #include <fstream>
 #include <deque>
 #include <map>
+#include <stdexcept>
 
 namespace workbench {
 namespace {
 using Clock = std::chrono::steady_clock;
+
+class CompositionRuntime final : public senp::ISenpEffectRuntime {
+public:
+	explicit CompositionRuntime(senp::EffectRuntimeLaunch launch) : m_launch(std::move(launch)) {}
+	senp::InvocationAdmission Start() override
+	{
+		m_state.phase = senp::RuntimePhase::Active;
+		auto context = m_launch.context;
+		context.operationId = L"activation";
+		m_result = senp::InvocationResult{ context, true, senp::InvocationStatus::EffectsReady };
+		return { senp::AdmissionStatus::Accepted, context.operationId };
+	}
+	senp::InvocationAdmission Submit(senp::effect::OperationContext, senp::effect::Event,
+		senp::CSenpRuntimeSession::Time) override { return { senp::AdmissionStatus::Busy }; }
+	bool Cancel(std::wstring_view) override { return true; }
+	void Stop(senp::effect::StopReason) override
+	{
+		m_state.phase = senp::RuntimePhase::Stopped;
+		m_state.workerExited = m_state.processExitConfirmed = true;
+	}
+	void Join() override {}
+	std::optional<senp::InvocationResult> TakeCompleted() override
+	{
+		auto result = std::move(m_result);
+		m_result.reset();
+		return result;
+	}
+	senp::EffectRuntimeSnapshot Snapshot() const override { return m_state; }
+private:
+	senp::EffectRuntimeLaunch m_launch;
+	senp::EffectRuntimeSnapshot m_state;
+	std::optional<senp::InvocationResult> m_result;
+};
 
 class CompositionTargetState final {
 public:
@@ -186,6 +220,96 @@ protected:
 
 	HWND m_owner{};
 };
+
+TEST_F(SenpOwnerComposition, FactoryUsesAllocatedOwnerAndRejectsReentrancy)
+{
+	layout::WorkbenchContributionRegistry catalog;
+	CDlgFuncList dialog;
+	viewcontainer::CViewContainerPages pages(dialog);
+	ASSERT_TRUE(pages.Create(m_owner));
+	std::optional<senp::EffectRuntimeLaunch> launched;
+	CSenpOwnerComposition composition(catalog, pages, [&](senp::EffectRuntimeLaunch launch) {
+		launched = launch;
+		return std::make_unique<CompositionRuntime>(std::move(launch));
+	});
+	auto state = std::make_shared<CompositionTargetState>();
+	std::optional<senp::ContributionOwnerIdentity> prepared;
+	int calls{};
+	const senp::EffectRuntimeLaunch launch{ .hostExecutable = L"host.exe", .modulePath = L"extension.wasm",
+		.moduleSha256 = std::wstring(64, L'a'), .extensionId = L"sample.factory",
+		.context = { .workspaceRevision = 7, .accountGeneration = 9 }, .generation = 999 };
+	const auto accepted = composition.Activate(launch, std::wstring(64, L'b'),
+		[&](const senp::ContributionOwnerIdentity& owner) -> std::optional<SenpOwnerPublicationOptions> {
+			++calls;
+			prepared = owner;
+			EXPECT_FALSE(launched);
+			EXPECT_EQ(senp::OwnerChangeStatus::Busy, composition.Activate(launch,
+				std::wstring(64, L'b'), SenpOwnerPublicationFactory{}, Clock::now()).status);
+			EXPECT_FALSE(composition.Close());
+			std::vector<SenpOwnerTreeContribution> trees;
+			trees.emplace_back(layout::WorkbenchViewDescriptor{
+				"sample.tree", "sample.container", "Sample", 1, true, true, "senp.tree" },
+				std::vector<std::string>{});
+			return SenpOwnerPublicationOptions(m_owner,
+				{ { "sample.container", "Sample", layout::EViewContainerLocation::Sidebar, 1,
+					"beaker", false, { layout::EViewContainerLocation::Sidebar } } },
+				std::move(trees), std::make_unique<CompositionTarget>(state),
+				[](std::string_view) { return true; },
+				[](viewcontainer::SenpViewBodyHost host, std::shared_ptr<tree::SenpTreeProvider>, std::wstring) {
+					return std::make_unique<CompositionBody>(std::move(host));
+				});
+		}, Clock::now());
+	ASSERT_EQ(senp::OwnerChangeStatus::Accepted, accepted.status);
+	ASSERT_TRUE(prepared);
+	ASSERT_TRUE(launched);
+	EXPECT_EQ(*prepared, accepted.owner);
+	EXPECT_EQ(prepared->generation, launched->generation);
+	EXPECT_EQ(prepared->generation, launched->context.ownerGeneration);
+	EXPECT_NE(999, prepared->generation);
+	EXPECT_EQ(7, prepared->workspaceRevision);
+	EXPECT_EQ(9, prepared->accountGeneration);
+	EXPECT_TRUE(composition.Poll(Clock::now()));
+	const auto terminal = composition.TakeTransition();
+	ASSERT_TRUE(terminal);
+	EXPECT_EQ(senp::OwnerChangeStatus::Activated, terminal->status);
+	EXPECT_EQ(1, calls);
+	EXPECT_TRUE(composition.Close());
+	EXPECT_EQ(1, state->Revokes());
+	EXPECT_TRUE(catalog.Snapshot().owners.empty());
+	pages.Close();
+}
+
+TEST_F(SenpOwnerComposition, FailedFactoryStartsNoRuntimeAndLeavesNoPublication)
+{
+	layout::WorkbenchContributionRegistry catalog;
+	CDlgFuncList dialog;
+	viewcontainer::CViewContainerPages pages(dialog);
+	ASSERT_TRUE(pages.Create(m_owner));
+	int starts{};
+	CSenpOwnerComposition composition(catalog, pages, [&](senp::EffectRuntimeLaunch launch) {
+		++starts;
+		return std::make_unique<CompositionRuntime>(std::move(launch));
+	});
+	const senp::EffectRuntimeLaunch launch{ .hostExecutable = L"host.exe", .modulePath = L"extension.wasm",
+		.moduleSha256 = std::wstring(64, L'a'), .extensionId = L"sample.factory" };
+	EXPECT_EQ(senp::OwnerChangeStatus::Unsupported, composition.Activate(launch, std::wstring(64, L'b'),
+		SenpOwnerPublicationFactory{}, Clock::now()).status);
+	EXPECT_EQ(senp::OwnerChangeStatus::Unsupported, composition.Activate(launch, std::wstring(64, L'b'),
+		[](const senp::ContributionOwnerIdentity&) -> std::optional<SenpOwnerPublicationOptions> { return {}; },
+		Clock::now()).status);
+	EXPECT_EQ(senp::OwnerChangeStatus::Failed, composition.Activate(launch, std::wstring(64, L'b'),
+		[](const senp::ContributionOwnerIdentity&) -> std::optional<SenpOwnerPublicationOptions> {
+			throw std::runtime_error("factory failure");
+		}, Clock::now()).status);
+	EXPECT_EQ(0, starts);
+	EXPECT_EQ(0U, composition.Snapshot().preparing);
+	EXPECT_FALSE(composition.TakeTransition());
+	EXPECT_TRUE(catalog.Snapshot().owners.empty());
+	EXPECT_TRUE(composition.Close());
+	EXPECT_EQ(senp::OwnerChangeStatus::Stopped, composition.Activate(launch, std::wstring(64, L'b'),
+		SenpOwnerPublicationFactory{}, Clock::now()).status);
+	pages.Close();
+}
 
 TEST_F(SenpOwnerComposition, RealSamplePublishesTwoTreesAndStructuredDocument)
 {

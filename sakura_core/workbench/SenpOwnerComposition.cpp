@@ -33,16 +33,31 @@ senp::OwnerChangeResult CSenpOwnerComposition::Activate(senp::EffectRuntimeLaunc
 	const senp::CSenpRuntimeSession::Time now) noexcept
 {
 	if (m_closed || m_entered) return { m_closed ? senp::OwnerChangeStatus::Stopped : senp::OwnerChangeStatus::Busy };
+	try {
+		// Prepare invokes the factory synchronously and never retains it.
+		return Activate(std::move(launch), std::move(packageDigest),
+			[&publication](const senp::ContributionOwnerIdentity&) {
+				return std::optional<SenpOwnerPublicationOptions>(std::move(publication));
+			}, now);
+	} catch (...) {
+		return { senp::OwnerChangeStatus::Failed };
+	}
+}
+
+senp::OwnerChangeResult CSenpOwnerComposition::Activate(senp::EffectRuntimeLaunch launch,
+	std::wstring packageDigest, SenpOwnerPublicationFactory publication,
+	const senp::CSenpRuntimeSession::Time now) noexcept
+{
+	if (m_closed || m_entered) return { m_closed ? senp::OwnerChangeStatus::Stopped : senp::OwnerChangeStatus::Busy };
+	if (!publication) return { senp::OwnerChangeStatus::Unsupported };
 	Call call(m_entered);
 	try {
-		auto pending = std::make_shared<std::optional<SenpOwnerPublicationOptions>>(std::move(publication));
 		return m_owners.Prepare(std::move(launch), std::move(packageDigest),
-			[this, pending](const senp::ContributionOwnerIdentity& candidate,
+			[this, publication = std::move(publication)](const senp::ContributionOwnerIdentity& candidate,
 				const senp::ContributionOwnerIdentity* previous) {
-				if (!*pending) return std::unique_ptr<senp::ISenpOwnerPublication>{};
-				auto options = std::move(**pending);
-				pending->reset();
-				return m_publications.Prepare(candidate, previous, std::move(options));
+				auto options = publication(candidate);
+				if (!options) return std::unique_ptr<senp::ISenpOwnerPublication>{};
+				return m_publications.Prepare(candidate, previous, std::move(*options));
 			}, now);
 	} catch (...) {
 		return { senp::OwnerChangeStatus::Failed };
