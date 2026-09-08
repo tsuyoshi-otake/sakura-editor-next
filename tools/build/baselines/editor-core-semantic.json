@@ -35764,6 +35764,20 @@
       "rule_id": "error.catch_all"
     },
     {
+      "column": 4,
+      "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
+      "line": 193,
+      "path": "sakura_core/senp/SenpToolGrants.cpp",
+      "rule_id": "error.catch_all"
+    },
+    {
+      "column": 4,
+      "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
+      "line": 239,
+      "path": "sakura_core/senp/SenpToolGrants.cpp",
+      "rule_id": "error.catch_all"
+    },
+    {
       "column": 6,
       "evidence_sha256": "sha256:e367699682104a11434267c1cfa5915146597b5d4df8e67257e7cc66399cf08c",
       "line": 177,
@@ -98121,7 +98135,7 @@
   },
   "inventory_kind": "editor-core-semantic",
   "metrics": {
-    "catch_all_count": 724,
+    "catch_all_count": 726,
     "direct_global_getter_calls": {
       "GetDllShareData": 710,
       "GetEditDoc": 7,
@@ -98594,11 +98608,11 @@
       }
     },
     "filtered_test_hint_count": 2,
-    "finding_count": 13988,
+    "finding_count": 13990,
     "finding_count_by_rule": {
       "boundary.private_include": 67,
       "boundary.win32_type": 4847,
-      "error.catch_all": 724,
+      "error.catch_all": 726,
       "global.get_dll_share_data": 710,
       "global.get_edit_doc": 7,
       "global.get_edit_wnd": 258,
@@ -98610,14 +98624,14 @@
       "state.raw_pointer_member": 30,
       "test.filtered_or_skipped": 2
     },
-    "include_directive_count": 11114,
+    "include_directive_count": 11136,
     "monolith_link_hint_count": 0,
     "private_include_mention_count": 67,
     "raw_delete_expression_count": 317,
     "raw_new_expression_count": 247,
-    "source_file_count": 1758,
-    "source_line_count": 526152,
-    "tracked_file_count": 1807,
+    "source_file_count": 1761,
+    "source_line_count": 526866,
+    "tracked_file_count": 1810,
     "win32_parameter_mention_count": 4847
   },
   "rule_catalog": [
@@ -98773,8 +98787,8 @@
     ]
   },
   "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
-  "source_commit": "8bcdf6dbea2a0c3071d3208c07b78fdddf93f92d",
-  "source_fingerprint": "sha256:c6e62bc9ee50fcfdb621828c89d3e7f422dc5e27674f0dd28f07239c855b084f",
+  "source_commit": "fe40658001197890e5d74a65719a2a9a4ca2fe35",
+  "source_fingerprint": "sha256:fdd772efd7cbfc12cf7f888963214627df88f3655d290e57e55fd8322f20d379",
   "tracked_source_paths": [
     ".github/actions/bootstrap-vcpkg/action.yml",
     ".github/dependabot.yml",
@@ -99517,6 +99531,8 @@
     "sakura_core/senp/SenpRuntimeSession.h",
     "sakura_core/senp/SenpTextResource.cpp",
     "sakura_core/senp/SenpTextResource.h",
+    "sakura_core/senp/SenpToolGrants.cpp",
+    "sakura_core/senp/SenpToolGrants.h",
     "sakura_core/terminal/DefaultTerminalLaunchProfileService.cpp",
     "sakura_core/terminal/DefaultTerminalLaunchProfileService.h",
     "sakura_core/terminal/PowerShellLocator.cpp",
@@ -100326,6 +100342,7 @@
     "src/test/cpp/tests1/senp/SenpRuntimeLifecycleTest.cpp",
     "src/test/cpp/tests1/senp/SenpRuntimeProcessTest.cpp",
     "src/test/cpp/tests1/senp/SenpTextResourceTest.cpp",
+    "src/test/cpp/tests1/senp/SenpToolGrantsTest.cpp",
     "src/test/cpp/tests1/senp/SenpViewLifecycleTest.cpp",
     "src/test/cpp/tests1/terminal/ConPtyCloseIntegrationTest.cpp",
     "src/test/cpp/tests1/terminal/HarnessOrchestrationAcceptanceTest.cpp",
@@ -100584,5 +100601,5 @@
     "tools/ppa_stub/ppa_stub.h",
     "tools/vcx-props/vcxcompat.props"
   ],
-  "tracked_source_set_sha256": "sha256:6a431f1fff46386d781c853f66f65a70120d1e0801cb20681130ed9ef0711b5a"
+  "tracked_source_set_sha256": "sha256:5a558598e3cd5dc5f9eeb61f14aee8fb608d9dbb000b3b1be22cd78092c30c12"
 }
