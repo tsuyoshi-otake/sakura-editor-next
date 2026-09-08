@@ -201,6 +201,29 @@ TEST(SenpToolGrants, InvalidRequestsAndBoundedCapacityFailClosed)
 	EXPECT_EQ(SenpToolGrantIssueStatus::ResourceExhausted,
 		session->Issue(SenpToolGrantRequest(L"profile-1", Owner(),
 			SenpToolCapability::GitHubRepositoryRead), kNow).Status());
+	const SenpToolGrantRequest request(L"profile-1", Owner(), SenpToolCapability::GitHubRepositoryRead);
+	const auto expiresAt = kNow + CSenpToolGrants::GrantLifetime();
+	EXPECT_EQ(SenpToolGrantIssueStatus::ResourceExhausted,
+		session->Issue(request, expiresAt - std::chrono::milliseconds(1)).Status());
+	// None of the old clients need to Validate or disconnect to reclaim expiry.
+	const auto renewed = session->Issue(request, expiresAt);
+	ASSERT_EQ(SenpToolGrantIssueStatus::Granted, renewed.Status());
+	EXPECT_EQ(1U, grants.Size());
+	EXPECT_EQ(SenpToolGrantCheck::Granted, session->Validate(renewed.GrantId(), request, expiresAt));
+	const auto later = expiresAt + std::chrono::seconds(1);
+	const auto surviving = sessions.front()->Issue(request, later);
+	ASSERT_EQ(SenpToolGrantIssueStatus::Granted, surviving.Status());
+	const auto next = session->Issue(request, renewed.ExpiresAt());
+	ASSERT_EQ(SenpToolGrantIssueStatus::Granted, next.Status());
+	EXPECT_EQ(2U, grants.Size());
+	EXPECT_EQ(SenpToolGrantCheck::Invalid,
+		session->Validate(renewed.GrantId(), request, renewed.ExpiresAt()));
+	EXPECT_EQ(SenpToolGrantCheck::Granted,
+		sessions.front()->Validate(surviving.GrantId(), request, renewed.ExpiresAt()));
+	session->Close();
+	session->Close();
+	EXPECT_EQ(SenpToolGrantIssueStatus::Closed, session->Issue(request, renewed.ExpiresAt()).Status());
+	EXPECT_EQ(1U, grants.Size());
 }
 
 TEST(SenpToolGrants, RetainedSessionObservesClosedAfterBrokerDestruction)

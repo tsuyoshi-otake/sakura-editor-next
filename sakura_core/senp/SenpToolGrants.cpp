@@ -199,6 +199,11 @@ SenpToolGrantIssue CSenpToolGrants::Impl::Issue(
 	const auto expiresAt = now + GrantLifetime();
 	std::lock_guard lock(mutex);
 	if (closed) return { SenpToolGrantIssueStatus::Closed, {}, {} };
+	// Admission owns expiry reclamation even when clients never Validate again.
+	// The registry contains at most MaximumGrants() records; live grants stay put.
+	std::erase_if(records, [now](const auto& entry) {
+		return now >= entry.second.ExpiresAt();
+	});
 	if (records.size() >= CSenpToolGrants::MaximumGrants()) {
 		return { SenpToolGrantIssueStatus::ResourceExhausted, {}, {} };
 	}
