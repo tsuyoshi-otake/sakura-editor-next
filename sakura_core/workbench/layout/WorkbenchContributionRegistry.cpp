@@ -256,12 +256,18 @@ PrepareWorkbenchContributionsResult WorkbenchContributionRegistry::PrepareOwnerD
 	}
 }
 
+bool WorkbenchContributionRegistry::CanCommit(
+	const PreparedWorkbenchContributions& change) const noexcept
+{
+	return change.m_registry == this && change.m_baseRevision == m_snapshot.revision;
+}
+
 EWorkbenchContributionChangeStatus WorkbenchContributionRegistry::Commit(
 	std::unique_ptr<PreparedWorkbenchContributions> change) noexcept
 {
 	using Status = EWorkbenchContributionChangeStatus;
 	if (!change || change->m_registry != this) return Status::Invalid;
-	if (change->m_baseRevision != m_snapshot.revision) return Status::Conflict;
+	if (!CanCommit(*change)) return Status::Conflict;
 	// No allocation, callback, or native work remains after the revision check.
 	m_snapshot = std::move(change->m_snapshot);
 	m_lastOwnerGeneration = change->m_lastGeneration;

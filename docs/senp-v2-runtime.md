@@ -475,3 +475,14 @@ readonly側の具体targetは、Coreへinactive inputを登録して得た実inp
 native hostを再利用する。外部Core close時のfinalizerはtargetへのraw callbackを保持せず、document/hostを
 自分で保持して閉じるため、owner targetが先にrevokeされても借用surfaceはdanglingにならない。
 選択pageへのF3 query接続はまだ公開APIを持たないため、controller callbackは明示的にunsupportedを返す。
+
+### U06途中: owner catalog/page publication transaction
+
+`CSenpOwnerPublicationHub`はownerごとのprojection、非表示のgrouped ViewContainer HWND、workbench
+catalog候補、native page候補をruntime開始前に一括prepareする。commitは両方のrevision fenceを先に
+検査し、その後はcallbackもallocationもないswapだけを実行する。owner `Poll`中の`Apply`はactivation
+invalidationまたは通常resultをqueueするだけで、compositionが`Poll`から戻った後にhub `Pump`で初めて
+Tree refresh、effect drain、document requestを実行する。revision競合時はcatalog/pageのどちらも公開しない。
+現時点のdynamic page registryには削除・置換がないため、同じextensionのreplacementはtyped
+unsupportedとして失敗し、revoke後のpage factoryはweak ownerが切れたinert tombstoneになる。実アプリの
+composition接続とpage削除・置換を終えるまでschema 2 package gateは開かない。

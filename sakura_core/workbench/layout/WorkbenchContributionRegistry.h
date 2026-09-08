@@ -174,6 +174,9 @@ public:
 	//! capacity for the removal of every live owner, including allocation failure.
 	[[nodiscard]] EWorkbenchContributionChangeStatus DisposeOwner(
 		const WorkbenchContributionOwner& owner) noexcept;
+	//! Preflights the allocation-free commit so native page and catalog
+	//! candidates can verify both revision fences before either is published.
+	[[nodiscard]] bool CanCommit(const PreparedWorkbenchContributions& change) const noexcept;
 	[[nodiscard]] EWorkbenchContributionChangeStatus Commit(
 		std::unique_ptr<PreparedWorkbenchContributions> change) noexcept;
 	[[nodiscard]] bool IsOwnerCurrent(const WorkbenchContributionOwner& owner) const noexcept;

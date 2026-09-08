@@ -47,10 +47,11 @@ U05のchunk本文・native検索/コピーも実装。owner/grant/revisionごと
 64 KiB chunk、32 MiB/resource、Control内64 MiBの割当上限を持ち、partial/失効を区別する。
 60 focused tests、同一binaryの別名実行26件（32 MiB本文一致を含む）、3,807件のinventoryが合格。
 450描画試行の再描画差分は最大0.00309%で、非ゼロは本文外の丸い角だけだった。
-schema 2は引き続きUnsupportedRuntimeで、公開・永続化adapterとsample接続はU06の工程。
+schema 2は引き続きUnsupportedRuntimeで、実composition接続と状態永続化はU06の工程。
 CI workflowは追加済みで、remote CI実行はpush後の確認事項。
 U06のGitHub非依存sample guestは実v2 Componentとして2 View、page/empty/error、構造化詳細とLoading logを返し、
-実hostとのHello/Activate/TreeRequest往復まで検証した。native owner publicationと実アプリ結合は引き続きU06に残る。
+実hostとのHello/Activate/TreeRequest往復まで検証した。native owner publicationはcatalog/pageの二重revision
+preflight、poll後queue drain、exact owner revokeまで実装し、実アプリ結合は引き続きU06に残る。
 G02のsemantic台帳はexact source commit `f881170f28b3c17d195c145b6f2396704cffa47a`
 から正規手順で受理した。追加35件は既定のconst equality operator 33件と
 `static constexpr` 2件の誤検出と確認し、JSONC APIの既存報告13件を保持する理由も

@@ -383,6 +383,16 @@ class. It does not create HWNDs, invent containers, poll a runtime, perform I/O,
 or interpret tool reads. Reentrant close from a native target is deferred until
 the active drain/admission callback reaches a terminal state.
 
+`CSenpOwnerPublicationHub` is that UI-thread publication boundary. It prepares
+the owner projection, hidden grouped ViewContainer HWNDs, the immutable
+workbench catalog candidate, and the matching native page candidate before the
+runtime starts. Commit first preflights both revision fences and then performs
+only allocation-free swaps. `ISenpOwnerPublication::Apply` validates and queues
+activation invalidations or runtime results while the owner service is entered;
+composition must call `CSenpOwnerPublicationHub::Pump` only after owner `Poll`.
+Until dynamic page removal/replacement is implemented, replacement preparation
+fails closed and revocation leaves only inert weak page factories behind.
+
 ## Phase 6 Service Foundations Checkpoint (2026-07-31)
 
 - `CWorkbenchRuntime` owns the process-local Marker and Output authorities.
