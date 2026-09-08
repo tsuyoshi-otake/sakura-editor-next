@@ -197,6 +197,16 @@ ViewContainerPageRegistrationResult ViewContainerPageRegistry::RegisterBatch(
 	return Commit(std::move(prepared));
 }
 
+bool ViewContainerPageRegistry::Remove(const std::string_view containerId) noexcept
+{
+	const auto found = m_descriptors.find(containerId);
+	if (found == m_descriptors.end()) return false;
+	// Remove authority before destroying captured factory state.
+	auto removed = m_descriptors.extract(found);
+	++m_revision;
+	return true;
+}
+
 const ViewContainerPageDescriptor* ViewContainerPageRegistry::Find(
 	const std::string_view containerId) const noexcept
 {

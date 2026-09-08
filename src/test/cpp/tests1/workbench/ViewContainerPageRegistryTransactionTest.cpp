@@ -83,5 +83,18 @@ TEST(ViewContainerPageRegistryTransaction, InvalidPreparationLeavesRegistryUncha
 	EXPECT_EQ(0U, registry.Size());
 }
 
+TEST(ViewContainerPageRegistryTransaction, RemovalInvalidatesPreparedAdditionsAndAllowsReinstall)
+{
+	ViewContainerPageRegistry registry;
+	ASSERT_TRUE(registry.RegisterBatch({ Descriptor("sample.first") }).Succeeded());
+	auto stale = registry.PrepareBatch({ Descriptor("sample.second") });
+	ASSERT_TRUE(registry.Remove("sample.first"));
+	EXPECT_EQ(nullptr, registry.Find("sample.first"));
+	EXPECT_FALSE(registry.CanCommit(stale));
+	EXPECT_FALSE(registry.Remove("sample.first"));
+	ASSERT_TRUE(registry.RegisterBatch({ Descriptor("sample.first") }).Succeeded());
+	EXPECT_EQ(1U, registry.Size());
+}
+
 } // namespace
 } // namespace workbench::viewcontainer

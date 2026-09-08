@@ -161,6 +161,9 @@ TEST_F(SenpOwnerPublicationTest, AtomicallyPublishesCatalogPagesAndQueuedActivat
 	owners.Poll(Clock::now());
 	ASSERT_TRUE(hub.Pump(Clock::now()));
 	ASSERT_TRUE(pages.Contains("sample.senp"));
+	const std::vector<std::string> invalidRemoval{ "sample.senp", "workbench.view.explorer" };
+	EXPECT_FALSE(pages.RemoveContributedPages(invalidRemoval));
+	EXPECT_TRUE(pages.Contains("sample.senp"));
 	const auto snapshot = catalog.Snapshot();
 	ASSERT_EQ(1U, snapshot.owners.size());
 	EXPECT_EQ("sample.extension", snapshot.owners[0].ownerId);
@@ -177,7 +180,19 @@ TEST_F(SenpOwnerPublicationTest, AtomicallyPublishesCatalogPagesAndQueuedActivat
 	owners.Poll(Clock::now());
 	EXPECT_EQ(1, target->revoked);
 	EXPECT_TRUE(catalog.Snapshot().owners.empty());
+	EXPECT_FALSE(pages.Contains("sample.senp"));
+	auto reenabled = owners.Prepare(Launch(), std::wstring(64, L'b'),
+		[&](const auto& candidate, const auto* previous) {
+			return hub.Prepare(candidate, previous, Options(target));
+		}, Clock::now());
+	ASSERT_EQ(senp::OwnerChangeStatus::Accepted, reenabled.status);
+	owners.Poll(Clock::now());
+	auto activatedAgain = owners.TakeTransition();
+	ASSERT_TRUE(activatedAgain);
+	EXPECT_EQ(senp::OwnerChangeStatus::Activated, activatedAgain->status);
 	EXPECT_TRUE(pages.Contains("sample.senp"));
+	EXPECT_TRUE(owners.Revoke(L"sample.extension", senp::effect::StopReason::Shutdown));
+	EXPECT_FALSE(pages.Contains("sample.senp"));
 	pages.Close();
 }
 

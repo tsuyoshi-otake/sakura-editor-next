@@ -148,6 +148,8 @@ public:
 		std::vector<ViewContainerPageDescriptor> descriptors) noexcept;
 	[[nodiscard]] const ViewContainerPageDescriptor* Find(
 		std::string_view containerId) const noexcept;
+	//! Revokes a factory and invalidates prepared additions. Does not own pages.
+	[[nodiscard]] bool Remove(std::string_view containerId) noexcept;
 	[[nodiscard]] std::size_t Size() const noexcept { return m_descriptors.size(); }
 
 private:

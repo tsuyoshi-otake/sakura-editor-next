@@ -976,5 +976,26 @@ TEST(ViewContainerPagePool, FailedCloseStillFinalizesOnceThroughThePageDestructo
 	EXPECT_EQ(1, state->closeCalls);
 }
 
+TEST(ViewContainerPagePool, RevokedFactoryReleaseAllowsFreshGenerationAfterCloseFailure)
+{
+	auto state = std::make_shared<FakePageState>();
+	auto registry = RegistryWith(state);
+	ViewContainerPagePool pool(registry);
+	ASSERT_TRUE(pool.Acquire(kContainerId).Succeeded());
+	EXPECT_FALSE(pool.Release(kContainerId));
+	EXPECT_EQ(0, state->closeCalls);
+	state->failures = { FakeStep::Close };
+	ASSERT_TRUE(registry.Remove(kContainerId));
+	ASSERT_TRUE(pool.Release(kContainerId));
+	EXPECT_EQ(1, state->closeCalls);
+	EXPECT_EQ(1, state->destructCalls);
+	EXPECT_EQ(0U, pool.Size());
+	EXPECT_TRUE(pool.Release(kContainerId));
+	ASSERT_TRUE(registry.RegisterBatch({ Descriptor(state) }).Succeeded());
+	ASSERT_TRUE(pool.Acquire(kContainerId).Succeeded());
+	EXPECT_EQ(2, state->factoryCalls);
+	EXPECT_EQ(1, state->livePages);
+}
+
 } // namespace
 } // namespace workbench::viewcontainer

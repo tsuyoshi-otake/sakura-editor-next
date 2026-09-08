@@ -150,6 +150,8 @@ public:
 		PreparedContributedPages&& prepared) noexcept;
 
 	//! Adds native companion page factories through the transactional API.
+	//! Removes only contributed pages; validates the entire batch before revoking.
+	[[nodiscard]] bool RemoveContributedPages(std::span<const std::string> containerIds) noexcept;
 	[[nodiscard]] ViewContainerPageRegistrationResult RegisterContributedPages(
 		std::vector<ViewContainerPageDescriptor> descriptors) noexcept;
 	[[nodiscard]] bool Create(HWND owner);
@@ -237,6 +239,7 @@ private:
 	bool m_outlineExpanded = true;
 	bool m_created = false;
 	bool m_closed = false;
+	bool m_removingContributions = false;
 };
 
 } // namespace workbench::viewcontainer

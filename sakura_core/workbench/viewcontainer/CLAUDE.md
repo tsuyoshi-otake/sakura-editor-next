@@ -66,3 +66,10 @@ ordinary tests never keep a window waiting for an external driver. Screen-vs-
 PrintWindow evidence must include a same-geometry full-redraw noise floor and
 prove both the gesture and process cleanup. The probe's stock EDIT body is a
 test fixture, not a shipped Tree View or document provider.
+
+- Contributed page removal revokes factory registration before native cleanup,
+  then releases the pool entry including closed tombstones. Removal invalidates
+  prepared additions and rejects a batch containing builtin/unknown pages before
+  changing anything. Reentrant publication is blocked during removal. The SENP
+  publication owner checks its exact catalog generation before removing pages;
+  an obsolete owner must never unregister a replacement generation.

@@ -334,6 +334,17 @@ public:
 				: EViewContainerPageCleanupOwner::PageDestructor };
 	}
 
+	[[nodiscard]] bool Release(const std::string_view containerId) noexcept
+	{
+		if (m_registry.Find(containerId)) return false;
+		const auto found = m_entries.find(containerId);
+		if (found == m_entries.end()) return true;
+		// Extraction makes reentrant observers see absence before Close/destruction.
+		auto removed = m_entries.extract(found);
+		(void)removed.mapped().Finalize();
+		return true;
+	}
+
 	[[nodiscard]] ViewContainerPagePoolShutdownResult Shutdown() noexcept
 	{
 		if (m_shutdown) return { EViewContainerPagePoolShutdownStatus::AlreadyClosed, 0, 0 };
@@ -574,6 +585,11 @@ ViewContainerPagePoolCloseResult ViewContainerPagePool::Close(
 	const std::string_view containerId) noexcept
 {
 	return m_impl->Close(containerId);
+}
+
+bool ViewContainerPagePool::Release(const std::string_view containerId) noexcept
+{
+	return m_impl->Release(containerId);
 }
 
 ViewContainerPagePoolShutdownResult ViewContainerPagePool::Shutdown() noexcept

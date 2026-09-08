@@ -183,6 +183,8 @@ public:
 		std::string_view containerId, const ViewContainerPageHost& destination) noexcept;
 	[[nodiscard]] ViewContainerPagePoolDetachResult Detach(std::string_view containerId) noexcept;
 	[[nodiscard]] ViewContainerPagePoolCloseResult Close(std::string_view containerId) noexcept;
+	//! Requires the factory to be revoked first; releases even a closed tombstone.
+	[[nodiscard]] bool Release(std::string_view containerId) noexcept;
 	[[nodiscard]] ViewContainerPagePoolShutdownResult Shutdown() noexcept;
 	[[nodiscard]] ViewContainerPageStateResult State(
 		std::string_view containerId) const noexcept;

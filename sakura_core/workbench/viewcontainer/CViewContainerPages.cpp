@@ -589,7 +589,7 @@ CViewContainerPages::PreparedContributedPages CViewContainerPages::PrepareContri
 		return { this, m_contributionRevision, m_created,
 			EViewContainerPageRegistrationStatus::NotApplicable, 0, {}, {}, {}, std::nullopt };
 	}
-	if (m_closed) {
+	if (m_closed || m_removingContributions) {
 		return { this, m_contributionRevision, m_created,
 			EViewContainerPageRegistrationStatus::Failed, 0, {}, {}, {}, std::nullopt };
 	}
@@ -645,7 +645,7 @@ bool CViewContainerPages::CanCommit(const PreparedContributedPages& prepared) co
 {
 	if (prepared.m_owner != this || prepared.m_consumed
 		|| prepared.m_baseRevision != m_contributionRevision || !prepared.Succeeded()
-		|| m_closed || prepared.m_preparedAfterCreate != m_created) {
+		|| m_closed || m_removingContributions || prepared.m_preparedAfterCreate != m_created) {
 		return false;
 	}
 	return prepared.m_status == EViewContainerPageRegistrationStatus::NotApplicable
@@ -682,6 +682,29 @@ ViewContainerPageRegistrationResult CViewContainerPages::RegisterContributedPage
 	auto prepared = PrepareContributedPages(std::move(descriptors));
 	if (!prepared.Succeeded()) return { prepared.Status(), 0 };
 	return Commit(std::move(prepared));
+}
+
+bool CViewContainerPages::RemoveContributedPages(
+	const std::span<const std::string> containerIds) noexcept
+{
+	if (m_removingContributions) return false;
+	for (const auto& id : containerIds) {
+		if (std::ranges::find(m_pendingContributions, id,
+			&ViewContainerPageDescriptor::containerId) == m_pendingContributions.end()) return false;
+	}
+	if (containerIds.empty()) return true;
+	m_removingContributions = true;
+	++m_contributionRevision;
+	// Revoke all registration authority before invoking native page callbacks.
+	for (const auto& id : containerIds) {
+		(void)m_registry.Remove(id);
+		std::erase(m_contributedPageIds, id);
+		std::erase(m_registeredPageIds, id);
+		std::erase_if(m_pendingContributions, [&](const auto& entry) { return entry.containerId == id; });
+	}
+	for (const auto& id : containerIds) (void)m_pool.Release(id);
+	m_removingContributions = false;
+	return true;
 }
 
 bool CViewContainerPages::Create(HWND owner)

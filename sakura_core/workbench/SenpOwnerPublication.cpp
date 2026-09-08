@@ -81,6 +81,8 @@ public:
 				views.push_back(std::move(descriptor));
 			}
 
+			for (const auto& container : options.Containers()) m_containerIds.push_back(container.id);
+
 			viewcontainer::SenpViewContainerOptions containerOptions{
 				options.ParkingParent(), m_catalogOwner, options.Containers(), std::move(nativeViews),
 				options.TakeRequestFocus(),
@@ -164,6 +166,9 @@ public:
 		if (m_closed) return;
 		m_closed = true;
 		m_invalidations.clear();
+		if (m_committed && m_hub.m_contributions.IsOwnerCurrent(m_catalogOwner)) {
+			(void)m_hub.m_pages.RemoveContributedPages(m_containerIds);
+		}
 		if (m_views) m_views->Close();
 		if (m_projection) m_projection->Close();
 		if (m_committed) (void)m_hub.m_contributions.DisposeOwner(m_catalogOwner);
@@ -186,6 +191,7 @@ private:
 	std::shared_ptr<viewcontainer::CSenpViewContainers> m_views;
 	std::unique_ptr<layout::PreparedWorkbenchContributions> m_catalogChange;
 	std::optional<viewcontainer::CViewContainerPages::PreparedContributedPages> m_pageChange;
+	std::vector<std::string> m_containerIds;
 	std::vector<std::wstring> m_viewIds;
 	std::vector<std::wstring> m_invalidations;
 	bool m_committed{};
