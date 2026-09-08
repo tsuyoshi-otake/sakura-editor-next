@@ -138,10 +138,22 @@ def main() -> int:
             cases = report.findall(".//testcase")
             process_cases = [case for case in cases if case.get("classname") == "SenpRuntimeProcess"]
             owner_cases = [case for case in cases if case.get("classname") == "SenpViewLifecycle"]
-            composition_cases = [case for case in cases if case.get("classname") == "SenpOwnerComposition"]
-            if len(process_cases) != 7 or len(owner_cases) < 15 or len(composition_cases) != 3 \
+            composition_cases = {case.get("name") for case in cases
+                                 if case.get("classname") == "SenpOwnerComposition"}
+            # Named, not counted: the hermetic cases in this suite grow, and a
+            # count that drifts turns the real-runtime gate into a pass for a
+            # run that never activated a component.
+            required_compositions = {
+                "RealSamplePublishesTwoTreesAndStructuredDocument",
+                "RealGithubIssuesAndPullRequestsReachNativeProviders",
+                "RealGithubActionsReachNativeProviders",
+            }
+            missing = sorted(required_compositions - composition_cases)
+            if len(process_cases) != 7 or len(owner_cases) < 15 or missing \
                     or any(case.find("skipped") is not None or case.find("failure") is not None for case in cases):
-                raise RuntimeError("required process cases are missing, skipped or failed")
+                raise RuntimeError(
+                    "required process cases are missing, skipped or failed"
+                    + (f"; absent real-runtime cases: {missing}" if missing else ""))
             env["SENP_PROTOCOL_PEER_FILE"] = str(cpp_peer)
             env["SENP_PROTOCOL_OUTPUT"] = str(rust_peer)
             v1 = ROOT / "build/x64/Debug/rust/senp/stage/sakura-indent-rainbow/module/extension.wasm"
