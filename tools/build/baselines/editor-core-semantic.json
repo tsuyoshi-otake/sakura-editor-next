@@ -39000,21 +39000,14 @@
     {
       "column": 4,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 62,
+      "line": 92,
       "path": "sakura_core/workbench/viewcontainer/ViewContainerPageRegistry.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 4,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 95,
-      "path": "sakura_core/workbench/viewcontainer/ViewContainerPageRegistry.cpp",
-      "rule_id": "error.catch_all"
-    },
-    {
-      "column": 4,
-      "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 106,
+      "line": 125,
       "path": "sakura_core/workbench/viewcontainer/ViewContainerPageRegistry.cpp",
       "rule_id": "error.catch_all"
     },
@@ -91192,14 +91185,7 @@
     {
       "column": 27,
       "evidence_sha256": "sha256:51f00d258dd922199470e6c8c79b13d0658e9e18f6d89f973faae256d7264987",
-      "line": 36,
-      "path": "sakura_core/workbench/viewcontainer/ViewContainerPageRegistry.h",
-      "rule_id": "state.public_mutable_field"
-    },
-    {
-      "column": 43,
-      "evidence_sha256": "sha256:07b128c2ab0d0ea1654bdc9569a7fd6b6dc17d54d090343f78d518dfe13bea0b",
-      "line": 51,
+      "line": 39,
       "path": "sakura_core/workbench/viewcontainer/ViewContainerPageRegistry.h",
       "rule_id": "state.public_mutable_field"
     },
@@ -97925,7 +97911,7 @@
   },
   "inventory_kind": "editor-core-semantic",
   "metrics": {
-    "catch_all_count": 709,
+    "catch_all_count": 708,
     "direct_global_getter_calls": {
       "GetDllShareData": 710,
       "GetEditDoc": 7,
@@ -98398,11 +98384,11 @@
       }
     },
     "filtered_test_hint_count": 2,
-    "finding_count": 13960,
+    "finding_count": 13958,
     "finding_count_by_rule": {
       "boundary.private_include": 67,
       "boundary.win32_type": 4834,
-      "error.catch_all": 709,
+      "error.catch_all": 708,
       "global.get_dll_share_data": 710,
       "global.get_edit_doc": 7,
       "global.get_edit_wnd": 258,
@@ -98410,18 +98396,18 @@
       "memory.raw_new": 247,
       "resource.stop_required_acquisition": 262,
       "state.mutable_member": 132,
-      "state.public_mutable_field": 6385,
+      "state.public_mutable_field": 6384,
       "state.raw_pointer_member": 30,
       "test.filtered_or_skipped": 2
     },
-    "include_directive_count": 11009,
+    "include_directive_count": 11013,
     "monolith_link_hint_count": 0,
     "private_include_mention_count": 67,
     "raw_delete_expression_count": 317,
     "raw_new_expression_count": 247,
-    "source_file_count": 1737,
-    "source_line_count": 522707,
-    "tracked_file_count": 1786,
+    "source_file_count": 1738,
+    "source_line_count": 522825,
+    "tracked_file_count": 1787,
     "win32_parameter_mention_count": 4834
   },
   "rule_catalog": [
@@ -98577,8 +98563,8 @@
     ]
   },
   "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
-  "source_commit": "a98fe96d5927132c5019568405f58030a0c49bc2",
-  "source_fingerprint": "sha256:6e1c1a0e20bd9a7886c77985bc6a63647123ac78d0be08b6fa59797d3c655f39",
+  "source_commit": "46877de7d93b648998b12ef2f4ab6a6e5bc00b84",
+  "source_fingerprint": "sha256:1d1090bf75e869761b7ea2fbc8c8b4cf8a45d14def515b41882441f66c7c02b5",
   "tracked_source_paths": [
     ".github/actions/bootstrap-vcpkg/action.yml",
     ".github/dependabot.yml",
@@ -100278,6 +100264,7 @@
     "src/test/cpp/tests1/workbench/GitSourceControlTest.cpp",
     "src/test/cpp/tests1/workbench/GitSyncCommandsTest.cpp",
     "src/test/cpp/tests1/workbench/GitWorktreeDiscoveryTest.cpp",
+    "src/test/cpp/tests1/workbench/HostViewContainerProjectionTest.cpp",
     "src/test/cpp/tests1/workbench/InputBoxGeometryTest.cpp",
     "src/test/cpp/tests1/workbench/MarkerPositionAdapterTest.cpp",
     "src/test/cpp/tests1/workbench/MarkerServiceTest.cpp",
@@ -100367,5 +100354,5 @@
     "tools/ppa_stub/ppa_stub.h",
     "tools/vcx-props/vcxcompat.props"
   ],
-  "tracked_source_set_sha256": "sha256:2c0cde761add679f71d638a8fd8640695e634eb9cc47d240be8a9c0073c29b61"
+  "tracked_source_set_sha256": "sha256:21dc867e40d6323145af55beb462741493f86ccab3fa5cd78cd52200ede5d3f2"
 }
