@@ -753,6 +753,7 @@
     <ClInclude Include="..\sakura_core\workbench\editor\SenpTextResourceView.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\SenpReadonlyDocumentView.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\SenpReadonlyDocumentHost.h" />
+    <ClInclude Include="..\sakura_core\workbench\editor\SenpReadonlyEditorController.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\SenpEditorSurfaceSwitcher.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\CEditorServiceLegacyAdapter.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\EmptyEditorSurfaceModel.h" />
@@ -1469,6 +1470,7 @@
     <ClCompile Include="..\sakura_core\workbench\editor\SenpTextResourceView.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\SenpReadonlyDocumentView.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\SenpReadonlyDocumentHost.cpp" />
+    <ClCompile Include="..\sakura_core\workbench\editor\SenpReadonlyEditorController.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\SenpEditorSurfaceSwitcher.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\CEditorServiceLegacyAdapter.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\EmptyEditorSurfaceModel.cpp" />

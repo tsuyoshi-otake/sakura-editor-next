@@ -1097,6 +1097,48 @@ TEST_F(EditWndTest, HoveredScrollTargetKeepsTabStripWheelPath)
 	EXPECT_EQ(nullptr, pcEditWnd->HoveredScrollTarget(descendantPoint));
 }
 
+TEST_F(EditWndTest, LogicalEditorTabsSelectAndCloseOpaqueCoreInputs)
+{
+	using WindowHolder = cxx::ResourceHolder<&::DestroyWindow>;
+	WindowHolder parent{ ::CreateWindowExW(WS_EX_TOOLWINDOW, L"STATIC", L"", WS_POPUP,
+		40, 40, 480, 60, nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr) };
+	ASSERT_TRUE(parent);
+	WindowHolder tabControl{ ::CreateWindowExW(0, WC_TABCONTROLW, L"",
+		WS_CHILD | WS_VISIBLE | TCS_TOOLTIPS, 0, 0, 480, 40, parent.get(), nullptr,
+		::GetModuleHandleW(nullptr), nullptr) };
+	ASSERT_TRUE(tabControl);
+
+	ScopedTabWindowHandles tabHandles(pcEditWnd->m_cTabWnd);
+	pcEditWnd->m_cTabWnd._SetHwnd(parent.get());
+	pcEditWnd->m_cTabWnd.m_hwndTab = tabControl.get();
+	std::vector<std::string> selected;
+	std::vector<std::string> closed;
+	ASSERT_TRUE(pcEditWnd->m_cTabWnd.SetEditorProjection({
+		{ "legacy.editor.1", L"notes.txt", L"C:\\work\\notes.txt" },
+		{ "senp.readonly.1", L"Issue #296", L"Issue #296" },
+	}, std::string("senp.readonly.1"),
+		[&](const std::string_view id) { selected.emplace_back(id); },
+		[&](const std::string_view id) { closed.emplace_back(id); }));
+	EXPECT_EQ(2, TabCtrl_GetItemCount(tabControl.get()));
+	EXPECT_EQ(1, TabCtrl_GetCurSel(tabControl.get()));
+
+	RECT first{};
+	ASSERT_TRUE(TabCtrl_GetItemRect(tabControl.get(), 0, &first));
+	const LPARAM firstCenter = MAKELPARAM((first.left + first.right) / 2, (first.top + first.bottom) / 2);
+	EXPECT_EQ(0L, pcEditWnd->m_cTabWnd.TabWndDispatchEvent(tabControl.get(), WM_LBUTTONDOWN, 0, firstCenter));
+	EXPECT_EQ(0L, pcEditWnd->m_cTabWnd.TabWndDispatchEvent(tabControl.get(), WM_LBUTTONUP, 0, firstCenter));
+	ASSERT_EQ(1u, selected.size());
+	EXPECT_EQ("legacy.editor.1", selected.front());
+
+	RECT second{};
+	ASSERT_TRUE(TabCtrl_GetItemRect(tabControl.get(), 1, &second));
+	const LPARAM secondCenter = MAKELPARAM((second.left + second.right) / 2, (second.top + second.bottom) / 2);
+	EXPECT_EQ(0L, pcEditWnd->m_cTabWnd.TabWndDispatchEvent(tabControl.get(), WM_MBUTTONUP, 0, secondCenter));
+	ASSERT_EQ(1u, closed.size());
+	EXPECT_EQ("senp.readonly.1", closed.front());
+	pcEditWnd->m_cTabWnd.ClearEditorProjection();
+}
+
 TEST_F(EditWndTest, DISABLED_OnCreate101)	// パラメーター不正の考慮がないので呼べない
 {
 	HWND hWndEdit = nullptr;

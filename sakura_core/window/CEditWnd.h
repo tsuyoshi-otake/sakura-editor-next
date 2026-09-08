@@ -166,9 +166,11 @@ class CCommandPaletteOverlay;
 namespace editor {
 class CEditDocLegacyEditorBackend;
 class CEditorServiceLegacyAdapter;
+class EditorCoreService;
 class EditorWorkingCopyCoordinator;
 class CEmptyEditorSurface;
 class IEditorCoreSubscription;
+class SenpReadonlyEditorController;
 struct EditorCoreSnapshot;
 }
 namespace editor::persistence {
@@ -363,6 +365,7 @@ public:
 
 	CEditWnd();
 	CEditWnd(
+		workbench::editor::EditorCoreService& editorCore,
 		workbench::editor::CEditorServiceLegacyAdapter& editorServiceAdapter,
 		workbench::editor::CEditDocLegacyEditorBackend& legacyEditorBackend,
 		workbench::editor::EditorWorkingCopyCoordinator& workingCopyCoordinator,
@@ -518,6 +521,7 @@ public:
 	[[nodiscard]] bool IsWorkbenchRuntimeBacked() const noexcept { return m_workbenchRuntime != nullptr; }
 	[[nodiscard]] senp::ISenpRuntimeService* GetSenpRuntime() const noexcept;
 	[[nodiscard]] senp::ISenpLanguageService* GetSenpLanguageService() const noexcept;
+	[[nodiscard]] workbench::editor::SenpReadonlyEditorController* GetSenpReadonlyEditors() const noexcept;
 	[[nodiscard]] bool IsWorkbenchPanelVisible(workbench::WorkbenchEdge edge) const noexcept;
 	//! `workbench.action.toggleAuxiliaryBar` (Ctrl+Alt+B). This is the physical Secondary
 	//! Side Bar Part, never the Outline View nested in the Primary Side Bar.
@@ -1144,10 +1148,13 @@ private:
 	// Non-owning migration seams composed by CEditApp. Unit-only CEditWnd instances
 	// may leave them null and retain the legacy-only behavior.
 	workbench::editor::CEditorServiceLegacyAdapter* m_editorServiceAdapter = nullptr;
+	workbench::editor::EditorCoreService* m_editorCoreService = nullptr;
 	workbench::editor::CEditDocLegacyEditorBackend* m_legacyEditorBackend = nullptr;
 	workbench::editor::EditorWorkingCopyCoordinator* m_workingCopyCoordinator = nullptr;
 	workbench::editor::persistence::EditorWorkingCopyLifecycleBridge* m_workingCopyLifecycleBridge = nullptr;
 	workbench::IWorkbenchRuntime* m_workbenchRuntime = nullptr;
+	//! One projection owner for the legacy editor and every retained SENP input.
+	std::unique_ptr<workbench::editor::SenpReadonlyEditorController> m_senpReadonlyEditors;
 	//! A shared callback-only gate lets service notifications outlive this window
 	//! without retaining or dereferencing CEditWnd from a model callback thread.
 	struct WorkbenchServiceProjectionGate;

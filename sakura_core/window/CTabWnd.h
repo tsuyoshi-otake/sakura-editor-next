@@ -26,6 +26,8 @@
 #include "env/CommonSetting.h"
 
 #include <string>
+#include <functional>
+#include <optional>
 #include <vector>
 #include "workbench/icons/CodiconGlyphPainter.h"
 #include "workbench/rendering/CGdiBackBuffer.h"
@@ -41,6 +43,15 @@ enum class ETabWindowNotifyImpact
 {
 	TabStripOnly,
 	WorkbenchLayout,
+};
+
+//! A logical input in the window-local Editor Core group. While this projection
+//! is present, tab clicks address opaque input identities instead of process HWNDs.
+struct EditorTabProjectionItem final
+{
+	std::string inputId;
+	std::wstring title;
+	std::wstring tooltip;
 };
 
 //! タブバーウィンドウ
@@ -82,6 +93,13 @@ public:
 	void UpdateTheme();		/*!< ダークモード切替時のテーマ更新 */
 	void RefreshDocumentActionState();	/*!< Markdownプレビュー操作の表示・状態更新 */
 	LRESULT PaintNativeTabFrame();
+	[[nodiscard]] bool SetEditorProjection(std::vector<EditorTabProjectionItem> items,
+		std::optional<std::string> activeInputId,
+		std::function<void(std::string_view)> select,
+		std::function<void(std::string_view)> close);
+	void ClearEditorProjection();
+	[[nodiscard]] bool HasEditorProjection() const noexcept { return !m_editorProjection.empty(); }
+	[[nodiscard]] std::wstring GetCurrentProcessTabTitle(bool full = false);
 protected:
 	/*
 	|| 実装ヘルパ系
@@ -133,6 +151,7 @@ protected:
 	BOOL SeparateGroup( HWND hwndSrc, HWND hwndDst, POINT ptDrag, POINT ptDrop );	/*!< タブ分離処理 */	// 2007.06.20 ryoji
 	LRESULT ExecTabCommand( int nId, POINTS pts );	/*!< タブ部 コマンド実行処理 */
 	void LayoutTab( void );							/*!< タブのレイアウト調整処理 */
+	void RebuildEditorProjection( BOOL bEnsureVisible );
 
 	HIMAGELIST InitImageList( void );				/*!< イメージリストの初期化処理 */
 	int GetImageIndex( EditNode* pNode );			/*!< イメージリストのインデックス取得処理 */
@@ -218,6 +237,10 @@ private:
 	HWND		m_hwndSizeBox = nullptr;
 	bool		m_bSizeBox = false;
 	int			m_nBreadcrumbHeight = 0;
+	std::vector<EditorTabProjectionItem> m_editorProjection;
+	std::optional<std::string> m_editorProjectionActive;
+	std::function<void(std::string_view)> m_selectProjectedEditor;
+	std::function<void(std::string_view)> m_closeProjectedEditor;
 
 	DISALLOW_COPY_AND_ASSIGN(CTabWnd);
 };

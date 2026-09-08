@@ -68,6 +68,9 @@ TEST(EditorCoreWorkingCopyCaptureContextSource, RefusesEmptyInactiveAndRevisionZ
 	ASSERT_EQ(EEditorOperationStatus::Succeeded,
 		Open(core, "open-inactive", "input.inactive", inactiveIdentity, 4, false).status);
 	EXPECT_FALSE(source.CurrentCaptureContext());
+	const auto inactiveSnapshot = core.Snapshot();
+	ASSERT_EQ(EEditorOperationStatus::Succeeded,
+		core.CloseInput({ { "close-inactive", inactiveSnapshot.revision }, "input.inactive" }).status);
 
 	const auto zeroRevisionIdentity = EditorDocumentIdentity{ .opaqueId = "untitled.zero" };
 	ASSERT_EQ(EEditorOperationStatus::Succeeded,
@@ -93,6 +96,39 @@ TEST(EditorCoreWorkingCopyCaptureContextSource, FollowsTheActiveInputWithoutReco
 	EXPECT_EQ(11U, context->documentRevision);
 	EXPECT_EQ(std::optional<std::string>("untitled.active.exact"), context->documentIdentity.opaqueId);
 	EXPECT_FALSE(context->documentIdentity.resource);
+}
+
+TEST(EditorCoreWorkingCopyCaptureContextSource, CapturesTheSoleRetainedTextInputWhileReadonlyInputIsActive)
+{
+	EditorCoreService core;
+	const auto retainedIdentity = EditorDocumentIdentity{ .opaqueId = "untitled.retained.dirty" };
+	const auto readonlyIdentity = ResourceIdentity(L"senp://sample.details/3/4/5/00690073007300750065");
+	ASSERT_EQ(EEditorOperationStatus::Succeeded,
+		Open(core, "open-retained", "legacy.editor.1", retainedIdentity, 19, false).status);
+	ASSERT_EQ(EEditorOperationStatus::Succeeded,
+		Open(core, "open-readonly", "senp.readonly.1", readonlyIdentity, 0).status);
+
+	EditorCoreWorkingCopyCaptureContextSource source(core);
+	const auto context = source.CurrentCaptureContext();
+
+	ASSERT_TRUE(context);
+	EXPECT_EQ("legacy.editor.1", context->inputId);
+	EXPECT_EQ(19U, context->documentRevision);
+	EXPECT_EQ(retainedIdentity.opaqueId, context->documentIdentity.opaqueId);
+}
+
+TEST(EditorCoreWorkingCopyCaptureContextSource, RefusesAnAmbiguousInactiveWorkingCopyFallback)
+{
+	EditorCoreService core;
+	const auto first = EditorDocumentIdentity{ .opaqueId = "untitled.retained.first" };
+	const auto second = EditorDocumentIdentity{ .opaqueId = "untitled.retained.second" };
+	const auto readonly = ResourceIdentity(L"senp://sample.details/3/4/5/006c006f0067");
+	ASSERT_EQ(EEditorOperationStatus::Succeeded, Open(core, "first", "first", first, 4, false).status);
+	ASSERT_EQ(EEditorOperationStatus::Succeeded, Open(core, "second", "second", second, 8, false).status);
+	ASSERT_EQ(EEditorOperationStatus::Succeeded, Open(core, "readonly", "readonly", readonly, 0).status);
+
+	EditorCoreWorkingCopyCaptureContextSource source(core);
+	EXPECT_FALSE(source.CurrentCaptureContext());
 }
 
 } // namespace

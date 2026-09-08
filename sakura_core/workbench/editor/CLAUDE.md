@@ -305,9 +305,16 @@ native body and one read stream.
 
 The structured renderer alone still rejects text-resource ranges. The generic
 document model retains validated opaque references so the host can partition
-them without fake child documents. Application tab/command/backup integration
-and full cross-page text accessibility remain pending. The rendered selection
-does not claim a UI Automation TextPattern.
+them without fake child documents. `SenpReadonlyEditorController` binds these
+retained roots into `CEditWnd`. When any readonly input exists, `CTabWnd`
+projects the ordered Editor Core group by opaque input ID and routes selection
+and close back to the controller. It must not reinterpret those IDs as process
+HWNDs or allow the legacy cross-process drag/reorder path. Clear the projection
+before destroying the controller so no callback outlives its owner. The retained
+legacy input remains selectable and is the sole working-copy fallback for backup
+while a readonly input is active; multiple persistence candidates remain an
+explicit conflict. Full cross-page text accessibility remains pending. The
+rendered selection does not claim a UI Automation TextPattern.
 
 Verify `SenpReadonlyDocument.*`, the existing Markdown suites and the
 `ReadonlyDocuments` probe in `tools/verify-senp-view-rendering.ps1`. Its readiness
@@ -372,5 +379,5 @@ fails with the covering HWND/PID/title, and bounded cleanup destroys the probe.
 Full Page Heap is per executable name and invalidates timing comparisons with
 an uninstrumented product. See the test guidance for exact-image measurement;
 do not silently remove a user's diagnostic settings or raise the test deadline.
-U06 still owns CEditWnd/tab/command/backup and sample
-publication; schema 2 remains UnsupportedRuntime until those gates pass.
+U06 still owns sample owner/page publication and end-to-end application
+verification; schema 2 remains UnsupportedRuntime until those gates pass.

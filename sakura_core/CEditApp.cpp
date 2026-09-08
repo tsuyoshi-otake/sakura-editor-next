@@ -259,6 +259,7 @@ bool CEditApp::Create(
 								std::make_unique<workbench::editor::persistence::EditorWorkingCopyLifecycleBridge>(
 								inputs->TakeWorkingCopyScope(), *m_workingCopyLifecycle, *m_workingCopyContextSource);
 							m_pcEditWnd = std::make_unique<CEditWnd>(
+								*m_editorCoreService,
 								*m_editorServiceLegacyAdapter, *m_legacyEditorBackend, *m_workingCopyCoordinator,
 								*m_workingCopyLifecycleBridge, *m_workbenchRuntime);
 							return m_pcEditWnd->Create(m_pcEditDoc.get(), &m_cIcons, inputs->GetGroupId())

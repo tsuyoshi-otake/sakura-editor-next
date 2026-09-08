@@ -74,6 +74,26 @@ namespace {
 	}
 }
 
+[[nodiscard]] std::optional<CEditDocWorkingCopyCaptureContext> CaptureCandidate(
+	const EditorCoreSnapshot& snapshot, const EditorInputSnapshot& input)
+{
+	if (!IsValidWorkingCopyPersistenceId(input.descriptor.inputId)
+		|| !input.descriptor.IsValid() || input.documentKey.empty()) return std::nullopt;
+	const auto document = std::find_if(snapshot.documents.begin(), snapshot.documents.end(),
+		[&](const EditorDocumentSnapshot& candidate) { return candidate.documentKey == input.documentKey; });
+	if (document == snapshot.documents.end()
+		|| document->documentRevision == 0
+		|| document->documentRevision > kMaximumWorkingCopyPersistenceGeneration
+		|| !IsSameDocumentIdentity(input.descriptor.documentIdentity, document->identity)
+		|| !ToPersistenceIdentity(input.descriptor.documentIdentity)) return std::nullopt;
+	return CEditDocWorkingCopyCaptureContext{
+		.inputId = input.descriptor.inputId,
+		.inputTypeId = std::string(CWorkingCopyPersistenceCodec::kTextInputTypeId),
+		.documentIdentity = input.descriptor.documentIdentity,
+		.documentRevision = document->documentRevision,
+	};
+}
+
 } // namespace
 
 EditorCoreWorkingCopyCaptureContextSource::EditorCoreWorkingCopyCaptureContextSource(
@@ -96,28 +116,22 @@ EditorCoreWorkingCopyCaptureContextSource::CurrentCaptureContext() const
 			[&](const EditorInputSnapshot& candidate) {
 				return candidate.descriptor.inputId == *snapshot.group.activeInputId;
 			});
-		if (input == snapshot.group.inputs.end() || !input->descriptor.IsValid()
-			|| input->documentKey.empty()) {
-			return std::nullopt;
-		}
+		if (input == snapshot.group.inputs.end()) return std::nullopt;
+		if (auto active = CaptureCandidate(snapshot, *input)) return active;
 
-		const auto document = std::find_if(snapshot.documents.begin(), snapshot.documents.end(),
-			[&](const EditorDocumentSnapshot& candidate) {
-				return candidate.documentKey == input->documentKey;
-			});
-		if (document == snapshot.documents.end()
-			|| document->documentRevision == 0
-			|| document->documentRevision > kMaximumWorkingCopyPersistenceGeneration
-			|| !IsSameDocumentIdentity(input->descriptor.documentIdentity, document->identity)) {
-			return std::nullopt;
+		// A readonly editor can be active while this process still owns one dirty
+		// native CEditDoc. Capture that exact retained working copy for Hot Exit.
+		// More than one eligible inactive input is outside the one-document native
+		// capability and remains ambiguous rather than choosing by order or title.
+		std::optional<CEditDocWorkingCopyCaptureContext> retained;
+		for (const auto& candidate : snapshot.group.inputs) {
+			if (candidate.descriptor.inputId == *snapshot.group.activeInputId) continue;
+			auto context = CaptureCandidate(snapshot, candidate);
+			if (!context) continue;
+			if (retained) return std::nullopt;
+			retained = std::move(context);
 		}
-
-		return CEditDocWorkingCopyCaptureContext{
-			.inputId = input->descriptor.inputId,
-			.inputTypeId = std::string(CWorkingCopyPersistenceCodec::kTextInputTypeId),
-			.documentIdentity = input->descriptor.documentIdentity,
-			.documentRevision = document->documentRevision,
-		};
+		return retained;
 	}
 	catch (...) {
 		return std::nullopt;

@@ -127,6 +127,7 @@
 #include "workbench/editor/CDiffSurface.h"
 #include "workbench/editor/CEmptyEditorSurface.h"
 #include "workbench/editor/EditorCommandIds.h"
+#include "workbench/editor/SenpReadonlyEditorController.h"
 #include "workbench/editor/WorkbenchCommandPaletteModel.h"
 #include "workbench/editor/EditorWorkingCopyCoordinator.h"
 #include "workbench/editor/persistence/EditorWorkingCopyLifecycleBridge.h"
@@ -1555,6 +1556,7 @@ CEditWnd::CEditWnd()
 }
 
 CEditWnd::CEditWnd(
+	workbench::editor::EditorCoreService& editorCore,
 	workbench::editor::CEditorServiceLegacyAdapter& editorServiceAdapter,
 	workbench::editor::CEditDocLegacyEditorBackend& legacyEditorBackend,
 	workbench::editor::EditorWorkingCopyCoordinator& workingCopyCoordinator,
@@ -1562,6 +1564,7 @@ CEditWnd::CEditWnd(
 	workbench::IWorkbenchRuntime& workbenchRuntime)
 	: CEditWnd()
 {
+	m_editorCoreService = &editorCore;
 	m_editorServiceAdapter = &editorServiceAdapter;
 	m_legacyEditorBackend = &legacyEditorBackend;
 	m_workingCopyCoordinator = &workingCopyCoordinator;
@@ -1779,6 +1782,11 @@ bool CEditWnd::CreateUntitledEditorInput()
 bool CEditWnd::ExecuteWorkbenchEditorCommand(std::string_view commandId)
 {
 	using namespace workbench::editor;
+	if (m_senpReadonlyEditors) {
+		const auto routed = m_senpReadonlyEditors->Execute(commandId);
+		if (routed != SenpReadonlyCommandStatus::NotHandled)
+			return routed == SenpReadonlyCommandStatus::Succeeded;
+	}
 	if (commandId == command_ids::NewUntitledFile) {
 		if (!HasActiveEditorInput()) return CreateUntitledEditorInput();
 		// The established native command owns the multi-document/new-buffer path
@@ -2148,6 +2156,20 @@ SWorkingCopyFunctionDispatchResult CEditWnd::TryExecuteWorkingCopyFileCommand(
 void CEditWnd::DispatchEditorFunction(EFunctionCode functionCode)
 {
 	const auto baseCode = static_cast<EFunctionCode>(static_cast<int>(functionCode) & 0xffff);
+	if (m_senpReadonlyEditors) {
+		std::string_view readonlyCommand;
+		switch (baseCode) {
+		case F_COPY: readonlyCommand = "editor.action.clipboardCopyAction"; break;
+		case F_SELECTALL: readonlyCommand = "editor.action.selectAll"; break;
+		case F_SEARCH_DIALOG: readonlyCommand = "actions.find"; break;
+		case F_SEARCH_NEXT: readonlyCommand = "editor.action.nextMatchFindAction"; break;
+		case F_SEARCH_PREV: readonlyCommand = "editor.action.previousMatchFindAction"; break;
+		default: break;
+		}
+		if (!readonlyCommand.empty()
+			&& m_senpReadonlyEditors->Execute(readonlyCommand) != workbench::editor::SenpReadonlyCommandStatus::NotHandled)
+			return;
+	}
 	// Menu and key dispatch retain their source/high-bit flags up to this point.
 	// Route only the base legacy alias through the stable workbench command; a
 	// registered command's terminal failure must not fall through as success.
@@ -2223,6 +2245,11 @@ senp::ISenpLanguageService* CEditWnd::GetSenpLanguageService() const noexcept
 	return m_workbenchRuntime == nullptr ? nullptr : m_workbenchRuntime->ExtensionLanguages();
 }
 
+workbench::editor::SenpReadonlyEditorController* CEditWnd::GetSenpReadonlyEditors() const noexcept
+{
+	return m_senpReadonlyEditors.get();
+}
+
 void CEditWnd::RefreshEditorCorePresentation()
 {
 	if (m_editorServiceAdapter == nullptr) return;
@@ -2244,6 +2271,7 @@ void CEditWnd::ApplyEditorCoreSnapshot(
 	}
 	const bool activeEditorChanged = m_presentedEditorInputId != snapshot.group.activeInputId
 		|| m_presentedEditorDocumentKey != activeDocumentKey;
+	const bool readonlyActive = m_senpReadonlyEditors && m_senpReadonlyEditors->IsReadonlyActive();
 	const bool restoreMaximizedPanel = m_bottomWorkbenchMaximized && hasActiveInput && activeEditorChanged;
 	// Editor tabs belong to this editor group.  Other native editor processes
 	// may exist while this group is genuinely empty; their global node count
@@ -2256,13 +2284,12 @@ void CEditWnd::ApplyEditorCoreSnapshot(
 	const bool showDocumentTabs = hasActiveInput && !m_bottomWorkbenchMaximized;
 	const bool documentTabVisibilityChanged = previousShowDocumentTabs != showDocumentTabs;
 	const bool presentationChanged = !m_editorCorePresentationInitialized
-		|| m_hasActiveEditorInput != hasActiveInput || restoreMaximizedPanel;
+		|| m_hasActiveEditorInput != hasActiveInput || activeEditorChanged || restoreMaximizedPanel;
 	m_hasActiveEditorInput = hasActiveInput;
 	m_presentedEditorInputId = snapshot.group.activeInputId;
 	m_presentedEditorDocumentKey = std::move(activeDocumentKey);
 	m_editorCorePresentationInitialized = true;
 	UpdateWorkbenchWelcomeState();
-	if (!presentationChanged) return;
 
 	const HWND splitter = m_cSplitterWnd.GetHwnd();
 	const HWND emptySurface = m_emptyEditorSurface ? m_emptyEditorSurface->GetHwnd() : nullptr;
@@ -2271,7 +2298,48 @@ void CEditWnd::ApplyEditorCoreSnapshot(
 	const bool editorOwnedFocus = focused != nullptr
 		&& ((splitter != nullptr && (focused == splitter || ::IsChild(splitter, focused)))
 			|| (emptySurface != nullptr && (focused == emptySurface || ::IsChild(emptySurface, focused)))
-			|| (diffSurface != nullptr && (focused == diffSurface || ::IsChild(diffSurface, focused))));
+			|| (diffSurface != nullptr && (focused == diffSurface || ::IsChild(diffSurface, focused)))
+			|| (m_senpReadonlyEditors && m_senpReadonlyEditors->OwnsFocus(focused)));
+	if (m_senpReadonlyEditors) {
+		if (readonlyActive) m_senpReadonlyEditors->SetVisible(!m_bottomWorkbenchMaximized && !m_pPrintPreview);
+		(void)m_senpReadonlyEditors->Apply(restoreFocus && editorOwnedFocus && !m_pPrintPreview);
+		try {
+			const auto readonlyInputs = m_senpReadonlyEditors->Workbench().Inputs();
+			if (readonlyInputs.empty()) {
+				m_cTabWnd.ClearEditorProjection();
+			} else {
+				const auto legacyTitle = m_cTabWnd.GetCurrentProcessTabTitle();
+				std::vector<EditorTabProjectionItem> tabs;
+				tabs.reserve(snapshot.group.inputs.size());
+				for (const auto& input : snapshot.group.inputs) {
+					if (const auto own = m_senpReadonlyEditors->Workbench().Find(input.descriptor.inputId)) {
+						tabs.push_back({ own->inputId, own->title, own->title });
+					} else if (input.descriptor.inputId == kLegacyEditorInputId) {
+						tabs.push_back({ input.descriptor.inputId, legacyTitle, legacyTitle });
+					}
+				}
+				if (tabs.size() != snapshot.group.inputs.size()
+					|| !m_cTabWnd.SetEditorProjection(std::move(tabs), snapshot.group.activeInputId,
+						[this](const std::string_view inputId) {
+							if (m_senpReadonlyEditors) (void)m_senpReadonlyEditors->Show(inputId, true);
+						},
+						[this](const std::string_view inputId) {
+							if (!m_senpReadonlyEditors) return;
+							if (inputId == kLegacyEditorInputId) {
+								if (m_senpReadonlyEditors->Show(inputId, false) == workbench::editor::SenpReadonlyStatus::Succeeded)
+									(void)ExecuteWorkbenchEditorCommand(workbench::editor::command_ids::CloseActiveEditor);
+							} else {
+								(void)m_senpReadonlyEditors->Close(inputId);
+							}
+						})) {
+					m_cTabWnd.ClearEditorProjection();
+				}
+			}
+		} catch (...) {
+			m_cTabWnd.ClearEditorProjection();
+		}
+	}
+	if (!presentationChanged) return;
 
 	if (hasActiveInput) {
 		if (m_emptyEditorSurface) m_emptyEditorSurface->Hide();
@@ -2283,9 +2351,17 @@ void CEditWnd::ApplyEditorCoreSnapshot(
 			m_diffSurface->ClearDiff();
 			m_diffSurface->Hide();
 		}
-		if (splitter != nullptr && !m_pPrintPreview) ::ShowWindow(splitter, SW_SHOWNA);
-		if (const HWND minimap = m_cMiniMapView.GetHwnd(); minimap != nullptr && !m_pPrintPreview) {
+		if (splitter != nullptr && !m_pPrintPreview && !m_senpReadonlyEditors) ::ShowWindow(splitter, SW_SHOWNA);
+		if (const HWND minimap = m_cMiniMapView.GetHwnd(); minimap != nullptr && !m_pPrintPreview && !readonlyActive) {
 			::ShowWindow(minimap, SW_SHOWNA);
+		}
+		if (readonlyActive) {
+			m_markdownPreviewCommandState.Reset();
+			m_markdownPreviewVisible = false;
+			m_markdownPreviewDirty = false;
+			m_markdownPreviewDivider = {};
+			if (m_markdownPreview) m_markdownPreview->Show(false);
+			if (const HWND minimap = m_cMiniMapView.GetHwnd(); minimap != nullptr) ::ShowWindow(minimap, SW_HIDE);
 		}
 	} else {
 		m_markdownPreviewCommandState.Reset();
@@ -2319,7 +2395,9 @@ void CEditWnd::ApplyEditorCoreSnapshot(
 	}
 
 	if (!restoreFocus || !editorOwnedFocus || m_pPrintPreview) return;
-	if (hasActiveInput) {
+	if (hasActiveInput && m_senpReadonlyEditors) {
+		(void)m_senpReadonlyEditors->Apply(true);
+	} else if (hasActiveInput) {
 		if (const HWND view = GetActiveView().GetHwnd(); ::IsWindowVisible(view)) ::SetFocus(view);
 	} else if (m_diffSurface && m_diffSurface->HasDiff()) {
 		m_diffSurface->Focus();
@@ -3331,12 +3409,16 @@ bool CEditWnd::InitializeWorkbench()
 
 	const bool hasEditorAdapter = m_editorServiceAdapter != nullptr;
 	const bool hasLegacyBackend = m_legacyEditorBackend != nullptr;
-	if (hasEditorAdapter != hasLegacyBackend) {
+	const bool hasEditorCore = m_editorCoreService != nullptr;
+	if (hasEditorAdapter != hasLegacyBackend || hasEditorAdapter != hasEditorCore) {
 		CloseWorkbench();
 		return false;
 	}
 	const bool editorBridgeEnabled = hasEditorAdapter && hasLegacyBackend;
 	if (editorBridgeEnabled) {
+		m_senpReadonlyEditors = std::make_unique<workbench::editor::SenpReadonlyEditorController>(
+			*m_editorCoreService, GetHwnd(), m_cSplitterWnd.GetHwnd(), GetActiveView().GetHwnd(),
+			std::string(kLegacyEditorInputId));
 		m_emptyEditorSurface = std::make_unique<workbench::editor::CEmptyEditorSurface>(
 			[this](std::string_view commandId) {
 				// Watermark actions share the same stable command authority as the
@@ -3364,7 +3446,8 @@ bool CEditWnd::InitializeWorkbench()
 		&& m_activityBar != nullptr
 		&& m_auxiliaryActivityBar != nullptr
 		&& (!editorBridgeEnabled
-			|| (m_emptyEditorSurface != nullptr && m_diffSurface != nullptr));
+			|| (m_emptyEditorSurface != nullptr && m_diffSurface != nullptr
+				&& m_senpReadonlyEditors != nullptr));
 	if (!initialized) {
 		// Workbench initialization is all-or-nothing. Do not leave an editor in
 		// an unobservable partial state where a configured tool has no HWND.
@@ -6038,6 +6121,14 @@ void CEditWnd::CloseWorkbench() noexcept
 	m_workbenchContextKeyService.reset();
 	if (m_editorCoreSubscription) m_editorCoreSubscription->Unsubscribe();
 	m_editorCoreSubscription.reset();
+	m_cTabWnd.ClearEditorProjection();
+	// Unbind every retained editor surface while the parent, Editor Core and
+	// publication-owned children are still alive. A failed shutdown retains the
+	// controller for CEditApp's explicit finalization attempt.
+	if (m_senpReadonlyEditors
+		&& m_senpReadonlyEditors->Shutdown() != workbench::editor::SenpReadonlyStatus::Conflict) {
+		m_senpReadonlyEditors.reset();
+	}
 	if (m_diffSurface) {
 		m_diffSurface->SetOnCloseRequested({});
 		m_diffSurface->ClearDiff();
@@ -10431,6 +10522,7 @@ RECT CEditWnd::LayoutMarkdownPreview(int left, int top, int right, int bottom, u
 		if (const auto splitter = m_cSplitterWnd.GetHwnd(); splitter != nullptr) {
 			::ShowWindow(splitter, SW_HIDE);
 		}
+		if (m_senpReadonlyEditors) m_senpReadonlyEditors->SetVisible(false);
 		if (m_markdownPreview) m_markdownPreview->Show(false);
 		if (m_diffSurface) m_diffSurface->Hide();
 		if (m_emptyEditorSurface) m_emptyEditorSurface->Hide();
@@ -10442,6 +10534,7 @@ RECT CEditWnd::LayoutMarkdownPreview(int left, int top, int right, int bottom, u
 		if (const HWND splitter = m_cSplitterWnd.GetHwnd(); splitter != nullptr) {
 			::ShowWindow(splitter, SW_HIDE);
 		}
+		if (m_senpReadonlyEditors) m_senpReadonlyEditors->SetVisible(false);
 		if (m_markdownPreview) m_markdownPreview->Show(false);
 		// Same precedence as `ApplyEditorCoreSnapshot`: comparison, extension
 		// metadata, then the watermark. Only the winner is laid out, so
@@ -10459,6 +10552,14 @@ RECT CEditWnd::LayoutMarkdownPreview(int left, int top, int right, int bottom, u
 	}
 	if (m_diffSurface) m_diffSurface->Hide();
 	if (m_emptyEditorSurface) m_emptyEditorSurface->Hide();
+	if (m_senpReadonlyEditors && m_senpReadonlyEditors->IsReadonlyActive()) {
+		m_markdownPreviewDivider = {};
+		if (GetHwnd() != nullptr) ::InvalidateRect(GetHwnd(), &previousDivider, FALSE);
+		if (m_markdownPreview) m_markdownPreview->Show(false);
+		(void)m_senpReadonlyEditors->Layout({ left, top, right, bottom });
+		m_senpReadonlyEditors->SetVisible(!m_pPrintPreview);
+		return minimapBounds;
+	}
 	const bool showPreview = m_markdownPreviewVisible && m_markdownPreview != nullptr && !m_pPrintPreview;
 	auto paneMode = markdown::PreviewPaneMode::Hidden;
 	if (showPreview) {
@@ -10501,7 +10602,11 @@ RECT CEditWnd::LayoutMarkdownPreview(int left, int top, int right, int bottom, u
 		::InvalidateRect(GetHwnd(), &previousDivider, FALSE);
 		::InvalidateRect(GetHwnd(), &m_markdownPreviewDivider, FALSE);
 	}
-	if (const HWND splitter = m_cSplitterWnd.GetHwnd(); splitter != nullptr) {
+	if (m_senpReadonlyEditors) {
+		(void)m_senpReadonlyEditors->Layout({ editorViewLeft, top, editorViewRight, bottom });
+		m_senpReadonlyEditors->SetVisible(
+			paneMode != markdown::PreviewPaneMode::Replacement && !m_pPrintPreview);
+	} else if (const HWND splitter = m_cSplitterWnd.GetHwnd(); splitter != nullptr) {
 		(void)PositionChildForFrame(splitter, editorViewLeft, top,
 			std::max(0, editorViewRight - editorViewLeft), std::max(0, bottom - top));
 		::ShowWindow(splitter, paneMode == markdown::PreviewPaneMode::Replacement || m_pPrintPreview
@@ -11031,6 +11136,21 @@ void CEditWnd::UpdateCaption()
 	if (!HasActiveEditorInput()) {
 		::SetWindowText(GetHwnd(), GSTR_APPNAME);
 		return;
+	}
+	if (m_senpReadonlyEditors) {
+		try {
+			const auto snapshot = m_senpReadonlyEditors->Workbench().Snapshot();
+			if (snapshot.group.activeInputId) {
+				if (const auto input = m_senpReadonlyEditors->Workbench().Find(*snapshot.group.activeInputId)) {
+					const auto caption = input->title + L" - " + GSTR_APPNAME;
+					::SetWindowTextW(GetHwnd(), caption.c_str());
+					return;
+				}
+			}
+		} catch (...) {
+			::SetWindowText(GetHwnd(), GSTR_APPNAME);
+			return;
+		}
 	}
 
 	const  CommonSetting& Common = GetDllShareData().m_Common;
@@ -14531,7 +14651,8 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 
 	if( m_cMiniMapView.GetHwnd() ){
 		::ShowWindow(m_cMiniMapView.GetHwnd(),
-			layoutRequest.showMinimap && !m_pPrintPreview ? SW_SHOWNA : SW_HIDE);
+			layoutRequest.showMinimap && !m_pPrintPreview
+				&& !(m_senpReadonlyEditors && m_senpReadonlyEditors->IsReadonlyActive()) ? SW_SHOWNA : SW_HIDE);
 		(void)PositionChildForFrame(m_cMiniMapView.GetHwnd(), minimapBounds.left,
 			minimapBounds.top, std::max(0L, minimapBounds.right - minimapBounds.left),
 			std::max(0L, minimapBounds.bottom - minimapBounds.top));

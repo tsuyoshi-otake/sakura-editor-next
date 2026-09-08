@@ -236,6 +236,7 @@
     <ClCompile Include="..\src\test\cpp\tests1\workbench\SenpTextResourceViewTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\workbench\SenpReadonlyDocumentTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\workbench\SenpReadonlyDocumentHostTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\SenpReadonlyEditorControllerTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\workbench\SenpTreeViewTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkbenchRuntimeTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\WorkspaceConfigurationDocumentParserTest.cpp" />

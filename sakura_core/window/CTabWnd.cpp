@@ -206,6 +206,12 @@ LRESULT CTabWnd::OnTabLButtonDown( [[maybe_unused]] WPARAM wParam, LPARAM lParam
 			return 0L;
 		}
 	}
+	if (HasEditorProjection()) {
+		m_eDragState = DRAG_CHECK;
+		m_nSrcTab = nSrcTab;
+		::SetCapture(m_hwndTab);
+		return 0L;
+	}
 
 	// マウスドラッグ開始処理
 	m_eDragState = DRAG_CHECK;	// ドラッグのチェックを開始
@@ -226,6 +232,31 @@ LRESULT CTabWnd::OnTabLButtonUp( [[maybe_unused]] WPARAM wParam, LPARAM lParam )
 	hitinfo.pt.x = LOWORD( (DWORD)lParam );
 	hitinfo.pt.y = HIWORD( (DWORD)lParam );
 	int nDstTab = TabCtrl_HitTest( m_hwndTab, (LPARAM)&hitinfo );
+	if (HasEditorProjection()) {
+		const int capturedClose = m_nTabCloseCapture;
+		const bool selected = m_eDragState == DRAG_CHECK && m_nSrcTab == nDstTab;
+		std::string inputId;
+		if (capturedClose >= 0 && capturedClose < static_cast<int>(m_editorProjection.size())) {
+			RECT item{};
+			RECT close{};
+			TabCtrl_GetItemRect(m_hwndTab, capturedClose, &item);
+			GetTabCloseBtnRect(&item, &close, capturedClose == TabCtrl_GetCurSel(m_hwndTab));
+			if (::PtInRect(&close, hitinfo.pt)) inputId = m_editorProjection[capturedClose].inputId;
+		} else if (selected && nDstTab >= 0 && nDstTab < static_cast<int>(m_editorProjection.size())) {
+			inputId = m_editorProjection[nDstTab].inputId;
+		}
+		BreakDrag();
+		try {
+			if (!inputId.empty() && capturedClose >= 0 && m_closeProjectedEditor) {
+				auto close = m_closeProjectedEditor;
+				close(inputId);
+			} else if (!inputId.empty() && m_selectProjectedEditor) {
+				auto select = m_selectProjectedEditor;
+				select(inputId);
+			}
+		} catch (...) {}
+		return 0L;
+	}
 	int nSelfTab = FindTabIndexByHWND( GetParentHwnd() );
 
 	// タブの閉じるボタン押下処理
@@ -306,6 +337,7 @@ LRESULT CTabWnd::OnTabLButtonUp( [[maybe_unused]] WPARAM wParam, LPARAM lParam )
 /*! タブ部 WM_MOUSEMOVE 処理 */
 LRESULT CTabWnd::OnTabMouseMove( WPARAM wParam, LPARAM lParam )
 {
+	if (HasEditorProjection() && m_eDragState != DRAG_NONE) return 0L;
 	TCHITTESTINFO	hitinfo;
 	int i;
 	int nTabCount = TabCtrl_GetItemCount(m_hwndTab);
@@ -793,6 +825,17 @@ LRESULT CTabWnd::ExecTabCommand( int nId, POINTS pts )
 	int nTab = TabCtrl_HitTest( m_hwndTab, (LPARAM)&hitinfo );
 	if( nTab < 0 )
 		return 1L;
+	if (HasEditorProjection()) {
+		if (nId != F_WINCLOSE || nTab >= static_cast<int>(m_editorProjection.size())) return 1L;
+		const auto inputId = m_editorProjection[nTab].inputId;
+		try {
+			if (m_closeProjectedEditor) {
+				auto close = m_closeProjectedEditor;
+				close(inputId);
+			}
+		} catch (...) {}
+		return 0L;
+	}
 
 	// 対象ウィンドウを取得する
 	TCITEM	tcitem;
@@ -1025,6 +1068,11 @@ void CTabWnd::RefreshDocumentActionState()
 /* ウィンドウ クローズ */
 void CTabWnd::Close( void )
 {
+	BreakDrag();
+	m_editorProjection.clear();
+	m_editorProjectionActive.reset();
+	m_selectProjectedEditor = {};
+	m_closeProjectedEditor = {};
 	if( GetHwnd() )
 	{
 		if( gm_pOldWndProc )
@@ -1783,6 +1831,17 @@ LRESULT CTabWnd::OnNotify( [[maybe_unused]] HWND hwnd, [[maybe_unused]] UINT uMs
 		{
 		//case TTN_NEEDTEXT:
 		case TTN_GETDISPINFO:
+			if (HasEditorProjection()) {
+				const auto index = static_cast<std::size_t>(pnmh->idFrom);
+				if (index < m_editorProjection.size()) {
+					const auto& item = m_editorProjection[index];
+					const auto& text = item.tooltip.empty() ? item.title : item.tooltip;
+					wcsncpy_s(m_szTextTip, text.c_str(), _TRUNCATE);
+					((NMTTDISPINFO*)pnmh)->lpszText = m_szTextTip;
+					((NMTTDISPINFO*)pnmh)->hinst = nullptr;
+				}
+				return 0L;
+			}
 			// ツールチップ表示情報を設定する
 			TCITEM	tcitem;
 			tcitem.mask   = TCIF_PARAM;
@@ -1806,6 +1865,15 @@ LRESULT CTabWnd::OnNotify( [[maybe_unused]] HWND hwnd, [[maybe_unused]] UINT uMs
 ETabWindowNotifyImpact CTabWnd::TabWindowNotify( WPARAM wParam, LPARAM lParam )
 {
 	if( nullptr == m_hwndTab ) return ETabWindowNotifyImpact::TabStripOnly;
+	if (HasEditorProjection()) {
+		if (wParam == TWNT_WNDPL_ADJUST) {
+			AdjustWindowPlacement();
+			return ETabWindowNotifyImpact::WorkbenchLayout;
+		}
+		RebuildEditorProjection(FALSE);
+		return wParam == TWNT_MODE_ENABLE || wParam == TWNT_MODE_DISABLE
+			? ETabWindowNotifyImpact::WorkbenchLayout : ETabWindowNotifyImpact::TabStripOnly;
+	}
 
 	bool	bFlag = false;	//前回何もタブがなかったか？
 	int		nCount;
@@ -2086,6 +2154,10 @@ void CTabWnd::Refresh( BOOL bEnsureVisible/* = TRUE*/, BOOL bRebuild/* = FALSE*/
 	int			j;
 
 	if( nullptr == m_hwndTab ) return;
+	if (HasEditorProjection()) {
+		RebuildEditorProjection(bEnsureVisible);
+		return;
+	}
 
 	pEditNode = nullptr;
 	nCount = CAppNodeManager::getInstance()->GetOpenedWindowArr( &pEditNode, TRUE );
@@ -2201,6 +2273,91 @@ void CTabWnd::Refresh( BOOL bEnsureVisible/* = TRUE*/, BOOL bRebuild/* = FALSE*/
 	if( pEditNode ) delete[]pEditNode;
 
 	return;
+}
+
+bool CTabWnd::SetEditorProjection(std::vector<EditorTabProjectionItem> items,
+	std::optional<std::string> activeInputId,
+	std::function<void(std::string_view)> select,
+	std::function<void(std::string_view)> close)
+{
+	if (items.empty() || items.size() > 17 || !select || !close) return false;
+	for (std::size_t index = 0; index < items.size(); ++index) {
+		const auto& item = items[index];
+		if (item.inputId.empty() || item.inputId.size() > 256 || item.title.empty() || item.title.size() > 256)
+			return false;
+		if (std::any_of(items.begin(), items.begin() + static_cast<std::ptrdiff_t>(index),
+			[&item](const auto& previous) { return previous.inputId == item.inputId; })) return false;
+	}
+	if (activeInputId && std::none_of(items.begin(), items.end(), [&activeInputId](const auto& item) {
+		return item.inputId == *activeInputId;
+	})) return false;
+	const bool sameItems = items.size() == m_editorProjection.size()
+		&& std::equal(items.begin(), items.end(), m_editorProjection.begin(), [](const auto& left, const auto& right) {
+			return left.inputId == right.inputId && left.title == right.title && left.tooltip == right.tooltip;
+		});
+	m_editorProjection = std::move(items);
+	m_editorProjectionActive = std::move(activeInputId);
+	m_selectProjectedEditor = std::move(select);
+	m_closeProjectedEditor = std::move(close);
+	if (!sameItems) {
+		RebuildEditorProjection(TRUE);
+	} else if (m_hwndTab && m_editorProjectionActive) {
+		const auto selected = std::find_if(m_editorProjection.begin(), m_editorProjection.end(), [this](const auto& item) {
+			return item.inputId == *m_editorProjectionActive;
+		});
+		if (selected != m_editorProjection.end()) {
+			TabCtrl_SetCurSel(m_hwndTab, static_cast<int>(std::distance(m_editorProjection.begin(), selected)));
+			::InvalidateRect(m_hwndTab, nullptr, FALSE);
+		}
+	}
+	return true;
+}
+
+void CTabWnd::ClearEditorProjection()
+{
+	if (!HasEditorProjection()) return;
+	BreakDrag();
+	m_editorProjection.clear();
+	m_editorProjectionActive.reset();
+	m_selectProjectedEditor = {};
+	m_closeProjectedEditor = {};
+	Refresh(TRUE, TRUE);
+}
+
+void CTabWnd::RebuildEditorProjection(const BOOL bEnsureVisible)
+{
+	if (!m_hwndTab || !HasEditorProjection()) return;
+	::SendMessageAny(m_hwndTab, WM_SETREDRAW, FALSE, 0);
+	TabCtrl_DeleteAllItems(m_hwndTab);
+	int selected = 0;
+	for (std::size_t index = 0; index < m_editorProjection.size(); ++index) {
+		auto& item = m_editorProjection[index];
+		TCITEM native{};
+		native.mask = TCIF_TEXT | TCIF_PARAM | TCIF_IMAGE;
+		native.pszText = item.title.data();
+		native.lParam = static_cast<LPARAM>(index + 1);
+		native.iImage = m_iIconApp;
+		TabCtrl_InsertItem(m_hwndTab, static_cast<int>(index), &native);
+		if (m_editorProjectionActive && item.inputId == *m_editorProjectionActive)
+			selected = static_cast<int>(index);
+	}
+	TabCtrl_SetCurSel(m_hwndTab, selected);
+	::SendMessageAny(m_hwndTab, WM_SETREDRAW, TRUE, 0);
+	if (bEnsureVisible) {
+		::PostMessageAny(m_hwndTab, TCM_SETCURSEL, 0, 0);
+		::PostMessageAny(m_hwndTab, TCM_SETCURSEL, selected, 0);
+	}
+	::InvalidateRect(m_hwndTab, nullptr, FALSE);
+	::InvalidateRect(GetHwnd(), nullptr, FALSE);
+}
+
+std::wstring CTabWnd::GetCurrentProcessTabTitle(const bool full)
+{
+	const auto node = CAppNodeManager::getInstance()->GetEditNode(GetParentHwnd());
+	if (!node) return LS(STR_NO_TITLE1);
+	wchar_t title[2048]{};
+	GetTabName(node, full ? TRUE : FALSE, FALSE, title, static_cast<int>(std::size(title)));
+	return title[0] == L'\0' ? std::wstring(LS(STR_NO_TITLE1)) : std::wstring(title);
 }
 
 /*!	編集ウィンドウの位置合わせ

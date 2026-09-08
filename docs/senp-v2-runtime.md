@@ -396,5 +396,24 @@ profile/package digest/grant/revision付きscopeを使う。owner/workspace/acco
 親theme transactionを修正した後に同じ閾値で合格した。既存32 MiBログ性能試験は変更後binaryの単独実行で
 60.37秒となり、既存60秒条件を0.37秒超えた。閾値は変更せず、混在host固有の合格とは分けて残余とする。
 
-実アプリのtab/command/backup、owner/page公開、sampleはU06に残る。独自Markdown rendererのUIA
+### U06途中: 実Editor Groupのtab・command・backup接続
+
+`SenpReadonlyEditorController`を`CEditWnd`がwindow lifetimeで所有し、保持したlegacy splitterと
+SENP native surfaceを同じ`EditorCoreService`のactive inputから投影する。readonly選択中はlegacy
+splitter、minimap、Markdown previewを隠し、Editor Partが非表示またはPanel最大化でもinputと各native
+surfaceの選択・検索・scrollを保持する。Copy、Select All、Find、次/前検索、Closeはstable command IDで
+選択中surfaceへ到達し、Save/Save As/Revert等はreadonlyで`NotApplicable`として終端する。
+
+readonly inputが1件でも存在するとき、`CTabWnd`は同じCore groupの順序、title、active inputをopaque IDで
+表示する。この間は従来の`TCITEM.lParam`をprocess HWNDとして扱う切替、drag、reorder、context commandを
+実行しない。clickとcloseはcontrollerへ戻し、callbackは同期Core通知でprojectionが更新されても安全な
+copyを実行する。最後のreadonly inputが閉じた時とworkbench shutdown時にはprojectionを消し、従来の
+process-window tab表示へ戻る。現段階は1 window内の1 Editor Groupだけで、cross-window group統合やtab dragは
+対応範囲外である。
+
+working-copy captureはactive readonly inputをCEditDocへ読み替えず、inactiveに保持されたpersistable legacy
+inputがちょうど1件ならそのidentity/revisionを採用する。候補0件または複数件はfail closedとする。
+readonly titleはtop-level captionにも反映し、終了時はtab callbackをcontrollerより先に破棄する。
+
+owner/page公開、GitHub-free sampleと実アプリのend-to-end検証はU06に残る。独自Markdown rendererのUIA
 TextPatternと全pageを横断する検索は実装済みとは扱わない。
