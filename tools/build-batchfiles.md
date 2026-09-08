@@ -21,6 +21,12 @@
 引数検証、tool discovery、実行計画、並列予算、staging は
 `tools/build/sakura_build.py` が所有します。
 
+MSVCのOutput backendは`rust`が既定です（Issue #274）。`cpp`の明示選択は
+ビルド単位のrollback用に残し、MinGWとUTF-16の既定は`cpp`のままです。
+`build-installer.bat`と`zipArtifacts.bat`は独立したproductionフラグを設定して
+Outputの`cpp`/`rust`を検証します。公開用のrelease provenance/smokeは
+Rust Output / C++ UTF-16のexact契約を要求します。
+
 | ファイル名 | 説明 |
 |----|----|
 |[sakura-build.bat](../sakura-build.bat)| canonical CLIへのWindows入口 |

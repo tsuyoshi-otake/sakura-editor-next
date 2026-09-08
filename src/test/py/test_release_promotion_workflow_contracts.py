@@ -20,7 +20,7 @@ EXACT_BUILD_CONTRACT = {
     "platform": "x64",
     "configuration": "Release",
     "utf16_backend": "cpp",
-    "output_backend": "cpp",
+    "output_backend": "rust",
     "utf16_production_package": "true",
     "output_production_package": "true",
 }
@@ -107,7 +107,7 @@ class ReleasePromotionWorkflowContractTests(unittest.TestCase):
     def test_release_compile_sets_all_cpp_production_values_before_build(self) -> None:
         expected_assignments = (
             "        SAKURA_UTF16_BACKEND: cpp",
-            "        SAKURA_OUTPUT_BACKEND: cpp",
+            "        SAKURA_OUTPUT_BACKEND: rust",
             "        SAKURA_UTF16_PRODUCTION_PACKAGE: true",
             "        SAKURA_OUTPUT_PRODUCTION_PACKAGE: true",
         )
@@ -146,7 +146,7 @@ class ReleasePromotionWorkflowContractTests(unittest.TestCase):
         step = self.workflow[start:end]
         for variable, value in (
             ("SAKURA_UTF16_BACKEND", "cpp"),
-            ("SAKURA_OUTPUT_BACKEND", "cpp"),
+            ("SAKURA_OUTPUT_BACKEND", "rust"),
             ("SAKURA_UTF16_PRODUCTION_PACKAGE", "true"),
             ("SAKURA_OUTPUT_PRODUCTION_PACKAGE", "true"),
         ):
@@ -216,7 +216,7 @@ class ReleaseBuildContractExecutableTests(unittest.TestCase):
             "platform": "arm64",
             "configuration": "Debug",
             "utf16_backend": "rust",
-            "output_backend": "rust",
+            "output_backend": "cpp",
             "utf16_production_package": "false",
             "output_production_package": "false",
         }

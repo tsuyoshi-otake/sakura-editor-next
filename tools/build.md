@@ -86,8 +86,8 @@ containmentを所有し、各exportはpanicを型付き`InternalError`へ変換�
 しません。allocation-freeのstrict UTF-8 primitiveは`no_std`の
 `sakura-unicode-core`に分離し、CESU-8や各subsystem固有policyとは混在させません。
 
-Output authorityは別の`SAKURA_OUTPUT_BACKEND`で明示し、既定は`cpp`です。MSVCでは
-`rust`を移行比較用に選択できますが、UTF-16/SIMD backend、ISA dispatch、CPU feature
+Output authorityは別の`SAKURA_OUTPUT_BACKEND`で明示し、MSVCの既定は`rust`、MinGWは`cpp`です。
+MSVCで`cpp`を明示すればビルド単位で戻せます。UTF-16/SIMD backend、ISA dispatch、CPU feature
 判定には影響しません。二つの選択は同じ`rust/native/sakura_native_ffi` staticlibを
 共有するだけで、provider policyやlifecycleは共有しません。
 
@@ -109,18 +109,20 @@ Outputも同様にMSBuildでは`/p:SAKURA_OUTPUT_BACKEND=cpp|rust`、CMakeでは
 配布ビルド・インストーラ・ZIPは`SAKURA_UTF16_PRODUCTION_PACKAGE=true`と
 `SAKURA_OUTPUT_PRODUCTION_PACKAGE=true`をそれぞれ設定します。G0のrollback-first契約では
 `SAKURA_UTF16_BACKEND=cpp`だけを受け付け、UTF-16の`rust`は比較ビルドで選択できても配布処理では
-拒否します。OutputもC1dのproduction authorityをC++に保ち、
-`SAKURA_OUTPUT_PRODUCTION_PACKAGE=true`の場合は`SAKURA_OUTPUT_BACKEND=cpp`だけを受け付けます。
-Outputのproduction判定はUTF-16のproductionフラグから推測せず、Rust採用は別のC1e gateで更新します。
+拒否します。OutputはIssue #274の独立した採用判断によりRustを既定とし、
+`SAKURA_OUTPUT_PRODUCTION_PACKAGE=true`でも`cpp`と`rust`を受け付けます。
+Outputのproduction判定はUTF-16のproductionフラグから推測しません。
 `both`など未知のモードもCargo・コンパイル・パッケージ処理の前に拒否します。
 
 release promotionのexact Release compileは、通常ビルドへ影響させないstep-local環境で
-`SAKURA_UTF16_BACKEND=cpp`、`SAKURA_OUTPUT_BACKEND=cpp`、
+`SAKURA_UTF16_BACKEND=cpp`、`SAKURA_OUTPUT_BACKEND=rust`、
 `SAKURA_UTF16_PRODUCTION_PACKAGE=true`、`SAKURA_OUTPUT_PRODUCTION_PACKAGE=true`の4値を
 `build-sln.bat`より前に設定します。旧tag向けの`GITHUB_SHA`差し替えは従来どおりそのcmd子プロセスだけに
 限定します。release provenanceは`x64`/`Release`と4値を`build_contract`へ記録し、distribution smokeは
-archive展開やinstaller/application起動より前に、欠落、文字列以外、大小文字違い、`rust`、`false`を拒否します。
-これはC++ production authorityを証明するrelease専用contractであり、Issue #274のRust Output採用はHOLDのままです。
+archive展開やinstaller/application起動より前に、欠落、文字列以外、大小文字違い、backend不一致、`false`を拒否します。
+これはRust Output / C++ UTF-16を証明するrelease専用contractです。2026-09-08のユーザー承認により、
+既知の性能gate未達を受容し、Intel実機・長時間canaryを後回しにする例外です。これらを合格とは扱いません。
+ローカル回帰・配布物同一性・起動終了検証は公開前の必須条件です。
 
 ## ビルド手順
 

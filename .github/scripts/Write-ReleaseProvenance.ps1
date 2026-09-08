@@ -151,7 +151,7 @@ $expectedBuildContract = [ordered]@{
     platform = 'x64'
     configuration = 'Release'
     utf16_backend = 'cpp'
-    output_backend = 'cpp'
+    output_backend = 'rust'
     utf16_production_package = 'true'
     output_production_package = 'true'
 }

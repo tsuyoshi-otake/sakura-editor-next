@@ -56,6 +56,36 @@ class MeasureOutputProviderContractTests(unittest.TestCase):
         self.assertIn("([string]$Value).Length -gt 512", self.text)
         self.assertNotIn("[string]$Value.Length -gt 512", self.text)
 
+    def test_timing_copy_keeps_producer_identity_and_rejects_instrumentation(self):
+        for marker in (
+            "[string]$TimingImageMode = 'verified-copy'",
+            "Invoke-VerifiedTimingProcess",
+            "verified-timing-copy-v1",
+            "$startInfo.WorkingDirectory = Split-Path -Parent $PSScriptRoot",
+            "timing copy SHA-256 mismatch",
+            "timing copy size mismatch",
+            "RegistryView]::Registry64",
+            "RegistryView]::Registry32",
+            "registryBefore = $before",
+            "registryAfter = $after",
+            "Assert-ExecutableUnchanged -Expected $copy",
+            "Assert-ExecutableUnchanged -Expected $ExecutableMetadata",
+            "original timing image mode is diagnostic-only",
+            "instrumented-before",
+            "instrumented-after",
+            "child-failure",
+            "copy-mutation",
+            "timing observation type rejection",
+            "cleanupVerified = $false",
+            "measurementRunnerSha256 = $runnerSha256",
+            "measurement runner changed before launch",
+            "measurement runner changed after campaign",
+            "$result.timingImage.cleanupVerified = $true",
+        ):
+            self.assertIn(marker, self.text)
+        for forbidden in (".SetValue(", "Remove-ItemProperty", "Set-ItemProperty"):
+            self.assertNotIn(forbidden, self.text)
+
     def test_qualified_requires_a_manifest_pair_before_launch(self):
         shell = next((name for name in ("pwsh", "powershell.exe") if shutil.which(name)), None)
         if shell is None:

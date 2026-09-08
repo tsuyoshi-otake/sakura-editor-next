@@ -1131,7 +1131,7 @@ class Utf16PackagingContractTests(unittest.TestCase):
             {
                 "SAKURA_GENERATE_ASSEMBLY_LISTINGS": "1",
                 "SAKURA_UTF16_BACKEND": "cpp",
-                "SAKURA_OUTPUT_BACKEND": "cpp",
+                "SAKURA_OUTPUT_BACKEND": "rust",
                 "SAKURA_UTF16_PRODUCTION_PACKAGE": "true",
                 "SAKURA_OUTPUT_PRODUCTION_PACKAGE": "true",
             },
@@ -1145,7 +1145,7 @@ class Utf16PackagingContractTests(unittest.TestCase):
                     {
                         "SAKURA_GENERATE_ASSEMBLY_LISTINGS": "1",
                         "SAKURA_UTF16_BACKEND": backend,
-                        "SAKURA_OUTPUT_BACKEND": "cpp",
+                        "SAKURA_OUTPUT_BACKEND": "rust",
                         "SAKURA_UTF16_PRODUCTION_PACKAGE": "true",
                         "SAKURA_OUTPUT_PRODUCTION_PACKAGE": "true",
                     },
@@ -1164,7 +1164,7 @@ class Utf16PackagingContractTests(unittest.TestCase):
                     sakura_build.production_package_environment(environment)
                 self.assertEqual(backend, environment["SAKURA_UTF16_BACKEND"])
 
-        for backend in ("cpp",):
+        for backend in ("cpp", "rust"):
             with self.subTest(output_backend=backend):
                 self.assertEqual(
                     {
@@ -1214,7 +1214,7 @@ class Utf16PackagingContractTests(unittest.TestCase):
                 name,
             )
             self.assertIn(
-                'if not defined SAKURA_OUTPUT_BACKEND set "SAKURA_OUTPUT_BACKEND=cpp"',
+                'if not defined SAKURA_OUTPUT_BACKEND set "SAKURA_OUTPUT_BACKEND=rust"',
                 body,
                 name,
             )
@@ -1224,7 +1224,7 @@ class Utf16PackagingContractTests(unittest.TestCase):
                 name,
             )
             self.assertIn(
-                "Production packaging requires SAKURA_OUTPUT_BACKEND=cpp;",
+                "Production packaging requires SAKURA_OUTPUT_BACKEND=cpp or rust;",
                 body,
                 name,
             )
@@ -1268,7 +1268,7 @@ class Utf16PackagingContractTests(unittest.TestCase):
 
     def test_native_selector_preflight_defaults_only_absent_selectors(self):
         cases = (
-            ("msvc", {}, {"SAKURA_UTF16_BACKEND": "cpp", "SAKURA_OUTPUT_BACKEND": "cpp"}),
+            ("msvc", {}, {"SAKURA_UTF16_BACKEND": "cpp", "SAKURA_OUTPUT_BACKEND": "rust"}),
             (
                 "msvc",
                 {"SAKURA_UTF16_BACKEND": "rust", "SAKURA_OUTPUT_BACKEND": "cpp"},
@@ -1310,7 +1310,6 @@ class Utf16PackagingContractTests(unittest.TestCase):
     def test_native_selector_preflight_validates_independent_production_flags(self):
         for selector, production_flag in (
             ("SAKURA_UTF16_BACKEND", "SAKURA_UTF16_PRODUCTION_PACKAGE"),
-            ("SAKURA_OUTPUT_BACKEND", "SAKURA_OUTPUT_PRODUCTION_PACKAGE"),
         ):
             with self.subTest(selector=selector, production_flag=production_flag):
                 with self.assertRaisesRegex(
@@ -1327,6 +1326,17 @@ class Utf16PackagingContractTests(unittest.TestCase):
                         "msvc",
                         {selector: "rust", production_flag: "false"},
                     )[selector],
+                )
+
+        for backend in ("cpp", "rust"):
+            with self.subTest(output_backend=backend):
+                self.assertEqual(
+                    backend,
+                    native_selector_preflight(
+                        "msvc",
+                        {"SAKURA_OUTPUT_BACKEND": backend,
+                         "SAKURA_OUTPUT_PRODUCTION_PACKAGE": "true"},
+                    )["SAKURA_OUTPUT_BACKEND"],
                 )
 
     def test_native_selector_preflight_rejects_invalid_production_flags_table(self):

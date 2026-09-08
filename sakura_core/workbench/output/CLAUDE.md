@@ -112,6 +112,14 @@ for a lifecycle: dual writes, per-call health probing, silent fallback,
 snapshot-based state transfer, and in-place provider swaps after an accepted
 mutation remain forbidden.
 
+The adapter admits each mutation through one serialized transaction: count and
+invalidate under the model lock, convert the admitted input outside that lock,
+call Rust, and finalize either the result or the retained fault before another
+mutation enters. All advisory callbacks run outside both the model and mutation
+locks. Notification IDs may be borrowed through this synchronous path, but the
+bounded dispatcher must own their values before QueueLocked returns; no view of
+caller storage may be retained in the queue.
+
 Issue #274 adds provider-neutral, payload-free health evidence without turning
 health into a fallback selector. `IOutputService::Health()` reports the selected
 kind, factory and lifecycle state, initialization and ABI boundaries, retained
@@ -149,16 +157,20 @@ cache and copy the result outside the mutation fence. Concurrent mutations or
 Stop may retire the provider's reference but must not alter an in-flight read's
 captured value; subsequent reads still revalidate against current state.
 
-Issue #274 remains a measurement gate, not an adoption decision. C++ is still
-the default Output authority. `SAKURA_OUTPUT_PRODUCTION_PACKAGE` is an explicit
-package-release gate independent from UTF-16 packaging and currently accepts
-only the C++ Output backend; comparison builds may select Rust without enabling
-that gate. The paired provider benchmark uses independently built and hashed
-test executables, a fixed verified processor-affinity mask, interleaved runs,
-provider health validation, semantic digests, and payload-free evidence. No
-default or production-package flip is allowed until the remaining startup,
-incremental-build, native-link closure, AMD/Intel, and required toolchain cells
-are complete.
+Issue #274's adoption decision was explicitly approved by the user on
+2026-09-08: Rust is the default MSVC Output authority; MinGW remains C++.
+`SAKURA_OUTPUT_PRODUCTION_PACKAGE` remains independent from UTF-16 and accepts
+both Rust and an explicitly selected C++ rollback build. The canonical release
+provenance requires Rust Output and C++ UTF-16; a rollback release must explicitly
+update that exact provenance policy, never silently relabel a C++ artifact.
+
+This decision accepts the recorded performance-gate misses and defers Intel
+hardware coverage and long-duration canary validation. Those cells remain
+unverified, not passed. The local-release exception requires successful local
+regression, installer/payload identity, and startup/shutdown checks before
+publication; it does not represent hosted CI as passed. Preserve all paired
+benchmark results and failed gates. Selection remains immutable per lifecycle;
+rollback requires a new build and never means runtime state transfer or fallback.
 
 `SAKURA_OUTPUT_BACKEND_RUST` is deliberately independent of
 `SAKURA_UTF16_BACKEND_RUST` and the SIMD ISA dispatcher. The Output model is a

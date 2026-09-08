@@ -252,7 +252,7 @@ class CMakeGenerationContractTests(unittest.TestCase):
             "SAKURA_OUTPUT_BACKEND must be exactly cpp or rust",
             output_backend_cmake,
         )
-        self.assertIn(
+        self.assertNotIn(
             "SAKURA_OUTPUT_PRODUCTION_PACKAGE=true requires SAKURA_OUTPUT_BACKEND=cpp",
             output_backend_cmake,
         )
@@ -273,11 +273,11 @@ class CMakeGenerationContractTests(unittest.TestCase):
         )
         self.assertIn("SAKURA_OUTPUT_BACKEND_RUST", sakura_cmake)
         self.assertIn(
-            '<SAKURA_OUTPUT_BACKEND Condition="\'$(SAKURA_OUTPUT_BACKEND)\'==\'\' And $([System.Environment]::GetEnvironmentVariables().Contains(\'SAKURA_OUTPUT_BACKEND\')) == \'False\'">cpp</SAKURA_OUTPUT_BACKEND>',
+            '<SAKURA_OUTPUT_BACKEND Condition="\'$(SAKURA_OUTPUT_BACKEND)\'==\'\' And $([System.Environment]::GetEnvironmentVariables().Contains(\'SAKURA_OUTPUT_BACKEND\')) == \'False\'">rust</SAKURA_OUTPUT_BACKEND>',
             msbuild_target,
         )
         self.assertIn("SAKURA_OUTPUT_PRODUCTION_PACKAGE", msbuild_target)
-        self.assertIn(
+        self.assertNotIn(
             "SAKURA_OUTPUT_PRODUCTION_PACKAGE=true requires SAKURA_OUTPUT_BACKEND=cpp",
             msbuild_target,
         )
@@ -309,7 +309,7 @@ class CMakeGenerationContractTests(unittest.TestCase):
             "$([System.String]::CompareOrdinal('$(SAKURA_OUTPUT_PRODUCTION_PACKAGE)', 'false')) != 0",
             msbuild_target,
         )
-        self.assertIn(
+        self.assertNotIn(
             "$([System.String]::CompareOrdinal('$(SAKURA_OUTPUT_PRODUCTION_PACKAGE)', 'true')) == 0",
             msbuild_target,
         )
@@ -533,12 +533,12 @@ class CMakeGenerationContractTests(unittest.TestCase):
                 "SAKURA_OUTPUT_BACKEND must be exactly cpp or rust",
             ),
             (
-                "output-rust-production",
+                "output-invalid-production-selector",
                 [
-                    "-DSAKURA_OUTPUT_BACKEND=rust",
+                    "-DSAKURA_OUTPUT_BACKEND=unknown",
                     "-DSAKURA_OUTPUT_PRODUCTION_PACKAGE=ON",
                 ],
-                "SAKURA_OUTPUT_PRODUCTION_PACKAGE=true requires SAKURA_OUTPUT_BACKEND=cpp",
+                "SAKURA_OUTPUT_BACKEND must be exactly cpp or rust",
             ),
         )
         with tempfile.TemporaryDirectory() as temporary:
@@ -744,7 +744,43 @@ class CMakeGenerationContractTests(unittest.TestCase):
             self.assertIn("contract output=rust", output)
 
     @unittest.skipUnless(CMAKE_EXECUTABLE, "cmake is required")
-    def test_cmake_output_backend_rejects_its_production_context_only(self) -> None:
+    def test_cmake_output_default_finalizes_after_compiler_discovery(self) -> None:
+        module = (REPO_ROOT / "src/main/cmake/sakura-output-backend.cmake").as_posix()
+        environment = os.environ.copy()
+        environment.pop("SAKURA_OUTPUT_BACKEND", None)
+        environment.pop("SAKURA_OUTPUT_PRODUCTION_PACKAGE", None)
+        cases = (
+            ("msvc-absent", "TRUE", None, "rust"),
+            ("mingw-absent", "FALSE", None, "cpp"),
+            ("msvc-rollback", "TRUE", "cpp", "cpp"),
+            ("msvc-explicit-rust", "TRUE", "rust", "rust"),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            for name, msvc, selected, expected in cases:
+                with self.subTest(case=name):
+                    probe = Path(temporary) / f"{name}.cmake"
+                    probe.write_text(
+                        f'include("{module}")\n'
+                        f'set(MSVC {msvc})\n'
+                        'sakura_finalize_output_backend_default()\n'
+                        'message(STATUS "final output=${SAKURA_OUTPUT_BACKEND}")\n',
+                        encoding="utf-8",
+                    )
+                    options = [] if selected is None else [f"-DSAKURA_OUTPUT_BACKEND={selected}"]
+                    result = subprocess.run(
+                        [CMAKE_EXECUTABLE, *options, "-P", str(probe)],
+                        capture_output=True, check=False, env=environment,
+                        text=True, timeout=10,
+                    )
+                    output = result.stdout + result.stderr
+                    self.assertEqual(0, result.returncode, output)
+                    self.assertIn(f"final output={expected}", output)
+        root = (REPO_ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+        self.assertLess(root.index("project(sakura LANGUAGES CXX)"),
+                        root.index("sakura_finalize_output_backend_default()"))
+
+    @unittest.skipUnless(CMAKE_EXECUTABLE, "cmake is required")
+    def test_cmake_output_backend_accepts_rust_production(self) -> None:
         cmake = CMAKE_EXECUTABLE
         assert cmake is not None
         module = (REPO_ROOT / "src/main/cmake/sakura-output-backend.cmake").as_posix()
@@ -775,11 +811,9 @@ class CMakeGenerationContractTests(unittest.TestCase):
                 timeout=10,
             )
             output = re.sub(r"\s+", " ", result.stdout + result.stderr)
-            self.assertNotEqual(0, result.returncode, output)
-            self.assertIn(
-                "SAKURA_OUTPUT_PRODUCTION_PACKAGE=true requires SAKURA_OUTPUT_BACKEND=cpp",
-                output,
-            )
+            self.assertEqual(0, result.returncode, output)
+            self.assertIn("contract output=rust", output)
+            self.assertIn("contract production=ON", output)
 
     @unittest.skipUnless(CMAKE_EXECUTABLE, "cmake is required")
     def test_cmake_output_selector_and_production_flag_tables_are_fail_closed(self) -> None:
@@ -1236,8 +1270,8 @@ class CMakeGenerationContractTests(unittest.TestCase):
                 "rust",
                 "true",
                 "true",
-                1,
-                "SAKURA_OUTPUT_PRODUCTION_PACKAGE=true requires SAKURA_OUTPUT_BACKEND=cpp",
+                0,
+                None,
             ),
             (
                 "CPP",
@@ -1374,16 +1408,16 @@ class CMakeGenerationContractTests(unittest.TestCase):
                 "SAKURA_OUTPUT_BACKEND must be exactly cpp or rust",
             ),
             (
-                "rust-production",
+                "invalid-production-flag",
                 (
                     "/p:SAKURA_OUTPUT_BACKEND=rust",
-                    "/p:SAKURA_OUTPUT_PRODUCTION_PACKAGE=true",
+                    "/p:SAKURA_OUTPUT_PRODUCTION_PACKAGE=invalid",
                     "/p:SakuraOutputBackendIsCpp=false",
                     "/p:SakuraOutputBackendIsRust=true",
                     "/p:SakuraOutputProductionPackageIsTrue=false",
                     "/p:SakuraOutputProductionPackageIsFalse=true",
                 ),
-                "SAKURA_OUTPUT_PRODUCTION_PACKAGE=true requires SAKURA_OUTPUT_BACKEND=cpp",
+                "SAKURA_OUTPUT_PRODUCTION_PACKAGE must be exactly true or false",
             ),
         )
         for name, properties, expected in cases:
@@ -1493,7 +1527,7 @@ class CMakeGenerationContractTests(unittest.TestCase):
                 "/p:Platform=x64",
                 "/p:Configuration=Debug",
                 "/p:SAKURA_UTF16_BACKEND=cpp",
-                "/p:SAKURA_OUTPUT_BACKEND=rust",
+                "/p:SAKURA_OUTPUT_BACKEND=unknown",
                 "/p:SAKURA_OUTPUT_PRODUCTION_PACKAGE=true",
                 f"/p:SakuraNativeFfiCargo={cargo_sentinel}",
                 "/m:1",
@@ -1512,7 +1546,7 @@ class CMakeGenerationContractTests(unittest.TestCase):
         normalized_output = re.sub(r"\s+", " ", output)
         self.assertNotEqual(0, result.returncode, output)
         self.assertIn(
-            "SAKURA_OUTPUT_PRODUCTION_PACKAGE=true requires SAKURA_OUTPUT_BACKEND=cpp",
+            "SAKURA_OUTPUT_BACKEND must be exactly cpp or rust",
             normalized_output,
         )
         self.assertNotIn("--version", normalized_output)

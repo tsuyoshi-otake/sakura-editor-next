@@ -1,9 +1,10 @@
 # Early Output authority backend contract validation.
 #
 # Output authority selection is intentionally independent from UTF-16/SIMD
-# dispatch. C++ remains the Output production-package authority until the
-# separate adoption gate lands; Rust is available only through an explicit
-# comparison build choice.
+# dispatch. MSVC defaults to Rust; MinGW retains C++. Explicit selections are
+# validated before compiler discovery; the absent default is finalized after it.
+
+set(_sakura_output_backend_default_pending FALSE)
 
 if(DEFINED SAKURA_OUTPUT_BACKEND)
   set(_sakura_output_backend_value "${SAKURA_OUTPUT_BACKEND}")
@@ -13,13 +14,15 @@ elseif(DEFINED ENV{SAKURA_OUTPUT_BACKEND})
   # rollback-first default below.
   set(_sakura_output_backend_value "$ENV{SAKURA_OUTPUT_BACKEND}")
 else()
-  # Only an entirely absent selector receives the native C++ default.
+  # Compiler identity is unavailable before project(). Keep a valid provisional
+  # value and finalize only this absent-selector case after compiler discovery.
+  set(_sakura_output_backend_default_pending TRUE)
   set(_sakura_output_backend_value "cpp")
 endif()
 set(
   SAKURA_OUTPUT_BACKEND
   "${_sakura_output_backend_value}"
-  CACHE STRING "Output authority backend: rust for explicit MSVC comparison, cpp otherwise"
+  CACHE STRING "Output authority backend: rust by default on MSVC, cpp on MinGW"
 )
 set_property(CACHE SAKURA_OUTPUT_BACKEND PROPERTY STRINGS cpp rust)
 if(NOT SAKURA_OUTPUT_BACKEND STREQUAL "cpp"
@@ -64,10 +67,12 @@ else()
 endif()
 set(SAKURA_OUTPUT_PRODUCTION_PACKAGE
   "${_sakura_output_production_value}"
-  CACHE BOOL "Output production packaging contract; C++ remains the authority"
+  CACHE BOOL "Output production packaging contract; independent from UTF-16"
   FORCE
 )
-if(SAKURA_OUTPUT_BACKEND STREQUAL "rust" AND SAKURA_OUTPUT_PRODUCTION_PACKAGE)
-  message(FATAL_ERROR
-    "SAKURA_OUTPUT_PRODUCTION_PACKAGE=true requires SAKURA_OUTPUT_BACKEND=cpp")
-endif()
+function(sakura_finalize_output_backend_default)
+  if(_sakura_output_backend_default_pending AND MSVC)
+    set(SAKURA_OUTPUT_BACKEND "rust" CACHE STRING
+      "Output authority backend: rust by default on MSVC, cpp on MinGW" FORCE)
+  endif()
+endfunction()

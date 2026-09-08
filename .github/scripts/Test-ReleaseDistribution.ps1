@@ -59,7 +59,7 @@ function Assert-ReleaseBuildContract {
         [pscustomobject]@{ Name = 'platform'; Value = 'x64' }
         [pscustomobject]@{ Name = 'configuration'; Value = 'Release' }
         [pscustomobject]@{ Name = 'utf16_backend'; Value = 'cpp' }
-        [pscustomobject]@{ Name = 'output_backend'; Value = 'cpp' }
+        [pscustomobject]@{ Name = 'output_backend'; Value = 'rust' }
         [pscustomobject]@{ Name = 'utf16_production_package'; Value = 'true' }
         [pscustomobject]@{ Name = 'output_production_package'; Value = 'true' }
     )

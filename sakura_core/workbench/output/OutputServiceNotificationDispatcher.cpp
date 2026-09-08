@@ -53,7 +53,7 @@ void OutputServiceNotificationDispatcher::Unsubscribe(const OutputServiceSubscri
 }
 
 bool OutputServiceNotificationDispatcher::QueueLocked(const std::uint64_t revision, const EOutputChangeKind kind,
-	const std::optional<std::string>& channelId, const std::optional<std::string>& activeChannelId) noexcept
+	const std::optional<std::string_view> channelId, const std::optional<std::string_view> activeChannelId) noexcept
 {
 	try {
 		if (m_stopped) return false;
@@ -61,7 +61,9 @@ bool OutputServiceNotificationDispatcher::QueueLocked(const std::uint64_t revisi
 			SaturatingIncrement(m_droppedNotificationCount);
 			return false;
 		}
-		PendingNotification pending{ .change = { .revision = revision, .kind = kind, .channelId = channelId, .activeChannelId = activeChannelId } };
+		PendingNotification pending{ .change = { .revision = revision, .kind = kind } };
+		if (channelId) pending.change.channelId.emplace(*channelId);
+		if (activeChannelId) pending.change.activeChannelId.emplace(*activeChannelId);
 		pending.subscriberIds.reserve(m_subscriptions.size());
 		for (const auto& [subscriptionId, ignored] : m_subscriptions) {
 			(void)ignored;

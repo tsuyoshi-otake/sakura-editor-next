@@ -163,7 +163,7 @@ process enumeration で failure が 0 の場合は succeeded=true / complete=tru
 を必須とし、failure が 1 以上の場合は succeeded=false（complete は true / false のいずれも許可）と
 します。failure code は first-cause を保持します。
 
-post-close の tracked sweep は、既存の closeTimeoutMs=3000、pollIntervalMs=25、
+post-close の tracked sweep は、既存の closeTimeoutMs=3000、
 最大8 outer pass という一つの global bound だけを使います。各 pass で complete census
 を1回だけ行い、present な全 tracked PID ごとに strict identity query を最大1回だけ
 行います。前の pass の成功 identity は cache せず、各 pass で PID / parent / creation /
@@ -180,6 +180,20 @@ identity でも PID、parent、creation、canonical image のいずれかが不�
 exception / exhaustion も terminal reject です。pending が全て解決した後にも exact
 image-path sweep は必須で、Job/query/close、survivor、cleanup-error の既存 gates は
 一つも緩和しません。
+
+成功した identity query も、そのプロセスが終了して census から消えた証明ではありません。
+tracked pass に current record が残っている間は既存の最大8 pass / 3秒の範囲で次の
+tracked pass へ進み、空になった後に初めて独立した exact image-path sweep を行います。
+この順序は、終了中の同じ PID を二つの observer が連続して query し、後者だけが失敗する
+競合を避けます。exact-path 自体の query failure は再試行・reconcile せず terminal reject
+のままです。`trackedBeforeExactPathSelfTestVerified` は、正常な disappearance、途中の
+Error 5 / 87、live のままの上限到達、独立した exact-path failure を検証します。
+post-close の delay は、base 25ms を指数的に増やし、各 delay を最大500msに制限します。
+75〜100% の jitter を加え、さらに global deadline の残り時間で切り詰めるため、
+回数上限や3秒の deadline は増やしません。終了した process object が OS の census から
+退場する前に、25ms 間隔だけで全確認回数を使い切ることを避けます。起動の通常 poll と
+Job state machine の interval は従来どおり25msです。`postCloseBackoffSelfTestVerified` は
+jitter、500ms cap、残り時間の clipping、不正入力の拒否を確認します。
 
 delayed fields の equation は bounded です。`not-attempted` は4 counter/elapsed
 値が全て0、`accepted` は failure type が `identity-still-present`、

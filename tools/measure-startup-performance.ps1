@@ -6003,6 +6003,20 @@ function Invoke-StartupJobCleanupStateMachine {
     }
 }
 
+function Get-StartupPostCloseDelayMs([int]$PassIndex, [long]$RemainingMs, [double]$JitterUnit) {
+    if ($PassIndex -lt 0 -or $PassIndex -ge ($startupContainmentMaxOuterPolls - 1) -or
+        [double]::IsNaN($JitterUnit) -or [double]::IsInfinity($JitterUnit) -or
+        $JitterUnit -lt 0 -or $JitterUnit -gt 1) {
+        throw 'Invalid post-close delay input.'
+    }
+    if ($RemainingMs -le 0) { return [int]0 }
+    # Keep the existing pass/time limits, but do not spend all seven delays in
+    # 175 ms while the OS is still retiring terminated process objects.
+    $ceiling = [Math]::Min(500.0, [double]$pollIntervalMs * [Math]::Pow(2.0, $PassIndex))
+    $delay = [long][Math]::Floor($ceiling * (0.75 + 0.25 * $JitterUnit))
+    return [int][Math]::Min($RemainingMs, $delay)
+}
+
 function Stop-OwnedProcesses($Owned, [IntPtr]$Job = [IntPtr]::Zero, [string]$ExecutablePath = $null, [object]$QueryObservation = $null, [AllowNull()] [object]$StateMachineInvokers = $null) {
     $closeWatch = [Diagnostics.Stopwatch]::StartNew()
     $cleanupObservation = if ($null -ne $QueryObservation) { $QueryObservation } else { New-StartupCleanupObservation }
@@ -6081,6 +6095,7 @@ function Stop-OwnedProcesses($Owned, [IntPtr]$Job = [IntPtr]::Zero, [string]$Exe
         $postCloseDelayInvoker = { param([int]$DelayMs) Start-Sleep -Milliseconds $DelayMs }
     }
     $settled = $false
+    $postCloseRandom = New-Object Random
     $delayedWatch = [Diagnostics.Stopwatch]::StartNew()
     for ($sweepPoll = 0; $sweepPoll -lt $startupContainmentMaxOuterPolls -and
             ($sweepPoll -eq 0 -or $closeWatch.ElapsedMilliseconds -lt $closeTimeoutMs); $sweepPoll++) {
@@ -6099,14 +6114,26 @@ function Stop-OwnedProcesses($Owned, [IntPtr]$Job = [IntPtr]::Zero, [string]$Exe
                     Set-StartupTrackedSweepDelayedReconciliationState $cleanupObservation 'exhausted'
                     break
                 }
+                $delayMs = Get-StartupPostCloseDelayMs $sweepPoll `
+                    ($closeTimeoutMs - $closeWatch.ElapsedMilliseconds) $postCloseRandom.NextDouble()
+                if ($delayMs -eq 0) {
+                    Set-StartupTrackedSweepDelayedReconciliationState $cleanupObservation 'exhausted'
+                    break
+                }
                 Add-StartupTrackedSweepDelayedReconciliationCount $cleanupObservation `
                     'trackedSweepDelayedReconciliationDelayCount'
-                & $postCloseDelayInvoker $pollIntervalMs
+                & $postCloseDelayInvoker $delayMs
                 Set-StartupTrackedSweepDelayedReconciliationElapsed $cleanupObservation $delayedWatch.ElapsedMilliseconds
                 continue
             }
             $trackedSweepVerified = $true
-            if (-not [string]::IsNullOrWhiteSpace($ExecutablePath)) {
+            # A successful identity query is not proof that its process has
+            # left the census. Give still-present tracked identities the next
+            # bounded tracked pass before starting the independent final-path
+            # sweep; otherwise the same terminating process can disappear
+            # between the two observers and fail OpenProcess in the latter.
+            # Exact-path failures remain terminal and are never reconciled.
+            if ($tracked.Count -eq 0 -and -not [string]::IsNullOrWhiteSpace($ExecutablePath)) {
                 $finalPathSweepAttempted = $true
                 $pathMatches = @(Get-ProcessesForImagePath $ExecutablePath $cleanupObservation $StateMachineInvokers)
                 $finalPathSweepVerified = $true
@@ -6125,7 +6152,10 @@ function Stop-OwnedProcesses($Owned, [IntPtr]$Job = [IntPtr]::Zero, [string]$Exe
         }
         if ($sweepPoll + 1 -lt $startupContainmentMaxOuterPolls -and
             $closeWatch.ElapsedMilliseconds -lt $closeTimeoutMs) {
-            & $postCloseDelayInvoker $pollIntervalMs
+            $delayMs = Get-StartupPostCloseDelayMs $sweepPoll `
+                ($closeTimeoutMs - $closeWatch.ElapsedMilliseconds) $postCloseRandom.NextDouble()
+            if ($delayMs -eq 0) { break }
+            & $postCloseDelayInvoker $delayMs
         }
     }
     if ($trackedReconciliationState.pending.Count -gt 0 -and
@@ -7944,6 +7974,122 @@ function Invoke-SelfTest {
         throw 'Bounded post-close delayed tracked-history reconciliation self-test failed.'
     }
 
+    # Stage 6 reproduced one successful tracked identity immediately followed
+    # by exact-path OpenProcess failure for the same terminating PID. Final-path
+    # observation starts only after a complete empty tracked pass; it still
+    # fails terminally if its own independent census/identity check fails.
+    $trackedBeforeExactPathSelfTestVerified = $true
+    foreach ($orderCase in @('live-then-absent', 'live-then-error5', 'live-then-error87', 'live-until-delayed', 'live-exhaustion', 'exact-path-failure')) {
+        $orderState = [pscustomobject]@{ census = 0; identity = 0; delay = 0; delayedMs = 0 }
+        $orderInvokers = [pscustomobject]@{
+            ObserveGraceful = { $false }
+            QueryJob = { & $newTerminalJobQuery ([int[]]@()) }
+            TerminateJob = { & $newTerminationSuccess }
+            CloseJob = { & $newCloseSuccess }
+            Delay = { param([int]$Milliseconds) }
+            PostCloseDelay = {
+                param([int]$Milliseconds)
+                if ($Milliseconds -lt 1 -or $Milliseconds -gt 500) { throw 'Post-close delay exceeded its cap.' }
+                $orderState.delay++
+                $orderState.delayedMs += $Milliseconds
+            }.GetNewClosure()
+            ProcessCensus = {
+                $orderState.census++
+                [object[]]$entries = New-Object object[] 0
+                $present = switch ($orderCase) {
+                    'live-then-absent' { $orderState.census -eq 1 }
+                    'live-then-error5' { $orderState.census -le 2 }
+                    'live-then-error87' { $orderState.census -le 2 }
+                    'live-until-delayed' { $orderState.delayedMs -lt 400 }
+                    'live-exhaustion' { $true }
+                    'exact-path-failure' { $orderState.census -eq 2 }
+                }
+                if ($present) {
+                    $entries = [object[]]@([pscustomobject]@{ ProcessId = 1234; ParentProcessId = 0; ImageName = 'self-test.exe' })
+                }
+                return [pscustomobject][ordered]@{
+                    Attempted = $true; Complete = $true; Succeeded = $true; ErrorCode = 0
+                    AttemptCount = 1; RetryCount = 0; Retried = $false; Entries = $entries
+                }
+            }.GetNewClosure()
+            IdentityQuery = {
+                $orderState.identity++
+                if ($orderCase -eq 'exact-path-failure' -or
+                    ($orderCase -in @('live-then-error5', 'live-then-error87') -and $orderState.identity -eq 2)) {
+                    $errorCode = if ($orderCase -eq 'live-then-error87') { 87 } else { 5 }
+                    return [pscustomobject][ordered]@{ Succeeded = $false; ErrorCode = $errorCode; Operation = 'open-process'; Identity = $null }
+                }
+                return [pscustomobject][ordered]@{
+                    Succeeded = $true; ErrorCode = 0; Operation = 'none'
+                    Identity = [pscustomobject][ordered]@{
+                        ProcessId = 1234; ParentProcessId = 0; CreationTime = [long]1001; ImagePath = 'C:\self-test.exe'
+                    }
+                }
+            }.GetNewClosure()
+        }
+        $orderResult = Stop-OwnedProcesses $reconciliationOwned ([IntPtr]1) 'C:\self-test.exe' $null $orderInvokers
+        $orderObservation = $orderResult.cleanupObservation
+        $orderVerified = switch ($orderCase) {
+            'live-then-absent' {
+                $null -eq $orderResult.error -and $orderResult.survivors.Count -eq 0 -and
+                    $orderResult.finalPathSweepVerified -and $orderObservation.finalPathSweepAttempted -and
+                    $orderState.census -eq 3 -and $orderState.identity -eq 1 -and $orderState.delay -eq 1 -and
+                    $orderObservation.trackedSweepPassCount -eq 2 -and
+                    -not $orderResult.containmentProof.identityReconciliation.attempted
+            }
+            { $_ -in @('live-then-error5', 'live-then-error87') } {
+                $null -eq $orderResult.error -and $orderResult.survivors.Count -eq 0 -and
+                    $orderResult.finalPathSweepVerified -and $orderObservation.finalPathSweepAttempted -and
+                    $orderState.census -eq 4 -and $orderState.identity -eq 2 -and $orderState.delay -eq 2 -and
+                    $orderObservation.trackedSweepPassCount -eq 3 -and
+                    $orderObservation.trackedSweepDelayedReconciliationAttemptCount -eq 1 -and
+                    $orderObservation.trackedSweepDelayedReconciliationDelayCount -eq 1 -and
+                    $orderResult.containmentProof.identityReconciliation.accepted -and
+                    $orderResult.containmentProof.identityReconciliation.observerRole -eq 'post-close-tracked-history'
+            }
+            'live-exhaustion' {
+                $null -ne $orderResult.error -and $orderResult.survivors.Count -eq 1 -and
+                    -not $orderResult.finalPathSweepVerified -and -not $orderObservation.finalPathSweepAttempted -and
+                    $orderState.census -eq $startupContainmentMaxOuterPolls -and
+                    $orderState.identity -eq $startupContainmentMaxOuterPolls -and
+                    $orderState.delay -eq ($startupContainmentMaxOuterPolls - 1) -and
+                    $orderResult.containmentProof.terminalState -eq 'rejected-post-close-observation'
+            }
+            'live-until-delayed' {
+                $null -eq $orderResult.error -and $orderResult.survivors.Count -eq 0 -and
+                    $orderResult.finalPathSweepVerified -and $orderObservation.finalPathSweepAttempted -and
+                    $orderState.census -eq 7 -and $orderState.identity -eq 5 -and $orderState.delay -eq 5 -and
+                    $orderState.delayedMs -ge 400 -and $orderState.delayedMs -le 775 -and
+                    $orderObservation.trackedSweepPassCount -eq 6 -and
+                    -not $orderResult.containmentProof.identityReconciliation.attempted
+            }
+            'exact-path-failure' {
+                $null -ne $orderResult.error -and -not $orderResult.finalPathSweepVerified -and
+                    $orderObservation.finalPathSweepAttempted -and
+                    $orderState.census -eq 2 -and $orderState.identity -eq 1 -and $orderState.delay -eq 0 -and
+                    $orderResult.containmentProof.terminalState -eq 'rejected-post-close-observation' -and
+                    -not $orderResult.containmentProof.identityReconciliation.accepted -and
+                    $orderResult.containmentProof.identityReconciliation.reason -eq 'exact-path-failure'
+            }
+        }
+        if (-not $orderVerified) { throw "Tracked-before-exact-path ordering self-test failed: $orderCase." }
+    }
+
+    $postCloseBackoffSelfTestVerified =
+        (Get-StartupPostCloseDelayMs 0 3000 0) -eq 18 -and
+        (Get-StartupPostCloseDelayMs 0 3000 1) -eq 25 -and
+        (Get-StartupPostCloseDelayMs 4 3000 1) -eq 400 -and
+        (Get-StartupPostCloseDelayMs 6 3000 1) -eq 500 -and
+        (Get-StartupPostCloseDelayMs 6 7 1) -eq 7 -and
+        (Get-StartupPostCloseDelayMs 6 0 1) -eq 0
+    foreach ($badDelay in @(@(-1, 0.5), @(7, 0.5), @(0, -0.1), @(0, 1.1), @(0, [double]::NaN))) {
+        $rejectedDelay = $false
+        try { [void](Get-StartupPostCloseDelayMs $badDelay[0] 3000 $badDelay[1]) }
+        catch { $rejectedDelay = $true }
+        $postCloseBackoffSelfTestVerified = $postCloseBackoffSelfTestVerified -and $rejectedDelay
+    }
+    if (-not $postCloseBackoffSelfTestVerified) { throw 'Post-close backoff bounds self-test failed.' }
+
     # Even an empty terminal Job query cannot authorize pending history when
     # closing the Job failed and the handle remains live.  Secondary observers
     # still run, but the first coherent identity failure must fail closed
@@ -9611,6 +9757,8 @@ function Invoke-SelfTest {
         trackedIdentityMalformedProbeSelfTestVerified = [bool]$identityMalformedProbeVerified
         trackedIdentityMalformedFreshCensusSelfTestVerified = [bool]$freshMalformedVerified
         trackedSweepDelayedReconciliationSelfTestVerified = [bool]$delayedReconciliationSelfTestVerified
+        trackedBeforeExactPathSelfTestVerified = [bool]$trackedBeforeExactPathSelfTestVerified
+        postCloseBackoffSelfTestVerified = [bool]$postCloseBackoffSelfTestVerified
         trackedSweepDelayedReconciliationTupleSelfTestVerified = [bool]$trackedSweepDelayedReconciliationTupleSelfTestVerified
         trackedSweepDelayedReconciliationExhaustionSelfTestVerified = [bool]$delayedReconciliationExhaustionSelfTestVerified
         failedCloseReconciliationRejectedSelfTestVerified = [bool]$failedCloseReconciliationRejectedSelfTestVerified

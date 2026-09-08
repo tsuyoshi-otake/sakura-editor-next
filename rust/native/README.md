@@ -18,11 +18,11 @@ The native link boundary is deliberately one archive:
   archive also owns the stateless URI candidate, the replay-only Output state
   candidate, and the callback-free Output authority provider. All three copy
   caller input and retain no foreign pointer. Candidates have no callback or
-  external side-effect authority. In an explicit
+  external side-effect authority. In a
   `SAKURA_OUTPUT_BACKEND_RUST` build, the provider owns the Output model behind
   a separate opaque-token family while its C++ adapter owns advisory listener
-  dispatch; C++ remains the default authority and there is no runtime fallback
-  between providers.
+  dispatch. Rust is the MSVC default (#274); MinGW remains C++. An explicit C++
+  build is the rollback path; there is no runtime fallback between providers.
 
 `sakura_native_ffi.lib` is therefore the only Rust library added to each
 native product/test link. The old `SakuraRustCore*` MSBuild property and target

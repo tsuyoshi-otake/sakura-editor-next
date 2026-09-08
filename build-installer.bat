@@ -7,9 +7,9 @@ if not "%SAKURA_UTF16_BACKEND%" == "cpp" (
 	echo Production packaging requires SAKURA_UTF16_BACKEND=cpp; got %SAKURA_UTF16_BACKEND%.
 	exit /b 1
 )
-if not defined SAKURA_OUTPUT_BACKEND set "SAKURA_OUTPUT_BACKEND=cpp"
-if not "%SAKURA_OUTPUT_BACKEND%" == "cpp" (
-	echo Production packaging requires SAKURA_OUTPUT_BACKEND=cpp; got %SAKURA_OUTPUT_BACKEND%.
+if not defined SAKURA_OUTPUT_BACKEND set "SAKURA_OUTPUT_BACKEND=rust"
+if not "%SAKURA_OUTPUT_BACKEND%" == "cpp" if not "%SAKURA_OUTPUT_BACKEND%" == "rust" (
+	echo Production packaging requires SAKURA_OUTPUT_BACKEND=cpp or rust; got %SAKURA_OUTPUT_BACKEND%.
 	exit /b 1
 )
 set platform=%1

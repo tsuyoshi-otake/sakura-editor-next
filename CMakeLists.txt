@@ -52,6 +52,7 @@ endif()
 # C is no longer required here: Onigmo NEXT is linked as a vcpkg static
 # library (see sakura_core/textmate/CLAUDE.md).
 project(sakura LANGUAGES CXX)
+sakura_finalize_output_backend_default()
 
 # Sakura Editor NEXT's CMake build is supported only for 64-bit x86 targets.
 # This also permits the experimental MinGW64 configuration, where the

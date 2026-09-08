@@ -1172,6 +1172,8 @@ class PairedStartupContractTests(unittest.TestCase):
             self.assertTrue(payload["trackedIdentityMalformedProbeSelfTestVerified"])
             self.assertTrue(payload["trackedIdentityMalformedFreshCensusSelfTestVerified"])
             self.assertTrue(payload["trackedSweepDelayedReconciliationSelfTestVerified"])
+            self.assertTrue(payload["trackedBeforeExactPathSelfTestVerified"])
+            self.assertTrue(payload["postCloseBackoffSelfTestVerified"])
             self.assertTrue(payload["trackedSweepDelayedReconciliationTupleSelfTestVerified"])
             self.assertTrue(payload["trackedSweepDelayedReconciliationExhaustionSelfTestVerified"])
             self.assertTrue(payload["failedCloseReconciliationRejectedSelfTestVerified"])

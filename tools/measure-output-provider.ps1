@@ -44,6 +44,8 @@ param(
   [double]$MaxMedianRegressionPercent = 2.0,
   [ValidateRange(0, 100000)]
   [double]$MaxP95RegressionPercent = 5.0,
+  [ValidateSet('verified-copy', 'original')]
+  [string]$TimingImageMode = 'verified-copy',
   [switch]$CollectOnly,
   [switch]$SelfTest
 )
@@ -353,7 +355,17 @@ function Resolve-ProviderManifestFile {
 
 function Get-ProviderFileSha256 {
   param([Parameter(Mandatory = $true)] [string]$Path)
-  return (Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+  $stream = $null
+  $algorithm = $null
+  try {
+    $stream = [IO.File]::OpenRead($Path)
+    $algorithm = [Security.Cryptography.SHA256]::Create()
+    return ([BitConverter]::ToString($algorithm.ComputeHash($stream))).Replace('-', '').ToLowerInvariant()
+  }
+  finally {
+    if ($null -ne $algorithm) { $algorithm.Dispose() }
+    if ($null -ne $stream) { $stream.Dispose() }
+  }
 }
 
 function Invoke-ProviderGitText {
@@ -903,6 +915,16 @@ function New-ProviderProvenance {
 }
 
 function Invoke-SelfTest {
+  Invoke-TimingCopySelfTests
+  $cleanTiming = [pscustomobject]@{ registryViewsChecked = [int]2; imageOptionsPresent = $false; systemGlobalFlagsZero = $true }
+  Assert-TimingInstrumentation -Observation $cleanTiming
+  foreach ($field in @('imageOptionsPresent', 'systemGlobalFlagsZero', 'registryViewsChecked')) {
+    $badTiming = [pscustomobject]@{ registryViewsChecked = [int]2; imageOptionsPresent = $false; systemGlobalFlagsZero = $true }
+    if ($field -eq 'registryViewsChecked') { $badTiming.$field = 1 }
+    else { $badTiming.$field = -not $badTiming.$field }
+    Assert-ProviderSelfTestRejects { Assert-TimingInstrumentation -Observation $badTiming } "timing instrumentation $field rejection"
+  }
+  Assert-ProviderSelfTestRejects { Assert-TimingInstrumentation -Observation ([pscustomobject]@{ registryViewsChecked = '2'; imageOptionsPresent = $false; systemGlobalFlagsZero = $true }) } 'timing observation type rejection'
   [void](Assert-AffinityMaskInput -Mask $AffinityMask)
   $statistics = Get-Statistics -Values @([double]4, 1, 9, 3, 2)
   Assert-EqualValue 5 $statistics.count 'odd statistics count'
@@ -1214,7 +1236,7 @@ function Get-ExecutableMetadata {
   if ($item -isnot [IO.FileInfo] -or -not $item.Exists) {
     throw "executable is not a regular file: $Path"
   }
-  $hash = (Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+  $hash = Get-ProviderFileSha256 -Path $Path
   if ([string]::IsNullOrWhiteSpace($hash)) {
     throw "executable SHA-256 is empty: $Path"
   }
@@ -1230,6 +1252,154 @@ function Assert-ExecutableUnchanged {
   $actual = Get-ExecutableMetadata -Path $Expected.path
   Assert-EqualValue $Expected.sha256 $actual.sha256 'executable SHA-256 changed during measurement'
   Assert-EqualValue $Expected.sizeBytes $actual.sizeBytes 'executable size changed during measurement'
+}
+
+function Assert-TimingInstrumentation {
+  param([Parameter(Mandatory = $true)] [object]$Observation)
+  if ($Observation.registryViewsChecked -isnot [int] -or $Observation.registryViewsChecked -ne 2 -or
+      $Observation.imageOptionsPresent -isnot [bool] -or $Observation.imageOptionsPresent -or
+      $Observation.systemGlobalFlagsZero -isnot [bool] -or -not $Observation.systemGlobalFlagsZero) {
+    throw 'timing instrumentation must prove both registry views, absent image options, and zero system GlobalFlag'
+  }
+}
+
+function Get-TimingInstrumentation {
+  param([Parameter(Mandatory = $true)] [string]$Executable)
+  $imageName = [IO.Path]::GetFileName($Executable)
+  if ([string]::IsNullOrWhiteSpace($imageName)) { throw 'timing image name is empty' }
+  $imageOptionsPresent = $false
+  $systemGlobalFlagsZero = $true
+  $checked = 0
+  foreach ($view in @([Microsoft.Win32.RegistryView]::Registry64, [Microsoft.Win32.RegistryView]::Registry32)) {
+    $base = $null
+    $imageOptions = $null
+    $session = $null
+    try {
+      $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, $view)
+      $imageOptions = $base.OpenSubKey("SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\$imageName", $false)
+      if ($null -ne $imageOptions) { $imageOptionsPresent = $true }
+      $session = $base.OpenSubKey('SYSTEM\CurrentControlSet\Control\Session Manager', $false)
+      if ($null -eq $session) { throw 'cannot observe system diagnostic configuration' }
+      $flags = $session.GetValue('GlobalFlag', $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+      # Missing is the Windows default. A present value must be an exact zero
+      # DWORD; unknown types/settings never become an uninstrumented proof.
+      if ($null -ne $flags -and ($flags -isnot [int] -or $flags -ne 0)) { $systemGlobalFlagsZero = $false }
+      ++$checked
+    }
+    finally {
+      if ($null -ne $session) { $session.Dispose() }
+      if ($null -ne $imageOptions) { $imageOptions.Dispose() }
+      if ($null -ne $base) { $base.Dispose() }
+    }
+  }
+  return [pscustomobject][ordered]@{
+    registryViewsChecked = [int]$checked
+    imageOptionsPresent = [bool]$imageOptionsPresent
+    systemGlobalFlagsZero = [bool]$systemGlobalFlagsZero
+  }
+}
+
+function Invoke-VerifiedTimingProcess {
+  param(
+    [string]$Executable, [object]$ExecutableMetadata,
+    [string]$Provider, [int]$PairIndex, [string]$RunDirectory
+  )
+  if ($TimingImageMode -eq 'original') {
+    if (-not $CollectOnly) { throw 'original timing image mode is diagnostic-only; use verified-copy for qualification' }
+    return Invoke-BenchmarkProcess -Executable $Executable -ExecutableMetadata $ExecutableMetadata `
+      -Provider $Provider -PairIndex $PairIndex -RunDirectory $RunDirectory
+  }
+  $directory = Join-Path $RunDirectory ('timing-' + [Guid]::NewGuid().ToString('N'))
+  $copyPath = Join-Path $directory 'sakura-output-timing.exe'
+  [void][IO.Directory]::CreateDirectory($directory)
+  try {
+    Assert-ExecutableUnchanged -Expected $ExecutableMetadata
+    [IO.File]::Copy($Executable, $copyPath, $false)
+    $copy = Get-ExecutableMetadata -Path $copyPath
+    Assert-EqualValue $ExecutableMetadata.sha256 $copy.sha256 'timing copy SHA-256 mismatch'
+    Assert-EqualValue $ExecutableMetadata.sizeBytes $copy.sizeBytes 'timing copy size mismatch'
+    $before = Get-TimingInstrumentation -Executable $copyPath
+    Assert-TimingInstrumentation -Observation $before
+    $result = Invoke-BenchmarkProcess -Executable $copyPath -ExecutableMetadata $copy `
+      -Provider $Provider -PairIndex $PairIndex -RunDirectory $RunDirectory
+    $after = Get-TimingInstrumentation -Executable $copyPath
+    Assert-TimingInstrumentation -Observation $after
+    Assert-ExecutableUnchanged -Expected $copy
+    Assert-ExecutableUnchanged -Expected $ExecutableMetadata
+    $result | Add-Member -NotePropertyName timingImage -NotePropertyValue ([pscustomobject][ordered]@{
+      contract = 'verified-timing-copy-v1'
+      sourceSha256 = $ExecutableMetadata.sha256
+      copySha256 = $copy.sha256
+      sizeBytes = $copy.sizeBytes
+      registryBefore = $before
+      registryAfter = $after
+      cleanupVerified = $false
+    })
+  }
+  finally {
+    # Only this unique directory's single known file is owned here. The inner
+    # process runner must finish its bounded cleanup before this runs.
+    if ([IO.File]::Exists($copyPath)) { [IO.File]::Delete($copyPath) }
+    [IO.Directory]::Delete($directory, $false)
+  }
+  if ([IO.Directory]::Exists($directory)) { throw 'timing copy cleanup failed' }
+  $result.timingImage.cleanupVerified = $true
+  return $result
+}
+
+function Invoke-TimingCopySelfTests {
+  $testRoot = Join-Path $env:USERPROFILE ('tmp/output-timing-contract-' + [Guid]::NewGuid().ToString('N'))
+  [void][IO.Directory]::CreateDirectory($testRoot)
+  try {
+    # Exercise the real copy/hash/finally boundary without launching a process
+    # or changing registry settings. Function overrides are local to this scope.
+    $TimingImageMode = 'verified-copy'
+    $metadata = Get-ExecutableMetadata -Path $PSCommandPath
+    foreach ($scenario in @('success', 'instrumented-before', 'instrumented-after', 'child-failure', 'copy-mutation')) {
+      & {
+        $script:timingSelfTestObservations = 0
+        $script:timingSelfTestLaunches = 0
+        function Get-TimingInstrumentation {
+          param([string]$Executable)
+          ++$script:timingSelfTestObservations
+          return [pscustomobject]@{
+            registryViewsChecked = [int]2
+            imageOptionsPresent = ($scenario -eq 'instrumented-before' -or
+              ($scenario -eq 'instrumented-after' -and $script:timingSelfTestObservations -eq 2))
+            systemGlobalFlagsZero = $true
+          }
+        }
+        function Invoke-BenchmarkProcess {
+          param([string]$Executable, [object]$ExecutableMetadata, [string]$Provider, [int]$PairIndex, [string]$RunDirectory)
+          ++$script:timingSelfTestLaunches
+          if ($scenario -eq 'instrumented-before') { throw 'instrumented image was launched' }
+          if ($scenario -eq 'child-failure') { throw 'injected bounded child failure' }
+          if ($scenario -eq 'copy-mutation') { [IO.File]::AppendAllText($Executable, 'mutation') }
+          return [pscustomobject]@{ pairIndex = $PairIndex; provider = $Provider }
+        }
+        if ($scenario -eq 'success') {
+          $result = Invoke-VerifiedTimingProcess -Executable $metadata.path -ExecutableMetadata $metadata -Provider cpp -PairIndex 0 -RunDirectory $testRoot
+          Assert-EqualValue $true $result.timingImage.cleanupVerified 'timing copy cleanup receipt'
+          Assert-EqualValue $metadata.sha256 $result.timingImage.copySha256 'timing copy identity receipt'
+          Assert-EqualValue 2 $script:timingSelfTestObservations 'timing before and after observations'
+        }
+        else {
+          Assert-ProviderSelfTestRejects {
+            Invoke-VerifiedTimingProcess -Executable $metadata.path -ExecutableMetadata $metadata -Provider cpp -PairIndex 0 -RunDirectory $testRoot
+          } "timing copy $scenario rejection"
+        }
+        Assert-EqualValue 0 @([IO.Directory]::EnumerateFileSystemEntries($testRoot)).Count "timing copy $scenario cleanup"
+        $expectedLaunches = if ($scenario -eq 'instrumented-before') { 0 } else { 1 }
+        Assert-EqualValue $expectedLaunches $script:timingSelfTestLaunches "timing copy $scenario launch count"
+        Assert-ExecutableUnchanged -Expected $metadata
+      }
+    }
+  }
+  finally {
+    [IO.Directory]::Delete($testRoot, $false)
+    Remove-Variable timingSelfTestObservations -Scope Script -ErrorAction SilentlyContinue
+    Remove-Variable timingSelfTestLaunches -Scope Script -ErrorAction SilentlyContinue
+  }
 }
 
 function Get-PlatformMetadata {
@@ -1536,7 +1706,9 @@ function Invoke-BenchmarkProcess {
   $stderrPath = Join-Path $RunDirectory ("pair-{0:D3}-{1}.stderr.txt" -f $PairIndex, $Provider)
   $startInfo = New-Object Diagnostics.ProcessStartInfo
   $startInfo.FileName = $Executable
-  $startInfo.WorkingDirectory = Split-Path -Parent $Executable
+  # Timing copies change only the image name/location. Resolve repository-owned
+  # test resources from the runner's checkout, never its temporary image folder.
+  $startInfo.WorkingDirectory = Split-Path -Parent $PSScriptRoot
   $startInfo.UseShellExecute = $false
   $startInfo.CreateNoWindow = $true
   $startInfo.RedirectStandardOutput = $true
@@ -1875,6 +2047,7 @@ function New-UniqueRunDirectory {
 }
 
 function Invoke-Benchmark {
+  $runnerSha256 = Get-ProviderFileSha256 -Path $PSCommandPath
   [void](Assert-AffinityMaskInput -Mask $AffinityMask)
   $cppPath = Resolve-RequiredFile -Path $CppTests1 -Name 'CppTests1'
   $rustPath = Resolve-RequiredFile -Path $RustTests1 -Name 'RustTests1'
@@ -1915,6 +2088,7 @@ function Invoke-Benchmark {
     $first = if ((($pairIndex % 2) -eq 0) -eq ($FirstProvider -eq 'cpp')) { 'cpp' } else { 'rust' }
     $order = if ($first -eq 'cpp') { @('cpp', 'rust') } else { @('rust', 'cpp') }
     foreach ($provider in $order) {
+      Assert-EqualValue $runnerSha256 (Get-ProviderFileSha256 -Path $PSCommandPath) 'measurement runner changed before launch'
       $executable = if ($provider -eq 'cpp') { $cppPath } else { $rustPath }
       $executableMetadata = if ($provider -eq 'cpp') { $cppExecutable } else { $rustExecutable }
       if ($null -ne $provenance) {
@@ -1924,7 +2098,7 @@ function Invoke-Benchmark {
           -Context ("provider source state changed before pair {0} {1} launch" -f $pairIndex, $provider)
       }
       Write-Host ("pair {0}/{1}: {2}" -f ($pairIndex + 1), $Pairs, $provider)
-      $runResult = Invoke-BenchmarkProcess -Executable $executable -ExecutableMetadata $executableMetadata `
+      $runResult = Invoke-VerifiedTimingProcess -Executable $executable -ExecutableMetadata $executableMetadata `
         -Provider $provider -PairIndex $pairIndex -RunDirectory $runDirectory
       [void]$runResults.Add([pscustomobject][ordered]@{
         pairIndex = $runResult.pairIndex
@@ -1933,6 +2107,7 @@ function Invoke-Benchmark {
         executableSizeBytes = $runResult.executableSizeBytes
         affinityMask = [UInt64]$AffinityMask
         result = 'validated'
+        timingImage = if ($TimingImageMode -eq 'verified-copy') { $runResult.timingImage } else { $null }
       })
       $parsed = Read-BenchmarkRun -Path $runResult.rawPath -ExpectedProvider $provider -PairIndex $pairIndex
       [void]$runRecords.Add($parsed)
@@ -1946,6 +2121,7 @@ function Invoke-Benchmark {
   }
   Assert-ExecutableUnchanged -Expected $cppExecutable
   Assert-ExecutableUnchanged -Expected $rustExecutable
+  Assert-EqualValue $runnerSha256 (Get-ProviderFileSha256 -Path $PSCommandPath) 'measurement runner changed after campaign'
 
   $allRunRecords = $runRecords.ToArray()
   $cppRuns = @($allRunRecords | Where-Object { $_.provider -eq 'cpp' })
@@ -2087,6 +2263,8 @@ function Invoke-Benchmark {
     performanceThresholdEnforced = -not $CollectOnly
     performanceThresholdPassed = $performancePass
     collectOnly = [bool]$CollectOnly
+    timingImageMode = $TimingImageMode
+    measurementRunnerSha256 = $runnerSha256
     maxMedianRegressionPercent = $MaxMedianRegressionPercent
     maxP95RegressionPercent = $MaxP95RegressionPercent
     pass = $pass

@@ -96,12 +96,19 @@ TEST(OutputServiceNotificationDispatcher, BoundsPendingDeliveryAndRunsCallbacksO
 		changes.push_back(change);
 	}));
 
+	const std::string originalChannelId(128, 'c');
+	const std::string originalActiveId(128, 'a');
+	std::string borrowedChannelId = originalChannelId;
+	std::string borrowedActiveId = originalActiveId;
 	bool shouldDrain{};
 	{
 		std::lock_guard lock(modelMutex);
 		shouldDrain = dispatcher.QueueLocked(1, EOutputChangeKind::ChannelCreated,
-			std::string("first.channel"), std::nullopt);
+			borrowedChannelId, borrowedActiveId);
 	}
+	// Queueing must own both IDs before the caller changes its input storage.
+	borrowedChannelId.assign(128, 'x');
+	borrowedActiveId.clear();
 	ASSERT_TRUE(shouldDrain);
 	std::thread drainer([&dispatcher] { dispatcher.Drain(); });
 	ASSERT_EQ(std::future_status::ready, enteredFuture.wait_for(2s));
@@ -120,6 +127,8 @@ TEST(OutputServiceNotificationDispatcher, BoundsPendingDeliveryAndRunsCallbacksO
 	EXPECT_TRUE(callbackOutsideModelLock);
 	ASSERT_EQ(2U, changes.size());
 	EXPECT_EQ(1U, changes[0].revision);
+	EXPECT_EQ(originalChannelId, changes[0].channelId);
+	EXPECT_EQ(originalActiveId, changes[0].activeChannelId);
 	EXPECT_EQ(2U, changes[1].revision);
 	EXPECT_FALSE(dispatcher.WaitForDrain());
 }

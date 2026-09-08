@@ -433,6 +433,14 @@ OutputOperationResult CompareMutation(
 	const auto rustResult = mutation(*providers.rust);
 	ExpectResultParity(cppResult, rustResult);
 	ExpectSnapshotParity(providers.cpp->Snapshot(), providers.rust->Snapshot());
+	const auto cppCounters = providers.cpp->Health().counters;
+	const auto rustCounters = providers.rust->Health().counters;
+	EXPECT_EQ(cppCounters.mutationCalls, rustCounters.mutationCalls);
+	EXPECT_EQ(cppCounters.acceptedOperations, rustCounters.acceptedOperations);
+	EXPECT_EQ(cppCounters.replayedOperations, rustCounters.replayedOperations);
+	EXPECT_EQ(cppCounters.rejectedOperations, rustCounters.rejectedOperations);
+	EXPECT_EQ(rustCounters.mutationCalls, rustCounters.acceptedOperations
+		+ rustCounters.replayedOperations + rustCounters.rejectedOperations);
 	return cppResult;
 }
 
@@ -538,6 +546,10 @@ TEST(OutputServiceProviderConformance, ActiveChannelAtStableIdLimitMatchesCppAut
 {
 	auto providers = MakeProviderPair();
 	AssertRustProviderReady(providers);
+	std::vector<OutputServiceChange> cppChanges;
+	std::vector<OutputServiceChange> rustChanges;
+	ASSERT_TRUE(providers.cpp->Subscribe([&](const auto& change) { cppChanges.push_back(change); }));
+	ASSERT_TRUE(providers.rust->Subscribe([&](const auto& change) { rustChanges.push_back(change); }));
 	const auto owner = ConformanceOwner("active-limit.owner");
 	const std::string channelId(kMaximumOutputStableIdBytes, 'a');
 	const auto create = ConformanceCreate("active-limit.create", owner, channelId);
@@ -551,9 +563,26 @@ TEST(OutputServiceProviderConformance, ActiveChannelAtStableIdLimitMatchesCppAut
 	ExpectSnapshotsExactlyEqual(cppSnapshot, rustSnapshot);
 	ASSERT_TRUE(rustSnapshot.activeChannelId.has_value());
 	EXPECT_EQ(channelId, *rustSnapshot.activeChannelId);
-	// No advisory listeners are registered, so the Rust adapter does not need
-	// an active-channel query merely to complete the accepted mutation.
+	ASSERT_EQ(1U, cppChanges.size());
+	ASSERT_EQ(1U, rustChanges.size());
+	EXPECT_EQ(cppChanges.front().activeChannelId, rustChanges.front().activeChannelId);
+	EXPECT_EQ(channelId, rustChanges.front().activeChannelId);
+	// A known-empty authority has exactly this new channel after acceptance.
+	// Reproduce its advisory identity without an active-channel FFI query.
 	EXPECT_EQ(0U, providers.rust->Health().counters.activeChannelCalls);
+
+	// Once nonempty, creation may replace a generation and select another
+	// owner's fallback. Do not generalize the empty-authority optimization.
+	const auto otherOwner = ConformanceOwner("active-limit.other");
+	const auto other = ConformanceCreate("active-limit.other-create", otherOwner, "z.other");
+	ExpectResultParity(providers.cpp->CreateChannel(other), providers.rust->CreateChannel(other));
+	const auto replacement = ConformanceCreate("active-limit.replace", ConformanceOwner(owner.ownerId, 2), "zz.replacement");
+	ExpectResultParity(providers.cpp->CreateChannel(replacement), providers.rust->CreateChannel(replacement));
+	ASSERT_EQ(3U, rustChanges.size());
+	EXPECT_EQ(cppChanges.back().activeChannelId, rustChanges.back().activeChannelId);
+	EXPECT_EQ(std::optional<std::string>("z.other"), rustChanges.back().activeChannelId);
+	EXPECT_GT(providers.rust->Health().counters.activeChannelCalls, 0U);
+	ExpectSnapshotsExactlyEqual(providers.cpp->Snapshot(), providers.rust->Snapshot());
 }
 
 TEST(OutputServiceProviderConformance, ReplayConflictStaleRevisionAndNotApplicableAreTyped)
@@ -1457,10 +1486,30 @@ TEST(OutputServiceProviderConformance, BoundedAdvisoryDropUnsubscribeAndExternal
 
 #endif
 
-#if !defined(SAKURA_OUTPUT_BACKEND_RUST)
-
-TEST(OutputServiceRustProvider, IsExplicitlyUnavailableWithoutFunctionalFallback)
+TEST(OutputServiceRustProvider, ReportsCompileSelectedAvailabilityWithoutFunctionalFallback)
 {
+#if defined(SAKURA_OUTPUT_BACKEND_RUST)
+	static_assert(OutputServiceRustProvider::IsCompiledIn());
+	OutputServiceRustProvider provider;
+	ASSERT_TRUE(provider.IsAvailable());
+	const auto health = provider.Health();
+	EXPECT_EQ(EOutputProviderKind::Rust, health.kind);
+	EXPECT_EQ(EOutputProviderLifecycle::Ready, health.lifecycle);
+	EXPECT_TRUE(health.compiledIn);
+	EXPECT_TRUE(health.available);
+	EXPECT_EQ(EOutputProviderFault::None, health.fault);
+	EXPECT_EQ(1U, health.counters.initializationAttempts);
+	EXPECT_EQ(1U, provider.Snapshot().revision);
+	const auto stop = provider.Stop();
+	ExpectExpectedResult(stop, EOutputOperationStatus::Succeeded,
+		EOutputOperationReason::None, 2);
+	const auto terminal = provider.Health();
+	EXPECT_EQ(EOutputProviderKind::Rust, terminal.kind);
+	EXPECT_EQ(EOutputProviderLifecycle::Stopped, terminal.lifecycle);
+	EXPECT_FALSE(provider.IsAvailable());
+	EXPECT_TRUE(provider.Snapshot().stopped);
+	EXPECT_EQ(2U, provider.Snapshot().revision);
+#else
 	static_assert(!OutputServiceRustProvider::IsCompiledIn());
 	OutputServiceRustProvider provider;
 	EXPECT_FALSE(provider.IsCompiledIn());
@@ -1508,9 +1557,12 @@ TEST(OutputServiceRustProvider, IsExplicitlyUnavailableWithoutFunctionalFallback
 	EXPECT_FALSE(stoppedHealth.available);
 	EXPECT_TRUE(stoppedHealth.hasLastOperation);
 	EXPECT_EQ(EOutputOperationStatus::Stopped, stoppedHealth.lastOperationStatus);
-}
-
+	EXPECT_EQ(2U, stoppedHealth.counters.mutationCalls);
+	EXPECT_EQ(0U, stoppedHealth.counters.acceptedOperations);
+	EXPECT_EQ(0U, stoppedHealth.counters.replayedOperations);
+	EXPECT_EQ(2U, stoppedHealth.counters.rejectedOperations);
 #endif
+}
 
 } // namespace
 } // namespace workbench::output

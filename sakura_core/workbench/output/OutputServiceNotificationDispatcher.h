@@ -13,6 +13,7 @@
 #include <deque>
 #include <map>
 #include <mutex>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -57,8 +58,8 @@ public:
 		it owns the synchronous drain attempt.
 	*/
 	[[nodiscard]] bool QueueLocked(std::uint64_t revision, EOutputChangeKind kind,
-		const std::optional<std::string>& channelId,
-		const std::optional<std::string>& activeChannelId) noexcept;
+		std::optional<std::string_view> channelId,
+		std::optional<std::string_view> activeChannelId) noexcept;
 
 	//! Closes the advisory boundary and drops not-yet-delivered notifications.
 	//! The caller must hold the provider model lock.

@@ -78,10 +78,9 @@ def native_selector_preflight(
 
     The selectors are deliberately validated as raw environment values.  A
     value that is present must be one of the exact lowercase spellings; only
-    an absent selector receives the native C++ default.  MSVC permits an
-    explicit Rust comparison selection, while MinGW is C++ only.  Production
-    package contexts force both independent package flags to ``true`` and
-    therefore require the corresponding C++ authority.
+    an absent selector receives its toolchain default. MSVC Output defaults to
+    Rust; UTF-16 and MinGW remain C++. Production package contexts force both
+    independent package flags to ``true``; only UTF-16 still requires C++.
 
     The returned mapping contains the resolved selectors and any supplied
     production flags.  Callers pass it to the native command runner so a
@@ -103,7 +102,12 @@ def native_selector_preflight(
     resolved: dict[str, str] = {}
     for selector, _production_flag in _NATIVE_BACKEND_VARIABLES:
         if selector not in source:
-            resolved[selector] = "cpp"
+            resolved[selector] = (
+                "rust"
+                if selector == "SAKURA_OUTPUT_BACKEND"
+                and normalized_toolchain in {"msvc", "x64"}
+                else "cpp"
+            )
             continue
         value = source[selector]
         if value not in allowed_backends:
@@ -125,13 +129,13 @@ def native_selector_preflight(
                 2,
             )
         production_enabled = production_package or value == "true"
-        if production_enabled and resolved[selector] != "cpp":
-            if selector == "SAKURA_UTF16_BACKEND":
-                code = "UTF16_PRODUCTION_BACKEND_INVALID"
-            else:
-                code = "OUTPUT_PRODUCTION_BACKEND_INVALID"
+        if (
+            production_enabled
+            and selector == "SAKURA_UTF16_BACKEND"
+            and resolved[selector] != "cpp"
+        ):
             raise BuildError(
-                code,
+                "UTF16_PRODUCTION_BACKEND_INVALID",
                 f"{production_flag}=true requires {selector}=cpp; got {resolved[selector]}",
                 2,
             )

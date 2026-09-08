@@ -9,6 +9,11 @@ GoogleTest, so ordinary `tests1.exe` runs do not perform timing work.
 
 Run the script from the repository root and supply distinct executable paths:
 
+Each benchmark process uses this runner's repository root as its working
+directory, including when its hash-verified timing image lives in a temporary
+folder. Only the disabled provider workload is selected; resource-dependent
+test suites are not included in a timing run.
+
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\measure-output-provider.ps1 `
   -CppTests1 .\x64\Release\tests1-cpp.exe `
@@ -109,6 +114,36 @@ An analysis is accepted only when all of the following hold:
 The script rejects malformed, incomplete, payload-bearing, failed, timed-out,
 or surviving-process runs. It alternates provider order between pairs and
 owns bounded cleanup of only the exact process tree it launched.
+
+## Timing image and diagnostic settings
+
+The default `-TimingImageMode verified-copy` uses a private, exact-byte
+`sakura-output-timing.exe` copy for each process. Inputs remain the original
+producer-published executables and manifests. SHA-256 and size must match before
+launch and after process exit; original artifact identities and source checks
+remain mandatory. The copied file is removed only after the inner runner's
+bounded process cleanup, and its unique empty directory is then removed.
+
+Before and after every timing process, the runner reads both Windows registry
+views. It rejects any Image File Execution Options key for the timing image,
+nonzero or malformed system GlobalFlag, and unreadable configuration. The
+`verified-timing-copy-v1` per-run receipt records source/copy hashes, size,
+both registry observations, and verified artifact cleanup. This is a scoped
+Windows diagnostic-configuration proof, not a claim to detect every external
+profiler or source of machine load. Keep the same host/power/background-load
+controls when comparing measurements.
+
+`measurementRunnerSha256` identifies the exact executing script even in
+CollectOnly mode. Its bytes must remain unchanged before every launch and
+after the campaign; this hash is diagnostic attribution, not a replacement
+for the qualified producer/source provenance.
+
+No registry setting is changed. Ordinary `tests1.exe` fault/lifecycle runs keep
+their existing Full Page Heap settings. `-TimingImageMode original` is allowed
+only with `-CollectOnly` for instrumentation diagnostics, never qualification.
+Legacy renamed diagnostic samples do not gain qualification retroactively.
+The copy contract does not remove any producer, sample-count, semantic,
+performance, or release-adoption gate.
 
 `-CollectOnly` is an explicit raw-collection mode. It may omit both build
 manifests, but omission leaves `provenanceComplete=false`, records an

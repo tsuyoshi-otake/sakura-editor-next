@@ -574,7 +574,7 @@ jobs:
       if: ${{ inputs.release_promotion }}
       env:
         SAKURA_UTF16_BACKEND: cpp
-        SAKURA_OUTPUT_BACKEND: cpp
+        SAKURA_OUTPUT_BACKEND: rust
         SAKURA_UTF16_PRODUCTION_PACKAGE: true
         SAKURA_OUTPUT_PRODUCTION_PACKAGE: true
       run: |
@@ -668,7 +668,7 @@ jobs:
       env:
         RELEASE_TAG: ${{ inputs.release_tag }}
         SAKURA_UTF16_BACKEND: cpp
-        SAKURA_OUTPUT_BACKEND: cpp
+        SAKURA_OUTPUT_BACKEND: rust
         SAKURA_UTF16_PRODUCTION_PACKAGE: true
         SAKURA_OUTPUT_PRODUCTION_PACKAGE: true
       run: >-
