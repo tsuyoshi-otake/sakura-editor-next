@@ -33876,21 +33876,21 @@
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 134,
+      "line": 135,
       "path": "src/test/cpp/tests1/workbench/SenpOwnerCompositionTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 159,
+      "line": 160,
       "path": "src/test/cpp/tests1/workbench/SenpOwnerCompositionTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 186,
+      "line": 187,
       "path": "src/test/cpp/tests1/workbench/SenpOwnerCompositionTest.cpp",
       "rule_id": "boundary.win32_type"
     },
@@ -98799,13 +98799,13 @@
       "state.raw_pointer_member": 30,
       "test.filtered_or_skipped": 2
     },
-    "include_directive_count": 11262,
+    "include_directive_count": 11263,
     "monolith_link_hint_count": 0,
     "private_include_mention_count": 67,
     "raw_delete_expression_count": 317,
     "raw_new_expression_count": 247,
     "source_file_count": 1782,
-    "source_line_count": 532554,
+    "source_line_count": 532584,
     "tracked_file_count": 1831,
     "win32_parameter_mention_count": 4847
   },
@@ -98962,8 +98962,8 @@
     ]
   },
   "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
-  "source_commit": "c294de5460bbc9e18bae1b410b4f3c1efa8dc4bf",
-  "source_fingerprint": "sha256:a82d6fa6c629c45396ebda2413b6af2b7b5e820f25ac2d108b6ffca7e4fb4556",
+  "source_commit": "f2870653168931be60dba2d0a193fa1f7197c919",
+  "source_fingerprint": "sha256:f57c4ada2383174cf266f8200fdfc919473d4225f60f834b099fe9a0b4ae4bb5",
   "tracked_source_paths": [
     ".github/actions/bootstrap-vcpkg/action.yml",
     ".github/dependabot.yml",
