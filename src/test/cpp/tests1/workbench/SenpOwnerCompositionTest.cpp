@@ -6,6 +6,7 @@
 #include "env/ShareDataTestSuite.hpp"
 #include "outline/CDlgFuncList.h"
 #include "workbench/SenpOwnerComposition.h"
+#include "workbench/SenpExtensionActivation.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -20,7 +21,8 @@ using Clock = std::chrono::steady_clock;
 
 class CompositionRuntime final : public senp::ISenpEffectRuntime {
 public:
-	explicit CompositionRuntime(senp::EffectRuntimeLaunch launch) : m_launch(std::move(launch)) {}
+	explicit CompositionRuntime(senp::EffectRuntimeLaunch launch, std::function<bool()> confirmed = {})
+		: m_confirmed(std::move(confirmed)), m_launch(std::move(launch)) {}
 	senp::InvocationAdmission Start() override
 	{
 		m_state.phase = senp::RuntimePhase::Active;
@@ -37,15 +39,21 @@ public:
 		m_state.phase = senp::RuntimePhase::Stopped;
 		m_state.workerExited = m_state.processExitConfirmed = true;
 	}
-	void Join() override {}
+	void Join() override { if (m_confirmed && !m_confirmed()) throw std::runtime_error("unconfirmed exit"); }
 	std::optional<senp::InvocationResult> TakeCompleted() override
 	{
 		auto result = std::move(m_result);
 		m_result.reset();
 		return result;
 	}
-	senp::EffectRuntimeSnapshot Snapshot() const override { return m_state; }
+	senp::EffectRuntimeSnapshot Snapshot() const override
+	{
+		auto state = m_state;
+		if (m_confirmed) state.processExitConfirmed = m_confirmed();
+		return state;
+	}
 private:
+	std::function<bool()> m_confirmed;
 	senp::EffectRuntimeLaunch m_launch;
 	senp::EffectRuntimeSnapshot m_state;
 	std::optional<senp::InvocationResult> m_result;
@@ -218,8 +226,209 @@ protected:
 		return false;
 	}
 
+	static senp::ManagementSnapshot Packages()
+	{
+		senp::ExtensionDescriptor extension;
+		extension.id = L"sample.factory";
+		extension.enabled = true;
+		extension.modulePath = L"extension.wasm";
+		extension.moduleSha256.assign(64, L'a');
+		extension.archiveSha256.assign(64, L'b');
+		extension.runtime = { 2, L"sakura:senp/extension@2.0.0", { L"onView:sample.tree" }, {}, {} };
+		extension.views = { { L"sample.tree", L"sample.container", L"Sample", L"senp.tree", 1 } };
+		return { senp::EManagementState::Ready, 1, { std::move(extension) } };
+	}
+
+	SenpOwnerPublicationOptions NativeOptions(std::shared_ptr<CompositionTargetState> state,
+		std::string suffix = {}) const
+	{
+		std::vector<SenpOwnerTreeContribution> trees;
+		trees.emplace_back(layout::WorkbenchViewDescriptor{
+			"sample.tree" + suffix, "sample.container" + suffix, "Sample", 1, true, true, "senp.tree" },
+			std::vector<std::string>{});
+		return { m_owner,
+			{ { "sample.container" + suffix, "Sample", layout::EViewContainerLocation::Sidebar, 1,
+				"beaker", false, { layout::EViewContainerLocation::Sidebar } } },
+			std::move(trees), std::make_unique<CompositionTarget>(std::move(state)),
+			[](std::string_view) { return true; },
+			[](viewcontainer::SenpViewBodyHost host, std::shared_ptr<tree::SenpTreeProvider>, std::wstring) {
+				return std::make_unique<CompositionBody>(std::move(host));
+			} };
+	}
+
 	HWND m_owner{};
 };
+
+TEST_F(SenpOwnerComposition, ActivationIsLazyDeduplicatedAndReenabledWithNewScope)
+{
+	layout::WorkbenchContributionRegistry catalog;
+	CDlgFuncList dialog;
+	viewcontainer::CViewContainerPages pages(dialog);
+	ASSERT_TRUE(pages.Create(m_owner));
+	int starts{};
+	CSenpOwnerComposition composition(catalog, pages, [&](senp::EffectRuntimeLaunch launch) {
+		++starts;
+		return std::make_unique<CompositionRuntime>(std::move(launch));
+	});
+	auto state = std::make_shared<CompositionTargetState>();
+	CSenpExtensionActivation activation(composition, L"host.exe", [&](const auto&, const auto&) {
+		return std::optional(NativeOptions(state));
+	});
+	auto packages = Packages();
+	ASSERT_TRUE(activation.Synchronize(packages, 7, 9, Clock::now()));
+	EXPECT_EQ(0, starts);
+	EXPECT_EQ(SenpExtensionActivationState::Dormant, activation.State(L"sample.factory"));
+	EXPECT_EQ(senp::OwnerChangeStatus::Unsupported, activation.RequestView(L"foreign.tree", Clock::now()).status);
+	const auto pending = activation.RequestView(L"sample.tree", Clock::now());
+	ASSERT_EQ(senp::OwnerChangeStatus::Accepted, pending.status);
+	EXPECT_EQ(pending.owner, activation.RequestView(L"sample.tree", Clock::now()).owner);
+	ASSERT_TRUE(activation.Poll(Clock::now()));
+	ASSERT_EQ(SenpExtensionActivationState::Active, activation.State(L"sample.factory"));
+	EXPECT_EQ(pending.owner, activation.ActiveOwner(L"sample.factory"));
+	EXPECT_EQ(senp::OwnerChangeStatus::Activated, activation.RequestView(L"sample.tree", Clock::now(), true).status);
+	EXPECT_EQ(1, starts);
+	auto malformed = packages;
+	++malformed.revision;
+	malformed.extensions.push_back(malformed.extensions[0]);
+	EXPECT_FALSE(activation.Synchronize(malformed, 7, 9, Clock::now()));
+	EXPECT_EQ(pending.owner, activation.ActiveOwner(L"sample.factory"));
+	EXPECT_TRUE(pages.Contains("sample.container"));
+	++packages.revision;
+	packages.extensions[0].enabled = false;
+	ASSERT_TRUE(activation.Synchronize(packages, 7, 9, Clock::now()));
+	EXPECT_EQ(SenpExtensionActivationState::Disabled, activation.State(L"sample.factory"));
+	EXPECT_FALSE(pages.Contains("sample.container"));
+	ASSERT_TRUE(activation.Poll(Clock::now()));
+	++packages.revision;
+	packages.extensions[0].enabled = true;
+	ASSERT_TRUE(activation.Synchronize(packages, 8, 10, Clock::now()));
+	ASSERT_TRUE(activation.Poll(Clock::now()));
+	const auto current = activation.ActiveOwner(L"sample.factory");
+	ASSERT_TRUE(current);
+	EXPECT_NE(pending.owner.generation, current->generation);
+	EXPECT_EQ(8, current->workspaceRevision);
+	EXPECT_EQ(10, current->accountGeneration);
+	EXPECT_EQ(2, starts);
+	EXPECT_TRUE(activation.Close());
+	EXPECT_TRUE(catalog.Snapshot().owners.empty());
+	EXPECT_FALSE(activation.Synchronize(packages, 8, 10, Clock::now()));
+	EXPECT_EQ(senp::OwnerChangeStatus::Stopped, activation.RequestView(L"sample.tree", Clock::now()).status);
+	pages.Close();
+}
+
+TEST_F(SenpOwnerComposition, ActivationSerializesDistinctOwnersWithoutRestartingPendingRequests)
+{
+	layout::WorkbenchContributionRegistry catalog;
+	CDlgFuncList dialog;
+	viewcontainer::CViewContainerPages pages(dialog);
+	ASSERT_TRUE(pages.Create(m_owner));
+	int starts{};
+	CSenpOwnerComposition composition(catalog, pages, [&](senp::EffectRuntimeLaunch launch) {
+		++starts;
+		return std::make_unique<CompositionRuntime>(std::move(launch));
+	});
+	auto state = std::make_shared<CompositionTargetState>();
+	CSenpExtensionActivation activation(composition, L"host.exe", [&](const auto& descriptor, const auto&) {
+		return std::optional(NativeOptions(state, descriptor.id == L"sample.second" ? "2" : ""));
+	});
+	auto packages = Packages();
+	auto second = packages.extensions[0];
+	second.id = L"sample.second";
+	second.views = { { L"sample.tree2", L"sample.container2", L"Sample", L"senp.tree", 1 } };
+	second.runtime.activationEvents = { L"onView:sample.tree2" };
+	packages.extensions.push_back(std::move(second));
+	ASSERT_TRUE(activation.Synchronize(packages, 7, 9, Clock::now()));
+	ASSERT_EQ(senp::OwnerChangeStatus::Accepted, activation.RequestView(L"sample.tree", Clock::now()).status);
+	EXPECT_EQ(senp::OwnerChangeStatus::Busy, activation.RequestView(L"sample.tree2", Clock::now()).status);
+	EXPECT_EQ(SenpExtensionActivationState::Queued, activation.State(L"sample.second"));
+	EXPECT_EQ(1, starts);
+	EXPECT_EQ(senp::OwnerChangeStatus::Busy, activation.RequestView(L"sample.tree2", Clock::now(), true).status);
+	ASSERT_TRUE(activation.Poll(Clock::now()));
+	EXPECT_EQ(2, starts);
+	ASSERT_TRUE(activation.Poll(Clock::now()));
+	EXPECT_EQ(SenpExtensionActivationState::Active, activation.State(L"sample.factory"));
+	EXPECT_EQ(SenpExtensionActivationState::Active, activation.State(L"sample.second"));
+	EXPECT_EQ(2U, catalog.Snapshot().owners.size());
+	EXPECT_TRUE(pages.Contains("sample.container"));
+	EXPECT_TRUE(pages.Contains("sample.container2"));
+	EXPECT_TRUE(activation.Close());
+	pages.Close();
+}
+
+TEST_F(SenpOwnerComposition, ActivationFailuresRemainTerminalAndRejectMalformedAuthority)
+{
+	layout::WorkbenchContributionRegistry catalog;
+	CDlgFuncList dialog;
+	viewcontainer::CViewContainerPages pages(dialog);
+	ASSERT_TRUE(pages.Create(m_owner));
+	int starts{}, factories{};
+	CSenpOwnerComposition composition(catalog, pages, [&](senp::EffectRuntimeLaunch launch) {
+		++starts;
+		return std::make_unique<CompositionRuntime>(std::move(launch));
+	});
+	CSenpExtensionActivation activation(composition, L"host.exe", [&](const auto&, const auto&) {
+		++factories;
+		return std::optional<SenpOwnerPublicationOptions>{};
+	});
+	auto packages = Packages();
+	ASSERT_TRUE(activation.Synchronize(packages, 7, 9, Clock::now()));
+	EXPECT_EQ(senp::OwnerChangeStatus::Unsupported, activation.RequestView(L"sample.tree", Clock::now()).status);
+	for (int n = 0; n < 5; ++n) {
+		EXPECT_TRUE(activation.Poll(Clock::now()));
+		EXPECT_TRUE(activation.Synchronize(packages, 7, 9, Clock::now()));
+		EXPECT_EQ(senp::OwnerChangeStatus::Unsupported, activation.RequestView(L"sample.tree", Clock::now()).status);
+	}
+	EXPECT_EQ(1, factories);
+	EXPECT_EQ(0, starts);
+	EXPECT_EQ(senp::OwnerChangeStatus::Unsupported, activation.RequestView(L"sample.tree", Clock::now(), true).status);
+	EXPECT_EQ(2, factories);
+	auto invalid = packages;
+	++invalid.revision;
+	invalid.extensions.push_back(invalid.extensions[0]);
+	EXPECT_FALSE(activation.Synchronize(invalid, 7, 9, Clock::now()));
+	EXPECT_EQ(SenpExtensionActivationState::Unsupported, activation.State(L"sample.factory"));
+	invalid = packages;
+	invalid.revision = 0;
+	EXPECT_FALSE(activation.Synchronize(invalid, 7, 9, Clock::now()));
+	++packages.revision;
+	packages.extensions[0].runtime.activationEvents.clear();
+	ASSERT_TRUE(activation.Synchronize(packages, 7, 9, Clock::now()));
+	EXPECT_EQ(senp::OwnerChangeStatus::Unsupported, activation.RequestView(L"sample.tree", Clock::now()).status);
+	EXPECT_EQ(SenpExtensionActivationState::Unsupported, activation.State(L"sample.factory"));
+	EXPECT_EQ(2, factories);
+	packages.state = senp::EManagementState::Failed;
+	EXPECT_FALSE(activation.Synchronize(packages, 7, 9, Clock::now()));
+	EXPECT_FALSE(activation.State(L"sample.factory"));
+	EXPECT_TRUE(activation.Close());
+	pages.Close();
+}
+
+TEST_F(SenpOwnerComposition, CloseRetainsFailedRuntimeCleanupUntilExitIsConfirmed)
+{
+	layout::WorkbenchContributionRegistry catalog;
+	CDlgFuncList dialog;
+	viewcontainer::CViewContainerPages pages(dialog);
+	ASSERT_TRUE(pages.Create(m_owner));
+	bool exitConfirmed{};
+	CSenpOwnerComposition composition(catalog, pages, [&](senp::EffectRuntimeLaunch launch) {
+		return std::make_unique<CompositionRuntime>(std::move(launch), [&] { return exitConfirmed; });
+	});
+	auto state = std::make_shared<CompositionTargetState>();
+	CSenpExtensionActivation activation(composition, L"host.exe", [&](const auto&, const auto&) {
+		return std::optional(NativeOptions(state));
+	});
+	ASSERT_TRUE(activation.Synchronize(Packages(), 7, 9, Clock::now()));
+	ASSERT_EQ(senp::OwnerChangeStatus::Accepted, activation.RequestView(L"sample.tree", Clock::now()).status);
+	ASSERT_TRUE(activation.Poll(Clock::now()));
+	EXPECT_FALSE(activation.Close());
+	EXPECT_FALSE(activation.Close());
+	EXPECT_TRUE(catalog.Snapshot().owners.empty());
+	EXPECT_FALSE(pages.Contains("sample.container"));
+	exitConfirmed = true;
+	EXPECT_TRUE(activation.Close());
+	EXPECT_EQ(1, state->Revokes());
+	pages.Close();
+}
 
 TEST_F(SenpOwnerComposition, FactoryUsesAllocatedOwnerAndRejectsReentrancy)
 {

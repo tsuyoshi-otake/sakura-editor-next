@@ -99,13 +99,17 @@ senp::ContributionOwnersSnapshot CSenpOwnerComposition::Snapshot() const noexcep
 
 bool CSenpOwnerComposition::Close() noexcept
 {
-	if (m_closed) return true;
 	if (m_entered) return false;
 	Call call(m_entered);
 	m_closed = true;
 	const bool stopped = m_owners.Close();
 	m_publications.Close();
 	return stopped;
+}
+
+bool CSenpOwnerComposition::IsCurrent(const senp::ContributionOwnerIdentity& owner) const noexcept
+{
+	return !m_closed && m_owners.IsCurrent(owner);
 }
 
 } // namespace workbench

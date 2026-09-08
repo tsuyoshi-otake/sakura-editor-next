@@ -38,6 +38,7 @@ public:
 		senp::effect::StopReason reason) noexcept;
 	[[nodiscard]] std::optional<senp::OwnerChangeResult> TakeTransition() noexcept;
 	[[nodiscard]] senp::ContributionOwnersSnapshot Snapshot() const noexcept;
+	[[nodiscard]] bool IsCurrent(const senp::ContributionOwnerIdentity& owner) const noexcept;
 	//! Stops every runtime before closing native publication resources.
 	[[nodiscard]] bool Close() noexcept;
 

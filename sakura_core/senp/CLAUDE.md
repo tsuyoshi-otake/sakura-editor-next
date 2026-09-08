@@ -369,3 +369,14 @@ the generation before invoking that synchronous factory; the caller's launch
 generation is not authoritative. The factory receives the same identity as the
 runtime and accepted receipt. Empty/rejected/throwing factories start no host,
 and reentrant activation/close cannot interrupt the outer preparation.
+
+- `CSenpExtensionActivation` consumes bounded authority snapshots without host
+  work until a declared View requests its matching `onView:` activation. Native
+  catalog/page preparations are serialized: queued admission starts at most one
+  candidate per call after the current preparation finishes. Runtime Busy,
+  Unsupported and Failed outcomes remain terminal until an explicit retry or
+  relevant metadata/scope change; polling and repeated visibility do not retry.
+  Disable/removal revokes publication; scope changes allocate a fresh owner.
+  Repeated Close retains responsibility for unconfirmed process exit. This is
+  window lifecycle infrastructure; declaration shells and CEditWnd scheduling
+  still need their own integration before enabling schema-v2 packages.

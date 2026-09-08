@@ -3298,6 +3298,9 @@
 	<ClCompile Include="..\sakura_core\workbench\SenpOwnerProjection.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\SenpExtensionActivation.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\SenpOwnerComposition.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
