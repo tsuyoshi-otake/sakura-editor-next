@@ -86,6 +86,19 @@ private:
 	std::vector<std::wstring> m_arguments;
 };
 
+class GhJobLogRequest final {
+public:
+	GhJobLogRequest(std::wstring hostname, std::wstring owner,
+		std::wstring repository, std::uint64_t jobId);
+	[[nodiscard]] const std::wstring& Hostname() const noexcept { return m_hostname; }
+	[[nodiscard]] const std::wstring& Owner() const noexcept { return m_owner; }
+	[[nodiscard]] const std::wstring& Repository() const noexcept { return m_repository; }
+	[[nodiscard]] std::uint64_t JobId() const noexcept { return m_jobId; }
+private:
+	std::wstring m_hostname, m_owner, m_repository;
+	std::uint64_t m_jobId{};
+};
+
 class GhProcessInvocation final {
 public:
 	GhProcessInvocation(std::wstring executablePath, std::wstring workingDirectory,
@@ -194,6 +207,8 @@ public:
 		const GhRepositoryReadRequest& request, HANDLE stop) const;
 	[[nodiscard]] GhPreparedRepositoryRead PrepareRepositoryRead(const GhToolProbe& probe,
 		const GhRepositoryReadRequest& request) const;
+	[[nodiscard]] GhPreparedRepositoryRead PrepareJobLog(const GhToolProbe& probe,
+		const GhJobLogRequest& request) const;
 private:
 	std::shared_ptr<const IGhToolPlatform> m_platform;
 	std::wstring m_workingDirectory;

@@ -139,6 +139,11 @@ account generation、host、repository identity、endpoint、canonical queryを�
 cleanup ownershipを保持する。cancel済みcycleの遅着結果は後続cycleへ公開しない。
 | T07 | single-flight・fair queue・cooldown・可視poll | T06/F03 | `GhReadScheduler.*` | 複数windowでも重複1本、最後のunsubscribeでcancel |
 | T08 | jobログのredirect・chunk受信・cleanup | T06/U05 | `GhLogResource.*` | credential転送0、上限、途中失敗、URL非保持 |
+
+T08のnative境界はjob IDを正の整数として検証し、`gh api --hostname <host> --method GET`
+の固定endpointだけを生成する。verified credentialは環境経由でgh processにだけ渡り、argv、
+text resource、結果には現れない。stdoutを64 KiB以下のchunkとして32 MiBまで追記し、stderrと
+gh内部の短命redirect URLは保持しない。作成後の全分岐はRAII completionでterminal化する。
 | E01 | repository snapshotとremote選択 | T06 | `GhRepositorySelection.*` | multi-root/fork/SSH alias/remote削除の区別 |
 | E02 | 共通github-clientとIssue一覧 | E01/U06 | 新crate testsとIssue View実表示 | PR除外後のnext page保持、状態filter |
 | E03 | Issue本文・コメントの詳細 | E02/U04 | fixtureとopt-in本文表示 | 本文/コメントpage、空と失敗の区別 |

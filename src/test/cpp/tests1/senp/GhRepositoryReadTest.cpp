@@ -34,6 +34,12 @@ public:
 		m_arguments = arguments;
 		return m_outcome;
 	}
+	GhProcessOutcome RunAuthenticatedStreaming(const std::vector<std::wstring>& arguments,
+		std::uint32_t timeout, std::size_t output, std::size_t error,
+		std::shared_ptr<platform::process::IBoundedProcessOutputObserver>, HANDLE stop) override
+	{
+		return RunAuthenticated(arguments, timeout, output, error, stop);
+	}
 	void Revoke() noexcept override {}
 	void Set(EBoundedProcessStatus status, std::string output)
 	{

@@ -130,6 +130,12 @@ bool IsRequest(const GhRepositoryReadRequest& request) noexcept
 	return true;
 }
 
+bool IsJobLogRequest(const GhJobLogRequest& request) noexcept
+{
+	return IsHostname(request.Hostname()) && IsAsciiName(request.Owner(), 100)
+		&& IsAsciiName(request.Repository(), 100) && request.JobId() > 0;
+}
+
 std::wstring PercentEncode(const std::wstring_view value)
 {
 	constexpr wchar_t hex[] = L"0123456789ABCDEF";
@@ -173,6 +179,14 @@ std::vector<std::wstring> ReadArguments(const GhRepositoryReadRequest& request)
 	}
 	arguments.push_back(Endpoint(request));
 	return arguments;
+}
+
+std::vector<std::wstring> JobLogArguments(const GhJobLogRequest& request)
+{
+	return { L"api", L"--hostname", request.Hostname(), L"--method", L"GET",
+		L"--header", L"X-GitHub-Api-Version: 2022-11-28",
+		L"repos/" + request.Owner() + L"/" + request.Repository()
+			+ L"/actions/jobs/" + std::to_wstring(request.JobId()) + L"/logs" };
 }
 
 std::optional<GhToolVersion> ParseVersion(const std::vector<std::uint8_t>& bytes) noexcept
@@ -255,6 +269,10 @@ GhRepositoryReadRequest::GhRepositoryReadRequest(std::wstring hostname, std::wst
 
 GhPreparedRepositoryRead::GhPreparedRepositoryRead(const GhRepositoryReadStatus status,
 	std::vector<std::wstring> arguments) : m_status(status), m_arguments(std::move(arguments)) {}
+
+GhJobLogRequest::GhJobLogRequest(std::wstring hostname, std::wstring owner,
+	std::wstring repository, const std::uint64_t jobId) : m_hostname(std::move(hostname)),
+	m_owner(std::move(owner)), m_repository(std::move(repository)), m_jobId(jobId) {}
 
 GhProcessInvocation::GhProcessInvocation(std::wstring executablePath, std::wstring workingDirectory,
 	std::vector<std::wstring> arguments, std::vector<std::pair<std::wstring, std::wstring>> environmentOverrides,
@@ -360,6 +378,22 @@ GhPreparedRepositoryRead CGhToolPolicy::PrepareRepositoryRead(const GhToolProbe&
 		return { GhRepositoryReadStatus::ToolUnavailable, {} };
 	}
 	return { GhRepositoryReadStatus::Succeeded, ReadArguments(request) };
+}
+
+GhPreparedRepositoryRead CGhToolPolicy::PrepareJobLog(const GhToolProbe& probe,
+	const GhJobLogRequest& request) const
+{
+	if (!platform::IsAbsoluteWindowsPath(m_workingDirectory) || !IsJobLogRequest(request)) {
+		return { GhRepositoryReadStatus::InvalidRequest, {} };
+	}
+	if (probe.Status() == GhToolAvailability::UnsupportedVersion) {
+		return { GhRepositoryReadStatus::UnsupportedVersion, {} };
+	}
+	if (probe.Status() != GhToolAvailability::Available || !probe.Version()
+		|| !probe.Version()->Supported() || !platform::IsAbsoluteWindowsPath(probe.ExecutablePath())) {
+		return { GhRepositoryReadStatus::ToolUnavailable, {} };
+	}
+	return { GhRepositoryReadStatus::Succeeded, JobLogArguments(request) };
 }
 
 } // namespace senp::github

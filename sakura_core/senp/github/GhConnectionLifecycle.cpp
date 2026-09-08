@@ -169,10 +169,12 @@ std::vector<std::pair<std::wstring, std::wstring>> Environment(
 GhProcessInvocation Invocation(std::wstring executable, std::wstring workingDirectory,
 	std::vector<std::wstring> arguments, const std::wstring_view configurationDirectory,
 	const std::uint32_t timeout, const std::size_t outputLimit,
-	const std::size_t errorLimit, std::optional<std::wstring_view> token = std::nullopt)
+	const std::size_t errorLimit, std::optional<std::wstring_view> token = std::nullopt,
+	std::shared_ptr<platform::process::IBoundedProcessOutputObserver> outputObserver = nullptr)
 {
 	return { std::move(executable), std::move(workingDirectory), std::move(arguments),
-		Environment(configurationDirectory, token), RemovedEnvironment(), timeout, outputLimit, errorLimit };
+		Environment(configurationDirectory, token), RemovedEnvironment(), timeout, outputLimit, errorLimit,
+		std::move(outputObserver) };
 }
 
 class CWindowsGhAccountCredential final : public IGhAccountCredential {
@@ -188,6 +190,34 @@ public:
 		const std::uint32_t timeoutMilliseconds, const std::size_t maximumOutputBytes,
 		const std::size_t maximumErrorBytes, HANDLE stop) override
 	{
+		return Run(arguments, timeoutMilliseconds, maximumOutputBytes,
+			maximumErrorBytes, nullptr, stop);
+	}
+	GhProcessOutcome RunAuthenticatedStreaming(const std::vector<std::wstring>& arguments,
+		const std::uint32_t timeoutMilliseconds, const std::size_t maximumOutputBytes,
+		const std::size_t maximumErrorBytes,
+		std::shared_ptr<platform::process::IBoundedProcessOutputObserver> outputObserver,
+		HANDLE stop) override
+	{
+		if (!outputObserver) {
+			return { platform::process::EBoundedProcessStatus::InvalidRequest, -1, {}, {} };
+		}
+		return Run(arguments, timeoutMilliseconds, maximumOutputBytes,
+			maximumErrorBytes, std::move(outputObserver), stop);
+	}
+	void Revoke() noexcept override
+	{
+		std::scoped_lock lock(m_mutex);
+		m_revoked = true;
+		m_token.Clear();
+	}
+private:
+	GhProcessOutcome Run(const std::vector<std::wstring>& arguments,
+		const std::uint32_t timeoutMilliseconds, const std::size_t maximumOutputBytes,
+		const std::size_t maximumErrorBytes,
+		std::shared_ptr<platform::process::IBoundedProcessOutputObserver> outputObserver,
+		HANDLE stop)
+	{
 		std::wstring token;
 		{
 			std::scoped_lock lock(m_mutex);
@@ -197,9 +227,10 @@ public:
 			token = m_token.Text();
 		}
 		try {
-			auto result = m_platform->Run(Invocation(m_executable, m_workingDirectory, arguments,
+			auto invocation = Invocation(m_executable, m_workingDirectory, arguments,
 				m_configurationDirectory, timeoutMilliseconds, maximumOutputBytes,
-				maximumErrorBytes, token), stop);
+				maximumErrorBytes, token, std::move(outputObserver));
+			auto result = m_platform->Run(invocation, stop);
 			::SecureZeroMemory(token.data(), token.size() * sizeof(wchar_t));
 			return result;
 		} catch (...) {
@@ -207,13 +238,6 @@ public:
 			return { platform::process::EBoundedProcessStatus::InvalidRequest, -1, {}, {} };
 		}
 	}
-	void Revoke() noexcept override
-	{
-		std::scoped_lock lock(m_mutex);
-		m_revoked = true;
-		m_token.Clear();
-	}
-private:
 	std::shared_ptr<const IGhToolPlatform> m_platform;
 	std::wstring m_executable, m_workingDirectory, m_configurationDirectory;
 	std::mutex m_mutex;

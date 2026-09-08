@@ -251,6 +251,17 @@ dispatch remains the broker's cleanup responsibility until `Complete`. Close
 has the same contract. Never publish a delayed completion from a cancelled
 cycle or use profile/account/repository results across another scope.
 
+`CGhLogResource` owns T08's selected-job transfer. It creates only the closed
+`gh api --hostname <host> --method GET` job-log request and executes it through
+the verified account credential. The token remains in that credential, while
+the CLI-internal short-lived redirect URL never enters the resource, result or
+diagnostics. Stream stdout into `SenpTextResourceStore` with a 120-second,
+32-MiB stdout and 64-KiB stderr bound. Complete, partial failure, cancellation,
+timeout and limit exhaustion are distinct terminals. An RAII completion guard
+must finish every created resource on all returns and exceptions. Do not infer
+whether a 404 means pending generation, missing permission or deletion; expose
+the ambiguous `UnavailableOrNotFound` terminal.
+
 Append accepts the next byte offset and at most 64 KiB. Fixed 64 KiB pages bound
 one resource to 32 MiB and the Control store to 64 MiB of allocated payload pages,
 including unused tails, with at most 64 resource slots. Pages and their index

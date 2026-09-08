@@ -64,6 +64,13 @@ public:
 	[[nodiscard]] virtual GhProcessOutcome RunAuthenticated(
 		const std::vector<std::wstring>& arguments, std::uint32_t timeoutMilliseconds,
 		std::size_t maximumOutputBytes, std::size_t maximumErrorBytes, HANDLE stop) = 0;
+	//! Streams a fixed invocation while the same private token lease remains valid.
+	//! The observer receives process bytes only; it never receives the token.
+	[[nodiscard]] virtual GhProcessOutcome RunAuthenticatedStreaming(
+		const std::vector<std::wstring>& arguments, std::uint32_t timeoutMilliseconds,
+		std::size_t maximumOutputBytes, std::size_t maximumErrorBytes,
+		std::shared_ptr<platform::process::IBoundedProcessOutputObserver> outputObserver,
+		HANDLE stop) = 0;
 	//! Stops future use of retained leases. In-flight work still reaches its own
 	//! terminal and is rejected by the account/grant generation fence.
 	virtual void Revoke() noexcept = 0;

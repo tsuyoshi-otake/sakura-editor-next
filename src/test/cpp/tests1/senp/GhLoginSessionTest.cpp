@@ -34,6 +34,12 @@ public:
 		return { m_revoked ? EBoundedProcessStatus::InvalidRequest : EBoundedProcessStatus::Succeeded,
 			m_revoked ? -1 : 0, {}, {} };
 	}
+	GhProcessOutcome RunAuthenticatedStreaming(const std::vector<std::wstring>& arguments,
+		std::uint32_t timeout, std::size_t output, std::size_t error,
+		std::shared_ptr<platform::process::IBoundedProcessOutputObserver>, HANDLE stop) override
+	{
+		return RunAuthenticated(arguments, timeout, output, error, stop);
+	}
 	void Revoke() noexcept override { m_revoked = true; }
 	[[nodiscard]] bool Revoked() const noexcept { return m_revoked; }
 private:
