@@ -26435,21 +26435,21 @@
     {
       "column": 30,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 33,
+      "line": 66,
       "path": "sakura_core/workbench/SenpOwnerPublication.h",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 16,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 42,
+      "line": 76,
       "path": "sakura_core/workbench/SenpOwnerPublication.h",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 49,
+      "line": 83,
       "path": "sakura_core/workbench/SenpOwnerPublication.h",
       "rule_id": "boundary.win32_type"
     },
@@ -33911,7 +33911,7 @@
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 139,
+      "line": 195,
       "path": "src/test/cpp/tests1/workbench/SenpOwnerPublicationTest.cpp",
       "rule_id": "boundary.win32_type"
     },
@@ -37250,28 +37250,28 @@
     {
       "column": 5,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 100,
+      "line": 114,
       "path": "sakura_core/workbench/SenpOwnerPublication.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 5,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 143,
+      "line": 163,
       "path": "sakura_core/workbench/SenpOwnerPublication.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 5,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 159,
+      "line": 180,
       "path": "sakura_core/workbench/SenpOwnerPublication.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 4,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 234,
+      "line": 257,
       "path": "sakura_core/workbench/SenpOwnerPublication.cpp",
       "rule_id": "error.catch_all"
     },
@@ -97399,6 +97399,20 @@
       "rule_id": "state.public_mutable_field"
     },
     {
+      "column": 49,
+      "evidence_sha256": "sha256:2e6eefa2546be99883a197cd6dc968bbc49f7317b768ab5dbc50114183d52bcf",
+      "line": 101,
+      "path": "src/test/cpp/tests1/workbench/SenpOwnerPublicationTest.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 34,
+      "evidence_sha256": "sha256:63ef0023e320855fc416c3f5f8af2559c71fa59239ea8b1bb3899dc4bdfacebc",
+      "line": 102,
+      "path": "src/test/cpp/tests1/workbench/SenpOwnerPublicationTest.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
       "column": 20,
       "evidence_sha256": "sha256:0997f4ec34befc8e341541d604ef453fae66c816aa457b3d0f859ca863bd63ed",
       "line": 213,
@@ -98881,7 +98895,7 @@
       }
     },
     "filtered_test_hint_count": 2,
-    "finding_count": 14029,
+    "finding_count": 14031,
     "finding_count_by_rule": {
       "boundary.private_include": 67,
       "boundary.win32_type": 4847,
@@ -98893,7 +98907,7 @@
       "memory.raw_new": 247,
       "resource.stop_required_acquisition": 286,
       "state.mutable_member": 132,
-      "state.public_mutable_field": 6394,
+      "state.public_mutable_field": 6396,
       "state.raw_pointer_member": 30,
       "test.filtered_or_skipped": 2
     },
@@ -98903,7 +98917,7 @@
     "raw_delete_expression_count": 317,
     "raw_new_expression_count": 247,
     "source_file_count": 1785,
-    "source_line_count": 533647,
+    "source_line_count": 533842,
     "tracked_file_count": 1834,
     "win32_parameter_mention_count": 4847
   },
@@ -99060,8 +99074,8 @@
     ]
   },
   "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
-  "source_commit": "aa1ee8517eca0fdbd7db9fafa729045b933ef8b6",
-  "source_fingerprint": "sha256:f2b992b67809134ee2964d3e3c0b3c750a3eccffa38dd8f961d4e49f62dd42ac",
+  "source_commit": "5ddd81202be1647808b54fae7aeefc649cef4f61",
+  "source_fingerprint": "sha256:95e58441be50da553908d551d5f7decc43850f774400a176c88a75de0d82d438",
   "tracked_source_paths": [
     ".github/actions/bootstrap-vcpkg/action.yml",
     ".github/dependabot.yml",
