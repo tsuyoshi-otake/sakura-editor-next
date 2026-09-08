@@ -31,18 +31,46 @@ public:
 	{
 		m_completion = std::move(completion); ++m_completions;
 	}
+	bool StartToolRead(const senp::effect::OperationContext& context,
+		senp::effect::StartToolRead read)
+	{
+		if (read.toolId != L"github" || read.operation != L"repositoryRead"
+			|| m_toolTerminal || m_toolResponse.empty()) return false;
+		m_lastRead = read;
+		m_toolTerminal = SenpToolReadTerminal{ context, {
+			read.readId, senp::effect::CompletionStatus::Succeeded, m_toolResponse, L"" } };
+		++m_toolReads;
+		return true;
+	}
+	std::optional<SenpToolReadTerminal> TakeToolRead()
+	{
+		auto terminal = std::move(m_toolTerminal);
+		m_toolTerminal.reset();
+		return terminal;
+	}
+	void CancelToolReads(const senp::effect::OperationContext& context)
+	{
+		if (m_toolTerminal && m_toolTerminal->Context().requestGeneration == context.requestGeneration)
+			m_toolTerminal.reset();
+	}
+	void SetToolResponse(std::wstring value) { m_toolResponse = std::move(value); }
 	void Revoke() noexcept { ++m_revokes; }
 	[[nodiscard]] int Begins() const noexcept { return m_begins; }
 	[[nodiscard]] int Publishes() const noexcept { return m_publishes; }
 	[[nodiscard]] int Completions() const noexcept { return m_completions; }
 	[[nodiscard]] int Revokes() const noexcept { return m_revokes; }
+	[[nodiscard]] int ToolReads() const noexcept { return m_toolReads; }
+	[[nodiscard]] const senp::effect::StartToolRead& LastRead() const noexcept { return m_lastRead; }
 	[[nodiscard]] const senp::effect::PublishDocument& Document() const noexcept { return m_document; }
 private:
 	std::wstring m_resource;
 	senp::effect::OperationContext m_context;
 	senp::effect::PublishDocument m_document;
 	senp::effect::CompleteCommand m_completion;
-	int m_begins{}, m_publishes{}, m_completions{}, m_revokes{};
+	senp::effect::StartToolRead m_lastRead;
+	std::optional<SenpToolReadTerminal> m_toolTerminal;
+	std::wstring m_toolResponse;
+	int m_begins{}, m_publishes{}, m_completions{}, m_revokes{}, m_toolReads{};
 };
 
 class CompositionTarget final : public ISenpOwnerProjectionTarget {
@@ -69,6 +97,19 @@ public:
 		m_state->Complete(std::move(completion)); return true;
 	}
 	bool ReleaseResource(std::wstring_view) noexcept override { return true; }
+	bool StartToolRead(const senp::effect::OperationContext& context,
+		senp::effect::StartToolRead read) noexcept override
+	{
+		return m_state->StartToolRead(context, std::move(read));
+	}
+	std::optional<SenpToolReadTerminal> TakeToolRead() noexcept override
+	{
+		return m_state->TakeToolRead();
+	}
+	void CancelToolReads(const senp::effect::OperationContext& context) noexcept override
+	{
+		m_state->CancelToolReads(context);
+	}
 	void Revoke() noexcept override { m_state->Revoke(); }
 private:
 	std::shared_ptr<CompositionTargetState> m_state;
@@ -214,6 +255,82 @@ TEST_F(SenpOwnerComposition, RealSamplePublishesTwoTreesAndStructuredDocument)
 	EXPECT_TRUE(composition.Close());
 	EXPECT_EQ(1, target->Revokes());
 	EXPECT_TRUE(catalog.Snapshot().owners.empty());
+	pages.Close();
+}
+
+TEST_F(SenpOwnerComposition, RealGithubIssueReadReachesTheNativeTreeProvider)
+{
+	const auto fixtureEnvironment = _wgetenv(L"SAKURA_SENP_RUNTIME_FIXTURES");
+	if (!fixtureEnvironment || !*fixtureEnvironment) GTEST_SKIP() << "SENP runtime fixtures are not configured";
+	const std::filesystem::path fixtures(fixtureEnvironment);
+	const auto host = fixtures / L"sakura-senp-host.exe";
+	const auto component = fixtures / L"github-pull-requests-extension.wasm";
+	std::ifstream digestFile(fixtures / L"github-pull-requests-extension.sha256");
+	std::string digest;
+	digestFile >> digest;
+	ASSERT_TRUE(std::filesystem::is_regular_file(host));
+	ASSERT_TRUE(std::filesystem::is_regular_file(component));
+	ASSERT_EQ(64U, digest.size());
+
+	layout::WorkbenchContributionRegistry catalog;
+	CDlgFuncList dialog;
+	viewcontainer::CViewContainerPages pages(dialog);
+	ASSERT_TRUE(pages.Create(m_owner));
+	CSenpOwnerComposition composition(catalog, pages);
+	auto target = std::make_shared<CompositionTargetState>();
+	target->SetToolResponse(LR"({"body":[{"id":11,"number":7,"title":"Visible issue","state":"open","user":{"login":"octocat"},"labels":[{"name":"bug"}],"html_url":"https://github.com/o/r/issues/7"},{"id":12,"number":8,"title":"Filtered PR","state":"open","user":{"login":"hubot"},"labels":[],"html_url":"https://github.com/o/r/pull/8","pull_request":{}}],"nextPage":2})");
+	std::map<std::wstring, std::shared_ptr<tree::SenpTreeProvider>, std::less<>> providers;
+	layout::WorkbenchViewContainerDescriptor container{
+		"github-pull-requests", "GitHub", layout::EViewContainerLocation::Sidebar, 6,
+		"$(github)", false, { layout::EViewContainerLocation::Sidebar },
+	};
+	std::vector<SenpOwnerTreeContribution> trees;
+	trees.emplace_back(layout::WorkbenchViewDescriptor{
+		"pr:github", "github-pull-requests", "Pull Requests", 10, true, true, "senp.tree" },
+		std::vector<std::string>{});
+	trees.emplace_back(layout::WorkbenchViewDescriptor{
+		"issues:github", "github-pull-requests", "Issues", 20, true, true, "senp.tree" },
+		std::vector<std::string>{});
+	SenpOwnerPublicationOptions publication(
+		m_owner, { std::move(container) }, std::move(trees),
+		std::make_unique<CompositionTarget>(target), [](std::string_view) { return true; },
+		[&providers](viewcontainer::SenpViewBodyHost host,
+			std::shared_ptr<tree::SenpTreeProvider> provider, std::wstring) {
+			providers.emplace(std::wstring(provider->ViewId()), provider);
+			auto body = std::make_unique<CompositionBody>(std::move(host));
+			return body->Window() ? std::unique_ptr<viewcontainer::ISenpViewBody>(std::move(body)) : nullptr;
+		});
+	const auto now = Clock::now();
+	const auto accepted = composition.Activate({
+		.hostExecutable = host.native(), .modulePath = component.native(),
+		.moduleSha256 = std::wstring(digest.begin(), digest.end()),
+		.extensionId = L"sakura-github-pull-requests",
+		.context = { .workspaceRevision = 3, .accountGeneration = 4 },
+	}, std::wstring(digest.begin(), digest.end()), std::move(publication), now);
+	ASSERT_EQ(senp::OwnerChangeStatus::Accepted, accepted.status);
+	std::optional<senp::OwnerChangeResult> transition;
+	ASSERT_TRUE(Await(composition, [&] {
+		transition = composition.TakeTransition();
+		return transition.has_value();
+	}));
+	ASSERT_EQ(senp::OwnerChangeStatus::Activated, transition->status);
+	ASSERT_EQ(2U, providers.size());
+
+	providers.at(L"issues:github")->SetVisible(true, Clock::now());
+	ASSERT_TRUE(Await(composition, [&] {
+		return providers.at(L"issues:github")->Model().ItemCount() == 1;
+	}));
+	EXPECT_EQ(1, target->ToolReads());
+	EXPECT_EQ(L"issues:open:1", target->LastRead().readId);
+	const auto& model = providers.at(L"issues:github")->Model();
+	const auto issue = model.Node(L"issue:11");
+	ASSERT_TRUE(issue);
+	EXPECT_EQ(L"#7 Visible issue", issue->item.label);
+	const auto root = model.Node(L"");
+	ASSERT_TRUE(root);
+	EXPECT_EQ(L"issues:open:2", root->nextCursor);
+	EXPECT_TRUE(composition.Close());
+	EXPECT_EQ(1, target->Revokes());
 	pages.Close();
 }
 

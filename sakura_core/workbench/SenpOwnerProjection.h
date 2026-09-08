@@ -6,8 +6,23 @@
 
 #include <map>
 #include <memory>
+#include <optional>
+#include <utility>
 
 namespace workbench {
+
+class SenpToolReadTerminal final {
+public:
+	SenpToolReadTerminal(senp::effect::OperationContext context,
+		senp::effect::ToolCompleted completion)
+		: m_context(std::move(context)), m_completion(std::move(completion)) {}
+	[[nodiscard]] const senp::effect::OperationContext& Context() const noexcept { return m_context; }
+	[[nodiscard]] const senp::effect::ToolCompleted& Completion() const noexcept { return m_completion; }
+private:
+	friend class CSenpOwnerProjection;
+	senp::effect::OperationContext m_context;
+	senp::effect::ToolCompleted m_completion;
+};
 
 //! Native document/command boundary used by one owner projection. Begin is
 //! called only after a DocumentRequest was admitted. Every accepted Begin is
@@ -24,6 +39,12 @@ public:
 	[[nodiscard]] virtual bool CompleteCommand(const senp::effect::OperationContext& context,
 		senp::effect::CompleteCommand completion) noexcept = 0;
 	[[nodiscard]] virtual bool ReleaseResource(std::wstring_view handle) noexcept = 0;
+	//! Starts one broker-authorized read without waiting. The target owns its
+	//! cancellation and returns completions only from TakeToolRead on the UI thread.
+	[[nodiscard]] virtual bool StartToolRead(const senp::effect::OperationContext&,
+		senp::effect::StartToolRead) noexcept { return false; }
+	[[nodiscard]] virtual std::optional<SenpToolReadTerminal> TakeToolRead() noexcept { return {}; }
+	virtual void CancelToolReads(const senp::effect::OperationContext&) noexcept {}
 	virtual void Revoke() noexcept = 0;
 };
 
@@ -57,6 +78,9 @@ private:
 		senp::effect::Effect effect, senp::CSenpRuntimeSession::Time now) noexcept override;
 	[[nodiscard]] bool Failed(const senp::effect::OperationContext& context,
 		senp::InvocationStatus status, senp::CSenpRuntimeSession::Time now) noexcept override;
+	[[nodiscard]] ESenpEffectTargetStatus PreserveLineage(
+		const senp::effect::OperationContext& context, ESenpEffectTargetStatus status) const noexcept;
+	void Cancel(const senp::effect::OperationContext& context) noexcept;
 	void FinishClose() noexcept;
 
 	senp::ContributionOwnerIdentity m_owner;
@@ -66,6 +90,8 @@ private:
 	std::map<std::wstring, std::shared_ptr<tree::SenpTreeProvider>, std::less<>> m_trees;
 	std::vector<std::wstring> m_documentQueue;
 	std::map<std::wstring, std::pair<senp::effect::OperationContext, std::wstring>, std::less<>> m_documents;
+	std::map<std::wstring, senp::effect::OperationContext, std::less<>> m_toolReads;
+	std::vector<SenpToolReadTerminal> m_toolCompletions;
 	bool m_pumping{};
 	bool m_closeRequested{};
 	bool m_closed{};

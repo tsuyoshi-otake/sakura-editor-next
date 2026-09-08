@@ -93,6 +93,8 @@ def main() -> int:
             ROOT / "rust/senp", 600)
         run("build-sample", cargo + ["-p", "sakura-senp-sample", "--target", "wasm32-unknown-unknown"],
             ROOT / "rust/senp", 600)
+        run("build-github-pull-requests", cargo + ["-p", "sakura-github-pull-requests", "--target", "wasm32-unknown-unknown"],
+            ROOT / "rust/senp", 600)
         for name in ("sakura-senp-host.exe", "senp-host-fixture.exe"):
             shutil.copy2(target / "debug" / name, output / name)
         run("componentize", [str(target / "debug/sakura-senp-tool.exe"), "componentize",
@@ -102,6 +104,11 @@ def main() -> int:
             str(target / "wasm32-unknown-unknown/debug/sakura_senp_sample.wasm"), str(output / "sample-extension.wasm")], ROOT, 30)
         (output / "sample-extension.sha256").write_text(
             hashlib.sha256((output / "sample-extension.wasm").read_bytes()).hexdigest() + "\n", encoding="ascii")
+        run("componentize-github-pull-requests", [str(target / "debug/sakura-senp-tool.exe"), "componentize",
+            str(target / "wasm32-unknown-unknown/debug/sakura_github_pull_requests.wasm"),
+            str(output / "github-pull-requests-extension.wasm")], ROOT, 30)
+        (output / "github-pull-requests-extension.sha256").write_text(
+            hashlib.sha256((output / "github-pull-requests-extension.wasm").read_bytes()).hexdigest() + "\n", encoding="ascii")
         for scenario in ("echo", "blocked-read", "blocked-write", "partial", "oversized", "crash", "memory-limit"):
             (output / f"{scenario}.wasm").write_bytes(b"native pipe test scenario; not a Wasm component")
         if args.prepare_only:
@@ -125,7 +132,7 @@ def main() -> int:
             process_cases = [case for case in cases if case.get("classname") == "SenpRuntimeProcess"]
             owner_cases = [case for case in cases if case.get("classname") == "SenpViewLifecycle"]
             composition_cases = [case for case in cases if case.get("classname") == "SenpOwnerComposition"]
-            if len(process_cases) != 6 or len(owner_cases) < 15 or len(composition_cases) != 1 \
+            if len(process_cases) != 7 or len(owner_cases) < 15 or len(composition_cases) != 2 \
                     or any(case.find("skipped") is not None or case.find("failure") is not None for case in cases):
                 raise RuntimeError("required process cases are missing, skipped or failed")
             env["SENP_PROTOCOL_PEER_FILE"] = str(cpp_peer)

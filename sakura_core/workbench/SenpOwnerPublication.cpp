@@ -107,7 +107,7 @@ public:
 		return std::ranges::all_of(result.effects, [&](const auto& effect) {
 			return std::visit([&](const auto& value) {
 				using T = std::decay_t<decltype(value)>;
-				if constexpr (std::is_same_v<T, senp::effect::StartToolRead>) return false;
+				if constexpr (std::is_same_v<T, senp::effect::StartToolRead>) return !result.activation;
 				else if constexpr (std::is_same_v<T, senp::effect::PublishTreePage>
 					|| std::is_same_v<T, senp::effect::InvalidateTree>) return OwnsView(value.viewId);
 				else return !result.activation;

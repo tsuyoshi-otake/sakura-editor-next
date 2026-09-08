@@ -379,9 +379,15 @@ its terminal can be accepted. Rejection or revocation clears the runtime port
 before providers and document surfaces are released.
 
 Keep owner publication and physical ViewContainer/editor construction above this
-class. It does not create HWNDs, invent containers, poll a runtime, perform I/O,
-or interpret tool reads. Reentrant close from a native target is deferred until
-the active drain/admission callback reaches a terminal state.
+class. It does not create HWNDs, invent containers, or perform I/O. A
+`StartToolRead` effect retains its request lineage while the native target owns
+the nonblocking broker operation. The target exposes terminals only through
+`TakeToolRead` on a later UI-thread pump; it must cancel matching reads on
+request cancellation and own final cleanup on cancellation or revoke. The
+projection bounds outstanding reads to the runtime pending-operation limit and
+never accepts a broker callback into the coordinator. Reentrant close from a
+native target is deferred until the active drain/admission callback reaches a
+terminal state.
 
 `CSenpOwnerPublicationHub` is that UI-thread publication boundary. It prepares
 the owner projection, hidden grouped ViewContainer HWNDs, the immutable

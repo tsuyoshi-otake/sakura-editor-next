@@ -151,6 +151,13 @@ workspace rootとrepository rootを別々に正規化し、同じrepository内�
 forkの`origin`と親の`upstream`は異なるrepository候補のまま選択を要求し、名前による優先はしない。
 literal `github.com`以外のSSH hostはaliasとして未解決にし、workspace/remote削除とstale generationを別terminalにした。
 | E02 | 共通github-clientとIssue一覧 | E01/U06 | 新crate testsとIssue View実表示 | PR除外後のnext page保持、状態filter |
+
+E02は`github_client`を常駐runtimeではなく両built-inへ静的linkするRust libraryとして追加した。
+repository read completionは`body`と検証済み`nextPage`の小さなJSON envelopeで受け、未知GitHub fieldは許容する一方、
+重複member、必須fieldの型、HTTPS URL、件数・文字列・64 KiB総量を検査する。Issue側は固定`issues` endpoint、
+state/sort/direction/per_page/pageだけを要求し、`pull_request` markerを持つ項目を除外した後もnext cursorを保持する。
+実componentをnative runtimeから呼び、`StartToolRead`から`ToolCompleted`を経て`issues:github`の
+`PublishTreePage`になる往復を受入runnerで検証する。PR一覧と本文はE03/E04まで公開しない。
 | E03 | Issue本文・コメントの詳細 | E02/U04 | fixtureとopt-in本文表示 | 本文/コメントpage、空と失敗の区別 |
 | E04 | PR一覧・本文・base/head/merged状態 | E03 | fixtureとPR View実表示 | Issue番号との混線0、別forkの暗黙取得なし |
 | E05 | Actions Workflow/Run/Attemptの一覧 | E01/U06 | 新crate testsとActions View | WorkflowとRunを区別、attempt固定 |

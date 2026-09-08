@@ -103,6 +103,16 @@ public:
 	bool CompleteCommand(const senp::effect::OperationContext&,
 		senp::effect::CompleteCommand) noexcept override { return m_accept; }
 	bool ReleaseResource(std::wstring_view) noexcept override { return m_accept; }
+	bool StartToolRead(const senp::effect::OperationContext& context,
+		senp::effect::StartToolRead read) noexcept override
+	{
+		m_toolContext = context; m_readId = std::move(read.readId); ++m_toolReads; return m_accept;
+	}
+	void CancelToolReads(const senp::effect::OperationContext& context) noexcept override
+	{
+		if (context.ownerGeneration == m_toolContext.ownerGeneration
+			&& context.requestGeneration == m_toolContext.requestGeneration) ++m_toolCancels;
+	}
 	void Revoke() noexcept override { ++m_revokes; }
 	void Reject() noexcept { m_accept = false; }
 	void OnBegin(std::function<void()> callback) { m_onBegin = std::move(callback); }
@@ -110,6 +120,8 @@ public:
 	[[nodiscard]] int Publishes() const noexcept { return m_publishes; }
 	[[nodiscard]] int Failures() const noexcept { return m_failures; }
 	[[nodiscard]] int Revokes() const noexcept { return m_revokes; }
+	[[nodiscard]] int ToolReads() const noexcept { return m_toolReads; }
+	[[nodiscard]] int ToolCancels() const noexcept { return m_toolCancels; }
 	[[nodiscard]] const senp::effect::PublishDocument& Document() const noexcept { return m_document; }
 private:
 	bool m_accept{ true };
@@ -117,7 +129,10 @@ private:
 	int m_begins{}, m_publishes{}, m_failures{}, m_revokes{};
 	std::wstring m_resource;
 	senp::effect::OperationContext m_context;
+	senp::effect::OperationContext m_toolContext;
 	senp::effect::PublishDocument m_document;
+	std::wstring m_readId;
+	int m_toolReads{}, m_toolCancels{};
 };
 
 class Fixture final {
@@ -208,6 +223,26 @@ TEST(SenpOwnerProjection, ReentrantCloseFromDocumentBeginDefersRevocation)
 	EXPECT_EQ(ESenpOwnerProjectionStatus::Closed, projection.Pump(Clock::now()));
 	EXPECT_EQ(1, target.Begins()); EXPECT_EQ(1, target.Revokes());
 	EXPECT_FALSE(projection.IsCurrent());
+}
+
+TEST(SenpOwnerProjection, RefreshCancelsRetainedToolReadBeforeStartingItsSuccessor)
+{
+	Fixture fixture; const auto owner = fixture.Activate(); Target target;
+	CSenpOwnerProjection projection(fixture.Owners(), owner, target); fixture.Port().Bind(projection);
+	ASSERT_TRUE(projection.RegisterTree(L"sample.projects", {}));
+	auto tree = projection.Tree(L"sample.projects");
+	fixture.Process().Next({ senp::effect::StartToolRead{ L"read.1", L"github", L"repositoryRead", {} } });
+	tree->SetVisible(true, Clock::now()); fixture.Owners().Poll(Clock::now());
+	EXPECT_EQ(ESenpOwnerProjectionStatus::Applied, projection.Pump(Clock::now()));
+	EXPECT_EQ(1, target.ToolReads());
+
+	fixture.Process().Next({ senp::effect::StartToolRead{ L"read.2", L"github", L"repositoryRead", {} } });
+	tree->Refresh(Clock::now());
+	EXPECT_EQ(1, target.ToolCancels());
+	fixture.Owners().Poll(Clock::now());
+	EXPECT_EQ(ESenpOwnerProjectionStatus::Applied, projection.Pump(Clock::now()));
+	EXPECT_EQ(2, target.ToolReads());
+	projection.Close();
 }
 
 } // namespace

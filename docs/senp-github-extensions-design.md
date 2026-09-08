@@ -39,6 +39,12 @@ Wasm拡張に置く。GitHubへの通信とOAuth認証はGitHub CLI (`gh`) を�
 これは3つ目の常駐拡張ではなく、DTO変換・ページング・識別子・エラー解釈の共有コード。
 認証情報、実行キュー、生レスポンスのキャッシュは本体の共通サービスが所有する。
 
+E02でこの境界を`rust/senp/github_client`として実装した。初期のIssue page契約は
+`{"body":[...],"nextPage":2}`で、brokerがHTTP Linkから検証した次page番号だけを渡す。
+SDKは未知GitHub fieldを許容するが、重複JSON member、必須fieldの欠落・型不整合、
+件数・文字列・response総量の超過を拒否する。Wasm側はtoken、HTTP header、redirect URL、
+repositoryを選ぶ自由形式URLを受け取らない。
+
 最初の対象はWindows x64 MSBuild、github.com、既存のローカルFolder / Workspace。
 GitHub Enterpriseはhostを含む識別子で拡張可能にするが、初回対応を宣言しない。
 gh未導入・未対応バージョンでは理由を表示し、利用者が導入後に再検出できるようにする。

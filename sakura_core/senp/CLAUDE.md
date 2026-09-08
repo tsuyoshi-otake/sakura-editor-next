@@ -122,6 +122,14 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   lineage suppresses already-queued delivery and cancels every live invocation.
   Close this broker before destroying its borrowed owner service.
 
+- Built-in GitHub guests request only the fixed `github` / `repositoryRead`
+  tool operation. The shared Rust `github_client` crate converts bounded DTOs;
+  it is statically linked into each guest and owns no account, process, network,
+  or cache state. Repository completions carry a JSON `body` plus a broker-
+  validated `nextPage` number. Keep pagination even when extension-side filtering
+  removes every row, and reject duplicate JSON members and malformed required
+  fields before publishing a View page.
+
 - `README.md`, `senp.json`, `LICENSE`, and complete SHA-256 coverage are
   mandatory. `module/extension.wasm` is mandatory only when `runtime` is
   declared; declarative language/grammar and host-View packages contain no

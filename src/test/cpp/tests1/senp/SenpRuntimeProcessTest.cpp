@@ -104,6 +104,54 @@ TEST_F(SenpRuntimeProcess, RealWasmV2ActivationEventAndFuelTrapUseTheNativeSessi
 	VerifyExit(runtime);
 }
 
+TEST_F(SenpRuntimeProcess, RealGithubIssuesComponentPublishesTheFilteredPageAndNextCursor)
+{
+	auto launch = Launch();
+	launch.hostExecutable = (fixtures / L"sakura-senp-host.exe").native();
+	launch.modulePath = (fixtures / L"github-pull-requests-extension.wasm").native();
+	std::ifstream digest(fixtures / L"github-pull-requests-extension.sha256");
+	std::string hash;
+	digest >> hash;
+	ASSERT_EQ(hash.size(), 64U);
+	launch.moduleSha256.assign(hash.begin(), hash.end());
+	launch.extensionId = L"sakura-github-pull-requests";
+	CSenpEffectRuntime runtime(std::move(launch));
+	ASSERT_EQ(runtime.Start().status, AdmissionStatus::Accepted);
+	auto activation = WaitResult(runtime);
+	ASSERT_TRUE(activation);
+	ASSERT_EQ(activation->status, InvocationStatus::EffectsReady);
+	ASSERT_EQ(activation->effects.size(), 2U);
+	EXPECT_EQ(std::get<InvalidateTree>(activation->effects[0]).viewId, L"issues:github");
+
+	ASSERT_EQ(runtime.Submit(Context(), TreeRequest{ L"issues:github", L"", L"" }, Clock::now() + 2s).status,
+		AdmissionStatus::Accepted);
+	auto requested = WaitResult(runtime);
+	ASSERT_TRUE(requested);
+	ASSERT_EQ(requested->status, InvocationStatus::EffectsReady);
+	ASSERT_EQ(requested->effects.size(), 1U);
+	const auto& read = std::get<StartToolRead>(requested->effects[0]);
+	EXPECT_EQ(read.readId, L"issues:open:1");
+	EXPECT_EQ(read.toolId, L"github");
+	EXPECT_EQ(read.operation, L"repositoryRead");
+
+	const std::wstring response = LR"({"body":[{"id":11,"number":7,"title":"Visible issue","state":"open","user":{"login":"octocat"},"labels":[{"name":"bug"}],"html_url":"https://github.com/o/r/issues/7"},{"id":12,"number":8,"title":"Filtered PR","state":"open","user":{"login":"hubot"},"labels":[],"html_url":"https://github.com/o/r/pull/8","pull_request":{}}],"nextPage":2})";
+	ASSERT_EQ(runtime.Submit(Context(), ToolCompleted{ read.readId, CompletionStatus::Succeeded,
+		response, L"" }, Clock::now() + 2s).status, AdmissionStatus::Accepted);
+	auto displayed = WaitResult(runtime);
+	ASSERT_TRUE(displayed);
+	ASSERT_EQ(displayed->status, InvocationStatus::EffectsReady);
+	ASSERT_EQ(displayed->effects.size(), 1U);
+	const auto& page = std::get<PublishTreePage>(displayed->effects[0]);
+	EXPECT_EQ(page.viewId, L"issues:github");
+	EXPECT_EQ(page.items.size(), 1U);
+	EXPECT_EQ(page.items[0].id, L"issue:11");
+	EXPECT_EQ(page.items[0].label, L"#7 Visible issue");
+	EXPECT_EQ(page.nextCursor, L"issues:open:2");
+	EXPECT_EQ(page.status, PageStatus::Partial);
+	runtime.Stop(StopReason::Shutdown);
+	VerifyExit(runtime);
+}
+
 TEST_F(SenpRuntimeProcess, FaultyPeersCannotLeaveBlockedIoOrPendingInvocations)
 {
 	for (const auto scenario : { L"blocked-read", L"blocked-write", L"partial", L"oversized", L"crash", L"memory-limit" }) {

@@ -17,8 +17,11 @@ bool SameContext(const senp::effect::OperationContext& left,
 
 class CSenpOwnerProjection::RuntimePort final : public tree::ISenpTreeRuntime {
 public:
-	void Bind(CSenpEffectCoordinator& coordinator) noexcept { m_coordinator = &coordinator; }
-	void Clear() noexcept { m_coordinator = nullptr; }
+	void Bind(CSenpOwnerProjection& projection, CSenpEffectCoordinator& coordinator) noexcept
+	{
+		m_projection = &projection; m_coordinator = &coordinator;
+	}
+	void Clear() noexcept { m_projection = nullptr; m_coordinator = nullptr; }
 	[[nodiscard]] bool IsCurrent() const noexcept override { return m_coordinator && m_coordinator->IsCurrent(); }
 	[[nodiscard]] tree::SenpTreeAdmission Submit(senp::effect::TreeRequest request,
 		senp::CSenpRuntimeSession::Time deadline) noexcept override
@@ -27,13 +30,14 @@ public:
 	}
 	void Cancel(const senp::effect::OperationContext& context) noexcept override
 	{
-		if (m_coordinator) m_coordinator->Cancel(context);
+		if (m_projection) m_projection->Cancel(context);
 	}
 	[[nodiscard]] bool Execute(senp::effect::CommandInvoked command) noexcept override
 	{
 		return m_coordinator && m_coordinator->Execute(std::move(command));
 	}
 private:
+	CSenpOwnerProjection* m_projection{};
 	CSenpEffectCoordinator* m_coordinator{};
 };
 
@@ -43,7 +47,7 @@ CSenpOwnerProjection::CSenpOwnerProjection(senp::CSenpContributionOwners& owners
 	, m_coordinator(std::make_unique<CSenpEffectCoordinator>(owners, m_owner,
 		static_cast<ISenpEffectTarget&>(*this)))
 {
-	m_runtime->Bind(*m_coordinator);
+	m_runtime->Bind(*this, *m_coordinator);
 }
 
 CSenpOwnerProjection::~CSenpOwnerProjection() { Close(); }
@@ -121,6 +125,31 @@ ESenpOwnerProjectionStatus CSenpOwnerProjection::Pump(const senp::CSenpRuntimeSe
 		}
 		applied = true;
 	}
+	while (m_toolCompletions.size() < senp::CSenpRuntimeSession::kMaximumPending) {
+		auto terminal = m_target.TakeToolRead();
+		if (!terminal) break;
+		const auto found = m_toolReads.find(terminal->m_completion.readId);
+		if (found == m_toolReads.end() || !SameContext(found->second, terminal->m_context)) {
+			m_pumping = false;
+			FinishClose();
+			return ESenpOwnerProjectionStatus::Rejected;
+		}
+		m_toolCompletions.push_back(std::move(*terminal));
+	}
+	while (!m_toolCompletions.empty()) {
+		auto& terminal = m_toolCompletions.front();
+		const auto admission = m_coordinator->SubmitDerived(terminal.m_context,
+			terminal.m_completion, now + senp::CSenpRuntimeSession::kMaximumLifetime);
+		if (admission.Status() == senp::AdmissionStatus::Busy) break;
+		if (admission.Status() != senp::AdmissionStatus::Accepted) {
+			m_pumping = false;
+			FinishClose();
+			return ESenpOwnerProjectionStatus::Rejected;
+		}
+		m_toolReads.erase(terminal.m_completion.readId);
+		m_toolCompletions.erase(m_toolCompletions.begin());
+		applied = true;
+	}
 	for (const auto& [id, provider] : m_trees) provider->Pump(now);
 	} catch (...) {
 		m_pumping = false;
@@ -145,20 +174,21 @@ ESenpEffectTargetStatus CSenpOwnerProjection::Apply(const senp::effect::Operatio
 			const auto found = m_trees.find(value.viewId);
 			if (found == m_trees.end()) return ESenpEffectTargetStatus::Rejected;
 			const auto result = found->second->Apply(context, std::move(value), now);
-			return result == tree::TreeResult::Applied || result == tree::TreeResult::Unchanged
-				? ESenpEffectTargetStatus::Applied : ESenpEffectTargetStatus::Rejected;
+			return PreserveLineage(context,
+				result == tree::TreeResult::Applied || result == tree::TreeResult::Unchanged
+					? ESenpEffectTargetStatus::Applied : ESenpEffectTargetStatus::Rejected);
 		} else if constexpr (std::is_same_v<T, senp::effect::InvalidateTree>) {
 			const auto found = m_trees.find(value.viewId);
 			if (found == m_trees.end()) return ESenpEffectTargetStatus::Rejected;
 			found->second->Refresh(now);
-			return ESenpEffectTargetStatus::Applied;
+			return PreserveLineage(context, ESenpEffectTargetStatus::Applied);
 		} else if constexpr (std::is_same_v<T, senp::effect::OpenDocument>) {
 			if (value.resourceId.empty() || m_documentQueue.size() + m_documents.size() >= 16)
 				return ESenpEffectTargetStatus::Rejected;
 			const bool known = std::ranges::any_of(m_documentQueue, [&](const auto& item) { return item == value.resourceId; })
 				|| std::ranges::any_of(m_documents, [&](const auto& item) { return item.second.second == value.resourceId; });
 			if (!known) m_documentQueue.push_back(std::move(value.resourceId));
-			return ESenpEffectTargetStatus::Applied;
+			return PreserveLineage(context, ESenpEffectTargetStatus::Applied);
 		} else if constexpr (std::is_same_v<T, senp::effect::PublishDocument>) {
 			const auto found = m_documents.find(context.operationId);
 			if (found == m_documents.end() || !SameContext(found->second.first, context)
@@ -166,13 +196,24 @@ ESenpEffectTargetStatus CSenpOwnerProjection::Apply(const senp::effect::Operatio
 				return ESenpEffectTargetStatus::Rejected;
 			const bool accepted = m_target.PublishDocument(context, std::move(value));
 			m_documents.erase(found);
-			return accepted ? ESenpEffectTargetStatus::Applied : ESenpEffectTargetStatus::Rejected;
+			return PreserveLineage(context, accepted
+				? ESenpEffectTargetStatus::Applied : ESenpEffectTargetStatus::Rejected);
 		} else if constexpr (std::is_same_v<T, senp::effect::CompleteCommand>) {
-			return m_target.CompleteCommand(context, std::move(value))
-				? ESenpEffectTargetStatus::Applied : ESenpEffectTargetStatus::Rejected;
+			return PreserveLineage(context, m_target.CompleteCommand(context, std::move(value))
+				? ESenpEffectTargetStatus::Applied : ESenpEffectTargetStatus::Rejected);
 		} else if constexpr (std::is_same_v<T, senp::effect::ReleaseResource>) {
-			return m_target.ReleaseResource(value.handle)
-				? ESenpEffectTargetStatus::Applied : ESenpEffectTargetStatus::Rejected;
+			return PreserveLineage(context, m_target.ReleaseResource(value.handle)
+				? ESenpEffectTargetStatus::Applied : ESenpEffectTargetStatus::Rejected);
+		} else if constexpr (std::is_same_v<T, senp::effect::StartToolRead>) {
+			if (m_toolReads.size() >= senp::CSenpRuntimeSession::kMaximumPending
+				|| m_toolReads.contains(value.readId)) return ESenpEffectTargetStatus::Rejected;
+			const auto readId = value.readId;
+			if (!m_toolReads.emplace(readId, context).second) return ESenpEffectTargetStatus::Rejected;
+			if (!m_target.StartToolRead(context, std::move(value))) {
+				m_toolReads.erase(readId);
+				return ESenpEffectTargetStatus::Rejected;
+			}
+			return ESenpEffectTargetStatus::Retained;
 		} else {
 			return ESenpEffectTargetStatus::Rejected;
 		}
@@ -180,6 +221,33 @@ ESenpEffectTargetStatus CSenpOwnerProjection::Apply(const senp::effect::Operatio
 	} catch (...) {
 		return ESenpEffectTargetStatus::Rejected;
 	}
+}
+
+ESenpEffectTargetStatus CSenpOwnerProjection::PreserveLineage(
+	const senp::effect::OperationContext& context, const ESenpEffectTargetStatus status) const noexcept
+{
+	if (status != ESenpEffectTargetStatus::Applied) return status;
+	const bool pending = std::ranges::any_of(m_toolReads, [&](const auto& read) {
+		return read.second.ownerGeneration == context.ownerGeneration
+			&& read.second.requestGeneration == context.requestGeneration;
+	});
+	return pending ? ESenpEffectTargetStatus::Retained : status;
+}
+
+void CSenpOwnerProjection::Cancel(const senp::effect::OperationContext& context) noexcept
+{
+	if (m_closed) return;
+	m_target.CancelToolReads(context);
+	for (auto it = m_toolReads.begin(); it != m_toolReads.end();) {
+		if (it->second.ownerGeneration == context.ownerGeneration
+			&& it->second.requestGeneration == context.requestGeneration) it = m_toolReads.erase(it);
+		else ++it;
+	}
+	std::erase_if(m_toolCompletions, [&](const auto& terminal) {
+		return terminal.m_context.ownerGeneration == context.ownerGeneration
+			&& terminal.m_context.requestGeneration == context.requestGeneration;
+	});
+	m_coordinator->Cancel(context);
 }
 
 bool CSenpOwnerProjection::Failed(const senp::effect::OperationContext& context,
@@ -217,6 +285,8 @@ void CSenpOwnerProjection::FinishClose() noexcept
 	m_coordinator->Close();
 	m_documents.clear();
 	m_documentQueue.clear();
+	m_toolCompletions.clear();
+	m_toolReads.clear();
 	m_target.Revoke();
 }
 
