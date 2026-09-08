@@ -8,6 +8,7 @@ SPDX-License-Identifier: Zlib
 
 #include <cstdint>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -51,6 +52,22 @@ struct ViewContribution final {
 	[[nodiscard]] bool operator==(const ViewContribution&) const = default;
 };
 
+struct CommandContribution final {
+	std::wstring command;
+	std::wstring title;
+	[[nodiscard]] bool operator==(const CommandContribution&) const = default;
+};
+
+//! Package-authority metadata, not permission to execute or issue tool grants.
+struct RuntimeContribution final {
+	std::uint32_t schemaVersion{ 1 };
+	std::wstring abi;
+	std::vector<std::wstring> activationEvents;
+	std::vector<std::wstring> capabilities;
+	std::vector<CommandContribution> commands;
+	[[nodiscard]] bool operator==(const RuntimeContribution&) const = default;
+};
+
 enum class EManagementState : std::uint8_t {
 	Created,
 	Ready,
@@ -82,8 +99,14 @@ struct ExtensionDescriptor final {
 	std::vector<ViewContainerContribution> viewContainers;
 	std::vector<ViewContribution> views;
 	std::wstring trust;
+	RuntimeContribution runtime;
 	[[nodiscard]] bool operator==(const ExtensionDescriptor&) const = default;
 };
+
+//! Decode bounded output from the package authority. These functions perform
+//! no filesystem access and do not make unverified manifests installable.
+[[nodiscard]] std::optional<std::vector<ExtensionDescriptor>> DecodeInstalledExtensions(std::string_view json);
+[[nodiscard]] std::optional<ExtensionDescriptor> DecodeBuiltInExtension(std::string_view json);
 
 struct ManagementSnapshot final {
 	EManagementState state = EManagementState::Created;

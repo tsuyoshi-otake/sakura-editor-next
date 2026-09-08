@@ -10,6 +10,10 @@
   "activationEvents": ["onView:github-actions.current-branch", "onView:github-actions.workflows"],
   "capabilities": ["workbench.views.tree", "workbench.documents.readonly", "workbench.commands", "workspace.repositories.read", "tools.github.repository.read"],
   "contributes": {
+    "commands": [
+      { "command": "github-actions.workflow.run.open", "title": "Open Run Details" },
+      { "command": "sakura.githubActions.openJobDetails", "title": "Open Job Details" }
+    ],
     "viewsContainers": {
       "activitybar": [{ "id": "github-actions", "title": "GitHub Actions", "icon": "$(play-circle)", "order": 7 }]
     },

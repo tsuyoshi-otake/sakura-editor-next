@@ -19,6 +19,11 @@
     "tools.github.repository.read"
   ],
   "contributes": {
+    "commands": [
+      { "command": "github.openIssue", "title": "Open Issue" },
+      { "command": "github.openIssueComment", "title": "Open Comment" },
+      { "command": "github.openPullRequest", "title": "Open Pull Request" }
+    ],
     "viewsContainers": {
       "activitybar": [
         { "id": "github-pull-requests", "title": "GitHub", "icon": "$(github)", "order": 6 }

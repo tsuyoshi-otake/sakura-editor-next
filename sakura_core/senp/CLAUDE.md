@@ -353,3 +353,12 @@ GitHub pull-request list responses can omit the conversation comment count.
 Preserve that count as unknown and allow expansion; only an explicit zero is a
 leaf. Detail responses require a count. Draft is independent from open/closed
 state, and merged status comes from merged_at; a closed draft must remain closed.
+
+The package preflight now validates schema-2 Tree activation, capabilities and
+command declarations before the explicit UnsupportedRuntime gate. Its identifier
+grammar preserves upstream colon IDs without widening schema 1. Commands are
+bounded package declarations, not authorization supplied by a Tree item.
+Native package-authority decoding retains schema/ABI, activation, capability and
+command metadata in RuntimeContribution for later window composition. Decoding
+does not enable a package, publish an owner, or issue a tool grant. Both installed
+and available built-in records use the same runtime-metadata decoder.

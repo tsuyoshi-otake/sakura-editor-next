@@ -390,7 +390,44 @@ bool ParseWorkbenchViewContributions(const JsoncValue::Object& contributes,
 	return true;
 }
 
-std::optional<std::vector<ExtensionDescriptor>> ParseInstalled(std::string_view json)
+bool ParseRuntimeContribution(const JsoncValue::Object& manifest,
+	const JsoncValue::Object& contributes, RuntimeContribution& target)
+{
+	const auto* schema = IntegerMember(manifest, L"schemaVersion");
+	if (!schema || (*schema != 1 && *schema != 2)) return false;
+	target.schemaVersion = static_cast<std::uint32_t>(*schema);
+	if (!ParseStringArray(manifest, L"activationEvents", target.activationEvents)
+		|| !ParseStringArray(manifest, L"capabilities", target.capabilities)) return false;
+	const auto* runtime = ObjectMember(manifest, L"runtime");
+	const auto runtimeMember = manifest.find(L"runtime");
+	if (!runtime && runtimeMember != manifest.end()
+		&& !std::holds_alternative<std::monostate>(runtimeMember->second.Value())) return false;
+	if (runtime) {
+		const auto* abi = StringMember(*runtime, L"abi");
+		const auto* module = StringMember(*runtime, L"module");
+		if (!abi || !module || *module != L"module/extension.wasm"
+			|| *abi != (*schema == 2 ? L"sakura:senp/extension@2.0.0" : L"sakura:senp/extension@1.0.0")) return false;
+		target.abi = *abi;
+	} else if (*schema == 2 || !target.activationEvents.empty() || !target.capabilities.empty()) return false;
+	const auto* commands = ArrayMember(contributes, L"commands");
+	// Older v1 package tools predate this default-empty member.
+	if (!commands) return *schema == 1 && !contributes.contains(L"commands");
+	if (commands->size() > 128 || (*schema == 1 && !commands->empty())) return false;
+	for (const auto& entry : *commands) {
+		const auto* object = std::get_if<JsoncValue::Object>(&entry.Value());
+		if (!object || object->size() != 2) return false;
+		const auto* command = StringMember(*object, L"command");
+		const auto* title = StringMember(*object, L"title");
+		if (!command || command->empty() || command->size() > 160 || !title || title->empty() || title->size() > 160
+			|| std::ranges::any_of(target.commands, [&](const auto& prior) { return prior.command == *command; })) return false;
+		target.commands.push_back({ *command, *title });
+	}
+	return true;
+}
+
+} // namespace
+
+std::optional<std::vector<ExtensionDescriptor>> DecodeInstalledExtensions(std::string_view json)
 {
 	const auto parsed = platform::serialization::CJsoncDocument::Parse(json);
 	if (!parsed.Succeeded()) return std::nullopt;
@@ -447,12 +484,14 @@ std::optional<std::vector<ExtensionDescriptor>> ParseInstalled(std::string_view 
 		std::vector<GrammarContribution> grammars;
 		std::vector<ViewContainerContribution> viewContainers;
 		std::vector<ViewContribution> views;
+		RuntimeContribution runtime;
 		if (id == nullptr || displayName == nullptr || version == nullptr
 			|| publisher == nullptr || description == nullptr || archive->size() != 64
 			|| decorations == nullptr || contributes == nullptr
 			|| !ParseLanguageContributions(*contributes, languages)
 			|| !ParseGrammarContributions(*contributes, grammars)
-			|| !ParseWorkbenchViewContributions(*contributes, viewContainers, views)) return std::nullopt;
+			|| !ParseWorkbenchViewContributions(*contributes, viewContainers, views)
+			|| !ParseRuntimeContribution(*manifest, *contributes, runtime)) return std::nullopt;
 		result.push_back({
 			.id = *id,
 			.displayName = *displayName,
@@ -474,10 +513,13 @@ std::optional<std::vector<ExtensionDescriptor>> ParseInstalled(std::string_view 
 			.viewContainers = std::move(viewContainers),
 			.views = std::move(views),
 			.trust = *trust,
+			.runtime = std::move(runtime),
 		});
 	}
 	return result;
 }
+
+namespace {
 
 std::optional<std::vector<std::wstring>> ParseUninstalled(std::string_view json)
 {
@@ -496,7 +538,9 @@ std::optional<std::vector<std::wstring>> ParseUninstalled(std::string_view json)
 	return result;
 }
 
-std::optional<ExtensionDescriptor> ParseBuiltInCandidate(std::string_view json)
+} // namespace
+
+std::optional<ExtensionDescriptor> DecodeBuiltInExtension(std::string_view json)
 {
 	const auto parsed = platform::serialization::CJsoncDocument::Parse(json);
 	if (!parsed.Succeeded()) return std::nullopt;
@@ -525,11 +569,13 @@ std::optional<ExtensionDescriptor> ParseBuiltInCandidate(std::string_view json)
 	std::vector<GrammarContribution> grammars;
 	std::vector<ViewContainerContribution> viewContainers;
 	std::vector<ViewContribution> views;
+	RuntimeContribution runtime;
 	if (id == nullptr || displayName == nullptr || version == nullptr
 		|| publisher == nullptr || description == nullptr || decorations == nullptr
 		|| contributes == nullptr || !ParseLanguageContributions(*contributes, languages)
 		|| !ParseGrammarContributions(*contributes, grammars)
-		|| !ParseWorkbenchViewContributions(*contributes, viewContainers, views)) {
+		|| !ParseWorkbenchViewContributions(*contributes, viewContainers, views)
+		|| !ParseRuntimeContribution(*manifest, *contributes, runtime)) {
 		return std::nullopt;
 	}
 	return ExtensionDescriptor{
@@ -549,8 +595,11 @@ std::optional<ExtensionDescriptor> ParseBuiltInCandidate(std::string_view json)
 		.viewContainers = std::move(viewContainers),
 		.views = std::move(views),
 		.trust = L"builtin",
+		.runtime = std::move(runtime),
 	};
 }
+
+namespace {
 
 struct StagedBuiltInPackage final {
 	std::filesystem::path path;
@@ -679,7 +728,7 @@ ManagementOperationResult CWin32SenpManagementService::LoadBuiltInCatalog()
 			m_snapshot.diagnostic = ProcessDiagnostic(inspected, L"Built-in SENP package was rejected");
 			return { EManagementOperationStatus::Failed, m_snapshot };
 		}
-		auto extension = ParseBuiltInCandidate(inspected.output);
+		auto extension = DecodeBuiltInExtension(inspected.output);
 		if (!extension || extension->id != builtIn.id) {
 			std::lock_guard lock(m_mutex);
 			m_snapshot.state = EManagementState::Failed;
@@ -717,7 +766,7 @@ ManagementOperationResult CWin32SenpManagementService::ReloadInstalled()
 			L"Uninstalled SENP extension preferences could not be read");
 		return { EManagementOperationStatus::Failed, m_snapshot };
 	}
-	const auto parsed = ParseInstalled(listed.output);
+	const auto parsed = DecodeInstalledExtensions(listed.output);
 	const auto parsedUninstalled = ParseUninstalled(listedUninstalled.output);
 	if (!parsed || !parsedUninstalled) {
 		std::lock_guard lock(m_mutex);

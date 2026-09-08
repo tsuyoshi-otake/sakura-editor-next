@@ -13,6 +13,7 @@
   "activationEvents": ["onView:sample.projects", "onView:sample.states"],
   "capabilities": ["workbench.views.tree", "workbench.documents.readonly", "workbench.commands"],
   "contributes": {
+    "commands": [{ "command": "sample.openDetails", "title": "Open Sample Details" }],
     "viewsContainers": {
       "activitybar": [
         { "id": "sample.senp", "title": "SENP Sample", "icon": "$(beaker)", "order": 90 }

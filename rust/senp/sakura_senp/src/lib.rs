@@ -116,7 +116,16 @@ pub struct ViewContribution {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct CommandContribution {
+    pub command: String,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Contributions {
+    #[serde(default)]
+    pub commands: Vec<CommandContribution>,
     #[serde(default)]
     pub editor_decorations: Vec<EditorDecorationContribution>,
     #[serde(default)]
@@ -508,6 +517,22 @@ fn valid_workbench_identifier(value: &str) -> bool {
         && !value.ends_with(['.', '-', '_'])
 }
 
+fn valid_effect_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 160
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_' | b':'))
+        && value
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
+        && value
+            .as_bytes()
+            .last()
+            .is_some_and(u8::is_ascii_alphanumeric)
+}
+
 fn valid_theme_icon(value: &str) -> bool {
     value.len() >= 4
         && value.len() <= 132
@@ -550,12 +575,18 @@ fn unique_bounded_strings(values: &[String], maximum: usize) -> bool {
 }
 
 fn validate_manifest(manifest: &Manifest) -> Result<(), SenpError> {
-    if manifest.schema_version != FORMAT_VERSION {
+    if !matches!(manifest.schema_version, FORMAT_VERSION | 2) {
         return Err(SenpError::new(
             ErrorCode::UnsupportedSchema,
             manifest.schema_version.to_string(),
         ));
     }
+    let effect_runtime = manifest.schema_version == 2;
+    let valid_view_id = if effect_runtime {
+        valid_effect_identifier
+    } else {
+        valid_workbench_identifier
+    };
     if !valid_identifier(&manifest.id) || !valid_identifier(&manifest.publisher) {
         return Err(SenpError::new(
             ErrorCode::InvalidManifest,
@@ -574,7 +605,9 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), SenpError> {
         ));
     }
     if let Some(runtime) = &manifest.runtime {
-        if runtime.abi != ABI || runtime.module != MODULE_PATH {
+        if runtime.abi != (if effect_runtime { ABI_V2 } else { ABI })
+            || runtime.module != MODULE_PATH
+        {
             return Err(SenpError::new(ErrorCode::AbiMismatch, runtime.abi.clone()));
         }
     }
@@ -584,7 +617,8 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), SenpError> {
         .map(String::as_str)
         .collect();
     if activation_events.len() != manifest.activation_events.len()
-        || (manifest.runtime.is_some()
+        || (!effect_runtime
+            && manifest.runtime.is_some()
             && (activation_events.len() != 1 || !activation_events.contains("onStartupFinished")))
         || (manifest.runtime.is_none() && !activation_events.is_empty())
     {
@@ -595,10 +629,20 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), SenpError> {
     }
     let capabilities: BTreeSet<_> = manifest.capabilities.iter().map(String::as_str).collect();
     if capabilities.len() != manifest.capabilities.len()
-        || manifest
-            .capabilities
-            .iter()
-            .any(|value| !matches!(value.as_str(), "editor.visibleText" | "editor.decorations"))
+        || manifest.capabilities.iter().any(|value| {
+            if effect_runtime {
+                !matches!(
+                    value.as_str(),
+                    "workbench.views.tree"
+                        | "workbench.documents.readonly"
+                        | "workbench.commands"
+                        | "workspace.repositories.read"
+                        | "tools.github.repository.read"
+                )
+            } else {
+                !matches!(value.as_str(), "editor.visibleText" | "editor.decorations")
+            }
+        })
     {
         return Err(SenpError::new(
             ErrorCode::InvalidManifest,
@@ -727,7 +771,7 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), SenpError> {
     }
     let mut container_ids = BTreeSet::new();
     for container in containers {
-        if !valid_workbench_identifier(&container.id)
+        if !valid_view_id(&container.id)
             || !container_ids.insert(container.id.as_str())
             || container.title.trim().is_empty()
             || container.title.len() > 160
@@ -751,7 +795,7 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), SenpError> {
             ));
         }
         for view in views {
-            if !valid_workbench_identifier(&view.id)
+            if !valid_view_id(&view.id)
                 || !view_ids.insert(view.id.as_str())
                 || view.name.trim().is_empty()
                 || view.name.len() > 160
@@ -776,6 +820,14 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), SenpError> {
             "ViewContainer and View contributions must form a complete bounded hierarchy",
         ));
     }
+    if effect_runtime {
+        validate_effect_contributions(manifest, &view_ids, &capabilities)?;
+    } else if !manifest.contributes.commands.is_empty() {
+        return Err(SenpError::new(
+            ErrorCode::InvalidManifest,
+            "commands require schema 2",
+        ));
+    }
     if manifest.contributes.editor_decorations.is_empty()
         && manifest.contributes.languages.is_empty()
         && containers.is_empty()
@@ -784,6 +836,62 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), SenpError> {
             ErrorCode::InvalidManifest,
             "extension contributes no supported capability",
         ));
+    }
+    Ok(())
+}
+
+fn validate_effect_contributions(
+    manifest: &Manifest,
+    views: &BTreeSet<&str>,
+    capabilities: &BTreeSet<&str>,
+) -> Result<(), SenpError> {
+    let invalid = || {
+        SenpError::new(
+            ErrorCode::InvalidManifest,
+            "invalid event/effect contributions",
+        )
+    };
+    if manifest.runtime.is_none()
+        || !manifest.contributes.editor_decorations.is_empty()
+        || !manifest.contributes.languages.is_empty()
+        || !manifest.contributes.grammars.is_empty()
+        || views.is_empty()
+        || !capabilities.contains("workbench.views.tree")
+        || manifest
+            .contributes
+            .views
+            .values()
+            .flatten()
+            .any(|view| view.provider != "senp.tree")
+        || manifest.activation_events.is_empty()
+        || manifest.activation_events.len() > 128
+        || manifest.activation_events.iter().any(|event| {
+            !event
+                .strip_prefix("onView:")
+                .is_some_and(|view| views.contains(view))
+        })
+        || manifest.contributes.commands.len() > 128
+    {
+        return Err(invalid());
+    }
+    let mut commands = BTreeSet::new();
+    for command in &manifest.contributes.commands {
+        if !valid_effect_identifier(&command.command)
+            || !commands.insert(command.command.as_str())
+            || command.title.trim().is_empty()
+            || command.title.len() > 160
+            || command.title.chars().any(char::is_control)
+        {
+            return Err(invalid());
+        }
+    }
+    if (!commands.is_empty() && !capabilities.contains("workbench.commands"))
+        || (capabilities
+            .iter()
+            .any(|capability| capability.starts_with("tools.github."))
+            && !capabilities.contains("workspace.repositories.read"))
+    {
+        return Err(invalid());
     }
     Ok(())
 }
@@ -921,6 +1029,9 @@ fn parse_manifest(bytes: &[u8]) -> Result<Manifest, SenpError> {
             if runtime.abi != ABI_V2 || runtime.module != MODULE_PATH {
                 return Err(SenpError::new(ErrorCode::AbiMismatch, runtime.abi));
             }
+            let manifest: Manifest = serde_json::from_value(value)
+                .map_err(|error| SenpError::new(ErrorCode::InvalidManifest, error.to_string()))?;
+            validate_manifest(&manifest)?;
             // G01 recognizes the version pair without admitting contributions
             // that the event/effect host cannot execute yet. Never fall back to v1.
             Err(SenpError::new(
@@ -2431,7 +2542,7 @@ mod tests {
                     "id": "github-pull-requests", "title": "GitHub", "icon": "$(github)", "order": 6
                 }] },
                 "views": { "github-pull-requests": [{
-                    "id": "pr:github", "name": "Pull Requests", "type": "tree", "order": 10
+                    "id": "pr:github", "name": "Pull Requests", "provider": "senp.tree", "order": 10
                 }] }
             }
         }))
@@ -2475,6 +2586,102 @@ mod tests {
             parse_manifest(&versioned_manifest(1, ABI))
                 .unwrap_err()
                 .code,
+            ErrorCode::InvalidManifest
+        );
+    }
+
+    #[test]
+    fn effect_manifest_preflight_validates_real_packages_without_admitting_runtime() {
+        for source in [
+            include_bytes!("../../extensions/sakura_senp_sample/senp.json").as_slice(),
+            include_bytes!("../../extensions/sakura_github_pull_requests/senp.json").as_slice(),
+            include_bytes!("../../extensions/sakura_github_actions/senp.json").as_slice(),
+        ] {
+            let manifest: Manifest = strict_json(source).unwrap();
+            validate_manifest(&manifest).unwrap();
+            assert!(!manifest.contributes.commands.is_empty());
+            assert_eq!(
+                parse_manifest(source).unwrap_err().code,
+                ErrorCode::UnsupportedRuntime
+            );
+        }
+    }
+
+    #[test]
+    fn effect_manifest_rejects_undeclared_activation_commands_and_capabilities() {
+        let base: serde_json::Value = serde_json::from_slice(include_bytes!(
+            "../../extensions/sakura_senp_sample/senp.json"
+        ))
+        .unwrap();
+        let cases = [
+            ("/activationEvents", serde_json::json!(["onView:foreign"])),
+            (
+                "/activationEvents",
+                serde_json::json!(["onStartupFinished"]),
+            ),
+            ("/activationEvents", serde_json::json!([])),
+            (
+                "/activationEvents",
+                serde_json::json!(["onView:sample.projects", "onView:sample.projects"]),
+            ),
+            (
+                "/capabilities",
+                serde_json::json!(["workbench.views.tree", "unknown"]),
+            ),
+            ("/capabilities", serde_json::json!(["workbench.views.tree"])),
+            (
+                "/capabilities",
+                serde_json::json!([
+                    "workbench.views.tree",
+                    "workbench.commands",
+                    "tools.github.repository.read"
+                ]),
+            ),
+            (
+                "/contributes/commands",
+                serde_json::json!([{"command":"bad id", "title":"Open"}]),
+            ),
+            (
+                "/contributes/commands",
+                serde_json::json!([{"command":"sample.open", "title":" "}]),
+            ),
+            (
+                "/contributes/commands",
+                serde_json::json!([{"command":"sample.open", "title":"Line\nbreak"}]),
+            ),
+            (
+                "/contributes/commands",
+                serde_json::json!([{"command":"sample.open", "title":"Open"}, {"command":"sample.open", "title":"Duplicate"}]),
+            ),
+            (
+                "/contributes/commands",
+                serde_json::json!([{"command":"sample.open", "title":"Open", "script":"run"}]),
+            ),
+            (
+                "/contributes/views/sample.senp/0/provider",
+                serde_json::json!("legacy.provider"),
+            ),
+            ("/runtime", serde_json::Value::Null),
+        ];
+        for (pointer, replacement) in cases {
+            let mut value = base.clone();
+            *value.pointer_mut(pointer).unwrap() = replacement;
+            let bytes = serde_json::to_vec(&value).unwrap();
+            assert_eq!(
+                parse_manifest(&bytes).unwrap_err().code,
+                ErrorCode::InvalidManifest,
+                "{pointer}: {value}"
+            );
+        }
+        let mut manifest: Manifest = serde_json::from_value(base).unwrap();
+        manifest.contributes.commands = (0..129)
+            .map(|index| CommandContribution {
+                command: format!("sample.open{index}"),
+                title: "Open".into(),
+            })
+            .collect();
+        assert_eq!(
+            validate_manifest(&manifest).unwrap_err().code,
             ErrorCode::InvalidManifest
         );
     }

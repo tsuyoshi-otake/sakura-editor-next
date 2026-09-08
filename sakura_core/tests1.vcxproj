@@ -237,6 +237,7 @@
     <ClCompile Include="..\src\test\cpp\tests1\senp\SenpViewLifecycleTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\senp\SenpOwnerRequestsTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\senp\SenpLanguageServiceTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\senp\SenpManagementCodecTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkbenchPanelHostTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\workbench\ViewContainerPagePoolTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\workbench\ViewContainerPageRegistryTransactionTest.cpp" />

@@ -54,6 +54,10 @@ U06のGitHub非依存sample guestは実v2 Componentとして2 View、page/empty/
 preflight、poll後queue drain、exact owner revokeまで実装した。window-local compositionはowner Pollとprojection
 Pumpを順序付け、実sampleで2 Viewのroot、command、4 sectionのreadonly documentまで一往復する。
 CEditWndのtimer/lifecycle、package-derived descriptor、状態永続化の結合は引き続きU06に残る。
+package-derived descriptorの前提として、v2 manifestのView起動条件・能力・commandを検証し、
+管理snapshotにschema/ABIと各宣言を保持する境界を追加した。実3拡張のmanifestと旧v1を含む
+Rust 18件、native decoderと管理情報の既存利用側69件が合格。v2のpackage公開は引き続き
+UnsupportedRuntimeで停止し、実windowの起動・終了接続を完了するまで受理を有効化しない。
 T01はGit固有policyから有界process runnerを分離し、T02はControl-owned grantをIPC接続、profile、
 package digest、owner/workspace/account generation、capability、management revision、有効期限へ束縛した。
 T03はPATHの相対/CWD候補を拒否して絶対`gh.exe`だけを検出し、実測した2.93.0を厳密に選択する。
