@@ -1,0 +1,453 @@
+//! Attempt-scoped job and step trees and read-only summaries.
+
+use super::*;
+use sakura_senp_github_client::actions::jobs::{parse_job, parse_jobs, Job, Step};
+
+// Upstream has a log command, but no native read-only job-summary command.
+pub const OPEN_JOB: &str = "sakura.githubActions.openJobDetails";
+
+#[derive(Clone, Copy)]
+pub struct Identity {
+    run: u64,
+    attempt: u32,
+    job: u64,
+}
+
+impl Identity {
+    fn matches(self, job: &Job) -> bool {
+        (self.run, self.attempt, self.job) == (job.run_id, job.run_attempt, job.id)
+    }
+    fn item(self) -> String {
+        format!("job:{}:{}:{}", self.run, self.attempt, self.job)
+    }
+    fn resource(self) -> String {
+        format!(
+            "github-actions-job:{}:{}:{}",
+            self.run, self.attempt, self.job
+        )
+    }
+    fn parts(run: &str, attempt: &str, job: &str) -> Option<Self> {
+        Some(Self {
+            run: positive(run)?,
+            attempt: positive32(attempt)?,
+            job: positive(job)?,
+        })
+    }
+}
+
+pub fn document_identity(resource: &str) -> Option<Identity> {
+    let parts: Vec<_> = resource.split(':').collect();
+    match parts.as_slice() {
+        ["github-actions-job", run, attempt, job] => Identity::parts(run, attempt, job),
+        _ => None,
+    }
+}
+
+pub fn document_request(identity: Identity) -> Effect {
+    read(
+        format!(
+            "jobdetail:{}:{}:{}",
+            identity.run, identity.attempt, identity.job
+        ),
+        format!("actions/jobs/{}", identity.job),
+        Vec::new(),
+    )
+}
+
+pub fn tree_request(request: &TreeRequest) -> Option<Effect> {
+    let code = view_code(&request.view_id)?;
+    let parts: Vec<_> = request.parent_id.split(':').collect();
+    let fail = || {
+        failed_page(
+            &request.view_id,
+            &request.parent_id,
+            1,
+            "Invalid job or step page identity",
+        )
+    };
+    match parts.as_slice() {
+        ["attempt", run, attempt] => {
+            let (Some(run), Some(attempt), Some(page)) = (
+                positive(run),
+                positive32(attempt),
+                page_cursor(&request.cursor),
+            ) else {
+                return Some(fail());
+            };
+            Some(read(
+                format!("jobs:{code}:{run}:{attempt}:{page}"),
+                format!("actions/runs/{run}/attempts/{attempt}/jobs"),
+                paging(page),
+            ))
+        }
+        ["job", run, attempt, job] => {
+            let (Some(identity), Some(page)) = (
+                Identity::parts(run, attempt, job),
+                page_cursor(&request.cursor),
+            ) else {
+                return Some(fail());
+            };
+            Some(read(
+                format!(
+                    "steps:{code}:{}:{}:{}:{page}",
+                    identity.run, identity.attempt, identity.job
+                ),
+                format!("actions/jobs/{}", identity.job),
+                Vec::new(),
+            ))
+        }
+        _ => None,
+    }
+}
+
+pub fn complete(completion: &ToolCompleted) -> Option<Effect> {
+    let parts: Vec<_> = completion.read_id.split(':').collect();
+    match parts.as_slice() {
+        ["jobdetail", run, attempt, job] => {
+            let Some(identity) = Identity::parts(run, attempt, job) else {
+                return Some(failed_page(WORKFLOWS, "", 1, "Invalid job completion"));
+            };
+            Some(if completion.status != CompletionStatus::Succeeded {
+                failed_document(identity.resource(), completion_message(completion))
+            } else {
+                match parse_job(&completion.data) {
+                    Ok(job) if identity.matches(&job) => job_document(identity, job),
+                    Ok(_) => failed_document(identity.resource(), "Mismatched job, run or attempt"),
+                    Err(error) => failed_document(identity.resource(), error.to_string()),
+                }
+            })
+        }
+        ["jobs", code, run, attempt, page] => {
+            let (Some(view), Some(run), Some(attempt), Some(page)) = (
+                code_view(code),
+                positive(run),
+                positive32(attempt),
+                positive32(page),
+            ) else {
+                return Some(failed_page(WORKFLOWS, "", 1, "Invalid job page completion"));
+            };
+            let parent = format!("attempt:{run}:{attempt}");
+            let fail = |message: String| failed_page(view, &parent, u64::from(page), message);
+            Some(if completion.status != CompletionStatus::Succeeded {
+                fail(completion_message(completion).into())
+            } else {
+                match parse_jobs(&completion.data) {
+                    Ok(result)
+                        if forward_page(result.next_page, page)
+                            && result
+                                .items
+                                .iter()
+                                .all(|job| job.run_id == run && job.run_attempt == attempt) =>
+                    {
+                        page_effect(
+                            view,
+                            &parent,
+                            u64::from(page),
+                            result.items.into_iter().map(job_item).collect(),
+                            next_cursor(result.next_page),
+                            String::new(),
+                        )
+                    }
+                    Ok(_) => fail("Mismatched job run, attempt or page".into()),
+                    Err(error) => fail(error.to_string()),
+                }
+            })
+        }
+        ["steps", code, run, attempt, job, page] => {
+            let (Some(view), Some(identity), Some(page)) = (
+                code_view(code),
+                Identity::parts(run, attempt, job),
+                positive32(page),
+            ) else {
+                return Some(failed_page(
+                    WORKFLOWS,
+                    "",
+                    1,
+                    "Invalid step page completion",
+                ));
+            };
+            let fail =
+                |message: String| failed_page(view, &identity.item(), u64::from(page), message);
+            Some(if completion.status != CompletionStatus::Succeeded {
+                fail(completion_message(completion).into())
+            } else {
+                match parse_job(&completion.data) {
+                    Ok(job) if identity.matches(&job) => step_page(view, identity, job.steps, page),
+                    Ok(_) => fail("Mismatched step job, run or attempt".into()),
+                    Err(error) => fail(error.to_string()),
+                }
+            })
+        }
+        _ => None,
+    }
+}
+
+fn job_item(job: Job) -> TreeItem {
+    let identity = Identity {
+        run: job.run_id,
+        attempt: job.run_attempt,
+        job: job.id,
+    };
+    let summary = job.summary();
+    TreeItem {
+        id: identity.item(),
+        label: job.name,
+        description: summary,
+        tooltip: job.html_url,
+        icon: "gear".into(),
+        collapsible_state: CollapsibleState::Collapsed,
+        command_id: OPEN_JOB.into(),
+        arguments: vec![identity.resource()],
+    }
+}
+
+fn step_page(view: &str, identity: Identity, steps: Vec<Step>, page: u32) -> Effect {
+    let Some(offset) = page.checked_sub(1).and_then(|p| p.checked_mul(PAGE_SIZE)) else {
+        return failed_page(
+            view,
+            &identity.item(),
+            u64::from(page),
+            "Invalid step page offset",
+        );
+    };
+    if offset as usize >= steps.len() && page != 1 {
+        return failed_page(
+            view,
+            &identity.item(),
+            u64::from(page),
+            "Step page is outside this job",
+        );
+    }
+    let next = if (offset as usize + PAGE_SIZE as usize) < steps.len() {
+        Some(page + 1)
+    } else {
+        None
+    };
+    let items = steps
+        .into_iter()
+        .skip(offset as usize)
+        .take(PAGE_SIZE as usize)
+        .map(|step| {
+            let summary = step.summary();
+            TreeItem {
+                id: format!(
+                    "step:{}:{}:{}:{}",
+                    identity.run, identity.attempt, identity.job, step.number
+                ),
+                label: format!("{} {}", step.number, step.name),
+                description: summary,
+                tooltip: String::new(),
+                icon: "circle-outline".into(),
+                collapsible_state: CollapsibleState::Leaf,
+                command_id: OPEN_JOB.into(),
+                arguments: vec![identity.resource()],
+            }
+        })
+        .collect();
+    page_effect(
+        view,
+        &identity.item(),
+        u64::from(page),
+        items,
+        next_cursor(next),
+        String::new(),
+    )
+}
+
+fn optional(value: Option<String>, absent: &str) -> String {
+    value.unwrap_or_else(|| absent.into())
+}
+
+fn job_document(identity: Identity, job: Job) -> Effect {
+    let fields = vec![
+        field("Job ID", job.id.to_string()),
+        field("Run ID", job.run_id.to_string()),
+        field("Attempt", job.run_attempt.to_string()),
+        field("State", job.summary()),
+        field("Started", optional(job.started_at, "not started")),
+        field("Completed", optional(job.completed_at, "not completed")),
+        field("Runner", optional(job.runner_name, "unassigned")),
+        field(
+            "Runner ID",
+            job.runner_id
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "unassigned".into()),
+        ),
+        field(
+            "Runner group",
+            optional(job.runner_group_name, "unassigned"),
+        ),
+        field(
+            "Runner group ID",
+            job.runner_group_id
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "unassigned".into()),
+        ),
+        field("Labels", job.labels.join(", ")),
+        field("Commit", job.head_sha),
+        field("URL", job.html_url),
+    ];
+    let steps = if job.steps.is_empty() {
+        DocumentSection::Markdown(MarkdownSection {
+            text: "No steps were reported for this job.".into(),
+        })
+    } else {
+        DocumentSection::Table(TableSection {
+            columns: vec![
+                "Step".into(),
+                "Name".into(),
+                "State".into(),
+                "Started".into(),
+                "Completed".into(),
+            ],
+            rows: job
+                .steps
+                .into_iter()
+                .map(|step| {
+                    let summary = step.summary();
+                    TableRow {
+                        cells: vec![
+                            step.number.to_string(),
+                            step.name,
+                            summary,
+                            optional(step.started_at, "not started"),
+                            optional(step.completed_at, "not completed"),
+                        ],
+                    }
+                })
+                .collect(),
+        })
+    };
+    Effect::PublishDocument(PublishDocument {
+        resource_id: identity.resource(),
+        title: job.name,
+        revision: 1,
+        sections: vec![DocumentSection::Metadata(MetadataSection { fields }), steps],
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const JOB: &str = r#"{"id":71,"run_id":51,"run_attempt":2,"name":"Build (Windows)","status":"in_progress","conclusion":null,"started_at":null,"completed_at":null,"html_url":"https://github.com/o/r/actions/runs/51/job/71","head_sha":"abcd","runner_id":null,"runner_name":null,"runner_group_id":null,"runner_group_name":null,"labels":[],"steps":[{"number":7,"name":"Compile","status":"queued","conclusion":null,"started_at":null,"completed_at":null}]}"#;
+
+    fn completion(id: &str, data: String) -> ToolCompleted {
+        ToolCompleted {
+            read_id: id.into(),
+            status: CompletionStatus::Succeeded,
+            data,
+            message: String::new(),
+        }
+    }
+    fn request(parent: &str, cursor: &str) -> TreeRequest {
+        TreeRequest {
+            view_id: WORKFLOWS.into(),
+            parent_id: parent.into(),
+            cursor: cursor.into(),
+        }
+    }
+    fn page(effect: &Effect) -> &PublishTreePage {
+        let Effect::PublishTreePage(page) = effect else {
+            panic!("expected tree terminal")
+        };
+        page
+    }
+
+    #[test]
+    fn jobs_are_scoped_to_the_selected_attempt_and_keep_matrix_ids_distinct() {
+        let Effect::StartToolRead(read) = tree_request(&request("attempt:51:2", "page:2")).unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(read.read_id, "jobs:w:51:2:2");
+        assert_eq!(read.arguments[0].value, "actions/runs/51/attempts/2/jobs");
+        let second = JOB.replace("\"id\":71", "\"id\":72");
+        let data =
+            format!(r#"{{"body":{{"total_count":2,"jobs":[{JOB},{second}]}},"nextPage":2}}"#);
+        let effect = complete(&completion("jobs:w:51:2:1", data)).unwrap();
+        let page = page(&effect);
+        assert_eq!(page.parent_id, "attempt:51:2");
+        assert_eq!(page.items[0].label, page.items[1].label);
+        assert_ne!(page.items[0].id, page.items[1].id);
+        assert_eq!(page.next_cursor, "page:2");
+        assert_eq!(page.items[0].arguments, ["github-actions-job:51:2:71"]);
+    }
+
+    #[test]
+    fn job_details_and_steps_preserve_null_state_and_reject_other_attempts() {
+        let resource = "github-actions-job:51:2:71";
+        let identity = document_identity(resource).unwrap();
+        let Effect::StartToolRead(read) = document_request(identity) else {
+            panic!()
+        };
+        assert_eq!(read.arguments[0].value, "actions/jobs/71");
+        let effect = complete(&completion("jobdetail:51:2:71", JOB.into())).unwrap();
+        let Effect::PublishDocument(document) = effect else {
+            panic!()
+        };
+        assert_eq!(document.resource_id, resource);
+        let DocumentSection::Table(table) = &document.sections[1] else {
+            panic!()
+        };
+        assert_eq!(
+            table.rows[0].cells,
+            ["7", "Compile", "queued", "not started", "not completed"]
+        );
+        let effect = complete(&completion("steps:w:51:2:71:1", JOB.into())).unwrap();
+        assert_eq!(page(&effect).items[0].id, "step:51:2:71:7");
+        assert_eq!(page(&effect).items[0].description, "queued");
+        let effect = complete(&completion("jobdetail:51:1:71", JOB.into())).unwrap();
+        assert!(
+            matches!(effect,Effect::PublishDocument(doc) if doc.title=="GitHub Actions read failed")
+        );
+    }
+
+    #[test]
+    fn empty_failed_and_stale_job_results_have_distinct_terminals() {
+        let empty = r#"{"body":{"total_count":0,"jobs":[]}}"#.to_string();
+        assert_eq!(
+            page(&complete(&completion("jobs:w:51:2:1", empty)).unwrap()).status,
+            PageStatus::Empty
+        );
+        let data = format!(r#"{{"body":{{"total_count":1,"jobs":[{JOB}]}}}}"#);
+        assert_eq!(
+            page(&complete(&completion("jobs:w:51:1:1", data)).unwrap()).status,
+            PageStatus::Failed
+        );
+        for id in ["jobs:w:51:2:1", "steps:w:51:2:71:1"] {
+            let mut result = completion(id, String::new());
+            result.status = CompletionStatus::TimedOut;
+            assert_eq!(page(&complete(&result).unwrap()).status, PageStatus::Failed);
+        }
+        assert_eq!(
+            page(&tree_request(&request("attempt:51:0", "")).unwrap()).status,
+            PageStatus::Failed
+        );
+        assert!(document_identity("github-actions-job:51:2:../72").is_none());
+        let job = parse_job(&JOB.replace("in_progress", "new_state")).unwrap();
+        assert_eq!(job_item(job).description, "unknown (new_state)");
+    }
+
+    #[test]
+    fn step_pages_are_bounded_and_use_numbers_instead_of_names() {
+        let identity = document_identity("github-actions-job:51:2:71").unwrap();
+        let step = parse_job(JOB).unwrap().steps.remove(0);
+        let steps: Vec<_> = (1..=21)
+            .map(|number| Step {
+                number,
+                ..step.clone()
+            })
+            .collect();
+        let effect = step_page(WORKFLOWS, identity, steps.clone(), 1);
+        assert_eq!(page(&effect).items.len(), 20);
+        assert_eq!(page(&effect).next_cursor, "page:2");
+        let effect = step_page(WORKFLOWS, identity, steps.clone(), 2);
+        assert_eq!(page(&effect).items.len(), 1);
+        assert_eq!(page(&effect).items[0].id, "step:51:2:71:21");
+        assert_eq!(
+            page(&step_page(WORKFLOWS, identity, steps, u32::MAX)).status,
+            PageStatus::Failed
+        );
+    }
+}

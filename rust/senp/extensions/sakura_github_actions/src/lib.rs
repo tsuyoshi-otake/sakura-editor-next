@@ -3,6 +3,8 @@
 use sakura_senp_github_client::actions::{parse_run, parse_runs, parse_workflows, Run, Workflow};
 use std::cell::RefCell;
 
+mod jobs;
+
 wit_bindgen::generate!({ path: "../../wit/v2/senp-extension.wit", world: "extension" });
 use exports::sakura::senp::event_effects::*;
 
@@ -74,9 +76,14 @@ impl State {
                 vec![self.tree_request(request)]
             }
             Event::ToolCompleted(read) => vec![self.complete(read)],
-            Event::CommandInvoked(command) if command.command_id == OPEN_RUN => {
+            Event::CommandInvoked(command)
+                if command.command_id == OPEN_RUN || command.command_id == jobs::OPEN_JOB =>
+            {
                 if let [resource] = command.arguments.as_slice() {
-                    if document_identity(resource).is_some() {
+                    if (command.command_id == OPEN_RUN && document_identity(resource).is_some())
+                        || (command.command_id == jobs::OPEN_JOB
+                            && jobs::document_identity(resource).is_some())
+                    {
                         return vec![
                             Effect::OpenDocument(OpenDocument {
                                 resource_id: resource.clone(),
@@ -92,6 +99,13 @@ impl State {
                     status: CompletionStatus::Failed,
                     message: "Invalid workflow run identity".into(),
                 })]
+            }
+            Event::DocumentRequest(request)
+                if jobs::document_identity(&request.resource_id).is_some() =>
+            {
+                vec![jobs::document_request(
+                    jobs::document_identity(&request.resource_id).unwrap(),
+                )]
             }
             Event::DocumentRequest(request) => match document_identity(&request.resource_id) {
                 Some((run, attempt)) => vec![read(
@@ -109,6 +123,9 @@ impl State {
     }
 
     fn tree_request(&self, request: TreeRequest) -> Effect {
+        if let Some(effect) = jobs::tree_request(&request) {
+            return effect;
+        }
         let view = request.view_id.as_str();
         let parent = request.parent_id.as_str();
         let code = view_code(view).unwrap();
@@ -178,6 +195,9 @@ impl State {
     }
 
     fn complete(&self, completion: ToolCompleted) -> Effect {
+        if let Some(effect) = jobs::complete(&completion) {
+            return effect;
+        }
         let parts: Vec<_> = completion.read_id.split(':').collect();
         match parts.as_slice() {
             ["detail", run, attempt] => {
@@ -493,7 +513,7 @@ fn attempt_page(view: &str, run: u64, total: u32, page: u32) -> Effect {
                 description: "Select to read this attempt".into(),
                 tooltip: format!("Run {run}, attempt {attempt}"),
                 icon: "history".into(),
-                collapsible_state: CollapsibleState::Leaf,
+                collapsible_state: CollapsibleState::Collapsed,
                 command_id: OPEN_RUN.into(),
                 arguments: vec![document_id(run, attempt)],
             }

@@ -1,5 +1,7 @@
 //! Workflow and run identities and bounded Actions REST responses.
 
+pub mod jobs;
+
 use super::{bounded_text, strict_json, ParseError, MAXIMUM_PAGE_ITEMS, MAXIMUM_RESPONSE_BYTES};
 use serde::Deserialize;
 use std::collections::BTreeSet;
@@ -34,17 +36,21 @@ pub struct Run {
 
 impl Run {
     pub fn summary(&self) -> String {
-        let state = match self.status.as_str() {
-            "queued" | "in_progress" | "completed" | "waiting" | "requested" | "pending" => {
-                self.status.clone()
-            }
-            _ => format!("unknown ({})", self.status),
-        };
-        match self.conclusion.as_deref() {
-            Some(value) => format!("{state} / {value}"),
-            None if self.status == "completed" => format!("{state} / conclusion unavailable"),
-            None => state,
+        state_summary(&self.status, self.conclusion.as_deref())
+    }
+}
+
+pub fn state_summary(status: &str, conclusion: Option<&str>) -> String {
+    let state = match status {
+        "queued" | "in_progress" | "completed" | "waiting" | "requested" | "pending" => {
+            status.to_owned()
         }
+        _ => format!("unknown ({status})"),
+    };
+    match conclusion {
+        Some(value) => format!("{state} / {value}"),
+        None if status == "completed" => format!("{state} / conclusion unavailable"),
+        None => state,
     }
 }
 

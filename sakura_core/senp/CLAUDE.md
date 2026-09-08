@@ -314,6 +314,16 @@ attempt document here, as requested for this platform's in-app Actions reading
 workflow; upstream opens the browser. The command and View identifiers remain
 upstream identifiers. Production workspace events and packaging are R01 gates.
 
+E06 job and step projection uses the database Job ID and each Step's job-scoped
+number. A matrix display name is never an identity. The selected Run/Attempt
+pair is embedded in the job resource and checked on every list/detail/step
+completion. Null runner assignments, absent timestamps, empty steps, unknown
+states and absent conclusions remain distinct from success. GitHub can return
+skipped jobs without runners or steps; do not reject those valid responses.
+The platform-only `sakura.githubActions.openJobDetails` command opens the native
+summary and Step table; upstream has no corresponding native summary command,
+and the upstream log command must retain its separate log meaning.
+
 Append accepts the next byte offset and at most 64 KiB. Fixed 64 KiB pages bound
 one resource to 32 MiB and the Control store to 64 MiB of allocated payload pages,
 including unused tails, with at most 64 resource slots. Pages and their index

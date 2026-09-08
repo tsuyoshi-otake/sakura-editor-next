@@ -428,6 +428,9 @@ TEST_F(SenpOwnerComposition, RealGithubActionsReachNativeProviders)
 	target->EnqueueToolResponse(LR"({"body":{"total_count":1,"workflow_runs":[{"id":51,"workflow_id":31,"run_number":8,"run_attempt":2,"name":"Build","display_title":"Build changes","event":"push","head_branch":"main","head_sha":"abcd","status":"in_progress","conclusion":null,"created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-02T00:00:00Z","run_started_at":null,"html_url":"https://github.com/o/r/actions/runs/51"}]}})");
 	target->EnqueueToolResponse(LR"({"id":51,"workflow_id":31,"run_number":8,"run_attempt":2,"name":"Build","display_title":"Build changes","event":"push","head_branch":"main","head_sha":"abcd","status":"in_progress","conclusion":null,"created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-02T00:00:00Z","run_started_at":null,"html_url":"https://github.com/o/r/actions/runs/51"})");
 	target->EnqueueToolResponse(LR"({"id":51,"workflow_id":31,"run_number":8,"run_attempt":1,"name":"Build","display_title":"Build changes","event":"push","head_branch":"main","head_sha":"abcd","status":"in_progress","conclusion":null,"created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-02T00:00:00Z","run_started_at":null,"html_url":"https://github.com/o/r/actions/runs/51"})");
+	target->EnqueueToolResponse(LR"json({"body":{"total_count":1,"jobs":[{"id":71,"run_id":51,"run_attempt":1,"name":"Build (Windows)","status":"in_progress","conclusion":null,"started_at":null,"completed_at":null,"html_url":"https://github.com/o/r/actions/runs/51/job/71","head_sha":"abcd","runner_id":null,"runner_name":null,"runner_group_id":null,"runner_group_name":null,"labels":[],"steps":[{"number":7,"name":"Compile","status":"queued","conclusion":null,"started_at":null,"completed_at":null}]}]}})json");
+	target->EnqueueToolResponse(LR"json({"id":71,"run_id":51,"run_attempt":1,"name":"Build (Windows)","status":"in_progress","conclusion":null,"started_at":null,"completed_at":null,"html_url":"https://github.com/o/r/actions/runs/51/job/71","head_sha":"abcd","runner_id":null,"runner_name":null,"runner_group_id":null,"runner_group_name":null,"labels":[],"steps":[{"number":7,"name":"Compile","status":"queued","conclusion":null,"started_at":null,"completed_at":null}]})json");
+	target->EnqueueToolResponse(LR"json({"id":71,"run_id":51,"run_attempt":1,"name":"Build (Windows)","status":"in_progress","conclusion":null,"started_at":null,"completed_at":null,"html_url":"https://github.com/o/r/actions/runs/51/job/71","head_sha":"abcd","runner_id":null,"runner_name":null,"runner_group_id":null,"runner_group_name":null,"labels":[],"steps":[{"number":7,"name":"Compile","status":"queued","conclusion":null,"started_at":null,"completed_at":null}]})json");
 	std::map<std::wstring, std::shared_ptr<tree::SenpTreeProvider>, std::less<>> providers;
 	layout::WorkbenchViewContainerDescriptor container{
 		"github-actions", "GitHub Actions", layout::EViewContainerLocation::Sidebar, 6,
@@ -436,10 +439,10 @@ TEST_F(SenpOwnerComposition, RealGithubActionsReachNativeProviders)
 	std::vector<SenpOwnerTreeContribution> trees;
 	trees.emplace_back(layout::WorkbenchViewDescriptor{
         "github-actions.workflows", "github-actions", "Workflows", 10, true, true, "senp.tree" },
-        std::vector<std::string>{ "github-actions.workflow.run.open" });
+        std::vector<std::string>{ "github-actions.workflow.run.open", "sakura.githubActions.openJobDetails" });
     trees.emplace_back(layout::WorkbenchViewDescriptor{
         "github-actions.current-branch", "github-actions", "Current Branch", 20, true, true, "senp.tree" },
-        std::vector<std::string>{ "github-actions.workflow.run.open" });
+        std::vector<std::string>{ "github-actions.workflow.run.open", "sakura.githubActions.openJobDetails" });
 	SenpOwnerPublicationOptions publication(
 		m_owner, { std::move(container) }, std::move(trees),
 		std::make_unique<CompositionTarget>(target), [](std::string_view) { return true; },
@@ -491,6 +494,24 @@ TEST_F(SenpOwnerComposition, RealGithubActionsReachNativeProviders)
     }));
     EXPECT_EQ(L"actions/runs/51/attempts/1", target->LastRead().arguments.front().value);
     EXPECT_EQ(4, target->ToolReads());
+    ASSERT_EQ(tree::TreeResult::Applied, provider->SetExpanded(L"attempt:51:1", true, Clock::now()));
+    ASSERT_TRUE(Await(composition, [&] { return provider->Model().Node(L"job:51:1:71").has_value(); }));
+    EXPECT_EQ(L"actions/runs/51/attempts/1/jobs", target->LastRead().arguments.front().value);
+    ASSERT_EQ(tree::TreeResult::Applied, provider->SetExpanded(L"job:51:1:71", true, Clock::now()));
+    ASSERT_TRUE(Await(composition, [&] { return provider->Model().Node(L"step:51:1:71:7").has_value(); }));
+    EXPECT_EQ(L"queued", provider->Model().Node(L"step:51:1:71:7")->item.description);
+    ASSERT_TRUE(provider->Select(L"job:51:1:71"));
+    ASSERT_TRUE(provider->Execute(L"job:51:1:71"));
+    ASSERT_TRUE(Await(composition, [&] { return target->Publishes() == 2; }));
+    EXPECT_EQ(L"github-actions-job:51:1:71", target->Document().resourceId);
+    EXPECT_EQ(L"Build (Windows)", target->Document().title);
+    ASSERT_EQ(2U, target->Document().sections.size());
+    ASSERT_TRUE(std::holds_alternative<senp::effect::TableSection>(target->Document().sections[1]));
+    const auto& table = std::get<senp::effect::TableSection>(target->Document().sections[1]);
+    ASSERT_EQ(1U, table.rows.size());
+    EXPECT_EQ((std::vector<std::wstring>{ L"7", L"Compile", L"queued", L"not started", L"not completed" }), table.rows[0].cells);
+    EXPECT_EQ(L"actions/jobs/71", target->LastRead().arguments.front().value);
+    EXPECT_EQ(7, target->ToolReads());
     EXPECT_TRUE(composition.Close());
     EXPECT_EQ(1, target->Revokes());
     pages.Close();

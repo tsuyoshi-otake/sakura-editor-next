@@ -16,7 +16,15 @@ Current Branch requires exactly one verified repository with a nonempty branch
 in the current workspace event. Detached, missing and ambiguous repositories
 fail explicitly. Production workspace publication and package installation are
 tracked in R01; the E05 native fixture proves Workflows through the real Wasm
-host and native tree/document providers. Job/Step and log support follow in E06/E07.
+host and native tree/document providers. Log support follows in E07.
+
+Expanding an attempt reads its fixed `actions/runs/{run}/attempts/{attempt}/jobs`
+path. Job IDs, not names, identify matrix rows; expanding a job pages its numbered
+steps in order. A job summary includes runner metadata and a Step table. Missing
+runner assignments and timestamps remain explicit. Details verify the job, run
+and attempt together before publication, so a response for another rerun fails.
+The native summary action uses `sakura.githubActions.openJobDetails`: upstream
+provides log actions but has no corresponding native job-summary command.
 
 Verify: `cargo test --locked --manifest-path rust/senp/Cargo.toml -p sakura-github-actions -p sakura-senp-github-client`
 from the repository root. After building the Debug solution, run

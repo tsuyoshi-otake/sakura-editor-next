@@ -191,6 +191,11 @@ detached/未確定/複数候補は明示的な失敗状態にする。production
 接続する。WorkflowはRunの有無によらず保持し、unknown statusやnull conclusionを成功へ変換しない。
 Attemptは最初に観測した総数をcursorに固定して20件ずつ返し、rerunによる重複・欠落を防ぐ。
 
+E06はAttempt固定のJobs APIからJob一覧を作り、Job IDとStep番号でidentityを保持する。
+同名matrix Job、番号に欠番のあるStep、null runner/時刻、unknown状態、空Stepを独立に扱う。
+native summary commandはJobのmetadataとStep表を開き、取得したJob/Run/Attemptが選択と
+一致しなければ失敗文書にする。実Wasm受入試験はAttempt→Job→StepとJob概要までを通す。
+
 大きな工程を赤い状態で積み上げるための分割ではない。
 例えばG01はv2の未実装能力をUnsupportedで返し、UIボタンをまだ公開しない。
 U06は実動するsample、E03/E04/E07は本文やログまで読める縦切りとして検証する。
