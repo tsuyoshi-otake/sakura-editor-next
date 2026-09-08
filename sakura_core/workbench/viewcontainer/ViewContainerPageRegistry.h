@@ -103,6 +103,46 @@ struct ViewContainerPageRegistrationResult final {
 //! HWND-independent WorkbenchContributionRegistry.
 class ViewContainerPageRegistry final {
 public:
+	class PreparedBatch final {
+	public:
+		PreparedBatch(PreparedBatch&& other) noexcept;
+		PreparedBatch& operator=(PreparedBatch&& other) noexcept;
+		PreparedBatch(const PreparedBatch&) = delete;
+		PreparedBatch& operator=(const PreparedBatch&) = delete;
+
+		[[nodiscard]] EViewContainerPageRegistrationStatus Status() const noexcept
+		{
+			return m_status;
+		}
+		[[nodiscard]] std::size_t PreparedCount() const noexcept { return m_preparedCount; }
+		[[nodiscard]] bool Succeeded() const noexcept
+		{
+			return m_status == EViewContainerPageRegistrationStatus::Registered
+				|| m_status == EViewContainerPageRegistrationStatus::NotApplicable;
+		}
+
+	private:
+		friend class ViewContainerPageRegistry;
+		using DescriptorMap = std::map<std::string, ViewContainerPageDescriptor, std::less<>>;
+		PreparedBatch(ViewContainerPageRegistry* registry, std::uint64_t baseRevision,
+			EViewContainerPageRegistrationStatus status, std::size_t preparedCount,
+			DescriptorMap descriptors) noexcept;
+
+		ViewContainerPageRegistry* m_registry{};
+		std::uint64_t m_baseRevision{};
+		EViewContainerPageRegistrationStatus m_status{
+			EViewContainerPageRegistrationStatus::Failed };
+		std::size_t m_preparedCount{};
+		DescriptorMap m_descriptors;
+		bool m_consumed{};
+	};
+
+	//! Builds the complete candidate without publishing it. A prepared batch is
+	//! revision-fenced and can be committed exactly once.
+	[[nodiscard]] PreparedBatch PrepareBatch(
+		std::vector<ViewContainerPageDescriptor> descriptors) noexcept;
+	[[nodiscard]] bool CanCommit(const PreparedBatch& prepared) const noexcept;
+	[[nodiscard]] ViewContainerPageRegistrationResult Commit(PreparedBatch&& prepared) noexcept;
 	//! Validates and copies the complete candidate registry before publishing it.
 	[[nodiscard]] ViewContainerPageRegistrationResult RegisterBatch(
 		std::vector<ViewContainerPageDescriptor> descriptors) noexcept;
@@ -113,6 +153,7 @@ public:
 private:
 	using DescriptorMap = std::map<std::string, ViewContainerPageDescriptor, std::less<>>;
 	DescriptorMap m_descriptors;
+	std::uint64_t m_revision{};
 };
 
 } // namespace workbench::viewcontainer

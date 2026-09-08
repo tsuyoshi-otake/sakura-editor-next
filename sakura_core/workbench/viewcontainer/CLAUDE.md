@@ -2,6 +2,10 @@
 
 - `IViewContainerPage`/`ViewContainerPagePool` owns the one-page-per-container
   mounting contract. A physical Part hosts a page; it is never a View identity.
+- Dynamic page publication uses `ViewContainerPageRegistry::PrepareBatch` and
+  `Commit`. Preparation owns every allocation and captures the registry revision;
+  commit is one non-throwing swap and rejects stale, foreign, or reused batches.
+  This is the native half of a larger catalog/page publication transaction.
 - `ProjectHostViewPages` groups Views only when their product-owned provider
   supplies `factoryForContainer`. It calls that factory once per container and
   publishes one page descriptor. A singleton `factory` still rejects a second

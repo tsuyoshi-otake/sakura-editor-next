@@ -94,11 +94,49 @@ HostViewPageProjectionResult ProjectHostViewPages(
 	}
 }
 
-ViewContainerPageRegistrationResult ViewContainerPageRegistry::RegisterBatch(
+ViewContainerPageRegistry::PreparedBatch::PreparedBatch(
+	ViewContainerPageRegistry* const registry, const std::uint64_t baseRevision,
+	const EViewContainerPageRegistrationStatus status, const std::size_t preparedCount,
+	DescriptorMap descriptors) noexcept
+	: m_registry(registry)
+	, m_baseRevision(baseRevision)
+	, m_status(status)
+	, m_preparedCount(preparedCount)
+	, m_descriptors(std::move(descriptors))
+{
+}
+
+ViewContainerPageRegistry::PreparedBatch::PreparedBatch(PreparedBatch&& other) noexcept
+	: m_registry(std::exchange(other.m_registry, nullptr))
+	, m_baseRevision(other.m_baseRevision)
+	, m_status(other.m_status)
+	, m_preparedCount(other.m_preparedCount)
+	, m_descriptors(std::move(other.m_descriptors))
+	, m_consumed(other.m_consumed)
+{
+	other.m_consumed = true;
+}
+
+ViewContainerPageRegistry::PreparedBatch&
+ViewContainerPageRegistry::PreparedBatch::operator=(PreparedBatch&& other) noexcept
+{
+	if (this == &other) return *this;
+	m_registry = std::exchange(other.m_registry, nullptr);
+	m_baseRevision = other.m_baseRevision;
+	m_status = other.m_status;
+	m_preparedCount = other.m_preparedCount;
+	m_descriptors = std::move(other.m_descriptors);
+	m_consumed = other.m_consumed;
+	other.m_consumed = true;
+	return *this;
+}
+
+ViewContainerPageRegistry::PreparedBatch ViewContainerPageRegistry::PrepareBatch(
 	std::vector<ViewContainerPageDescriptor> descriptors) noexcept
 {
 	if (descriptors.empty()) {
-		return { EViewContainerPageRegistrationStatus::NotApplicable, 0 };
+		return { this, m_revision, EViewContainerPageRegistrationStatus::NotApplicable,
+			0, {} };
 	}
 	try {
 		std::unordered_set<std::string_view> batchIds;
@@ -106,25 +144,57 @@ ViewContainerPageRegistrationResult ViewContainerPageRegistry::RegisterBatch(
 		for (const auto& descriptor : descriptors) {
 			if (!layout::WorkbenchContributionRegistry::IsValidStableId(descriptor.containerId)
 				|| !descriptor.supportedLocations.IsValid() || !descriptor.factory) {
-				return { EViewContainerPageRegistrationStatus::InvalidDescriptor, 0 };
+				return { this, m_revision, EViewContainerPageRegistrationStatus::InvalidDescriptor,
+					0, {} };
 			}
 			if (m_descriptors.contains(descriptor.containerId)
 				|| !batchIds.emplace(descriptor.containerId).second) {
-				return { EViewContainerPageRegistrationStatus::DuplicateContainerId, 0 };
+				return { this, m_revision,
+					EViewContainerPageRegistrationStatus::DuplicateContainerId, 0, {} };
 			}
 		}
 
-		// Publish by swap so allocation/copy failure can never expose a partial batch.
 		auto candidate = m_descriptors;
+		const auto preparedCount = descriptors.size();
 		for (auto& descriptor : descriptors) {
 			auto key = descriptor.containerId;
 			candidate.emplace(std::move(key), std::move(descriptor));
 		}
-		m_descriptors.swap(candidate);
-		return { EViewContainerPageRegistrationStatus::Registered, descriptors.size() };
+		return { this, m_revision, EViewContainerPageRegistrationStatus::Registered,
+			preparedCount, std::move(candidate) };
 	} catch (...) {
+		return { this, m_revision, EViewContainerPageRegistrationStatus::Failed, 0, {} };
+	}
+}
+
+bool ViewContainerPageRegistry::CanCommit(const PreparedBatch& prepared) const noexcept
+{
+	return prepared.m_registry == this && !prepared.m_consumed
+		&& prepared.m_baseRevision == m_revision && prepared.Succeeded();
+}
+
+ViewContainerPageRegistrationResult ViewContainerPageRegistry::Commit(
+	PreparedBatch&& prepared) noexcept
+{
+	if (!CanCommit(prepared)) {
 		return { EViewContainerPageRegistrationStatus::Failed, 0 };
 	}
+	prepared.m_consumed = true;
+	if (prepared.m_status == EViewContainerPageRegistrationStatus::NotApplicable) {
+		return { EViewContainerPageRegistrationStatus::NotApplicable, 0 };
+	}
+	// The candidate owns every allocation. Publication is one non-throwing swap.
+	m_descriptors.swap(prepared.m_descriptors);
+	++m_revision;
+	return { EViewContainerPageRegistrationStatus::Registered, prepared.m_preparedCount };
+}
+
+ViewContainerPageRegistrationResult ViewContainerPageRegistry::RegisterBatch(
+	std::vector<ViewContainerPageDescriptor> descriptors) noexcept
+{
+	auto prepared = PrepareBatch(std::move(descriptors));
+	if (!prepared.Succeeded()) return { prepared.Status(), 0 };
+	return Commit(std::move(prepared));
 }
 
 const ViewContainerPageDescriptor* ViewContainerPageRegistry::Find(
