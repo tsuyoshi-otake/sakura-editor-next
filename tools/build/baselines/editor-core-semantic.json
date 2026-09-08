@@ -35526,6 +35526,13 @@
       "rule_id": "error.catch_all"
     },
     {
+      "column": 3,
+      "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
+      "line": 363,
+      "path": "sakura_core/platform/process/BoundedProcessRunner.cpp",
+      "rule_id": "error.catch_all"
+    },
+    {
       "column": 2,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
       "line": 463,
@@ -50457,6 +50464,13 @@
       "rule_id": "resource.stop_required_acquisition"
     },
     {
+      "column": 25,
+      "evidence_sha256": "sha256:3bdc4453749048eea7e0399d4212c283116044cc17e03d091492574bbf3088fc",
+      "line": 295,
+      "path": "sakura_core/platform/process/BoundedProcessRunner.cpp",
+      "rule_id": "resource.stop_required_acquisition"
+    },
+    {
       "column": 72,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
       "line": 791,
@@ -51087,13 +51101,6 @@
       "rule_id": "resource.stop_required_acquisition"
     },
     {
-      "column": 25,
-      "evidence_sha256": "sha256:3bdc4453749048eea7e0399d4212c283116044cc17e03d091492574bbf3088fc",
-      "line": 316,
-      "path": "sakura_core/workbench/scm/GitCommandRunner.cpp",
-      "rule_id": "resource.stop_required_acquisition"
-    },
-    {
       "column": 63,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
       "line": 645,
@@ -51357,6 +51364,13 @@
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
       "line": 386,
       "path": "src/test/cpp/tests1/debug/DebugConsoleModelTest.cpp",
+      "rule_id": "resource.stop_required_acquisition"
+    },
+    {
+      "column": 17,
+      "evidence_sha256": "sha256:3bdc4453749048eea7e0399d4212c283116044cc17e03d091492574bbf3088fc",
+      "line": 103,
+      "path": "src/test/cpp/tests1/platform/BoundedProcessRunnerTest.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
@@ -98107,7 +98121,7 @@
   },
   "inventory_kind": "editor-core-semantic",
   "metrics": {
-    "catch_all_count": 723,
+    "catch_all_count": 724,
     "direct_global_getter_calls": {
       "GetDllShareData": 710,
       "GetEditDoc": 7,
@@ -98580,30 +98594,30 @@
       }
     },
     "filtered_test_hint_count": 2,
-    "finding_count": 13986,
+    "finding_count": 13988,
     "finding_count_by_rule": {
       "boundary.private_include": 67,
       "boundary.win32_type": 4847,
-      "error.catch_all": 723,
+      "error.catch_all": 724,
       "global.get_dll_share_data": 710,
       "global.get_edit_doc": 7,
       "global.get_edit_wnd": 258,
       "memory.raw_delete": 317,
       "memory.raw_new": 247,
-      "resource.stop_required_acquisition": 262,
+      "resource.stop_required_acquisition": 263,
       "state.mutable_member": 132,
       "state.public_mutable_field": 6384,
       "state.raw_pointer_member": 30,
       "test.filtered_or_skipped": 2
     },
-    "include_directive_count": 11097,
+    "include_directive_count": 11114,
     "monolith_link_hint_count": 0,
     "private_include_mention_count": 67,
     "raw_delete_expression_count": 317,
     "raw_new_expression_count": 247,
-    "source_file_count": 1755,
-    "source_line_count": 525724,
-    "tracked_file_count": 1804,
+    "source_file_count": 1758,
+    "source_line_count": 526152,
+    "tracked_file_count": 1807,
     "win32_parameter_mention_count": 4847
   },
   "rule_catalog": [
@@ -98759,8 +98773,8 @@
     ]
   },
   "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
-  "source_commit": "002849b681aae48c1310eda17bc4a65f4eb1b022",
-  "source_fingerprint": "sha256:b5d90c4af3214029af333ea02c4091d06a3a9af238b6e7d9baac0d6205da06a4",
+  "source_commit": "8bcdf6dbea2a0c3071d3208c07b78fdddf93f92d",
+  "source_fingerprint": "sha256:c6e62bc9ee50fcfdb621828c89d3e7f422dc5e27674f0dd28f07239c855b084f",
   "tracked_source_paths": [
     ".github/actions/bootstrap-vcpkg/action.yml",
     ".github/dependabot.yml",
@@ -99374,6 +99388,8 @@
     "sakura_core/platform/harnessbridge/HarnessBridgeProtocol.cpp",
     "sakura_core/platform/harnessbridge/HarnessBridgeSecurity.cpp",
     "sakura_core/platform/harnessbridge/HarnessBridgeServiceHost.cpp",
+    "sakura_core/platform/process/BoundedProcessRunner.cpp",
+    "sakura_core/platform/process/BoundedProcessRunner.h",
     "sakura_core/platform/process/WindowsExecutableResolver.cpp",
     "sakura_core/platform/process/WindowsExecutableResolver.h",
     "sakura_core/platform/profiles/ControlUserDataProfileRegistry.cpp",
@@ -100272,6 +100288,7 @@
     "src/test/cpp/tests1/markdown/MarkdownRemoteImageFetcherTest.cpp",
     "src/test/cpp/tests1/markdown/MermaidDiagramTest.cpp",
     "src/test/cpp/tests1/platform/AtomicFileStorageServiceTest.cpp",
+    "src/test/cpp/tests1/platform/BoundedProcessRunnerTest.cpp",
     "src/test/cpp/tests1/platform/PlatformServiceRegistryTest.cpp",
     "src/test/cpp/tests1/platform/RequestServiceTest.cpp",
     "src/test/cpp/tests1/platform/StorageServiceTest.cpp",
@@ -100567,5 +100584,5 @@
     "tools/ppa_stub/ppa_stub.h",
     "tools/vcx-props/vcxcompat.props"
   ],
-  "tracked_source_set_sha256": "sha256:d79000f0995770c821323e014e81ef60e6cf1d208a429c4a0a2672fb271032c4"
+  "tracked_source_set_sha256": "sha256:6a431f1fff46386d781c853f66f65a70120d1e0801cb20681130ed9ef0711b5a"
 }
