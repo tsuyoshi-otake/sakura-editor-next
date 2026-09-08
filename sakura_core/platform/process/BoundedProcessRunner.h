@@ -39,6 +39,10 @@ public:
 	{
 		m_environmentOverrides = std::move(value);
 	}
+	void SetEnvironmentRemovals(std::vector<std::wstring> value)
+	{
+		m_environmentRemovals = std::move(value);
+	}
 	void SetTimeoutMilliseconds(std::uint32_t value) noexcept { m_timeoutMilliseconds = value; }
 	void SetMaximumStandardOutputBytes(std::size_t value) noexcept { m_maximumStandardOutputBytes = value; }
 	void SetMaximumStandardErrorBytes(std::size_t value) noexcept { m_maximumStandardErrorBytes = value; }
@@ -51,6 +55,10 @@ public:
 	{
 		return m_environmentOverrides;
 	}
+	[[nodiscard]] const std::vector<std::wstring>& EnvironmentRemovals() const noexcept
+	{
+		return m_environmentRemovals;
+	}
 	[[nodiscard]] std::uint32_t TimeoutMilliseconds() const noexcept { return m_timeoutMilliseconds; }
 	[[nodiscard]] std::size_t MaximumStandardOutputBytes() const noexcept { return m_maximumStandardOutputBytes; }
 	[[nodiscard]] std::size_t MaximumStandardErrorBytes() const noexcept { return m_maximumStandardErrorBytes; }
@@ -61,6 +69,7 @@ private:
 	std::vector<std::wstring> m_arguments;
 	std::string m_standardInput;
 	std::vector<std::pair<std::wstring, std::wstring>> m_environmentOverrides;
+	std::vector<std::wstring> m_environmentRemovals;
 	std::uint32_t m_timeoutMilliseconds{ 15000 };
 	std::size_t m_maximumStandardOutputBytes{ 4u * 1024u * 1024u };
 	std::size_t m_maximumStandardErrorBytes{ 64u * 1024u };

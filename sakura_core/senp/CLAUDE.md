@@ -193,6 +193,17 @@ five-minute lifetime bound abandoned grants. T03 adds the provider policy; this
 registry alone cannot construct an executable, argv, environment, or network
 request.
 
+`CGhToolPolicy` is the next closed boundary. It discovers only `gh.exe` through
+absolute PATH entries, accepts the measured `2.93.0` contract exactly, and
+constructs either `--version` or one fixed `gh api --method GET --include`
+invocation. Repository identity and path segments are validated separately;
+extensions never provide flags, cwd, stdin, headers, executable paths, or
+environment values. Ambient GitHub tokens, repository/host selectors, debug,
+pager, browser, editor, forced-TTY, socket, and config-directory overrides are
+removed in the bounded child environment. T04 will add a verified account
+candidate; T06 will add bounded query and HTTP-envelope parsing. Do not widen
+this policy into a generic command runner.
+
 Append accepts the next byte offset and at most 64 KiB. Fixed 64 KiB pages bound
 one resource to 32 MiB and the Control store to 64 MiB of allocated payload pages,
 including unused tails, with at most 64 resource slots. Pages and their index

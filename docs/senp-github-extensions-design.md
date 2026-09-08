@@ -451,6 +451,13 @@ CLI token自体のGitHub権限を縮小した保証ではない。
 対応範囲は実測で広げる。将来の全versionを無検証で互換と判定しない。
 参考実装は[cli/cli v2.93.0](https://github.com/cli/cli/tree/v2.93.0)。
 
+T03ではこの境界を`CGhToolPolicy`として実装した。PATH検出は絶対path候補だけを使い、
+versionは2.93.0の測定済み形式を厳密に解析する。read argvは`api`、明示hostname、
+`GET`、include、固定API version header、検証済みrepository endpointだけで構成する。
+ambientのtoken、host/repository、debug、pager、browser/editor、forced TTY、socket、config sourceは
+共通runnerの環境除去で子へ継承しない。T04の接続候補が採用したconfig/tokenを明示的に渡すまでは、
+このpolicyを製品の認証済みreadとして公開しない。
+
 ## 7. repositoryとGitHubデータの契約
 
 repositoryはViewの選択で明示し、SCM画面を開いている必要はない。

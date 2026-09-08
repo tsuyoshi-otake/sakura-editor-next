@@ -54,6 +54,13 @@ U06のGitHub非依存sample guestは実v2 Componentとして2 View、page/empty/
 preflight、poll後queue drain、exact owner revokeまで実装した。window-local compositionはowner Pollとprojection
 Pumpを順序付け、実sampleで2 Viewのroot、command、4 sectionのreadonly documentまで一往復する。
 CEditWndのtimer/lifecycle、package-derived descriptor、状態永続化の結合は引き続きU06に残る。
+T01はGit固有policyから有界process runnerを分離し、T02はControl-owned grantをIPC接続、profile、
+package digest、owner/workspace/account generation、capability、management revision、有効期限へ束縛した。
+T03はPATHの相対/CWD候補を拒否して絶対`gh.exe`だけを検出し、実測した2.93.0を厳密に選択する。
+拡張が渡せるのは検証済みhost/repository/path segmentだけで、実行argvは固定REST GET、
+ambient token・host/repository・debug・pager・browser・editor・TTY/socket/config overrideは子環境から除く。
+`GhToolPolicy.*:BoundedProcessRunner.*:GitCommandRunner.*`の21件、3,871件のinventory、no-op buildが合格した。
+T04がaccount candidateと一時credential、T06がquery/HTTP envelopeを追加するまでnetwork機能は公開しない。
 G02のsemantic台帳はexact source commit `f881170f28b3c17d195c145b6f2396704cffa47a`
 から正規手順で受理した。追加35件は既定のconst equality operator 33件と
 `static constexpr` 2件の誤検出と確認し、JSONC APIの既存報告13件を保持する理由も

@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <cwctype>
+#include <exception>
 #include <thread>
 
 namespace platform::process {
@@ -84,7 +85,8 @@ bool EqualEnvironmentName(std::wstring_view left, std::wstring_view right) noexc
 }
 
 std::vector<wchar_t> BuildEnvironmentBlock(
-	const std::vector<std::pair<std::wstring, std::wstring>>& overrides)
+	const std::vector<std::pair<std::wstring, std::wstring>>& overrides,
+	const std::vector<std::wstring>& removals)
 {
 	std::vector<std::wstring> entries;
 	wchar_t* const parent = ::GetEnvironmentStringsW();
@@ -96,7 +98,9 @@ std::vector<wchar_t> BuildEnvironmentBlock(
 			const auto name = equals == std::wstring_view::npos ? entry : entry.substr(0, equals);
 			const bool replaced = std::any_of(overrides.begin(), overrides.end(),
 				[name](const auto& overrideEntry) { return EqualEnvironmentName(name, overrideEntry.first); });
-			if (!replaced) entries.emplace_back(entry);
+			const bool removed = std::any_of(removals.begin(), removals.end(),
+				[name](const auto& removal) { return EqualEnvironmentName(name, removal); });
+			if (!replaced && !removed) entries.emplace_back(entry);
 		}
 		::FreeEnvironmentStringsW(parent);
 	}
@@ -215,7 +219,8 @@ bool IsExecutableBoundedProcessRequest(const BoundedProcessRequest& request) noe
 	if (!IsAbsoluteWindowsPath(request.ExecutablePath())
 		|| !IsAbsoluteWindowsPath(request.WorkingDirectory()) || request.Arguments().empty()) return false;
 	if (request.Arguments().size() > kMaximumBoundedProcessArguments
-		|| request.EnvironmentOverrides().size() > kMaximumBoundedProcessEnvironmentOverrides) return false;
+		|| request.EnvironmentOverrides().size() + request.EnvironmentRemovals().size()
+			> kMaximumBoundedProcessEnvironmentOverrides) return false;
 	if (request.StandardInput().size() > kMaximumBoundedProcessStandardInputBytes) return false;
 	if (request.TimeoutMilliseconds() == 0
 		|| request.MaximumStandardOutputBytes() == 0 || request.MaximumStandardErrorBytes() == 0
@@ -227,10 +232,21 @@ bool IsExecutableBoundedProcessRequest(const BoundedProcessRequest& request) noe
 		[](const std::wstring& value) { return value.size() > kMaximumBoundedProcessArgumentLength; })) return false;
 	if (std::any_of(request.EnvironmentOverrides().begin(), request.EnvironmentOverrides().end(),
 		[](const auto& entry) { return !IsValidEnvironmentOverride(entry); })) return false;
+	if (std::any_of(request.EnvironmentRemovals().begin(), request.EnvironmentRemovals().end(),
+		[](const auto& name) { return name.empty() || name.front() == L'=' || name.find(L'=') != std::wstring::npos
+			|| name.size() > kMaximumBoundedProcessArgumentLength || name.find(L'\0') != std::wstring::npos; })) return false;
 	for (std::size_t index = 0; index < request.EnvironmentOverrides().size(); ++index) {
 		for (std::size_t other = index + 1; other < request.EnvironmentOverrides().size(); ++other) {
 			if (EqualEnvironmentName(request.EnvironmentOverrides()[index].first,
 				request.EnvironmentOverrides()[other].first)) return false;
+		}
+	}
+	for (std::size_t index = 0; index < request.EnvironmentRemovals().size(); ++index) {
+		if (std::any_of(request.EnvironmentOverrides().begin(), request.EnvironmentOverrides().end(),
+			[&](const auto& entry) { return EqualEnvironmentName(entry.first, request.EnvironmentRemovals()[index]); })) return false;
+		for (std::size_t other = index + 1; other < request.EnvironmentRemovals().size(); ++other) {
+			if (EqualEnvironmentName(request.EnvironmentRemovals()[index],
+				request.EnvironmentRemovals()[other])) return false;
 		}
 	}
 	return CommandLineLengthFits(request);
@@ -281,7 +297,7 @@ try {
 		return Terminal(EBoundedProcessStatus::LaunchFailed);
 	}
 
-	auto environment = BuildEnvironmentBlock(request.EnvironmentOverrides());
+	auto environment = BuildEnvironmentBlock(request.EnvironmentOverrides(), request.EnvironmentRemovals());
 	STARTUPINFOEXW startup{};
 	startup.StartupInfo.cb = sizeof(startup);
 	startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
@@ -360,7 +376,7 @@ try {
 	result.m_exitCode = static_cast<int>(exitCode);
 	result.m_status = exitCode == 0 ? EBoundedProcessStatus::Succeeded : EBoundedProcessStatus::Failed;
 	return result;
-} catch (...) {
+} catch (const std::exception&) {
 	return Terminal(EBoundedProcessStatus::LaunchFailed);
 }
 

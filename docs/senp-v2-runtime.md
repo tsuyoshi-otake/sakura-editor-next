@@ -129,6 +129,28 @@ Tree/document/commandへ反映し、派生処理がなければ明示的に`Fini
 `Finish`まで同じlineageを保持する。target拒否は`Rejected` terminalとなり、呼出側compositionがownerを失効
 させる。callback中のCloseは遅延し、Drain自身がqueue取消を完了して`Closed`を返す。
 
+## GitHub CLIの閉じたprocess policy（T03）
+
+`CGhToolPolicy`は`WindowsExecutableResolver`で相対PATHとcurrent directoryを無視し、
+検出した絶対`gh.exe`へ`--version`を直接渡す。対応contractは実測した2.93.0だけで、
+未導入、未知形式、未対応version、起動失敗、timeout、cancel、出力超過を別のterminalにする。
+
+repository readはhostname、owner、repository、最大16個のASCII path segmentを検証してから、
+次の固定argvへ変換する。shell、任意flag、stdin、cwd、header、別repositoryは入力にない。
+
+```text
+gh api --hostname <host> --method GET --include \
+  --header "X-GitHub-Api-Version: 2022-11-28" \
+  repos/<owner>/<repository>/<validated-segments>
+```
+
+子processは`GH_PROMPT_DISABLED=1`、`GH_NO_UPDATE_NOTIFIER=1`、
+`GH_SPINNER_DISABLED=1`を固定する。ambient token、host/repository selector、debug、pager、
+browser/editor、forced TTY、HTTP Unix socket、config directoryは親環境から除去する。
+共通runnerの環境除去は名前の大小文字を同一視し、overrideとの衝突・重複を起動前に拒否する。
+T04が検証済みaccount/config source、一時tokenとidentity照合を所有し、T06がqueryとHTTP envelopeを所有する。
+この段階だけではnetwork readやschema 2 packageを公開しない。
+
 ## native ViewContainer/Viewの投影（U01）
 
 [CSenpViewContainers](../sakura_core/workbench/viewcontainer/SenpViewContainer.h)はowner generationごとに
