@@ -759,6 +759,7 @@
 	<ClInclude Include="..\sakura_core\senp\github\GhReadScheduler.h" />
 	<ClInclude Include="..\sakura_core\senp\github\GhLogResource.h" />
 	<ClInclude Include="..\sakura_core\senp\github\GhRepositorySelection.h" />
+	<ClInclude Include="..\sakura_core\senp\github\SenpGitHubToolExecutor.h" />
     <ClInclude Include="..\sakura_core\senp\github\GhToolPolicy.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\SenpReadonlyDocument.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\SenpTextResourceView.h" />
@@ -1444,6 +1445,7 @@
 	<ClCompile Include="..\sakura_core\senp\github\GhReadScheduler.cpp" />
 	<ClCompile Include="..\sakura_core\senp\github\GhLogResource.cpp" />
 	<ClCompile Include="..\sakura_core\senp\github\GhRepositorySelection.cpp" />
+	<ClCompile Include="..\sakura_core\senp\github\SenpGitHubToolExecutor.cpp" />
 	<ClCompile Include="..\sakura_core\senp\github\GhToolPolicy.cpp" />
 	<ClCompile Include="..\sakura_core\senp\SenpEffectProtocol.cpp" />
 	<ClCompile Include="..\sakura_core\senp\SenpRuntimeSession.cpp" />
