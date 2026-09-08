@@ -512,6 +512,13 @@ Issue番号でpage取得し、各comment documentはdatabase IDの`issues/commen
 64 KiB総量、本文60 KiB、page 100件の上限を越えるresponseはpublish前に拒否する。本文null、
 空comment、空page、next page付きpartial、tool/parse failureは同じ空表示へ畳み込まない。
 
+E04のPR item identityもdatabase IDとrepository内番号を分離し、Issue identityとは異なる
+`pull` namespaceに置く。PR一覧と本文は`pulls` endpoint固有DTOから作り、draft、merged timestamp、
+base/headのrepository・branch・commitを独立fieldとして保持する。base/head repositoryが異なる場合も
+それは表示するrevision metadataであり、選択repositoryは変更しない。本文は選択repositoryの
+`pulls/{number}`、通常会話commentは同repositoryの`issues/{number}/comments`だけを読む。
+head forkへの暗黙fallback、追加remote解決、Issue endpointの同番号itemとの混用は行わない。
+
 ### Actionsのログで約束する範囲
 
 JobログAPIは短命のredirect先からplain textを取得する契約。

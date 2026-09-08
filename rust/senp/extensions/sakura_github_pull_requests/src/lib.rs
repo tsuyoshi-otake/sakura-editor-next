@@ -1,8 +1,9 @@
 //! GitHub Issues and Pull Requests SENP extension.
 
 use sakura_senp_github_client::{
-    parse_comment_detail, parse_comment_page, parse_issue_detail, parse_issue_page, Comment, Issue,
-    IssueDetail, IssueState,
+    parse_comment_detail, parse_comment_page, parse_issue_detail, parse_issue_page,
+    parse_pull_request_detail, parse_pull_request_page, Comment, Issue, IssueDetail, IssueState,
+    PullRequest, PullRequestDetail, RepositoryRef,
 };
 wit_bindgen::generate!({ path: "../../wit/v2/senp-extension.wit", world: "extension" });
 use exports::sakura::senp::event_effects::*;
@@ -13,6 +14,7 @@ const TOOL_ID: &str = "github";
 const REPOSITORY_READ: &str = "repositoryRead";
 const OPEN_ISSUE: &str = "github.openIssue";
 const OPEN_COMMENT: &str = "github.openIssueComment";
+const OPEN_PULL_REQUEST: &str = "github.openPullRequest";
 
 struct GithubPullRequests;
 
@@ -34,7 +36,7 @@ fn invalidate(view_id: &str) -> Effect {
     })
 }
 
-fn request_parts(cursor: &str) -> Option<(IssueState, u32)> {
+fn issue_request_parts(cursor: &str) -> Option<(IssueState, u32)> {
     if cursor.is_empty() {
         return Some((IssueState::Open, 1));
     }
@@ -182,15 +184,7 @@ fn comment_item(comment: Comment) -> TreeItem {
 }
 
 fn failed_page(parent_id: String, revision: u64, message: impl Into<String>) -> Effect {
-    Effect::PublishTreePage(PublishTreePage {
-        view_id: ISSUES_VIEW.into(),
-        parent_id,
-        items: Vec::new(),
-        next_cursor: String::new(),
-        revision,
-        status: PageStatus::Failed,
-        message: message.into(),
-    })
+    failed_view_page(ISSUES_VIEW, parent_id, revision, message)
 }
 
 fn failed(message: impl Into<String>) -> Effect {
@@ -443,6 +437,25 @@ fn complete_detail(read: ToolCompleted) -> Effect {
             Err(error) => failed_document(resource, error.to_string()),
         };
     }
+    if let Some(value) = read.read_id.strip_prefix("pull-detail:") {
+        let Some(number) = positive(value) else {
+            return failed_view_page(
+                PULL_REQUESTS_VIEW,
+                String::new(),
+                1,
+                "Invalid pull request detail identity",
+            );
+        };
+        let resource = format!("github-pull-request:{number}");
+        if read.status != CompletionStatus::Succeeded {
+            return failed_document(resource, read.message);
+        }
+        return match parse_pull_request_detail(&read.data) {
+            Ok(detail) if detail.pull_request.number == number => pull_request_document(detail),
+            Ok(_) => failed_document(resource, "Mismatched pull request detail".into()),
+            Err(error) => failed_document(resource, error.to_string()),
+        };
+    }
     failed("Unknown GitHub detail completion")
 }
 
@@ -454,6 +467,10 @@ fn open_document(command: CommandInvoked) -> Vec<Effect> {
             .is_some_and(|argument| match command.command_id.as_str() {
                 OPEN_ISSUE => argument
                     .strip_prefix("github-issue:")
+                    .and_then(positive)
+                    .is_some(),
+                OPEN_PULL_REQUEST => argument
+                    .strip_prefix("github-pull-request:")
                     .and_then(positive)
                     .is_some(),
                 OPEN_COMMENT => argument
@@ -488,6 +505,14 @@ fn request_document(resource: &str) -> Option<Effect> {
             Vec::new(),
         ));
     }
+    if let Some(value) = resource.strip_prefix("github-pull-request:") {
+        let number = positive(value)?;
+        return Some(repository_read(
+            format!("pull-detail:{number}"),
+            format!("pulls/{number}"),
+            Vec::new(),
+        ));
+    }
     if let Some(value) = resource.strip_prefix("github-issue-comment:") {
         let id = positive(value)?;
         return Some(repository_read(
@@ -499,12 +524,389 @@ fn request_document(resource: &str) -> Option<Effect> {
     None
 }
 
+fn pull_request_parts(cursor: &str) -> Option<(IssueState, u32)> {
+    if cursor.is_empty() {
+        return Some((IssueState::Open, 1));
+    }
+    let mut parts = cursor.split(':');
+    match (parts.next(), parts.next(), parts.next(), parts.next()) {
+        (Some("pulls"), Some(state), Some(page), None) => Some((
+            IssueState::parse(state)?,
+            page.parse::<u32>().ok().filter(|value| *value > 0)?,
+        )),
+        (Some("filter"), Some(state), None, None) => Some((IssueState::parse(state)?, 1)),
+        _ => None,
+    }
+}
+
+fn start_pull_read(state: IssueState, page: u32) -> Effect {
+    Effect::StartToolRead(StartToolRead {
+        read_id: format!("pulls:{}:{page}", state.as_str()),
+        tool_id: TOOL_ID.into(),
+        operation: REPOSITORY_READ.into(),
+        arguments: vec![
+            Field {
+                name: "path".into(),
+                value: "pulls".into(),
+            },
+            Field {
+                name: "state".into(),
+                value: state.as_str().into(),
+            },
+            Field {
+                name: "sort".into(),
+                value: "updated".into(),
+            },
+            Field {
+                name: "direction".into(),
+                value: "desc".into(),
+            },
+            Field {
+                name: "per_page".into(),
+                value: "50".into(),
+            },
+            Field {
+                name: "page".into(),
+                value: page.to_string(),
+            },
+        ],
+    })
+}
+
+fn pull_identity(value: &str) -> Option<(u64, u64)> {
+    let mut parts = value.split(':');
+    match (parts.next(), parts.next(), parts.next(), parts.next()) {
+        (Some("pull"), Some(id), Some(number), None) => Some((positive(id)?, positive(number)?)),
+        _ => None,
+    }
+}
+
+fn pull_comments_request(parent_id: &str, cursor: &str) -> Option<Effect> {
+    let (id, number) = pull_identity(parent_id)?;
+    let page = if cursor.is_empty() {
+        1
+    } else {
+        cursor
+            .strip_prefix("pull-comments:")?
+            .parse::<u32>()
+            .ok()
+            .filter(|value| *value > 0)?
+    };
+    Some(repository_read(
+        format!("pull-comments:{id}:{number}:{page}"),
+        format!("issues/{number}/comments"),
+        vec![
+            Field {
+                name: "per_page".into(),
+                value: "20".into(),
+            },
+            Field {
+                name: "page".into(),
+                value: page.to_string(),
+            },
+        ],
+    ))
+}
+
+fn pull_item(pull: PullRequest) -> TreeItem {
+    let status = if pull.merged_at.is_some() {
+        "merged"
+    } else {
+        pull.state.as_str()
+    };
+    let draft = if pull.draft { " · draft" } else { "" };
+    let labels = pull.labels.join(", ");
+    TreeItem {
+        id: format!("pull:{}:{}", pull.id, pull.number),
+        label: format!("#{} {}", pull.number, pull.title),
+        description: format!("{status}{draft} · @{}", pull.author),
+        tooltip: if labels.is_empty() {
+            pull.html_url
+        } else {
+            format!("{}\nLabels: {labels}", pull.html_url)
+        },
+        icon: "git-pull-request".into(),
+        collapsible_state: if pull.comments == Some(0) {
+            CollapsibleState::Leaf
+        } else {
+            CollapsibleState::Collapsed
+        },
+        command_id: OPEN_PULL_REQUEST.into(),
+        arguments: vec![format!("github-pull-request:{}", pull.number)],
+    }
+}
+
+fn failed_view_page(
+    view_id: &str,
+    parent_id: String,
+    revision: u64,
+    message: impl Into<String>,
+) -> Effect {
+    Effect::PublishTreePage(PublishTreePage {
+        view_id: view_id.into(),
+        parent_id,
+        items: Vec::new(),
+        next_cursor: String::new(),
+        revision,
+        status: PageStatus::Failed,
+        message: message.into(),
+    })
+}
+
+fn complete_pull_requests(read: ToolCompleted) -> Effect {
+    let Some(rest) = read.read_id.strip_prefix("pulls:") else {
+        return failed_view_page(
+            PULL_REQUESTS_VIEW,
+            String::new(),
+            1,
+            "Unknown GitHub read completion",
+        );
+    };
+    let Some((state, page)) = rest.split_once(':') else {
+        return failed_view_page(
+            PULL_REQUESTS_VIEW,
+            String::new(),
+            1,
+            "Invalid GitHub read identity",
+        );
+    };
+    let Some(state) = IssueState::parse(state) else {
+        return failed_view_page(
+            PULL_REQUESTS_VIEW,
+            String::new(),
+            1,
+            "Invalid GitHub state filter",
+        );
+    };
+    let Some(page) = page.parse::<u32>().ok().filter(|value| *value > 0) else {
+        return failed_view_page(
+            PULL_REQUESTS_VIEW,
+            String::new(),
+            1,
+            "Invalid GitHub page identity",
+        );
+    };
+    if read.status != CompletionStatus::Succeeded {
+        return failed_view_page(
+            PULL_REQUESTS_VIEW,
+            String::new(),
+            1,
+            if read.message.is_empty() {
+                "GitHub read failed".into()
+            } else {
+                read.message
+            },
+        );
+    }
+    let page_result = match parse_pull_request_page(&read.data, state) {
+        Ok(value) => value,
+        Err(error) => {
+            return failed_view_page(PULL_REQUESTS_VIEW, String::new(), 1, error.to_string())
+        }
+    };
+    if page_result.next_page.is_some_and(|next| next <= page) {
+        return failed_view_page(
+            PULL_REQUESTS_VIEW,
+            String::new(),
+            1,
+            "Invalid GitHub next page",
+        );
+    }
+    let items: Vec<_> = page_result
+        .pull_requests
+        .into_iter()
+        .map(pull_item)
+        .collect();
+    let next_cursor = page_result
+        .next_page
+        .map(|next| format!("pulls:{}:{next}", state.as_str()))
+        .unwrap_or_default();
+    let status = if !next_cursor.is_empty() {
+        PageStatus::Partial
+    } else if items.is_empty() {
+        PageStatus::Empty
+    } else {
+        PageStatus::Complete
+    };
+    Effect::PublishTreePage(PublishTreePage {
+        view_id: PULL_REQUESTS_VIEW.into(),
+        parent_id: String::new(),
+        items,
+        next_cursor,
+        revision: u64::from(page),
+        status,
+        message: String::new(),
+    })
+}
+
+fn complete_pull_comments(read: ToolCompleted) -> Effect {
+    let mut parts = read.read_id.split(':');
+    let (Some("pull-comments"), Some(id), Some(number), Some(page), None) = (
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+    ) else {
+        return failed_view_page(
+            PULL_REQUESTS_VIEW,
+            String::new(),
+            1,
+            "Invalid GitHub comments read identity",
+        );
+    };
+    let (Some(id), Some(number), Some(page)) = (
+        positive(id),
+        positive(number),
+        page.parse::<u32>().ok().filter(|value| *value > 0),
+    ) else {
+        return failed_view_page(
+            PULL_REQUESTS_VIEW,
+            String::new(),
+            1,
+            "Invalid GitHub comments read identity",
+        );
+    };
+    let parent_id = format!("pull:{id}:{number}");
+    if read.status != CompletionStatus::Succeeded {
+        return failed_view_page(
+            PULL_REQUESTS_VIEW,
+            parent_id,
+            u64::from(page),
+            if read.message.is_empty() {
+                "GitHub comments read failed".into()
+            } else {
+                read.message
+            },
+        );
+    }
+    let result = match parse_comment_page(&read.data) {
+        Ok(value) => value,
+        Err(error) => {
+            return failed_view_page(
+                PULL_REQUESTS_VIEW,
+                parent_id,
+                u64::from(page),
+                error.to_string(),
+            )
+        }
+    };
+    if result.next_page.is_some_and(|next| next <= page) {
+        return failed_view_page(
+            PULL_REQUESTS_VIEW,
+            parent_id,
+            u64::from(page),
+            "Invalid GitHub comments next page",
+        );
+    }
+    let items: Vec<_> = result.comments.into_iter().map(comment_item).collect();
+    let next_cursor = result
+        .next_page
+        .map(|next| format!("pull-comments:{next}"))
+        .unwrap_or_default();
+    let status = if !next_cursor.is_empty() {
+        PageStatus::Partial
+    } else if items.is_empty() {
+        PageStatus::Empty
+    } else {
+        PageStatus::Complete
+    };
+    Effect::PublishTreePage(PublishTreePage {
+        view_id: PULL_REQUESTS_VIEW.into(),
+        parent_id,
+        items,
+        next_cursor,
+        revision: u64::from(page),
+        status,
+        message: String::new(),
+    })
+}
+
+fn pull_request_document(detail: PullRequestDetail) -> Effect {
+    let body = detail
+        .body
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "_No description provided._".into());
+    let pull = detail.pull_request;
+    Effect::PublishDocument(PublishDocument {
+        resource_id: format!("github-pull-request:{}", pull.number),
+        title: format!("#{} {}", pull.number, pull.title),
+        revision: 1,
+        sections: vec![
+            DocumentSection::Metadata(MetadataSection {
+                fields: vec![
+                    Field {
+                        name: "State".into(),
+                        value: if pull.merged_at.is_some() {
+                            "merged"
+                        } else {
+                            pull.state.as_str()
+                        }
+                        .into(),
+                    },
+                    Field {
+                        name: "Draft".into(),
+                        value: pull.draft.to_string(),
+                    },
+                    Field {
+                        name: "Labels".into(),
+                        value: pull.labels.join(", "),
+                    },
+                    Field {
+                        name: "Base".into(),
+                        value: display_ref(pull.base),
+                    },
+                    Field {
+                        name: "Head".into(),
+                        value: display_ref(pull.head),
+                    },
+                    Field {
+                        name: "Merged".into(),
+                        value: pull.merged_at.unwrap_or_else(|| "not merged".into()),
+                    },
+                    Field {
+                        name: "Author".into(),
+                        value: format!("@{}", pull.author),
+                    },
+                    Field {
+                        name: "Created".into(),
+                        value: detail.created_at,
+                    },
+                    Field {
+                        name: "Updated".into(),
+                        value: detail.updated_at,
+                    },
+                    Field {
+                        name: "Comments".into(),
+                        value: pull
+                            .comments
+                            .map(|count| count.to_string())
+                            .unwrap_or_else(|| "unknown".into()),
+                    },
+                    Field {
+                        name: "URL".into(),
+                        value: pull.html_url,
+                    },
+                ],
+            }),
+            DocumentSection::Markdown(MarkdownSection { text: body }),
+        ],
+    })
+}
+
+fn display_ref(value: RepositoryRef) -> String {
+    match value.repository {
+        Some(repository) => format!("{repository}:{} ({})", value.branch, value.sha),
+        None => format!("unavailable repository:{} ({})", value.branch, value.sha),
+    }
+}
+
 fn dispatch(event: Event) -> Vec<Effect> {
     match event {
         Event::TreeRequest(request)
             if request.view_id == ISSUES_VIEW && request.parent_id.is_empty() =>
         {
-            match request_parts(&request.cursor) {
+            match issue_request_parts(&request.cursor) {
                 Some((state, page)) => vec![start_read(state, page)],
                 None => vec![failed("Invalid Issues page cursor")],
             }
@@ -519,15 +921,47 @@ fn dispatch(event: Event) -> Vec<Effect> {
                 )],
             }
         }
+        Event::TreeRequest(request)
+            if request.view_id == PULL_REQUESTS_VIEW && request.parent_id.is_empty() =>
+        {
+            match pull_request_parts(&request.cursor) {
+                Some((state, page)) => vec![start_pull_read(state, page)],
+                None => vec![failed_view_page(
+                    PULL_REQUESTS_VIEW,
+                    String::new(),
+                    1,
+                    "Invalid Issues page cursor",
+                )],
+            }
+        }
+        Event::TreeRequest(request) if request.view_id == PULL_REQUESTS_VIEW => {
+            match pull_comments_request(&request.parent_id, &request.cursor) {
+                Some(effect) => vec![effect],
+                None => vec![failed_view_page(
+                    PULL_REQUESTS_VIEW,
+                    request.parent_id,
+                    1,
+                    "Invalid comments page request",
+                )],
+            }
+        }
         Event::ToolCompleted(read) if read.read_id.starts_with("issues:") => {
             vec![complete_tool(read)]
+        }
+        Event::ToolCompleted(read) if read.read_id.starts_with("pulls:") => {
+            vec![complete_pull_requests(read)]
+        }
+        Event::ToolCompleted(read) if read.read_id.starts_with("pull-comments:") => {
+            vec![complete_pull_comments(read)]
         }
         Event::ToolCompleted(read) if read.read_id.starts_with("comments:") => {
             vec![complete_comments(read)]
         }
         Event::ToolCompleted(read) => vec![complete_detail(read)],
         Event::CommandInvoked(command)
-            if command.command_id == OPEN_ISSUE || command.command_id == OPEN_COMMENT =>
+            if command.command_id == OPEN_ISSUE
+                || command.command_id == OPEN_COMMENT
+                || command.command_id == OPEN_PULL_REQUEST =>
         {
             open_document(command)
         }
@@ -544,6 +978,145 @@ export!(GithubPullRequests);
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const PULLS: &str = r#"{"body":[{"id":51,"number":8,"title":"Cross-fork change","state":"open","user":{"login":"contributor"},"labels":[{"name":"ready"}],"html_url":"https://github.com/base/project/pull/8","comments":2,"draft":false,"merged_at":null,"base":{"ref":"main","sha":"bbbb","repo":{"full_name":"base/project"}},"head":{"ref":"feature","sha":"hhhh","repo":{"full_name":"fork/project"}}}],"nextPage":2}"#;
+
+    #[test]
+    fn publishes_pull_requests_with_separate_identity_state_and_next_page() {
+        let effects = dispatch(Event::TreeRequest(TreeRequest {
+            view_id: PULL_REQUESTS_VIEW.into(),
+            parent_id: String::new(),
+            cursor: "filter:closed".into(),
+        }));
+        let Effect::StartToolRead(read) = &effects[0] else {
+            panic!()
+        };
+        assert_eq!(read.read_id, "pulls:closed:1");
+        assert!(read
+            .arguments
+            .iter()
+            .any(|field| field.name == "path" && field.value == "pulls"));
+        assert!(read
+            .arguments
+            .iter()
+            .any(|field| field.name == "state" && field.value == "closed"));
+        let effects = dispatch(Event::ToolCompleted(ToolCompleted {
+            read_id: "pulls:open:1".into(),
+            status: CompletionStatus::Succeeded,
+            data: PULLS.into(),
+            message: String::new(),
+        }));
+        let Effect::PublishTreePage(page) = &effects[0] else {
+            panic!()
+        };
+        assert_eq!(page.view_id, PULL_REQUESTS_VIEW);
+        assert_eq!(page.items[0].id, "pull:51:8");
+        assert_eq!(page.items[0].command_id, OPEN_PULL_REQUEST);
+        assert_eq!(page.items[0].description, "open · @contributor");
+        assert_eq!(page.next_cursor, "pulls:open:2");
+        assert_eq!(page.status, PageStatus::Partial);
+    }
+
+    fn pull_detail(draft: bool, merged: bool) -> String {
+        PULLS.strip_prefix("{\"body\":[").unwrap().strip_suffix("],\"nextPage\":2}").unwrap()
+            .replace("\"state\":\"open\"", "\"state\":\"closed\"")
+            .replace("\"merged_at\":null", if merged { "\"merged_at\":\"2026-09-03T00:00:00Z\"" } else { "\"merged_at\":null" })
+            .replace("\"draft\":false", &format!("\"draft\":{draft},\"body\":\"Ready\",\"created_at\":\"2026-09-01T00:00:00Z\",\"updated_at\":\"2026-09-03T00:00:00Z\""))
+    }
+
+    #[test]
+    fn pull_request_detail_displays_base_head_and_merged_state_without_a_repo_read() {
+        let effects = dispatch(Event::ToolCompleted(ToolCompleted {
+            read_id: "pull-detail:8".into(),
+            status: CompletionStatus::Succeeded,
+            data: pull_detail(false, true),
+            message: String::new(),
+        }));
+        let Effect::PublishDocument(document) = &effects[0] else {
+            panic!()
+        };
+        assert_eq!(document.resource_id, "github-pull-request:8");
+        let DocumentSection::Metadata(metadata) = &document.sections[0] else {
+            panic!()
+        };
+        for (name, value) in [
+            ("State", "merged"),
+            ("Base", "base/project:main"),
+            ("Head", "fork/project:feature"),
+            ("Labels", "ready"),
+        ] {
+            assert!(metadata
+                .fields
+                .iter()
+                .any(|field| field.name == name && field.value.contains(value)));
+        }
+        assert_eq!(effects.len(), 1);
+        let request = dispatch(Event::DocumentRequest(DocumentRequest {
+            resource_id: "github-pull-request:8".into(),
+        }));
+        let Effect::StartToolRead(read) = &request[0] else {
+            panic!()
+        };
+        assert_eq!(read.read_id, "pull-detail:8");
+        assert_eq!(read.arguments.len(), 1);
+        assert_eq!(read.arguments[0].name, "path");
+        assert_eq!(read.arguments[0].value, "pulls/8");
+    }
+
+    #[test]
+    fn closed_draft_and_unknown_comment_count_keep_independent_meanings() {
+        let list = PULLS
+            .replace("\"state\":\"open\"", "\"state\":\"closed\"")
+            .replace("\"draft\":false", "\"draft\":true")
+            .replace("\"comments\":2,", "");
+        let mut page = parse_pull_request_page(&list, IssueState::Closed).unwrap();
+        let item = pull_item(page.pull_requests.remove(0));
+        assert!(item.description.starts_with("closed · draft"));
+        assert_eq!(item.collapsible_state, CollapsibleState::Collapsed);
+        let Effect::PublishDocument(document) =
+            pull_request_document(parse_pull_request_detail(&pull_detail(true, false)).unwrap())
+        else {
+            panic!()
+        };
+        let DocumentSection::Metadata(metadata) = &document.sections[0] else {
+            panic!()
+        };
+        assert!(metadata
+            .fields
+            .iter()
+            .any(|field| field.name == "State" && field.value == "closed"));
+        assert!(metadata
+            .fields
+            .iter()
+            .any(|field| field.name == "Draft" && field.value == "true"));
+    }
+
+    #[test]
+    fn pull_request_comments_use_issue_conversation_path_but_keep_pull_identity() {
+        let effects = dispatch(Event::TreeRequest(TreeRequest {
+            view_id: PULL_REQUESTS_VIEW.into(),
+            parent_id: "pull:51:8".into(),
+            cursor: String::new(),
+        }));
+        let Effect::StartToolRead(read) = &effects[0] else {
+            panic!()
+        };
+        assert_eq!(read.read_id, "pull-comments:51:8:1");
+        assert_eq!(read.arguments[0].value, "issues/8/comments");
+        let effects = dispatch(Event::ToolCompleted(ToolCompleted {
+            read_id: "pull-comments:51:8:1".into(),
+            status: CompletionStatus::Succeeded,
+            data: r#"{"body":[],"nextPage":2}"#.into(),
+            message: String::new(),
+        }));
+        let Effect::PublishTreePage(page) = &effects[0] else {
+            panic!()
+        };
+        assert_eq!(page.view_id, PULL_REQUESTS_VIEW);
+        assert_eq!(page.parent_id, "pull:51:8");
+        assert_eq!(page.next_cursor, "pull-comments:2");
+        assert_eq!(page.status, PageStatus::Partial);
+    }
 
     const MIXED: &str = r#"{"body":[{"id":11,"number":7,"title":"Visible issue","state":"open","user":{"login":"octocat"},"labels":[{"name":"bug"}],"html_url":"https://github.com/o/r/issues/7","comments":2},{"id":12,"number":8,"title":"Filtered PR","state":"open","user":{"login":"hubot"},"labels":[],"html_url":"https://github.com/o/r/pull/8","comments":0,"pull_request":{}}],"nextPage":2}"#;
 

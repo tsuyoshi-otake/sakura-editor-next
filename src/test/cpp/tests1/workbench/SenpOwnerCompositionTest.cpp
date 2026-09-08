@@ -7,6 +7,7 @@
 #include "outline/CDlgFuncList.h"
 #include "workbench/SenpOwnerComposition.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <deque>
@@ -266,7 +267,7 @@ TEST_F(SenpOwnerComposition, RealSamplePublishesTwoTreesAndStructuredDocument)
 	pages.Close();
 }
 
-TEST_F(SenpOwnerComposition, RealGithubIssueReadReachesTheNativeTreeProvider)
+TEST_F(SenpOwnerComposition, RealGithubIssuesAndPullRequestsReachNativeProviders)
 {
 	const auto fixtureEnvironment = _wgetenv(L"SAKURA_SENP_RUNTIME_FIXTURES");
 	if (!fixtureEnvironment || !*fixtureEnvironment) GTEST_SKIP() << "SENP runtime fixtures are not configured";
@@ -290,6 +291,8 @@ TEST_F(SenpOwnerComposition, RealGithubIssueReadReachesTheNativeTreeProvider)
 	target->EnqueueToolResponse(LR"({"id":11,"number":7,"title":"Visible issue","state":"open","user":{"login":"octocat"},"labels":[{"name":"bug"}],"html_url":"https://github.com/o/r/issues/7","comments":2,"body":"Issue body","created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-02T00:00:00Z"})");
 	target->EnqueueToolResponse(LR"({"body":[{"id":91,"user":{"login":"hubot"},"body":"Comment body","html_url":"https://github.com/o/r/issues/7#issuecomment-91","created_at":"2026-09-02T01:00:00Z","updated_at":"2026-09-02T01:00:00Z"}],"nextPage":2})");
 	target->EnqueueToolResponse(LR"({"id":91,"user":{"login":"hubot"},"body":"Comment body","html_url":"https://github.com/o/r/issues/7#issuecomment-91","created_at":"2026-09-02T01:00:00Z","updated_at":"2026-09-02T01:00:00Z"})");
+	target->EnqueueToolResponse(LR"({"body":[{"id":51,"number":8,"title":"Cross-fork change","state":"open","user":{"login":"contributor"},"labels":[{"name":"ready"}],"html_url":"https://github.com/base/project/pull/8","comments":0,"draft":false,"merged_at":null,"base":{"ref":"main","sha":"bbbb","repo":{"full_name":"base/project"}},"head":{"ref":"feature","sha":"hhhh","repo":{"full_name":"fork/project"}}}]})");
+	target->EnqueueToolResponse(LR"({"id":51,"number":8,"title":"Cross-fork change","state":"closed","user":{"login":"contributor"},"labels":[{"name":"ready"}],"html_url":"https://github.com/base/project/pull/8","comments":0,"draft":false,"merged_at":"2026-09-03T00:00:00Z","base":{"ref":"main","sha":"bbbb","repo":{"full_name":"base/project"}},"head":{"ref":"feature","sha":"hhhh","repo":{"full_name":"fork/project"}},"body":"Pull request body","created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-03T00:00:00Z"})");
 	std::map<std::wstring, std::shared_ptr<tree::SenpTreeProvider>, std::less<>> providers;
 	layout::WorkbenchViewContainerDescriptor container{
 		"github-pull-requests", "GitHub", layout::EViewContainerLocation::Sidebar, 6,
@@ -298,7 +301,7 @@ TEST_F(SenpOwnerComposition, RealGithubIssueReadReachesTheNativeTreeProvider)
 	std::vector<SenpOwnerTreeContribution> trees;
 	trees.emplace_back(layout::WorkbenchViewDescriptor{
 		"pr:github", "github-pull-requests", "Pull Requests", 10, true, true, "senp.tree" },
-		std::vector<std::string>{});
+		std::vector<std::string>{ "github.openPullRequest" });
 	trees.emplace_back(layout::WorkbenchViewDescriptor{
 		"issues:github", "github-pull-requests", "Issues", 20, true, true, "senp.tree" },
 		std::vector<std::string>{ "github.openIssue", "github.openIssueComment" });
@@ -369,6 +372,33 @@ TEST_F(SenpOwnerComposition, RealGithubIssueReadReachesTheNativeTreeProvider)
 	EXPECT_EQ(L"Comment body", std::get<senp::effect::MarkdownSection>(
 		target->Document().sections[1]).text);
 	EXPECT_EQ(4, target->ToolReads());
+
+	providers.at(L"pr:github")->SetVisible(true, Clock::now());
+	ASSERT_TRUE(Await(composition, [&] {
+		return providers.at(L"pr:github")->Model().ItemCount() == 1;
+	}));
+	const auto pull = providers.at(L"pr:github")->Model().Node(L"pull:51:8");
+	ASSERT_TRUE(pull);
+	EXPECT_EQ(L"#8 Cross-fork change", pull->item.label);
+	ASSERT_TRUE(providers.at(L"pr:github")->Select(L"pull:51:8"));
+	ASSERT_TRUE(providers.at(L"pr:github")->Execute(L"pull:51:8"));
+	ASSERT_TRUE(Await(composition, [&] { return target->Publishes() == 3; }));
+	EXPECT_EQ(L"#8 Cross-fork change", target->Document().title);
+	ASSERT_TRUE(std::holds_alternative<senp::effect::MetadataSection>(
+		target->Document().sections[0]));
+	const auto& fields = std::get<senp::effect::MetadataSection>(
+		target->Document().sections[0]).fields;
+	EXPECT_TRUE(std::ranges::any_of(fields, [](const auto& field) {
+		return field.name == L"State" && field.value == L"merged";
+	}));
+	EXPECT_TRUE(std::ranges::any_of(fields, [](const auto& field) {
+		return field.name == L"Base" && field.value.find(L"base/project:main") != std::wstring::npos;
+	}));
+	EXPECT_TRUE(std::ranges::any_of(fields, [](const auto& field) {
+		return field.name == L"Head" && field.value.find(L"fork/project:feature") != std::wstring::npos;
+	}));
+	EXPECT_EQ(L"pulls/8", target->LastRead().arguments.front().value);
+	EXPECT_EQ(6, target->ToolReads());
 	EXPECT_TRUE(composition.Close());
 	EXPECT_EQ(1, target->Revokes());
 	pages.Close();

@@ -292,6 +292,16 @@ body bound, required HTTPS URLs and timestamps before publishing. Null Issue
 bodies, empty comments, empty pages, partial pages and failed reads are distinct
 terminal presentations.
 
+The same guest owns E04's separate pull-request DTOs and `pr:github` tree.
+Pull-request identities use `pull:<database-id>:<number>` and must never collide
+with Issue identities. List and detail reads use only `pulls` and
+`pulls/{number}` in the repository selected by the native broker; ordinary
+conversation comments use that repository's `issues/{number}/comments` path.
+Base and head repository, branch, and commit values are bounded display metadata.
+A head in another fork never changes the selected repository or authorizes an
+implicit read from that fork. Draft, closed-unmerged, and merged states remain
+distinct in tree and document publication.
+
 Append accepts the next byte offset and at most 64 KiB. Fixed 64 KiB pages bound
 one resource to 32 MiB and the Control store to 64 MiB of allocated payload pages,
 including unused tails, with at most 64 resource slots. Pages and their index
@@ -316,3 +326,8 @@ storage and indexing; neither decoder nor store reparses earlier content.
 Verify `SenpTextResource.*`, including actual 32/64 MiB allocations and every
 authorization dimension. U06 owns native publication; T02/T08 still own live
 grant, download and release wiring. This store alone enables no network access.
+
+GitHub pull-request list responses can omit the conversation comment count.
+Preserve that count as unknown and allow expansion; only an explicit zero is a
+leaf. Detail responses require a count. Draft is independent from open/closed
+state, and merged status comes from merged_at; a closed draft must remain closed.

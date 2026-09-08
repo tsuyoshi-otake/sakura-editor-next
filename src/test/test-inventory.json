@@ -1,11 +1,11 @@
 {
   "disabled_count": 38,
-  "discovery": {"arguments":["--gtest_list_tests"],"executable":"runtime-set:tests1","executable_sha256":"ba3ebcaafd824fe8af37d3fe60b7d89c012e3ed8ae553acf5f8e3c8fa9e2254b","framework":"googletest"},
+  "discovery": {"arguments":["--gtest_list_tests"],"executable":"runtime-set:tests1","executable_sha256":"5042aec5e107b6ab5a163bb6cb976063b96145bbb0830e878f5ea1e15559aa96","framework":"googletest"},
   "guarantee_fingerprint": "sha256:31d900ec4cf7dca0e0bdc29b8bfd8b3b315534f94b9a86924a08b9af47dc6e53",
   "inventory_id": "legacy-tests1-msvc-x64-debug",
   "schema_version": 1,
   "source_dirty": true,
-  "source_revision": "c0097c729895147db76211409ff9ecf0953d2d0d",
+  "source_revision": "89c0707e372f0bc6fb5c311517f94fd90be67aa0",
   "test_count": 3928,
   "tests": [
     {"runtime":{"runner_id":"tests1","selector":"AccountDiscovery.AValidGhResponseWithNoAccountsIsReadyAndDistinctFromUnavailable"},"status":"enabled","test_id":"tests1:AccountDiscovery.AValidGhResponseWithNoAccountsIsReadyAndDistinctFromUnavailable"},
@@ -2633,7 +2633,7 @@
     {"runtime":{"runner_id":"tests1","selector":"SenpEffectProtocol.StrictJsonModeRetainsConfigurationJsoncCompatibility"},"status":"enabled","test_id":"tests1:SenpEffectProtocol.StrictJsonModeRetainsConfigurationJsoncCompatibility"},
     {"runtime":{"runner_id":"tests1","selector":"SenpLanguageServiceTest.ExactCloudFormationFilenameWinsOverGenericYamlExtension"},"status":"enabled","test_id":"tests1:SenpLanguageServiceTest.ExactCloudFormationFilenameWinsOverGenericYamlExtension"},
     {"runtime":{"runner_id":"tests1","selector":"SenpLanguageServiceTest.SelectsTerraformByExtensionAndTokenizesWithContributedGrammar"},"status":"enabled","test_id":"tests1:SenpLanguageServiceTest.SelectsTerraformByExtensionAndTokenizesWithContributedGrammar"},
-    {"runtime":{"runner_id":"tests1","selector":"SenpOwnerComposition.RealGithubIssueReadReachesTheNativeTreeProvider"},"status":"enabled","test_id":"tests1:SenpOwnerComposition.RealGithubIssueReadReachesTheNativeTreeProvider"},
+    {"runtime":{"runner_id":"tests1","selector":"SenpOwnerComposition.RealGithubIssuesAndPullRequestsReachNativeProviders"},"status":"enabled","test_id":"tests1:SenpOwnerComposition.RealGithubIssueReadReachesTheNativeTreeProvider"},
     {"runtime":{"runner_id":"tests1","selector":"SenpOwnerComposition.RealSamplePublishesTwoTreesAndStructuredDocument"},"status":"enabled","test_id":"tests1:SenpOwnerComposition.RealSamplePublishesTwoTreesAndStructuredDocument"},
     {"runtime":{"runner_id":"tests1","selector":"SenpOwnerProjection.DocumentFailureTerminatesAndForeignEffectRevokesCohort"},"status":"enabled","test_id":"tests1:SenpOwnerProjection.DocumentFailureTerminatesAndForeignEffectRevokesCohort"},
     {"runtime":{"runner_id":"tests1","selector":"SenpOwnerProjection.ReentrantCloseFromDocumentBeginDefersRevocation"},"status":"enabled","test_id":"tests1:SenpOwnerProjection.ReentrantCloseFromDocumentBeginDefersRevocation"},

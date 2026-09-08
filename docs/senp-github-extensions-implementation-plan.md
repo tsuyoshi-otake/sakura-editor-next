@@ -111,6 +111,18 @@ G02のsemantic台帳はexact source commit `f881170f28b3c17d195c145b6f2396704cff
 | T04 | gh接続状態・account固定・identity検証 | T03/F01 | `GhConnectionLifecycle.*` | Unknownをsigned-outにしない、account混在0 |
 | T05 | 有界web login・cancel・接続解除UI | T04 | fake ghとopt-in認証試験 | 全分岐終端、共有gh logoutなし、code表示/保管先表示 |
 | T06 | HTTP envelope・page・ETag・read DTO | T04 | `GhRepositoryRead.*` | 304、403/404、必須field、部分pageを区別 |
+| T07 | single-flight・fair queue・cooldown・可視poll | T06/F03 | `GhReadScheduler.*` | 複数windowでも重複1本、最後のunsubscribeでcancel |
+| T08 | jobログのredirect・chunk受信・cleanup | T06/U05 | `GhLogResource.*` | credential転送0、上限、途中失敗、URL非保持 |
+| E01 | repository snapshotとremote選択 | T06 | `GhRepositorySelection.*` | multi-root/fork/SSH alias/remote削除の区別 |
+| E02 | 共通github-clientとIssue一覧 | E01/U06 | 新crate testsとIssue View実表示 | PR除外後のnext page保持、状態filter |
+| E03 | Issue本文・コメントの詳細 | E02/U04 | fixtureとopt-in本文表示 | 本文/コメントpage、空と失敗の区別 |
+| E04 | PR一覧・本文・base/head/merged状態 | E03 | fixtureとPR View実表示 | Issue番号との混線0、別forkの暗黙取得なし |
+| E05 | Actions Workflow/Run/Attemptの一覧 | E01/U06 | 新crate testsとActions View | WorkflowとRunを区別、attempt固定 |
+| E06 | Job/Step状態とreadonly概要 | E05 | matrix/unknown/nullのfixture | job名でidentityを代用しない、進行中を成功にしない |
+| E07 | ActionsログのEditor接続と可視poll | E06/T07/T08 | opt-in Run→Job→ログ | アプリ内で読める、取得前/partial/expiredを区別 |
+| R01 | 独立package install/disable/updateと旧版回帰 | E04/E07 | packageとowner lifecycle tests | 他方の拡張/旧SENPを壊さず停止・更新 |
+| R02 | x64 Debug/Release配布と未対応backend境界 | R01 | solution build、変更したCMake、audit/encoding | payload完備、未対応はUnavailable、runner残存0 |
+| R03 | 全rubric・native実表示・形式仕様対応の最終確認 | R02 | 設計V1–V13 + 全TLC + process audit | 必須条件が全て合格してから機能完成 |
 
 T05の実装境界は`CGhLoginSession`とする。固定web login argv、専用
 `GH_CONFIG_DIR`、5分deadline、64 KiBずつのstdout/stderr上限、cancel event、
@@ -137,20 +149,16 @@ account generation、host、repository identity、endpoint、canonical queryを�
 下限にする。429とrate情報付き403だけがhost/account cooldownを設定し、通常403は設定しない。
 最後のvisible subscriberが外れた時だけ共有stop eventをsignalし、workerの`Complete`までは
 cleanup ownershipを保持する。cancel済みcycleの遅着結果は後続cycleへ公開しない。
-| T07 | single-flight・fair queue・cooldown・可視poll | T06/F03 | `GhReadScheduler.*` | 複数windowでも重複1本、最後のunsubscribeでcancel |
-| T08 | jobログのredirect・chunk受信・cleanup | T06/U05 | `GhLogResource.*` | credential転送0、上限、途中失敗、URL非保持 |
 
 T08のnative境界はjob IDを正の整数として検証し、`gh api --hostname <host> --method GET`
 の固定endpointだけを生成する。verified credentialは環境経由でgh processにだけ渡り、argv、
 text resource、結果には現れない。stdoutを64 KiB以下のchunkとして32 MiBまで追記し、stderrと
 gh内部の短命redirect URLは保持しない。作成後の全分岐はRAII completionでterminal化する。
-| E01 | repository snapshotとremote選択 | T06 | `GhRepositorySelection.*` | multi-root/fork/SSH alias/remote削除の区別 |
 
 E01ではrevision付きWorkspace snapshotを入力に、SCM HWNDへ依存しないpassive Git adapterを実装した。
 workspace rootとrepository rootを別々に正規化し、同じrepository内の複数rootはまとめるがroot identityは保持する。
 forkの`origin`と親の`upstream`は異なるrepository候補のまま選択を要求し、名前による優先はしない。
 literal `github.com`以外のSSH hostはaliasとして未解決にし、workspace/remote削除とstale generationを別terminalにした。
-| E02 | 共通github-clientとIssue一覧 | E01/U06 | 新crate testsとIssue View実表示 | PR除外後のnext page保持、状態filter |
 
 E02は`github_client`を常駐runtimeではなく両built-inへ静的linkするRust libraryとして追加した。
 repository read completionは`body`と検証済み`nextPage`の小さなJSON envelopeで受け、未知GitHub fieldは許容する一方、
@@ -158,7 +166,6 @@ repository read completionは`body`と検証済み`nextPage`の小さなJSON env
 state/sort/direction/per_page/pageだけを要求し、`pull_request` markerを持つ項目を除外した後もnext cursorを保持する。
 実componentをnative runtimeから呼び、`StartToolRead`から`ToolCompleted`を経て`issues:github`の
 `PublishTreePage`になる往復を受入runnerで検証する。PR一覧と本文はE03/E04まで公開しない。
-| E03 | Issue本文・コメントの詳細 | E02/U04 | fixtureとopt-in本文表示 | 本文/コメントpage、空と失敗の区別 |
 
 E03ではIssue rowのstable database IDとIssue番号を分離したidentityにし、選択時は
 `github.openIssue`から`github-issue:<number>` readonly documentを開く。document requestが
@@ -169,13 +176,14 @@ comment選択はdatabase IDを使う固定`issues/comments/{id}` readから独�
 実Wasm componentからnative tool target、Tree provider、readonly document publicationまでの往復を
 受入runnerで検証する。tool completionでoperation IDが変わってもowner/request generationを保持し、
 元のdocument contextだけへpublish/failureを返す。
-| E04 | PR一覧・本文・base/head/merged状態 | E03 | fixtureとPR View実表示 | Issue番号との混線0、別forkの暗黙取得なし |
-| E05 | Actions Workflow/Run/Attemptの一覧 | E01/U06 | 新crate testsとActions View | WorkflowとRunを区別、attempt固定 |
-| E06 | Job/Step状態とreadonly概要 | E05 | matrix/unknown/nullのfixture | job名でidentityを代用しない、進行中を成功にしない |
-| E07 | ActionsログのEditor接続と可視poll | E06/T07/T08 | opt-in Run→Job→ログ | アプリ内で読める、取得前/partial/expiredを区別 |
-| R01 | 独立package install/disable/updateと旧版回帰 | E04/E07 | packageとowner lifecycle tests | 他方の拡張/旧SENPを壊さず停止・更新 |
-| R02 | x64 Debug/Release配布と未対応backend境界 | R01 | solution build、変更したCMake、audit/encoding | payload完備、未対応はUnavailable、runner残存0 |
-| R03 | 全rubric・native実表示・形式仕様対応の最終確認 | R02 | 設計V1–V13 + 全TLC + process audit | 必須条件が全て合格してから機能完成 |
+
+E04ではPRをIssue APIの`pull_request` markerから復元せず、固定`pulls` / `pulls/{number}`
+responseを専用DTOへ変換する。Tree identityは`pull:<database-id>:<number>`、documentは
+`github-pull-request:<number>`としてIssue identityから分離する。draft、merged timestamp、
+base/headのrepository・branch・commitをreadonly metadataに保持するが、別forkのhead repositoryは
+表示情報に限定する。本文も通常会話commentもE01で選択したbase repositoryに対する固定pathからだけ
+取得し、head repositoryへの暗黙readやrepository切替を行わない。実Wasm componentからnativeの
+`pr:github` TreeとPR documentまで通す受入試験でこの境界を確認する。
 
 大きな工程を赤い状態で積み上げるための分割ではない。
 例えばG01はv2の未実装能力をUnsupportedで返し、UIボタンをまだ公開しない。
