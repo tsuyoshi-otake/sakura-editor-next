@@ -35822,6 +35822,20 @@
     {
       "column": 3,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
+      "line": 314,
+      "path": "sakura_core/senp/github/GhRepositorySelection.cpp",
+      "rule_id": "error.catch_all"
+    },
+    {
+      "column": 3,
+      "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
+      "line": 371,
+      "path": "sakura_core/senp/github/GhRepositorySelection.cpp",
+      "rule_id": "error.catch_all"
+    },
+    {
+      "column": 3,
+      "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
       "line": 348,
       "path": "sakura_core/senp/github/GhToolPolicy.cpp",
       "rule_id": "error.catch_all"
@@ -98345,7 +98359,7 @@
   },
   "inventory_kind": "editor-core-semantic",
   "metrics": {
-    "catch_all_count": 735,
+    "catch_all_count": 737,
     "direct_global_getter_calls": {
       "GetDllShareData": 710,
       "GetEditDoc": 7,
@@ -98818,11 +98832,11 @@
       }
     },
     "filtered_test_hint_count": 2,
-    "finding_count": 14020,
+    "finding_count": 14022,
     "finding_count_by_rule": {
       "boundary.private_include": 67,
       "boundary.win32_type": 4847,
-      "error.catch_all": 735,
+      "error.catch_all": 737,
       "global.get_dll_share_data": 710,
       "global.get_edit_doc": 7,
       "global.get_edit_wnd": 258,
@@ -98834,14 +98848,14 @@
       "state.raw_pointer_member": 30,
       "test.filtered_or_skipped": 2
     },
-    "include_directive_count": 11238,
+    "include_directive_count": 11258,
     "monolith_link_hint_count": 0,
     "private_include_mention_count": 67,
     "raw_delete_expression_count": 317,
     "raw_new_expression_count": 247,
-    "source_file_count": 1779,
-    "source_line_count": 531487,
-    "tracked_file_count": 1828,
+    "source_file_count": 1782,
+    "source_line_count": 532242,
+    "tracked_file_count": 1831,
     "win32_parameter_mention_count": 4847
   },
   "rule_catalog": [
@@ -98997,8 +99011,8 @@
     ]
   },
   "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
-  "source_commit": "24664869e6e692e5ae94d4f5b9feb42a1e8b9f69",
-  "source_fingerprint": "sha256:4bd92ae72ed53fe73c506c56c0c6d90eb2626798f2bd85a954e9ae56783041b8",
+  "source_commit": "ace3d56b6af18b5efa022e3ea0204c17ca8b38c5",
+  "source_fingerprint": "sha256:f29570d3d9e2b3aa9468b599d1dd8bafee2e5fd5f242fbcabf1b4e6e2725ce72",
   "tracked_source_paths": [
     ".github/actions/bootstrap-vcpkg/action.yml",
     ".github/dependabot.yml",
@@ -99753,6 +99767,8 @@
     "sakura_core/senp/github/GhReadScheduler.h",
     "sakura_core/senp/github/GhRepositoryRead.cpp",
     "sakura_core/senp/github/GhRepositoryRead.h",
+    "sakura_core/senp/github/GhRepositorySelection.cpp",
+    "sakura_core/senp/github/GhRepositorySelection.h",
     "sakura_core/senp/github/GhToolPolicy.cpp",
     "sakura_core/senp/github/GhToolPolicy.h",
     "sakura_core/terminal/DefaultTerminalLaunchProfileService.cpp",
@@ -100563,6 +100579,7 @@
     "src/test/cpp/tests1/senp/GhLoginSessionTest.cpp",
     "src/test/cpp/tests1/senp/GhReadSchedulerTest.cpp",
     "src/test/cpp/tests1/senp/GhRepositoryReadTest.cpp",
+    "src/test/cpp/tests1/senp/GhRepositorySelectionTest.cpp",
     "src/test/cpp/tests1/senp/GhToolPolicyTest.cpp",
     "src/test/cpp/tests1/senp/SenpEffectProtocolTest.cpp",
     "src/test/cpp/tests1/senp/SenpLanguageServiceTest.cpp",
@@ -100829,5 +100846,5 @@
     "tools/ppa_stub/ppa_stub.h",
     "tools/vcx-props/vcxcompat.props"
   ],
-  "tracked_source_set_sha256": "sha256:d8a41bdc9f9bc49a091995e7f572a022c99d829e4b39845bffbc9e388a0ecf6a"
+  "tracked_source_set_sha256": "sha256:e7b34b5cd2bc58843c4ba10def748124eee09d19fb103aefa19b05145283290a"
 }
