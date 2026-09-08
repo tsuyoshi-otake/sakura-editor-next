@@ -129,6 +129,14 @@ argvを組み立て、後者はT04の検証済みcredential leaseでのみ実行
 検証済みnext page番号だけを返す。200はJSON content type、strict JSON、object/array
 rootを必須とし、304/401/403/404、malformed envelope、malformed JSON、process terminalを
 別結果にする。endpoint固有の必須fieldとDTO変換はE02以降の拡張側責務に残す。
+
+T07は`CGhReadScheduler`がControl全体のadmissionを所有する。resource keyはprofile、
+account generation、host、repository identity、endpoint、canonical queryを含み、ETagだけが
+異なる同一readは集約する。account laneごとに実行中1本、全体64 resource / 256 subscriberを
+上限とし、dispatch可能な最古queueを選ぶ。hidden leaseはpollせず、listは60秒、activeは15秒を
+下限にする。429とrate情報付き403だけがhost/account cooldownを設定し、通常403は設定しない。
+最後のvisible subscriberが外れた時だけ共有stop eventをsignalし、workerの`Complete`までは
+cleanup ownershipを保持する。cancel済みcycleの遅着結果は後続cycleへ公開しない。
 | T07 | single-flight・fair queue・cooldown・可視poll | T06/F03 | `GhReadScheduler.*` | 複数windowでも重複1本、最後のunsubscribeでcancel |
 | T08 | jobログのredirect・chunk受信・cleanup | T06/U05 | `GhLogResource.*` | credential転送0、上限、途中失敗、URL非保持 |
 | E01 | repository snapshotとremote選択 | T06 | `GhRepositorySelection.*` | multi-root/fork/SSH alias/remote削除の区別 |

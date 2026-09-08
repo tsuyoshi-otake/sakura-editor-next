@@ -780,6 +780,9 @@
 	<ClCompile Include="..\src\test\cpp\tests1\senp\GhRepositoryReadTest.cpp">
 	  <Filter>Test Files</Filter>
 	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\senp\GhReadSchedulerTest.cpp">
+	  <Filter>Test Files</Filter>
+	</ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\senp\GhToolPolicyTest.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>

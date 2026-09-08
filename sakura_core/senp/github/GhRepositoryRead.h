@@ -16,6 +16,7 @@ namespace senp::github {
 enum class GhRepositoryResponseStatus : std::uint8_t {
 	Succeeded,
 	NotModified,
+	RateLimited,
 	Forbidden,
 	NotFound,
 	Unauthorized,
@@ -34,7 +35,10 @@ class GhRepositoryResponse final {
 public:
 	GhRepositoryResponse(GhRepositoryResponseStatus status, int httpStatus,
 		std::vector<std::uint8_t> body, std::optional<std::string> etag,
-		std::uint32_t currentPage, std::optional<std::uint32_t> nextPage);
+		std::uint32_t currentPage, std::optional<std::uint32_t> nextPage,
+		std::optional<std::uint32_t> retryAfterSeconds = std::nullopt,
+		std::optional<std::uint64_t> rateLimitResetUnixSeconds
+			= std::nullopt);
 	[[nodiscard]] GhRepositoryResponseStatus Status() const noexcept { return m_status; }
 	[[nodiscard]] int HttpStatus() const noexcept { return m_httpStatus; }
 	[[nodiscard]] const std::vector<std::uint8_t>& Body() const noexcept { return m_body; }
@@ -42,6 +46,8 @@ public:
 	[[nodiscard]] std::uint32_t CurrentPage() const noexcept { return m_currentPage; }
 	[[nodiscard]] const std::optional<std::uint32_t>& NextPage() const noexcept { return m_nextPage; }
 	[[nodiscard]] bool HasNextPage() const noexcept { return m_nextPage.has_value(); }
+	[[nodiscard]] const std::optional<std::uint32_t>& RetryAfterSeconds() const noexcept { return m_retryAfterSeconds; }
+	[[nodiscard]] const std::optional<std::uint64_t>& RateLimitResetUnixSeconds() const noexcept { return m_rateLimitResetUnixSeconds; }
 private:
 	GhRepositoryResponseStatus m_status{ GhRepositoryResponseStatus::InvalidRequest };
 	int m_httpStatus{};
@@ -49,6 +55,8 @@ private:
 	std::optional<std::string> m_etag;
 	std::uint32_t m_currentPage{ 1 };
 	std::optional<std::uint32_t> m_nextPage;
+	std::optional<std::uint32_t> m_retryAfterSeconds;
+	std::optional<std::uint64_t> m_rateLimitResetUnixSeconds;
 };
 
 //! Executes a policy-built request through a verified account lease, then

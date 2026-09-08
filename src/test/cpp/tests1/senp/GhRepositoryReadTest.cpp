@@ -4,6 +4,7 @@
 #include "senp/github/GhRepositoryRead.h"
 
 #include <memory>
+#include <tuple>
 
 namespace {
 using namespace senp;
@@ -170,6 +171,36 @@ TEST(GhRepositoryRead, KeepsUnauthorizedForbiddenAndNotFoundDistinct)
 		EXPECT_EQ(expected, result.Status());
 		EXPECT_EQ(code, result.HttpStatus());
 	}
+}
+
+TEST(GhRepositoryRead, SeparatesRateLimitedResponsesAndValidatesCooldownHeaders)
+{
+	for (const auto& [output, expected, retryAfter] :
+		std::vector<std::tuple<std::string, GhRepositoryResponseStatus, std::optional<std::uint32_t>>>{
+			{ "HTTP/2.0 429 Too Many Requests\r\nRetry-After: 120\r\nX-RateLimit-Reset: 200\r\n\r\n{}",
+				GhRepositoryResponseStatus::RateLimited, 120 },
+			{ "HTTP/2.0 403 Forbidden\r\nX-RateLimit-Remaining: 0\r\nX-RateLimit-Reset: 200\r\n\r\n{}",
+				GhRepositoryResponseStatus::RateLimited, std::nullopt },
+			{ "HTTP/2.0 403 Forbidden\r\nX-RateLimit-Remaining: 1\r\n\r\n{}",
+				GhRepositoryResponseStatus::Forbidden, std::nullopt },
+		}) {
+		Fixture fixture;
+		fixture.CredentialValue().Set(EBoundedProcessStatus::Failed, output);
+		auto account = fixture.Account();
+		const auto result = fixture.Reader().Read(account, fixture.Probe(), Request(), nullptr);
+		EXPECT_EQ(expected, result.Status());
+		EXPECT_EQ(retryAfter, result.RetryAfterSeconds());
+		if (expected == GhRepositoryResponseStatus::RateLimited) {
+			ASSERT_TRUE(result.RateLimitResetUnixSeconds());
+			EXPECT_EQ(200U, *result.RateLimitResetUnixSeconds());
+		}
+	}
+	Fixture fixture;
+	fixture.CredentialValue().Set(EBoundedProcessStatus::Failed,
+		"HTTP/2.0 429 Too Many Requests\r\nRetry-After: tomorrow\r\n\r\n{}");
+	auto account = fixture.Account();
+	EXPECT_EQ(GhRepositoryResponseStatus::InvalidEnvelope,
+		fixture.Reader().Read(account, fixture.Probe(), Request(), nullptr).Status());
 }
 
 TEST(GhRepositoryRead, RejectsMalformedEnvelopeContentTypeAndJsonRoot)

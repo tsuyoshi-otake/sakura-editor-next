@@ -30,6 +30,12 @@ public:
 	void SetEtag(std::string etag) { etag_ = std::move(etag); }
 	const std::optional<std::uint32_t>& NextPage() const noexcept { return nextPage_; }
 	void SetNextPage(const std::optional<std::uint32_t> page) noexcept { nextPage_ = page; }
+	const std::optional<std::uint32_t>& RetryAfterSeconds() const noexcept { return retryAfterSeconds_; }
+	void SetRetryAfterSeconds(const std::uint32_t seconds) noexcept { retryAfterSeconds_ = seconds; }
+	const std::optional<std::uint64_t>& RateLimitResetUnixSeconds() const noexcept { return rateLimitResetUnixSeconds_; }
+	void SetRateLimitResetUnixSeconds(const std::uint64_t seconds) noexcept { rateLimitResetUnixSeconds_ = seconds; }
+	const std::optional<std::uint32_t>& RateLimitRemaining() const noexcept { return rateLimitRemaining_; }
+	void SetRateLimitRemaining(const std::uint32_t remaining) noexcept { rateLimitRemaining_ = remaining; }
 	bool HasJsonContent() const noexcept { return jsonContent_; }
 	void SetJsonContent(const bool jsonContent) noexcept { jsonContent_ = jsonContent; }
 	bool ContentTypeSeen() const noexcept { return contentTypeSeen_; }
@@ -42,6 +48,9 @@ private:
 	std::vector<std::uint8_t> body_;
 	std::optional<std::string> etag_;
 	std::optional<std::uint32_t> nextPage_;
+	std::optional<std::uint32_t> retryAfterSeconds_;
+	std::optional<std::uint64_t> rateLimitResetUnixSeconds_;
+	std::optional<std::uint32_t> rateLimitRemaining_;
 	bool jsonContent_{};
 	bool contentTypeSeen_{}, linkSeen_{};
 };
@@ -84,6 +93,15 @@ std::optional<std::uint32_t> ParsePositive(const std::string_view value) noexcep
 	const auto parsed = std::from_chars(value.data(), value.data() + value.size(), result);
 	return parsed.ec == std::errc{} && parsed.ptr == value.data() + value.size() && result > 0
 		? std::optional<std::uint32_t>(result) : std::nullopt;
+}
+
+std::optional<std::uint64_t> ParseUnsigned64(const std::string_view value) noexcept
+{
+	if (value.empty()) return std::nullopt;
+	std::uint64_t result{};
+	const auto parsed = std::from_chars(value.data(), value.data() + value.size(), result);
+	return parsed.ec == std::errc{} && parsed.ptr == value.data() + value.size()
+		? std::optional<std::uint64_t>(result) : std::nullopt;
 }
 
 std::optional<std::uint32_t> ParseNextPage(const std::string_view link) noexcept
@@ -153,6 +171,21 @@ std::optional<Envelope> ParseEnvelope(const std::vector<std::uint8_t>& bytes)
 			const auto next = ParseNextPage(value);
 			if (value.find("rel=\"next\"") != std::string_view::npos && !next) return std::nullopt;
 			envelope.SetNextPage(next);
+		} else if (EqualsInsensitive(name, "retry-after")) {
+			if (envelope.RetryAfterSeconds()) return std::nullopt;
+			const auto seconds = ParseUnsigned64(value);
+			if (!seconds || *seconds > 86400) return std::nullopt;
+			envelope.SetRetryAfterSeconds(static_cast<std::uint32_t>(*seconds));
+		} else if (EqualsInsensitive(name, "x-ratelimit-reset")) {
+			if (envelope.RateLimitResetUnixSeconds()) return std::nullopt;
+			const auto seconds = ParseUnsigned64(value);
+			if (!seconds) return std::nullopt;
+			envelope.SetRateLimitResetUnixSeconds(*seconds);
+		} else if (EqualsInsensitive(name, "x-ratelimit-remaining")) {
+			if (envelope.RateLimitRemaining()) return std::nullopt;
+			const auto remaining = ParseUnsigned64(value);
+			if (!remaining || *remaining > std::numeric_limits<std::uint32_t>::max()) return std::nullopt;
+			envelope.SetRateLimitRemaining(static_cast<std::uint32_t>(*remaining));
 		}
 		if (end == std::string_view::npos) break;
 		begin = end + 1;
@@ -197,9 +230,13 @@ GhRepositoryResponse Terminal(const GhRepositoryResponseStatus status, const std
 
 GhRepositoryResponse::GhRepositoryResponse(const GhRepositoryResponseStatus status, const int httpStatus,
 	std::vector<std::uint8_t> body, std::optional<std::string> etag,
-	const std::uint32_t currentPage, std::optional<std::uint32_t> nextPage) :
+	const std::uint32_t currentPage, std::optional<std::uint32_t> nextPage,
+	std::optional<std::uint32_t> retryAfterSeconds,
+	std::optional<std::uint64_t> rateLimitResetUnixSeconds) :
 	m_status(status), m_httpStatus(httpStatus), m_body(std::move(body)), m_etag(std::move(etag)),
-	m_currentPage(currentPage), m_nextPage(std::move(nextPage)) {}
+	m_currentPage(currentPage), m_nextPage(std::move(nextPage)),
+	m_retryAfterSeconds(std::move(retryAfterSeconds)),
+	m_rateLimitResetUnixSeconds(std::move(rateLimitResetUnixSeconds)) {}
 
 GhRepositoryResponse CGhRepositoryReader::Read(GhAuthenticatedAccount& account,
 	const GhToolProbe& probe, const GhRepositoryReadRequest& request, HANDLE stop) const
@@ -227,6 +264,11 @@ try {
 		return { GhRepositoryResponseStatus::NotModified, 304, {}, envelope->Etag(), page, std::nullopt };
 	}
 	if (envelope->Status() == 401) return { GhRepositoryResponseStatus::Unauthorized, 401, {}, envelope->Etag(), page, std::nullopt };
+	if (envelope->Status() == 429 || (envelope->Status() == 403
+		&& (envelope->RetryAfterSeconds() || envelope->RateLimitRemaining().value_or(1U) == 0U))) {
+		return { GhRepositoryResponseStatus::RateLimited, envelope->Status(), {}, envelope->Etag(), page,
+			std::nullopt, envelope->RetryAfterSeconds(), envelope->RateLimitResetUnixSeconds() };
+	}
 	if (envelope->Status() == 403) return { GhRepositoryResponseStatus::Forbidden, 403, {}, envelope->Etag(), page, std::nullopt };
 	if (envelope->Status() == 404) return { GhRepositoryResponseStatus::NotFound, 404, {}, envelope->Etag(), page, std::nullopt };
 	if (envelope->Status() != 200 || outcome.Status() != platform::process::EBoundedProcessStatus::Succeeded) {

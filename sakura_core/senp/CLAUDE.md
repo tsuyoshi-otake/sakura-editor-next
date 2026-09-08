@@ -209,7 +209,7 @@ The candidate becomes Connected only after the fixed `user` endpoint reports
 the same login. Timeout, malformed output, and candidate failure preserve an
 existing usable account. Replacement, confirmed reauthentication, disconnect,
 and close revoke retained credential leases and every profile grant. A late
-candidate cannot cross the connection epoch. T06 will add bounded query and
+candidate cannot cross the connection epoch. T06 adds bounded query and
 HTTP-envelope parsing. Do not widen either policy into a generic command
 runner.
 
@@ -237,6 +237,19 @@ root. 304, 401, 403 and 404 remain distinct even when gh exits nonzero; malforme
 headers, duplicate relevant headers, scalar JSON, and process terminals fail
 closed without publishing a body. Endpoint-specific DTO fields remain owned by
 the extension SDK stages after T06.
+
+`CGhReadScheduler` owns T07's Control-wide read admission. Its resource key
+includes profile, account generation, host, repository identity, endpoint and
+canonical query, while excluding the conditional ETag from single-flight
+identity. It permits one running read per account lane, admits at most 64 live
+resources and 256 subscriptions, and chooses the oldest eligible queue entry.
+Hidden subscribers never create polling work. Visible list and active leases
+poll no faster than 60 and 15 seconds respectively. A typed 429 or rate-limited
+403 installs the bounded host/account cooldown; an ordinary 403 does not.
+Removing the last visible subscriber signals the shared stop event, but the
+dispatch remains the broker's cleanup responsibility until `Complete`. Close
+has the same contract. Never publish a delayed completion from a cancelled
+cycle or use profile/account/repository results across another scope.
 
 Append accepts the next byte offset and at most 64 KiB. Fixed 64 KiB pages bound
 one resource to 32 MiB and the Control store to 64 MiB of allocated payload pages,
