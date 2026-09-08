@@ -17,6 +17,11 @@ private:
 
 CSenpOwnerComposition::CSenpOwnerComposition(
 	layout::WorkbenchContributionRegistry& contributions,
+	viewcontainer::CViewContainerPages& pages)
+	: CSenpOwnerComposition(contributions, pages, {}) {}
+
+CSenpOwnerComposition::CSenpOwnerComposition(
+	layout::WorkbenchContributionRegistry& contributions,
 	viewcontainer::CViewContainerPages& pages,
 	senp::EffectRuntimeFactory runtimeFactory)
 	: m_owners(std::move(runtimeFactory)), m_publications(m_owners, contributions, pages) {}
@@ -33,7 +38,7 @@ senp::OwnerChangeResult CSenpOwnerComposition::Activate(senp::EffectRuntimeLaunc
 		auto pending = std::make_shared<std::optional<SenpOwnerPublicationOptions>>(std::move(publication));
 		return m_owners.Prepare(std::move(launch), std::move(packageDigest),
 			[this, pending](const senp::ContributionOwnerIdentity& candidate,
-				const senp::ContributionOwnerIdentity* previous) mutable {
+				const senp::ContributionOwnerIdentity* previous) {
 				if (!*pending) return std::unique_ptr<senp::ISenpOwnerPublication>{};
 				auto options = std::move(**pending);
 				pending->reset();
@@ -74,8 +79,7 @@ std::optional<senp::OwnerChangeResult> CSenpOwnerComposition::TakeTransition() n
 
 senp::ContributionOwnersSnapshot CSenpOwnerComposition::Snapshot() const noexcept
 {
-	try { return m_owners.Snapshot(); }
-	catch (...) { return { .closed = m_closed }; }
+	return m_owners.Snapshot();
 }
 
 bool CSenpOwnerComposition::Close() noexcept
@@ -84,9 +88,7 @@ bool CSenpOwnerComposition::Close() noexcept
 	if (m_entered) return false;
 	Call call(m_entered);
 	m_closed = true;
-	bool stopped{};
-	try { stopped = m_owners.Close(); }
-	catch (...) { stopped = false; }
+	const bool stopped = m_owners.Close();
 	m_publications.Close();
 	return stopped;
 }

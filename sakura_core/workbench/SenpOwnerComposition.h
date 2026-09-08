@@ -13,8 +13,10 @@ namespace workbench {
 class CSenpOwnerComposition final {
 public:
 	CSenpOwnerComposition(layout::WorkbenchContributionRegistry& contributions,
+		viewcontainer::CViewContainerPages& pages);
+	CSenpOwnerComposition(layout::WorkbenchContributionRegistry& contributions,
 		viewcontainer::CViewContainerPages& pages,
-		senp::EffectRuntimeFactory runtimeFactory = {});
+		senp::EffectRuntimeFactory runtimeFactory);
 	~CSenpOwnerComposition();
 	CSenpOwnerComposition(const CSenpOwnerComposition&) = delete;
 	CSenpOwnerComposition& operator=(const CSenpOwnerComposition&) = delete;

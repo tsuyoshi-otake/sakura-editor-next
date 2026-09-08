@@ -15,12 +15,34 @@ namespace workbench {
 namespace {
 using Clock = std::chrono::steady_clock;
 
-struct CompositionTargetState final {
-	std::wstring resource;
-	senp::effect::OperationContext context;
-	senp::effect::PublishDocument document;
-	senp::effect::CompleteCommand completion;
-	int begins{}, publishes{}, completions{}, revokes{};
+class CompositionTargetState final {
+public:
+	void Begin(std::wstring_view resource, const senp::effect::OperationContext& context)
+	{
+		m_resource.assign(resource); m_context = context; ++m_begins;
+	}
+	[[nodiscard]] bool Publish(const senp::effect::OperationContext& context,
+		senp::effect::PublishDocument document)
+	{
+		if (context != m_context || document.resourceId != m_resource) return false;
+		m_document = std::move(document); ++m_publishes; return true;
+	}
+	void Complete(senp::effect::CompleteCommand completion)
+	{
+		m_completion = std::move(completion); ++m_completions;
+	}
+	void Revoke() noexcept { ++m_revokes; }
+	[[nodiscard]] int Begins() const noexcept { return m_begins; }
+	[[nodiscard]] int Publishes() const noexcept { return m_publishes; }
+	[[nodiscard]] int Completions() const noexcept { return m_completions; }
+	[[nodiscard]] int Revokes() const noexcept { return m_revokes; }
+	[[nodiscard]] const senp::effect::PublishDocument& Document() const noexcept { return m_document; }
+private:
+	std::wstring m_resource;
+	senp::effect::OperationContext m_context;
+	senp::effect::PublishDocument m_document;
+	senp::effect::CompleteCommand m_completion;
+	int m_begins{}, m_publishes{}, m_completions{}, m_revokes{};
 };
 
 class CompositionTarget final : public ISenpOwnerProjectionTarget {
@@ -30,13 +52,12 @@ public:
 	bool BeginDocument(std::wstring_view resourceId,
 		const senp::effect::OperationContext& context) noexcept override
 	{
-		m_state->resource.assign(resourceId); m_state->context = context; ++m_state->begins; return true;
+		m_state->Begin(resourceId, context); return true;
 	}
 	bool PublishDocument(const senp::effect::OperationContext& context,
 		senp::effect::PublishDocument document) noexcept override
 	{
-		if (context != m_state->context || document.resourceId != m_state->resource) return false;
-		m_state->document = std::move(document); ++m_state->publishes; return true;
+		return m_state->Publish(context, std::move(document));
 	}
 	bool FailDocument(const senp::effect::OperationContext&, senp::InvocationStatus) noexcept override
 	{
@@ -45,10 +66,10 @@ public:
 	bool CompleteCommand(const senp::effect::OperationContext&,
 		senp::effect::CompleteCommand completion) noexcept override
 	{
-		m_state->completion = std::move(completion); ++m_state->completions; return true;
+		m_state->Complete(std::move(completion)); return true;
 	}
 	bool ReleaseResource(std::wstring_view) noexcept override { return true; }
-	void Revoke() noexcept override { ++m_state->revokes; }
+	void Revoke() noexcept override { m_state->Revoke(); }
 private:
 	std::shared_ptr<CompositionTargetState> m_state;
 };
@@ -182,16 +203,16 @@ TEST_F(SenpOwnerComposition, RealSamplePublishesTwoTreesAndStructuredDocument)
 	auto projects = providers.at(L"sample.projects");
 	ASSERT_TRUE(projects->Select(L"project:alpha"));
 	ASSERT_TRUE(projects->Execute(L"project:alpha"));
-	ASSERT_TRUE(Await(composition, [&] { return target->publishes == 1; }));
-	EXPECT_EQ(1, target->begins);
-	EXPECT_EQ(1, target->completions);
-	EXPECT_EQ(L"Alpha details", target->document.title);
-	ASSERT_EQ(4U, target->document.sections.size());
+	ASSERT_TRUE(Await(composition, [&] { return target->Publishes() == 1; }));
+	EXPECT_EQ(1, target->Begins());
+	EXPECT_EQ(1, target->Completions());
+	EXPECT_EQ(L"Alpha details", target->Document().title);
+	ASSERT_EQ(4U, target->Document().sections.size());
 	EXPECT_TRUE(std::holds_alternative<senp::effect::TextResourceSection>(
-		target->document.sections.back()));
+		target->Document().sections.back()));
 
 	EXPECT_TRUE(composition.Close());
-	EXPECT_EQ(1, target->revokes);
+	EXPECT_EQ(1, target->Revokes());
 	EXPECT_TRUE(catalog.Snapshot().owners.empty());
 	pages.Close();
 }
