@@ -136,6 +136,14 @@ void CControlPlatformRuntime::RollbackStart() noexcept
 		}
 		m_host.reset();
 	}
+	if (m_senp) {
+		try {
+			m_senp->Close();
+		} catch (...) {
+			// The composition already owns its own cancellation. Continue releasing storage.
+		}
+		m_senp.reset();
+	}
 	if (m_profileRegistry) {
 		try {
 			(void)m_profileRegistry->Stop({ m_profileRegistryShutdownOperationId, m_profileRegistry->StorageRevision() });
@@ -251,6 +259,18 @@ ControlPlatformRuntimeResult CControlPlatformRuntime::Start()
 				L"durable user-data profile registry load failed", std::move(profileRegistryResult));
 		}
 
+		try {
+			ControlSenpCompositionOptions senpOptions;
+			senpOptions.controlProfileRoot = m_options.profileDirectory.native();
+			senpOptions.controlAuthorityId = authorityResult->profileId;
+			senpOptions.controlAuthorityGeneration = authorityResult->authorityGeneration;
+			m_senp = std::make_unique<CControlSenpComposition>(std::move(senpOptions), m_profileRegistry);
+		} catch (...) {
+			RollbackStart();
+			return Result(EControlPlatformRuntimeResultCode::HostCreateFailed, std::move(authorityResult),
+				std::move(storageOpenResult), std::nullopt, L"control SENP composition creation failed");
+		}
+
 		ControlPlatformServiceHostOptions hostOptions;
 		hostOptions.profileDirectory = m_options.profileDirectory;
 		hostOptions.profileId = authorityResult->profileId;
@@ -259,11 +279,11 @@ ControlPlatformRuntimeResult CControlPlatformRuntime::Start()
 		try {
 			if (m_dependencies.hostDependencies) {
 				m_host = std::make_unique<CControlPlatformServiceHost>(std::move(hostOptions), m_storage,
-					m_profileRegistry, *m_dependencies.hostDependencies);
+					m_profileRegistry, *m_dependencies.hostDependencies, m_senp->Handler());
 			}
 			else {
 				m_host = std::make_unique<CControlPlatformServiceHost>(std::move(hostOptions), m_storage,
-					m_profileRegistry);
+					m_profileRegistry, m_senp->Handler());
 			}
 		} catch (...) {
 			RollbackStart();
@@ -306,6 +326,10 @@ ControlPlatformRuntimeResult CControlPlatformRuntime::Stop()
 	try {
 		if (m_host) hostResult = m_host->Stop();
 		m_host.reset();
+		if (m_senp) {
+			m_senp->Close();
+			m_senp.reset();
+		}
 		if (m_profileRegistry) {
 			profileRegistryResult = m_profileRegistry->Stop(
 				{ m_profileRegistryShutdownOperationId, m_profileRegistry->StorageRevision() });

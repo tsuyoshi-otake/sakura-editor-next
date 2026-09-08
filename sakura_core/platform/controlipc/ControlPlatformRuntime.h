@@ -9,6 +9,7 @@
 #pragma once
 
 #include "platform/controlipc/ControlPlatformServiceHost.h"
+#include "platform/controlipc/ControlSenpComposition.h"
 #include "platform/profiles/ControlUserDataProfileRegistry.h"
 #include "platform/profiles/ProfileAuthorityStore.h"
 #include <sakura/storage/IStorageAuthority.h>
@@ -141,6 +142,10 @@ private:
 	std::shared_ptr<storage::IStorageAuthority> m_storage;
 	std::shared_ptr<profiles::ControlUserDataProfileRegistry> m_profileRegistry;
 	std::string m_profileRegistryShutdownOperationId;
+	//! Composed before the host so the accepted pipe already carries the
+	//! additive SENP frame handler, and closed after it so no session can
+	//! still reach a grant, a connection or the tool executor.
+	std::unique_ptr<CControlSenpComposition> m_senp;
 	std::unique_ptr<CControlPlatformServiceHost> m_host;
 };
 
