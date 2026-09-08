@@ -381,3 +381,21 @@ an uninstrumented product. See the test guidance for exact-image measurement;
 do not silently remove a user's diagnostic settings or raise the test deadline.
 U06 still owns sample owner/page publication and end-to-end application
 verification; schema 2 remains UnsupportedRuntime until those gates pass.
+
+## SENP Owner Documents
+
+`CSenpReadonlyOwnerTarget` joins an admitted owner document request to a real
+`SenpReadonlyWorkbench` input, `SenpReadonlyDocument` model, and
+`SenpReadonlyDocumentHost` HWND. It registers the Core input inactive first,
+uses that authoritative input ID in the model, prepares and binds the host, and
+only then activates it. A registration guard closes the Core input and surface
+when any intermediate step fails. A same-resource, same-title refresh retains
+the input and native host.
+
+Controller finalizers retain document ownership without a raw callback to the
+target. External Core close and failed removal therefore cannot leave a borrowed
+HWND dangling after owner teardown. The target reports which validation, model,
+host, registration, or presentation boundary failed. The controller's F3 route
+remains a typed unsupported boundary until the selected document page exposes
+its retained find query. Owner publication, the shared Tree ViewContainer
+transaction, and text-resource I/O remain composition work.

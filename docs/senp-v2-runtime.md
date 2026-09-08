@@ -466,3 +466,12 @@ unit testに加え、`wasm32-unknown-unknown`のcore moduleを`componentize`し�
 `sakura-senp-host --protocol 2`へHello、Activate、TreeRequestをframe送信して、activationの2 invalidationと
 Projectsの2 itemを確認した。この段階はguest側の縦切りであり、owner effectをnative View/page/editorへ
 transactionalに公開するadapterと実アプリend-to-endはU06に残る。
+
+### U06途中: readonly documentの実Core/HWND target
+
+readonly側の具体targetは、Coreへinactive inputを登録して得た実input IDをdocument modelへ渡し、hostの
+作成成功後に同じ登録をcontrollerへbindしてactiveにする。model、HWND、Core registrationのいずれかが
+失敗した場合はguardが登録を閉じ、途中状態をtabとして残さない。同じresource/titleの更新ではinputと
+native hostを再利用する。外部Core close時のfinalizerはtargetへのraw callbackを保持せず、document/hostを
+自分で保持して閉じるため、owner targetが先にrevokeされても借用surfaceはdanglingにならない。
+選択pageへのF3 query接続はまだ公開APIを持たないため、controller callbackは明示的にunsupportedを返す。

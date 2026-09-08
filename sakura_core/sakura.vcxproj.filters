@@ -3504,6 +3504,9 @@
     <ClCompile Include="..\sakura_core\workbench\editor\SenpReadonlyEditorController.cpp">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\editor\SenpReadonlyOwnerTarget.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
     <ClCompile Include="..\sakura_core\workbench\editor\SenpEditorSurfaceSwitcher.cpp">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
