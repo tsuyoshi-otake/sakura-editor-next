@@ -38209,28 +38209,28 @@
     {
       "column": 2,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 75,
+      "line": 77,
       "path": "sakura_core/workbench/output/OutputServiceNotificationDispatcher.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 117,
+      "line": 119,
       "path": "sakura_core/workbench/output/OutputServiceNotificationDispatcher.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 6,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 155,
+      "line": 157,
       "path": "sakura_core/workbench/output/OutputServiceNotificationDispatcher.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 4,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 172,
+      "line": 174,
       "path": "sakura_core/workbench/output/OutputServiceNotificationDispatcher.cpp",
       "rule_id": "error.catch_all"
     },
@@ -38291,107 +38291,44 @@
       "rule_id": "error.catch_all"
     },
     {
-      "column": 5,
+      "column": 4,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 933,
+      "line": 919,
       "path": "sakura_core/workbench/output/OutputServiceRustProvider.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 1039,
+      "line": 1051,
       "path": "sakura_core/workbench/output/OutputServiceRustProvider.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 6,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 1043,
+      "line": 1055,
       "path": "sakura_core/workbench/output/OutputServiceRustProvider.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 4,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 1146,
+      "line": 1376,
       "path": "sakura_core/workbench/output/OutputServiceRustProvider.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 4,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 1167,
+      "line": 1390,
       "path": "sakura_core/workbench/output/OutputServiceRustProvider.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 4,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 1188,
-      "path": "sakura_core/workbench/output/OutputServiceRustProvider.cpp",
-      "rule_id": "error.catch_all"
-    },
-    {
-      "column": 4,
-      "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 1209,
-      "path": "sakura_core/workbench/output/OutputServiceRustProvider.cpp",
-      "rule_id": "error.catch_all"
-    },
-    {
-      "column": 4,
-      "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 1230,
-      "path": "sakura_core/workbench/output/OutputServiceRustProvider.cpp",
-      "rule_id": "error.catch_all"
-    },
-    {
-      "column": 4,
-      "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 1251,
-      "path": "sakura_core/workbench/output/OutputServiceRustProvider.cpp",
-      "rule_id": "error.catch_all"
-    },
-    {
-      "column": 4,
-      "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 1272,
-      "path": "sakura_core/workbench/output/OutputServiceRustProvider.cpp",
-      "rule_id": "error.catch_all"
-    },
-    {
-      "column": 4,
-      "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 1293,
-      "path": "sakura_core/workbench/output/OutputServiceRustProvider.cpp",
-      "rule_id": "error.catch_all"
-    },
-    {
-      "column": 4,
-      "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 1314,
-      "path": "sakura_core/workbench/output/OutputServiceRustProvider.cpp",
-      "rule_id": "error.catch_all"
-    },
-    {
-      "column": 4,
-      "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 1475,
-      "path": "sakura_core/workbench/output/OutputServiceRustProvider.cpp",
-      "rule_id": "error.catch_all"
-    },
-    {
-      "column": 4,
-      "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 1489,
-      "path": "sakura_core/workbench/output/OutputServiceRustProvider.cpp",
-      "rule_id": "error.catch_all"
-    },
-    {
-      "column": 4,
-      "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 1509,
+      "line": 1410,
       "path": "sakura_core/workbench/output/OutputServiceRustProvider.cpp",
       "rule_id": "error.catch_all"
     },
@@ -39518,7 +39455,7 @@
     {
       "column": 6,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 1018,
+      "line": 1047,
       "path": "src/test/cpp/tests1/workbench/OutputServiceProviderConformanceTest.cpp",
       "rule_id": "error.catch_all"
     },
@@ -51138,21 +51075,21 @@
     {
       "column": 59,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 49,
+      "line": 50,
       "path": "sakura_core/workbench/output/OutputServiceNotificationDispatcher.h",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 71,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 1482,
+      "line": 1383,
       "path": "sakura_core/workbench/output/OutputServiceRustProvider.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 43,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 1493,
+      "line": 1394,
       "path": "sakura_core/workbench/output/OutputServiceRustProvider.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
@@ -51864,44 +51801,58 @@
       "rule_id": "resource.stop_required_acquisition"
     },
     {
+      "column": 29,
+      "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
+      "line": 551,
+      "path": "src/test/cpp/tests1/workbench/OutputServiceProviderConformanceTest.cpp",
+      "rule_id": "resource.stop_required_acquisition"
+    },
+    {
+      "column": 30,
+      "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
+      "line": 552,
+      "path": "src/test/cpp/tests1/workbench/OutputServiceProviderConformanceTest.cpp",
+      "rule_id": "resource.stop_required_acquisition"
+    },
+    {
       "column": 22,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 1156,
+      "line": 1185,
       "path": "src/test/cpp/tests1/workbench/OutputServiceProviderConformanceTest.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 45,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 1159,
+      "line": 1188,
       "path": "src/test/cpp/tests1/workbench/OutputServiceProviderConformanceTest.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 36,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 1199,
+      "line": 1228,
       "path": "src/test/cpp/tests1/workbench/OutputServiceProviderConformanceTest.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 31,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 1287,
+      "line": 1316,
       "path": "src/test/cpp/tests1/workbench/OutputServiceProviderConformanceTest.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 37,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 1300,
+      "line": 1329,
       "path": "src/test/cpp/tests1/workbench/OutputServiceProviderConformanceTest.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 24,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 1504,
+      "line": 1553,
       "path": "src/test/cpp/tests1/workbench/OutputServiceProviderConformanceTest.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
@@ -51950,154 +51901,154 @@
     {
       "column": 25,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 138,
+      "line": 147,
       "path": "src/test/cpp/tests1/workbench/OutputServiceTest.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 25,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 180,
+      "line": 189,
       "path": "src/test/cpp/tests1/workbench/OutputServiceTest.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 25,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 183,
+      "line": 192,
       "path": "src/test/cpp/tests1/workbench/OutputServiceTest.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 25,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 228,
+      "line": 237,
       "path": "src/test/cpp/tests1/workbench/OutputServiceTest.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 25,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 230,
+      "line": 239,
       "path": "src/test/cpp/tests1/workbench/OutputServiceTest.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 30,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 272,
+      "line": 281,
       "path": "src/test/cpp/tests1/workbench/OutputServiceTest.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 25,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 333,
+      "line": 342,
       "path": "src/test/cpp/tests1/workbench/OutputServiceTest.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 25,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 387,
+      "line": 396,
       "path": "src/test/cpp/tests1/workbench/OutputServiceTest.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 25,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 422,
+      "line": 431,
       "path": "src/test/cpp/tests1/workbench/OutputServiceTest.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 26,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 423,
+      "line": 432,
       "path": "src/test/cpp/tests1/workbench/OutputServiceTest.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 22,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 446,
+      "line": 455,
       "path": "src/test/cpp/tests1/workbench/OutputServiceTest.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 22,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 478,
+      "line": 487,
       "path": "src/test/cpp/tests1/workbench/OutputServiceTest.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 22,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 828,
+      "line": 837,
       "path": "src/test/cpp/tests1/workbench/OutputServiceTest.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 22,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 1054,
+      "line": 1063,
       "path": "src/test/cpp/tests1/workbench/OutputServiceTest.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 22,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 1196,
+      "line": 1205,
       "path": "src/test/cpp/tests1/workbench/OutputServiceTest.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 22,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 1390,
+      "line": 1399,
       "path": "src/test/cpp/tests1/workbench/OutputServiceTest.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 22,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 1391,
+      "line": 1400,
       "path": "src/test/cpp/tests1/workbench/OutputServiceTest.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 22,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 1393,
+      "line": 1402,
       "path": "src/test/cpp/tests1/workbench/OutputServiceTest.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 22,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 1409,
+      "line": 1418,
       "path": "src/test/cpp/tests1/workbench/OutputServiceTest.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 23,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 1417,
+      "line": 1426,
       "path": "src/test/cpp/tests1/workbench/OutputServiceTest.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 22,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 1429,
+      "line": 1438,
       "path": "src/test/cpp/tests1/workbench/OutputServiceTest.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 22,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 1482,
+      "line": 1491,
       "path": "src/test/cpp/tests1/workbench/OutputServiceTest.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
@@ -53231,7 +53182,7 @@
     {
       "column": 74,
       "evidence_sha256": "sha256:0a06a841e82a3f7809b4ae59af5eda45e7e805c40e8d967bb1abef61fe1efb49",
-      "line": 1165,
+      "line": 1174,
       "path": "src/test/cpp/tests1/workbench/OutputServiceTest.cpp",
       "rule_id": "state.mutable_member"
     },
@@ -81567,14 +81518,14 @@
     {
       "column": 23,
       "evidence_sha256": "sha256:3cf7c7616b0888ebc33446d1dd764173c97edaaa5e12ee479eb50ff27deacdf1",
-      "line": 85,
+      "line": 86,
       "path": "sakura_core/workbench/output/OutputServiceNotificationDispatcher.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 44,
       "evidence_sha256": "sha256:4bc45b3a78605d985961a8d8ca05da6dfb673dc825a0180d7cea1f4cbfec5365",
-      "line": 86,
+      "line": 87,
       "path": "sakura_core/workbench/output/OutputServiceNotificationDispatcher.h",
       "rule_id": "state.public_mutable_field"
     },
@@ -96981,21 +96932,21 @@
     {
       "column": 31,
       "evidence_sha256": "sha256:d3f8d16d64c7934f6550248c94d9d9bcee2546fae85e137ab66df68223dae9f2",
-      "line": 1271,
+      "line": 1300,
       "path": "src/test/cpp/tests1/workbench/OutputServiceProviderConformanceTest.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 31,
       "evidence_sha256": "sha256:5e878ff7d8f77157d960b5a8ac78a92ecca87ba2cbfa21804f6576010bf1f230",
-      "line": 1272,
+      "line": 1301,
       "path": "src/test/cpp/tests1/workbench/OutputServiceProviderConformanceTest.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 24,
       "evidence_sha256": "sha256:f8858cdf82e005d2aaa10627c99311ffd87b15d51f05613b200c70c0644b0279",
-      "line": 1273,
+      "line": 1302,
       "path": "src/test/cpp/tests1/workbench/OutputServiceProviderConformanceTest.cpp",
       "rule_id": "state.public_mutable_field"
     },
@@ -97177,7 +97128,7 @@
     {
       "column": 30,
       "evidence_sha256": "sha256:bdfe29a8be50714af660ad8be12765206fcbaf2b6d024496ef1b64405a405ccb",
-      "line": 209,
+      "line": 218,
       "path": "src/test/cpp/tests1/workbench/OutputServiceTest.cpp",
       "rule_id": "state.public_mutable_field"
     },
@@ -98359,7 +98310,7 @@
   },
   "inventory_kind": "editor-core-semantic",
   "metrics": {
-    "catch_all_count": 737,
+    "catch_all_count": 728,
     "direct_global_getter_calls": {
       "GetDllShareData": 710,
       "GetEditDoc": 7,
@@ -98832,29 +98783,29 @@
       }
     },
     "filtered_test_hint_count": 2,
-    "finding_count": 14022,
+    "finding_count": 14015,
     "finding_count_by_rule": {
       "boundary.private_include": 67,
       "boundary.win32_type": 4847,
-      "error.catch_all": 737,
+      "error.catch_all": 728,
       "global.get_dll_share_data": 710,
       "global.get_edit_doc": 7,
       "global.get_edit_wnd": 258,
       "memory.raw_delete": 317,
       "memory.raw_new": 247,
-      "resource.stop_required_acquisition": 284,
+      "resource.stop_required_acquisition": 286,
       "state.mutable_member": 132,
       "state.public_mutable_field": 6384,
       "state.raw_pointer_member": 30,
       "test.filtered_or_skipped": 2
     },
-    "include_directive_count": 11261,
+    "include_directive_count": 11262,
     "monolith_link_hint_count": 0,
     "private_include_mention_count": 67,
     "raw_delete_expression_count": 317,
     "raw_new_expression_count": 247,
     "source_file_count": 1782,
-    "source_line_count": 532589,
+    "source_line_count": 532554,
     "tracked_file_count": 1831,
     "win32_parameter_mention_count": 4847
   },
@@ -99011,8 +98962,8 @@
     ]
   },
   "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
-  "source_commit": "38233fe8e059bdcb34ebc01322e155602c55d04e",
-  "source_fingerprint": "sha256:da9007d0e0343c8a26fe1bc3f5e75f3ed887ae14f207ab5ee289bf619e1e5c35",
+  "source_commit": "c294de5460bbc9e18bae1b410b4f3c1efa8dc4bf",
+  "source_fingerprint": "sha256:a82d6fa6c629c45396ebda2413b6af2b7b5e820f25ac2d108b6ffca7e4fb4556",
   "tracked_source_paths": [
     ".github/actions/bootstrap-vcpkg/action.yml",
     ".github/dependabot.yml",
