@@ -391,6 +391,21 @@ PrintWindowだけの欠落
 runnerとbuild processの終了を確認した。通常アプリの巨大段落測定は起動後のdocument確認に
 到達せず測定値を得ていないため、性能合格とは扱わず、実アプリ統合時の検証に残す。
 
+### U06途中: owner effectのnative cohort routing
+
+`CSenpOwnerProjection`は1つの有効なowner generationに属するTree provider群とdocument requestを、
+`CSenpEffectCoordinator`の上でまとめて所有する。Tree pageとinvalidateはwireのview IDを登録済みproviderへ
+厳密に対応させ、未知のviewやrequest contextはcohort全体の失敗として閉じる。`OpenDocument`はownerの
+`Poll`とeffect drainの中ではrequestを再入場させず、有界queueへ入れ、drain終了後の`Pump`で初めて
+`DocumentRequest`を発行する。Acceptedになったrequestはnative targetのBeginへ渡した後、同じ完全な
+operation contextとresource IDのPublish/Failedだけを終端として受け付ける。
+
+Tree providerが共有するruntime portはprojection構築完了後にbindし、closeではproviderやdocument surfaceを
+破棄する前にclearする。native targetから同期closeが返ってもcallback中にrevokeせず、drain/admissionの
+所有者へcleanupを戻す。StartToolReadはまだ実装済みのresource brokerへ接続していないため、この境界では
+明示的に拒否する。次の未完了境界は、このcohortをowner publication transactionから作り、実
+`CSenpViewContainers`と`SenpReadonlyDocumentHost`へ接続するapp compositionである。
+
 ### U06途中: 構造化本文とログの混在routing
 
 `SenpReadonlyDocumentHost`は1つのreadonly inputを、隣接するMarkdown/metadata/tableの本文pageと、

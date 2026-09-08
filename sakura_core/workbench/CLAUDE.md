@@ -368,6 +368,21 @@ The integrated dual-profile/runtime/command/control-client cohort passes 79/79.
 The complete Phase 3 profile-management UI and the complete Phase 5 command
 surface remain open.
 
+## SENP Owner Projection Boundary
+
+`CSenpOwnerProjection` is the UI-thread owner of one committed SENP generation's
+Tree providers and document request lineages. It shares one inertable runtime
+port across those providers, routes only exact View and operation contexts, and
+queues `OpenDocument` effects until the contribution-owner poll and effect drain
+have both returned. A document admission is reported to the native target before
+its terminal can be accepted. Rejection or revocation clears the runtime port
+before providers and document surfaces are released.
+
+Keep owner publication and physical ViewContainer/editor construction above this
+class. It does not create HWNDs, invent containers, poll a runtime, perform I/O,
+or interpret tool reads. Reentrant close from a native target is deferred until
+the active drain/admission callback reaches a terminal state.
+
 ## Phase 6 Service Foundations Checkpoint (2026-07-31)
 
 - `CWorkbenchRuntime` owns the process-local Marker and Output authorities.
