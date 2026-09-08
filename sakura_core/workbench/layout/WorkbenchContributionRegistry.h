@@ -156,6 +156,9 @@ public:
 	WorkbenchContributionRegistry();
 
 	[[nodiscard]] WorkbenchContributionSnapshot Snapshot() const { return m_snapshot; }
+	//! Non-reserving suggestion for serialized composition. Zero means exhausted;
+	//! preparing and committing still enforce the catalog revision fence.
+	[[nodiscard]] std::uint64_t NextOwnerGeneration() const noexcept;
 	//! Atomically appends one validated startup batch. Runtime registration after
 	//! native page creation is deliberately unsupported by this checkpoint.
 	[[nodiscard]] bool RegisterExtensionContributions(

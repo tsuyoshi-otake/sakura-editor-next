@@ -186,6 +186,11 @@ bool WorkbenchContributionRegistry::IsValidStableId(const std::string_view value
 	return IsPrintableUtf8(value);
 }
 
+std::uint64_t WorkbenchContributionRegistry::NextOwnerGeneration() const noexcept
+{
+	return m_lastOwnerGeneration >= kMaxOwnerGeneration ? 0 : m_lastOwnerGeneration + 1;
+}
+
 PrepareWorkbenchContributionsResult WorkbenchContributionRegistry::PrepareOwnerReplacement(
 	WorkbenchContributionOwner replacement, const std::uint64_t expectedGeneration,
 	const std::span<const WorkbenchViewContainerDescriptor> containers,

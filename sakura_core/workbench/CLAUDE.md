@@ -442,6 +442,21 @@ owners before closing this registry and the borrowed page service. Exact-owner
 cleanup preserves foreign pages and registrations. Its injected native callbacks
 must not pump messages or destroy the owning window/registry while entered.
 
+`CSenpWindowExtensions` composes package snapshots, persistent declarations and
+lazy activation for one native window. Its target factory receives the actual
+runtime owner generation. Unchanged declarations survive package replacement;
+new hidden cohorts roll back if a later registration fails. Structural changes
+and non-tree/foreign-container metadata remain typed unsupported/conflict
+boundaries. A conflict may preserve an old runtime only while it is still enabled
+in the same workspace/account scope. If a rejected snapshot also revokes that
+authority, the composition closes instead of retaining unauthorized work.
+Removal revokes publication authority and signals runtime Stop before removing
+native pages; retained runtime slots own physical exit/cleanup independently.
+Close disables admission and native callbacks even when physical cleanup fails;
+the window must retain the composition and explicitly retry Close. Ordinary
+polling never retries a failed join. The window still owns timer scheduling,
+layout reconciliation, editor/tool target construction and CEditWnd integration.
+
 ## Phase 6 Service Foundations Checkpoint (2026-07-31)
 
 - `CWorkbenchRuntime` owns the process-local Marker and Output authorities.
