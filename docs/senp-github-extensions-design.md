@@ -358,8 +358,10 @@ container消失時のExplorer移動はnative page poolの未対応境界とし�
 初回providerは`github`のみで、`RepositoryRead`と`OpenConnectionUI`を提供する。
 外部ツールのパス、argv、環境変数、cwd、stdinを拡張から自由入力させない。
 
-`RepositoryRead`はgrant済みrepository handle、正規化した相対resource path、
-小さいquery map、JSON/textの結果種別を受ける。gh providerが
+`RepositoryRead`はgrant済みrepository handle、閉じた集合から選ぶ**shape名**と
+そのshapeが鍵とする10進id、小さいquery map、JSON/textの結果種別を受ける。
+拡張はpath segmentを一切名乗らない——`path`を含むargument listはbrokerが拒否する。
+path segmentの組立はbrokerだけが持ち、gh providerが
 `gh api --hostname <host> --method GET --include <endpoint>`へ変換する。
 endpointはhostが`repos/<owner>/<repo>/`を付けて構築し、絶対URL、userinfo、`..`、
 encoded separator、fragment、未知query、`@file`、GraphQL、任意headerは受け付けない。
@@ -493,17 +495,21 @@ repository rootのidentityを別に保持し、同じrepository配下の複数ro
 全て明示的host・repository付きの`gh api --method GET`。パスの組立とquery検証はbroker、
 endpoint選択・responseのJSON解釈は拡張SDKが担当する。
 
-| 用途 | repositoryに続くpath | 取得方針 |
-|---|---|---|
-| Issue一覧 | `issues` | state/sort/direction/per_page/page。`pull_request`を持つ要素はIssue一覧から除外 |
-| Issue本文・コメント | `issues/{number}` / `issues/{number}/comments` | 選択後。コメントは別page |
-| PR一覧・本文 | `pulls` / `pulls/{number}` | state、draft、merged状態、base/headを別に保持 |
-| PR会話コメント | `issues/{number}/comments` | 通常コメントを表示。レビューtimeline全対応は後続 |
-| Workflow一覧 | `actions/workflows` | disabled状態を保持。runがなくてもWorkflowは存在する |
-| Run一覧 | `actions/runs` / `actions/workflows/{workflow_id}/runs` | branch/workflow filter、ページ単位 |
-| Run / Attempt | `actions/runs/{run_id}` / `actions/runs/{run_id}/attempts/{attempt}` | run IDとattemptを別キーにする |
-| Job/Step | `actions/runs/{run_id}/attempts/{attempt}/jobs` | 特定attemptのページ。matrix job名の同一性を仮定しない |
-| Jobログ | `actions/jobs/{job_id}/logs` | 選択jobのみ。text resourceへ有界転送 |
+拡張が名乗るのは**shape**列だけで、path列はbrokerがそのshapeから組み立てる結果である。
+shapeとpathの対応は`SenpGitHubToolExecutor.cpp`の`ResourceSegments`が唯一の実装を持つ。
+
+| 用途 | shape（拡張が名乗る） | repositoryに続くpath（brokerが組む） | 取得方針 |
+|---|---|---|---|
+| Issue一覧 | `issues` | `issues` | state/sort/direction/per_page/page。`pull_request`を持つ要素はIssue一覧から除外 |
+| Issue本文・コメント | `issue` / `issueComments` | `issues/{number}` / `issues/{number}/comments` | 選択後。コメントは別page |
+| PR一覧・本文 | `pulls` / `pull` | `pulls` / `pulls/{number}` | state、draft、merged状態、base/headを別に保持 |
+| PR会話コメント | `issueComments` | `issues/{number}/comments` | 通常コメントを表示。レビューtimeline全対応は後続 |
+| コメント単体 | `issueComment` | `issues/comments/{id}` | database IDで再取得。issue番号ではない |
+| Workflow一覧 | `workflows` | `actions/workflows` | disabled状態を保持。runがなくてもWorkflowは存在する |
+| Run一覧 | `runs` / `workflowRuns` | `actions/runs` / `actions/workflows/{workflow_id}/runs` | branch/workflow filter、ページ単位 |
+| Run / Attempt | `run` / `runAttempt` | `actions/runs/{run_id}` / `actions/runs/{run_id}/attempts/{attempt}` | run IDとattemptを別キーにする。`runAttempt`だけが`attempt`引数を取る |
+| Job/Step | `runAttemptJobs` / `job` | `actions/runs/{run_id}/attempts/{attempt}/jobs` / `actions/jobs/{job_id}` | 特定attemptのページ。matrix job名の同一性を仮定しない |
+| Jobログ | （`jobLog` operation） | `actions/jobs/{job_id}/logs` | 選択jobのみ。text resourceへ有界転送 |
 
 IssueページがPRだけだった時も「Issueなし」で全探索を終わらせない。
 next pageを保持して「次を読み込む」を出す。filterの結果0件と全体0件を区別する。

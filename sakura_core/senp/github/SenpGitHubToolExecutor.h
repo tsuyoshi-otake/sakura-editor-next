@@ -59,8 +59,10 @@ public:
 	@brief Translates one admitted repositoryRead argument list into a policy request.
 
 	The editor names a shape from a closed set and, for the item shapes, a decimal
-	id; it never names a path segment, host, owner or repository. Anything outside
-	the closed set is refused here instead of being forwarded to the tool policy.
+	id - plus a second decimal number for the two run-attempt shapes, which no
+	single id identifies. It never names a path segment, host, owner or
+	repository. Anything outside the closed set is refused here instead of being
+	forwarded to the tool policy.
 */
 [[nodiscard]] std::optional<GhRepositoryReadRequest> BuildRepositoryReadRequest(
 	const GhSelectedRepository& repository, const std::vector<effect::Field>& arguments);

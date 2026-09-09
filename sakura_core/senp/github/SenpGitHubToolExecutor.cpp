@@ -85,33 +85,64 @@ bool IsDecimalId(const std::wstring& value) noexcept
 	return std::ranges::all_of(value, [](const wchar_t character) { return character >= L'0' && character <= L'9'; });
 }
 
-//! Closed repository-read shapes. The editor names one of these; it never names a
-//! path segment, host, owner or repository of its own.
-std::optional<std::vector<std::wstring>> ResourceSegments(const std::wstring& shape, const std::wstring& id)
+/*!
+	@brief Closed repository-read shapes.
+
+	The editor names one of these; it never names a path segment, host, owner or
+	repository of its own. Every shape the two GitHub extensions can ask for is
+	listed here: a shape they need but this set lacks is not a smaller feature,
+	it is a view that fails every read it issues.
+*/
+std::optional<std::vector<std::wstring>> ResourceSegments(const std::wstring& shape,
+	const std::wstring& id, const std::wstring& attempt)
 {
 	if (shape == L"issues") return std::vector<std::wstring>{ L"issues" };
 	if (shape == L"pulls") return std::vector<std::wstring>{ L"pulls" };
 	if (shape == L"runs") return std::vector<std::wstring>{ L"actions", L"runs" };
+	if (shape == L"workflows") return std::vector<std::wstring>{ L"actions", L"workflows" };
 	if (shape == L"issue") return std::vector<std::wstring>{ L"issues", id };
 	if (shape == L"pull") return std::vector<std::wstring>{ L"pulls", id };
+	// An issue's comment list is keyed by the issue number; one comment is keyed
+	// by its own id under a different collection. They are separate shapes
+	// because the id means a different thing in each.
+	if (shape == L"issueComments") return std::vector<std::wstring>{ L"issues", id, L"comments" };
+	if (shape == L"issueComment") return std::vector<std::wstring>{ L"issues", L"comments", id };
 	if (shape == L"run") return std::vector<std::wstring>{ L"actions", L"runs", id };
 	if (shape == L"runJobs") return std::vector<std::wstring>{ L"actions", L"runs", id, L"jobs" };
+	if (shape == L"workflowRuns") return std::vector<std::wstring>{ L"actions", L"workflows", id, L"runs" };
+	if (shape == L"runAttempt") {
+		return std::vector<std::wstring>{ L"actions", L"runs", id, L"attempts", attempt };
+	}
+	if (shape == L"runAttemptJobs") {
+		return std::vector<std::wstring>{ L"actions", L"runs", id, L"attempts", attempt, L"jobs" };
+	}
 	if (shape == L"job") return std::vector<std::wstring>{ L"actions", L"jobs", id };
 	return std::nullopt;
 }
 
 bool ShapeNeedsId(const std::wstring& shape) noexcept
 {
-	return shape == L"issue" || shape == L"pull" || shape == L"run"
-		|| shape == L"runJobs" || shape == L"job";
+	return shape == L"issue" || shape == L"pull" || shape == L"issueComments"
+		|| shape == L"issueComment" || shape == L"run" || shape == L"runJobs"
+		|| shape == L"workflowRuns" || shape == L"runAttempt"
+		|| shape == L"runAttemptJobs" || shape == L"job";
+}
+
+//! A run attempt is named by the run and the attempt number together. Neither
+//! alone identifies it, so the second number is required exactly here and
+//! refused everywhere else rather than being ignored.
+bool ShapeNeedsAttempt(const std::wstring& shape) noexcept
+{
+	return shape == L"runAttempt" || shape == L"runAttemptJobs";
 }
 
 //! Query names the editor may forward. They are a subset of the tool policy's own
 //! closed set; the policy still validates every value independently.
 bool IsForwardedQuery(const std::wstring& name) noexcept
 {
-	static constexpr std::array<std::wstring_view, 7> forwarded{
-		L"actor", L"branch", L"event", L"page", L"per_page", L"state", L"status",
+	static constexpr std::array<std::wstring_view, 9> forwarded{
+		L"actor", L"branch", L"direction", L"event", L"page", L"per_page",
+		L"sort", L"state", L"status",
 	};
 	return std::ranges::find(forwarded, name) != forwarded.end();
 }
@@ -277,7 +308,7 @@ std::optional<GhRepositoryReadRequest> BuildRepositoryReadRequest(
 	const GhSelectedRepository& repository, const std::vector<effect::Field>& arguments)
 {
 	if (arguments.size() > 16) return std::nullopt;
-	std::wstring shape, id;
+	std::wstring shape, id, attempt;
 	std::optional<std::wstring> etag;
 	std::vector<std::pair<std::wstring, std::wstring>> query;
 	for (const auto& argument : arguments) {
@@ -291,6 +322,9 @@ std::optional<GhRepositoryReadRequest> BuildRepositoryReadRequest(
 		} else if (argument.name == L"id") {
 			if (!id.empty() || !IsDecimalId(argument.value)) return std::nullopt;
 			id = argument.value;
+		} else if (argument.name == L"attempt") {
+			if (!attempt.empty() || !IsDecimalId(argument.value)) return std::nullopt;
+			attempt = argument.value;
 		} else if (argument.name == L"etag") {
 			if (etag) return std::nullopt;
 			etag = argument.value;
@@ -300,8 +334,9 @@ std::optional<GhRepositoryReadRequest> BuildRepositoryReadRequest(
 			return std::nullopt;
 		}
 	}
-	if (shape.empty() || ShapeNeedsId(shape) != !id.empty()) return std::nullopt;
-	auto segments = ResourceSegments(shape, id);
+	if (shape.empty() || ShapeNeedsId(shape) != !id.empty()
+		|| ShapeNeedsAttempt(shape) != !attempt.empty()) return std::nullopt;
+	auto segments = ResourceSegments(shape, id, attempt);
 	if (!segments) return std::nullopt;
 	// Deterministic order keeps one logical read on one scheduler resource.
 	std::ranges::sort(query, [](const auto& left, const auto& right) { return left.first < right.first; });

@@ -220,8 +220,18 @@ TEST(SenpGitHubToolExecutor, TranslatesOnlyTheClosedShapeSet)
 	ASSERT_TRUE(jobs);
 	EXPECT_EQ((std::vector<std::wstring>{ L"actions", L"runs", L"42", L"jobs" }), jobs->ResourceSegments());
 
-	// An unknown shape, a missing or surplus id, a free path and an unlisted query
-	// name are all refused before anything reaches the tool policy.
+	// A run attempt is named by two numbers. The second is required exactly for
+	// the attempt shapes and refused everywhere else, so neither number can be
+	// silently dropped into a read of a different resource.
+	const auto attemptJobs = BuildRepositoryReadRequest(repository,
+		{ { L"shape", L"runAttemptJobs" }, { L"id", L"42" }, { L"attempt", L"2" } });
+	ASSERT_TRUE(attemptJobs);
+	EXPECT_EQ((std::vector<std::wstring>{ L"actions", L"runs", L"42", L"attempts", L"2", L"jobs" }),
+		attemptJobs->ResourceSegments());
+
+	// An unknown shape, a missing or surplus id, a missing or surplus attempt, a
+	// free path and an unlisted query name are all refused before anything
+	// reaches the tool policy.
 	EXPECT_FALSE(BuildRepositoryReadRequest(repository, { { L"shape", L"secrets" } }));
 	EXPECT_FALSE(BuildRepositoryReadRequest(repository, { { L"shape", L"issue" } }));
 	EXPECT_FALSE(BuildRepositoryReadRequest(repository, { { L"shape", L"issues" }, { L"id", L"1" } }));
@@ -229,7 +239,72 @@ TEST(SenpGitHubToolExecutor, TranslatesOnlyTheClosedShapeSet)
 	EXPECT_FALSE(BuildRepositoryReadRequest(repository, { { L"shape", L"issue" }, { L"id", L"1/../secrets" } }));
 	EXPECT_FALSE(BuildRepositoryReadRequest(repository, { { L"shape", L"issues" }, { L"path", L"secrets" } }));
 	EXPECT_FALSE(BuildRepositoryReadRequest(repository, { { L"shape", L"issues" }, { L"state", L"" } }));
+	EXPECT_FALSE(BuildRepositoryReadRequest(repository, { { L"shape", L"runAttempt" }, { L"id", L"42" } }));
+	EXPECT_FALSE(BuildRepositoryReadRequest(repository,
+		{ { L"shape", L"run" }, { L"id", L"42" }, { L"attempt", L"2" } }));
+	EXPECT_FALSE(BuildRepositoryReadRequest(repository,
+		{ { L"shape", L"runAttempt" }, { L"id", L"42" }, { L"attempt", L"0x2" } }));
 	EXPECT_FALSE(BuildRepositoryReadRequest(repository, {}));
+}
+
+/*!
+	@brief Every read the two shipped GitHub extensions can issue is admitted.
+
+	The shape set and the extensions are written on opposite sides of the SENP
+	boundary, and each side passed its own tests while naming resources the other
+	side did not recognise: every real read was refused as InvalidRequest, which
+	no unit test on either side could see. This table is the two sides written
+	down together - a shape an extension emits but this executor lacks is not a
+	missing feature, it is a view that fails every read it issues.
+*/
+TEST(SenpGitHubToolExecutor, AdmitsEveryShapeTheShippedExtensionsEmit)
+{
+	const GhSelectedRepository repository(L"repo-identity-1", L"origin", L"github.com", L"owner", L"repo");
+	struct Expectation {
+		std::wstring shape;
+		std::wstring id;
+		std::wstring attempt;
+		std::vector<std::wstring> segments;
+	};
+	const std::vector<Expectation> expectations{
+		// sakura-github-pull-requests
+		{ L"issues", L"", L"", { L"issues" } },
+		{ L"pulls", L"", L"", { L"pulls" } },
+		{ L"issue", L"7", L"", { L"issues", L"7" } },
+		{ L"pull", L"8", L"", { L"pulls", L"8" } },
+		{ L"issueComments", L"8", L"", { L"issues", L"8", L"comments" } },
+		{ L"issueComment", L"91", L"", { L"issues", L"comments", L"91" } },
+		// sakura-github-actions
+		{ L"workflows", L"", L"", { L"actions", L"workflows" } },
+		{ L"runs", L"", L"", { L"actions", L"runs" } },
+		{ L"workflowRuns", L"31", L"", { L"actions", L"workflows", L"31", L"runs" } },
+		{ L"run", L"51", L"", { L"actions", L"runs", L"51" } },
+		{ L"runAttempt", L"51", L"2", { L"actions", L"runs", L"51", L"attempts", L"2" } },
+		{ L"runAttemptJobs", L"51", L"2", { L"actions", L"runs", L"51", L"attempts", L"2", L"jobs" } },
+		{ L"job", L"71", L"", { L"actions", L"jobs", L"71" } },
+	};
+	for (const auto& expectation : expectations) {
+		// Every shape is ASCII by construction, so the trace narrows one code
+		// unit at a time rather than converting through a locale.
+		std::string named;
+		for (const auto character : expectation.shape) named.push_back(static_cast<char>(character));
+		SCOPED_TRACE(named);
+		std::vector<effect::Field> arguments{ { L"shape", expectation.shape } };
+		if (!expectation.id.empty()) arguments.push_back({ L"id", expectation.id });
+		if (!expectation.attempt.empty()) arguments.push_back({ L"attempt", expectation.attempt });
+		const auto request = BuildRepositoryReadRequest(repository, arguments);
+		ASSERT_TRUE(request);
+		EXPECT_EQ(expectation.segments, request->ResourceSegments());
+	}
+
+	// The query names both extensions send with their list reads. An unforwarded
+	// one would drop the sort order or the page silently rather than failing.
+	const auto listed = BuildRepositoryReadRequest(repository,
+		{ { L"shape", L"issues" }, { L"state", L"open" }, { L"sort", L"updated" },
+			{ L"direction", L"desc" }, { L"per_page", L"50" }, { L"page", L"2" },
+			{ L"branch", L"main" } });
+	ASSERT_TRUE(listed);
+	EXPECT_EQ(6U, listed->Query().size());
 }
 
 TEST(SenpGitHubToolExecutor, CarriesAWorkspaceDeclarationWithoutReadingAFolder)

@@ -129,6 +129,30 @@ private:
 	int m_begins{}, m_publishes{}, m_completions{}, m_revokes{}, m_toolReads{};
 };
 
+/*!
+	@brief Asserts the shape and ids the last repository read named.
+
+	The tool boundary admits a shape from a closed set plus the decimal ids that
+	shape is keyed by; it refuses an argument list that names a path of its own.
+	Asserting the names here is what proves the real extension speaks the
+	vocabulary the real executor accepts. The two sides were once written apart
+	and each passed its own tests while every real read was refused.
+*/
+void ExpectRead(const CompositionTargetState& target, std::wstring_view shape,
+	std::wstring_view id = {}, std::wstring_view attempt = {})
+{
+	const auto& arguments = target.LastRead().arguments;
+	ASSERT_FALSE(arguments.empty());
+	EXPECT_EQ(L"shape", arguments[0].name);
+	EXPECT_EQ(shape, arguments[0].value);
+	const auto named = [&arguments](const std::wstring_view name) {
+		const auto found = std::ranges::find(arguments, name, &senp::effect::Field::name);
+		return found == arguments.end() ? std::wstring() : found->value;
+	};
+	EXPECT_EQ(id, named(L"id"));
+	EXPECT_EQ(attempt, named(L"attempt"));
+}
+
 class CompositionTarget final : public ISenpOwnerProjectionTarget {
 public:
 	explicit CompositionTarget(std::shared_ptr<CompositionTargetState> state) noexcept
@@ -735,7 +759,7 @@ TEST_F(SenpOwnerComposition, RealGithubIssuesAndPullRequestsReachNativeProviders
 	EXPECT_TRUE(std::ranges::any_of(fields, [](const auto& field) {
 		return field.name == L"Head" && field.value.find(L"fork/project:feature") != std::wstring::npos;
 	}));
-	EXPECT_EQ(L"pulls/8", target->LastRead().arguments.front().value);
+	ExpectRead(*target, L"pull", L"8");
 	EXPECT_EQ(6, target->ToolReads());
 	EXPECT_TRUE(composition.Close());
 	EXPECT_EQ(1, target->Revokes());
@@ -812,14 +836,14 @@ TEST_F(SenpOwnerComposition, RealGithubActionsReachNativeProviders)
     const auto provider = providers.at(L"github-actions.workflows");
     provider->SetVisible(true, Clock::now());
     ASSERT_TRUE(Await(composition, [&] { return provider->Model().Node(L"workflow:31").has_value(); }));
-    EXPECT_EQ(L"actions/workflows", target->LastRead().arguments.front().value);
+    ExpectRead(*target, L"workflows");
     ASSERT_EQ(tree::TreeResult::Applied, provider->SetExpanded(L"workflow:31", true, Clock::now()));
     ASSERT_TRUE(Await(composition, [&] { return provider->Model().Node(L"run:51").has_value(); }));
-    EXPECT_EQ(L"actions/workflows/31/runs", target->LastRead().arguments.front().value);
+    ExpectRead(*target, L"workflowRuns", L"31");
     ASSERT_EQ(tree::TreeResult::Applied, provider->SetExpanded(L"run:51", true, Clock::now()));
     ASSERT_TRUE(Await(composition, [&] { return provider->Model().Node(L"attempt:51:1").has_value(); }));
     EXPECT_TRUE(provider->Model().Node(L"attempt:51:2").has_value());
-    EXPECT_EQ(L"actions/runs/51", target->LastRead().arguments.front().value);
+    ExpectRead(*target, L"run", L"51");
     ASSERT_TRUE(provider->Select(L"attempt:51:1"));
     ASSERT_TRUE(provider->Execute(L"attempt:51:1"));
     ASSERT_TRUE(Await(composition, [&] { return target->Publishes() == 1; }));
@@ -832,11 +856,11 @@ TEST_F(SenpOwnerComposition, RealGithubActionsReachNativeProviders)
     EXPECT_TRUE(std::ranges::any_of(fields, [](const auto& field) {
         return field.name == L"State" && field.value == L"in_progress";
     }));
-    EXPECT_EQ(L"actions/runs/51/attempts/1", target->LastRead().arguments.front().value);
+    ExpectRead(*target, L"runAttempt", L"51", L"1");
     EXPECT_EQ(4, target->ToolReads());
     ASSERT_EQ(tree::TreeResult::Applied, provider->SetExpanded(L"attempt:51:1", true, Clock::now()));
     ASSERT_TRUE(Await(composition, [&] { return provider->Model().Node(L"job:51:1:71").has_value(); }));
-    EXPECT_EQ(L"actions/runs/51/attempts/1/jobs", target->LastRead().arguments.front().value);
+    ExpectRead(*target, L"runAttemptJobs", L"51", L"1");
     ASSERT_EQ(tree::TreeResult::Applied, provider->SetExpanded(L"job:51:1:71", true, Clock::now()));
     ASSERT_TRUE(Await(composition, [&] { return provider->Model().Node(L"step:51:1:71:7").has_value(); }));
     EXPECT_EQ(L"queued", provider->Model().Node(L"step:51:1:71:7")->item.description);
@@ -850,7 +874,7 @@ TEST_F(SenpOwnerComposition, RealGithubActionsReachNativeProviders)
     const auto& table = std::get<senp::effect::TableSection>(target->Document().sections[1]);
     ASSERT_EQ(1U, table.rows.size());
     EXPECT_EQ((std::vector<std::wstring>{ L"7", L"Compile", L"queued", L"not started", L"not completed" }), table.rows[0].cells);
-    EXPECT_EQ(L"actions/jobs/71", target->LastRead().arguments.front().value);
+    ExpectRead(*target, L"job", L"71");
     EXPECT_EQ(7, target->ToolReads());
 
     // The job's log is a separate command reading a separate operation, and the

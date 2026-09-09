@@ -110,7 +110,7 @@ impl State {
             Event::DocumentRequest(request) => match document_identity(&request.resource_id) {
                 Some((run, attempt)) => vec![read(
                     format!("detail:{run}:{attempt}"),
-                    format!("actions/runs/{run}/attempts/{attempt}"),
+                    Resource::attempt("runAttempt", run, attempt),
                     Vec::new(),
                 )],
                 None => vec![failed_document(
@@ -137,7 +137,7 @@ impl State {
             if view == WORKFLOWS {
                 return read(
                     format!("workflows:{page}"),
-                    "actions/workflows".into(),
+                    Resource::collection("workflows"),
                     paging(page),
                 );
             }
@@ -145,7 +145,11 @@ impl State {
                 BranchState::Selected(branch) => {
                     let mut fields = paging(page);
                     fields.push(field("branch", branch.clone()));
-                    read(format!("runs:b:0:{page}"), "actions/runs".into(), fields)
+                    read(
+                        format!("runs:b:0:{page}"),
+                        Resource::collection("runs"),
+                        fields,
+                    )
                 }
                 BranchState::Detached => page_effect(
                     view,
@@ -167,7 +171,7 @@ impl State {
                 };
                 return read(
                     format!("runs:w:{workflow}:{page}"),
-                    format!("actions/workflows/{workflow}/runs"),
+                    Resource::item("workflowRuns", workflow),
                     paging(page),
                 );
             }
@@ -187,7 +191,7 @@ impl State {
             };
             return read(
                 format!("attempts:{code}:{run}:{total}:{page}"),
-                format!("actions/runs/{run}"),
+                Resource::item("run", run),
                 Vec::new(),
             );
         }
@@ -407,13 +411,61 @@ fn invalidations() -> Vec<Effect> {
         .collect()
 }
 
-fn read(read_id: String, path: String, mut arguments: Vec<Field>) -> Effect {
-    arguments.insert(0, field("path", path));
+/// One shape of the tool boundary's closed set together with the ids that shape
+/// is keyed by. The boundary owns every path segment: it refuses an argument
+/// list that names a path of its own, so such a read never reaches GitHub.
+pub struct Resource {
+    shape: &'static str,
+    id: Option<u64>,
+    attempt: Option<u32>,
+}
+
+impl Resource {
+    /// A collection under the repository. It carries no id of its own.
+    pub fn collection(shape: &'static str) -> Self {
+        Self {
+            shape,
+            id: None,
+            attempt: None,
+        }
+    }
+    pub fn item(shape: &'static str, id: u64) -> Self {
+        Self {
+            shape,
+            id: Some(id),
+            attempt: None,
+        }
+    }
+    /// A run attempt is named by the run and the attempt number together;
+    /// neither number identifies it alone, so both are sent.
+    pub fn attempt(shape: &'static str, run: u64, attempt: u32) -> Self {
+        Self {
+            shape,
+            id: Some(run),
+            attempt: Some(attempt),
+        }
+    }
+
+    fn fields(self) -> Vec<Field> {
+        let mut fields = vec![field("shape", self.shape.into())];
+        if let Some(id) = self.id {
+            fields.push(field("id", id.to_string()));
+        }
+        if let Some(attempt) = self.attempt {
+            fields.push(field("attempt", attempt.to_string()));
+        }
+        fields
+    }
+}
+
+fn read(read_id: String, resource: Resource, mut arguments: Vec<Field>) -> Effect {
+    let mut fields = resource.fields();
+    fields.append(&mut arguments);
     Effect::StartToolRead(StartToolRead {
         read_id,
         tool_id: "github".into(),
         operation: "repositoryRead".into(),
-        arguments,
+        arguments: fields,
     })
 }
 
@@ -646,17 +698,25 @@ mod tests {
     }
 
     #[test]
-    fn workflows_and_filtered_runs_use_distinct_fixed_paths_and_keep_paging() {
+    fn workflows_and_filtered_runs_use_distinct_fixed_shapes_and_keep_paging() {
         let mut state = State::default();
-        for (parent, expected) in [
-            ("", "actions/workflows"),
-            ("workflow:31", "actions/workflows/31/runs"),
+        for (parent, shape, id) in [
+            ("", "workflows", None),
+            ("workflow:31", "workflowRuns", Some("31")),
         ] {
             let effects = state.dispatch(context(1), request(WORKFLOWS, parent, "page:2"));
             let Effect::StartToolRead(read) = &effects[0] else {
                 panic!()
             };
-            assert_eq!(read.arguments[0].value, expected);
+            assert_eq!(read.arguments[0].name, "shape");
+            assert_eq!(read.arguments[0].value, shape);
+            assert_eq!(
+                read.arguments
+                    .iter()
+                    .find(|field| field.name == "id")
+                    .map(|field| field.value.as_str()),
+                id
+            );
             assert!(read
                 .arguments
                 .iter()
@@ -758,8 +818,11 @@ mod tests {
         let Effect::StartToolRead(read) = &effects[0] else {
             panic!()
         };
-        assert_eq!(read.arguments.len(), 1);
-        assert_eq!(read.arguments[0].value, "actions/runs/51/attempts/1");
+        assert_eq!(read.arguments.len(), 3);
+        assert_eq!(read.arguments[0].value, "runAttempt");
+        assert_eq!(read.arguments[1].value, "51");
+        assert_eq!(read.arguments[2].name, "attempt");
+        assert_eq!(read.arguments[2].value, "1");
         let effect = state.complete(completed("detail:51:1", RUN.into()));
         assert!(
             matches!(effect, Effect::PublishDocument(value) if value.title == "GitHub Actions read failed")

@@ -62,7 +62,7 @@ fn start_read(state: IssueState, page: u32) -> Effect {
         operation: REPOSITORY_READ.into(),
         arguments: vec![
             Field {
-                name: "path".into(),
+                name: "shape".into(),
                 value: "issues".into(),
             },
             Field {
@@ -89,11 +89,20 @@ fn start_read(state: IssueState, page: u32) -> Effect {
     })
 }
 
-fn repository_read(read_id: String, path: String, query: Vec<Field>) -> Effect {
-    let mut arguments = vec![Field {
-        name: "path".into(),
-        value: path,
-    }];
+/// Names one shape of the tool boundary's closed set plus the decimal id that
+/// shape is keyed by. The boundary owns every path segment: an argument list
+/// that spelled a path of its own is refused there, so such a read never runs.
+fn repository_read(read_id: String, shape: &str, id: u64, query: Vec<Field>) -> Effect {
+    let mut arguments = vec![
+        Field {
+            name: "shape".into(),
+            value: shape.into(),
+        },
+        Field {
+            name: "id".into(),
+            value: id.to_string(),
+        },
+    ];
     arguments.extend(query);
     Effect::StartToolRead(StartToolRead {
         read_id,
@@ -128,7 +137,8 @@ fn comments_request(parent_id: &str, cursor: &str) -> Option<Effect> {
     };
     Some(repository_read(
         format!("comments:{id}:{number}:{page}"),
-        format!("issues/{number}/comments"),
+        "issueComments",
+        number,
         vec![
             Field {
                 name: "per_page".into(),
@@ -501,7 +511,8 @@ fn request_document(resource: &str) -> Option<Effect> {
         let number = positive(value)?;
         return Some(repository_read(
             format!("issue-detail:{number}"),
-            format!("issues/{number}"),
+            "issue",
+            number,
             Vec::new(),
         ));
     }
@@ -509,7 +520,8 @@ fn request_document(resource: &str) -> Option<Effect> {
         let number = positive(value)?;
         return Some(repository_read(
             format!("pull-detail:{number}"),
-            format!("pulls/{number}"),
+            "pull",
+            number,
             Vec::new(),
         ));
     }
@@ -517,7 +529,8 @@ fn request_document(resource: &str) -> Option<Effect> {
         let id = positive(value)?;
         return Some(repository_read(
             format!("comment-detail:{id}"),
-            format!("issues/comments/{id}"),
+            "issueComment",
+            id,
             Vec::new(),
         ));
     }
@@ -546,7 +559,7 @@ fn start_pull_read(state: IssueState, page: u32) -> Effect {
         operation: REPOSITORY_READ.into(),
         arguments: vec![
             Field {
-                name: "path".into(),
+                name: "shape".into(),
                 value: "pulls".into(),
             },
             Field {
@@ -594,7 +607,8 @@ fn pull_comments_request(parent_id: &str, cursor: &str) -> Option<Effect> {
     };
     Some(repository_read(
         format!("pull-comments:{id}:{number}:{page}"),
-        format!("issues/{number}/comments"),
+        "issueComments",
+        number,
         vec![
             Field {
                 name: "per_page".into(),
@@ -995,7 +1009,7 @@ mod tests {
         assert!(read
             .arguments
             .iter()
-            .any(|field| field.name == "path" && field.value == "pulls"));
+            .any(|field| field.name == "shape" && field.value == "pulls"));
         assert!(read
             .arguments
             .iter()
@@ -1058,9 +1072,11 @@ mod tests {
             panic!()
         };
         assert_eq!(read.read_id, "pull-detail:8");
-        assert_eq!(read.arguments.len(), 1);
-        assert_eq!(read.arguments[0].name, "path");
-        assert_eq!(read.arguments[0].value, "pulls/8");
+        assert_eq!(read.arguments.len(), 2);
+        assert_eq!(read.arguments[0].name, "shape");
+        assert_eq!(read.arguments[0].value, "pull");
+        assert_eq!(read.arguments[1].name, "id");
+        assert_eq!(read.arguments[1].value, "8");
     }
 
     #[test]
@@ -1092,7 +1108,7 @@ mod tests {
     }
 
     #[test]
-    fn pull_request_comments_use_issue_conversation_path_but_keep_pull_identity() {
+    fn pull_request_comments_use_the_issue_conversation_shape_but_keep_pull_identity() {
         let effects = dispatch(Event::TreeRequest(TreeRequest {
             view_id: PULL_REQUESTS_VIEW.into(),
             parent_id: "pull:51:8".into(),
@@ -1102,7 +1118,10 @@ mod tests {
             panic!()
         };
         assert_eq!(read.read_id, "pull-comments:51:8:1");
-        assert_eq!(read.arguments[0].value, "issues/8/comments");
+        // The comments hang off the issue number rather than the pull's own id:
+        // the shape is the issue conversation, the identity stays the pull's.
+        assert_eq!(read.arguments[0].value, "issueComments");
+        assert_eq!(read.arguments[1].value, "8");
         let effects = dispatch(Event::ToolCompleted(ToolCompleted {
             read_id: "pull-comments:51:8:1".into(),
             status: CompletionStatus::Succeeded,
@@ -1133,6 +1152,10 @@ mod tests {
             };
             assert_eq!(read.tool_id, TOOL_ID);
             assert_eq!(read.operation, REPOSITORY_READ);
+            assert!(read
+                .arguments
+                .iter()
+                .any(|field| field.name == "shape" && field.value == "issues"));
             assert!(read
                 .arguments
                 .iter()
@@ -1167,13 +1190,14 @@ mod tests {
 
     #[test]
     fn opens_issue_and_comment_documents_with_fixed_repository_reads() {
-        for (command_id, resource_id, expected_read, expected_path) in [
-            (OPEN_ISSUE, "github-issue:7", "issue-detail:7", "issues/7"),
+        for (command_id, resource_id, expected_read, expected_shape, expected_id) in [
+            (OPEN_ISSUE, "github-issue:7", "issue-detail:7", "issue", "7"),
             (
                 OPEN_COMMENT,
                 "github-issue-comment:91",
                 "comment-detail:91",
-                "issues/comments/91",
+                "issueComment",
+                "91",
             ),
         ] {
             let effects = dispatch(Event::CommandInvoked(CommandInvoked {
@@ -1199,9 +1223,16 @@ mod tests {
             assert_eq!(
                 read.arguments
                     .iter()
-                    .find(|field| field.name == "path")
+                    .find(|field| field.name == "shape")
                     .map(|field| field.value.as_str()),
-                Some(expected_path)
+                Some(expected_shape)
+            );
+            assert_eq!(
+                read.arguments
+                    .iter()
+                    .find(|field| field.name == "id")
+                    .map(|field| field.value.as_str()),
+                Some(expected_id)
             );
         }
     }

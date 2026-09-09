@@ -86,7 +86,7 @@ pub fn document_request(identity: Identity, kind: Kind) -> Effect {
                 "jobdetail:{}:{}:{}",
                 identity.run, identity.attempt, identity.job
             ),
-            format!("actions/jobs/{}", identity.job),
+            Resource::item("job", identity.job),
             Vec::new(),
         ),
         // A log is its own operation rather than a path under the repository
@@ -119,7 +119,7 @@ pub fn tree_request(request: &TreeRequest) -> Option<Effect> {
             };
             Some(read(
                 format!("jobs:{code}:{run}:{attempt}:{page}"),
-                format!("actions/runs/{run}/attempts/{attempt}/jobs"),
+                Resource::attempt("runAttemptJobs", run, attempt),
                 paging(page),
             ))
         }
@@ -135,7 +135,7 @@ pub fn tree_request(request: &TreeRequest) -> Option<Effect> {
                     "steps:{code}:{}:{}:{}:{page}",
                     identity.run, identity.attempt, identity.job
                 ),
-                format!("actions/jobs/{}", identity.job),
+                Resource::item("job", identity.job),
                 Vec::new(),
             ))
         }
@@ -462,7 +462,9 @@ mod tests {
             panic!()
         };
         assert_eq!(read.read_id, "jobs:w:51:2:2");
-        assert_eq!(read.arguments[0].value, "actions/runs/51/attempts/2/jobs");
+        assert_eq!(read.arguments[0].value, "runAttemptJobs");
+        assert_eq!(read.arguments[1].value, "51");
+        assert_eq!(read.arguments[2].value, "2");
         let second = JOB.replace("\"id\":71", "\"id\":72");
         let data =
             format!(r#"{{"body":{{"total_count":2,"jobs":[{JOB},{second}]}},"nextPage":2}}"#);
@@ -483,7 +485,8 @@ mod tests {
         let Effect::StartToolRead(read) = document_request(identity, kind) else {
             panic!()
         };
-        assert_eq!(read.arguments[0].value, "actions/jobs/71");
+        assert_eq!(read.arguments[0].value, "job");
+        assert_eq!(read.arguments[1].value, "71");
         let effect = complete(&completion("jobdetail:51:2:71", JOB.into())).unwrap();
         let Effect::PublishDocument(document) = effect else {
             panic!()
