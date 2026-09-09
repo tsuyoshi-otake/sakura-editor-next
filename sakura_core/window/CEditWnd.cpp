@@ -128,6 +128,7 @@
 #include "workbench/editor/CEmptyEditorSurface.h"
 #include "workbench/editor/EditorCommandIds.h"
 #include "workbench/editor/SenpReadonlyEditorController.h"
+#include "workbench/editor/SenpOwnerTextResources.h"
 #include "workbench/editor/SenpReadonlyOwnerTarget.h"
 #include "workbench/SenpWindowExtensions.h"
 #include "workbench/editor/WorkbenchCommandPaletteModel.h"
@@ -6095,6 +6096,12 @@ bool CEditWnd::InitializeSenpWindowExtensions()
 				m_workbenchRuntime->Bootstrap().UserDataProfile().SelectedProfileId());
 		}
 	}
+	if (!m_senpTextResources) {
+		// The resources an owner's reads create live under the profile the
+		// control side answers for, so the same identity names them here.
+		m_senpTextResources = std::make_unique<workbench::editor::CSenpOwnerTextResources>(
+			m_workbenchRuntime->Bootstrap().UserDataProfile().SelectedProfileId());
+	}
 	std::array<wchar_t, 32768> executable{};
 	const auto length = ::GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size()));
 	if (!length || length >= executable.size()) return false;
@@ -6112,14 +6119,33 @@ bool CEditWnd::InitializeSenpWindowExtensions()
 			const auto first = base + m_senpSurfaceSequence++ * block;
 			// The broker outlives every target it serves: it is declared ahead of
 			// the extensions, so the extensions are torn down first.
+			// An owner this authority cannot record gets none: its documents then
+			// state that text output is unavailable instead of waiting on bytes
+			// no scope could ever be resolved for.
+			const bool admitted = m_senpTextResources && m_senpTextResources->Admit(owner);
 			auto target = std::make_unique<workbench::editor::CSenpReadonlyOwnerTarget>(
 				owner, *m_senpReadonlyEditors, GetHwnd(), first,
-				nullptr, workbench::editor::SenpTextResourceView::CopySink{},
+				admitted ? m_senpTextResources.get() : nullptr,
+				workbench::editor::SenpTextResourceView::CopySink{},
 				workbench::editor::SenpOwnerCommandCompleted{},
-				workbench::editor::SenpOwnerResourceReleased{}, m_senpToolReads.get());
+				[this, owner](const std::wstring_view handle) {
+					// The extension states it will not read the resource again.
+					// Nothing answers a release, so this only carries it on.
+					if (!m_senpToolReads) return false;
+					m_senpToolReads->ReleaseResource(owner, handle);
+					return true;
+				},
+				m_senpToolReads.get());
 			const auto mode = m_pShareData->m_Common.m_sWindow.m_bDarkMode
 				? theme::ThemeMode::Dark : theme::ThemeMode::Light;
 			m_senpStyleSinks.push_back(target->StyleSink());
+			// The pump reports its owner's death exactly as the style sink does,
+			// which is the only notice this window gets that a target is gone.
+			m_senpTextPumps.push_back([this, owner, pump = target->TextPump()] {
+				if (pump()) return true;
+				if (m_senpTextResources) m_senpTextResources->Retire(owner);
+				return false;
+			});
 			ApplySenpWindowStyle(theme::CThemeService::EffectivePalette(mode));
 			return target;
 		},
@@ -6216,13 +6242,14 @@ void CEditWnd::StopSenpWindowExtensions() noexcept
 	m_senpWorkspaceGeneration = 0;
 	m_senpWorkspaceRevision = 0;
 	m_senpStyleSinks.clear();
+	m_senpTextPumps.clear();
 	if (m_senpWindowExtensions) {
 		if (m_senpWindowExtensions->Close()) m_senpWindowExtensions.reset();
 		else ::OutputDebugStringW(L"Sakura Editor NEXT: SENP authority closed; runtime cleanup retained for explicit close.\n");
 	}
-	// Retained extensions still hold owner targets that borrow the broker, so
-	// the broker may only be released once they are gone.
-	if (!m_senpWindowExtensions) m_senpToolReads.reset();
+	// Retained extensions still hold owner targets that borrow the broker and
+	// the text authority, so both may only be released once they are gone.
+	if (!m_senpWindowExtensions) { m_senpToolReads.reset(); m_senpTextResources.reset(); }
 	if (!wasActive || !m_workbenchRuntime) return;
 	try {
 		const auto operation = NextWorkbenchLayoutOperationId("senp.retire-contributions");
@@ -6238,6 +6265,11 @@ void CEditWnd::StopSenpWindowExtensions() noexcept
 		// application fails closed if its stale model still names removed pages.
 	}
 	::OutputDebugStringW(L"Sakura Editor NEXT: SENP authority closed; contribution layout reconciliation failed.\n");
+}
+
+void CEditWnd::PumpSenpTextResources() noexcept
+{
+	std::erase_if(m_senpTextPumps, [](const auto& pump) { return !pump(); });
 }
 
 void CEditWnd::ApplySenpWindowStyle(const theme::ThemePalette& palette)
@@ -16059,6 +16091,9 @@ void CEditWnd::OnEditTimer( void )
 		&& !m_senpWindowExtensions->Poll(std::chrono::steady_clock::now())) {
 		StopSenpWindowExtensions();
 	}
+	// After the poll, so a document published on this turn asks for its text on
+	// this turn rather than waiting for the next one.
+	PumpSenpTextResources();
 	if (m_workingCopyLifecycleBridge && !m_workingCopyBackendEffectInProgress) {
 		(void)m_workingCopyLifecycleBridge->Flush(::GetTickCount64(), false);
 	}

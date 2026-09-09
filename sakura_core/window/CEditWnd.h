@@ -174,6 +174,7 @@ class CEmptyEditorSurface;
 class IEditorCoreSubscription;
 class SenpReadonlyEditorController;
 class ISenpOwnerToolReads;
+class CSenpOwnerTextResources;
 struct EditorCoreSnapshot;
 }
 namespace editor::persistence {
@@ -735,6 +736,11 @@ private:
 	//! a refresh and never waits for one, so it is safe on the UI thread.
 	[[nodiscard]] std::int64_t SenpAccountGeneration() noexcept;
 	void StopSenpWindowExtensions() noexcept;
+	//! One turn of every live owner's text pump, and the point at which an owner
+	//! that has gone is retired from the text-resource authority. Runs on the
+	//! window's own cadence: a chunk arrives over the seam asynchronously, so
+	//! there is nothing here to wait for and nothing to do more than once.
+	void PumpSenpTextResources() noexcept;
 	void ApplySenpWindowStyle(const theme::ThemePalette& palette);
 	//! Applies the committed theme, or one non-persistent Quick Pick preview.
 	//! An invalid explicit preview leaves the currently painted theme untouched.
@@ -1293,6 +1299,10 @@ private:
 	//! keeps tool reads fail-closed. Declared ahead of the extensions
 	//! because every owner target borrows it as a raw pointer.
 	std::unique_ptr<workbench::editor::ISenpOwnerToolReads> m_senpToolReads;
+	//! The owners this window still shows text resources for. Every owner target
+	//! borrows it as a raw pointer, exactly as it borrows the seam above, so it
+	//! is declared ahead of the extensions and released only after them.
+	std::unique_ptr<workbench::editor::CSenpOwnerTextResources> m_senpTextResources;
 	//! Revoked before the borrowed pages and readonly editor controller are closed.
 	std::unique_ptr<workbench::CSenpWindowExtensions> m_senpWindowExtensions;
 	std::uint64_t m_senpSurfaceSequence{};
@@ -1306,6 +1316,9 @@ private:
 	std::uint64_t m_senpWorkspaceRevision{};
 	bool m_senpWindowExtensionsActive{};
 	std::vector<std::function<bool(const theme::ThemePalette&, const LOGFONT&, unsigned int)>> m_senpStyleSinks;
+	//! One text pump per owner. False means that owner is gone, which is also
+	//! when it stops being one this window will resolve resource scopes for.
+	std::vector<std::function<bool()>> m_senpTextPumps;
 	//! Single staged native projection owner for Primary Side Bar, Panel, and Auxiliary Bar.
 	std::unique_ptr<workbench::win32::PaneCompositeProjectionService>
 		m_paneCompositeProjection;
