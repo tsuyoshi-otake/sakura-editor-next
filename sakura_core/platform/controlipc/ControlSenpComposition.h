@@ -95,6 +95,17 @@ public:
 
 	//! True only when this call admitted new work for the profile.
 	bool Request(std::wstring_view profileId);
+	/*!
+		@brief Admits work for a profile whose control-owned state actually changed.
+
+		The interval exists so a five-hundred-millisecond poll cannot become a
+		package-tool reload loop. An edge - a connection declaring a workspace, or
+		dropping the one it declared - is not a poll, and making it wait out an
+		interval would leave the editor looking at a workspace the control side
+		has already been told about. Deduplication and the pending bound still
+		apply, so an editor cannot turn repeated declarations into repeated work.
+	*/
+	bool RequestChanged(std::wstring_view profileId);
 	//! Blocks until work is admitted or the queue closes. An empty result means closed.
 	[[nodiscard]] std::optional<std::wstring> WaitAndTake();
 	//! Records the attempt so the interval starts at its end, not at its start.
@@ -103,6 +114,10 @@ public:
 	void Close() noexcept;
 
 private:
+	//! The one admission path. Both entry points differ only in whether the
+	//! poll interval applies, so the bound and the deduplication cannot drift.
+	bool Admit(std::wstring_view profileId, bool respectInterval);
+
 	const std::chrono::milliseconds m_minimumInterval;
 	const std::size_t m_maximumPending;
 	mutable std::mutex m_mutex;
@@ -149,9 +164,14 @@ class CControlSenpProfileSource final : public senp::github::ISenpGitHubProfileS
 public:
 	[[nodiscard]] static constexpr std::size_t MaximumProfiles() noexcept { return 8; }
 
+	//! Connections whose declarations are held at once. It bounds the store the
+	//! same way the grant registry bounds what one connection can mint.
+	[[nodiscard]] static constexpr std::size_t MaximumAdoptions() noexcept { return 32; }
+
 	CControlSenpProfileSource(std::shared_ptr<senp::CSenpToolGrants> grants,
 		std::shared_ptr<senp::github::IGhConnectionPlatform> platform,
-		std::wstring configurationDirectory);
+		std::wstring configurationDirectory,
+		std::shared_ptr<CControlSenpRefreshQueue> refresh = nullptr);
 	~CControlSenpProfileSource() override;
 	CControlSenpProfileSource(const CControlSenpProfileSource&) = delete;
 	CControlSenpProfileSource& operator=(const CControlSenpProfileSource&) = delete;
@@ -160,6 +180,20 @@ public:
 		std::wstring_view profileId) override;
 	[[nodiscard]] std::optional<senp::github::GhSelectedRepository> Repository(
 		std::wstring_view profileId) override;
+	[[nodiscard]] EControlSenpRpcStatus AdoptWorkspace(
+		const SenpWorkspaceAdoption& adoption) override;
+	void WithdrawWorkspace(const SenpConnectionIdentity& connection) override;
+
+	/*!
+		@brief The one workspace every connection open on this profile agrees on.
+
+		Empty when none has declared one, and empty when two disagree: a profile
+		is shared by every window that selected it, so two windows on different
+		folders are ambiguity, and ambiguity publishes nothing. That is the same
+		rule the remote selection applies to a workspace naming two repositories.
+	*/
+	[[nodiscard]] std::optional<ControlSenpRpcWorkspace> DeclaredWorkspace(
+		std::wstring_view profileId) const;
 
 	//! Worker-only. Creates this profile's connection lifecycle while the source
 	//! still admits one. It adopts no account by itself.
@@ -175,12 +209,25 @@ private:
 		std::shared_ptr<senp::github::CGhConnectionLifecycle> connection;
 		std::optional<senp::github::GhSelectedRepository> repository;
 	};
+	//! Held per connection, never per profile: a declaration has to disappear
+	//! with the window that made it, and only the connection identifies that.
+	struct Adoption final {
+		SenpConnectionIdentity connection;
+		std::wstring profileId;
+		ControlSenpRpcWorkspace workspace;
+	};
+
+	//! Requests a refresh for each named profile. Called with no lock held,
+	//! because the queue wakes the worker that calls back into this source.
+	void Resolve(const std::vector<std::wstring>& profileIds) noexcept;
 
 	std::shared_ptr<senp::CSenpToolGrants> m_grants;
 	std::shared_ptr<senp::github::IGhConnectionPlatform> m_platform;
 	const std::wstring m_configurationDirectory;
+	std::shared_ptr<CControlSenpRefreshQueue> m_refresh;
 	mutable std::mutex m_mutex;
 	std::map<std::wstring, Profile, std::less<>> m_profiles;
+	std::vector<Adoption> m_adoptions;
 	bool m_closed = false;
 };
 
@@ -259,8 +306,7 @@ private:
 	void Refresh(const std::wstring& profileId);
 	[[nodiscard]] std::optional<std::wstring> ResolveProfileHome(const std::wstring& profileId,
 		const profiles::UserDataProfileRegistrySnapshot& registry) const;
-	void RefreshRepository(const std::wstring& profileId,
-		const profiles::UserDataProfileRegistrySnapshot& registry);
+	void RefreshRepository(const std::wstring& profileId);
 	void RefreshConnection(const std::wstring& profileId);
 	void Discard(const std::wstring& profileId) noexcept;
 

@@ -38,6 +38,29 @@ struct SenpToolExecutionScope {
 	bool operator==(const SenpToolExecutionScope&) const = default;
 };
 
+/*!
+	@brief One connection, named without an owner.
+
+	A workspace is declared by the connection that opened on it, before any owner
+	carrying a workspace revision can exist, so a declaration cannot be scoped by
+	SenpToolExecutionScope the way a read is. It is scoped by this instead, and
+	that is also what makes the declaration disappear with the connection.
+*/
+struct SenpConnectionIdentity {
+	std::uint64_t sessionId = 0;
+	std::uint32_t clientProcessId = 0;
+	bool operator==(const SenpConnectionIdentity&) const = default;
+};
+
+//! One connection's declared workspace. It names folders and never a repository:
+//! what those folders resolve to is decided by the control side from the remotes
+//! it finds there, so the editor's claim is verified rather than trusted.
+struct SenpWorkspaceAdoption {
+	SenpConnectionIdentity connection;
+	std::wstring profileId;
+	ControlSenpRpcWorkspace workspace;
+};
+
 //! One admitted read. The broker forwards only values it has already bounded.
 struct SenpToolReadCommand {
 	std::wstring readId;
@@ -86,6 +109,25 @@ public:
 	*/
 	[[nodiscard]] virtual EControlSenpRpcStatus QueryAccount(std::wstring_view profileId,
 		ControlSenpRpcResponse& response) noexcept = 0;
+	/*!
+		@brief Records the workspace one connection declares it is opened on.
+
+		Like QueryAccount it carries no execution scope, because it precedes every
+		owner. It must only record the declaration: inspecting a folder for its
+		remotes is exactly the kind of blocking work frame processing may not do,
+		so it belongs on an implementation's own worker.
+	*/
+	[[nodiscard]] virtual EControlSenpRpcStatus AdoptWorkspace(
+		const SenpWorkspaceAdoption& adoption) noexcept = 0;
+	/*!
+		@brief Withdraws whatever that connection declared.
+
+		The session destructor calls it for every connection, including ones that
+		declared nothing, so withdrawing an unknown connection must be a no-op.
+		A declaration outliving its connection would let a closed window keep
+		deciding which repository a profile answers for.
+	*/
+	virtual void WithdrawWorkspace(const SenpConnectionIdentity& connection) noexcept = 0;
 };
 
 /*!

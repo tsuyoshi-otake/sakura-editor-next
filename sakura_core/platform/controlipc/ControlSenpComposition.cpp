@@ -122,6 +122,16 @@ CControlSenpRefreshQueue::CControlSenpRefreshQueue(std::chrono::milliseconds min
 }
 
 bool CControlSenpRefreshQueue::Request(std::wstring_view profileId)
+{
+	return Admit(profileId, true);
+}
+
+bool CControlSenpRefreshQueue::RequestChanged(std::wstring_view profileId)
+{
+	return Admit(profileId, false);
+}
+
+bool CControlSenpRefreshQueue::Admit(std::wstring_view profileId, const bool respectInterval)
 try {
 	if (profileId.empty()) return false;
 	{
@@ -129,9 +139,11 @@ try {
 		if (m_closed || m_pending.size() >= m_maximumPending) return false;
 		if (m_busy && m_running == profileId) return false;
 		if (std::ranges::find(m_pending, profileId) != m_pending.end()) return false;
-		if (const auto attempted = m_attempted.find(profileId); attempted != m_attempted.end()
-			&& std::chrono::steady_clock::now() - attempted->second < m_minimumInterval) {
-			return false;
+		if (respectInterval) {
+			if (const auto attempted = m_attempted.find(profileId); attempted != m_attempted.end()
+				&& std::chrono::steady_clock::now() - attempted->second < m_minimumInterval) {
+				return false;
+			}
 		}
 		m_pending.emplace_back(profileId);
 	}
@@ -205,10 +217,12 @@ std::optional<senp::SenpApprovedToolOwner> CControlSenpAuthorityGate::Resolve(
 }
 
 CControlSenpProfileSource::CControlSenpProfileSource(std::shared_ptr<senp::CSenpToolGrants> grants,
-	std::shared_ptr<senp::github::IGhConnectionPlatform> platform, std::wstring configurationDirectory) :
+	std::shared_ptr<senp::github::IGhConnectionPlatform> platform, std::wstring configurationDirectory,
+	std::shared_ptr<CControlSenpRefreshQueue> refresh) :
 	m_grants(std::move(grants)), m_platform(std::move(platform)),
 	m_configurationDirectory(::platform::IsAbsoluteWindowsPath(configurationDirectory)
-		? std::move(configurationDirectory) : std::wstring{})
+		? std::move(configurationDirectory) : std::wstring{}),
+	m_refresh(std::move(refresh))
 {
 }
 
@@ -259,6 +273,90 @@ try {
 	return nullptr;
 }
 
+EControlSenpRpcStatus CControlSenpProfileSource::AdoptWorkspace(const SenpWorkspaceAdoption& adoption)
+try {
+	std::vector<std::wstring> changed;
+	{
+		std::lock_guard lock(m_mutex);
+		if (m_closed) return EControlSenpRpcStatus::Closed;
+		const auto held = std::ranges::find_if(m_adoptions,
+			[&](const Adoption& existing) { return existing.connection == adoption.connection; });
+		if (held != m_adoptions.end()) {
+			// Re-declaring what this connection already declared is not a change.
+			// Answering it with work would let a reconnecting editor drive the
+			// worker by saying the same thing again.
+			if (held->profileId == adoption.profileId && held->workspace == adoption.workspace) {
+				return EControlSenpRpcStatus::Succeeded;
+			}
+			// A connection that moves to another profile changes both: the one it
+			// leaves loses a declaration the resolution was still counting.
+			if (held->profileId != adoption.profileId) changed.push_back(held->profileId);
+			held->profileId = adoption.profileId;
+			held->workspace = adoption.workspace;
+		} else {
+			if (m_adoptions.size() >= MaximumAdoptions()) {
+				return EControlSenpRpcStatus::ResourceExhausted;
+			}
+			m_adoptions.push_back({ adoption.connection, adoption.profileId, adoption.workspace });
+		}
+		changed.push_back(adoption.profileId);
+	}
+	Resolve(changed);
+	return EControlSenpRpcStatus::Succeeded;
+} catch (...) {
+	return EControlSenpRpcStatus::Unavailable;
+}
+
+void CControlSenpProfileSource::WithdrawWorkspace(const SenpConnectionIdentity& connection)
+try {
+	std::vector<std::wstring> changed;
+	{
+		std::lock_guard lock(m_mutex);
+		// Not guarded by m_closed: a closed source has already dropped every
+		// declaration, so there is nothing left for this to leave behind.
+		const auto held = std::ranges::find_if(m_adoptions,
+			[&](const Adoption& existing) { return existing.connection == connection; });
+		if (held == m_adoptions.end()) return;
+		changed.push_back(held->profileId);
+		m_adoptions.erase(held);
+	}
+	// The profile keeps answering the withdrawn repository until this resolves,
+	// which is why a withdrawal admits work rather than only forgetting.
+	Resolve(changed);
+} catch (...) {
+}
+
+std::optional<ControlSenpRpcWorkspace> CControlSenpProfileSource::DeclaredWorkspace(
+	std::wstring_view profileId) const
+try {
+	std::lock_guard lock(m_mutex);
+	if (m_closed) return std::nullopt;
+	std::optional<ControlSenpRpcWorkspace> agreed;
+	for (const auto& adoption : m_adoptions) {
+		if (adoption.profileId != profileId) continue;
+		if (!agreed) {
+			agreed = adoption.workspace;
+			continue;
+		}
+		if (agreed->folders != adoption.workspace.folders) return std::nullopt;
+		// The same workspace observed by two windows at different times. The
+		// newer observation is the one a staleness check has to be made against.
+		if (adoption.workspace.revision > agreed->revision) agreed = adoption.workspace;
+	}
+	return agreed;
+} catch (...) {
+	return std::nullopt;
+}
+
+void CControlSenpProfileSource::Resolve(const std::vector<std::wstring>& profileIds) noexcept
+try {
+	if (!m_refresh) return;
+	for (const auto& profileId : profileIds) {
+		(void)m_refresh->RequestChanged(profileId);
+	}
+} catch (...) {
+}
+
 void CControlSenpProfileSource::PublishRepository(const std::wstring& profileId,
 	std::optional<senp::github::GhSelectedRepository> repository)
 try {
@@ -295,6 +393,7 @@ try {
 		if (m_closed) return;
 		m_closed = true;
 		profiles.swap(m_profiles);
+		m_adoptions.clear();
 	}
 	for (auto& [profileId, profile] : profiles) {
 		if (profile.connection) profile.connection->Close();
@@ -320,7 +419,7 @@ CControlSenpComposition::CControlSenpComposition(ControlSenpCompositionOptions o
 		dependencies.connectionPlatform ? dependencies.connectionPlatform
 			: std::make_shared<senp::github::CWindowsGhConnectionPlatform>(
 				m_toolPlatform, m_options.workingDirectory),
-		m_options.ghConfigurationDirectory)),
+		m_options.ghConfigurationDirectory, m_refresh)),
 	m_executor(std::make_shared<senp::github::CSenpGitHubToolExecutor>(
 		m_toolPlatform, m_profiles, m_options.workingDirectory)),
 	m_handler(std::make_shared<CControlSenpBroker>(m_grants, m_executor)),
@@ -432,7 +531,7 @@ void CControlSenpComposition::Refresh(const std::wstring& profileId)
 		}
 		return;
 	}
-	RefreshRepository(profileId, *registry.snapshot);
+	RefreshRepository(profileId);
 	RefreshConnection(profileId);
 }
 
@@ -460,22 +559,36 @@ std::optional<std::wstring> CControlSenpComposition::ResolveProfileHome(const st
 	return *profileHome.value;
 }
 
-void CControlSenpComposition::RefreshRepository(const std::wstring& profileId,
-	const profiles::UserDataProfileRegistrySnapshot& registry)
+void CControlSenpComposition::RefreshRepository(const std::wstring& profileId)
 {
-	// The workspace a profile answers for is control-owned state: it is the
-	// association the registry holds, never a claim carried by a read request.
-	config::WorkspaceContextSnapshot workspace;
-	for (const auto& [associated, owner] : registry.workspaceAssociations) {
-		if (owner != profileId) continue;
-		workspace.folders.push_back(config::WorkspaceFolderDescriptor{ associated, {} });
-	}
-	if (workspace.folders.empty() || registry.revision == 0) {
+	// The workspace a profile answers for is declared by the connections open on
+	// it, and never carried by a read request. It is not stored on the profile
+	// either: the registry has no per-window granularity, so one association set
+	// could only mix the folders of every window that shares this profile.
+	const auto declared = m_profiles->DeclaredWorkspace(profileId);
+	if (!declared || declared->folders.empty()) {
 		m_profiles->PublishRepository(profileId, std::nullopt);
 		return;
 	}
-	workspace.generation = registry.revision;
-	workspace.revision = registry.revision;
+	config::WorkspaceContextSnapshot workspace;
+	workspace.folders.reserve(declared->folders.size());
+	for (const auto& folder : declared->folders) {
+		// The wire carries URI text, so an unparseable folder is a declaration
+		// the control side cannot act on. It takes the whole workspace with it:
+		// resolving the folders that did parse would answer for a workspace no
+		// window is actually open on.
+		auto uri = ::platform::uri::Uri::Parse(folder);
+		if (!uri) {
+			m_profiles->PublishRepository(profileId, std::nullopt);
+			return;
+		}
+		// The declaration named the folder and nothing else. Everything below
+		// this line is read from the folder itself, so the editor's claim is
+		// verified against the real remotes rather than trusted.
+		workspace.folders.push_back(config::WorkspaceFolderDescriptor{ std::move(*uri.value), {} });
+	}
+	workspace.generation = declared->generation;
+	workspace.revision = declared->revision;
 	workspace.kind = workspace.folders.size() == 1 ? config::EWorkspaceKind::Folder
 		: config::EWorkspaceKind::Workspace;
 	const auto captured = m_repositories.Capture(workspace, nullptr);

@@ -97,8 +97,22 @@ public:
 		if (profileId != m_profileId || !m_repository) return std::nullopt;
 		return m_repository;
 	}
+	platform::controlipc::EControlSenpRpcStatus AdoptWorkspace(
+		const platform::controlipc::SenpWorkspaceAdoption& adoption) override
+	{
+		adopted.push_back(adoption);
+		return adoptStatus;
+	}
+	void WithdrawWorkspace(const platform::controlipc::SenpConnectionIdentity& connection) override
+	{
+		withdrawn.push_back(connection);
+	}
 	void SetLifecycle(std::shared_ptr<CGhConnectionLifecycle> lifecycle) { m_lifecycle = std::move(lifecycle); }
 	void ClearRepository() noexcept { m_repository.reset(); }
+
+	EControlSenpRpcStatus adoptStatus = EControlSenpRpcStatus::Succeeded;
+	std::vector<platform::controlipc::SenpWorkspaceAdoption> adopted;
+	std::vector<platform::controlipc::SenpConnectionIdentity> withdrawn;
 private:
 	std::wstring m_profileId{ L"profile-1" };
 	std::shared_ptr<CGhConnectionLifecycle> m_lifecycle;
@@ -194,6 +208,38 @@ TEST(SenpGitHubToolExecutor, TranslatesOnlyTheClosedShapeSet)
 	EXPECT_FALSE(BuildRepositoryReadRequest(repository, { { L"shape", L"issues" }, { L"path", L"secrets" } }));
 	EXPECT_FALSE(BuildRepositoryReadRequest(repository, { { L"shape", L"issues" }, { L"state", L"" } }));
 	EXPECT_FALSE(BuildRepositoryReadRequest(repository, {}));
+}
+
+TEST(SenpGitHubToolExecutor, CarriesAWorkspaceDeclarationWithoutReadingAFolder)
+{
+	Fixture fixture;
+	platform::controlipc::SenpWorkspaceAdoption adoption;
+	adoption.connection = { 7, 1234 };
+	adoption.profileId = L"profile-1";
+	adoption.workspace.generation = 5;
+	adoption.workspace.revision = 11;
+	adoption.workspace.folders = { L"file:///c:/work/repo" };
+	EXPECT_EQ(EControlSenpRpcStatus::Succeeded, fixture.Executor().AdoptWorkspace(adoption));
+	// Forwarded, not stored: resolving folders to a repository means reading git
+	// remotes, which belongs on the worker that owns every blocking lookup here.
+	ASSERT_EQ(1U, fixture.Profiles().adopted.size());
+	EXPECT_EQ(L"profile-1", fixture.Profiles().adopted.front().profileId);
+	EXPECT_EQ(11, fixture.Profiles().adopted.front().workspace.revision);
+
+	// A declaration that names no connection could never be withdrawn, and one
+	// that names no profile answers for nothing. Neither reaches the source.
+	auto nameless = adoption;
+	nameless.connection = {};
+	EXPECT_EQ(EControlSenpRpcStatus::InvalidRequest, fixture.Executor().AdoptWorkspace(nameless));
+	auto profileless = adoption;
+	profileless.profileId.clear();
+	EXPECT_EQ(EControlSenpRpcStatus::InvalidRequest, fixture.Executor().AdoptWorkspace(profileless));
+	EXPECT_EQ(1U, fixture.Profiles().adopted.size());
+
+	fixture.Executor().WithdrawWorkspace(adoption.connection);
+	ASSERT_EQ(1U, fixture.Profiles().withdrawn.size());
+	EXPECT_EQ(7U, fixture.Profiles().withdrawn.front().sessionId);
+	EXPECT_EQ(1234U, fixture.Profiles().withdrawn.front().clientProcessId);
 }
 
 TEST(SenpGitHubToolExecutor, PublishesOneFetchedPageAsAReadableResource)

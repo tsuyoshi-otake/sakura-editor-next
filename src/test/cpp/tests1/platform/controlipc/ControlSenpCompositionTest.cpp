@@ -23,6 +23,7 @@ constexpr wchar_t kProfile[] = L"github-profile";
 constexpr wchar_t kControlRoot[] = L"C:\\Control";
 constexpr wchar_t kProfileHome[] = L"C:\\Control\\user-data-profiles\\github-profile";
 constexpr wchar_t kWorkspaceRoot[] = L"C:\\Work\\Fork";
+constexpr wchar_t kOtherWorkspaceRoot[] = L"C:\\Work\\Notes";
 constexpr wchar_t kGhConfiguration[] = L"C:\\Control\\gh";
 constexpr wchar_t kExtension[] = L"sakura.github-pull-requests";
 constexpr std::uint64_t kManagementRevision = 9;
@@ -231,7 +232,7 @@ private:
 	std::map<std::wstring, std::tuple<std::wstring, std::wstring, std::string>> m_entries;
 };
 
-std::shared_ptr<profiles::ControlUserDataProfileRegistry> Registry(bool associateWorkspace = true)
+std::shared_ptr<profiles::ControlUserDataProfileRegistry> Registry()
 {
 	auto storage = std::make_shared<::platform::storage::CInMemoryStorageService>();
 	auto registry = std::make_shared<profiles::ControlUserDataProfileRegistry>(storage);
@@ -239,12 +240,13 @@ std::shared_ptr<profiles::ControlUserDataProfileRegistry> Registry(bool associat
 	EXPECT_TRUE(registry->CreateNamed(
 		{ kProfile, L"GitHub", profiles::UserDataProfileKind::Normal, {}, {} },
 		{ "create-github-profile", std::nullopt }).Succeeded());
-	if (associateWorkspace) {
-		auto workspace = ::platform::uri::Uri::FromWindowsPath(kWorkspaceRoot);
-		EXPECT_TRUE(workspace);
-		EXPECT_TRUE(registry->AssociateWorkspace(kProfile, std::move(*workspace.value),
-			{ "associate-workspace", std::nullopt }).Succeeded());
-	}
+	// Kept even though no repository is derived from it any more: it is what
+	// proves the association stopped deciding which repository a profile
+	// answers for, rather than that the test simply stopped writing one.
+	auto workspace = ::platform::uri::Uri::FromWindowsPath(kWorkspaceRoot);
+	EXPECT_TRUE(workspace);
+	EXPECT_TRUE(registry->AssociateWorkspace(kProfile, std::move(*workspace.value),
+		{ "associate-workspace", std::nullopt }).Succeeded());
 	return registry;
 }
 
@@ -282,6 +284,26 @@ ControlSenpRpcRequest IssueGrant(std::wstring profileId = kProfile)
 	return request;
 }
 
+//! The folder identity a window would declare for a root it is open on.
+std::wstring WorkspaceFolder(const wchar_t* root = kWorkspaceRoot)
+{
+	auto uri = ::platform::uri::Uri::FromWindowsPath(root);
+	EXPECT_TRUE(uri);
+	return uri ? uri.value->ToString() : std::wstring();
+}
+
+ControlSenpRpcRequest AdoptWorkspace(std::vector<std::wstring> folders, std::int64_t revision = 11,
+	std::wstring profileId = kProfile)
+{
+	ControlSenpRpcRequest request;
+	request.operation = EControlSenpRpcOperation::AdoptWorkspace;
+	request.profileId = std::move(profileId);
+	request.workspace.generation = 5;
+	request.workspace.revision = revision;
+	request.workspace.folders = std::move(folders);
+	return request;
+}
+
 ControlIpcFrame RequestFrame(const ControlSenpRpcRequest& request, std::uint64_t requestId = 1)
 {
 	auto payload = EncodeControlSenpRpcRequest(request);
@@ -313,6 +335,26 @@ EControlSenpRpcStatus Issue(IControlIpcSessionHandler& session, std::uint64_t re
 	const auto reply = ReadResponse(
 		session.HandleFrame(kConnection, RequestFrame(IssueGrant(std::move(profileId)), requestId)));
 	return reply ? reply->status : EControlSenpRpcStatus::InvalidRequest;
+}
+
+EControlSenpRpcStatus Adopt(IControlIpcSessionHandler& session, std::uint64_t requestId,
+	std::vector<std::wstring> folders, const ControlIpcSessionContext& connection = kConnection)
+{
+	const auto reply = ReadResponse(session.HandleFrame(connection,
+		RequestFrame(AdoptWorkspace(std::move(folders)), requestId)));
+	return reply ? reply->status : EControlSenpRpcStatus::InvalidRequest;
+}
+
+SenpWorkspaceAdoption Adoption(SenpConnectionIdentity connection, std::vector<std::wstring> folders,
+	std::int64_t revision = 11, std::wstring profileId = kProfile)
+{
+	SenpWorkspaceAdoption adoption;
+	adoption.connection = connection;
+	adoption.profileId = std::move(profileId);
+	adoption.workspace.generation = 5;
+	adoption.workspace.revision = revision;
+	adoption.workspace.folders = std::move(folders);
+	return adoption;
 }
 
 } // namespace
@@ -474,6 +516,77 @@ TEST(ControlSenpProfileSource, AnswersNothingUntilTheWorkerPublishesAndWithdrawC
 	source.Close();
 }
 
+TEST(ControlSenpProfileSource, AgreesOnADeclaredWorkspaceOnlyWhileEveryConnectionDeclaresTheSameOne)
+{
+	auto authority = std::make_shared<senp::CSenpControlPackageAuthority>();
+	auto grants = std::make_shared<senp::CSenpToolGrants>(authority);
+	auto refresh = std::make_shared<CControlSenpRefreshQueue>(std::chrono::milliseconds{ 60000 }, 8);
+	CControlSenpProfileSource source(grants, std::make_shared<FakeConnectionPlatform>(),
+		kGhConfiguration, refresh);
+	EXPECT_FALSE(source.DeclaredWorkspace(kProfile).has_value());
+
+	const SenpConnectionIdentity first{ 31, 1701 };
+	const SenpConnectionIdentity second{ 32, 1702 };
+	EXPECT_EQ(EControlSenpRpcStatus::Succeeded,
+		source.AdoptWorkspace(Adoption(first, { L"file:///c:/work/fork" })));
+	// A declaration is edge-triggered, so it admits work without waiting out the
+	// interval that protects the worker from polling.
+	EXPECT_TRUE(refresh->WaitAndTake().has_value());
+	refresh->Complete(kProfile);
+	{
+		const auto declared = source.DeclaredWorkspace(kProfile);
+		ASSERT_TRUE(declared.has_value());
+		EXPECT_EQ(11, declared->revision);
+	}
+
+	// Re-declaring what this connection already declared is not a change, so it
+	// admits nothing: a reconnecting editor must not be able to drive the worker
+	// by repeating itself.
+	EXPECT_EQ(EControlSenpRpcStatus::Succeeded,
+		source.AdoptWorkspace(Adoption(first, { L"file:///c:/work/fork" })));
+	EXPECT_TRUE(refresh->WaitForIdle(0));
+
+	// The same workspace seen later by another window: the newer observation is
+	// what a staleness check has to be made against.
+	EXPECT_EQ(EControlSenpRpcStatus::Succeeded,
+		source.AdoptWorkspace(Adoption(second, { L"file:///c:/work/fork" }, 12)));
+	{
+		const auto declared = source.DeclaredWorkspace(kProfile);
+		ASSERT_TRUE(declared.has_value());
+		EXPECT_EQ(12, declared->revision);
+	}
+
+	// Two windows of one profile on different workspaces cannot both be answered
+	// for by a profile-scoped repository, so nothing is agreed rather than one
+	// of them being picked.
+	EXPECT_EQ(EControlSenpRpcStatus::Succeeded,
+		source.AdoptWorkspace(Adoption(second, { L"file:///c:/work/notes" }, 13)));
+	EXPECT_FALSE(source.DeclaredWorkspace(kProfile).has_value());
+
+	// Withdrawing the disagreeing declaration leaves one, and it agrees again.
+	source.WithdrawWorkspace(second);
+	EXPECT_TRUE(source.DeclaredWorkspace(kProfile).has_value());
+	// Withdrawing a connection that declared nothing is a no-op: the session
+	// destructor calls it for every connection, including those.
+	source.WithdrawWorkspace({ 33, 1703 });
+	EXPECT_TRUE(source.DeclaredWorkspace(kProfile).has_value());
+
+	for (std::size_t index = 1; index < CControlSenpProfileSource::MaximumAdoptions(); ++index) {
+		EXPECT_EQ(EControlSenpRpcStatus::Succeeded, source.AdoptWorkspace(Adoption(
+			{ 100 + index, 2000 }, { L"file:///c:/work/fork" }, 11, L"profile" + std::to_wstring(index))));
+	}
+	// The control side inspects every declared folder, so declarations are
+	// bounded the way every other admitted resource here is.
+	EXPECT_EQ(EControlSenpRpcStatus::ResourceExhausted,
+		source.AdoptWorkspace(Adoption({ 999, 2000 }, { L"file:///c:/work/fork" })));
+
+	source.Close();
+	EXPECT_FALSE(source.DeclaredWorkspace(kProfile).has_value());
+	EXPECT_EQ(EControlSenpRpcStatus::Closed,
+		source.AdoptWorkspace(Adoption(first, { L"file:///c:/work/fork" })));
+	refresh->Close();
+}
+
 TEST(ControlSenpProfileSource, RefusesToAdoptAnAccountWithoutAnAbsoluteConfigurationDirectory)
 {
 	auto authority = std::make_shared<senp::CSenpControlPackageAuthority>();
@@ -489,10 +602,13 @@ TEST(ControlSenpComposition, PublishesControlOwnedPackagesAndThenAdmitsAGrantThr
 	CControlSenpComposition composition(Options(), Registry(), fakes.Dependencies());
 	auto session = composition.Handler()->CreateSession(kConnection);
 	ASSERT_NE(nullptr, session);
+	// The window says where it is open before it asks for anything. Nothing else
+	// tells the control side which folders this profile answers for.
+	ASSERT_EQ(EControlSenpRpcStatus::Succeeded, Adopt(*session, 1, { WorkspaceFolder() }));
 
 	// Nothing is published yet, so the grant is refused and the miss admits one
 	// refresh instead of issuing on the strength of the request.
-	EXPECT_EQ(EControlSenpRpcStatus::Unauthorized, Issue(*session, 1));
+	EXPECT_EQ(EControlSenpRpcStatus::Unauthorized, Issue(*session, 2));
 	ASSERT_TRUE(composition.WaitForIdle(kIdleTimeoutMilliseconds));
 
 	ASSERT_EQ(1U, fakes.packages->Homes().size());
@@ -501,8 +617,8 @@ TEST(ControlSenpComposition, PublishesControlOwnedPackagesAndThenAdmitsAGrantThr
 	ASSERT_TRUE(revision.has_value());
 	EXPECT_EQ(kManagementRevision, *revision);
 
-	// The workspace the profile answers for is the control-owned association,
-	// never a claim carried by a read request.
+	// The declaration named folders and nothing else: what they resolve to was
+	// read from the remotes found there, never carried by a request.
 	ASSERT_EQ(std::vector<std::wstring>{ kWorkspaceRoot }, fakes.repositories->Roots());
 	const auto repository = composition.PublishedRepository(kProfile);
 	ASSERT_TRUE(repository.has_value());
@@ -516,11 +632,11 @@ TEST(ControlSenpComposition, PublishesControlOwnedPackagesAndThenAdmitsAGrantThr
 	EXPECT_EQ(gh::GhToolAvailability::Available, fakes.connection->Probes().front());
 	EXPECT_EQ(gh::GhConnectionState::Connected, composition.ConnectionState(kProfile));
 
-	EXPECT_EQ(EControlSenpRpcStatus::Succeeded, Issue(*session, 2));
+	EXPECT_EQ(EControlSenpRpcStatus::Succeeded, Issue(*session, 3));
 	// A capability the published table does not carry stays refused.
 	auto widened = IssueGrant();
 	widened.capabilities = static_cast<std::uint32_t>(senp::SenpToolCapability::OpenConnectionUi);
-	const auto refused = ReadResponse(session->HandleFrame(kConnection, RequestFrame(widened, 3)));
+	const auto refused = ReadResponse(session->HandleFrame(kConnection, RequestFrame(widened, 4)));
 	ASSERT_TRUE(refused.has_value());
 	EXPECT_EQ(EControlSenpRpcStatus::Unauthorized, refused->status);
 
@@ -577,20 +693,75 @@ TEST(ControlSenpComposition, PublishesNoPermissionWhenThePackageStateProvesNoEna
 	}
 }
 
-TEST(ControlSenpComposition, PublishesNoRepositoryWhenNoWorkspaceIsAssociatedWithTheProfile)
+TEST(ControlSenpComposition, PublishesNoRepositoryWhileNoConnectionHasDeclaredAWorkspace)
 {
 	Fakes fakes;
-	CControlSenpComposition composition(Options(), Registry(false), fakes.Dependencies());
+	CControlSenpComposition composition(Options(), Registry(), fakes.Dependencies());
 	ASSERT_TRUE(composition.RequestRefresh(kProfile));
 	ASSERT_TRUE(composition.WaitForIdle(kIdleTimeoutMilliseconds));
 
 	EXPECT_TRUE(composition.PublishedRevision(kProfile).has_value());
-	// The permission table is still published, but the executor must answer
-	// Unavailable rather than guess an owner or repository.
+	// The registry still associates a workspace with this profile, and it is
+	// deliberately not what answers: one association set has no per-window
+	// granularity, so it could only mix the folders of every window sharing it.
 	EXPECT_TRUE(fakes.repositories->Roots().empty());
 	EXPECT_FALSE(composition.PublishedRepository(kProfile).has_value());
 	// An account is not an authorization, so it is still adopted on its own.
 	EXPECT_EQ(gh::GhConnectionState::Connected, composition.ConnectionState(kProfile));
+	composition.Close();
+}
+
+TEST(ControlSenpComposition, ResolvesTheDeclaredWorkspaceAndStopsAnsweringWhenTheConnectionEnds)
+{
+	Fakes fakes;
+	CControlSenpComposition composition(Options(), Registry(), fakes.Dependencies());
+	{
+		auto session = composition.Handler()->CreateSession(kConnection);
+		ASSERT_NE(nullptr, session);
+		// The declaration alone admits the work. It is edge-triggered, so making
+		// it wait out the poll-protection interval would leave the window looking
+		// at a workspace the control side already knows about.
+		ASSERT_EQ(EControlSenpRpcStatus::Succeeded, Adopt(*session, 1, { WorkspaceFolder() }));
+		ASSERT_TRUE(composition.WaitForIdle(kIdleTimeoutMilliseconds));
+		ASSERT_EQ(std::vector<std::wstring>{ kWorkspaceRoot }, fakes.repositories->Roots());
+		const auto repository = composition.PublishedRepository(kProfile);
+		ASSERT_TRUE(repository.has_value());
+		EXPECT_EQ(L"github.com", repository->Hostname());
+		EXPECT_EQ(L"me", repository->Owner());
+		EXPECT_EQ(L"project", repository->Repository());
+	}
+	// A declaration cannot outlive its connection: a closed window must not keep
+	// deciding which repository the profile answers for.
+	ASSERT_TRUE(composition.WaitForIdle(kIdleTimeoutMilliseconds));
+	EXPECT_FALSE(composition.PublishedRepository(kProfile).has_value());
+	composition.Close();
+}
+
+TEST(ControlSenpComposition, PublishesNoRepositoryWhileTwoConnectionsDeclareDifferentWorkspaces)
+{
+	constexpr ControlIpcSessionContext kOtherConnection{ 32, 1702 };
+	Fakes fakes;
+	CControlSenpComposition composition(Options(), Registry(), fakes.Dependencies());
+	auto first = composition.Handler()->CreateSession(kConnection);
+	ASSERT_NE(nullptr, first);
+	ASSERT_EQ(EControlSenpRpcStatus::Succeeded, Adopt(*first, 1, { WorkspaceFolder() }));
+	ASSERT_TRUE(composition.WaitForIdle(kIdleTimeoutMilliseconds));
+	ASSERT_TRUE(composition.PublishedRepository(kProfile).has_value());
+
+	auto second = composition.Handler()->CreateSession(kOtherConnection);
+	ASSERT_NE(nullptr, second);
+	ASSERT_EQ(EControlSenpRpcStatus::Succeeded,
+		Adopt(*second, 1, { WorkspaceFolder(kOtherWorkspaceRoot) }, kOtherConnection));
+	ASSERT_TRUE(composition.WaitForIdle(kIdleTimeoutMilliseconds));
+	// Ambiguity publishes nothing, exactly as two GitHub remotes in one
+	// workspace do: the executor answers Unavailable rather than pick a window.
+	EXPECT_FALSE(composition.PublishedRepository(kProfile).has_value());
+
+	second.reset();
+	ASSERT_TRUE(composition.WaitForIdle(kIdleTimeoutMilliseconds));
+	// One declaration is left, so the profile answers for it again.
+	EXPECT_TRUE(composition.PublishedRepository(kProfile).has_value());
+	first.reset();
 	composition.Close();
 }
 

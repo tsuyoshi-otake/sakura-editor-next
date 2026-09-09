@@ -549,6 +549,31 @@ try {
 	return EControlSenpRpcStatus::Unavailable;
 }
 
+EControlSenpRpcStatus CSenpGitHubToolExecutor::AdoptWorkspace(
+	const platform::controlipc::SenpWorkspaceAdoption& adoption) noexcept
+try {
+	if (adoption.profileId.empty()) return EControlSenpRpcStatus::InvalidRequest;
+	// The connection is the identity a declaration is withdrawn by, so one that
+	// names no connection could never be withdrawn and is refused instead.
+	if (adoption.connection.sessionId == 0 && adoption.connection.clientProcessId == 0) {
+		return EControlSenpRpcStatus::InvalidRequest;
+	}
+	if (!m_profiles) return EControlSenpRpcStatus::Unavailable;
+	// Forwarded, not stored: this executor never reads a folder, so holding the
+	// declaration here would only put it a step further from what resolves it.
+	return m_profiles->AdoptWorkspace(adoption);
+} catch (...) {
+	return EControlSenpRpcStatus::Unavailable;
+}
+
+void CSenpGitHubToolExecutor::WithdrawWorkspace(
+	const platform::controlipc::SenpConnectionIdentity& connection) noexcept
+try {
+	if (!m_profiles) return;
+	m_profiles->WithdrawWorkspace(connection);
+} catch (...) {
+}
+
 bool CSenpGitHubToolExecutor::WaitForIdle(const std::uint32_t timeoutMilliseconds) noexcept
 {
 	const auto deadline = NowMilliseconds() + timeoutMilliseconds;

@@ -41,6 +41,18 @@ public:
 	[[nodiscard]] virtual std::shared_ptr<CGhConnectionLifecycle> Connection(std::wstring_view profileId) = 0;
 	//! Empty while the profile's workspace resolves to no single GitHub repository.
 	[[nodiscard]] virtual std::optional<GhSelectedRepository> Repository(std::wstring_view profileId) = 0;
+	/*!
+		@brief Records one connection's declared workspace, or withdraws it.
+
+		The executor holds no workspace of its own, because resolving folders to a
+		repository means reading git remotes, and that belongs on the refresh
+		worker that already owns every blocking lookup here. These two only carry
+		the declaration to whoever does own it.
+	*/
+	[[nodiscard]] virtual platform::controlipc::EControlSenpRpcStatus AdoptWorkspace(
+		const platform::controlipc::SenpWorkspaceAdoption& adoption) = 0;
+	virtual void WithdrawWorkspace(
+		const platform::controlipc::SenpConnectionIdentity& connection) = 0;
 };
 
 /*!
@@ -96,6 +108,10 @@ public:
 		std::wstring_view handle) noexcept override;
 	[[nodiscard]] platform::controlipc::EControlSenpRpcStatus QueryAccount(std::wstring_view profileId,
 		platform::controlipc::ControlSenpRpcResponse& response) noexcept override;
+	[[nodiscard]] platform::controlipc::EControlSenpRpcStatus AdoptWorkspace(
+		const platform::controlipc::SenpWorkspaceAdoption& adoption) noexcept override;
+	void WithdrawWorkspace(
+		const platform::controlipc::SenpConnectionIdentity& connection) noexcept override;
 
 	//! Blocks until the worker has no dispatch left to run. Test-only observation
 	//! point; production code drives the executor through the broker alone.

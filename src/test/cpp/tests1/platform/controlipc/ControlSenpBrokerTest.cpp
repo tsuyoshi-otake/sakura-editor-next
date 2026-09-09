@@ -81,6 +81,15 @@ public:
 		response.accountState = accountState;
 		return accountStatus;
 	}
+	EControlSenpRpcStatus AdoptWorkspace(const SenpWorkspaceAdoption& adoption) noexcept override
+	{
+		adopted.push_back(adoption);
+		return adoptStatus;
+	}
+	void WithdrawWorkspace(const SenpConnectionIdentity& connection) noexcept override
+	{
+		withdrawn.push_back(connection);
+	}
 
 	EControlSenpRpcStatus next = EControlSenpRpcStatus::Succeeded;
 	EControlSenpRpcStatus resourceStatus = EControlSenpRpcStatus::Succeeded;
@@ -94,6 +103,9 @@ public:
 	std::int64_t accountGeneration = 0;
 	EControlSenpAccountState accountState = EControlSenpAccountState::Unknown;
 	std::vector<std::wstring> accountQueries;
+	EControlSenpRpcStatus adoptStatus = EControlSenpRpcStatus::Succeeded;
+	std::vector<SenpWorkspaceAdoption> adopted;
+	std::vector<SenpConnectionIdentity> withdrawn;
 };
 
 ControlSenpRpcOwner Owner()
@@ -139,6 +151,17 @@ ControlSenpRpcRequest QueryAccount()
 	ControlSenpRpcRequest request;
 	request.operation = EControlSenpRpcOperation::QueryAccount;
 	request.profileId = L"profile-1";
+	return request;
+}
+
+ControlSenpRpcRequest AdoptWorkspace()
+{
+	ControlSenpRpcRequest request;
+	request.operation = EControlSenpRpcOperation::AdoptWorkspace;
+	request.profileId = L"profile-1";
+	request.workspace.generation = 5;
+	request.workspace.revision = 11;
+	request.workspace.folders = { L"file:///c:/work/repo" };
 	return request;
 }
 
@@ -251,6 +274,70 @@ TEST(ControlSenpBroker, DiscardsAPartialAccountAnswerWhenTheQueryIsRefused)
 	EXPECT_EQ(EControlSenpRpcStatus::Unavailable, reply->status);
 	EXPECT_EQ(0, reply->accountGeneration);
 	EXPECT_EQ(EControlSenpAccountState::Unknown, reply->accountState);
+}
+
+TEST(ControlSenpBroker, AttributesADeclaredWorkspaceToTheConnectionTheOsObserved)
+{
+	Fixture fixture;
+	auto session = fixture.Open();
+	ASSERT_NE(nullptr, session);
+	// No IssueGrant precedes it, for the same reason the account query needs
+	// none: the declaration is what a window says before any owner exists.
+	const auto reply = ReadResponse(
+		session->HandleFrame(fixture.connection, RequestFrame(AdoptWorkspace())));
+	ASSERT_TRUE(reply);
+	EXPECT_EQ(EControlSenpRpcStatus::Succeeded, reply->status);
+	ASSERT_EQ(1U, fixture.executor->adopted.size());
+	const auto& adoption = fixture.executor->adopted.front();
+	// Taken from the pipe rather than from the request, so a declaration can
+	// only ever be attributed to the connection that actually made it.
+	EXPECT_EQ(fixture.connection.sessionId, adoption.connection.sessionId);
+	EXPECT_EQ(fixture.connection.clientProcessId, adoption.connection.clientProcessId);
+	EXPECT_EQ(L"profile-1", adoption.profileId);
+	EXPECT_EQ(11, adoption.workspace.revision);
+	ASSERT_EQ(1U, adoption.workspace.folders.size());
+	EXPECT_EQ(L"file:///c:/work/repo", adoption.workspace.folders.front());
+	EXPECT_TRUE(fixture.executor->started.empty());
+}
+
+TEST(ControlSenpBroker, RefusesAWorkspaceDeclaredOutsideTheProfileIdentitySpace)
+{
+	Fixture fixture;
+	auto session = fixture.Open();
+	ASSERT_NE(nullptr, session);
+	auto request = AdoptWorkspace();
+	request.profileId = L"../other";
+	// Nothing owner-scoped is rechecked for this operation either, so admission
+	// is the whole check and it must not reach the executor.
+	const auto reply = ReadResponse(session->HandleFrame(fixture.connection, RequestFrame(request)));
+	ASSERT_TRUE(reply);
+	EXPECT_EQ(EControlSenpRpcStatus::InvalidRequest, reply->status);
+	EXPECT_TRUE(fixture.executor->adopted.empty());
+}
+
+TEST(ControlSenpBroker, WithdrawsTheDeclaredWorkspaceWhenTheConnectionEnds)
+{
+	Fixture fixture;
+	{
+		auto session = fixture.Open();
+		ASSERT_NE(nullptr, session);
+		ASSERT_TRUE(ReadResponse(
+			session->HandleFrame(fixture.connection, RequestFrame(AdoptWorkspace()))));
+		EXPECT_TRUE(fixture.executor->withdrawn.empty());
+	}
+	// A declaration outliving its connection would let a closed window keep
+	// deciding which repository the profile answers for.
+	ASSERT_EQ(1U, fixture.executor->withdrawn.size());
+	EXPECT_EQ(fixture.connection.sessionId, fixture.executor->withdrawn.front().sessionId);
+	EXPECT_EQ(fixture.connection.clientProcessId, fixture.executor->withdrawn.front().clientProcessId);
+
+	{
+		// A connection that declared nothing withdraws unconditionally too:
+		// remembering which ones declared would only add a way to skip one.
+		auto session = fixture.Open();
+		ASSERT_NE(nullptr, session);
+	}
+	EXPECT_EQ(2U, fixture.executor->withdrawn.size());
 }
 
 TEST(ControlSenpBroker, RefusesEveryOperationThatNamesAnUnknownGrant)

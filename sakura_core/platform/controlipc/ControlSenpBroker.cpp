@@ -98,6 +98,10 @@ public:
 			for (const auto& record : m_records) {
 				m_executor->CancelScope(record.scope);
 			}
+			// Unconditional: a connection that declared nothing withdraws
+			// nothing, and tracking whether it did would only add a way for the
+			// declaration to survive the connection that made it.
+			m_executor->WithdrawWorkspace({ m_connection.sessionId, m_connection.clientProcessId });
 		}
 		if (m_grants) m_grants->Close();
 	}
@@ -193,6 +197,7 @@ private:
 		if (!m_grants) return Terminal(EControlSenpRpcStatus::Closed);
 		if (request.operation == EControlSenpRpcOperation::IssueGrant) return Issue(request);
 		if (request.operation == EControlSenpRpcOperation::QueryAccount) return Account(request);
+		if (request.operation == EControlSenpRpcOperation::AdoptWorkspace) return Adopt(request);
 		const Record* record = nullptr;
 		if (const auto status = Authorize(request, record); status != EControlSenpRpcStatus::Succeeded) {
 			return Terminal(status);
@@ -258,6 +263,26 @@ private:
 		if (status != EControlSenpRpcStatus::Succeeded) return Terminal(status);
 		response.status = status;
 		return response;
+	}
+
+	/*!
+		@brief The other operation that carries no grant and no owner.
+
+		Admission is the whole check here too, and it is the same check: the id
+		has to be an opaque user-data profile id. The connection is taken from
+		what the OS observed for this pipe rather than from the request, so a
+		declaration can only ever be attributed to the connection that made it.
+	*/
+	ControlSenpRpcResponse Adopt(const ControlSenpRpcRequest& request)
+	{
+		if (!platform::profiles::IsOpaqueUserDataProfileId(request.profileId)) {
+			return Terminal(EControlSenpRpcStatus::InvalidRequest);
+		}
+		if (!m_executor) return Terminal(EControlSenpRpcStatus::Unavailable);
+		const SenpWorkspaceAdoption adoption{
+			{ m_connection.sessionId, m_connection.clientProcessId },
+			request.profileId, request.workspace };
+		return Terminal(m_executor->AdoptWorkspace(adoption));
 	}
 
 	ControlSenpRpcResponse Issue(const ControlSenpRpcRequest& request)
