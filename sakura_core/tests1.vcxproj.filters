@@ -330,6 +330,9 @@
     <ClCompile Include="..\src\test\cpp\tests1\workbench\SenpControlToolReadsTest.cpp">
       <Filter>Test Files\workbench</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\SenpOwnerTextResourcesTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\workbench\SenpTreeViewTest.cpp">
       <Filter>Test Files\workbench</Filter>
     </ClCompile>

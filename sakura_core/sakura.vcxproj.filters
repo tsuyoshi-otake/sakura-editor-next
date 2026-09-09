@@ -3603,6 +3603,9 @@
     <ClCompile Include="..\sakura_core\workbench\editor\SenpControlToolReads.cpp">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\editor\SenpOwnerTextResources.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
     <ClCompile Include="..\sakura_core\workbench\editor\SenpEditorSurfaceSwitcher.cpp">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>

@@ -263,6 +263,7 @@
     <ClCompile Include="..\src\test\cpp\tests1\workbench\SenpReadonlyEditorControllerTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\workbench\SenpReadonlyOwnerTargetTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\workbench\SenpControlToolReadsTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\SenpOwnerTextResourcesTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\workbench\SenpTreeViewTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkbenchRuntimeTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\WorkspaceConfigurationDocumentParserTest.cpp" />
