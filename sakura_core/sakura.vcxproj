@@ -1511,6 +1511,7 @@
     <ClCompile Include="..\sakura_core\workbench\editor\SenpReadonlyDocumentHost.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\SenpReadonlyEditorController.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\SenpReadonlyOwnerTarget.cpp" />
+    <ClCompile Include="..\sakura_core\workbench\editor\SenpControlToolReads.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\SenpEditorSurfaceSwitcher.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\CEditorServiceLegacyAdapter.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\EmptyEditorSurfaceModel.cpp" />
