@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -381,6 +381,8 @@ WorkbenchLayoutMementoEncodeResult CWorkbenchLayoutMementoCodec::Encode(
 
 		JsonObject root;
 		root["activeContainers"] = JsonValue(std::move(activeContainers));
+		root["containerOrderBaseline"] =
+			JsonValue(static_cast<double>(snapshot.containerOrderBaseline));
 		root["containers"] = JsonValue(std::move(encodedContainers));
 		root["focus"] = JsonValue(std::move(focus));
 		root["formatVersion"] = JsonValue(static_cast<double>(kWorkbenchLayoutMementoFormatVersion));
@@ -456,6 +458,15 @@ WorkbenchLayoutMementoDecodeResult CWorkbenchLayoutMementoCodec::Decode(std::str
 
 		WorkbenchLayoutStateSnapshot snapshot;
 		snapshot.schemaVersion = kWorkbenchLayoutStateSchemaVersion;
+		// Absent in every memento written before the baseline existed, and those
+		// are exactly the ones whose container orders must not be believed.
+		snapshot.containerOrderBaseline = 0;
+		if (Find(root, "containerOrderBaseline") != nullptr
+			&& !ReadRequiredUnsigned(root, "containerOrderBaseline", UINT32_MAX,
+				snapshot.containerOrderBaseline)) {
+			return DecodeFailure(EWorkbenchLayoutMementoCodecStatus::CorruptPayload,
+				"layout memento containerOrderBaseline is invalid");
+		}
 		snapshot.generation = 0;
 		snapshot.revision = 0;
 		const auto alignment = ParseAlignment(alignmentValue->get<std::string>());

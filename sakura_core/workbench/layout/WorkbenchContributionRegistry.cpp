@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -27,6 +27,19 @@ constexpr std::uint64_t kMaxOwnerGeneration = INT64_MAX;
 bool IsBuiltIn(const WorkbenchContributionOwner& owner) noexcept
 {
 	return owner.ownerId.empty() && owner.generation == 0;
+}
+
+//! One extension-contributed container, moved into the reserved order band.
+//!
+//! The fold happens here rather than at each caller so that both registration
+//! paths - the trusted built-in batch and a SENP owner's declaration - are
+//! subject to it. A package cannot opt out by choosing a different entry point.
+WorkbenchViewContainerDescriptor Banded(const WorkbenchViewContainerDescriptor& descriptor)
+{
+	if (IsFirstPartyNavigationViewContainer(descriptor.id)) return descriptor;
+	auto banded = descriptor;
+	banded.order = ExtensionViewContainerOrder(descriptor.order);
+	return banded;
 }
 
 void EraseOwner(WorkbenchContributionSnapshot& snapshot, const std::string_view ownerId)
@@ -123,7 +136,8 @@ WorkbenchContributionRegistry::WorkbenchContributionRegistry()
 	addContainer(ids::viewContainer::Search, "Search", EViewContainerLocation::Sidebar, 20, sideBars, "search");
 	addContainer(ids::viewContainer::RunAndDebug, "Run and Debug", EViewContainerLocation::Sidebar, 30, sideBars, "debug-alt");
 	addContainer(ids::viewContainer::SourceControl, "Source Control", EViewContainerLocation::Sidebar, 40, sideBars, "source-control");
-	addContainer(ids::viewContainer::Extensions, "Extensions", EViewContainerLocation::Sidebar, 50, sideBars, "extensions");
+	addContainer(ids::viewContainer::Extensions, "Extensions", EViewContainerLocation::Sidebar,
+		kExtensionsViewContainerOrder, sideBars, "extensions");
 	addContainer(ids::viewContainer::Problems, "Problems", EViewContainerLocation::Panel, 10, panel);
 	addContainer(ids::viewContainer::Output, "Output", EViewContainerLocation::Panel, 20, panel);
 	addContainer(ids::viewContainer::Terminal, "Terminal", EViewContainerLocation::Panel, 30, panel);
@@ -168,7 +182,7 @@ bool WorkbenchContributionRegistry::RegisterExtensionContributions(
 		++candidate.revision;
 		candidate.viewContainers.reserve(candidate.viewContainers.size() + containers.size());
 		candidate.views.reserve(candidate.views.size() + views.size());
-		for (const auto& descriptor : containers) candidate.viewContainers.push_back({ descriptor });
+		for (const auto& descriptor : containers) candidate.viewContainers.push_back({ Banded(descriptor) });
 		for (const auto& descriptor : views) candidate.views.push_back({ descriptor });
 		SortById(candidate.viewContainers);
 		SortById(candidate.views);
@@ -221,7 +235,7 @@ PrepareWorkbenchContributionsResult WorkbenchContributionRegistry::PrepareOwnerR
 		EraseOwner(candidate, replacement.ownerId);
 		candidate.owners.push_back(replacement);
 		std::ranges::sort(candidate.owners, {}, &WorkbenchContributionOwner::ownerId);
-		for (const auto& descriptor : containers) candidate.viewContainers.push_back({ descriptor, replacement });
+		for (const auto& descriptor : containers) candidate.viewContainers.push_back({ Banded(descriptor), replacement });
 		for (const auto& descriptor : views) candidate.views.push_back({ descriptor, replacement });
 		SortById(candidate.viewContainers);
 		SortById(candidate.views);

@@ -43,6 +43,85 @@ TEST(ActivityBarEntryProjection, ProjectsTheRequestedSideBarLocation)
 	EXPECT_TRUE(panel.empty());
 }
 
+TEST(ActivityBarEntryProjection, ExtensionContributedContainersSitBelowSourceControl)
+{
+	// The declared orders are the ones the shipped packages carry, and every one
+	// of them is smaller than Explorer's. Read literally they put a package's icon
+	// above the editor's own navigation, which is what the reserved band exists to
+	// prevent: the package still orders its own icons, but only inside the band.
+	// Projects is the exception the host names itself - it is the workspace
+	// switcher the editor opens with, so its declared order is honoured literally.
+	layout::WorkbenchContributionRegistry registry;
+	const std::array containers{
+		layout::WorkbenchViewContainerDescriptor{ .id = "sakura.view.projects", .title = "Projects",
+			.location = layout::EViewContainerLocation::Sidebar, .order = 5, .icon = "project",
+			.supportedLocations = { layout::EViewContainerLocation::Sidebar } },
+		layout::WorkbenchViewContainerDescriptor{ .id = "github-pull-requests", .title = "GitHub",
+			.location = layout::EViewContainerLocation::Sidebar, .order = 6, .icon = "github",
+			.supportedLocations = { layout::EViewContainerLocation::Sidebar } },
+		layout::WorkbenchViewContainerDescriptor{ .id = "github-actions", .title = "GitHub Actions",
+			.location = layout::EViewContainerLocation::Sidebar, .order = 7, .icon = "play-circle",
+			.supportedLocations = { layout::EViewContainerLocation::Sidebar } },
+	};
+	ASSERT_TRUE(registry.RegisterExtensionContributions(containers, {}));
+
+	const std::array renderable{
+		layout::ids::viewContainer::Explorer, layout::ids::viewContainer::Search,
+		layout::ids::viewContainer::SourceControl, layout::ids::viewContainer::Extensions,
+		std::string_view("sakura.view.projects"), std::string_view("github-pull-requests"),
+		std::string_view("github-actions"),
+	};
+	const ActivityBarProjectionOptions options{ .renderableBuiltins = renderable };
+
+	const auto entries = ProjectActivityBarEntries(registry.Snapshot(), options);
+	ASSERT_EQ(7U, entries.size());
+	// Declared 5, honoured as 5, so it keeps the seat above Explorer.
+	EXPECT_EQ("sakura.view.projects", entries[0].id);
+	EXPECT_EQ(std::string(layout::ids::viewContainer::Explorer), entries[1].id);
+	EXPECT_EQ(std::string(layout::ids::viewContainer::Search), entries[2].id);
+	EXPECT_EQ(std::string(layout::ids::viewContainer::SourceControl), entries[3].id);
+	// Below Source Control, in the relative order the packages asked for.
+	EXPECT_EQ("github-pull-requests", entries[4].id);
+	EXPECT_EQ("github-actions", entries[5].id);
+	// Extensions keeps the last seat, so the band never runs past the bar's end.
+	EXPECT_EQ(std::string(layout::ids::viewContainer::Extensions), entries[6].id);
+}
+
+TEST(ActivityBarEntryProjection, OnlyTheHostsOwnNavigationEscapesTheBand)
+{
+	// The exemption is a list the host holds, not a manifest field, so declaring
+	// the same order as Projects buys an installed package nothing.
+	EXPECT_TRUE(layout::IsFirstPartyNavigationViewContainer("sakura.view.projects"));
+	EXPECT_FALSE(layout::IsFirstPartyNavigationViewContainer("github-pull-requests"));
+	EXPECT_FALSE(layout::IsFirstPartyNavigationViewContainer("sakura.view.projects.impostor"));
+
+	layout::WorkbenchContributionRegistry registry;
+	const std::array containers{
+		layout::WorkbenchViewContainerDescriptor{ .id = "impostor", .title = "Impostor",
+			.location = layout::EViewContainerLocation::Sidebar, .order = 5, .icon = "project",
+			.supportedLocations = { layout::EViewContainerLocation::Sidebar } },
+	};
+	ASSERT_TRUE(registry.RegisterExtensionContributions(containers, {}));
+	const std::array renderable{
+		layout::ids::viewContainer::Explorer, std::string_view("impostor"),
+	};
+	const ActivityBarProjectionOptions options{ .renderableBuiltins = renderable };
+
+	const auto entries = ProjectActivityBarEntries(registry.Snapshot(), options);
+	ASSERT_EQ(2U, entries.size());
+	EXPECT_EQ(std::string(layout::ids::viewContainer::Explorer), entries[0].id);
+	EXPECT_EQ("impostor", entries[1].id);
+}
+
+TEST(ActivityBarEntryProjection, ANegativeDeclaredOrderCannotEscapeTheExtensionBand)
+{
+	// -10'000 is the smallest order manifest parsing accepts. It must land on the
+	// band floor rather than above Explorer, or the clamp is decoration.
+	EXPECT_EQ(layout::kExtensionViewContainerOrderBase, layout::ExtensionViewContainerOrder(-10'000));
+	EXPECT_GT(layout::ExtensionViewContainerOrder(-10'000), 40);
+	EXPECT_LT(layout::ExtensionViewContainerOrder(10'000), layout::kExtensionsViewContainerOrder);
+}
+
 TEST(ActivityBarEntryProjection, OptionsCanSelectTheAuxiliaryLocation)
 {
 	layout::WorkbenchContributionSnapshot snapshot;

@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -101,6 +101,48 @@ TEST(WorkbenchLayoutMementoCodec, RoundTripIsDeterministicAndOmitsRuntimeCoordin
 	const auto reencoded = CWorkbenchLayoutMementoCodec::Encode(*decoded.snapshot);
 	ASSERT_TRUE(reencoded.Succeeded());
 	EXPECT_EQ(encodedFirst.payload, reencoded.payload);
+}
+
+TEST(WorkbenchLayoutMementoCodec, AMementoWithoutAnOrderBaselineDecodesAsTheRetiredOne)
+{
+	// Every memento written before the baseline existed carries container orders
+	// from whatever defaults shipped then. Decoding the missing field as zero -
+	// rather than as the current baseline - is what lets hydration tell the two
+	// apart and restore today's shipped order.
+	auto encoded = CWorkbenchLayoutMementoCodec::Encode(Sample());
+	ASSERT_TRUE(encoded.Succeeded()) << encoded.diagnostic;
+	const auto field = encoded.payload.find("\"containerOrderBaseline\"");
+	ASSERT_NE(std::string::npos, field);
+	const auto after = encoded.payload.find(',', field);
+	ASSERT_NE(std::string::npos, after);
+	auto legacy = encoded.payload;
+	legacy.erase(field, after + 1 - field);
+
+	const auto decoded = CWorkbenchLayoutMementoCodec::Decode(legacy);
+	ASSERT_TRUE(decoded.Succeeded()) << decoded.diagnostic;
+	EXPECT_EQ(0U, decoded.snapshot->containerOrderBaseline);
+
+	const auto current = CWorkbenchLayoutMementoCodec::Decode(encoded.payload);
+	ASSERT_TRUE(current.Succeeded()) << current.diagnostic;
+	EXPECT_EQ(workbench::layout::kWorkbenchViewContainerOrderBaseline,
+		current.snapshot->containerOrderBaseline);
+}
+
+TEST(WorkbenchLayoutMementoCodec, ANonNumericOrderBaselineIsCorruptRatherThanIgnored)
+{
+	auto encoded = CWorkbenchLayoutMementoCodec::Encode(Sample());
+	ASSERT_TRUE(encoded.Succeeded()) << encoded.diagnostic;
+	const auto field = encoded.payload.find("\"containerOrderBaseline\":");
+	ASSERT_NE(std::string::npos, field);
+	const auto value = field + std::string("\"containerOrderBaseline\":").size();
+	const auto after = encoded.payload.find(',', value);
+	ASSERT_NE(std::string::npos, after);
+	auto corrupt = encoded.payload;
+	corrupt.replace(value, after - value, "\"1\"");
+
+	const auto decoded = CWorkbenchLayoutMementoCodec::Decode(corrupt);
+	EXPECT_FALSE(decoded.Succeeded());
+	EXPECT_EQ(EWorkbenchLayoutMementoCodecStatus::CorruptPayload, decoded.status);
 }
 
 TEST(WorkbenchLayoutMementoCodec, UnknownStableIdsRoundTripWithoutRegistryMaterialization)

@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -553,10 +553,29 @@ WorkbenchLayoutHydrationResult WorkbenchLayoutStateService::HydrateInitialState(
 			if (m_contributionIndex->parts.contains(part.partId)) nextParts.at(part.partId) = part;
 			else deferredParts.emplace(part.partId, part);
 		}
+		// A memento from an older default ordering still names every container,
+		// so believing its orders would pin the bar to the layout that shipped
+		// then. The arrangement the user chose - what is visible, where it lives,
+		// which view is active - is theirs and survives; the ordinal does not.
+		const bool trustPersistedOrder =
+			persisted.containerOrderBaseline == kWorkbenchViewContainerOrderBaseline;
 		for (const auto& container : persisted.containers) {
-			if (m_contributionIndex->containers.contains(container.containerId)) {
-				nextContainers.at(container.containerId) = container;
-			} else deferredContainers.emplace(container.containerId, container);
+			const auto descriptor = m_contributionIndex->containers.find(container.containerId);
+			if (descriptor != m_contributionIndex->containers.end()) {
+				auto& target = nextContainers.at(container.containerId);
+				const auto order = trustPersistedOrder ? container.order : descriptor->second.order;
+				target = container;
+				target.order = order;
+			} else if (trustPersistedOrder) {
+				deferredContainers.emplace(container.containerId, container);
+			}
+			// A container whose descriptor has not arrived yet - every
+			// extension-contributed one, since packages register after the memento
+			// is read - cannot have its order corrected here, and Reconcile adopts a
+			// deferred entry verbatim once the package registers. Holding the entry
+			// would smuggle the retired ordinal straight back into the Activity Bar,
+			// which is exactly the ordering the baseline bump exists to retire. The
+			// container is rebuilt from its descriptor instead.
 		}
 		for (const auto& view : persisted.views) {
 			if (m_contributionIndex->views.contains(view.viewId)) {

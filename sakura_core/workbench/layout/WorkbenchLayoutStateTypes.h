@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -19,6 +19,17 @@
 namespace workbench::layout {
 
 inline constexpr std::uint32_t kWorkbenchLayoutStateSchemaVersion = 2;
+//! Generation of the shipped default ViewContainer ordering.
+//!
+//! A memento records every container's order, including the ones nobody ever
+//! moved, so a changed default would otherwise never reach a profile that has
+//! saved its layout even once. Bumping this retires the persisted orders - and
+//! only the orders - so the new defaults take effect while each container's
+//! visibility, location and active view survive untouched.
+//! Generation 3 retires the orders written while unregistered containers still
+//! carried theirs through the deferred path, and the ones written while the band
+//! still swallowed the editor's own Projects navigation.
+inline constexpr std::uint32_t kWorkbenchViewContainerOrderBaseline = 3;
 //! Keep the state boundary no wider than the contribution registry's external-ID/replay limits.
 inline constexpr std::size_t kMaxWorkbenchLayoutIdLength = 160;
 inline constexpr std::size_t kMaxWorkbenchLayoutOperationIdLength = 160;
@@ -103,6 +114,8 @@ struct WorkbenchActiveContainerState {
 
 struct WorkbenchLayoutStateSnapshot {
 	std::uint32_t schemaVersion = kWorkbenchLayoutStateSchemaVersion;
+	//! Zero denotes a memento written before the baseline existed.
+	std::uint32_t containerOrderBaseline = kWorkbenchViewContainerOrderBaseline;
 	std::uint64_t generation = 0;
 	std::uint64_t revision = 0;
 	std::vector<WorkbenchPartState> parts;

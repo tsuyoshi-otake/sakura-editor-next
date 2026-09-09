@@ -860,6 +860,90 @@ TEST(WorkbenchLayoutStateService, HydratesValidMementoAtomicallyWithoutRevisionO
 	EXPECT_TRUE(notifications.empty());
 }
 
+TEST(WorkbenchLayoutStateService, HydrationFromAnOlderOrderBaselineRestoresTheShippedOrder)
+{
+	// The memento names every container, so an untouched default is stored the
+	// same way a deliberate arrangement is. Reading a stale baseline's orders back
+	// would freeze the Activity Bar at whatever shipped when the profile was first
+	// saved - the change to the shipped order would never reach an existing user.
+	WorkbenchContributionRegistry registry;
+	WorkbenchLayoutStateService state(registry.Snapshot());
+	auto persisted = state.Snapshot();
+	persisted.containerOrderBaseline = 0;
+	auto explorer = std::find_if(persisted.containers.begin(), persisted.containers.end(),
+		[](const auto& container) { return container.containerId == ids::viewContainer::Explorer; });
+	ASSERT_NE(persisted.containers.end(), explorer);
+	const auto shippedOrder = explorer->order;
+	explorer->order = 9'000;
+	explorer->visible = false;
+
+	const auto hydrated = state.HydrateInitialState(persisted);
+	ASSERT_EQ(EWorkbenchLayoutHydrationStatus::Succeeded, hydrated.status);
+	const auto& restored = Container(hydrated.snapshot, ids::viewContainer::Explorer);
+	EXPECT_EQ(shippedOrder, restored.order);
+	// Only the ordinal is retired. What the user chose about the container stands.
+	EXPECT_FALSE(restored.visible);
+}
+
+TEST(WorkbenchLayoutStateService, HydrationAtTheCurrentOrderBaselineKeepsAUserArrangedOrder)
+{
+	WorkbenchContributionRegistry registry;
+	WorkbenchLayoutStateService state(registry.Snapshot());
+	auto persisted = state.Snapshot();
+	ASSERT_EQ(kWorkbenchViewContainerOrderBaseline, persisted.containerOrderBaseline);
+	auto explorer = std::find_if(persisted.containers.begin(), persisted.containers.end(),
+		[](const auto& container) { return container.containerId == ids::viewContainer::Explorer; });
+	ASSERT_NE(persisted.containers.end(), explorer);
+	explorer->order = 9'000;
+
+	const auto hydrated = state.HydrateInitialState(persisted);
+	ASSERT_EQ(EWorkbenchLayoutHydrationStatus::Succeeded, hydrated.status);
+	EXPECT_EQ(9'000, Container(hydrated.snapshot, ids::viewContainer::Explorer).order);
+}
+
+TEST(WorkbenchLayoutStateService, AnUnregisteredContainerFromAnOlderBaselineDoesNotCarryItsOrderBack)
+{
+	// Extension-contributed containers are always unregistered when the memento is
+	// read - a package registers later, once its runtime is up - so they take the
+	// deferred path. Reconcile adopts a deferred entry verbatim, which is how a
+	// retired ordinal used to reach the Activity Bar anyway and put a package's
+	// icon somewhere the current defaults never place it.
+	WorkbenchContributionRegistry registry;
+	WorkbenchLayoutStateService state(registry.Snapshot());
+	auto persisted = state.Snapshot();
+	persisted.containerOrderBaseline = 0;
+	persisted.containers.push_back(WorkbenchViewContainerState{ .containerId = "sample.movable",
+		.location = EWorkbenchViewContainerLocation::SideBar, .order = 5, .visible = true });
+
+	ASSERT_EQ(EWorkbenchLayoutHydrationStatus::Succeeded, state.HydrateInitialState(persisted).status);
+	const auto result = state.Reconcile(Contribute(registry), {
+		.operation = { .operationId = "register-after-a-retired-baseline" },
+	});
+	ASSERT_EQ(EWorkbenchLayoutOperationStatus::Succeeded, result.status);
+
+	// 40 is the descriptor's order. 5 is what the stale memento asked for.
+	EXPECT_EQ(40, Container(state.Snapshot(), "sample.movable").order);
+}
+
+TEST(WorkbenchLayoutStateService, AnUnregisteredContainerAtTheCurrentBaselineKeepsItsPersistedOrder)
+{
+	WorkbenchContributionRegistry registry;
+	WorkbenchLayoutStateService state(registry.Snapshot());
+	auto persisted = state.Snapshot();
+	ASSERT_EQ(kWorkbenchViewContainerOrderBaseline, persisted.containerOrderBaseline);
+	persisted.containers.push_back(WorkbenchViewContainerState{ .containerId = "sample.movable",
+		.location = EWorkbenchViewContainerLocation::SideBar, .order = 5, .visible = true });
+
+	ASSERT_EQ(EWorkbenchLayoutHydrationStatus::Succeeded, state.HydrateInitialState(persisted).status);
+	const auto result = state.Reconcile(Contribute(registry), {
+		.operation = { .operationId = "register-at-the-current-baseline" },
+	});
+	ASSERT_EQ(EWorkbenchLayoutOperationStatus::Succeeded, result.status);
+
+	// The user moved this one. The package's descriptor does not get to undo that.
+	EXPECT_EQ(5, Container(state.Snapshot(), "sample.movable").order);
+}
+
 TEST(WorkbenchLayoutStateService, HydrationRejectsUnsupportedRegisteredLocationAtomically)
 {
 	WorkbenchContributionRegistry registry;

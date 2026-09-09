@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -7,6 +7,8 @@
 #pragma once
 
 #include <cstdint>
+#include <algorithm>
+#include <array>
 #include <memory>
 #include <initializer_list>
 #include <span>
@@ -21,6 +23,44 @@ enum class EViewContainerLocation : std::uint8_t {
 	Panel,
 	AuxiliaryBar,
 };
+
+//! Reserved Activity Bar band for extension-contributed ViewContainers.
+//!
+//! A package declares its own `order`, but that number is only the package's
+//! opinion about its own icons. It carries no authority over where the editor's
+//! own navigation sits, so every extension-contributed container is folded into
+//! a band that starts below Source Control. Without the fold a package that
+//! declares `"order": 0` silently pushes itself above Explorer.
+inline constexpr std::int32_t kExtensionViewContainerOrderBase = 1'000;
+//! Widest declared order the band accepts. Manifest parsing already refuses
+//! anything outside +-10'000; a negative declaration folds onto the band floor.
+inline constexpr std::int32_t kMaximumDeclaredViewContainerOrder = 10'000;
+//! Built-in Extensions keeps the last Activity Bar seat, below the whole band.
+inline constexpr std::int32_t kExtensionsViewContainerOrder = 100'000;
+
+//! ViewContainers that are the editor's own navigation despite shipping as
+//! packages. Projects is the workspace switcher the editor opens with, so it
+//! belongs beside Explorer rather than behind Source Control; the band would
+//! otherwise push the editor's own entry point below every built-in. The list is
+//! the host's, not a manifest field, so no installed package can join it.
+inline constexpr std::array<std::string_view, 1> kFirstPartyNavigationViewContainers{
+	std::string_view("sakura.view.projects"),
+};
+
+//! Whether this container's declared order is honoured literally.
+[[nodiscard]] inline bool IsFirstPartyNavigationViewContainer(std::string_view id) noexcept
+{
+	return std::find(kFirstPartyNavigationViewContainers.begin(),
+		kFirstPartyNavigationViewContainers.end(), id) != kFirstPartyNavigationViewContainers.end();
+}
+
+//! Folds one declared order into the reserved band, preserving relative order.
+[[nodiscard]] constexpr std::int32_t ExtensionViewContainerOrder(std::int32_t declared) noexcept
+{
+	const auto clamped = declared < 0 ? 0
+		: declared > kMaximumDeclaredViewContainerOrder ? kMaximumDeclaredViewContainerOrder : declared;
+	return kExtensionViewContainerOrderBase + clamped;
+}
 
 //! Bounded destination contract for one ViewContainer contribution.
 class SupportedViewContainerLocations final {
