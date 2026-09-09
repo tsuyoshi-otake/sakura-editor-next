@@ -6127,7 +6127,17 @@ bool CEditWnd::InitializeSenpWindowExtensions()
 				owner, *m_senpReadonlyEditors, GetHwnd(), first,
 				admitted ? m_senpTextResources.get() : nullptr,
 				workbench::editor::SenpTextResourceView::CopySink{},
-				workbench::editor::SenpOwnerCommandCompleted{},
+				[this, owner](const senp::effect::OperationContext&,
+					const senp::effect::CompleteCommand& completion) {
+					// The user invoked this command, so its outcome belongs on the
+					// status line. Refusing it here would not merely lose the
+					// message: a rejected effect fails the owner's coordinator for
+					// good, so every extension that finishes a command would die.
+					const auto status = workbench::editor::SenpCommandCompletionStatus(
+						owner.extensionId, completion);
+					if (!status.empty()) SendStatusMessage(status.c_str());
+					return true;
+				},
 				[this, owner](const std::wstring_view handle) {
 					// The extension states it will not read the resource again.
 					// Nothing answers a release, so this only carries it on.

@@ -624,4 +624,128 @@ TEST_F(SenpReadonlyOwnerTargetTest, RevocationCancelsEveryReadBeforeAnotherCanBe
 	EXPECT_EQ(1U, reads.cancelledAll.size());
 }
 
+namespace {
+senp::effect::CompleteCommand Completion(senp::effect::CompletionStatus status, std::wstring message = {})
+{
+	return { status, std::move(message) };
+}
+constexpr wchar_t kShown = 0xfffd;
+constexpr wchar_t kMore = 0x2026;
+}
+
+TEST(SenpCommandCompletionStatusTest, SaysNothingForASilentSuccessAndNamesTheExtensionOtherwise)
+{
+	using Status = senp::effect::CompletionStatus;
+	// A command that succeeded and said nothing has already shown its result in
+	// what it changed. Saying so again would make every tree click write a line.
+	EXPECT_TRUE(SenpCommandCompletionStatus(L"sample.details", Completion(Status::Succeeded)).empty());
+	// A success carrying a message is the extension speaking, so the line is its
+	// message under its own name, with no phrase invented around it.
+	EXPECT_EQ(L"sample.details: 3 runs refreshed",
+		SenpCommandCompletionStatus(L"sample.details", Completion(Status::Succeeded, L"3 runs refreshed")));
+	// Every other outcome is always told: one that showed nothing would be
+	// indistinguishable from the click having done nothing at all.
+	EXPECT_EQ(L"sample.details: the command failed.",
+		SenpCommandCompletionStatus(L"sample.details", Completion(Status::Failed)));
+	EXPECT_EQ(L"sample.details: the command failed - rate limit reached",
+		SenpCommandCompletionStatus(L"sample.details", Completion(Status::Failed, L"rate limit reached")));
+	EXPECT_EQ(L"sample.details: the command was cancelled.",
+		SenpCommandCompletionStatus(L"sample.details", Completion(Status::Cancelled)));
+	EXPECT_EQ(L"sample.details: the command timed out.",
+		SenpCommandCompletionStatus(L"sample.details", Completion(Status::TimedOut)));
+	EXPECT_EQ(L"sample.details: the command could not reach its host.",
+		SenpCommandCompletionStatus(L"sample.details", Completion(Status::HostUnavailable)));
+}
+
+TEST(SenpCommandCompletionStatusTest, FlattensAnUntrustedMessageIntoOneBoundedLine)
+{
+	using Status = senp::effect::CompletionStatus;
+	const auto Line = [](std::wstring message) {
+		return SenpCommandCompletionStatus(L"ext", Completion(Status::Succeeded, std::move(message)));
+	};
+	// The wire checks the message only for well-formed UTF-16 and a byte budget,
+	// so newlines and tabs reach here. One status line cannot hold them: runs of
+	// whitespace collapse to one space and both ends are trimmed.
+	EXPECT_EQ(L"ext: line one line two", Line(L"  line one\r\n\tline two  "));
+	// A control unit that is not whitespace is shown, not deleted: text that
+	// carried one must never be presented as if it had not.
+	EXPECT_EQ(std::wstring(L"ext: a") + kShown + L"b", Line(std::wstring(L"a\0b", 3)));
+	EXPECT_EQ(std::wstring(L"ext: ") + kShown + kShown, Line(L"\x01\x7f"));
+	// 200 units survive and an ellipsis states that more was said.
+	EXPECT_EQ(L"ext: " + std::wstring(200, L'x') + kMore, Line(std::wstring(250, L'x')));
+	EXPECT_EQ(L"ext: " + std::wstring(200, L'x'), Line(std::wstring(200, L'x')));
+	// Truncation lands between the halves of one character here. A high surrogate
+	// left alone is not a character, so it goes with the rest of the message.
+	std::wstring split(199, L'x');
+	split.push_back(static_cast<wchar_t>(0xd83d));
+	split.push_back(static_cast<wchar_t>(0xde00));
+	EXPECT_EQ(L"ext: " + std::wstring(199, L'x') + kMore, Line(split));
+}
+
+TEST(SenpCommandCompletionStatusTest, NamesAnExtensionItCannotIdentifyRatherThanSpeakingUnattributed)
+{
+	using Status = senp::effect::CompletionStatus;
+	// The name is what stops extension text from being read as the editor's own,
+	// so an absent one is stated. A line with no speaker is the one thing this
+	// must never produce.
+	EXPECT_EQ(L"unknown extension: the command failed.",
+		SenpCommandCompletionStatus(L"", Completion(Status::Failed)));
+	EXPECT_EQ(L"unknown extension: the command failed.",
+		SenpCommandCompletionStatus(L" \t\n", Completion(Status::Failed)));
+	// Bounded well below the message, so a long identity cannot crowd out what
+	// the extension actually said.
+	EXPECT_EQ(std::wstring(64, L'e') + kMore + L": the command failed - why",
+		SenpCommandCompletionStatus(std::wstring(80, L'e'), Completion(Status::Failed, L"why")));
+}
+
+TEST_F(SenpReadonlyOwnerTargetTest, TellsTheWindowOfACommandItOwnsAndRefusesOneItDoesNot)
+{
+	std::vector<std::pair<senp::effect::OperationContext, senp::effect::CompleteCommand>> told;
+	CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 966000, nullptr, {},
+		[&told](const senp::effect::OperationContext& context,
+			const senp::effect::CompleteCommand& completion) {
+			told.emplace_back(context, completion);
+			return true;
+		});
+	const senp::effect::OperationContext context{ L"cmd.1", 3, 4, 5, 1 };
+	const auto completion = Completion(senp::effect::CompletionStatus::Succeeded, L"done");
+	ASSERT_TRUE(target.CompleteCommand(context, completion));
+	ASSERT_EQ(1U, told.size());
+	EXPECT_EQ(context, told[0].first);
+	EXPECT_EQ(completion, told[0].second);
+	// A rejected effect fails the owner's whole coordinator, so what reaches the
+	// window has to be exactly what this owner's committed generations admit.
+	EXPECT_FALSE(target.CompleteCommand({ L"cmd.2", 9, 4, 5, 1 }, completion));
+	EXPECT_FALSE(target.CompleteCommand({ L"cmd.3", 3, 9, 5, 1 }, completion));
+	EXPECT_FALSE(target.CompleteCommand({ L"cmd.4", 3, 4, 9, 1 }, completion));
+	EXPECT_FALSE(target.CompleteCommand({ L"", 3, 4, 5, 1 }, completion));
+	EXPECT_FALSE(target.CompleteCommand({ L"cmd.5", 3, 4, 5, 0 }, completion));
+	EXPECT_EQ(1U, told.size());
+	target.Revoke();
+	EXPECT_FALSE(target.CompleteCommand(context, completion));
+	EXPECT_EQ(1U, told.size());
+}
+
+TEST_F(SenpReadonlyOwnerTargetTest, RefusesACompletionWhenNothingIsThereToTellItTo)
+{
+	// Production held no sink until it was wired, and this is what that did:
+	// refuse, which fails the coordinator and kills the owner on its first
+	// completed command. The refusal is still correct; having no sink is not.
+	CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 967000);
+	EXPECT_FALSE(target.CompleteCommand({ L"cmd.1", 3, 4, 5, 1 },
+		Completion(senp::effect::CompletionStatus::Succeeded, L"done")));
+}
+
+TEST_F(SenpReadonlyOwnerTargetTest, KeepsTheOwnerAliveWhenTellingTheWindowThrows)
+{
+	CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 968000, nullptr, {},
+		[](const senp::effect::OperationContext&, const senp::effect::CompleteCommand&) -> bool {
+			throw std::bad_alloc();
+		});
+	// The seam is noexcept, so an escaping exception becomes a refusal of that
+	// one completion rather than a terminate of the window that owns the target.
+	EXPECT_FALSE(target.CompleteCommand({ L"cmd.1", 3, 4, 5, 1 },
+		Completion(senp::effect::CompletionStatus::Failed, L"boom")));
+}
+
 } // namespace workbench::editor::tests

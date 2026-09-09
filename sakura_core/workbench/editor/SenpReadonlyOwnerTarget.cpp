@@ -9,6 +9,49 @@
 
 namespace workbench::editor {
 namespace {
+constexpr std::size_t kCompletionMessageUnits = 200;
+constexpr std::size_t kCompletionNameUnits = 64;
+
+//! One status line out of arbitrary text. Runs of whitespace controls become a
+//! single space and are dropped at both ends; every other control unit becomes
+//! the visible replacement character rather than being deleted, so text that
+//! carried one is never silently presented as if it had not. Truncation appends
+//! an ellipsis, and drops a high surrogate it would otherwise strand alone.
+std::wstring OneLine(std::wstring_view text, const std::size_t maximum)
+{
+	std::wstring line;
+	bool space = false;
+	for (const wchar_t unit : text) {
+		if (unit == L' ' || unit == L'\t' || unit == L'\n' || unit == L'\r') {
+			space = !line.empty();
+			continue;
+		}
+		if (line.size() + (space ? 2 : 1) > maximum) {
+			if (!line.empty() && line.back() >= 0xd800 && line.back() <= 0xdbff) line.pop_back();
+			line.push_back(L'\x2026');
+			return line;
+		}
+		if (space) { line.push_back(L' '); space = false; }
+		line.push_back(unit < 0x20 || unit == 0x7f ? L'\xfffd' : unit);
+	}
+	return line;
+}
+
+//! What the status says happened. Succeeded has no phrase: the extension's own
+//! message stands alone, and a silent success is never told at all.
+std::wstring_view Phrase(const senp::effect::CompletionStatus status)
+{
+	switch (status) {
+	case senp::effect::CompletionStatus::Succeeded: return {};
+	case senp::effect::CompletionStatus::Cancelled: return L"the command was cancelled";
+	case senp::effect::CompletionStatus::Failed: return L"the command failed";
+	case senp::effect::CompletionStatus::TimedOut: return L"the command timed out";
+	case senp::effect::CompletionStatus::HostUnavailable: return L"the command could not reach its host";
+	}
+	// A status this build does not name is still a status the user was owed.
+	return L"the command ended for an unknown reason";
+}
+
 bool ExtensionId(std::wstring_view source, std::string& result)
 {
 	if (source.empty() || source.size() > 128) return false;
@@ -199,6 +242,24 @@ bool CSenpReadonlyOwnerTarget::FailDocument(const senp::effect::OperationContext
 	const auto request = m_pending.find(context.operationId);
 	if (request == m_pending.end() || request->second.Context() != context) return false;
 	m_pending.erase(request); return true;
+}
+
+std::wstring SenpCommandCompletionStatus(const std::wstring_view extensionId,
+	const senp::effect::CompleteCommand& completion)
+{
+	const auto message = OneLine(completion.message, kCompletionMessageUnits);
+	if (completion.status == senp::effect::CompletionStatus::Succeeded && message.empty()) return {};
+	// The name is bounded well below the message so a long identity cannot crowd
+	// out what the extension actually said, and an absent one is stated rather
+	// than dropped: a line with no speaker is the one thing this must not be.
+	auto line = OneLine(extensionId, kCompletionNameUnits);
+	if (line.empty()) line = L"unknown extension";
+	line.append(L": ");
+	const auto phrase = Phrase(completion.status);
+	if (phrase.empty()) line.append(message);
+	else if (message.empty()) { line.append(phrase); line.push_back(L'.'); }
+	else { line.append(phrase); line.append(L" - "); line.append(message); }
+	return line;
 }
 
 bool CSenpReadonlyOwnerTarget::CompleteCommand(const senp::effect::OperationContext& context,

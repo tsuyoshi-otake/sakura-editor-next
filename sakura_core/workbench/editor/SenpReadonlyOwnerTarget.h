@@ -14,6 +14,30 @@ namespace workbench::editor {
 
 using SenpOwnerCommandCompleted = std::function<bool(const senp::effect::OperationContext&,
 	const senp::effect::CompleteCommand&)>;
+/*!
+	@brief The one line a completed extension command is told to the user as.
+
+	The user invoked the command, so its outcome belongs where the user is
+	looking, and it has to say who is speaking: `extensionId` leads the line so
+	text an extension wrote can never be read as the editor's own. That name is
+	the identity the control side committed, never a title the extension chose.
+
+	`completion.message` is untrusted and only checked for well-formed UTF-16 and
+	a byte budget on the wire, so it may carry NUL, newlines and any other
+	control unit. Here it becomes one bounded line: whitespace controls collapse
+	to single spaces, because a message written over several lines is still a
+	message, and every other control unit becomes the visible replacement
+	character, as a published document's text does. At most 200 units survive,
+	and an ellipsis marks a message that was longer.
+
+	Empty means say nothing: a command that succeeded without a message has
+	already shown its result in the tree or document it changed, and repeating
+	that on every click would leave the status line saying nothing worth reading.
+	Every other status is always said, with or without a message, because a
+	failure that shows nothing is indistinguishable from nothing happening.
+*/
+[[nodiscard]] std::wstring SenpCommandCompletionStatus(std::wstring_view extensionId,
+	const senp::effect::CompleteCommand& completion);
 using SenpOwnerResourceReleased = std::function<bool(std::wstring_view)>;
 //! UI-thread-only observer. False means its owner has been revoked or destroyed.
 using SenpReadonlyOwnerStyleSink = std::function<bool(const theme::ThemePalette&, const LOGFONT&, unsigned int)>;
