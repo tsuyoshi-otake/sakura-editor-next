@@ -3,6 +3,8 @@
 #include "StdAfx.h"
 #include "senp/github/SenpGitHubToolExecutor.h"
 
+#include "senp/github/GhLogResource.h"
+
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -133,6 +135,41 @@ effect::CompletionStatus ToCompletionStatus(const GhRepositoryResponseStatus sta
 	}
 }
 
+//! A log carries its own terminal vocabulary because it never went through the
+//! JSON envelope a page does. The two are mapped separately rather than folded
+//! into one enum, so neither can quietly inherit the other's meanings.
+effect::CompletionStatus ToCompletionStatus(const GhLogResourceStatus status) noexcept
+{
+	switch (status) {
+	case GhLogResourceStatus::Succeeded:
+		return effect::CompletionStatus::Succeeded;
+	case GhLogResourceStatus::Cancelled:
+		return effect::CompletionStatus::Cancelled;
+	case GhLogResourceStatus::TimedOut:
+		return effect::CompletionStatus::TimedOut;
+	case GhLogResourceStatus::ToolUnavailable:
+	case GhLogResourceStatus::UnsupportedVersion:
+		return effect::CompletionStatus::HostUnavailable;
+	default:
+		return effect::CompletionStatus::Failed;
+	}
+}
+
+std::wstring Describe(const GhLogResourceStatus status)
+{
+	switch (status) {
+	case GhLogResourceStatus::UnavailableOrNotFound: return L"unavailable-or-not-found";
+	case GhLogResourceStatus::InvalidRequest: return L"invalid-request";
+	case GhLogResourceStatus::ToolUnavailable: return L"tool-unavailable";
+	case GhLogResourceStatus::UnsupportedVersion: return L"unsupported-version";
+	case GhLogResourceStatus::TimedOut: return L"timed-out";
+	case GhLogResourceStatus::Cancelled: return L"cancelled";
+	case GhLogResourceStatus::LimitExceeded: return L"output-limit-exceeded";
+	case GhLogResourceStatus::ResourceUnavailable: return L"resource-unavailable";
+	default: return L"failed";
+	}
+}
+
 std::wstring Describe(const GhRepositoryResponseStatus status)
 {
 	switch (status) {
@@ -257,11 +294,30 @@ std::optional<GhRepositoryReadRequest> BuildRepositoryReadRequest(
 		std::move(*segments), std::move(query), std::move(etag));
 }
 
+std::optional<GhJobLogRequest> BuildJobLogRequest(const GhSelectedRepository& repository,
+	const std::vector<effect::Field>& arguments)
+{
+	// Exactly one argument, and it is the job. There is no shape to choose here:
+	// a log is one endpoint, so anything else named would be an argument this
+	// operation has no meaning for.
+	if (arguments.size() != 1 || arguments.front().name != L"id") return std::nullopt;
+	const auto& value = arguments.front().value;
+	if (!IsDecimalId(value)) return std::nullopt;
+	// IsDecimalId already bounds the value to nineteen digits with no leading
+	// zero, which cannot overflow an unsigned 64-bit accumulator.
+	std::uint64_t jobId{};
+	for (const wchar_t digit : value) jobId = jobId * 10 + static_cast<std::uint64_t>(digit - L'0');
+	if (jobId == 0) return std::nullopt;
+	return GhJobLogRequest(repository.Hostname(), repository.Owner(), repository.Repository(), jobId);
+}
+
 CSenpGitHubToolExecutor::CSenpGitHubToolExecutor(std::shared_ptr<const IGhToolPlatform> toolPlatform,
 	std::shared_ptr<ISenpGitHubProfileSource> profiles, std::wstring workingDirectory) :
 	m_profiles(std::move(profiles)), m_policy(std::move(toolPlatform), std::move(workingDirectory)),
 	m_reader(m_policy)
 {
+	// Created before the worker exists, so the worker never observes it half set.
+	m_logStop = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
 	m_worker = std::thread([this]() noexcept { Run(); });
 }
 
@@ -274,13 +330,18 @@ CSenpGitHubToolExecutor::~CSenpGitHubToolExecutor()
 	// Close signals every running dispatch; the worker still owns the matching
 	// Complete, so physical cleanup finishes before the thread is joined.
 	m_scheduler.Close();
+	// The log download waits on this alone; without it the join would wait out
+	// the whole request timeout.
+	if (m_logStop) (void)::SetEvent(m_logStop);
 	m_wakeWorker.notify_all();
 	if (m_worker.joinable()) m_worker.join();
 	std::scoped_lock lock(m_mutex);
 	for (auto& state : m_scopes) Release(*state);
 	m_scopes.clear();
 	m_pages.clear();
+	m_logQueue.clear();
 	m_store.Close();
+	if (m_logStop) (void)::CloseHandle(m_logStop);
 }
 
 CSenpGitHubToolExecutor::ScopeState* CSenpGitHubToolExecutor::Find(const SenpToolExecutionScope& scope) noexcept
@@ -288,6 +349,29 @@ CSenpGitHubToolExecutor::ScopeState* CSenpGitHubToolExecutor::Find(const SenpToo
 	const auto found = std::ranges::find_if(m_scopes,
 		[&](const auto& state) { return state->scope == scope; });
 	return found == m_scopes.end() ? nullptr : found->get();
+}
+
+EControlSenpRpcStatus CSenpGitHubToolExecutor::Ensure(const SenpToolExecutionScope& scope,
+	ScopeState*& state)
+{
+	state = Find(scope);
+	if (state) return EControlSenpRpcStatus::Succeeded;
+	if (m_scopes.size() >= MaximumScopes()) return EControlSenpRpcStatus::ResourceExhausted;
+	const auto profileId = Narrow(scope.profileId);
+	const auto extensionId = Narrow(scope.owner.extensionId);
+	const auto digest = PackageDigest(scope.owner.packageDigest);
+	if (!profileId || !extensionId || !digest) return EControlSenpRpcStatus::InvalidRequest;
+	auto created = std::make_unique<ScopeState>();
+	created->scope = scope;
+	// The resource scope names the connection that owns the resources. Grant
+	// liveness is proved by the broker before every call reaching this object.
+	created->resourceScope = { *profileId, *extensionId, *digest,
+		"connection-" + std::to_string(scope.sessionId) + "-" + std::to_string(scope.clientProcessId),
+		scope.owner.generation, scope.owner.workspaceRevision, scope.owner.accountGeneration,
+		scope.owner.generation };
+	state = created.get();
+	m_scopes.push_back(std::move(created));
+	return EControlSenpRpcStatus::Succeeded;
 }
 
 EControlSenpRpcStatus CSenpGitHubToolExecutor::StartRead(const SenpToolExecutionScope& scope,
@@ -298,6 +382,18 @@ try {
 	// That is not an authentication failure and must not be answered as one.
 	if (scope.owner.accountGeneration <= 0 || scope.owner.generation <= 0) return EControlSenpRpcStatus::NotConnected;
 	if (!m_profiles) return EControlSenpRpcStatus::Unavailable;
+	// The broker admits the closed operation set before anything reaches here.
+	// Naming it again is not distrust of the broker: this object has to know
+	// which of the two shapes a read is, and one it cannot name has no shape.
+	if (command.toolId != platform::controlipc::kSenpGitHubToolId) {
+		return EControlSenpRpcStatus::InvalidRequest;
+	}
+	if (command.operation == platform::controlipc::kSenpGitHubJobLogOperation) {
+		return StartJobLog(scope, command);
+	}
+	if (command.operation != platform::controlipc::kSenpGitHubRepositoryReadOperation) {
+		return EControlSenpRpcStatus::InvalidRequest;
+	}
 	const auto repository = m_profiles->Repository(scope.profileId);
 	if (!repository) return EControlSenpRpcStatus::Unavailable;
 	if (!m_profiles->Connection(scope.profileId)) return EControlSenpRpcStatus::NotConnected;
@@ -306,23 +402,14 @@ try {
 
 	std::unique_lock lock(m_mutex);
 	if (m_stopping) return EControlSenpRpcStatus::Closed;
-	auto* state = Find(scope);
-	if (!state) {
-		if (m_scopes.size() >= MaximumScopes()) return EControlSenpRpcStatus::ResourceExhausted;
-		const auto profileId = Narrow(scope.profileId);
-		const auto extensionId = Narrow(scope.owner.extensionId);
-		const auto digest = PackageDigest(scope.owner.packageDigest);
-		if (!profileId || !extensionId || !digest) return EControlSenpRpcStatus::InvalidRequest;
-		auto created = std::make_unique<ScopeState>();
-		created->scope = scope;
-		// The resource scope names the connection that owns the resources. Grant
-		// liveness is proved by the broker before every call reaching this object.
-		created->resourceScope = { *profileId, *extensionId, *digest,
-			"connection-" + std::to_string(scope.sessionId) + "-" + std::to_string(scope.clientProcessId),
-			scope.owner.generation, scope.owner.workspaceRevision, scope.owner.accountGeneration,
-			scope.owner.generation };
-		state = created.get();
-		m_scopes.push_back(std::move(created));
+	ScopeState* state = nullptr;
+	if (const auto admitted = Ensure(scope, state); admitted != EControlSenpRpcStatus::Succeeded) {
+		return admitted;
+	}
+	// A read identity means one read. One already spent on a log is not a page
+	// this could refresh, so it is refused rather than quietly answered twice.
+	if (std::ranges::find(state->logReads, command.readId) != state->logReads.end()) {
+		return EControlSenpRpcStatus::InvalidRequest;
 	}
 
 	const auto key = GhReadResourceKey(scope.profileId,
@@ -344,7 +431,9 @@ try {
 		m_wakeWorker.notify_all();
 		return EControlSenpRpcStatus::Succeeded;
 	}
-	if (state->reads.size() >= MaximumReadsPerScope()) return EControlSenpRpcStatus::ResourceExhausted;
+	if (state->reads.size() + state->logReads.size() >= MaximumReadsPerScope()) {
+		return EControlSenpRpcStatus::ResourceExhausted;
+	}
 	const auto subscribed = m_scheduler.Subscribe(key, GhReadPollCadence::Manual, true, NowMilliseconds());
 	switch (subscribed.Status()) {
 	case GhReadSubscribeStatus::Accepted: break;
@@ -358,6 +447,43 @@ try {
 	return EControlSenpRpcStatus::Succeeded;
 } catch (...) {
 	return EControlSenpRpcStatus::Unavailable;
+}
+
+EControlSenpRpcStatus CSenpGitHubToolExecutor::StartJobLog(const SenpToolExecutionScope& scope,
+	const platform::controlipc::SenpToolReadCommand& command)
+{
+	const auto repository = m_profiles->Repository(scope.profileId);
+	if (!repository) return EControlSenpRpcStatus::Unavailable;
+	if (!m_profiles->Connection(scope.profileId)) return EControlSenpRpcStatus::NotConnected;
+	const auto request = BuildJobLogRequest(*repository, command.arguments);
+	if (!request) return EControlSenpRpcStatus::InvalidRequest;
+
+	std::unique_lock lock(m_mutex);
+	if (m_stopping) return EControlSenpRpcStatus::Closed;
+	ScopeState* state = nullptr;
+	if (const auto admitted = Ensure(scope, state); admitted != EControlSenpRpcStatus::Succeeded) {
+		return admitted;
+	}
+	// A log is refetched by asking for it again, never refreshed in place: there
+	// is no conditional request for a stream of bytes. So a repeated identity is
+	// a duplicate, whichever kind of read already holds it.
+	const auto duplicate = std::ranges::find(state->logReads, command.readId) != state->logReads.end()
+		|| std::ranges::any_of(state->reads,
+			[&](const auto& read) { return read.readId == command.readId; });
+	if (duplicate) return EControlSenpRpcStatus::InvalidRequest;
+	if (state->reads.size() + state->logReads.size() >= MaximumReadsPerScope()
+		|| state->logs.size() >= MaximumResourcesPerScope()
+		|| m_logQueue.size() >= MaximumQueuedLogs()) {
+		return EControlSenpRpcStatus::ResourceExhausted;
+	}
+	// The store is made here so the worker has no allocation left to fail on,
+	// and so a job cancelled before it runs is torn down by whoever cancels it.
+	m_logQueue.push_back(LogJob{ scope, command.readId, scope.profileId, state->resourceScope,
+		*request, std::make_unique<SenpTextResourceStore>(), {} });
+	state->logReads.push_back(command.readId);
+	lock.unlock();
+	m_wakeWorker.notify_all();
+	return EControlSenpRpcStatus::Succeeded;
 }
 
 std::optional<effect::ToolCompleted> CSenpGitHubToolExecutor::TakeCompleted(
@@ -444,6 +570,22 @@ try {
 	std::unique_lock lock(m_mutex);
 	auto* state = Find(scope);
 	if (!state) return;
+	if (const auto log = std::ranges::find(state->logReads, readId); log != state->logReads.end()) {
+		// Forgetting the identity is the cancellation: a running download finds
+		// it gone and discards everything it produced. Signalling only makes
+		// that prompt instead of waiting out the request timeout.
+		state->logReads.erase(log);
+		std::erase_if(m_logQueue,
+			[&](const auto& job) { return job.scope == scope && job.readId == readId; });
+		if (m_runningLog && m_logStop && m_runningLogReadId == readId
+			&& m_runningLogScope == scope) {
+			(void)::SetEvent(m_logStop);
+		}
+		std::erase_if(state->pending, [&](const auto& completed) { return completed.readId == readId; });
+		lock.unlock();
+		m_wakeWorker.notify_all();
+		return;
+	}
 	const auto found = std::ranges::find_if(state->reads,
 		[&](const auto& read) { return read.readId == readId; });
 	if (found == state->reads.end()) return;
@@ -459,6 +601,11 @@ void CSenpGitHubToolExecutor::Release(ScopeState& state) noexcept
 {
 	for (const auto& handle : state.resources) (void)m_store.Release(state.resourceScope, handle);
 	state.resources.clear();
+	// Each log owns the whole store it was written into, so dropping the record
+	// is the release. Forgetting the identities is what stops a download that is
+	// still running from handing this scope anything else.
+	state.logs.clear();
+	state.logReads.clear();
 }
 
 void CSenpGitHubToolExecutor::CancelScope(const SenpToolExecutionScope& scope) noexcept
@@ -468,6 +615,10 @@ try {
 		[&](const auto& state) { return state->scope == scope; });
 	if (found == m_scopes.end()) return;
 	for (const auto& read : (*found)->reads) (void)m_scheduler.Unsubscribe(read.subscriptionId);
+	std::erase_if(m_logQueue, [&](const auto& job) { return job.scope == (*found)->scope; });
+	if (m_runningLog && m_logStop && m_runningLogScope == (*found)->scope) {
+		(void)::SetEvent(m_logStop);
+	}
 	Release(**found);
 	// The worker never holds a scope - it only writes keyed pages - so erasing the
 	// record under this mutex is by itself proof that no worker can reach it.
@@ -491,11 +642,17 @@ try {
 	std::scoped_lock lock(m_mutex);
 	auto* state = Find(scope);
 	if (!state) return EControlSenpRpcStatus::Unauthorized;
-	if (std::ranges::find(state->resources, handle) == state->resources.end()) {
+	// A log lives in the store its own download owned; a page lives in the one
+	// shared by every page. The handle names exactly one of them.
+	const auto log = std::ranges::find_if(state->logs,
+		[&](const auto& entry) { return entry.handle == handle; });
+	if (log == state->logs.end()
+		&& std::ranges::find(state->resources, handle) == state->resources.end()) {
 		return EControlSenpRpcStatus::NotFound;
 	}
-	const auto chunk = m_store.Read(state->resourceScope, handle,
-		static_cast<std::size_t>(offset), length);
+	const auto chunk = log != state->logs.end()
+		? log->store->Read(log->resourceScope, handle, static_cast<std::size_t>(offset), length)
+		: m_store.Read(state->resourceScope, handle, static_cast<std::size_t>(offset), length);
 	switch (chunk.result) {
 	case TextResourceResult::Accepted: break;
 	case TextResourceResult::NotFound: return EControlSenpRpcStatus::NotFound;
@@ -523,6 +680,11 @@ try {
 	std::scoped_lock lock(m_mutex);
 	auto* state = Find(scope);
 	if (!state) return;
+	if (const auto log = std::ranges::find_if(state->logs,
+		[&](const auto& entry) { return entry.handle == handle; }); log != state->logs.end()) {
+		state->logs.erase(log);
+		return;
+	}
 	const auto found = std::ranges::find(state->resources, handle);
 	if (found == state->resources.end()) return;
 	(void)m_store.Release(state->resourceScope, *found);
@@ -583,7 +745,8 @@ bool CSenpGitHubToolExecutor::WaitForIdle(const std::uint32_t timeoutMillisecond
 	for (;;) {
 		std::unique_lock lock(m_mutex);
 		const auto now = NowMilliseconds();
-		if (!m_dispatching && m_scheduler.QueuedCount(now) == 0 && m_scheduler.RunningCount() == 0) {
+		if (!m_dispatching && m_logQueue.empty() && !m_runningLog
+			&& m_scheduler.QueuedCount(now) == 0 && m_scheduler.RunningCount() == 0) {
 			return true;
 		}
 		if (now >= deadline) return false;
@@ -600,21 +763,43 @@ const GhToolProbe& CSenpGitHubToolExecutor::Probe()
 void CSenpGitHubToolExecutor::Run() noexcept
 {
 	for (;;) {
+		std::optional<LogJob> job;
 		std::optional<GhReadDispatch> dispatch;
 		{
 			std::unique_lock lock(m_mutex);
 			if (m_stopping) break;
-			try {
-				dispatch = m_scheduler.TryDispatch(NowMilliseconds());
-			} catch (...) {
-				dispatch.reset();
+			if (!m_logQueue.empty()) {
+				// Claimed and armed under the same lock a cancel takes, so a
+				// cancel either removes the job here or signals the download.
+				job.emplace(std::move(m_logQueue.front()));
+				m_logQueue.pop_front();
+				if (m_logStop) (void)::ResetEvent(m_logStop);
+				m_runningLogScope = job->scope;
+				m_runningLogReadId = job->readId;
+				m_runningLog = true;
+				m_dispatching = true;
+			} else {
+				try {
+					dispatch = m_scheduler.TryDispatch(NowMilliseconds());
+				} catch (...) {
+					dispatch.reset();
+				}
+				if (!dispatch) {
+					m_idle.notify_all();
+					m_wakeWorker.wait_for(lock, std::chrono::milliseconds(kWorkerWakeMilliseconds));
+					continue;
+				}
+				m_dispatching = true;
 			}
-			if (!dispatch) {
-				m_idle.notify_all();
-				m_wakeWorker.wait_for(lock, std::chrono::milliseconds(kWorkerWakeMilliseconds));
-				continue;
-			}
-			m_dispatching = true;
+		}
+		if (job) {
+			ExecuteLog(*job);
+			std::scoped_lock lock(m_mutex);
+			m_runningLog = false;
+			m_runningLogReadId.clear();
+			m_dispatching = false;
+			m_idle.notify_all();
+			continue;
 		}
 		try {
 			Execute(*dispatch);
@@ -673,6 +858,62 @@ void CSenpGitHubToolExecutor::Execute(const GhReadDispatch& dispatch)
 	});
 	m_pages.push_back(std::move(page));
 	while (m_pages.size() > MaximumCachedPages()) m_pages.pop_front();
+}
+
+void CSenpGitHubToolExecutor::ExecuteLog(LogJob& job) noexcept
+try {
+	const auto connection = m_profiles ? m_profiles->Connection(job.profileId) : nullptr;
+	// The account generation the scope was admitted against is the fence: a
+	// reconnect that adopted a new account cannot satisfy this download.
+	std::optional<GhAuthenticatedAccount> account;
+	if (connection) account = connection->Acquire(job.resourceScope.accountGeneration);
+	if (!account) {
+		RecordLog(job, { job.readId, effect::CompletionStatus::HostUnavailable, L"", L"unauthorized" }, false);
+		return;
+	}
+	const auto& probe = Probe();
+	if (probe.Status() != GhToolAvailability::Available) {
+		RecordLog(job, { job.readId, effect::CompletionStatus::HostUnavailable, L"", L"tool-unavailable" }, false);
+		return;
+	}
+	const CGhLogResource resource(m_policy, *job.store);
+	const auto downloaded = resource.Download(*account, probe, job.resourceScope,
+		job.request, m_logStop);
+	if (downloaded.Status() != GhLogResourceStatus::Succeeded) {
+		RecordLog(job, { job.readId, ToCompletionStatus(downloaded.Status()), L"",
+			Describe(downloaded.Status()) }, false);
+		return;
+	}
+	job.handle = downloaded.Handle();
+	// The bytes never travel inside a completion: the editor reads the resource
+	// back in bounded chunks through the same grant, exactly as it does a page.
+	std::wstring data = LR"({"resource":")" + JsonToken(job.handle) + LR"(","bytes":)"
+		+ std::to_wstring(downloaded.AcceptedBytes()) + LR"(,"log":true})";
+	RecordLog(job, { job.readId, effect::CompletionStatus::Succeeded, std::move(data), L"" }, true);
+} catch (...) {
+	RecordLog(job, Refused(job.readId, L"failed"), false);
+}
+
+void CSenpGitHubToolExecutor::RecordLog(LogJob& job, effect::ToolCompleted completed,
+	const bool keepResource) noexcept
+try {
+	std::scoped_lock lock(m_mutex);
+	auto* state = Find(job.scope);
+	if (!state) return;
+	const auto admitted = std::ranges::find(state->logReads, job.readId);
+	// Cancelled while it ran. Nothing is owed for a read nobody is waiting on,
+	// and the store goes with the job.
+	if (admitted == state->logReads.end()) return;
+	state->logReads.erase(admitted);
+	if (keepResource) {
+		if (state->logs.size() >= MaximumResourcesPerScope()) {
+			completed = Refused(job.readId, L"resource-limit");
+		} else {
+			state->logs.push_back({ std::move(job.handle), job.resourceScope, std::move(job.store) });
+		}
+	}
+	state->pending.push_back(std::move(completed));
+} catch (...) {
 }
 
 } // namespace senp::github

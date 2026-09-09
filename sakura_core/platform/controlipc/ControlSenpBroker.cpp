@@ -66,8 +66,13 @@ bool IsAdmittedToolOperation(const ControlSenpRpcRequest& request,
 	const senp::SenpToolCapability capability) noexcept
 {
 	if (capability != senp::SenpToolCapability::GitHubRepositoryRead) return false;
-	return request.toolId == kSenpGitHubToolId
-		&& request.toolOperation == kSenpGitHubRepositoryReadOperation;
+	if (request.toolId != kSenpGitHubToolId) return false;
+	// Both operations read the repository this capability names, so both are
+	// admitted by it. The set stays written out here rather than derived from a
+	// prefix: an operation is admitted because it was listed, never because it
+	// resembled one that was.
+	return request.toolOperation == kSenpGitHubRepositoryReadOperation
+		|| request.toolOperation == kSenpGitHubJobLogOperation;
 }
 
 } // namespace

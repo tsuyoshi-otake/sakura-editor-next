@@ -15,6 +15,7 @@ using platform::controlipc::EControlSenpRpcStatus;
 using platform::controlipc::SenpToolExecutionScope;
 using platform::controlipc::SenpToolReadCommand;
 using platform::process::EBoundedProcessStatus;
+using platform::process::EBoundedProcessStream;
 
 constexpr std::uint32_t kIdleTimeoutMilliseconds = 5000;
 
@@ -46,21 +47,37 @@ public:
 		m_arguments = arguments;
 		return m_outcome;
 	}
+	//! A streamed run hands its bytes to the observer and keeps none: that is
+	//! what makes a log a resource rather than a page carried in an outcome.
 	GhProcessOutcome RunAuthenticatedStreaming(const std::vector<std::wstring>& arguments,
-		std::uint32_t timeout, std::size_t output, std::size_t error,
-		std::shared_ptr<platform::process::IBoundedProcessOutputObserver>, HANDLE stop) override
+		std::uint32_t, std::size_t, std::size_t,
+		std::shared_ptr<platform::process::IBoundedProcessOutputObserver> observer, HANDLE) override
 	{
-		return RunAuthenticated(arguments, timeout, output, error, stop);
+		m_arguments = arguments;
+		for (const auto& chunk : m_streamed) {
+			if (observer && !observer->OnOutput(EBoundedProcessStream::StandardOutput, chunk)) {
+				return { EBoundedProcessStatus::ObserverRejected, -1, {}, {} };
+			}
+		}
+		return { m_streamStatus, m_streamStatus == EBoundedProcessStatus::Succeeded ? 0 : 1, {}, {} };
 	}
 	void Revoke() noexcept override {}
 	void Set(std::string response)
 	{
 		m_outcome = { EBoundedProcessStatus::Succeeded, 0, Bytes(response), {} };
 	}
+	void SetStream(const EBoundedProcessStatus status, const std::vector<std::string>& chunks)
+	{
+		m_streamStatus = status;
+		m_streamed.clear();
+		for (const auto& chunk : chunks) m_streamed.push_back(Bytes(chunk));
+	}
 	[[nodiscard]] const std::vector<std::wstring>& Arguments() const noexcept { return m_arguments; }
 private:
 	GhProcessOutcome m_outcome{ EBoundedProcessStatus::Failed, 1, {}, {} };
 	std::vector<std::wstring> m_arguments;
+	std::vector<std::vector<std::uint8_t>> m_streamed;
+	EBoundedProcessStatus m_streamStatus{ EBoundedProcessStatus::Succeeded };
 };
 
 class ConnectionPlatform final : public IGhConnectionPlatform {
@@ -133,6 +150,11 @@ SenpToolExecutionScope Scope()
 SenpToolReadCommand IssueList()
 {
 	return { L"issues:open", L"github", L"repositoryRead", { { L"shape", L"issues" }, { L"state", L"open" } } };
+}
+
+SenpToolReadCommand JobLog()
+{
+	return { L"job:77:log", L"github", L"jobLog", { { L"id", L"77" } } };
 }
 
 class Fixture final {
@@ -445,4 +467,169 @@ TEST(SenpGitHubToolExecutor, RefusesAnUnusableResourceRead)
 		fixture.Executor().ReadResource(scope, handle, 0, 64 * 1024 + 1, response));
 	EXPECT_EQ(EControlSenpRpcStatus::InvalidRequest,
 		fixture.Executor().ReadResource(scope, L"", 0, 1024, response));
+}
+
+TEST(SenpGitHubToolExecutor, TranslatesOnlyAJobIdIntoALogRequest)
+{
+	const GhSelectedRepository repository(L"repo-identity-1", L"origin", L"github.com", L"owner", L"repo");
+	const auto log = BuildJobLogRequest(repository, { { L"id", L"77" } });
+	ASSERT_TRUE(log);
+	// The host, owner and repository come from what the control side resolved,
+	// never from the editor, exactly as they do for a page.
+	EXPECT_EQ(L"github.com", log->Hostname());
+	EXPECT_EQ(L"owner", log->Owner());
+	EXPECT_EQ(L"repo", log->Repository());
+	EXPECT_EQ(77U, log->JobId());
+
+	// A log is one endpoint, so there is no shape to choose and nothing else to
+	// name. Anything but exactly one decimal job id is refused before the policy.
+	EXPECT_FALSE(BuildJobLogRequest(repository, {}));
+	EXPECT_FALSE(BuildJobLogRequest(repository, { { L"shape", L"job" }, { L"id", L"77" } }));
+	EXPECT_FALSE(BuildJobLogRequest(repository, { { L"job", L"77" } }));
+	EXPECT_FALSE(BuildJobLogRequest(repository, { { L"id", L"0" } }));
+	EXPECT_FALSE(BuildJobLogRequest(repository, { { L"id", L"077" } }));
+	EXPECT_FALSE(BuildJobLogRequest(repository, { { L"id", L"77/../secrets" } }));
+	EXPECT_FALSE(BuildJobLogRequest(repository, { { L"id", L"" } }));
+}
+
+TEST(SenpGitHubToolExecutor, PublishesAJobLogAsAResourceOfItsOwnStore)
+{
+	Fixture fixture;
+	const auto scope = Scope();
+	fixture.CredentialValue().SetStream(EBoundedProcessStatus::Succeeded, { "line one\n", "line two\n" });
+	const auto completed = fixture.Fetch(scope, JobLog());
+	ASSERT_TRUE(completed);
+	EXPECT_EQ(effect::CompletionStatus::Succeeded, completed->status);
+	EXPECT_EQ(L"job:77:log", completed->readId);
+	EXPECT_NE(std::wstring::npos, completed->data.find(LR"("log":true)"));
+	EXPECT_NE(std::wstring::npos, completed->data.find(LR"("bytes":18)"));
+	// The log itself never travels inside the completion, no more than a page
+	// body does: the editor reads it back through the same grant.
+	EXPECT_EQ(std::wstring::npos, completed->data.find(L"line one"));
+
+	const auto handle = ResourceHandle(*completed);
+	ASSERT_FALSE(handle.empty());
+	ControlSenpRpcResponse response;
+	ASSERT_EQ(EControlSenpRpcStatus::Succeeded,
+		fixture.Executor().ReadResource(scope, handle, 0, 64 * 1024, response));
+	EXPECT_EQ("line one\nline two\n", response.resourceBytes);
+	EXPECT_EQ(static_cast<std::uint8_t>(TextResourceState::Complete), response.resourceState);
+	EXPECT_EQ(static_cast<std::uint8_t>(TextResourceEnd::Complete), response.resourceEnd);
+	EXPECT_EQ(18U, response.resourceLength);
+
+	// The argv is the one the closed policy built. `gh` follows the short-lived
+	// download redirect internally, so no URL is named here or anywhere else.
+	const auto& arguments = fixture.CredentialValue().Arguments();
+	ASSERT_FALSE(arguments.empty());
+	EXPECT_EQ(L"api", arguments.front());
+	EXPECT_EQ(L"repos/owner/repo/actions/jobs/77/logs", arguments.back());
+
+	// A log owns the whole store it was written into, so releasing it is the
+	// end of that store and not merely of a name inside a shared one.
+	fixture.Executor().ReleaseResource(scope, handle);
+	EXPECT_EQ(EControlSenpRpcStatus::NotFound,
+		fixture.Executor().ReadResource(scope, handle, 0, 1024, response));
+}
+
+TEST(SenpGitHubToolExecutor, KeepsALogAndAPageApartWithinOneScope)
+{
+	Fixture fixture;
+	const auto scope = Scope();
+	fixture.CredentialValue().SetStream(EBoundedProcessStatus::Succeeded, { "log bytes" });
+	const auto page = fixture.Fetch(scope, IssueList());
+	ASSERT_TRUE(page);
+	const auto log = fixture.Fetch(scope, JobLog());
+	ASSERT_TRUE(log);
+	const auto pageHandle = ResourceHandle(*page);
+	const auto logHandle = ResourceHandle(*log);
+	ASSERT_FALSE(pageHandle.empty());
+	ASSERT_FALSE(logHandle.empty());
+
+	// Two stores, so the handles are free to collide as strings. What routes a
+	// read is which of the two the scope recorded the handle in.
+	ControlSenpRpcResponse fromPage;
+	ASSERT_EQ(EControlSenpRpcStatus::Succeeded,
+		fixture.Executor().ReadResource(scope, pageHandle, 0, 64 * 1024, fromPage));
+	EXPECT_EQ("[{\"id\":1,\"title\":\"first\"}]", fromPage.resourceBytes);
+	ControlSenpRpcResponse fromLog;
+	ASSERT_EQ(EControlSenpRpcStatus::Succeeded,
+		fixture.Executor().ReadResource(scope, logHandle, 0, 64 * 1024, fromLog));
+	EXPECT_EQ("log bytes", fromLog.resourceBytes);
+
+	// A page read is a subscription and keeps its identity for as long as it is
+	// held, so a log may not take one out from under it.
+	auto reused = JobLog();
+	reused.readId = L"issues:open";
+	EXPECT_EQ(EControlSenpRpcStatus::InvalidRequest, fixture.Executor().StartRead(scope, reused));
+	// A log is one download rather than a subscription: once answered its
+	// identity is spent and a page may take it. The log itself is keyed by its
+	// handle, so it outlives the identity and stays readable.
+	auto reusedPage = IssueList();
+	reusedPage.readId = L"job:77:log";
+	EXPECT_EQ(EControlSenpRpcStatus::Succeeded, fixture.Executor().StartRead(scope, reusedPage));
+	ASSERT_TRUE(fixture.Executor().WaitForIdle(kIdleTimeoutMilliseconds));
+	ControlSenpRpcResponse logAgain;
+	ASSERT_EQ(EControlSenpRpcStatus::Succeeded,
+		fixture.Executor().ReadResource(scope, logHandle, 0, 64 * 1024, logAgain));
+	EXPECT_EQ("log bytes", logAgain.resourceBytes);
+}
+
+TEST(SenpGitHubToolExecutor, ReportsAFailedJobLogWithoutPublishingAResource)
+{
+	Fixture fixture;
+	const auto scope = Scope();
+	fixture.CredentialValue().SetStream(EBoundedProcessStatus::Failed, {});
+	const auto completed = fixture.Fetch(scope, JobLog());
+	ASSERT_TRUE(completed);
+	// A log that did not arrive is said to have failed and names no resource:
+	// an empty resource the editor could open would read as an empty log.
+	EXPECT_EQ(effect::CompletionStatus::Failed, completed->status);
+	EXPECT_EQ(L"unavailable-or-not-found", completed->message);
+	EXPECT_TRUE(completed->data.empty());
+	EXPECT_FALSE(fixture.Executor().TakeCompleted(scope));
+
+	// The same identity is free again, because nothing was answered under it.
+	fixture.CredentialValue().SetStream(EBoundedProcessStatus::Succeeded, { "second try" });
+	const auto retried = fixture.Fetch(scope, JobLog());
+	ASSERT_TRUE(retried);
+	EXPECT_EQ(effect::CompletionStatus::Succeeded, retried->status);
+}
+
+TEST(SenpGitHubToolExecutor, CancellingAJobLogDropsItsResultAndItsStore)
+{
+	Fixture fixture;
+	const auto scope = Scope();
+	fixture.CredentialValue().SetStream(EBoundedProcessStatus::Succeeded, { "line one\n" });
+	ASSERT_EQ(EControlSenpRpcStatus::Succeeded, fixture.Executor().StartRead(scope, JobLog()));
+	fixture.Executor().CancelRead(scope, L"job:77:log");
+	ASSERT_TRUE(fixture.Executor().WaitForIdle(kIdleTimeoutMilliseconds));
+	// Whether the worker had already claimed the job or not, forgetting the read
+	// identity is what makes the result undeliverable.
+	EXPECT_FALSE(fixture.Executor().TakeCompleted(scope));
+
+	// Cancelling a whole scope leaves nothing a later download could reach.
+	ASSERT_EQ(EControlSenpRpcStatus::Succeeded, fixture.Executor().StartRead(scope, JobLog()));
+	fixture.Executor().CancelScope(scope);
+	ASSERT_TRUE(fixture.Executor().WaitForIdle(kIdleTimeoutMilliseconds));
+	EXPECT_FALSE(fixture.Executor().TakeCompleted(scope));
+}
+
+TEST(SenpGitHubToolExecutor, StartsOnlyTheTwoOperationsThisToolNames)
+{
+	Fixture fixture;
+	const auto scope = Scope();
+	// The broker admits the closed set first. This object names it again because
+	// it has to know which shape a read is; one it cannot name has no shape.
+	auto foreignTool = JobLog();
+	foreignTool.toolId = L"shell";
+	EXPECT_EQ(EControlSenpRpcStatus::InvalidRequest, fixture.Executor().StartRead(scope, foreignTool));
+	auto foreignOperation = IssueList();
+	foreignOperation.operation = L"repositoryWrite";
+	EXPECT_EQ(EControlSenpRpcStatus::InvalidRequest,
+		fixture.Executor().StartRead(scope, foreignOperation));
+	auto nameless = IssueList();
+	nameless.operation.clear();
+	EXPECT_EQ(EControlSenpRpcStatus::InvalidRequest, fixture.Executor().StartRead(scope, nameless));
+	ASSERT_TRUE(fixture.Executor().WaitForIdle(kIdleTimeoutMilliseconds));
+	EXPECT_FALSE(fixture.Executor().TakeCompleted(scope));
 }

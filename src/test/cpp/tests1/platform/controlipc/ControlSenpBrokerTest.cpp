@@ -414,6 +414,18 @@ TEST(ControlSenpBroker, RefusesAToolOperationOutsideTheClosedSet)
 	ASSERT_TRUE(operation);
 	EXPECT_EQ(EControlSenpRpcStatus::Unauthorized, operation->status);
 	EXPECT_TRUE(fixture.executor->started.empty());
+
+	// The set holds exactly two, and the second was admitted by the capability
+	// the first already needed: a job log reads the repository a page reads.
+	auto log = StartRead(grantId);
+	log.toolOperation = L"jobLog";
+	log.readId = L"job:77:log";
+	log.arguments = { { L"id", L"77" } };
+	const auto admitted = ReadResponse(session->HandleFrame(fixture.connection, RequestFrame(log, 5)));
+	ASSERT_TRUE(admitted);
+	EXPECT_EQ(EControlSenpRpcStatus::Succeeded, admitted->status);
+	ASSERT_EQ(1U, fixture.executor->started.size());
+	EXPECT_EQ(L"jobLog", fixture.executor->started.front().second.operation);
 }
 
 TEST(ControlSenpBroker, RevokedAuthorityStopsAnAlreadyIssuedGrant)

@@ -66,6 +66,17 @@ public:
 	const GhSelectedRepository& repository, const std::vector<effect::Field>& arguments);
 
 /*!
+	@brief Translates one admitted jobLog argument list into a policy request.
+
+	A job log names exactly one job of the repository the control side already
+	resolved, so the only argument is that job's decimal id. The editor never
+	names the host, owner, repository or the log's own short-lived download URL,
+	which the GitHub CLI follows internally and never exposes.
+*/
+[[nodiscard]] std::optional<GhJobLogRequest> BuildJobLogRequest(
+	const GhSelectedRepository& repository, const std::vector<effect::Field>& arguments);
+
+/*!
 	@brief Bounded GitHub implementation of the control-side tool execution seam.
 
 	Frame processing only admits work and drains already-finished state: every
@@ -85,6 +96,10 @@ public:
 	//! A page larger than this is refused instead of being cached or published.
 	[[nodiscard]] static constexpr std::size_t MaximumPageBytes() noexcept { return 2u * 1024u * 1024u; }
 	[[nodiscard]] static constexpr std::size_t MaximumCachedPages() noexcept { return 8; }
+	//! A log downloads on the same single worker every page fetch runs on, so
+	//! this is what bounds how much work one connection can queue ahead of
+	//! another's. A log that does not fit is refused, never silently dropped.
+	[[nodiscard]] static constexpr std::size_t MaximumQueuedLogs() noexcept { return 4; }
 
 	CSenpGitHubToolExecutor(std::shared_ptr<const IGhToolPlatform> toolPlatform,
 		std::shared_ptr<ISenpGitHubProfileSource> profiles, std::wstring workingDirectory);
@@ -134,21 +149,61 @@ private:
 		std::optional<std::string> etag;
 		std::string body;
 	};
+	//! One finished log and the store that received it. The store held nothing
+	//! else, so releasing the log is simply dropping this.
+	struct LogResource final {
+		std::wstring handle;
+		TextResourceScope resourceScope;
+		std::unique_ptr<SenpTextResourceStore> store;
+	};
 	struct ScopeState final {
 		platform::controlipc::SenpToolExecutionScope scope;
 		TextResourceScope resourceScope;
 		std::vector<Read> reads;
 		std::deque<effect::ToolCompleted> pending;
 		std::vector<std::wstring> resources;
+		//! Log reads admitted but not yet answered. A read identity that is no
+		//! longer here is one nothing may still be completed for.
+		std::vector<std::wstring> logReads;
+		std::vector<LogResource> logs;
+	};
+	/*!
+		@brief One queued job-log download, owned by the worker while it runs.
+
+		A log is streamed straight into a text resource rather than arriving as a
+		page, and the store that receives it is a single-thread store, so each job
+		carries its own: the worker writes into it alone, and only a finished job
+		hands it to the scope under the state mutex. Everything else here is a
+		copy, so the worker still holds no scope of its own.
+	*/
+	struct LogJob final {
+		platform::controlipc::SenpToolExecutionScope scope;
+		std::wstring readId;
+		std::wstring profileId;
+		TextResourceScope resourceScope;
+		GhJobLogRequest request;
+		std::unique_ptr<SenpTextResourceStore> store;
+		std::wstring handle;
 	};
 
 	[[nodiscard]] ScopeState* Find(const platform::controlipc::SenpToolExecutionScope& scope) noexcept;
+	//! Resolves the scope's state, admitting it the first time. Called with the
+	//! state mutex held; a refusal here is the refusal of the read that asked.
+	[[nodiscard]] platform::controlipc::EControlSenpRpcStatus Ensure(
+		const platform::controlipc::SenpToolExecutionScope& scope, ScopeState*& state);
+	[[nodiscard]] platform::controlipc::EControlSenpRpcStatus StartJobLog(
+		const platform::controlipc::SenpToolExecutionScope& scope,
+		const platform::controlipc::SenpToolReadCommand& command);
 	void Drain(ScopeState& state);
 	[[nodiscard]] std::optional<effect::ToolCompleted> Publish(ScopeState& state,
 		const Read& read, const Page& page);
 	void Release(ScopeState& state) noexcept;
 	void Run() noexcept;
 	void Execute(const GhReadDispatch& dispatch);
+	void ExecuteLog(LogJob& job) noexcept;
+	//! Hands one finished log to its scope, or discards it when the scope or the
+	//! read identity is gone. Never throws out to the worker loop.
+	void RecordLog(LogJob& job, effect::ToolCompleted completed, bool keepResource) noexcept;
 	[[nodiscard]] const GhToolProbe& Probe();
 
 	std::shared_ptr<ISenpGitHubProfileSource> m_profiles;
@@ -162,6 +217,15 @@ private:
 	std::vector<std::unique_ptr<ScopeState>> m_scopes;
 	std::deque<Page> m_pages;
 	SenpTextResourceStore m_store;
+	std::deque<LogJob> m_logQueue;
+	//! One log downloads at a time, so one manual-reset event is the whole
+	//! cancellation surface: it is reset and claimed under the state mutex. Null
+	//! when the event could not be created, which costs cancellation promptness
+	//! and nothing else - the download still ends at its own timeout.
+	HANDLE m_logStop{};
+	platform::controlipc::SenpToolExecutionScope m_runningLogScope;
+	std::wstring m_runningLogReadId;
+	bool m_runningLog{};
 	bool m_dispatching{};
 	bool m_stopping{};
 

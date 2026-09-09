@@ -26,6 +26,10 @@ namespace platform::controlipc {
 //! this closed set; it never names an executable, argument or environment.
 inline constexpr std::wstring_view kSenpGitHubToolId = L"github";
 inline constexpr std::wstring_view kSenpGitHubRepositoryReadOperation = L"repositoryRead";
+//! One workflow job's log. It reads the same repository the other operation
+//! does and needs no capability of its own; what separates it is the shape of
+//! what comes back, which is a log stream rather than a JSON page.
+inline constexpr std::wstring_view kSenpGitHubJobLogOperation = L"jobLog";
 
 //! One bounded execution scope. It pairs the OS-observed connection with the
 //! profile and owner the control side resolved for itself, so a completion can
