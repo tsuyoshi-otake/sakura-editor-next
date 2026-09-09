@@ -259,8 +259,13 @@ TEST(SenpGitHubToolExecutor, PublishesOneFetchedPageAsAReadableResource)
 	ASSERT_EQ(EControlSenpRpcStatus::Succeeded,
 		fixture.Executor().ReadResource(scope, handle, 0, 64 * 1024, response));
 	EXPECT_EQ("[{\"id\":1,\"title\":\"first\"}]", response.resourceBytes);
-	EXPECT_TRUE(response.resourceFinal);
 	EXPECT_EQ(handle, response.resourceHandle);
+	// The whole chunk, as the store answered it. Without the length and the end
+	// the editor could not tell a finished body from a truncated one, and would
+	// have to decide that from the byte count it happened to receive.
+	EXPECT_EQ(static_cast<std::uint8_t>(TextResourceState::Complete), response.resourceState);
+	EXPECT_EQ(static_cast<std::uint8_t>(TextResourceEnd::Complete), response.resourceEnd);
+	EXPECT_EQ(response.resourceBytes.size(), response.resourceLength);
 
 	// The argv reaching the credential is the one the closed policy built.
 	const auto& arguments = fixture.CredentialValue().Arguments();

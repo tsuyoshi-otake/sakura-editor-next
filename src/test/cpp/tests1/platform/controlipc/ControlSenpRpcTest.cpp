@@ -3,6 +3,8 @@
 #include "pch.h"
 #include "platform/controlipc/ControlSenpRpc.h"
 
+#include "senp/SenpTextResource.h"
+
 namespace platform::controlipc {
 namespace {
 ControlSenpRpcOwner Owner()
@@ -214,15 +216,22 @@ TEST(ControlSenpRpc, RoundTripsCompletionAndResourceResponses)
 	chunk.resourceHandle = L"log-1";
 	chunk.resourceOffset = 64;
 	chunk.resourceBytes = "run step output";
-	chunk.resourceState = 1;
-	chunk.resourceFinal = true;
+	chunk.resourceState = static_cast<std::uint8_t>(senp::TextResourceState::Complete);
+	chunk.resourceEnd = static_cast<std::uint8_t>(senp::TextResourceEnd::Complete);
+	chunk.resourceLength = 79;
+	chunk.resourceRevision = 11;
 	const auto encodedChunk = EncodeControlSenpRpcResponse(chunk);
 	ASSERT_TRUE(encodedChunk);
 	const auto decodedChunk = DecodeControlSenpRpcResponse(*encodedChunk);
 	ASSERT_TRUE(decodedChunk);
 	EXPECT_EQ(chunk.resourceBytes, decodedChunk->resourceBytes);
 	EXPECT_EQ(64U, decodedChunk->resourceOffset);
-	EXPECT_TRUE(decodedChunk->resourceFinal);
+	// The editor rebuilds a whole chunk from these, so every member its text
+	// surface validates has to survive the round trip - not only the bytes.
+	EXPECT_EQ(chunk.resourceState, decodedChunk->resourceState);
+	EXPECT_EQ(chunk.resourceEnd, decodedChunk->resourceEnd);
+	EXPECT_EQ(79U, decodedChunk->resourceLength);
+	EXPECT_EQ(11, decodedChunk->resourceRevision);
 }
 
 TEST(ControlSenpRpc, RejectsIncoherentResponses)
@@ -241,6 +250,68 @@ TEST(ControlSenpRpc, RejectsIncoherentResponses)
 	chunkWithoutHandle.status = EControlSenpRpcStatus::Succeeded;
 	chunkWithoutHandle.resourceBytes = "bytes";
 	EXPECT_FALSE(EncodeControlSenpRpcResponse(chunkWithoutHandle));
+
+	// A refusal names no resource, so it may describe none either. Each of these
+	// alone would let an answer about nothing be read as a chunk of whichever
+	// resource the editor is currently filling.
+	ControlSenpRpcResponse offsetWithoutHandle;
+	offsetWithoutHandle.status = EControlSenpRpcStatus::NotFound;
+	offsetWithoutHandle.resourceOffset = 64;
+	EXPECT_FALSE(EncodeControlSenpRpcResponse(offsetWithoutHandle));
+
+	ControlSenpRpcResponse lengthWithoutHandle;
+	lengthWithoutHandle.status = EControlSenpRpcStatus::NotFound;
+	lengthWithoutHandle.resourceLength = 128;
+	EXPECT_FALSE(EncodeControlSenpRpcResponse(lengthWithoutHandle));
+
+	ControlSenpRpcResponse revisionWithoutHandle;
+	revisionWithoutHandle.status = EControlSenpRpcStatus::NotFound;
+	revisionWithoutHandle.resourceRevision = 11;
+	EXPECT_FALSE(EncodeControlSenpRpcResponse(revisionWithoutHandle));
+
+	ControlSenpRpcResponse endWithoutHandle;
+	endWithoutHandle.status = EControlSenpRpcStatus::NotFound;
+	endWithoutHandle.resourceState = static_cast<std::uint8_t>(senp::TextResourceState::Complete);
+	endWithoutHandle.resourceEnd = static_cast<std::uint8_t>(senp::TextResourceEnd::Complete);
+	EXPECT_FALSE(EncodeControlSenpRpcResponse(endWithoutHandle));
+
+	// A chunk reaching past the resource it belongs to describes no resource the
+	// store could have produced, and the editor would append bytes it never held.
+	ControlSenpRpcResponse pastTheEnd;
+	pastTheEnd.status = EControlSenpRpcStatus::Succeeded;
+	pastTheEnd.resourceHandle = L"log-1";
+	pastTheEnd.resourceOffset = 64;
+	pastTheEnd.resourceBytes = "run step output";
+	pastTheEnd.resourceLength = 70;
+	EXPECT_FALSE(EncodeControlSenpRpcResponse(pastTheEnd));
+
+	ControlSenpRpcResponse beyondTheResourceBound;
+	beyondTheResourceBound.status = EControlSenpRpcStatus::Succeeded;
+	beyondTheResourceBound.resourceHandle = L"log-1";
+	beyondTheResourceBound.resourceLength = kControlSenpRpcMaximumResourceBytes + 1;
+	EXPECT_FALSE(EncodeControlSenpRpcResponse(beyondTheResourceBound));
+
+	// Outside either enumeration. The editor tests a decoded state against the
+	// states it handles, so one it has never heard of must not decode at all.
+	ControlSenpRpcResponse unknownState;
+	unknownState.status = EControlSenpRpcStatus::Succeeded;
+	unknownState.resourceHandle = L"log-1";
+	unknownState.resourceState = 200;
+	EXPECT_FALSE(EncodeControlSenpRpcResponse(unknownState));
+
+	ControlSenpRpcResponse unknownEnd;
+	unknownEnd.status = EControlSenpRpcStatus::Succeeded;
+	unknownEnd.resourceHandle = L"log-1";
+	unknownEnd.resourceEnd = 200;
+	EXPECT_FALSE(EncodeControlSenpRpcResponse(unknownEnd));
+
+	// A negative revision would encode as an enormous unsigned value and decode
+	// back as a different one, which is a resource identity, not a rounding error.
+	ControlSenpRpcResponse negativeRevision;
+	negativeRevision.status = EControlSenpRpcStatus::Succeeded;
+	negativeRevision.resourceHandle = L"log-1";
+	negativeRevision.resourceRevision = -1;
+	EXPECT_FALSE(EncodeControlSenpRpcResponse(negativeRevision));
 
 	ControlSenpRpcResponse oversizedData;
 	oversizedData.status = EControlSenpRpcStatus::Succeeded;

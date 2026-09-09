@@ -507,8 +507,11 @@ try {
 	response.resourceOffset = offset;
 	response.resourceBytes = chunk.bytes;
 	response.resourceState = static_cast<std::uint8_t>(chunk.state);
-	response.resourceFinal = chunk.state == TextResourceState::Complete
-		&& static_cast<std::size_t>(offset) + chunk.bytes.size() >= chunk.length;
+	response.resourceEnd = static_cast<std::uint8_t>(chunk.end);
+	// The whole chunk as the store answered it. The editor decides from these
+	// whether it has reached the end; nothing here decides that on its behalf.
+	response.resourceLength = chunk.length;
+	response.resourceRevision = chunk.revision;
 	return EControlSenpRpcStatus::Succeeded;
 } catch (...) {
 	return EControlSenpRpcStatus::Unavailable;

@@ -125,11 +125,25 @@ struct ControlSenpRpcResponse {
 	std::uint64_t expiresAtMilliseconds = 0;
 	bool hasCompletion = false;
 	senp::effect::ToolCompleted completion;
+	//! One text-resource chunk, whole. The editor rebuilds the chunk its text
+	//! surface validates from exactly these members, so every member that
+	//! validation reads has to travel: a length or an end the editor filled in
+	//! itself would be the editor asserting something about a resource the
+	//! control side owns.
 	std::wstring resourceHandle;
 	std::uint64_t resourceOffset = 0;
 	std::string resourceBytes;
+	//! senp::TextResourceState and senp::TextResourceEnd as raw discriminators.
+	//! This header describes the wire rather than the store, so it names their
+	//! values without depending on the type that defines them.
 	std::uint8_t resourceState = 0;
-	bool resourceFinal = false;
+	std::uint8_t resourceEnd = 0;
+	//! Bytes the whole resource holds, and the revision the store answers for.
+	//! Whether a chunk is the last one is derived from these rather than sent:
+	//! a sent answer could contradict the members it is derived from, and the
+	//! editor would have no way to tell which of the two to believe.
+	std::uint64_t resourceLength = 0;
+	std::int64_t resourceRevision = 0;
 	//! Answered by QueryAccount only. Zero means the profile has adopted no
 	//! account at all, which `accountState` separates from a signed-out one.
 	std::int64_t accountGeneration = 0;
@@ -145,6 +159,10 @@ inline constexpr std::size_t kControlSenpRpcMaximumArguments = 32;
 inline constexpr std::size_t kControlSenpRpcMaximumWorkspaceFolders = 8;
 inline constexpr std::size_t kControlSenpRpcMaximumToolDataBytes = 64 * 1024;
 inline constexpr std::size_t kControlSenpRpcMaximumResourceChunkBytes = 64 * 1024;
+//! Largest resource one chunk may claim to belong to. It mirrors the store's own
+//! per-resource ceiling and is restated here so the decoder can refuse an
+//! impossible length on its own, before anything reads the chunk as text.
+inline constexpr std::uint64_t kControlSenpRpcMaximumResourceBytes = 32ULL * 1024 * 1024;
 
 [[nodiscard]] std::optional<std::vector<std::uint8_t>> EncodeControlSenpRpcRequest(
 	const ControlSenpRpcRequest& request);

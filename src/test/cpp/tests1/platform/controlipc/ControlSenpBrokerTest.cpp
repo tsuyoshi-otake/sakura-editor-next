@@ -3,6 +3,8 @@
 #include "pch.h"
 #include "platform/controlipc/ControlSenpBroker.h"
 
+#include "senp/SenpTextResource.h"
+
 #include <memory>
 #include <string>
 #include <vector>
@@ -65,7 +67,10 @@ public:
 		response.resourceHandle = std::wstring(handle);
 		response.resourceOffset = offset;
 		response.resourceBytes.assign(length, 'x');
-		response.resourceFinal = true;
+		response.resourceState = static_cast<std::uint8_t>(senp::TextResourceState::Complete);
+		response.resourceEnd = static_cast<std::uint8_t>(senp::TextResourceEnd::Complete);
+		response.resourceLength = offset + length;
+		response.resourceRevision = 11;
 		return resourceStatus;
 	}
 	void ReleaseResource(const SenpToolExecutionScope&, std::wstring_view handle) noexcept override
@@ -481,6 +486,12 @@ TEST(ControlSenpBroker, RefusedResourceReadDiscardsThePartialChunk)
 	EXPECT_EQ(EControlSenpRpcStatus::NotFound, refused->status);
 	EXPECT_TRUE(refused->resourceBytes.empty());
 	EXPECT_TRUE(refused->resourceHandle.empty());
+	// The rest of the chunk is part of that partial answer and must not survive
+	// the refusal either: a length and a revision with no handle still describe
+	// a resource, and the editor has one open to attribute them to.
+	EXPECT_EQ(0U, refused->resourceLength);
+	EXPECT_EQ(0, refused->resourceRevision);
+	EXPECT_EQ(0U, refused->resourceEnd);
 
 	fixture.executor->resourceStatus = EControlSenpRpcStatus::Succeeded;
 	const auto served = ReadResponse(session->HandleFrame(fixture.connection, RequestFrame(read, 4)));
@@ -489,6 +500,9 @@ TEST(ControlSenpBroker, RefusedResourceReadDiscardsThePartialChunk)
 	EXPECT_EQ(L"log-1", served->resourceHandle);
 	EXPECT_EQ(64U, served->resourceOffset);
 	EXPECT_EQ(16U, served->resourceBytes.size());
+	EXPECT_EQ(80U, served->resourceLength);
+	EXPECT_EQ(11, served->resourceRevision);
+	EXPECT_EQ(static_cast<std::uint8_t>(senp::TextResourceEnd::Complete), served->resourceEnd);
 }
 
 TEST(ControlSenpBroker, DestroyingTheSessionCancelsItsExecutorScope)

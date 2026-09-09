@@ -7,6 +7,8 @@
 #include "StdAfx.h"
 #include "platform/controlipc/ControlSenpRpc.h"
 
+#include "senp/SenpTextResource.h"
+
 #include <Windows.h>
 
 #include <limits>
@@ -18,8 +20,10 @@ namespace {
 constexpr std::size_t kMaximumPayload = kControlIpcMaximumFrameBytes - kControlIpcHeaderBytes;
 //! Bumped with every payload layout change. Version 2 added the account
 //! members a QueryAccount answer carries; version 3 added the workspace an
-//! AdoptWorkspace request declares.
-constexpr std::uint8_t kControlSenpRpcPayloadVersion = 3;
+//! AdoptWorkspace request declares; version 4 replaced the derived
+//! `resourceFinal` flag with the end, length and revision that make a
+//! ReadResource answer a whole text-resource chunk.
+constexpr std::uint8_t kControlSenpRpcPayloadVersion = 4;
 constexpr std::uint64_t kMaximumGeneration = static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)());
 
 template<class T> void Put(std::vector<std::uint8_t>& bytes, T value)
@@ -131,6 +135,19 @@ bool IsCompletionStatus(std::uint8_t status) noexcept
 	return status <= static_cast<std::uint8_t>(senp::effect::CompletionStatus::HostUnavailable);
 }
 
+//! A discriminator outside either enum decodes into a value the editor's text
+//! surface never tests for, and would be read there as some state it does not
+//! handle rather than as the malformed answer it is.
+bool IsResourceState(std::uint8_t state) noexcept
+{
+	return state <= static_cast<std::uint8_t>(senp::TextResourceState::Closed);
+}
+
+bool IsResourceEnd(std::uint8_t end) noexcept
+{
+	return end <= static_cast<std::uint8_t>(senp::TextResourceEnd::Revoked);
+}
+
 //! Rejects a payload whose members do not belong to its operation. A decoder
 //! that silently ignored stray members would let one operation smuggle another
 //! operation's authority-relevant fields past a later switch.
@@ -207,8 +224,26 @@ bool IsCoherentResponse(const ControlSenpRpcResponse& response) noexcept
 	}
 	if (response.hasCompletion && response.completion.readId.empty()) return false;
 	if (response.completion.data.size() > kControlSenpRpcMaximumToolDataBytes) return false;
-	if (!response.resourceBytes.empty() && response.resourceHandle.empty()) return false;
+	if (!IsResourceState(response.resourceState) || !IsResourceEnd(response.resourceEnd)) return false;
+	if (response.resourceRevision < 0) return false;
 	if (response.resourceBytes.size() > kControlSenpRpcMaximumResourceChunkBytes) return false;
+	if (response.resourceHandle.empty()) {
+		// Nothing here names the resource these members would describe, so a
+		// refusal or an unrelated answer must carry none of them: the editor
+		// would otherwise be free to read one as a chunk of whichever resource
+		// it happens to be filling.
+		if (!response.resourceBytes.empty() || response.resourceOffset != 0
+			|| response.resourceState != 0 || response.resourceEnd != 0
+			|| response.resourceLength != 0 || response.resourceRevision != 0) {
+			return false;
+		}
+	} else {
+		// A chunk that reaches past the resource it belongs to describes no
+		// resource the store could have produced.
+		if (response.resourceLength > kControlSenpRpcMaximumResourceBytes) return false;
+		if (response.resourceOffset > response.resourceLength) return false;
+		if (response.resourceBytes.size() > response.resourceLength - response.resourceOffset) return false;
+	}
 	// A negative generation would encode as an enormous unsigned value and decode
 	// back as a different number, so it is refused at the encoder instead.
 	if (response.accountGeneration < 0) return false;
@@ -337,7 +372,9 @@ std::optional<std::vector<std::uint8_t>> EncodeControlSenpRpcResponse(const Cont
 	Put<std::uint64_t>(bytes, response.resourceOffset);
 	if (!PutBytes(bytes, response.resourceBytes, kControlSenpRpcMaximumResourceChunkBytes)) return std::nullopt;
 	Put<std::uint8_t>(bytes, response.resourceState);
-	Put<std::uint8_t>(bytes, response.resourceFinal ? 1U : 0U);
+	Put<std::uint8_t>(bytes, response.resourceEnd);
+	Put<std::uint64_t>(bytes, response.resourceLength);
+	Put<std::uint64_t>(bytes, static_cast<std::uint64_t>(response.resourceRevision));
 	Put<std::uint64_t>(bytes, static_cast<std::uint64_t>(response.accountGeneration));
 	Put<std::uint8_t>(bytes, static_cast<std::uint8_t>(response.accountState));
 	if (bytes.size() > kMaximumPayload) return std::nullopt;
@@ -347,9 +384,9 @@ std::optional<std::vector<std::uint8_t>> EncodeControlSenpRpcResponse(const Cont
 std::optional<ControlSenpRpcResponse> DecodeControlSenpRpcResponse(std::span<const std::uint8_t> payload)
 {
 	std::size_t offset = 0;
-	std::uint8_t version = 0, status = 0, hasCompletion = 0, completionStatus = 0, resourceFinal = 0;
+	std::uint8_t version = 0, status = 0, hasCompletion = 0, completionStatus = 0;
 	std::uint8_t accountState = 0;
-	std::uint64_t accountGeneration = 0;
+	std::uint64_t accountGeneration = 0, resourceRevision = 0;
 	if (!Get(payload, offset, version) || version != kControlSenpRpcPayloadVersion) return std::nullopt;
 	if (!Get(payload, offset, status) || !IsStatus(status)) return std::nullopt;
 	ControlSenpRpcResponse response;
@@ -366,9 +403,17 @@ std::optional<ControlSenpRpcResponse> DecodeControlSenpRpcResponse(std::span<con
 	if (!GetWide(payload, offset, response.resourceHandle)) return std::nullopt;
 	if (!Get(payload, offset, response.resourceOffset)) return std::nullopt;
 	if (!GetBytes(payload, offset, response.resourceBytes, kControlSenpRpcMaximumResourceChunkBytes)) return std::nullopt;
-	if (!Get(payload, offset, response.resourceState)) return std::nullopt;
-	if (!Get(payload, offset, resourceFinal) || resourceFinal > 1) return std::nullopt;
-	response.resourceFinal = resourceFinal != 0;
+	if (!Get(payload, offset, response.resourceState) || !IsResourceState(response.resourceState)) {
+		return std::nullopt;
+	}
+	if (!Get(payload, offset, response.resourceEnd) || !IsResourceEnd(response.resourceEnd)) {
+		return std::nullopt;
+	}
+	if (!Get(payload, offset, response.resourceLength)) return std::nullopt;
+	// Encoded from a signed member, so a value past the signed maximum decodes
+	// back as a different revision than the one that was sent.
+	if (!Get(payload, offset, resourceRevision) || resourceRevision > kMaximumGeneration) return std::nullopt;
+	response.resourceRevision = static_cast<std::int64_t>(resourceRevision);
 	if (!Get(payload, offset, accountGeneration) || accountGeneration > kMaximumGeneration) return std::nullopt;
 	if (!Get(payload, offset, accountState) || !IsAccountState(accountState)) return std::nullopt;
 	response.accountGeneration = static_cast<std::int64_t>(accountGeneration);
