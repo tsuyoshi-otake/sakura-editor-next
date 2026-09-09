@@ -727,6 +727,10 @@ private:
 	void CloseWorkbench() noexcept;
 	[[nodiscard]] bool InitializeSenpWindowExtensions();
 	[[nodiscard]] bool SynchronizeSenpWindowExtensions();
+	//! The account generation the control side last answered for this window's
+	//! profile, or zero when it holds no usable account authority. It publishes
+	//! a refresh and never waits for one, so it is safe on the UI thread.
+	[[nodiscard]] std::int64_t SenpAccountGeneration() noexcept;
 	void StopSenpWindowExtensions() noexcept;
 	void ApplySenpWindowStyle(const theme::ThemePalette& palette);
 	//! Applies the committed theme, or one non-persistent Quick Pick preview.
@@ -1289,6 +1293,9 @@ private:
 	//! Revoked before the borrowed pages and readonly editor controller are closed.
 	std::unique_ptr<workbench::CSenpWindowExtensions> m_senpWindowExtensions;
 	std::uint64_t m_senpSurfaceSequence{};
+	//! The account generation the extensions were last synchronized under. A
+	//! change is an authority change, which the extensions revoke on their own.
+	std::int64_t m_senpAccountGeneration{};
 	bool m_senpWindowExtensionsActive{};
 	std::vector<std::function<bool(const theme::ThemePalette&, const LOGFONT&, unsigned int)>> m_senpStyleSinks;
 	//! Single staged native projection owner for Primary Side Bar, Panel, and Auxiliary Bar.

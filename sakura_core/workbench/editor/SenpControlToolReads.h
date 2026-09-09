@@ -36,6 +36,9 @@ struct SenpControlToolReadsOptions {
 	std::wstring senpProfileId;
 	std::chrono::milliseconds pollInterval = std::chrono::milliseconds(50);
 	std::chrono::milliseconds exchangeDeadline = std::chrono::seconds(5);
+	//! Floor between two account queries. The window asks on every frame turn,
+	//! so the seam - not its callers - owns how often that reaches the wire.
+	std::chrono::milliseconds accountRefreshInterval = std::chrono::seconds(2);
 	std::function<std::unique_ptr<platform::controlipc::IControlPlatformClientChannel>()> channelFactory;
 };
 
@@ -96,6 +99,8 @@ public:
 	void Cancel(const senp::ContributionOwnerIdentity& owner,
 		const senp::effect::OperationContext& context) noexcept override;
 	void CancelAll(const senp::ContributionOwnerIdentity& owner) noexcept override;
+	[[nodiscard]] SenpToolAccount Account() const noexcept override;
+	void RefreshAccount() noexcept override;
 
 	//! Terminal. It stops the client, joins the worker and drops every queue, so
 	//! no completion is routed afterwards.
@@ -110,8 +115,8 @@ public:
 
 private:
 	struct Command {
-		//! Cancel carries only `read.readId`; Retire carries neither.
-		enum class Kind : std::uint8_t { Start, Cancel, Retire } kind{ Kind::Start };
+		//! Cancel carries only `read.readId`; Retire and Account carry neither.
+		enum class Kind : std::uint8_t { Start, Cancel, Retire, Account } kind{ Kind::Start };
 		senp::ContributionOwnerIdentity owner;
 		senp::effect::OperationContext context;
 		senp::effect::StartToolRead read;
@@ -170,6 +175,13 @@ private:
 	//! Re-queues one refused read, or fails it once its attempts are spent.
 	void Retry(Command command, std::wstring message) noexcept;
 	void Poll() noexcept;
+	//! Worker-side. Asks the control side which account the profile has adopted.
+	[[nodiscard]] SenpToolAccount Query() noexcept;
+	//! Publishes one settled answer and clears the pending query.
+	void Settle(SenpToolAccount account) noexcept;
+	//! Drops an answer that a replaced connection made meaningless, and lets the
+	//! next refresh reach the wire without waiting out the cadence.
+	void Stale() noexcept;
 	[[nodiscard]] bool Ensure() noexcept;
 	//! Returns the live grant for this owner, minting one when the cached record
 	//! belongs to an earlier connection. Empty means the control side refused,
@@ -191,6 +203,12 @@ private:
 	std::condition_variable m_quiet;
 	std::deque<Command> m_commands;
 	std::vector<Owner> m_owners;
+	//! Last settled answer plus the cadence state guarding the next query. The
+	//! pending flag is what keeps a per-frame caller from queueing a second one.
+	SenpToolAccount m_account;
+	bool m_accountPending{};
+	bool m_accountAsked{};
+	std::chrono::steady_clock::time_point m_accountAskedAt{};
 	bool m_busy{};
 	bool m_stopped{};
 	//! Worker-private: only the worker thread reads or writes it, and Stop joins

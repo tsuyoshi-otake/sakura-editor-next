@@ -56,6 +56,18 @@ public:
 	{
 		cancelledAll.push_back(owner);
 	}
+	//! An owner target never asks for the account fence, so these record the
+	//! calls in order to assert that it does not.
+	[[nodiscard]] SenpToolAccount Account() const noexcept override
+	{
+		++accountCalls;
+		return account;
+	}
+	void RefreshAccount() noexcept override { ++accountRefreshes; }
+
+	SenpToolAccount account;
+	mutable int accountCalls{};
+	int accountRefreshes{};
 };
 
 senp::effect::StartToolRead Read(std::wstring readId, std::wstring operation)
@@ -219,6 +231,11 @@ TEST_F(SenpReadonlyOwnerTargetTest, RoutesAdmittedToolReadsToTheSeamAndReturnsTh
 	EXPECT_EQ(L"[1]", secondTerminal->Completion().data);
 	EXPECT_EQ(0U, target.ToolReadCount());
 	EXPECT_FALSE(target.TakeToolRead());
+
+	// The account fence is the window's concern. A target that asked for it
+	// would be reading authority it is already scoped by, so it never does.
+	EXPECT_EQ(0, reads.accountCalls);
+	EXPECT_EQ(0, reads.accountRefreshes);
 }
 
 TEST_F(SenpReadonlyOwnerTargetTest, RefusesEveryToolReadItCannotAccountFor)

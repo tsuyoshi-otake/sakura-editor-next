@@ -29,6 +29,7 @@ namespace {
 using platform::controlipc::ControlIpcFrame;
 using platform::controlipc::ControlSenpRpcRequest;
 using platform::controlipc::ControlSenpRpcResponse;
+using platform::controlipc::EControlSenpAccountState;
 using platform::controlipc::EControlSenpRpcOperation;
 using platform::controlipc::EControlSenpRpcStatus;
 
@@ -91,6 +92,11 @@ struct Broker {
 	std::deque<senp::effect::ToolCompleted> ready;
 	EControlSenpRpcStatus issueStatus = EControlSenpRpcStatus::Succeeded;
 	EControlSenpRpcStatus startStatus = EControlSenpRpcStatus::Succeeded;
+	//! The account this profile has adopted, as the control side would answer it.
+	int accounts = 0;
+	std::int64_t accountGeneration = 0;
+	EControlSenpAccountState accountState = EControlSenpAccountState::Unknown;
+	EControlSenpRpcStatus accountStatus = EControlSenpRpcStatus::Succeeded;
 	//! Transport failure rather than a broker answer.
 	bool severed = false;
 
@@ -114,10 +120,20 @@ struct Broker {
 		std::lock_guard<std::mutex> lock(mutex);
 		return hello;
 	}
+	[[nodiscard]] int Accounts() const
+	{
+		std::lock_guard<std::mutex> lock(mutex);
+		return accounts;
+	}
 	void Sever()
 	{
 		std::lock_guard<std::mutex> lock(mutex);
 		severed = true;
+	}
+	void Restore()
+	{
+		std::lock_guard<std::mutex> lock(mutex);
+		severed = false;
 	}
 	void Publish(senp::effect::ToolCompleted completion)
 	{
@@ -228,6 +244,14 @@ private:
 				m_broker->ready.erase(current);
 				break;
 			}
+			return response;
+		case EControlSenpRpcOperation::QueryAccount:
+			++m_broker->accounts;
+			response.status = m_broker->accountStatus;
+			// The account members are filled even for a refusal, so a seam that
+			// read them past one would be caught rather than merely unlucky.
+			response.accountGeneration = m_broker->accountGeneration;
+			response.accountState = m_broker->accountState;
 			return response;
 		case EControlSenpRpcOperation::CancelRead:
 			++m_broker->cancelled;
@@ -569,6 +593,128 @@ TEST(SenpControlToolReads, AdoptsTheEndpointReaderTheCompositionHandsIt)
 	EXPECT_EQ(1, broker->Hello());
 	EXPECT_EQ(1, broker->Started());
 	EXPECT_NE(0u, reads.ConnectionEpoch());
+}
+
+TEST(SenpControlToolReads, AnswersTheAccountFenceWithoutNamingAnOwnerOrAGrant)
+{
+	auto broker = std::make_shared<Broker>();
+	broker->accountGeneration = 21;
+	broker->accountState = EControlSenpAccountState::Connected;
+	CFixedEndpointReader reader;
+	CSenpControlToolReads reads(Options(broker), reader);
+
+	// Nothing has been asked yet. That is not a signed-out account, and the
+	// window must not be able to mistake it for one.
+	EXPECT_EQ(SenpToolAccountState::Unknown, reads.Account().state);
+	EXPECT_EQ(0, reads.Account().generation);
+
+	reads.RefreshAccount();
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+
+	EXPECT_EQ(SenpToolAccountState::Connected, reads.Account().state);
+	EXPECT_EQ(21, reads.Account().generation);
+	// This is what the window asks before an owner carrying a generation can
+	// exist, so the request names no owner and holds no grant to name one with.
+	const auto requests = broker->Requests();
+	ASSERT_EQ(1u, requests.size());
+	EXPECT_EQ(EControlSenpRpcOperation::QueryAccount, requests[0].operation);
+	EXPECT_EQ(kSenpProfile, requests[0].profileId);
+	EXPECT_TRUE(requests[0].owner == platform::controlipc::ControlSenpRpcOwner{});
+	EXPECT_TRUE(requests[0].grantId.empty());
+	EXPECT_EQ(0u, requests[0].capabilities);
+	EXPECT_EQ(0, broker->Issued());
+}
+
+TEST(SenpControlToolReads, ReportsTheFenceTheControlSideNamesWithoutCollapsingIt)
+{
+	auto broker = std::make_shared<Broker>();
+	// A generation the control side still remembers, under a state that carries
+	// no authority. Deciding what that means is the window's rule, not this
+	// seam's, so the answer is reported exactly as it arrived.
+	broker->accountGeneration = 4;
+	broker->accountState = EControlSenpAccountState::ReauthenticationRequired;
+	CFixedEndpointReader reader;
+	CSenpControlToolReads reads(Options(broker), reader);
+
+	reads.RefreshAccount();
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+
+	EXPECT_EQ(SenpToolAccountState::ReauthenticationRequired, reads.Account().state);
+	EXPECT_EQ(4, reads.Account().generation);
+}
+
+TEST(SenpControlToolReads, ReportsNoFenceWhenTheControlSideIsUnreachableOrRefuses)
+{
+	auto broker = std::make_shared<Broker>();
+	broker->accountGeneration = 21;
+	broker->accountState = EControlSenpAccountState::Connected;
+	// Set before the worker exists: the stand-in's script is only safe to write
+	// from this thread while nothing is reading it.
+	broker->accountStatus = EControlSenpRpcStatus::NotFound;
+	broker->Sever();
+	CFixedEndpointReader reader;
+	auto options = Options(broker);
+	// Both halves of this test ask, and the second follows the first by less
+	// than any floor worth naming, so there is none.
+	options.accountRefreshInterval = std::chrono::milliseconds(0);
+	CSenpControlToolReads reads(std::move(options), reader);
+
+	reads.RefreshAccount();
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+	// Unavailable, not Unknown: the question was asked and could not be answered.
+	EXPECT_EQ(SenpToolAccountState::Unavailable, reads.Account().state);
+	EXPECT_EQ(0, reads.Account().generation);
+
+	broker->Restore();
+	reads.RefreshAccount();
+	ASSERT_TRUE(WaitUntil([&] { return broker->Accounts() == 1; }));
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+	// A refusal names no account, so the members it still carried are ignored.
+	EXPECT_EQ(SenpToolAccountState::Unavailable, reads.Account().state);
+	EXPECT_EQ(0, reads.Account().generation);
+}
+
+TEST(SenpControlToolReads, CoalescesAccountRefreshesAndReasksAfterTheConnectionIsReplaced)
+{
+	auto broker = std::make_shared<Broker>();
+	broker->accountGeneration = 21;
+	broker->accountState = EControlSenpAccountState::Connected;
+	CFixedEndpointReader reader;
+	auto options = Options(broker);
+	// A floor no part of this test can wait out, so a second query proves the
+	// cadence was reset rather than merely expired.
+	options.accountRefreshInterval = std::chrono::seconds(60);
+	CSenpControlToolReads reads(std::move(options), reader);
+
+	// The window asks on every frame turn; only the seam decides how often that
+	// reaches the wire.
+	for (int turn = 0; turn < 6; ++turn) reads.RefreshAccount();
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+	EXPECT_EQ(1, broker->Accounts());
+	EXPECT_EQ(SenpToolAccountState::Connected, reads.Account().state);
+
+	ASSERT_TRUE(reads.Start(Owner(), Context(L"tool.1", 1), Read(L"issues:open:1")));
+	ASSERT_TRUE(WaitUntil([&] { return broker->Started() == 1; }));
+	broker->Sever();
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+	ASSERT_TRUE(reads.Take(Owner()));
+
+	broker->Restore();
+	broker->Publish({ L"issues:open:2", senp::effect::CompletionStatus::Succeeded, L"[2]", L"" });
+	ASSERT_TRUE(reads.Start(Owner(), Context(L"tool.2", 2), Read(L"issues:open:2")));
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+	ASSERT_TRUE(reads.Take(Owner()));
+	ASSERT_EQ(2u, reads.ConnectionEpoch());
+	// The connection that answered the fence is gone, so the answer is gone with
+	// it - reporting the old generation would name authority nothing holds.
+	EXPECT_EQ(SenpToolAccountState::Unknown, reads.Account().state);
+	EXPECT_EQ(0, reads.Account().generation);
+
+	reads.RefreshAccount();
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+	EXPECT_EQ(2, broker->Accounts());
+	EXPECT_EQ(SenpToolAccountState::Connected, reads.Account().state);
+	EXPECT_EQ(21, reads.Account().generation);
 }
 
 TEST(SenpControlToolReads, RefusesToExistWithoutAnEndpointReaderToDiscoverThrough)

@@ -6142,11 +6142,13 @@ bool CEditWnd::SynchronizeSenpWindowExtensions() try
 {
 	if (!m_senpWindowExtensionsActive) return true;
 	if (!m_workbenchRuntime || !m_workbenchRuntime->Extensions()) return false;
+	// The control side owns the account fence, so this reports the generation it
+	// answered and never a locally assumed one. Zero still means no adopted
+	// account authority, and GitHub reads stay unsupported under it.
+	m_senpAccountGeneration = SenpAccountGeneration();
 	const auto status = m_senpWindowExtensions->Synchronize(m_workbenchRuntime->Extensions()->Snapshot(),
 		m_workbenchRuntime->WorkspaceContext().Snapshot().revision,
-		0, std::chrono::steady_clock::now());
-	// Zero has no adopted account authority. GitHub reads remain unsupported
-	// until the Control-owned authenticated grant client is connected.
+		m_senpAccountGeneration, std::chrono::steady_clock::now());
 	if (status != workbench::SenpWindowExtensionsStatus::Synchronized) return false;
 	const auto operation = NextWorkbenchLayoutOperationId("senp.reconcile-contributions");
 	if (!operation) return false;
@@ -6160,9 +6162,27 @@ bool CEditWnd::SynchronizeSenpWindowExtensions() try
 	return false;
 }
 
+std::int64_t CEditWnd::SenpAccountGeneration() noexcept
+{
+	// Null while this process holds no control-platform authority. Zero then
+	// keeps the extensions where they already are: without GitHub reads.
+	if (!m_senpToolReads) return 0;
+	// Publishing a refresh is not waiting for one. The seam answers from what it
+	// has already settled, so an adoption or a revocation is observed on a later
+	// turn of the window's own cadence rather than by blocking this thread.
+	m_senpToolReads->RefreshAccount();
+	const auto account = m_senpToolReads->Account();
+	// Only an account the control side currently holds carries authority. A
+	// generation left from a connection that now needs re-authentication would
+	// admit reads the control side refuses anyway, and an unadopted profile
+	// answers zero with a state that is not a sign-out.
+	return account.state == workbench::editor::SenpToolAccountState::Connected ? account.generation : 0;
+}
+
 void CEditWnd::StopSenpWindowExtensions() noexcept
 {
 	const bool wasActive = std::exchange(m_senpWindowExtensionsActive, false);
+	m_senpAccountGeneration = 0;
 	m_senpStyleSinks.clear();
 	if (m_senpWindowExtensions) {
 		if (m_senpWindowExtensions->Close()) m_senpWindowExtensions.reset();
@@ -15990,6 +16010,14 @@ void CEditWnd::OnEditTimer( void )
 	// タイマーの呼び出し間隔を 500msに変更。300*10→500*6にする。 20060128 aroka
 	IncrementTimerCount(6);
 	UpdateMarkdownPreviewIfNeeded();
+	// The control side adopts and revokes accounts on its own schedule and the
+	// seam answers asynchronously, so the window notices a changed fence here.
+	// Re-synchronizing is the revocation: the extensions close every owner whose
+	// authority the new generation no longer covers.
+	if (m_senpWindowExtensionsActive && SenpAccountGeneration() != m_senpAccountGeneration
+		&& !SynchronizeSenpWindowExtensions()) {
+		StopSenpWindowExtensions();
+	}
 	if (m_senpWindowExtensionsActive
 		&& !m_senpWindowExtensions->Poll(std::chrono::steady_clock::now())) {
 		StopSenpWindowExtensions();

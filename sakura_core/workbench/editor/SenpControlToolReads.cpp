@@ -50,6 +50,21 @@ senp::effect::CompletionStatus ToCompletion(const EControlSenpRpcStatus status) 
 	}
 }
 
+//! The seam keeps its own account vocabulary, so the mapping from the wire one
+//! is written out rather than assumed from the two enumerations agreeing today.
+SenpToolAccountState ToAccountState(const platform::controlipc::EControlSenpAccountState state) noexcept
+{
+	using Wire = platform::controlipc::EControlSenpAccountState;
+	switch (state) {
+	case Wire::Checking: return SenpToolAccountState::Checking;
+	case Wire::Disconnected: return SenpToolAccountState::Disconnected;
+	case Wire::Connected: return SenpToolAccountState::Connected;
+	case Wire::ReauthenticationRequired: return SenpToolAccountState::ReauthenticationRequired;
+	case Wire::Unavailable: return SenpToolAccountState::Unavailable;
+	default: return SenpToolAccountState::Unknown;
+	}
+}
+
 platform::controlipc::ControlSenpClientOptions ClientOptions(const SenpControlToolReadsOptions& options)
 {
 	platform::controlipc::ControlSenpClientOptions client;
@@ -243,12 +258,51 @@ void CSenpControlToolReads::CancelAll(const senp::ContributionOwnerIdentity& own
 	m_work.notify_all();
 }
 
+SenpToolAccount CSenpControlToolReads::Account() const noexcept
+{
+	try {
+		std::lock_guard<std::mutex> lock(m_mutex);
+		return m_account;
+	} catch (...) {
+		return {};
+	}
+}
+
+void CSenpControlToolReads::RefreshAccount() noexcept
+{
+	try {
+		const auto now = std::chrono::steady_clock::now();
+		{
+			std::lock_guard<std::mutex> lock(m_mutex);
+			if (m_stopped || m_accountPending) return;
+			// The window asks on every synchronization and on every timer turn,
+			// so the cadence belongs here rather than in each caller.
+			if (m_accountAsked && now - m_accountAskedAt < m_options.accountRefreshInterval) return;
+			Command command;
+			command.kind = Command::Kind::Account;
+			if (!EnqueueLocked(std::move(command))) return;
+			// Timed from the question, not the answer: a query the control side
+			// never answers must not be repeated faster than this floor.
+			m_accountPending = true;
+			m_accountAsked = true;
+			m_accountAskedAt = now;
+		}
+	} catch (...) {
+		return;
+	}
+	m_work.notify_all();
+}
+
 void CSenpControlToolReads::Stop() noexcept
 {
 	{
 		std::lock_guard<std::mutex> lock(m_mutex);
 		m_stopped = true;
 		m_commands.clear();
+		// A stopped seam holds no account authority, and the query that would
+		// have answered one is gone with the queue.
+		m_account = {};
+		m_accountPending = false;
 		for (auto& owner : m_owners) {
 			owner.retired = true;
 			owner.outstanding.clear();
@@ -478,6 +532,10 @@ void CSenpControlToolReads::Run(Command command) noexcept
 		}
 		return;
 	}
+	if (command.kind == Command::Kind::Account) {
+		Settle(Query());
+		return;
+	}
 	if (command.kind == Command::Kind::Cancel) {
 		// A cancellation never revives a connection: without one the broker lost
 		// this read together with the grant that named it.
@@ -622,15 +680,73 @@ void CSenpControlToolReads::Poll() noexcept
 	}
 }
 
+SenpToolAccount CSenpControlToolReads::Query() noexcept
+{
+	// Unavailable, not Unknown: the question was asked and could not be
+	// answered, which is a different thing from never having asked.
+	if (!Ensure()) return { 0, SenpToolAccountState::Unavailable };
+	try {
+		ControlSenpRpcRequest request;
+		// The account query names no owner and holds no grant: it is what the
+		// window asks before an owner carrying a generation can exist.
+		request.operation = EControlSenpRpcOperation::QueryAccount;
+		request.profileId = m_options.senpProfileId;
+		const auto answer = m_client.Execute(request);
+		if (!answer.Answered()) {
+			m_client.Disconnect();
+			return { 0, SenpToolAccountState::Unavailable };
+		}
+		// A refusal names no account. Reporting the fence as unavailable keeps
+		// the window fail-closed instead of guessing which refusal it was.
+		if (answer.response.status != EControlSenpRpcStatus::Succeeded) {
+			return { 0, SenpToolAccountState::Unavailable };
+		}
+		return { answer.response.accountGeneration, ToAccountState(answer.response.accountState) };
+	} catch (...) {
+		return { 0, SenpToolAccountState::Unavailable };
+	}
+}
+
+void CSenpControlToolReads::Settle(const SenpToolAccount account) noexcept
+{
+	try {
+		std::lock_guard<std::mutex> lock(m_mutex);
+		// A seam stopped while the query was in flight keeps its cleared answer.
+		if (!m_stopped) m_account = account;
+		m_accountPending = false;
+	} catch (...) {
+	}
+	m_quiet.notify_all();
+}
+
+void CSenpControlToolReads::Stale() noexcept
+{
+	try {
+		std::lock_guard<std::mutex> lock(m_mutex);
+		m_account = {};
+		// The cadence must not suppress the query that re-establishes the fence
+		// on the connection that just replaced the answered one.
+		m_accountAsked = false;
+	} catch (...) {
+	}
+}
+
 bool CSenpControlToolReads::Ensure() noexcept
 {
 	if (m_client.State() == EControlSenpClientState::Connected) return true;
+	// Zero means this seam has never had a connection, so nothing was minted or
+	// answered on an earlier one and there is nothing here to invalidate.
+	const auto replaced = m_client.ConnectionEpoch() != 0;
 	const auto connected = m_client.Connect();
 	if (!connected.IsConnected()) return false;
+	if (!replaced) return true;
 	// A new connection voids every grant minted on the old one, and with them
 	// every read the broker had admitted under those grants. A read this seam
 	// has not put on the wire yet survives: it is dispatched on this connection.
 	m_grants.clear();
+	// The settled account was answered by a connection that no longer exists,
+	// so it is dropped for the same reason the grants are.
+	Stale();
 	FailDispatched(senp::effect::CompletionStatus::HostUnavailable, kReplaced);
 	return true;
 }

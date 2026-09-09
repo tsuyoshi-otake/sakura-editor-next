@@ -18,6 +18,26 @@ using SenpOwnerResourceReleased = std::function<bool(std::wstring_view)>;
 //! UI-thread-only observer. False means its owner has been revoked or destroyed.
 using SenpReadonlyOwnerStyleSink = std::function<bool(const theme::ThemePalette&, const LOGFONT&, unsigned int)>;
 
+//! Editor-side view of the account a profile has adopted, as the control side
+//! last answered it. It mirrors the wire vocabulary rather than reusing it, so
+//! this header does not depend on the control IPC contract. Unknown means the
+//! question has not been answered yet, which is not a signed-out account.
+enum class SenpToolAccountState : std::uint8_t {
+	Unknown,
+	Checking,
+	Disconnected,
+	Connected,
+	ReauthenticationRequired,
+	Unavailable,
+};
+
+//! The account fence a window synchronizes its extensions under. A zero
+//! generation carries no authority, and only `state` says why it is zero.
+struct SenpToolAccount {
+	std::int64_t generation = 0;
+	SenpToolAccountState state = SenpToolAccountState::Unknown;
+};
+
 /*!
 	@brief Nonblocking tool-read seam between one owner target and the broker.
 
@@ -45,6 +65,23 @@ public:
 	//! Revocation obligation: no completion of this owner may be routed after it
 	//! returns.
 	virtual void CancelAll(const senp::ContributionOwnerIdentity& owner) noexcept = 0;
+
+	/*!
+		@brief The account fence every read through this seam is admitted under.
+
+		It is not an owner concern and an owner target never calls it. It lives
+		here because this seam is the only handle the window holds on the
+		control connection, and the adopted account generation decides whether
+		any read over that connection can be authorized at all.
+
+		The answer is whatever has already settled; like every other method here
+		it must not wait on the connection. A seam that has learned nothing
+		answers Unknown with generation zero, which is fail-closed.
+	*/
+	[[nodiscard]] virtual SenpToolAccount Account() const noexcept = 0;
+	//! Publishes a refresh of that answer without waiting for it. The window
+	//! calls it on its own cadence, so an implementation owns the rate limit.
+	virtual void RefreshAccount() noexcept = 0;
 };
 
 enum class SenpReadonlyOwnerTargetState : std::uint8_t {
