@@ -378,6 +378,24 @@ TEST(SenpGitHubToolExecutor, PublishesOneFetchedPageAsAReadableResource)
 	EXPECT_FALSE(fixture.Executor().TakeCompleted(scope));
 }
 
+TEST(SenpGitHubToolExecutor, AnswersAnItemReadInTheSameEnvelopeAsAPage)
+{
+	Fixture fixture;
+	fixture.CredentialValue().Set("HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n\r\n"
+		"{\"id\":11,\"number\":7}");
+	const SenpToolReadCommand detail{ L"issue-detail:7", L"github", L"repositoryRead",
+		{ { L"shape", L"issue" }, { L"id", L"7" } } };
+	const auto completed = fixture.Fetch(Scope(), detail);
+	ASSERT_TRUE(completed);
+	EXPECT_EQ(effect::CompletionStatus::Succeeded, completed->status);
+	// One item is answered exactly the way one page is, member for member. The
+	// extension that read this completion as though it were the item parsed
+	// nothing, and said so only against real data: its own canned answers were
+	// the bare object this executor never sends.
+	EXPECT_EQ(LR"({"bytes":20,"httpStatus":200,"page":1,"resource":")"
+		+ ResourceHandle(*completed) + LR"(","body":{"id":11,"number":7}})", completed->data);
+}
+
 TEST(SenpGitHubToolExecutor, AnswersTheAdoptedAccountGenerationWithoutAnExecutionScope)
 {
 	Fixture fixture;

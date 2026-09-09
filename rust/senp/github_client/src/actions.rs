@@ -2,7 +2,9 @@
 
 pub mod jobs;
 
-use super::{bounded_text, strict_json, ParseError, MAXIMUM_PAGE_ITEMS, MAXIMUM_RESPONSE_BYTES};
+use super::{
+    bounded_text, item_body, strict_json, ParseError, MAXIMUM_PAGE_ITEMS, MAXIMUM_RESPONSE_BYTES,
+};
 use serde::Deserialize;
 use std::collections::BTreeSet;
 
@@ -172,7 +174,7 @@ pub fn parse_run(data: &str) -> Result<Run, ParseError> {
     if data.len() > MAXIMUM_RESPONSE_BYTES {
         return Err(ParseError::LimitExceeded);
     }
-    let value: Run = strict_json(data)?;
+    let value: Run = item_body(data)?;
     if !valid_run(&value) {
         return Err(ParseError::InvalidItem);
     }
@@ -182,6 +184,7 @@ pub fn parse_run(data: &str) -> Result<Run, ParseError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::item_completion;
 
     const WORKFLOW: &str = r#"{"id":31,"name":"Build","path":".github/workflows/build.yml","state":"disabled_manually","html_url":"https://github.com/o/r/actions/workflows/build.yml"}"#;
     const RUN: &str = r#"{"id":51,"workflow_id":31,"run_number":8,"run_attempt":2,"name":"Build","display_title":"Build changes","event":"push","head_branch":"main","head_sha":"abcd","status":"in_progress","conclusion":null,"created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-02T00:00:00Z","run_started_at":null,"html_url":"https://github.com/o/r/actions/runs/51"}"#;
@@ -204,7 +207,7 @@ mod tests {
 
     #[test]
     fn run_attempt_and_null_or_unknown_status_are_not_conflated() {
-        let run = parse_run(RUN).unwrap();
+        let run = parse_run(&item_completion(RUN)).unwrap();
         assert_eq!(
             (run.id, run.workflow_id, run.run_number, run.run_attempt),
             (51, 31, 8, 2)
@@ -213,11 +216,11 @@ mod tests {
         let changed = RUN
             .replace("in_progress", "brand_new_state")
             .replace("\"head_branch\":\"main\"", "\"head_branch\":null");
-        let run = parse_run(&changed).unwrap();
+        let run = parse_run(&item_completion(&changed)).unwrap();
         assert_eq!(run.summary(), "unknown (brand_new_state)");
         assert_eq!(run.head_branch, None);
         assert_eq!(
-            parse_run(&RUN.replace("in_progress", "completed"))
+            parse_run(&item_completion(&RUN.replace("in_progress", "completed")))
                 .unwrap()
                 .summary(),
             "completed / conclusion unavailable"
@@ -236,11 +239,11 @@ mod tests {
             ("https://", "file://"),
             ("\"id\":51", "\"id\":51,\"id\":52"),
         ] {
-            assert!(parse_run(&RUN.replace(from, to)).is_err());
+            assert!(parse_run(&item_completion(&RUN.replace(from, to))).is_err());
         }
         assert!(parse_runs(r#"{"body":[],"nextPage":2}"#).is_err());
         assert!(parse_runs(&page(RUN).replace("\"total_count\":2", "\"total_count\":0")).is_err());
-        assert!(parse_run(&(RUN.to_owned() + " trailing")).is_err());
+        assert!(parse_run(&(item_completion(RUN) + " trailing")).is_err());
         assert_eq!(
             parse_run(&"x".repeat(MAXIMUM_RESPONSE_BYTES + 1)),
             Err(ParseError::LimitExceeded)

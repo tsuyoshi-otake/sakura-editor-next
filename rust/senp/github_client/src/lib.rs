@@ -317,6 +317,34 @@ impl<'de> Deserialize<'de> for NoDuplicateJson {
     }
 }
 
+/// Every `repositoryRead` answer arrives inside one envelope: the tool states
+/// the transfer it made - byte count, page number, the handle of the resource
+/// holding the raw response - and carries the API response itself under `body`.
+/// An item read is answered exactly the way a page read is, so unwrapping it is
+/// not optional. Parsing the envelope as though it were the item is how a real
+/// detail read fails with the response already in hand.
+#[derive(Deserialize)]
+struct ItemEnvelope<T> {
+    body: T,
+}
+
+pub(crate) fn item_body<T: DeserializeOwned>(data: &str) -> Result<T, ParseError> {
+    let envelope: ItemEnvelope<T> = strict_json(data)?;
+    Ok(envelope.body)
+}
+
+/// Wraps one API object the way `CSenpGitHubToolExecutor::Publish` answers a
+/// detail read. It exists so the tests on both sides of the boundary say the
+/// envelope once, next to the parser that unwraps it: a test that feeds a bare
+/// API object proves the object parses and nothing about the message an
+/// extension is actually handed.
+pub fn item_completion(body: &str) -> String {
+    format!(
+        r#"{{"bytes":{},"httpStatus":200,"page":1,"body":{body}}}"#,
+        body.len()
+    )
+}
+
 fn strict_json<T: DeserializeOwned>(data: &str) -> Result<T, ParseError> {
     let mut deserializer = serde_json::Deserializer::from_str(data);
     let value =
@@ -446,7 +474,7 @@ pub fn parse_issue_detail(data: &str) -> Result<IssueDetail, ParseError> {
     if data.len() > MAXIMUM_RESPONSE_BYTES {
         return Err(ParseError::LimitExceeded);
     }
-    let value: ApiIssue = strict_json(data)?;
+    let value: ApiIssue = item_body(data)?;
     if matches!(value.pull_request, PullRequestMarker::Present) || !valid_issue(&value) {
         return Err(ParseError::InvalidItem);
     }
@@ -513,7 +541,7 @@ pub fn parse_comment_detail(data: &str) -> Result<Comment, ParseError> {
     if data.len() > MAXIMUM_RESPONSE_BYTES {
         return Err(ParseError::LimitExceeded);
     }
-    let value: ApiComment = strict_json(data)?;
+    let value: ApiComment = item_body(data)?;
     if value.id == 0
         || !bounded_text(&value.user.login, 128)
         || value.body.len() > MAXIMUM_BODY_BYTES
@@ -568,7 +596,7 @@ pub fn parse_pull_request_detail(data: &str) -> Result<PullRequestDetail, ParseE
     if data.len() > MAXIMUM_RESPONSE_BYTES {
         return Err(ParseError::LimitExceeded);
     }
-    let value: ApiPullRequest = strict_json(data)?;
+    let value: ApiPullRequest = item_body(data)?;
     if !valid_pull_request(&value) || value.comments.is_none() {
         return Err(ParseError::InvalidItem);
     }
@@ -700,17 +728,37 @@ mod tests {
         assert_eq!(page.next_page, Some(2));
     }
 
+    /// The completion below is the exact shape `Publish` writes: the transfer
+    /// it made, optionally the text resource holding the raw response, and the
+    /// API object under `body`. None of those transfer members belong to the
+    /// object, and the object alone is a message no read ever delivers.
+    #[test]
+    fn a_detail_read_arrives_in_the_same_envelope_a_page_read_does() {
+        const ISSUE: &str = r#"{"id":11,"number":7,"title":"First issue","state":"open","user":{"login":"octocat"},"labels":[],"html_url":"https://github.com/o/r/issues/7","comments":0,"body":"Text","created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-02T00:00:00Z"}"#;
+        let completion = format!(
+            r#"{{"bytes":{},"httpStatus":200,"page":1,"resource":"text:9:1","nextPage":2,"etag":"W/x","body":{ISSUE}}}"#,
+            ISSUE.len()
+        );
+        let issue = parse_issue_detail(&completion).unwrap();
+        assert_eq!(issue.issue.number, 7);
+        assert_eq!(issue.body.as_deref(), Some("Text"));
+        // An issue carries a "body" member of its own - its markdown text - so a
+        // bare object does not read as an empty envelope. It fails, and every
+        // real detail read failed the same way until the parser was corrected.
+        assert!(parse_issue_detail(ISSUE).is_err());
+    }
+
     #[test]
     fn parses_issue_body_and_paged_comments_with_explicit_empty_values() {
         let detail = r#"{"id":11,"number":7,"title":"First issue","state":"open","user":{"login":"octocat"},"labels":[],"html_url":"https://github.com/o/r/issues/7","comments":1,"body":null,"created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-02T00:00:00Z"}"#;
-        let issue = parse_issue_detail(detail).unwrap();
+        let issue = parse_issue_detail(&item_completion(detail)).unwrap();
         assert_eq!(issue.body, None);
         assert_eq!(issue.issue.comments, 1);
 
         let page = parse_comment_page(r#"{"body":[{"id":91,"user":{"login":"hubot"},"body":"A comment","html_url":"https://github.com/o/r/issues/7#issuecomment-91","created_at":"2026-09-02T01:00:00Z","updated_at":"2026-09-02T01:00:00Z"}],"nextPage":2}"#).unwrap();
         assert_eq!(page.comments.len(), 1);
         assert_eq!(page.next_page, Some(2));
-        assert_eq!(parse_comment_detail(r#"{"id":91,"user":{"login":"hubot"},"body":"A comment","html_url":"https://github.com/o/r/issues/7#issuecomment-91","created_at":"2026-09-02T01:00:00Z","updated_at":"2026-09-02T01:00:00Z"}"#).unwrap(), page.comments[0]);
+        assert_eq!(parse_comment_detail(&item_completion(r#"{"id":91,"user":{"login":"hubot"},"body":"A comment","html_url":"https://github.com/o/r/issues/7#issuecomment-91","created_at":"2026-09-02T01:00:00Z","updated_at":"2026-09-02T01:00:00Z"}"#)).unwrap(), page.comments[0]);
     }
 
     #[test]
@@ -742,7 +790,7 @@ mod tests {
             .replace("\"merged_at\":null", "\"merged_at\":\"2026-09-03T00:00:00Z\"")
             .replace("\"repo\":{\"full_name\":\"fork/project\"}", "\"repo\":null")
             .replace("\"draft\":false", "\"draft\":false,\"body\":null,\"created_at\":\"2026-09-01T00:00:00Z\",\"updated_at\":\"2026-09-03T00:00:00Z\"");
-        let pull = parse_pull_request_detail(&detail).unwrap();
+        let pull = parse_pull_request_detail(&item_completion(&detail)).unwrap();
         assert_eq!(pull.pull_request.state, IssueState::Closed);
         assert_eq!(
             pull.pull_request.merged_at.as_deref(),

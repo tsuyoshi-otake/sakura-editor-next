@@ -430,6 +430,7 @@ fn job_document(identity: Identity, job: Job) -> Effect {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sakura_senp_github_client::item_completion;
 
     const JOB: &str = r#"{"id":71,"run_id":51,"run_attempt":2,"name":"Build (Windows)","status":"in_progress","conclusion":null,"started_at":null,"completed_at":null,"html_url":"https://github.com/o/r/actions/runs/51/job/71","head_sha":"abcd","runner_id":null,"runner_name":null,"runner_group_id":null,"runner_group_name":null,"labels":[],"steps":[{"number":7,"name":"Compile","status":"queued","conclusion":null,"started_at":null,"completed_at":null}]}"#;
 
@@ -487,7 +488,7 @@ mod tests {
         };
         assert_eq!(read.arguments[0].value, "job");
         assert_eq!(read.arguments[1].value, "71");
-        let effect = complete(&completion("jobdetail:51:2:71", JOB.into())).unwrap();
+        let effect = complete(&completion("jobdetail:51:2:71", item_completion(JOB))).unwrap();
         let Effect::PublishDocument(document) = effect else {
             panic!()
         };
@@ -499,11 +500,11 @@ mod tests {
             table.rows[0].cells,
             ["7", "Compile", "queued", "not started", "not completed"]
         );
-        let effect = complete(&completion("steps:w:51:2:71:1", JOB.into())).unwrap();
+        let effect = complete(&completion("steps:w:51:2:71:1", item_completion(JOB))).unwrap();
         assert_eq!(page(&effect).items[0].id, "joblog:51:2:71");
         assert_eq!(page(&effect).items[1].id, "step:51:2:71:7");
         assert_eq!(page(&effect).items[1].description, "queued");
-        let effect = complete(&completion("jobdetail:51:1:71", JOB.into())).unwrap();
+        let effect = complete(&completion("jobdetail:51:1:71", item_completion(JOB))).unwrap();
         assert!(
             matches!(effect,Effect::PublishDocument(doc) if doc.title=="GitHub Actions read failed")
         );
@@ -531,7 +532,7 @@ mod tests {
             PageStatus::Failed
         );
         assert!(document_identity("github-actions-job:51:2:../72").is_none());
-        let job = parse_job(&JOB.replace("in_progress", "new_state")).unwrap();
+        let job = parse_job(&item_completion(&JOB.replace("in_progress", "new_state"))).unwrap();
         assert_eq!(job_item(job).description, "unknown (new_state)");
     }
 
@@ -605,7 +606,7 @@ mod tests {
     #[test]
     fn step_pages_are_bounded_and_use_numbers_instead_of_names() {
         let (identity, _) = document_identity("github-actions-job:51:2:71").unwrap();
-        let step = parse_job(JOB).unwrap().steps.remove(0);
+        let step = parse_job(&item_completion(JOB)).unwrap().steps.remove(0);
         let steps: Vec<_> = (1..=21)
             .map(|number| Step {
                 number,

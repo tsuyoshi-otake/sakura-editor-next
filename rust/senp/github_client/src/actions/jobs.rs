@@ -1,8 +1,8 @@
 //! Jobs have database identities; steps have numbers scoped to one job.
 
 use super::{
-    bounded_text, check_page, state_summary, strict_json, valid_optional, valid_url, Envelope,
-    Page, ParseError, MAXIMUM_PAGE_ITEMS, MAXIMUM_RESPONSE_BYTES,
+    bounded_text, check_page, item_body, state_summary, strict_json, valid_optional, valid_url,
+    Envelope, Page, ParseError, MAXIMUM_PAGE_ITEMS, MAXIMUM_RESPONSE_BYTES,
 };
 use serde::Deserialize;
 use std::collections::BTreeSet;
@@ -112,7 +112,7 @@ pub fn parse_job(data: &str) -> Result<Job, ParseError> {
     if data.len() > MAXIMUM_RESPONSE_BYTES {
         return Err(ParseError::LimitExceeded);
     }
-    let mut job: Job = strict_json(data)?;
+    let mut job: Job = item_body(data)?;
     if !valid_job(&job) {
         return Err(ParseError::InvalidItem);
     }
@@ -123,6 +123,7 @@ pub fn parse_job(data: &str) -> Result<Job, ParseError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::item_completion;
 
     const JOB: &str = r#"{"id":71,"run_id":51,"run_attempt":2,"name":"Build (Windows)","status":"in_progress","conclusion":null,"started_at":null,"completed_at":null,"html_url":"https://github.com/o/r/actions/runs/51/job/71","head_sha":"abcd","runner_id":null,"runner_name":null,"runner_group_id":null,"runner_group_name":null,"labels":[],"steps":[{"number":7,"name":"Compile","status":"queued","conclusion":null,"started_at":null,"completed_at":null}]}"#;
 
@@ -135,20 +136,20 @@ mod tests {
         assert_eq!(page.items[0].name, page.items[1].name);
         assert_ne!(page.items[0].id, page.items[1].id);
         assert_eq!(page.next_page, Some(2));
-        let job = parse_job(JOB).unwrap();
+        let job = parse_job(&item_completion(JOB)).unwrap();
         assert_eq!(job.summary(), "in_progress");
         assert_eq!(job.runner_id, None);
         assert_eq!(job.steps[0].number, 7);
         assert_eq!(job.steps[0].summary(), "queued");
         assert_eq!(job.steps[0].started_at, None);
         assert_eq!(
-            parse_job(&JOB.replace("in_progress", "completed"))
+            parse_job(&item_completion(&JOB.replace("in_progress", "completed")))
                 .unwrap()
                 .summary(),
             "completed / conclusion unavailable"
         );
         assert_eq!(
-            parse_job(&JOB.replace("queued", "new_state"))
+            parse_job(&item_completion(&JOB.replace("queued", "new_state")))
                 .unwrap()
                 .steps[0]
                 .summary(),
@@ -163,7 +164,9 @@ mod tests {
         value["status"] = serde_json::json!("completed");
         value["conclusion"] = serde_json::json!("skipped");
         assert_eq!(
-            parse_job(&value.to_string()).unwrap().summary(),
+            parse_job(&item_completion(&value.to_string()))
+                .unwrap()
+                .summary(),
             "completed / skipped"
         );
         assert!(parse_jobs(r#"{"body":{"total_count":0,"jobs":[]}}"#)
@@ -180,12 +183,12 @@ mod tests {
             ("\"number\":7", "\"number\":0"),
             ("https://", "file://"),
         ] {
-            assert!(parse_job(&JOB.replace(from, to)).is_err());
+            assert!(parse_job(&item_completion(&JOB.replace(from, to))).is_err());
         }
         let mut value: serde_json::Value = serde_json::from_str(JOB).unwrap();
         let step = value["steps"][0].clone();
         value["steps"] = serde_json::json!([step, step]);
-        assert!(parse_job(&value.to_string()).is_err());
+        assert!(parse_job(&item_completion(&value.to_string())).is_err());
         assert_eq!(
             parse_job(&"x".repeat(MAXIMUM_RESPONSE_BYTES + 1)),
             Err(ParseError::LimitExceeded)

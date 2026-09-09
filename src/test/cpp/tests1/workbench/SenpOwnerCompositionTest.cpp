@@ -130,6 +130,25 @@ private:
 };
 
 /*!
+	@brief Builds the completion CSenpGitHubToolExecutor::Publish would send.
+
+	Publish answers every repositoryRead - a page and a single item alike - with
+	one envelope: the transfer it made, and the API response under "body". Canned
+	data that left the envelope out let a detail read pass here while every real
+	one failed to parse, so the fake tool target says the real shape or nothing.
+*/
+std::wstring Completion(const std::wstring_view body, const unsigned nextPage = 0)
+{
+	// The canned bodies are ASCII, so their length is the byte count Publish states.
+	std::wstring data = LR"({"bytes":)" + std::to_wstring(body.size())
+		+ LR"(,"httpStatus":200,"page":1)";
+	if (nextPage != 0) data += LR"(,"nextPage":)" + std::to_wstring(nextPage);
+	data += LR"(,"body":)";
+	data += body;
+	return data + L"}";
+}
+
+/*!
 	@brief Asserts the shape and ids the last repository read named.
 
 	The tool boundary admits a shape from a closed set plus the decimal ids that
@@ -649,12 +668,12 @@ TEST_F(SenpOwnerComposition, RealGithubIssuesAndPullRequestsReachNativeProviders
 	ASSERT_TRUE(pages.Create(m_owner));
 	CSenpOwnerComposition composition(catalog, pages);
 	auto target = std::make_shared<CompositionTargetState>();
-	target->SetToolResponse(LR"({"body":[{"id":11,"number":7,"title":"Visible issue","state":"open","user":{"login":"octocat"},"labels":[{"name":"bug"}],"html_url":"https://github.com/o/r/issues/7","comments":2},{"id":12,"number":8,"title":"Filtered PR","state":"open","user":{"login":"hubot"},"labels":[],"html_url":"https://github.com/o/r/pull/8","comments":0,"pull_request":{}}],"nextPage":2})");
-	target->EnqueueToolResponse(LR"({"id":11,"number":7,"title":"Visible issue","state":"open","user":{"login":"octocat"},"labels":[{"name":"bug"}],"html_url":"https://github.com/o/r/issues/7","comments":2,"body":"Issue body","created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-02T00:00:00Z"})");
-	target->EnqueueToolResponse(LR"({"body":[{"id":91,"user":{"login":"hubot"},"body":"Comment body","html_url":"https://github.com/o/r/issues/7#issuecomment-91","created_at":"2026-09-02T01:00:00Z","updated_at":"2026-09-02T01:00:00Z"}],"nextPage":2})");
-	target->EnqueueToolResponse(LR"({"id":91,"user":{"login":"hubot"},"body":"Comment body","html_url":"https://github.com/o/r/issues/7#issuecomment-91","created_at":"2026-09-02T01:00:00Z","updated_at":"2026-09-02T01:00:00Z"})");
-	target->EnqueueToolResponse(LR"({"body":[{"id":51,"number":8,"title":"Cross-fork change","state":"open","user":{"login":"contributor"},"labels":[{"name":"ready"}],"html_url":"https://github.com/base/project/pull/8","comments":0,"draft":false,"merged_at":null,"base":{"ref":"main","sha":"bbbb","repo":{"full_name":"base/project"}},"head":{"ref":"feature","sha":"hhhh","repo":{"full_name":"fork/project"}}}]})");
-	target->EnqueueToolResponse(LR"({"id":51,"number":8,"title":"Cross-fork change","state":"closed","user":{"login":"contributor"},"labels":[{"name":"ready"}],"html_url":"https://github.com/base/project/pull/8","comments":0,"draft":false,"merged_at":"2026-09-03T00:00:00Z","base":{"ref":"main","sha":"bbbb","repo":{"full_name":"base/project"}},"head":{"ref":"feature","sha":"hhhh","repo":{"full_name":"fork/project"}},"body":"Pull request body","created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-03T00:00:00Z"})");
+	target->SetToolResponse(Completion(LR"([{"id":11,"number":7,"title":"Visible issue","state":"open","user":{"login":"octocat"},"labels":[{"name":"bug"}],"html_url":"https://github.com/o/r/issues/7","comments":2},{"id":12,"number":8,"title":"Filtered PR","state":"open","user":{"login":"hubot"},"labels":[],"html_url":"https://github.com/o/r/pull/8","comments":0,"pull_request":{}}])", 2));
+	target->EnqueueToolResponse(Completion(LR"({"id":11,"number":7,"title":"Visible issue","state":"open","user":{"login":"octocat"},"labels":[{"name":"bug"}],"html_url":"https://github.com/o/r/issues/7","comments":2,"body":"Issue body","created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-02T00:00:00Z"})"));
+	target->EnqueueToolResponse(Completion(LR"([{"id":91,"user":{"login":"hubot"},"body":"Comment body","html_url":"https://github.com/o/r/issues/7#issuecomment-91","created_at":"2026-09-02T01:00:00Z","updated_at":"2026-09-02T01:00:00Z"}])", 2));
+	target->EnqueueToolResponse(Completion(LR"({"id":91,"user":{"login":"hubot"},"body":"Comment body","html_url":"https://github.com/o/r/issues/7#issuecomment-91","created_at":"2026-09-02T01:00:00Z","updated_at":"2026-09-02T01:00:00Z"})"));
+	target->EnqueueToolResponse(Completion(LR"([{"id":51,"number":8,"title":"Cross-fork change","state":"open","user":{"login":"contributor"},"labels":[{"name":"ready"}],"html_url":"https://github.com/base/project/pull/8","comments":0,"draft":false,"merged_at":null,"base":{"ref":"main","sha":"bbbb","repo":{"full_name":"base/project"}},"head":{"ref":"feature","sha":"hhhh","repo":{"full_name":"fork/project"}}}])"));
+	target->EnqueueToolResponse(Completion(LR"({"id":51,"number":8,"title":"Cross-fork change","state":"closed","user":{"login":"contributor"},"labels":[{"name":"ready"}],"html_url":"https://github.com/base/project/pull/8","comments":0,"draft":false,"merged_at":"2026-09-03T00:00:00Z","base":{"ref":"main","sha":"bbbb","repo":{"full_name":"base/project"}},"head":{"ref":"feature","sha":"hhhh","repo":{"full_name":"fork/project"}},"body":"Pull request body","created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-03T00:00:00Z"})"));
 	std::map<std::wstring, std::shared_ptr<tree::SenpTreeProvider>, std::less<>> providers;
 	layout::WorkbenchViewContainerDescriptor container{
 		"github-pull-requests", "GitHub", layout::EViewContainerLocation::Sidebar, 6,
@@ -786,13 +805,13 @@ TEST_F(SenpOwnerComposition, RealGithubActionsReachNativeProviders)
 	ASSERT_TRUE(pages.Create(m_owner));
 	CSenpOwnerComposition composition(catalog, pages);
 	auto target = std::make_shared<CompositionTargetState>();
-	target->EnqueueToolResponse(LR"({"body":{"total_count":1,"workflows":[{"id":31,"name":"Build","path":".github/workflows/build.yml","state":"active","html_url":"https://github.com/o/r/actions/workflows/build.yml"}]}})");
-	target->EnqueueToolResponse(LR"({"body":{"total_count":1,"workflow_runs":[{"id":51,"workflow_id":31,"run_number":8,"run_attempt":2,"name":"Build","display_title":"Build changes","event":"push","head_branch":"main","head_sha":"abcd","status":"in_progress","conclusion":null,"created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-02T00:00:00Z","run_started_at":null,"html_url":"https://github.com/o/r/actions/runs/51"}]}})");
-	target->EnqueueToolResponse(LR"({"id":51,"workflow_id":31,"run_number":8,"run_attempt":2,"name":"Build","display_title":"Build changes","event":"push","head_branch":"main","head_sha":"abcd","status":"in_progress","conclusion":null,"created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-02T00:00:00Z","run_started_at":null,"html_url":"https://github.com/o/r/actions/runs/51"})");
-	target->EnqueueToolResponse(LR"({"id":51,"workflow_id":31,"run_number":8,"run_attempt":1,"name":"Build","display_title":"Build changes","event":"push","head_branch":"main","head_sha":"abcd","status":"in_progress","conclusion":null,"created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-02T00:00:00Z","run_started_at":null,"html_url":"https://github.com/o/r/actions/runs/51"})");
-	target->EnqueueToolResponse(LR"json({"body":{"total_count":1,"jobs":[{"id":71,"run_id":51,"run_attempt":1,"name":"Build (Windows)","status":"in_progress","conclusion":null,"started_at":null,"completed_at":null,"html_url":"https://github.com/o/r/actions/runs/51/job/71","head_sha":"abcd","runner_id":null,"runner_name":null,"runner_group_id":null,"runner_group_name":null,"labels":[],"steps":[{"number":7,"name":"Compile","status":"queued","conclusion":null,"started_at":null,"completed_at":null}]}]}})json");
-	target->EnqueueToolResponse(LR"json({"id":71,"run_id":51,"run_attempt":1,"name":"Build (Windows)","status":"in_progress","conclusion":null,"started_at":null,"completed_at":null,"html_url":"https://github.com/o/r/actions/runs/51/job/71","head_sha":"abcd","runner_id":null,"runner_name":null,"runner_group_id":null,"runner_group_name":null,"labels":[],"steps":[{"number":7,"name":"Compile","status":"queued","conclusion":null,"started_at":null,"completed_at":null}]})json");
-	target->EnqueueToolResponse(LR"json({"id":71,"run_id":51,"run_attempt":1,"name":"Build (Windows)","status":"in_progress","conclusion":null,"started_at":null,"completed_at":null,"html_url":"https://github.com/o/r/actions/runs/51/job/71","head_sha":"abcd","runner_id":null,"runner_name":null,"runner_group_id":null,"runner_group_name":null,"labels":[],"steps":[{"number":7,"name":"Compile","status":"queued","conclusion":null,"started_at":null,"completed_at":null}]})json");
+	target->EnqueueToolResponse(Completion(LR"({"total_count":1,"workflows":[{"id":31,"name":"Build","path":".github/workflows/build.yml","state":"active","html_url":"https://github.com/o/r/actions/workflows/build.yml"}]})"));
+	target->EnqueueToolResponse(Completion(LR"({"total_count":1,"workflow_runs":[{"id":51,"workflow_id":31,"run_number":8,"run_attempt":2,"name":"Build","display_title":"Build changes","event":"push","head_branch":"main","head_sha":"abcd","status":"in_progress","conclusion":null,"created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-02T00:00:00Z","run_started_at":null,"html_url":"https://github.com/o/r/actions/runs/51"}]})"));
+	target->EnqueueToolResponse(Completion(LR"({"id":51,"workflow_id":31,"run_number":8,"run_attempt":2,"name":"Build","display_title":"Build changes","event":"push","head_branch":"main","head_sha":"abcd","status":"in_progress","conclusion":null,"created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-02T00:00:00Z","run_started_at":null,"html_url":"https://github.com/o/r/actions/runs/51"})"));
+	target->EnqueueToolResponse(Completion(LR"({"id":51,"workflow_id":31,"run_number":8,"run_attempt":1,"name":"Build","display_title":"Build changes","event":"push","head_branch":"main","head_sha":"abcd","status":"in_progress","conclusion":null,"created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-02T00:00:00Z","run_started_at":null,"html_url":"https://github.com/o/r/actions/runs/51"})"));
+	target->EnqueueToolResponse(Completion(LR"json({"total_count":1,"jobs":[{"id":71,"run_id":51,"run_attempt":1,"name":"Build (Windows)","status":"in_progress","conclusion":null,"started_at":null,"completed_at":null,"html_url":"https://github.com/o/r/actions/runs/51/job/71","head_sha":"abcd","runner_id":null,"runner_name":null,"runner_group_id":null,"runner_group_name":null,"labels":[],"steps":[{"number":7,"name":"Compile","status":"queued","conclusion":null,"started_at":null,"completed_at":null}]}]})json"));
+	target->EnqueueToolResponse(Completion(LR"json({"id":71,"run_id":51,"run_attempt":1,"name":"Build (Windows)","status":"in_progress","conclusion":null,"started_at":null,"completed_at":null,"html_url":"https://github.com/o/r/actions/runs/51/job/71","head_sha":"abcd","runner_id":null,"runner_name":null,"runner_group_id":null,"runner_group_name":null,"labels":[],"steps":[{"number":7,"name":"Compile","status":"queued","conclusion":null,"started_at":null,"completed_at":null}]})json"));
+	target->EnqueueToolResponse(Completion(LR"json({"id":71,"run_id":51,"run_attempt":1,"name":"Build (Windows)","status":"in_progress","conclusion":null,"started_at":null,"completed_at":null,"html_url":"https://github.com/o/r/actions/runs/51/job/71","head_sha":"abcd","runner_id":null,"runner_name":null,"runner_group_id":null,"runner_group_name":null,"labels":[],"steps":[{"number":7,"name":"Compile","status":"queued","conclusion":null,"started_at":null,"completed_at":null}]})json"));
 	std::map<std::wstring, std::shared_ptr<tree::SenpTreeProvider>, std::less<>> providers;
 	layout::WorkbenchViewContainerDescriptor container{
 		"github-actions", "GitHub Actions", layout::EViewContainerLocation::Sidebar, 6,

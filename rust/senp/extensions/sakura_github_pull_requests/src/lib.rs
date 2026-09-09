@@ -992,6 +992,7 @@ export!(GithubPullRequests);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sakura_senp_github_client::item_completion;
 
     const PULLS: &str = r#"{"body":[{"id":51,"number":8,"title":"Cross-fork change","state":"open","user":{"login":"contributor"},"labels":[{"name":"ready"}],"html_url":"https://github.com/base/project/pull/8","comments":2,"draft":false,"merged_at":null,"base":{"ref":"main","sha":"bbbb","repo":{"full_name":"base/project"}},"head":{"ref":"feature","sha":"hhhh","repo":{"full_name":"fork/project"}}}],"nextPage":2}"#;
 
@@ -1031,11 +1032,13 @@ mod tests {
         assert_eq!(page.status, PageStatus::Partial);
     }
 
+    /// Answers a pull detail read the way the tool does: the API object inside
+    /// the completion envelope, not on its own.
     fn pull_detail(draft: bool, merged: bool) -> String {
-        PULLS.strip_prefix("{\"body\":[").unwrap().strip_suffix("],\"nextPage\":2}").unwrap()
+        item_completion(&PULLS.strip_prefix("{\"body\":[").unwrap().strip_suffix("],\"nextPage\":2}").unwrap()
             .replace("\"state\":\"open\"", "\"state\":\"closed\"")
             .replace("\"merged_at\":null", if merged { "\"merged_at\":\"2026-09-03T00:00:00Z\"" } else { "\"merged_at\":null" })
-            .replace("\"draft\":false", &format!("\"draft\":{draft},\"body\":\"Ready\",\"created_at\":\"2026-09-01T00:00:00Z\",\"updated_at\":\"2026-09-03T00:00:00Z\""))
+            .replace("\"draft\":false", &format!("\"draft\":{draft},\"body\":\"Ready\",\"created_at\":\"2026-09-01T00:00:00Z\",\"updated_at\":\"2026-09-03T00:00:00Z\"")))
     }
 
     #[test]
@@ -1243,7 +1246,7 @@ mod tests {
         let effects = dispatch(Event::ToolCompleted(ToolCompleted {
             read_id: "issue-detail:7".into(),
             status: CompletionStatus::Succeeded,
-            data: detail.into(),
+            data: item_completion(detail),
             message: String::new(),
         }));
         let Effect::PublishDocument(document) = &effects[0] else {
@@ -1259,7 +1262,7 @@ mod tests {
         let effects = dispatch(Event::ToolCompleted(ToolCompleted {
             read_id: "comment-detail:91".into(),
             status: CompletionStatus::Succeeded,
-            data: comment.into(),
+            data: item_completion(comment),
             message: String::new(),
         }));
         let Effect::PublishDocument(document) = &effects[0] else {

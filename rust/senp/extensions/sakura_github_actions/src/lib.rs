@@ -646,6 +646,7 @@ export!(GithubActions);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sakura_senp_github_client::item_completion;
 
     const RUN: &str = r#"{"id":51,"workflow_id":31,"run_number":8,"run_attempt":2,"name":"Build","display_title":"Build changes","event":"push","head_branch":"main","head_sha":"abcd","status":"in_progress","conclusion":null,"created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-02T00:00:00Z","run_started_at":null,"html_url":"https://github.com/o/r/actions/runs/51"}"#;
 
@@ -771,7 +772,7 @@ mod tests {
         let state = State::default();
         let effect = state.complete(completed(
             "attempts:w:51:0:1",
-            RUN.replace("\"run_attempt\":2", "\"run_attempt\":21"),
+            item_completion(&RUN.replace("\"run_attempt\":2", "\"run_attempt\":21")),
         ));
         let first = page(&effect);
         assert_eq!(first.items.len(), 20);
@@ -780,7 +781,7 @@ mod tests {
         assert_eq!(first.next_cursor, "attempts:21:2");
         let effect = state.complete(completed(
             "attempts:w:51:21:2",
-            RUN.replace("\"run_attempt\":2", "\"run_attempt\":22"),
+            item_completion(&RUN.replace("\"run_attempt\":2", "\"run_attempt\":22")),
         ));
         let second = page(&effect);
         assert_eq!(second.items.len(), 1);
@@ -823,13 +824,13 @@ mod tests {
         assert_eq!(read.arguments[1].value, "51");
         assert_eq!(read.arguments[2].name, "attempt");
         assert_eq!(read.arguments[2].value, "1");
-        let effect = state.complete(completed("detail:51:1", RUN.into()));
+        let effect = state.complete(completed("detail:51:1", item_completion(RUN)));
         assert!(
             matches!(effect, Effect::PublishDocument(value) if value.title == "GitHub Actions read failed")
         );
         let effect = state.complete(completed(
             "detail:51:1",
-            RUN.replace("\"run_attempt\":2", "\"run_attempt\":1"),
+            item_completion(&RUN.replace("\"run_attempt\":2", "\"run_attempt\":1")),
         ));
         let Effect::PublishDocument(document) = effect else {
             panic!()
@@ -881,7 +882,7 @@ mod tests {
             PageStatus::Failed
         );
         assert_eq!(
-            page(&state.complete(completed("attempts:w:51:0:2", RUN.into()))).status,
+            page(&state.complete(completed("attempts:w:51:0:2", item_completion(RUN)))).status,
             PageStatus::Failed
         );
         for id in ["workflows:1", "runs:w:31:1", "attempts:w:51:0:1"] {

@@ -39,8 +39,13 @@ Wasm拡張に置く。GitHubへの通信とOAuth認証はGitHub CLI (`gh`) を�
 これは3つ目の常駐拡張ではなく、DTO変換・ページング・識別子・エラー解釈の共有コード。
 認証情報、実行キュー、生レスポンスのキャッシュは本体の共通サービスが所有する。
 
-E02でこの境界を`rust/senp/github_client`として実装した。初期のIssue page契約は
-`{"body":[...],"nextPage":2}`で、brokerがHTTP Linkから検証した次page番号だけを渡す。
+E02でこの境界を`rust/senp/github_client`として実装した。`repositoryRead`の完了は
+**page・単体を問わず同じ封筒**で届く:
+`{"bytes":N,"httpStatus":N,"page":N[,"resource":"…"][,"nextPage":N][,"etag":"…"][,"notModified":true][,"body":<生JSON>]}`。
+brokerが行った転送を述べ、GitHubの応答そのものは`body`の下に入る。`nextPage`はHTTP Linkから
+検証した次page番号だけを渡す。単体取得の応答をこの封筒ごと1件のDTOとして読もうとすると
+**実データでのみ**失敗する——封筒無しの缶詰データは拡張側の単体テストを通ってしまうので、
+`item_completion`が封筒を1箇所に書き、境界の両側のテストがそれを使う。
 SDKは未知GitHub fieldを許容するが、重複JSON member、必須fieldの欠落・型不整合、
 件数・文字列・response総量の超過を拒否する。Wasm側はtoken、HTTP header、redirect URL、
 repositoryを選ぶ自由形式URLを受け取らない。
