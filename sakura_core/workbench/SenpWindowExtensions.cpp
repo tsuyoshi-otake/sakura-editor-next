@@ -194,6 +194,13 @@ SenpExtensionActivationState CSenpWindowExtensions::RequestView(std::wstring_vie
 	return SenpExtensionActivationState::Unsupported;
 }
 
+bool CSenpWindowExtensions::PublishWorkspace(const senp::effect::WorkspaceChanged& workspace) noexcept
+{
+	if (m_closed || m_entered) return false;
+	WindowExtensionsCall call(m_entered);
+	return m_composition.PublishWorkspace(workspace);
+}
+
 bool CSenpWindowExtensions::Poll(senp::CSenpRuntimeSession::Time now) noexcept
 {
 	if (m_closed || m_entered) return false;

@@ -731,6 +731,10 @@ private:
 	//! Hands the window's workspace to the tool-reads seam, which is what lets
 	//! the control side resolve a repository for this window's reads at all.
 	void DeclareSenpWorkspace() noexcept;
+	//! Publishes the repositories this window knows about to the packages, which
+	//! is what lets a view render the branch the editor is actually on. Only a
+	//! change from the last published list reaches the wire.
+	void PublishSenpWorkspaceRepositories() noexcept;
 	//! The account generation the control side last answered for this window's
 	//! profile, or zero when it holds no usable account authority. It publishes
 	//! a refresh and never waits for one, so it is safe on the UI thread.
@@ -1314,6 +1318,11 @@ private:
 	//! caller the folder list; the seam re-declares a replaced connection itself.
 	std::uint64_t m_senpWorkspaceGeneration{};
 	std::uint64_t m_senpWorkspaceRevision{};
+	//! What the packages were last told about this window's repositories, as the
+	//! flattened list that was published. It identifies the payload rather than a
+	//! revision: the Source Control tool publishes state, not a version, so there
+	//! is no counter to compare instead.
+	std::wstring m_senpRepositorySignature;
 	bool m_senpWindowExtensionsActive{};
 	std::vector<std::function<bool(const theme::ThemePalette&, const LOGFONT&, unsigned int)>> m_senpStyleSinks;
 	//! One text pump per owner. False means that owner is gone, which is also

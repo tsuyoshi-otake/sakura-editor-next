@@ -74,6 +74,12 @@ senp::OwnerRequestAdmission CSenpEffectCoordinator::SubmitVisibility(std::wstrin
 	return SubmitEvent(senp::effect::VisibilityChanged{ std::move(viewId), visible }, deadline);
 }
 
+senp::OwnerRequestAdmission CSenpEffectCoordinator::SubmitWorkspace(
+	senp::effect::WorkspaceChanged workspace, const senp::CSenpRuntimeSession::Time deadline) noexcept
+{
+	return SubmitEvent(std::move(workspace), deadline);
+}
+
 senp::OwnerRequestAdmission CSenpEffectCoordinator::SubmitDerived(
 	const senp::effect::OperationContext& request, senp::effect::ToolCompleted completed,
 	const senp::CSenpRuntimeSession::Time deadline) noexcept

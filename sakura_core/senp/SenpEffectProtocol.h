@@ -249,5 +249,11 @@ struct Envelope final {
 [[nodiscard]] bool Validate(const Envelope& envelope);
 //! Validate an already-decoded document without copying its effect graph.
 [[nodiscard]] bool ValidateDocument(const PublishDocument& document);
+//! Validate a workspace payload before anything submits it as an event. The
+//! window builds one out of live workspace and Source Control state, and a value
+//! the wire would refuse has to be caught where it is built: an admission that
+//! fails at the request broker is indistinguishable from the owner going away,
+//! so a host-side mistake would read as a runtime fault.
+[[nodiscard]] bool ValidateWorkspace(const WorkspaceChanged& workspace);
 
 } // namespace senp::effect

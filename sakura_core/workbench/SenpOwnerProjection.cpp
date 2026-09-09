@@ -76,6 +76,18 @@ std::shared_ptr<tree::SenpTreeProvider> CSenpOwnerProjection::Tree(std::wstring_
 	return found == m_trees.end() ? nullptr : found->second;
 }
 
+bool CSenpOwnerProjection::PublishWorkspace(senp::effect::WorkspaceChanged workspace) noexcept
+{
+	if (m_closed || m_closeRequested) return false;
+	if (!senp::effect::ValidateWorkspace(workspace)) return false;
+	try {
+		m_workspace = std::move(workspace);
+		return true;
+	} catch (...) {
+		return false;
+	}
+}
+
 bool CSenpOwnerProjection::Publish(senp::InvocationResult result) noexcept
 {
 	return !m_closed && m_coordinator->Publish(std::move(result));
@@ -100,6 +112,20 @@ ESenpOwnerProjectionStatus CSenpOwnerProjection::Pump(const senp::CSenpRuntimeSe
 	}
 	bool applied = drained.Status() == ESenpEffectDrainStatus::Applied;
 	try {
+	if (m_workspace) {
+		const auto admission = m_coordinator->SubmitWorkspace(*m_workspace,
+			now + senp::CSenpRuntimeSession::kMaximumLifetime);
+		if (admission.Status() == senp::AdmissionStatus::Accepted) {
+			m_workspace.reset();
+			applied = true;
+		} else if (admission.Status() != senp::AdmissionStatus::Busy) {
+			// The payload was validated when it was queued, so a refusal here is
+			// the owner generation ending rather than a bad snapshot. Dropping it
+			// keeps a retired owner from retrying the same event every turn; the
+			// window republishes into the owner that replaces this one.
+			m_workspace.reset();
+		}
+	}
 	while (!m_documentQueue.empty()) {
 		auto resource = std::move(m_documentQueue.front());
 		m_documentQueue.erase(m_documentQueue.begin());
@@ -294,6 +320,7 @@ void CSenpOwnerProjection::FinishClose() noexcept
 	m_runtime->Clear();
 	for (auto& [id, provider] : m_trees) provider->Close();
 	m_coordinator->Close();
+	m_workspace.reset();
 	m_documents.clear();
 	m_documentQueue.clear();
 	m_toolCompletions.clear();

@@ -71,6 +71,12 @@ public:
 		senp::CSenpRuntimeSession::Time deadline) noexcept;
 	[[nodiscard]] senp::OwnerRequestAdmission SubmitVisibility(std::wstring viewId,
 		bool visible, senp::CSenpRuntimeSession::Time deadline) noexcept;
+	//! One complete workspace snapshot. The payload replaces whatever the
+	//! extension last heard rather than amending it, so a repository that is gone
+	//! is expressed by its absence and no retraction event is needed.
+	[[nodiscard]] senp::OwnerRequestAdmission SubmitWorkspace(
+		senp::effect::WorkspaceChanged workspace,
+		senp::CSenpRuntimeSession::Time deadline) noexcept;
 	[[nodiscard]] senp::OwnerRequestAdmission SubmitDerived(
 		const senp::effect::OperationContext& request, senp::effect::ToolCompleted completed,
 		senp::CSenpRuntimeSession::Time deadline) noexcept;

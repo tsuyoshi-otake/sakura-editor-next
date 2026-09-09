@@ -187,6 +187,32 @@ TEST(SenpOwnerProjection, RoutesTreeCommandOpenAndDocumentAsOneOwnerCohort)
 	projection.Close(); EXPECT_EQ(1, target.Revokes());
 }
 
+TEST(SenpOwnerProjection, WorkspaceSnapshotsReplaceUnsentOnesAndRefuseInvalidPayloads)
+{
+	Fixture fixture; const auto owner = fixture.Activate(); Target target;
+	CSenpOwnerProjection projection(fixture.Owners(), owner, target); fixture.Port().Bind(projection);
+	// A root id the wire's charset refuses never reaches the queue. Catching it
+	// where it is published keeps a host-side mistake from arriving later as an
+	// admission failure, which is indistinguishable from the owner going away.
+	EXPECT_FALSE(projection.PublishWorkspace({ { { L"root 0", L"main", {} } } }));
+	EXPECT_TRUE(projection.PublishWorkspace({ { { L"root:0", L"main", {} } } }));
+	// The event carries the whole workspace, so an unsent snapshot is replaced
+	// rather than queued behind: delivering the older list after the newer one
+	// would be wrong rather than merely late.
+	EXPECT_TRUE(projection.PublishWorkspace({ { { L"root:0", L"feature", {} } } }));
+	EXPECT_EQ(ESenpOwnerProjectionStatus::Applied, projection.Pump(Clock::now()));
+	ASSERT_EQ(1U, fixture.Process().Events().size());
+	const auto* published = std::get_if<senp::effect::WorkspaceChanged>(&fixture.Process().Events()[0]);
+	ASSERT_NE(nullptr, published);
+	ASSERT_EQ(1U, published->repositories.size());
+	EXPECT_EQ(L"feature", published->repositories[0].branch);
+	// Nothing is retained once it is submitted, so a turn with no new snapshot
+	// republishes nothing.
+	EXPECT_EQ(ESenpOwnerProjectionStatus::Idle, projection.Pump(Clock::now()));
+	EXPECT_EQ(1U, fixture.Process().Events().size());
+	projection.Close(); EXPECT_EQ(1, target.Revokes());
+}
+
 TEST(SenpOwnerProjection, DocumentFailureTerminatesAndForeignEffectRevokesCohort)
 {
 	Fixture fixture; const auto owner = fixture.Activate(); Target target;

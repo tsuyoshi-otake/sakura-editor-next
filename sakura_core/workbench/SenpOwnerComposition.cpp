@@ -64,6 +64,14 @@ senp::OwnerChangeResult CSenpOwnerComposition::Activate(senp::EffectRuntimeLaunc
 	}
 }
 
+bool CSenpOwnerComposition::PublishWorkspace(const senp::effect::WorkspaceChanged& workspace) noexcept
+{
+	if (m_closed || m_entered) return false;
+	Call call(m_entered);
+	try { return m_publications.PublishWorkspace(workspace); }
+	catch (...) { return false; }
+}
+
 bool CSenpOwnerComposition::Poll(const senp::CSenpRuntimeSession::Time now) noexcept
 {
 	if (m_closed || m_entered) return false;

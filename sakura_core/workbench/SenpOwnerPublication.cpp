@@ -137,6 +137,7 @@ public:
 		if (m_declaredTrees) {
 			if (!m_declaredTrees->CanCommit() || !m_declaredTrees->Commit()) return false;
 			m_committed = true;
+			SeedWorkspace();
 			return true;
 		}
 		if (!m_catalogChange || !m_pageChange
@@ -147,7 +148,26 @@ public:
 		const auto catalog = m_hub.m_contributions.Commit(std::move(m_catalogChange));
 		if (catalog != CatalogStatus::Committed) return false;
 		m_committed = true;
+		SeedWorkspace();
 		return true;
+	}
+
+	//! Delivers the workspace the hub already holds to a publication that has
+	//! just committed. Without it a package that activates between two workspace
+	//! changes hears nothing at all, and one that reads the current branch fails
+	//! closed for the rest of the session.
+	void SeedWorkspace() noexcept
+	{
+		if (m_hub.m_workspace && m_projection) (void)m_projection->PublishWorkspace(*m_hub.m_workspace);
+	}
+
+	//! True when the snapshot reached everything that could receive it. A
+	//! publication that has not committed is not yet an audience: it is seeded
+	//! from the hub when it commits, so silence here is not a refusal.
+	bool PublishWorkspace(const senp::effect::WorkspaceChanged& workspace) noexcept
+	{
+		if (m_closed || !m_committed || !m_projection) return true;
+		return m_projection->PublishWorkspace(workspace);
 	}
 
 	bool Apply(senp::InvocationResult result) noexcept
@@ -257,6 +277,24 @@ std::unique_ptr<senp::ISenpOwnerPublication> CSenpOwnerPublicationHub::Prepare(
 	} catch (...) {
 		return {};
 	}
+}
+
+bool CSenpOwnerPublicationHub::PublishWorkspace(const senp::effect::WorkspaceChanged& workspace) noexcept
+{
+	if (m_closed || !senp::effect::ValidateWorkspace(workspace)) return false;
+	try {
+		m_workspace = workspace;
+	} catch (...) {
+		return false;
+	}
+	bool accepted = true;
+	for (auto it = m_publications.begin(); it != m_publications.end();) {
+		auto state = it->lock();
+		if (!state) { it = m_publications.erase(it); continue; }
+		if (!state->PublishWorkspace(workspace)) accepted = false;
+		++it;
+	}
+	return accepted;
 }
 
 bool CSenpOwnerPublicationHub::Pump(const senp::CSenpRuntimeSession::Time now) noexcept

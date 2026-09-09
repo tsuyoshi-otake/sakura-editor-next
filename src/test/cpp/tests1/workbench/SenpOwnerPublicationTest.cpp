@@ -66,6 +66,11 @@ private:
 struct RuntimeLifecycle final {
 	int starts{}, stops{}, joins{}, destroyed{};
 	bool permitExit{ true };
+	//! Off by default: most of these tests want a runtime that admits nothing, so
+	//! that a publication's own bookkeeping is what they observe. A test that
+	//! needs to read the events themselves opts in.
+	bool admitEvents{};
+	std::vector<senp::effect::Event> events;
 	std::function<void()> onStop;
 };
 
@@ -84,8 +89,17 @@ public:
 		m_results.push_back({ context, true, senp::InvocationStatus::EffectsReady, {}, std::move(m_activation) });
 		return { senp::AdmissionStatus::Accepted, context.operationId };
 	}
-	senp::InvocationAdmission Submit(senp::effect::OperationContext, senp::effect::Event,
-		senp::CSenpRuntimeSession::Time) override { return { senp::AdmissionStatus::Busy }; }
+	senp::InvocationAdmission Submit(senp::effect::OperationContext context, senp::effect::Event event,
+		senp::CSenpRuntimeSession::Time) override
+	{
+		if (!m_lifecycle || !m_lifecycle->admitEvents) return { senp::AdmissionStatus::Busy };
+		// An admitted request needs a result, or the owner keeps waiting for one
+		// and the next turn is refused rather than merely quiet.
+		context.operationId = L"request." + std::to_wstring(++m_sequence);
+		m_lifecycle->events.push_back(std::move(event));
+		m_results.push_back({ context, false, senp::InvocationStatus::EffectsReady });
+		return { senp::AdmissionStatus::Accepted, context.operationId };
+	}
 	bool Cancel(std::wstring_view) override { return true; }
 	void Stop(senp::effect::StopReason) override
 	{
@@ -120,6 +134,7 @@ private:
 	std::deque<senp::InvocationResult> m_results;
 	senp::EffectRuntimeSnapshot m_state;
 	std::shared_ptr<RuntimeLifecycle> m_lifecycle;
+	std::int64_t m_sequence{};
 };
 
 struct DeclaredState final {
@@ -439,6 +454,67 @@ TEST_F(SenpOwnerPublicationTest, NativeDeclarationsPublishBeforeRuntimeAndSurviv
 	declarations.Close();
 	EXPECT_FALSE(pages.Contains("sample.senp")); EXPECT_TRUE(catalog.Snapshot().owners.empty());
 	EXPECT_EQ(SenpViewDeclarationStatus::Stopped, declarations.Register({ "sample.extension", 102 }, containers, views));
+	pages.Close();
+}
+
+TEST_F(SenpOwnerPublicationTest, WorkspaceSnapshotsSeedLateCommitsAndThenReachThemDirectly)
+{
+	layout::WorkbenchContributionRegistry catalog;
+	CDlgFuncList dialog;
+	viewcontainer::CViewContainerPages pages(dialog);
+	ASSERT_TRUE(pages.Create(m_owner));
+	CSenpViewDeclarations declarations(catalog, pages, m_owner,
+		[](std::wstring_view, bool) { return SenpExtensionActivationState::Preparing; },
+		[](std::string_view) { return true; });
+	const std::vector<layout::WorkbenchViewContainerDescriptor> containers{
+		{ "sample.senp", "Sample", layout::EViewContainerLocation::Sidebar, 10, "", false,
+			{ layout::EViewContainerLocation::Sidebar } } };
+	const std::vector<layout::WorkbenchViewDescriptor> views{
+		{ "sample.projects", "sample.senp", "Projects", 10, true, true, "senp.tree" } };
+	ASSERT_EQ(SenpViewDeclarationStatus::Registered,
+		declarations.Register({ "sample.extension", 100 }, containers, views));
+	auto lifecycle = std::make_shared<RuntimeLifecycle>();
+	lifecycle->admitEvents = true;
+	senp::CSenpContributionOwners owners([lifecycle](senp::EffectRuntimeLaunch launch) {
+		return std::make_unique<Runtime>(std::move(launch), std::vector<senp::effect::Effect>{}, lifecycle);
+	});
+	CSenpOwnerPublicationHub hub(owners, catalog, pages);
+	// Refused where it is published rather than where it would be admitted: a
+	// root id with a space is not one the wire's charset accepts.
+	EXPECT_FALSE(hub.PublishWorkspace({ { { L"root 0", L"main", {} } } }));
+	// Published while no owner exists at all, which is the ordering the window
+	// produces: the Source Control worker has a branch long before a package is
+	// activated. Without the hub retaining it, this package would start with no
+	// repositories and stay that way until the workspace next changed.
+	EXPECT_TRUE(hub.PublishWorkspace({ { { L"root:0", L"main", {} } } }));
+	auto target = std::make_shared<TargetState>();
+	auto change = owners.Prepare(Launch(), std::wstring(64, L'b'),
+		[&](const auto& candidate, const auto* previous) {
+			return hub.Prepare(candidate, previous, SenpOwnerPublicationOptions(
+				{ { views.front(), { "sample.open" } } }, std::make_unique<Target>(target),
+				[&](const auto& owner, auto trees) { return declarations.Bind(owner, std::move(trees)); }));
+		}, Clock::now());
+	ASSERT_EQ(senp::OwnerChangeStatus::Accepted, change.status);
+	owners.Poll(Clock::now());
+	ASSERT_TRUE(hub.Pump(Clock::now()));
+	ASSERT_EQ(1U, lifecycle->events.size());
+	const auto* seeded = std::get_if<senp::effect::WorkspaceChanged>(&lifecycle->events[0]);
+	ASSERT_NE(nullptr, seeded);
+	ASSERT_EQ(1U, seeded->repositories.size());
+	EXPECT_EQ(L"main", seeded->repositories[0].branch);
+
+	// Once committed, the publication is an audience in its own right.
+	EXPECT_TRUE(hub.PublishWorkspace({ { { L"root:0", L"feature", {} } } }));
+	owners.Poll(Clock::now());
+	ASSERT_TRUE(hub.Pump(Clock::now()));
+	ASSERT_EQ(2U, lifecycle->events.size());
+	const auto* replaced = std::get_if<senp::effect::WorkspaceChanged>(&lifecycle->events[1]);
+	ASSERT_NE(nullptr, replaced);
+	ASSERT_EQ(1U, replaced->repositories.size());
+	EXPECT_EQ(L"feature", replaced->repositories[0].branch);
+
+	hub.Close();
+	declarations.Close();
 	pages.Close();
 }
 

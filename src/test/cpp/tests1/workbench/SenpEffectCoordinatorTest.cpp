@@ -239,6 +239,34 @@ TEST(SenpEffectCoordinator, RoutesFailureAndMakesRejectedTargetTerminal)
 	EXPECT_TRUE(fixture.Owners().Revoke(owner.extensionId, senp::effect::StopReason::ProtocolError));
 }
 
+TEST(SenpEffectCoordinator, SubmitsWorkspaceSnapshotsAsCompleteRepositoryLists)
+{
+	Fixture fixture;
+	const auto owner = fixture.Activate();
+	Target target;
+	CSenpEffectCoordinator coordinator(fixture.Owners(), owner, target);
+	fixture.PublicationChannel().Bind(coordinator);
+	const auto admission = coordinator.SubmitWorkspace(
+		{ { { L"root:0", L"main", { { L"origin", L"https://example.invalid/repo.git" } } } } },
+		Clock::now() + 1s);
+	ASSERT_EQ(senp::AdmissionStatus::Accepted, admission.Status());
+	// The whole list travels, remotes included: the event replaces what the
+	// extension last heard rather than amending it.
+	ASSERT_EQ(1U, fixture.Process().Events().size());
+	const auto* event = std::get_if<senp::effect::WorkspaceChanged>(&fixture.Process().Events()[0]);
+	ASSERT_NE(nullptr, event);
+	ASSERT_EQ(1U, event->repositories.size());
+	EXPECT_EQ(L"root:0", event->repositories[0].rootId);
+	EXPECT_EQ(L"main", event->repositories[0].branch);
+	ASSERT_EQ(1U, event->repositories[0].remotes.size());
+	EXPECT_EQ(L"origin", event->repositories[0].remotes[0].name);
+	fixture.Owners().Poll(Clock::now());
+	EXPECT_EQ(ESenpEffectDrainStatus::Applied, coordinator.Drain(Clock::now()).Status());
+	// A workspace snapshot asks for nothing back, so its request is terminal on
+	// the turn it completes rather than waiting for a document to be published.
+	EXPECT_EQ(0U, coordinator.Snapshot().Requests());
+}
+
 TEST(SenpEffectCoordinator, ReentrantCloseDefersCleanupToTheDrainOwner)
 {
 	Fixture fixture;

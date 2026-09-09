@@ -105,6 +105,14 @@ public:
 		const senp::ContributionOwnerIdentity& candidate,
 		const senp::ContributionOwnerIdentity* previous,
 		SenpOwnerPublicationOptions options) noexcept;
+	//! Hands one workspace snapshot to every publication that has committed, and
+	//! retains it for the ones that have not: a package activated later would
+	//! otherwise start with no repositories and stay that way until the workspace
+	//! next changed. Nothing is submitted here - Pump owns submission - so this is
+	//! safe to call while the owner service is between turns. False means the
+	//! payload is not one the wire accepts, or that a committed publication
+	//! refused it.
+	[[nodiscard]] bool PublishWorkspace(const senp::effect::WorkspaceChanged& workspace) noexcept;
 	//! Must run after CSenpContributionOwners::Poll on the same UI thread.
 	[[nodiscard]] bool Pump(senp::CSenpRuntimeSession::Time now) noexcept;
 	void Close() noexcept;
@@ -116,6 +124,10 @@ private:
 	layout::WorkbenchContributionRegistry& m_contributions;
 	viewcontainer::CViewContainerPages& m_pages;
 	std::vector<std::weak_ptr<State>> m_publications;
+	//! The last workspace the window published, replayed into each publication as
+	//! it commits. It is state rather than a one-shot notification: the wire event
+	//! is a complete list, so the newest one is the whole truth.
+	std::optional<senp::effect::WorkspaceChanged> m_workspace;
 	bool m_closed{};
 };
 

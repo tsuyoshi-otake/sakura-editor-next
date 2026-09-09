@@ -33,6 +33,10 @@ public:
 		senp::CSenpRuntimeSession::Time now) noexcept;
 	[[nodiscard]] SenpExtensionActivationState RequestView(std::wstring_view viewId,
 		bool explicitRetry, senp::CSenpRuntimeSession::Time now) noexcept;
+	//! The window's current repositories, as the packages are allowed to see
+	//! them. Retained by the composition, so a package that activates later is
+	//! told the same thing rather than starting blind.
+	[[nodiscard]] bool PublishWorkspace(const senp::effect::WorkspaceChanged& workspace) noexcept;
 	[[nodiscard]] bool Poll(senp::CSenpRuntimeSession::Time now) noexcept;
 	[[nodiscard]] bool ApplyLayout(const layout::WorkbenchLayoutStateSnapshot& snapshot) noexcept;
 	[[nodiscard]] bool FocusView(std::string_view viewId) noexcept;

@@ -6226,6 +6226,44 @@ void CEditWnd::DeclareSenpWorkspace() noexcept try
 	// nothing. Neither is a reason to fail the window.
 }
 
+void CEditWnd::PublishSenpWorkspaceRepositories() noexcept try
+{
+	if (!m_senpWindowExtensionsActive || !m_senpWindowExtensions) return;
+	senp::effect::WorkspaceChanged workspace;
+	// Only a repository the editor has already read. The Source Control tool
+	// refreshes on its own worker, so this takes a value the window is holding
+	// rather than running git on the UI thread, and a root that is not a
+	// repository contributes no entry at all: the wire spells "no repositories"
+	// as an empty list, while one entry with an empty branch is what a detached
+	// HEAD looks like to the package that reads it.
+	if (m_scmTool != nullptr && m_scmTool->State().repository) {
+		// The checkout path is deliberately not on the wire. A package runs
+		// sandboxed and has no business learning where the user keeps the working
+		// copy; `rootId` only has to name the workspace root slot it belongs to,
+		// and the payload is a complete list, so nothing downstream needs the id
+		// to carry more than that.
+		workspace.repositories.push_back({ .rootId = L"root:0",
+			.branch = m_scmTool->State().branch });
+	}
+	std::wstring signature;
+	for (const auto& repository : workspace.repositories) {
+		signature += repository.rootId;
+		signature += L'\n';
+		signature += repository.branch;
+		signature += L'\n';
+	}
+	// An empty list is the state every package starts in, so the opening turns
+	// publish nothing and only a change from what was last published is sent.
+	if (signature == m_senpRepositorySignature) return;
+	// Recorded only once the composition holds it, so a refused publication is
+	// retried on the next turn instead of being remembered as delivered.
+	if (!m_senpWindowExtensions->PublishWorkspace(workspace)) return;
+	m_senpRepositorySignature = std::move(signature);
+} catch (...) {
+	// The packages keep answering for whatever they were last told, which is the
+	// state they are already in. Neither is a reason to fail the window.
+}
+
 std::int64_t CEditWnd::SenpAccountGeneration() noexcept
 {
 	// Null while this process holds no control-platform authority. Zero then
@@ -6251,6 +6289,9 @@ void CEditWnd::StopSenpWindowExtensions() noexcept
 	// counters would leave a new connection answering for no workspace at all.
 	m_senpWorkspaceGeneration = 0;
 	m_senpWorkspaceRevision = 0;
+	// The composition is released below, so the next one has heard nothing about
+	// this window's repositories either.
+	m_senpRepositorySignature.clear();
 	m_senpStyleSinks.clear();
 	m_senpTextPumps.clear();
 	if (m_senpWindowExtensions) {
@@ -16097,6 +16138,9 @@ void CEditWnd::OnEditTimer( void )
 	// repository for, so it is refreshed on the window's own cadence rather than
 	// only where a synchronization happens to run.
 	if (m_senpWindowExtensionsActive) DeclareSenpWorkspace();
+	// Before the poll, so a branch the Source Control worker published on the
+	// previous turn reaches the packages on this one rather than the next.
+	if (m_senpWindowExtensionsActive) PublishSenpWorkspaceRepositories();
 	if (m_senpWindowExtensionsActive
 		&& !m_senpWindowExtensions->Poll(std::chrono::steady_clock::now())) {
 		StopSenpWindowExtensions();

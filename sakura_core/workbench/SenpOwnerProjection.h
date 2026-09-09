@@ -68,6 +68,13 @@ public:
 	//! Call after contribution-owner Poll. It drains terminals, then admits queued
 	//! document requests. No method waits, performs I/O, or pumps window messages.
 	[[nodiscard]] ESenpOwnerProjectionStatus Pump(senp::CSenpRuntimeSession::Time now) noexcept;
+	//! Queues one workspace snapshot for this owner. A newer snapshot replaces an
+	//! unsent one: the event carries the whole workspace, so delivering an older
+	//! list after a newer one would be wrong rather than merely late. Submission
+	//! happens in Pump, where the request broker's back-pressure already applies
+	//! and where reentering the owner service is impossible. False means the
+	//! payload is not one the wire accepts, or that this projection is closing.
+	[[nodiscard]] bool PublishWorkspace(senp::effect::WorkspaceChanged workspace) noexcept;
 	[[nodiscard]] bool Publish(senp::InvocationResult result) noexcept;
 	[[nodiscard]] bool IsCurrent() const noexcept;
 	void Close() noexcept;
@@ -88,6 +95,7 @@ private:
 	std::shared_ptr<RuntimePort> m_runtime;
 	std::unique_ptr<CSenpEffectCoordinator> m_coordinator;
 	std::map<std::wstring, std::shared_ptr<tree::SenpTreeProvider>, std::less<>> m_trees;
+	std::optional<senp::effect::WorkspaceChanged> m_workspace;
 	std::vector<std::wstring> m_documentQueue;
 	std::map<std::wstring, std::pair<senp::effect::OperationContext, std::wstring>, std::less<>> m_documents;
 	std::map<std::wstring, senp::effect::OperationContext, std::less<>> m_toolReads;

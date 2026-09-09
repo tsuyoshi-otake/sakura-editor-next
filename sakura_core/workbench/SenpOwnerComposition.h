@@ -32,6 +32,10 @@ public:
 	[[nodiscard]] senp::OwnerChangeResult Activate(senp::EffectRuntimeLaunch launch,
 		std::wstring packageDigest, SenpOwnerPublicationFactory publication,
 		senp::CSenpRuntimeSession::Time now) noexcept;
+	//! Publishes one workspace snapshot to every owner this composition holds,
+	//! and retains it for owners that activate later. It queues only, so it never
+	//! reenters the owner service; the next Poll is what puts it on the wire.
+	[[nodiscard]] bool PublishWorkspace(const senp::effect::WorkspaceChanged& workspace) noexcept;
 	//! One bounded UI-thread tick. False means projection failure or a closed/busy composition.
 	[[nodiscard]] bool Poll(senp::CSenpRuntimeSession::Time now) noexcept;
 	[[nodiscard]] bool Revoke(std::wstring_view extensionId,
