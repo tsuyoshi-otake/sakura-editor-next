@@ -82,6 +82,23 @@ public:
 	//! Publishes a refresh of that answer without waiting for it. The window
 	//! calls it on its own cadence, so an implementation owns the rate limit.
 	virtual void RefreshAccount() noexcept = 0;
+
+	/*!
+		@brief Publishes the workspace the window holding this seam is open on.
+
+		It is here for the same reason Account is, and no owner target calls it
+		either: the control side resolves the repository a tool read answers for
+		from the folders the window declares, and this seam is the only handle
+		the window has on the connection that declaration travels over.
+
+		Folder identities only, in URI text. What they contain is read on the
+		control side from the folders themselves, so this claims nothing about
+		them. Like every other method here it must not wait on the connection,
+		and the window may call it on every turn: the rate limit belongs to the
+		implementation.
+	*/
+	virtual void DeclareWorkspace(std::uint64_t generation, std::uint64_t revision,
+		std::vector<std::wstring> folders) noexcept = 0;
 };
 
 enum class SenpReadonlyOwnerTargetState : std::uint8_t {

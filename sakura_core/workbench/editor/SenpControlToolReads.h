@@ -102,6 +102,23 @@ public:
 	[[nodiscard]] SenpToolAccount Account() const noexcept override;
 	void RefreshAccount() noexcept override;
 
+	/*!
+		@brief Publishes the workspace this window is open on.
+
+		The control side derives the repository a read answers for from the
+		folders declared here, and from nothing else: a window that declares none
+		is answered Unavailable rather than guessed for. Folder identities only -
+		what they resolve to is read from the remotes found there, so this claims
+		nothing about their contents.
+
+		Callable on every window turn. Only a declaration that differs from the
+		one this seam last published reaches the wire, so the cadence belongs
+		here rather than in each caller, and a declaration is re-sent on a new
+		connection because the broker binds it to the connection that made it.
+	*/
+	void DeclareWorkspace(std::uint64_t generation, std::uint64_t revision,
+		std::vector<std::wstring> folders) noexcept;
+
 	//! Terminal. It stops the client, joins the worker and drops every queue, so
 	//! no completion is routed afterwards.
 	void Stop() noexcept;
@@ -115,8 +132,10 @@ public:
 
 private:
 	struct Command {
-		//! Cancel carries only `read.readId`; Retire and Account carry neither.
-		enum class Kind : std::uint8_t { Start, Cancel, Retire, Account } kind{ Kind::Start };
+		//! Cancel carries only `read.readId`; Retire, Account and Workspace carry
+		//! neither. A Workspace command carries no declaration either: it only
+		//! wakes the worker, which reads the published one under the lock.
+		enum class Kind : std::uint8_t { Start, Cancel, Retire, Account, Workspace } kind{ Kind::Start };
 		senp::ContributionOwnerIdentity owner;
 		senp::effect::OperationContext context;
 		senp::effect::StartToolRead read;
@@ -183,6 +202,10 @@ private:
 	//! next refresh reach the wire without waiting out the cadence.
 	void Stale() noexcept;
 	[[nodiscard]] bool Ensure() noexcept;
+	//! Worker-side. Sends the published declaration when the connection has not
+	//! heard it. A connection that has is left alone: re-declaring the same
+	//! workspace would let a window drive the control side's refresh worker.
+	[[nodiscard]] bool Declare() noexcept;
 	//! Returns the live grant for this owner, minting one when the cached record
 	//! belongs to an earlier connection. Empty means the control side refused,
 	//! and `failure` then says whether that refusal was a host outage.
@@ -211,9 +234,15 @@ private:
 	std::chrono::steady_clock::time_point m_accountAskedAt{};
 	bool m_busy{};
 	bool m_stopped{};
+	//! The declaration the window has published, empty until it declares one.
+	platform::controlipc::ControlSenpRpcWorkspace m_workspace;
 	//! Worker-private: only the worker thread reads or writes it, and Stop joins
 	//! the worker before the client is destroyed.
 	std::vector<Grant> m_grants;
+	//! Worker-private, like the grants and for the same reason: a declaration
+	//! belongs to the connection it was made on, so the epoch is part of it.
+	platform::controlipc::ControlSenpRpcWorkspace m_declared;
+	std::uint64_t m_declaredEpoch{};
 	std::thread m_worker;
 };
 

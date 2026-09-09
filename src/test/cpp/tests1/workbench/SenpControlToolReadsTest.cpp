@@ -14,6 +14,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <deque>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -97,6 +98,11 @@ struct Broker {
 	std::int64_t accountGeneration = 0;
 	EControlSenpAccountState accountState = EControlSenpAccountState::Unknown;
 	EControlSenpRpcStatus accountStatus = EControlSenpRpcStatus::Succeeded;
+	//! Workspace declarations, which the real broker binds to the connection
+	//! that made them. Counted rather than replayed: what matters here is how
+	//! often one reaches the wire, and the payload is read from `requests`.
+	int adopted = 0;
+	EControlSenpRpcStatus adoptStatus = EControlSenpRpcStatus::Succeeded;
 	//! Transport failure rather than a broker answer.
 	bool severed = false;
 
@@ -124,6 +130,11 @@ struct Broker {
 	{
 		std::lock_guard<std::mutex> lock(mutex);
 		return accounts;
+	}
+	[[nodiscard]] int Adopted() const
+	{
+		std::lock_guard<std::mutex> lock(mutex);
+		return adopted;
 	}
 	void Sever()
 	{
@@ -253,6 +264,10 @@ private:
 			response.accountGeneration = m_broker->accountGeneration;
 			response.accountState = m_broker->accountState;
 			return response;
+		case EControlSenpRpcOperation::AdoptWorkspace:
+			++m_broker->adopted;
+			response.status = m_broker->adoptStatus;
+			return response;
 		case EControlSenpRpcOperation::CancelRead:
 			++m_broker->cancelled;
 			m_broker->cancelledReads.push_back(request.readId);
@@ -336,6 +351,27 @@ bool WaitUntil(Predicate predicate)
 }
 
 constexpr std::chrono::milliseconds kSettle{ 5000 };
+
+//! The declarations the seam put on the wire, in order.
+std::vector<ControlSenpRpcRequest> Declarations(const Broker& broker)
+{
+	std::vector<ControlSenpRpcRequest> declarations;
+	for (const auto& request : broker.Requests()) {
+		if (request.operation == EControlSenpRpcOperation::AdoptWorkspace) {
+			declarations.push_back(request);
+		}
+	}
+	return declarations;
+}
+
+std::vector<std::wstring> Folders(std::size_t count)
+{
+	std::vector<std::wstring> folders;
+	for (std::size_t index = 0; index < count; ++index) {
+		folders.push_back(L"file:///C:/Work/folder" + std::to_wstring(index));
+	}
+	return folders;
+}
 
 } // namespace
 
@@ -715,6 +751,154 @@ TEST(SenpControlToolReads, CoalescesAccountRefreshesAndReasksAfterTheConnectionI
 	EXPECT_EQ(2, broker->Accounts());
 	EXPECT_EQ(SenpToolAccountState::Connected, reads.Account().state);
 	EXPECT_EQ(21, reads.Account().generation);
+}
+
+TEST(SenpControlToolReads, DeclaresTheWorkspaceWithoutNamingAnOwnerOrAGrant)
+{
+	auto broker = std::make_shared<Broker>();
+	CFixedEndpointReader reader;
+	CSenpControlToolReads reads(Options(broker), reader);
+
+	reads.DeclareWorkspace(7, 11, { L"file:///C:/Work/repo" });
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+
+	auto declarations = Declarations(*broker);
+	ASSERT_EQ(1u, declarations.size());
+	EXPECT_EQ(kSenpProfile, declarations[0].profileId);
+	// It is what the window says before an owner carrying a workspace revision
+	// can exist, so like the account query it names no owner and holds no grant.
+	EXPECT_TRUE(declarations[0].owner == platform::controlipc::ControlSenpRpcOwner{});
+	EXPECT_TRUE(declarations[0].grantId.empty());
+	EXPECT_EQ(7, declarations[0].workspace.generation);
+	EXPECT_EQ(11, declarations[0].workspace.revision);
+	ASSERT_EQ(1u, declarations[0].workspace.folders.size());
+	EXPECT_EQ(L"file:///C:/Work/repo", declarations[0].workspace.folders[0]);
+	EXPECT_EQ(0, broker->Issued());
+
+	// The window declares on every turn; only the seam decides what reaches the
+	// wire. Re-declaring what the control side already holds would let a window
+	// drive the refresh worker on the other side of the pipe.
+	for (int turn = 0; turn < 6; ++turn) reads.DeclareWorkspace(7, 11, { L"file:///C:/Work/repo" });
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+	EXPECT_EQ(1, broker->Adopted());
+
+	// A changed workspace is a different declaration, and the control side has
+	// no way to learn about it other than being told.
+	reads.DeclareWorkspace(7, 12, { L"file:///C:/Work/other" });
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+	declarations = Declarations(*broker);
+	ASSERT_EQ(2u, declarations.size());
+	EXPECT_EQ(12, declarations[1].workspace.revision);
+	ASSERT_EQ(1u, declarations[1].workspace.folders.size());
+	EXPECT_EQ(L"file:///C:/Work/other", declarations[1].workspace.folders[0]);
+}
+
+TEST(SenpControlToolReads, DeclaresAgainOnTheConnectionThatReplacedTheOneItToldFirst)
+{
+	auto broker = std::make_shared<Broker>();
+	CFixedEndpointReader reader;
+	CSenpControlToolReads reads(Options(broker), reader);
+
+	reads.DeclareWorkspace(7, 11, { L"file:///C:/Work/repo" });
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+	ASSERT_EQ(1, broker->Adopted());
+
+	ASSERT_TRUE(reads.Start(Owner(), Context(L"tool.1", 1), Read(L"issues:open:1")));
+	ASSERT_TRUE(WaitUntil([&] { return broker->Started() == 1; }));
+	broker->Sever();
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+	ASSERT_TRUE(reads.Take(Owner()));
+
+	broker->Restore();
+	broker->Publish({ L"issues:open:2", senp::effect::CompletionStatus::Succeeded, L"[2]", L"" });
+	ASSERT_TRUE(reads.Start(Owner(), Context(L"tool.2", 2), Read(L"issues:open:2")));
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+	ASSERT_TRUE(reads.Take(Owner()));
+	ASSERT_EQ(2u, reads.ConnectionEpoch());
+
+	// The broker binds a declaration to the connection that made it, exactly as
+	// it binds a grant, so a replaced connection has been told nothing. The
+	// window is not asked again: the seam re-declares what it already holds.
+	const auto declarations = Declarations(*broker);
+	ASSERT_EQ(2u, declarations.size());
+	EXPECT_EQ(declarations[0].workspace, declarations[1].workspace);
+}
+
+TEST(SenpControlToolReads, RetriesADeclarationTheControlSideRefused)
+{
+	auto broker = std::make_shared<Broker>();
+	// Set before the worker exists: the stand-in's script is only safe to write
+	// from this thread while nothing is reading it.
+	broker->adoptStatus = EControlSenpRpcStatus::ResourceExhausted;
+	CFixedEndpointReader reader;
+	auto options = Options(broker);
+	options.accountRefreshInterval = std::chrono::milliseconds(0);
+	CSenpControlToolReads reads(std::move(options), reader);
+
+	reads.DeclareWorkspace(7, 11, { L"file:///C:/Work/repo" });
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+	ASSERT_EQ(1, broker->Adopted());
+
+	// A refused declaration is not a held one. Recording it would leave this
+	// window answering for a workspace the control side never accepted, for as
+	// long as the connection lasts.
+	broker->adoptStatus = EControlSenpRpcStatus::Succeeded;
+	reads.RefreshAccount();
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+	EXPECT_EQ(2, broker->Adopted());
+	EXPECT_EQ(1, broker->Accounts());
+
+	// Held now, so the next connection turn says nothing.
+	reads.RefreshAccount();
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+	EXPECT_EQ(2, broker->Adopted());
+}
+
+TEST(SenpControlToolReads, DeclaresNoFolderRatherThanASubsetTheWindowIsNotOpenOn)
+{
+	auto broker = std::make_shared<Broker>();
+	CFixedEndpointReader reader;
+	CSenpControlToolReads reads(Options(broker), reader);
+
+	// One past what the wire carries. The control side would refuse to inspect
+	// any of them, so the window says it can select nothing - which is true -
+	// rather than naming the folders that happen to fit.
+	reads.DeclareWorkspace(7, 11, Folders(platform::controlipc::kControlSenpRpcMaximumWorkspaceFolders + 1));
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+
+	// A folder with no identity cannot be inspected either, and it says nothing
+	// about the folders declared beside it.
+	reads.DeclareWorkspace(7, 12, { L"file:///C:/Work/repo", L"" });
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+
+	const auto declarations = Declarations(*broker);
+	ASSERT_EQ(2u, declarations.size());
+	EXPECT_EQ(11, declarations[0].workspace.revision);
+	EXPECT_TRUE(declarations[0].workspace.folders.empty());
+	EXPECT_EQ(12, declarations[1].workspace.revision);
+	EXPECT_TRUE(declarations[1].workspace.folders.empty());
+}
+
+TEST(SenpControlToolReads, SendsNothingForCountersThatObservedNothing)
+{
+	auto broker = std::make_shared<Broker>();
+	CFixedEndpointReader reader;
+	CSenpControlToolReads reads(Options(broker), reader);
+
+	// A counter that observed nothing would let a staleness check pass for a
+	// workspace that was never captured, so neither is a declaration at all.
+	reads.DeclareWorkspace(0, 11, { L"file:///C:/Work/repo" });
+	reads.DeclareWorkspace(7, 0, { L"file:///C:/Work/repo" });
+	reads.DeclareWorkspace(
+		static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)()) + 1, 11,
+		{ L"file:///C:/Work/repo" });
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+
+	EXPECT_EQ(0, broker->Adopted());
+	// Nothing reached the wire at all: a seam with nothing to declare does not
+	// open a connection to say so.
+	EXPECT_TRUE(broker->Requests().empty());
+	EXPECT_EQ(0, broker->Hello());
 }
 
 TEST(SenpControlToolReads, RefusesToExistWithoutAnEndpointReaderToDiscoverThrough)

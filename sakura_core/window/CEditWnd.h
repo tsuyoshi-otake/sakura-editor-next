@@ -727,6 +727,9 @@ private:
 	void CloseWorkbench() noexcept;
 	[[nodiscard]] bool InitializeSenpWindowExtensions();
 	[[nodiscard]] bool SynchronizeSenpWindowExtensions();
+	//! Hands the window's workspace to the tool-reads seam, which is what lets
+	//! the control side resolve a repository for this window's reads at all.
+	void DeclareSenpWorkspace() noexcept;
 	//! The account generation the control side last answered for this window's
 	//! profile, or zero when it holds no usable account authority. It publishes
 	//! a refresh and never waits for one, so it is safe on the UI thread.
@@ -1296,6 +1299,11 @@ private:
 	//! The account generation the extensions were last synchronized under. A
 	//! change is an authority change, which the extensions revoke on their own.
 	std::int64_t m_senpAccountGeneration{};
+	//! Workspace counters already handed to the seam. They identify the whole
+	//! workspace state, so skipping an unchanged pair only spares a per-turn
+	//! caller the folder list; the seam re-declares a replaced connection itself.
+	std::uint64_t m_senpWorkspaceGeneration{};
+	std::uint64_t m_senpWorkspaceRevision{};
 	bool m_senpWindowExtensionsActive{};
 	std::vector<std::function<bool(const theme::ThemePalette&, const LOGFONT&, unsigned int)>> m_senpStyleSinks;
 	//! Single staged native projection owner for Primary Side Bar, Panel, and Auxiliary Bar.

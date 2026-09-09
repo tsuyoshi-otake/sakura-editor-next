@@ -64,10 +64,17 @@ public:
 		return account;
 	}
 	void RefreshAccount() noexcept override { ++accountRefreshes; }
+	//! Recorded for the same reason: the workspace is the window's business and
+	//! an owner target must never declare one.
+	void DeclareWorkspace(std::uint64_t, std::uint64_t, std::vector<std::wstring>) noexcept override
+	{
+		++workspaceDeclarations;
+	}
 
 	SenpToolAccount account;
 	mutable int accountCalls{};
 	int accountRefreshes{};
+	int workspaceDeclarations{};
 };
 
 senp::effect::StartToolRead Read(std::wstring readId, std::wstring operation)
@@ -232,10 +239,12 @@ TEST_F(SenpReadonlyOwnerTargetTest, RoutesAdmittedToolReadsToTheSeamAndReturnsTh
 	EXPECT_EQ(0U, target.ToolReadCount());
 	EXPECT_FALSE(target.TakeToolRead());
 
-	// The account fence is the window's concern. A target that asked for it
-	// would be reading authority it is already scoped by, so it never does.
+	// The account fence and the workspace are the window's concern. A target that
+	// asked for either would be reading authority it is already scoped by, or
+	// answering for a workspace it does not own, so it never does.
 	EXPECT_EQ(0, reads.accountCalls);
 	EXPECT_EQ(0, reads.accountRefreshes);
+	EXPECT_EQ(0, reads.workspaceDeclarations);
 }
 
 TEST_F(SenpReadonlyOwnerTargetTest, RefusesEveryToolReadItCannotAccountFor)

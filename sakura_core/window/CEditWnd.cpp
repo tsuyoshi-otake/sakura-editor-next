@@ -6145,6 +6145,10 @@ bool CEditWnd::SynchronizeSenpWindowExtensions() try
 	// The control side owns the account fence, so this reports the generation it
 	// answered and never a locally assumed one. Zero still means no adopted
 	// account authority, and GitHub reads stay unsupported under it.
+	// Declared before the fence is read because both travel over the same seam,
+	// and a read admitted under the fence is answered for the workspace this
+	// window declared. A window that declares none is answered for none.
+	DeclareSenpWorkspace();
 	m_senpAccountGeneration = SenpAccountGeneration();
 	const auto status = m_senpWindowExtensions->Synchronize(m_workbenchRuntime->Extensions()->Snapshot(),
 		m_workbenchRuntime->WorkspaceContext().Snapshot().revision,
@@ -6160,6 +6164,30 @@ bool CEditWnd::SynchronizeSenpWindowExtensions() try
 } catch (...) {
 	// Every caller retires the window owner on failure, including exceptions.
 	return false;
+}
+
+void CEditWnd::DeclareSenpWorkspace() noexcept try
+{
+	// Null while this process holds no control-platform authority. There is then
+	// no connection to declare over, and reads stay fail-closed regardless.
+	if (!m_senpToolReads || !m_workbenchRuntime) return;
+	const auto snapshot = m_workbenchRuntime->WorkspaceContext().Snapshot();
+	if (snapshot.generation == m_senpWorkspaceGeneration
+		&& snapshot.revision == m_senpWorkspaceRevision) return;
+	std::vector<std::wstring> folders;
+	folders.reserve(snapshot.folders.size());
+	// URI text, which is what the wire carries and what the control side parses
+	// back. Nothing here reads a folder: the control side inspects the remotes
+	// it finds at them, so the window's claim is verified rather than trusted.
+	for (const auto& folder : snapshot.folders) folders.push_back(folder.uri.ToString());
+	m_senpToolReads->DeclareWorkspace(snapshot.generation, snapshot.revision, std::move(folders));
+	// Recorded only once the seam has the declaration, so a failure to build one
+	// is retried on the next turn instead of being remembered as published.
+	m_senpWorkspaceGeneration = snapshot.generation;
+	m_senpWorkspaceRevision = snapshot.revision;
+} catch (...) {
+	// The control side keeps answering for whatever it was last told, or for
+	// nothing. Neither is a reason to fail the window.
 }
 
 std::int64_t CEditWnd::SenpAccountGeneration() noexcept
@@ -6183,6 +6211,10 @@ void CEditWnd::StopSenpWindowExtensions() noexcept
 {
 	const bool wasActive = std::exchange(m_senpWindowExtensionsActive, false);
 	m_senpAccountGeneration = 0;
+	// The seam is released below, so the next one has heard nothing. Keeping the
+	// counters would leave a new connection answering for no workspace at all.
+	m_senpWorkspaceGeneration = 0;
+	m_senpWorkspaceRevision = 0;
 	m_senpStyleSinks.clear();
 	if (m_senpWindowExtensions) {
 		if (m_senpWindowExtensions->Close()) m_senpWindowExtensions.reset();
@@ -16018,6 +16050,11 @@ void CEditWnd::OnEditTimer( void )
 		&& !SynchronizeSenpWindowExtensions()) {
 		StopSenpWindowExtensions();
 	}
+	// The workspace changes without the extensions or the account fence changing,
+	// and only a declared workspace is one the control side can select a
+	// repository for, so it is refreshed on the window's own cadence rather than
+	// only where a synchronization happens to run.
+	if (m_senpWindowExtensionsActive) DeclareSenpWorkspace();
 	if (m_senpWindowExtensionsActive
 		&& !m_senpWindowExtensions->Poll(std::chrono::steady_clock::now())) {
 		StopSenpWindowExtensions();

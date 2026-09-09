@@ -11,6 +11,7 @@
 #include "senp/SenpToolGrants.h"
 
 #include <algorithm>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <utility>
@@ -22,6 +23,11 @@ using platform::controlipc::ControlSenpRpcRequest;
 using platform::controlipc::EControlSenpClientState;
 using platform::controlipc::EControlSenpRpcOperation;
 using platform::controlipc::EControlSenpRpcStatus;
+
+//! A counter the wire cannot carry is a counter the control side would refuse,
+//! so a declaration naming one is not sent at all.
+constexpr std::uint64_t kMaximumCounter =
+	static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)());
 
 //! Per-owner bound for both outstanding reads and their terminals. One admitted
 //! read produces exactly one terminal, so the same bound covers both queues.
@@ -293,6 +299,39 @@ void CSenpControlToolReads::RefreshAccount() noexcept
 	m_work.notify_all();
 }
 
+void CSenpControlToolReads::DeclareWorkspace(const std::uint64_t generation,
+	const std::uint64_t revision, std::vector<std::wstring> folders) noexcept
+{
+	try {
+		// A counter that observed nothing would let a staleness check pass for a
+		// workspace that was never captured, so it is not a declaration at all.
+		if (generation == 0 || revision == 0
+			|| generation > kMaximumCounter || revision > kMaximumCounter) return;
+		platform::controlipc::ControlSenpRpcWorkspace workspace;
+		workspace.generation = static_cast<std::int64_t>(generation);
+		workspace.revision = static_cast<std::int64_t>(revision);
+		// Past the bound, or with a folder that has no identity, the control side
+		// would refuse to inspect any of them. The window then says it can select
+		// nothing, which is true, rather than naming the subset that fits - that
+		// would answer for a workspace this window is not open on.
+		const auto usable = folders.size() <= platform::controlipc::kControlSenpRpcMaximumWorkspaceFolders
+			&& std::none_of(folders.begin(), folders.end(),
+				[](const std::wstring& folder) { return folder.empty(); });
+		if (usable) workspace.folders = std::move(folders);
+		{
+			std::lock_guard<std::mutex> lock(m_mutex);
+			if (m_stopped || m_workspace == workspace) return;
+			m_workspace = std::move(workspace);
+			Command command;
+			command.kind = Command::Kind::Workspace;
+			if (!EnqueueLocked(std::move(command))) return;
+		}
+	} catch (...) {
+		return;
+	}
+	m_work.notify_all();
+}
+
 void CSenpControlToolReads::Stop() noexcept
 {
 	{
@@ -536,6 +575,12 @@ void CSenpControlToolReads::Run(Command command) noexcept
 		Settle(Query());
 		return;
 	}
+	if (command.kind == Command::Kind::Workspace) {
+		// Reaching a connection is what declares: Ensure sends the published
+		// declaration to any connection that has not already heard it.
+		(void)Ensure();
+		return;
+	}
 	if (command.kind == Command::Kind::Cancel) {
 		// A cancellation never revives a connection: without one the broker lost
 		// this read together with the grant that named it.
@@ -733,22 +778,67 @@ void CSenpControlToolReads::Stale() noexcept
 
 bool CSenpControlToolReads::Ensure() noexcept
 {
-	if (m_client.State() == EControlSenpClientState::Connected) return true;
-	// Zero means this seam has never had a connection, so nothing was minted or
-	// answered on an earlier one and there is nothing here to invalidate.
-	const auto replaced = m_client.ConnectionEpoch() != 0;
-	const auto connected = m_client.Connect();
-	if (!connected.IsConnected()) return false;
-	if (!replaced) return true;
-	// A new connection voids every grant minted on the old one, and with them
-	// every read the broker had admitted under those grants. A read this seam
-	// has not put on the wire yet survives: it is dispatched on this connection.
-	m_grants.clear();
-	// The settled account was answered by a connection that no longer exists,
-	// so it is dropped for the same reason the grants are.
-	Stale();
-	FailDispatched(senp::effect::CompletionStatus::HostUnavailable, kReplaced);
+	if (m_client.State() != EControlSenpClientState::Connected) {
+		// Zero means this seam has never had a connection, so nothing was minted
+		// or answered on an earlier one and there is nothing here to invalidate.
+		const auto replaced = m_client.ConnectionEpoch() != 0;
+		const auto connected = m_client.Connect();
+		if (!connected.IsConnected()) return false;
+		if (replaced) {
+			// A new connection voids every grant minted on the old one, and with
+			// them every read the broker had admitted under those grants. A read
+			// this seam has not put on the wire yet survives: it is dispatched on
+			// this connection.
+			m_grants.clear();
+			// The settled account was answered by a connection that no longer
+			// exists, so it is dropped for the same reason the grants are.
+			Stale();
+			FailDispatched(senp::effect::CompletionStatus::HostUnavailable, kReplaced);
+		}
+	}
+	// Declaring here rather than beside each read is what makes a replaced
+	// connection hear the workspace again: the broker binds a declaration to the
+	// connection that made it, exactly as it binds a grant. A failed declaration
+	// is not a failed connection - the read that follows it is refused by the
+	// control side on its own terms, and the declaration is tried again next.
+	(void)Declare();
 	return true;
+}
+
+bool CSenpControlToolReads::Declare() noexcept
+{
+	platform::controlipc::ControlSenpRpcWorkspace desired;
+	try {
+		std::lock_guard<std::mutex> lock(m_mutex);
+		desired = m_workspace;
+	} catch (...) {
+		return false;
+	}
+	// Nothing has been declared yet. Saying so is not the same as declaring an
+	// empty workspace, which is a window stating it can select nothing.
+	if (desired.Empty()) return true;
+	const auto epoch = m_client.ConnectionEpoch();
+	if (m_declaredEpoch == epoch && m_declared == desired) return true;
+	try {
+		ControlSenpRpcRequest request;
+		// It names no owner and holds no grant, for the same reason the account
+		// query does not: it is what the window says before an owner carrying a
+		// workspace revision can exist.
+		request.operation = EControlSenpRpcOperation::AdoptWorkspace;
+		request.profileId = m_options.senpProfileId;
+		request.workspace = desired;
+		const auto answer = m_client.Execute(request);
+		if (!answer.Answered()) {
+			m_client.Disconnect();
+			return false;
+		}
+		if (answer.response.status != EControlSenpRpcStatus::Succeeded) return false;
+		m_declared = std::move(desired);
+		m_declaredEpoch = epoch;
+		return true;
+	} catch (...) {
+		return false;
+	}
 }
 
 std::optional<std::string> CSenpControlToolReads::Authorize(
