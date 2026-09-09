@@ -78,7 +78,12 @@ public:
 	bool StartToolRead(const senp::effect::OperationContext& context,
 		senp::effect::StartToolRead read)
 	{
-		if (read.toolId != L"github" || read.operation != L"repositoryRead"
+		// Both operations the GitHub tool boundary admits. A log is answered by
+		// the same queue as a page because what distinguishes them here is the
+		// shape of the answer, which is exactly what the extension has to tell
+		// apart.
+		if (read.toolId != L"github"
+			|| (read.operation != L"repositoryRead" && read.operation != L"jobLog")
 			|| m_toolTerminal || m_toolResponses.empty()) return false;
 		m_lastRead = read;
 		m_toolTerminal = SenpToolReadTerminal{ context, {
@@ -772,10 +777,12 @@ TEST_F(SenpOwnerComposition, RealGithubActionsReachNativeProviders)
 	std::vector<SenpOwnerTreeContribution> trees;
 	trees.emplace_back(layout::WorkbenchViewDescriptor{
         "github-actions.workflows", "github-actions", "Workflows", 10, true, true, "senp.tree" },
-        std::vector<std::string>{ "github-actions.workflow.run.open", "sakura.githubActions.openJobDetails" });
+        std::vector<std::string>{ "github-actions.workflow.run.open",
+            "sakura.githubActions.openJobDetails", "sakura.githubActions.openJobLog" });
     trees.emplace_back(layout::WorkbenchViewDescriptor{
         "github-actions.current-branch", "github-actions", "Current Branch", 20, true, true, "senp.tree" },
-        std::vector<std::string>{ "github-actions.workflow.run.open", "sakura.githubActions.openJobDetails" });
+        std::vector<std::string>{ "github-actions.workflow.run.open",
+            "sakura.githubActions.openJobDetails", "sakura.githubActions.openJobLog" });
 	SenpOwnerPublicationOptions publication(
 		m_owner, { std::move(container) }, std::move(trees),
 		std::make_unique<CompositionTarget>(target), [](std::string_view) { return true; },
@@ -845,6 +852,28 @@ TEST_F(SenpOwnerComposition, RealGithubActionsReachNativeProviders)
     EXPECT_EQ((std::vector<std::wstring>{ L"7", L"Compile", L"queued", L"not started", L"not completed" }), table.rows[0].cells);
     EXPECT_EQ(L"actions/jobs/71", target->LastRead().arguments.front().value);
     EXPECT_EQ(7, target->ToolReads());
+
+    // The job's log is a separate command reading a separate operation, and the
+    // document it publishes names bytes the extension never held. Nothing else
+    // proves that end of the path: an extension has no effect for reading a
+    // resource, so a log can only reach the reader as a text-resource section.
+    target->EnqueueToolResponse(LR"json({"resource":"text:9:1","bytes":8192,"log":true})json");
+    ASSERT_TRUE(provider->Model().Node(L"joblog:51:1:71").has_value());
+    ASSERT_TRUE(provider->Select(L"joblog:51:1:71"));
+    ASSERT_TRUE(provider->Execute(L"joblog:51:1:71"));
+    ASSERT_TRUE(Await(composition, [&] { return target->Publishes() == 3; }));
+    EXPECT_EQ(L"github-actions-job-log:51:1:71", target->Document().resourceId);
+    EXPECT_EQ(L"jobLog", target->LastRead().operation);
+    ASSERT_EQ(1U, target->LastRead().arguments.size());
+    EXPECT_EQ(L"id", target->LastRead().arguments.front().name);
+    EXPECT_EQ(L"71", target->LastRead().arguments.front().value);
+    ASSERT_EQ(2U, target->Document().sections.size());
+    ASSERT_TRUE(std::holds_alternative<senp::effect::TextResourceSection>(target->Document().sections[1]));
+    const auto& log = std::get<senp::effect::TextResourceSection>(target->Document().sections[1]);
+    EXPECT_EQ(L"text:9:1", log.handle);
+    EXPECT_EQ(8192, log.length);
+    EXPECT_EQ(senp::effect::TextStatus::Complete, log.status);
+    EXPECT_EQ(8, target->ToolReads());
     EXPECT_TRUE(composition.Close());
     EXPECT_EQ(1, target->Revokes());
     pages.Close();

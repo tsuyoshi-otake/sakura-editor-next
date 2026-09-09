@@ -322,7 +322,16 @@ states and absent conclusions remain distinct from success. GitHub can return
 skipped jobs without runners or steps; do not reject those valid responses.
 The platform-only `sakura.githubActions.openJobDetails` command opens the native
 summary and Step table; upstream has no corresponding native summary command,
-and the upstream log command must retain its separate log meaning.
+and the upstream log command must retain its separate log meaning. The separate
+platform-only `sakura.githubActions.openJobLog` command opens that log as a
+native text document. It reads through the `jobLog` tool operation, not through
+a repository path, and the extension never holds the bytes: the tool writes them
+into the Control text resource store and answers `{"resource","bytes","log"}`,
+which the extension turns into a text-resource section. A tree item naming a
+command the View did not register rejects the whole page, so a new command must
+reach `senp.json` before any item may carry it. The section is published only
+once a real handle exists, because the reader starts reading a text section
+immediately and does not wait on its status.
 
 Append accepts the next byte offset and at most 64 KiB. Fixed 64 KiB pages bound
 one resource to 32 MiB and the Control store to 64 MiB of allocated payload pages,

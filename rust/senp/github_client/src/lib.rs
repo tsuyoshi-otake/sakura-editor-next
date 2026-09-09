@@ -592,6 +592,56 @@ pub fn parse_pull_request_detail(data: &str) -> Result<PullRequestDetail, ParseE
     })
 }
 
+/// Where a downloaded job log lives. The bytes stay in the editor's own text
+/// resource store: an extension has no effect for reading a resource, so it
+/// names the log in a document and the editor reads it back itself.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LogResource {
+    pub handle: String,
+    pub bytes: u64,
+}
+
+/// A document section may not name a log larger than the protocol allows one to
+/// be, so a length over this is a malformed answer rather than a big log.
+pub const MAXIMUM_RESOURCE_BYTES: u64 = 32 * 1024 * 1024;
+
+#[derive(Deserialize)]
+struct ApiLogResource {
+    resource: String,
+    bytes: u64,
+    // A page answer names a resource and a byte count too, and carries no
+    // marker at all. Absent has to mean not-a-log rather than not-JSON, or a
+    // page mistaken for a log would be reported as a malformed response.
+    #[serde(default)]
+    log: bool,
+}
+
+fn resource_handle(value: &str) -> bool {
+    bounded_text(value, 256)
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_' | b':' | b'/')
+        })
+}
+
+pub fn parse_log_resource(data: &str) -> Result<LogResource, ParseError> {
+    if data.len() > MAXIMUM_RESPONSE_BYTES {
+        return Err(ParseError::LimitExceeded);
+    }
+    let value: ApiLogResource = strict_json(data)?;
+    // The marker is what tells a log answer from a page answer, and both name a
+    // resource. Reading one as the other would publish a JSON body as though it
+    // were log text. The handle is checked against the charset a document
+    // section demands, so a handle this cannot use is refused here rather than
+    // rejected later as an invalid effect.
+    if !value.log || !resource_handle(&value.resource) || value.bytes > MAXIMUM_RESOURCE_BYTES {
+        return Err(ParseError::InvalidEnvelope);
+    }
+    Ok(LogResource {
+        handle: value.resource,
+        bytes: value.bytes,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -599,6 +649,45 @@ mod tests {
     const MIXED: &str = r#"{"body":[{"id":11,"number":7,"title":"First issue","state":"open","user":{"login":"octocat"},"labels":[{"name":"bug"}],"html_url":"https://github.com/o/r/issues/7","comments":2},{"id":12,"number":8,"title":"A pull request","state":"open","user":{"login":"hubot"},"labels":[],"html_url":"https://github.com/o/r/pull/8","comments":0,"pull_request":{"url":"https://api.github.com/repos/o/r/pulls/8"}}],"nextPage":2,"ignored":"allowed"}"#;
 
     const PULLS: &str = r#"{"body":[{"id":51,"number":8,"title":"Cross-fork change","state":"open","user":{"login":"contributor"},"labels":[{"name":"ready"}],"html_url":"https://github.com/base/project/pull/8","comments":3,"draft":false,"merged_at":null,"base":{"ref":"main","sha":"bbbb","repo":{"full_name":"base/project"}},"head":{"ref":"feature","sha":"hhhh","repo":{"full_name":"fork/project"}}}],"nextPage":2}"#;
+
+    #[test]
+    fn parses_a_log_answer_and_refuses_one_that_is_not_a_log() {
+        let answer = r#"{"resource":"text:3:1","bytes":4096,"log":true,"ignored":1}"#;
+        assert_eq!(
+            parse_log_resource(answer).unwrap(),
+            LogResource {
+                handle: "text:3:1".into(),
+                bytes: 4096,
+            }
+        );
+        for refused in [
+            // A page answer names a resource too. Without the marker this would
+            // publish a JSON body to the reader as though it were log text.
+            r#"{"resource":"text:3:1","bytes":4096}"#.to_string(),
+            r#"{"resource":"text:3:1","bytes":4096,"log":false}"#.to_string(),
+            r#"{"resource":"","bytes":0,"log":true}"#.to_string(),
+            // A handle a document section could not carry.
+            r#"{"resource":"text 3 1","bytes":0,"log":true}"#.to_string(),
+            format!(
+                r#"{{"resource":"text:3:1","bytes":{},"log":true}}"#,
+                MAXIMUM_RESOURCE_BYTES + 1
+            ),
+        ] {
+            assert_eq!(
+                parse_log_resource(&refused),
+                Err(ParseError::InvalidEnvelope),
+                "{refused}"
+            );
+        }
+        assert_eq!(
+            parse_log_resource(&"x".repeat(MAXIMUM_RESPONSE_BYTES + 1)),
+            Err(ParseError::LimitExceeded)
+        );
+        assert_eq!(
+            parse_log_resource(r#"{"resource":"a","resource":"b","bytes":0,"log":true}"#),
+            Err(ParseError::InvalidJson)
+        );
+    }
 
     #[test]
     fn excludes_pull_requests_without_consuming_the_next_page() {

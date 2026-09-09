@@ -2,9 +2,21 @@
 
 use super::*;
 use sakura_senp_github_client::actions::jobs::{parse_job, parse_jobs, Job, Step};
+use sakura_senp_github_client::{parse_log_resource, LogResource};
 
 // Upstream has a log command, but no native read-only job-summary command.
 pub const OPEN_JOB: &str = "sakura.githubActions.openJobDetails";
+/// The log of one job attempt, as text the editor holds rather than as a
+/// summary. It is a separate command from the job because it is a separate
+/// download: opening a job must not pull a log nobody asked to read.
+pub const OPEN_LOG: &str = "sakura.githubActions.openJobLog";
+
+/// Which of a job's two documents a resource identity names.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Kind {
+    Detail,
+    Log,
+}
 
 #[derive(Clone, Copy)]
 pub struct Identity {
@@ -26,6 +38,15 @@ impl Identity {
             self.run, self.attempt, self.job
         )
     }
+    fn log_resource(self) -> String {
+        format!(
+            "github-actions-job-log:{}:{}:{}",
+            self.run, self.attempt, self.job
+        )
+    }
+    fn log_item(self) -> String {
+        format!("joblog:{}:{}:{}", self.run, self.attempt, self.job)
+    }
     fn parts(run: &str, attempt: &str, job: &str) -> Option<Self> {
         Some(Self {
             run: positive(run)?,
@@ -35,23 +56,45 @@ impl Identity {
     }
 }
 
-pub fn document_identity(resource: &str) -> Option<Identity> {
+pub fn document_identity(resource: &str) -> Option<(Identity, Kind)> {
     let parts: Vec<_> = resource.split(':').collect();
     match parts.as_slice() {
-        ["github-actions-job", run, attempt, job] => Identity::parts(run, attempt, job),
+        ["github-actions-job", run, attempt, job] => {
+            Some((Identity::parts(run, attempt, job)?, Kind::Detail))
+        }
+        ["github-actions-job-log", run, attempt, job] => {
+            Some((Identity::parts(run, attempt, job)?, Kind::Log))
+        }
         _ => None,
     }
 }
 
-pub fn document_request(identity: Identity) -> Effect {
-    read(
-        format!(
-            "jobdetail:{}:{}:{}",
-            identity.run, identity.attempt, identity.job
-        ),
-        format!("actions/jobs/{}", identity.job),
-        Vec::new(),
+/// True when this command opens this resource. Each command owns one kind, so a
+/// log identity handed to the summary command is refused rather than opened as
+/// a document whose read would never answer.
+pub fn opens(command_id: &str, resource: &str) -> bool {
+    matches!(
+        (command_id, document_identity(resource)),
+        (OPEN_JOB, Some((_, Kind::Detail))) | (OPEN_LOG, Some((_, Kind::Log)))
     )
+}
+
+pub fn document_request(identity: Identity, kind: Kind) -> Effect {
+    match kind {
+        Kind::Detail => read(
+            format!(
+                "jobdetail:{}:{}:{}",
+                identity.run, identity.attempt, identity.job
+            ),
+            format!("actions/jobs/{}", identity.job),
+            Vec::new(),
+        ),
+        // A log is its own operation rather than a path under the repository
+        // read: the tool downloads it into the editor's text resource store and
+        // answers with a handle, because an extension has no way to read bytes
+        // itself and a log is far larger than a completion may carry.
+        Kind::Log => log_read(identity.log_item(), identity.job),
+    }
 }
 
 pub fn tree_request(request: &TreeRequest) -> Option<Effect> {
@@ -103,6 +146,19 @@ pub fn tree_request(request: &TreeRequest) -> Option<Effect> {
 pub fn complete(completion: &ToolCompleted) -> Option<Effect> {
     let parts: Vec<_> = completion.read_id.split(':').collect();
     match parts.as_slice() {
+        ["joblog", run, attempt, job] => {
+            let Some(identity) = Identity::parts(run, attempt, job) else {
+                return Some(failed_page(WORKFLOWS, "", 1, "Invalid job log completion"));
+            };
+            Some(if completion.status != CompletionStatus::Succeeded {
+                failed_document(identity.log_resource(), completion_message(completion))
+            } else {
+                match parse_log_resource(&completion.data) {
+                    Ok(log) => log_document(identity, log),
+                    Err(error) => failed_document(identity.log_resource(), error.to_string()),
+                }
+            })
+        }
         ["jobdetail", run, attempt, job] => {
             let Some(identity) = Identity::parts(run, attempt, job) else {
                 return Some(failed_page(WORKFLOWS, "", 1, "Invalid job completion"));
@@ -223,7 +279,7 @@ fn step_page(view: &str, identity: Identity, steps: Vec<Step>, page: u32) -> Eff
     } else {
         None
     };
-    let items = steps
+    let mut items: Vec<TreeItem> = steps
         .into_iter()
         .skip(offset as usize)
         .take(PAGE_SIZE as usize)
@@ -244,6 +300,24 @@ fn step_page(view: &str, identity: Identity, steps: Vec<Step>, page: u32) -> Eff
             }
         })
         .collect();
+    // The log belongs to the job rather than to any step, so it sits once at the
+    // top of the job's first page. A job with no steps still has one, which is
+    // exactly the job whose log is the only thing left to read.
+    if page == 1 {
+        items.insert(
+            0,
+            TreeItem {
+                id: identity.log_item(),
+                label: "Log".into(),
+                description: String::new(),
+                tooltip: "Open this job's log as text".into(),
+                icon: "output".into(),
+                collapsible_state: CollapsibleState::Leaf,
+                command_id: OPEN_LOG.into(),
+                arguments: vec![identity.log_resource()],
+            },
+        );
+    }
     page_effect(
         view,
         &identity.item(),
@@ -252,6 +326,33 @@ fn step_page(view: &str, identity: Identity, steps: Vec<Step>, page: u32) -> Eff
         next_cursor(next),
         String::new(),
     )
+}
+
+fn log_document(identity: Identity, log: LogResource) -> Effect {
+    // The handle is named only now that the tool has answered with a real one.
+    // The editor reads a text resource section as soon as it is published and
+    // does not wait on its status, so a placeholder handle would be published as
+    // a read that immediately fails rather than as a log still arriving.
+    Effect::PublishDocument(PublishDocument {
+        resource_id: identity.log_resource(),
+        title: format!("Job {} log / Attempt #{}", identity.job, identity.attempt),
+        revision: 1,
+        sections: vec![
+            DocumentSection::Metadata(MetadataSection {
+                fields: vec![
+                    field("Job ID", identity.job.to_string()),
+                    field("Run ID", identity.run.to_string()),
+                    field("Attempt", identity.attempt.to_string()),
+                    field("Bytes", log.bytes.to_string()),
+                ],
+            }),
+            DocumentSection::TextResource(TextResourceSection {
+                handle: log.handle,
+                length: log.bytes,
+                status: TextStatus::Complete,
+            }),
+        ],
+    })
 }
 
 fn optional(value: Option<String>, absent: &str) -> String {
@@ -377,8 +478,9 @@ mod tests {
     #[test]
     fn job_details_and_steps_preserve_null_state_and_reject_other_attempts() {
         let resource = "github-actions-job:51:2:71";
-        let identity = document_identity(resource).unwrap();
-        let Effect::StartToolRead(read) = document_request(identity) else {
+        let (identity, kind) = document_identity(resource).unwrap();
+        assert_eq!(kind, Kind::Detail);
+        let Effect::StartToolRead(read) = document_request(identity, kind) else {
             panic!()
         };
         assert_eq!(read.arguments[0].value, "actions/jobs/71");
@@ -395,8 +497,9 @@ mod tests {
             ["7", "Compile", "queued", "not started", "not completed"]
         );
         let effect = complete(&completion("steps:w:51:2:71:1", JOB.into())).unwrap();
-        assert_eq!(page(&effect).items[0].id, "step:51:2:71:7");
-        assert_eq!(page(&effect).items[0].description, "queued");
+        assert_eq!(page(&effect).items[0].id, "joblog:51:2:71");
+        assert_eq!(page(&effect).items[1].id, "step:51:2:71:7");
+        assert_eq!(page(&effect).items[1].description, "queued");
         let effect = complete(&completion("jobdetail:51:1:71", JOB.into())).unwrap();
         assert!(
             matches!(effect,Effect::PublishDocument(doc) if doc.title=="GitHub Actions read failed")
@@ -430,8 +533,75 @@ mod tests {
     }
 
     #[test]
+    fn a_job_log_is_its_own_document_named_only_once_the_tool_answers() {
+        let (identity, kind) = document_identity("github-actions-job-log:51:2:71").unwrap();
+        assert_eq!(kind, Kind::Log);
+        let Effect::StartToolRead(read) = document_request(identity, kind) else {
+            panic!()
+        };
+        // A log is one endpoint the tool owns, so it is named by job alone.
+        assert_eq!(read.read_id, "joblog:51:2:71");
+        assert_eq!(read.operation, "jobLog");
+        assert_eq!(read.arguments.len(), 1);
+        assert_eq!(read.arguments[0].name, "id");
+        assert_eq!(read.arguments[0].value, "71");
+
+        let answer = r#"{"resource":"text:3:1","bytes":8192,"log":true}"#;
+        let effect = complete(&completion("joblog:51:2:71", answer.into())).unwrap();
+        let Effect::PublishDocument(document) = effect else {
+            panic!()
+        };
+        assert_eq!(document.resource_id, "github-actions-job-log:51:2:71");
+        let DocumentSection::TextResource(section) = &document.sections[1] else {
+            panic!()
+        };
+        assert_eq!(section.handle, "text:3:1");
+        assert_eq!(section.length, 8192);
+        assert_eq!(section.status, TextStatus::Complete);
+    }
+
+    #[test]
+    fn a_log_that_did_not_arrive_publishes_no_resource_to_read() {
+        // The editor reads a text resource section as soon as it is published, so
+        // a failure has to be a document with no section rather than a section
+        // naming a handle nothing can answer.
+        let mut result = completion("joblog:51:2:71", String::new());
+        result.status = CompletionStatus::HostUnavailable;
+        result.message = "unauthorized".into();
+        let Effect::PublishDocument(document) = complete(&result).unwrap() else {
+            panic!()
+        };
+        assert_eq!(document.resource_id, "github-actions-job-log:51:2:71");
+        assert_eq!(document.sections.len(), 1);
+        assert!(matches!(document.sections[0], DocumentSection::Metadata(_)));
+        // A page answer names a resource too; read as a log it would show JSON
+        // where log text belongs.
+        let page_answer = r#"{"bytes":4,"httpStatus":200,"page":1,"resource":"text:3:1"}"#;
+        let Effect::PublishDocument(document) =
+            complete(&completion("joblog:51:2:71", page_answer.into())).unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(document.sections.len(), 1);
+        assert_eq!(document.title, "GitHub Actions read failed");
+    }
+
+    #[test]
+    fn each_job_command_opens_only_its_own_kind_of_document() {
+        assert!(opens(OPEN_JOB, "github-actions-job:51:2:71"));
+        assert!(opens(OPEN_LOG, "github-actions-job-log:51:2:71"));
+        assert!(!opens(OPEN_JOB, "github-actions-job-log:51:2:71"));
+        assert!(!opens(OPEN_LOG, "github-actions-job:51:2:71"));
+        assert!(!opens(OPEN_LOG, "github-actions-job-log:51:0:71"));
+        assert!(!opens(
+            "sakura.githubActions.other",
+            "github-actions-job:51:2:71"
+        ));
+    }
+
+    #[test]
     fn step_pages_are_bounded_and_use_numbers_instead_of_names() {
-        let identity = document_identity("github-actions-job:51:2:71").unwrap();
+        let (identity, _) = document_identity("github-actions-job:51:2:71").unwrap();
         let step = parse_job(JOB).unwrap().steps.remove(0);
         let steps: Vec<_> = (1..=21)
             .map(|number| Step {
@@ -440,7 +610,11 @@ mod tests {
             })
             .collect();
         let effect = step_page(WORKFLOWS, identity, steps.clone(), 1);
-        assert_eq!(page(&effect).items.len(), 20);
+        // Twenty steps and the job's own log, which is not one of them and so
+        // does not take a step's place on the page.
+        assert_eq!(page(&effect).items.len(), 21);
+        assert_eq!(page(&effect).items[0].id, "joblog:51:2:71");
+        assert_eq!(page(&effect).items[1].id, "step:51:2:71:1");
         assert_eq!(page(&effect).next_cursor, "page:2");
         let effect = step_page(WORKFLOWS, identity, steps.clone(), 2);
         assert_eq!(page(&effect).items.len(), 1);

@@ -12,7 +12,8 @@
   "contributes": {
     "commands": [
       { "command": "github-actions.workflow.run.open", "title": "Open Run Details" },
-      { "command": "sakura.githubActions.openJobDetails", "title": "Open Job Details" }
+      { "command": "sakura.githubActions.openJobDetails", "title": "Open Job Details" },
+      { "command": "sakura.githubActions.openJobLog", "title": "Open Job Log" }
     ],
     "viewsContainers": {
       "activitybar": [{ "id": "github-actions", "title": "GitHub Actions", "icon": "$(play-circle)", "order": 7 }]

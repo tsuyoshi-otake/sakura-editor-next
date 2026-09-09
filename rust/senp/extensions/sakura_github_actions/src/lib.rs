@@ -77,12 +77,13 @@ impl State {
             }
             Event::ToolCompleted(read) => vec![self.complete(read)],
             Event::CommandInvoked(command)
-                if command.command_id == OPEN_RUN || command.command_id == jobs::OPEN_JOB =>
+                if command.command_id == OPEN_RUN
+                    || command.command_id == jobs::OPEN_JOB
+                    || command.command_id == jobs::OPEN_LOG =>
             {
                 if let [resource] = command.arguments.as_slice() {
                     if (command.command_id == OPEN_RUN && document_identity(resource).is_some())
-                        || (command.command_id == jobs::OPEN_JOB
-                            && jobs::document_identity(resource).is_some())
+                        || jobs::opens(&command.command_id, resource)
                     {
                         return vec![
                             Effect::OpenDocument(OpenDocument {
@@ -103,9 +104,8 @@ impl State {
             Event::DocumentRequest(request)
                 if jobs::document_identity(&request.resource_id).is_some() =>
             {
-                vec![jobs::document_request(
-                    jobs::document_identity(&request.resource_id).unwrap(),
-                )]
+                let (identity, kind) = jobs::document_identity(&request.resource_id).unwrap();
+                vec![jobs::document_request(identity, kind)]
             }
             Event::DocumentRequest(request) => match document_identity(&request.resource_id) {
                 Some((run, attempt)) => vec![read(
@@ -414,6 +414,18 @@ fn read(read_id: String, path: String, mut arguments: Vec<Field>) -> Effect {
         tool_id: "github".into(),
         operation: "repositoryRead".into(),
         arguments,
+    })
+}
+
+/// A log is downloaded by its own operation rather than by a repository path.
+/// The tool writes it into the editor's text resource store and answers with a
+/// handle, so nothing here ever holds the bytes.
+fn log_read(read_id: String, job: u64) -> Effect {
+    Effect::StartToolRead(StartToolRead {
+        read_id,
+        tool_id: "github".into(),
+        operation: "jobLog".into(),
+        arguments: vec![field("id", job.to_string())],
     })
 }
 
