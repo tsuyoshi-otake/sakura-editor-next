@@ -10,7 +10,9 @@
 #include "workbench/editor/SenpControlToolReads.h"
 #include "platform/controlipc/ControlStorageRpc.h"
 #include "senp/SenpRuntimeSession.h"
+#include "senp/SenpTextResource.h"
 
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <deque>
@@ -105,6 +107,15 @@ struct Broker {
 	EControlSenpRpcStatus adoptStatus = EControlSenpRpcStatus::Succeeded;
 	//! Transport failure rather than a broker answer.
 	bool severed = false;
+	//! The one text resource this stand-in holds. A read is answered out of the
+	//! body rather than replayed, because the seam chooses its own windows.
+	int resourceReads = 0;
+	int releases = 0;
+	std::vector<std::wstring> releasedResources;
+	std::wstring resourceHandle = L"log-1";
+	std::string resourceBody = "run step output";
+	std::int64_t resourceRevision = 11;
+	EControlSenpRpcStatus resourceStatus = EControlSenpRpcStatus::Succeeded;
 
 	[[nodiscard]] int Started() const
 	{
@@ -135,6 +146,21 @@ struct Broker {
 	{
 		std::lock_guard<std::mutex> lock(mutex);
 		return adopted;
+	}
+	[[nodiscard]] int ResourceReads() const
+	{
+		std::lock_guard<std::mutex> lock(mutex);
+		return resourceReads;
+	}
+	[[nodiscard]] int Releases() const
+	{
+		std::lock_guard<std::mutex> lock(mutex);
+		return releases;
+	}
+	[[nodiscard]] std::vector<std::wstring> Released() const
+	{
+		std::lock_guard<std::mutex> lock(mutex);
+		return releasedResources;
 	}
 	void Sever()
 	{
@@ -271,6 +297,38 @@ private:
 		case EControlSenpRpcOperation::CancelRead:
 			++m_broker->cancelled;
 			m_broker->cancelledReads.push_back(request.readId);
+			response.status = EControlSenpRpcStatus::Succeeded;
+			return response;
+		case EControlSenpRpcOperation::ReadResource: {
+			++m_broker->resourceReads;
+			response.status = m_broker->resourceStatus;
+			if (response.status != EControlSenpRpcStatus::Succeeded) return response;
+			if (request.resourceHandle != m_broker->resourceHandle
+				|| request.offset > m_broker->resourceBody.size()) {
+				response.status = EControlSenpRpcStatus::NotFound;
+				return response;
+			}
+			const auto offset = static_cast<std::size_t>(request.offset);
+			const auto served = (std::min)(static_cast<std::size_t>(request.length),
+				m_broker->resourceBody.size() - offset);
+			response.resourceHandle = request.resourceHandle;
+			response.resourceOffset = request.offset;
+			response.resourceBytes = m_broker->resourceBody.substr(offset, served);
+			response.resourceLength = m_broker->resourceBody.size();
+			response.resourceRevision = m_broker->resourceRevision;
+			// The store calls a resource Complete only once a chunk reaches the
+			// end of the body; before that it is still loading, and the editor
+			// is what decides which of the two it has from these members.
+			const auto whole = offset + served == m_broker->resourceBody.size();
+			response.resourceState = static_cast<std::uint8_t>(
+				whole ? senp::TextResourceState::Complete : senp::TextResourceState::Loading);
+			response.resourceEnd = static_cast<std::uint8_t>(
+				whole ? senp::TextResourceEnd::Complete : senp::TextResourceEnd::None);
+			return response;
+		}
+		case EControlSenpRpcOperation::ReleaseResource:
+			++m_broker->releases;
+			m_broker->releasedResources.push_back(request.resourceHandle);
 			response.status = EControlSenpRpcStatus::Succeeded;
 			return response;
 		default:
@@ -899,6 +957,204 @@ TEST(SenpControlToolReads, SendsNothingForCountersThatObservedNothing)
 	// open a connection to say so.
 	EXPECT_TRUE(broker->Requests().empty());
 	EXPECT_EQ(0, broker->Hello());
+}
+
+TEST(SenpControlToolReads, CarriesEachTextResourceChunkWholeFromTheControlStore)
+{
+	auto broker = std::make_shared<Broker>();
+	CFixedEndpointReader reader;
+	CSenpControlToolReads reads(Options(broker), reader);
+
+	// A window short of the body. The chunk must arrive describing the whole
+	// resource it belongs to, because that is what tells the surface it has not
+	// reached the end - the byte count it happened to receive does not.
+	ASSERT_TRUE(reads.ReadResource(Owner(), L"log-1", 0, 8));
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+	const auto loading = reads.TakeResource(Owner());
+	ASSERT_TRUE(loading);
+	EXPECT_EQ(L"log-1", loading->handle);
+	EXPECT_EQ(0U, loading->offset);
+	ASSERT_TRUE(loading->chunk);
+	EXPECT_EQ(senp::TextResourceResult::Accepted, loading->chunk->result);
+	EXPECT_EQ(senp::TextResourceState::Loading, loading->chunk->state);
+	EXPECT_EQ(senp::TextResourceEnd::None, loading->chunk->end);
+	EXPECT_EQ(L"log-1", loading->chunk->handle);
+	EXPECT_EQ(11, loading->chunk->revision);
+	EXPECT_EQ(0U, loading->chunk->offset);
+	EXPECT_EQ(15U, loading->chunk->length);
+	EXPECT_EQ("run step", loading->chunk->bytes);
+	// One answer per read: a second drain would hand the same chunk to whatever
+	// asked next.
+	EXPECT_FALSE(reads.TakeResource(Owner()));
+
+	ASSERT_TRUE(reads.ReadResource(Owner(), L"log-1", 8, 64));
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+	const auto complete = reads.TakeResource(Owner());
+	ASSERT_TRUE(complete);
+	EXPECT_EQ(8U, complete->offset);
+	ASSERT_TRUE(complete->chunk);
+	EXPECT_EQ(senp::TextResourceState::Complete, complete->chunk->state);
+	EXPECT_EQ(senp::TextResourceEnd::Complete, complete->chunk->end);
+	EXPECT_EQ(8U, complete->chunk->offset);
+	EXPECT_EQ(15U, complete->chunk->length);
+	EXPECT_EQ(" output", complete->chunk->bytes);
+
+	// The read is grant-scoped and names only what the closed operation set
+	// admits for it: no read identity, no tool, no arguments.
+	EXPECT_EQ(1, broker->Issued());
+	EXPECT_EQ(2, broker->ResourceReads());
+	const auto requests = broker->Requests();
+	ASSERT_GE(requests.size(), 2u);
+	EXPECT_EQ(EControlSenpRpcOperation::ReadResource, requests[1].operation);
+	EXPECT_EQ(kSenpProfile, requests[1].profileId);
+	EXPECT_EQ(platform::controlipc::FromContributionOwner(Owner()), requests[1].owner);
+	EXPECT_EQ("grant-1", requests[1].grantId);
+	EXPECT_EQ(L"log-1", requests[1].resourceHandle);
+	EXPECT_EQ(0U, requests[1].offset);
+	EXPECT_EQ(8U, requests[1].length);
+	EXPECT_TRUE(requests[1].readId.empty());
+	EXPECT_TRUE(requests[1].toolId.empty());
+	EXPECT_TRUE(requests[1].arguments.empty());
+}
+
+TEST(SenpControlToolReads, HoldsOneResourceReadPerOwnerUntilItsAnswerIsDrained)
+{
+	auto broker = std::make_shared<Broker>();
+	CGatedEndpointReader reader;
+	CSenpControlToolReads reads(Options(broker), reader);
+
+	// Nothing the wire could carry is admitted: a resource it cannot name, a
+	// window of nothing, and one past the chunk the broker answers with.
+	EXPECT_FALSE(reads.ReadResource(Owner(), L"", 0, 64));
+	EXPECT_FALSE(reads.ReadResource(Owner(), L"log-1", 0, 0));
+	EXPECT_FALSE(reads.ReadResource(Owner(), L"log-1", 0,
+		platform::controlipc::kControlSenpRpcMaximumResourceChunkBytes + 1));
+	senp::ContributionOwnerIdentity ungeneration = Owner();
+	ungeneration.generation = 0;
+	EXPECT_FALSE(reads.ReadResource(ungeneration, L"log-1", 0, 64));
+
+	ASSERT_TRUE(reads.ReadResource(Owner(), L"log-1", 0, 64));
+	// One at a time. A second read would settle into the same slot, and the
+	// surface could not tell which of the two ranges it had been given.
+	EXPECT_FALSE(reads.ReadResource(Owner(), L"log-1", 64, 64));
+	// Another owner is another surface and is not held by this one.
+	EXPECT_TRUE(reads.ReadResource(OtherOwner(), L"log-1", 0, 64));
+
+	reader.Release();
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+	const auto unreachable = reads.TakeResource(Owner());
+	ASSERT_TRUE(unreachable);
+	EXPECT_EQ(L"log-1", unreachable->handle);
+	// The connection is what would have carried an answer, and its absence says
+	// nothing about the resource, so no chunk stands in for one.
+	EXPECT_FALSE(unreachable->chunk);
+	EXPECT_TRUE(reads.TakeResource(OtherOwner()));
+	// Drained, so the surface may ask again.
+	EXPECT_TRUE(reads.ReadResource(Owner(), L"log-1", 64, 64));
+}
+
+TEST(SenpControlToolReads, AnswersAResourceReadTheControlSideRefusedWithoutInventingAChunk)
+{
+	auto broker = std::make_shared<Broker>();
+	broker->resourceStatus = EControlSenpRpcStatus::Closed;
+	CFixedEndpointReader reader;
+	CSenpControlToolReads reads(Options(broker), reader);
+
+	ASSERT_TRUE(reads.ReadResource(Owner(), L"log-1", 0, 64));
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+
+	const auto answer = reads.TakeResource(Owner());
+	ASSERT_TRUE(answer);
+	EXPECT_EQ(L"log-1", answer->handle);
+	ASSERT_TRUE(answer->chunk);
+	// The refusal the control side gave, in the store's own vocabulary, and
+	// nothing besides: no state, length, revision or bytes were answered, so
+	// none are filled in on its behalf.
+	EXPECT_EQ(senp::TextResourceResult::Closed, answer->chunk->result);
+	EXPECT_EQ(0U, answer->chunk->length);
+	EXPECT_EQ(0, answer->chunk->revision);
+	EXPECT_TRUE(answer->chunk->bytes.empty());
+	// A refusal is an answer, so it is not retried.
+	EXPECT_EQ(1, broker->ResourceReads());
+}
+
+TEST(SenpControlToolReads, RemintsTheGrantForAResourceReadTheControlSideCallsExpired)
+{
+	auto broker = std::make_shared<Broker>();
+	broker->resourceStatus = EControlSenpRpcStatus::Expired;
+	CFixedEndpointReader reader;
+	CSenpControlToolReads reads(Options(broker), reader);
+
+	ASSERT_TRUE(reads.ReadResource(Owner(), L"log-1", 0, 64));
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+
+	const auto answer = reads.TakeResource(Owner());
+	ASSERT_TRUE(answer);
+	ASSERT_TRUE(answer->chunk);
+	// Bounded retries, each on a freshly minted grant, and then the refusal the
+	// control side kept giving rather than a generic one: a surface told the
+	// resource expired re-resolves it, where a failure is only reported.
+	EXPECT_EQ(senp::TextResourceResult::Expired, answer->chunk->result);
+	EXPECT_EQ(static_cast<int>(CSenpControlToolReads::kMaximumAttempts), broker->ResourceReads());
+	EXPECT_EQ(static_cast<int>(CSenpControlToolReads::kMaximumAttempts), broker->Issued());
+}
+
+TEST(SenpControlToolReads, AnswersAResourceReadWithNoChunkWhenTheConnectionIsLost)
+{
+	auto broker = std::make_shared<Broker>();
+	CFixedEndpointReader reader;
+	CSenpControlToolReads reads(Options(broker), reader);
+
+	ASSERT_TRUE(reads.ReadResource(Owner(), L"log-1", 0, 64));
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+	ASSERT_TRUE(reads.TakeResource(Owner()));
+
+	broker->Sever();
+	ASSERT_TRUE(reads.ReadResource(Owner(), L"log-1", 0, 64));
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+	const auto lost = reads.TakeResource(Owner());
+	ASSERT_TRUE(lost);
+	EXPECT_EQ(L"log-1", lost->handle);
+	EXPECT_EQ(0U, lost->offset);
+	EXPECT_FALSE(lost->chunk);
+	EXPECT_EQ(ESenpControlToolReadsState::Disconnected, reads.State());
+}
+
+TEST(SenpControlToolReads, WithdrawsAResourceOnTheWireWithoutWaitingForAnAnswer)
+{
+	auto broker = std::make_shared<Broker>();
+	CFixedEndpointReader reader;
+	CSenpControlToolReads reads(Options(broker), reader);
+
+	// A release for an owner this seam holds nothing for names a resource no
+	// grant of ours reaches, so nothing goes on the wire for it.
+	reads.ReleaseResource(Owner(), L"log-1");
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+	EXPECT_EQ(0, broker->Releases());
+
+	ASSERT_TRUE(reads.ReadResource(Owner(), L"log-1", 0, 64));
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+	EXPECT_TRUE(reads.TakeResource(Owner()));
+
+	reads.ReleaseResource(Owner(), L"");
+	reads.ReleaseResource(Owner(), L"log-1");
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+	EXPECT_EQ(1, broker->Releases());
+	ASSERT_EQ(1u, broker->Released().size());
+	EXPECT_EQ(L"log-1", broker->Released()[0]);
+	// A withdrawal names the whole resource, so it carries no window, and it
+	// produces no answer for the surface to drain.
+	const auto requests = broker->Requests();
+	const auto release = std::find_if(requests.begin(), requests.end(),
+		[](const ControlSenpRpcRequest& request) {
+			return request.operation == EControlSenpRpcOperation::ReleaseResource;
+		});
+	ASSERT_NE(requests.end(), release);
+	EXPECT_EQ(L"log-1", release->resourceHandle);
+	EXPECT_EQ(0U, release->offset);
+	EXPECT_EQ(0U, release->length);
+	EXPECT_EQ("grant-1", release->grantId);
+	EXPECT_FALSE(reads.TakeResource(Owner()));
 }
 
 TEST(SenpControlToolReads, RefusesToExistWithoutAnEndpointReaderToDiscoverThrough)

@@ -56,6 +56,19 @@ senp::effect::CompletionStatus ToCompletion(const EControlSenpRpcStatus status) 
 	}
 }
 
+//! A refusal of a resource read, in the store's own vocabulary. Only the three
+//! statuses the control side derives from a store answer map onto one; anything
+//! else is an answer that is not a chunk, which is what Invalid says.
+senp::TextResourceResult ToResourceResult(const EControlSenpRpcStatus status) noexcept
+{
+	switch (status) {
+	case EControlSenpRpcStatus::NotFound: return senp::TextResourceResult::NotFound;
+	case EControlSenpRpcStatus::Expired: return senp::TextResourceResult::Expired;
+	case EControlSenpRpcStatus::Closed: return senp::TextResourceResult::Closed;
+	default: return senp::TextResourceResult::Invalid;
+	}
+}
+
 //! The seam keeps its own account vocabulary, so the mapping from the wire one
 //! is written out rather than assumed from the two enumerations agreeing today.
 SenpToolAccountState ToAccountState(const platform::controlipc::EControlSenpAccountState state) noexcept
@@ -239,8 +252,12 @@ void CSenpControlToolReads::CancelAll(const senp::ContributionOwnerIdentity& own
 		auto* entry = FindLocked(owner);
 		if (!entry) return;
 		entry->retired = true;
+		// A resource read goes with the reads for the same reason: the surface
+		// that asked is being revoked with its owner. A queued release stays -
+		// it is what tells the control side the resource is no longer wanted.
 		std::erase_if(m_commands, [&](const Command& queued) {
-			return queued.kind == Command::Kind::Start && queued.owner == owner;
+			return (queued.kind == Command::Kind::Start || queued.kind == Command::Kind::Resource)
+				&& queued.owner == owner;
 		});
 		for (const auto& read : entry->outstanding) {
 			Command command;
@@ -251,6 +268,9 @@ void CSenpControlToolReads::CancelAll(const senp::ContributionOwnerIdentity& own
 		}
 		entry->outstanding.clear();
 		entry->completions.clear();
+		entry->resourceHandle.clear();
+		entry->resourceOffset = 0;
+		entry->resource.reset();
 		Command retire;
 		retire.kind = Command::Kind::Retire;
 		retire.owner = owner;
@@ -332,6 +352,88 @@ void CSenpControlToolReads::DeclareWorkspace(const std::uint64_t generation,
 	m_work.notify_all();
 }
 
+bool CSenpControlToolReads::ReadResource(const senp::ContributionOwnerIdentity& owner,
+	const std::wstring_view handle, const std::uint64_t offset, const std::uint32_t length) noexcept
+{
+	// A window of nothing, or one past the chunk bound, is refused by the
+	// broker's own coherence rules, so the boundary fails here rather than
+	// dispatching something the wire cannot carry.
+	if (handle.empty() || length == 0
+		|| length > platform::controlipc::kControlSenpRpcMaximumResourceChunkBytes) {
+		return false;
+	}
+	if (owner.extensionId.empty() || owner.generation <= 0 || owner.workspaceRevision < 0
+		|| owner.accountGeneration < 0 || m_options.senpProfileId.empty()) {
+		return false;
+	}
+	try {
+		std::lock_guard<std::mutex> lock(m_mutex);
+		if (m_stopped) return false;
+		auto* entry = FindLocked(owner);
+		if (!entry) {
+			if (m_owners.size() >= kMaximumOwners) return false;
+			m_owners.push_back(Owner{ owner, {}, {}, false });
+			entry = &m_owners.back();
+		}
+		if (entry->retired || !entry->resourceHandle.empty() || entry->resource) return false;
+		Command command;
+		command.kind = Command::Kind::Resource;
+		command.owner = owner;
+		command.resourceHandle = std::wstring(handle);
+		command.resourceOffset = offset;
+		command.resourceLength = length;
+		if (!EnqueueLocked(std::move(command))) return false;
+		try {
+			entry->resourceHandle = std::wstring(handle);
+			entry->resourceOffset = offset;
+		} catch (...) {
+			m_commands.pop_back();
+			return false;
+		}
+	} catch (...) {
+		return false;
+	}
+	m_work.notify_all();
+	return true;
+}
+
+std::optional<SenpToolResourceAnswer> CSenpControlToolReads::TakeResource(
+	const senp::ContributionOwnerIdentity& owner) noexcept
+{
+	try {
+		std::lock_guard<std::mutex> lock(m_mutex);
+		auto* entry = FindLocked(owner);
+		if (!entry || !entry->resource) return {};
+		auto answer = std::move(*entry->resource);
+		entry->resource.reset();
+		return answer;
+	} catch (...) {
+		return {};
+	}
+}
+
+void CSenpControlToolReads::ReleaseResource(const senp::ContributionOwnerIdentity& owner,
+	const std::wstring_view handle) noexcept
+{
+	try {
+		if (handle.empty()) return;
+		std::lock_guard<std::mutex> lock(m_mutex);
+		if (m_stopped) return;
+		// A release for an owner this seam holds nothing for names a resource no
+		// grant of ours reaches, so there is nothing here to withdraw.
+		auto* entry = FindLocked(owner);
+		if (!entry || entry->retired) return;
+		Command command;
+		command.kind = Command::Kind::Release;
+		command.owner = owner;
+		command.resourceHandle = std::wstring(handle);
+		if (!EnqueueLocked(std::move(command))) return;
+	} catch (...) {
+		return;
+	}
+	m_work.notify_all();
+}
+
 void CSenpControlToolReads::Stop() noexcept
 {
 	{
@@ -346,6 +448,9 @@ void CSenpControlToolReads::Stop() noexcept
 			owner.retired = true;
 			owner.outstanding.clear();
 			owner.completions.clear();
+			owner.resourceHandle.clear();
+			owner.resourceOffset = 0;
+			owner.resource.reset();
 		}
 	}
 	m_work.notify_all();
@@ -516,6 +621,48 @@ void CSenpControlToolReads::Dispatched(const senp::ContributionOwnerIdentity& ow
 	}
 }
 
+void CSenpControlToolReads::Answer(const senp::ContributionOwnerIdentity& owner,
+	SenpToolResourceAnswer answer) noexcept
+{
+	try {
+		std::lock_guard<std::mutex> lock(m_mutex);
+		auto* entry = FindLocked(owner);
+		if (!entry || entry->retired) return;
+		// An answer to a read this owner is no longer waiting on belongs to a
+		// surface that has gone. Publishing it would hand whatever asked next a
+		// chunk of some other range.
+		if (entry->resourceHandle != answer.handle || entry->resourceOffset != answer.offset) return;
+		entry->resourceHandle.clear();
+		entry->resourceOffset = 0;
+		entry->resource = std::move(answer);
+	} catch (...) {
+	}
+	m_quiet.notify_all();
+}
+
+void CSenpControlToolReads::Refuse(const Command& command,
+	const std::optional<senp::TextResourceResult> result) noexcept
+{
+	try {
+		SenpToolResourceAnswer answer;
+		answer.handle = command.resourceHandle;
+		answer.offset = command.resourceOffset;
+		if (result) {
+			// The refusal names what was asked for and nothing else. A state, an
+			// end or a length here would describe a resource the control side
+			// did not describe, and the surface reads none of them once the
+			// result is not Accepted.
+			senp::TextResourceChunk chunk;
+			chunk.result = *result;
+			chunk.handle = command.resourceHandle;
+			chunk.offset = static_cast<std::size_t>(command.resourceOffset);
+			answer.chunk = std::move(chunk);
+		}
+		Answer(command.owner, std::move(answer));
+	} catch (...) {
+	}
+}
+
 // --- worker thread ---------------------------------------------------------
 
 void CSenpControlToolReads::Worker() noexcept
@@ -579,6 +726,24 @@ void CSenpControlToolReads::Run(Command command) noexcept
 		// Reaching a connection is what declares: Ensure sends the published
 		// declaration to any connection that has not already heard it.
 		(void)Ensure();
+		return;
+	}
+	if (command.kind == Command::Kind::Resource) {
+		Fetch(std::move(command));
+		return;
+	}
+	if (command.kind == Command::Kind::Release) {
+		// A release never revives a connection. Without one the grant that named
+		// the resource is gone, and the control side let the resource go with
+		// the scope that grant belonged to.
+		if (m_client.State() != EControlSenpClientState::Connected) return;
+		auto failure = senp::effect::CompletionStatus::Failed;
+		const auto grant = Authorize(command.owner, failure);
+		if (!grant) return;
+		auto request = Compose(EControlSenpRpcOperation::ReleaseResource, command.owner, *grant);
+		request.resourceHandle = command.resourceHandle;
+		const auto answer = m_client.Execute(request);
+		if (!answer.Answered()) m_client.Disconnect();
 		return;
 	}
 	if (command.kind == Command::Kind::Cancel) {
@@ -667,6 +832,105 @@ void CSenpControlToolReads::Retry(Command command, std::wstring message) noexcep
 		Complete(owner, readId, stopped
 			? senp::effect::CompletionStatus::Cancelled : senp::effect::CompletionStatus::Failed,
 			stopped ? kStopped : std::move(message));
+		return;
+	}
+	m_work.notify_all();
+}
+
+void CSenpControlToolReads::Fetch(Command command) noexcept
+{
+	if (!Ensure()) {
+		// No answer at all. What would have carried one is the connection, and
+		// its absence says nothing about the resource behind the handle.
+		Refuse(command, {});
+		return;
+	}
+	auto failure = senp::effect::CompletionStatus::Failed;
+	const auto grant = Authorize(command.owner, failure);
+	if (!grant) {
+		if (failure == senp::effect::CompletionStatus::HostUnavailable) {
+			Refuse(command, {});
+			return;
+		}
+		Refetch(std::move(command), senp::TextResourceResult::Invalid);
+		return;
+	}
+	auto request = Compose(EControlSenpRpcOperation::ReadResource, command.owner, *grant);
+	request.resourceHandle = command.resourceHandle;
+	request.offset = command.resourceOffset;
+	request.length = command.resourceLength;
+	const auto answer = m_client.Execute(request);
+	if (!answer.Answered()) {
+		m_client.Disconnect();
+		Refuse(command, {});
+		return;
+	}
+	switch (answer.response.status) {
+	case EControlSenpRpcStatus::Succeeded:
+		break;
+	case EControlSenpRpcStatus::Busy:
+	case EControlSenpRpcStatus::ResourceExhausted:
+		// Saturation is not a statement about the resource, so a spent retry
+		// answers with the one refusal that claims nothing about it.
+		Refetch(std::move(command), senp::TextResourceResult::Invalid);
+		return;
+	case EControlSenpRpcStatus::Expired:
+	case EControlSenpRpcStatus::Unauthorized:
+		// The grant may simply have outlived its lifetime. Minting a new one and
+		// asking again is what tells a rotated grant apart from a resource the
+		// control side has really let go of.
+		Forget(command.owner);
+		Refetch(std::move(command), ToResourceResult(answer.response.status));
+		return;
+	default:
+		Refuse(command, ToResourceResult(answer.response.status));
+		return;
+	}
+	// An answer naming no resource, or naming another range of one, is not this
+	// read's chunk. Passing it on would let the surface append bytes at an
+	// offset it never asked about, which its decoder has no way to detect.
+	if (answer.response.resourceHandle != command.resourceHandle
+		|| answer.response.resourceOffset != command.resourceOffset) {
+		Refuse(command, senp::TextResourceResult::Invalid);
+		return;
+	}
+	senp::TextResourceChunk chunk;
+	// The chunk as the store answered it. The codec has already refused a state
+	// or an end outside its enumeration and a chunk reaching past its resource,
+	// so nothing is reinterpreted here - only carried.
+	chunk.result = senp::TextResourceResult::Accepted;
+	chunk.state = static_cast<senp::TextResourceState>(answer.response.resourceState);
+	chunk.end = static_cast<senp::TextResourceEnd>(answer.response.resourceEnd);
+	chunk.handle = answer.response.resourceHandle;
+	chunk.revision = answer.response.resourceRevision;
+	chunk.offset = static_cast<std::size_t>(answer.response.resourceOffset);
+	chunk.length = static_cast<std::size_t>(answer.response.resourceLength);
+	chunk.bytes = answer.response.resourceBytes;
+	SenpToolResourceAnswer settled;
+	settled.handle = command.resourceHandle;
+	settled.offset = command.resourceOffset;
+	settled.chunk = std::move(chunk);
+	Answer(command.owner, std::move(settled));
+}
+
+void CSenpControlToolReads::Refetch(Command command,
+	const senp::TextResourceResult exhausted) noexcept
+{
+	if (++command.attempts >= kMaximumAttempts) {
+		Refuse(command, exhausted);
+		return;
+	}
+	Command refused = command;
+	bool queued = false;
+	try {
+		std::lock_guard<std::mutex> lock(m_mutex);
+		queued = EnqueueLocked(std::move(command));
+	} catch (...) {
+	}
+	// A seam that cannot hold the retry still owes the surface an answer, or it
+	// would wait on a read nothing is going to serve.
+	if (!queued) {
+		Refuse(refused, exhausted);
 		return;
 	}
 	m_work.notify_all();

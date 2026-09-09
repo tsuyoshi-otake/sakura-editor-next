@@ -70,6 +70,28 @@ public:
 	{
 		++workspaceDeclarations;
 	}
+	//! The window drives the text pump, not the owner target, so these record
+	//! the calls in order to assert that a target makes none of them.
+	[[nodiscard]] bool ReadResource(const senp::ContributionOwnerIdentity&, std::wstring_view handle,
+		std::uint64_t, std::uint32_t) noexcept override
+	{
+		resourceReads.emplace_back(handle);
+		return false;
+	}
+	[[nodiscard]] std::optional<SenpToolResourceAnswer> TakeResource(
+		const senp::ContributionOwnerIdentity&) noexcept override
+	{
+		++resourceTakes;
+		return {};
+	}
+	void ReleaseResource(const senp::ContributionOwnerIdentity&, std::wstring_view handle) noexcept override
+	{
+		resourceReleases.emplace_back(handle);
+	}
+
+	std::vector<std::wstring> resourceReads;
+	std::vector<std::wstring> resourceReleases;
+	int resourceTakes{};
 
 	SenpToolAccount account;
 	mutable int accountCalls{};

@@ -119,6 +119,13 @@ public:
 	void DeclareWorkspace(std::uint64_t generation, std::uint64_t revision,
 		std::vector<std::wstring> folders) noexcept;
 
+	[[nodiscard]] bool ReadResource(const senp::ContributionOwnerIdentity& owner,
+		std::wstring_view handle, std::uint64_t offset, std::uint32_t length) noexcept override;
+	[[nodiscard]] std::optional<SenpToolResourceAnswer> TakeResource(
+		const senp::ContributionOwnerIdentity& owner) noexcept override;
+	void ReleaseResource(const senp::ContributionOwnerIdentity& owner,
+		std::wstring_view handle) noexcept override;
+
 	//! Terminal. It stops the client, joins the worker and drops every queue, so
 	//! no completion is routed afterwards.
 	void Stop() noexcept;
@@ -135,10 +142,17 @@ private:
 		//! Cancel carries only `read.readId`; Retire, Account and Workspace carry
 		//! neither. A Workspace command carries no declaration either: it only
 		//! wakes the worker, which reads the published one under the lock.
-		enum class Kind : std::uint8_t { Start, Cancel, Retire, Account, Workspace } kind{ Kind::Start };
+		enum class Kind : std::uint8_t {
+			Start, Cancel, Retire, Account, Workspace, Resource, Release
+		} kind{ Kind::Start };
 		senp::ContributionOwnerIdentity owner;
 		senp::effect::OperationContext context;
 		senp::effect::StartToolRead read;
+		//! Named by Resource and Release only. A Release names no window: it
+		//! withdraws the whole resource rather than a range of it.
+		std::wstring resourceHandle;
+		std::uint64_t resourceOffset{};
+		std::uint32_t resourceLength{};
 		std::uint32_t attempts{};
 	};
 	//! One read admitted here and not yet terminated. The context travels with it
@@ -157,6 +171,13 @@ private:
 		std::vector<Read> outstanding;
 		std::deque<senp::effect::ToolCompleted> completions;
 		bool retired{};
+		//! The resource read in flight for this owner, empty when none is, plus
+		//! the settled answer waiting to be drained. One at a time: two answers
+		//! could only be told apart by the surface remembering which it asked
+		//! for, and remembering that is what this pair is doing on its behalf.
+		std::wstring resourceHandle;
+		std::uint64_t resourceOffset{};
+		std::optional<SenpToolResourceAnswer> resource;
 	};
 	//! Worker-private grant record. The epoch is part of a grant's identity: the
 	//! same id on a later connection is not the same capability.
@@ -188,11 +209,24 @@ private:
 	//! Records the connection a read was admitted on.
 	void Dispatched(const senp::ContributionOwnerIdentity& owner, const std::wstring& readId,
 		std::uint64_t epoch) noexcept;
+	//! Publishes one settled resource answer. An answer for a read this owner is
+	//! no longer waiting on was cancelled with it and is dropped.
+	void Answer(const senp::ContributionOwnerIdentity& owner, SenpToolResourceAnswer answer) noexcept;
+	//! Answers a resource read the control side did not serve. An engaged result
+	//! is the refusal it gave; a disengaged one means no answer arrived at all.
+	void Refuse(const Command& command, std::optional<senp::TextResourceResult> result) noexcept;
 
 	void Worker() noexcept;
 	void Run(Command command) noexcept;
 	//! Re-queues one refused read, or fails it once its attempts are spent.
 	void Retry(Command command, std::wstring message) noexcept;
+	//! Worker-side. Serves one resource read and always answers it.
+	void Fetch(Command command) noexcept;
+	//! Re-queues one transiently refused resource read. `exhausted` is the
+	//! refusal it carried, which is what the answer says once the attempts are
+	//! spent: a surface told the resource expired re-resolves it, where a
+	//! generic failure would only be reported.
+	void Refetch(Command command, senp::TextResourceResult exhausted) noexcept;
 	void Poll() noexcept;
 	//! Worker-side. Asks the control side which account the profile has adopted.
 	[[nodiscard]] SenpToolAccount Query() noexcept;

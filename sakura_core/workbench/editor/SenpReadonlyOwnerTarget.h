@@ -39,6 +39,25 @@ struct SenpToolAccount {
 };
 
 /*!
+	@brief One settled answer to a text-resource read.
+
+	`handle` and `offset` echo the read this answers, because the surface that
+	asked needs to attribute an answer that names no resource of its own.
+
+	`chunk` is engaged only when the control side answered. A disengaged one
+	means no answer arrived - the connection was unavailable, lost or replaced -
+	which is not a statement about the resource, and the seam does not invent one
+	that would read as if the store had spoken. An engaged chunk whose `result`
+	is Accepted is the store's own chunk, whole; any other `result` is the
+	control side's refusal, and the rest of the chunk describes nothing.
+*/
+struct SenpToolResourceAnswer {
+	std::wstring handle;
+	std::uint64_t offset = 0;
+	std::optional<senp::TextResourceChunk> chunk;
+};
+
+/*!
 	@brief Nonblocking tool-read seam between one owner target and the broker.
 
 	Every method runs on the UI thread inside the owner projection's Pump, so an
@@ -99,6 +118,35 @@ public:
 	*/
 	virtual void DeclareWorkspace(std::uint64_t generation, std::uint64_t revision,
 		std::vector<std::wstring> folders) noexcept = 0;
+
+	/*!
+		@brief Publishes a read of one text resource the control side holds.
+
+		A tool read answers with a resource handle rather than with the body, so
+		this is the only way the bytes behind a published document reach the
+		editor. Like Start it admits only: the answer arrives later through
+		TakeResource, and like every other method here it must not wait on the
+		connection.
+
+		At most one read per owner is outstanding, matching the single
+		outstanding read a document surface keeps, and its answer has to be
+		drained before the next is admitted. False therefore means the request
+		was unusable or this owner already has one in flight - not that the read
+		failed, which is an answer rather than a refusal to admit.
+	*/
+	[[nodiscard]] virtual bool ReadResource(const senp::ContributionOwnerIdentity& owner,
+		std::wstring_view handle, std::uint64_t offset, std::uint32_t length) noexcept = 0;
+	//! Drains that answer once it has settled. Every admitted read ends in
+	//! exactly one answer - a refusal is an answer - so a surface that asked is
+	//! never left holding a read that can no longer finish.
+	[[nodiscard]] virtual std::optional<SenpToolResourceAnswer> TakeResource(
+		const senp::ContributionOwnerIdentity& owner) noexcept = 0;
+	//! States that this owner will not read the resource again. It produces no
+	//! answer: whether anything else still holds the resource is the store's
+	//! business, and a release the connection never carried is not a failure
+	//! this side can act on.
+	virtual void ReleaseResource(const senp::ContributionOwnerIdentity& owner,
+		std::wstring_view handle) noexcept = 0;
 };
 
 enum class SenpReadonlyOwnerTargetState : std::uint8_t {
