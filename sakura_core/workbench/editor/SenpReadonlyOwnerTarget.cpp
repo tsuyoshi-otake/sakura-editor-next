@@ -62,10 +62,11 @@ CSenpReadonlyOwnerTarget::CSenpReadonlyOwnerTarget(senp::ContributionOwnerIdenti
 	SenpReadonlyEditorController& editors, const HWND parent,
 	const rendering::FrameSurfaceId firstSurfaceId, const ISenpReadonlyTextResources* resources,
 	SenpTextResourceView::CopySink copy, SenpOwnerCommandCompleted commandCompleted,
-	SenpOwnerResourceReleased resourceReleased)
+	SenpOwnerResourceReleased resourceReleased, ISenpOwnerToolReads* toolReads)
 	: m_owner(std::move(owner)), m_editors(editors), m_parent(parent),
 	  m_firstSurfaceId(firstSurfaceId), m_resources(resources), m_copy(std::move(copy)),
 	  m_commandCompleted(std::move(commandCompleted)), m_resourceReleased(std::move(resourceReleased)),
+	  m_toolReads(toolReads),
 	  m_styleLifetime(std::make_shared<CSenpReadonlyOwnerTarget*>(this))
 {
 	if (!ExtensionId(m_owner.extensionId, m_scope.extensionId)) {
@@ -213,6 +214,65 @@ bool CSenpReadonlyOwnerTarget::ReleaseResource(std::wstring_view handle) noexcep
 	try { return m_resourceReleased(handle); } catch (...) { return false; }
 }
 
+bool CSenpReadonlyOwnerTarget::StartToolRead(const senp::effect::OperationContext& context,
+	senp::effect::StartToolRead read) noexcept
+{
+	// The projection already refused a duplicate readId and enforced its own
+	// pending bound. This check is not redundant: the target is the last owner
+	// of the readId -> context map, and a map that outgrows the session bound
+	// could never be drained within one lifetime.
+	if (!Matches(context) || !m_toolReads) return false;
+	if (read.readId.empty() || read.readId.size() > 512) return false;
+	if (m_toolReadContexts.size() >= senp::CSenpRuntimeSession::kMaximumPending
+		|| m_toolReadContexts.contains(read.readId)) return false;
+	try {
+		auto readId = read.readId;
+		// Recorded before dispatch so a terminal that arrives during Start is
+		// still routable. A refused start removes it again.
+		if (!m_toolReadContexts.emplace(readId, context).second) return false;
+		if (!m_toolReads->Start(m_owner, context, read)) {
+			m_toolReadContexts.erase(readId);
+			return false;
+		}
+		return true;
+	} catch (...) { return false; }
+}
+
+std::optional<SenpToolReadTerminal> CSenpReadonlyOwnerTarget::TakeToolRead() noexcept
+{
+	if (m_revoked || !m_toolReads) return {};
+	// Bounded drain. A completion whose readId is unknown was cancelled while it
+	// was already in flight; handing it to the projection would be reported as a
+	// protocol violation and would close the owner, so it is discarded here. The
+	// bound keeps a misbehaving seam from spinning the UI thread.
+	for (std::size_t attempt = 0; attempt <= senp::CSenpRuntimeSession::kMaximumPending; ++attempt) {
+		try {
+			auto completion = m_toolReads->Take(m_owner);
+			if (!completion) return {};
+			const auto found = m_toolReadContexts.find(completion->readId);
+			if (found == m_toolReadContexts.end()) continue;
+			auto context = found->second;
+			m_toolReadContexts.erase(found);
+			return SenpToolReadTerminal(std::move(context), std::move(*completion));
+		} catch (...) { return {}; }
+	}
+	return {};
+}
+
+void CSenpReadonlyOwnerTarget::CancelToolReads(const senp::effect::OperationContext& context) noexcept
+{
+	// The lineage, not the operation id: one request generation can hold several
+	// reads, and the projection cancels the same lineage on its own side.
+	for (auto current = m_toolReadContexts.begin(); current != m_toolReadContexts.end();) {
+		if (current->second.ownerGeneration == context.ownerGeneration
+			&& current->second.requestGeneration == context.requestGeneration)
+			current = m_toolReadContexts.erase(current);
+		else ++current;
+	}
+	if (!m_toolReads) return;
+	m_toolReads->Cancel(m_owner, context);
+}
+
 SenpReadonlyOwnerStyleSink CSenpReadonlyOwnerTarget::StyleSink() const
 {
 	return [lifetime = std::weak_ptr(m_styleLifetime)](const theme::ThemePalette& palette,
@@ -259,6 +319,10 @@ void CSenpReadonlyOwnerTarget::Revoke() noexcept
 	*m_styleLifetime = nullptr;
 	m_revoked = true; m_pending.clear();
 	m_state = SenpReadonlyOwnerTargetState::Revoked;
+	// Physical cancellation before the document teardown: once this returns no
+	// completion of this owner may be routed anywhere.
+	m_toolReadContexts.clear();
+	if (const auto reads = std::exchange(m_toolReads, nullptr)) reads->CancelAll(m_owner);
 	(void)m_editors.Revoke(m_scope);
 	for (const auto& [resource, document] : m_documents) {
 		if (!document->closed && m_editors.Remove(document->inputId)) {

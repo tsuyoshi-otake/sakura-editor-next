@@ -6,8 +6,63 @@
 
 #include <CommCtrl.h>
 
+#include <deque>
+
 namespace workbench::editor::tests {
 namespace {
+
+//! Records every seam call and hands back scripted terminals. It never blocks,
+//! mirroring the contract the production seam owes the UI thread.
+class ScriptedToolReads final : public ISenpOwnerToolReads {
+public:
+	struct Started {
+		senp::ContributionOwnerIdentity owner;
+		senp::effect::OperationContext context;
+		senp::effect::StartToolRead read;
+	};
+	std::vector<Started> started;
+	std::vector<std::pair<senp::ContributionOwnerIdentity, senp::effect::OperationContext>> cancelled;
+	std::vector<senp::ContributionOwnerIdentity> cancelledAll;
+	std::deque<senp::effect::ToolCompleted> completions;
+	//! When set, Take answers with this terminal forever. It models a seam that
+	//! keeps offering a completion the target no longer owns.
+	std::optional<senp::effect::ToolCompleted> endless;
+	int takeCalls{};
+	bool admit{ true };
+
+	[[nodiscard]] bool Start(const senp::ContributionOwnerIdentity& owner,
+		const senp::effect::OperationContext& context,
+		const senp::effect::StartToolRead& read) noexcept override
+	{
+		started.push_back({ owner, context, read });
+		return admit;
+	}
+	[[nodiscard]] std::optional<senp::effect::ToolCompleted> Take(
+		const senp::ContributionOwnerIdentity&) noexcept override
+	{
+		++takeCalls;
+		if (endless) return endless;
+		if (completions.empty()) return {};
+		auto value = completions.front();
+		completions.pop_front();
+		return value;
+	}
+	void Cancel(const senp::ContributionOwnerIdentity& owner,
+		const senp::effect::OperationContext& context) noexcept override
+	{
+		cancelled.emplace_back(owner, context);
+	}
+	void CancelAll(const senp::ContributionOwnerIdentity& owner) noexcept override
+	{
+		cancelledAll.push_back(owner);
+	}
+};
+
+senp::effect::StartToolRead Read(std::wstring readId, std::wstring operation)
+{
+	return { std::move(readId), L"github", std::move(operation),
+		{ senp::effect::Field{ L"repository", L"owner/project" } } };
+}
 
 class SenpReadonlyOwnerTargetTest : public testing::Test {
 protected:
@@ -128,4 +183,146 @@ TEST_F(SenpReadonlyOwnerTargetTest, RejectsForeignTerminalAndSurvivesExternalCor
 }
 
 } // namespace
+
+TEST_F(SenpReadonlyOwnerTargetTest, RoutesAdmittedToolReadsToTheSeamAndReturnsTheirTerminals)
+{
+	ScriptedToolReads reads;
+	CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 960000, nullptr, {}, {}, {}, &reads);
+	const senp::effect::OperationContext issues{ L"tool.1", 3, 4, 5, 1 };
+	const senp::effect::OperationContext comments{ L"tool.2", 3, 4, 5, 2 };
+	ASSERT_TRUE(target.StartToolRead(issues, Read(L"issues:open:1", L"repositoryRead")));
+	ASSERT_TRUE(target.StartToolRead(comments, Read(L"comments:1", L"repositoryRead")));
+	ASSERT_EQ(2U, target.ToolReadCount());
+	ASSERT_EQ(2U, reads.started.size());
+	// The seam is told which owner scope the read belongs to; the target never
+	// lets the extension name it.
+	EXPECT_EQ(Owner(), reads.started[0].owner);
+	EXPECT_EQ(issues, reads.started[0].context);
+	EXPECT_EQ(L"issues:open:1", reads.started[0].read.readId);
+	EXPECT_EQ(L"github", reads.started[0].read.toolId);
+	EXPECT_EQ(L"repositoryRead", reads.started[0].read.operation);
+	ASSERT_EQ(1U, reads.started[0].read.arguments.size());
+	EXPECT_EQ(L"owner/project", reads.started[0].read.arguments[0].value);
+
+	// Terminals arrive out of order; each one is paired with the context that
+	// started that readId, not with the order it finished in.
+	reads.completions.push_back({ L"comments:1", senp::effect::CompletionStatus::Succeeded, L"[]" });
+	reads.completions.push_back({ L"issues:open:1", senp::effect::CompletionStatus::Succeeded, L"[1]" });
+	const auto firstTerminal = target.TakeToolRead();
+	ASSERT_TRUE(firstTerminal);
+	EXPECT_EQ(comments, firstTerminal->Context());
+	EXPECT_EQ(L"comments:1", firstTerminal->Completion().readId);
+	EXPECT_EQ(L"[]", firstTerminal->Completion().data);
+	const auto secondTerminal = target.TakeToolRead();
+	ASSERT_TRUE(secondTerminal);
+	EXPECT_EQ(issues, secondTerminal->Context());
+	EXPECT_EQ(L"[1]", secondTerminal->Completion().data);
+	EXPECT_EQ(0U, target.ToolReadCount());
+	EXPECT_FALSE(target.TakeToolRead());
+}
+
+TEST_F(SenpReadonlyOwnerTargetTest, RefusesEveryToolReadItCannotAccountFor)
+{
+	CSenpReadonlyOwnerTarget without(Owner(), *controller, parent, 961000);
+	const senp::effect::OperationContext context{ L"tool.1", 3, 4, 5, 1 };
+	// No seam at all: the boundary fails explicitly instead of pretending.
+	EXPECT_FALSE(without.StartToolRead(context, Read(L"issues:open:1", L"repositoryRead")));
+	EXPECT_FALSE(without.TakeToolRead());
+
+	ScriptedToolReads reads;
+	CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 962000, nullptr, {}, {}, {}, &reads);
+	const std::vector<senp::effect::OperationContext> foreign{
+		{ L"tool.1", 9, 4, 5, 1 },   // another owner generation
+		{ L"tool.1", 3, 9, 5, 1 },   // another workspace revision
+		{ L"tool.1", 3, 4, 9, 1 },   // another account generation
+		{ L"tool.1", 3, 4, 5, 0 },   // no request lineage
+		{ L"", 3, 4, 5, 1 },         // no operation
+	};
+	for (const auto& rejected : foreign)
+		EXPECT_FALSE(target.StartToolRead(rejected, Read(L"issues:open:1", L"repositoryRead")));
+	EXPECT_FALSE(target.StartToolRead(context, Read(L"", L"repositoryRead")));
+	EXPECT_FALSE(target.StartToolRead(context, Read(std::wstring(513, L'r'), L"repositoryRead")));
+	EXPECT_TRUE(reads.started.empty());
+
+	ASSERT_TRUE(target.StartToolRead(context, Read(L"issues:open:1", L"repositoryRead")));
+	// The same readId twice would make one terminal unroutable.
+	EXPECT_FALSE(target.StartToolRead(context, Read(L"issues:open:1", L"repositoryRead")));
+	EXPECT_EQ(1U, reads.started.size());
+
+	// A refused dispatch leaves nothing behind that could never be drained.
+	reads.admit = false;
+	EXPECT_FALSE(target.StartToolRead(context, Read(L"issues:open:2", L"repositoryRead")));
+	EXPECT_EQ(1U, target.ToolReadCount());
+	reads.admit = true;
+	for (std::size_t index = 1; index < senp::CSenpRuntimeSession::kMaximumPending; ++index)
+		ASSERT_TRUE(target.StartToolRead(context, Read(L"issues:bulk:" + std::to_wstring(index),
+			L"repositoryRead")));
+	EXPECT_EQ(senp::CSenpRuntimeSession::kMaximumPending, target.ToolReadCount());
+	EXPECT_FALSE(target.StartToolRead(context, Read(L"issues:overflow", L"repositoryRead")));
+}
+
+TEST_F(SenpReadonlyOwnerTargetTest, DiscardsATerminalForAReadItNoLongerOwns)
+{
+	ScriptedToolReads reads;
+	CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 963000, nullptr, {}, {}, {}, &reads);
+	const senp::effect::OperationContext context{ L"tool.1", 3, 4, 5, 1 };
+	ASSERT_TRUE(target.StartToolRead(context, Read(L"issues:open:1", L"repositoryRead")));
+	target.CancelToolReads(context);
+	EXPECT_EQ(0U, target.ToolReadCount());
+	ASSERT_EQ(1U, reads.cancelled.size());
+	EXPECT_EQ(Owner(), reads.cancelled[0].first);
+	EXPECT_EQ(context, reads.cancelled[0].second);
+
+	// The read was already in flight, so its terminal still surfaces. Handing it
+	// to the projection would be a protocol violation and would close the owner.
+	reads.endless = senp::effect::ToolCompleted{ L"issues:open:1",
+		senp::effect::CompletionStatus::Succeeded, L"[1]" };
+	EXPECT_FALSE(target.TakeToolRead());
+	// Bounded drain: a seam that keeps offering an unknown terminal cannot spin
+	// the UI thread.
+	EXPECT_LE(reads.takeCalls, static_cast<int>(senp::CSenpRuntimeSession::kMaximumPending) + 1);
+}
+
+TEST_F(SenpReadonlyOwnerTargetTest, CancelsOnlyTheRequestLineageItWasGiven)
+{
+	ScriptedToolReads reads;
+	CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 964000, nullptr, {}, {}, {}, &reads);
+	const senp::effect::OperationContext first{ L"tool.1", 3, 4, 5, 1 };
+	const senp::effect::OperationContext second{ L"tool.2", 3, 4, 5, 2 };
+	ASSERT_TRUE(target.StartToolRead(first, Read(L"issues:open:1", L"repositoryRead")));
+	ASSERT_TRUE(target.StartToolRead(second, Read(L"comments:1", L"repositoryRead")));
+	target.CancelToolReads(first);
+	EXPECT_EQ(1U, target.ToolReadCount());
+
+	reads.completions.push_back({ L"issues:open:1", senp::effect::CompletionStatus::Cancelled, L"" });
+	reads.completions.push_back({ L"comments:1", senp::effect::CompletionStatus::Succeeded, L"[]" });
+	const auto terminal = target.TakeToolRead();
+	ASSERT_TRUE(terminal);
+	EXPECT_EQ(second, terminal->Context());
+	EXPECT_EQ(L"comments:1", terminal->Completion().readId);
+	EXPECT_EQ(0U, target.ToolReadCount());
+}
+
+TEST_F(SenpReadonlyOwnerTargetTest, RevocationCancelsEveryReadBeforeAnotherCanBeRouted)
+{
+	ScriptedToolReads reads;
+	{
+		CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 965000, nullptr, {}, {}, {}, &reads);
+		const senp::effect::OperationContext context{ L"tool.1", 3, 4, 5, 1 };
+		ASSERT_TRUE(target.StartToolRead(context, Read(L"issues:open:1", L"repositoryRead")));
+		reads.completions.push_back({ L"issues:open:1", senp::effect::CompletionStatus::Succeeded, L"[1]" });
+		target.Revoke();
+		ASSERT_EQ(1U, reads.cancelledAll.size());
+		EXPECT_EQ(Owner(), reads.cancelledAll[0]);
+		EXPECT_EQ(0U, target.ToolReadCount());
+		EXPECT_FALSE(target.StartToolRead(context, Read(L"issues:open:2", L"repositoryRead")));
+		// The queued terminal is never taken: after CancelAll the seam is released.
+		EXPECT_FALSE(target.TakeToolRead());
+		EXPECT_EQ(0, reads.takeCalls);
+		EXPECT_EQ(1U, reads.started.size());
+	}
+	// Destruction re-enters Revoke; the seam must not be told twice.
+	EXPECT_EQ(1U, reads.cancelledAll.size());
+}
+
 } // namespace workbench::editor::tests
