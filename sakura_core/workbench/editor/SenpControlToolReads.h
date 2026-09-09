@@ -15,6 +15,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -78,6 +79,11 @@ public:
 
 	CSenpControlToolReads(SenpControlToolReadsOptions options,
 		platform::controlipc::IControlPlatformEndpointReader& endpointReader);
+	//! Production composition owns nothing else that could hold the discovery
+	//! reader for exactly this seam's lifetime, so this overload adopts it.
+	//! A null reader throws: a seam without discovery could never connect.
+	CSenpControlToolReads(SenpControlToolReadsOptions options,
+		std::unique_ptr<platform::controlipc::IControlPlatformEndpointReader> endpointReader);
 	~CSenpControlToolReads() override;
 	CSenpControlToolReads(const CSenpControlToolReads&) = delete;
 	CSenpControlToolReads& operator=(const CSenpControlToolReads&) = delete;
@@ -176,6 +182,9 @@ private:
 		const senp::ContributionOwnerIdentity& owner, const std::string& grantId) const;
 
 	SenpControlToolReadsOptions m_options;
+	//! Engaged only for the adopting constructor, and declared ahead of the
+	//! client because the client keeps a reference into it.
+	std::unique_ptr<platform::controlipc::IControlPlatformEndpointReader> m_ownedReader;
 	platform::controlipc::CControlSenpClient m_client;
 	mutable std::mutex m_mutex;
 	std::condition_variable m_work;

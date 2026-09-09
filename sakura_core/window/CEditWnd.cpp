@@ -6087,6 +6087,14 @@ bool CEditWnd::InitializeSenpWindowExtensions()
 	if (availability != senp::EManagementState::Ready
 		&& availability != senp::EManagementState::ReadyWithDiagnostics) return true;
 	if (m_senpWindowExtensions) return false;
+	if (!m_senpToolReads) {
+		// Null when this process holds no control-platform authority. Owner
+		// targets then keep failing tool reads closed instead of pretending.
+		if (auto* const process = CProcess::getInstance()) {
+			m_senpToolReads = process->CreateSenpToolReads(
+				m_workbenchRuntime->Bootstrap().UserDataProfile().SelectedProfileId());
+		}
+	}
 	std::array<wchar_t, 32768> executable{};
 	const auto length = ::GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size()));
 	if (!length || length >= executable.size()) return false;
@@ -6102,8 +6110,13 @@ bool CEditWnd::InitializeSenpWindowExtensions()
 			constexpr std::uint64_t base = 0x53454e5000000001ULL;
 			if (!m_senpReadonlyEditors || m_senpSurfaceSequence >= 0xffffffffULL / block) return {};
 			const auto first = base + m_senpSurfaceSequence++ * block;
+			// The broker outlives every target it serves: it is declared ahead of
+			// the extensions, so the extensions are torn down first.
 			auto target = std::make_unique<workbench::editor::CSenpReadonlyOwnerTarget>(
-				owner, *m_senpReadonlyEditors, GetHwnd(), first);
+				owner, *m_senpReadonlyEditors, GetHwnd(), first,
+				nullptr, workbench::editor::SenpTextResourceView::CopySink{},
+				workbench::editor::SenpOwnerCommandCompleted{},
+				workbench::editor::SenpOwnerResourceReleased{}, m_senpToolReads.get());
 			const auto mode = m_pShareData->m_Common.m_sWindow.m_bDarkMode
 				? theme::ThemeMode::Dark : theme::ThemeMode::Light;
 			m_senpStyleSinks.push_back(target->StyleSink());
@@ -6155,6 +6168,9 @@ void CEditWnd::StopSenpWindowExtensions() noexcept
 		if (m_senpWindowExtensions->Close()) m_senpWindowExtensions.reset();
 		else ::OutputDebugStringW(L"Sakura Editor NEXT: SENP authority closed; runtime cleanup retained for explicit close.\n");
 	}
+	// Retained extensions still hold owner targets that borrow the broker, so
+	// the broker may only be released once they are gone.
+	if (!m_senpWindowExtensions) m_senpToolReads.reset();
 	if (!wasActive || !m_workbenchRuntime) return;
 	try {
 		const auto operation = NextWorkbenchLayoutOperationId("senp.retire-contributions");

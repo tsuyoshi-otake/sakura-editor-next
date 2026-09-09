@@ -17,6 +17,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
@@ -549,6 +550,35 @@ TEST(SenpControlToolReads, BoundsTheOwnerScopesAndReadsItWillHold)
 	EXPECT_EQ(senp::CSenpRuntimeSession::kMaximumPending + CSenpControlToolReads::kMaximumOwners - 1,
 		reads.OutstandingReads());
 	reader.Release();
+}
+
+TEST(SenpControlToolReads, AdoptsTheEndpointReaderTheCompositionHandsIt)
+{
+	auto broker = std::make_shared<Broker>();
+	broker->Publish({ L"issues:open:1", senp::effect::CompletionStatus::Succeeded, L"[1]", L"" });
+	// Production has nowhere to keep a reader for exactly the seam lifetime, so
+	// the seam owns it and must still reach the broker through it.
+	CSenpControlToolReads reads(Options(broker), std::make_unique<CFixedEndpointReader>());
+
+	ASSERT_TRUE(reads.Start(Owner(), Context(L"tool.1", 1), Read(L"issues:open:1")));
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+
+	const auto completion = reads.Take(Owner());
+	ASSERT_TRUE(completion);
+	EXPECT_EQ(senp::effect::CompletionStatus::Succeeded, completion->status);
+	EXPECT_EQ(1, broker->Hello());
+	EXPECT_EQ(1, broker->Started());
+	EXPECT_NE(0u, reads.ConnectionEpoch());
+}
+
+TEST(SenpControlToolReads, RefusesToExistWithoutAnEndpointReaderToDiscoverThrough)
+{
+	auto broker = std::make_shared<Broker>();
+	// A seam with no discovery could never connect, so it fails loudly at
+	// composition instead of accepting reads it would silently never carry.
+	EXPECT_THROW(CSenpControlToolReads(Options(broker),
+		std::unique_ptr<platform::controlipc::IControlPlatformEndpointReader>{}),
+		std::invalid_argument);
 }
 
 } // namespace workbench::editor

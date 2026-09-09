@@ -51,6 +51,8 @@
 #include "_main/ControlPlatformStatusbarVisibilityMementoStore.h"
 #include "_main/ControlPlatformWorkingCopyPersistenceStore.h"
 #include "platform/controlipc/EditorControlPlatformRuntime.h"
+#include "platform/controlipc/ControlPlatformEndpointDiscoveryReader.h"
+#include "workbench/editor/SenpControlToolReads.h"
 #include "platform/profiles/ProfileBootstrapSnapshot.h"
 #include "platform/profiles/UserDataProfileBootstrap.h"
 #include "senp/SenpManagementService.h"
@@ -982,6 +984,40 @@ std::shared_ptr<terminal::CDefaultTerminalLaunchProfileService>
 CNormalProcess::GetTerminalLaunchProfiles() const noexcept
 {
 	return m_terminalHarnessRuntime ? m_terminalHarnessRuntime->LaunchProfiles() : nullptr;
+}
+
+std::unique_ptr<workbench::editor::ISenpOwnerToolReads>
+CNormalProcess::CreateSenpToolReads(const std::wstring& userDataProfileId) const
+{
+	using namespace platform::controlipc;
+	// The identity is published only while the runtime is Ready, and the
+	// broker has nothing to authenticate with until then.
+	if (!m_editorControlPlatformRuntime || userDataProfileId.empty()) return {};
+	const auto identity = m_editorControlPlatformRuntime->Identity();
+	if (!identity) return {};
+	const auto profileDirectory = TryGetResolvedProfileDirectory();
+	if (!profileDirectory) return {};
+	try {
+		workbench::editor::SenpControlToolReadsOptions options;
+		options.authorityProfileId = identity->profileId;
+		options.authorityProfileHash = identity->profileHash;
+		options.minimumGeneration = identity->minimumGeneration;
+		options.senpProfileId = userDataProfileId;
+		// The seam refuses to connect without a factory rather than assuming a
+		// transport, so the one production route names the named pipe here.
+		options.channelFactory = [] {
+			return std::make_unique<CControlPlatformNamedPipeChannel>();
+		};
+		// The runtime keeps its discovery reader private, so the broker owns a
+		// second one over the same pair the runtime froze its identity from.
+		auto reader = std::make_unique<CControlPlatformEndpointDiscoveryReader>(
+			*profileDirectory, identity->profileHash);
+		return std::make_unique<workbench::editor::CSenpControlToolReads>(
+			std::move(options), std::move(reader));
+	}
+	catch (...) {
+		return {};
+	}
 }
 
 // -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //

@@ -11,6 +11,8 @@
 #include "senp/SenpToolGrants.h"
 
 #include <algorithm>
+#include <memory>
+#include <stdexcept>
 #include <utility>
 
 namespace workbench::editor {
@@ -59,6 +61,16 @@ platform::controlipc::ControlSenpClientOptions ClientOptions(const SenpControlTo
 	return client;
 }
 
+//! The reference the adopting constructor hands the client is bound before the
+//! client member exists, so the null check has to happen inside the member
+//! initializer rather than in the body.
+platform::controlipc::IControlPlatformEndpointReader& Adopted(
+	const std::unique_ptr<platform::controlipc::IControlPlatformEndpointReader>& reader)
+{
+	if (!reader) throw std::invalid_argument("SenpControlToolReads requires an endpoint reader");
+	return *reader;
+}
+
 } // namespace
 
 CSenpControlToolReads::CSenpControlToolReads(SenpControlToolReadsOptions options,
@@ -67,6 +79,17 @@ CSenpControlToolReads::CSenpControlToolReads(SenpControlToolReadsOptions options
 {
 	// A zero interval would turn the idle worker into a spin, so the poll cadence
 	// has a floor rather than a caller-chosen one.
+	if (m_options.pollInterval < std::chrono::milliseconds(1)) {
+		m_options.pollInterval = std::chrono::milliseconds(1);
+	}
+	m_worker = std::thread([this] { Worker(); });
+}
+
+CSenpControlToolReads::CSenpControlToolReads(SenpControlToolReadsOptions options,
+	std::unique_ptr<platform::controlipc::IControlPlatformEndpointReader> endpointReader) :
+	m_options(std::move(options)), m_ownedReader(std::move(endpointReader)),
+	m_client(ClientOptions(m_options), Adopted(m_ownedReader))
+{
 	if (m_options.pollInterval < std::chrono::milliseconds(1)) {
 		m_options.pollInterval = std::chrono::milliseconds(1);
 	}

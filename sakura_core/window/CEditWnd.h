@@ -173,6 +173,7 @@ class EditorWorkingCopyCoordinator;
 class CEmptyEditorSurface;
 class IEditorCoreSubscription;
 class SenpReadonlyEditorController;
+class ISenpOwnerToolReads;
 struct EditorCoreSnapshot;
 }
 namespace editor::persistence {
@@ -1280,6 +1281,11 @@ private:
 	//! Both side bars borrow their ViewContainer controls from this shared pool, so a
 	//! container survives being moved from one physical Part to the other.
 	std::shared_ptr<workbench::viewcontainer::CViewContainerPages> m_viewContainerPages;
+	//! Process-owned route from an owner's tool reads to the control broker.
+	//! Null while this process holds no control-platform authority, which
+	//! keeps tool reads fail-closed. Declared ahead of the extensions
+	//! because every owner target borrows it as a raw pointer.
+	std::unique_ptr<workbench::editor::ISenpOwnerToolReads> m_senpToolReads;
 	//! Revoked before the borrowed pages and readonly editor controller are closed.
 	std::unique_ptr<workbench::CSenpWindowExtensions> m_senpWindowExtensions;
 	std::uint64_t m_senpSurfaceSequence{};
