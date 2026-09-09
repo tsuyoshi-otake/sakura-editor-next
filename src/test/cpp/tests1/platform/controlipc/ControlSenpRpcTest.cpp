@@ -41,6 +41,17 @@ ControlSenpRpcRequest QueryAccount()
 	request.profileId = L"profile-1";
 	return request;
 }
+
+ControlSenpRpcRequest AdoptWorkspace()
+{
+	ControlSenpRpcRequest request;
+	request.operation = EControlSenpRpcOperation::AdoptWorkspace;
+	request.profileId = L"profile-1";
+	request.workspace.generation = 5;
+	request.workspace.revision = 11;
+	request.workspace.folders = { L"file:///c:/work/repo", L"file:///c:/work/docs" };
+	return request;
+}
 } // namespace
 
 TEST(ControlSenpRpc, RoundTripsEveryRequestOperation)
@@ -297,6 +308,123 @@ TEST(ControlSenpRpc, RoundTripsTheAccountAnswerAndRefusesAnUnusableOne)
 	auto badState = *encoded;
 	badState.back() = 9;
 	EXPECT_FALSE(DecodeControlSenpRpcResponse(badState));
+}
+
+TEST(ControlSenpRpc, RoundTripsTheOwnerFreeWorkspaceAdoption)
+{
+	const auto declared = AdoptWorkspace();
+	const auto encoded = EncodeControlSenpRpcRequest(declared);
+	ASSERT_TRUE(encoded);
+	const auto decoded = DecodeControlSenpRpcRequest(*encoded);
+	ASSERT_TRUE(decoded);
+	EXPECT_EQ(EControlSenpRpcOperation::AdoptWorkspace, decoded->operation);
+	EXPECT_EQ(L"profile-1", decoded->profileId);
+	// The declaration precedes every owner and names no repository: the control
+	// side derives that from the remotes it finds at these folders.
+	EXPECT_TRUE(decoded->owner == ControlSenpRpcOwner{});
+	EXPECT_TRUE(decoded->grantId.empty());
+	EXPECT_EQ(declared.workspace, decoded->workspace);
+	// Order is part of the identity of a multi-root workspace, so it is asserted
+	// rather than left to the set of folders happening to match.
+	ASSERT_EQ(2U, decoded->workspace.folders.size());
+	EXPECT_EQ(L"file:///c:/work/repo", decoded->workspace.folders[0]);
+	EXPECT_EQ(L"file:///c:/work/docs", decoded->workspace.folders[1]);
+
+	// A window that has no folder to select from says so. That is a declaration,
+	// not an absent one, and it must survive the round trip as one.
+	auto empty = declared;
+	empty.workspace.folders.clear();
+	const auto encodedEmpty = EncodeControlSenpRpcRequest(empty);
+	ASSERT_TRUE(encodedEmpty);
+	const auto decodedEmpty = DecodeControlSenpRpcRequest(*encodedEmpty);
+	ASSERT_TRUE(decodedEmpty);
+	EXPECT_TRUE(decodedEmpty->workspace.folders.empty());
+	EXPECT_EQ(11, decodedEmpty->workspace.revision);
+	EXPECT_FALSE(decodedEmpty->workspace.Empty());
+}
+
+TEST(ControlSenpRpc, RejectsAWorkspaceAdoptionThatCarriesAnOwnerOrCannotBeChecked)
+{
+	auto withOwner = AdoptWorkspace();
+	withOwner.owner = Owner();
+	EXPECT_FALSE(EncodeControlSenpRpcRequest(withOwner));
+
+	auto withGrant = AdoptWorkspace();
+	withGrant.grantId = "grant-1";
+	EXPECT_FALSE(EncodeControlSenpRpcRequest(withGrant));
+
+	auto withRead = AdoptWorkspace();
+	withRead.readId = L"issues:open:1";
+	EXPECT_FALSE(EncodeControlSenpRpcRequest(withRead));
+
+	auto withoutProfile = AdoptWorkspace();
+	withoutProfile.profileId.clear();
+	EXPECT_FALSE(EncodeControlSenpRpcRequest(withoutProfile));
+
+	// A revision of zero observed nothing, so a staleness check against it would
+	// pass for a workspace that was never captured.
+	auto withoutRevision = AdoptWorkspace();
+	withoutRevision.workspace.revision = 0;
+	EXPECT_FALSE(EncodeControlSenpRpcRequest(withoutRevision));
+
+	auto withoutGeneration = AdoptWorkspace();
+	withoutGeneration.workspace.generation = 0;
+	EXPECT_FALSE(EncodeControlSenpRpcRequest(withoutGeneration));
+
+	auto withNamelessFolder = AdoptWorkspace();
+	withNamelessFolder.workspace.folders.push_back(L"");
+	EXPECT_FALSE(EncodeControlSenpRpcRequest(withNamelessFolder));
+
+	// The control side inspects every declared folder, so the bound is what keeps
+	// one declaration from becoming unbounded work on the refresh worker.
+	auto tooMany = AdoptWorkspace();
+	tooMany.workspace.folders.assign(kControlSenpRpcMaximumWorkspaceFolders + 1, L"file:///c:/work");
+	EXPECT_FALSE(EncodeControlSenpRpcRequest(tooMany));
+}
+
+TEST(ControlSenpRpc, RejectsADeclaredFolderCountNoEncoderWouldHaveWritten)
+{
+	auto empty = AdoptWorkspace();
+	empty.workspace.folders.clear();
+	const auto encoded = EncodeControlSenpRpcRequest(empty);
+	ASSERT_TRUE(encoded);
+	// The folder count is the last field on the wire, so raising it past the
+	// bound is exactly the payload a peer that ignored the bound would send.
+	ASSERT_LE(4U, encoded->size());
+	auto beyondTheBound = *encoded;
+	beyondTheBound[beyondTheBound.size() - 4] =
+		static_cast<std::uint8_t>(kControlSenpRpcMaximumWorkspaceFolders + 1);
+	EXPECT_FALSE(DecodeControlSenpRpcRequest(beyondTheBound));
+
+	// Within the bound but with nothing behind it: refused as truncated rather
+	// than decoded into a folder list the sender never wrote.
+	auto claimingOne = *encoded;
+	claimingOne[claimingOne.size() - 4] = 1;
+	EXPECT_FALSE(DecodeControlSenpRpcRequest(claimingOne));
+}
+
+TEST(ControlSenpRpc, RejectsAWorkspaceDeclaredOnAnOperationThatDoesNotAdoptOne)
+{
+	// Every other operation answers for a workspace the control side already
+	// holds, so a declaration on one would restate that state where nothing
+	// rechecks it.
+	auto readWithWorkspace = StartRead();
+	readWithWorkspace.workspace = AdoptWorkspace().workspace;
+	EXPECT_FALSE(EncodeControlSenpRpcRequest(readWithWorkspace));
+
+	auto grantWithWorkspace = IssueGrant();
+	grantWithWorkspace.workspace = AdoptWorkspace().workspace;
+	EXPECT_FALSE(EncodeControlSenpRpcRequest(grantWithWorkspace));
+
+	auto accountWithWorkspace = QueryAccount();
+	accountWithWorkspace.workspace = AdoptWorkspace().workspace;
+	EXPECT_FALSE(EncodeControlSenpRpcRequest(accountWithWorkspace));
+
+	// A revision alone is still a declaration, so it is refused for the same
+	// reason a fully populated one is.
+	auto readWithRevision = StartRead();
+	readWithRevision.workspace.revision = 11;
+	EXPECT_FALSE(EncodeControlSenpRpcRequest(readWithRevision));
 }
 
 TEST(ControlSenpRpc, MapsOwnerIdentityWithoutLoss)

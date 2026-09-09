@@ -21,8 +21,9 @@ namespace platform::controlipc {
 //! The one-byte operation discriminator is part of the versioned SenpRequest payload.
 //! Every operation that names a contribution carries the requesting owner so the
 //! control side can recheck its own trusted authority instead of trusting the
-//! editor's claim. QueryAccount names none, because it is what the editor asks
-//! before it can know which account generation its owners would belong to.
+//! editor's claim. QueryAccount and AdoptWorkspace name none, because they are
+//! what the editor asks and declares before an owner carrying an account
+//! generation and a workspace revision can exist at all.
 enum class EControlSenpRpcOperation : std::uint8_t {
 	IssueGrant = 1,
 	StartRead = 2,
@@ -31,6 +32,7 @@ enum class EControlSenpRpcOperation : std::uint8_t {
 	ReadResource = 5,
 	ReleaseResource = 6,
 	QueryAccount = 7,
+	AdoptWorkspace = 8,
 };
 
 //! Transport-neutral view of the account a profile has adopted. It is deliberately
@@ -72,6 +74,30 @@ struct ControlSenpRpcOwner {
 	bool operator==(const ControlSenpRpcOwner&) const = default;
 };
 
+/*!
+	@brief The workspace one editor connection declares it is opened on.
+
+	It names folders and the revision they were observed at, and deliberately no
+	repository: which repository those folders resolve to is decided by the
+	control side from the git remotes it finds there, never by this declaration.
+	A declaration with no folders is a window that can select nothing, which is a
+	meaningful thing to say rather than an absent message.
+*/
+struct ControlSenpRpcWorkspace {
+	std::int64_t generation = 0;
+	std::int64_t revision = 0;
+	//! Folder identities as the workspace context holds them, never a claim
+	//! about their contents.
+	std::vector<std::wstring> folders;
+	bool operator==(const ControlSenpRpcWorkspace&) const = default;
+	//! True while nothing has been declared. Every operation but AdoptWorkspace
+	//! must leave it that way.
+	[[nodiscard]] bool Empty() const noexcept
+	{
+		return generation == 0 && revision == 0 && folders.empty();
+	}
+};
+
 //! Editor command model. Unused members for an operation must stay empty/zero;
 //! the decoder rejects a payload whose operation does not match its members.
 struct ControlSenpRpcRequest {
@@ -87,6 +113,8 @@ struct ControlSenpRpcRequest {
 	std::wstring resourceHandle;
 	std::uint64_t offset = 0;
 	std::uint32_t length = 0;
+	//! Declared by AdoptWorkspace only, and empty on every other operation.
+	ControlSenpRpcWorkspace workspace;
 };
 
 //! Terminal broker response. `completion` is present only when `hasCompletion`
@@ -111,6 +139,10 @@ struct ControlSenpRpcResponse {
 //! Bounds applied by both encoder and decoder. They are smaller than the frame
 //! limit so an aggregate record cannot be used to reach the transport bound.
 inline constexpr std::size_t kControlSenpRpcMaximumArguments = 32;
+//! A multi-root workspace declares at most this many folders. The control side
+//! inspects every one of them, so this bound is what keeps one declaration from
+//! turning into an unbounded amount of work on the refresh worker.
+inline constexpr std::size_t kControlSenpRpcMaximumWorkspaceFolders = 8;
 inline constexpr std::size_t kControlSenpRpcMaximumToolDataBytes = 64 * 1024;
 inline constexpr std::size_t kControlSenpRpcMaximumResourceChunkBytes = 64 * 1024;
 

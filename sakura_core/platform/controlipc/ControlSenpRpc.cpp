@@ -17,8 +17,9 @@ namespace platform::controlipc {
 namespace {
 constexpr std::size_t kMaximumPayload = kControlIpcMaximumFrameBytes - kControlIpcHeaderBytes;
 //! Bumped with every payload layout change. Version 2 added the account
-//! members a QueryAccount answer carries.
-constexpr std::uint8_t kControlSenpRpcPayloadVersion = 2;
+//! members a QueryAccount answer carries; version 3 added the workspace an
+//! AdoptWorkspace request declares.
+constexpr std::uint8_t kControlSenpRpcPayloadVersion = 3;
 constexpr std::uint64_t kMaximumGeneration = static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)());
 
 template<class T> void Put(std::vector<std::uint8_t>& bytes, T value)
@@ -112,7 +113,7 @@ bool GetWide(std::span<const std::uint8_t> bytes, std::size_t& offset, std::wstr
 bool IsOperation(std::uint8_t operation) noexcept
 {
 	return operation >= static_cast<std::uint8_t>(EControlSenpRpcOperation::IssueGrant)
-		&& operation <= static_cast<std::uint8_t>(EControlSenpRpcOperation::QueryAccount);
+		&& operation <= static_cast<std::uint8_t>(EControlSenpRpcOperation::AdoptWorkspace);
 }
 
 bool IsAccountState(std::uint8_t state) noexcept
@@ -140,6 +141,25 @@ bool IsCoherentRequest(const ControlSenpRpcRequest& request) noexcept
 	const bool hasRead = !request.readId.empty();
 	const bool hasTool = !request.toolId.empty() || !request.toolOperation.empty();
 	const bool hasResource = !request.resourceHandle.empty();
+	// A workspace declaration precedes every owner for the same reason as the
+	// account query, and is refused on the same terms: there is no owner to
+	// scope it by, so it must carry nothing an owner-scoped operation carries.
+	if (request.operation == EControlSenpRpcOperation::AdoptWorkspace) {
+		// A revision of zero has observed nothing. Admitting one would let a
+		// staleness check pass against a workspace that was never captured.
+		if (request.workspace.generation <= 0 || request.workspace.revision <= 0) return false;
+		if (request.workspace.folders.size() > kControlSenpRpcMaximumWorkspaceFolders) return false;
+		for (const auto& folder : request.workspace.folders) {
+			if (folder.empty()) return false;
+		}
+		return request.owner == ControlSenpRpcOwner{} && request.grantId.empty()
+			&& request.capabilities == 0 && !hasRead && !hasTool && request.arguments.empty()
+			&& !hasResource && request.offset == 0 && request.length == 0;
+	}
+	// Every other operation answers for a workspace the control side already
+	// holds. One carrying a declaration would be restating that state where
+	// nothing rechecks it, so the declaration is refused rather than ignored.
+	if (!request.workspace.Empty()) return false;
 	// The account query precedes every owner: an editor cannot name the account
 	// generation it is asking for. An owner here could only be a claim that
 	// nothing downstream rechecks, so a populated one is refused rather than
@@ -234,6 +254,12 @@ std::optional<std::vector<std::uint8_t>> EncodeControlSenpRpcRequest(const Contr
 	if (!PutWide(bytes, request.resourceHandle)) return std::nullopt;
 	Put<std::uint64_t>(bytes, request.offset);
 	Put<std::uint32_t>(bytes, request.length);
+	Put<std::uint64_t>(bytes, static_cast<std::uint64_t>(request.workspace.generation));
+	Put<std::uint64_t>(bytes, static_cast<std::uint64_t>(request.workspace.revision));
+	Put<std::uint32_t>(bytes, static_cast<std::uint32_t>(request.workspace.folders.size()));
+	for (const auto& folder : request.workspace.folders) {
+		if (!PutWide(bytes, folder)) return std::nullopt;
+	}
 	if (bytes.size() > kMaximumPayload) return std::nullopt;
 	return bytes;
 }
@@ -273,6 +299,19 @@ std::optional<ControlSenpRpcRequest> DecodeControlSenpRpcRequest(std::span<const
 	if (!GetWide(payload, offset, request.resourceHandle)) return std::nullopt;
 	if (!Get(payload, offset, request.offset)) return std::nullopt;
 	if (!Get(payload, offset, request.length)) return std::nullopt;
+	std::uint64_t declaredGeneration = 0, declaredRevision = 0;
+	if (!Get(payload, offset, declaredGeneration) || declaredGeneration > kMaximumGeneration) return std::nullopt;
+	if (!Get(payload, offset, declaredRevision) || declaredRevision > kMaximumGeneration) return std::nullopt;
+	request.workspace.generation = static_cast<std::int64_t>(declaredGeneration);
+	request.workspace.revision = static_cast<std::int64_t>(declaredRevision);
+	std::uint32_t folders = 0;
+	if (!Get(payload, offset, folders) || folders > kControlSenpRpcMaximumWorkspaceFolders) return std::nullopt;
+	request.workspace.folders.reserve(folders);
+	for (std::uint32_t index = 0; index < folders; ++index) {
+		std::wstring folder;
+		if (!GetWide(payload, offset, folder)) return std::nullopt;
+		request.workspace.folders.push_back(std::move(folder));
+	}
 	if (offset != payload.size()) return std::nullopt;
 	if (!IsCoherentRequest(request)) return std::nullopt;
 	return request;
