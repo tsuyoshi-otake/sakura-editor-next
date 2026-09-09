@@ -379,8 +379,10 @@ fails with the covering HWND/PID/title, and bounded cleanup destroys the probe.
 Full Page Heap is per executable name and invalidates timing comparisons with
 an uninstrumented product. See the test guidance for exact-image measurement;
 do not silently remove a user's diagnostic settings or raise the test deadline.
-U06 still owns sample owner/page publication and end-to-end application
-verification; schema 2 remains UnsupportedRuntime until those gates pass.
+U06 owns sample owner/page publication and end-to-end application
+verification. Schema 2 is admitted as a package; end-to-end verification
+against real GitHub data is the remaining gate, and no screenshot substitutes
+for it.
 
 ## SENP Owner Documents
 

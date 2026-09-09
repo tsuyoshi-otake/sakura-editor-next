@@ -230,7 +230,6 @@ pub enum ErrorCode {
     InvalidManifest,
     UnsupportedSchema,
     AbiMismatch,
-    UnsupportedRuntime,
     InvalidSignature,
     UnsignedPackage,
     UntrustedPublisher,
@@ -1015,29 +1014,25 @@ fn parse_manifest(bytes: &[u8]) -> Result<Manifest, SenpError> {
         .and_then(serde_json::Value::as_u64)
         .ok_or_else(|| SenpError::new(ErrorCode::InvalidManifest, "invalid schemaVersion"))?;
     match schema {
-        1 => {
-            let manifest: Manifest = serde_json::from_value(value)
-                .map_err(|error| SenpError::new(ErrorCode::InvalidManifest, error.to_string()))?;
-            validate_manifest(&manifest)?;
-            Ok(manifest)
-        }
-        2 => {
-            let runtime: RuntimeContract = serde_json::from_value(
-                value.get("runtime").cloned().unwrap_or_default(),
-            )
-            .map_err(|error| SenpError::new(ErrorCode::InvalidManifest, error.to_string()))?;
-            if runtime.abi != ABI_V2 || runtime.module != MODULE_PATH {
-                return Err(SenpError::new(ErrorCode::AbiMismatch, runtime.abi));
+        // A v2 package must name the runtime it targets before anything else is
+        // read. Its contributions mean nothing without the effect host, and a
+        // manifest that omits `runtime` would otherwise validate as a
+        // declarative extension and be installed as one. Never fall back to v1.
+        1 | 2 => {
+            if schema == 2 {
+                let runtime: RuntimeContract =
+                    serde_json::from_value(value.get("runtime").cloned().unwrap_or_default())
+                        .map_err(|error| {
+                            SenpError::new(ErrorCode::InvalidManifest, error.to_string())
+                        })?;
+                if runtime.abi != ABI_V2 || runtime.module != MODULE_PATH {
+                    return Err(SenpError::new(ErrorCode::AbiMismatch, runtime.abi));
+                }
             }
             let manifest: Manifest = serde_json::from_value(value)
                 .map_err(|error| SenpError::new(ErrorCode::InvalidManifest, error.to_string()))?;
             validate_manifest(&manifest)?;
-            // G01 recognizes the version pair without admitting contributions
-            // that the event/effect host cannot execute yet. Never fall back to v1.
-            Err(SenpError::new(
-                ErrorCode::UnsupportedRuntime,
-                "SENP schema 2 event/effect runtime is not available",
-            ))
+            Ok(manifest)
         }
         _ => Err(SenpError::new(
             ErrorCode::UnsupportedSchema,
@@ -2550,7 +2545,7 @@ mod tests {
     }
 
     #[test]
-    fn manifest_version_dispatch_preserves_v1_and_rejects_v2_authority() {
+    fn manifest_version_dispatch_preserves_v1_and_admits_v2_only_with_its_own_runtime() {
         let temp = TempDir::new().unwrap();
         fixture(temp.path());
         let bytes = fs::read(temp.path().join(MANIFEST_PATH)).unwrap();
@@ -2562,9 +2557,23 @@ mod tests {
         );
         assert_eq!(
             parse_manifest(&versioned_manifest(2, ABI_V2))
+                .unwrap()
+                .runtime
+                .unwrap()
+                .abi,
+            ABI_V2
+        );
+        // A v2 manifest without a runtime is not a declarative extension that
+        // happens to carry a newer version number: its View and command
+        // contributions exist only for the effect host to execute.
+        let mut bare: serde_json::Value =
+            serde_json::from_slice(&versioned_manifest(2, ABI_V2)).unwrap();
+        bare.as_object_mut().unwrap().remove("runtime");
+        assert_eq!(
+            parse_manifest(&serde_json::to_vec(&bare).unwrap())
                 .unwrap_err()
                 .code,
-            ErrorCode::UnsupportedRuntime
+            ErrorCode::InvalidManifest
         );
         for abi in [ABI, "sakura:senp/extension@3.0.0"] {
             assert_eq!(
@@ -2591,19 +2600,19 @@ mod tests {
     }
 
     #[test]
-    fn effect_manifest_preflight_validates_real_packages_without_admitting_runtime() {
+    fn real_effect_packages_parse_with_the_commands_they_declare() {
         for source in [
             include_bytes!("../../extensions/sakura_senp_sample/senp.json").as_slice(),
             include_bytes!("../../extensions/sakura_github_pull_requests/senp.json").as_slice(),
             include_bytes!("../../extensions/sakura_github_actions/senp.json").as_slice(),
         ] {
-            let manifest: Manifest = strict_json(source).unwrap();
-            validate_manifest(&manifest).unwrap();
+            let manifest = parse_manifest(source).unwrap();
+            assert_eq!(manifest.schema_version, 2);
+            assert_eq!(manifest.runtime.as_ref().unwrap().abi, ABI_V2);
+            // Every command a tree item may carry has to be declared here: the
+            // View registers exactly this list, and an item naming anything else
+            // rejects the page that carries it.
             assert!(!manifest.contributes.commands.is_empty());
-            assert_eq!(
-                parse_manifest(source).unwrap_err().code,
-                ErrorCode::UnsupportedRuntime
-            );
         }
     }
 
@@ -2708,77 +2717,89 @@ mod tests {
     }
 
     #[test]
-    fn v2_runtime_is_rejected_at_pack_archive_and_installed_boundaries() {
+    fn v2_runtime_packs_installs_and_lists_alongside_an_untouched_v1_extension() {
         let temp = TempDir::new().unwrap();
-        let source = temp.path().join("source");
-        fixture(&source);
-        let package = temp.path().join("v1.senp");
-        let hash = pack_directory(&source, &package, None).unwrap();
+        let declarative = temp.path().join("v1");
+        fixture(&declarative);
+        let v1 = temp.path().join("v1.senp");
+        let v1_hash = pack_directory(&declarative, &v1, None).unwrap();
         let root = temp.path().join("installed");
         install_package(
-            &package,
+            &v1,
             &root,
             &TrustPolicy::BuiltIn {
-                expected_archive_sha256: hash.clone(),
+                expected_archive_sha256: v1_hash,
             },
         )
         .unwrap();
-        let manifest = versioned_manifest(2, ABI_V2);
-        fs::write(source.join(MANIFEST_PATH), &manifest).unwrap();
-        let destination = temp.path().join("unpublished.senp");
-        assert_eq!(
-            pack_directory(&source, &destination, None)
-                .unwrap_err()
-                .code,
-            ErrorCode::UnsupportedRuntime
-        );
-        assert!(!destination.exists());
 
-        let snapshot = read_archive_snapshot(&package).unwrap();
-        let mut entries =
-            read_zip_entries(&mut ZipArchive::new(Cursor::new(snapshot.bytes)).unwrap()).unwrap();
-        entries.insert(MANIFEST_PATH.into(), manifest.clone());
-        let checksums: String = entries
+        // The same payload layout under a v2 manifest, and under its own id, so
+        // both live in one install root and neither may displace the other.
+        let effect = temp.path().join("v2");
+        fixture(&effect);
+        fs::write(effect.join(MANIFEST_PATH), versioned_manifest(2, ABI_V2)).unwrap();
+        let v2 = temp.path().join("v2.senp");
+        let v2_hash = pack_directory(&effect, &v2, None).unwrap();
+        let verified = verify_package(&v2, &TrustPolicy::DeveloperUnsigned).unwrap();
+        assert_eq!(verified.manifest.schema_version, 2);
+        assert_eq!(verified.archive_sha256, v2_hash);
+        install_package(
+            &v2,
+            &root,
+            &TrustPolicy::BuiltIn {
+                expected_archive_sha256: v2_hash,
+            },
+        )
+        .unwrap();
+
+        let listed = list_installed(&root).unwrap();
+        assert_eq!(listed.len(), 2);
+        let effect_entry = listed
             .iter()
-            .filter(|(name, _)| name.as_str() != CHECKSUM_PATH)
-            .map(|(name, bytes)| format!("{}  {name}\n", hex(&Sha256::digest(bytes))))
-            .collect();
-        entries.insert(CHECKSUM_PATH.into(), checksums.as_bytes().to_vec());
-        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
-        for (name, bytes) in &entries {
-            writer
-                .start_file(
-                    name,
-                    SimpleFileOptions::default().compression_method(CompressionMethod::Stored),
-                )
-                .unwrap();
-            writer.write_all(bytes).unwrap();
-        }
-        let bytes = writer.finish().unwrap().into_inner();
-        let foreign = temp.path().join("v2.senp");
-        fs::write(&foreign, &bytes).unwrap();
+            .find(|entry| entry.manifest.id == "sample-github")
+            .unwrap();
+        assert_eq!(effect_entry.manifest.schema_version, 2);
+        assert_eq!(effect_entry.manifest.runtime.as_ref().unwrap().abi, ABI_V2);
+        // The module is what the effect host will load, so listing has to name
+        // its digest; without one the package would be admitted as executable
+        // while nothing could prove which bytes were installed.
         assert_eq!(
-            verify_package(&foreign, &TrustPolicy::DeveloperUnsigned)
-                .unwrap_err()
-                .code,
-            ErrorCode::UnsupportedRuntime
+            effect_entry.module_sha256,
+            Some(hex(&Sha256::digest(b"wasm")))
         );
-        assert_eq!(
-            install_package(&foreign, &root, &TrustPolicy::DeveloperUnsigned)
-                .unwrap_err()
-                .code,
-            ErrorCode::UnsupportedRuntime
-        );
-        assert_eq!(list_installed(&root).unwrap()[0].manifest.schema_version, 1);
 
-        // Even with matching payload hashes, installed discovery must not admit v2.
-        let content = root.join("content").join(hash);
-        fs::write(content.join(MANIFEST_PATH), manifest).unwrap();
-        fs::write(content.join(CHECKSUM_PATH), checksums).unwrap();
+        // Disabling one package leaves the other alone. The v1 extension shares
+        // the install root, and releasing this gate must not couple lifecycles.
+        set_extension_enabled(&root, "sample-github", false).unwrap();
+        let listed = list_installed(&root).unwrap();
+        for entry in &listed {
+            assert_eq!(
+                entry.enabled,
+                entry.manifest.id == "sample-indent",
+                "{}",
+                entry.manifest.id
+            );
+        }
         assert_eq!(
-            list_installed(&root).unwrap_err().code,
-            ErrorCode::UnsupportedRuntime
+            listed
+                .iter()
+                .find(|entry| entry.manifest.id == "sample-indent")
+                .unwrap()
+                .manifest
+                .schema_version,
+            1
         );
+
+        // What was released is the runtime's gate, not the version number's. A
+        // v2 manifest naming the v1 ABI is still a package for a host that
+        // cannot run it, and packing must refuse it rather than publish it.
+        fs::write(effect.join(MANIFEST_PATH), versioned_manifest(2, ABI)).unwrap();
+        let crossed = temp.path().join("crossed.senp");
+        assert_eq!(
+            pack_directory(&effect, &crossed, None).unwrap_err().code,
+            ErrorCode::AbiMismatch
+        );
+        assert!(!crossed.exists());
     }
 
     #[test]

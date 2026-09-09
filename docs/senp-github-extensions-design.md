@@ -223,7 +223,11 @@ G01時点: 既知のschema 2/ABI 2を判別した後、未実装のruntimeは
 `UnsupportedRuntime`で拒否する。未知schemaは`UnsupportedSchema`、
 schema 2にABI 1/未知ABI/異なるmoduleを組み合わせると`AbiMismatch`。
 JSON全体の重複キー・末尾入力を検査してからversionを選び、pack・archive検証・
-installed listingが同じ入口を使う。v2 packageの公開・インストール・寄与登録はまだ許可しない。
+installed listingが同じ入口を使う。
+
+R01時点: 受理gateは解放済み。schema 2は`runtime`宣言を必須とし、これを欠くmanifestは
+`InvalidManifest`である（新しい版番号を持つ宣言型拡張ではなく、effect hostが実行するための
+寄与しか持たないため）。version全体を拒否する分岐は残っておらず、境界はABI/moduleの対のみ。
 
 以下はv2の最小構成例。API名はこの提案の名前で、現行validatorでは受理されない。
 

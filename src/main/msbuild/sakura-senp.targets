@@ -32,6 +32,19 @@
     <SakuraSenpLegacyLanguagePackageHash>$([MSBuild]::NormalizePath('$(SakuraSenpTargetDir)', 'packages\sakura-legacy-language-basics.sha256'))</SakuraSenpLegacyLanguagePackageHash>
     <SakuraSenpProjectsPackage>$([MSBuild]::NormalizePath('$(SakuraSenpTargetDir)', 'packages\sakura-projects.senp'))</SakuraSenpProjectsPackage>
     <SakuraSenpProjectsPackageHash>$([MSBuild]::NormalizePath('$(SakuraSenpTargetDir)', 'packages\sakura-projects.sha256'))</SakuraSenpProjectsPackageHash>
+    <!-- The two schema-2 packages. Each needs its own stage because a runtime
+         extension is packed from a directory that holds the componentized
+         module, not from the crate directory the manifest lives in. -->
+    <SakuraSenpGitHubPullRequestsModule>$([MSBuild]::NormalizePath('$(SakuraSenpTargetDir)', 'wasm32-unknown-unknown\$(SakuraSenpProfileDirectory)\sakura_github_pull_requests.wasm'))</SakuraSenpGitHubPullRequestsModule>
+    <SakuraSenpGitHubPullRequestsStage>$([MSBuild]::NormalizePath('$(SakuraSenpTargetDir)', 'stage\sakura-github-pull-requests'))</SakuraSenpGitHubPullRequestsStage>
+    <SakuraSenpGitHubPullRequestsComponent>$([MSBuild]::NormalizePath('$(SakuraSenpGitHubPullRequestsStage)', 'module\extension.wasm'))</SakuraSenpGitHubPullRequestsComponent>
+    <SakuraSenpGitHubPullRequestsPackage>$([MSBuild]::NormalizePath('$(SakuraSenpTargetDir)', 'packages\sakura-github-pull-requests.senp'))</SakuraSenpGitHubPullRequestsPackage>
+    <SakuraSenpGitHubPullRequestsPackageHash>$([MSBuild]::NormalizePath('$(SakuraSenpTargetDir)', 'packages\sakura-github-pull-requests.sha256'))</SakuraSenpGitHubPullRequestsPackageHash>
+    <SakuraSenpGitHubActionsModule>$([MSBuild]::NormalizePath('$(SakuraSenpTargetDir)', 'wasm32-unknown-unknown\$(SakuraSenpProfileDirectory)\sakura_github_actions.wasm'))</SakuraSenpGitHubActionsModule>
+    <SakuraSenpGitHubActionsStage>$([MSBuild]::NormalizePath('$(SakuraSenpTargetDir)', 'stage\sakura-github-actions'))</SakuraSenpGitHubActionsStage>
+    <SakuraSenpGitHubActionsComponent>$([MSBuild]::NormalizePath('$(SakuraSenpGitHubActionsStage)', 'module\extension.wasm'))</SakuraSenpGitHubActionsComponent>
+    <SakuraSenpGitHubActionsPackage>$([MSBuild]::NormalizePath('$(SakuraSenpTargetDir)', 'packages\sakura-github-actions.senp'))</SakuraSenpGitHubActionsPackage>
+    <SakuraSenpGitHubActionsPackageHash>$([MSBuild]::NormalizePath('$(SakuraSenpTargetDir)', 'packages\sakura-github-actions.sha256'))</SakuraSenpGitHubActionsPackageHash>
     <SakuraSenpResourceFile>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(IntDir)', 'sakura-senp-builtin.rc'))</SakuraSenpResourceFile>
     <SakuraSenpStamp>$([MSBuild]::NormalizePath('$(SakuraSenpTargetDir)', 'sakura-senp.msbuild.stamp'))</SakuraSenpStamp>
     <SakuraSenpOutputHost>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(SakuraSharedOutDir)', 'sakura-senp-host.exe'))</SakuraSenpOutputHost>
@@ -52,6 +65,10 @@
     <SakuraSenpLegacyLanguagePackageHashRc>$([System.Text.RegularExpressions.Regex]::Replace('$(SakuraSenpLegacyLanguagePackageHash)', '[\\\\]', '/'))</SakuraSenpLegacyLanguagePackageHashRc>
     <SakuraSenpProjectsPackageRc>$([System.Text.RegularExpressions.Regex]::Replace('$(SakuraSenpProjectsPackage)', '[\\\\]', '/'))</SakuraSenpProjectsPackageRc>
     <SakuraSenpProjectsPackageHashRc>$([System.Text.RegularExpressions.Regex]::Replace('$(SakuraSenpProjectsPackageHash)', '[\\\\]', '/'))</SakuraSenpProjectsPackageHashRc>
+    <SakuraSenpGitHubPullRequestsPackageRc>$([System.Text.RegularExpressions.Regex]::Replace('$(SakuraSenpGitHubPullRequestsPackage)', '[\\\\]', '/'))</SakuraSenpGitHubPullRequestsPackageRc>
+    <SakuraSenpGitHubPullRequestsPackageHashRc>$([System.Text.RegularExpressions.Regex]::Replace('$(SakuraSenpGitHubPullRequestsPackageHash)', '[\\\\]', '/'))</SakuraSenpGitHubPullRequestsPackageHashRc>
+    <SakuraSenpGitHubActionsPackageRc>$([System.Text.RegularExpressions.Regex]::Replace('$(SakuraSenpGitHubActionsPackage)', '[\\\\]', '/'))</SakuraSenpGitHubActionsPackageRc>
+    <SakuraSenpGitHubActionsPackageHashRc>$([System.Text.RegularExpressions.Regex]::Replace('$(SakuraSenpGitHubActionsPackageHash)', '[\\\\]', '/'))</SakuraSenpGitHubActionsPackageHashRc>
   </PropertyGroup>
 
   <ItemGroup>
@@ -78,12 +95,26 @@
     <SakuraSenpSource Include="$(SakuraSenpWorkspace)\extensions\sakura_configuration_language_basics\**\*" />
     <SakuraSenpSource Include="$(SakuraSenpWorkspace)\extensions\sakura_legacy_language_basics\**\*" />
     <SakuraSenpSource Include="$(SakuraSenpWorkspace)\extensions\sakura_projects\**\*" />
+    <!-- Both GitHub packages are built from these crates and the client crate
+         they share, so a change to any of them must repack the packages. -->
+    <SakuraSenpSource Include="$(SakuraSenpWorkspace)\github_client\**\*.toml" />
+    <SakuraSenpSource Include="$(SakuraSenpWorkspace)\github_client\src\**\*.rs" />
+    <SakuraSenpSource Include="$(SakuraSenpWorkspace)\extensions\sakura_github_pull_requests\**\*.toml" />
+    <SakuraSenpSource Include="$(SakuraSenpWorkspace)\extensions\sakura_github_pull_requests\src\**\*.rs" />
+    <SakuraSenpSource Include="$(SakuraSenpWorkspace)\extensions\sakura_github_pull_requests\senp.json" />
+    <SakuraSenpSource Include="$(SakuraSenpWorkspace)\extensions\sakura_github_pull_requests\README.md" />
+    <SakuraSenpSource Include="$(SakuraSenpWorkspace)\extensions\sakura_github_pull_requests\LICENSE" />
+    <SakuraSenpSource Include="$(SakuraSenpWorkspace)\extensions\sakura_github_actions\**\*.toml" />
+    <SakuraSenpSource Include="$(SakuraSenpWorkspace)\extensions\sakura_github_actions\src\**\*.rs" />
+    <SakuraSenpSource Include="$(SakuraSenpWorkspace)\extensions\sakura_github_actions\senp.json" />
+    <SakuraSenpSource Include="$(SakuraSenpWorkspace)\extensions\sakura_github_actions\README.md" />
+    <SakuraSenpSource Include="$(SakuraSenpWorkspace)\extensions\sakura_github_actions\LICENSE" />
     <ResourceCompile Include="$(SakuraSenpResourceFile)" />
   </ItemGroup>
 
   <Target Name="PrepareSakuraSenpIncrementalState">
     <Delete Files="$(SakuraSenpStamp)"
-            Condition="Exists('$(SakuraSenpStamp)') And (!Exists('$(SakuraSenpPackage)') Or !Exists('$(SakuraSenpPackageHash)') Or !Exists('$(SakuraSenpCoreLanguagePackage)') Or !Exists('$(SakuraSenpCoreLanguagePackageHash)') Or !Exists('$(SakuraSenpShellLanguagePackage)') Or !Exists('$(SakuraSenpShellLanguagePackageHash)') Or !Exists('$(SakuraSenpDatabaseLanguagePackage)') Or !Exists('$(SakuraSenpDatabaseLanguagePackageHash)') Or !Exists('$(SakuraSenpInfrastructureLanguagePackage)') Or !Exists('$(SakuraSenpInfrastructureLanguagePackageHash)') Or !Exists('$(SakuraSenpConfigurationLanguagePackage)') Or !Exists('$(SakuraSenpConfigurationLanguagePackageHash)') Or !Exists('$(SakuraSenpLegacyLanguagePackage)') Or !Exists('$(SakuraSenpLegacyLanguagePackageHash)') Or !Exists('$(SakuraSenpProjectsPackage)') Or !Exists('$(SakuraSenpProjectsPackageHash)') Or !Exists('$(SakuraSenpResourceFile)') Or !Exists('$(SakuraSenpOutputHost)') Or !Exists('$(SakuraSenpOutputTool)'))" />
+            Condition="Exists('$(SakuraSenpStamp)') And (!Exists('$(SakuraSenpPackage)') Or !Exists('$(SakuraSenpPackageHash)') Or !Exists('$(SakuraSenpCoreLanguagePackage)') Or !Exists('$(SakuraSenpCoreLanguagePackageHash)') Or !Exists('$(SakuraSenpShellLanguagePackage)') Or !Exists('$(SakuraSenpShellLanguagePackageHash)') Or !Exists('$(SakuraSenpDatabaseLanguagePackage)') Or !Exists('$(SakuraSenpDatabaseLanguagePackageHash)') Or !Exists('$(SakuraSenpInfrastructureLanguagePackage)') Or !Exists('$(SakuraSenpInfrastructureLanguagePackageHash)') Or !Exists('$(SakuraSenpConfigurationLanguagePackage)') Or !Exists('$(SakuraSenpConfigurationLanguagePackageHash)') Or !Exists('$(SakuraSenpLegacyLanguagePackage)') Or !Exists('$(SakuraSenpLegacyLanguagePackageHash)') Or !Exists('$(SakuraSenpProjectsPackage)') Or !Exists('$(SakuraSenpProjectsPackageHash)') Or !Exists('$(SakuraSenpGitHubPullRequestsPackage)') Or !Exists('$(SakuraSenpGitHubPullRequestsPackageHash)') Or !Exists('$(SakuraSenpGitHubActionsPackage)') Or !Exists('$(SakuraSenpGitHubActionsPackageHash)') Or !Exists('$(SakuraSenpResourceFile)') Or !Exists('$(SakuraSenpOutputHost)') Or !Exists('$(SakuraSenpOutputTool)'))" />
   </Target>
 
   <Target Name="BuildSakuraSenpArtifacts"
@@ -91,12 +122,12 @@
           Inputs="@(SakuraSenpSource)"
           Outputs="$(SakuraSenpStamp)"
           BeforeTargets="ResourceCompile">
-    <MakeDir Directories="$(SakuraSenpTargetDir);$(SakuraSenpStage)\module;$([System.IO.Path]::GetDirectoryName('$(SakuraSenpPackage)'))" />
-    <Exec Command="&quot;$(SakuraSenpCargo)&quot; build --manifest-path &quot;$(SakuraSenpManifest)&quot; --package sakura-indent-rainbow --locked --target wasm32-unknown-unknown --target-dir &quot;$(SakuraSenpTargetDir)&quot; --profile $(SakuraSenpCargoProfile)"
+    <MakeDir Directories="$(SakuraSenpTargetDir);$(SakuraSenpStage)\module;$(SakuraSenpGitHubPullRequestsStage)\module;$(SakuraSenpGitHubActionsStage)\module;$([System.IO.Path]::GetDirectoryName('$(SakuraSenpPackage)'))" />
+    <Exec Command="&quot;$(SakuraSenpCargo)&quot; build --manifest-path &quot;$(SakuraSenpManifest)&quot; --package sakura-indent-rainbow --package sakura-github-pull-requests --package sakura-github-actions --locked --target wasm32-unknown-unknown --target-dir &quot;$(SakuraSenpTargetDir)&quot; --profile $(SakuraSenpCargoProfile)"
           WorkingDirectory="$(SakuraSenpWorkspace)" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
     <Exec Command="&quot;$(SakuraSenpCargo)&quot; build --manifest-path &quot;$(SakuraSenpManifest)&quot; --package sakura-senp-tool --package sakura-senp-host --locked --target x86_64-pc-windows-msvc --target-dir &quot;$(SakuraSenpTargetDir)&quot; --profile $(SakuraSenpCargoProfile)"
           WorkingDirectory="$(SakuraSenpWorkspace)" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
-    <Error Condition="!Exists('$(SakuraSenpGuestModule)') Or !Exists('$(SakuraSenpTool)') Or !Exists('$(SakuraSenpHost)')"
+    <Error Condition="!Exists('$(SakuraSenpGuestModule)') Or !Exists('$(SakuraSenpGitHubPullRequestsModule)') Or !Exists('$(SakuraSenpGitHubActionsModule)') Or !Exists('$(SakuraSenpTool)') Or !Exists('$(SakuraSenpHost)')"
            Text="Cargo completed without producing all required SENP artifacts." />
     <Copy SourceFiles="$(SakuraSenpWorkspace)\extensions\sakura_indent_rainbow\senp.json;$(SakuraSenpWorkspace)\extensions\sakura_indent_rainbow\README.md;$(SakuraSenpWorkspace)\extensions\sakura_indent_rainbow\LICENSE"
           DestinationFolder="$(SakuraSenpStage)" SkipUnchangedFiles="true" />
@@ -118,15 +149,27 @@
           WorkingDirectory="$(SakuraSenpWorkspace)" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
     <Exec Command="&quot;$(SakuraSenpTool)&quot; pack-builtin &quot;$(SakuraSenpWorkspace)\extensions\sakura_projects&quot; &quot;$(SakuraSenpProjectsPackage)&quot; &quot;$(SakuraSenpProjectsPackageHash)&quot;"
           WorkingDirectory="$(SakuraSenpWorkspace)" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
+    <Copy SourceFiles="$(SakuraSenpWorkspace)\extensions\sakura_github_pull_requests\senp.json;$(SakuraSenpWorkspace)\extensions\sakura_github_pull_requests\README.md;$(SakuraSenpWorkspace)\extensions\sakura_github_pull_requests\LICENSE"
+          DestinationFolder="$(SakuraSenpGitHubPullRequestsStage)" SkipUnchangedFiles="true" />
+    <Exec Command="&quot;$(SakuraSenpTool)&quot; componentize &quot;$(SakuraSenpGitHubPullRequestsModule)&quot; &quot;$(SakuraSenpGitHubPullRequestsComponent)&quot;"
+          WorkingDirectory="$(SakuraSenpWorkspace)" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
+    <Exec Command="&quot;$(SakuraSenpTool)&quot; pack-builtin &quot;$(SakuraSenpGitHubPullRequestsStage)&quot; &quot;$(SakuraSenpGitHubPullRequestsPackage)&quot; &quot;$(SakuraSenpGitHubPullRequestsPackageHash)&quot;"
+          WorkingDirectory="$(SakuraSenpWorkspace)" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
+    <Copy SourceFiles="$(SakuraSenpWorkspace)\extensions\sakura_github_actions\senp.json;$(SakuraSenpWorkspace)\extensions\sakura_github_actions\README.md;$(SakuraSenpWorkspace)\extensions\sakura_github_actions\LICENSE"
+          DestinationFolder="$(SakuraSenpGitHubActionsStage)" SkipUnchangedFiles="true" />
+    <Exec Command="&quot;$(SakuraSenpTool)&quot; componentize &quot;$(SakuraSenpGitHubActionsModule)&quot; &quot;$(SakuraSenpGitHubActionsComponent)&quot;"
+          WorkingDirectory="$(SakuraSenpWorkspace)" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
+    <Exec Command="&quot;$(SakuraSenpTool)&quot; pack-builtin &quot;$(SakuraSenpGitHubActionsStage)&quot; &quot;$(SakuraSenpGitHubActionsPackage)&quot; &quot;$(SakuraSenpGitHubActionsPackageHash)&quot;"
+          WorkingDirectory="$(SakuraSenpWorkspace)" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
     <Copy SourceFiles="$(SakuraSenpHost);$(SakuraSenpTool)" DestinationFiles="$(SakuraSenpOutputHost);$(SakuraSenpOutputTool)" SkipUnchangedFiles="true" />
     <WriteLinesToFile File="$(SakuraSenpResourceFile)"
-          Lines="39000 RCDATA &quot;$(SakuraSenpPackageRc)&quot;;39001 RCDATA &quot;$(SakuraSenpPackageHashRc)&quot;;39002 RCDATA &quot;$(SakuraSenpCoreLanguagePackageRc)&quot;;39003 RCDATA &quot;$(SakuraSenpCoreLanguagePackageHashRc)&quot;;39004 RCDATA &quot;$(SakuraSenpShellLanguagePackageRc)&quot;;39005 RCDATA &quot;$(SakuraSenpShellLanguagePackageHashRc)&quot;;39006 RCDATA &quot;$(SakuraSenpDatabaseLanguagePackageRc)&quot;;39007 RCDATA &quot;$(SakuraSenpDatabaseLanguagePackageHashRc)&quot;;39008 RCDATA &quot;$(SakuraSenpInfrastructureLanguagePackageRc)&quot;;39009 RCDATA &quot;$(SakuraSenpInfrastructureLanguagePackageHashRc)&quot;;39010 RCDATA &quot;$(SakuraSenpConfigurationLanguagePackageRc)&quot;;39011 RCDATA &quot;$(SakuraSenpConfigurationLanguagePackageHashRc)&quot;;39012 RCDATA &quot;$(SakuraSenpLegacyLanguagePackageRc)&quot;;39013 RCDATA &quot;$(SakuraSenpLegacyLanguagePackageHashRc)&quot;;39014 RCDATA &quot;$(SakuraSenpProjectsPackageRc)&quot;;39015 RCDATA &quot;$(SakuraSenpProjectsPackageHashRc)&quot;"
+          Lines="39000 RCDATA &quot;$(SakuraSenpPackageRc)&quot;;39001 RCDATA &quot;$(SakuraSenpPackageHashRc)&quot;;39002 RCDATA &quot;$(SakuraSenpCoreLanguagePackageRc)&quot;;39003 RCDATA &quot;$(SakuraSenpCoreLanguagePackageHashRc)&quot;;39004 RCDATA &quot;$(SakuraSenpShellLanguagePackageRc)&quot;;39005 RCDATA &quot;$(SakuraSenpShellLanguagePackageHashRc)&quot;;39006 RCDATA &quot;$(SakuraSenpDatabaseLanguagePackageRc)&quot;;39007 RCDATA &quot;$(SakuraSenpDatabaseLanguagePackageHashRc)&quot;;39008 RCDATA &quot;$(SakuraSenpInfrastructureLanguagePackageRc)&quot;;39009 RCDATA &quot;$(SakuraSenpInfrastructureLanguagePackageHashRc)&quot;;39010 RCDATA &quot;$(SakuraSenpConfigurationLanguagePackageRc)&quot;;39011 RCDATA &quot;$(SakuraSenpConfigurationLanguagePackageHashRc)&quot;;39012 RCDATA &quot;$(SakuraSenpLegacyLanguagePackageRc)&quot;;39013 RCDATA &quot;$(SakuraSenpLegacyLanguagePackageHashRc)&quot;;39014 RCDATA &quot;$(SakuraSenpProjectsPackageRc)&quot;;39015 RCDATA &quot;$(SakuraSenpProjectsPackageHashRc)&quot;;39016 RCDATA &quot;$(SakuraSenpGitHubPullRequestsPackageRc)&quot;;39017 RCDATA &quot;$(SakuraSenpGitHubPullRequestsPackageHashRc)&quot;;39018 RCDATA &quot;$(SakuraSenpGitHubActionsPackageRc)&quot;;39019 RCDATA &quot;$(SakuraSenpGitHubActionsPackageHashRc)&quot;"
           Overwrite="true" WriteOnlyWhenDifferent="true" Encoding="Unicode" />
     <Touch Files="$(SakuraSenpStamp)" AlwaysCreate="true" />
   </Target>
 
   <Target Name="ValidateSakuraSenpArtifacts" DependsOnTargets="BuildSakuraSenpArtifacts" BeforeTargets="ResourceCompile">
-    <Error Condition="!Exists('$(SakuraSenpPackage)') Or !Exists('$(SakuraSenpPackageHash)') Or !Exists('$(SakuraSenpCoreLanguagePackage)') Or !Exists('$(SakuraSenpCoreLanguagePackageHash)') Or !Exists('$(SakuraSenpShellLanguagePackage)') Or !Exists('$(SakuraSenpShellLanguagePackageHash)') Or !Exists('$(SakuraSenpDatabaseLanguagePackage)') Or !Exists('$(SakuraSenpDatabaseLanguagePackageHash)') Or !Exists('$(SakuraSenpInfrastructureLanguagePackage)') Or !Exists('$(SakuraSenpInfrastructureLanguagePackageHash)') Or !Exists('$(SakuraSenpConfigurationLanguagePackage)') Or !Exists('$(SakuraSenpConfigurationLanguagePackageHash)') Or !Exists('$(SakuraSenpLegacyLanguagePackage)') Or !Exists('$(SakuraSenpLegacyLanguagePackageHash)') Or !Exists('$(SakuraSenpProjectsPackage)') Or !Exists('$(SakuraSenpProjectsPackageHash)') Or !Exists('$(SakuraSenpResourceFile)') Or !Exists('$(SakuraSenpOutputHost)') Or !Exists('$(SakuraSenpOutputTool)')"
+    <Error Condition="!Exists('$(SakuraSenpPackage)') Or !Exists('$(SakuraSenpPackageHash)') Or !Exists('$(SakuraSenpCoreLanguagePackage)') Or !Exists('$(SakuraSenpCoreLanguagePackageHash)') Or !Exists('$(SakuraSenpShellLanguagePackage)') Or !Exists('$(SakuraSenpShellLanguagePackageHash)') Or !Exists('$(SakuraSenpDatabaseLanguagePackage)') Or !Exists('$(SakuraSenpDatabaseLanguagePackageHash)') Or !Exists('$(SakuraSenpInfrastructureLanguagePackage)') Or !Exists('$(SakuraSenpInfrastructureLanguagePackageHash)') Or !Exists('$(SakuraSenpConfigurationLanguagePackage)') Or !Exists('$(SakuraSenpConfigurationLanguagePackageHash)') Or !Exists('$(SakuraSenpLegacyLanguagePackage)') Or !Exists('$(SakuraSenpLegacyLanguagePackageHash)') Or !Exists('$(SakuraSenpProjectsPackage)') Or !Exists('$(SakuraSenpProjectsPackageHash)') Or !Exists('$(SakuraSenpGitHubPullRequestsPackage)') Or !Exists('$(SakuraSenpGitHubPullRequestsPackageHash)') Or !Exists('$(SakuraSenpGitHubActionsPackage)') Or !Exists('$(SakuraSenpGitHubActionsPackageHash)') Or !Exists('$(SakuraSenpResourceFile)') Or !Exists('$(SakuraSenpOutputHost)') Or !Exists('$(SakuraSenpOutputTool)')"
            Text="The SENP build completed without publishing all required outputs." />
   </Target>
 </Project>

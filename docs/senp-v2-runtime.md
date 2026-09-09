@@ -175,7 +175,7 @@ title actionのpadding/gapも共通化する。Enter/Space/Left/Rightで開閉�
 U01ではnative body portとpage lifetimeを扱い、U02のTree本文は以下の境界で接続する。
 U06の動的公開はまだ接続しない。別cohortへのView移動はnative retention契約がないため`Unsupported`。
 collapse/sizeはSnapshotで回収でき、初期値を構築時に渡せるが、永続化はU06のcompositionが担う。
-schema 2のpackage gateは引き続きUnsupportedRuntimeである。
+schema 2のpackage gateはR01で解放済み。`runtime`のABI/module検証だけが残る境界である。
 
 ```powershell
 build-sln.bat x64 Debug
@@ -231,7 +231,7 @@ pwsh -NoProfile -File tools/verify-senp-view-rendering.ps1 -ProbeSet TreeViews -
 実ウィンドウでlazy load、page/retry、取消、反復開閉、command、focus/scroll維持、owner失敗とUIAを検証する。
 別起動の描画probeは3テーマ・3 DPIでexpand/resize/scroll/refreshを往復し、実native row text/stateと
 geometryの変化を確認してからdual captureする。provider portのfixtureであり、GitHubのlive dataや
-Wasm/tool brokerの結合はU06/T工程で検査する。v2 package gateは引き続きUnsupportedRuntime。
+Wasm/tool brokerの結合はU06/T工程で検査する。v2 package gateはR01で解放済み。
 
 ## 再現可能な実プロセス検査
 

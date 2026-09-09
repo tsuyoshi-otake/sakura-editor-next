@@ -55,9 +55,10 @@
 - The current projection captures collapse/size through `Snapshot` and accepts
   restored values at construction; it performs no durable writes. Profile
   restoration and dynamic package publication must be wired by native
-  composition (U06). The v2 package gate remains UnsupportedRuntime until the
-  body, command, persistence and tool adapters exist, so these incomplete user
-  capabilities are not presented as working VS Code features.
+  composition (U06). The v2 package gate is released now that the body, command,
+  persistence and tool adapters exist; the two GitHub packages ship as built-in
+  candidates that are offered rather than installed, so an incomplete capability
+  is never presented as a working VS Code feature.
 
 Run the focused `SenpViewContainer`, `ViewPaneStackLayout`, existing page/layout,
 SCM and `CustomUiAutomationProvider` tests after a solution build. Use

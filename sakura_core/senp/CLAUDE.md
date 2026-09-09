@@ -43,13 +43,20 @@ failure with a visual placeholder or an unrelated legacy plugin path.
 
 - Package parsing selects `schemaVersion` only after the entire JSON passes
   duplicate-member and trailing-input checks. Schema 1 retains its existing
-  strict field/capability validation. Schema 2 with
-  `sakura:senp/extension@2.0.0` is recognized but returns the typed
-  `UnsupportedRuntime` boundary until v2 owner/contribution/capability validation is wired;
-  mismatched ABI/module pairs return `AbiMismatch`, unknown schemas return
+  strict field/capability validation. Schema 2 requires its own
+  `runtime` block naming `sakura:senp/extension@2.0.0` and `module/extension.wasm`
+  before anything else is read: a v2 manifest that omits `runtime` is
+  `InvalidManifest`, not a declarative extension carrying a newer number.
+  Mismatched ABI/module pairs return `AbiMismatch`, unknown schemas return
   `UnsupportedSchema`. Pack, archive verification, and installed-content
-  discovery use the same dispatch and must never fall back to v1 or publish
-  v2 contributions early (#296, G01).
+  discovery use the same dispatch and must never fall back to v1 (#296, G01/R01).
+
+- The schema-2 admission gate is released. It was held closed only until the
+  real application could accept a v2 package, run the GitHub tool, complete a
+  command, read a text resource and persist state; those exist now, so
+  `parse_manifest` admits v2 rather than returning a typed refusal. Do not
+  reintroduce a version-wide refusal here: what the gate protected is the ABI
+  pair, and that check is what remains.
 
 - The v2 event/effect wire contract is `SenpEffectProtocol` and
   `sakura_senp_host::effect_protocol`, with separate WIT bindings under
@@ -363,8 +370,8 @@ Preserve that count as unknown and allow expansion; only an explicit zero is a
 leaf. Detail responses require a count. Draft is independent from open/closed
 state, and merged status comes from merged_at; a closed draft must remain closed.
 
-The package preflight now validates schema-2 Tree activation, capabilities and
-command declarations before the explicit UnsupportedRuntime gate. Its identifier
+The package preflight validates schema-2 Tree activation, capabilities and
+command declarations as part of admission. Its identifier
 grammar preserves upstream colon IDs without widening schema 1. Commands are
 bounded package declarations, not authorization supplied by a Tree item.
 Native package-authority decoding retains schema/ABI, activation, capability and

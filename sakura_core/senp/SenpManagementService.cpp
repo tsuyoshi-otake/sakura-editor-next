@@ -40,6 +40,11 @@ constexpr std::array kBuiltInResources{
 	BuiltInResource{ L"sakura-configuration-language-basics", 39010, 39011, true },
 	BuiltInResource{ L"sakura-legacy-language-basics", 39012, 39013, true },
 	BuiltInResource{ L"sakura-projects", 39014, 39015, true },
+	// The schema-2 packages are offered rather than installed. They show
+	// nothing without a GitHub connection, so the user admits them from the
+	// Extensions tool instead of finding two activity bar containers appear.
+	BuiltInResource{ L"sakura-github-pull-requests", 39016, 39017, false },
+	BuiltInResource{ L"sakura-github-actions", 39018, 39019, false },
 };
 constexpr DWORD kToolTimeoutMilliseconds = 30'000;
 constexpr std::size_t kMaximumToolOutputBytes = 4U * 1024U * 1024U;

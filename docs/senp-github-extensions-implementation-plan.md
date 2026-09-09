@@ -79,6 +79,17 @@ G02のsemantic台帳はexact source commit `f881170f28b3c17d195c145b6f2396704cff
 から正規手順で受理した。追加35件は既定のconst equality operator 33件と
 `static constexpr` 2件の誤検出と確認し、JSONC APIの既存報告13件を保持する理由も
 台帳履歴に保存した。exact source SHAが必要な証跡は製品コードに続く小さなcommitとする。
+2026-09-09: 上記の実アプリ結合検証（v2 packageの受理、GitHub tool、command完了、
+text resource、状態永続化）が揃ったため、schema 2の受理gateを解放した。`parse_manifest`の
+schema 2分岐は`runtime`のABI/module検証を経てmanifestを返し、`UnsupportedRuntime`は
+唯一の生成箇所と共に削除した。gateだけを開けても受理する対象が無いので、同じ単位で
+GitHub 2拡張をbuilt-in packageとして同梱する（RCDATA 39016-39019）。
+どちらも`installedByDefault=false`——GitHub接続が無ければ何も表示しないため、
+activity barに勝手に現れるのではなくExtensions toolから利用者が受理する。
+Rust 18件、`*Senp*` native 342件（既知の先行失敗1件のみ）、
+`tools/verify-senp-runtime.py --offline`が`{"status":"pass","survivors":[]}`、
+実packageの`inspect-builtin`がschema 2とcommand宣言を返すことを確認した。
+残るは実GitHubデータでのE2E検証。
 
 ## コミットの進め方
 
