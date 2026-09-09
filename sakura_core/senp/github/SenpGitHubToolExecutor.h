@@ -83,9 +83,11 @@ public:
 	`gh` invocation runs on this object's single worker thread. The worker never
 	holds an execution scope - it writes finished pages into a small keyed cache -
 	so removing a scope under the state mutex is by itself enough to guarantee that
-	no worker can touch it afterwards. Bodies never travel inside a completion;
-	each finished page is published as a text resource whose handle the editor
-	reads back in bounded chunks.
+	no worker can touch it afterwards. A finished page carries its body inside the
+	completion, because parsing it is the extension's own work and the protocol
+	gives an extension no way to read a resource; the same bytes are also kept as
+	a text resource while a slot is free, so a document may name the raw response.
+	A log is the other way round: it is only ever read back in bounded chunks.
 */
 class CSenpGitHubToolExecutor final : public platform::controlipc::ISenpToolExecutor {
 public:
@@ -95,6 +97,15 @@ public:
 	[[nodiscard]] static constexpr std::size_t MaximumResourcesPerScope() noexcept { return 8; }
 	//! A page larger than this is refused instead of being cached or published.
 	[[nodiscard]] static constexpr std::size_t MaximumPageBytes() noexcept { return 2u * 1024u * 1024u; }
+	/*!
+		@brief Largest body one completion may carry.
+
+		The wire and the effect protocol both bound a completion's data at 64 KiB,
+		and the rest of the envelope has to fit beside the body. A page over this
+		is refused by name rather than delivered short: a truncated JSON body is
+		not a smaller page, it is one nothing can parse.
+	*/
+	[[nodiscard]] static constexpr std::size_t MaximumInlineBodyBytes() noexcept { return 62u * 1024u; }
 	[[nodiscard]] static constexpr std::size_t MaximumCachedPages() noexcept { return 8; }
 	//! A log downloads on the same single worker every page fetch runs on, so
 	//! this is what bounds how much work one connection can queue ahead of
@@ -138,6 +149,10 @@ private:
 		std::wstring cacheKey;
 		std::uint64_t subscriptionId{};
 		std::uint64_t deliveredCycle{};
+		//! The page resource this read currently owns, empty when it owns none.
+		//! One read holds at most one: a refresh replaces what it published, so a
+		//! subscription that refreshes forever cannot exhaust the scope's slots.
+		std::wstring resource;
 	};
 	struct Page final {
 		std::wstring cacheKey;
@@ -196,7 +211,11 @@ private:
 		const platform::controlipc::SenpToolReadCommand& command);
 	void Drain(ScopeState& state);
 	[[nodiscard]] std::optional<effect::ToolCompleted> Publish(ScopeState& state,
-		const Read& read, const Page& page);
+		Read& read, const Page& page);
+	//! Drops the page resource one read owns, if it owns one. Called before a
+	//! read publishes again and when it ends, so the slot never outlives what
+	//! the editor could still be shown.
+	void ReleasePage(ScopeState& state, Read& read) noexcept;
 	void Release(ScopeState& state) noexcept;
 	void Run() noexcept;
 	void Execute(const GhReadDispatch& dispatch);

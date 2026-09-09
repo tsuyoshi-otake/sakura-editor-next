@@ -274,8 +274,12 @@ TEST(SenpGitHubToolExecutor, PublishesOneFetchedPageAsAReadableResource)
 	EXPECT_EQ(L"issues:open", completed->readId);
 	const auto handle = ResourceHandle(*completed);
 	ASSERT_FALSE(handle.empty());
-	// The body itself never travels inside the completion.
-	EXPECT_EQ(std::wstring::npos, completed->data.find(L"first"));
+	// The extension parses this body itself and the protocol gives it no way to
+	// read a resource, so the body travels inside the completion. Everything the
+	// page was answered with travels beside it, unchanged.
+	EXPECT_NE(std::wstring::npos, completed->data.find(LR"(,"body":[{"id":1,"title":"first"}]})"));
+	EXPECT_NE(std::wstring::npos, completed->data.find(LR"("httpStatus":200)"));
+	EXPECT_NE(std::wstring::npos, completed->data.find(LR"("page":1)"));
 
 	ControlSenpRpcResponse response;
 	ASSERT_EQ(EControlSenpRpcStatus::Succeeded,
@@ -467,6 +471,81 @@ TEST(SenpGitHubToolExecutor, RefusesAnUnusableResourceRead)
 		fixture.Executor().ReadResource(scope, handle, 0, 64 * 1024 + 1, response));
 	EXPECT_EQ(EControlSenpRpcStatus::InvalidRequest,
 		fixture.Executor().ReadResource(scope, L"", 0, 1024, response));
+}
+
+TEST(SenpGitHubToolExecutor, RefusesAPageTooLargeForOneCompletion)
+{
+	Fixture fixture;
+	const auto scope = Scope();
+	// Under the fetch budget and over the completion budget. Delivering it short
+	// would hand the extension a JSON body that ends mid-value, which parses as
+	// a broken page rather than as the too-large one it is.
+	const std::string body = "[\"" + std::string(70 * 1024, 'x') + "\"]";
+	fixture.CredentialValue().Set("HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n\r\n" + body);
+	const auto completed = fixture.Fetch(scope, IssueList());
+	ASSERT_TRUE(completed);
+	EXPECT_EQ(effect::CompletionStatus::Failed, completed->status);
+	EXPECT_EQ(L"page-too-large", completed->message);
+	EXPECT_TRUE(completed->data.empty());
+	// Nothing was published under it either, so no slot is spent on a page the
+	// editor was never given a way to reach.
+	EXPECT_TRUE(ResourceHandle(*completed).empty());
+}
+
+TEST(SenpGitHubToolExecutor, ARefreshReplacesThePageResourceItPublished)
+{
+	Fixture fixture;
+	const auto scope = Scope();
+	const auto first = fixture.Fetch(scope, IssueList());
+	ASSERT_TRUE(first);
+	const auto firstHandle = ResourceHandle(*first);
+	ASSERT_FALSE(firstHandle.empty());
+
+	// A subscription refreshes for as long as the view is open. One read owning
+	// more than one resource at a time would spend the scope's whole allowance
+	// on a single view that simply stayed open.
+	std::wstring lastHandle = firstHandle;
+	for (int refresh = 0; refresh < static_cast<int>(
+		CSenpGitHubToolExecutor::MaximumResourcesPerScope()) + 4; ++refresh) {
+		const auto refreshed = fixture.Fetch(scope, IssueList());
+		ASSERT_TRUE(refreshed) << refresh;
+		EXPECT_EQ(effect::CompletionStatus::Succeeded, refreshed->status) << refresh;
+		lastHandle = ResourceHandle(*refreshed);
+		ASSERT_FALSE(lastHandle.empty()) << refresh;
+	}
+	ControlSenpRpcResponse response;
+	EXPECT_EQ(EControlSenpRpcStatus::Succeeded,
+		fixture.Executor().ReadResource(scope, lastHandle, 0, 64 * 1024, response));
+	// The replaced one is gone rather than merely unreferenced: what a refresh
+	// published before is not what the view is showing now.
+	EXPECT_EQ(EControlSenpRpcStatus::NotFound,
+		fixture.Executor().ReadResource(scope, firstHandle, 0, 64 * 1024, response));
+}
+
+TEST(SenpGitHubToolExecutor, PublishesAPageWithoutAResourceWhenNoSlotIsLeft)
+{
+	Fixture fixture;
+	const auto scope = Scope();
+	// One view of one extension opens more concurrent reads than a scope has
+	// resource slots. The resource is an extra, so running out of them cannot be
+	// what stops the page from arriving.
+	for (std::size_t index = 0; index < CSenpGitHubToolExecutor::MaximumResourcesPerScope(); ++index) {
+		auto command = IssueList();
+		command.readId = L"issues:" + std::to_wstring(index);
+		command.arguments.push_back({ L"page", std::to_wstring(index + 1) });
+		const auto completed = fixture.Fetch(scope, command);
+		ASSERT_TRUE(completed) << index;
+		ASSERT_EQ(effect::CompletionStatus::Succeeded, completed->status) << index;
+		EXPECT_FALSE(ResourceHandle(*completed).empty()) << index;
+	}
+	auto beyond = IssueList();
+	beyond.readId = L"issues:beyond";
+	beyond.arguments.push_back({ L"page", L"9" });
+	const auto completed = fixture.Fetch(scope, beyond);
+	ASSERT_TRUE(completed);
+	EXPECT_EQ(effect::CompletionStatus::Succeeded, completed->status);
+	EXPECT_TRUE(ResourceHandle(*completed).empty());
+	EXPECT_NE(std::wstring::npos, completed->data.find(LR"(,"body":[{"id":1,"title":"first"}]})"));
 }
 
 TEST(SenpGitHubToolExecutor, TranslatesOnlyAJobIdIntoALogRequest)

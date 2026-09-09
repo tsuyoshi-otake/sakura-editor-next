@@ -225,6 +225,21 @@ effect::ToolCompleted Refused(const std::wstring& readId, const std::wstring& me
 	return { readId, effect::CompletionStatus::Failed, L"", message };
 }
 
+//! False when the bytes are not well-formed UTF-8. GitHub answers UTF-8, so a
+//! body that is not is not a body this can carry, and guessing an encoding for
+//! it would put invented characters inside a document.
+bool Widen(const std::string& bytes, std::wstring& widened)
+{
+	if (bytes.empty()) return true;
+	if (bytes.size() > (std::numeric_limits<int>::max)()) return false;
+	const auto length = ::MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, bytes.data(),
+		static_cast<int>(bytes.size()), nullptr, 0);
+	if (length <= 0) return false;
+	widened.resize(static_cast<std::size_t>(length));
+	return ::MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, bytes.data(),
+		static_cast<int>(bytes.size()), widened.data(), length) == length;
+}
+
 constexpr wchar_t kFieldSeparator = 0x1f;
 constexpr wchar_t kSegmentSeparator = 0x1e;
 constexpr wchar_t kQuerySeparator = 0x1d;
@@ -523,45 +538,69 @@ void CSenpGitHubToolExecutor::Drain(ScopeState& state)
 }
 
 std::optional<effect::ToolCompleted> CSenpGitHubToolExecutor::Publish(ScopeState& state,
-	const Read& read, const Page& page)
+	Read& read, const Page& page)
 {
 	if (page.status != GhRepositoryResponseStatus::Succeeded
 		&& page.status != GhRepositoryResponseStatus::NotModified) {
 		return effect::ToolCompleted{ read.readId, ToCompletionStatus(page.status), L"", Describe(page.status) };
 	}
-	if (state.resources.size() >= MaximumResourcesPerScope()) {
-		return Refused(read.readId, L"resource-limit");
+	// The extension parses this body itself, and the protocol gives it no way to
+	// read a resource, so the body has to travel inside the completion. Both
+	// bounds it has to clear are stated rather than discovered: a page over the
+	// budget and one that is not UTF-8 are refused by name.
+	if (page.body.size() > MaximumInlineBodyBytes()) return Refused(read.readId, L"page-too-large");
+	std::wstring body;
+	if (!Widen(page.body, body)) return Refused(read.readId, L"invalid-encoding");
+	// A refresh replaces what this read published rather than adding to it, so
+	// the slot is given up before the next one is taken.
+	ReleasePage(state, read);
+	// The resource is the same bytes kept for a document that wants to name the
+	// raw response. It is an extra rather than the answer, so a scope with no
+	// slot left still gets its page - only without one.
+	std::wstring handle;
+	if (state.resources.size() < MaximumResourcesPerScope()) {
+		const auto created = m_store.Create(state.resourceScope);
+		if (created.result == TextResourceResult::Accepted) {
+			const std::string_view bytes = page.body;
+			std::size_t offset = 0;
+			auto accepted = true;
+			while (accepted && offset < bytes.size()) {
+				const auto size = (std::min)(SenpTextResourceStore::kChunkBytes, bytes.size() - offset);
+				accepted = m_store.Append(state.resourceScope, created.handle, offset,
+					bytes.substr(offset, size)) == TextResourceResult::Accepted;
+				offset += size;
+			}
+			if (accepted && m_store.Finish(state.resourceScope, created.handle, TextResourceEnd::Complete)
+				== TextResourceResult::Accepted) {
+				state.resources.push_back(created.handle);
+				read.resource = created.handle;
+				handle = created.handle;
+			} else {
+				(void)m_store.Release(state.resourceScope, created.handle);
+			}
+		}
 	}
-	const auto created = m_store.Create(state.resourceScope);
-	if (created.result != TextResourceResult::Accepted) return Refused(read.readId, L"resource-unavailable");
-	const std::string_view body = page.body;
-	std::size_t offset = 0;
-	auto accepted = true;
-	while (accepted && offset < body.size()) {
-		const auto size = (std::min)(SenpTextResourceStore::kChunkBytes, body.size() - offset);
-		accepted = m_store.Append(state.resourceScope, created.handle, offset, body.substr(offset, size))
-			== TextResourceResult::Accepted;
-		offset += size;
-	}
-	if (accepted) {
-		accepted = m_store.Finish(state.resourceScope, created.handle, TextResourceEnd::Complete)
-			== TextResourceResult::Accepted;
-	}
-	if (!accepted) {
-		(void)m_store.Release(state.resourceScope, created.handle);
-		return Refused(read.readId, L"resource-unavailable");
-	}
-	state.resources.push_back(created.handle);
-	// The body never travels inside a completion: the editor reads the resource
-	// back in bounded chunks through the same connection-bound grant.
-	std::wstring data = LR"({"resource":")" + JsonToken(created.handle) + LR"(","bytes":)"
-		+ std::to_wstring(body.size()) + LR"(,"httpStatus":)" + std::to_wstring(page.httpStatus)
+	std::wstring data = LR"({"bytes":)" + std::to_wstring(page.body.size())
+		+ LR"(,"httpStatus":)" + std::to_wstring(page.httpStatus)
 		+ LR"(,"page":)" + std::to_wstring(page.currentPage);
+	if (!handle.empty()) data += LR"(,"resource":")" + JsonToken(handle) + LR"(")";
 	if (page.nextPage) data += LR"(,"nextPage":)" + std::to_wstring(*page.nextPage);
 	if (page.etag) data += LR"(,"etag":")" + JsonToken(*page.etag) + LR"(")";
+	// A body-less answer is only ever a not-modified one, and saying the page is
+	// unchanged is the whole content of that answer. Writing an empty body
+	// instead would be handing the extension something to parse that is not JSON.
 	if (page.status == GhRepositoryResponseStatus::NotModified) data += LR"(,"notModified":true)";
+	if (!body.empty()) data += LR"(,"body":)" + body;
 	data += L"}";
 	return effect::ToolCompleted{ read.readId, effect::CompletionStatus::Succeeded, std::move(data), L"" };
+}
+
+void CSenpGitHubToolExecutor::ReleasePage(ScopeState& state, Read& read) noexcept
+{
+	if (read.resource.empty()) return;
+	(void)m_store.Release(state.resourceScope, read.resource);
+	std::erase(state.resources, read.resource);
+	read.resource.clear();
 }
 
 void CSenpGitHubToolExecutor::CancelRead(const SenpToolExecutionScope& scope,
@@ -590,6 +629,7 @@ try {
 		[&](const auto& read) { return read.readId == readId; });
 	if (found == state->reads.end()) return;
 	(void)m_scheduler.Unsubscribe(found->subscriptionId);
+	ReleasePage(*state, *found);
 	state->reads.erase(found);
 	std::erase_if(state->pending, [&](const auto& completed) { return completed.readId == readId; });
 	lock.unlock();
@@ -601,6 +641,7 @@ void CSenpGitHubToolExecutor::Release(ScopeState& state) noexcept
 {
 	for (const auto& handle : state.resources) (void)m_store.Release(state.resourceScope, handle);
 	state.resources.clear();
+	for (auto& read : state.reads) read.resource.clear();
 	// Each log owns the whole store it was written into, so dropping the record
 	// is the release. Forgetting the identities is what stops a download that is
 	// still running from handing this scope anything else.
@@ -689,6 +730,9 @@ try {
 	if (found == state->resources.end()) return;
 	(void)m_store.Release(state->resourceScope, *found);
 	state->resources.erase(found);
+	// The read that published it keeps running; it simply owns nothing now, so
+	// its next page does not try to release a handle the editor already has.
+	for (auto& read : state->reads) if (read.resource == handle) read.resource.clear();
 } catch (...) {
 }
 
