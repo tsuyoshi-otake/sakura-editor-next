@@ -94,6 +94,8 @@ public:
 		platform::controlipc::ControlSenpRpcResponse& response) noexcept override;
 	void ReleaseResource(const platform::controlipc::SenpToolExecutionScope& scope,
 		std::wstring_view handle) noexcept override;
+	[[nodiscard]] platform::controlipc::EControlSenpRpcStatus QueryAccount(std::wstring_view profileId,
+		platform::controlipc::ControlSenpRpcResponse& response) noexcept override;
 
 	//! Blocks until the worker has no dispatch left to run. Test-only observation
 	//! point; production code drives the executor through the broker alone.

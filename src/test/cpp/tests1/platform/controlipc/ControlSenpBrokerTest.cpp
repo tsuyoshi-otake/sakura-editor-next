@@ -72,6 +72,15 @@ public:
 	{
 		released.push_back(std::wstring(handle));
 	}
+	EControlSenpRpcStatus QueryAccount(std::wstring_view profileId,
+		ControlSenpRpcResponse& response) noexcept override
+	{
+		accountQueries.push_back(std::wstring(profileId));
+		// A refused query still writes, so the broker must discard a partial answer.
+		response.accountGeneration = accountGeneration;
+		response.accountState = accountState;
+		return accountStatus;
+	}
 
 	EControlSenpRpcStatus next = EControlSenpRpcStatus::Succeeded;
 	EControlSenpRpcStatus resourceStatus = EControlSenpRpcStatus::Succeeded;
@@ -81,6 +90,10 @@ public:
 	std::vector<std::pair<SenpToolExecutionScope, std::wstring>> cancelledReads;
 	std::vector<SenpToolExecutionScope> cancelledScopes;
 	std::vector<std::wstring> released;
+	EControlSenpRpcStatus accountStatus = EControlSenpRpcStatus::Succeeded;
+	std::int64_t accountGeneration = 0;
+	EControlSenpAccountState accountState = EControlSenpAccountState::Unknown;
+	std::vector<std::wstring> accountQueries;
 };
 
 ControlSenpRpcOwner Owner()
@@ -118,6 +131,14 @@ ControlSenpRpcRequest IssueGrant()
 	request.profileId = L"profile-1";
 	request.owner = Owner();
 	request.capabilities = static_cast<std::uint32_t>(senp::SenpToolCapability::GitHubRepositoryRead);
+	return request;
+}
+
+ControlSenpRpcRequest QueryAccount()
+{
+	ControlSenpRpcRequest request;
+	request.operation = EControlSenpRpcOperation::QueryAccount;
+	request.profileId = L"profile-1";
 	return request;
 }
 
@@ -179,6 +200,57 @@ TEST(ControlSenpBroker, IssuesConnectionBoundGrantAndAdmitsOneRead)
 	EXPECT_EQ(L"sample.github", scope.owner.extensionId);
 	EXPECT_EQ(7, scope.owner.generation);
 	EXPECT_EQ(L"issues:open:1", fixture.executor->started.front().second.readId);
+}
+
+TEST(ControlSenpBroker, AnswersTheAccountQueryWithoutAGrantOrAnOwner)
+{
+	Fixture fixture;
+	auto session = fixture.Open();
+	ASSERT_NE(nullptr, session);
+	fixture.executor->accountGeneration = 5;
+	fixture.executor->accountState = EControlSenpAccountState::Connected;
+	// No IssueGrant precedes it on purpose: the editor cannot build the owner a
+	// grant is scoped by until it has been told which account generation to use.
+	const auto reply = ReadResponse(
+		session->HandleFrame(fixture.connection, RequestFrame(QueryAccount())));
+	ASSERT_TRUE(reply);
+	EXPECT_EQ(EControlSenpRpcStatus::Succeeded, reply->status);
+	EXPECT_EQ(5, reply->accountGeneration);
+	EXPECT_EQ(EControlSenpAccountState::Connected, reply->accountState);
+	ASSERT_EQ(1U, fixture.executor->accountQueries.size());
+	EXPECT_EQ(L"profile-1", fixture.executor->accountQueries.front());
+	EXPECT_TRUE(fixture.executor->started.empty());
+}
+
+TEST(ControlSenpBroker, RefusesAnAccountQueryOutsideTheProfileIdentitySpace)
+{
+	Fixture fixture;
+	auto session = fixture.Open();
+	ASSERT_NE(nullptr, session);
+	auto request = QueryAccount();
+	request.profileId = L"../other";
+	// Nothing owner-scoped is rechecked for this operation, so admission is the
+	// whole check: the id must belong to the space every grant is scoped by.
+	const auto reply = ReadResponse(session->HandleFrame(fixture.connection, RequestFrame(request)));
+	ASSERT_TRUE(reply);
+	EXPECT_EQ(EControlSenpRpcStatus::InvalidRequest, reply->status);
+	EXPECT_TRUE(fixture.executor->accountQueries.empty());
+}
+
+TEST(ControlSenpBroker, DiscardsAPartialAccountAnswerWhenTheQueryIsRefused)
+{
+	Fixture fixture;
+	auto session = fixture.Open();
+	ASSERT_NE(nullptr, session);
+	fixture.executor->accountGeneration = 5;
+	fixture.executor->accountState = EControlSenpAccountState::Connected;
+	fixture.executor->accountStatus = EControlSenpRpcStatus::Unavailable;
+	const auto reply = ReadResponse(
+		session->HandleFrame(fixture.connection, RequestFrame(QueryAccount())));
+	ASSERT_TRUE(reply);
+	EXPECT_EQ(EControlSenpRpcStatus::Unavailable, reply->status);
+	EXPECT_EQ(0, reply->accountGeneration);
+	EXPECT_EQ(EControlSenpAccountState::Unknown, reply->accountState);
 }
 
 TEST(ControlSenpBroker, RefusesEveryOperationThatNamesAnUnknownGrant)

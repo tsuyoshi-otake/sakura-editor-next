@@ -33,6 +33,14 @@ ControlSenpRpcRequest IssueGrant()
 	request.capabilities = static_cast<std::uint32_t>(senp::SenpToolCapability::GitHubRepositoryRead);
 	return request;
 }
+
+ControlSenpRpcRequest QueryAccount()
+{
+	ControlSenpRpcRequest request;
+	request.operation = EControlSenpRpcOperation::QueryAccount;
+	request.profileId = L"profile-1";
+	return request;
+}
 } // namespace
 
 TEST(ControlSenpRpc, RoundTripsEveryRequestOperation)
@@ -154,7 +162,9 @@ TEST(ControlSenpRpc, RejectsTruncatedAndTrailingBytes)
 	EXPECT_FALSE(DecodeControlSenpRpcRequest(trailing));
 
 	auto badVersion = *encoded;
-	badVersion[0] = 2;
+	// One past whatever this build writes: a layout change has to be refused
+	// rather than decoded as if the members had not moved.
+	++badVersion[0];
 	EXPECT_FALSE(DecodeControlSenpRpcRequest(badVersion));
 
 	auto badOperation = *encoded;
@@ -227,6 +237,66 @@ TEST(ControlSenpRpc, RejectsIncoherentResponses)
 	oversizedData.completion.readId = L"issues:open:1";
 	oversizedData.completion.data.assign(kControlSenpRpcMaximumToolDataBytes + 1, L'a');
 	EXPECT_FALSE(EncodeControlSenpRpcResponse(oversizedData));
+}
+
+TEST(ControlSenpRpc, RoundTripsTheOwnerFreeAccountQuery)
+{
+	const auto encoded = EncodeControlSenpRpcRequest(QueryAccount());
+	ASSERT_TRUE(encoded);
+	const auto decoded = DecodeControlSenpRpcRequest(*encoded);
+	ASSERT_TRUE(decoded);
+	EXPECT_EQ(EControlSenpRpcOperation::QueryAccount, decoded->operation);
+	EXPECT_EQ(L"profile-1", decoded->profileId);
+	EXPECT_TRUE(decoded->owner == ControlSenpRpcOwner{});
+}
+
+TEST(ControlSenpRpc, RejectsAnAccountQueryThatCarriesAnOwnerOrAGrant)
+{
+	// The editor asks this before it can know an account generation at all, so an
+	// owner on it could only be a claim that nothing downstream rechecks.
+	auto withOwner = QueryAccount();
+	withOwner.owner = Owner();
+	EXPECT_FALSE(EncodeControlSenpRpcRequest(withOwner));
+
+	auto withGrant = QueryAccount();
+	withGrant.grantId = "grant-1";
+	EXPECT_FALSE(EncodeControlSenpRpcRequest(withGrant));
+
+	auto withCapability = QueryAccount();
+	withCapability.capabilities = 1;
+	EXPECT_FALSE(EncodeControlSenpRpcRequest(withCapability));
+
+	auto withoutProfile = QueryAccount();
+	withoutProfile.profileId.clear();
+	EXPECT_FALSE(EncodeControlSenpRpcRequest(withoutProfile));
+}
+
+TEST(ControlSenpRpc, RoundTripsTheAccountAnswerAndRefusesAnUnusableOne)
+{
+	ControlSenpRpcResponse answered;
+	answered.status = EControlSenpRpcStatus::Succeeded;
+	answered.accountGeneration = 4;
+	answered.accountState = EControlSenpAccountState::ReauthenticationRequired;
+	const auto encoded = EncodeControlSenpRpcResponse(answered);
+	ASSERT_TRUE(encoded);
+	const auto decoded = DecodeControlSenpRpcResponse(*encoded);
+	ASSERT_TRUE(decoded);
+	EXPECT_EQ(4, decoded->accountGeneration);
+	EXPECT_EQ(EControlSenpAccountState::ReauthenticationRequired, decoded->accountState);
+
+	auto negative = answered;
+	negative.accountGeneration = -1;
+	EXPECT_FALSE(EncodeControlSenpRpcResponse(negative));
+
+	auto foreignState = answered;
+	foreignState.accountState = static_cast<EControlSenpAccountState>(9);
+	EXPECT_FALSE(EncodeControlSenpRpcResponse(foreignState));
+
+	// The state is the last byte on the wire. A value outside the enum must be
+	// refused rather than cast into a state the editor would then act on.
+	auto badState = *encoded;
+	badState.back() = 9;
+	EXPECT_FALSE(DecodeControlSenpRpcResponse(badState));
 }
 
 TEST(ControlSenpRpc, MapsOwnerIdentityWithoutLoss)

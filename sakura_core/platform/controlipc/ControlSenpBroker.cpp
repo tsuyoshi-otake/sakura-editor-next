@@ -7,6 +7,8 @@
 #include "StdAfx.h"
 #include "platform/controlipc/ControlSenpBroker.h"
 
+#include "platform/profiles/UserDataProfileIdentity.h"
+
 #include <algorithm>
 #include <utility>
 #include <vector>
@@ -190,6 +192,7 @@ private:
 	{
 		if (!m_grants) return Terminal(EControlSenpRpcStatus::Closed);
 		if (request.operation == EControlSenpRpcOperation::IssueGrant) return Issue(request);
+		if (request.operation == EControlSenpRpcOperation::QueryAccount) return Account(request);
 		const Record* record = nullptr;
 		if (const auto status = Authorize(request, record); status != EControlSenpRpcStatus::Succeeded) {
 			return Terminal(status);
@@ -232,6 +235,29 @@ private:
 		default:
 			return Terminal(EControlSenpRpcStatus::InvalidRequest);
 		}
+	}
+
+	/*!
+		@brief The one operation that carries no grant and no owner.
+
+		There is nothing owner-scoped to recheck, so admission is the whole check:
+		the id has to be an opaque user-data profile id, which is the same identity
+		space every grant this connection could mint is scoped by. The answer names
+		no account, no login and no token; it says only which generation the profile
+		has adopted and how the control side currently sees it.
+	*/
+	ControlSenpRpcResponse Account(const ControlSenpRpcRequest& request)
+	{
+		if (!platform::profiles::IsOpaqueUserDataProfileId(request.profileId)) {
+			return Terminal(EControlSenpRpcStatus::InvalidRequest);
+		}
+		if (!m_executor) return Terminal(EControlSenpRpcStatus::Unavailable);
+		ControlSenpRpcResponse response;
+		const auto status = m_executor->QueryAccount(request.profileId, response);
+		// A partially filled answer must not escape a refused query.
+		if (status != EControlSenpRpcStatus::Succeeded) return Terminal(status);
+		response.status = status;
+		return response;
 	}
 
 	ControlSenpRpcResponse Issue(const ControlSenpRpcRequest& request)

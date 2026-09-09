@@ -16,7 +16,9 @@
 namespace platform::controlipc {
 namespace {
 constexpr std::size_t kMaximumPayload = kControlIpcMaximumFrameBytes - kControlIpcHeaderBytes;
-constexpr std::uint8_t kControlSenpRpcPayloadVersion = 1;
+//! Bumped with every payload layout change. Version 2 added the account
+//! members a QueryAccount answer carries.
+constexpr std::uint8_t kControlSenpRpcPayloadVersion = 2;
 constexpr std::uint64_t kMaximumGeneration = static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)());
 
 template<class T> void Put(std::vector<std::uint8_t>& bytes, T value)
@@ -110,7 +112,12 @@ bool GetWide(std::span<const std::uint8_t> bytes, std::size_t& offset, std::wstr
 bool IsOperation(std::uint8_t operation) noexcept
 {
 	return operation >= static_cast<std::uint8_t>(EControlSenpRpcOperation::IssueGrant)
-		&& operation <= static_cast<std::uint8_t>(EControlSenpRpcOperation::ReleaseResource);
+		&& operation <= static_cast<std::uint8_t>(EControlSenpRpcOperation::QueryAccount);
+}
+
+bool IsAccountState(std::uint8_t state) noexcept
+{
+	return state <= static_cast<std::uint8_t>(EControlSenpAccountState::Unavailable);
 }
 
 bool IsStatus(std::uint8_t status) noexcept
@@ -128,13 +135,23 @@ bool IsCompletionStatus(std::uint8_t status) noexcept
 //! operation's authority-relevant fields past a later switch.
 bool IsCoherentRequest(const ControlSenpRpcRequest& request) noexcept
 {
-	if (request.profileId.empty() || request.owner.extensionId.empty()) return false;
-	if (request.owner.generation <= 0) return false;
-	if (request.owner.workspaceRevision < 0 || request.owner.accountGeneration < 0) return false;
+	if (request.profileId.empty()) return false;
 	if (request.arguments.size() > kControlSenpRpcMaximumArguments) return false;
 	const bool hasRead = !request.readId.empty();
 	const bool hasTool = !request.toolId.empty() || !request.toolOperation.empty();
 	const bool hasResource = !request.resourceHandle.empty();
+	// The account query precedes every owner: an editor cannot name the account
+	// generation it is asking for. An owner here could only be a claim that
+	// nothing downstream rechecks, so a populated one is refused rather than
+	// carried past the switch below.
+	if (request.operation == EControlSenpRpcOperation::QueryAccount) {
+		return request.owner == ControlSenpRpcOwner{} && request.grantId.empty()
+			&& request.capabilities == 0 && !hasRead && !hasTool && request.arguments.empty()
+			&& !hasResource && request.offset == 0 && request.length == 0;
+	}
+	if (request.owner.extensionId.empty()) return false;
+	if (request.owner.generation <= 0) return false;
+	if (request.owner.workspaceRevision < 0 || request.owner.accountGeneration < 0) return false;
 	switch (request.operation) {
 	case EControlSenpRpcOperation::IssueGrant:
 		return request.capabilities != 0 && request.grantId.empty() && !hasRead && !hasTool
@@ -172,6 +189,9 @@ bool IsCoherentResponse(const ControlSenpRpcResponse& response) noexcept
 	if (response.completion.data.size() > kControlSenpRpcMaximumToolDataBytes) return false;
 	if (!response.resourceBytes.empty() && response.resourceHandle.empty()) return false;
 	if (response.resourceBytes.size() > kControlSenpRpcMaximumResourceChunkBytes) return false;
+	// A negative generation would encode as an enormous unsigned value and decode
+	// back as a different number, so it is refused at the encoder instead.
+	if (response.accountGeneration < 0) return false;
 	return true;
 }
 } // namespace
@@ -262,6 +282,7 @@ std::optional<std::vector<std::uint8_t>> EncodeControlSenpRpcResponse(const Cont
 {
 	if (!IsStatus(static_cast<std::uint8_t>(response.status))) return std::nullopt;
 	if (!IsCompletionStatus(static_cast<std::uint8_t>(response.completion.status))) return std::nullopt;
+	if (!IsAccountState(static_cast<std::uint8_t>(response.accountState))) return std::nullopt;
 	if (!IsCoherentResponse(response)) return std::nullopt;
 	std::vector<std::uint8_t> bytes;
 	Put<std::uint8_t>(bytes, kControlSenpRpcPayloadVersion);
@@ -278,6 +299,8 @@ std::optional<std::vector<std::uint8_t>> EncodeControlSenpRpcResponse(const Cont
 	if (!PutBytes(bytes, response.resourceBytes, kControlSenpRpcMaximumResourceChunkBytes)) return std::nullopt;
 	Put<std::uint8_t>(bytes, response.resourceState);
 	Put<std::uint8_t>(bytes, response.resourceFinal ? 1U : 0U);
+	Put<std::uint64_t>(bytes, static_cast<std::uint64_t>(response.accountGeneration));
+	Put<std::uint8_t>(bytes, static_cast<std::uint8_t>(response.accountState));
 	if (bytes.size() > kMaximumPayload) return std::nullopt;
 	return bytes;
 }
@@ -286,6 +309,8 @@ std::optional<ControlSenpRpcResponse> DecodeControlSenpRpcResponse(std::span<con
 {
 	std::size_t offset = 0;
 	std::uint8_t version = 0, status = 0, hasCompletion = 0, completionStatus = 0, resourceFinal = 0;
+	std::uint8_t accountState = 0;
+	std::uint64_t accountGeneration = 0;
 	if (!Get(payload, offset, version) || version != kControlSenpRpcPayloadVersion) return std::nullopt;
 	if (!Get(payload, offset, status) || !IsStatus(status)) return std::nullopt;
 	ControlSenpRpcResponse response;
@@ -305,6 +330,10 @@ std::optional<ControlSenpRpcResponse> DecodeControlSenpRpcResponse(std::span<con
 	if (!Get(payload, offset, response.resourceState)) return std::nullopt;
 	if (!Get(payload, offset, resourceFinal) || resourceFinal > 1) return std::nullopt;
 	response.resourceFinal = resourceFinal != 0;
+	if (!Get(payload, offset, accountGeneration) || accountGeneration > kMaximumGeneration) return std::nullopt;
+	if (!Get(payload, offset, accountState) || !IsAccountState(accountState)) return std::nullopt;
+	response.accountGeneration = static_cast<std::int64_t>(accountGeneration);
+	response.accountState = static_cast<EControlSenpAccountState>(accountState);
 	if (offset != payload.size()) return std::nullopt;
 	if (!IsCoherentResponse(response)) return std::nullopt;
 	return response;

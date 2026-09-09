@@ -19,8 +19,10 @@
 namespace platform::controlipc {
 
 //! The one-byte operation discriminator is part of the versioned SenpRequest payload.
-//! Every operation carries the requesting owner so the control side can recheck its
-//! own trusted authority instead of trusting the editor's claim.
+//! Every operation that names a contribution carries the requesting owner so the
+//! control side can recheck its own trusted authority instead of trusting the
+//! editor's claim. QueryAccount names none, because it is what the editor asks
+//! before it can know which account generation its owners would belong to.
 enum class EControlSenpRpcOperation : std::uint8_t {
 	IssueGrant = 1,
 	StartRead = 2,
@@ -28,6 +30,20 @@ enum class EControlSenpRpcOperation : std::uint8_t {
 	CancelRead = 4,
 	ReadResource = 5,
 	ReleaseResource = 6,
+	QueryAccount = 7,
+};
+
+//! Transport-neutral view of the account a profile has adopted. It is deliberately
+//! not senp::github::GhConnectionState: the wire contract must not depend on which
+//! tool happens to serve a capability. Unknown and Disconnected are distinct
+//! answers, so a zero account generation is never read as a signed-out account.
+enum class EControlSenpAccountState : std::uint8_t {
+	Unknown = 0,
+	Checking = 1,
+	Disconnected = 2,
+	Connected = 3,
+	ReauthenticationRequired = 4,
+	Unavailable = 5,
 };
 
 //! Broker outcome for one SENP operation. It is intentionally distinct from
@@ -86,6 +102,10 @@ struct ControlSenpRpcResponse {
 	std::string resourceBytes;
 	std::uint8_t resourceState = 0;
 	bool resourceFinal = false;
+	//! Answered by QueryAccount only. Zero means the profile has adopted no
+	//! account at all, which `accountState` separates from a signed-out one.
+	std::int64_t accountGeneration = 0;
+	EControlSenpAccountState accountState = EControlSenpAccountState::Unknown;
 };
 
 //! Bounds applied by both encoder and decoder. They are smaller than the frame

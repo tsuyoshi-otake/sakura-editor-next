@@ -13,8 +13,24 @@ namespace senp::github {
 namespace {
 
 using platform::controlipc::ControlSenpRpcResponse;
+using platform::controlipc::EControlSenpAccountState;
 using platform::controlipc::EControlSenpRpcStatus;
 using platform::controlipc::SenpToolExecutionScope;
+
+//! The wire vocabulary is deliberately its own enum, so the mapping is written
+//! out rather than assumed from the two enumerations happening to agree today.
+EControlSenpAccountState ToAccountState(const GhConnectionState state) noexcept
+{
+	switch (state) {
+	case GhConnectionState::Checking: return EControlSenpAccountState::Checking;
+	case GhConnectionState::Disconnected: return EControlSenpAccountState::Disconnected;
+	case GhConnectionState::Connected: return EControlSenpAccountState::Connected;
+	case GhConnectionState::ReauthenticationRequired:
+		return EControlSenpAccountState::ReauthenticationRequired;
+	case GhConnectionState::Unavailable: return EControlSenpAccountState::Unavailable;
+	default: return EControlSenpAccountState::Unknown;
+	}
+}
 
 constexpr std::uint32_t kWorkerWakeMilliseconds = 50;
 constexpr std::uint32_t kIdleWaitSliceMilliseconds = 10;
@@ -509,6 +525,28 @@ try {
 	(void)m_store.Release(state->resourceScope, *found);
 	state->resources.erase(found);
 } catch (...) {
+}
+
+EControlSenpRpcStatus CSenpGitHubToolExecutor::QueryAccount(const std::wstring_view profileId,
+	ControlSenpRpcResponse& response) noexcept
+try {
+	if (profileId.empty()) return EControlSenpRpcStatus::InvalidRequest;
+	if (!m_profiles) return EControlSenpRpcStatus::Unavailable;
+	const auto connection = m_profiles->Connection(profileId);
+	// A profile the control side has never adopted a connection for answers
+	// Unknown, not Disconnected: nothing has been checked, so nothing entitles
+	// this executor to report the account as signed out.
+	if (!connection) {
+		response.accountGeneration = 0;
+		response.accountState = EControlSenpAccountState::Unknown;
+		return EControlSenpRpcStatus::Succeeded;
+	}
+	const auto snapshot = connection->Snapshot();
+	response.accountGeneration = snapshot.AccountGeneration();
+	response.accountState = ToAccountState(snapshot.State());
+	return EControlSenpRpcStatus::Succeeded;
+} catch (...) {
+	return EControlSenpRpcStatus::Unavailable;
 }
 
 bool CSenpGitHubToolExecutor::WaitForIdle(const std::uint32_t timeoutMilliseconds) noexcept

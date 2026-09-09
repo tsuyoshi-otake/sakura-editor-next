@@ -10,6 +10,7 @@ namespace {
 using namespace senp;
 using namespace senp::github;
 using platform::controlipc::ControlSenpRpcResponse;
+using platform::controlipc::EControlSenpAccountState;
 using platform::controlipc::EControlSenpRpcStatus;
 using platform::controlipc::SenpToolExecutionScope;
 using platform::controlipc::SenpToolReadCommand;
@@ -223,6 +224,41 @@ TEST(SenpGitHubToolExecutor, PublishesOneFetchedPageAsAReadableResource)
 
 	// One terminal is drained exactly once.
 	EXPECT_FALSE(fixture.Executor().TakeCompleted(scope));
+}
+
+TEST(SenpGitHubToolExecutor, AnswersTheAdoptedAccountGenerationWithoutAnExecutionScope)
+{
+	Fixture fixture;
+	ControlSenpRpcResponse response;
+	EXPECT_EQ(EControlSenpRpcStatus::Succeeded,
+		fixture.Executor().QueryAccount(L"profile-1", response));
+	EXPECT_EQ(EControlSenpAccountState::Connected, response.accountState);
+	// This is exactly the number a read's owner has to carry, which is why the
+	// editor has to be able to ask for it before it builds one.
+	EXPECT_EQ(Owner().accountGeneration, response.accountGeneration);
+	EXPECT_EQ(EControlSenpRpcStatus::Succeeded, fixture.Executor().StartRead(Scope(), IssueList()));
+}
+
+TEST(SenpGitHubToolExecutor, SeparatesAnUnadoptedProfileFromASignedOutOne)
+{
+	Fixture fixture;
+	ControlSenpRpcResponse unadopted;
+	EXPECT_EQ(EControlSenpRpcStatus::Succeeded,
+		fixture.Executor().QueryAccount(L"profile-2", unadopted));
+	// Both answers carry generation zero. Only the state distinguishes "nothing
+	// has been adopted or checked" from "the account is signed out", so reporting
+	// Disconnected here would announce a sign-out that never happened.
+	EXPECT_EQ(0, unadopted.accountGeneration);
+	EXPECT_EQ(EControlSenpAccountState::Unknown, unadopted.accountState);
+
+	const auto connection = fixture.Profiles().Connection(L"profile-1");
+	ASSERT_NE(nullptr, connection);
+	connection->Disconnect();
+	ControlSenpRpcResponse signedOut;
+	EXPECT_EQ(EControlSenpRpcStatus::Succeeded,
+		fixture.Executor().QueryAccount(L"profile-1", signedOut));
+	EXPECT_EQ(0, signedOut.accountGeneration);
+	EXPECT_EQ(EControlSenpAccountState::Disconnected, signedOut.accountState);
 }
 
 TEST(SenpGitHubToolExecutor, RefusesAReadBeforeAnAccountOrWorkspaceExists)

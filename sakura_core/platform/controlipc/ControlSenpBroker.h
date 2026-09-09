@@ -76,6 +76,16 @@ public:
 		ControlSenpRpcResponse& response) noexcept = 0;
 	virtual void ReleaseResource(const SenpToolExecutionScope& scope,
 		std::wstring_view handle) noexcept = 0;
+	/*!
+		@brief Answers one profile's adopted account state.
+
+		This is the only method with no execution scope, because it is what the
+		editor asks before it can know the account generation an owner would carry.
+		An implementation fills the account members of `response` and nothing else,
+		and stays as bounded as every other method here.
+	*/
+	[[nodiscard]] virtual EControlSenpRpcStatus QueryAccount(std::wstring_view profileId,
+		ControlSenpRpcResponse& response) noexcept = 0;
 };
 
 /*!
