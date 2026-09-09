@@ -239,6 +239,44 @@ TEST_F(SenpReadonlyDocumentHostTest, DuplicateTextReferencesShareOneRetainedBody
 	EXPECT_FALSE(host->TakeTextRead());
 }
 
+TEST_F(SenpReadonlyDocumentHostTest, AReadThatFailsKeepsWhatArrivedAndOneThatIsRevokedErasesIt)
+{
+	Publish(); Create();
+	ASSERT_TRUE(host->SelectPage(1, false));
+	const std::string bytes = "half\n";
+	// More is still expected, so the page holds text and is not yet terminal:
+	// the only state in which erasing it is distinguishable from failing it.
+	const auto ShowHalf = [&] {
+		const auto read = host->TakeTextRead(); ASSERT_TRUE(read);
+		const senp::TextResourceChunk chunk{ senp::TextResourceResult::Accepted, senp::TextResourceState::Loading,
+			senp::TextResourceEnd::None, L"log-42", authority.scope.revision, 0, bytes.size() + 4, bytes };
+		ASSERT_EQ(SenpTextViewResult::Applied, host->ApplyText(*read, chunk));
+		host->SelectAll(); ASSERT_EQ(L"half\n", host->SelectedText());
+	};
+
+	ASSERT_NO_FATAL_FAILURE(ShowHalf());
+	auto failed = host->TakeTextRead(); ASSERT_TRUE(failed);
+	// A read that failed says nothing about the resource, so the bytes that did
+	// arrive remain readable under a failed status.
+	host->FailText(*failed, senp::TextResourceEnd::Failed);
+	host->SelectAll(); EXPECT_EQ(L"half\n", host->SelectedText());
+	// The read is settled, so a second answer for it changes nothing.
+	host->FailText(*failed, senp::TextResourceEnd::Revoked);
+	host->SelectAll(); EXPECT_EQ(L"half\n", host->SelectedText());
+	EXPECT_FALSE(host->TakeTextRead());
+
+	host->Close(); host.reset(); ::DestroyWindow(parent); parent = nullptr;
+	Publish(Mixed(2), Request(2)); Create();
+	ASSERT_TRUE(host->SelectPage(1, false));
+	ASSERT_NO_FATAL_FAILURE(ShowHalf());
+	const auto revoked = host->TakeTextRead(); ASSERT_TRUE(revoked);
+	// Revoked says the resource itself is gone. Bytes nobody may read again are
+	// not a partial answer, so they are erased rather than left on screen.
+	host->FailText(*revoked, senp::TextResourceEnd::Revoked);
+	host->SelectAll(); EXPECT_TRUE(host->SelectedText().empty());
+	EXPECT_FALSE(host->TakeTextRead());
+}
+
 TEST_F(SenpReadonlyDocumentHostTest, DISABLED_VisualCaptureProbe)
 {
 	wchar_t enabled[2]{};

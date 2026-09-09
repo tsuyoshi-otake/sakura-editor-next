@@ -67,7 +67,7 @@ CSenpReadonlyOwnerTarget::CSenpReadonlyOwnerTarget(senp::ContributionOwnerIdenti
 	  m_firstSurfaceId(firstSurfaceId), m_resources(resources), m_copy(std::move(copy)),
 	  m_commandCompleted(std::move(commandCompleted)), m_resourceReleased(std::move(resourceReleased)),
 	  m_toolReads(toolReads),
-	  m_styleLifetime(std::make_shared<CSenpReadonlyOwnerTarget*>(this))
+	  m_lifetime(std::make_shared<CSenpReadonlyOwnerTarget*>(this))
 {
 	if (!ExtensionId(m_owner.extensionId, m_scope.extensionId)) {
 		m_revoked = true;
@@ -275,7 +275,7 @@ void CSenpReadonlyOwnerTarget::CancelToolReads(const senp::effect::OperationCont
 
 SenpReadonlyOwnerStyleSink CSenpReadonlyOwnerTarget::StyleSink() const
 {
-	return [lifetime = std::weak_ptr(m_styleLifetime)](const theme::ThemePalette& palette,
+	return [lifetime = std::weak_ptr(m_lifetime)](const theme::ThemePalette& palette,
 		const LOGFONT& font, unsigned int dpi) noexcept {
 		const auto alive = lifetime.lock();
 		if (!alive || !*alive || (*alive)->m_revoked || dpi < 48 || dpi > 768) return false;
@@ -293,6 +293,103 @@ void CSenpReadonlyOwnerTarget::SetStyle(const theme::ThemePalette& palette,
 		ReapClosed();
 		for (const auto& [resource, document] : m_documents) document->host.SetStyle(m_palette, m_font, m_dpi);
 	} catch (...) { Revoke(); }
+}
+
+void CSenpReadonlyOwnerTarget::PumpText() noexcept
+try {
+	if (m_revoked || !m_toolReads) return;
+	ReapClosed();
+	SettleText();
+	// Settling frees the one read this owner may have outstanding, so the turn
+	// that delivers a chunk is also the turn that asks for the next one.
+	if (!m_textRead) BeginText();
+} catch (...) {
+	Revoke();
+}
+
+void CSenpReadonlyOwnerTarget::SettleText() noexcept
+{
+	if (!m_textRead) return;
+	auto answer = m_toolReads->TakeResource(m_owner);
+	// Nothing has settled yet. The read stays outstanding and the next turn asks
+	// again; the seam owes exactly one answer, so this cannot wait forever.
+	if (!answer) return;
+	const auto request = *m_textRead;
+	const auto resource = m_textResource;
+	m_textRead.reset();
+	m_textResource.clear();
+	const auto found = m_documents.find(resource);
+	// The document that asked is gone. There is nothing left to tell.
+	if (found == m_documents.end() || found->second->closed) return;
+	auto& host = found->second->host;
+	if (answer->handle != request.Handle()
+		|| answer->offset != static_cast<std::uint64_t>(request.Offset())) {
+		// An answer naming another read cannot settle this one, and no second
+		// answer is coming, so the read this document is waiting on ends here.
+		host.FailText(request, senp::TextResourceEnd::Failed);
+		return;
+	}
+	if (!answer->chunk) {
+		// No answer about the resource arrived at all - the connection was
+		// unavailable, lost or replaced. This read failed; the resource is not
+		// known to be gone, so whatever already reached the screen stays.
+		host.FailText(request, senp::TextResourceEnd::Failed);
+		return;
+	}
+	switch (answer->chunk->result) {
+	case senp::TextResourceResult::Accepted:
+		// The store's own chunk, whole. Whether it fits what the surface already
+		// holds is the view's judgement, not this one's.
+		(void)host.ApplyText(request, *answer->chunk);
+		return;
+	case senp::TextResourceResult::Expired:
+		// The store let the resource go. Its bytes are no longer a partial
+		// answer that something might complete, so the body is erased.
+		host.FailText(request, senp::TextResourceEnd::Revoked);
+		return;
+	case senp::TextResourceResult::Closed:
+		host.FailText(request, senp::TextResourceEnd::Cancelled);
+		return;
+	default:
+		host.FailText(request, senp::TextResourceEnd::Failed);
+		return;
+	}
+}
+
+void CSenpReadonlyOwnerTarget::BeginText() noexcept
+{
+	for (const auto& [resource, document] : m_documents) {
+		if (document->closed) continue;
+		auto read = document->host.TakeTextRead();
+		if (!read) continue;
+		// The host has committed to this read the moment it handed it over, so a
+		// seam that will not carry it must be answered here. Left alone the
+		// surface would wait on a read nothing is going to serve.
+		if (read->Count() > (std::numeric_limits<std::uint32_t>::max)()
+			|| !m_toolReads->ReadResource(m_owner, read->Handle(), read->Offset(),
+				static_cast<std::uint32_t>(read->Count()))) {
+			document->host.FailText(*read, senp::TextResourceEnd::Failed);
+			return;
+		}
+		m_textRead = std::move(read);
+		m_textResource = resource;
+		return;
+	}
+}
+
+SenpReadonlyOwnerTextPump CSenpReadonlyOwnerTarget::TextPump() const
+{
+	return [lifetime = std::weak_ptr(m_lifetime)]() noexcept {
+		const auto alive = lifetime.lock();
+		if (!alive || !*alive || (*alive)->m_revoked) return false;
+		(*alive)->PumpText();
+		return *alive != nullptr;
+	};
+}
+
+std::wstring CSenpReadonlyOwnerTarget::OutstandingTextResource() const
+{
+	return m_textResource;
 }
 
 std::optional<std::string> CSenpReadonlyOwnerTarget::InputId(std::wstring_view resourceId) const
@@ -316,7 +413,7 @@ std::size_t CSenpReadonlyOwnerTarget::DocumentCount() const noexcept
 void CSenpReadonlyOwnerTarget::Revoke() noexcept
 {
 	if (m_revoked) return;
-	*m_styleLifetime = nullptr;
+	*m_lifetime = nullptr;
 	m_revoked = true; m_pending.clear();
 	m_state = SenpReadonlyOwnerTargetState::Revoked;
 	// Physical cancellation before the document teardown: once this returns no
@@ -330,6 +427,9 @@ void CSenpReadonlyOwnerTarget::Revoke() noexcept
 		}
 	}
 	m_documents.clear();
+	// CancelAll above discards this owner's outstanding read and any answer it
+	// had not drained, so nothing is left for the pump to settle.
+	m_textRead.reset(); m_textResource.clear();
 	m_copy = {}; m_commandCompleted = {}; m_resourceReleased = {};
 }
 

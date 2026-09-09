@@ -3,10 +3,12 @@
 #include "pch.h"
 #include <gtest/gtest.h>
 #include "workbench/editor/SenpReadonlyOwnerTarget.h"
+#include "workbench/editor/SenpOwnerTextResources.h"
 
 #include <CommCtrl.h>
 
 #include <deque>
+#include <string>
 
 namespace workbench::editor::tests {
 namespace {
@@ -70,34 +72,87 @@ public:
 	{
 		++workspaceDeclarations;
 	}
-	//! The window drives the text pump, not the owner target, so these record
-	//! the calls in order to assert that a target makes none of them.
+	//! Only the text pump reaches these, so recording every call is what lets a
+	//! test assert that publishing, completing and revoking make none of them.
+	struct Requested final {
+		std::wstring handle;
+		std::uint64_t offset{};
+		std::uint32_t length{};
+	};
 	[[nodiscard]] bool ReadResource(const senp::ContributionOwnerIdentity&, std::wstring_view handle,
-		std::uint64_t, std::uint32_t) noexcept override
+		const std::uint64_t offset, const std::uint32_t length) noexcept override
 	{
-		resourceReads.emplace_back(handle);
-		return false;
+		resourceReads.push_back({ std::wstring(handle), offset, length });
+		return admitResource;
 	}
 	[[nodiscard]] std::optional<SenpToolResourceAnswer> TakeResource(
 		const senp::ContributionOwnerIdentity&) noexcept override
 	{
 		++resourceTakes;
-		return {};
+		if (resourceAnswers.empty()) return {};
+		auto value = std::move(resourceAnswers.front());
+		resourceAnswers.pop_front();
+		return value;
 	}
 	void ReleaseResource(const senp::ContributionOwnerIdentity&, std::wstring_view handle) noexcept override
 	{
 		resourceReleases.emplace_back(handle);
 	}
 
-	std::vector<std::wstring> resourceReads;
+	std::vector<Requested> resourceReads;
+	std::deque<SenpToolResourceAnswer> resourceAnswers;
 	std::vector<std::wstring> resourceReleases;
 	int resourceTakes{};
+	bool admitResource{ true };
 
 	SenpToolAccount account;
 	mutable int accountCalls{};
 	int accountRefreshes{};
 	int workspaceDeclarations{};
 };
+
+//! A document whose only section is a text resource, so its single page is the
+//! text page and no selection is needed to reach it.
+senp::effect::PublishDocument TextDocument()
+{
+	return { L"run/42", L"Workflow run", 1,
+		{ senp::effect::TextResourceSection{ L"log-1", 0, senp::effect::TextStatus::Loading } } };
+}
+
+//! One chunk shaped exactly as the control-side store answers it. The revision
+//! is the owner generation, which is what resources are created under.
+senp::TextResourceChunk Chunk(std::string bytes, std::size_t offset, std::size_t length,
+	senp::TextResourceState state, senp::TextResourceEnd end)
+{
+	senp::TextResourceChunk chunk;
+	chunk.result = senp::TextResourceResult::Accepted;
+	chunk.state = state;
+	chunk.end = end;
+	chunk.handle = L"log-1";
+	chunk.revision = 3;
+	chunk.offset = offset;
+	chunk.length = length;
+	chunk.bytes = std::move(bytes);
+	return chunk;
+}
+
+SenpToolResourceAnswer Answer(std::optional<senp::TextResourceChunk> chunk, std::uint64_t offset = 0)
+{
+	SenpToolResourceAnswer answer;
+	answer.handle = L"log-1";
+	answer.offset = offset;
+	answer.chunk = std::move(chunk);
+	return answer;
+}
+
+//! The store refusing a read, which is an answer and not a lost connection.
+SenpToolResourceAnswer Refused(senp::TextResourceResult result, std::uint64_t offset)
+{
+	senp::TextResourceChunk chunk;
+	chunk.result = result;
+	chunk.handle = L"log-1";
+	return Answer(std::move(chunk), offset);
+}
 
 senp::effect::StartToolRead Read(std::wstring readId, std::wstring operation)
 {
@@ -146,7 +201,203 @@ protected:
 	{
 		return { L"sample.details", std::wstring(64, L'a'), 3, 4, 5 };
 	}
+
+	//! The production authority, so a page is built on the scope the window
+	//! would really project rather than on a shape invented for the test.
+	CSenpOwnerTextResources resources{ L"0123456789abcdef0123456789abcdef" };
+
+	//! Publishes the one-page text document and leaves it on screen, which is
+	//! what makes the host willing to hand out a read.
+	void PublishText(CSenpReadonlyOwnerTarget& target)
+	{
+		const senp::effect::OperationContext request{ L"text.document", 3, 4, 5, 1 };
+		ASSERT_TRUE(target.BeginDocument(L"run/42", request));
+		ASSERT_TRUE(target.PublishDocument(request, TextDocument())) << static_cast<int>(target.State());
+		auto* const host = target.Host(L"run/42");
+		ASSERT_NE(nullptr, host);
+		ASSERT_EQ(SenpDocumentHostState::Ready, host->State()) << static_cast<int>(host->State());
+	}
+
+	//! Leaves the surface holding "partial" with more still expected, which is
+	//! the only state in which losing the rest of a resource is observable.
+	void PumpPartialText(CSenpReadonlyOwnerTarget& target, ScriptedToolReads& reads)
+	{
+		target.PumpText();
+		ASSERT_EQ(1U, reads.resourceReads.size());
+		reads.resourceAnswers.push_back(Answer(Chunk("partial", 0, 15,
+			senp::TextResourceState::Loading, senp::TextResourceEnd::None)));
+		target.PumpText();
+		ASSERT_EQ(2U, reads.resourceReads.size());
+		EXPECT_EQ(7U, reads.resourceReads[1].offset);
+		auto* const host = target.Host(L"run/42");
+		ASSERT_NE(nullptr, host);
+		host->SelectAll();
+		ASSERT_EQ(L"partial", host->SelectedText());
+	}
 };
+
+TEST_F(SenpReadonlyOwnerTargetTest, CarriesOneTextChunkPerTurnFromTheSeamToTheSurface)
+{
+	ScriptedToolReads reads;
+	ASSERT_TRUE(resources.Admit(Owner()));
+	CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 960000, &resources, {}, {}, {}, &reads);
+	ASSERT_NO_FATAL_FAILURE(PublishText(target));
+
+	// The first turn admits a read and settles nothing: no answer exists yet.
+	target.PumpText();
+	ASSERT_EQ(1U, reads.resourceReads.size());
+	EXPECT_EQ(L"log-1", reads.resourceReads[0].handle);
+	EXPECT_EQ(0U, reads.resourceReads[0].offset);
+	EXPECT_EQ(senp::SenpTextResourceStore::kChunkBytes, reads.resourceReads[0].length);
+	EXPECT_EQ(L"run/42", target.OutstandingTextResource());
+
+	// A turn with no answer waiting leaves the read where it is rather than
+	// asking a second time for a range already in flight.
+	target.PumpText();
+	EXPECT_EQ(1U, reads.resourceReads.size());
+	EXPECT_EQ(L"run/42", target.OutstandingTextResource());
+
+	reads.resourceAnswers.push_back(Answer(Chunk("run step output", 0, 15,
+		senp::TextResourceState::Complete, senp::TextResourceEnd::Complete)));
+	target.PumpText();
+	EXPECT_TRUE(target.OutstandingTextResource().empty());
+	auto* const host = target.Host(L"run/42");
+	ASSERT_NE(nullptr, host);
+	host->SelectAll();
+	EXPECT_EQ(L"run step output", host->SelectedText());
+
+	// A resource that has arrived whole asks for nothing further.
+	target.PumpText();
+	EXPECT_EQ(1U, reads.resourceReads.size());
+}
+
+TEST_F(SenpReadonlyOwnerTargetTest, AnswersAReadTheSeamWouldNotCarryInsteadOfLeavingItOutstanding)
+{
+	ScriptedToolReads reads;
+	reads.admitResource = false;
+	ASSERT_TRUE(resources.Admit(Owner()));
+	CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 961000, &resources, {}, {}, {}, &reads);
+	ASSERT_NO_FATAL_FAILURE(PublishText(target));
+
+	// The host committed to the read the moment it handed it over, so a refused
+	// admission has to end it here rather than leave the page waiting.
+	target.PumpText();
+	ASSERT_EQ(1U, reads.resourceReads.size());
+	EXPECT_TRUE(target.OutstandingTextResource().empty());
+
+	// A failed page wants nothing further, and nothing is owed to this owner.
+	target.PumpText();
+	EXPECT_EQ(1U, reads.resourceReads.size());
+	EXPECT_EQ(0, reads.resourceTakes);
+}
+
+TEST_F(SenpReadonlyOwnerTargetTest, KeepsWhatArrivedWhenNoAnswerAboutTheResourceCameBack)
+{
+	ScriptedToolReads reads;
+	ASSERT_TRUE(resources.Admit(Owner()));
+	CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 962000, &resources, {}, {}, {}, &reads);
+	ASSERT_NO_FATAL_FAILURE(PublishText(target));
+	ASSERT_NO_FATAL_FAILURE(PumpPartialText(target, reads));
+
+	// A connection that went away says nothing about the resource, so the bytes
+	// that did arrive stay on screen under a failed status.
+	reads.resourceAnswers.push_back(Answer(std::nullopt, 7));
+	target.PumpText();
+	EXPECT_TRUE(target.OutstandingTextResource().empty());
+	auto* const host = target.Host(L"run/42");
+	ASSERT_NE(nullptr, host);
+	host->SelectAll();
+	EXPECT_EQ(L"partial", host->SelectedText());
+}
+
+TEST_F(SenpReadonlyOwnerTargetTest, ErasesTheBodyOfAResourceTheStoreHasLetGo)
+{
+	ScriptedToolReads reads;
+	ASSERT_TRUE(resources.Admit(Owner()));
+	CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 963000, &resources, {}, {}, {}, &reads);
+	ASSERT_NO_FATAL_FAILURE(PublishText(target));
+	ASSERT_NO_FATAL_FAILURE(PumpPartialText(target, reads));
+
+	// Expired is the store saying the resource is gone, not that this read
+	// failed. What arrived is no longer part of anything completable.
+	reads.resourceAnswers.push_back(Refused(senp::TextResourceResult::Expired, 7));
+	target.PumpText();
+	EXPECT_TRUE(target.OutstandingTextResource().empty());
+	auto* const host = target.Host(L"run/42");
+	ASSERT_NE(nullptr, host);
+	host->SelectAll();
+	EXPECT_TRUE(host->SelectedText().empty());
+}
+
+TEST_F(SenpReadonlyOwnerTargetTest, IgnoresAnAnswerThatSettlesSomeOtherRead)
+{
+	ScriptedToolReads reads;
+	ASSERT_TRUE(resources.Admit(Owner()));
+	CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 966000, &resources, {}, {}, {}, &reads);
+	ASSERT_NO_FATAL_FAILURE(PublishText(target));
+	ASSERT_NO_FATAL_FAILURE(PumpPartialText(target, reads));
+
+	// The offset names a range this owner never asked for. It cannot settle the
+	// outstanding read, and no second answer is coming, so the read ends failed
+	// and the bytes already shown are left alone.
+	reads.resourceAnswers.push_back(Answer(Chunk("more", 0, 15,
+		senp::TextResourceState::Loading, senp::TextResourceEnd::None), 0));
+	target.PumpText();
+	EXPECT_TRUE(target.OutstandingTextResource().empty());
+	auto* const host = target.Host(L"run/42");
+	ASSERT_NE(nullptr, host);
+	host->SelectAll();
+	EXPECT_EQ(L"partial", host->SelectedText());
+}
+
+TEST_F(SenpReadonlyOwnerTargetTest, MakesNoResourceCallWithoutAPumpTurnAndNoneAfterRevoke)
+{
+	ScriptedToolReads reads;
+	ASSERT_TRUE(resources.Admit(Owner()));
+	SenpReadonlyOwnerTextPump pump;
+	{
+		CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 964000, &resources, {}, {}, {}, &reads);
+		ASSERT_NO_FATAL_FAILURE(PublishText(target));
+		pump = target.TextPump();
+
+		// Publishing a document and starting a tool read are the target's own
+		// work; neither touches a resource.
+		const senp::effect::OperationContext request{ L"tool.read", 3, 4, 5, 2 };
+		ASSERT_TRUE(target.StartToolRead(request, Read(L"read-1", L"repositoryRead")));
+		EXPECT_FALSE(target.TakeToolRead());
+		EXPECT_TRUE(reads.resourceReads.empty());
+		EXPECT_EQ(0, reads.resourceTakes);
+
+		EXPECT_TRUE(pump());
+		EXPECT_EQ(1U, reads.resourceReads.size());
+		EXPECT_EQ(L"run/42", target.OutstandingTextResource());
+
+		target.Revoke();
+		EXPECT_FALSE(pump());
+		EXPECT_TRUE(target.OutstandingTextResource().empty());
+		EXPECT_EQ(1U, reads.resourceReads.size());
+	}
+	// The handle outlives the object it was taken from and says so plainly.
+	EXPECT_FALSE(pump());
+	EXPECT_EQ(1U, reads.resourceReads.size());
+}
+
+TEST_F(SenpReadonlyOwnerTargetTest, ShowsNoTextPageForAnOwnerTheAuthorityDoesNotHold)
+{
+	ScriptedToolReads reads;
+	// The authority was never told about this owner, so the cohort the document
+	// names cannot be attributed and no surface is created to wait on bytes.
+	CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 965000, &resources, {}, {}, {}, &reads);
+	const senp::effect::OperationContext request{ L"text.document", 3, 4, 5, 1 };
+	ASSERT_TRUE(target.BeginDocument(L"run/42", request));
+	EXPECT_FALSE(target.PublishDocument(request, TextDocument()));
+	EXPECT_EQ(SenpReadonlyOwnerTargetState::HostFailed, target.State());
+	EXPECT_EQ(0U, target.DocumentCount());
+
+	target.PumpText();
+	EXPECT_TRUE(reads.resourceReads.empty());
+	EXPECT_TRUE(target.OutstandingTextResource().empty());
+}
 
 TEST_F(SenpReadonlyOwnerTargetTest, PublishesRefreshesAndRevokesNativeDocument)
 {

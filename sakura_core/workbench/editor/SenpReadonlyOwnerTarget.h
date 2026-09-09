@@ -17,6 +17,18 @@ using SenpOwnerCommandCompleted = std::function<bool(const senp::effect::Operati
 using SenpOwnerResourceReleased = std::function<bool(std::wstring_view)>;
 //! UI-thread-only observer. False means its owner has been revoked or destroyed.
 using SenpReadonlyOwnerStyleSink = std::function<bool(const theme::ThemePalette&, const LOGFONT&, unsigned int)>;
+/*!
+	@brief One turn of the text pump for a single owner, driven by the window.
+
+	A document names its text by a resource handle the control side holds, so
+	something has to carry chunks from there to the surface, one turn at a time.
+	The window owns the cadence because it owns the turn; what to ask for and
+	where the answer belongs is the target's, because it holds the documents.
+
+	False means its owner has been revoked or destroyed, which is how the window
+	drops it, exactly as it drops a style sink.
+*/
+using SenpReadonlyOwnerTextPump = std::function<bool()>;
 
 //! Editor-side view of the account a profile has adopted, as the control side
 //! last answered it. It mirrors the wire vocabulary rather than reusing it, so
@@ -190,6 +202,22 @@ public:
 
 	void SetStyle(const theme::ThemePalette& palette, const LOGFONT& font, unsigned int dpi) noexcept;
 	[[nodiscard]] SenpReadonlyOwnerStyleSink StyleSink() const;
+	/*!
+		@brief Moves this owner's text resources one step toward the screen.
+
+		At most one chunk per turn, and at most one read outstanding across every
+		document this owner holds: the seam admits one read per owner, and a
+		second answer could only be attributed by remembering which document
+		asked, which is what the target remembers instead.
+
+		A turn settles an answer that has arrived and then admits the next read
+		if one is wanted. It never waits: an answer that has not settled leaves
+		the turn with nothing done, and the next turn asks again.
+	*/
+	void PumpText() noexcept;
+	[[nodiscard]] SenpReadonlyOwnerTextPump TextPump() const;
+	//! The resource whose read is outstanding over the seam, empty when none is.
+	[[nodiscard]] std::wstring OutstandingTextResource() const;
 	[[nodiscard]] std::optional<std::string> InputId(std::wstring_view resourceId) const;
 	[[nodiscard]] SenpReadonlyDocumentHost* Host(std::wstring_view resourceId) const noexcept;
 	[[nodiscard]] std::size_t DocumentCount() const noexcept;
@@ -201,6 +229,10 @@ private:
 	class Pending;
 	[[nodiscard]] bool Matches(const senp::effect::OperationContext& context) const noexcept;
 	void ReapClosed() noexcept;
+	//! Delivers the settled answer to the document that asked, whatever it says.
+	void SettleText() noexcept;
+	//! Admits the next read one of this owner's documents is waiting to make.
+	void BeginText() noexcept;
 
 	senp::ContributionOwnerIdentity m_owner;
 	SenpReadonlyScope m_scope;
@@ -215,9 +247,18 @@ private:
 	//! readId -> the context that started it. A terminal whose readId is absent
 	//! was cancelled or never admitted here and must never reach the projection.
 	std::map<std::wstring, senp::effect::OperationContext, std::less<>> m_toolReadContexts;
-	std::shared_ptr<CSenpReadonlyOwnerTarget*> m_styleLifetime;
+	//! Cleared by Revoke, so every weak handle this target hands out - the
+	//! style sink and the text pump - dies with the owner rather than with
+	//! the object, which the window may still be holding a copy of.
+	std::shared_ptr<CSenpReadonlyOwnerTarget*> m_lifetime;
 	std::map<std::wstring, Pending, std::less<>> m_pending;
 	std::map<std::wstring, std::shared_ptr<Document>, std::less<>> m_documents;
+	//! The read this owner has in flight over the seam and the resource id of
+	//! the document that made it. The seam answers with a handle and an offset,
+	//! and two documents of one owner may hold the same handle, so the document
+	//! is remembered here rather than guessed from the answer.
+	std::optional<SenpDocumentTextRead> m_textRead;
+	std::wstring m_textResource;
 	std::size_t m_surfaceBlocks{};
 	theme::ThemePalette m_palette{ theme::CThemeService::PaletteFor(theme::ThemeMode::Dark) };
 	LOGFONT m_font{};

@@ -346,7 +346,8 @@ void SenpReadonlyDocumentHost::FailText(const SenpDocumentTextRead& request, sen
 	if (!self.inFlight || *self.inFlight != request) return;
 	self.inFlight.reset();
 		for (auto& page : self.pages) if (page.text && page.text->view && page.text->scope == request.Scope() && page.text->handle == request.Handle()) {
-		page.text->view->Fail(reason); page.text->readReady = false; return;
+		if (reason == senp::TextResourceEnd::Revoked) page.text->view->Expire(); else page.text->view->Fail(reason);
+		page.text->readReady = false; return;
 	}
 }
 void SenpReadonlyDocumentHost::NotifyTextChanged(const senp::TextResourceScope& scope, std::wstring_view handle) {

@@ -80,6 +80,11 @@ public:
 	//! even if this host replaces the generation or closes before the response.
 	[[nodiscard]] std::optional<SenpDocumentTextRead> TakeTextRead();
 	[[nodiscard]] SenpTextViewResult ApplyText(const SenpDocumentTextRead& request, const senp::TextResourceChunk& chunk);
+	//! Settles an outstanding read that produced no chunk. Revoked says the
+	//! resource itself is gone rather than that this read failed, so the body
+	//! already shown is erased: bytes of a resource nobody may read again are
+	//! not a partial answer, they are a resource that is no longer there. Every
+	//! other reason leaves what did arrive on screen under a failed status.
 	void FailText(const SenpDocumentTextRead& request, senp::TextResourceEnd reason = senp::TextResourceEnd::Failed) noexcept;
 	void NotifyTextChanged(const senp::TextResourceScope& scope, std::wstring_view handle);
 	void SelectAll();
