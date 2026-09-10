@@ -51,7 +51,7 @@ bool Rules(const TreeItem& v) { return Id(v.id) && Text(v.label, 1024) && Text(v
 bool Rules(const TreeRequest& v) { return Id(v.viewId) && Id(v.parentId, true) && Text(v.cursor, 2048); }
 bool Rules(const DocumentRequest& v) { return Id(v.resourceId); }
 bool Rules(const CommandInvoked& v) { return Id(v.commandId) && v.arguments.size() <= 16 && std::all_of(v.arguments.begin(), v.arguments.end(), [](const auto& x) { return Text(x, 4096); }); }
-bool Rules(const ToolCompleted& v) { return Id(v.readId) && Text(v.data, 65536) && Text(v.message, 4096) && (v.status == CompletionStatus::Succeeded || v.data.empty()); }
+bool Rules(const ToolCompleted& v) { return Id(v.readId) && Text(v.data, kMaximumToolDataBytes) && Text(v.message, 4096) && (v.status == CompletionStatus::Succeeded || v.data.empty()); }
 bool Rules(const WorkspaceChanged& v) { std::set<std::wstring> ids; return v.repositories.size() <= 32 && std::all_of(v.repositories.begin(), v.repositories.end(), [&](const auto& x) { return ids.insert(x.rootId).second; }); }
 bool Rules(const Cancel& v) { return Id(v.operationId) && v.operationId.size() <= 96; }
 bool Rules(const VisibilityChanged& v) { return Id(v.viewId); }

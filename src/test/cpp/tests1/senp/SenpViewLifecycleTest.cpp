@@ -373,7 +373,7 @@ TEST(SenpViewLifecycle, FailedStartAndPreparationDeadlineHaveOneTerminalReceipt)
 	h.throwStart = false;
 	h.activate = false;
 	ASSERT_EQ(OwnerChangeStatus::Accepted, h.Begin().status);
-	h.owners.Poll(Clock::now() + 11s);
+	h.owners.Poll(Clock::now() + CSenpRuntimeSession::kMaximumColdStart + 1s);
 	auto expired = h.owners.TakeTransition();
 	ASSERT_TRUE(expired);
 	EXPECT_EQ(OwnerChangeStatus::TimedOut, expired->status);

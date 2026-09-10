@@ -137,7 +137,15 @@ try {
 	{
 		std::lock_guard lock(m_mutex);
 		if (m_closed || m_pending.size() >= m_maximumPending) return false;
-		if (m_busy && m_running == profileId) return false;
+		if (m_busy && m_running == profileId) {
+			// A poll that lands on the running attempt is the duplicate this
+			// refuses. A change is not: the attempt may have read the workspace
+			// before this declaration existed, and nothing else would ask again,
+			// so the profile would answer for a repository it no longer has
+			// until an unrelated request happened to arrive.
+			if (!respectInterval) m_changedWhileRunning = true;
+			return false;
+		}
 		if (std::ranges::find(m_pending, profileId) != m_pending.end()) return false;
 		if (respectInterval) {
 			if (const auto attempted = m_attempted.find(profileId); attempted != m_attempted.end()
@@ -167,6 +175,7 @@ std::optional<std::wstring> CControlSenpRefreshQueue::WaitAndTake()
 
 void CControlSenpRefreshQueue::Complete(const std::wstring& profileId)
 try {
+	bool readmitted = false;
 	{
 		std::lock_guard lock(m_mutex);
 		// The interval starts when the attempt ends, so a slow package tool can
@@ -174,7 +183,18 @@ try {
 		m_attempted.insert_or_assign(profileId, std::chrono::steady_clock::now());
 		m_running.clear();
 		m_busy = false;
+		// The change that arrived mid-attempt is admitted now, without the
+		// interval it never had to wait out, and still under the pending bound.
+		if (m_changedWhileRunning) {
+			m_changedWhileRunning = false;
+			if (!m_closed && m_pending.size() < m_maximumPending
+				&& std::ranges::find(m_pending, profileId) == m_pending.end()) {
+				m_pending.emplace_back(profileId);
+				readmitted = true;
+			}
+		}
 	}
+	if (readmitted) m_admitted.notify_one();
 	m_idle.notify_all();
 } catch (...) {
 }
@@ -192,6 +212,7 @@ try {
 		std::lock_guard lock(m_mutex);
 		if (m_closed) return;
 		m_closed = true;
+		m_changedWhileRunning = false;
 		m_pending.clear();
 	}
 	m_admitted.notify_all();

@@ -126,6 +126,10 @@ private:
 	std::deque<std::wstring> m_pending;
 	std::map<std::wstring, std::chrono::steady_clock::time_point, std::less<>> m_attempted;
 	std::wstring m_running;
+	//! A change reported for the profile currently being refreshed. The pass
+	//! in flight may already have read the state that change replaced, so it
+	//! is re-admitted when the attempt ends instead of being dropped.
+	bool m_changedWhileRunning = false;
 	bool m_busy = false;
 	bool m_closed = false;
 };

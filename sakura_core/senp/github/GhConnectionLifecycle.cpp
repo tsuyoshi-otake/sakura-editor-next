@@ -144,14 +144,29 @@ GhConnectionTerminal ProcessTerminal(const platform::process::EBoundedProcessSta
 	return GhConnectionTerminal::Failed;
 }
 
-const std::vector<std::wstring>& RemovedEnvironment()
+//! Names this process may carry that must never reach gh, minus the ones this
+//! invocation sets itself. An override already discards the inherited entry it
+//! replaces, and a request that both overrides and removes one name states two
+//! things about it, which IsExecutableBoundedProcessRequest rejects before launch.
+std::vector<std::wstring> RemovedEnvironment(
+	const std::vector<std::pair<std::wstring, std::wstring>>& overrides)
 {
-	static const std::vector<std::wstring> values{
+	static const std::vector<std::wstring> inherited{
 		L"GH_TOKEN", L"GITHUB_TOKEN", L"GH_ENTERPRISE_TOKEN", L"GITHUB_ENTERPRISE_TOKEN",
 		L"GH_HOST", L"GH_REPO", L"GH_DEBUG", L"DEBUG", L"GH_PAGER", L"PAGER",
 		L"GH_BROWSER", L"BROWSER", L"GH_FORCE_TTY", L"GH_HTTP_UNIX_SOCKET",
 		L"GH_EDITOR", L"GIT_EDITOR", L"VISUAL", L"EDITOR",
 	};
+	std::vector<std::wstring> values;
+	values.reserve(inherited.size());
+	for (const auto& name : inherited) {
+		const bool overridden = std::ranges::any_of(overrides, [&name](const auto& entry) {
+			return entry.first.size() == name.size()
+				&& ::CompareStringOrdinal(entry.first.data(), static_cast<int>(entry.first.size()),
+					name.data(), static_cast<int>(name.size()), TRUE) == CSTR_EQUAL;
+		});
+		if (!overridden) values.push_back(name);
+	}
 	return values;
 }
 
@@ -172,8 +187,10 @@ GhProcessInvocation Invocation(std::wstring executable, std::wstring workingDire
 	const std::size_t errorLimit, std::optional<std::wstring_view> token = std::nullopt,
 	std::shared_ptr<platform::process::IBoundedProcessOutputObserver> outputObserver = nullptr)
 {
+	auto environment = Environment(configurationDirectory, token);
+	auto removals = RemovedEnvironment(environment);
 	return { std::move(executable), std::move(workingDirectory), std::move(arguments),
-		Environment(configurationDirectory, token), RemovedEnvironment(), timeout, outputLimit, errorLimit,
+		std::move(environment), std::move(removals), timeout, outputLimit, errorLimit,
 		std::move(outputObserver) };
 }
 

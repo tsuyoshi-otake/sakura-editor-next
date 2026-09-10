@@ -254,7 +254,12 @@ struct CSenpEffectRuntime::Impl final {
 						session.Expire(now);
 						if (session.Phase() == RuntimePhase::Stopped) break;
 						if (session.Phase() == RuntimePhase::Stopping && !stopDeadline) stopDeadline = now + 250ms;
-						deadline = now + (session.Phase() == RuntimePhase::Handshaking ? 10s : 1s);
+						// The handshake is answered only once the host has read,
+						// verified and compiled its component, which is the whole
+						// cold start; every later exchange answers from a guest that
+						// is already resident.
+						deadline = now + (session.Phase() == RuntimePhase::Handshaking
+							? CSenpRuntimeSession::kMaximumColdStart : std::chrono::seconds(1));
 						if (const auto expires = session.NextDeadline()) {
 							deadline = (std::min)(deadline, *expires);
 							idleWait = Remaining(*expires);

@@ -8,8 +8,8 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 pub const MAXIMUM_PAGE_ITEMS: usize = 100;
-pub const MAXIMUM_RESPONSE_BYTES: usize = 64 * 1024;
-const MAXIMUM_BODY_BYTES: usize = 60 * 1024;
+pub const MAXIMUM_RESPONSE_BYTES: usize = 256 * 1024;
+const MAXIMUM_BODY_BYTES: usize = 240 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IssueState {

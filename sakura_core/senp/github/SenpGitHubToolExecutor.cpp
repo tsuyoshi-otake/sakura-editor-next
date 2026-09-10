@@ -4,6 +4,7 @@
 #include "senp/github/SenpGitHubToolExecutor.h"
 
 #include "senp/github/GhLogResource.h"
+#include "senp/github/GhPageProjection.h"
 
 #include <algorithm>
 #include <array>
@@ -145,6 +146,15 @@ bool IsForwardedQuery(const std::wstring& name) noexcept
 		L"sort", L"state", L"status",
 	};
 	return std::ranges::find(forwarded, name) != forwarded.end();
+}
+
+//! The shape a repositoryRead argument list names, empty when it names none.
+//! A list that reached a built request always names exactly one.
+std::wstring ShapeArgument(const std::vector<effect::Field>& arguments)
+{
+	const auto named = std::ranges::find_if(arguments,
+		[](const auto& argument) { return argument.name == L"shape"; });
+	return named == arguments.end() ? std::wstring() : named->value;
 }
 
 effect::CompletionStatus ToCompletionStatus(const GhRepositoryResponseStatus status) noexcept
@@ -338,6 +348,9 @@ std::optional<GhRepositoryReadRequest> BuildRepositoryReadRequest(
 		|| ShapeNeedsAttempt(shape) != !attempt.empty()) return std::nullopt;
 	auto segments = ResourceSegments(shape, id, attempt);
 	if (!segments) return std::nullopt;
+	// A shape whose fields nobody wrote down cannot be answered: its page would
+	// have to travel whole, and a real one does not fit a completion.
+	if (!HasRepositoryPageProjection(shape)) return std::nullopt;
 	// Deterministic order keeps one logical read on one scheduler resource.
 	std::ranges::sort(query, [](const auto& left, const auto& right) { return left.first < right.first; });
 	return GhRepositoryReadRequest(repository.Hostname(), repository.Owner(), repository.Repository(),
@@ -449,6 +462,10 @@ try {
 	if (!m_profiles->Connection(scope.profileId)) return EControlSenpRpcStatus::NotConnected;
 	const auto request = BuildRepositoryReadRequest(*repository, command.arguments);
 	if (!request) return EControlSenpRpcStatus::InvalidRequest;
+	// The request no longer spells the shape, and the page it comes back with has
+	// to be reduced to that shape's fields. Reading the argument again here keeps
+	// one definition of what a request is and still remembers the question.
+	const auto shape = ShapeArgument(command.arguments);
 
 	std::unique_lock lock(m_mutex);
 	if (m_stopping) return EControlSenpRpcStatus::Closed;
@@ -491,7 +508,7 @@ try {
 	case GhReadSubscribeStatus::Closed: return EControlSenpRpcStatus::Closed;
 	default: return EControlSenpRpcStatus::ResourceExhausted;
 	}
-	state->reads.push_back({ command.readId, canonical, subscribed.SubscriptionId(), 0 });
+	state->reads.push_back({ command.readId, shape, canonical, subscribed.SubscriptionId(), 0 });
 	lock.unlock();
 	m_wakeWorker.notify_all();
 	return EControlSenpRpcStatus::Succeeded;
@@ -580,12 +597,17 @@ std::optional<effect::ToolCompleted> CSenpGitHubToolExecutor::Publish(ScopeState
 		return effect::ToolCompleted{ read.readId, ToCompletionStatus(page.status), L"", Describe(page.status) };
 	}
 	// The extension parses this body itself, and the protocol gives it no way to
-	// read a resource, so the body has to travel inside the completion. Both
-	// bounds it has to clear are stated rather than discovered: a page over the
-	// budget and one that is not UTF-8 are refused by name.
-	if (page.body.size() > MaximumInlineBodyBytes()) return Refused(read.readId, L"page-too-large");
+	// read a resource, so the body has to travel inside the completion. A real
+	// list page is several hundred kilobytes and the wire bounds a completion at
+	// 256 KiB, so what travels is the page reduced to the fields the shape names -
+	// never the page cut short, which would be a body nothing can parse. The
+	// bounds it still has to clear are stated rather than discovered: a projected
+	// page over the budget and one that is not UTF-8 are refused by name.
+	const auto projected = ProjectRepositoryPage(read.shape, page.body);
+	if (!projected) return Refused(read.readId, L"page-unprojectable");
+	if (projected->size() > MaximumInlineBodyBytes()) return Refused(read.readId, L"page-too-large");
 	std::wstring body;
-	if (!Widen(page.body, body)) return Refused(read.readId, L"invalid-encoding");
+	if (!Widen(*projected, body)) return Refused(read.readId, L"invalid-encoding");
 	// A refresh replaces what this read published rather than adding to it, so
 	// the slot is given up before the next one is taken.
 	ReleasePage(state, read);
@@ -914,10 +936,8 @@ void CSenpGitHubToolExecutor::Execute(const GhReadDispatch& dispatch)
 				: GhRepositoryResponse(GhRepositoryResponseStatus::ToolUnavailable, 0, {}, std::nullopt, 1, std::nullopt);
 		}
 	}
-	const auto applied = m_scheduler.Complete(dispatch.Ticket(), response,
-		NowMilliseconds(), NowUnixSeconds());
-	if (applied != GhReadMutationStatus::Applied || dispatch.CancellationRequested()) return;
-
+	// Built before the lock is taken: copying a page is the expensive part, and
+	// nothing else may read it until it is stored.
 	Page page;
 	page.cacheKey = CanonicalKey(key);
 	page.cycle = dispatch.Cycle();
@@ -931,7 +951,15 @@ void CSenpGitHubToolExecutor::Execute(const GhReadDispatch& dispatch)
 	} else if (response.Status() == GhRepositoryResponseStatus::Succeeded) {
 		page.body.assign(response.Body().begin(), response.Body().end());
 	}
+	// The terminal and the page it answers for become visible together, under
+	// the same lock the drain holds while it polls this scheduler. A terminal
+	// published first is one the drain can reach before the page exists, and
+	// that drain has nothing to answer with but a refusal for a page that was
+	// fetched and was about to be stored.
 	std::scoped_lock lock(m_mutex);
+	const auto applied = m_scheduler.Complete(dispatch.Ticket(), response,
+		NowMilliseconds(), NowUnixSeconds());
+	if (applied != GhReadMutationStatus::Applied || dispatch.CancellationRequested()) return;
 	std::erase_if(m_pages, [&](const auto& entry) {
 		return entry.cycle == page.cycle && entry.cacheKey == page.cacheKey;
 	});

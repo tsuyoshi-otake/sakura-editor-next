@@ -573,7 +573,7 @@ TEST(SenpGitHubToolExecutor, RefusesAPageTooLargeForOneCompletion)
 	// Under the fetch budget and over the completion budget. Delivering it short
 	// would hand the extension a JSON body that ends mid-value, which parses as
 	// a broken page rather than as the too-large one it is.
-	const std::string body = "[\"" + std::string(70 * 1024, 'x') + "\"]";
+	const std::string body = "[\"" + std::string(CSenpGitHubToolExecutor::MaximumInlineBodyBytes() + 8 * 1024, 'x') + "\"]";
 	fixture.CredentialValue().Set("HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n\r\n" + body);
 	const auto completed = fixture.Fetch(scope, IssueList());
 	ASSERT_TRUE(completed);

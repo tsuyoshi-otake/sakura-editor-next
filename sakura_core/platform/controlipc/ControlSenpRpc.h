@@ -157,7 +157,14 @@ inline constexpr std::size_t kControlSenpRpcMaximumArguments = 32;
 //! inspects every one of them, so this bound is what keeps one declaration from
 //! turning into an unbounded amount of work on the refresh worker.
 inline constexpr std::size_t kControlSenpRpcMaximumWorkspaceFolders = 8;
-inline constexpr std::size_t kControlSenpRpcMaximumToolDataBytes = 64 * 1024;
+//! Largest body one tool completion may carry across the control channel, in
+//! UTF-8 bytes. It is deliberately larger than kControlIpcMaximumUtf8FieldBytes
+//! and matches senp::effect::kMaximumToolDataBytes: a completion carries a whole
+//! page of an answer, and holding that one field to the bound written for
+//! identifiers and messages would refuse pages the effect protocol accepts. The
+//! field is encoded against this bound by name, the way a resource chunk is, so
+//! naming it here moves no other field's ceiling.
+inline constexpr std::size_t kControlSenpRpcMaximumToolDataBytes = 256 * 1024;
 inline constexpr std::size_t kControlSenpRpcMaximumResourceChunkBytes = 64 * 1024;
 //! Largest resource one chunk may claim to belong to. It mirrors the store's own
 //! per-resource ceiling and is restated here so the decoder can refuse an

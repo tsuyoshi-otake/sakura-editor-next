@@ -22,9 +22,25 @@ use exports::sakura::senp::editor_decorations::{DecorationRequest, VisibleLine};
 
 const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 const MAX_COMPONENT_BYTES: u64 = 32 * 1024 * 1024;
-const MAX_FUEL: u64 = 10_000_000;
+/// Fuel one guest call may burn before the payload it carries is counted. It is
+/// what an activation, a tree page or a command costs, and it is the whole
+/// budget of a call that carries no page.
+const BASE_FUEL: u64 = 10_000_000;
+/// Fuel added for each byte of payload a call carries. A tool completion holds a
+/// whole page of an answer and the guest parses and renders every byte of it, so
+/// the budget follows the page rather than every call being handed the largest
+/// page's budget. Measured against real GitHub pages, the densest of them cost
+/// about 710 fuel per byte; this is that with room above it.
+const FUEL_PER_PAYLOAD_BYTE: u64 = 1024;
 const EPOCH_TICK_MILLISECONDS: u64 = 10;
 const CALL_DEADLINE_TICKS: u64 = 20;
+
+/// Fuel for one call carrying `payload_bytes` of payload. Saturating rather than
+/// wrapping: a payload big enough to overflow this is one the frame bound has
+/// already refused, and a wrapped budget would be a small one.
+fn call_fuel(payload_bytes: usize) -> u64 {
+    BASE_FUEL.saturating_add(FUEL_PER_PAYLOAD_BYTE.saturating_mul(payload_bytes as u64))
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(
@@ -110,7 +126,7 @@ impl Runtime {
             .build();
         let mut store = Store::new(&engine, HostState { limits });
         store.limiter(|state| &mut state.limits);
-        store.set_fuel(MAX_FUEL)?;
+        store.set_fuel(call_fuel(0))?;
         store.set_epoch_deadline(CALL_DEADLINE_TICKS);
         let bindings = Extension::instantiate(&mut store, &component, &linker)?;
         let epoch_stop = Arc::new(AtomicBool::new(false));
@@ -131,7 +147,8 @@ impl Runtime {
     }
 
     fn decorate(&mut self, revision: u64, tab_size: u32, lines: Vec<InputLine>) -> Response {
-        if let Err(error) = self.store.set_fuel(MAX_FUEL) {
+        let payload = lines.iter().map(|line| line.text.len()).sum();
+        if let Err(error) = self.store.set_fuel(call_fuel(payload)) {
             return Response::Error {
                 code: "runtimeUnavailable",
                 detail: error.to_string(),
@@ -338,6 +355,33 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn call_fuel_follows_the_page_a_completion_carries() {
+        use sakura_senp_host::effect_protocol as wire;
+
+        let empty = wire::Event::Cancel(wire::Cancel {
+            operation_id: "op".into(),
+        });
+        assert_eq!(empty.payload_bytes(), 0);
+        assert_eq!(call_fuel(empty.payload_bytes()), BASE_FUEL);
+
+        // The largest completion the wire admits has to be affordable, or the
+        // guest traps on a page the protocol just accepted. The rate is measured
+        // against real GitHub pages, whose densest cost about 710 fuel per byte.
+        let page = wire::Event::ToolCompleted(wire::ToolCompleted {
+            read_id: "read".into(),
+            status: wire::CompletionStatus::Succeeded,
+            data: "x".repeat(wire::MAX_TOOL_DATA_BYTES),
+            message: String::new(),
+        });
+        assert_eq!(page.payload_bytes(), wire::MAX_TOOL_DATA_BYTES);
+        assert!(call_fuel(page.payload_bytes()) > 710 * wire::MAX_TOOL_DATA_BYTES as u64);
+
+        // A length no frame could ever hold still yields a budget, not a wrap to
+        // a small one.
+        assert_eq!(call_fuel(usize::MAX), u64::MAX);
+    }
 
     #[test]
     fn verified_component_returns_the_exact_hashed_bytes() {

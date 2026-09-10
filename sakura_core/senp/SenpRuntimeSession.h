@@ -38,6 +38,18 @@ public:
 	static constexpr std::size_t kMaximumPending = 16;
 	static constexpr std::size_t kMaximumQueuedBytes = 4U * 1024U * 1024U;
 	static constexpr auto kMaximumLifetime = std::chrono::seconds(10);
+	/*!
+		@brief How long an owner may take to become callable at all.
+
+		A cold start is not one invocation of a running guest: it launches the
+		host process, reads and verifies the component, compiles it, and only
+		then exchanges a handshake. Compiling a debug-built component is seconds
+		of work by itself - about 7.5 seconds for the GitHub Actions extension on
+		an idle machine - so holding a cold start to kMaximumLifetime reads an
+		ordinary start on a busy machine as a hung host and retires an owner that
+		was about to answer.
+	*/
+	static constexpr auto kMaximumColdStart = std::chrono::seconds(30);
 
 	explicit CSenpRuntimeSession(std::int64_t generation);
 	~CSenpRuntimeSession();

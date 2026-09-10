@@ -2,6 +2,11 @@
 use serde::{Deserialize, Serialize};
 
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
+/// Largest body one tool completion may carry, in UTF-8 bytes. A completion
+/// carries a whole page of an answer, so it is the one field larger than the
+/// identifiers and messages beside it, and escaping a page doubles it at worst:
+/// a quarter of a frame is what one completion is allowed to be.
+pub const MAX_TOOL_DATA_BYTES: usize = 256 * 1024;
 pub const MAX_EFFECTS: usize = 64;
 pub const MAX_ITEMS: usize = 256;
 pub const MAX_COUNTER: u64 = i64::MAX as u64;
@@ -305,6 +310,26 @@ pub enum Event {
     WorkspaceChanged(WorkspaceChanged),
     Cancel(Cancel),
     VisibilityChanged(VisibilityChanged),
+}
+
+impl Event {
+    /// Bytes of payload this event carries, meaning the one field that grows
+    /// with an answer instead of with the identifiers around it. It is what the
+    /// guest has to parse and render, so it is what a call's fuel is scaled
+    /// against. Every variant is named rather than swept into a wildcard, so a
+    /// new event that carries a page has to decide here instead of silently
+    /// inheriting an empty budget.
+    pub fn payload_bytes(&self) -> usize {
+        match self {
+            Event::ToolCompleted(value) => value.data.len(),
+            Event::TreeRequest(_)
+            | Event::DocumentRequest(_)
+            | Event::CommandInvoked(_)
+            | Event::WorkspaceChanged(_)
+            | Event::Cancel(_)
+            | Event::VisibilityChanged(_) => 0,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -623,7 +648,7 @@ impl Check for ToolCompleted {
             && self.data.check(budget)
             && self.message.check(budget)
             && (id(&self.read_id, false)
-                && self.data.len() <= 65536
+                && self.data.len() <= MAX_TOOL_DATA_BYTES
                 && self.message.len() <= 4096
                 && (self.status == CompletionStatus::Succeeded || self.data.is_empty()))
     }

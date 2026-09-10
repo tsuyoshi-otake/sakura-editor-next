@@ -385,6 +385,28 @@ TEST(ControlSenpRefreshQueue, DeduplicatesAndStartsThePerProfileIntervalWhenTheA
 	queue.Close();
 }
 
+TEST(ControlSenpRefreshQueue, ReAdmitsAChangeThatArrivedWhileThatProfileWasRefreshing)
+{
+	CControlSenpRefreshQueue queue(std::chrono::milliseconds{ 60000 }, 4);
+	EXPECT_TRUE(queue.Request(kProfile));
+	const auto taken = queue.WaitAndTake();
+	ASSERT_TRUE(taken.has_value());
+	// A poll landing on the running attempt is the duplicate the queue drops.
+	EXPECT_FALSE(queue.Request(kProfile));
+	// A declared workspace is not a poll. The attempt in flight read the
+	// workspace before this existed, so losing it would leave the profile
+	// answering for no repository until an unrelated request arrived.
+	EXPECT_FALSE(queue.RequestChanged(kProfile));
+	queue.Complete(*taken);
+	const auto again = queue.WaitAndTake();
+	ASSERT_TRUE(again.has_value());
+	EXPECT_EQ(kProfile, *again);
+	// Exactly one re-admission: the flag is spent, not sticky.
+	queue.Complete(*again);
+	EXPECT_TRUE(queue.WaitForIdle(0));
+	queue.Close();
+}
+
 TEST(ControlSenpRefreshQueue, BoundsPendingWorkAndCloseReleasesEveryWaiter)
 {
 	CControlSenpRefreshQueue queue(std::chrono::milliseconds{ 0 }, 2);

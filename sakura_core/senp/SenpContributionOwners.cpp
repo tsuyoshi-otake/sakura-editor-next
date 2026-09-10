@@ -170,7 +170,9 @@ OwnerChangeResult CSenpContributionOwners::Prepare(EffectRuntimeLaunch launch, s
 		auto slot = std::make_unique<Impl::Slot>();
 		slot->owner = { launch.extensionId, std::move(packageDigest), launch.generation,
 			launch.context.workspaceRevision, launch.context.accountGeneration };
-		slot->deadline = now + CSenpRuntimeSession::kMaximumLifetime;
+		// A slot that has not become callable yet is waiting on a cold start, not
+		// on one invocation, so it is held to the budget written for one.
+		slot->deadline = now + CSenpRuntimeSession::kMaximumColdStart;
 		const auto* previous = s.Current(launch.extensionId);
 		slot->publication = publication(slot->owner, previous ? &previous->owner : nullptr);
 		if (!slot->publication) return { OwnerChangeStatus::Unsupported };

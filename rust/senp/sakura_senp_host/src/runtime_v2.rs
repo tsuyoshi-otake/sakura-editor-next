@@ -67,7 +67,7 @@ impl Runtime {
             .build();
         let mut store = Store::new(&engine, super::HostState { limits });
         store.limiter(|state| &mut state.limits);
-        store.set_fuel(super::MAX_FUEL)?;
+        store.set_fuel(super::call_fuel(0))?;
         store.set_epoch_deadline(super::CALL_DEADLINE_TICKS);
         // Instantiation can execute Wasm, so the clock must already be running.
         // This RAII local also joins the clock on failed instantiation.
@@ -80,9 +80,9 @@ impl Runtime {
         })
     }
 
-    fn begin_call(&mut self) -> Result<(), GuestFailed> {
+    fn begin_call(&mut self, payload_bytes: usize) -> Result<(), GuestFailed> {
         self.store
-            .set_fuel(super::MAX_FUEL)
+            .set_fuel(super::call_fuel(payload_bytes))
             .map_err(|_| GuestFailed)?;
         self.store.set_epoch_deadline(super::CALL_DEADLINE_TICKS);
         Ok(())
@@ -91,7 +91,7 @@ impl Runtime {
 
 impl Guest for Runtime {
     fn activate(&mut self, value: &wire::Activate) -> Result<Vec<wire::Effect>, GuestFailed> {
-        self.begin_call()?;
+        self.begin_call(0)?;
         self.bindings
             .sakura_senp_event_effects()
             .call_activate(&mut self.store, &value.into())
@@ -100,7 +100,7 @@ impl Guest for Runtime {
     }
 
     fn on_event(&mut self, value: &wire::EventMessage) -> Result<Vec<wire::Effect>, GuestFailed> {
-        self.begin_call()?;
+        self.begin_call(value.event.payload_bytes())?;
         self.bindings
             .sakura_senp_event_effects()
             .call_on_event(
@@ -113,7 +113,7 @@ impl Guest for Runtime {
     }
 
     fn deactivate(&mut self, reason: &wire::StopReason) -> Result<(), GuestFailed> {
-        self.begin_call()?;
+        self.begin_call(0)?;
         self.bindings
             .sakura_senp_event_effects()
             .call_deactivate(&mut self.store, reason.into())

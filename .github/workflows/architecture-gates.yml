@@ -64,6 +64,7 @@ jobs:
         timeout-minutes: 15
         run: |
           python3 -m unittest discover -s src/test/py -p test_senp_github_models.py -v
+          python3 -m unittest discover -s src/test/py -p test_senp_runtime_gate.py -v
           python3 tools/verify-senp-github-models.py \
             --jar "$RUNNER_TEMP/tla2tools.jar" --output "$RUNNER_TEMP/senp-github"
 

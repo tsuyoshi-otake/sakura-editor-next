@@ -102,12 +102,12 @@ public:
 	/*!
 		@brief Largest body one completion may carry.
 
-		The wire and the effect protocol both bound a completion's data at 64 KiB,
-		and the rest of the envelope has to fit beside the body. A page over this
-		is refused by name rather than delivered short: a truncated JSON body is
-		not a smaller page, it is one nothing can parse.
+		The wire and the effect protocol both bound a completion's data at
+		256 KiB, and the rest of the envelope has to fit beside the body. A page
+		over this is refused by name rather than delivered short: a truncated JSON
+		body is not a smaller page, it is one nothing can parse.
 	*/
-	[[nodiscard]] static constexpr std::size_t MaximumInlineBodyBytes() noexcept { return 62u * 1024u; }
+	[[nodiscard]] static constexpr std::size_t MaximumInlineBodyBytes() noexcept { return 248u * 1024u; }
 	[[nodiscard]] static constexpr std::size_t MaximumCachedPages() noexcept { return 8; }
 	//! A log downloads on the same single worker every page fetch runs on, so
 	//! this is what bounds how much work one connection can queue ahead of
@@ -148,6 +148,10 @@ public:
 private:
 	struct Read final {
 		std::wstring readId;
+		//! The shape this read asked for. The page it answers with is reduced to
+		//! that shape's stated fields, so the answer cannot be published without
+		//! remembering which question it answers.
+		std::wstring shape;
 		std::wstring cacheKey;
 		std::uint64_t subscriptionId{};
 		std::uint64_t deliveredCycle{};

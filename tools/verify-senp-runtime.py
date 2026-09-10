@@ -36,12 +36,42 @@ def matching_processes(paths: list[Path]) -> list[dict]:
     return json.loads(result.stdout)
 
 
+# The two cases that, between them, carry a real gh answer across the tool
+# boundary into a real tree and a real editor surface. Anything less than both
+# of them is a run that did not exercise the path.
+LIVE_GITHUB_CASES = {
+    "RealIssuesAndPullRequestsReachTheTreeAndAnEditorSurface",
+    "RealWorkflowRunsAndOneRealJobLogReachTheTreeAndAnEditorSurface",
+}
+
+
+def live_gate_failure(report: ET.Element) -> str | None:
+    """Why a live GitHub run proved nothing, or None when it proved the path.
+
+    Cases are named rather than counted, for the same reason the compositions
+    are: a filter that matches nothing still writes a well-formed report, and a
+    gate that reads that clean zero as a pass has stopped being a gate.
+    """
+    cases = {case.get("name"): case for case in report.findall(".//testcase")
+             if case.get("classname") == "SenpLiveGitHub"}
+    absent = sorted(LIVE_GITHUB_CASES - cases.keys())
+    unproven = sorted(name for name, case in cases.items()
+                      if case.find("skipped") is not None or case.find("failure") is not None)
+    if not absent and not unproven:
+        return None
+    return ("the live GitHub gate proved nothing"
+            + (f"; absent cases: {absent}" if absent else "")
+            + (f"; skipped or failed cases: {unproven}" if unproven else ""))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, default=Path.home() / "tmp" / "senp-runtime-fixtures")
     parser.add_argument("--tests1", type=Path, default=ROOT / "x64/Debug/tests1.exe")
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--prepare-only", action="store_true", help="build fixtures without claiming a test pass")
+    parser.add_argument("--live-github", type=Path, default=None,
+                        help="checkout to read real GitHub data from; adds the live suite to the gate")
     args = parser.parse_args()
     if os.name != "nt":
         parser.error("the native v2 process acceptance path requires Windows")
@@ -49,6 +79,9 @@ def main() -> int:
     if output == Path.home().resolve() or output == Path(output.anchor):
         parser.error("output-dir must be a dedicated work-artifact directory")
     output.mkdir(parents=True, exist_ok=True)
+    live = args.live_github.resolve() if args.live_github else None
+    if live is not None and not (live / ".git").exists():
+        parser.error("live-github must name a git checkout the GitHub reads run against")
     tests = args.tests1.resolve()
     if not tests.is_file() and not args.prepare_only:
         parser.error("tests1 does not exist; run build-sln.bat x64 Debug first")
@@ -163,6 +196,21 @@ def main() -> int:
             run("rust-host", cargo_test + ["--", "--include-ignored"], ROOT / "rust/senp", 600, env)
             if rust_peer.read_bytes() != cpp_peer.read_bytes():
                 raise RuntimeError("C++ and Rust canonical fixture encodings disagree")
+            if live is not None:
+                # The live suite is the only gate that proves the path end to
+                # end: real gh output crossing the tool boundary, reaching a
+                # real tree and a real editor surface. It needs a checkout and a
+                # signed-in gh, so it is opt-in, but once asked for it is a gate
+                # and not a report - a run that skipped both cases has proved
+                # nothing and must not be read as a pass.
+                live_env = dict(os.environ, SAKURA_SENP_RUNTIME_FIXTURES=str(output),
+                                SAKURA_SENP_LIVE_GITHUB=str(live))
+                live_xml = output / "live-github-results.xml"
+                run("live-github", [str(tests), "--gtest_filter=SenpLiveGitHub.*",
+                    f"--gtest_output=xml:{live_xml}"], ROOT, 600, live_env)
+                refusal = live_gate_failure(ET.parse(live_xml).getroot())
+                if refusal:
+                    raise RuntimeError(refusal)
             status = "pass"
     finally:
         survivors = matching_processes(executables)

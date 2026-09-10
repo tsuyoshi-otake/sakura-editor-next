@@ -85,6 +85,9 @@ public:
 	std::optional<std::wstring> ResolveExecutable() const override { return L"C:\\Tools\\gh.exe"; }
 	GhProcessOutcome Run(const GhProcessInvocation& invocation, HANDLE) const override
 	{
+		EXPECT_TRUE(::platform::process::IsExecutableBoundedProcessRequest(
+			BuildBoundedProcessRequest(invocation)))
+			<< L"the request this invocation builds would be rejected before gh is launched";
 		m_state->invocations.push_back(invocation);
 		if (m_state->outcomes.empty()) {
 			return { EBoundedProcessStatus::Succeeded, 0,
@@ -301,6 +304,40 @@ TEST(GhConnectionLifecycle, NativePlatformPinsConfigAccountAndVerifiesIdentityBe
 		checked.Credential()->RunAuthenticated({ L"api", L"user" }, 1000, 1024, 1024, nullptr).Status());
 	ASSERT_EQ(5U, tool->Invocations().size());
 	EXPECT_TRUE(HasOverride(tool->Invocations()[4], L"GH_TOKEN", L"secret-token"));
+}
+
+TEST(GhConnectionLifecycle, StatesOneThingAboutEveryEnvironmentNameATokenBearingCallSets)
+{
+	auto tool = std::make_shared<FakeToolPlatform>();
+	const auto probe = CGhToolPolicy(tool, L"C:\\Sakura").Probe(nullptr);
+	tool->Queue({ EBoundedProcessStatus::Succeeded, 0, Bytes(
+		R"({"hosts":{"github.com":[{"active":true,"host":"github.com","login":"account-a","state":"success","tokenSource":"keyring"}]}})"), {} });
+	tool->Queue({ EBoundedProcessStatus::Succeeded, 0, Bytes("secret-token\n"), {} });
+	tool->Queue({ EBoundedProcessStatus::Succeeded, 0, Bytes(R"({"login":"account-a"})"), {} });
+	CWindowsGhConnectionPlatform connection(tool, L"C:\\Sakura");
+	const auto checked = connection.Check(probe, L"C:\\Profiles\\gh", L"github.com", std::nullopt, nullptr);
+	ASSERT_EQ(GhConnectionTerminal::Succeeded, checked.Terminal());
+	ASSERT_EQ(4U, tool->Invocations().size());
+	const auto removes = [](const GhProcessInvocation& invocation, const std::wstring_view name) {
+		return std::ranges::any_of(invocation.EnvironmentRemovals(),
+			[&](const std::wstring& entry) { return entry == name; });
+	};
+	const auto& status = tool->Invocations()[1];
+	EXPECT_FALSE(HasOverride(status, L"GH_TOKEN", L"secret-token"));
+	EXPECT_TRUE(removes(status, L"GH_TOKEN"));
+	EXPECT_TRUE(::platform::process::IsExecutableBoundedProcessRequest(BuildBoundedProcessRequest(status)));
+	const auto& identity = tool->Invocations()[3];
+	EXPECT_TRUE(HasOverride(identity, L"GH_TOKEN", L"secret-token"));
+	EXPECT_FALSE(removes(identity, L"GH_TOKEN"));
+	EXPECT_TRUE(removes(identity, L"GITHUB_TOKEN"));
+	EXPECT_TRUE(::platform::process::IsExecutableBoundedProcessRequest(BuildBoundedProcessRequest(identity)));
+	tool->Queue({ EBoundedProcessStatus::Succeeded, 0, Bytes("{}"), {} });
+	ASSERT_TRUE(checked.Credential());
+	EXPECT_EQ(EBoundedProcessStatus::Succeeded,
+		checked.Credential()->RunAuthenticated({ L"api", L"user" }, 1000, 1024, 1024, nullptr).Status());
+	ASSERT_EQ(5U, tool->Invocations().size());
+	EXPECT_TRUE(::platform::process::IsExecutableBoundedProcessRequest(
+		BuildBoundedProcessRequest(tool->Invocations()[4])));
 }
 
 TEST(GhConnectionLifecycle, NativePlatformSeparatesConfirmedAuthenticationAbsenceFromMalformedAndMismatchedIdentity)

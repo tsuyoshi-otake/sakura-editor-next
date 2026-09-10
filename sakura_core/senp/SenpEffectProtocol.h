@@ -13,6 +13,12 @@
 namespace senp::effect {
 
 inline constexpr std::size_t kMaximumFrameBytes = 1024U * 1024U;
+//! Largest body one tool completion may carry, counted in UTF-8 bytes. A
+//! completion carries a whole page of an answer, so it is the one field that is
+//! larger than the identifiers and messages beside it. The frame it travels in
+//! is still kMaximumFrameBytes, and escaping a page of text doubles it at
+//! worst, so a quarter of a frame is what one completion is allowed to be.
+inline constexpr std::size_t kMaximumToolDataBytes = 256U * 1024U;
 inline constexpr std::size_t kMaximumEffects = 64;
 inline constexpr std::size_t kMaximumItems = 256;
 inline constexpr std::int64_t kMaximumCounter = INT64_MAX;

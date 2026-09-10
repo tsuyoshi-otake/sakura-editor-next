@@ -157,6 +157,11 @@ private:
 	std::vector<std::uint8_t> m_standardOutput, m_standardError;
 };
 
+//! Build the exact process request an invocation runs as, so a caller and a test
+//! can ask whether the runner would accept it without launching anything.
+[[nodiscard]] platform::process::BoundedProcessRequest BuildBoundedProcessRequest(
+	const GhProcessInvocation& invocation);
+
 class IGhToolPlatform {
 public:
 	virtual ~IGhToolPlatform() = default;

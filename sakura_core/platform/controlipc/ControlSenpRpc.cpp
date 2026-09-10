@@ -114,6 +114,24 @@ bool GetWide(std::span<const std::uint8_t> bytes, std::size_t& offset, std::wstr
 	return GetUtf8(bytes, offset, utf8) && FromUtf8(utf8, value);
 }
 
+//! Wide text held to a bound the caller names instead of the generic field one.
+//! A field that is allowed to be large says so at its own call site, so it
+//! cannot raise the ceiling every other field on this channel is held to.
+bool PutWideBounded(std::vector<std::uint8_t>& bytes, std::wstring_view value, std::size_t maximum)
+{
+	std::string utf8;
+	if (!ToUtf8(value, utf8) || utf8.find('\0') != std::string::npos) return false;
+	return PutBytes(bytes, utf8, maximum);
+}
+
+bool GetWideBounded(std::span<const std::uint8_t> bytes, std::size_t& offset, std::wstring& value,
+	std::size_t maximum)
+{
+	std::string utf8;
+	if (!GetBytes(bytes, offset, utf8, maximum)) return false;
+	return utf8.find('\0') == std::string::npos && FromUtf8(utf8, value);
+}
+
 bool IsOperation(std::uint8_t operation) noexcept
 {
 	return operation >= static_cast<std::uint8_t>(EControlSenpRpcOperation::IssueGrant)
@@ -223,6 +241,9 @@ bool IsCoherentResponse(const ControlSenpRpcResponse& response) noexcept
 		return false;
 	}
 	if (response.hasCompletion && response.completion.readId.empty()) return false;
+	// Counted in characters against a bound written in UTF-8 bytes, which is the
+	// conservative direction: a character never encodes to fewer than one byte,
+	// so anything this admits the encoder still measures for real.
 	if (response.completion.data.size() > kControlSenpRpcMaximumToolDataBytes) return false;
 	if (!IsResourceState(response.resourceState) || !IsResourceEnd(response.resourceEnd)) return false;
 	if (response.resourceRevision < 0) return false;
@@ -366,7 +387,9 @@ std::optional<std::vector<std::uint8_t>> EncodeControlSenpRpcResponse(const Cont
 	Put<std::uint8_t>(bytes, response.hasCompletion ? 1U : 0U);
 	if (!PutWide(bytes, response.completion.readId)) return std::nullopt;
 	Put<std::uint8_t>(bytes, static_cast<std::uint8_t>(response.completion.status));
-	if (!PutWide(bytes, response.completion.data)) return std::nullopt;
+	if (!PutWideBounded(bytes, response.completion.data, kControlSenpRpcMaximumToolDataBytes)) {
+		return std::nullopt;
+	}
 	if (!PutWide(bytes, response.completion.message)) return std::nullopt;
 	if (!PutWide(bytes, response.resourceHandle)) return std::nullopt;
 	Put<std::uint64_t>(bytes, response.resourceOffset);
@@ -398,7 +421,9 @@ std::optional<ControlSenpRpcResponse> DecodeControlSenpRpcResponse(std::span<con
 	if (!GetWide(payload, offset, response.completion.readId)) return std::nullopt;
 	if (!Get(payload, offset, completionStatus) || !IsCompletionStatus(completionStatus)) return std::nullopt;
 	response.completion.status = static_cast<senp::effect::CompletionStatus>(completionStatus);
-	if (!GetWide(payload, offset, response.completion.data)) return std::nullopt;
+	if (!GetWideBounded(payload, offset, response.completion.data, kControlSenpRpcMaximumToolDataBytes)) {
+		return std::nullopt;
+	}
 	if (!GetWide(payload, offset, response.completion.message)) return std::nullopt;
 	if (!GetWide(payload, offset, response.resourceHandle)) return std::nullopt;
 	if (!Get(payload, offset, response.resourceOffset)) return std::nullopt;
