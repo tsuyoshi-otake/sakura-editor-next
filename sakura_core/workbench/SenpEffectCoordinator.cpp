@@ -37,6 +37,11 @@ bool CSenpEffectCoordinator::IsCurrent() const noexcept
 	return !m_closed && !m_failed && m_requests.IsCurrent();
 }
 
+bool CSenpEffectCoordinator::CanSubmit() const noexcept
+{
+	return IsCurrent() && !m_pumping;
+}
+
 senp::OwnerRequestAdmission CSenpEffectCoordinator::SubmitEvent(senp::effect::Event event,
 	const senp::CSenpRuntimeSession::Time deadline) noexcept
 {

@@ -31,6 +31,7 @@ public:
 	std::vector<senp::effect::OperationContext> cancelled;
 	std::vector<senp::effect::CommandInvoked> commands;
 	bool IsCurrent() const noexcept override { return true; }
+	bool CanSubmit() const noexcept override { return true; }
 	SenpTreeAdmission Submit(senp::effect::TreeRequest request, SenpTreeProvider::Time) noexcept override
 	{
 		const auto sequence = static_cast<std::int64_t>(calls.size() + 1);

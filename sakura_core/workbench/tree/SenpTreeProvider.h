@@ -23,6 +23,10 @@ class ISenpTreeRuntime {
 public:
 	virtual ~ISenpTreeRuntime() = default;
 	[[nodiscard]] virtual bool IsCurrent() const noexcept = 0;
+	//! False while the runtime is delivering results to this subscriber. Demand
+	//! raised then (a refresh or a page) waits for the owner's next Pump instead
+	//! of being refused, which the subscriber could not tell from a dead owner.
+	[[nodiscard]] virtual bool CanSubmit() const noexcept = 0;
 	[[nodiscard]] virtual SenpTreeAdmission Submit(senp::effect::TreeRequest request,
 		senp::CSenpRuntimeSession::Time deadline) noexcept = 0;
 	virtual void Cancel(const senp::effect::OperationContext& context) noexcept = 0;

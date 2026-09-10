@@ -131,7 +131,9 @@ void SenpTreeProvider::Pump(Time now)
 		state.options.runtime->Cancel(it->second.context); it = state.pending.erase(it);
 		state.Changed(parent);
 	}
-	if (!state.visible) return;
+	// While the runtime delivers results, demand stays queued in the model; the
+	// owner pumps every subscriber again once delivery returns.
+	if (!state.visible || !state.options.runtime->CanSubmit()) return;
 	// One pass admits at most eight visible demands. Failed admissions are terminal,
 	// never put back into an immediate retry loop by paint, timer or other results.
 	struct DispatchGuard final { bool& flag; explicit DispatchGuard(bool& value) : flag(value) { flag = true; } ~DispatchGuard() { flag = false; } } guard(state.pumping);

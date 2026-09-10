@@ -29,6 +29,7 @@ public:
 	}
 	void Clear() noexcept { m_projection = nullptr; m_coordinator = nullptr; }
 	[[nodiscard]] bool IsCurrent() const noexcept override { return m_coordinator && m_coordinator->IsCurrent(); }
+	[[nodiscard]] bool CanSubmit() const noexcept override { return m_coordinator && m_coordinator->CanSubmit(); }
 	[[nodiscard]] tree::SenpTreeAdmission Submit(senp::effect::TreeRequest request,
 		senp::CSenpRuntimeSession::Time deadline) noexcept override
 	{

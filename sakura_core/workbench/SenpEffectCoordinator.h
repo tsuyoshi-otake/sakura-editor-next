@@ -62,6 +62,8 @@ public:
 	CSenpEffectCoordinator& operator=(const CSenpEffectCoordinator&) = delete;
 
 	[[nodiscard]] bool IsCurrent() const noexcept override;
+	//! Drain refuses every submission it would reenter; this names that window.
+	[[nodiscard]] bool CanSubmit() const noexcept override;
 	[[nodiscard]] tree::SenpTreeAdmission Submit(senp::effect::TreeRequest request,
 		senp::CSenpRuntimeSession::Time deadline) noexcept override;
 	void Cancel(const senp::effect::OperationContext& context) noexcept override;

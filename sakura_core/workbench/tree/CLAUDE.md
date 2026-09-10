@@ -14,6 +14,12 @@
   parent loads deduplicate. Refresh preserves stable selection and user expansion;
   removed descendants and collapsed/hidden subscribers cancel explicitly.
   Failed, busy and timed-out loads require an explicit retry. Do not poll data.
+- Demand raised while the runtime delivers results (`CanSubmit()` is false,
+  i.e. inside the coordinator's drain) is not a failed admission. It stays
+  queued in the model and the owner's post-drain provider Pump admits it.
+  Submitting it anyway returned a bare `Unavailable`, so every extension-issued
+  `InvalidateTree` - on activation and on each workspace change - failed the
+  visible root until the user pressed Retry (#296).
 - The native composition port mints owner-wide monotonic request generations.
   A derived tool-result event may have a different operation ID but retains its
   owner/workspace/account/request scope. Cancel unsubscribes all reads derived

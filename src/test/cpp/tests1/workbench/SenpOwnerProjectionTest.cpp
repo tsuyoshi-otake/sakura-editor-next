@@ -271,5 +271,41 @@ TEST(SenpOwnerProjection, RefreshCancelsRetainedToolReadBeforeStartingItsSuccess
 	projection.Close();
 }
 
+TEST(SenpOwnerProjection, InvalidationDeliveredDuringDrainReloadsInsteadOfFailing)
+{
+	Fixture fixture; const auto owner = fixture.Activate(); Target target;
+	CSenpOwnerProjection projection(fixture.Owners(), owner, target); fixture.Port().Bind(projection);
+	ASSERT_TRUE(projection.RegisterTree(L"sample.projects", {}));
+	auto tree = projection.Tree(L"sample.projects");
+	const auto page = [](std::wstring label) {
+		return senp::effect::PublishTreePage{ L"sample.projects", L"", {
+			{ L"item", std::move(label), L"", L"", L"", senp::effect::CollapsibleState::Leaf, L"", {} } },
+			L"", 1, senp::effect::PageStatus::Complete, L"" };
+	};
+	fixture.Process().Next({ page(L"Before") });
+	tree->SetVisible(true, Clock::now()); fixture.Owners().Poll(Clock::now());
+	EXPECT_EQ(ESenpOwnerProjectionStatus::Applied, projection.Pump(Clock::now()));
+	ASSERT_EQ(tree::TreeChildrenState::Complete, tree->Model().Node(L"")->state);
+
+	// An extension answers a workspace change (and its own activation) by
+	// invalidating its views. The invalidation reaches the provider inside the
+	// coordinator's drain, which refuses every submission; the reload has to wait
+	// for the drain to return instead of failing the root until Retry is pressed.
+	fixture.Process().Next({ senp::effect::InvalidateTree{ L"sample.projects" } });
+	EXPECT_TRUE(projection.PublishWorkspace({ { { L"root:0", L"main", {} } } }));
+	EXPECT_EQ(ESenpOwnerProjectionStatus::Applied, projection.Pump(Clock::now()));
+	fixture.Process().Next({ page(L"After") });
+	fixture.Owners().Poll(Clock::now());
+	EXPECT_EQ(ESenpOwnerProjectionStatus::Applied, projection.Pump(Clock::now()));
+	EXPECT_EQ(tree::TreeChildrenState::Loading, tree->Model().Node(L"")->state);
+	ASSERT_EQ(3U, fixture.Process().Events().size());
+	EXPECT_TRUE(std::holds_alternative<senp::effect::WorkspaceChanged>(fixture.Process().Events()[1]));
+	EXPECT_TRUE(std::holds_alternative<senp::effect::TreeRequest>(fixture.Process().Events()[2]));
+	fixture.Owners().Poll(Clock::now());
+	EXPECT_EQ(ESenpOwnerProjectionStatus::Applied, projection.Pump(Clock::now()));
+	EXPECT_EQ(tree::TreeChildrenState::Complete, tree->Model().Node(L"")->state);
+	projection.Close(); EXPECT_EQ(1, target.Revokes());
+}
+
 } // namespace
 } // namespace workbench

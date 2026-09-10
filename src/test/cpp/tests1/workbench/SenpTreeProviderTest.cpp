@@ -206,7 +206,7 @@ TEST(TreeViewModel, MalformedTextAndUnknownStateNeverReachTheNativeControl)
 
 class TreeRuntimeProbe final : public ISenpTreeRuntime {
 public:
-	bool current{ true }, executeResult{ true }, invalidScope{};
+	bool current{ true }, executeResult{ true }, invalidScope{}, delivering{};
 	senp::AdmissionStatus admission{ senp::AdmissionStatus::Accepted };
 	std::int64_t nextGeneration{};
 	struct Call { senp::effect::TreeRequest request; senp::effect::OperationContext context; SenpTreeProvider::Time deadline; };
@@ -214,6 +214,7 @@ public:
 	std::vector<senp::effect::OperationContext> cancelled;
 	std::vector<senp::effect::CommandInvoked> executed;
 	bool IsCurrent() const noexcept override { return current; }
+	bool CanSubmit() const noexcept override { return current && !delivering; }
 	SenpTreeAdmission Submit(senp::effect::TreeRequest request, SenpTreeProvider::Time deadline) noexcept override
 	{
 		const auto generation = ++nextGeneration;
@@ -259,6 +260,19 @@ TEST_F(SenpTreeProviderTest, HideAndRefreshCancelOldSubscriberAndFenceItsLatePag
 	provider.Refresh(now); ASSERT_EQ(3, runtime->submitted.size()); EXPECT_EQ(2, runtime->cancelled.size());
 	EXPECT_EQ(TreeResult::Stale, provider.Apply(fresh, Wire(), now));
 	EXPECT_EQ(TreeResult::Applied, provider.Apply(runtime->submitted.back().context, Wire(), now));
+	EXPECT_EQ(1, provider.Model().ItemCount());
+}
+TEST_F(SenpTreeProviderTest, DemandRaisedWhileResultsAreDeliveredWaitsForTheNextPump)
+{
+	provider.SetVisible(true, now); ASSERT_EQ(1, runtime->submitted.size());
+	ASSERT_EQ(TreeResult::Applied, provider.Apply(runtime->submitted[0].context, Wire(), now));
+	runtime->delivering = true;
+	provider.Refresh(now);
+	EXPECT_EQ(1, runtime->submitted.size());
+	EXPECT_NE(TreeChildrenState::Failed, provider.Model().Node(L"")->state);
+	runtime->delivering = false;
+	provider.Pump(now); ASSERT_EQ(2, runtime->submitted.size());
+	EXPECT_EQ(TreeResult::Applied, provider.Apply(runtime->submitted[1].context, Wire(), now));
 	EXPECT_EQ(1, provider.Model().ItemCount());
 }
 TEST_F(SenpTreeProviderTest, BusyAndDeadlineAreTerminalUntilExplicitRetry)
