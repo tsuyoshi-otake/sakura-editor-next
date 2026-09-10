@@ -952,6 +952,9 @@
     <ClCompile Include="..\src\test\cpp\tests1\test-themeiconresolver.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\test-githubactionsstatusicons.cpp">
+      <Filter>Test Files</Filter>
+    </ClCompile>
 
 
 

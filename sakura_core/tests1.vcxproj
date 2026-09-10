@@ -385,6 +385,7 @@
     <ClCompile Include="..\src\test\cpp\tests1\test-ccodiconfont.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-csetifont.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-themeiconresolver.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\test-githubactionsstatusicons.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cfileext.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cfuncinfoarr.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-clayoutint.cpp" />

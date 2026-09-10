@@ -14,6 +14,13 @@ Neither is installed into the system font collection or written to disk, and eac
 singleton (`CCodiconFont`, `CSetiFont`) reports `IsAvailable()` so a caller can
 fail over rather than draw a code point in a substituted face.
 
+Two vector sets are compiled in as GDI path data rather than fonts:
+`CodiconsActivityIcons.h` (the Activity Bar fallback, `CODICONS-ATTRIBUTION.md`)
+and `GitHubActionsStatusIcons.h` (the GitHub Actions run/job/step status icons,
+`GITHUB-ACTIONS-ATTRIBUTION.md`). The latter is addressed by the upstream
+extension's own icon paths from `TreeItem.icon`, carries per-theme-kind colours
+and one constant-alpha layer, and has its own `license\github-actions\` payload.
+
 - Keep icon lookup restricted to the bundled, versioned vocabularies. A glyph
   this repository cannot name is a missing table entry, not a reason to load an
   external font file or package metadata.

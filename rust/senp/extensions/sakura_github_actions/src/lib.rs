@@ -4,6 +4,7 @@ use sakura_senp_github_client::actions::{parse_run, parse_runs, parse_workflows,
 use std::cell::RefCell;
 
 mod jobs;
+mod status;
 
 wit_bindgen::generate!({ path: "../../wit/v2/senp-extension.wit", world: "extension" });
 use exports::sakura::senp::event_effects::*;
@@ -287,7 +288,7 @@ impl State {
                         if workflow != 0 { run.workflow_id == workflow } else {
                             matches!(&self.branch, BranchState::Selected(branch) if run.head_branch.as_ref() == Some(branch))
                         }
-                    }) => page_effect(view, &parent, u64::from(page), result.items.into_iter().map(run_item).collect(), next_cursor(result.next_page), String::new()),
+                    }) => page_effect(view, &parent, u64::from(page), result.items.into_iter().map(|run| run_item(view, run)).collect(), next_cursor(result.next_page), String::new()),
                     Ok(_) => failed_page(view, &parent, u64::from(page), "Mismatched run filter or next page"),
                     Err(error) => failed_page(view, &parent, u64::from(page), error.to_string()),
                 }
@@ -527,26 +528,48 @@ fn page_effect(
     })
 }
 
+// Upstream's WorkflowNode is its name alone: no icon and no description.
 fn workflow_item(workflow: Workflow) -> TreeItem {
     TreeItem {
         id: format!("workflow:{}", workflow.id),
         label: workflow.name,
-        description: workflow.state,
+        description: String::new(),
         tooltip: format!("{}\n{}", workflow.path, workflow.html_url),
-        icon: "workflow".into(),
+        icon: String::new(),
         collapsible_state: CollapsibleState::Collapsed,
         command_id: String::new(),
         arguments: Vec::new(),
     }
 }
 
-fn run_item(run: Run) -> TreeItem {
+// Upstream's WorkflowRunNode: under a workflow the workflow is already named,
+// so a run is its number; on the current branch it is the workflow and number.
+// State is the icon and the tooltip rather than a text description.
+fn run_item(view: &str, run: Run) -> TreeItem {
+    let label = match &run.name {
+        Some(name) if view != WORKFLOWS => format!("{name} #{}", run.run_number),
+        _ => format!("#{}", run.run_number),
+    };
+    let attempt = if run.run_attempt > 1 {
+        format!("Attempt #{} ", run.run_attempt)
+    } else {
+        String::new()
+    };
+    let state = status::status_text(
+        &run.status,
+        run.conclusion.as_deref(),
+        run.run_started_at.as_deref(),
+        Some(&run.updated_at),
+    );
     TreeItem {
         id: format!("run:{}", run.id),
-        label: format!("#{} {}", run.run_number, run.display_title),
-        description: run.summary(),
-        tooltip: run.html_url,
-        icon: "play-circle".into(),
+        label,
+        description: String::new(),
+        tooltip: format!(
+            "{attempt}{state}\n\n{}",
+            status::event_text(&run.event, run.run_attempt)
+        ),
+        icon: status::run_icon(&run.status, run.conclusion.as_deref()),
         collapsible_state: CollapsibleState::Collapsed,
         command_id: OPEN_RUN.into(),
         arguments: vec![document_id(run.id, run.run_attempt)],
@@ -729,10 +752,59 @@ mod tests {
         let page = page(&effect);
         assert_eq!(page.parent_id, "workflow:31");
         assert_eq!(page.items[0].id, "run:51");
-        assert_eq!(page.items[0].description, "in_progress");
+        assert_eq!(page.items[0].label, "#8");
+        assert_eq!(
+            page.items[0].icon,
+            "resources/icons/workflowruns/wr_inprogress.svg"
+        );
+        assert_eq!(page.items[0].description, "");
+        assert_eq!(page.items[0].tooltip, "Attempt #2 In progress\n\nRe-run");
         assert_eq!(page.items[0].arguments, ["github-actions-run:51:2"]);
         assert_eq!(page.status, PageStatus::Partial);
         assert_eq!(page.next_cursor, "page:2");
+    }
+
+    #[test]
+    fn runs_follow_upstream_labels_icons_and_tooltips() {
+        let run = parse_run(&item_completion(RUN)).unwrap();
+        let item = run_item(BRANCH, run);
+        assert_eq!(item.label, "Build #8");
+        let finished = RUN
+            .replace("\"run_attempt\":2", "\"run_attempt\":1")
+            .replace("\"status\":\"in_progress\"", "\"status\":\"completed\"")
+            .replace("\"conclusion\":null", "\"conclusion\":\"failure\"")
+            .replace(
+                "\"run_started_at\":null",
+                "\"run_started_at\":\"2026-09-01T23:58:30Z\"",
+            )
+            .replace("\"event\":\"push\"", "\"event\":\"pull_request\"");
+        let item = run_item(WORKFLOWS, parse_run(&item_completion(&finished)).unwrap());
+        assert_eq!(item.label, "#8");
+        assert_eq!(item.icon, "resources/icons/workflowruns/wr_failure.svg");
+        assert_eq!(
+            item.tooltip,
+            "Failed in 1m 30s\n\nTriggered via pull request"
+        );
+        let unnamed = RUN.replace("\"name\":\"Build\"", "\"name\":null");
+        assert_eq!(
+            run_item(BRANCH, parse_run(&item_completion(&unnamed)).unwrap()).label,
+            "#8"
+        );
+        let item = workflow_item(Workflow {
+            id: 31,
+            name: "CI".into(),
+            path: ".github/workflows/ci.yml".into(),
+            state: "active".into(),
+            html_url: "https://github.com/o/r/actions/workflows/ci.yml".into(),
+        });
+        assert_eq!(
+            (
+                item.label.as_str(),
+                item.icon.as_str(),
+                item.description.as_str()
+            ),
+            ("CI", "", "")
+        );
     }
 
     #[test]

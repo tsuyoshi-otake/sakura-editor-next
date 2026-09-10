@@ -244,13 +244,22 @@ fn job_item(job: Job) -> TreeItem {
         attempt: job.run_attempt,
         job: job.id,
     };
-    let summary = job.summary();
+    let state = status::status_text(
+        &job.status,
+        job.conclusion.as_deref(),
+        job.started_at.as_deref(),
+        job.completed_at.as_deref(),
+    );
+    // Upstream's WorkflowJobNode shows state only as its icon and is a leaf when
+    // it has no steps. The job's log row lives on the first step page until the
+    // log is an inline action, so every job stays expandable, and the status
+    // string is the tooltip so the state can still be read as text.
     TreeItem {
         id: identity.item(),
         label: job.name,
-        description: summary,
-        tooltip: job.html_url,
-        icon: "gear".into(),
+        description: String::new(),
+        tooltip: state,
+        icon: status::run_icon(&job.status, job.conclusion.as_deref()),
         collapsible_state: CollapsibleState::Collapsed,
         command_id: OPEN_JOB.into(),
         arguments: vec![identity.resource()],
@@ -283,21 +292,20 @@ fn step_page(view: &str, identity: Identity, steps: Vec<Step>, page: u32) -> Eff
         .into_iter()
         .skip(offset as usize)
         .take(PAGE_SIZE as usize)
-        .map(|step| {
-            let summary = step.summary();
-            TreeItem {
-                id: format!(
-                    "step:{}:{}:{}:{}",
-                    identity.run, identity.attempt, identity.job, step.number
-                ),
-                label: format!("{} {}", step.number, step.name),
-                description: summary,
-                tooltip: String::new(),
-                icon: "circle-outline".into(),
-                collapsible_state: CollapsibleState::Leaf,
-                command_id: OPEN_JOB.into(),
-                arguments: vec![identity.resource()],
-            }
+        // Upstream's WorkflowStepNode: the step name, its state as the icon, and
+        // no description or tooltip. The number stays in the stable item ID.
+        .map(|step| TreeItem {
+            id: format!(
+                "step:{}:{}:{}:{}",
+                identity.run, identity.attempt, identity.job, step.number
+            ),
+            icon: status::step_icon(&step.status, step.conclusion.as_deref()),
+            label: step.name,
+            description: String::new(),
+            tooltip: String::new(),
+            collapsible_state: CollapsibleState::Leaf,
+            command_id: OPEN_JOB.into(),
+            arguments: vec![identity.resource()],
         })
         .collect();
     // The log belongs to the job rather than to any step, so it sits once at the
@@ -503,7 +511,12 @@ mod tests {
         let effect = complete(&completion("steps:w:51:2:71:1", item_completion(JOB))).unwrap();
         assert_eq!(page(&effect).items[0].id, "joblog:51:2:71");
         assert_eq!(page(&effect).items[1].id, "step:51:2:71:7");
-        assert_eq!(page(&effect).items[1].description, "queued");
+        assert_eq!(page(&effect).items[1].label, "Compile");
+        assert_eq!(
+            page(&effect).items[1].icon,
+            "resources/icons/steps/step_queued.svg"
+        );
+        assert_eq!(page(&effect).items[1].description, "");
         let effect = complete(&completion("jobdetail:51:1:71", item_completion(JOB))).unwrap();
         assert!(
             matches!(effect,Effect::PublishDocument(doc) if doc.title=="GitHub Actions read failed")
@@ -533,7 +546,36 @@ mod tests {
         );
         assert!(document_identity("github-actions-job:51:2:../72").is_none());
         let job = parse_job(&item_completion(&JOB.replace("in_progress", "new_state"))).unwrap();
-        assert_eq!(job_item(job).description, "unknown (new_state)");
+        let item = job_item(job);
+        assert_eq!(item.icon, "");
+        assert_eq!(item.tooltip, "New state");
+    }
+
+    #[test]
+    fn jobs_show_upstream_state_icons_with_the_status_string_as_tooltip() {
+        let job = parse_job(&item_completion(JOB)).unwrap();
+        let item = job_item(job);
+        assert_eq!(item.label, "Build (Windows)");
+        assert_eq!(item.icon, "resources/icons/workflowruns/wr_inprogress.svg");
+        assert_eq!(item.description, "");
+        assert_eq!(item.tooltip, "In progress");
+        assert_eq!(item.collapsible_state, CollapsibleState::Collapsed);
+        let done = JOB
+            .replacen("\"status\":\"in_progress\"", "\"status\":\"completed\"", 1)
+            .replacen("\"conclusion\":null", "\"conclusion\":\"success\"", 1)
+            .replacen(
+                "\"started_at\":null",
+                "\"started_at\":\"2026-09-01T00:00:00Z\"",
+                1,
+            )
+            .replacen(
+                "\"completed_at\":null",
+                "\"completed_at\":\"2026-09-01T01:02:03Z\"",
+                1,
+            );
+        let item = job_item(parse_job(&item_completion(&done)).unwrap());
+        assert_eq!(item.icon, "resources/icons/workflowruns/wr_success.svg");
+        assert_eq!(item.tooltip, "Succeeded in 1h 2m 3s");
     }
 
     #[test]
@@ -604,7 +646,7 @@ mod tests {
     }
 
     #[test]
-    fn step_pages_are_bounded_and_use_numbers_instead_of_names() {
+    fn step_pages_are_bounded_and_use_upstream_step_names() {
         let (identity, _) = document_identity("github-actions-job:51:2:71").unwrap();
         let step = parse_job(&item_completion(JOB)).unwrap().steps.remove(0);
         let steps: Vec<_> = (1..=21)

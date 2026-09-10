@@ -356,6 +356,7 @@ Source: "sakura\license\ctags\*";      DestDir: "{app}\license\ctags";    Compon
 Source: "sakura\license\windows-terminal\*"; DestDir: "{app}\license\windows-terminal"; Components: main
 Source: "sakura\license\codicons\*"; DestDir: "{app}\license\codicons"; Components: main
 Source: "sakura\license\seti\*"; DestDir: "{app}\license\seti"; Components: main
+Source: "sakura\license\github-actions\*"; DestDir: "{app}\license\github-actions"; Components: main
 Source: "sakura\license\fmt\*"; DestDir: "{app}\license\fmt"; Components: main
 Source: "sakura\license\ms-gsl\*"; DestDir: "{app}\license\ms-gsl"; Components: main
 Source: "sakura\license\wil\*"; DestDir: "{app}\license\wil"; Components: main

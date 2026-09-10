@@ -179,6 +179,11 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   The native Activity Bar currently renders the bundled codicon font and has no
   safe SVG extension-asset renderer; accepting arbitrary image paths would fake
   capability and widen the package filesystem boundary.
+- Tree item icons follow the same boundary. `TreeItem.icon` may name an
+  upstream-relative image path, but only a path in the host's compiled-in
+  vocabulary draws (today the GitHub Actions status icons, see
+  `../workbench/tree/CLAUDE.md`); the package's own files are never read and an
+  unknown path draws nothing.
 - ZIP paths, counts, sizes, compression ratio, UTF-8, JSON members, ABI,
   capabilities, activation events, and contribution identifiers fail closed.
 - No WASI linker is attached in ABI v1. Runtime memory, fuel, elapsed time, IPC

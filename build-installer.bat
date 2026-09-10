@@ -60,6 +60,7 @@ mkdir %INSTALLER_WORK%\license\ctags\
 mkdir %INSTALLER_WORK%\license\windows-terminal\
 mkdir %INSTALLER_WORK%\license\codicons\
 mkdir %INSTALLER_WORK%\license\seti\
+mkdir %INSTALLER_WORK%\license\github-actions\
 mkdir %INSTALLER_WORK%\license\fmt\
 mkdir %INSTALLER_WORK%\license\ms-gsl\
 mkdir %INSTALLER_WORK%\license\wil\
@@ -117,6 +118,11 @@ if not exist "%SETI_VENDOR%\SETI-LICENSE" (
 	echo Seti license payload was not found.
 	exit /b 1
 )
+set GITHUB_ACTIONS_VENDOR=%~dp0sakura_core\workbench\icons
+if not exist "%GITHUB_ACTIONS_VENDOR%\GITHUB-ACTIONS-ATTRIBUTION.md" (
+	echo GitHub Actions attribution payload was not found.
+	exit /b 1
+)
 if not exist "%WINDOWS_TERMINAL_VENDOR%\LICENSE" (
 	echo Windows Terminal license payload was not found.
 	exit /b 1
@@ -157,6 +163,7 @@ copy /Y %WINDOWS_TERMINAL_VENDOR%\IMPORTED_FILES.md         %INSTALLER_WORK%\lic
 copy /Y %CODICONS_VENDOR%\CODICONS-ATTRIBUTION.md           %INSTALLER_WORK%\license\codicons\ > NUL || (echo error copying Codicons attribution && exit /b 1)
 copy /Y %SETI_VENDOR%\SETI-ATTRIBUTION.md                   %INSTALLER_WORK%\license\seti\ > NUL || (echo error copying Seti attribution && exit /b 1)
 copy /Y %SETI_VENDOR%\SETI-LICENSE                          %INSTALLER_WORK%\license\seti\ > NUL || (echo error copying Seti license && exit /b 1)
+copy /Y %GITHUB_ACTIONS_VENDOR%\GITHUB-ACTIONS-ATTRIBUTION.md %INSTALLER_WORK%\license\github-actions\ > NUL || (echo error copying GitHub Actions attribution && exit /b 1)
 copy /Y %WINDOWS_TERMINAL_LICENSES%\fmt\LICENSE             %INSTALLER_WORK%\license\fmt\ > NUL || (echo error copying fmt license && exit /b 1)
 copy /Y %WINDOWS_TERMINAL_LICENSES%\ms-gsl\LICENSE          %INSTALLER_WORK%\license\ms-gsl\ > NUL || (echo error copying Microsoft GSL license && exit /b 1)
 copy /Y %WINDOWS_TERMINAL_LICENSES%\wil\LICENSE             %INSTALLER_WORK%\license\wil\ > NUL || (echo error copying WIL license && exit /b 1)

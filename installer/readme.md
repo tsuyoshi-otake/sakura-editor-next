@@ -117,6 +117,8 @@ Windows の「アプリで開く」登録、右クリックメニュー、`送�
             - seti/
                 - SETI-ATTRIBUTION.md
                 - SETI-LICENSE
+            - github-actions/
+                - GITHUB-ACTIONS-ATTRIBUTION.md
             - fmt/
                 - LICENSE
             - ms-gsl/

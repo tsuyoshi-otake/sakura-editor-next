@@ -859,6 +859,13 @@ TEST_F(SenpOwnerComposition, RealGithubActionsReachNativeProviders)
     ASSERT_EQ(tree::TreeResult::Applied, provider->SetExpanded(L"workflow:31", true, Clock::now()));
     ASSERT_TRUE(Await(composition, [&] { return provider->Model().Node(L"run:51").has_value(); }));
     ExpectRead(*target, L"workflowRuns", L"31");
+    // Upstream's run row: the number under WORKFLOWS, state as the icon, and
+    // status and trigger in the tooltip rather than in the row text.
+    const auto runItem = provider->Model().Node(L"run:51")->item;
+    EXPECT_EQ(L"#8", runItem.label);
+    EXPECT_EQ(L"resources/icons/workflowruns/wr_inprogress.svg", runItem.icon);
+    EXPECT_TRUE(runItem.description.empty());
+    EXPECT_EQ(L"Attempt #2 In progress\n\nRe-run", runItem.tooltip);
     ASSERT_EQ(tree::TreeResult::Applied, provider->SetExpanded(L"run:51", true, Clock::now()));
     ASSERT_TRUE(Await(composition, [&] { return provider->Model().Node(L"attempt:51:1").has_value(); }));
     EXPECT_TRUE(provider->Model().Node(L"attempt:51:2").has_value());
@@ -882,7 +889,13 @@ TEST_F(SenpOwnerComposition, RealGithubActionsReachNativeProviders)
     ExpectRead(*target, L"runAttemptJobs", L"51", L"1");
     ASSERT_EQ(tree::TreeResult::Applied, provider->SetExpanded(L"job:51:1:71", true, Clock::now()));
     ASSERT_TRUE(Await(composition, [&] { return provider->Model().Node(L"step:51:1:71:7").has_value(); }));
-    EXPECT_EQ(L"queued", provider->Model().Node(L"step:51:1:71:7")->item.description);
+    const auto jobItem = provider->Model().Node(L"job:51:1:71")->item;
+    EXPECT_EQ(L"resources/icons/workflowruns/wr_inprogress.svg", jobItem.icon);
+    EXPECT_EQ(L"In progress", jobItem.tooltip);
+    const auto stepItem = provider->Model().Node(L"step:51:1:71:7")->item;
+    EXPECT_EQ(L"Compile", stepItem.label);
+    EXPECT_EQ(L"resources/icons/steps/step_queued.svg", stepItem.icon);
+    EXPECT_TRUE(stepItem.description.empty());
     ASSERT_TRUE(provider->Select(L"job:51:1:71"));
     ASSERT_TRUE(provider->Execute(L"job:51:1:71"));
     ASSERT_TRUE(Await(composition, [&] { return target->Publishes() == 2; }));

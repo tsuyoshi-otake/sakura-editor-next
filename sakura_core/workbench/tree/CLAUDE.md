@@ -37,8 +37,25 @@
   the row text as its name. This is a documented accessibility mapping boundary.
 - Commands execute on a matched down/up pair or Enter, never on selection.
   Command-bearing rows expand through their twistie; commandless rows use the
-  requested single/double-click mode. Drag/drop, checkboxes, inline editing and
-  remote icon resources have no contract and remain unavailable.
+  requested single/double-click mode. Drag/drop, checkboxes and inline editing
+  have no contract and remain unavailable.
+- `TreeItem.icon` is a codicon name, empty, or a path. Upstream extensions pass
+  `{light, dark}` file URIs inside their package; Sakura never reads package
+  files for icons, so a path names one entry of the bundled, compiled-in
+  vocabulary (today only the GitHub Actions run/job/step status icons, see
+  `../icons/GITHUB-ACTIONS-ATTRIBUTION.md`). One theme-independent path stands
+  for the upstream light/dark pair, and `ViewPaneChrome` picks the colours from
+  the active colour theme kind. An unknown path draws no icon, never a
+  substituted glyph. Upstream's in-progress spinner rotates; it is drawn at rest
+  because a per-row animation timer is not allowed here (see the timer rule
+  below).
+- The bundled GitHub Actions extension follows upstream's run, job and step
+  rows (name/number labels, state as icon, status and trigger in the tooltip),
+  with two recorded divergences: tooltips are plain text without upstream's
+  bold status, actor link and relative time (there is no Markdown tooltip
+  contract, and the extension has no clock or timezone), and a job with no
+  steps stays expandable because its Log row lives on its first child page
+  until log opening becomes an inline row action.
 - Intercept external `TVM_EXPAND` before the default procedure: after the first
   expansion Windows can omit its expansion notifications. Apply native updates
   only under the projection guard. Restoring the first visible row must ascend

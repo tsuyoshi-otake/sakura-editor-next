@@ -204,6 +204,7 @@ mkdir %WORKDIR_EXE%\license\ctags\
 mkdir %WORKDIR_EXE%\license\windows-terminal\
 mkdir %WORKDIR_EXE%\license\codicons\
 mkdir %WORKDIR_EXE%\license\seti\
+mkdir %WORKDIR_EXE%\license\github-actions\
 mkdir %WORKDIR_EXE%\license\fmt\
 mkdir %WORKDIR_EXE%\license\ms-gsl\
 mkdir %WORKDIR_EXE%\license\wil\
@@ -310,6 +311,15 @@ if not exist "%SETI_VENDOR%\SETI-LICENSE" (
 call :copyRequired "%SETI_VENDOR%\SETI-ATTRIBUTION.md" "%WORKDIR_EXE%\license\seti\" "Seti attribution"
 if errorlevel 1 exit /b 1
 call :copyRequired "%SETI_VENDOR%\SETI-LICENSE" "%WORKDIR_EXE%\license\seti\" "Seti license"
+if errorlevel 1 exit /b 1
+
+: GitHub Actions run, job and step status icons, drawn for the bundled Actions extension
+set GITHUB_ACTIONS_VENDOR=%~dp0sakura_core\workbench\icons
+if not exist "%GITHUB_ACTIONS_VENDOR%\GITHUB-ACTIONS-ATTRIBUTION.md" (
+	echo GitHub Actions attribution payload was not found.
+	exit /b 1
+)
+call :copyRequired "%GITHUB_ACTIONS_VENDOR%\GITHUB-ACTIONS-ATTRIBUTION.md" "%WORKDIR_EXE%\license\github-actions\" "GitHub Actions attribution"
 if errorlevel 1 exit /b 1
 
 : Windows Terminal compatibility dependencies

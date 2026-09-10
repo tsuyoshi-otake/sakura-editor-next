@@ -5,6 +5,7 @@
 #include "workbench/IconMetrics.h"
 #include "workbench/icons/CCodiconFont.h"
 #include "workbench/icons/CodiconsActivityIcons.h"
+#include "workbench/icons/GitHubActionsStatusIcons.h"
 #include "workbench/icons/LabelRunPainter.h"
 #include "workbench/icons/ThemeIconResolver.h"
 #include <array>
@@ -15,6 +16,14 @@ void PaintViewPaneIcon(HDC dc, const RECT& bounds, const std::wstring_view name,
 {
 	if (!dc || bounds.right <= bounds.left || bounds.bottom <= bounds.top) return;
 	try {
+		// An extension-relative image path is not a codicon name. Only the
+		// bundled GitHub Actions status vocabulary is drawable; any other path
+		// draws nothing rather than a substituted glyph.
+		if (icons::github_actions::IsIconPath(name)) {
+			static_cast<void>(icons::github_actions::Draw(dc, { bounds.left, bounds.top, bounds.right, bounds.bottom },
+				name, theme::CThemeService::IsActiveColorThemeLightKind()));
+			return;
+		}
 		const auto icon = icons::ResolveThemeIcon(name, icons::CCodiconFont::Instance().FaceName());
 		if (icon.font && !icon.fontIcon.glyph.empty()) {
 			const HFONT font = icons::CreateLabelRunGlyphFont(icon.fontIcon.faceName, bounds.bottom - bounds.top);
