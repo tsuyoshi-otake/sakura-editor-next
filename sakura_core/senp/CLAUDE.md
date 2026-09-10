@@ -324,9 +324,9 @@ distinct in tree and document publication.
 
 The separate Actions guest owns Workflow, Run and Attempt identities. Wrapped
 list responses contain `body.workflows` or `body.workflow_runs`, not a bare
-array. A run retains its workflow ID, database ID and attempt number. Attempt
-pagination pins its initial count and never silently switches an older attempt
-to the latest rerun. Current Branch requires a single verified repository branch;
+array. A run retains its workflow ID, database ID and attempt number. The run
+row's ID includes the attempt it was read at, so its jobs and its "Previous
+attempts" never silently switch to a later rerun. Current Branch requires a single verified repository branch;
 detached, unavailable and ambiguous selections are explicit terminal states.
 No run status or null conclusion may be promoted to success. The upstream
 `github-actions.workflow.run.open` command deliberately opens a native read-only
@@ -356,9 +356,15 @@ states and absent conclusions remain distinct from success. GitHub can return
 skipped jobs without runners or steps; do not reject those valid responses.
 The platform-only `sakura.githubActions.openJobDetails` command opens the native
 summary and Step table; upstream has no corresponding native summary command,
-and the upstream log command must retain its separate log meaning. The separate
-platform-only `sakura.githubActions.openJobLog` command opens that log as a
-native text document. It reads through the `jobLog` tool operation, not through
+and the upstream log command must retain its separate log meaning. That command
+is upstream's own `github-actions.workflow.logs`, "View job logs", an inline
+`view/item/context` action on a job row whose contextValue contains `job` and
+`completed` (#297). It receives the job row's ID in place of the job node and
+opens the log as a native text document; there is no Log row. Upstream's
+`github-actions.step.logs` is omitted: it opens the same job log scrolled to a
+step, and a text document has no step-anchored reveal contract here, so a step
+row carries no action rather than a look-alike that ignores the step. The log
+reads through the `jobLog` tool operation, not through
 a repository path, and the extension never holds the bytes: the tool writes them
 into the Control text resource store and answers `{"resource","bytes","log"}`,
 which the extension turns into a text-resource section. A tree item naming a
@@ -406,9 +412,10 @@ command metadata in RuntimeContribution for later window composition. Decoding
 does not enable a package, publish an owner, or issue a tool grant. Both installed
 and available built-in records use the same runtime-metadata decoder.
 
-Schema 2 accepts the VS Code `contributes.menus` shape for one menu only,
-`view/title`, and only the subset a native View title button can present
-(#297). A command may carry a `$(codicon)` `icon`; a `view/title` item must
+Schema 2 accepts the VS Code `contributes.menus` shape for two menus only,
+`view/title` and `view/item/context`, and only the subset a native View can
+present (#297). A command may carry a `$(codicon)` `icon` or a package-relative
+path naming a bundled icon; a `view/title` item must
 name a declared command that has one, use `group: "navigation"` (the inline
 title bar; overflow `...` menus do not exist here), and place itself with
 `when` clauses of the form `view == <id>` joined by `||`. Any other context-key
@@ -423,6 +430,26 @@ Upstream also activates on `onCommand:` for a title click; SENP activation is
 `onView:` only, so a title action reaches only the currently bound runtime and a
 click before activation returns false instead of starting the extension. The
 refresh action is the sanctioned trigger for the no-polling Tree rule.
+
+A `view/item/context` item is drawn on the row, so only `group: "inline"` is
+accepted (a row context menu does not exist here). Its `when` is one View clause
+or none, joined by `&&` to `viewItem =~ /token/` and `viewItem == value` terms;
+a row shows the action when its contextValue contains every regex token and
+equals every value. Any other expression is refused. The icon may be a codicon or
+a path, and the path must name an entry of the bundled vocabulary; `view/title`
+still requires a codicon, and both the Rust and the native decoder enforce that.
+The action runs with the row's ID as its only argument. Item actions belong to
+the runtime generation, not to the structural View declaration.
+
+GitHub Actions tree divergences (#297). As upstream, a run lists its latest
+attempt's jobs followed, for a rerun, by "Previous attempts", which lists every
+earlier attempt oldest first. The run row's ID carries the attempt it was read
+at, so a rerun arrives as a new row instead of re-pointing the old row's
+children. An attempt row shows the `history` codicon rather than its own status
+icon, which would cost one read per attempt before the list could show. The
+run and workflow contextValues keep only the kind and `completed`: upstream's
+rerun/cancel permission and pin tokens serve menus this extension does not
+contribute, and inventing them would advertise actions that do not exist.
 
 Native publication targets that retain an owner must be constructed through
 the CSenpOwnerComposition publication factory. Contribution ownership allocates

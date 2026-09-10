@@ -3,7 +3,9 @@
 #include "StdAfx.h"
 #include "workbench/SenpWindowExtensions.h"
 #include "workbench/commands/CommandArgumentsJson.h"
+#include "workbench/icons/GitHubActionsStatusIcons.h"
 #include <algorithm>
+#include <map>
 #include <set>
 
 namespace workbench {
@@ -103,6 +105,35 @@ private:
 				actions.push_back({ *command, declared->title, *icon });
 			}
 		}
+		for (const auto& menu : m_descriptor.runtime.viewItemContext) {
+			const auto declared = std::ranges::find(m_descriptor.runtime.commands, menu.command,
+				&senp::CommandContribution::command);
+			const auto command = Utf8(menu.command);
+			if (declared == m_descriptor.runtime.commands.end() || !command || !commands.contains(*command))
+				return Status::Invalid;
+			// A row action draws a bundled codicon or a compiled-in extension icon
+			// path; the package's own image files are never read.
+			auto icon = TitleActionIcon(declared->icon);
+			if (!icon && !icons::github_actions::FindStatusIcon(declared->icon).empty()) icon = declared->icon;
+			if (!icon) return Status::Unsupported;
+			std::vector<std::string> targets;
+			if (menu.views.empty()) {
+				for (const auto& view : m_views) targets.push_back(view.id);
+			}
+			for (const auto& view : menu.views) {
+				const auto viewId = Utf8(view);
+				if (!viewId || !views.contains(*viewId)) return Status::Invalid;
+				targets.push_back(*viewId);
+			}
+			for (const auto& viewId : targets) {
+				auto& actions = m_itemActions[viewId];
+				if (std::ranges::any_of(actions, [&](const auto& action) { return action.commandId == menu.command; }))
+					return Status::Invalid;
+				// A row has room for eight inline actions, as a View title bar does.
+				if (actions.size() >= 8) return Status::Unsupported;
+				actions.push_back({ menu.command, declared->title, *icon, menu.contains, menu.equals });
+			}
+		}
 		return Status::Synchronized;
 	}
 	senp::ExtensionDescriptor m_descriptor;
@@ -111,6 +142,9 @@ private:
 	std::vector<layout::WorkbenchViewDescriptor> m_views;
 	std::vector<std::string> m_commands;
 	SenpViewTitleActions m_titleActions;
+	//! Inline row actions per View. They reach the provider of each runtime
+	//! generation and are not a structural declaration field.
+	std::map<std::string, std::vector<tree::SenpTreeItemAction>, std::less<>> m_itemActions;
 };
 
 CSenpWindowExtensions::CSenpWindowExtensions(layout::WorkbenchContributionRegistry& catalog,
@@ -136,7 +170,12 @@ std::optional<SenpOwnerPublicationOptions> CSenpWindowExtensions::PreparePublica
 	auto target = m_createTarget(descriptor, owner);
 	if (!target) return {};
 	std::vector<SenpOwnerTreeContribution> trees;
-	for (auto& view : entry.m_views) trees.emplace_back(std::move(view), entry.m_commands);
+	for (auto& view : entry.m_views) {
+		auto actions = entry.m_itemActions.find(view.id);
+		auto itemActions = actions == entry.m_itemActions.end()
+			? std::vector<tree::SenpTreeItemAction>{} : std::move(actions->second);
+		trees.emplace_back(std::move(view), entry.m_commands, std::move(itemActions));
+	}
 	return SenpOwnerPublicationOptions{ std::move(trees), std::move(target),
 		[this](const auto& candidate, auto bindings) { return m_declarations.Bind(candidate, std::move(bindings)); } };
 }

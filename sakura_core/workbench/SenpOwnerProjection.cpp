@@ -59,13 +59,14 @@ CSenpOwnerProjection::CSenpOwnerProjection(senp::CSenpContributionOwners& owners
 
 CSenpOwnerProjection::~CSenpOwnerProjection() { Close(); }
 
-bool CSenpOwnerProjection::RegisterTree(std::wstring viewId, std::vector<std::wstring> commands)
+bool CSenpOwnerProjection::RegisterTree(std::wstring viewId, std::vector<std::wstring> commands,
+	std::vector<tree::SenpTreeItemAction> itemActions)
 {
 	if (m_closed || m_pumping || viewId.empty() || m_trees.contains(viewId)) return false;
 	tree::SenpTreeProviderOptions options{
 		std::move(viewId),
 		{ m_owner.generation, m_owner.workspaceRevision, m_owner.accountGeneration },
-		std::move(commands), m_runtime,
+		std::move(commands), m_runtime, std::move(itemActions),
 	};
 	auto provider = std::make_shared<tree::SenpTreeProvider>(std::move(options));
 	return m_trees.emplace(std::wstring(provider->ViewId()), std::move(provider)).second;

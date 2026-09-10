@@ -30,7 +30,7 @@ bool Id(std::wstring_view id) noexcept
 std::size_t Bytes(const TreeItem& item) noexcept
 {
 	std::size_t units = item.id.size() + item.label.size() + item.description.size() + item.tooltip.size()
-		+ item.icon.size() + item.commandId.size();
+		+ item.icon.size() + item.commandId.size() + item.contextValue.size();
 	for (const auto& argument : item.arguments) units += argument.size();
 	return units * sizeof(wchar_t);
 }
@@ -103,7 +103,7 @@ TreeViewModel::~TreeViewModel() = default;
 bool TreeViewModel::ValidItem(const TreeItem& item) noexcept
 {
 	return Id(item.id) && !item.label.empty() && Text(item.label, 1024) && Text(item.description, 1024)
-		&& Text(item.tooltip, 4096) && (item.icon.empty() || Id(item.icon)) && (item.commandId.empty() || Id(item.commandId))
+		&& Text(item.tooltip, 4096) && Text(item.contextValue, 1024) && (item.icon.empty() || Id(item.icon)) && (item.commandId.empty() || Id(item.commandId))
 		&& (!item.commandId.empty() || item.arguments.empty())
 		&& item.arguments.size() <= 16 && std::all_of(item.arguments.begin(), item.arguments.end(), [](const auto& v) { return Text(v, 4096); })
 		&& (item.collapsibleState == TreeItemCollapsibleState::None || item.collapsibleState == TreeItemCollapsibleState::Collapsed || item.collapsibleState == TreeItemCollapsibleState::Expanded);

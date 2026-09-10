@@ -31,7 +31,8 @@ std::size_t CountBytes(const TreeViewModel& model, std::wstring_view parent = L"
 {
 	const auto value = model.Node(parent).value();
 	std::size_t units = value.item.id.size() + value.item.label.size() + value.item.description.size() + value.item.tooltip.size()
-		+ value.item.icon.size() + value.item.commandId.size() + value.parentId.size() + value.nextCursor.size() + value.message.size();
+		+ value.item.icon.size() + value.item.commandId.size() + value.item.contextValue.size() + value.parentId.size()
+		+ value.nextCursor.size() + value.message.size();
 	for (const auto& argument : value.item.arguments) units += argument.size();
 	std::size_t bytes{};
 	for (const auto& child : value.children) { units += child.size(); bytes += CountBytes(model, child); }
@@ -192,13 +193,15 @@ TEST(TreeViewModel, BranchToLeafCancelsChildrenAndLeafToBranchAppliesItsInitialE
 TEST(TreeViewModel, MalformedTextAndUnknownStateNeverReachTheNativeControl)
 {
 	TreeViewModel model;
-	for (int shape = 0; shape < 5; ++shape) {
+	for (int shape = 0; shape < 7; ++shape) {
 		auto item = Leaf(L"test");
 		if (shape == 0) item.label = std::wstring(L"a\0b", 3);
 		if (shape == 1) item.tooltip.assign(1, static_cast<wchar_t>(0xd800));
 		if (shape == 2) item.label.clear();
 		if (shape == 3) item.arguments = { L"undeclared" };
 		if (shape == 4) item.collapsibleState = static_cast<TreeItemCollapsibleState>(255);
+		if (shape == 5) item.contextValue.assign(1025, L'x');
+		if (shape == 6) item.contextValue = std::wstring(L"job\0x", 5);
 		EXPECT_EQ(TreeResult::Invalid, model.Apply(Begin(model, L"", TreeLoadKind::Refresh), Page(L"", { item })).result);
 		EXPECT_EQ(0, model.ItemCount()); EXPECT_EQ(0, model.PendingCount());
 	}
@@ -328,6 +331,65 @@ TEST_F(SenpTreeProviderTest, RuntimeFailureDoesNotBecomeEmptyOrRestartItself)
 	EXPECT_FALSE(provider.Model().Node(L"")->hasSnapshot); EXPECT_FALSE(provider.NextDeadline());
 	provider.Pump(now); EXPECT_EQ(1, runtime->submitted.size()); EXPECT_EQ(1, runtime->cancelled.size());
 	provider.Close(); provider.Close(); EXPECT_TRUE(provider.Model().IsClosed());
+}
+TEST_F(SenpTreeProviderTest, InlineItemActionsMatchTheRowContextValueAndPassOnlyItsId)
+{
+	SenpTreeProvider rows{ { L"test.tree", { 1, 2, 3 }, { L"test.open", L"test.logs", L"test.rerun" }, runtime, {
+		{ L"test.logs", L"View logs", L"resources/icons/light/logs.svg", { L"job", L"completed" }, {} },
+		{ L"test.rerun", L"Re-run", L"$(sync)", {}, { L"job" } },
+	} } };
+	rows.SetVisible(true, now); ASSERT_EQ(1, runtime->submitted.size());
+	auto page = Wire(); page.items[0].contextValue = L"job completed";
+	auto running = page.items[0]; running.id = L"running"; running.contextValue = L"job";
+	auto plain = page.items[0]; plain.id = L"plain"; plain.contextValue.clear();
+	page.items.push_back(running); page.items.push_back(plain);
+	ASSERT_EQ(TreeResult::Applied, rows.Apply(runtime->submitted[0].context, page, now));
+	// `=~` tokens are substrings of the contextValue; `==` compares all of it.
+	const auto completed = rows.ItemActions(L"item");
+	ASSERT_EQ(1, completed.size()); EXPECT_EQ(L"test.logs", completed[0].commandId);
+	const auto inProgress = rows.ItemActions(L"running");
+	ASSERT_EQ(1, inProgress.size()); EXPECT_EQ(L"test.rerun", inProgress[0].commandId);
+	EXPECT_TRUE(rows.ItemActions(L"plain").empty());
+	EXPECT_TRUE(rows.ItemActions(L"").empty()); EXPECT_TRUE(rows.ItemActions(L"missing").empty());
+	EXPECT_FALSE(rows.ExecuteItemAction(L"running", L"test.logs"));
+	EXPECT_FALSE(rows.ExecuteItemAction(L"item", L"test.open"));
+	EXPECT_FALSE(rows.ExecuteItemAction(L"", L"test.logs"));
+	EXPECT_TRUE(runtime->executed.empty());
+	ASSERT_TRUE(rows.ExecuteItemAction(L"item", L"test.logs"));
+	ASSERT_EQ(1, runtime->executed.size());
+	EXPECT_EQ(L"test.logs", runtime->executed[0].commandId);
+	EXPECT_EQ(std::vector<std::wstring>{ L"item" }, runtime->executed[0].arguments);
+	EXPECT_EQ(L"item", rows.Model().Selection());
+	rows.SetVisible(false, now);
+	EXPECT_FALSE(rows.ExecuteItemAction(L"item", L"test.logs"));
+	rows.SetVisible(true, now);
+	runtime->current = false;
+	EXPECT_FALSE(rows.ExecuteItemAction(L"item", L"test.logs"));
+	EXPECT_EQ(1, runtime->executed.size());
+}
+TEST(SenpTreeProviderOptions, RejectsItemActionsARowCannotCarry)
+{
+	const auto runtime = std::make_shared<TreeRuntimeProbe>();
+	const auto make = [&](std::vector<SenpTreeItemAction> actions) {
+		std::vector<std::wstring> commands;
+		for (int i = 0; i < 9; ++i) commands.push_back(L"test.act" + std::to_wstring(i));
+		return std::make_unique<SenpTreeProvider>(SenpTreeProviderOptions{ L"test.tree", { 1, 2, 3 }, std::move(commands), runtime, std::move(actions) });
+	};
+	const auto action = [](int i) { return SenpTreeItemAction{ L"test.act" + std::to_wstring(i), L"Act", L"$(output)", { L"job" }, {} }; };
+	std::vector<SenpTreeItemAction> eight;
+	for (int i = 0; i < 8; ++i) eight.push_back(action(i));
+	EXPECT_NO_THROW((void)make(eight));
+	auto nine = eight; nine.push_back(action(8));
+	EXPECT_THROW((void)make(nine), std::invalid_argument);
+	auto undeclared = action(0); undeclared.commandId = L"test.missing";
+	EXPECT_THROW((void)make({ undeclared }), std::invalid_argument);
+	EXPECT_THROW((void)make({ action(0), action(0) }), std::invalid_argument);
+	auto iconless = action(0); iconless.icon.clear();
+	EXPECT_THROW((void)make({ iconless }), std::invalid_argument);
+	auto emptyToken = action(0); emptyToken.equals = { L"" };
+	EXPECT_THROW((void)make({ emptyToken }), std::invalid_argument);
+	auto unbounded = action(0); unbounded.contains.assign(9, L"job");
+	EXPECT_THROW((void)make({ unbounded }), std::invalid_argument);
 }
 }
 } // namespace workbench::tree

@@ -16,8 +16,9 @@ fail over rather than draw a code point in a substituted face.
 
 Two vector sets are compiled in as GDI path data rather than fonts:
 `CodiconsActivityIcons.h` (the Activity Bar fallback, `CODICONS-ATTRIBUTION.md`)
-and `GitHubActionsStatusIcons.h` (the GitHub Actions run/job/step status icons,
-`GITHUB-ACTIONS-ATTRIBUTION.md`). The latter is addressed by the upstream
+and `GitHubActionsStatusIcons.h` (the GitHub Actions run/job/step status icons
+and the `resources/icons/light/logs.svg` icon of its inline "View job logs" row
+action, `GITHUB-ACTIONS-ATTRIBUTION.md`). The latter is addressed by the upstream
 extension's own icon paths from `TreeItem.icon`, carries per-theme-kind colours
 and one constant-alpha layer, and has its own `license\github-actions\` payload.
 `GitHubActionsContainerIcon.h` adds the same extension's Activity Bar icon

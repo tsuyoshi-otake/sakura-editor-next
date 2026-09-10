@@ -42,8 +42,8 @@
 - `TreeItem.icon` is a codicon name, empty, or a path. Upstream extensions pass
   `{light, dark}` file URIs inside their package; Sakura never reads package
   files for icons, so a path names one entry of the bundled, compiled-in
-  vocabulary (today only the GitHub Actions run/job/step status icons, see
-  `../icons/GITHUB-ACTIONS-ATTRIBUTION.md`). One theme-independent path stands
+  vocabulary (today the GitHub Actions run/job/step status icons and its
+  `logs.svg` action icon, see `../icons/GITHUB-ACTIONS-ATTRIBUTION.md`). One theme-independent path stands
   for the upstream light/dark pair, and `ViewPaneChrome` picks the colours from
   the active colour theme kind. An unknown path draws no icon, never a
   substituted glyph. Upstream's in-progress spinner rotates; it is drawn at rest
@@ -53,9 +53,15 @@
   rows (name/number labels, state as icon, status and trigger in the tooltip),
   with two recorded divergences: tooltips are plain text without upstream's
   bold status, actor link and relative time (there is no Markdown tooltip
-  contract, and the extension has no clock or timezone), and a job with no
-  steps stays expandable because its Log row lives on its first child page
-  until log opening becomes an inline row action.
+  contract, and the extension has no clock or timezone). A job with no steps
+  is a leaf, as upstream.
+- Inline row actions follow VS Code's `view/item/context` `inline` group
+  (#297). `SenpTreeItemAction` matches the row's `TreeItem.contextValue`
+  (every `contains` token and every `equals` value); a row with no matching
+  action draws none. The actions are drawn right-aligned on the row and a click
+  selects the row and runs the command with the row's stable ID as its only
+  argument, SENP's stand-in for the element VS Code passes. A hidden or
+  non-current row refuses the action. At most eight actions per View.
 - Intercept external `TVM_EXPAND` before the default procedure: after the first
   expansion Windows can omit its expansion notifications. Apply native updates
   only under the projection guard. Restoring the first visible row must ascend

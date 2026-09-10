@@ -119,16 +119,19 @@ pub struct ViewContribution {
 pub struct CommandContribution {
     pub command: String,
     pub title: String,
-    /// A `$(codicon)` ThemeIcon. VS Code also accepts an image path or a
-    /// light/dark pair here; SENP draws command icons only from the codicon
-    /// vocabulary, so those forms are rejected rather than drawn as something else.
+    /// A `$(codicon)` ThemeIcon or, as VS Code allows, a package-relative image
+    /// path. The host never reads that file: a path draws only as an inline
+    /// Tree item action and only when it names an entry of the compiled-in
+    /// vocabulary, and a `view/title` action must still use a codicon. The
+    /// light/dark pair form is rejected rather than drawn as something else.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
 }
 
-/// One `menus["view/title"]` item. Only the inline `navigation` group exists
-/// natively, and `when` is limited to the `view == <id>` disjunction a title
-/// item uses to name its Views; see `view_title_when_views`.
+/// One `menus["view/title"]` or `menus["view/item/context"]` item. A title item
+/// exists natively only in the inline `navigation` group and names its Views by
+/// a `view == <id>` disjunction, see `view_title_when_views`; an item action
+/// exists only in the `inline` group, see `view_item_when`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MenuItemContribution {
@@ -142,11 +145,17 @@ pub struct MenuItemContribution {
 pub struct MenusContribution {
     #[serde(default, rename = "view/title", skip_serializing_if = "Vec::is_empty")]
     pub view_title: Vec<MenuItemContribution>,
+    #[serde(
+        default,
+        rename = "view/item/context",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub view_item_context: Vec<MenuItemContribution>,
 }
 
 impl MenusContribution {
     pub fn is_empty(&self) -> bool {
-        self.view_title.is_empty()
+        self.view_title.is_empty() && self.view_item_context.is_empty()
     }
 }
 
@@ -600,6 +609,69 @@ pub fn view_title_when_views(when: &str) -> Option<Vec<&str>> {
     Some(views)
 }
 
+/// The decoded `when` of one `view/item/context` item. `contains` holds the
+/// tokens of `viewItem =~ /token/` clauses, `equals` the values of
+/// `viewItem == value` clauses, and `view` the optional `view == <id>` clause;
+/// without one the item applies to every View of its package.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct ViewItemWhen<'a> {
+    pub contains: Vec<&'a str>,
+    pub equals: Vec<&'a str>,
+    pub view: Option<&'a str>,
+}
+
+/// VS Code evaluates a full context-key expression in `when`. A SENP item action
+/// may only test the row's `contextValue`, as `&&`-joined `viewItem =~ /token/`
+/// substring and `viewItem == value` equality clauses plus at most one
+/// `view == <id>`. Regular-expression syntax, `||`, `!` and any other key are
+/// refused instead of being evaluated partially; at least one `viewItem` clause
+/// is required so an action never lands on host rows or on every item blindly.
+pub fn view_item_when(when: &str) -> Option<ViewItemWhen<'_>> {
+    if when.len() > 1024 {
+        return None;
+    }
+    let token = |value: &str| {
+        !value.is_empty()
+            && value.len() <= 256
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    };
+    let mut parsed = ViewItemWhen::default();
+    for clause in when.split("&&") {
+        let clause = clause.trim();
+        if let Some(rest) = clause.strip_prefix("viewItem") {
+            let rest = rest.trim_start();
+            if let Some(pattern) = rest.strip_prefix("=~") {
+                let value = pattern.trim().strip_prefix('/')?.strip_suffix('/')?;
+                if !token(value) || parsed.contains.contains(&value) {
+                    return None;
+                }
+                parsed.contains.push(value);
+            } else {
+                let value = rest.strip_prefix("==")?.trim();
+                if !token(value) || parsed.equals.contains(&value) {
+                    return None;
+                }
+                parsed.equals.push(value);
+            }
+        } else {
+            let view = clause
+                .strip_prefix("view")?
+                .trim_start()
+                .strip_prefix("==")?
+                .trim();
+            if !valid_effect_identifier(view) || parsed.view.replace(view).is_some() {
+                return None;
+            }
+        }
+    }
+    if parsed.contains.is_empty() && parsed.equals.is_empty() {
+        return None;
+    }
+    Some(parsed)
+}
+
 fn valid_container_icon(value: &str) -> bool {
     valid_theme_icon(value) || valid_package_image_path(value)
 }
@@ -955,7 +1027,10 @@ fn validate_effect_contributions(
             || command.title.trim().is_empty()
             || command.title.len() > 160
             || command.title.chars().any(char::is_control)
-            || command.icon.as_deref().is_some_and(|icon| !valid_theme_icon(icon))
+            || command
+                .icon
+                .as_deref()
+                .is_some_and(|icon| !valid_theme_icon(icon) && !valid_package_image_path(icon))
         {
             return Err(invalid());
         }
@@ -976,15 +1051,49 @@ fn validate_effect_contributions(
         let Some(targets) = view_title_when_views(&item.when) else {
             return Err(invalid());
         };
-        // A title item is an icon button: without one it would need VS Code's
+        // A title item is a codicon button: without one it would need VS Code's
         // text rendering, and any group but `navigation` its overflow menu.
-        if menus.len() > 64 || icon.is_none() || item.group != "navigation" {
+        if menus.len() > 64 || !icon.is_some_and(valid_theme_icon) || item.group != "navigation" {
             return Err(invalid());
         }
         for view in targets {
             let count = per_view.entry(view).or_default();
             *count += 1;
             if !views.contains(view) || !placed.insert((view, item.command.as_str())) || *count > 8 {
+                return Err(invalid());
+            }
+        }
+    }
+    let items = &manifest.contributes.menus.view_item_context;
+    if items.len() > 64 {
+        return Err(invalid());
+    }
+    let mut placed = BTreeSet::new();
+    let mut per_view = BTreeMap::<&str, usize>::new();
+    for item in items {
+        let icon = manifest
+            .contributes
+            .commands
+            .iter()
+            .find(|command| command.command == item.command)
+            .and_then(|command| command.icon.as_deref());
+        let Some(when) = view_item_when(&item.when) else {
+            return Err(invalid());
+        };
+        // An inline action is an icon on the row; other groups are VS Code's
+        // context menu, which a native Tree row does not have.
+        if icon.is_none() || item.group != "inline" {
+            return Err(invalid());
+        }
+        let targets: Vec<&str> = match when.view {
+            Some(view) if views.contains(view) => vec![view],
+            Some(_) => return Err(invalid()),
+            None => views.iter().copied().collect(),
+        };
+        for view in targets {
+            let count = per_view.entry(view).or_default();
+            *count += 1;
+            if !placed.insert((view, item.command.as_str())) || *count > 8 {
                 return Err(invalid());
             }
         }
@@ -2921,7 +3030,18 @@ mod tests {
                 "{view_title}"
             );
         }
-        for bad_icon in ["refresh", "$(refresh", "$()", "resources/refresh.svg", "$(re fresh)"] {
+        // A package image path is a valid command icon, but only a row action can
+        // draw one; a title button needs a codicon.
+        assert_eq!(
+            with_view_title(
+                serde_json::json!([{"command":"sample.refresh", "title":"Refresh", "icon":"resources/refresh.svg"}]),
+                serde_json::json!([item("sample.refresh", "view == sample.projects", "navigation")])
+            )
+            .unwrap_err()
+            .code,
+            ErrorCode::InvalidManifest
+        );
+        for bad_icon in ["refresh", "$(refresh", "$()", "../refresh.svg", "resources/refresh.gif", "$(re fresh)"] {
             assert_eq!(
                 with_view_title(
                     serde_json::json!([{"command":"sample.refresh", "title":"Refresh", "icon": bad_icon}]),
@@ -2959,9 +3079,130 @@ mod tests {
             "../../extensions/sakura_senp_sample/senp.json"
         ))
         .unwrap();
-        value["contributes"]["menus"] = serde_json::json!({"view/item/context": []});
+        value["contributes"]["menus"] = serde_json::json!({"editor/title": []});
         assert_eq!(
             parse_manifest(&serde_json::to_vec(&value).unwrap()).unwrap_err().code,
+            ErrorCode::InvalidManifest
+        );
+    }
+
+    fn with_view_item(
+        commands: serde_json::Value,
+        view_item: serde_json::Value,
+    ) -> Result<Manifest, SenpError> {
+        let mut value: serde_json::Value = serde_json::from_slice(include_bytes!(
+            "../../extensions/sakura_senp_sample/senp.json"
+        ))
+        .unwrap();
+        value["contributes"]["commands"] = commands;
+        value["contributes"]["menus"] = serde_json::json!({ "view/item/context": view_item });
+        parse_manifest(&serde_json::to_vec(&value).unwrap())
+    }
+
+    #[test]
+    fn view_item_menus_accept_inline_actions_matched_by_context_value() {
+        let commands = serde_json::json!([
+            {"command":"sample.logs", "title":"View logs", "icon":"resources/icons/light/logs.svg"},
+            {"command":"sample.open", "title":"Open", "icon":"$(go-to-file)"}
+        ]);
+        let manifest = with_view_item(
+            commands,
+            serde_json::json!([
+                {"command":"sample.logs", "when":"viewItem =~ /job/ && viewItem =~ /completed/", "group":"inline"},
+                {"command":"sample.open", "when":" view == sample.states&&viewItem == step ", "group":"inline"}
+            ]),
+        )
+        .unwrap();
+        let items = &manifest.contributes.menus.view_item_context;
+        assert_eq!(items.len(), 2);
+        let first = view_item_when(&items[0].when).unwrap();
+        assert_eq!(first.contains, ["job", "completed"]);
+        assert!(first.equals.is_empty());
+        assert_eq!(first.view, None);
+        let second = view_item_when(&items[1].when).unwrap();
+        assert!(second.contains.is_empty());
+        assert_eq!(second.equals, ["step"]);
+        assert_eq!(second.view, Some("sample.states"));
+        let serialized = serde_json::to_value(&manifest).unwrap();
+        assert_eq!(
+            serialized["contributes"]["menus"]["view/item/context"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert!(serialized["contributes"]["menus"].get("view/title").is_none());
+    }
+
+    #[test]
+    fn view_item_menus_reject_what_a_row_action_cannot_show() {
+        let commands = serde_json::json!([
+            {"command":"sample.logs", "title":"View logs", "icon":"resources/icons/light/logs.svg"},
+            {"command":"sample.plain", "title":"Plain"}
+        ]);
+        let item = |command: &str, when: &str, group: &str| {
+            serde_json::json!({"command": command, "when": when, "group": group})
+        };
+        let cases = [
+            // Undeclared command, a command without an icon, a context-menu group.
+            serde_json::json!([item("sample.other", "viewItem =~ /job/", "inline")]),
+            serde_json::json!([item("sample.plain", "viewItem =~ /job/", "inline")]),
+            serde_json::json!([item("sample.logs", "viewItem =~ /job/", "navigation")]),
+            serde_json::json!([item("sample.logs", "viewItem =~ /job/", "")]),
+            // Only `viewItem` matches and one `view ==` joined by `&&`.
+            serde_json::json!([item("sample.logs", "viewItem =~ /job/ || viewItem =~ /step/", "inline")]),
+            serde_json::json!([item("sample.logs", "viewItem != job", "inline")]),
+            serde_json::json!([item("sample.logs", "!viewItem", "inline")]),
+            serde_json::json!([item("sample.logs", "viewItem =~ /jo.b/", "inline")]),
+            serde_json::json!([item("sample.logs", "viewItem =~ /job/i", "inline")]),
+            serde_json::json!([item("sample.logs", "viewItem =~ //", "inline")]),
+            serde_json::json!([item("sample.logs", "view == sample.projects", "inline")]),
+            serde_json::json!([item("sample.logs", "viewItem =~ /job/ && isWeb", "inline")]),
+            serde_json::json!([item("sample.logs", "view == foreign.view && viewItem == job", "inline")]),
+            serde_json::json!([item("sample.logs", "view == sample.projects && view == sample.states && viewItem == job", "inline")]),
+            serde_json::json!([item("sample.logs", "viewItem == job && viewItem == job", "inline")]),
+            serde_json::json!([item("sample.logs", "viewItem =~ /job/ &&", "inline")]),
+            serde_json::json!([item("sample.logs", "", "inline")]),
+            // The same command twice on one View, directly or through "all Views".
+            serde_json::json!([
+                item("sample.logs", "viewItem == job", "inline"),
+                item("sample.logs", "viewItem == step", "inline")
+            ]),
+            serde_json::json!([
+                item("sample.logs", "viewItem == job", "inline"),
+                item("sample.logs", "view == sample.projects && viewItem == step", "inline")
+            ]),
+            serde_json::json!([{"command":"sample.logs", "when":"viewItem == job", "group":"inline", "alt":"sample.plain"}]),
+        ];
+        for view_item in cases {
+            assert_eq!(
+                with_view_item(commands.clone(), view_item.clone())
+                    .unwrap_err()
+                    .code,
+                ErrorCode::InvalidManifest,
+                "{view_item}"
+            );
+        }
+        // At most eight inline actions fit one row.
+        let nine: Vec<_> = (0..9)
+            .map(|index| serde_json::json!({"command": format!("sample.act{index}"), "title":"Act", "icon":"$(output)"}))
+            .collect();
+        let placed: Vec<_> = (0..9)
+            .map(|index| item(&format!("sample.act{index}"), "view == sample.projects && viewItem == job", "inline"))
+            .collect();
+        assert_eq!(
+            with_view_item(serde_json::json!(nine), serde_json::json!(placed[..8]))
+                .unwrap()
+                .contributes
+                .menus
+                .view_item_context
+                .len(),
+            8
+        );
+        assert_eq!(
+            with_view_item(serde_json::json!(nine), serde_json::json!(placed))
+                .unwrap_err()
+                .code,
             ErrorCode::InvalidManifest
         );
     }

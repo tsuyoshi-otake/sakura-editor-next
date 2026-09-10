@@ -807,25 +807,29 @@ TEST_F(SenpOwnerComposition, RealGithubActionsReachNativeProviders)
 	auto target = std::make_shared<CompositionTargetState>();
 	target->EnqueueToolResponse(Completion(LR"({"total_count":1,"workflows":[{"id":31,"name":"Build","path":".github/workflows/build.yml","state":"active","html_url":"https://github.com/o/r/actions/workflows/build.yml"}]})"));
 	target->EnqueueToolResponse(Completion(LR"({"total_count":1,"workflow_runs":[{"id":51,"workflow_id":31,"run_number":8,"run_attempt":2,"name":"Build","display_title":"Build changes","event":"push","head_branch":"main","head_sha":"abcd","status":"in_progress","conclusion":null,"created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-02T00:00:00Z","run_started_at":null,"html_url":"https://github.com/o/r/actions/runs/51"}]})"));
-	target->EnqueueToolResponse(Completion(LR"({"id":51,"workflow_id":31,"run_number":8,"run_attempt":2,"name":"Build","display_title":"Build changes","event":"push","head_branch":"main","head_sha":"abcd","status":"in_progress","conclusion":null,"created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-02T00:00:00Z","run_started_at":null,"html_url":"https://github.com/o/r/actions/runs/51"})"));
+	target->EnqueueToolResponse(Completion(LR"json({"total_count":1,"jobs":[{"id":72,"run_id":51,"run_attempt":2,"name":"Build (Windows)","status":"in_progress","conclusion":null,"started_at":null,"completed_at":null,"html_url":"https://github.com/o/r/actions/runs/51/job/72","head_sha":"abcd","runner_id":null,"runner_name":null,"runner_group_id":null,"runner_group_name":null,"labels":[],"steps":[{"number":7,"name":"Compile","status":"queued","conclusion":null,"started_at":null,"completed_at":null}]}]})json"));
 	target->EnqueueToolResponse(Completion(LR"({"id":51,"workflow_id":31,"run_number":8,"run_attempt":1,"name":"Build","display_title":"Build changes","event":"push","head_branch":"main","head_sha":"abcd","status":"in_progress","conclusion":null,"created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-02T00:00:00Z","run_started_at":null,"html_url":"https://github.com/o/r/actions/runs/51"})"));
-	target->EnqueueToolResponse(Completion(LR"json({"total_count":1,"jobs":[{"id":71,"run_id":51,"run_attempt":1,"name":"Build (Windows)","status":"in_progress","conclusion":null,"started_at":null,"completed_at":null,"html_url":"https://github.com/o/r/actions/runs/51/job/71","head_sha":"abcd","runner_id":null,"runner_name":null,"runner_group_id":null,"runner_group_name":null,"labels":[],"steps":[{"number":7,"name":"Compile","status":"queued","conclusion":null,"started_at":null,"completed_at":null}]}]})json"));
-	target->EnqueueToolResponse(Completion(LR"json({"id":71,"run_id":51,"run_attempt":1,"name":"Build (Windows)","status":"in_progress","conclusion":null,"started_at":null,"completed_at":null,"html_url":"https://github.com/o/r/actions/runs/51/job/71","head_sha":"abcd","runner_id":null,"runner_name":null,"runner_group_id":null,"runner_group_name":null,"labels":[],"steps":[{"number":7,"name":"Compile","status":"queued","conclusion":null,"started_at":null,"completed_at":null}]})json"));
-	target->EnqueueToolResponse(Completion(LR"json({"id":71,"run_id":51,"run_attempt":1,"name":"Build (Windows)","status":"in_progress","conclusion":null,"started_at":null,"completed_at":null,"html_url":"https://github.com/o/r/actions/runs/51/job/71","head_sha":"abcd","runner_id":null,"runner_name":null,"runner_group_id":null,"runner_group_name":null,"labels":[],"steps":[{"number":7,"name":"Compile","status":"queued","conclusion":null,"started_at":null,"completed_at":null}]})json"));
+	target->EnqueueToolResponse(Completion(LR"json({"total_count":1,"jobs":[{"id":71,"run_id":51,"run_attempt":1,"name":"Build (Windows)","status":"completed","conclusion":"success","started_at":"2026-09-01T00:00:00Z","completed_at":"2026-09-01T00:01:30Z","html_url":"https://github.com/o/r/actions/runs/51/job/71","head_sha":"abcd","runner_id":null,"runner_name":null,"runner_group_id":null,"runner_group_name":null,"labels":[],"steps":[{"number":7,"name":"Compile","status":"queued","conclusion":null,"started_at":null,"completed_at":null}]}]})json"));
+	target->EnqueueToolResponse(Completion(LR"json({"id":71,"run_id":51,"run_attempt":1,"name":"Build (Windows)","status":"completed","conclusion":"success","started_at":"2026-09-01T00:00:00Z","completed_at":"2026-09-01T00:01:30Z","html_url":"https://github.com/o/r/actions/runs/51/job/71","head_sha":"abcd","runner_id":null,"runner_name":null,"runner_group_id":null,"runner_group_name":null,"labels":[],"steps":[{"number":7,"name":"Compile","status":"queued","conclusion":null,"started_at":null,"completed_at":null}]})json"));
+	target->EnqueueToolResponse(Completion(LR"json({"id":71,"run_id":51,"run_attempt":1,"name":"Build (Windows)","status":"completed","conclusion":"success","started_at":"2026-09-01T00:00:00Z","completed_at":"2026-09-01T00:01:30Z","html_url":"https://github.com/o/r/actions/runs/51/job/71","head_sha":"abcd","runner_id":null,"runner_name":null,"runner_group_id":null,"runner_group_name":null,"labels":[],"steps":[{"number":7,"name":"Compile","status":"queued","conclusion":null,"started_at":null,"completed_at":null}]})json"));
 	std::map<std::wstring, std::shared_ptr<tree::SenpTreeProvider>, std::less<>> providers;
 	layout::WorkbenchViewContainerDescriptor container{
 		"github-actions", "GitHub Actions", layout::EViewContainerLocation::Sidebar, 6,
 		"$(play-circle)", false, { layout::EViewContainerLocation::Sidebar },
 	};
+	// The manifest's one inline action: upstream draws "View job logs" on a job
+	// row whose contextValue says it has completed.
+	const std::vector<tree::SenpTreeItemAction> itemActions{ { L"github-actions.workflow.logs",
+		L"View job logs", L"resources/icons/light/logs.svg", { L"job", L"completed" }, {} } };
 	std::vector<SenpOwnerTreeContribution> trees;
 	trees.emplace_back(layout::WorkbenchViewDescriptor{
         "github-actions.workflows", "github-actions", "Workflows", 10, true, true, "senp.tree" },
         std::vector<std::string>{ "github-actions.workflow.run.open",
-            "sakura.githubActions.openJobDetails", "sakura.githubActions.openJobLog" });
+            "sakura.githubActions.openJobDetails", "github-actions.workflow.logs" }, itemActions);
     trees.emplace_back(layout::WorkbenchViewDescriptor{
         "github-actions.current-branch", "github-actions", "Current Branch", 20, true, true, "senp.tree" },
         std::vector<std::string>{ "github-actions.workflow.run.open",
-            "sakura.githubActions.openJobDetails", "sakura.githubActions.openJobLog" });
+            "sakura.githubActions.openJobDetails", "github-actions.workflow.logs" }, itemActions);
 	SenpOwnerPublicationOptions publication(
 		m_owner, { std::move(container) }, std::move(trees),
 		std::make_unique<CompositionTarget>(target), [](std::string_view) { return true; },
@@ -857,19 +861,30 @@ TEST_F(SenpOwnerComposition, RealGithubActionsReachNativeProviders)
     ASSERT_TRUE(Await(composition, [&] { return provider->Model().Node(L"workflow:31").has_value(); }));
     ExpectRead(*target, L"workflows");
     ASSERT_EQ(tree::TreeResult::Applied, provider->SetExpanded(L"workflow:31", true, Clock::now()));
-    ASSERT_TRUE(Await(composition, [&] { return provider->Model().Node(L"run:51").has_value(); }));
+    ASSERT_TRUE(Await(composition, [&] { return provider->Model().Node(L"run:51:2").has_value(); }));
     ExpectRead(*target, L"workflowRuns", L"31");
     // Upstream's run row: the number under WORKFLOWS, state as the icon, and
     // status and trigger in the tooltip rather than in the row text.
-    const auto runItem = provider->Model().Node(L"run:51")->item;
+    const auto runItem = provider->Model().Node(L"run:51:2")->item;
     EXPECT_EQ(L"#8", runItem.label);
     EXPECT_EQ(L"resources/icons/workflowruns/wr_inprogress.svg", runItem.icon);
     EXPECT_TRUE(runItem.description.empty());
     EXPECT_EQ(L"Attempt #2 In progress\n\nRe-run", runItem.tooltip);
-    ASSERT_EQ(tree::TreeResult::Applied, provider->SetExpanded(L"run:51", true, Clock::now()));
+    EXPECT_EQ(L"run", runItem.contextValue);
+    // As upstream, a run lists its latest attempt's jobs and then, for a rerun,
+    // "Previous attempts". The earlier attempts need no read of their own.
+    ASSERT_EQ(tree::TreeResult::Applied, provider->SetExpanded(L"run:51:2", true, Clock::now()));
+    ASSERT_TRUE(Await(composition, [&] { return provider->Model().Node(L"previous:51:2").has_value(); }));
+    ExpectRead(*target, L"runAttemptJobs", L"51", L"2");
+    ASSERT_TRUE(provider->Model().Node(L"job:51:2:72").has_value());
+    EXPECT_EQ(L"job", provider->Model().Node(L"job:51:2:72")->item.contextValue);
+    // An unfinished job has no log yet, so its row draws no inline action.
+    EXPECT_TRUE(provider->ItemActions(L"job:51:2:72").empty());
+    EXPECT_EQ(3, target->ToolReads());
+    ASSERT_EQ(tree::TreeResult::Applied, provider->SetExpanded(L"previous:51:2", true, Clock::now()));
     ASSERT_TRUE(Await(composition, [&] { return provider->Model().Node(L"attempt:51:1").has_value(); }));
-    EXPECT_TRUE(provider->Model().Node(L"attempt:51:2").has_value());
-    ExpectRead(*target, L"run", L"51");
+    EXPECT_FALSE(provider->Model().Node(L"attempt:51:2").has_value());
+    EXPECT_EQ(3, target->ToolReads());
     ASSERT_TRUE(provider->Select(L"attempt:51:1"));
     ASSERT_TRUE(provider->Execute(L"attempt:51:1"));
     ASSERT_TRUE(Await(composition, [&] { return target->Publishes() == 1; }));
@@ -890,12 +905,14 @@ TEST_F(SenpOwnerComposition, RealGithubActionsReachNativeProviders)
     ASSERT_EQ(tree::TreeResult::Applied, provider->SetExpanded(L"job:51:1:71", true, Clock::now()));
     ASSERT_TRUE(Await(composition, [&] { return provider->Model().Node(L"step:51:1:71:7").has_value(); }));
     const auto jobItem = provider->Model().Node(L"job:51:1:71")->item;
-    EXPECT_EQ(L"resources/icons/workflowruns/wr_inprogress.svg", jobItem.icon);
-    EXPECT_EQ(L"In progress", jobItem.tooltip);
+    EXPECT_EQ(L"resources/icons/workflowruns/wr_success.svg", jobItem.icon);
+    EXPECT_EQ(L"Succeeded in 1m 30s", jobItem.tooltip);
+    EXPECT_EQ(L"job completed", jobItem.contextValue);
     const auto stepItem = provider->Model().Node(L"step:51:1:71:7")->item;
     EXPECT_EQ(L"Compile", stepItem.label);
     EXPECT_EQ(L"resources/icons/steps/step_queued.svg", stepItem.icon);
     EXPECT_TRUE(stepItem.description.empty());
+    EXPECT_EQ(L"step", stepItem.contextValue);
     ASSERT_TRUE(provider->Select(L"job:51:1:71"));
     ASSERT_TRUE(provider->Execute(L"job:51:1:71"));
     ASSERT_TRUE(Await(composition, [&] { return target->Publishes() == 2; }));
@@ -909,14 +926,17 @@ TEST_F(SenpOwnerComposition, RealGithubActionsReachNativeProviders)
     ExpectRead(*target, L"job", L"71");
     EXPECT_EQ(7, target->ToolReads());
 
-    // The job's log is a separate command reading a separate operation, and the
-    // document it publishes names bytes the extension never held. Nothing else
-    // proves that end of the path: an extension has no effect for reading a
-    // resource, so a log can only reach the reader as a text-resource section.
+    // The job's log is upstream's inline row action: a separate command reading a
+    // separate operation, and the document it publishes names bytes the
+    // extension never held. Nothing else proves that end of the path: an
+    // extension has no effect for reading a resource, so a log can only reach
+    // the reader as a text-resource section.
     target->EnqueueToolResponse(LR"json({"resource":"text:9:1","bytes":8192,"log":true})json");
-    ASSERT_TRUE(provider->Model().Node(L"joblog:51:1:71").has_value());
-    ASSERT_TRUE(provider->Select(L"joblog:51:1:71"));
-    ASSERT_TRUE(provider->Execute(L"joblog:51:1:71"));
+    EXPECT_FALSE(provider->Model().Node(L"joblog:51:1:71").has_value());
+    const auto actions = provider->ItemActions(L"job:51:1:71");
+    ASSERT_EQ(1U, actions.size());
+    EXPECT_EQ(L"github-actions.workflow.logs", actions.front().commandId);
+    ASSERT_TRUE(provider->ExecuteItemAction(L"job:51:1:71", L"github-actions.workflow.logs"));
     ASSERT_TRUE(Await(composition, [&] { return target->Publishes() == 3; }));
     EXPECT_EQ(L"github-actions-job-log:51:1:71", target->Document().resourceId);
     EXPECT_EQ(L"jobLog", target->LastRead().operation);

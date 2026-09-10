@@ -251,6 +251,14 @@ protected:
 		runtime.viewTitle = { { L"sample.refresh", { L"sample.projects" } } };
 		return snapshot;
 	}
+	static senp::ManagementSnapshot PackagesWithLogs()
+	{
+		auto snapshot = Packages();
+		auto& runtime = snapshot.extensions.front().runtime;
+		runtime.commands.push_back({ L"sample.logs", L"View logs", L"resources/icons/light/logs.svg" });
+		runtime.viewItemContext = { { L"sample.logs", {}, { L"job" }, {} } };
+		return snapshot;
+	}
 	//! The pane whose header (control 1) carries the View title; its title
 	//! actions are controls 2 onward.
 	static HWND FindPane(HWND owner, const wchar_t* title)
@@ -438,6 +446,50 @@ TEST_F(SenpOwnerPublicationTest, ViewTitleActionsTheNativeTitleBarCannotShowAreR
 			const auto id = L"sample.extra" + std::to_wstring(i);
 			runtime.commands.push_back({ id, L"Extra", L"$(refresh)" });
 			runtime.viewTitle.push_back({ id, { L"sample.projects" } });
+		}
+	}));
+}
+
+TEST_F(SenpOwnerPublicationTest, InlineItemActionsDrawOnlyBundledIconsAndAreNotAStructuralField)
+{
+	const auto run = [&](const auto& mutate) {
+		layout::WorkbenchContributionRegistry catalog;
+		CDlgFuncList dialog; viewcontainer::CViewContainerPages pages(dialog);
+		EXPECT_TRUE(pages.Create(m_owner));
+		auto target = std::make_shared<TargetState>();
+		CSenpWindowExtensions extensions(catalog, pages, m_owner, L"host.exe",
+			[&](const auto&, const auto&) { return std::make_unique<Target>(target); },
+			[](std::string_view) { return true; },
+			[](auto launch) { return std::make_unique<Runtime>(std::move(launch), std::vector<senp::effect::Effect>{}); });
+		auto snapshot = PackagesWithLogs();
+		mutate(snapshot.extensions.front().runtime);
+		const auto status = extensions.Synchronize(snapshot, 7, 9, Clock::now());
+		EXPECT_FALSE(pages.Contains("sample.senp") && status != SenpWindowExtensionsStatus::Synchronized);
+		// Row actions belong to each runtime generation, so a changed set is not
+		// a structural edit of the declaration the way a title action is.
+		if (status == SenpWindowExtensionsStatus::Synchronized) {
+			snapshot.revision++;
+			snapshot.extensions.front().runtime.viewItemContext.front().contains = { L"completed" };
+			EXPECT_EQ(SenpWindowExtensionsStatus::Synchronized, extensions.Synchronize(snapshot, 7, 9, Clock::now()));
+		}
+		EXPECT_TRUE(extensions.Close()); pages.Close();
+		return status;
+	};
+	EXPECT_EQ(SenpWindowExtensionsStatus::Synchronized, run([](auto&) {}));
+	EXPECT_EQ(SenpWindowExtensionsStatus::Synchronized, run([](auto& runtime) { runtime.commands[1].icon = L"$(output)"; }));
+	EXPECT_EQ(SenpWindowExtensionsStatus::Unsupported, run([](auto& runtime) { runtime.commands[1].icon = L"$(Output)"; }));
+	// A package image path draws only when it names a compiled-in icon.
+	EXPECT_EQ(SenpWindowExtensionsStatus::Unsupported, run([](auto& runtime) { runtime.commands[1].icon = L"resources/unknown.svg"; }));
+	EXPECT_EQ(SenpWindowExtensionsStatus::Invalid, run([](auto& runtime) { runtime.viewItemContext[0].views = { L"sample.other" }; }));
+	EXPECT_EQ(SenpWindowExtensionsStatus::Invalid, run([](auto& runtime) { runtime.viewItemContext[0].command = L"sample.missing"; }));
+	EXPECT_EQ(SenpWindowExtensionsStatus::Invalid, run([](auto& runtime) {
+		runtime.viewItemContext.push_back({ L"sample.logs", { L"sample.projects" }, { L"step" }, {} });
+	}));
+	EXPECT_EQ(SenpWindowExtensionsStatus::Unsupported, run([](auto& runtime) {
+		for (int i = 0; i != 8; ++i) {
+			const auto id = L"sample.act" + std::to_wstring(i);
+			runtime.commands.push_back({ id, L"Act", L"$(output)" });
+			runtime.viewItemContext.push_back({ id, { L"sample.projects" }, {}, { L"job" } });
 		}
 	}));
 }

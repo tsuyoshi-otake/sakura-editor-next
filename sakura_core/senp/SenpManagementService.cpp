@@ -446,6 +446,66 @@ std::optional<std::vector<std::wstring>> ViewTitleWhenViews(std::wstring_view wh
 	}
 }
 
+//! The package tool's `valid_package_image_path`: a bounded relative `.svg`/`.png`
+//! path of `[A-Za-z0-9._-]` segments with no empty, `.` or `..` segment.
+bool ValidPackageImagePath(std::wstring_view value) noexcept
+{
+	if (value.size() > 260 || !(value.ends_with(L".svg") || value.ends_with(L".png"))) return false;
+	for (std::size_t start = 0;;) {
+		const auto split = value.find(L'/', start);
+		const auto segment = value.substr(start, split == std::wstring_view::npos ? split : split - start);
+		if (segment.empty() || segment == L"." || segment == L".."
+			|| !std::ranges::all_of(segment, [](const wchar_t ch) {
+				return IsAsciiAlphanumeric(ch) || ch == L'.' || ch == L'_' || ch == L'-';
+			})) return false;
+		if (split == std::wstring_view::npos) return true;
+		start = split + 1;
+	}
+}
+
+//! A `view/item/context` item's `when`, mirroring the package tool's
+//! `view_item_when`: `&&`-joined `viewItem =~ /token/`, `viewItem == token` and
+//! at most one `view == <id>`, with at least one `viewItem` clause.
+std::optional<ViewItemMenuContribution> ViewItemWhen(std::wstring_view when)
+{
+	if (when.size() > 1024) return std::nullopt;
+	const auto token = [](std::wstring_view value) {
+		return !value.empty() && value.size() <= 256 && std::ranges::all_of(value, [](const wchar_t ch) {
+			return IsAsciiAlphanumeric(ch) || ch == L'_' || ch == L'-';
+		});
+	};
+	ViewItemMenuContribution parsed;
+	for (std::size_t start = 0;;) {
+		const auto split = when.find(L"&&", start);
+		auto clause = TrimAsciiSpace(when.substr(start, split == std::wstring_view::npos ? split : split - start));
+		if (clause.starts_with(L"viewItem")) {
+			clause = TrimAsciiSpace(clause.substr(8));
+			if (clause.starts_with(L"=~")) {
+				auto pattern = TrimAsciiSpace(clause.substr(2));
+				if (pattern.size() < 2 || pattern.front() != L'/' || pattern.back() != L'/') return std::nullopt;
+				pattern = pattern.substr(1, pattern.size() - 2);
+				if (!token(pattern) || std::ranges::find(parsed.contains, pattern) != parsed.contains.end()) return std::nullopt;
+				parsed.contains.emplace_back(pattern);
+			} else if (clause.starts_with(L"==")) {
+				const auto value = TrimAsciiSpace(clause.substr(2));
+				if (!token(value) || std::ranges::find(parsed.equals, value) != parsed.equals.end()) return std::nullopt;
+				parsed.equals.emplace_back(value);
+			} else return std::nullopt;
+		} else {
+			if (!clause.starts_with(L"view")) return std::nullopt;
+			clause = TrimAsciiSpace(clause.substr(4));
+			if (!clause.starts_with(L"==")) return std::nullopt;
+			const auto view = TrimAsciiSpace(clause.substr(2));
+			if (!ValidEffectIdentifier(view) || !parsed.views.empty()) return std::nullopt;
+			parsed.views.emplace_back(view);
+		}
+		if (split == std::wstring_view::npos) break;
+		start = split + 2;
+	}
+	if (parsed.contains.empty() && parsed.equals.empty()) return std::nullopt;
+	return parsed;
+}
+
 bool ParseRuntimeContribution(const JsoncValue::Object& manifest,
 	const JsoncValue::Object& contributes, RuntimeContribution& target)
 {
@@ -476,16 +536,45 @@ bool ParseRuntimeContribution(const JsoncValue::Object& manifest,
 		const auto* command = StringMember(*object, L"command");
 		const auto* title = StringMember(*object, L"title");
 		if (!command || command->empty() || command->size() > 160 || !title || title->empty() || title->size() > 160
-			|| (icon && !ValidThemeIcon(*icon))
+			|| (icon && !ValidThemeIcon(*icon) && !ValidPackageImagePath(*icon))
 			|| std::ranges::any_of(target.commands, [&](const auto& prior) { return prior.command == *command; })) return false;
 		target.commands.push_back({ *command, *title, icon ? *icon : std::wstring{} });
 	}
 	const auto menusMember = contributes.find(L"menus");
 	if (menusMember == contributes.end()) return true;
 	const auto* menus = std::get_if<JsoncValue::Object>(&menusMember->second.Value());
-	if (!menus || *schema != 2 || menus->size() != 1) return false;
+	if (!menus || *schema != 2 || menus->empty()
+		|| std::ranges::any_of(*menus, [](const auto& member) {
+			return member.first != L"view/title" && member.first != L"view/item/context";
+		})) return false;
 	const auto* viewTitle = ArrayMember(*menus, L"view/title");
-	if (!viewTitle || viewTitle->empty() || viewTitle->size() > 64) return false;
+	const auto* viewItem = ArrayMember(*menus, L"view/item/context");
+	if ((menus->contains(L"view/title") && (!viewTitle || viewTitle->empty() || viewTitle->size() > 64))
+		|| (menus->contains(L"view/item/context") && (!viewItem || viewItem->empty() || viewItem->size() > 64)))
+		return false;
+	if (viewItem) {
+		for (const auto& entry : *viewItem) {
+			const auto* object = std::get_if<JsoncValue::Object>(&entry.Value());
+			if (!object || object->size() != 3) return false;
+			const auto* command = StringMember(*object, L"command");
+			const auto* when = StringMember(*object, L"when");
+			const auto* group = StringMember(*object, L"group");
+			const auto declared = command ? std::ranges::find(target.commands, *command, &CommandContribution::command)
+				: target.commands.end();
+			if (declared == target.commands.end() || declared->icon.empty() || !when || !group || *group != L"inline")
+				return false;
+			auto item = ViewItemWhen(*when);
+			if (!item) return false;
+			// One command appears once per View; an item without a View clause covers all of them.
+			for (const auto& prior : target.viewItemContext) {
+				if (prior.command == *command && (prior.views.empty() || item->views.empty() || prior.views == item->views))
+					return false;
+			}
+			item->command = *command;
+			target.viewItemContext.push_back(std::move(*item));
+		}
+	}
+	if (!viewTitle) return true;
 	for (const auto& entry : *viewTitle) {
 		const auto* object = std::get_if<JsoncValue::Object>(&entry.Value());
 		if (!object || object->size() != 3) return false;
@@ -494,7 +583,8 @@ bool ParseRuntimeContribution(const JsoncValue::Object& manifest,
 		const auto* group = StringMember(*object, L"group");
 		const auto declared = command ? std::ranges::find(target.commands, *command, &CommandContribution::command)
 			: target.commands.end();
-		if (declared == target.commands.end() || declared->icon.empty() || !when || !group || *group != L"navigation")
+		// A title button draws a codicon only; a package image path is an inline row action's.
+		if (declared == target.commands.end() || !ValidThemeIcon(declared->icon) || !when || !group || *group != L"navigation")
 			return false;
 		auto views = ViewTitleWhenViews(*when);
 		if (!views) return false;

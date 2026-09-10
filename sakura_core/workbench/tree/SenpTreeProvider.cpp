@@ -19,7 +19,7 @@ TreeItem Item(senp::effect::TreeItem value)
 	TreeItem item;
 	item.id = std::move(value.id); item.label = std::move(value.label); item.description = std::move(value.description);
 	item.tooltip = std::move(value.tooltip); item.icon = std::move(value.icon); item.commandId = std::move(value.commandId);
-	item.arguments = std::move(value.arguments);
+	item.arguments = std::move(value.arguments); item.contextValue = std::move(value.contextValue);
 	switch (value.collapsibleState) {
 	case senp::effect::CollapsibleState::Leaf: item.collapsibleState = TreeItemCollapsibleState::None; break;
 	case senp::effect::CollapsibleState::Collapsed: item.collapsibleState = TreeItemCollapsibleState::Collapsed; break;
@@ -46,6 +46,23 @@ struct SenpTreeProvider::Impl {
 			throw std::invalid_argument("Invalid SENP tree provider options.");
 		for (const auto& command : options.commands) if (!Id(command) || !commands.insert(command).second)
 			throw std::invalid_argument("Invalid SENP tree command declaration.");
+		std::set<std::wstring, std::less<>> actions;
+		if (options.itemActions.size() > 8) throw std::invalid_argument("Too many SENP tree item actions.");
+		for (const auto& action : options.itemActions) {
+			const auto bounded = [](const std::vector<std::wstring>& values) {
+				return values.size() <= 8 && std::all_of(values.begin(), values.end(), [](const auto& v) { return !v.empty() && v.size() <= 1024; });
+			};
+			if (!commands.contains(action.commandId) || !actions.insert(action.commandId).second || action.icon.empty()
+				|| action.title.size() > 1024 || !bounded(action.contains) || !bounded(action.equals))
+				throw std::invalid_argument("Invalid SENP tree item action.");
+		}
+	}
+	static bool Matches(const SenpTreeItemAction& action, std::wstring_view contextValue) noexcept
+	{
+		// VS Code's `=~` is an unanchored regular expression; the manifest admits
+		// only a literal token there, so it is a substring test.
+		return std::all_of(action.contains.begin(), action.contains.end(), [&](const auto& token) { return contextValue.find(token) != std::wstring_view::npos; })
+			&& std::all_of(action.equals.begin(), action.equals.end(), [&](const auto& value) { return contextValue == value; });
 	}
 	bool Current() const noexcept { return !model.IsClosed() && options.runtime->IsCurrent(); }
 	bool Scope(const senp::effect::OperationContext& context) const noexcept
@@ -179,6 +196,28 @@ bool SenpTreeProvider::ExecuteViewCommand(std::wstring_view commandId)
 	auto& state = *m_impl;
 	if (!state.Current() || !state.commands.contains(commandId)) return false;
 	return state.options.runtime->Execute({ std::wstring(commandId), {} });
+}
+std::vector<SenpTreeItemAction> SenpTreeProvider::ItemActions(std::wstring_view id) const
+{
+	std::vector<SenpTreeItemAction> result;
+	const auto* node = m_impl->model.Inspect(id);
+	if (!node || id.empty()) return result;
+	for (const auto& action : m_impl->options.itemActions)
+		if (Impl::Matches(action, node->item.contextValue)) result.push_back(action);
+	return result;
+}
+bool SenpTreeProvider::ExecuteItemAction(std::wstring_view id, std::wstring_view commandId)
+{
+	auto& state = *m_impl;
+	if (!state.Current() || !state.visible || id.empty()) return false;
+	const auto* node = state.model.Inspect(id);
+	if (!node) return false;
+	const auto action = std::find_if(state.options.itemActions.begin(), state.options.itemActions.end(),
+		[&](const auto& value) { return value.commandId == commandId; });
+	if (action == state.options.itemActions.end() || !Impl::Matches(*action, node->item.contextValue)) return false;
+	std::wstring itemId(id);
+	if (!state.model.Select(itemId)) return false;
+	return state.options.runtime->Execute({ std::wstring(commandId), { std::move(itemId) } });
 }
 TreeResult SenpTreeProvider::Apply(const senp::effect::OperationContext& context, senp::effect::PublishTreePage page, Time now)
 {

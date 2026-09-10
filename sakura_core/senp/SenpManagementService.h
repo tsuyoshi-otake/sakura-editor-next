@@ -55,9 +55,21 @@ struct ViewContribution final {
 struct CommandContribution final {
 	std::wstring command;
 	std::wstring title;
-	//! The manifest's `$(codicon)` ThemeIcon, or empty when it names none.
+	//! The manifest's `$(codicon)` ThemeIcon or package-relative image path, or
+	//! empty when it names none. A path draws only as an inline Tree item action.
 	std::wstring icon;
 	[[nodiscard]] bool operator==(const CommandContribution&) const = default;
+};
+
+//! One `menus["view/item/context"]` item: a declared, icon-bearing command drawn
+//! inline on the rows whose contextValue contains every `contains` token and
+//! equals every `equals` value. An empty `views` means every View of the package.
+struct ViewItemMenuContribution final {
+	std::wstring command;
+	std::vector<std::wstring> views;
+	std::vector<std::wstring> contains;
+	std::vector<std::wstring> equals;
+	[[nodiscard]] bool operator==(const ViewItemMenuContribution&) const = default;
 };
 
 //! One `menus["view/title"]` item: a declared, icon-bearing command placed in
@@ -76,6 +88,7 @@ struct RuntimeContribution final {
 	std::vector<std::wstring> capabilities;
 	std::vector<CommandContribution> commands;
 	std::vector<ViewTitleMenuContribution> viewTitle;
+	std::vector<ViewItemMenuContribution> viewItemContext;
 	[[nodiscard]] bool operator==(const RuntimeContribution&) const = default;
 };
 

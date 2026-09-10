@@ -38,11 +38,19 @@ public:
 	//! Coalesce native projection work; never synchronously reenter the provider.
 	virtual void TreeChanged(std::wstring_view parentId) noexcept = 0;
 };
+//! One `view/item/context` inline action: a declared command drawn on every row
+//! whose contextValue contains each `contains` token and equals each `equals`
+//! value (VS Code's `viewItem =~ /token/` and `viewItem == value` clauses).
+struct SenpTreeItemAction final {
+	std::wstring commandId, title, icon;
+	std::vector<std::wstring> contains, equals;
+};
 struct SenpTreeProviderOptions final {
 	std::wstring viewId;
 	SenpTreeScope scope;
 	std::vector<std::wstring> commands;
 	std::shared_ptr<ISenpTreeRuntime> runtime;
+	std::vector<SenpTreeItemAction> itemActions{};
 };
 
 //! One visible Tree View subscriber, serialized on its native composition thread.
@@ -69,6 +77,11 @@ public:
 	//! A declared command from the View's title bar. It carries no item and no
 	//! arguments, so unlike Execute it needs neither a selected row nor a visible body.
 	[[nodiscard]] bool ExecuteViewCommand(std::wstring_view commandId);
+	//! The inline actions whose `viewItem` conditions match this row, in declaration order.
+	[[nodiscard]] std::vector<SenpTreeItemAction> ItemActions(std::wstring_view id) const;
+	//! Runs a matching inline action with the row's stable ID as its only argument,
+	//! SENP's stand-in for the TreeItem element VS Code passes to the command.
+	[[nodiscard]] bool ExecuteItemAction(std::wstring_view id, std::wstring_view commandId);
 	[[nodiscard]] TreeResult Apply(const senp::effect::OperationContext& context,
 		senp::effect::PublishTreePage page, Time now);
 	//! Non-effects runtime terminals for the admitted request or a derived event.

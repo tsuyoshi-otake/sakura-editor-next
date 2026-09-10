@@ -131,3 +131,68 @@ TEST(SenpManagementCodec, RejectsViewTitleActionsATitleButtonCannotShow)
 	Replace(legacy, "\"workbench.views.tree\",\"workbench.commands\"", "\"editor.visibleText\",\"editor.decorations\"");
 	EXPECT_FALSE(senp::DecodeBuiltInExtension(legacy));
 }
+
+namespace {
+std::string WithViewItem()
+{
+	auto json = Candidate();
+	Replace(json, "\"commands\":[{\"command\":\"sample.open\",\"title\":\"Open\"}],",
+		"\"commands\":[{\"command\":\"sample.open\",\"title\":\"Open\"},"
+		"{\"command\":\"sample.logs\",\"title\":\"View logs\",\"icon\":\"resources/icons/light/logs.svg\"}],"
+		"\"menus\":{\"view/item/context\":[{\"command\":\"sample.logs\","
+		"\"when\":\"viewItem =~ /job/ && viewItem =~ /completed/\",\"group\":\"inline\"}]},");
+	return json;
+}
+}
+
+TEST(SenpManagementCodec, RetainsInlineItemActionsMatchedByContextValue)
+{
+	const auto decoded = senp::DecodeBuiltInExtension(WithViewItem());
+	ASSERT_TRUE(decoded);
+	ASSERT_EQ(2U, decoded->runtime.commands.size());
+	// A path icon is kept verbatim; only an inline row action can draw it.
+	EXPECT_EQ(L"resources/icons/light/logs.svg", decoded->runtime.commands[1].icon);
+	EXPECT_TRUE(decoded->runtime.viewTitle.empty());
+	ASSERT_EQ(1U, decoded->runtime.viewItemContext.size());
+	const auto& action = decoded->runtime.viewItemContext[0];
+	EXPECT_EQ(L"sample.logs", action.command);
+	EXPECT_TRUE(action.views.empty());
+	EXPECT_EQ((std::vector<std::wstring>{ L"job", L"completed" }), action.contains);
+	EXPECT_TRUE(action.equals.empty());
+	auto scoped = WithViewItem();
+	Replace(scoped, "viewItem =~ /job/ && viewItem =~ /completed/", "view == sample:view && viewItem == step");
+	const auto equality = senp::DecodeBuiltInExtension(scoped);
+	ASSERT_TRUE(equality);
+	ASSERT_EQ(1U, equality->runtime.viewItemContext.size());
+	EXPECT_EQ((std::vector<std::wstring>{ L"sample:view" }), equality->runtime.viewItemContext[0].views);
+	EXPECT_TRUE(equality->runtime.viewItemContext[0].contains.empty());
+	EXPECT_EQ((std::vector<std::wstring>{ L"step" }), equality->runtime.viewItemContext[0].equals);
+}
+
+TEST(SenpManagementCodec, RejectsInlineItemActionsARowCannotShow)
+{
+	for (const auto& mutation : std::vector<std::pair<std::string, std::string>>{
+		{ "\"group\":\"inline\"", "\"group\":\"navigation\"" },
+		{ ",\"group\":\"inline\"", "" },
+		{ "viewItem =~ /job/ && viewItem =~ /completed/", "viewItem =~ /job/ || viewItem =~ /completed/" },
+		{ "viewItem =~ /job/ && viewItem =~ /completed/", "!viewItem" },
+		{ "viewItem =~ /job/ && viewItem =~ /completed/", "viewItem =~ /jo.b/" },
+		{ "viewItem =~ /job/ && viewItem =~ /completed/", "view == sample:view" },
+		{ "viewItem =~ /job/ && viewItem =~ /completed/", "view == sample:view && view == other:view && viewItem == job" },
+		{ "viewItem =~ /job/ && viewItem =~ /completed/", "viewItem =~ /job/ && viewItem =~ /job/" },
+		{ "{\"command\":\"sample.logs\",\"when\"", "{\"command\":\"sample.open\",\"when\"" },
+		{ "{\"command\":\"sample.logs\",\"when\"", "{\"command\":\"sample.missing\",\"when\"" },
+		{ "\"resources/icons/light/logs.svg\"", "\"../logs.svg\"" },
+		{ "\"group\":\"inline\"}]", "\"group\":\"inline\"},{\"command\":\"sample.logs\",\"when\":\"viewItem == job\",\"group\":\"inline\"}]" },
+	}) {
+		auto json = WithViewItem(); Replace(json, mutation.first, mutation.second);
+		EXPECT_FALSE(senp::DecodeBuiltInExtension(json)) << mutation.second;
+	}
+	auto empty = Candidate();
+	Replace(empty, "\"viewsContainers\"", "\"menus\":{\"view/item/context\":[]},\"viewsContainers\"");
+	EXPECT_FALSE(senp::DecodeBuiltInExtension(empty));
+	// A path icon cannot draw on a title button.
+	auto title = WithViewTitle();
+	Replace(title, "\"$(refresh)\"", "\"resources/icons/light/logs.svg\"");
+	EXPECT_FALSE(senp::DecodeBuiltInExtension(title));
+}

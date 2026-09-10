@@ -113,6 +113,7 @@ impl From<&wire::TreeItem> for wit::TreeItem {
             collapsible_state: (&value.collapsible_state).into(),
             command_id: value.command_id.clone(),
             arguments: value.arguments.clone(),
+            context_value: value.context_value.clone(),
         }
     }
 }
@@ -449,6 +450,7 @@ impl From<wit::TreeItem> for wire::TreeItem {
             collapsible_state: value.collapsible_state.into(),
             command_id: value.command_id,
             arguments: value.arguments,
+            context_value: value.context_value,
         }
     }
 }

@@ -16,13 +16,17 @@ namespace workbench {
 class SenpOwnerTreeContribution final {
 public:
 	SenpOwnerTreeContribution(layout::WorkbenchViewDescriptor descriptor,
-		std::vector<std::string> commands) noexcept
-		: m_descriptor(std::move(descriptor)), m_commands(std::move(commands)) {}
+		std::vector<std::string> commands, std::vector<tree::SenpTreeItemAction> itemActions = {}) noexcept
+		: m_descriptor(std::move(descriptor)), m_commands(std::move(commands)), m_itemActions(std::move(itemActions)) {}
 	[[nodiscard]] const layout::WorkbenchViewDescriptor& Descriptor() const noexcept { return m_descriptor; }
 	[[nodiscard]] std::vector<std::string> TakeCommands() noexcept { return std::move(m_commands); }
+	//! The View's `view/item/context` inline actions. They belong to the runtime
+	//! generation that registers them, not to the persistent declaration.
+	[[nodiscard]] std::vector<tree::SenpTreeItemAction> TakeItemActions() noexcept { return std::move(m_itemActions); }
 private:
 	layout::WorkbenchViewDescriptor m_descriptor;
 	std::vector<std::string> m_commands;
+	std::vector<tree::SenpTreeItemAction> m_itemActions;
 };
 
 using SenpTreeBodyFactory = std::function<std::unique_ptr<viewcontainer::ISenpViewBody>(

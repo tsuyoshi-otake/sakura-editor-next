@@ -72,7 +72,7 @@ public:
 					if (!converted) return false;
 					commands.push_back(std::move(*converted));
 				}
-				if (!m_projection->RegisterTree(*viewId, std::move(commands))) return false;
+				if (!m_projection->RegisterTree(*viewId, std::move(commands), contribution.TakeItemActions())) return false;
 				auto provider = m_projection->Tree(*viewId);
 				if (!provider) return false;
 				m_viewIds.push_back(*viewId);

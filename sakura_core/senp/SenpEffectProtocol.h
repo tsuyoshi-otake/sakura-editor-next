@@ -71,6 +71,9 @@ struct TreeItem final {
 	CollapsibleState collapsibleState{};
 	std::wstring commandId{};
 	std::vector<std::wstring> arguments{};
+	// VS Code's TreeItem.contextValue, read by `viewItem` menu conditions.
+	// Declared last so aggregate initializers written before it keep their meaning.
+	std::wstring contextValue{};
 	bool operator==(const TreeItem&) const = default;
 };
 

@@ -466,6 +466,12 @@ that is current now, which submits `CommandInvoked` with no arguments. Without a
 bound runtime the click is refused; it never activates the extension (see the
 `onCommand:` divergence in `../senp/CLAUDE.md`).
 
+A package's `view/item/context` inline actions are different: they are drawn
+by the Tree provider, which exists per runtime generation, so they travel with
+`SenpOwnerTreeContribution` into each generation's provider rather than being a
+structural field. A changed set of item actions is therefore not a Conflict; it
+applies with the next runtime generation.
+
 ## Phase 6 Service Foundations Checkpoint (2026-07-31)
 
 - `CWorkbenchRuntime` owns the process-local Marker and Output authorities.

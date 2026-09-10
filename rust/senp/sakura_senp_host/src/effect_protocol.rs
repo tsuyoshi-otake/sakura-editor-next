@@ -115,6 +115,7 @@ pub struct TreeItem {
     pub collapsible_state: CollapsibleState,
     pub command_id: String,
     pub arguments: Vec<String>,
+    pub context_value: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -603,6 +604,7 @@ impl Check for TreeItem {
             && self.collapsible_state.check(budget)
             && self.command_id.check(budget)
             && self.arguments.check(budget)
+            && self.context_value.check(budget)
             && (id(&self.id, false)
                 && self.label.len() <= 1024
                 && self.description.len() <= 1024
@@ -610,7 +612,8 @@ impl Check for TreeItem {
                 && id(&self.icon, true)
                 && id(&self.command_id, true)
                 && self.arguments.len() <= 16
-                && self.arguments.iter().all(|x| x.len() <= 4096))
+                && self.arguments.iter().all(|x| x.len() <= 4096)
+                && self.context_value.len() <= 1024)
     }
 }
 impl Check for TreeRequest {

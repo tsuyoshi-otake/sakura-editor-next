@@ -28,6 +28,8 @@ struct TreeItem final {
 	std::wstring id, label, description, tooltip, icon, commandId;
 	std::vector<std::wstring> arguments;
 	TreeItemCollapsibleState collapsibleState{ TreeItemCollapsibleState::None };
+	//! VS Code's TreeItem.contextValue, read by `viewItem` inline-action conditions.
+	std::wstring contextValue;
 };
 struct TreeChildrenPage final {
 	std::wstring parentId;

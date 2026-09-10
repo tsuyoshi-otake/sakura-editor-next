@@ -171,6 +171,7 @@ fn item(issue: Issue) -> TreeItem {
         },
         command_id: OPEN_ISSUE.into(),
         arguments: vec![format!("github-issue:{}", issue.number)],
+        context_value: String::new(),
     }
 }
 
@@ -190,6 +191,7 @@ fn comment_item(comment: Comment) -> TreeItem {
         collapsible_state: CollapsibleState::Leaf,
         command_id: OPEN_COMMENT.into(),
         arguments: vec![format!("github-issue-comment:{}", comment.id)],
+        context_value: String::new(),
     }
 }
 
@@ -647,6 +649,7 @@ fn pull_item(pull: PullRequest) -> TreeItem {
         },
         command_id: OPEN_PULL_REQUEST.into(),
         arguments: vec![format!("github-pull-request:{}", pull.number)],
+        context_value: String::new(),
     }
 }
 

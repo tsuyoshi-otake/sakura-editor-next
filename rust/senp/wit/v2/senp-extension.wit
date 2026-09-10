@@ -38,6 +38,9 @@ interface event-effects {
         collapsible-state: collapsible-state,
         command-id: string,
         arguments: list<string>,
+        // VS Code's TreeItem.contextValue: matched by `viewItem` in the
+        // package's view/item/context menu conditions. Empty means none.
+        context-value: string,
     }
     record tree-request {
         view-id: string,

@@ -9,6 +9,7 @@
 #include <windowsx.h>
 #include <algorithm>
 #include <map>
+#include <optional>
 #include <set>
 #include <unordered_map>
 #include <utility>
@@ -45,6 +46,9 @@ struct CSenpTreeView::Impl final : ISenpTreeObserver {
 	layout::EViewContainerLocation location{ layout::EViewContainerLocation::Sidebar };
 	unsigned int dpi{ 96 };
 	std::uint64_t nextToken{ 1 }, armed{}, invoking{};
+	//! An inline row action armed by a press, and the one posted for Invoke.
+	std::uint64_t armedActionToken{};
+	std::wstring armedAction, pendingActionRow, pendingAction;
 	HTREEITEM hover{};
 	bool closed{}, failed{}, visible{}, synchronizing{}, posted{}, invokePosted{}, observed{}, invokeExpand{};
 	explicit Impl(SenpTreeViewOptions value) : options(std::move(value)) {}
@@ -244,9 +248,50 @@ struct CSenpTreeView::Impl final : ISenpTreeObserver {
 		invokeExpand = explicitExpand;
 		if (!invokePosted) { invokePosted = ::PostMessageW(window, kInvoke, 0, 0) != FALSE; if (!invokePosted) Fault(); }
 	}
+	//! Inline actions show on the hovered or selected item row, right-aligned in
+	//! declaration order from the right edge, as VS Code's action bar does.
+	std::vector<std::pair<RECT, SenpTreeItemAction>> Actions(HTREEITEM item) const
+	{
+		std::vector<std::pair<RECT, SenpTreeItemAction>> result;
+		const auto* row = Find(item);
+		if (!row || row->kind != RowKind::Item || (item != hover && item != TreeView_GetSelection(tree))) return result;
+		RECT line{}; if (!TreeView_GetItemRect(tree, item, &line, FALSE)) return result;
+		RECT client{}; ::GetClientRect(tree, &client);
+		const int side = Dip(viewcontainer::kViewPaneIconDip, dpi), gap = Dip(4, dpi), top = line.top + (line.bottom - line.top - side) / 2;
+		int right = client.right - Dip(10, dpi);
+		auto actions = options.provider->ItemActions(row->id);
+		for (auto it = actions.rbegin(); it != actions.rend(); ++it) {
+			result.emplace_back(RECT{ right - side, top, right, top + side }, std::move(*it));
+			right -= side + gap;
+		}
+		std::ranges::reverse(result);
+		return result;
+	}
+	const SenpTreeItemAction* ActionAt(const std::vector<std::pair<RECT, SenpTreeItemAction>>& actions, POINT point) const noexcept
+	{
+		for (const auto& [rect, action] : actions) if (::PtInRect(&rect, point)) return &action;
+		return nullptr;
+	}
+	//! The row and command under a point, or null when the point is not on a
+	//! visible inline action.
+	std::optional<std::pair<Row*, std::wstring>> HitAction(POINT point) const
+	{
+		TVHITTESTINFO hit{}; hit.pt = point; const auto item = TreeView_HitTest(tree, &hit);
+		auto* row = Find(item); if (!row) return {};
+		const auto actions = Actions(item);
+		const auto* action = ActionAt(actions, point);
+		if (!action) return {};
+		return std::pair{ row, action->commandId };
+	}
 	void Invoke()
 	{
-		invokePosted = false; const auto token = std::exchange(invoking, 0);
+		invokePosted = false;
+		if (!pendingAction.empty()) {
+			const auto id = std::exchange(pendingActionRow, {}), command = std::exchange(pendingAction, {});
+			(void)options.provider->ExecuteItemAction(id, command);
+			return;
+		}
+		const auto token = std::exchange(invoking, 0);
 		for (const auto& [handle, row] : rows) if (row->token == token) {
 			const auto id = row->id, parent = row->parent; const auto kind = row->kind;
 			if (kind == RowKind::More) (void)options.provider->LoadNext(parent, Now());
@@ -285,6 +330,11 @@ struct CSenpTreeView::Impl final : ISenpTreeObserver {
 			}
 		}
 		text.top = line.top; text.bottom = line.bottom; text.right = std::max(text.left, client.right - Dip(10, dpi));
+		if (const auto actions = Actions(item); !actions.empty()) {
+			for (const auto& [rect, action] : actions)
+				viewcontainer::PaintViewPaneIcon(draw.nmcd.hdc, rect, action.icon, main.ToColorRef());
+			text.right = std::max<LONG>(text.left, actions.front().first.left - Dip(4, dpi));
+		}
 		const auto oldColor = ::SetTextColor(draw.nmcd.hdc, main.ToColorRef());
 		if (!description.empty() && text.right > text.left) {
 			SIZE labelSize{}, descriptionSize{};
@@ -373,13 +423,33 @@ struct CSenpTreeView::Impl final : ISenpTreeObserver {
 				const auto result = state.options.provider->SetExpanded(row->id, expand, Now());
 				return result == TreeResult::Applied || result == TreeResult::Unchanged;
 			}
+			// An inline row action is its own button: a press on it neither
+			// selects nor arms the row, and it runs on a matched release.
+			if (message == WM_LBUTTONDOWN || message == WM_LBUTTONDBLCLK) {
+				if (const auto action = state.HitAction({ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) })) {
+					state.armed = 0; state.armedActionToken = action->first->token; state.armedAction = action->second;
+					return 0;
+				}
+				state.armedActionToken = 0; state.armedAction.clear();
+			}
+			if (message == WM_LBUTTONUP && !state.armedAction.empty()) {
+				const auto action = state.HitAction({ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) });
+				const auto command = std::exchange(state.armedAction, {});
+				const auto token = std::exchange(state.armedActionToken, 0);
+				if (action && action->first->token == token && action->second == command && !state.invokePosted) {
+					state.pendingActionRow = action->first->id; state.pendingAction = command;
+					state.invokePosted = ::PostMessageW(state.window, kInvoke, 0, 0) != FALSE;
+					if (!state.invokePosted) state.Fault();
+				}
+				return 0;
+			}
 			if (message == WM_LBUTTONDOWN) { const auto* row = state.Hit({ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) }, true); state.armed = row ? row->token : 0; }
 			if (message == WM_LBUTTONUP) {
 				auto* row = state.Hit({ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) }, true);
 				if (row && row->token == state.armed) state.QueueInvoke(row);
 				state.armed = 0;
 			}
-			if (message == WM_CANCELMODE || message == WM_CAPTURECHANGED) state.armed = 0;
+			if (message == WM_CANCELMODE || message == WM_CAPTURECHANGED) { state.armed = state.armedActionToken = 0; state.armedAction.clear(); }
 			if (message == WM_LBUTTONDBLCLK) {
 				if (!state.options.expandOnSingleClick) state.QueueInvoke(state.Hit({ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) }, true), true);
 				return 0; // Native double-click expansion must not bypass the command/twistie rule.

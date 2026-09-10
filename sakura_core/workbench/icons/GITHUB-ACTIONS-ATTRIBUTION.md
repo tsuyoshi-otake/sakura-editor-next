@@ -43,6 +43,14 @@ identical.
 | --- | --- | --- |
 | `resources/icons/light/explorer.svg` | [light](https://github.com/github/vscode-github-actions/blob/45e962b4439e6476d67937206566c0470743c660/resources/icons/light/explorer.svg) | [dark](https://github.com/github/vscode-github-actions/blob/45e962b4439e6476d67937206566c0470743c660/resources/icons/dark/explorer.svg) |
 
+The inline tree-item action `github-actions.workflow.logs` ("View job logs")
+uses upstream's logs icon. Its local name is the light path the extension's
+`package.json` gives as the command icon; the dark file differs only in fill.
+
+| Local icon path | Upstream light SVG | Upstream dark SVG |
+| --- | --- | --- |
+| `resources/icons/light/logs.svg` | [light](https://github.com/github/vscode-github-actions/blob/45e962b4439e6476d67937206566c0470743c660/resources/icons/light/logs.svg) | [dark](https://github.com/github/vscode-github-actions/blob/45e962b4439e6476d67937206566c0470743c660/resources/icons/dark/logs.svg) |
+
 The upstream `wr_warning.svg`, `step_warning.svg` and light-only
 `step_pending.svg` are not imported because no upstream tree node resolves to
 them.

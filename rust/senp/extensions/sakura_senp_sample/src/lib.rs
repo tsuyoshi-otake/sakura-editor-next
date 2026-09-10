@@ -62,6 +62,7 @@ fn item(id: &str, label: &str, state: CollapsibleState) -> TreeItem {
         collapsible_state: state,
         command_id: String::new(),
         arguments: Vec::new(),
+        context_value: String::new(),
     }
 }
 

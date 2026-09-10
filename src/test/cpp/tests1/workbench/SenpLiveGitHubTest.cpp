@@ -644,14 +644,16 @@ TEST_F(SenpLiveGitHub, RealWorkflowRunsAndOneRealJobLogReachTheTreeAndAnEditorSu
 	std::map<std::wstring, std::shared_ptr<tree::SenpTreeProvider>, std::less<>> providers;
 	CSenpReadonlyOwnerTarget* target = nullptr;
 	const std::vector<std::string> commands{ "github-actions.workflow.run.open",
-		"sakura.githubActions.openJobDetails", "sakura.githubActions.openJobLog" };
+		"sakura.githubActions.openJobDetails", "github-actions.workflow.logs" };
+	const std::vector<tree::SenpTreeItemAction> itemActions{ { L"github-actions.workflow.logs",
+		L"View job logs", L"resources/icons/light/logs.svg", { L"job", L"completed" }, {} } };
 	std::vector<SenpOwnerTreeContribution> trees;
 	trees.emplace_back(layout::WorkbenchViewDescriptor{
 		"github-actions.workflows", "github-actions", "Workflows", 10, true, true, "senp.tree" },
-		commands);
+		commands, itemActions);
 	trees.emplace_back(layout::WorkbenchViewDescriptor{
 		"github-actions.current-branch", "github-actions", "Current Branch", 20, true, true,
-		"senp.tree" }, commands);
+		"senp.tree" }, commands, itemActions);
 	auto publication = Publication({ layout::WorkbenchViewContainerDescriptor{
 		"github-actions", "GitHub Actions", layout::EViewContainerLocation::Sidebar, 6,
 		"$(play-circle)", false, { layout::EViewContainerLocation::Sidebar } } },
@@ -675,53 +677,35 @@ TEST_F(SenpLiveGitHub, RealWorkflowRunsAndOneRealJobLogReachTheTreeAndAnEditorSu
 	ASSERT_TRUE(workflowRoot);
 	ASSERT_FALSE(workflowRoot->children.empty());
 
-	// A workflow that has never run has nothing below it, which is a true answer
-	// about that workflow rather than a failure, so the walk moves on to the next
-	// one. It fails only if the repository has no run under any workflow at all.
-	std::wstring runId;
-	for (const auto& workflowId : workflowRoot->children) {
-		if (!workflowId.starts_with(L"workflow:")) continue;
-		ASSERT_EQ(tree::TreeResult::Applied,
-			workflows->SetExpanded(workflowId, true, Clock::now()));
-		ASSERT_TRUE(Await(composition, [&] {
-			const auto node = workflows->Model().Node(workflowId);
+	const auto expand = [&](const std::wstring& id) {
+		if (workflows->SetExpanded(id, true, Clock::now()) != tree::TreeResult::Applied) return false;
+		return Await(composition, [&] {
+			const auto node = workflows->Model().Node(id);
 			return node && node->state != tree::TreeChildrenState::Unrequested
 				&& node->state != tree::TreeChildrenState::Loading;
-		})) << "expanding a workflow never settled";
-		const auto node = workflows->Model().Node(workflowId);
-		ASSERT_TRUE(node);
-		const auto run = std::ranges::find_if(node->children, [](const std::wstring& id) {
-			return id.starts_with(L"run:");
 		});
-		if (run != node->children.end()) { runId = *run; break; }
-	}
-	ASSERT_FALSE(runId.empty()) << "no workflow run reached the tree from the live repository";
-
-	ASSERT_EQ(tree::TreeResult::Applied, workflows->SetExpanded(runId, true, Clock::now()));
-	std::wstring attemptId;
-	ASSERT_TRUE(Await(composition, [&] {
-		const auto node = workflows->Model().Node(runId);
-		if (!node) return false;
-		const auto attempt = std::ranges::find_if(node->children, [](const std::wstring& id) {
-			return id.starts_with(L"attempt:");
-		});
-		if (attempt == node->children.end()) return false;
-		attemptId = *attempt;
-		return true;
-	})) << "the run never produced an attempt";
-
-	ASSERT_EQ(tree::TreeResult::Applied, workflows->SetExpanded(attemptId, true, Clock::now()));
+	};
+	// A workflow that has never run has nothing below it, and a run still in
+	// progress may have no finished job; both are true answers rather than
+	// failures, so the walk moves on. As upstream, a run lists its latest
+	// attempt's jobs, and the log action is drawn only on a completed one. The
+	// walk fails only if no run in the repository has a completed job at all.
 	std::wstring jobId;
-	ASSERT_TRUE(Await(composition, [&] {
-		const auto node = workflows->Model().Node(attemptId);
-		if (!node) return false;
-		const auto job = std::ranges::find_if(node->children, [](const std::wstring& id) {
-			return id.starts_with(L"job:");
-		});
-		if (job == node->children.end()) return false;
-		jobId = *job;
-		return true;
-	})) << "the attempt never produced a job";
+	for (const auto& workflowId : workflowRoot->children) {
+		if (!workflowId.starts_with(L"workflow:")) continue;
+		ASSERT_TRUE(expand(workflowId)) << "expanding a workflow never settled";
+		const auto runs = workflows->Model().Node(workflowId)->children;
+		for (const auto& runId : runs) {
+			if (!runId.starts_with(L"run:")) continue;
+			ASSERT_TRUE(expand(runId)) << "expanding a run never settled";
+			for (const auto& id : workflows->Model().Node(runId)->children) {
+				if (id.starts_with(L"job:") && !workflows->ItemActions(id).empty()) { jobId = id; break; }
+			}
+			if (!jobId.empty()) break;
+		}
+		if (!jobId.empty()) break;
+	}
+	ASSERT_FALSE(jobId.empty()) << "no completed job reached the tree from the live repository";
 
 	// The job detail, whose table of steps is built entirely from the live answer.
 	ASSERT_TRUE(workflows->Select(jobId));
@@ -741,14 +725,8 @@ TEST_F(SenpLiveGitHub, RealWorkflowRunsAndOneRealJobLogReachTheTreeAndAnEditorSu
 		the handle, the length and the characters on the surface - came out of the
 		live job.
 	*/
-	// A job's log is one of its children, so it exists only once the job has been
-	// asked for them. That read is the same one that fills the step rows.
-	ASSERT_EQ(tree::TreeResult::Applied, workflows->SetExpanded(jobId, true, Clock::now()));
-	const auto logId = L"joblog:" + jobSuffix;
-	ASSERT_TRUE(Await(composition, [&] { return workflows->Model().Node(logId).has_value(); }))
-		<< "the job published no log node";
-	ASSERT_TRUE(workflows->Select(logId));
-	ASSERT_TRUE(workflows->Execute(logId));
+	// The log is the completed job row's inline "View job logs" action.
+	ASSERT_TRUE(workflows->ExecuteItemAction(jobId, L"github-actions.workflow.logs"));
 	ASSERT_TRUE(Await(composition, [&] { return target->DocumentCount() == 2; }))
 		<< "the job log read never produced a document";
 	ASSERT_NO_FATAL_FAILURE(ExpectDisplayed(composition, *target,

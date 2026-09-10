@@ -3,8 +3,8 @@
 `effect-protocol.jsonl` is shared by the native `SenpEffectProtocol` tests and
 Rust host integration tests. Each line contains `name`, `valid` and the literal
 wire `input`. Optional `fill` replaces one `~fill~` marker with that many ASCII
-`x` bytes so boundary cases stay compact in source control. There are 72 cases:
-26 accepted and 46 rejected. Missing fixtures or unexpected counts fail tests.
+`x` bytes so boundary cases stay compact in source control. There are 73 cases:
+26 accepted and 47 rejected. Missing fixtures or unexpected counts fail tests.
 
 The v1 world and executable dispatch are unchanged. The v2 WIT world compiles
 separately. `effect_bridge` exhaustively maps its records/variants to the wire
@@ -38,7 +38,8 @@ request, acknowledge delivery, or publish a contribution.
   256 table rows, 64 metadata fields, 32 repositories and 16 remotes are accepted.
   Tool/command arguments have at most 16 entries. A table row must match its
   column count. A text resource is at most 32 MiB; it is an opaque handle.
-- Labels/titles/descriptions are at most 1,024 UTF-8 bytes; tooltip/argument/
+- Labels/titles/descriptions and tree-item context values are at most 1,024
+  UTF-8 bytes; tooltip/argument/
   metadata values are at most 4,096; cursors 2,048; tool data 65,536; Markdown
   262,144. The frame budget still applies to their sum and JSON escaping.
 - Partial tree pages require a next cursor; other terminal page states forbid

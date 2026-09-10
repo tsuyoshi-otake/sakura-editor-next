@@ -147,16 +147,17 @@ impl State {
             Event::CommandInvoked(command)
                 if command.command_id == OPEN_RUN
                     || command.command_id == jobs::OPEN_JOB
-                    || command.command_id == jobs::OPEN_LOG =>
+                    || command.command_id == jobs::VIEW_LOGS =>
             {
-                if let [resource] = command.arguments.as_slice() {
-                    if (command.command_id == OPEN_RUN && document_identity(resource).is_some())
-                        || jobs::opens(&command.command_id, resource)
-                    {
+                if let [argument] = command.arguments.as_slice() {
+                    let resource = if command.command_id == OPEN_RUN {
+                        document_identity(argument).map(|_| argument.clone())
+                    } else {
+                        jobs::opened(&command.command_id, argument)
+                    };
+                    if let Some(resource_id) = resource {
                         return vec![
-                            Effect::OpenDocument(OpenDocument {
-                                resource_id: resource.clone(),
-                            }),
+                            Effect::OpenDocument(OpenDocument { resource_id }),
                             Effect::CompleteCommand(CompleteCommand {
                                 status: CompletionStatus::Succeeded,
                                 message: String::new(),
@@ -196,7 +197,6 @@ impl State {
         }
         let view = request.view_id.as_str();
         let parent = request.parent_id.as_str();
-        let code = view_code(view).unwrap();
         let fail = |message| failed_page(view, parent, 1, message);
         if parent.is_empty() {
             let Some(page) = page_cursor(&request.cursor) else {
@@ -243,25 +243,6 @@ impl State {
                     paging(page),
                 );
             }
-        }
-        if let Some(run) = parent.strip_prefix("run:").and_then(positive) {
-            let (total, page) = if request.cursor.is_empty() {
-                (0, 1)
-            } else {
-                let parts: Vec<_> = request.cursor.split(':').collect();
-                let ["attempts", total, page] = parts.as_slice() else {
-                    return fail("Invalid attempt page cursor");
-                };
-                let (Some(total), Some(page)) = (positive32(total), positive32(page)) else {
-                    return fail("Invalid attempt page cursor");
-                };
-                (total, page)
-            };
-            return read(
-                format!("attempts:{code}:{run}:{total}:{page}"),
-                Resource::item("run", run),
-                Vec::new(),
-            );
         }
         fail("Unsupported Actions tree parent")
     }
@@ -357,46 +338,6 @@ impl State {
                         }
                     }) => page_effect(view, &parent, u64::from(page), result.items.into_iter().map(|run| run_item(view, run)).collect(), next_cursor(result.next_page), String::new()),
                     Ok(_) => failed_page(view, &parent, u64::from(page), "Mismatched run filter or next page"),
-                    Err(error) => failed_page(view, &parent, u64::from(page), error.to_string()),
-                }
-            }
-            ["attempts", code, run, total, page] => {
-                let (Some(view), Some(run), Ok(total), Some(page)) = (
-                    code_view(code),
-                    positive(run),
-                    total.parse::<u32>(),
-                    positive32(page),
-                ) else {
-                    return failed_page(WORKFLOWS, "", 1, "Invalid attempt page completion");
-                };
-                let parent = format!("run:{run}");
-                if completion.status != CompletionStatus::Succeeded {
-                    return failed_page(
-                        view,
-                        &parent,
-                        u64::from(page),
-                        completion_message(&completion),
-                    );
-                }
-                match parse_run(&completion.data) {
-                    Ok(value)
-                        if value.id == run
-                            && (total != 0 || page == 1)
-                            && (total == 0 || total <= value.run_attempt) =>
-                    {
-                        attempt_page(
-                            view,
-                            run,
-                            if total == 0 { value.run_attempt } else { total },
-                            page,
-                        )
-                    }
-                    Ok(_) => failed_page(
-                        view,
-                        &parent,
-                        u64::from(page),
-                        "Mismatched run attempt count",
-                    ),
                     Err(error) => failed_page(view, &parent, u64::from(page), error.to_string()),
                 }
             }
@@ -594,7 +535,9 @@ fn page_effect(
     })
 }
 
-// Upstream's WorkflowNode is its name alone: no icon and no description.
+// Upstream's WorkflowNode is its name alone: no icon and no description. Its
+// contextValue also carries pin and dispatch tokens for menus this extension
+// does not contribute, so only the node kind is sent.
 fn workflow_item(workflow: Workflow) -> TreeItem {
     TreeItem {
         id: format!("workflow:{}", workflow.id),
@@ -605,6 +548,7 @@ fn workflow_item(workflow: Workflow) -> TreeItem {
         collapsible_state: CollapsibleState::Collapsed,
         command_id: String::new(),
         arguments: Vec::new(),
+        context_value: "workflow".into(),
     }
 }
 
@@ -627,8 +571,17 @@ fn run_item(view: &str, run: Run) -> TreeItem {
         run.run_started_at.as_deref(),
         Some(&run.updated_at),
     );
+    // The row names the attempt it was read at: its children are that attempt's
+    // jobs, so a rerun has to arrive as a new row rather than re-point this one.
+    // Upstream's contextValue adds rerun and cancel permission tokens for menus
+    // this extension does not contribute; the kind and "completed" are kept.
+    let context_value = if run.status == "completed" {
+        "run completed"
+    } else {
+        "run"
+    };
     TreeItem {
-        id: format!("run:{}", run.id),
+        id: format!("run:{}:{}", run.id, run.run_attempt),
         label,
         description: String::new(),
         tooltip: format!(
@@ -639,45 +592,8 @@ fn run_item(view: &str, run: Run) -> TreeItem {
         collapsible_state: CollapsibleState::Collapsed,
         command_id: OPEN_RUN.into(),
         arguments: vec![document_id(run.id, run.run_attempt)],
+        context_value: context_value.into(),
     }
-}
-
-fn attempt_page(view: &str, run: u64, total: u32, page: u32) -> Effect {
-    let parent = format!("run:{run}");
-    let Some(offset) = page
-        .checked_sub(1)
-        .and_then(|value| value.checked_mul(PAGE_SIZE))
-        .filter(|value| *value < total)
-    else {
-        return failed_page(
-            view,
-            &parent,
-            u64::from(page),
-            "Attempt page is outside the selected snapshot",
-        );
-    };
-    let count = PAGE_SIZE.min(total - offset);
-    let items = (0..count)
-        .map(|index| {
-            let attempt = total - offset - index;
-            TreeItem {
-                id: format!("attempt:{run}:{attempt}"),
-                label: format!("Attempt #{attempt}"),
-                description: "Select to read this attempt".into(),
-                tooltip: format!("Run {run}, attempt {attempt}"),
-                icon: "history".into(),
-                collapsible_state: CollapsibleState::Collapsed,
-                command_id: OPEN_RUN.into(),
-                arguments: vec![document_id(run, attempt)],
-            }
-        })
-        .collect();
-    let cursor = if offset + count < total {
-        format!("attempts:{total}:{}", page + 1)
-    } else {
-        String::new()
-    };
-    page_effect(view, &parent, u64::from(page), items, cursor, String::new())
 }
 
 fn run_document(run: Run) -> Effect {
@@ -818,7 +734,8 @@ mod tests {
         let effect = state.complete(completed("runs:w:31:1", data));
         let page = page(&effect);
         assert_eq!(page.parent_id, "workflow:31");
-        assert_eq!(page.items[0].id, "run:51");
+        assert_eq!(page.items[0].id, "run:51:2");
+        assert_eq!(page.items[0].context_value, "run");
         assert_eq!(page.items[0].label, "#8");
         assert_eq!(
             page.items[0].icon,
@@ -852,6 +769,8 @@ mod tests {
             item.tooltip,
             "Failed in 1m 30s\n\nTriggered via pull request"
         );
+        assert_eq!(item.id, "run:51:1");
+        assert_eq!(item.context_value, "run completed");
         let unnamed = RUN.replace("\"name\":\"Build\"", "\"name\":null");
         assert_eq!(
             run_item(BRANCH, parse_run(&item_completion(&unnamed)).unwrap()).label,
@@ -872,6 +791,7 @@ mod tests {
             ),
             ("CI", "", "")
         );
+        assert_eq!(item.context_value, "workflow");
     }
 
     #[test]
@@ -1029,29 +949,31 @@ mod tests {
     }
 
     #[test]
-    fn attempt_pages_are_bounded_and_pin_the_observed_attempt_count() {
-        let state = State::default();
-        let effect = state.complete(completed(
-            "attempts:w:51:0:1",
-            item_completion(&RUN.replace("\"run_attempt\":2", "\"run_attempt\":21")),
-        ));
-        let first = page(&effect);
-        assert_eq!(first.items.len(), 20);
-        assert_eq!(first.items[0].id, "attempt:51:21");
-        assert_eq!(first.items[19].id, "attempt:51:2");
-        assert_eq!(first.next_cursor, "attempts:21:2");
-        let effect = state.complete(completed(
-            "attempts:w:51:21:2",
-            item_completion(&RUN.replace("\"run_attempt\":2", "\"run_attempt\":22")),
-        ));
-        let second = page(&effect);
-        assert_eq!(second.items.len(), 1);
-        assert_eq!(second.items[0].id, "attempt:51:1");
-        assert_eq!(second.status, PageStatus::Complete);
-        assert_eq!(
-            page(&attempt_page(WORKFLOWS, 51, 2, u32::MAX)).status,
-            PageStatus::Failed
+    fn the_inline_log_action_opens_the_log_of_the_job_row_it_was_drawn_on() {
+        let mut state = State::default();
+        let invoke = |state: &mut State, argument: &str| {
+            state.dispatch(
+                context(1),
+                Event::CommandInvoked(CommandInvoked {
+                    command_id: jobs::VIEW_LOGS.into(),
+                    arguments: vec![argument.into()],
+                }),
+            )
+        };
+        let effects = invoke(&mut state, "job:51:2:71");
+        assert!(
+            matches!(&effects[0], Effect::OpenDocument(value) if value.resource_id == "github-actions-job-log:51:2:71")
         );
+        assert!(
+            matches!(&effects[1], Effect::CompleteCommand(value) if value.status == CompletionStatus::Succeeded)
+        );
+        for argument in ["github-actions-job-log:51:2:71", "job:51:2", "run:51:2"] {
+            let effects = invoke(&mut state, argument);
+            assert_eq!(effects.len(), 1, "{argument}");
+            assert!(
+                matches!(&effects[0], Effect::CompleteCommand(value) if value.status == CompletionStatus::Failed)
+            );
+        }
     }
 
     #[test]
@@ -1116,7 +1038,8 @@ mod tests {
         for (view, parent, cursor) in [
             (WORKFLOWS, "workflow:0", ""),
             (BRANCH, "workflow:31", ""),
-            (WORKFLOWS, "run:51", "attempts:0:2"),
+            (WORKFLOWS, "run:51", ""),
+            (WORKFLOWS, "run:51:0", ""),
             (WORKFLOWS, "", "page:0"),
         ] {
             assert_eq!(
@@ -1142,11 +1065,7 @@ mod tests {
             .status,
             PageStatus::Failed
         );
-        assert_eq!(
-            page(&state.complete(completed("attempts:w:51:0:2", item_completion(RUN)))).status,
-            PageStatus::Failed
-        );
-        for id in ["workflows:1", "runs:w:31:1", "attempts:w:51:0:1"] {
+        for id in ["workflows:1", "runs:w:31:1", "runjobs:w:51:2:1"] {
             let mut completion = completed(id, String::new());
             completion.status = CompletionStatus::TimedOut;
             assert_eq!(page(&state.complete(completion)).status, PageStatus::Failed);

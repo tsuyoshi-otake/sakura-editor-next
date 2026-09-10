@@ -63,7 +63,8 @@ public:
 	CSenpOwnerProjection(const CSenpOwnerProjection&) = delete;
 	CSenpOwnerProjection& operator=(const CSenpOwnerProjection&) = delete;
 
-	[[nodiscard]] bool RegisterTree(std::wstring viewId, std::vector<std::wstring> commands);
+	[[nodiscard]] bool RegisterTree(std::wstring viewId, std::vector<std::wstring> commands,
+		std::vector<tree::SenpTreeItemAction> itemActions = {});
 	[[nodiscard]] std::shared_ptr<tree::SenpTreeProvider> Tree(std::wstring_view viewId) const noexcept;
 	//! Call after contribution-owner Poll. It drains terminals, then admits queued
 	//! document requests. No method waits, performs I/O, or pumps window messages.

@@ -13,7 +13,7 @@
     "commands": [
       { "command": "github-actions.workflow.run.open", "title": "Open Run Details" },
       { "command": "sakura.githubActions.openJobDetails", "title": "Open Job Details" },
-      { "command": "sakura.githubActions.openJobLog", "title": "Open Job Log" },
+      { "command": "github-actions.workflow.logs", "title": "View job logs", "icon": "resources/icons/light/logs.svg" },
       { "command": "github-actions.explorer.refresh", "title": "Refresh", "icon": "$(refresh)" },
       { "command": "github-actions.explorer.current-branch.refresh", "title": "Refresh current branch", "icon": "$(refresh)" }
     ],
@@ -21,6 +21,9 @@
       "view/title": [
         { "command": "github-actions.explorer.refresh", "when": "view == github-actions.workflows", "group": "navigation" },
         { "command": "github-actions.explorer.current-branch.refresh", "when": "view == github-actions.current-branch", "group": "navigation" }
+      ],
+      "view/item/context": [
+        { "command": "github-actions.workflow.logs", "when": "viewItem =~ /job/ && viewItem =~ /completed/", "group": "inline" }
       ]
     },
     "viewsContainers": {

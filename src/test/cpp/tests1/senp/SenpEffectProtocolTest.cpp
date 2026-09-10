@@ -67,7 +67,7 @@ TEST(SenpEffectProtocol, SharedFixturesAgreeOnGrammarBoundsAndTypedRoundTrips)
 		}
 		++cases;
 	}
-	EXPECT_EQ(72U, cases); EXPECT_EQ(26U, accepted);
+	EXPECT_EQ(73U, cases); EXPECT_EQ(26U, accepted);
 	if (output.is_open()) { output.flush(); EXPECT_TRUE(output.good()); }
 }
 
