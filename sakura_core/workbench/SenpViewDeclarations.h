@@ -11,6 +11,9 @@ enum class SenpViewDeclarationStatus : std::uint8_t {
 	Registered, Unchanged, Invalid, Conflict, Failed, Stopped,
 };
 
+//! A declaration's `view/title` actions, keyed by View ID.
+using SenpViewTitleActions = std::map<std::string, std::vector<viewcontainer::SenpViewTitleAction>, std::less<>>;
+
 //! UI-thread owner of persistent native declaration cohorts and their catalog
 //! and page registrations. Runtime generations borrow Bind; they never own this
 //! catalog. The window stops activation/runtime ownership before Remove/Close.
@@ -30,7 +33,8 @@ public:
 	[[nodiscard]] SenpViewDeclarationStatus Register(
 		layout::WorkbenchContributionOwner owner,
 		std::vector<layout::WorkbenchViewContainerDescriptor> containers,
-		std::vector<layout::WorkbenchViewDescriptor> views) noexcept;
+		std::vector<layout::WorkbenchViewDescriptor> views,
+		SenpViewTitleActions titleActions = {}) noexcept;
 	[[nodiscard]] std::unique_ptr<ISenpDeclaredTreePublication> Bind(
 		const senp::ContributionOwnerIdentity& runtimeOwner,
 		std::vector<SenpOwnerBoundTree> trees) noexcept;

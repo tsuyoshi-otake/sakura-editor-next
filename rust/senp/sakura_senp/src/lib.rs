@@ -119,6 +119,35 @@ pub struct ViewContribution {
 pub struct CommandContribution {
     pub command: String,
     pub title: String,
+    /// A `$(codicon)` ThemeIcon. VS Code also accepts an image path or a
+    /// light/dark pair here; SENP draws command icons only from the codicon
+    /// vocabulary, so those forms are rejected rather than drawn as something else.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+}
+
+/// One `menus["view/title"]` item. Only the inline `navigation` group exists
+/// natively, and `when` is limited to the `view == <id>` disjunction a title
+/// item uses to name its Views; see `view_title_when_views`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct MenuItemContribution {
+    pub command: String,
+    pub when: String,
+    pub group: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MenusContribution {
+    #[serde(default, rename = "view/title", skip_serializing_if = "Vec::is_empty")]
+    pub view_title: Vec<MenuItemContribution>,
+}
+
+impl MenusContribution {
+    pub fn is_empty(&self) -> bool {
+        self.view_title.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -126,6 +155,8 @@ pub struct CommandContribution {
 pub struct Contributions {
     #[serde(default)]
     pub commands: Vec<CommandContribution>,
+    #[serde(default, skip_serializing_if = "MenusContribution::is_empty")]
+    pub menus: MenusContribution,
     #[serde(default)]
     pub editor_decorations: Vec<EditorDecorationContribution>,
     #[serde(default)]
@@ -546,6 +577,29 @@ fn valid_theme_icon(value: &str) -> bool {
 /// as VS Code's `viewsContainers` allows, a package-relative image path. The
 /// host never reads that file: a path draws only when it names an entry of the
 /// host's compiled-in vocabulary, so the path is bounded here and nothing more.
+/// VS Code evaluates a full context-key expression in `when`. A SENP title item
+/// may only name its Views, as `view == <id>` clauses joined by `||`; any other
+/// operator, key or grouping is refused instead of being evaluated partially.
+pub fn view_title_when_views(when: &str) -> Option<Vec<&str>> {
+    if when.len() > 1024 {
+        return None;
+    }
+    let mut views = Vec::new();
+    for clause in when.split("||") {
+        let view = clause
+            .trim()
+            .strip_prefix("view")?
+            .trim_start()
+            .strip_prefix("==")?
+            .trim();
+        if !valid_effect_identifier(view) || views.contains(&view) {
+            return None;
+        }
+        views.push(view);
+    }
+    Some(views)
+}
+
 fn valid_container_icon(value: &str) -> bool {
     valid_theme_icon(value) || valid_package_image_path(value)
 }
@@ -842,7 +896,7 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), SenpError> {
     }
     if effect_runtime {
         validate_effect_contributions(manifest, &view_ids, &capabilities)?;
-    } else if !manifest.contributes.commands.is_empty() {
+    } else if !manifest.contributes.commands.is_empty() || !manifest.contributes.menus.is_empty() {
         return Err(SenpError::new(
             ErrorCode::InvalidManifest,
             "commands require schema 2",
@@ -901,8 +955,38 @@ fn validate_effect_contributions(
             || command.title.trim().is_empty()
             || command.title.len() > 160
             || command.title.chars().any(char::is_control)
+            || command.icon.as_deref().is_some_and(|icon| !valid_theme_icon(icon))
         {
             return Err(invalid());
+        }
+    }
+    let menus = &manifest.contributes.menus.view_title;
+    if menus.len() > 64 {
+        return Err(invalid());
+    }
+    let mut placed = BTreeSet::new();
+    let mut per_view = BTreeMap::<&str, usize>::new();
+    for item in menus {
+        let icon = manifest
+            .contributes
+            .commands
+            .iter()
+            .find(|command| command.command == item.command)
+            .and_then(|command| command.icon.as_deref());
+        let Some(targets) = view_title_when_views(&item.when) else {
+            return Err(invalid());
+        };
+        // A title item is an icon button: without one it would need VS Code's
+        // text rendering, and any group but `navigation` its overflow menu.
+        if menus.len() > 64 || icon.is_none() || item.group != "navigation" {
+            return Err(invalid());
+        }
+        for view in targets {
+            let count = per_view.entry(view).or_default();
+            *count += 1;
+            if !views.contains(view) || !placed.insert((view, item.command.as_str())) || *count > 8 {
+                return Err(invalid());
+            }
         }
     }
     if (!commands.is_empty() && !capabilities.contains("workbench.commands"))
@@ -2745,10 +2829,139 @@ mod tests {
             .map(|index| CommandContribution {
                 command: format!("sample.open{index}"),
                 title: "Open".into(),
+                icon: None,
             })
             .collect();
         assert_eq!(
             validate_manifest(&manifest).unwrap_err().code,
+            ErrorCode::InvalidManifest
+        );
+    }
+
+    fn with_view_title(
+        commands: serde_json::Value,
+        view_title: serde_json::Value,
+    ) -> Result<Manifest, SenpError> {
+        let mut value: serde_json::Value = serde_json::from_slice(include_bytes!(
+            "../../extensions/sakura_senp_sample/senp.json"
+        ))
+        .unwrap();
+        value["contributes"]["commands"] = commands;
+        value["contributes"]["menus"] = serde_json::json!({ "view/title": view_title });
+        parse_manifest(&serde_json::to_vec(&value).unwrap())
+    }
+
+    #[test]
+    fn view_title_menus_accept_icon_commands_placed_by_view_equality() {
+        let commands = serde_json::json!([
+            {"command":"sample.refresh", "title":"Refresh", "icon":"$(refresh)"},
+            {"command":"sample.collapse", "title":"Collapse", "icon":"$(collapse-all)"}
+        ]);
+        let manifest = with_view_title(
+            commands,
+            serde_json::json!([
+                {"command":"sample.refresh", "when":"view == sample.projects || view==sample.states", "group":"navigation"},
+                {"command":"sample.collapse", "when":"  view ==  sample.states ", "group":"navigation"}
+            ]),
+        )
+        .unwrap();
+        let items = &manifest.contributes.menus.view_title;
+        assert_eq!(items.len(), 2);
+        assert_eq!(
+            view_title_when_views(&items[0].when).unwrap(),
+            ["sample.projects", "sample.states"]
+        );
+        assert_eq!(manifest.contributes.commands[0].icon.as_deref(), Some("$(refresh)"));
+        // A manifest without menus still serializes without the key, so the
+        // C++ decoder of a package installed before menus existed is unchanged.
+        let plain = parse_manifest(include_bytes!(
+            "../../extensions/sakura_senp_sample/senp.json"
+        ))
+        .unwrap();
+        let serialized = serde_json::to_value(&plain).unwrap();
+        assert!(serialized["contributes"].get("menus").is_none());
+        assert!(serialized["contributes"]["commands"][0].get("icon").is_none());
+    }
+
+    #[test]
+    fn view_title_menus_reject_what_a_title_button_cannot_show() {
+        let icon = serde_json::json!([
+            {"command":"sample.refresh", "title":"Refresh", "icon":"$(refresh)"},
+            {"command":"sample.plain", "title":"Plain"}
+        ]);
+        let item = |command: &str, when: &str, group: &str| {
+            serde_json::json!({"command": command, "when": when, "group": group})
+        };
+        let cases = [
+            // Undeclared command, a command without an icon, overflow group.
+            serde_json::json!([item("sample.other", "view == sample.projects", "navigation")]),
+            serde_json::json!([item("sample.plain", "view == sample.projects", "navigation")]),
+            serde_json::json!([item("sample.refresh", "view == sample.projects", "inline")]),
+            serde_json::json!([item("sample.refresh", "view == sample.projects", "navigation@1")]),
+            // Anything but a `view == <declared id>` disjunction.
+            serde_json::json!([item("sample.refresh", "view == foreign.view", "navigation")]),
+            serde_json::json!([item("sample.refresh", "view != sample.projects", "navigation")]),
+            serde_json::json!([item("sample.refresh", "view == sample.projects && isWeb", "navigation")]),
+            serde_json::json!([item("sample.refresh", "viewItem == sample.projects", "navigation")]),
+            serde_json::json!([item("sample.refresh", "", "navigation")]),
+            serde_json::json!([item("sample.refresh", "view == sample.projects ||", "navigation")]),
+            serde_json::json!([item("sample.refresh", "view == sample.projects || view == sample.projects", "navigation")]),
+            // The same command twice on one View.
+            serde_json::json!([
+                item("sample.refresh", "view == sample.projects", "navigation"),
+                item("sample.refresh", "view == sample.projects", "navigation")
+            ]),
+            // Unknown item and menu keys.
+            serde_json::json!([{"command":"sample.refresh", "when":"view == sample.projects", "group":"navigation", "alt":"sample.plain"}]),
+        ];
+        for view_title in cases {
+            assert_eq!(
+                with_view_title(icon.clone(), view_title.clone()).unwrap_err().code,
+                ErrorCode::InvalidManifest,
+                "{view_title}"
+            );
+        }
+        for bad_icon in ["refresh", "$(refresh", "$()", "resources/refresh.svg", "$(re fresh)"] {
+            assert_eq!(
+                with_view_title(
+                    serde_json::json!([{"command":"sample.refresh", "title":"Refresh", "icon": bad_icon}]),
+                    serde_json::json!([])
+                )
+                .unwrap_err()
+                .code,
+                ErrorCode::InvalidManifest,
+                "{bad_icon}"
+            );
+        }
+        // At most eight title actions fit one View.
+        let nine: Vec<_> = (0..9)
+            .map(|index| serde_json::json!({"command": format!("sample.act{index}"), "title":"Act", "icon":"$(refresh)"}))
+            .collect();
+        let placed: Vec<_> = (0..9)
+            .map(|index| item(&format!("sample.act{index}"), "view == sample.projects", "navigation"))
+            .collect();
+        assert_eq!(
+            with_view_title(serde_json::json!(nine), serde_json::json!(placed[..8]))
+                .unwrap()
+                .contributes
+                .menus
+                .view_title
+                .len(),
+            8
+        );
+        assert_eq!(
+            with_view_title(serde_json::json!(nine), serde_json::json!(placed))
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidManifest
+        );
+        let mut value: serde_json::Value = serde_json::from_slice(include_bytes!(
+            "../../extensions/sakura_senp_sample/senp.json"
+        ))
+        .unwrap();
+        value["contributes"]["menus"] = serde_json::json!({"view/item/context": []});
+        assert_eq!(
+            parse_manifest(&serde_json::to_vec(&value).unwrap()).unwrap_err().code,
             ErrorCode::InvalidManifest
         );
     }

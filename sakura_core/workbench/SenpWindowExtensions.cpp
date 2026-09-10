@@ -24,6 +24,18 @@ std::optional<std::string> Utf8(std::wstring_view value)
 	const auto roundtrip = commands::json::ToWideStrict(text);
 	return roundtrip && *roundtrip == value ? std::optional(std::move(text)) : std::nullopt;
 }
+
+//! A title button draws a bundled codicon by name. The manifest's `$(name)`
+//! ThemeIcon allows upper case, which names no codicon, so it is unsupported here.
+std::optional<std::wstring> TitleActionIcon(std::wstring_view icon)
+{
+	if (icon.size() < 4 || !icon.starts_with(L"$(") || !icon.ends_with(L')')) return {};
+	const auto name = icon.substr(2, icon.size() - 3);
+	if (name.size() > 160 || !std::ranges::all_of(name, [](const wchar_t ch) {
+		return (ch >= L'a' && ch <= L'z') || (ch >= L'0' && ch <= L'9') || ch == L'-';
+	})) return {};
+	return std::wstring(name);
+}
 }
 
 class CSenpWindowExtensions::Entry final {
@@ -72,6 +84,25 @@ private:
 				|| !commands.insert(*command).second) return Status::Invalid;
 			m_commands.push_back(*command);
 		}
+		for (const auto& menu : m_descriptor.runtime.viewTitle) {
+			const auto declared = std::ranges::find(m_descriptor.runtime.commands, menu.command,
+				&senp::CommandContribution::command);
+			const auto command = Utf8(menu.command);
+			if (declared == m_descriptor.runtime.commands.end() || !command || !commands.contains(*command))
+				return Status::Invalid;
+			const auto icon = TitleActionIcon(declared->icon);
+			if (!icon) return Status::Unsupported;
+			for (const auto& view : menu.views) {
+				const auto viewId = Utf8(view);
+				if (!viewId || !views.contains(*viewId)) return Status::Invalid;
+				auto& actions = m_titleActions[*viewId];
+				if (std::ranges::any_of(actions, [&](const auto& action) { return action.commandId == *command; }))
+					return Status::Invalid;
+				// A View title bar has eight native action slots.
+				if (actions.size() >= 8) return Status::Unsupported;
+				actions.push_back({ *command, declared->title, *icon });
+			}
+		}
 		return Status::Synchronized;
 	}
 	senp::ExtensionDescriptor m_descriptor;
@@ -79,6 +110,7 @@ private:
 	std::vector<layout::WorkbenchViewContainerDescriptor> m_containers;
 	std::vector<layout::WorkbenchViewDescriptor> m_views;
 	std::vector<std::string> m_commands;
+	SenpViewTitleActions m_titleActions;
 };
 
 CSenpWindowExtensions::CSenpWindowExtensions(layout::WorkbenchContributionRegistry& catalog,
@@ -147,7 +179,8 @@ SenpWindowExtensionsStatus CSenpWindowExtensions::Synchronize(const senp::Manage
 			if (status != Status::Synchronized) return reject(status);
 			const auto previous = m_entries.find(descriptor.id);
 			if (previous != m_entries.end() && (previous->second->m_containers != entry->m_containers
-				|| previous->second->m_views != entry->m_views)) return reject(Status::Conflict);
+				|| previous->second->m_views != entry->m_views
+				|| previous->second->m_titleActions != entry->m_titleActions)) return reject(Status::Conflict);
 			if (!desired.emplace(descriptor.id, std::move(entry)).second) return reject(Status::Invalid);
 			accepted.extensions.push_back(descriptor);
 		}
@@ -157,7 +190,7 @@ SenpWindowExtensionsStatus CSenpWindowExtensions::Synchronize(const senp::Manage
 		added.reserve(desired.size());
 		for (const auto& [id, entry] : desired) {
 			const auto status = m_declarations.Register({ entry->m_ownerId, m_catalog.NextOwnerGeneration() },
-				entry->m_containers, entry->m_views);
+				entry->m_containers, entry->m_views, entry->m_titleActions);
 			if (status == SenpViewDeclarationStatus::Registered) added.push_back(id);
 			else if (status != SenpViewDeclarationStatus::Unchanged) {
 				for (const auto rollback : added) (void)m_declarations.Remove(rollback);

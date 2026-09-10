@@ -395,6 +395,57 @@ bool ParseWorkbenchViewContributions(const JsoncValue::Object& contributes,
 	return true;
 }
 
+bool IsAsciiAlphanumeric(const wchar_t ch) noexcept
+{
+	return (ch >= L'a' && ch <= L'z') || (ch >= L'A' && ch <= L'Z') || (ch >= L'0' && ch <= L'9');
+}
+
+//! The same `$(codicon)` form the package tool accepts for a command icon.
+bool ValidThemeIcon(std::wstring_view value) noexcept
+{
+	return value.size() >= 4 && value.size() <= 132 && value.starts_with(L"$(") && value.ends_with(L')')
+		&& std::ranges::all_of(value.substr(2, value.size() - 3),
+			[](const wchar_t ch) { return IsAsciiAlphanumeric(ch) || ch == L'-'; });
+}
+
+bool ValidEffectIdentifier(std::wstring_view value) noexcept
+{
+	return !value.empty() && value.size() <= 160 && IsAsciiAlphanumeric(value.front())
+		&& IsAsciiAlphanumeric(value.back())
+		&& std::ranges::all_of(value, [](const wchar_t ch) {
+			return IsAsciiAlphanumeric(ch) || ch == L'.' || ch == L'-' || ch == L'_' || ch == L':';
+		});
+}
+
+std::wstring_view TrimAsciiSpace(std::wstring_view value) noexcept
+{
+	const auto space = [](const wchar_t ch) { return ch == L' ' || ch == L'\t' || ch == L'\r' || ch == L'\n'; };
+	while (!value.empty() && space(value.front())) value.remove_prefix(1);
+	while (!value.empty() && space(value.back())) value.remove_suffix(1);
+	return value;
+}
+
+//! The Views a `view/title` item's `when` names: `view == <id>` clauses joined
+//! by `||`, mirroring the package tool's `view_title_when_views`. Anything else
+//! is refused rather than evaluated as a partial context-key expression.
+std::optional<std::vector<std::wstring>> ViewTitleWhenViews(std::wstring_view when)
+{
+	if (when.size() > 1024) return std::nullopt;
+	std::vector<std::wstring> views;
+	for (std::size_t start = 0;;) {
+		const auto split = when.find(L"||", start);
+		auto clause = TrimAsciiSpace(when.substr(start, split == std::wstring_view::npos ? split : split - start));
+		if (!clause.starts_with(L"view")) return std::nullopt;
+		clause = TrimAsciiSpace(clause.substr(4));
+		if (!clause.starts_with(L"==")) return std::nullopt;
+		const auto view = TrimAsciiSpace(clause.substr(2));
+		if (!ValidEffectIdentifier(view) || std::ranges::find(views, view) != views.end()) return std::nullopt;
+		views.emplace_back(view);
+		if (split == std::wstring_view::npos) return views;
+		start = split + 2;
+	}
+}
+
 bool ParseRuntimeContribution(const JsoncValue::Object& manifest,
 	const JsoncValue::Object& contributes, RuntimeContribution& target)
 {
@@ -416,16 +467,43 @@ bool ParseRuntimeContribution(const JsoncValue::Object& manifest,
 	} else if (*schema == 2 || !target.activationEvents.empty() || !target.capabilities.empty()) return false;
 	const auto* commands = ArrayMember(contributes, L"commands");
 	// Older v1 package tools predate this default-empty member.
-	if (!commands) return *schema == 1 && !contributes.contains(L"commands");
+	if (!commands) return *schema == 1 && !contributes.contains(L"commands") && !contributes.contains(L"menus");
 	if (commands->size() > 128 || (*schema == 1 && !commands->empty())) return false;
 	for (const auto& entry : *commands) {
 		const auto* object = std::get_if<JsoncValue::Object>(&entry.Value());
-		if (!object || object->size() != 2) return false;
+		const auto* icon = object ? StringMember(*object, L"icon") : nullptr;
+		if (!object || object->size() != (icon ? 3u : 2u)) return false;
 		const auto* command = StringMember(*object, L"command");
 		const auto* title = StringMember(*object, L"title");
 		if (!command || command->empty() || command->size() > 160 || !title || title->empty() || title->size() > 160
+			|| (icon && !ValidThemeIcon(*icon))
 			|| std::ranges::any_of(target.commands, [&](const auto& prior) { return prior.command == *command; })) return false;
-		target.commands.push_back({ *command, *title });
+		target.commands.push_back({ *command, *title, icon ? *icon : std::wstring{} });
+	}
+	const auto menusMember = contributes.find(L"menus");
+	if (menusMember == contributes.end()) return true;
+	const auto* menus = std::get_if<JsoncValue::Object>(&menusMember->second.Value());
+	if (!menus || *schema != 2 || menus->size() != 1) return false;
+	const auto* viewTitle = ArrayMember(*menus, L"view/title");
+	if (!viewTitle || viewTitle->empty() || viewTitle->size() > 64) return false;
+	for (const auto& entry : *viewTitle) {
+		const auto* object = std::get_if<JsoncValue::Object>(&entry.Value());
+		if (!object || object->size() != 3) return false;
+		const auto* command = StringMember(*object, L"command");
+		const auto* when = StringMember(*object, L"when");
+		const auto* group = StringMember(*object, L"group");
+		const auto declared = command ? std::ranges::find(target.commands, *command, &CommandContribution::command)
+			: target.commands.end();
+		if (declared == target.commands.end() || declared->icon.empty() || !when || !group || *group != L"navigation")
+			return false;
+		auto views = ViewTitleWhenViews(*when);
+		if (!views) return false;
+		for (const auto& view : *views) {
+			for (const auto& prior : target.viewTitle) {
+				if (prior.command == *command && std::ranges::find(prior.views, view) != prior.views.end()) return false;
+			}
+		}
+		target.viewTitle.push_back({ *command, std::move(*views) });
 	}
 	return true;
 }

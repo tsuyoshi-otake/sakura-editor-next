@@ -228,6 +228,8 @@ struct CSenpDeclaredTreeViews::Impl final : std::enable_shared_from_this<Impl> {
 	std::map<std::wstring, std::shared_ptr<Slot>, std::less<>> slots;
 	SenpDeclaredViewActivation request;
 	std::optional<senp::ContributionOwnerIdentity> bindingOwner;
+	//! The bound generation's providers, for title actions. Empty while unbound.
+	std::map<std::wstring, std::shared_ptr<tree::SenpTreeProvider>, std::less<>> providers;
 	Activation activation{ Activation::Dormant };
 	bool closed{}, failed{}, projecting{};
 	bool Project() noexcept
@@ -242,7 +244,7 @@ struct CSenpDeclaredTreeViews::Impl final : std::enable_shared_from_this<Impl> {
 	void Close() noexcept
 	{
 		if (closed) return;
-		closed = true; request = {}; bindingOwner.reset();
+		closed = true; request = {}; bindingOwner.reset(); providers.clear();
 		for (const auto& [id, slot] : slots) slot->Close();
 	}
 };
@@ -308,6 +310,7 @@ public:
 				[weak] { if (const auto value = weak.lock()) value->Fault(); } }, tree.Provider(), slot->second->title });
 			if (!body) return false;
 			m_bodies.emplace(slot->first, std::move(body));
+			m_providers.emplace(slot->first, tree.Provider());
 		}
 		return CanCommit();
 	}
@@ -324,6 +327,7 @@ public:
 		const auto state = m_state.lock();
 		state->bindingOwner = std::move(m_commitOwner);
 		for (auto& [id, body] : m_bodies) state->slots.find(id)->second->pending = std::move(body);
+		state->providers.swap(m_providers);
 		m_committed = true; return true;
 	}
 	bool Pump() noexcept override
@@ -336,14 +340,16 @@ public:
 		if (m_closed) return;
 		m_closed = true;
 		const auto state = m_state.lock();
-		if (m_committed && state && state->bindingOwner == m_owner) state->bindingOwner.reset();
-		m_bodies.clear();
+		if (m_committed && state && state->bindingOwner == m_owner) { state->bindingOwner.reset(); state->providers.clear(); }
+		m_bodies.clear(); m_providers.clear();
 	}
 private:
 	std::weak_ptr<Impl> m_state;
 	senp::ContributionOwnerIdentity m_owner;
 	std::optional<senp::ContributionOwnerIdentity> m_expected, m_commitOwner;
 	std::map<std::wstring, std::unique_ptr<tree::CSenpTreeView>, std::less<>> m_bodies;
+	// After Commit this holds the predecessor's providers, released with it.
+	std::map<std::wstring, std::shared_ptr<tree::SenpTreeProvider>, std::less<>> m_providers;
 	bool m_committed{}, m_closed{};
 };
 
@@ -388,6 +394,17 @@ std::unique_ptr<ISenpDeclaredTreePublication> CSenpDeclaredTreeViews::PrepareBin
 }
 bool CSenpDeclaredTreeViews::Pump(SenpExtensionActivationState state) noexcept
 { m_impl->activation = state; return m_impl->Project(); }
+bool CSenpDeclaredTreeViews::ExecuteTitleCommand(std::string_view viewId, std::string_view commandId) noexcept
+{
+	try {
+		if (!IsUsable() || !m_impl->bindingOwner) return false;
+		const auto view = commands::json::ToWideStrict(std::string(viewId));
+		const auto command = commands::json::ToWideStrict(std::string(commandId));
+		if (!view || !command) return false;
+		const auto provider = m_impl->providers.find(*view);
+		return provider != m_impl->providers.end() && provider->second->ExecuteViewCommand(*command);
+	} catch (...) { return false; }
+}
 bool CSenpDeclaredTreeViews::IsUsable() const noexcept { return !m_impl->closed && !m_impl->failed; }
 void CSenpDeclaredTreeViews::Close() noexcept { m_impl->Close(); }
 

@@ -30,6 +30,7 @@ struct SenpViewTitleAction final {
 	std::wstring title;
 	std::wstring icon;
 	bool enabled{ true };
+	[[nodiscard]] bool operator==(const SenpViewTitleAction&) const = default;
 };
 struct SenpViewBodyHost final {
 	HWND parent{};

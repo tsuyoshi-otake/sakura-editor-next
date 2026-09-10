@@ -66,6 +66,9 @@ public:
 	void Refresh(Time now);
 	[[nodiscard]] bool Select(std::wstring_view id);
 	[[nodiscard]] bool Execute(std::wstring_view id);
+	//! A declared command from the View's title bar. It carries no item and no
+	//! arguments, so unlike Execute it needs neither a selected row nor a visible body.
+	[[nodiscard]] bool ExecuteViewCommand(std::wstring_view commandId);
 	[[nodiscard]] TreeResult Apply(const senp::effect::OperationContext& context,
 		senp::effect::PublishTreePage page, Time now);
 	//! Non-effects runtime terminals for the admitted request or a derived event.

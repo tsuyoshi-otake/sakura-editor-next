@@ -174,6 +174,12 @@ bool SenpTreeProvider::Execute(std::wstring_view id)
 	if (!node || node->item.commandId.empty() || !state.commands.contains(node->item.commandId) || !state.model.Select(id)) return false;
 	return state.options.runtime->Execute({ node->item.commandId, node->item.arguments });
 }
+bool SenpTreeProvider::ExecuteViewCommand(std::wstring_view commandId)
+{
+	auto& state = *m_impl;
+	if (!state.Current() || !state.commands.contains(commandId)) return false;
+	return state.options.runtime->Execute({ std::wstring(commandId), {} });
+}
 TreeResult SenpTreeProvider::Apply(const senp::effect::OperationContext& context, senp::effect::PublishTreePage page, Time now)
 {
 	auto& state = *m_impl;

@@ -32,6 +32,10 @@ public:
 	//! The window calls this after activation Poll, including after runtime revoke.
 	//! Commit/Close only change authority; this method owns native body replacement.
 	[[nodiscard]] bool Pump(SenpExtensionActivationState state) noexcept;
+	//! A View title action. It reaches only the currently bound runtime: SENP
+	//! activates on `onView:` alone, so a click before activation is refused
+	//! rather than starting the extension the way VS Code's `onCommand:` would.
+	[[nodiscard]] bool ExecuteTitleCommand(std::string_view viewId, std::string_view commandId) noexcept;
 	[[nodiscard]] bool IsUsable() const noexcept;
 	void Close() noexcept;
 private:

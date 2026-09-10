@@ -12,6 +12,10 @@ use exports::sakura::senp::event_effects::*;
 const WORKFLOWS: &str = "github-actions.workflows";
 const BRANCH: &str = "github-actions.current-branch";
 const OPEN_RUN: &str = "github-actions.workflow.run.open";
+/// Upstream's `view/title` refresh commands. They are the only way to re-read a
+/// tree that nothing else invalidated; there is no polling behind them.
+const REFRESH: &str = "github-actions.explorer.refresh";
+const REFRESH_BRANCH: &str = "github-actions.explorer.current-branch.refresh";
 const PAGE_SIZE: u32 = 20;
 
 struct GithubActions;
@@ -35,7 +39,7 @@ impl Guest for GithubActions {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, PartialEq)]
 enum BranchState {
     #[default]
     Unavailable,
@@ -43,9 +47,14 @@ enum BranchState {
     Selected(String),
 }
 
+/// The part of a workspace snapshot that decides which repository both views
+/// read: each root and its remotes. The branch is tracked apart from it.
+type RepositoryIdentity = Vec<(String, Vec<(String, String)>)>;
+
 #[derive(Default)]
 struct State {
     scope: Option<(u64, u64, u64)>,
+    repositories: Option<RepositoryIdentity>,
     branch: BranchState,
 }
 
@@ -58,11 +67,30 @@ impl State {
         );
         if self.scope != Some(scope) {
             self.scope = Some(scope);
+            self.repositories = None;
             self.branch = BranchState::Unavailable;
         }
         match event {
             Event::WorkspaceChanged(change) => {
-                self.branch = match change.repositories.as_slice() {
+                // Upstream refreshes the current-branch tree when the Git
+                // extension reports a new HEAD, and rebuilds everything only when
+                // the repository itself changes. Mirror that split instead of
+                // re-reading the workflows on every checkout.
+                let repositories: RepositoryIdentity = change
+                    .repositories
+                    .iter()
+                    .map(|repository| {
+                        (
+                            repository.root_id.clone(),
+                            repository
+                                .remotes
+                                .iter()
+                                .map(|remote| (remote.name.clone(), remote.url.clone()))
+                                .collect(),
+                        )
+                    })
+                    .collect();
+                let branch = match change.repositories.as_slice() {
                     [repository] if repository.branch.is_empty() => BranchState::Detached,
                     [repository]
                         if repository.branch.len() <= 1024 && !repository.branch.contains('\0') =>
@@ -71,7 +99,34 @@ impl State {
                     }
                     _ => BranchState::Unavailable,
                 };
-                invalidations()
+                if self.repositories.as_ref() != Some(&repositories) {
+                    self.repositories = Some(repositories);
+                    self.branch = branch;
+                    invalidations()
+                } else if self.branch != branch {
+                    self.branch = branch;
+                    vec![invalidate(BRANCH)]
+                } else {
+                    Vec::new()
+                }
+            }
+            Event::CommandInvoked(command)
+                if command.command_id == REFRESH || command.command_id == REFRESH_BRANCH =>
+            {
+                if !command.arguments.is_empty() {
+                    return vec![Effect::CompleteCommand(CompleteCommand {
+                        status: CompletionStatus::Failed,
+                        message: "Refresh takes no arguments".into(),
+                    })];
+                }
+                let view = if command.command_id == REFRESH { WORKFLOWS } else { BRANCH };
+                vec![
+                    invalidate(view),
+                    Effect::CompleteCommand(CompleteCommand {
+                        status: CompletionStatus::Succeeded,
+                        message: String::new(),
+                    }),
+                ]
             }
             Event::TreeRequest(request) if view_code(&request.view_id).is_some() => {
                 vec![self.tree_request(request)]
@@ -401,15 +456,14 @@ fn document_identity(resource: &str) -> Option<(u64, u32)> {
     }
 }
 
+fn invalidate(view: &str) -> Effect {
+    Effect::InvalidateTree(InvalidateTree {
+        view_id: view.into(),
+    })
+}
+
 fn invalidations() -> Vec<Effect> {
-    [BRANCH, WORKFLOWS]
-        .into_iter()
-        .map(|view| {
-            Effect::InvalidateTree(InvalidateTree {
-                view_id: view.into(),
-            })
-        })
-        .collect()
+    [BRANCH, WORKFLOWS].into_iter().map(invalidate).collect()
 }
 
 /// One shape of the tool boundary's closed set together with the ids that shape
@@ -837,6 +891,85 @@ mod tests {
             page(&state.dispatch(context(2), request(BRANCH, "", ""))[0]).status,
             PageStatus::Failed
         );
+    }
+
+    fn invalidated(effects: &[Effect]) -> Vec<&str> {
+        effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::InvalidateTree(value) => Some(value.view_id.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_branch_change_refreshes_only_the_current_branch_view() {
+        let mut state = State::default();
+        assert_eq!(
+            invalidated(&state.dispatch(context(1), workspace(&["main"]))),
+            [BRANCH, WORKFLOWS]
+        );
+        // The same snapshot again changes nothing a view shows.
+        assert!(state.dispatch(context(1), workspace(&["main"])).is_empty());
+        assert_eq!(
+            invalidated(&state.dispatch(context(1), workspace(&["topic"]))),
+            [BRANCH]
+        );
+        assert_eq!(
+            invalidated(&state.dispatch(context(1), workspace(&[""]))),
+            [BRANCH]
+        );
+        // A different remote is a different repository for both views.
+        let Event::WorkspaceChanged(mut moved) = workspace(&[""]) else {
+            panic!()
+        };
+        moved.repositories[0].remotes.push(Remote {
+            name: "origin".into(),
+            url: "https://github.com/o/r.git".into(),
+        });
+        assert_eq!(
+            invalidated(&state.dispatch(context(1), Event::WorkspaceChanged(moved))),
+            [BRANCH, WORKFLOWS]
+        );
+        assert_eq!(
+            invalidated(&state.dispatch(context(1), workspace(&["main", "main"]))),
+            [BRANCH, WORKFLOWS]
+        );
+        // A new scope forgets what was announced before it.
+        assert_eq!(
+            invalidated(&state.dispatch(context(2), workspace(&["main", "main"]))),
+            [BRANCH, WORKFLOWS]
+        );
+    }
+
+    #[test]
+    fn title_refresh_commands_invalidate_their_own_view_and_complete() {
+        let mut state = State::default();
+        for (command, view) in [(REFRESH, WORKFLOWS), (REFRESH_BRANCH, BRANCH)] {
+            let effects = state.dispatch(
+                context(1),
+                Event::CommandInvoked(CommandInvoked {
+                    command_id: command.into(),
+                    arguments: Vec::new(),
+                }),
+            );
+            assert_eq!(invalidated(&effects), [view]);
+            assert!(
+                matches!(&effects[1], Effect::CompleteCommand(value) if value.status == CompletionStatus::Succeeded)
+            );
+            let effects = state.dispatch(
+                context(1),
+                Event::CommandInvoked(CommandInvoked {
+                    command_id: command.into(),
+                    arguments: vec!["run:1".into()],
+                }),
+            );
+            assert_eq!(effects.len(), 1);
+            assert!(
+                matches!(&effects[0], Effect::CompleteCommand(value) if value.status == CompletionStatus::Failed)
+            );
+        }
     }
 
     #[test]

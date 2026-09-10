@@ -23,9 +23,9 @@ class CSenpViewDeclarations::Entry final {
 public:
 	Entry(CSenpViewDeclarations& declarations, layout::WorkbenchContributionOwner owner,
 		std::vector<layout::WorkbenchViewContainerDescriptor> containers,
-		std::vector<layout::WorkbenchViewDescriptor> views) noexcept
+		std::vector<layout::WorkbenchViewDescriptor> views, SenpViewTitleActions titleActions) noexcept
 		: m_declarations(declarations), m_owner(std::move(owner)),
-		m_containers(std::move(containers)), m_views(std::move(views)) {}
+		m_containers(std::move(containers)), m_views(std::move(views)), m_titleActions(std::move(titleActions)) {}
 	~Entry() { Close(); }
 private:
 	friend class CSenpViewDeclarations;
@@ -38,14 +38,21 @@ private:
 		for (const auto& view : m_views) {
 			const auto id = commands::json::ToWideStrict(view.id);
 			if (!id) return false;
+			const auto actions = m_titleActions.find(view.id);
 			native.push_back({ view, [bodies = m_bodies, id = *id](viewcontainer::SenpViewBodyHost host) {
 				return bodies->CreateBody(id, std::move(host));
-			} });
+			}, actions == m_titleActions.end() ? std::vector<viewcontainer::SenpViewTitleAction>{} : actions->second });
 		}
 		for (const auto& container : m_containers) m_containerIds.push_back(container.id);
+		// The title bar outlives runtime generations; each click asks the bodies
+		// which runtime, if any, is bound now. The weak reference keeps a button
+		// that outlives its declaration from reaching a closed cohort.
 		m_native = viewcontainer::CSenpViewContainers::Create({ m_declarations.m_parkingParent,
 			m_owner, m_containers, std::move(native), m_declarations.m_requestFocus,
-			[](std::string_view, std::string_view) { return false; } });
+			[bodies = std::weak_ptr(m_bodies)](std::string_view viewId, std::string_view commandId) {
+				const auto current = bodies.lock();
+				return current && current->ExecuteTitleCommand(viewId, commandId);
+			} });
 		if (!m_native) return false;
 		auto catalog = m_declarations.m_catalog.PrepareOwnerReplacement(m_owner, 0, m_containers, m_views);
 		if (catalog.status != CatalogStatus::Prepared || !catalog.change) return false;
@@ -77,6 +84,7 @@ private:
 	layout::WorkbenchContributionOwner m_owner;
 	std::vector<layout::WorkbenchViewContainerDescriptor> m_containers;
 	std::vector<layout::WorkbenchViewDescriptor> m_views;
+	SenpViewTitleActions m_titleActions;
 	std::vector<std::string> m_containerIds;
 	std::shared_ptr<CSenpDeclaredTreeViews> m_bodies;
 	std::shared_ptr<viewcontainer::CSenpViewContainers> m_native;
@@ -94,7 +102,7 @@ CSenpViewDeclarations::~CSenpViewDeclarations() { Close(); }
 
 SenpViewDeclarationStatus CSenpViewDeclarations::Register(layout::WorkbenchContributionOwner owner,
 	std::vector<layout::WorkbenchViewContainerDescriptor> containers,
-	std::vector<layout::WorkbenchViewDescriptor> views) noexcept
+	std::vector<layout::WorkbenchViewDescriptor> views, SenpViewTitleActions titleActions) noexcept
 {
 	if (m_closed) return Status::Stopped;
 	if (m_entered) return Status::Conflict;
@@ -106,13 +114,14 @@ SenpViewDeclarationStatus CSenpViewDeclarations::Register(layout::WorkbenchContr
 			|| !::IsWindow(m_parkingParent) || !m_requestActivation || !m_requestFocus) return Status::Invalid;
 		const auto found = m_entries.find(*id);
 		if (found != m_entries.end()) return found->second->m_containers == containers && found->second->m_views == views
-			&& m_catalog.IsOwnerCurrent(found->second->m_owner) && found->second->m_native->IsUsable()
+			&& found->second->m_titleActions == titleActions && m_catalog.IsOwnerCurrent(found->second->m_owner) && found->second->m_native->IsUsable()
 			? Status::Unchanged : Status::Conflict;
 		if (m_entries.size() >= 64) return Status::Invalid;
 		// Allocate the map node before either authority commits. Insertion after
 		// both commits transfers this prepared node and cannot allocate or call UI.
 		decltype(m_entries) prepared;
-		auto entry = std::make_unique<Entry>(*this, std::move(owner), std::move(containers), std::move(views));
+		auto entry = std::make_unique<Entry>(*this, std::move(owner), std::move(containers), std::move(views),
+			std::move(titleActions));
 		if (!entry->Prepare(*id)) return Status::Failed;
 		auto inserted = prepared.emplace(*id, std::move(entry));
 		if (!inserted.first->second->Commit()) return Status::Conflict;

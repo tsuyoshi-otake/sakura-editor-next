@@ -55,7 +55,17 @@ struct ViewContribution final {
 struct CommandContribution final {
 	std::wstring command;
 	std::wstring title;
+	//! The manifest's `$(codicon)` ThemeIcon, or empty when it names none.
+	std::wstring icon;
 	[[nodiscard]] bool operator==(const CommandContribution&) const = default;
+};
+
+//! One `menus["view/title"]` item: a declared, icon-bearing command placed in
+//! the inline `navigation` group of each View its `when` clause names.
+struct ViewTitleMenuContribution final {
+	std::wstring command;
+	std::vector<std::wstring> views;
+	[[nodiscard]] bool operator==(const ViewTitleMenuContribution&) const = default;
 };
 
 //! Package-authority metadata, not permission to execute or issue tool grants.
@@ -65,6 +75,7 @@ struct RuntimeContribution final {
 	std::vector<std::wstring> activationEvents;
 	std::vector<std::wstring> capabilities;
 	std::vector<CommandContribution> commands;
+	std::vector<ViewTitleMenuContribution> viewTitle;
 	[[nodiscard]] bool operator==(const RuntimeContribution&) const = default;
 };
 

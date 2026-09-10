@@ -243,6 +243,28 @@ protected:
 		extension.views = { { L"sample.projects", L"sample.senp", L"Projects", L"senp.tree", 10 } };
 		return { senp::EManagementState::Ready, 1, { std::move(extension) } };
 	}
+	static senp::ManagementSnapshot PackagesWithRefresh()
+	{
+		auto snapshot = Packages();
+		auto& runtime = snapshot.extensions.front().runtime;
+		runtime.commands.push_back({ L"sample.refresh", L"Refresh", L"$(refresh)" });
+		runtime.viewTitle = { { L"sample.refresh", { L"sample.projects" } } };
+		return snapshot;
+	}
+	//! The pane whose header (control 1) carries the View title; its title
+	//! actions are controls 2 onward.
+	static HWND FindPane(HWND owner, const wchar_t* title)
+	{
+		struct Search final { const wchar_t* title; HWND pane; } search{ title, nullptr };
+		::EnumChildWindows(owner, [](HWND window, LPARAM parameter) -> BOOL {
+			auto& found = *reinterpret_cast<Search*>(parameter);
+			wchar_t text[64]{};
+			if (::GetDlgCtrlID(window) != 1 || !::GetWindowTextW(window, text, 64) || std::wcscmp(text, found.title) != 0) return TRUE;
+			found.pane = ::GetParent(window);
+			return FALSE;
+		}, reinterpret_cast<LPARAM>(&search));
+		return search.pane;
+	}
 
 	HWND m_owner{};
 };
@@ -325,6 +347,99 @@ TEST_F(SenpOwnerPublicationTest, WindowPackagesCarryAnImagePathContainerIconVerb
 	published.clear();
 	EXPECT_NE(SenpWindowExtensionsStatus::Synchronized, run(L"../explorer.svg", published));
 	EXPECT_TRUE(published.empty());
+}
+
+TEST_F(SenpOwnerPublicationTest, ViewTitleActionsReachOnlyTheBoundRuntime)
+{
+	layout::WorkbenchContributionRegistry catalog;
+	CDlgFuncList dialog; viewcontainer::CViewContainerPages pages(dialog);
+	ASSERT_TRUE(pages.Create(m_owner));
+	auto target = std::make_shared<TargetState>(); auto runtime = std::make_shared<RuntimeLifecycle>();
+	runtime->admitEvents = true;
+	CSenpWindowExtensions extensions(catalog, pages, m_owner, L"host.exe",
+		[target](const auto&, const auto&) { return std::make_unique<Target>(target); },
+		[](std::string_view) { return true; },
+		[runtime](auto launch) { return std::make_unique<Runtime>(std::move(launch), std::vector<senp::effect::Effect>{}, runtime); });
+	auto snapshot = PackagesWithRefresh();
+	ASSERT_EQ(SenpWindowExtensionsStatus::Synchronized, extensions.Synchronize(snapshot, 7, 9, Clock::now()));
+	const auto pane = FindPane(m_owner, L"Projects");
+	ASSERT_NE(nullptr, pane);
+	const auto refresh = ::GetDlgItem(pane, 2);
+	ASSERT_NE(nullptr, refresh);
+	// Mount the page in a visible host, so a refused click below is refused for
+	// want of a binding rather than because the pane is not on screen.
+	const auto host = ::CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
+		0, 0, 320, 400, m_owner, nullptr, ::GetModuleHandleW(nullptr), nullptr);
+	ASSERT_NE(nullptr, host);
+	ASSERT_TRUE(pages.Attach("sample.senp", { "test.host", layout::EViewContainerLocation::Sidebar,
+		reinterpret_cast<viewcontainer::ViewContainerNativeHandle>(host) }).Succeeded());
+	const RECT bounds{ 0, 0, 320, 400 };
+	pages.LayoutPageProjection("sample.senp", bounds, bounds, 96);
+	pages.SetPageVisible("sample.senp", true);
+	const auto invoked = [&] {
+		return std::ranges::count_if(runtime->events, [](const auto& event) {
+			const auto* command = std::get_if<senp::effect::CommandInvoked>(&event);
+			return command && command->commandId == L"sample.refresh" && command->arguments.empty();
+		});
+	};
+	const auto click = [&] {
+		::SendMessageW(pane, WM_COMMAND, MAKEWPARAM(2, BN_CLICKED), reinterpret_cast<LPARAM>(refresh));
+		(void)extensions.Poll(Clock::now());
+	};
+	// SENP activates on `onView:` alone: a click with no bound runtime neither
+	// starts the extension nor queues the command for a later one.
+	click();
+	EXPECT_EQ(0, runtime->starts); EXPECT_EQ(0, invoked());
+	EXPECT_EQ(SenpExtensionActivationState::Dormant, extensions.State(L"sample.extension"));
+	ASSERT_EQ(SenpExtensionActivationState::Preparing, extensions.RequestView(L"sample.projects", false, Clock::now()));
+	ASSERT_TRUE(extensions.Poll(Clock::now()));
+	ASSERT_EQ(SenpExtensionActivationState::Active, extensions.State(L"sample.extension"));
+	EXPECT_EQ(0, invoked());
+	click();
+	EXPECT_EQ(1, invoked());
+	// The title bar is part of the declaration; changing it is a structural edit.
+	const auto revision = catalog.Snapshot().revision;
+	snapshot.revision++; snapshot.extensions.front().runtime.viewTitle.clear();
+	EXPECT_EQ(SenpWindowExtensionsStatus::Conflict, extensions.Synchronize(snapshot, 7, 9, Clock::now()));
+	EXPECT_EQ(revision, catalog.Snapshot().revision); EXPECT_EQ(0, runtime->stops);
+	EXPECT_EQ(SenpExtensionActivationState::Active, extensions.State(L"sample.extension"));
+	EXPECT_TRUE(extensions.Close()); pages.Close(); ::DestroyWindow(host);
+	EXPECT_EQ(1, invoked());
+}
+
+TEST_F(SenpOwnerPublicationTest, ViewTitleActionsTheNativeTitleBarCannotShowAreRefused)
+{
+	const auto run = [&](const auto& mutate) {
+		layout::WorkbenchContributionRegistry catalog;
+		CDlgFuncList dialog; viewcontainer::CViewContainerPages pages(dialog);
+		EXPECT_TRUE(pages.Create(m_owner));
+		auto target = std::make_shared<TargetState>();
+		CSenpWindowExtensions extensions(catalog, pages, m_owner, L"host.exe",
+			[&](const auto&, const auto&) { return std::make_unique<Target>(target); },
+			[](std::string_view) { return true; },
+			[](auto launch) { return std::make_unique<Runtime>(std::move(launch), std::vector<senp::effect::Effect>{}); });
+		auto snapshot = PackagesWithRefresh();
+		mutate(snapshot.extensions.front().runtime);
+		const auto status = extensions.Synchronize(snapshot, 7, 9, Clock::now());
+		EXPECT_FALSE(pages.Contains("sample.senp") && status != SenpWindowExtensionsStatus::Synchronized);
+		EXPECT_TRUE(extensions.Close()); pages.Close();
+		return status;
+	};
+	EXPECT_EQ(SenpWindowExtensionsStatus::Synchronized, run([](auto&) {}));
+	// A manifest ThemeIcon may be upper case; no bundled codicon is.
+	EXPECT_EQ(SenpWindowExtensionsStatus::Unsupported, run([](auto& runtime) { runtime.commands[1].icon = L"$(Refresh)"; }));
+	EXPECT_EQ(SenpWindowExtensionsStatus::Invalid, run([](auto& runtime) { runtime.viewTitle[0].views = { L"sample.other" }; }));
+	EXPECT_EQ(SenpWindowExtensionsStatus::Invalid, run([](auto& runtime) { runtime.viewTitle[0].command = L"sample.missing"; }));
+	EXPECT_EQ(SenpWindowExtensionsStatus::Invalid, run([](auto& runtime) {
+		runtime.viewTitle.push_back({ L"sample.refresh", { L"sample.projects" } });
+	}));
+	EXPECT_EQ(SenpWindowExtensionsStatus::Unsupported, run([](auto& runtime) {
+		for (int i = 0; i != 8; ++i) {
+			const auto id = L"sample.extra" + std::to_wstring(i);
+			runtime.commands.push_back({ id, L"Extra", L"$(refresh)" });
+			runtime.viewTitle.push_back({ id, { L"sample.projects" } });
+		}
+	}));
 }
 
 TEST(SenpWindowExtensionsGeneration, CatalogSuggestionIsNonReservingAndExhaustsAtProtocolLimit)

@@ -457,6 +457,15 @@ the window must retain the composition and explicitly retry Close. Ordinary
 polling never retries a failed join. The window still owns timer scheduling,
 layout reconciliation, editor/tool target construction and CEditWnd integration.
 
+A package's `view/title` actions are part of its declaration (#297). The
+composition maps each to a `SenpViewTitleAction` on the named View when the
+cohort is prepared, so they are compared like any other structural field and a
+changed set is a Conflict. The button outlives runtime generations: its callback
+holds the declared bodies weakly and asks them for the provider of the binding
+that is current now, which submits `CommandInvoked` with no arguments. Without a
+bound runtime the click is refused; it never activates the extension (see the
+`onCommand:` divergence in `../senp/CLAUDE.md`).
+
 ## Phase 6 Service Foundations Checkpoint (2026-07-31)
 
 - `CWorkbenchRuntime` owns the process-local Marker and Output authorities.

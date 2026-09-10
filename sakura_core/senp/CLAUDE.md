@@ -392,6 +392,24 @@ command metadata in RuntimeContribution for later window composition. Decoding
 does not enable a package, publish an owner, or issue a tool grant. Both installed
 and available built-in records use the same runtime-metadata decoder.
 
+Schema 2 accepts the VS Code `contributes.menus` shape for one menu only,
+`view/title`, and only the subset a native View title button can present
+(#297). A command may carry a `$(codicon)` `icon`; a `view/title` item must
+name a declared command that has one, use `group: "navigation"` (the inline
+title bar; overflow `...` menus do not exist here), and place itself with
+`when` clauses of the form `view == <id>` joined by `||`. Any other context-key
+expression is refused rather than evaluated in part. Each View has at most
+eight actions and a (command, View) pair appears once. Rust `validate_manifest`
+and the native decoder apply the same rule; the window composition further
+requires a lower-case codicon name (a bundled glyph) and a declared View.
+Recorded divergences: upstream GitHub Actions names its refresh icon by a
+package-relative `refresh.svg` pair, while the built-in package uses the
+equivalent `$(refresh)` codicon because the host never reads package images.
+Upstream also activates on `onCommand:` for a title click; SENP activation is
+`onView:` only, so a title action reaches only the currently bound runtime and a
+click before activation returns false instead of starting the extension. The
+refresh action is the sanctioned trigger for the no-polling Tree rule.
+
 Native publication targets that retain an owner must be constructed through
 the CSenpOwnerComposition publication factory. Contribution ownership allocates
 the generation before invoking that synchronous factory; the caller's launch

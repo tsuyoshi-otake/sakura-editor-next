@@ -13,8 +13,16 @@
     "commands": [
       { "command": "github-actions.workflow.run.open", "title": "Open Run Details" },
       { "command": "sakura.githubActions.openJobDetails", "title": "Open Job Details" },
-      { "command": "sakura.githubActions.openJobLog", "title": "Open Job Log" }
+      { "command": "sakura.githubActions.openJobLog", "title": "Open Job Log" },
+      { "command": "github-actions.explorer.refresh", "title": "Refresh", "icon": "$(refresh)" },
+      { "command": "github-actions.explorer.current-branch.refresh", "title": "Refresh current branch", "icon": "$(refresh)" }
     ],
+    "menus": {
+      "view/title": [
+        { "command": "github-actions.explorer.refresh", "when": "view == github-actions.workflows", "group": "navigation" },
+        { "command": "github-actions.explorer.current-branch.refresh", "when": "view == github-actions.current-branch", "group": "navigation" }
+      ]
+    },
     "viewsContainers": {
       "activitybar": [{ "id": "github-actions", "title": "GitHub Actions", "icon": "resources/icons/light/explorer.svg", "order": 7 }]
     },
