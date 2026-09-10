@@ -46,7 +46,7 @@ template<class T> bool Rules(const T&) { return true; }
 bool Rules(const OperationContext& v) { return Id(v.operationId) && v.operationId.size() <= 96 && v.ownerGeneration > 0; }
 bool Rules(const Field& v) { return Text(v.name, 1024) && Text(v.value, 4096); }
 bool Rules(const Remote& v) { return Text(v.name, 256) && Text(v.url, 4096); }
-bool Rules(const Repository& v) { return Id(v.rootId) && Text(v.branch, 1024) && v.remotes.size() <= 16; }
+bool Rules(const Repository& v) { return Id(v.rootId) && Text(v.branch, 1024) && v.ahead <= 0xFFFFFFFFLL && v.remotes.size() <= 16; }
 bool Rules(const TreeItem& v) { return Id(v.id) && Text(v.label, 1024) && Text(v.description, 1024) && Text(v.tooltip, 4096) && Id(v.icon, true) && Id(v.commandId, true) && v.arguments.size() <= 16 && std::all_of(v.arguments.begin(), v.arguments.end(), [](const auto& x) { return Text(x, 4096); }); }
 bool Rules(const TreeRequest& v) { return Id(v.viewId) && Id(v.parentId, true) && Text(v.cursor, 2048); }
 bool Rules(const DocumentRequest& v) { return Id(v.resourceId); }
@@ -120,7 +120,7 @@ template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kRea
 	return codec.Record(Member(L"name", value.name), Member(L"url", value.url));
 }
 template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, Repository&, const Repository&> value) {
-	return codec.Record(Member(L"rootId", value.rootId), Member(L"branch", value.branch), Member(L"remotes", value.remotes));
+	return codec.Record(Member(L"rootId", value.rootId), Member(L"branch", value.branch), Member(L"ahead", value.ahead), Member(L"remotes", value.remotes));
 }
 template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, TreeItem&, const TreeItem&> value) {
 	return codec.Record(Member(L"id", value.id), Member(L"label", value.label), Member(L"description", value.description), Member(L"tooltip", value.tooltip), Member(L"icon", value.icon), Member(L"collapsibleState", value.collapsibleState), Member(L"commandId", value.commandId), Member(L"arguments", value.arguments));

@@ -3,8 +3,8 @@
 `effect-protocol.jsonl` is shared by the native `SenpEffectProtocol` tests and
 Rust host integration tests. Each line contains `name`, `valid` and the literal
 wire `input`. Optional `fill` replaces one `~fill~` marker with that many ASCII
-`x` bytes so boundary cases stay compact in source control. There are 71 cases:
-26 accepted and 45 rejected. Missing fixtures or unexpected counts fail tests.
+`x` bytes so boundary cases stay compact in source control. There are 72 cases:
+26 accepted and 46 rejected. Missing fixtures or unexpected counts fail tests.
 
 The v1 world and executable dispatch are unchanged. The v2 WIT world compiles
 separately. `effect_bridge` exhaustively maps its records/variants to the wire
@@ -23,6 +23,8 @@ request, acknowledge delivery, or publish a contribution.
   trailing commas, duplicate decoded keys or extra root values are accepted.
 - Counters are integers in `0..INT64_MAX`. Floats, exponent notation, negative
   zero and unsigned values above `INT64_MAX` do not become integer counters.
+  A repository's `ahead` is WIT `u32`, so both codecs also reject it above
+  `4294967295`.
 - Operation context carries an ID and owner/workspace/account/request
   generations. Owner generation is positive. Account generation zero is
   bootstrap/unknown state and is never evidence of being signed out.

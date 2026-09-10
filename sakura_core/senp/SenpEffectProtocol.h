@@ -56,6 +56,9 @@ struct Repository final {
 	std::wstring rootId{};
 	std::wstring branch{};
 	std::vector<Remote> remotes{};
+	// Commits HEAD is ahead of its upstream (WIT u32); last so that aggregate
+	// initializers written before it keep their meaning.
+	std::int64_t ahead{};
 	bool operator==(const Repository&) const = default;
 };
 

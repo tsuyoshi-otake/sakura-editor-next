@@ -70,7 +70,9 @@
   branches. No idle timer, automatic error retry, or per-item polling is allowed.
   A package's `view/title` refresh action is the explicit trigger instead: it
   reaches the bound runtime as a no-argument command that invalidates its own
-  View (#297, see `../senp/CLAUDE.md`).
+  View (#297, see `../senp/CLAUDE.md`). A push is the other trigger: the
+  published workspace snapshot carries the SCM ahead count, and a drop
+  invalidates the Actions extension's CURRENT BRANCH view, as upstream does.
 
 Verify with a Debug solution build and
 `TreeViewModel.*:SenpTreeProviderTest.*:SenpTreeView.*`, plus the owning View/page

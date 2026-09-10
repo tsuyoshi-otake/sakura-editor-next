@@ -247,7 +247,7 @@ TEST(SenpEffectCoordinator, SubmitsWorkspaceSnapshotsAsCompleteRepositoryLists)
 	CSenpEffectCoordinator coordinator(fixture.Owners(), owner, target);
 	fixture.PublicationChannel().Bind(coordinator);
 	const auto admission = coordinator.SubmitWorkspace(
-		{ { { L"root:0", L"main", { { L"origin", L"https://example.invalid/repo.git" } } } } },
+		{ { { L"root:0", L"main", { { L"origin", L"https://example.invalid/repo.git" } }, 3 } } },
 		Clock::now() + 1s);
 	ASSERT_EQ(senp::AdmissionStatus::Accepted, admission.Status());
 	// The whole list travels, remotes included: the event replaces what the
@@ -258,6 +258,7 @@ TEST(SenpEffectCoordinator, SubmitsWorkspaceSnapshotsAsCompleteRepositoryLists)
 	ASSERT_EQ(1U, event->repositories.size());
 	EXPECT_EQ(L"root:0", event->repositories[0].rootId);
 	EXPECT_EQ(L"main", event->repositories[0].branch);
+	EXPECT_EQ(3, event->repositories[0].ahead);
 	ASSERT_EQ(1U, event->repositories[0].remotes.size());
 	EXPECT_EQ(L"origin", event->repositories[0].remotes[0].name);
 	fixture.Owners().Poll(Clock::now());

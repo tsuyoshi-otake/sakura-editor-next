@@ -334,6 +334,20 @@ attempt document here, as requested for this platform's in-app Actions reading
 workflow; upstream opens the browser. The command and View identifiers remain
 upstream identifiers. Production workspace events and packaging are R01 gates.
 
+Push detection (#297). `workspaceChanged` carries each repository's `ahead`
+(WIT `u32`, both codecs reject larger values). `CEditWnd` publishes it from the
+SCM model's `HEAD` ahead count, 0 without an upstream, and a changed count is a
+new snapshot. Upstream's Actions extension refreshes CURRENT BRANCH when the
+HEAD name changes or when `HEAD.ahead` falls below its recorded value. It
+records that value only when it refreshes, so the ordinary
+commit-then-push sequence (0, 1, 0) never compares lower and the push is
+missed, although its code comment says a changed ahead count "indicates a push".
+**Documented divergence:** the guest records `ahead` on every observation, so
+any drop invalidates CURRENT BRANCH only; a rise, like a commit upstream, does
+nothing. A branch change that also lowers the count is one invalidation, and a
+new scope forgets the count. This is the upstream rule applied as its comment
+describes, not an extra trigger.
+
 E06 job and step projection uses the database Job ID and each Step's job-scoped
 number. A matrix display name is never an identity. The selected Run/Attempt
 pair is embedded in the job resource and checked on every list/detail/step

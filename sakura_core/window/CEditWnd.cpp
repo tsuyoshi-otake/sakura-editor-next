@@ -6242,14 +6242,18 @@ void CEditWnd::PublishSenpWorkspaceRepositories() noexcept try
 		// copy; `rootId` only has to name the workspace root slot it belongs to,
 		// and the payload is a complete list, so nothing downstream needs the id
 		// to carry more than that.
+		// `ahead` lets a package tell a push from a commit, as upstream's Actions
+		// extension does with the Git API's `HEAD.ahead`.
 		workspace.repositories.push_back({ .rootId = L"root:0",
-			.branch = m_scmTool->State().branch });
+			.branch = m_scmTool->State().branch, .ahead = std::max(0, m_scmTool->State().ahead) });
 	}
 	std::wstring signature;
 	for (const auto& repository : workspace.repositories) {
 		signature += repository.rootId;
 		signature += L'\n';
 		signature += repository.branch;
+		signature += L'\n';
+		signature += std::to_wstring(repository.ahead);
 		signature += L'\n';
 	}
 	// An empty list is the state every package starts in, so the opening turns

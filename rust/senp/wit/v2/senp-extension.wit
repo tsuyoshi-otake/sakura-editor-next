@@ -25,6 +25,8 @@ interface event-effects {
     record repository {
         root-id: string,
         branch: string,
+        // Commits HEAD is ahead of its upstream; 0 without one. A drop is a push.
+        ahead: u32,
         remotes: list<remote>,
     }
     record tree-item {

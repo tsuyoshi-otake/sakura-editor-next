@@ -45,7 +45,7 @@ fn shared_fixtures_agree_on_grammar_bounds_and_typed_round_trips() {
         }
         count += 1;
     }
-    assert_eq!(count, 71);
+    assert_eq!(count, 72);
     assert_eq!(accepted, 26);
 }
 

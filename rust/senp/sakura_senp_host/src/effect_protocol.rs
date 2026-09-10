@@ -99,6 +99,8 @@ pub struct Remote {
 pub struct Repository {
     pub root_id: String,
     pub branch: String,
+    /// Commits HEAD is ahead of its upstream; WIT `u32`.
+    pub ahead: u64,
     pub remotes: Vec<Remote>,
 }
 
@@ -580,8 +582,12 @@ impl Check for Repository {
         }
         self.root_id.check(budget)
             && self.branch.check(budget)
+            && self.ahead.check(budget)
             && self.remotes.check(budget)
-            && (id(&self.root_id, false) && self.branch.len() <= 1024 && self.remotes.len() <= 16)
+            && (id(&self.root_id, false)
+                && self.branch.len() <= 1024
+                && self.ahead <= u64::from(u32::MAX)
+                && self.remotes.len() <= 16)
     }
 }
 impl Check for TreeItem {

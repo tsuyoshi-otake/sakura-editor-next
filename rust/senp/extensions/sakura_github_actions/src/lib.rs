@@ -56,6 +56,8 @@ struct State {
     scope: Option<(u64, u64, u64)>,
     repositories: Option<RepositoryIdentity>,
     branch: BranchState,
+    /// The one repository's commits ahead of its upstream, as last observed.
+    ahead: u32,
 }
 
 impl State {
@@ -69,6 +71,7 @@ impl State {
             self.scope = Some(scope);
             self.repositories = None;
             self.branch = BranchState::Unavailable;
+            self.ahead = 0;
         }
         match event {
             Event::WorkspaceChanged(change) => {
@@ -99,11 +102,20 @@ impl State {
                     }
                     _ => BranchState::Unavailable,
                 };
+                // Upstream reads a drop in HEAD's ahead count as a push. It records
+                // the count only when it refreshes, so the usual commit-then-push
+                // (0 -> 1 -> 0) never compares lower; every observation counts here.
+                let ahead = match change.repositories.as_slice() {
+                    [repository] => repository.ahead,
+                    _ => 0,
+                };
+                let pushed = ahead < self.ahead;
+                self.ahead = ahead;
                 if self.repositories.as_ref() != Some(&repositories) {
                     self.repositories = Some(repositories);
                     self.branch = branch;
                     invalidations()
-                } else if self.branch != branch {
+                } else if self.branch != branch || pushed {
                     self.branch = branch;
                     vec![invalidate(BRANCH)]
                 } else {
@@ -762,6 +774,7 @@ mod tests {
                 .map(|(index, branch)| Repository {
                     root_id: format!("root:{index}"),
                     branch: (*branch).into(),
+                    ahead: 0,
                     remotes: Vec::new(),
                 })
                 .collect(),
@@ -939,6 +952,49 @@ mod tests {
         // A new scope forgets what was announced before it.
         assert_eq!(
             invalidated(&state.dispatch(context(2), workspace(&["main", "main"]))),
+            [BRANCH, WORKFLOWS]
+        );
+    }
+
+    fn ahead_of(branch: &str, ahead: u32) -> Event {
+        let Event::WorkspaceChanged(mut change) = workspace(&[branch]) else {
+            panic!()
+        };
+        change.repositories[0].ahead = ahead;
+        Event::WorkspaceChanged(change)
+    }
+
+    #[test]
+    fn a_push_refreshes_only_the_current_branch_view() {
+        let mut state = State::default();
+        assert_eq!(
+            invalidated(&state.dispatch(context(1), ahead_of("main", 0))),
+            [BRANCH, WORKFLOWS]
+        );
+        // Commits raise the count; nothing on GitHub has changed yet.
+        assert!(state.dispatch(context(1), ahead_of("main", 1)).is_empty());
+        assert!(state.dispatch(context(1), ahead_of("main", 2)).is_empty());
+        // The push upstream misses when the count was zero at its last refresh.
+        assert_eq!(
+            invalidated(&state.dispatch(context(1), ahead_of("main", 0))),
+            [BRANCH]
+        );
+        assert!(state.dispatch(context(1), ahead_of("main", 0)).is_empty());
+        // A partial push lowers the count too.
+        let _ = state.dispatch(context(1), ahead_of("main", 3));
+        assert_eq!(
+            invalidated(&state.dispatch(context(1), ahead_of("main", 1))),
+            [BRANCH]
+        );
+        // A checkout onto a branch with a lower count is one refresh, not two.
+        assert_eq!(
+            invalidated(&state.dispatch(context(1), ahead_of("topic", 0))),
+            [BRANCH]
+        );
+        // A new scope forgets the count along with everything else.
+        let _ = state.dispatch(context(1), ahead_of("topic", 5));
+        assert_eq!(
+            invalidated(&state.dispatch(context(2), ahead_of("topic", 1))),
             [BRANCH, WORKFLOWS]
         );
     }

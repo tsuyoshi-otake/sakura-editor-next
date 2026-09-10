@@ -95,6 +95,8 @@ impl From<&wire::Repository> for wit::Repository {
         Self {
             root_id: value.root_id.clone(),
             branch: value.branch.clone(),
+            // `Check` bounds the wire value to u32 before any conversion.
+            ahead: u32::try_from(value.ahead).unwrap_or(u32::MAX),
             remotes: value.remotes.iter().map(Into::into).collect(),
         }
     }
@@ -430,6 +432,7 @@ impl From<wit::Repository> for wire::Repository {
         Self {
             root_id: value.root_id,
             branch: value.branch,
+            ahead: value.ahead.into(),
             remotes: value.remotes.into_iter().map(Into::into).collect(),
         }
     }
