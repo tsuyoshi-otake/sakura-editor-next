@@ -293,6 +293,40 @@ TEST_F(SenpOwnerPublicationTest, WindowPackagesKeepDeclarationsDormantAndRetireB
 	EXPECT_FALSE(extensions.Poll(Clock::now())); pages.Close();
 }
 
+TEST_F(SenpOwnerPublicationTest, WindowPackagesCarryAnImagePathContainerIconVerbatim)
+{
+	// Upstream packages name their container icon by a package-relative image
+	// path. The catalog keeps it verbatim for the Activity Bar's compiled-in
+	// vocabulary; an unbounded path is refused before any declaration exists.
+	const auto run = [&](std::wstring icon, std::string& published) {
+		layout::WorkbenchContributionRegistry catalog;
+		CDlgFuncList dialog; viewcontainer::CViewContainerPages pages(dialog);
+		EXPECT_TRUE(pages.Create(m_owner));
+		auto target = std::make_shared<TargetState>();
+		CSenpWindowExtensions extensions(catalog, pages, m_owner, L"host.exe",
+			[&](const auto&, const auto&) { return std::make_unique<Target>(target); },
+			[](std::string_view) { return true; },
+			[](auto launch) { return std::make_unique<Runtime>(std::move(launch), std::vector<senp::effect::Effect>{}); });
+		auto snapshot = Packages();
+		snapshot.extensions.front().viewContainers.front().icon = std::move(icon);
+		const auto status = extensions.Synchronize(snapshot, 7, 9, Clock::now());
+		for (const auto& registered : catalog.Snapshot().viewContainers) {
+			if (registered.descriptor.id == "sample.senp") published = registered.descriptor.icon;
+		}
+		EXPECT_TRUE(extensions.Close()); pages.Close();
+		return status;
+	};
+	std::string published;
+	ASSERT_EQ(SenpWindowExtensionsStatus::Synchronized, run(L"resources/icons/light/explorer.svg", published));
+	EXPECT_EQ("resources/icons/light/explorer.svg", published);
+	published.clear();
+	ASSERT_EQ(SenpWindowExtensionsStatus::Synchronized, run(L"$(github)", published));
+	EXPECT_EQ("github", published);
+	published.clear();
+	EXPECT_NE(SenpWindowExtensionsStatus::Synchronized, run(L"../explorer.svg", published));
+	EXPECT_TRUE(published.empty());
+}
+
 TEST(SenpWindowExtensionsGeneration, CatalogSuggestionIsNonReservingAndExhaustsAtProtocolLimit)
 {
 	layout::WorkbenchContributionRegistry catalog;

@@ -6,6 +6,7 @@
 */
 #include "pch.h"
 #include "workbench/icons/GitHubActionsStatusIcons.h"
+#include "workbench/icons/GitHubActionsContainerIcon.h"
 
 #include <Windows.h>
 
@@ -30,12 +31,12 @@ constexpr COLORREF kWhite = RGB(255, 255, 255);
 
 class Canvas {
 public:
-	Canvas()
+	explicit Canvas(int size = kSize) : size_(size)
 	{
 		BITMAPINFO info{};
 		info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-		info.bmiHeader.biWidth = kSize;
-		info.bmiHeader.biHeight = -kSize;
+		info.bmiHeader.biWidth = size_;
+		info.bmiHeader.biHeight = -size_;
 		info.bmiHeader.biPlanes = 1;
 		info.bmiHeader.biBitCount = 32;
 		info.bmiHeader.biCompression = BI_RGB;
@@ -60,20 +61,20 @@ public:
 	{
 		if (bits_ == nullptr) return;
 		::GdiFlush();
-		std::fill_n(static_cast<DWORD*>(bits_), kSize * kSize, 0x00FFFFFFU);
+		std::fill_n(static_cast<DWORD*>(bits_), size_ * size_, 0x00FFFFFFU);
 	}
 
 	[[nodiscard]] COLORREF Pixel(int x, int y) const noexcept
 	{
 		::GdiFlush();
-		const DWORD value = static_cast<const DWORD*>(bits_)[y * kSize + x];
+		const DWORD value = static_cast<const DWORD*>(bits_)[y * size_ + x];
 		return RGB((value >> 16) & 0xFFU, (value >> 8) & 0xFFU, value & 0xFFU);
 	}
 
 	[[nodiscard]] bool Blank() const noexcept
 	{
-		for (int y = 0; y < kSize; ++y) {
-			for (int x = 0; x < kSize; ++x) {
+		for (int y = 0; y < size_; ++y) {
+			for (int x = 0; x < size_; ++x) {
 				if (Pixel(x, y) != kWhite) return false;
 			}
 		}
@@ -82,10 +83,16 @@ public:
 
 	[[nodiscard]] bool Draw(std::wstring_view name, bool light) const noexcept
 	{
-		return github_actions::Draw(dc_, IconRect{ 0, 0, kSize, kSize }, name, light);
+		return github_actions::Draw(dc_, IconRect{ 0, 0, size_, size_ }, name, light);
+	}
+
+	[[nodiscard]] bool DrawContainer(std::wstring_view name, COLORREF color) const noexcept
+	{
+		return github_actions::DrawContainerIcon(dc_, IconRect{ 0, 0, size_, size_ }, name, color);
 	}
 
 private:
+	int size_ = kSize;
 	HDC dc_ = nullptr;
 	HBITMAP bitmap_ = nullptr;
 	HGDIOBJ previous_ = nullptr;
@@ -201,4 +208,52 @@ TEST(GitHubActionsStatusIcons, StepQueuedDrawsOnlyTheActiveThemesRing)
 	ASSERT_TRUE(canvas.Draw(kStepQueued, false));
 	EXPECT_EQ(canvas.Pixel(16, 1), kWhite);
 	EXPECT_EQ(canvas.Pixel(16, 4), RGB(0x8B, 0x94, 0x9E));
+}
+
+// The Activity Bar icon is upstream's 24-unit explorer.svg (the Octicons
+// workflow glyph). A 48x48 canvas makes one SVG unit two pixels again.
+TEST(GitHubActionsContainerIcon, OnlyTheManifestPathIsAContainerIcon)
+{
+	EXPECT_TRUE(github_actions::IsContainerIcon(L"resources/icons/light/explorer.svg"));
+	EXPECT_TRUE(github_actions::IsIconPath(github_actions::kContainerIconPath));
+	// The two vocabularies are addressed separately: a container icon is not a
+	// Tree row status icon, and the reverse.
+	EXPECT_TRUE(github_actions::FindStatusIcon(github_actions::kContainerIconPath).empty());
+	EXPECT_FALSE(github_actions::IsContainerIcon(kRunSuccess));
+	EXPECT_FALSE(github_actions::IsContainerIcon(L"resources/icons/dark/explorer.svg"));
+	EXPECT_FALSE(github_actions::IsContainerIcon(L"play-circle"));
+	EXPECT_FALSE(github_actions::IsContainerIcon(L""));
+}
+
+TEST(GitHubActionsContainerIcon, DrawsTheWorkflowGlyphInTheCallersColour)
+{
+	constexpr COLORREF kIcon = RGB(0x33, 0x66, 0x99);
+	Canvas canvas(48);
+	ASSERT_TRUE(canvas.Valid());
+	ASSERT_TRUE(canvas.DrawContainer(github_actions::kContainerIconPath, kIcon));
+	// Top-left box: its left border (SVG x 1..2.5) is filled, its hole is not.
+	EXPECT_EQ(canvas.Pixel(3, 12), kIcon);
+	EXPECT_EQ(canvas.Pixel(12, 12), kWhite);
+	// Bottom-right box: its right border (SVG x 21.5..23) and its hole.
+	EXPECT_EQ(canvas.Pixel(44, 36), kIcon);
+	EXPECT_EQ(canvas.Pixel(35, 36), kWhite);
+	// The connector (SVG x 5.5..7) that leaves the top-left box downwards.
+	EXPECT_EQ(canvas.Pixel(12, 27), kIcon);
+	// Nothing is drawn in the empty top-right quarter.
+	EXPECT_EQ(canvas.Pixel(36, 12), kWhite);
+	EXPECT_EQ(::GetGraphicsMode(canvas.Dc()), GM_COMPATIBLE);
+	EXPECT_EQ(::GetPolyFillMode(canvas.Dc()), ALTERNATE);
+}
+
+TEST(GitHubActionsContainerIcon, OtherNamesAndEmptyBoxesDrawNothing)
+{
+	Canvas canvas(48);
+	ASSERT_TRUE(canvas.Valid());
+	EXPECT_FALSE(canvas.DrawContainer(kRunSuccess, RGB(0, 0, 0)));
+	EXPECT_FALSE(canvas.DrawContainer(L"resources/icons/other.svg", RGB(0, 0, 0)));
+	EXPECT_FALSE(github_actions::DrawContainerIcon(canvas.Dc(), IconRect{ 4, 4, 4, 20 },
+		github_actions::kContainerIconPath, RGB(0, 0, 0)));
+	EXPECT_FALSE(github_actions::DrawContainerIcon(nullptr, IconRect{ 0, 0, 48, 48 },
+		github_actions::kContainerIconPath, RGB(0, 0, 0)));
+	EXPECT_TRUE(canvas.Blank());
 }

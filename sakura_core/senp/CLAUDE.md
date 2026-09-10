@@ -174,11 +174,19 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   workspace activation, HWND drawing, focus, and accessibility authority.
   The current native page pool accepts this batch only during window startup,
   so enable/uninstall changes apply to the next window.
-- Recorded SENP divergence: an Activity Bar ViewContainer icon is a bounded
-  `$(codicon-name)` ThemeIcon instead of VS Code's extension-relative SVG path.
-  The native Activity Bar currently renders the bundled codicon font and has no
-  safe SVG extension-asset renderer; accepting arbitrary image paths would fake
-  capability and widen the package filesystem boundary.
+- An Activity Bar ViewContainer icon is either a bounded `$(codicon-name)`
+  ThemeIcon or, as in VS Code, a package-relative image path (`.svg`/`.png`,
+  at most 260 bytes of `[A-Za-z0-9._-]` segments, no empty, `.` or `..`
+  segment, so no absolute, drive, URL or traversal form). Rust manifest
+  validation and `WorkbenchContributionRegistry::ContainerIconName` apply the
+  same rule; the path reaches the Activity Bar verbatim.
+- Recorded SENP divergence: the host never reads that image from the package.
+  The native Activity Bar has no safe SVG extension-asset renderer, so a path
+  draws only when it names an entry of the compiled-in vocabulary (today the
+  GitHub Actions `resources/icons/light/explorer.svg`, see
+  `../workbench/icons/CLAUDE.md`), as the single-colour mask VS Code paints in
+  the Activity Bar foreground. Any other path draws the label's initial tile,
+  the fallback of an unknown codicon, rather than a substituted glyph.
 - Tree item icons follow the same boundary. `TreeItem.icon` may name an
   upstream-relative image path, but only a path in the host's compiled-in
   vocabulary draws (today the GitHub Actions status icons, see

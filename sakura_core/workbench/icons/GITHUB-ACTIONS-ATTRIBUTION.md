@@ -34,6 +34,15 @@ dark colours from the active colour theme kind.
 | `resources/icons/steps/step_queued.svg` | [light](https://github.com/github/vscode-github-actions/blob/45e962b4439e6476d67937206566c0470743c660/resources/icons/light/steps/step_queued.svg) | [dark](https://github.com/github/vscode-github-actions/blob/45e962b4439e6476d67937206566c0470743c660/resources/icons/dark/steps/step_queued.svg) |
 | `resources/icons/steps/step_inprogress.svg` | [light](https://github.com/github/vscode-github-actions/blob/45e962b4439e6476d67937206566c0470743c660/resources/icons/light/steps/step_inprogress.svg) | [dark](https://github.com/github/vscode-github-actions/blob/45e962b4439e6476d67937206566c0470743c660/resources/icons/dark/steps/step_inprogress.svg) |
 
+The Activity Bar icon of the `github-actions` ViewContainer is compiled into
+`GitHubActionsContainerIcon.h`. Its local name is the path upstream's
+`package.json` gives as the container icon; the light and dark files are
+identical.
+
+| Local icon path | Upstream light SVG | Upstream dark SVG |
+| --- | --- | --- |
+| `resources/icons/light/explorer.svg` | [light](https://github.com/github/vscode-github-actions/blob/45e962b4439e6476d67937206566c0470743c660/resources/icons/light/explorer.svg) | [dark](https://github.com/github/vscode-github-actions/blob/45e962b4439e6476d67937206566c0470743c660/resources/icons/dark/explorer.svg) |
+
 The upstream `wr_warning.svg`, `step_warning.svg` and light-only
 `step_pending.svg` are not imported because no upstream tree node resolves to
 them.
@@ -55,6 +64,10 @@ them.
   are drawn only for that colour theme kind.
 - Colours are copied from each SVG's `fill` attributes. They are not remapped
   to theme tokens, matching upstream, where the SVGs are fixed per theme kind.
+- `explorer.svg` has no fill. Its elliptical-arc corners are rewritten as
+  cubic Bezier segments, and it is filled with the Activity Bar's icon
+  foreground, matching VS Code, which uses an extension's container icon as a
+  mask over that colour.
 
 ## MIT License
 

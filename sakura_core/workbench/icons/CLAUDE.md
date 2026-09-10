@@ -20,6 +20,11 @@ and `GitHubActionsStatusIcons.h` (the GitHub Actions run/job/step status icons,
 `GITHUB-ACTIONS-ATTRIBUTION.md`). The latter is addressed by the upstream
 extension's own icon paths from `TreeItem.icon`, carries per-theme-kind colours
 and one constant-alpha layer, and has its own `license\github-actions\` payload.
+`GitHubActionsContainerIcon.h` adds the same extension's Activity Bar icon
+(`resources/icons/light/explorer.svg`, the Octicons workflow glyph) under the
+same attribution. It is addressed by the ViewContainer's manifest icon path and
+has no colour of its own: the Activity Bar fills it with its icon foreground,
+as VS Code masks an extension's container icon.
 
 - Keep icon lookup restricted to the bundled, versioned vocabularies. A glyph
   this repository cannot name is a missing table entry, not a reason to load an

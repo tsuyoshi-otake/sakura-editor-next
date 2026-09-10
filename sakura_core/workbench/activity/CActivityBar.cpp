@@ -11,6 +11,7 @@
 #include "workbench/icons/CCodiconFont.h"
 #include "workbench/icons/CodiconsActivityIcons.h"
 #include "workbench/icons/CodiconGlyphTable.h"
+#include "workbench/icons/GitHubActionsContainerIcon.h"
 #include "workbench/layout/WorkbenchIds.h"
 #include "util/string_ex.h"
 
@@ -719,8 +720,15 @@ void CActivityBar::Paint() noexcept
 		// anti-aliasing and optical weight visibly inconsistent. The orientation's
 		// 20/16-DIP bounds and normal font weight stay unchanged; vector paths remain
 		// the explicit fallback when the embedded font could not be registered.
-		if (!PaintFontGlyph(buffer, iconBounds, m_iconFont, CodiconGlyph(button.codicon), iconColor)
-			&& !PaintBuiltinGlyph(buffer, iconBounds, button.id, iconColor)) {
+		// An extension may name its container icon by the image path its manifest
+		// carries, as upstream packages do. Only a path in the compiled-in
+		// vocabulary draws, as the same single-colour mask VS Code paints; any
+		// other path takes the initial-tile fallback of an unknown codicon.
+		const bool painted = icons::github_actions::IsIconPath(button.codicon)
+			? icons::github_actions::DrawContainerIcon(buffer, iconBounds, button.codicon, iconColor)
+			: PaintFontGlyph(buffer, iconBounds, m_iconFont, CodiconGlyph(button.codicon), iconColor)
+				|| PaintBuiltinGlyph(buffer, iconBounds, button.id, iconColor);
+		if (!painted) {
 			static_cast<void>(PaintInitialTile(buffer, iconBounds, button.label, iconColor, m_model.GetDpi()));
 		}
 		// The badge sits over the glyph, as upstream's absolutely-positioned

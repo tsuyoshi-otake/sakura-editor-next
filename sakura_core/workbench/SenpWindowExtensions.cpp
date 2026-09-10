@@ -43,12 +43,13 @@ private:
 		std::set<std::string, std::less<>> containers, views, commands;
 		for (const auto& value : m_descriptor.viewContainers) {
 			const auto containerId = Utf8(value.id), title = Utf8(value.title);
-			std::wstring_view icon(value.icon);
-			if (!icon.empty()) {
-				if (icon.size() < 4 || !icon.starts_with(L"$(") || !icon.ends_with(L")")) return Status::Unsupported;
-				icon = icon.substr(2, icon.size() - 3);
+			std::optional<std::string> iconName = std::string{};
+			if (!value.icon.empty()) {
+				const auto manifestIcon = Utf8(value.icon);
+				if (!manifestIcon) return Status::Invalid;
+				iconName = layout::WorkbenchContributionRegistry::ContainerIconName(*manifestIcon);
+				if (!iconName) return Status::Unsupported;
 			}
-			const auto iconName = Utf8(icon);
 			if (!containerId || !title || !iconName || !containers.insert(*containerId).second) return Status::Invalid;
 			m_containers.push_back({ *containerId, *title, layout::EViewContainerLocation::Sidebar,
 				value.order, *iconName, false,

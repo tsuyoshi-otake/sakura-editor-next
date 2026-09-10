@@ -11,6 +11,7 @@
 #include <array>
 #include <memory>
 #include <initializer_list>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -224,6 +225,12 @@ public:
 		std::unique_ptr<PreparedWorkbenchContributions> change) noexcept;
 	[[nodiscard]] bool IsOwnerCurrent(const WorkbenchContributionOwner& owner) const noexcept;
 	[[nodiscard]] static bool IsValidStableId(std::string_view value) noexcept;
+	//! Maps a manifest ViewContainer icon to the descriptor icon: the name of a
+	//! `$(codicon)` ThemeIcon, or a bounded package-relative image path kept
+	//! verbatim (codicon names never contain '/'). The path names an entry of
+	//! the host's compiled-in icon vocabulary; no package file is ever read.
+	//! Returns nullopt for anything else, the SENP manifest rule mirrored.
+	[[nodiscard]] static std::optional<std::string> ContainerIconName(std::string_view manifestIcon);
 	[[nodiscard]] static bool IsValidViewContainerDescriptor(
 		const WorkbenchViewContainerDescriptor& descriptor) noexcept;
 	//! Validates the complete batch before any consumer can register a partial index.

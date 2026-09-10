@@ -542,6 +542,27 @@ fn valid_theme_icon(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
 }
 
+/// An Activity Bar ViewContainer icon is either a `$(codicon)` ThemeIcon or,
+/// as VS Code's `viewsContainers` allows, a package-relative image path. The
+/// host never reads that file: a path draws only when it names an entry of the
+/// host's compiled-in vocabulary, so the path is bounded here and nothing more.
+fn valid_container_icon(value: &str) -> bool {
+    valid_theme_icon(value) || valid_package_image_path(value)
+}
+
+fn valid_package_image_path(value: &str) -> bool {
+    value.len() <= 260
+        && (value.ends_with(".svg") || value.ends_with(".png"))
+        && value.split('/').all(|segment| {
+            !segment.is_empty()
+                && segment != "."
+                && segment != ".."
+                && segment
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+        })
+}
+
 fn valid_sha256(value: &str) -> bool {
     value.len() == 64
         && value
@@ -774,7 +795,7 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), SenpError> {
             || !container_ids.insert(container.id.as_str())
             || container.title.trim().is_empty()
             || container.title.len() > 160
-            || !valid_theme_icon(&container.icon)
+            || !valid_container_icon(&container.icon)
             || !(-10_000..=10_000).contains(&container.order)
         {
             return Err(SenpError::new(
@@ -2542,6 +2563,43 @@ mod tests {
             }
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn container_icons_accept_theme_icons_and_bounded_package_image_paths() {
+        let with_icon = |icon: &str| {
+            let mut value: serde_json::Value =
+                serde_json::from_slice(&versioned_manifest(2, ABI_V2)).unwrap();
+            value["contributes"]["viewsContainers"]["activitybar"][0]["icon"] = icon.into();
+            parse_manifest(&serde_json::to_vec(&value).unwrap())
+        };
+        for icon in [
+            "$(github)",
+            "resources/icons/light/explorer.svg",
+            "media/icon.png",
+        ] {
+            assert!(with_icon(icon).is_ok(), "{icon}");
+        }
+        for icon in [
+            "",
+            "$()",
+            "$(a b)",
+            "/resources/icon.svg",
+            "./icon.svg",
+            "../icon.svg",
+            "resources/../icon.svg",
+            "resources//icon.svg",
+            "resources\\icon.svg",
+            "resources/icon.svgz",
+            "C:/icon.svg",
+            "https://example.com/icon.svg",
+        ] {
+            assert_eq!(
+                with_icon(icon).unwrap_err().code,
+                ErrorCode::InvalidManifest,
+                "{icon}"
+            );
+        }
     }
 
     #[test]

@@ -59,10 +59,11 @@ std::optional<std::string> WideToUtf8Strict(const std::wstring_view value)
 	return result;
 }
 
-std::optional<std::string> ThemeIconName(const std::wstring_view value)
+std::optional<std::string> ContainerIconName(const std::wstring_view value)
 {
-	if (value.size() < 4 || !value.starts_with(L"$(") || !value.ends_with(L')')) return std::nullopt;
-	return WideToUtf8Strict(value.substr(2, value.size() - 3));
+	const auto manifestIcon = WideToUtf8Strict(value);
+	if (!manifestIcon) return std::nullopt;
+	return layout::WorkbenchContributionRegistry::ContainerIconName(*manifestIcon);
 }
 
 //! The file-source controller deliberately owns parse/apply/CAS tracking as one
@@ -413,7 +414,7 @@ bool CWorkbenchRuntime::RegisterExtensionWorkbenchContributions(
 		for (const auto& contribution : extension.viewContainers) {
 			const auto id = WideToUtf8Strict(contribution.id);
 			const auto title = WideToUtf8Strict(contribution.title);
-			const auto icon = ThemeIconName(contribution.icon);
+			const auto icon = ContainerIconName(contribution.icon);
 			if (!id || !title || !icon) return false;
 			containers.push_back({
 				.id = *id,

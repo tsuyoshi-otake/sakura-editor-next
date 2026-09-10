@@ -5,6 +5,8 @@
 #include "sakura_rc.h"
 
 #include <array>
+#include <optional>
+#include <string_view>
 #include <utility>
 
 namespace workbench::activity {
@@ -60,7 +62,8 @@ TEST(ActivityBarEntryProjection, ExtensionContributedContainersSitBelowSourceCon
 			.location = layout::EViewContainerLocation::Sidebar, .order = 6, .icon = "github",
 			.supportedLocations = { layout::EViewContainerLocation::Sidebar } },
 		layout::WorkbenchViewContainerDescriptor{ .id = "github-actions", .title = "GitHub Actions",
-			.location = layout::EViewContainerLocation::Sidebar, .order = 7, .icon = "play-circle",
+			.location = layout::EViewContainerLocation::Sidebar, .order = 7,
+			.icon = "resources/icons/light/explorer.svg",
 			.supportedLocations = { layout::EViewContainerLocation::Sidebar } },
 	};
 	ASSERT_TRUE(registry.RegisterExtensionContributions(containers, {}));
@@ -85,6 +88,26 @@ TEST(ActivityBarEntryProjection, ExtensionContributedContainersSitBelowSourceCon
 	EXPECT_EQ("github-actions", entries[5].id);
 	// Extensions keeps the last seat, so the band never runs past the bar's end.
 	EXPECT_EQ(std::string(layout::ids::viewContainer::Extensions), entries[6].id);
+	// A manifest image path reaches the painter verbatim, beside codicon names.
+	EXPECT_EQ(L"github", entries[4].codicon);
+	EXPECT_EQ(L"resources/icons/light/explorer.svg", entries[5].codicon);
+}
+
+TEST(ActivityBarEntryProjection, ManifestContainerIconsResolveToACodiconOrABoundedImagePath)
+{
+	using Registry = layout::WorkbenchContributionRegistry;
+	EXPECT_EQ(std::optional<std::string>("github"), Registry::ContainerIconName("$(github)"));
+	EXPECT_EQ(std::optional<std::string>("resources/icons/light/explorer.svg"),
+		Registry::ContainerIconName("resources/icons/light/explorer.svg"));
+	EXPECT_EQ(std::optional<std::string>("media/icon.png"), Registry::ContainerIconName("media/icon.png"));
+	// The SENP manifest rule: no traversal, no absolute or drive paths, no
+	// URLs, no backslashes, and only the image kinds a manifest may name.
+	for (const std::string_view rejected : { "", "$()", "$(a b)", "$(github", "github",
+		"/resources/icon.svg", "./icon.svg", "../icon.svg", "resources/../icon.svg",
+		"resources//icon.svg", "resources\\icon.svg", "resources/icon.svgz", "C:/icon.svg",
+		"https://example.com/icon.svg" }) {
+		EXPECT_FALSE(Registry::ContainerIconName(rejected).has_value()) << rejected;
+	}
 }
 
 TEST(ActivityBarEntryProjection, OnlyTheHostsOwnNavigationEscapesTheBand)

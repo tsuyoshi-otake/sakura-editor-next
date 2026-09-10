@@ -16,7 +16,7 @@
       { "command": "sakura.githubActions.openJobLog", "title": "Open Job Log" }
     ],
     "viewsContainers": {
-      "activitybar": [{ "id": "github-actions", "title": "GitHub Actions", "icon": "$(play-circle)", "order": 7 }]
+      "activitybar": [{ "id": "github-actions", "title": "GitHub Actions", "icon": "resources/icons/light/explorer.svg", "order": 7 }]
     },
     "views": {
       "github-actions": [

@@ -50,7 +50,9 @@ struct ActivityBarEntry {
 	std::string id;
 	//! Tooltip and accessible name, already localized by whoever produced the entry.
 	std::wstring label;
-	//! Bundled codicon name. Empty names fall back to the first letter of the label.
+	//! Bundled codicon name, or an extension container's package-relative image
+	//! path (it contains '/'), which draws only from the compiled-in vocabulary.
+	//! Empty or unknown names fall back to the first letter of the label.
 	std::wstring codicon;
 	ActivityBarEntryKind kind = ActivityBarEntryKind::ViewContainer;
 	bool enabled = true;

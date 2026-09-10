@@ -200,6 +200,33 @@ bool WorkbenchContributionRegistry::IsValidStableId(const std::string_view value
 	return IsPrintableUtf8(value);
 }
 
+std::optional<std::string> WorkbenchContributionRegistry::ContainerIconName(const std::string_view manifestIcon)
+{
+	const auto alnum = [](const char c) {
+		return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+	};
+	if (manifestIcon.starts_with("$(")) {
+		if (manifestIcon.size() < 4 || manifestIcon.size() > 132 || !manifestIcon.ends_with(')')) return std::nullopt;
+		const auto name = manifestIcon.substr(2, manifestIcon.size() - 3);
+		if (!std::ranges::all_of(name, [&](const char c) { return alnum(c) || c == '-'; })) return std::nullopt;
+		return std::string(name);
+	}
+	if (manifestIcon.size() > 260 || !(manifestIcon.ends_with(".svg") || manifestIcon.ends_with(".png"))) {
+		return std::nullopt;
+	}
+	for (std::size_t start = 0;;) {
+		const auto end = std::min(manifestIcon.find('/', start), manifestIcon.size());
+		const auto segment = manifestIcon.substr(start, end - start);
+		if (segment.empty() || segment == "." || segment == ".."
+			|| !std::ranges::all_of(segment, [&](const char c) { return alnum(c) || c == '.' || c == '_' || c == '-'; })) {
+			return std::nullopt;
+		}
+		if (end == manifestIcon.size()) break;
+		start = end + 1;
+	}
+	return std::string(manifestIcon);
+}
+
 std::uint64_t WorkbenchContributionRegistry::NextOwnerGeneration() const noexcept
 {
 	return m_lastOwnerGeneration >= kMaxOwnerGeneration ? 0 : m_lastOwnerGeneration + 1;
