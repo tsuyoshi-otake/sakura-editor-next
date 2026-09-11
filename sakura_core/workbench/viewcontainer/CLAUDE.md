@@ -68,6 +68,11 @@
   intermediate frame. `Attach` lays the panes out while the container is still
   hidden and shows it afterwards, so a retained page never appears at its
   previous geometry first.
+- An owner-draw header or action BUTTON (and the declared tree view's Retry)
+  returns 1 for `WM_ERASEBKGND`; its `WM_DRAWITEM` already fills the whole item.
+  Showing a page erases a newly visible child synchronously with the btnface
+  brush while `WM_PAINT` arrives a frame later, so the headers flashed as white
+  boxes and then blinked out and back during a switch (#298 follow-up).
 - The visual probe has no `CEditWnd`, so the fixture's `CommitFrame` stands in
   for the frame commit after every workbench-driven gesture. Without it the
   capture races an asynchronous paint and reports stale pixels that the real

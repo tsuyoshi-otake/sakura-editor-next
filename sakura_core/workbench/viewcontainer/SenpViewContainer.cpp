@@ -619,6 +619,9 @@ LRESULT CALLBACK CSenpViewContainers::Impl::ControlProcedure(HWND window, UINT m
 	}
 	if (message == WM_GETOBJECT && control.index == 0)
 		return owner.Usable() && control.lifetime->IsAlive() ? accessibility::HandleGetObject(control, wParam, lParam) : 0;
+	// DrawControl fills the whole item. A separate erase lands a frame before
+	// WM_DRAWITEM when the page is shown, so the header blinks out and back.
+	if (message == WM_ERASEBKGND) return 1;
 	if (!owner.Usable()) return ::DefSubclassProc(window, message, wParam, lParam);
 	if (message == WM_SETFOCUS) {
 		if (!owner.RequestFocus(pane) && ::IsWindow(reinterpret_cast<HWND>(wParam))) ::SetFocus(reinterpret_cast<HWND>(wParam));

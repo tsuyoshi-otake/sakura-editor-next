@@ -169,6 +169,8 @@ struct CSenpDeclaredTreeViews::Impl final : std::enable_shared_from_this<Impl> {
 		static LRESULT CALLBACK RetryProcedure(HWND window, UINT message, WPARAM w, LPARAM l, UINT_PTR, DWORD_PTR data) noexcept
 		{
 			auto& self = *reinterpret_cast<Slot*>(data);
+			// DrawRetry fills the whole item; the show-time erase would paint btnface first.
+			if (window == self.retry && message == WM_ERASEBKGND) return 1;
 			try {
 				if (message == WM_MOUSEMOVE) {
 					TRACKMOUSEEVENT track{ sizeof(track), TME_LEAVE, window, 0 }; ::TrackMouseEvent(&track);
