@@ -20,7 +20,6 @@ using Status = ESenpPackageAuthorityPublishStatus;
 //! Only a package that the runtime can actually activate may own a tool grant.
 //! These are the same terms CSenpExtensionActivation requires, so a package can
 //! never hold a capability it could not exercise.
-constexpr std::wstring_view kRuntimeAbi = L"sakura:senp/extension@2.0.0";
 constexpr std::uint32_t kRuntimeSchemaVersion = 2;
 
 //! Closed manifest-name to capability map. A name outside it grants nothing:
@@ -63,7 +62,7 @@ bool IsActivatable(const ExtensionDescriptor& extension) noexcept
 {
 	return extension.installed && extension.enabled
 		&& extension.runtime.schemaVersion == kRuntimeSchemaVersion
-		&& extension.runtime.abi == kRuntimeAbi;
+		&& extension.runtime.compatible;
 }
 
 //! A snapshot proves the current enablement state only in Ready. After a failed

@@ -10,7 +10,7 @@ pub const MAX_TOOL_DATA_BYTES: usize = 256 * 1024;
 pub const MAX_EFFECTS: usize = 64;
 pub const MAX_ITEMS: usize = 256;
 pub const MAX_COUNTER: u64 = i64::MAX as u64;
-pub const ABI: &str = "sakura:senp/extension@2.0.0";
+pub const ABI: &str = "sakura:senp/extension@3.0.0";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

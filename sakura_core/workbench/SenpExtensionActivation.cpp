@@ -35,7 +35,7 @@ ActivationState StateFor(Status status) noexcept
 bool Eligible(const senp::ExtensionDescriptor& extension) noexcept
 {
 	return extension.installed && extension.enabled && extension.runtime.schemaVersion == 2
-		&& extension.runtime.abi == L"sakura:senp/extension@2.0.0";
+		&& extension.runtime.compatible;
 }
 }
 

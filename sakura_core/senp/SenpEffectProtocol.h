@@ -22,7 +22,7 @@ inline constexpr std::size_t kMaximumToolDataBytes = 256U * 1024U;
 inline constexpr std::size_t kMaximumEffects = 64;
 inline constexpr std::size_t kMaximumItems = 256;
 inline constexpr std::int64_t kMaximumCounter = INT64_MAX;
-inline constexpr std::wstring_view kAbi = L"sakura:senp/extension@2.0.0";
+inline constexpr std::wstring_view kAbi = L"sakura:senp/extension@3.0.0";
 
 enum class CollapsibleState : std::uint8_t { Leaf, Collapsed, Expanded };
 enum class CompletionStatus : std::uint8_t { Succeeded, Cancelled, Failed, TimedOut, HostUnavailable };

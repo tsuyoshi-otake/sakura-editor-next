@@ -89,6 +89,10 @@ struct RuntimeContribution final {
 	std::vector<CommandContribution> commands;
 	std::vector<ViewTitleMenuContribution> viewTitle;
 	std::vector<ViewItemMenuContribution> viewItemContext;
+	//! Decided by sakura_senp, the only owner of the runtime ABI: false for an
+	//! installed package built for another WIT world. It is listed so it can be
+	//! refreshed or removed, and must never be activated or granted tools.
+	bool compatible{ true };
 	[[nodiscard]] bool operator==(const RuntimeContribution&) const = default;
 };
 

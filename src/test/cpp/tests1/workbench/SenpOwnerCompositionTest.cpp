@@ -282,7 +282,7 @@ protected:
 		extension.modulePath = L"extension.wasm";
 		extension.moduleSha256.assign(64, L'a');
 		extension.archiveSha256.assign(64, L'b');
-		extension.runtime = { 2, L"sakura:senp/extension@2.0.0", { L"onView:sample.tree" }, {}, {} };
+		extension.runtime = { 2, L"sakura:senp/extension@3.0.0", { L"onView:sample.tree" }, {}, {} };
 		extension.views = { { L"sample.tree", L"sample.container", L"Sample", L"senp.tree", 1 } };
 		return { senp::EManagementState::Ready, 1, { std::move(extension) } };
 	}
@@ -447,6 +447,36 @@ TEST_F(SenpOwnerComposition, ActivationFailuresRemainTerminalAndRejectMalformedA
 	packages.state = senp::EManagementState::Failed;
 	EXPECT_FALSE(activation.Synchronize(packages, 7, 9, Clock::now()));
 	EXPECT_FALSE(activation.State(L"sample.factory"));
+	EXPECT_TRUE(activation.Close());
+	pages.Close();
+}
+
+TEST_F(SenpOwnerComposition, APackageListedForAnotherRuntimeAbiIsUnsupportedWithoutAHost)
+{
+	layout::WorkbenchContributionRegistry catalog;
+	CDlgFuncList dialog;
+	viewcontainer::CViewContainerPages pages(dialog);
+	ASSERT_TRUE(pages.Create(m_owner));
+	int starts{}, factories{};
+	CSenpOwnerComposition composition(catalog, pages, [&](senp::EffectRuntimeLaunch launch) {
+		++starts;
+		return std::make_unique<CompositionRuntime>(std::move(launch));
+	});
+	CSenpExtensionActivation activation(composition, L"host.exe", [&](const auto&, const auto&) {
+		++factories;
+		return std::optional<SenpOwnerPublicationOptions>{};
+	});
+	// sakura_senp lists a package an earlier build installed for its own WIT
+	// world as incompatible (#299). The host could not instantiate it, so it is
+	// never started and never reaches the generic "could not be activated".
+	auto packages = Packages();
+	packages.extensions[0].runtime.abi = L"sakura:senp/extension@2.0.0";
+	packages.extensions[0].runtime.compatible = false;
+	ASSERT_TRUE(activation.Synchronize(packages, 7, 9, Clock::now()));
+	EXPECT_EQ(SenpExtensionActivationState::Unsupported, activation.State(L"sample.factory"));
+	EXPECT_EQ(senp::OwnerChangeStatus::Unsupported, activation.RequestView(L"sample.tree", Clock::now(), true).status);
+	EXPECT_EQ(0, factories);
+	EXPECT_EQ(0, starts);
 	EXPECT_TRUE(activation.Close());
 	pages.Close();
 }

@@ -9,7 +9,7 @@ std::string Candidate()
 {
 	return R"json({"archiveSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","signed":false,
 	"manifest":{"schemaVersion":2,"id":"sample.extension","displayName":"Sample","version":"1.0.0",
-	"publisher":"sample","description":"Fixture","runtime":{"abi":"sakura:senp/extension@2.0.0","module":"module/extension.wasm"},
+	"publisher":"sample","description":"Fixture","runtime":{"abi":"sakura:senp/extension@3.0.0","module":"module/extension.wasm"},
 	"activationEvents":["onView:sample:view"],"capabilities":["workbench.views.tree","workbench.commands"],
 	"contributes":{"editorDecorations":[],"languages":[],"grammars":[],
 	"commands":[{"command":"sample.open","title":"Open"}],
@@ -31,14 +31,14 @@ TEST(SenpManagementCodec, RetainsRuntimeMetadataForCatalogAndInstalledAuthoritie
 	EXPECT_FALSE(catalog->installed);
 	EXPECT_FALSE(catalog->enabled);
 	EXPECT_EQ(2U, catalog->runtime.schemaVersion);
-	EXPECT_EQ(L"sakura:senp/extension@2.0.0", catalog->runtime.abi);
+	EXPECT_EQ(L"sakura:senp/extension@3.0.0", catalog->runtime.abi);
 	EXPECT_EQ((std::vector<std::wstring>{ L"onView:sample:view" }), catalog->runtime.activationEvents);
 	ASSERT_EQ(1U, catalog->runtime.commands.size());
 	EXPECT_EQ(L"sample.open", catalog->runtime.commands[0].command);
 	EXPECT_EQ(L"Open", catalog->runtime.commands[0].title);
 	EXPECT_EQ(L"sample:view", catalog->views[0].id);
 	auto installedJson = Candidate();
-	installedJson.insert(1, R"json("enabled":true,"trust":"developer","readme":"","extensionPath":"C:/fixture",
+	installedJson.insert(1, R"json("enabled":true,"compatible":true,"trust":"developer","readme":"","extensionPath":"C:/fixture",
 	"modulePath":"C:/fixture/module/extension.wasm","moduleSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",)json");
 	const auto installed = senp::DecodeInstalledExtensions("[" + installedJson + "]");
 	ASSERT_TRUE(installed);
@@ -47,11 +47,39 @@ TEST(SenpManagementCodec, RetainsRuntimeMetadataForCatalogAndInstalledAuthoritie
 	EXPECT_EQ(catalog->runtime, installed->front().runtime);
 }
 
+TEST(SenpManagementCodec, TakesRuntimeCompatibilityFromTheRustListingOnly)
+{
+	// sakura_senp decides whether an installed package's runtime ABI is the one
+	// this build executes. A package built for another WIT world is still listed
+	// (it can be refreshed or removed) and C++ neither re-derives nor overrides that.
+	auto stale = Candidate();
+	Replace(stale, "extension@3.0.0", "extension@2.0.0");
+	stale.insert(1, R"json("enabled":true,"compatible":false,"trust":"builtin","readme":"","extensionPath":"C:/fixture",
+	"modulePath":"C:/fixture/module/extension.wasm","moduleSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",)json");
+	const auto listed = senp::DecodeInstalledExtensions("[" + stale + "]");
+	ASSERT_TRUE(listed);
+	ASSERT_EQ(1U, listed->size());
+	EXPECT_FALSE(listed->front().runtime.compatible);
+	EXPECT_EQ(L"sakura:senp/extension@2.0.0", listed->front().runtime.abi);
+
+	// The listing must say; an absent or non-boolean value fails closed.
+	for (const auto& mutation : { std::string{ "\"compatible\":false," }, std::string{ "\"compatible\":false" } }) {
+		auto json = stale;
+		Replace(json, mutation, mutation.back() == ',' ? "" : "\"compatible\":\"no\"");
+		EXPECT_FALSE(senp::DecodeInstalledExtensions("[" + json + "]")) << mutation;
+	}
+	// A built-in candidate comes from archive verification, which admits only
+	// the current ABI, so it is compatible by construction.
+	const auto candidate = senp::DecodeBuiltInExtension(Candidate());
+	ASSERT_TRUE(candidate);
+	EXPECT_TRUE(candidate->runtime.compatible);
+}
+
 TEST(SenpManagementCodec, PreservesLegacyMetadataAndRejectsCrossedRuntime)
 {
 	auto legacy = Candidate();
 	Replace(legacy, "\"schemaVersion\":2", "\"schemaVersion\":1");
-	Replace(legacy, "extension@2.0.0", "extension@1.0.0");
+	Replace(legacy, "extension@3.0.0", "extension@1.0.0");
 	Replace(legacy, "\"commands\":[{\"command\":\"sample.open\",\"title\":\"Open\"}],", "");
 	Replace(legacy, "onView:sample:view", "onStartupFinished");
 	Replace(legacy, "\"workbench.views.tree\",\"workbench.commands\"", "\"editor.visibleText\",\"editor.decorations\"");
@@ -60,7 +88,7 @@ TEST(SenpManagementCodec, PreservesLegacyMetadataAndRejectsCrossedRuntime)
 	EXPECT_EQ(1U, decoded->runtime.schemaVersion);
 	EXPECT_TRUE(decoded->runtime.commands.empty());
 	for (const auto& mutation : std::vector<std::pair<std::string, std::string>>{
-		{ "extension@2.0.0", "extension@1.0.0" },
+		{ "extension@3.0.0", "extension@1.0.0" },
 		{ "module/extension.wasm", "elsewhere.wasm" },
 		{ "\"schemaVersion\":2", "\"schemaVersion\":3" },
 		{ "\"command\":\"sample.open\"", "\"command\":null" },
@@ -125,7 +153,7 @@ TEST(SenpManagementCodec, RejectsViewTitleActionsATitleButtonCannotShow)
 	// Schema 1 has no command surface for a title action to name.
 	auto legacy = Candidate();
 	Replace(legacy, "\"schemaVersion\":2", "\"schemaVersion\":1");
-	Replace(legacy, "extension@2.0.0", "extension@1.0.0");
+	Replace(legacy, "extension@3.0.0", "extension@1.0.0");
 	Replace(legacy, "\"commands\":[{\"command\":\"sample.open\",\"title\":\"Open\"}],", "\"menus\":{\"view/title\":[]},");
 	Replace(legacy, "onView:sample:view", "onStartupFinished");
 	Replace(legacy, "\"workbench.views.tree\",\"workbench.commands\"", "\"editor.visibleText\",\"editor.decorations\"");

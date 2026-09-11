@@ -44,12 +44,34 @@ failure with a visual placeholder or an unrelated legacy plugin path.
 - Package parsing selects `schemaVersion` only after the entire JSON passes
   duplicate-member and trailing-input checks. Schema 1 retains its existing
   strict field/capability validation. Schema 2 requires its own
-  `runtime` block naming `sakura:senp/extension@2.0.0` and `module/extension.wasm`
+  `runtime` block naming `sakura:senp/extension@3.0.0` and `module/extension.wasm`
   before anything else is read: a v2 manifest that omits `runtime` is
   `InvalidManifest`, not a declarative extension carrying a newer number.
   Mismatched ABI/module pairs return `AbiMismatch`, unknown schemas return
   `UnsupportedSchema`. Pack, archive verification, and installed-content
   discovery use the same dispatch and must never fall back to v1 (#296, G01/R01).
+
+- **The runtime ABI is owned by Rust and moves with the WIT (#299).** The
+  schema-2 ABI string is `sakura:senp/extension@<WIT package version>`, defined
+  once as `sakura_senp::ABI_V2` and `sakura_senp_host::effect_protocol::ABI`
+  (plus the C++ wire `kAbi`, tied to the host through the shared protocol
+  fixture). `sakura_senp_host/tests/wit_pin.rs` pins the WIT digest to its
+  package version, so any WIT change fails the build until the version and
+  every ABI string are bumped. The schema number is unrelated and stays 2. A
+  record field added without a bump (9aaed7a9e `ahead`) once let an older
+  installed GitHub Actions package pass every manifest check and then die in
+  wasmtime as a generic "could not be activated".
+- Pack, verification and install admit only the current ABI. Installed-content
+  listing (`AbiAdmission::Installed`) also lists a schema-2 package naming
+  another well-formed extension ABI and reports `compatible: false`; one such
+  package must never abort the whole listing. C++ reads that `compatible` bool
+  (required in the installed JSON) into `RuntimeContribution::compatible` and
+  never compares ABI strings itself: activation reports Unsupported, the window
+  composition refuses it and the package authority grants no tools.
+- Startup refreshes every installed built-in whose archive differs from the
+  embedded one, including offered (`installedByDefault == false`) built-ins the
+  user installed; an offered built-in that is absent is still never installed
+  on the user's behalf. Enablement and uninstall tombstones are preserved.
 
 - The schema-2 admission gate is released. It was held closed only until the
   real application could accept a v2 package, run the GitHub tool, complete a
@@ -157,8 +179,8 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   payload and metadata; do not claim stronger same-user tamper resistance until
   authenticated installed metadata or filesystem ACL ownership is defined.
 - `kBuiltInResources` declares whether each embedded package is installed by
-  default. Startup reconciles missing or outdated default packages before the
-  runtime starts. Reinstallation preserves a user's disabled state for the same
+  default. Startup reconciles missing or outdated default packages, and
+  outdated installed offered packages, before the runtime starts. Reinstallation preserves a user's disabled state for the same
   trust class; a product update must never silently re-enable that extension.
   An explicit built-in uninstall publishes a profile tombstone before removing
   the active profile state. Startup must honor that tombstone across product

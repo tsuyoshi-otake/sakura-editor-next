@@ -237,7 +237,7 @@ protected:
 		extension.id = L"sample.extension"; extension.enabled = true;
 		extension.modulePath = L"module.wasm"; extension.moduleSha256 = std::wstring(64, L'a');
 		extension.archiveSha256 = std::wstring(64, L'b');
-		extension.runtime = { 2, L"sakura:senp/extension@2.0.0", { L"onView:sample.projects" }, {},
+		extension.runtime = { 2, L"sakura:senp/extension@3.0.0", { L"onView:sample.projects" }, {},
 			{ { L"sample.open", L"Open" } } };
 		extension.viewContainers = { { L"sample.senp", L"Sample", L"$(github)", 10 } };
 		extension.views = { { L"sample.projects", L"sample.senp", L"Projects", L"senp.tree", 10 } };

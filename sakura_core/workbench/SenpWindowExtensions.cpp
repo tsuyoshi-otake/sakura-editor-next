@@ -50,7 +50,7 @@ private:
 		const auto id = Utf8(m_descriptor.id);
 		if (!id || !layout::WorkbenchContributionRegistry::IsValidStableId(*id)) return Status::Invalid;
 		m_ownerId = *id;
-		if (m_descriptor.runtime.abi != L"sakura:senp/extension@2.0.0") return Status::Unsupported;
+		if (m_descriptor.runtime.schemaVersion != 2 || !m_descriptor.runtime.compatible) return Status::Unsupported;
 		if (m_descriptor.viewContainers.empty() || m_descriptor.viewContainers.size() > 16
 			|| m_descriptor.views.empty() || m_descriptor.views.size() > 64
 			|| m_descriptor.runtime.commands.size() > 64) return Status::Unsupported;
@@ -201,7 +201,7 @@ SenpWindowExtensionsStatus CSenpWindowExtensions::Synchronize(const senp::Manage
 			|| std::ranges::any_of(m_entries, [&](const auto& current) {
 				return std::ranges::none_of(snapshot.extensions, [&](const auto& descriptor) {
 					return descriptor.id == current.first && descriptor.installed && descriptor.enabled
-						&& descriptor.runtime.schemaVersion == 2 && descriptor.runtime.abi == L"sakura:senp/extension@2.0.0";
+						&& descriptor.runtime.schemaVersion == 2 && descriptor.runtime.compatible;
 				});
 			}));
 		const auto reject = [&](Status status) {

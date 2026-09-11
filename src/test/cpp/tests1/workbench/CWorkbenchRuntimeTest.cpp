@@ -1702,7 +1702,7 @@ TEST(CWorkbenchRuntime, LeavesV2DeclarationsToWindowOwnerWithoutFailingLegacySta
 {
 	auto extension = ProjectsExtension();
 	extension.runtime.schemaVersion = 2;
-	extension.runtime.abi = L"sakura:senp/extension@2.0.0";
+	extension.runtime.abi = L"sakura:senp/extension@3.0.0";
 	extension.views.front().provider = L"senp.tree";
 	senp::ManagementSnapshot management{
 		.state = senp::EManagementState::Created,

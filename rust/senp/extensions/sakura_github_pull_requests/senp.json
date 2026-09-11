@@ -7,7 +7,7 @@
   "description": "Browse repository issues and pull requests.",
   "engines": { "sakura": ">=0.1.0" },
   "runtime": {
-    "abi": "sakura:senp/extension@2.0.0",
+    "abi": "sakura:senp/extension@3.0.0",
     "module": "module/extension.wasm"
   },
   "activationEvents": ["onView:pr:github", "onView:issues:github"],

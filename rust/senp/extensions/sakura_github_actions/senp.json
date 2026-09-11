@@ -6,7 +6,7 @@
   "publisher": "sakura.builtin",
   "description": "Browse repository workflows and run attempts.",
   "engines": { "sakura": ">=0.1.0" },
-  "runtime": { "abi": "sakura:senp/extension@2.0.0", "module": "module/extension.wasm" },
+  "runtime": { "abi": "sakura:senp/extension@3.0.0", "module": "module/extension.wasm" },
   "activationEvents": ["onView:github-actions.current-branch", "onView:github-actions.workflows"],
   "capabilities": ["workbench.views.tree", "workbench.documents.readonly", "workbench.commands", "workspace.repositories.read", "tools.github.repository.read"],
   "contributes": {

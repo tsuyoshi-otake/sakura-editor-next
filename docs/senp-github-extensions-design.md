@@ -234,6 +234,11 @@ R01時点: 受理gateは解放済み。schema 2は`runtime`宣言を必須とし
 `InvalidManifest`である（新しい版番号を持つ宣言型拡張ではなく、effect hostが実行するための
 寄与しか持たないため）。version全体を拒否する分岐は残っておらず、境界はABI/moduleの対のみ。
 
+#299時点: ABI文字列はWIT package版に従い、現在は`sakura:senp/extension@3.0.0`（schemaは2のまま）。
+WITを変更したら版とABIを上げる。`sakura_senp_host/tests/wit_pin.rs`がWITのdigestを版に固定し、
+上げ忘れはテスト失敗になる。インストール済みの別ABIのschema 2パッケージは一覧から消さず
+`compatible: false`として報告し、起動しない。同梱パッケージは起動時に更新される。
+
 以下はv2の最小構成例。API名はこの提案の名前で、現行validatorでは受理されない。
 
 ```json
@@ -246,7 +251,7 @@ R01時点: 受理gateは解放済み。schema 2は`runtime`宣言を必須とし
   "description": "Browse repository issues and pull requests.",
   "engines": { "sakura": ">=VERSION_WITH_SENP_V2" },
   "runtime": {
-    "abi": "sakura:senp/extension@2.0.0",
+    "abi": "sakura:senp/extension@3.0.0",
     "module": "module/extension.wasm"
   },
   "activationEvents": ["onView:pr:github", "onView:issues:github"],

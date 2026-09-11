@@ -26,7 +26,7 @@ ExtensionDescriptor Extension(std::wstring id = L"sakura.github-pull-requests",
 	value.installed = true;
 	value.enabled = true;
 	value.runtime.schemaVersion = 2;
-	value.runtime.abi = L"sakura:senp/extension@2.0.0";
+	value.runtime.abi = L"sakura:senp/extension@3.0.0";
 	value.runtime.capabilities = { L"workbench.views.tree", L"tools.github.repository.read" };
 	return value;
 }
@@ -72,7 +72,8 @@ TEST(SenpControlPackageAuthority, RefusesAPackageTheRuntimeCouldNotActivate)
 		case 0: extension.installed = false; break;
 		case 1: extension.enabled = false; break;
 		case 2: extension.runtime.schemaVersion = 1; break;
-		case 3: extension.runtime.abi = L"sakura:senp/extension@1.0.0"; break;
+		// sakura_senp listed it for another runtime ABI (#299).
+		case 3: extension.runtime.compatible = false; break;
 		}
 		CSenpControlPackageAuthority authority;
 		const auto published = authority.Publish(L"profile1", Snapshot({ extension }));

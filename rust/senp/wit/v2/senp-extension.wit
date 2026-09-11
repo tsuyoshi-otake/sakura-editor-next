@@ -1,4 +1,4 @@
-package sakura:senp@2.0.0;
+package sakura:senp@3.0.0;
 
 // No imports and no WASI. All I/O is requested as bounded effects.
 interface event-effects {

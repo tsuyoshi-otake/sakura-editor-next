@@ -521,8 +521,14 @@ bool ParseRuntimeContribution(const JsoncValue::Object& manifest,
 	if (runtime) {
 		const auto* abi = StringMember(*runtime, L"abi");
 		const auto* module = StringMember(*runtime, L"module");
+		// Schema 1 has one frozen world. Which schema-2 world this build runs is
+		// sakura_senp's decision, delivered as `compatible`; only its shape is checked here.
+		constexpr std::wstring_view v1Abi = L"sakura:senp/extension@1.0.0";
+		constexpr std::wstring_view prefix = L"sakura:senp/extension@";
 		if (!abi || !module || *module != L"module/extension.wasm"
-			|| *abi != (*schema == 2 ? L"sakura:senp/extension@2.0.0" : L"sakura:senp/extension@1.0.0")) return false;
+			|| (*schema == 1 && *abi != v1Abi)
+			|| (*schema == 2 && (*abi == v1Abi || abi->size() > 64 || !abi->starts_with(prefix)
+				|| abi->size() == prefix.size()))) return false;
 		target.abi = *abi;
 	} else if (*schema == 2 || !target.activationEvents.empty() || !target.capabilities.empty()) return false;
 	const auto* commands = ArrayMember(contributes, L"commands");
@@ -621,10 +627,11 @@ std::optional<std::vector<ExtensionDescriptor>> DecodeInstalledExtensions(std::s
 		const auto* readme = StringMember(*object, L"readme");
 		const auto* extensionPath = StringMember(*object, L"extensionPath");
 		const auto* modulePath = StringMember(*object, L"modulePath");
+		const auto* compatible = BoolMember(*object, L"compatible");
 		const auto moduleSha256Member = object->find(L"moduleSha256");
 		const auto* moduleSha256 = moduleSha256Member == object->end()
 			? nullptr : std::get_if<std::wstring>(&moduleSha256Member->second.Value());
-		if (manifest == nullptr || archive == nullptr || enabled == nullptr
+		if (manifest == nullptr || archive == nullptr || enabled == nullptr || compatible == nullptr
 			|| signedPackage == nullptr || trust == nullptr || readme == nullptr || extensionPath == nullptr) {
 			return std::nullopt;
 		}
@@ -665,6 +672,7 @@ std::optional<std::vector<ExtensionDescriptor>> DecodeInstalledExtensions(std::s
 			|| !ParseGrammarContributions(*contributes, grammars)
 			|| !ParseWorkbenchViewContributions(*contributes, viewContainers, views)
 			|| !ParseRuntimeContribution(*manifest, *contributes, runtime)) return std::nullopt;
+		runtime.compatible = *compatible;
 		result.push_back({
 			.id = *id,
 			.displayName = *displayName,
@@ -854,16 +862,22 @@ ManagementOperationResult CWin32SenpManagementService::Start()
 	if (!catalog.Succeeded()) return catalog;
 	auto loaded = ReloadInstalled();
 	if (!loaded.Succeeded()) return loaded;
+	// A built-in tracks the product that bundles it, as VS Code's built-in
+	// extensions do. An offered (not installed-by-default) built-in the user
+	// installed is refreshed too, never installed on their behalf: a copy left
+	// by an earlier build may target a runtime ABI this host cannot run (#299).
 	for (const auto& builtIn : kBuiltInResources) {
-		if (!builtIn.installedByDefault) continue;
 		bool current = false;
 		bool explicitlyUninstalled = false;
+		bool installedAsBuiltIn = false;
 		{
 			std::lock_guard lock(m_mutex);
 			const auto installed = std::ranges::find(m_snapshot.extensions,
 				builtIn.id, &ExtensionDescriptor::id);
 			const auto candidate = std::ranges::find(m_builtInCatalog,
 				builtIn.id, &ExtensionDescriptor::id);
+			installedAsBuiltIn = installed != m_snapshot.extensions.end() && installed->installed
+				&& installed->builtIn;
 			current = installed != m_snapshot.extensions.end() && installed->installed
 				&& candidate != m_builtInCatalog.end()
 				&& installed->archiveSha256 == candidate->archiveSha256;
@@ -871,6 +885,7 @@ ManagementOperationResult CWin32SenpManagementService::Start()
 				builtIn.id) != m_uninstalledBuiltIns.end();
 		}
 		if (current || explicitlyUninstalled) continue;
+		if (!builtIn.installedByDefault && !installedAsBuiltIn) continue;
 		loaded = InstallBuiltInPackage(builtIn.id);
 		if (!loaded.Succeeded()) return loaded;
 	}

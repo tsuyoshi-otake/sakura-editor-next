@@ -144,7 +144,7 @@ public:
 		extension.installed = true;
 		extension.enabled = true;
 		extension.runtime.schemaVersion = 2;
-		extension.runtime.abi = L"sakura:senp/extension@2.0.0";
+		extension.runtime.abi = L"sakura:senp/extension@3.0.0";
 		extension.runtime.capabilities = { L"workbench.views.tree", L"tools.github.repository.read" };
 		m_snapshot.state = senp::EManagementState::Ready;
 		m_snapshot.revision = 1;

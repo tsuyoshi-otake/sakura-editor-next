@@ -16,7 +16,7 @@ use zip::{CompressionMethod, DateTime, ZipWriter};
 
 pub const FORMAT_VERSION: u32 = 1;
 pub const ABI: &str = "sakura:senp/extension@1.0.0";
-pub const ABI_V2: &str = "sakura:senp/extension@2.0.0";
+pub const ABI_V2: &str = "sakura:senp/extension@3.0.0";
 pub const MANIFEST_PATH: &str = "senp.json";
 pub const README_PATH: &str = "README.md";
 pub const LICENSE_PATH: &str = "LICENSE";
@@ -220,6 +220,10 @@ pub struct InstalledExtension {
     pub module_sha256: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub module_path: Option<PathBuf>,
+    /// False when the package names a runtime ABI other than the one this build
+    /// executes. It stays listed (so it can be updated or removed) but must
+    /// never be started; the host could not instantiate it.
+    pub compatible: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -720,7 +724,12 @@ fn unique_bounded_strings(values: &[String], maximum: usize) -> bool {
         && values.iter().collect::<BTreeSet<_>>().len() == values.len()
 }
 
+#[cfg(test)]
 fn validate_manifest(manifest: &Manifest) -> Result<(), SenpError> {
+    validate_manifest_as(manifest, AbiAdmission::Current).map(|_| ())
+}
+
+fn validate_manifest_as(manifest: &Manifest, admission: AbiAdmission) -> Result<bool, SenpError> {
     if !matches!(manifest.schema_version, FORMAT_VERSION | 2) {
         return Err(SenpError::new(
             ErrorCode::UnsupportedSchema,
@@ -750,13 +759,10 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), SenpError> {
             "invalid display metadata",
         ));
     }
-    if let Some(runtime) = &manifest.runtime {
-        if runtime.abi != (if effect_runtime { ABI_V2 } else { ABI })
-            || runtime.module != MODULE_PATH
-        {
-            return Err(SenpError::new(ErrorCode::AbiMismatch, runtime.abi.clone()));
-        }
-    }
+    let compatible = match &manifest.runtime {
+        Some(runtime) => runtime_compatibility(manifest.schema_version, runtime, admission)?,
+        None => true,
+    };
     let activation_events: BTreeSet<_> = manifest
         .activation_events
         .iter()
@@ -983,7 +989,55 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), SenpError> {
             "extension contributes no supported capability",
         ));
     }
-    Ok(())
+    Ok(compatible)
+}
+
+/// Whether a runtime contract names the ABI this build executes. Packing,
+/// verification and installation admit only that ABI. An installed schema-2
+/// package built for another runtime ABI -- older after a WIT change, or newer
+/// from a later product sharing the profile -- is still listed so the user can
+/// see, update or remove it, but it is reported incompatible and never started.
+fn runtime_compatibility(
+    schema_version: u32,
+    runtime: &RuntimeContract,
+    admission: AbiAdmission,
+) -> Result<bool, SenpError> {
+    let current = if schema_version == 2 { ABI_V2 } else { ABI };
+    if runtime.module != MODULE_PATH {
+        return Err(SenpError::new(ErrorCode::AbiMismatch, runtime.abi.clone()));
+    }
+    if runtime.abi == current {
+        return Ok(true);
+    }
+    if admission == AbiAdmission::Installed
+        && schema_version == 2
+        && is_extension_abi(&runtime.abi)
+        && runtime.abi != ABI
+    {
+        return Ok(false);
+    }
+    Err(SenpError::new(ErrorCode::AbiMismatch, runtime.abi.clone()))
+}
+
+/// `sakura:senp/extension@<major>.<minor>.<patch>` with bounded decimal parts.
+fn is_extension_abi(value: &str) -> bool {
+    value
+        .strip_prefix("sakura:senp/extension@")
+        .map(|version| version.split('.').collect::<Vec<_>>())
+        .is_some_and(|parts| {
+            parts.len() == 3
+                && parts.iter().all(|part| {
+                    !part.is_empty() && part.len() <= 5 && part.bytes().all(|b| b.is_ascii_digit())
+                })
+        })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AbiAdmission {
+    /// Packing, archive verification and installation: only the current ABI.
+    Current,
+    /// Reading already-installed content: another runtime ABI is listed as incompatible.
+    Installed,
 }
 
 fn validate_effect_contributions(
@@ -1220,6 +1274,15 @@ fn strict_json<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, SenpError> {
 }
 
 fn parse_manifest(bytes: &[u8]) -> Result<Manifest, SenpError> {
+    parse_manifest_as(bytes, AbiAdmission::Current).map(|(manifest, _)| manifest)
+}
+
+/// Parses a manifest and reports whether its runtime ABI is the one this build
+/// executes. Only `AbiAdmission::Installed` can return `false`.
+fn parse_manifest_as(
+    bytes: &[u8],
+    admission: AbiAdmission,
+) -> Result<(Manifest, bool), SenpError> {
     // Select the version before deserializing its fields, but only after strict
     // duplicate-member and trailing-input checks have consumed the entire JSON.
     let value: serde_json::Value = strict_json(bytes)?;
@@ -1239,14 +1302,12 @@ fn parse_manifest(bytes: &[u8]) -> Result<Manifest, SenpError> {
                         .map_err(|error| {
                             SenpError::new(ErrorCode::InvalidManifest, error.to_string())
                         })?;
-                if runtime.abi != ABI_V2 || runtime.module != MODULE_PATH {
-                    return Err(SenpError::new(ErrorCode::AbiMismatch, runtime.abi));
-                }
+                runtime_compatibility(2, &runtime, admission)?;
             }
             let manifest: Manifest = serde_json::from_value(value)
                 .map_err(|error| SenpError::new(ErrorCode::InvalidManifest, error.to_string()))?;
-            validate_manifest(&manifest)?;
-            Ok(manifest)
+            let compatible = validate_manifest_as(&manifest, admission)?;
+            Ok((manifest, compatible))
         }
         _ => Err(SenpError::new(
             ErrorCode::UnsupportedSchema,
@@ -1816,6 +1877,7 @@ struct InstalledContentSnapshot {
     readme: String,
     signed: bool,
     module_sha256: Option<String>,
+    compatible: bool,
 }
 
 fn metadata_is_reparse_point(metadata: &fs::Metadata) -> bool {
@@ -2053,7 +2115,8 @@ fn read_installed_content(
             return Err(SenpError::new(ErrorCode::ChecksumMismatch, path));
         }
     }
-    let manifest = parse_manifest(&entries[MANIFEST_PATH])?;
+    let (manifest, compatible) =
+        parse_manifest_as(&entries[MANIFEST_PATH], AbiAdmission::Installed)?;
     validate_manifest_entries(&manifest, &entries)?;
     let readme = String::from_utf8(entries[README_PATH].clone())
         .map_err(|_| SenpError::new(ErrorCode::InvalidUtf8, README_PATH))?;
@@ -2073,6 +2136,7 @@ fn read_installed_content(
         readme,
         signed,
         module_sha256,
+        compatible,
     })
 }
 
@@ -2308,6 +2372,7 @@ pub fn list_installed(root: &Path) -> Result<Vec<InstalledExtension>, SenpError>
             trust: state.trust,
             readme: content_snapshot.readme,
             extension_path: content,
+            compatible: content_snapshot.compatible,
         });
     }
     installed.sort_by(|left, right| left.manifest.id.cmp(&right.manifest.id));
@@ -2826,7 +2891,7 @@ mod tests {
                 .code,
             ErrorCode::InvalidManifest
         );
-        for abi in [ABI, "sakura:senp/extension@3.0.0"] {
+        for abi in [ABI, "sakura:senp/extension@2.0.0", "sakura:senp/extension@4.0.0"] {
             assert_eq!(
                 parse_manifest(&versioned_manifest(2, abi))
                     .unwrap_err()
@@ -3312,6 +3377,97 @@ mod tests {
             ErrorCode::AbiMismatch
         );
         assert!(!crossed.exists());
+    }
+
+    #[test]
+    fn the_v2_runtime_abi_is_the_wit_package_version() {
+        // The host pins the WIT digest to this version (sakura_senp_host
+        // tests/wit_pin.rs); the manifest gate must name the same world.
+        let wit = include_str!("../../wit/v2/senp-extension.wit");
+        let version = wit
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("package sakura:senp@"))
+            .and_then(|rest| rest.strip_suffix(';'))
+            .unwrap();
+        assert_eq!(ABI_V2, format!("sakura:senp/extension@{version}"));
+        for manifest in [
+            include_str!("../../extensions/sakura_github_actions/senp.json"),
+            include_str!("../../extensions/sakura_github_pull_requests/senp.json"),
+            include_str!("../../extensions/sakura_senp_sample/senp.json"),
+        ] {
+            let manifest = parse_manifest(manifest.as_bytes()).unwrap();
+            assert_eq!(manifest.runtime.unwrap().abi, ABI_V2, "{}", manifest.id);
+        }
+    }
+
+    /// Replaces an installed package's manifest and re-signs its checksum line,
+    /// as an older build's install of the same id would have left it.
+    fn rewrite_installed_manifest(content: &Path, manifest: &[u8]) {
+        fs::write(content.join(MANIFEST_PATH), manifest).unwrap();
+        let checksums = fs::read_to_string(content.join(CHECKSUM_PATH)).unwrap();
+        let digest = hex(&Sha256::digest(manifest));
+        let rewritten: String = checksums
+            .lines()
+            .map(|line| match line.split_once("  ") {
+                Some((_, path)) if path == MANIFEST_PATH => format!("{digest}  {path}\n"),
+                _ => format!("{line}\n"),
+            })
+            .collect();
+        fs::write(content.join(CHECKSUM_PATH), rewritten).unwrap();
+    }
+
+    #[test]
+    fn installed_package_for_another_runtime_abi_is_listed_as_incompatible() {
+        let temp = TempDir::new().unwrap();
+        let declarative = temp.path().join("v1");
+        fixture(&declarative);
+        let v1 = temp.path().join("v1.senp");
+        let v1_hash = pack_directory(&declarative, &v1, None).unwrap();
+        let root = temp.path().join("installed");
+        install_package(&v1, &root, &TrustPolicy::BuiltIn { expected_archive_sha256: v1_hash })
+            .unwrap();
+        let effect = temp.path().join("v2");
+        fixture(&effect);
+        fs::write(effect.join(MANIFEST_PATH), versioned_manifest(2, ABI_V2)).unwrap();
+        let v2 = temp.path().join("v2.senp");
+        let v2_hash = pack_directory(&effect, &v2, None).unwrap();
+        install_package(
+            &v2,
+            &root,
+            &TrustPolicy::BuiltIn { expected_archive_sha256: v2_hash.clone() },
+        )
+        .unwrap();
+        assert!(list_installed(&root).unwrap().iter().all(|entry| entry.compatible));
+
+        // A package an earlier build installed for its own WIT world. The host
+        // here could not instantiate it, but one such package must neither hide
+        // the others nor disappear itself: it is listed so it can be refreshed.
+        let content = root.join("content").join(&v2_hash);
+        let stale = "sakura:senp/extension@2.0.1";
+        assert_ne!(stale, ABI_V2);
+        rewrite_installed_manifest(&content, &versioned_manifest(2, stale));
+        let listed = list_installed(&root).unwrap();
+        assert_eq!(listed.len(), 2);
+        for entry in &listed {
+            assert_eq!(entry.compatible, entry.manifest.id == "sample-indent", "{}", entry.manifest.id);
+        }
+        let stale_entry = listed.iter().find(|entry| entry.manifest.id == "sample-github").unwrap();
+        assert_eq!(stale_entry.manifest.runtime.as_ref().unwrap().abi, stale);
+
+        // Only installed content is admitted this way. The same manifest can
+        // still not be packed or verified by this build.
+        fs::write(effect.join(MANIFEST_PATH), versioned_manifest(2, stale)).unwrap();
+        assert_eq!(
+            pack_directory(&effect, &temp.path().join("stale.senp"), None).unwrap_err().code,
+            ErrorCode::AbiMismatch
+        );
+
+        // What is not an extension ABI at all, or the v1 ABI under a v2 manifest,
+        // is still malformed installed state and fails closed.
+        for abi in [ABI, "sakura:senp/extension@x.0.0", "other:world@3.0.0"] {
+            rewrite_installed_manifest(&content, &versioned_manifest(2, abi));
+            assert_eq!(list_installed(&root).unwrap_err().code, ErrorCode::AbiMismatch, "{abi}");
+        }
     }
 
     #[test]
