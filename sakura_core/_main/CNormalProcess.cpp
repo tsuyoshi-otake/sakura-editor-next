@@ -187,7 +187,10 @@ std::optional<std::string> EncodeWorkingCopyScopeId(std::wstring_view value) noe
 			result, false, kMaximumWorkingCopyPersistenceIdBytes)
 			? std::optional{ std::move(result) } : std::nullopt;
 	}
-	catch (...) {
+	// Only the std::string allocation above can throw (std::bad_alloc /
+	// std::length_error); WideCharToMultiByte and the validator are
+	// non-throwing. Fail closed on the standard exception hierarchy only.
+	catch (const std::exception&) {
 		return std::nullopt;
 	}
 }
@@ -999,15 +1002,15 @@ CNormalProcess::CreateSenpToolReads(const std::wstring& userDataProfileId) const
 	if (!profileDirectory) return {};
 	try {
 		workbench::editor::SenpControlToolReadsOptions options;
-		options.authorityProfileId = identity->profileId;
-		options.authorityProfileHash = identity->profileHash;
-		options.minimumGeneration = identity->minimumGeneration;
-		options.senpProfileId = userDataProfileId;
+		options.SetAuthorityProfileId(identity->profileId);
+		options.SetAuthorityProfileHash(identity->profileHash);
+		options.SetMinimumGeneration(identity->minimumGeneration);
+		options.SetSenpProfileId(userDataProfileId);
 		// The seam refuses to connect without a factory rather than assuming a
 		// transport, so the one production route names the named pipe here.
-		options.channelFactory = [] {
+		options.SetChannelFactory([] {
 			return std::make_unique<CControlPlatformNamedPipeChannel>();
-		};
+		});
 		// The runtime keeps its discovery reader private, so the broker owns a
 		// second one over the same pair the runtime froze its identity from.
 		auto reader = std::make_unique<CControlPlatformEndpointDiscoveryReader>(
@@ -1015,7 +1018,12 @@ CNormalProcess::CreateSenpToolReads(const std::wstring& userDataProfileId) const
 		return std::make_unique<workbench::editor::CSenpControlToolReads>(
 			std::move(options), std::move(reader));
 	}
-	catch (...) {
+	// The seam above only allocates (std::make_unique, wstring/function copies
+	// into SenpControlToolReadsOptions) and constructs the discovery reader;
+	// none of that can throw beyond the standard exception hierarchy, so a
+	// catch-all here would silently hide a real defect instead of a fail-closed
+	// resource condition.
+	catch (const std::exception&) {
 		return {};
 	}
 }

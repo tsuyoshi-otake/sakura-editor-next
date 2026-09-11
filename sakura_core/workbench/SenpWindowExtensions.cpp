@@ -81,57 +81,57 @@ private:
 			m_views.push_back({ *viewId, *containerId, *title, value.order, true, true, "senp.tree" });
 		}
 		for (const auto& value : m_descriptor.runtime.commands) {
-			const auto command = Utf8(value.command);
+			const auto command = Utf8(value.Command());
 			if (!command || !layout::WorkbenchContributionRegistry::IsValidStableId(*command)
 				|| !commands.insert(*command).second) return Status::Invalid;
 			m_commands.push_back(*command);
 		}
-		for (const auto& menu : m_descriptor.runtime.viewTitle) {
-			const auto declared = std::ranges::find(m_descriptor.runtime.commands, menu.command,
-				&senp::CommandContribution::command);
-			const auto command = Utf8(menu.command);
+		for (const auto& menu : m_descriptor.runtime.ViewTitle()) {
+			const auto declared = std::ranges::find(m_descriptor.runtime.commands, menu.Command(),
+				&senp::CommandContribution::Command);
+			const auto command = Utf8(menu.Command());
 			if (declared == m_descriptor.runtime.commands.end() || !command || !commands.contains(*command))
 				return Status::Invalid;
-			const auto icon = TitleActionIcon(declared->icon);
+			const auto icon = TitleActionIcon(declared->Icon());
 			if (!icon) return Status::Unsupported;
-			for (const auto& view : menu.views) {
+			for (const auto& view : menu.Views()) {
 				const auto viewId = Utf8(view);
 				if (!viewId || !views.contains(*viewId)) return Status::Invalid;
 				auto& actions = m_titleActions[*viewId];
-				if (std::ranges::any_of(actions, [&](const auto& action) { return action.commandId == *command; }))
+				if (std::ranges::any_of(actions, [&](const auto& action) { return action.CommandId() == *command; }))
 					return Status::Invalid;
 				// A View title bar has eight native action slots.
 				if (actions.size() >= 8) return Status::Unsupported;
-				actions.push_back({ *command, declared->title, *icon });
+				actions.push_back({ *command, declared->Title(), *icon });
 			}
 		}
-		for (const auto& menu : m_descriptor.runtime.viewItemContext) {
-			const auto declared = std::ranges::find(m_descriptor.runtime.commands, menu.command,
-				&senp::CommandContribution::command);
-			const auto command = Utf8(menu.command);
+		for (const auto& menu : m_descriptor.runtime.ViewItemContext()) {
+			const auto declared = std::ranges::find(m_descriptor.runtime.commands, menu.Command(),
+				&senp::CommandContribution::Command);
+			const auto command = Utf8(menu.Command());
 			if (declared == m_descriptor.runtime.commands.end() || !command || !commands.contains(*command))
 				return Status::Invalid;
 			// A row action draws a bundled codicon or a compiled-in extension icon
 			// path; the package's own image files are never read.
-			auto icon = TitleActionIcon(declared->icon);
-			if (!icon && !icons::github_actions::FindStatusIcon(declared->icon).empty()) icon = declared->icon;
+			auto icon = TitleActionIcon(declared->Icon());
+			if (!icon && !icons::github_actions::FindStatusIcon(declared->Icon()).empty()) icon = declared->Icon();
 			if (!icon) return Status::Unsupported;
 			std::vector<std::string> targets;
-			if (menu.views.empty()) {
+			if (menu.Views().empty()) {
 				for (const auto& view : m_views) targets.push_back(view.id);
 			}
-			for (const auto& view : menu.views) {
+			for (const auto& view : menu.Views()) {
 				const auto viewId = Utf8(view);
 				if (!viewId || !views.contains(*viewId)) return Status::Invalid;
 				targets.push_back(*viewId);
 			}
 			for (const auto& viewId : targets) {
 				auto& actions = m_itemActions[viewId];
-				if (std::ranges::any_of(actions, [&](const auto& action) { return action.commandId == menu.command; }))
+				if (std::ranges::any_of(actions, [&](const auto& action) { return action.CommandId() == menu.Command(); }))
 					return Status::Invalid;
 				// A row has room for eight inline actions, as a View title bar does.
 				if (actions.size() >= 8) return Status::Unsupported;
-				actions.push_back({ menu.command, declared->title, *icon, menu.contains, menu.equals });
+				actions.push_back({ menu.Command(), declared->Title(), *icon, menu.Contains(), menu.Equals() });
 			}
 		}
 		return Status::Synchronized;
@@ -148,12 +148,12 @@ private:
 };
 
 CSenpWindowExtensions::CSenpWindowExtensions(layout::WorkbenchContributionRegistry& catalog,
-	viewcontainer::CViewContainerPages& pages, HWND parkingParent, std::wstring hostExecutable,
+	viewcontainer::CViewContainerPages& pages, std::wstring hostExecutable,
 	SenpWindowOwnerTargetFactory createTarget, std::function<bool(std::string_view)> requestFocus,
 	senp::EffectRuntimeFactory runtimeFactory)
 	: m_catalog(catalog), m_createTarget(std::move(createTarget)),
 	m_composition(catalog, pages, std::move(runtimeFactory)),
-	m_declarations(catalog, pages, parkingParent,
+	m_declarations(catalog, pages,
 		[this](std::wstring_view id, bool retry) { return RequestView(id, retry, std::chrono::steady_clock::now()); },
 		std::move(requestFocus)),
 	m_activation(m_composition, std::move(hostExecutable),
@@ -247,7 +247,11 @@ SenpWindowExtensionsStatus CSenpWindowExtensions::Synchronize(const senp::Manage
 		m_revision = snapshot.revision; m_workspaceRevision = workspaceRevision; m_accountGeneration = accountGeneration;
 		m_synchronized = true;
 		return Status::Synchronized;
-	} catch (...) {
+	} catch (const std::exception&) {
+		// m_declarations.Register/Remove and m_activation.Synchronize are all
+		// noexcept; CSenpExtensionActivation's own Activate boundary already
+		// swallows anything m_createTarget/PreparePublication could throw. Only
+		// std container/allocation work in this block can throw here.
 		(void)CloseEntered();
 		return Status::Failed;
 	}

@@ -75,118 +75,278 @@ platform::controlipc::ControlPlatformEndpointSnapshot Endpoint()
 
 	It answers by decoding the request rather than by replaying a fixed script,
 	because the seam decides for itself how often it polls. Every counter is read
-	from the test thread while the seam's worker writes it, so all of it lives
-	under one mutex.
-*/
-struct Broker {
-	mutable std::mutex mutex;
-	int hello = 0;
-	int issued = 0;
-	int started = 0;
-	int polled = 0;
-	int cancelled = 0;
-	std::vector<ControlSenpRpcRequest> requests;
-	std::vector<std::wstring> startedReads;
-	std::vector<std::wstring> cancelledReads;
-	//! The scope each read was admitted under. The real broker routes a terminal
-	//! by scope, so this stand-in must not hand one scope another scope's read.
-	std::map<std::wstring, platform::controlipc::ControlSenpRpcOwner> readOwner;
-	//! Terminals the broker hands back, one per poll of the owning scope.
-	std::deque<senp::effect::ToolCompleted> ready;
-	EControlSenpRpcStatus issueStatus = EControlSenpRpcStatus::Succeeded;
-	EControlSenpRpcStatus startStatus = EControlSenpRpcStatus::Succeeded;
-	//! The account this profile has adopted, as the control side would answer it.
-	int accounts = 0;
-	std::int64_t accountGeneration = 0;
-	EControlSenpAccountState accountState = EControlSenpAccountState::Unknown;
-	EControlSenpRpcStatus accountStatus = EControlSenpRpcStatus::Succeeded;
-	//! Workspace declarations, which the real broker binds to the connection
-	//! that made them. Counted rather than replayed: what matters here is how
-	//! often one reaches the wire, and the payload is read from `requests`.
-	int adopted = 0;
-	EControlSenpRpcStatus adoptStatus = EControlSenpRpcStatus::Succeeded;
-	//! Transport failure rather than a broker answer.
-	bool severed = false;
-	//! The one text resource this stand-in holds. A read is answered out of the
-	//! body rather than replayed, because the seam chooses its own windows.
-	int resourceReads = 0;
-	int releases = 0;
-	std::vector<std::wstring> releasedResources;
-	std::wstring resourceHandle = L"log-1";
-	std::string resourceBody = "run step output";
-	std::int64_t resourceRevision = 11;
-	EControlSenpRpcStatus resourceStatus = EControlSenpRpcStatus::Succeeded;
+	from the test thread while the seam's worker writes it, so the dispatch logic
+	that mutates them lives here too, behind one lock this class owns end to end -
+	`CBrokerChannel` never reaches into this state directly, it only decodes a
+	wire frame and asks this broker to dispatch it.
 
+	The guarded state sits behind a `unique_ptr` rather than a `mutable` member so
+	the query methods below can lock it from a `const` method without needing the
+	`mutable` keyword: constness on `m_state` only pins the pointer, not what it
+	points to, exactly like a pimpl.
+*/
+class Broker {
+public:
 	[[nodiscard]] int Started() const
 	{
-		std::lock_guard<std::mutex> lock(mutex);
-		return started;
+		std::lock_guard<std::mutex> lock(m_state->mutex);
+		return m_state->started;
 	}
 	[[nodiscard]] int Cancelled() const
 	{
-		std::lock_guard<std::mutex> lock(mutex);
-		return cancelled;
+		std::lock_guard<std::mutex> lock(m_state->mutex);
+		return m_state->cancelled;
 	}
 	[[nodiscard]] int Issued() const
 	{
-		std::lock_guard<std::mutex> lock(mutex);
-		return issued;
+		std::lock_guard<std::mutex> lock(m_state->mutex);
+		return m_state->issued;
 	}
 	[[nodiscard]] int Hello() const
 	{
-		std::lock_guard<std::mutex> lock(mutex);
-		return hello;
+		std::lock_guard<std::mutex> lock(m_state->mutex);
+		return m_state->hello;
 	}
 	[[nodiscard]] int Accounts() const
 	{
-		std::lock_guard<std::mutex> lock(mutex);
-		return accounts;
+		std::lock_guard<std::mutex> lock(m_state->mutex);
+		return m_state->accounts;
 	}
 	[[nodiscard]] int Adopted() const
 	{
-		std::lock_guard<std::mutex> lock(mutex);
-		return adopted;
+		std::lock_guard<std::mutex> lock(m_state->mutex);
+		return m_state->adopted;
 	}
 	[[nodiscard]] int ResourceReads() const
 	{
-		std::lock_guard<std::mutex> lock(mutex);
-		return resourceReads;
+		std::lock_guard<std::mutex> lock(m_state->mutex);
+		return m_state->resourceReads;
 	}
 	[[nodiscard]] int Releases() const
 	{
-		std::lock_guard<std::mutex> lock(mutex);
-		return releases;
+		std::lock_guard<std::mutex> lock(m_state->mutex);
+		return m_state->releases;
 	}
 	[[nodiscard]] std::vector<std::wstring> Released() const
 	{
-		std::lock_guard<std::mutex> lock(mutex);
-		return releasedResources;
-	}
-	void Sever()
-	{
-		std::lock_guard<std::mutex> lock(mutex);
-		severed = true;
-	}
-	void Restore()
-	{
-		std::lock_guard<std::mutex> lock(mutex);
-		severed = false;
-	}
-	void Publish(senp::effect::ToolCompleted completion)
-	{
-		std::lock_guard<std::mutex> lock(mutex);
-		ready.push_back(std::move(completion));
+		std::lock_guard<std::mutex> lock(m_state->mutex);
+		return m_state->releasedResources;
 	}
 	[[nodiscard]] std::vector<ControlSenpRpcRequest> Requests() const
 	{
-		std::lock_guard<std::mutex> lock(mutex);
-		return requests;
+		std::lock_guard<std::mutex> lock(m_state->mutex);
+		return m_state->requests;
 	}
 	[[nodiscard]] std::vector<std::wstring> Cancellations() const
 	{
-		std::lock_guard<std::mutex> lock(mutex);
-		return cancelledReads;
+		std::lock_guard<std::mutex> lock(m_state->mutex);
+		return m_state->cancelledReads;
 	}
+
+	void Sever()
+	{
+		std::lock_guard<std::mutex> lock(m_state->mutex);
+		m_state->severed = true;
+	}
+	void Restore()
+	{
+		std::lock_guard<std::mutex> lock(m_state->mutex);
+		m_state->severed = false;
+	}
+	void Publish(senp::effect::ToolCompleted completion)
+	{
+		std::lock_guard<std::mutex> lock(m_state->mutex);
+		m_state->ready.push_back(std::move(completion));
+	}
+
+	//! Set before the worker exists in every test that uses these: the script is
+	//! only safe to write from the test thread while nothing is reading it yet,
+	//! but each setter still locks so a broker touched after Start stays coherent.
+	void SetStartStatus(EControlSenpRpcStatus status)
+	{
+		std::lock_guard<std::mutex> lock(m_state->mutex);
+		m_state->startStatus = status;
+	}
+	void SetAccountGeneration(std::int64_t generation)
+	{
+		std::lock_guard<std::mutex> lock(m_state->mutex);
+		m_state->accountGeneration = generation;
+	}
+	void SetAccountState(EControlSenpAccountState state)
+	{
+		std::lock_guard<std::mutex> lock(m_state->mutex);
+		m_state->accountState = state;
+	}
+	void SetAccountStatus(EControlSenpRpcStatus status)
+	{
+		std::lock_guard<std::mutex> lock(m_state->mutex);
+		m_state->accountStatus = status;
+	}
+	void SetAdoptStatus(EControlSenpRpcStatus status)
+	{
+		std::lock_guard<std::mutex> lock(m_state->mutex);
+		m_state->adoptStatus = status;
+	}
+	void SetResourceStatus(EControlSenpRpcStatus status)
+	{
+		std::lock_guard<std::mutex> lock(m_state->mutex);
+		m_state->resourceStatus = status;
+	}
+
+	//! The wire-facing entry points `CBrokerChannel` calls. Both hold the state
+	//! lock for the whole exchange, exactly as the single mutex used to, so a
+	//! `Sever`/`Restore`/`Publish` from the test thread cannot interleave with one
+	//! dispatch. Neither records anything when severed.
+	[[nodiscard]] bool BeginHello()
+	{
+		std::lock_guard<std::mutex> lock(m_state->mutex);
+		if (m_state->severed) return false;
+		++m_state->hello;
+		return true;
+	}
+	[[nodiscard]] std::optional<ControlSenpRpcResponse> Dispatch(const ControlSenpRpcRequest& request)
+	{
+		std::lock_guard<std::mutex> lock(m_state->mutex);
+		if (m_state->severed) return std::nullopt;
+		m_state->requests.push_back(request);
+		return HandleLocked(request);
+	}
+
+private:
+	//! Requires `m_state->mutex`, which every caller above already holds.
+	ControlSenpRpcResponse HandleLocked(const ControlSenpRpcRequest& request)
+	{
+		ControlSenpRpcResponse response;
+		switch (request.Operation()) {
+		case EControlSenpRpcOperation::IssueGrant:
+			++m_state->issued;
+			response.SetStatus(m_state->issueStatus);
+			if (response.Status() == EControlSenpRpcStatus::Succeeded) {
+				response.SetGrantId("grant-" + std::to_string(m_state->issued));
+				response.SetExpiresAtMilliseconds(10000);
+			}
+			return response;
+		case EControlSenpRpcOperation::StartRead:
+			++m_state->started;
+			response.SetStatus(m_state->startStatus);
+			if (response.Status() == EControlSenpRpcStatus::Succeeded) {
+				m_state->startedReads.push_back(request.ReadId());
+				m_state->readOwner[request.ReadId()] = request.Owner();
+			}
+			return response;
+		case EControlSenpRpcOperation::PollRead:
+			++m_state->polled;
+			response.SetStatus(EControlSenpRpcStatus::Succeeded);
+			for (auto current = m_state->ready.begin(); current != m_state->ready.end(); ++current) {
+				const auto scope = m_state->readOwner.find(current->readId);
+				if (scope == m_state->readOwner.end() || !(scope->second == request.Owner())) continue;
+				response.SetHasCompletion(true);
+				response.SetCompletion(*current);
+				m_state->ready.erase(current);
+				break;
+			}
+			return response;
+		case EControlSenpRpcOperation::QueryAccount:
+			++m_state->accounts;
+			response.SetStatus(m_state->accountStatus);
+			// The account members are filled even for a refusal, so a seam that
+			// read them past one would be caught rather than merely unlucky.
+			response.SetAccountGeneration(m_state->accountGeneration);
+			response.SetAccountState(m_state->accountState);
+			return response;
+		case EControlSenpRpcOperation::AdoptWorkspace:
+			++m_state->adopted;
+			response.SetStatus(m_state->adoptStatus);
+			return response;
+		case EControlSenpRpcOperation::CancelRead:
+			++m_state->cancelled;
+			m_state->cancelledReads.push_back(request.ReadId());
+			response.SetStatus(EControlSenpRpcStatus::Succeeded);
+			return response;
+		case EControlSenpRpcOperation::ReadResource: {
+			++m_state->resourceReads;
+			response.SetStatus(m_state->resourceStatus);
+			if (response.Status() != EControlSenpRpcStatus::Succeeded) return response;
+			if (request.ResourceHandle() != m_state->resourceHandle
+				|| request.Offset() > m_state->resourceBody.size()) {
+				response.SetStatus(EControlSenpRpcStatus::NotFound);
+				return response;
+			}
+			const auto offset = static_cast<std::size_t>(request.Offset());
+			const auto served = (std::min)(static_cast<std::size_t>(request.Length()),
+				m_state->resourceBody.size() - offset);
+			response.SetResourceHandle(request.ResourceHandle());
+			response.SetResourceOffset(request.Offset());
+			response.SetResourceBytes(m_state->resourceBody.substr(offset, served));
+			response.SetResourceLength(m_state->resourceBody.size());
+			response.SetResourceRevision(m_state->resourceRevision);
+			// The store calls a resource Complete only once a chunk reaches the
+			// end of the body; before that it is still loading, and the editor
+			// is what decides which of the two it has from these members.
+			const auto whole = offset + served == m_state->resourceBody.size();
+			response.SetResourceState(static_cast<std::uint8_t>(
+				whole ? senp::TextResourceState::Complete : senp::TextResourceState::Loading));
+			response.SetResourceEnd(static_cast<std::uint8_t>(
+				whole ? senp::TextResourceEnd::Complete : senp::TextResourceEnd::None));
+			return response;
+		}
+		case EControlSenpRpcOperation::ReleaseResource:
+			++m_state->releases;
+			m_state->releasedResources.push_back(request.ResourceHandle());
+			response.SetStatus(EControlSenpRpcStatus::Succeeded);
+			return response;
+		default:
+			response.SetStatus(EControlSenpRpcStatus::InvalidRequest);
+			return response;
+		}
+	}
+
+	class State {
+		friend class Broker;
+		std::mutex mutex;
+		int hello = 0;
+		int issued = 0;
+		int started = 0;
+		int polled = 0;
+		int cancelled = 0;
+		std::vector<ControlSenpRpcRequest> requests;
+		std::vector<std::wstring> startedReads;
+		std::vector<std::wstring> cancelledReads;
+		//! The scope each read was admitted under. The real broker routes a
+		//! terminal by scope, so this stand-in must not hand one scope another
+		//! scope's read.
+		std::map<std::wstring, platform::controlipc::ControlSenpRpcOwner> readOwner;
+		//! Terminals the broker hands back, one per poll of the owning scope.
+		std::deque<senp::effect::ToolCompleted> ready;
+		EControlSenpRpcStatus issueStatus = EControlSenpRpcStatus::Succeeded;
+		EControlSenpRpcStatus startStatus = EControlSenpRpcStatus::Succeeded;
+		//! The account this profile has adopted, as the control side would
+		//! answer it.
+		int accounts = 0;
+		std::int64_t accountGeneration = 0;
+		EControlSenpAccountState accountState = EControlSenpAccountState::Unknown;
+		EControlSenpRpcStatus accountStatus = EControlSenpRpcStatus::Succeeded;
+		//! Workspace declarations, which the real broker binds to the connection
+		//! that made them. Counted rather than replayed: what matters here is
+		//! how often one reaches the wire, and the payload is read from
+		//! `requests`.
+		int adopted = 0;
+		EControlSenpRpcStatus adoptStatus = EControlSenpRpcStatus::Succeeded;
+		//! Transport failure rather than a broker answer.
+		bool severed = false;
+		//! The one text resource this stand-in holds. A read is answered out of
+		//! the body rather than replayed, because the seam chooses its own
+		//! windows.
+		int resourceReads = 0;
+		int releases = 0;
+		std::vector<std::wstring> releasedResources;
+		std::wstring resourceHandle = L"log-1";
+		std::string resourceBody = "run step output";
+		std::int64_t resourceRevision = 11;
+		EControlSenpRpcStatus resourceStatus = EControlSenpRpcStatus::Succeeded;
+	};
+
+	std::unique_ptr<State> m_state = std::make_unique<State>();
 };
 
 ControlIpcFrame Answer(const ControlIpcFrame& request, platform::controlipc::EControlIpcKind kind,
@@ -211,13 +371,11 @@ public:
 	platform::controlipc::ControlIpcTransportResult Exchange(const ControlIpcFrame& request,
 		std::vector<ControlIpcFrame>& responses, std::chrono::milliseconds) override
 	{
-		std::lock_guard<std::mutex> lock(m_broker->mutex);
-		if (m_broker->severed) {
-			return { false, platform::controlipc::EControlIpcTransportDisconnectReason::IoError, 0,
-				L"severed" };
-		}
 		if (request.header.kind == platform::controlipc::EControlIpcKind::Hello) {
-			++m_broker->hello;
+			if (!m_broker->BeginHello()) {
+				return { false, platform::controlipc::EControlIpcTransportDisconnectReason::IoError, 0,
+					L"severed" };
+			}
 			auto hello = platform::controlipc::EncodeControlStorageHello(kAuthorityId);
 			if (!hello) return { false, platform::controlipc::EControlIpcTransportDisconnectReason::IoError, 0, L"" };
 			responses.push_back(Answer(request, platform::controlipc::EControlIpcKind::HelloAck,
@@ -233,9 +391,12 @@ public:
 		if (!decoded) {
 			return { false, platform::controlipc::EControlIpcTransportDisconnectReason::IoError, 0, L"" };
 		}
-		m_broker->requests.push_back(*decoded);
-		const auto response = Handle(*decoded);
-		auto payload = platform::controlipc::EncodeControlSenpRpcResponse(response);
+		const auto response = m_broker->Dispatch(*decoded);
+		if (!response) {
+			return { false, platform::controlipc::EControlIpcTransportDisconnectReason::IoError, 0,
+				L"severed" };
+		}
+		auto payload = platform::controlipc::EncodeControlSenpRpcResponse(*response);
 		if (!payload) return { false, platform::controlipc::EControlIpcTransportDisconnectReason::IoError, 0, L"" };
 		auto outer = platform::controlipc::EncodeControlIpcFields(
 			{ { static_cast<std::uint16_t>(platform::controlipc::EControlIpcFieldTag::SenpPayload),
@@ -249,94 +410,6 @@ public:
 	void Close() noexcept override {}
 
 private:
-	//! Requires the broker mutex, which Exchange already holds.
-	ControlSenpRpcResponse Handle(const ControlSenpRpcRequest& request) const
-	{
-		ControlSenpRpcResponse response;
-		switch (request.operation) {
-		case EControlSenpRpcOperation::IssueGrant:
-			++m_broker->issued;
-			response.status = m_broker->issueStatus;
-			if (response.status == EControlSenpRpcStatus::Succeeded) {
-				response.grantId = "grant-" + std::to_string(m_broker->issued);
-				response.expiresAtMilliseconds = 10000;
-			}
-			return response;
-		case EControlSenpRpcOperation::StartRead:
-			++m_broker->started;
-			response.status = m_broker->startStatus;
-			if (response.status == EControlSenpRpcStatus::Succeeded) {
-				m_broker->startedReads.push_back(request.readId);
-				m_broker->readOwner[request.readId] = request.owner;
-			}
-			return response;
-		case EControlSenpRpcOperation::PollRead:
-			++m_broker->polled;
-			response.status = EControlSenpRpcStatus::Succeeded;
-			for (auto current = m_broker->ready.begin(); current != m_broker->ready.end(); ++current) {
-				const auto scope = m_broker->readOwner.find(current->readId);
-				if (scope == m_broker->readOwner.end() || !(scope->second == request.owner)) continue;
-				response.hasCompletion = true;
-				response.completion = *current;
-				m_broker->ready.erase(current);
-				break;
-			}
-			return response;
-		case EControlSenpRpcOperation::QueryAccount:
-			++m_broker->accounts;
-			response.status = m_broker->accountStatus;
-			// The account members are filled even for a refusal, so a seam that
-			// read them past one would be caught rather than merely unlucky.
-			response.accountGeneration = m_broker->accountGeneration;
-			response.accountState = m_broker->accountState;
-			return response;
-		case EControlSenpRpcOperation::AdoptWorkspace:
-			++m_broker->adopted;
-			response.status = m_broker->adoptStatus;
-			return response;
-		case EControlSenpRpcOperation::CancelRead:
-			++m_broker->cancelled;
-			m_broker->cancelledReads.push_back(request.readId);
-			response.status = EControlSenpRpcStatus::Succeeded;
-			return response;
-		case EControlSenpRpcOperation::ReadResource: {
-			++m_broker->resourceReads;
-			response.status = m_broker->resourceStatus;
-			if (response.status != EControlSenpRpcStatus::Succeeded) return response;
-			if (request.resourceHandle != m_broker->resourceHandle
-				|| request.offset > m_broker->resourceBody.size()) {
-				response.status = EControlSenpRpcStatus::NotFound;
-				return response;
-			}
-			const auto offset = static_cast<std::size_t>(request.offset);
-			const auto served = (std::min)(static_cast<std::size_t>(request.length),
-				m_broker->resourceBody.size() - offset);
-			response.resourceHandle = request.resourceHandle;
-			response.resourceOffset = request.offset;
-			response.resourceBytes = m_broker->resourceBody.substr(offset, served);
-			response.resourceLength = m_broker->resourceBody.size();
-			response.resourceRevision = m_broker->resourceRevision;
-			// The store calls a resource Complete only once a chunk reaches the
-			// end of the body; before that it is still loading, and the editor
-			// is what decides which of the two it has from these members.
-			const auto whole = offset + served == m_broker->resourceBody.size();
-			response.resourceState = static_cast<std::uint8_t>(
-				whole ? senp::TextResourceState::Complete : senp::TextResourceState::Loading);
-			response.resourceEnd = static_cast<std::uint8_t>(
-				whole ? senp::TextResourceEnd::Complete : senp::TextResourceEnd::None);
-			return response;
-		}
-		case EControlSenpRpcOperation::ReleaseResource:
-			++m_broker->releases;
-			m_broker->releasedResources.push_back(request.resourceHandle);
-			response.status = EControlSenpRpcStatus::Succeeded;
-			return response;
-		default:
-			response.status = EControlSenpRpcStatus::InvalidRequest;
-			return response;
-		}
-	}
-
 	std::shared_ptr<Broker> m_broker;
 };
 
@@ -345,10 +418,17 @@ public:
 	std::optional<platform::controlipc::ControlPlatformEndpointSnapshot> Read(
 		const platform::controlipc::ControlPlatformEndpointReadRequirements&) override
 	{
-		return endpoint;
+		return m_endpoint;
 	}
 
-	std::optional<platform::controlipc::ControlPlatformEndpointSnapshot> endpoint = Endpoint();
+	//! Withdraws the published endpoint, as if control discovery found none.
+	void ClearEndpoint()
+	{
+		m_endpoint.reset();
+	}
+
+private:
+	std::optional<platform::controlipc::ControlPlatformEndpointSnapshot> m_endpoint = Endpoint();
 };
 
 /*!
@@ -386,14 +466,14 @@ private:
 SenpControlToolReadsOptions Options(std::shared_ptr<Broker> broker)
 {
 	SenpControlToolReadsOptions options;
-	options.authorityProfileId = kAuthorityId;
-	options.authorityProfileHash = kProfileHash;
-	options.senpProfileId = kSenpProfile;
-	options.pollInterval = std::chrono::milliseconds(1);
-	options.exchangeDeadline = std::chrono::milliseconds(200);
-	options.channelFactory = [broker = std::move(broker)] {
+	options.SetAuthorityProfileId(kAuthorityId);
+	options.SetAuthorityProfileHash(kProfileHash);
+	options.SetSenpProfileId(kSenpProfile);
+	options.SetPollInterval(std::chrono::milliseconds(1));
+	options.SetExchangeDeadline(std::chrono::milliseconds(200));
+	options.SetChannelFactory([broker = std::move(broker)] {
 		return std::make_unique<CBrokerChannel>(broker);
-	};
+	});
 	return options;
 }
 
@@ -415,7 +495,7 @@ std::vector<ControlSenpRpcRequest> Declarations(const Broker& broker)
 {
 	std::vector<ControlSenpRpcRequest> declarations;
 	for (const auto& request : broker.Requests()) {
-		if (request.operation == EControlSenpRpcOperation::AdoptWorkspace) {
+		if (request.Operation() == EControlSenpRpcOperation::AdoptWorkspace) {
 			declarations.push_back(request);
 		}
 	}
@@ -461,19 +541,19 @@ TEST(SenpControlToolReads, CarriesOneReadFromTheOwnerScopeToTheBrokerAndBack)
 	EXPECT_EQ(1, broker->Started());
 	const auto requests = broker->Requests();
 	ASSERT_GE(requests.size(), 2u);
-	EXPECT_EQ(EControlSenpRpcOperation::IssueGrant, requests[0].operation);
-	EXPECT_EQ(kSenpProfile, requests[0].profileId);
-	EXPECT_EQ(platform::controlipc::FromContributionOwner(Owner()), requests[0].owner);
+	EXPECT_EQ(EControlSenpRpcOperation::IssueGrant, requests[0].Operation());
+	EXPECT_EQ(kSenpProfile, requests[0].ProfileId());
+	EXPECT_EQ(platform::controlipc::FromContributionOwner(Owner()), requests[0].Owner());
 	EXPECT_EQ(static_cast<std::uint32_t>(senp::SenpToolCapability::GitHubRepositoryRead),
-		requests[0].capabilities);
-	EXPECT_EQ(EControlSenpRpcOperation::StartRead, requests[1].operation);
-	EXPECT_EQ("grant-1", requests[1].grantId);
-	EXPECT_EQ(L"issues:open:1", requests[1].readId);
-	EXPECT_EQ(L"github", requests[1].toolId);
-	EXPECT_EQ(L"repositoryRead", requests[1].toolOperation);
-	ASSERT_EQ(1u, requests[1].arguments.size());
-	EXPECT_EQ(L"repository", requests[1].arguments[0].name);
-	EXPECT_EQ(L"owner/project", requests[1].arguments[0].value);
+		requests[0].Capabilities());
+	EXPECT_EQ(EControlSenpRpcOperation::StartRead, requests[1].Operation());
+	EXPECT_EQ("grant-1", requests[1].GrantId());
+	EXPECT_EQ(L"issues:open:1", requests[1].ReadId());
+	EXPECT_EQ(L"github", requests[1].ToolId());
+	EXPECT_EQ(L"repositoryRead", requests[1].ToolOperation());
+	ASSERT_EQ(1u, requests[1].Arguments().size());
+	EXPECT_EQ(L"repository", requests[1].Arguments()[0].name);
+	EXPECT_EQ(L"owner/project", requests[1].Arguments()[0].value);
 }
 
 TEST(SenpControlToolReads, KeepsOneGrantPerOwnerScopeAcrossReads)
@@ -511,7 +591,7 @@ TEST(SenpControlToolReads, KeepsOneGrantPerOwnerScopeAcrossReads)
 TEST(SenpControlToolReads, FailsAReadTheControlSideKeepsRefusing)
 {
 	auto broker = std::make_shared<Broker>();
-	broker->startStatus = EControlSenpRpcStatus::Unauthorized;
+	broker->SetStartStatus(EControlSenpRpcStatus::Unauthorized);
 	CFixedEndpointReader reader;
 	CSenpControlToolReads reads(Options(broker), reader);
 
@@ -525,8 +605,8 @@ TEST(SenpControlToolReads, FailsAReadTheControlSideKeepsRefusing)
 	EXPECT_FALSE(completion->message.empty());
 	// A refusal may mean an expired record, so the grant is re-minted - but the
 	// retry is bounded and the read ends rather than looping.
-	EXPECT_EQ(static_cast<int>(CSenpControlToolReads::kMaximumAttempts), broker->Started());
-	EXPECT_EQ(static_cast<int>(CSenpControlToolReads::kMaximumAttempts), broker->Issued());
+	EXPECT_EQ(static_cast<int>(CSenpControlToolReads::MaximumAttempts()), broker->Started());
+	EXPECT_EQ(static_cast<int>(CSenpControlToolReads::MaximumAttempts()), broker->Issued());
 	EXPECT_EQ(0U, reads.OutstandingReads());
 }
 
@@ -534,7 +614,7 @@ TEST(SenpControlToolReads, FailsClosedWhenNoControlEndpointIsPublished)
 {
 	auto broker = std::make_shared<Broker>();
 	CFixedEndpointReader reader;
-	reader.endpoint.reset();
+	reader.ClearEndpoint();
 	CSenpControlToolReads reads(Options(broker), reader);
 
 	ASSERT_TRUE(reads.Start(Owner(), Context(L"tool.1", 1), Read(L"issues:open:1")));
@@ -657,7 +737,7 @@ TEST(SenpControlToolReads, BoundsTheOwnerScopesAndReadsItWillHold)
 	}
 	EXPECT_FALSE(reads.Start(Owner(), context, Read(L"issues:overflow")));
 
-	for (std::size_t index = 1; index < CSenpControlToolReads::kMaximumOwners; ++index) {
+	for (std::size_t index = 1; index < CSenpControlToolReads::MaximumOwners(); ++index) {
 		senp::ContributionOwnerIdentity owner = Owner();
 		owner.generation = static_cast<std::int64_t>(index) + 100;
 		ASSERT_TRUE(reads.Start(owner, Context(L"tool.1", 1), Read(L"issues:open:1")));
@@ -665,7 +745,7 @@ TEST(SenpControlToolReads, BoundsTheOwnerScopesAndReadsItWillHold)
 	senp::ContributionOwnerIdentity overflow = Owner();
 	overflow.generation = 999;
 	EXPECT_FALSE(reads.Start(overflow, Context(L"tool.1", 1), Read(L"issues:open:1")));
-	EXPECT_EQ(senp::CSenpRuntimeSession::kMaximumPending + CSenpControlToolReads::kMaximumOwners - 1,
+	EXPECT_EQ(senp::CSenpRuntimeSession::kMaximumPending + CSenpControlToolReads::MaximumOwners() - 1,
 		reads.OutstandingReads());
 	reader.Release();
 }
@@ -692,30 +772,30 @@ TEST(SenpControlToolReads, AdoptsTheEndpointReaderTheCompositionHandsIt)
 TEST(SenpControlToolReads, AnswersTheAccountFenceWithoutNamingAnOwnerOrAGrant)
 {
 	auto broker = std::make_shared<Broker>();
-	broker->accountGeneration = 21;
-	broker->accountState = EControlSenpAccountState::Connected;
+	broker->SetAccountGeneration(21);
+	broker->SetAccountState(EControlSenpAccountState::Connected);
 	CFixedEndpointReader reader;
 	CSenpControlToolReads reads(Options(broker), reader);
 
 	// Nothing has been asked yet. That is not a signed-out account, and the
 	// window must not be able to mistake it for one.
-	EXPECT_EQ(SenpToolAccountState::Unknown, reads.Account().state);
-	EXPECT_EQ(0, reads.Account().generation);
+	EXPECT_EQ(SenpToolAccountState::Unknown, reads.Account().State());
+	EXPECT_EQ(0, reads.Account().Generation());
 
 	reads.RefreshAccount();
 	ASSERT_TRUE(reads.WaitForSettled(kSettle));
 
-	EXPECT_EQ(SenpToolAccountState::Connected, reads.Account().state);
-	EXPECT_EQ(21, reads.Account().generation);
+	EXPECT_EQ(SenpToolAccountState::Connected, reads.Account().State());
+	EXPECT_EQ(21, reads.Account().Generation());
 	// This is what the window asks before an owner carrying a generation can
 	// exist, so the request names no owner and holds no grant to name one with.
 	const auto requests = broker->Requests();
 	ASSERT_EQ(1u, requests.size());
-	EXPECT_EQ(EControlSenpRpcOperation::QueryAccount, requests[0].operation);
-	EXPECT_EQ(kSenpProfile, requests[0].profileId);
-	EXPECT_TRUE(requests[0].owner == platform::controlipc::ControlSenpRpcOwner{});
-	EXPECT_TRUE(requests[0].grantId.empty());
-	EXPECT_EQ(0u, requests[0].capabilities);
+	EXPECT_EQ(EControlSenpRpcOperation::QueryAccount, requests[0].Operation());
+	EXPECT_EQ(kSenpProfile, requests[0].ProfileId());
+	EXPECT_TRUE(requests[0].Owner() == platform::controlipc::ControlSenpRpcOwner{});
+	EXPECT_TRUE(requests[0].GrantId().empty());
+	EXPECT_EQ(0u, requests[0].Capabilities());
 	EXPECT_EQ(0, broker->Issued());
 }
 
@@ -725,59 +805,59 @@ TEST(SenpControlToolReads, ReportsTheFenceTheControlSideNamesWithoutCollapsingIt
 	// A generation the control side still remembers, under a state that carries
 	// no authority. Deciding what that means is the window's rule, not this
 	// seam's, so the answer is reported exactly as it arrived.
-	broker->accountGeneration = 4;
-	broker->accountState = EControlSenpAccountState::ReauthenticationRequired;
+	broker->SetAccountGeneration(4);
+	broker->SetAccountState(EControlSenpAccountState::ReauthenticationRequired);
 	CFixedEndpointReader reader;
 	CSenpControlToolReads reads(Options(broker), reader);
 
 	reads.RefreshAccount();
 	ASSERT_TRUE(reads.WaitForSettled(kSettle));
 
-	EXPECT_EQ(SenpToolAccountState::ReauthenticationRequired, reads.Account().state);
-	EXPECT_EQ(4, reads.Account().generation);
+	EXPECT_EQ(SenpToolAccountState::ReauthenticationRequired, reads.Account().State());
+	EXPECT_EQ(4, reads.Account().Generation());
 }
 
 TEST(SenpControlToolReads, ReportsNoFenceWhenTheControlSideIsUnreachableOrRefuses)
 {
 	auto broker = std::make_shared<Broker>();
-	broker->accountGeneration = 21;
-	broker->accountState = EControlSenpAccountState::Connected;
+	broker->SetAccountGeneration(21);
+	broker->SetAccountState(EControlSenpAccountState::Connected);
 	// Set before the worker exists: the stand-in's script is only safe to write
 	// from this thread while nothing is reading it.
-	broker->accountStatus = EControlSenpRpcStatus::NotFound;
+	broker->SetAccountStatus(EControlSenpRpcStatus::NotFound);
 	broker->Sever();
 	CFixedEndpointReader reader;
 	auto options = Options(broker);
 	// Both halves of this test ask, and the second follows the first by less
 	// than any floor worth naming, so there is none.
-	options.accountRefreshInterval = std::chrono::milliseconds(0);
+	options.SetAccountRefreshInterval(std::chrono::milliseconds(0));
 	CSenpControlToolReads reads(std::move(options), reader);
 
 	reads.RefreshAccount();
 	ASSERT_TRUE(reads.WaitForSettled(kSettle));
 	// Unavailable, not Unknown: the question was asked and could not be answered.
-	EXPECT_EQ(SenpToolAccountState::Unavailable, reads.Account().state);
-	EXPECT_EQ(0, reads.Account().generation);
+	EXPECT_EQ(SenpToolAccountState::Unavailable, reads.Account().State());
+	EXPECT_EQ(0, reads.Account().Generation());
 
 	broker->Restore();
 	reads.RefreshAccount();
 	ASSERT_TRUE(WaitUntil([&] { return broker->Accounts() == 1; }));
 	ASSERT_TRUE(reads.WaitForSettled(kSettle));
 	// A refusal names no account, so the members it still carried are ignored.
-	EXPECT_EQ(SenpToolAccountState::Unavailable, reads.Account().state);
-	EXPECT_EQ(0, reads.Account().generation);
+	EXPECT_EQ(SenpToolAccountState::Unavailable, reads.Account().State());
+	EXPECT_EQ(0, reads.Account().Generation());
 }
 
 TEST(SenpControlToolReads, CoalescesAccountRefreshesAndReasksAfterTheConnectionIsReplaced)
 {
 	auto broker = std::make_shared<Broker>();
-	broker->accountGeneration = 21;
-	broker->accountState = EControlSenpAccountState::Connected;
+	broker->SetAccountGeneration(21);
+	broker->SetAccountState(EControlSenpAccountState::Connected);
 	CFixedEndpointReader reader;
 	auto options = Options(broker);
 	// A floor no part of this test can wait out, so a second query proves the
 	// cadence was reset rather than merely expired.
-	options.accountRefreshInterval = std::chrono::seconds(60);
+	options.SetAccountRefreshInterval(std::chrono::seconds(60));
 	CSenpControlToolReads reads(std::move(options), reader);
 
 	// The window asks on every frame turn; only the seam decides how often that
@@ -785,7 +865,7 @@ TEST(SenpControlToolReads, CoalescesAccountRefreshesAndReasksAfterTheConnectionI
 	for (int turn = 0; turn < 6; ++turn) reads.RefreshAccount();
 	ASSERT_TRUE(reads.WaitForSettled(kSettle));
 	EXPECT_EQ(1, broker->Accounts());
-	EXPECT_EQ(SenpToolAccountState::Connected, reads.Account().state);
+	EXPECT_EQ(SenpToolAccountState::Connected, reads.Account().State());
 
 	ASSERT_TRUE(reads.Start(Owner(), Context(L"tool.1", 1), Read(L"issues:open:1")));
 	ASSERT_TRUE(WaitUntil([&] { return broker->Started() == 1; }));
@@ -801,14 +881,14 @@ TEST(SenpControlToolReads, CoalescesAccountRefreshesAndReasksAfterTheConnectionI
 	ASSERT_EQ(2u, reads.ConnectionEpoch());
 	// The connection that answered the fence is gone, so the answer is gone with
 	// it - reporting the old generation would name authority nothing holds.
-	EXPECT_EQ(SenpToolAccountState::Unknown, reads.Account().state);
-	EXPECT_EQ(0, reads.Account().generation);
+	EXPECT_EQ(SenpToolAccountState::Unknown, reads.Account().State());
+	EXPECT_EQ(0, reads.Account().Generation());
 
 	reads.RefreshAccount();
 	ASSERT_TRUE(reads.WaitForSettled(kSettle));
 	EXPECT_EQ(2, broker->Accounts());
-	EXPECT_EQ(SenpToolAccountState::Connected, reads.Account().state);
-	EXPECT_EQ(21, reads.Account().generation);
+	EXPECT_EQ(SenpToolAccountState::Connected, reads.Account().State());
+	EXPECT_EQ(21, reads.Account().Generation());
 }
 
 TEST(SenpControlToolReads, DeclaresTheWorkspaceWithoutNamingAnOwnerOrAGrant)
@@ -822,15 +902,15 @@ TEST(SenpControlToolReads, DeclaresTheWorkspaceWithoutNamingAnOwnerOrAGrant)
 
 	auto declarations = Declarations(*broker);
 	ASSERT_EQ(1u, declarations.size());
-	EXPECT_EQ(kSenpProfile, declarations[0].profileId);
+	EXPECT_EQ(kSenpProfile, declarations[0].ProfileId());
 	// It is what the window says before an owner carrying a workspace revision
 	// can exist, so like the account query it names no owner and holds no grant.
-	EXPECT_TRUE(declarations[0].owner == platform::controlipc::ControlSenpRpcOwner{});
-	EXPECT_TRUE(declarations[0].grantId.empty());
-	EXPECT_EQ(7, declarations[0].workspace.generation);
-	EXPECT_EQ(11, declarations[0].workspace.revision);
-	ASSERT_EQ(1u, declarations[0].workspace.folders.size());
-	EXPECT_EQ(L"file:///C:/Work/repo", declarations[0].workspace.folders[0]);
+	EXPECT_TRUE(declarations[0].Owner() == platform::controlipc::ControlSenpRpcOwner{});
+	EXPECT_TRUE(declarations[0].GrantId().empty());
+	EXPECT_EQ(7, declarations[0].Workspace().Generation());
+	EXPECT_EQ(11, declarations[0].Workspace().Revision());
+	ASSERT_EQ(1u, declarations[0].Workspace().Folders().size());
+	EXPECT_EQ(L"file:///C:/Work/repo", declarations[0].Workspace().Folders()[0]);
 	EXPECT_EQ(0, broker->Issued());
 
 	// The window declares on every turn; only the seam decides what reaches the
@@ -846,9 +926,9 @@ TEST(SenpControlToolReads, DeclaresTheWorkspaceWithoutNamingAnOwnerOrAGrant)
 	ASSERT_TRUE(reads.WaitForSettled(kSettle));
 	declarations = Declarations(*broker);
 	ASSERT_EQ(2u, declarations.size());
-	EXPECT_EQ(12, declarations[1].workspace.revision);
-	ASSERT_EQ(1u, declarations[1].workspace.folders.size());
-	EXPECT_EQ(L"file:///C:/Work/other", declarations[1].workspace.folders[0]);
+	EXPECT_EQ(12, declarations[1].Workspace().Revision());
+	ASSERT_EQ(1u, declarations[1].Workspace().Folders().size());
+	EXPECT_EQ(L"file:///C:/Work/other", declarations[1].Workspace().Folders()[0]);
 }
 
 TEST(SenpControlToolReads, DeclaresAgainOnTheConnectionThatReplacedTheOneItToldFirst)
@@ -879,7 +959,7 @@ TEST(SenpControlToolReads, DeclaresAgainOnTheConnectionThatReplacedTheOneItToldF
 	// window is not asked again: the seam re-declares what it already holds.
 	const auto declarations = Declarations(*broker);
 	ASSERT_EQ(2u, declarations.size());
-	EXPECT_EQ(declarations[0].workspace, declarations[1].workspace);
+	EXPECT_EQ(declarations[0].Workspace(), declarations[1].Workspace());
 }
 
 TEST(SenpControlToolReads, RetriesADeclarationTheControlSideRefused)
@@ -887,10 +967,10 @@ TEST(SenpControlToolReads, RetriesADeclarationTheControlSideRefused)
 	auto broker = std::make_shared<Broker>();
 	// Set before the worker exists: the stand-in's script is only safe to write
 	// from this thread while nothing is reading it.
-	broker->adoptStatus = EControlSenpRpcStatus::ResourceExhausted;
+	broker->SetAdoptStatus(EControlSenpRpcStatus::ResourceExhausted);
 	CFixedEndpointReader reader;
 	auto options = Options(broker);
-	options.accountRefreshInterval = std::chrono::milliseconds(0);
+	options.SetAccountRefreshInterval(std::chrono::milliseconds(0));
 	CSenpControlToolReads reads(std::move(options), reader);
 
 	reads.DeclareWorkspace(7, 11, { L"file:///C:/Work/repo" });
@@ -900,7 +980,7 @@ TEST(SenpControlToolReads, RetriesADeclarationTheControlSideRefused)
 	// A refused declaration is not a held one. Recording it would leave this
 	// window answering for a workspace the control side never accepted, for as
 	// long as the connection lasts.
-	broker->adoptStatus = EControlSenpRpcStatus::Succeeded;
+	broker->SetAdoptStatus(EControlSenpRpcStatus::Succeeded);
 	reads.RefreshAccount();
 	ASSERT_TRUE(reads.WaitForSettled(kSettle));
 	EXPECT_EQ(2, broker->Adopted());
@@ -931,10 +1011,10 @@ TEST(SenpControlToolReads, DeclaresNoFolderRatherThanASubsetTheWindowIsNotOpenOn
 
 	const auto declarations = Declarations(*broker);
 	ASSERT_EQ(2u, declarations.size());
-	EXPECT_EQ(11, declarations[0].workspace.revision);
-	EXPECT_TRUE(declarations[0].workspace.folders.empty());
-	EXPECT_EQ(12, declarations[1].workspace.revision);
-	EXPECT_TRUE(declarations[1].workspace.folders.empty());
+	EXPECT_EQ(11, declarations[0].Workspace().Revision());
+	EXPECT_TRUE(declarations[0].Workspace().Folders().empty());
+	EXPECT_EQ(12, declarations[1].Workspace().Revision());
+	EXPECT_TRUE(declarations[1].Workspace().Folders().empty());
 }
 
 TEST(SenpControlToolReads, SendsNothingForCountersThatObservedNothing)
@@ -972,17 +1052,17 @@ TEST(SenpControlToolReads, CarriesEachTextResourceChunkWholeFromTheControlStore)
 	ASSERT_TRUE(reads.WaitForSettled(kSettle));
 	const auto loading = reads.TakeResource(Owner());
 	ASSERT_TRUE(loading);
-	EXPECT_EQ(L"log-1", loading->handle);
-	EXPECT_EQ(0U, loading->offset);
-	ASSERT_TRUE(loading->chunk);
-	EXPECT_EQ(senp::TextResourceResult::Accepted, loading->chunk->result);
-	EXPECT_EQ(senp::TextResourceState::Loading, loading->chunk->state);
-	EXPECT_EQ(senp::TextResourceEnd::None, loading->chunk->end);
-	EXPECT_EQ(L"log-1", loading->chunk->handle);
-	EXPECT_EQ(11, loading->chunk->revision);
-	EXPECT_EQ(0U, loading->chunk->offset);
-	EXPECT_EQ(15U, loading->chunk->length);
-	EXPECT_EQ("run step", loading->chunk->bytes);
+	EXPECT_EQ(L"log-1", loading->Handle());
+	EXPECT_EQ(0U, loading->Offset());
+	ASSERT_TRUE(loading->Chunk());
+	EXPECT_EQ(senp::TextResourceResult::Accepted, loading->Chunk()->result);
+	EXPECT_EQ(senp::TextResourceState::Loading, loading->Chunk()->state);
+	EXPECT_EQ(senp::TextResourceEnd::None, loading->Chunk()->end);
+	EXPECT_EQ(L"log-1", loading->Chunk()->handle);
+	EXPECT_EQ(11, loading->Chunk()->revision);
+	EXPECT_EQ(0U, loading->Chunk()->offset);
+	EXPECT_EQ(15U, loading->Chunk()->length);
+	EXPECT_EQ("run step", loading->Chunk()->bytes);
 	// One answer per read: a second drain would hand the same chunk to whatever
 	// asked next.
 	EXPECT_FALSE(reads.TakeResource(Owner()));
@@ -991,13 +1071,13 @@ TEST(SenpControlToolReads, CarriesEachTextResourceChunkWholeFromTheControlStore)
 	ASSERT_TRUE(reads.WaitForSettled(kSettle));
 	const auto complete = reads.TakeResource(Owner());
 	ASSERT_TRUE(complete);
-	EXPECT_EQ(8U, complete->offset);
-	ASSERT_TRUE(complete->chunk);
-	EXPECT_EQ(senp::TextResourceState::Complete, complete->chunk->state);
-	EXPECT_EQ(senp::TextResourceEnd::Complete, complete->chunk->end);
-	EXPECT_EQ(8U, complete->chunk->offset);
-	EXPECT_EQ(15U, complete->chunk->length);
-	EXPECT_EQ(" output", complete->chunk->bytes);
+	EXPECT_EQ(8U, complete->Offset());
+	ASSERT_TRUE(complete->Chunk());
+	EXPECT_EQ(senp::TextResourceState::Complete, complete->Chunk()->state);
+	EXPECT_EQ(senp::TextResourceEnd::Complete, complete->Chunk()->end);
+	EXPECT_EQ(8U, complete->Chunk()->offset);
+	EXPECT_EQ(15U, complete->Chunk()->length);
+	EXPECT_EQ(" output", complete->Chunk()->bytes);
 
 	// The read is grant-scoped and names only what the closed operation set
 	// admits for it: no read identity, no tool, no arguments.
@@ -1005,16 +1085,16 @@ TEST(SenpControlToolReads, CarriesEachTextResourceChunkWholeFromTheControlStore)
 	EXPECT_EQ(2, broker->ResourceReads());
 	const auto requests = broker->Requests();
 	ASSERT_GE(requests.size(), 2u);
-	EXPECT_EQ(EControlSenpRpcOperation::ReadResource, requests[1].operation);
-	EXPECT_EQ(kSenpProfile, requests[1].profileId);
-	EXPECT_EQ(platform::controlipc::FromContributionOwner(Owner()), requests[1].owner);
-	EXPECT_EQ("grant-1", requests[1].grantId);
-	EXPECT_EQ(L"log-1", requests[1].resourceHandle);
-	EXPECT_EQ(0U, requests[1].offset);
-	EXPECT_EQ(8U, requests[1].length);
-	EXPECT_TRUE(requests[1].readId.empty());
-	EXPECT_TRUE(requests[1].toolId.empty());
-	EXPECT_TRUE(requests[1].arguments.empty());
+	EXPECT_EQ(EControlSenpRpcOperation::ReadResource, requests[1].Operation());
+	EXPECT_EQ(kSenpProfile, requests[1].ProfileId());
+	EXPECT_EQ(platform::controlipc::FromContributionOwner(Owner()), requests[1].Owner());
+	EXPECT_EQ("grant-1", requests[1].GrantId());
+	EXPECT_EQ(L"log-1", requests[1].ResourceHandle());
+	EXPECT_EQ(0U, requests[1].Offset());
+	EXPECT_EQ(8U, requests[1].Length());
+	EXPECT_TRUE(requests[1].ReadId().empty());
+	EXPECT_TRUE(requests[1].ToolId().empty());
+	EXPECT_TRUE(requests[1].Arguments().empty());
 }
 
 TEST(SenpControlToolReads, HoldsOneResourceReadPerOwnerUntilItsAnswerIsDrained)
@@ -1044,10 +1124,10 @@ TEST(SenpControlToolReads, HoldsOneResourceReadPerOwnerUntilItsAnswerIsDrained)
 	ASSERT_TRUE(reads.WaitForSettled(kSettle));
 	const auto unreachable = reads.TakeResource(Owner());
 	ASSERT_TRUE(unreachable);
-	EXPECT_EQ(L"log-1", unreachable->handle);
+	EXPECT_EQ(L"log-1", unreachable->Handle());
 	// The connection is what would have carried an answer, and its absence says
 	// nothing about the resource, so no chunk stands in for one.
-	EXPECT_FALSE(unreachable->chunk);
+	EXPECT_FALSE(unreachable->Chunk());
 	EXPECT_TRUE(reads.TakeResource(OtherOwner()));
 	// Drained, so the surface may ask again.
 	EXPECT_TRUE(reads.ReadResource(Owner(), L"log-1", 64, 64));
@@ -1056,7 +1136,7 @@ TEST(SenpControlToolReads, HoldsOneResourceReadPerOwnerUntilItsAnswerIsDrained)
 TEST(SenpControlToolReads, AnswersAResourceReadTheControlSideRefusedWithoutInventingAChunk)
 {
 	auto broker = std::make_shared<Broker>();
-	broker->resourceStatus = EControlSenpRpcStatus::Closed;
+	broker->SetResourceStatus(EControlSenpRpcStatus::Closed);
 	CFixedEndpointReader reader;
 	CSenpControlToolReads reads(Options(broker), reader);
 
@@ -1065,15 +1145,15 @@ TEST(SenpControlToolReads, AnswersAResourceReadTheControlSideRefusedWithoutInven
 
 	const auto answer = reads.TakeResource(Owner());
 	ASSERT_TRUE(answer);
-	EXPECT_EQ(L"log-1", answer->handle);
-	ASSERT_TRUE(answer->chunk);
+	EXPECT_EQ(L"log-1", answer->Handle());
+	ASSERT_TRUE(answer->Chunk());
 	// The refusal the control side gave, in the store's own vocabulary, and
 	// nothing besides: no state, length, revision or bytes were answered, so
 	// none are filled in on its behalf.
-	EXPECT_EQ(senp::TextResourceResult::Closed, answer->chunk->result);
-	EXPECT_EQ(0U, answer->chunk->length);
-	EXPECT_EQ(0, answer->chunk->revision);
-	EXPECT_TRUE(answer->chunk->bytes.empty());
+	EXPECT_EQ(senp::TextResourceResult::Closed, answer->Chunk()->result);
+	EXPECT_EQ(0U, answer->Chunk()->length);
+	EXPECT_EQ(0, answer->Chunk()->revision);
+	EXPECT_TRUE(answer->Chunk()->bytes.empty());
 	// A refusal is an answer, so it is not retried.
 	EXPECT_EQ(1, broker->ResourceReads());
 }
@@ -1081,7 +1161,7 @@ TEST(SenpControlToolReads, AnswersAResourceReadTheControlSideRefusedWithoutInven
 TEST(SenpControlToolReads, RemintsTheGrantForAResourceReadTheControlSideCallsExpired)
 {
 	auto broker = std::make_shared<Broker>();
-	broker->resourceStatus = EControlSenpRpcStatus::Expired;
+	broker->SetResourceStatus(EControlSenpRpcStatus::Expired);
 	CFixedEndpointReader reader;
 	CSenpControlToolReads reads(Options(broker), reader);
 
@@ -1090,13 +1170,13 @@ TEST(SenpControlToolReads, RemintsTheGrantForAResourceReadTheControlSideCallsExp
 
 	const auto answer = reads.TakeResource(Owner());
 	ASSERT_TRUE(answer);
-	ASSERT_TRUE(answer->chunk);
+	ASSERT_TRUE(answer->Chunk());
 	// Bounded retries, each on a freshly minted grant, and then the refusal the
 	// control side kept giving rather than a generic one: a surface told the
 	// resource expired re-resolves it, where a failure is only reported.
-	EXPECT_EQ(senp::TextResourceResult::Expired, answer->chunk->result);
-	EXPECT_EQ(static_cast<int>(CSenpControlToolReads::kMaximumAttempts), broker->ResourceReads());
-	EXPECT_EQ(static_cast<int>(CSenpControlToolReads::kMaximumAttempts), broker->Issued());
+	EXPECT_EQ(senp::TextResourceResult::Expired, answer->Chunk()->result);
+	EXPECT_EQ(static_cast<int>(CSenpControlToolReads::MaximumAttempts()), broker->ResourceReads());
+	EXPECT_EQ(static_cast<int>(CSenpControlToolReads::MaximumAttempts()), broker->Issued());
 }
 
 TEST(SenpControlToolReads, AnswersAResourceReadWithNoChunkWhenTheConnectionIsLost)
@@ -1114,9 +1194,9 @@ TEST(SenpControlToolReads, AnswersAResourceReadWithNoChunkWhenTheConnectionIsLos
 	ASSERT_TRUE(reads.WaitForSettled(kSettle));
 	const auto lost = reads.TakeResource(Owner());
 	ASSERT_TRUE(lost);
-	EXPECT_EQ(L"log-1", lost->handle);
-	EXPECT_EQ(0U, lost->offset);
-	EXPECT_FALSE(lost->chunk);
+	EXPECT_EQ(L"log-1", lost->Handle());
+	EXPECT_EQ(0U, lost->Offset());
+	EXPECT_FALSE(lost->Chunk());
 	EXPECT_EQ(ESenpControlToolReadsState::Disconnected, reads.State());
 }
 
@@ -1147,13 +1227,13 @@ TEST(SenpControlToolReads, WithdrawsAResourceOnTheWireWithoutWaitingForAnAnswer)
 	const auto requests = broker->Requests();
 	const auto release = std::find_if(requests.begin(), requests.end(),
 		[](const ControlSenpRpcRequest& request) {
-			return request.operation == EControlSenpRpcOperation::ReleaseResource;
+			return request.Operation() == EControlSenpRpcOperation::ReleaseResource;
 		});
 	ASSERT_NE(requests.end(), release);
-	EXPECT_EQ(L"log-1", release->resourceHandle);
-	EXPECT_EQ(0U, release->offset);
-	EXPECT_EQ(0U, release->length);
-	EXPECT_EQ("grant-1", release->grantId);
+	EXPECT_EQ(L"log-1", release->ResourceHandle());
+	EXPECT_EQ(0U, release->Offset());
+	EXPECT_EQ(0U, release->Length());
+	EXPECT_EQ("grant-1", release->GrantId());
 	EXPECT_FALSE(reads.TakeResource(Owner()));
 }
 

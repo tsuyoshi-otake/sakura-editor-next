@@ -37,7 +37,7 @@ void ActivityBarModel::SetViewContainerBadge(std::string_view id, std::optional<
 	if (id.empty()) return;
 	// Upstream hides a badge at zero or below rather than drawing "0", so a
 	// non-positive count is stored as no badge at all.
-	if (!badge || badge->number <= 0) {
+	if (!badge || badge->Number() <= 0) {
 		if (const auto it = m_badges.find(id); it != m_badges.end()) m_badges.erase(it);
 		return;
 	}

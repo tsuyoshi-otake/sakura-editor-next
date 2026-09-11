@@ -6,6 +6,7 @@
 #include "platform/profiles/UserDataProfileIdentity.h"
 
 #include <algorithm>
+#include <exception>
 
 namespace workbench::editor {
 namespace {
@@ -42,7 +43,7 @@ bool PackageDigest(std::wstring_view source, std::string& result)
 
 bool ValidHandle(std::wstring_view handle) noexcept
 {
-	return !handle.empty() && handle.size() <= CSenpOwnerTextResources::kMaximumHandleCharacters;
+	return !handle.empty() && handle.size() <= CSenpOwnerTextResources::MaximumHandleCharacters();
 }
 
 } // namespace
@@ -59,7 +60,7 @@ const CSenpOwnerTextResources::Owner* CSenpOwnerTextResources::Find(
 	const SenpReadonlyScope& document) const noexcept
 {
 	const auto found = std::find_if(m_owners.begin(), m_owners.end(),
-		[&document](const Owner& owner) noexcept { return owner.document == document; });
+		[&document](const Owner& owner) noexcept { return owner.Document() == document; });
 	return found == m_owners.end() ? nullptr : &*found;
 }
 
@@ -83,34 +84,37 @@ senp::TextResourceScope CSenpOwnerTextResources::Project(const Owner& owner) con
 {
 	senp::TextResourceScope scope;
 	scope.profileId = m_profileId;
-	scope.extensionId = owner.document.extensionId;
-	scope.packageDigest = owner.packageDigest;
-	scope.ownerGeneration = owner.document.ownerGeneration;
-	scope.workspaceRevision = owner.document.workspaceRevision;
-	scope.accountGeneration = owner.document.accountGeneration;
-	scope.revision = owner.document.ownerGeneration;
+	scope.extensionId = owner.Document().extensionId;
+	scope.packageDigest = owner.PackageDigest();
+	scope.ownerGeneration = owner.Document().ownerGeneration;
+	scope.workspaceRevision = owner.Document().workspaceRevision;
+	scope.accountGeneration = owner.Document().accountGeneration;
+	scope.revision = owner.Document().ownerGeneration;
 	return scope;
 }
 
 bool CSenpOwnerTextResources::Admit(const senp::ContributionOwnerIdentity& owner)
 try {
 	if (!Usable()) return false;
-	Owner candidate;
-	if (!ExtensionId(owner.extensionId, candidate.document.extensionId)
-		|| !PackageDigest(owner.packageDigest, candidate.packageDigest)) return false;
+	std::string extensionId;
+	std::string packageDigest;
+	if (!ExtensionId(owner.extensionId, extensionId)
+		|| !PackageDigest(owner.packageDigest, packageDigest)) return false;
 	// The store refuses a scope outside these bounds, so an owner outside them
 	// could never own a resource in the first place.
 	if (owner.generation <= 0 || owner.workspaceRevision < 0 || owner.accountGeneration < 0) return false;
-	candidate.document.ownerGeneration = owner.generation;
-	candidate.document.workspaceRevision = owner.workspaceRevision;
-	candidate.document.accountGeneration = owner.accountGeneration;
-	if (const auto* existing = Find(candidate.document)) {
-		return existing->packageDigest == candidate.packageDigest;
+	SenpReadonlyScope document;
+	document.extensionId = std::move(extensionId);
+	document.ownerGeneration = owner.generation;
+	document.workspaceRevision = owner.workspaceRevision;
+	document.accountGeneration = owner.accountGeneration;
+	if (const auto* existing = Find(document)) {
+		return existing->PackageDigest() == packageDigest;
 	}
-	if (m_owners.size() >= kMaximumOwners) return false;
-	m_owners.push_back(std::move(candidate));
+	if (m_owners.size() >= MaximumOwners()) return false;
+	m_owners.emplace_back(std::move(document), std::move(packageDigest));
 	return true;
-} catch (...) {
+} catch (const std::exception&) {
 	return false;
 }
 
@@ -122,9 +126,9 @@ try {
 	document.workspaceRevision = owner.workspaceRevision;
 	document.accountGeneration = owner.accountGeneration;
 	const auto removed = std::remove_if(m_owners.begin(), m_owners.end(),
-		[&document](const Owner& value) noexcept { return value.document == document; });
+		[&document](const Owner& value) noexcept { return value.Document() == document; });
 	m_owners.erase(removed, m_owners.end());
-} catch (...) {
+} catch (const std::exception&) {
 }
 
 std::optional<senp::TextResourceScope> CSenpOwnerTextResources::Resolve(const SenpReadonlyScope& document,

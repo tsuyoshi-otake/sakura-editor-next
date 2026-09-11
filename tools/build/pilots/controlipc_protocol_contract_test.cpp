@@ -71,13 +71,13 @@ bool FragmentedAndCoalescedDecodePreservesFrames()
 	combined.insert(combined.end(), second.begin(), second.end());
 
 	CControlIpcFrameDecoder decoder;
-	if (decoder.Feed(std::span<const std::uint8_t>(combined).first(2)).outcome != EControlIpcDecodeOutcome::NeedMoreData) return false;
+	if (decoder.Feed(std::span<const std::uint8_t>(combined).first(2)).Outcome() != EControlIpcDecodeOutcome::NeedMoreData) return false;
 	const auto decoded = decoder.Feed(std::span<const std::uint8_t>(combined).subspan(2));
-	return decoded.outcome == EControlIpcDecodeOutcome::Decoded
-		&& decoded.frames.size() == 2
-		&& decoded.frames[0].header.kind == EControlIpcKind::Hello
-		&& decoded.frames[1].header.kind == EControlIpcKind::CancelAck
-		&& decoded.frames[1].header.generation == 7;
+	return decoded.Outcome() == EControlIpcDecodeOutcome::Decoded
+		&& decoded.Frames().size() == 2
+		&& decoded.Frames()[0].header.kind == EControlIpcKind::Hello
+		&& decoded.Frames()[1].header.kind == EControlIpcKind::CancelAck
+		&& decoded.Frames()[1].header.generation == 7;
 }
 
 bool MinorVersionAndUtf8FieldsRemainCompatible()
@@ -87,8 +87,8 @@ bool MinorVersionAndUtf8FieldsRemainCompatible()
 	const auto encoded = Encode(frame);
 	CControlIpcFrameDecoder decoder;
 	const auto decoded = decoder.Feed(encoded);
-	if (decoded.outcome != EControlIpcDecodeOutcome::Decoded || decoded.frames.size() != 1
-		|| decoded.frames[0].header.minorVersion != kControlIpcMinorVersion + 3) return false;
+	if (decoded.Outcome() != EControlIpcDecodeOutcome::Decoded || decoded.Frames().size() != 1
+		|| decoded.Frames()[0].header.minorVersion != kControlIpcMinorVersion + 3) return false;
 
 	ControlIpcFields fields;
 	if (!AddUtf8Field(fields, EControlIpcFieldTag::Diagnostic, "protocol fixture")) return false;
@@ -110,11 +110,11 @@ bool StickyFailureHasExplicitResetTerminal()
 {
 	CControlIpcFrameDecoder decoder(64);
 	const std::array<std::uint8_t, 4> oversize{ 65, 0, 0, 0 };
-	if (decoder.Feed(oversize).outcome != EControlIpcDecodeOutcome::OversizeFrame || !decoder.IsFailed()) return false;
-	if (decoder.Feed(Encode(HelloFrame())).outcome != EControlIpcDecodeOutcome::OversizeFrame) return false;
+	if (decoder.Feed(oversize).Outcome() != EControlIpcDecodeOutcome::OversizeFrame || !decoder.IsFailed()) return false;
+	if (decoder.Feed(Encode(HelloFrame())).Outcome() != EControlIpcDecodeOutcome::OversizeFrame) return false;
 	decoder.Reset();
 	const auto decoded = decoder.Feed(Encode(HelloFrame()));
-	return decoded.outcome == EControlIpcDecodeOutcome::Decoded && decoded.frames.size() == 1 && !decoder.IsFailed();
+	return decoded.Outcome() == EControlIpcDecodeOutcome::Decoded && decoded.Frames().size() == 1 && !decoder.IsFailed();
 }
 
 constexpr std::array kTestNames{

@@ -210,7 +210,22 @@ private:
 	std::shared_ptr<RuntimeProbe> p;
 };
 
-struct PublicationProbe {
+//! Test double state for one CatalogPublication. Configuration (identity,
+//! valid, commitAllowed) is fixed at construction by OwnerHarness; the rest
+//! is mutated only by CatalogPublication and read back by the tests through
+//! the narrow accessors below, so the fields are private rather than a data
+//! bag any future caller could poke.
+class PublicationProbe {
+public:
+	PublicationProbe(ContributionOwnerIdentity ownerIdentity, bool validState, bool commitAllowedState)
+		: identity(std::move(ownerIdentity)), valid(validState), commitAllowed(commitAllowedState) {}
+
+	[[nodiscard]] bool Visible() const noexcept { return visible; }
+	[[nodiscard]] int Applies() const noexcept { return applies; }
+
+private:
+	friend class CatalogPublication;
+
 	ContributionOwnerIdentity identity;
 	bool valid{ true }, commitAllowed{ true }, applyAllowed{ true }, visible{};
 	int commits{}, applies{}, revokes{}, destroyed{};
@@ -268,10 +283,7 @@ struct OwnerHarness {
 			.moduleSha256 = std::wstring(64, L'a'), .extensionId = std::move(id),
 			.context = { .workspaceRevision = 3, .accountGeneration = 4 } }, std::wstring(64, L'b'),
 			[this](const ContributionOwnerIdentity& identity, const ContributionOwnerIdentity* previous) -> std::unique_ptr<ISenpOwnerPublication> {
-				auto probe = std::make_shared<PublicationProbe>();
-				probe->identity = identity;
-				probe->valid = valid;
-				probe->commitAllowed = commit;
+				auto probe = std::make_shared<PublicationProbe>(identity, valid, commit);
 				std::string id;
 				for (auto c : identity.extensionId) id.push_back(static_cast<char>(c));
 				auto prepared = registry.PrepareOwnerReplacement({ id, static_cast<std::uint64_t>(identity.generation) },
@@ -322,7 +334,7 @@ TEST(SenpViewLifecycle, ReplacementFencesTakenResultsAndKeepsRetirementOwnership
 	const auto replacement = h.Begin();
 	h.runtimes[0]->onStop = [&] {
 		EXPECT_FALSE(h.owners.IsCurrent(old));
-		EXPECT_FALSE(h.publications[0]->visible);
+		EXPECT_FALSE(h.publications[0]->Visible());
 	};
 	h.owners.Poll(Clock::now());
 	EXPECT_FALSE(h.owners.IsCurrent(old));
@@ -333,7 +345,7 @@ TEST(SenpViewLifecycle, ReplacementFencesTakenResultsAndKeepsRetirementOwnership
 	h.runtimes[0]->results.push_back({ { L"late", old.generation, 3, 4, 1 }, false, InvocationStatus::EffectsReady });
 	h.runtimes[0]->state = { .phase = RuntimePhase::Stopped, .workerExited = true, .processExitConfirmed = true };
 	h.owners.Poll(Clock::now());
-	EXPECT_EQ(1, h.publications[0]->applies);
+	EXPECT_EQ(1, h.publications[0]->Applies());
 	EXPECT_EQ(1, h.runtimes[0]->joins);
 	EXPECT_EQ(0U, h.owners.Snapshot().retiring);
 	EXPECT_TRUE(h.registry.IsOwnerCurrent({ "test.github", static_cast<std::uint64_t>(replacement.owner.generation) }));
@@ -350,10 +362,10 @@ TEST(SenpViewLifecycle, DisableCancelsPendingUpdateAndRejectsUndeliveredEffects)
 	ASSERT_TRUE(h.owners.Revoke(L"test.github", effect::StopReason::Disabled));
 	EXPECT_FALSE(h.owners.IsCurrent(old));
 	EXPECT_FALSE(h.owners.IsCurrent(pending.owner));
-	EXPECT_FALSE(h.publications[0]->visible);
+	EXPECT_FALSE(h.publications[0]->Visible());
 	h.owners.Poll(Clock::now());
-	EXPECT_EQ(1, h.publications[0]->applies);
-	EXPECT_EQ(0, h.publications[1]->applies);
+	EXPECT_EQ(1, h.publications[0]->Applies());
+	EXPECT_EQ(0, h.publications[1]->Applies());
 	ASSERT_TRUE(h.owners.TakeTransition());
 	EXPECT_FALSE(h.owners.TakeTransition());
 	EXPECT_TRUE(h.owners.Close());
@@ -373,7 +385,7 @@ TEST(SenpViewLifecycle, FailedStartAndPreparationDeadlineHaveOneTerminalReceipt)
 	h.throwStart = false;
 	h.activate = false;
 	ASSERT_EQ(OwnerChangeStatus::Accepted, h.Begin().status);
-	h.owners.Poll(Clock::now() + CSenpRuntimeSession::kMaximumColdStart + 1s);
+	h.owners.Poll(Clock::now() + kMaximumColdStart + 1s);
 	auto expired = h.owners.TakeTransition();
 	ASSERT_TRUE(expired);
 	EXPECT_EQ(OwnerChangeStatus::TimedOut, expired->status);
@@ -394,8 +406,8 @@ TEST(SenpViewLifecycle, CrashAndWrongContextRevokeInsteadOfApplyingOrRestarting)
 		if (fault == 3) ++result.context.accountGeneration;
 		h.owners.Poll(Clock::now());
 		EXPECT_FALSE(h.owners.IsCurrent(owner));
-		EXPECT_FALSE(h.publications[0]->visible);
-		EXPECT_EQ(1, h.publications[0]->applies);
+		EXPECT_FALSE(h.publications[0]->Visible());
+		EXPECT_EQ(1, h.publications[0]->Applies());
 		h.owners.Poll(Clock::now() + 1h);
 		EXPECT_EQ(1U, h.runtimes.size());
 	}

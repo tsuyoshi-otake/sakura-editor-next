@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <exception>
 #include <limits>
 #include <mutex>
 #include <thread>
@@ -187,10 +188,10 @@ ControlIpcTransportResult DecodeAndDispatch(CControlIpcFrameDecoder& decoder, st
 	const ControlIpcNamedPipeOptions& options, bool& shouldClose)
 {
 	const auto decoded = decoder.Feed(bytes);
-	if (decoded.outcome != EControlIpcDecodeOutcome::NeedMoreData && decoded.outcome != EControlIpcDecodeOutcome::Decoded) {
+	if (decoded.Outcome() != EControlIpcDecodeOutcome::NeedMoreData && decoded.Outcome() != EControlIpcDecodeOutcome::Decoded) {
 		return { false, EControlIpcTransportDisconnectReason::ProtocolError, ERROR_INVALID_DATA, L"Control IPC frame decoder rejected input" };
 	}
-	for (const auto& frame : decoded.frames) {
+	for (const auto& frame : decoded.Frames()) {
 		ControlIpcFrameDispatchResult dispatch;
 		try {
 			dispatch = handler.HandleFrame(context, frame);
@@ -248,7 +249,7 @@ public:
 			std::lock_guard lock(mutex);
 			if (completed.size() == 64) completed.erase(completed.begin());
 			completed.push_back(result);
-		} catch (...) {
+		} catch (const std::exception&) {
 			// Diagnostics must never terminate an I/O worker when allocation is exhausted.
 		}
 	}
@@ -601,8 +602,8 @@ ControlIpcTransportResult CControlIpcNamedPipeClient::Receive(std::vector<Contro
 		if (!result.success) { m_impl->MarkDisconnected(); return result; }
 		try {
 			auto decoded = m_impl->decoder.Feed(std::span(bytes).first(read));
-			if (decoded.outcome != EControlIpcDecodeOutcome::NeedMoreData && decoded.outcome != EControlIpcDecodeOutcome::Decoded) { m_impl->MarkDisconnected(); return { false, EControlIpcTransportDisconnectReason::ProtocolError, ERROR_INVALID_DATA, L"Control IPC response frame is malformed" }; }
-			if (!decoded.frames.empty()) { frames = std::move(decoded.frames); return { true, EControlIpcTransportDisconnectReason::None, ERROR_SUCCESS, {} }; }
+			if (decoded.Outcome() != EControlIpcDecodeOutcome::NeedMoreData && decoded.Outcome() != EControlIpcDecodeOutcome::Decoded) { m_impl->MarkDisconnected(); return { false, EControlIpcTransportDisconnectReason::ProtocolError, ERROR_INVALID_DATA, L"Control IPC response frame is malformed" }; }
+			if (!decoded.Frames().empty()) { frames = decoded.TakeFrames(); return { true, EControlIpcTransportDisconnectReason::None, ERROR_SUCCESS, {} }; }
 		} catch (...) {
 			m_impl->MarkDisconnected();
 			return { false, EControlIpcTransportDisconnectReason::IoError, ERROR_NOT_ENOUGH_MEMORY, {} };
@@ -643,9 +644,9 @@ ControlIpcTransportResult CControlIpcNamedPipeClient::Exchange(const ControlIpcF
 		if (!result.success) { m_impl->MarkDisconnected(); responses.clear(); return result; }
 		try {
 			auto decoded = m_impl->decoder.Feed(std::span(bytes).first(read));
-			if (decoded.outcome != EControlIpcDecodeOutcome::NeedMoreData && decoded.outcome != EControlIpcDecodeOutcome::Decoded) { m_impl->MarkDisconnected(); responses.clear(); return { false, EControlIpcTransportDisconnectReason::ProtocolError, ERROR_INVALID_DATA, L"Control IPC exchange response is malformed" }; }
+			if (decoded.Outcome() != EControlIpcDecodeOutcome::NeedMoreData && decoded.Outcome() != EControlIpcDecodeOutcome::Decoded) { m_impl->MarkDisconnected(); responses.clear(); return { false, EControlIpcTransportDisconnectReason::ProtocolError, ERROR_INVALID_DATA, L"Control IPC exchange response is malformed" }; }
 			bool sawTerminal = false;
-			for (auto& frame : decoded.frames) {
+			for (auto& frame : decoded.TakeFrames()) {
 				if (sawTerminal) {
 					m_impl->MarkDisconnected();
 					responses.clear();

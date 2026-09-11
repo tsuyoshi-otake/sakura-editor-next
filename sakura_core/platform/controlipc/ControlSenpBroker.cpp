@@ -66,13 +66,13 @@ bool IsAdmittedToolOperation(const ControlSenpRpcRequest& request,
 	const senp::SenpToolCapability capability) noexcept
 {
 	if (capability != senp::SenpToolCapability::GitHubRepositoryRead) return false;
-	if (request.toolId != kSenpGitHubToolId) return false;
+	if (request.ToolId() != kSenpGitHubToolId) return false;
 	// Both operations read the repository this capability names, so both are
 	// admitted by it. The set stays written out here rather than derived from a
 	// prefix: an operation is admitted because it was listed, never because it
 	// resembled one that was.
-	return request.toolOperation == kSenpGitHubRepositoryReadOperation
-		|| request.toolOperation == kSenpGitHubJobLogOperation;
+	return request.ToolOperation() == kSenpGitHubRepositoryReadOperation
+		|| request.ToolOperation() == kSenpGitHubJobLogOperation;
 }
 
 } // namespace
@@ -101,7 +101,7 @@ public:
 		// before the record that named it disappears.
 		if (m_executor) {
 			for (const auto& record : m_records) {
-				m_executor->CancelScope(record.scope);
+				m_executor->CancelScope(record.Scope());
 			}
 			// Unconditional: a connection that declared nothing withdraws
 			// nothing, and tracking whether it did would only add a way for the
@@ -135,10 +135,22 @@ private:
 	//! One grant this connection minted. The capability is remembered by the
 	//! control side because the wire never restates it after issue: an editor
 	//! must not be able to widen a record by naming a different capability.
-	struct Record {
-		std::string grantId;
-		SenpToolExecutionScope scope;
-		senp::SenpToolCapability capability{ senp::SenpToolCapability::None };
+	class Record {
+	public:
+		Record() = default;
+		Record(std::string grantId, SenpToolExecutionScope scope, senp::SenpToolCapability capability) :
+			m_grantId(std::move(grantId)), m_scope(std::move(scope)), m_capability(capability)
+		{
+		}
+
+		[[nodiscard]] const std::string& GrantId() const noexcept { return m_grantId; }
+		[[nodiscard]] const SenpToolExecutionScope& Scope() const noexcept { return m_scope; }
+		[[nodiscard]] senp::SenpToolCapability Capability() const noexcept { return m_capability; }
+
+	private:
+		std::string m_grantId;
+		SenpToolExecutionScope m_scope;
+		senp::SenpToolCapability m_capability{ senp::SenpToolCapability::None };
 	};
 
 	static ControlIpcFrameDispatchResult Invalid(const ControlIpcFrame& frame)
@@ -170,14 +182,14 @@ private:
 	static ControlSenpRpcResponse Terminal(EControlSenpRpcStatus status) noexcept
 	{
 		ControlSenpRpcResponse response;
-		response.status = status;
+		response.SetStatus(status);
 		return response;
 	}
 
 	[[nodiscard]] const Record* Find(const std::string& grantId) const noexcept
 	{
 		const auto found = std::find_if(m_records.begin(), m_records.end(),
-			[&](const Record& record) { return record.grantId == grantId; });
+			[&](const Record& record) { return record.GrantId() == grantId; });
 		return found == m_records.end() ? nullptr : &*found;
 	}
 
@@ -186,61 +198,61 @@ private:
 	[[nodiscard]] EControlSenpRpcStatus Authorize(const ControlSenpRpcRequest& request,
 		const Record*& record) const
 	{
-		record = Find(request.grantId);
+		record = Find(request.GrantId());
 		if (!record) return EControlSenpRpcStatus::Unauthorized;
-		const auto owner = ToContributionOwner(request.owner);
-		if (record->scope.profileId != request.profileId || !(record->scope.owner == owner)) {
+		const auto owner = ToContributionOwner(request.Owner());
+		if (record->Scope().ProfileId() != request.ProfileId() || !(record->Scope().Owner() == owner)) {
 			return EControlSenpRpcStatus::Unauthorized;
 		}
 		if (!m_grants) return EControlSenpRpcStatus::Closed;
-		const senp::SenpToolGrantRequest scoped(request.profileId, owner, record->capability);
-		return ToStatus(m_grants->Validate(request.grantId, scoped, std::chrono::steady_clock::now()));
+		const senp::SenpToolGrantRequest scoped(request.ProfileId(), owner, record->Capability());
+		return ToStatus(m_grants->Validate(request.GrantId(), scoped, std::chrono::steady_clock::now()));
 	}
 
 	ControlSenpRpcResponse Dispatch(const ControlSenpRpcRequest& request)
 	{
 		if (!m_grants) return Terminal(EControlSenpRpcStatus::Closed);
-		if (request.operation == EControlSenpRpcOperation::IssueGrant) return Issue(request);
-		if (request.operation == EControlSenpRpcOperation::QueryAccount) return Account(request);
-		if (request.operation == EControlSenpRpcOperation::AdoptWorkspace) return Adopt(request);
+		if (request.Operation() == EControlSenpRpcOperation::IssueGrant) return Issue(request);
+		if (request.Operation() == EControlSenpRpcOperation::QueryAccount) return Account(request);
+		if (request.Operation() == EControlSenpRpcOperation::AdoptWorkspace) return Adopt(request);
 		const Record* record = nullptr;
 		if (const auto status = Authorize(request, record); status != EControlSenpRpcStatus::Succeeded) {
 			return Terminal(status);
 		}
 		if (!m_executor) return Terminal(EControlSenpRpcStatus::Unavailable);
-		switch (request.operation) {
+		switch (request.Operation()) {
 		case EControlSenpRpcOperation::StartRead: {
-			if (!IsAdmittedToolOperation(request, record->capability)) {
+			if (!IsAdmittedToolOperation(request, record->Capability())) {
 				return Terminal(EControlSenpRpcStatus::Unauthorized);
 			}
-			const SenpToolReadCommand command{ request.readId, request.toolId,
-				request.toolOperation, request.arguments };
-			return Terminal(m_executor->StartRead(record->scope, command));
+			const SenpToolReadCommand command(request.ReadId(), request.ToolId(),
+				request.ToolOperation(), request.Arguments());
+			return Terminal(m_executor->StartRead(record->Scope(), command));
 		}
 		case EControlSenpRpcOperation::PollRead: {
-			auto completed = m_executor->TakeCompleted(record->scope);
+			auto completed = m_executor->TakeCompleted(record->Scope());
 			ControlSenpRpcResponse response;
-			response.status = EControlSenpRpcStatus::Succeeded;
+			response.SetStatus(EControlSenpRpcStatus::Succeeded);
 			if (completed) {
-				response.hasCompletion = true;
-				response.completion = std::move(*completed);
+				response.SetHasCompletion(true);
+				response.Completion() = std::move(*completed);
 			}
 			return response;
 		}
 		case EControlSenpRpcOperation::CancelRead:
-			m_executor->CancelRead(record->scope, request.readId);
+			m_executor->CancelRead(record->Scope(), request.ReadId());
 			return Terminal(EControlSenpRpcStatus::Succeeded);
 		case EControlSenpRpcOperation::ReadResource: {
 			ControlSenpRpcResponse response;
-			const auto status = m_executor->ReadResource(record->scope, request.resourceHandle,
-				request.offset, request.length, response);
+			const auto status = m_executor->ReadResource(record->Scope(), request.ResourceHandle(),
+				request.Offset(), request.Length(), response);
 			// A partially filled response must not escape a refused read.
 			if (status != EControlSenpRpcStatus::Succeeded) return Terminal(status);
-			response.status = status;
+			response.SetStatus(status);
 			return response;
 		}
 		case EControlSenpRpcOperation::ReleaseResource:
-			m_executor->ReleaseResource(record->scope, request.resourceHandle);
+			m_executor->ReleaseResource(record->Scope(), request.ResourceHandle());
 			return Terminal(EControlSenpRpcStatus::Succeeded);
 		default:
 			return Terminal(EControlSenpRpcStatus::InvalidRequest);
@@ -258,15 +270,15 @@ private:
 	*/
 	ControlSenpRpcResponse Account(const ControlSenpRpcRequest& request)
 	{
-		if (!platform::profiles::IsOpaqueUserDataProfileId(request.profileId)) {
+		if (!platform::profiles::IsOpaqueUserDataProfileId(request.ProfileId())) {
 			return Terminal(EControlSenpRpcStatus::InvalidRequest);
 		}
 		if (!m_executor) return Terminal(EControlSenpRpcStatus::Unavailable);
 		ControlSenpRpcResponse response;
-		const auto status = m_executor->QueryAccount(request.profileId, response);
+		const auto status = m_executor->QueryAccount(request.ProfileId(), response);
 		// A partially filled answer must not escape a refused query.
 		if (status != EControlSenpRpcStatus::Succeeded) return Terminal(status);
-		response.status = status;
+		response.SetStatus(status);
 		return response;
 	}
 
@@ -280,13 +292,13 @@ private:
 	*/
 	ControlSenpRpcResponse Adopt(const ControlSenpRpcRequest& request)
 	{
-		if (!platform::profiles::IsOpaqueUserDataProfileId(request.profileId)) {
+		if (!platform::profiles::IsOpaqueUserDataProfileId(request.ProfileId())) {
 			return Terminal(EControlSenpRpcStatus::InvalidRequest);
 		}
 		if (!m_executor) return Terminal(EControlSenpRpcStatus::Unavailable);
-		const SenpWorkspaceAdoption adoption{
-			{ m_connection.sessionId, m_connection.clientProcessId },
-			request.profileId, request.workspace };
+		const SenpWorkspaceAdoption adoption(
+			SenpConnectionIdentity(m_connection.sessionId, m_connection.clientProcessId),
+			request.ProfileId(), request.Workspace());
 		return Terminal(m_executor->AdoptWorkspace(adoption));
 	}
 
@@ -295,29 +307,27 @@ private:
 		if (m_records.size() >= MaximumTrackedGrants()) {
 			return Terminal(EControlSenpRpcStatus::ResourceExhausted);
 		}
-		const auto capability = static_cast<senp::SenpToolCapability>(request.capabilities);
-		const auto owner = ToContributionOwner(request.owner);
-		const senp::SenpToolGrantRequest scoped(request.profileId, owner, capability);
+		const auto capability = static_cast<senp::SenpToolCapability>(request.Capabilities());
+		const auto owner = ToContributionOwner(request.Owner());
+		const senp::SenpToolGrantRequest scoped(request.ProfileId(), owner, capability);
 		const auto issued = m_grants->Issue(scoped, std::chrono::steady_clock::now());
 		if (issued.Status() != senp::SenpToolGrantIssueStatus::Granted) {
 			return Terminal(ToStatus(issued.Status()));
 		}
-		Record record;
-		record.grantId = issued.GrantId();
-		record.scope = { m_connection.sessionId, m_connection.clientProcessId,
-			request.profileId, owner };
-		record.capability = capability;
-		m_records.push_back(std::move(record));
+		m_records.emplace_back(issued.GrantId(),
+			SenpToolExecutionScope(m_connection.sessionId, m_connection.clientProcessId,
+				request.ProfileId(), owner),
+			capability);
 
 		ControlSenpRpcResponse response;
-		response.status = EControlSenpRpcStatus::Succeeded;
-		response.grantId = issued.GrantId();
+		response.SetStatus(EControlSenpRpcStatus::Succeeded);
+		response.SetGrantId(issued.GrantId());
 		// The wire carries a relative lifetime: a steady_clock origin means
 		// nothing across processes and must never be published as a timestamp.
 		const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
 			issued.ExpiresAt() - std::chrono::steady_clock::now());
-		response.expiresAtMilliseconds = remaining.count() > 0
-			? static_cast<std::uint64_t>(remaining.count()) : 0;
+		response.SetExpiresAtMilliseconds(remaining.count() > 0
+			? static_cast<std::uint64_t>(remaining.count()) : 0);
 		return response;
 	}
 

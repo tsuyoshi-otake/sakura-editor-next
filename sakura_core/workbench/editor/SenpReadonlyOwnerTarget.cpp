@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <stdexcept>
 #include <utility>
 
 namespace workbench::editor {
@@ -151,7 +152,7 @@ bool CSenpReadonlyOwnerTarget::BeginDocument(std::wstring_view resourceId,
 			|| m_pending.size() >= SenpReadonlyWorkbench::kMaximumInputs
 			|| m_pending.contains(context.operationId)) return false;
 		return m_pending.emplace(context.operationId, Pending(context, std::wstring(resourceId))).second;
-	} catch (...) { return false; }
+	} catch (const std::exception&) { return false; }
 }
 
 bool CSenpReadonlyOwnerTarget::PublishDocument(const senp::effect::OperationContext& context,
@@ -232,7 +233,7 @@ bool CSenpReadonlyOwnerTarget::PublishDocument(const senp::effect::OperationCont
 		registration.Release();
 		m_state = SenpReadonlyOwnerTargetState::Ready;
 		return true;
-	} catch (...) { return false; }
+	} catch (const std::exception&) { return false; }
 }
 
 bool CSenpReadonlyOwnerTarget::FailDocument(const senp::effect::OperationContext& context,
@@ -266,13 +267,13 @@ bool CSenpReadonlyOwnerTarget::CompleteCommand(const senp::effect::OperationCont
 	senp::effect::CompleteCommand completion) noexcept
 {
 	if (!Matches(context) || !m_commandCompleted) return false;
-	try { return m_commandCompleted(context, completion); } catch (...) { return false; }
+	try { return m_commandCompleted(context, completion); } catch (const std::exception&) { return false; }
 }
 
 bool CSenpReadonlyOwnerTarget::ReleaseResource(std::wstring_view handle) noexcept
 {
 	if (m_revoked || !m_resourceReleased || handle.empty()) return false;
-	try { return m_resourceReleased(handle); } catch (...) { return false; }
+	try { return m_resourceReleased(handle); } catch (const std::exception&) { return false; }
 }
 
 bool CSenpReadonlyOwnerTarget::StartToolRead(const senp::effect::OperationContext& context,
@@ -296,7 +297,7 @@ bool CSenpReadonlyOwnerTarget::StartToolRead(const senp::effect::OperationContex
 			return false;
 		}
 		return true;
-	} catch (...) { return false; }
+	} catch (const std::exception&) { return false; }
 }
 
 std::optional<SenpToolReadTerminal> CSenpReadonlyOwnerTarget::TakeToolRead() noexcept
@@ -315,7 +316,7 @@ std::optional<SenpToolReadTerminal> CSenpReadonlyOwnerTarget::TakeToolRead() noe
 			auto context = found->second;
 			m_toolReadContexts.erase(found);
 			return SenpToolReadTerminal(std::move(context), std::move(*completion));
-		} catch (...) { return {}; }
+		} catch (const std::exception&) { return {}; }
 	}
 	return {};
 }
@@ -353,7 +354,7 @@ void CSenpReadonlyOwnerTarget::SetStyle(const theme::ThemePalette& palette,
 	try {
 		ReapClosed();
 		for (const auto& [resource, document] : m_documents) document->host.SetStyle(m_palette, m_font, m_dpi);
-	} catch (...) { Revoke(); }
+	} catch (const std::exception&) { Revoke(); }
 }
 
 void CSenpReadonlyOwnerTarget::PumpText() noexcept
@@ -364,7 +365,7 @@ try {
 	// Settling frees the one read this owner may have outstanding, so the turn
 	// that delivers a chunk is also the turn that asks for the next one.
 	if (!m_textRead) BeginText();
-} catch (...) {
+} catch (const std::exception&) {
 	Revoke();
 }
 
@@ -383,25 +384,25 @@ void CSenpReadonlyOwnerTarget::SettleText() noexcept
 	// The document that asked is gone. There is nothing left to tell.
 	if (found == m_documents.end() || found->second->closed) return;
 	auto& host = found->second->host;
-	if (answer->handle != request.Handle()
-		|| answer->offset != static_cast<std::uint64_t>(request.Offset())) {
+	if (answer->Handle() != request.Handle()
+		|| answer->Offset() != static_cast<std::uint64_t>(request.Offset())) {
 		// An answer naming another read cannot settle this one, and no second
 		// answer is coming, so the read this document is waiting on ends here.
 		host.FailText(request, senp::TextResourceEnd::Failed);
 		return;
 	}
-	if (!answer->chunk) {
+	if (!answer->Chunk()) {
 		// No answer about the resource arrived at all - the connection was
 		// unavailable, lost or replaced. This read failed; the resource is not
 		// known to be gone, so whatever already reached the screen stays.
 		host.FailText(request, senp::TextResourceEnd::Failed);
 		return;
 	}
-	switch (answer->chunk->result) {
+	switch (answer->Chunk()->result) {
 	case senp::TextResourceResult::Accepted:
 		// The store's own chunk, whole. Whether it fits what the surface already
 		// holds is the view's judgement, not this one's.
-		(void)host.ApplyText(request, *answer->chunk);
+		(void)host.ApplyText(request, *answer->Chunk());
 		return;
 	case senp::TextResourceResult::Expired:
 		// The store let the resource go. Its bytes are no longer a partial

@@ -1425,11 +1425,20 @@ void CWorkbenchRuntime::ReloadWorkspaceSettingsNow(const config::WorkspaceContex
 	const std::string* exactWorkspaceDocument)
 {
 	if (IsStopRequested()) return;
-	struct DesiredDocument final {
-		std::wstring identity;
-		std::string key;
-		ConfigurationSource source;
-		Uri resource;
+	class DesiredDocument final {
+	public:
+		DesiredDocument(std::wstring identity, std::string key, ConfigurationSource source, Uri resource)
+			: m_identity(std::move(identity)), m_key(std::move(key)),
+			m_source(std::move(source)), m_resource(std::move(resource)) {}
+		[[nodiscard]] const std::wstring& Identity() const noexcept { return m_identity; }
+		[[nodiscard]] const std::string& Key() const noexcept { return m_key; }
+		[[nodiscard]] const ConfigurationSource& Source() const noexcept { return m_source; }
+		[[nodiscard]] const Uri& Resource() const noexcept { return m_resource; }
+	private:
+		std::wstring m_identity;
+		std::string m_key;
+		ConfigurationSource m_source;
+		Uri m_resource;
 	};
 	std::set<std::wstring, std::less<>> desiredIdentities;
 	std::set<std::string, std::less<>> desiredDiagnosticKeys;
@@ -1614,8 +1623,8 @@ void CWorkbenchRuntime::ReloadWorkspaceSettingsNow(const config::WorkspaceContex
 		};
 		desiredIdentities.insert(identity);
 		desiredDiagnosticKeys.insert(*key);
-		desiredDocuments.push_back(
-			{ std::move(identity), std::move(*key), std::move(source), settings->resource });
+		desiredDocuments.emplace_back(
+			std::move(identity), std::move(*key), std::move(source), settings->resource);
 	}
 	if (resourceIdentityFailed) {
 		SetDiagnostic("workspace.resource", WorkbenchRuntimeDiagnostic {
@@ -1644,12 +1653,12 @@ void CWorkbenchRuntime::ReloadWorkspaceSettingsNow(const config::WorkspaceContex
 	}
 	for (const auto& desired : desiredDocuments) {
 		if (IsStopRequested() || HasTerminalState()) return;
-		const bool wasActive = m_activeWorkspaceDocuments.contains(desired.identity);
-		const auto loaded = m_fileSources->Reload(desired.key, desired.source, desired.resource);
-		RecordFileSourceResult(desired.key, EWorkbenchRuntimeDiagnosticSource::WorkspaceSettings, loaded);
+		const bool wasActive = m_activeWorkspaceDocuments.contains(desired.Identity());
+		const auto loaded = m_fileSources->Reload(desired.Key(), desired.Source(), desired.Resource());
+		RecordFileSourceResult(desired.Key(), EWorkbenchRuntimeDiagnosticSource::WorkspaceSettings, loaded);
 		if (IsStopRequested() || HasTerminalState()) return;
 		if (!wasActive && loaded.Succeeded()) {
-			m_activeWorkspaceDocuments.emplace(desired.identity, desired.key);
+			m_activeWorkspaceDocuments.emplace(desired.Identity(), desired.Key());
 		}
 	}
 	for (const auto& previousKey : m_workspaceDiagnosticKeys) {

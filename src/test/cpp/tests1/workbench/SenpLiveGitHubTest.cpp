@@ -78,11 +78,43 @@ constexpr auto kLiveDeadline = std::chrono::seconds(90);
 //! The componentized extension a test drives, with the digest the control side
 //! will publish for it. The digest is the real one, so the real permission gate
 //! decides whether this package may hold the GitHub capability.
-struct LiveExtension final {
-	std::wstring extensionId;
-	std::filesystem::path host;
-	std::filesystem::path component;
-	std::wstring digest;
+//!
+//! Loading is exposed as a method rather than a free function writing into
+//! public fields, so nothing outside this class can hand it a half-built
+//! identity: `Load` either fails the enclosing test via `ASSERT_*` or leaves
+//! every member consistent.
+class LiveExtension final {
+public:
+	[[nodiscard]] const std::wstring& ExtensionId() const { return m_extensionId; }
+	[[nodiscard]] const std::filesystem::path& Host() const { return m_host; }
+	[[nodiscard]] const std::filesystem::path& Component() const { return m_component; }
+	[[nodiscard]] const std::wstring& Digest() const { return m_digest; }
+
+	void Load(const wchar_t* stem, std::wstring extensionId)
+	{
+		const auto fixtureEnvironment = _wgetenv(L"SAKURA_SENP_RUNTIME_FIXTURES");
+		// Not a skip: the gate is already open, so an absent fixture set means
+		// the machine was told to run live and cannot.
+		ASSERT_TRUE(fixtureEnvironment && *fixtureEnvironment)
+			<< "SAKURA_SENP_LIVE_GITHUB is set but SAKURA_SENP_RUNTIME_FIXTURES is not";
+		const std::filesystem::path fixtures(fixtureEnvironment);
+		m_extensionId = std::move(extensionId);
+		m_host = fixtures / L"sakura-senp-host.exe";
+		m_component = fixtures / (std::wstring(stem) + L".wasm");
+		std::ifstream digestFile(fixtures / (std::wstring(stem) + L".sha256"));
+		std::string digest;
+		digestFile >> digest;
+		ASSERT_TRUE(std::filesystem::is_regular_file(m_host)) << m_host.string();
+		ASSERT_TRUE(std::filesystem::is_regular_file(m_component)) << m_component.string();
+		ASSERT_EQ(64U, digest.size()) << "componentized module digest is missing";
+		m_digest.assign(digest.begin(), digest.end());
+	}
+
+private:
+	std::wstring m_extensionId;
+	std::filesystem::path m_host;
+	std::filesystem::path m_component;
+	std::wstring m_digest;
 };
 
 //! Node ids and resource ids are ASCII wherever this suite prints one, and the
@@ -103,26 +135,6 @@ std::filesystem::path LiveCheckout()
 	const auto value = _wgetenv(L"SAKURA_SENP_LIVE_GITHUB");
 	if (!value || !*value) return {};
 	return std::filesystem::path(value);
-}
-
-void LoadExtension(const wchar_t* stem, std::wstring extensionId, LiveExtension& loaded)
-{
-	const auto fixtureEnvironment = _wgetenv(L"SAKURA_SENP_RUNTIME_FIXTURES");
-	// Not a skip: the gate is already open, so an absent fixture set means the
-	// machine was told to run live and cannot.
-	ASSERT_TRUE(fixtureEnvironment && *fixtureEnvironment)
-		<< "SAKURA_SENP_LIVE_GITHUB is set but SAKURA_SENP_RUNTIME_FIXTURES is not";
-	const std::filesystem::path fixtures(fixtureEnvironment);
-	loaded.extensionId = std::move(extensionId);
-	loaded.host = fixtures / L"sakura-senp-host.exe";
-	loaded.component = fixtures / (std::wstring(stem) + L".wasm");
-	std::ifstream digestFile(fixtures / (std::wstring(stem) + L".sha256"));
-	std::string digest;
-	digestFile >> digest;
-	ASSERT_TRUE(std::filesystem::is_regular_file(loaded.host)) << loaded.host.string();
-	ASSERT_TRUE(std::filesystem::is_regular_file(loaded.component)) << loaded.component.string();
-	ASSERT_EQ(64U, digest.size()) << "componentized module digest is missing";
-	loaded.digest.assign(digest.begin(), digest.end());
 }
 
 /*!
@@ -343,29 +355,29 @@ protected:
 			{ "create-live-profile", std::nullopt }).Succeeded());
 
 		ipc::ControlSenpCompositionOptions options;
-		options.controlProfileRoot = kControlRoot;
-		options.controlAuthorityId = kAuthorityId;
-		options.controlAuthorityGeneration = kEndpointGeneration;
+		options.SetControlProfileRoot(kControlRoot);
+		options.SetControlAuthorityId(kAuthorityId);
+		options.SetControlAuthorityGeneration(kEndpointGeneration);
 		// Left empty on purpose: production resolves GH_CONFIG_DIR, and failing
 		// to find the real one is how an unauthenticated machine is caught.
-		options.ghConfigurationDirectory.clear();
-		options.workingDirectory = checkout.native();
-		options.hostname = L"github.com";
+		options.SetGhConfigurationDirectory({});
+		options.SetWorkingDirectory(checkout.native());
+		options.SetHostname(L"github.com");
 		ipc::ControlSenpCompositionDependencies dependencies;
-		dependencies.packages = std::make_shared<LivePackages>(extension.extensionId, extension.digest);
+		dependencies.SetPackages(std::make_shared<LivePackages>(extension.ExtensionId(), extension.Digest()));
 		m_control = std::make_unique<ipc::CControlSenpComposition>(
 			std::move(options), m_registry, std::move(dependencies));
 
 		SenpControlToolReadsOptions readOptions;
-		readOptions.authorityProfileId = kAuthorityId;
-		readOptions.authorityProfileHash = kProfileHash;
-		readOptions.senpProfileId = kProfile;
-		readOptions.pollInterval = std::chrono::milliseconds(5);
-		readOptions.exchangeDeadline = std::chrono::seconds(30);
-		readOptions.accountRefreshInterval = std::chrono::milliseconds(200);
+		readOptions.SetAuthorityProfileId(kAuthorityId);
+		readOptions.SetAuthorityProfileHash(kProfileHash);
+		readOptions.SetSenpProfileId(kProfile);
+		readOptions.SetPollInterval(std::chrono::milliseconds(5));
+		readOptions.SetExchangeDeadline(std::chrono::seconds(30));
+		readOptions.SetAccountRefreshInterval(std::chrono::milliseconds(200));
 		auto handler = m_control->Handler();
 		ASSERT_TRUE(handler);
-		readOptions.channelFactory = [handler] { return std::make_unique<LiveChannel>(handler); };
+		readOptions.SetChannelFactory([handler] { return std::make_unique<LiveChannel>(handler); });
 		m_reads = std::make_unique<CSenpControlToolReads>(std::move(readOptions), m_endpoints);
 
 		const auto folder = ::platform::uri::Uri::FromWindowsPath(checkout.native());
@@ -390,12 +402,12 @@ protected:
 			// CEditWnd asks on every synchronization and every timer turn; no
 			// owner exists yet to run that cadence, so the question is asked here.
 			m_reads->RefreshAccount();
-			return m_reads->Account().state == SenpToolAccountState::Connected
-				&& m_reads->Account().generation > 0;
+			return m_reads->Account().State() == SenpToolAccountState::Connected
+				&& m_reads->Account().Generation() > 0;
 		})) << "the editor seam never saw a connected GitHub account: state="
-			<< static_cast<int>(m_reads->Account().state)
-			<< " generation=" << m_reads->Account().generation;
-		m_accountGeneration = m_reads->Account().generation;
+			<< static_cast<int>(m_reads->Account().State())
+			<< " generation=" << m_reads->Account().Generation();
+		m_accountGeneration = m_reads->Account().Generation();
 
 		m_resources = std::make_unique<CSenpOwnerTextResources>(kProfile);
 		ASSERT_TRUE(m_resources->Usable());
@@ -503,10 +515,10 @@ protected:
 
 	senp::EffectRuntimeLaunch Launch(const LiveExtension& extension) const
 	{
-		return { .hostExecutable = extension.host.native(),
-			.modulePath = extension.component.native(),
-			.moduleSha256 = extension.digest,
-			.extensionId = extension.extensionId,
+		return { .hostExecutable = extension.Host().native(),
+			.modulePath = extension.Component().native(),
+			.moduleSha256 = extension.Digest(),
+			.extensionId = extension.ExtensionId(),
 			.context = { .workspaceRevision = 1, .accountGeneration = m_accountGeneration } };
 	}
 
@@ -535,10 +547,16 @@ protected:
 	std::unique_ptr<CSenpControlToolReads> m_reads;
 	std::unique_ptr<CSenpOwnerTextResources> m_resources;
 	std::int64_t m_accountGeneration{};
-	mutable SenpReadonlyOwnerTextPump m_pump;
+	//! Assigned only from the non-const `Publication` factory lambda and reset
+	//! only from non-const test bodies; `Await` (a const method) only invokes it,
+	//! which `std::function::operator()` already permits from a const object, so
+	//! this member needs no `mutable`.
+	SenpReadonlyOwnerTextPump m_pump;
 	//! What the extension said about each command it was asked to run. The
 	//! window puts these on the status line; the test only has to remember them.
-	mutable std::vector<std::pair<senp::effect::CompletionStatus, std::wstring>> m_completions;
+	//! Only ever written from the non-const `Publication` factory lambda; no
+	//! const method touches it, so this member needs no `mutable` either.
+	std::vector<std::pair<senp::effect::CompletionStatus, std::wstring>> m_completions;
 };
 
 TEST_F(SenpLiveGitHub, RealIssuesAndPullRequestsReachTheTreeAndAnEditorSurface)
@@ -546,8 +564,8 @@ TEST_F(SenpLiveGitHub, RealIssuesAndPullRequestsReachTheTreeAndAnEditorSurface)
 	const auto checkout = LiveCheckout();
 	if (checkout.empty()) GTEST_SKIP() << "SAKURA_SENP_LIVE_GITHUB is not configured";
 	LiveExtension extension;
-	ASSERT_NO_FATAL_FAILURE(LoadExtension(L"github-pull-requests-extension",
-		L"sakura-github-pull-requests", extension));
+	ASSERT_NO_FATAL_FAILURE(extension.Load(L"github-pull-requests-extension",
+		L"sakura-github-pull-requests"));
 	ASSERT_NO_FATAL_FAILURE(StartControl(extension, checkout));
 
 	layout::WorkbenchContributionRegistry catalog;
@@ -569,7 +587,7 @@ TEST_F(SenpLiveGitHub, RealIssuesAndPullRequestsReachTheTreeAndAnEditorSurface)
 		"$(github)", false, { layout::EViewContainerLocation::Sidebar } } },
 		std::move(trees), providers, target);
 	ASSERT_EQ(senp::OwnerChangeStatus::Accepted, composition.Activate(Launch(extension),
-		extension.digest, std::move(publication), Clock::now()).status);
+		extension.Digest(), std::move(publication), Clock::now()).status);
 	std::optional<senp::OwnerChangeResult> transition;
 	ASSERT_TRUE(Await(composition, [&] {
 		transition = composition.TakeTransition();
@@ -632,8 +650,8 @@ TEST_F(SenpLiveGitHub, RealWorkflowRunsAndOneRealJobLogReachTheTreeAndAnEditorSu
 	const auto checkout = LiveCheckout();
 	if (checkout.empty()) GTEST_SKIP() << "SAKURA_SENP_LIVE_GITHUB is not configured";
 	LiveExtension extension;
-	ASSERT_NO_FATAL_FAILURE(LoadExtension(L"github-actions-extension",
-		L"sakura-github-actions", extension));
+	ASSERT_NO_FATAL_FAILURE(extension.Load(L"github-actions-extension",
+		L"sakura-github-actions"));
 	ASSERT_NO_FATAL_FAILURE(StartControl(extension, checkout));
 
 	layout::WorkbenchContributionRegistry catalog;
@@ -659,7 +677,7 @@ TEST_F(SenpLiveGitHub, RealWorkflowRunsAndOneRealJobLogReachTheTreeAndAnEditorSu
 		"$(play-circle)", false, { layout::EViewContainerLocation::Sidebar } } },
 		std::move(trees), providers, target);
 	ASSERT_EQ(senp::OwnerChangeStatus::Accepted, composition.Activate(Launch(extension),
-		extension.digest, std::move(publication), Clock::now()).status);
+		extension.Digest(), std::move(publication), Clock::now()).status);
 	std::optional<senp::OwnerChangeResult> transition;
 	ASSERT_TRUE(Await(composition, [&] {
 		transition = composition.TakeTransition();

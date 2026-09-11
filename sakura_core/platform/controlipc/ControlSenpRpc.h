@@ -14,6 +14,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace platform::controlipc {
@@ -65,14 +66,50 @@ enum class EControlSenpRpcStatus : std::uint8_t {
 };
 
 //! Editor-declared owner reference. It selects a record; it never authorizes one.
-struct ControlSenpRpcOwner {
-	std::wstring extensionId;
-	std::wstring packageDigest;
-	std::int64_t generation = 0;
-	std::int64_t workspaceRevision = 0;
-	std::int64_t accountGeneration = 0;
-	bool operator==(const ControlSenpRpcOwner&) const = default;
+//! State is private and reached only through the constructor/accessors below so a
+//! decoder that fills it field-by-field cannot leave a caller holding a reference
+//! to a partially-built value: every read goes through the same named accessor a
+//! writer used.
+class ControlSenpRpcOwner {
+public:
+	ControlSenpRpcOwner() = default;
+	ControlSenpRpcOwner(std::wstring extensionId, std::wstring packageDigest, std::int64_t generation,
+		std::int64_t workspaceRevision, std::int64_t accountGeneration) :
+		m_extensionId(std::move(extensionId)), m_packageDigest(std::move(packageDigest)),
+		m_generation(generation), m_workspaceRevision(workspaceRevision),
+		m_accountGeneration(accountGeneration)
+	{
+	}
+
+	[[nodiscard]] const std::wstring& ExtensionId() const noexcept { return m_extensionId; }
+	[[nodiscard]] const std::wstring& PackageDigest() const noexcept { return m_packageDigest; }
+	[[nodiscard]] std::int64_t Generation() const noexcept { return m_generation; }
+	[[nodiscard]] std::int64_t WorkspaceRevision() const noexcept { return m_workspaceRevision; }
+	[[nodiscard]] std::int64_t AccountGeneration() const noexcept { return m_accountGeneration; }
+
+	void SetExtensionId(std::wstring value) { m_extensionId = std::move(value); }
+	void SetPackageDigest(std::wstring value) { m_packageDigest = std::move(value); }
+	void SetGeneration(std::int64_t value) noexcept { m_generation = value; }
+	void SetWorkspaceRevision(std::int64_t value) noexcept { m_workspaceRevision = value; }
+	void SetAccountGeneration(std::int64_t value) noexcept { m_accountGeneration = value; }
+
+private:
+	std::wstring m_extensionId;
+	std::wstring m_packageDigest;
+	std::int64_t m_generation = 0;
+	std::int64_t m_workspaceRevision = 0;
+	std::int64_t m_accountGeneration = 0;
 };
+
+//! Free function rather than a member: it reads every field through the same
+//! public accessors any other caller uses, so the comparison stays exactly
+//! member-wise without a member declaration of its own.
+[[nodiscard]] inline bool operator==(const ControlSenpRpcOwner& lhs, const ControlSenpRpcOwner& rhs) noexcept
+{
+	return lhs.ExtensionId() == rhs.ExtensionId() && lhs.PackageDigest() == rhs.PackageDigest()
+		&& lhs.Generation() == rhs.Generation() && lhs.WorkspaceRevision() == rhs.WorkspaceRevision()
+		&& lhs.AccountGeneration() == rhs.AccountGeneration();
+}
 
 /*!
 	@brief The workspace one editor connection declares it is opened on.
@@ -83,71 +120,175 @@ struct ControlSenpRpcOwner {
 	A declaration with no folders is a window that can select nothing, which is a
 	meaningful thing to say rather than an absent message.
 */
-struct ControlSenpRpcWorkspace {
-	std::int64_t generation = 0;
-	std::int64_t revision = 0;
+class ControlSenpRpcWorkspace {
+public:
+	ControlSenpRpcWorkspace() = default;
+	ControlSenpRpcWorkspace(std::int64_t generation, std::int64_t revision, std::vector<std::wstring> folders) :
+		m_generation(generation), m_revision(revision), m_folders(std::move(folders))
+	{
+	}
+
+	[[nodiscard]] std::int64_t Generation() const noexcept { return m_generation; }
+	[[nodiscard]] std::int64_t Revision() const noexcept { return m_revision; }
 	//! Folder identities as the workspace context holds them, never a claim
 	//! about their contents.
-	std::vector<std::wstring> folders;
-	bool operator==(const ControlSenpRpcWorkspace&) const = default;
+	[[nodiscard]] const std::vector<std::wstring>& Folders() const noexcept { return m_folders; }
+
+	void SetGeneration(std::int64_t value) noexcept { m_generation = value; }
+	void SetRevision(std::int64_t value) noexcept { m_revision = value; }
+	void SetFolders(std::vector<std::wstring> value) { m_folders = std::move(value); }
+	void ReserveFolders(std::size_t count) { m_folders.reserve(count); }
+	void AddFolder(std::wstring folder) { m_folders.push_back(std::move(folder)); }
+
 	//! True while nothing has been declared. Every operation but AdoptWorkspace
 	//! must leave it that way.
 	[[nodiscard]] bool Empty() const noexcept
 	{
-		return generation == 0 && revision == 0 && folders.empty();
+		return m_generation == 0 && m_revision == 0 && m_folders.empty();
 	}
+
+private:
+	std::int64_t m_generation = 0;
+	std::int64_t m_revision = 0;
+	std::vector<std::wstring> m_folders;
 };
+
+//! Free function rather than a member: it reads every field through the same
+//! public accessors any other caller uses, so the comparison stays exactly
+//! member-wise without a member declaration of its own.
+[[nodiscard]] inline bool operator==(const ControlSenpRpcWorkspace& lhs, const ControlSenpRpcWorkspace& rhs) noexcept
+{
+	return lhs.Generation() == rhs.Generation() && lhs.Revision() == rhs.Revision()
+		&& lhs.Folders() == rhs.Folders();
+}
 
 //! Editor command model. Unused members for an operation must stay empty/zero;
 //! the decoder rejects a payload whose operation does not match its members.
-struct ControlSenpRpcRequest {
-	EControlSenpRpcOperation operation = EControlSenpRpcOperation::IssueGrant;
-	std::wstring profileId;
-	ControlSenpRpcOwner owner;
-	std::string grantId;
-	std::uint32_t capabilities = 0;
-	std::wstring readId;
-	std::wstring toolId;
-	std::wstring toolOperation;
-	std::vector<senp::effect::Field> arguments;
-	std::wstring resourceHandle;
-	std::uint64_t offset = 0;
-	std::uint32_t length = 0;
+//! The wire codec fills this field-by-field, so every member keeps both a const
+//! accessor and a setter (or a mutable accessor for the composite members);
+//! there is no positional constructor covering every field, because none of the
+//! call sites that build one ever have every field available at once.
+class ControlSenpRpcRequest {
+public:
+	ControlSenpRpcRequest() = default;
+
+	[[nodiscard]] EControlSenpRpcOperation Operation() const noexcept { return m_operation; }
+	[[nodiscard]] const std::wstring& ProfileId() const noexcept { return m_profileId; }
+	[[nodiscard]] const ControlSenpRpcOwner& Owner() const noexcept { return m_owner; }
+	[[nodiscard]] ControlSenpRpcOwner& Owner() noexcept { return m_owner; }
+	[[nodiscard]] const std::string& GrantId() const noexcept { return m_grantId; }
+	[[nodiscard]] std::uint32_t Capabilities() const noexcept { return m_capabilities; }
+	[[nodiscard]] const std::wstring& ReadId() const noexcept { return m_readId; }
+	[[nodiscard]] const std::wstring& ToolId() const noexcept { return m_toolId; }
+	[[nodiscard]] const std::wstring& ToolOperation() const noexcept { return m_toolOperation; }
+	[[nodiscard]] const std::vector<senp::effect::Field>& Arguments() const noexcept { return m_arguments; }
+	[[nodiscard]] std::vector<senp::effect::Field>& Arguments() noexcept { return m_arguments; }
+	[[nodiscard]] const std::wstring& ResourceHandle() const noexcept { return m_resourceHandle; }
+	[[nodiscard]] std::uint64_t Offset() const noexcept { return m_offset; }
+	[[nodiscard]] std::uint32_t Length() const noexcept { return m_length; }
 	//! Declared by AdoptWorkspace only, and empty on every other operation.
-	ControlSenpRpcWorkspace workspace;
+	[[nodiscard]] const ControlSenpRpcWorkspace& Workspace() const noexcept { return m_workspace; }
+	[[nodiscard]] ControlSenpRpcWorkspace& Workspace() noexcept { return m_workspace; }
+
+	void SetOperation(EControlSenpRpcOperation value) noexcept { m_operation = value; }
+	void SetProfileId(std::wstring value) { m_profileId = std::move(value); }
+	void SetOwner(ControlSenpRpcOwner value) { m_owner = std::move(value); }
+	void SetGrantId(std::string value) { m_grantId = std::move(value); }
+	void SetCapabilities(std::uint32_t value) noexcept { m_capabilities = value; }
+	void SetReadId(std::wstring value) { m_readId = std::move(value); }
+	void SetToolId(std::wstring value) { m_toolId = std::move(value); }
+	void SetToolOperation(std::wstring value) { m_toolOperation = std::move(value); }
+	void SetArguments(std::vector<senp::effect::Field> value) { m_arguments = std::move(value); }
+	void SetResourceHandle(std::wstring value) { m_resourceHandle = std::move(value); }
+	void SetOffset(std::uint64_t value) noexcept { m_offset = value; }
+	void SetLength(std::uint32_t value) noexcept { m_length = value; }
+	void SetWorkspace(ControlSenpRpcWorkspace value) { m_workspace = std::move(value); }
+
+private:
+	EControlSenpRpcOperation m_operation = EControlSenpRpcOperation::IssueGrant;
+	std::wstring m_profileId;
+	ControlSenpRpcOwner m_owner;
+	std::string m_grantId;
+	std::uint32_t m_capabilities = 0;
+	std::wstring m_readId;
+	std::wstring m_toolId;
+	std::wstring m_toolOperation;
+	std::vector<senp::effect::Field> m_arguments;
+	std::wstring m_resourceHandle;
+	std::uint64_t m_offset = 0;
+	std::uint32_t m_length = 0;
+	ControlSenpRpcWorkspace m_workspace;
 };
 
-//! Terminal broker response. `completion` is present only when `hasCompletion`
-//! is set; a poll with no drained terminal is a successful empty answer.
-struct ControlSenpRpcResponse {
-	EControlSenpRpcStatus status = EControlSenpRpcStatus::InvalidRequest;
-	std::string grantId;
-	std::uint64_t expiresAtMilliseconds = 0;
-	bool hasCompletion = false;
-	senp::effect::ToolCompleted completion;
+//! Terminal broker response. `completion` is present only when `HasCompletion()`
+//! is set; a poll with no drained terminal is a successful empty answer. Like the
+//! request, this is filled field-by-field by the codec and by handlers that build
+//! a partial answer before a status is known, so it keeps setters/mutable
+//! accessors rather than a single covering constructor.
+class ControlSenpRpcResponse {
+public:
+	ControlSenpRpcResponse() = default;
+
+	[[nodiscard]] EControlSenpRpcStatus Status() const noexcept { return m_status; }
+	[[nodiscard]] const std::string& GrantId() const noexcept { return m_grantId; }
+	[[nodiscard]] std::uint64_t ExpiresAtMilliseconds() const noexcept { return m_expiresAtMilliseconds; }
+	[[nodiscard]] bool HasCompletion() const noexcept { return m_hasCompletion; }
+	[[nodiscard]] const senp::effect::ToolCompleted& Completion() const noexcept { return m_completion; }
+	[[nodiscard]] senp::effect::ToolCompleted& Completion() noexcept { return m_completion; }
 	//! One text-resource chunk, whole. The editor rebuilds the chunk its text
 	//! surface validates from exactly these members, so every member that
 	//! validation reads has to travel: a length or an end the editor filled in
 	//! itself would be the editor asserting something about a resource the
 	//! control side owns.
-	std::wstring resourceHandle;
-	std::uint64_t resourceOffset = 0;
-	std::string resourceBytes;
+	[[nodiscard]] const std::wstring& ResourceHandle() const noexcept { return m_resourceHandle; }
+	[[nodiscard]] std::uint64_t ResourceOffset() const noexcept { return m_resourceOffset; }
+	[[nodiscard]] const std::string& ResourceBytes() const noexcept { return m_resourceBytes; }
 	//! senp::TextResourceState and senp::TextResourceEnd as raw discriminators.
 	//! This header describes the wire rather than the store, so it names their
 	//! values without depending on the type that defines them.
-	std::uint8_t resourceState = 0;
-	std::uint8_t resourceEnd = 0;
+	[[nodiscard]] std::uint8_t ResourceState() const noexcept { return m_resourceState; }
+	[[nodiscard]] std::uint8_t ResourceEnd() const noexcept { return m_resourceEnd; }
 	//! Bytes the whole resource holds, and the revision the store answers for.
 	//! Whether a chunk is the last one is derived from these rather than sent:
 	//! a sent answer could contradict the members it is derived from, and the
 	//! editor would have no way to tell which of the two to believe.
-	std::uint64_t resourceLength = 0;
-	std::int64_t resourceRevision = 0;
+	[[nodiscard]] std::uint64_t ResourceLength() const noexcept { return m_resourceLength; }
+	[[nodiscard]] std::int64_t ResourceRevision() const noexcept { return m_resourceRevision; }
 	//! Answered by QueryAccount only. Zero means the profile has adopted no
-	//! account at all, which `accountState` separates from a signed-out one.
-	std::int64_t accountGeneration = 0;
-	EControlSenpAccountState accountState = EControlSenpAccountState::Unknown;
+	//! account at all, which `AccountState()` separates from a signed-out one.
+	[[nodiscard]] std::int64_t AccountGeneration() const noexcept { return m_accountGeneration; }
+	[[nodiscard]] EControlSenpAccountState AccountState() const noexcept { return m_accountState; }
+
+	void SetStatus(EControlSenpRpcStatus value) noexcept { m_status = value; }
+	void SetGrantId(std::string value) { m_grantId = std::move(value); }
+	void SetExpiresAtMilliseconds(std::uint64_t value) noexcept { m_expiresAtMilliseconds = value; }
+	void SetHasCompletion(bool value) noexcept { m_hasCompletion = value; }
+	void SetCompletion(senp::effect::ToolCompleted value) { m_completion = std::move(value); }
+	void SetResourceHandle(std::wstring value) { m_resourceHandle = std::move(value); }
+	void SetResourceOffset(std::uint64_t value) noexcept { m_resourceOffset = value; }
+	void SetResourceBytes(std::string value) { m_resourceBytes = std::move(value); }
+	void SetResourceState(std::uint8_t value) noexcept { m_resourceState = value; }
+	void SetResourceEnd(std::uint8_t value) noexcept { m_resourceEnd = value; }
+	void SetResourceLength(std::uint64_t value) noexcept { m_resourceLength = value; }
+	void SetResourceRevision(std::int64_t value) noexcept { m_resourceRevision = value; }
+	void SetAccountGeneration(std::int64_t value) noexcept { m_accountGeneration = value; }
+	void SetAccountState(EControlSenpAccountState value) noexcept { m_accountState = value; }
+
+private:
+	EControlSenpRpcStatus m_status = EControlSenpRpcStatus::InvalidRequest;
+	std::string m_grantId;
+	std::uint64_t m_expiresAtMilliseconds = 0;
+	bool m_hasCompletion = false;
+	senp::effect::ToolCompleted m_completion;
+	std::wstring m_resourceHandle;
+	std::uint64_t m_resourceOffset = 0;
+	std::string m_resourceBytes;
+	std::uint8_t m_resourceState = 0;
+	std::uint8_t m_resourceEnd = 0;
+	std::uint64_t m_resourceLength = 0;
+	std::int64_t m_resourceRevision = 0;
+	std::int64_t m_accountGeneration = 0;
+	EControlSenpAccountState m_accountState = EControlSenpAccountState::Unknown;
 };
 
 //! Bounds applied by both encoder and decoder. They are smaller than the frame

@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /* Copyright (C) 2026, Sakura Editor Organization. SPDX-License-Identifier: Zlib */
 #include "pch.h"
 #include "platform/controlipc/ControlSenpComposition.h"
@@ -65,33 +65,36 @@ class FakePackages final : public IControlSenpPackageSource {
 public:
 	std::optional<senp::ManagementSnapshot> Refresh(const std::wstring& profileHome) override
 	{
-		std::lock_guard lock(m_mutex);
+		std::lock_guard lock(*m_mutex);
 		m_homes.push_back(profileHome);
 		if (m_closed) return std::nullopt;
 		return m_snapshot;
 	}
 	void Close() noexcept override
 	{
-		std::lock_guard lock(m_mutex);
+		std::lock_guard lock(*m_mutex);
 		m_closed = true;
 	}
 	void Set(std::optional<senp::ManagementSnapshot> value)
 	{
-		std::lock_guard lock(m_mutex);
+		std::lock_guard lock(*m_mutex);
 		m_snapshot = std::move(value);
 	}
 	[[nodiscard]] std::vector<std::wstring> Homes() const
 	{
-		std::lock_guard lock(m_mutex);
+		std::lock_guard lock(*m_mutex);
 		return m_homes;
 	}
 	[[nodiscard]] bool Closed() const
 	{
-		std::lock_guard lock(m_mutex);
+		std::lock_guard lock(*m_mutex);
 		return m_closed;
 	}
 private:
-	mutable std::mutex m_mutex;
+	// Owned separately rather than a class-level mutable mutex, so the const
+	// accessors above do not need to defeat their own constness to serialize
+	// with Refresh()/Close()/Set().
+	std::unique_ptr<std::mutex> m_mutex = std::make_unique<std::mutex>();
 	std::optional<senp::ManagementSnapshot> m_snapshot{ Packages() };
 	std::vector<std::wstring> m_homes;
 	bool m_closed = false;
@@ -119,7 +122,7 @@ public:
 	void Stop() noexcept override
 	try {
 		m_log->push_back(L"stop:" + m_profileHome);
-	} catch (...) {
+	} catch (const std::exception&) {
 	}
 	senp::ManagementSnapshot Snapshot() const override { return Packages(); }
 private:
@@ -132,13 +135,15 @@ public:
 	std::optional<std::wstring> ResolveExecutable() const override { return std::wstring(L"C:\\Tools\\gh.exe"); }
 	gh::GhProcessOutcome Run(const gh::GhProcessInvocation&, HANDLE) const override
 	{
-		++m_runs;
+		++(*m_runs);
 		return { ::platform::process::EBoundedProcessStatus::Succeeded, 0,
 			Bytes("gh version 2.93.0 (2026-05-27)\n"), {} };
 	}
-	[[nodiscard]] std::size_t Runs() const noexcept { return m_runs.load(); }
+	[[nodiscard]] std::size_t Runs() const noexcept { return m_runs->load(); }
 private:
-	mutable std::atomic<std::size_t> m_runs{ 0 };
+	// Owned separately rather than a mutable counter: Run() is const to match
+	// the interface, and the pointee is mutable through the non-mutable pointer.
+	std::unique_ptr<std::atomic<std::size_t>> m_runs = std::make_unique<std::atomic<std::size_t>>(0);
 };
 
 class FakeCredential final : public gh::IGhAccountCredential {
@@ -165,7 +170,7 @@ public:
 	gh::GhConnectionCheckResult Check(const gh::GhToolProbe& probe, std::wstring_view configurationDirectory,
 		std::wstring_view hostname, std::optional<std::wstring_view>, HANDLE) override
 	{
-		std::lock_guard lock(m_mutex);
+		std::lock_guard lock(*m_mutex);
 		m_directories.emplace_back(configurationDirectory);
 		m_hosts.emplace_back(hostname);
 		m_probes.push_back(probe.Status());
@@ -177,26 +182,28 @@ public:
 	}
 	void Set(gh::GhConnectionTerminal terminal)
 	{
-		std::lock_guard lock(m_mutex);
+		std::lock_guard lock(*m_mutex);
 		m_terminal = terminal;
 	}
 	[[nodiscard]] std::vector<std::wstring> Directories() const
 	{
-		std::lock_guard lock(m_mutex);
+		std::lock_guard lock(*m_mutex);
 		return m_directories;
 	}
 	[[nodiscard]] std::vector<std::wstring> Hosts() const
 	{
-		std::lock_guard lock(m_mutex);
+		std::lock_guard lock(*m_mutex);
 		return m_hosts;
 	}
 	[[nodiscard]] std::vector<gh::GhToolAvailability> Probes() const
 	{
-		std::lock_guard lock(m_mutex);
+		std::lock_guard lock(*m_mutex);
 		return m_probes;
 	}
 private:
-	mutable std::mutex m_mutex;
+	// Owned separately: Directories()/Hosts()/Probes() are const and must not
+	// defeat their own constness with a class-level mutable mutex.
+	std::unique_ptr<std::mutex> m_mutex = std::make_unique<std::mutex>();
 	gh::GhConnectionTerminal m_terminal{ gh::GhConnectionTerminal::Succeeded };
 	std::vector<std::wstring> m_directories, m_hosts;
 	std::vector<gh::GhToolAvailability> m_probes;
@@ -212,10 +219,7 @@ public:
 	}
 	gh::GhLocalRepositoryRead Inspect(std::wstring_view root, HANDLE) const override
 	{
-		{
-			std::lock_guard lock(m_mutex);
-			m_roots.emplace_back(root);
-		}
+		m_roots->Record(root);
 		const auto found = m_entries.find(std::wstring(root));
 		if (found == m_entries.end()) return { gh::GhLocalRepositoryStatus::NotRepository, {}, {}, {} };
 		return { gh::GhLocalRepositoryStatus::Succeeded, std::get<0>(found->second),
@@ -223,12 +227,30 @@ public:
 	}
 	[[nodiscard]] std::vector<std::wstring> Roots() const
 	{
-		std::lock_guard lock(m_mutex);
-		return m_roots;
+		return m_roots->Snapshot();
 	}
 private:
-	mutable std::mutex m_mutex;
-	mutable std::vector<std::wstring> m_roots;
+	//! Owned separately from the object rather than as mutable members: Inspect()
+	//! and Roots() are const, and this is the only state either one mutates. A
+	//! unique_ptr member keeps the pointee non-const in those const methods, so
+	//! this helper's own lock/push methods need no `mutable` of their own.
+	class RootLog {
+	public:
+		void Record(std::wstring_view root)
+		{
+			std::lock_guard lock(m_mutex);
+			m_seen.emplace_back(root);
+		}
+		[[nodiscard]] std::vector<std::wstring> Snapshot()
+		{
+			std::lock_guard lock(m_mutex);
+			return m_seen;
+		}
+	private:
+		std::mutex m_mutex;
+		std::vector<std::wstring> m_seen;
+	};
+	std::unique_ptr<RootLog> m_roots = std::make_unique<RootLog>();
 	std::map<std::wstring, std::tuple<std::wstring, std::wstring, std::string>> m_entries;
 };
 
@@ -253,34 +275,50 @@ std::shared_ptr<profiles::ControlUserDataProfileRegistry> Registry()
 ControlSenpCompositionOptions Options()
 {
 	ControlSenpCompositionOptions options;
-	options.controlProfileRoot = kControlRoot;
-	options.controlAuthorityId = kAuthorityId;
-	options.controlAuthorityGeneration = 7;
-	options.ghConfigurationDirectory = kGhConfiguration;
-	options.workingDirectory = kControlRoot;
+	options.SetControlProfileRoot(kControlRoot);
+	options.SetControlAuthorityId(kAuthorityId);
+	options.SetControlAuthorityGeneration(7);
+	options.SetGhConfigurationDirectory(kGhConfiguration);
+	options.SetWorkingDirectory(kControlRoot);
 	return options;
 }
 
 //! Every seam is a fake, so no test starts `gh`, git or the package tool.
-struct Fakes {
-	std::shared_ptr<FakePackages> packages = std::make_shared<FakePackages>();
-	std::shared_ptr<FakeToolPlatform> tool = std::make_shared<FakeToolPlatform>();
-	std::shared_ptr<FakeConnectionPlatform> connection = std::make_shared<FakeConnectionPlatform>();
-	std::shared_ptr<FakeRepositoryPlatform> repositories = std::make_shared<FakeRepositoryPlatform>();
+//! Private state with accessors for the same reason as every other DTO in
+//! this subsystem: fields are constructed once and never reassigned by a test.
+class Fakes {
+public:
+	[[nodiscard]] const std::shared_ptr<FakePackages>& Packages() const noexcept { return m_packages; }
+	[[nodiscard]] const std::shared_ptr<FakeToolPlatform>& Tool() const noexcept { return m_tool; }
+	[[nodiscard]] const std::shared_ptr<FakeConnectionPlatform>& Connection() const noexcept { return m_connection; }
+	[[nodiscard]] const std::shared_ptr<FakeRepositoryPlatform>& Repositories() const noexcept
+	{
+		return m_repositories;
+	}
 
 	[[nodiscard]] ControlSenpCompositionDependencies Dependencies() const
 	{
-		return { packages, tool, connection, repositories };
+		ControlSenpCompositionDependencies dependencies;
+		dependencies.SetPackages(m_packages);
+		dependencies.SetToolPlatform(m_tool);
+		dependencies.SetConnectionPlatform(m_connection);
+		dependencies.SetRepositoryPlatform(m_repositories);
+		return dependencies;
 	}
+private:
+	std::shared_ptr<FakePackages> m_packages = std::make_shared<FakePackages>();
+	std::shared_ptr<FakeToolPlatform> m_tool = std::make_shared<FakeToolPlatform>();
+	std::shared_ptr<FakeConnectionPlatform> m_connection = std::make_shared<FakeConnectionPlatform>();
+	std::shared_ptr<FakeRepositoryPlatform> m_repositories = std::make_shared<FakeRepositoryPlatform>();
 };
 
 ControlSenpRpcRequest IssueGrant(std::wstring profileId = kProfile)
 {
 	ControlSenpRpcRequest request;
-	request.operation = EControlSenpRpcOperation::IssueGrant;
-	request.profileId = std::move(profileId);
-	request.owner = { kExtension, Digest(), 7, 11, 13 };
-	request.capabilities = static_cast<std::uint32_t>(senp::SenpToolCapability::GitHubRepositoryRead);
+	request.SetOperation(EControlSenpRpcOperation::IssueGrant);
+	request.SetProfileId(std::move(profileId));
+	request.SetOwner({ kExtension, Digest(), 7, 11, 13 });
+	request.SetCapabilities(static_cast<std::uint32_t>(senp::SenpToolCapability::GitHubRepositoryRead));
 	return request;
 }
 
@@ -296,11 +334,13 @@ ControlSenpRpcRequest AdoptWorkspace(std::vector<std::wstring> folders, std::int
 	std::wstring profileId = kProfile)
 {
 	ControlSenpRpcRequest request;
-	request.operation = EControlSenpRpcOperation::AdoptWorkspace;
-	request.profileId = std::move(profileId);
-	request.workspace.generation = 5;
-	request.workspace.revision = revision;
-	request.workspace.folders = std::move(folders);
+	request.SetOperation(EControlSenpRpcOperation::AdoptWorkspace);
+	request.SetProfileId(std::move(profileId));
+	ControlSenpRpcWorkspace workspace;
+	workspace.SetGeneration(5);
+	workspace.SetRevision(revision);
+	workspace.SetFolders(std::move(folders));
+	request.SetWorkspace(std::move(workspace));
 	return request;
 }
 
@@ -334,7 +374,7 @@ EControlSenpRpcStatus Issue(IControlIpcSessionHandler& session, std::uint64_t re
 {
 	const auto reply = ReadResponse(
 		session.HandleFrame(kConnection, RequestFrame(IssueGrant(std::move(profileId)), requestId)));
-	return reply ? reply->status : EControlSenpRpcStatus::InvalidRequest;
+	return reply ? reply->Status() : EControlSenpRpcStatus::InvalidRequest;
 }
 
 EControlSenpRpcStatus Adopt(IControlIpcSessionHandler& session, std::uint64_t requestId,
@@ -342,19 +382,17 @@ EControlSenpRpcStatus Adopt(IControlIpcSessionHandler& session, std::uint64_t re
 {
 	const auto reply = ReadResponse(session.HandleFrame(connection,
 		RequestFrame(AdoptWorkspace(std::move(folders)), requestId)));
-	return reply ? reply->status : EControlSenpRpcStatus::InvalidRequest;
+	return reply ? reply->Status() : EControlSenpRpcStatus::InvalidRequest;
 }
 
 SenpWorkspaceAdoption Adoption(SenpConnectionIdentity connection, std::vector<std::wstring> folders,
 	std::int64_t revision = 11, std::wstring profileId = kProfile)
 {
-	SenpWorkspaceAdoption adoption;
-	adoption.connection = connection;
-	adoption.profileId = std::move(profileId);
-	adoption.workspace.generation = 5;
-	adoption.workspace.revision = revision;
-	adoption.workspace.folders = std::move(folders);
-	return adoption;
+	ControlSenpRpcWorkspace workspace;
+	workspace.SetGeneration(5);
+	workspace.SetRevision(revision);
+	workspace.SetFolders(std::move(folders));
+	return SenpWorkspaceAdoption(connection, std::move(profileId), std::move(workspace));
 }
 
 } // namespace
@@ -558,7 +596,7 @@ TEST(ControlSenpProfileSource, AgreesOnADeclaredWorkspaceOnlyWhileEveryConnectio
 	{
 		const auto declared = source.DeclaredWorkspace(kProfile);
 		ASSERT_TRUE(declared.has_value());
-		EXPECT_EQ(11, declared->revision);
+		EXPECT_EQ(11, declared->Revision());
 	}
 
 	// Re-declaring what this connection already declared is not a change, so it
@@ -575,7 +613,7 @@ TEST(ControlSenpProfileSource, AgreesOnADeclaredWorkspaceOnlyWhileEveryConnectio
 	{
 		const auto declared = source.DeclaredWorkspace(kProfile);
 		ASSERT_TRUE(declared.has_value());
-		EXPECT_EQ(12, declared->revision);
+		EXPECT_EQ(12, declared->Revision());
 	}
 
 	// Two windows of one profile on different workspaces cannot both be answered
@@ -633,34 +671,34 @@ TEST(ControlSenpComposition, PublishesControlOwnedPackagesAndThenAdmitsAGrantThr
 	EXPECT_EQ(EControlSenpRpcStatus::Unauthorized, Issue(*session, 2));
 	ASSERT_TRUE(composition.WaitForIdle(kIdleTimeoutMilliseconds));
 
-	ASSERT_EQ(1U, fakes.packages->Homes().size());
-	EXPECT_EQ(kProfileHome, fakes.packages->Homes().front());
+	ASSERT_EQ(1U, fakes.Packages()->Homes().size());
+	EXPECT_EQ(kProfileHome, fakes.Packages()->Homes().front());
 	const auto revision = composition.PublishedRevision(kProfile);
 	ASSERT_TRUE(revision.has_value());
 	EXPECT_EQ(kManagementRevision, *revision);
 
 	// The declaration named folders and nothing else: what they resolve to was
 	// read from the remotes found there, never carried by a request.
-	ASSERT_EQ(std::vector<std::wstring>{ kWorkspaceRoot }, fakes.repositories->Roots());
+	ASSERT_EQ(std::vector<std::wstring>{ kWorkspaceRoot }, fakes.Repositories()->Roots());
 	const auto repository = composition.PublishedRepository(kProfile);
 	ASSERT_TRUE(repository.has_value());
 	EXPECT_EQ(L"github.com", repository->Hostname());
 	EXPECT_EQ(L"me", repository->Owner());
 	EXPECT_EQ(L"project", repository->Repository());
 
-	ASSERT_EQ(1U, fakes.connection->Directories().size());
-	EXPECT_EQ(kGhConfiguration, fakes.connection->Directories().front());
-	EXPECT_EQ(L"github.com", fakes.connection->Hosts().front());
-	EXPECT_EQ(gh::GhToolAvailability::Available, fakes.connection->Probes().front());
+	ASSERT_EQ(1U, fakes.Connection()->Directories().size());
+	EXPECT_EQ(kGhConfiguration, fakes.Connection()->Directories().front());
+	EXPECT_EQ(L"github.com", fakes.Connection()->Hosts().front());
+	EXPECT_EQ(gh::GhToolAvailability::Available, fakes.Connection()->Probes().front());
 	EXPECT_EQ(gh::GhConnectionState::Connected, composition.ConnectionState(kProfile));
 
 	EXPECT_EQ(EControlSenpRpcStatus::Succeeded, Issue(*session, 3));
 	// A capability the published table does not carry stays refused.
 	auto widened = IssueGrant();
-	widened.capabilities = static_cast<std::uint32_t>(senp::SenpToolCapability::OpenConnectionUi);
+	widened.SetCapabilities(static_cast<std::uint32_t>(senp::SenpToolCapability::OpenConnectionUi));
 	const auto refused = ReadResponse(session->HandleFrame(kConnection, RequestFrame(widened, 4)));
 	ASSERT_TRUE(refused.has_value());
-	EXPECT_EQ(EControlSenpRpcStatus::Unauthorized, refused->status);
+	EXPECT_EQ(EControlSenpRpcStatus::Unauthorized, refused->Status());
 
 	session.reset();
 	composition.Close();
@@ -675,14 +713,14 @@ TEST(ControlSenpComposition, ReadsNoPackagesForAProfileControlOwnedStateDoesNotR
 
 	EXPECT_EQ(EControlSenpRpcStatus::Unauthorized, Issue(*session, 1, L"absent-profile"));
 	ASSERT_TRUE(composition.WaitForIdle(kIdleTimeoutMilliseconds));
-	EXPECT_TRUE(fakes.packages->Homes().empty());
+	EXPECT_TRUE(fakes.Packages()->Homes().empty());
 	EXPECT_FALSE(composition.PublishedRevision(L"absent-profile").has_value());
 	EXPECT_EQ(gh::GhConnectionState::Unknown, composition.ConnectionState(L"absent-profile"));
 
 	// An identifier that is not an opaque profile id never reaches the registry.
 	EXPECT_TRUE(composition.RequestRefresh(L"not an opaque id"));
 	ASSERT_TRUE(composition.WaitForIdle(kIdleTimeoutMilliseconds));
-	EXPECT_TRUE(fakes.packages->Homes().empty());
+	EXPECT_TRUE(fakes.Packages()->Homes().empty());
 	EXPECT_EQ(EControlSenpRpcStatus::Unauthorized, Issue(*session, 2, L"absent-profile"));
 
 	session.reset();
@@ -695,7 +733,7 @@ TEST(ControlSenpComposition, PublishesNoPermissionWhenThePackageStateProvesNoEna
 		Fakes fakes;
 		// A read that failed and a reload that kept previously discovered
 		// extensions both prove nothing about what is enabled now.
-		fakes.packages->Set(variant == 0 ? std::optional<senp::ManagementSnapshot>{}
+		fakes.Packages()->Set(variant == 0 ? std::optional<senp::ManagementSnapshot>{}
 			: Packages(kManagementRevision, senp::EManagementState::ReadyWithDiagnostics));
 		CControlSenpComposition composition(Options(), Registry(), fakes.Dependencies());
 		auto session = composition.Handler()->CreateSession(kConnection);
@@ -703,12 +741,12 @@ TEST(ControlSenpComposition, PublishesNoPermissionWhenThePackageStateProvesNoEna
 
 		EXPECT_EQ(EControlSenpRpcStatus::Unauthorized, Issue(*session, 1));
 		ASSERT_TRUE(composition.WaitForIdle(kIdleTimeoutMilliseconds));
-		EXPECT_EQ(1U, fakes.packages->Homes().size());
+		EXPECT_EQ(1U, fakes.Packages()->Homes().size());
 		EXPECT_FALSE(composition.PublishedRevision(kProfile).has_value());
 		EXPECT_EQ(EControlSenpRpcStatus::Unauthorized, Issue(*session, 2));
 		// No enablement proof means no repository and no adopted account either.
 		EXPECT_FALSE(composition.PublishedRepository(kProfile).has_value());
-		EXPECT_TRUE(fakes.connection->Directories().empty());
+		EXPECT_TRUE(fakes.Connection()->Directories().empty());
 
 		session.reset();
 		composition.Close();
@@ -726,7 +764,7 @@ TEST(ControlSenpComposition, PublishesNoRepositoryWhileNoConnectionHasDeclaredAW
 	// The registry still associates a workspace with this profile, and it is
 	// deliberately not what answers: one association set has no per-window
 	// granularity, so it could only mix the folders of every window sharing it.
-	EXPECT_TRUE(fakes.repositories->Roots().empty());
+	EXPECT_TRUE(fakes.Repositories()->Roots().empty());
 	EXPECT_FALSE(composition.PublishedRepository(kProfile).has_value());
 	// An account is not an authorization, so it is still adopted on its own.
 	EXPECT_EQ(gh::GhConnectionState::Connected, composition.ConnectionState(kProfile));
@@ -745,7 +783,7 @@ TEST(ControlSenpComposition, ResolvesTheDeclaredWorkspaceAndStopsAnsweringWhenTh
 		// at a workspace the control side already knows about.
 		ASSERT_EQ(EControlSenpRpcStatus::Succeeded, Adopt(*session, 1, { WorkspaceFolder() }));
 		ASSERT_TRUE(composition.WaitForIdle(kIdleTimeoutMilliseconds));
-		ASSERT_EQ(std::vector<std::wstring>{ kWorkspaceRoot }, fakes.repositories->Roots());
+		ASSERT_EQ(std::vector<std::wstring>{ kWorkspaceRoot }, fakes.Repositories()->Roots());
 		const auto repository = composition.PublishedRepository(kProfile);
 		ASSERT_TRUE(repository.has_value());
 		EXPECT_EQ(L"github.com", repository->Hostname());
@@ -797,7 +835,7 @@ TEST(ControlSenpComposition, CloseIsIdempotentAndLeavesNoConnectionAbleToReachAG
 
 	composition.Close();
 	composition.Close();
-	EXPECT_TRUE(fakes.packages->Closed());
+	EXPECT_TRUE(fakes.Packages()->Closed());
 	EXPECT_FALSE(composition.PublishedRevision(kProfile).has_value());
 	EXPECT_EQ(nullptr, composition.Handler()->CreateSession(kConnection));
 	EXPECT_FALSE(composition.RequestRefresh(kProfile));

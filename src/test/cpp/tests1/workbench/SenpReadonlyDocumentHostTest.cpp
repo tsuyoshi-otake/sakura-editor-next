@@ -6,6 +6,7 @@
 #include "markdown/CMarkdownPreviewWnd.h"
 #include "theme/CThemeService.h"
 #include <CommCtrl.h>
+#include <stdexcept>
 
 namespace workbench::editor::tests {
 namespace {
@@ -144,7 +145,7 @@ protected:
 				return 1;
 			default: return 0;
 			}
-		} catch (...) { return 0; }
+		} catch (const std::exception&) { return 0; }
 	}
 };
 }

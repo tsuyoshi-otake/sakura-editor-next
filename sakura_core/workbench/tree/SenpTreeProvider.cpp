@@ -19,7 +19,7 @@ TreeItem Item(senp::effect::TreeItem value)
 	TreeItem item;
 	item.id = std::move(value.id); item.label = std::move(value.label); item.description = std::move(value.description);
 	item.tooltip = std::move(value.tooltip); item.icon = std::move(value.icon); item.commandId = std::move(value.commandId);
-	item.arguments = std::move(value.arguments); item.contextValue = std::move(value.contextValue);
+	item.arguments = std::move(value.arguments); item.SetContextValue(std::move(value.contextValue));
 	switch (value.collapsibleState) {
 	case senp::effect::CollapsibleState::Leaf: item.collapsibleState = TreeItemCollapsibleState::None; break;
 	case senp::effect::CollapsibleState::Collapsed: item.collapsibleState = TreeItemCollapsibleState::Collapsed; break;
@@ -32,6 +32,8 @@ TreeItem Item(senp::effect::TreeItem value)
 
 struct SenpTreeProvider::Impl {
 	struct Pending final { TreeLoadRequest request; senp::effect::OperationContext context; Time deadline; };
+private:
+	friend class SenpTreeProvider;
 	SenpTreeProviderOptions options;
 	TreeViewModel model;
 	std::map<std::uint64_t, Pending> pending;
@@ -39,6 +41,7 @@ struct SenpTreeProvider::Impl {
 	ISenpTreeObserver* observer{};
 	std::int64_t lastRequestGeneration{};
 	bool visible{}, pumping{};
+public:
 	explicit Impl(SenpTreeProviderOptions value) : options(std::move(value))
 	{
 		if (!options.runtime || !Id(options.viewId) || options.scope.ownerGeneration <= 0
@@ -52,8 +55,8 @@ struct SenpTreeProvider::Impl {
 			const auto bounded = [](const std::vector<std::wstring>& values) {
 				return values.size() <= 8 && std::all_of(values.begin(), values.end(), [](const auto& v) { return !v.empty() && v.size() <= 1024; });
 			};
-			if (!commands.contains(action.commandId) || !actions.insert(action.commandId).second || action.icon.empty()
-				|| action.title.size() > 1024 || !bounded(action.contains) || !bounded(action.equals))
+			if (!commands.contains(action.CommandId()) || !actions.insert(action.CommandId()).second || action.Icon().empty()
+				|| action.Title().size() > 1024 || !bounded(action.Contains()) || !bounded(action.Equals()))
 				throw std::invalid_argument("Invalid SENP tree item action.");
 		}
 	}
@@ -61,8 +64,8 @@ struct SenpTreeProvider::Impl {
 	{
 		// VS Code's `=~` is an unanchored regular expression; the manifest admits
 		// only a literal token there, so it is a substring test.
-		return std::all_of(action.contains.begin(), action.contains.end(), [&](const auto& token) { return contextValue.find(token) != std::wstring_view::npos; })
-			&& std::all_of(action.equals.begin(), action.equals.end(), [&](const auto& value) { return contextValue == value; });
+		return std::all_of(action.Contains().begin(), action.Contains().end(), [&](const auto& token) { return contextValue.find(token) != std::wstring_view::npos; })
+			&& std::all_of(action.Equals().begin(), action.Equals().end(), [&](const auto& value) { return contextValue == value; });
 	}
 	bool Current() const noexcept { return !model.IsClosed() && options.runtime->IsCurrent(); }
 	bool Scope(const senp::effect::OperationContext& context) const noexcept
@@ -103,14 +106,14 @@ struct SenpTreeProvider::Impl {
 			pending.erase(it); Changed(parentId);
 			return submitted.status == senp::AdmissionStatus::Busy ? TreeResult::Busy : TreeResult::Unavailable;
 		}
-		if (!Scope(submitted.context) || !Id(submitted.context.operationId) || submitted.context.operationId.size() > 96
-			|| submitted.context.requestGeneration <= lastRequestGeneration) {
-			options.runtime->Cancel(submitted.context);
+		if (!Scope(submitted.Context()) || !Id(submitted.Context().operationId) || submitted.Context().operationId.size() > 96
+			|| submitted.Context().requestGeneration <= lastRequestGeneration) {
+			options.runtime->Cancel(submitted.Context());
 			(void)model.Fail(request.request, L"The provider returned an invalid request identity.");
 			pending.erase(it); Changed(parentId); return TreeResult::Invalid;
 		}
-		lastRequestGeneration = submitted.context.requestGeneration;
-		request.context = std::move(submitted.context);
+		lastRequestGeneration = submitted.Context().requestGeneration;
+		request.context = std::move(submitted.MutableContext());
 		Changed(parentId); return TreeResult::Accepted;
 	}
 	std::map<std::uint64_t, Pending>::iterator Find(const senp::effect::OperationContext& context)
@@ -163,7 +166,7 @@ TreeResult SenpTreeProvider::SetExpanded(std::wstring_view id, bool expanded, Ti
 {
 	if (!m_impl->Current()) { Close(); return TreeResult::Unavailable; }
 	const auto changed = m_impl->model.SetExpanded(id, expanded);
-	m_impl->CancelTickets(changed.cancelled); m_impl->Changed(id); Pump(now);
+	m_impl->CancelTickets(changed.Cancelled()); m_impl->Changed(id); Pump(now);
 	return changed.result;
 }
 TreeResult SenpTreeProvider::LoadNext(std::wstring_view parentId, Time now) { return m_impl->Load(parentId, TreeLoadKind::NextPage, now); }
@@ -203,7 +206,7 @@ std::vector<SenpTreeItemAction> SenpTreeProvider::ItemActions(std::wstring_view 
 	const auto* node = m_impl->model.Inspect(id);
 	if (!node || id.empty()) return result;
 	for (const auto& action : m_impl->options.itemActions)
-		if (Impl::Matches(action, node->item.contextValue)) result.push_back(action);
+		if (Impl::Matches(action, node->item.ContextValue())) result.push_back(action);
 	return result;
 }
 bool SenpTreeProvider::ExecuteItemAction(std::wstring_view id, std::wstring_view commandId)
@@ -213,8 +216,8 @@ bool SenpTreeProvider::ExecuteItemAction(std::wstring_view id, std::wstring_view
 	const auto* node = state.model.Inspect(id);
 	if (!node) return false;
 	const auto action = std::find_if(state.options.itemActions.begin(), state.options.itemActions.end(),
-		[&](const auto& value) { return value.commandId == commandId; });
-	if (action == state.options.itemActions.end() || !Impl::Matches(*action, node->item.contextValue)) return false;
+		[&](const auto& value) { return value.CommandId() == commandId; });
+	if (action == state.options.itemActions.end() || !Impl::Matches(*action, node->item.ContextValue())) return false;
 	std::wstring itemId(id);
 	if (!state.model.Select(itemId)) return false;
 	return state.options.runtime->Execute({ std::wstring(commandId), { std::move(itemId) } });
@@ -247,7 +250,7 @@ TreeResult SenpTreeProvider::Apply(const senp::effect::OperationContext& context
 	}
 	const auto changed = state.model.Apply(it->second.request, std::move(native));
 	if (changed.result != TreeResult::Applied) state.options.runtime->Cancel(it->second.context);
-	state.pending.erase(it); state.CancelTickets(changed.cancelled); state.Changed(parent); Pump(now);
+	state.pending.erase(it); state.CancelTickets(changed.Cancelled()); state.Changed(parent); Pump(now);
 	return changed.result;
 }
 TreeResult SenpTreeProvider::Failed(const senp::effect::OperationContext& context, senp::InvocationStatus status, Time now)

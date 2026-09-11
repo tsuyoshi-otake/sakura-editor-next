@@ -15,43 +15,45 @@ ControlSenpRpcOwner Owner()
 ControlSenpRpcRequest StartRead()
 {
 	ControlSenpRpcRequest request;
-	request.operation = EControlSenpRpcOperation::StartRead;
-	request.profileId = L"profile-1";
-	request.owner = Owner();
-	request.grantId = "grant-1";
-	request.readId = L"issues:open:1";
-	request.toolId = L"github";
-	request.toolOperation = L"repositoryRead";
-	request.arguments = { { L"path", L"issues" }, { L"state", L"open" } };
+	request.SetOperation(EControlSenpRpcOperation::StartRead);
+	request.SetProfileId(L"profile-1");
+	request.SetOwner(Owner());
+	request.SetGrantId("grant-1");
+	request.SetReadId(L"issues:open:1");
+	request.SetToolId(L"github");
+	request.SetToolOperation(L"repositoryRead");
+	request.SetArguments({ { L"path", L"issues" }, { L"state", L"open" } });
 	return request;
 }
 
 ControlSenpRpcRequest IssueGrant()
 {
 	ControlSenpRpcRequest request;
-	request.operation = EControlSenpRpcOperation::IssueGrant;
-	request.profileId = L"profile-1";
-	request.owner = Owner();
-	request.capabilities = static_cast<std::uint32_t>(senp::SenpToolCapability::GitHubRepositoryRead);
+	request.SetOperation(EControlSenpRpcOperation::IssueGrant);
+	request.SetProfileId(L"profile-1");
+	request.SetOwner(Owner());
+	request.SetCapabilities(static_cast<std::uint32_t>(senp::SenpToolCapability::GitHubRepositoryRead));
 	return request;
 }
 
 ControlSenpRpcRequest QueryAccount()
 {
 	ControlSenpRpcRequest request;
-	request.operation = EControlSenpRpcOperation::QueryAccount;
-	request.profileId = L"profile-1";
+	request.SetOperation(EControlSenpRpcOperation::QueryAccount);
+	request.SetProfileId(L"profile-1");
 	return request;
 }
 
 ControlSenpRpcRequest AdoptWorkspace()
 {
 	ControlSenpRpcRequest request;
-	request.operation = EControlSenpRpcOperation::AdoptWorkspace;
-	request.profileId = L"profile-1";
-	request.workspace.generation = 5;
-	request.workspace.revision = 11;
-	request.workspace.folders = { L"file:///c:/work/repo", L"file:///c:/work/docs" };
+	request.SetOperation(EControlSenpRpcOperation::AdoptWorkspace);
+	request.SetProfileId(L"profile-1");
+	ControlSenpRpcWorkspace workspace;
+	workspace.SetGeneration(5);
+	workspace.SetRevision(11);
+	workspace.SetFolders({ L"file:///c:/work/repo", L"file:///c:/work/docs" });
+	request.SetWorkspace(std::move(workspace));
 	return request;
 }
 } // namespace
@@ -63,54 +65,54 @@ TEST(ControlSenpRpc, RoundTripsEveryRequestOperation)
 	ASSERT_TRUE(encodedGrant);
 	const auto decodedGrant = DecodeControlSenpRpcRequest(*encodedGrant);
 	ASSERT_TRUE(decodedGrant);
-	EXPECT_EQ(EControlSenpRpcOperation::IssueGrant, decodedGrant->operation);
-	EXPECT_EQ(grant.capabilities, decodedGrant->capabilities);
-	EXPECT_EQ(grant.owner, decodedGrant->owner);
+	EXPECT_EQ(EControlSenpRpcOperation::IssueGrant, decodedGrant->Operation());
+	EXPECT_EQ(grant.Capabilities(), decodedGrant->Capabilities());
+	EXPECT_EQ(grant.Owner(), decodedGrant->Owner());
 
 	const auto read = StartRead();
 	const auto encodedRead = EncodeControlSenpRpcRequest(read);
 	ASSERT_TRUE(encodedRead);
 	const auto decodedRead = DecodeControlSenpRpcRequest(*encodedRead);
 	ASSERT_TRUE(decodedRead);
-	EXPECT_EQ(read.readId, decodedRead->readId);
-	EXPECT_EQ(read.toolId, decodedRead->toolId);
-	EXPECT_EQ(read.toolOperation, decodedRead->toolOperation);
-	ASSERT_EQ(2U, decodedRead->arguments.size());
-	EXPECT_EQ(L"path", decodedRead->arguments[0].name);
-	EXPECT_EQ(L"open", decodedRead->arguments[1].value);
+	EXPECT_EQ(read.ReadId(), decodedRead->ReadId());
+	EXPECT_EQ(read.ToolId(), decodedRead->ToolId());
+	EXPECT_EQ(read.ToolOperation(), decodedRead->ToolOperation());
+	ASSERT_EQ(2U, decodedRead->Arguments().size());
+	EXPECT_EQ(L"path", decodedRead->Arguments()[0].name);
+	EXPECT_EQ(L"open", decodedRead->Arguments()[1].value);
 
 	ControlSenpRpcRequest poll = read;
-	poll.operation = EControlSenpRpcOperation::PollRead;
-	poll.readId.clear();
-	poll.toolId.clear();
-	poll.toolOperation.clear();
-	poll.arguments.clear();
+	poll.SetOperation(EControlSenpRpcOperation::PollRead);
+	poll.SetReadId(L"");
+	poll.SetToolId(L"");
+	poll.SetToolOperation(L"");
+	poll.SetArguments({});
 	const auto encodedPoll = EncodeControlSenpRpcRequest(poll);
 	ASSERT_TRUE(encodedPoll);
 	EXPECT_TRUE(DecodeControlSenpRpcRequest(*encodedPoll));
 
 	ControlSenpRpcRequest cancel = poll;
-	cancel.operation = EControlSenpRpcOperation::CancelRead;
-	cancel.readId = L"issues:open:1";
+	cancel.SetOperation(EControlSenpRpcOperation::CancelRead);
+	cancel.SetReadId(L"issues:open:1");
 	const auto encodedCancel = EncodeControlSenpRpcRequest(cancel);
 	ASSERT_TRUE(encodedCancel);
 	EXPECT_TRUE(DecodeControlSenpRpcRequest(*encodedCancel));
 
 	ControlSenpRpcRequest resource = poll;
-	resource.operation = EControlSenpRpcOperation::ReadResource;
-	resource.resourceHandle = L"log-1";
-	resource.offset = 4096;
-	resource.length = 1024;
+	resource.SetOperation(EControlSenpRpcOperation::ReadResource);
+	resource.SetResourceHandle(L"log-1");
+	resource.SetOffset(4096);
+	resource.SetLength(1024);
 	const auto encodedResource = EncodeControlSenpRpcRequest(resource);
 	ASSERT_TRUE(encodedResource);
 	const auto decodedResource = DecodeControlSenpRpcRequest(*encodedResource);
 	ASSERT_TRUE(decodedResource);
-	EXPECT_EQ(4096U, decodedResource->offset);
-	EXPECT_EQ(1024U, decodedResource->length);
+	EXPECT_EQ(4096U, decodedResource->Offset());
+	EXPECT_EQ(1024U, decodedResource->Length());
 
 	ControlSenpRpcRequest release = poll;
-	release.operation = EControlSenpRpcOperation::ReleaseResource;
-	release.resourceHandle = L"log-1";
+	release.SetOperation(EControlSenpRpcOperation::ReleaseResource);
+	release.SetResourceHandle(L"log-1");
 	const auto encodedRelease = EncodeControlSenpRpcRequest(release);
 	ASSERT_TRUE(encodedRelease);
 	EXPECT_TRUE(DecodeControlSenpRpcRequest(*encodedRelease));
@@ -119,47 +121,47 @@ TEST(ControlSenpRpc, RoundTripsEveryRequestOperation)
 TEST(ControlSenpRpc, RejectsMembersThatDoNotBelongToTheOperation)
 {
 	auto grantWithRead = IssueGrant();
-	grantWithRead.readId = L"issues:open:1";
+	grantWithRead.SetReadId(L"issues:open:1");
 	EXPECT_FALSE(EncodeControlSenpRpcRequest(grantWithRead));
 
 	auto pollWithTool = StartRead();
-	pollWithTool.operation = EControlSenpRpcOperation::PollRead;
+	pollWithTool.SetOperation(EControlSenpRpcOperation::PollRead);
 	EXPECT_FALSE(EncodeControlSenpRpcRequest(pollWithTool));
 
 	auto readWithCapability = StartRead();
-	readWithCapability.capabilities = 1;
+	readWithCapability.SetCapabilities(1);
 	EXPECT_FALSE(EncodeControlSenpRpcRequest(readWithCapability));
 
 	auto readWithoutGrant = StartRead();
-	readWithoutGrant.grantId.clear();
+	readWithoutGrant.SetGrantId("");
 	EXPECT_FALSE(EncodeControlSenpRpcRequest(readWithoutGrant));
 
 	auto resourceWithoutLength = StartRead();
-	resourceWithoutLength.operation = EControlSenpRpcOperation::ReadResource;
-	resourceWithoutLength.readId.clear();
-	resourceWithoutLength.toolId.clear();
-	resourceWithoutLength.toolOperation.clear();
-	resourceWithoutLength.arguments.clear();
-	resourceWithoutLength.resourceHandle = L"log-1";
+	resourceWithoutLength.SetOperation(EControlSenpRpcOperation::ReadResource);
+	resourceWithoutLength.SetReadId(L"");
+	resourceWithoutLength.SetToolId(L"");
+	resourceWithoutLength.SetToolOperation(L"");
+	resourceWithoutLength.SetArguments({});
+	resourceWithoutLength.SetResourceHandle(L"log-1");
 	EXPECT_FALSE(EncodeControlSenpRpcRequest(resourceWithoutLength));
 }
 
 TEST(ControlSenpRpc, RejectsUnusableOwnerIdentity)
 {
 	auto zeroGeneration = StartRead();
-	zeroGeneration.owner.generation = 0;
+	zeroGeneration.Owner().SetGeneration(0);
 	EXPECT_FALSE(EncodeControlSenpRpcRequest(zeroGeneration));
 
 	auto noExtension = StartRead();
-	noExtension.owner.extensionId.clear();
+	noExtension.Owner().SetExtensionId(L"");
 	EXPECT_FALSE(EncodeControlSenpRpcRequest(noExtension));
 
 	auto noProfile = StartRead();
-	noProfile.profileId.clear();
+	noProfile.SetProfileId(L"");
 	EXPECT_FALSE(EncodeControlSenpRpcRequest(noProfile));
 
 	auto negativeAccount = StartRead();
-	negativeAccount.owner.accountGeneration = -1;
+	negativeAccount.Owner().SetAccountGeneration(-1);
 	EXPECT_FALSE(EncodeControlSenpRpcRequest(negativeAccount));
 }
 
@@ -188,136 +190,136 @@ TEST(ControlSenpRpc, RejectsTruncatedAndTrailingBytes)
 TEST(ControlSenpRpc, RoundTripsCompletionAndResourceResponses)
 {
 	ControlSenpRpcResponse granted;
-	granted.status = EControlSenpRpcStatus::Succeeded;
-	granted.grantId = "grant-1";
-	granted.expiresAtMilliseconds = 1234567;
+	granted.SetStatus(EControlSenpRpcStatus::Succeeded);
+	granted.SetGrantId("grant-1");
+	granted.SetExpiresAtMilliseconds(1234567);
 	const auto encodedGrant = EncodeControlSenpRpcResponse(granted);
 	ASSERT_TRUE(encodedGrant);
 	const auto decodedGrant = DecodeControlSenpRpcResponse(*encodedGrant);
 	ASSERT_TRUE(decodedGrant);
-	EXPECT_EQ("grant-1", decodedGrant->grantId);
-	EXPECT_EQ(1234567U, decodedGrant->expiresAtMilliseconds);
-	EXPECT_FALSE(decodedGrant->hasCompletion);
+	EXPECT_EQ("grant-1", decodedGrant->GrantId());
+	EXPECT_EQ(1234567U, decodedGrant->ExpiresAtMilliseconds());
+	EXPECT_FALSE(decodedGrant->HasCompletion());
 
 	ControlSenpRpcResponse completed;
-	completed.status = EControlSenpRpcStatus::Succeeded;
-	completed.hasCompletion = true;
-	completed.completion = { L"issues:open:1", senp::effect::CompletionStatus::Succeeded,
-		LR"({"body":[],"nextPage":2})", L"" };
+	completed.SetStatus(EControlSenpRpcStatus::Succeeded);
+	completed.SetHasCompletion(true);
+	completed.SetCompletion({ L"issues:open:1", senp::effect::CompletionStatus::Succeeded,
+		LR"({"body":[],"nextPage":2})", L"" });
 	const auto encodedCompleted = EncodeControlSenpRpcResponse(completed);
 	ASSERT_TRUE(encodedCompleted);
 	const auto decodedCompleted = DecodeControlSenpRpcResponse(*encodedCompleted);
 	ASSERT_TRUE(decodedCompleted);
-	EXPECT_TRUE(decodedCompleted->hasCompletion);
-	EXPECT_EQ(completed.completion, decodedCompleted->completion);
+	EXPECT_TRUE(decodedCompleted->HasCompletion());
+	EXPECT_EQ(completed.Completion(), decodedCompleted->Completion());
 
 	ControlSenpRpcResponse chunk;
-	chunk.status = EControlSenpRpcStatus::Succeeded;
-	chunk.resourceHandle = L"log-1";
-	chunk.resourceOffset = 64;
-	chunk.resourceBytes = "run step output";
-	chunk.resourceState = static_cast<std::uint8_t>(senp::TextResourceState::Complete);
-	chunk.resourceEnd = static_cast<std::uint8_t>(senp::TextResourceEnd::Complete);
-	chunk.resourceLength = 79;
-	chunk.resourceRevision = 11;
+	chunk.SetStatus(EControlSenpRpcStatus::Succeeded);
+	chunk.SetResourceHandle(L"log-1");
+	chunk.SetResourceOffset(64);
+	chunk.SetResourceBytes("run step output");
+	chunk.SetResourceState(static_cast<std::uint8_t>(senp::TextResourceState::Complete));
+	chunk.SetResourceEnd(static_cast<std::uint8_t>(senp::TextResourceEnd::Complete));
+	chunk.SetResourceLength(79);
+	chunk.SetResourceRevision(11);
 	const auto encodedChunk = EncodeControlSenpRpcResponse(chunk);
 	ASSERT_TRUE(encodedChunk);
 	const auto decodedChunk = DecodeControlSenpRpcResponse(*encodedChunk);
 	ASSERT_TRUE(decodedChunk);
-	EXPECT_EQ(chunk.resourceBytes, decodedChunk->resourceBytes);
-	EXPECT_EQ(64U, decodedChunk->resourceOffset);
+	EXPECT_EQ(chunk.ResourceBytes(), decodedChunk->ResourceBytes());
+	EXPECT_EQ(64U, decodedChunk->ResourceOffset());
 	// The editor rebuilds a whole chunk from these, so every member its text
 	// surface validates has to survive the round trip - not only the bytes.
-	EXPECT_EQ(chunk.resourceState, decodedChunk->resourceState);
-	EXPECT_EQ(chunk.resourceEnd, decodedChunk->resourceEnd);
-	EXPECT_EQ(79U, decodedChunk->resourceLength);
-	EXPECT_EQ(11, decodedChunk->resourceRevision);
+	EXPECT_EQ(chunk.ResourceState(), decodedChunk->ResourceState());
+	EXPECT_EQ(chunk.ResourceEnd(), decodedChunk->ResourceEnd());
+	EXPECT_EQ(79U, decodedChunk->ResourceLength());
+	EXPECT_EQ(11, decodedChunk->ResourceRevision());
 }
 
 TEST(ControlSenpRpc, RejectsIncoherentResponses)
 {
 	ControlSenpRpcResponse completionWithoutFlag;
-	completionWithoutFlag.status = EControlSenpRpcStatus::Succeeded;
-	completionWithoutFlag.completion.readId = L"issues:open:1";
+	completionWithoutFlag.SetStatus(EControlSenpRpcStatus::Succeeded);
+	completionWithoutFlag.Completion().readId = L"issues:open:1";
 	EXPECT_FALSE(EncodeControlSenpRpcResponse(completionWithoutFlag));
 
 	ControlSenpRpcResponse flagWithoutRead;
-	flagWithoutRead.status = EControlSenpRpcStatus::Succeeded;
-	flagWithoutRead.hasCompletion = true;
+	flagWithoutRead.SetStatus(EControlSenpRpcStatus::Succeeded);
+	flagWithoutRead.SetHasCompletion(true);
 	EXPECT_FALSE(EncodeControlSenpRpcResponse(flagWithoutRead));
 
 	ControlSenpRpcResponse chunkWithoutHandle;
-	chunkWithoutHandle.status = EControlSenpRpcStatus::Succeeded;
-	chunkWithoutHandle.resourceBytes = "bytes";
+	chunkWithoutHandle.SetStatus(EControlSenpRpcStatus::Succeeded);
+	chunkWithoutHandle.SetResourceBytes("bytes");
 	EXPECT_FALSE(EncodeControlSenpRpcResponse(chunkWithoutHandle));
 
 	// A refusal names no resource, so it may describe none either. Each of these
 	// alone would let an answer about nothing be read as a chunk of whichever
 	// resource the editor is currently filling.
 	ControlSenpRpcResponse offsetWithoutHandle;
-	offsetWithoutHandle.status = EControlSenpRpcStatus::NotFound;
-	offsetWithoutHandle.resourceOffset = 64;
+	offsetWithoutHandle.SetStatus(EControlSenpRpcStatus::NotFound);
+	offsetWithoutHandle.SetResourceOffset(64);
 	EXPECT_FALSE(EncodeControlSenpRpcResponse(offsetWithoutHandle));
 
 	ControlSenpRpcResponse lengthWithoutHandle;
-	lengthWithoutHandle.status = EControlSenpRpcStatus::NotFound;
-	lengthWithoutHandle.resourceLength = 128;
+	lengthWithoutHandle.SetStatus(EControlSenpRpcStatus::NotFound);
+	lengthWithoutHandle.SetResourceLength(128);
 	EXPECT_FALSE(EncodeControlSenpRpcResponse(lengthWithoutHandle));
 
 	ControlSenpRpcResponse revisionWithoutHandle;
-	revisionWithoutHandle.status = EControlSenpRpcStatus::NotFound;
-	revisionWithoutHandle.resourceRevision = 11;
+	revisionWithoutHandle.SetStatus(EControlSenpRpcStatus::NotFound);
+	revisionWithoutHandle.SetResourceRevision(11);
 	EXPECT_FALSE(EncodeControlSenpRpcResponse(revisionWithoutHandle));
 
 	ControlSenpRpcResponse endWithoutHandle;
-	endWithoutHandle.status = EControlSenpRpcStatus::NotFound;
-	endWithoutHandle.resourceState = static_cast<std::uint8_t>(senp::TextResourceState::Complete);
-	endWithoutHandle.resourceEnd = static_cast<std::uint8_t>(senp::TextResourceEnd::Complete);
+	endWithoutHandle.SetStatus(EControlSenpRpcStatus::NotFound);
+	endWithoutHandle.SetResourceState(static_cast<std::uint8_t>(senp::TextResourceState::Complete));
+	endWithoutHandle.SetResourceEnd(static_cast<std::uint8_t>(senp::TextResourceEnd::Complete));
 	EXPECT_FALSE(EncodeControlSenpRpcResponse(endWithoutHandle));
 
 	// A chunk reaching past the resource it belongs to describes no resource the
 	// store could have produced, and the editor would append bytes it never held.
 	ControlSenpRpcResponse pastTheEnd;
-	pastTheEnd.status = EControlSenpRpcStatus::Succeeded;
-	pastTheEnd.resourceHandle = L"log-1";
-	pastTheEnd.resourceOffset = 64;
-	pastTheEnd.resourceBytes = "run step output";
-	pastTheEnd.resourceLength = 70;
+	pastTheEnd.SetStatus(EControlSenpRpcStatus::Succeeded);
+	pastTheEnd.SetResourceHandle(L"log-1");
+	pastTheEnd.SetResourceOffset(64);
+	pastTheEnd.SetResourceBytes("run step output");
+	pastTheEnd.SetResourceLength(70);
 	EXPECT_FALSE(EncodeControlSenpRpcResponse(pastTheEnd));
 
 	ControlSenpRpcResponse beyondTheResourceBound;
-	beyondTheResourceBound.status = EControlSenpRpcStatus::Succeeded;
-	beyondTheResourceBound.resourceHandle = L"log-1";
-	beyondTheResourceBound.resourceLength = kControlSenpRpcMaximumResourceBytes + 1;
+	beyondTheResourceBound.SetStatus(EControlSenpRpcStatus::Succeeded);
+	beyondTheResourceBound.SetResourceHandle(L"log-1");
+	beyondTheResourceBound.SetResourceLength(kControlSenpRpcMaximumResourceBytes + 1);
 	EXPECT_FALSE(EncodeControlSenpRpcResponse(beyondTheResourceBound));
 
 	// Outside either enumeration. The editor tests a decoded state against the
 	// states it handles, so one it has never heard of must not decode at all.
 	ControlSenpRpcResponse unknownState;
-	unknownState.status = EControlSenpRpcStatus::Succeeded;
-	unknownState.resourceHandle = L"log-1";
-	unknownState.resourceState = 200;
+	unknownState.SetStatus(EControlSenpRpcStatus::Succeeded);
+	unknownState.SetResourceHandle(L"log-1");
+	unknownState.SetResourceState(200);
 	EXPECT_FALSE(EncodeControlSenpRpcResponse(unknownState));
 
 	ControlSenpRpcResponse unknownEnd;
-	unknownEnd.status = EControlSenpRpcStatus::Succeeded;
-	unknownEnd.resourceHandle = L"log-1";
-	unknownEnd.resourceEnd = 200;
+	unknownEnd.SetStatus(EControlSenpRpcStatus::Succeeded);
+	unknownEnd.SetResourceHandle(L"log-1");
+	unknownEnd.SetResourceEnd(200);
 	EXPECT_FALSE(EncodeControlSenpRpcResponse(unknownEnd));
 
 	// A negative revision would encode as an enormous unsigned value and decode
 	// back as a different one, which is a resource identity, not a rounding error.
 	ControlSenpRpcResponse negativeRevision;
-	negativeRevision.status = EControlSenpRpcStatus::Succeeded;
-	negativeRevision.resourceHandle = L"log-1";
-	negativeRevision.resourceRevision = -1;
+	negativeRevision.SetStatus(EControlSenpRpcStatus::Succeeded);
+	negativeRevision.SetResourceHandle(L"log-1");
+	negativeRevision.SetResourceRevision(-1);
 	EXPECT_FALSE(EncodeControlSenpRpcResponse(negativeRevision));
 
 	ControlSenpRpcResponse oversizedData;
-	oversizedData.status = EControlSenpRpcStatus::Succeeded;
-	oversizedData.hasCompletion = true;
-	oversizedData.completion.readId = L"issues:open:1";
-	oversizedData.completion.data.assign(kControlSenpRpcMaximumToolDataBytes + 1, L'a');
+	oversizedData.SetStatus(EControlSenpRpcStatus::Succeeded);
+	oversizedData.SetHasCompletion(true);
+	oversizedData.Completion().readId = L"issues:open:1";
+	oversizedData.Completion().data.assign(kControlSenpRpcMaximumToolDataBytes + 1, L'a');
 	EXPECT_FALSE(EncodeControlSenpRpcResponse(oversizedData));
 }
 
@@ -327,9 +329,9 @@ TEST(ControlSenpRpc, RoundTripsTheOwnerFreeAccountQuery)
 	ASSERT_TRUE(encoded);
 	const auto decoded = DecodeControlSenpRpcRequest(*encoded);
 	ASSERT_TRUE(decoded);
-	EXPECT_EQ(EControlSenpRpcOperation::QueryAccount, decoded->operation);
-	EXPECT_EQ(L"profile-1", decoded->profileId);
-	EXPECT_TRUE(decoded->owner == ControlSenpRpcOwner{});
+	EXPECT_EQ(EControlSenpRpcOperation::QueryAccount, decoded->Operation());
+	EXPECT_EQ(L"profile-1", decoded->ProfileId());
+	EXPECT_TRUE(decoded->Owner() == ControlSenpRpcOwner{});
 }
 
 TEST(ControlSenpRpc, RejectsAnAccountQueryThatCarriesAnOwnerOrAGrant)
@@ -337,41 +339,41 @@ TEST(ControlSenpRpc, RejectsAnAccountQueryThatCarriesAnOwnerOrAGrant)
 	// The editor asks this before it can know an account generation at all, so an
 	// owner on it could only be a claim that nothing downstream rechecks.
 	auto withOwner = QueryAccount();
-	withOwner.owner = Owner();
+	withOwner.SetOwner(Owner());
 	EXPECT_FALSE(EncodeControlSenpRpcRequest(withOwner));
 
 	auto withGrant = QueryAccount();
-	withGrant.grantId = "grant-1";
+	withGrant.SetGrantId("grant-1");
 	EXPECT_FALSE(EncodeControlSenpRpcRequest(withGrant));
 
 	auto withCapability = QueryAccount();
-	withCapability.capabilities = 1;
+	withCapability.SetCapabilities(1);
 	EXPECT_FALSE(EncodeControlSenpRpcRequest(withCapability));
 
 	auto withoutProfile = QueryAccount();
-	withoutProfile.profileId.clear();
+	withoutProfile.SetProfileId(L"");
 	EXPECT_FALSE(EncodeControlSenpRpcRequest(withoutProfile));
 }
 
 TEST(ControlSenpRpc, RoundTripsTheAccountAnswerAndRefusesAnUnusableOne)
 {
 	ControlSenpRpcResponse answered;
-	answered.status = EControlSenpRpcStatus::Succeeded;
-	answered.accountGeneration = 4;
-	answered.accountState = EControlSenpAccountState::ReauthenticationRequired;
+	answered.SetStatus(EControlSenpRpcStatus::Succeeded);
+	answered.SetAccountGeneration(4);
+	answered.SetAccountState(EControlSenpAccountState::ReauthenticationRequired);
 	const auto encoded = EncodeControlSenpRpcResponse(answered);
 	ASSERT_TRUE(encoded);
 	const auto decoded = DecodeControlSenpRpcResponse(*encoded);
 	ASSERT_TRUE(decoded);
-	EXPECT_EQ(4, decoded->accountGeneration);
-	EXPECT_EQ(EControlSenpAccountState::ReauthenticationRequired, decoded->accountState);
+	EXPECT_EQ(4, decoded->AccountGeneration());
+	EXPECT_EQ(EControlSenpAccountState::ReauthenticationRequired, decoded->AccountState());
 
 	auto negative = answered;
-	negative.accountGeneration = -1;
+	negative.SetAccountGeneration(-1);
 	EXPECT_FALSE(EncodeControlSenpRpcResponse(negative));
 
 	auto foreignState = answered;
-	foreignState.accountState = static_cast<EControlSenpAccountState>(9);
+	foreignState.SetAccountState(static_cast<EControlSenpAccountState>(9));
 	EXPECT_FALSE(EncodeControlSenpRpcResponse(foreignState));
 
 	// The state is the last byte on the wire. A value outside the enum must be
@@ -388,75 +390,76 @@ TEST(ControlSenpRpc, RoundTripsTheOwnerFreeWorkspaceAdoption)
 	ASSERT_TRUE(encoded);
 	const auto decoded = DecodeControlSenpRpcRequest(*encoded);
 	ASSERT_TRUE(decoded);
-	EXPECT_EQ(EControlSenpRpcOperation::AdoptWorkspace, decoded->operation);
-	EXPECT_EQ(L"profile-1", decoded->profileId);
+	EXPECT_EQ(EControlSenpRpcOperation::AdoptWorkspace, decoded->Operation());
+	EXPECT_EQ(L"profile-1", decoded->ProfileId());
 	// The declaration precedes every owner and names no repository: the control
 	// side derives that from the remotes it finds at these folders.
-	EXPECT_TRUE(decoded->owner == ControlSenpRpcOwner{});
-	EXPECT_TRUE(decoded->grantId.empty());
-	EXPECT_EQ(declared.workspace, decoded->workspace);
+	EXPECT_TRUE(decoded->Owner() == ControlSenpRpcOwner{});
+	EXPECT_TRUE(decoded->GrantId().empty());
+	EXPECT_EQ(declared.Workspace(), decoded->Workspace());
 	// Order is part of the identity of a multi-root workspace, so it is asserted
 	// rather than left to the set of folders happening to match.
-	ASSERT_EQ(2U, decoded->workspace.folders.size());
-	EXPECT_EQ(L"file:///c:/work/repo", decoded->workspace.folders[0]);
-	EXPECT_EQ(L"file:///c:/work/docs", decoded->workspace.folders[1]);
+	ASSERT_EQ(2U, decoded->Workspace().Folders().size());
+	EXPECT_EQ(L"file:///c:/work/repo", decoded->Workspace().Folders()[0]);
+	EXPECT_EQ(L"file:///c:/work/docs", decoded->Workspace().Folders()[1]);
 
 	// A window that has no folder to select from says so. That is a declaration,
 	// not an absent one, and it must survive the round trip as one.
 	auto empty = declared;
-	empty.workspace.folders.clear();
+	empty.Workspace().SetFolders({});
 	const auto encodedEmpty = EncodeControlSenpRpcRequest(empty);
 	ASSERT_TRUE(encodedEmpty);
 	const auto decodedEmpty = DecodeControlSenpRpcRequest(*encodedEmpty);
 	ASSERT_TRUE(decodedEmpty);
-	EXPECT_TRUE(decodedEmpty->workspace.folders.empty());
-	EXPECT_EQ(11, decodedEmpty->workspace.revision);
-	EXPECT_FALSE(decodedEmpty->workspace.Empty());
+	EXPECT_TRUE(decodedEmpty->Workspace().Folders().empty());
+	EXPECT_EQ(11, decodedEmpty->Workspace().Revision());
+	EXPECT_FALSE(decodedEmpty->Workspace().Empty());
 }
 
 TEST(ControlSenpRpc, RejectsAWorkspaceAdoptionThatCarriesAnOwnerOrCannotBeChecked)
 {
 	auto withOwner = AdoptWorkspace();
-	withOwner.owner = Owner();
+	withOwner.SetOwner(Owner());
 	EXPECT_FALSE(EncodeControlSenpRpcRequest(withOwner));
 
 	auto withGrant = AdoptWorkspace();
-	withGrant.grantId = "grant-1";
+	withGrant.SetGrantId("grant-1");
 	EXPECT_FALSE(EncodeControlSenpRpcRequest(withGrant));
 
 	auto withRead = AdoptWorkspace();
-	withRead.readId = L"issues:open:1";
+	withRead.SetReadId(L"issues:open:1");
 	EXPECT_FALSE(EncodeControlSenpRpcRequest(withRead));
 
 	auto withoutProfile = AdoptWorkspace();
-	withoutProfile.profileId.clear();
+	withoutProfile.SetProfileId(L"");
 	EXPECT_FALSE(EncodeControlSenpRpcRequest(withoutProfile));
 
 	// A revision of zero observed nothing, so a staleness check against it would
 	// pass for a workspace that was never captured.
 	auto withoutRevision = AdoptWorkspace();
-	withoutRevision.workspace.revision = 0;
+	withoutRevision.Workspace().SetRevision(0);
 	EXPECT_FALSE(EncodeControlSenpRpcRequest(withoutRevision));
 
 	auto withoutGeneration = AdoptWorkspace();
-	withoutGeneration.workspace.generation = 0;
+	withoutGeneration.Workspace().SetGeneration(0);
 	EXPECT_FALSE(EncodeControlSenpRpcRequest(withoutGeneration));
 
 	auto withNamelessFolder = AdoptWorkspace();
-	withNamelessFolder.workspace.folders.push_back(L"");
+	withNamelessFolder.Workspace().AddFolder(L"");
 	EXPECT_FALSE(EncodeControlSenpRpcRequest(withNamelessFolder));
 
 	// The control side inspects every declared folder, so the bound is what keeps
 	// one declaration from becoming unbounded work on the refresh worker.
 	auto tooMany = AdoptWorkspace();
-	tooMany.workspace.folders.assign(kControlSenpRpcMaximumWorkspaceFolders + 1, L"file:///c:/work");
+	tooMany.Workspace().SetFolders(
+		std::vector<std::wstring>(kControlSenpRpcMaximumWorkspaceFolders + 1, L"file:///c:/work"));
 	EXPECT_FALSE(EncodeControlSenpRpcRequest(tooMany));
 }
 
 TEST(ControlSenpRpc, RejectsADeclaredFolderCountNoEncoderWouldHaveWritten)
 {
 	auto empty = AdoptWorkspace();
-	empty.workspace.folders.clear();
+	empty.Workspace().SetFolders({});
 	const auto encoded = EncodeControlSenpRpcRequest(empty);
 	ASSERT_TRUE(encoded);
 	// The folder count is the last field on the wire, so raising it past the
@@ -480,21 +483,21 @@ TEST(ControlSenpRpc, RejectsAWorkspaceDeclaredOnAnOperationThatDoesNotAdoptOne)
 	// holds, so a declaration on one would restate that state where nothing
 	// rechecks it.
 	auto readWithWorkspace = StartRead();
-	readWithWorkspace.workspace = AdoptWorkspace().workspace;
+	readWithWorkspace.SetWorkspace(AdoptWorkspace().Workspace());
 	EXPECT_FALSE(EncodeControlSenpRpcRequest(readWithWorkspace));
 
 	auto grantWithWorkspace = IssueGrant();
-	grantWithWorkspace.workspace = AdoptWorkspace().workspace;
+	grantWithWorkspace.SetWorkspace(AdoptWorkspace().Workspace());
 	EXPECT_FALSE(EncodeControlSenpRpcRequest(grantWithWorkspace));
 
 	auto accountWithWorkspace = QueryAccount();
-	accountWithWorkspace.workspace = AdoptWorkspace().workspace;
+	accountWithWorkspace.SetWorkspace(AdoptWorkspace().Workspace());
 	EXPECT_FALSE(EncodeControlSenpRpcRequest(accountWithWorkspace));
 
 	// A revision alone is still a declaration, so it is refused for the same
 	// reason a fully populated one is.
 	auto readWithRevision = StartRead();
-	readWithRevision.workspace.revision = 11;
+	readWithRevision.Workspace().SetRevision(11);
 	EXPECT_FALSE(EncodeControlSenpRpcRequest(readWithRevision));
 }
 
@@ -502,9 +505,9 @@ TEST(ControlSenpRpc, MapsOwnerIdentityWithoutLoss)
 {
 	const auto owner = Owner();
 	const auto identity = ToContributionOwner(owner);
-	EXPECT_EQ(owner.extensionId, identity.extensionId);
-	EXPECT_EQ(owner.packageDigest, identity.packageDigest);
-	EXPECT_EQ(owner.generation, identity.generation);
+	EXPECT_EQ(owner.ExtensionId(), identity.extensionId);
+	EXPECT_EQ(owner.PackageDigest(), identity.packageDigest);
+	EXPECT_EQ(owner.Generation(), identity.generation);
 	EXPECT_EQ(owner, FromContributionOwner(identity));
 }
 

@@ -26,7 +26,16 @@ struct CallGuard {
 } // namespace
 
 struct CSenpContributionOwners::Impl {
+	//! One prepared/active/retiring host slot. State belongs exclusively to
+	//! CSenpContributionOwners and its Impl, which together sequence
+	//! preparation, activation, draining and retirement; the fields are
+	//! private with those two as the sole, explicit friends rather than a
+	//! public data bag any future caller could reach into.
 	struct Slot {
+	private:
+		friend struct Impl;
+		friend class ::senp::CSenpContributionOwners;
+
 		ContributionOwnerIdentity owner;
 		std::unique_ptr<ISenpEffectRuntime> runtime;
 		std::unique_ptr<ISenpOwnerPublication> publication;
@@ -172,7 +181,7 @@ OwnerChangeResult CSenpContributionOwners::Prepare(EffectRuntimeLaunch launch, s
 			launch.context.workspaceRevision, launch.context.accountGeneration };
 		// A slot that has not become callable yet is waiting on a cold start, not
 		// on one invocation, so it is held to the budget written for one.
-		slot->deadline = now + CSenpRuntimeSession::kMaximumColdStart;
+		slot->deadline = now + kMaximumColdStart;
 		const auto* previous = s.Current(launch.extensionId);
 		slot->publication = publication(slot->owner, previous ? &previous->owner : nullptr);
 		if (!slot->publication) return { OwnerChangeStatus::Unsupported };

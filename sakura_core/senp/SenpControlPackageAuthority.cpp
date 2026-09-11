@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <array>
+#include <system_error>
 #include <utility>
 
 namespace senp {
@@ -79,32 +80,31 @@ SenpPackageAuthorityPublishResult CSenpControlPackageAuthority::Publish(
 	const std::wstring_view profileId, const ManagementSnapshot& snapshot)
 {
 	if (!platform::profiles::IsOpaqueUserDataProfileId(profileId)) return { Status::InvalidRequest };
-	std::lock_guard lock(m_mutex);
+	std::lock_guard lock(*m_mutex);
 	if (m_closed) return { Status::Closed };
 	const auto published = m_profiles.find(profileId);
-	if (published != m_profiles.end() && snapshot.revision < published->second.revision) {
-		return { Status::Stale, published->second.revision, published->second.owners.size() };
+	if (published != m_profiles.end() && snapshot.revision < published->second.Revision()) {
+		return { Status::Stale, published->second.Revision(), published->second.OwnerCount() };
 	}
 	if (!ProvesEnablement(snapshot)) {
 		if (published != m_profiles.end()) m_profiles.erase(published);
 		return { Status::Unverified };
 	}
 
-	Profile next;
-	next.revision = snapshot.revision;
+	Profile next(snapshot.revision);
 	for (const auto& extension : snapshot.extensions) {
 		if (!IsActivatable(extension)) continue;
 		const auto capabilities = Capabilities(extension);
 		if (capabilities == SenpToolCapability::None) continue;
 		if (!IsExtensionId(extension.id) || !IsDigest(extension.archiveSha256)) continue;
-		if (next.owners.size() >= MaximumOwners()) {
+		if (next.OwnerCount() >= MaximumOwners()) {
 			if (published != m_profiles.end()) m_profiles.erase(published);
 			return { Status::ResourceExhausted };
 		}
 		// Two records for one identity make the permission ambiguous. Resolving
 		// the ambiguity by insertion order would let a second package inherit the
 		// first one's authority, so the whole publish is refused instead.
-		if (!next.owners.emplace(extension.id, Owner{ extension.archiveSha256, capabilities }).second) {
+		if (!next.AddOwner(extension.id, Owner(extension.archiveSha256, capabilities))) {
 			if (published != m_profiles.end()) m_profiles.erase(published);
 			return { Status::Unverified };
 		}
@@ -112,7 +112,7 @@ SenpPackageAuthorityPublishResult CSenpControlPackageAuthority::Publish(
 	if (published == m_profiles.end() && m_profiles.size() >= MaximumProfiles()) {
 		return { Status::ResourceExhausted };
 	}
-	const auto approved = next.owners.size();
+	const auto approved = next.OwnerCount();
 	if (published != m_profiles.end()) published->second = std::move(next);
 	else m_profiles.emplace(std::wstring(profileId), std::move(next));
 	return { Status::Published, snapshot.revision, approved };
@@ -121,10 +121,10 @@ SenpPackageAuthorityPublishResult CSenpControlPackageAuthority::Publish(
 void CSenpControlPackageAuthority::Withdraw(const std::wstring_view profileId) noexcept
 {
 	try {
-		std::lock_guard lock(m_mutex);
+		std::lock_guard lock(*m_mutex);
 		const auto found = m_profiles.find(profileId);
 		if (found != m_profiles.end()) m_profiles.erase(found);
-	} catch (...) {
+	} catch (const std::system_error&) {
 		// Withdrawing is a revocation path and may not expose a failure.
 	}
 }
@@ -132,10 +132,10 @@ void CSenpControlPackageAuthority::Withdraw(const std::wstring_view profileId) n
 void CSenpControlPackageAuthority::Close() noexcept
 {
 	try {
-		std::lock_guard lock(m_mutex);
+		std::lock_guard lock(*m_mutex);
 		m_closed = true;
 		m_profiles.clear();
-	} catch (...) {
+	} catch (const std::system_error&) {
 		// Closing is terminal; a locking failure may not be reported here.
 	}
 }
@@ -143,30 +143,30 @@ void CSenpControlPackageAuthority::Close() noexcept
 std::optional<SenpApprovedToolOwner> CSenpControlPackageAuthority::Resolve(
 	const std::wstring_view profileId, const std::wstring_view extensionId) const
 {
-	std::lock_guard lock(m_mutex);
+	std::lock_guard lock(*m_mutex);
 	if (m_closed) return std::nullopt;
 	const auto profile = m_profiles.find(profileId);
 	if (profile == m_profiles.end()) return std::nullopt;
-	const auto owner = profile->second.owners.find(extensionId);
-	if (owner == profile->second.owners.end()) return std::nullopt;
+	const auto* owner = profile->second.FindOwner(extensionId);
+	if (owner == nullptr) return std::nullopt;
 	return SenpApprovedToolOwner{ std::wstring(profileId), std::wstring(extensionId),
-		owner->second.packageDigest, profile->second.revision, owner->second.capabilities, true };
+		owner->PackageDigest(), profile->second.Revision(), owner->Capabilities(), true };
 }
 
 std::optional<std::uint64_t> CSenpControlPackageAuthority::Revision(const std::wstring_view profileId) const
 {
-	std::lock_guard lock(m_mutex);
+	std::lock_guard lock(*m_mutex);
 	const auto profile = m_profiles.find(profileId);
 	if (profile == m_profiles.end()) return std::nullopt;
-	return profile->second.revision;
+	return profile->second.Revision();
 }
 
 std::size_t CSenpControlPackageAuthority::Size() const noexcept
 {
 	try {
-		std::lock_guard lock(m_mutex);
+		std::lock_guard lock(*m_mutex);
 		return m_profiles.size();
-	} catch (...) {
+	} catch (const std::system_error&) {
 		return 0;
 	}
 }

@@ -35,6 +35,8 @@ struct CSenpTreeView::Impl final : ISenpTreeObserver {
 		std::uint64_t token{};
 		RowKind kind{ RowKind::Item };
 	};
+private:
+	friend class CSenpTreeView;
 	SenpTreeViewOptions options;
 	HWND window{}, tree{};
 	std::unordered_map<HTREEITEM, std::unique_ptr<Row>> rows;
@@ -51,6 +53,7 @@ struct CSenpTreeView::Impl final : ISenpTreeObserver {
 	std::wstring armedAction, pendingActionRow, pendingAction;
 	HTREEITEM hover{};
 	bool closed{}, failed{}, visible{}, synchronizing{}, posted{}, invokePosted{}, observed{}, invokeExpand{};
+public:
 	explicit Impl(SenpTreeViewOptions value) : options(std::move(value)) {}
 	~Impl() { Close(); }
 	bool Usable() const noexcept { return !closed && !failed && window && tree; }
@@ -281,7 +284,7 @@ struct CSenpTreeView::Impl final : ISenpTreeObserver {
 		const auto actions = Actions(item);
 		const auto* action = ActionAt(actions, point);
 		if (!action) return {};
-		return std::pair{ row, action->commandId };
+		return std::pair{ row, action->CommandId() };
 	}
 	void Invoke()
 	{
@@ -332,7 +335,7 @@ struct CSenpTreeView::Impl final : ISenpTreeObserver {
 		text.top = line.top; text.bottom = line.bottom; text.right = std::max(text.left, client.right - Dip(10, dpi));
 		if (const auto actions = Actions(item); !actions.empty()) {
 			for (const auto& [rect, action] : actions)
-				viewcontainer::PaintViewPaneIcon(draw.nmcd.hdc, rect, action.icon, main.ToColorRef());
+				viewcontainer::PaintViewPaneIcon(draw.nmcd.hdc, rect, action.Icon(), main.ToColorRef());
 			text.right = std::max<LONG>(text.left, actions.front().first.left - Dip(4, dpi));
 		}
 		const auto oldColor = ::SetTextColor(draw.nmcd.hdc, main.ToColorRef());

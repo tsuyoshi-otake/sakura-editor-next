@@ -146,7 +146,25 @@ public:
 	[[nodiscard]] bool WaitForIdle(std::uint32_t timeoutMilliseconds) noexcept;
 
 private:
+	// The five structs below are private members of this class already - no
+	// external caller can name them - but each is its own type with its own
+	// fresh public/private access state, so their data fields were still
+	// public-by-default from that type's own point of view. Every field moves
+	// behind an explicit `private:` label with `friend class CSenpGitHubToolExecutor;`
+	// so the sole owner keeps full field access while each struct's own public
+	// surface narrows to what it actually needs to expose (nothing, for these
+	// plain state records).
 	struct Read final {
+		Read(std::wstring readIdValue, std::wstring shapeValue, std::wstring cacheKeyValue,
+			std::uint64_t subscriptionIdValue, std::uint64_t deliveredCycleValue) noexcept
+			: readId(std::move(readIdValue)), shape(std::move(shapeValue)), cacheKey(std::move(cacheKeyValue)),
+			subscriptionId(subscriptionIdValue), deliveredCycle(deliveredCycleValue)
+		{
+		}
+
+	private:
+		friend class CSenpGitHubToolExecutor;
+
 		std::wstring readId;
 		//! The shape this read asked for. The page it answers with is reduced to
 		//! that shape's stated fields, so the answer cannot be published without
@@ -161,6 +179,9 @@ private:
 		std::wstring resource;
 	};
 	struct Page final {
+	private:
+		friend class CSenpGitHubToolExecutor;
+
 		std::wstring cacheKey;
 		std::uint64_t cycle{};
 		GhRepositoryResponseStatus status{ GhRepositoryResponseStatus::Failed };
@@ -173,11 +194,23 @@ private:
 	//! One finished log and the store that received it. The store held nothing
 	//! else, so releasing the log is simply dropping this.
 	struct LogResource final {
+		LogResource(std::wstring handleValue, TextResourceScope resourceScopeValue,
+			std::unique_ptr<SenpTextResourceStore> storeValue) noexcept
+			: handle(std::move(handleValue)), resourceScope(std::move(resourceScopeValue)), store(std::move(storeValue))
+		{
+		}
+
+	private:
+		friend class CSenpGitHubToolExecutor;
+
 		std::wstring handle;
 		TextResourceScope resourceScope;
 		std::unique_ptr<SenpTextResourceStore> store;
 	};
 	struct ScopeState final {
+	private:
+		friend class CSenpGitHubToolExecutor;
+
 		platform::controlipc::SenpToolExecutionScope scope;
 		TextResourceScope resourceScope;
 		std::vector<Read> reads;
@@ -198,6 +231,18 @@ private:
 		copy, so the worker still holds no scope of its own.
 	*/
 	struct LogJob final {
+		LogJob(platform::controlipc::SenpToolExecutionScope scopeValue, std::wstring readIdValue,
+			std::wstring profileIdValue, TextResourceScope resourceScopeValue, GhJobLogRequest requestValue,
+			std::unique_ptr<SenpTextResourceStore> storeValue, std::wstring handleValue = {})
+			: scope(std::move(scopeValue)), readId(std::move(readIdValue)), profileId(std::move(profileIdValue)),
+			resourceScope(std::move(resourceScopeValue)), request(std::move(requestValue)), store(std::move(storeValue)),
+			handle(std::move(handleValue))
+		{
+		}
+
+	private:
+		friend class CSenpGitHubToolExecutor;
+
 		platform::controlipc::SenpToolExecutionScope scope;
 		std::wstring readId;
 		std::wstring profileId;
@@ -230,6 +275,15 @@ private:
 	//! read identity is gone. Never throws out to the worker loop.
 	void RecordLog(LogJob& job, effect::ToolCompleted completed, bool keepResource) noexcept;
 	[[nodiscard]] const GhToolProbe& Probe();
+	//! The sole place this class starts its worker thread: paired unconditionally
+	//! with the destructor's stop-then-join, so the acquisition this rule tracks
+	//! appears exactly once, already scoped to its guaranteed release.
+	void StartWorker();
+	//! The sole place this class admits a scheduler subscription: its matching
+	//! release is `m_scheduler.Unsubscribe`, called from both CancelRead and
+	//! CancelScope. Isolating the acquisition here keeps it to one documented
+	//! call site instead of leaving it inline in StartRead.
+	[[nodiscard]] GhReadSubscriptionResult SubscribeRead(const GhReadResourceKey& key);
 
 	std::shared_ptr<ISenpGitHubProfileSource> m_profiles;
 	CGhToolPolicy m_policy;

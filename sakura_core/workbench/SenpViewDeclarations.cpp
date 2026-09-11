@@ -47,7 +47,7 @@ private:
 		// The title bar outlives runtime generations; each click asks the bodies
 		// which runtime, if any, is bound now. The weak reference keeps a button
 		// that outlives its declaration from reaching a closed cohort.
-		m_native = viewcontainer::CSenpViewContainers::Create({ m_declarations.m_parkingParent,
+		m_native = viewcontainer::CSenpViewContainers::Create({ m_declarations.m_pages.ParkingParent(),
 			m_owner, m_containers, std::move(native), m_declarations.m_requestFocus,
 			[bodies = std::weak_ptr(m_bodies)](std::string_view viewId, std::string_view commandId) {
 				const auto current = bodies.lock();
@@ -94,9 +94,9 @@ private:
 };
 
 CSenpViewDeclarations::CSenpViewDeclarations(layout::WorkbenchContributionRegistry& catalog,
-	viewcontainer::CViewContainerPages& pages, HWND parkingParent,
+	viewcontainer::CViewContainerPages& pages,
 	SenpDeclaredViewActivation requestActivation, std::function<bool(std::string_view)> requestFocus)
-	: m_catalog(catalog), m_pages(pages), m_parkingParent(parkingParent),
+	: m_catalog(catalog), m_pages(pages),
 	m_requestActivation(std::move(requestActivation)), m_requestFocus(std::move(requestFocus)) {}
 CSenpViewDeclarations::~CSenpViewDeclarations() { Close(); }
 
@@ -111,7 +111,7 @@ SenpViewDeclarationStatus CSenpViewDeclarations::Register(layout::WorkbenchContr
 		const auto id = commands::json::ToWideStrict(owner.ownerId);
 		if (!id || !layout::WorkbenchContributionRegistry::IsValidStableId(owner.ownerId)
 			|| !owner.generation || containers.empty() || containers.size() > 64 || views.empty() || views.size() > 64
-			|| !::IsWindow(m_parkingParent) || !m_requestActivation || !m_requestFocus) return Status::Invalid;
+			|| !::IsWindow(m_pages.ParkingParent()) || !m_requestActivation || !m_requestFocus) return Status::Invalid;
 		const auto found = m_entries.find(*id);
 		if (found != m_entries.end()) return found->second->m_containers == containers && found->second->m_views == views
 			&& found->second->m_titleActions == titleActions && m_catalog.IsOwnerCurrent(found->second->m_owner) && found->second->m_native->IsUsable()
@@ -127,7 +127,12 @@ SenpViewDeclarationStatus CSenpViewDeclarations::Register(layout::WorkbenchContr
 		if (!inserted.first->second->Commit()) return Status::Conflict;
 		m_entries.insert(prepared.extract(inserted.first));
 		return Status::Registered;
-	} catch (...) { return Status::Failed; }
+	} catch (const std::exception&) {
+		// CSenpDeclaredTreeViews::Create, CSenpViewContainers::Create,
+		// PrepareOwnerReplacement and PrepareContributedPages are all noexcept;
+		// only std container/allocation work in this block can throw here.
+		return Status::Failed;
+	}
 }
 
 std::unique_ptr<ISenpDeclaredTreePublication> CSenpViewDeclarations::Bind(

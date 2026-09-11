@@ -8,6 +8,7 @@
 #include <array>
 #include <charconv>
 #include <cstdint>
+#include <exception>
 #include <limits>
 #include <span>
 #include <string>
@@ -33,9 +34,19 @@ using ProjectionFields = std::span<const ProjectionField>;
 	not "keep everything" - it keeps an array of scalars as it is, and reduces an
 	object to `{}`, which is how a presence marker survives without its payload.
 */
-struct ProjectionField final {
-	std::wstring_view name;
-	ProjectionFields members{};
+class ProjectionField final {
+public:
+	constexpr ProjectionField(std::wstring_view name, ProjectionFields members = {}) noexcept
+		: m_name(name), m_members(members)
+	{
+	}
+
+	[[nodiscard]] constexpr std::wstring_view Name() const noexcept { return m_name; }
+	[[nodiscard]] constexpr ProjectionFields Members() const noexcept { return m_members; }
+
+private:
+	std::wstring_view m_name;
+	ProjectionFields m_members;
 };
 
 constexpr std::array<ProjectionField, 1> kUser{ { { L"login" } } };
@@ -105,9 +116,19 @@ constexpr std::array<ProjectionField, 2> kJobs{ {
 	{ L"jobs", kJob }, { L"total_count" },
 } };
 
-struct ShapeProjection final {
-	std::wstring_view shape;
-	ProjectionFields fields;
+class ShapeProjection final {
+public:
+	constexpr ShapeProjection(std::wstring_view shape, ProjectionFields fields) noexcept
+		: m_shape(shape), m_fields(fields)
+	{
+	}
+
+	[[nodiscard]] constexpr std::wstring_view Shape() const noexcept { return m_shape; }
+	[[nodiscard]] constexpr ProjectionFields Fields() const noexcept { return m_fields; }
+
+private:
+	std::wstring_view m_shape;
+	ProjectionFields m_fields;
 };
 
 constexpr std::array<ShapeProjection, 14> kShapes{ {
@@ -130,7 +151,7 @@ constexpr std::array<ShapeProjection, 14> kShapes{ {
 const ShapeProjection* FindShape(const std::wstring_view shape) noexcept
 {
 	for (const auto& entry : kShapes) {
-		if (entry.shape == shape) return &entry;
+		if (entry.Shape() == shape) return &entry;
 	}
 	return nullptr;
 }
@@ -140,9 +161,9 @@ JsoncValue Project(const JsoncValue& value, ProjectionFields fields)
 	if (const auto* object = std::get_if<JsoncValue::Object>(&value.Value())) {
 		JsoncValue::Object kept;
 		for (const auto& field : fields) {
-			const auto member = object->find(field.name);
+			const auto member = object->find(field.Name());
 			if (member == object->end()) continue;
-			kept.emplace(member->first, Project(member->second, field.members));
+			kept.emplace(member->first, Project(member->second, field.Members()));
 		}
 		return JsoncValue(std::move(kept));
 	}
@@ -266,9 +287,9 @@ try {
 		&& !std::holds_alternative<JsoncValue::Array>(value)) return std::nullopt;
 	std::string projected;
 	projected.reserve(body.size() / 8);
-	if (!Serialize(Project(*parsed.value, projection->fields), projected)) return std::nullopt;
+	if (!Serialize(Project(*parsed.value, projection->Fields()), projected)) return std::nullopt;
 	return projected;
-} catch (...) {
+} catch (const std::exception&) {
 	return std::nullopt;
 }
 

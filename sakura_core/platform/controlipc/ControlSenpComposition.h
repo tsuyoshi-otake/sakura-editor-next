@@ -60,7 +60,8 @@ public:
 	//! Bounded number of profile homes this source keeps a service for.
 	[[nodiscard]] static constexpr std::size_t MaximumProfileHomes() noexcept { return 8; }
 
-	using Factory = std::function<std::shared_ptr<senp::ISenpManagementService>(const std::wstring&)>;
+	using Factory =
+		std::function<std::shared_ptr<senp::ISenpManagementService>(const std::wstring&)>;
 	//! A disengaged factory selects the production Win32 management service.
 	explicit CControlSenpPackageSource(Factory factory = {});
 	~CControlSenpPackageSource() override;
@@ -120,7 +121,7 @@ private:
 
 	const std::chrono::milliseconds m_minimumInterval;
 	const std::size_t m_maximumPending;
-	mutable std::mutex m_mutex;
+	std::mutex m_mutex;
 	std::condition_variable m_admitted;
 	std::condition_variable m_idle;
 	std::deque<std::wstring> m_pending;
@@ -175,7 +176,8 @@ public:
 	CControlSenpProfileSource(std::shared_ptr<senp::CSenpToolGrants> grants,
 		std::shared_ptr<senp::github::IGhConnectionPlatform> platform,
 		std::wstring configurationDirectory,
-		std::shared_ptr<CControlSenpRefreshQueue> refresh = nullptr);
+		std::shared_ptr<CControlSenpRefreshQueue> refresh
+			= nullptr);
 	~CControlSenpProfileSource() override;
 	CControlSenpProfileSource(const CControlSenpProfileSource&) = delete;
 	CControlSenpProfileSource& operator=(const CControlSenpProfileSource&) = delete;
@@ -209,16 +211,64 @@ public:
 	void Close() noexcept;
 
 private:
-	struct Profile final {
-		std::shared_ptr<senp::github::CGhConnectionLifecycle> connection;
-		std::optional<senp::github::GhSelectedRepository> repository;
+	//! Private state with accessors/setters for the same encapsulation reason as
+	//! every other DTO in this subsystem, even though this one never leaves the
+	//! owning source.
+	class Profile final {
+	public:
+		Profile() = default;
+		Profile(std::shared_ptr<senp::github::CGhConnectionLifecycle> connection,
+			std::optional<senp::github::GhSelectedRepository> repository) :
+			m_connection(std::move(connection)), m_repository(std::move(repository))
+		{
+		}
+
+		[[nodiscard]] const std::shared_ptr<senp::github::CGhConnectionLifecycle>& Connection() const noexcept
+		{
+			return m_connection;
+		}
+		[[nodiscard]] const std::optional<senp::github::GhSelectedRepository>& Repository() const noexcept
+		{
+			return m_repository;
+		}
+
+		void SetConnection(std::shared_ptr<senp::github::CGhConnectionLifecycle> value)
+		{
+			m_connection = std::move(value);
+		}
+		void SetRepository(std::optional<senp::github::GhSelectedRepository> value)
+		{
+			m_repository = std::move(value);
+		}
+
+	private:
+		std::shared_ptr<senp::github::CGhConnectionLifecycle> m_connection;
+		std::optional<senp::github::GhSelectedRepository> m_repository;
 	};
 	//! Held per connection, never per profile: a declaration has to disappear
 	//! with the window that made it, and only the connection identifies that.
-	struct Adoption final {
-		SenpConnectionIdentity connection;
-		std::wstring profileId;
-		ControlSenpRpcWorkspace workspace;
+	//! Private state; `connection` is set once at construction and never
+	//! reassigned, so it needs only a getter.
+	class Adoption final {
+	public:
+		Adoption(SenpConnectionIdentity connection, std::wstring profileId,
+			ControlSenpRpcWorkspace workspace) :
+			m_connection(std::move(connection)), m_profileId(std::move(profileId)),
+			m_workspace(std::move(workspace))
+		{
+		}
+
+		[[nodiscard]] const SenpConnectionIdentity& Connection() const noexcept { return m_connection; }
+		[[nodiscard]] const std::wstring& ProfileId() const noexcept { return m_profileId; }
+		[[nodiscard]] const ControlSenpRpcWorkspace& Workspace() const noexcept { return m_workspace; }
+
+		void SetProfileId(std::wstring value) { m_profileId = std::move(value); }
+		void SetWorkspace(ControlSenpRpcWorkspace value) { m_workspace = std::move(value); }
+
+	private:
+		SenpConnectionIdentity m_connection;
+		std::wstring m_profileId;
+		ControlSenpRpcWorkspace m_workspace;
 	};
 
 	//! Requests a refresh for each named profile. Called with no lock held,
@@ -229,7 +279,10 @@ private:
 	std::shared_ptr<senp::github::IGhConnectionPlatform> m_platform;
 	const std::wstring m_configurationDirectory;
 	std::shared_ptr<CControlSenpRefreshQueue> m_refresh;
-	mutable std::mutex m_mutex;
+	//! Owned separately from the class so DeclaredWorkspace() can lock it from a
+	//! const method without a class-level mutable member, matching
+	//! ControlSenpClient.h.
+	std::unique_ptr<std::mutex> m_mutex = std::make_unique<std::mutex>();
 	std::map<std::wstring, Profile, std::less<>> m_profiles;
 	std::vector<Adoption> m_adoptions;
 	bool m_closed = false;
@@ -238,27 +291,92 @@ private:
 //! Immutable inputs the control runtime has already resolved for itself. The
 //! authority identity and the control profile root are the canonical pair the
 //! profile bootstrap resolves a profile home from; they are never editor claims.
-struct ControlSenpCompositionOptions {
-	std::wstring controlProfileRoot;
-	std::string controlAuthorityId;
-	std::uint64_t controlAuthorityGeneration = 0;
+//! Private state with accessors/setters, matching every other DTO in this
+//! subsystem: callers build one with the default constructor and setters, then
+//! pass it by value into the composition, which never mutates it afterwards.
+class ControlSenpCompositionOptions {
+public:
+	ControlSenpCompositionOptions() = default;
+
+	[[nodiscard]] const std::wstring& ControlProfileRoot() const noexcept { return m_controlProfileRoot; }
+	[[nodiscard]] const std::string& ControlAuthorityId() const noexcept { return m_controlAuthorityId; }
+	[[nodiscard]] std::uint64_t ControlAuthorityGeneration() const noexcept
+	{
+		return m_controlAuthorityGeneration;
+	}
 	//! Absolute GH_CONFIG_DIR of the control process's own user. An empty value
 	//! selects the location the GitHub CLI itself would use for that user.
-	std::wstring ghConfigurationDirectory;
+	[[nodiscard]] const std::wstring& GhConfigurationDirectory() const noexcept
+	{
+		return m_ghConfigurationDirectory;
+	}
 	//! Absolute working directory for `gh` invocations. Empty selects the
 	//! control profile root.
-	std::wstring workingDirectory;
+	[[nodiscard]] const std::wstring& WorkingDirectory() const noexcept { return m_workingDirectory; }
 	//! The hostname the connection check adopts an account for.
-	std::wstring hostname = L"github.com";
+	[[nodiscard]] const std::wstring& Hostname() const noexcept { return m_hostname; }
+
+	void SetControlProfileRoot(std::wstring value) { m_controlProfileRoot = std::move(value); }
+	void SetControlAuthorityId(std::string value) { m_controlAuthorityId = std::move(value); }
+	void SetControlAuthorityGeneration(std::uint64_t value) noexcept { m_controlAuthorityGeneration = value; }
+	void SetGhConfigurationDirectory(std::wstring value) { m_ghConfigurationDirectory = std::move(value); }
+	void SetWorkingDirectory(std::wstring value) { m_workingDirectory = std::move(value); }
+	void SetHostname(std::wstring value) { m_hostname = std::move(value); }
+
+private:
+	std::wstring m_controlProfileRoot;
+	std::string m_controlAuthorityId;
+	std::uint64_t m_controlAuthorityGeneration = 0;
+	std::wstring m_ghConfigurationDirectory;
+	std::wstring m_workingDirectory;
+	std::wstring m_hostname = L"github.com";
 };
 
 //! Narrow seams for deterministic tests. A disengaged member selects its
 //! production implementation; production composition passes none of them.
-struct ControlSenpCompositionDependencies {
-	std::shared_ptr<IControlSenpPackageSource> packages;
-	std::shared_ptr<const senp::github::IGhToolPlatform> toolPlatform;
-	std::shared_ptr<senp::github::IGhConnectionPlatform> connectionPlatform;
-	std::shared_ptr<const senp::github::IGhLocalRepositoryPlatform> repositoryPlatform;
+//! Private state with accessors/setters for the same reason as every other DTO
+//! in this subsystem.
+class ControlSenpCompositionDependencies {
+public:
+	ControlSenpCompositionDependencies() = default;
+
+	[[nodiscard]] const std::shared_ptr<IControlSenpPackageSource>& Packages() const noexcept
+	{
+		return m_packages;
+	}
+	[[nodiscard]] const std::shared_ptr<const senp::github::IGhToolPlatform>& ToolPlatform() const noexcept
+	{
+		return m_toolPlatform;
+	}
+	[[nodiscard]] const std::shared_ptr<senp::github::IGhConnectionPlatform>& ConnectionPlatform() const noexcept
+	{
+		return m_connectionPlatform;
+	}
+	[[nodiscard]] const std::shared_ptr<const senp::github::IGhLocalRepositoryPlatform>&
+		RepositoryPlatform() const noexcept
+	{
+		return m_repositoryPlatform;
+	}
+
+	void SetPackages(std::shared_ptr<IControlSenpPackageSource> value) { m_packages = std::move(value); }
+	void SetToolPlatform(std::shared_ptr<const senp::github::IGhToolPlatform> value)
+	{
+		m_toolPlatform = std::move(value);
+	}
+	void SetConnectionPlatform(std::shared_ptr<senp::github::IGhConnectionPlatform> value)
+	{
+		m_connectionPlatform = std::move(value);
+	}
+	void SetRepositoryPlatform(std::shared_ptr<const senp::github::IGhLocalRepositoryPlatform> value)
+	{
+		m_repositoryPlatform = std::move(value);
+	}
+
+private:
+	std::shared_ptr<IControlSenpPackageSource> m_packages;
+	std::shared_ptr<const senp::github::IGhToolPlatform> m_toolPlatform;
+	std::shared_ptr<senp::github::IGhConnectionPlatform> m_connectionPlatform;
+	std::shared_ptr<const senp::github::IGhLocalRepositoryPlatform> m_repositoryPlatform;
 };
 
 /*!
@@ -286,7 +404,8 @@ public:
 
 	CControlSenpComposition(ControlSenpCompositionOptions options,
 		std::shared_ptr<profiles::ControlUserDataProfileRegistry> profiles,
-		ControlSenpCompositionDependencies dependencies = {});
+		ControlSenpCompositionDependencies dependencies
+			= {});
 	~CControlSenpComposition();
 	CControlSenpComposition(const CControlSenpComposition&) = delete;
 	CControlSenpComposition& operator=(const CControlSenpComposition&) = delete;

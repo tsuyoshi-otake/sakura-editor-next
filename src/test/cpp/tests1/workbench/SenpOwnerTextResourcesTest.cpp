@@ -209,23 +209,23 @@ TEST(SenpOwnerTextResources, AgreesWithAHandleItHasNeverSeenButNotWithOneNamingN
 	EXPECT_TRUE(resources.IsCurrent(*scope, L"never-read-anything"));
 	EXPECT_FALSE(resources.IsCurrent(*scope, L""));
 	EXPECT_FALSE(resources.IsCurrent(*scope,
-		std::wstring(CSenpOwnerTextResources::kMaximumHandleCharacters + 1, L'x')));
+		std::wstring(CSenpOwnerTextResources::MaximumHandleCharacters() + 1, L'x')));
 
 	EXPECT_FALSE(resources.Resolve(Document(), Section(L"")).has_value());
 	EXPECT_FALSE(resources.Resolve(Document(),
-		Section(std::wstring(CSenpOwnerTextResources::kMaximumHandleCharacters + 1, L'x'))).has_value());
+		Section(std::wstring(CSenpOwnerTextResources::MaximumHandleCharacters() + 1, L'x'))).has_value());
 }
 
 TEST(SenpOwnerTextResources, RefusesToRecordMoreOwnersThanItHoldsRoomFor)
 {
 	CSenpOwnerTextResources resources(kProfile);
-	for (std::size_t index = 0; index < CSenpOwnerTextResources::kMaximumOwners; ++index) {
+	for (std::size_t index = 0; index < CSenpOwnerTextResources::MaximumOwners(); ++index) {
 		ASSERT_TRUE(resources.Admit(Owner(static_cast<std::int64_t>(index) + 1)));
 	}
-	EXPECT_EQ(CSenpOwnerTextResources::kMaximumOwners, resources.OwnerCount());
+	EXPECT_EQ(CSenpOwnerTextResources::MaximumOwners(), resources.OwnerCount());
 
-	EXPECT_FALSE(resources.Admit(Owner(static_cast<std::int64_t>(CSenpOwnerTextResources::kMaximumOwners) + 1)));
-	EXPECT_EQ(CSenpOwnerTextResources::kMaximumOwners, resources.OwnerCount());
+	EXPECT_FALSE(resources.Admit(Owner(static_cast<std::int64_t>(CSenpOwnerTextResources::MaximumOwners()) + 1)));
+	EXPECT_EQ(CSenpOwnerTextResources::MaximumOwners(), resources.OwnerCount());
 	// One already recorded still answers, because it takes no new room.
 	EXPECT_TRUE(resources.Admit(Owner(1)));
 }

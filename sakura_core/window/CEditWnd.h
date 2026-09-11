@@ -235,11 +235,27 @@ private:
 };
 
 //! A handled operation never falls back to the legacy implementation, including
-//! cancellation, conflict, unsupported, and failure terminals.
-struct SWorkingCopyFunctionDispatchResult final {
-	bool handled = false;
-	BOOL legacyResult = TRUE;
-	std::optional<workbench::editor::EditorWorkingCopyOperationResult> operation;
+//! cancellation, conflict, unsupported, and failure terminals. Built up across
+//! several branches of TryExecuteWorkingCopyFileCommand, so mutation stays
+//! available to that owner through named setters rather than public fields.
+class SWorkingCopyFunctionDispatchResult final {
+public:
+	SWorkingCopyFunctionDispatchResult() = default;
+
+	[[nodiscard]] bool Handled() const noexcept { return m_handled; }
+	void SetHandled(bool value) noexcept { m_handled = value; }
+
+	[[nodiscard]] BOOL LegacyResult() const noexcept { return m_legacyResult; }
+	void SetLegacyResult(BOOL value) noexcept { m_legacyResult = value; }
+
+	[[nodiscard]] const std::optional<workbench::editor::EditorWorkingCopyOperationResult>&
+		Operation() const noexcept { return m_operation; }
+	void SetOperation(workbench::editor::EditorWorkingCopyOperationResult value) { m_operation = std::move(value); }
+
+private:
+	bool m_handled = false;
+	BOOL m_legacyResult = TRUE;
+	std::optional<workbench::editor::EditorWorkingCopyOperationResult> m_operation;
 };
 
 //! Terminal outcome for the one-input Hot Exit recovery projection.  Recovery
@@ -699,6 +715,11 @@ public:
 	//! Called by the successor process only after it has crossed the ready IPC
 	//! boundary.  The predecessor never mutates typed recent history.
 	void RecordCurrentWorkspaceAfterReady();
+
+	//! Shared-memory settings this window already resolved at construction.
+	//! Callers owned by this window read through here instead of reaching for
+	//! the process-wide accessor again.
+	[[nodiscard]] DLLSHAREDATA* GetShareData() const noexcept { return m_pShareData; }
 
 	void ClearViewCaretPosInfo();
 

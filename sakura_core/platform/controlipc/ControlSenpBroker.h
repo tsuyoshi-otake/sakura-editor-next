@@ -31,46 +31,113 @@ inline constexpr std::wstring_view kSenpGitHubRepositoryReadOperation = L"reposi
 //! what comes back, which is a log stream rather than a JSON page.
 inline constexpr std::wstring_view kSenpGitHubJobLogOperation = L"jobLog";
 
+//! One connection, named without an owner.
+//!
+//! A workspace is declared by the connection that opened on it, before any owner
+//! carrying a workspace revision can exist, so a declaration cannot be scoped by
+//! SenpToolExecutionScope the way a read is. It is scoped by this instead, and
+//! that is also what makes the declaration disappear with the connection.
+class SenpConnectionIdentity {
+public:
+	SenpConnectionIdentity() = default;
+	SenpConnectionIdentity(std::uint64_t sessionId, std::uint32_t clientProcessId) noexcept :
+		m_sessionId(sessionId), m_clientProcessId(clientProcessId)
+	{
+	}
+
+	[[nodiscard]] std::uint64_t SessionId() const noexcept { return m_sessionId; }
+	[[nodiscard]] std::uint32_t ClientProcessId() const noexcept { return m_clientProcessId; }
+
+private:
+	std::uint64_t m_sessionId = 0;
+	std::uint32_t m_clientProcessId = 0;
+};
+
+//! Free function rather than a member: it reads every field through the same
+//! public accessors any other caller uses, so the comparison stays exactly
+//! member-wise without a member declaration of its own.
+[[nodiscard]] inline bool operator==(const SenpConnectionIdentity& lhs, const SenpConnectionIdentity& rhs) noexcept
+{
+	return lhs.SessionId() == rhs.SessionId() && lhs.ClientProcessId() == rhs.ClientProcessId();
+}
+
 //! One bounded execution scope. It pairs the OS-observed connection with the
 //! profile and owner the control side resolved for itself, so a completion can
 //! never be handed to a different connection, profile, owner or generation.
-struct SenpToolExecutionScope {
-	std::uint64_t sessionId = 0;
-	std::uint32_t clientProcessId = 0;
-	std::wstring profileId;
-	senp::ContributionOwnerIdentity owner;
-	bool operator==(const SenpToolExecutionScope&) const = default;
+class SenpToolExecutionScope {
+public:
+	SenpToolExecutionScope() = default;
+	SenpToolExecutionScope(std::uint64_t sessionId, std::uint32_t clientProcessId, std::wstring profileId,
+		senp::ContributionOwnerIdentity owner) :
+		m_sessionId(sessionId), m_clientProcessId(clientProcessId), m_profileId(std::move(profileId)),
+		m_owner(std::move(owner))
+	{
+	}
+
+	[[nodiscard]] std::uint64_t SessionId() const noexcept { return m_sessionId; }
+	[[nodiscard]] std::uint32_t ClientProcessId() const noexcept { return m_clientProcessId; }
+	[[nodiscard]] const std::wstring& ProfileId() const noexcept { return m_profileId; }
+	[[nodiscard]] const senp::ContributionOwnerIdentity& Owner() const noexcept { return m_owner; }
+
+private:
+	std::uint64_t m_sessionId = 0;
+	std::uint32_t m_clientProcessId = 0;
+	std::wstring m_profileId;
+	senp::ContributionOwnerIdentity m_owner;
 };
 
-/*!
-	@brief One connection, named without an owner.
-
-	A workspace is declared by the connection that opened on it, before any owner
-	carrying a workspace revision can exist, so a declaration cannot be scoped by
-	SenpToolExecutionScope the way a read is. It is scoped by this instead, and
-	that is also what makes the declaration disappear with the connection.
-*/
-struct SenpConnectionIdentity {
-	std::uint64_t sessionId = 0;
-	std::uint32_t clientProcessId = 0;
-	bool operator==(const SenpConnectionIdentity&) const = default;
-};
+//! Free function rather than a member: it reads every field through the same
+//! public accessors any other caller uses, so the comparison stays exactly
+//! member-wise without a member declaration of its own.
+[[nodiscard]] inline bool operator==(const SenpToolExecutionScope& lhs, const SenpToolExecutionScope& rhs) noexcept
+{
+	return lhs.SessionId() == rhs.SessionId() && lhs.ClientProcessId() == rhs.ClientProcessId()
+		&& lhs.ProfileId() == rhs.ProfileId() && lhs.Owner() == rhs.Owner();
+}
 
 //! One connection's declared workspace. It names folders and never a repository:
 //! what those folders resolve to is decided by the control side from the remotes
 //! it finds there, so the editor's claim is verified rather than trusted.
-struct SenpWorkspaceAdoption {
-	SenpConnectionIdentity connection;
-	std::wstring profileId;
-	ControlSenpRpcWorkspace workspace;
+class SenpWorkspaceAdoption {
+public:
+	SenpWorkspaceAdoption() = default;
+	SenpWorkspaceAdoption(SenpConnectionIdentity connection, std::wstring profileId,
+		ControlSenpRpcWorkspace workspace) :
+		m_connection(connection), m_profileId(std::move(profileId)), m_workspace(std::move(workspace))
+	{
+	}
+
+	[[nodiscard]] const SenpConnectionIdentity& Connection() const noexcept { return m_connection; }
+	[[nodiscard]] const std::wstring& ProfileId() const noexcept { return m_profileId; }
+	[[nodiscard]] const ControlSenpRpcWorkspace& Workspace() const noexcept { return m_workspace; }
+
+private:
+	SenpConnectionIdentity m_connection;
+	std::wstring m_profileId;
+	ControlSenpRpcWorkspace m_workspace;
 };
 
 //! One admitted read. The broker forwards only values it has already bounded.
-struct SenpToolReadCommand {
-	std::wstring readId;
-	std::wstring toolId;
-	std::wstring operation;
-	std::vector<senp::effect::Field> arguments;
+class SenpToolReadCommand {
+public:
+	SenpToolReadCommand() = default;
+	SenpToolReadCommand(std::wstring readId, std::wstring toolId, std::wstring operation,
+		std::vector<senp::effect::Field> arguments) :
+		m_readId(std::move(readId)), m_toolId(std::move(toolId)), m_operation(std::move(operation)),
+		m_arguments(std::move(arguments))
+	{
+	}
+
+	[[nodiscard]] const std::wstring& ReadId() const noexcept { return m_readId; }
+	[[nodiscard]] const std::wstring& ToolId() const noexcept { return m_toolId; }
+	[[nodiscard]] const std::wstring& Operation() const noexcept { return m_operation; }
+	[[nodiscard]] const std::vector<senp::effect::Field>& Arguments() const noexcept { return m_arguments; }
+
+private:
+	std::wstring m_readId;
+	std::wstring m_toolId;
+	std::wstring m_operation;
+	std::vector<senp::effect::Field> m_arguments;
 };
 
 /*!

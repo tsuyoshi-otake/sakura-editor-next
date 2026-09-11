@@ -29,7 +29,10 @@ struct TreeItem final {
 	std::vector<std::wstring> arguments;
 	TreeItemCollapsibleState collapsibleState{ TreeItemCollapsibleState::None };
 	//! VS Code's TreeItem.contextValue, read by `viewItem` inline-action conditions.
-	std::wstring contextValue;
+	[[nodiscard]] const std::wstring& ContextValue() const noexcept { return m_contextValue; }
+	void SetContextValue(std::wstring value) noexcept { m_contextValue = std::move(value); }
+private:
+	std::wstring m_contextValue;
 };
 struct TreeChildrenPage final {
 	std::wstring parentId;
@@ -48,9 +51,15 @@ struct TreeLoadAdmission final {
 	std::optional<TreeLoadRequest> request;
 };
 struct TreeChange final {
+	TreeChange() = default;
+	TreeChange(TreeResult resultValue, std::vector<std::uint64_t> cancelledValue) noexcept
+		: result(resultValue), m_cancelled(std::move(cancelledValue)) {}
 	TreeResult result{ TreeResult::Invalid };
+	[[nodiscard]] const std::vector<std::uint64_t>& Cancelled() const noexcept { return m_cancelled; }
 	//! Transport ownership remains with the caller, which cancels these tickets.
-	std::vector<std::uint64_t> cancelled;
+	[[nodiscard]] std::vector<std::uint64_t>& MutableCancelled() noexcept { return m_cancelled; }
+private:
+	std::vector<std::uint64_t> m_cancelled;
 };
 struct TreeNodeSnapshot final {
 	TreeItem item;

@@ -47,37 +47,90 @@ enum class EControlSenpClientOutcome : std::uint8_t {
 	Stopped,
 };
 
-struct ControlSenpClientResult {
-	EControlSenpClientOutcome outcome = EControlSenpClientOutcome::Stopped;
-	//! Meaningful only when outcome is Answered.
-	ControlSenpRpcResponse response;
-	EControlIpcTerminalStatus terminalStatus = EControlIpcTerminalStatus::InternalError;
-	EControlPlatformEndpointDiscoveryDisposition discoveryDisposition =
-		EControlPlatformEndpointDiscoveryDisposition::ResourceOrIoFailure;
-	EControlIpcTransportDisconnectReason transportReason = EControlIpcTransportDisconnectReason::None;
+//! Terminal outcome of one client call. State is private and reached only
+//! through the constructor/accessors below, matching the encapsulation rule
+//! applied to the wire DTOs this result carries.
+class ControlSenpClientResult {
+public:
+	ControlSenpClientResult() = default;
+
+	[[nodiscard]] EControlSenpClientOutcome Outcome() const noexcept { return m_outcome; }
+	//! Meaningful only when Outcome() is Answered.
+	[[nodiscard]] const ControlSenpRpcResponse& Response() const noexcept { return m_response; }
+	[[nodiscard]] ControlSenpRpcResponse& Response() noexcept { return m_response; }
+	[[nodiscard]] EControlIpcTerminalStatus TerminalStatus() const noexcept { return m_terminalStatus; }
+	[[nodiscard]] EControlPlatformEndpointDiscoveryDisposition DiscoveryDisposition() const noexcept
+	{
+		return m_discoveryDisposition;
+	}
+	[[nodiscard]] EControlIpcTransportDisconnectReason TransportReason() const noexcept
+	{
+		return m_transportReason;
+	}
 	//! Deliberately generic transport/protocol text. It never carries an owner
 	//! identity, a grant id, a resource handle, a tool argument or a path.
-	std::wstring diagnostic;
+	[[nodiscard]] const std::wstring& Diagnostic() const noexcept { return m_diagnostic; }
+
+	void SetOutcome(EControlSenpClientOutcome value) noexcept { m_outcome = value; }
+	void SetResponse(ControlSenpRpcResponse value) { m_response = std::move(value); }
+	void SetTerminalStatus(EControlIpcTerminalStatus value) noexcept { m_terminalStatus = value; }
+	void SetDiscoveryDisposition(EControlPlatformEndpointDiscoveryDisposition value) noexcept
+	{
+		m_discoveryDisposition = value;
+	}
+	void SetTransportReason(EControlIpcTransportDisconnectReason value) noexcept { m_transportReason = value; }
+	void SetDiagnostic(std::wstring value) { m_diagnostic = std::move(value); }
 
 	[[nodiscard]] bool Answered() const noexcept
 	{
-		return outcome == EControlSenpClientOutcome::Answered;
+		return m_outcome == EControlSenpClientOutcome::Answered;
 	}
 	[[nodiscard]] bool IsConnected() const noexcept
 	{
-		return outcome == EControlSenpClientOutcome::Connected
-			|| outcome == EControlSenpClientOutcome::AlreadyConnected;
+		return m_outcome == EControlSenpClientOutcome::Connected
+			|| m_outcome == EControlSenpClientOutcome::AlreadyConnected;
 	}
+
+private:
+	EControlSenpClientOutcome m_outcome = EControlSenpClientOutcome::Stopped;
+	ControlSenpRpcResponse m_response;
+	EControlIpcTerminalStatus m_terminalStatus = EControlIpcTerminalStatus::InternalError;
+	EControlPlatformEndpointDiscoveryDisposition m_discoveryDisposition =
+		EControlPlatformEndpointDiscoveryDisposition::ResourceOrIoFailure;
+	EControlIpcTransportDisconnectReason m_transportReason = EControlIpcTransportDisconnectReason::None;
+	std::wstring m_diagnostic;
 };
 
-struct ControlSenpClientOptions {
+//! Client construction parameters. Private state with accessors/setters for
+//! the same reason as every other DTO in this subsystem.
+class ControlSenpClientOptions {
+public:
+	ControlSenpClientOptions() = default;
+
 	//! Canonical control authority identity, the same value the storage Hello pins.
-	std::string profileId;
-	std::wstring profileHash;
+	[[nodiscard]] const std::string& ProfileId() const noexcept { return m_profileId; }
+	[[nodiscard]] const std::wstring& ProfileHash() const noexcept { return m_profileHash; }
 	//! Anti-rollback floor. A later connection may never pin a lower generation.
-	std::uint64_t minimumGeneration = 0;
-	std::chrono::milliseconds exchangeDeadline = std::chrono::seconds(5);
-	std::function<std::unique_ptr<IControlPlatformClientChannel>()> channelFactory;
+	[[nodiscard]] std::uint64_t MinimumGeneration() const noexcept { return m_minimumGeneration; }
+	[[nodiscard]] std::chrono::milliseconds ExchangeDeadline() const noexcept { return m_exchangeDeadline; }
+	[[nodiscard]] const std::function<std::unique_ptr<IControlPlatformClientChannel>()>&
+		ChannelFactory() const noexcept { return m_channelFactory; }
+
+	void SetProfileId(std::string value) { m_profileId = std::move(value); }
+	void SetProfileHash(std::wstring value) { m_profileHash = std::move(value); }
+	void SetMinimumGeneration(std::uint64_t value) noexcept { m_minimumGeneration = value; }
+	void SetExchangeDeadline(std::chrono::milliseconds value) noexcept { m_exchangeDeadline = value; }
+	void SetChannelFactory(std::function<std::unique_ptr<IControlPlatformClientChannel>()> value)
+	{
+		m_channelFactory = std::move(value);
+	}
+
+private:
+	std::string m_profileId;
+	std::wstring m_profileHash;
+	std::uint64_t m_minimumGeneration = 0;
+	std::chrono::milliseconds m_exchangeDeadline = std::chrono::seconds(5);
+	std::function<std::unique_ptr<IControlPlatformClientChannel>()> m_channelFactory;
 };
 
 /*!
@@ -128,7 +181,10 @@ private:
 
 	ControlSenpClientOptions m_options;
 	IControlPlatformEndpointReader& m_endpointReader;
-	mutable std::mutex m_mutex;
+	//! Owned separately from the class so State()/PinnedGeneration()/
+	//! ConnectionEpoch() can lock it from a const method without a
+	//! class-level mutable member.
+	std::unique_ptr<std::mutex> m_mutex;
 	EControlSenpClientState m_state = EControlSenpClientState::Disconnected;
 	bool m_stopped = false;
 	bool m_busy = false;

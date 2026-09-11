@@ -12,6 +12,8 @@
 
 namespace workbench::editor {
 
+class CSenpControlToolReads;
+
 using SenpOwnerCommandCompleted = std::function<bool(const senp::effect::OperationContext&,
 	const senp::effect::CompleteCommand&)>;
 /*!
@@ -68,10 +70,20 @@ enum class SenpToolAccountState : std::uint8_t {
 };
 
 //! The account fence a window synchronizes its extensions under. A zero
-//! generation carries no authority, and only `state` says why it is zero.
-struct SenpToolAccount {
-	std::int64_t generation = 0;
-	SenpToolAccountState state = SenpToolAccountState::Unknown;
+//! generation carries no authority, and only `State()` says why it is zero.
+class SenpToolAccount {
+public:
+	SenpToolAccount() = default;
+	SenpToolAccount(std::int64_t generation, SenpToolAccountState state) noexcept
+		: m_generation(generation), m_state(state) {
+	}
+
+	[[nodiscard]] std::int64_t Generation() const noexcept { return m_generation; }
+	[[nodiscard]] SenpToolAccountState State() const noexcept { return m_state; }
+
+private:
+	std::int64_t m_generation = 0;
+	SenpToolAccountState m_state = SenpToolAccountState::Unknown;
 };
 
 /*!
@@ -87,7 +99,23 @@ struct SenpToolAccount {
 	is Accepted is the store's own chunk, whole; any other `result` is the
 	control side's refusal, and the rest of the chunk describes nothing.
 */
-struct SenpToolResourceAnswer {
+class SenpToolResourceAnswer {
+public:
+	SenpToolResourceAnswer() = default;
+	SenpToolResourceAnswer(std::wstring handle, std::uint64_t offset,
+		std::optional<senp::TextResourceChunk> chunk)
+		: handle(std::move(handle)), offset(offset), chunk(std::move(chunk)) {
+	}
+
+	[[nodiscard]] const std::wstring& Handle() const noexcept { return handle; }
+	[[nodiscard]] std::uint64_t Offset() const noexcept { return offset; }
+	[[nodiscard]] const std::optional<senp::TextResourceChunk>& Chunk() const noexcept { return chunk; }
+
+private:
+	//! CSenpControlToolReads is the wire-level answer producer and constructs/
+	//! mutates these fields directly, matching the friend idiom this file
+	//! already uses for its own nested Document/Pending classes.
+	friend class CSenpControlToolReads;
 	std::wstring handle;
 	std::uint64_t offset = 0;
 	std::optional<senp::TextResourceChunk> chunk;

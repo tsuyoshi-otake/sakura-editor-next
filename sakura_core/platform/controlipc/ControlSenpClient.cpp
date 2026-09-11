@@ -24,11 +24,11 @@ ControlSenpClientResult Result(EControlSenpClientOutcome outcome, EControlIpcTer
 	EControlIpcTransportDisconnectReason transportReason = EControlIpcTransportDisconnectReason::None)
 {
 	ControlSenpClientResult result;
-	result.outcome = outcome;
-	result.terminalStatus = status;
-	result.discoveryDisposition = discoveryDisposition;
-	result.transportReason = transportReason;
-	result.diagnostic = std::move(diagnostic);
+	result.SetOutcome(outcome);
+	result.SetTerminalStatus(status);
+	result.SetDiscoveryDisposition(discoveryDisposition);
+	result.SetTransportReason(transportReason);
+	result.SetDiagnostic(std::move(diagnostic));
 	return result;
 }
 
@@ -58,7 +58,7 @@ bool KeepsConnectionOpen(EControlIpcTerminalStatus status) noexcept
 CControlSenpClient::CControlSenpClient(ControlSenpClientOptions options,
 	IControlPlatformEndpointReader& endpointReader)
 	: m_options(std::move(options)), m_endpointReader(endpointReader),
-	m_minimumGeneration(m_options.minimumGeneration)
+	m_mutex(std::make_unique<std::mutex>()), m_minimumGeneration(m_options.MinimumGeneration())
 {
 }
 
@@ -78,7 +78,7 @@ void CControlSenpClient::Release(const std::shared_ptr<IControlPlatformClientCha
 {
 	std::shared_ptr<IControlPlatformClientChannel> closing;
 	{
-		std::scoped_lock lock(m_mutex);
+		std::scoped_lock lock(*m_mutex);
 		m_busy = false;
 		if (drop && m_activeChannel == channel) {
 			closing = std::move(m_activeChannel);
@@ -95,7 +95,7 @@ ControlSenpClientResult CControlSenpClient::Connect()
 {
 	std::uint64_t floor = 0;
 	{
-		std::scoped_lock lock(m_mutex);
+		std::scoped_lock lock(*m_mutex);
 		if (m_stopped) return Result(EControlSenpClientOutcome::Stopped, EControlIpcTerminalStatus::Cancelled);
 		if (m_busy) {
 			return Result(EControlSenpClientOutcome::OperationInFlight,
@@ -112,7 +112,7 @@ ControlSenpClientResult CControlSenpClient::Connect()
 	std::shared_ptr<IControlPlatformClientChannel> channel;
 	const auto fail = [this, &channel](ControlSenpClientResult result) {
 		Release(channel, true);
-		std::scoped_lock lock(m_mutex);
+		std::scoped_lock lock(*m_mutex);
 		if (m_stopped) return Result(EControlSenpClientOutcome::Stopped, EControlIpcTerminalStatus::Cancelled);
 		m_state = EControlSenpClientState::Disconnected;
 		return result;
@@ -129,7 +129,7 @@ ControlSenpClientResult CControlSenpClient::Connect()
 		}
 		const auto& endpoint = *discovered.snapshot;
 		if (!profiles::IsCanonicalProfileAuthorityId(endpoint.profileId)
-			|| endpoint.profileId != m_options.profileId) {
+			|| endpoint.profileId != m_options.ProfileId()) {
 			return fail(Result(EControlSenpClientOutcome::EndpointUnavailable,
 				EControlIpcTerminalStatus::ProfileMismatch, L"control platform endpoint profile mismatch"));
 		}
@@ -139,7 +139,7 @@ ControlSenpClientResult CControlSenpClient::Connect()
 			return fail(Result(EControlSenpClientOutcome::GenerationChanged,
 				EControlIpcTerminalStatus::GenerationMismatch, L"control platform generation rolled back"));
 		}
-		const auto disposition = CControlPlatformEndpoint::ClassifySnapshot(endpoint, m_options.profileHash,
+		const auto disposition = CControlPlatformEndpoint::ClassifySnapshot(endpoint, m_options.ProfileHash(),
 			requirements);
 		if (disposition != EControlPlatformEndpointDiscoveryDisposition::Discovered) {
 			return fail(Result(EControlSenpClientOutcome::EndpointUnavailable,
@@ -147,14 +147,14 @@ ControlSenpClientResult CControlSenpClient::Connect()
 				disposition));
 		}
 
-		auto created = m_options.channelFactory ? m_options.channelFactory() : nullptr;
+		auto created = m_options.ChannelFactory() ? m_options.ChannelFactory()() : nullptr;
 		if (!created) {
 			return fail(Result(EControlSenpClientOutcome::ProtocolError, EControlIpcTerminalStatus::InternalError,
 				L"SENP client channel factory returned null"));
 		}
 		channel = std::shared_ptr<IControlPlatformClientChannel>(std::move(created));
 		{
-			std::scoped_lock lock(m_mutex);
+			std::scoped_lock lock(*m_mutex);
 			if (m_stopped) {
 				m_busy = false;
 				channel->Close();
@@ -163,7 +163,7 @@ ControlSenpClientResult CControlSenpClient::Connect()
 			m_activeChannel = channel;
 		}
 
-		const auto connected = channel->Connect(endpoint, m_options.exchangeDeadline);
+		const auto connected = channel->Connect(endpoint, m_options.ExchangeDeadline());
 		if (!connected.success) {
 			return fail(Result(EControlSenpClientOutcome::ConnectionLost,
 				connected.reason == EControlIpcTransportDisconnectReason::DeadlineExceeded
@@ -174,10 +174,10 @@ ControlSenpClientResult CControlSenpClient::Connect()
 
 		std::optional<std::uint64_t> helloId;
 		{
-			std::scoped_lock lock(m_mutex);
+			std::scoped_lock lock(*m_mutex);
 			helloId = NextRequestId();
 		}
-		const auto helloPayload = EncodeControlStorageHello(m_options.profileId);
+		const auto helloPayload = EncodeControlStorageHello(m_options.ProfileId());
 		if (!helloPayload || !helloId) {
 			return fail(Result(EControlSenpClientOutcome::InvalidRequest, EControlIpcTerminalStatus::InvalidRequest,
 				L"invalid SENP client hello request"));
@@ -185,7 +185,7 @@ ControlSenpClientResult CControlSenpClient::Connect()
 		const ControlIpcFrame hello{ { kControlIpcMajorVersion, kControlIpcMinorVersion, EControlIpcKind::Hello,
 			EControlIpcFlags::Request, *helloId, 0 }, *helloPayload };
 		std::vector<ControlIpcFrame> responses;
-		const auto exchange = channel->Exchange(hello, responses, m_options.exchangeDeadline);
+		const auto exchange = channel->Exchange(hello, responses, m_options.ExchangeDeadline());
 		if (!exchange.success) {
 			return fail(Result(EControlSenpClientOutcome::ConnectionLost,
 				exchange.reason == EControlIpcTransportDisconnectReason::DeadlineExceeded
@@ -215,7 +215,7 @@ ControlSenpClientResult CControlSenpClient::Connect()
 				L"unexpected SENP client hello response"));
 		}
 		const auto acknowledged = DecodeControlStorageHello(helloAck.payload);
-		if (!acknowledged || *acknowledged != m_options.profileId) {
+		if (!acknowledged || *acknowledged != m_options.ProfileId()) {
 			return fail(Result(EControlSenpClientOutcome::ProtocolError, EControlIpcTerminalStatus::ProfileMismatch,
 				L"SENP client hello profile mismatch"));
 		}
@@ -225,7 +225,7 @@ ControlSenpClientResult CControlSenpClient::Connect()
 		}
 
 		{
-			std::scoped_lock lock(m_mutex);
+			std::scoped_lock lock(*m_mutex);
 			if (m_stopped || m_activeChannel != channel) {
 				m_busy = false;
 				channel->Close();
@@ -238,7 +238,7 @@ ControlSenpClientResult CControlSenpClient::Connect()
 			m_busy = false;
 		}
 		return Result(EControlSenpClientOutcome::Connected, EControlIpcTerminalStatus::Succeeded);
-	} catch (...) {
+	} catch (const std::exception&) {
 		return fail(Result(EControlSenpClientOutcome::ProtocolError, EControlIpcTerminalStatus::InternalError,
 			L"SENP client connection raised"));
 	}
@@ -262,7 +262,7 @@ ControlSenpClientResult CControlSenpClient::Execute(const ControlSenpRpcRequest&
 	std::uint64_t generation = 0;
 	std::optional<std::uint64_t> requestId;
 	{
-		std::scoped_lock lock(m_mutex);
+		std::scoped_lock lock(*m_mutex);
 		if (m_stopped) return Result(EControlSenpClientOutcome::Stopped, EControlIpcTerminalStatus::Cancelled);
 		if (m_busy) {
 			return Result(EControlSenpClientOutcome::OperationInFlight,
@@ -292,7 +292,7 @@ ControlSenpClientResult CControlSenpClient::Execute(const ControlSenpRpcRequest&
 			EControlIpcKind::SenpRequest, EControlIpcFlags::Request, *requestId, generation },
 			std::move(*fields) };
 		std::vector<ControlIpcFrame> responses;
-		const auto exchange = channel->Exchange(frame, responses, m_options.exchangeDeadline);
+		const auto exchange = channel->Exchange(frame, responses, m_options.ExchangeDeadline());
 		if (!exchange.success) {
 			// The answer is unknown, so the grant state of this connection is
 			// unknown too. Dropping it is the only fail-closed outcome.
@@ -346,9 +346,9 @@ ControlSenpClientResult CControlSenpClient::Execute(const ControlSenpRpcRequest&
 		// A refusal is a normal answer on a healthy connection: the caller decides
 		// what an Unauthorized, Closed or Expired status means for its own grant.
 		auto result = Result(EControlSenpClientOutcome::Answered, EControlIpcTerminalStatus::Succeeded);
-		result.response = std::move(*decoded);
+		result.SetResponse(std::move(*decoded));
 		return finish(std::move(result), false);
-	} catch (...) {
+	} catch (const std::exception&) {
 		return finish(Result(EControlSenpClientOutcome::ProtocolError, EControlIpcTerminalStatus::InternalError,
 			L"SENP request raised"), true);
 	}
@@ -358,7 +358,7 @@ void CControlSenpClient::Disconnect() noexcept
 {
 	std::shared_ptr<IControlPlatformClientChannel> closing;
 	{
-		std::scoped_lock lock(m_mutex);
+		std::scoped_lock lock(*m_mutex);
 		closing = std::move(m_activeChannel);
 		m_activeChannel.reset();
 		m_pinnedGeneration = 0;
@@ -372,7 +372,7 @@ void CControlSenpClient::Stop() noexcept
 {
 	std::shared_ptr<IControlPlatformClientChannel> closing;
 	{
-		std::scoped_lock lock(m_mutex);
+		std::scoped_lock lock(*m_mutex);
 		m_stopped = true;
 		m_state = EControlSenpClientState::Stopped;
 		m_pinnedGeneration = 0;
@@ -384,19 +384,19 @@ void CControlSenpClient::Stop() noexcept
 
 EControlSenpClientState CControlSenpClient::State() const noexcept
 {
-	std::scoped_lock lock(m_mutex);
+	std::scoped_lock lock(*m_mutex);
 	return m_state;
 }
 
 std::uint64_t CControlSenpClient::PinnedGeneration() const noexcept
 {
-	std::scoped_lock lock(m_mutex);
+	std::scoped_lock lock(*m_mutex);
 	return m_pinnedGeneration;
 }
 
 std::uint64_t CControlSenpClient::ConnectionEpoch() const noexcept
 {
-	std::scoped_lock lock(m_mutex);
+	std::scoped_lock lock(*m_mutex);
 	return m_connectionEpoch;
 }
 

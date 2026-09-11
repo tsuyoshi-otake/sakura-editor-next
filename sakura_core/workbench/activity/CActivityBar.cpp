@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cwctype>
+#include <exception>
 #include <string>
 #include <string_view>
 
@@ -345,7 +346,7 @@ void CActivityBar::SetViewContainerBadge(std::string_view containerId, std::opti
 {
 	const auto previous = m_model.GetViewContainerBadge(containerId);
 	std::optional<activity::ActivityBarNumberBadge> badge;
-	if (count && *count > 0) badge = activity::ActivityBarNumberBadge{ .number = *count };
+	if (count && *count > 0) badge = activity::ActivityBarNumberBadge{ *count };
 	if (previous == badge) return;
 	m_model.SetViewContainerBadge(containerId, badge);
 	Invalidate();
@@ -733,7 +734,7 @@ void CActivityBar::Paint() noexcept
 		}
 		// The badge sits over the glyph, as upstream's absolutely-positioned
 		// `.badge-content` does, and under the focus ring drawn next.
-		if (button.badge) PaintBadge(buffer, bounds, button.badge->number);
+		if (button.badge) PaintBadge(buffer, bounds, button.badge->Number());
 		if (button.focused) {
 			const HPEN pen = ::CreatePen(PS_SOLID, 1, m_palette.focusBorder);
 			const HGDIOBJ previousPen = ::SelectObject(buffer, pen);
@@ -854,9 +855,12 @@ bool CActivityBar::ShowLocationContextMenu(POINT screenPoint) noexcept
 	}
 	try {
 		m_onLocationRequest(requested);
-	} catch (...) {
+	} catch (const std::exception&) {
 		// A menu gesture has no secondary owner. The callback reports failures on
 		// the workbench surface and the current location remains authoritative.
+		// The callback is always an in-process owner from this codebase, which
+		// throws only std::exception-derived types (if it throws at all); no
+		// out-of-process/plugin code runs on this call path.
 	}
 	return true;
 }

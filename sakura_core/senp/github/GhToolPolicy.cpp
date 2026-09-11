@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <exception>
 #include <limits>
 
 namespace senp::github {
@@ -351,7 +352,7 @@ try {
 	if (!version) return { GhToolAvailability::ProbeFailed, *executable, std::nullopt };
 	return { version->Supported() ? GhToolAvailability::Available : GhToolAvailability::UnsupportedVersion,
 		*executable, version };
-} catch (...) {
+} catch (const std::exception&) {
 	return { GhToolAvailability::ProbeFailed, {}, std::nullopt };
 }
 
@@ -366,7 +367,7 @@ try {
 		prepared.Arguments(), kReadTimeoutMilliseconds, kReadOutputBytes, kErrorBytes), stop);
 	return { ReadTerminal(outcome.Status()), outcome.ExitCode(),
 		outcome.StandardOutput(), outcome.StandardError() };
-} catch (...) {
+} catch (const std::exception&) {
 	return { GhRepositoryReadStatus::LaunchFailed, -1, {}, {} };
 }
 

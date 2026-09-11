@@ -136,7 +136,11 @@ bool CSenpExtensionActivation::Synchronize(const senp::ManagementSnapshot& snaps
 		}
 		AdmitNext(now);
 		return true;
-	} catch (...) {
+	} catch (const std::exception&) {
+		// AdmitNext only reaches CSenpOwnerComposition::Activate/Revoke, both
+		// noexcept with their own internal catch(...), so any exception from the
+		// extension-supplied publication factory is already swallowed there; only
+		// std container/allocation work in this block can throw here.
 		RevokeAll(senp::effect::StopReason::HostUnavailable);
 		m_entries.clear();
 		m_synchronized = false;
@@ -210,7 +214,10 @@ senp::OwnerChangeResult CSenpExtensionActivation::RequestView(const std::wstring
 			return entry->m_result;
 		}
 		return { Status::Unsupported };
-	} catch (...) {
+	} catch (const std::exception&) {
+		// AdmitNext's only externally-supplied call is CSenpOwnerComposition::Activate,
+		// which is noexcept and already swallows the publication factory's exceptions
+		// internally; only std container/allocation work here can throw.
 		RevokeAll(senp::effect::StopReason::HostUnavailable);
 		return { Status::Failed };
 	}
@@ -243,7 +250,10 @@ bool CSenpExtensionActivation::Poll(const senp::CSenpRuntimeSession::Time now) n
 		}
 		AdmitNext(now);
 		return projected;
-	} catch (...) {
+	} catch (const std::exception&) {
+		// m_composition.Poll/TakeTransition/IsCurrent are noexcept and AdmitNext's
+		// callback path is already absorbed inside CSenpOwnerComposition::Activate;
+		// only std container/allocation work in this block can throw here.
 		RevokeAll(senp::effect::StopReason::HostUnavailable);
 		return false;
 	}

@@ -223,16 +223,6 @@ private:
 struct CSenpEffectRuntime::Impl final {
 	explicit Impl(EffectRuntimeLaunch value) : launch(std::move(value)), session(launch.generation),
 		changed(::CreateEventW(nullptr, TRUE, FALSE, nullptr)), cancelIo(::CreateEventW(nullptr, TRUE, FALSE, nullptr)) {}
-	EffectRuntimeLaunch launch;
-	mutable std::mutex mutex;
-	std::mutex joinMutex;
-	CSenpRuntimeSession session;
-	Handle changed, cancelIo;
-	std::thread worker;
-	DWORD pid{};
-	bool workerExited{ true };
-	bool processExitConfirmed{ true };
-	std::optional<Time> stopDeadline;
 
 	void Worker()
 	{
@@ -259,7 +249,7 @@ struct CSenpEffectRuntime::Impl final {
 						// cold start; every later exchange answers from a guest that
 						// is already resident.
 						deadline = now + (session.Phase() == RuntimePhase::Handshaking
-							? CSenpRuntimeSession::kMaximumColdStart : std::chrono::seconds(1));
+							? kMaximumColdStart : std::chrono::seconds(1));
 						if (const auto expires = session.NextDeadline()) {
 							deadline = (std::min)(deadline, *expires);
 							idleWait = Remaining(*expires);
@@ -292,6 +282,28 @@ struct CSenpEffectRuntime::Impl final {
 		processExitConfirmed = exited;
 		workerExited = true;
 	}
+
+private:
+	// State owned exclusively by CSenpEffectRuntime and this Impl, which
+	// together own the worker's lifecycle; the outer class is the sole
+	// friend rather than a public data bag any future caller could reach.
+	friend class ::senp::CSenpEffectRuntime;
+
+	EffectRuntimeLaunch launch;
+	// Not `mutable`: every lock site reaches this mutex through
+	// m_impl->mutex on a std::unique_ptr<Impl>, whose operator-> yields a
+	// non-const Impl* even when the owning CSenpEffectRuntime method (e.g.
+	// Snapshot() const) is itself const. unique_ptr does not propagate
+	// const to its pointee, so the qualifier was never load-bearing here.
+	std::mutex mutex;
+	std::mutex joinMutex;
+	CSenpRuntimeSession session;
+	Handle changed, cancelIo;
+	std::thread worker;
+	DWORD pid{};
+	bool workerExited{ true };
+	bool processExitConfirmed{ true };
+	std::optional<Time> stopDeadline;
 };
 
 CSenpEffectRuntime::CSenpEffectRuntime(EffectRuntimeLaunch launch) : m_impl(std::make_unique<Impl>(std::move(launch))) {}

@@ -19,6 +19,7 @@
 #include "_main/CProcess.h"
 
 #include <algorithm>
+#include <stdexcept>
 
 #include "util/module.h"
 #include "env/CShareData.h"
@@ -54,7 +55,15 @@ CProcess::CreateSenpToolReads(const std::wstring& /*userDataProfileId*/) const
 std::filesystem::path CProcess::GetIniFileName() const
 {
 	if (m_cShareData.IsPrivateSettings()) {
-		const DLLSHAREDATA *pShareData = &GetDllShareData();
+		// Read through this process's own CShareData member instead of the
+		// process-wide GetDllShareData() singleton accessor used elsewhere;
+		// TryGetResolvedProfileDirectory() right below already establishes
+		// this is the same shared-memory mapping. The explicit null check
+		// preserves GetDllShareData()'s original fail-fast throw.
+		const DLLSHAREDATA *pShareData = m_cShareData.GetDllShareDataPtr();
+		if (!pShareData) {
+			throw std::domain_error("DLLSHAREDATA is not initialized");
+		}
 		return pShareData->m_szPrivateIniFile.c_str();
 	}
 	return GetExeFileName().replace_extension(L".ini");

@@ -46,11 +46,11 @@ bool ValidActions(std::span<const SenpViewTitleAction> actions) noexcept
 	if (actions.size() > kMaximumActions) return false;
 	for (std::size_t i = 0; i < actions.size(); ++i) {
 		const auto& action = actions[i];
-		if (!layout::WorkbenchContributionRegistry::IsValidStableId(action.commandId)
-			|| action.title.empty() || action.title.size() > 1024 || action.icon.empty() || action.icon.size() > 160
-			|| action.title.find(L'\0') != std::wstring::npos
-			|| std::ranges::any_of(action.icon, [](wchar_t c) { return !((c >= L'a' && c <= L'z') || (c >= L'0' && c <= L'9') || c == L'-'); })) return false;
-		for (std::size_t j = 0; j < i; ++j) if (actions[j].commandId == action.commandId) return false;
+		if (!layout::WorkbenchContributionRegistry::IsValidStableId(action.CommandId())
+			|| action.Title().empty() || action.Title().size() > 1024 || action.Icon().empty() || action.Icon().size() > 160
+			|| action.Title().find(L'\0') != std::wstring::npos
+			|| std::ranges::any_of(action.Icon(), [](wchar_t c) { return !((c >= L'a' && c <= L'z') || (c >= L'0' && c <= L'9') || c == L'-'); })) return false;
+		for (std::size_t j = 0; j < i; ++j) if (actions[j].CommandId() == action.CommandId()) return false;
 	}
 	return true;
 }
@@ -240,9 +240,9 @@ struct CSenpViewContainers::Impl {
 		for (std::size_t i = 1; i < pane.controls.size(); ++i) {
 			auto& control = pane.controls[i];
 			const bool present = i <= pane.definition.actions.size();
-			const wchar_t* title = present ? pane.definition.actions[i - 1].title.c_str() : L"";
+			const wchar_t* title = present ? pane.definition.actions[i - 1].Title().c_str() : L"";
 			::SetWindowTextW(control.window, title);
-			::EnableWindow(control.window, present && pane.definition.actions[i - 1].enabled);
+			::EnableWindow(control.window, present && pane.definition.actions[i - 1].Enabled());
 			TOOLINFOW info{ sizeof(info) }; info.hwnd = pane.root.window;
 			info.uId = reinterpret_cast<UINT_PTR>(control.window); info.lpszText = const_cast<LPWSTR>(title);
 			::SendMessageW(pane.tooltip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&info));
@@ -510,7 +510,7 @@ void CSenpViewContainers::Impl::DrawControl(const DRAWITEMSTRUCT& draw, Pane& pa
 		const auto& action = pane.definition.actions[index - 1];
 		const int padding = Dip(kViewPaneActionPaddingDip, pane.container->dpi);
 		RECT icon = draw.rcItem; ::InflateRect(&icon, -padding, -padding);
-		PaintViewPaneIcon(draw.hDC, icon, action.icon, (action.enabled ? palette.primaryText : palette.disabledText).ToColorRef());
+		PaintViewPaneIcon(draw.hDC, icon, action.Icon(), (action.Enabled() ? palette.primaryText : palette.disabledText).ToColorRef());
 	}
 	::SelectObject(draw.hDC, previous);
 	if (draw.itemState & ODS_FOCUS) {
@@ -566,9 +566,9 @@ LRESULT CSenpViewContainers::Impl::Message(Node& node, UINT message, WPARAM wPar
 			const auto index = LOWORD(wParam) - 1;
 			if (!RequestFocus(pane)) return 0;
 			if (index == 0) (void)Collapse(pane, !pane.collapsed);
-			else if (index <= pane.definition.actions.size() && pane.definition.actions[index - 1].enabled && options.execute) {
+			else if (index <= pane.definition.actions.size() && pane.definition.actions[index - 1].Enabled() && options.execute) {
 				// Copy the operand before a command callback can update title actions.
-				const auto command = pane.definition.actions[index - 1].commandId;
+				const auto command = pane.definition.actions[index - 1].CommandId();
 				(void)options.execute(pane.definition.descriptor.id, command);
 			}
 			return 0;
@@ -691,8 +691,10 @@ public:
 		if (!m_owner->IsUsable() || m_container.closed || m_container.host || host.nativeParent == 0
 			|| host.nativeParent != m_container.nativeParent || !m_container.descriptor.supportedLocations.Contains(host.location))
 			return EViewContainerPageAttachStatus::Failed;
+		// Assigning a value-typed host only ever risks std::bad_alloc/length_error
+		// from the copy; no user callback runs here.
 		try { m_container.host = host; }
-		catch (...) { return EViewContainerPageAttachStatus::Failed; }
+		catch (const std::exception&) { return EViewContainerPageAttachStatus::Failed; }
 		// Lay the panes out while the container is still hidden, then show it, so a
 		// retained page never appears at its previous geometry first.
 		m_owner->m_impl->Layout(m_container, false);
@@ -863,7 +865,7 @@ ESenpViewProjectionStatus CSenpViewContainers::SetTitleActions(std::string_view 
 	auto* pane = m_impl->FindPane(id);
 	if (!pane || !ValidActions(actions) || (!actions.empty() && !m_impl->options.execute)) return ESenpViewProjectionStatus::Invalid;
 	for (std::size_t i = 1; i < pane->controls.size(); ++i)
-		if (::GetFocus() == pane->controls[i].window && (i > actions.size() || !actions[i - 1].enabled)) ::SetFocus(pane->controls[0].window);
+		if (::GetFocus() == pane->controls[i].window && (i > actions.size() || !actions[i - 1].Enabled())) ::SetFocus(pane->controls[0].window);
 	pane->definition.actions = std::move(actions);
 	m_impl->UpdateActions(*pane);
 	m_impl->Layout(*pane->container);

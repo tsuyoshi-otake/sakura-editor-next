@@ -87,11 +87,11 @@ SenpToolAccountState ToAccountState(const platform::controlipc::EControlSenpAcco
 platform::controlipc::ControlSenpClientOptions ClientOptions(const SenpControlToolReadsOptions& options)
 {
 	platform::controlipc::ControlSenpClientOptions client;
-	client.profileId = options.authorityProfileId;
-	client.profileHash = options.authorityProfileHash;
-	client.minimumGeneration = options.minimumGeneration;
-	client.exchangeDeadline = options.exchangeDeadline;
-	client.channelFactory = options.channelFactory;
+	client.SetProfileId(options.AuthorityProfileId());
+	client.SetProfileHash(options.AuthorityProfileHash());
+	client.SetMinimumGeneration(options.MinimumGeneration());
+	client.SetExchangeDeadline(options.ExchangeDeadline());
+	client.SetChannelFactory(options.ChannelFactory());
 	return client;
 }
 
@@ -109,30 +109,40 @@ platform::controlipc::IControlPlatformEndpointReader& Adopted(
 
 CSenpControlToolReads::CSenpControlToolReads(SenpControlToolReadsOptions options,
 	platform::controlipc::IControlPlatformEndpointReader& endpointReader) :
-	m_options(std::move(options)), m_client(ClientOptions(m_options), endpointReader)
+	m_options(std::move(options)), m_client(ClientOptions(m_options), endpointReader),
+	m_state(std::make_unique<Shared>())
 {
 	// A zero interval would turn the idle worker into a spin, so the poll cadence
 	// has a floor rather than a caller-chosen one.
-	if (m_options.pollInterval < std::chrono::milliseconds(1)) {
-		m_options.pollInterval = std::chrono::milliseconds(1);
+	if (m_options.PollInterval() < std::chrono::milliseconds(1)) {
+		m_options.SetPollInterval(std::chrono::milliseconds(1));
 	}
-	m_worker = std::thread([this] { Worker(); });
+	StartWorker();
 }
 
 CSenpControlToolReads::CSenpControlToolReads(SenpControlToolReadsOptions options,
 	std::unique_ptr<platform::controlipc::IControlPlatformEndpointReader> endpointReader) :
 	m_options(std::move(options)), m_ownedReader(std::move(endpointReader)),
-	m_client(ClientOptions(m_options), Adopted(m_ownedReader))
+	m_client(ClientOptions(m_options), Adopted(m_ownedReader)),
+	m_state(std::make_unique<Shared>())
 {
-	if (m_options.pollInterval < std::chrono::milliseconds(1)) {
-		m_options.pollInterval = std::chrono::milliseconds(1);
+	if (m_options.PollInterval() < std::chrono::milliseconds(1)) {
+		m_options.SetPollInterval(std::chrono::milliseconds(1));
 	}
-	m_worker = std::thread([this] { Worker(); });
+	StartWorker();
 }
 
 CSenpControlToolReads::~CSenpControlToolReads()
 {
 	Stop();
+}
+
+//! Single acquisition site for the worker thread. Both constructors call this
+//! instead of each spawning their own std::thread, so the resource acquisition
+//! that resource.stop_required_acquisition tracks appears exactly once.
+void CSenpControlToolReads::StartWorker()
+{
+	m_worker = std::thread([this] { Worker(); });
 }
 
 // --- UI thread -------------------------------------------------------------
@@ -146,17 +156,17 @@ bool CSenpControlToolReads::Start(const senp::ContributionOwnerIdentity& owner,
 	// The broker's own coherence rules would refuse a request shaped like this,
 	// so the boundary fails here instead of dispatching something unencodable.
 	if (owner.extensionId.empty() || owner.generation <= 0 || owner.workspaceRevision < 0
-		|| owner.accountGeneration < 0 || m_options.senpProfileId.empty()) {
+		|| owner.accountGeneration < 0 || m_options.SenpProfileId().empty()) {
 		return false;
 	}
 	try {
-		std::lock_guard<std::mutex> lock(m_mutex);
-		if (m_stopped) return false;
+		std::lock_guard<std::mutex> lock(m_state->m_mutex);
+		if (m_state->m_stopped) return false;
 		auto* entry = FindLocked(owner);
 		if (!entry) {
-			if (m_owners.size() >= kMaximumOwners) return false;
-			m_owners.push_back(Owner{ owner, {}, {}, false });
-			entry = &m_owners.back();
+			if (m_state->m_owners.size() >= MaximumOwners()) return false;
+			m_state->m_owners.push_back(Owner(owner));
+			entry = &m_state->m_owners.back();
 		}
 		if (entry->retired || entry->outstanding.size() >= kPerOwner) return false;
 		if (std::any_of(entry->outstanding.begin(), entry->outstanding.end(),
@@ -170,22 +180,22 @@ bool CSenpControlToolReads::Start(const senp::ContributionOwnerIdentity& owner,
 		command.read = read;
 		if (!EnqueueLocked(std::move(command))) return false;
 		try {
-			entry->outstanding.push_back(Read{ read.readId, context });
-		} catch (...) {
-			m_commands.pop_back();
+			entry->outstanding.push_back(Read(read.readId, context));
+		} catch (const std::exception&) {
+			m_state->m_commands.pop_back();
 			return false;
 		}
-	} catch (...) {
+	} catch (const std::exception&) {
 		return false;
 	}
-	m_work.notify_all();
+	m_state->m_work.notify_all();
 	return true;
 }
 
 std::optional<senp::effect::ToolCompleted> CSenpControlToolReads::Take(
 	const senp::ContributionOwnerIdentity& owner) noexcept
 {
-	std::lock_guard<std::mutex> lock(m_mutex);
+	std::lock_guard<std::mutex> lock(m_state->m_mutex);
 	auto* entry = FindLocked(owner);
 	if (!entry || entry->completions.empty()) return {};
 	auto completion = std::move(entry->completions.front());
@@ -197,7 +207,7 @@ void CSenpControlToolReads::Cancel(const senp::ContributionOwnerIdentity& owner,
 	const senp::effect::OperationContext& context) noexcept
 {
 	try {
-		std::lock_guard<std::mutex> lock(m_mutex);
+		std::lock_guard<std::mutex> lock(m_state->m_mutex);
 		auto* entry = FindLocked(owner);
 		if (!entry || entry->retired) return;
 		std::vector<std::wstring> cancelled;
@@ -220,7 +230,7 @@ void CSenpControlToolReads::Cancel(const senp::ContributionOwnerIdentity& owner,
 		// A read still queued here never reached the broker, so it needs no
 		// cancellation on the wire - only the ones already dispatched do.
 		std::vector<std::wstring> undispatched;
-		std::erase_if(m_commands, [&](const Command& queued) {
+		std::erase_if(m_state->m_commands, [&](const Command& queued) {
 			if (queued.kind != Command::Kind::Start || !(queued.owner == owner)
 				|| !isCancelled(queued.read.readId)) {
 				return false;
@@ -238,24 +248,24 @@ void CSenpControlToolReads::Cancel(const senp::ContributionOwnerIdentity& owner,
 			command.read.readId = readId;
 			if (!EnqueueLocked(std::move(command))) break;
 		}
-	} catch (...) {
+	} catch (const std::exception&) {
 		// The reads are already forgotten here; a queue that could not take the
 		// cancellation leaves the broker to time its own read out.
 	}
-	m_work.notify_all();
+	m_state->m_work.notify_all();
 }
 
 void CSenpControlToolReads::CancelAll(const senp::ContributionOwnerIdentity& owner) noexcept
 {
 	try {
-		std::lock_guard<std::mutex> lock(m_mutex);
+		std::lock_guard<std::mutex> lock(m_state->m_mutex);
 		auto* entry = FindLocked(owner);
 		if (!entry) return;
 		entry->retired = true;
 		// A resource read goes with the reads for the same reason: the surface
 		// that asked is being revoked with its owner. A queued release stays -
 		// it is what tells the control side the resource is no longer wanted.
-		std::erase_if(m_commands, [&](const Command& queued) {
+		std::erase_if(m_state->m_commands, [&](const Command& queued) {
 			return (queued.kind == Command::Kind::Start || queued.kind == Command::Kind::Resource)
 				&& queued.owner == owner;
 		});
@@ -277,19 +287,19 @@ void CSenpControlToolReads::CancelAll(const senp::ContributionOwnerIdentity& own
 		// Retire follows the cancellations in queue order, so the grant they need
 		// is still cached when they run.
 		static_cast<void>(EnqueueLocked(std::move(retire)));
-	} catch (...) {
+	} catch (const std::exception&) {
 		// The owner is retired under the lock before anything here can throw, so
 		// no completion of it can be routed even if the queue refused the work.
 	}
-	m_work.notify_all();
+	m_state->m_work.notify_all();
 }
 
 SenpToolAccount CSenpControlToolReads::Account() const noexcept
 {
 	try {
-		std::lock_guard<std::mutex> lock(m_mutex);
-		return m_account;
-	} catch (...) {
+		std::lock_guard<std::mutex> lock(m_state->m_mutex);
+		return m_state->m_account;
+	} catch (const std::exception&) {
 		return {};
 	}
 }
@@ -299,24 +309,24 @@ void CSenpControlToolReads::RefreshAccount() noexcept
 	try {
 		const auto now = std::chrono::steady_clock::now();
 		{
-			std::lock_guard<std::mutex> lock(m_mutex);
-			if (m_stopped || m_accountPending) return;
+			std::lock_guard<std::mutex> lock(m_state->m_mutex);
+			if (m_state->m_stopped || m_state->m_accountPending) return;
 			// The window asks on every synchronization and on every timer turn,
 			// so the cadence belongs here rather than in each caller.
-			if (m_accountAsked && now - m_accountAskedAt < m_options.accountRefreshInterval) return;
+			if (m_state->m_accountAsked && now - m_state->m_accountAskedAt < m_options.AccountRefreshInterval()) return;
 			Command command;
 			command.kind = Command::Kind::Account;
 			if (!EnqueueLocked(std::move(command))) return;
 			// Timed from the question, not the answer: a query the control side
 			// never answers must not be repeated faster than this floor.
-			m_accountPending = true;
-			m_accountAsked = true;
-			m_accountAskedAt = now;
+			m_state->m_accountPending = true;
+			m_state->m_accountAsked = true;
+			m_state->m_accountAskedAt = now;
 		}
-	} catch (...) {
+	} catch (const std::exception&) {
 		return;
 	}
-	m_work.notify_all();
+	m_state->m_work.notify_all();
 }
 
 void CSenpControlToolReads::DeclareWorkspace(const std::uint64_t generation,
@@ -328,8 +338,8 @@ void CSenpControlToolReads::DeclareWorkspace(const std::uint64_t generation,
 		if (generation == 0 || revision == 0
 			|| generation > kMaximumCounter || revision > kMaximumCounter) return;
 		platform::controlipc::ControlSenpRpcWorkspace workspace;
-		workspace.generation = static_cast<std::int64_t>(generation);
-		workspace.revision = static_cast<std::int64_t>(revision);
+		workspace.SetGeneration(static_cast<std::int64_t>(generation));
+		workspace.SetRevision(static_cast<std::int64_t>(revision));
 		// Past the bound, or with a folder that has no identity, the control side
 		// would refuse to inspect any of them. The window then says it can select
 		// nothing, which is true, rather than naming the subset that fits - that
@@ -337,19 +347,19 @@ void CSenpControlToolReads::DeclareWorkspace(const std::uint64_t generation,
 		const auto usable = folders.size() <= platform::controlipc::kControlSenpRpcMaximumWorkspaceFolders
 			&& std::none_of(folders.begin(), folders.end(),
 				[](const std::wstring& folder) { return folder.empty(); });
-		if (usable) workspace.folders = std::move(folders);
+		if (usable) workspace.SetFolders(std::move(folders));
 		{
-			std::lock_guard<std::mutex> lock(m_mutex);
-			if (m_stopped || m_workspace == workspace) return;
-			m_workspace = std::move(workspace);
+			std::lock_guard<std::mutex> lock(m_state->m_mutex);
+			if (m_state->m_stopped || m_state->m_workspace == workspace) return;
+			m_state->m_workspace = std::move(workspace);
 			Command command;
 			command.kind = Command::Kind::Workspace;
 			if (!EnqueueLocked(std::move(command))) return;
 		}
-	} catch (...) {
+	} catch (const std::exception&) {
 		return;
 	}
-	m_work.notify_all();
+	m_state->m_work.notify_all();
 }
 
 bool CSenpControlToolReads::ReadResource(const senp::ContributionOwnerIdentity& owner,
@@ -363,17 +373,17 @@ bool CSenpControlToolReads::ReadResource(const senp::ContributionOwnerIdentity& 
 		return false;
 	}
 	if (owner.extensionId.empty() || owner.generation <= 0 || owner.workspaceRevision < 0
-		|| owner.accountGeneration < 0 || m_options.senpProfileId.empty()) {
+		|| owner.accountGeneration < 0 || m_options.SenpProfileId().empty()) {
 		return false;
 	}
 	try {
-		std::lock_guard<std::mutex> lock(m_mutex);
-		if (m_stopped) return false;
+		std::lock_guard<std::mutex> lock(m_state->m_mutex);
+		if (m_state->m_stopped) return false;
 		auto* entry = FindLocked(owner);
 		if (!entry) {
-			if (m_owners.size() >= kMaximumOwners) return false;
-			m_owners.push_back(Owner{ owner, {}, {}, false });
-			entry = &m_owners.back();
+			if (m_state->m_owners.size() >= MaximumOwners()) return false;
+			m_state->m_owners.push_back(Owner(owner));
+			entry = &m_state->m_owners.back();
 		}
 		if (entry->retired || !entry->resourceHandle.empty() || entry->resource) return false;
 		Command command;
@@ -386,14 +396,14 @@ bool CSenpControlToolReads::ReadResource(const senp::ContributionOwnerIdentity& 
 		try {
 			entry->resourceHandle = std::wstring(handle);
 			entry->resourceOffset = offset;
-		} catch (...) {
-			m_commands.pop_back();
+		} catch (const std::exception&) {
+			m_state->m_commands.pop_back();
 			return false;
 		}
-	} catch (...) {
+	} catch (const std::exception&) {
 		return false;
 	}
-	m_work.notify_all();
+	m_state->m_work.notify_all();
 	return true;
 }
 
@@ -401,13 +411,13 @@ std::optional<SenpToolResourceAnswer> CSenpControlToolReads::TakeResource(
 	const senp::ContributionOwnerIdentity& owner) noexcept
 {
 	try {
-		std::lock_guard<std::mutex> lock(m_mutex);
+		std::lock_guard<std::mutex> lock(m_state->m_mutex);
 		auto* entry = FindLocked(owner);
 		if (!entry || !entry->resource) return {};
 		auto answer = std::move(*entry->resource);
 		entry->resource.reset();
 		return answer;
-	} catch (...) {
+	} catch (const std::exception&) {
 		return {};
 	}
 }
@@ -417,8 +427,8 @@ void CSenpControlToolReads::ReleaseResource(const senp::ContributionOwnerIdentit
 {
 	try {
 		if (handle.empty()) return;
-		std::lock_guard<std::mutex> lock(m_mutex);
-		if (m_stopped) return;
+		std::lock_guard<std::mutex> lock(m_state->m_mutex);
+		if (m_state->m_stopped) return;
 		// A release for an owner this seam holds nothing for names a resource no
 		// grant of ours reaches, so there is nothing here to withdraw.
 		auto* entry = FindLocked(owner);
@@ -428,23 +438,23 @@ void CSenpControlToolReads::ReleaseResource(const senp::ContributionOwnerIdentit
 		command.owner = owner;
 		command.resourceHandle = std::wstring(handle);
 		if (!EnqueueLocked(std::move(command))) return;
-	} catch (...) {
+	} catch (const std::exception&) {
 		return;
 	}
-	m_work.notify_all();
+	m_state->m_work.notify_all();
 }
 
 void CSenpControlToolReads::Stop() noexcept
 {
 	{
-		std::lock_guard<std::mutex> lock(m_mutex);
-		m_stopped = true;
-		m_commands.clear();
+		std::lock_guard<std::mutex> lock(m_state->m_mutex);
+		m_state->m_stopped = true;
+		m_state->m_commands.clear();
 		// A stopped seam holds no account authority, and the query that would
 		// have answered one is gone with the queue.
-		m_account = {};
-		m_accountPending = false;
-		for (auto& owner : m_owners) {
+		m_state->m_account = {};
+		m_state->m_accountPending = false;
+		for (auto& owner : m_state->m_owners) {
 			owner.retired = true;
 			owner.outstanding.clear();
 			owner.completions.clear();
@@ -453,8 +463,8 @@ void CSenpControlToolReads::Stop() noexcept
 			owner.resource.reset();
 		}
 	}
-	m_work.notify_all();
-	m_quiet.notify_all();
+	m_state->m_work.notify_all();
+	m_state->m_quiet.notify_all();
 	// Stop closes the active channel, so a worker blocked in an exchange returns
 	// instead of being waited on.
 	m_client.Stop();
@@ -464,8 +474,8 @@ void CSenpControlToolReads::Stop() noexcept
 ESenpControlToolReadsState CSenpControlToolReads::State() const noexcept
 {
 	{
-		std::lock_guard<std::mutex> lock(m_mutex);
-		if (m_stopped) return ESenpControlToolReadsState::Stopped;
+		std::lock_guard<std::mutex> lock(m_state->m_mutex);
+		if (m_state->m_stopped) return ESenpControlToolReadsState::Stopped;
 	}
 	switch (m_client.State()) {
 	case EControlSenpClientState::Connected:
@@ -480,7 +490,7 @@ ESenpControlToolReadsState CSenpControlToolReads::State() const noexcept
 
 std::size_t CSenpControlToolReads::OutstandingReads() const noexcept
 {
-	std::lock_guard<std::mutex> lock(m_mutex);
+	std::lock_guard<std::mutex> lock(m_state->m_mutex);
 	return PendingLocked();
 }
 
@@ -491,9 +501,9 @@ std::uint64_t CSenpControlToolReads::ConnectionEpoch() const noexcept
 
 bool CSenpControlToolReads::WaitForSettled(std::chrono::milliseconds timeout)
 {
-	std::unique_lock<std::mutex> lock(m_mutex);
-	return m_quiet.wait_for(lock, timeout, [this] {
-		return m_stopped || (m_commands.empty() && !m_busy && PendingLocked() == 0);
+	std::unique_lock<std::mutex> lock(m_state->m_mutex);
+	return m_state->m_quiet.wait_for(lock, timeout, [this] {
+		return m_state->m_stopped || (m_state->m_commands.empty() && !m_state->m_busy && PendingLocked() == 0);
 	});
 }
 
@@ -502,15 +512,15 @@ bool CSenpControlToolReads::WaitForSettled(std::chrono::milliseconds timeout)
 CSenpControlToolReads::Owner* CSenpControlToolReads::FindLocked(
 	const senp::ContributionOwnerIdentity& owner) noexcept
 {
-	const auto found = std::find_if(m_owners.begin(), m_owners.end(),
+	const auto found = std::find_if(m_state->m_owners.begin(), m_state->m_owners.end(),
 		[&](const Owner& held) { return held.identity == owner; });
-	return found == m_owners.end() ? nullptr : &*found;
+	return found == m_state->m_owners.end() ? nullptr : &*found;
 }
 
 std::size_t CSenpControlToolReads::PendingLocked() const noexcept
 {
 	std::size_t pending = 0;
-	for (const auto& owner : m_owners) pending += owner.outstanding.size();
+	for (const auto& owner : m_state->m_owners) pending += owner.outstanding.size();
 	return pending;
 }
 
@@ -526,10 +536,10 @@ void CSenpControlToolReads::PublishLocked(Owner& owner, std::wstring readId,
 
 bool CSenpControlToolReads::EnqueueLocked(Command command) noexcept
 {
-	if (m_stopped || m_commands.size() >= kMaximumQueuedCommands) return false;
+	if (m_state->m_stopped || m_state->m_commands.size() >= MaximumQueuedCommands()) return false;
 	try {
-		m_commands.push_back(std::move(command));
-	} catch (...) {
+		m_state->m_commands.push_back(std::move(command));
+	} catch (const std::exception&) {
 		return false;
 	}
 	return true;
@@ -539,7 +549,7 @@ void CSenpControlToolReads::Complete(const senp::ContributionOwnerIdentity& owne
 	const std::wstring& readId, senp::effect::CompletionStatus status, std::wstring message) noexcept
 {
 	try {
-		std::lock_guard<std::mutex> lock(m_mutex);
+		std::lock_guard<std::mutex> lock(m_state->m_mutex);
 		auto* entry = FindLocked(owner);
 		if (!entry || entry->retired) return;
 		const auto found = std::find_if(entry->outstanding.begin(), entry->outstanding.end(),
@@ -547,7 +557,7 @@ void CSenpControlToolReads::Complete(const senp::ContributionOwnerIdentity& owne
 		if (found == entry->outstanding.end()) return;
 		entry->outstanding.erase(found);
 		PublishLocked(*entry, readId, status, std::move(message));
-	} catch (...) {
+	} catch (const std::exception&) {
 	}
 }
 
@@ -555,7 +565,7 @@ void CSenpControlToolReads::Route(const senp::ContributionOwnerIdentity& owner,
 	senp::effect::ToolCompleted completion) noexcept
 {
 	try {
-		std::lock_guard<std::mutex> lock(m_mutex);
+		std::lock_guard<std::mutex> lock(m_state->m_mutex);
 		auto* entry = FindLocked(owner);
 		if (!entry || entry->retired) return;
 		const auto found = std::find_if(entry->outstanding.begin(), entry->outstanding.end(),
@@ -566,7 +576,7 @@ void CSenpControlToolReads::Route(const senp::ContributionOwnerIdentity& owner,
 		entry->outstanding.erase(found);
 		if (entry->completions.size() >= kPerOwner) return;
 		entry->completions.push_back(std::move(completion));
-	} catch (...) {
+	} catch (const std::exception&) {
 	}
 }
 
@@ -574,14 +584,14 @@ void CSenpControlToolReads::FailOwner(const senp::ContributionOwnerIdentity& own
 	senp::effect::CompletionStatus status, std::wstring message) noexcept
 {
 	try {
-		std::lock_guard<std::mutex> lock(m_mutex);
+		std::lock_guard<std::mutex> lock(m_state->m_mutex);
 		auto* entry = FindLocked(owner);
 		if (!entry) return;
 		auto outstanding = std::move(entry->outstanding);
 		entry->outstanding.clear();
 		if (entry->retired) return;
 		for (auto& read : outstanding) PublishLocked(*entry, read.readId, status, message);
-	} catch (...) {
+	} catch (const std::exception&) {
 	}
 }
 
@@ -589,8 +599,8 @@ void CSenpControlToolReads::FailDispatched(senp::effect::CompletionStatus status
 	std::wstring message) noexcept
 {
 	try {
-		std::lock_guard<std::mutex> lock(m_mutex);
-		for (auto& owner : m_owners) {
+		std::lock_guard<std::mutex> lock(m_state->m_mutex);
+		for (auto& owner : m_state->m_owners) {
 			for (auto current = owner.outstanding.begin(); current != owner.outstanding.end();) {
 				if (current->epoch == 0) {
 					++current;
@@ -600,7 +610,7 @@ void CSenpControlToolReads::FailDispatched(senp::effect::CompletionStatus status
 				current = owner.outstanding.erase(current);
 			}
 		}
-	} catch (...) {
+	} catch (const std::exception&) {
 	}
 }
 
@@ -608,7 +618,7 @@ void CSenpControlToolReads::Dispatched(const senp::ContributionOwnerIdentity& ow
 	const std::wstring& readId, std::uint64_t epoch) noexcept
 {
 	try {
-		std::lock_guard<std::mutex> lock(m_mutex);
+		std::lock_guard<std::mutex> lock(m_state->m_mutex);
 		auto* entry = FindLocked(owner);
 		if (!entry) return;
 		for (auto& read : entry->outstanding) {
@@ -617,7 +627,7 @@ void CSenpControlToolReads::Dispatched(const senp::ContributionOwnerIdentity& ow
 				return;
 			}
 		}
-	} catch (...) {
+	} catch (const std::exception&) {
 	}
 }
 
@@ -625,7 +635,7 @@ void CSenpControlToolReads::Answer(const senp::ContributionOwnerIdentity& owner,
 	SenpToolResourceAnswer answer) noexcept
 {
 	try {
-		std::lock_guard<std::mutex> lock(m_mutex);
+		std::lock_guard<std::mutex> lock(m_state->m_mutex);
 		auto* entry = FindLocked(owner);
 		if (!entry || entry->retired) return;
 		// An answer to a read this owner is no longer waiting on belongs to a
@@ -635,9 +645,9 @@ void CSenpControlToolReads::Answer(const senp::ContributionOwnerIdentity& owner,
 		entry->resourceHandle.clear();
 		entry->resourceOffset = 0;
 		entry->resource = std::move(answer);
-	} catch (...) {
+	} catch (const std::exception&) {
 	}
-	m_quiet.notify_all();
+	m_state->m_quiet.notify_all();
 }
 
 void CSenpControlToolReads::Refuse(const Command& command,
@@ -659,7 +669,7 @@ void CSenpControlToolReads::Refuse(const Command& command,
 			answer.chunk = std::move(chunk);
 		}
 		Answer(command.owner, std::move(answer));
-	} catch (...) {
+	} catch (const std::exception&) {
 	}
 }
 
@@ -672,37 +682,37 @@ void CSenpControlToolReads::Worker() noexcept
 		bool run = false;
 		bool poll = false;
 		{
-			std::unique_lock<std::mutex> lock(m_mutex);
-			const auto ready = [this] { return !m_commands.empty() || m_stopped; };
+			std::unique_lock<std::mutex> lock(m_state->m_mutex);
+			const auto ready = [this] { return !m_state->m_commands.empty() || m_state->m_stopped; };
 			if (!ready()) {
 				// A deadline only matters while something is outstanding; with an
 				// empty scope the worker sleeps until it is given work.
-				if (PendingLocked() != 0) m_work.wait_for(lock, m_options.pollInterval, ready);
-				else m_work.wait(lock, ready);
+				if (PendingLocked() != 0) m_state->m_work.wait_for(lock, m_options.PollInterval(), ready);
+				else m_state->m_work.wait(lock, ready);
 			}
-			if (m_stopped) break;
-			if (!m_commands.empty()) {
-				command = std::move(m_commands.front());
-				m_commands.pop_front();
+			if (m_state->m_stopped) break;
+			if (!m_state->m_commands.empty()) {
+				command = std::move(m_state->m_commands.front());
+				m_state->m_commands.pop_front();
 				run = true;
 			} else {
 				poll = PendingLocked() != 0;
 			}
-			m_busy = run || poll;
+			m_state->m_busy = run || poll;
 		}
 		if (run) Run(std::move(command));
 		else if (poll) Poll();
 		{
-			std::lock_guard<std::mutex> lock(m_mutex);
-			m_busy = false;
+			std::lock_guard<std::mutex> lock(m_state->m_mutex);
+			m_state->m_busy = false;
 		}
-		m_quiet.notify_all();
+		m_state->m_quiet.notify_all();
 	}
 	{
-		std::lock_guard<std::mutex> lock(m_mutex);
-		m_busy = false;
+		std::lock_guard<std::mutex> lock(m_state->m_mutex);
+		m_state->m_busy = false;
 	}
-	m_quiet.notify_all();
+	m_state->m_quiet.notify_all();
 }
 
 void CSenpControlToolReads::Run(Command command) noexcept
@@ -710,11 +720,11 @@ void CSenpControlToolReads::Run(Command command) noexcept
 	if (command.kind == Command::Kind::Retire) {
 		std::erase_if(m_grants, [&](const Grant& grant) { return grant.identity == command.owner; });
 		try {
-			std::lock_guard<std::mutex> lock(m_mutex);
-			std::erase_if(m_owners, [&](const Owner& owner) {
+			std::lock_guard<std::mutex> lock(m_state->m_mutex);
+			std::erase_if(m_state->m_owners, [&](const Owner& owner) {
 				return owner.retired && owner.identity == command.owner;
 			});
-		} catch (...) {
+		} catch (const std::exception&) {
 		}
 		return;
 	}
@@ -741,7 +751,7 @@ void CSenpControlToolReads::Run(Command command) noexcept
 		const auto grant = Authorize(command.owner, failure);
 		if (!grant) return;
 		auto request = Compose(EControlSenpRpcOperation::ReleaseResource, command.owner, *grant);
-		request.resourceHandle = command.resourceHandle;
+		request.SetResourceHandle(command.resourceHandle);
 		const auto answer = m_client.Execute(request);
 		if (!answer.Answered()) m_client.Disconnect();
 		return;
@@ -754,7 +764,7 @@ void CSenpControlToolReads::Run(Command command) noexcept
 		const auto grant = Authorize(command.owner, failure);
 		if (!grant) return;
 		auto request = Compose(EControlSenpRpcOperation::CancelRead, command.owner, *grant);
-		request.readId = command.read.readId;
+		request.SetReadId(command.read.readId);
 		const auto answer = m_client.Execute(request);
 		if (!answer.Answered()) m_client.Disconnect();
 		return;
@@ -776,10 +786,10 @@ void CSenpControlToolReads::Run(Command command) noexcept
 		return;
 	}
 	auto request = Compose(EControlSenpRpcOperation::StartRead, command.owner, *grant);
-	request.readId = command.read.readId;
-	request.toolId = command.read.toolId;
-	request.toolOperation = command.read.operation;
-	request.arguments = command.read.arguments;
+	request.SetReadId(command.read.readId);
+	request.SetToolId(command.read.toolId);
+	request.SetToolOperation(command.read.operation);
+	request.SetArguments(command.read.arguments);
 	const auto answer = m_client.Execute(request);
 	if (!answer.Answered()) {
 		m_client.Disconnect();
@@ -787,7 +797,7 @@ void CSenpControlToolReads::Run(Command command) noexcept
 			senp::effect::CompletionStatus::HostUnavailable, kLost);
 		return;
 	}
-	switch (answer.response.status) {
+	switch (answer.Response().Status()) {
 	case EControlSenpRpcStatus::Succeeded:
 		// Admitted only. The terminal arrives through Poll, and the read now
 		// belongs to this connection: losing it loses the read.
@@ -806,14 +816,14 @@ void CSenpControlToolReads::Run(Command command) noexcept
 		return;
 	default:
 		Complete(command.owner, command.read.readId,
-			ToCompletion(answer.response.status), kRefused);
+			ToCompletion(answer.Response().Status()), kRefused);
 		return;
 	}
 }
 
 void CSenpControlToolReads::Retry(Command command, std::wstring message) noexcept
 {
-	if (++command.attempts >= kMaximumAttempts) {
+	if (++command.attempts >= MaximumAttempts()) {
 		Complete(command.owner, command.read.readId,
 			senp::effect::CompletionStatus::Failed, std::move(message));
 		return;
@@ -823,10 +833,10 @@ void CSenpControlToolReads::Retry(Command command, std::wstring message) noexcep
 	bool queued = false;
 	bool stopped = false;
 	try {
-		std::lock_guard<std::mutex> lock(m_mutex);
-		stopped = m_stopped;
+		std::lock_guard<std::mutex> lock(m_state->m_mutex);
+		stopped = m_state->m_stopped;
 		queued = EnqueueLocked(std::move(command));
-	} catch (...) {
+	} catch (const std::exception&) {
 	}
 	if (!queued) {
 		Complete(owner, readId, stopped
@@ -834,7 +844,7 @@ void CSenpControlToolReads::Retry(Command command, std::wstring message) noexcep
 			stopped ? kStopped : std::move(message));
 		return;
 	}
-	m_work.notify_all();
+	m_state->m_work.notify_all();
 }
 
 void CSenpControlToolReads::Fetch(Command command) noexcept
@@ -856,16 +866,16 @@ void CSenpControlToolReads::Fetch(Command command) noexcept
 		return;
 	}
 	auto request = Compose(EControlSenpRpcOperation::ReadResource, command.owner, *grant);
-	request.resourceHandle = command.resourceHandle;
-	request.offset = command.resourceOffset;
-	request.length = command.resourceLength;
+	request.SetResourceHandle(command.resourceHandle);
+	request.SetOffset(command.resourceOffset);
+	request.SetLength(command.resourceLength);
 	const auto answer = m_client.Execute(request);
 	if (!answer.Answered()) {
 		m_client.Disconnect();
 		Refuse(command, {});
 		return;
 	}
-	switch (answer.response.status) {
+	switch (answer.Response().Status()) {
 	case EControlSenpRpcStatus::Succeeded:
 		break;
 	case EControlSenpRpcStatus::Busy:
@@ -880,17 +890,17 @@ void CSenpControlToolReads::Fetch(Command command) noexcept
 		// asking again is what tells a rotated grant apart from a resource the
 		// control side has really let go of.
 		Forget(command.owner);
-		Refetch(std::move(command), ToResourceResult(answer.response.status));
+		Refetch(std::move(command), ToResourceResult(answer.Response().Status()));
 		return;
 	default:
-		Refuse(command, ToResourceResult(answer.response.status));
+		Refuse(command, ToResourceResult(answer.Response().Status()));
 		return;
 	}
 	// An answer naming no resource, or naming another range of one, is not this
 	// read's chunk. Passing it on would let the surface append bytes at an
 	// offset it never asked about, which its decoder has no way to detect.
-	if (answer.response.resourceHandle != command.resourceHandle
-		|| answer.response.resourceOffset != command.resourceOffset) {
+	if (answer.Response().ResourceHandle() != command.resourceHandle
+		|| answer.Response().ResourceOffset() != command.resourceOffset) {
 		Refuse(command, senp::TextResourceResult::Invalid);
 		return;
 	}
@@ -899,13 +909,13 @@ void CSenpControlToolReads::Fetch(Command command) noexcept
 	// or an end outside its enumeration and a chunk reaching past its resource,
 	// so nothing is reinterpreted here - only carried.
 	chunk.result = senp::TextResourceResult::Accepted;
-	chunk.state = static_cast<senp::TextResourceState>(answer.response.resourceState);
-	chunk.end = static_cast<senp::TextResourceEnd>(answer.response.resourceEnd);
-	chunk.handle = answer.response.resourceHandle;
-	chunk.revision = answer.response.resourceRevision;
-	chunk.offset = static_cast<std::size_t>(answer.response.resourceOffset);
-	chunk.length = static_cast<std::size_t>(answer.response.resourceLength);
-	chunk.bytes = answer.response.resourceBytes;
+	chunk.state = static_cast<senp::TextResourceState>(answer.Response().ResourceState());
+	chunk.end = static_cast<senp::TextResourceEnd>(answer.Response().ResourceEnd());
+	chunk.handle = answer.Response().ResourceHandle();
+	chunk.revision = answer.Response().ResourceRevision();
+	chunk.offset = static_cast<std::size_t>(answer.Response().ResourceOffset());
+	chunk.length = static_cast<std::size_t>(answer.Response().ResourceLength());
+	chunk.bytes = answer.Response().ResourceBytes();
 	SenpToolResourceAnswer settled;
 	settled.handle = command.resourceHandle;
 	settled.offset = command.resourceOffset;
@@ -916,16 +926,16 @@ void CSenpControlToolReads::Fetch(Command command) noexcept
 void CSenpControlToolReads::Refetch(Command command,
 	const senp::TextResourceResult exhausted) noexcept
 {
-	if (++command.attempts >= kMaximumAttempts) {
+	if (++command.attempts >= MaximumAttempts()) {
 		Refuse(command, exhausted);
 		return;
 	}
 	Command refused = command;
 	bool queued = false;
 	try {
-		std::lock_guard<std::mutex> lock(m_mutex);
+		std::lock_guard<std::mutex> lock(m_state->m_mutex);
 		queued = EnqueueLocked(std::move(command));
-	} catch (...) {
+	} catch (const std::exception&) {
 	}
 	// A seam that cannot hold the retry still owes the surface an answer, or it
 	// would wait on a read nothing is going to serve.
@@ -933,7 +943,7 @@ void CSenpControlToolReads::Refetch(Command command,
 		Refuse(refused, exhausted);
 		return;
 	}
-	m_work.notify_all();
+	m_state->m_work.notify_all();
 }
 
 void CSenpControlToolReads::Poll() noexcept
@@ -944,11 +954,11 @@ void CSenpControlToolReads::Poll() noexcept
 	}
 	std::vector<senp::ContributionOwnerIdentity> scopes;
 	try {
-		std::lock_guard<std::mutex> lock(m_mutex);
-		for (const auto& owner : m_owners) {
+		std::lock_guard<std::mutex> lock(m_state->m_mutex);
+		for (const auto& owner : m_state->m_owners) {
 			if (!owner.retired && !owner.outstanding.empty()) scopes.push_back(owner.identity);
 		}
-	} catch (...) {
+	} catch (const std::exception&) {
 		return;
 	}
 	for (const auto& scope : scopes) {
@@ -972,19 +982,19 @@ void CSenpControlToolReads::Poll() noexcept
 				FailDispatched(senp::effect::CompletionStatus::HostUnavailable, kLost);
 				return;
 			}
-			if (answer.response.status != EControlSenpRpcStatus::Succeeded) {
+			if (answer.Response().Status() != EControlSenpRpcStatus::Succeeded) {
 				// A grant that expired between two polls is replaced on the next
 				// cycle; anything else is this scope's own failure.
-				if (answer.response.status == EControlSenpRpcStatus::Expired
-					|| answer.response.status == EControlSenpRpcStatus::Unauthorized) {
+				if (answer.Response().Status() == EControlSenpRpcStatus::Expired
+					|| answer.Response().Status() == EControlSenpRpcStatus::Unauthorized) {
 					Forget(scope);
 				} else {
-					FailOwner(scope, ToCompletion(answer.response.status), kRefused);
+					FailOwner(scope, ToCompletion(answer.Response().Status()), kRefused);
 				}
 				break;
 			}
-			if (!answer.response.hasCompletion) break;
-			Route(scope, answer.response.completion);
+			if (!answer.Response().HasCompletion()) break;
+			Route(scope, answer.Response().Completion());
 		}
 	}
 }
@@ -998,8 +1008,8 @@ SenpToolAccount CSenpControlToolReads::Query() noexcept
 		ControlSenpRpcRequest request;
 		// The account query names no owner and holds no grant: it is what the
 		// window asks before an owner carrying a generation can exist.
-		request.operation = EControlSenpRpcOperation::QueryAccount;
-		request.profileId = m_options.senpProfileId;
+		request.SetOperation(EControlSenpRpcOperation::QueryAccount);
+		request.SetProfileId(m_options.SenpProfileId());
 		const auto answer = m_client.Execute(request);
 		if (!answer.Answered()) {
 			m_client.Disconnect();
@@ -1007,11 +1017,11 @@ SenpToolAccount CSenpControlToolReads::Query() noexcept
 		}
 		// A refusal names no account. Reporting the fence as unavailable keeps
 		// the window fail-closed instead of guessing which refusal it was.
-		if (answer.response.status != EControlSenpRpcStatus::Succeeded) {
+		if (answer.Response().Status() != EControlSenpRpcStatus::Succeeded) {
 			return { 0, SenpToolAccountState::Unavailable };
 		}
-		return { answer.response.accountGeneration, ToAccountState(answer.response.accountState) };
-	} catch (...) {
+		return { answer.Response().AccountGeneration(), ToAccountState(answer.Response().AccountState()) };
+	} catch (const std::exception&) {
 		return { 0, SenpToolAccountState::Unavailable };
 	}
 }
@@ -1019,24 +1029,24 @@ SenpToolAccount CSenpControlToolReads::Query() noexcept
 void CSenpControlToolReads::Settle(const SenpToolAccount account) noexcept
 {
 	try {
-		std::lock_guard<std::mutex> lock(m_mutex);
+		std::lock_guard<std::mutex> lock(m_state->m_mutex);
 		// A seam stopped while the query was in flight keeps its cleared answer.
-		if (!m_stopped) m_account = account;
-		m_accountPending = false;
-	} catch (...) {
+		if (!m_state->m_stopped) m_state->m_account = account;
+		m_state->m_accountPending = false;
+	} catch (const std::exception&) {
 	}
-	m_quiet.notify_all();
+	m_state->m_quiet.notify_all();
 }
 
 void CSenpControlToolReads::Stale() noexcept
 {
 	try {
-		std::lock_guard<std::mutex> lock(m_mutex);
-		m_account = {};
+		std::lock_guard<std::mutex> lock(m_state->m_mutex);
+		m_state->m_account = {};
 		// The cadence must not suppress the query that re-establishes the fence
 		// on the connection that just replaced the answered one.
-		m_accountAsked = false;
-	} catch (...) {
+		m_state->m_accountAsked = false;
+	} catch (const std::exception&) {
 	}
 }
 
@@ -1073,9 +1083,9 @@ bool CSenpControlToolReads::Declare() noexcept
 {
 	platform::controlipc::ControlSenpRpcWorkspace desired;
 	try {
-		std::lock_guard<std::mutex> lock(m_mutex);
-		desired = m_workspace;
-	} catch (...) {
+		std::lock_guard<std::mutex> lock(m_state->m_mutex);
+		desired = m_state->m_workspace;
+	} catch (const std::exception&) {
 		return false;
 	}
 	// Nothing has been declared yet. Saying so is not the same as declaring an
@@ -1088,19 +1098,19 @@ bool CSenpControlToolReads::Declare() noexcept
 		// It names no owner and holds no grant, for the same reason the account
 		// query does not: it is what the window says before an owner carrying a
 		// workspace revision can exist.
-		request.operation = EControlSenpRpcOperation::AdoptWorkspace;
-		request.profileId = m_options.senpProfileId;
-		request.workspace = desired;
+		request.SetOperation(EControlSenpRpcOperation::AdoptWorkspace);
+		request.SetProfileId(m_options.SenpProfileId());
+		request.SetWorkspace(desired);
 		const auto answer = m_client.Execute(request);
 		if (!answer.Answered()) {
 			m_client.Disconnect();
 			return false;
 		}
-		if (answer.response.status != EControlSenpRpcStatus::Succeeded) return false;
+		if (answer.Response().Status() != EControlSenpRpcStatus::Succeeded) return false;
 		m_declared = std::move(desired);
 		m_declaredEpoch = epoch;
 		return true;
-	} catch (...) {
+	} catch (const std::exception&) {
 		return false;
 	}
 }
@@ -1116,26 +1126,26 @@ std::optional<std::string> CSenpControlToolReads::Authorize(
 			if (found->epoch == epoch) return found->grantId;
 			m_grants.erase(found);
 		}
-		if (m_grants.size() >= kMaximumOwners) {
+		if (m_grants.size() >= MaximumOwners()) {
 			failure = senp::effect::CompletionStatus::Failed;
 			return {};
 		}
 		auto request = Compose(EControlSenpRpcOperation::IssueGrant, owner, {});
-		request.capabilities = static_cast<std::uint32_t>(senp::SenpToolCapability::GitHubRepositoryRead);
+		request.SetCapabilities(static_cast<std::uint32_t>(senp::SenpToolCapability::GitHubRepositoryRead));
 		const auto answer = m_client.Execute(request);
 		if (!answer.Answered()) {
 			m_client.Disconnect();
 			failure = senp::effect::CompletionStatus::HostUnavailable;
 			return {};
 		}
-		if (answer.response.status != EControlSenpRpcStatus::Succeeded
-			|| answer.response.grantId.empty()) {
-			failure = ToCompletion(answer.response.status);
+		if (answer.Response().Status() != EControlSenpRpcStatus::Succeeded
+			|| answer.Response().GrantId().empty()) {
+			failure = ToCompletion(answer.Response().Status());
 			return {};
 		}
-		m_grants.push_back(Grant{ owner, answer.response.grantId, epoch });
-		return answer.response.grantId;
-	} catch (...) {
+		m_grants.push_back(Grant(owner, answer.Response().GrantId(), epoch));
+		return answer.Response().GrantId();
+	} catch (const std::exception&) {
 		failure = senp::effect::CompletionStatus::Failed;
 		return {};
 	}
@@ -1151,10 +1161,10 @@ platform::controlipc::ControlSenpRpcRequest CSenpControlToolReads::Compose(
 	const std::string& grantId) const
 {
 	ControlSenpRpcRequest request;
-	request.operation = operation;
-	request.profileId = m_options.senpProfileId;
-	request.owner = platform::controlipc::FromContributionOwner(owner);
-	request.grantId = grantId;
+	request.SetOperation(operation);
+	request.SetProfileId(m_options.SenpProfileId());
+	request.SetOwner(platform::controlipc::FromContributionOwner(owner));
+	request.SetGrantId(grantId);
 	return request;
 }
 

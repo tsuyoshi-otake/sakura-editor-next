@@ -263,7 +263,7 @@ class SenpReadonlyDocumentHost::Impl {
 				self.ClearPages(); self.copy = {}; ::RemoveWindowSubclass(window, Procedure, 1); break;
 			default: break;
 			}
-		} catch (...) { self.Close(); return 0; }
+		} catch (const std::exception&) { self.Close(); return 0; }
 		return ::DefSubclassProc(window, message, wParam, lParam);
 	}
 };
@@ -285,12 +285,12 @@ bool SenpReadonlyDocumentHost::Create(HWND parent) {
 		self.notice = ::CreateWindowExW(0, L"STATIC", L"", WS_CHILD, 0, 0, 1, 1, self.root, nullptr, nullptr, nullptr);
 		if (!self.selector || !self.label || !self.notice) { self.Close(); return false; }
 		self.Style(); (void)self.Sync(); return self.state != SenpDocumentHostState::Closed;
-	} catch (...) { self.Close(); return false; }
+	} catch (const std::exception&) { self.Close(); return false; }
 }
-SenpDocumentHostState SenpReadonlyDocumentHost::Sync() { try { return m_impl->Sync(); } catch (...) { m_impl->Close(); return SenpDocumentHostState::Closed; } }
+SenpDocumentHostState SenpReadonlyDocumentHost::Sync() { try { return m_impl->Sync(); } catch (const std::exception&) { m_impl->Close(); return SenpDocumentHostState::Closed; } }
 void SenpReadonlyDocumentHost::SetStyle(const theme::ThemePalette& palette, const LOGFONT& font, unsigned int dpi) {
 	if (m_impl->state == SenpDocumentHostState::Closed) return;
-	try { m_impl->palette = palette; m_impl->editorFont = font; m_impl->dpi = dpi ? dpi : 96; m_impl->Style(); } catch (...) { m_impl->Close(); }
+	try { m_impl->palette = palette; m_impl->editorFont = font; m_impl->dpi = dpi ? dpi : 96; m_impl->Style(); } catch (const std::exception&) { m_impl->Close(); }
 }
 void SenpReadonlyDocumentHost::Layout(const RECT& bounds, unsigned int dpi) {
 	if (!m_impl->root || bounds.right < bounds.left || bounds.bottom < bounds.top) return;
@@ -299,12 +299,12 @@ void SenpReadonlyDocumentHost::Layout(const RECT& bounds, unsigned int dpi) {
 		if (!::SetWindowPos(m_impl->root, nullptr, bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top,
 			SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS)) { m_impl->Close(); return; }
 		m_impl->LayoutChildren();
-	} catch (...) { m_impl->Close(); }
+	} catch (const std::exception&) { m_impl->Close(); }
 }
 void SenpReadonlyDocumentHost::Show(bool visible) noexcept { if (m_impl->root) ::ShowWindow(m_impl->root, visible ? SW_SHOWNA : SW_HIDE); }
 void SenpReadonlyDocumentHost::Close() noexcept { m_impl->Close(); }
 bool SenpReadonlyDocumentHost::SelectPage(std::size_t index, bool focus) {
-	try { (void)m_impl->Sync(); return m_impl->Select(index, focus); } catch (...) { m_impl->Close(); return false; }
+	try { (void)m_impl->Sync(); return m_impl->Select(index, focus); } catch (const std::exception&) { m_impl->Close(); return false; }
 }
 std::vector<SenpDocumentPage> SenpReadonlyDocumentHost::Pages() const {
 	std::vector<SenpDocumentPage> result;
@@ -323,7 +323,7 @@ std::optional<SenpDocumentTextRead> SenpReadonlyDocumentHost::TakeTextRead() {
 		self.inFlight = SenpDocumentTextRead{ *self.generation, ++self.nextTicket, page->text->scope, page->text->handle,
 			viewport.byteOffset, senp::SenpTextResourceStore::kChunkBytes };
 		page->text->readReady = false; return self.inFlight;
-	} catch (...) { m_impl->Close(); return {}; }
+	} catch (const std::exception&) { m_impl->Close(); return {}; }
 }
 SenpTextViewResult SenpReadonlyDocumentHost::ApplyText(const SenpDocumentTextRead& request, const senp::TextResourceChunk& chunk) {
 	try {
@@ -339,7 +339,7 @@ SenpTextViewResult SenpReadonlyDocumentHost::ApplyText(const SenpDocumentTextRea
 			return result;
 		}
 		return SenpTextViewResult::Stale;
-	} catch (...) { m_impl->Close(); return SenpTextViewResult::Closed; }
+	} catch (const std::exception&) { m_impl->Close(); return SenpTextViewResult::Closed; }
 }
 void SenpReadonlyDocumentHost::FailText(const SenpDocumentTextRead& request, senp::TextResourceEnd reason) noexcept {
 	auto& self = *m_impl;
@@ -354,23 +354,23 @@ void SenpReadonlyDocumentHost::NotifyTextChanged(const senp::TextResourceScope& 
 	try {
 		if (m_impl->Sync() != SenpDocumentHostState::Ready) return;
 		for (auto& page : m_impl->pages) if (page.text && page.text->scope == scope && page.text->handle == handle) page.text->readReady = true;
-	} catch (...) { m_impl->Close(); }
+	} catch (const std::exception&) { m_impl->Close(); }
 }
 void SenpReadonlyDocumentHost::SelectAll() {
 	try { if (auto* page = m_impl->CommandPage()) { if (page->structured) page->structured->SelectAll(); else page->text->view->SelectAll(); } }
-	catch (...) { m_impl->Close(); }
+	catch (const std::exception&) { m_impl->Close(); }
 }
 std::wstring SenpReadonlyDocumentHost::SelectedText() {
 	try { if (auto* page = m_impl->CommandPage()) return page->structured ? page->structured->SelectedText() : page->text->view->SelectedText(); }
-	catch (...) { m_impl->Close(); } return {};
+	catch (const std::exception&) { m_impl->Close(); } return {};
 }
 bool SenpReadonlyDocumentHost::Copy() {
 	try { if (auto* page = m_impl->CommandPage()) return page->structured ? page->structured->Copy() : page->text->view->Copy(); }
-	catch (...) { m_impl->Close(); } return false;
+	catch (const std::exception&) { m_impl->Close(); } return false;
 }
 void SenpReadonlyDocumentHost::ShowFind(bool visible) {
 	try { if (auto* page = m_impl->CommandPage()) { if (page->structured) page->structured->ShowFind(visible); else page->text->view->ShowFind(visible); } }
-	catch (...) { m_impl->Close(); }
+	catch (const std::exception&) { m_impl->Close(); }
 }
 markdown::PreviewFindResult SenpReadonlyDocumentHost::Find(std::wstring_view query, bool previous, bool matchCase) {
 	try {
@@ -384,7 +384,7 @@ markdown::PreviewFindResult SenpReadonlyDocumentHost::Find(std::wstring_view que
 			default: break;
 			}
 		}
-	} catch (...) { m_impl->Close(); } return markdown::PreviewFindResult::Unavailable;
+	} catch (const std::exception&) { m_impl->Close(); } return markdown::PreviewFindResult::Unavailable;
 }
 HWND SenpReadonlyDocumentHost::Window() const noexcept { return m_impl->root; }
 HWND SenpReadonlyDocumentHost::FocusWindow() const noexcept { return m_impl->root; }

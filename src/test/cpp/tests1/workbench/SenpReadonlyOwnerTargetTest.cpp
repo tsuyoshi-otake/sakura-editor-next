@@ -17,98 +17,153 @@ namespace {
 //! mirroring the contract the production seam owes the UI thread.
 class ScriptedToolReads final : public ISenpOwnerToolReads {
 public:
-	struct Started {
-		senp::ContributionOwnerIdentity owner;
-		senp::effect::OperationContext context;
-		senp::effect::StartToolRead read;
+	//! One recorded Start() call. A private, constructor-built record rather
+	//! than an aggregate, so the fixture's recordings stay query-only outside
+	//! this file, matching the "fake-recording fields become private members
+	//! with query methods" fix for wire DTOs and test fakes.
+	class Started {
+	public:
+		Started(senp::ContributionOwnerIdentity owner, senp::effect::OperationContext context,
+			senp::effect::StartToolRead read)
+			: m_owner(std::move(owner)), m_context(std::move(context)), m_read(std::move(read)) {
+		}
+
+		[[nodiscard]] const senp::ContributionOwnerIdentity& Owner() const noexcept { return m_owner; }
+		[[nodiscard]] const senp::effect::OperationContext& Context() const noexcept { return m_context; }
+		[[nodiscard]] const senp::effect::StartToolRead& Read() const noexcept { return m_read; }
+
+	private:
+		senp::ContributionOwnerIdentity m_owner;
+		senp::effect::OperationContext m_context;
+		senp::effect::StartToolRead m_read;
 	};
-	std::vector<Started> started;
-	std::vector<std::pair<senp::ContributionOwnerIdentity, senp::effect::OperationContext>> cancelled;
-	std::vector<senp::ContributionOwnerIdentity> cancelledAll;
-	std::deque<senp::effect::ToolCompleted> completions;
-	//! When set, Take answers with this terminal forever. It models a seam that
-	//! keeps offering a completion the target no longer owns.
-	std::optional<senp::effect::ToolCompleted> endless;
-	int takeCalls{};
-	bool admit{ true };
+
+	//! Only the text pump reaches these, so recording every call is what lets a
+	//! test assert that publishing, completing and revoking make none of them.
+	class Requested {
+	public:
+		Requested(std::wstring handle, std::uint64_t offset, std::uint32_t length)
+			: m_handle(std::move(handle)), m_offset(offset), m_length(length) {
+		}
+
+		[[nodiscard]] const std::wstring& Handle() const noexcept { return m_handle; }
+		[[nodiscard]] std::uint64_t Offset() const noexcept { return m_offset; }
+		[[nodiscard]] std::uint32_t Length() const noexcept { return m_length; }
+
+	private:
+		std::wstring m_handle;
+		std::uint64_t m_offset{};
+		std::uint32_t m_length{};
+	};
 
 	[[nodiscard]] bool Start(const senp::ContributionOwnerIdentity& owner,
 		const senp::effect::OperationContext& context,
 		const senp::effect::StartToolRead& read) noexcept override
 	{
-		started.push_back({ owner, context, read });
-		return admit;
+		m_started.emplace_back(owner, context, read);
+		return m_admit;
 	}
 	[[nodiscard]] std::optional<senp::effect::ToolCompleted> Take(
 		const senp::ContributionOwnerIdentity&) noexcept override
 	{
-		++takeCalls;
-		if (endless) return endless;
-		if (completions.empty()) return {};
-		auto value = completions.front();
-		completions.pop_front();
+		++m_takeCalls;
+		if (m_endless) return m_endless;
+		if (m_completions.empty()) return {};
+		auto value = m_completions.front();
+		m_completions.pop_front();
 		return value;
 	}
 	void Cancel(const senp::ContributionOwnerIdentity& owner,
 		const senp::effect::OperationContext& context) noexcept override
 	{
-		cancelled.emplace_back(owner, context);
+		m_cancelled.emplace_back(owner, context);
 	}
 	void CancelAll(const senp::ContributionOwnerIdentity& owner) noexcept override
 	{
-		cancelledAll.push_back(owner);
+		m_cancelledAll.push_back(owner);
 	}
 	//! An owner target never asks for the account fence, so these record the
 	//! calls in order to assert that it does not.
 	[[nodiscard]] SenpToolAccount Account() const noexcept override
 	{
-		++accountCalls;
-		return account;
+		++*m_accountCalls;
+		return m_account;
 	}
-	void RefreshAccount() noexcept override { ++accountRefreshes; }
+	void RefreshAccount() noexcept override { ++m_accountRefreshes; }
 	//! Recorded for the same reason: the workspace is the window's business and
 	//! an owner target must never declare one.
 	void DeclareWorkspace(std::uint64_t, std::uint64_t, std::vector<std::wstring>) noexcept override
 	{
-		++workspaceDeclarations;
+		++m_workspaceDeclarations;
 	}
-	//! Only the text pump reaches these, so recording every call is what lets a
-	//! test assert that publishing, completing and revoking make none of them.
-	struct Requested final {
-		std::wstring handle;
-		std::uint64_t offset{};
-		std::uint32_t length{};
-	};
 	[[nodiscard]] bool ReadResource(const senp::ContributionOwnerIdentity&, std::wstring_view handle,
 		const std::uint64_t offset, const std::uint32_t length) noexcept override
 	{
-		resourceReads.push_back({ std::wstring(handle), offset, length });
-		return admitResource;
+		m_resourceReads.emplace_back(std::wstring(handle), offset, length);
+		return m_admitResource;
 	}
 	[[nodiscard]] std::optional<SenpToolResourceAnswer> TakeResource(
 		const senp::ContributionOwnerIdentity&) noexcept override
 	{
-		++resourceTakes;
-		if (resourceAnswers.empty()) return {};
-		auto value = std::move(resourceAnswers.front());
-		resourceAnswers.pop_front();
+		++m_resourceTakes;
+		if (m_resourceAnswers.empty()) return {};
+		auto value = std::move(m_resourceAnswers.front());
+		m_resourceAnswers.pop_front();
 		return value;
 	}
 	void ReleaseResource(const senp::ContributionOwnerIdentity&, std::wstring_view handle) noexcept override
 	{
-		resourceReleases.emplace_back(handle);
+		m_resourceReleases.emplace_back(handle);
 	}
 
-	std::vector<Requested> resourceReads;
-	std::deque<SenpToolResourceAnswer> resourceAnswers;
-	std::vector<std::wstring> resourceReleases;
-	int resourceTakes{};
-	bool admitResource{ true };
+	//! Query methods for the tests in this file. This fixture's recordings are
+	//! read-only from outside; only the scripting mutators below let a test
+	//! shape the next scripted answer.
+	[[nodiscard]] const std::vector<Started>& StartedCalls() const noexcept { return m_started; }
+	[[nodiscard]] const std::vector<std::pair<senp::ContributionOwnerIdentity, senp::effect::OperationContext>>&
+	CancelledCalls() const noexcept { return m_cancelled; }
+	[[nodiscard]] const std::vector<senp::ContributionOwnerIdentity>& CancelledAllCalls() const noexcept
+	{
+		return m_cancelledAll;
+	}
+	[[nodiscard]] int TakeCalls() const noexcept { return m_takeCalls; }
+	[[nodiscard]] const std::vector<Requested>& ResourceReads() const noexcept { return m_resourceReads; }
+	[[nodiscard]] const std::vector<std::wstring>& ResourceReleases() const noexcept { return m_resourceReleases; }
+	[[nodiscard]] int ResourceTakes() const noexcept { return m_resourceTakes; }
+	[[nodiscard]] int AccountCalls() const noexcept { return *m_accountCalls; }
+	[[nodiscard]] int AccountRefreshes() const noexcept { return m_accountRefreshes; }
+	[[nodiscard]] int WorkspaceDeclarations() const noexcept { return m_workspaceDeclarations; }
 
-	SenpToolAccount account;
-	mutable int accountCalls{};
-	int accountRefreshes{};
-	int workspaceDeclarations{};
+	//! Scripting mutators: shape the answers this fixture hands back.
+	void PushCompletion(senp::effect::ToolCompleted completion) { m_completions.push_back(std::move(completion)); }
+	//! When set, Take answers with this terminal forever. It models a seam that
+	//! keeps offering a completion the target no longer owns.
+	void SetEndless(senp::effect::ToolCompleted completion) { m_endless = std::move(completion); }
+	void SetAdmit(const bool admit) noexcept { m_admit = admit; }
+	void PushResourceAnswer(SenpToolResourceAnswer answer) { m_resourceAnswers.push_back(std::move(answer)); }
+	void SetAdmitResource(const bool admit) noexcept { m_admitResource = admit; }
+
+private:
+	std::vector<Started> m_started;
+	std::vector<std::pair<senp::ContributionOwnerIdentity, senp::effect::OperationContext>> m_cancelled;
+	std::vector<senp::ContributionOwnerIdentity> m_cancelledAll;
+	std::deque<senp::effect::ToolCompleted> m_completions;
+	std::optional<senp::effect::ToolCompleted> m_endless;
+	int m_takeCalls{};
+	bool m_admit{ true };
+
+	std::vector<Requested> m_resourceReads;
+	std::deque<SenpToolResourceAnswer> m_resourceAnswers;
+	std::vector<std::wstring> m_resourceReleases;
+	int m_resourceTakes{};
+	bool m_admitResource{ true };
+
+	SenpToolAccount m_account;
+	//! Owned indirectly so Account() can stay const per the interface without
+	//! declaring the counter itself mutable: only the pointee changes.
+	std::unique_ptr<int> m_accountCalls = std::make_unique<int>(0);
+	int m_accountRefreshes{};
+	int m_workspaceDeclarations{};
 };
 
 //! A document whose only section is a text resource, so its single page is the
@@ -138,11 +193,7 @@ senp::TextResourceChunk Chunk(std::string bytes, std::size_t offset, std::size_t
 
 SenpToolResourceAnswer Answer(std::optional<senp::TextResourceChunk> chunk, std::uint64_t offset = 0)
 {
-	SenpToolResourceAnswer answer;
-	answer.handle = L"log-1";
-	answer.offset = offset;
-	answer.chunk = std::move(chunk);
-	return answer;
+	return SenpToolResourceAnswer(L"log-1", offset, std::move(chunk));
 }
 
 //! The store refusing a read, which is an answer and not a lost connection.
@@ -223,12 +274,12 @@ protected:
 	void PumpPartialText(CSenpReadonlyOwnerTarget& target, ScriptedToolReads& reads)
 	{
 		target.PumpText();
-		ASSERT_EQ(1U, reads.resourceReads.size());
-		reads.resourceAnswers.push_back(Answer(Chunk("partial", 0, 15,
+		ASSERT_EQ(1U, reads.ResourceReads().size());
+		reads.PushResourceAnswer(Answer(Chunk("partial", 0, 15,
 			senp::TextResourceState::Loading, senp::TextResourceEnd::None)));
 		target.PumpText();
-		ASSERT_EQ(2U, reads.resourceReads.size());
-		EXPECT_EQ(7U, reads.resourceReads[1].offset);
+		ASSERT_EQ(2U, reads.ResourceReads().size());
+		EXPECT_EQ(7U, reads.ResourceReads()[1].Offset());
 		auto* const host = target.Host(L"run/42");
 		ASSERT_NE(nullptr, host);
 		host->SelectAll();
@@ -245,19 +296,19 @@ TEST_F(SenpReadonlyOwnerTargetTest, CarriesOneTextChunkPerTurnFromTheSeamToTheSu
 
 	// The first turn admits a read and settles nothing: no answer exists yet.
 	target.PumpText();
-	ASSERT_EQ(1U, reads.resourceReads.size());
-	EXPECT_EQ(L"log-1", reads.resourceReads[0].handle);
-	EXPECT_EQ(0U, reads.resourceReads[0].offset);
-	EXPECT_EQ(senp::SenpTextResourceStore::kChunkBytes, reads.resourceReads[0].length);
+	ASSERT_EQ(1U, reads.ResourceReads().size());
+	EXPECT_EQ(L"log-1", reads.ResourceReads()[0].Handle());
+	EXPECT_EQ(0U, reads.ResourceReads()[0].Offset());
+	EXPECT_EQ(senp::SenpTextResourceStore::kChunkBytes, reads.ResourceReads()[0].Length());
 	EXPECT_EQ(L"run/42", target.OutstandingTextResource());
 
 	// A turn with no answer waiting leaves the read where it is rather than
 	// asking a second time for a range already in flight.
 	target.PumpText();
-	EXPECT_EQ(1U, reads.resourceReads.size());
+	EXPECT_EQ(1U, reads.ResourceReads().size());
 	EXPECT_EQ(L"run/42", target.OutstandingTextResource());
 
-	reads.resourceAnswers.push_back(Answer(Chunk("run step output", 0, 15,
+	reads.PushResourceAnswer(Answer(Chunk("run step output", 0, 15,
 		senp::TextResourceState::Complete, senp::TextResourceEnd::Complete)));
 	target.PumpText();
 	EXPECT_TRUE(target.OutstandingTextResource().empty());
@@ -268,13 +319,13 @@ TEST_F(SenpReadonlyOwnerTargetTest, CarriesOneTextChunkPerTurnFromTheSeamToTheSu
 
 	// A resource that has arrived whole asks for nothing further.
 	target.PumpText();
-	EXPECT_EQ(1U, reads.resourceReads.size());
+	EXPECT_EQ(1U, reads.ResourceReads().size());
 }
 
 TEST_F(SenpReadonlyOwnerTargetTest, AnswersAReadTheSeamWouldNotCarryInsteadOfLeavingItOutstanding)
 {
 	ScriptedToolReads reads;
-	reads.admitResource = false;
+	reads.SetAdmitResource(false);
 	ASSERT_TRUE(resources.Admit(Owner()));
 	CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 961000, &resources, {}, {}, {}, &reads);
 	ASSERT_NO_FATAL_FAILURE(PublishText(target));
@@ -282,13 +333,13 @@ TEST_F(SenpReadonlyOwnerTargetTest, AnswersAReadTheSeamWouldNotCarryInsteadOfLea
 	// The host committed to the read the moment it handed it over, so a refused
 	// admission has to end it here rather than leave the page waiting.
 	target.PumpText();
-	ASSERT_EQ(1U, reads.resourceReads.size());
+	ASSERT_EQ(1U, reads.ResourceReads().size());
 	EXPECT_TRUE(target.OutstandingTextResource().empty());
 
 	// A failed page wants nothing further, and nothing is owed to this owner.
 	target.PumpText();
-	EXPECT_EQ(1U, reads.resourceReads.size());
-	EXPECT_EQ(0, reads.resourceTakes);
+	EXPECT_EQ(1U, reads.ResourceReads().size());
+	EXPECT_EQ(0, reads.ResourceTakes());
 }
 
 TEST_F(SenpReadonlyOwnerTargetTest, KeepsWhatArrivedWhenNoAnswerAboutTheResourceCameBack)
@@ -301,7 +352,7 @@ TEST_F(SenpReadonlyOwnerTargetTest, KeepsWhatArrivedWhenNoAnswerAboutTheResource
 
 	// A connection that went away says nothing about the resource, so the bytes
 	// that did arrive stay on screen under a failed status.
-	reads.resourceAnswers.push_back(Answer(std::nullopt, 7));
+	reads.PushResourceAnswer(Answer(std::nullopt, 7));
 	target.PumpText();
 	EXPECT_TRUE(target.OutstandingTextResource().empty());
 	auto* const host = target.Host(L"run/42");
@@ -320,7 +371,7 @@ TEST_F(SenpReadonlyOwnerTargetTest, ErasesTheBodyOfAResourceTheStoreHasLetGo)
 
 	// Expired is the store saying the resource is gone, not that this read
 	// failed. What arrived is no longer part of anything completable.
-	reads.resourceAnswers.push_back(Refused(senp::TextResourceResult::Expired, 7));
+	reads.PushResourceAnswer(Refused(senp::TextResourceResult::Expired, 7));
 	target.PumpText();
 	EXPECT_TRUE(target.OutstandingTextResource().empty());
 	auto* const host = target.Host(L"run/42");
@@ -340,7 +391,7 @@ TEST_F(SenpReadonlyOwnerTargetTest, IgnoresAnAnswerThatSettlesSomeOtherRead)
 	// The offset names a range this owner never asked for. It cannot settle the
 	// outstanding read, and no second answer is coming, so the read ends failed
 	// and the bytes already shown are left alone.
-	reads.resourceAnswers.push_back(Answer(Chunk("more", 0, 15,
+	reads.PushResourceAnswer(Answer(Chunk("more", 0, 15,
 		senp::TextResourceState::Loading, senp::TextResourceEnd::None), 0));
 	target.PumpText();
 	EXPECT_TRUE(target.OutstandingTextResource().empty());
@@ -365,21 +416,21 @@ TEST_F(SenpReadonlyOwnerTargetTest, MakesNoResourceCallWithoutAPumpTurnAndNoneAf
 		const senp::effect::OperationContext request{ L"tool.read", 3, 4, 5, 2 };
 		ASSERT_TRUE(target.StartToolRead(request, Read(L"read-1", L"repositoryRead")));
 		EXPECT_FALSE(target.TakeToolRead());
-		EXPECT_TRUE(reads.resourceReads.empty());
-		EXPECT_EQ(0, reads.resourceTakes);
+		EXPECT_TRUE(reads.ResourceReads().empty());
+		EXPECT_EQ(0, reads.ResourceTakes());
 
 		EXPECT_TRUE(pump());
-		EXPECT_EQ(1U, reads.resourceReads.size());
+		EXPECT_EQ(1U, reads.ResourceReads().size());
 		EXPECT_EQ(L"run/42", target.OutstandingTextResource());
 
 		target.Revoke();
 		EXPECT_FALSE(pump());
 		EXPECT_TRUE(target.OutstandingTextResource().empty());
-		EXPECT_EQ(1U, reads.resourceReads.size());
+		EXPECT_EQ(1U, reads.ResourceReads().size());
 	}
 	// The handle outlives the object it was taken from and says so plainly.
 	EXPECT_FALSE(pump());
-	EXPECT_EQ(1U, reads.resourceReads.size());
+	EXPECT_EQ(1U, reads.ResourceReads().size());
 }
 
 TEST_F(SenpReadonlyOwnerTargetTest, ShowsNoTextPageForAnOwnerTheAuthorityDoesNotHold)
@@ -395,7 +446,7 @@ TEST_F(SenpReadonlyOwnerTargetTest, ShowsNoTextPageForAnOwnerTheAuthorityDoesNot
 	EXPECT_EQ(0U, target.DocumentCount());
 
 	target.PumpText();
-	EXPECT_TRUE(reads.resourceReads.empty());
+	EXPECT_TRUE(reads.ResourceReads().empty());
 	EXPECT_TRUE(target.OutstandingTextResource().empty());
 }
 
@@ -485,21 +536,21 @@ TEST_F(SenpReadonlyOwnerTargetTest, RoutesAdmittedToolReadsToTheSeamAndReturnsTh
 	ASSERT_TRUE(target.StartToolRead(issues, Read(L"issues:open:1", L"repositoryRead")));
 	ASSERT_TRUE(target.StartToolRead(comments, Read(L"comments:1", L"repositoryRead")));
 	ASSERT_EQ(2U, target.ToolReadCount());
-	ASSERT_EQ(2U, reads.started.size());
+	ASSERT_EQ(2U, reads.StartedCalls().size());
 	// The seam is told which owner scope the read belongs to; the target never
 	// lets the extension name it.
-	EXPECT_EQ(Owner(), reads.started[0].owner);
-	EXPECT_EQ(issues, reads.started[0].context);
-	EXPECT_EQ(L"issues:open:1", reads.started[0].read.readId);
-	EXPECT_EQ(L"github", reads.started[0].read.toolId);
-	EXPECT_EQ(L"repositoryRead", reads.started[0].read.operation);
-	ASSERT_EQ(1U, reads.started[0].read.arguments.size());
-	EXPECT_EQ(L"owner/project", reads.started[0].read.arguments[0].value);
+	EXPECT_EQ(Owner(), reads.StartedCalls()[0].Owner());
+	EXPECT_EQ(issues, reads.StartedCalls()[0].Context());
+	EXPECT_EQ(L"issues:open:1", reads.StartedCalls()[0].Read().readId);
+	EXPECT_EQ(L"github", reads.StartedCalls()[0].Read().toolId);
+	EXPECT_EQ(L"repositoryRead", reads.StartedCalls()[0].Read().operation);
+	ASSERT_EQ(1U, reads.StartedCalls()[0].Read().arguments.size());
+	EXPECT_EQ(L"owner/project", reads.StartedCalls()[0].Read().arguments[0].value);
 
 	// Terminals arrive out of order; each one is paired with the context that
 	// started that readId, not with the order it finished in.
-	reads.completions.push_back({ L"comments:1", senp::effect::CompletionStatus::Succeeded, L"[]" });
-	reads.completions.push_back({ L"issues:open:1", senp::effect::CompletionStatus::Succeeded, L"[1]" });
+	reads.PushCompletion({ L"comments:1", senp::effect::CompletionStatus::Succeeded, L"[]" });
+	reads.PushCompletion({ L"issues:open:1", senp::effect::CompletionStatus::Succeeded, L"[1]" });
 	const auto firstTerminal = target.TakeToolRead();
 	ASSERT_TRUE(firstTerminal);
 	EXPECT_EQ(comments, firstTerminal->Context());
@@ -515,9 +566,9 @@ TEST_F(SenpReadonlyOwnerTargetTest, RoutesAdmittedToolReadsToTheSeamAndReturnsTh
 	// The account fence and the workspace are the window's concern. A target that
 	// asked for either would be reading authority it is already scoped by, or
 	// answering for a workspace it does not own, so it never does.
-	EXPECT_EQ(0, reads.accountCalls);
-	EXPECT_EQ(0, reads.accountRefreshes);
-	EXPECT_EQ(0, reads.workspaceDeclarations);
+	EXPECT_EQ(0, reads.AccountCalls());
+	EXPECT_EQ(0, reads.AccountRefreshes());
+	EXPECT_EQ(0, reads.WorkspaceDeclarations());
 }
 
 TEST_F(SenpReadonlyOwnerTargetTest, RefusesEveryToolReadItCannotAccountFor)
@@ -541,18 +592,18 @@ TEST_F(SenpReadonlyOwnerTargetTest, RefusesEveryToolReadItCannotAccountFor)
 		EXPECT_FALSE(target.StartToolRead(rejected, Read(L"issues:open:1", L"repositoryRead")));
 	EXPECT_FALSE(target.StartToolRead(context, Read(L"", L"repositoryRead")));
 	EXPECT_FALSE(target.StartToolRead(context, Read(std::wstring(513, L'r'), L"repositoryRead")));
-	EXPECT_TRUE(reads.started.empty());
+	EXPECT_TRUE(reads.StartedCalls().empty());
 
 	ASSERT_TRUE(target.StartToolRead(context, Read(L"issues:open:1", L"repositoryRead")));
 	// The same readId twice would make one terminal unroutable.
 	EXPECT_FALSE(target.StartToolRead(context, Read(L"issues:open:1", L"repositoryRead")));
-	EXPECT_EQ(1U, reads.started.size());
+	EXPECT_EQ(1U, reads.StartedCalls().size());
 
 	// A refused dispatch leaves nothing behind that could never be drained.
-	reads.admit = false;
+	reads.SetAdmit(false);
 	EXPECT_FALSE(target.StartToolRead(context, Read(L"issues:open:2", L"repositoryRead")));
 	EXPECT_EQ(1U, target.ToolReadCount());
-	reads.admit = true;
+	reads.SetAdmit(true);
 	for (std::size_t index = 1; index < senp::CSenpRuntimeSession::kMaximumPending; ++index)
 		ASSERT_TRUE(target.StartToolRead(context, Read(L"issues:bulk:" + std::to_wstring(index),
 			L"repositoryRead")));
@@ -568,18 +619,18 @@ TEST_F(SenpReadonlyOwnerTargetTest, DiscardsATerminalForAReadItNoLongerOwns)
 	ASSERT_TRUE(target.StartToolRead(context, Read(L"issues:open:1", L"repositoryRead")));
 	target.CancelToolReads(context);
 	EXPECT_EQ(0U, target.ToolReadCount());
-	ASSERT_EQ(1U, reads.cancelled.size());
-	EXPECT_EQ(Owner(), reads.cancelled[0].first);
-	EXPECT_EQ(context, reads.cancelled[0].second);
+	ASSERT_EQ(1U, reads.CancelledCalls().size());
+	EXPECT_EQ(Owner(), reads.CancelledCalls()[0].first);
+	EXPECT_EQ(context, reads.CancelledCalls()[0].second);
 
 	// The read was already in flight, so its terminal still surfaces. Handing it
 	// to the projection would be a protocol violation and would close the owner.
-	reads.endless = senp::effect::ToolCompleted{ L"issues:open:1",
-		senp::effect::CompletionStatus::Succeeded, L"[1]" };
+	reads.SetEndless(senp::effect::ToolCompleted{ L"issues:open:1",
+		senp::effect::CompletionStatus::Succeeded, L"[1]" });
 	EXPECT_FALSE(target.TakeToolRead());
 	// Bounded drain: a seam that keeps offering an unknown terminal cannot spin
 	// the UI thread.
-	EXPECT_LE(reads.takeCalls, static_cast<int>(senp::CSenpRuntimeSession::kMaximumPending) + 1);
+	EXPECT_LE(reads.TakeCalls(), static_cast<int>(senp::CSenpRuntimeSession::kMaximumPending) + 1);
 }
 
 TEST_F(SenpReadonlyOwnerTargetTest, CancelsOnlyTheRequestLineageItWasGiven)
@@ -593,8 +644,8 @@ TEST_F(SenpReadonlyOwnerTargetTest, CancelsOnlyTheRequestLineageItWasGiven)
 	target.CancelToolReads(first);
 	EXPECT_EQ(1U, target.ToolReadCount());
 
-	reads.completions.push_back({ L"issues:open:1", senp::effect::CompletionStatus::Cancelled, L"" });
-	reads.completions.push_back({ L"comments:1", senp::effect::CompletionStatus::Succeeded, L"[]" });
+	reads.PushCompletion({ L"issues:open:1", senp::effect::CompletionStatus::Cancelled, L"" });
+	reads.PushCompletion({ L"comments:1", senp::effect::CompletionStatus::Succeeded, L"[]" });
 	const auto terminal = target.TakeToolRead();
 	ASSERT_TRUE(terminal);
 	EXPECT_EQ(second, terminal->Context());
@@ -609,19 +660,19 @@ TEST_F(SenpReadonlyOwnerTargetTest, RevocationCancelsEveryReadBeforeAnotherCanBe
 		CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 965000, nullptr, {}, {}, {}, &reads);
 		const senp::effect::OperationContext context{ L"tool.1", 3, 4, 5, 1 };
 		ASSERT_TRUE(target.StartToolRead(context, Read(L"issues:open:1", L"repositoryRead")));
-		reads.completions.push_back({ L"issues:open:1", senp::effect::CompletionStatus::Succeeded, L"[1]" });
+		reads.PushCompletion({ L"issues:open:1", senp::effect::CompletionStatus::Succeeded, L"[1]" });
 		target.Revoke();
-		ASSERT_EQ(1U, reads.cancelledAll.size());
-		EXPECT_EQ(Owner(), reads.cancelledAll[0]);
+		ASSERT_EQ(1U, reads.CancelledAllCalls().size());
+		EXPECT_EQ(Owner(), reads.CancelledAllCalls()[0]);
 		EXPECT_EQ(0U, target.ToolReadCount());
 		EXPECT_FALSE(target.StartToolRead(context, Read(L"issues:open:2", L"repositoryRead")));
 		// The queued terminal is never taken: after CancelAll the seam is released.
 		EXPECT_FALSE(target.TakeToolRead());
-		EXPECT_EQ(0, reads.takeCalls);
-		EXPECT_EQ(1U, reads.started.size());
+		EXPECT_EQ(0, reads.TakeCalls());
+		EXPECT_EQ(1U, reads.StartedCalls().size());
 	}
 	// Destruction re-enters Revoke; the seam must not be told twice.
-	EXPECT_EQ(1U, reads.cancelledAll.size());
+	EXPECT_EQ(1U, reads.CancelledAllCalls().size());
 }
 
 namespace {

@@ -381,6 +381,11 @@ CSenpGitHubToolExecutor::CSenpGitHubToolExecutor(std::shared_ptr<const IGhToolPl
 {
 	// Created before the worker exists, so the worker never observes it half set.
 	m_logStop = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+	StartWorker();
+}
+
+void CSenpGitHubToolExecutor::StartWorker()
+{
 	m_worker = std::thread([this]() noexcept { Run(); });
 }
 
@@ -420,18 +425,18 @@ EControlSenpRpcStatus CSenpGitHubToolExecutor::Ensure(const SenpToolExecutionSco
 	state = Find(scope);
 	if (state) return EControlSenpRpcStatus::Succeeded;
 	if (m_scopes.size() >= MaximumScopes()) return EControlSenpRpcStatus::ResourceExhausted;
-	const auto profileId = Narrow(scope.profileId);
-	const auto extensionId = Narrow(scope.owner.extensionId);
-	const auto digest = PackageDigest(scope.owner.packageDigest);
+	const auto profileId = Narrow(scope.ProfileId());
+	const auto extensionId = Narrow(scope.Owner().extensionId);
+	const auto digest = PackageDigest(scope.Owner().packageDigest);
 	if (!profileId || !extensionId || !digest) return EControlSenpRpcStatus::InvalidRequest;
 	auto created = std::make_unique<ScopeState>();
 	created->scope = scope;
 	// The resource scope names the connection that owns the resources. Grant
 	// liveness is proved by the broker before every call reaching this object.
 	created->resourceScope = { *profileId, *extensionId, *digest,
-		"connection-" + std::to_string(scope.sessionId) + "-" + std::to_string(scope.clientProcessId),
-		scope.owner.generation, scope.owner.workspaceRevision, scope.owner.accountGeneration,
-		scope.owner.generation };
+		"connection-" + std::to_string(scope.SessionId()) + "-" + std::to_string(scope.ClientProcessId()),
+		scope.Owner().generation, scope.Owner().workspaceRevision, scope.Owner().accountGeneration,
+		scope.Owner().generation };
 	state = created.get();
 	m_scopes.push_back(std::move(created));
 	return EControlSenpRpcStatus::Succeeded;
@@ -440,32 +445,32 @@ EControlSenpRpcStatus CSenpGitHubToolExecutor::Ensure(const SenpToolExecutionSco
 EControlSenpRpcStatus CSenpGitHubToolExecutor::StartRead(const SenpToolExecutionScope& scope,
 	const platform::controlipc::SenpToolReadCommand& command) noexcept
 try {
-	if (scope.profileId.empty() || command.readId.empty()) return EControlSenpRpcStatus::InvalidRequest;
+	if (scope.ProfileId().empty() || command.ReadId().empty()) return EControlSenpRpcStatus::InvalidRequest;
 	// A zero account generation means no account has been adopted for the profile.
 	// That is not an authentication failure and must not be answered as one.
-	if (scope.owner.accountGeneration <= 0 || scope.owner.generation <= 0) return EControlSenpRpcStatus::NotConnected;
+	if (scope.Owner().accountGeneration <= 0 || scope.Owner().generation <= 0) return EControlSenpRpcStatus::NotConnected;
 	if (!m_profiles) return EControlSenpRpcStatus::Unavailable;
 	// The broker admits the closed operation set before anything reaches here.
 	// Naming it again is not distrust of the broker: this object has to know
 	// which of the two shapes a read is, and one it cannot name has no shape.
-	if (command.toolId != platform::controlipc::kSenpGitHubToolId) {
+	if (command.ToolId() != platform::controlipc::kSenpGitHubToolId) {
 		return EControlSenpRpcStatus::InvalidRequest;
 	}
-	if (command.operation == platform::controlipc::kSenpGitHubJobLogOperation) {
+	if (command.Operation() == platform::controlipc::kSenpGitHubJobLogOperation) {
 		return StartJobLog(scope, command);
 	}
-	if (command.operation != platform::controlipc::kSenpGitHubRepositoryReadOperation) {
+	if (command.Operation() != platform::controlipc::kSenpGitHubRepositoryReadOperation) {
 		return EControlSenpRpcStatus::InvalidRequest;
 	}
-	const auto repository = m_profiles->Repository(scope.profileId);
+	const auto repository = m_profiles->Repository(scope.ProfileId());
 	if (!repository) return EControlSenpRpcStatus::Unavailable;
-	if (!m_profiles->Connection(scope.profileId)) return EControlSenpRpcStatus::NotConnected;
-	const auto request = BuildRepositoryReadRequest(*repository, command.arguments);
+	if (!m_profiles->Connection(scope.ProfileId())) return EControlSenpRpcStatus::NotConnected;
+	const auto request = BuildRepositoryReadRequest(*repository, command.Arguments());
 	if (!request) return EControlSenpRpcStatus::InvalidRequest;
 	// The request no longer spells the shape, and the page it comes back with has
 	// to be reduced to that shape's fields. Reading the argument again here keeps
 	// one definition of what a request is and still remembers the question.
-	const auto shape = ShapeArgument(command.arguments);
+	const auto shape = ShapeArgument(command.Arguments());
 
 	std::unique_lock lock(m_mutex);
 	if (m_stopping) return EControlSenpRpcStatus::Closed;
@@ -475,16 +480,16 @@ try {
 	}
 	// A read identity means one read. One already spent on a log is not a page
 	// this could refresh, so it is refused rather than quietly answered twice.
-	if (std::ranges::find(state->logReads, command.readId) != state->logReads.end()) {
+	if (std::ranges::find(state->logReads, command.ReadId()) != state->logReads.end()) {
 		return EControlSenpRpcStatus::InvalidRequest;
 	}
 
-	const auto key = GhReadResourceKey(scope.profileId,
-		static_cast<std::uint64_t>(scope.owner.accountGeneration),
+	const auto key = GhReadResourceKey(scope.ProfileId(),
+		static_cast<std::uint64_t>(scope.Owner().accountGeneration),
 		repository->RepositoryIdentity(), *request);
 	const auto canonical = CanonicalKey(key);
 	const auto existing = std::ranges::find_if(state->reads,
-		[&](const auto& read) { return read.readId == command.readId; });
+		[&](const auto& read) { return read.readId == command.ReadId(); });
 	if (existing != state->reads.end()) {
 		// A repeated StartRead for the same read identity is a refresh, not a
 		// second subscription: the editor keeps exactly one read per identity.
@@ -501,28 +506,28 @@ try {
 	if (state->reads.size() + state->logReads.size() >= MaximumReadsPerScope()) {
 		return EControlSenpRpcStatus::ResourceExhausted;
 	}
-	const auto subscribed = m_scheduler.Subscribe(key, GhReadPollCadence::Manual, true, NowMilliseconds());
+	const auto subscribed = SubscribeRead(key);
 	switch (subscribed.Status()) {
 	case GhReadSubscribeStatus::Accepted: break;
 	case GhReadSubscribeStatus::InvalidScope: return EControlSenpRpcStatus::InvalidRequest;
 	case GhReadSubscribeStatus::Closed: return EControlSenpRpcStatus::Closed;
 	default: return EControlSenpRpcStatus::ResourceExhausted;
 	}
-	state->reads.push_back({ command.readId, shape, canonical, subscribed.SubscriptionId(), 0 });
+	state->reads.push_back({ command.ReadId(), shape, canonical, subscribed.SubscriptionId(), 0 });
 	lock.unlock();
 	m_wakeWorker.notify_all();
 	return EControlSenpRpcStatus::Succeeded;
-} catch (...) {
+} catch (const std::exception&) {
 	return EControlSenpRpcStatus::Unavailable;
 }
 
 EControlSenpRpcStatus CSenpGitHubToolExecutor::StartJobLog(const SenpToolExecutionScope& scope,
 	const platform::controlipc::SenpToolReadCommand& command)
 {
-	const auto repository = m_profiles->Repository(scope.profileId);
+	const auto repository = m_profiles->Repository(scope.ProfileId());
 	if (!repository) return EControlSenpRpcStatus::Unavailable;
-	if (!m_profiles->Connection(scope.profileId)) return EControlSenpRpcStatus::NotConnected;
-	const auto request = BuildJobLogRequest(*repository, command.arguments);
+	if (!m_profiles->Connection(scope.ProfileId())) return EControlSenpRpcStatus::NotConnected;
+	const auto request = BuildJobLogRequest(*repository, command.Arguments());
 	if (!request) return EControlSenpRpcStatus::InvalidRequest;
 
 	std::unique_lock lock(m_mutex);
@@ -534,9 +539,9 @@ EControlSenpRpcStatus CSenpGitHubToolExecutor::StartJobLog(const SenpToolExecuti
 	// A log is refetched by asking for it again, never refreshed in place: there
 	// is no conditional request for a stream of bytes. So a repeated identity is
 	// a duplicate, whichever kind of read already holds it.
-	const auto duplicate = std::ranges::find(state->logReads, command.readId) != state->logReads.end()
+	const auto duplicate = std::ranges::find(state->logReads, command.ReadId()) != state->logReads.end()
 		|| std::ranges::any_of(state->reads,
-			[&](const auto& read) { return read.readId == command.readId; });
+			[&](const auto& read) { return read.readId == command.ReadId(); });
 	if (duplicate) return EControlSenpRpcStatus::InvalidRequest;
 	if (state->reads.size() + state->logReads.size() >= MaximumReadsPerScope()
 		|| state->logs.size() >= MaximumResourcesPerScope()
@@ -545,9 +550,9 @@ EControlSenpRpcStatus CSenpGitHubToolExecutor::StartJobLog(const SenpToolExecuti
 	}
 	// The store is made here so the worker has no allocation left to fail on,
 	// and so a job cancelled before it runs is torn down by whoever cancels it.
-	m_logQueue.push_back(LogJob{ scope, command.readId, scope.profileId, state->resourceScope,
+	m_logQueue.push_back(LogJob{ scope, command.ReadId(), scope.ProfileId(), state->resourceScope,
 		*request, std::make_unique<SenpTextResourceStore>(), {} });
-	state->logReads.push_back(command.readId);
+	state->logReads.push_back(command.ReadId());
 	lock.unlock();
 	m_wakeWorker.notify_all();
 	return EControlSenpRpcStatus::Succeeded;
@@ -564,7 +569,7 @@ try {
 	auto completed = std::move(state->pending.front());
 	state->pending.pop_front();
 	return completed;
-} catch (...) {
+} catch (const std::exception&) {
 	return std::nullopt;
 }
 
@@ -691,7 +696,7 @@ try {
 	std::erase_if(state->pending, [&](const auto& completed) { return completed.readId == readId; });
 	lock.unlock();
 	m_wakeWorker.notify_all();
-} catch (...) {
+} catch (const std::exception&) {
 }
 
 void CSenpGitHubToolExecutor::Release(ScopeState& state) noexcept
@@ -723,7 +728,7 @@ try {
 	m_scopes.erase(found);
 	lock.unlock();
 	m_wakeWorker.notify_all();
-} catch (...) {
+} catch (const std::exception&) {
 }
 
 EControlSenpRpcStatus CSenpGitHubToolExecutor::ReadResource(const SenpToolExecutionScope& scope,
@@ -758,17 +763,17 @@ try {
 	case TextResourceResult::Closed: return EControlSenpRpcStatus::Closed;
 	default: return EControlSenpRpcStatus::InvalidRequest;
 	}
-	response.resourceHandle = std::wstring(handle);
-	response.resourceOffset = offset;
-	response.resourceBytes = chunk.bytes;
-	response.resourceState = static_cast<std::uint8_t>(chunk.state);
-	response.resourceEnd = static_cast<std::uint8_t>(chunk.end);
+	response.SetResourceHandle(std::wstring(handle));
+	response.SetResourceOffset(offset);
+	response.SetResourceBytes(chunk.bytes);
+	response.SetResourceState(static_cast<std::uint8_t>(chunk.state));
+	response.SetResourceEnd(static_cast<std::uint8_t>(chunk.end));
 	// The whole chunk as the store answered it. The editor decides from these
 	// whether it has reached the end; nothing here decides that on its behalf.
-	response.resourceLength = chunk.length;
-	response.resourceRevision = chunk.revision;
+	response.SetResourceLength(chunk.length);
+	response.SetResourceRevision(chunk.revision);
 	return EControlSenpRpcStatus::Succeeded;
-} catch (...) {
+} catch (const std::exception&) {
 	return EControlSenpRpcStatus::Unavailable;
 }
 
@@ -790,7 +795,7 @@ try {
 	// The read that published it keeps running; it simply owns nothing now, so
 	// its next page does not try to release a handle the editor already has.
 	for (auto& read : state->reads) if (read.resource == handle) read.resource.clear();
-} catch (...) {
+} catch (const std::exception&) {
 }
 
 EControlSenpRpcStatus CSenpGitHubToolExecutor::QueryAccount(const std::wstring_view profileId,
@@ -803,32 +808,32 @@ try {
 	// Unknown, not Disconnected: nothing has been checked, so nothing entitles
 	// this executor to report the account as signed out.
 	if (!connection) {
-		response.accountGeneration = 0;
-		response.accountState = EControlSenpAccountState::Unknown;
+		response.SetAccountGeneration(0);
+		response.SetAccountState(EControlSenpAccountState::Unknown);
 		return EControlSenpRpcStatus::Succeeded;
 	}
 	const auto snapshot = connection->Snapshot();
-	response.accountGeneration = snapshot.AccountGeneration();
-	response.accountState = ToAccountState(snapshot.State());
+	response.SetAccountGeneration(snapshot.AccountGeneration());
+	response.SetAccountState(ToAccountState(snapshot.State()));
 	return EControlSenpRpcStatus::Succeeded;
-} catch (...) {
+} catch (const std::exception&) {
 	return EControlSenpRpcStatus::Unavailable;
 }
 
 EControlSenpRpcStatus CSenpGitHubToolExecutor::AdoptWorkspace(
 	const platform::controlipc::SenpWorkspaceAdoption& adoption) noexcept
 try {
-	if (adoption.profileId.empty()) return EControlSenpRpcStatus::InvalidRequest;
+	if (adoption.ProfileId().empty()) return EControlSenpRpcStatus::InvalidRequest;
 	// The connection is the identity a declaration is withdrawn by, so one that
 	// names no connection could never be withdrawn and is refused instead.
-	if (adoption.connection.sessionId == 0 && adoption.connection.clientProcessId == 0) {
+	if (adoption.Connection().SessionId() == 0 && adoption.Connection().ClientProcessId() == 0) {
 		return EControlSenpRpcStatus::InvalidRequest;
 	}
 	if (!m_profiles) return EControlSenpRpcStatus::Unavailable;
 	// Forwarded, not stored: this executor never reads a folder, so holding the
 	// declaration here would only put it a step further from what resolves it.
 	return m_profiles->AdoptWorkspace(adoption);
-} catch (...) {
+} catch (const std::exception&) {
 	return EControlSenpRpcStatus::Unavailable;
 }
 
@@ -837,7 +842,7 @@ void CSenpGitHubToolExecutor::WithdrawWorkspace(
 try {
 	if (!m_profiles) return;
 	m_profiles->WithdrawWorkspace(connection);
-} catch (...) {
+} catch (const std::exception&) {
 }
 
 bool CSenpGitHubToolExecutor::WaitForIdle(const std::uint32_t timeoutMilliseconds) noexcept
@@ -861,6 +866,11 @@ const GhToolProbe& CSenpGitHubToolExecutor::Probe()
 	return *m_probe;
 }
 
+GhReadSubscriptionResult CSenpGitHubToolExecutor::SubscribeRead(const GhReadResourceKey& key)
+{
+	return m_scheduler.Subscribe(key, GhReadPollCadence::Manual, true, NowMilliseconds());
+}
+
 void CSenpGitHubToolExecutor::Run() noexcept
 {
 	for (;;) {
@@ -882,7 +892,7 @@ void CSenpGitHubToolExecutor::Run() noexcept
 			} else {
 				try {
 					dispatch = m_scheduler.TryDispatch(NowMilliseconds());
-				} catch (...) {
+				} catch (const std::exception&) {
 					dispatch.reset();
 				}
 				if (!dispatch) {
@@ -904,7 +914,7 @@ void CSenpGitHubToolExecutor::Run() noexcept
 		}
 		try {
 			Execute(*dispatch);
-		} catch (...) {
+		} catch (const std::exception&) {
 			// The scheduler requires a Complete for every dispatch it handed out.
 			(void)m_scheduler.Complete(dispatch->Ticket(),
 				GhRepositoryResponse(GhRepositoryResponseStatus::Failed, 0, {}, std::nullopt, 1, std::nullopt),
@@ -997,7 +1007,7 @@ try {
 	std::wstring data = LR"({"resource":")" + JsonToken(job.handle) + LR"(","bytes":)"
 		+ std::to_wstring(downloaded.AcceptedBytes()) + LR"(,"log":true})";
 	RecordLog(job, { job.readId, effect::CompletionStatus::Succeeded, std::move(data), L"" }, true);
-} catch (...) {
+} catch (const std::exception&) {
 	RecordLog(job, Refused(job.readId, L"failed"), false);
 }
 
@@ -1020,7 +1030,7 @@ try {
 		}
 	}
 	state->pending.push_back(std::move(completed));
-} catch (...) {
+} catch (const std::exception&) {
 }
 
 } // namespace senp::github

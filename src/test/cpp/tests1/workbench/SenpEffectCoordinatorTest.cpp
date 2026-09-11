@@ -170,14 +170,14 @@ TEST(SenpEffectCoordinator, AdaptsTreeAndDocumentRequestsAfterOwnerPoll)
 	EXPECT_EQ(1U, drained.Terminals());
 	ASSERT_EQ(1U, target.Effects().size());
 	EXPECT_TRUE(std::holds_alternative<senp::effect::PublishTreePage>(target.Effects()[0]));
-	EXPECT_EQ(tree.context, target.LastContext());
+	EXPECT_EQ(tree.Context(), target.LastContext());
 	EXPECT_EQ(0U, coordinator.Snapshot().Requests());
 
 	fixture.Process().CompleteWith({ senp::effect::PublishDocument{
 		L"sample:details", L"Details", 1, {} } });
 	const auto document = coordinator.SubmitDocument(L"sample:details", Clock::now() + 1s);
 	ASSERT_EQ(senp::AdmissionStatus::Accepted, document.Status());
-	EXPECT_GT(document.Context().requestGeneration, tree.context.requestGeneration);
+	EXPECT_GT(document.Context().requestGeneration, tree.Context().requestGeneration);
 	fixture.Owners().Poll(Clock::now());
 	EXPECT_EQ(ESenpEffectDrainStatus::Applied, coordinator.Drain(Clock::now()).Status());
 	ASSERT_EQ(2U, target.Effects().size());

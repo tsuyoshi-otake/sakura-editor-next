@@ -27,19 +27,23 @@ void DispatchTreeMessages()
 class NativeTreeRuntime final : public ISenpTreeRuntime {
 public:
 	struct Call { senp::effect::TreeRequest request; senp::effect::OperationContext context; };
-	std::vector<Call> calls;
-	std::vector<senp::effect::OperationContext> cancelled;
-	std::vector<senp::effect::CommandInvoked> commands;
+	[[nodiscard]] const std::vector<Call>& Calls() const noexcept { return m_calls; }
+	[[nodiscard]] const std::vector<senp::effect::OperationContext>& Cancelled() const noexcept { return m_cancelled; }
+	[[nodiscard]] const std::vector<senp::effect::CommandInvoked>& Commands() const noexcept { return m_commands; }
 	bool IsCurrent() const noexcept override { return true; }
 	bool CanSubmit() const noexcept override { return true; }
 	SenpTreeAdmission Submit(senp::effect::TreeRequest request, SenpTreeProvider::Time) noexcept override
 	{
-		const auto sequence = static_cast<std::int64_t>(calls.size() + 1);
+		const auto sequence = static_cast<std::int64_t>(m_calls.size() + 1);
 		senp::effect::OperationContext context{ L"s1:o" + std::to_wstring(sequence), 1, 2, 3, sequence };
-		calls.push_back({ std::move(request), context }); return { senp::AdmissionStatus::Accepted, context };
+		m_calls.push_back({ std::move(request), context }); return { senp::AdmissionStatus::Accepted, context };
 	}
-	void Cancel(const senp::effect::OperationContext& context) noexcept override { cancelled.push_back(context); }
-	bool Execute(senp::effect::CommandInvoked command) noexcept override { commands.push_back(std::move(command)); return true; }
+	void Cancel(const senp::effect::OperationContext& context) noexcept override { m_cancelled.push_back(context); }
+	bool Execute(senp::effect::CommandInvoked command) noexcept override { m_commands.push_back(std::move(command)); return true; }
+private:
+	std::vector<Call> m_calls;
+	std::vector<senp::effect::OperationContext> m_cancelled;
+	std::vector<senp::effect::CommandInvoked> m_commands;
 };
 senp::effect::TreeItem NativeItem(std::wstring id, bool branch = false, bool command = false)
 {
@@ -98,9 +102,9 @@ protected:
 			fixture.Projection()->LayoutProjection({ 0, 0, width, 620 }, { 0, 0, width, 620 }, dpi); DispatchTreeMessages(); return fixture.body->IsUsable();
 		}
 		case 2: {
-			const auto before = fixture.runtime->calls.size();
+			const auto before = fixture.runtime->Calls().size();
 			TreeView_Expand(fixture.tree, TreeView_GetRoot(fixture.tree), lParam ? TVE_EXPAND : TVE_COLLAPSE); DispatchTreeMessages();
-			if (fixture.runtime->calls.size() > before) fixture.Complete({ NativeItem(L"nested1", false, true), NativeItem(L"nested2", false, true) });
+			if (fixture.runtime->Calls().size() > before) fixture.Complete({ NativeItem(L"nested1", false, true), NativeItem(L"nested2", false, true) });
 			return fixture.body->IsUsable();
 		}
 		case 3: {
@@ -154,7 +158,7 @@ protected:
 	}
 	void Complete(std::vector<senp::effect::TreeItem> items, std::wstring cursor = L"", std::int64_t revision = 1)
 	{
-		ASSERT_FALSE(runtime->calls.empty()); const auto call = runtime->calls.back();
+		ASSERT_FALSE(runtime->Calls().empty()); const auto call = runtime->Calls().back();
 		senp::effect::PublishTreePage page{ L"test.tree", call.request.parentId, std::move(items), std::move(cursor), revision, senp::effect::PageStatus::Complete, L"" };
 		if (!page.nextCursor.empty()) page.status = senp::effect::PageStatus::Partial;
 		ASSERT_EQ(TreeResult::Applied, provider->Apply(call.context, std::move(page), std::chrono::steady_clock::now())); DispatchTreeMessages();
@@ -184,15 +188,15 @@ protected:
 };
 TEST_F(SenpTreeView, LazyNativeHierarchyKeepsLeafAndCommandSemantics)
 {
-	Create(); ASSERT_NE(nullptr, body); ASSERT_EQ(1, runtime->calls.size()); EXPECT_EQ(L"Loading...", Text(TreeView_GetRoot(tree)));
+	Create(); ASSERT_NE(nullptr, body); ASSERT_EQ(1, runtime->Calls().size()); EXPECT_EQ(L"Loading...", Text(TreeView_GetRoot(tree)));
 	Complete({ NativeItem(L"folder", true), NativeItem(L"command", true, true), NativeItem(L"leaf", false, true) });
 	const auto folder = TreeView_GetRoot(tree), command = TreeView_GetNextSibling(tree, folder), leaf = TreeView_GetNextSibling(tree, command);
-	TreeView_SelectItem(tree, folder); Key(VK_RIGHT); ASSERT_EQ(2, runtime->calls.size()); EXPECT_EQ(L"folder", runtime->calls.back().request.parentId);
+	TreeView_SelectItem(tree, folder); Key(VK_RIGHT); ASSERT_EQ(2, runtime->Calls().size()); EXPECT_EQ(L"folder", runtime->Calls().back().request.parentId);
 	EXPECT_EQ(L"Loading...", Text(TreeView_GetChild(tree, folder))); Complete({ NativeItem(L"child", false, true) });
 	EXPECT_TRUE(TreeView_GetItemState(tree, folder, TVIS_EXPANDED) & TVIS_EXPANDED);
-	TreeView_SelectItem(tree, leaf); EXPECT_EQ(L"leaf", provider->Model().Selection()); EXPECT_TRUE(runtime->commands.empty());
-	Key(VK_RETURN); ASSERT_EQ(1, runtime->commands.size()); EXPECT_EQ(L"leaf", runtime->commands.back().arguments[0]);
-	Click(command); ASSERT_EQ(2, runtime->commands.size()); EXPECT_FALSE(provider->Model().Node(L"command")->expanded); EXPECT_EQ(2, runtime->calls.size());
+	TreeView_SelectItem(tree, leaf); EXPECT_EQ(L"leaf", provider->Model().Selection()); EXPECT_TRUE(runtime->Commands().empty());
+	Key(VK_RETURN); ASSERT_EQ(1, runtime->Commands().size()); EXPECT_EQ(L"leaf", runtime->Commands().back().arguments[0]);
+	Click(command); ASSERT_EQ(2, runtime->Commands().size()); EXPECT_FALSE(provider->Model().Node(L"command")->expanded); EXPECT_EQ(2, runtime->Calls().size());
 	Click(folder); EXPECT_FALSE(provider->Model().Node(L"folder")->expanded);
 	const auto child = TreeView_GetChild(tree, folder);
 	for (int repeat = 0; repeat < 4; ++repeat) {
@@ -201,27 +205,27 @@ TEST_F(SenpTreeView, LazyNativeHierarchyKeepsLeafAndCommandSemantics)
 		TreeView_Expand(tree, folder, TVE_COLLAPSE); DispatchTreeMessages(); EXPECT_FALSE(provider->Model().Node(L"folder")->expanded);
 		EXPECT_FALSE(TreeView_GetItemState(tree, folder, TVIS_EXPANDED) & TVIS_EXPANDED); EXPECT_EQ(child, TreeView_GetChild(tree, folder));
 	}
-	EXPECT_EQ(2, runtime->calls.size());
+	EXPECT_EQ(2, runtime->Calls().size());
 }
 TEST_F(SenpTreeView, PageAndRetryAreNativeActionsWithExplicitTerminals)
 {
 	Create(); Complete({ NativeItem(L"one") }, L"page2");
 	auto more = TreeView_GetNextSibling(tree, TreeView_GetRoot(tree)); ASSERT_NE(nullptr, more); EXPECT_EQ(L"Load more...", Text(more));
-	TreeView_SelectItem(tree, more); Key(VK_RETURN); ASSERT_EQ(2, runtime->calls.size()); EXPECT_EQ(L"page2", runtime->calls.back().request.cursor);
-	ASSERT_EQ(TreeResult::Applied, provider->Failed(runtime->calls.back().context, senp::InvocationStatus::TimedOut, std::chrono::steady_clock::now())); DispatchTreeMessages();
+	TreeView_SelectItem(tree, more); Key(VK_RETURN); ASSERT_EQ(2, runtime->Calls().size()); EXPECT_EQ(L"page2", runtime->Calls().back().request.cursor);
+	ASSERT_EQ(TreeResult::Applied, provider->Failed(runtime->Calls().back().context, senp::InvocationStatus::TimedOut, std::chrono::steady_clock::now())); DispatchTreeMessages();
 	auto retry = TreeView_GetNextSibling(tree, TreeView_GetRoot(tree)); ASSERT_NE(nullptr, retry); EXPECT_EQ(0, Text(retry).find(L"Retry"));
-	TreeView_SelectItem(tree, retry); Key(VK_RETURN); ASSERT_EQ(3, runtime->calls.size()); EXPECT_EQ(L"page2", runtime->calls.back().request.cursor);
+	TreeView_SelectItem(tree, retry); Key(VK_RETURN); ASSERT_EQ(3, runtime->Calls().size()); EXPECT_EQ(L"page2", runtime->Calls().back().request.cursor);
 	Complete({ NativeItem(L"two") }); EXPECT_EQ(2, TreeView_GetCount(tree)); EXPECT_EQ(L"one - Description", Text(TreeView_GetRoot(tree)));
 }
 TEST_F(SenpTreeView, CollapseAndHideCancelSubscribersAndNeverAcceptTheirLatePage)
 {
-	Create(); Complete({ NativeItem(L"branch", true) }); TreeView_SelectItem(tree, TreeView_GetRoot(tree)); Key(VK_RIGHT); const auto pending = runtime->calls.back();
-	Key(VK_LEFT); EXPECT_EQ(1, runtime->cancelled.size()); EXPECT_EQ(0, provider->Model().PendingCount());
+	Create(); Complete({ NativeItem(L"branch", true) }); TreeView_SelectItem(tree, TreeView_GetRoot(tree)); Key(VK_RIGHT); const auto pending = runtime->Calls().back();
+	Key(VK_LEFT); EXPECT_EQ(1, runtime->Cancelled().size()); EXPECT_EQ(0, provider->Model().PendingCount());
 	senp::effect::PublishTreePage late{ L"test.tree", L"branch", { NativeItem(L"late") }, L"", 1, senp::effect::PageStatus::Complete, L"" };
 	EXPECT_EQ(TreeResult::Stale, provider->Apply(pending.context, late, std::chrono::steady_clock::now()));
-	Key(VK_RIGHT); ASSERT_EQ(3, runtime->calls.size()); ASSERT_TRUE(owner->SetCollapsed("test.tree", true)); DispatchTreeMessages();
-	EXPECT_EQ(2, runtime->cancelled.size()); EXPECT_FALSE(provider->IsVisible());
-	ASSERT_TRUE(owner->SetCollapsed("test.tree", false)); DispatchTreeMessages(); EXPECT_EQ(4, runtime->calls.size());
+	Key(VK_RIGHT); ASSERT_EQ(3, runtime->Calls().size()); ASSERT_TRUE(owner->SetCollapsed("test.tree", true)); DispatchTreeMessages();
+	EXPECT_EQ(2, runtime->Cancelled().size()); EXPECT_FALSE(provider->IsVisible());
+	ASSERT_TRUE(owner->SetCollapsed("test.tree", false)); DispatchTreeMessages(); EXPECT_EQ(4, runtime->Calls().size());
 }
 TEST_F(SenpTreeView, StableNativeSelectionFocusAndScrollSurviveRefreshAndContainerMove)
 {
@@ -241,8 +245,8 @@ TEST_F(SenpTreeView, InterruptedPointerAndDoubleClickModeDoNotAccidentallyOpenOr
 {
 	singleClick = false; Create(); Complete({ NativeItem(L"branch", true), NativeItem(L"command", true, true) });
 	const auto branch = TreeView_GetRoot(tree), command = TreeView_GetNextSibling(tree, branch);
-	Click(command, false); EXPECT_TRUE(runtime->commands.empty()); Click(branch); EXPECT_FALSE(provider->Model().Node(L"branch")->expanded); EXPECT_EQ(1, runtime->calls.size());
-	TreeView_SelectItem(tree, branch); Key(VK_RETURN); EXPECT_TRUE(provider->Model().Node(L"branch")->expanded); EXPECT_EQ(2, runtime->calls.size());
+	Click(command, false); EXPECT_TRUE(runtime->Commands().empty()); Click(branch); EXPECT_FALSE(provider->Model().Node(L"branch")->expanded); EXPECT_EQ(1, runtime->Calls().size());
+	TreeView_SelectItem(tree, branch); Key(VK_RETURN); EXPECT_TRUE(provider->Model().Node(L"branch")->expanded); EXPECT_EQ(2, runtime->Calls().size());
 }
 TEST_F(SenpTreeView, FailedSecondBodyDoesNotRevokeTheExistingObserver)
 {
@@ -263,7 +267,7 @@ TEST_F(SenpTreeView, NativeAccessibilityReportsRealNamesSelectionAndExpandCollap
 	ComPtr<IUIAutomationElement> row; ASSERT_EQ(S_OK, walker->GetFirstChildElement(root.Get(), &row)); ASSERT_NE(nullptr, row.Get());
 	BSTR name{}; ASSERT_EQ(S_OK, row->get_CurrentName(&name)); EXPECT_NE(std::wstring::npos, std::wstring(name).find(L"branch")); ::SysFreeString(name);
 	ComPtr<IUIAutomationExpandCollapsePattern> expansion; ASSERT_EQ(S_OK, row->GetCurrentPatternAs(UIA_ExpandCollapsePatternId, IID_PPV_ARGS(&expansion)));
-	ASSERT_EQ(S_OK, expansion->Expand()); DispatchTreeMessages(); EXPECT_TRUE(provider->Model().Node(L"branch")->expanded); EXPECT_EQ(2, runtime->calls.size());
+	ASSERT_EQ(S_OK, expansion->Expand()); DispatchTreeMessages(); EXPECT_TRUE(provider->Model().Node(L"branch")->expanded); EXPECT_EQ(2, runtime->Calls().size());
 	ExpandCollapseState state{}; ASSERT_EQ(S_OK, expansion->get_CurrentExpandCollapseState(&state)); EXPECT_EQ(ExpandCollapseState_Expanded, state);
 	owner->Close(); EXPECT_TRUE(provider->Model().IsClosed()); EXPECT_FALSE(::IsWindow(tree));
 }
@@ -406,9 +410,9 @@ TEST_F(SenpDeclaredTreeViewsTest, RuntimeReplacementDefersNativeSwapAndRetainsDe
 	declaredBody->SetVisible(true); DispatchTreeMessages();
 	auto initial = declarations->PrepareBinding(Identity(1), { { L"test.tree", provider } });
 	ASSERT_NE(nullptr, initial); ASSERT_TRUE(initial->Commit());
-	EXPECT_TRUE(runtime->calls.empty());
+	EXPECT_TRUE(runtime->Calls().empty());
 	ASSERT_TRUE(initial->Pump()); DispatchTreeMessages();
-	ASSERT_EQ(1U, runtime->calls.size());
+	ASSERT_EQ(1U, runtime->Calls().size());
 	const HWND firstTree = ::FindWindowExW(retained, nullptr, L"SakuraSenpTreeView", nullptr);
 	ASSERT_NE(nullptr, firstTree);
 	EXPECT_FALSE(declarations->PrepareBinding(Identity(1), { { L"test.tree", provider } }));
@@ -417,11 +421,11 @@ TEST_F(SenpDeclaredTreeViewsTest, RuntimeReplacementDefersNativeSwapAndRetainsDe
 	auto replacement = declarations->PrepareBinding(Identity(2), { { L"test.tree", newerProvider } });
 	ASSERT_NE(nullptr, replacement); ASSERT_TRUE(replacement->Commit());
 	initial->Close();
-	EXPECT_TRUE(::IsWindow(firstTree)); EXPECT_TRUE(newerRuntime->calls.empty());
+	EXPECT_TRUE(::IsWindow(firstTree)); EXPECT_TRUE(newerRuntime->Calls().empty());
 	ASSERT_TRUE(replacement->Pump()); DispatchTreeMessages();
 	EXPECT_EQ(retained, declaredBody->Window()); EXPECT_FALSE(::IsWindow(firstTree));
-	EXPECT_TRUE(provider->Model().IsClosed()); EXPECT_EQ(1U, runtime->cancelled.size());
-	EXPECT_EQ(1U, newerRuntime->calls.size());
+	EXPECT_TRUE(provider->Model().IsClosed()); EXPECT_EQ(1U, runtime->Cancelled().size());
+	EXPECT_EQ(1U, newerRuntime->Calls().size());
 	const HWND secondTree = ::FindWindowExW(retained, nullptr, L"SakuraSenpTreeView", nullptr);
 	ASSERT_NE(nullptr, secondTree);
 	replacement->Close();
@@ -448,10 +452,10 @@ TEST_F(SenpDeclaredTreeViewsTest, LosingPreparedCandidateCannotCloseWinningRunti
 	ASSERT_NE(nullptr, winningTree);
 	EXPECT_FALSE(loser->CanCommit()); EXPECT_FALSE(loser->Commit());
 	loser->Close();
-	EXPECT_TRUE(losingRuntime->calls.empty()); EXPECT_TRUE(losingProvider->Model().IsClosed());
-	EXPECT_FALSE(provider->Model().IsClosed()); EXPECT_TRUE(runtime->cancelled.empty());
+	EXPECT_TRUE(losingRuntime->Calls().empty()); EXPECT_TRUE(losingProvider->Model().IsClosed());
+	EXPECT_FALSE(provider->Model().IsClosed()); EXPECT_TRUE(runtime->Cancelled().empty());
 	EXPECT_TRUE(::IsWindow(winningTree)); EXPECT_TRUE(winner->Pump());
-	EXPECT_EQ(1U, runtime->calls.size());
+	EXPECT_EQ(1U, runtime->Calls().size());
 }
 
 TEST_F(SenpDeclaredTreeViewsTest, DISABLED_VisualCaptureProbe)

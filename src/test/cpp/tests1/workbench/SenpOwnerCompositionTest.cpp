@@ -282,7 +282,11 @@ protected:
 		extension.modulePath = L"extension.wasm";
 		extension.moduleSha256.assign(64, L'a');
 		extension.archiveSha256.assign(64, L'b');
-		extension.runtime = { 2, L"sakura:senp/extension@3.0.0", { L"onView:sample.tree" }, {}, {} };
+		extension.runtime.schemaVersion = 2;
+		extension.runtime.abi = L"sakura:senp/extension@3.0.0";
+		extension.runtime.activationEvents = { L"onView:sample.tree" };
+		extension.runtime.capabilities = {};
+		extension.runtime.commands = {};
 		extension.views = { { L"sample.tree", L"sample.container", L"Sample", L"senp.tree", 1 } };
 		return { senp::EManagementState::Ready, 1, { std::move(extension) } };
 	}
@@ -900,14 +904,14 @@ TEST_F(SenpOwnerComposition, RealGithubActionsReachNativeProviders)
     EXPECT_EQ(L"resources/icons/workflowruns/wr_inprogress.svg", runItem.icon);
     EXPECT_TRUE(runItem.description.empty());
     EXPECT_EQ(L"Attempt #2 In progress\n\nRe-run", runItem.tooltip);
-    EXPECT_EQ(L"run", runItem.contextValue);
+    EXPECT_EQ(L"run", runItem.ContextValue());
     // As upstream, a run lists its latest attempt's jobs and then, for a rerun,
     // "Previous attempts". The earlier attempts need no read of their own.
     ASSERT_EQ(tree::TreeResult::Applied, provider->SetExpanded(L"run:51:2", true, Clock::now()));
     ASSERT_TRUE(Await(composition, [&] { return provider->Model().Node(L"previous:51:2").has_value(); }));
     ExpectRead(*target, L"runAttemptJobs", L"51", L"2");
     ASSERT_TRUE(provider->Model().Node(L"job:51:2:72").has_value());
-    EXPECT_EQ(L"job", provider->Model().Node(L"job:51:2:72")->item.contextValue);
+    EXPECT_EQ(L"job", provider->Model().Node(L"job:51:2:72")->item.ContextValue());
     // An unfinished job has no log yet, so its row draws no inline action.
     EXPECT_TRUE(provider->ItemActions(L"job:51:2:72").empty());
     EXPECT_EQ(3, target->ToolReads());
@@ -937,12 +941,12 @@ TEST_F(SenpOwnerComposition, RealGithubActionsReachNativeProviders)
     const auto jobItem = provider->Model().Node(L"job:51:1:71")->item;
     EXPECT_EQ(L"resources/icons/workflowruns/wr_success.svg", jobItem.icon);
     EXPECT_EQ(L"Succeeded in 1m 30s", jobItem.tooltip);
-    EXPECT_EQ(L"job completed", jobItem.contextValue);
+    EXPECT_EQ(L"job completed", jobItem.ContextValue());
     const auto stepItem = provider->Model().Node(L"step:51:1:71:7")->item;
     EXPECT_EQ(L"Compile", stepItem.label);
     EXPECT_EQ(L"resources/icons/steps/step_queued.svg", stepItem.icon);
     EXPECT_TRUE(stepItem.description.empty());
-    EXPECT_EQ(L"step", stepItem.contextValue);
+    EXPECT_EQ(L"step", stepItem.ContextValue());
     ASSERT_TRUE(provider->Select(L"job:51:1:71"));
     ASSERT_TRUE(provider->Execute(L"job:51:1:71"));
     ASSERT_TRUE(Await(composition, [&] { return target->Publishes() == 2; }));
@@ -965,7 +969,7 @@ TEST_F(SenpOwnerComposition, RealGithubActionsReachNativeProviders)
     EXPECT_FALSE(provider->Model().Node(L"joblog:51:1:71").has_value());
     const auto actions = provider->ItemActions(L"job:51:1:71");
     ASSERT_EQ(1U, actions.size());
-    EXPECT_EQ(L"github-actions.workflow.logs", actions.front().commandId);
+    EXPECT_EQ(L"github-actions.workflow.logs", actions.front().CommandId());
     ASSERT_TRUE(provider->ExecuteItemAction(L"job:51:1:71", L"github-actions.workflow.logs"));
     ASSERT_TRUE(Await(composition, [&] { return target->Publishes() == 3; }));
     EXPECT_EQ(L"github-actions-job-log:51:1:71", target->Document().resourceId);

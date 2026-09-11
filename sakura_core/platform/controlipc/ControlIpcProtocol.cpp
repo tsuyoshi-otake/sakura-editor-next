@@ -353,7 +353,7 @@ ControlIpcDecodeResult CControlIpcFrameDecoder::Feed(std::span<const std::uint8_
 {
 	ControlIpcDecodeResult result;
 	if (IsFailed()) {
-		result.outcome = m_failure;
+		result.SetOutcome(m_failure);
 		return result;
 	}
 	std::size_t offset = 0;
@@ -391,12 +391,12 @@ ControlIpcDecodeResult CControlIpcFrameDecoder::Feed(std::span<const std::uint8_
 			Fail(frameOutcome);
 			break;
 		}
-		result.frames.push_back(std::move(frame));
+		result.AppendFrame(std::move(frame));
 		m_lengthPrefixUsed = 0;
 		m_expectedFrameBytes = 0;
 		m_frameBytes.clear();
 	}
-	result.outcome = IsFailed() ? m_failure : (result.frames.empty() ? EControlIpcDecodeOutcome::NeedMoreData : EControlIpcDecodeOutcome::Decoded);
+	result.SetOutcome(IsFailed() ? m_failure : (result.Frames().empty() ? EControlIpcDecodeOutcome::NeedMoreData : EControlIpcDecodeOutcome::Decoded));
 	return result;
 }
 

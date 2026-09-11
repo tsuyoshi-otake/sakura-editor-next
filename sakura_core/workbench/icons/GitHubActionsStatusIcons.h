@@ -31,21 +31,50 @@ enum class ThemeKind : unsigned char {
 };
 
 //! One filled SVG path of a status icon, with its light and dark fill.
-struct StatusIconLayer {
-	int viewBox = 16;
-	bool evenOdd = false;
-	std::string_view path;
-	COLORREF light = 0;
-	COLORREF dark = 0;
-	//! SVG fill-opacity as a constant 0..255 alpha. 255 is an ordinary fill.
-	BYTE alpha = 255;
-	ThemeKind kind = ThemeKind::Both;
+//! Every instance is a compile-time table entry (see detail::kStatusIcons
+//! below); the constructor lets each table row keep writing the same
+//! positional brace-init it used as a plain aggregate.
+class StatusIconLayer {
+public:
+	constexpr StatusIconLayer(int viewBox, bool evenOdd, std::string_view path, COLORREF light, COLORREF dark,
+		//! SVG fill-opacity as a constant 0..255 alpha. 255 is an ordinary fill.
+		BYTE alpha = 255, ThemeKind kind = ThemeKind::Both) noexcept
+		: viewBox_(viewBox), evenOdd_(evenOdd), path_(path), light_(light), dark_(dark), alpha_(alpha), kind_(kind)
+	{
+	}
+
+	[[nodiscard]] constexpr int ViewBox() const noexcept { return viewBox_; }
+	[[nodiscard]] constexpr bool EvenOdd() const noexcept { return evenOdd_; }
+	[[nodiscard]] constexpr std::string_view Path() const noexcept { return path_; }
+	[[nodiscard]] constexpr COLORREF Light() const noexcept { return light_; }
+	[[nodiscard]] constexpr COLORREF Dark() const noexcept { return dark_; }
+	[[nodiscard]] constexpr BYTE Alpha() const noexcept { return alpha_; }
+	[[nodiscard]] constexpr ThemeKind Kind() const noexcept { return kind_; }
+
+private:
+	int viewBox_;
+	bool evenOdd_;
+	std::string_view path_;
+	COLORREF light_;
+	COLORREF dark_;
+	BYTE alpha_;
+	ThemeKind kind_;
 };
 
 //! A path an extension names in TreeItem.icon, and the layers it draws.
-struct StatusIconEntry {
-	std::wstring_view name;
-	std::span<const StatusIconLayer> layers;
+class StatusIconEntry {
+public:
+	constexpr StatusIconEntry(std::wstring_view name, std::span<const StatusIconLayer> layers) noexcept
+		: name_(name), layers_(layers)
+	{
+	}
+
+	[[nodiscard]] constexpr std::wstring_view Name() const noexcept { return name_; }
+	[[nodiscard]] constexpr std::span<const StatusIconLayer> Layers() const noexcept { return layers_; }
+
+private:
+	std::wstring_view name_;
+	std::span<const StatusIconLayer> layers_;
 };
 
 namespace detail {
@@ -135,14 +164,14 @@ constexpr StatusIconEntry kStatusIcons[] = {
 [[nodiscard]] constexpr std::span<const StatusIconLayer> FindStatusIcon(std::wstring_view name) noexcept
 {
 	for (const auto& entry : detail::kStatusIcons) {
-		if (entry.name == name) return entry.layers;
+		if (entry.Name() == name) return entry.Layers();
 	}
 	return {};
 }
 
 [[nodiscard]] constexpr bool AppliesTo(const StatusIconLayer& layer, bool lightTheme) noexcept
 {
-	return layer.kind == ThemeKind::Both || (layer.kind == ThemeKind::LightOnly) == lightTheme;
+	return layer.Kind() == ThemeKind::Both || (layer.Kind() == ThemeKind::LightOnly) == lightTheme;
 }
 
 namespace detail {
@@ -150,22 +179,22 @@ namespace detail {
 //! Fills one layer into a square viewport that already preserves the aspect ratio.
 [[nodiscard]] inline bool FillLayer(HDC dc, const IconRect& viewport, const StatusIconLayer& layer, COLORREF color) noexcept
 {
-	if (layer.path.empty() || layer.viewBox <= 0) return false;
+	if (layer.Path().empty() || layer.ViewBox() <= 0) return false;
 	const int saved = ::SaveDC(dc);
 	if (saved == 0) return false;
 	if (::SetGraphicsMode(dc, GM_ADVANCED) == 0) {
 		::RestoreDC(dc, saved);
 		return false;
 	}
-	::SetPolyFillMode(dc, layer.evenOdd ? ALTERNATE : WINDING);
-	const int logicalExtent = layer.viewBox * codicons::detail::kCoordinateScale;
+	::SetPolyFillMode(dc, layer.EvenOdd() ? ALTERNATE : WINDING);
+	const int logicalExtent = layer.ViewBox() * codicons::detail::kCoordinateScale;
 	const XFORM transform{
 		static_cast<float>(viewport.Width()) / logicalExtent, 0.0F,
 		0.0F, static_cast<float>(viewport.Height()) / logicalExtent,
 		static_cast<float>(viewport.left), static_cast<float>(viewport.top),
 	};
 	if (::SetWorldTransform(dc, &transform) == FALSE || ::BeginPath(dc) == FALSE
-		|| !codicons::detail::AppendSvgPath(dc, layer.path) || ::EndPath(dc) == FALSE) {
+		|| !codicons::detail::AppendSvgPath(dc, layer.Path()) || ::EndPath(dc) == FALSE) {
 		::RestoreDC(dc, saved);
 		return false;
 	}
@@ -200,7 +229,7 @@ namespace detail {
 	bool drawn = ::BitBlt(memory, 0, 0, width, height, dc, viewport.left, viewport.top, SRCCOPY) != FALSE
 		&& FillLayer(memory, { 0, 0, width, height }, layer, color);
 	if (drawn) {
-		const BLENDFUNCTION blend{ AC_SRC_OVER, 0, layer.alpha, 0 };
+		const BLENDFUNCTION blend{ AC_SRC_OVER, 0, layer.Alpha(), 0 };
 		drawn = ::AlphaBlend(dc, viewport.left, viewport.top, width, height, memory, 0, 0, width, height, blend) != FALSE;
 	}
 	::SelectObject(memory, oldBitmap);
@@ -222,8 +251,8 @@ inline bool Draw(HDC dc, const IconRect& box, std::wstring_view name, bool light
 	bool drawn = true;
 	for (const auto& layer : layers) {
 		if (!AppliesTo(layer, lightTheme)) continue;
-		const COLORREF color = lightTheme ? layer.light : layer.dark;
-		const bool filled = layer.alpha == 255
+		const COLORREF color = lightTheme ? layer.Light() : layer.Dark();
+		const bool filled = layer.Alpha() == 255
 			? detail::FillLayer(dc, viewport, layer, color)
 			: detail::BlendLayer(dc, viewport, layer, color);
 		drawn = filled && drawn;

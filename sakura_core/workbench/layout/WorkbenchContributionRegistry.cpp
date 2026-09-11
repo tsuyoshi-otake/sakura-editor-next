@@ -91,7 +91,11 @@ template<typename T>
 void SortById(std::vector<T>& values)
 {
 	std::sort(values.begin(), values.end(), [](const auto& left, const auto& right) {
-		return left.descriptor.id < right.descriptor.id;
+		if constexpr (requires { left.descriptor.Id(); }) {
+			return left.descriptor.Id() < right.descriptor.Id();
+		} else {
+			return left.descriptor.id < right.descriptor.id;
+		}
 	});
 }
 
@@ -190,7 +194,9 @@ bool WorkbenchContributionRegistry::RegisterExtensionContributions(
 		m_snapshot = std::move(candidate);
 		m_extensionBatchRegistered = true;
 		return true;
-	} catch (...) {
+	} catch (const std::exception&) {
+		// Every statement in this block is vector/string bookkeeping on data this
+		// method owns; the only failure mode is a standard allocation exception.
 		return false;
 	}
 }
@@ -362,8 +368,8 @@ bool WorkbenchContributionRegistry::IsValidContributionSnapshot(
 		std::unordered_set<std::string_view> partIds;
 		partIds.reserve(snapshot.parts.size());
 		for (const auto& registered : snapshot.parts) {
-			if (!IsValidStableId(registered.descriptor.id)
-				|| !partIds.emplace(registered.descriptor.id).second) return false;
+			if (!IsValidStableId(registered.descriptor.Id())
+				|| !partIds.emplace(registered.descriptor.Id()).second) return false;
 		}
 
 		std::unordered_map<std::string_view, const WorkbenchContributionOwner*> containerIds;

@@ -99,6 +99,14 @@ bool HasPart(const WorkbenchLayoutStateSnapshot& snapshot, std::string_view id)
 	return std::any_of(snapshot.parts.begin(), snapshot.parts.end(), [id](const auto& value) { return value.partId == id; });
 }
 
+//! Shared subscribe-and-record helper so plain "record every batch" tests do
+//! not each carry their own direct WorkbenchLayoutStateService::Subscribe call.
+std::unique_ptr<IWorkbenchLayoutSubscription> SubscribeCollectingBatches(
+	WorkbenchLayoutStateService& state, std::vector<WorkbenchLayoutChangeBatch>& notifications)
+{
+	return state.Subscribe([&notifications](const auto& batch) { notifications.push_back(batch); });
+}
+
 bool HasContainer(const WorkbenchLayoutStateSnapshot& snapshot, std::string_view id)
 {
 	return std::any_of(snapshot.containers.begin(), snapshot.containers.end(), [id](const auto& value) { return value.containerId == id; });
@@ -130,8 +138,7 @@ TEST(WorkbenchLayoutTransaction, CommitsOneRevisionAndOneOrderedCallbackThenRepl
 	WorkbenchContributionRegistry registry;
 	WorkbenchLayoutStateService state(registry.Snapshot());
 	std::vector<WorkbenchLayoutChangeBatch> notifications;
-	auto subscription = state.Subscribe(
-		[&notifications](const auto& batch) { notifications.push_back(batch); });
+	auto subscription = SubscribeCollectingBatches(state, notifications);
 	ASSERT_TRUE(subscription);
 	const ApplyWorkbenchLayoutTransactionRequest request{
 		.operation = { .operationId = "atomic-layout-success", .expectedRevision = 0 },
@@ -837,7 +844,7 @@ TEST(WorkbenchLayoutStateService, HydratesValidMementoAtomicallyWithoutRevisionO
 	WorkbenchContributionRegistry registry;
 	WorkbenchLayoutStateService state(registry.Snapshot());
 	std::vector<WorkbenchLayoutChangeBatch> notifications;
-	auto subscription = state.Subscribe([&](const auto& batch) { notifications.push_back(batch); });
+	auto subscription = SubscribeCollectingBatches(state, notifications);
 	ASSERT_TRUE(subscription);
 	auto persisted = state.Snapshot();
 	persisted.parts = { { .partId = std::string(ids::part::Sidebar), .visible = false,

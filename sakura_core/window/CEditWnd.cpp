@@ -1767,7 +1767,10 @@ ERecoveredEditorProjectionResult CEditWnd::ReconcileRecoveredEditorInput(
 		}
 		return ERecoveredEditorProjectionResult::Succeeded;
 	}
-	catch (...) {
+	catch (const std::exception&) {
+		// Every step above is Core/adapter calls plus std::string/HWND state
+		// queries, so std::exception (bad_alloc, length_error, ...) is
+		// exhaustive; there is no non-std throw path here to widen for.
 		return ERecoveredEditorProjectionResult::NativeProjectionFailed;
 	}
 }
@@ -2059,7 +2062,7 @@ SWorkingCopyFunctionDispatchResult CEditWnd::TryExecuteWorkingCopyFileCommand(
 	default:
 		return dispatch;
 	}
-	dispatch.handled = true;
+	dispatch.SetHandled(true);
 
 	const auto invalidInput = [this]() {
 		return EditorWorkingCopyOperationResult{
@@ -2083,74 +2086,74 @@ SWorkingCopyFunctionDispatchResult CEditWnd::TryExecuteWorkingCopyFileCommand(
 	EditorWorkingCopySaveOptions options;
 	switch (baseCode) {
 	case F_FILESAVE:
-		dispatch.operation = ExecuteActiveWorkingCopyOperation(command_ids::Save, options);
-		dispatch.legacyResult = isSuccessfulSave(*dispatch.operation) ? TRUE : FALSE;
+		dispatch.SetOperation(ExecuteActiveWorkingCopyOperation(command_ids::Save, options));
+		dispatch.SetLegacyResult(isSuccessfulSave(*dispatch.Operation()) ? TRUE : FALSE);
 		break;
 
 	case F_FILESAVE_QUIET:
 		options.targetPolicy = EEditorWorkingCopySaveTargetPolicy::ExistingOnly;
 		options.suppressFeedback = true;
-		dispatch.operation = ExecuteActiveWorkingCopyOperation(command_ids::Save, options);
-		dispatch.legacyResult = isSuccessfulSave(*dispatch.operation) ? TRUE : FALSE;
+		dispatch.SetOperation(ExecuteActiveWorkingCopyOperation(command_ids::Save, options));
+		dispatch.SetLegacyResult(isSuccessfulSave(*dispatch.Operation()) ? TRUE : FALSE);
 		break;
 
 	case F_FILESAVEAS_DIALOG:
 		if (!WideToUtf8Bounded(reinterpret_cast<const wchar_t*>(request.Parameter1()), 4096, options.suggestedTarget)
 			|| !TryCanonicalEncodingId(static_cast<ECodeType>(request.Parameter2()), options.encodingId)
 			|| !TryWorkingCopyLineEnding(static_cast<EEolType>(request.Parameter3()), options.lineEnding)) {
-			dispatch.operation = invalidInput();
-			dispatch.legacyResult = FALSE;
+			dispatch.SetOperation(invalidInput());
+			dispatch.SetLegacyResult(FALSE);
 			break;
 		}
-		dispatch.operation = ExecuteActiveWorkingCopyOperation(command_ids::SaveAs, options);
-		dispatch.legacyResult = dispatch.operation->status == EEditorWorkingCopyOperationStatus::Succeeded
-			? TRUE : FALSE;
+		dispatch.SetOperation(ExecuteActiveWorkingCopyOperation(command_ids::SaveAs, options));
+		dispatch.SetLegacyResult(dispatch.Operation()->status == EEditorWorkingCopyOperationStatus::Succeeded
+			? TRUE : FALSE);
 		break;
 
 	case F_FILESAVEAS:
 		if (!TryWorkingCopyLineEnding(static_cast<EEolType>(request.Parameter3()), options.lineEnding)) {
-			dispatch.operation = invalidInput();
-			dispatch.legacyResult = FALSE;
+			dispatch.SetOperation(invalidInput());
+			dispatch.SetLegacyResult(FALSE);
 			break;
 		}
 		if (auto target = FileIdentityFromLegacyPath(reinterpret_cast<const wchar_t*>(request.Parameter1()))) {
-			dispatch.operation = ExecuteActiveWorkingCopyOperation(
-				command_ids::SaveAs, options, std::move(target));
-			dispatch.legacyResult = dispatch.operation->status == EEditorWorkingCopyOperationStatus::Succeeded
-				? TRUE : FALSE;
+			dispatch.SetOperation(ExecuteActiveWorkingCopyOperation(
+				command_ids::SaveAs, options, std::move(target)));
+			dispatch.SetLegacyResult(dispatch.Operation()->status == EEditorWorkingCopyOperationStatus::Succeeded
+				? TRUE : FALSE);
 		}
 		else {
-			dispatch.operation = invalidInput();
-			dispatch.legacyResult = FALSE;
+			dispatch.SetOperation(invalidInput());
+			dispatch.SetLegacyResult(FALSE);
 		}
 		break;
 
 	case F_FILESAVECLOSE:
 		if (!GetDllShareData().m_Common.m_sFile.m_bEnableUnmodifiedOverwrite
 			&& !GetDocument()->m_cDocEditor.IsModified()) {
-			dispatch.legacyResult = postWindowClose() ? TRUE : FALSE;
+			dispatch.SetLegacyResult(postWindowClose() ? TRUE : FALSE);
 			break;
 		}
 		options.suppressFeedback = true;
 		options.forceWrite = GetDllShareData().m_Common.m_sFile.m_bEnableUnmodifiedOverwrite;
-		dispatch.operation = ExecuteActiveWorkingCopyOperation(command_ids::Save, options);
-		if (isSuccessfulSave(*dispatch.operation)) {
-			dispatch.legacyResult = postWindowClose() ? TRUE : FALSE;
+		dispatch.SetOperation(ExecuteActiveWorkingCopyOperation(command_ids::Save, options));
+		if (isSuccessfulSave(*dispatch.Operation())) {
+			dispatch.SetLegacyResult(postWindowClose() ? TRUE : FALSE);
 		}
 		else {
-			dispatch.legacyResult = FALSE;
+			dispatch.SetLegacyResult(FALSE);
 		}
 		break;
 
 	case F_FILECLOSE:
-		dispatch.operation = ExecuteActiveWorkingCopyOperation(command_ids::CloseActiveEditor);
-		dispatch.legacyResult = dispatch.operation->status == EEditorWorkingCopyOperationStatus::Succeeded
-			? TRUE : FALSE;
+		dispatch.SetOperation(ExecuteActiveWorkingCopyOperation(command_ids::CloseActiveEditor));
+		dispatch.SetLegacyResult(dispatch.Operation()->status == EEditorWorkingCopyOperationStatus::Succeeded
+			? TRUE : FALSE);
 		break;
 
 	default:
 		// The first switch owns command recognition; this is an explicit terminal guard.
-		dispatch.handled = false;
+		dispatch.SetHandled(false);
 		break;
 	}
 	return dispatch;
@@ -6108,7 +6111,7 @@ bool CEditWnd::InitializeSenpWindowExtensions()
 	const auto host = (std::filesystem::path(std::wstring(executable.data(), length)).parent_path()
 		/ L"sakura-senp-host.exe").native();
 	m_senpWindowExtensions = std::make_unique<workbench::CSenpWindowExtensions>(
-		m_workbenchRuntime->Contributions(), *m_viewContainerPages, GetHwnd(), host,
+		m_workbenchRuntime->Contributions(), *m_viewContainerPages, host,
 		[this](const senp::ExtensionDescriptor&, const senp::ContributionOwnerIdentity& owner)
 			-> std::unique_ptr<workbench::ISenpOwnerProjectionTarget> {
 			// Each owner reserves every possible document/page surface ID up front.
@@ -6169,7 +6172,10 @@ bool CEditWnd::InitializeSenpWindowExtensions()
 			});
 			return result.status == workbench::layout::EWorkbenchLayoutOperationStatus::Succeeded
 				|| result.status == workbench::layout::EWorkbenchLayoutOperationStatus::NotApplicable;
-		});
+		},
+		// The window launches every effect runtime through the composed host
+		// process, so it supplies no in-process factory of its own.
+		senp::EffectRuntimeFactory{});
 	m_senpWindowExtensionsActive = true;
 	return SynchronizeSenpWindowExtensions();
 }
@@ -6221,9 +6227,11 @@ void CEditWnd::DeclareSenpWorkspace() noexcept try
 	// is retried on the next turn instead of being remembered as published.
 	m_senpWorkspaceGeneration = snapshot.generation;
 	m_senpWorkspaceRevision = snapshot.revision;
-} catch (...) {
+} catch (const std::exception&) {
 	// The control side keeps answering for whatever it was last told, or for
-	// nothing. Neither is a reason to fail the window.
+	// nothing. Neither is a reason to fail the window. Every step here is
+	// std::wstring/std::vector construction plus the DeclareWorkspace seam,
+	// so std::exception (bad_alloc, length_error, ...) is exhaustive.
 }
 
 void CEditWnd::PublishSenpWorkspaceRepositories() noexcept try
@@ -6263,9 +6271,12 @@ void CEditWnd::PublishSenpWorkspaceRepositories() noexcept try
 	// retried on the next turn instead of being remembered as delivered.
 	if (!m_senpWindowExtensions->PublishWorkspace(workspace)) return;
 	m_senpRepositorySignature = std::move(signature);
-} catch (...) {
+} catch (const std::exception&) {
 	// The packages keep answering for whatever they were last told, which is the
-	// state they are already in. Neither is a reason to fail the window.
+	// state they are already in. Neither is a reason to fail the window. Every
+	// step here is std::wstring/std::vector construction plus the
+	// PublishWorkspace seam, so std::exception (bad_alloc, length_error, ...)
+	// is exhaustive.
 }
 
 std::int64_t CEditWnd::SenpAccountGeneration() noexcept
@@ -6282,7 +6293,7 @@ std::int64_t CEditWnd::SenpAccountGeneration() noexcept
 	// generation left from a connection that now needs re-authentication would
 	// admit reads the control side refuses anyway, and an unadopted profile
 	// answers zero with a state that is not a sign-out.
-	return account.state == workbench::editor::SenpToolAccountState::Connected ? account.generation : 0;
+	return account.State() == workbench::editor::SenpToolAccountState::Connected ? account.Generation() : 0;
 }
 
 void CEditWnd::StopSenpWindowExtensions() noexcept

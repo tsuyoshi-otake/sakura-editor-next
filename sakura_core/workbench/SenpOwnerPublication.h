@@ -77,11 +77,24 @@ public:
 		m_trees(std::move(trees)), m_target(std::move(target)),
 		m_requestFocus(std::move(requestFocus)), m_createTreeBody(std::move(createTreeBody)) {}
 	[[nodiscard]] const SenpDeclaredTreeFactory& DeclaredTreeFactory() const noexcept { return m_bindDeclaredTrees; }
-	[[nodiscard]] HWND ParkingParent() const noexcept { return m_parkingParent; }
+	//! True when the parking parent is a live window. The declared-tree
+	//! construction path never sets one and always reports false.
+	[[nodiscard]] bool HasValidParkingParent() const noexcept { return ::IsWindow(m_parkingParent) != FALSE; }
+	//! Assembles the native container construction options. Keeping this here
+	//! instead of exposing a raw parking-parent accessor keeps the Win32 handle
+	//! out of this options object's public surface; only its own constructor and
+	//! this factory ever name the type.
+	[[nodiscard]] viewcontainer::SenpViewContainerOptions BuildContainerOptions(
+		layout::WorkbenchContributionOwner owner,
+		std::vector<viewcontainer::SenpNativeViewDefinition> views,
+		std::function<bool(std::string_view, std::string_view)> execute) noexcept
+	{
+		return viewcontainer::SenpViewContainerOptions{ m_parkingParent, std::move(owner), m_containers,
+			std::move(views), std::move(m_requestFocus), std::move(execute) };
+	}
 	[[nodiscard]] const std::vector<layout::WorkbenchViewContainerDescriptor>& Containers() const noexcept { return m_containers; }
 	[[nodiscard]] std::vector<SenpOwnerTreeContribution> TakeTrees() noexcept { return std::move(m_trees); }
 	[[nodiscard]] std::unique_ptr<ISenpOwnerProjectionTarget> TakeTarget() noexcept { return std::move(m_target); }
-	[[nodiscard]] std::function<bool(std::string_view)> TakeRequestFocus() noexcept { return std::move(m_requestFocus); }
 	[[nodiscard]] const SenpTreeBodyFactory& TreeBodyFactory() const noexcept { return m_createTreeBody; }
 private:
 	HWND m_parkingParent{};

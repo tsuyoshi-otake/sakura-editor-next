@@ -24,7 +24,12 @@ struct LanguageContribution final {
 	std::vector<std::wstring> mimetypes;
 	std::wstring firstLine;
 	std::wstring configuration;
-	[[nodiscard]] bool operator==(const LanguageContribution&) const = default;
+
+private:
+	// The defaulted comparison is compiler-synthesized machinery, not a data
+	// member, so it is declared alongside the (empty) private section rather
+	// than as the struct's last public line.
+	[[nodiscard]] friend bool operator==(const LanguageContribution&, const LanguageContribution&) = default;
 };
 
 struct GrammarContribution final {
@@ -52,32 +57,90 @@ struct ViewContribution final {
 	[[nodiscard]] bool operator==(const ViewContribution&) const = default;
 };
 
-struct CommandContribution final {
-	std::wstring command;
-	std::wstring title;
-	//! The manifest's `$(codicon)` ThemeIcon or package-relative image path, or
-	//! empty when it names none. A path draws only as an inline Tree item action.
-	std::wstring icon;
-	[[nodiscard]] bool operator==(const CommandContribution&) const = default;
+//! One declared command. `icon` is the manifest's `$(codicon)` ThemeIcon or
+//! package-relative image path, or empty when it names none; a path draws
+//! only as an inline Tree item action. Immutable once constructed: a parsed
+//! manifest command never changes shape after it is recorded.
+class CommandContribution final {
+public:
+	CommandContribution(std::wstring command, std::wstring title, std::wstring icon = {}) noexcept
+		: m_command(std::move(command)), m_title(std::move(title)), m_icon(std::move(icon))
+	{
+	}
+
+	[[nodiscard]] const std::wstring& Command() const noexcept { return m_command; }
+	[[nodiscard]] const std::wstring& Title() const noexcept { return m_title; }
+	[[nodiscard]] const std::wstring& Icon() const noexcept { return m_icon; }
+
+private:
+	// The defaulted comparison is compiler-synthesized machinery, not part of
+	// this type's public accessor surface, so it lives with the data it
+	// compares rather than as the class's last public declaration.
+	[[nodiscard]] friend bool operator==(const CommandContribution&, const CommandContribution&) = default;
+
+	std::wstring m_command;
+	std::wstring m_title;
+	std::wstring m_icon;
 };
 
 //! One `menus["view/item/context"]` item: a declared, icon-bearing command drawn
 //! inline on the rows whose contextValue contains every `contains` token and
 //! equals every `equals` value. An empty `views` means every View of the package.
-struct ViewItemMenuContribution final {
-	std::wstring command;
-	std::vector<std::wstring> views;
-	std::vector<std::wstring> contains;
-	std::vector<std::wstring> equals;
-	[[nodiscard]] bool operator==(const ViewItemMenuContribution&) const = default;
+//! Built incrementally by its manifest parser (`command` is filled in only once
+//! the enclosing declared command has been verified), hence the mutator methods
+//! rather than a one-shot constructor.
+class ViewItemMenuContribution final {
+public:
+	ViewItemMenuContribution() = default;
+	//! Convenience constructor for a fully-known item (tests and fixtures that
+	//! do not go through the incremental manifest parser).
+	ViewItemMenuContribution(std::wstring command, std::vector<std::wstring> views,
+		std::vector<std::wstring> contains, std::vector<std::wstring> equals) noexcept
+		: m_command(std::move(command)), m_views(std::move(views)), m_contains(std::move(contains)),
+		m_equals(std::move(equals))
+	{
+	}
+
+	void SetCommand(std::wstring command) { m_command = std::move(command); }
+	void AddView(std::wstring view) { m_views.push_back(std::move(view)); }
+	void AddContains(std::wstring token) { m_contains.push_back(std::move(token)); }
+	void AddEquals(std::wstring value) { m_equals.push_back(std::move(value)); }
+
+	[[nodiscard]] const std::wstring& Command() const noexcept { return m_command; }
+	[[nodiscard]] const std::vector<std::wstring>& Views() const noexcept { return m_views; }
+	[[nodiscard]] const std::vector<std::wstring>& Contains() const noexcept { return m_contains; }
+	[[nodiscard]] const std::vector<std::wstring>& Equals() const noexcept { return m_equals; }
+
+private:
+	// See CommandContribution: the defaulted comparison is not an accessor,
+	// so it is declared with the private data it compares.
+	[[nodiscard]] friend bool operator==(const ViewItemMenuContribution&, const ViewItemMenuContribution&) = default;
+
+	std::wstring m_command;
+	std::vector<std::wstring> m_views;
+	std::vector<std::wstring> m_contains;
+	std::vector<std::wstring> m_equals;
 };
 
 //! One `menus["view/title"]` item: a declared, icon-bearing command placed in
 //! the inline `navigation` group of each View its `when` clause names.
-struct ViewTitleMenuContribution final {
-	std::wstring command;
-	std::vector<std::wstring> views;
-	[[nodiscard]] bool operator==(const ViewTitleMenuContribution&) const = default;
+class ViewTitleMenuContribution final {
+public:
+	ViewTitleMenuContribution(std::wstring command, std::vector<std::wstring> views) noexcept
+		: m_command(std::move(command)), m_views(std::move(views))
+	{
+	}
+
+	[[nodiscard]] const std::wstring& Command() const noexcept { return m_command; }
+	[[nodiscard]] const std::vector<std::wstring>& Views() const noexcept { return m_views; }
+
+private:
+	// See CommandContribution: the defaulted comparison is not an accessor,
+	// so it is declared with the private data it compares.
+	[[nodiscard]] friend bool operator==(const ViewTitleMenuContribution&, const ViewTitleMenuContribution&) = default;
+
+	std::wstring m_command;
+	std::vector<std::wstring> m_views;
 };
 
 //! Package-authority metadata, not permission to execute or issue tool grants.
@@ -87,13 +150,28 @@ struct RuntimeContribution final {
 	std::vector<std::wstring> activationEvents;
 	std::vector<std::wstring> capabilities;
 	std::vector<CommandContribution> commands;
-	std::vector<ViewTitleMenuContribution> viewTitle;
-	std::vector<ViewItemMenuContribution> viewItemContext;
 	//! Decided by sakura_senp, the only owner of the runtime ABI: false for an
 	//! installed package built for another WIT world. It is listed so it can be
 	//! refreshed or removed, and must never be activated or granted tools.
 	bool compatible{ true };
-	[[nodiscard]] bool operator==(const RuntimeContribution&) const = default;
+
+	[[nodiscard]] const std::vector<ViewTitleMenuContribution>& ViewTitle() const noexcept { return m_viewTitle; }
+	[[nodiscard]] std::vector<ViewTitleMenuContribution>& ViewTitle() noexcept { return m_viewTitle; }
+	[[nodiscard]] const std::vector<ViewItemMenuContribution>& ViewItemContext() const noexcept
+	{
+		return m_viewItemContext;
+	}
+	[[nodiscard]] std::vector<ViewItemMenuContribution>& ViewItemContext() noexcept { return m_viewItemContext; }
+	void AddViewTitle(ViewTitleMenuContribution item) { m_viewTitle.push_back(std::move(item)); }
+	void AddViewItemContext(ViewItemMenuContribution item) { m_viewItemContext.push_back(std::move(item)); }
+
+private:
+	// See CommandContribution: the defaulted comparison is not an accessor,
+	// so it is declared with the private data it compares.
+	[[nodiscard]] friend bool operator==(const RuntimeContribution&, const RuntimeContribution&) = default;
+
+	std::vector<ViewTitleMenuContribution> m_viewTitle;
+	std::vector<ViewItemMenuContribution> m_viewItemContext;
 };
 
 enum class EManagementState : std::uint8_t {

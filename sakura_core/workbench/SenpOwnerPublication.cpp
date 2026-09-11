@@ -49,7 +49,7 @@ public:
 		try {
 			if (!m_target) return false;
 			const bool declared = static_cast<bool>(options.DeclaredTreeFactory());
-			if (!declared && (!::IsWindow(options.ParkingParent()) || options.Containers().empty())) return false;
+			if (!declared && (!options.HasValidParkingParent() || options.Containers().empty())) return false;
 			m_projection = std::make_unique<CSenpOwnerProjection>(m_hub.m_owners, m_owner, *m_target);
 
 			auto trees = options.TakeTrees();
@@ -97,11 +97,8 @@ public:
 
 			for (const auto& container : options.Containers()) m_containerIds.push_back(container.id);
 
-			viewcontainer::SenpViewContainerOptions containerOptions{
-				options.ParkingParent(), m_catalogOwner, options.Containers(), std::move(nativeViews),
-				options.TakeRequestFocus(),
-				[](std::string_view, std::string_view) { return false; },
-			};
+			auto containerOptions = options.BuildContainerOptions(m_catalogOwner, std::move(nativeViews),
+				[](std::string_view, std::string_view) { return false; });
 			m_views = viewcontainer::CSenpViewContainers::Create(std::move(containerOptions));
 			if (!m_views) return false;
 
@@ -274,7 +271,9 @@ std::unique_ptr<senp::ISenpOwnerPublication> CSenpOwnerPublicationHub::Prepare(
 		if (!state->Initialize(std::move(options))) return {};
 		m_publications.push_back(state);
 		return std::make_unique<Publication>(std::move(state));
-	} catch (...) {
+	} catch (const std::exception&) {
+		// State::Initialize already fails closed internally; only allocation for
+		// the shared State and its owning vector can throw past this point.
 		return {};
 	}
 }
@@ -284,7 +283,8 @@ bool CSenpOwnerPublicationHub::PublishWorkspace(const senp::effect::WorkspaceCha
 	if (m_closed || !senp::effect::ValidateWorkspace(workspace)) return false;
 	try {
 		m_workspace = workspace;
-	} catch (...) {
+	} catch (const std::exception&) {
+		// Only the std::optional/struct copy above can throw here.
 		return false;
 	}
 	bool accepted = true;

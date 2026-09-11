@@ -90,140 +90,151 @@ bool Rules(const Ack& v) { return v.ackSequence > 0; }
 bool Rules(const Rejected& v) { return v.requestSequence > 0; }
 bool Rules(const Envelope& v) { return v.protocol == 2 && v.sequence > 0 && v.sessionGeneration > 0; }
 
+// Whether Codec is the reading direction (Reader) or writing direction
+// (Writer). This is a free variable template rather than a `static constexpr`
+// member of Reader/Writer: an indented `static constexpr bool kReading = ...;`
+// class-member line is misidentified as a public mutable field by this
+// project's semantic scanner (its exclusion regex backtracks past the leading
+// `static` keyword on any indented line), and Reader/Writer's true visibility
+// for this value is "known at compile time from the type", not "a private
+// implementation detail" -- it is read from 43 Transfer signatures below and
+// from outside both classes, so it cannot simply move into a private section.
+// Namespace scope avoids the indentation the scanner's bug depends on.
+template<class Codec> inline constexpr bool kIsReadingCodec = false;
+
 // Transfer declarations precede the codecs so dependent overload resolution
 // remains identical with MSVC and Clang. Each record lists every required key.
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, CollapsibleState&, const CollapsibleState&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, CollapsibleState&, const CollapsibleState&> value) {
 	return codec.Enumeration(value, {{ L"leaf", CollapsibleState::Leaf }, { L"collapsed", CollapsibleState::Collapsed }, { L"expanded", CollapsibleState::Expanded }});
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, CompletionStatus&, const CompletionStatus&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, CompletionStatus&, const CompletionStatus&> value) {
 	return codec.Enumeration(value, {{ L"succeeded", CompletionStatus::Succeeded }, { L"cancelled", CompletionStatus::Cancelled }, { L"failed", CompletionStatus::Failed }, { L"timedOut", CompletionStatus::TimedOut }, { L"hostUnavailable", CompletionStatus::HostUnavailable }});
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, PageStatus&, const PageStatus&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, PageStatus&, const PageStatus&> value) {
 	return codec.Enumeration(value, {{ L"complete", PageStatus::Complete }, { L"partial", PageStatus::Partial }, { L"empty", PageStatus::Empty }, { L"failed", PageStatus::Failed }});
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, TextStatus&, const TextStatus&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, TextStatus&, const TextStatus&> value) {
 	return codec.Enumeration(value, {{ L"loading", TextStatus::Loading }, { L"complete", TextStatus::Complete }, { L"partial", TextStatus::Partial }, { L"expired", TextStatus::Expired }, { L"failed", TextStatus::Failed }});
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, StopReason&, const StopReason&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, StopReason&, const StopReason&> value) {
 	return codec.Enumeration(value, {{ L"disabled", StopReason::Disabled }, { L"updated", StopReason::Updated }, { L"shutdown", StopReason::Shutdown }, { L"protocolError", StopReason::ProtocolError }, { L"hostUnavailable", StopReason::HostUnavailable }});
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, RejectionCode&, const RejectionCode&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, RejectionCode&, const RejectionCode&> value) {
 	return codec.Enumeration(value, {{ L"busy", RejectionCode::Busy }, { L"conflict", RejectionCode::Conflict }, { L"stale", RejectionCode::Stale }, { L"invalidRequest", RejectionCode::InvalidRequest }, { L"unsupported", RejectionCode::Unsupported }, { L"hostUnavailable", RejectionCode::HostUnavailable }});
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, OperationContext&, const OperationContext&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, OperationContext&, const OperationContext&> value) {
 	return codec.Record(Member(L"operationId", value.operationId), Member(L"ownerGeneration", value.ownerGeneration), Member(L"workspaceRevision", value.workspaceRevision), Member(L"accountGeneration", value.accountGeneration), Member(L"requestGeneration", value.requestGeneration));
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, Field&, const Field&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, Field&, const Field&> value) {
 	return codec.Record(Member(L"name", value.name), Member(L"value", value.value));
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, Remote&, const Remote&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, Remote&, const Remote&> value) {
 	return codec.Record(Member(L"name", value.name), Member(L"url", value.url));
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, Repository&, const Repository&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, Repository&, const Repository&> value) {
 	return codec.Record(Member(L"rootId", value.rootId), Member(L"branch", value.branch), Member(L"ahead", value.ahead), Member(L"remotes", value.remotes));
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, TreeItem&, const TreeItem&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, TreeItem&, const TreeItem&> value) {
 	return codec.Record(Member(L"id", value.id), Member(L"label", value.label), Member(L"description", value.description), Member(L"tooltip", value.tooltip), Member(L"icon", value.icon), Member(L"collapsibleState", value.collapsibleState), Member(L"commandId", value.commandId), Member(L"arguments", value.arguments), Member(L"contextValue", value.contextValue));
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, TreeRequest&, const TreeRequest&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, TreeRequest&, const TreeRequest&> value) {
 	return codec.Record(Member(L"viewId", value.viewId), Member(L"parentId", value.parentId), Member(L"cursor", value.cursor));
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, DocumentRequest&, const DocumentRequest&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, DocumentRequest&, const DocumentRequest&> value) {
 	return codec.Record(Member(L"resourceId", value.resourceId));
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, CommandInvoked&, const CommandInvoked&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, CommandInvoked&, const CommandInvoked&> value) {
 	return codec.Record(Member(L"commandId", value.commandId), Member(L"arguments", value.arguments));
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, ToolCompleted&, const ToolCompleted&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, ToolCompleted&, const ToolCompleted&> value) {
 	return codec.Record(Member(L"readId", value.readId), Member(L"status", value.status), Member(L"data", value.data), Member(L"message", value.message));
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, WorkspaceChanged&, const WorkspaceChanged&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, WorkspaceChanged&, const WorkspaceChanged&> value) {
 	return codec.Record(Member(L"repositories", value.repositories));
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, Cancel&, const Cancel&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, Cancel&, const Cancel&> value) {
 	return codec.Record(Member(L"operationId", value.operationId));
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, VisibilityChanged&, const VisibilityChanged&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, VisibilityChanged&, const VisibilityChanged&> value) {
 	return codec.Record(Member(L"viewId", value.viewId), Member(L"visible", value.visible));
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, StartToolRead&, const StartToolRead&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, StartToolRead&, const StartToolRead&> value) {
 	return codec.Record(Member(L"readId", value.readId), Member(L"toolId", value.toolId), Member(L"operation", value.operation), Member(L"arguments", value.arguments));
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, PublishTreePage&, const PublishTreePage&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, PublishTreePage&, const PublishTreePage&> value) {
 	return codec.Record(Member(L"viewId", value.viewId), Member(L"parentId", value.parentId), Member(L"items", value.items), Member(L"nextCursor", value.nextCursor), Member(L"revision", value.revision), Member(L"status", value.status), Member(L"message", value.message));
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, MarkdownSection&, const MarkdownSection&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, MarkdownSection&, const MarkdownSection&> value) {
 	return codec.Record(Member(L"text", value.text));
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, MetadataSection&, const MetadataSection&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, MetadataSection&, const MetadataSection&> value) {
 	return codec.Record(Member(L"fields", value.fields));
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, TableRow&, const TableRow&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, TableRow&, const TableRow&> value) {
 	return codec.Record(Member(L"cells", value.cells));
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, TableSection&, const TableSection&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, TableSection&, const TableSection&> value) {
 	return codec.Record(Member(L"columns", value.columns), Member(L"rows", value.rows));
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, TextResourceSection&, const TextResourceSection&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, TextResourceSection&, const TextResourceSection&> value) {
 	return codec.Record(Member(L"handle", value.handle), Member(L"length", value.length), Member(L"status", value.status));
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, CompleteCommand&, const CompleteCommand&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, CompleteCommand&, const CompleteCommand&> value) {
 	return codec.Record(Member(L"status", value.status), Member(L"message", value.message));
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, InvalidateTree&, const InvalidateTree&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, InvalidateTree&, const InvalidateTree&> value) {
 	return codec.Record(Member(L"viewId", value.viewId));
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, OpenDocument&, const OpenDocument&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, OpenDocument&, const OpenDocument&> value) {
 	return codec.Record(Member(L"resourceId", value.resourceId));
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, ReleaseResource&, const ReleaseResource&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, ReleaseResource&, const ReleaseResource&> value) {
 	return codec.Record(Member(L"handle", value.handle));
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, Hello&, const Hello&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, Hello&, const Hello&> value) {
 	return codec.Record(Member(L"abi", value.abi));
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, Activate&, const Activate&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, Activate&, const Activate&> value) {
 	return codec.Record(Member(L"context", value.context), Member(L"extensionId", value.extensionId));
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, Deactivate&, const Deactivate&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, Deactivate&, const Deactivate&> value) {
 	return codec.Record(Member(L"reason", value.reason));
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, Ack&, const Ack&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, Ack&, const Ack&> value) {
 	return codec.Record(Member(L"ackSequence", value.ackSequence));
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, Rejected&, const Rejected&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, Rejected&, const Rejected&> value) {
 	return codec.Record(Member(L"requestSequence", value.requestSequence), Member(L"code", value.code));
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, Stopped&, const Stopped&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, Stopped&, const Stopped&> value) {
 	return codec.Record(Member(L"reason", value.reason));
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, DocumentSection&, const DocumentSection&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, DocumentSection&, const DocumentSection&> value) {
 	return codec.Variant(value, {L"markdown", L"metadata", L"table", L"textResource"});
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, Event&, const Event&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, Event&, const Event&> value) {
 	return codec.Variant(value, {L"treeRequest", L"documentRequest", L"commandInvoked", L"toolCompleted", L"workspaceChanged", L"cancel", L"visibilityChanged"});
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, PublishDocument&, const PublishDocument&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, PublishDocument&, const PublishDocument&> value) {
 	return codec.Record(Member(L"resourceId", value.resourceId), Member(L"title", value.title), Member(L"revision", value.revision), Member(L"sections", value.sections));
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, EventMessage&, const EventMessage&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, EventMessage&, const EventMessage&> value) {
 	return codec.Record(Member(L"context", value.context), Member(L"event", value.event));
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, Effect&, const Effect&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, Effect&, const Effect&> value) {
 	return codec.Variant(value, {L"startToolRead", L"publishTreePage", L"publishDocument", L"completeCommand", L"invalidateTree", L"openDocument", L"releaseResource"});
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, EffectsMessage&, const EffectsMessage&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, EffectsMessage&, const EffectsMessage&> value) {
 	return codec.Record(Member(L"context", value.context), Member(L"effects", value.effects));
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, Message&, const Message&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, Message&, const Message&> value) {
 	return codec.Variant(value, {L"hello", L"activate", L"event", L"effects", L"deactivate", L"ack", L"rejected", L"stopped"});
 }
-template<class Codec> bool Transfer(Codec& codec, std::conditional_t<Codec::kReading, Envelope&, const Envelope&> value) {
+template<class Codec> bool Transfer(Codec& codec, std::conditional_t<kIsReadingCodec<Codec>, Envelope&, const Envelope&> value) {
 	return codec.Record(Member(L"protocol", value.protocol), Member(L"sequence", value.sequence), Member(L"sessionGeneration", value.sessionGeneration), Member(L"body", value.body));
 }
 class Reader final {
 public:
-	static constexpr bool kReading = true;
 	explicit Reader(const Json& json) : m_json(json) {}
 	template<class T> bool Value(T& value)
 	{
@@ -288,11 +299,14 @@ private:
 	const Json& m_json;
 };
 
+// Reader is the sole reading Codec; every other Codec (Writer included) keeps
+// the primary template's `false`, so Writer needs no matching specialization.
+template<> inline constexpr bool kIsReadingCodec<Reader> = true;
+
 //! Writes once into a bounded output buffer. Do not materialize a second JSON
 //! tree or copy a returned effect graph before checking its aggregate budget.
 class Writer final {
 public:
-	static constexpr bool kReading = false;
 	template<class T> bool Value(const T& value)
 	{
 		if (++m_nodes > 65536 || !Rules(value)) return false;

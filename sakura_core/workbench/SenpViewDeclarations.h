@@ -20,7 +20,7 @@ using SenpViewTitleActions = std::map<std::string, std::vector<viewcontainer::Se
 class CSenpViewDeclarations final {
 public:
 	CSenpViewDeclarations(layout::WorkbenchContributionRegistry& catalog,
-		viewcontainer::CViewContainerPages& pages, HWND parkingParent,
+		viewcontainer::CViewContainerPages& pages,
 		SenpDeclaredViewActivation requestActivation,
 		std::function<bool(std::string_view)> requestFocus);
 	~CSenpViewDeclarations();
@@ -33,8 +33,13 @@ public:
 	[[nodiscard]] SenpViewDeclarationStatus Register(
 		layout::WorkbenchContributionOwner owner,
 		std::vector<layout::WorkbenchViewContainerDescriptor> containers,
+		std::vector<layout::WorkbenchViewDescriptor> views) noexcept
+	{ return Register(std::move(owner), std::move(containers), std::move(views), {}); }
+	[[nodiscard]] SenpViewDeclarationStatus Register(
+		layout::WorkbenchContributionOwner owner,
+		std::vector<layout::WorkbenchViewContainerDescriptor> containers,
 		std::vector<layout::WorkbenchViewDescriptor> views,
-		SenpViewTitleActions titleActions = {}) noexcept;
+		SenpViewTitleActions titleActions) noexcept;
 	[[nodiscard]] std::unique_ptr<ISenpDeclaredTreePublication> Bind(
 		const senp::ContributionOwnerIdentity& runtimeOwner,
 		std::vector<SenpOwnerBoundTree> trees) noexcept;
@@ -49,7 +54,6 @@ private:
 	class Entry;
 	layout::WorkbenchContributionRegistry& m_catalog;
 	viewcontainer::CViewContainerPages& m_pages;
-	HWND m_parkingParent{};
 	SenpDeclaredViewActivation m_requestActivation;
 	std::function<bool(std::string_view)> m_requestFocus;
 	std::map<std::wstring, std::unique_ptr<Entry>, std::less<>> m_entries;

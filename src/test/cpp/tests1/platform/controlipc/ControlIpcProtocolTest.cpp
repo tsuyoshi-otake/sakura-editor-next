@@ -53,10 +53,10 @@ TEST(ControlIpcProtocol, SenpEnvelopeAddsFixedKindsWithoutChangingVersionOneHead
 	EXPECT_EQ(golden, Encode(request));
 	CControlIpcFrameDecoder decoder;
 	const auto decoded = decoder.Feed(golden);
-	ASSERT_EQ(EControlIpcDecodeOutcome::Decoded, decoded.outcome);
-	ASSERT_EQ(1U, decoded.frames.size());
-	EXPECT_EQ(EControlIpcKind::SenpRequest, decoded.frames.front().header.kind);
-	EXPECT_EQ(request.payload, decoded.frames.front().payload);
+	ASSERT_EQ(EControlIpcDecodeOutcome::Decoded, decoded.Outcome());
+	ASSERT_EQ(1U, decoded.Frames().size());
+	EXPECT_EQ(EControlIpcKind::SenpRequest, decoded.Frames().front().header.kind);
+	EXPECT_EQ(request.payload, decoded.Frames().front().payload);
 	auto response = request;
 	response.header.kind = EControlIpcKind::SenpResponse;
 	response.header.flags = EControlIpcFlags::Response | EControlIpcFlags::Terminal;
@@ -69,7 +69,7 @@ TEST(ControlIpcProtocol, SenpEnvelopeAddsFixedKindsWithoutChangingVersionOneHead
 	auto wrongDirection = golden;
 	wrongDirection[14] = 6;
 	CControlIpcFrameDecoder rejected;
-	EXPECT_EQ(EControlIpcDecodeOutcome::InvalidFlags, rejected.Feed(wrongDirection).outcome);
+	EXPECT_EQ(EControlIpcDecodeOutcome::InvalidFlags, rejected.Feed(wrongDirection).Outcome());
 }
 
 TEST(ControlIpcProtocol, EncodesVersionedLittleEndianHeaderAndDecodesFragmentedInput)
@@ -87,14 +87,14 @@ TEST(ControlIpcProtocol, EncodesVersionedLittleEndianHeaderAndDecodesFragmentedI
 	EXPECT_EQ('P', encoded[7]);
 
 	CControlIpcFrameDecoder decoder;
-	EXPECT_EQ(EControlIpcDecodeOutcome::NeedMoreData, decoder.Feed(std::span(encoded).first(3)).outcome);
-	EXPECT_EQ(EControlIpcDecodeOutcome::NeedMoreData, decoder.Feed(std::span(encoded).subspan(3, 11)).outcome);
+	EXPECT_EQ(EControlIpcDecodeOutcome::NeedMoreData, decoder.Feed(std::span(encoded).first(3)).Outcome());
+	EXPECT_EQ(EControlIpcDecodeOutcome::NeedMoreData, decoder.Feed(std::span(encoded).subspan(3, 11)).Outcome());
 	const auto decoded = decoder.Feed(std::span(encoded).subspan(14));
-	ASSERT_EQ(EControlIpcDecodeOutcome::Decoded, decoded.outcome);
-	ASSERT_EQ(1u, decoded.frames.size());
-	EXPECT_EQ(input.header.requestId, decoded.frames[0].header.requestId);
-	EXPECT_EQ(input.header.generation, decoded.frames[0].header.generation);
-	EXPECT_EQ(input.payload, decoded.frames[0].payload);
+	ASSERT_EQ(EControlIpcDecodeOutcome::Decoded, decoded.Outcome());
+	ASSERT_EQ(1u, decoded.Frames().size());
+	EXPECT_EQ(input.header.requestId, decoded.Frames()[0].header.requestId);
+	EXPECT_EQ(input.header.generation, decoded.Frames()[0].header.generation);
+	EXPECT_EQ(input.payload, decoded.Frames()[0].payload);
 }
 
 TEST(ControlIpcProtocol, DecodesCoalescedFramesWithoutLosingBoundary)
@@ -107,11 +107,11 @@ TEST(ControlIpcProtocol, DecodesCoalescedFramesWithoutLosingBoundary)
 
 	CControlIpcFrameDecoder decoder;
 	const auto decoded = decoder.Feed(coalesced);
-	ASSERT_EQ(EControlIpcDecodeOutcome::Decoded, decoded.outcome);
-	ASSERT_EQ(2u, decoded.frames.size());
-	EXPECT_EQ(EControlIpcKind::Hello, decoded.frames[0].header.kind);
-	EXPECT_EQ(EControlIpcKind::CancelAck, decoded.frames[1].header.kind);
-	EXPECT_EQ(2u, decoded.frames[1].header.requestId);
+	ASSERT_EQ(EControlIpcDecodeOutcome::Decoded, decoded.Outcome());
+	ASSERT_EQ(2u, decoded.Frames().size());
+	EXPECT_EQ(EControlIpcKind::Hello, decoded.Frames()[0].header.kind);
+	EXPECT_EQ(EControlIpcKind::CancelAck, decoded.Frames()[1].header.kind);
+	EXPECT_EQ(2u, decoded.Frames()[1].header.requestId);
 }
 
 TEST(ControlIpcProtocol, InitialHelloUsesUnknownGenerationButLaterRequestsDoNot)
@@ -119,14 +119,14 @@ TEST(ControlIpcProtocol, InitialHelloUsesUnknownGenerationButLaterRequestsDoNot)
 	const auto hello = Encode(MakeFrame(EControlIpcKind::Hello, EControlIpcFlags::Request, 1, 0));
 	CControlIpcFrameDecoder decoder;
 	const auto decoded = decoder.Feed(hello);
-	ASSERT_EQ(EControlIpcDecodeOutcome::Decoded, decoded.outcome);
-	ASSERT_EQ(1u, decoded.frames.size());
-	EXPECT_EQ(0u, decoded.frames[0].header.generation);
+	ASSERT_EQ(EControlIpcDecodeOutcome::Decoded, decoded.Outcome());
+	ASSERT_EQ(1u, decoded.Frames().size());
+	EXPECT_EQ(0u, decoded.Frames()[0].header.generation);
 
 	auto later = Encode(MakeFrame());
 	for (std::size_t index = 24; index < 32; ++index) later[index] = 0;
 	CControlIpcFrameDecoder staleDecoder;
-	EXPECT_EQ(EControlIpcDecodeOutcome::InvalidGeneration, staleDecoder.Feed(later).outcome);
+	EXPECT_EQ(EControlIpcDecodeOutcome::InvalidGeneration, staleDecoder.Feed(later).Outcome());
 }
 
 TEST(ControlIpcProtocol, SameMajorHigherMinorRemainsForwardCompatible)
@@ -136,32 +136,41 @@ TEST(ControlIpcProtocol, SameMajorHigherMinorRemainsForwardCompatible)
 	const auto encoded = Encode(frame);
 	CControlIpcFrameDecoder decoder;
 	const auto decoded = decoder.Feed(encoded);
-	ASSERT_EQ(EControlIpcDecodeOutcome::Decoded, decoded.outcome);
-	ASSERT_EQ(1u, decoded.frames.size());
-	EXPECT_EQ(kControlIpcMinorVersion + 7, decoded.frames[0].header.minorVersion);
+	ASSERT_EQ(EControlIpcDecodeOutcome::Decoded, decoded.Outcome());
+	ASSERT_EQ(1u, decoded.Frames().size());
+	EXPECT_EQ(kControlIpcMinorVersion + 7, decoded.Frames()[0].header.minorVersion);
 }
 
 TEST(ControlIpcProtocol, RejectsZeroAndOversizedLengthBeforeFrameAllocation)
 {
 	CControlIpcFrameDecoder zero;
 	const std::array<std::uint8_t, 4> zeroPrefix{};
-	EXPECT_EQ(EControlIpcDecodeOutcome::ZeroLengthFrame, zero.Feed(zeroPrefix).outcome);
+	EXPECT_EQ(EControlIpcDecodeOutcome::ZeroLengthFrame, zero.Feed(zeroPrefix).Outcome());
 	EXPECT_TRUE(zero.IsFailed());
-	EXPECT_EQ(EControlIpcDecodeOutcome::ZeroLengthFrame, zero.Feed(std::span<const std::uint8_t>{}).outcome);
+	EXPECT_EQ(EControlIpcDecodeOutcome::ZeroLengthFrame, zero.Feed(std::span<const std::uint8_t>{}).Outcome());
 
 	CControlIpcFrameDecoder oversize(64);
 	std::array<std::uint8_t, 4> prefix{};
 	prefix[0] = 65;
-	EXPECT_EQ(EControlIpcDecodeOutcome::OversizeFrame, oversize.Feed(prefix).outcome);
+	EXPECT_EQ(EControlIpcDecodeOutcome::OversizeFrame, oversize.Feed(prefix).Outcome());
 	EXPECT_TRUE(oversize.IsFailed());
 }
 
 TEST(ControlIpcProtocol, RejectsHostileHeaderMetadataWithExplicitTerminalOutcome)
 {
 	const auto valid = Encode(MakeFrame());
-	struct Case {
-		std::vector<std::uint8_t> bytes;
-		EControlIpcDecodeOutcome expected;
+	// Kept private: only the constructor and the accessors below ever need to
+	// touch the recorded bytes/outcome, so there is no reason for the fixture
+	// to expose them as mutable public state.
+	class Case {
+	public:
+		Case(std::vector<std::uint8_t> bytes, EControlIpcDecodeOutcome expected)
+			: m_bytes(std::move(bytes)), m_expected(expected) {}
+		[[nodiscard]] const std::vector<std::uint8_t>& Bytes() const noexcept { return m_bytes; }
+		[[nodiscard]] EControlIpcDecodeOutcome Expected() const noexcept { return m_expected; }
+	private:
+		std::vector<std::uint8_t> m_bytes;
+		EControlIpcDecodeOutcome m_expected;
 	};
 	std::vector<Case> cases;
 	auto malformedMagic = valid;
@@ -185,7 +194,7 @@ TEST(ControlIpcProtocol, RejectsHostileHeaderMetadataWithExplicitTerminalOutcome
 
 	for (const auto& test : cases) {
 		CControlIpcFrameDecoder decoder;
-		EXPECT_EQ(test.expected, decoder.Feed(test.bytes).outcome);
+		EXPECT_EQ(test.Expected(), decoder.Feed(test.Bytes()).Outcome());
 		EXPECT_TRUE(decoder.IsFailed());
 	}
 }
@@ -246,7 +255,7 @@ TEST(ControlIpcProtocol, RejectsMalformedTlvAndInvalidUtf8WithoutAmbiguousFallba
 	std::vector<std::uint8_t> malformedFrame = Encode(MakeFrame());
 	SetLe32(malformedFrame, 0, kControlIpcHeaderBytes - 1);
 	CControlIpcFrameDecoder decoder;
-	EXPECT_EQ(EControlIpcDecodeOutcome::MalformedFrame, decoder.Feed(malformedFrame).outcome);
+	EXPECT_EQ(EControlIpcDecodeOutcome::MalformedFrame, decoder.Feed(malformedFrame).Outcome());
 }
 
 TEST(ControlIpcProtocol, RejectsReservedAndDuplicateTlvTags)
@@ -265,12 +274,12 @@ TEST(ControlIpcProtocol, ResetMakesAStickyTerminalDecoderUsableForANewConnection
 {
 	CControlIpcFrameDecoder decoder(64);
 	const std::array<std::uint8_t, 4> oversizePrefix{ 65, 0, 0, 0 };
-	EXPECT_EQ(EControlIpcDecodeOutcome::OversizeFrame, decoder.Feed(oversizePrefix).outcome);
+	EXPECT_EQ(EControlIpcDecodeOutcome::OversizeFrame, decoder.Feed(oversizePrefix).Outcome());
 	decoder.Reset();
 	EXPECT_FALSE(decoder.IsFailed());
 	const auto decoded = decoder.Feed(Encode(MakeFrame()));
-	EXPECT_EQ(EControlIpcDecodeOutcome::Decoded, decoded.outcome);
-	ASSERT_EQ(1u, decoded.frames.size());
+	EXPECT_EQ(EControlIpcDecodeOutcome::Decoded, decoded.Outcome());
+	ASSERT_EQ(1u, decoded.Frames().size());
 }
 
 TEST(ControlIpcProtocol, RejectsMoreThanMaximumTlvFieldCount)

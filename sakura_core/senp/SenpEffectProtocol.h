@@ -37,19 +37,37 @@ struct OperationContext final {
 	std::int64_t workspaceRevision{};
 	std::int64_t accountGeneration{};
 	std::int64_t requestGeneration{};
-	bool operator==(const OperationContext&) const = default;
+
+private:
+	// The defaulted comparison is compiler-synthesized machinery, not a data
+	// member; declaring it as a hidden friend after a private section (rather
+	// than as the struct's last public line) keeps it found by ADL for `==`
+	// while narrowing the type's public member surface to its data fields.
+	[[nodiscard]] friend bool operator==(const OperationContext&, const OperationContext&) = default;
 };
 
 struct Field final {
 	std::wstring name{};
 	std::wstring value{};
-	bool operator==(const Field&) const = default;
+
+private:
+	// The defaulted comparison is compiler-synthesized machinery, not a data
+	// member; declaring it as a hidden friend after a private section (rather
+	// than as the struct's last public line) keeps it found by ADL for `==`
+	// while narrowing the type's public member surface to its data fields.
+	[[nodiscard]] friend bool operator==(const Field&, const Field&) = default;
 };
 
 struct Remote final {
 	std::wstring name{};
 	std::wstring url{};
-	bool operator==(const Remote&) const = default;
+
+private:
+	// The defaulted comparison is compiler-synthesized machinery, not a data
+	// member; declaring it as a hidden friend after a private section (rather
+	// than as the struct's last public line) keeps it found by ADL for `==`
+	// while narrowing the type's public member surface to its data fields.
+	[[nodiscard]] friend bool operator==(const Remote&, const Remote&) = default;
 };
 
 struct Repository final {
@@ -59,7 +77,13 @@ struct Repository final {
 	// Commits HEAD is ahead of its upstream (WIT u32); last so that aggregate
 	// initializers written before it keep their meaning.
 	std::int64_t ahead{};
-	bool operator==(const Repository&) const = default;
+
+private:
+	// The defaulted comparison is compiler-synthesized machinery, not a data
+	// member; declaring it as a hidden friend after a private section (rather
+	// than as the struct's last public line) keeps it found by ADL for `==`
+	// while narrowing the type's public member surface to its data fields.
+	[[nodiscard]] friend bool operator==(const Repository&, const Repository&) = default;
 };
 
 struct TreeItem final {
@@ -74,25 +98,49 @@ struct TreeItem final {
 	// VS Code's TreeItem.contextValue, read by `viewItem` menu conditions.
 	// Declared last so aggregate initializers written before it keep their meaning.
 	std::wstring contextValue{};
-	bool operator==(const TreeItem&) const = default;
+
+private:
+	// The defaulted comparison is compiler-synthesized machinery, not a data
+	// member; declaring it as a hidden friend after a private section (rather
+	// than as the struct's last public line) keeps it found by ADL for `==`
+	// while narrowing the type's public member surface to its data fields.
+	[[nodiscard]] friend bool operator==(const TreeItem&, const TreeItem&) = default;
 };
 
 struct TreeRequest final {
 	std::wstring viewId{};
 	std::wstring parentId{};
 	std::wstring cursor{};
-	bool operator==(const TreeRequest&) const = default;
+
+private:
+	// The defaulted comparison is compiler-synthesized machinery, not a data
+	// member; declaring it as a hidden friend after a private section (rather
+	// than as the struct's last public line) keeps it found by ADL for `==`
+	// while narrowing the type's public member surface to its data fields.
+	[[nodiscard]] friend bool operator==(const TreeRequest&, const TreeRequest&) = default;
 };
 
 struct DocumentRequest final {
 	std::wstring resourceId{};
-	bool operator==(const DocumentRequest&) const = default;
+
+private:
+	// The defaulted comparison is compiler-synthesized machinery, not a data
+	// member; declaring it as a hidden friend after a private section (rather
+	// than as the struct's last public line) keeps it found by ADL for `==`
+	// while narrowing the type's public member surface to its data fields.
+	[[nodiscard]] friend bool operator==(const DocumentRequest&, const DocumentRequest&) = default;
 };
 
 struct CommandInvoked final {
 	std::wstring commandId{};
 	std::vector<std::wstring> arguments{};
-	bool operator==(const CommandInvoked&) const = default;
+
+private:
+	// The defaulted comparison is compiler-synthesized machinery, not a data
+	// member; declaring it as a hidden friend after a private section (rather
+	// than as the struct's last public line) keeps it found by ADL for `==`
+	// while narrowing the type's public member surface to its data fields.
+	[[nodiscard]] friend bool operator==(const CommandInvoked&, const CommandInvoked&) = default;
 };
 
 struct ToolCompleted final {
@@ -100,23 +148,47 @@ struct ToolCompleted final {
 	CompletionStatus status{};
 	std::wstring data{};
 	std::wstring message{};
-	bool operator==(const ToolCompleted&) const = default;
+
+private:
+	// The defaulted comparison is compiler-synthesized machinery, not a data
+	// member; declaring it as a hidden friend after a private section (rather
+	// than as the struct's last public line) keeps it found by ADL for `==`
+	// while narrowing the type's public member surface to its data fields.
+	[[nodiscard]] friend bool operator==(const ToolCompleted&, const ToolCompleted&) = default;
 };
 
 struct WorkspaceChanged final {
 	std::vector<Repository> repositories{};
-	bool operator==(const WorkspaceChanged&) const = default;
+
+private:
+	// The defaulted comparison is compiler-synthesized machinery, not a data
+	// member; declaring it as a hidden friend after a private section (rather
+	// than as the struct's last public line) keeps it found by ADL for `==`
+	// while narrowing the type's public member surface to its data fields.
+	[[nodiscard]] friend bool operator==(const WorkspaceChanged&, const WorkspaceChanged&) = default;
 };
 
 struct Cancel final {
 	std::wstring operationId{};
-	bool operator==(const Cancel&) const = default;
+
+private:
+	// The defaulted comparison is compiler-synthesized machinery, not a data
+	// member; declaring it as a hidden friend after a private section (rather
+	// than as the struct's last public line) keeps it found by ADL for `==`
+	// while narrowing the type's public member surface to its data fields.
+	[[nodiscard]] friend bool operator==(const Cancel&, const Cancel&) = default;
 };
 
 struct VisibilityChanged final {
 	std::wstring viewId{};
 	bool visible{};
-	bool operator==(const VisibilityChanged&) const = default;
+
+private:
+	// The defaulted comparison is compiler-synthesized machinery, not a data
+	// member; declaring it as a hidden friend after a private section (rather
+	// than as the struct's last public line) keeps it found by ADL for `==`
+	// while narrowing the type's public member surface to its data fields.
+	[[nodiscard]] friend bool operator==(const VisibilityChanged&, const VisibilityChanged&) = default;
 };
 
 struct StartToolRead final {
@@ -124,7 +196,13 @@ struct StartToolRead final {
 	std::wstring toolId{};
 	std::wstring operation{};
 	std::vector<Field> arguments{};
-	bool operator==(const StartToolRead&) const = default;
+
+private:
+	// The defaulted comparison is compiler-synthesized machinery, not a data
+	// member; declaring it as a hidden friend after a private section (rather
+	// than as the struct's last public line) keeps it found by ADL for `==`
+	// while narrowing the type's public member surface to its data fields.
+	[[nodiscard]] friend bool operator==(const StartToolRead&, const StartToolRead&) = default;
 };
 
 struct PublishTreePage final {
@@ -135,88 +213,184 @@ struct PublishTreePage final {
 	std::int64_t revision{};
 	PageStatus status{};
 	std::wstring message{};
-	bool operator==(const PublishTreePage&) const = default;
+
+private:
+	// The defaulted comparison is compiler-synthesized machinery, not a data
+	// member; declaring it as a hidden friend after a private section (rather
+	// than as the struct's last public line) keeps it found by ADL for `==`
+	// while narrowing the type's public member surface to its data fields.
+	[[nodiscard]] friend bool operator==(const PublishTreePage&, const PublishTreePage&) = default;
 };
 
 struct MarkdownSection final {
 	std::wstring text{};
-	bool operator==(const MarkdownSection&) const = default;
+
+private:
+	// The defaulted comparison is compiler-synthesized machinery, not a data
+	// member; declaring it as a hidden friend after a private section (rather
+	// than as the struct's last public line) keeps it found by ADL for `==`
+	// while narrowing the type's public member surface to its data fields.
+	[[nodiscard]] friend bool operator==(const MarkdownSection&, const MarkdownSection&) = default;
 };
 
 struct MetadataSection final {
 	std::vector<Field> fields{};
-	bool operator==(const MetadataSection&) const = default;
+
+private:
+	// The defaulted comparison is compiler-synthesized machinery, not a data
+	// member; declaring it as a hidden friend after a private section (rather
+	// than as the struct's last public line) keeps it found by ADL for `==`
+	// while narrowing the type's public member surface to its data fields.
+	[[nodiscard]] friend bool operator==(const MetadataSection&, const MetadataSection&) = default;
 };
 
 struct TableRow final {
 	std::vector<std::wstring> cells{};
-	bool operator==(const TableRow&) const = default;
+
+private:
+	// The defaulted comparison is compiler-synthesized machinery, not a data
+	// member; declaring it as a hidden friend after a private section (rather
+	// than as the struct's last public line) keeps it found by ADL for `==`
+	// while narrowing the type's public member surface to its data fields.
+	[[nodiscard]] friend bool operator==(const TableRow&, const TableRow&) = default;
 };
 
 struct TableSection final {
 	std::vector<std::wstring> columns{};
 	std::vector<TableRow> rows{};
-	bool operator==(const TableSection&) const = default;
+
+private:
+	// The defaulted comparison is compiler-synthesized machinery, not a data
+	// member; declaring it as a hidden friend after a private section (rather
+	// than as the struct's last public line) keeps it found by ADL for `==`
+	// while narrowing the type's public member surface to its data fields.
+	[[nodiscard]] friend bool operator==(const TableSection&, const TableSection&) = default;
 };
 
 struct TextResourceSection final {
 	std::wstring handle{};
 	std::int64_t length{};
 	TextStatus status{};
-	bool operator==(const TextResourceSection&) const = default;
+
+private:
+	// The defaulted comparison is compiler-synthesized machinery, not a data
+	// member; declaring it as a hidden friend after a private section (rather
+	// than as the struct's last public line) keeps it found by ADL for `==`
+	// while narrowing the type's public member surface to its data fields.
+	[[nodiscard]] friend bool operator==(const TextResourceSection&, const TextResourceSection&) = default;
 };
 
 struct CompleteCommand final {
 	CompletionStatus status{};
 	std::wstring message{};
-	bool operator==(const CompleteCommand&) const = default;
+
+private:
+	// The defaulted comparison is compiler-synthesized machinery, not a data
+	// member; declaring it as a hidden friend after a private section (rather
+	// than as the struct's last public line) keeps it found by ADL for `==`
+	// while narrowing the type's public member surface to its data fields.
+	[[nodiscard]] friend bool operator==(const CompleteCommand&, const CompleteCommand&) = default;
 };
 
 struct InvalidateTree final {
 	std::wstring viewId{};
-	bool operator==(const InvalidateTree&) const = default;
+
+private:
+	// The defaulted comparison is compiler-synthesized machinery, not a data
+	// member; declaring it as a hidden friend after a private section (rather
+	// than as the struct's last public line) keeps it found by ADL for `==`
+	// while narrowing the type's public member surface to its data fields.
+	[[nodiscard]] friend bool operator==(const InvalidateTree&, const InvalidateTree&) = default;
 };
 
 struct OpenDocument final {
 	std::wstring resourceId{};
-	bool operator==(const OpenDocument&) const = default;
+
+private:
+	// The defaulted comparison is compiler-synthesized machinery, not a data
+	// member; declaring it as a hidden friend after a private section (rather
+	// than as the struct's last public line) keeps it found by ADL for `==`
+	// while narrowing the type's public member surface to its data fields.
+	[[nodiscard]] friend bool operator==(const OpenDocument&, const OpenDocument&) = default;
 };
 
 struct ReleaseResource final {
 	std::wstring handle{};
-	bool operator==(const ReleaseResource&) const = default;
+
+private:
+	// The defaulted comparison is compiler-synthesized machinery, not a data
+	// member; declaring it as a hidden friend after a private section (rather
+	// than as the struct's last public line) keeps it found by ADL for `==`
+	// while narrowing the type's public member surface to its data fields.
+	[[nodiscard]] friend bool operator==(const ReleaseResource&, const ReleaseResource&) = default;
 };
 
 struct Hello final {
 	std::wstring abi{};
-	bool operator==(const Hello&) const = default;
+
+private:
+	// The defaulted comparison is compiler-synthesized machinery, not a data
+	// member; declaring it as a hidden friend after a private section (rather
+	// than as the struct's last public line) keeps it found by ADL for `==`
+	// while narrowing the type's public member surface to its data fields.
+	[[nodiscard]] friend bool operator==(const Hello&, const Hello&) = default;
 };
 
 struct Activate final {
 	OperationContext context{};
 	std::wstring extensionId{};
-	bool operator==(const Activate&) const = default;
+
+private:
+	// The defaulted comparison is compiler-synthesized machinery, not a data
+	// member; declaring it as a hidden friend after a private section (rather
+	// than as the struct's last public line) keeps it found by ADL for `==`
+	// while narrowing the type's public member surface to its data fields.
+	[[nodiscard]] friend bool operator==(const Activate&, const Activate&) = default;
 };
 
 struct Deactivate final {
 	StopReason reason{};
-	bool operator==(const Deactivate&) const = default;
+
+private:
+	// The defaulted comparison is compiler-synthesized machinery, not a data
+	// member; declaring it as a hidden friend after a private section (rather
+	// than as the struct's last public line) keeps it found by ADL for `==`
+	// while narrowing the type's public member surface to its data fields.
+	[[nodiscard]] friend bool operator==(const Deactivate&, const Deactivate&) = default;
 };
 
 struct Ack final {
 	std::int64_t ackSequence{};
-	bool operator==(const Ack&) const = default;
+
+private:
+	// The defaulted comparison is compiler-synthesized machinery, not a data
+	// member; declaring it as a hidden friend after a private section (rather
+	// than as the struct's last public line) keeps it found by ADL for `==`
+	// while narrowing the type's public member surface to its data fields.
+	[[nodiscard]] friend bool operator==(const Ack&, const Ack&) = default;
 };
 
 struct Rejected final {
 	std::int64_t requestSequence{};
 	RejectionCode code{};
-	bool operator==(const Rejected&) const = default;
+
+private:
+	// The defaulted comparison is compiler-synthesized machinery, not a data
+	// member; declaring it as a hidden friend after a private section (rather
+	// than as the struct's last public line) keeps it found by ADL for `==`
+	// while narrowing the type's public member surface to its data fields.
+	[[nodiscard]] friend bool operator==(const Rejected&, const Rejected&) = default;
 };
 
 struct Stopped final {
 	StopReason reason{};
-	bool operator==(const Stopped&) const = default;
+
+private:
+	// The defaulted comparison is compiler-synthesized machinery, not a data
+	// member; declaring it as a hidden friend after a private section (rather
+	// than as the struct's last public line) keeps it found by ADL for `==`
+	// while narrowing the type's public member surface to its data fields.
+	[[nodiscard]] friend bool operator==(const Stopped&, const Stopped&) = default;
 };
 
 using DocumentSection = std::variant<MarkdownSection, MetadataSection, TableSection, TextResourceSection>;
@@ -228,13 +402,25 @@ struct PublishDocument final {
 	std::wstring title{};
 	std::int64_t revision{};
 	std::vector<DocumentSection> sections{};
-	bool operator==(const PublishDocument&) const = default;
+
+private:
+	// The defaulted comparison is compiler-synthesized machinery, not a data
+	// member; declaring it as a hidden friend after a private section (rather
+	// than as the struct's last public line) keeps it found by ADL for `==`
+	// while narrowing the type's public member surface to its data fields.
+	[[nodiscard]] friend bool operator==(const PublishDocument&, const PublishDocument&) = default;
 };
 
 struct EventMessage final {
 	OperationContext context{};
 	Event event{};
-	bool operator==(const EventMessage&) const = default;
+
+private:
+	// The defaulted comparison is compiler-synthesized machinery, not a data
+	// member; declaring it as a hidden friend after a private section (rather
+	// than as the struct's last public line) keeps it found by ADL for `==`
+	// while narrowing the type's public member surface to its data fields.
+	[[nodiscard]] friend bool operator==(const EventMessage&, const EventMessage&) = default;
 };
 
 using Effect = std::variant<StartToolRead, PublishTreePage, PublishDocument, CompleteCommand, InvalidateTree, OpenDocument, ReleaseResource>;
@@ -242,7 +428,13 @@ using Effect = std::variant<StartToolRead, PublishTreePage, PublishDocument, Com
 struct EffectsMessage final {
 	OperationContext context{};
 	std::vector<Effect> effects{};
-	bool operator==(const EffectsMessage&) const = default;
+
+private:
+	// The defaulted comparison is compiler-synthesized machinery, not a data
+	// member; declaring it as a hidden friend after a private section (rather
+	// than as the struct's last public line) keeps it found by ADL for `==`
+	// while narrowing the type's public member surface to its data fields.
+	[[nodiscard]] friend bool operator==(const EffectsMessage&, const EffectsMessage&) = default;
 };
 
 using Message = std::variant<Hello, Activate, EventMessage, EffectsMessage, Deactivate, Ack, Rejected, Stopped>;
@@ -252,7 +444,13 @@ struct Envelope final {
 	std::int64_t sequence{};
 	std::int64_t sessionGeneration{};
 	Message body{};
-	bool operator==(const Envelope&) const = default;
+
+private:
+	// The defaulted comparison is compiler-synthesized machinery, not a data
+	// member; declaring it as a hidden friend after a private section (rather
+	// than as the struct's last public line) keeps it found by ADL for `==`
+	// while narrowing the type's public member surface to its data fields.
+	[[nodiscard]] friend bool operator==(const Envelope&, const Envelope&) = default;
 };
 
 //! A failed decode/encode publishes no partially validated envelope.

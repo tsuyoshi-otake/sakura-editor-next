@@ -144,9 +144,26 @@ struct ControlIpcFrame {
 	std::vector<std::uint8_t> payload;
 };
 
-struct ControlIpcDecodeResult {
-	EControlIpcDecodeOutcome outcome = EControlIpcDecodeOutcome::NeedMoreData;
-	std::vector<ControlIpcFrame> frames;
+//! Result of feeding bytes into CControlIpcFrameDecoder. The outcome and the
+//! frames decoded so far are kept private: the decoder is the only writer
+//! (it accumulates frames one at a time and settles the outcome once at the
+//! end of a Feed() call), and every other caller only ever reads them back.
+class ControlIpcDecodeResult {
+public:
+	ControlIpcDecodeResult() = default;
+
+	[[nodiscard]] EControlIpcDecodeOutcome Outcome() const noexcept { return m_outcome; }
+	[[nodiscard]] const std::vector<ControlIpcFrame>& Frames() const noexcept { return m_frames; }
+
+	void SetOutcome(EControlIpcDecodeOutcome outcome) noexcept { m_outcome = outcome; }
+	void AppendFrame(ControlIpcFrame frame) { m_frames.push_back(std::move(frame)); }
+	//! Moves the decoded frames out for a caller that owns the result outright
+	//! (e.g. a single-shot receive that only needs the batch once).
+	[[nodiscard]] std::vector<ControlIpcFrame> TakeFrames() { return std::move(m_frames); }
+
+private:
+	EControlIpcDecodeOutcome m_outcome = EControlIpcDecodeOutcome::NeedMoreData;
+	std::vector<ControlIpcFrame> m_frames;
 };
 
 struct ControlIpcEncodeResult {

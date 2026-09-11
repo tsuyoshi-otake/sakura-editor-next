@@ -187,8 +187,8 @@ public:
 			events.push_back(std::move(event));
 			ready.notify_one();
 		}
-		Uri root;
 	private:
+		Uri root;
 		std::mutex mutex;
 		std::condition_variable ready;
 		std::deque<FileWatchEvent> events;

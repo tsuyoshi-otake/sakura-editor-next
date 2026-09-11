@@ -85,7 +85,7 @@ BOOL CViewCommander::HandleCommand(
 	m_pCommanderView->TranslateCommand_isearch( nCommand, bRedraw, lparam1, lparam2, lparam3, lparam4 );
 
 	// 2013.09.23 novice 機能が利用可能か調べる
-	if( !IsFuncEnable( GetDocument(), &GetDllShareData(), nCommand ) ){
+	if( !IsFuncEnable( GetDocument(), GetEditWindow()->GetShareData(), nCommand ) ){
 		return TRUE;
 	}
 
@@ -106,8 +106,9 @@ BOOL CViewCommander::HandleCommand(
 		bRepeat = true;
 	}
 	m_bPrevCommand = nCommand;
-	if( GetDllShareData().m_sFlags.m_bRecordingKeyMacro &&									/* キーボードマクロの記録中 */
-		GetDllShareData().m_sFlags.m_hwndRecordingKeyMacro == GetMainWindow() &&	/* キーボードマクロを記録中のウィンドウ */
+	const DLLSHAREDATA* pShareData = GetEditWindow()->GetShareData();
+	if( pShareData->m_sFlags.m_bRecordingKeyMacro &&									/* キーボードマクロの記録中 */
+		pShareData->m_sFlags.m_hwndRecordingKeyMacro == GetMainWindow() &&	/* キーボードマクロを記録中のウィンドウ */
 		( nCommandFrom & FA_NONRECORD ) != FA_NONRECORD	/* 2007.07.07 genta 記録抑制フラグ off */
 	){
 		/* キーリピート状態をなくする */
@@ -179,8 +180,8 @@ BOOL CViewCommander::HandleCommand(
 	const auto workingCopyDispatch = GetEditWindow()->TryExecuteWorkingCopyFileCommand(
 		SLegacyEditorFunctionCommand(originalCommand, bRedraw,
 			lparam1, lparam2, lparam3, lparam4));
-	if (workingCopyDispatch.handled) {
-		bRet = workingCopyDispatch.legacyResult;
+	if (workingCopyDispatch.Handled()) {
+		bRet = workingCopyDispatch.LegacyResult();
 	}
 	else switch( nCommand ){
 	case F_WCHAR:	/* 文字入力 */

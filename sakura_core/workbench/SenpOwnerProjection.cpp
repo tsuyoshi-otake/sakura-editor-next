@@ -85,7 +85,8 @@ bool CSenpOwnerProjection::PublishWorkspace(senp::effect::WorkspaceChanged works
 	try {
 		m_workspace = std::move(workspace);
 		return true;
-	} catch (...) {
+	} catch (const std::exception&) {
+		// Only the std::optional assignment above can throw here.
 		return false;
 	}
 }
@@ -255,7 +256,9 @@ ESenpEffectTargetStatus CSenpOwnerProjection::Apply(const senp::effect::Operatio
 			return ESenpEffectTargetStatus::Rejected;
 		}
 	}, std::move(effect));
-	} catch (...) {
+	} catch (const std::exception&) {
+		// ISenpOwnerProjectionTarget's virtuals are all declared noexcept, so only
+		// the std::visit/container bookkeeping above can throw here.
 		return ESenpEffectTargetStatus::Rejected;
 	}
 }

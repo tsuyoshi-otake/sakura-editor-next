@@ -22,6 +22,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <utility>
 
 namespace platform::controlipc {
 
@@ -55,11 +56,22 @@ enum class EControlPlatformRuntimeResultCode : std::uint8_t {
 
 //! Immutable identity published by the running host. The profile and storage
 //! directories remain caller-owned policy and are deliberately not identities.
-struct ControlPlatformRuntimeIdentity {
-	std::string profileId;
-	std::uint64_t authorityGeneration = 0;
+//! Kept private: the only writer is CControlPlatformRuntime::Start(), and every
+//! reader is a caller of Identity() or Result(), so there is no reason to expose
+//! these fields as mutable state once constructed.
+class ControlPlatformRuntimeIdentity {
+public:
+	ControlPlatformRuntimeIdentity(std::string profileId, std::uint64_t authorityGeneration)
+		: m_profileId(std::move(profileId)), m_authorityGeneration(authorityGeneration) {}
+
+	[[nodiscard]] const std::string& ProfileId() const noexcept { return m_profileId; }
+	[[nodiscard]] std::uint64_t AuthorityGeneration() const noexcept { return m_authorityGeneration; }
 
 	friend bool operator==(const ControlPlatformRuntimeIdentity&, const ControlPlatformRuntimeIdentity&) = default;
+
+private:
+	std::string m_profileId;
+	std::uint64_t m_authorityGeneration = 0;
 };
 
 //! Immutable inputs resolved by the legacy process-composition layer before

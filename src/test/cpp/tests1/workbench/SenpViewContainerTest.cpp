@@ -145,7 +145,7 @@ protected:
 		ASSERT_TRUE(pages.RegisterBatch(owner->PageDescriptors()).Succeeded());
 		pool = std::make_unique<ViewContainerPagePool>(pages);
 		for (const auto* id : { "test.issues", "test.actions" }) {
-			const HWND parent = id == std::string_view("test.issues") ? left : right;
+			const auto parent = id == std::string_view("test.issues") ? left : right;
 			ASSERT_TRUE(pool->Attach(id, { id, EViewContainerLocation::Sidebar, reinterpret_cast<ViewContainerNativeHandle>(parent) }).Succeeded());
 			auto* projection = Projection(id);
 			ASSERT_NE(nullptr, projection);
@@ -342,7 +342,7 @@ TEST_F(SenpViewContainer, LayoutReservesItsRepaintAndShowsAPageOnlyAtItsFinalGeo
 {
 	Create(true); ASSERT_NE(nullptr, owner);
 	const auto first = owner->Snapshot("test.issueList").value();
-	const HWND root = ::GetParent(first.pane);
+	const auto root = ::GetParent(first.pane);
 	ASSERT_NE(nullptr, root);
 	PaintProbe probe(root, first.pane);
 	auto* projection = Projection("test.issues");

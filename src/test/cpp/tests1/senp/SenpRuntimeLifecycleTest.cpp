@@ -205,7 +205,7 @@ TEST_F(SenpRuntimeLifecycle, InvalidLifetimeOwnerAndQueueBudgetRejectBeforeAdmis
 	for (std::size_t i = 0; i < 17; ++i) {
 		const auto result = session.Submit(Context(), large, now + 1s, now);
 		EXPECT_EQ(result.status, i < 16 ? AdmissionStatus::Accepted : AdmissionStatus::Busy);
-		EXPECT_LE(session.QueuedBytes(), CSenpRuntimeSession::kMaximumQueuedBytes);
+		EXPECT_LE(session.QueuedBytes(), kMaximumQueuedBytes);
 	}
 	session.TransportFailed();
 	EXPECT_EQ(session.PendingCount(), 0U);
@@ -244,8 +244,8 @@ TEST_F(SenpRuntimeLifecycle, EscapedPayloadsHitTheByteBudgetBeforeTheCountBudget
 		ASSERT_EQ(session.Submit(Context(), large, now + 1s, now).status, AdmissionStatus::Accepted);
 	EXPECT_EQ(session.Submit(Context(), large, now + 1s, now).status, AdmissionStatus::Busy);
 	EXPECT_EQ(session.PendingCount(), 10U);
-	EXPECT_LE(session.QueuedBytes(), CSenpRuntimeSession::kMaximumQueuedBytes);
-	EXPECT_GT(session.QueuedBytes(), CSenpRuntimeSession::kMaximumQueuedBytes - 400000U);
+	EXPECT_LE(session.QueuedBytes(), kMaximumQueuedBytes);
+	EXPECT_GT(session.QueuedBytes(), kMaximumQueuedBytes - 400000U);
 	session.TransportFailed();
 	EXPECT_EQ(session.QueuedBytes(), 0U);
 	EXPECT_EQ(session.CompletionCount(), 10U);

@@ -25,12 +25,26 @@ public:
 	virtual void Close() noexcept = 0;
 };
 
+//! Immutable value; construction validates nothing here (ValidActions in the
+//! .cpp is the acceptance boundary), but every field is set exactly once so a
+//! title action can never be mutated in place after being handed to a pane.
 struct SenpViewTitleAction final {
-	std::string commandId;
-	std::wstring title;
-	std::wstring icon;
-	bool enabled{ true };
-	[[nodiscard]] bool operator==(const SenpViewTitleAction&) const = default;
+	SenpViewTitleAction(std::string commandId, std::wstring title, std::wstring icon, bool enabled = true) noexcept
+		: m_commandId(std::move(commandId)), m_title(std::move(title)), m_icon(std::move(icon)), m_enabled(enabled) {}
+	[[nodiscard]] const std::string& CommandId() const noexcept { return m_commandId; }
+	[[nodiscard]] const std::wstring& Title() const noexcept { return m_title; }
+	[[nodiscard]] const std::wstring& Icon() const noexcept { return m_icon; }
+	[[nodiscard]] bool Enabled() const noexcept { return m_enabled; }
+private:
+	std::string m_commandId;
+	std::wstring m_title;
+	std::wstring m_icon;
+	bool m_enabled{ true };
+	// A hidden friend is found by argument-dependent lookup regardless of which
+	// access section declares it, so it sits beside the private state it
+	// compares instead of in the accessor API above.
+	[[nodiscard]]
+	friend bool operator==(const SenpViewTitleAction&, const SenpViewTitleAction&) = default;
 };
 struct SenpViewBodyHost final {
 	HWND parent{};

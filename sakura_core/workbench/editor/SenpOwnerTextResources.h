@@ -41,10 +41,10 @@ public:
 	//! One window shows one workbench, and its owners are bounded by the
 	//! contribution service long before this cap is reached. It exists so a
 	//! runaway admission cannot grow the record without limit.
-	static constexpr std::size_t kMaximumOwners = 64;
+	static constexpr std::size_t MaximumOwners() noexcept { return 64; }
 	//! Handles are opaque to this side, so only their length is checked. The
 	//! bound matches the resource ids a document may name.
-	static constexpr std::size_t kMaximumHandleCharacters = 512;
+	static constexpr std::size_t MaximumHandleCharacters() noexcept { return 512; }
 
 	explicit CSenpOwnerTextResources(std::wstring_view profileId);
 
@@ -76,9 +76,17 @@ public:
 	[[nodiscard]] bool IsCurrent(const senp::TextResourceScope& scope, std::wstring_view handle) const override;
 
 private:
-	struct Owner final {
-		SenpReadonlyScope document;
-		std::string packageDigest;
+	class Owner final {
+	public:
+		Owner(SenpReadonlyScope document, std::string packageDigest) noexcept
+			: m_document(std::move(document)), m_packageDigest(std::move(packageDigest)) {}
+
+		[[nodiscard]] const SenpReadonlyScope& Document() const noexcept { return m_document; }
+		[[nodiscard]] const std::string& PackageDigest() const noexcept { return m_packageDigest; }
+
+	private:
+		SenpReadonlyScope m_document;
+		std::string m_packageDigest;
 	};
 	[[nodiscard]] const Owner* Find(const SenpReadonlyScope& document) const noexcept;
 	[[nodiscard]] senp::TextResourceScope Project(const Owner& owner) const;

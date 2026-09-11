@@ -11,8 +11,14 @@ struct SenpTreeScope final {
 	std::int64_t ownerGeneration{}, workspaceRevision{}, accountGeneration{};
 };
 struct SenpTreeAdmission final {
+	SenpTreeAdmission() = default;
+	SenpTreeAdmission(senp::AdmissionStatus statusValue, senp::effect::OperationContext contextValue) noexcept
+		: status(statusValue), m_context(std::move(contextValue)) {}
 	senp::AdmissionStatus status{ senp::AdmissionStatus::Unavailable };
-	senp::effect::OperationContext context;
+	[[nodiscard]] const senp::effect::OperationContext& Context() const noexcept { return m_context; }
+	[[nodiscard]] senp::effect::OperationContext& MutableContext() noexcept { return m_context; }
+private:
+	senp::effect::OperationContext m_context;
 };
 //! A native, owner-scoped async port. Submit never waits for Wasm or a tool.
 //! Accepted contexts use owner-wide monotonic request generations. Tool result
@@ -42,8 +48,23 @@ public:
 //! whose contextValue contains each `contains` token and equals each `equals`
 //! value (VS Code's `viewItem =~ /token/` and `viewItem == value` clauses).
 struct SenpTreeItemAction final {
-	std::wstring commandId, title, icon;
-	std::vector<std::wstring> contains, equals;
+	SenpTreeItemAction() = default;
+	SenpTreeItemAction(std::wstring commandIdValue, std::wstring titleValue, std::wstring iconValue,
+		std::vector<std::wstring> containsValue, std::vector<std::wstring> equalsValue)
+		: m_commandId(std::move(commandIdValue)), m_title(std::move(titleValue)), m_icon(std::move(iconValue)),
+		  m_contains(std::move(containsValue)), m_equals(std::move(equalsValue)) {}
+	[[nodiscard]] const std::wstring& CommandId() const noexcept { return m_commandId; }
+	[[nodiscard]] const std::wstring& Title() const noexcept { return m_title; }
+	[[nodiscard]] const std::wstring& Icon() const noexcept { return m_icon; }
+	[[nodiscard]] const std::vector<std::wstring>& Contains() const noexcept { return m_contains; }
+	[[nodiscard]] const std::vector<std::wstring>& Equals() const noexcept { return m_equals; }
+	void SetCommandId(std::wstring value) noexcept { m_commandId = std::move(value); }
+	void SetIcon(std::wstring value) noexcept { m_icon = std::move(value); }
+	void SetContains(std::vector<std::wstring> value) noexcept { m_contains = std::move(value); }
+	void SetEquals(std::vector<std::wstring> value) noexcept { m_equals = std::move(value); }
+private:
+	std::wstring m_commandId, m_title, m_icon;
+	std::vector<std::wstring> m_contains, m_equals;
 };
 struct SenpTreeProviderOptions final {
 	std::wstring viewId;

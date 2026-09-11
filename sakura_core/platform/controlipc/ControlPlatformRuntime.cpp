@@ -11,6 +11,7 @@
 #include <sakura/storage/StorageAuthorityFactory.h>
 
 #include <chrono>
+#include <exception>
 #include <string>
 #include <utility>
 
@@ -139,7 +140,7 @@ void CControlPlatformRuntime::RollbackStart() noexcept
 	if (m_senp) {
 		try {
 			m_senp->Close();
-		} catch (...) {
+		} catch (const std::exception&) {
 			// The composition already owns its own cancellation. Continue releasing storage.
 		}
 		m_senp.reset();
@@ -261,11 +262,11 @@ ControlPlatformRuntimeResult CControlPlatformRuntime::Start()
 
 		try {
 			ControlSenpCompositionOptions senpOptions;
-			senpOptions.controlProfileRoot = m_options.profileDirectory.native();
-			senpOptions.controlAuthorityId = authorityResult->profileId;
-			senpOptions.controlAuthorityGeneration = authorityResult->authorityGeneration;
+			senpOptions.SetControlProfileRoot(m_options.profileDirectory.native());
+			senpOptions.SetControlAuthorityId(authorityResult->profileId);
+			senpOptions.SetControlAuthorityGeneration(authorityResult->authorityGeneration);
 			m_senp = std::make_unique<CControlSenpComposition>(std::move(senpOptions), m_profileRegistry);
-		} catch (...) {
+		} catch (const std::exception&) {
 			RollbackStart();
 			return Result(EControlPlatformRuntimeResultCode::HostCreateFailed, std::move(authorityResult),
 				std::move(storageOpenResult), std::nullopt, L"control SENP composition creation failed");
@@ -299,14 +300,14 @@ ControlPlatformRuntimeResult CControlPlatformRuntime::Start()
 		}
 
 		m_identity = ControlPlatformRuntimeIdentity{
-			.profileId = authorityResult->profileId,
-			.authorityGeneration = authorityResult->authorityGeneration,
+			authorityResult->profileId,
+			authorityResult->authorityGeneration,
 		};
 		m_state = EControlPlatformRuntimeState::Running;
 		return Result(EControlPlatformRuntimeResultCode::Running, std::move(authorityResult),
 			std::move(storageOpenResult), std::move(hostResult), {}, std::move(profileRegistryResult));
 	}
-	catch (...) {
+	catch (const std::exception&) {
 		RollbackStart();
 		return Result(EControlPlatformRuntimeResultCode::UnexpectedFailure, std::move(authorityResult),
 			std::move(storageOpenResult), std::move(hostResult), L"control platform runtime startup failed");

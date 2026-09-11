@@ -51,8 +51,8 @@ TEST(SenpControlPackageAuthority, ApprovesOnlyOwnersDeclaringAKnownToolCapabilit
 	CSenpControlPackageAuthority authority;
 	const auto published = authority.Publish(L"profile1",
 		Snapshot({ Extension(), onlyWorkbench, unknownTool }));
-	EXPECT_EQ(Status::Published, published.status);
-	EXPECT_EQ(1U, published.approved);
+	EXPECT_EQ(Status::Published, published.Status());
+	EXPECT_EQ(1U, published.Approved());
 
 	const auto resolved = authority.Resolve(L"profile1", L"sakura.github-pull-requests");
 	ASSERT_TRUE(resolved.has_value());
@@ -77,8 +77,8 @@ TEST(SenpControlPackageAuthority, RefusesAPackageTheRuntimeCouldNotActivate)
 		}
 		CSenpControlPackageAuthority authority;
 		const auto published = authority.Publish(L"profile1", Snapshot({ extension }));
-		EXPECT_EQ(Status::Published, published.status);
-		EXPECT_EQ(0U, published.approved);
+		EXPECT_EQ(Status::Published, published.Status());
+		EXPECT_EQ(0U, published.Approved());
 		EXPECT_FALSE(authority.Resolve(L"profile1", L"sakura.github-pull-requests").has_value());
 	}
 }
@@ -91,8 +91,8 @@ TEST(SenpControlPackageAuthority, RefusesADigestNoOwnerRequestCanCarry)
 		CSenpControlPackageAuthority authority;
 		const auto published = authority.Publish(L"profile1",
 			Snapshot({ Extension(L"sakura.github-pull-requests", digest) }));
-		EXPECT_EQ(Status::Published, published.status);
-		EXPECT_EQ(0U, published.approved);
+		EXPECT_EQ(Status::Published, published.Status());
+		EXPECT_EQ(0U, published.Approved());
 		EXPECT_FALSE(authority.Resolve(L"profile1", L"sakura.github-pull-requests").has_value());
 	}
 }
@@ -100,37 +100,37 @@ TEST(SenpControlPackageAuthority, RefusesADigestNoOwnerRequestCanCarry)
 TEST(SenpControlPackageAuthority, ADiagnosticReloadWithdrawsInsteadOfProvingEnablement)
 {
 	CSenpControlPackageAuthority authority;
-	ASSERT_EQ(Status::Published, authority.Publish(L"profile1", Snapshot({ Extension() })).status);
+	ASSERT_EQ(Status::Published, authority.Publish(L"profile1", Snapshot({ Extension() })).Status());
 	ASSERT_TRUE(authority.Resolve(L"profile1", L"sakura.github-pull-requests").has_value());
 
 	// The service keeps the previously discovered extensions after a failed
 	// reload, so a newer revision in this state still proves nothing.
 	const auto diagnostics = authority.Publish(L"profile1",
 		Snapshot({ Extension() }, EManagementState::ReadyWithDiagnostics, kRevision + 1));
-	EXPECT_EQ(Status::Unverified, diagnostics.status);
+	EXPECT_EQ(Status::Unverified, diagnostics.Status());
 	EXPECT_FALSE(authority.Resolve(L"profile1", L"sakura.github-pull-requests").has_value());
 	EXPECT_FALSE(authority.Revision(L"profile1").has_value());
 
 	for (const auto state : { EManagementState::Created, EManagementState::Failed,
 		EManagementState::Stopped }) {
 		ASSERT_EQ(Status::Published, authority.Publish(L"profile1",
-			Snapshot({ Extension() }, EManagementState::Ready, kRevision + 2)).status);
+			Snapshot({ Extension() }, EManagementState::Ready, kRevision + 2)).Status());
 		EXPECT_EQ(Status::Unverified, authority.Publish(L"profile1",
-			Snapshot({ Extension() }, state, kRevision + 3)).status);
+			Snapshot({ Extension() }, state, kRevision + 3)).Status());
 		EXPECT_FALSE(authority.Resolve(L"profile1", L"sakura.github-pull-requests").has_value());
 	}
 	EXPECT_EQ(Status::Unverified, authority.Publish(L"profile1",
-		Snapshot({ Extension() }, EManagementState::Ready, 0)).status);
+		Snapshot({ Extension() }, EManagementState::Ready, 0)).Status());
 }
 
 TEST(SenpControlPackageAuthority, AnOlderSnapshotNeverReplacesThePublishedTable)
 {
 	CSenpControlPackageAuthority authority;
-	ASSERT_EQ(Status::Published, authority.Publish(L"profile1", Snapshot({ Extension() })).status);
+	ASSERT_EQ(Status::Published, authority.Publish(L"profile1", Snapshot({ Extension() })).Status());
 	const auto stale = authority.Publish(L"profile1",
 		Snapshot({}, EManagementState::Ready, kRevision - 1));
-	EXPECT_EQ(Status::Stale, stale.status);
-	EXPECT_EQ(kRevision, stale.revision);
+	EXPECT_EQ(Status::Stale, stale.Status());
+	EXPECT_EQ(kRevision, stale.Revision());
 	const auto resolved = authority.Resolve(L"profile1", L"sakura.github-pull-requests");
 	ASSERT_TRUE(resolved.has_value());
 	EXPECT_EQ(kRevision, resolved->ManagementRevision());
@@ -139,10 +139,10 @@ TEST(SenpControlPackageAuthority, AnOlderSnapshotNeverReplacesThePublishedTable)
 TEST(SenpControlPackageAuthority, EveryPublishedRevisionReachesEveryResolution)
 {
 	CSenpControlPackageAuthority authority;
-	ASSERT_EQ(Status::Published, authority.Publish(L"profile1", Snapshot({ Extension() })).status);
+	ASSERT_EQ(Status::Published, authority.Publish(L"profile1", Snapshot({ Extension() })).Status());
 	ASSERT_EQ(kRevision, authority.Revision(L"profile1").value_or(0));
 	ASSERT_EQ(Status::Published, authority.Publish(L"profile1",
-		Snapshot({ Extension() }, EManagementState::Ready, kRevision + 4)).status);
+		Snapshot({ Extension() }, EManagementState::Ready, kRevision + 4)).Status());
 	EXPECT_EQ(kRevision + 4, authority.Revision(L"profile1").value_or(0));
 	const auto resolved = authority.Resolve(L"profile1", L"sakura.github-pull-requests");
 	ASSERT_TRUE(resolved.has_value());
@@ -152,18 +152,18 @@ TEST(SenpControlPackageAuthority, EveryPublishedRevisionReachesEveryResolution)
 TEST(SenpControlPackageAuthority, AnAmbiguousIdentityRefusesTheWholePublish)
 {
 	CSenpControlPackageAuthority authority;
-	ASSERT_EQ(Status::Published, authority.Publish(L"profile1", Snapshot({ Extension() })).status);
+	ASSERT_EQ(Status::Published, authority.Publish(L"profile1", Snapshot({ Extension() })).Status());
 	const auto duplicated = authority.Publish(L"profile1",
 		Snapshot({ Extension(), Extension(L"sakura.github-pull-requests", Digest(L'b')) },
 			EManagementState::Ready, kRevision + 1));
-	EXPECT_EQ(Status::Unverified, duplicated.status);
+	EXPECT_EQ(Status::Unverified, duplicated.Status());
 	EXPECT_FALSE(authority.Resolve(L"profile1", L"sakura.github-pull-requests").has_value());
 }
 
 TEST(SenpControlPackageAuthority, OneProfileNeverAnswersForAnother)
 {
 	CSenpControlPackageAuthority authority;
-	ASSERT_EQ(Status::Published, authority.Publish(L"profile1", Snapshot({ Extension() })).status);
+	ASSERT_EQ(Status::Published, authority.Publish(L"profile1", Snapshot({ Extension() })).Status());
 	EXPECT_FALSE(authority.Resolve(L"profile2", L"sakura.github-pull-requests").has_value());
 	EXPECT_EQ(1U, authority.Size());
 
@@ -171,17 +171,17 @@ TEST(SenpControlPackageAuthority, OneProfileNeverAnswersForAnother)
 	EXPECT_EQ(0U, authority.Size());
 	EXPECT_FALSE(authority.Resolve(L"profile1", L"sakura.github-pull-requests").has_value());
 
-	ASSERT_EQ(Status::Published, authority.Publish(L"profile1", Snapshot({ Extension() })).status);
+	ASSERT_EQ(Status::Published, authority.Publish(L"profile1", Snapshot({ Extension() })).Status());
 	authority.Close();
 	EXPECT_FALSE(authority.Resolve(L"profile1", L"sakura.github-pull-requests").has_value());
-	EXPECT_EQ(Status::Closed, authority.Publish(L"profile1", Snapshot({ Extension() })).status);
+	EXPECT_EQ(Status::Closed, authority.Publish(L"profile1", Snapshot({ Extension() })).Status());
 }
 
 TEST(SenpControlPackageAuthority, RefusesAProfileIdOutsideTheOpaqueIdentitySpace)
 {
 	CSenpControlPackageAuthority authority;
 	for (const auto* profileId : { L"", L"profile 1", L"profile.1", L"c:/profiles/one" }) {
-		EXPECT_EQ(Status::InvalidRequest, authority.Publish(profileId, Snapshot({ Extension() })).status);
+		EXPECT_EQ(Status::InvalidRequest, authority.Publish(profileId, Snapshot({ Extension() })).Status());
 	}
 	EXPECT_EQ(0U, authority.Size());
 }
@@ -191,28 +191,28 @@ TEST(SenpControlPackageAuthority, AdmitsABoundedNumberOfProfilesAndOwners)
 	CSenpControlPackageAuthority authority;
 	for (std::size_t index = 0; index < CSenpControlPackageAuthority::MaximumProfiles(); ++index) {
 		const auto profileId = L"profile" + std::to_wstring(index);
-		ASSERT_EQ(Status::Published, authority.Publish(profileId, Snapshot({ Extension() })).status);
+		ASSERT_EQ(Status::Published, authority.Publish(profileId, Snapshot({ Extension() })).Status());
 	}
 	EXPECT_EQ(CSenpControlPackageAuthority::MaximumProfiles(), authority.Size());
 	EXPECT_EQ(Status::ResourceExhausted,
-		authority.Publish(L"profileExtra", Snapshot({ Extension() })).status);
+		authority.Publish(L"profileExtra", Snapshot({ Extension() })).Status());
 	// An already admitted profile keeps publishing once the table is full.
 	EXPECT_EQ(Status::Published, authority.Publish(L"profile0",
-		Snapshot({ Extension() }, EManagementState::Ready, kRevision + 1)).status);
+		Snapshot({ Extension() }, EManagementState::Ready, kRevision + 1)).Status());
 
 	std::vector<ExtensionDescriptor> owners;
 	for (std::size_t index = 0; index <= CSenpControlPackageAuthority::MaximumOwners(); ++index) {
 		owners.push_back(Extension(L"sakura.owner-" + std::to_wstring(index)));
 	}
 	EXPECT_EQ(Status::ResourceExhausted, authority.Publish(L"profile0",
-		Snapshot(owners, EManagementState::Ready, kRevision + 2)).status);
+		Snapshot(owners, EManagementState::Ready, kRevision + 2)).Status());
 	EXPECT_FALSE(authority.Resolve(L"profile0", L"sakura.owner-0").has_value());
 }
 
 TEST(SenpControlPackageAuthority, GrantsFollowTheControlOwnedTableAndNotTheRequest)
 {
 	auto authority = std::make_shared<CSenpControlPackageAuthority>();
-	ASSERT_EQ(Status::Published, authority->Publish(L"profile1", Snapshot({ Extension() })).status);
+	ASSERT_EQ(Status::Published, authority->Publish(L"profile1", Snapshot({ Extension() })).Status());
 
 	CSenpToolGrants grants(authority);
 	const ControlIpcSessionContext connection{ 31, 1701 };
@@ -235,7 +235,7 @@ TEST(SenpControlPackageAuthority, GrantsFollowTheControlOwnedTableAndNotTheReque
 
 	// Losing proof of the enablement state strands the live grant.
 	ASSERT_EQ(Status::Unverified, authority->Publish(L"profile1",
-		Snapshot({ Extension() }, EManagementState::ReadyWithDiagnostics, kRevision + 1)).status);
+		Snapshot({ Extension() }, EManagementState::ReadyWithDiagnostics, kRevision + 1)).Status());
 	EXPECT_EQ(SenpToolGrantCheck::StaleAuthority, session->Validate(issued.GrantId(), request, kNow));
 }
 

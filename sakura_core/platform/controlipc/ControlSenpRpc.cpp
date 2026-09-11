@@ -171,63 +171,63 @@ bool IsResourceEnd(std::uint8_t end) noexcept
 //! operation's authority-relevant fields past a later switch.
 bool IsCoherentRequest(const ControlSenpRpcRequest& request) noexcept
 {
-	if (request.profileId.empty()) return false;
-	if (request.arguments.size() > kControlSenpRpcMaximumArguments) return false;
-	const bool hasRead = !request.readId.empty();
-	const bool hasTool = !request.toolId.empty() || !request.toolOperation.empty();
-	const bool hasResource = !request.resourceHandle.empty();
+	if (request.ProfileId().empty()) return false;
+	if (request.Arguments().size() > kControlSenpRpcMaximumArguments) return false;
+	const bool hasRead = !request.ReadId().empty();
+	const bool hasTool = !request.ToolId().empty() || !request.ToolOperation().empty();
+	const bool hasResource = !request.ResourceHandle().empty();
 	// A workspace declaration precedes every owner for the same reason as the
 	// account query, and is refused on the same terms: there is no owner to
 	// scope it by, so it must carry nothing an owner-scoped operation carries.
-	if (request.operation == EControlSenpRpcOperation::AdoptWorkspace) {
+	if (request.Operation() == EControlSenpRpcOperation::AdoptWorkspace) {
 		// A revision of zero has observed nothing. Admitting one would let a
 		// staleness check pass against a workspace that was never captured.
-		if (request.workspace.generation <= 0 || request.workspace.revision <= 0) return false;
-		if (request.workspace.folders.size() > kControlSenpRpcMaximumWorkspaceFolders) return false;
-		for (const auto& folder : request.workspace.folders) {
+		if (request.Workspace().Generation() <= 0 || request.Workspace().Revision() <= 0) return false;
+		if (request.Workspace().Folders().size() > kControlSenpRpcMaximumWorkspaceFolders) return false;
+		for (const auto& folder : request.Workspace().Folders()) {
 			if (folder.empty()) return false;
 		}
-		return request.owner == ControlSenpRpcOwner{} && request.grantId.empty()
-			&& request.capabilities == 0 && !hasRead && !hasTool && request.arguments.empty()
-			&& !hasResource && request.offset == 0 && request.length == 0;
+		return request.Owner() == ControlSenpRpcOwner{} && request.GrantId().empty()
+			&& request.Capabilities() == 0 && !hasRead && !hasTool && request.Arguments().empty()
+			&& !hasResource && request.Offset() == 0 && request.Length() == 0;
 	}
 	// Every other operation answers for a workspace the control side already
 	// holds. One carrying a declaration would be restating that state where
 	// nothing rechecks it, so the declaration is refused rather than ignored.
-	if (!request.workspace.Empty()) return false;
+	if (!request.Workspace().Empty()) return false;
 	// The account query precedes every owner: an editor cannot name the account
 	// generation it is asking for. An owner here could only be a claim that
 	// nothing downstream rechecks, so a populated one is refused rather than
 	// carried past the switch below.
-	if (request.operation == EControlSenpRpcOperation::QueryAccount) {
-		return request.owner == ControlSenpRpcOwner{} && request.grantId.empty()
-			&& request.capabilities == 0 && !hasRead && !hasTool && request.arguments.empty()
-			&& !hasResource && request.offset == 0 && request.length == 0;
+	if (request.Operation() == EControlSenpRpcOperation::QueryAccount) {
+		return request.Owner() == ControlSenpRpcOwner{} && request.GrantId().empty()
+			&& request.Capabilities() == 0 && !hasRead && !hasTool && request.Arguments().empty()
+			&& !hasResource && request.Offset() == 0 && request.Length() == 0;
 	}
-	if (request.owner.extensionId.empty()) return false;
-	if (request.owner.generation <= 0) return false;
-	if (request.owner.workspaceRevision < 0 || request.owner.accountGeneration < 0) return false;
-	switch (request.operation) {
+	if (request.Owner().ExtensionId().empty()) return false;
+	if (request.Owner().Generation() <= 0) return false;
+	if (request.Owner().WorkspaceRevision() < 0 || request.Owner().AccountGeneration() < 0) return false;
+	switch (request.Operation()) {
 	case EControlSenpRpcOperation::IssueGrant:
-		return request.capabilities != 0 && request.grantId.empty() && !hasRead && !hasTool
-			&& request.arguments.empty() && !hasResource && request.offset == 0 && request.length == 0;
+		return request.Capabilities() != 0 && request.GrantId().empty() && !hasRead && !hasTool
+			&& request.Arguments().empty() && !hasResource && request.Offset() == 0 && request.Length() == 0;
 	case EControlSenpRpcOperation::StartRead:
-		return !request.grantId.empty() && request.capabilities == 0 && hasRead
-			&& !request.toolId.empty() && !request.toolOperation.empty() && !hasResource
-			&& request.offset == 0 && request.length == 0;
+		return !request.GrantId().empty() && request.Capabilities() == 0 && hasRead
+			&& !request.ToolId().empty() && !request.ToolOperation().empty() && !hasResource
+			&& request.Offset() == 0 && request.Length() == 0;
 	case EControlSenpRpcOperation::PollRead:
-		return !request.grantId.empty() && request.capabilities == 0 && !hasRead && !hasTool
-			&& request.arguments.empty() && !hasResource && request.offset == 0 && request.length == 0;
+		return !request.GrantId().empty() && request.Capabilities() == 0 && !hasRead && !hasTool
+			&& request.Arguments().empty() && !hasResource && request.Offset() == 0 && request.Length() == 0;
 	case EControlSenpRpcOperation::CancelRead:
-		return !request.grantId.empty() && request.capabilities == 0 && hasRead && !hasTool
-			&& request.arguments.empty() && !hasResource && request.offset == 0 && request.length == 0;
+		return !request.GrantId().empty() && request.Capabilities() == 0 && hasRead && !hasTool
+			&& request.Arguments().empty() && !hasResource && request.Offset() == 0 && request.Length() == 0;
 	case EControlSenpRpcOperation::ReadResource:
-		return !request.grantId.empty() && request.capabilities == 0 && !hasRead && !hasTool
-			&& request.arguments.empty() && hasResource && request.length > 0
-			&& request.length <= kControlSenpRpcMaximumResourceChunkBytes;
+		return !request.GrantId().empty() && request.Capabilities() == 0 && !hasRead && !hasTool
+			&& request.Arguments().empty() && hasResource && request.Length() > 0
+			&& request.Length() <= kControlSenpRpcMaximumResourceChunkBytes;
 	case EControlSenpRpcOperation::ReleaseResource:
-		return !request.grantId.empty() && request.capabilities == 0 && !hasRead && !hasTool
-			&& request.arguments.empty() && hasResource && request.offset == 0 && request.length == 0;
+		return !request.GrantId().empty() && request.Capabilities() == 0 && !hasRead && !hasTool
+			&& request.Arguments().empty() && hasResource && request.Offset() == 0 && request.Length() == 0;
 	default:
 		return false;
 	}
@@ -235,85 +235,85 @@ bool IsCoherentRequest(const ControlSenpRpcRequest& request) noexcept
 
 bool IsCoherentResponse(const ControlSenpRpcResponse& response) noexcept
 {
-	if (!response.hasCompletion
-		&& (!response.completion.readId.empty() || !response.completion.data.empty()
-			|| !response.completion.message.empty())) {
+	if (!response.HasCompletion()
+		&& (!response.Completion().readId.empty() || !response.Completion().data.empty()
+			|| !response.Completion().message.empty())) {
 		return false;
 	}
-	if (response.hasCompletion && response.completion.readId.empty()) return false;
+	if (response.HasCompletion() && response.Completion().readId.empty()) return false;
 	// Counted in characters against a bound written in UTF-8 bytes, which is the
 	// conservative direction: a character never encodes to fewer than one byte,
 	// so anything this admits the encoder still measures for real.
-	if (response.completion.data.size() > kControlSenpRpcMaximumToolDataBytes) return false;
-	if (!IsResourceState(response.resourceState) || !IsResourceEnd(response.resourceEnd)) return false;
-	if (response.resourceRevision < 0) return false;
-	if (response.resourceBytes.size() > kControlSenpRpcMaximumResourceChunkBytes) return false;
-	if (response.resourceHandle.empty()) {
+	if (response.Completion().data.size() > kControlSenpRpcMaximumToolDataBytes) return false;
+	if (!IsResourceState(response.ResourceState()) || !IsResourceEnd(response.ResourceEnd())) return false;
+	if (response.ResourceRevision() < 0) return false;
+	if (response.ResourceBytes().size() > kControlSenpRpcMaximumResourceChunkBytes) return false;
+	if (response.ResourceHandle().empty()) {
 		// Nothing here names the resource these members would describe, so a
 		// refusal or an unrelated answer must carry none of them: the editor
 		// would otherwise be free to read one as a chunk of whichever resource
 		// it happens to be filling.
-		if (!response.resourceBytes.empty() || response.resourceOffset != 0
-			|| response.resourceState != 0 || response.resourceEnd != 0
-			|| response.resourceLength != 0 || response.resourceRevision != 0) {
+		if (!response.ResourceBytes().empty() || response.ResourceOffset() != 0
+			|| response.ResourceState() != 0 || response.ResourceEnd() != 0
+			|| response.ResourceLength() != 0 || response.ResourceRevision() != 0) {
 			return false;
 		}
 	} else {
 		// A chunk that reaches past the resource it belongs to describes no
 		// resource the store could have produced.
-		if (response.resourceLength > kControlSenpRpcMaximumResourceBytes) return false;
-		if (response.resourceOffset > response.resourceLength) return false;
-		if (response.resourceBytes.size() > response.resourceLength - response.resourceOffset) return false;
+		if (response.ResourceLength() > kControlSenpRpcMaximumResourceBytes) return false;
+		if (response.ResourceOffset() > response.ResourceLength()) return false;
+		if (response.ResourceBytes().size() > response.ResourceLength() - response.ResourceOffset()) return false;
 	}
 	// A negative generation would encode as an enormous unsigned value and decode
 	// back as a different number, so it is refused at the encoder instead.
-	if (response.accountGeneration < 0) return false;
+	if (response.AccountGeneration() < 0) return false;
 	return true;
 }
 } // namespace
 
 senp::ContributionOwnerIdentity ToContributionOwner(const ControlSenpRpcOwner& owner)
 {
-	return { owner.extensionId, owner.packageDigest, owner.generation,
-		owner.workspaceRevision, owner.accountGeneration };
+	return { owner.ExtensionId(), owner.PackageDigest(), owner.Generation(),
+		owner.WorkspaceRevision(), owner.AccountGeneration() };
 }
 
 ControlSenpRpcOwner FromContributionOwner(const senp::ContributionOwnerIdentity& owner)
 {
-	return { owner.extensionId, owner.packageDigest, owner.generation,
-		owner.workspaceRevision, owner.accountGeneration };
+	return ControlSenpRpcOwner(owner.extensionId, owner.packageDigest, owner.generation,
+		owner.workspaceRevision, owner.accountGeneration);
 }
 
 std::optional<std::vector<std::uint8_t>> EncodeControlSenpRpcRequest(const ControlSenpRpcRequest& request)
 {
-	if (!IsOperation(static_cast<std::uint8_t>(request.operation))) return std::nullopt;
+	if (!IsOperation(static_cast<std::uint8_t>(request.Operation()))) return std::nullopt;
 	if (!IsCoherentRequest(request)) return std::nullopt;
 	std::vector<std::uint8_t> bytes;
 	Put<std::uint8_t>(bytes, kControlSenpRpcPayloadVersion);
-	Put<std::uint8_t>(bytes, static_cast<std::uint8_t>(request.operation));
-	if (!PutWide(bytes, request.profileId)) return std::nullopt;
-	if (!PutWide(bytes, request.owner.extensionId)) return std::nullopt;
-	if (!PutWide(bytes, request.owner.packageDigest)) return std::nullopt;
-	Put<std::uint64_t>(bytes, static_cast<std::uint64_t>(request.owner.generation));
-	Put<std::uint64_t>(bytes, static_cast<std::uint64_t>(request.owner.workspaceRevision));
-	Put<std::uint64_t>(bytes, static_cast<std::uint64_t>(request.owner.accountGeneration));
-	if (!PutUtf8(bytes, request.grantId)) return std::nullopt;
-	Put<std::uint32_t>(bytes, request.capabilities);
-	if (!PutWide(bytes, request.readId)) return std::nullopt;
-	if (!PutWide(bytes, request.toolId)) return std::nullopt;
-	if (!PutWide(bytes, request.toolOperation)) return std::nullopt;
-	Put<std::uint32_t>(bytes, static_cast<std::uint32_t>(request.arguments.size()));
-	for (const auto& argument : request.arguments) {
+	Put<std::uint8_t>(bytes, static_cast<std::uint8_t>(request.Operation()));
+	if (!PutWide(bytes, request.ProfileId())) return std::nullopt;
+	if (!PutWide(bytes, request.Owner().ExtensionId())) return std::nullopt;
+	if (!PutWide(bytes, request.Owner().PackageDigest())) return std::nullopt;
+	Put<std::uint64_t>(bytes, static_cast<std::uint64_t>(request.Owner().Generation()));
+	Put<std::uint64_t>(bytes, static_cast<std::uint64_t>(request.Owner().WorkspaceRevision()));
+	Put<std::uint64_t>(bytes, static_cast<std::uint64_t>(request.Owner().AccountGeneration()));
+	if (!PutUtf8(bytes, request.GrantId())) return std::nullopt;
+	Put<std::uint32_t>(bytes, request.Capabilities());
+	if (!PutWide(bytes, request.ReadId())) return std::nullopt;
+	if (!PutWide(bytes, request.ToolId())) return std::nullopt;
+	if (!PutWide(bytes, request.ToolOperation())) return std::nullopt;
+	Put<std::uint32_t>(bytes, static_cast<std::uint32_t>(request.Arguments().size()));
+	for (const auto& argument : request.Arguments()) {
 		if (argument.name.empty()) return std::nullopt;
 		if (!PutWide(bytes, argument.name) || !PutWide(bytes, argument.value)) return std::nullopt;
 	}
-	if (!PutWide(bytes, request.resourceHandle)) return std::nullopt;
-	Put<std::uint64_t>(bytes, request.offset);
-	Put<std::uint32_t>(bytes, request.length);
-	Put<std::uint64_t>(bytes, static_cast<std::uint64_t>(request.workspace.generation));
-	Put<std::uint64_t>(bytes, static_cast<std::uint64_t>(request.workspace.revision));
-	Put<std::uint32_t>(bytes, static_cast<std::uint32_t>(request.workspace.folders.size()));
-	for (const auto& folder : request.workspace.folders) {
+	if (!PutWide(bytes, request.ResourceHandle())) return std::nullopt;
+	Put<std::uint64_t>(bytes, request.Offset());
+	Put<std::uint32_t>(bytes, request.Length());
+	Put<std::uint64_t>(bytes, static_cast<std::uint64_t>(request.Workspace().Generation()));
+	Put<std::uint64_t>(bytes, static_cast<std::uint64_t>(request.Workspace().Revision()));
+	Put<std::uint32_t>(bytes, static_cast<std::uint32_t>(request.Workspace().Folders().size()));
+	for (const auto& folder : request.Workspace().Folders()) {
 		if (!PutWide(bytes, folder)) return std::nullopt;
 	}
 	if (bytes.size() > kMaximumPayload) return std::nullopt;
@@ -327,46 +327,63 @@ std::optional<ControlSenpRpcRequest> DecodeControlSenpRpcRequest(std::span<const
 	if (!Get(payload, offset, version) || version != kControlSenpRpcPayloadVersion) return std::nullopt;
 	if (!Get(payload, offset, operation) || !IsOperation(operation)) return std::nullopt;
 	ControlSenpRpcRequest request;
-	request.operation = static_cast<EControlSenpRpcOperation>(operation);
-	if (!GetWide(payload, offset, request.profileId)) return std::nullopt;
-	if (!GetWide(payload, offset, request.owner.extensionId)) return std::nullopt;
-	if (!GetWide(payload, offset, request.owner.packageDigest)) return std::nullopt;
+	request.SetOperation(static_cast<EControlSenpRpcOperation>(operation));
+	std::wstring profileId;
+	if (!GetWide(payload, offset, profileId)) return std::nullopt;
+	request.SetProfileId(std::move(profileId));
+	std::wstring extensionId, packageDigest;
+	if (!GetWide(payload, offset, extensionId)) return std::nullopt;
+	if (!GetWide(payload, offset, packageDigest)) return std::nullopt;
 	std::uint64_t generation = 0, workspaceRevision = 0, accountGeneration = 0;
 	if (!Get(payload, offset, generation) || generation > kMaximumGeneration) return std::nullopt;
 	if (!Get(payload, offset, workspaceRevision) || workspaceRevision > kMaximumGeneration) return std::nullopt;
 	if (!Get(payload, offset, accountGeneration) || accountGeneration > kMaximumGeneration) return std::nullopt;
-	request.owner.generation = static_cast<std::int64_t>(generation);
-	request.owner.workspaceRevision = static_cast<std::int64_t>(workspaceRevision);
-	request.owner.accountGeneration = static_cast<std::int64_t>(accountGeneration);
-	if (!GetUtf8(payload, offset, request.grantId)) return std::nullopt;
-	if (!Get(payload, offset, request.capabilities)) return std::nullopt;
-	if (!GetWide(payload, offset, request.readId)) return std::nullopt;
-	if (!GetWide(payload, offset, request.toolId)) return std::nullopt;
-	if (!GetWide(payload, offset, request.toolOperation)) return std::nullopt;
+	request.SetOwner(ControlSenpRpcOwner(std::move(extensionId), std::move(packageDigest),
+		static_cast<std::int64_t>(generation), static_cast<std::int64_t>(workspaceRevision),
+		static_cast<std::int64_t>(accountGeneration)));
+	std::string grantId;
+	if (!GetUtf8(payload, offset, grantId)) return std::nullopt;
+	request.SetGrantId(std::move(grantId));
+	std::uint32_t capabilities = 0;
+	if (!Get(payload, offset, capabilities)) return std::nullopt;
+	request.SetCapabilities(capabilities);
+	std::wstring readId, toolId, toolOperation;
+	if (!GetWide(payload, offset, readId)) return std::nullopt;
+	request.SetReadId(std::move(readId));
+	if (!GetWide(payload, offset, toolId)) return std::nullopt;
+	request.SetToolId(std::move(toolId));
+	if (!GetWide(payload, offset, toolOperation)) return std::nullopt;
+	request.SetToolOperation(std::move(toolOperation));
 	std::uint32_t arguments = 0;
 	if (!Get(payload, offset, arguments) || arguments > kControlSenpRpcMaximumArguments) return std::nullopt;
-	request.arguments.reserve(arguments);
+	request.Arguments().reserve(arguments);
 	for (std::uint32_t index = 0; index < arguments; ++index) {
 		senp::effect::Field field;
 		if (!GetWide(payload, offset, field.name) || field.name.empty()) return std::nullopt;
 		if (!GetWide(payload, offset, field.value)) return std::nullopt;
-		request.arguments.push_back(std::move(field));
+		request.Arguments().push_back(std::move(field));
 	}
-	if (!GetWide(payload, offset, request.resourceHandle)) return std::nullopt;
-	if (!Get(payload, offset, request.offset)) return std::nullopt;
-	if (!Get(payload, offset, request.length)) return std::nullopt;
+	std::wstring resourceHandle;
+	if (!GetWide(payload, offset, resourceHandle)) return std::nullopt;
+	request.SetResourceHandle(std::move(resourceHandle));
+	std::uint64_t requestOffset = 0;
+	std::uint32_t requestLength = 0;
+	if (!Get(payload, offset, requestOffset)) return std::nullopt;
+	request.SetOffset(requestOffset);
+	if (!Get(payload, offset, requestLength)) return std::nullopt;
+	request.SetLength(requestLength);
 	std::uint64_t declaredGeneration = 0, declaredRevision = 0;
 	if (!Get(payload, offset, declaredGeneration) || declaredGeneration > kMaximumGeneration) return std::nullopt;
 	if (!Get(payload, offset, declaredRevision) || declaredRevision > kMaximumGeneration) return std::nullopt;
-	request.workspace.generation = static_cast<std::int64_t>(declaredGeneration);
-	request.workspace.revision = static_cast<std::int64_t>(declaredRevision);
+	request.Workspace().SetGeneration(static_cast<std::int64_t>(declaredGeneration));
+	request.Workspace().SetRevision(static_cast<std::int64_t>(declaredRevision));
 	std::uint32_t folders = 0;
 	if (!Get(payload, offset, folders) || folders > kControlSenpRpcMaximumWorkspaceFolders) return std::nullopt;
-	request.workspace.folders.reserve(folders);
+	request.Workspace().ReserveFolders(folders);
 	for (std::uint32_t index = 0; index < folders; ++index) {
 		std::wstring folder;
 		if (!GetWide(payload, offset, folder)) return std::nullopt;
-		request.workspace.folders.push_back(std::move(folder));
+		request.Workspace().AddFolder(std::move(folder));
 	}
 	if (offset != payload.size()) return std::nullopt;
 	if (!IsCoherentRequest(request)) return std::nullopt;
@@ -375,31 +392,31 @@ std::optional<ControlSenpRpcRequest> DecodeControlSenpRpcRequest(std::span<const
 
 std::optional<std::vector<std::uint8_t>> EncodeControlSenpRpcResponse(const ControlSenpRpcResponse& response)
 {
-	if (!IsStatus(static_cast<std::uint8_t>(response.status))) return std::nullopt;
-	if (!IsCompletionStatus(static_cast<std::uint8_t>(response.completion.status))) return std::nullopt;
-	if (!IsAccountState(static_cast<std::uint8_t>(response.accountState))) return std::nullopt;
+	if (!IsStatus(static_cast<std::uint8_t>(response.Status()))) return std::nullopt;
+	if (!IsCompletionStatus(static_cast<std::uint8_t>(response.Completion().status))) return std::nullopt;
+	if (!IsAccountState(static_cast<std::uint8_t>(response.AccountState()))) return std::nullopt;
 	if (!IsCoherentResponse(response)) return std::nullopt;
 	std::vector<std::uint8_t> bytes;
 	Put<std::uint8_t>(bytes, kControlSenpRpcPayloadVersion);
-	Put<std::uint8_t>(bytes, static_cast<std::uint8_t>(response.status));
-	if (!PutUtf8(bytes, response.grantId)) return std::nullopt;
-	Put<std::uint64_t>(bytes, response.expiresAtMilliseconds);
-	Put<std::uint8_t>(bytes, response.hasCompletion ? 1U : 0U);
-	if (!PutWide(bytes, response.completion.readId)) return std::nullopt;
-	Put<std::uint8_t>(bytes, static_cast<std::uint8_t>(response.completion.status));
-	if (!PutWideBounded(bytes, response.completion.data, kControlSenpRpcMaximumToolDataBytes)) {
+	Put<std::uint8_t>(bytes, static_cast<std::uint8_t>(response.Status()));
+	if (!PutUtf8(bytes, response.GrantId())) return std::nullopt;
+	Put<std::uint64_t>(bytes, response.ExpiresAtMilliseconds());
+	Put<std::uint8_t>(bytes, response.HasCompletion() ? 1U : 0U);
+	if (!PutWide(bytes, response.Completion().readId)) return std::nullopt;
+	Put<std::uint8_t>(bytes, static_cast<std::uint8_t>(response.Completion().status));
+	if (!PutWideBounded(bytes, response.Completion().data, kControlSenpRpcMaximumToolDataBytes)) {
 		return std::nullopt;
 	}
-	if (!PutWide(bytes, response.completion.message)) return std::nullopt;
-	if (!PutWide(bytes, response.resourceHandle)) return std::nullopt;
-	Put<std::uint64_t>(bytes, response.resourceOffset);
-	if (!PutBytes(bytes, response.resourceBytes, kControlSenpRpcMaximumResourceChunkBytes)) return std::nullopt;
-	Put<std::uint8_t>(bytes, response.resourceState);
-	Put<std::uint8_t>(bytes, response.resourceEnd);
-	Put<std::uint64_t>(bytes, response.resourceLength);
-	Put<std::uint64_t>(bytes, static_cast<std::uint64_t>(response.resourceRevision));
-	Put<std::uint64_t>(bytes, static_cast<std::uint64_t>(response.accountGeneration));
-	Put<std::uint8_t>(bytes, static_cast<std::uint8_t>(response.accountState));
+	if (!PutWide(bytes, response.Completion().message)) return std::nullopt;
+	if (!PutWide(bytes, response.ResourceHandle())) return std::nullopt;
+	Put<std::uint64_t>(bytes, response.ResourceOffset());
+	if (!PutBytes(bytes, response.ResourceBytes(), kControlSenpRpcMaximumResourceChunkBytes)) return std::nullopt;
+	Put<std::uint8_t>(bytes, response.ResourceState());
+	Put<std::uint8_t>(bytes, response.ResourceEnd());
+	Put<std::uint64_t>(bytes, response.ResourceLength());
+	Put<std::uint64_t>(bytes, static_cast<std::uint64_t>(response.ResourceRevision()));
+	Put<std::uint64_t>(bytes, static_cast<std::uint64_t>(response.AccountGeneration()));
+	Put<std::uint8_t>(bytes, static_cast<std::uint8_t>(response.AccountState()));
 	if (bytes.size() > kMaximumPayload) return std::nullopt;
 	return bytes;
 }
@@ -413,36 +430,51 @@ std::optional<ControlSenpRpcResponse> DecodeControlSenpRpcResponse(std::span<con
 	if (!Get(payload, offset, version) || version != kControlSenpRpcPayloadVersion) return std::nullopt;
 	if (!Get(payload, offset, status) || !IsStatus(status)) return std::nullopt;
 	ControlSenpRpcResponse response;
-	response.status = static_cast<EControlSenpRpcStatus>(status);
-	if (!GetUtf8(payload, offset, response.grantId)) return std::nullopt;
-	if (!Get(payload, offset, response.expiresAtMilliseconds)) return std::nullopt;
+	response.SetStatus(static_cast<EControlSenpRpcStatus>(status));
+	std::string grantId;
+	if (!GetUtf8(payload, offset, grantId)) return std::nullopt;
+	response.SetGrantId(std::move(grantId));
+	std::uint64_t expiresAtMilliseconds = 0;
+	if (!Get(payload, offset, expiresAtMilliseconds)) return std::nullopt;
+	response.SetExpiresAtMilliseconds(expiresAtMilliseconds);
 	if (!Get(payload, offset, hasCompletion) || hasCompletion > 1) return std::nullopt;
-	response.hasCompletion = hasCompletion != 0;
-	if (!GetWide(payload, offset, response.completion.readId)) return std::nullopt;
+	response.SetHasCompletion(hasCompletion != 0);
+	if (!GetWide(payload, offset, response.Completion().readId)) return std::nullopt;
 	if (!Get(payload, offset, completionStatus) || !IsCompletionStatus(completionStatus)) return std::nullopt;
-	response.completion.status = static_cast<senp::effect::CompletionStatus>(completionStatus);
-	if (!GetWideBounded(payload, offset, response.completion.data, kControlSenpRpcMaximumToolDataBytes)) {
+	response.Completion().status = static_cast<senp::effect::CompletionStatus>(completionStatus);
+	if (!GetWideBounded(payload, offset, response.Completion().data, kControlSenpRpcMaximumToolDataBytes)) {
 		return std::nullopt;
 	}
-	if (!GetWide(payload, offset, response.completion.message)) return std::nullopt;
-	if (!GetWide(payload, offset, response.resourceHandle)) return std::nullopt;
-	if (!Get(payload, offset, response.resourceOffset)) return std::nullopt;
-	if (!GetBytes(payload, offset, response.resourceBytes, kControlSenpRpcMaximumResourceChunkBytes)) return std::nullopt;
-	if (!Get(payload, offset, response.resourceState) || !IsResourceState(response.resourceState)) {
+	if (!GetWide(payload, offset, response.Completion().message)) return std::nullopt;
+	std::wstring resourceHandle;
+	if (!GetWide(payload, offset, resourceHandle)) return std::nullopt;
+	response.SetResourceHandle(std::move(resourceHandle));
+	std::uint64_t resourceOffset = 0;
+	if (!Get(payload, offset, resourceOffset)) return std::nullopt;
+	response.SetResourceOffset(resourceOffset);
+	std::string resourceBytes;
+	if (!GetBytes(payload, offset, resourceBytes, kControlSenpRpcMaximumResourceChunkBytes)) return std::nullopt;
+	response.SetResourceBytes(std::move(resourceBytes));
+	std::uint8_t resourceState = 0, resourceEnd = 0;
+	if (!Get(payload, offset, resourceState) || !IsResourceState(resourceState)) {
 		return std::nullopt;
 	}
-	if (!Get(payload, offset, response.resourceEnd) || !IsResourceEnd(response.resourceEnd)) {
+	response.SetResourceState(resourceState);
+	if (!Get(payload, offset, resourceEnd) || !IsResourceEnd(resourceEnd)) {
 		return std::nullopt;
 	}
-	if (!Get(payload, offset, response.resourceLength)) return std::nullopt;
+	response.SetResourceEnd(resourceEnd);
+	std::uint64_t resourceLength = 0;
+	if (!Get(payload, offset, resourceLength)) return std::nullopt;
+	response.SetResourceLength(resourceLength);
 	// Encoded from a signed member, so a value past the signed maximum decodes
 	// back as a different revision than the one that was sent.
 	if (!Get(payload, offset, resourceRevision) || resourceRevision > kMaximumGeneration) return std::nullopt;
-	response.resourceRevision = static_cast<std::int64_t>(resourceRevision);
+	response.SetResourceRevision(static_cast<std::int64_t>(resourceRevision));
 	if (!Get(payload, offset, accountGeneration) || accountGeneration > kMaximumGeneration) return std::nullopt;
 	if (!Get(payload, offset, accountState) || !IsAccountState(accountState)) return std::nullopt;
-	response.accountGeneration = static_cast<std::int64_t>(accountGeneration);
-	response.accountState = static_cast<EControlSenpAccountState>(accountState);
+	response.SetAccountGeneration(static_cast<std::int64_t>(accountGeneration));
+	response.SetAccountState(static_cast<EControlSenpAccountState>(accountState));
 	if (offset != payload.size()) return std::nullopt;
 	if (!IsCoherentResponse(response)) return std::nullopt;
 	return response;

@@ -69,7 +69,7 @@ bool CSenpOwnerComposition::PublishWorkspace(const senp::effect::WorkspaceChange
 	if (m_closed || m_entered) return false;
 	Call call(m_entered);
 	try { return m_publications.PublishWorkspace(workspace); }
-	catch (...) { return false; }
+	catch (const std::exception&) { return false; }
 }
 
 bool CSenpOwnerComposition::Poll(const senp::CSenpRuntimeSession::Time now) noexcept
@@ -97,7 +97,7 @@ std::optional<senp::OwnerChangeResult> CSenpOwnerComposition::TakeTransition() n
 {
 	if (m_entered) return {};
 	try { return m_owners.TakeTransition(); }
-	catch (...) { return {}; }
+	catch (const std::exception&) { return {}; }
 }
 
 senp::ContributionOwnersSnapshot CSenpOwnerComposition::Snapshot() const noexcept

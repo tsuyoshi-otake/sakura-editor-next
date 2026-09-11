@@ -117,20 +117,25 @@ public:
 	platform::controlipc::EControlSenpRpcStatus AdoptWorkspace(
 		const platform::controlipc::SenpWorkspaceAdoption& adoption) override
 	{
-		adopted.push_back(adoption);
-		return adoptStatus;
+		m_adopted.push_back(adoption);
+		return m_adoptStatus;
 	}
 	void WithdrawWorkspace(const platform::controlipc::SenpConnectionIdentity& connection) override
 	{
-		withdrawn.push_back(connection);
+		m_withdrawn.push_back(connection);
 	}
 	void SetLifecycle(std::shared_ptr<CGhConnectionLifecycle> lifecycle) { m_lifecycle = std::move(lifecycle); }
 	void ClearRepository() noexcept { m_repository.reset(); }
 
-	EControlSenpRpcStatus adoptStatus = EControlSenpRpcStatus::Succeeded;
-	std::vector<platform::controlipc::SenpWorkspaceAdoption> adopted;
-	std::vector<platform::controlipc::SenpConnectionIdentity> withdrawn;
+	// Assertions only ever read what this fixture recorded; nothing outside the
+	// class ever sets adoptStatus or appends to adopted/withdrawn directly, so
+	// those stay behind an observation-only surface instead of public fields.
+	[[nodiscard]] const std::vector<platform::controlipc::SenpWorkspaceAdoption>& Adopted() const noexcept { return m_adopted; }
+	[[nodiscard]] const std::vector<platform::controlipc::SenpConnectionIdentity>& Withdrawn() const noexcept { return m_withdrawn; }
 private:
+	EControlSenpRpcStatus m_adoptStatus = EControlSenpRpcStatus::Succeeded;
+	std::vector<platform::controlipc::SenpWorkspaceAdoption> m_adopted;
+	std::vector<platform::controlipc::SenpConnectionIdentity> m_withdrawn;
 	std::wstring m_profileId{ L"profile-1" };
 	std::shared_ptr<CGhConnectionLifecycle> m_lifecycle;
 	std::optional<GhSelectedRepository> m_repository{
@@ -260,7 +265,24 @@ TEST(SenpGitHubToolExecutor, TranslatesOnlyTheClosedShapeSet)
 TEST(SenpGitHubToolExecutor, AdmitsEveryShapeTheShippedExtensionsEmit)
 {
 	const GhSelectedRepository repository(L"repo-identity-1", L"origin", L"github.com", L"owner", L"repo");
+	// Each row is a fixed fact about one shape this table documents once and
+	// never revises after construction. The fields stay behind an
+	// observation-only surface (rather than public data this loop could
+	// reassign) with a positional constructor matching the table rows below.
 	struct Expectation {
+		Expectation(std::wstring shapeValue, std::wstring idValue, std::wstring attemptValue,
+			std::vector<std::wstring> segmentsValue)
+			: shape(std::move(shapeValue)), id(std::move(idValue)), attempt(std::move(attemptValue)),
+			segments(std::move(segmentsValue))
+		{
+		}
+
+		[[nodiscard]] const std::wstring& Shape() const noexcept { return shape; }
+		[[nodiscard]] const std::wstring& Id() const noexcept { return id; }
+		[[nodiscard]] const std::wstring& Attempt() const noexcept { return attempt; }
+		[[nodiscard]] const std::vector<std::wstring>& Segments() const noexcept { return segments; }
+
+	private:
 		std::wstring shape;
 		std::wstring id;
 		std::wstring attempt;
@@ -287,14 +309,14 @@ TEST(SenpGitHubToolExecutor, AdmitsEveryShapeTheShippedExtensionsEmit)
 		// Every shape is ASCII by construction, so the trace narrows one code
 		// unit at a time rather than converting through a locale.
 		std::string named;
-		for (const auto character : expectation.shape) named.push_back(static_cast<char>(character));
+		for (const auto character : expectation.Shape()) named.push_back(static_cast<char>(character));
 		SCOPED_TRACE(named);
-		std::vector<effect::Field> arguments{ { L"shape", expectation.shape } };
-		if (!expectation.id.empty()) arguments.push_back({ L"id", expectation.id });
-		if (!expectation.attempt.empty()) arguments.push_back({ L"attempt", expectation.attempt });
+		std::vector<effect::Field> arguments{ { L"shape", expectation.Shape() } };
+		if (!expectation.Id().empty()) arguments.push_back({ L"id", expectation.Id() });
+		if (!expectation.Attempt().empty()) arguments.push_back({ L"attempt", expectation.Attempt() });
 		const auto request = BuildRepositoryReadRequest(repository, arguments);
 		ASSERT_TRUE(request);
-		EXPECT_EQ(expectation.segments, request->ResourceSegments());
+		EXPECT_EQ(expectation.Segments(), request->ResourceSegments());
 	}
 
 	// The query names both extensions send with their list reads. An unforwarded
@@ -310,33 +332,30 @@ TEST(SenpGitHubToolExecutor, AdmitsEveryShapeTheShippedExtensionsEmit)
 TEST(SenpGitHubToolExecutor, CarriesAWorkspaceDeclarationWithoutReadingAFolder)
 {
 	Fixture fixture;
-	platform::controlipc::SenpWorkspaceAdoption adoption;
-	adoption.connection = { 7, 1234 };
-	adoption.profileId = L"profile-1";
-	adoption.workspace.generation = 5;
-	adoption.workspace.revision = 11;
-	adoption.workspace.folders = { L"file:///c:/work/repo" };
+	const platform::controlipc::SenpWorkspaceAdoption adoption(
+		platform::controlipc::SenpConnectionIdentity(7, 1234), L"profile-1",
+		platform::controlipc::ControlSenpRpcWorkspace(5, 11, { L"file:///c:/work/repo" }));
 	EXPECT_EQ(EControlSenpRpcStatus::Succeeded, fixture.Executor().AdoptWorkspace(adoption));
 	// Forwarded, not stored: resolving folders to a repository means reading git
 	// remotes, which belongs on the worker that owns every blocking lookup here.
-	ASSERT_EQ(1U, fixture.Profiles().adopted.size());
-	EXPECT_EQ(L"profile-1", fixture.Profiles().adopted.front().profileId);
-	EXPECT_EQ(11, fixture.Profiles().adopted.front().workspace.revision);
+	ASSERT_EQ(1U, fixture.Profiles().Adopted().size());
+	EXPECT_EQ(L"profile-1", fixture.Profiles().Adopted().front().ProfileId());
+	EXPECT_EQ(11, fixture.Profiles().Adopted().front().Workspace().Revision());
 
 	// A declaration that names no connection could never be withdrawn, and one
 	// that names no profile answers for nothing. Neither reaches the source.
-	auto nameless = adoption;
-	nameless.connection = {};
+	const platform::controlipc::SenpWorkspaceAdoption nameless(
+		platform::controlipc::SenpConnectionIdentity(), adoption.ProfileId(), adoption.Workspace());
 	EXPECT_EQ(EControlSenpRpcStatus::InvalidRequest, fixture.Executor().AdoptWorkspace(nameless));
-	auto profileless = adoption;
-	profileless.profileId.clear();
+	const platform::controlipc::SenpWorkspaceAdoption profileless(
+		adoption.Connection(), std::wstring(), adoption.Workspace());
 	EXPECT_EQ(EControlSenpRpcStatus::InvalidRequest, fixture.Executor().AdoptWorkspace(profileless));
-	EXPECT_EQ(1U, fixture.Profiles().adopted.size());
+	EXPECT_EQ(1U, fixture.Profiles().Adopted().size());
 
-	fixture.Executor().WithdrawWorkspace(adoption.connection);
-	ASSERT_EQ(1U, fixture.Profiles().withdrawn.size());
-	EXPECT_EQ(7U, fixture.Profiles().withdrawn.front().sessionId);
-	EXPECT_EQ(1234U, fixture.Profiles().withdrawn.front().clientProcessId);
+	fixture.Executor().WithdrawWorkspace(adoption.Connection());
+	ASSERT_EQ(1U, fixture.Profiles().Withdrawn().size());
+	EXPECT_EQ(7U, fixture.Profiles().Withdrawn().front().SessionId());
+	EXPECT_EQ(1234U, fixture.Profiles().Withdrawn().front().ClientProcessId());
 }
 
 TEST(SenpGitHubToolExecutor, PublishesOneFetchedPageAsAReadableResource)
@@ -359,14 +378,14 @@ TEST(SenpGitHubToolExecutor, PublishesOneFetchedPageAsAReadableResource)
 	ControlSenpRpcResponse response;
 	ASSERT_EQ(EControlSenpRpcStatus::Succeeded,
 		fixture.Executor().ReadResource(scope, handle, 0, 64 * 1024, response));
-	EXPECT_EQ("[{\"id\":1,\"title\":\"first\"}]", response.resourceBytes);
-	EXPECT_EQ(handle, response.resourceHandle);
+	EXPECT_EQ("[{\"id\":1,\"title\":\"first\"}]", response.ResourceBytes());
+	EXPECT_EQ(handle, response.ResourceHandle());
 	// The whole chunk, as the store answered it. Without the length and the end
 	// the editor could not tell a finished body from a truncated one, and would
 	// have to decide that from the byte count it happened to receive.
-	EXPECT_EQ(static_cast<std::uint8_t>(TextResourceState::Complete), response.resourceState);
-	EXPECT_EQ(static_cast<std::uint8_t>(TextResourceEnd::Complete), response.resourceEnd);
-	EXPECT_EQ(response.resourceBytes.size(), response.resourceLength);
+	EXPECT_EQ(static_cast<std::uint8_t>(TextResourceState::Complete), response.ResourceState());
+	EXPECT_EQ(static_cast<std::uint8_t>(TextResourceEnd::Complete), response.ResourceEnd());
+	EXPECT_EQ(response.ResourceBytes().size(), response.ResourceLength());
 
 	// The argv reaching the credential is the one the closed policy built.
 	const auto& arguments = fixture.CredentialValue().Arguments();
@@ -402,10 +421,10 @@ TEST(SenpGitHubToolExecutor, AnswersTheAdoptedAccountGenerationWithoutAnExecutio
 	ControlSenpRpcResponse response;
 	EXPECT_EQ(EControlSenpRpcStatus::Succeeded,
 		fixture.Executor().QueryAccount(L"profile-1", response));
-	EXPECT_EQ(EControlSenpAccountState::Connected, response.accountState);
+	EXPECT_EQ(EControlSenpAccountState::Connected, response.AccountState());
 	// This is exactly the number a read's owner has to carry, which is why the
 	// editor has to be able to ask for it before it builds one.
-	EXPECT_EQ(Owner().accountGeneration, response.accountGeneration);
+	EXPECT_EQ(Owner().accountGeneration, response.AccountGeneration());
 	EXPECT_EQ(EControlSenpRpcStatus::Succeeded, fixture.Executor().StartRead(Scope(), IssueList()));
 }
 
@@ -418,8 +437,8 @@ TEST(SenpGitHubToolExecutor, SeparatesAnUnadoptedProfileFromASignedOutOne)
 	// Both answers carry generation zero. Only the state distinguishes "nothing
 	// has been adopted or checked" from "the account is signed out", so reporting
 	// Disconnected here would announce a sign-out that never happened.
-	EXPECT_EQ(0, unadopted.accountGeneration);
-	EXPECT_EQ(EControlSenpAccountState::Unknown, unadopted.accountState);
+	EXPECT_EQ(0, unadopted.AccountGeneration());
+	EXPECT_EQ(EControlSenpAccountState::Unknown, unadopted.AccountState());
 
 	const auto connection = fixture.Profiles().Connection(L"profile-1");
 	ASSERT_NE(nullptr, connection);
@@ -427,20 +446,20 @@ TEST(SenpGitHubToolExecutor, SeparatesAnUnadoptedProfileFromASignedOutOne)
 	ControlSenpRpcResponse signedOut;
 	EXPECT_EQ(EControlSenpRpcStatus::Succeeded,
 		fixture.Executor().QueryAccount(L"profile-1", signedOut));
-	EXPECT_EQ(0, signedOut.accountGeneration);
-	EXPECT_EQ(EControlSenpAccountState::Disconnected, signedOut.accountState);
+	EXPECT_EQ(0, signedOut.AccountGeneration());
+	EXPECT_EQ(EControlSenpAccountState::Disconnected, signedOut.AccountState());
 }
 
 TEST(SenpGitHubToolExecutor, RefusesAReadBeforeAnAccountOrWorkspaceExists)
 {
 	Fixture fixture;
-	auto unadopted = Scope();
-	unadopted.owner.accountGeneration = 0;
+	auto unadoptedOwner = Owner();
+	unadoptedOwner.accountGeneration = 0;
+	const SenpToolExecutionScope unadopted(7, 1234, L"profile-1", unadoptedOwner);
 	EXPECT_EQ(EControlSenpRpcStatus::NotConnected,
 		fixture.Executor().StartRead(unadopted, IssueList()));
 
-	auto foreign = Scope();
-	foreign.profileId = L"profile-2";
+	const SenpToolExecutionScope foreign(7, 1234, L"profile-2", Owner());
 	EXPECT_EQ(EControlSenpRpcStatus::Unavailable, fixture.Executor().StartRead(foreign, IssueList()));
 
 	fixture.Profiles().ClearRepository();
@@ -450,8 +469,9 @@ TEST(SenpGitHubToolExecutor, RefusesAReadBeforeAnAccountOrWorkspaceExists)
 TEST(SenpGitHubToolExecutor, RefusesAnOwnerWithoutAnArchiveDigest)
 {
 	Fixture fixture;
-	auto scope = Scope();
-	scope.owner.packageDigest = L"sha256:ab";
+	auto shortDigestOwner = Owner();
+	shortDigestOwner.packageDigest = L"sha256:ab";
+	const SenpToolExecutionScope scope(7, 1234, L"profile-1", shortDigestOwner);
 	EXPECT_EQ(EControlSenpRpcStatus::InvalidRequest, fixture.Executor().StartRead(scope, IssueList()));
 }
 
@@ -483,7 +503,7 @@ TEST(SenpGitHubToolExecutor, ReleasingAResourceEndsFurtherReads)
 	ControlSenpRpcResponse response;
 	EXPECT_EQ(EControlSenpRpcStatus::NotFound,
 		fixture.Executor().ReadResource(scope, handle, 0, 1024, response));
-	EXPECT_TRUE(response.resourceBytes.empty());
+	EXPECT_TRUE(response.ResourceBytes().empty());
 }
 
 TEST(SenpGitHubToolExecutor, AResourceBelongsToExactlyOneScope)
@@ -495,8 +515,7 @@ TEST(SenpGitHubToolExecutor, AResourceBelongsToExactlyOneScope)
 	const auto handle = ResourceHandle(*completed);
 	ASSERT_FALSE(handle.empty());
 
-	auto other = Scope();
-	other.sessionId = 8;
+	const SenpToolExecutionScope other(8, 1234, L"profile-1", Owner());
 	ControlSenpRpcResponse response;
 	EXPECT_EQ(EControlSenpRpcStatus::Unauthorized,
 		fixture.Executor().ReadResource(other, handle, 0, 1024, response));
@@ -535,8 +554,8 @@ TEST(SenpGitHubToolExecutor, RepeatingAReadIdentityRefreshesInsteadOfSubscribing
 	EXPECT_NE(ResourceHandle(*refreshed), std::wstring());
 
 	// The same identity may not be reused for a different resource.
-	auto different = IssueList();
-	different.arguments = { { L"shape", L"pulls" } };
+	const SenpToolReadCommand different(IssueList().ReadId(), IssueList().ToolId(), IssueList().Operation(),
+		{ { L"shape", L"pulls" } });
 	EXPECT_EQ(EControlSenpRpcStatus::InvalidRequest, fixture.Executor().StartRead(scope, different));
 }
 
@@ -623,17 +642,19 @@ TEST(SenpGitHubToolExecutor, PublishesAPageWithoutAResourceWhenNoSlotIsLeft)
 	// resource slots. The resource is an extra, so running out of them cannot be
 	// what stops the page from arriving.
 	for (std::size_t index = 0; index < CSenpGitHubToolExecutor::MaximumResourcesPerScope(); ++index) {
-		auto command = IssueList();
-		command.readId = L"issues:" + std::to_wstring(index);
-		command.arguments.push_back({ L"page", std::to_wstring(index + 1) });
+		auto arguments = IssueList().Arguments();
+		arguments.push_back({ L"page", std::to_wstring(index + 1) });
+		const SenpToolReadCommand command(L"issues:" + std::to_wstring(index), IssueList().ToolId(),
+			IssueList().Operation(), arguments);
 		const auto completed = fixture.Fetch(scope, command);
 		ASSERT_TRUE(completed) << index;
 		ASSERT_EQ(effect::CompletionStatus::Succeeded, completed->status) << index;
 		EXPECT_FALSE(ResourceHandle(*completed).empty()) << index;
 	}
-	auto beyond = IssueList();
-	beyond.readId = L"issues:beyond";
-	beyond.arguments.push_back({ L"page", L"9" });
+	auto beyondArguments = IssueList().Arguments();
+	beyondArguments.push_back({ L"page", L"9" });
+	const SenpToolReadCommand beyond(L"issues:beyond", IssueList().ToolId(), IssueList().Operation(),
+		beyondArguments);
 	const auto completed = fixture.Fetch(scope, beyond);
 	ASSERT_TRUE(completed);
 	EXPECT_EQ(effect::CompletionStatus::Succeeded, completed->status);
@@ -684,10 +705,10 @@ TEST(SenpGitHubToolExecutor, PublishesAJobLogAsAResourceOfItsOwnStore)
 	ControlSenpRpcResponse response;
 	ASSERT_EQ(EControlSenpRpcStatus::Succeeded,
 		fixture.Executor().ReadResource(scope, handle, 0, 64 * 1024, response));
-	EXPECT_EQ("line one\nline two\n", response.resourceBytes);
-	EXPECT_EQ(static_cast<std::uint8_t>(TextResourceState::Complete), response.resourceState);
-	EXPECT_EQ(static_cast<std::uint8_t>(TextResourceEnd::Complete), response.resourceEnd);
-	EXPECT_EQ(18U, response.resourceLength);
+	EXPECT_EQ("line one\nline two\n", response.ResourceBytes());
+	EXPECT_EQ(static_cast<std::uint8_t>(TextResourceState::Complete), response.ResourceState());
+	EXPECT_EQ(static_cast<std::uint8_t>(TextResourceEnd::Complete), response.ResourceEnd());
+	EXPECT_EQ(18U, response.ResourceLength());
 
 	// The argv is the one the closed policy built. `gh` follows the short-lived
 	// download redirect internally, so no URL is named here or anywhere else.
@@ -722,28 +743,28 @@ TEST(SenpGitHubToolExecutor, KeepsALogAndAPageApartWithinOneScope)
 	ControlSenpRpcResponse fromPage;
 	ASSERT_EQ(EControlSenpRpcStatus::Succeeded,
 		fixture.Executor().ReadResource(scope, pageHandle, 0, 64 * 1024, fromPage));
-	EXPECT_EQ("[{\"id\":1,\"title\":\"first\"}]", fromPage.resourceBytes);
+	EXPECT_EQ("[{\"id\":1,\"title\":\"first\"}]", fromPage.ResourceBytes());
 	ControlSenpRpcResponse fromLog;
 	ASSERT_EQ(EControlSenpRpcStatus::Succeeded,
 		fixture.Executor().ReadResource(scope, logHandle, 0, 64 * 1024, fromLog));
-	EXPECT_EQ("log bytes", fromLog.resourceBytes);
+	EXPECT_EQ("log bytes", fromLog.ResourceBytes());
 
 	// A page read is a subscription and keeps its identity for as long as it is
 	// held, so a log may not take one out from under it.
-	auto reused = JobLog();
-	reused.readId = L"issues:open";
+	const SenpToolReadCommand reused(L"issues:open", JobLog().ToolId(), JobLog().Operation(),
+		JobLog().Arguments());
 	EXPECT_EQ(EControlSenpRpcStatus::InvalidRequest, fixture.Executor().StartRead(scope, reused));
 	// A log is one download rather than a subscription: once answered its
 	// identity is spent and a page may take it. The log itself is keyed by its
 	// handle, so it outlives the identity and stays readable.
-	auto reusedPage = IssueList();
-	reusedPage.readId = L"job:77:log";
+	const SenpToolReadCommand reusedPage(L"job:77:log", IssueList().ToolId(), IssueList().Operation(),
+		IssueList().Arguments());
 	EXPECT_EQ(EControlSenpRpcStatus::Succeeded, fixture.Executor().StartRead(scope, reusedPage));
 	ASSERT_TRUE(fixture.Executor().WaitForIdle(kIdleTimeoutMilliseconds));
 	ControlSenpRpcResponse logAgain;
 	ASSERT_EQ(EControlSenpRpcStatus::Succeeded,
 		fixture.Executor().ReadResource(scope, logHandle, 0, 64 * 1024, logAgain));
-	EXPECT_EQ("log bytes", logAgain.resourceBytes);
+	EXPECT_EQ("log bytes", logAgain.ResourceBytes());
 }
 
 TEST(SenpGitHubToolExecutor, ReportsAFailedJobLogWithoutPublishingAResource)
@@ -792,15 +813,15 @@ TEST(SenpGitHubToolExecutor, StartsOnlyTheTwoOperationsThisToolNames)
 	const auto scope = Scope();
 	// The broker admits the closed set first. This object names it again because
 	// it has to know which shape a read is; one it cannot name has no shape.
-	auto foreignTool = JobLog();
-	foreignTool.toolId = L"shell";
+	const SenpToolReadCommand foreignTool(JobLog().ReadId(), L"shell", JobLog().Operation(),
+		JobLog().Arguments());
 	EXPECT_EQ(EControlSenpRpcStatus::InvalidRequest, fixture.Executor().StartRead(scope, foreignTool));
-	auto foreignOperation = IssueList();
-	foreignOperation.operation = L"repositoryWrite";
+	const SenpToolReadCommand foreignOperation(IssueList().ReadId(), IssueList().ToolId(),
+		L"repositoryWrite", IssueList().Arguments());
 	EXPECT_EQ(EControlSenpRpcStatus::InvalidRequest,
 		fixture.Executor().StartRead(scope, foreignOperation));
-	auto nameless = IssueList();
-	nameless.operation.clear();
+	const SenpToolReadCommand nameless(IssueList().ReadId(), IssueList().ToolId(), std::wstring(),
+		IssueList().Arguments());
 	EXPECT_EQ(EControlSenpRpcStatus::InvalidRequest, fixture.Executor().StartRead(scope, nameless));
 	ASSERT_TRUE(fixture.Executor().WaitForIdle(kIdleTimeoutMilliseconds));
 	EXPECT_FALSE(fixture.Executor().TakeCompleted(scope));

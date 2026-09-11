@@ -41,9 +41,12 @@ void PaintViewPaneIcon(HDC dc, const RECT& bounds, const std::wstring_view name,
 		} else {
 			icons::codicons::Draw(dc, { bounds.left, bounds.top, bounds.right, bounds.bottom }, icon.builtin, color);
 		}
-	} catch (...) {
+	} catch (const std::exception&) {
 		// Paint has no pending operation. The next invalidation can redraw the
 		// glyph; native control text remains its accessible/action identity.
+		// Only the icon/glyph resolution and string/vector copies below this
+		// try can throw, and only std::bad_alloc/length_error at that -- the
+		// GDI calls themselves are noexcept Win32 APIs.
 	}
 }
 

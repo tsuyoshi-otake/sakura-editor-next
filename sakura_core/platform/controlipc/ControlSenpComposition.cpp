@@ -47,12 +47,12 @@ namespace {
 
 [[nodiscard]] ControlSenpCompositionOptions Normalize(ControlSenpCompositionOptions options)
 {
-	if (options.workingDirectory.empty()) options.workingDirectory = options.controlProfileRoot;
-	if (options.ghConfigurationDirectory.empty()) {
-		options.ghConfigurationDirectory = ResolveGhConfigurationDirectory();
+	if (options.WorkingDirectory().empty()) options.SetWorkingDirectory(options.ControlProfileRoot());
+	if (options.GhConfigurationDirectory().empty()) {
+		options.SetGhConfigurationDirectory(ResolveGhConfigurationDirectory());
 	}
-	if (!::platform::IsAbsoluteWindowsPath(options.ghConfigurationDirectory)) {
-		options.ghConfigurationDirectory.clear();
+	if (!::platform::IsAbsoluteWindowsPath(options.GhConfigurationDirectory())) {
+		options.SetGhConfigurationDirectory({});
 	}
 	return options;
 }
@@ -96,7 +96,7 @@ try {
 	// it proves belongs to the authority, not to this source.
 	const auto result = created ? service->Start() : service->Refresh();
 	return result.snapshot;
-} catch (...) {
+} catch (const std::exception&) {
 	return std::nullopt;
 }
 
@@ -112,7 +112,7 @@ try {
 	for (auto& [profileHome, service] : services) {
 		if (service) service->Stop();
 	}
-} catch (...) {
+} catch (const std::exception&) {
 }
 
 CControlSenpRefreshQueue::CControlSenpRefreshQueue(std::chrono::milliseconds minimumInterval,
@@ -157,7 +157,7 @@ try {
 	}
 	m_admitted.notify_one();
 	return true;
-} catch (...) {
+} catch (const std::exception&) {
 	return false;
 }
 
@@ -196,7 +196,7 @@ try {
 	}
 	if (readmitted) m_admitted.notify_one();
 	m_idle.notify_all();
-} catch (...) {
+} catch (const std::exception&) {
 }
 
 bool CControlSenpRefreshQueue::WaitForIdle(std::uint32_t timeoutMilliseconds)
@@ -217,7 +217,7 @@ try {
 	}
 	m_admitted.notify_all();
 	m_idle.notify_all();
-} catch (...) {
+} catch (const std::exception&) {
 }
 
 CControlSenpAuthorityGate::CControlSenpAuthorityGate(
@@ -255,42 +255,42 @@ CControlSenpProfileSource::~CControlSenpProfileSource()
 std::shared_ptr<senp::github::CGhConnectionLifecycle> CControlSenpProfileSource::Connection(
 	std::wstring_view profileId)
 try {
-	std::lock_guard lock(m_mutex);
+	std::lock_guard lock(*m_mutex);
 	if (m_closed) return nullptr;
 	const auto found = m_profiles.find(profileId);
-	return found == m_profiles.end() ? nullptr : found->second.connection;
-} catch (...) {
+	return found == m_profiles.end() ? nullptr : found->second.Connection();
+} catch (const std::exception&) {
 	return nullptr;
 }
 
 std::optional<senp::github::GhSelectedRepository> CControlSenpProfileSource::Repository(
 	std::wstring_view profileId)
 try {
-	std::lock_guard lock(m_mutex);
+	std::lock_guard lock(*m_mutex);
 	if (m_closed) return std::nullopt;
 	const auto found = m_profiles.find(profileId);
-	return found == m_profiles.end() ? std::nullopt : found->second.repository;
-} catch (...) {
+	return found == m_profiles.end() ? std::nullopt : found->second.Repository();
+} catch (const std::exception&) {
 	return std::nullopt;
 }
 
 std::shared_ptr<senp::github::CGhConnectionLifecycle> CControlSenpProfileSource::Adopt(
 	const std::wstring& profileId)
 try {
-	std::lock_guard lock(m_mutex);
+	std::lock_guard lock(*m_mutex);
 	if (m_closed || !m_grants || !m_platform || m_configurationDirectory.empty()) return nullptr;
 	if (const auto found = m_profiles.find(profileId); found != m_profiles.end()) {
-		if (found->second.connection) return found->second.connection;
-		found->second.connection = std::make_shared<senp::github::CGhConnectionLifecycle>(
-			m_platform, *m_grants, profileId, m_configurationDirectory);
-		return found->second.connection;
+		if (found->second.Connection()) return found->second.Connection();
+		found->second.SetConnection(std::make_shared<senp::github::CGhConnectionLifecycle>(
+			m_platform, *m_grants, profileId, m_configurationDirectory));
+		return found->second.Connection();
 	}
 	if (m_profiles.size() >= MaximumProfiles()) return nullptr;
 	auto connection = std::make_shared<senp::github::CGhConnectionLifecycle>(
 		m_platform, *m_grants, profileId, m_configurationDirectory);
 	m_profiles.emplace(profileId, Profile{ connection, std::nullopt });
 	return connection;
-} catch (...) {
+} catch (const std::exception&) {
 	return nullptr;
 }
 
@@ -298,33 +298,33 @@ EControlSenpRpcStatus CControlSenpProfileSource::AdoptWorkspace(const SenpWorksp
 try {
 	std::vector<std::wstring> changed;
 	{
-		std::lock_guard lock(m_mutex);
+		std::lock_guard lock(*m_mutex);
 		if (m_closed) return EControlSenpRpcStatus::Closed;
 		const auto held = std::ranges::find_if(m_adoptions,
-			[&](const Adoption& existing) { return existing.connection == adoption.connection; });
+			[&](const Adoption& existing) { return existing.Connection() == adoption.Connection(); });
 		if (held != m_adoptions.end()) {
 			// Re-declaring what this connection already declared is not a change.
 			// Answering it with work would let a reconnecting editor drive the
 			// worker by saying the same thing again.
-			if (held->profileId == adoption.profileId && held->workspace == adoption.workspace) {
+			if (held->ProfileId() == adoption.ProfileId() && held->Workspace() == adoption.Workspace()) {
 				return EControlSenpRpcStatus::Succeeded;
 			}
 			// A connection that moves to another profile changes both: the one it
 			// leaves loses a declaration the resolution was still counting.
-			if (held->profileId != adoption.profileId) changed.push_back(held->profileId);
-			held->profileId = adoption.profileId;
-			held->workspace = adoption.workspace;
+			if (held->ProfileId() != adoption.ProfileId()) changed.push_back(held->ProfileId());
+			held->SetProfileId(adoption.ProfileId());
+			held->SetWorkspace(adoption.Workspace());
 		} else {
 			if (m_adoptions.size() >= MaximumAdoptions()) {
 				return EControlSenpRpcStatus::ResourceExhausted;
 			}
-			m_adoptions.push_back({ adoption.connection, adoption.profileId, adoption.workspace });
+			m_adoptions.push_back({ adoption.Connection(), adoption.ProfileId(), adoption.Workspace() });
 		}
-		changed.push_back(adoption.profileId);
+		changed.push_back(adoption.ProfileId());
 	}
 	Resolve(changed);
 	return EControlSenpRpcStatus::Succeeded;
-} catch (...) {
+} catch (const std::exception&) {
 	return EControlSenpRpcStatus::Unavailable;
 }
 
@@ -332,40 +332,40 @@ void CControlSenpProfileSource::WithdrawWorkspace(const SenpConnectionIdentity& 
 try {
 	std::vector<std::wstring> changed;
 	{
-		std::lock_guard lock(m_mutex);
+		std::lock_guard lock(*m_mutex);
 		// Not guarded by m_closed: a closed source has already dropped every
 		// declaration, so there is nothing left for this to leave behind.
 		const auto held = std::ranges::find_if(m_adoptions,
-			[&](const Adoption& existing) { return existing.connection == connection; });
+			[&](const Adoption& existing) { return existing.Connection() == connection; });
 		if (held == m_adoptions.end()) return;
-		changed.push_back(held->profileId);
+		changed.push_back(held->ProfileId());
 		m_adoptions.erase(held);
 	}
 	// The profile keeps answering the withdrawn repository until this resolves,
 	// which is why a withdrawal admits work rather than only forgetting.
 	Resolve(changed);
-} catch (...) {
+} catch (const std::exception&) {
 }
 
 std::optional<ControlSenpRpcWorkspace> CControlSenpProfileSource::DeclaredWorkspace(
 	std::wstring_view profileId) const
 try {
-	std::lock_guard lock(m_mutex);
+	std::lock_guard lock(*m_mutex);
 	if (m_closed) return std::nullopt;
 	std::optional<ControlSenpRpcWorkspace> agreed;
 	for (const auto& adoption : m_adoptions) {
-		if (adoption.profileId != profileId) continue;
+		if (adoption.ProfileId() != profileId) continue;
 		if (!agreed) {
-			agreed = adoption.workspace;
+			agreed = adoption.Workspace();
 			continue;
 		}
-		if (agreed->folders != adoption.workspace.folders) return std::nullopt;
+		if (agreed->Folders() != adoption.Workspace().Folders()) return std::nullopt;
 		// The same workspace observed by two windows at different times. The
 		// newer observation is the one a staleness check has to be made against.
-		if (adoption.workspace.revision > agreed->revision) agreed = adoption.workspace;
+		if (adoption.Workspace().Revision() > agreed->Revision()) agreed = adoption.Workspace();
 	}
 	return agreed;
-} catch (...) {
+} catch (const std::exception&) {
 	return std::nullopt;
 }
 
@@ -375,51 +375,51 @@ try {
 	for (const auto& profileId : profileIds) {
 		(void)m_refresh->RequestChanged(profileId);
 	}
-} catch (...) {
+} catch (const std::exception&) {
 }
 
 void CControlSenpProfileSource::PublishRepository(const std::wstring& profileId,
 	std::optional<senp::github::GhSelectedRepository> repository)
 try {
-	std::lock_guard lock(m_mutex);
+	std::lock_guard lock(*m_mutex);
 	if (m_closed) return;
 	if (const auto found = m_profiles.find(profileId); found != m_profiles.end()) {
-		found->second.repository = std::move(repository);
+		found->second.SetRepository(std::move(repository));
 		return;
 	}
 	if (!repository || m_profiles.size() >= MaximumProfiles()) return;
 	m_profiles.emplace(profileId, Profile{ nullptr, std::move(repository) });
-} catch (...) {
+} catch (const std::exception&) {
 }
 
 void CControlSenpProfileSource::Withdraw(std::wstring_view profileId) noexcept
 try {
 	std::shared_ptr<senp::github::CGhConnectionLifecycle> connection;
 	{
-		std::lock_guard lock(m_mutex);
+		std::lock_guard lock(*m_mutex);
 		const auto found = m_profiles.find(profileId);
 		if (found == m_profiles.end()) return;
-		connection = std::move(found->second.connection);
+		connection = found->second.Connection();
 		m_profiles.erase(found);
 	}
 	if (connection) connection->Close();
-} catch (...) {
+} catch (const std::exception&) {
 }
 
 void CControlSenpProfileSource::Close() noexcept
 try {
 	std::map<std::wstring, Profile, std::less<>> profiles;
 	{
-		std::lock_guard lock(m_mutex);
+		std::lock_guard lock(*m_mutex);
 		if (m_closed) return;
 		m_closed = true;
 		profiles.swap(m_profiles);
 		m_adoptions.clear();
 	}
 	for (auto& [profileId, profile] : profiles) {
-		if (profile.connection) profile.connection->Close();
+		if (profile.Connection()) profile.Connection()->Close();
 	}
-} catch (...) {
+} catch (const std::exception&) {
 }
 
 CControlSenpComposition::CControlSenpComposition(ControlSenpCompositionOptions options,
@@ -427,9 +427,9 @@ CControlSenpComposition::CControlSenpComposition(ControlSenpCompositionOptions o
 	ControlSenpCompositionDependencies dependencies) :
 	m_options(Normalize(std::move(options))),
 	m_profileRegistry(std::move(profiles)),
-	m_toolPlatform(dependencies.toolPlatform ? dependencies.toolPlatform
+	m_toolPlatform(dependencies.ToolPlatform() ? dependencies.ToolPlatform()
 		: std::make_shared<const senp::github::CWindowsGhToolPlatform>()),
-	m_packages(dependencies.packages ? dependencies.packages
+	m_packages(dependencies.Packages() ? dependencies.Packages()
 		: std::make_shared<CControlSenpPackageSource>()),
 	m_authority(std::make_shared<senp::CSenpControlPackageAuthority>()),
 	m_refresh(std::make_shared<CControlSenpRefreshQueue>(
@@ -437,15 +437,15 @@ CControlSenpComposition::CControlSenpComposition(ControlSenpCompositionOptions o
 	m_grants(std::make_shared<senp::CSenpToolGrants>(
 		std::make_shared<CControlSenpAuthorityGate>(m_authority, m_refresh))),
 	m_profiles(std::make_shared<CControlSenpProfileSource>(m_grants,
-		dependencies.connectionPlatform ? dependencies.connectionPlatform
+		dependencies.ConnectionPlatform() ? dependencies.ConnectionPlatform()
 			: std::make_shared<senp::github::CWindowsGhConnectionPlatform>(
-				m_toolPlatform, m_options.workingDirectory),
-		m_options.ghConfigurationDirectory, m_refresh)),
+				m_toolPlatform, m_options.WorkingDirectory()),
+		m_options.GhConfigurationDirectory(), m_refresh)),
 	m_executor(std::make_shared<senp::github::CSenpGitHubToolExecutor>(
-		m_toolPlatform, m_profiles, m_options.workingDirectory)),
+		m_toolPlatform, m_profiles, m_options.WorkingDirectory())),
 	m_handler(std::make_shared<CControlSenpBroker>(m_grants, m_executor)),
-	m_policy(m_toolPlatform, m_options.workingDirectory),
-	m_repositories(dependencies.repositoryPlatform ? dependencies.repositoryPlatform
+	m_policy(m_toolPlatform, m_options.WorkingDirectory()),
+	m_repositories(dependencies.RepositoryPlatform() ? dependencies.RepositoryPlatform()
 		: std::make_shared<const senp::github::CWindowsGhLocalRepositoryPlatform>())
 {
 	m_worker = std::thread([this]() noexcept { Run(); });
@@ -498,7 +498,7 @@ try {
 	if (m_authority) m_authority->Close();
 	if (m_profiles) m_profiles->Close();
 	if (m_packages) m_packages->Close();
-} catch (...) {
+} catch (const std::exception&) {
 }
 
 void CControlSenpComposition::Run() noexcept
@@ -508,7 +508,7 @@ void CControlSenpComposition::Run() noexcept
 		if (!profileId) return;
 		try {
 			Refresh(*profileId);
-		} catch (...) {
+		} catch (const std::exception&) {
 			// A refresh that failed leaves the profile without a published table,
 			// which refuses grants. It never leaves a stale table admitting them.
 		}
@@ -547,7 +547,7 @@ void CControlSenpComposition::Refresh(const std::wstring& profileId)
 	if (!published.Succeeded()) {
 		// Stale keeps the newer table already published, and the grants that
 		// match it. Every other refusal has withdrawn the table.
-		if (published.status != senp::ESenpPackageAuthorityPublishStatus::Stale) {
+		if (published.Status() != senp::ESenpPackageAuthorityPublishStatus::Stale) {
 			m_grants->RevokeProfile(profileId);
 		}
 		return;
@@ -560,8 +560,8 @@ std::optional<std::wstring> CControlSenpComposition::ResolveProfileHome(const st
 	const profiles::UserDataProfileRegistrySnapshot& registry) const
 {
 	profiles::UserDataProfileBootstrapRequest request{
-		.controlAuthority = { m_options.controlAuthorityId, m_options.controlAuthorityGeneration },
-		.controlProfileRoot = m_options.controlProfileRoot,
+		.controlAuthority = { m_options.ControlAuthorityId(), m_options.ControlAuthorityGeneration() },
+		.controlProfileRoot = m_options.ControlProfileRoot(),
 		.resourceRootMode = profiles::UserDataProfileResourceRootMode::ProfileIdNamespace,
 	};
 	request.selection.explicitProfileId = profileId;
@@ -587,13 +587,13 @@ void CControlSenpComposition::RefreshRepository(const std::wstring& profileId)
 	// either: the registry has no per-window granularity, so one association set
 	// could only mix the folders of every window that shares this profile.
 	const auto declared = m_profiles->DeclaredWorkspace(profileId);
-	if (!declared || declared->folders.empty()) {
+	if (!declared || declared->Folders().empty()) {
 		m_profiles->PublishRepository(profileId, std::nullopt);
 		return;
 	}
 	config::WorkspaceContextSnapshot workspace;
-	workspace.folders.reserve(declared->folders.size());
-	for (const auto& folder : declared->folders) {
+	workspace.folders.reserve(declared->Folders().size());
+	for (const auto& folder : declared->Folders()) {
 		// The wire carries URI text, so an unparseable folder is a declaration
 		// the control side cannot act on. It takes the whole workspace with it:
 		// resolving the folders that did parse would answer for a workspace no
@@ -608,8 +608,8 @@ void CControlSenpComposition::RefreshRepository(const std::wstring& profileId)
 		// verified against the real remotes rather than trusted.
 		workspace.folders.push_back(config::WorkspaceFolderDescriptor{ std::move(*uri.value), {} });
 	}
-	workspace.generation = declared->generation;
-	workspace.revision = declared->revision;
+	workspace.generation = declared->Generation();
+	workspace.revision = declared->Revision();
 	workspace.kind = workspace.folders.size() == 1 ? config::EWorkspaceKind::Folder
 		: config::EWorkspaceKind::Workspace;
 	const auto captured = m_repositories.Capture(workspace, nullptr);
@@ -626,7 +626,7 @@ void CControlSenpComposition::RefreshConnection(const std::wstring& profileId)
 	auto connection = m_profiles->Adopt(profileId);
 	if (!connection) return;
 	if (connection->Snapshot().State() == senp::github::GhConnectionState::Connected) return;
-	auto attempt = connection->Begin(m_options.hostname, std::nullopt);
+	auto attempt = connection->Begin(m_options.Hostname(), std::nullopt);
 	if (!attempt) return;
 	// Probing runs `gh --version`; it belongs on this worker and never on a frame.
 	if (!m_probe || m_probe->Status() != senp::github::GhToolAvailability::Available) {
@@ -642,7 +642,7 @@ try {
 	m_authority->Withdraw(profileId);
 	m_grants->RevokeProfile(profileId);
 	m_profiles->Withdraw(profileId);
-} catch (...) {
+} catch (const std::exception&) {
 }
 
 } // namespace platform::controlipc

@@ -114,10 +114,12 @@ constexpr std::wstring_view kStepQueued = L"resources/icons/steps/step_queued.sv
 
 TEST(GitHubActionsStatusIcons, OnlyTheImportedPathsResolve)
 {
-	EXPECT_EQ(github_actions::StatusIcons().size(), 14U);
+	// Eight run states, six step states, and the job-log action glyph.
+	EXPECT_EQ(github_actions::StatusIcons().size(), 15U);
+	EXPECT_FALSE(github_actions::FindStatusIcon(L"resources/icons/light/logs.svg").empty());
 	for (const auto& entry : github_actions::StatusIcons()) {
-		EXPECT_TRUE(github_actions::IsIconPath(entry.name));
-		EXPECT_FALSE(github_actions::FindStatusIcon(entry.name).empty()) << std::wstring(entry.name);
+		EXPECT_TRUE(github_actions::IsIconPath(entry.Name()));
+		EXPECT_FALSE(github_actions::FindStatusIcon(entry.Name()).empty()) << std::wstring(entry.Name());
 	}
 	// A codicon name is not a path, and a path this build did not import
 	// resolves to nothing rather than to a substitute.
@@ -145,8 +147,8 @@ TEST(GitHubActionsStatusIcons, EveryIconDrawsInBothThemesAndRestoresTheDc)
 	for (const bool light : { true, false }) {
 		for (const auto& entry : github_actions::StatusIcons()) {
 			canvas.Clear();
-			EXPECT_TRUE(canvas.Draw(entry.name, light)) << std::wstring(entry.name);
-			EXPECT_FALSE(canvas.Blank()) << std::wstring(entry.name);
+			EXPECT_TRUE(canvas.Draw(entry.Name(), light)) << std::wstring(entry.Name());
+			EXPECT_FALSE(canvas.Blank()) << std::wstring(entry.Name());
 			EXPECT_EQ(::GetGraphicsMode(canvas.Dc()), GM_COMPATIBLE);
 			EXPECT_EQ(::GetPolyFillMode(canvas.Dc()), ALTERNATE);
 		}

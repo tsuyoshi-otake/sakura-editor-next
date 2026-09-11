@@ -20,10 +20,10 @@ using SenpWindowOwnerTargetFactory = std::function<std::unique_ptr<ISenpOwnerPro
 class CSenpWindowExtensions final {
 public:
 	CSenpWindowExtensions(layout::WorkbenchContributionRegistry& catalog,
-		viewcontainer::CViewContainerPages& pages, HWND parkingParent,
+		viewcontainer::CViewContainerPages& pages,
 		std::wstring hostExecutable, SenpWindowOwnerTargetFactory createTarget,
 		std::function<bool(std::string_view)> requestFocus,
-		senp::EffectRuntimeFactory runtimeFactory = {});
+		senp::EffectRuntimeFactory runtimeFactory);
 	~CSenpWindowExtensions();
 	CSenpWindowExtensions(const CSenpWindowExtensions&) = delete;
 	CSenpWindowExtensions& operator=(const CSenpWindowExtensions&) = delete;

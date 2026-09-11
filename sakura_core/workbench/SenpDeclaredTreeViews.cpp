@@ -230,8 +230,6 @@ struct CSenpDeclaredTreeViews::Impl final : std::enable_shared_from_this<Impl> {
 	std::map<std::wstring, std::shared_ptr<Slot>, std::less<>> slots;
 	SenpDeclaredViewActivation request;
 	std::optional<senp::ContributionOwnerIdentity> bindingOwner;
-	//! The bound generation's providers, for title actions. Empty while unbound.
-	std::map<std::wstring, std::shared_ptr<tree::SenpTreeProvider>, std::less<>> providers;
 	Activation activation{ Activation::Dormant };
 	bool closed{}, failed{}, projecting{};
 	bool Project() noexcept
@@ -249,6 +247,20 @@ struct CSenpDeclaredTreeViews::Impl final : std::enable_shared_from_this<Impl> {
 		closed = true; request = {}; bindingOwner.reset(); providers.clear();
 		for (const auto& [id, slot] : slots) slot->Close();
 	}
+	//! Swaps in the bound generation's providers (for title actions), releasing
+	//! whatever the previous generation held.
+	void SwapProviders(std::map<std::wstring, std::shared_ptr<tree::SenpTreeProvider>, std::less<>>& other) noexcept
+	{ providers.swap(other); }
+	void ClearProviders() noexcept { providers.clear(); }
+	bool ExecuteProviderCommand(const std::wstring& viewId, const std::wstring& commandId) const
+	{
+		const auto provider = providers.find(viewId);
+		return provider != providers.end() && provider->second->ExecuteViewCommand(commandId);
+	}
+
+private:
+	//! The bound generation's providers, for title actions. Empty while unbound.
+	std::map<std::wstring, std::shared_ptr<tree::SenpTreeProvider>, std::less<>> providers;
 };
 
 class CSenpDeclaredTreeViews::Body final : public viewcontainer::ISenpViewBody {
@@ -329,7 +341,7 @@ public:
 		const auto state = m_state.lock();
 		state->bindingOwner = std::move(m_commitOwner);
 		for (auto& [id, body] : m_bodies) state->slots.find(id)->second->pending = std::move(body);
-		state->providers.swap(m_providers);
+		state->SwapProviders(m_providers);
 		m_committed = true; return true;
 	}
 	bool Pump() noexcept override
@@ -342,7 +354,7 @@ public:
 		if (m_closed) return;
 		m_closed = true;
 		const auto state = m_state.lock();
-		if (m_committed && state && state->bindingOwner == m_owner) { state->bindingOwner.reset(); state->providers.clear(); }
+		if (m_committed && state && state->bindingOwner == m_owner) { state->bindingOwner.reset(); state->ClearProviders(); }
 		m_bodies.clear(); m_providers.clear();
 	}
 private:
@@ -370,7 +382,10 @@ std::shared_ptr<CSenpDeclaredTreeViews> CSenpDeclaredTreeViews::Create(std::wstr
 			if (!state->slots.emplace(*id, std::move(slot)).second) return {};
 		}
 		return std::shared_ptr<CSenpDeclaredTreeViews>(new CSenpDeclaredTreeViews(std::move(state)));
-	} catch (...) { return {}; }
+	} catch (const std::exception&) {
+		// Only std container/allocation work above can throw; no callback runs here.
+		return {};
+	}
 }
 std::unique_ptr<viewcontainer::ISenpViewBody> CSenpDeclaredTreeViews::CreateBody(
 	std::wstring_view viewId, viewcontainer::SenpViewBodyHost host) noexcept
@@ -403,9 +418,12 @@ bool CSenpDeclaredTreeViews::ExecuteTitleCommand(std::string_view viewId, std::s
 		const auto view = commands::json::ToWideStrict(std::string(viewId));
 		const auto command = commands::json::ToWideStrict(std::string(commandId));
 		if (!view || !command) return false;
-		const auto provider = m_impl->providers.find(*view);
-		return provider != m_impl->providers.end() && provider->second->ExecuteViewCommand(*command);
-	} catch (...) { return false; }
+		return m_impl->ExecuteProviderCommand(*view, *command);
+	} catch (const std::exception&) {
+		// commands::json::ToWideStrict and the map/string lookups above only ever
+		// throw std exceptions; ExecuteViewCommand is a same-process provider call.
+		return false;
+	}
 }
 bool CSenpDeclaredTreeViews::IsUsable() const noexcept { return !m_impl->closed && !m_impl->failed; }
 void CSenpDeclaredTreeViews::Close() noexcept { m_impl->Close(); }

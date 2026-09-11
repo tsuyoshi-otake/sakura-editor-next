@@ -6,6 +6,7 @@
 #include <sakura/serialization/JsoncDocument.h>
 
 #include <algorithm>
+#include <exception>
 #include <limits>
 #include <mutex>
 
@@ -251,6 +252,12 @@ private:
 			::SecureZeroMemory(token.data(), token.size() * sizeof(wchar_t));
 			return result;
 		} catch (...) {
+			// This catch stays unnarrowed: `token` is a plain std::wstring holding
+			// a live credential, not a RAII SensitiveToken, so nothing zeroes its
+			// backing memory during stack unwinding. Catching only
+			// std::exception would let a non-standard exception type propagate
+			// past this scope with the secret still resident; the unconditional
+			// catch is what makes the explicit SecureZeroMemory below unconditional too.
 			::SecureZeroMemory(token.data(), token.size() * sizeof(wchar_t));
 			return { platform::process::EBoundedProcessStatus::InvalidRequest, -1, {}, {} };
 		}
@@ -420,7 +427,7 @@ try {
 	return { GhConnectionTerminal::Succeeded,
 		GhAccountIdentity(std::wstring(hostname), *verifiedLogin, selected->TokenSource(),
 			std::wstring(configurationDirectory)), std::move(credential) };
-} catch (...) {
+} catch (const std::exception&) {
 	return { GhConnectionTerminal::Failed, std::nullopt, {} };
 }
 
@@ -481,7 +488,7 @@ GhConnectionOperationResult CGhConnectionLifecycle::Complete(
 	try {
 		checked = m_platform->Check(probe, m_configurationDirectory, attempt.m_hostname,
 			attempt.m_requestedLogin ? std::optional<std::wstring_view>(*attempt.m_requestedLogin) : std::nullopt, stop);
-	} catch (...) {
+	} catch (const std::exception&) {
 		checked = { GhConnectionTerminal::Failed, std::nullopt, {} };
 	}
 	bool revoke{};

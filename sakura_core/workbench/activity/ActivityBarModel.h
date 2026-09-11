@@ -80,11 +80,18 @@ struct ActivityBarEntry {
 	`TextBadge`, and `ProgressBadge`; a producer that needs one of those must add
 	the kind explicitly rather than approximating it with a number.
 */
-struct ActivityBarNumberBadge {
+class ActivityBarNumberBadge {
+public:
+	constexpr ActivityBarNumberBadge() noexcept = default;
 	//! Upstream hides the badge entirely at zero or below, so a count of 0 is not
 	//! a badge reading "0" -- callers publish `std::nullopt` for "nothing to show".
-	int number = 0;
+	constexpr explicit ActivityBarNumberBadge(int number) noexcept : number_(number) {}
+
+	[[nodiscard]] constexpr int Number() const noexcept { return number_; }
 	[[nodiscard]] constexpr bool operator==(const ActivityBarNumberBadge&) const noexcept = default;
+
+private:
+	int number_ = 0;
 };
 
 /*!

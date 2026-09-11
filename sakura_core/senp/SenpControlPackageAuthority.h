@@ -40,16 +40,27 @@ enum class ESenpPackageAuthorityPublishStatus : std::uint8_t {
 	Closed,
 };
 
-//! Result of one publish. approved counts the owners that hold at least one
+//! Result of one publish. Approved() counts the owners that hold at least one
 //! tool capability; it is not the extension count of the snapshot.
 struct SenpPackageAuthorityPublishResult final {
-	ESenpPackageAuthorityPublishStatus status = ESenpPackageAuthorityPublishStatus::Unverified;
-	std::uint64_t revision = 0;
-	std::size_t approved = 0;
+	constexpr SenpPackageAuthorityPublishResult(ESenpPackageAuthorityPublishStatus status,
+		std::uint64_t revision = 0, std::size_t approved = 0) noexcept
+		: m_status(status), m_revision(revision), m_approved(approved)
+	{
+	}
+
+	[[nodiscard]] constexpr ESenpPackageAuthorityPublishStatus Status() const noexcept { return m_status; }
+	[[nodiscard]] constexpr std::uint64_t Revision() const noexcept { return m_revision; }
+	[[nodiscard]] constexpr std::size_t Approved() const noexcept { return m_approved; }
 	[[nodiscard]] bool Succeeded() const noexcept
 	{
-		return status == ESenpPackageAuthorityPublishStatus::Published;
+		return m_status == ESenpPackageAuthorityPublishStatus::Published;
 	}
+
+private:
+	ESenpPackageAuthorityPublishStatus m_status;
+	std::uint64_t m_revision;
+	std::size_t m_approved;
 };
 
 /*!
@@ -95,16 +106,51 @@ public:
 	[[nodiscard]] std::size_t Size() const noexcept;
 
 private:
-	struct Owner final {
-		std::wstring packageDigest;
-		SenpToolCapability capabilities = SenpToolCapability::None;
-	};
-	struct Profile final {
-		std::uint64_t revision = 0;
-		std::map<std::wstring, Owner, std::less<>> owners;
+	//! Holds one approved owner's identity proof. Immutable once constructed:
+	//! an owner's digest/capabilities never change without a whole new Publish.
+	class Owner final {
+	public:
+		Owner(std::wstring packageDigest, SenpToolCapability capabilities) noexcept
+			: m_packageDigest(std::move(packageDigest)), m_capabilities(capabilities)
+		{
+		}
+
+		[[nodiscard]] const std::wstring& PackageDigest() const noexcept { return m_packageDigest; }
+		[[nodiscard]] SenpToolCapability Capabilities() const noexcept { return m_capabilities; }
+
+	private:
+		std::wstring m_packageDigest;
+		SenpToolCapability m_capabilities;
 	};
 
-	mutable std::mutex m_mutex;
+	//! Holds one profile's published table. AddOwner()/erase mutate it only
+	//! while a Publish is still building or replacing it under m_mutex.
+	class Profile final {
+	public:
+		explicit Profile(std::uint64_t revision) noexcept : m_revision(revision) {}
+
+		[[nodiscard]] std::uint64_t Revision() const noexcept { return m_revision; }
+		[[nodiscard]] std::size_t OwnerCount() const noexcept { return m_owners.size(); }
+		[[nodiscard]] const Owner* FindOwner(std::wstring_view extensionId) const
+		{
+			const auto found = m_owners.find(extensionId);
+			return found == m_owners.end() ? nullptr : &found->second;
+		}
+		//! Returns false when extensionId already names an owner in this table.
+		[[nodiscard]] bool AddOwner(std::wstring_view extensionId, Owner owner)
+		{
+			return m_owners.emplace(std::wstring(extensionId), std::move(owner)).second;
+		}
+
+	private:
+		std::uint64_t m_revision;
+		std::map<std::wstring, Owner, std::less<>> m_owners;
+	};
+
+	//! Guards m_profiles/m_closed. Held through an owned indirection rather
+	//! than a `mutable` member so const readers (Resolve/Revision/Size) can
+	//! lock it without granting themselves mutable access to anything else.
+	std::unique_ptr<std::mutex> m_mutex = std::make_unique<std::mutex>();
 	std::map<std::wstring, Profile, std::less<>> m_profiles;
 	bool m_closed = false;
 };

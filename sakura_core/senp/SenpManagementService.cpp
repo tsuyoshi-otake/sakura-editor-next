@@ -22,11 +22,27 @@ namespace {
 
 using platform::serialization::JsoncValue;
 
-struct BuiltInResource final {
-	std::wstring_view id;
-	int packageResource;
-	int hashResource;
-	bool installedByDefault;
+//! One embedded built-in package's resource identity. Immutable once
+//! constructed: the table below is the sole source of this mapping.
+class BuiltInResource final {
+public:
+	constexpr BuiltInResource(std::wstring_view id, int packageResource, int hashResource,
+		bool installedByDefault) noexcept
+		: m_id(id), m_packageResource(packageResource), m_hashResource(hashResource),
+		m_installedByDefault(installedByDefault)
+	{
+	}
+
+	[[nodiscard]] constexpr std::wstring_view Id() const noexcept { return m_id; }
+	[[nodiscard]] constexpr int PackageResource() const noexcept { return m_packageResource; }
+	[[nodiscard]] constexpr int HashResource() const noexcept { return m_hashResource; }
+	[[nodiscard]] constexpr bool InstalledByDefault() const noexcept { return m_installedByDefault; }
+
+private:
+	std::wstring_view m_id;
+	int m_packageResource;
+	int m_hashResource;
+	bool m_installedByDefault;
 };
 
 // Keep this table as the package-management boundary for built-ins. Adding a
@@ -484,25 +500,26 @@ std::optional<ViewItemMenuContribution> ViewItemWhen(std::wstring_view when)
 				auto pattern = TrimAsciiSpace(clause.substr(2));
 				if (pattern.size() < 2 || pattern.front() != L'/' || pattern.back() != L'/') return std::nullopt;
 				pattern = pattern.substr(1, pattern.size() - 2);
-				if (!token(pattern) || std::ranges::find(parsed.contains, pattern) != parsed.contains.end()) return std::nullopt;
-				parsed.contains.emplace_back(pattern);
+				if (!token(pattern) || std::ranges::find(parsed.Contains(), pattern) != parsed.Contains().end())
+					return std::nullopt;
+				parsed.AddContains(std::wstring(pattern));
 			} else if (clause.starts_with(L"==")) {
 				const auto value = TrimAsciiSpace(clause.substr(2));
-				if (!token(value) || std::ranges::find(parsed.equals, value) != parsed.equals.end()) return std::nullopt;
-				parsed.equals.emplace_back(value);
+				if (!token(value) || std::ranges::find(parsed.Equals(), value) != parsed.Equals().end()) return std::nullopt;
+				parsed.AddEquals(std::wstring(value));
 			} else return std::nullopt;
 		} else {
 			if (!clause.starts_with(L"view")) return std::nullopt;
 			clause = TrimAsciiSpace(clause.substr(4));
 			if (!clause.starts_with(L"==")) return std::nullopt;
 			const auto view = TrimAsciiSpace(clause.substr(2));
-			if (!ValidEffectIdentifier(view) || !parsed.views.empty()) return std::nullopt;
-			parsed.views.emplace_back(view);
+			if (!ValidEffectIdentifier(view) || !parsed.Views().empty()) return std::nullopt;
+			parsed.AddView(std::wstring(view));
 		}
 		if (split == std::wstring_view::npos) break;
 		start = split + 2;
 	}
-	if (parsed.contains.empty() && parsed.equals.empty()) return std::nullopt;
+	if (parsed.Contains().empty() && parsed.Equals().empty()) return std::nullopt;
 	return parsed;
 }
 
@@ -543,7 +560,7 @@ bool ParseRuntimeContribution(const JsoncValue::Object& manifest,
 		const auto* title = StringMember(*object, L"title");
 		if (!command || command->empty() || command->size() > 160 || !title || title->empty() || title->size() > 160
 			|| (icon && !ValidThemeIcon(*icon) && !ValidPackageImagePath(*icon))
-			|| std::ranges::any_of(target.commands, [&](const auto& prior) { return prior.command == *command; })) return false;
+			|| std::ranges::any_of(target.commands, [&](const auto& prior) { return prior.Command() == *command; })) return false;
 		target.commands.push_back({ *command, *title, icon ? *icon : std::wstring{} });
 	}
 	const auto menusMember = contributes.find(L"menus");
@@ -565,19 +582,20 @@ bool ParseRuntimeContribution(const JsoncValue::Object& manifest,
 			const auto* command = StringMember(*object, L"command");
 			const auto* when = StringMember(*object, L"when");
 			const auto* group = StringMember(*object, L"group");
-			const auto declared = command ? std::ranges::find(target.commands, *command, &CommandContribution::command)
+			const auto declared = command ? std::ranges::find(target.commands, *command, &CommandContribution::Command)
 				: target.commands.end();
-			if (declared == target.commands.end() || declared->icon.empty() || !when || !group || *group != L"inline")
+			if (declared == target.commands.end() || declared->Icon().empty() || !when || !group || *group != L"inline")
 				return false;
 			auto item = ViewItemWhen(*when);
 			if (!item) return false;
 			// One command appears once per View; an item without a View clause covers all of them.
-			for (const auto& prior : target.viewItemContext) {
-				if (prior.command == *command && (prior.views.empty() || item->views.empty() || prior.views == item->views))
+			for (const auto& prior : target.ViewItemContext()) {
+				if (prior.Command() == *command
+					&& (prior.Views().empty() || item->Views().empty() || prior.Views() == item->Views()))
 					return false;
 			}
-			item->command = *command;
-			target.viewItemContext.push_back(std::move(*item));
+			item->SetCommand(*command);
+			target.AddViewItemContext(std::move(*item));
 		}
 	}
 	if (!viewTitle) return true;
@@ -587,19 +605,21 @@ bool ParseRuntimeContribution(const JsoncValue::Object& manifest,
 		const auto* command = StringMember(*object, L"command");
 		const auto* when = StringMember(*object, L"when");
 		const auto* group = StringMember(*object, L"group");
-		const auto declared = command ? std::ranges::find(target.commands, *command, &CommandContribution::command)
+		const auto declared = command ? std::ranges::find(target.commands, *command, &CommandContribution::Command)
 			: target.commands.end();
 		// A title button draws a codicon only; a package image path is an inline row action's.
-		if (declared == target.commands.end() || !ValidThemeIcon(declared->icon) || !when || !group || *group != L"navigation")
+		if (declared == target.commands.end() || !ValidThemeIcon(declared->Icon()) || !when || !group
+			|| *group != L"navigation")
 			return false;
 		auto views = ViewTitleWhenViews(*when);
 		if (!views) return false;
 		for (const auto& view : *views) {
-			for (const auto& prior : target.viewTitle) {
-				if (prior.command == *command && std::ranges::find(prior.views, view) != prior.views.end()) return false;
+			for (const auto& prior : target.ViewTitle()) {
+				if (prior.Command() == *command && std::ranges::find(prior.Views(), view) != prior.Views().end())
+					return false;
 			}
 		}
-		target.viewTitle.push_back({ *command, std::move(*views) });
+		target.AddViewTitle(ViewTitleMenuContribution(*command, std::move(*views)));
 	}
 	return true;
 }
@@ -790,22 +810,22 @@ struct StagedBuiltInPackage final {
 std::optional<StagedBuiltInPackage> StageBuiltInPackage(
 	const BuiltInResource& builtIn, std::wstring_view installRoot, std::wstring& diagnostic)
 {
-	const auto package = EmbeddedResource(builtIn.packageResource);
-	const auto hashBytes = EmbeddedResource(builtIn.hashResource);
+	const auto package = EmbeddedResource(builtIn.PackageResource());
+	const auto hashBytes = EmbeddedResource(builtIn.HashResource());
 	if (!package || !hashBytes) {
-		diagnostic = L"Built-in SENP resources are missing: " + std::wstring(builtIn.id);
+		diagnostic = L"Built-in SENP resources are missing: " + std::wstring(builtIn.Id());
 		return std::nullopt;
 	}
 	std::string hash(reinterpret_cast<const char*>(hashBytes->data()), hashBytes->size());
 	while (!hash.empty() && (hash.back() == '\r' || hash.back() == '\n')) hash.pop_back();
 	if (hash.size() != 64) {
-		diagnostic = L"Built-in SENP hash resource is invalid: " + std::wstring(builtIn.id);
+		diagnostic = L"Built-in SENP hash resource is invalid: " + std::wstring(builtIn.Id());
 		return std::nullopt;
 	}
 	const auto staging = std::filesystem::path(installRoot) / L"staging"
-		/ (std::wstring(builtIn.id) + L"." + std::to_wstring(::GetCurrentProcessId()) + L".senp");
+		/ (std::wstring(builtIn.Id()) + L"." + std::to_wstring(::GetCurrentProcessId()) + L".senp");
 	if (!WriteBytes(staging, *package)) {
-		diagnostic = L"Built-in SENP package could not be staged: " + std::wstring(builtIn.id);
+		diagnostic = L"Built-in SENP package could not be staged: " + std::wstring(builtIn.Id());
 		return std::nullopt;
 	}
 	return StagedBuiltInPackage{ staging, Utf8ToWide(hash) };
@@ -873,20 +893,20 @@ ManagementOperationResult CWin32SenpManagementService::Start()
 		{
 			std::lock_guard lock(m_mutex);
 			const auto installed = std::ranges::find(m_snapshot.extensions,
-				builtIn.id, &ExtensionDescriptor::id);
+				builtIn.Id(), &ExtensionDescriptor::id);
 			const auto candidate = std::ranges::find(m_builtInCatalog,
-				builtIn.id, &ExtensionDescriptor::id);
+				builtIn.Id(), &ExtensionDescriptor::id);
 			installedAsBuiltIn = installed != m_snapshot.extensions.end() && installed->installed
 				&& installed->builtIn;
 			current = installed != m_snapshot.extensions.end() && installed->installed
 				&& candidate != m_builtInCatalog.end()
 				&& installed->archiveSha256 == candidate->archiveSha256;
 			explicitlyUninstalled = std::ranges::find(m_uninstalledBuiltIns,
-				builtIn.id) != m_uninstalledBuiltIns.end();
+				builtIn.Id()) != m_uninstalledBuiltIns.end();
 		}
 		if (current || explicitlyUninstalled) continue;
-		if (!builtIn.installedByDefault && !installedAsBuiltIn) continue;
-		loaded = InstallBuiltInPackage(builtIn.id);
+		if (!builtIn.InstalledByDefault() && !installedAsBuiltIn) continue;
+		loaded = InstallBuiltInPackage(builtIn.Id());
 		if (!loaded.Succeeded()) return loaded;
 	}
 	return loaded;
@@ -917,7 +937,7 @@ ManagementOperationResult CWin32SenpManagementService::LoadBuiltInCatalog()
 			return { EManagementOperationStatus::Failed, m_snapshot };
 		}
 		auto extension = DecodeBuiltInExtension(inspected.output);
-		if (!extension || extension->id != builtIn.id) {
+		if (!extension || extension->id != builtIn.Id()) {
 			std::lock_guard lock(m_mutex);
 			m_snapshot.state = EManagementState::Failed;
 			++m_snapshot.revision;
@@ -1021,7 +1041,7 @@ ManagementOperationResult CWin32SenpManagementService::InstallBuiltInPackage(
 		return Terminal(IsStopped() ? EManagementOperationStatus::Stopped
 			: EManagementOperationStatus::InvalidRequest);
 	}
-	const auto builtIn = std::ranges::find(kBuiltInResources, extensionId, &BuiltInResource::id);
+	const auto builtIn = std::ranges::find(kBuiltInResources, extensionId, &BuiltInResource::Id);
 	if (builtIn == kBuiltInResources.end()) {
 		return Terminal(EManagementOperationStatus::InvalidRequest,
 			L"The built-in SENP extension is unavailable");
@@ -1060,7 +1080,7 @@ ManagementOperationResult CWin32SenpManagementService::UninstallBuiltInPackage(
 		return Terminal(IsStopped() ? EManagementOperationStatus::Stopped
 			: EManagementOperationStatus::InvalidRequest);
 	}
-	const auto builtIn = std::ranges::find(kBuiltInResources, extensionId, &BuiltInResource::id);
+	const auto builtIn = std::ranges::find(kBuiltInResources, extensionId, &BuiltInResource::Id);
 	if (builtIn == kBuiltInResources.end()) {
 		return Terminal(EManagementOperationStatus::InvalidRequest,
 			L"The built-in SENP extension is unavailable");

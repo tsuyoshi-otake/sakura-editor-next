@@ -30,7 +30,7 @@ bool Id(std::wstring_view id) noexcept
 std::size_t Bytes(const TreeItem& item) noexcept
 {
 	std::size_t units = item.id.size() + item.label.size() + item.description.size() + item.tooltip.size()
-		+ item.icon.size() + item.commandId.size() + item.contextValue.size();
+		+ item.icon.size() + item.commandId.size() + item.ContextValue().size();
 	for (const auto& argument : item.arguments) units += argument.size();
 	return units * sizeof(wchar_t);
 }
@@ -45,6 +45,8 @@ std::size_t Bytes(const TreeNodeSnapshot& node) noexcept
 struct TreeViewModel::Impl {
 	struct Node final { TreeNodeSnapshot value; std::uint64_t pending{}; };
 	struct Pending final { TreeLoadRequest request; TreeLoadKind kind{}; TreeChildrenState previous{}; };
+private:
+	friend class TreeViewModel;
 	Node root;
 	std::map<std::wstring, Node, std::less<>> nodes;
 	std::unordered_map<std::uint64_t, Pending> pending;
@@ -52,6 +54,7 @@ struct TreeViewModel::Impl {
 	std::uint64_t generation{ 1 }, nextTicket{ 1 };
 	std::size_t bytes{};
 	bool closed{};
+public:
 	Impl() { root.value.expanded = true; }
 	Node* Find(std::wstring_view id) { if (id.empty()) return &root; const auto it = nodes.find(id); return it == nodes.end() ? nullptr : &it->second; }
 	const Node* Find(std::wstring_view id) const { return const_cast<Impl*>(this)->Find(id); }
@@ -103,7 +106,7 @@ TreeViewModel::~TreeViewModel() = default;
 bool TreeViewModel::ValidItem(const TreeItem& item) noexcept
 {
 	return Id(item.id) && !item.label.empty() && Text(item.label, 1024) && Text(item.description, 1024)
-		&& Text(item.tooltip, 4096) && Text(item.contextValue, 1024) && (item.icon.empty() || Id(item.icon)) && (item.commandId.empty() || Id(item.commandId))
+		&& Text(item.tooltip, 4096) && Text(item.ContextValue(), 1024) && (item.icon.empty() || Id(item.icon)) && (item.commandId.empty() || Id(item.commandId))
 		&& (!item.commandId.empty() || item.arguments.empty())
 		&& item.arguments.size() <= 16 && std::all_of(item.arguments.begin(), item.arguments.end(), [](const auto& v) { return Text(v, 4096); })
 		&& (item.collapsibleState == TreeItemCollapsibleState::None || item.collapsibleState == TreeItemCollapsibleState::Collapsed || item.collapsibleState == TreeItemCollapsibleState::Expanded);
@@ -204,14 +207,14 @@ TreeChange TreeViewModel::Apply(const TreeLoadRequest& request, TreeChildrenPage
 		additions.emplace(id, std::move(node));
 	}
 	TreeChange changed{ TreeResult::Applied, {} };
-	changed.cancelled.reserve(kMaximumTreeLoads);
-	for (const auto& id : removalRoots) state.Remove(id, changed.cancelled);
+	changed.MutableCancelled().reserve(kMaximumTreeLoads);
+	for (const auto& id : removalRoots) state.Remove(id, changed.MutableCancelled());
 	for (auto& item : page.items) {
 		if (item.id.empty()) continue; // Moved into a prepared addition above.
 		auto* existing = state.Find(item.id);
 		if (existing) {
 			if (item.collapsibleState == TreeItemCollapsibleState::None) {
-				state.CancelTicket(existing->pending, changed.cancelled);
+				state.CancelTicket(existing->pending, changed.MutableCancelled());
 				existing->value.children.clear(); existing->value.expanded = false;
 				existing->value.state = TreeChildrenState::Unrequested; existing->value.hasSnapshot = false;
 				existing->value.nextCursor.clear(); existing->value.message.clear();
@@ -259,13 +262,13 @@ TreeChange TreeViewModel::SetExpanded(std::wstring_view id, bool expanded)
 	auto* node = state.Find(id);
 	if (!node || id.empty() || node->value.item.collapsibleState == TreeItemCollapsibleState::None) return {};
 	if (node->value.expanded == expanded) return { TreeResult::Unchanged, {} };
-	TreeChange result{ TreeResult::Applied, {} }; result.cancelled.reserve(kMaximumTreeLoads);
+	TreeChange result{ TreeResult::Applied, {} }; result.MutableCancelled().reserve(kMaximumTreeLoads);
 	node->value.expanded = expanded;
 	if (!expanded) {
 		std::vector<std::uint64_t> cancelled;
 		cancelled.reserve(kMaximumTreeLoads);
 		for (const auto& [ticket, pending] : state.pending) if (state.Descendant(pending.request.parentId, id)) cancelled.push_back(ticket);
-		for (const auto ticket : cancelled) state.CancelTicket(ticket, result.cancelled);
+		for (const auto ticket : cancelled) state.CancelTicket(ticket, result.MutableCancelled());
 		if (state.Descendant(state.selection, id)) state.selection = id;
 	}
 	return result;

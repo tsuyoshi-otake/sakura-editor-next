@@ -302,7 +302,11 @@ void WorkbenchLayoutSubscription::Unsubscribe() noexcept
 			state->slots.erase(found);
 		}
 		m_id = 0;
-	} catch (...) { m_id = 0; }
+	} catch (const std::exception&) {
+		// This block only locks a mutex and mutates the subscription map; its sole
+		// failure mode is a standard allocation exception.
+		m_id = 0;
+	}
 }
 
 bool WorkbenchLayoutSubscription::IsSubscribed() const noexcept
@@ -378,9 +382,9 @@ std::unique_ptr<WorkbenchLayoutStateService::ContributionIndex> WorkbenchLayoutS
 	if (!WorkbenchContributionRegistry::IsValidContributionSnapshot(contributions))
 		throw std::invalid_argument("invalid workbench contribution snapshot");
 	auto index = std::make_unique<ContributionIndex>();
-	for (const auto& registered : contributions.parts) index->parts.emplace(registered.descriptor.id,
-		ContributionIndex::Part{ .supportsVisibility = registered.descriptor.supportsVisibility,
-			.position = DefaultPartPosition(registered.descriptor.id) });
+	for (const auto& registered : contributions.parts) index->parts.emplace(registered.descriptor.Id(),
+		ContributionIndex::Part{ .supportsVisibility = registered.descriptor.SupportsVisibility(),
+			.position = DefaultPartPosition(registered.descriptor.Id()) });
 	for (const auto& registered : contributions.viewContainers) index->containers.emplace(registered.descriptor.id,
 		ContributionIndex::Container{ .location = ToStateLocation(registered.descriptor.location),
 			.order = registered.descriptor.order, .hideIfEmpty = registered.descriptor.hideIfEmpty,

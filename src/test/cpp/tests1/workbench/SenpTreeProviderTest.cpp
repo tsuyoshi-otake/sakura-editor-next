@@ -31,7 +31,7 @@ std::size_t CountBytes(const TreeViewModel& model, std::wstring_view parent = L"
 {
 	const auto value = model.Node(parent).value();
 	std::size_t units = value.item.id.size() + value.item.label.size() + value.item.description.size() + value.item.tooltip.size()
-		+ value.item.icon.size() + value.item.commandId.size() + value.item.contextValue.size() + value.parentId.size()
+		+ value.item.icon.size() + value.item.commandId.size() + value.item.ContextValue().size() + value.parentId.size()
 		+ value.nextCursor.size() + value.message.size();
 	for (const auto& argument : value.item.arguments) units += argument.size();
 	std::size_t bytes{};
@@ -75,7 +75,7 @@ TEST(TreeViewModel, RefreshKeepsStableSelectionAndUserExpansionAndRemovesOldDesc
 	auto folder = Branch(L"folder"); folder.label = L"Renamed folder";
 	const auto refreshed = model.Apply(Begin(model, L"", TreeLoadKind::Refresh), Page(L"", { folder }, 2));
 	ASSERT_EQ(TreeResult::Applied, refreshed.result);
-	EXPECT_EQ(std::vector<std::uint64_t>{ removedLoad.ticket }, refreshed.cancelled);
+	EXPECT_EQ(std::vector<std::uint64_t>{ removedLoad.ticket }, refreshed.Cancelled());
 	EXPECT_FALSE(model.Node(L"removed")); EXPECT_EQ(L"selected", model.Selection());
 	EXPECT_TRUE(model.Node(L"folder")->expanded); EXPECT_EQ(L"Renamed folder", model.Node(L"folder")->item.label);
 	EXPECT_EQ(CountBytes(model), model.RetainedBytes());
@@ -118,7 +118,7 @@ TEST(TreeViewModel, CollapseCancelsSubtreeLoadsAndMovesHiddenSelectionToItsParen
 	ASSERT_EQ(TreeResult::Applied, model.Apply(Begin(model, L"outer"), Page(L"outer", { Branch(L"inner", true) })).result);
 	const auto load = Begin(model, L"inner"); ASSERT_TRUE(model.Select(L"inner"));
 	const auto collapsed = model.SetExpanded(L"outer", false);
-	EXPECT_EQ(std::vector<std::uint64_t>{ load.ticket }, collapsed.cancelled);
+	EXPECT_EQ(std::vector<std::uint64_t>{ load.ticket }, collapsed.Cancelled());
 	EXPECT_EQ(L"outer", model.Selection()); EXPECT_EQ(0, model.PendingCount());
 	EXPECT_FALSE(model.Select(L"inner")); EXPECT_TRUE(model.Demand().empty());
 	EXPECT_EQ(TreeResult::Stale, model.Apply(load, Page(L"inner", { Leaf(L"late") })).result);
@@ -185,7 +185,7 @@ TEST(TreeViewModel, BranchToLeafCancelsChildrenAndLeafToBranchAppliesItsInitialE
 	ASSERT_EQ(TreeResult::Applied, model.Apply(Begin(model, L"a"), Page(L"a", { Branch(L"b", true) }, 1, L"c")).result);
 	const auto b = Begin(model, L"b");
 	const auto changed = model.Apply(Begin(model, L"", TreeLoadKind::Refresh), Page(L"", { Leaf(L"a") }, 2));
-	EXPECT_EQ(TreeResult::Applied, changed.result); EXPECT_EQ(std::vector<std::uint64_t>{ b.ticket }, changed.cancelled);
+	EXPECT_EQ(TreeResult::Applied, changed.result); EXPECT_EQ(std::vector<std::uint64_t>{ b.ticket }, changed.Cancelled());
 	EXPECT_FALSE(model.Node(L"b")); EXPECT_FALSE(model.Node(L"a")->expanded); EXPECT_EQ(CountBytes(model), model.RetainedBytes());
 	ASSERT_EQ(TreeResult::Applied, model.Apply(Begin(model, L"", TreeLoadKind::Refresh), Page(L"", { Branch(L"a", true) }, 3)).result);
 	EXPECT_TRUE(model.Node(L"a")->expanded); EXPECT_EQ(std::vector<std::wstring>{ L"a" }, model.Demand());
@@ -200,8 +200,8 @@ TEST(TreeViewModel, MalformedTextAndUnknownStateNeverReachTheNativeControl)
 		if (shape == 2) item.label.clear();
 		if (shape == 3) item.arguments = { L"undeclared" };
 		if (shape == 4) item.collapsibleState = static_cast<TreeItemCollapsibleState>(255);
-		if (shape == 5) item.contextValue.assign(1025, L'x');
-		if (shape == 6) item.contextValue = std::wstring(L"job\0x", 5);
+		if (shape == 5) item.SetContextValue(std::wstring(1025, L'x'));
+		if (shape == 6) item.SetContextValue(std::wstring(L"job\0x", 5));
 		EXPECT_EQ(TreeResult::Invalid, model.Apply(Begin(model, L"", TreeLoadKind::Refresh), Page(L"", { item })).result);
 		EXPECT_EQ(0, model.ItemCount()); EXPECT_EQ(0, model.PendingCount());
 	}
@@ -213,19 +213,23 @@ public:
 	senp::AdmissionStatus admission{ senp::AdmissionStatus::Accepted };
 	std::int64_t nextGeneration{};
 	struct Call { senp::effect::TreeRequest request; senp::effect::OperationContext context; SenpTreeProvider::Time deadline; };
-	std::vector<Call> submitted;
-	std::vector<senp::effect::OperationContext> cancelled;
-	std::vector<senp::effect::CommandInvoked> executed;
+	[[nodiscard]] const std::vector<Call>& Submitted() const noexcept { return m_submitted; }
+	[[nodiscard]] const std::vector<senp::effect::OperationContext>& Cancelled() const noexcept { return m_cancelled; }
+	[[nodiscard]] const std::vector<senp::effect::CommandInvoked>& Executed() const noexcept { return m_executed; }
 	bool IsCurrent() const noexcept override { return current; }
 	bool CanSubmit() const noexcept override { return current && !delivering; }
 	SenpTreeAdmission Submit(senp::effect::TreeRequest request, SenpTreeProvider::Time deadline) noexcept override
 	{
 		const auto generation = ++nextGeneration;
 		senp::effect::OperationContext context{ L"s1:o" + std::to_wstring(generation), invalidScope ? 99 : 1, 2, 3, generation };
-		submitted.push_back({ std::move(request), context, deadline }); return { admission, std::move(context) };
+		m_submitted.push_back({ std::move(request), context, deadline }); return { admission, std::move(context) };
 	}
-	void Cancel(const senp::effect::OperationContext& context) noexcept override { cancelled.push_back(context); }
-	bool Execute(senp::effect::CommandInvoked command) noexcept override { executed.push_back(std::move(command)); return executeResult; }
+	void Cancel(const senp::effect::OperationContext& context) noexcept override { m_cancelled.push_back(context); }
+	bool Execute(senp::effect::CommandInvoked command) noexcept override { m_executed.push_back(std::move(command)); return executeResult; }
+private:
+	std::vector<Call> m_submitted;
+	std::vector<senp::effect::OperationContext> m_cancelled;
+	std::vector<senp::effect::CommandInvoked> m_executed;
 };
 class SenpTreeProviderTest : public ::testing::Test {
 protected:
@@ -242,40 +246,40 @@ protected:
 };
 TEST_F(SenpTreeProviderTest, VisibilityAdmissionAndDerivedOperationPageUseOneRequestGeneration)
 {
-	provider.Pump(now); EXPECT_TRUE(runtime->submitted.empty());
-	provider.SetVisible(true, now); ASSERT_EQ(1, runtime->submitted.size());
+	provider.Pump(now); EXPECT_TRUE(runtime->Submitted().empty());
+	provider.SetVisible(true, now); ASSERT_EQ(1, runtime->Submitted().size());
 	for (int i = 0; i < 20; ++i) provider.Pump(now);
-	EXPECT_EQ(1, runtime->submitted.size());
-	auto context = runtime->submitted[0].context; context.operationId = L"s1:o999";
+	EXPECT_EQ(1, runtime->Submitted().size());
+	auto context = runtime->Submitted()[0].context; context.operationId = L"s1:o999";
 	ASSERT_EQ(TreeResult::Applied, provider.Apply(context, Wire(), now));
 	EXPECT_EQ(1, provider.Model().ItemCount()); EXPECT_FALSE(provider.NextDeadline());
 	provider.SetVisible(false, now); provider.SetVisible(true, now);
-	EXPECT_EQ(1, runtime->submitted.size());
-	EXPECT_TRUE(provider.Execute(L"item")); ASSERT_EQ(1, runtime->executed.size()); EXPECT_EQ(L"detail", runtime->executed[0].arguments[0]);
+	EXPECT_EQ(1, runtime->Submitted().size());
+	EXPECT_TRUE(provider.Execute(L"item")); ASSERT_EQ(1, runtime->Executed().size()); EXPECT_EQ(L"detail", runtime->Executed()[0].arguments[0]);
 }
 TEST_F(SenpTreeProviderTest, HideAndRefreshCancelOldSubscriberAndFenceItsLatePage)
 {
-	provider.SetVisible(true, now); const auto old = runtime->submitted[0].context;
-	provider.SetVisible(false, now); EXPECT_EQ(1, runtime->cancelled.size());
+	provider.SetVisible(true, now); const auto old = runtime->Submitted()[0].context;
+	provider.SetVisible(false, now); EXPECT_EQ(1, runtime->Cancelled().size());
 	EXPECT_EQ(TreeResult::Stale, provider.Apply(old, Wire(), now));
-	provider.SetVisible(true, now); ASSERT_EQ(2, runtime->submitted.size());
-	const auto fresh = runtime->submitted[1].context;
-	provider.Refresh(now); ASSERT_EQ(3, runtime->submitted.size()); EXPECT_EQ(2, runtime->cancelled.size());
+	provider.SetVisible(true, now); ASSERT_EQ(2, runtime->Submitted().size());
+	const auto fresh = runtime->Submitted()[1].context;
+	provider.Refresh(now); ASSERT_EQ(3, runtime->Submitted().size()); EXPECT_EQ(2, runtime->Cancelled().size());
 	EXPECT_EQ(TreeResult::Stale, provider.Apply(fresh, Wire(), now));
-	EXPECT_EQ(TreeResult::Applied, provider.Apply(runtime->submitted.back().context, Wire(), now));
+	EXPECT_EQ(TreeResult::Applied, provider.Apply(runtime->Submitted().back().context, Wire(), now));
 	EXPECT_EQ(1, provider.Model().ItemCount());
 }
 TEST_F(SenpTreeProviderTest, DemandRaisedWhileResultsAreDeliveredWaitsForTheNextPump)
 {
-	provider.SetVisible(true, now); ASSERT_EQ(1, runtime->submitted.size());
-	ASSERT_EQ(TreeResult::Applied, provider.Apply(runtime->submitted[0].context, Wire(), now));
+	provider.SetVisible(true, now); ASSERT_EQ(1, runtime->Submitted().size());
+	ASSERT_EQ(TreeResult::Applied, provider.Apply(runtime->Submitted()[0].context, Wire(), now));
 	runtime->delivering = true;
 	provider.Refresh(now);
-	EXPECT_EQ(1, runtime->submitted.size());
+	EXPECT_EQ(1, runtime->Submitted().size());
 	EXPECT_NE(TreeChildrenState::Failed, provider.Model().Node(L"")->state);
 	runtime->delivering = false;
-	provider.Pump(now); ASSERT_EQ(2, runtime->submitted.size());
-	EXPECT_EQ(TreeResult::Applied, provider.Apply(runtime->submitted[1].context, Wire(), now));
+	provider.Pump(now); ASSERT_EQ(2, runtime->Submitted().size());
+	EXPECT_EQ(TreeResult::Applied, provider.Apply(runtime->Submitted()[1].context, Wire(), now));
 	EXPECT_EQ(1, provider.Model().ItemCount());
 }
 TEST_F(SenpTreeProviderTest, BusyAndDeadlineAreTerminalUntilExplicitRetry)
@@ -283,17 +287,17 @@ TEST_F(SenpTreeProviderTest, BusyAndDeadlineAreTerminalUntilExplicitRetry)
 	runtime->admission = senp::AdmissionStatus::Busy; provider.SetVisible(true, now);
 	EXPECT_EQ(TreeChildrenState::Failed, provider.Model().Node(L"")->state); EXPECT_FALSE(provider.NextDeadline());
 	for (int i = 0; i < 50; ++i) provider.Pump(now);
-	EXPECT_EQ(1, runtime->submitted.size());
+	EXPECT_EQ(1, runtime->Submitted().size());
 	runtime->admission = senp::AdmissionStatus::Accepted; EXPECT_EQ(TreeResult::Accepted, provider.Retry(L"", now));
-	ASSERT_TRUE(provider.NextDeadline()); const auto context = runtime->submitted.back().context;
+	ASSERT_TRUE(provider.NextDeadline()); const auto context = runtime->Submitted().back().context;
 	provider.Pump(now + SenpTreeProvider::kLoadLifetime);
-	EXPECT_FALSE(provider.NextDeadline()); EXPECT_EQ(0, provider.Model().PendingCount()); EXPECT_EQ(1, runtime->cancelled.size());
+	EXPECT_FALSE(provider.NextDeadline()); EXPECT_EQ(0, provider.Model().PendingCount()); EXPECT_EQ(1, runtime->Cancelled().size());
 	EXPECT_EQ(TreeResult::Stale, provider.Apply(context, Wire(), now + SenpTreeProvider::kLoadLifetime));
-	EXPECT_EQ(2, runtime->submitted.size());
+	EXPECT_EQ(2, runtime->Submitted().size());
 }
 TEST_F(SenpTreeProviderTest, ScopeAndCommandValidationRejectBeforePublishingAndRevocationClearsRows)
 {
-	provider.SetVisible(true, now); auto context = runtime->submitted[0].context;
+	provider.SetVisible(true, now); auto context = runtime->Submitted()[0].context;
 	for (int field = 0; field < 3; ++field) {
 		auto old = context;
 		if (field == 0) ++old.ownerGeneration; if (field == 1) ++old.workspaceRevision; if (field == 2) ++old.accountGeneration;
@@ -302,7 +306,7 @@ TEST_F(SenpTreeProviderTest, ScopeAndCommandValidationRejectBeforePublishingAndR
 	auto forbidden = Wire(); forbidden.items[0].commandId = L"foreign.open";
 	EXPECT_EQ(TreeResult::Invalid, provider.Apply(context, forbidden, now)); EXPECT_EQ(0, provider.Model().PendingCount());
 	ASSERT_EQ(TreeResult::Accepted, provider.Retry(L"", now));
-	ASSERT_EQ(TreeResult::Applied, provider.Apply(runtime->submitted.back().context, Wire(), now));
+	ASSERT_EQ(TreeResult::Applied, provider.Apply(runtime->Submitted().back().context, Wire(), now));
 	runtime->current = false;
 	EXPECT_FALSE(provider.Select(L"item")); EXPECT_TRUE(provider.Model().IsClosed()); EXPECT_EQ(0, provider.Model().ItemCount());
 	EXPECT_FALSE(provider.Execute(L"item"));
@@ -310,26 +314,26 @@ TEST_F(SenpTreeProviderTest, ScopeAndCommandValidationRejectBeforePublishingAndR
 TEST_F(SenpTreeProviderTest, NativeAdmissionMismatchCancelsTheAcceptedRequest)
 {
 	runtime->invalidScope = true; provider.SetVisible(true, now);
-	EXPECT_EQ(1, runtime->cancelled.size()); EXPECT_EQ(0, provider.Model().PendingCount());
+	EXPECT_EQ(1, runtime->Cancelled().size()); EXPECT_EQ(0, provider.Model().PendingCount());
 	EXPECT_EQ(TreeChildrenState::Failed, provider.Model().Node(L"")->state); EXPECT_FALSE(provider.NextDeadline());
 }
 TEST_F(SenpTreeProviderTest, CollapsingPendingChildrenRetainsTheParentAndRejectsLateResults)
 {
-	provider.SetVisible(true, now); ASSERT_EQ(TreeResult::Applied, provider.Apply(runtime->submitted[0].context, Wire(L"", true), now));
-	EXPECT_EQ(1, runtime->submitted.size());
-	ASSERT_EQ(TreeResult::Applied, provider.SetExpanded(L"item", true, now)); ASSERT_EQ(2, runtime->submitted.size());
-	EXPECT_EQ(L"item", runtime->submitted[1].request.parentId);
-	const auto child = runtime->submitted[1].context;
-	ASSERT_EQ(TreeResult::Applied, provider.SetExpanded(L"item", false, now)); EXPECT_EQ(1, runtime->cancelled.size());
+	provider.SetVisible(true, now); ASSERT_EQ(TreeResult::Applied, provider.Apply(runtime->Submitted()[0].context, Wire(L"", true), now));
+	EXPECT_EQ(1, runtime->Submitted().size());
+	ASSERT_EQ(TreeResult::Applied, provider.SetExpanded(L"item", true, now)); ASSERT_EQ(2, runtime->Submitted().size());
+	EXPECT_EQ(L"item", runtime->Submitted()[1].request.parentId);
+	const auto child = runtime->Submitted()[1].context;
+	ASSERT_EQ(TreeResult::Applied, provider.SetExpanded(L"item", false, now)); EXPECT_EQ(1, runtime->Cancelled().size());
 	EXPECT_EQ(TreeResult::Stale, provider.Apply(child, Wire(L"item"), now)); EXPECT_EQ(1, provider.Model().ItemCount());
 }
 TEST_F(SenpTreeProviderTest, RuntimeFailureDoesNotBecomeEmptyOrRestartItself)
 {
-	provider.SetVisible(true, now); const auto context = runtime->submitted[0].context;
+	provider.SetVisible(true, now); const auto context = runtime->Submitted()[0].context;
 	EXPECT_EQ(TreeResult::Applied, provider.Failed(context, senp::InvocationStatus::HostUnavailable, now));
 	EXPECT_EQ(TreeChildrenState::Failed, provider.Model().Node(L"")->state);
 	EXPECT_FALSE(provider.Model().Node(L"")->hasSnapshot); EXPECT_FALSE(provider.NextDeadline());
-	provider.Pump(now); EXPECT_EQ(1, runtime->submitted.size()); EXPECT_EQ(1, runtime->cancelled.size());
+	provider.Pump(now); EXPECT_EQ(1, runtime->Submitted().size()); EXPECT_EQ(1, runtime->Cancelled().size());
 	provider.Close(); provider.Close(); EXPECT_TRUE(provider.Model().IsClosed());
 }
 TEST_F(SenpTreeProviderTest, InlineItemActionsMatchTheRowContextValueAndPassOnlyItsId)
@@ -338,34 +342,34 @@ TEST_F(SenpTreeProviderTest, InlineItemActionsMatchTheRowContextValueAndPassOnly
 		{ L"test.logs", L"View logs", L"resources/icons/light/logs.svg", { L"job", L"completed" }, {} },
 		{ L"test.rerun", L"Re-run", L"$(sync)", {}, { L"job" } },
 	} } };
-	rows.SetVisible(true, now); ASSERT_EQ(1, runtime->submitted.size());
+	rows.SetVisible(true, now); ASSERT_EQ(1, runtime->Submitted().size());
 	auto page = Wire(); page.items[0].contextValue = L"job completed";
 	auto running = page.items[0]; running.id = L"running"; running.contextValue = L"job";
 	auto plain = page.items[0]; plain.id = L"plain"; plain.contextValue.clear();
 	page.items.push_back(running); page.items.push_back(plain);
-	ASSERT_EQ(TreeResult::Applied, rows.Apply(runtime->submitted[0].context, page, now));
+	ASSERT_EQ(TreeResult::Applied, rows.Apply(runtime->Submitted()[0].context, page, now));
 	// `=~` tokens are substrings of the contextValue; `==` compares all of it.
 	const auto completed = rows.ItemActions(L"item");
-	ASSERT_EQ(1, completed.size()); EXPECT_EQ(L"test.logs", completed[0].commandId);
+	ASSERT_EQ(1, completed.size()); EXPECT_EQ(L"test.logs", completed[0].CommandId());
 	const auto inProgress = rows.ItemActions(L"running");
-	ASSERT_EQ(1, inProgress.size()); EXPECT_EQ(L"test.rerun", inProgress[0].commandId);
+	ASSERT_EQ(1, inProgress.size()); EXPECT_EQ(L"test.rerun", inProgress[0].CommandId());
 	EXPECT_TRUE(rows.ItemActions(L"plain").empty());
 	EXPECT_TRUE(rows.ItemActions(L"").empty()); EXPECT_TRUE(rows.ItemActions(L"missing").empty());
 	EXPECT_FALSE(rows.ExecuteItemAction(L"running", L"test.logs"));
 	EXPECT_FALSE(rows.ExecuteItemAction(L"item", L"test.open"));
 	EXPECT_FALSE(rows.ExecuteItemAction(L"", L"test.logs"));
-	EXPECT_TRUE(runtime->executed.empty());
+	EXPECT_TRUE(runtime->Executed().empty());
 	ASSERT_TRUE(rows.ExecuteItemAction(L"item", L"test.logs"));
-	ASSERT_EQ(1, runtime->executed.size());
-	EXPECT_EQ(L"test.logs", runtime->executed[0].commandId);
-	EXPECT_EQ(std::vector<std::wstring>{ L"item" }, runtime->executed[0].arguments);
+	ASSERT_EQ(1, runtime->Executed().size());
+	EXPECT_EQ(L"test.logs", runtime->Executed()[0].commandId);
+	EXPECT_EQ(std::vector<std::wstring>{ L"item" }, runtime->Executed()[0].arguments);
 	EXPECT_EQ(L"item", rows.Model().Selection());
 	rows.SetVisible(false, now);
 	EXPECT_FALSE(rows.ExecuteItemAction(L"item", L"test.logs"));
 	rows.SetVisible(true, now);
 	runtime->current = false;
 	EXPECT_FALSE(rows.ExecuteItemAction(L"item", L"test.logs"));
-	EXPECT_EQ(1, runtime->executed.size());
+	EXPECT_EQ(1, runtime->Executed().size());
 }
 TEST(SenpTreeProviderOptions, RejectsItemActionsARowCannotCarry)
 {
@@ -381,14 +385,14 @@ TEST(SenpTreeProviderOptions, RejectsItemActionsARowCannotCarry)
 	EXPECT_NO_THROW((void)make(eight));
 	auto nine = eight; nine.push_back(action(8));
 	EXPECT_THROW((void)make(nine), std::invalid_argument);
-	auto undeclared = action(0); undeclared.commandId = L"test.missing";
+	auto undeclared = action(0); undeclared.SetCommandId(L"test.missing");
 	EXPECT_THROW((void)make({ undeclared }), std::invalid_argument);
 	EXPECT_THROW((void)make({ action(0), action(0) }), std::invalid_argument);
-	auto iconless = action(0); iconless.icon.clear();
+	auto iconless = action(0); iconless.SetIcon(L"");
 	EXPECT_THROW((void)make({ iconless }), std::invalid_argument);
-	auto emptyToken = action(0); emptyToken.equals = { L"" };
+	auto emptyToken = action(0); emptyToken.SetEquals({ L"" });
 	EXPECT_THROW((void)make({ emptyToken }), std::invalid_argument);
-	auto unbounded = action(0); unbounded.contains.assign(9, L"job");
+	auto unbounded = action(0); unbounded.SetContains(std::vector<std::wstring>(9, L"job"));
 	EXPECT_THROW((void)make({ unbounded }), std::invalid_argument);
 }
 }

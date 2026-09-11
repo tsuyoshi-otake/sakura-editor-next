@@ -108,11 +108,23 @@ private:
 	std::uint8_t m_bits{};
 };
 
-struct WorkbenchPartDescriptor {
-	std::string id;
-	std::string title;
-	bool supportsVisibility{ true };
+class WorkbenchPartDescriptor {
+public:
+	WorkbenchPartDescriptor() = default;
+	WorkbenchPartDescriptor(std::string id, std::string title, bool supportsVisibility = true)
+		: m_id(std::move(id)), m_title(std::move(title)), m_supportsVisibility(supportsVisibility)
+	{
+	}
+
+	[[nodiscard]] const std::string& Id() const noexcept { return m_id; }
+	[[nodiscard]] const std::string& Title() const noexcept { return m_title; }
+	[[nodiscard]] bool SupportsVisibility() const noexcept { return m_supportsVisibility; }
 	[[nodiscard]] bool operator==(const WorkbenchPartDescriptor&) const = default;
+
+private:
+	std::string m_id;
+	std::string m_title;
+	bool m_supportsVisibility{ true };
 };
 
 struct WorkbenchViewContainerDescriptor {

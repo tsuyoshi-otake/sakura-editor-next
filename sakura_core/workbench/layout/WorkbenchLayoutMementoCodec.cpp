@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <exception>
 #include <set>
 #include <utility>
 
@@ -395,7 +396,9 @@ WorkbenchLayoutMementoEncodeResult CWorkbenchLayoutMementoCodec::Encode(
 				"layout memento exceeds the storage value limit");
 		}
 		return { EWorkbenchLayoutMementoCodecStatus::Succeeded, std::move(payload), {} };
-	} catch (...) {
+	} catch (const std::exception&) {
+		// This block only builds JSON values and strings from the given snapshot;
+		// its sole failure mode is a standard allocation/format exception.
 		return EncodeFailure(EWorkbenchLayoutMementoCodecStatus::InvalidSnapshot,
 			"layout memento encoding failed");
 	}

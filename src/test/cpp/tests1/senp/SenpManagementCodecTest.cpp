@@ -34,8 +34,8 @@ TEST(SenpManagementCodec, RetainsRuntimeMetadataForCatalogAndInstalledAuthoritie
 	EXPECT_EQ(L"sakura:senp/extension@3.0.0", catalog->runtime.abi);
 	EXPECT_EQ((std::vector<std::wstring>{ L"onView:sample:view" }), catalog->runtime.activationEvents);
 	ASSERT_EQ(1U, catalog->runtime.commands.size());
-	EXPECT_EQ(L"sample.open", catalog->runtime.commands[0].command);
-	EXPECT_EQ(L"Open", catalog->runtime.commands[0].title);
+	EXPECT_EQ(L"sample.open", catalog->runtime.commands[0].Command());
+	EXPECT_EQ(L"Open", catalog->runtime.commands[0].Title());
 	EXPECT_EQ(L"sample:view", catalog->views[0].id);
 	auto installedJson = Candidate();
 	installedJson.insert(1, R"json("enabled":true,"compatible":true,"trust":"developer","readme":"","extensionPath":"C:/fixture",
@@ -117,15 +117,15 @@ TEST(SenpManagementCodec, RetainsViewTitleActionsPlacedByViewEquality)
 	const auto decoded = senp::DecodeBuiltInExtension(WithViewTitle());
 	ASSERT_TRUE(decoded);
 	ASSERT_EQ(2U, decoded->runtime.commands.size());
-	EXPECT_TRUE(decoded->runtime.commands[0].icon.empty());
-	EXPECT_EQ(L"$(refresh)", decoded->runtime.commands[1].icon);
-	ASSERT_EQ(1U, decoded->runtime.viewTitle.size());
-	EXPECT_EQ(L"sample.refresh", decoded->runtime.viewTitle[0].command);
-	EXPECT_EQ((std::vector<std::wstring>{ L"sample:view", L"other:view" }), decoded->runtime.viewTitle[0].views);
+	EXPECT_TRUE(decoded->runtime.commands[0].Icon().empty());
+	EXPECT_EQ(L"$(refresh)", decoded->runtime.commands[1].Icon());
+	ASSERT_EQ(1U, decoded->runtime.ViewTitle().size());
+	EXPECT_EQ(L"sample.refresh", decoded->runtime.ViewTitle()[0].Command());
+	EXPECT_EQ((std::vector<std::wstring>{ L"sample:view", L"other:view" }), decoded->runtime.ViewTitle()[0].Views());
 	// Absent menus are an empty set, not a schema error.
 	const auto plain = senp::DecodeBuiltInExtension(Candidate());
 	ASSERT_TRUE(plain);
-	EXPECT_TRUE(plain->runtime.viewTitle.empty());
+	EXPECT_TRUE(plain->runtime.ViewTitle().empty());
 }
 
 TEST(SenpManagementCodec, RejectsViewTitleActionsATitleButtonCannotShow)
@@ -179,22 +179,22 @@ TEST(SenpManagementCodec, RetainsInlineItemActionsMatchedByContextValue)
 	ASSERT_TRUE(decoded);
 	ASSERT_EQ(2U, decoded->runtime.commands.size());
 	// A path icon is kept verbatim; only an inline row action can draw it.
-	EXPECT_EQ(L"resources/icons/light/logs.svg", decoded->runtime.commands[1].icon);
-	EXPECT_TRUE(decoded->runtime.viewTitle.empty());
-	ASSERT_EQ(1U, decoded->runtime.viewItemContext.size());
-	const auto& action = decoded->runtime.viewItemContext[0];
-	EXPECT_EQ(L"sample.logs", action.command);
-	EXPECT_TRUE(action.views.empty());
-	EXPECT_EQ((std::vector<std::wstring>{ L"job", L"completed" }), action.contains);
-	EXPECT_TRUE(action.equals.empty());
+	EXPECT_EQ(L"resources/icons/light/logs.svg", decoded->runtime.commands[1].Icon());
+	EXPECT_TRUE(decoded->runtime.ViewTitle().empty());
+	ASSERT_EQ(1U, decoded->runtime.ViewItemContext().size());
+	const auto& action = decoded->runtime.ViewItemContext()[0];
+	EXPECT_EQ(L"sample.logs", action.Command());
+	EXPECT_TRUE(action.Views().empty());
+	EXPECT_EQ((std::vector<std::wstring>{ L"job", L"completed" }), action.Contains());
+	EXPECT_TRUE(action.Equals().empty());
 	auto scoped = WithViewItem();
 	Replace(scoped, "viewItem =~ /job/ && viewItem =~ /completed/", "view == sample:view && viewItem == step");
 	const auto equality = senp::DecodeBuiltInExtension(scoped);
 	ASSERT_TRUE(equality);
-	ASSERT_EQ(1U, equality->runtime.viewItemContext.size());
-	EXPECT_EQ((std::vector<std::wstring>{ L"sample:view" }), equality->runtime.viewItemContext[0].views);
-	EXPECT_TRUE(equality->runtime.viewItemContext[0].contains.empty());
-	EXPECT_EQ((std::vector<std::wstring>{ L"step" }), equality->runtime.viewItemContext[0].equals);
+	ASSERT_EQ(1U, equality->runtime.ViewItemContext().size());
+	EXPECT_EQ((std::vector<std::wstring>{ L"sample:view" }), equality->runtime.ViewItemContext()[0].Views());
+	EXPECT_TRUE(equality->runtime.ViewItemContext()[0].Contains().empty());
+	EXPECT_EQ((std::vector<std::wstring>{ L"step" }), equality->runtime.ViewItemContext()[0].Equals());
 }
 
 TEST(SenpManagementCodec, RejectsInlineItemActionsARowCannotShow)

@@ -63,15 +63,20 @@ private:
 	HWND m_window{};
 };
 
-struct RuntimeLifecycle final {
+class RuntimeLifecycle final {
+public:
 	int starts{}, stops{}, joins{}, destroyed{};
 	bool permitExit{ true };
 	//! Off by default: most of these tests want a runtime that admits nothing, so
 	//! that a publication's own bookkeeping is what they observe. A test that
 	//! needs to read the events themselves opts in.
 	bool admitEvents{};
-	std::vector<senp::effect::Event> events;
 	std::function<void()> onStop;
+
+	void PushEvent(senp::effect::Event event) { m_events.push_back(std::move(event)); }
+	[[nodiscard]] const std::vector<senp::effect::Event>& Events() const noexcept { return m_events; }
+private:
+	std::vector<senp::effect::Event> m_events;
 };
 
 class Runtime final : public senp::ISenpEffectRuntime {
@@ -96,7 +101,7 @@ public:
 		// An admitted request needs a result, or the owner keeps waiting for one
 		// and the next turn is refused rather than merely quiet.
 		context.operationId = L"request." + std::to_wstring(++m_sequence);
-		m_lifecycle->events.push_back(std::move(event));
+		m_lifecycle->PushEvent(std::move(event));
 		m_results.push_back({ context, false, senp::InvocationStatus::EffectsReady });
 		return { senp::AdmissionStatus::Accepted, context.operationId };
 	}
@@ -137,12 +142,20 @@ private:
 	std::int64_t m_sequence{};
 };
 
-struct DeclaredState final {
-	std::optional<senp::ContributionOwnerIdentity> owner;
-	std::vector<SenpOwnerBoundTree> bindings;
+class DeclaredState final {
+public:
+	[[nodiscard]] const std::optional<senp::ContributionOwnerIdentity>& Owner() const noexcept { return m_owner; }
+	void SetOwner(senp::ContributionOwnerIdentity owner) noexcept { m_owner = std::move(owner); }
+	void ResetOwner() noexcept { m_owner.reset(); }
+	[[nodiscard]] const std::vector<SenpOwnerBoundTree>& Bindings() const noexcept { return m_bindings; }
+	void SetBindings(std::vector<SenpOwnerBoundTree> bindings) noexcept { m_bindings = std::move(bindings); }
+	void ClearBindings() noexcept { m_bindings.clear(); }
 	bool permitCommit{ true };
 	int pumped{};
 	int cleared{};
+private:
+	std::optional<senp::ContributionOwnerIdentity> m_owner;
+	std::vector<SenpOwnerBoundTree> m_bindings;
 };
 
 class DeclaredPublication final : public ISenpDeclaredTreePublication {
@@ -151,25 +164,25 @@ public:
 		senp::CSenpContributionOwners& owners, senp::ContributionOwnerIdentity owner,
 		std::vector<SenpOwnerBoundTree> bindings)
 		: m_state(std::move(state)), m_owners(owners), m_owner(std::move(owner)),
-		m_previous(m_state->owner), m_bindings(std::move(bindings)) {}
+		m_previous(m_state->Owner()), m_bindings(std::move(bindings)) {}
 	bool CanCommit() const noexcept override
 	{
-		return !m_closed && !m_committed && m_state->permitCommit && m_state->owner == m_previous;
+		return !m_closed && !m_committed && m_state->permitCommit && m_state->Owner() == m_previous;
 	}
 	bool Commit() noexcept override
 	{
 		if (!CanCommit()) return false;
-		m_state->owner = std::move(m_owner);
-		m_state->bindings = std::move(m_bindings);
-		m_generation = m_state->owner->generation;
+		m_state->SetOwner(std::move(m_owner));
+		m_state->SetBindings(std::move(m_bindings));
+		m_generation = m_state->Owner()->generation;
 		m_committed = true;
 		return true;
 	}
 	bool Pump() noexcept override
 	{
-		if (!m_committed || m_closed || !m_state->owner
-			|| m_state->owner->generation != m_generation) return false;
-		EXPECT_TRUE(m_owners.IsCurrent(*m_state->owner));
+		if (!m_committed || m_closed || !m_state->Owner()
+			|| m_state->Owner()->generation != m_generation) return false;
+		EXPECT_TRUE(m_owners.IsCurrent(*m_state->Owner()));
 		++m_state->pumped;
 		return true;
 	}
@@ -177,9 +190,9 @@ public:
 	{
 		if (m_closed) return;
 		m_closed = true;
-		if (!m_committed || !m_state->owner || m_state->owner->generation != m_generation) return;
-		m_state->owner.reset();
-		m_state->bindings.clear();
+		if (!m_committed || !m_state->Owner() || m_state->Owner()->generation != m_generation) return;
+		m_state->ResetOwner();
+		m_state->ClearBindings();
 		++m_state->cleared;
 	}
 private:
@@ -237,8 +250,11 @@ protected:
 		extension.id = L"sample.extension"; extension.enabled = true;
 		extension.modulePath = L"module.wasm"; extension.moduleSha256 = std::wstring(64, L'a');
 		extension.archiveSha256 = std::wstring(64, L'b');
-		extension.runtime = { 2, L"sakura:senp/extension@3.0.0", { L"onView:sample.projects" }, {},
-			{ { L"sample.open", L"Open" } } };
+		extension.runtime.schemaVersion = 2;
+		extension.runtime.abi = L"sakura:senp/extension@3.0.0";
+		extension.runtime.activationEvents = { L"onView:sample.projects" };
+		extension.runtime.capabilities = {};
+		extension.runtime.commands = { { L"sample.open", L"Open" } };
 		extension.viewContainers = { { L"sample.senp", L"Sample", L"$(github)", 10 } };
 		extension.views = { { L"sample.projects", L"sample.senp", L"Projects", L"senp.tree", 10 } };
 		return { senp::EManagementState::Ready, 1, { std::move(extension) } };
@@ -248,7 +264,7 @@ protected:
 		auto snapshot = Packages();
 		auto& runtime = snapshot.extensions.front().runtime;
 		runtime.commands.push_back({ L"sample.refresh", L"Refresh", L"$(refresh)" });
-		runtime.viewTitle = { { L"sample.refresh", { L"sample.projects" } } };
+		runtime.ViewTitle() = { { L"sample.refresh", { L"sample.projects" } } };
 		return snapshot;
 	}
 	static senp::ManagementSnapshot PackagesWithLogs()
@@ -256,7 +272,7 @@ protected:
 		auto snapshot = Packages();
 		auto& runtime = snapshot.extensions.front().runtime;
 		runtime.commands.push_back({ L"sample.logs", L"View logs", L"resources/icons/light/logs.svg" });
-		runtime.viewItemContext = { { L"sample.logs", {}, { L"job" }, {} } };
+		runtime.ViewItemContext() = { { L"sample.logs", {}, { L"job" }, {} } };
 		return snapshot;
 	}
 	//! The pane whose header (control 1) carries the View title; its title
@@ -289,7 +305,7 @@ TEST_F(SenpOwnerPublicationTest, WindowPackagesKeepDeclarationsDormantAndRetireB
 	auto target = std::make_shared<TargetState>(); auto runtime = std::make_shared<RuntimeLifecycle>();
 	int factories{};
 	runtime->onStop = [&] { EXPECT_TRUE(pages.Contains("sample.senp")); EXPECT_GT(target->revoked, 0); };
-	CSenpWindowExtensions extensions(catalog, pages, m_owner, L"host.exe",
+	CSenpWindowExtensions extensions(catalog, pages, L"host.exe",
 		[&](const auto& descriptor, const auto& owner) {
 			++factories; EXPECT_EQ(descriptor.id, owner.extensionId);
 			EXPECT_GT(owner.generation, 0); EXPECT_EQ(7, owner.workspaceRevision); EXPECT_EQ(9, owner.accountGeneration);
@@ -333,7 +349,7 @@ TEST_F(SenpOwnerPublicationTest, WindowPackagesCarryAnImagePathContainerIconVerb
 		CDlgFuncList dialog; viewcontainer::CViewContainerPages pages(dialog);
 		EXPECT_TRUE(pages.Create(m_owner));
 		auto target = std::make_shared<TargetState>();
-		CSenpWindowExtensions extensions(catalog, pages, m_owner, L"host.exe",
+		CSenpWindowExtensions extensions(catalog, pages, L"host.exe",
 			[&](const auto&, const auto&) { return std::make_unique<Target>(target); },
 			[](std::string_view) { return true; },
 			[](auto launch) { return std::make_unique<Runtime>(std::move(launch), std::vector<senp::effect::Effect>{}); });
@@ -364,7 +380,7 @@ TEST_F(SenpOwnerPublicationTest, ViewTitleActionsReachOnlyTheBoundRuntime)
 	ASSERT_TRUE(pages.Create(m_owner));
 	auto target = std::make_shared<TargetState>(); auto runtime = std::make_shared<RuntimeLifecycle>();
 	runtime->admitEvents = true;
-	CSenpWindowExtensions extensions(catalog, pages, m_owner, L"host.exe",
+	CSenpWindowExtensions extensions(catalog, pages, L"host.exe",
 		[target](const auto&, const auto&) { return std::make_unique<Target>(target); },
 		[](std::string_view) { return true; },
 		[runtime](auto launch) { return std::make_unique<Runtime>(std::move(launch), std::vector<senp::effect::Effect>{}, runtime); });
@@ -385,7 +401,7 @@ TEST_F(SenpOwnerPublicationTest, ViewTitleActionsReachOnlyTheBoundRuntime)
 	pages.LayoutPageProjection("sample.senp", bounds, bounds, 96);
 	pages.SetPageVisible("sample.senp", true);
 	const auto invoked = [&] {
-		return std::ranges::count_if(runtime->events, [](const auto& event) {
+		return std::ranges::count_if(runtime->Events(), [](const auto& event) {
 			const auto* command = std::get_if<senp::effect::CommandInvoked>(&event);
 			return command && command->commandId == L"sample.refresh" && command->arguments.empty();
 		});
@@ -407,7 +423,7 @@ TEST_F(SenpOwnerPublicationTest, ViewTitleActionsReachOnlyTheBoundRuntime)
 	EXPECT_EQ(1, invoked());
 	// The title bar is part of the declaration; changing it is a structural edit.
 	const auto revision = catalog.Snapshot().revision;
-	snapshot.revision++; snapshot.extensions.front().runtime.viewTitle.clear();
+	snapshot.revision++; snapshot.extensions.front().runtime.ViewTitle().clear();
 	EXPECT_EQ(SenpWindowExtensionsStatus::Conflict, extensions.Synchronize(snapshot, 7, 9, Clock::now()));
 	EXPECT_EQ(revision, catalog.Snapshot().revision); EXPECT_EQ(0, runtime->stops);
 	EXPECT_EQ(SenpExtensionActivationState::Active, extensions.State(L"sample.extension"));
@@ -422,7 +438,7 @@ TEST_F(SenpOwnerPublicationTest, ViewTitleActionsTheNativeTitleBarCannotShowAreR
 		CDlgFuncList dialog; viewcontainer::CViewContainerPages pages(dialog);
 		EXPECT_TRUE(pages.Create(m_owner));
 		auto target = std::make_shared<TargetState>();
-		CSenpWindowExtensions extensions(catalog, pages, m_owner, L"host.exe",
+		CSenpWindowExtensions extensions(catalog, pages, L"host.exe",
 			[&](const auto&, const auto&) { return std::make_unique<Target>(target); },
 			[](std::string_view) { return true; },
 			[](auto launch) { return std::make_unique<Runtime>(std::move(launch), std::vector<senp::effect::Effect>{}); });
@@ -435,17 +451,23 @@ TEST_F(SenpOwnerPublicationTest, ViewTitleActionsTheNativeTitleBarCannotShowAreR
 	};
 	EXPECT_EQ(SenpWindowExtensionsStatus::Synchronized, run([](auto&) {}));
 	// A manifest ThemeIcon may be upper case; no bundled codicon is.
-	EXPECT_EQ(SenpWindowExtensionsStatus::Unsupported, run([](auto& runtime) { runtime.commands[1].icon = L"$(Refresh)"; }));
-	EXPECT_EQ(SenpWindowExtensionsStatus::Invalid, run([](auto& runtime) { runtime.viewTitle[0].views = { L"sample.other" }; }));
-	EXPECT_EQ(SenpWindowExtensionsStatus::Invalid, run([](auto& runtime) { runtime.viewTitle[0].command = L"sample.missing"; }));
+	EXPECT_EQ(SenpWindowExtensionsStatus::Unsupported, run([](auto& runtime) {
+		runtime.commands[1] = senp::CommandContribution(L"sample.refresh", L"Refresh", L"$(Refresh)");
+	}));
 	EXPECT_EQ(SenpWindowExtensionsStatus::Invalid, run([](auto& runtime) {
-		runtime.viewTitle.push_back({ L"sample.refresh", { L"sample.projects" } });
+		runtime.ViewTitle()[0] = senp::ViewTitleMenuContribution(L"sample.refresh", { L"sample.other" });
+	}));
+	EXPECT_EQ(SenpWindowExtensionsStatus::Invalid, run([](auto& runtime) {
+		runtime.ViewTitle()[0] = senp::ViewTitleMenuContribution(L"sample.missing", { L"sample.projects" });
+	}));
+	EXPECT_EQ(SenpWindowExtensionsStatus::Invalid, run([](auto& runtime) {
+		runtime.ViewTitle().push_back({ L"sample.refresh", { L"sample.projects" } });
 	}));
 	EXPECT_EQ(SenpWindowExtensionsStatus::Unsupported, run([](auto& runtime) {
 		for (int i = 0; i != 8; ++i) {
 			const auto id = L"sample.extra" + std::to_wstring(i);
 			runtime.commands.push_back({ id, L"Extra", L"$(refresh)" });
-			runtime.viewTitle.push_back({ id, { L"sample.projects" } });
+			runtime.ViewTitle().push_back({ id, { L"sample.projects" } });
 		}
 	}));
 }
@@ -457,7 +479,7 @@ TEST_F(SenpOwnerPublicationTest, InlineItemActionsDrawOnlyBundledIconsAndAreNotA
 		CDlgFuncList dialog; viewcontainer::CViewContainerPages pages(dialog);
 		EXPECT_TRUE(pages.Create(m_owner));
 		auto target = std::make_shared<TargetState>();
-		CSenpWindowExtensions extensions(catalog, pages, m_owner, L"host.exe",
+		CSenpWindowExtensions extensions(catalog, pages, L"host.exe",
 			[&](const auto&, const auto&) { return std::make_unique<Target>(target); },
 			[](std::string_view) { return true; },
 			[](auto launch) { return std::make_unique<Runtime>(std::move(launch), std::vector<senp::effect::Effect>{}); });
@@ -469,27 +491,38 @@ TEST_F(SenpOwnerPublicationTest, InlineItemActionsDrawOnlyBundledIconsAndAreNotA
 		// a structural edit of the declaration the way a title action is.
 		if (status == SenpWindowExtensionsStatus::Synchronized) {
 			snapshot.revision++;
-			snapshot.extensions.front().runtime.viewItemContext.front().contains = { L"completed" };
+			snapshot.extensions.front().runtime.ViewItemContext().front()
+				= senp::ViewItemMenuContribution(L"sample.logs", {}, { L"completed" }, {});
 			EXPECT_EQ(SenpWindowExtensionsStatus::Synchronized, extensions.Synchronize(snapshot, 7, 9, Clock::now()));
 		}
 		EXPECT_TRUE(extensions.Close()); pages.Close();
 		return status;
 	};
 	EXPECT_EQ(SenpWindowExtensionsStatus::Synchronized, run([](auto&) {}));
-	EXPECT_EQ(SenpWindowExtensionsStatus::Synchronized, run([](auto& runtime) { runtime.commands[1].icon = L"$(output)"; }));
-	EXPECT_EQ(SenpWindowExtensionsStatus::Unsupported, run([](auto& runtime) { runtime.commands[1].icon = L"$(Output)"; }));
+	EXPECT_EQ(SenpWindowExtensionsStatus::Synchronized, run([](auto& runtime) {
+		runtime.commands[1] = senp::CommandContribution(L"sample.logs", L"View logs", L"$(output)");
+	}));
+	EXPECT_EQ(SenpWindowExtensionsStatus::Unsupported, run([](auto& runtime) {
+		runtime.commands[1] = senp::CommandContribution(L"sample.logs", L"View logs", L"$(Output)");
+	}));
 	// A package image path draws only when it names a compiled-in icon.
-	EXPECT_EQ(SenpWindowExtensionsStatus::Unsupported, run([](auto& runtime) { runtime.commands[1].icon = L"resources/unknown.svg"; }));
-	EXPECT_EQ(SenpWindowExtensionsStatus::Invalid, run([](auto& runtime) { runtime.viewItemContext[0].views = { L"sample.other" }; }));
-	EXPECT_EQ(SenpWindowExtensionsStatus::Invalid, run([](auto& runtime) { runtime.viewItemContext[0].command = L"sample.missing"; }));
+	EXPECT_EQ(SenpWindowExtensionsStatus::Unsupported, run([](auto& runtime) {
+		runtime.commands[1] = senp::CommandContribution(L"sample.logs", L"View logs", L"resources/unknown.svg");
+	}));
 	EXPECT_EQ(SenpWindowExtensionsStatus::Invalid, run([](auto& runtime) {
-		runtime.viewItemContext.push_back({ L"sample.logs", { L"sample.projects" }, { L"step" }, {} });
+		runtime.ViewItemContext()[0] = senp::ViewItemMenuContribution(L"sample.logs", { L"sample.other" }, { L"job" }, {});
+	}));
+	EXPECT_EQ(SenpWindowExtensionsStatus::Invalid, run([](auto& runtime) {
+		runtime.ViewItemContext()[0] = senp::ViewItemMenuContribution(L"sample.missing", {}, { L"job" }, {});
+	}));
+	EXPECT_EQ(SenpWindowExtensionsStatus::Invalid, run([](auto& runtime) {
+		runtime.ViewItemContext().push_back({ L"sample.logs", { L"sample.projects" }, { L"step" }, {} });
 	}));
 	EXPECT_EQ(SenpWindowExtensionsStatus::Unsupported, run([](auto& runtime) {
 		for (int i = 0; i != 8; ++i) {
 			const auto id = L"sample.act" + std::to_wstring(i);
 			runtime.commands.push_back({ id, L"Act", L"$(output)" });
-			runtime.viewItemContext.push_back({ id, { L"sample.projects" }, {}, { L"job" } });
+			runtime.ViewItemContext().push_back({ id, { L"sample.projects" }, {}, { L"job" } });
 		}
 	}));
 }
@@ -513,7 +546,7 @@ TEST_F(SenpOwnerPublicationTest, WindowPackageConflictsPreserveLiveRuntimeAndRol
 	CDlgFuncList dialog; viewcontainer::CViewContainerPages pages(dialog);
 	ASSERT_TRUE(pages.Create(m_owner));
 	auto target = std::make_shared<TargetState>(); auto runtime = std::make_shared<RuntimeLifecycle>();
-	CSenpWindowExtensions extensions(catalog, pages, m_owner, L"host.exe",
+	CSenpWindowExtensions extensions(catalog, pages, L"host.exe",
 		[target](const auto&, const auto&) { return std::make_unique<Target>(target); },
 		[](std::string_view) { return true; },
 		[runtime](auto launch) { return std::make_unique<Runtime>(std::move(launch), std::vector<senp::effect::Effect>{}, runtime); });
@@ -557,7 +590,7 @@ TEST_F(SenpOwnerPublicationTest, WindowCloseRetainsFailedRuntimeCleanupWithoutPo
 	ASSERT_TRUE(pages.Create(m_owner));
 	auto target = std::make_shared<TargetState>(); auto runtime = std::make_shared<RuntimeLifecycle>();
 	runtime->permitExit = false;
-	CSenpWindowExtensions extensions(catalog, pages, m_owner, L"host.exe",
+	CSenpWindowExtensions extensions(catalog, pages, L"host.exe",
 		[target](const auto&, const auto&) { return std::make_unique<Target>(target); },
 		[](std::string_view) { return true; },
 		[runtime](auto launch) { return std::make_unique<Runtime>(std::move(launch), std::vector<senp::effect::Effect>{}, runtime); });
@@ -581,7 +614,7 @@ TEST_F(SenpOwnerPublicationTest, WindowDeclarationConflictsCannotSuppressAuthori
 		CDlgFuncList dialog; viewcontainer::CViewContainerPages pages(dialog);
 		ASSERT_TRUE(pages.Create(m_owner));
 		auto target = std::make_shared<TargetState>(); auto runtime = std::make_shared<RuntimeLifecycle>();
-		CSenpWindowExtensions extensions(catalog, pages, m_owner, L"host.exe",
+		CSenpWindowExtensions extensions(catalog, pages, L"host.exe",
 			[target](const auto&, const auto&) { return std::make_unique<Target>(target); },
 			[](std::string_view) { return true; },
 			[runtime](auto launch) { return std::make_unique<Runtime>(std::move(launch), std::vector<senp::effect::Effect>{}, runtime); });
@@ -613,7 +646,7 @@ TEST_F(SenpOwnerPublicationTest, NativeDeclarationsPublishBeforeRuntimeAndSurviv
 	viewcontainer::CViewContainerPages pages(dialog);
 	ASSERT_TRUE(pages.Create(m_owner));
 	int activations{};
-	CSenpViewDeclarations declarations(catalog, pages, m_owner,
+	CSenpViewDeclarations declarations(catalog, pages,
 		[&](std::wstring_view, bool) { ++activations; return SenpExtensionActivationState::Preparing; },
 		[](std::string_view) { return true; });
 	const std::vector<layout::WorkbenchViewContainerDescriptor> containers{
@@ -664,7 +697,7 @@ TEST_F(SenpOwnerPublicationTest, WorkspaceSnapshotsSeedLateCommitsAndThenReachTh
 	CDlgFuncList dialog;
 	viewcontainer::CViewContainerPages pages(dialog);
 	ASSERT_TRUE(pages.Create(m_owner));
-	CSenpViewDeclarations declarations(catalog, pages, m_owner,
+	CSenpViewDeclarations declarations(catalog, pages,
 		[](std::wstring_view, bool) { return SenpExtensionActivationState::Preparing; },
 		[](std::string_view) { return true; });
 	const std::vector<layout::WorkbenchViewContainerDescriptor> containers{
@@ -698,8 +731,8 @@ TEST_F(SenpOwnerPublicationTest, WorkspaceSnapshotsSeedLateCommitsAndThenReachTh
 	ASSERT_EQ(senp::OwnerChangeStatus::Accepted, change.status);
 	owners.Poll(Clock::now());
 	ASSERT_TRUE(hub.Pump(Clock::now()));
-	ASSERT_EQ(1U, lifecycle->events.size());
-	const auto* seeded = std::get_if<senp::effect::WorkspaceChanged>(&lifecycle->events[0]);
+	ASSERT_EQ(1U, lifecycle->Events().size());
+	const auto* seeded = std::get_if<senp::effect::WorkspaceChanged>(&lifecycle->Events()[0]);
 	ASSERT_NE(nullptr, seeded);
 	ASSERT_EQ(1U, seeded->repositories.size());
 	EXPECT_EQ(L"main", seeded->repositories[0].branch);
@@ -708,8 +741,8 @@ TEST_F(SenpOwnerPublicationTest, WorkspaceSnapshotsSeedLateCommitsAndThenReachTh
 	EXPECT_TRUE(hub.PublishWorkspace({ { { L"root:0", L"feature", {} } } }));
 	owners.Poll(Clock::now());
 	ASSERT_TRUE(hub.Pump(Clock::now()));
-	ASSERT_EQ(2U, lifecycle->events.size());
-	const auto* replaced = std::get_if<senp::effect::WorkspaceChanged>(&lifecycle->events[1]);
+	ASSERT_EQ(2U, lifecycle->Events().size());
+	const auto* replaced = std::get_if<senp::effect::WorkspaceChanged>(&lifecycle->Events()[1]);
 	ASSERT_NE(nullptr, replaced);
 	ASSERT_EQ(1U, replaced->repositories.size());
 	EXPECT_EQ(L"feature", replaced->repositories[0].branch);
@@ -725,7 +758,7 @@ TEST_F(SenpOwnerPublicationTest, NativeDeclarationConflictsPreserveCatalogAndOth
 	CDlgFuncList dialog;
 	viewcontainer::CViewContainerPages pages(dialog);
 	ASSERT_TRUE(pages.Create(m_owner));
-	CSenpViewDeclarations declarations(catalog, pages, m_owner,
+	CSenpViewDeclarations declarations(catalog, pages,
 		[](std::wstring_view, bool) { return SenpExtensionActivationState::Preparing; },
 		[](std::string_view) { return true; });
 	std::vector<layout::WorkbenchViewContainerDescriptor> containers{
@@ -871,15 +904,15 @@ TEST_F(SenpOwnerPublicationTest, DeclaredBindingsRetainCatalogAcrossReplacementF
 	};
 	auto initial = prepare(L'b');
 	ASSERT_EQ(senp::OwnerChangeStatus::Accepted, initial.status);
-	EXPECT_FALSE(state->owner);
+	EXPECT_FALSE(state->Owner());
 	owners.Poll(Clock::now());
 	ASSERT_TRUE(owners.IsCurrent(initial.owner));
 	EXPECT_EQ(0, state->pumped);
 	ASSERT_TRUE(hub.Pump(Clock::now()));
 	EXPECT_EQ(1, state->pumped);
-	ASSERT_EQ(1U, state->bindings.size());
-	EXPECT_EQ(L"sample.projects", state->bindings.front().ViewId());
-	auto originalProvider = state->bindings.front().Provider();
+	ASSERT_EQ(1U, state->Bindings().size());
+	EXPECT_EQ(L"sample.projects", state->Bindings().front().ViewId());
+	auto originalProvider = state->Bindings().front().Provider();
 	ASSERT_TRUE(owners.TakeTransition());
 
 	auto rejected = prepare(L'c');
@@ -890,7 +923,7 @@ TEST_F(SenpOwnerPublicationTest, DeclaredBindingsRetainCatalogAcrossReplacementF
 	ASSERT_TRUE(failed);
 	EXPECT_EQ(senp::OwnerChangeStatus::Failed, failed->status);
 	EXPECT_TRUE(owners.IsCurrent(initial.owner));
-	EXPECT_EQ(originalProvider, state->bindings.front().Provider());
+	EXPECT_EQ(originalProvider, state->Bindings().front().Provider());
 	EXPECT_EQ(0, state->cleared);
 	EXPECT_TRUE(catalog.IsOwnerCurrent(declarationOwner));
 
@@ -899,16 +932,16 @@ TEST_F(SenpOwnerPublicationTest, DeclaredBindingsRetainCatalogAcrossReplacementF
 	ASSERT_EQ(senp::OwnerChangeStatus::Accepted, replacement.status);
 	owners.Poll(Clock::now());
 	ASSERT_TRUE(owners.IsCurrent(replacement.owner));
-	ASSERT_TRUE(state->owner);
-	EXPECT_EQ(replacement.owner, *state->owner);
-	EXPECT_NE(originalProvider, state->bindings.front().Provider());
+	ASSERT_TRUE(state->Owner());
+	EXPECT_EQ(replacement.owner, *state->Owner());
+	EXPECT_NE(originalProvider, state->Bindings().front().Provider());
 	EXPECT_EQ(0, state->cleared);
 	EXPECT_EQ(2, target->revoked);
 	ASSERT_TRUE(hub.Pump(Clock::now()));
 	EXPECT_TRUE(catalog.IsOwnerCurrent(declarationOwner));
 	ASSERT_TRUE(owners.Revoke(L"sample.extension", senp::effect::StopReason::Disabled));
-	EXPECT_FALSE(state->owner);
-	EXPECT_TRUE(state->bindings.empty());
+	EXPECT_FALSE(state->Owner());
+	EXPECT_TRUE(state->Bindings().empty());
 	EXPECT_EQ(1, state->cleared);
 	EXPECT_EQ(3, target->revoked);
 	EXPECT_TRUE(catalog.IsOwnerCurrent(declarationOwner));
