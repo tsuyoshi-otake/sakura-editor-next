@@ -131,7 +131,11 @@ impl State {
                         message: "Refresh takes no arguments".into(),
                     })];
                 }
-                let view = if command.command_id == REFRESH { WORKFLOWS } else { BRANCH };
+                let view = if command.command_id == REFRESH {
+                    WORKFLOWS
+                } else {
+                    BRANCH
+                };
                 vec![
                     invalidate(view),
                     Effect::CompleteCommand(CompleteCommand {

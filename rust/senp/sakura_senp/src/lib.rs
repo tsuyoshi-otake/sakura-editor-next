@@ -1113,7 +1113,8 @@ fn validate_effect_contributions(
         for view in targets {
             let count = per_view.entry(view).or_default();
             *count += 1;
-            if !views.contains(view) || !placed.insert((view, item.command.as_str())) || *count > 8 {
+            if !views.contains(view) || !placed.insert((view, item.command.as_str())) || *count > 8
+            {
                 return Err(invalid());
             }
         }
@@ -1279,10 +1280,7 @@ fn parse_manifest(bytes: &[u8]) -> Result<Manifest, SenpError> {
 
 /// Parses a manifest and reports whether its runtime ABI is the one this build
 /// executes. Only `AbiAdmission::Installed` can return `false`.
-fn parse_manifest_as(
-    bytes: &[u8],
-    admission: AbiAdmission,
-) -> Result<(Manifest, bool), SenpError> {
+fn parse_manifest_as(bytes: &[u8], admission: AbiAdmission) -> Result<(Manifest, bool), SenpError> {
     // Select the version before deserializing its fields, but only after strict
     // duplicate-member and trailing-input checks have consumed the entire JSON.
     let value: serde_json::Value = strict_json(bytes)?;
@@ -2891,7 +2889,11 @@ mod tests {
                 .code,
             ErrorCode::InvalidManifest
         );
-        for abi in [ABI, "sakura:senp/extension@2.0.0", "sakura:senp/extension@4.0.0"] {
+        for abi in [
+            ABI,
+            "sakura:senp/extension@2.0.0",
+            "sakura:senp/extension@4.0.0",
+        ] {
             assert_eq!(
                 parse_manifest(&versioned_manifest(2, abi))
                     .unwrap_err()
@@ -3045,7 +3047,10 @@ mod tests {
             view_title_when_views(&items[0].when).unwrap(),
             ["sample.projects", "sample.states"]
         );
-        assert_eq!(manifest.contributes.commands[0].icon.as_deref(), Some("$(refresh)"));
+        assert_eq!(
+            manifest.contributes.commands[0].icon.as_deref(),
+            Some("$(refresh)")
+        );
         // A manifest without menus still serializes without the key, so the
         // C++ decoder of a package installed before menus existed is unchanged.
         let plain = parse_manifest(include_bytes!(
@@ -3054,7 +3059,9 @@ mod tests {
         .unwrap();
         let serialized = serde_json::to_value(&plain).unwrap();
         assert!(serialized["contributes"].get("menus").is_none());
-        assert!(serialized["contributes"]["commands"][0].get("icon").is_none());
+        assert!(serialized["contributes"]["commands"][0]
+            .get("icon")
+            .is_none());
     }
 
     #[test]
@@ -3063,23 +3070,53 @@ mod tests {
             {"command":"sample.refresh", "title":"Refresh", "icon":"$(refresh)"},
             {"command":"sample.plain", "title":"Plain"}
         ]);
-        let item = |command: &str, when: &str, group: &str| {
-            serde_json::json!({"command": command, "when": when, "group": group})
-        };
+        let item = |command: &str, when: &str, group: &str| serde_json::json!({"command": command, "when": when, "group": group});
         let cases = [
             // Undeclared command, a command without an icon, overflow group.
-            serde_json::json!([item("sample.other", "view == sample.projects", "navigation")]),
-            serde_json::json!([item("sample.plain", "view == sample.projects", "navigation")]),
+            serde_json::json!([item(
+                "sample.other",
+                "view == sample.projects",
+                "navigation"
+            )]),
+            serde_json::json!([item(
+                "sample.plain",
+                "view == sample.projects",
+                "navigation"
+            )]),
             serde_json::json!([item("sample.refresh", "view == sample.projects", "inline")]),
-            serde_json::json!([item("sample.refresh", "view == sample.projects", "navigation@1")]),
+            serde_json::json!([item(
+                "sample.refresh",
+                "view == sample.projects",
+                "navigation@1"
+            )]),
             // Anything but a `view == <declared id>` disjunction.
             serde_json::json!([item("sample.refresh", "view == foreign.view", "navigation")]),
-            serde_json::json!([item("sample.refresh", "view != sample.projects", "navigation")]),
-            serde_json::json!([item("sample.refresh", "view == sample.projects && isWeb", "navigation")]),
-            serde_json::json!([item("sample.refresh", "viewItem == sample.projects", "navigation")]),
+            serde_json::json!([item(
+                "sample.refresh",
+                "view != sample.projects",
+                "navigation"
+            )]),
+            serde_json::json!([item(
+                "sample.refresh",
+                "view == sample.projects && isWeb",
+                "navigation"
+            )]),
+            serde_json::json!([item(
+                "sample.refresh",
+                "viewItem == sample.projects",
+                "navigation"
+            )]),
             serde_json::json!([item("sample.refresh", "", "navigation")]),
-            serde_json::json!([item("sample.refresh", "view == sample.projects ||", "navigation")]),
-            serde_json::json!([item("sample.refresh", "view == sample.projects || view == sample.projects", "navigation")]),
+            serde_json::json!([item(
+                "sample.refresh",
+                "view == sample.projects ||",
+                "navigation"
+            )]),
+            serde_json::json!([item(
+                "sample.refresh",
+                "view == sample.projects || view == sample.projects",
+                "navigation"
+            )]),
             // The same command twice on one View.
             serde_json::json!([
                 item("sample.refresh", "view == sample.projects", "navigation"),
@@ -3090,7 +3127,9 @@ mod tests {
         ];
         for view_title in cases {
             assert_eq!(
-                with_view_title(icon.clone(), view_title.clone()).unwrap_err().code,
+                with_view_title(icon.clone(), view_title.clone())
+                    .unwrap_err()
+                    .code,
                 ErrorCode::InvalidManifest,
                 "{view_title}"
             );
@@ -3106,7 +3145,14 @@ mod tests {
             .code,
             ErrorCode::InvalidManifest
         );
-        for bad_icon in ["refresh", "$(refresh", "$()", "../refresh.svg", "resources/refresh.gif", "$(re fresh)"] {
+        for bad_icon in [
+            "refresh",
+            "$(refresh",
+            "$()",
+            "../refresh.svg",
+            "resources/refresh.gif",
+            "$(re fresh)",
+        ] {
             assert_eq!(
                 with_view_title(
                     serde_json::json!([{"command":"sample.refresh", "title":"Refresh", "icon": bad_icon}]),
@@ -3123,7 +3169,13 @@ mod tests {
             .map(|index| serde_json::json!({"command": format!("sample.act{index}"), "title":"Act", "icon":"$(refresh)"}))
             .collect();
         let placed: Vec<_> = (0..9)
-            .map(|index| item(&format!("sample.act{index}"), "view == sample.projects", "navigation"))
+            .map(|index| {
+                item(
+                    &format!("sample.act{index}"),
+                    "view == sample.projects",
+                    "navigation",
+                )
+            })
             .collect();
         assert_eq!(
             with_view_title(serde_json::json!(nine), serde_json::json!(placed[..8]))
@@ -3146,7 +3198,9 @@ mod tests {
         .unwrap();
         value["contributes"]["menus"] = serde_json::json!({"editor/title": []});
         assert_eq!(
-            parse_manifest(&serde_json::to_vec(&value).unwrap()).unwrap_err().code,
+            parse_manifest(&serde_json::to_vec(&value).unwrap())
+                .unwrap_err()
+                .code,
             ErrorCode::InvalidManifest
         );
     }
@@ -3196,7 +3250,9 @@ mod tests {
                 .len(),
             2
         );
-        assert!(serialized["contributes"]["menus"].get("view/title").is_none());
+        assert!(serialized["contributes"]["menus"]
+            .get("view/title")
+            .is_none());
     }
 
     #[test]
@@ -3205,9 +3261,7 @@ mod tests {
             {"command":"sample.logs", "title":"View logs", "icon":"resources/icons/light/logs.svg"},
             {"command":"sample.plain", "title":"Plain"}
         ]);
-        let item = |command: &str, when: &str, group: &str| {
-            serde_json::json!({"command": command, "when": when, "group": group})
-        };
+        let item = |command: &str, when: &str, group: &str| serde_json::json!({"command": command, "when": when, "group": group});
         let cases = [
             // Undeclared command, a command without an icon, a context-menu group.
             serde_json::json!([item("sample.other", "viewItem =~ /job/", "inline")]),
@@ -3215,7 +3269,11 @@ mod tests {
             serde_json::json!([item("sample.logs", "viewItem =~ /job/", "navigation")]),
             serde_json::json!([item("sample.logs", "viewItem =~ /job/", "")]),
             // Only `viewItem` matches and one `view ==` joined by `&&`.
-            serde_json::json!([item("sample.logs", "viewItem =~ /job/ || viewItem =~ /step/", "inline")]),
+            serde_json::json!([item(
+                "sample.logs",
+                "viewItem =~ /job/ || viewItem =~ /step/",
+                "inline"
+            )]),
             serde_json::json!([item("sample.logs", "viewItem != job", "inline")]),
             serde_json::json!([item("sample.logs", "!viewItem", "inline")]),
             serde_json::json!([item("sample.logs", "viewItem =~ /jo.b/", "inline")]),
@@ -3223,9 +3281,21 @@ mod tests {
             serde_json::json!([item("sample.logs", "viewItem =~ //", "inline")]),
             serde_json::json!([item("sample.logs", "view == sample.projects", "inline")]),
             serde_json::json!([item("sample.logs", "viewItem =~ /job/ && isWeb", "inline")]),
-            serde_json::json!([item("sample.logs", "view == foreign.view && viewItem == job", "inline")]),
-            serde_json::json!([item("sample.logs", "view == sample.projects && view == sample.states && viewItem == job", "inline")]),
-            serde_json::json!([item("sample.logs", "viewItem == job && viewItem == job", "inline")]),
+            serde_json::json!([item(
+                "sample.logs",
+                "view == foreign.view && viewItem == job",
+                "inline"
+            )]),
+            serde_json::json!([item(
+                "sample.logs",
+                "view == sample.projects && view == sample.states && viewItem == job",
+                "inline"
+            )]),
+            serde_json::json!([item(
+                "sample.logs",
+                "viewItem == job && viewItem == job",
+                "inline"
+            )]),
             serde_json::json!([item("sample.logs", "viewItem =~ /job/ &&", "inline")]),
             serde_json::json!([item("sample.logs", "", "inline")]),
             // The same command twice on one View, directly or through "all Views".
@@ -3235,7 +3305,11 @@ mod tests {
             ]),
             serde_json::json!([
                 item("sample.logs", "viewItem == job", "inline"),
-                item("sample.logs", "view == sample.projects && viewItem == step", "inline")
+                item(
+                    "sample.logs",
+                    "view == sample.projects && viewItem == step",
+                    "inline"
+                )
             ]),
             serde_json::json!([{"command":"sample.logs", "when":"viewItem == job", "group":"inline", "alt":"sample.plain"}]),
         ];
@@ -3253,7 +3327,13 @@ mod tests {
             .map(|index| serde_json::json!({"command": format!("sample.act{index}"), "title":"Act", "icon":"$(output)"}))
             .collect();
         let placed: Vec<_> = (0..9)
-            .map(|index| item(&format!("sample.act{index}"), "view == sample.projects && viewItem == job", "inline"))
+            .map(|index| {
+                item(
+                    &format!("sample.act{index}"),
+                    "view == sample.projects && viewItem == job",
+                    "inline",
+                )
+            })
             .collect();
         assert_eq!(
             with_view_item(serde_json::json!(nine), serde_json::json!(placed[..8]))
@@ -3424,8 +3504,14 @@ mod tests {
         let v1 = temp.path().join("v1.senp");
         let v1_hash = pack_directory(&declarative, &v1, None).unwrap();
         let root = temp.path().join("installed");
-        install_package(&v1, &root, &TrustPolicy::BuiltIn { expected_archive_sha256: v1_hash })
-            .unwrap();
+        install_package(
+            &v1,
+            &root,
+            &TrustPolicy::BuiltIn {
+                expected_archive_sha256: v1_hash,
+            },
+        )
+        .unwrap();
         let effect = temp.path().join("v2");
         fixture(&effect);
         fs::write(effect.join(MANIFEST_PATH), versioned_manifest(2, ABI_V2)).unwrap();
@@ -3434,10 +3520,15 @@ mod tests {
         install_package(
             &v2,
             &root,
-            &TrustPolicy::BuiltIn { expected_archive_sha256: v2_hash.clone() },
+            &TrustPolicy::BuiltIn {
+                expected_archive_sha256: v2_hash.clone(),
+            },
         )
         .unwrap();
-        assert!(list_installed(&root).unwrap().iter().all(|entry| entry.compatible));
+        assert!(list_installed(&root)
+            .unwrap()
+            .iter()
+            .all(|entry| entry.compatible));
 
         // A package an earlier build installed for its own WIT world. The host
         // here could not instantiate it, but one such package must neither hide
@@ -3449,16 +3540,26 @@ mod tests {
         let listed = list_installed(&root).unwrap();
         assert_eq!(listed.len(), 2);
         for entry in &listed {
-            assert_eq!(entry.compatible, entry.manifest.id == "sample-indent", "{}", entry.manifest.id);
+            assert_eq!(
+                entry.compatible,
+                entry.manifest.id == "sample-indent",
+                "{}",
+                entry.manifest.id
+            );
         }
-        let stale_entry = listed.iter().find(|entry| entry.manifest.id == "sample-github").unwrap();
+        let stale_entry = listed
+            .iter()
+            .find(|entry| entry.manifest.id == "sample-github")
+            .unwrap();
         assert_eq!(stale_entry.manifest.runtime.as_ref().unwrap().abi, stale);
 
         // Only installed content is admitted this way. The same manifest can
         // still not be packed or verified by this build.
         fs::write(effect.join(MANIFEST_PATH), versioned_manifest(2, stale)).unwrap();
         assert_eq!(
-            pack_directory(&effect, &temp.path().join("stale.senp"), None).unwrap_err().code,
+            pack_directory(&effect, &temp.path().join("stale.senp"), None)
+                .unwrap_err()
+                .code,
             ErrorCode::AbiMismatch
         );
 
@@ -3466,7 +3567,11 @@ mod tests {
         // is still malformed installed state and fails closed.
         for abi in [ABI, "sakura:senp/extension@x.0.0", "other:world@3.0.0"] {
             rewrite_installed_manifest(&content, &versioned_manifest(2, abi));
-            assert_eq!(list_installed(&root).unwrap_err().code, ErrorCode::AbiMismatch, "{abi}");
+            assert_eq!(
+                list_installed(&root).unwrap_err().code,
+                ErrorCode::AbiMismatch,
+                "{abi}"
+            );
         }
     }
 

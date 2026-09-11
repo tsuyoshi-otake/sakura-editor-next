@@ -632,7 +632,10 @@ mod tests {
         assert_eq!(first.items[0].label, "Attempt #1");
         assert_eq!(first.items[0].command_id, OPEN_RUN);
         assert_eq!(first.items[0].arguments, ["github-actions-run:51:1"]);
-        assert_eq!(first.items[0].collapsible_state, CollapsibleState::Collapsed);
+        assert_eq!(
+            first.items[0].collapsible_state,
+            CollapsibleState::Collapsed
+        );
         assert_eq!(first.items[19].id, "attempt:51:20");
         assert_eq!(first.next_cursor, "page:2");
         let effect = tree_request(&request("previous:51:22", "page:2")).unwrap();

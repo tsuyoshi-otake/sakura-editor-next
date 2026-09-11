@@ -722,7 +722,7 @@ impl Check for PublishTreePage {
                 && id(&self.parent_id, true)
                 && self.next_cursor.len() <= 2048
                 && self.message.len() <= 4096
-                && ((self.status == PageStatus::Partial) == !self.next_cursor.is_empty())
+                && ((self.status == PageStatus::Partial) != self.next_cursor.is_empty())
                 && (!matches!(self.status, PageStatus::Empty | PageStatus::Failed)
                     || self.items.is_empty())
                 && self.items.iter().all(|x| x.id != self.parent_id)
