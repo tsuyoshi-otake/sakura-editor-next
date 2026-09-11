@@ -57,6 +57,35 @@ private:
 	EViewContainerLocation m_location{ EViewContainerLocation::Sidebar };
 };
 
+// Counts the frames the container root actually publishes and remembers the
+// pane geometry at the moment the root became visible (#298).
+class PaintProbe final {
+public:
+	PaintProbe(HWND root, HWND pane) : m_root(root), m_pane(pane)
+	{
+		::SetWindowSubclass(root, Procedure, 0x298, reinterpret_cast<DWORD_PTR>(this));
+		::SetWindowSubclass(pane, Procedure, 0x298, reinterpret_cast<DWORD_PTR>(this));
+	}
+	~PaintProbe()
+	{
+		if (::IsWindow(m_root)) ::RemoveWindowSubclass(m_root, Procedure, 0x298);
+		if (::IsWindow(m_pane)) ::RemoveWindowSubclass(m_pane, Procedure, 0x298);
+	}
+	PaintProbe(const PaintProbe&) = delete;
+	PaintProbe& operator=(const PaintProbe&) = delete;
+	int paints{};
+	RECT shown{};
+private:
+	static LRESULT CALLBACK Procedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR data)
+	{
+		auto& probe = *reinterpret_cast<PaintProbe*>(data);
+		if (message == WM_PAINT) ++probe.paints;
+		if (message == WM_SHOWWINDOW && wParam && window == probe.m_root) ::GetWindowRect(probe.m_pane, &probe.shown);
+		return ::DefSubclassProc(window, message, wParam, lParam);
+	}
+	HWND m_root{}, m_pane{};
+};
+
 class SenpViewContainer : public testing::Test {
 protected:
 	HRESULT com = ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
@@ -128,6 +157,10 @@ protected:
 	}
 	IViewContainerPageProjection* Projection(std::string_view id)
 	{ return dynamic_cast<IViewContainerPageProjection*>(pool->Acquire(id).page); }
+	// The visual probe has no CEditWnd, so it stands in for the workbench frame
+	// commit: a container only reserves its repaint (#298), and something has to
+	// publish the finished frame before the capture reads the screen.
+	void CommitFrame() { ::RedrawWindow(window, nullptr, nullptr, RDW_UPDATENOW | RDW_ALLCHILDREN); }
 	static LRESULT CALLBACK ProbeProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR data)
 	{
 		auto& fixture = *reinterpret_cast<SenpViewContainer*>(data);
@@ -144,17 +177,22 @@ protected:
 				fixture.Projection(id)->SetProjectionPalette(palette);
 				fixture.Projection(id)->LayoutProjection({ 0, 0, width, 620 }, { 0, 0, width, 620 }, dpi);
 			}
+			fixture.CommitFrame();
 			return fixture.owner->IsUsable();
 		}
 		case 2: {
 			auto changed = fixture.model->MoveView({ { "probe.move." + std::to_string(++fixture.probeOperation) }, "test.issueList", lParam ? "test.actions" : "test.issues", 0 });
-			return fixture.owner->ApplyLayout(changed.snapshot) == ESenpViewProjectionStatus::Applied;
+			const bool applied = fixture.owner->ApplyLayout(changed.snapshot) == ESenpViewProjectionStatus::Applied;
+			fixture.CommitFrame();
+			return applied;
 		}
 		case 3: {
 			const HWND issueHost = lParam ? fixture.right : fixture.left;
 			const HWND actionHost = lParam ? fixture.left : fixture.right;
-			return fixture.pool->Attach("test.issues", { "probe.issues", lParam ? EViewContainerLocation::AuxiliaryBar : EViewContainerLocation::Sidebar, reinterpret_cast<ViewContainerNativeHandle>(issueHost) }).Succeeded()
+			const bool attached = fixture.pool->Attach("test.issues", { "probe.issues", lParam ? EViewContainerLocation::AuxiliaryBar : EViewContainerLocation::Sidebar, reinterpret_cast<ViewContainerNativeHandle>(issueHost) }).Succeeded()
 				&& fixture.pool->Attach("test.actions", { "probe.actions", lParam ? EViewContainerLocation::Sidebar : EViewContainerLocation::AuxiliaryBar, reinterpret_cast<ViewContainerNativeHandle>(actionHost) }).Succeeded();
+			fixture.CommitFrame();
+			return attached;
 		}
 		case 4: fixture.probeDone = true; return 1;
 		case 5: return reinterpret_cast<LRESULT>(fixture.owner->Snapshot("test.issueList")->body);
@@ -298,6 +336,37 @@ TEST_F(SenpViewContainer, TitleActionsRespectEnabledStateAndRestoreFocusWhenRemo
 	::SetFocus(refresh); ASSERT_EQ(refresh, ::GetFocus());
 	EXPECT_EQ(ESenpViewProjectionStatus::Applied, owner->SetTitleActions(first.viewId, {})); EXPECT_EQ(first.header, ::GetFocus());
 	EXPECT_EQ(ESenpViewProjectionStatus::Invalid, owner->SetTitleActions(first.viewId, { { "test.duplicate", L"One", L"refresh" }, { "test.duplicate", L"Two", L"refresh" } }));
+}
+
+TEST_F(SenpViewContainer, LayoutReservesItsRepaintAndShowsAPageOnlyAtItsFinalGeometry)
+{
+	Create(true); ASSERT_NE(nullptr, owner);
+	const auto first = owner->Snapshot("test.issueList").value();
+	const HWND root = ::GetParent(first.pane);
+	ASSERT_NE(nullptr, root);
+	PaintProbe probe(root, first.pane);
+	auto* projection = Projection("test.issues");
+	ASSERT_NE(nullptr, projection);
+
+	// A relayout of a visible container must not publish a frame of its own.
+	projection->LayoutProjection({ 0, 0, 300, 620 }, { 0, 0, 300, 620 }, 96);
+	EXPECT_EQ(0, probe.paints);
+	EXPECT_TRUE(::GetUpdateRect(root, nullptr, FALSE));
+	Pump(); EXPECT_GT(probe.paints, 0);
+
+	// A page switch lays the panes out first, so the page is never shown at its
+	// previous geometry, and it publishes nothing until the message loop runs.
+	projection->SetProjectionVisible(false); Pump();
+	probe.paints = 0; probe.shown = RECT{};
+	projection->LayoutProjection({ 0, 0, 380, 620 }, { 0, 0, 380, 620 }, 96);
+	projection->SetProjectionVisible(true);
+	EXPECT_EQ(0, probe.paints);
+	RECT settled{}; ::GetWindowRect(first.pane, &settled);
+	EXPECT_EQ(settled.right - settled.left, probe.shown.right - probe.shown.left);
+	EXPECT_TRUE(::IsWindowVisible(root));
+	Pump(); EXPECT_GT(probe.paints, 0);
+	RECT afterPaint{}; ::GetWindowRect(first.pane, &afterPaint);
+	EXPECT_EQ(settled.right - settled.left, afterPaint.right - afterPaint.left);
 }
 
 TEST_F(SenpViewContainer, PanelPlacementUpdatesBodyThemeContextWithoutReplacingIt)

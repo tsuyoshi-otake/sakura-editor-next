@@ -47,6 +47,33 @@
   `UiaReturnRawElementProvider(hwnd, 0, 0, nullptr)` at WM_DESTROY; reject
   WM_GETOBJECT during revocation. Invalidation alone does not clear Windows'
   HWND/event map and failed the combined UIA test despite passing in isolation.
+- **Who publishes the frame decides whether a switch flickers (2026-09-11, #298).**
+  `CSenpViewContainers::Impl::Layout` runs several times for one Side Bar page
+  switch -- `Attach`, `LayoutProjection`, then `SetProjectionVisible` -- so a
+  synchronous `RDW_UPDATENOW` there put every intermediate state on the screen
+  and the extension views visibly flickered while the built-in containers, which
+  defer to the one committed frame, did not. `Layout` therefore takes a
+  `publish` flag: the workbench-driven entry points (attach, projected bounds,
+  projected visibility, palette, `ApplyLayout`) only reserve the repaint and let
+  `CEditWnd`'s committed-frame redraw or the host's own invalidation publish it,
+  while a gesture that originates inside the container (collapse, keyboard move,
+  sash drag, wheel scroll, title actions) owns its frame and still publishes it
+  synchronously. This does not weaken the #17 rule in
+  [`../../window/CLAUDE.md`](../../window/CLAUDE.md); it names the one owner of
+  that single frame instead of letting every layer publish its own.
+- A pane and the container root move with `SWP_NOCOPYBITS` for the same reason
+  the Panel host does: the default bit copy smears the old content across the
+  moved rectangle before `WM_PAINT` arrives. The sash decides show-or-hide once
+  per pass; hiding it and showing it again within one layout was a guaranteed
+  intermediate frame. `Attach` lays the panes out while the container is still
+  hidden and shows it afterwards, so a retained page never appears at its
+  previous geometry first.
+- The visual probe has no `CEditWnd`, so the fixture's `CommitFrame` stands in
+  for the frame commit after every workbench-driven gesture. Without it the
+  capture races an asynchronous paint and reports stale pixels that the real
+  window never shows. `SenpViewContainer.LayoutReservesItsRepaintAndShowsAPageOnlyAtItsFinalGeometry`
+  pins both halves: no frame is published during a switch, and the pane already
+  has its final width when the container becomes visible.
 - Current supported placement is within this owner cohort. A product-owned or
   foreign cohort page without a retained-View transfer contract returns
   `Unsupported`. The pure catalog can describe a wider destination; that alone

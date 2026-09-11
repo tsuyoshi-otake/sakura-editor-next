@@ -267,7 +267,11 @@ struct CSenpViewContainers::Impl {
 			if (container->root.window) ::DestroyWindow(container->root.window);
 		}
 	}
-	void Layout(Container& container);
+	// `publish` is false for a layout the workbench drives (attach, projected
+	// bounds, visibility, palette, committed placement): those run several times
+	// for one page switch and the frame commit publishes the finished frame.
+	// A gesture inside the container owns its own frame and publishes it here.
+	void Layout(Container& container, bool publish = true);
 	void LayoutPane(Pane& pane, int width, int height);
 	void ScheduleInteraction(Pane& pane) noexcept
 	{
@@ -309,7 +313,7 @@ bool CSenpViewContainers::Impl::Control::AccessibilityExpandCollapse(int, bool e
 	return pane->owner->Usable() && pane->owner->Collapse(*pane, !expanded);
 }
 
-void CSenpViewContainers::Impl::Layout(Container& container)
+void CSenpViewContainers::Impl::Layout(Container& container, bool publish)
 {
 	if (!Usable() || container.closed || !container.root.window) return;
 	const int width = std::max(0L, container.content.right - container.content.left);
@@ -340,12 +344,14 @@ void CSenpViewContainers::Impl::Layout(Container& container)
 		if (pane.font.Dpi() != container.dpi && !pane.font.Recreate(theme::ThemeFontKind::Chrome, container.dpi)) { Fault(); return; }
 		if (!::SetWindowPos(pane.root.window, nullptr, container.content.left,
 			container.content.top + pane.bounds.top - container.scroll, width, pane.bounds.bottom - pane.bounds.top,
-			SWP_NOZORDER | SWP_NOACTIVATE)) { Fault(); return; }
+			SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS)) { Fault(); return; }
 		pane.mountedVisible = visible;
 		LayoutPane(pane, width, pane.bounds.bottom - pane.bounds.top);
 		::ShowWindow(pane.root.window, visible ? SW_SHOWNOACTIVATE : SW_HIDE);
-		::ShowWindow(pane.sash.window, SW_HIDE);
 		// A sash spans the next header boundary without consuming layout space.
+		// Decide its placement once. Hiding it and showing it again within the
+		// same pass publishes an intermediate frame on every layout.
+		bool sashPlaced = false;
 		if (!pane.collapsed) {
 			for (std::size_t next = i + 1; next < count; ++next) if (!ordered[next]->collapsed) {
 				pane.nextResizable = ordered[next];
@@ -355,17 +361,21 @@ void CSenpViewContainers::Impl::Layout(Container& container)
 				const int sash = Dip(kViewPaneSashDip, container.dpi);
 				const int y = container.content.top + pane.bounds.bottom - container.scroll - sash / 2;
 				if (y >= container.content.top && y + sash <= container.content.bottom) {
-					::SetWindowPos(pane.sash.window, HWND_TOP, container.content.left, y, width, sash, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+					::SetWindowPos(pane.sash.window, HWND_TOP, container.content.left, y, width, sash,
+						SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOCOPYBITS);
+					sashPlaced = true;
 				}
 			}
 		}
+		if (!sashPlaced) ::ShowWindow(pane.sash.window, SW_HIDE);
 	}
 	container.scrollbar.SetDpi(container.dpi);
 	container.scrollbar.SetBounds(container.content);
 	container.scrollbar.SetColors(controls::ResolveOverlayScrollbarColors(palette, Surface(container)));
 	container.scrollbar.SetScrollModel({ stack.contentHeight, height, container.scroll });
 	container.scrollbar.Update();
-	::RedrawWindow(container.root.window, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+	::RedrawWindow(container.root.window, nullptr, nullptr,
+		RDW_INVALIDATE | RDW_ALLCHILDREN | (publish ? RDW_UPDATENOW : 0u));
 }
 
 void CSenpViewContainers::Impl::LayoutPane(Pane& pane, int width, int height)
@@ -680,8 +690,10 @@ public:
 			return EViewContainerPageAttachStatus::Failed;
 		try { m_container.host = host; }
 		catch (...) { return EViewContainerPageAttachStatus::Failed; }
+		// Lay the panes out while the container is still hidden, then show it, so a
+		// retained page never appears at its previous geometry first.
+		m_owner->m_impl->Layout(m_container, false);
 		::ShowWindow(m_container.root.window, m_container.visible ? SW_SHOWNOACTIVATE : SW_HIDE);
-		m_owner->m_impl->Layout(m_container);
 		if (!m_owner->IsUsable()) { m_container.host.reset(); return EViewContainerPageAttachStatus::Failed; }
 		return EViewContainerPageAttachStatus::Attached;
 	}
@@ -722,15 +734,17 @@ public:
 			|| dpi > 768) { m_owner->m_impl->Fault(); return; }
 		m_container.content = content; m_container.dpi = dpi == 0 ? 96 : dpi;
 		if (!::SetWindowPos(m_container.root.window, nullptr, bounds.left, bounds.top, bounds.right - bounds.left,
-			bounds.bottom - bounds.top, SWP_NOACTIVATE | SWP_NOZORDER)) { m_owner->m_impl->Fault(); return; }
-		m_owner->m_impl->Layout(m_container);
+			bounds.bottom - bounds.top, SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOCOPYBITS)) { m_owner->m_impl->Fault(); return; }
+		m_owner->m_impl->Layout(m_container, false);
 	}
 	void SetProjectionVisible(bool visible) noexcept override
 	{
 		if (!m_owner->IsUsable() || m_container.closed) return;
 		m_container.visible = visible;
-		::ShowWindow(m_container.root.window, visible && m_container.host ? SW_SHOWNOACTIVATE : SW_HIDE);
-		m_owner->m_impl->Layout(m_container);
+		const bool show = visible && m_container.host.has_value();
+		if (!show) ::ShowWindow(m_container.root.window, SW_HIDE);
+		m_owner->m_impl->Layout(m_container, false);
+		if (show) ::ShowWindow(m_container.root.window, SW_SHOWNOACTIVATE);
 	}
 	void SetProjectionPalette(const theme::ThemePalette& palette) noexcept override
 	{
@@ -738,7 +752,7 @@ public:
 		if (!owner.Usable()) return;
 		owner.palette = palette;
 		for (auto& pane : owner.panes) pane->body->SetPalette(palette, owner.Location(*pane->container));
-		for (auto& container : owner.containers) owner.Layout(*container);
+		for (auto& container : owner.containers) owner.Layout(*container, false);
 	}
 private:
 	std::shared_ptr<CSenpViewContainers> m_owner;
@@ -823,7 +837,7 @@ ESenpViewProjectionStatus CSenpViewContainers::ApplyLayout(const layout::Workben
 		change.pane->container = change.target; change.pane->visible = change.model->visible; change.pane->order = change.model->order;
 	}
 	state.layoutGeneration = snapshot.generation; state.layoutRevision = snapshot.revision;
-	for (auto& container : state.containers) state.Layout(*container);
+	for (auto& container : state.containers) state.Layout(*container, false);
 	state.applying = false;
 	// Movement preserves the same actual focused control, never focuses a new View.
 	if (focus && ::IsWindow(focus) && ::IsWindowVisible(focus) && ::GetFocus() != focus) ::SetFocus(focus);
