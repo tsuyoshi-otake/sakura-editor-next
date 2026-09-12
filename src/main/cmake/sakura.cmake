@@ -768,78 +768,87 @@ elseif(NOT MSVC)
     "Native provider contracts support only MSVC and experimental MinGW")
 endif()
 
-# MSVC always builds the one native Rust FFI archive. UTF-16/SIMD and Output
-# authority choose their providers independently, but both cross the same
-# staticlib boundary.
-if(MSVC)
-  find_program(SAKURA_CARGO_EXECUTABLE cargo)
-  if(NOT SAKURA_CARGO_EXECUTABLE)
-    message(FATAL_ERROR
-      "MSVC Rust candidate integration requires Cargo; no fallback is permitted")
-  endif()
+# Both supported toolchains build and link the one native Rust FFI archive.
+# Only the Cargo target triple and the archive file name differ, so a native
+# core that moves to Rust has a single implementation to verify rather than one
+# per toolchain. UTF-16/SIMD and Output authority still choose their providers
+# independently, and the provider guard above keeps C++ as MinGW's production
+# provider; this staticlib is the boundary every provider crosses (#303).
+find_program(SAKURA_CARGO_EXECUTABLE cargo)
+if(NOT SAKURA_CARGO_EXECUTABLE)
+  message(FATAL_ERROR
+    "Native Rust candidate integration requires Cargo; no fallback is permitted")
+endif()
 
-  set(SAKURA_NATIVE_FFI_ROOT "${CMAKE_SOURCE_DIR}/rust/native")
-  set(SAKURA_NATIVE_FFI_MANIFEST "${SAKURA_NATIVE_FFI_ROOT}/Cargo.toml")
-  set(SAKURA_NATIVE_FFI_LOCK "${SAKURA_NATIVE_FFI_ROOT}/Cargo.lock")
-  set(SAKURA_NATIVE_FFI_TOOLCHAIN "${SAKURA_NATIVE_FFI_ROOT}/rust-toolchain.toml")
-  set(SAKURA_NATIVE_FFI_MEMBER_MANIFEST
-    "${SAKURA_NATIVE_FFI_ROOT}/sakura_native_ffi/Cargo.toml")
-  set(SAKURA_NATIVE_FFI_SIMD_MANIFEST
-    "${SAKURA_NATIVE_FFI_ROOT}/sakura_simd/Cargo.toml")
-  set(SAKURA_NATIVE_FFI_UNICODE_MANIFEST
-    "${SAKURA_NATIVE_FFI_ROOT}/sakura_unicode_core/Cargo.toml")
-  set(SAKURA_NATIVE_FFI_SOURCE_DIR "${SAKURA_NATIVE_FFI_ROOT}")
-  file(GLOB_RECURSE SAKURA_NATIVE_FFI_RUST_SOURCES CONFIGURE_DEPENDS
-    "${SAKURA_NATIVE_FFI_SOURCE_DIR}/*.rs")
-  set(SAKURA_NATIVE_FFI_SOURCE
-    ${SAKURA_NATIVE_FFI_MANIFEST}
-    ${SAKURA_NATIVE_FFI_MEMBER_MANIFEST}
-    ${SAKURA_NATIVE_FFI_SIMD_MANIFEST}
-    ${SAKURA_NATIVE_FFI_UNICODE_MANIFEST}
-    ${SAKURA_NATIVE_FFI_LOCK}
-    ${SAKURA_NATIVE_FFI_TOOLCHAIN}
-    ${SAKURA_NATIVE_FFI_RUST_SOURCES})
-  set(SAKURA_NATIVE_FFI_BUILD_SCRIPT
-    "${CMAKE_SOURCE_DIR}/src/main/cmake/build-rust-sakura-core.cmake")
-  set(SAKURA_NATIVE_FFI_TARGET_DIR "${CMAKE_BINARY_DIR}/rust/native")
+set(SAKURA_NATIVE_FFI_ROOT "${CMAKE_SOURCE_DIR}/rust/native")
+set(SAKURA_NATIVE_FFI_MANIFEST "${SAKURA_NATIVE_FFI_ROOT}/Cargo.toml")
+set(SAKURA_NATIVE_FFI_LOCK "${SAKURA_NATIVE_FFI_ROOT}/Cargo.lock")
+set(SAKURA_NATIVE_FFI_TOOLCHAIN "${SAKURA_NATIVE_FFI_ROOT}/rust-toolchain.toml")
+set(SAKURA_NATIVE_FFI_MEMBER_MANIFEST
+  "${SAKURA_NATIVE_FFI_ROOT}/sakura_native_ffi/Cargo.toml")
+set(SAKURA_NATIVE_FFI_SIMD_MANIFEST
+  "${SAKURA_NATIVE_FFI_ROOT}/sakura_simd/Cargo.toml")
+set(SAKURA_NATIVE_FFI_UNICODE_MANIFEST
+  "${SAKURA_NATIVE_FFI_ROOT}/sakura_unicode_core/Cargo.toml")
+set(SAKURA_NATIVE_FFI_SOURCE_DIR "${SAKURA_NATIVE_FFI_ROOT}")
+file(GLOB_RECURSE SAKURA_NATIVE_FFI_RUST_SOURCES CONFIGURE_DEPENDS
+  "${SAKURA_NATIVE_FFI_SOURCE_DIR}/*.rs")
+set(SAKURA_NATIVE_FFI_SOURCE
+  ${SAKURA_NATIVE_FFI_MANIFEST}
+  ${SAKURA_NATIVE_FFI_MEMBER_MANIFEST}
+  ${SAKURA_NATIVE_FFI_SIMD_MANIFEST}
+  ${SAKURA_NATIVE_FFI_UNICODE_MANIFEST}
+  ${SAKURA_NATIVE_FFI_LOCK}
+  ${SAKURA_NATIVE_FFI_TOOLCHAIN}
+  ${SAKURA_NATIVE_FFI_RUST_SOURCES})
+set(SAKURA_NATIVE_FFI_BUILD_SCRIPT
+  "${CMAKE_SOURCE_DIR}/src/main/cmake/build-rust-sakura-core.cmake")
+set(SAKURA_NATIVE_FFI_TARGET_DIR "${CMAKE_BINARY_DIR}/rust/native")
+# Only MSVC and MinGW reach this point; the provider guard above is fatal for
+# every other toolchain. The Cargo target triple and the archive file name are
+# the only two things that differ between them.
+if(MSVC)
   set(SAKURA_NATIVE_FFI_TARGET x86_64-pc-windows-msvc)
   set(SAKURA_NATIVE_FFI_LIBRARY_NAME sakura_native_ffi.lib)
-  set(SAKURA_NATIVE_FFI_DEBUG_LIBRARY
-    "${SAKURA_NATIVE_FFI_TARGET_DIR}/${SAKURA_NATIVE_FFI_TARGET}/debug/${SAKURA_NATIVE_FFI_LIBRARY_NAME}")
-  set(SAKURA_NATIVE_FFI_RELEASE_LIBRARY
-    "${SAKURA_NATIVE_FFI_TARGET_DIR}/${SAKURA_NATIVE_FFI_TARGET}/release/${SAKURA_NATIVE_FFI_LIBRARY_NAME}")
-
-  add_custom_target(sakura_native_ffi_build
-    COMMAND ${CMAKE_COMMAND}
-      -DSAKURA_NATIVE_FFI_CARGO=${SAKURA_CARGO_EXECUTABLE}
-      -DSAKURA_NATIVE_FFI_MANIFEST=${SAKURA_NATIVE_FFI_MANIFEST}
-      -DSAKURA_NATIVE_FFI_MEMBER_MANIFEST=${SAKURA_NATIVE_FFI_MEMBER_MANIFEST}
-      -DSAKURA_NATIVE_FFI_SIMD_MANIFEST=${SAKURA_NATIVE_FFI_SIMD_MANIFEST}
-      -DSAKURA_NATIVE_FFI_UNICODE_MANIFEST=${SAKURA_NATIVE_FFI_UNICODE_MANIFEST}
-      -DSAKURA_NATIVE_FFI_LOCK=${SAKURA_NATIVE_FFI_LOCK}
-      -DSAKURA_NATIVE_FFI_TOOLCHAIN=${SAKURA_NATIVE_FFI_TOOLCHAIN}
-      -DSAKURA_NATIVE_FFI_SOURCE_DIR=${SAKURA_NATIVE_FFI_SOURCE_DIR}
-      -DSAKURA_NATIVE_FFI_TARGET=${SAKURA_NATIVE_FFI_TARGET}
-      -DSAKURA_NATIVE_FFI_TARGET_DIR=${SAKURA_NATIVE_FFI_TARGET_DIR}
-      -DSAKURA_NATIVE_FFI_WORKING_DIR=${SAKURA_NATIVE_FFI_ROOT}
-      -DSAKURA_NATIVE_FFI_PROFILE=$<$<CONFIG:Debug>:dev>$<$<CONFIG:Release>:release>
-      -DSAKURA_NATIVE_FFI_OUTPUT=$<$<CONFIG:Debug>:${SAKURA_NATIVE_FFI_DEBUG_LIBRARY}>$<$<CONFIG:Release>:${SAKURA_NATIVE_FFI_RELEASE_LIBRARY}>
-      -P ${SAKURA_NATIVE_FFI_BUILD_SCRIPT}
-    BYPRODUCTS
-      ${SAKURA_NATIVE_FFI_DEBUG_LIBRARY}
-      ${SAKURA_NATIVE_FFI_RELEASE_LIBRARY}
-    DEPENDS ${SAKURA_NATIVE_FFI_SOURCE} ${SAKURA_NATIVE_FFI_BUILD_SCRIPT}
-    VERBATIM
-    COMMENT "Checking sakura_native_ffi static library")
-  add_library(sakura_native_ffi STATIC IMPORTED GLOBAL)
-  set_target_properties(sakura_native_ffi PROPERTIES
-    IMPORTED_CONFIGURATIONS "Debug;Release"
-    IMPORTED_LOCATION_DEBUG ${SAKURA_NATIVE_FFI_DEBUG_LIBRARY}
-    IMPORTED_LOCATION_RELEASE ${SAKURA_NATIVE_FFI_RELEASE_LIBRARY}
-    INTERFACE_LINK_LIBRARIES "kernel32;ntdll;userenv;ws2_32;dbghelp"
-  )
-  add_dependencies(sakura_native_ffi sakura_native_ffi_build)
+else()
+  set(SAKURA_NATIVE_FFI_TARGET x86_64-pc-windows-gnu)
+  set(SAKURA_NATIVE_FFI_LIBRARY_NAME libsakura_native_ffi.a)
 endif()
+set(SAKURA_NATIVE_FFI_DEBUG_LIBRARY
+  "${SAKURA_NATIVE_FFI_TARGET_DIR}/${SAKURA_NATIVE_FFI_TARGET}/debug/${SAKURA_NATIVE_FFI_LIBRARY_NAME}")
+set(SAKURA_NATIVE_FFI_RELEASE_LIBRARY
+  "${SAKURA_NATIVE_FFI_TARGET_DIR}/${SAKURA_NATIVE_FFI_TARGET}/release/${SAKURA_NATIVE_FFI_LIBRARY_NAME}")
+
+add_custom_target(sakura_native_ffi_build
+  COMMAND ${CMAKE_COMMAND}
+    -DSAKURA_NATIVE_FFI_CARGO=${SAKURA_CARGO_EXECUTABLE}
+    -DSAKURA_NATIVE_FFI_MANIFEST=${SAKURA_NATIVE_FFI_MANIFEST}
+    -DSAKURA_NATIVE_FFI_MEMBER_MANIFEST=${SAKURA_NATIVE_FFI_MEMBER_MANIFEST}
+    -DSAKURA_NATIVE_FFI_SIMD_MANIFEST=${SAKURA_NATIVE_FFI_SIMD_MANIFEST}
+    -DSAKURA_NATIVE_FFI_UNICODE_MANIFEST=${SAKURA_NATIVE_FFI_UNICODE_MANIFEST}
+    -DSAKURA_NATIVE_FFI_LOCK=${SAKURA_NATIVE_FFI_LOCK}
+    -DSAKURA_NATIVE_FFI_TOOLCHAIN=${SAKURA_NATIVE_FFI_TOOLCHAIN}
+    -DSAKURA_NATIVE_FFI_SOURCE_DIR=${SAKURA_NATIVE_FFI_SOURCE_DIR}
+    -DSAKURA_NATIVE_FFI_TARGET=${SAKURA_NATIVE_FFI_TARGET}
+    -DSAKURA_NATIVE_FFI_TARGET_DIR=${SAKURA_NATIVE_FFI_TARGET_DIR}
+    -DSAKURA_NATIVE_FFI_WORKING_DIR=${SAKURA_NATIVE_FFI_ROOT}
+    -DSAKURA_NATIVE_FFI_PROFILE=$<$<CONFIG:Debug>:dev>$<$<CONFIG:Release>:release>
+    -DSAKURA_NATIVE_FFI_OUTPUT=$<$<CONFIG:Debug>:${SAKURA_NATIVE_FFI_DEBUG_LIBRARY}>$<$<CONFIG:Release>:${SAKURA_NATIVE_FFI_RELEASE_LIBRARY}>
+    -P ${SAKURA_NATIVE_FFI_BUILD_SCRIPT}
+  BYPRODUCTS
+    ${SAKURA_NATIVE_FFI_DEBUG_LIBRARY}
+    ${SAKURA_NATIVE_FFI_RELEASE_LIBRARY}
+  DEPENDS ${SAKURA_NATIVE_FFI_SOURCE} ${SAKURA_NATIVE_FFI_BUILD_SCRIPT}
+  VERBATIM
+  COMMENT "Checking sakura_native_ffi static library")
+add_library(sakura_native_ffi STATIC IMPORTED GLOBAL)
+set_target_properties(sakura_native_ffi PROPERTIES
+  IMPORTED_CONFIGURATIONS "Debug;Release"
+  IMPORTED_LOCATION_DEBUG ${SAKURA_NATIVE_FFI_DEBUG_LIBRARY}
+  IMPORTED_LOCATION_RELEASE ${SAKURA_NATIVE_FFI_RELEASE_LIBRARY}
+  INTERFACE_LINK_LIBRARIES "kernel32;ntdll;userenv;ws2_32;dbghelp"
+)
+add_dependencies(sakura_native_ffi sakura_native_ffi_build)
 
 # Set C++ standard for sakura_core
 target_compile_features(sakura_core PUBLIC cxx_std_20)
@@ -911,15 +920,17 @@ target_link_libraries(sakura_core
     winspool
 )
 
-if(MSVC)
-  target_compile_definitions(sakura_core PUBLIC SAKURA_UTF16_RUST_CANDIDATE)
-  target_link_libraries(sakura_core PUBLIC sakura_native_ffi)
-  if(SAKURA_UTF16_BACKEND STREQUAL "rust")
-    target_compile_definitions(sakura_core PUBLIC SAKURA_UTF16_BACKEND_RUST)
-  endif()
-  if(SAKURA_OUTPUT_BACKEND STREQUAL "rust")
-    target_compile_definitions(sakura_core PUBLIC SAKURA_OUTPUT_BACKEND_RUST)
-  endif()
+# Both toolchains link the one archive and compile the Rust candidate paths, so
+# the differential corpus runs on MinGW as well as MSVC. Production authority is
+# a separate decision that stays with the backend selection below, which the
+# provider guard above pins to C++ for MinGW (#303).
+target_compile_definitions(sakura_core PUBLIC SAKURA_UTF16_RUST_CANDIDATE)
+target_link_libraries(sakura_core PUBLIC sakura_native_ffi)
+if(SAKURA_UTF16_BACKEND STREQUAL "rust")
+  target_compile_definitions(sakura_core PUBLIC SAKURA_UTF16_BACKEND_RUST)
+endif()
+if(SAKURA_OUTPUT_BACKEND STREQUAL "rust")
+  target_compile_definitions(sakura_core PUBLIC SAKURA_OUTPUT_BACKEND_RUST)
 endif()
 
 if(SAKURA_UTF16_BENCHMARK_TELEMETRY)

@@ -166,9 +166,12 @@ class CiRustNativeWorkflowContractTests(unittest.TestCase):
     def test_toolchain_toml_is_the_single_exact_ci_pin(self) -> None:
         self.assertRegex(self.toolchain, r"^[0-9]+\.[0-9]+\.[0-9]+$")
         self.assertEqual(self.toolchain, self.senp_toolchain)
+        # Both Windows targets are declared because both toolchains link the
+        # one native staticlib (#303); this gate still installs only the MSVC
+        # one, since it never builds the GNU archive.
         self.assertEqual(
             self.native_toolchain_targets,
-            ["x86_64-pc-windows-msvc"],
+            ["x86_64-pc-windows-msvc", "x86_64-pc-windows-gnu"],
         )
         self.assertEqual(
             self.senp_toolchain_targets,

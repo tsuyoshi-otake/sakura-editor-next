@@ -159,6 +159,10 @@ captured value; subsequent reads still revalidate against current state.
 
 Issue #274's adoption decision was explicitly approved by the user on
 2026-09-08: Rust is the default MSVC Output authority; MinGW remains C++.
+That names the production authority, not what is linked. Since #303 the MinGW
+build links the same `sakura_native_ffi` archive and compiles the same candidate
+paths, so this service's differential corpus runs under both toolchains while
+only MSVC's Output provider is Rust; `src/main/CLAUDE.md` records that boundary.
 `SAKURA_OUTPUT_PRODUCTION_PACKAGE` remains independent from UTF-16 and accepts
 both Rust and an explicitly selected C++ rollback build. The canonical release
 provenance requires Rust Output and C++ UTF-16; a rollback release must explicitly

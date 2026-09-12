@@ -51,8 +51,11 @@ jobs:
     env:
       BuildPlatform: MinGW
       Configuration: ${{ matrix.configuration }}
-      # MinGW is intentionally C++-only; never inherit a Rust backend from the
-      # caller or runner environment.
+      # MinGW links the one native Rust staticlib and compiles the candidate
+      # paths, but its production providers stay C++: the provider guard in
+      # src/main/cmake/sakura.cmake is fatal for any other value here (#303).
+      # Pin the selector so no Rust backend arrives from the caller or from the
+      # runner environment.
       SAKURA_UTF16_BACKEND: cpp
 
     defaults:
@@ -103,6 +106,54 @@ jobs:
             mingw-w64-x86_64-ctags
             mingw-w64-x86_64-diffutils
 
+      # rustup ships with the runner image, but the release this repository
+      # builds against is declared by rust/native/rust-toolchain.toml, which the
+      # MSVC gate reads the same way. Add the GNU target so the one native
+      # staticlib exists for the MinGW link (#303). The toolchain is installed
+      # per run rather than cached: the MSVC gate does the same, and this
+      # workflow already owns the largest entry in the repository's shared cache
+      # quota.
+      - name: Prepare the pinned Rust toolchain for the GNU target
+        shell: pwsh
+        working-directory: rust/native
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $toolchainDocument = Get-Content -LiteralPath 'rust-toolchain.toml' -Raw
+          $channelMatches = [regex]::Matches(
+            $toolchainDocument,
+            '(?m)^\s*channel\s*=\s*"([^"]+)"\s*$'
+          )
+          if ($channelMatches.Count -ne 1) {
+            throw 'rust-toolchain.toml must declare exactly one channel.'
+          }
+          $pin = $channelMatches[0].Groups[1].Value
+          if ($pin -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
+            throw "rust-toolchain.toml channel must be an exact numeric release, not a moving alias: $pin"
+          }
+
+          rustup toolchain install $pin --profile minimal --target x86_64-pc-windows-gnu --no-self-update
+          if ($LASTEXITCODE -ne 0) {
+            throw "Pinned Rust toolchain installation failed with exit code $LASTEXITCODE."
+          }
+
+          $activeToolchain = (rustup show active-toolchain).Trim()
+          if (-not $activeToolchain.StartsWith(
+            "$pin-",
+            [StringComparison]::Ordinal
+          )) {
+            throw "rust-toolchain.toml did not select ${pin}: $activeToolchain"
+          }
+          rustc "+$pin" --target x86_64-pc-windows-gnu --print target-libdir
+          if ($LASTEXITCODE -ne 0) {
+            throw "The pinned toolchain has no x86_64-pc-windows-gnu standard library."
+          }
+
+          $cargo = (Get-Command cargo -CommandType Application | Select-Object -First 1).Source
+          if (-not $cargo) {
+            throw 'cargo is not on PATH after installing the pinned toolchain.'
+          }
+          "SAKURA_CARGO_BIN=$(Split-Path -Parent $cargo)" >> $env:GITHUB_ENV
+
       - run: uv venv
 
       - run: uv pip install --require-hashes --no-build --no-deps -r requirements.txt
@@ -143,7 +194,13 @@ jobs:
           }
 
       - name: Build with MinGW-w64-gcc
-        run: ./build-gnu.bat ${{ env.BuildPlatform }} ${{ env.Configuration }} --no-test
+        # The msys2 shell keeps a minimal PATH so MSYS2 build-tool resolution
+        # stays deterministic. Name Cargo's proxy directory on its own rather
+        # than inheriting the whole Windows PATH, so CMake's find_program
+        # resolves the cargo the step above pinned.
+        run: |
+          export PATH="$(cygpath --unix "${SAKURA_CARGO_BIN}"):${PATH}"
+          ./build-gnu.bat ${{ env.BuildPlatform }} ${{ env.Configuration }} --no-test
 
       - name: Run unit tests
         id: run_unit_tests
@@ -151,10 +208,14 @@ jobs:
         # The pytest contract suite invokes the runner-provided git,
         # powershell.exe, and pwsh.exe directly. Keep the broader Windows PATH
         # scoped to this test step so MSYS2 build-tool resolution stays
-        # deterministic while those host executables remain observable.
+        # deterministic while those host executables remain observable. The
+        # pinned Cargo proxy still leads that PATH, so the reconfigure this
+        # step performs resolves the same cargo the build did.
         env:
           MSYS2_PATH_TYPE: inherit
-        run: ./build-gnu.bat ${{ env.BuildPlatform }} ${{ env.Configuration }}
+        run: |
+          export PATH="$(cygpath --unix "${SAKURA_CARGO_BIN}"):${PATH}"
+          ./build-gnu.bat ${{ env.BuildPlatform }} ${{ env.Configuration }}
 
       - name: Try gdb backtrace on test failure
         if: failure() && env.Configuration == 'Debug'
