@@ -18,14 +18,63 @@
 namespace platform::foundation {
 namespace {
 
-//! What the worker body records. It is held separately from the owner so a
-//! test can still read it once the owner, and the handle it held, are gone.
-struct Record final {
-	std::mutex mutex;
-	std::condition_variable changed;
-	bool running = false;
-	bool stop = false;
-	int completions = 0;
+/*!
+	What the worker body records, behind the lock that guards it.
+
+	It is held separately from the owner, so an assertion can outlive the owner
+	and the handle it held and still read what the worker did. Every field is
+	private: a test that reached for one directly would be reading it without
+	the lock the worker writes it under.
+*/
+class Record final {
+public:
+	//! Announces that the body is running, so a later assertion about the join
+	//! is about a worker that existed rather than one that never started.
+	void MarkRunning()
+	{
+		{
+			std::lock_guard lock(m_mutex);
+			m_running = true;
+		}
+		m_changed.notify_all();
+	}
+
+	//! Holds the body until its owner asks it to stop, then counts the return.
+	void AwaitStopAndComplete()
+	{
+		std::unique_lock lock(m_mutex);
+		m_changed.wait(lock, [this]() { return m_stop; });
+		++m_completions;
+	}
+
+	void RequestStop()
+	{
+		{
+			std::lock_guard lock(m_mutex);
+			m_stop = true;
+		}
+		m_changed.notify_all();
+	}
+
+	//! False when the body did not start within the timeout, which is a failure
+	//! of the test's premise rather than of the property under test.
+	[[nodiscard]] bool WaitUntilRunning()
+	{
+		std::unique_lock lock(m_mutex);
+		return m_changed.wait_for(lock, std::chrono::seconds(5), [this]() { return m_running; });
+	}
+
+	[[nodiscard]] int Completions()
+	{
+		std::lock_guard lock(m_mutex);
+		return m_completions;
+	}
+private:
+	std::mutex m_mutex;
+	std::condition_variable m_changed;
+	bool m_running = false;
+	bool m_stop = false;
+	int m_completions = 0;
 };
 
 /*!
@@ -38,7 +87,7 @@ struct Record final {
 class Owner final {
 public:
 	explicit Owner(std::shared_ptr<Record> record) noexcept : m_record(std::move(record)) {}
-	~Owner() { RequestStop(); }
+	~Owner() { m_record->RequestStop(); }
 
 	Owner(const Owner&) = delete;
 	Owner& operator=(const Owner&) = delete;
@@ -47,26 +96,11 @@ public:
 	//! Hands the join to the caller, leaving this owner holding nothing.
 	[[nodiscard]] CNativeWorkerThread Release() noexcept { return std::move(m_worker); }
 	[[nodiscard]] bool Started() const noexcept { return m_worker.Started(); }
-
-	void RequestStop() noexcept
-	{
-		{
-			std::lock_guard lock(m_record->mutex);
-			m_record->stop = true;
-		}
-		m_record->changed.notify_all();
-	}
 private:
 	void Run()
 	{
-		{
-			std::lock_guard lock(m_record->mutex);
-			m_record->running = true;
-		}
-		m_record->changed.notify_all();
-		std::unique_lock lock(m_record->mutex);
-		m_record->changed.wait(lock, [this]() { return m_record->stop; });
-		++m_record->completions;
+		m_record->MarkRunning();
+		m_record->AwaitStopAndComplete();
 	}
 
 	std::shared_ptr<Record> m_record;
@@ -74,33 +108,18 @@ private:
 	CNativeWorkerThread m_worker;
 };
 
-//! Proves the body actually ran, so a later assertion about the join is about
-//! a worker that existed rather than one that never started.
-void WaitUntilRunning(Record& record)
-{
-	std::unique_lock lock(record.mutex);
-	ASSERT_TRUE(record.changed.wait_for(lock, std::chrono::seconds(5),
-		[&record]() { return record.running; }));
-}
-
-[[nodiscard]] int Completions(Record& record)
-{
-	std::lock_guard lock(record.mutex);
-	return record.completions;
-}
-
 TEST(NativeWorkerThread, JoinsTheWorkerWhenTheOwnerHoldingItIsDestroyed)
 {
 	auto record = std::make_shared<Record>();
 	{
 		Owner owner(record);
 		owner.Start();
-		ASSERT_NO_FATAL_FAILURE(WaitUntilRunning(*record));
+		ASSERT_TRUE(record->WaitUntilRunning());
 		EXPECT_TRUE(owner.Started());
 		// No join is written here. The owner's destructor raises the stop and
 		// the handle's destructor waits, which is the whole of the teardown.
 	}
-	EXPECT_EQ(1, Completions(*record));
+	EXPECT_EQ(1, record->Completions());
 }
 
 TEST(NativeWorkerThread, MovesTheJoinWithTheHandleAndPerformsItExactlyOnce)
@@ -108,19 +127,19 @@ TEST(NativeWorkerThread, MovesTheJoinWithTheHandleAndPerformsItExactlyOnce)
 	auto record = std::make_shared<Record>();
 	Owner owner(record);
 	owner.Start();
-	ASSERT_NO_FATAL_FAILURE(WaitUntilRunning(*record));
+	ASSERT_TRUE(record->WaitUntilRunning());
 
 	CNativeWorkerThread moved = owner.Release();
 	EXPECT_FALSE(owner.Started());
 	EXPECT_TRUE(moved.Started());
 
-	owner.RequestStop();
+	record->RequestStop();
 	moved.Join();
 	EXPECT_FALSE(moved.Started());
 	// Joining again, and the destructor after it, each find nothing left to
 	// wait for: the handle forgot the worker as it joined it.
 	moved.Join();
-	EXPECT_EQ(1, Completions(*record));
+	EXPECT_EQ(1, record->Completions());
 }
 
 TEST(NativeWorkerThread, JoinsTheWorkerItHeldBeforeAdoptingAnother)
@@ -131,20 +150,20 @@ TEST(NativeWorkerThread, JoinsTheWorkerItHeldBeforeAdoptingAnother)
 	Owner secondOwner(second);
 	firstOwner.Start();
 	secondOwner.Start();
-	ASSERT_NO_FATAL_FAILURE(WaitUntilRunning(*first));
-	ASSERT_NO_FATAL_FAILURE(WaitUntilRunning(*second));
+	ASSERT_TRUE(first->WaitUntilRunning());
+	ASSERT_TRUE(second->WaitUntilRunning());
 
 	CNativeWorkerThread held = firstOwner.Release();
-	firstOwner.RequestStop();
+	first->RequestStop();
 	// Adopting the second worker is also the release of the first: the
 	// assignment joins what it is about to stop owning.
 	held = secondOwner.Release();
-	EXPECT_EQ(1, Completions(*first));
-	EXPECT_EQ(0, Completions(*second));
+	EXPECT_EQ(1, first->Completions());
+	EXPECT_EQ(0, second->Completions());
 
-	secondOwner.RequestStop();
+	second->RequestStop();
 	held.Join();
-	EXPECT_EQ(1, Completions(*second));
+	EXPECT_EQ(1, second->Completions());
 }
 
 TEST(NativeWorkerThread, OwnsNothingWhenItWasNeverStarted)
