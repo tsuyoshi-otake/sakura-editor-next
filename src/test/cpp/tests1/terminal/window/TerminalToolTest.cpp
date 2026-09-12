@@ -93,7 +93,6 @@ private:
 struct ToolHarness {
 	std::mutex mutex;
 	std::vector<std::shared_ptr<BackendState>> backends;
-	std::vector<std::wstring> resolvedWorkingDirectories;
 	std::string scriptedOutput;
 	bool failStart{};
 	bool blockWrites{};
@@ -112,8 +111,7 @@ struct ToolHarness {
 			}
 			return std::make_unique<terminal::CTerminalSession>(std::make_unique<ToolFakeBackend>(state), std::move(callbacks));
 		};
-		dependencies.resolveLaunch = [this](terminal::TerminalSize size, std::wstring_view workingDirectory) {
-			resolvedWorkingDirectories.emplace_back(workingDirectory);
+		dependencies.resolveLaunch = [](terminal::TerminalSize size, std::wstring_view workingDirectory) {
 			terminal::TerminalLaunchOptions options;
 			options.executablePath = L"C:\\Program Files\\PowerShell\\7\\pwsh.exe";
 			options.arguments = { L"-NoLogo" };
@@ -848,6 +846,42 @@ TEST(TerminalTool, DrainPublishesScrollbackMutationExactlyOnce)
 	EXPECT_EQ(0u, first.scrollbackChange.Evicted());
 	EXPECT_FALSE(first.scrollbackChange.Cleared());
 	EXPECT_FALSE(manager.DrainOutput(*id).scrollbackChange.Changed());
+	manager.Close();
+}
+
+TEST(TerminalTool, AttachAnnouncesOutputThatWasStillUndrainedAtTheDetach)
+{
+	ToolHarness harness;
+	harness.scriptedOutput = "still here\r\n";
+	std::atomic<int> outputNotifications{};
+	terminal::TerminalTabManager manager(harness.Dependencies(), [&outputNotifications](const terminal::TerminalTabEvent& event) {
+		if( event.kind == terminal::TerminalTabEventKind::OutputAvailable ) ++outputNotifications;
+	});
+	const auto id = manager.Activate({ 80, 24 }, L"C:\\workspace");
+	ASSERT_TRUE(id.has_value());
+	ASSERT_TRUE(WaitUntil([&] { return outputNotifications.load() > 0; }));
+	ASSERT_EQ(1u, harness.backends.size());
+	ASSERT_TRUE(WaitUntil([&] { return harness.backends[0]->outputOffset.load() == harness.scriptedOutput.size(); }));
+
+	// Output availability is an edge: the session raises it once for a queued
+	// batch and re-arms only when that batch is drained. Leave the batch
+	// undrained and detach the projection the way a workspace switch does. The
+	// session keeps running with nothing routed to it, so the edge for this
+	// batch has already been spent and can never be raised again.
+	auto projection = manager.DetachTabs();
+	ASSERT_EQ(1u, projection.tabs.size());
+	const auto spent = outputNotifications.load();
+	EXPECT_FALSE(WaitUntil([&] { return outputNotifications.load() > spent; }, 50ms));
+
+	// Attaching reconciles the level that edge stood for, so the pane is told
+	// about the waiting output by the attach itself rather than by an edge that
+	// is never coming.
+	ASSERT_TRUE(manager.AttachTabs(std::move(projection)).Succeeded());
+	EXPECT_EQ(spent + 1, outputNotifications.load());
+
+	const auto drained = manager.DrainOutput(*id);
+	EXPECT_TRUE(drained.found);
+	EXPECT_EQ(harness.scriptedOutput.size(), drained.bytesDrained);
 	manager.Close();
 }
 

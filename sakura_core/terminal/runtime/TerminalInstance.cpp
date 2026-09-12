@@ -106,9 +106,6 @@ struct TerminalInstance::Impl {
 		TerminalInstanceDependencies dependenciesValue,
 		TerminalInstanceEventCallback eventCallbackValue)
 		: coordinate()
-		, origin(requestValue.origin)
-		, environmentPolicy(requestValue.environmentPolicy)
-		, taskRunId(requestValue.taskRunId)
 		, request(std::move(requestValue))
 		, dependencies(std::move(dependenciesValue))
 		, eventCallback(std::move(eventCallbackValue))
@@ -513,6 +510,12 @@ struct TerminalInstance::Impl {
 		return result;
 	}
 
+	bool HasUndrainedOutput() const noexcept
+	{
+		const std::lock_guard lock(stateMutex);
+		return session && !outcomePublished && session->GetQueuedOutputBytes() > 0;
+	}
+
 	TerminalInstanceDrainResult DrainOutput()
 	{
 		TerminalInstanceDrainResult result;
@@ -616,9 +619,9 @@ struct TerminalInstance::Impl {
 		{
 			const std::lock_guard lock(stateMutex);
 			result.coordinate = coordinate;
-			result.origin = origin;
-			result.environmentPolicy = environmentPolicy;
-			result.taskRunId = taskRunId;
+			result.origin = request.origin;
+			result.environmentPolicy = request.environmentPolicy;
+			result.taskRunId = request.taskRunId;
 			result.state = state;
 			result.sessionState = sessionStateValue;
 			result.errorCode = errorCode;
@@ -740,9 +743,9 @@ struct TerminalInstance::Impl {
 	mutable std::mutex stateMutex;
 	mutable std::mutex modelMutex;
 	TerminalTargetCoordinate coordinate;
-	TerminalInstanceOrigin origin;
-	TerminalChildEnvironmentPolicy environmentPolicy;
-	std::optional<std::string> taskRunId;
+	//! Assigned once at construction and never reassigned. Origin, environment
+	//! policy, and task run id are read from here rather than mirrored into
+	//! members of their own.
 	TerminalCreateRequest request;
 	TerminalInstanceDependencies dependencies;
 	TerminalInstanceEventCallback eventCallback;
@@ -854,13 +857,13 @@ std::uint64_t TerminalInstance::InstanceGeneration() const noexcept
 TerminalInstanceOrigin TerminalInstance::Origin() const noexcept
 {
 	if (!m_impl) return TerminalInstanceOrigin::Interactive;
-	return m_impl->origin;
+	return m_impl->request.origin;
 }
 
 TerminalChildEnvironmentPolicy TerminalInstance::EnvironmentPolicy() const noexcept
 {
 	if (!m_impl) return TerminalChildEnvironmentPolicy::InteractiveWithHarnessShim;
-	return m_impl->environmentPolicy;
+	return m_impl->request.environmentPolicy;
 }
 
 TerminalInstanceState TerminalInstance::State() const noexcept
@@ -928,6 +931,11 @@ SakuraTerminalInputAdapter* TerminalInstance::InputAdapter() noexcept
 TerminalInstanceDrainResult TerminalInstance::DrainOutput()
 {
 	return m_impl ? m_impl->DrainOutput() : TerminalInstanceDrainResult{};
+}
+
+bool TerminalInstance::HasUndrainedOutput() const noexcept
+{
+	return m_impl && m_impl->HasUndrainedOutput();
 }
 
 TerminalQueueInputResult TerminalInstance::QueueInput(

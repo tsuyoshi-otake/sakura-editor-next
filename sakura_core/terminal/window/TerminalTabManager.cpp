@@ -47,7 +47,6 @@ struct TerminalTabManager::Impl {
 		TerminalPaneId paneId;
 	};
 
-	TerminalTabManagerDependencies dependencies;
 	TerminalTabEventCallback eventCallback;
 	struct EventRoute {
 		TerminalInstanceId instanceId;
@@ -81,19 +80,26 @@ struct TerminalTabManager::Impl {
 
 	void RegisterEventRoute( const TerminalInstanceId instanceId, const std::uint64_t tabId )
 	{
-		std::lock_guard lock(eventMutex);
-		if( !acceptingEvents ) return;
-		eventRoutes.push_back({ instanceId, tabId });
+		{
+			std::lock_guard lock(eventMutex);
+			if( !acceptingEvents ) return;
+			eventRoutes.push_back({ instanceId, tabId });
+		}
+		AnnounceUndrainedOutput(instanceId);
 	}
 
 	void ReplaceEventRoute( const TerminalInstanceId oldInstanceId,
 		const TerminalInstanceId newInstanceId, const std::uint64_t tabId )
 	{
-		std::lock_guard lock(eventMutex);
-		const auto old = std::remove_if(eventRoutes.begin(), eventRoutes.end(),
-			[oldInstanceId](const EventRoute& route) { return route.instanceId == oldInstanceId; });
-		eventRoutes.erase(old, eventRoutes.end());
-		if( acceptingEvents ) eventRoutes.push_back({ newInstanceId, tabId });
+		{
+			std::lock_guard lock(eventMutex);
+			const auto old = std::remove_if(eventRoutes.begin(), eventRoutes.end(),
+				[oldInstanceId](const EventRoute& route) { return route.instanceId == oldInstanceId; });
+			eventRoutes.erase(old, eventRoutes.end());
+			if( !acceptingEvents ) return;
+			eventRoutes.push_back({ newInstanceId, tabId });
+		}
+		AnnounceUndrainedOutput(newInstanceId);
 	}
 
 	void RemoveEventRoute( const TerminalInstanceId instanceId ) noexcept
@@ -119,11 +125,25 @@ struct TerminalTabManager::Impl {
 
 	void RegisterProjectionRoutes()
 	{
-		ClearEventRoutes();
-		for( const auto& tab : tabs ) RegisterEventRoute(tab->instanceId, tab->id);
+		std::vector<TerminalInstanceId> rebound;
+		{
+			std::lock_guard lock(eventMutex);
+			eventRoutes.clear();
+			if( !acceptingEvents ) return;
+			rebound.reserve(tabs.size());
+			for( const auto& tab : tabs ) {
+				eventRoutes.push_back({ tab->instanceId, tab->id });
+				rebound.push_back(tab->instanceId);
+			}
+		}
+		for( const auto instanceId : rebound ) AnnounceUndrainedOutput(instanceId);
 	}
 
-	void OnRuntimeEvent( const TerminalInstanceEvent& event ) noexcept
+	//! Announces one fact about an instance to the owner. An instance with no
+	//! route is ignored on purpose: the runtime service can be process-wide, so
+	//! this manager observes instances that belong to other projections.
+	void PublishTabEvent( const TerminalInstanceId instanceId, const TerminalTabEventKind kind,
+		const TerminalSessionState sessionState, const std::uint32_t errorCode ) noexcept
 	{
 		TerminalTabEvent translated;
 		TerminalTabEventCallback callback;
@@ -131,15 +151,14 @@ struct TerminalTabManager::Impl {
 			{
 				std::lock_guard lock(eventMutex);
 				if( !acceptingEvents || !eventCallback ) return;
-				const auto found = std::find_if(eventRoutes.begin(), eventRoutes.end(), [&](const EventRoute& route) {
-					return route.instanceId == event.coordinate.instanceId;
+				const auto found = std::find_if(eventRoutes.begin(), eventRoutes.end(), [instanceId](const EventRoute& route) {
+					return route.instanceId == instanceId;
 				});
 				if( found == eventRoutes.end() ) return;
-				translated.kind = event.kind == TerminalInstanceEventKind::OutputAvailable
-					? TerminalTabEventKind::OutputAvailable : TerminalTabEventKind::StateChanged;
+				translated.kind = kind;
 				translated.tabId = found->tabId;
-				translated.state = event.sessionState;
-				translated.errorCode = event.errorCode;
+				translated.state = sessionState;
+				translated.errorCode = errorCode;
 				callback = eventCallback;
 			}
 			callback(translated);
@@ -147,21 +166,44 @@ struct TerminalTabManager::Impl {
 			// A projection callback is advisory and must not unwind a session worker.
 		}
 	}
+
+	//! Output availability is an edge. A session raises it when its reader
+	//! queues a batch and re-arms only once that batch is drained, so a route
+	//! bound after the session started - AddTab binds after CreateSession has
+	//! already started the reader, and an attach rebuilds every route beneath a
+	//! live session - misses an edge that will never come again, leaving the
+	//! pane unpainted until something else wakes it. Read the level that edge
+	//! stood for and announce it once; the owner coalesces a repeat exactly as
+	//! it coalesces two real ones. Call with eventMutex unheld.
+	void AnnounceUndrainedOutput( const TerminalInstanceId instanceId ) noexcept
+	{
+		const auto* instance = runtimeService ? runtimeService->Instance(instanceId) : nullptr;
+		if( instance == nullptr || !instance->HasUndrainedOutput() ) return;
+		PublishTabEvent(instanceId, TerminalTabEventKind::OutputAvailable,
+			instance->SessionState(), instance->LastError());
+	}
+
+	void OnRuntimeEvent( const TerminalInstanceEvent& event ) noexcept
+	{
+		PublishTabEvent(event.coordinate.instanceId,
+			event.kind == TerminalInstanceEventKind::OutputAvailable
+				? TerminalTabEventKind::OutputAvailable : TerminalTabEventKind::StateChanged,
+			event.sessionState, event.errorCode);
+	}
 };
 
 TerminalTabManager::TerminalTabManager( TerminalTabManagerDependencies dependencies, TerminalTabEventCallback eventCallback )
 	: m_impl(std::make_shared<Impl>())
 {
-	m_impl->dependencies = std::move(dependencies);
 	m_impl->eventCallback = std::move(eventCallback);
-	if( m_impl->dependencies.runtimeService ) {
-		m_impl->runtimeService = std::move(m_impl->dependencies.runtimeService);
+	if( dependencies.runtimeService ) {
+		m_impl->runtimeService = std::move(dependencies.runtimeService);
 		m_impl->ownsRuntimeService = false;
 	} else {
 		TerminalRuntimeServiceDependencies runtimeDependencies;
-		runtimeDependencies.createSession = m_impl->dependencies.createSession;
-		runtimeDependencies.resolveLaunch = m_impl->dependencies.resolveLaunch;
-		runtimeDependencies.decorateLaunch = m_impl->dependencies.decorateLaunch;
+		runtimeDependencies.createSession = std::move(dependencies.createSession);
+		runtimeDependencies.resolveLaunch = std::move(dependencies.resolveLaunch);
+		runtimeDependencies.decorateLaunch = std::move(dependencies.decorateLaunch);
 		m_impl->runtimeService = std::make_shared<CTerminalRuntimeService>(std::move(runtimeDependencies));
 		m_impl->ownsRuntimeService = true;
 	}

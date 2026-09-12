@@ -35,7 +35,7 @@ public:
 		std::uint64_t instanceGeneration,
 		TerminalCreateRequest request,
 		TerminalInstanceDependencies dependencies,
-		TerminalInstanceEventCallback eventCallback = {});
+		TerminalInstanceEventCallback eventCallback);
 	~TerminalInstance();
 
 	TerminalInstance(const TerminalInstance&) = delete;
@@ -87,6 +87,12 @@ public:
 	[[nodiscard]] SakuraTerminalInputAdapter* InputAdapter() noexcept;
 
 	[[nodiscard]] TerminalInstanceDrainResult DrainOutput();
+	//! True while the session still holds output this instance has not fed to
+	//! its parser. Output availability is published as an edge that a session
+	//! raises once and re-arms only on a drain, so an owner that binds its
+	//! projection after the session has started reads this level to recover
+	//! the notification it was not yet routed to hear.
+	[[nodiscard]] bool HasUndrainedOutput() const noexcept;
 	[[nodiscard]] TerminalQueueInputResult QueueInput(
 		std::span<const std::uint8_t> bytes,
 		TerminalInputSource source = TerminalInputSource::Interactive);
