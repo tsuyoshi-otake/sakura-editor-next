@@ -21,11 +21,10 @@ protected:
 	std::filesystem::path fixtures;
 	void SetUp() override
 	{
-		wchar_t* value{};
-		std::size_t size{};
-		_wdupenv_s(&value, &size, L"SAKURA_SENP_RUNTIME_FIXTURES");
-		if (value) fixtures = value;
-		std::free(value);
+		// _wdupenv_s is an MSVC-only secure variant with no MinGW-w64 import
+		// library entry, and the three other readers of this variable already
+		// use _wgetenv. One idiom across the four, and nothing here to free.
+		if (const auto value = _wgetenv(L"SAKURA_SENP_RUNTIME_FIXTURES"); value && *value) fixtures = value;
 		if (fixtures.empty()) GTEST_SKIP() << "Run tools/verify-senp-runtime.py to build and verify process fixtures";
 		ASSERT_TRUE(std::filesystem::is_regular_file(fixtures / "senp-host-fixture.exe"));
 	}
