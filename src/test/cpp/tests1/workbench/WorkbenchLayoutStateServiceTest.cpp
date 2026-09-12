@@ -99,14 +99,6 @@ bool HasPart(const WorkbenchLayoutStateSnapshot& snapshot, std::string_view id)
 	return std::any_of(snapshot.parts.begin(), snapshot.parts.end(), [id](const auto& value) { return value.partId == id; });
 }
 
-//! Shared subscribe-and-record helper so plain "record every batch" tests do
-//! not each carry their own direct WorkbenchLayoutStateService::Subscribe call.
-std::unique_ptr<IWorkbenchLayoutSubscription> SubscribeCollectingBatches(
-	WorkbenchLayoutStateService& state, std::vector<WorkbenchLayoutChangeBatch>& notifications)
-{
-	return state.Subscribe([&notifications](const auto& batch) { notifications.push_back(batch); });
-}
-
 bool HasContainer(const WorkbenchLayoutStateSnapshot& snapshot, std::string_view id)
 {
 	return std::any_of(snapshot.containers.begin(), snapshot.containers.end(), [id](const auto& value) { return value.containerId == id; });
@@ -138,7 +130,8 @@ TEST(WorkbenchLayoutTransaction, CommitsOneRevisionAndOneOrderedCallbackThenRepl
 	WorkbenchContributionRegistry registry;
 	WorkbenchLayoutStateService state(registry.Snapshot());
 	std::vector<WorkbenchLayoutChangeBatch> notifications;
-	auto subscription = SubscribeCollectingBatches(state, notifications);
+	auto subscription = state.Subscribe(
+		[&notifications](const auto& batch) { notifications.push_back(batch); });
 	ASSERT_TRUE(subscription);
 	const ApplyWorkbenchLayoutTransactionRequest request{
 		.operation = { .operationId = "atomic-layout-success", .expectedRevision = 0 },
@@ -192,11 +185,17 @@ TEST(WorkbenchLayoutTransaction, CommitsOneRevisionAndOneOrderedCallbackThenRepl
 	ExpectSameSnapshot(committed.snapshot, state.Snapshot());
 }
 
-TEST(WorkbenchLayoutTransaction, InjectedFailureAtEveryIndexLeavesNoPartialStateOrIntent)
+TEST(WorkbenchLayoutTransaction, InjectedFailureAndThrowAtEveryIndexAreTypedAndLeaveNoPartialStateOrIntent)
 {
+	// An indexed change can refuse by returning false or by throwing, and the two
+	// are typed differently - InjectedFailure against InternalFailure. Sweep both
+	// modes across every index instead of letting one hand-picked index stand in
+	// for the throwing path.
 	WorkbenchContributionRegistry registry;
 	const auto changes = AtomicLayoutChanges();
-	for (std::size_t failureIndex = 0; failureIndex < changes.size(); ++failureIndex) {
+	for (std::size_t attempt = 0; attempt < changes.size() * 2U; ++attempt) {
+		const std::size_t failureIndex = attempt % changes.size();
+		const bool throwsAtIndex = attempt >= changes.size();
 		WorkbenchLayoutStateService state(registry.Snapshot());
 		const auto before = state.Snapshot();
 		const auto mementoBefore = state.MementoSnapshot();
@@ -205,7 +204,11 @@ TEST(WorkbenchLayoutTransaction, InjectedFailureAtEveryIndexLeavesNoPartialState
 			[&notifications](const auto& batch) { notifications.push_back(batch); });
 		ASSERT_TRUE(subscription);
 		WorkbenchLayoutStateServiceTestAccess::SetTransactionChangeHook(state,
-			[failureIndex](const std::size_t index) { return index != failureIndex; });
+			[failureIndex, throwsAtIndex](const std::size_t index) {
+				if (index != failureIndex) return true;
+				if (throwsAtIndex) throw std::runtime_error("injected transaction failure");
+				return false;
+			});
 		const ApplyWorkbenchLayoutTransactionRequest request{
 			.operation = { .operationId = "atomic-index-failure", .expectedRevision = 0 },
 			.changes = changes,
@@ -213,7 +216,8 @@ TEST(WorkbenchLayoutTransaction, InjectedFailureAtEveryIndexLeavesNoPartialState
 
 		const auto failed = state.ApplyTransaction(request);
 		EXPECT_EQ(EWorkbenchLayoutOperationStatus::Failed, failed.status);
-		EXPECT_EQ(EWorkbenchLayoutOperationReason::InjectedFailure, failed.reason);
+		EXPECT_EQ(throwsAtIndex ? EWorkbenchLayoutOperationReason::InternalFailure
+			: EWorkbenchLayoutOperationReason::InjectedFailure, failed.reason);
 		ASSERT_TRUE(failed.failedChangeIndex);
 		EXPECT_EQ(failureIndex, *failed.failedChangeIndex);
 		EXPECT_FALSE(failed.changeBatch);
@@ -232,23 +236,24 @@ TEST(WorkbenchLayoutTransaction, InjectedFailureAtEveryIndexLeavesNoPartialState
 	}
 }
 
-TEST(WorkbenchLayoutTransaction, ThrowingIndexedPathIsTypedAndDoesNotConsumeReplayIntent)
+TEST(WorkbenchLayoutTransaction, AChangeThatThrowsOutsideTheExceptionHierarchyIsStillTypedInternalFailure)
 {
+	// The transaction boundary is a catch(...), not a catch(const std::exception&),
+	// because a change can be contributed code. A throw the service has no type for
+	// must still land as InternalFailure at the index that threw, must roll the
+	// shadow state back, and must leave the operation ID free to be retried.
+	struct OutsideTheExceptionHierarchy {};
 	WorkbenchContributionRegistry registry;
 	WorkbenchLayoutStateService state(registry.Snapshot());
 	const auto before = state.Snapshot();
 	const auto mementoBefore = state.MementoSnapshot();
-	std::vector<WorkbenchLayoutChangeBatch> notifications;
-	auto subscription = state.Subscribe(
-		[&notifications](const auto& batch) { notifications.push_back(batch); });
-	ASSERT_TRUE(subscription);
 	WorkbenchLayoutStateServiceTestAccess::SetTransactionChangeHook(state,
 		[](const std::size_t index) {
-			if (index == 2U) throw std::runtime_error("injected transaction failure");
+			if (index == 1U) throw OutsideTheExceptionHierarchy{};
 			return true;
 		});
 	const ApplyWorkbenchLayoutTransactionRequest request{
-		.operation = { .operationId = "atomic-index-throw", .expectedRevision = 0 },
+		.operation = { .operationId = "atomic-index-throws-outside-the-hierarchy", .expectedRevision = 0 },
 		.changes = AtomicLayoutChanges(),
 	};
 
@@ -256,16 +261,16 @@ TEST(WorkbenchLayoutTransaction, ThrowingIndexedPathIsTypedAndDoesNotConsumeRepl
 	EXPECT_EQ(EWorkbenchLayoutOperationStatus::Failed, failed.status);
 	EXPECT_EQ(EWorkbenchLayoutOperationReason::InternalFailure, failed.reason);
 	ASSERT_TRUE(failed.failedChangeIndex);
-	EXPECT_EQ(2U, *failed.failedChangeIndex);
+	EXPECT_EQ(1U, *failed.failedChangeIndex);
+	EXPECT_FALSE(failed.changeBatch);
 	ExpectSameSnapshot(before, state.Snapshot());
 	ExpectSameSnapshot(mementoBefore, state.MementoSnapshot());
-	EXPECT_TRUE(notifications.empty());
 
 	WorkbenchLayoutStateServiceTestAccess::SetTransactionChangeHook(state, {});
 	const auto retry = state.ApplyTransaction(request);
 	EXPECT_EQ(EWorkbenchLayoutOperationStatus::Succeeded, retry.status);
 	EXPECT_FALSE(retry.replayed);
-	EXPECT_EQ(1U, notifications.size());
+	EXPECT_EQ(1U, retry.revision);
 }
 
 TEST(WorkbenchLayoutTransaction, RejectsInvalidUnknownUnsupportedAndStaleSequencesAtomically)
@@ -844,7 +849,7 @@ TEST(WorkbenchLayoutStateService, HydratesValidMementoAtomicallyWithoutRevisionO
 	WorkbenchContributionRegistry registry;
 	WorkbenchLayoutStateService state(registry.Snapshot());
 	std::vector<WorkbenchLayoutChangeBatch> notifications;
-	auto subscription = SubscribeCollectingBatches(state, notifications);
+	auto subscription = state.Subscribe([&](const auto& batch) { notifications.push_back(batch); });
 	ASSERT_TRUE(subscription);
 	auto persisted = state.Snapshot();
 	persisted.parts = { { .partId = std::string(ids::part::Sidebar), .visible = false,
