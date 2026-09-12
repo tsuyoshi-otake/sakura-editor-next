@@ -1434,24 +1434,22 @@ TEST(CpuDispatchTest, RustByteCandidateAbiFailsClosedWithTypedStatus)
 	ASSERT_TRUE(dispatch.capabilities.avx);
 	using AbiFunction = SakuraStatus (*)(
 		const std::uint8_t*, std::uint64_t, std::uint64_t*) noexcept;
-	const std::array<std::pair<const char*, AbiFunction>, 3> functions{{
-		{"avx128", sakura_byte_find_cr_or_lf_avx128_candidate_v1},
-		{"avx2", sakura_byte_find_cr_or_lf_avx2_candidate_v1},
-		{"avx512bw", sakura_byte_find_cr_or_lf_avx512bw_candidate_v1},
+	const std::array<std::pair<CpuDispatch::Isa, AbiFunction>, 3> functions{{
+		{CpuDispatch::Isa::Avx, sakura_byte_find_cr_or_lf_avx128_candidate_v1},
+		{CpuDispatch::Isa::Avx2, sakura_byte_find_cr_or_lf_avx2_candidate_v1},
+		{CpuDispatch::Isa::Avx512, sakura_byte_find_cr_or_lf_avx512bw_candidate_v1},
 	}};
 	const std::array<std::uint8_t, 2> aligned{0, 0};
 	const auto* const misaligned = aligned.data() + 1;
 	const auto max = std::numeric_limits<std::uint64_t>::max();
+	std::size_t executed = 0;
 
-	for (const auto& [name, function] : functions) {
-		const bool supported = std::string_view{name} == "avx128"
-			? dispatch.capabilities.avx
-			: std::string_view{name} == "avx2"
-			? dispatch.capabilities.avx2
-			: dispatch.capabilities.avx512;
-		if (!supported) {
+	for (const auto& [isa, function] : functions) {
+		if (CpuDispatch::Testing::GetSupportedFindCrOrLfRust(isa) == nullptr) {
 			continue;
 		}
+		const auto* const name = CpuDispatch::GetIsaName(isa);
+		++executed;
 
 		std::uint64_t result = 99;
 		EXPECT_EQ(SakuraStatus::Ok, function(nullptr, 0, &result)) << name;
@@ -1479,28 +1477,30 @@ TEST(CpuDispatchTest, RustByteCandidateAbiFailsClosedWithTypedStatus)
 		EXPECT_EQ(SakuraStatus::InvalidArgument, function(nullptr, max, &result)) << name;
 		EXPECT_EQ(max, result) << name;
 
-		std::array<std::uint8_t, sizeof(std::uint64_t) + 1> outputStorage{};
+		// The refusal below is a real test only if the output pointer really is
+		// misaligned, and `std::array<std::uint8_t, N>` does not make it so:
+		// its alignment requirement is 1, so the array may begin anywhere and
+		// `data() + 1` may land on an 8-byte boundary. MSVC happened to place
+		// it so the case held; GCC placed it so the case did not. Demand the
+		// alignment here, and assert the misalignment before relying on it.
+		alignas(std::uint64_t)
+			std::array<std::uint8_t, sizeof(std::uint64_t) + 1> outputStorage{};
+		auto* const misalignedResult =
+			reinterpret_cast<std::uint64_t*>(outputStorage.data() + 1);
+		ASSERT_NE(0U, reinterpret_cast<std::uintptr_t>(misalignedResult)
+			% alignof(std::uint64_t)) << name;
 		EXPECT_EQ(SakuraStatus::InvalidArgument,
-			function(aligned.data(), 1,
-				reinterpret_cast<std::uint64_t*>(outputStorage.data() + 1))) << name;
+			function(aligned.data(), 1, misalignedResult)) << name;
+		// A refused call must not even publish the sentinel, because the
+		// storage it would publish into is exactly what it refused.
+		EXPECT_TRUE(std::all_of(outputStorage.begin(), outputStorage.end(),
+			[](std::uint8_t byte) noexcept { return byte == 0; })) << name;
 	}
+	ASSERT_GT(executed, 0U);
 }
 
 TEST(CpuDispatchTest, RustByteCandidateTouchesBothGuardPages)
 {
-	struct Implementation {
-		const char* name;
-		CpuDispatch::FindCrOrLfFunction cpp;
-		CpuDispatch::FindCrOrLfFunction rust;
-	};
-	const std::array<Implementation, 3> implementations{{
-		{"avx128", CpuDispatch::Testing::GetSupportedFindCrOrLf(CpuDispatch::Isa::Avx),
-			CpuDispatch::Testing::GetSupportedFindCrOrLfRust(CpuDispatch::Isa::Avx)},
-		{"avx2", CpuDispatch::Testing::GetSupportedFindCrOrLf(CpuDispatch::Isa::Avx2),
-			CpuDispatch::Testing::GetSupportedFindCrOrLfRust(CpuDispatch::Isa::Avx2)},
-		{"avx512bw", CpuDispatch::Testing::GetSupportedFindCrOrLf(CpuDispatch::Isa::Avx512),
-			CpuDispatch::Testing::GetSupportedFindCrOrLfRust(CpuDispatch::Isa::Avx512)},
-	}};
 	SYSTEM_INFO systemInfo{};
 	::GetSystemInfo(&systemInfo);
 	const std::size_t pageSize = systemInfo.dwPageSize;
@@ -1520,8 +1520,10 @@ TEST(CpuDispatchTest, RustByteCandidateTouchesBothGuardPages)
 		1, 2, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129,
 		255, 256, 257, 511, 512, 513, 1023, 1024,
 	};
-	for (const auto& implementation : implementations) {
-		if (implementation.cpp == nullptr || implementation.rust == nullptr) {
+	for (const auto isa : kImplementations) {
+		const auto cpp = CpuDispatch::Testing::GetSupportedFindCrOrLf(isa);
+		const auto rust = CpuDispatch::Testing::GetSupportedFindCrOrLfRust(isa);
+		if (cpp == nullptr || rust == nullptr) {
 			continue;
 		}
 		for (const bool rightBoundary : {false, true}) {
@@ -1534,12 +1536,12 @@ TEST(CpuDispatchTest, RustByteCandidateTouchesBothGuardPages)
 				std::fill(data, data + length, 'x');
 				ASSERT_TRUE(::VirtualProtect(
 					middle, pageSize, PAGE_READONLY, &previousProtection));
-				EXPECT_EQ(length, implementation.cpp(data, length))
-					<< "name=" << implementation.name
+				EXPECT_EQ(length, cpp(data, length))
+					<< "isa=" << CpuDispatch::GetIsaName(isa)
 					<< " rightBoundary=" << rightBoundary
 					<< " length=" << length;
-				EXPECT_EQ(length, implementation.rust(data, length))
-					<< "name=" << implementation.name
+				EXPECT_EQ(length, rust(data, length))
+					<< "isa=" << CpuDispatch::GetIsaName(isa)
 					<< " rightBoundary=" << rightBoundary
 					<< " length=" << length;
 
@@ -1558,13 +1560,13 @@ TEST(CpuDispatchTest, RustByteCandidateTouchesBothGuardPages)
 					data[position] = (position & 1) == 0 ? '\r' : '\n';
 					ASSERT_TRUE(::VirtualProtect(
 						middle, pageSize, PAGE_READONLY, &previousProtection));
-					EXPECT_EQ(position, implementation.cpp(data, length))
-						<< "name=" << implementation.name
+					EXPECT_EQ(position, cpp(data, length))
+						<< "isa=" << CpuDispatch::GetIsaName(isa)
 						<< " rightBoundary=" << rightBoundary
 						<< " length=" << length
 						<< " position=" << position;
-					EXPECT_EQ(position, implementation.rust(data, length))
-						<< "name=" << implementation.name
+					EXPECT_EQ(position, rust(data, length))
+						<< "isa=" << CpuDispatch::GetIsaName(isa)
 						<< " rightBoundary=" << rightBoundary
 						<< " length=" << length
 						<< " position=" << position;
