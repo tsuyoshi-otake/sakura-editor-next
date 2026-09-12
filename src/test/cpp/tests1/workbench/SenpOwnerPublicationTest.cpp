@@ -276,18 +276,17 @@ protected:
 		return snapshot;
 	}
 	//! The pane whose header (control 1) carries the View title; its title
-	//! actions are controls 2 onward.
-	static HWND FindPane(HWND owner, const wchar_t* title)
+	//! actions are controls 2 onward. A parked page keeps every ViewContainer
+	//! directly under the parking parent, and that container's panes below it.
+	auto FindPane(const wchar_t* title) const
 	{
-		struct Search final { const wchar_t* title; HWND pane; } search{ title, nullptr };
-		::EnumChildWindows(owner, [](HWND window, LPARAM parameter) -> BOOL {
-			auto& found = *reinterpret_cast<Search*>(parameter);
-			wchar_t text[64]{};
-			if (::GetDlgCtrlID(window) != 1 || !::GetWindowTextW(window, text, 64) || std::wcscmp(text, found.title) != 0) return TRUE;
-			found.pane = ::GetParent(window);
-			return FALSE;
-		}, reinterpret_cast<LPARAM>(&search));
-		return search.pane;
+		auto pane = ::GetWindow(m_owner, GW_CHILD); // the first container, then each of its panes
+		for (auto container = pane; container; container = ::GetWindow(container, GW_HWNDNEXT))
+			for (pane = ::GetWindow(container, GW_CHILD); pane; pane = ::GetWindow(pane, GW_HWNDNEXT)) {
+				wchar_t header[64]{};
+				if (::GetWindowTextW(::GetDlgItem(pane, 1), header, 64) && std::wcscmp(header, title) == 0) return pane;
+			}
+		return pane; // null: no container published that View
 	}
 
 	HWND m_owner{};
@@ -386,7 +385,7 @@ TEST_F(SenpOwnerPublicationTest, ViewTitleActionsReachOnlyTheBoundRuntime)
 		[runtime](auto launch) { return std::make_unique<Runtime>(std::move(launch), std::vector<senp::effect::Effect>{}, runtime); });
 	auto snapshot = PackagesWithRefresh();
 	ASSERT_EQ(SenpWindowExtensionsStatus::Synchronized, extensions.Synchronize(snapshot, 7, 9, Clock::now()));
-	const auto pane = FindPane(m_owner, L"Projects");
+	const auto pane = FindPane(L"Projects");
 	ASSERT_NE(nullptr, pane);
 	const auto refresh = ::GetDlgItem(pane, 2);
 	ASSERT_NE(nullptr, refresh);
@@ -406,8 +405,12 @@ TEST_F(SenpOwnerPublicationTest, ViewTitleActionsReachOnlyTheBoundRuntime)
 			return command && command->commandId == L"sample.refresh" && command->arguments.empty();
 		});
 	};
+	// BM_CLICK runs the control's own mouse loop, which needs the button on a
+	// visible desktop; every window this fixture raises stays hidden. Send what
+	// the button itself would send instead, and address it by the control's own
+	// ID, which is the only part of the notification the pane reads.
 	const auto click = [&] {
-		::SendMessageW(pane, WM_COMMAND, MAKEWPARAM(2, BN_CLICKED), reinterpret_cast<LPARAM>(refresh));
+		::SendMessageW(pane, WM_COMMAND, MAKEWPARAM(::GetDlgCtrlID(refresh), BN_CLICKED), 0);
 		(void)extensions.Poll(Clock::now());
 	};
 	// SENP activates on `onView:` alone: a click with no bound runtime neither

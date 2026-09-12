@@ -103,11 +103,11 @@ private:
 };
 
 CSenpReadonlyOwnerTarget::CSenpReadonlyOwnerTarget(senp::ContributionOwnerIdentity owner,
-	SenpReadonlyEditorController& editors, const HWND parent,
+	SenpReadonlyEditorController& editors, SenpReadonlyOwnerSurface surface,
 	const rendering::FrameSurfaceId firstSurfaceId, const ISenpReadonlyTextResources* resources,
 	SenpTextResourceView::CopySink copy, SenpOwnerCommandCompleted commandCompleted,
 	SenpOwnerResourceReleased resourceReleased, ISenpOwnerToolReads* toolReads)
-	: m_owner(std::move(owner)), m_editors(editors), m_parent(parent),
+	: m_owner(std::move(owner)), m_editors(editors), m_surface(std::move(surface)),
 	  m_firstSurfaceId(firstSurfaceId), m_resources(resources), m_copy(std::move(copy)),
 	  m_commandCompleted(std::move(commandCompleted)), m_resourceReleased(std::move(resourceReleased)),
 	  m_toolReads(toolReads),
@@ -185,7 +185,7 @@ bool CSenpReadonlyOwnerTarget::PublishDocument(const senp::effect::OperationCont
 			return shown;
 		}
 		if (m_documents.size() >= SenpReadonlyWorkbench::kMaximumInputs
-			|| m_surfaceBlocks >= SenpReadonlyWorkbench::kMaximumInputs || !::IsWindow(m_parent)
+			|| m_surfaceBlocks >= SenpReadonlyWorkbench::kMaximumInputs || !m_surface.Present()
 			|| m_firstSurfaceId == 0 || m_surfaceBlocks > ((std::numeric_limits<rendering::FrameSurfaceId>::max)() - m_firstSurfaceId) / 32)
 			{ m_state = SenpReadonlyOwnerTargetState::Invalid; return false; }
 		m_state = SenpReadonlyOwnerTargetState::EditorOpenFailed;
@@ -202,7 +202,7 @@ bool CSenpReadonlyOwnerTarget::PublishDocument(const senp::effect::OperationCont
 		m_state = SenpReadonlyOwnerTargetState::ModelApplyFailed;
 		if (value->model.Apply(context, std::move(document)).result != SenpDocumentResult::Accepted) return false;
 		m_state = SenpReadonlyOwnerTargetState::HostFailed;
-		if (!value->host.Create(m_parent)) {
+		if (!m_surface.Place(value->host)) {
 			m_state = SenpReadonlyOwnerTargetState::HostFailed; return false;
 		}
 		value->host.SetStyle(m_palette, m_font, m_dpi);
@@ -212,7 +212,7 @@ bool CSenpReadonlyOwnerTarget::PublishDocument(const senp::effect::OperationCont
 		std::weak_ptr<Document> weak = value;
 		m_state = SenpReadonlyOwnerTargetState::EditorOpenFailed;
 		auto opened = m_editors.Open(m_scope, value->model.Input().resourceId, value->model.Input().title,
-			value->host.Window(), value->host.FocusWindow(), {
+			value->host.Window(), value->host.Window(), {
 			.copy = [weak] { const auto locked = weak.lock(); return locked && locked->host.Copy(); },
 			.selectAll = [weak] { if (const auto locked = weak.lock()) locked->host.SelectAll(); },
 			.showFind = [weak] { if (const auto locked = weak.lock()) locked->host.ShowFind(true); },

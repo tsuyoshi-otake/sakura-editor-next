@@ -3,6 +3,7 @@
 #include "pch.h"
 #include <gtest/gtest.h>
 
+#include "cxx/ResourceHolder.hpp"
 #include "env/ShareDataTestSuite.hpp"
 #include "outline/CDlgFuncList.h"
 #include "platform/controlipc/ControlPlatformClient.h"
@@ -13,6 +14,7 @@
 #include "workbench/editor/SenpControlToolReads.h"
 #include "workbench/editor/SenpOwnerTextResources.h"
 #include "workbench/editor/SenpReadonlyOwnerTarget.h"
+#include "workbench/tree/SenpTreeView.h"
 
 #include <sakura/controlipc/ControlIpcSecurity.h>
 #include <sakura/uri/UriIdentity.h>
@@ -57,6 +59,10 @@ namespace {
 
 namespace ipc = ::platform::controlipc;
 using Clock = std::chrono::steady_clock;
+//! The alias the rest of tests1 uses for a window it owns. A holder takes its
+//! window down when the fixture that raised it goes away, so no teardown path
+//! can forget one and no member has to carry a bare native handle.
+using WindowHolder = cxx::ResourceHolder<&::DestroyWindow>;
 
 //! The canonical control authority the storage Hello pins, and the profile hash
 //! the endpoint publishes. Neither names a GitHub identity: the account, the
@@ -236,44 +242,6 @@ public:
 	}
 };
 
-//! The child window a published tree view is parked in. A tree is projected
-//! whether or not anything draws it, so this only has to be a real window.
-class LiveBody final : public viewcontainer::ISenpViewBody {
-public:
-	explicit LiveBody(viewcontainer::SenpViewBodyHost host) : m_host(std::move(host))
-	{
-		m_window = ::CreateWindowExW(0, L"STATIC", L"", WS_CHILD, 0, 0, 1, 1,
-			m_host.parent, nullptr, ::GetModuleHandleW(nullptr), nullptr);
-	}
-	~LiveBody() override { Close(); }
-	HWND Window() const noexcept override { return m_window; }
-	void Layout(const RECT& bounds, unsigned int) noexcept override
-	{
-		if (m_window) (void)::SetWindowPos(m_window, nullptr, bounds.left, bounds.top,
-			bounds.right - bounds.left, bounds.bottom - bounds.top, SWP_NOACTIVATE | SWP_NOZORDER);
-	}
-	void SetVisible(const bool visible) noexcept override
-	{
-		if (m_window) ::ShowWindow(m_window, visible ? SW_SHOWNA : SW_HIDE);
-	}
-	void SetPalette(const theme::ThemePalette&, layout::EViewContainerLocation) noexcept override {}
-	bool Focus() noexcept override
-	{
-		if (!m_window) return false;
-		::SetFocus(m_window);
-		return ::GetFocus() == m_window;
-	}
-	bool PreTranslate(MSG&) noexcept override { return false; }
-	void Close() noexcept override
-	{
-		m_host = {};
-		if (m_window) { ::DestroyWindow(m_window); m_window = nullptr; }
-	}
-private:
-	viewcontainer::SenpViewBodyHost m_host;
-	HWND m_window{};
-};
-
 //! The tail of a colon separated node id, which is how a document resource is
 //! named from the node that opens it. Asserting on it is a cross check rather
 //! than a convenience: it fails unless the tree and the document agree.
@@ -307,17 +275,21 @@ protected:
 		m_shell = ::CreateWindowExW(0, L"STATIC", L"SENP live GitHub",
 			WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, 80, 80, 720, 520,
 			nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
-		ASSERT_NE(nullptr, m_shell);
-		m_legacy = ::CreateWindowExW(0, L"EDIT", L"legacy", WS_CHILD | WS_TABSTOP | ES_MULTILINE,
-			0, 0, 0, 0, m_shell, nullptr, ::GetModuleHandleW(nullptr), nullptr);
-		ASSERT_NE(nullptr, m_legacy);
-		::ShowWindow(m_shell, SW_SHOWNOACTIVATE);
+		ASSERT_NE(nullptr, m_shell.get());
+		// The legacy editor belongs to the controller from here on and dies with
+		// the frame it is a child of, so it stays a local of the one function that
+		// raises it instead of a member no later line reads.
+		const auto legacyEditor = ::CreateWindowExW(0, L"EDIT", L"legacy",
+			WS_CHILD | WS_TABSTOP | ES_MULTILINE,
+			0, 0, 0, 0, m_shell.get(), nullptr, ::GetModuleHandleW(nullptr), nullptr);
+		ASSERT_NE(nullptr, legacyEditor);
+		::ShowWindow(m_shell.get(), SW_SHOWNOACTIVATE);
 		m_controller = std::make_unique<SenpReadonlyEditorController>(
-			m_core, m_shell, m_legacy, m_legacy, "legacy");
+			m_core, m_shell.get(), legacyEditor, legacyEditor, "legacy");
 		ASSERT_EQ(SenpSurfaceProjection::Applied, m_controller->Layout({ 4, 8, 660, 460 }));
 		m_parking = ::CreateWindowExW(0, L"STATIC", L"", WS_POPUP, 0, 0, 640, 480,
 			nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
-		ASSERT_NE(nullptr, m_parking);
+		ASSERT_NE(nullptr, m_parking.get());
 	}
 
 	void TearDown() override
@@ -328,8 +300,14 @@ protected:
 		m_registry.reset();
 		m_resources.reset();
 		if (m_controller) { (void)m_controller->Shutdown(); m_controller.reset(); }
-		if (m_parking) ::DestroyWindow(m_parking);
-		if (m_shell) { ::DestroyWindow(m_shell); EXPECT_FALSE(::IsWindow(m_shell)); }
+		m_parking.reset(nullptr);
+		// Both frames go before the apartment they were raised in. The shell has to
+		// prove it really went: DestroyWindow reports failure only through its
+		// return value, and a surviving frame would outlive the fixture.
+		if (const auto frame = m_shell.get()) {
+			m_shell.reset(nullptr);
+			EXPECT_FALSE(::IsWindow(frame));
+		}
 		if (SUCCEEDED(m_apartment)) ::CoUninitialize();
 	}
 
@@ -487,7 +465,9 @@ protected:
 			// neither is not the owner production runs: a refused effect fails the
 			// coordinator for good, so an extension that merely finishes a command
 			// would take its whole composition down before any document arrived.
-			auto held = std::make_unique<CSenpReadonlyOwnerTarget>(owner, *m_controller, m_shell,
+			auto held = std::make_unique<CSenpReadonlyOwnerTarget>(owner, *m_controller,
+				SenpReadonlyOwnerSurface{ [this] { return ::IsWindow(m_shell.get()) != FALSE; },
+					[this](SenpReadonlyDocumentHost& host) { return host.Create(m_shell.get()); } },
 				980000, m_resources.get(), SenpTextResourceView::CopySink{},
 				[this, owner](const senp::effect::OperationContext&,
 					const senp::effect::CompleteCommand& completion) {
@@ -501,14 +481,15 @@ protected:
 				m_reads.get());
 			target = held.get();
 			m_pump = held->TextPump();
-			return SenpOwnerPublicationOptions(m_parking, containers, trees, std::move(held),
+			return SenpOwnerPublicationOptions(m_parking.get(), containers, trees, std::move(held),
 				[](std::string_view) { return true; },
+				// The production Tree body, so a live read reaches the real native
+				// hierarchy rather than a window that only stands in for one.
 				[&providers](viewcontainer::SenpViewBodyHost host,
-					std::shared_ptr<tree::SenpTreeProvider> provider, std::wstring) {
+					std::shared_ptr<tree::SenpTreeProvider> provider, std::wstring title) {
 					providers.emplace(std::wstring(provider->ViewId()), provider);
-					auto body = std::make_unique<LiveBody>(std::move(host));
-					return body->Window()
-						? std::unique_ptr<viewcontainer::ISenpViewBody>(std::move(body)) : nullptr;
+					return std::unique_ptr<viewcontainer::ISenpViewBody>(tree::CSenpTreeView::Create(
+						{ std::move(host), std::move(provider), std::move(title) }));
 				});
 		};
 	}
@@ -539,7 +520,13 @@ protected:
 
 	HRESULT m_apartment{ E_FAIL };
 	EditorCoreService m_core;
-	HWND m_shell{}, m_legacy{}, m_parking{};
+	//! The frame this suite runs on. The readonly controller lays its surfaces
+	//! out inside it, and every live document is presented on it.
+	WindowHolder m_shell;
+	//! Where a publication parks its hidden ViewContainer windows before commit,
+	//! and where the page host is raised. Keeping it apart from the frame means a
+	//! parked window can never be mistaken for one the controller laid out.
+	WindowHolder m_parking;
 	std::unique_ptr<SenpReadonlyEditorController> m_controller;
 	LiveEndpointReader m_endpoints;
 	std::shared_ptr<::platform::profiles::ControlUserDataProfileRegistry> m_registry;
@@ -571,7 +558,7 @@ TEST_F(SenpLiveGitHub, RealIssuesAndPullRequestsReachTheTreeAndAnEditorSurface)
 	layout::WorkbenchContributionRegistry catalog;
 	CDlgFuncList dialog;
 	viewcontainer::CViewContainerPages pages(dialog);
-	ASSERT_TRUE(pages.Create(m_parking));
+	ASSERT_TRUE(pages.Create(m_parking.get()));
 	CSenpOwnerComposition composition(catalog, pages);
 	std::map<std::wstring, std::shared_ptr<tree::SenpTreeProvider>, std::less<>> providers;
 	CSenpReadonlyOwnerTarget* target = nullptr;
@@ -657,7 +644,7 @@ TEST_F(SenpLiveGitHub, RealWorkflowRunsAndOneRealJobLogReachTheTreeAndAnEditorSu
 	layout::WorkbenchContributionRegistry catalog;
 	CDlgFuncList dialog;
 	viewcontainer::CViewContainerPages pages(dialog);
-	ASSERT_TRUE(pages.Create(m_parking));
+	ASSERT_TRUE(pages.Create(m_parking.get()));
 	CSenpOwnerComposition composition(catalog, pages);
 	std::map<std::wstring, std::shared_ptr<tree::SenpTreeProvider>, std::less<>> providers;
 	CSenpReadonlyOwnerTarget* target = nullptr;

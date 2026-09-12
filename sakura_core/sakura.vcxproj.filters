@@ -1364,6 +1364,9 @@
     <ClInclude Include="..\sakura_core\workbench\editor\DocumentRegistry.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\editor\SenpOwnerToolReadsFactory.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\workbench\editor\CEditDocLegacyEditorBackend.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>

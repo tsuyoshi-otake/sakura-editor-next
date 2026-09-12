@@ -47,13 +47,15 @@ public:
 		workbench::WorkbenchBootstrapContext bootstrap,
 		workbench::WorkbenchRuntimeDependencies dependencies,
 		std::unique_ptr<workbench::editor::persistence::IWorkingCopyPersistenceStore> workingCopyStore,
-		workbench::editor::persistence::WorkingCopyPersistenceScope workingCopyScope)
+		workbench::editor::persistence::WorkingCopyPersistenceScope workingCopyScope,
+		workbench::editor::SenpOwnerToolReadsFactory senpToolReadsFactory)
 		: m_hInst(hInst)
 		, m_groupId(groupId)
 		, m_bootstrap(std::move(bootstrap))
 		, m_dependencies(std::move(dependencies))
 		, m_workingCopyStore(std::move(workingCopyStore))
 		, m_workingCopyScope(std::move(workingCopyScope))
+		, m_senpToolReadsFactory(std::move(senpToolReadsFactory))
 	{
 	}
 
@@ -73,6 +75,12 @@ public:
 	{
 		return std::move(m_workingCopyScope);
 	}
+	//! Empty when this process holds no control-platform authority; the window
+	//! then keeps its owner tool reads fail-closed.
+	[[nodiscard]] workbench::editor::SenpOwnerToolReadsFactory TakeSenpToolReadsFactory()
+	{
+		return std::move(m_senpToolReadsFactory);
+	}
 private:
 	HINSTANCE m_hInst = nullptr;
 	int m_groupId = 0;
@@ -80,6 +88,7 @@ private:
 	workbench::WorkbenchRuntimeDependencies m_dependencies;
 	std::unique_ptr<workbench::editor::persistence::IWorkingCopyPersistenceStore> m_workingCopyStore;
 	workbench::editor::persistence::WorkingCopyPersistenceScope m_workingCopyScope;
+	workbench::editor::SenpOwnerToolReadsFactory m_senpToolReadsFactory;
 };
 
 using editor::lifecycle::EEditorAppLifecycleFinalizationOutcome;
@@ -174,12 +183,13 @@ bool CEditApp::Create(
 	workbench::WorkbenchBootstrapContext bootstrap,
 	workbench::WorkbenchRuntimeDependencies dependencies,
 	std::unique_ptr<workbench::editor::persistence::IWorkingCopyPersistenceStore> workingCopyStore,
-	workbench::editor::persistence::WorkingCopyPersistenceScope workingCopyScope)
+	workbench::editor::persistence::WorkingCopyPersistenceScope workingCopyScope,
+	workbench::editor::SenpOwnerToolReadsFactory senpToolReadsFactory)
 {
 	if (m_editorLifecycle) return false;
 	auto inputs = std::make_shared<EditorAppStartupInputs>(
 		hInst, nGroupId, std::move(bootstrap), std::move(dependencies), std::move(workingCopyStore),
-		std::move(workingCopyScope));
+		std::move(workingCopyScope), std::move(senpToolReadsFactory));
 
 	try {
 		m_editorLifecycle = std::make_unique<editor::lifecycle::EditorAppLifecycle>(
@@ -262,7 +272,8 @@ bool CEditApp::Create(
 								*m_editorCoreService,
 								*m_editorServiceLegacyAdapter, *m_legacyEditorBackend, *m_workingCopyCoordinator,
 								*m_workingCopyLifecycleBridge, *m_workbenchRuntime);
-							return m_pcEditWnd->Create(m_pcEditDoc.get(), &m_cIcons, inputs->GetGroupId())
+							return m_pcEditWnd->Create(m_pcEditDoc.get(), &m_cIcons, inputs->GetGroupId(),
+								inputs->TakeSenpToolReadsFactory())
 								? LifecycleSucceeded() : LifecycleFailed();
 						}
 						catch (const std::exception&) {
@@ -334,12 +345,7 @@ bool CEditApp::FinalizeWorkbenchResources()
 		m_workingCopyLifecycleBridge->WillShutdown();
 	}
 	if (m_pcEditWnd) {
-		CEditWnd* const window = m_pcEditWnd.get();
-		const HWND hwnd = window->GetHwnd();
-		if (hwnd != nullptr && ::IsWindow(hwnd)
-			&& reinterpret_cast<CEditWnd*>(::GetWindowLongPtrW(hwnd, GWLP_USERDATA)) == window) {
-			::DestroyWindow(hwnd);
-		}
+		m_pcEditWnd->DestroySelfIfOwned();
 		m_pcEditWnd.reset();
 	}
 	m_pcSMacroMgr.reset();

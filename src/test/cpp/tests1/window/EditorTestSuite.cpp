@@ -22,7 +22,12 @@ namespace window {
 
 	// ドキュメントの初期化前に文字幅キャッシュの生成が必要
 	SelectCharWidthCache(CWM_FONT_EDIT, CWM_CACHE_SHARE);
-	InitCharWidthCache(GetDllShareData().m_Common.m_sView.m_lf);
+	// 共有メモリは直前の SetUpShareData() でこのフィクスチャが作ったものを使う。
+	// プロセス全体の GetDllShareData() を経由しないことで、文字幅キャッシュの
+	// 元になるフォントがこのフィクスチャの初期化結果であることを明示する。
+	const DLLSHAREDATA* const pShareData = pcShareData->GetDllShareDataPtr();
+	ASSERT_THAT(pShareData, NotNull());
+	InitCharWidthCache(pShareData->m_Common.m_sView.m_lf);
 
 #pragma region CanBeMove
 	// ドキュメントがなくてもエラーにならない
@@ -39,7 +44,7 @@ namespace window {
 	app->SetAppInstanceForTesting(hInst);
 
 	//ヘルパ作成
-	CEditApp::getInstance()->m_cIcons.Create(hInst);
+	app->GetIcons().Create(hInst);
 
 	// CEditViewをインスタンス化するにはドキュメントのインスタンスが必要
 	pcEditDoc = app->AdoptDocumentForTesting(std::make_unique<CEditDoc>(nullptr));
@@ -95,7 +100,7 @@ namespace window {
 	pcPropertyManager = app->AdoptPropertyManagerForTesting(std::make_unique<CPropertyManager>());
 	app->GetPropertyManager()->Create(
 		pcEditWnd->GetHwnd(),
-		&CEditApp::getInstance()->m_cIcons,
+		&app->GetIcons(),
 		&pcEditWnd->GetMenuDrawer()
 	);
 }

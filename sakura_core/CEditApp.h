@@ -15,6 +15,7 @@
 #include "uiparts/CSoundSet.h"
 #include "uiparts/CImageListMgr.h"
 #include "types/CType.h"
+#include "workbench/editor/SenpOwnerToolReadsFactory.h"
 
 #include <sakura/editor/lifecycle/EditorAppLifecycle.h>
 
@@ -72,7 +73,8 @@ public:
 		workbench::WorkbenchBootstrapContext bootstrap,
 		workbench::WorkbenchRuntimeDependencies dependencies,
 		std::unique_ptr<workbench::editor::persistence::IWorkingCopyPersistenceStore> workingCopyStore,
-		workbench::editor::persistence::WorkingCopyPersistenceScope workingCopyScope);
+		workbench::editor::persistence::WorkingCopyPersistenceScope workingCopyScope,
+		workbench::editor::SenpOwnerToolReadsFactory senpToolReadsFactory);
 	//! Restore is invoked after the native layout/group exists and startup policy is known.
 	[[nodiscard]] workbench::editor::persistence::EditorWorkingCopyLifecycleResult RestoreWorkingCopies(
 		const workbench::editor::persistence::EditorWorkingCopyRestorePolicy& policy);
@@ -113,15 +115,15 @@ public:
 	bool OpenPropertySheet( int nPageNum );
 	bool OpenPropertySheetTypes( int nPageNum, CTypeConfig nSettingType );
 
-	// The legacy presentation members remain public only while their value-type
-	// APIs are used directly. Process-owned resources stay private below.
+	// The legacy presentation member remains public only while its value-type
+	// API is used directly. Process-owned resources stay private below.
 	CSoundSet			m_cSoundSet;					//!< サウンド管理
-
-	//GUIオブジェクト
-	CImageListMgr		m_cIcons;					//!< Image List
 
 private:
 	HINSTANCE			m_hInst = nullptr;
+
+	//GUIオブジェクト。このプロセスが所有し、利用側は GetIcons() 経由で借りるだけ。
+	CImageListMgr		m_cIcons;					//!< Image List
 
 	// Process-owned legacy resources. Other subsystems borrow them solely
 	// through the accessors above; lifecycle finalizers retain exclusive ownership.

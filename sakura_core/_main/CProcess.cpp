@@ -26,7 +26,6 @@
 #include "env/DLLSHAREDATA.h"
 #include "config/app_constants.h"
 #include "CSelectLang.h"
-#include "workbench/editor/SenpReadonlyOwnerTarget.h"
 
 /*!
 	@brief プロセス基底クラス
@@ -40,13 +39,6 @@ CProcess::CProcess(
 )
 : m_hInstance( hInstance )
 {
-}
-
-std::unique_ptr<workbench::editor::ISenpOwnerToolReads>
-CProcess::CreateSenpToolReads(const std::wstring& /*userDataProfileId*/) const
-{
-	// A process without control-platform authority brokers no tool read.
-	return {};
 }
 
 /*!

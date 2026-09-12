@@ -59,6 +59,7 @@
 #include <sakura/uri/UriIdentity.h>
 #include "workbench/CWorkbenchRuntime.h"
 #include "workbench/WorkbenchBootstrapContext.h"
+#include "workbench/editor/SenpOwnerToolReadsFactory.h"
 #include "workbench/editor/persistence/EditorWorkingCopyLifecycleBridge.h"
 #include "workbench/editor/persistence/WorkingCopyPersistenceTypes.h"
 #include "workbench/tasks/TaskTerminalSessionFactory.h"
@@ -206,6 +207,50 @@ ResolveWorkingCopyPersistenceScope(std::string profileId,
 		if (!scope.workspaceId) return std::nullopt;
 	}
 	return scope.IsValid() ? std::optional{ std::move(scope) } : std::nullopt;
+}
+
+/*!
+	@brief Builds the SENP tool-read broker for one user-data profile.
+
+	The broker authenticates with the control-platform authority identity this
+	process froze at startup, so it is composed here, where that identity and
+	the profile directory it was frozen from are both in hand. An empty result
+	is a normal answer: the owner target then keeps its tool reads fail-closed
+	rather than inventing an unauthenticated route.
+*/
+std::unique_ptr<workbench::editor::ISenpOwnerToolReads> CreateSenpToolReads(
+	const platform::controlipc::EditorControlPlatformRuntimeIdentity& identity,
+	const std::filesystem::path& profileDirectory,
+	const std::wstring& userDataProfileId)
+{
+	using namespace platform::controlipc;
+	if (userDataProfileId.empty()) return {};
+	try {
+		workbench::editor::SenpControlToolReadsOptions options;
+		options.SetAuthorityProfileId(identity.profileId);
+		options.SetAuthorityProfileHash(identity.profileHash);
+		options.SetMinimumGeneration(identity.minimumGeneration);
+		options.SetSenpProfileId(userDataProfileId);
+		// The seam refuses to connect without a factory rather than assuming a
+		// transport, so the one production route names the named pipe here.
+		options.SetChannelFactory([] {
+			return std::make_unique<CControlPlatformNamedPipeChannel>();
+		});
+		// The runtime keeps its discovery reader private, so the broker owns a
+		// second one over the same pair the runtime froze its identity from.
+		auto reader = std::make_unique<CControlPlatformEndpointDiscoveryReader>(
+			profileDirectory, identity.profileHash);
+		return std::make_unique<workbench::editor::CSenpControlToolReads>(
+			std::move(options), std::move(reader));
+	}
+	// The seam above only allocates (std::make_unique, wstring/function copies
+	// into SenpControlToolReadsOptions) and constructs the discovery reader;
+	// none of that can throw beyond the standard exception hierarchy, so a
+	// catch-all here would silently hide a real defect instead of a fail-closed
+	// resource condition.
+	catch (const std::exception&) {
+		return {};
+	}
 }
 }
 
@@ -577,9 +622,18 @@ bool CNormalProcess::InitializeProcess()
 		std::make_unique<senp::CWin32SenpManagementService>(*extensionProfileHome.value);
 	auto workingCopyStore = std::make_unique<CControlPlatformWorkingCopyPersistenceStore>(
 		*m_editorControlPlatformRuntime, platformIdentity->profileId);
+	// Only this composition root holds the frozen control-platform authority
+	// the SENP broker authenticates with, so the window is handed the seam
+	// instead of reaching back into the process object for it.
+	workbench::editor::SenpOwnerToolReadsFactory senpToolReadsFactory =
+		[identity = *platformIdentity, directory = *profileDirectory]
+		(const std::wstring& userDataProfileId) {
+			return CreateSenpToolReads(identity, directory, userDataProfileId);
+		};
 	if (!m_pcEditApp->Create(
 		GetProcessInstance(), nGroupId, std::move(*bootstrap.context), std::move(workbenchDependencies),
-		std::move(workingCopyStore), std::move(*workingCopyScope))) {
+		std::move(workingCopyStore), std::move(*workingCopyScope),
+		std::move(senpToolReadsFactory))) {
 		TopErrorMessage(nullptr,
 			L"ワークベンチの初期化に失敗しました。\n"
 			L"設定またはワークスペースサービスを開始できませんでした。");
@@ -987,45 +1041,6 @@ std::shared_ptr<terminal::CDefaultTerminalLaunchProfileService>
 CNormalProcess::GetTerminalLaunchProfiles() const noexcept
 {
 	return m_terminalHarnessRuntime ? m_terminalHarnessRuntime->LaunchProfiles() : nullptr;
-}
-
-std::unique_ptr<workbench::editor::ISenpOwnerToolReads>
-CNormalProcess::CreateSenpToolReads(const std::wstring& userDataProfileId) const
-{
-	using namespace platform::controlipc;
-	// The identity is published only while the runtime is Ready, and the
-	// broker has nothing to authenticate with until then.
-	if (!m_editorControlPlatformRuntime || userDataProfileId.empty()) return {};
-	const auto identity = m_editorControlPlatformRuntime->Identity();
-	if (!identity) return {};
-	const auto profileDirectory = TryGetResolvedProfileDirectory();
-	if (!profileDirectory) return {};
-	try {
-		workbench::editor::SenpControlToolReadsOptions options;
-		options.SetAuthorityProfileId(identity->profileId);
-		options.SetAuthorityProfileHash(identity->profileHash);
-		options.SetMinimumGeneration(identity->minimumGeneration);
-		options.SetSenpProfileId(userDataProfileId);
-		// The seam refuses to connect without a factory rather than assuming a
-		// transport, so the one production route names the named pipe here.
-		options.SetChannelFactory([] {
-			return std::make_unique<CControlPlatformNamedPipeChannel>();
-		});
-		// The runtime keeps its discovery reader private, so the broker owns a
-		// second one over the same pair the runtime froze its identity from.
-		auto reader = std::make_unique<CControlPlatformEndpointDiscoveryReader>(
-			*profileDirectory, identity->profileHash);
-		return std::make_unique<workbench::editor::CSenpControlToolReads>(
-			std::move(options), std::move(reader));
-	}
-	// The seam above only allocates (std::make_unique, wstring/function copies
-	// into SenpControlToolReadsOptions) and constructs the discovery reader;
-	// none of that can throw beyond the standard exception hierarchy, so a
-	// catch-all here would silently hide a real defect instead of a fail-closed
-	// resource condition.
-	catch (const std::exception&) {
-		return {};
-	}
 }
 
 // -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //

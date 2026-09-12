@@ -748,6 +748,7 @@
     <ClInclude Include="..\sakura_core\update\UpdateComposition.h" />
     <ClInclude Include="..\sakura_core\update\UpdateAutoCheckTimer.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\DocumentRegistry.h" />
+    <ClInclude Include="..\sakura_core\workbench\editor\SenpOwnerToolReadsFactory.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\CEditDocLegacyEditorBackend.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\CEditDocWorkingCopyBackend.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\CEmptyEditorSurface.h" />

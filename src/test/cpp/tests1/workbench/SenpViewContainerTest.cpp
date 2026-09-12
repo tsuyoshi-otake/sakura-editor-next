@@ -57,35 +57,6 @@ private:
 	EViewContainerLocation m_location{ EViewContainerLocation::Sidebar };
 };
 
-// Counts the frames the container root actually publishes and remembers the
-// pane geometry at the moment the root became visible (#298).
-class PaintProbe final {
-public:
-	PaintProbe(HWND root, HWND pane) : m_root(root), m_pane(pane)
-	{
-		::SetWindowSubclass(root, Procedure, 0x298, reinterpret_cast<DWORD_PTR>(this));
-		::SetWindowSubclass(pane, Procedure, 0x298, reinterpret_cast<DWORD_PTR>(this));
-	}
-	~PaintProbe()
-	{
-		if (::IsWindow(m_root)) ::RemoveWindowSubclass(m_root, Procedure, 0x298);
-		if (::IsWindow(m_pane)) ::RemoveWindowSubclass(m_pane, Procedure, 0x298);
-	}
-	PaintProbe(const PaintProbe&) = delete;
-	PaintProbe& operator=(const PaintProbe&) = delete;
-	int paints{};
-	RECT shown{};
-private:
-	static LRESULT CALLBACK Procedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR data)
-	{
-		auto& probe = *reinterpret_cast<PaintProbe*>(data);
-		if (message == WM_PAINT) ++probe.paints;
-		if (message == WM_SHOWWINDOW && wParam && window == probe.m_root) ::GetWindowRect(probe.m_pane, &probe.shown);
-		return ::DefSubclassProc(window, message, wParam, lParam);
-	}
-	HWND m_root{}, m_pane{};
-};
-
 class SenpViewContainer : public testing::Test {
 protected:
 	HRESULT com = ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
@@ -101,6 +72,11 @@ protected:
 	bool probeDone{}, longTitles{};
 	unsigned int probeOperation{};
 	static constexpr UINT kProbeMessage = WM_APP + 0x296;
+	static constexpr UINT_PTR kFrameProbeId = 0x298;
+	// What WatchFrames observed: the frames the watched windows actually
+	// published, and where the page sat when its root became visible (#298).
+	int paints{};
+	RECT shown{};
 	void SetUp() override
 	{
 		ASSERT_TRUE(SUCCEEDED(com) || com == RPC_E_CHANGED_MODE);
@@ -161,9 +137,23 @@ protected:
 	// commit: a container only reserves its repaint (#298), and something has to
 	// publish the finished frame before the capture reads the screen.
 	void CommitFrame() { ::RedrawWindow(window, nullptr, nullptr, RDW_UPDATENOW | RDW_ALLCHILDREN); }
+	// Watches one page and its container root. The windows belong to the owner,
+	// which destroys them in TearDown, so the subclass needs no separate removal.
+	void WatchFrames(const SenpViewPaneSnapshot& page)
+	{
+		::SetWindowSubclass(::GetParent(page.pane), ProbeProcedure, kFrameProbeId, reinterpret_cast<DWORD_PTR>(this));
+		::SetWindowSubclass(page.pane, ProbeProcedure, kFrameProbeId, reinterpret_cast<DWORD_PTR>(this));
+	}
 	static LRESULT CALLBACK ProbeProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR data)
 	{
 		auto& fixture = *reinterpret_cast<SenpViewContainer*>(data);
+		if (message == WM_PAINT) ++fixture.paints;
+		if (message == WM_SHOWWINDOW && wParam && fixture.owner) {
+			// A page must already sit at its final geometry when its container root
+			// becomes visible, so record where it is at that exact moment (#298).
+			const auto page = fixture.owner->Snapshot("test.issueList");
+			if (page && window == ::GetParent(page->pane)) ::GetWindowRect(page->pane, &fixture.shown);
+		}
 		if (message != kProbeMessage) return ::DefSubclassProc(window, message, wParam, lParam);
 		switch (wParam) {
 		case 0: return fixture.owner->IsUsable();
@@ -344,27 +334,27 @@ TEST_F(SenpViewContainer, LayoutReservesItsRepaintAndShowsAPageOnlyAtItsFinalGeo
 	const auto first = owner->Snapshot("test.issueList").value();
 	const auto root = ::GetParent(first.pane);
 	ASSERT_NE(nullptr, root);
-	PaintProbe probe(root, first.pane);
+	WatchFrames(first);
 	auto* projection = Projection("test.issues");
 	ASSERT_NE(nullptr, projection);
 
 	// A relayout of a visible container must not publish a frame of its own.
 	projection->LayoutProjection({ 0, 0, 300, 620 }, { 0, 0, 300, 620 }, 96);
-	EXPECT_EQ(0, probe.paints);
+	EXPECT_EQ(0, paints);
 	EXPECT_TRUE(::GetUpdateRect(root, nullptr, FALSE));
-	Pump(); EXPECT_GT(probe.paints, 0);
+	Pump(); EXPECT_GT(paints, 0);
 
 	// A page switch lays the panes out first, so the page is never shown at its
 	// previous geometry, and it publishes nothing until the message loop runs.
 	projection->SetProjectionVisible(false); Pump();
-	probe.paints = 0; probe.shown = RECT{};
+	paints = 0; shown = RECT{};
 	projection->LayoutProjection({ 0, 0, 380, 620 }, { 0, 0, 380, 620 }, 96);
 	projection->SetProjectionVisible(true);
-	EXPECT_EQ(0, probe.paints);
+	EXPECT_EQ(0, paints);
 	RECT settled{}; ::GetWindowRect(first.pane, &settled);
-	EXPECT_EQ(settled.right - settled.left, probe.shown.right - probe.shown.left);
+	EXPECT_EQ(settled.right - settled.left, shown.right - shown.left);
 	EXPECT_TRUE(::IsWindowVisible(root));
-	Pump(); EXPECT_GT(probe.paints, 0);
+	Pump(); EXPECT_GT(paints, 0);
 	RECT afterPaint{}; ::GetWindowRect(first.pane, &afterPaint);
 	EXPECT_EQ(settled.right - settled.left, afterPaint.right - afterPaint.left);
 }

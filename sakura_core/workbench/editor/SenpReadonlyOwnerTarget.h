@@ -213,19 +213,60 @@ public:
 		std::wstring_view handle) noexcept = 0;
 };
 
+/*!
+	@brief The native surface one owner's readonly documents are presented on.
+
+	This target is a model of one extension's documents; where a document is
+	physically born, and whether that place still exists, is the window's own
+	business. Telling the target how to reach the surface instead of handing it
+	the window keeps the model free of the platform, and lets the window decide
+	what "still there" means without this class having to ask.
+
+	A default-constructed surface is one nothing can be presented on. That is a
+	valid model - an owner with nowhere to show a document - and it says so by
+	refusing every document rather than by failing to be built.
+*/
+class SenpReadonlyOwnerSurface final {
+public:
+	SenpReadonlyOwnerSurface() = default;
+	SenpReadonlyOwnerSurface(std::function<bool()> present,
+		std::function<bool(SenpReadonlyDocumentHost&)> place) noexcept
+		: m_present(std::move(present)), m_place(std::move(place)) {
+	}
+
+	//! False once nothing more can be presented here: no surface was ever given,
+	//! or the one that was has gone. Asked before any work is done for a
+	//! document, because a document that cannot be shown must not be registered.
+	[[nodiscard]] bool Present() const noexcept
+	{
+		return m_present && m_place && m_present();
+	}
+	//! Puts one document host on the surface. False means the host could not be
+	//! born there, which is the only failure this seam reports.
+	[[nodiscard]] bool Place(SenpReadonlyDocumentHost& host) const
+	{
+		return m_place && m_place(host);
+	}
+
+private:
+	std::function<bool()> m_present;
+	std::function<bool(SenpReadonlyDocumentHost&)> m_place;
+};
+
 enum class SenpReadonlyOwnerTargetState : std::uint8_t {
 	Ready, Invalid, ModelBeginFailed, ModelApplyFailed, HostFailed, EditorOpenFailed, EditorStoreFailed,
 	EditorShowFailed, Revoked,
 };
 
 //! Native readonly-document destination for one committed SENP owner. It owns
-//! document models and HWND hosts while the editor controller owns their Core
-//! registrations. Controller finalizers retain each host independently, so a
-//! failed/reentrant removal cannot leave a borrowed HWND dangling.
+//! the document models and their native hosts while the editor controller owns
+//! their Core registrations. Controller finalizers retain each host
+//! independently, so a failed or reentrant removal cannot leave a borrowed
+//! native window dangling.
 class CSenpReadonlyOwnerTarget final : public ISenpOwnerProjectionTarget {
 public:
 	CSenpReadonlyOwnerTarget(senp::ContributionOwnerIdentity owner,
-		SenpReadonlyEditorController& editors, HWND parent,
+		SenpReadonlyEditorController& editors, SenpReadonlyOwnerSurface surface,
 		rendering::FrameSurfaceId firstSurfaceId,
 		const ISenpReadonlyTextResources* resources = nullptr,
 		SenpTextResourceView::CopySink copy = {},
@@ -289,7 +330,7 @@ private:
 	senp::ContributionOwnerIdentity m_owner;
 	SenpReadonlyScope m_scope;
 	SenpReadonlyEditorController& m_editors;
-	HWND m_parent{};
+	SenpReadonlyOwnerSurface m_surface;
 	rendering::FrameSurfaceId m_firstSurfaceId{};
 	const ISenpReadonlyTextResources* m_resources{};
 	SenpTextResourceView::CopySink m_copy;

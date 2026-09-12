@@ -8,6 +8,7 @@
 #include <CommCtrl.h>
 
 #include <deque>
+#include <functional>
 #include <string>
 
 namespace workbench::editor::tests {
@@ -215,8 +216,17 @@ class SenpReadonlyOwnerTargetTest : public testing::Test {
 protected:
 	HRESULT apartment{ E_FAIL };
 	EditorCoreService core;
-	HWND parent{}, legacy{};
 	std::unique_ptr<SenpReadonlyEditorController> controller;
+
+	//! The surface every target in these tests presents on. The fixture owns the
+	//! shell window behind it, so it is the fixture that says how a document host
+	//! reaches it; a test never needs the window itself.
+	SenpReadonlyOwnerSurface surface;
+
+	//! Takes down what SetUp put up. The fixture keeps the closing step rather
+	//! than the window it closes, so the shell can stay a local of the one
+	//! function that creates it.
+	std::function<void()> closeShell;
 
 	void SetUp() override
 	{
@@ -229,22 +239,31 @@ protected:
 			.operation = { "owner-target.fixture.open" }, .input = { "legacy", identity },
 			.resolvedDocument = ResolvedEditorDocument{ identity, 7, true },
 		}).status);
-		parent = ::CreateWindowExW(0, L"STATIC", L"SENP owner target",
+		// The shell and its legacy child are this fixture's own scaffolding, so
+		// they stay local to the one function that raises them. What the tests
+		// need of them is kept instead: the surface a document is presented on,
+		// and the step that takes the whole thing down again.
+		const auto shell = ::CreateWindowExW(0, L"STATIC", L"SENP owner target",
 			WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, 80, 80, 560, 380,
 			nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
-		ASSERT_NE(nullptr, parent);
-		legacy = ::CreateWindowExW(0, L"EDIT", L"legacy", WS_CHILD | WS_TABSTOP | ES_MULTILINE,
-			0, 0, 0, 0, parent, nullptr, ::GetModuleHandleW(nullptr), nullptr);
-		ASSERT_NE(nullptr, legacy);
-		::ShowWindow(parent, SW_SHOWNOACTIVATE);
-		controller = std::make_unique<SenpReadonlyEditorController>(core, parent, legacy, legacy, "legacy");
+		ASSERT_NE(nullptr, shell);
+		closeShell = [shell] { ::DestroyWindow(shell); EXPECT_FALSE(::IsWindow(shell)); };
+		const auto legacyEditor = ::CreateWindowExW(0, L"EDIT", L"legacy",
+			WS_CHILD | WS_TABSTOP | ES_MULTILINE, 0, 0, 0, 0,
+			shell, nullptr, ::GetModuleHandleW(nullptr), nullptr);
+		ASSERT_NE(nullptr, legacyEditor);
+		::ShowWindow(shell, SW_SHOWNOACTIVATE);
+		controller = std::make_unique<SenpReadonlyEditorController>(
+			core, shell, legacyEditor, legacyEditor, "legacy");
 		ASSERT_EQ(SenpSurfaceProjection::Applied, controller->Layout({ 4, 8, 500, 320 }));
+		surface = { [shell] { return ::IsWindow(shell) != FALSE; },
+			[shell](SenpReadonlyDocumentHost& host) { return host.Create(shell); } };
 	}
 
 	void TearDown() override
 	{
 		if (controller) { (void)controller->Shutdown(); controller.reset(); }
-		if (parent) { ::DestroyWindow(parent); EXPECT_FALSE(::IsWindow(parent)); }
+		if (closeShell) closeShell();
 		if (SUCCEEDED(apartment)) ::CoUninitialize();
 	}
 
@@ -291,7 +310,7 @@ TEST_F(SenpReadonlyOwnerTargetTest, CarriesOneTextChunkPerTurnFromTheSeamToTheSu
 {
 	ScriptedToolReads reads;
 	ASSERT_TRUE(resources.Admit(Owner()));
-	CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 960000, &resources, {}, {}, {}, &reads);
+	CSenpReadonlyOwnerTarget target(Owner(), *controller, surface, 960000, &resources, {}, {}, {}, &reads);
 	ASSERT_NO_FATAL_FAILURE(PublishText(target));
 
 	// The first turn admits a read and settles nothing: no answer exists yet.
@@ -327,7 +346,7 @@ TEST_F(SenpReadonlyOwnerTargetTest, AnswersAReadTheSeamWouldNotCarryInsteadOfLea
 	ScriptedToolReads reads;
 	reads.SetAdmitResource(false);
 	ASSERT_TRUE(resources.Admit(Owner()));
-	CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 961000, &resources, {}, {}, {}, &reads);
+	CSenpReadonlyOwnerTarget target(Owner(), *controller, surface, 961000, &resources, {}, {}, {}, &reads);
 	ASSERT_NO_FATAL_FAILURE(PublishText(target));
 
 	// The host committed to the read the moment it handed it over, so a refused
@@ -346,7 +365,7 @@ TEST_F(SenpReadonlyOwnerTargetTest, KeepsWhatArrivedWhenNoAnswerAboutTheResource
 {
 	ScriptedToolReads reads;
 	ASSERT_TRUE(resources.Admit(Owner()));
-	CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 962000, &resources, {}, {}, {}, &reads);
+	CSenpReadonlyOwnerTarget target(Owner(), *controller, surface, 962000, &resources, {}, {}, {}, &reads);
 	ASSERT_NO_FATAL_FAILURE(PublishText(target));
 	ASSERT_NO_FATAL_FAILURE(PumpPartialText(target, reads));
 
@@ -365,7 +384,7 @@ TEST_F(SenpReadonlyOwnerTargetTest, ErasesTheBodyOfAResourceTheStoreHasLetGo)
 {
 	ScriptedToolReads reads;
 	ASSERT_TRUE(resources.Admit(Owner()));
-	CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 963000, &resources, {}, {}, {}, &reads);
+	CSenpReadonlyOwnerTarget target(Owner(), *controller, surface, 963000, &resources, {}, {}, {}, &reads);
 	ASSERT_NO_FATAL_FAILURE(PublishText(target));
 	ASSERT_NO_FATAL_FAILURE(PumpPartialText(target, reads));
 
@@ -384,7 +403,7 @@ TEST_F(SenpReadonlyOwnerTargetTest, IgnoresAnAnswerThatSettlesSomeOtherRead)
 {
 	ScriptedToolReads reads;
 	ASSERT_TRUE(resources.Admit(Owner()));
-	CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 966000, &resources, {}, {}, {}, &reads);
+	CSenpReadonlyOwnerTarget target(Owner(), *controller, surface, 966000, &resources, {}, {}, {}, &reads);
 	ASSERT_NO_FATAL_FAILURE(PublishText(target));
 	ASSERT_NO_FATAL_FAILURE(PumpPartialText(target, reads));
 
@@ -407,7 +426,7 @@ TEST_F(SenpReadonlyOwnerTargetTest, MakesNoResourceCallWithoutAPumpTurnAndNoneAf
 	ASSERT_TRUE(resources.Admit(Owner()));
 	SenpReadonlyOwnerTextPump pump;
 	{
-		CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 964000, &resources, {}, {}, {}, &reads);
+		CSenpReadonlyOwnerTarget target(Owner(), *controller, surface, 964000, &resources, {}, {}, {}, &reads);
 		ASSERT_NO_FATAL_FAILURE(PublishText(target));
 		pump = target.TextPump();
 
@@ -438,7 +457,7 @@ TEST_F(SenpReadonlyOwnerTargetTest, ShowsNoTextPageForAnOwnerTheAuthorityDoesNot
 	ScriptedToolReads reads;
 	// The authority was never told about this owner, so the cohort the document
 	// names cannot be attributed and no surface is created to wait on bytes.
-	CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 965000, &resources, {}, {}, {}, &reads);
+	CSenpReadonlyOwnerTarget target(Owner(), *controller, surface, 965000, &resources, {}, {}, {}, &reads);
 	const senp::effect::OperationContext request{ L"text.document", 3, 4, 5, 1 };
 	ASSERT_TRUE(target.BeginDocument(L"run/42", request));
 	EXPECT_FALSE(target.PublishDocument(request, TextDocument()));
@@ -452,7 +471,7 @@ TEST_F(SenpReadonlyOwnerTargetTest, ShowsNoTextPageForAnOwnerTheAuthorityDoesNot
 
 TEST_F(SenpReadonlyOwnerTargetTest, PublishesRefreshesAndRevokesNativeDocument)
 {
-	CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 920000);
+	CSenpReadonlyOwnerTarget target(Owner(), *controller, surface, 920000);
 	const senp::effect::OperationContext first{ L"document.1", 3, 4, 5, 1 };
 	ASSERT_TRUE(target.BeginDocument(L"issue/296", first));
 	ASSERT_TRUE(target.PublishDocument(first, { L"issue/296", L"Issue 296", 1,
@@ -484,7 +503,7 @@ TEST_F(SenpReadonlyOwnerTargetTest, StyleObserverExpiresOnRevokeAndDestruction)
 	(void)::GetObjectW(::GetStockObject(DEFAULT_GUI_FONT), sizeof(font), &font);
 	SenpReadonlyOwnerStyleSink revoked, destroyed;
 	{
-		CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 940000);
+		CSenpReadonlyOwnerTarget target(Owner(), *controller, surface, 940000);
 		revoked = target.StyleSink();
 		ASSERT_TRUE(revoked(palette, font, 144));
 		const senp::effect::OperationContext request{ L"styled.document", 3, 4, 5, 1 };
@@ -499,7 +518,7 @@ TEST_F(SenpReadonlyOwnerTargetTest, StyleObserverExpiresOnRevokeAndDestruction)
 	}
 	EXPECT_FALSE(revoked(palette, font, 96));
 	{
-		CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 950000);
+		CSenpReadonlyOwnerTarget target(Owner(), *controller, surface, 950000);
 		destroyed = target.StyleSink();
 		ASSERT_TRUE(destroyed(palette, font, 96));
 	}
@@ -508,7 +527,7 @@ TEST_F(SenpReadonlyOwnerTargetTest, StyleObserverExpiresOnRevokeAndDestruction)
 
 TEST_F(SenpReadonlyOwnerTargetTest, RejectsForeignTerminalAndSurvivesExternalCoreClose)
 {
-	CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 930000);
+	CSenpReadonlyOwnerTarget target(Owner(), *controller, surface, 930000);
 	const senp::effect::OperationContext request{ L"document.1", 3, 4, 5, 1 };
 	ASSERT_TRUE(target.BeginDocument(L"issue/296", request));
 	auto foreign = request; foreign.accountGeneration = 6;
@@ -530,7 +549,7 @@ TEST_F(SenpReadonlyOwnerTargetTest, RejectsForeignTerminalAndSurvivesExternalCor
 TEST_F(SenpReadonlyOwnerTargetTest, RoutesAdmittedToolReadsToTheSeamAndReturnsTheirTerminals)
 {
 	ScriptedToolReads reads;
-	CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 960000, nullptr, {}, {}, {}, &reads);
+	CSenpReadonlyOwnerTarget target(Owner(), *controller, surface, 960000, nullptr, {}, {}, {}, &reads);
 	const senp::effect::OperationContext issues{ L"tool.1", 3, 4, 5, 1 };
 	const senp::effect::OperationContext comments{ L"tool.2", 3, 4, 5, 2 };
 	ASSERT_TRUE(target.StartToolRead(issues, Read(L"issues:open:1", L"repositoryRead")));
@@ -573,14 +592,14 @@ TEST_F(SenpReadonlyOwnerTargetTest, RoutesAdmittedToolReadsToTheSeamAndReturnsTh
 
 TEST_F(SenpReadonlyOwnerTargetTest, RefusesEveryToolReadItCannotAccountFor)
 {
-	CSenpReadonlyOwnerTarget without(Owner(), *controller, parent, 961000);
+	CSenpReadonlyOwnerTarget without(Owner(), *controller, surface, 961000);
 	const senp::effect::OperationContext context{ L"tool.1", 3, 4, 5, 1 };
 	// No seam at all: the boundary fails explicitly instead of pretending.
 	EXPECT_FALSE(without.StartToolRead(context, Read(L"issues:open:1", L"repositoryRead")));
 	EXPECT_FALSE(without.TakeToolRead());
 
 	ScriptedToolReads reads;
-	CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 962000, nullptr, {}, {}, {}, &reads);
+	CSenpReadonlyOwnerTarget target(Owner(), *controller, surface, 962000, nullptr, {}, {}, {}, &reads);
 	const std::vector<senp::effect::OperationContext> foreign{
 		{ L"tool.1", 9, 4, 5, 1 },   // another owner generation
 		{ L"tool.1", 3, 9, 5, 1 },   // another workspace revision
@@ -614,7 +633,7 @@ TEST_F(SenpReadonlyOwnerTargetTest, RefusesEveryToolReadItCannotAccountFor)
 TEST_F(SenpReadonlyOwnerTargetTest, DiscardsATerminalForAReadItNoLongerOwns)
 {
 	ScriptedToolReads reads;
-	CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 963000, nullptr, {}, {}, {}, &reads);
+	CSenpReadonlyOwnerTarget target(Owner(), *controller, surface, 963000, nullptr, {}, {}, {}, &reads);
 	const senp::effect::OperationContext context{ L"tool.1", 3, 4, 5, 1 };
 	ASSERT_TRUE(target.StartToolRead(context, Read(L"issues:open:1", L"repositoryRead")));
 	target.CancelToolReads(context);
@@ -636,7 +655,7 @@ TEST_F(SenpReadonlyOwnerTargetTest, DiscardsATerminalForAReadItNoLongerOwns)
 TEST_F(SenpReadonlyOwnerTargetTest, CancelsOnlyTheRequestLineageItWasGiven)
 {
 	ScriptedToolReads reads;
-	CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 964000, nullptr, {}, {}, {}, &reads);
+	CSenpReadonlyOwnerTarget target(Owner(), *controller, surface, 964000, nullptr, {}, {}, {}, &reads);
 	const senp::effect::OperationContext first{ L"tool.1", 3, 4, 5, 1 };
 	const senp::effect::OperationContext second{ L"tool.2", 3, 4, 5, 2 };
 	ASSERT_TRUE(target.StartToolRead(first, Read(L"issues:open:1", L"repositoryRead")));
@@ -657,7 +676,7 @@ TEST_F(SenpReadonlyOwnerTargetTest, RevocationCancelsEveryReadBeforeAnotherCanBe
 {
 	ScriptedToolReads reads;
 	{
-		CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 965000, nullptr, {}, {}, {}, &reads);
+		CSenpReadonlyOwnerTarget target(Owner(), *controller, surface, 965000, nullptr, {}, {}, {}, &reads);
 		const senp::effect::OperationContext context{ L"tool.1", 3, 4, 5, 1 };
 		ASSERT_TRUE(target.StartToolRead(context, Read(L"issues:open:1", L"repositoryRead")));
 		reads.PushCompletion({ L"issues:open:1", senp::effect::CompletionStatus::Succeeded, L"[1]" });
@@ -752,7 +771,7 @@ TEST(SenpCommandCompletionStatusTest, NamesAnExtensionItCannotIdentifyRatherThan
 TEST_F(SenpReadonlyOwnerTargetTest, TellsTheWindowOfACommandItOwnsAndRefusesOneItDoesNot)
 {
 	std::vector<std::pair<senp::effect::OperationContext, senp::effect::CompleteCommand>> told;
-	CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 966000, nullptr, {},
+	CSenpReadonlyOwnerTarget target(Owner(), *controller, surface, 966000, nullptr, {},
 		[&told](const senp::effect::OperationContext& context,
 			const senp::effect::CompleteCommand& completion) {
 			told.emplace_back(context, completion);
@@ -782,14 +801,14 @@ TEST_F(SenpReadonlyOwnerTargetTest, RefusesACompletionWhenNothingIsThereToTellIt
 	// Production held no sink until it was wired, and this is what that did:
 	// refuse, which fails the coordinator and kills the owner on its first
 	// completed command. The refusal is still correct; having no sink is not.
-	CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 967000);
+	CSenpReadonlyOwnerTarget target(Owner(), *controller, surface, 967000);
 	EXPECT_FALSE(target.CompleteCommand({ L"cmd.1", 3, 4, 5, 1 },
 		Completion(senp::effect::CompletionStatus::Succeeded, L"done")));
 }
 
 TEST_F(SenpReadonlyOwnerTargetTest, KeepsTheOwnerAliveWhenTellingTheWindowThrows)
 {
-	CSenpReadonlyOwnerTarget target(Owner(), *controller, parent, 968000, nullptr, {},
+	CSenpReadonlyOwnerTarget target(Owner(), *controller, surface, 968000, nullptr, {},
 		[](const senp::effect::OperationContext&, const senp::effect::CompleteCommand&) -> bool {
 			throw std::bad_alloc();
 		});

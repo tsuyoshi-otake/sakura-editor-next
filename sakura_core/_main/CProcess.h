@@ -31,9 +31,6 @@ namespace terminal {
 class CDefaultTerminalLaunchProfileService;
 class CTerminalRuntimeService;
 }
-namespace workbench::editor {
-class ISenpOwnerToolReads;
-}
 
 /*-----------------------------------------------------------------------
 クラスの宣言
@@ -75,16 +72,6 @@ public:
 		GetTerminalRuntimeService() const noexcept { return {}; }
 	[[nodiscard]] virtual std::shared_ptr<terminal::CDefaultTerminalLaunchProfileService>
 		GetTerminalLaunchProfiles() const noexcept { return {}; }
-	/*!
-		@brief Creates the process-owned SENP tool-read broker for one user-data profile.
-
-		The broker authenticates with the control-platform authority identity
-		this process froze at startup, which only the concrete editor process
-		holds. A null result is a normal answer: it leaves an owner target's
-		tool reads fail-closed rather than inventing an unauthenticated route.
-	*/
-	[[nodiscard]] virtual std::unique_ptr<workbench::editor::ISenpOwnerToolReads>
-		CreateSenpToolReads(const std::wstring& userDataProfileId) const;
 
 private:
 	HINSTANCE	m_hInstance;

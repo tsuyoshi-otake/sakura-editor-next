@@ -387,6 +387,5 @@ markdown::PreviewFindResult SenpReadonlyDocumentHost::Find(std::wstring_view que
 	} catch (const std::exception&) { m_impl->Close(); } return markdown::PreviewFindResult::Unavailable;
 }
 HWND SenpReadonlyDocumentHost::Window() const noexcept { return m_impl->root; }
-HWND SenpReadonlyDocumentHost::FocusWindow() const noexcept { return m_impl->root; }
 
 } // namespace workbench::editor

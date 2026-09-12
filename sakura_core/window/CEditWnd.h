@@ -63,6 +63,7 @@
 
 #include "print/CPrintPreview.h"
 #include "workbench/editor/EditorWorkingCopyTypes.h"
+#include "workbench/editor/SenpOwnerToolReadsFactory.h"
 #include "workbench/editor/WorkbenchKeybindingState.h"
 #include "workbench/commands/WorkbenchContextKeyService.h"
 #include "config/WorkspaceContextTypes.h"
@@ -402,8 +403,17 @@ public:
 	HWND Create(
 		const CEditDoc*	pcEditDoc,
 		CImageListMgr*	pcIcons,
-		int				nGroup
+		int				nGroup,
+		workbench::editor::SenpOwnerToolReadsFactory senpToolReadsFactory
 	);
+	/*!
+		@brief Destroys the native window this object created, while it still owns it.
+
+		The binding between this object and its window is established by Create,
+		so the check that the window is still alive and still bound here belongs
+		beside it rather than in the owner that merely releases this object.
+	*/
+	void DestroySelfIfOwned() noexcept;
 	void	_GetTabGroupInfo(STabGroupInfo* pTabGroupInfo, int& nGroup) const;
 	void	_GetWindowRectForInit(CMyRect* rcResult, int nGroup, const STabGroupInfo& sTabGroupInfo) const;	//!< ウィンドウ生成用の矩形を取得
 	HWND _CreateMainWindow(int nGroup, const STabGroupInfo& sTabGroupInfo);
@@ -1319,6 +1329,10 @@ private:
 	//! Both side bars borrow their ViewContainer controls from this shared pool, so a
 	//! container survives being moved from one physical Part to the other.
 	std::shared_ptr<workbench::viewcontainer::CViewContainerPages> m_viewContainerPages;
+	//! Builds the tool-read route below on first use. Empty when this process
+	//! holds no control-platform authority, since only the composition root
+	//! that froze that identity can authenticate the broker.
+	workbench::editor::SenpOwnerToolReadsFactory m_senpToolReadsFactory;
 	//! Process-owned route from an owner's tool reads to the control broker.
 	//! Null while this process holds no control-platform authority, which
 	//! keeps tool reads fail-closed. Declared ahead of the extensions

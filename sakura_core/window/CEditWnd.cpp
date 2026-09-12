@@ -6091,13 +6091,12 @@ bool CEditWnd::InitializeSenpWindowExtensions()
 	if (availability != senp::EManagementState::Ready
 		&& availability != senp::EManagementState::ReadyWithDiagnostics) return true;
 	if (m_senpWindowExtensions) return false;
-	if (!m_senpToolReads) {
-		// Null when this process holds no control-platform authority. Owner
-		// targets then keep failing tool reads closed instead of pretending.
-		if (auto* const process = CProcess::getInstance()) {
-			m_senpToolReads = process->CreateSenpToolReads(
-				m_workbenchRuntime->Bootstrap().UserDataProfile().SelectedProfileId());
-		}
+	if (!m_senpToolReads && m_senpToolReadsFactory) {
+		// Empty seam, or an empty result from it, means this process holds no
+		// control-platform authority. Owner targets then keep failing their
+		// tool reads closed instead of pretending to have a route.
+		m_senpToolReads = m_senpToolReadsFactory(
+			m_workbenchRuntime->Bootstrap().UserDataProfile().SelectedProfileId());
 	}
 	if (!m_senpTextResources) {
 		// The resources an owner's reads create live under the profile the
@@ -6127,7 +6126,17 @@ bool CEditWnd::InitializeSenpWindowExtensions()
 			// no scope could ever be resolved for.
 			const bool admitted = m_senpTextResources && m_senpTextResources->Admit(owner);
 			auto target = std::make_unique<workbench::editor::CSenpReadonlyOwnerTarget>(
-				owner, *m_senpReadonlyEditors, GetHwnd(), first,
+				owner, *m_senpReadonlyEditors,
+				// The surface is this window: a document host is born as its child,
+				// and once this window has gone nothing can be presented at all. The
+				// target is told how to reach the surface rather than handed the
+				// window, so the document model itself stays free of the platform.
+				workbench::editor::SenpReadonlyOwnerSurface{
+					[this] { return ::IsWindow(GetHwnd()) != FALSE; },
+					[this](workbench::editor::SenpReadonlyDocumentHost& host) {
+						return host.Create(GetHwnd());
+					} },
+				first,
 				admitted ? m_senpTextResources.get() : nullptr,
 				workbench::editor::SenpTextResourceView::CopySink{},
 				[this, owner](const senp::effect::OperationContext&,
@@ -11696,6 +11705,15 @@ void CEditWnd::_AdjustInMonitor(const STabGroupInfo& sTabGroupInfo)
 	//To Here @@@ 2003.06.13 MIK
 }
 
+void CEditWnd::DestroySelfIfOwned() noexcept
+{
+	// A handle this object never created, or one a later window reused, is not
+	// ours to destroy; the user-data pointer is what Create bound to it.
+	if (m_hWnd == nullptr || !::IsWindow(m_hWnd)) return;
+	if (reinterpret_cast<CEditWnd*>(::GetWindowLongPtrW(m_hWnd, GWLP_USERDATA)) != this) return;
+	::DestroyWindow(m_hWnd);
+}
+
 /*!
 	作成
 
@@ -11706,10 +11724,15 @@ void CEditWnd::_AdjustInMonitor(const STabGroupInfo& sTabGroupInfo)
 HWND CEditWnd::Create(
 	[[maybe_unused]] const CEditDoc* pcEditDoc,
 	CImageListMgr*	pcIcons,	//!< [in] Image List
-	int				nGroup		//!< [in] グループID
+	int				nGroup,		//!< [in] グループID
+	workbench::editor::SenpOwnerToolReadsFactory senpToolReadsFactory	//!< [in] SENP tool-read seam; may be empty
 )
 {
 	MY_RUNNINGTIMER( cRunningTimer, L"CEditWnd::Create" );
+
+	// The workbench extensions are initialized inside this call, so the seam
+	// has to be held before any of the phases below can ask for a broker.
+	m_senpToolReadsFactory = std::move(senpToolReadsFactory);
 
 	wmemset( m_pszMenubarMessage, L' ', MENUBAR_MESSAGE_MAX_LEN );	// null終端は不要
 

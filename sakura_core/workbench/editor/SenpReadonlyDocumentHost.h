@@ -92,9 +92,9 @@ public:
 	[[nodiscard]] bool Copy();
 	void ShowFind(bool visible);
 	[[nodiscard]] markdown::PreviewFindResult Find(std::wstring_view query, bool previous = false, bool matchCase = false);
+	//! The host root. Its WM_SETFOCUS resolves the currently selected body, so it
+	//! is both the surface window and the stable focus proxy for this document.
 	[[nodiscard]] HWND Window() const noexcept;
-	//! Stable focus proxy: its WM_SETFOCUS resolves the currently selected body.
-	[[nodiscard]] HWND FocusWindow() const noexcept;
 private:
 	class Impl;
 	std::unique_ptr<Impl> m_impl;

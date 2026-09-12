@@ -3,6 +3,7 @@
 #include "pch.h"
 #include <gtest/gtest.h>
 
+#include "cxx/ResourceHolder.hpp"
 #include "env/ShareDataTestSuite.hpp"
 #include "outline/CDlgFuncList.h"
 #include "workbench/SenpOwnerComposition.h"
@@ -18,6 +19,10 @@
 namespace workbench {
 namespace {
 using Clock = std::chrono::steady_clock;
+//! The alias the rest of tests1 uses for a window it owns. A holder takes its
+//! window down when whatever raised it goes away, so no teardown path here has
+//! to remember one.
+using WindowHolder = cxx::ResourceHolder<&::DestroyWindow>;
 
 class CompositionRuntime final : public senp::ISenpEffectRuntime {
 public:
@@ -243,11 +248,11 @@ public:
 	void Close() noexcept override
 	{
 		m_host = {};
-		if (m_window) { ::DestroyWindow(m_window); m_window = nullptr; }
+		m_window.reset(nullptr);
 	}
 private:
 	viewcontainer::SenpViewBodyHost m_host;
-	HWND m_window{};
+	WindowHolder m_window;
 };
 
 class SenpOwnerComposition : public testing::Test, public env::ShareDataTestSuite {
@@ -258,9 +263,8 @@ protected:
 	{
 		m_owner = ::CreateWindowExW(0, L"STATIC", L"", WS_POPUP, 0, 0, 640, 480,
 			nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
-		ASSERT_NE(nullptr, m_owner);
+		ASSERT_NE(nullptr, m_owner.get());
 	}
-	void TearDown() override { if (m_owner) ::DestroyWindow(m_owner); }
 
 	template<class Predicate>
 	bool Await(CSenpOwnerComposition& composition, Predicate predicate) const
@@ -298,7 +302,7 @@ protected:
 		trees.emplace_back(layout::WorkbenchViewDescriptor{
 			"sample.tree" + suffix, "sample.container" + suffix, "Sample", 1, true, true, "senp.tree" },
 			std::vector<std::string>{});
-		return { m_owner,
+		return { m_owner.get(),
 			{ { "sample.container" + suffix, "Sample", layout::EViewContainerLocation::Sidebar, 1,
 				"beaker", false, { layout::EViewContainerLocation::Sidebar } } },
 			std::move(trees), std::make_unique<CompositionTarget>(std::move(state)),
@@ -308,7 +312,9 @@ protected:
 			} };
 	}
 
-	HWND m_owner{};
+	//! The window every page and every publication in this suite is raised on,
+	//! standing in for the one frame CEditWnd owns in production.
+	WindowHolder m_owner;
 };
 
 TEST_F(SenpOwnerComposition, ActivationIsLazyDeduplicatedAndReenabledWithNewScope)
@@ -316,7 +322,7 @@ TEST_F(SenpOwnerComposition, ActivationIsLazyDeduplicatedAndReenabledWithNewScop
 	layout::WorkbenchContributionRegistry catalog;
 	CDlgFuncList dialog;
 	viewcontainer::CViewContainerPages pages(dialog);
-	ASSERT_TRUE(pages.Create(m_owner));
+	ASSERT_TRUE(pages.Create(m_owner.get()));
 	int starts{};
 	CSenpOwnerComposition composition(catalog, pages, [&](senp::EffectRuntimeLaunch launch) {
 		++starts;
@@ -373,7 +379,7 @@ TEST_F(SenpOwnerComposition, ActivationSerializesDistinctOwnersWithoutRestarting
 	layout::WorkbenchContributionRegistry catalog;
 	CDlgFuncList dialog;
 	viewcontainer::CViewContainerPages pages(dialog);
-	ASSERT_TRUE(pages.Create(m_owner));
+	ASSERT_TRUE(pages.Create(m_owner.get()));
 	int starts{};
 	CSenpOwnerComposition composition(catalog, pages, [&](senp::EffectRuntimeLaunch launch) {
 		++starts;
@@ -412,7 +418,7 @@ TEST_F(SenpOwnerComposition, ActivationFailuresRemainTerminalAndRejectMalformedA
 	layout::WorkbenchContributionRegistry catalog;
 	CDlgFuncList dialog;
 	viewcontainer::CViewContainerPages pages(dialog);
-	ASSERT_TRUE(pages.Create(m_owner));
+	ASSERT_TRUE(pages.Create(m_owner.get()));
 	int starts{}, factories{};
 	CSenpOwnerComposition composition(catalog, pages, [&](senp::EffectRuntimeLaunch launch) {
 		++starts;
@@ -460,7 +466,7 @@ TEST_F(SenpOwnerComposition, APackageListedForAnotherRuntimeAbiIsUnsupportedWith
 	layout::WorkbenchContributionRegistry catalog;
 	CDlgFuncList dialog;
 	viewcontainer::CViewContainerPages pages(dialog);
-	ASSERT_TRUE(pages.Create(m_owner));
+	ASSERT_TRUE(pages.Create(m_owner.get()));
 	int starts{}, factories{};
 	CSenpOwnerComposition composition(catalog, pages, [&](senp::EffectRuntimeLaunch launch) {
 		++starts;
@@ -490,7 +496,7 @@ TEST_F(SenpOwnerComposition, CloseRetainsFailedRuntimeCleanupUntilExitIsConfirme
 	layout::WorkbenchContributionRegistry catalog;
 	CDlgFuncList dialog;
 	viewcontainer::CViewContainerPages pages(dialog);
-	ASSERT_TRUE(pages.Create(m_owner));
+	ASSERT_TRUE(pages.Create(m_owner.get()));
 	bool exitConfirmed{};
 	CSenpOwnerComposition composition(catalog, pages, [&](senp::EffectRuntimeLaunch launch) {
 		return std::make_unique<CompositionRuntime>(std::move(launch), [&] { return exitConfirmed; });
@@ -517,7 +523,7 @@ TEST_F(SenpOwnerComposition, FactoryUsesAllocatedOwnerAndRejectsReentrancy)
 	layout::WorkbenchContributionRegistry catalog;
 	CDlgFuncList dialog;
 	viewcontainer::CViewContainerPages pages(dialog);
-	ASSERT_TRUE(pages.Create(m_owner));
+	ASSERT_TRUE(pages.Create(m_owner.get()));
 	std::optional<senp::EffectRuntimeLaunch> launched;
 	CSenpOwnerComposition composition(catalog, pages, [&](senp::EffectRuntimeLaunch launch) {
 		launched = launch;
@@ -541,7 +547,7 @@ TEST_F(SenpOwnerComposition, FactoryUsesAllocatedOwnerAndRejectsReentrancy)
 			trees.emplace_back(layout::WorkbenchViewDescriptor{
 				"sample.tree", "sample.container", "Sample", 1, true, true, "senp.tree" },
 				std::vector<std::string>{});
-			return SenpOwnerPublicationOptions(m_owner,
+			return SenpOwnerPublicationOptions(m_owner.get(),
 				{ { "sample.container", "Sample", layout::EViewContainerLocation::Sidebar, 1,
 					"beaker", false, { layout::EViewContainerLocation::Sidebar } } },
 				std::move(trees), std::make_unique<CompositionTarget>(state),
@@ -575,7 +581,7 @@ TEST_F(SenpOwnerComposition, FailedFactoryStartsNoRuntimeAndLeavesNoPublication)
 	layout::WorkbenchContributionRegistry catalog;
 	CDlgFuncList dialog;
 	viewcontainer::CViewContainerPages pages(dialog);
-	ASSERT_TRUE(pages.Create(m_owner));
+	ASSERT_TRUE(pages.Create(m_owner.get()));
 	int starts{};
 	CSenpOwnerComposition composition(catalog, pages, [&](senp::EffectRuntimeLaunch launch) {
 		++starts;
@@ -619,7 +625,7 @@ TEST_F(SenpOwnerComposition, RealSamplePublishesTwoTreesAndStructuredDocument)
 	layout::WorkbenchContributionRegistry catalog;
 	CDlgFuncList dialog;
 	viewcontainer::CViewContainerPages pages(dialog);
-	ASSERT_TRUE(pages.Create(m_owner));
+	ASSERT_TRUE(pages.Create(m_owner.get()));
 	CSenpOwnerComposition composition(catalog, pages);
 	auto target = std::make_shared<CompositionTargetState>();
 	std::map<std::wstring, std::shared_ptr<tree::SenpTreeProvider>, std::less<>> providers;
@@ -635,7 +641,7 @@ TEST_F(SenpOwnerComposition, RealSamplePublishesTwoTreesAndStructuredDocument)
 		"sample.states", "sample.senp", "States", 20, true, true, "senp.tree" },
 		std::vector<std::string>{});
 	SenpOwnerPublicationOptions publication(
-		m_owner, { std::move(container) }, std::move(trees),
+		m_owner.get(), { std::move(container) }, std::move(trees),
 		std::make_unique<CompositionTarget>(target), [](std::string_view) { return true; },
 		[&providers](viewcontainer::SenpViewBodyHost host,
 			std::shared_ptr<tree::SenpTreeProvider> provider, std::wstring) {
@@ -699,7 +705,7 @@ TEST_F(SenpOwnerComposition, RealGithubIssuesAndPullRequestsReachNativeProviders
 	layout::WorkbenchContributionRegistry catalog;
 	CDlgFuncList dialog;
 	viewcontainer::CViewContainerPages pages(dialog);
-	ASSERT_TRUE(pages.Create(m_owner));
+	ASSERT_TRUE(pages.Create(m_owner.get()));
 	CSenpOwnerComposition composition(catalog, pages);
 	auto target = std::make_shared<CompositionTargetState>();
 	target->SetToolResponse(Completion(LR"([{"id":11,"number":7,"title":"Visible issue","state":"open","user":{"login":"octocat"},"labels":[{"name":"bug"}],"html_url":"https://github.com/o/r/issues/7","comments":2},{"id":12,"number":8,"title":"Filtered PR","state":"open","user":{"login":"hubot"},"labels":[],"html_url":"https://github.com/o/r/pull/8","comments":0,"pull_request":{}}])", 2));
@@ -721,7 +727,7 @@ TEST_F(SenpOwnerComposition, RealGithubIssuesAndPullRequestsReachNativeProviders
 		"issues:github", "github-pull-requests", "Issues", 20, true, true, "senp.tree" },
 		std::vector<std::string>{ "github.openIssue", "github.openIssueComment" });
 	SenpOwnerPublicationOptions publication(
-		m_owner, { std::move(container) }, std::move(trees),
+		m_owner.get(), { std::move(container) }, std::move(trees),
 		std::make_unique<CompositionTarget>(target), [](std::string_view) { return true; },
 		[&providers](viewcontainer::SenpViewBodyHost host,
 			std::shared_ptr<tree::SenpTreeProvider> provider, std::wstring) {
@@ -836,7 +842,7 @@ TEST_F(SenpOwnerComposition, RealGithubActionsReachNativeProviders)
 	layout::WorkbenchContributionRegistry catalog;
 	CDlgFuncList dialog;
 	viewcontainer::CViewContainerPages pages(dialog);
-	ASSERT_TRUE(pages.Create(m_owner));
+	ASSERT_TRUE(pages.Create(m_owner.get()));
 	CSenpOwnerComposition composition(catalog, pages);
 	auto target = std::make_shared<CompositionTargetState>();
 	target->EnqueueToolResponse(Completion(LR"({"total_count":1,"workflows":[{"id":31,"name":"Build","path":".github/workflows/build.yml","state":"active","html_url":"https://github.com/o/r/actions/workflows/build.yml"}]})"));
@@ -865,7 +871,7 @@ TEST_F(SenpOwnerComposition, RealGithubActionsReachNativeProviders)
         std::vector<std::string>{ "github-actions.workflow.run.open",
             "sakura.githubActions.openJobDetails", "github-actions.workflow.logs" }, itemActions);
 	SenpOwnerPublicationOptions publication(
-		m_owner, { std::move(container) }, std::move(trees),
+		m_owner.get(), { std::move(container) }, std::move(trees),
 		std::make_unique<CompositionTarget>(target), [](std::string_view) { return true; },
 		[&providers](viewcontainer::SenpViewBodyHost host,
 			std::shared_ptr<tree::SenpTreeProvider> provider, std::wstring) {

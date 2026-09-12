@@ -46,8 +46,6 @@ public:
 		GetTerminalRuntimeService() const noexcept override;
 	[[nodiscard]] std::shared_ptr<terminal::CDefaultTerminalLaunchProfileService>
 		GetTerminalLaunchProfiles() const noexcept override;
-	[[nodiscard]] std::unique_ptr<workbench::editor::ISenpOwnerToolReads>
-		CreateSenpToolReads(const std::wstring& userDataProfileId) const override;
 
 protected:
 	//プロセスハンドラ
