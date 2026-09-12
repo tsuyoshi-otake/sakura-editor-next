@@ -511,6 +511,8 @@
     <ClInclude Include="..\sakura_core\include\sakura\filesystem\FileSystemFactory.h" />
     <ClInclude Include="..\sakura_core\include\sakura\filesystem\IFileService.h" />
     <ClInclude Include="..\sakura_core\include\sakura\filesystem\IFileSystemProvider.h" />
+    <ClInclude Include="..\sakura_core\platform\foundation\NativeWorkerThread.h" />
+    <ClInclude Include="..\sakura_core\platform\foundation\NativeWorkerThreadAbi.h" />
     <ClInclude Include="..\sakura_core\platform\foundation\PlatformLifecycleCoordinator.h" />
     <ClInclude Include="..\sakura_core\platform\foundation\PlatformServiceRegistry.h" />
     <ClInclude Include="..\sakura_core\platform\profiles\UserDataProfileRegistry.h" />

@@ -9,6 +9,7 @@
 #pragma once
 
 #include "platform/controlipc/ControlSenpBroker.h"
+#include "platform/foundation/NativeWorkerThread.h"
 #include "platform/profiles/ControlUserDataProfileRegistry.h"
 #include "senp/SenpControlPackageAuthority.h"
 #include "senp/SenpManagementService.h"
@@ -26,7 +27,6 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <thread>
 
 namespace platform::controlipc {
 
@@ -448,7 +448,7 @@ private:
 	std::mutex m_workerMutex;
 	std::optional<senp::github::GhToolProbe> m_probe;
 	bool m_closed = false;
-	std::thread m_worker;
+	foundation::CNativeWorkerThread m_worker;
 };
 
 } // namespace platform::controlipc

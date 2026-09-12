@@ -3,16 +3,20 @@
 #![deny(clippy::missing_safety_doc)]
 #![deny(clippy::undocumented_unsafe_blocks)]
 
-use std::mem::{align_of, size_of};
+use std::mem::size_of;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::slice;
 use std::sync::OnceLock;
 
 use sakura_simd as native_simd;
 
+use crate::ffi_pointer::is_aligned;
+
+mod ffi_pointer;
 mod output_provider;
 mod output_shadow;
 mod uri_candidate;
+mod worker_thread;
 
 const ABI_VERSION_V1: u32 = 1;
 const POLICY_COUNT_V1: usize = 3;
@@ -203,10 +207,6 @@ fn validate_snapshot(snapshot: &Snapshot) -> SakuraStatus {
     } else {
         SakuraStatus::Ok
     }
-}
-
-fn is_aligned<T>(pointer: *const T) -> bool {
-    (pointer as usize).is_multiple_of(align_of::<T>())
 }
 
 unsafe fn copy_snapshot(

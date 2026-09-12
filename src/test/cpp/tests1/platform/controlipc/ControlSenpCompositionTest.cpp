@@ -6,6 +6,7 @@
 #include "platform/storage/CInMemoryStorageService.h"
 
 #include <atomic>
+#include <condition_variable>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -65,10 +66,27 @@ class FakePackages final : public IControlSenpPackageSource {
 public:
 	std::optional<senp::ManagementSnapshot> Refresh(const std::wstring& profileHome) override
 	{
-		std::lock_guard lock(*m_mutex);
+		std::unique_lock lock(*m_mutex);
+		m_released.wait(lock, [this]() { return !m_held; });
 		m_homes.push_back(profileHome);
 		if (m_closed) return std::nullopt;
 		return m_snapshot;
+	}
+	//! Keeps the refresh worker inside Refresh until Release. A test that means
+	//! "nothing is published yet" then observes exactly that, instead of racing
+	//! the worker that the same declaration just admitted.
+	void Hold()
+	{
+		std::lock_guard lock(*m_mutex);
+		m_held = true;
+	}
+	void Release()
+	{
+		{
+			std::lock_guard lock(*m_mutex);
+			m_held = false;
+		}
+		m_released.notify_all();
 	}
 	void Close() noexcept override
 	{
@@ -96,8 +114,10 @@ private:
 	// with Refresh()/Close()/Set().
 	std::unique_ptr<std::mutex> m_mutex = std::make_unique<std::mutex>();
 	std::optional<senp::ManagementSnapshot> m_snapshot{ Packages() };
+	std::condition_variable m_released;
 	std::vector<std::wstring> m_homes;
 	bool m_closed = false;
+	bool m_held = false;
 };
 
 class FakeManagementService final : public senp::ISenpManagementService {
@@ -659,6 +679,10 @@ TEST(ControlSenpProfileSource, RefusesToAdoptAnAccountWithoutAnAbsoluteConfigura
 TEST(ControlSenpComposition, PublishesControlOwnedPackagesAndThenAdmitsAGrantThroughItsHandler)
 {
 	Fakes fakes;
+	// The declaration below admits a refresh, and the worker would publish from
+	// it. Holding that attempt is what makes "nothing is published yet" a fact
+	// of this test rather than a bet on the worker losing a race.
+	fakes.Packages()->Hold();
 	CControlSenpComposition composition(Options(), Registry(), fakes.Dependencies());
 	auto session = composition.Handler()->CreateSession(kConnection);
 	ASSERT_NE(nullptr, session);
@@ -666,9 +690,10 @@ TEST(ControlSenpComposition, PublishesControlOwnedPackagesAndThenAdmitsAGrantThr
 	// tells the control side which folders this profile answers for.
 	ASSERT_EQ(EControlSenpRpcStatus::Succeeded, Adopt(*session, 1, { WorkspaceFolder() }));
 
-	// Nothing is published yet, so the grant is refused and the miss admits one
-	// refresh instead of issuing on the strength of the request.
+	// Nothing is published yet, so the grant is refused and the miss admits no
+	// second refresh: the attempt this declaration admitted is still the one.
 	EXPECT_EQ(EControlSenpRpcStatus::Unauthorized, Issue(*session, 2));
+	fakes.Packages()->Release();
 	ASSERT_TRUE(composition.WaitForIdle(kIdleTimeoutMilliseconds));
 
 	ASSERT_EQ(1U, fakes.Packages()->Homes().size());

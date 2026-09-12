@@ -5,6 +5,7 @@
 #pragma once
 
 #include "platform/controlipc/ControlSenpBroker.h"
+#include "platform/foundation/NativeWorkerThread.h"
 #include "senp/SenpTextResource.h"
 #include "senp/github/GhConnectionLifecycle.h"
 #include "senp/github/GhReadScheduler.h"
@@ -20,7 +21,6 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <thread>
 #include <vector>
 
 namespace senp::github {
@@ -156,9 +156,9 @@ private:
 	// plain state records).
 	struct Read final {
 		Read(std::wstring readIdValue, std::wstring shapeValue, std::wstring cacheKeyValue,
-			std::uint64_t subscriptionIdValue, std::uint64_t deliveredCycleValue) noexcept
+			GhReadSubscription subscriptionValue, std::uint64_t deliveredCycleValue) noexcept
 			: readId(std::move(readIdValue)), shape(std::move(shapeValue)), cacheKey(std::move(cacheKeyValue)),
-			subscriptionId(subscriptionIdValue), deliveredCycle(deliveredCycleValue)
+			subscription(std::move(subscriptionValue)), deliveredCycle(deliveredCycleValue)
 		{
 		}
 
@@ -171,7 +171,9 @@ private:
 		//! remembering which question it answers.
 		std::wstring shape;
 		std::wstring cacheKey;
-		std::uint64_t subscriptionId{};
+		//! The scheduler admission this read owns. Erasing the read is the whole
+		//! of the release, so no cancellation path has to remember a second step.
+		GhReadSubscription subscription;
 		std::uint64_t deliveredCycle{};
 		//! The page resource this read currently owns, empty when it owns none.
 		//! One read holds at most one: a refresh replaces what it published, so a
@@ -279,11 +281,6 @@ private:
 	//! with the destructor's stop-then-join, so the acquisition this rule tracks
 	//! appears exactly once, already scoped to its guaranteed release.
 	void StartWorker();
-	//! The sole place this class admits a scheduler subscription: its matching
-	//! release is `m_scheduler.Unsubscribe`, called from both CancelRead and
-	//! CancelScope. Isolating the acquisition here keeps it to one documented
-	//! call site instead of leaving it inline in StartRead.
-	[[nodiscard]] GhReadSubscriptionResult SubscribeRead(const GhReadResourceKey& key);
 
 	std::shared_ptr<ISenpGitHubProfileSource> m_profiles;
 	CGhToolPolicy m_policy;
@@ -310,7 +307,7 @@ private:
 
 	//! Worker-thread-only lazy probe; frame processing never runs `gh --version`.
 	std::optional<GhToolProbe> m_probe;
-	std::thread m_worker;
+	platform::foundation::CNativeWorkerThread m_worker;
 };
 
 } // namespace senp::github

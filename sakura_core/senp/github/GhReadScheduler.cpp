@@ -113,7 +113,7 @@ bool GhReadDispatch::CancellationRequested() const noexcept
 	return m_stopSignal && m_stopSignal->Signaled();
 }
 
-class CGhReadScheduler::Impl final {
+class GhReadSchedulerState final {
 public:
 	class Subscription final {
 	public:
@@ -123,7 +123,7 @@ private:
 		std::uint64_t id{};
 		GhReadPollCadence cadence{ GhReadPollCadence::Manual };
 		bool visible{};
-		friend class Impl;
+		friend class GhReadSchedulerState;
 		friend class CGhReadScheduler;
 	};
 	class Entry final {
@@ -137,7 +137,7 @@ public:
 		std::shared_ptr<GhReadDispatch::StopSignal> stopSignal;
 		std::optional<GhRepositoryResponseStatus> terminal;
 		std::optional<std::uint64_t> nextPollAt;
-		friend class Impl;
+		friend class GhReadSchedulerState;
 		friend class CGhReadScheduler;
 	};
 	class Lane final {
@@ -146,7 +146,7 @@ public:
 	private:
 		GhReadResourceKey account;
 		std::uint64_t cooldownUntil{};
-		friend class Impl;
+		friend class GhReadSchedulerState;
 		friend class CGhReadScheduler;
 	};
 
@@ -264,104 +264,164 @@ public:
 				[&](const auto& entry) { return lane.account.SameAccount(entry->key); });
 		});
 	}
+
+	//! Admits one subscription, reporting the id its handle will own. The id is
+	//! zero on every refusal, so a refused handle owns nothing to release.
+	std::pair<GhReadSubscribeStatus, std::uint64_t> Admit(const GhReadResourceKey& key,
+		const GhReadPollCadence cadence, const bool visible, const std::uint64_t now)
+	{
+		std::scoped_lock lock(mutex);
+		if (closed) return { GhReadSubscribeStatus::Closed, 0 };
+		if (!key.Valid()) return { GhReadSubscribeStatus::InvalidScope, 0 };
+		EraseUnused();
+		if (SubscriptionCount() >= CGhReadScheduler::MaximumSubscriptions()) {
+			return { GhReadSubscribeStatus::SubscriptionLimit, 0 };
+		}
+		RefreshDue(now);
+		EraseExpiredLanes(now);
+		auto entry = FindEntry(key);
+		if (!entry) {
+			if (entries.size() >= CGhReadScheduler::MaximumResources()) {
+				return { GhReadSubscribeStatus::QueueFull, 0 };
+			}
+			if (!FindLane(key) && lanes.size() >= CGhReadScheduler::MaximumAccountLanes()) {
+				return { GhReadSubscribeStatus::QueueFull, 0 };
+			}
+			auto added = std::make_unique<Entry>(key);
+			entry = added.get();
+			if (!FindLane(key)) lanes.emplace_back(key);
+			entries.push_back(std::move(added));
+		}
+		const auto id = ++nextSubscription;
+		entry->subscriptions.push_back({ id, cadence, visible });
+		if (visible && entry->phase == GhReadPhase::Hidden) Queue(*entry);
+		return { GhReadSubscribeStatus::Accepted, id };
+	}
+
+	GhReadMutationStatus SetVisible(const std::uint64_t id, const bool visible,
+		const std::uint64_t now) noexcept
+	{
+		std::scoped_lock lock(mutex);
+		if (closed) return GhReadMutationStatus::Closed;
+		const auto [entry, subscription] = FindSubscription(id);
+		if (!entry) return GhReadMutationStatus::NotFound;
+		if (subscription->visible == visible) return GhReadMutationStatus::Applied;
+		subscription->visible = visible;
+		if (visible && entry->phase == GhReadPhase::Hidden) Queue(*entry);
+		else if (!visible) CancelIfUnobserved(*entry);
+		RefreshDue(now);
+		return GhReadMutationStatus::Applied;
+	}
+
+	GhReadMutationStatus RequestRefresh(const std::uint64_t id, const std::uint64_t now) noexcept
+	{
+		std::scoped_lock lock(mutex);
+		if (closed) return GhReadMutationStatus::Closed;
+		const auto [entry, subscription] = FindSubscription(id);
+		if (!entry) return GhReadMutationStatus::NotFound;
+		if (!subscription->visible) return GhReadMutationStatus::NotVisible;
+		if (entry->phase == GhReadPhase::Completed || entry->phase == GhReadPhase::RateLimited
+			|| entry->phase == GhReadPhase::Hidden) Queue(*entry);
+		RefreshDue(now);
+		return GhReadMutationStatus::Applied;
+	}
+
+	//! Releases one subscription. Called only from the handle that owns the id,
+	//! and only once, because the handle forgets the id as it releases it.
+	GhReadMutationStatus Remove(const std::uint64_t id) noexcept
+	{
+		std::scoped_lock lock(mutex);
+		if (closed) return GhReadMutationStatus::Closed;
+		const auto [entry, subscription] = FindSubscription(id);
+		if (!entry) return GhReadMutationStatus::NotFound;
+		const auto removedId = subscription->id;
+		std::erase_if(entry->subscriptions,
+			[&](const Subscription& candidate) { return candidate.id == removedId; });
+		CancelIfUnobserved(*entry);
+		EraseUnused();
+		return GhReadMutationStatus::Applied;
+	}
+
+	std::optional<GhReadObservation> Poll(const std::uint64_t id, const std::uint64_t now) noexcept
+	{
+		std::scoped_lock lock(mutex);
+		if (closed) return std::nullopt;
+		RefreshDue(now);
+		const auto [entry, subscription] = FindSubscription(id);
+		if (!entry) return std::nullopt;
+		(void)subscription;
+		return GhReadObservation(entry->phase, entry->cycle, entry->subscriptions.size(),
+			VisibleCount(*entry), entry->terminal, entry->nextPollAt,
+			Cooldown(entry->key, now));
+	}
 };
 
-CGhReadScheduler::CGhReadScheduler() : m_impl(std::make_shared<Impl>()) {}
-CGhReadScheduler::~CGhReadScheduler() { Close(); }
-
-GhReadSubscriptionResult CGhReadScheduler::Subscribe(const GhReadResourceKey& key,
-	const GhReadPollCadence cadence, const bool visible, const std::uint64_t nowMilliseconds)
+GhReadSubscription::GhReadSubscription(CGhReadScheduler& scheduler, const GhReadResourceKey& key,
+	const GhReadPollCadence cadence, const bool visible, const std::uint64_t nowMilliseconds) :
+	m_state(scheduler.m_state)
 {
-	std::scoped_lock lock(m_impl->mutex);
-	if (m_impl->closed) return { GhReadSubscribeStatus::Closed, 0 };
-	if (!key.Valid()) return { GhReadSubscribeStatus::InvalidScope, 0 };
-	m_impl->EraseUnused();
-	if (m_impl->SubscriptionCount() >= MaximumSubscriptions()) return { GhReadSubscribeStatus::SubscriptionLimit, 0 };
-	m_impl->RefreshDue(nowMilliseconds);
-	m_impl->EraseExpiredLanes(nowMilliseconds);
-	auto entry = m_impl->FindEntry(key);
-	if (!entry) {
-		if (m_impl->entries.size() >= MaximumResources()) return { GhReadSubscribeStatus::QueueFull, 0 };
-		if (!m_impl->FindLane(key) && m_impl->lanes.size() >= MaximumAccountLanes()) {
-			return { GhReadSubscribeStatus::QueueFull, 0 };
-		}
-		auto added = std::make_unique<Impl::Entry>(key);
-		entry = added.get();
-		if (!m_impl->FindLane(key)) m_impl->lanes.emplace_back(key);
-		m_impl->entries.push_back(std::move(added));
+	const auto [status, id] = scheduler.m_state->Admit(key, cadence, visible, nowMilliseconds);
+	m_status = status;
+	m_id = id;
+}
+
+GhReadSubscription::~GhReadSubscription() { Release(); }
+
+GhReadSubscription::GhReadSubscription(GhReadSubscription&& other) noexcept :
+	m_state(std::move(other.m_state)), m_id(std::exchange(other.m_id, 0)), m_status(other.m_status) {}
+
+GhReadSubscription& GhReadSubscription::operator=(GhReadSubscription&& other) noexcept
+{
+	if (this != &other) {
+		Release();
+		m_state = std::move(other.m_state);
+		m_id = std::exchange(other.m_id, 0);
+		m_status = other.m_status;
 	}
-	const auto id = ++m_impl->nextSubscription;
-	entry->subscriptions.push_back({ id, cadence, visible });
-	if (visible && entry->phase == GhReadPhase::Hidden) m_impl->Queue(*entry);
-	return { GhReadSubscribeStatus::Accepted, id };
+	return *this;
 }
 
-GhReadMutationStatus CGhReadScheduler::SetVisible(const std::uint64_t subscriptionId,
-	const bool visible, const std::uint64_t nowMilliseconds) noexcept
-{
-	std::scoped_lock lock(m_impl->mutex);
-	if (m_impl->closed) return GhReadMutationStatus::Closed;
-	const auto [entry, subscription] = m_impl->FindSubscription(subscriptionId);
-	if (!entry) return GhReadMutationStatus::NotFound;
-	if (subscription->visible == visible) return GhReadMutationStatus::Applied;
-	subscription->visible = visible;
-	if (visible && entry->phase == GhReadPhase::Hidden) m_impl->Queue(*entry);
-	else if (!visible) m_impl->CancelIfUnobserved(*entry);
-	m_impl->RefreshDue(nowMilliseconds);
-	return GhReadMutationStatus::Applied;
-}
-
-GhReadMutationStatus CGhReadScheduler::RequestRefresh(const std::uint64_t subscriptionId,
+GhReadMutationStatus GhReadSubscription::SetVisible(const bool visible,
 	const std::uint64_t nowMilliseconds) noexcept
 {
-	std::scoped_lock lock(m_impl->mutex);
-	if (m_impl->closed) return GhReadMutationStatus::Closed;
-	const auto [entry, subscription] = m_impl->FindSubscription(subscriptionId);
-	if (!entry) return GhReadMutationStatus::NotFound;
-	if (!subscription->visible) return GhReadMutationStatus::NotVisible;
-	if (entry->phase == GhReadPhase::Completed || entry->phase == GhReadPhase::RateLimited
-		|| entry->phase == GhReadPhase::Hidden) m_impl->Queue(*entry);
-	m_impl->RefreshDue(nowMilliseconds);
-	return GhReadMutationStatus::Applied;
+	const auto state = m_state.lock();
+	return state && m_id != 0
+		? state->SetVisible(m_id, visible, nowMilliseconds) : GhReadMutationStatus::NotFound;
 }
 
-GhReadMutationStatus CGhReadScheduler::Unsubscribe(const std::uint64_t subscriptionId) noexcept
+GhReadMutationStatus GhReadSubscription::RequestRefresh(const std::uint64_t nowMilliseconds) noexcept
 {
-	std::scoped_lock lock(m_impl->mutex);
-	if (m_impl->closed) return GhReadMutationStatus::Closed;
-	const auto [entry, subscription] = m_impl->FindSubscription(subscriptionId);
-	if (!entry) return GhReadMutationStatus::NotFound;
-	const auto removedId = subscription->id;
-	std::erase_if(entry->subscriptions,
-		[&](const Impl::Subscription& candidate) { return candidate.id == removedId; });
-	m_impl->CancelIfUnobserved(*entry);
-	m_impl->EraseUnused();
-	return GhReadMutationStatus::Applied;
+	const auto state = m_state.lock();
+	return state && m_id != 0
+		? state->RequestRefresh(m_id, nowMilliseconds) : GhReadMutationStatus::NotFound;
 }
 
-std::optional<GhReadObservation> CGhReadScheduler::Poll(const std::uint64_t subscriptionId,
-	const std::uint64_t nowMilliseconds) noexcept
+std::optional<GhReadObservation> GhReadSubscription::Poll(const std::uint64_t nowMilliseconds) noexcept
 {
-	std::scoped_lock lock(m_impl->mutex);
-	if (m_impl->closed) return std::nullopt;
-	m_impl->RefreshDue(nowMilliseconds);
-	const auto [entry, subscription] = m_impl->FindSubscription(subscriptionId);
-	if (!entry) return std::nullopt;
-	(void)subscription;
-	return GhReadObservation(entry->phase, entry->cycle, entry->subscriptions.size(),
-		Impl::VisibleCount(*entry), entry->terminal, entry->nextPollAt,
-		m_impl->Cooldown(entry->key, nowMilliseconds));
+	const auto state = m_state.lock();
+	return state && m_id != 0 ? state->Poll(m_id, nowMilliseconds) : std::nullopt;
 }
+
+void GhReadSubscription::Release() noexcept
+{
+	if (m_id == 0) return;
+	if (const auto state = m_state.lock()) (void)state->Remove(m_id);
+	m_id = 0;
+	m_state.reset();
+}
+
+CGhReadScheduler::CGhReadScheduler() : m_state(std::make_shared<GhReadSchedulerState>()) {}
+CGhReadScheduler::~CGhReadScheduler() { Close(); }
 
 std::optional<GhReadDispatch> CGhReadScheduler::TryDispatch(const std::uint64_t nowMilliseconds)
 {
-	std::scoped_lock lock(m_impl->mutex);
-	if (m_impl->closed) return std::nullopt;
-	m_impl->RefreshDue(nowMilliseconds);
-	Impl::Entry* selected{};
-	for (const auto& entry : m_impl->entries) {
-		if (entry->phase != GhReadPhase::Queued || Impl::VisibleCount(*entry) == 0
-			|| m_impl->AccountRunning(entry->key) || m_impl->Cooldown(entry->key, nowMilliseconds)) continue;
+	std::scoped_lock lock(m_state->mutex);
+	if (m_state->closed) return std::nullopt;
+	m_state->RefreshDue(nowMilliseconds);
+	GhReadSchedulerState::Entry* selected{};
+	for (const auto& entry : m_state->entries) {
+		if (entry->phase != GhReadPhase::Queued || GhReadSchedulerState::VisibleCount(*entry) == 0
+			|| m_state->AccountRunning(entry->key) || m_state->Cooldown(entry->key, nowMilliseconds)) continue;
 		if (!selected || entry->queueSequence < selected->queueSequence) selected = entry.get();
 	}
 	if (!selected) return std::nullopt;
@@ -371,7 +431,7 @@ std::optional<GhReadDispatch> CGhReadScheduler::TryDispatch(const std::uint64_t 
 		selected->terminal = GhRepositoryResponseStatus::ToolUnavailable;
 		return std::nullopt;
 	}
-	const auto ticket = ++m_impl->nextTicket;
+	const auto ticket = ++m_state->nextTicket;
 	GhReadDispatch dispatch(ticket, selected->cycle, selected->key, stopSignal);
 	selected->ticket = ticket;
 	selected->stopSignal = std::move(stopSignal);
@@ -383,10 +443,10 @@ GhReadMutationStatus CGhReadScheduler::Complete(const std::uint64_t ticket,
 	const GhRepositoryResponse& response, const std::uint64_t nowMilliseconds,
 	const std::uint64_t nowUnixSeconds) noexcept
 {
-	std::scoped_lock lock(m_impl->mutex);
-	const auto found = std::ranges::find_if(m_impl->entries,
+	std::scoped_lock lock(m_state->mutex);
+	const auto found = std::ranges::find_if(m_state->entries,
 		[&](const auto& entry) { return entry->ticket == ticket && ticket != 0; });
-	if (found == m_impl->entries.end()) return m_impl->closed
+	if (found == m_state->entries.end()) return m_state->closed
 		? GhReadMutationStatus::Closed : GhReadMutationStatus::StaleDispatch;
 	auto& entry = **found;
 	if (entry.phase != GhReadPhase::Running && entry.phase != GhReadPhase::Cancelling) {
@@ -395,15 +455,15 @@ GhReadMutationStatus CGhReadScheduler::Complete(const std::uint64_t ticket,
 	const bool wasCancelling = entry.phase == GhReadPhase::Cancelling;
 	entry.ticket = 0;
 	entry.stopSignal.reset();
-	if (m_impl->closed) {
+	if (m_state->closed) {
 		entry.phase = GhReadPhase::Closed;
-		m_impl->EraseUnused();
+		m_state->EraseUnused();
 		return GhReadMutationStatus::Applied;
 	}
 	if (wasCancelling) {
-		if (Impl::VisibleCount(entry) != 0) m_impl->Queue(entry);
+		if (GhReadSchedulerState::VisibleCount(entry) != 0) m_state->Queue(entry);
 		else entry.phase = GhReadPhase::Hidden;
-		m_impl->EraseUnused();
+		m_state->EraseUnused();
 		return GhReadMutationStatus::Applied;
 	}
 	entry.terminal = response.Status();
@@ -422,9 +482,9 @@ GhReadMutationStatus CGhReadScheduler::Complete(const std::uint64_t ticket,
 			cooldown = cooldown ? std::max(*cooldown, reset) : reset;
 		}
 		if (!cooldown) cooldown = SaturatingAdd(nowMilliseconds, kUnknownRateLimitMilliseconds);
-		if (auto lane = m_impl->FindLane(entry.key)) lane->cooldownUntil = std::max(lane->cooldownUntil, *cooldown);
+		if (auto lane = m_state->FindLane(entry.key)) lane->cooldownUntil = std::max(lane->cooldownUntil, *cooldown);
 	}
-	if (const auto interval = Impl::PollInterval(entry)) {
+	if (const auto interval = GhReadSchedulerState::PollInterval(entry)) {
 		entry.nextPollAt = SaturatingAdd(nowMilliseconds, *interval);
 		if (cooldown) entry.nextPollAt = std::max(*entry.nextPollAt, *cooldown);
 	} else {
@@ -435,11 +495,11 @@ GhReadMutationStatus CGhReadScheduler::Complete(const std::uint64_t ticket,
 
 void CGhReadScheduler::Close() noexcept
 {
-	if (!m_impl) return;
-	std::scoped_lock lock(m_impl->mutex);
-	if (m_impl->closed) return;
-	m_impl->closed = true;
-	for (const auto& entry : m_impl->entries) {
+	if (!m_state) return;
+	std::scoped_lock lock(m_state->mutex);
+	if (m_state->closed) return;
+	m_state->closed = true;
+	for (const auto& entry : m_state->entries) {
 		entry->subscriptions.clear();
 		entry->terminal.reset();
 		entry->nextPollAt.reset();
@@ -450,21 +510,21 @@ void CGhReadScheduler::Close() noexcept
 			entry->phase = GhReadPhase::Closed;
 		}
 	}
-	m_impl->EraseUnused();
+	m_state->EraseUnused();
 }
 
 std::size_t CGhReadScheduler::QueuedCount(const std::uint64_t nowMilliseconds) noexcept
 {
-	std::scoped_lock lock(m_impl->mutex);
-	m_impl->RefreshDue(nowMilliseconds);
-	return static_cast<std::size_t>(std::ranges::count_if(m_impl->entries,
+	std::scoped_lock lock(m_state->mutex);
+	m_state->RefreshDue(nowMilliseconds);
+	return static_cast<std::size_t>(std::ranges::count_if(m_state->entries,
 		[](const auto& entry) { return entry->phase == GhReadPhase::Queued; }));
 }
 
 std::size_t CGhReadScheduler::RunningCount() const noexcept
 {
-	std::scoped_lock lock(m_impl->mutex);
-	return static_cast<std::size_t>(std::ranges::count_if(m_impl->entries, [](const auto& entry) {
+	std::scoped_lock lock(m_state->mutex);
+	return static_cast<std::size_t>(std::ranges::count_if(m_state->entries, [](const auto& entry) {
 		return entry->phase == GhReadPhase::Running || entry->phase == GhReadPhase::Cancelling;
 	}));
 }

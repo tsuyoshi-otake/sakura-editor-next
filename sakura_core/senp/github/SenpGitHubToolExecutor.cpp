@@ -386,7 +386,8 @@ CSenpGitHubToolExecutor::CSenpGitHubToolExecutor(std::shared_ptr<const IGhToolPl
 
 void CSenpGitHubToolExecutor::StartWorker()
 {
-	m_worker = std::thread([this]() noexcept { Run(); });
+	m_worker = platform::foundation::CNativeWorkerThread::Start<CSenpGitHubToolExecutor,
+		&CSenpGitHubToolExecutor::Run>(this);
 }
 
 CSenpGitHubToolExecutor::~CSenpGitHubToolExecutor()
@@ -402,7 +403,7 @@ CSenpGitHubToolExecutor::~CSenpGitHubToolExecutor()
 	// the whole request timeout.
 	if (m_logStop) (void)::SetEvent(m_logStop);
 	m_wakeWorker.notify_all();
-	if (m_worker.joinable()) m_worker.join();
+	m_worker.Join();
 	std::scoped_lock lock(m_mutex);
 	for (auto& state : m_scopes) Release(*state);
 	m_scopes.clear();
@@ -494,7 +495,7 @@ try {
 		// A repeated StartRead for the same read identity is a refresh, not a
 		// second subscription: the editor keeps exactly one read per identity.
 		if (existing->cacheKey != canonical) return EControlSenpRpcStatus::InvalidRequest;
-		switch (m_scheduler.RequestRefresh(existing->subscriptionId, NowMilliseconds())) {
+		switch (existing->subscription.RequestRefresh(NowMilliseconds())) {
 		case GhReadMutationStatus::Applied: break;
 		case GhReadMutationStatus::Closed: return EControlSenpRpcStatus::Closed;
 		default: return EControlSenpRpcStatus::NotFound;
@@ -506,14 +507,14 @@ try {
 	if (state->reads.size() + state->logReads.size() >= MaximumReadsPerScope()) {
 		return EControlSenpRpcStatus::ResourceExhausted;
 	}
-	const auto subscribed = SubscribeRead(key);
-	switch (subscribed.Status()) {
+	GhReadSubscription subscription(m_scheduler, key, GhReadPollCadence::Manual, true, NowMilliseconds());
+	switch (subscription.Status()) {
 	case GhReadSubscribeStatus::Accepted: break;
 	case GhReadSubscribeStatus::InvalidScope: return EControlSenpRpcStatus::InvalidRequest;
 	case GhReadSubscribeStatus::Closed: return EControlSenpRpcStatus::Closed;
 	default: return EControlSenpRpcStatus::ResourceExhausted;
 	}
-	state->reads.push_back({ command.ReadId(), shape, canonical, subscribed.SubscriptionId(), 0 });
+	state->reads.emplace_back(command.ReadId(), shape, canonical, std::move(subscription), 0);
 	lock.unlock();
 	m_wakeWorker.notify_all();
 	return EControlSenpRpcStatus::Succeeded;
@@ -577,7 +578,7 @@ void CSenpGitHubToolExecutor::Drain(ScopeState& state)
 {
 	const auto now = NowMilliseconds();
 	for (auto& read : state.reads) {
-		const auto observation = m_scheduler.Poll(read.subscriptionId, now);
+		const auto observation = read.subscription.Poll(now);
 		if (!observation || !observation->Terminal()) continue;
 		if (observation->Cycle() == read.deliveredCycle) continue;
 		read.deliveredCycle = observation->Cycle();
@@ -690,8 +691,9 @@ try {
 	const auto found = std::ranges::find_if(state->reads,
 		[&](const auto& read) { return read.readId == readId; });
 	if (found == state->reads.end()) return;
-	(void)m_scheduler.Unsubscribe(found->subscriptionId);
 	ReleasePage(*state, *found);
+	// Erasing the read releases its scheduler admission: the subscription is a
+	// member, so the record and the admission end together by construction.
 	state->reads.erase(found);
 	std::erase_if(state->pending, [&](const auto& completed) { return completed.readId == readId; });
 	lock.unlock();
@@ -717,7 +719,6 @@ try {
 	const auto found = std::ranges::find_if(m_scopes,
 		[&](const auto& state) { return state->scope == scope; });
 	if (found == m_scopes.end()) return;
-	for (const auto& read : (*found)->reads) (void)m_scheduler.Unsubscribe(read.subscriptionId);
 	std::erase_if(m_logQueue, [&](const auto& job) { return job.scope == (*found)->scope; });
 	if (m_runningLog && m_logStop && m_runningLogScope == (*found)->scope) {
 		(void)::SetEvent(m_logStop);
@@ -864,11 +865,6 @@ const GhToolProbe& CSenpGitHubToolExecutor::Probe()
 {
 	if (!m_probe || m_probe->Status() != GhToolAvailability::Available) m_probe = m_policy.Probe(nullptr);
 	return *m_probe;
-}
-
-GhReadSubscriptionResult CSenpGitHubToolExecutor::SubscribeRead(const GhReadResourceKey& key)
-{
-	return m_scheduler.Subscribe(key, GhReadPollCadence::Manual, true, NowMilliseconds());
 }
 
 void CSenpGitHubToolExecutor::Run() noexcept

@@ -12,12 +12,14 @@
 #[cfg(test)]
 use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap, VecDeque};
-use std::mem::{align_of, size_of};
+use std::mem::size_of;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
 use std::slice;
 use std::str;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+
+use crate::ffi_pointer::{is_aligned, is_valid_pointer};
 
 const ABI_VERSION_V1: u32 = 1;
 
@@ -1365,19 +1367,6 @@ fn poison_active_channel() -> SakuraOutputShadowActiveChannelV1 {
 
 fn validate_struct_header(struct_size: u32, abi_version: u32, expected_size: usize) -> bool {
     struct_size as usize == expected_size && abi_version == ABI_VERSION_V1
-}
-
-fn is_aligned<T>(pointer: *const T) -> bool {
-    (pointer as usize).is_multiple_of(align_of::<T>())
-}
-
-fn is_valid_pointer<T>(pointer: *const T) -> bool {
-    if pointer.is_null() || !is_aligned(pointer) {
-        return false;
-    }
-    (pointer as usize)
-        .checked_add(size_of::<T>())
-        .is_some_and(|end| end <= isize::MAX as usize)
 }
 
 fn checked_len(length: u64) -> Option<usize> {

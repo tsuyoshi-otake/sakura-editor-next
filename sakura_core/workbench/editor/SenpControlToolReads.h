@@ -10,6 +10,7 @@
 
 #include "workbench/editor/SenpReadonlyOwnerTarget.h"
 #include "platform/controlipc/ControlSenpClient.h"
+#include "platform/foundation/NativeWorkerThread.h"
 
 #include <chrono>
 #include <condition_variable>
@@ -20,7 +21,6 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <thread>
 #include <vector>
 
 namespace workbench::editor {
@@ -305,8 +305,8 @@ private:
 	[[nodiscard]] platform::controlipc::ControlSenpRpcRequest Compose(
 		platform::controlipc::EControlSenpRpcOperation operation,
 		const senp::ContributionOwnerIdentity& owner, const std::string& grantId) const;
-	//! Spawns the worker thread. Both constructors funnel through this single
-	//! acquisition site instead of each starting their own std::thread.
+	//! Starts the worker thread. Both constructors funnel through this one
+	//! site so the worker is acquired the same way whichever one runs.
 	void StartWorker();
 
 	//! The mutex-guarded state, held behind a pointer rather than as plain data
@@ -351,7 +351,7 @@ private:
 	//! belongs to the connection it was made on, so the epoch is part of it.
 	platform::controlipc::ControlSenpRpcWorkspace m_declared;
 	std::uint64_t m_declaredEpoch{};
-	std::thread m_worker;
+	platform::foundation::CNativeWorkerThread m_worker;
 };
 
 } // namespace workbench::editor

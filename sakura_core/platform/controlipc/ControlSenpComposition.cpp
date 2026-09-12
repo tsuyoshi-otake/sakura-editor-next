@@ -448,7 +448,8 @@ CControlSenpComposition::CControlSenpComposition(ControlSenpCompositionOptions o
 	m_repositories(dependencies.RepositoryPlatform() ? dependencies.RepositoryPlatform()
 		: std::make_shared<const senp::github::CWindowsGhLocalRepositoryPlatform>())
 {
-	m_worker = std::thread([this]() noexcept { Run(); });
+	m_worker = foundation::CNativeWorkerThread::Start<CControlSenpComposition,
+		&CControlSenpComposition::Run>(this);
 }
 
 CControlSenpComposition::~CControlSenpComposition()
@@ -491,7 +492,7 @@ try {
 		m_closed = true;
 	}
 	if (m_refresh) m_refresh->Close();
-	if (m_worker.joinable()) m_worker.join();
+	m_worker.Join();
 	// The grant registry closes first: a connection that is torn down while a
 	// grant still names it must not be reachable through that grant afterwards.
 	if (m_grants) m_grants->Close();

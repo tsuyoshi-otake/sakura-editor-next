@@ -5,7 +5,9 @@
 //! platform state.  Every entry point copies its input and uses caller-owned
 //! two-pass output buffers; no pointer is retained after a call.
 
-use std::mem::{align_of, size_of};
+use std::mem::size_of;
+
+use crate::ffi_pointer::is_aligned;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
 use std::slice;
@@ -144,10 +146,6 @@ struct AddressRange {
 
 fn catch_status(operation: impl FnOnce() -> SakuraUriCandidateStatus) -> SakuraUriCandidateStatus {
     catch_unwind(AssertUnwindSafe(operation)).unwrap_or(SakuraUriCandidateStatus::InternalError)
-}
-
-fn is_aligned<T>(pointer: *const T) -> bool {
-    (pointer as usize).is_multiple_of(align_of::<T>())
 }
 
 fn checked_address_range<T>(pointer: *const T) -> Option<AddressRange> {

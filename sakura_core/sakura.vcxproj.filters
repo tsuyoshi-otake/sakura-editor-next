@@ -1590,6 +1590,12 @@
     <ClInclude Include="..\sakura_core\platform\process\WindowsExecutableResolver.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\foundation\NativeWorkerThread.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\foundation\NativeWorkerThreadAbi.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\platform\foundation\PlatformLifecycleCoordinator.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>

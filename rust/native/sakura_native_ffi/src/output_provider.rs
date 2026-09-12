@@ -12,6 +12,7 @@ use std::mem::{align_of, offset_of, size_of};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
+use crate::ffi_pointer::{is_aligned, is_valid_pointer};
 use crate::output_shadow;
 
 pub type SakuraOutputProviderStatus = output_shadow::SakuraOutputShadowStatus;
@@ -255,18 +256,6 @@ fn lock_providers() -> MutexGuard<'static, ProviderRegistry> {
     providers()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-}
-
-fn is_aligned<T>(pointer: *const T) -> bool {
-    (pointer as usize).is_multiple_of(align_of::<T>())
-}
-
-fn is_valid_pointer<T>(pointer: *const T) -> bool {
-    !pointer.is_null()
-        && is_aligned(pointer)
-        && (pointer as usize)
-            .checked_add(size_of::<T>())
-            .is_some_and(|end| end <= isize::MAX as usize)
 }
 
 fn poison_result() -> SakuraOutputProviderApplyResultV1 {

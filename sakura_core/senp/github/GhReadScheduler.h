@@ -66,17 +66,6 @@ private:
 	GhRepositoryReadRequest m_request;
 };
 
-class GhReadSubscriptionResult final {
-public:
-	GhReadSubscriptionResult(GhReadSubscribeStatus status, std::uint64_t subscriptionId) noexcept :
-		m_status(status), m_subscriptionId(subscriptionId) {}
-	[[nodiscard]] GhReadSubscribeStatus Status() const noexcept { return m_status; }
-	[[nodiscard]] std::uint64_t SubscriptionId() const noexcept { return m_subscriptionId; }
-private:
-	GhReadSubscribeStatus m_status{ GhReadSubscribeStatus::InvalidScope };
-	std::uint64_t m_subscriptionId{};
-};
-
 class GhReadObservation final {
 public:
 	GhReadObservation(GhReadPhase phase, std::uint64_t cycle,
@@ -100,6 +89,9 @@ private:
 	std::optional<std::uint64_t> m_nextAllowedAtMilliseconds;
 };
 
+class CGhReadScheduler;
+class GhReadSchedulerState;
+
 class GhReadDispatch final {
 public:
 	GhReadDispatch() = default;
@@ -116,6 +108,46 @@ private:
 	GhReadResourceKey m_key{ L"", 0, L"", GhRepositoryReadRequest(L"", L"", L"", {}) };
 	std::shared_ptr<StopSignal> m_stopSignal;
 	friend class CGhReadScheduler;
+	friend class GhReadSchedulerState;
+};
+
+/*!
+	@brief One admitted subscription to a shared read.
+
+	Admission is this handle's construction and release is its destruction, and
+	the scheduler offers no second spelling for either.  Dropping whatever record
+	owns the handle - a read, a scope, a local in a test - is therefore the whole
+	of the release, so an admitted subscription cannot be left behind by a path
+	that forgot to name it.
+
+	Move-only.  A moved-from handle, a refused admission, and a handle whose
+	scheduler has already been destroyed all own nothing, and every operation on
+	them reports `NotFound` rather than reaching for state that is gone.
+*/
+class GhReadSubscription final {
+public:
+	GhReadSubscription(CGhReadScheduler& scheduler, const GhReadResourceKey& key,
+		GhReadPollCadence cadence, bool visible, std::uint64_t nowMilliseconds);
+	~GhReadSubscription();
+	GhReadSubscription(const GhReadSubscription&) = delete;
+	GhReadSubscription& operator=(const GhReadSubscription&) = delete;
+	GhReadSubscription(GhReadSubscription&& other) noexcept;
+	GhReadSubscription& operator=(GhReadSubscription&& other) noexcept;
+
+	//! Why admission succeeded or was refused.
+	[[nodiscard]] GhReadSubscribeStatus Status() const noexcept { return m_status; }
+	//! Whether this handle owns a subscription that its destruction will release.
+	[[nodiscard]] bool Admitted() const noexcept { return m_id != 0; }
+	[[nodiscard]] GhReadMutationStatus SetVisible(bool visible, std::uint64_t nowMilliseconds) noexcept;
+	[[nodiscard]] GhReadMutationStatus RequestRefresh(std::uint64_t nowMilliseconds) noexcept;
+	[[nodiscard]] std::optional<GhReadObservation> Poll(std::uint64_t nowMilliseconds) noexcept;
+	//! Releases now rather than at destruction.  Idempotent, and the destructor
+	//! performs exactly this, so an early release is never a second one.
+	void Release() noexcept;
+private:
+	std::weak_ptr<GhReadSchedulerState> m_state;
+	std::uint64_t m_id{};
+	GhReadSubscribeStatus m_status{ GhReadSubscribeStatus::InvalidScope };
 };
 
 //! Cooperative scheduler. The broker owns worker execution and must call
@@ -129,15 +161,6 @@ public:
 	~CGhReadScheduler();
 	CGhReadScheduler(const CGhReadScheduler&) = delete;
 	CGhReadScheduler& operator=(const CGhReadScheduler&) = delete;
-	[[nodiscard]] GhReadSubscriptionResult Subscribe(const GhReadResourceKey& key,
-		GhReadPollCadence cadence, bool visible, std::uint64_t nowMilliseconds);
-	[[nodiscard]] GhReadMutationStatus SetVisible(std::uint64_t subscriptionId,
-		bool visible, std::uint64_t nowMilliseconds) noexcept;
-	[[nodiscard]] GhReadMutationStatus RequestRefresh(std::uint64_t subscriptionId,
-		std::uint64_t nowMilliseconds) noexcept;
-	[[nodiscard]] GhReadMutationStatus Unsubscribe(std::uint64_t subscriptionId) noexcept;
-	[[nodiscard]] std::optional<GhReadObservation> Poll(std::uint64_t subscriptionId,
-		std::uint64_t nowMilliseconds) noexcept;
 	[[nodiscard]] std::optional<GhReadDispatch> TryDispatch(std::uint64_t nowMilliseconds);
 	[[nodiscard]] GhReadMutationStatus Complete(std::uint64_t ticket,
 		const GhRepositoryResponse& response, std::uint64_t nowMilliseconds,
@@ -147,8 +170,9 @@ public:
 	[[nodiscard]] std::size_t RunningCount() const noexcept;
 	[[nodiscard]] std::size_t OutstandingCleanupCount() const noexcept;
 private:
-	class Impl;
-	std::shared_ptr<Impl> m_impl;
+	friend class GhReadSubscription;
+
+	std::shared_ptr<GhReadSchedulerState> m_state;
 };
 
 } // namespace senp::github

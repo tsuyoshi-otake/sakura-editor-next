@@ -137,12 +137,12 @@ CSenpControlToolReads::~CSenpControlToolReads()
 	Stop();
 }
 
-//! Single acquisition site for the worker thread. Both constructors call this
-//! instead of each spawning their own std::thread, so the resource acquisition
-//! that resource.stop_required_acquisition tracks appears exactly once.
+//! Single start site for the worker thread. Both constructors call this, so
+//! the worker is acquired the same way whichever constructor runs.
 void CSenpControlToolReads::StartWorker()
 {
-	m_worker = std::thread([this] { Worker(); });
+	m_worker = platform::foundation::CNativeWorkerThread::Start<CSenpControlToolReads,
+		&CSenpControlToolReads::Worker>(this);
 }
 
 // --- UI thread -------------------------------------------------------------
@@ -468,7 +468,7 @@ void CSenpControlToolReads::Stop() noexcept
 	// Stop closes the active channel, so a worker blocked in an exchange returns
 	// instead of being waited on.
 	m_client.Stop();
-	if (m_worker.joinable()) m_worker.join();
+	m_worker.Join();
 }
 
 ESenpControlToolReadsState CSenpControlToolReads::State() const noexcept
