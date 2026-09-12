@@ -157,6 +157,7 @@
 	<ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlSenpBrokerTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlSenpCompositionTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlSenpClientTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\platform\foundation\NativeWorkerThreadTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\UserDataProfileRegistryTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\UserDataProfileBootstrapTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\config\ConfigurationServiceTest.cpp" />

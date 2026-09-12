@@ -45,6 +45,9 @@
     <Filter Include="Test Files\platform\controlipc">
       <UniqueIdentifier>{b8c4d661-7779-42bc-829a-a78d4c995156}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Test Files\platform\foundation">
+      <UniqueIdentifier>{6f1ac0d2-4f1e-4a7a-9a7c-0d5b1e8c2a41}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Test Files\config">
       <UniqueIdentifier>{fd73669b-2b65-4cdb-a56c-c504ce143d35}</UniqueIdentifier>
     </Filter>
@@ -571,6 +574,9 @@
 	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlSenpClientTest.cpp">
 	  <Filter>Test Files\platform\controlipc</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\platform\foundation\NativeWorkerThreadTest.cpp">
+	  <Filter>Test Files\platform\foundation</Filter>
 	</ClCompile>
 
 
