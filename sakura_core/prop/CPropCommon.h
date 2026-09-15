@@ -261,7 +261,6 @@ protected:
 
 private:
 	void SetKeyWordSet(HWND hwndDlg, int nIdx);	/* 指定キーワードセットの設定 */
-	void GetKeyWordSet(HWND hwndDlg, int nIdx);	/* 指定キーワードセットの取得 */
 	void DispKeywordCount( HWND hwndDlg );
 
 	void Edit_List_KeyWord(HWND hwndDlg, HWND hwndLIST_KEYWORD);		//!< リスト中で選択されているキーワードを編集する

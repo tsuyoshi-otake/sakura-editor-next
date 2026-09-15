@@ -700,11 +700,6 @@ int CPropKeyword::GetData( [[maybe_unused]] HWND hwndDlg )
 	return TRUE;
 }
 
-/* ダイアログデータの取得 Keyword 指定キーワードセットの取得 */
-void CPropKeyword::GetKeyWordSet( [[maybe_unused]] HWND hwndDlg, [[maybe_unused]] int nIdx )
-{
-}
-
 //キーワード数を表示する。
 void CPropKeyword::DispKeywordCount( HWND hwndDlg )
 {

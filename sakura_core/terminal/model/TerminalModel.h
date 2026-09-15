@@ -214,7 +214,6 @@ private:
 	void NormalizeScrollbackOrder();
 	void ClearCellRange( TerminalRow& row, std::size_t begin, std::size_t end );
 	void SetCellAttributes( TerminalRow& row, std::size_t column, std::size_t length, const TerminalAttributes& attributes );
-	void NormalizeAttributeRuns( TerminalRow& row );
 	void RebuildAttributeRuns( TerminalRow& row );
 	void RepairWideCells( TerminalRow& row );
 	void MarkDirty( std::size_t row ) noexcept;

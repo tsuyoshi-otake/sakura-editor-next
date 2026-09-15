@@ -665,21 +665,6 @@ void TerminalModel::SetCellAttributes( TerminalRow& row, std::size_t column, std
 	}
 }
 
-void TerminalModel::NormalizeAttributeRuns( TerminalRow& row )
-{
-	std::vector<TerminalAttributeRun> normalized;
-	for( auto run : row.attributeRuns ) {
-		if( run.start >= m_columns ) continue;
-		run.length = std::min(run.length, m_columns - run.start);
-		if( run.length == 0 ) continue;
-		if( !normalized.empty() && normalized.back().start + normalized.back().length == run.start && normalized.back().attributes == run.attributes ) normalized.back().length += run.length;
-		else normalized.push_back(run);
-	}
-	if( normalized.empty() ) normalized.push_back({ 0, m_columns, {} });
-	else if( normalized.back().start + normalized.back().length < m_columns ) normalized.push_back({ normalized.back().start + normalized.back().length, m_columns - normalized.back().start - normalized.back().length, {} });
-	row.attributeRuns = std::move(normalized);
-}
-
 void TerminalModel::RebuildAttributeRuns( TerminalRow& row )
 {
 	row.attributeRuns.clear();
