@@ -26,8 +26,11 @@ struct TerminalColor {
 	static constexpr TerminalColor Rgb( std::uint8_t red, std::uint8_t green, std::uint8_t blue ) noexcept {
 		return { TerminalColorKind::Rgb, (static_cast<std::uint32_t>(red) << 16) | (static_cast<std::uint32_t>(green) << 8) | blue };
 	}
-	friend constexpr bool operator==( const TerminalColor&, const TerminalColor& ) noexcept = default;
 };
+
+constexpr bool operator==( const TerminalColor& left, const TerminalColor& right ) noexcept {
+	return left.kind == right.kind && left.value == right.value;
+}
 
 struct TerminalAttributes {
 	TerminalColor foreground;
