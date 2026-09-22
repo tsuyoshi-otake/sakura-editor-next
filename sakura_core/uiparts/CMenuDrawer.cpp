@@ -705,13 +705,6 @@ CMenuDrawer::CMenuDrawer()
 
 CMenuDrawer::~CMenuDrawer()
 {
-	for (auto& dib : m_dibs) {
-		if (dib.hBMP) {
-			// 生成したビットマップを削除する。（生ハンドルでなく、オブジェクトを格納したほうが分かりやすいかも？）
-			::DeleteObject(dib.hBMP);
-		}
-	}
-
 	if( nullptr != m_hFontMenu ){
 		::DeleteObject( m_hFontMenu );
 		m_hFontMenu = nullptr;
@@ -728,6 +721,7 @@ void CMenuDrawer::Create( HINSTANCE hInstance, HWND hWndOwner, CImageListMgr* pc
 	m_hInstance = hInstance;
 	m_hWndOwner = hWndOwner;
 	m_pcIcons = pcIcons;
+	m_dibs.clear();
 	m_dibs.resize(pcIcons->Count());
 
 	BITMAPINFO bminfo = {};
@@ -1036,11 +1030,6 @@ WCHAR CMenuDrawer::GetAccelCharFromLabel(std::wstring_view label) const
 	return (WCHAR)towupper(label[pos + 1]);
 }
 
-struct WorkData{
-	int				idx;
-	MENUITEMINFO	mii;
-};
-
 /*! メニューアクセスキー押下時の処理(WM_MENUCHAR処理) */
 LRESULT CMenuDrawer::OnMenuChar( [[maybe_unused]] HWND hwnd, [[maybe_unused]] UINT uMsg, WPARAM wParam, LPARAM lParam )
 {
@@ -1060,7 +1049,7 @@ LRESULT CMenuDrawer::OnMenuChar( [[maybe_unused]] HWND hwnd, [[maybe_unused]] UI
 	}
 
 	// 2011.11.18 vector化
-	std::vector<WorkData> vecAccel;
+	std::vector<int> vecAccel;
 	size_t nAccelSel = 99999;
 	for( i = 0; i < ::GetMenuItemCount( hmenu ); i++ ){
 		WCHAR	szText[1024];
@@ -1080,13 +1069,10 @@ LRESULT CMenuDrawer::OnMenuChar( [[maybe_unused]] HWND hwnd, [[maybe_unused]] UI
 			continue;
 		}
 		if( chUser == GetAccelCharFromLabel( pszLabel ) ){
-			WorkData work;
-			work.idx = i;
-			work.mii = mii;
 			if( /*-1 == nAccelSel ||*/ MFS_HILITE & mii.fState ){
 				nAccelSel = vecAccel.size();
 			}
-			vecAccel.push_back( work );
+			vecAccel.push_back( i );
 		}
 	}
 //	MYTRACE( L"%d\n", (int)mapAccel.size() );
@@ -1094,15 +1080,15 @@ LRESULT CMenuDrawer::OnMenuChar( [[maybe_unused]] HWND hwnd, [[maybe_unused]] UI
 		return  MAKELONG( 0, MNC_IGNORE );
 	}
 	if( 1 == vecAccel.size() ){
-		return  MAKELONG( vecAccel[0].idx, MNC_EXECUTE );
+		return  MAKELONG( vecAccel[0], MNC_EXECUTE );
 	}
 //	MYTRACE( L"nAccelSel=%d vecAccel.size()=%d\n", nAccelSel, vecAccel.size() );
 	if( nAccelSel + 1 >= vecAccel.size() ){
-//		MYTRACE( L"vecAccel[0].idx=%d\n", vecAccel[0].idx );
-		return  MAKELONG( vecAccel[0].idx, MNC_SELECT );
+//		MYTRACE( L"vecAccel[0]=%d\n", vecAccel[0] );
+		return  MAKELONG( vecAccel[0], MNC_SELECT );
 	}else{
-//		MYTRACE( L"vecAccel[nAccelSel + 1].idx=%d\n", vecAccel[nAccelSel + 1].idx );
-		return  MAKELONG( vecAccel[nAccelSel + 1].idx, MNC_SELECT );
+//		MYTRACE( L"vecAccel[nAccelSel + 1]=%d\n", vecAccel[nAccelSel + 1] );
+		return  MAKELONG( vecAccel[nAccelSel + 1], MNC_SELECT );
 	}
 }
 

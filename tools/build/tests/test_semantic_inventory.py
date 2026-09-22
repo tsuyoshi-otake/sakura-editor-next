@@ -118,6 +118,28 @@ void f() {
             inventory = collect_semantic_inventory(root)
             self.assertEqual(set(), _finding_paths(inventory))
 
+    def test_public_state_keyword_exclusions_ignore_indentation(self) -> None:
+        for indent in ("", " ", "    ", "\t"):
+            with self.subTest(indent=repr(indent)):
+                temporary, root = self._temporary_repo({
+                    "sakura_core/state.h": (
+                        "struct State {\n"
+                        f"{indent}const int immutable = 1;\n"
+                        f"{indent}static int shared;\n"
+                        f"{indent}constexpr static int constant = 2;\n"
+                        f"{indent}const Widget* m_borrowed;\n"
+                        f"{indent}static Widget* m_shared;\n"
+                        f"{indent}int mutableValue;\n"
+                        f"{indent}Widget* m_owned;\n"
+                        "};\n"
+                    ),
+                })
+                with temporary:
+                    self.assertEqual({
+                        ("state.public_mutable_field", "sakura_core/state.h", 7),
+                        ("state.raw_pointer_member", "sakura_core/state.h", 8),
+                    }, _finding_paths(collect_semantic_inventory(root)))
+
     def test_legacy_selection_lock_direct_access_is_ratcheted(self) -> None:
         temporary, root = self._temporary_repo(
             {"sakura_core/view/CViewSelect.cpp": "void Select() { if (m_bSelectingLock) {} }\n"}

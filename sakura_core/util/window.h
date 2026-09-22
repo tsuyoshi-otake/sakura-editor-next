@@ -82,9 +82,11 @@ struct SGetTextResult {
 	//!	取得した文字列
 	std::wstring_view text;
 
+private:
 	//!	取得結果
 	bool result = false;
 
+public:
 	//! デフォルトコンストラクタは失敗状態を表す
 	SGetTextResult() = default;
 
@@ -297,9 +299,10 @@ private:
 public:
 	explicit CDCFont(const LOGFONT& font, HWND hWnd = nullptr)
 		: m_hDC(hWnd)
-		, m_hFontOld(m_hDC)
+		, m_hFontOld(nullptr)
 	{
 		m_hDC = ::GetWindowDC( hWnd );
+		m_hFontOld.updateBound(m_hDC.get());
 		m_hFont = ::CreateFontIndirectW(&font);
 		m_hFontOld = ::SelectObject(m_hDC, m_hFont);
 	}

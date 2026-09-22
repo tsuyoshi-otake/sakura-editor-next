@@ -23,6 +23,7 @@
 #include "Funccode_enum.h"
 #include "env/CSakuraEnvironment.h"	//env::ShareDataClient
 #include "mem/CNativeW.h"
+#include "cxx/ResourceHolder.hpp"
 
 class CMenuDrawer;
 
@@ -118,7 +119,7 @@ private:
 	int				m_nCompBitmapHeight;
 	int				m_nCompBitmapWidth;
 	struct DIB {
-		HBITMAP hBMP = nullptr;			//!< ビットマップハンドル
+		cxx::ResourceHolder<&::DeleteObject, HBITMAP> hBMP = nullptr; //!< Owned bitmap
 		std::byte* pvBits = nullptr;	//!< ビットマップのビットデータ
 	};
 	std::vector<DIB> m_dibs;

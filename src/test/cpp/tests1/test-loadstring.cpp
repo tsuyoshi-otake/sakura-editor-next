@@ -124,7 +124,7 @@ private:
 
 struct FileMenuLocaleExpectation {
 	const wchar_t* dllName;
-	WORD languageId;
+	const WORD languageId;
 	const wchar_t* openFolder;
 	const wchar_t* openWorkspace;
 	const wchar_t* recentWorkspace;
@@ -299,6 +299,44 @@ TEST(CSelectLang, MissingResourceDllRetainsLoadFailure)
 	::SetLastError(ERROR_SUCCESS);
 	EXPECT_FALSE(language.Load());
 	EXPECT_NE(ERROR_EXE_MACHINE_TYPE_MISMATCH, ::GetLastError());
+}
+
+TEST(CSelectLang, RejectedLanguageIdReleasesResourceMapping)
+{
+	TemporaryLanguageDllFile file(IMAGE_FILE_MACHINE_AMD64);
+	const auto source = GetExeFileName().replace_filename(L"sakura_lang_en_US.dll");
+	ASSERT_TRUE(::CopyFileW(source.c_str(), file.path().c_str(), FALSE));
+	CSelectLang::SSelLangInfo language(file.path());
+	language.m_LangId = 0; // The copied resource declares 0x0409.
+	for (int iteration = 0; iteration < 32; ++iteration) {
+		EXPECT_THROW(language.Load(), std::out_of_range);
+		EXPECT_EQ(nullptr, language.m_Module.get());
+	}
+	// A data-file resource mapping keeps an exclusive writer from opening it.
+	const HANDLE writer = ::CreateFileW(file.path().c_str(), GENERIC_READ | GENERIC_WRITE,
+		0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+	ASSERT_NE(INVALID_HANDLE_VALUE, writer) << ::GetLastError();
+	EXPECT_TRUE(::CloseHandle(writer));
+}
+
+TEST(CSelectLang, RepeatedLoadAndUnloadReleaseResourceMapping)
+{
+	TemporaryLanguageDllFile file(IMAGE_FILE_MACHINE_AMD64);
+	const auto source = GetExeFileName().replace_filename(L"sakura_lang_en_US.dll");
+	ASSERT_TRUE(::CopyFileW(source.c_str(), file.path().c_str(), FALSE));
+	CSelectLang::SSelLangInfo language(file.path());
+	language.m_LangId = 0x0409;
+	for (int iteration = 0; iteration < 32; ++iteration) {
+		ASSERT_TRUE(language.Load());
+		ASSERT_NE(nullptr, language.m_Module.get());
+		ASSERT_TRUE(language.Load()); // Replacing a loaded module releases its old reference.
+		language.Unload();
+		EXPECT_EQ(nullptr, language.m_Module.get());
+	}
+	const HANDLE writer = ::CreateFileW(file.path().c_str(), GENERIC_READ | GENERIC_WRITE,
+		0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+	ASSERT_NE(INVALID_HANDLE_VALUE, writer) << ::GetLastError();
+	EXPECT_TRUE(::CloseHandle(writer));
 }
 
 /*!

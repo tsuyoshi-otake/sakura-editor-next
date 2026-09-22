@@ -420,6 +420,7 @@
     <ClCompile Include="..\src\test\cpp\tests1\test-StdControl.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-string_ex.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-window.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\test-native-resource-lifetime.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-zoom.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\test-winmain.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\test-control-process-startup.cpp" />

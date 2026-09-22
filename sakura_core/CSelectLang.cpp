@@ -54,7 +54,9 @@ bool CSelectLang::SSelLangInfo::Load()
 		return false;
 	}
 
-	const auto hModule = ::LoadLibraryExW(resourceDllPath.c_str(), nullptr, LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
+	ResourceDllHolder loadedModule = ::LoadLibraryExW(resourceDllPath.c_str(), nullptr,
+		LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
+	const HMODULE hModule = loadedModule.get();
 	if( !hModule ){
 		return false;
 	}
@@ -75,7 +77,7 @@ bool CSelectLang::SSelLangInfo::Load()
 		throw std::out_of_range(std::format("unexpected language id: {}, expected: {}", langId, m_LangId));
 	}
 
-	m_Module = hModule;
+	m_Module = std::move(loadedModule);
 
 	return true;
 }

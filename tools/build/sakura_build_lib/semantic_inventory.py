@@ -101,11 +101,11 @@ _RAW_LITERAL_START_RE = re.compile(r"(?:u8|u|U|L)?R\"(?P<delimiter>[^\s()\\\"\r\
 _CLASS_OPEN_RE = re.compile(r"\b(?P<kind>class|struct)\s+[A-Za-z_][A-Za-z0-9_]*(?:\s+final)?[^;{]*\{")
 _ACCESS_RE = re.compile(r"^\s*(public|private|protected)\s*:")
 _PUBLIC_MUTABLE_FIELD_RE = re.compile(
-    r"^\s*(?!(?:static|const|constexpr|using|typedef|friend|class|struct|enum|template)\b)"
+    r"^(?!\s*(?:static|const|constexpr|using|typedef|friend|class|struct|enum|template)\b)\s*"
     r"(?P<declaration>[^;(){}]+?)\b(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?:=[^;]*)?;\s*$"
 )
 _RAW_POINTER_MEMBER_RE = re.compile(
-    r"^\s*(?!(?:static|const|constexpr)\b)[^;(){}]*\*\s*(?P<name>m_[A-Za-z_][A-Za-z0-9_]*)\s*(?:=[^;]*)?;\s*$"
+    r"^(?!\s*(?:static|const|constexpr)\b)\s*[^;(){}]*\*\s*(?P<name>m_[A-Za-z_][A-Za-z0-9_]*)\s*(?:=[^;]*)?;\s*$"
 )
 
 
