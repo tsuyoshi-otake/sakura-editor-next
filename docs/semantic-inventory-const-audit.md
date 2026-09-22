@@ -16,6 +16,12 @@ scannerのハッシュはbaselineの契約に含まれるため、この修正�
 正式な`--accept-current`操作と履歴レコードが必要。baselineの手編集やCIでの自動受理は行わない。
 前後のrule/file差分と受理理由は`tools/build/baselines/editor-core-semantic-history/`に記録する。
 
+`0836d1cf6d79809a0d2ab63f3b9dcf18506826ee`のcleanなソースだけのローカル複製から正式受理した。
+ビルド出力やsubmoduleは複製していない。同じソースに旧・新scannerを適用した比較では、
+13,870→13,610件、public fieldの誤検出251件とpointerの誤検出9件だけが減少した。
+削除された全指摘について、該当行が既存の除外キーワードで始まることを照合済み。
+追加指摘0、他のruleの変化0。受理履歴は同SHA名のJSONで追跡できる。
+
 調査範囲はscannerの公開フィールド判定、回帰テスト、基準受理契約に限った。
 範囲が広がった理由は、実装修正に伴ってscannerバージョンが変わると旧基準との比較を拒否する
 既存のfail-closed契約にある。製品の状態所有者・公開API・依存関係は変わらない。
