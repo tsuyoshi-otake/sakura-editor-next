@@ -409,6 +409,39 @@ are stored as half-open cell intervals, but mouse endpoints must be normalized t
 include both drag endpoints and the complete continuation cells of wide graphemes
 before painting or extracting clipboard text.
 
+## Terminal Web Links (Issue #310)
+
+`TerminalLink` detects HTTP(S) URLs in the model's cell coordinates. It joins
+soft-wrapped rows, preserves wide/combining grapheme coordinates, and shares
+`GetTerminalRow` with selection so scrollback and the alternate screen have the
+same meaning. Detection is linear in the clicked logical line, bounded to 8192
+cells and UTF-16 units. Oversized or incomplete lines return no link; never open
+a truncated prefix. Mouse movement does not scan the full scrollback buffer.
+
+`CTerminalWnd` owns the Ctrl+left-click gesture and the native browser boundary.
+Only a release over the original target opens it, once. Dragging, release without Ctrl,
+capture/focus loss, resize, output publication, scrolling, and session/model
+rebinding cancel activation. A consumed down retains release ownership even
+after cancellation, preventing an unmatched PTY mouse-up. Plain clicks and
+selection continue through the existing input path. `SetLinkOpener` is the
+injectable activation boundary; false reports failure without a retry. The
+default calls `ShellExecuteW` with the detected URL as its sole target and no
+command arguments. The injected callback receives only the URI; the native
+window handle and registration callback stay in the viewport implementation.
+Callback configuration and link-gesture state are private to that owner.
+Ctrl-hover uses the hand cursor.
+
+This implements the HTTP(S) subset of VS Code's terminal URI links:
+https://code.visualstudio.com/docs/terminal/basics#_links . The native terminal
+does not yet own an editor/file link resolver, arbitrary protocol policy, OSC 8
+target metadata, or link-hover decoration/tooltip state. Those capabilities
+remain unsupported; do not route them to arbitrary shell handlers or advertise
+full VS Code link-provider parity. Their contracts must be added at the owning
+boundary before broadening this web-link type.
+
+Detector and native mouse/cancellation contracts are together in
+`src/test/cpp/tests1/terminal/window/TerminalLinkTest.cpp`.
+
 ## Multiplexer Keybinding Presets (fork extension, documented divergence)
 
 The terminal menu offers a `ショートカット` submenu with `なし` / `tmux (Ctrl+B)` /
@@ -557,9 +590,9 @@ above ours makes the comparison unavailable, not merely noisy.
 
 `MeasureGrid` is pinned by
 `TerminalRenderMapping.MeasuresNoGridForAClientWithoutExtent`. Keep the decision
-in the pure geometry header rather than in `CTerminalWnd`'s `Impl`: the window
-class is not linked into `tests1`, so an invariant that lives there cannot be
-tested at all.
+in the pure geometry header so geometry tests do not require native HWND
+fixtures. `CTerminalWnd` interaction contracts use native-window fixtures, as
+demonstrated by `TerminalLinkTest.cpp`.
 
 ## Metadata-only live loop diagnostics (2026-08-28, #276)
 

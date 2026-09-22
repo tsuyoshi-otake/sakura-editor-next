@@ -40,6 +40,9 @@ public:
 	//! Called after this native viewport becomes the focused terminal pane.
 	//! The workbench owns session selection; the renderer only reports focus.
 	using FocusSink = std::function<void()>;
+	//! Receives only detected HTTP(S) targets after a completed Ctrl+click.
+	//! Return false on launch failure; an empty override restores the OS browser.
+	using LinkOpener = std::function<bool(std::wstring_view uri)>;
 	using ImeResultReader = std::function<bool(HWND window, std::wstring& result)>;
 	using FrameSurfaceId = TerminalSurfaceAdapter::SurfaceId;
 	using FrameSurfaceResult = TerminalSurfaceAdapter::Result;
@@ -61,6 +64,7 @@ public:
 	void SetInputSink( InputSink sink );
 	void SetResizeSink( ResizeSink sink );
 	void SetFocusSink( FocusSink sink );
+	void SetLinkOpener( LinkOpener opener );
 	//! Drops input and IME state owned by the previously bound session. This must
 	//! be called before a renderer is rebound across a workspace/session boundary.
 	void ResetSessionInputState() noexcept;
@@ -106,8 +110,6 @@ public:
 	[[nodiscard]] bool HasSelection() const noexcept;
 	[[nodiscard]] bool CopySelectionToClipboard();
 	[[nodiscard]] bool PasteFromClipboard();
-
-	static LRESULT CALLBACK WindowProc( HWND window, UINT message, WPARAM wParam, LPARAM lParam );
 
 private:
 	struct Impl;

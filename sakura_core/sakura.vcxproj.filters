@@ -1860,6 +1860,9 @@
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalClipboardPaste.h">
 	  <Filter>Cpp Source Files\terminal\window</Filter>
 	</ClInclude>
+    <ClInclude Include="..\sakura_core\terminal\window\TerminalLink.h">
+      <Filter>Cpp Source Files\terminal\window</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\terminal\window\TerminalRenderMapping.h">
       <Filter>Cpp Source Files\terminal\window</Filter>
     </ClInclude>
@@ -3858,6 +3861,9 @@
 	<ClCompile Include="..\sakura_core\terminal\window\TerminalClipboardPaste.cpp">
 	  <Filter>Cpp Source Files\terminal\window</Filter>
 	</ClCompile>
+    <ClCompile Include="..\sakura_core\terminal\window\TerminalLink.cpp">
+      <Filter>Cpp Source Files\terminal\window</Filter>
+    </ClCompile>
     <ClCompile Include="..\sakura_core\terminal\window\TerminalRenderMapping.cpp">
       <Filter>Cpp Source Files\terminal\window</Filter>
     </ClCompile>

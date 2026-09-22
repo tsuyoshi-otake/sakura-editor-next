@@ -17,6 +17,7 @@
 #include "terminal/window/TerminalDWriteRenderer.h"
 #include "terminal/window/TerminalFontMetrics.h"
 #include "terminal/window/TerminalInput.h"
+#include "terminal/window/TerminalLink.h"
 #include "terminal/window/TerminalRenderPlan.h"
 #include "terminal/window/TerminalRenderMapping.h"
 #include "terminal/window/TerminalScrollbarLayout.h"
@@ -43,6 +44,7 @@
 #include <vector>
 #include <windowsx.h>
 #include <imm.h>
+#include <shellapi.h>
 
 namespace terminal {
 namespace {
@@ -82,12 +84,12 @@ bool FontContainsText( HDC dc, HFONT candidate, std::wstring_view text ) noexcep
 		[](WORD glyph) { return glyph != kMissingGlyph; });
 }
 
-bool EnsureTerminalClass( HINSTANCE instance )
+bool EnsureTerminalClass( HINSTANCE instance, WNDPROC windowProcedure )
 {
 	WNDCLASSEXW windowClass{};
 	windowClass.cbSize = sizeof(windowClass);
 	windowClass.style = CS_DBLCLKS;
-	windowClass.lpfnWndProc = CTerminalWnd::WindowProc;
+	windowClass.lpfnWndProc = windowProcedure;
 	windowClass.hInstance = instance;
 	windowClass.hCursor = ::LoadCursor(nullptr, IDC_IBEAM);
 	windowClass.lpszClassName = kTerminalWindowClass;
@@ -419,6 +421,7 @@ private:
 } // namespace
 
 struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
+	friend class CTerminalWnd;
 	using NativeRegistration = workbench::rendering::FrameNativeSurfaceRegistration;
 	using NativeFrame = workbench::rendering::FrameNativeSurfaceFrame;
 	using FrameSnapshot = workbench::rendering::FrameSurfaceAdapterSnapshot;
@@ -433,9 +436,18 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 	TerminalModel* model{};
 	TerminalSurfaceAdapter frameSurface;
 	SakuraTerminalInputAdapter* inputAdapter{};
+private:
+	// Only the owning viewport configures callbacks or mutates link gestures.
 	InputSink inputSink;
 	ResizeSink resizeSink;
 	FocusSink focusSink;
+	LinkOpener linkOpener;
+	std::optional<TerminalWebLink> pressedLink;
+	POINT linkPressPoint{};
+	// Ownership survives cancellation until release, so a consumed down never
+	// leaks an orphan mouse-up into a mouse-reporting terminal application.
+	bool linkGestureOwned{};
+public:
 	CTerminalWnd::ImeResultReader imeResultReader;
 	TerminalNativeFrameBridgePtr nativeFrameBridge;
 	TerminalNativeSurfacePublisher nativeSurfacePublisher;
@@ -1218,6 +1230,7 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 
 	void SetScrollTop( std::size_t top )
 	{
+		CancelLinkGesture();
 		// Keep the main screen's scroll position intact while a TUI owns the
 		// alternate screen.  Wheel events may still arrive after the overlay
 		// scrollbar has disappeared; they must not reset the position restored
@@ -1255,6 +1268,7 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 	void ApplyScrollbackChange( const TerminalScrollbackChange& change, bool invalidate )
 	{
 		if( model == nullptr || !change.Changed() ) return;
+		CancelLinkGesture();
 		const auto previousOffset = scrollOffset;
 		const auto totalRows = model->ScrollbackSize() + model->RowCount();
 		const auto maximumOffset = totalRows > visibleRows ? totalRows - visibleRows : 0;
@@ -1296,6 +1310,40 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 	TerminalSelectionPoint PointToCell( int x, int y ) const noexcept
 	{
 		return TerminalCellFromPoint(Viewport(), x, y, cellWidth, cellHeight, model ? model->Columns() : 0, Geometry());
+	}
+
+	std::optional<TerminalWebLink> LinkAtPoint( POINT point ) const
+	{
+		if( !model || ScrollbarLayout().HitTest(point) ) return std::nullopt;
+		RECT client{};
+		::GetClientRect(window, &client);
+		const auto geometry = Geometry();
+		const auto grid = geometry.GridRect(client);
+		if( !::PtInRect(&grid, point) || cellWidth <= 0 || cellHeight <= 0 ) return std::nullopt;
+		const auto column = static_cast<std::size_t>((point.x - grid.left) / cellWidth);
+		const auto row = static_cast<std::size_t>((point.y - grid.top) / cellHeight);
+		const auto viewport = Viewport();
+		if( column >= model->Columns() || row >= viewport.visibleRows ) return std::nullopt;
+		return DetectTerminalWebLink(*model, { viewport.topRow + row, column });
+	}
+
+	void CancelLinkGesture() noexcept
+	{
+		pressedLink.reset();
+		if( linkGestureOwned && ::GetCapture() == window ) ::ReleaseCapture();
+	}
+
+	bool LinkDragged( POINT point ) const noexcept
+	{
+		return std::abs(point.x - linkPressPoint.x) >= std::max(1, ::GetSystemMetrics(SM_CXDRAG)) ||
+			std::abs(point.y - linkPressPoint.y) >= std::max(1, ::GetSystemMetrics(SM_CYDRAG));
+	}
+
+	void OpenLink( const TerminalWebLink& link )
+	{
+		const bool opened = linkOpener ? linkOpener(link.uri) :
+			reinterpret_cast<INT_PTR>(::ShellExecuteW(window, L"open", link.uri.c_str(), nullptr, nullptr, SW_SHOWNORMAL)) > 32;
+		if( !opened ) ::MessageBeep(MB_ICONWARNING);
 	}
 
 	void UpdateSelection( TerminalSelectionPoint point ) noexcept
@@ -1582,6 +1630,7 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 
 	void ResetSessionInputState() noexcept
 	{
+		CancelLinkGesture();
 		if( window ) {
 			::KillTimer(window, kInputRetryTimer);
 			if( imeComposing ) {
@@ -1607,6 +1656,7 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 			Paint();
 			return 0;
 		case WM_SIZE:
+			CancelLinkGesture();
 			MarkNativeFullDirty();
 			NotifySize();
 			if( frameSurface.IsOpen() ) {
@@ -1642,6 +1692,7 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 			}
 			return 0;
 		case WM_KILLFOCUS:
+			CancelLinkGesture();
 			if( inputAdapter ) {
 				if( const auto encoded = inputAdapter->EncodeFocus(false) ) Send(*encoded);
 			}
@@ -1693,8 +1744,23 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 		case WM_RBUTTONDOWN: {
 			const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
 			const auto button = message == WM_LBUTTONDOWN ? 0u : message == WM_MBUTTONDOWN ? 1u : 2u;
+			if( button == 0 ) {
+				// A cancelled gesture may have been released outside this HWND.
+				// Retire its ownership before admitting any new host gesture.
+				CancelLinkGesture();
+				linkGestureOwned = false;
+			}
 			if( BeginScrollbarButtonPress(point, button) ) return 0;
 			::SetFocus(window);
+			if( button == 0 && (wParam & MK_CONTROL) != 0 ) {
+				pressedLink = LinkAtPoint(point);
+				if( pressedLink ) {
+					linkGestureOwned = true;
+					linkPressPoint = point;
+					::SetCapture(window);
+					return 0;
+				}
+			}
 			pressedMouseButton = button;
 			if( MouseReporting() && (wParam & MK_SHIFT) == 0 ) {
 				SendMouse(TerminalMouseAction::Press, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), button, wParam);
@@ -1710,6 +1776,10 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 		}
 		case WM_MOUSEMOVE: {
 			const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+			if( linkGestureOwned && (wParam & MK_LBUTTON) != 0 ) {
+				if( (wParam & MK_CONTROL) == 0 || LinkDragged(point) ) pressedLink.reset();
+				return 0;
+			}
 			if( scrollbarButtonPressed ) {
 				DragScrollbarTo(point.y);
 				return 0;
@@ -1727,6 +1797,16 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 		case WM_MBUTTONUP:
 		case WM_RBUTTONUP: {
 			const auto button = message == WM_LBUTTONUP ? 0u : message == WM_MBUTTONUP ? 1u : 2u;
+			if( button == 0 && linkGestureOwned ) {
+				const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+				auto link = std::move(pressedLink);
+				linkGestureOwned = false;
+				pressedLink.reset();
+				pressedMouseButton = 3;
+				if( ::GetCapture() == window ) ::ReleaseCapture();
+				if( link && (wParam & MK_CONTROL) != 0 && !LinkDragged(point) && LinkAtPoint(point) == link ) OpenLink(*link);
+				return 0;
+			}
 			const auto buttonMask = 1u << button;
 			if( scrollbarButtonPressed && (scrollbarSuppressedButtons & buttonMask) != 0 ) {
 				if( scrollbarDragging ) DragScrollbarTo(GET_Y_LPARAM(lParam));
@@ -1770,6 +1850,7 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 			}
 			return 0;
 		case WM_CAPTURECHANGED:
+			pressedLink.reset();
 			EndScrollbarButtonPress(false);
 			if( selecting ) {
 				selecting = false;
@@ -1778,7 +1859,11 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 			}
 			pressedMouseButton = 3;
 			return 0;
+		case WM_CANCELMODE:
+			CancelLinkGesture();
+			return ::DefWindowProcW(window, message, wParam, lParam);
 		case WM_MOUSEWHEEL: {
+			CancelLinkGesture();
 			const auto delta = GET_WHEEL_DELTA_WPARAM(wParam);
 			POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
 			::ScreenToClient(window, &point);
@@ -1793,6 +1878,10 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 			::ScreenToClient(window, &point);
 			if( ScrollbarLayout().HitTest(point) ) {
 				::SetCursor(::LoadCursor(nullptr, IDC_ARROW));
+				return TRUE;
+			}
+			if( (::GetKeyState(VK_CONTROL) & 0x8000) != 0 && LinkAtPoint(point) ) {
+				::SetCursor(::LoadCursor(nullptr, IDC_HAND));
 				return TRUE;
 			}
 			return ::DefWindowProcW(window, message, wParam, lParam);
@@ -1891,6 +1980,32 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 		}
 		return false;
 	}
+
+	static LRESULT CALLBACK WindowProc( HWND window, UINT message, WPARAM wParam, LPARAM lParam )
+	{
+		if( message == WM_NCCREATE ) {
+			const auto* create = reinterpret_cast<const CREATESTRUCTW*>(lParam);
+			auto* impl = static_cast<Impl*>(create->lpCreateParams);
+			if( impl ) {
+				impl->window = window;
+				::SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(impl));
+			}
+		}
+		auto* impl = reinterpret_cast<Impl*>(::GetWindowLongPtrW(window, GWLP_USERDATA));
+		if( impl ) {
+			if( message == WM_NCDESTROY ) {
+				// Fence the logical lifetime even when the parent destroys the native
+				// child directly. Close() normally performs this first, but this branch
+				// is the final ownership boundary for late frame work.
+				static_cast<void>(impl->frameSurface.Close());
+				impl->window = nullptr;
+				::SetWindowLongPtrW(window, GWLP_USERDATA, 0);
+				return ::DefWindowProcW(window, message, wParam, lParam);
+			}
+			return impl->HandleMessage(message, wParam, lParam);
+		}
+		return ::DefWindowProcW(window, message, wParam, lParam);
+	}
 };
 
 CTerminalWnd::CTerminalWnd()
@@ -1921,7 +2036,7 @@ CTerminalWnd::~CTerminalWnd()
 
 bool CTerminalWnd::Create( HWND parent, HINSTANCE instance )
 {
-	if( m_impl->closed || m_impl->window || parent == nullptr || instance == nullptr || !EnsureTerminalClass(instance) ) return false;
+	if( m_impl->closed || m_impl->window || parent == nullptr || instance == nullptr || !EnsureTerminalClass(instance, Impl::WindowProc) ) return false;
 	m_impl->instance = instance;
 	m_impl->window = ::CreateWindowExW(0, kTerminalWindowClass, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
 		0, 0, 0, 0, parent, nullptr, instance, m_impl.get());
@@ -1975,6 +2090,7 @@ void CTerminalWnd::Layout( const RECT& bounds, unsigned int dpi )
 
 void CTerminalWnd::SetModel( TerminalModel* model )
 {
+	m_impl->CancelLinkGesture();
 	const bool changed = m_impl->model != model;
 	m_impl->model = model;
 	m_impl->MarkNativeFullDirty();
@@ -2014,6 +2130,12 @@ void CTerminalWnd::SetFocusSink( FocusSink sink )
 	m_impl->focusSink = std::move(sink);
 }
 
+void CTerminalWnd::SetLinkOpener( LinkOpener opener )
+{
+	m_impl->CancelLinkGesture();
+	m_impl->linkOpener = std::move(opener);
+}
+
 void CTerminalWnd::SetPalette( const theme::ThemePalette& palette )
 {
 	m_impl->palette = palette;
@@ -2043,6 +2165,7 @@ void CTerminalWnd::ApplyScrollbackChange( const TerminalScrollbackChange& change
 
 void CTerminalWnd::InvalidateDirtyRows( const std::vector<std::size_t>& dirtyScreenRows )
 {
+	if( !dirtyScreenRows.empty() ) m_impl->CancelLinkGesture();
 	if( !m_impl->window || !m_impl->model ) return;
 	m_impl->UpdateScrollbar();
 	const auto viewport = m_impl->Viewport();
@@ -2089,6 +2212,7 @@ CTerminalWnd::FrameSurfaceResult CTerminalWnd::SetFrameVisible(
 
 CTerminalWnd::FrameSurfaceResult CTerminalWnd::NotifyFrameContent() noexcept
 {
+	m_impl->CancelLinkGesture();
 	return m_impl->frameSurface.NotifyContent();
 }
 
@@ -2224,6 +2348,7 @@ void CTerminalWnd::Focus()
 void CTerminalWnd::Close() noexcept
 {
 	if( !m_impl || m_impl->closed ) return;
+	m_impl->CancelLinkGesture();
 	m_impl->closed = true;
 	m_impl->nativeFrameReadySink = {};
 	if (m_impl->nativeFrameBridge) {
@@ -2281,32 +2406,6 @@ bool CTerminalWnd::CopySelectionToClipboard()
 bool CTerminalWnd::PasteFromClipboard()
 {
 	return m_impl->PasteFromClipboard();
-}
-
-LRESULT CALLBACK CTerminalWnd::WindowProc( HWND window, UINT message, WPARAM wParam, LPARAM lParam )
-{
-	if( message == WM_NCCREATE ) {
-		const auto* create = reinterpret_cast<const CREATESTRUCTW*>(lParam);
-		auto* impl = static_cast<Impl*>(create->lpCreateParams);
-		if( impl ) {
-			impl->window = window;
-			::SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(impl));
-		}
-	}
-	auto* impl = reinterpret_cast<Impl*>(::GetWindowLongPtrW(window, GWLP_USERDATA));
-	if( impl ) {
-		if( message == WM_NCDESTROY ) {
-			// Fence the logical lifetime even when the parent destroys the native
-			// child directly. Close() normally performs this first, but this branch
-			// is the final ownership boundary for late frame work.
-			static_cast<void>(impl->frameSurface.Close());
-			impl->window = nullptr;
-			::SetWindowLongPtrW(window, GWLP_USERDATA, 0);
-			return ::DefWindowProcW(window, message, wParam, lParam);
-		}
-		return impl->HandleMessage(message, wParam, lParam);
-	}
-	return ::DefWindowProcW(window, message, wParam, lParam);
 }
 
 } // namespace terminal
