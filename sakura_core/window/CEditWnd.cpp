@@ -8090,6 +8090,7 @@ void CEditWnd::ApplySemanticWorkspaceContext()
 		else m_workspaceContext->SetExplicitRoot(root);
 	}
 	if (m_explorerTool) m_explorerTool->SetRoot(root);
+	if (m_searchTool) m_searchTool->SetRoot(root);
 	if (!SynchronizeSenpWindowExtensions()) StopSenpWindowExtensions();
 	if (m_scmTool) {
 		m_scmTool->SetRoot(root);
@@ -15058,13 +15059,18 @@ LRESULT CEditWnd::OnPaint(
 		// preserves every previous splitter position as a vertical/horizontal trail.
 		// Paint only the invalid parent area; WS_CLIPCHILDREN keeps the current Parts
 		// out of this fill.
-		if (!::IsRectEmpty(&ps.rcPaint)) {
+		RECT backgroundRect = ps.rcPaint;
+		// The custom title is painted as one buffered image below. Do not first
+		// expose a bare canvas strip while its glyphs and menu are still pending.
+		if (m_customFrame) backgroundRect.top = std::max(backgroundRect.top,
+			static_cast<LONG>(m_customFrame->TitleHeight()));
+		if (!::IsRectEmpty(&backgroundRect)) {
 			const auto mode = m_pShareData->m_Common.m_sWindow.m_bDarkMode
 				? theme::ThemeMode::Dark : theme::ThemeMode::Light;
 			const auto backgroundBrush = ::CreateSolidBrush(
 				theme::CThemeService::EffectivePalette(mode).canvas.ToColorRef());
 			if (backgroundBrush != nullptr) {
-				::FillRect(dc, &ps.rcPaint, backgroundBrush);
+				::FillRect(dc, &backgroundRect, backgroundBrush);
 				::DeleteObject(backgroundBrush);
 			}
 		}
@@ -15218,7 +15224,9 @@ LRESULT CEditWnd::OnMouseMove( WPARAM wParam, LPARAM lParam )
 			extent -= PixelsToDip(point.y - m_workbenchResizeOrigin.y, dpi);
 			break;
 		}
+		const int previousExtent = m_resizingWorkbenchPanel->GetPendingExtentDip();
 		m_resizingWorkbenchPanel->UpdateResize(extent);
+		if (m_resizingWorkbenchPanel->GetPendingExtentDip() == previousExtent) return 0;
 		RECT client{};
 		::GetClientRect(GetHwnd(), &client);
 		(void)OnSize2(m_nWinSizeType,

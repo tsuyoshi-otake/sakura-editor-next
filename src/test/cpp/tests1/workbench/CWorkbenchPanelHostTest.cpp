@@ -78,7 +78,8 @@ public:
 		m_input = ::CreateWindowExW(0, L"EDIT", L"",
 			WS_CHILD | ES_MULTILINE | ES_AUTOVSCROLL,
 			0, 0, 0, 0, parent, nullptr, ::GetModuleHandleW(nullptr), nullptr);
-		return m_input != nullptr;
+		return m_input != nullptr && ::SetWindowSubclass(m_input, FontMessageProbe, 1,
+			reinterpret_cast<DWORD_PTR>(this)) != FALSE;
 	}
 	void Layout(const RECT&, unsigned int) override
 	{
@@ -108,8 +109,18 @@ public:
 	}
 
 	HFONT fontAtLayout{};
+	int fontSetCalls = 0;
 
 private:
+	static LRESULT CALLBACK FontMessageProbe(HWND window, UINT message, WPARAM wParam,
+		LPARAM lParam, UINT_PTR, DWORD_PTR data)
+	{
+		if (message == WM_SETFONT) {
+			++reinterpret_cast<FormattingRectTool*>(data)->fontSetCalls;
+		}
+		return ::DefSubclassProc(window, message, wParam, lParam);
+	}
+
 	HWND m_input{};
 };
 
@@ -298,6 +309,12 @@ TEST(WorkbenchPanelHost, AppliesChromeFontBeforeToolLayoutEstablishesNativeGeome
 	EXPECT_EQ(4, formatting.top);
 	EXPECT_EQ(196, formatting.right);
 	EXPECT_EQ(20, formatting.bottom);
+	const int initialFontSetCalls = formattingTool->fontSetCalls;
+	EXPECT_GT(initialFontSetCalls, 0);
+	host.Layout(RECT{ 0, 0, 320, 500 }, 96);
+	EXPECT_EQ(initialFontSetCalls, formattingTool->fontSetCalls);
+	host.Layout(RECT{ 0, 0, 320, 500 }, 144);
+	EXPECT_EQ(initialFontSetCalls + 1, formattingTool->fontSetCalls);
 	host.Close();
 }
 

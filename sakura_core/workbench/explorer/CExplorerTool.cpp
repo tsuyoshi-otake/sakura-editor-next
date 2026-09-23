@@ -2026,7 +2026,7 @@ bool CExplorerTool::Create(HWND parent)
 		0, 0, 0, 0, parent, nullptr, instance, this);
 	if (m_impl->window == nullptr) return false;
 	m_impl->dpi = std::max(1u, ::GetDpiForWindow(m_impl->window));
-	m_impl->tree = ::CreateWindowExW(0, WC_TREEVIEWW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP |
+	m_impl->tree = ::CreateWindowExW(0, WC_TREEVIEWW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_CLIPSIBLINGS |
 		TVS_HASBUTTONS | TVS_SHOWSELALWAYS | TVS_NOHSCROLL |
 		TVS_EDITLABELS,
 		0, 0, 0, 0, m_impl->window, nullptr, instance, nullptr);

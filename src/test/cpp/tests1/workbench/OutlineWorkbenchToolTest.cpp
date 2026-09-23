@@ -515,8 +515,8 @@ TEST(OutlineWorkbenchTool, NativeOutlineControlsAreBornWithoutNonClientBorders)
 	ASSERT_TRUE( NormalizeWorkbenchOutlineDialogTemplate(dialog.data(), dialog.size()) );
 	const DWORD treeStyle = ReadTemplateValue<DWORD>(dialog, tree.Style());
 	EXPECT_EQ(0u, treeStyle & (WS_BORDER | TVS_HASLINES | TVS_SHOWSELALWAYS));
-	EXPECT_EQ(static_cast<DWORD>(TVS_HASBUTTONS | TVS_LINESATROOT | TVS_FULLROWSELECT),
-		treeStyle & (TVS_HASBUTTONS | TVS_LINESATROOT | TVS_FULLROWSELECT));
+	EXPECT_EQ(static_cast<DWORD>(TVS_HASBUTTONS | TVS_LINESATROOT | TVS_FULLROWSELECT | TVS_NOHSCROLL),
+		treeStyle & (TVS_HASBUTTONS | TVS_LINESATROOT | TVS_FULLROWSELECT | TVS_NOHSCROLL));
 	EXPECT_EQ(0u, ReadTemplateValue<DWORD>(dialog, tree.ExStyle()) & edgeStyles);
 	EXPECT_EQ(0u, ReadTemplateValue<DWORD>(dialog, list.Style()) & WS_BORDER);
 	EXPECT_EQ(0u, ReadTemplateValue<DWORD>(dialog, list.ExStyle()) & edgeStyles);

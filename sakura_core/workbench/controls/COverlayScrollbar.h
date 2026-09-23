@@ -132,7 +132,9 @@ public:
 		@param parent The window the overlay is positioned in, normally the same
 		       parent the target control has.
 		@param target The scrolling surface whose native state the overlay reads,
-		       or whose explicit model the overlay presents.
+		       or whose explicit model the overlay presents. A sibling target that
+		       overlaps the overlay must have WS_CLIPSIBLINGS; otherwise its paint
+		       can cover the slider after scrolling.
 		@param setTopRow Applied when the user drags the thumb or clicks the track.
 	*/
 	[[nodiscard]] bool Create(HWND parent, HWND target, SetTopRowCallback setTopRow,
@@ -186,7 +188,6 @@ private:
 		int viewportExtent{};
 		int offset{};
 		int maximumOffset{};
-		int pageStep{};
 		bool scrollable{};
 	};
 

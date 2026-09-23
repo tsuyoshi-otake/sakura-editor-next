@@ -415,6 +415,38 @@ TEST(ExplorerTool, UsesOverlayVerticalScrollbarWithoutHorizontalScrollbar)
 	ASSERT_NE(nullptr, overlay);
 	EXPECT_NE(0, ::GetWindowLongPtrW(overlay, GWL_STYLE) & WS_VISIBLE);
 	EXPECT_EQ(0, ::GetWindowLongPtrW(tree, GWL_STYLE) & (WS_HSCROLL | WS_VSCROLL));
+	EXPECT_NE(0, ::GetWindowLongPtrW(tree, GWL_STYLE) & WS_CLIPSIBLINGS);
+	const HTREEITEM first = TreeView_GetFirstVisible(tree);
+	ASSERT_NE(nullptr, first);
+	RECT track{};
+	ASSERT_TRUE(::GetClientRect(overlay, &track));
+	ASSERT_GT(track.bottom, 20);
+	const int pointerX = (track.left + track.right) / 2;
+	const int trackBottom = track.bottom - 2;
+	(void)::SendMessageW(overlay, WM_LBUTTONDOWN, MK_LBUTTON,
+		MAKELPARAM(pointerX, trackBottom));
+	(void)::SendMessageW(overlay, WM_LBUTTONUP, 0,
+		MAKELPARAM(pointerX, trackBottom));
+	const HTREEITEM afterTrackClick = TreeView_GetFirstVisible(tree);
+	EXPECT_NE(first, afterTrackClick);
+	SCROLLINFO afterTrackScroll{ sizeof(afterTrackScroll), SIF_RANGE | SIF_PAGE | SIF_POS };
+	ASSERT_TRUE(::GetScrollInfo(tree, SB_VERT, &afterTrackScroll));
+	EXPECT_GE(afterTrackScroll.nPos,
+		afterTrackScroll.nMax - static_cast<int>(afterTrackScroll.nPage));
+	(void)::SendMessageW(overlay, WM_MOUSEWHEEL,
+		MAKEWPARAM(0, static_cast<WORD>(WHEEL_DELTA)), 0);
+	EXPECT_NE(afterTrackClick, TreeView_GetFirstVisible(tree));
+	ASSERT_TRUE(TreeView_SelectSetFirstVisible(tree, TreeView_GetRoot(tree)));
+	tool.Layout(RECT{ 0, 0, 180, 100 }, 96);
+	(void)::SendMessageW(overlay, WM_LBUTTONDOWN, MK_LBUTTON,
+		MAKELPARAM(pointerX, 2));
+	EXPECT_EQ(overlay, ::GetCapture());
+	(void)::SendMessageW(overlay, WM_MOUSEMOVE, MK_LBUTTON,
+		MAKELPARAM(pointerX, trackBottom));
+	(void)::SendMessageW(overlay, WM_LBUTTONUP, 0,
+		MAKELPARAM(pointerX, trackBottom));
+	EXPECT_NE(first, TreeView_GetFirstVisible(tree));
+	EXPECT_NE(overlay, ::GetCapture());
 
 	tool.Close();
 	::DestroyWindow(parent);

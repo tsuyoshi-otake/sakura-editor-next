@@ -121,6 +121,17 @@ a bounded safety model, not a proof of Windows I/O cancellation or worker
 liveness. Its two negative configurations must violate `CurrentResults`; tool
 errors or an unrelated invariant violation do not count as expected failures.
 
+## Native result-list presentation (#311)
+
+The Search root uses `WS_EX_COMPOSITED` so its owner-drawn result list and
+overlay are presented together after a Side Bar sash commit. Without child
+composition, a populated list could be blank in the immediate screen capture
+and recover after its queued row paints, with unchanged window geometry.
+Verify this with a populated Search fixture using
+`tools/rendering/measure-frame-coherence.ps1`: an empty result list cannot
+exercise the race. Check the presented Side Bar crop and scrollbar gestures
+independently; whole-frame changes outside the Side Bar are separate evidence.
+
 ## Current-client rendering (#290)
 
 `WM_PRINTCLIENT` paints the current widget into its borrowed DC and restores DC

@@ -178,8 +178,11 @@ private:
 
 DWORD workbench::outline::NormalizeWorkbenchOutlineTreeStyle( DWORD style ) noexcept
 {
+	// Labels are ellipsized to the available width below. A native horizontal
+	// scrollbar briefly appears on every narrower sash sample before TreeView
+	// recalculates those labels, changing the visible row count mid-frame.
 	return (style & ~(WS_BORDER | TVS_HASLINES | TVS_SHOWSELALWAYS))
-		| TVS_HASBUTTONS | TVS_LINESATROOT | TVS_FULLROWSELECT;
+		| TVS_HASBUTTONS | TVS_LINESATROOT | TVS_FULLROWSELECT | TVS_NOHSCROLL;
 }
 
 DWORD workbench::outline::NormalizeWorkbenchOutlineListStyle( DWORD style ) noexcept

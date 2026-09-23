@@ -32,7 +32,10 @@ constexpr UINT_PTR kHeaderMenuSubclassId = 1;
 
 BOOL CALLBACK ApplyChromeFont(HWND window, LPARAM parameter)
 {
-	::SendMessageW(window, WM_SETFONT, static_cast<WPARAM>(parameter), TRUE);
+	const auto font = reinterpret_cast<HFONT>(parameter);
+	if (reinterpret_cast<HFONT>(::SendMessageW(window, WM_GETFONT, 0, 0)) != font) {
+		::SendMessageW(window, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+	}
 	return TRUE;
 }
 

@@ -224,6 +224,37 @@ TEST_F(SearchRequestSafetyTest, PreviewDoesNotSplitUtf16SurrogatePair)
     }
 }
 
+TEST_F(SearchRequestSafetyTest, HiddenNativeBarStillScrollsSearchResultsByWheel)
+{
+    std::string lines;
+    for (int index = 0; index < 60; ++index) lines += "needle\r\n";
+    Write(lines);
+    const cxx::ResourceHolder<&::DestroyWindow> parent{::CreateWindowExW(0, L"STATIC", L"", WS_POPUP,
+        0, 0, 400, 300, nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr)};
+    ASSERT_NE(nullptr, parent.get());
+    workbench::search::CSearchWorkbenchTool tool;
+    ASSERT_TRUE(tool.Create(parent.get()));
+    tool.Layout(RECT{0, 0, 400, 300}, 96);
+    tool.SetRoot(root.wstring());
+    tool.SetQueryText(L"needle");
+    const HWND list = ::GetDlgItem(tool.GetHwnd(), 3);
+    ASSERT_NE(nullptr, list);
+    const ULONGLONG deadline = ::GetTickCount64() + 10000;
+    MSG message{};
+    while (::SendMessageW(list, LB_GETCOUNT, 0, 0) < 61 && ::GetTickCount64() < deadline) {
+        while (::PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) ::DispatchMessageW(&message);
+        ::MsgWaitForMultipleObjectsEx(0, nullptr, 10, QS_ALLINPUT, 0);
+    }
+    ASSERT_EQ(61, ::SendMessageW(list, LB_GETCOUNT, 0, 0));
+    ASSERT_EQ(0, ::SendMessageW(list, LB_GETTOPINDEX, 0, 0));
+    constexpr WPARAM halfWheelDown = static_cast<WPARAM>(static_cast<WORD>(-WHEEL_DELTA / 2)) << 16;
+    (void)::SendMessageW(list, WM_MOUSEWHEEL, halfWheelDown, 0);
+    EXPECT_EQ(0, ::SendMessageW(list, LB_GETTOPINDEX, 0, 0));
+    (void)::SendMessageW(list, WM_MOUSEWHEEL, halfWheelDown, 0);
+    EXPECT_GT(::SendMessageW(list, LB_GETTOPINDEX, 0, 0), 0);
+    tool.Close();
+}
+
 TEST_F(SearchRequestSafetyTest, ClearingQueryRejectsAlreadyPostedCompletion)
 {
     for (int scenario = 0; scenario < 5; ++scenario) {

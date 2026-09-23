@@ -95,7 +95,7 @@ public:
 		window = ::CreateWindowExW(WS_EX_CONTROLPARENT, kClass, L"", WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
 			0, 0, 0, 0, options.host.parent, nullptr, cls.hInstance, this);
 		if (!window) return false;
-		tree = ::CreateWindowExW(0, WC_TREEVIEWW, options.title.c_str(), WS_CHILD | WS_VISIBLE | WS_TABSTOP
+		tree = ::CreateWindowExW(0, WC_TREEVIEWW, options.title.c_str(), WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_CLIPSIBLINGS
 			| TVS_HASBUTTONS | TVS_LINESATROOT | TVS_FULLROWSELECT | TVS_SHOWSELALWAYS | TVS_NOHSCROLL | TVS_INFOTIP | TVS_DISABLEDRAGDROP | TVS_NONEVENHEIGHT,
 			0, 0, 0, 0, window, reinterpret_cast<HMENU>(1), cls.hInstance, nullptr);
 		if (!tree || !::SetWindowSubclass(tree, TreeProcedure, kTreeSubclass, reinterpret_cast<DWORD_PTR>(this))) return false;

@@ -300,6 +300,13 @@ bool CViewContainerHost::RequestOutlineExpanded(bool expanded) noexcept
 		}
 	}
 	SetOutlineExpanded(expanded);
+	// The header click owns this frame. Publish the final host and child geometry
+	// before returning to the input loop; a queued paint leaves the old Outline
+	// rows visible in the space vacated by the collapsed child.
+	if (m_window != nullptr) {
+		::RedrawWindow(m_window, nullptr, nullptr,
+			RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_NOERASE | RDW_UPDATENOW);
+	}
 	return true;
 }
 

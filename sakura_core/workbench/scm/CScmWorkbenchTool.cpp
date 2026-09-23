@@ -3237,7 +3237,7 @@ bool CScmWorkbenchTool::Create(HWND parent)
 		WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
 		0, 0, 0, 0, parent, nullptr, instance, this);
 	if (!m_impl->window) return false;
-	m_impl->list = ::CreateWindowExW(0, L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT
+	m_impl->list = ::CreateWindowExW(0, L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT
 		| LBS_OWNERDRAWFIXED | LBS_HASSTRINGS,
 		0, 0, 0, 0, m_impl->window, reinterpret_cast<HMENU>(1), instance, nullptr);
 	if (!m_impl->list) { Close(); return false; }
@@ -3255,7 +3255,7 @@ bool CScmWorkbenchTool::Create(HWND parent)
 	// so it inherits the same keyboard, wheel, and overlay-scrollbar behaviour the
 	// change list already has.
 	m_impl->graphList = ::CreateWindowExW(0, L"LISTBOX", L"",
-		WS_CHILD | WS_VSCROLL | LBS_NOINTEGRALHEIGHT | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS,
+		WS_CHILD | WS_CLIPSIBLINGS | WS_VSCROLL | LBS_NOINTEGRALHEIGHT | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS,
 		0, 0, 0, 0, m_impl->window,
 		reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kGraphControlId)), instance, nullptr);
 	if (!m_impl->graphList) { Close(); return false; }

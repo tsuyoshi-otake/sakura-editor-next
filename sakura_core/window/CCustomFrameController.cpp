@@ -1660,15 +1660,45 @@ bool CCustomFrameController::PreTranslateMessage(MSG& message) noexcept
 	return handled;
 }
 
-void CCustomFrameController::Paint(HDC dc, [[maybe_unused]] const RECT& paintRect) noexcept
+void CCustomFrameController::Paint(HDC dc, const RECT& paintRect) noexcept
 {
 	if (m_window == nullptr || dc == nullptr) {
 		return;
 	}
 	RefreshLayout();
-	m_titleBar.Paint(m_window, dc, m_layout, m_palette, m_font.Get(), m_active, m_hotHit, m_pressedHit,
-		m_hotControl, m_pressedControl, TitleControlFromNode(m_accessibilityFocusedNode));
-	m_menuBar.Paint(m_window, dc, m_menuFont.Get(), m_palette, m_active);
+	RECT intersection{};
+	if (!::IntersectRect(&intersection, &paintRect, &m_layout.title)) return;
+	const auto paintTitle = [this](HDC target) {
+		m_titleBar.Paint(m_window, target, m_layout, m_palette, m_font.Get(), m_active, m_hotHit, m_pressedHit,
+			m_hotControl, m_pressedControl, TitleControlFromNode(m_accessibilityFocusedNode));
+		m_menuBar.Paint(m_window, target, m_menuFont.Get(), m_palette, m_active);
+	};
+	const int width = m_layout.title.right - m_layout.title.left;
+	const int height = m_layout.title.bottom - m_layout.title.top;
+	HDC buffer = ::CreateCompatibleDC(dc);
+	HBITMAP bitmap = buffer != nullptr ? ::CreateCompatibleBitmap(dc, width, height) : nullptr;
+	if (bitmap == nullptr) {
+		if (buffer != nullptr) ::DeleteDC(buffer);
+		paintTitle(dc);
+		return;
+	}
+	const HGDIOBJ oldBitmap = ::SelectObject(buffer, bitmap);
+	if (oldBitmap == nullptr || oldBitmap == HGDI_ERROR) {
+		::DeleteObject(bitmap);
+		::DeleteDC(buffer);
+		paintTitle(dc);
+		return;
+	}
+	::SetViewportOrgEx(buffer, -m_layout.title.left, -m_layout.title.top, nullptr);
+	paintTitle(buffer);
+	// Present the title background, text, menu, and buttons in one GDI operation.
+	// A screen capture must not observe the background fill before its glyphs.
+	const BOOL presented = ::BitBlt(dc, m_layout.title.left, m_layout.title.top, width, height,
+		buffer, m_layout.title.left, m_layout.title.top, SRCCOPY);
+	::SelectObject(buffer, oldBitmap);
+	::DeleteObject(bitmap);
+	::DeleteDC(buffer);
+	if (!presented) paintTitle(dc);
 }
 
 void CCustomFrameController::InvalidateTitle() const noexcept

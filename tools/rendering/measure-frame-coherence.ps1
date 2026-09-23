@@ -4,19 +4,31 @@ param(
 	[string]$WorkspaceFolder,
 	[ValidateRange(1, 1000)]
 	[int]$Trials = 10,
-	[ValidateSet('Resize', 'SideBarResize', 'Command')]
+	[ValidateSet('Resize', 'SideBarResize', 'Command', 'ActivityBarSwitch', 'OutlineToggle')]
 	[string]$Gesture = 'Resize',
 	[ValidateSet('Default', 'Projects', 'Explorer', 'Search', 'SourceControl')]
 	[string]$ActivityBarPage = 'Default',
 	[string]$SearchQuery,
+	[ValidateRange(0, 1000000)]
+	[int]$MinimumSearchRows = 0,
 	[int]$FunctionCode = 0,
 	[ValidateRange(100, 10000)]
-	[int]$ReadyTimeoutMilliseconds = 5000,
+	[int]$ReadyTimeoutMilliseconds = 10000,
+	[ValidateRange(0, 8000)]
+	[int]$WindowWidth = 0,
+	[ValidateRange(0, 8000)]
+	[int]$WindowHeight = 0,
+	[int]$WindowLeft = 40,
+	[int]$WindowTop = 40,
+	[ValidateSet('DuringDrag', 'AfterRelease', 'DragSequence')]
+	[string]$SideBarCapturePhase = 'DuringDrag',
 	[ValidateRange(0, 255)]
 	[int]$ChannelTolerance = 8,
 	[ValidateRange(0.0, 100.0)]
 	[double]$AllowedExcessPercent = 0.05,
 	[switch]$PresentedScreenOnly,
+	[switch]$ProbePendingTreePaint,
+	[switch]$ProbePendingSearchPaint,
 	[switch]$FailOnExcess,
 	[string]$ProfileName = "codex-render-coherence-$PID",
 	[string]$OutputDirectory
@@ -24,6 +36,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+
+if ($ProbePendingSearchPaint -and ($ActivityBarPage -ne 'Search' -or
+	[string]::IsNullOrWhiteSpace($SearchQuery) -or $MinimumSearchRows -le 0)) {
+	throw '-ProbePendingSearchPaint requires Search, -SearchQuery, and -MinimumSearchRows greater than zero.'
+}
 
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
 	$repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
@@ -53,6 +70,13 @@ public static class SakuraFrameCoherenceNative
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
 
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetUpdateRect(IntPtr hwnd, out RECT rect, bool erase);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool UpdateWindow(IntPtr hwnd);
     [DllImport("dwmapi.dll")]
     public static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute,
         out RECT value, int valueSize);
@@ -66,6 +90,12 @@ public static class SakuraFrameCoherenceNative
     [DllImport("user32.dll")]
     private static extern IntPtr GetParent(IntPtr hwnd);
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr GetPropW(IntPtr hwnd, string name);
+
+    [DllImport("user32.dll")]
+    private static extern int GetDlgCtrlID(IntPtr hwnd);
+
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool SetWindowPos(IntPtr hwnd, IntPtr insertAfter,
@@ -73,6 +103,9 @@ public static class SakuraFrameCoherenceNative
 
     [DllImport("user32.dll")]
     public static extern int GetSystemMetrics(int index);
+
+    [DllImport("user32.dll")]
+    public static extern uint GetDpiForWindow(IntPtr hwnd);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -94,6 +127,35 @@ public static class SakuraFrameCoherenceNative
     private static extern IntPtr SendMessageTimeoutW(IntPtr hwnd, uint message,
         IntPtr wParam, IntPtr lParam, uint flags, uint timeoutMilliseconds,
         out UIntPtr result);
+
+    [DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW", CharSet = CharSet.Unicode,
+        SetLastError = true)]
+    private static extern IntPtr SendTextMessageTimeoutW(IntPtr hwnd, uint message,
+        IntPtr wParam, string text, uint flags, uint timeoutMilliseconds,
+        out UIntPtr result);
+
+    [DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW", CharSet = CharSet.Unicode,
+        SetLastError = true)]
+    private static extern IntPtr ReceiveTextMessageTimeoutW(IntPtr hwnd, uint message,
+        IntPtr wParam, StringBuilder text, uint flags, uint timeoutMilliseconds,
+        out UIntPtr result);
+
+    public static bool SetControlTextWithTimeout(IntPtr hwnd, string text, uint timeoutMilliseconds)
+    {
+        UIntPtr result;
+        return SendTextMessageTimeoutW(hwnd, 0x000C, IntPtr.Zero, text,
+            0x0002, timeoutMilliseconds, out result) != IntPtr.Zero;
+    }
+
+    public static string ReadControlTextWithTimeout(IntPtr hwnd, uint timeoutMilliseconds)
+    {
+        var text = new StringBuilder(4096);
+        UIntPtr result;
+        if (ReceiveTextMessageTimeoutW(hwnd, 0x000D, new IntPtr(text.Capacity), text,
+            0x0002, timeoutMilliseconds, out result) == IntPtr.Zero)
+            throw new InvalidOperationException("WM_GETTEXT timed out for Search query");
+        return text.ToString();
+    }
 
     public static bool SendCommandWithTimeout(IntPtr hwnd, int functionCode,
         uint timeoutMilliseconds)
@@ -126,11 +188,20 @@ public static class SakuraFrameCoherenceNative
     private static extern int GetClassNameW(IntPtr hwnd, StringBuilder className, int maximum);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool SetWindowTextW(IntPtr hwnd, string text);
-
-    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern int GetWindowTextW(IntPtr hwnd, StringBuilder text, int maximum);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
+
+    public static string DescribeWindow(IntPtr hwnd)
+    {
+        var className = new StringBuilder(128);
+        GetClassNameW(hwnd, className, className.Capacity);
+        uint processId;
+        GetWindowThreadProcessId(hwnd, out processId);
+        return "HWND=" + hwnd + " PID=" + processId + " class=" + className
+            + " title=" + ReadWindowText(hwnd);
+    }
 
     public static string ReadWindowText(IntPtr hwnd)
     {
@@ -147,11 +218,63 @@ public static class SakuraFrameCoherenceNative
             if (!IsWindowVisible(child)) return true;
             var className = new StringBuilder(128);
             GetClassNameW(child, className, className.Capacity);
-            if (!String.Equals(className.ToString(), expectedClass, StringComparison.Ordinal)) return true;
+            if (!String.Equals(className.ToString(), expectedClass, StringComparison.OrdinalIgnoreCase)) return true;
             match = child;
             return false;
         }, IntPtr.Zero);
         return match;
+    }
+
+    public sealed class TreeViewState
+    {
+        public long Window { get; set; }
+        public long Parent { get; set; }
+        public int ControlId { get; set; }
+        public bool Visible { get; set; }
+        public bool RedrawSuppressed { get; set; }
+        public int ItemCount { get; set; }
+        public RECT Bounds { get; set; }
+        public bool HasPendingPaint { get; set; }
+        public RECT PendingPaintBounds { get; set; }
+        public string HitWindow { get; set; }
+    }
+
+    public static TreeViewState[] SnapshotTreeViews(IntPtr parent, uint timeoutMilliseconds)
+    {
+        var trees = new TreeViewState[256];
+        int treeCount = 0;
+        bool overflow = false;
+        EnumChildWindows(parent, delegate(IntPtr child, IntPtr unused)
+        {
+            var className = new StringBuilder(128);
+            GetClassNameW(child, className, className.Capacity);
+            if (!String.Equals(className.ToString(), "SysTreeView32", StringComparison.OrdinalIgnoreCase))
+                return true;
+            RECT bounds;
+            if (!GetWindowRect(child, out bounds)) return true;
+            UIntPtr count;
+            int itemCount = SendMessageTimeoutW(child, 0x1105, IntPtr.Zero, IntPtr.Zero,
+                0x0002, timeoutMilliseconds, out count) != IntPtr.Zero
+                && count.ToUInt64() <= Int32.MaxValue ? (int)count.ToUInt64() : -1;
+            if (treeCount == trees.Length) { overflow = true; return false; }
+            RECT pendingPaint;
+            bool hasPendingPaint = GetUpdateRect(child, out pendingPaint, false);
+            var hitPoint = new POINT { X = (bounds.Left + bounds.Right) / 2,
+                Y = (bounds.Top + bounds.Bottom) / 2 };
+            IntPtr hitWindow = WindowFromPoint(hitPoint);
+            trees[treeCount++] = new TreeViewState {
+                Window = child.ToInt64(), Parent = GetParent(child).ToInt64(),
+                ControlId = GetDlgCtrlID(child), Visible = IsWindowVisible(child),
+                RedrawSuppressed = GetPropW(child, "SysSetRedraw") != IntPtr.Zero,
+                ItemCount = itemCount, Bounds = bounds, HasPendingPaint = hasPendingPaint,
+                PendingPaintBounds = pendingPaint, HitWindow = DescribeWindow(hitWindow)
+            };
+            return true;
+        }, IntPtr.Zero);
+        if (overflow) throw new InvalidOperationException("Too many TreeView controls.");
+        var result = new TreeViewState[treeCount];
+        Array.Copy(trees, result, treeCount);
+        return result;
     }
 
     public static IntPtr FindAncestorByClass(IntPtr child, string expectedClass)
@@ -160,7 +283,7 @@ public static class SakuraFrameCoherenceNative
         {
             var className = new StringBuilder(128);
             GetClassNameW(current, className, className.Capacity);
-            if (String.Equals(className.ToString(), expectedClass, StringComparison.Ordinal))
+            if (String.Equals(className.ToString(), expectedClass, StringComparison.OrdinalIgnoreCase))
                 return current;
         }
         return IntPtr.Zero;
@@ -179,7 +302,7 @@ public static class SakuraFrameCoherenceNative
             var className = new StringBuilder(128);
             GetClassNameW(child, className, className.Capacity);
             RECT rect;
-            if (!String.Equals(className.ToString(), expectedClass, StringComparison.Ordinal)
+            if (!String.Equals(className.ToString(), expectedClass, StringComparison.OrdinalIgnoreCase)
                 || !GetWindowRect(child, out rect)) return true;
             if (rect.Bottom - rect.Top <= rect.Right - rect.Left) return true;
             if (rect.Bottom <= referenceRect.Top || rect.Top >= referenceRect.Bottom) return true;
@@ -219,6 +342,14 @@ public static class SakuraFrameCoherenceNative
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool SetCursorPos(int x, int y);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetPhysicalCursorPos(int x, int y);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetPhysicalCursorPos(out POINT point);
 
     private delegate bool EnumChildProc(IntPtr hwnd, IntPtr parameter);
 
@@ -403,6 +534,21 @@ function Get-WindowRectangle {
 	return $rect
 }
 
+function Get-RectangleRecord {
+	param([SakuraFrameCoherenceNative+RECT]$Rectangle)
+	return [pscustomobject]@{
+		left = $Rectangle.Left
+		top = $Rectangle.Top
+		right = $Rectangle.Right
+		bottom = $Rectangle.Bottom
+	}
+}
+
+function Get-RectangleSignature {
+	param([SakuraFrameCoherenceNative+RECT]$Rectangle)
+	return "$($Rectangle.Left),$($Rectangle.Top),$($Rectangle.Right),$($Rectangle.Bottom)"
+}
+
 function Get-CapturableWindowRectangle {
 	param([IntPtr]$Window)
 	$rect = [SakuraFrameCoherenceNative+RECT]::new()
@@ -439,7 +585,7 @@ function Assert-WindowUnoccluded {
 			$sample = [SakuraFrameCoherenceNative]::WindowFromPoint($point)
 			$sampleRoot = [SakuraFrameCoherenceNative]::GetAncestor($sample, 2)
 			if ($sampleRoot -ne $rootOwner) {
-				throw "Window is occluded at ($($point.X), $($point.Y)); trial is invalid."
+				throw "Window is occluded at ($($point.X), $($point.Y)) by $([SakuraFrameCoherenceNative]::DescribeWindow($sampleRoot)); expected $([SakuraFrameCoherenceNative]::DescribeWindow($rootOwner)); trial is invalid."
 			}
 		}
 	}
@@ -694,8 +840,27 @@ if (-not [IO.File]::Exists($resolvedExecutable)) { throw "Executable not found: 
 if ($Gesture -eq 'Command' -and $FunctionCode -le 0) {
 	throw 'Command gesture requires a positive -FunctionCode.'
 }
+if ($SideBarCapturePhase -eq 'DragSequence' -and ($Gesture -ne 'SideBarResize' -or $PresentedScreenOnly)) {
+	throw 'DragSequence requires -Gesture SideBarResize without -PresentedScreenOnly.'
+}
+if ($Gesture -eq 'OutlineToggle' -and $ActivityBarPage -ne 'Explorer') {
+	throw 'OutlineToggle requires -ActivityBarPage Explorer.'
+}
+if ($Gesture -eq 'ActivityBarSwitch' -and $ActivityBarPage -notin @('Default', 'Explorer')) {
+	throw 'ActivityBarSwitch requires -ActivityBarPage Default or Explorer.'
+}
 [IO.Directory]::CreateDirectory([IO.Path]::GetFullPath($OutputDirectory)) | Out-Null
+Remove-Item -LiteralPath (Join-Path $OutputDirectory 'summary.json') -ErrorAction SilentlyContinue
 Remove-TestProfile $ProfileName
+
+$originalPhysicalCursor = $null
+$lastOwnedPhysicalCursor = $null
+if ($SideBarCapturePhase -eq 'DragSequence') {
+	$originalPhysicalCursor = [SakuraFrameCoherenceNative+POINT]::new()
+	if (-not [SakuraFrameCoherenceNative]::GetPhysicalCursorPos([ref]$originalPhysicalCursor)) {
+		throw 'Failed to record the original physical cursor position.'
+	}
+}
 
 $argumentList = @("-PROF=$ProfileName")
 if (-not [string]::IsNullOrWhiteSpace($WorkspaceFolder)) {
@@ -724,6 +889,8 @@ $screenStabilityResults = [Collections.Generic.List[object]]::new()
 $surfaceScreenStabilityResults = [Collections.Generic.List[object]]::new()
 $presentedScreenResults = [Collections.Generic.List[object]]::new()
 $presentedSurfaceResults = [Collections.Generic.List[object]]::new()
+$dragSequenceResults = [Collections.Generic.List[object]]::new()
+$dragReleaseResults = [Collections.Generic.List[object]]::new()
 try {
 	$window = Wait-ForMainWindow $process $ReadyTimeoutMilliseconds
 	# CopyFromScreen has no stable meaning outside the physical desktop. A
@@ -732,11 +899,21 @@ try {
 	$launchRect = Get-WindowRectangle $window
 	$screenWidth = [SakuraFrameCoherenceNative]::GetSystemMetrics(0)
 	$screenHeight = [SakuraFrameCoherenceNative]::GetSystemMetrics(1)
-	$testWidth = [Math]::Max(640, [Math]::Min($launchRect.Right - $launchRect.Left, $screenWidth - 80))
-	$testHeight = [Math]::Max(480, [Math]::Min($launchRect.Bottom - $launchRect.Top, $screenHeight - 80))
+	$requestedWidth = if ($WindowWidth -gt 0) { $WindowWidth } else { $launchRect.Right - $launchRect.Left }
+	$testWidth = [Math]::Max(640, [Math]::Min($requestedWidth, $screenWidth - 80))
+	$requestedHeight = if ($WindowHeight -gt 0) { $WindowHeight } else { $launchRect.Bottom - $launchRect.Top }
+	$testHeight = [Math]::Max(480, [Math]::Min($requestedHeight, $screenHeight - 80))
+	$virtualLeft = [SakuraFrameCoherenceNative]::GetSystemMetrics(76)
+	$virtualTop = [SakuraFrameCoherenceNative]::GetSystemMetrics(77)
+	$virtualRight = $virtualLeft + [SakuraFrameCoherenceNative]::GetSystemMetrics(78)
+	$virtualBottom = $virtualTop + [SakuraFrameCoherenceNative]::GetSystemMetrics(79)
+	if ($WindowLeft -lt $virtualLeft -or $WindowTop -lt $virtualTop -or
+		$WindowLeft + $testWidth -gt $virtualRight -or $WindowTop + $testHeight -gt $virtualBottom) {
+		throw 'The requested test window rectangle is outside the virtual desktop.'
+	}
 	[void][SakuraFrameCoherenceNative]::ShowWindow($window, 9)
 	if (-not [SakuraFrameCoherenceNative]::SetWindowPos(
-		$window, [IntPtr]::Zero, 40, 40, $testWidth, $testHeight, 0x0014)) {
+		$window, [IntPtr]::Zero, $WindowLeft, $WindowTop, $testWidth, $testHeight, 0x0014)) {
 		throw 'Failed to place the test window inside the physical display.'
 	}
 	# Screen capture is only meaningful while the tested top-level window owns
@@ -752,6 +929,12 @@ try {
 	$parkingX = [Convert]::ToInt32($parkingRect.Left + 3 * ($parkingRect.Right - $parkingRect.Left) / 4)
 	$parkingY = [Convert]::ToInt32($parkingRect.Top + ($parkingRect.Bottom - $parkingRect.Top) / 2)
 	[void][SakuraFrameCoherenceNative]::SetCursorPos($parkingX, $parkingY)
+	if ($SideBarCapturePhase -eq 'DragSequence') {
+		$parkedCursor = [SakuraFrameCoherenceNative+POINT]::new()
+		if ([SakuraFrameCoherenceNative]::GetPhysicalCursorPos([ref]$parkedCursor)) {
+			$lastOwnedPhysicalCursor = [pscustomobject]@{ X = $parkedCursor.X; Y = $parkedCursor.Y }
+		}
+	}
 	if ($ActivityBarPage -eq 'Default') {
 		Wait-ForWindowQuiescence $window $ReadyTimeoutMilliseconds
 	}
@@ -809,11 +992,20 @@ try {
 		if ($ActivityBarPage -eq 'Search' -and -not [string]::IsNullOrWhiteSpace($SearchQuery)) {
 			$queryWindow = [SakuraFrameCoherenceNative]::FindVisibleChildByClass($surfaceWindow, 'Edit')
 			if ($queryWindow -eq [IntPtr]::Zero) { throw 'The Search query control was not found.' }
-			if (-not [SakuraFrameCoherenceNative]::SetWindowTextW($queryWindow, $SearchQuery)) {
-				throw "SetWindowTextW failed for the Search query: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())"
+			if (-not [SakuraFrameCoherenceNative]::SetControlTextWithTimeout(
+				$queryWindow, $SearchQuery, [uint32]$ReadyTimeoutMilliseconds)) {
+				throw "WM_SETTEXT failed or timed out for the Search query: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())"
 			}
-			if ([SakuraFrameCoherenceNative]::ReadWindowText($queryWindow) -ne $SearchQuery) {
+			if ([SakuraFrameCoherenceNative]::ReadControlTextWithTimeout(
+				$queryWindow, [uint32]$ReadyTimeoutMilliseconds) -ne $SearchQuery) {
 				throw 'The Search query control did not retain the requested text.'
+			}
+			if ($MinimumSearchRows -gt 0) {
+				$searchList = [SakuraFrameCoherenceNative]::FindVisibleChildByClass(
+					$surfaceWindow, 'ListBox')
+				if ($searchList -eq [IntPtr]::Zero) { throw 'The Search result list was not found.' }
+				[void](Wait-ForMinimumStableListItemCount $searchList $MinimumSearchRows `
+					$ReadyTimeoutMilliseconds)
 			}
 			Wait-ForWindowQuiescence $surfaceWindow $ReadyTimeoutMilliseconds
 		}
@@ -878,10 +1070,40 @@ try {
 			throw "Primary Side Bar normalization did not converge; measured width $normalizedWidth; $($normalizationTrace -join '; ')."
 		}
 	}
+	if ($ActivityBarPage -eq 'Search' -and $MinimumSearchRows -gt 0) {
+		[void](Capture-PresentedScreen $window 'normalized-search-baseline')
+	}
+	if ($Gesture -eq 'ActivityBarSwitch') {
+		$activityBar = [SakuraFrameCoherenceNative]::FindVisibleChildByClass(
+			$window, 'SakuraWorkbenchActivityBar')
+		if ($activityBar -eq [IntPtr]::Zero) { throw 'Activity Bar was not found for switching.' }
+		if ([SakuraFrameCoherenceNative]::FindVisibleChildByClass(
+			$window, 'SakuraNativeExplorerTool') -eq [IntPtr]::Zero) {
+			$beforePage = [SakuraFrameCoherenceNative]::VisibleChildLayoutSignature($window)
+			if (-not [SakuraFrameCoherenceNative]::SendActivityBarClickWithTimeout(
+				$activityBar, 1, [uint32]$ReadyTimeoutMilliseconds)) {
+				throw 'Could not activate Explorer before switching.'
+			}
+			[void](Wait-ForChildLayoutChange $window $beforePage $ReadyTimeoutMilliseconds)
+		}
+		$surfaceWindow = [IntPtr]::Zero
+	}
+	if ($Gesture -eq 'OutlineToggle') {
+		$viewContainerWindow = [SakuraFrameCoherenceNative]::FindAncestorByClass(
+			$surfaceWindow, 'SakuraViewContainerHost')
+		if ($viewContainerWindow -eq [IntPtr]::Zero) {
+			throw 'Explorer ViewContainer host was not found for Outline toggle.'
+		}
+		$outlineExpanded = $true
+	}
 	$initial = Get-WindowRectangle $window
 	$baseWidth = $initial.Right - $initial.Left
 	$baseHeight = $initial.Bottom - $initial.Top
 	for ($trial = 1; $trial -le $Trials; ++$trial) {
+		[void][SakuraFrameCoherenceNative]::SetWindowPos(
+			$window, [IntPtr](-1), 0, 0, 0, 0, 0x0013)
+		$trialRect = Get-CapturableWindowRectangle $window
+		Assert-WindowUnoccluded $window $trialRect
 		if ($Gesture -eq 'Resize') {
 			$delta = if (($trial % 2) -eq 0) { 173 } else { -137 }
 			$width = [Math]::Max(640, $baseWidth + $delta)
@@ -910,22 +1132,189 @@ try {
 			$targetX = $origin.X + $(if (($trial % 2) -eq 0) { -72 } else { 72 })
 			$targetScreenX = $originScreenX + $targetX - $origin.X
 			$dragStarted = $false
+			$initialHostRect = Get-WindowRectangle $surfaceHostWindow
+			$previousHostWidth = $initialHostRect.Right - $initialHostRect.Left
 			try {
-				[void][SakuraFrameCoherenceNative]::SetCursorPos($originScreenX, $originScreenY)
+				if ($SideBarCapturePhase -eq 'DragSequence') {
+					# Match the hardware cursor to every synthetic position. Windows
+					# may deliver physical WM_MOUSEMOVE while the window owns capture.
+					if (-not [SakuraFrameCoherenceNative]::SetPhysicalCursorPos(
+						$originScreenX, $originScreenY)) { throw 'Failed to position the physical cursor on the sash.' }
+					$lastOwnedPhysicalCursor = [pscustomobject]@{ X = $originScreenX; Y = $originScreenY }
+					Wait-ForWindowQuiescence $window $ReadyTimeoutMilliseconds
+				} else {
+					[void][SakuraFrameCoherenceNative]::SetCursorPos($originScreenX, $originScreenY)
+				}
 				if (-not [SakuraFrameCoherenceNative]::SendMouseWithTimeout(
 					$window, 0x0201, $origin.X, $origin.Y, $true, [uint32]$ReadyTimeoutMilliseconds)) {
 					throw 'WM_LBUTTONDOWN failed for the Side Bar sash.'
 				}
 				$dragStarted = $true
-				[void][SakuraFrameCoherenceNative]::SetCursorPos($targetScreenX, $originScreenY)
-				if (-not [SakuraFrameCoherenceNative]::SendMouseWithTimeout(
-					$window, 0x0200, $targetX, $origin.Y, $true, [uint32]$ReadyTimeoutMilliseconds)) {
-					throw 'WM_MOUSEMOVE failed for the Side Bar sash.'
-				}
-				if ($PresentedScreenOnly) {
-					$beforeFrameRect = Get-CapturableWindowRectangle $window
-					$beforeSurfaceRect = Get-WindowRectangle $surfaceWindow
-					$beforeScreen = Capture-PresentedScreen $window ("trial-{0:D3}-immediate" -f $trial)
+				if ($SideBarCapturePhase -eq 'DragSequence') {
+					for ($step = 1; $step -le 4; ++$step) {
+						$stepX = $origin.X + [int](($targetX - $origin.X) * $step / 4)
+						$stepScreenX = $originScreenX + $stepX - $origin.X
+						if (-not [SakuraFrameCoherenceNative]::SetPhysicalCursorPos(
+							$stepScreenX, $originScreenY)) { throw "Failed to position the physical cursor at drag step $step." }
+						$lastOwnedPhysicalCursor = [pscustomobject]@{ X = $stepScreenX; Y = $originScreenY }
+						if (-not [SakuraFrameCoherenceNative]::SendMouseWithTimeout(
+							$window, 0x0200, $stepX, $origin.Y, $true, [uint32]$ReadyTimeoutMilliseconds)) {
+							throw "WM_MOUSEMOVE failed at drag step $step."
+						}
+						$sashHeld = Get-WindowRectangle $sash
+						$hostHeld = Get-WindowRectangle $surfaceHostWindow
+						$surfaceHeld = Get-WindowRectangle $surfaceWindow
+						$hostWidth = $hostHeld.Right - $hostHeld.Left
+						$physicalCursor = [SakuraFrameCoherenceNative+POINT]::new()
+						if (-not [SakuraFrameCoherenceNative]::GetPhysicalCursorPos([ref]$physicalCursor)) {
+							throw "Failed to read the physical cursor at drag step $step."
+						}
+						if (($trial % 2) -eq 0) {
+							if ($hostWidth -ge $previousHostWidth) {
+								throw "Drag step $step did not narrow the Side Bar: $previousHostWidth -> $hostWidth."
+							}
+						} elseif ($hostWidth -le $previousHostWidth) {
+							throw "Drag step $step did not widen the Side Bar: $previousHostWidth -> $hostWidth."
+						}
+						$previousHostWidth = $hostWidth
+						$capturedAt = [DateTimeOffset]::UtcNow.ToString('o')
+						$prefix = "trial-{0:D3}-step-{1:D2}" -f $trial, $step
+						$instant = Capture-PresentedScreen $window "$prefix-held-immediate"
+						$immediateTreeViews = [SakuraFrameCoherenceNative]::SnapshotTreeViews(
+							$surfaceHostWindow, [uint32]$ReadyTimeoutMilliseconds)
+						Wait-ForWindowQuiescence $window $ReadyTimeoutMilliseconds
+						$settledAt = [DateTimeOffset]::UtcNow.ToString('o')
+						$sashAfterWait = Get-WindowRectangle $sash
+						$hostAfterWait = Get-WindowRectangle $surfaceHostWindow
+						$surfaceAfterWait = Get-WindowRectangle $surfaceWindow
+						$settledCursor = [SakuraFrameCoherenceNative+POINT]::new()
+						if (-not [SakuraFrameCoherenceNative]::GetPhysicalCursorPos([ref]$settledCursor)) {
+							throw "Failed to read the settled cursor at drag step $step."
+						}
+						if ($settledCursor.X -ne $stepScreenX -or $settledCursor.Y -ne $originScreenY) {
+							throw "Physical cursor left drag step ${step}: ($($settledCursor.X),$($settledCursor.Y)) instead of ($stepScreenX,$originScreenY)."
+						}
+						$settledHostWidth = $hostAfterWait.Right - $hostAfterWait.Left
+						if ([Math]::Abs($settledHostWidth - $hostWidth) -gt 1) {
+							throw "Drag step $step was overridden by physical input: $hostWidth -> $settledHostWidth; cursor=$($physicalCursor.X), target=$stepScreenX."
+						}
+						$inputTransition = $null
+						if ((Get-RectangleSignature $sashHeld) -ne (Get-RectangleSignature $sashAfterWait) -or
+							(Get-RectangleSignature $hostHeld) -ne (Get-RectangleSignature $hostAfterWait) -or
+							(Get-RectangleSignature $surfaceHeld) -ne (Get-RectangleSignature $surfaceAfterWait)) {
+							# A hardware cursor move can still deliver its final input sample
+							# after the synthetic message. Preserve that intermediate frame,
+							# then compare only frames at the geometry reached after input.
+							$inputTransition = [pscustomobject]@{
+								screen = $instant
+								capturedAtUtc = $capturedAt
+								sash = Get-RectangleRecord $sashHeld
+								sideBarHost = Get-RectangleRecord $hostHeld
+								surface = Get-RectangleRecord $surfaceHeld
+							}
+							$sashHeld = $sashAfterWait
+							$hostHeld = $hostAfterWait
+							$surfaceHeld = $surfaceAfterWait
+							$capturedAt = [DateTimeOffset]::UtcNow.ToString('o')
+							$instant = Capture-PresentedScreen $window "$prefix-held-after-input"
+							$immediateTreeViews = [SakuraFrameCoherenceNative]::SnapshotTreeViews(
+								$surfaceHostWindow, [uint32]$ReadyTimeoutMilliseconds)
+							Wait-ForWindowQuiescence $window $ReadyTimeoutMilliseconds
+							$settledAt = [DateTimeOffset]::UtcNow.ToString('o')
+							if ((Get-RectangleSignature $sashHeld) -ne
+								(Get-RectangleSignature (Get-WindowRectangle $sash)) -or
+								(Get-RectangleSignature $hostHeld) -ne
+								(Get-RectangleSignature (Get-WindowRectangle $surfaceHostWindow)) -or
+								(Get-RectangleSignature $surfaceHeld) -ne
+								(Get-RectangleSignature (Get-WindowRectangle $surfaceWindow))) {
+								throw "Drag step $step did not reach stable geometry after the pending input sample."
+							}
+						}
+						$stable = Capture-PresentedScreen $window "$prefix-held-stable"
+						$stableTreeViews = [SakuraFrameCoherenceNative]::SnapshotTreeViews(
+							$surfaceHostWindow, [uint32]$ReadyTimeoutMilliseconds)
+						$heldDifference = Compare-SavedCaptures -BeforePath $instant -AfterPath $stable -Prefix "$prefix-held-stability"
+						$frameHeld = Get-CapturableWindowRectangle $window
+						$instantSideBar = Save-CaptureCrop $instant $frameHeld $hostHeld (
+							Join-Path $OutputDirectory "$prefix-sidebar-immediate.png")
+						$stableSideBar = Save-CaptureCrop $stable $frameHeld $hostHeld (
+							Join-Path $OutputDirectory "$prefix-sidebar-stable.png")
+						$sideBarDifference = Compare-SavedCaptures -BeforePath $instantSideBar -AfterPath $stableSideBar -Prefix "$prefix-sidebar-stability"
+						$record = [pscustomobject]@{
+							trial = $trial
+							step = $step
+							direction = if (($trial % 2) -eq 0) { 'Narrower' } else { 'Wider' }
+							syntheticPointerScreenX = $stepScreenX
+							hardwareCursorScreenX = $stepScreenX
+							actualPhysicalCursorScreenX = $physicalCursor.X
+							pointerScreenY = $originScreenY
+							capturedAtUtc = $capturedAt
+							settledAtUtc = $settledAt
+							sash = Get-RectangleRecord $sashHeld
+							sideBarHost = Get-RectangleRecord $hostHeld
+							surface = Get-RectangleRecord $surfaceHeld
+							inputTransition = $inputTransition
+							immediateTreeViews = $immediateTreeViews
+							stableTreeViews = $stableTreeViews
+							heldScreenMeasurement = $heldDifference
+							heldSideBarMeasurement = $sideBarDifference
+							dualCapture = $null
+							redrawNoiseFloor = $null
+							redrawScreenStability = $null
+							treeUpdateProbe = $null
+						}
+						if ($ProbePendingTreePaint -and $step -ne 4 -and $sideBarDifference.percent -gt 0.5) {
+							$updatedTrees = @(
+								foreach ($treeState in $stableTreeViews) {
+									[pscustomobject]@{
+										window = $treeState.Window
+										updated = [SakuraFrameCoherenceNative]::UpdateWindow([IntPtr]$treeState.Window)
+									}
+								}
+							)
+							$afterTreeUpdate = Capture-PresentedScreen $window "$prefix-after-tree-update"
+							$afterTreeUpdateCrop = Save-CaptureCrop $afterTreeUpdate $frameHeld $hostHeld (
+								Join-Path $OutputDirectory "$prefix-sidebar-after-tree-update.png")
+							$record.treeUpdateProbe = [pscustomobject]@{
+								updatedTrees = $updatedTrees
+								measurement = Compare-SavedCaptures -BeforePath $stableSideBar -AfterPath $afterTreeUpdateCrop -Prefix "$prefix-sidebar-tree-update-diff"
+							}
+						}
+						if ($step -eq 4) {
+							$record.dualCapture = Capture-WindowPair $window "$prefix-held-dual"
+							if (-not [SakuraFrameCoherenceNative]::RedrawWindow(
+								$window, [IntPtr]::Zero, [IntPtr]::Zero, 0x0585)) {
+								throw 'RedrawWindow failed while holding the sash.'
+							}
+							Wait-ForWindowQuiescence $window $ReadyTimeoutMilliseconds
+							$redrawCursor = [SakuraFrameCoherenceNative+POINT]::new()
+							if (-not [SakuraFrameCoherenceNative]::GetPhysicalCursorPos([ref]$redrawCursor) -or
+								$redrawCursor.X -ne $stepScreenX -or $redrawCursor.Y -ne $originScreenY) {
+								throw "Physical cursor moved during the drag redraw in trial $trial."
+							}
+							if ((Get-RectangleSignature $hostHeld) -ne
+								(Get-RectangleSignature (Get-WindowRectangle $surfaceHostWindow))) {
+								throw "Full redraw changed Side Bar geometry while the sash was held: $(Get-RectangleSignature $hostHeld) -> $(Get-RectangleSignature (Get-WindowRectangle $surfaceHostWindow))."
+							}
+							$record.redrawNoiseFloor = Capture-WindowPair $window "$prefix-held-noise-floor"
+							$record.redrawScreenStability = Compare-SavedCaptures -BeforePath $record.dualCapture.screen -AfterPath $record.redrawNoiseFloor.screen -Prefix "$prefix-held-redraw-stability"
+						}
+						$dragSequenceResults.Add($record)
+						$record | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (
+							Join-Path $OutputDirectory "$prefix-metadata.json") -Encoding utf8
+						$lastHeldScreen = $stable
+					}
+				} else {
+					[void][SakuraFrameCoherenceNative]::SetCursorPos($targetScreenX, $originScreenY)
+					if (-not [SakuraFrameCoherenceNative]::SendMouseWithTimeout(
+						$window, 0x0200, $targetX, $origin.Y, $true, [uint32]$ReadyTimeoutMilliseconds)) {
+						throw 'WM_MOUSEMOVE failed for the Side Bar sash.'
+					}
+					if ($PresentedScreenOnly -and $SideBarCapturePhase -eq 'DuringDrag') {
+						$beforeFrameRect = Get-CapturableWindowRectangle $window
+						$beforeSurfaceRect = Get-WindowRectangle $surfaceWindow
+						$beforeScreen = Capture-PresentedScreen $window ("trial-{0:D3}-immediate" -f $trial)
+					}
 				}
 			}
 			finally {
@@ -934,7 +1323,22 @@ try {
 						$window, 0x0202, $targetX, $origin.Y, $false, [uint32]$ReadyTimeoutMilliseconds)
 				}
 			}
+			if ($SideBarCapturePhase -eq 'DragSequence') {
+				Wait-ForWindowQuiescence $window $ReadyTimeoutMilliseconds
+				$released = Capture-PresentedScreen $window ("trial-{0:D3}-released" -f $trial)
+				$dragReleaseResults.Add((Compare-SavedCaptures -BeforePath $lastHeldScreen -AfterPath $released -Prefix ("trial-{0:D3}-release-change" -f $trial)))
+				continue
+			}
 			if ($PresentedScreenOnly) {
+				if ($SideBarCapturePhase -eq 'AfterRelease') {
+					$beforeFrameRect = Get-CapturableWindowRectangle $window
+					$beforeSurfaceRect = Get-WindowRectangle $surfaceWindow
+					$beforeScreen = Capture-PresentedScreen $window ("trial-{0:D3}-immediate" -f $trial)
+					if ($ProbePendingSearchPaint -and $ActivityBarPage -eq 'Search') {
+						[void][SakuraFrameCoherenceNative]::UpdateWindow($searchList)
+						[void](Capture-PresentedScreen $window ("trial-{0:D3}-after-list-update" -f $trial))
+					}
+				}
 				Wait-ForWindowQuiescence $window $ReadyTimeoutMilliseconds
 				$afterScreen = Capture-PresentedScreen $window ("trial-{0:D3}-settled" -f $trial)
 				$presentedScreenResults.Add((Compare-SavedCaptures `
@@ -959,6 +1363,58 @@ try {
 				[void][SakuraFrameCoherenceNative]::SetCursorPos($parkingX, $parkingY)
 				continue
 			}
+		}
+		elseif ($Gesture -eq 'ActivityBarSwitch') {
+			$beforeLayout = [SakuraFrameCoherenceNative]::VisibleChildLayoutSignature($window)
+			$targetSlot = if (($trial % 2) -eq 1) { 2 } else { 1 }
+			$targetClass = if ($targetSlot -eq 2) { 'SakuraNativeSearchTool' } else { 'SakuraNativeExplorerTool' }
+			if (-not [SakuraFrameCoherenceNative]::SendActivityBarClickWithTimeout(
+				$activityBar, $targetSlot, [uint32]$ReadyTimeoutMilliseconds)) {
+				throw "Activity Bar click failed for slot $targetSlot."
+			}
+			[void](Wait-ForChildLayoutChange $window $beforeLayout $ReadyTimeoutMilliseconds)
+			if ([SakuraFrameCoherenceNative]::FindVisibleChildByClass($window, $targetClass) -eq [IntPtr]::Zero) {
+				throw "Activity Bar switch did not show $targetClass."
+			}
+		}
+		elseif ($Gesture -eq 'OutlineToggle') {
+			$beforeLayout = [SakuraFrameCoherenceNative]::VisibleChildLayoutSignature($window)
+			$beforeExplorerRect = Get-WindowRectangle $surfaceWindow
+			$hostRect = Get-WindowRectangle $viewContainerWindow
+			$dpi = [SakuraFrameCoherenceNative]::GetDpiForWindow($viewContainerWindow)
+			$headerHeight = [int][Math]::Round(24 * $dpi / 96.0)
+			$available = $hostRect.Bottom - $hostRect.Top
+			$outlineHeight = 0
+			if ($outlineExpanded) {
+				$minimum = [int][Math]::Round(96 * $dpi / 96.0)
+				$preferred = [int][Math]::Round(180 * $dpi / 96.0)
+				$outlineHeight = [Math]::Min(
+					[Math]::Max($minimum, [Math]::Min($preferred, [Math]::Max($minimum, [int]($available / 2)))),
+					[Math]::Max(0, $available - $headerHeight))
+			}
+			$point = [SakuraFrameCoherenceNative+POINT]::new()
+			$point.X = $hostRect.Left + 30
+			$point.Y = $hostRect.Bottom - $outlineHeight - [int]($headerHeight / 2)
+			if (-not [SakuraFrameCoherenceNative]::ScreenToClient($viewContainerWindow, [ref]$point)) {
+				throw 'ScreenToClient failed for the Outline header.'
+			}
+			if (-not [SakuraFrameCoherenceNative]::SendMouseWithTimeout(
+				$viewContainerWindow, 0x0201, $point.X, $point.Y, $true, [uint32]$ReadyTimeoutMilliseconds)) {
+				throw 'WM_LBUTTONDOWN failed for the Outline header.'
+			}
+			if (-not [SakuraFrameCoherenceNative]::SendMouseWithTimeout(
+				$viewContainerWindow, 0x0202, $point.X, $point.Y, $false, [uint32]$ReadyTimeoutMilliseconds)) {
+				throw 'WM_LBUTTONUP failed for the Outline header.'
+			}
+			[void](Wait-ForChildLayoutChange $window $beforeLayout $ReadyTimeoutMilliseconds)
+			$afterExplorerRect = Get-WindowRectangle $surfaceWindow
+			$beforeHeight = $beforeExplorerRect.Bottom - $beforeExplorerRect.Top
+			$afterHeight = $afterExplorerRect.Bottom - $afterExplorerRect.Top
+			if (($outlineExpanded -and $afterHeight -le $beforeHeight) -or
+				(-not $outlineExpanded -and $afterHeight -ge $beforeHeight)) {
+				throw "Outline toggle did not change Explorer height as expected ($beforeHeight -> $afterHeight)."
+			}
+			$outlineExpanded = -not $outlineExpanded
 		}
 		else {
 			$beforeLayout = [SakuraFrameCoherenceNative]::VisibleChildLayoutSignature($window)
@@ -1021,6 +1477,54 @@ try {
 			[Math]::Max(0.0, $measurement.percent - $noiseFloor.percent))
 		$measurement | Add-Member -NotePropertyName noiseFloorPercent -NotePropertyValue $noiseFloor.percent
 	}
+	if ($Gesture -eq 'SideBarResize' -and $SideBarCapturePhase -eq 'DragSequence') {
+		$fullFramePixelBudget = $dragSequenceResults[0].heldScreenMeasurement.totalPixels *
+			$AllowedExcessPercent / 100.0
+		$heldFailures = @($dragSequenceResults | Where-Object {
+			$_.heldScreenMeasurement.percent -gt $AllowedExcessPercent
+		})
+		$sideBarFailures = @($dragSequenceResults | Where-Object {
+			$_.heldSideBarMeasurement.differentPixels -gt $fullFramePixelBudget
+		})
+		$finalSteps = @($dragSequenceResults | Where-Object { $_.step -eq 4 })
+		$redrawFailures = @($finalSteps | Where-Object {
+			$_.redrawScreenStability.percent -gt $AllowedExcessPercent
+		})
+		$dualFailures = @($finalSteps | Where-Object {
+			[Math]::Max(0.0, $_.dualCapture.percent - $_.redrawNoiseFloor.percent) -gt $AllowedExcessPercent
+		})
+		$summary = [ordered]@{
+			executable = $resolvedExecutable
+			profile = $ProfileName
+			workspaceFolder = $resolvedWorkspaceFolder
+			gesture = $Gesture
+			activityBarPage = $ActivityBarPage
+			sideBarCapturePhase = $SideBarCapturePhase
+			trials = $Trials
+			stepsPerTrial = 4
+			channelTolerance = $ChannelTolerance
+			allowedExcessPercent = $AllowedExcessPercent
+			fullFramePixelBudget = $fullFramePixelBudget
+			heldSameGeometryMaximumPercent = (@($dragSequenceResults |
+				ForEach-Object { $_.heldScreenMeasurement.percent } | Sort-Object))[-1]
+			heldSideBarMaximumPercent = (@($dragSequenceResults |
+				ForEach-Object { $_.heldSideBarMeasurement.percent } | Sort-Object))[-1]
+			failedHeldStepCount = $heldFailures.Count
+			failedSideBarStepCount = $sideBarFailures.Count
+			failedRedrawTrialCount = $redrawFailures.Count
+			failedDualTrialCount = $dualFailures.Count
+			releaseChangeMaximumPercent = (@($dragReleaseResults |
+				ForEach-Object percent | Sort-Object))[-1]
+			heldSteps = @($dragSequenceResults)
+			releaseChanges = @($dragReleaseResults)
+		}
+		$summaryPath = Join-Path $OutputDirectory 'summary.json'
+		$summary | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $summaryPath -Encoding utf8
+		[pscustomobject]@{ summaryPath = $summaryPath; trials = $Trials; heldSteps = $dragSequenceResults.Count; failedHeldStepCount = $heldFailures.Count; failedSideBarStepCount = $sideBarFailures.Count; failedRedrawTrialCount = $redrawFailures.Count; failedDualTrialCount = $dualFailures.Count } | ConvertTo-Json -Compress
+		if ($FailOnExcess -and ($heldFailures.Count -ne 0 -or
+			$redrawFailures.Count -ne 0 -or $dualFailures.Count -ne 0)) { exit 2 }
+		return
+	}
 	if ($PresentedScreenOnly) {
 		# The surface crop localizes a failure; it must not silently tighten the
 		# global pixel budget merely because its denominator is smaller. Applying
@@ -1038,6 +1542,7 @@ try {
 			workspaceFolder = $resolvedWorkspaceFolder
 			gesture = $Gesture
 			activityBarPage = $ActivityBarPage
+			sideBarCapturePhase = if ($Gesture -eq 'SideBarResize') { $SideBarCapturePhase } else { $null }
 			trials = $Trials
 			channelTolerance = $ChannelTolerance
 			allowedExcessPercent = $AllowedExcessPercent
@@ -1077,7 +1582,9 @@ try {
 		workspaceFolder = $resolvedWorkspaceFolder
 		gesture = $Gesture
 		activityBarPage = $ActivityBarPage
+		sideBarCapturePhase = if ($Gesture -eq 'SideBarResize') { $SideBarCapturePhase } else { $null }
 		searchQuery = if ($ActivityBarPage -eq 'Search') { $SearchQuery } else { $null }
+		minimumSearchRows = if ($ActivityBarPage -eq 'Search') { $MinimumSearchRows } else { $null }
 		functionCode = $FunctionCode
 		trials = $Trials
 		channelTolerance = $ChannelTolerance
@@ -1112,7 +1619,31 @@ try {
 	if ($FailOnExcess -and ($failedMeasurements.Count -ne 0 -or $failedSurfaceMeasurements.Count -ne 0 `
 		-or $failedScreenStability.Count -ne 0 -or $failedSurfaceScreenStability.Count -ne 0)) { exit 2 }
 }
+catch {
+	$incomplete = [pscustomobject]@{
+		requestedTrials = $Trials
+		completedHeldSteps = $dragSequenceResults.Count
+		heldSteps = @($dragSequenceResults)
+		error = $_.Exception.Message
+		processExited = $process.HasExited
+		exitCode = if ($process.HasExited) { $process.ExitCode } else { $null }
+	}
+	try {
+		$incomplete | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (
+			Join-Path $OutputDirectory 'incomplete.json') -Encoding utf8
+	} catch { }
+	throw
+}
 finally {
+	if ($originalPhysicalCursor -ne $null -and $lastOwnedPhysicalCursor -ne $null) {
+		$currentPhysicalCursor = [SakuraFrameCoherenceNative+POINT]::new()
+		if ([SakuraFrameCoherenceNative]::GetPhysicalCursorPos([ref]$currentPhysicalCursor) -and
+			$currentPhysicalCursor.X -eq $lastOwnedPhysicalCursor.X -and
+			$currentPhysicalCursor.Y -eq $lastOwnedPhysicalCursor.Y) {
+			[void][SakuraFrameCoherenceNative]::SetPhysicalCursorPos(
+				$originalPhysicalCursor.X, $originalPhysicalCursor.Y)
+		}
+	}
 	if ($process -and -not $process.HasExited -and $process.MainWindowHandle -ne [IntPtr]::Zero) {
 		[void][SakuraFrameCoherenceNative]::SetWindowPos(
 			$process.MainWindowHandle, [IntPtr](-2), 0, 0, 0, 0, 0x0013)

@@ -52,6 +52,35 @@ constexpr int kQueryControlId = 1;
 constexpr int kReplaceControlId = 2;
 constexpr int kListControlId = 3;
 
+void ScrollListByWheel(HWND list, WPARAM wParam, int& wheelRemainder)
+{
+	const int count = static_cast<int>(::SendMessageW(list, LB_GETCOUNT, 0, 0));
+	if (count <= 0) return;
+	const int accumulatedDelta = wheelRemainder + GET_WHEEL_DELTA_WPARAM(wParam);
+	const int notches = accumulatedDelta / WHEEL_DELTA;
+	wheelRemainder = accumulatedDelta % WHEEL_DELTA;
+	if (notches == 0) return;
+	UINT linesPerNotch = 3;
+	if (::SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, &linesPerNotch, 0) == FALSE) {
+		linesPerNotch = 3;
+	}
+	long long rows = 0;
+	if (linesPerNotch == WHEEL_PAGESCROLL) {
+		RECT client{};
+		::GetClientRect(list, &client);
+		const int itemHeight = static_cast<int>(::SendMessageW(list, LB_GETITEMHEIGHT, 0, 0));
+		const int page = itemHeight > 0 ? std::max(1, static_cast<int>(client.bottom - client.top) / itemHeight) : 1;
+		rows = -static_cast<long long>(notches) * page;
+	} else {
+		rows = -static_cast<long long>(notches) * linesPerNotch;
+	}
+	if (rows == 0) return;
+	const int top = static_cast<int>(::SendMessageW(list, LB_GETTOPINDEX, 0, 0));
+	const int next = static_cast<int>(std::clamp(static_cast<long long>(top) + rows,
+		0LL, static_cast<long long>(count - 1)));
+	if (next != top) (void)::SendMessageW(list, LB_SETTOPINDEX, static_cast<WPARAM>(next), 0);
+}
+
 //! `.search-widgets-container` from VS Code 1.134.0.
 constexpr int kWidgetMarginLeftDip = 2;
 constexpr int kWidgetMarginRightDip = 12;
@@ -356,6 +385,7 @@ public:
 	//! Set while the tool itself writes a box, so the resulting `EN_CHANGE` is not
 	//! mistaken for the user typing.
 	bool updatingText{};
+	int wheelRemainder{};
 	std::wstring statusText;
 	MatchActivationCallback activateMatch;
 	FilesChangedCallback filesChanged;
@@ -1099,7 +1129,10 @@ bool CSearchWorkbenchTool::Create(HWND parent)
 	auto instance = reinterpret_cast<HINSTANCE>(::GetWindowLongPtrW(parent, GWLP_HINSTANCE));
 	if (instance == nullptr) instance = ::GetModuleHandleW(nullptr);
 	if (!EnsureClass(instance)) return false;
-	m_impl->window = ::CreateWindowExW(0, kWindowClass, L"", WS_CHILD | WS_CLIPCHILDREN,
+	// The native owner-draw result list and its overlay are one visible cohort.
+	// Without child composition, a sash commit can present the list background
+	// before the queued row paints, leaving a blank result area for one frame.
+	m_impl->window = ::CreateWindowExW(WS_EX_COMPOSITED, kWindowClass, L"", WS_CHILD | WS_CLIPCHILDREN,
 		0, 0, 0, 0, parent, nullptr, instance, this);
 	if (m_impl->window == nullptr) return false;
 	m_impl->query = ::CreateWindowExW(0, L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
@@ -1107,7 +1140,7 @@ bool CSearchWorkbenchTool::Create(HWND parent)
 	m_impl->replace = ::CreateWindowExW(0, L"EDIT", L"", WS_CHILD | ES_AUTOHSCROLL,
 		0, 0, 0, 0, m_impl->window, reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kReplaceControlId)), instance, nullptr);
 	m_impl->list = ::CreateWindowExW(0, L"LISTBOX", L"",
-		WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT
+		WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT
 			| LBS_OWNERDRAWFIXED | LBS_HASSTRINGS,
 		0, 0, 0, 0, m_impl->window, reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kListControlId)), instance, nullptr);
 	if (m_impl->query == nullptr || m_impl->replace == nullptr || m_impl->list == nullptr) {
@@ -1387,8 +1420,13 @@ LRESULT CALLBACK CSearchWorkbenchTool::ListSubclassProc(HWND window, UINT messag
 			}
 			break;
 		}
-		case WM_VSCROLL:
 		case WM_MOUSEWHEEL:
+			// The native bar is hidden under the overlay; LISTBOX then ignores the
+			// wheel even while its rows exceed the viewport.
+			ScrollListByWheel(window, wParam, impl->wheelRemainder);
+			impl->scrollbar.Update();
+			return 0;
+		case WM_VSCROLL:
 		case WM_KEYDOWN:
 		case WM_SIZE: {
 			const LRESULT result = ::DefSubclassProc(window, message, wParam, lParam);

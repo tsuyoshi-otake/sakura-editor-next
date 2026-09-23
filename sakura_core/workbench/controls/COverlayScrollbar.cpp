@@ -16,10 +16,8 @@ namespace workbench::controls {
 namespace {
 
 constexpr wchar_t kOverlayScrollbarClass[] = L"SakuraWorkbenchOverlayScrollbar";
-//! The reserved hit area, and the visible bar inside it. VS Code's overlay is
-//! wider than the thumb it paints so the pointer finds it without pixel precision.
+//! The reserved hit area and slider share the list scrollbar's 10-DIP width.
 constexpr int kOverlayWidthDip = 10;
-constexpr int kThumbWidthDip = 6;
 constexpr int kMinimumThumbDip = 20;
 
 } // namespace
@@ -117,8 +115,6 @@ COverlayScrollbar::Layout COverlayScrollbar::GetLayout() const noexcept
 	}
 	layout.maximumOffset = std::max(0, layout.contentExtent - layout.viewportExtent);
 	layout.offset = std::clamp(layout.offset, 0, layout.maximumOffset);
-	layout.pageStep = std::max(1, layout.viewportExtent);
-
 	RECT client{};
 	if (!::GetClientRect(m_window, &client)) return layout;
 	const int extent = IsHorizontal() ? (client.right - client.left) : (client.bottom - client.top);
@@ -151,12 +147,7 @@ void COverlayScrollbar::Paint(HDC dc) const
 		::DeleteObject(background);
 	}
 	if (!layout.scrollable) return;
-	RECT thumb = layout.thumb;
-	if (IsHorizontal()) {
-		thumb.top = std::max(thumb.top, thumb.bottom - ScaleDip(kThumbWidthDip));
-	} else {
-		thumb.left = std::max(thumb.left, thumb.right - ScaleDip(kThumbWidthDip));
-	}
+	const RECT thumb = layout.thumb;
 	const COLORREF thumbColor = m_dragging ? m_colors.thumbActive
 		: (m_hover ? m_colors.thumbHover : m_colors.thumb);
 	if (const HBRUSH thumbBrush = ::CreateSolidBrush(thumbColor);
@@ -169,8 +160,7 @@ void COverlayScrollbar::Paint(HDC dc) const
 void COverlayScrollbar::UpdateHover(POINT point)
 {
 	const auto layout = GetLayout();
-	const bool hover = layout.scrollable && point.x >= layout.track.left && point.x < layout.track.right
-		&& point.y >= layout.track.top && point.y < layout.track.bottom;
+	const bool hover = layout.scrollable && ::PtInRect(&layout.thumb, point) != FALSE;
 	if (m_hover != hover) {
 		m_hover = hover;
 		Invalidate();
@@ -343,8 +333,18 @@ LRESULT CALLBACK COverlayScrollbar::WindowProc(HWND window, UINT message, WPARAM
 			self->m_thumbGrabOffset = pointer - thumbStart;
 			::SetCapture(window);
 		} else {
-			self->ScrollToPosition(layout.offset
-				+ (pointer < thumbStart ? -layout.pageStep : layout.pageStep));
+			const int extent = self->IsHorizontal()
+				? layout.track.right - layout.track.left : layout.track.bottom - layout.track.top;
+			const int thumbExtent = thumbEnd - thumbStart;
+			const int origin = self->IsHorizontal() ? layout.track.left : layout.track.top;
+			const int travel = extent - thumbExtent;
+			const int sliderPosition = std::clamp(pointer - origin - thumbExtent / 2, 0, travel);
+			self->ScrollToPosition(travel > 0
+				? static_cast<int>((static_cast<long long>(layout.maximumOffset) * sliderPosition) / travel)
+				: 0);
+			self->m_dragging = true;
+			self->m_thumbGrabOffset = thumbExtent / 2;
+			::SetCapture(window);
 		}
 		self->UpdateHover(point);
 		self->Invalidate();

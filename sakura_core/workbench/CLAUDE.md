@@ -248,6 +248,15 @@ adding one-off HWND branches. Unsupported capabilities are explicit.
 - The overlay scrollbar uses TreeView scroll metadata for ordinary layout and
   paint work. Walking visible items is confined to an explicit thumb drag or
   track click, so refresh, resize, and hover do not add an O(N) tree traversal.
+- Issue #311 records two open native scrolling behaviors. The shared overlay
+  remains visible whenever its source scrolls, whereas VS Code's
+  `ScrollableElement` defaults to automatic visibility and fades after hover or
+  scroll ends. The native list/tree views also do not autoscroll when the middle
+  button is held and the pointer moves; wheel rotation, track clicks, and thumb
+  drags are separate working gestures. The overlay currently has no visibility
+  state or middle-button gesture owner. Any parity change belongs in the shared
+  control and must preserve its source callbacks and sibling clipping; the
+  current behavior is recorded rather than simulated by a visual-only fade.
 
 ## Phase 5 Native Part Projection Checkpoint (2026-07-31)
 

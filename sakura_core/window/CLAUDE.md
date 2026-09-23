@@ -745,6 +745,17 @@ workspace names its own folder as the workspace identity, and only a real
 prove a settings read works by changing the value and observing the window, never
 by reading the code path.
 
+## Custom title paint coherence (#311)
+
+The title is client-area paint owned by `CCustomFrameController`, including
+the menu, caption, icon, and buttons. `CEditWnd::OnPaint` fills exposed canvas
+only below the custom title. The frame paints the complete title into a
+compatible bitmap and presents it with one `BitBlt`; separate visible fills
+can leave the title background briefly bare after a Side Bar sash commit.
+Check immediate and settled physical screen captures of a populated sidebar
+resize. An active/inactive text-color change is a focus transition; a bare
+title background is a paint failure.
+
 ## The caption is VS Code's `window.title`, and the minimap belongs to the editor (2026-08-20)
 
 Two frame-level defects had the same root cause: a control was positioned or

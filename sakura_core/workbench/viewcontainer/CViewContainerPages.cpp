@@ -115,7 +115,9 @@ public:
 		// One page-owned wrapper is the only HWND the pool reparents. All native roots,
 		// including Explorer's nested Outline View, remain children of this wrapper, so
 		// a native reparent has no partially-moved multi-window failure state.
-		m_window = ::CreateWindowExW(WS_EX_TRANSPARENT, kPageWindowClass, L"",
+		// The wrapper paints no background and owns native child views. Delaying its
+		// paint behind sibling windows can leave pending TreeView rows unpresented.
+		m_window = ::CreateWindowExW(0, kPageWindowClass, L"",
 			WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, 0, 0, 0, 0,
 			parkingParent, nullptr, instance, nullptr);
 		if (m_window == nullptr) return false;

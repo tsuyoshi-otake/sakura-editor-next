@@ -79,6 +79,17 @@
   window never shows. `SenpViewContainer.LayoutReservesItsRepaintAndShowsAPageOnlyAtItsFinalGeometry`
   pins both halves: no frame is published during a switch, and the pane already
   has its final width when the container becomes visible.
+- The built-in Outline header is also an inside-container gesture. Its collapse
+  request updates the shared View state and final child bounds, then the host
+  publishes that frame synchronously. A deferred host repaint left the old
+  Outline rows beneath the collapsed header in all five collapse trials of a
+  ten-transition screen capture (2026-09-23); expansion did not exhibit it.
+  Keep the synchronous redraw in `RequestOutlineExpanded`, after the accepted
+  request and final layout, so model-driven projection through
+  `SetOutlineExpanded` still reserves rather than publishes its repaint. Run
+  `tools/rendering/measure-frame-coherence.ps1 -Gesture OutlineToggle
+  -ActivityBarPage Explorer -PresentedScreenOnly` for the direct screen gate;
+  the same-geometry screen/PrintWindow gate checks independent capture noise.
 - Current supported placement is within this owner cohort. A product-owned or
   foreign cohort page without a retained-View transfer contract returns
   `Unsupported`. The pure catalog can describe a wider destination; that alone
