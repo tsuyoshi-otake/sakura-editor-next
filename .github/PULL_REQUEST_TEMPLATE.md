@@ -1,6 +1,6 @@
 <!-- これはコメントです。ブラウザで表示されません。 -->
 <!-- Preview のシートで見た目のチェックができます。 -->
-<!-- 通常の PR は develop を base branch にしてください。main は develop または hotfix/* からのリリース PR 専用です。 -->
+<!-- PR は main を base branch にしてください。 -->
 
 # <!-- 必須 --> PR対象
 

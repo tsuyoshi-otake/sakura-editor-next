@@ -28,7 +28,7 @@
 
 | 種類 | 入手先 | 内容 |
 | --- | --- | --- |
-| 開発版 | [GitHub Actions](https://github.com/tsuyoshi-otake/sakura-editor-next/actions/workflows/build-sakura.yml?query=branch%3Adevelop) | `develop` の最新ビルド |
+| 開発版 | [GitHub Actions](https://github.com/tsuyoshi-otake/sakura-editor-next/actions/workflows/build-sakura.yml?query=branch%3Amain) | `main` の最新ビルド |
 | リリース版 | [Releases](https://github.com/tsuyoshi-otake/sakura-editor-next/releases) | 公開済みの配布パッケージ |
 
 ## 主な特徴
