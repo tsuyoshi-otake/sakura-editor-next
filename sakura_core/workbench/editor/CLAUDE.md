@@ -271,6 +271,14 @@ runs in paint. Preparation failure displays an explicit error and requires an
 explicit newer request to retry. Prepared means the worker result was committed;
 `ViewportSnapshot` separately reports ongoing native reflow and actual scroll.
 
+`RefreshStrings` reprojects host-authored notices and controls without reopening
+the SENP input or reading its provider. Ready content is prepared again only
+when its displayed section range includes metadata, because those generated
+Field/Value headings are localized; the preview's existing document replacement
+clears text selection in that case. Ready bodies with no metadata remain intact,
+preserving their selection. A new locale preparation key supersedes any older
+queued notice or render for the same model generation.
+
 The structured surface supports rendered-text mouse selection, Shift-click,
 Ctrl+A and exact-selection Copy. Its retained reading-order index preserves hard
 breaks and table cell separators across width reflow; a new model admission

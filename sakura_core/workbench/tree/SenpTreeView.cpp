@@ -163,12 +163,12 @@ public:
 		}
 		auto row = std::make_unique<Row>(); row->parent = node.item.id;
 		switch (node.state) {
-		case TreeChildrenState::Loading: row->kind = RowKind::Loading; row->label = L"Loading..."; break;
-		case TreeChildrenState::Partial: row->kind = RowKind::More; row->label = L"Load more..."; break;
-		case TreeChildrenState::Failed: row->kind = RowKind::Retry; row->label = L"Retry"; if (!node.message.empty()) row->label += L" - " + node.message; break;
-		case TreeChildrenState::Empty: row->kind = RowKind::Empty; row->label = L"No items"; break;
-		case TreeChildrenState::Unrequested: case TreeChildrenState::Stale: row->kind = RowKind::Unrequested; row->label = L"Not loaded"; break;
-		case TreeChildrenState::Stopped: row->kind = RowKind::Stopped; row->label = L"Provider unavailable"; break;
+		case TreeChildrenState::Loading: row->kind = RowKind::Loading; row->label = options.loadingText; break;
+		case TreeChildrenState::Partial: row->kind = RowKind::More; row->label = options.loadMoreText; break;
+		case TreeChildrenState::Failed: row->kind = RowKind::Retry; row->label = options.retryText; if (!node.message.empty()) row->label += L" - " + node.message; break;
+		case TreeChildrenState::Empty: row->kind = RowKind::Empty; row->label = options.noItemsText; break;
+		case TreeChildrenState::Unrequested: case TreeChildrenState::Stale: row->kind = RowKind::Unrequested; row->label = options.notLoadedText; break;
+		case TreeChildrenState::Stopped: row->kind = RowKind::Stopped; row->label = options.providerUnavailableText; break;
 		default: return;
 		}
 		if (node.state == TreeChildrenState::Empty && parent != TVI_ROOT) return;
@@ -487,6 +487,40 @@ std::unique_ptr<CSenpTreeView> CSenpTreeView::Create(SenpTreeViewOptions options
 HWND CSenpTreeView::Window() const noexcept { return m_impl->window; }
 HWND CSenpTreeView::TreeWindow() const noexcept { return m_impl->tree; }
 bool CSenpTreeView::IsUsable() const noexcept { return m_impl->Usable(); }
+void CSenpTreeView::SetLocalizedStatusText(std::wstring loading, std::wstring loadMore,
+	std::wstring retry, std::wstring noItems, std::wstring notLoaded,
+	std::wstring providerUnavailable) noexcept
+{
+	if (!m_impl->Usable()) return;
+	try {
+		auto& options = m_impl->options;
+		options.loadingText = std::move(loading); options.loadMoreText = std::move(loadMore);
+		options.retryText = std::move(retry); options.noItemsText = std::move(noItems);
+		options.notLoadedText = std::move(notLoaded); options.providerUnavailableText = std::move(providerUnavailable);
+		for (auto& [handle, row] : m_impl->rows) {
+			if (row->kind == Impl::RowKind::Item) continue;
+			const auto* parent = m_impl->options.provider->Model().Inspect(row->parent);
+			if (!parent) continue;
+			std::wstring label;
+			switch (row->kind) {
+			case Impl::RowKind::Loading: label = options.loadingText; break;
+			case Impl::RowKind::More: label = options.loadMoreText; break;
+			case Impl::RowKind::Retry:
+				label = options.retryText;
+				if (!parent->message.empty()) label += L" - " + parent->message;
+				break;
+			case Impl::RowKind::Empty: label = options.noItemsText; break;
+			case Impl::RowKind::Unrequested: label = options.notLoadedText; break;
+			case Impl::RowKind::Stopped: label = options.providerUnavailableText; break;
+			case Impl::RowKind::Item: continue;
+			}
+			row->label = std::move(label);
+			TVITEMW item{}; item.mask = TVIF_TEXT; item.hItem = handle; item.pszText = row->label.data();
+			if (!TreeView_SetItem(m_impl->tree, &item)) { m_impl->Fault(); return; }
+		}
+		::InvalidateRect(m_impl->tree, nullptr, FALSE);
+	} catch (...) { m_impl->Fault(); }
+}
 void CSenpTreeView::Layout(const RECT& bounds, unsigned int dpi) noexcept
 {
 	auto& state = *m_impl; if (!state.Usable()) return;

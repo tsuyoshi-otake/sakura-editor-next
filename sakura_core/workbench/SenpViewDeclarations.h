@@ -46,6 +46,7 @@ public:
 	//! Called after activation Poll, including when there is no active runtime.
 	[[nodiscard]] bool Pump(std::wstring_view extensionId,
 		SenpExtensionActivationState state) noexcept;
+	void RefreshStrings() noexcept;
 	[[nodiscard]] bool ApplyLayout(const layout::WorkbenchLayoutStateSnapshot& snapshot) noexcept;
 	[[nodiscard]] bool FocusView(std::string_view viewId) noexcept;
 	[[nodiscard]] bool Remove(std::wstring_view extensionId) noexcept;

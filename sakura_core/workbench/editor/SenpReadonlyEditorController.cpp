@@ -149,6 +149,21 @@ void SenpReadonlyEditorController::SetVisible(const bool visible) noexcept
 	if (!m_closed) m_switcher.SetVisible(visible);
 }
 
+bool SenpReadonlyEditorController::RefreshStrings() noexcept
+{
+	if (m_closed || m_callbackActive) return false;
+	m_callbackActive = true;
+	struct Reset final { bool& active; ~Reset() { active = false; } } reset{ m_callbackActive };
+	bool succeeded = true;
+	for (auto& [inputId, surface] : m_surfaces) {
+		if (surface.m_commands.refreshStrings) {
+			try { surface.m_commands.refreshStrings(); }
+			catch (...) { succeeded = false; }
+		}
+	}
+	return succeeded;
+}
+
 bool SenpReadonlyEditorController::IsReadonlyActive() const noexcept
 {
 	try {

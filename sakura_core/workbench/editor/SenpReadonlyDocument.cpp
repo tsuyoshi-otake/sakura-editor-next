@@ -43,7 +43,8 @@ markdown::TableRow Row(const std::vector<std::wstring>& values, bool header)
 }
 
 SenpPreparedDocument PrepareSenpReadonlyDocument(const senp::effect::PublishDocument& source,
-	std::optional<SenpStructuredSectionRange> range)
+	std::optional<SenpStructuredSectionRange> range, const std::wstring_view fieldLabel,
+	const std::wstring_view valueLabel)
 {
 	if (!senp::effect::ValidateDocument(source) || !Title(source.title)) return {};
 	const auto first = range ? range->First() : 0, count = range ? range->Count() : source.sections.size();
@@ -71,7 +72,7 @@ SenpPreparedDocument PrepareSenpReadonlyDocument(const senp::effect::PublishDocu
 			if (metadata->fields.empty()) continue;
 			markdown::Block table; table.kind = markdown::BlockKind::Table;
 			table.tableAlignments.resize(2, markdown::TableAlignment::Left);
-			table.tableRows.push_back(Row({ L"Field", L"Value" }, true));
+			table.tableRows.push_back(Row({ std::wstring(fieldLabel), std::wstring(valueLabel) }, true));
 			for (const auto& field : metadata->fields) table.tableRows.push_back(Row({ field.name, field.value }, false));
 			result.blocks.push_back(std::move(table));
 		} else if (const auto* data = std::get_if<senp::effect::TableSection>(&section)) {

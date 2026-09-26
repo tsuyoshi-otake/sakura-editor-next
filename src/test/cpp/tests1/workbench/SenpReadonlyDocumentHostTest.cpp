@@ -1,6 +1,8 @@
 /*! @file */
 /* Copyright (C) 2026, Sakura Editor Organization. SPDX-License-Identifier: Zlib */
 #include "pch.h"
+#include "CSelectLang.h"
+#include "sakura_rc.h"
 #include <gtest/gtest.h>
 #include "workbench/editor/SenpReadonlyDocumentHost.h"
 #include "markdown/CMarkdownPreviewWnd.h"
@@ -61,8 +63,23 @@ protected:
 	std::wstring copied;
 	bool probeDone{};
 	bool probeFindVisible{};
+	bool rejectSelectorAdd{};
 	unsigned int probeDpi{}, probeTheme{ 3 };
 	HBRUSH probeBrush{};
+	static LRESULT CALLBACK SelectorProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
+		UINT_PTR, DWORD_PTR context)
+	{
+		auto& self = *reinterpret_cast<SenpReadonlyDocumentHostTest*>(context);
+		if (message == CB_ADDSTRING && self.rejectSelectorAdd) return CB_ERR;
+		return ::DefSubclassProc(window, message, wParam, lParam);
+	}
+	HWND Selector() const {
+		for (auto child = host ? ::GetWindow(host->Window(), GW_CHILD) : nullptr; child; child = ::GetWindow(child, GW_HWNDNEXT)) {
+			wchar_t kind[64]{}; ::GetClassNameW(child, kind, _countof(kind));
+			if (::lstrcmpiW(kind, L"ComboBox") == 0) return child;
+		}
+		return nullptr;
+	}
 	void Publish(PublishDocument document = Mixed(), OperationContext request = Request()) {
 		ASSERT_EQ(SenpDocumentResult::Accepted, model.Begin(request).result);
 		ASSERT_EQ(SenpDocumentResult::Accepted, model.Apply(request, std::move(document)).result);
@@ -155,9 +172,9 @@ TEST_F(SenpReadonlyDocumentHostTest, MixedSectionsPreserveOrderAndRetainedPageSt
 	Publish(); Create();
 	ASSERT_EQ(SenpDocumentHostState::Ready, host->State());
 	const auto pages = host->Pages(); ASSERT_EQ(3u, pages.size());
-	EXPECT_EQ(SenpDocumentPageKind::Structured, pages[0].Kind()); EXPECT_EQ(L"Details 1", pages[0].Label());
-	EXPECT_EQ(SenpDocumentPageKind::TextResource, pages[1].Kind()); EXPECT_EQ(L"Text output", pages[1].Label());
-	EXPECT_EQ(SenpDocumentPageKind::Structured, pages[2].Kind()); EXPECT_EQ(L"Details 2", pages[2].Label());
+	EXPECT_EQ(SenpDocumentPageKind::Structured, pages[0].Kind()); EXPECT_EQ(std::wstring(LS(STR_WORKBENCH_DOCUMENT_DETAILS)) + L" 1", pages[0].Label());
+	EXPECT_EQ(SenpDocumentPageKind::TextResource, pages[1].Kind()); EXPECT_EQ(std::wstring(LS(STR_WORKBENCH_DOCUMENT_TEXT_OUTPUT)), pages[1].Label());
+	EXPECT_EQ(SenpDocumentPageKind::Structured, pages[2].Kind()); EXPECT_EQ(std::wstring(LS(STR_WORKBENCH_DOCUMENT_DETAILS)) + L" 2", pages[2].Label());
 	EXPECT_EQ((SenpStructuredSectionRange{ 0, 2 }), pages[0].Sections());
 	EXPECT_EQ((SenpStructuredSectionRange{ 2, 1 }), pages[1].Sections());
 	EXPECT_EQ((SenpStructuredSectionRange{ 3, 1 }), pages[2].Sections());
@@ -176,6 +193,72 @@ TEST_F(SenpReadonlyDocumentHostTest, MixedSectionsPreserveOrderAndRetainedPageSt
 	ASSERT_TRUE(host->SelectPage(1, false));
 	EXPECT_EQ(L"first\nline\n", host->SelectedText());
 	EXPECT_FALSE(host->TakeTextRead());
+}
+
+TEST_F(SenpReadonlyDocumentHostTest, LocaleRefreshRetainsSelectedPageAndProviderData)
+{
+	struct RestoreLanguage final {
+		LANGID thread{ ::GetThreadUILanguage() };
+		bool initialized{ !CSelectLang::gm_Langs.empty() };
+		std::wstring dll{ initialized && CSelectLang::gm_Selected < CSelectLang::gm_Langs.size()
+			? CSelectLang::GetLangInfo(CSelectLang::gm_Selected).GetDllName() : L"" };
+		~RestoreLanguage() {
+			CSelectLang::ChangeLang(dll);
+			if (!initialized) { CSelectLang::gm_Langs.clear(); CSelectLang::gm_Selected = 0; }
+			::SetThreadUILanguage(thread);
+		}
+	} restore;
+	CSelectLang::InitializeLanguageEnvironment();
+	Publish(); Create();
+	ASSERT_EQ(SenpDocumentHostState::Ready, host->State());
+	ASSERT_TRUE(host->SelectPage(1, false));
+	auto read = host->TakeTextRead(); ASSERT_TRUE(read);
+	const std::string bytes = "retained log body\n";
+	senp::TextResourceChunk chunk{ senp::TextResourceResult::Accepted, senp::TextResourceState::Complete,
+		senp::TextResourceEnd::Complete, L"log-42", authority.scope.revision, 0, bytes.size(), bytes };
+	ASSERT_EQ(SenpTextViewResult::Applied, host->ApplyText(*read, chunk));
+	host->SelectAll();
+	const auto selectedBody = host->SelectedText();
+	ASSERT_EQ(L"retained log body\n", selectedBody);
+	const auto content = model.Content(); ASSERT_TRUE(content);
+	const auto title = content->title;
+	const auto revision = content->revision;
+	const auto resolveCalls = authority.resolveCalls;
+	const auto currentCalls = authority.currentCalls;
+	const auto selector = Selector(); ASSERT_NE(nullptr, selector);
+	ASSERT_EQ(1, ::SendMessageW(selector, CB_GETCURSEL, 0, 0));
+
+	CSelectLang::ChangeLang(L"sakura_lang_en_US.dll");
+	host->RefreshStrings();
+	EXPECT_EQ(resolveCalls, authority.resolveCalls);
+	EXPECT_EQ(currentCalls, authority.currentCalls);
+	EXPECT_EQ(1u, host->ActivePage().value_or(99));
+	EXPECT_EQ(1, ::SendMessageW(selector, CB_GETCURSEL, 0, 0));
+	EXPECT_EQ(L"retained log body\n", host->SelectedText());
+	const auto pages = host->Pages();
+	ASSERT_EQ(3u, pages.size());
+	EXPECT_EQ(std::wstring(LS(STR_WORKBENCH_DOCUMENT_TEXT_OUTPUT)), pages[1].Label());
+	const auto refreshedContent = model.Content(); ASSERT_TRUE(refreshedContent);
+	EXPECT_EQ(title, refreshedContent->title);
+	EXPECT_EQ(revision, refreshedContent->revision);
+	EXPECT_FALSE(host->TakeTextRead());
+}
+
+TEST_F(SenpReadonlyDocumentHostTest, LocaleRefreshClosesWhenSelectorCannotInsertRelabeledPage)
+{
+	Publish(); Create();
+	ASSERT_EQ(SenpDocumentHostState::Ready, host->State());
+	const auto selector = Selector(); ASSERT_NE(nullptr, selector);
+	ASSERT_TRUE(::SetWindowSubclass(selector, SelectorProcedure, 1, reinterpret_cast<DWORD_PTR>(this)));
+	rejectSelectorAdd = true;
+
+	host->RefreshStrings();
+
+	EXPECT_EQ(SenpDocumentHostState::Closed, host->State());
+	EXPECT_EQ(nullptr, host->Window());
+	EXPECT_TRUE(host->Pages().empty());
+	EXPECT_FALSE(host->ActivePage());
+	EXPECT_EQ(SenpDocumentState::Ready, model.State());
 }
 
 TEST_F(SenpReadonlyDocumentHostTest, HiddenPagesDoNotReadAndAuthorityRevocationErasesTheCohort)
@@ -229,7 +312,7 @@ TEST_F(SenpReadonlyDocumentHostTest, DuplicateTextReferencesShareOneRetainedBody
 		MarkdownSection{ L"## Between" }, TextResourceSection{ L"log-42", 11, senp::effect::TextStatus::Complete } };
 	Publish(std::move(document)); Create();
 	const auto pages = host->Pages(); ASSERT_EQ(3u, pages.size());
-	EXPECT_EQ(L"Text output 1", pages[0].Label()); EXPECT_EQ(L"Details", pages[1].Label()); EXPECT_EQ(L"Text output 2", pages[2].Label());
+	EXPECT_EQ(std::wstring(LS(STR_WORKBENCH_DOCUMENT_TEXT_OUTPUT)) + L" 1", pages[0].Label()); EXPECT_EQ(std::wstring(LS(STR_WORKBENCH_DOCUMENT_DETAILS)), pages[1].Label()); EXPECT_EQ(std::wstring(LS(STR_WORKBENCH_DOCUMENT_TEXT_OUTPUT)) + L" 2", pages[2].Label());
 	const auto read = host->TakeTextRead(); ASSERT_TRUE(read);
 	const std::string bytes = "shared\n";
 	senp::TextResourceChunk chunk{ senp::TextResourceResult::Accepted, senp::TextResourceState::Complete,

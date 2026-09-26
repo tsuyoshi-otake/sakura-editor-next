@@ -69,6 +69,18 @@ enum class EScmTextKey : std::uint16_t {
 	GitCommitAmendAction,
 	GitCommitAndPushAction,
 	GitCommitAndSyncAction,
+	GitCommitToolbar,
+	GitRefreshToolbar,
+	GitPullToolbar,
+	GitPushToolbar,
+	GitShowOutput,
+	GitCopyCommitHash,
+	GitCopyCommitMessage,
+	GitFetchAllRemotes,
+	MoreActions,
+	GitCloneToolbar,
+	GitCheckoutToolbar,
+	GitFetchToolbar,
 };
 
 using ScmTextResolver = std::function<std::wstring(EScmTextKey, std::wstring_view)>;

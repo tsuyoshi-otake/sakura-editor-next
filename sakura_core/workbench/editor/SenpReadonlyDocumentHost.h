@@ -68,6 +68,7 @@ public:
 	[[nodiscard]] bool Create(HWND parent);
 	[[nodiscard]] SenpDocumentHostState Sync();
 	void SetStyle(const theme::ThemePalette& palette, const LOGFONT& font, unsigned int dpi);
+	void RefreshStrings() noexcept;
 	void Layout(const RECT& bounds, unsigned int dpi);
 	void Show(bool visible) noexcept;
 	void Close() noexcept;

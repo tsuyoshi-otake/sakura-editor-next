@@ -2796,6 +2796,52 @@ TEST(GitScmMenus, RecognizesOnlyTheBuiltInGitGroupIds)
 	EXPECT_FALSE(ParseGitResourceGroupId("WorkingTree").has_value());
 }
 
+TEST(GitScmMenus, ResolvesToolbarAndHistoryMenuTextWithoutChangingCommandIds)
+{
+	const ScmTextResolver text = [](EScmTextKey key, std::wstring_view) -> std::wstring {
+		switch (key) {
+		case EScmTextKey::GitCommitToolbar: return L"Localized Commit";
+		case EScmTextKey::GitRefreshToolbar: return L"Localized Refresh";
+		case EScmTextKey::GitPullToolbar: return L"Localized Pull";
+		case EScmTextKey::GitPushToolbar: return L"Localized Push";
+		case EScmTextKey::GitShowOutput: return L"Localized Output";
+		case EScmTextKey::GitCopyCommitHash: return L"Localized Hash";
+		case EScmTextKey::GitCopyCommitMessage: return L"Localized Message";
+		case EScmTextKey::GitFetchAllRemotes: return L"Localized Fetch";
+		case EScmTextKey::GitCloneToolbar: return L"Localized Clone";
+		case EScmTextKey::GitCheckoutToolbar: return L"Localized Checkout";
+		case EScmTextKey::GitFetchToolbar: return L"Localized Fetch One";
+		default: return {};
+		}
+	};
+	const auto titleActions = BuildGitScmTitleToolbarActions(text);
+	ASSERT_EQ(2u, titleActions.size());
+	EXPECT_EQ("git.commit", titleActions[0].commandId);
+	EXPECT_EQ(L"Localized Commit", titleActions[0].tooltip);
+	EXPECT_EQ(L"Localized Refresh", titleActions[1].tooltip);
+
+	const auto overflow = BuildGitScmTitleOverflowMenu(text);
+	ASSERT_EQ(7u, overflow.size());
+	EXPECT_EQ("git.pull", overflow[0].commandId);
+	EXPECT_EQ(L"Localized Pull", overflow[0].title);
+	EXPECT_EQ("git.push", overflow[1].commandId);
+	EXPECT_EQ(L"Localized Push", overflow[1].title);
+	EXPECT_EQ(L"Localized Clone", overflow[2].title);
+	EXPECT_EQ(L"Localized Checkout", overflow[3].title);
+	EXPECT_EQ(L"Localized Fetch One", overflow[4].title);
+	EXPECT_EQ(L"Localized Output", overflow.back().title);
+
+	const auto historyToolbar = BuildGitScmHistoryTitleToolbarActions(text);
+	EXPECT_EQ(L"Localized Fetch", historyToolbar[0].tooltip);
+	EXPECT_EQ(L"Localized Pull", historyToolbar[1].tooltip);
+	const auto historyMenu = BuildGitHistoryItemContextMenu(text);
+	ASSERT_EQ(2u, historyMenu.size());
+	EXPECT_EQ("git.copyCommitId", historyMenu[0].commandId);
+	EXPECT_EQ(L"Localized Hash", historyMenu[0].title);
+	EXPECT_EQ("git.copyCommitMessage", historyMenu[1].commandId);
+	EXPECT_EQ(L"Localized Message", historyMenu[1].title);
+}
+
 //! A throwaway git metadata directory. `ReadInProgressState` probes `MERGE_HEAD`
 //! and the rebase state directories with `GetFileAttributesW`, which no injected
 //! callable can intercept, so the in-progress cases need real files.

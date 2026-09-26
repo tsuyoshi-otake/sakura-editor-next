@@ -6,6 +6,7 @@
 #include "workbench/editor/EditorCommandIds.h"
 
 #include <CommCtrl.h>
+#include <stdexcept>
 
 namespace workbench::editor::tests {
 namespace {
@@ -19,6 +20,10 @@ protected:
 	int copied{}, selected{}, findShown{}, next{}, previous{}, closed{};
 	bool closeDuringShow{};
 	SenpReadonlyStatus reentrantCloseStatus{ SenpReadonlyStatus::Failed };
+	int refreshCalls{};
+	bool reenterDuringRefresh{}, throwDuringRefresh{};
+	SenpReadonlyStatus refreshCloseStatus{ SenpReadonlyStatus::Failed };
+	bool nestedRefreshResult{ true };
 
 	static LRESULT CALLBACK Hook(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
 		UINT_PTR, DWORD_PTR context)
@@ -70,6 +75,15 @@ protected:
 			.selectAll = [this] { ++selected; },
 			.showFind = [this] { ++findShown; },
 			.find = [this](bool backward) { backward ? ++previous : ++next; return true; },
+			.refreshStrings = [this] {
+				++refreshCalls;
+				if (reenterDuringRefresh) {
+					reenterDuringRefresh = false;
+					refreshCloseStatus = controller->Close(detailId);
+					nestedRefreshResult = controller->RefreshStrings();
+				}
+				if (throwDuringRefresh) { throwDuringRefresh = false; throw std::runtime_error("refresh failure"); }
+			},
 			.closed = [this] {
 				EXPECT_EQ(nullptr, ::GetPropW(detail, L"Sakura.Senp.EditorSurfaceOwner"));
 				++closed;
@@ -159,6 +173,26 @@ TEST_F(SenpReadonlyEditorControllerTest, ReentrantCoreCloseDefersSurfaceFinaliza
 	EXPECT_EQ(SenpSurfaceProjection::Applied, controller->Apply());
 	EXPECT_EQ(1, closed);
 	EXPECT_EQ(nullptr, ::GetPropW(detail, L"Sakura.Senp.EditorSurfaceOwner"));
+}
+TEST_F(SenpReadonlyEditorControllerTest, RefreshStringsBlocksReentrantMutationAndReportsCallbackFailure)
+{
+	const auto opened = OpenDetail();
+	ASSERT_EQ(SenpReadonlyStatus::Succeeded, opened.status);
+	reenterDuringRefresh = true;
+	EXPECT_TRUE(controller->RefreshStrings());
+	EXPECT_EQ(SenpReadonlyStatus::Conflict, refreshCloseStatus);
+	EXPECT_FALSE(nestedRefreshResult);
+	EXPECT_EQ(1, refreshCalls);
+	ASSERT_NE(nullptr, controller->Workbench().Find(opened.inputId));
+
+	throwDuringRefresh = true;
+	EXPECT_FALSE(controller->RefreshStrings());
+	EXPECT_EQ(2, refreshCalls);
+	ASSERT_NE(nullptr, controller->Workbench().Find(opened.inputId));
+
+	EXPECT_TRUE(controller->RefreshStrings());
+	EXPECT_EQ(3, refreshCalls);
+	EXPECT_EQ(0, closed);
 }
 
 } // namespace

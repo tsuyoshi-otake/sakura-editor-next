@@ -12,6 +12,8 @@
 #include <cstdlib>
 
 #include "window/CCustomFrameController.h"
+#include "CSelectLang.h"
+#include "sakura_rc.h"
 #include "window/CClientMenuBar.h"
 #include "workbench/WorkbenchLayout.h"
 #include "workbench/IconMetrics.h"
@@ -171,6 +173,24 @@ TEST(CustomFrame, PlacesAllCompactTitleControlsImmediatelyBeforeNativeCaptionBut
 	EXPECT_LE(layout.captionText.right, layout.layoutButton.left);
 }
 
+TEST(CustomFrame, TitleControlNamesUseTheirLocalizedResourceContracts)
+{
+	EXPECT_EQ(LS(STR_WORKBENCH_TITLEBAR_LAYOUT),
+		CustomFrameControlName(CustomFrameControl::Layout));
+	EXPECT_EQ(LS(STR_WORKBENCH_LAYOUT_TOGGLE_PRIMARY_SIDEBAR),
+		CustomFrameControlName(CustomFrameControl::PrimarySidebar));
+	EXPECT_EQ(LS(STR_WORKBENCH_LAYOUT_TOGGLE_PANEL),
+		CustomFrameControlName(CustomFrameControl::BottomPanel));
+	EXPECT_EQ(LS(STR_WORKBENCH_LAYOUT_TOGGLE_SECONDARY_SIDEBAR),
+		CustomFrameControlName(CustomFrameControl::SecondarySidebar));
+	EXPECT_EQ(LS(STR_WORKBENCH_COMMAND_UPDATE_INDICATOR),
+		CustomFrameControlName(CustomFrameControl::Update));
+	EXPECT_EQ(LS(STR_WORKBENCH_ACTIVITY_ACCOUNTS),
+		CustomFrameControlName(CustomFrameControl::Account));
+	EXPECT_EQ(LS(STR_WORKBENCH_ACTIVITY_MANAGE),
+		CustomFrameControlName(CustomFrameControl::Manage));
+}
+
 TEST(CustomFrame, ProjectsActivityBarGlobalActionsIntoTheTitleBarOnlyWhenEnabled)
 {
 	const auto vertical = CalculateCustomFrameLayout(1200, 96, 430);
@@ -197,14 +217,14 @@ TEST(CustomFrame, ProjectsActivityBarGlobalActionsIntoTheTitleBarOnlyWhenEnabled
 
 	const auto account = CustomFrameControlAccessibilityNode(
 		CustomFrameControl::Account, topOrBottom, true);
-	EXPECT_EQ(L"Account", account.name);
+	EXPECT_EQ(CustomFrameControlName(CustomFrameControl::Account), account.name);
 	EXPECT_EQ(L"Sakura.TitleBar.Account", account.automationId);
 	EXPECT_EQ(topOrBottom.accountButton.left, account.bounds.left);
 	EXPECT_TRUE(account.enabled);
 
 	const auto manage = CustomFrameControlAccessibilityNode(
 		CustomFrameControl::Manage, topOrBottom, false);
-	EXPECT_EQ(L"Manage", manage.name);
+	EXPECT_EQ(CustomFrameControlName(CustomFrameControl::Manage), manage.name);
 	EXPECT_EQ(L"Sakura.TitleBar.Manage", manage.automationId);
 	EXPECT_EQ(topOrBottom.manageButton.left, manage.bounds.left);
 	EXPECT_TRUE(manage.enabled);
@@ -455,7 +475,7 @@ TEST(CustomFrame, CompactTitleControlsExposeAccessibleButtonsWithInvokeMetadata)
 {
 	const auto layout = CalculateCustomFrameLayout(1200, 96, 300);
 	const auto secondary = CustomFrameControlAccessibilityNode(CustomFrameControl::SecondarySidebar, layout, true);
-	EXPECT_EQ(L"Toggle Secondary Side Bar", secondary.name);
+	EXPECT_EQ(CustomFrameControlName(CustomFrameControl::SecondarySidebar), secondary.name);
 	EXPECT_EQ(L"Sakura.TitleBar.SecondarySidebar", secondary.automationId);
 	EXPECT_EQ(UIA_ButtonControlTypeId, secondary.controlType);
 	EXPECT_EQ(layout.secondarySidebarButton.left, secondary.bounds.left);
@@ -465,7 +485,7 @@ TEST(CustomFrame, CompactTitleControlsExposeAccessibleButtonsWithInvokeMetadata)
 	EXPECT_TRUE(secondary.invoke);
 
 	const auto primary = CustomFrameControlAccessibilityNode(CustomFrameControl::PrimarySidebar, layout, false);
-	EXPECT_EQ(L"Toggle Primary Side Bar", primary.name);
+	EXPECT_EQ(CustomFrameControlName(CustomFrameControl::PrimarySidebar), primary.name);
 	EXPECT_EQ(L"Sakura.TitleBar.PrimarySidebar", primary.automationId);
 	EXPECT_TRUE(primary.enabled);
 	EXPECT_TRUE(primary.invoke);
@@ -609,7 +629,7 @@ TEST(CustomFrameUpdateControl, ExposesUpstreamsUpdateTitleAsItsAccessibleNameAnd
 {
 	const auto layout = CalculateCustomFrameLayout(1200, 96, 300, 56);
 	const auto node = CustomFrameControlAccessibilityNode(CustomFrameControl::Update, layout, true);
-	EXPECT_EQ(L"Update", node.name);
+	EXPECT_EQ(CustomFrameControlName(CustomFrameControl::Update), node.name);
 	EXPECT_EQ(L"Sakura.TitleBar.Update", node.automationId);
 	EXPECT_EQ(UIA_ButtonControlTypeId, node.controlType);
 	EXPECT_EQ(layout.updateButton.left, node.bounds.left);

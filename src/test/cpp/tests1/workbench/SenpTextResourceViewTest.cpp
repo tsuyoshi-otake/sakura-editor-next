@@ -1,10 +1,11 @@
-/*! @file */
+﻿/*! @file */
 /* Copyright (C) 2026, Sakura Editor Organization. SPDX-License-Identifier: Zlib */
 #include "pch.h"
 #include "workbench/editor/SenpTextResourceView.h"
 #include "workbench/editor/SenpReadonlyWorkbench.h"
 #include "workbench/editor/SenpEditorSurfaceSwitcher.h"
 #include "theme/CThemeService.h"
+#include "CSelectLang.h"
 #include <Richedit.h>
 #include <CommCtrl.h>
 #include <UIAutomation.h>
@@ -15,6 +16,20 @@ namespace {
 using namespace senp;
 using namespace workbench::editor;
 using Microsoft::WRL::ComPtr;
+struct ScopedLanguageSelection final {
+	const LANGID threadLanguage{ ::GetThreadUILanguage() };
+	const bool hadEnvironment{ !CSelectLang::gm_Langs.empty() };
+	const std::wstring previousDll{ hadEnvironment && CSelectLang::gm_Selected < CSelectLang::gm_Langs.size()
+		? CSelectLang::GetLangInfo(CSelectLang::gm_Selected).GetDllName() : L"" };
+	~ScopedLanguageSelection() {
+		if (hadEnvironment) CSelectLang::ChangeLang(previousDll);
+		else { CSelectLang::ChangeLang(L""); CSelectLang::gm_Langs.clear(); CSelectLang::gm_Selected = 0; }
+		::SetThreadUILanguage(threadLanguage);
+	}
+};
+std::wstring WindowText(HWND window) {
+	wchar_t text[512]{}; ::GetWindowTextW(window, text, _countof(text)); return text;
+}
 class SenpTextResourceViewTest : public ::testing::Test {
 protected:
 	HRESULT com{ ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED) };
@@ -60,6 +75,7 @@ protected:
 		CHARRANGE range{ before.selectionStart, before.selectionEnd }; ::SendMessageW(view->FocusWindow(), EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&range));
 		return text;
 	}
+	std::wstring LocalizedText(UINT id) const { return std::wstring(CSelectLang::LoadStringW(id)); }
 	void Select(LONG start, LONG end) { CHARRANGE range{ start, end }; ::SendMessageW(view->FocusWindow(), EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&range)); }
 	HWND Scrollbar(bool horizontal) {
 		for (auto child = ::GetWindow(view->Window(), GW_CHILD); child; child = ::GetWindow(child, GW_HWNDNEXT)) {
@@ -152,7 +168,73 @@ TEST_F(SenpTextResourceViewTest, NativeUnicodeSearchMovesForwardBackwardAndWraps
 	EXPECT_EQ(view->Find(L"\u65e5", true), SenpTextFindResult::Found); EXPECT_EQ(view->SelectedText(), L"\u65e5");
 	EXPECT_EQ(view->Find(L"alpha", false, true), SenpTextFindResult::NotFound);
 	EXPECT_EQ(view->Find(L""), SenpTextFindResult::Invalid); EXPECT_EQ(view->Find(std::wstring(1025, L'x')), SenpTextFindResult::Invalid);
+	const auto beforeRefresh = view->Viewport();
+	view->RefreshStrings();
+	const auto afterRefresh = view->Viewport();
+	EXPECT_EQ(afterRefresh.selectionStart, beforeRefresh.selectionStart);
+	EXPECT_EQ(afterRefresh.selectionEnd, beforeRefresh.selectionEnd);
+	EXPECT_EQ(afterRefresh.scrollY, beforeRefresh.scrollY);
+	EXPECT_EQ(afterRefresh.state, beforeRefresh.state);
 	EXPECT_EQ(Text(), L"Alpha \u65e5 beta ALPHA \u65e5 omega");
+}
+TEST_F(SenpTextResourceViewTest, LocaleRefreshReprojectsLogStatusAndCueWithoutChangingSelectionOrScroll)
+{
+	ScopedLanguageSelection restoreLanguage;
+	CSelectLang::InitializeLanguageEnvironment();
+	ASSERT_NO_FATAL_FAILURE(CreateNative());
+	std::string bytes;
+	for (int line = 0; line < 500; ++line) bytes += "line " + std::to_string(line) + " needle payload\n";
+	ASSERT_NO_FATAL_FAILURE(Append(bytes, true));
+	view->ShowFind(true);
+	ASSERT_EQ(SenpTextFindResult::Found, view->Find(L"needle"));
+	::SendMessageW(view->FocusWindow(), WM_VSCROLL, SB_BOTTOM, 0); Pump();
+	const auto query = ::FindWindowExW(view->Window(), nullptr, L"EDIT", nullptr);
+	ASSERT_NE(nullptr, query);
+	const auto getCue = [&] {
+		wchar_t cue[256]{};
+		::SendMessageW(query, EM_GETCUEBANNER, reinterpret_cast<WPARAM>(cue), _countof(cue));
+		return std::wstring(cue);
+	};
+	const auto getStatus = [&] {
+		for (auto child = ::GetWindow(view->Window(), GW_CHILD); child; child = ::GetWindow(child, GW_HWNDNEXT)) {
+			wchar_t kind[64]{}; ::GetClassNameW(child, kind, _countof(kind));
+			if (::lstrcmpiW(kind, L"STATIC") == 0) return WindowText(child);
+		}
+		return std::wstring{};
+	};
+	const auto expectViewportRetained = [&](const SenpTextViewport& before) {
+		const auto after = view->Viewport();
+		EXPECT_EQ(before.selectionStart, after.selectionStart);
+		EXPECT_EQ(before.selectionEnd, after.selectionEnd);
+		EXPECT_EQ(before.scrollY, after.scrollY);
+		EXPECT_EQ(before.characters, after.characters);
+	};
+	const auto before = view->Viewport();
+	ASSERT_GT(before.scrollY, 0);
+
+	CSelectLang::ChangeLang(L"sakura_lang_en_US.dll");
+	view->RefreshStrings();
+	EXPECT_EQ(L"Read-only log", WindowText(view->Window()));
+	EXPECT_EQ(L"Find in log (Enter / Shift+Enter)", getCue());
+	EXPECT_NE(std::wstring::npos, getStatus().find(L"Match in the loaded text."));
+	expectViewportRetained(before);
+
+	CSelectLang::ChangeLang(L"");
+	view->RefreshStrings();
+	EXPECT_EQ(L"読み取り専用ログ", WindowText(view->Window()));
+	EXPECT_EQ(L"ログ内を検索 (Enter / Shift+Enter)", getCue());
+	EXPECT_NE(std::wstring::npos, getStatus().find(L"読み込んだテキスト内で一致しました。"));
+	expectViewportRetained(before);
+
+	CSelectLang::ChangeLang(L"sakura_lang_zh_CN.dll");
+	view->RefreshStrings();
+	constexpr auto chineseTitle = L"只读日志";
+	constexpr auto chineseCue = L"在日志中查找 (Enter / Shift+Enter)";
+	constexpr auto chineseMatch = L"在已加载的文本中找到匹配项。";
+	EXPECT_EQ(chineseTitle, WindowText(view->Window()));
+	EXPECT_EQ(chineseCue, getCue());
+	EXPECT_NE(std::wstring::npos, getStatus().find(chineseMatch));
+	expectViewportRetained(before);
 }
 TEST_F(SenpTextResourceViewTest, NativeSharedScrollbarsTrackBothAxesAndDragBeyondSixteenBitPositions)
 {
@@ -250,11 +332,11 @@ TEST_F(SenpTextResourceViewTest, NativeDecoderFailureKeepsEarlierTextAndExpiryEr
 	EXPECT_EQ(view->Find(L"private"), SenpTextFindResult::Found);
 	wchar_t statusText[512]{};
 	::GetWindowTextW(::FindWindowExW(view->Window(), nullptr, L"STATIC", nullptr), statusText, 512);
-	EXPECT_NE(std::wstring_view(statusText).find(L"Partial log:"), std::wstring_view::npos);
-	EXPECT_NE(std::wstring_view(statusText).find(L"Match"), std::wstring_view::npos);
+	EXPECT_NE(std::wstring_view(statusText).find(LocalizedText(STR_WORKBENCH_LOG_PARTIAL_FAILED)), std::wstring_view::npos);
+	EXPECT_NE(std::wstring_view(statusText).find(LocalizedText(STR_WORKBENCH_LOG_FIND_MATCH)), std::wstring_view::npos);
 	copySucceeds = false; EXPECT_FALSE(view->Copy());
 	::GetWindowTextW(::FindWindowExW(view->Window(), nullptr, L"STATIC", nullptr), statusText, 512);
-	EXPECT_NE(std::wstring_view(statusText).find(L"Partial log:"), std::wstring_view::npos);
+	EXPECT_NE(std::wstring_view(statusText).find(LocalizedText(STR_WORKBENCH_LOG_PARTIAL_FAILED)), std::wstring_view::npos);
 	view->ShowFind(true); EXPECT_TRUE(view->Viewport().findVisible);
 	ASSERT_EQ(store.Expire(scope, handle), TextResourceResult::Expired);
 	EXPECT_EQ(view->Apply(scope, store.Read(scope, handle, 7, 99)), SenpTextViewResult::Applied);

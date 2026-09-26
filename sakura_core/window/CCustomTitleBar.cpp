@@ -7,6 +7,7 @@
 
 #include "StdAfx.h"
 #include "window/CCustomTitleBar.h"
+#include "CSelectLang.h"
 
 #include <algorithm>
 #include <array>
@@ -231,12 +232,12 @@ void PaintUpdateIndicator(
 	} else {
 		Fill(dc, pill, fill);
 	}
-	const wchar_t* const label = CustomFrameControlName(CustomFrameControl::Update);
+	const std::wstring label = CustomFrameControlName(CustomFrameControl::Update);
 	if (font != nullptr) (void)::SelectObject(dc, font);
 	::SetBkMode(dc, TRANSPARENT);
 	::SetTextColor(dc, palette.buttonForeground.ToColorRef());
 	RECT textRect = pill;
-	::DrawTextW(dc, label, static_cast<int>(::wcslen(label)), &textRect,
+	::DrawTextW(dc, label.c_str(), static_cast<int>(label.size()), &textRect,
 		DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
 	::RestoreDC(dc, saved);
 	if (pen != nullptr) ::DeleteObject(pen);
@@ -297,22 +298,21 @@ void CCustomTitleBar::ReleaseCodiconFont() const noexcept
 	m_codiconFontHeight = 0;
 }
 
-const wchar_t* CustomFrameControlName(CustomFrameControl control) noexcept
+std::wstring CustomFrameControlName(CustomFrameControl control)
 {
 	switch (control) {
-	case CustomFrameControl::Layout: return L"Layout";
-	case CustomFrameControl::PrimarySidebar: return L"Toggle Primary Side Bar";
-	case CustomFrameControl::BottomPanel: return L"Toggle Bottom Panel";
-	case CustomFrameControl::SecondarySidebar: return L"Toggle Secondary Side Bar";
-	// Upstream's `workbench.actions.updateIndicator` title, used verbatim as both the
-	// accessible name and the painted label. `MeasureCustomFrameUpdateButtonWidth`
-	// measures this exact string, so the two can never disagree.
-	case CustomFrameControl::Update: return L"Update";
-	case CustomFrameControl::Account: return L"Account";
-	case CustomFrameControl::Manage: return L"Manage";
-	case CustomFrameControl::None: return L"";
+	case CustomFrameControl::Layout: return LS(STR_WORKBENCH_TITLEBAR_LAYOUT);
+	case CustomFrameControl::PrimarySidebar: return LS(STR_WORKBENCH_LAYOUT_TOGGLE_PRIMARY_SIDEBAR);
+	case CustomFrameControl::BottomPanel: return LS(STR_WORKBENCH_LAYOUT_TOGGLE_PANEL);
+	case CustomFrameControl::SecondarySidebar: return LS(STR_WORKBENCH_LAYOUT_TOGGLE_SECONDARY_SIDEBAR);
+	// Upstream's `workbench.actions.updateIndicator` title comes from the selected
+	// locale resource. Painting, UI Automation, and button measurement share it.
+	case CustomFrameControl::Update: return LS(STR_WORKBENCH_COMMAND_UPDATE_INDICATOR);
+	case CustomFrameControl::Account: return LS(STR_WORKBENCH_ACTIVITY_ACCOUNTS);
+	case CustomFrameControl::Manage: return LS(STR_WORKBENCH_ACTIVITY_MANAGE);
+	case CustomFrameControl::None: return {};
 	}
-	return L"";
+	return {};
 }
 
 const wchar_t* CustomFrameControlAutomationId(CustomFrameControl control) noexcept

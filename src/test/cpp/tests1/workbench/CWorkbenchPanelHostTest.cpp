@@ -9,6 +9,8 @@
 #include <gtest/gtest.h>
 
 #include "workbench/CWorkbenchPanelHost.h"
+#include "CSelectLang.h"
+#include "sakura_rc.h"
 
 #include <memory>
 
@@ -265,6 +267,17 @@ TEST(WorkbenchPanelHost, AcceptsTheCompletePersistedLayoutExtentDomain)
 
 TEST(WorkbenchPanelHost, OwnsViewContainerTitleOverflowGeometry)
 {
+	struct RestoreLanguage final {
+		LANGID thread = ::GetThreadUILanguage();
+		bool initialized = !CSelectLang::gm_Langs.empty();
+		std::wstring dll = initialized ? CSelectLang::GetLangInfo(CSelectLang::gm_Selected).GetDllName() : L"";
+		~RestoreLanguage() {
+			CSelectLang::ChangeLang(dll);
+			if (!initialized) { CSelectLang::gm_Langs.clear(); CSelectLang::gm_Selected = 0; }
+			::SetThreadUILanguage(thread);
+		}
+	} restore;
+	CSelectLang::InitializeLanguageEnvironment();
 	workbench::CWorkbenchPanelHost host(workbench::WorkbenchEdge::Left, 280);
 	auto tool = std::make_unique<RecordingTool>();
 	ASSERT_TRUE(host.Create(::GetDesktopWindow(), ::GetModuleHandleW(nullptr), std::move(tool)));
@@ -276,7 +289,8 @@ TEST(WorkbenchPanelHost, OwnsViewContainerTitleOverflowGeometry)
 	host.Layout(RECT{ 0, 0, 360, 500 }, 96);
 	host.Show();
 
-	const HWND button = ::FindWindowExW(host.GetHwnd(), nullptr, L"BUTTON", L"More Actions...");
+	const HWND button = ::FindWindowExW(host.GetHwnd(), nullptr, L"BUTTON",
+		LS(STR_WORKBENCH_PANEL_MORE_ACTIONS));
 	ASSERT_NE(nullptr, button);
 	EXPECT_NE(0L, ::GetWindowLongPtrW(button, GWL_STYLE) & WS_VISIBLE);
 	EXPECT_NE(0L, ::GetWindowLongPtrW(button, GWL_STYLE) & WS_TABSTOP);
@@ -288,6 +302,20 @@ TEST(WorkbenchPanelHost, OwnsViewContainerTitleOverflowGeometry)
 	EXPECT_EQ(2, bounds.top);
 	EXPECT_EQ(356, bounds.right);
 	EXPECT_EQ(28, bounds.bottom);
+
+	for (const auto* dll : { L"", L"sakura_lang_en_US.dll", L"sakura_lang_zh_CN.dll" }) {
+		SCOPED_TRACE(dll);
+		CSelectLang::ChangeLang(dll);
+		host.RefreshLocalizedText();
+		wchar_t label[128]{};
+		ASSERT_GT(::GetWindowTextW(button, label, 128), 0);
+		EXPECT_EQ(std::wstring(LS(STR_WORKBENCH_PANEL_MORE_ACTIONS)), label);
+		RECT refreshed{};
+		ASSERT_TRUE(::GetWindowRect(button, &refreshed));
+		::MapWindowPoints(nullptr, host.GetHwnd(), reinterpret_cast<POINT*>(&refreshed), 2);
+		EXPECT_TRUE(::EqualRect(&bounds, &refreshed));
+		EXPECT_NE(0L, ::GetWindowLongPtrW(button, GWL_STYLE) & WS_VISIBLE);
+	}
 
 	host.SetHeaderMenu({});
 	EXPECT_EQ(0L, ::GetWindowLongPtrW(button, GWL_STYLE) & WS_VISIBLE);

@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /* Copyright (C) 2026, Sakura Editor Organization. SPDX-License-Identifier: Zlib */
 #include "pch.h"
 #include <gtest/gtest.h>
@@ -7,6 +7,7 @@
 #include "markdown/CMarkdownPreviewWnd.h"
 #include "markdown/MarkdownRemoteImageFetcher.h"
 #include "theme/CThemeService.h"
+#include "CSelectLang.h"
 #include <CommCtrl.h>
 #include <algorithm>
 #include <atomic>
@@ -16,6 +17,17 @@
 
 namespace workbench::editor::tests {
 namespace {
+struct ScopedLanguageSelection final {
+	const LANGID threadLanguage{ ::GetThreadUILanguage() };
+	const bool hadEnvironment{ !CSelectLang::gm_Langs.empty() };
+	const std::wstring previousDll{ hadEnvironment && CSelectLang::gm_Selected < CSelectLang::gm_Langs.size()
+		? CSelectLang::GetLangInfo(CSelectLang::gm_Selected).GetDllName() : L"" };
+	~ScopedLanguageSelection() {
+		if (hadEnvironment) CSelectLang::ChangeLang(previousDll);
+		else { CSelectLang::ChangeLang(L""); CSelectLang::gm_Langs.clear(); CSelectLang::gm_Selected = 0; }
+		::SetThreadUILanguage(threadLanguage);
+	}
+};
 using Model = editor::SenpReadonlyDocument;
 using Context = senp::effect::OperationContext;
 using Published = senp::effect::PublishDocument;
@@ -39,6 +51,7 @@ bool PumpUntil(const std::function<bool()>& predicate, DWORD timeout = 5000) {
 	}
 	return predicate();
 }
+std::wstring ResourceText(UINT id) { return std::wstring(CSelectLang::LoadStringW(id)); }
 std::wstring WindowText(HWND window) {
 	wchar_t text[1024]{}; ::GetWindowTextW(window, text, 1024); return text;
 }
@@ -349,13 +362,13 @@ TEST_F(SenpReadonlyDocument, NativeFailureAndExpiryReplacePreviousBodyWithExplic
 	ASSERT_EQ(SenpDocumentResult::Accepted, model.Begin(Request(2)).result);
 	EXPECT_TRUE(view->Sync());
 	ASSERT_TRUE(PumpUntil([&] { return view->State() == SenpDocumentViewState::Prepared; }));
-	EXPECT_EQ(L"Loading...", WindowText(view->FocusWindow()));
+	EXPECT_EQ(ResourceText(STR_WORKBENCH_DOCUMENT_LOADING), WindowText(view->FocusWindow()));
 	(void)model.Fail(Request(2)); EXPECT_TRUE(view->Sync());
 	ASSERT_TRUE(PumpUntil([&] { return view->State() == SenpDocumentViewState::Prepared; }));
-	EXPECT_NE(std::wstring::npos, WindowText(view->FocusWindow()).find(L"could not be loaded"));
+	EXPECT_EQ(ResourceText(STR_WORKBENCH_DOCUMENT_LOAD_FAILED), WindowText(view->FocusWindow()));
 	(void)model.Expire(); EXPECT_TRUE(view->Sync());
 	ASSERT_TRUE(PumpUntil([&] { return view->State() == SenpDocumentViewState::Prepared; }));
-	EXPECT_NE(std::wstring::npos, WindowText(view->FocusWindow()).find(L"no longer available"));
+	EXPECT_EQ(ResourceText(STR_WORKBENCH_DOCUMENT_EXPIRED), WindowText(view->FocusWindow()));
 	const auto preview = view->FocusWindow(); view->Close(); view->Close();
 	EXPECT_FALSE(::IsWindow(preview)); EXPECT_EQ(SenpDocumentViewState::Closed, view->State()); EXPECT_FALSE(view->Sync());
 }
@@ -368,7 +381,7 @@ TEST_F(SenpReadonlyDocument, NativePreparationLimitIsTerminalAndCanBeExplicitlyR
 	large.sections = { senp::effect::MarkdownSection{ text } };
 	Publish(std::move(large));
 	EXPECT_EQ(SenpDocumentViewState::Failed, view->State());
-	EXPECT_NE(std::wstring::npos, WindowText(view->FocusWindow()).find(L"could not be rendered"));
+	EXPECT_EQ(ResourceText(STR_WORKBENCH_DOCUMENT_RENDER_FAILED), WindowText(view->FocusWindow()));
 	EXPECT_FALSE(view->Sync());
 	Publish(Document(2), Request(2)); EXPECT_EQ(SenpDocumentViewState::Prepared, view->State());
 }
@@ -441,6 +454,57 @@ TEST_F(SenpReadonlyDocument, NativePreparedWorkerReportsFailuresAndDeferredCommi
 	ASSERT_TRUE(PumpUntil([&] { return delivered.size() == 2; })); EXPECT_TRUE(delivered[1].second);
 	preview.Layout({ 0, 0, 450, 200 }, 96); EXPECT_EQ(2u, delivered.size()); preview.Close();
 }
+TEST_F(SenpReadonlyDocument, LocaleRefreshReprojectsMetadataWithoutReloadingInput)
+{
+	ScopedLanguageSelection restoreLanguage;
+	CSelectLang::InitializeLanguageEnvironment();
+	ASSERT_NO_FATAL_FAILURE(CreateNative());
+	ASSERT_NO_FATAL_FAILURE(Publish());
+	ASSERT_TRUE(PumpUntil([&] { return !view->ViewportSnapshot().layoutPending; }));
+	ASSERT_EQ(SenpDocumentViewState::Prepared, view->State());
+	ASSERT_EQ(markdown::PreviewFindResult::Found, view->Find(L"unsaved"));
+	ASSERT_EQ(L"unsaved", view->SelectedText());
+	const auto generation = model.Generation();
+	const auto* const input = inputs.Find(opened.inputId);
+	ASSERT_NE(nullptr, input);
+
+	const auto expectHeader = [&](std::wstring_view field, std::wstring_view value) {
+		view->SelectAll();
+		const auto rendered = view->SelectedText();
+		EXPECT_NE(std::wstring::npos, rendered.find(field));
+		EXPECT_NE(std::wstring::npos, rendered.find(value));
+	};
+	CSelectLang::ChangeLang(L"sakura_lang_en_US.dll");
+	view->RefreshStrings();
+	ASSERT_EQ(SenpDocumentViewState::Preparing, view->State());
+	ASSERT_TRUE(PumpUntil([&] { return view->State() != SenpDocumentViewState::Preparing; }));
+	ASSERT_EQ(SenpDocumentViewState::Prepared, view->State());
+	ASSERT_TRUE(PumpUntil([&] { return !view->ViewportSnapshot().layoutPending; }));
+	EXPECT_TRUE(view->SelectedText().empty());
+	expectHeader(L"Field", L"Value");
+
+	CSelectLang::ChangeLang(L"");
+	view->RefreshStrings();
+	// The Chinese locale queue supersedes Japanese before its completion message
+	// can be dispatched; the committed headings must use the latest resource.
+	CSelectLang::ChangeLang(L"sakura_lang_zh_CN.dll");
+	view->RefreshStrings();
+	ASSERT_TRUE(PumpUntil([&] { return view->State() != SenpDocumentViewState::Preparing; }));
+	EXPECT_EQ(SenpDocumentViewState::Prepared, view->State());
+	ASSERT_TRUE(PumpUntil([&] { return !view->ViewportSnapshot().layoutPending; }));
+	EXPECT_EQ(generation, model.Generation());
+	EXPECT_EQ(input, inputs.Find(opened.inputId));
+	EXPECT_TRUE(view->SelectedText().empty());
+	expectHeader(L"字段", L"值");
+	const auto content = model.Content();
+	ASSERT_TRUE(content);
+	EXPECT_EQ(L"Issue 7: preserve unsaved work", content->title);
+	const auto* metadata = std::get_if<senp::effect::MetadataSection>(&content->sections.front());
+	ASSERT_NE(nullptr, metadata);
+	ASSERT_EQ(2u, metadata->fields.size());
+	EXPECT_EQ(L"Status", metadata->fields.front().name);
+	EXPECT_EQ(L"Open", metadata->fields.front().value);
+}
 TEST_F(SenpReadonlyDocument, NativeRenderedSelectionFindAndCopyPreserveTextAcrossReflow)
 {
 	ASSERT_NO_FATAL_FAILURE(CreateNative());
@@ -477,7 +541,7 @@ TEST_F(SenpReadonlyDocument, NativeRenderedSelectionFindAndCopyPreserveTextAcros
 	bool failureShown{};
 	for (auto child = ::GetWindow(view->Window(), GW_CHILD); child; child = ::GetWindow(child, GW_HWNDNEXT)) {
 		wchar_t text[128]{}; ::GetWindowTextW(child, text, 128);
-		if (::IsWindowVisible(child) && std::wstring_view(text) == L"The selection could not be copied. Try again.") failureShown = true;
+		if (::IsWindowVisible(child) && std::wstring_view(text) == ResourceText(STR_WORKBENCH_DOCUMENT_SELECTION_COPY_FAILED)) failureShown = true;
 	}
 	EXPECT_TRUE(failureShown);
 	view->ShowFind(true);

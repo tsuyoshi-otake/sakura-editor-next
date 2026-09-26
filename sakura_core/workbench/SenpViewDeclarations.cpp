@@ -155,6 +155,13 @@ bool CSenpViewDeclarations::Pump(std::wstring_view extensionId, SenpExtensionAct
 		&& found->second->m_native->IsUsable() && found->second->m_bodies->Pump(state);
 }
 
+void CSenpViewDeclarations::RefreshStrings() noexcept
+{
+	if (m_closed || m_entered) return;
+	DeclarationCall call(m_entered);
+	for (const auto& [id, entry] : m_entries) if (entry->m_bodies) entry->m_bodies->RefreshStrings();
+}
+
 bool CSenpViewDeclarations::ApplyLayout(const layout::WorkbenchLayoutStateSnapshot& snapshot) noexcept
 {
 	if (m_closed || m_entered) return false;

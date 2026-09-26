@@ -11,6 +11,7 @@
 #include "workbench/icons/CodiconGlyphTable.h"
 #include "workbench/icons/LabelRunPainter.h"
 #include "workbench/layout/WorkbenchLayoutStateTypes.h"
+#include "CSelectLang.h"
 
 #include <windowsx.h>
 
@@ -105,7 +106,7 @@ bool CWorkbenchPanelHost::Create(HWND parent, HINSTANCE instance, std::unique_pt
 	m_window = ::CreateWindowExW(0, kPanelHostClass, L"", WS_CHILD | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
 		0, 0, 0, 0, parent, nullptr, instance, this);
 	if (m_window == nullptr) return false;
-	m_headerMenuButton = ::CreateWindowExW(0, L"BUTTON", L"More Actions...",
+	m_headerMenuButton = ::CreateWindowExW(0, L"BUTTON", LS(STR_WORKBENCH_PANEL_MORE_ACTIONS),
 		WS_CHILD | WS_TABSTOP | BS_OWNERDRAW,
 		0, 0, 0, 0, m_window,
 		reinterpret_cast<HMENU>(static_cast<INT_PTR>(kHeaderMenuControlId)), instance, nullptr);
@@ -213,6 +214,13 @@ void CWorkbenchPanelHost::SetHeaderMenu(std::vector<HeaderMenuItem> items)
 	m_headerMenu = std::move(items);
 	LayoutHeaderMenuButton();
 	if (m_window != nullptr) ::InvalidateRect(m_window, nullptr, FALSE);
+}
+
+void CWorkbenchPanelHost::RefreshLocalizedText() noexcept
+{
+	if (m_headerMenuButton == nullptr || !::IsWindow(m_headerMenuButton)) return;
+	(void)::SetWindowTextW(m_headerMenuButton, LS(STR_WORKBENCH_PANEL_MORE_ACTIONS));
+	(void)::InvalidateRect(m_headerMenuButton, nullptr, FALSE);
 }
 
 void CWorkbenchPanelHost::ApplyExtentDip(int extentDip)

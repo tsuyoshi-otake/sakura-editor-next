@@ -401,10 +401,11 @@ composites with `CreateCompatibleDC`/`BitBlt`, and even
   one of four rotating static buffers, so a menu that held several `LS` pointers
   at once would paint the wrong labels; copying at the call site is what makes
   building a whole menu safe.
-- Still English by design: `CustomFrameControlName` in `CCustomTitleBar.cpp`.
-  Those strings are accessible names, and the `Update` one is also the painted
-  label that `MeasureCustomFrameUpdateButtonWidth` measures, so translating them
-  is a separate change that has to keep measurement and painting in agreement.
+- `CustomFrameControlName` resolves each title-bar control name from the
+  selected language resource. The `Update` string is both the painted label and
+  the accessible name, and `MeasureCustomFrameUpdateButtonWidth` measures that
+  same localized value. Keep those paths on this one resolver so locale changes
+  cannot leave stale button width or English accessibility names.
 
 ## Moving a ViewContainer between the side bars (2026-08-01)
 

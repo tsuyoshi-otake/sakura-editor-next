@@ -6,6 +6,7 @@
 #include "workbench/commands/CommandArgumentsJson.h"
 #include "workbench/tree/SenpTreeView.h"
 #include "theme/CThemeService.h"
+#include "CSelectLang.h"
 #include <CommCtrl.h>
 #include <algorithm>
 #include <map>
@@ -18,21 +19,27 @@ constexpr UINT kActivate = WM_APP + 0x5eb;
 constexpr UINT_PTR kRetrySubclass = 296;
 using Activation = SenpExtensionActivationState;
 int Dip(int value, unsigned int dpi) noexcept { return ::MulDiv(value, dpi, 96); }
-const wchar_t* StatusText(Activation state) noexcept
+std::wstring Localized(UINT id, const wchar_t* fallback)
+{
+	const auto text = CSelectLang::LoadStringW(id);
+	return text.empty() ? std::wstring(fallback) : std::wstring(text);
+}
+std::wstring StatusText(Activation state)
 {
 	switch (state) {
-	case Activation::Dormant: return L"View is not active.";
-	case Activation::Queued: return L"Waiting to activate extension...";
-	case Activation::Preparing: return L"Activating extension...";
-	case Activation::Active: return L"No data provider is registered for this view.";
-	case Activation::Failed: return L"The extension could not be activated.";
-	case Activation::Busy: return L"The extension could not start because runtime capacity is in use.";
-	case Activation::Unsupported: return L"This extension cannot provide this view in this environment.";
-	case Activation::Disabled: return L"This extension is disabled.";
-	case Activation::Stopped: return L"This extension has stopped.";
+	case Activation::Dormant: return Localized(STR_WORKBENCH_VIEW_NOT_ACTIVE, L"View is not active.");
+	case Activation::Queued: return Localized(STR_WORKBENCH_VIEW_WAITING_ACTIVATION, L"Waiting to activate extension...");
+	case Activation::Preparing: return Localized(STR_WORKBENCH_VIEW_ACTIVATING, L"Activating extension...");
+	case Activation::Active: return Localized(STR_WORKBENCH_VIEW_NO_PROVIDER, L"No data provider is registered for this view.");
+	case Activation::Failed: return Localized(STR_WORKBENCH_VIEW_ACTIVATION_FAILED, L"The extension could not be activated.");
+	case Activation::Busy: return Localized(STR_WORKBENCH_VIEW_ACTIVATION_BUSY, L"The extension could not start because runtime capacity is in use.");
+	case Activation::Unsupported: return Localized(STR_WORKBENCH_VIEW_UNSUPPORTED, L"This extension cannot provide this view in this environment.");
+	case Activation::Disabled: return Localized(STR_WORKBENCH_VIEW_DISABLED, L"This extension is disabled.");
+	case Activation::Stopped: return Localized(STR_WORKBENCH_VIEW_STOPPED, L"This extension has stopped.");
 	}
-	return L"This view is unavailable.";
+	return Localized(STR_WORKBENCH_VIEW_UNAVAILABLE, L"This view is unavailable.");
 }
+std::wstring RetryText() { return Localized(STR_WORKBENCH_TREE_RETRY, L"Retry"); }
 bool CanRetry(Activation state) noexcept { return state == Activation::Failed || state == Activation::Busy; }
 void Fill(HDC dc, const RECT& bounds, COLORREF color) noexcept
 {
@@ -46,6 +53,7 @@ struct CSenpDeclaredTreeViews::Impl final : std::enable_shared_from_this<Impl> {
 	struct Slot final {
 		std::weak_ptr<Impl> cohort;
 		std::wstring id, title;
+		std::wstring retryText;
 		viewcontainer::SenpViewBodyHost host;
 		HWND window{}, message{}, retry{};
 		std::unique_ptr<tree::CSenpTreeView> current, pending;
@@ -84,9 +92,10 @@ struct CSenpDeclaredTreeViews::Impl final : std::enable_shared_from_this<Impl> {
 			window = ::CreateWindowExW(WS_EX_CONTROLPARENT, kClass, title.c_str(),
 				WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, 0, 0, 0, 0, host.parent, nullptr, cls.hInstance, this);
 			if (!window) return false;
-			message = ::CreateWindowExW(0, L"STATIC", StatusText(Activation::Dormant),
+			message = ::CreateWindowExW(0, L"STATIC", StatusText(Activation::Dormant).c_str(),
 				WS_CHILD | WS_VISIBLE | SS_LEFT | SS_NOPREFIX, 0, 0, 0, 0, window, reinterpret_cast<HMENU>(1), cls.hInstance, nullptr);
-			retry = ::CreateWindowExW(0, L"BUTTON", L"Retry", WS_CHILD | WS_TABSTOP | BS_OWNERDRAW,
+			retryText = RetryText();
+			retry = ::CreateWindowExW(0, L"BUTTON", retryText.c_str(), WS_CHILD | WS_TABSTOP | BS_OWNERDRAW,
 				0, 0, 0, 0, window, reinterpret_cast<HMENU>(2), cls.hInstance, nullptr);
 			return message && retry
 				&& ::SetWindowSubclass(message, RetryProcedure, kRetrySubclass, reinterpret_cast<DWORD_PTR>(this))
@@ -108,13 +117,33 @@ struct CSenpDeclaredTreeViews::Impl final : std::enable_shared_from_this<Impl> {
 			RECT text{ 0, 0, width, 0 };
 			if (const HDC dc = ::GetDC(window)) {
 				const auto old = ::SelectObject(dc, font.Get());
-				::DrawTextW(dc, StatusText(rendered), -1, &text, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+				const auto status = StatusText(rendered);
+				::DrawTextW(dc, status.c_str(), -1, &text, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
 				::SelectObject(dc, old); ::ReleaseDC(window, dc);
 			}
 			const int height = std::max<long>(Dip(22, dpi), text.bottom);
 			if (!::SetWindowPos(message, nullptr, inset, inset, width, height, SWP_NOACTIVATE | SWP_NOZORDER)
 				|| !::SetWindowPos(retry, nullptr, inset, inset + height + Dip(8, dpi),
 					std::min(width, Dip(100, dpi)), Dip(26, dpi), SWP_NOACTIVATE | SWP_NOZORDER)) Fault();
+		}
+		void RefreshStrings() noexcept
+		{
+			if (!Usable()) return;
+			try {
+				retryText = RetryText();
+				::SetWindowTextW(message, StatusText(rendered).c_str());
+				::SetWindowTextW(retry, retryText.c_str());
+				if (current) {
+					current->SetLocalizedStatusText(
+						Localized(STR_WORKBENCH_TREE_LOADING, L"Loading..."),
+						Localized(STR_WORKBENCH_TREE_LOAD_MORE, L"Load more..."), retryText,
+						Localized(STR_WORKBENCH_TREE_NO_ITEMS, L"No items"),
+						Localized(STR_WORKBENCH_TREE_NOT_LOADED, L"Not loaded"),
+						Localized(STR_WORKBENCH_TREE_PROVIDER_UNAVAILABLE, L"Provider unavailable"));
+				}
+				LayoutChildren();
+				::RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
+			} catch (...) { Fault(); }
 		}
 		void Request(bool isRetry) noexcept
 		{
@@ -144,7 +173,7 @@ struct CSenpDeclaredTreeViews::Impl final : std::enable_shared_from_this<Impl> {
 			const bool changed = rendered != state || showingTree != treeVisible;
 			rendered = state; showingTree = treeVisible;
 			if (changed) {
-				::SetWindowTextW(message, StatusText(state));
+				::SetWindowTextW(message, StatusText(state).c_str());
 				LayoutChildren();
 				::ShowWindow(message, treeVisible ? SW_HIDE : SW_SHOWNA);
 				::ShowWindow(retry, !treeVisible && CanRetry(state) ? SW_SHOWNA : SW_HIDE);
@@ -162,7 +191,7 @@ struct CSenpDeclaredTreeViews::Impl final : std::enable_shared_from_this<Impl> {
 			const auto old = ::SelectObject(draw.hDC, font.Get());
 			::SetBkMode(draw.hDC, TRANSPARENT); ::SetTextColor(draw.hDC, (enabled ? palette.buttonForeground : palette.secondaryText).ToColorRef());
 			auto text = draw.rcItem; if (pressed) ::OffsetRect(&text, 0, 1);
-			::DrawTextW(draw.hDC, L"Retry", -1, &text, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+			::DrawTextW(draw.hDC, retryText.c_str(), -1, &text, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 			if (draw.itemState & ODS_FOCUS) { auto focus = draw.rcItem; ::InflateRect(&focus, -2, -2); ::DrawFocusRect(draw.hDC, &focus); }
 			::SelectObject(draw.hDC, old);
 		}
@@ -319,9 +348,16 @@ public:
 			if (slot == state->slots.end() || !slot->second->Usable() || !tree.Provider()
 				|| tree.Provider()->ViewId() != tree.ViewId() || m_bodies.contains(slot->first)) return false;
 			const std::weak_ptr<Impl::Slot> weak = slot->second;
-			auto body = tree::CSenpTreeView::Create({ { slot->second->window,
+			tree::SenpTreeViewOptions options{{ slot->second->window,
 				[weak] { if (const auto value = weak.lock(); value && value->host.interactionChanged) value->host.interactionChanged(); },
-				[weak] { if (const auto value = weak.lock()) value->Fault(); } }, tree.Provider(), slot->second->title });
+				[weak] { if (const auto value = weak.lock()) value->Fault(); } }, tree.Provider(), slot->second->title};
+			options.loadingText = Localized(STR_WORKBENCH_TREE_LOADING, L"Loading...");
+			options.loadMoreText = Localized(STR_WORKBENCH_TREE_LOAD_MORE, L"Load more...");
+			options.retryText = RetryText();
+			options.noItemsText = Localized(STR_WORKBENCH_TREE_NO_ITEMS, L"No items");
+			options.notLoadedText = Localized(STR_WORKBENCH_TREE_NOT_LOADED, L"Not loaded");
+			options.providerUnavailableText = Localized(STR_WORKBENCH_TREE_PROVIDER_UNAVAILABLE, L"Provider unavailable");
+			auto body = tree::CSenpTreeView::Create(std::move(options));
 			if (!body) return false;
 			m_bodies.emplace(slot->first, std::move(body));
 			m_providers.emplace(slot->first, tree.Provider());
@@ -411,6 +447,11 @@ std::unique_ptr<ISenpDeclaredTreePublication> CSenpDeclaredTreeViews::PrepareBin
 }
 bool CSenpDeclaredTreeViews::Pump(SenpExtensionActivationState state) noexcept
 { m_impl->activation = state; return m_impl->Project(); }
+void CSenpDeclaredTreeViews::RefreshStrings() noexcept
+{
+	if (!IsUsable()) return;
+	for (const auto& [id, slot] : m_impl->slots) slot->RefreshStrings();
+}
 bool CSenpDeclaredTreeViews::ExecuteTitleCommand(std::string_view viewId, std::string_view commandId) noexcept
 {
 	try {

@@ -236,6 +236,7 @@ private:
 	std::vector<std::string> m_registeredPageIds;
 	std::uint64_t m_contributionRevision{};
 	HWND m_owner = nullptr;
+	COLORREF m_pageBackground = RGB(0x25, 0x25, 0x26);
 	bool m_outlineExpanded = true;
 	bool m_created = false;
 	bool m_closed = false;

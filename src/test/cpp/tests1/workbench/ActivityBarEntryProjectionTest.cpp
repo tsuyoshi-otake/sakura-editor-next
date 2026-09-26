@@ -226,6 +226,8 @@ TEST(ActivityBarEntryProjection, ExtensionsUsesTheStableContainerIdAndCodicon)
 	EXPECT_EQ(L"extensions", entries.front().codicon);
 	EXPECT_EQ(STR_WORKBENCH_EXTENSIONS_TITLE,
 		ResolveBuiltinActivityTitleResourceId(layout::ids::viewContainer::Extensions));
+	EXPECT_EQ(STR_WORKBENCH_PROJECTS_TITLE,
+		ResolveBuiltinActivityTitleResourceId(layout::ids::viewContainer::Projects));
 }
 
 TEST(ActivityBarEntryProjection, ProjectsUsesOneStableContainerEntryAndProjectCodicon)

@@ -14,6 +14,32 @@
 
 namespace workbench::explorer {
 
+//! Localizable words for delete prompts. The model stays independent of native
+//! resources; production callers inject the active language's text.
+struct ExplorerDeleteConfirmationText final {
+	std::wstring trashFileTemplate{ L"Are you sure you want to delete '{0}'?" };
+	std::wstring trashFolderTemplate{ L"Are you sure you want to delete '{0}' and its contents?" };
+	std::wstring permanentFileTemplate{ L"Are you sure you want to permanently delete '{0}'?" };
+	std::wstring permanentFolderTemplate{ L"Are you sure you want to permanently delete '{0}' and its contents?" };
+	std::wstring trashDetail{ L"You can restore this file from the Recycle Bin." };
+	std::wstring permanentDetail{ L"This action is irreversible!" };
+	std::wstring trashButton{ L"&Move to Recycle Bin" };
+	std::wstring deleteButton{ L"&Delete" };
+	std::wstring trashFailedInstruction{ L"Failed to delete using the Recycle Bin. Do you want to permanently delete instead?" };
+};
+
+[[nodiscard]] inline std::wstring FormatExplorerDeleteInstruction(
+	std::wstring_view format, std::wstring_view resourceName)
+{
+	std::wstring result(format);
+	constexpr std::wstring_view placeholder = L"{0}";
+	const auto position = result.find(placeholder);
+	if (position != std::wstring::npos) {
+		result.replace(position, placeholder.size(), resourceName.data(), resourceName.size());
+	}
+	return result;
+}
+
 //! One modal delete-confirmation prompt.  The projection renders it with
 //! `TaskDialogIndirect` as one custom primary button plus Cancel; the model
 //! owns only the words and the severity so the dialog code never becomes a
@@ -47,24 +73,24 @@ struct ExplorerDeleteConfirmation final {
 //!   "Do not ask me again" checkbox.
 //!
 [[nodiscard]] inline ExplorerDeleteConfirmation BuildExplorerDeleteConfirmation(
-	std::wstring_view resourceName, bool isDirectory, bool useTrash)
+	std::wstring_view resourceName, bool isDirectory, bool useTrash,
+	const ExplorerDeleteConfirmationText& text = {})
 {
 	ExplorerDeleteConfirmation confirmation;
 
-	confirmation.instruction = useTrash
-		? L"Are you sure you want to delete '"
-		: L"Are you sure you want to permanently delete '";
-	confirmation.instruction += resourceName;
-	confirmation.instruction += isDirectory ? L"' and its contents?" : L"'?";
+	const std::wstring_view instructionTemplate = useTrash
+		? (isDirectory ? text.trashFolderTemplate : text.trashFileTemplate)
+		: (isDirectory ? text.permanentFolderTemplate : text.permanentFileTemplate);
+	confirmation.instruction = FormatExplorerDeleteInstruction(instructionTemplate, resourceName);
 
 	if (useTrash) {
-		confirmation.detail = L"You can restore this file from the Recycle Bin.";
-		confirmation.primaryButton = L"&Move to Recycle Bin";
+		confirmation.detail = text.trashDetail;
+		confirmation.primaryButton = text.trashButton;
 		confirmation.isWarning = false;
 	}
 	else {
-		confirmation.detail = L"This action is irreversible!";
-		confirmation.primaryButton = L"&Delete";
+		confirmation.detail = text.permanentDetail;
+		confirmation.primaryButton = text.deleteButton;
 		confirmation.isWarning = true;
 	}
 
@@ -76,13 +102,13 @@ struct ExplorerDeleteConfirmation final {
 //! delete itself failed (fileActions.ts `onBinError`): the user may retry as
 //! a permanent delete or cancel.
 //!
-[[nodiscard]] inline ExplorerDeleteConfirmation BuildExplorerTrashFailedConfirmation()
+[[nodiscard]] inline ExplorerDeleteConfirmation BuildExplorerTrashFailedConfirmation(
+	const ExplorerDeleteConfirmationText& text = {})
 {
 	ExplorerDeleteConfirmation confirmation;
-	confirmation.instruction =
-		L"Failed to delete using the Recycle Bin. Do you want to permanently delete instead?";
-	confirmation.detail = L"This action is irreversible!";
-	confirmation.primaryButton = L"&Delete";
+	confirmation.instruction = text.trashFailedInstruction;
+	confirmation.detail = text.permanentDetail;
+	confirmation.primaryButton = text.deleteButton;
 	confirmation.isWarning = true;
 	return confirmation;
 }

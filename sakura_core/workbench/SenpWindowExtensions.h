@@ -40,6 +40,7 @@ public:
 	[[nodiscard]] bool Poll(senp::CSenpRuntimeSession::Time now) noexcept;
 	[[nodiscard]] bool ApplyLayout(const layout::WorkbenchLayoutStateSnapshot& snapshot) noexcept;
 	[[nodiscard]] bool FocusView(std::string_view viewId) noexcept;
+	void RefreshStrings() noexcept;
 	[[nodiscard]] std::optional<SenpExtensionActivationState> State(std::wstring_view extensionId) const noexcept;
 	//! Admission and native callbacks end immediately. False retains failed
 	//! runtime cleanup; explicit repeated Close owns the next join attempt.

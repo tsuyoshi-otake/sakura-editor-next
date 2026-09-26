@@ -718,6 +718,26 @@ constexpr std::array kFallbackRenderableContainers{
 	return std::wstring(fallback);
 }
 
+[[nodiscard]] workbench::explorer::ExplorerDeleteConfirmationText LocalizedExplorerDeleteText()
+{
+	workbench::explorer::ExplorerDeleteConfirmationText text;
+	const auto assign = [](std::wstring& target, UINT resourceId) {
+		if (auto localized = LocalizedWorkbenchString(resourceId); !localized.empty()) {
+			target = std::move(localized);
+		}
+	};
+	assign(text.trashFileTemplate, STR_EXPLORER_DELETE_CONFIRM_TRASH_FILE);
+	assign(text.trashFolderTemplate, STR_EXPLORER_DELETE_CONFIRM_TRASH_FOLDER);
+	assign(text.permanentFileTemplate, STR_EXPLORER_DELETE_CONFIRM_PERMANENT_FILE);
+	assign(text.permanentFolderTemplate, STR_EXPLORER_DELETE_CONFIRM_PERMANENT_FOLDER);
+	assign(text.trashDetail, STR_EXPLORER_DELETE_CONFIRM_TRASH_DETAIL);
+	assign(text.permanentDetail, STR_EXPLORER_DELETE_CONFIRM_PERMANENT_DETAIL);
+	assign(text.trashButton, STR_EXPLORER_DELETE_CONFIRM_TRASH_BUTTON);
+	assign(text.deleteButton, STR_EXPLORER_DELETE_CONFIRM_DELETE_BUTTON);
+	assign(text.trashFailedInstruction, STR_EXPLORER_DELETE_CONFIRM_TRASH_FAILED);
+	return text;
+}
+
 [[nodiscard]] std::wstring ResolveLocalizedWorkbenchCommandTitle(
 	const workbench::commands::WorkbenchCommandDescriptor& descriptor)
 {
@@ -826,6 +846,30 @@ void ReplaceLocalizedArgument(std::wstring& text, std::wstring_view argument)
 		resourceId = STR_WORKBENCH_GIT_COMMIT_AND_PUSH_ACTION; break;
 	case workbench::scm::EScmTextKey::GitCommitAndSyncAction:
 		resourceId = STR_WORKBENCH_GIT_COMMIT_AND_SYNC_ACTION; break;
+	case workbench::scm::EScmTextKey::GitCommitToolbar:
+		resourceId = STR_WORKBENCH_GIT_COMMIT_TOOLBAR; break;
+	case workbench::scm::EScmTextKey::GitRefreshToolbar:
+		resourceId = STR_WORKBENCH_GIT_REFRESH_TOOLBAR; break;
+	case workbench::scm::EScmTextKey::GitPullToolbar:
+		resourceId = STR_WORKBENCH_GIT_PULL_TOOLBAR; break;
+	case workbench::scm::EScmTextKey::GitPushToolbar:
+		resourceId = STR_WORKBENCH_GIT_PUSH_TOOLBAR; break;
+	case workbench::scm::EScmTextKey::GitShowOutput:
+		resourceId = STR_WORKBENCH_GIT_SHOW_OUTPUT; break;
+	case workbench::scm::EScmTextKey::GitCopyCommitHash:
+		resourceId = STR_WORKBENCH_GIT_COPY_COMMIT_HASH; break;
+	case workbench::scm::EScmTextKey::GitCopyCommitMessage:
+		resourceId = STR_WORKBENCH_GIT_COPY_COMMIT_MESSAGE; break;
+	case workbench::scm::EScmTextKey::GitFetchAllRemotes:
+		resourceId = STR_WORKBENCH_GIT_FETCH_ALL_REMOTES; break;
+	case workbench::scm::EScmTextKey::MoreActions:
+		resourceId = STR_WORKBENCH_PANEL_MORE_ACTIONS; break;
+	case workbench::scm::EScmTextKey::GitCloneToolbar:
+		resourceId = STR_WORKBENCH_GIT_CLONE_TOOLBAR; break;
+	case workbench::scm::EScmTextKey::GitCheckoutToolbar:
+		resourceId = STR_WORKBENCH_GIT_CHECKOUT_TOOLBAR; break;
+	case workbench::scm::EScmTextKey::GitFetchToolbar:
+		resourceId = STR_WORKBENCH_GIT_FETCH_TOOLBAR; break;
 	}
 	std::wstring localized = LocalizedWorkbenchString(resourceId);
 	if (!localized.empty() && !argument.empty()) ReplaceLocalizedArgument(localized, argument);
@@ -4805,7 +4849,7 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteExplorerDe
 	const bool isDirectory = stat.value->type == platform::filesystem::EFileEntryType::Directory;
 
 	const auto confirmation = workbench::explorer::BuildExplorerDeleteConfirmation(
-		ExplorerResourceDisplayName(*path), isDirectory, useTrash);
+		ExplorerResourceDisplayName(*path), isDirectory, useTrash, LocalizedExplorerDeleteText());
 	if (!ShowExplorerDeleteConfirmationDialog(GetHwnd(), confirmation)) {
 		// Upstream resolves a declined confirmation without error; cancelling
 		// the dialog is the command completing, not the command failing.
@@ -4818,7 +4862,7 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteExplorerDe
 		// Upstream's Recycle Bin fallback: offer the permanent deletion the
 		// trash could not perform, behind its own warning confirmation.
 		if (!ShowExplorerDeleteConfirmationDialog(GetHwnd(),
-				workbench::explorer::BuildExplorerTrashFailedConfirmation())) {
+				workbench::explorer::BuildExplorerTrashFailedConfirmation(LocalizedExplorerDeleteText()))) {
 			return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
 		}
 		deletion = files->Delete(platform::uri::Uri::FromWindowsPath(*path),
@@ -8972,6 +9016,12 @@ void CEditWnd::RefreshSidebarTitles()
 
 void CEditWnd::RefreshLocalizedWorkbenchText()
 {
+	if (m_customFrame) m_customFrame->RefreshStrings();
+	if (m_leftWorkbenchPanel) m_leftWorkbenchPanel->RefreshLocalizedText();
+	if (m_rightWorkbenchPanel) m_rightWorkbenchPanel->RefreshLocalizedText();
+	if (m_bottomWorkbenchPanel) m_bottomWorkbenchPanel->RefreshLocalizedText();
+	if (m_senpWindowExtensions) m_senpWindowExtensions->RefreshStrings();
+	if (m_senpReadonlyEditors) (void)m_senpReadonlyEditors->RefreshStrings();
 	if (m_commandPaletteOverlay) m_commandPaletteOverlay->RefreshStrings();
 	if (m_viewContainerPages) m_viewContainerPages->RefreshStrings();
 	if (m_bottomPanelTool) m_bottomPanelTool->RefreshStrings();

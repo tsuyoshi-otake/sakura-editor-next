@@ -4,6 +4,7 @@
 #include "workbench/editor/SenpTextResourceView.h"
 #include "workbench/controls/COverlayScrollbar.h"
 #include "theme/CThemeService.h"
+#include "CSelectLang.h"
 #include <CommCtrl.h>
 #include <Richedit.h>
 #include <algorithm>
@@ -14,6 +15,11 @@
 namespace workbench::editor {
 namespace {
 using namespace senp;
+std::wstring Localized(UINT id, const wchar_t* fallback)
+{
+	const auto text = CSelectLang::LoadStringW(id);
+	return text.empty() ? std::wstring(fallback) : std::wstring(text);
+}
 bool ValidEnd(const TextResourceChunk& chunk) noexcept
 {
 	const bool failure = chunk.end == TextResourceEnd::Failed || chunk.end == TextResourceEnd::Cancelled || chunk.end == TextResourceEnd::LimitExceeded;
@@ -52,6 +58,7 @@ struct SenpTextResourceView::Impl {
 	std::size_t characters{}, knownLength{};
 	TextResourceState state{ TextResourceState::Loading };
 	TextResourceEnd end{ TextResourceEnd::None };
+	UINT feedbackResource{};
 	struct SourceEnd final { TextResourceState state; TextResourceEnd end; std::size_t length; };
 	std::optional<SourceEnd> sourceEnd;
 	theme::ThemePalette palette{ theme::CThemeService::PaletteFor(theme::ThemeMode::Dark) };
@@ -84,22 +91,24 @@ struct SenpTextResourceView::Impl {
 		::SendMessageW(text, EM_SETSCROLLPOS, 0, reinterpret_cast<LPARAM>(&point));
 		UpdateScrollbars();
 	}
-	void Status(const wchar_t* message = nullptr) noexcept {
+	void Status(UINT message = 0) noexcept {
 		if (!status) return;
-		const wchar_t* sourceStatus{};
+		if (message) feedbackResource = message;
+		std::wstring sourceStatus;
 		switch (state) {
-		case TextResourceState::Loading: sourceStatus = L"Loading log..."; break;
-		case TextResourceState::Complete: sourceStatus = characters ? L"Read-only log" : L"The log is empty."; break;
-		case TextResourceState::Partial: sourceStatus = end == TextResourceEnd::LimitExceeded ? L"Partial log: the size limit was reached."
-			: end == TextResourceEnd::Cancelled ? L"Partial log: loading was cancelled." : L"Partial log: loading failed."; break;
-		case TextResourceState::Failed: sourceStatus = L"The log could not be loaded."; break;
-		case TextResourceState::Expired: sourceStatus = L"This log is no longer available."; break;
-		default: sourceStatus = L"The log is closed."; break;
+		case TextResourceState::Loading: sourceStatus = Localized(STR_WORKBENCH_LOG_LOADING, L"Loading log..."); break;
+		case TextResourceState::Complete: sourceStatus = characters ? Localized(STR_WORKBENCH_LOG_READ_ONLY, L"Read-only log") : Localized(STR_WORKBENCH_LOG_EMPTY, L"The log is empty."); break;
+		case TextResourceState::Partial: sourceStatus = end == TextResourceEnd::LimitExceeded ? Localized(STR_WORKBENCH_LOG_PARTIAL_LIMIT, L"Partial log: the size limit was reached.")
+			: end == TextResourceEnd::Cancelled ? Localized(STR_WORKBENCH_LOG_PARTIAL_CANCELLED, L"Partial log: loading was cancelled.") : Localized(STR_WORKBENCH_LOG_PARTIAL_FAILED, L"Partial log: loading failed."); break;
+		case TextResourceState::Failed: sourceStatus = Localized(STR_WORKBENCH_LOG_LOAD_FAILED, L"The log could not be loaded."); break;
+		case TextResourceState::Expired: sourceStatus = Localized(STR_WORKBENCH_LOG_EXPIRED, L"This log is no longer available."); break;
+		default: sourceStatus = Localized(STR_WORKBENCH_LOG_CLOSED, L"The log is closed."); break;
 		}
-		// Search/copy feedback must never hide loading or partial-source warnings.
-		wchar_t combined[512]{};
-		if (message && ::swprintf_s(combined, L"%ls  %ls", sourceStatus, message) > 0) sourceStatus = combined;
-		::SetWindowTextW(status, sourceStatus);
+		if (feedbackResource) {
+			const auto feedback = Localized(feedbackResource, L"The selection could not be copied. Try again.");
+			if (!feedback.empty()) sourceStatus += L"  " + feedback;
+		}
+		::SetWindowTextW(status, sourceStatus.c_str());
 	}
 	void LayoutChildren() noexcept {
 		if (!root || !text) return;
@@ -124,11 +133,11 @@ struct SenpTextResourceView::Impl {
 		if (closed || state != TextResourceState::Loading) return;
 		state = characters ? TextResourceState::Partial : TextResourceState::Failed;
 		end = reason == TextResourceEnd::Cancelled || reason == TextResourceEnd::LimitExceeded ? reason : TextResourceEnd::Failed;
-		decoder.Close(); Status();
+		decoder.Close(); feedbackResource = 0; Status();
 	}
 	void Expire() noexcept {
 		if (closed) return;
-		decoder.Close(); state = TextResourceState::Expired; end = TextResourceEnd::Revoked; characters = 0;
+		decoder.Close(); state = TextResourceState::Expired; end = TextResourceEnd::Revoked; characters = 0; feedbackResource = 0;
 		if (text) ::SetWindowTextW(text, L"");
 		if (query) ::SetWindowTextW(query, L"");
 		Status(); UpdateScrollbars();
@@ -157,7 +166,7 @@ struct SenpTextResourceView::Impl {
 		if (!text || closed || state == TextResourceState::Expired) return false;
 		const auto value = SelectedText(true);
 		const bool success = copy ? copy(value) : CopyUnicode(text, value);
-		if (!success) Status(L"The selection could not be copied. Try again.");
+		if (!success) Status(STR_WORKBENCH_DOCUMENT_SELECTION_COPY_FAILED);
 		return success;
 	}
 	void SelectAll() noexcept { if (text) { CHARRANGE range{ 0, -1 }; ::SendMessageW(text, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&range)); } }
@@ -181,13 +190,13 @@ struct SenpTextResourceView::Impl {
 		if (::SendMessageW(text, EM_FINDTEXTEXW, flags, reinterpret_cast<LPARAM>(&request)) < 0) {
 			request.chrg = previous ? CHARRANGE{ static_cast<LONG>(characters), selected.cpMin } : CHARRANGE{ 0, selected.cpMax };
 			if (::SendMessageW(text, EM_FINDTEXTEXW, flags, reinterpret_cast<LPARAM>(&request)) < 0) {
-				Status(L"No results in the loaded text."); return SenpTextFindResult::NotFound;
+				Status(STR_WORKBENCH_LOG_FIND_NO_RESULTS); return SenpTextFindResult::NotFound;
 			}
 			wrapped = true;
 		}
 		::SendMessageW(text, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&request.chrgText)); ::SendMessageW(text, EM_SCROLLCARET, 0, 0);
 		UpdateScrollbars();
-		Status(wrapped ? L"Search wrapped in the loaded text." : L"Match in the loaded text.");
+		Status(wrapped ? STR_WORKBENCH_LOG_FIND_WRAPPED : STR_WORKBENCH_LOG_FIND_MATCH);
 		return wrapped ? SenpTextFindResult::Wrapped : SenpTextFindResult::Found;
 	}
 	void FindCurrent(bool previous) {
@@ -270,7 +279,7 @@ struct SenpTextResourceView::Impl {
 		const bool terminal = chunk.state != TextResourceState::Loading;
 		const bool final = terminal && chunk.offset + chunk.bytes.size() == chunk.length;
 		auto decoded = decoder.Decode(chunk.offset, chunk.bytes, final);
-		if (decoded.result != TextDecodeResult::Accepted) { Fail(TextResourceEnd::Failed); Status(L"The log contains invalid or incomplete UTF-8."); return SenpTextViewResult::DecodeFailed; }
+		if (decoded.result != TextDecodeResult::Accepted) { Fail(TextResourceEnd::Failed); Status(STR_WORKBENCH_LOG_DECODE_FAILED); return SenpTextViewResult::DecodeFailed; }
 		if (terminal) sourceEnd = SourceEnd{ chunk.state, chunk.end, chunk.length };
 		knownLength = chunk.length;
 		if (!decoded.text.empty()) {
@@ -297,7 +306,7 @@ struct SenpTextResourceView::Impl {
 			characters += decoded.text.size();
 			appending = false; UpdateScrollbars();
 		}
-		state = final ? chunk.state : TextResourceState::Loading; end = final ? chunk.end : TextResourceEnd::None; Status();
+		state = final ? chunk.state : TextResourceState::Loading; end = final ? chunk.end : TextResourceEnd::None; feedbackResource = 0; Status();
 		return SenpTextViewResult::Applied;
 	}
 };
@@ -311,7 +320,8 @@ bool SenpTextResourceView::Create(HWND parent)
 	if (self.closed || self.root || !::IsWindow(parent)) return false;
 	self.richEdit = ::LoadLibraryExW(L"Msftedit.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
 	if (!self.richEdit) { self.Close(); return false; }
-	self.root = ::CreateWindowExW(WS_EX_CONTROLPARENT, L"STATIC", L"Read-only log", WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
+	const auto title = Localized(STR_WORKBENCH_LOG_READ_ONLY, L"Read-only log");
+	self.root = ::CreateWindowExW(WS_EX_CONTROLPARENT, L"STATIC", title.c_str(), WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
 		0, 0, 1, 1, parent, nullptr, ::GetModuleHandleW(nullptr), nullptr);
 	if (!self.root || !::SetWindowSubclass(self.root, Impl::RootProcedure, 1, reinterpret_cast<DWORD_PTR>(&self))) { self.Close(); return false; }
 	// The shared scrollbar windows overlap this sibling's client area.
@@ -328,7 +338,8 @@ bool SenpTextResourceView::Create(HWND parent)
 	::SendMessageW(self.text, EM_SETEVENTMASK, 0, ENM_REQUESTRESIZE);
 	::SendMessageW(self.text, EM_SHOWSCROLLBAR, SB_VERT, FALSE); ::SendMessageW(self.text, EM_SHOWSCROLLBAR, SB_HORZ, FALSE);
 	::SendMessageW(self.query, EM_LIMITTEXT, 1024, 0);
-	::SendMessageW(self.query, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(L"Find in log (Enter / Shift+Enter)"));
+	const auto placeholder = Localized(STR_WORKBENCH_LOG_FIND_PLACEHOLDER, L"Find in log (Enter / Shift+Enter)");
+	::SendMessageW(self.query, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(placeholder.c_str()));
 	if (!self.verticalScrollbar.Create(self.root, self.text, [&self](int position) { self.ScrollTo(position, false); }, controls::OverlayScrollbarSource::ExplicitModel)
 		|| !self.horizontalScrollbar.Create(self.root, self.text, [&self](int position) { self.ScrollTo(position, true); },
 			controls::OverlayScrollbarSource::ExplicitModel, controls::OverlayScrollbarOrientation::Horizontal)) { self.Close(); return false; }
@@ -366,6 +377,17 @@ void SenpTextResourceView::SetStyle(const theme::ThemePalette& palette, unsigned
 		::SendMessageW(self.text, EM_SETMODIFY, FALSE, 0);
 		::SendMessageW(self.text, EM_REQUESTRESIZE, 0, 0); self.LayoutChildren();
 	}
+}
+void SenpTextResourceView::RefreshStrings() noexcept
+{
+	if (!m_impl || m_impl->closed) return;
+	try {
+		const auto title = Localized(STR_WORKBENCH_LOG_READ_ONLY, L"Read-only log");
+		const auto placeholder = Localized(STR_WORKBENCH_LOG_FIND_PLACEHOLDER, L"Find in log (Enter / Shift+Enter)");
+		if (m_impl->root) ::SetWindowTextW(m_impl->root, title.c_str());
+		if (m_impl->query) ::SendMessageW(m_impl->query, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(placeholder.c_str()));
+		m_impl->Status();
+	} catch (...) { m_impl->Close(); }
 }
 void SenpTextResourceView::ShowFind(bool visible) { m_impl->ShowFind(visible); }
 SenpTextFindResult SenpTextResourceView::Find(std::wstring_view query, bool previous, bool matchCase)

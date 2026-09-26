@@ -115,5 +115,70 @@ TEST_F(ContributedPageTransaction, PublishesBatchIntoCreatedRegistry)
 	pages.Close();
 }
 
+TEST_F(ContributedPageTransaction, EmptyOutlinePagePaintsTheSelectedSideBarColor)
+{
+	const HWND ownerHandle = ::CreateWindowExW(0, L"STATIC", L"", WS_POPUP,
+		0, 0, 320, 240, nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
+	using WindowOwner = std::unique_ptr<std::remove_pointer_t<decltype(ownerHandle)>,
+		decltype(&::DestroyWindow)>;
+	WindowOwner owner(ownerHandle, &::DestroyWindow);
+	ASSERT_NE(nullptr, owner.get());
+	CDlgFuncList dialog;
+	CViewContainerPages pages(dialog);
+	ASSERT_TRUE(pages.Create(owner.get()));
+
+	HWND explorerPage = nullptr;
+	for (HWND window = ::FindWindowExW(owner.get(), nullptr,
+		L"SakuraEditorNext.ViewContainerPage", nullptr); window != nullptr;
+		window = ::FindWindowExW(owner.get(), window,
+			L"SakuraEditorNext.ViewContainerPage", nullptr)) {
+		if (::FindWindowExW(window, nullptr, L"SakuraNativeExplorerTool", nullptr)) {
+			explorerPage = window;
+			break;
+		}
+	}
+	ASSERT_NE(nullptr, explorerPage);
+	pages.LayoutPage(pageIds::Explorer, RECT{ 0, 0, 16, 16 });
+	ASSERT_EQ(nullptr, ::FindWindowExW(explorerPage, nullptr, L"#32770", nullptr));
+
+	struct PaintBuffer final {
+		HDC dc{ ::CreateCompatibleDC(nullptr) };
+		HBITMAP bitmap{};
+		HGDIOBJ previous{};
+		PaintBuffer() {
+			BITMAPINFO info{};
+			info.bmiHeader.biSize = sizeof(info.bmiHeader);
+			info.bmiHeader.biWidth = 16;
+			info.bmiHeader.biHeight = -16;
+			info.bmiHeader.biPlanes = 1;
+			info.bmiHeader.biBitCount = 32;
+			info.bmiHeader.biCompression = BI_RGB;
+			void* bits = nullptr;
+			bitmap = ::CreateDIBSection(nullptr, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+			if (dc && bitmap) previous = ::SelectObject(dc, bitmap);
+		}
+		~PaintBuffer() {
+			if (previous && previous != HGDI_ERROR) ::SelectObject(dc, previous);
+			if (bitmap) ::DeleteObject(bitmap);
+			if (dc) ::DeleteDC(dc);
+		}
+	} buffer;
+	ASSERT_NE(nullptr, buffer.dc);
+	ASSERT_NE(nullptr, buffer.bitmap);
+	ASSERT_NE(nullptr, buffer.previous);
+	ASSERT_NE(HGDI_ERROR, buffer.previous);
+	for (const theme::ThemeColor color : { theme::ThemeColor{ 0x29, 0x31, 0x34 },
+		theme::ThemeColor{ 0xF8, 0xF8, 0xF8 } }) {
+		theme::ThemePalette palette;
+		palette.sideBar = color;
+		pages.SetPalette(palette);
+		ASSERT_TRUE(::PatBlt(buffer.dc, 0, 0, 16, 16, WHITENESS));
+		::SendMessageW(explorerPage, WM_PRINTCLIENT,
+			reinterpret_cast<WPARAM>(buffer.dc), 0);
+		EXPECT_EQ(color.ToColorRef(), ::GetPixel(buffer.dc, 8, 8));
+	}
+	pages.Close();
+}
+
 } // namespace
 } // namespace workbench::viewcontainer

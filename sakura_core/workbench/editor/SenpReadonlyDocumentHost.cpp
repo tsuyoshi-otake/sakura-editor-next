@@ -4,6 +4,7 @@
 #include "workbench/editor/SenpReadonlyDocumentHost.h"
 #include "markdown/CMarkdownPreviewWnd.h"
 #include "theme/CThemeService.h"
+#include "CSelectLang.h"
 #include <CommCtrl.h>
 #include <algorithm>
 #include <stdexcept>
@@ -11,22 +12,27 @@
 namespace workbench::editor {
 namespace {
 constexpr UINT kSectionControl = 1;
+std::wstring Localized(UINT id, const wchar_t* fallback)
+{
+	const auto text = CSelectLang::LoadStringW(id);
+	return text.empty() ? std::wstring(fallback) : std::wstring(text);
+}
 bool SameOwner(const SenpReadonlyScope& document, const senp::TextResourceScope& resource)
 {
 	return resource.extensionId == document.extensionId && resource.ownerGeneration == document.ownerGeneration
 		&& resource.workspaceRevision == document.workspaceRevision && resource.accountGeneration == document.accountGeneration;
 }
-const wchar_t* Notice(SenpDocumentHostState state, SenpDocumentState model)
+std::wstring Notice(SenpDocumentHostState state, SenpDocumentState model)
 {
-	if (state == SenpDocumentHostState::Denied) return L"This document is no longer available.";
-	if (state == SenpDocumentHostState::Unsupported) return L"Text output is unavailable in this environment.";
-	if (state == SenpDocumentHostState::Failed) return L"The document could not be displayed. Refresh to try again.";
+	if (state == SenpDocumentHostState::Denied) return Localized(STR_WORKBENCH_DOCUMENT_EXPIRED, L"This document is no longer available.");
+	if (state == SenpDocumentHostState::Unsupported) return Localized(STR_WORKBENCH_DOCUMENT_TEXT_UNAVAILABLE, L"Text output is unavailable in this environment.");
+	if (state == SenpDocumentHostState::Failed) return Localized(STR_WORKBENCH_DOCUMENT_DISPLAY_FAILED, L"The document could not be displayed. Refresh to try again.");
 	switch (model) {
-	case SenpDocumentState::Loading: return L"Loading...";
-	case SenpDocumentState::Failed: return L"The document could not be loaded. Refresh to try again.";
-	case SenpDocumentState::Expired: return L"This document is no longer available.";
-	case SenpDocumentState::Closed: return L"The document is closed.";
-	default: return L"No content has been requested.";
+	case SenpDocumentState::Loading: return Localized(STR_WORKBENCH_DOCUMENT_LOADING, L"Loading...");
+	case SenpDocumentState::Failed: return Localized(STR_WORKBENCH_DOCUMENT_LOAD_FAILED, L"The document could not be loaded. Refresh to try again.");
+	case SenpDocumentState::Expired: return Localized(STR_WORKBENCH_DOCUMENT_EXPIRED, L"This document is no longer available.");
+	case SenpDocumentState::Closed: return Localized(STR_WORKBENCH_DOCUMENT_CLOSED, L"The document is closed.");
+	default: return Localized(STR_WORKBENCH_DOCUMENT_NO_CONTENT, L"No content has been requested.");
 	}
 }
 }
@@ -118,7 +124,7 @@ class SenpReadonlyDocumentHost::Impl {
 	}
 	SenpDocumentHostState Terminal(SenpDocumentHostState result) {
 		ClearPages(); state = result;
-		if (notice) ::SetWindowTextW(notice, Notice(state, model.State()));
+		if (notice) { const auto text = Notice(state, model.State()); ::SetWindowTextW(notice, text.c_str()); }
 		LayoutChildren(); return state;
 	}
 	bool Authorized() const {
@@ -173,19 +179,19 @@ class SenpReadonlyDocumentHost::Impl {
 				if (!scope || !SameOwner(model.Input().scope, *scope) || !resources->IsCurrent(*scope, section->handle))
 					return Terminal(SenpDocumentHostState::Denied);
 				page.kind = SenpDocumentPageKind::TextResource;
-				page.label = L"Text output"; page.sections = { rangeFirst, 1 };
+				page.label = Localized(STR_WORKBENCH_DOCUMENT_TEXT_OUTPUT, L"Text output"); page.sections = { rangeFirst, 1 };
 				for (const auto& existing : pages)
 					if (existing.text && existing.text->scope == *scope && existing.text->handle == section->handle) page.text = existing.text;
 				if (!page.text) page.text = std::make_shared<TextBody>(*scope, section->handle);
 				++first;
 			} else {
-				page.label = L"Details";
+				page.label = Localized(STR_WORKBENCH_DOCUMENT_DETAILS, L"Details");
 				do { ++first; } while (first < document->sections.size() && !std::holds_alternative<senp::effect::TextResourceSection>(document->sections[first]));
 				page.sections = { rangeFirst, first - rangeFirst };
 			}
 			pages.push_back(std::move(page));
 		}
-		if (pages.empty()) { Page page; page.label = L"Details"; pages.push_back(std::move(page)); }
+		if (pages.empty()) { Page page; page.label = Localized(STR_WORKBENCH_DOCUMENT_DETAILS, L"Details"); pages.push_back(std::move(page)); }
 		for (std::size_t index = 0; index < pages.size(); ++index) {
 			auto& page = pages[index]; std::size_t count = 0, ordinal = 0;
 			for (std::size_t other = 0; other < pages.size(); ++other) if (pages[other].kind == page.kind) { ++count; if (other <= index) ++ordinal; }
@@ -279,7 +285,8 @@ bool SenpReadonlyDocumentHost::Create(HWND parent) {
 		self.root = ::CreateWindowExW(WS_EX_CONTROLPARENT, L"STATIC", L"", WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
 			0, 0, 1, 1, parent, nullptr, ::GetModuleHandleW(nullptr), nullptr);
 		if (!self.root || !::SetWindowSubclass(self.root, Impl::Procedure, 1, reinterpret_cast<DWORD_PTR>(&self))) { self.Close(); return false; }
-		self.label = ::CreateWindowExW(0, L"STATIC", L"&Section", WS_CHILD | SS_CENTERIMAGE, 0, 0, 1, 1, self.root, nullptr, nullptr, nullptr);
+		const auto sectionLabel = Localized(STR_WORKBENCH_DOCUMENT_SECTION, L"&Section");
+		self.label = ::CreateWindowExW(0, L"STATIC", sectionLabel.c_str(), WS_CHILD | SS_CENTERIMAGE, 0, 0, 1, 1, self.root, nullptr, nullptr, nullptr);
 		self.selector = ::CreateWindowExW(0, L"COMBOBOX", L"", WS_CHILD | WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS,
 			0, 0, 1, 1, self.root, reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kSectionControl)), nullptr, nullptr);
 		self.notice = ::CreateWindowExW(0, L"STATIC", L"", WS_CHILD, 0, 0, 1, 1, self.root, nullptr, nullptr, nullptr);
@@ -291,6 +298,41 @@ SenpDocumentHostState SenpReadonlyDocumentHost::Sync() { try { return m_impl->Sy
 void SenpReadonlyDocumentHost::SetStyle(const theme::ThemePalette& palette, const LOGFONT& font, unsigned int dpi) {
 	if (m_impl->state == SenpDocumentHostState::Closed) return;
 	try { m_impl->palette = palette; m_impl->editorFont = font; m_impl->dpi = dpi ? dpi : 96; m_impl->Style(); } catch (const std::exception&) { m_impl->Close(); }
+}
+void SenpReadonlyDocumentHost::RefreshStrings() noexcept
+{
+	auto& self = *m_impl;
+	if (!self.root || self.state == SenpDocumentHostState::Closed) return;
+	try {
+		const auto sectionLabel = Localized(STR_WORKBENCH_DOCUMENT_SECTION, L"&Section");
+		::SetWindowTextW(self.label, sectionLabel.c_str());
+		const auto active = self.active;
+		::SendMessageW(self.selector, CB_RESETCONTENT, 0, 0);
+		std::size_t textPageCount = 0, detailPageCount = 0;
+		for (const auto& page : self.pages) {
+			if (page.kind == SenpDocumentPageKind::TextResource) ++textPageCount;
+			else ++detailPageCount;
+		}
+		std::size_t textPageOrdinal = 0, detailPageOrdinal = 0;
+		for (std::size_t i = 0; i < self.pages.size(); ++i) {
+			auto& page = self.pages[i];
+			const bool textPage = page.kind == SenpDocumentPageKind::TextResource;
+			page.label = textPage ? Localized(STR_WORKBENCH_DOCUMENT_TEXT_OUTPUT, L"Text output")
+				: Localized(STR_WORKBENCH_DOCUMENT_DETAILS, L"Details");
+			const auto ordinal = textPage ? ++textPageOrdinal : ++detailPageOrdinal;
+			if ((textPage ? textPageCount : detailPageCount) > 1) page.label += L" " + std::to_wstring(ordinal);
+			if (::SendMessageW(self.selector, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(page.label.c_str())) < 0) {
+				self.Close(); return;
+			}
+			if (page.structured) page.structured->RefreshStrings();
+			if (page.text && page.text->view) page.text->view->RefreshStrings();
+		}
+		if (active && *active < self.pages.size()) ::SendMessageW(self.selector, CB_SETCURSEL, *active, 0);
+		if (self.state != SenpDocumentHostState::Ready || self.model.State() != SenpDocumentState::Ready) {
+			const auto text = Notice(self.state, self.model.State()); ::SetWindowTextW(self.notice, text.c_str());
+		}
+		::RedrawWindow(self.root, nullptr, nullptr, RDW_INVALIDATE | RDW_FRAME | RDW_ALLCHILDREN | RDW_NOERASE);
+	} catch (...) { self.Close(); }
 }
 void SenpReadonlyDocumentHost::Layout(const RECT& bounds, unsigned int dpi) {
 	if (!m_impl->root || bounds.right < bounds.left || bounds.bottom < bounds.top) return;

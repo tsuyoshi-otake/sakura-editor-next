@@ -305,6 +305,13 @@ bool CSenpWindowExtensions::FocusView(std::string_view viewId) noexcept
 	return m_declarations.FocusView(viewId);
 }
 
+void CSenpWindowExtensions::RefreshStrings() noexcept
+{
+	if (m_closed || m_entered) return;
+	WindowExtensionsCall call(m_entered);
+	m_declarations.RefreshStrings();
+}
+
 std::optional<SenpExtensionActivationState> CSenpWindowExtensions::State(std::wstring_view extensionId) const noexcept
 {
 	return m_closed ? std::optional(SenpExtensionActivationState::Stopped) : m_activation.State(extensionId);

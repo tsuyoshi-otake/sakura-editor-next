@@ -504,10 +504,10 @@ int MeasureCustomFrameUpdateButtonWidth(HDC dc, UINT dpi) noexcept
 	const int padding = ScaleCustomFrameDip(8, dpi);
 	const int margins = ScaleCustomFrameDip(kUpdateIndicatorMarginDip, dpi) * 2;
 	const int minimumWidth = ScaleCustomFrameDip(56, dpi) + margins;
-	const wchar_t* const label = CustomFrameControlName(CustomFrameControl::Update);
+	const std::wstring label = CustomFrameControlName(CustomFrameControl::Update);
 	SIZE extent{};
 	if (dc == nullptr
-		|| ::GetTextExtentPoint32W(dc, label, static_cast<int>(::wcslen(label)), &extent) == FALSE) {
+		|| ::GetTextExtentPoint32W(dc, label.c_str(), static_cast<int>(label.size()), &extent) == FALSE) {
 		return minimumWidth;
 	}
 	return std::max(minimumWidth, static_cast<int>(extent.cx) + padding * 2 + margins);
@@ -887,6 +887,12 @@ void CCustomFrameController::SetUiScalePercent(int percent) noexcept
 	if (m_uiScalePercent == percent) return;
 	m_uiScalePercent = percent;
 	RefreshMetrics();
+	InvalidateTitle();
+}
+
+void CCustomFrameController::RefreshStrings() noexcept
+{
+	RefreshLayout();
 	InvalidateTitle();
 }
 
@@ -1792,7 +1798,7 @@ int CCustomFrameController::AccessibilityParent(int nodeId) const noexcept
 accessibility::CustomUiAutomationNode CCustomFrameController::AccessibilityNode(int nodeId) const
 {
 	if (nodeId == kMenuBarNode) {
-		return { nodeId, L"Application menu", L"Sakura.MenuBar", UIA_MenuBarControlTypeId,
+		return { nodeId, LS(STR_WORKBENCH_ACCESSIBILITY_APPLICATION_MENU), L"Sakura.MenuBar", UIA_MenuBarControlTypeId,
 			m_layout.menu, true, false, false };
 	}
 	if (nodeId >= kMenuItemBaseNode && nodeId < kMenuItemBaseNode + m_menuBar.AccessibilityItemCount()) {
@@ -1810,18 +1816,20 @@ accessibility::CustomUiAutomationNode CCustomFrameController::AccessibilityNode(
 	}
 	const LONG_PTR style = m_window == nullptr ? 0 : ::GetWindowLongPtrW(m_window, GWL_STYLE);
 	if (nodeId == kMinimizeNode) {
-		return { nodeId, L"Minimize", L"Sakura.Caption.Minimize", UIA_ButtonControlTypeId,
+		return { nodeId, LS(STR_WORKBENCH_ACCESSIBILITY_MINIMIZE), L"Sakura.Caption.Minimize", UIA_ButtonControlTypeId,
 			m_layout.minimizeButton, (style & WS_MINIMIZEBOX) != 0,
 			m_accessibilityFocusedNode == nodeId, true };
 	}
 	if (nodeId == kMaximizeNode) {
 		const bool maximized = m_window != nullptr && ::IsZoomed(m_window) != FALSE;
-		return { nodeId, maximized ? L"Restore" : L"Maximize", L"Sakura.Caption.Maximize", UIA_ButtonControlTypeId,
+		return { nodeId, maximized ? std::wstring(LS(STR_WORKBENCH_ACCESSIBILITY_RESTORE))
+				: std::wstring(LS(STR_WORKBENCH_ACCESSIBILITY_MAXIMIZE)),
+			L"Sakura.Caption.Maximize", UIA_ButtonControlTypeId,
 			m_layout.maximizeButton, (style & WS_MAXIMIZEBOX) != 0,
 			m_accessibilityFocusedNode == nodeId, true };
 	}
 	if (nodeId == kCloseNode) {
-		return { nodeId, L"Close", L"Sakura.Caption.Close", UIA_ButtonControlTypeId,
+		return { nodeId, LS(STR_WORKBENCH_ACCESSIBILITY_CLOSE), L"Sakura.Caption.Close", UIA_ButtonControlTypeId,
 			m_layout.closeButton, (style & WS_SYSMENU) != 0,
 			m_accessibilityFocusedNode == nodeId, true };
 	}

@@ -16,9 +16,34 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace workbench::projects {
+
+//! Presentation text for the pure Projects projection. Product composition may
+//! supply localized values; branch names and other user data stay untouched.
+struct ProjectsTexts final {
+	std::wstring currentFolder{ L"Current Folder" };
+	std::wstring currentWorkspace{ L"Current Workspace" };
+	std::wstring folder{ L"Folder" };
+	std::wstring workspace{ L"Workspace" };
+	std::wstring detached{ L"Detached" };
+	std::wstring bare{ L"Bare" };
+	std::wstring locked{ L"Locked" };
+	std::wstring prunable{ L"Prunable" };
+	std::wstring linkedWorktreesFormat{ L"{0} linked worktrees" };
+	std::wstring primary{ L"Primary" };
+	std::wstring thisWindow{ L"This Window" };
+	std::wstring unavailable{ L"Unavailable" };
+	std::wstring loadingGit{ L"Loading Git..." };
+	std::wstring noGit{ L"No Git" };
+	std::wstring gitUnavailable{ L"Git unavailable" };
+	std::wstring repositoriesFormat{ L"{0}+ repositories" };
+	std::wstring branchesFormat{ L"{0} branches" };
+	std::wstring hideLinkedWorktrees{ L"Hide linked worktrees" };
+	std::wstring showLinkedWorktrees{ L"Show linked worktrees" };
+};
 
 enum class EProjectsRowKind : std::uint8_t {
 	Project,
@@ -103,14 +128,16 @@ struct ProjectsProjection final {
 	bool worktreesExpanded,
 	std::span<const ProjectBranchSummary> branchSummaries = {},
 	std::optional<EProjectsRowKind> preferredKind = std::nullopt,
-	std::wstring_view preferredWorktreeIdentity = {});
+	std::wstring_view preferredWorktreeIdentity = {},
+	const ProjectsTexts& texts = {});
 
 //! Aggregates completed repository observations without inventing a branch for
 //! failed or truncated inputs.  A mixed result counts distinct branch labels.
 [[nodiscard]] ProjectBranchSummary SummarizeProjectBranches(
 	std::span<const ProjectRepositoryBranchObservation> observations,
 	bool complete,
-	bool truncated = false);
+	bool truncated = false,
+	const ProjectsTexts& texts = {});
 
 //! Builds one deterministic, bounded queue.  The current Project is scheduled
 //! first, duplicate roots within a Project are removed case-insensitively, and
@@ -123,8 +150,11 @@ struct ProjectsProjection final {
 
 [[nodiscard]] std::wstring ProjectDisplayName(const ProjectEntry& project);
 [[nodiscard]] std::wstring ProjectWorktreeBranchLabel(
-	const agent::AgentWorktreeRow& worktree);
+	const agent::AgentWorktreeRow& worktree,
+	const ProjectsTexts& texts = {});
 //! Owner-drawn LISTBOX rows retain a complete text value for screen readers.
-[[nodiscard]] std::wstring ProjectsAccessibleLabel(const ProjectsRow& row);
+[[nodiscard]] std::wstring ProjectsAccessibleLabel(
+	const ProjectsRow& row,
+	const ProjectsTexts& texts = {});
 
 } // namespace workbench::projects

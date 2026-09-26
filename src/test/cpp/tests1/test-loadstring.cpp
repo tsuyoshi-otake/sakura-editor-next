@@ -8,6 +8,7 @@
 #include "CSelectLang.h"
 #include "func/CFuncLookup.h"
 #include "window/CEditWnd.h"
+#include "window/CCustomFrameController.h"
 
 #include <array>
 #include <filesystem>
@@ -566,5 +567,150 @@ TEST(FileMenuLocalization, LegacyMissingFunctionUsesTheSelectedLocaleUndefinedRe
 		EXPECT_FALSE(lookup.Funccode2Name(F_EXPANDPARAMETER, name.data(), name.size()));
 		EXPECT_EQ(expectedUndefinedName, name.data());
 		EXPECT_NE(L"-- undefined name --", name.data());
+	}
+}
+
+TEST(NativeHostLocalization, SelectedResourceModulesContainEveryHostLabel)
+{
+	ScopedLanguageSelection restoreLanguage;
+	CSelectLang::InitializeLanguageEnvironment();
+	const std::array resourceIds = {
+		STR_EXPLORER_DELETE_CONFIRM_TRASH_FILE,
+		STR_EXPLORER_DELETE_CONFIRM_TRASH_FOLDER,
+		STR_EXPLORER_DELETE_CONFIRM_PERMANENT_FILE,
+		STR_EXPLORER_DELETE_CONFIRM_PERMANENT_FOLDER,
+		STR_EXPLORER_DELETE_CONFIRM_TRASH_DETAIL,
+		STR_EXPLORER_DELETE_CONFIRM_PERMANENT_DETAIL,
+		STR_EXPLORER_DELETE_CONFIRM_TRASH_BUTTON,
+		STR_EXPLORER_DELETE_CONFIRM_DELETE_BUTTON,
+		STR_EXPLORER_DELETE_CONFIRM_TRASH_FAILED,
+		STR_WORKBENCH_TREE_LOADING,
+		STR_WORKBENCH_TREE_LOAD_MORE,
+		STR_WORKBENCH_TREE_RETRY,
+		STR_WORKBENCH_TREE_NO_ITEMS,
+		STR_WORKBENCH_TREE_NOT_LOADED,
+		STR_WORKBENCH_TREE_PROVIDER_UNAVAILABLE,
+		STR_WORKBENCH_VIEW_NOT_ACTIVE,
+		STR_WORKBENCH_VIEW_WAITING_ACTIVATION,
+		STR_WORKBENCH_VIEW_ACTIVATING,
+		STR_WORKBENCH_VIEW_NO_PROVIDER,
+		STR_WORKBENCH_VIEW_ACTIVATION_FAILED,
+		STR_WORKBENCH_VIEW_ACTIVATION_BUSY,
+		STR_WORKBENCH_VIEW_UNSUPPORTED,
+		STR_WORKBENCH_VIEW_DISABLED,
+		STR_WORKBENCH_VIEW_STOPPED,
+		STR_WORKBENCH_VIEW_UNAVAILABLE,
+		STR_WORKBENCH_DOCUMENT_NO_CONTENT,
+		STR_WORKBENCH_DOCUMENT_LOADING,
+		STR_WORKBENCH_DOCUMENT_LOAD_FAILED,
+		STR_WORKBENCH_DOCUMENT_EXPIRED,
+		STR_WORKBENCH_DOCUMENT_CLOSED,
+		STR_WORKBENCH_DOCUMENT_UNAVAILABLE,
+		STR_WORKBENCH_DOCUMENT_FIND_PLACEHOLDER,
+		STR_WORKBENCH_DOCUMENT_FIND_MATCH,
+		STR_WORKBENCH_DOCUMENT_FIND_WRAPPED,
+		STR_WORKBENCH_DOCUMENT_FIND_NO_RESULTS,
+		STR_WORKBENCH_DOCUMENT_FIND_INVALID,
+		STR_WORKBENCH_DOCUMENT_FIND_UNAVAILABLE,
+		STR_WORKBENCH_DOCUMENT_SELECTION_COPIED,
+		STR_WORKBENCH_DOCUMENT_SELECTION_COPY_FAILED,
+		STR_WORKBENCH_DOCUMENT_RENDER_FAILED,
+		STR_WORKBENCH_LOG_LOADING,
+		STR_WORKBENCH_LOG_READ_ONLY,
+		STR_WORKBENCH_LOG_EMPTY,
+		STR_WORKBENCH_LOG_PARTIAL_LIMIT,
+		STR_WORKBENCH_LOG_PARTIAL_CANCELLED,
+		STR_WORKBENCH_LOG_PARTIAL_FAILED,
+		STR_WORKBENCH_LOG_LOAD_FAILED,
+		STR_WORKBENCH_LOG_EXPIRED,
+		STR_WORKBENCH_LOG_CLOSED,
+		STR_WORKBENCH_LOG_FIND_PLACEHOLDER,
+		STR_WORKBENCH_LOG_FIND_NO_RESULTS,
+		STR_WORKBENCH_LOG_FIND_WRAPPED,
+		STR_WORKBENCH_LOG_FIND_MATCH,
+		STR_WORKBENCH_LOG_DECODE_FAILED,
+		STR_WORKBENCH_TITLEBAR_LAYOUT,
+		STR_WORKBENCH_PANEL_MORE_ACTIONS,
+		STR_WORKBENCH_ACCESSIBILITY_APPLICATION_MENU,
+		STR_WORKBENCH_ACCESSIBILITY_MINIMIZE,
+		STR_WORKBENCH_ACCESSIBILITY_MAXIMIZE,
+		STR_WORKBENCH_ACCESSIBILITY_RESTORE,
+		STR_WORKBENCH_ACCESSIBILITY_CLOSE,
+		STR_DLGOPNFL_MACROS,
+		STR_DLGOPNFL_KEY_MACRO,
+		STR_WORKBENCH_GIT_CLONE_TOOLBAR,
+		STR_WORKBENCH_GIT_CHECKOUT_TOOLBAR,
+		STR_WORKBENCH_GIT_FETCH_TOOLBAR,
+		STR_WORKBENCH_GIT_COMMIT_TOOLBAR,
+		STR_WORKBENCH_GIT_REFRESH_TOOLBAR,
+		STR_WORKBENCH_GIT_PULL_TOOLBAR,
+		STR_WORKBENCH_GIT_PUSH_TOOLBAR,
+		STR_WORKBENCH_GIT_SHOW_OUTPUT,
+		STR_WORKBENCH_GIT_COPY_COMMIT_HASH,
+		STR_WORKBENCH_GIT_COPY_COMMIT_MESSAGE,
+		STR_WORKBENCH_DOCUMENT_DISPLAY_FAILED,
+		STR_WORKBENCH_DOCUMENT_TEXT_UNAVAILABLE,
+		STR_WORKBENCH_DOCUMENT_TEXT_OUTPUT,
+		STR_WORKBENCH_DOCUMENT_DETAILS,
+		STR_WORKBENCH_DOCUMENT_SECTION,
+		STR_WORKBENCH_DOCUMENT_FIELD,
+		STR_WORKBENCH_DOCUMENT_VALUE,
+		STR_MAXWINDOW,
+		STR_DLGGREP_THISDOC_ERROR,
+		STR_PROPCOMMACR_SEL_PYTHONDIR,
+		STR_GREP_ERR_FILEOPEN,
+		STR_ERR_DLGKEYMACMGR7,
+	};
+	std::vector<std::wstring> japanese;
+	for (const auto* dllName : { L"", L"sakura_lang_en_US.dll", L"sakura_lang_zh_CN.dll" }) {
+		SCOPED_TRACE(dllName);
+		CSelectLang::ChangeLang(dllName);
+		const LANGID expectedLanguage = *dllName == L'\0' ? 0x0411
+			: std::wstring_view(dllName) == L"sakura_lang_en_US.dll" ? 0x0409 : 0x0804;
+		ASSERT_EQ(expectedLanguage, CSelectLang::getDefaultLangId());
+		for (size_t index = 0; index < resourceIds.size(); ++index) {
+			SCOPED_TRACE(resourceIds[index]);
+			// Direct module reads reject a fallback to the embedded Japanese table.
+			const auto text = cxx::load_string(resourceIds[index],
+				std::optional<HMODULE>{ CSelectLang::getLangRsrcInstance() });
+			ASSERT_FALSE(text.empty());
+			if (*dllName == L'\0') japanese.emplace_back(text);
+			else if (expectedLanguage == 0x0409) EXPECT_NE(japanese[index], text);
+		}
+		const auto load = [](UINT id) { return CSelectLang::LoadStringW(id); };
+		const auto updateLabel = CustomFrameControlName(CustomFrameControl::Update);
+		EXPECT_EQ(load(STR_WORKBENCH_COMMAND_UPDATE_INDICATOR), updateLabel);
+		const HDC dc = ::CreateCompatibleDC(nullptr);
+		ASSERT_NE(nullptr, dc);
+		SIZE extent{};
+		EXPECT_TRUE(::GetTextExtentPoint32W(dc, updateLabel.c_str(),
+			static_cast<int>(updateLabel.size()), &extent));
+		for (UINT dpi : { 96u, 144u, 192u }) {
+			const int width = MeasureCustomFrameUpdateButtonWidth(dc, dpi);
+			const auto layout = CalculateCustomFrameLayout(1600, dpi, 0, width);
+			const auto pill = CustomFrameUpdateIndicatorPillRect(layout.updateButton, dpi);
+			EXPECT_GE(pill.right - pill.left, extent.cx + ScaleCustomFrameDip(8, dpi) * 2);
+			const auto node = CustomFrameControlAccessibilityNode(CustomFrameControl::Update, layout, false);
+			EXPECT_EQ(updateLabel, node.name);
+			EXPECT_EQ(L"Sakura.TitleBar.Update", node.automationId);
+			EXPECT_EQ(CustomFrameControl::Update, HitTestCustomFrameControl(layout,
+				{ (layout.updateButton.left + layout.updateButton.right) / 2,
+				(layout.updateButton.top + layout.updateButton.bottom) / 2 }));
+		}
+		EXPECT_TRUE(::DeleteDC(dc));
+		EXPECT_NE(std::wstring_view::npos, load(STR_MAXWINDOW).find(L"%d"));
+		EXPECT_NE(std::wstring_view::npos, load(STR_GREP_ERR_FILEOPEN).find(L"%s"));
+		const auto syntax = load(STR_ERR_DLGKEYMACMGR7);
+		const auto firstArgument = syntax.find(L"%d");
+		ASSERT_NE(std::wstring_view::npos, firstArgument);
+		EXPECT_NE(std::wstring_view::npos, syntax.find(L"%d", firstArgument + 2));
+		EXPECT_NE(std::wstring_view::npos,
+			load(STR_EXPLORER_DELETE_CONFIRM_TRASH_FOLDER).find(L"{0}"));
+		if (*dllName == L'\0') {
+			EXPECT_EQ(L"マクロ", load(STR_DLGOPNFL_MACROS));
+			EXPECT_EQ(L"キーマクロ", load(STR_DLGOPNFL_KEY_MACRO));
+			EXPECT_EQ(L"ファイルを開けませんでした [%s]\r\n", load(STR_GREP_ERR_FILEOPEN));
+			EXPECT_EQ(L"%d 行 %d 列: 構文エラー\n", syntax);
+		}
 	}
 }

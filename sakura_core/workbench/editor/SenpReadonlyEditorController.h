@@ -15,6 +15,7 @@ struct SenpReadonlySurfaceCommands final {
 	std::function<void()> selectAll;
 	std::function<void()> showFind;
 	std::function<bool(bool previous)> find;
+	std::function<void()> refreshStrings;
 	//! Called after the input has left Editor Core and the HWND has been unbound.
 	//! The callback may destroy the borrowed surface and must not reenter this controller.
 	std::function<void()> closed;
@@ -51,6 +52,7 @@ public:
 	[[nodiscard]] SenpSurfaceProjection Apply(bool focus = false) noexcept;
 	[[nodiscard]] SenpSurfaceProjection Layout(RECT bounds) noexcept;
 	void SetVisible(bool visible) noexcept;
+	[[nodiscard]] bool RefreshStrings() noexcept;
 	[[nodiscard]] bool IsReadonlyActive() const noexcept;
 	[[nodiscard]] bool OwnsFocus(HWND window) const noexcept;
 	[[nodiscard]] SenpReadonlyCommandStatus Execute(std::string_view commandId) noexcept;

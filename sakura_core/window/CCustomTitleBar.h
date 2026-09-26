@@ -9,6 +9,8 @@
 
 #include <Windows.h>
 
+#include <string>
+
 #include "theme/CThemeService.h"
 
 struct CustomFrameLayout;
@@ -29,7 +31,7 @@ enum class CustomFrameControl : unsigned char {
 	Manage,
 };
 
-[[nodiscard]] const wchar_t* CustomFrameControlName(CustomFrameControl control) noexcept;
+[[nodiscard]] std::wstring CustomFrameControlName(CustomFrameControl control);
 [[nodiscard]] const wchar_t* CustomFrameControlAutomationId(CustomFrameControl control) noexcept;
 
 //! Returns a physical icon size constrained to 16--20 DIP for the supplied title area.

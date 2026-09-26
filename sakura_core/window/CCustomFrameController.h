@@ -336,6 +336,8 @@ public:
 	[[nodiscard]] bool PreTranslateMessage(MSG& message) noexcept;
 	void Paint(HDC dc, const RECT& paintRect) noexcept;
 	void InvalidateTitle() const noexcept;
+	//! Re-measures translated title controls and invalidates their current bounds.
+	void RefreshStrings() noexcept;
 	//! Reasserts the input-only edge overlays after sibling HWND layout.
 	void LayoutResizeOverlays() noexcept;
 	//! Activity Bar GlobalCompositeBar popup anchors (screen coordinates).

@@ -36,7 +36,8 @@ private:
 //! I/O-free bounded conversion. Only Markdown sections are parsed. All metadata
 //! and table cells stay literal. No local or remote asset is ever admitted.
 [[nodiscard]] SenpPreparedDocument PrepareSenpReadonlyDocument(const senp::effect::PublishDocument& document,
-	std::optional<SenpStructuredSectionRange> range = std::nullopt);
+	std::optional<SenpStructuredSectionRange> range = std::nullopt,
+	std::wstring_view fieldLabel = L"Field", std::wstring_view valueLabel = L"Value");
 
 //! UI-thread value owner for one already-authorized readonly input. Runtime
 //! admission, deadlines, cancellation and core title updates belong to composition.

@@ -26,6 +26,8 @@ public:
 	SenpReadonlyDocumentView& operator=(const SenpReadonlyDocumentView&) = delete;
 	[[nodiscard]] bool Create(HWND parent);
 	[[nodiscard]] bool Sync();
+	//! Reprojects host-owned strings without changing the retained input/model.
+	void RefreshStrings() noexcept;
 	void SetStyle(const theme::ThemePalette& palette, const LOGFONT& font, unsigned int dpi);
 	void Layout(const RECT& bounds, unsigned int dpi);
 	void Show(bool visible) noexcept;

@@ -9,6 +9,7 @@
 #pragma once
 
 #include "workbench/scm/GitScmPublisher.h"
+#include "workbench/scm/GitInitCloneCommands.h"
 #include "workbench/scm/GitStageCommands.h"
 
 #include <optional>
@@ -127,7 +128,7 @@ struct GitToolbarAction final {
 //! These follow, never replace, the provider's `statusBarCommands`, which the
 //! row already renders.
 //!
-[[nodiscard]] std::vector<GitToolbarAction> BuildGitScmTitleToolbarActions();
+[[nodiscard]] std::vector<GitToolbarAction> BuildGitScmTitleToolbarActions(const ScmTextResolver& text = {});
 
 //!
 //! @brief `scm/title`'s remaining groups: what the row's `...` overflow shows.
@@ -138,7 +139,7 @@ struct GitToolbarAction final {
 //! are absent rather than rendered as dead rows; the omission is recorded in
 //! this directory's CLAUDE.md.
 //!
-[[nodiscard]] std::vector<GitMenuItem> BuildGitScmTitleOverflowMenu();
+[[nodiscard]] std::vector<GitMenuItem> BuildGitScmTitleOverflowMenu(const ScmTextResolver& text = {});
 //!
 //! @brief `scm/resourceGroup/context`'s `inline` group for one group header row.
 //!
@@ -170,7 +171,8 @@ struct GitToolbarAction final {
 //! inert, because each needs view state this Graph does not keep. The reasons
 //! are recorded in this directory's CLAUDE.md.
 //!
-[[nodiscard]] std::vector<GitToolbarAction> BuildGitScmHistoryTitleToolbarActions();
+[[nodiscard]] std::vector<GitToolbarAction> BuildGitScmHistoryTitleToolbarActions(
+	const ScmTextResolver& text = {});
 
 
 //!
@@ -190,7 +192,7 @@ struct GitToolbarAction final {
 //! rather than approximated, and the omission is recorded in this directory's
 //! CLAUDE.md.
 //!
-[[nodiscard]] std::vector<GitMenuItem> BuildGitHistoryItemContextMenu();
+[[nodiscard]] std::vector<GitMenuItem> BuildGitHistoryItemContextMenu(const ScmTextResolver& text = {});
 
 //! Nothing when upstream contributes no button for this state.
 [[nodiscard]] std::optional<GitActionButton> BuildGitCommitActionButton(bool hasChanges, bool enabled);

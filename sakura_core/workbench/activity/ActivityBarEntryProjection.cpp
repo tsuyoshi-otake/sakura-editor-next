@@ -52,6 +52,7 @@ std::uint32_t ResolveBuiltinActivityTitleResourceId(std::string_view containerId
 	if (containerId == layout::ids::viewContainer::Search) return STR_WORKBENCH_ACTIVITY_SEARCH;
 	if (containerId == layout::ids::viewContainer::SourceControl) return STR_WORKBENCH_ACTIVITY_SOURCE_CONTROL;
 	if (containerId == layout::ids::viewContainer::Extensions) return STR_WORKBENCH_EXTENSIONS_TITLE;
+	if (containerId == layout::ids::viewContainer::Projects) return STR_WORKBENCH_PROJECTS_TITLE;
 	return 0;
 }
 

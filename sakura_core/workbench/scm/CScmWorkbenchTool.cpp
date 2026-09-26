@@ -1641,7 +1641,7 @@ struct CScmWorkbenchTool::Impl {
 		// Upstream's `RepositoryRenderer` appends `scm/title`'s `navigation` group
 		// after the provider's `statusBarCommands`, then the `...` that opens the
 		// rest of that menu. The order here is that order.
-		for (const auto& action : BuildGitScmTitleToolbarActions()) {
+		for (const auto& action : BuildGitScmTitleToolbarActions(text)) {
 			BandSegment segment;
 			segment.kind = EBandSegment::Action;
 			segment.runs = ParseRuns(action.icon);
@@ -1656,7 +1656,7 @@ struct CScmWorkbenchTool::Impl {
 			BandSegment overflow;
 			overflow.kind = EBandSegment::Overflow;
 			overflow.runs = ParseRuns(L"$(ellipsis)");
-			overflow.tooltip = L"More Actions...";
+			overflow.tooltip = ResolveViewTitle(EScmTextKey::MoreActions, L"More Actions...");
 			const int width = icons::MeasureLabelRuns(dc, overflow.runs, iconSide) + 2 * actionInset;
 			overflow.rect = RECT{ 0, bounds.top, width, bounds.bottom };
 			actionsWidth += width;
@@ -1694,7 +1694,7 @@ struct CScmWorkbenchTool::Impl {
 		const int iconSide = icons::ScaleDip(kRepositoryIconDip, dpi);
 		std::vector<BandSegment> actions;
 		int width = 0;
-		for (const auto& action : BuildGitScmHistoryTitleToolbarActions()) {
+		for (const auto& action : BuildGitScmHistoryTitleToolbarActions(text)) {
 			BandSegment segment;
 			segment.kind = EBandSegment::Action;
 			segment.runs = ParseRuns(action.icon);
@@ -2955,14 +2955,14 @@ struct CScmWorkbenchTool::Impl {
 		// A copy of the id, not a reference into `history`: `TrackPopupMenu` pumps
 		// messages, so a refresh can replace the page while the menu is open.
 		const std::wstring historyItemId = history[static_cast<std::size_t>(index)].id;
-		const auto chosen = TrackMenu(BuildGitHistoryItemContextMenu(), screen);
+		const auto chosen = TrackMenu(BuildGitHistoryItemContextMenu(text), screen);
 		if (!chosen || chosen->commandId.empty() || !runCommand) return;
 		(void)runCommand(chosen->commandId, BuildGitHistoryItemArguments(historyItemId));
 	}
 	//! The repository row toolbar's `...`: `scm/title`'s secondary actions.
 	void ShowTitleOverflowMenu(POINT screen)
 	{
-		const auto chosen = TrackMenu(BuildGitScmTitleOverflowMenu(), screen);
+		const auto chosen = TrackMenu(BuildGitScmTitleOverflowMenu(text), screen);
 		if (!chosen || chosen->commandId.empty() || !runCommand) return;
 		// Every `scm/title` command is repository-scoped upstream and takes no
 		// operand, so none of them carries arguments here either.

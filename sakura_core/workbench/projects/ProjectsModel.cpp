@@ -28,11 +28,20 @@ bool IsCurrentProject(const ProjectEntry& project,
 		&& platform::uri::UriIdentityService::IsEqual(project.uri, workspace.folders.front().uri);
 }
 
-std::wstring ProjectDescription(const ProjectEntry& project, const bool current)
+std::wstring ProjectDescription(
+	const ProjectEntry& project, const bool current, const ProjectsTexts& texts)
 {
-	if (current) return project.kind == EProjectKind::Folder
-		? L"Current Folder" : L"Current Workspace";
-	return project.kind == EProjectKind::Folder ? L"Folder" : L"Workspace";
+	if (current) return std::wstring(project.kind == EProjectKind::Folder
+		? texts.currentFolder : texts.currentWorkspace);
+	return std::wstring(project.kind == EProjectKind::Folder ? texts.folder : texts.workspace);
+}
+
+std::wstring FormatCount(const std::wstring_view format, const std::size_t count)
+{
+	std::wstring result(format);
+	const auto marker = result.find(L"{0}");
+	if (marker != std::wstring::npos) result.replace(marker, 3, std::to_wstring(count));
+	return result;
 }
 
 void AppendDescription(std::wstring& target, const std::wstring_view value)
@@ -62,21 +71,22 @@ std::wstring WorktreeLabel(const agent::AgentWorktreeRow& worktree)
 }
 
 std::wstring WorktreeDescription(const agent::AgentWorktreeRow& worktree,
-	const std::wstring_view projectName, const std::wstring_view label)
+	const std::wstring_view projectName, const std::wstring_view label,
+	const ProjectsTexts& texts)
 {
 	std::wstring result;
 	if (!worktree.name.empty() && worktree.name != label && worktree.name != projectName) {
 		AppendDescription(result, worktree.name);
 	}
 	if (worktree.detached) {
-		std::wstring detached = L"Detached";
+		std::wstring detached(texts.detached);
 		if (!worktree.head.empty()) detached += L" @ " + worktree.head;
 		AppendDescription(result, detached);
 	} else if (worktree.bare) {
-		AppendDescription(result, L"Bare");
+		AppendDescription(result, texts.bare);
 	}
-	if (worktree.locked) AppendDescription(result, L"Locked");
-	else if (worktree.prunable) AppendDescription(result, L"Prunable");
+	if (worktree.locked) AppendDescription(result, texts.locked);
+	else if (worktree.prunable) AppendDescription(result, texts.prunable);
 	return result;
 }
 
@@ -98,52 +108,58 @@ std::wstring ProjectDisplayName(const ProjectEntry& project)
 	return project.uri.ToString();
 }
 
-std::wstring ProjectWorktreeBranchLabel(const agent::AgentWorktreeRow& worktree)
+std::wstring ProjectWorktreeBranchLabel(
+	const agent::AgentWorktreeRow& worktree, const ProjectsTexts& texts)
 {
 	if (worktree.detached) {
-		return worktree.head.empty() ? L"Detached" : L"Detached @ " + worktree.head;
+		return worktree.head.empty() ? std::wstring(texts.detached)
+			: std::wstring(texts.detached) + L" @ " + worktree.head;
 	}
-	if (worktree.bare) return L"Bare";
+	if (worktree.bare) return std::wstring(texts.bare);
 	return worktree.branch;
 }
 
-std::wstring ProjectsAccessibleLabel(const ProjectsRow& row)
+std::wstring ProjectsAccessibleLabel(const ProjectsRow& row, const ProjectsTexts& texts)
 {
 	std::wstring result = row.label;
 	if (!row.description.empty()) result += L", " + row.description;
 	if (!row.trailing.empty()) result += L", " + row.trailing;
 	if (row.kind == EProjectsRowKind::WorktreesToggle) {
-		result += L", " + std::to_wstring(row.hiddenWorktreeCount) + L" linked worktrees";
+		result += L", " + FormatCount(texts.linkedWorktreesFormat, row.hiddenWorktreeCount);
 	}
-	if (row.primaryWorktree) result += L", Primary";
-	if (row.kind == EProjectsRowKind::CurrentWorktree) result += L", This Window";
-	if (!row.enabled) result += L", Unavailable";
+	if (row.primaryWorktree) result += L", " + std::wstring(texts.primary);
+	if (row.kind == EProjectsRowKind::CurrentWorktree) result += L", " + std::wstring(texts.thisWindow);
+	if (!row.enabled) result += L", " + std::wstring(texts.unavailable);
 	return result;
 }
 
 ProjectBranchSummary SummarizeProjectBranches(
 	const std::span<const ProjectRepositoryBranchObservation> observations,
 	const bool complete,
-	const bool truncated)
+	const bool truncated,
+	const ProjectsTexts& texts)
 {
 	ProjectBranchSummary result;
 	result.repositoryCount = observations.size();
-	if (!complete) return result;
+	if (!complete) {
+		result.label = texts.loadingGit;
+		return result;
+	}
 	if (truncated) {
 		result.status = EProjectBranchSummaryStatus::Bounded;
-		result.label = std::to_wstring(observations.size()) + L"+ repositories";
+		result.label = FormatCount(texts.repositoriesFormat, observations.size());
 		return result;
 	}
 	if (observations.empty()) {
 		result.status = EProjectBranchSummaryStatus::NoRepository;
-		result.label = L"No Git";
+		result.label = texts.noGit;
 		return result;
 	}
 	if (std::ranges::any_of(observations, [](const auto& observation) {
 		return observation.unavailable;
 	})) {
 		result.status = EProjectBranchSummaryStatus::Unavailable;
-		result.label = L"Git unavailable";
+		result.label = texts.gitUnavailable;
 		return result;
 	}
 	std::vector<std::wstring_view> labels;
@@ -158,7 +174,7 @@ ProjectBranchSummary SummarizeProjectBranches(
 	}
 	if (labels.empty()) {
 		result.status = EProjectBranchSummaryStatus::NoRepository;
-		result.label = L"No Git";
+		result.label = texts.noGit;
 		return result;
 	}
 	if (labels.size() == 1) {
@@ -167,7 +183,7 @@ ProjectBranchSummary SummarizeProjectBranches(
 		return result;
 	}
 	result.status = EProjectBranchSummaryStatus::Mixed;
-	result.label = std::to_wstring(labels.size()) + L" branches";
+	result.label = FormatCount(texts.branchesFormat, labels.size());
 	return result;
 }
 
@@ -237,7 +253,8 @@ ProjectsProjection ProjectProjects(
 	const bool worktreesExpanded,
 	const std::span<const ProjectBranchSummary> branchSummaries,
 	const std::optional<EProjectsRowKind> preferredKind,
-	const std::wstring_view preferredWorktreeIdentity)
+	const std::wstring_view preferredWorktreeIdentity,
+	const ProjectsTexts& texts)
 {
 	ProjectsProjection result;
 	for (std::size_t index = 0; index < projects.size(); ++index) {
@@ -255,7 +272,7 @@ ProjectsProjection ProjectProjects(
 			.kind = EProjectsRowKind::Project,
 			.projectIndex = projectIndex,
 			.label = projectName,
-			.description = ProjectDescription(projects[projectIndex], current),
+			.description = ProjectDescription(projects[projectIndex], current, texts),
 			.trailing = projectIndex < branchSummaries.size()
 				? branchSummaries[projectIndex].label : std::wstring{},
 			.currentProject = current,
@@ -273,7 +290,7 @@ ProjectsProjection ProjectProjects(
 			.projectIndex = projectIndex,
 			.worktreeIndex = currentWorktree,
 			.label = currentLabel,
-			.description = WorktreeDescription(currentRow, projectName, currentLabel),
+			.description = WorktreeDescription(currentRow, projectName, currentLabel, texts),
 			.currentProject = true,
 			.primaryWorktree = currentWorktree == 0,
 			.enabled = !currentRow.locked && !currentRow.prunable && !currentRow.bare,
@@ -284,7 +301,8 @@ ProjectsProjection ProjectProjects(
 		result.rows.push_back({
 			.kind = EProjectsRowKind::WorktreesToggle,
 			.projectIndex = projectIndex,
-			.label = worktreesExpanded ? L"Hide linked worktrees" : L"Show linked worktrees",
+			.label = std::wstring(worktreesExpanded
+				? texts.hideLinkedWorktrees : texts.showLinkedWorktrees),
 			.hiddenWorktreeCount = hiddenCount,
 			.currentProject = true,
 			.expanded = worktreesExpanded,
@@ -299,7 +317,7 @@ ProjectsProjection ProjectProjects(
 				.projectIndex = projectIndex,
 				.worktreeIndex = worktreeIndex,
 				.label = worktreeLabel,
-				.description = WorktreeDescription(worktree, projectName, worktreeLabel),
+				.description = WorktreeDescription(worktree, projectName, worktreeLabel, texts),
 				.currentProject = true,
 				.primaryWorktree = worktreeIndex == 0,
 				.enabled = !worktree.locked && !worktree.prunable && !worktree.bare,

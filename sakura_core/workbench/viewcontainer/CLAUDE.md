@@ -90,6 +90,12 @@
   `tools/rendering/measure-frame-coherence.ps1 -Gesture OutlineToggle
   -ActivityBarPage Explorer -PresentedScreenOnly` for the direct screen gate;
   the same-geometry screen/PrintWindow gate checks independent capture noise.
+- The built-in page wrapper paints its uncovered area with the current Side Bar
+  background. The Outline child dialog is created lazily, so an expanded empty
+  Outline otherwise leaves the wrapper's pixels white under a dark theme.
+  Paint both `WM_PAINT` and `WM_PRINTCLIENT`, and invalidate visible wrappers
+  when the palette changes. `ContributedPageTransaction.EmptyOutlinePagePaintsTheSelectedSideBarColor`
+  checks the empty page and both dark and light palette projections.
 - Current supported placement is within this owner cohort. A product-owned or
   foreign cohort page without a retained-View transfer contract returns
   `Unsupported`. The pure catalog can describe a wider destination; that alone

@@ -40,6 +40,7 @@ public:
 	void Close() noexcept;
 	void Layout(const RECT& bounds, unsigned int dpi);
 	void SetStyle(const theme::ThemePalette& palette, unsigned int dpi);
+	void RefreshStrings() noexcept;
 	void ShowFind(bool visible);
 	[[nodiscard]] SenpTextFindResult Find(std::wstring_view query, bool previous = false, bool matchCase = false);
 	void SelectAll() noexcept;

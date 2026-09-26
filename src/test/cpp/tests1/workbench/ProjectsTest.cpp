@@ -5,6 +5,8 @@
  */
 #include "pch.h"
 
+#include "CSelectLang.h"
+#include "sakura_rc.h"
 #include "_main/ControlPlatformProjectCatalogStore.h"
 #include "workbench/projects/CProjectsPage.h"
 #include "workbench/projects/ProjectCatalogService.h"
@@ -345,6 +347,22 @@ TEST(ProjectsModel, GroupsCurrentCheckoutAndCollapsesTheRemainingWorktrees)
 	EXPECT_EQ(L"feature", expanded.rows[3].label);
 	EXPECT_EQ(EProjectsRowKind::Worktree, expanded.rows[4].kind);
 	EXPECT_EQ(EProjectsRowKind::Project, expanded.rows[5].kind);
+
+	ProjectsTexts texts;
+	texts.currentFolder = L"Current localized";
+	texts.folder = L"Folder localized";
+	texts.showLinkedWorktrees = L"Show localized";
+	texts.linkedWorktreesFormat = L"Linked count: {0}";
+	texts.primary = L"Primary localized";
+	texts.thisWindow = L"Window localized";
+	const auto localized = ProjectProjects(projects, workspace, &worktrees, false,
+		{}, std::nullopt, {}, texts);
+	EXPECT_EQ(L"Current localized", localized.rows[0].description);
+	EXPECT_EQ(L"Folder localized", localized.rows[3].description);
+	EXPECT_EQ(L"main", localized.rows[1].label);
+	EXPECT_EQ(L"Show localized, Linked count: 2", ProjectsAccessibleLabel(localized.rows[2], texts));
+	EXPECT_EQ(L"main, Primary localized, Window localized",
+		ProjectsAccessibleLabel(localized.rows[1], texts));
 }
 
 TEST(ProjectsModel, SummarizesCommonMixedAndUnavailableProjectBranches)
@@ -378,6 +396,21 @@ TEST(ProjectsModel, SummarizesCommonMixedAndUnavailableProjectBranches)
 	workbench::agent::AgentWorktreeRow detached{
 		.name = L"checkout", .head = L"abcdef0", .detached = true };
 	EXPECT_EQ(L"Detached @ abcdef0", ProjectWorktreeBranchLabel(detached));
+
+	ProjectsTexts texts;
+	texts.loadingGit = L"Loading localized";
+	texts.noGit = L"No repository localized";
+	texts.gitUnavailable = L"Unavailable localized";
+	texts.branchesFormat = L"Branches: {0}";
+	texts.repositoriesFormat = L"Repositories: {0}+";
+	texts.detached = L"Detached localized";
+	EXPECT_EQ(L"main", SummarizeProjectBranches(common, true, false, texts).label);
+	EXPECT_EQ(L"Branches: 2", SummarizeProjectBranches(mixed, true, false, texts).label);
+	EXPECT_EQ(L"Repositories: 2+", SummarizeProjectBranches(common, true, true, texts).label);
+	EXPECT_EQ(L"Loading localized", SummarizeProjectBranches(common, false, false, texts).label);
+	EXPECT_EQ(L"No repository localized", SummarizeProjectBranches({}, true, false, texts).label);
+	EXPECT_EQ(L"Unavailable localized", SummarizeProjectBranches(unavailable, true, false, texts).label);
+	EXPECT_EQ(L"Detached localized @ abcdef0", ProjectWorktreeBranchLabel(detached, texts));
 }
 
 TEST(ProjectsModel, PlansCurrentProjectFirstWithCaseInsensitiveDedupeAndBounds)
@@ -560,6 +593,26 @@ TEST(ProjectsPage, DeleteRemovesTheCatalogEntryWithoutChangingWorkspaceState)
 
 TEST(ProjectsPage, ShowsUnselectedProjectBranchWithoutActivatingOrMutatingWorkspace)
 {
+	const bool hadLanguageEnvironment = !CSelectLang::gm_Langs.empty();
+	const auto previousLanguage = hadLanguageEnvironment
+		? CSelectLang::GetLangInfo(CSelectLang::gm_Selected).GetDllName() : std::filesystem::path{};
+	const auto threadLanguage = ::GetThreadUILanguage();
+	struct RestoreLanguage final {
+		bool hadEnvironment;
+		std::filesystem::path previous;
+		LANGID threadLanguage;
+		~RestoreLanguage() {
+			CSelectLang::ChangeLang(previous);
+			if (!hadEnvironment) {
+				CSelectLang::gm_Langs.clear();
+				CSelectLang::gm_Selected = 0;
+			}
+			::SetThreadUILanguage(threadLanguage);
+		}
+	} restoreLanguage{ hadLanguageEnvironment, previousLanguage, threadLanguage };
+	CSelectLang::InitializeLanguageEnvironment();
+	CSelectLang::ChangeLang(L"sakura_lang_en_US.dll");
+	ASSERT_EQ(L"Projects", CSelectLang::LoadStringW(STR_WORKBENCH_PROJECTS_TITLE));
 	TemporaryProjectRoots roots;
 	std::vector<ProjectEntry> projects{
 		ProjectFolder(roots.current.wstring(), L"Current"),
@@ -656,6 +709,36 @@ TEST(ProjectsPage, ShowsUnselectedProjectBranchWithoutActivatingOrMutatingWorksp
 	EXPECT_TRUE(std::ranges::any_of(ListBoxRows(list), [](const auto& row) {
 		return row.find(L"Other, Folder, feature/other") != std::wstring::npos;
 	}));
+
+	// Language changes update the retained native rows without Git or workspace work.
+	const auto otherIndex = ::SendMessageW(list, LB_GETCOUNT, 0, 0) - 1;
+	(void)::SendMessageW(list, LB_SETCURSEL, otherIndex, 0);
+	const auto originalRows = ListBoxRows(list);
+	const std::pair<const wchar_t*, const wchar_t*> locales[] = {
+		{ L"", L"\u30d7\u30ed\u30b8\u30a7\u30af\u30c8" },
+		{ L"sakura_lang_zh_CN.dll", L"\u9879\u76ee" },
+		{ L"sakura_lang_en_US.dll", L"Projects" },
+	};
+	for (const auto& [dll, title] : locales) {
+		CSelectLang::ChangeLang(dll);
+		EXPECT_EQ(title, CSelectLang::LoadStringW(STR_WORKBENCH_PROJECTS_TITLE));
+		// Direct selected-module reads reject silent Japanese fallback for a missing ID.
+		for (UINT id = STR_WORKBENCH_PROJECTS_TITLE; id <= STR_WORKBENCH_PROJECTS_PROFILE_UNAVAILABLE; ++id) {
+			wchar_t value[256]{};
+			EXPECT_GT(::LoadStringW(CSelectLang::getLangRsrcInstance(), id, value, 256), 0) << id;
+		}
+		nativePage->RefreshProjectionStrings();
+		const auto translatedRows = ListBoxRows(list);
+		ASSERT_EQ(originalRows.size(), translatedRows.size());
+		const auto expected = L"Other, " + std::wstring(CSelectLang::LoadStringW(STR_WORKBENCH_PROJECTS_FOLDER))
+			+ L", feature/other";
+		EXPECT_EQ(expected, translatedRows.back());
+		EXPECT_EQ(otherIndex, ::SendMessageW(list, LB_GETCURSEL, 0, 0));
+		EXPECT_EQ(2U, runner->Calls().size());
+		EXPECT_EQ(0, activationCalls);
+		EXPECT_EQ(17U, workspace.revision);
+	}
+	EXPECT_EQ(originalRows, ListBoxRows(list));
 
 	EXPECT_EQ(workbench::viewcontainer::EViewContainerPageCloseStatus::Closed, page->Close());
 	EXPECT_EQ(0, runner->Active());

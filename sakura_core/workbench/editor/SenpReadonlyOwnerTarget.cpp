@@ -217,6 +217,7 @@ bool CSenpReadonlyOwnerTarget::PublishDocument(const senp::effect::OperationCont
 			.selectAll = [weak] { if (const auto locked = weak.lock()) locked->host.SelectAll(); },
 			.showFind = [weak] { if (const auto locked = weak.lock()) locked->host.ShowFind(true); },
 			.find = [](bool) { return false; },
+			.refreshStrings = [weak] { if (const auto locked = weak.lock()) locked->host.RefreshStrings(); },
 			.closed = [value] { value->closed = true; value->host.Close(); },
 		});
 		if (opened.status != SenpReadonlyStatus::Reused)

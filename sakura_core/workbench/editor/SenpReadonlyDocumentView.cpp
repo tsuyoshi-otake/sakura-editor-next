@@ -5,12 +5,19 @@
 #include "markdown/CMarkdownPreviewWnd.h"
 #include "workbench/controls/CInputBoxGeometry.h"
 #include "theme/CThemeService.h"
+#include "CSelectLang.h"
 #include <CommCtrl.h>
 #include <algorithm>
+#include <limits>
 #include <stdexcept>
 
 namespace workbench::editor {
 namespace {
+std::wstring Localized(UINT id, const wchar_t* fallback)
+{
+	const auto text = CSelectLang::LoadStringW(id);
+	return text.empty() ? std::wstring(fallback) : std::wstring(text);
+}
 markdown::Document Notice(std::wstring text)
 {
 	markdown::Document result;
@@ -21,16 +28,17 @@ markdown::Document Notice(std::wstring text)
 std::wstring StatusText(SenpDocumentState state)
 {
 	switch (state) {
-	case SenpDocumentState::Dormant: return L"No content has been requested.";
-	case SenpDocumentState::Loading: return L"Loading...";
-	case SenpDocumentState::Failed: return L"The document could not be loaded. Refresh to try again.";
-	case SenpDocumentState::Expired: return L"This document is no longer available.";
-	case SenpDocumentState::Closed: return L"The document is closed.";
-	default: return L"The document is unavailable.";
+	case SenpDocumentState::Dormant: return Localized(STR_WORKBENCH_DOCUMENT_NO_CONTENT, L"No content has been requested.");
+	case SenpDocumentState::Loading: return Localized(STR_WORKBENCH_DOCUMENT_LOADING, L"Loading...");
+	case SenpDocumentState::Failed: return Localized(STR_WORKBENCH_DOCUMENT_LOAD_FAILED, L"The document could not be loaded. Refresh to try again.");
+	case SenpDocumentState::Expired: return Localized(STR_WORKBENCH_DOCUMENT_EXPIRED, L"This document is no longer available.");
+	case SenpDocumentState::Closed: return Localized(STR_WORKBENCH_DOCUMENT_CLOSED, L"The document is closed.");
+	default: return Localized(STR_WORKBENCH_DOCUMENT_UNAVAILABLE, L"The document is unavailable.");
 	}
 }
 }
 class SenpReadonlyDocumentView::Impl {
+	friend class SenpReadonlyDocumentView;
 	std::optional<SenpStructuredSectionRange> sectionRange;
 public:
 	SenpReadonlyDocument& model;
@@ -43,8 +51,10 @@ public:
 	int inputLineHeight{};
 	unsigned int dpi{ 96 };
 	SenpDocumentViewState state{ SenpDocumentViewState::Unavailable };
-	std::optional<std::uint64_t> queued;
+	std::optional<markdown::PreviewRenderKey> queued;
 	std::uint64_t prepared{};
+	UINT feedbackResource{};
+	bool renderFailure{};
 	Impl(SenpReadonlyDocument& value, rendering::FrameSurfaceId surfaceId, std::optional<SenpStructuredSectionRange> range)
 		: model(value), preview({}, surfaceId), sectionRange(range)
 	{
@@ -67,34 +77,47 @@ public:
 		// otherwise expose the old heading/query position for a composited frame.
 		::RedrawWindow(root, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW);
 	}
-	void Status(const wchar_t* text) {
+	void Status(UINT resource) {
 		if (!status) return;
-		statusVisible = text && *text; ::SetWindowTextW(status, text ? text : L"");
+		feedbackResource = resource;
+		const auto text = Localized(resource, L"");
+		statusVisible = !text.empty(); ::SetWindowTextW(status, text.c_str());
 		::ShowWindow(status, statusVisible ? SW_SHOWNA : SW_HIDE); LayoutChild();
+	}
+	void HideStatus() { feedbackResource = 0; statusVisible = false; if (status) { ::SetWindowTextW(status, L""); ::ShowWindow(status, SW_HIDE); LayoutChild(); } }
+	bool HasMetadataSection() const noexcept {
+		const auto content = model.Content();
+		if (!content) return false;
+		const std::size_t first = sectionRange ? sectionRange->First() : 0;
+		const std::size_t count = sectionRange ? sectionRange->Count() : content->sections.size();
+		if (first > content->sections.size() || count > content->sections.size() - first) return false;
+		for (std::size_t i = first; i < first + count; ++i)
+			if (std::holds_alternative<senp::effect::MetadataSection>(content->sections[i])) return true;
+		return false;
 	}
 	void ShowFind(bool visible, bool focus = true) {
 		if (!query || state == SenpDocumentViewState::Closed) return;
 		findVisible = visible; ::ShowWindow(query, visible ? SW_SHOWNA : SW_HIDE); LayoutChild();
 		if (visible) { if (focus) ::SetFocus(query); ::SendMessageW(query, EM_SETSEL, 0, -1); }
-		else { Status(nullptr); if (focus) ::SetFocus(preview.GetHwnd()); }
+		else { HideStatus(); if (focus) ::SetFocus(preview.GetHwnd()); }
 	}
 	markdown::PreviewFindResult Find(std::wstring_view value, bool previous, bool matchCase) {
 		if (model.State() != SenpDocumentState::Ready || state != SenpDocumentViewState::Prepared) return markdown::PreviewFindResult::Unavailable;
 		const auto result = preview.FindText(value, previous, matchCase);
 		if (value.size() <= 1024 && value.find(L'\0') == std::wstring_view::npos) ::SetWindowTextW(query, std::wstring(value).c_str());
 		switch (result) {
-		case markdown::PreviewFindResult::Found: Status(L"Match in the document."); break;
-		case markdown::PreviewFindResult::Wrapped: Status(L"Search wrapped in the document."); break;
-		case markdown::PreviewFindResult::NotFound: Status(L"No results in the document."); break;
-		case markdown::PreviewFindResult::Invalid: Status(L"Enter a valid search query."); break;
-		default: Status(L"The document is not ready to search."); break;
+		case markdown::PreviewFindResult::Found: Status(STR_WORKBENCH_DOCUMENT_FIND_MATCH); break;
+		case markdown::PreviewFindResult::Wrapped: Status(STR_WORKBENCH_DOCUMENT_FIND_WRAPPED); break;
+		case markdown::PreviewFindResult::NotFound: Status(STR_WORKBENCH_DOCUMENT_FIND_NO_RESULTS); break;
+		case markdown::PreviewFindResult::Invalid: Status(STR_WORKBENCH_DOCUMENT_FIND_INVALID); break;
+		default: Status(STR_WORKBENCH_DOCUMENT_FIND_UNAVAILABLE); break;
 		}
 		return result;
 	}
 	bool Copy() {
 		if (model.State() != SenpDocumentState::Ready || state != SenpDocumentViewState::Prepared) return false;
 		const bool copied = preview.CopySelection();
-		Status(copied ? L"Selection copied." : L"The selection could not be copied. Try again.");
+		Status(copied ? STR_WORKBENCH_DOCUMENT_SELECTION_COPIED : STR_WORKBENCH_DOCUMENT_SELECTION_COPY_FAILED);
 		return copied;
 	}
 	void FindCurrent(bool previous) {
@@ -165,19 +188,24 @@ public:
 	bool Sync() {
 		if (!root || !preview.IsCreated() || state == SenpDocumentViewState::Closed) return false;
 		const auto generation = model.Generation();
-		if (queued == generation) return state != SenpDocumentViewState::Failed;
+		if (queued && queued->generation == generation) return state != SenpDocumentViewState::Failed;
 		const auto content = model.State() == SenpDocumentState::Ready ? model.Content() : nullptr;
 		const auto statusText = StatusText(model.State());
 		std::function<markdown::Document()> prepare;
-		if (content) prepare = [content, range = sectionRange] {
-			auto result = PrepareSenpReadonlyDocument(*content, range);
+		if (content) prepare = [content, range = sectionRange,
+			field = Localized(STR_WORKBENCH_DOCUMENT_FIELD, L"Field"),
+			value = Localized(STR_WORKBENCH_DOCUMENT_VALUE, L"Value")] {
+			auto result = PrepareSenpReadonlyDocument(*content, range, field, value);
 			if (result.result != SenpDocumentResult::Accepted) throw std::runtime_error("SENP document preparation failed.");
 			return std::move(result.document);
 		};
 		else prepare = [statusText] { return Notice(statusText); };
+		renderFailure = false;
+		feedbackResource = 0;
 		// Generation is a separate key field; never narrow an int64 wire revision.
-		if (!preview.QueuePreparedDocument(std::move(prepare), { generation, 0 })) { Close(); return false; }
-		queued = generation; state = SenpDocumentViewState::Preparing;
+		const markdown::PreviewRenderKey key{ generation, 0 };
+		if (!preview.QueuePreparedDocument(std::move(prepare), key)) { Close(); return false; }
+		queued = key; state = SenpDocumentViewState::Preparing;
 		if (!content) { ::SetWindowTextW(query, L""); ShowFind(false, false); }
 		::SetWindowTextW(preview.GetHwnd(), content ? content->title.c_str() : statusText.c_str());
 		return true;
@@ -204,7 +232,8 @@ bool SenpReadonlyDocumentView::Create(HWND parent)
 			0, 0, 1, 1, self.root, nullptr, nullptr, nullptr);
 		if (!self.query || !self.status || !::SetWindowSubclass(self.query, Impl::QueryProcedure, 1, reinterpret_cast<DWORD_PTR>(&self))) { self.Close(); return false; }
 		::SendMessageW(self.query, EM_LIMITTEXT, 1024, 0);
-		::SendMessageW(self.query, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(L"Find in document (Enter / Shift+Enter)"));
+		const auto placeholder = Localized(STR_WORKBENCH_DOCUMENT_FIND_PLACEHOLDER, L"Find in document (Enter / Shift+Enter)");
+		::SendMessageW(self.query, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(placeholder.c_str()));
 		self.preview.SetCopyCommand([this] { (void)Copy(); });
 		self.preview.SetFindCallback([this](markdown::PreviewFindAction action) {
 			if (action == markdown::PreviewFindAction::Show) { ShowFind(true); return; }
@@ -213,14 +242,16 @@ bool SenpReadonlyDocumentView::Create(HWND parent)
 		});
 		self.preview.SetPreparationCallback([&self](markdown::PreviewRenderKey key, bool succeeded) noexcept {
 			try {
-			if (self.state == SenpDocumentViewState::Closed || self.queued != key.generation) return;
+			if (self.state == SenpDocumentViewState::Closed || self.queued != key) return;
 			self.prepared = key.generation;
 			self.state = succeeded ? SenpDocumentViewState::Prepared : SenpDocumentViewState::Failed;
 			if (!succeeded) {
 				// The failed worker generation is terminal. Replace its last-good
 				// projection with an explicit failure; no automatic retry is queued.
-				self.preview.SetDocument(Notice(L"The document could not be rendered. Refresh to try again."));
-				::SetWindowTextW(self.preview.GetHwnd(), L"The document could not be rendered.");
+				self.renderFailure = true;
+				const auto text = Localized(STR_WORKBENCH_DOCUMENT_RENDER_FAILED, L"The document could not be rendered. Refresh to try again.");
+				self.preview.SetDocument(Notice(text));
+				::SetWindowTextW(self.preview.GetHwnd(), text.c_str());
 			}
 			} catch (...) { self.Close(); }
 		});
@@ -237,6 +268,56 @@ void SenpReadonlyDocumentView::SetStyle(const theme::ThemePalette& palette, cons
 	for (auto child : { m_impl->query, m_impl->status }) if (child) ::SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(m_impl->chromeFont.Get()), FALSE);
 	m_impl->inputLineHeight = controls::MeasureTextLineHeight(m_impl->root, m_impl->chromeFont.Get());
 	m_impl->preview.SetPalette(palette); m_impl->preview.SetEditorFont(font, m_impl->dpi); m_impl->LayoutChild();
+}
+void SenpReadonlyDocumentView::RefreshStrings() noexcept
+{
+	if (!m_impl || m_impl->state == SenpDocumentViewState::Closed) return;
+	try {
+		const auto placeholder = Localized(STR_WORKBENCH_DOCUMENT_FIND_PLACEHOLDER, L"Find in document (Enter / Shift+Enter)");
+		if (m_impl->query) ::SendMessageW(m_impl->query, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(placeholder.c_str()));
+		if (m_impl->renderFailure) {
+			const auto text = Localized(STR_WORKBENCH_DOCUMENT_RENDER_FAILED, L"The document could not be rendered. Refresh to try again.");
+			m_impl->preview.SetDocument(Notice(text));
+			if (m_impl->preview.GetHwnd()) ::SetWindowTextW(m_impl->preview.GetHwnd(), text.c_str());
+		}
+		else if (m_impl->model.State() == SenpDocumentState::Ready && m_impl->HasMetadataSection()) {
+			const auto content = m_impl->model.Content();
+			if (!content) return;
+			if (!m_impl->queued || m_impl->queued->revision == (std::numeric_limits<int>::max)()) {
+				m_impl->Close(); return;
+			}
+			const markdown::PreviewRenderKey key{ m_impl->model.Generation(), m_impl->queued->revision + 1 };
+			const auto range = m_impl->sectionRange;
+			auto prepare = [content, range,
+				field = Localized(STR_WORKBENCH_DOCUMENT_FIELD, L"Field"),
+				value = Localized(STR_WORKBENCH_DOCUMENT_VALUE, L"Value")] {
+				auto result = PrepareSenpReadonlyDocument(*content, range, field, value);
+				if (result.result != SenpDocumentResult::Accepted) throw std::runtime_error("SENP document preparation failed.");
+				return std::move(result.document);
+			};
+			if (!m_impl->preview.QueuePreparedDocument(std::move(prepare), key)) { m_impl->Close(); return; }
+			m_impl->queued = key;
+			m_impl->renderFailure = false;
+			m_impl->state = SenpDocumentViewState::Preparing;
+		}
+		else if (m_impl->model.State() != SenpDocumentState::Ready) {
+			const auto text = StatusText(m_impl->model.State());
+			if (m_impl->queued) {
+				if (m_impl->queued->revision == (std::numeric_limits<int>::max)()) { m_impl->Close(); return; }
+				const auto revision = m_impl->queued->revision + 1;
+				const markdown::PreviewRenderKey key{ m_impl->model.Generation(), revision };
+				if (!m_impl->preview.QueuePreparedDocument([text] { return Notice(text); }, key)) {
+					m_impl->Close(); return;
+				}
+				m_impl->queued = key;
+			}
+			if (m_impl->preview.GetHwnd()) ::SetWindowTextW(m_impl->preview.GetHwnd(), text.c_str());
+		}
+		if (m_impl->feedbackResource) m_impl->Status(m_impl->feedbackResource);
+		else if (m_impl->statusVisible && m_impl->status) {
+			const auto text = StatusText(m_impl->model.State()); ::SetWindowTextW(m_impl->status, text.c_str());
+		}
+	} catch (...) { m_impl->Close(); }
 }
 void SenpReadonlyDocumentView::Layout(const RECT& bounds, unsigned int dpi)
 {

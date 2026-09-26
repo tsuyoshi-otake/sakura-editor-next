@@ -14,6 +14,12 @@ struct SenpTreeViewOptions final {
 	//! VS Code's workbench.tree.expandMode default is singleClick. Items with a
 	//! command always reserve expansion for the twistie, independent of this option.
 	bool expandOnSingleClick{ true };
+	std::wstring loadingText{ L"Loading..." };
+	std::wstring loadMoreText{ L"Load more..." };
+	std::wstring retryText{ L"Retry" };
+	std::wstring noItemsText{ L"No items" };
+	std::wstring notLoadedText{ L"Not loaded" };
+	std::wstring providerUnavailableText{ L"Provider unavailable" };
 };
 
 //! A real Win32 TreeView body: native hierarchy, keyboard, selection and
@@ -32,6 +38,9 @@ public:
 	void Close() noexcept override;
 	[[nodiscard]] HWND TreeWindow() const noexcept;
 	[[nodiscard]] bool IsUsable() const noexcept;
+	void SetLocalizedStatusText(std::wstring loading, std::wstring loadMore,
+		std::wstring retry, std::wstring noItems, std::wstring notLoaded,
+		std::wstring providerUnavailable) noexcept;
 private:
 	struct Impl;
 	explicit CSenpTreeView(SenpTreeViewOptions options);

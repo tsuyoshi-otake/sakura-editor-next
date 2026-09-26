@@ -17,6 +17,19 @@ namespace workbench::viewcontainer {
 namespace {
 
 constexpr wchar_t kPageWindowClass[] = L"SakuraEditorNext.ViewContainerPage";
+constexpr COLORREF kDefaultPageBackground = RGB(0x25, 0x25, 0x26);
+
+void PaintPageBackground(HWND window, HDC dc, const RECT& bounds) noexcept
+{
+	const LONG_PTR encoded = ::GetWindowLongPtrW(window, GWLP_USERDATA);
+	const COLORREF color = encoded == 0 ? kDefaultPageBackground
+		: static_cast<COLORREF>(encoded - 1);
+	const HBRUSH brush = ::CreateSolidBrush(color);
+	if (brush != nullptr) {
+		::FillRect(dc, &bounds, brush);
+		::DeleteObject(brush);
+	}
+}
 
 void ShowPageWindow(HWND window, bool visible)
 {
@@ -58,8 +71,15 @@ LRESULT CALLBACK PageWindowProc(HWND window, UINT message, WPARAM wParam, LPARAM
 		return 1;
 	case WM_PAINT: {
 		PAINTSTRUCT paint{};
-		(void)::BeginPaint(window, &paint);
+		const HDC dc = ::BeginPaint(window, &paint);
+		PaintPageBackground(window, dc, paint.rcPaint);
 		::EndPaint(window, &paint);
+		return 0;
+	}
+	case WM_PRINTCLIENT: {
+		RECT client{};
+		::GetClientRect(window, &client);
+		PaintPageBackground(window, reinterpret_cast<HDC>(wParam), client);
 		return 0;
 	}
 	case WM_NCHITTEST:
@@ -115,12 +135,14 @@ public:
 		// One page-owned wrapper is the only HWND the pool reparents. All native roots,
 		// including Explorer's nested Outline View, remain children of this wrapper, so
 		// a native reparent has no partially-moved multi-window failure state.
-		// The wrapper paints no background and owns native child views. Delaying its
-		// paint behind sibling windows can leave pending TreeView rows unpresented.
+		// The wrapper paints uncovered space, including an empty Outline, with the
+		// side-bar color. Native child views still paint their own content.
 		m_window = ::CreateWindowExW(0, kPageWindowClass, L"",
 			WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, 0, 0, 0, 0,
 			parkingParent, nullptr, instance, nullptr);
 		if (m_window == nullptr) return false;
+		::SetWindowLongPtrW(m_window, GWLP_USERDATA,
+			static_cast<LONG_PTR>(m_owner.m_pageBackground) + 1);
 		try {
 			switch (m_kind) {
 			case PageKind::Explorer:
@@ -1054,6 +1076,17 @@ void CViewContainerPages::LayoutPage(
 
 void CViewContainerPages::SetPalette(const theme::ThemePalette& palette)
 {
+	const COLORREF background = palette.sideBar.ToColorRef();
+	if (m_pageBackground != background) {
+		m_pageBackground = background;
+		for (const auto& page : m_pages) {
+			if (const HWND window = PageWindow(page); window != nullptr) {
+				::SetWindowLongPtrW(window, GWLP_USERDATA,
+					static_cast<LONG_PTR>(background) + 1);
+				RedrawVisiblePage(window);
+			}
+		}
+	}
 	if (auto* explorer = Explorer()) {
 		explorer::ExplorerPalette explorerPalette;
 		explorerPalette.background = palette.sideBar.ToColorRef();

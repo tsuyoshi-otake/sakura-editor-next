@@ -7,6 +7,8 @@
 
 #include "workbench/projects/CProjectsPage.h"
 
+#include "CSelectLang.h"
+#include "sakura_rc.h"
 #include "workbench/layout/WorkbenchIds.h"
 #include "workbench/projects/ProjectsModel.h"
 #include "workbench/worktree/GitWorktreeDiscoverySource.h"
@@ -40,6 +42,35 @@ constexpr UINT kRemoveProjectMenuId = 1;
 constexpr std::size_t kMaximumBranchRepositoriesPerProject = 8;
 constexpr std::size_t kMaximumBranchRequestsPerRefresh = 64;
 
+ProjectsTexts LoadProjectsTexts()
+{
+	ProjectsTexts texts;
+	const auto load = [](std::wstring& target, const UINT id) {
+		const auto value = CSelectLang::LoadStringW(id);
+		if (!value.empty()) target.assign(value);
+	};
+	load(texts.currentFolder, STR_WORKBENCH_PROJECTS_CURRENT_FOLDER);
+	load(texts.currentWorkspace, STR_WORKBENCH_PROJECTS_CURRENT_WORKSPACE);
+	load(texts.folder, STR_WORKBENCH_PROJECTS_FOLDER);
+	load(texts.workspace, STR_WORKBENCH_PROJECTS_WORKSPACE);
+	load(texts.detached, STR_WORKBENCH_PROJECTS_DETACHED);
+	load(texts.bare, STR_WORKBENCH_PROJECTS_BARE);
+	load(texts.locked, STR_WORKBENCH_PROJECTS_LOCKED);
+	load(texts.prunable, STR_WORKBENCH_PROJECTS_PRUNABLE);
+	load(texts.linkedWorktreesFormat, STR_WORKBENCH_PROJECTS_LINKED_COUNT);
+	load(texts.primary, STR_WORKBENCH_PROJECTS_PRIMARY);
+	load(texts.thisWindow, STR_WORKBENCH_PROJECTS_THIS_WINDOW);
+	load(texts.unavailable, STR_WORKBENCH_PROJECTS_UNAVAILABLE);
+	load(texts.loadingGit, STR_WORKBENCH_PROJECTS_LOADING_GIT);
+	load(texts.noGit, STR_WORKBENCH_PROJECTS_NO_GIT);
+	load(texts.gitUnavailable, STR_WORKBENCH_PROJECTS_GIT_UNAVAILABLE);
+	load(texts.repositoriesFormat, STR_WORKBENCH_PROJECTS_REPOSITORIES_COUNT);
+	load(texts.branchesFormat, STR_WORKBENCH_PROJECTS_BRANCHES_COUNT);
+	load(texts.hideLinkedWorktrees, STR_WORKBENCH_PROJECTS_HIDE_LINKED);
+	load(texts.showLinkedWorktrees, STR_WORKBENCH_PROJECTS_SHOW_LINKED);
+	return texts;
+}
+
 int ScaleDip(const int value, const unsigned int dpi) noexcept
 {
 	return ::MulDiv(value, static_cast<int>(dpi == 0 ? 96 : dpi), 96);
@@ -63,7 +94,7 @@ class CProjectsPage final : public viewcontainer::IViewContainerPage,
 	public viewcontainer::IViewContainerPageProjection {
 public:
 	explicit CProjectsPage(ProjectsPageOptions options) :
-		m_options(std::move(options))
+		m_options(std::move(options)), m_texts(LoadProjectsTexts())
 	{
 		if (m_options.gitDiscoveryFactory) {
 			m_discovery = m_options.gitDiscoveryFactory();
@@ -293,7 +324,38 @@ public:
 
 	void RefreshProjectionStrings() noexcept override
 	{
-		if (m_window != nullptr) ::InvalidateRect(m_window, nullptr, FALSE);
+		try {
+			m_texts = LoadProjectsTexts();
+			// Reuse completed Git observations; a language change is not a refresh request.
+			for (auto& [identity, entry] : m_branchCache) {
+				for (std::size_t index = 0; index < entry.projections.size(); ++index) {
+					const auto& projection = entry.projections[index];
+					if (projection && projection->currentIndex
+						&& *projection->currentIndex < projection->rows.size()) {
+						entry.observations[index].label = ProjectWorktreeBranchLabel(
+							projection->rows[*projection->currentIndex], m_texts);
+					}
+				}
+				if (entry.summary.status == EProjectBranchSummaryStatus::Unavailable
+					&& entry.observations.empty()) {
+					entry.summary.label = m_texts.gitUnavailable;
+				} else {
+					entry.summary = SummarizeProjectBranches(entry.observations,
+						entry.completed == entry.observations.size(), entry.truncated, m_texts);
+				}
+			}
+			const auto selected = m_list ? ::SendMessageW(m_list, LB_GETCURSEL, 0, 0) : LB_ERR;
+			const auto top = m_list ? ::SendMessageW(m_list, LB_GETTOPINDEX, 0, 0) : LB_ERR;
+			RebuildProjection();
+			if (selected != LB_ERR && static_cast<std::size_t>(selected) < m_rows.size()) {
+				m_selectedIndex = static_cast<std::size_t>(selected);
+				(void)::SendMessageW(m_list, LB_SETCURSEL, selected, 0);
+			}
+			if (top != LB_ERR) (void)::SendMessageW(m_list, LB_SETTOPINDEX, top, 0);
+			InvalidateContent();
+		} catch (...) {
+			// Keep the accepted rows if allocating the new presentation failed.
+		}
 	}
 
 	void RefreshProjectionContent() noexcept override
@@ -492,7 +554,7 @@ private:
 				if (!roots) {
 					entry.summary = {
 						.status = EProjectBranchSummaryStatus::Unavailable,
-						.label = L"Git unavailable",
+						.label = m_texts.gitUnavailable,
 					};
 				}
 				m_branchCache.emplace(identity, std::move(entry));
@@ -522,7 +584,7 @@ private:
 					&& plan.truncatedProjects[index];
 				if (entry.summary.status == EProjectBranchSummaryStatus::Unavailable) continue;
 				entry.summary = SummarizeProjectBranches(entry.observations,
-					entry.observations.empty(), entry.truncated);
+					entry.observations.empty(), entry.truncated, m_texts);
 			}
 			if (!m_branchQueue.empty()
 				&& (m_window == nullptr || ::SetTimer(m_window, kRefreshTimer,
@@ -559,7 +621,7 @@ private:
 			entry.observations[request.repositoryIndex].unavailable = true;
 			++entry.completed;
 			entry.summary = SummarizeProjectBranches(entry.observations,
-				entry.completed == entry.observations.size(), entry.truncated);
+				entry.completed == entry.observations.size(), entry.truncated, m_texts);
 		} catch (...) {
 			auto found = m_branchCache.find(request.identity);
 			if (found == m_branchCache.end()) return;
@@ -621,7 +683,7 @@ private:
 							&& *projected.currentIndex < projected.rows.size()) {
 							auto& observation = entry.observations[request.repositoryIndex];
 							observation.label = ProjectWorktreeBranchLabel(
-								projected.rows[*projected.currentIndex]);
+								projected.rows[*projected.currentIndex], m_texts);
 							observation.succeeded = !observation.label.empty();
 							entry.projections[request.repositoryIndex] = projected;
 							if (m_currentProjectIndex
@@ -639,7 +701,7 @@ private:
 					}
 					++entry.completed;
 					entry.summary = SummarizeProjectBranches(entry.observations,
-						entry.completed == entry.observations.size(), entry.truncated);
+						entry.completed == entry.observations.size(), entry.truncated, m_texts);
 				}
 			}
 		} catch (...) {
@@ -663,11 +725,11 @@ private:
 			for (const auto& identity : m_projectBranchKeys) {
 				const auto found = m_branchCache.find(identity);
 				summaries.push_back(found == m_branchCache.end()
-					? ProjectBranchSummary{} : found->second.summary);
+					? SummarizeProjectBranches({}, false, false, m_texts) : found->second.summary);
 			}
 			const auto projection = ProjectProjects(m_projects, m_workspace,
 				m_worktrees ? &*m_worktrees : nullptr, m_worktreesExpanded,
-				summaries, m_selectedKind, m_selectedWorktreeIdentity);
+				summaries, m_selectedKind, m_selectedWorktreeIdentity, m_texts);
 			m_rows = projection.rows;
 			m_selectedIndex = projection.selectedRowIndex;
 		} catch (...) {
@@ -683,7 +745,7 @@ private:
 		::SendMessageW(m_list, WM_SETREDRAW, FALSE, 0);
 		(void)::SendMessageW(m_list, LB_RESETCONTENT, 0, 0);
 		for (const auto& row : m_rows) {
-			const auto accessible = ProjectsAccessibleLabel(row);
+			const auto accessible = ProjectsAccessibleLabel(row, m_texts);
 			(void)::SendMessageW(m_list, LB_ADDSTRING, 0,
 				reinterpret_cast<LPARAM>(accessible.c_str()));
 		}
@@ -813,12 +875,12 @@ private:
 		if (menu == nullptr) return;
 		constexpr UINT kOpenProjectInNewWindowMenuId = 0x5102;
 		if (::AppendMenuW(menu, MF_STRING, kOpenProjectInNewWindowMenuId,
-			L"Open in New Window") == FALSE) {
+			LS(STR_WORKBENCH_PROJECTS_OPEN_NEW_WINDOW)) == FALSE) {
 			::DestroyMenu(menu);
 			return;
 		}
 		if (::AppendMenuW(menu, MF_STRING, kRemoveProjectMenuId,
-			L"Remove from Projects") == FALSE) {
+			LS(STR_WORKBENCH_PROJECTS_REMOVE)) == FALSE) {
 			::DestroyMenu(menu);
 			return;
 		}
@@ -859,8 +921,8 @@ private:
 		const COLORREF previousColor = ::SetTextColor(dc, m_palette.primaryText.ToColorRef());
 		if (m_state != EPageState::Loaded) {
 			const wchar_t* message = m_state == EPageState::Empty
-				? L"Open a folder or workspace to add a Project."
-				: L"Projects are unavailable for this profile.";
+				? LS(STR_WORKBENCH_PROJECTS_EMPTY)
+				: LS(STR_WORKBENCH_PROJECTS_PROFILE_UNAVAILABLE);
 			RECT body = m_contentBounds;
 			const int inset = ScaleDip(20, m_dpi);
 			body.left += inset;
@@ -910,10 +972,10 @@ private:
 			labelRect.left += childIndent;
 		} else {
 			labelRect.left += childIndent;
-			if (row.primaryWorktree) trailing = L"Primary";
+			if (row.primaryWorktree) trailing = m_texts.primary;
 			if (row.kind == EProjectsRowKind::CurrentWorktree) {
 				if (!trailing.empty()) trailing += L"  ";
-				trailing += L"This Window";
+				trailing += m_texts.thisWindow;
 			}
 			const int dot = ScaleDip(6, m_dpi);
 			RECT dotRect = item.rcItem;
@@ -978,6 +1040,7 @@ private:
 	}
 
 	ProjectsPageOptions m_options;
+	ProjectsTexts m_texts;
 	std::unique_ptr<worktree::GitWorktreeDiscoverySource> m_discovery;
 	worktree::GitWorktreeRefresh m_refresh;
 	std::vector<ProjectEntry> m_projects;

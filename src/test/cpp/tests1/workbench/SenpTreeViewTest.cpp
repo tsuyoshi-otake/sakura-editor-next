@@ -1,6 +1,8 @@
 /*! @file */
 /* Copyright (C) 2026, Sakura Editor Organization. SPDX-License-Identifier: Zlib */
 #include "pch.h"
+#include "CSelectLang.h"
+#include "sakura_rc.h"
 #include <gtest/gtest.h>
 #include "workbench/tree/SenpTreeView.h"
 #include "workbench/SenpDeclaredTreeViews.h"
@@ -207,6 +209,24 @@ TEST_F(SenpTreeView, LazyNativeHierarchyKeepsLeafAndCommandSemantics)
 	}
 	EXPECT_EQ(2, runtime->Calls().size());
 }
+TEST_F(SenpTreeView, LocalizedHostRowsRefreshWithoutReloadingProviderState)
+{
+	Create();
+	ASSERT_EQ(1, runtime->Calls().size());
+	body->SetLocalizedStatusText(L"Loading translated", L"More translated", L"Retry translated",
+		L"Empty translated", L"Not loaded translated", L"Unavailable translated");
+	EXPECT_EQ(L"Loading translated", Text(TreeView_GetRoot(tree)));
+	EXPECT_EQ(1, runtime->Calls().size());
+	Complete({ NativeItem(L"branch", true) });
+	const auto branch = TreeView_GetRoot(tree);
+	TreeView_SelectItem(tree, branch); Key(VK_RIGHT);
+	const auto loading = TreeView_GetChild(tree, branch);
+	ASSERT_NE(nullptr, loading);
+	body->SetLocalizedStatusText(L"Loading now", L"More now", L"Retry now",
+		L"Empty now", L"Not loaded now", L"Unavailable now");
+	EXPECT_EQ(L"Loading now", Text(loading));
+	EXPECT_EQ(2, runtime->Calls().size());
+}
 TEST_F(SenpTreeView, PageAndRetryAreNativeActionsWithExplicitTerminals)
 {
 	Create(); Complete({ NativeItem(L"one") }, L"page2");
@@ -378,7 +398,7 @@ TEST_F(SenpDeclaredTreeViewsTest, ActivationIsPostedAndFailureRequiresExplicitRe
 	EXPECT_EQ(0, activationRequests);
 	DispatchTreeMessages();
 	EXPECT_EQ(1, activationRequests);
-	EXPECT_EQ(L"Activating extension...", Status());
+	EXPECT_EQ(std::wstring(CSelectLang::LoadStringW(STR_WORKBENCH_VIEW_ACTIVATING)), Status());
 	for (int i = 0; i < 5; ++i) { declaredBody->SetVisible(false); declaredBody->SetVisible(true); DispatchTreeMessages(); }
 	EXPECT_EQ(1, activationRequests);
 	ASSERT_TRUE(declarations->Pump(SenpExtensionActivationState::Failed));
@@ -389,7 +409,7 @@ TEST_F(SenpDeclaredTreeViewsTest, ActivationIsPostedAndFailureRequiresExplicitRe
 	EXPECT_FALSE(::IsWindowEnabled(retry));
 	DispatchTreeMessages();
 	EXPECT_EQ(2, activationRequests); EXPECT_EQ(1, retryRequests);
-	EXPECT_EQ(L"Activating extension...", Status());
+	EXPECT_EQ(std::wstring(CSelectLang::LoadStringW(STR_WORKBENCH_VIEW_ACTIVATING)), Status());
 	ASSERT_TRUE(declarations->Pump(SenpExtensionActivationState::Failed));
 	::SendMessageW(retry, BM_CLICK, 0, 0);
 	declaredBody->SetVisible(false); DispatchTreeMessages();
@@ -433,7 +453,7 @@ TEST_F(SenpDeclaredTreeViewsTest, RuntimeReplacementDefersNativeSwapAndRetainsDe
 	ASSERT_TRUE(declarations->Pump(SenpExtensionActivationState::Failed));
 	EXPECT_FALSE(::IsWindow(secondTree)); EXPECT_TRUE(newerProvider->Model().IsClosed());
 	EXPECT_EQ(retained, declaredBody->Window()); EXPECT_TRUE(::IsWindow(retained));
-	EXPECT_EQ(L"The extension could not be activated.", Status());
+	EXPECT_EQ(std::wstring(LS(STR_WORKBENCH_VIEW_ACTIVATION_FAILED)), Status());
 	EXPECT_FALSE(replacement->Pump());
 }
 

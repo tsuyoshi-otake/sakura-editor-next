@@ -49,6 +49,8 @@ public:
 	void SetPalette(const theme::ThemePalette& palette);
 	void SetTitle(std::wstring title);
 	void SetHeaderMenu(std::vector<HeaderMenuItem> items);
+	//! Refreshes locale-dependent control text after the selected resource changes.
+	void RefreshLocalizedText() noexcept;
 	void SetHeaderDragCallback(HeaderDragCallback callback) { m_headerDrag = std::move(callback); }
 	//! Applies a shared extent without entering resize state or invoking persistence.
 	void ApplyExtentDip(int extentDip);

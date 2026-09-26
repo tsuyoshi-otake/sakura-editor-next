@@ -161,6 +161,13 @@ and lifecycle rules as the rest of the native workbench.
 - The catalog must finish one coherent load before it can write. Invalid or
   unsupported stored data is retained for diagnosis and may never be silently
   replaced by startup auto-registration.
+- Projects presentation uses `ProjectsTexts` values in the pure model and the
+  existing Japanese/English/Chinese resource tables at `CProjectsPage`. These
+  values own their strings because changing language unloads the old DLL.
+  `RefreshProjectionStrings` reprojects cached Git observations and preserves
+  selection; it must not restart discovery or mutate the workspace/catalog.
+  `ProjectsTest.cpp` covers model labels and live native language switching;
+  `ActivityBarEntryProjectionTest.cpp` covers the stable title resource mapping.
 
 ### Phase 1 Layout-Memento Persistence Checkpoint (2026-07-31)
 
