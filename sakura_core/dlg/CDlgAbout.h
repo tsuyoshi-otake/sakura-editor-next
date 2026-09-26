@@ -19,12 +19,7 @@
 #pragma once
 
 #include "dlg/CDialog.h"
-/*!
-	@brief About Box管理
-	
-	DispatchEventを独自に定義することで，CDialogでサポートされていない
-	メッセージを捕捉する．
-*/
+#include <string>
 
 class CUrlWnd
 {
@@ -48,20 +43,21 @@ protected:
 class CDlgAbout final : public CDialog
 {
 public:
+	~CDlgAbout() override;
 	int DoModal(HINSTANCE hInstance, HWND hwndParent);	/* モーダルダイアログの表示 */
-	//	Nov. 7, 2000 genta	標準以外のメッセージを捕捉する
-	INT_PTR DispatchEvent( HWND hWnd, UINT wMsg, WPARAM wParam, LPARAM lParam ) override;
 protected:
 	BOOL OnInitDialog(HWND hwndDlg, WPARAM wParam, LPARAM lParam) override;
 	BOOL OnBnClicked(int wID) override;
 	BOOL OnStnClicked(int wID) override;
 	LPVOID GetHelpIdTable(void) override;	//@@@ 2002.01.18 add
 private:
+	std::wstring m_fullVersionInfo;
+	HFONT m_headingFont = nullptr;
+	HFONT m_sectionFont = nullptr;
 	CUrlWnd m_UrlUrWnd;
 	CUrlWnd m_UrlGitWnd;
 	CUrlWnd m_UrlBuildLinkWnd;
 	CUrlWnd m_UrlGitHubCommitWnd;
 	CUrlWnd m_UrlGitHubPRWnd;
-	CUrlWnd m_UrlOrgWnd;
 };
 #endif /* SAKURA_CDLGABOUT_7F887984_7DEB_42C7_AB87_7CE7D9801700_H_ */

@@ -3215,7 +3215,7 @@ BEGIN
     F_MENU_ALLFUNC          "命令列表"
     F_EXTHELP1              "外部帮助1"
     F_EXTHTMLHELP           "外部HTML帮助"
-    F_ABOUT                 "关于Sakura"
+    F_ABOUT                 "关于 Sakura Editor NEXT"
 END
 
 STRINGTABLE
@@ -3284,7 +3284,7 @@ END
 STRINGTABLE
 BEGIN
     IDS_AUTHOR_PAGE         "https://github.com/tsuyoshi-otake/sakura-editor-next"
-    IDS_ABOUT_DESCRIPTION   "VS Code級の機能を、ネイティブの速さで。\r\n本软件是[文本编辑器(联合开发版)]的更名版本。\r\n可免费用于商业或非商业用途，源代码版权遵循各部分原始作者声明保留。\r\n本软件不提供任何担保。\r\n"
+    IDS_ABOUT_DESCRIPTION   "Sakura Editor NEXT 是一款基于 Sakura Editor 的 Windows 文本编辑器。\r\n采用 zlib 许可证分发。版权和许可详情请参阅随附的 LICENSE 文件。"
 END
 
 STRINGTABLE

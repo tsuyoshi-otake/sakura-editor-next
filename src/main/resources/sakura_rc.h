@@ -796,6 +796,14 @@
 #define IDC_PYTHONDIR                   1739
 #define IDC_PYTHONDIRREF                1740
 #define IDC_CHECK_bDarkMode             1741
+#define IDC_STATIC_ABOUT_NAME           1742
+#define IDC_STATIC_ABOUT_VERSION        1743
+#define IDC_STATIC_ABOUT_BUILD_HEADING  1744
+#define IDC_STATIC_ABOUT_LINKS_HEADING  1745
+#define IDC_STATIC_ABOUT_AUTHOR         1746
+#define IDC_STATIC_ABOUT_COPYRIGHT      1747
+#define IDC_STATIC_ABOUT_TRANSLATION    1748
+#define IDC_STATIC_ABOUT_FORK_COPYRIGHT 1749
 #define IDS_AUTHOR_PAGE                 4054
 #define IDS_ABOUT_DESCRIPTION           4056
 #define IDD_TYPELIST                    5000
@@ -2370,7 +2378,7 @@
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NEXT_RESOURCE_VALUE        35804
 #define _APS_NEXT_COMMAND_VALUE         101
-#define _APS_NEXT_CONTROL_VALUE         1741
+#define _APS_NEXT_CONTROL_VALUE         1750
 #define _APS_NEXT_SYMED_VALUE           10000
 #endif
 #endif

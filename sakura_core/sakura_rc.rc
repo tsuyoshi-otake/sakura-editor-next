@@ -3311,7 +3311,7 @@ END
 STRINGTABLE
 BEGIN
     IDS_AUTHOR_PAGE         "https://github.com/tsuyoshi-otake/sakura-editor-next"
-    IDS_ABOUT_DESCRIPTION   "VS Code級の機能を、ネイティブの速さで。\r\nこのソフトウェアは「テキストエディタ(共同開発版)」を改称したものです。\r\n商用・非商用を問わず無償で利用できますが、ソースコードの著作権は各箇所を記述した人が留保しています。\r\nこのソフトウェアは無保証です。\r\n"
+    IDS_ABOUT_DESCRIPTION   "Sakura Editor NEXT は、サクラエディタを基にした Windows 用テキストエディタです。\r\nzlib ライセンスで公開しています。著作権とライセンスの詳細は付属の LICENSE を参照してください。"
 END
 
 STRINGTABLE

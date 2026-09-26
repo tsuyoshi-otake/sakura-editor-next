@@ -24,6 +24,7 @@
 #include "uiparts/HandCursor.h"
 #include "util/file.h"
 #include "util/module.h"
+#include "util/os.h"
 #include "util/shell.h"
 #include "util/window.h"
 #include "sakura_rc.h" // 2002/2/10 aroka 復帰
@@ -32,7 +33,9 @@
 #include "apiwrap/StdControl.h"
 #include "CSelectLang.h"
 #include "sakura.hh"
+#include "config/app_constants.h"
 #include "config/system_constants.h"
+#include "theme/CThemeService.h"
 
 // バージョン情報 CDlgAbout.cpp	//@@@ 2002.01.07 add start MIK
 const DWORD p_helpids[] = {	//12900
@@ -105,30 +108,69 @@ const DWORD p_helpids[] = {	//12900
 #pragma message("CI_BUILD_NUMBER_LABEL: " CI_BUILD_NUMBER_LABEL)
 #endif
 
-//	From Here Nov. 7, 2000 genta
-/*!
-	標準以外のメッセージを捕捉する
-*/
-INT_PTR CDlgAbout::DispatchEvent( HWND hWnd, UINT wMsg, WPARAM wParam, LPARAM lParam )
-{
-	INT_PTR result;
-	result = CDialog::DispatchEvent( hWnd, wMsg, wParam, lParam );
-	switch( wMsg ){
-	case WM_CTLCOLORDLG:
-	case WM_CTLCOLORSTATIC:
-		// EDITも READONLY か DISABLEの場合 WM_CTLCOLORSTATIC になります
-		if( (HWND)lParam == GetDlgItem(hWnd, IDC_EDIT_ABOUT) ){
-			::SetTextColor( (HDC)wParam, RGB( 102, 102, 102 ) );
-		} else {
-			::SetTextColor( (HDC)wParam, RGB( 0, 0, 0 ) );
-        }
-		return (INT_PTR)GetStockObject( WHITE_BRUSH );
-	default:
-		break;
+namespace {
+	HFONT CreateAboutFont( HWND dialog, int pointSize, int weight )
+	{
+		const auto baseFont = reinterpret_cast<HFONT>( ::SendMessageW( dialog, WM_GETFONT, 0, 0 ) );
+		LOGFONTW font{};
+		if( ::GetObjectW( baseFont, sizeof( font ), &font ) == 0 ) return nullptr;
+		const UINT dpi = ::GetDpiForWindow( dialog );
+		font.lfHeight = -::MulDiv( pointSize, dpi == 0 ? 96 : dpi, 72 );
+		font.lfWidth = 0;
+		font.lfWeight = weight;
+		return ::CreateFontIndirectW( &font );
 	}
-	return result;
+
+	void CompactAboutFooter( HWND dialog )
+	{
+		const int omittedRows =
+			(::GetDlgItem( dialog, IDC_STATIC_GIT_CAPTION ) == nullptr ? 1 : 0) +
+			(::GetDlgItem( dialog, IDC_STATIC_URL_CI_BUILD_CAPTION ) == nullptr ? 1 : 0) +
+			(::GetDlgItem( dialog, IDC_STATIC_URL_GITHUB_CAPTION ) == nullptr ? 1 : 0);
+		if( omittedRows == 0 ) return;
+
+		RECT units{ 0, 0, 0, 14 * omittedRows };
+		if( !::MapDialogRect( dialog, &units ) ) return;
+		const int delta = units.bottom;
+		RECT bounds{};
+		if( !::GetWindowRect( dialog, &bounds ) ) return;
+		constexpr int footerIds[]{ IDC_STATIC_ABOUT_AUTHOR, IDC_STATIC_ABOUT_FORK_COPYRIGHT,
+			IDC_STATIC_ABOUT_COPYRIGHT,
+			IDC_STATIC_ABOUT_TRANSLATION, IDC_BUTTON_COPY, IDOK };
+		HWND children[std::size( footerIds )]{};
+		RECT positions[std::size( footerIds )]{};
+		for( size_t index = 0; index < std::size( footerIds ); ++index ){
+			children[index] = ::GetDlgItem( dialog, footerIds[index] );
+			if( children[index] == nullptr || !::GetWindowRect( children[index], &positions[index] ) ) return;
+			::MapWindowPoints( nullptr, dialog, reinterpret_cast<POINT*>( &positions[index] ), 2 );
+		}
+
+		for( size_t index = 0; index < std::size( footerIds ); ++index ){
+			const RECT& position = positions[index];
+			if( !::SetWindowPos( children[index], nullptr, position.left, position.top - delta, 0, 0,
+				SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSIZE ) ){
+				for( size_t previous = 0; previous < index; ++previous ){
+					::SetWindowPos( children[previous], nullptr, positions[previous].left, positions[previous].top,
+						0, 0, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSIZE );
+				}
+				return;
+			}
+		}
+		if( ::SetWindowPos( dialog, nullptr, bounds.left, bounds.top + delta / 2,
+			bounds.right - bounds.left, bounds.bottom - bounds.top - delta,
+			SWP_NOZORDER | SWP_NOACTIVATE ) ) return;
+		for( size_t index = 0; index < std::size( footerIds ); ++index ){
+			::SetWindowPos( children[index], nullptr, positions[index].left, positions[index].top,
+				0, 0, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSIZE );
+		}
+	}
 }
-//	To Here Nov. 7, 2000 genta
+
+CDlgAbout::~CDlgAbout()
+{
+	if( m_headingFont != nullptr ) ::DeleteObject( m_headingFont );
+	if( m_sectionFont != nullptr ) ::DeleteObject( m_sectionFont );
+}
 
 /* モーダルダイアログの表示 */
 int CDlgAbout::DoModal( HINSTANCE hInstance, HWND hwndParent )
@@ -157,14 +199,8 @@ BOOL CDlgAbout::OnInitDialog( HWND hwndDlg, WPARAM wParam, LPARAM lParam )
 	//	2004.05.13 Moca バージョン番号は、プロセスごとに取得する
 	//	2010.04.15 Moca コンパイラ情報を分離/WINヘッダー,N_SHAREDATA_VERSION追加
 
-	// 以下の形式で出力
-	//サクラエディタ開発版(64bitデバッグ) Ver. 2.4.1.1234 GHA (xxxxxxxx)
-	//(GitURL https://github.com/sakura/sakura-editor.git)
-	//
-	//      Compile Info: V 1400  WR WIN600/I601/N600
-	//      Last Modified: 1999/9/9 00:00:00
-	//      (あればSKR_PATCH_INFOの文字列がそのまま表示)
 	CNativeW cmemMsg;
+	CNativeW buildSummary;
 
 	// 1行目
 	// バージョン情報
@@ -180,6 +216,7 @@ BOOL CDlgAbout::OnInitDialog( HWND hwndDlg, WPARAM wParam, LPARAM lParam )
 	// 2行目
 #ifdef GIT_COMMIT_HASH
 	cmemMsg.AppendString( L"(GitHash " _T(GIT_COMMIT_HASH) L")\r\n" );
+	buildSummary.AppendString( L"Git: " _T(GIT_COMMIT_HASH) L"\r\n" );
 #endif
 
 	// 3行目
@@ -191,17 +228,21 @@ BOOL CDlgAbout::OnInitDialog( HWND hwndDlg, WPARAM wParam, LPARAM lParam )
 	cmemMsg.AppendString( L"\r\n" );
 
 	// コンパイル情報
-	cmemMsg.AppendStringF(
-		L"      Compile Info: " _T(COMPILER_TYPE) _T(TARGET_M_SUFFIX) L"%d " TSTR_TARGET_MODE L" WIN%03x/I%03x/N%03x\r\n",
+	CNativeW compileLine;
+	compileLine.AppendStringF(
+		L"Compiler: " _T(COMPILER_TYPE) _T(TARGET_M_SUFFIX) L"%d " TSTR_TARGET_MODE L" WIN%03x/I%03x/N%03x\r\n",
 		COMPILER_VER, WINVER, _WIN32_IE, _WIN32_WINNT
 	);
+	cmemMsg.AppendString( compileLine.GetStringPtr() );
+	buildSummary.AppendString( compileLine.GetStringPtr() );
 
 	// 更新日情報
 	//	Oct. 22, 2005 genta タイムスタンプ取得の共通関数利用
 	CFileTime cFileTime;
 	GetLastWriteTimestamp( szFile, &cFileTime );
-	cmemMsg.AppendStringF(
-		L"      Last Modified: %d/%d/%d %02d:%02d:%02d\r\n",
+	CNativeW modifiedLine;
+	modifiedLine.AppendStringF(
+		L"Modified: %d/%d/%d %02d:%02d:%02d\r\n",
 		cFileTime->wYear,
 		cFileTime->wMonth,
 		cFileTime->wDay,
@@ -209,6 +250,8 @@ BOOL CDlgAbout::OnInitDialog( HWND hwndDlg, WPARAM wParam, LPARAM lParam )
 		cFileTime->wMinute,
 		cFileTime->wSecond
 	);
+	cmemMsg.AppendString( modifiedLine.GetStringPtr() );
+	buildSummary.AppendString( modifiedLine.GetStringPtr() );
 
 	// パッチの情報をコンパイル時に渡せるようにする
 #ifdef SKR_PATCH_INFO
@@ -216,10 +259,12 @@ BOOL CDlgAbout::OnInitDialog( HWND hwndDlg, WPARAM wParam, LPARAM lParam )
 	const WCHAR szPatchInfo[] = SKR_PATCH_INFO;
 	constexpr auto patchInfoLen = std::size(szPatchInfo) - 1;
 	cmemMsg.AppendString( szPatchInfo, t_min(80, patchInfoLen) );
+	buildSummary.AppendString( szPatchInfo, t_min(80, patchInfoLen) );
 #endif
 	cmemMsg.AppendString( L"\r\n");
 
-	ApiWrap::DlgItem_SetText( GetHwnd(), IDC_EDIT_VER, cmemMsg.GetStringPtr() );
+	m_fullVersionInfo = cmemMsg.GetStringPtr();
+	ApiWrap::DlgItem_SetText( GetHwnd(), IDC_EDIT_VER, buildSummary.GetStringPtr() );
 
 	//	From Here Jun. 8, 2001 genta
 	//	Edit Boxにメッセージを追加する．
@@ -244,6 +289,34 @@ BOOL CDlgAbout::OnInitDialog( HWND hwndDlg, WPARAM wParam, LPARAM lParam )
 
 	/* 基底クラスメンバ */
 	(void)CDialog::OnInitDialog( GetHwnd(), wParam, lParam );
+
+	::SetDlgItemTextW( GetHwnd(), IDC_STATIC_ABOUT_NAME, GetAppName() );
+#ifdef _WIN64
+	constexpr wchar_t architecture[] = L"x64";
+#else
+	constexpr wchar_t architecture[] = L"x86";
+#endif
+#ifdef _DEBUG
+	constexpr wchar_t configuration[] = L"Debug";
+#else
+	constexpr wchar_t configuration[] = L"Release";
+#endif
+	WCHAR versionText[96]{};
+	swprintf_s( versionText, L"%u.%u.%u.%u  |  %ls  |  %ls",
+		HIWORD( dwVersionMS ), LOWORD( dwVersionMS ), HIWORD( dwVersionLS ), LOWORD( dwVersionLS ),
+		architecture, configuration );
+	::SetDlgItemTextW( GetHwnd(), IDC_STATIC_ABOUT_VERSION, versionText );
+
+	m_headingFont = CreateAboutFont( GetHwnd(), 14, FW_SEMIBOLD );
+	m_sectionFont = CreateAboutFont( GetHwnd(), 9, FW_SEMIBOLD );
+	if( m_headingFont != nullptr ){
+		::SendMessageW( GetItemHwnd( IDC_STATIC_ABOUT_NAME ), WM_SETFONT, reinterpret_cast<WPARAM>( m_headingFont ), TRUE );
+	}
+	if( m_sectionFont != nullptr ){
+		::SendMessageW( GetItemHwnd( IDC_STATIC_ABOUT_BUILD_HEADING ), WM_SETFONT, reinterpret_cast<WPARAM>( m_sectionFont ), TRUE );
+		::SendMessageW( GetItemHwnd( IDC_STATIC_ABOUT_LINKS_HEADING ), WM_SETFONT, reinterpret_cast<WPARAM>( m_sectionFont ), TRUE );
+	}
+	CompactAboutFooter( GetHwnd() );
 
 	// URLウィンドウをサブクラス化する
 	m_UrlUrWnd.SetSubclassWindow( GetItemHwnd( IDC_STATIC_URL_UR ) );
@@ -277,12 +350,7 @@ BOOL CDlgAbout::OnBnClicked( int wID )
 {
 	switch( wID ){
 	case IDC_BUTTON_COPY:
-		{
-			HWND hwndEditVer = GetItemHwnd( IDC_EDIT_VER );
-			ApiWrap::EditCtl_SetSel( hwndEditVer, 0, -1); 
-	 		SendMessage( hwndEditVer, WM_COPY, 0, 0 );
-	 		ApiWrap::EditCtl_SetSel( hwndEditVer, -1, 0); 
- 		}
+		SetClipboardText( GetHwnd(), m_fullVersionInfo.c_str(), static_cast<int>( m_fullVersionInfo.size() ) );
 		return TRUE;
 	default:
 		break;
@@ -430,7 +498,7 @@ LRESULT CALLBACK CUrlWnd::UrlWndProc( HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 		if( !PtInRect( &rc, pt ) )
 			SendMessageAny( hWnd, WM_MOUSEMOVE, 0, MAKELONG( pt.x, pt.y ) );
 		break;
-	case WM_PAINT:
+	case WM_PAINT: {
 		// ウィンドウの描画
 		PAINTSTRUCT ps;
 		HFONT hFont;
@@ -446,7 +514,10 @@ LRESULT CALLBACK CUrlWnd::UrlWndProc( HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 
 		// テキスト描画
 		SetBkMode( hdc, TRANSPARENT );
-		SetTextColor( hdc, pUrlWnd->m_bHilighted? RGB( 0x84, 0, 0 ): RGB( 0, 0, 0xff ) );
+		const auto mode = GetDllShareData().m_Common.m_sWindow.m_bDarkMode
+			? theme::ThemeMode::Dark : theme::ThemeMode::Light;
+		const auto palette = theme::CThemeService::EffectivePalette( mode );
+		SetTextColor( hdc, (pUrlWnd->m_bHilighted ? palette.buttonHoverBackground : palette.accent).ToColorRef() );
 		hFontOld = (HFONT)SelectObject( hdc, (HGDIOBJ)hFont );
 		::TextOutW(hdc, ::DpiScaleX(2), 0, PSZ_ARGS(szText));
 		SelectObject( hdc, (HGDIOBJ)hFontOld );
@@ -457,28 +528,18 @@ LRESULT CALLBACK CUrlWnd::UrlWndProc( HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 
 		EndPaint( hWnd, &ps );
 		return (LRESULT)0;
-	case WM_ERASEBKGND:
+	}
+	case WM_ERASEBKGND: {
 		hdc = (HDC)wParam;
 		GetClientRect( hWnd, &rc );
 
-		// 背景描画
-		if( pUrlWnd->m_bHilighted ){
-			// ハイライト時背景描画
-			HBRUSH brush = ::CreateSolidBrush( RGB( 0xff, 0xff, 0 ) );
-			HGDIOBJ brushOld = ::SelectObject( hdc, brush );
-			::PatBlt( hdc, rc.left, rc.top, rc.right, rc.bottom, PATCOPY );
-			::SelectObject( hdc, brushOld );
-			::DeleteObject( brush );
-		}else{
-			// 親にWM_CTLCOLORSTATICを送って背景ブラシを取得し、背景描画する
-			HBRUSH hbr;
-			HBRUSH hbrOld;
-			hbr = (HBRUSH)SendMessageAny( GetParent( hWnd ), WM_CTLCOLORSTATIC, wParam, (LPARAM)hWnd );
-			hbrOld = (HBRUSH)SelectObject( hdc, hbr );
-			::PatBlt( hdc, rc.left, rc.top, rc.right, rc.bottom, PATCOPY );
-			SelectObject( hdc, hbrOld );
-		}
+		// 親の背景を使い、ホバー色だけを変える。
+		HBRUSH hbr = (HBRUSH)SendMessageAny( GetParent( hWnd ), WM_CTLCOLORSTATIC, wParam, (LPARAM)hWnd );
+		HBRUSH hbrOld = (HBRUSH)SelectObject( hdc, hbr );
+		::PatBlt( hdc, rc.left, rc.top, rc.right, rc.bottom, PATCOPY );
+		SelectObject( hdc, hbrOld );
 		return (LRESULT)1;
+	}
 	case WM_DESTROY:
 		// 後始末
 		KillTimer( hWnd, 1 );

@@ -1624,6 +1624,49 @@ TEST_F(EditWndTest, ShowDlgAbout101)
 	dialog::ModalDialogCloser closer([this] (HWND hWndDlg) {
 		std::vector<INPUT> inputs{};
 		RECT rc{};
+		WCHAR text[2048]{};
+
+		EXPECT_NE(::GetDlgItem(hWndDlg, IDC_STATIC_ABOUT_NAME), nullptr);
+		::GetDlgItemTextW(hWndDlg, IDC_STATIC_ABOUT_NAME, text, int(std::size(text)));
+		EXPECT_EQ(std::wstring_view(text), GetAppName());
+
+		::GetDlgItemTextW(hWndDlg, IDC_STATIC_ABOUT_VERSION, text, int(std::size(text)));
+		EXPECT_NE(std::wstring_view(text).find(L"  |  "), std::wstring_view::npos);
+		EXPECT_EQ(std::wstring_view(text).find(L"開発版"), std::wstring_view::npos);
+
+		::GetDlgItemTextW(hWndDlg, IDC_EDIT_ABOUT, text, int(std::size(text)));
+		EXPECT_NE(std::wstring_view(text).find(L"Sakura Editor NEXT"), std::wstring_view::npos);
+		::GetDlgItemTextW(hWndDlg, IDC_EDIT_VER, text, int(std::size(text)));
+		EXPECT_NE(std::wstring_view(text).find(L"Compiler:"), std::wstring_view::npos);
+		EXPECT_NE(std::wstring_view(text).find(L"Modified:"), std::wstring_view::npos);
+		EXPECT_NE(::GetDlgItem(hWndDlg, IDC_STATIC_ABOUT_BUILD_HEADING), nullptr);
+		EXPECT_NE(::GetDlgItem(hWndDlg, IDC_STATIC_ABOUT_LINKS_HEADING), nullptr);
+		EXPECT_NE(::GetDlgItem(hWndDlg, IDC_STATIC_ABOUT_COPYRIGHT), nullptr);
+		::GetDlgItemTextW(hWndDlg, IDC_STATIC_ABOUT_COPYRIGHT, text, int(std::size(text)));
+		EXPECT_NE(std::wstring_view(text).find(L"Norio Nakatani"), std::wstring_view::npos);
+		EXPECT_NE(::GetDlgItem(hWndDlg, IDC_STATIC_ABOUT_FORK_COPYRIGHT), nullptr);
+		::GetDlgItemTextW(hWndDlg, IDC_STATIC_ABOUT_FORK_COPYRIGHT, text, int(std::size(text)));
+		EXPECT_EQ(std::wstring_view(text), L"Copyright (C) 2026 Tsuyoshi Otake");
+		HWND lastLink = ::GetDlgItem(hWndDlg, IDC_STATIC_URL_CAPTION);
+		for (const int id : {IDC_STATIC_GIT_CAPTION, IDC_STATIC_URL_CI_BUILD_CAPTION, IDC_STATIC_URL_GITHUB_CAPTION}) {
+			if (const HWND candidate = ::GetDlgItem(hWndDlg, id); candidate != nullptr) lastLink = candidate;
+		}
+		RECT lastLinkRect{};
+		RECT authorRect{};
+		RECT allowedGap{0, 0, 0, 12};
+		const bool hasGeometry = ::GetWindowRect(lastLink, &lastLinkRect)
+			&& ::GetWindowRect(::GetDlgItem(hWndDlg, IDC_STATIC_ABOUT_AUTHOR), &authorRect)
+			&& ::MapDialogRect(hWndDlg, &allowedGap);
+		EXPECT_TRUE(hasGeometry);
+		if (hasGeometry) EXPECT_LE(authorRect.top - lastLinkRect.bottom, allowedGap.bottom);
+		const HWND projectLink = ::GetDlgItem(hWndDlg, IDC_STATIC_URL_UR);
+		EXPECT_EQ(::GetNextDlgTabItem(hWndDlg, ::GetDlgItem(hWndDlg, IDOK), FALSE), projectLink);
+		HWND lastTabLink = projectLink;
+		for (const int id : {IDC_STATIC_URL_GIT, IDC_STATIC_URL_CI_BUILD,
+			IDC_STATIC_URL_GITHUB_COMMIT, IDC_STATIC_URL_GITHUB_PR}) {
+			if (const HWND candidate = ::GetDlgItem(hWndDlg, id); candidate != nullptr) lastTabLink = candidate;
+		}
+		EXPECT_EQ(::GetNextDlgTabItem(hWndDlg, lastTabLink, FALSE), ::GetDlgItem(hWndDlg, IDC_BUTTON_COPY));
 
 		EXPECT_THAT(::GetWindowRect(::GetDlgItem(hWndDlg, IDC_STATIC_URL_UR), &rc), IsTrue());
 		inputs.emplace_back(MakeMouseInputMove((rc.left + rc.right) / 2, (rc.top + rc.bottom) / 2));

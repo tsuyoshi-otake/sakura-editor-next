@@ -3299,7 +3299,7 @@ BEGIN
     F_MENU_ALLFUNC          "Command list"
     F_EXTHELP1              "External Help1"
     F_EXTHTMLHELP           "External HTML Help"
-    F_ABOUT                 "About Sakura"
+    F_ABOUT                 "About Sakura Editor NEXT"
 END
 
 STRINGTABLE
@@ -3368,7 +3368,7 @@ END
 STRINGTABLE
 BEGIN
     IDS_AUTHOR_PAGE         "https://github.com/tsuyoshi-otake/sakura-editor-next"
-    IDS_ABOUT_DESCRIPTION   "VS Code級の機能を、ネイティブの速さで。\r\nThis software is the renamed [Text Editor(Joint Development Version)].\r\nIt is free for use irrespective of use commercially or not but, Source Code Copyright reserved by the person as described in each section.\r\nThis software is distributed without guarantee.\r\n"
+    IDS_ABOUT_DESCRIPTION   "Sakura Editor NEXT is a Windows text editor based on Sakura Editor.\r\nDistributed under the zlib License. See the included LICENSE for copyright and license details."
 END
 
 STRINGTABLE
