@@ -272,15 +272,15 @@ function ConvertTo-ValidatedCheckRuns {
                 -Description "$description completed_at"
             $reverseTimestampSkew = $startedAt - $completedAt
             # GitHub may synthesize a never-executed job shortly after its
-            # workflow completes. Permit only the exact seven-second anomaly
-            # observed in #284, and only for trusted, non-required Actions jobs.
+            # workflow completes. Permit at most the nine-second anomaly
+            # observed in #315 (following #284), and only for trusted, non-required Actions jobs.
             $allowedNonRequiredGitHubSkippedTimestampSkew =
                 -not $isRequiredCheck -and
                 $appId -eq $TrustedAppId -and
                 $appSlug -ceq 'github-actions' -and
                 $isCanonicalActionsJob -and
                 $conclusion -ceq 'skipped' -and
-                $reverseTimestampSkew -le [TimeSpan]::FromSeconds(7)
+                $reverseTimestampSkew -le [TimeSpan]::FromSeconds(9)
             if ($startedAt -gt $completedAt -and -not $allowedNonRequiredGitHubSkippedTimestampSkew) {
                 throw "$description started_at must not be later than completed_at."
             }
@@ -573,16 +573,16 @@ function Invoke-SourceCheckSelfTest {
     Assert-MalformedFirstRunRejected $completedBeforeStart 'must not be later than completed_at'
 
     $observedSkippedTimestampSkew = New-CheckRun -Name 'Publish test results' -Id 3034 `
-        -Status 'completed' -Conclusion 'skipped' -StartedAt '2026-08-30T00:10:07Z' `
+        -Status 'completed' -Conclusion 'skipped' -StartedAt '2026-08-30T00:10:09Z' `
         -DetailsUrl "https://github.com/$repository/actions/runs/5000/job/3034"
     @(Resolve-RequiredSourceChecks -CheckRuns (@($allSuccess) + $observedSkippedTimestampSkew) `
         -RequiredCheckNames $required -TrustedAppId $trustedAppId `
         -Repository $repository -SourceSha $sourceSha) | Out-Null
 
-    $eightSecondSkippedTimestampSkew = New-CheckRun -Name 'Publish test results' -Id 3035 `
-        -Status 'completed' -Conclusion 'skipped' -StartedAt '2026-08-30T00:10:08Z' `
+    $tenSecondSkippedTimestampSkew = New-CheckRun -Name 'Publish test results' -Id 3035 `
+        -Status 'completed' -Conclusion 'skipped' -StartedAt '2026-08-30T00:10:10Z' `
         -DetailsUrl "https://github.com/$repository/actions/runs/5000/job/3035"
-    Assert-Rejected -Runs (@($allSuccess) + $eightSecondSkippedTimestampSkew) `
+    Assert-Rejected -Runs (@($allSuccess) + $tenSecondSkippedTimestampSkew) `
         -ExpectedMessage 'must not be later than completed_at'
 
     $requiredSkippedTimestampSkew = New-CheckRun -Name $required[0] -Id 3037 `
