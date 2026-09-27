@@ -95644,14 +95644,14 @@
     {
       "column": 34,
       "evidence_sha256": "sha256:72037de2aae316ef967a6f331bbd2d569a99eec5e17583b47951ee540d0c0f78",
-      "line": 917,
+      "line": 916,
       "path": ".github/workflows/build-sakura.yml",
       "rule_id": "test.filtered_or_skipped"
     },
     {
       "column": 34,
       "evidence_sha256": "sha256:72037de2aae316ef967a6f331bbd2d569a99eec5e17583b47951ee540d0c0f78",
-      "line": 967,
+      "line": 966,
       "path": ".github/workflows/build-sakura.yml",
       "rule_id": "test.filtered_or_skipped"
     }
@@ -96508,8 +96508,8 @@
     ]
   },
   "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
-  "source_commit": "e1d0389dfa51ba99508f6583310250fcbb5a1ba3",
-  "source_fingerprint": "sha256:4d6d768492bed36d5771dffba72c005e2707d1f3b4837a9c784a7f34dd3747d1",
+  "source_commit": "56b549cc9eea76a68335df697dcd09cabfdb1035",
+  "source_fingerprint": "sha256:8821fa1df06de9cc3d5afceb7ab056c9bf0d7a55b198a330877bc0b051f015e4",
   "tracked_source_paths": [
     ".github/actions/bootstrap-vcpkg/action.yml",
     ".github/dependabot.yml",
