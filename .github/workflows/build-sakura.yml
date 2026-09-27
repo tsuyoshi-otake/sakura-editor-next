@@ -205,7 +205,6 @@ jobs:
           mingw-w64-x86_64-7zip
           mingw-w64-x86_64-gdb
           mingw-w64-x86_64-ctags
-          mingw-w64-x86_64-diffutils
 
     - run: uv venv
       shell: msys2 {0}

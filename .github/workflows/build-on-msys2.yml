@@ -57,6 +57,9 @@ jobs:
       # Pin the selector so no Rust backend arrives from the caller or from the
       # runner environment.
       SAKURA_UTF16_BACKEND: cpp
+      # This build neither packages nor tests diff.exe; avoid an unnecessary
+      # MSYS2 package prerequisite and the archive fallback.
+      SAKURA_DIFFUTILS_SOURCE: none
 
     defaults:
       run:
@@ -104,7 +107,6 @@ jobs:
             mingw-w64-x86_64-7zip
             mingw-w64-x86_64-gdb
             mingw-w64-x86_64-ctags
-            mingw-w64-x86_64-diffutils
 
       # rustup ships with the runner image, but the release this repository
       # builds against is declared by rust/native/rust-toolchain.toml, which the
