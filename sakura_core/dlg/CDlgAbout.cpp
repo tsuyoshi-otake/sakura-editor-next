@@ -31,6 +31,7 @@
 #include "version.h"
 #include "apiwrap/StdApi.h"
 #include "apiwrap/StdControl.h"
+#include "apiwrap/DarkMode.h"
 #include "CSelectLang.h"
 #include "sakura.hh"
 #include "config/app_constants.h"
@@ -109,58 +110,59 @@ const DWORD p_helpids[] = {	//12900
 #endif
 
 namespace {
-	HFONT CreateAboutFont( HWND dialog, int pointSize, int weight )
+	HFONT CreateAboutFont( const CDialog& dialog, int pointSize, int weight )
 	{
-		const auto baseFont = reinterpret_cast<HFONT>( ::SendMessageW( dialog, WM_GETFONT, 0, 0 ) );
+		const auto hwnd = dialog.GetHwnd();
+		const auto baseFont = reinterpret_cast<HFONT>( ::SendMessageW( hwnd, WM_GETFONT, 0, 0 ) );
 		LOGFONTW font{};
 		if( ::GetObjectW( baseFont, sizeof( font ), &font ) == 0 ) return nullptr;
-		const UINT dpi = ::GetDpiForWindow( dialog );
+		const UINT dpi = ::GetDpiForWindow( hwnd );
 		font.lfHeight = -::MulDiv( pointSize, dpi == 0 ? 96 : dpi, 72 );
 		font.lfWidth = 0;
 		font.lfWeight = weight;
 		return ::CreateFontIndirectW( &font );
 	}
 
-	void CompactAboutFooter( HWND dialog )
+	void CompactAboutFooter( const CDialog& dialog )
 	{
+		const auto hwnd = dialog.GetHwnd();
 		const int omittedRows =
-			(::GetDlgItem( dialog, IDC_STATIC_GIT_CAPTION ) == nullptr ? 1 : 0) +
-			(::GetDlgItem( dialog, IDC_STATIC_URL_CI_BUILD_CAPTION ) == nullptr ? 1 : 0) +
-			(::GetDlgItem( dialog, IDC_STATIC_URL_GITHUB_CAPTION ) == nullptr ? 1 : 0);
+			(::GetDlgItem( hwnd, IDC_STATIC_GIT_CAPTION ) == nullptr ? 1 : 0) +
+			(::GetDlgItem( hwnd, IDC_STATIC_URL_CI_BUILD_CAPTION ) == nullptr ? 1 : 0) +
+			(::GetDlgItem( hwnd, IDC_STATIC_URL_GITHUB_CAPTION ) == nullptr ? 1 : 0);
 		if( omittedRows == 0 ) return;
 
 		RECT units{ 0, 0, 0, 14 * omittedRows };
-		if( !::MapDialogRect( dialog, &units ) ) return;
+		if( !::MapDialogRect( hwnd, &units ) ) return;
 		const int delta = units.bottom;
 		RECT bounds{};
-		if( !::GetWindowRect( dialog, &bounds ) ) return;
+		if( !::GetWindowRect( hwnd, &bounds ) ) return;
 		constexpr int footerIds[]{ IDC_STATIC_ABOUT_AUTHOR, IDC_STATIC_ABOUT_FORK_COPYRIGHT,
 			IDC_STATIC_ABOUT_COPYRIGHT,
 			IDC_STATIC_ABOUT_TRANSLATION, IDC_BUTTON_COPY, IDOK };
-		HWND children[std::size( footerIds )]{};
 		RECT positions[std::size( footerIds )]{};
 		for( size_t index = 0; index < std::size( footerIds ); ++index ){
-			children[index] = ::GetDlgItem( dialog, footerIds[index] );
-			if( children[index] == nullptr || !::GetWindowRect( children[index], &positions[index] ) ) return;
-			::MapWindowPoints( nullptr, dialog, reinterpret_cast<POINT*>( &positions[index] ), 2 );
+			const auto child = ::GetDlgItem( hwnd, footerIds[index] );
+			if( child == nullptr || !::GetWindowRect( child, &positions[index] ) ) return;
+			::MapWindowPoints( nullptr, hwnd, reinterpret_cast<POINT*>( &positions[index] ), 2 );
 		}
 
 		for( size_t index = 0; index < std::size( footerIds ); ++index ){
 			const RECT& position = positions[index];
-			if( !::SetWindowPos( children[index], nullptr, position.left, position.top - delta, 0, 0,
+			if( !::SetWindowPos( ::GetDlgItem( hwnd, footerIds[index] ), nullptr, position.left, position.top - delta, 0, 0,
 				SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSIZE ) ){
 				for( size_t previous = 0; previous < index; ++previous ){
-					::SetWindowPos( children[previous], nullptr, positions[previous].left, positions[previous].top,
+					::SetWindowPos( ::GetDlgItem( hwnd, footerIds[previous] ), nullptr, positions[previous].left, positions[previous].top,
 						0, 0, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSIZE );
 				}
 				return;
 			}
 		}
-		if( ::SetWindowPos( dialog, nullptr, bounds.left, bounds.top + delta / 2,
+		if( ::SetWindowPos( hwnd, nullptr, bounds.left, bounds.top + delta / 2,
 			bounds.right - bounds.left, bounds.bottom - bounds.top - delta,
 			SWP_NOZORDER | SWP_NOACTIVATE ) ) return;
 		for( size_t index = 0; index < std::size( footerIds ); ++index ){
-			::SetWindowPos( children[index], nullptr, positions[index].left, positions[index].top,
+			::SetWindowPos( ::GetDlgItem( hwnd, footerIds[index] ), nullptr, positions[index].left, positions[index].top,
 				0, 0, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSIZE );
 		}
 	}
@@ -307,16 +309,16 @@ BOOL CDlgAbout::OnInitDialog( HWND hwndDlg, WPARAM wParam, LPARAM lParam )
 		architecture, configuration );
 	::SetDlgItemTextW( GetHwnd(), IDC_STATIC_ABOUT_VERSION, versionText );
 
-	m_headingFont = CreateAboutFont( GetHwnd(), 14, FW_SEMIBOLD );
-	m_sectionFont = CreateAboutFont( GetHwnd(), 9, FW_SEMIBOLD );
+	m_headingFont = CreateAboutFont( *this, 14, FW_SEMIBOLD );
+	m_sectionFont = CreateAboutFont( *this, 9, FW_SEMIBOLD );
 	if( m_headingFont != nullptr ){
-		::SendMessageW( GetItemHwnd( IDC_STATIC_ABOUT_NAME ), WM_SETFONT, reinterpret_cast<WPARAM>( m_headingFont ), TRUE );
+		SetWindowFont( GetItemHwnd( IDC_STATIC_ABOUT_NAME ), m_headingFont, TRUE );
 	}
 	if( m_sectionFont != nullptr ){
-		::SendMessageW( GetItemHwnd( IDC_STATIC_ABOUT_BUILD_HEADING ), WM_SETFONT, reinterpret_cast<WPARAM>( m_sectionFont ), TRUE );
-		::SendMessageW( GetItemHwnd( IDC_STATIC_ABOUT_LINKS_HEADING ), WM_SETFONT, reinterpret_cast<WPARAM>( m_sectionFont ), TRUE );
+		SetWindowFont( GetItemHwnd( IDC_STATIC_ABOUT_BUILD_HEADING ), m_sectionFont, TRUE );
+		SetWindowFont( GetItemHwnd( IDC_STATIC_ABOUT_LINKS_HEADING ), m_sectionFont, TRUE );
 	}
-	CompactAboutFooter( GetHwnd() );
+	CompactAboutFooter( *this );
 
 	// URLウィンドウをサブクラス化する
 	m_UrlUrWnd.SetSubclassWindow( GetItemHwnd( IDC_STATIC_URL_UR ) );
@@ -514,7 +516,7 @@ LRESULT CALLBACK CUrlWnd::UrlWndProc( HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 
 		// テキスト描画
 		SetBkMode( hdc, TRANSPARENT );
-		const auto mode = GetDllShareData().m_Common.m_sWindow.m_bDarkMode
+		const auto mode = IsDarkModeActive()
 			? theme::ThemeMode::Dark : theme::ThemeMode::Light;
 		const auto palette = theme::CThemeService::EffectivePalette( mode );
 		SetTextColor( hdc, (pUrlWnd->m_bHilighted ? palette.buttonHoverBackground : palette.accent).ToColorRef() );
@@ -534,7 +536,7 @@ LRESULT CALLBACK CUrlWnd::UrlWndProc( HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 		GetClientRect( hWnd, &rc );
 
 		// 親の背景を使い、ホバー色だけを変える。
-		HBRUSH hbr = (HBRUSH)SendMessageAny( GetParent( hWnd ), WM_CTLCOLORSTATIC, wParam, (LPARAM)hWnd );
+		HBRUSH hbr = FORWARD_WM_CTLCOLORSTATIC( GetParent( hWnd ), hdc, hWnd, SendMessageAny );
 		HBRUSH hbrOld = (HBRUSH)SelectObject( hdc, hbr );
 		::PatBlt( hdc, rc.left, rc.top, rc.right, rc.bottom, PATCOPY );
 		SelectObject( hdc, hbrOld );

@@ -1621,7 +1621,7 @@ TEST_F(EditWndTest, ShowDlgReplace001)
 TEST_F(EditWndTest, ShowDlgAbout101)
 {
 	// 表示されたモーダルダイアログをキャンセルボタンで閉じるようにする
-	dialog::ModalDialogCloser closer([this] (HWND hWndDlg) {
+	dialog::ModalDialogCloser closer([this] (auto hWndDlg) {
 		std::vector<INPUT> inputs{};
 		RECT rc{};
 		WCHAR text[2048]{};
@@ -1647,9 +1647,9 @@ TEST_F(EditWndTest, ShowDlgAbout101)
 		EXPECT_NE(::GetDlgItem(hWndDlg, IDC_STATIC_ABOUT_FORK_COPYRIGHT), nullptr);
 		::GetDlgItemTextW(hWndDlg, IDC_STATIC_ABOUT_FORK_COPYRIGHT, text, int(std::size(text)));
 		EXPECT_EQ(std::wstring_view(text), L"Copyright (C) 2026 Tsuyoshi Otake");
-		HWND lastLink = ::GetDlgItem(hWndDlg, IDC_STATIC_URL_CAPTION);
+		auto lastLink = ::GetDlgItem(hWndDlg, IDC_STATIC_URL_CAPTION);
 		for (const int id : {IDC_STATIC_GIT_CAPTION, IDC_STATIC_URL_CI_BUILD_CAPTION, IDC_STATIC_URL_GITHUB_CAPTION}) {
-			if (const HWND candidate = ::GetDlgItem(hWndDlg, id); candidate != nullptr) lastLink = candidate;
+			if (const auto candidate = ::GetDlgItem(hWndDlg, id); candidate != nullptr) lastLink = candidate;
 		}
 		RECT lastLinkRect{};
 		RECT authorRect{};
@@ -1659,12 +1659,12 @@ TEST_F(EditWndTest, ShowDlgAbout101)
 			&& ::MapDialogRect(hWndDlg, &allowedGap);
 		EXPECT_TRUE(hasGeometry);
 		if (hasGeometry) EXPECT_LE(authorRect.top - lastLinkRect.bottom, allowedGap.bottom);
-		const HWND projectLink = ::GetDlgItem(hWndDlg, IDC_STATIC_URL_UR);
+		const auto projectLink = ::GetDlgItem(hWndDlg, IDC_STATIC_URL_UR);
 		EXPECT_EQ(::GetNextDlgTabItem(hWndDlg, ::GetDlgItem(hWndDlg, IDOK), FALSE), projectLink);
-		HWND lastTabLink = projectLink;
+		auto lastTabLink = projectLink;
 		for (const int id : {IDC_STATIC_URL_GIT, IDC_STATIC_URL_CI_BUILD,
 			IDC_STATIC_URL_GITHUB_COMMIT, IDC_STATIC_URL_GITHUB_PR}) {
-			if (const HWND candidate = ::GetDlgItem(hWndDlg, id); candidate != nullptr) lastTabLink = candidate;
+			if (const auto candidate = ::GetDlgItem(hWndDlg, id); candidate != nullptr) lastTabLink = candidate;
 		}
 		EXPECT_EQ(::GetNextDlgTabItem(hWndDlg, lastTabLink, FALSE), ::GetDlgItem(hWndDlg, IDC_BUTTON_COPY));
 
