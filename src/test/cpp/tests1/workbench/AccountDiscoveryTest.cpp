@@ -43,6 +43,13 @@ scm::GitExecutionResult GitMissing()
 	return result;
 }
 
+scm::GitExecutionResult GitNotInstalled()
+{
+	scm::GitExecutionResult result;
+	result.status = scm::EGitExecutionStatus::GitUnavailable;
+	return result;
+}
+
 scm::GitExecutionResult GitCancelled()
 {
 	scm::GitExecutionResult result;
@@ -208,9 +215,24 @@ TEST(AccountDiscovery, DistinguishesUnconfiguredGitFromUnavailableTools)
 	const auto snapshot = DiscoverAccounts(Request(), runners);
 	EXPECT_EQ(EAccountDiscoveryState::Unavailable, snapshot.state);
 	EXPECT_EQ(EAccountSourceState::Unconfigured, snapshot.gitState);
-	EXPECT_EQ(EAccountSourceState::Unavailable, snapshot.githubState);
+	EXPECT_EQ(EAccountSourceState::NotInstalled, snapshot.githubState);
 	EXPECT_FALSE(snapshot.gitIdentity.has_value());
 	EXPECT_TRUE(snapshot.githubAccounts.empty());
+}
+
+TEST(AccountDiscovery, MissingGitAndFailedGhLaunchHaveDifferentGuidanceStates)
+{
+	AccountDiscoveryRunners runners;
+	runners.runGit = [](const scm::GitExecutionRequest&, HANDLE) { return GitNotInstalled(); };
+	runners.runGhAuthStatus = [](const GhAuthStatusRequest&, HANDLE) {
+		GhAuthStatusResult result;
+		result.status = EAccountCommandStatus::LaunchFailed;
+		return result;
+	};
+	const auto snapshot = DiscoverAccounts(Request(), runners);
+	EXPECT_EQ(EAccountDiscoveryState::Unavailable, snapshot.state);
+	EXPECT_EQ(EAccountSourceState::NotInstalled, snapshot.gitState);
+	EXPECT_EQ(EAccountSourceState::Unavailable, snapshot.githubState);
 }
 
 TEST(AccountDiscovery, KeepsUsableGitDataAndMarksTheAggregatePartialWhenGhFails)
@@ -223,7 +245,7 @@ TEST(AccountDiscovery, KeepsUsableGitDataAndMarksTheAggregatePartialWhenGhFails)
 	const auto snapshot = DiscoverAccounts(Request(), runners);
 	EXPECT_EQ(EAccountDiscoveryState::Partial, snapshot.state);
 	EXPECT_EQ(EAccountSourceState::Partial, snapshot.gitState);
-	EXPECT_EQ(EAccountSourceState::Unavailable, snapshot.githubState);
+	EXPECT_EQ(EAccountSourceState::NotInstalled, snapshot.githubState);
 	ASSERT_TRUE(snapshot.gitIdentity.has_value());
 	EXPECT_EQ(L"Alice", snapshot.gitIdentity->userName);
 	EXPECT_TRUE(snapshot.gitIdentity->userEmail.empty());
@@ -319,6 +341,24 @@ TEST(AccountDiscovery, ServiceDeduplicatesInFlightWorkAndStopJoinsIt)
 	EXPECT_EQ(EAccountDiscoveryState::Stopped, service.Snapshot().state);
 	EXPECT_EQ(EAccountRefreshResult::RejectedStopped, service.RequestRefresh(L"C:\\repo"));
 	::CloseHandle(entered);
+}
+
+TEST(AccountDiscovery, ServiceReportsMissingGitHubExecutableOnlyAfterDiscoverySettles)
+{
+	AccountDiscoveryService service([](const AccountDiscoveryRequest&, HANDLE) {
+		AccountDiscoverySnapshot result;
+		result.state = EAccountDiscoveryState::Unavailable;
+		result.githubState = EAccountSourceState::NotInstalled;
+		return result;
+	});
+	EXPECT_FALSE(service.GitHubCliExecutableMissing());
+	EXPECT_EQ(EAccountRefreshResult::Started, service.RequestRefresh(L"C:\\repo"));
+	const auto deadline = ::GetTickCount64() + 1000;
+	while (service.Snapshot().state == EAccountDiscoveryState::Loading
+		&& ::GetTickCount64() < deadline) ::Sleep(1);
+	EXPECT_TRUE(service.GitHubCliExecutableMissing());
+	service.Stop();
+	EXPECT_FALSE(service.GitHubCliExecutableMissing());
 }
 
 } // namespace

@@ -56,9 +56,9 @@ constexpr std::wstring_view kBranchFromPlaceholder = L"Select a ref to create th
 }
 
 //! `DescribeGitFailure` under the name this file's call sites already use.
-[[nodiscard]] std::wstring DescribeFailure(const GitExecutionResult& result)
+[[nodiscard]] std::wstring DescribeFailure(const GitExecutionResult& result, const GitBranchCommandContext& context)
 {
-	return DescribeGitFailure(result);
+	return DescribeGitFailure(result, context.text);
 }
 
 [[nodiscard]] bool HasPresenters(const GitBranchCommandContext& context) noexcept
@@ -81,7 +81,7 @@ void Notify(const GitBranchCommandContext& context, std::wstring_view message)
 {
 	const auto result = context.run(BuildForEachRefArguments());
 	if (!result.Succeeded() || result.exitCode != 0) {
-		failure = Failed(DescribeFailure(result));
+		failure = Failed(DescribeFailure(result, context));
 		return false;
 	}
 	const std::string_view bytes(
@@ -114,7 +114,7 @@ void Notify(const GitBranchCommandContext& context, std::wstring_view message)
 {
 	const auto result = context.run(arguments);
 	if (!result.Succeeded() || result.exitCode != 0) {
-		auto message = DescribeFailure(result);
+		auto message = DescribeFailure(result, context);
 		Notify(context, message);
 		return Failed(std::move(message));
 	}

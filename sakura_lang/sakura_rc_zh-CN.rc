@@ -4529,7 +4529,7 @@ BEGIN
     STR_WORKBENCH_VIEW_NO_PROVIDER "此视图未注册数据提供程序。"
     STR_WORKBENCH_VIEW_ACTIVATION_FAILED "无法激活扩展。"
     STR_WORKBENCH_VIEW_ACTIVATION_BUSY "运行时容量已占用，无法启动扩展。"
-    STR_WORKBENCH_VIEW_UNSUPPORTED "此扩展无法在当前环境中提供此视图。"
+    STR_WORKBENCH_VIEW_UNSUPPORTED "无法显示此视图。请在“扩展”中检查该扩展的状态。"
     STR_WORKBENCH_VIEW_DISABLED "此扩展已禁用。"
     STR_WORKBENCH_VIEW_STOPPED "此扩展已停止。"
     STR_WORKBENCH_VIEW_UNAVAILABLE "此视图不可用。"
@@ -4591,6 +4591,12 @@ BEGIN
     STR_WORKBENCH_GIT_CLONE_TOOLBAR "克隆"
     STR_WORKBENCH_GIT_CHECKOUT_TOOLBAR "签出到..."
     STR_WORKBENCH_GIT_FETCH_TOOLBAR "提取"
+    STR_WORKBENCH_GIT_UNAVAILABLE "未找到 Git。请安装 Git for Windows，将 git.exe 添加到 PATH，然后重新启动 Sakura Editor NEXT。"
+    STR_WORKBENCH_ACCOUNT_GITHUB_CLI_NOT_INSTALLED "未检测到 GitHub CLI（请检查安装和 PATH）。"
+    STR_WORKBENCH_VIEW_DETAILS "详细信息"
+    STR_WORKBENCH_VIEW_HELP_OPEN_FAILED "无法打开指南。请在浏览器中打开以下 URL："
+    STR_WORKBENCH_ACCOUNT_GIT_NOT_INSTALLED "未检测到 Git（请检查安装和 PATH）。"
+    STR_WORKBENCH_VIEW_GITHUB_CLI_MISSING "未检测到 GitHub CLI。请安装或检查 PATH。"
 END
 #endif    // 中国語 (簡体字、中国) resources
 /////////////////////////////////////////////////////////////////////////////

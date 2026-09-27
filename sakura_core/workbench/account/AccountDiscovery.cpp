@@ -307,7 +307,7 @@ GitSourceResult ReadGitIdentity(const AccountDiscoveryRequest& request,
 		source.state = EAccountSourceState::Unconfigured;
 	} else if (results[0].status == scm::EGitExecutionStatus::GitUnavailable
 		|| results[1].status == scm::EGitExecutionStatus::GitUnavailable) {
-		source.state = EAccountSourceState::Unavailable;
+		source.state = EAccountSourceState::NotInstalled;
 	} else if (!decoded[0] || !decoded[1]) {
 		source.state = EAccountSourceState::Failed;
 	}
@@ -344,8 +344,9 @@ GhSourceResult ReadGitHubAccounts(const AccountDiscoveryRequest& request,
 	if (result.parseStatus == EGitHubAuthParseStatus::Invalid
 		&& result.accounts.empty()) {
 		source.state = result.status == EAccountCommandStatus::Unavailable
-			|| result.status == EAccountCommandStatus::LaunchFailed
-			? EAccountSourceState::Unavailable : EAccountSourceState::Failed;
+			? EAccountSourceState::NotInstalled
+			: result.status == EAccountCommandStatus::LaunchFailed
+				? EAccountSourceState::Unavailable : EAccountSourceState::Failed;
 		return source;
 	}
 	source.accounts = result.accounts;
@@ -617,6 +618,14 @@ AccountDiscoverySnapshot AccountDiscoveryService::Snapshot() const
 {
 	std::lock_guard lock(m_mutex);
 	return m_snapshot;
+}
+
+bool AccountDiscoveryService::GitHubCliExecutableMissing() const
+{
+	std::lock_guard lock(m_mutex);
+	return m_snapshot.state != EAccountDiscoveryState::Loading
+		&& m_snapshot.state != EAccountDiscoveryState::Stopped
+		&& m_snapshot.githubState == EAccountSourceState::NotInstalled;
 }
 
 void AccountDiscoveryService::Stop() noexcept

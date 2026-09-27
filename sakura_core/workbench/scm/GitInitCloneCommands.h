@@ -51,6 +51,8 @@ enum class EScmTextKey : std::uint16_t {
 	GitRepositoryLocation,
 	GitCloneNonEmpty,
 	GitCloneCancelled,
+	GitUnavailable,
+	GitTroubleshootingDetails,
 	GitOpenChanges,
 	GitOpenFile,
 	GitStageChanges,
@@ -407,7 +409,8 @@ struct GitCloneCommandContext final {
 	const GitCloneRequest& request, const GitCloneOptions& options, const GitCloneInvoker& invoker, HANDLE stop);
 
 //! Phase 3: turn the raw execution result into the typed command result.
-[[nodiscard]] GitCloneCommandResult RunGitCloneComplete(const GitCloneRequest& request, const GitExecutionResult& result);
+[[nodiscard]] GitCloneCommandResult RunGitCloneComplete(const GitCloneRequest& request,
+	const GitExecutionResult& result, const ScmTextResolver& text = {});
 
 // ---------------------------------------------------------------------------
 // Source Control empty-state welcome content
@@ -448,15 +451,25 @@ enum class EGitScmWelcomeWorkspaceState : std::uint8_t {
 	//! `view.workbench.scm.empty`, with `Open Folder` followed by
 	//! `Clone Repository`.
 	EmptyWorkbench,
+	//! Git's executable could not be resolved, so Git actions cannot run.
+	MissingGit,
 };
 
-//! One clickable link inside the welcome content, carrying the exact command
-//! id and JSON arguments a `CommandCallback` already accepts — the same shape
-//! `ScmCommand::command` / `argumentsJson` use elsewhere in this directory.
+//! A welcome action is either a real command or a link to the troubleshooting
+//! guide. The guide is not a synthetic VS Code command id.
+enum class EGitScmWelcomeActionKind : std::uint8_t {
+	Command,
+	OpenTroubleshootingGuide,
+};
+
+//! One clickable action inside the welcome content. Command actions carry the
+//! exact id and JSON arguments accepted by `CommandCallback`; guide actions
+//! have no command id or arguments and are handled by the native presenter.
 struct GitScmWelcomeAction final {
 	std::wstring label;
 	std::string command;
 	std::string argumentsJson;
+	EGitScmWelcomeActionKind kind{ EGitScmWelcomeActionKind::Command };
 
 	[[nodiscard]] bool operator==(const GitScmWelcomeAction&) const = default;
 };
@@ -475,12 +488,16 @@ struct GitScmWelcomeModel final {
 //!
 //! `workspaceState` is the composition root's projection of the runtime's
 //! semantic workspace snapshot; `hasRepository` is `SourceControlService`
-//! currently publishing a provider. Upstream's Git availability and special
-//! repository gates (`git.missing`, `git.parentRepositoryCount`,
-//! `git.unsafeRepositoryCount`, `git.closedRepositoryCount`) still have no
-//! backing native state and remain omitted rather than fabricated.
+//! currently publishing a provider. An observed `GitUnavailable` diagnostic
+//! supplies the missing-Git welcome state analogous to upstream's
+//! `git.missing`; this does not claim the rest of upstream's Git availability
+//! model. Its separate repository gates (`git.parentRepositoryCount`,
+//! `git.unsafeRepositoryCount`, `git.closedRepositoryCount`) remain omitted
+//! rather than fabricated. Unknown or unrelated launch failures must not be
+//! presented as a missing install.
 //!
 [[nodiscard]] GitScmWelcomeModel BuildGitScmWelcomeModel(
-	EGitScmWelcomeWorkspaceState workspaceState, bool hasRepository, const ScmTextResolver& text = {});
+	EGitScmWelcomeWorkspaceState workspaceState, bool hasRepository, const ScmTextResolver& text = {},
+	EGitExecutionStatus gitStatus = EGitExecutionStatus::InvalidRequest);
 
 } // namespace workbench::scm

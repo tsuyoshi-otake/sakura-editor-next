@@ -23,7 +23,8 @@ public:
 		viewcontainer::CViewContainerPages& pages,
 		std::wstring hostExecutable, SenpWindowOwnerTargetFactory createTarget,
 		std::function<bool(std::string_view)> requestFocus,
-		senp::EffectRuntimeFactory runtimeFactory);
+		senp::EffectRuntimeFactory runtimeFactory,
+		SenpGitHubCliDiagnosticQuery githubCliDiagnostic = {});
 	~CSenpWindowExtensions();
 	CSenpWindowExtensions(const CSenpWindowExtensions&) = delete;
 	CSenpWindowExtensions& operator=(const CSenpWindowExtensions&) = delete;

@@ -8,6 +8,7 @@
 
 #include <gtest/gtest.h>
 
+#include <initializer_list>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -60,6 +61,13 @@ using Arguments = std::vector<std::wstring>;
 	GitExecutionResult result;
 	result.status = EGitExecutionStatus::Cancelled;
 	result.exitCode = -1;
+	return result;
+}
+
+[[nodiscard]] GitExecutionResult MissingGit()
+{
+	GitExecutionResult result;
+	result.status = EGitExecutionStatus::GitUnavailable;
 	return result;
 }
 
@@ -462,6 +470,22 @@ TEST(GitInitCloneCommands, RunGitInitAGitFailureIsReportedAndSentToMessage)
 	EXPECT_EQ(L"fatal: unable to create directory", fake.messages[0]);
 }
 
+TEST(GitInitCloneCommands, RunGitInitMissingGitUsesLocalizedGuidance)
+{
+	FakeGitInit fake;
+	fake.responses.push_back(MissingGit());
+	auto context = fake.Context();
+	context.openFolders = { GitInitWorkspaceFolder{ L"app", L"C:\\repo\\app" } };
+	context.text = [](EScmTextKey key, std::wstring_view) {
+		return key == EScmTextKey::GitUnavailable ? std::wstring(L"Install Git and restart.") : std::wstring{};
+	};
+	const auto result = RunGitInit(context, /*skipFolderPrompt=*/true);
+	EXPECT_EQ(EGitInitCommandStatus::Failed, result.status);
+	EXPECT_EQ(L"Install Git and restart.", result.message);
+	ASSERT_EQ(1U, fake.messages.size());
+	EXPECT_EQ(result.message, fake.messages.front());
+}
+
 TEST(GitInitCloneCommands, RunGitInitWithNoFolderPickerFailsInsteadOfCrashingWhenPromptingIsNeeded)
 {
 	FakeGitInit fake;
@@ -718,6 +742,17 @@ TEST(GitInitCloneCommands, RunGitCloneCompleteOnFailureCarriesGitsOwnMessage)
 	EXPECT_EQ(L"fatal: could not read Username", result.message);
 }
 
+TEST(GitInitCloneCommands, RunGitCloneCompleteMissingGitUsesLocalizedGuidance)
+{
+	const GitCloneRequest request{ L"u", L"d" };
+	const ScmTextResolver text = [](EScmTextKey key, std::wstring_view) {
+		return key == EScmTextKey::GitUnavailable ? std::wstring(L"Install Git and restart.") : std::wstring{};
+	};
+	const auto result = RunGitCloneComplete(request, MissingGit(), text);
+	EXPECT_EQ(EGitCloneCommandStatus::Failed, result.status);
+	EXPECT_EQ(L"Install Git and restart.", result.message);
+}
+
 TEST(GitInitCloneCommands, RunGitCloneCompleteOnCancellationIsCancelledNotFailed)
 {
 	const GitCloneRequest request{ L"u", L"d" };
@@ -750,6 +785,7 @@ TEST(GitInitCloneCommands, BuildGitScmWelcomeModelOffersInitWithAnOpenFolderAndN
 	ASSERT_EQ(1U, model.actions.size());
 	EXPECT_EQ("git.init", model.actions[0].command);
 	EXPECT_EQ("[true]", model.actions[0].argumentsJson);
+	EXPECT_EQ(EGitScmWelcomeActionKind::Command, model.actions[0].kind);
 	EXPECT_EQ(L"\u30ea\u30dd\u30b8\u30c8\u30ea\u3092\u521d\u671f\u5316", model.actions[0].label);
 }
 
@@ -762,9 +798,11 @@ TEST(GitInitCloneCommands, BuildGitScmWelcomeModelOffersOpenFolderThenCloneWithN
 	ASSERT_EQ(2U, model.actions.size());
 	EXPECT_EQ("vscode.openFolder", model.actions[0].command);
 	EXPECT_TRUE(model.actions[0].argumentsJson.empty());
+	EXPECT_EQ(EGitScmWelcomeActionKind::Command, model.actions[0].kind);
 	EXPECT_EQ(L"Open Folder", model.actions[0].label);
 	EXPECT_EQ("git.cloneRecursive", model.actions[1].command);
 	EXPECT_TRUE(model.actions[1].argumentsJson.empty());
+	EXPECT_EQ(EGitScmWelcomeActionKind::Command, model.actions[1].kind);
 	EXPECT_EQ(L"Clone Repository", model.actions[1].label);
 }
 
@@ -819,4 +857,69 @@ TEST(GitInitCloneCommands, BuildGitScmWelcomeModelInitAndCloneAreMutuallyExclusi
 		EXPECT_NE("git.init", action.command);
 		EXPECT_NE("workbench.action.addRootFolder", action.command);
 	}
+}
+
+TEST(GitInitCloneCommands, BuildGitScmWelcomeModelMissingGitShowsOnlyTheTroubleshootingGuide)
+{
+	const ScmTextResolver text = [](EScmTextKey key, std::wstring_view) -> std::wstring {
+		if (key == EScmTextKey::GitUnavailable) return L"Install Git and restart.";
+		if (key == EScmTextKey::GitTroubleshootingDetails) return L"Localized details";
+		return {};
+	};
+
+	for (const EGitScmWelcomeWorkspaceState state : {
+		EGitScmWelcomeWorkspaceState::Folder,
+		EGitScmWelcomeWorkspaceState::Empty,
+		EGitScmWelcomeWorkspaceState::WorkspaceWithFolders,
+		EGitScmWelcomeWorkspaceState::WorkspaceWithoutFolders,
+	}) {
+		const GitScmWelcomeModel model = BuildGitScmWelcomeModel(
+			state, /*hasRepository=*/false, text, EGitExecutionStatus::GitUnavailable);
+		EXPECT_EQ(EGitScmWelcomeContent::MissingGit, model.content);
+		EXPECT_EQ(L"Install Git and restart.", model.message);
+		ASSERT_EQ(1U, model.actions.size());
+		EXPECT_EQ(EGitScmWelcomeActionKind::OpenTroubleshootingGuide, model.actions[0].kind);
+		EXPECT_EQ(L"Localized details", model.actions[0].label);
+		EXPECT_TRUE(model.actions[0].command.empty());
+		EXPECT_TRUE(model.actions[0].argumentsJson.empty());
+	}
+}
+
+TEST(GitInitCloneCommands, BuildGitScmWelcomeModelUnknownAndLaunchFailureRetainNormalActions)
+{
+	for (const EGitExecutionStatus status : {
+		EGitExecutionStatus::InvalidRequest,
+		EGitExecutionStatus::LaunchFailed,
+	}) {
+		const GitScmWelcomeModel folder = BuildGitScmWelcomeModel(
+			EGitScmWelcomeWorkspaceState::Folder, false, {}, status);
+		EXPECT_EQ(EGitScmWelcomeContent::FolderNoRepository, folder.content);
+		ASSERT_EQ(1U, folder.actions.size());
+		EXPECT_EQ("git.init", folder.actions[0].command);
+
+		const GitScmWelcomeModel empty = BuildGitScmWelcomeModel(
+			EGitScmWelcomeWorkspaceState::Empty, false, {}, status);
+		EXPECT_EQ(EGitScmWelcomeContent::EmptyWorkbench, empty.content);
+		ASSERT_EQ(2U, empty.actions.size());
+		EXPECT_EQ("vscode.openFolder", empty.actions[0].command);
+		EXPECT_EQ("git.cloneRecursive", empty.actions[1].command);
+	}
+}
+
+TEST(GitInitCloneCommands, BuildGitScmWelcomeModelRecoveryRestoresWorkspaceActions)
+{
+	const GitScmWelcomeModel missing = BuildGitScmWelcomeModel(
+		EGitScmWelcomeWorkspaceState::Folder, false, {}, EGitExecutionStatus::GitUnavailable);
+	const GitScmWelcomeModel recovered = BuildGitScmWelcomeModel(
+		EGitScmWelcomeWorkspaceState::Folder, false, {}, EGitExecutionStatus::Succeeded);
+	EXPECT_EQ(EGitScmWelcomeContent::MissingGit, missing.content);
+	EXPECT_EQ(kGitUnavailableFallback, missing.message);
+	ASSERT_EQ(1U, missing.actions.size());
+	EXPECT_EQ(L"Details", missing.actions[0].label);
+	EXPECT_EQ(BuildGitScmWelcomeModel(EGitScmWelcomeWorkspaceState::Folder, false), recovered);
+
+	const GitScmWelcomeModel withProvider = BuildGitScmWelcomeModel(
+		EGitScmWelcomeWorkspaceState::Folder, true, {}, EGitExecutionStatus::GitUnavailable);
+	EXPECT_EQ(EGitScmWelcomeContent::None, withProvider.content);
+	EXPECT_TRUE(withProvider.actions.empty());
 }

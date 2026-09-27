@@ -2,6 +2,7 @@
 /* Copyright (C) 2026, Sakura Editor Organization. SPDX-License-Identifier: Zlib */
 #include "StdAfx.h"
 #include "workbench/SenpDeclaredTreeViews.h"
+#include "workbench/GitTroubleshootingGuide.h"
 #include "workbench/SenpExtensionActivation.h"
 #include "workbench/commands/CommandArgumentsJson.h"
 #include "workbench/tree/SenpTreeView.h"
@@ -33,13 +34,15 @@ std::wstring StatusText(Activation state)
 	case Activation::Active: return Localized(STR_WORKBENCH_VIEW_NO_PROVIDER, L"No data provider is registered for this view.");
 	case Activation::Failed: return Localized(STR_WORKBENCH_VIEW_ACTIVATION_FAILED, L"The extension could not be activated.");
 	case Activation::Busy: return Localized(STR_WORKBENCH_VIEW_ACTIVATION_BUSY, L"The extension could not start because runtime capacity is in use.");
-	case Activation::Unsupported: return Localized(STR_WORKBENCH_VIEW_UNSUPPORTED, L"This extension cannot provide this view in this environment.");
+	case Activation::Unsupported: return Localized(STR_WORKBENCH_VIEW_UNSUPPORTED,
+		L"This view cannot be displayed. Check the extension status in Extensions.");
 	case Activation::Disabled: return Localized(STR_WORKBENCH_VIEW_DISABLED, L"This extension is disabled.");
 	case Activation::Stopped: return Localized(STR_WORKBENCH_VIEW_STOPPED, L"This extension has stopped.");
 	}
 	return Localized(STR_WORKBENCH_VIEW_UNAVAILABLE, L"This view is unavailable.");
 }
 std::wstring RetryText() { return Localized(STR_WORKBENCH_TREE_RETRY, L"Retry"); }
+std::wstring DetailsText() { return Localized(STR_WORKBENCH_VIEW_DETAILS, L"Details"); }
 bool CanRetry(Activation state) noexcept { return state == Activation::Failed || state == Activation::Busy; }
 void Fill(HDC dc, const RECT& bounds, COLORREF color) noexcept
 {
@@ -53,20 +56,42 @@ struct CSenpDeclaredTreeViews::Impl final : std::enable_shared_from_this<Impl> {
 	struct Slot final {
 		std::weak_ptr<Impl> cohort;
 		std::wstring id, title;
-		std::wstring retryText;
+		std::wstring retryText, detailsText;
 		viewcontainer::SenpViewBodyHost host;
-		HWND window{}, message{}, retry{};
+		HWND window{}, message{}, retry{}, details{};
 		std::unique_ptr<tree::CSenpTreeView> current, pending;
 		theme::CThemeFont font;
 		theme::ThemePalette palette{ theme::CThemeService::PaletteFor(theme::ThemeMode::Dark) };
 		layout::EViewContainerLocation location{ layout::EViewContainerLocation::Sidebar };
 		Activation rendered{ Activation::Stopped };
 		unsigned int dpi{ 96 };
-		bool mounted{}, closed{}, visible{}, posted{}, explicitRetry{}, hover{}, showingTree{};
+		bool mounted{}, closed{}, visible{}, posted{}, explicitRetry{}, hover{}, detailsHover{}, showingTree{}, githubCliMissing{};
 		~Slot() { Close(); }
 		COLORREF Surface() const noexcept
 		{ return (location == layout::EViewContainerLocation::Panel ? palette.bottomPanel : palette.sideBar).ToColorRef(); }
-		bool Usable() const noexcept { return !closed && window && message && retry; }
+		bool Usable() const noexcept { return !closed && window && message && retry && details; }
+		bool HasGitHubGuide() const noexcept
+		{
+			const auto owner = cohort.lock();
+			return owner && (owner->extensionId == L"sakura-github-actions"
+				|| owner->extensionId == L"sakura-github-pull-requests");
+		}
+		bool MissingGitHubCli() const noexcept
+		{
+			const auto owner = cohort.lock();
+			if (!owner || !HasGitHubGuide() || !owner->githubCliDiagnostic) return false;
+			try { return owner->githubCliDiagnostic() == SenpGitHubCliDiagnostic::ExecutableMissing; }
+			catch (...) { return false; }
+		}
+		std::wstring MessageText() const
+		{
+			auto text = StatusText(rendered);
+			if (rendered == Activation::Unsupported && githubCliMissing) {
+				text.append(L"\n").append(Localized(STR_WORKBENCH_VIEW_GITHUB_CLI_MISSING,
+					L"GitHub CLI was not found. Install it or check PATH."));
+			}
+			return text;
+		}
 		void Fault() noexcept
 		{
 			if (auto owner = cohort.lock()) owner->failed = true;
@@ -80,7 +105,7 @@ struct CSenpDeclaredTreeViews::Impl final : std::enable_shared_from_this<Impl> {
 			if (current) current->Close();
 			pending.reset(); current.reset();
 			if (window) ::DestroyWindow(window);
-			window = message = retry = nullptr; font.Reset();
+			window = message = retry = details = nullptr; font.Reset();
 		}
 		bool Initialize(viewcontainer::SenpViewBodyHost value)
 		{
@@ -94,18 +119,22 @@ struct CSenpDeclaredTreeViews::Impl final : std::enable_shared_from_this<Impl> {
 			if (!window) return false;
 			message = ::CreateWindowExW(0, L"STATIC", StatusText(Activation::Dormant).c_str(),
 				WS_CHILD | WS_VISIBLE | SS_LEFT | SS_NOPREFIX, 0, 0, 0, 0, window, reinterpret_cast<HMENU>(1), cls.hInstance, nullptr);
-			retryText = RetryText();
+			retryText = RetryText(); detailsText = DetailsText();
 			retry = ::CreateWindowExW(0, L"BUTTON", retryText.c_str(), WS_CHILD | WS_TABSTOP | BS_OWNERDRAW,
 				0, 0, 0, 0, window, reinterpret_cast<HMENU>(2), cls.hInstance, nullptr);
-			return message && retry
+			details = ::CreateWindowExW(0, L"BUTTON", detailsText.c_str(), WS_CHILD | WS_TABSTOP | BS_OWNERDRAW,
+				0, 0, 0, 0, window, reinterpret_cast<HMENU>(3), cls.hInstance, nullptr);
+			return message && retry && details
 				&& ::SetWindowSubclass(message, RetryProcedure, kRetrySubclass, reinterpret_cast<DWORD_PTR>(this))
-				&& ::SetWindowSubclass(retry, RetryProcedure, kRetrySubclass, reinterpret_cast<DWORD_PTR>(this)) && Metrics();
+				&& ::SetWindowSubclass(retry, RetryProcedure, kRetrySubclass, reinterpret_cast<DWORD_PTR>(this))
+				&& ::SetWindowSubclass(details, RetryProcedure, kRetrySubclass, reinterpret_cast<DWORD_PTR>(this)) && Metrics();
 		}
 		bool Metrics() noexcept
 		{
 			if (!font.Recreate(theme::ThemeFontKind::Chrome, dpi)) return false;
 			::SendMessageW(message, WM_SETFONT, reinterpret_cast<WPARAM>(font.Get()), FALSE);
 			::SendMessageW(retry, WM_SETFONT, reinterpret_cast<WPARAM>(font.Get()), FALSE);
+			::SendMessageW(details, WM_SETFONT, reinterpret_cast<WPARAM>(font.Get()), FALSE);
 			return true;
 		}
 		void LayoutChildren() noexcept
@@ -117,22 +146,25 @@ struct CSenpDeclaredTreeViews::Impl final : std::enable_shared_from_this<Impl> {
 			RECT text{ 0, 0, width, 0 };
 			if (const HDC dc = ::GetDC(window)) {
 				const auto old = ::SelectObject(dc, font.Get());
-				const auto status = StatusText(rendered);
+				const auto status = MessageText();
 				::DrawTextW(dc, status.c_str(), -1, &text, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
 				::SelectObject(dc, old); ::ReleaseDC(window, dc);
 			}
 			const int height = std::max<long>(Dip(22, dpi), text.bottom);
 			if (!::SetWindowPos(message, nullptr, inset, inset, width, height, SWP_NOACTIVATE | SWP_NOZORDER)
 				|| !::SetWindowPos(retry, nullptr, inset, inset + height + Dip(8, dpi),
+					std::min(width, Dip(100, dpi)), Dip(26, dpi), SWP_NOACTIVATE | SWP_NOZORDER)
+				|| !::SetWindowPos(details, nullptr, inset, inset + height + Dip(8, dpi),
 					std::min(width, Dip(100, dpi)), Dip(26, dpi), SWP_NOACTIVATE | SWP_NOZORDER)) Fault();
 		}
 		void RefreshStrings() noexcept
 		{
 			if (!Usable()) return;
 			try {
-				retryText = RetryText();
-				::SetWindowTextW(message, StatusText(rendered).c_str());
+				retryText = RetryText(); detailsText = DetailsText();
+				::SetWindowTextW(message, MessageText().c_str());
 				::SetWindowTextW(retry, retryText.c_str());
+				::SetWindowTextW(details, detailsText.c_str());
 				if (current) {
 					current->SetLocalizedStatusText(
 						Localized(STR_WORKBENCH_TREE_LOADING, L"Loading..."),
@@ -155,6 +187,11 @@ struct CSenpDeclaredTreeViews::Impl final : std::enable_shared_from_this<Impl> {
 			if (!posted) Fault();
 			else ::EnableWindow(retry, FALSE);
 		}
+		void OpenDetails()
+		{
+			if (!Usable() || !HasGitHubGuide() || rendered != Activation::Unsupported || showingTree) return;
+			OpenGitTroubleshootingGuide(window, title);
+		}
 		bool Project(Activation state, bool bound) noexcept
 		{
 			if (!Usable()) return false;
@@ -170,44 +207,51 @@ struct CSenpDeclaredTreeViews::Impl final : std::enable_shared_from_this<Impl> {
 				current->SetVisible(visible);
 			}
 			const bool treeVisible = current != nullptr;
-			const bool changed = rendered != state || showingTree != treeVisible;
-			rendered = state; showingTree = treeVisible;
+			const bool missing = !treeVisible && state == Activation::Unsupported && MissingGitHubCli();
+			const bool changed = rendered != state || showingTree != treeVisible || githubCliMissing != missing;
+			rendered = state; showingTree = treeVisible; githubCliMissing = missing;
 			if (changed) {
-				::SetWindowTextW(message, StatusText(state).c_str());
+				::SetWindowTextW(message, MessageText().c_str());
 				LayoutChildren();
 				::ShowWindow(message, treeVisible ? SW_HIDE : SW_SHOWNA);
 				::ShowWindow(retry, !treeVisible && CanRetry(state) ? SW_SHOWNA : SW_HIDE);
+				::ShowWindow(details, !treeVisible && state == Activation::Unsupported && HasGitHubGuide()
+					? SW_SHOWNA : SW_HIDE);
 				::RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
 			}
 			const bool enabled = !posted && CanRetry(state);
 			if ((::IsWindowEnabled(retry) != FALSE) != enabled) ::EnableWindow(retry, enabled);
 			return !current || current->IsUsable();
 		}
-		void DrawRetry(const DRAWITEMSTRUCT& draw) noexcept
+		void DrawAction(const DRAWITEMSTRUCT& draw, bool isDetails) noexcept
 		{
 			const bool enabled = !(draw.itemState & ODS_DISABLED), pressed = (draw.itemState & ODS_SELECTED) != 0;
-			Fill(draw.hDC, draw.rcItem, (enabled ? (hover || pressed ? palette.buttonHoverBackground
+			Fill(draw.hDC, draw.rcItem, (enabled ? ((isDetails ? detailsHover : hover) || pressed ? palette.buttonHoverBackground
 				: palette.buttonBackground) : palette.sideBar).ToColorRef());
 			const auto old = ::SelectObject(draw.hDC, font.Get());
 			::SetBkMode(draw.hDC, TRANSPARENT); ::SetTextColor(draw.hDC, (enabled ? palette.buttonForeground : palette.secondaryText).ToColorRef());
 			auto text = draw.rcItem; if (pressed) ::OffsetRect(&text, 0, 1);
-			::DrawTextW(draw.hDC, retryText.c_str(), -1, &text, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+			::DrawTextW(draw.hDC, isDetails ? detailsText.c_str() : retryText.c_str(), -1,
+				&text, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 			if (draw.itemState & ODS_FOCUS) { auto focus = draw.rcItem; ::InflateRect(&focus, -2, -2); ::DrawFocusRect(draw.hDC, &focus); }
 			::SelectObject(draw.hDC, old);
 		}
 		static LRESULT CALLBACK RetryProcedure(HWND window, UINT message, WPARAM w, LPARAM l, UINT_PTR, DWORD_PTR data) noexcept
 		{
 			auto& self = *reinterpret_cast<Slot*>(data);
-			// DrawRetry fills the whole item; the show-time erase would paint btnface first.
-			if (window == self.retry && message == WM_ERASEBKGND) return 1;
+			// DrawAction fills each button; the show-time erase would paint btnface first.
+			if ((window == self.retry || window == self.details) && message == WM_ERASEBKGND) return 1;
 			try {
 				if (message == WM_MOUSEMOVE) {
 					TRACKMOUSEEVENT track{ sizeof(track), TME_LEAVE, window, 0 }; ::TrackMouseEvent(&track);
 					if (window == self.retry && !self.hover) { self.hover = true; ::InvalidateRect(window, nullptr, FALSE); }
+					if (window == self.details && !self.detailsHover) { self.detailsHover = true; ::InvalidateRect(window, nullptr, FALSE); }
 				} else if (window == self.retry && message == WM_MOUSELEAVE) { self.hover = false; ::InvalidateRect(window, nullptr, FALSE); }
+				else if (window == self.details && message == WM_MOUSELEAVE) { self.detailsHover = false; ::InvalidateRect(window, nullptr, FALSE); }
 				if (message == WM_SETFOCUS || message == WM_KILLFOCUS || message == WM_MOUSEMOVE || message == WM_MOUSELEAVE)
 					if (self.host.interactionChanged) self.host.interactionChanged();
 				if (window == self.retry && message == WM_KEYDOWN && w == VK_RETURN) { self.Request(true); return 0; }
+				if (window == self.details && message == WM_KEYDOWN && w == VK_RETURN) { self.OpenDetails(); return 0; }
 			} catch (...) { self.Fault(); }
 			return ::DefSubclassProc(window, message, w, l);
 		}
@@ -229,8 +273,13 @@ struct CSenpDeclaredTreeViews::Impl final : std::enable_shared_from_this<Impl> {
 					owner->activation = owner->request(self->id, std::exchange(self->explicitRetry, false));
 					(void)owner->Project(); return 0;
 				}
-				case WM_COMMAND: if (LOWORD(w) == 2 && HIWORD(w) == BN_CLICKED) { self->Request(true); return 0; } break;
-				case WM_DRAWITEM: if (w == 2) { self->DrawRetry(*reinterpret_cast<DRAWITEMSTRUCT*>(l)); return TRUE; } break;
+				case WM_COMMAND:
+					if (HIWORD(w) == BN_CLICKED && LOWORD(w) == 2) { self->Request(true); return 0; }
+					if (HIWORD(w) == BN_CLICKED && LOWORD(w) == 3) { self->OpenDetails(); return 0; }
+					break;
+				case WM_DRAWITEM:
+					if (w == 2 || w == 3) { self->DrawAction(*reinterpret_cast<DRAWITEMSTRUCT*>(l), w == 3); return TRUE; }
+					break;
 				case WM_SIZE: self->LayoutChildren(); return 0;
 				case WM_MOUSEMOVE: {
 					TRACKMOUSEEVENT track{ sizeof(track), TME_LEAVE, window, 0 }; ::TrackMouseEvent(&track);
@@ -258,6 +307,7 @@ struct CSenpDeclaredTreeViews::Impl final : std::enable_shared_from_this<Impl> {
 	std::wstring extensionId;
 	std::map<std::wstring, std::shared_ptr<Slot>, std::less<>> slots;
 	SenpDeclaredViewActivation request;
+	SenpGitHubCliDiagnosticQuery githubCliDiagnostic;
 	std::optional<senp::ContributionOwnerIdentity> bindingOwner;
 	Activation activation{ Activation::Dormant };
 	bool closed{}, failed{}, projecting{};
@@ -324,7 +374,8 @@ public:
 	{
 		if (!m_slot->Usable() || !m_slot->visible) return false;
 		if (m_slot->current) return m_slot->current->Focus();
-		const auto target = CanRetry(m_slot->rendered) ? m_slot->retry : Window();
+		const auto target = CanRetry(m_slot->rendered) ? m_slot->retry
+			: m_slot->rendered == Activation::Unsupported && m_slot->HasGitHubGuide() ? m_slot->details : Window();
 		::SetFocus(target); return ::GetFocus() == target;
 	}
 	bool PreTranslate(MSG& message) noexcept override
@@ -406,11 +457,13 @@ private:
 CSenpDeclaredTreeViews::CSenpDeclaredTreeViews(std::shared_ptr<Impl> impl) noexcept : m_impl(std::move(impl)) {}
 CSenpDeclaredTreeViews::~CSenpDeclaredTreeViews() { Close(); }
 std::shared_ptr<CSenpDeclaredTreeViews> CSenpDeclaredTreeViews::Create(std::wstring extensionId,
-	std::vector<layout::WorkbenchViewDescriptor> views, SenpDeclaredViewActivation requestActivation) noexcept
+	std::vector<layout::WorkbenchViewDescriptor> views, SenpDeclaredViewActivation requestActivation,
+	SenpGitHubCliDiagnosticQuery githubCliDiagnostic) noexcept
 {
 	try {
 		if (extensionId.empty() || extensionId.size() > 256 || views.empty() || views.size() > 64 || !requestActivation) return {};
-		auto state = std::make_shared<Impl>(); state->extensionId = std::move(extensionId); state->request = std::move(requestActivation);
+		auto state = std::make_shared<Impl>(); state->extensionId = std::move(extensionId);
+		state->request = std::move(requestActivation); state->githubCliDiagnostic = std::move(githubCliDiagnostic);
 		for (const auto& view : views) {
 			const auto id = commands::json::ToWideStrict(view.id), title = commands::json::ToWideStrict(view.title);
 			if (!id || id->empty() || id->size() > 256 || !title || title->empty() || title->size() > 1024 || view.provider != "senp.tree") return {};

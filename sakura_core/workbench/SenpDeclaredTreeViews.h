@@ -3,6 +3,8 @@
 #pragma once
 
 #include "workbench/SenpOwnerPublication.h"
+#include <cstdint>
+#include <functional>
 
 namespace workbench {
 
@@ -13,6 +15,11 @@ enum class SenpExtensionActivationState : std::uint8_t;
 //! actual state. The callback must not pump messages or destroy the declaration.
 using SenpDeclaredViewActivation = std::function<SenpExtensionActivationState(std::wstring_view, bool)>;
 
+//! An independent local executable diagnostic, never inferred from activation
+//! failure or the control-side account generation.
+enum class SenpGitHubCliDiagnostic : std::uint8_t { None, ExecutableMissing };
+using SenpGitHubCliDiagnosticQuery = std::function<SenpGitHubCliDiagnostic()>;
+
 //! Persistent native View bodies for a single extension declaration. A body
 //! exists before runtime activation and owns the real activation/error/retry UI.
 //! Runtime providers bind through a prepared transaction without replacing the
@@ -21,7 +28,8 @@ class CSenpDeclaredTreeViews final {
 public:
 	[[nodiscard]] static std::shared_ptr<CSenpDeclaredTreeViews> Create(
 		std::wstring extensionId, std::vector<layout::WorkbenchViewDescriptor> views,
-		SenpDeclaredViewActivation requestActivation) noexcept;
+		SenpDeclaredViewActivation requestActivation,
+		SenpGitHubCliDiagnosticQuery githubCliDiagnostic = {}) noexcept;
 	~CSenpDeclaredTreeViews();
 	CSenpDeclaredTreeViews(const CSenpDeclaredTreeViews&) = delete;
 	CSenpDeclaredTreeViews& operator=(const CSenpDeclaredTreeViews&) = delete;

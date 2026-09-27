@@ -49,6 +49,8 @@ enum class EAccountSourceState : std::uint8_t {
 	Unconfigured,
 	Unavailable,
 	Failed,
+	//! The source executable could not be resolved from PATH.
+	NotInstalled,
 };
 
 [[nodiscard]] constexpr bool IsTerminalAccountDiscoveryState(
@@ -240,6 +242,8 @@ public:
 
 	[[nodiscard]] EAccountRefreshResult RequestRefresh(std::wstring workingDirectory);
 	[[nodiscard]] AccountDiscoverySnapshot Snapshot() const;
+	//! Cheap UI-cadence read; does not copy the bounded account list.
+	[[nodiscard]] bool GitHubCliExecutableMissing() const;
 	void Stop() noexcept;
 
 private:

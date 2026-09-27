@@ -308,16 +308,20 @@ protected:
 	std::shared_ptr<CSenpDeclaredTreeViews> declarations;
 	std::unique_ptr<ISenpViewBody> declaredBody;
 	std::unique_ptr<ISenpDeclaredTreePublication> visualPublication;
+	std::wstring declarationExtensionId{ L"test.extension" };
 	std::int64_t visualGeneration{};
+	SenpGitHubCliDiagnostic probeDiagnostic{ SenpGitHubCliDiagnostic::None };
 	int activationRequests{}, retryRequests{};
-	void CreateDeclaration()
+	void CreateDeclaration(std::wstring extensionId = L"test.extension",
+		SenpGitHubCliDiagnosticQuery githubCliDiagnostic = {})
 	{
-		declarations = CSenpDeclaredTreeViews::Create(L"test.extension",
+		declarationExtensionId = extensionId;
+		declarations = CSenpDeclaredTreeViews::Create(std::move(extensionId),
 			{ { "test.tree", "test.container", "Projects", 0, true, true, "senp.tree" } },
 			[this](std::wstring_view viewId, bool retry) {
 				EXPECT_EQ(L"test.tree", viewId); ++activationRequests; if (retry) ++retryRequests;
 				return SenpExtensionActivationState::Preparing;
-			});
+			}, std::move(githubCliDiagnostic));
 		ASSERT_NE(nullptr, declarations);
 		declaredBody = declarations->CreateBody(L"test.tree", { left, {}, {} });
 		ASSERT_NE(nullptr, declaredBody);
@@ -334,8 +338,8 @@ protected:
 	{
 		wchar_t text[512]{}; ::GetWindowTextW(::GetDlgItem(declaredBody->Window(), 1), text, _countof(text)); return text;
 	}
-	static senp::ContributionOwnerIdentity Identity(std::int64_t generation)
-	{ return { L"test.extension", std::wstring(64, L'a'), generation, 2, 3 }; }
+	senp::ContributionOwnerIdentity Identity(std::int64_t generation) const
+	{ return { declarationExtensionId, std::wstring(64, L'a'), generation, 2, 3 }; }
 	void BindVisual()
 	{
 		runtime = std::make_shared<NativeTreeRuntime>();
@@ -360,6 +364,7 @@ protected:
 		std::uint64_t hash = 2166136261;
 		for (const auto letter : Status()) hash = (hash ^ letter) * 16777619;
 		hash ^= static_cast<std::uint64_t>(::IsWindowVisible(declaredBody->Window())) << 20;
+		hash ^= static_cast<std::uint64_t>(::IsWindowVisible(::GetDlgItem(declaredBody->Window(), 3))) << 21;
 		if (::IsWindow(tree)) hash ^= static_cast<std::uint64_t>(TreeView_GetCount(tree)) << 10;
 		return static_cast<LRESULT>((hash & 0x7fffffffffffffff) | 1);
 	}
@@ -385,6 +390,11 @@ protected:
 		case 7: return reinterpret_cast<LRESULT>(::GetDlgItem(self.declaredBody->Window(), 2));
 		case 8: self.declaredBody->SetVisible(!l); DispatchTreeMessages(); return 1;
 		case 9: return self.DeclarationFingerprint();
+		case 10: self.UnbindVisual(l ? SenpExtensionActivationState::Unsupported
+			: SenpExtensionActivationState::Preparing); DispatchTreeMessages(); return 1;
+		case 11:
+			self.probeDiagnostic = l ? SenpGitHubCliDiagnostic::ExecutableMissing : SenpGitHubCliDiagnostic::None;
+			self.UnbindVisual(SenpExtensionActivationState::Unsupported); DispatchTreeMessages(); return 1;
 		}
 		return 0;
 	}
@@ -421,6 +431,72 @@ TEST_F(SenpDeclaredTreeViewsTest, ActivationIsPostedAndFailureRequiresExplicitRe
 	declarations->Close(); DispatchTreeMessages();
 	EXPECT_FALSE(::IsWindow(retained)); EXPECT_EQ(2, activationRequests);
 	EXPECT_FALSE(declarations->Pump(SenpExtensionActivationState::Dormant));
+}
+
+TEST_F(SenpDeclaredTreeViewsTest, UnsupportedOffersKeyboardAccessibleDetailsWithoutRetry)
+{
+	CreateDeclaration(L"sakura-github-actions");
+	declaredBody->SetVisible(true);
+	DispatchTreeMessages();
+	const HWND retry = ::GetDlgItem(declaredBody->Window(), 2);
+	const HWND details = ::GetDlgItem(declaredBody->Window(), 3);
+	ASSERT_NE(nullptr, retry);
+	ASSERT_NE(nullptr, details);
+	EXPECT_FALSE(::GetWindowLongPtrW(details, GWL_STYLE) & WS_VISIBLE);
+	ASSERT_TRUE(declarations->Pump(SenpExtensionActivationState::Unsupported));
+	EXPECT_FALSE(::GetWindowLongPtrW(retry, GWL_STYLE) & WS_VISIBLE);
+	EXPECT_TRUE(::GetWindowLongPtrW(details, GWL_STYLE) & WS_VISIBLE);
+	EXPECT_TRUE(::GetWindowLongPtrW(details, GWL_STYLE) & WS_TABSTOP);
+	EXPECT_TRUE(::IsWindowEnabled(details));
+	EXPECT_TRUE(declaredBody->Focus());
+	EXPECT_EQ(details, ::GetFocus());
+	wchar_t label[64]{};
+	::GetWindowTextW(details, label, _countof(label));
+	EXPECT_EQ(std::wstring(CSelectLang::LoadStringW(STR_WORKBENCH_VIEW_DETAILS)), label);
+	ASSERT_TRUE(declarations->Pump(SenpExtensionActivationState::Failed));
+	EXPECT_FALSE(::GetWindowLongPtrW(details, GWL_STYLE) & WS_VISIBLE);
+	EXPECT_TRUE(::GetWindowLongPtrW(retry, GWL_STYLE) & WS_VISIBLE);
+}
+
+TEST_F(SenpDeclaredTreeViewsTest, UnsupportedDoesNotOfferGitHubGuideForOtherExtensions)
+{
+	CreateDeclaration();
+	declaredBody->SetVisible(true);
+	DispatchTreeMessages();
+	ASSERT_TRUE(declarations->Pump(SenpExtensionActivationState::Unsupported));
+	EXPECT_FALSE(::GetWindowLongPtrW(::GetDlgItem(declaredBody->Window(), 3), GWL_STYLE) & WS_VISIBLE);
+}
+
+TEST_F(SenpDeclaredTreeViewsTest, OnlyVerifiedMissingGitHubCliAddsAnUpdatingDiagnostic)
+{
+	auto diagnostic = SenpGitHubCliDiagnostic::None;
+	CreateDeclaration(L"sakura-github-actions", [&] { return diagnostic; });
+	declaredBody->SetVisible(true);
+	DispatchTreeMessages();
+	ASSERT_TRUE(declarations->Pump(SenpExtensionActivationState::Unsupported));
+	const auto unsupported = std::wstring(CSelectLang::LoadStringW(STR_WORKBENCH_VIEW_UNSUPPORTED));
+	const auto missing = std::wstring(CSelectLang::LoadStringW(STR_WORKBENCH_VIEW_GITHUB_CLI_MISSING));
+	EXPECT_EQ(unsupported, Status());
+	diagnostic = SenpGitHubCliDiagnostic::ExecutableMissing;
+	ASSERT_TRUE(declarations->Pump(SenpExtensionActivationState::Unsupported));
+	EXPECT_EQ(unsupported + L"\n" + missing, Status());
+	EXPECT_TRUE(::GetWindowLongPtrW(::GetDlgItem(declaredBody->Window(), 3), GWL_STYLE) & WS_VISIBLE);
+	diagnostic = SenpGitHubCliDiagnostic::None;
+	ASSERT_TRUE(declarations->Pump(SenpExtensionActivationState::Unsupported));
+	EXPECT_EQ(unsupported, Status());
+	ASSERT_TRUE(declarations->Pump(SenpExtensionActivationState::Failed));
+	diagnostic = SenpGitHubCliDiagnostic::ExecutableMissing;
+	ASSERT_TRUE(declarations->Pump(SenpExtensionActivationState::Failed));
+	EXPECT_EQ(std::wstring(CSelectLang::LoadStringW(STR_WORKBENCH_VIEW_ACTIVATION_FAILED)), Status());
+}
+
+TEST_F(SenpDeclaredTreeViewsTest, UnrelatedExtensionIgnoresGitHubCliDiagnostic)
+{
+	CreateDeclaration(L"test.extension", [] { return SenpGitHubCliDiagnostic::ExecutableMissing; });
+	declaredBody->SetVisible(true);
+	DispatchTreeMessages();
+	ASSERT_TRUE(declarations->Pump(SenpExtensionActivationState::Unsupported));
+	EXPECT_EQ(std::wstring(CSelectLang::LoadStringW(STR_WORKBENCH_VIEW_UNSUPPORTED)), Status());
 }
 
 TEST_F(SenpDeclaredTreeViewsTest, RuntimeReplacementDefersNativeSwapAndRetainsDeclarationBody)
@@ -483,7 +559,7 @@ TEST_F(SenpDeclaredTreeViewsTest, DISABLED_VisualCaptureProbe)
 	wchar_t enabled[2]{};
 	if (::GetEnvironmentVariableW(L"SAKURA_SENP_VIEW_PROBE", enabled, 2) != 1 || enabled[0] != L'1')
 		GTEST_SKIP() << "Use tools/verify-senp-view-rendering.ps1 -ProbeSet DeclaredTreeViews";
-	CreateDeclaration(); ASSERT_NE(nullptr, declaredBody);
+	CreateDeclaration(L"sakura-github-actions", [this] { return probeDiagnostic; }); ASSERT_NE(nullptr, declaredBody);
 	::SetWindowTextW(window, L"SENP declared TreeView verification");
 	declaredBody->SetVisible(true); DispatchTreeMessages();
 	ASSERT_TRUE(::SetWindowSubclass(window, DeclarationProbe, 297, reinterpret_cast<DWORD_PTR>(this)));

@@ -45,6 +45,7 @@ constexpr std::wstring_view kAddFolderToWorkspaceLabel = L"Add Folder to Workspa
 constexpr std::wstring_view kChooseFolderLabel = L"Choose Folder...";
 constexpr std::wstring_view kOpenFolderLabel = L"Open Folder";
 constexpr std::wstring_view kOpenLabel = L"Open";
+constexpr std::wstring_view kTroubleshootingDetailsLabel = L"Details";
 
 std::wstring Text(const ScmTextResolver& resolver, EScmTextKey key,
 	std::wstring_view fallback, std::wstring_view argument = {})
@@ -278,7 +279,11 @@ GitInitCommandResult RunGitInit(const GitInitCommandContext& context, bool skipF
 
 	const GitExecutionResult result = context.run(chosenPath, BuildGitInitArguments());
 	if (GitCommandFailed(result)) {
-		std::wstring failure = DescribeGitFailure(result);
+		std::wstring failure = DescribeGitFailure(result, [&context](std::string_view key, std::wstring_view) {
+			return key == "GitUnavailable"
+				? Text(context.text, EScmTextKey::GitUnavailable, kGitUnavailableFallback)
+				: std::wstring{};
+		});
 		if (context.message) {
 			context.message(failure);
 		}
@@ -422,13 +427,18 @@ GitExecutionResult RunGitCloneExecute(
 	return invoker(BuildGitCloneArguments(request.url, request.destinationPath, options), stop);
 }
 
-GitCloneCommandResult RunGitCloneComplete(const GitCloneRequest& request, const GitExecutionResult& result)
+GitCloneCommandResult RunGitCloneComplete(const GitCloneRequest& request,
+	const GitExecutionResult& result, const ScmTextResolver& text)
 {
 	if (result.status == EGitExecutionStatus::Cancelled) {
 		return MakeCloneCancelled(L"\u30af\u30ed\u30fc\u30f3\u306f\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f\u3002");
 	}
 	if (GitCommandFailed(result)) {
-		return MakeCloneFailed(DescribeGitFailure(result));
+		return MakeCloneFailed(DescribeGitFailure(result, [&text](std::string_view key, std::wstring_view) {
+			return key == "GitUnavailable"
+				? Text(text, EScmTextKey::GitUnavailable, kGitUnavailableFallback)
+				: std::wstring{};
+		}));
 	}
 	return MakeCloneSucceeded(request.destinationPath);
 }
@@ -438,12 +448,21 @@ GitCloneCommandResult RunGitCloneComplete(const GitCloneRequest& request, const 
 // ---------------------------------------------------------------------------
 
 GitScmWelcomeModel BuildGitScmWelcomeModel(
-	EGitScmWelcomeWorkspaceState workspaceState, bool hasRepository, const ScmTextResolver& text)
+	EGitScmWelcomeWorkspaceState workspaceState, bool hasRepository, const ScmTextResolver& text,
+	EGitExecutionStatus gitStatus)
 {
 	GitScmWelcomeModel model;
 
 	if (hasRepository) {
 		model.content = EGitScmWelcomeContent::None;
+		return model;
+	}
+	if (gitStatus == EGitExecutionStatus::GitUnavailable) {
+		model.content = EGitScmWelcomeContent::MissingGit;
+		model.message = Text(text, EScmTextKey::GitUnavailable, kGitUnavailableFallback);
+		model.actions.push_back(GitScmWelcomeAction{
+			Text(text, EScmTextKey::GitTroubleshootingDetails, kTroubleshootingDetailsLabel),
+			{}, {}, EGitScmWelcomeActionKind::OpenTroubleshootingGuide });
 		return model;
 	}
 

@@ -150,12 +150,12 @@ private:
 CSenpWindowExtensions::CSenpWindowExtensions(layout::WorkbenchContributionRegistry& catalog,
 	viewcontainer::CViewContainerPages& pages, std::wstring hostExecutable,
 	SenpWindowOwnerTargetFactory createTarget, std::function<bool(std::string_view)> requestFocus,
-	senp::EffectRuntimeFactory runtimeFactory)
+	senp::EffectRuntimeFactory runtimeFactory, SenpGitHubCliDiagnosticQuery githubCliDiagnostic)
 	: m_catalog(catalog), m_createTarget(std::move(createTarget)),
 	m_composition(catalog, pages, std::move(runtimeFactory)),
 	m_declarations(catalog, pages,
 		[this](std::wstring_view id, bool retry) { return RequestView(id, retry, std::chrono::steady_clock::now()); },
-		std::move(requestFocus)),
+		std::move(requestFocus), std::move(githubCliDiagnostic)),
 	m_activation(m_composition, std::move(hostExecutable),
 		[this](const auto& descriptor, const auto& owner) { return PreparePublication(descriptor, owner); }) {}
 

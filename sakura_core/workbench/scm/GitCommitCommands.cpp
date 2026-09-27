@@ -179,7 +179,7 @@ struct GitInProgressState final {
 	for (const auto& arguments : BuildGitPathChunks(prefix, paths, limits)) {
 		const auto result = context.run(arguments, {});
 		if (!result.Succeeded() || result.exitCode != 0) {
-			auto message = DescribeGitFailure(result);
+			auto message = DescribeGitFailure(result, context.text);
 			Notify(context, message);
 			return Failed(std::move(message));
 		}
@@ -206,7 +206,7 @@ struct GitInProgressState final {
 		// Upstream maps this to `UnmergedChanges`, whose user-facing handler is the
 		// generic error display; the resolution path it would point at does not
 		// exist here, so git's own sentence is what the user gets.
-		return DescribeGitFailure(result);
+		return DescribeGitFailure(result, context.text);
 	}
 	if (contains("Aborting commit due to empty commit message")) {
 		return L"Commit operation was cancelled due to empty commit message.";
@@ -221,7 +221,7 @@ struct GitInProgressState final {
 		// a button that does nothing is worse than no button.
 		return L"Make sure you configure your \"user.name\" and \"user.email\" in git.";
 	}
-	return DescribeGitFailure(result);
+	return DescribeGitFailure(result, context.text);
 }
 
 //! `git rev-list --parents -n 1 HEAD` yields `<commit> <parent>...`.
@@ -593,7 +593,7 @@ GitCommitCommandResult RunGitUndoCommit(
 		// it, which is a materially different operation from undoing the commit.
 		const auto result = context.run({ L"reset", L"--soft", L"HEAD~" }, {});
 		if (!result.Succeeded() || result.exitCode != 0) {
-			auto failure = DescribeGitFailure(result);
+			auto failure = DescribeGitFailure(result, context.text);
 			Notify(context, failure);
 			return Failed(std::move(failure));
 		}
@@ -602,7 +602,7 @@ GitCommitCommandResult RunGitUndoCommit(
 		// and then unstages everything.
 		const auto deleted = context.run({ L"update-ref", L"-d", L"HEAD" }, {});
 		if (!deleted.Succeeded() || deleted.exitCode != 0) {
-			auto failure = DescribeGitFailure(deleted);
+			auto failure = DescribeGitFailure(deleted, context.text);
 			Notify(context, failure);
 			return Failed(std::move(failure));
 		}

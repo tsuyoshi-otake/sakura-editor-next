@@ -106,8 +106,12 @@ inline constexpr std::size_t kMaximumGitStandardErrorBytes = 64u * 1024u;
 //!
 [[nodiscard]] std::vector<std::wstring> BuildEffectiveGitArguments(const GitExecutionRequest& request);
 
-//! Resolve `git.exe` from the search path. Empty when git is not installed.
+//! Resolve `git.exe` from the search path. Empty when it is not discoverable.
 [[nodiscard]] std::wstring ResolveGitExecutable();
+
+//! Query the same executable resolution as RunGit without launching a process.
+//! Suitable for the no-folder welcome state, where no repository request can run.
+[[nodiscard]] bool GitExecutableResolvable();
 
 //! True when the request is structurally executable. Pure; no process is created.
 [[nodiscard]] bool IsExecutableGitRequest(const GitExecutionRequest& request) noexcept;

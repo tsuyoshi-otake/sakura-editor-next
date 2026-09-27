@@ -13,6 +13,7 @@
 #include "workbench/scm/GitScmMenus.h"
 #include "workbench/scm/GitScmPublisher.h"
 #include "workbench/scm/ScmViewStackLayout.h"
+#include "workbench/GitTroubleshootingGuide.h"
 #include "workbench/viewcontainer/ViewPaneChrome.h"
 
 #include "theme/CThemeService.h"
@@ -46,6 +47,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -144,6 +146,7 @@ void ScrollListBoxByWheel(HWND list, WPARAM wParam)
 constexpr int kActionButtonDropdownDip = 22;
 //! The commit box's child-control id. The list predates it and keeps 1.
 constexpr int kInputControlId = 2;
+constexpr int kWelcomeDetailsControlId = 3;
 //! The empty-state welcome content is upstream's `viewsWelcome`, the same
 //! contribution the Explorer renders, so its inset, its 300-DIP action column
 //! and its button box all come from workbench/ViewsWelcomeMetrics.h. Measuring
@@ -418,15 +421,15 @@ struct BandSegment final {
 	std::wstring tooltip;
 };
 
-//! One clickable action button inside the Source Control empty-state welcome
-//! content (`GitScmWelcomeModel::actions`). Mirrors `BandSegment`'s
-//! rect/command/argumentsJson hit-test-and-dispatch shape rather than
-//! inventing a second interaction model — see this directory's CLAUDE.md.
+//! One action in the Source Control empty-state welcome content. Git commands
+//! retain their owner-drawn hit regions; the guide action is backed by a real
+//! keyboard-focusable BUTTON at the same rectangle.
 struct WelcomeSegment final {
 	RECT rect{};
 	std::wstring label;
 	std::string command;
 	std::string argumentsJson;
+	EGitScmWelcomeActionKind kind{ EGitScmWelcomeActionKind::Command };
 };
 
 //! What the repository row renders, copied out of the published provider so the
@@ -609,6 +612,7 @@ void WorkerMain(std::shared_ptr<SharedState> shared)
 	for (;;) {
 		const DWORD wait = ::WaitForMultipleObjects(2, waits, FALSE, kRefreshMilliseconds);
 		if (wait == WAIT_OBJECT_0) return;
+		if (wait != WAIT_OBJECT_0 + 1 && wait != WAIT_TIMEOUT) return;
 		std::wstring root;
 		std::uint64_t generation = 0;
 		{
@@ -616,7 +620,18 @@ void WorkerMain(std::shared_ptr<SharedState> shared)
 			root = shared->root;
 			generation = shared->generation;
 		}
-		if (root.empty()) continue;
+		if (root.empty()) {
+			// No repository command can run without a root. On an explicit wake,
+			// resolve the Git executable through the runner's own boundary without
+			// launching it. The periodic timer does no PATH work in this state.
+			if (wait != WAIT_OBJECT_0 + 1) continue;
+			auto result = std::make_unique<WorkerResult>();
+			result->generation = generation;
+			result->execution = GitExecutableResolvable()
+				? EGitExecutionStatus::InvalidRequest : EGitExecutionStatus::GitUnavailable;
+			PostResult(shared, std::move(result));
+			continue;
+		}
 		const auto execution = RunGit(MakeStatusRequest(root), shared->stop);
 		if (execution.status == EGitExecutionStatus::Cancelled) return;
 		auto result = std::make_unique<WorkerResult>();
@@ -849,6 +864,11 @@ struct CScmWorkbenchTool::Impl {
 	RECT welcomeMessageRect{};
 	//! `welcomeSegments` index plus one, or zero when the pointer is over none.
 	std::size_t hoveredWelcomeSegment{};
+	//! A native button gives the missing-Git guide action Tab/Enter/Space and an
+	//! accessible label while preserving the existing ViewWelcome geometry.
+	HWND welcomeDetailsButton{};
+	bool welcomeDetailsHovered{};
+	std::wstring welcomeDetailsText;
 
 	void Start() {
 		if (worker.joinable()) return;
@@ -975,9 +995,9 @@ struct CScmWorkbenchTool::Impl {
 	{
 		if (!result) return;
 		// `state` and the provider are the last successfully read repository
-		// snapshot. A failed status command does not produce a replacement
-		// snapshot: its default-constructed state is only the worker's empty
-		// payload. In particular, treating that payload as a real state would
+		// snapshot. A failed status command or rootless availability check does
+		// not produce a replacement snapshot: its default-constructed state is
+		// only the worker's empty payload. Treating that payload as a real state would
 		// retract the provider during a timeout, launch failure, or an
 		// unavailable/over-limit git invocation. This is also why an unattempted
 		// history query must not clear the last graph page on this path.
@@ -986,12 +1006,14 @@ struct CScmWorkbenchTool::Impl {
 		const bool stateChanged = statusSucceeded && state != result->state;
 		const bool diagnosticsChanged = execution != result->execution
 			|| failureReason != result->failureReason;
+		const bool gitAvailabilityChanged = (execution == EGitExecutionStatus::GitUnavailable)
+			!= (result->execution == EGitExecutionStatus::GitUnavailable);
 		const bool historyChanged = statusSucceeded && (result->historyRead
 			? graphPresentation.status != EScmGraphPresentationStatus::Available
 				|| history != result->history
 			: graphPresentation.status != EScmGraphPresentationStatus::Unavailable
 				|| !history.empty());
-		if (!stateChanged && !historyChanged) {
+		if (!stateChanged && !historyChanged && !gitAvailabilityChanged) {
 			if (diagnosticsChanged) {
 				execution = result->execution;
 				failureReason = std::move(result->failureReason);
@@ -1007,7 +1029,7 @@ struct CScmWorkbenchTool::Impl {
 		if (stateChanged) {
 			state = std::move(result->state);
 			PublishAndRender();
-		}
+		} else if (gitAvailabilityChanged) RebuildWelcome();
 		if (historyChanged) ApplyHistory(std::move(result->history), result->historyRead);
 	}
 	//! Drop the old repository's authoritative presentation before a new root's
@@ -2261,7 +2283,8 @@ struct CScmWorkbenchTool::Impl {
 	void RebuildWelcome()
 	{
 		const auto previous = welcomeModel;
-		welcomeModel = BuildGitScmWelcomeModel(welcomeWorkspaceState, openRepositoryCount != 0, text);
+		welcomeModel = BuildGitScmWelcomeModel(
+			welcomeWorkspaceState, openRepositoryCount != 0, text, execution);
 		if (welcomeModel == previous) return;
 		hoveredWelcomeSegment = 0;
 		// The empty resource list and the welcome content occupy the same region
@@ -2274,6 +2297,15 @@ struct CScmWorkbenchTool::Impl {
 		LayoutWelcome();
 		if (window) ::InvalidateRect(window, nullptr, FALSE);
 	}
+	void HideWelcomeDetails()
+	{
+		if (welcomeDetailsButton == nullptr) return;
+		if (::GetFocus() == welcomeDetailsButton && window != nullptr) {
+			::SetFocus(list != nullptr && ::IsWindowVisible(list) ? list : window);
+		}
+		::ShowWindow(welcomeDetailsButton, SW_HIDE);
+		welcomeDetailsHovered = false;
+	}
 	//! ViewWelcome is a top-flow flex column: its content starts one `em` below
 	//! the view body, each direct child gets a one-`em` block-start margin, and
 	//! the action container is a centered column capped at 300px.
@@ -2281,7 +2313,10 @@ struct CScmWorkbenchTool::Impl {
 	{
 		welcomeSegments.clear();
 		welcomeMessageRect = RECT{};
-		if (!window || welcomeModel.content == EGitScmWelcomeContent::None) return;
+		if (!window || welcomeModel.content == EGitScmWelcomeContent::None) {
+			HideWelcomeDetails();
+			return;
+		}
 		const RECT body = WelcomeBounds();
 		const int inset = views::WelcomeHorizontalInset(dpi);
 		const LONG availableWidth = std::max<LONG>(0, body.right - body.left - 2 * inset);
@@ -2292,10 +2327,16 @@ struct CScmWorkbenchTool::Impl {
 		const LONG buttonRight = buttonLeft + buttonWidth;
 		const LONG top = body.top;
 		const LONG bottom = std::max(top, body.bottom);
-		if (messageRight <= messageLeft || buttonRight <= buttonLeft || bottom <= top) return;
+		if (messageRight <= messageLeft || buttonRight <= buttonLeft || bottom <= top) {
+			HideWelcomeDetails();
+			return;
+		}
 
 		const HDC dc = ::GetDC(window);
-		if (dc == nullptr) return;
+		if (dc == nullptr) {
+			HideWelcomeDetails();
+			return;
+		}
 		const HGDIOBJ previousFont = font.Get() == nullptr ? nullptr : ::SelectObject(dc, font.Get());
 
 		TEXTMETRICW metrics{};
@@ -2316,11 +2357,13 @@ struct CScmWorkbenchTool::Impl {
 			std::wstring label;
 			std::string command;
 			std::string argumentsJson;
+			EGitScmWelcomeActionKind kind{ EGitScmWelcomeActionKind::Command };
 		};
 		std::vector<WelcomeButton> buttons;
 		for (const auto& action : welcomeModel.actions) {
-			if (action.label.empty() || action.command.empty()) continue;
-			buttons.push_back(WelcomeButton{ action.label, action.command, action.argumentsJson });
+			if (action.label.empty()
+				|| (action.kind == EGitScmWelcomeActionKind::Command && action.command.empty())) continue;
+			buttons.push_back(WelcomeButton{ action.label, action.command, action.argumentsJson, action.kind });
 		}
 
 		LONG cursorTop = top + em;
@@ -2337,12 +2380,75 @@ struct CScmWorkbenchTool::Impl {
 			segment.label = std::move(button.label);
 			segment.command = std::move(button.command);
 			segment.argumentsJson = std::move(button.argumentsJson);
+			segment.kind = button.kind;
 			welcomeSegments.push_back(std::move(segment));
 			cursorTop += buttonHeight + em;
 		}
 
 		if (previousFont != nullptr) ::SelectObject(dc, previousFont);
 		::ReleaseDC(window, dc);
+		const auto details = std::ranges::find(welcomeSegments,
+			EGitScmWelcomeActionKind::OpenTroubleshootingGuide, &WelcomeSegment::kind);
+		if (welcomeDetailsButton == nullptr || details == welcomeSegments.end()
+			|| details->rect.top < body.top || details->rect.bottom > body.bottom) {
+			HideWelcomeDetails();
+			return;
+		}
+		if (welcomeDetailsText != details->label) {
+			welcomeDetailsText = details->label;
+			if (!::SetWindowTextW(welcomeDetailsButton, welcomeDetailsText.c_str())) {
+				HideWelcomeDetails();
+				return;
+			}
+		}
+		const auto& rect = details->rect;
+		if (!::SetWindowPos(welcomeDetailsButton, nullptr, rect.left, rect.top,
+			rect.right - rect.left, rect.bottom - rect.top,
+			SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOREDRAW | SWP_SHOWWINDOW)) {
+			HideWelcomeDetails();
+		} else {
+			::InvalidateRect(welcomeDetailsButton, nullptr, FALSE);
+		}
+	}
+	void PaintWelcomeButton(HDC dc, const RECT& rect, std::wstring_view label,
+		bool hovered, bool focused) const
+	{
+		if (rect.right <= rect.left || rect.bottom <= rect.top) return;
+		const COLORREF background =
+			(hovered ? palette.buttonHoverBackground : palette.buttonBackground).ToColorRef();
+		const HBRUSH brush = ::CreateSolidBrush(background);
+		const HPEN border = ::CreatePen(PS_SOLID, 1, background);
+		if (brush != nullptr && border != nullptr) {
+			const HGDIOBJ previousBrush = ::SelectObject(dc, brush);
+			const HGDIOBJ previousPen = ::SelectObject(dc, border);
+			const int radius = views::WelcomeButtonCornerRadius(dpi);
+			::RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom, radius, radius);
+			::SelectObject(dc, previousPen);
+			::SelectObject(dc, previousBrush);
+		} else {
+			::SetDCBrushColor(dc, background);
+			::FillRect(dc, &rect, reinterpret_cast<HBRUSH>(::GetStockObject(DC_BRUSH)));
+		}
+		if (border != nullptr) ::DeleteObject(border);
+		if (brush != nullptr) ::DeleteObject(brush);
+		::SetBkMode(dc, TRANSPARENT);
+		::SetTextColor(dc, palette.buttonForeground.ToColorRef());
+		RECT labelRect = rect;
+		::DrawTextW(dc, label.data(), static_cast<int>(label.size()), &labelRect,
+			DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+		if (focused) {
+			RECT focus = rect;
+			::InflateRect(&focus, -2, -2);
+			::DrawFocusRect(dc, &focus);
+		}
+	}
+	void DrawWelcomeDetails(const DRAWITEMSTRUCT& draw) const
+	{
+		const HGDIOBJ previousFont = font.Get() ? ::SelectObject(draw.hDC, font.Get()) : nullptr;
+		PaintWelcomeButton(draw.hDC, draw.rcItem, welcomeDetailsText,
+			welcomeDetailsHovered || (draw.itemState & ODS_SELECTED) != 0,
+			(draw.itemState & ODS_FOCUS) != 0);
+		if (previousFont != nullptr) ::SelectObject(draw.hDC, previousFont);
 	}
 	void PaintWelcome(HDC dc)
 	{
@@ -2353,32 +2459,10 @@ struct CScmWorkbenchTool::Impl {
 			::DrawTextW(dc, welcomeModel.message.c_str(), static_cast<int>(welcomeModel.message.size()),
 			&message, DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
 		}
-		const int radius = views::WelcomeButtonCornerRadius(dpi);
 		for (std::size_t index = 0; index < welcomeSegments.size(); ++index) {
 			const auto& segment = welcomeSegments[index];
-			if (segment.rect.right <= segment.rect.left) continue;
-			const bool hovered = hoveredWelcomeSegment == index + 1;
-			const COLORREF background =
-				(hovered ? palette.buttonHoverBackground : palette.buttonBackground).ToColorRef();
-			const HBRUSH brush = ::CreateSolidBrush(background);
-			// `background-color` fills the whole border box. A NULL_PEN RoundRect
-			// would stop one pixel short of the laid-out rectangle, which is enough
-			// to make this button a different size from the Explorer's.
-			const HPEN border = ::CreatePen(PS_SOLID, 1, background);
-			if (brush != nullptr && border != nullptr) {
-				const HGDIOBJ previousBrush = ::SelectObject(dc, brush);
-				const HGDIOBJ previousPen = ::SelectObject(dc, border);
-				::RoundRect(dc, segment.rect.left, segment.rect.top, segment.rect.right, segment.rect.bottom,
-					radius, radius);
-				::SelectObject(dc, previousPen);
-				::SelectObject(dc, previousBrush);
-			}
-			if (border != nullptr) ::DeleteObject(border);
-			if (brush != nullptr) ::DeleteObject(brush);
-			::SetTextColor(dc, palette.buttonForeground.ToColorRef());
-			RECT labelRect = segment.rect;
-			::DrawTextW(dc, segment.label.c_str(), static_cast<int>(segment.label.size()), &labelRect,
-				DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+			if (segment.kind == EGitScmWelcomeActionKind::OpenTroubleshootingGuide) continue;
+			PaintWelcomeButton(dc, segment.rect, segment.label, hoveredWelcomeSegment == index + 1, false);
 		}
 	}
 	//! `scm/resourceGroup/context`'s `inline` group, laid out right to left from
@@ -2660,9 +2744,51 @@ struct CScmWorkbenchTool::Impl {
 		const auto index = WelcomeSegmentIndexAt(point);
 		if (index == 0) return false;
 		const auto& segment = welcomeSegments[index - 1];
+		if (segment.kind != EGitScmWelcomeActionKind::Command) return false;
 		if (segment.command.empty() || !runCommand) return false;
 		(void)runCommand(segment.command, segment.argumentsJson);
 		return true;
+	}
+	void OpenWelcomeDetails()
+	{
+		if (welcomeModel.content != EGitScmWelcomeContent::MissingGit
+			|| welcomeDetailsButton == nullptr || !::IsWindowVisible(welcomeDetailsButton)) return;
+		auto title = text ? text(EScmTextKey::SourceControlTitle, L"Source Control") : L"Source Control";
+		if (title.empty()) title = L"Source Control";
+		workbench::OpenGitTroubleshootingGuide(window, title);
+	}
+	static LRESULT CALLBACK WelcomeDetailsSubclassProc(HWND button, UINT message,
+		WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR data)
+	{
+		auto& impl = *reinterpret_cast<Impl*>(data);
+		switch (message) {
+		case WM_ERASEBKGND: return 1;
+		case WM_MOUSEMOVE: {
+			TRACKMOUSEEVENT track{ sizeof(track), TME_LEAVE, button, 0 };
+			(void)::TrackMouseEvent(&track);
+			if (!impl.welcomeDetailsHovered) {
+				impl.welcomeDetailsHovered = true;
+				::InvalidateRect(button, nullptr, FALSE);
+			}
+			break;
+		}
+		case WM_MOUSELEAVE:
+			impl.welcomeDetailsHovered = false;
+			::InvalidateRect(button, nullptr, FALSE);
+			break;
+		case WM_SETFOCUS:
+		case WM_KILLFOCUS:
+			::InvalidateRect(button, nullptr, FALSE);
+			break;
+		case WM_KEYDOWN:
+			if (wParam == VK_RETURN) { impl.OpenWelcomeDetails(); return 0; }
+			break;
+		case WM_NCDESTROY:
+			impl.welcomeDetailsButton = nullptr;
+			impl.welcomeDetailsHovered = false;
+			break;
+		}
+		return ::DefSubclassProc(button, message, wParam, lParam);
 	}
 	//! Replace the row's tools. Upstream's title and its command tooltips are the
 	//! only place the repository path, the remote, and the commit counts appear.
@@ -3233,7 +3359,7 @@ bool CScmWorkbenchTool::Create(HWND parent)
 	auto instance = reinterpret_cast<HINSTANCE>(::GetWindowLongPtrW(parent, GWLP_HINSTANCE));
 	if (!instance) instance = ::GetModuleHandleW(nullptr);
 	if (!EnsureClass(instance)) return false;
-	m_impl->window = ::CreateWindowExW(0, kWindowClass, L"",
+	m_impl->window = ::CreateWindowExW(WS_EX_CONTROLPARENT, kWindowClass, L"",
 		WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
 		0, 0, 0, 0, parent, nullptr, instance, this);
 	if (!m_impl->window) return false;
@@ -3277,6 +3403,16 @@ bool CScmWorkbenchTool::Create(HWND parent)
 	if (!m_impl->input) { Close(); return false; }
 	(void)::SetWindowSubclass(m_impl->input, &CScmWorkbenchTool::InputSubclassProc,
 		static_cast<UINT_PTR>(kInputControlId), reinterpret_cast<DWORD_PTR>(m_impl.get()));
+	m_impl->welcomeDetailsButton = ::CreateWindowExW(0, L"BUTTON", L"",
+		WS_CHILD | WS_TABSTOP | BS_OWNERDRAW,
+		0, 0, 0, 0, m_impl->window,
+		reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kWelcomeDetailsControlId)), instance, nullptr);
+	if (m_impl->welcomeDetailsButton == nullptr
+		|| !::SetWindowSubclass(m_impl->welcomeDetailsButton, &Impl::WelcomeDetailsSubclassProc,
+			static_cast<UINT_PTR>(kWelcomeDetailsControlId), reinterpret_cast<DWORD_PTR>(m_impl.get()))) {
+		Close();
+		return false;
+	}
 	// The repository row's own hover text. `TTF_SUBCLASS` relays the pointer
 	// messages, so the row needs no manual `TTM_RELAYEVENT` pump.
 	m_impl->tooltip = ::CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr,
@@ -3305,6 +3441,10 @@ void CScmWorkbenchTool::Layout(const RECT& rect, unsigned int dpi)
 		}
 		if (m_impl->input) {
 			::SendMessageW(m_impl->input, WM_SETFONT, reinterpret_cast<WPARAM>(m_impl->font.Get()), FALSE);
+		}
+		if (m_impl->welcomeDetailsButton) {
+			::SendMessageW(m_impl->welcomeDetailsButton, WM_SETFONT,
+				reinterpret_cast<WPARAM>(m_impl->font.Get()), FALSE);
 		}
 	}
 	::SetWindowPos(m_impl->window, nullptr, rect.left, rect.top,
@@ -3338,6 +3478,11 @@ void CScmWorkbenchTool::Layout(const RECT& rect, unsigned int dpi)
 void CScmWorkbenchTool::Activate()
 {
 	m_impl->active = true;
+	if (m_impl->welcomeDetailsButton != nullptr && ::IsWindowVisible(m_impl->welcomeDetailsButton)) {
+		::SetFocus(m_impl->welcomeDetailsButton);
+		Refresh();
+		return;
+	}
 	// Upstream's `SCMViewPane.focus` focuses the rendered input widget when the
 	// tree has no focused element, and the tree otherwise.
 	const bool listHasFocusRow = m_impl->list != nullptr
@@ -3352,6 +3497,22 @@ void CScmWorkbenchTool::Activate()
 void CScmWorkbenchTool::Deactivate() { m_impl->active = false; }
 bool CScmWorkbenchTool::PreTranslateMessage(MSG& message) {
 	if (!m_impl->active) return false;
+	if (message.hwnd == m_impl->welcomeDetailsButton) {
+		if (message.message == WM_KEYDOWN && message.wParam == VK_RETURN) {
+			m_impl->OpenWelcomeDetails();
+			return true;
+		}
+		if ((message.message == WM_KEYDOWN || message.message == WM_KEYUP)
+			&& message.wParam == VK_SPACE) {
+			::DispatchMessageW(&message);
+			return true;
+		}
+	}
+	if (m_impl->welcomeDetailsButton != nullptr && ::IsWindowVisible(m_impl->welcomeDetailsButton)
+		&& message.message == WM_KEYDOWN && message.wParam == VK_TAB
+		&& (message.hwnd == m_impl->window || ::IsChild(m_impl->window, message.hwnd))) {
+		return ::IsDialogMessageW(m_impl->window, &message) != FALSE;
+	}
 	if (m_impl->input != nullptr && message.hwnd == m_impl->input) {
 		if (message.message == WM_KEYDOWN && message.wParam == VK_RETURN
 			&& (::GetKeyState(VK_CONTROL) & 0x8000) != 0) {
@@ -3400,6 +3561,8 @@ void CScmWorkbenchTool::Close()
 	m_impl->welcomeSegments.clear();
 	m_impl->welcomeModel = {};
 	m_impl->hoveredWelcomeSegment = 0;
+	m_impl->welcomeDetailsHovered = false;
+	m_impl->welcomeDetailsText.clear();
 	m_impl->tooltipToolCount = 0;
 	if (m_impl->tooltip && ::IsWindow(m_impl->tooltip)) ::DestroyWindow(m_impl->tooltip);
 	m_impl->tooltip = nullptr;
@@ -3412,6 +3575,7 @@ void CScmWorkbenchTool::Close()
 	m_impl->list = nullptr;
 	m_impl->graphList = nullptr;
 	m_impl->input = nullptr;
+	m_impl->welcomeDetailsButton = nullptr;
 }
 
 void CScmWorkbenchTool::SetRoot(std::wstring root)
@@ -3717,6 +3881,11 @@ LRESULT CALLBACK CScmWorkbenchTool::WindowProc(HWND window, UINT message, WPARAM
 	}
 	case WM_DRAWITEM: {
 		auto* draw = reinterpret_cast<DRAWITEMSTRUCT*>(lParam);
+		if (draw != nullptr && draw->CtlID == kWelcomeDetailsControlId
+			&& draw->hwndItem == impl.welcomeDetailsButton) {
+			impl.DrawWelcomeDetails(*draw);
+			return TRUE;
+		}
 		if (draw != nullptr && draw->CtlID == 1 && draw->hwndItem == impl.list
 			&& draw->itemID != static_cast<UINT>(-1)) {
 			RECT client{};
@@ -3761,6 +3930,11 @@ LRESULT CALLBACK CScmWorkbenchTool::WindowProc(HWND window, UINT message, WPARAM
 		return reinterpret_cast<LRESULT>(::GetStockObject(DC_BRUSH));
 	}
 	case WM_COMMAND:
+		if (LOWORD(wParam) == kWelcomeDetailsControlId && HIWORD(wParam) == BN_CLICKED
+			&& reinterpret_cast<HWND>(lParam) == impl.welcomeDetailsButton) {
+			impl.OpenWelcomeDetails();
+			return 0;
+		}
 		if (LOWORD(wParam) == 1 && HIWORD(wParam) == LBN_DBLCLK) { impl.ActivateSelection(); return 0; }
 		if (LOWORD(wParam) == kInputControlId && HIWORD(wParam) == EN_CHANGE) { impl.OnInputChanged(); return 0; }
 		break;

@@ -4633,7 +4633,7 @@ BEGIN
     STR_WORKBENCH_VIEW_NO_PROVIDER "No data provider is registered for this view."
     STR_WORKBENCH_VIEW_ACTIVATION_FAILED "The extension could not be activated."
     STR_WORKBENCH_VIEW_ACTIVATION_BUSY "The extension could not start because runtime capacity is in use."
-    STR_WORKBENCH_VIEW_UNSUPPORTED "This extension cannot provide this view in this environment."
+    STR_WORKBENCH_VIEW_UNSUPPORTED "This view cannot be displayed. Check the extension status in Extensions."
     STR_WORKBENCH_VIEW_DISABLED "This extension is disabled."
     STR_WORKBENCH_VIEW_STOPPED "This extension has stopped."
     STR_WORKBENCH_VIEW_UNAVAILABLE "This view is unavailable."
@@ -4695,6 +4695,12 @@ BEGIN
     STR_WORKBENCH_GIT_CLONE_TOOLBAR "Clone"
     STR_WORKBENCH_GIT_CHECKOUT_TOOLBAR "Checkout to..."
     STR_WORKBENCH_GIT_FETCH_TOOLBAR "Fetch"
+    STR_WORKBENCH_GIT_UNAVAILABLE "Git was not found. Install Git for Windows, add git.exe to PATH, then restart Sakura Editor NEXT."
+    STR_WORKBENCH_ACCOUNT_GITHUB_CLI_NOT_INSTALLED "GitHub CLI not found (install or check PATH)."
+    STR_WORKBENCH_VIEW_DETAILS "Details"
+    STR_WORKBENCH_VIEW_HELP_OPEN_FAILED "Could not open the guide. Open this URL in a browser:"
+    STR_WORKBENCH_ACCOUNT_GIT_NOT_INSTALLED "Git not found (install or check PATH)."
+    STR_WORKBENCH_VIEW_GITHUB_CLI_MISSING "GitHub CLI was not found. Install it or check PATH."
 END
 #endif    // 英語 (米国) resources
 /////////////////////////////////////////////////////////////////////////////

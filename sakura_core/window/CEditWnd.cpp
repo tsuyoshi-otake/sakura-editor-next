@@ -814,6 +814,10 @@ void ReplaceLocalizedArgument(std::wstring& text, std::wstring_view argument)
 		resourceId = STR_WORKBENCH_GIT_CLONE_NONEMPTY; break;
 	case workbench::scm::EScmTextKey::GitCloneCancelled:
 		resourceId = STR_WORKBENCH_GIT_CLONE_CANCELLED; break;
+	case workbench::scm::EScmTextKey::GitUnavailable:
+		resourceId = STR_WORKBENCH_GIT_UNAVAILABLE; break;
+	case workbench::scm::EScmTextKey::GitTroubleshootingDetails:
+		resourceId = STR_WORKBENCH_VIEW_DETAILS; break;
 	case workbench::scm::EScmTextKey::GitOpenChanges:
 		resourceId = STR_WORKBENCH_GIT_OPEN_CHANGES; break;
 	case workbench::scm::EScmTextKey::GitOpenFile:
@@ -887,7 +891,7 @@ void ReplaceLocalizedArgument(std::wstring& text, std::wstring_view argument)
 		const std::string_view key{};
 		const UINT resourceId{};
 	};
-	constexpr std::array<TextEntry, 105> kEntries{{
+	constexpr std::array<TextEntry, 106> kEntries{{
 		{ "GitRefBranches", STR_WORKBENCH_GIT_REF_BRANCHES },
 		{ "GitRefRemoteBranches", STR_WORKBENCH_GIT_REF_REMOTE_BRANCHES },
 		{ "GitRefTags", STR_WORKBENCH_GIT_REF_TAGS },
@@ -993,6 +997,7 @@ void ReplaceLocalizedArgument(std::wstring& text, std::wstring_view argument)
 		{ "GitScmChanges", STR_WORKBENCH_GIT_SCM_CHANGES },
 		{ "GitScmUntrackedChanges", STR_WORKBENCH_GIT_SCM_UNTRACKED_CHANGES },
 		{ "GitScmOpen", STR_WORKBENCH_GIT_OPEN },
+		{ "GitUnavailable", STR_WORKBENCH_GIT_UNAVAILABLE },
 	}};
 	for (const auto& entry : kEntries) {
 		if (entry.key != key) continue;
@@ -1062,6 +1067,8 @@ void ReplaceLocalizedArgument(std::wstring& text, std::wstring_view argument)
 		parent.detailRows.push_back(LocalizedWorkbenchString(
 			snapshot.gitState == EAccountSourceState::Unconfigured
 				? STR_WORKBENCH_ACCOUNT_GIT_IDENTITY_NOT_CONFIGURED
+				: snapshot.gitState == EAccountSourceState::NotInstalled
+					? STR_WORKBENCH_ACCOUNT_GIT_NOT_INSTALLED
 				: snapshot.gitState == EAccountSourceState::Unavailable
 					? STR_WORKBENCH_ACCOUNT_GIT_UNAVAILABLE
 					: STR_WORKBENCH_ACCOUNT_DISCOVERY_FAILED));
@@ -1089,6 +1096,8 @@ void ReplaceLocalizedArgument(std::wstring& text, std::wstring_view argument)
 		parent.detailRows.push_back(LocalizedWorkbenchString(
 			snapshot.githubState == EAccountSourceState::Ready
 				? STR_WORKBENCH_ACCOUNT_GITHUB_CLI_NO_ACCOUNTS
+				: snapshot.githubState == EAccountSourceState::NotInstalled
+					? STR_WORKBENCH_ACCOUNT_GITHUB_CLI_NOT_INSTALLED
 				: snapshot.githubState == EAccountSourceState::Unavailable
 					? STR_WORKBENCH_ACCOUNT_GITHUB_CLI_UNAVAILABLE
 					: STR_WORKBENCH_ACCOUNT_DISCOVERY_FAILED));
@@ -4681,7 +4690,7 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitCloneCo
 			r.arguments = arguments;
 			return workbench::scm::RunGitLogged(r, stop, sink);
 		}, nullptr);
-	const auto result = workbench::scm::RunGitCloneComplete(*request, raw);
+	const auto result = workbench::scm::RunGitCloneComplete(*request, raw, context.text);
 	if (!result.Succeeded()) return { EWorkbenchCommandExecutionStatus::Failed, wcstou8s(result.message) };
 	context.message(LocalizedWorkbenchString(STR_WORKBENCH_GIT_CLONE_SUCCESS));
 	return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
@@ -5208,7 +5217,7 @@ constexpr std::size_t kMaximumDiffSideBytes = 4u * 1024u * 1024u;
 		request.maximumOutputBytes = kMaximumDiffSideBytes;
 		auto result = workbench::scm::RunGitLogged(request, nullptr, sink);
 		if (!result.Succeeded()) {
-			failure = workbench::scm::DescribeGitFailure(result);
+			failure = workbench::scm::DescribeGitFailure(result, ResolveLocalizedScmTextKey);
 			return false;
 		}
 		bytes = std::move(result.standardOutput);
@@ -5647,7 +5656,7 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitSelecte
 	const auto& path = modified->path;
 	const auto hashed = runGit(workbench::scm::BuildGitHashObjectArguments(path), std::move(*encoded));
 	if (!hashed.Succeeded()) {
-		return { EWorkbenchCommandExecutionStatus::Failed, wcstou8s(workbench::scm::DescribeGitFailure(hashed)) };
+		return { EWorkbenchCommandExecutionStatus::Failed, wcstou8s(workbench::scm::DescribeGitFailure(hashed, ResolveLocalizedScmTextKey)) };
 	}
 	const auto object = workbench::scm::ParseGitHashObjectName(DecodeDiffSide(hashed.standardOutput));
 	if (!object) {
@@ -5674,7 +5683,7 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitSelecte
 
 	const auto updated = runGit(workbench::scm::BuildGitUpdateIndexArguments(mode, *object, path, add), {});
 	if (!updated.Succeeded()) {
-		return { EWorkbenchCommandExecutionStatus::Failed, wcstou8s(workbench::scm::DescribeGitFailure(updated)) };
+		return { EWorkbenchCommandExecutionStatus::Failed, wcstou8s(workbench::scm::DescribeGitFailure(updated, ResolveLocalizedScmTextKey)) };
 	}
 
 	// The index moved, so every published SCM fact is stale.
@@ -5990,7 +5999,7 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitSyncCom
 	const auto remotesResult = context.run(workbench::scm::BuildGitRemoteArguments());
 	if (!remotesResult.Succeeded() || remotesResult.exitCode != 0) {
 		return { EWorkbenchCommandExecutionStatus::Failed,
-			wcstou8s(workbench::scm::DescribeGitFailure(remotesResult)) };
+			wcstou8s(workbench::scm::DescribeGitFailure(remotesResult, ResolveLocalizedScmTextKey)) };
 	}
 	auto remotes = workbench::scm::ParseGitRemotes({
 		reinterpret_cast<const char*>(remotesResult.standardOutput.data()),
@@ -6228,7 +6237,13 @@ bool CEditWnd::InitializeSenpWindowExtensions()
 		},
 		// The window launches every effect runtime through the composed host
 		// process, so it supplies no in-process factory of its own.
-		senp::EffectRuntimeFactory{});
+		senp::EffectRuntimeFactory{},
+		[this] {
+			using Diagnostic = workbench::SenpGitHubCliDiagnostic;
+			if (!m_accountDiscoveryService) return Diagnostic::None;
+			return m_accountDiscoveryService->GitHubCliExecutableMissing()
+				? Diagnostic::ExecutableMissing : Diagnostic::None;
+		});
 	m_senpWindowExtensionsActive = true;
 	return SynchronizeSenpWindowExtensions();
 }

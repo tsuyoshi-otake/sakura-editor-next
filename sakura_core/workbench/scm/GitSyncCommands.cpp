@@ -696,7 +696,7 @@ GitSyncFailure DescribeGitSyncFailure(
 	case EGitExecutionStatus::Failed:
 		break;
 	default:
-		failure.message = DescribeGitFailure(result);
+		failure.message = DescribeGitFailure(result, text);
 		return failure;
 	}
 

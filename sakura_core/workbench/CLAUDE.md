@@ -18,6 +18,8 @@
   [`commands/CLAUDE.md`](commands/CLAUDE.md)
 - Files Explorer view and its context-menu row model:
   [`explorer/CLAUDE.md`](explorer/CLAUDE.md)
+- Source Control provider, Git execution, and the native SCM view:
+  [`scm/CLAUDE.md`](scm/CLAUDE.md)
 - SENP Extensions ViewContainer and compact extension-list projection:
   [`extensions/CLAUDE.md`](extensions/CLAUDE.md)
 - Workspace artifact routing and file/watch ownership:

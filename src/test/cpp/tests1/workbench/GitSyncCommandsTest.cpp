@@ -468,7 +468,20 @@ TEST(GitSyncCommands, DescribeGitSyncFailureDefersToTheSharedRendererWhenGitNeve
 	// The shared renderer owns "git is not installed"; this path must not
 	// invent a sentence for a process that produced no output at all.
 	EXPECT_EQ(DescribeGitFailure(result), failure.message);
-	EXPECT_EQ(L"Git was not found on PATH.", failure.message);
+	EXPECT_EQ(L"Git was not found. Install Git for Windows, add git.exe to PATH, then restart Sakura Editor NEXT.", failure.message);
+
+	int resolverCalls = 0;
+	const GitRefTextResolver localized = [&resolverCalls](std::string_view key, std::wstring_view) {
+		++resolverCalls;
+		return key == "GitUnavailable" ? L"Git missing: install it and restart." : L"";
+	};
+	EXPECT_EQ(L"Git missing: install it and restart.", DescribeGitFailure(result, localized));
+	EXPECT_EQ(1, resolverCalls);
+
+	result.status = EGitExecutionStatus::LaunchFailed;
+	resolverCalls = 0;
+	EXPECT_EQ(L"Git could not be started.", DescribeGitFailure(result, localized));
+	EXPECT_EQ(0, resolverCalls);
 }
 
 // ----------------------------------------------------------------------------

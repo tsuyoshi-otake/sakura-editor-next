@@ -15,24 +15,32 @@
 
 namespace workbench::scm {
 
+inline constexpr wchar_t kGitUnavailableFallback[] =
+	L"Git was not found. Install Git for Windows, add git.exe to PATH, then restart Sakura Editor NEXT.";
+
 //!
 //! @brief Turns a non-`Succeeded` git invocation into a reason a person can act on.
 //!
 //! `RunGit` already separates its terminal states, so the message names the
 //! actual cause instead of collapsing everything into "git failed". For a
-//! non-zero exit git's own stderr is the most accurate reason available —
-//! "pathspec did not match", "local changes would be overwritten" — so it is
+//! non-zero exit git's own stderr is the most accurate reason available (for
+//! example, "pathspec did not match" or "local changes would be overwritten"), so it is
 //! preferred over any sentence written here.
 //!
 //! Shared by every command family rather than copied into each: a user who has
 //! to decide whether to retry must not get two different sentences for the same
 //! failure depending on which button produced it.
 //!
-[[nodiscard]] inline std::wstring DescribeGitFailure(const GitExecutionResult& result)
+[[nodiscard]] inline std::wstring DescribeGitFailure(
+	const GitExecutionResult& result, const GitRefTextResolver& text = {})
 {
 	switch (result.status) {
 	case EGitExecutionStatus::GitUnavailable:
-		return L"Git was not found on PATH.";
+		if (text) {
+			auto localized = text("GitUnavailable", {});
+			if (!localized.empty()) return localized;
+		}
+		return kGitUnavailableFallback;
 	case EGitExecutionStatus::LaunchFailed:
 		return L"Git could not be started.";
 	case EGitExecutionStatus::TimedOut:
@@ -48,12 +56,12 @@ namespace workbench::scm {
 	default:
 		break;
 	}
-	auto text = DecodeGitOutput(result.standardError);
-	while (!text.empty() && (text.back() == L'\n' || text.back() == L'\r')) {
-		text.pop_back();
+	auto message = DecodeGitOutput(result.standardError);
+	while (!message.empty() && (message.back() == L'\n' || message.back() == L'\r')) {
+		message.pop_back();
 	}
-	if (!text.empty()) {
-		return text;
+	if (!message.empty()) {
+		return message;
 	}
 	return L"The git command failed.";
 }

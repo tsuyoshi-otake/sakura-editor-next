@@ -95,6 +95,11 @@ std::wstring ResolveGitExecutable()
 	return resolved.value_or(std::wstring{});
 }
 
+bool GitExecutableResolvable()
+{
+	return !ResolveGitExecutable().empty();
+}
+
 bool IsExecutableGitRequest(const GitExecutionRequest& request) noexcept
 {
 	if (request.workingDirectory.empty() || request.arguments.empty()) return false;

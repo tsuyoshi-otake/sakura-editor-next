@@ -1795,7 +1795,7 @@ TEST(GitBranchCommands, AFailedListingNeverOpensAPicker)
 	// An empty ref list and an unreadable one are different facts; offering an
 	// empty picker would render the second as the first.
 	EXPECT_FALSE(opened);
-	EXPECT_EQ(L"Git was not found on PATH.", result.message);
+	EXPECT_EQ(L"Git was not found. Install Git for Windows, add git.exe to PATH, then restart Sakura Editor NEXT.", result.message);
 	ASSERT_EQ(1U, messages.size());
 	EXPECT_EQ(result.message, messages[0]);
 }

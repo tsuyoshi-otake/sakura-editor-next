@@ -171,7 +171,7 @@ struct UntrackedDialogDetails final {
 	for (const auto& arguments : BuildGitPathChunks(prefix, paths, limits)) {
 		const auto result = context.run(arguments);
 		if (!result.Succeeded() || result.exitCode != 0) {
-			auto message = DescribeGitFailure(result);
+			auto message = DescribeGitFailure(result, context.text);
 			Notify(context, message);
 			return Failed(std::move(message));
 		}

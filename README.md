@@ -28,7 +28,7 @@
 
 | 種類 | 入手先 | 内容 |
 | --- | --- | --- |
-| 開発版 | [GitHub Actions](https://github.com/tsuyoshi-otake/sakura-editor-next/actions/workflows/build-sakura.yml?query=branch%3Adevelop) | `develop` の最新ビルド |
+| 開発版 | [GitHub Actions](https://github.com/tsuyoshi-otake/sakura-editor-next/actions/workflows/build-sakura.yml?query=branch%3Amain) | `main` の最新ビルド |
 | リリース版 | [Releases](https://github.com/tsuyoshi-otake/sakura-editor-next/releases) | 公開済みの配布パッケージ |
 
 ## 主な特徴
@@ -70,6 +70,11 @@ x64 Release 版を使い、1,249,037 bytes の Markdown ファイルを各条件
 | Terminal への貼り付け | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd>（右クリックでも可） |
 
 統合 Terminal は、ユーザーが指定したプロファイルを最優先します。指定がない場合はインストール済みの安定版 PowerShell から最も新しいものを選び、PowerShell 7 がない環境では Windows PowerShell 5.1 にフォールバックします。ネットワークへの問い合わせや自動インストールは行いません。
+
+### Git・GitHub 機能
+
+GitHub 関連の画面で `Unsupported`、Git／GitHub CLI 未検出、サインイン要求などが表示された場合は、[Git・GitHub 機能のトラブルシューティング](./docs/user/git-github-cli-troubleshooting.md)で原因と確認方法を確認できます（[English](./docs/user/git-github-cli-troubleshooting.en.md)・[简体中文](./docs/user/git-github-cli-troubleshooting.zh-CN.md)）。
+ソース管理で Git 未検出が確定した場合は画面内の［詳細］から、GitHub 関連ビューでは［詳細］から同じガイドを開けます。
 
 ### Terminal への画像貼り付け
 

@@ -22,7 +22,8 @@ public:
 	CSenpViewDeclarations(layout::WorkbenchContributionRegistry& catalog,
 		viewcontainer::CViewContainerPages& pages,
 		SenpDeclaredViewActivation requestActivation,
-		std::function<bool(std::string_view)> requestFocus);
+		std::function<bool(std::string_view)> requestFocus,
+		SenpGitHubCliDiagnosticQuery githubCliDiagnostic = {});
 	~CSenpViewDeclarations();
 	CSenpViewDeclarations(const CSenpViewDeclarations&) = delete;
 	CSenpViewDeclarations& operator=(const CSenpViewDeclarations&) = delete;
@@ -57,6 +58,7 @@ private:
 	viewcontainer::CViewContainerPages& m_pages;
 	SenpDeclaredViewActivation m_requestActivation;
 	std::function<bool(std::string_view)> m_requestFocus;
+	SenpGitHubCliDiagnosticQuery m_githubCliDiagnostic;
 	std::map<std::wstring, std::unique_ptr<Entry>, std::less<>> m_entries;
 	bool m_entered{}, m_closed{};
 };

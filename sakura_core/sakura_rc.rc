@@ -4565,7 +4565,7 @@ BEGIN
     STR_WORKBENCH_VIEW_NO_PROVIDER "このビューにデータプロバイダーが登録されていません。"
     STR_WORKBENCH_VIEW_ACTIVATION_FAILED "拡張機能をアクティブ化できませんでした。"
     STR_WORKBENCH_VIEW_ACTIVATION_BUSY "実行環境の容量が使用中のため、拡張機能を開始できませんでした。"
-    STR_WORKBENCH_VIEW_UNSUPPORTED "この拡張機能は、この環境でこのビューを提供できません。"
+    STR_WORKBENCH_VIEW_UNSUPPORTED "このビューを表示できません。［拡張機能］で拡張機能の状態を確認してください。"
     STR_WORKBENCH_VIEW_DISABLED "この拡張機能は無効です。"
     STR_WORKBENCH_VIEW_STOPPED "この拡張機能は停止しました。"
     STR_WORKBENCH_VIEW_UNAVAILABLE "このビューは利用できません。"
@@ -4624,6 +4624,12 @@ BEGIN
     STR_WORKBENCH_GIT_CLONE_TOOLBAR "複製"
     STR_WORKBENCH_GIT_CHECKOUT_TOOLBAR "チェックアウト先..."
     STR_WORKBENCH_GIT_FETCH_TOOLBAR "フェッチ"
+    STR_WORKBENCH_GIT_UNAVAILABLE "Git が見つかりません。Git for Windows をインストールし、git.exe を PATH に追加してから Sakura Editor NEXT を再起動してください。"
+    STR_WORKBENCH_ACCOUNT_GITHUB_CLI_NOT_INSTALLED "GitHub CLI 未検出（導入・PATH を確認）"
+    STR_WORKBENCH_VIEW_DETAILS "詳細"
+    STR_WORKBENCH_VIEW_HELP_OPEN_FAILED "ガイドを開けませんでした。ブラウザーで次の URL を開いてください:"
+    STR_WORKBENCH_ACCOUNT_GIT_NOT_INSTALLED "Git 未検出（導入・PATH を確認）"
+    STR_WORKBENCH_VIEW_GITHUB_CLI_MISSING "GitHub CLI が見つかりません。導入または PATH を確認してください。"
 END
 #endif    // 日本語 (日本) resources
 /////////////////////////////////////////////////////////////////////////////

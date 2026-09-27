@@ -7,7 +7,21 @@ repository reader (`GitCommandRunner`, `GitScmModel`), the bridge that publishes
 that repository into the SCM model (`GitScmPublisher`), and the native Source
 Control view (`CScmWorkbenchTool`).
 
-The tracking Issue for the current work is #19.
+## Find the Relevant SCM Contract
+
+Start with the row for the behavior being changed. The detailed sections below
+record contracts and intentional VS Code divergences; unrelated sections do not
+need to be read for a focused change.
+
+| Change | State or contract owner | Presentation or boundary | Focused tests |
+| --- | --- | --- | --- |
+| Git missing, no-repository welcome, init/clone | `GitCommandRunner.h`, `GitInitCloneCommands.h` | `CScmWorkbenchTool.cpp`, `../GitTroubleshootingGuide.h` | `GitInitCloneCommandsTest.cpp`, `GitSourceControlTest.cpp` |
+| Repository status and resource groups | `GitScmModel.h`, `GitScmPublisher.h`, `SourceControlService.h` | `CScmWorkbenchTool.cpp` | `GitSourceControlTest.cpp` |
+| Branch, stage, commit, and sync commands | The corresponding `Git*Commands.h` contract | `CScmWorkbenchTool.cpp`, command registry | `GitSourceControlTest.cpp`, `GitSyncCommandsTest.cpp` |
+| Graph history | `GitHistoryModel.h` | `CScmWorkbenchTool.cpp` | `GitSourceControlTest.cpp` (`GitHistoryModel` suite) |
+
+Test files in the table live under `src/test/cpp/tests1/workbench/`. Search
+the named contract and test first, then follow only the relevant section below.
 
 ## One SCM Authority, No Second Truth
 
@@ -1233,14 +1247,23 @@ are registered under upstream's own IDs. The empty-workbench welcome uses
   Markdown links.** The empty workbench keeps upstream's action order and IDs:
   `vscode.openFolder`, then `git.cloneRecursive`. The command registry owns the
   runtime routing; this SCM model only publishes the stable action contract.
-- **The upstream `git.missing`, `git.parentRepositoryCount`,
-  `git.unsafeRepositoryCount`, and `git.closedRepositoryCount` context keys are
-  not read.** `BuildGitScmWelcomeModel` takes the explicit
-  `EGitScmWelcomeWorkspaceState` (`Empty`, `Folder`, `WorkspaceWithFolders`, or
-  `WorkspaceWithoutFolders`) plus repository presence. The richer upstream
-  gates fold into `EGitScmWelcomeContent::None` when a provider is present,
-  rather than being approximated by a partial read of keys this product does
-  not publish.
+- **The upstream missing-Git welcome is driven by a typed execution result.**
+  `RunGit` returns `GitUnavailable` only when `git.exe` cannot be resolved.
+  With no folder to run a repository command against, the SCM worker asks the
+  same runner for executable availability on initial or explicit refresh; its
+  five-second timer does not repeat that PATH check. `CScmWorkbenchTool` passes
+  the resulting diagnostic into `BuildGitScmWelcomeModel`, which
+  suppresses the normal no-repository actions and shows an installation
+  explanation only after missing Git is proven. A pending probe, a failed
+  launch, or an ordinary folder without a repository keeps its distinct state.
+  Upstream's inline Download/Reload/Troubleshoot links become one native
+  keyboard-accessible Details button linking to the locale-matched product
+  guide because this native welcome renderer has no inline Markdown links or
+  in-process `workbench.action.reloadWindow` equivalent. The guide contains
+  the official Git download link and the app's restart/PATH instructions.
+  `git.parentRepositoryCount`, `git.unsafeRepositoryCount`, and
+  `git.closedRepositoryCount` remain unpublished; their upstream welcome
+  variants remain omitted instead of being inferred from repository absence.
 - **No progress indicator, and `git clone` still runs to completion or
   cancellation without a queue.** This mirrors the remote-commands and
   branch-commands divergences below: there is no operation queue and no
@@ -1416,9 +1439,10 @@ divergence is a bug.
   git invocation instead of pretending to be asynchronous.
 - **The `when` clause is `gitOpenRepositoryCount != 0` alone.** Upstream's is
   `config.git.enabled && !git.missing && gitOpenRepositoryCount != 0`. The other
-  two are not keys this product publishes: there is no `git.enabled` setting to
-  read and no `git.missing` probe, and a clause referencing an unpublished key
-  would evaluate false and hide the commands entirely.
+  two are not context keys this product publishes: there is no `git.enabled`
+  setting, and the typed Git execution diagnostic used by the welcome view
+  does not publish `git.missing` into command context. Referencing an
+  unpublished key would evaluate false and hide the commands entirely.
   `gitOpenRepositoryCount` is owned by the core context projection rather than by
   an extension, because our Git provider is native.
 - **Retracted: "`git.sync` and `git.publish` are deliberately not registered."**

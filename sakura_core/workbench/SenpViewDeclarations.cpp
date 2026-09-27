@@ -31,7 +31,8 @@ private:
 	friend class CSenpViewDeclarations;
 	bool Prepare(const std::wstring& extensionId)
 	{
-		m_bodies = CSenpDeclaredTreeViews::Create(extensionId, m_views, m_declarations.m_requestActivation);
+		m_bodies = CSenpDeclaredTreeViews::Create(extensionId, m_views,
+			m_declarations.m_requestActivation, m_declarations.m_githubCliDiagnostic);
 		if (!m_bodies) return false;
 		std::vector<viewcontainer::SenpNativeViewDefinition> native;
 		native.reserve(m_views.size()); m_containerIds.reserve(m_containers.size());
@@ -95,9 +96,11 @@ private:
 
 CSenpViewDeclarations::CSenpViewDeclarations(layout::WorkbenchContributionRegistry& catalog,
 	viewcontainer::CViewContainerPages& pages,
-	SenpDeclaredViewActivation requestActivation, std::function<bool(std::string_view)> requestFocus)
+	SenpDeclaredViewActivation requestActivation, std::function<bool(std::string_view)> requestFocus,
+	SenpGitHubCliDiagnosticQuery githubCliDiagnostic)
 	: m_catalog(catalog), m_pages(pages),
-	m_requestActivation(std::move(requestActivation)), m_requestFocus(std::move(requestFocus)) {}
+	m_requestActivation(std::move(requestActivation)), m_requestFocus(std::move(requestFocus)),
+	m_githubCliDiagnostic(std::move(githubCliDiagnostic)) {}
 CSenpViewDeclarations::~CSenpViewDeclarations() { Close(); }
 
 SenpViewDeclarationStatus CSenpViewDeclarations::Register(layout::WorkbenchContributionOwner owner,
