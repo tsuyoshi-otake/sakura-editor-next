@@ -20,7 +20,7 @@ here are the ones that keep it that way:
 * no workflow installs the tool from a package feed again, which is the
   one-line change that would silently restore both problems at once.
 
-Like ``test_develop_issue_closure.py``, this lives in ``src/test/py`` because
+Like ``test_cppcheck_analyzer_cache.py``, this lives in ``src/test/py`` because
 the CTest ``pytest`` target runs from the repository root under pytest's
 default ``norecursedirs``, which never collects ``tools/build/tests``.
 """

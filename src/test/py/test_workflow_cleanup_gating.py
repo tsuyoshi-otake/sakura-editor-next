@@ -19,7 +19,7 @@ edit.  ``KNOWN_UNGATED_CALL_SITES`` records the two sites deliberately left
 alone and why; a fifth site anywhere forces a decision instead of appearing
 silently.
 
-Like ``test_develop_issue_closure.py``, it lives in ``src/test/py`` because the
+Like ``test_cppcheck_analyzer_cache.py``, it lives in ``src/test/py`` because the
 CTest ``pytest`` target runs from the repository root under pytest's default
 ``norecursedirs``, which never collects ``tools/build/tests``.
 """

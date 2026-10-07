@@ -14,7 +14,7 @@ not silently drift back apart:
   existed only to feed Sonar coverage and the hosted build jobs no longer
   install OpenCppCoverage.
 
-Like ``test_develop_issue_closure.py``, this lives in ``src/test/py`` because
+Like ``test_cppcheck_analyzer_cache.py``, this lives in ``src/test/py`` because
 the CTest ``pytest`` target runs from the repository root under pytest's
 default ``norecursedirs``, which never collects ``tools/build/tests``.
 """

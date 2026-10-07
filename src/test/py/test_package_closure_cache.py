@@ -177,7 +177,7 @@ class PullRequestCacheCleanupTests(unittest.TestCase):
     def test_it_runs_when_a_pull_request_closes(self) -> None:
         self.assertIn("on:\n  pull_request:\n    types: [closed]\n", self.text)
         # Merged and abandoned pull requests both leave unreadable entries, so
-        # unlike develop-issue-closure.yml this must not require `merged`.
+        # this must not require `merged`.
         self.assertNotIn("github.event.pull_request.merged", self.text)
 
     def test_it_can_delete_caches(self) -> None:
