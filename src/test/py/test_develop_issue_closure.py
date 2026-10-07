@@ -234,7 +234,7 @@ class DevelopIssueClosureWorkflowContractTests(unittest.TestCase):
     def test_the_workflow_delegates_resolution_to_the_tested_script(self) -> None:
         self.assertIn("        run: python3 .github/scripts/close_referenced_issues.py\n", self.text)
         self.assertIn(
-            "uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0\n",
+            "uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n",
             self.text,
         )
         self.assertIn("          persist-credentials: false\n", self.text)

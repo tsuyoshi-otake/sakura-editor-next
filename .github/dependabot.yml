@@ -4,3 +4,7 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    # Never propose a release younger than 7 days, matching the repository's
+    # minimum-release-age policy for every dependency ecosystem.
+    cooldown:
+      default-days: 7

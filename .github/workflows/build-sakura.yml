@@ -76,7 +76,7 @@ jobs:
         shell: cmd # このJobでは 指定しない限り cmd を使う
     steps:
       - name: Checkout repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.CHECKOUT_REF }}
           fetch-depth: 0  # The encoding checker validates the event-provided base SHA
@@ -106,7 +106,7 @@ jobs:
 
     steps:
     ## see https://github.com/actions/checkout
-    - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         ref: ${{ env.CHECKOUT_REF }}
         fetch-depth: 1  # 過去の履歴は含めず取得
@@ -122,7 +122,7 @@ jobs:
         python-version: ${{ vars.PYTHON_VERSION || '3.14.3' }}
 
     - name: Install the latest version of uv
-      uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       with:
         activate-environment: true
 
@@ -184,7 +184,7 @@ jobs:
       packages: write
 
     steps:
-    - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         ref: ${{ env.CHECKOUT_REF }}
         fetch-depth: 1
@@ -258,7 +258,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.CHECKOUT_REF }}
           fetch-depth: 1
@@ -348,7 +348,7 @@ jobs:
 
     steps:
     ## see https://github.com/actions/checkout
-    - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         ref: ${{ env.CHECKOUT_REF }}
         fetch-depth: 1  # 過去の履歴は含めず取得
@@ -443,7 +443,7 @@ jobs:
         python-version: ${{ vars.PYTHON_VERSION || '3.14.3' }}
 
     - name: Install the latest version of uv
-      uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       with:
         activate-environment: true
 
@@ -532,7 +532,7 @@ jobs:
     - name: Restore cached package closure
       id: package-cache
       if: ${{ steps.package-plan.outputs.hash != '' }}
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@v6
       with:
         path: ${{ steps.package-plan.outputs.path }}
         key: sakura-packages-${{ runner.os }}-${{ steps.package-plan.outputs.hash }}
@@ -560,7 +560,7 @@ jobs:
 
     - name: Save cached package closure
       if: ${{ github.event_name != 'pull_request' && steps.package-plan.outputs.hash != '' && steps.package-cache.outputs.cache-hit != 'true' }}
-      uses: actions/cache/save@v4
+      uses: actions/cache/save@v6
       with:
         path: ${{ steps.package-plan.outputs.path }}
         key: sakura-packages-${{ runner.os }}-${{ steps.package-plan.outputs.hash }}
@@ -656,7 +656,7 @@ jobs:
     # a separate directory so it cannot affect the packaged source tree.
     - name: Checkout release provenance helper
       if: ${{ matrix.config == 'Release' && inputs.release_promotion }}
-      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         ref: ${{ github.workflow_sha }}
         fetch-depth: 1

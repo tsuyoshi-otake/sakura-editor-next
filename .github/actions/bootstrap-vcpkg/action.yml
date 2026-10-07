@@ -58,7 +58,7 @@ runs:
     # consumes the shared 10 GiB quota.
     - name: Restore cached vcpkg tool
       id: restore
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@v6
       with:
         path: ${{ inputs.vcpkg-root }}\vcpkg.exe
         key: ${{ steps.pin.outputs.cache-key }}
@@ -140,7 +140,7 @@ runs:
 
     - name: Save cached vcpkg tool
       if: ${{ github.event_name != 'pull_request' && steps.restore.outputs.cache-hit != 'true' }}
-      uses: actions/cache/save@v4
+      uses: actions/cache/save@v6
       with:
         path: ${{ inputs.vcpkg-root }}\vcpkg.exe
         key: ${{ steps.pin.outputs.cache-key }}
