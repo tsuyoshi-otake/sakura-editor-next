@@ -444,8 +444,9 @@ Visibility posts a deduplicated activation request; painting and layout never
 activate extensions. Failed and capacity-busy states offer an explicit Retry;
 disabled, unsupported and stopped states stay terminal without automatic retry.
 The window must Pump the actual activation state even after runtime revocation.
-The opt-in `DeclaredTreeViews` rendering probe verifies activation status,
-runtime binding, resizing and visibility with the dual-capture protocol. This
+The opt-in `DeclaredTreeViews` rendering probe verifies activation status, the
+Unsupported details page, the verified missing-GitHub-CLI diagnostic, runtime
+binding, resizing and visibility with the dual-capture protocol. This
 component does not itself register declarations in the workbench catalog.
 
 `CSenpViewDeclarations` owns those native declaration cohorts together with their

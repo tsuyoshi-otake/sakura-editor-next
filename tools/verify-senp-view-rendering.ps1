@@ -290,7 +290,7 @@ try {
         [void](Invoke-Probe 1 (380 -bor (($dpi -bor ($themeId -shl 10)) -shl 16)))
         Wait-DocumentReady
         for ($repeat = 0; $repeat -lt $Repetitions; ++$repeat) {
-            $gestures = if ($ProbeSet -eq 'DeclaredTreeViews') { @('activation-state', 'resize', 'runtime-binding', 'declaration-visibility') } elseif ($ProbeSet -eq 'TextResources') { @('log-visibility', 'resize', 'scroll', 'find', 'append') } elseif ($ProbeSet -eq 'MixedDocuments') { @('section-switch', 'resize', 'mixed-visibility', 'find', 'selection') } elseif ($ProbeSet -eq 'ReadonlyDocuments') { @('document-visibility', 'resize', 'scroll', 'refresh', 'find', 'selection') } elseif ($ProbeSet -eq 'ReadonlyEditors') { @('input-switch', 'resize', 'editor-visibility', 'surface-move') } elseif ($ProbeSet -eq 'TreeViews') { @('expand', 'resize', 'scroll', 'refresh') } else { @('collapse', 'resize', 'view-move', 'container-move') }
+            $gestures = if ($ProbeSet -eq 'DeclaredTreeViews') { @('activation-state', 'unsupported-details', 'missing-cli', 'resize', 'runtime-binding', 'declaration-visibility') } elseif ($ProbeSet -eq 'TextResources') { @('log-visibility', 'resize', 'scroll', 'find', 'append') } elseif ($ProbeSet -eq 'MixedDocuments') { @('section-switch', 'resize', 'mixed-visibility', 'find', 'selection') } elseif ($ProbeSet -eq 'ReadonlyDocuments') { @('document-visibility', 'resize', 'scroll', 'refresh', 'find', 'selection') } elseif ($ProbeSet -eq 'ReadonlyEditors') { @('input-switch', 'resize', 'editor-visibility', 'surface-move') } elseif ($ProbeSet -eq 'TreeViews') { @('expand', 'resize', 'scroll', 'refresh') } else { @('collapse', 'resize', 'view-move', 'container-move') }
             foreach ($gesture in $gestures) { foreach ($direction in 1, 0) {
                 if ($clock.Elapsed.TotalSeconds -gt $(if ($ProbeSet -eq 'TextResources') { 520 } elseif ($ProbeSet -eq 'ReadonlyDocuments') { 320 } elseif ($ProbeSet -eq 'ReadonlyEditors') { 200 } else { 140 })) { throw 'Rendering run exceeded its overall deadline.' }
                 # The preceding text append deliberately reveals the tail. Reset
@@ -300,6 +300,8 @@ try {
                 if ($ProbeSet -in @('TreeViews', 'DeclaredTreeViews', 'ReadonlyEditors', 'ReadonlyDocuments', 'MixedDocuments', 'TextResources')) { $before += ':' + (Invoke-Probe 9).ToString() }
                 switch ($gesture) {
                     'activation-state' { [void](Invoke-Probe 2 $direction) }
+                    'unsupported-details' { [void](Invoke-Probe 10 $direction) }
+                    'missing-cli' { [void](Invoke-Probe 11 $direction) }
                     'runtime-binding' { [void](Invoke-Probe 3 $direction) }
                     'declaration-visibility' { [void](Invoke-Probe 8 $direction) }
                     'log-visibility' { [void](Invoke-Probe 2 $direction) }
