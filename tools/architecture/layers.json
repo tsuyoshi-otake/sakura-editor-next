@@ -1,0 +1,350 @@
+{
+  "schema_version": 2,
+  "source_of_truth": "src/main/modules/modules.json",
+  "description": "Layer map for tools/architecture/include_layers.py. Lower rank = more stable; an include from a lower-rank source into a higher-rank header is an upward include. Layer membership is DERIVED from the component manifest named by source_of_truth: a file owned by an extracted (non-legacy) component takes the layer of its family, and a contract header takes the contract layer. Hand-written entries survive only in monolith_overrides, and only for paths still inside the sakura_app monolith. Run 'include_layers.py check-derivation' to prove the overrides still agree with the manifest.",
+  "derivation": {
+    "contract_layer": "L0-contracts",
+    "contract_prefixes": [
+      "sakura_core/include/sakura/"
+    ],
+    "monolith_families": [
+      "legacy"
+    ],
+    "family_rank": {
+      "shared-state": 0,
+      "platform-primitives": 2,
+      "authority-process-platform": 2,
+      "terminal-harness": 2,
+      "document-editor": 3,
+      "win32-adapters": 4,
+      "process-lifecycle": 5,
+      "legacy": 5,
+      "legacy-language-resources": 4,
+      "shared-state-tests": 6,
+      "platform-primitives-tests": 6,
+      "authority-process-platform-tests": 6,
+      "document-editor-tests": 6,
+      "win32-adapters-tests": 6,
+      "process-lifecycle-tests": 6,
+      "legacy-tests": 6
+    },
+    "rules": [
+      "Classification order: (1) contract headers - every public_header of every component plus everything under contract_prefixes - become contract_layer; (2) a file listed in a non-legacy component's sources or private_headers takes the layer of that component's family; (3) a file left over inside the sakura_app monolith takes the longest-matching monolith_overrides prefix; (4) anything else is reported as unclassified and counted, never silently dropped.",
+      "family shared-state = rank 0: sakura_shareddata_contract ships no translation unit at all, only the SharedData ABI headers, so it is a pure contract with nothing below it.",
+      "family platform-primitives = rank 2 (L2-platform): uri/serialization/security/storage/filesystem/request wrap OS and file-format primitives for every process; they sit above the string/memory foundation and below any document concept.",
+      "family authority-process-platform = rank 2 (L2-platform): the control-IPC protocol, security, transport and endpoint components are the cross-process plumbing of the control process, peers of the other platform primitives (controlipc_transport depends only on controlipc_security/protocol and sakura_security).",
+      "family terminal-harness = rank 2 (L2-platform): the tmux core, harness bridge, harness CLI and terminal tools are a self-contained automation subsystem that already lives under sakura_core/platform/harnessbridge; nothing in it depends on the document or workbench model, and the monolith depends on it (sakura_app -> sakura_terminal_cli), so it belongs below the domain layers.",
+      "family document-editor = rank 3 (L3-workbench-model): SelectionSession, EditorFrameEvents and DocumentSession are the extracted editor domain model, exactly the layer the sakura_core/workbench tree already occupied.",
+      "family win32-adapters = rank 4 (L4-legacy-ui): Win32EditorFrameAdapter binds the editor frame contract to HWND-level Win32 UI, the same layer as the rest of sakura_core/window.",
+      "family process-lifecycle = rank 5 (L5-composition): EditorAppLifecycle sequences editor process startup and shutdown from sakura_core/_main, i.e. it is part of the composition root.",
+      "family legacy = rank 5 (L5-composition) for manifest edge direction only: sakura_app is the monolithic executable that composes every extracted component. Its individual files are NOT classified by this rank - they go through monolith_overrides.",
+      "family legacy-language-resources = rank 4 (L4-legacy-ui): sakura_lang ships localized dialog/menu resources, a UI-layer artifact (its .rc files are outside the C++ include scan).",
+      "every *-tests family = rank 6 (L6-tests): a test binary may depend on anything, so it is the topmost layer and can never produce an upward edge (its sources live outside the scanned source roots).",
+      "When several layers share a rank, the one marked derived_target receives family-derived files; the other exists only as an override target.",
+      "monolith_overrides prefixes nest on purpose and the longest prefix wins, exactly like the pre-derivation map. Two overrides with the SAME prefix and different layers are an error; a nested prefix is not."
+    ]
+  },
+  "layers": [
+    { "id": "L0-contracts", "rank": 0 },
+    { "id": "L1-foundation", "rank": 1 },
+    { "id": "L2-platform", "rank": 2 },
+    { "id": "L3-domain", "rank": 3 },
+    { "id": "L3-workbench-model", "rank": 3, "derived_target": true },
+    { "id": "L4-legacy-ui", "rank": 4 },
+    { "id": "L5-composition", "rank": 5 },
+    { "id": "L6-tests", "rank": 6 }
+  ],
+  "monolith_overrides": [
+    {
+      "prefix": "sakura_core/StdAfx.h",
+      "layer": "L1-foundation",
+      "reason": "The precompiled header every monolith translation unit must include; it is foundation by construction, not by ownership.",
+      "removal_condition": "Remove when sakura_app no longer uses a repository-wide precompiled header, or when a sakura_foundation component owns it in modules.json."
+    },
+    {
+      "prefix": "src/main/cpp/cxx/",
+      "layer": "L1-foundation",
+      "reason": "Generic C++ helpers listed directly in sakura_app.sources; they have no Windows or editor dependency.",
+      "removal_condition": "Remove when a sakura_cxx_support component in modules.json owns src/main/cpp/cxx."
+    },
+    {
+      "prefix": "sakura_core/basis/",
+      "layer": "L1-foundation",
+      "reason": "Primitive value types and typedefs shared by every monolith subsystem, still owned by sakura_app.",
+      "removal_condition": "Remove when a sakura_basis component in modules.json owns sakura_core/basis."
+    },
+    {
+      "prefix": "sakura_core/util/",
+      "layer": "L1-foundation",
+      "reason": "Leaf string/number/file helpers of the monolith, still owned by sakura_app.",
+      "removal_condition": "Remove when a sakura_util component in modules.json owns sakura_core/util."
+    },
+    {
+      "prefix": "sakura_core/mem/",
+      "layer": "L1-foundation",
+      "reason": "Monolith memory and buffer primitives, still owned by sakura_app.",
+      "removal_condition": "Remove when a sakura_mem component in modules.json owns sakura_core/mem."
+    },
+    {
+      "prefix": "sakura_core/charset/",
+      "layer": "L1-foundation",
+      "reason": "Character-set detection and codec primitives of the monolith, still owned by sakura_app.",
+      "removal_condition": "Remove when a sakura_charset component in modules.json owns sakura_core/charset."
+    },
+    {
+      "prefix": "sakura_core/apiwrap/",
+      "layer": "L1-foundation",
+      "reason": "Thin Win32 API wrappers with no monolith state, still owned by sakura_app.",
+      "removal_condition": "Remove when a sakura_apiwrap component in modules.json owns sakura_core/apiwrap."
+    },
+    {
+      "prefix": "sakura_core/convert/",
+      "layer": "L1-foundation",
+      "reason": "Text conversion primitives operating on buffers only, still owned by sakura_app.",
+      "removal_condition": "Remove when a sakura_convert component in modules.json owns sakura_core/convert."
+    },
+    {
+      "prefix": "sakura_core/parse/",
+      "layer": "L1-foundation",
+      "reason": "Lexical helpers used by both the document model and the UI, still owned by sakura_app.",
+      "removal_condition": "Remove when a sakura_parse component in modules.json owns sakura_core/parse."
+    },
+    {
+      "prefix": "sakura_core/debug/",
+      "layer": "L1-foundation",
+      "reason": "Assertion and trace primitives linked into every monolith translation unit, still owned by sakura_app.",
+      "removal_condition": "Remove when a sakura_debug component in modules.json owns sakura_core/debug."
+    },
+    {
+      "prefix": "sakura_core/_os/",
+      "layer": "L1-foundation",
+      "reason": "OLE/clipboard/OS glue with no dependency on the document model, still owned by sakura_app.",
+      "removal_condition": "Remove when a sakura_os_glue component in modules.json owns sakura_core/_os."
+    },
+    {
+      "prefix": "sakura_core/platform/",
+      "layer": "L2-platform",
+      "reason": "Monolith remainder of the platform tree (foundation, process, profiles) alongside the already extracted platform components, which all derive to the same rank.",
+      "removal_condition": "Remove when sakura_platform_process and sakura_platform_profiles components in modules.json own the remaining sakura_core/platform subtrees."
+    },
+    {
+      "prefix": "sakura_core/io/",
+      "layer": "L2-platform",
+      "reason": "File and stream I/O of the monolith, a platform service below the document model, still owned by sakura_app.",
+      "removal_condition": "Remove when a sakura_io component in modules.json owns sakura_core/io."
+    },
+    {
+      "prefix": "sakura_core/extmodule/",
+      "layer": "L2-platform",
+      "reason": "Dynamic loading of external DLLs, a platform capability, still owned by sakura_app.",
+      "removal_condition": "Remove when a sakura_extmodule component in modules.json owns sakura_core/extmodule."
+    },
+    {
+      "prefix": "sakura_core/doc/",
+      "layer": "L3-domain",
+      "reason": "The legacy CEditDoc document model, the core monolith domain, still owned by sakura_app.",
+      "removal_condition": "Remove when sakura_editor_document_core in modules.json owns sakura_core/doc instead of only workbench/editor/document."
+    },
+    {
+      "prefix": "sakura_core/docplus/",
+      "layer": "L3-domain",
+      "reason": "Document-adjacent domain services (bookmarks, mark-up state) of the monolith.",
+      "removal_condition": "Remove when sakura_editor_document_core in modules.json owns sakura_core/docplus."
+    },
+    {
+      "prefix": "sakura_core/types/",
+      "layer": "L3-domain",
+      "reason": "Per-file-type domain settings of the monolith, still owned by sakura_app.",
+      "removal_condition": "Remove when a sakura_doctypes component in modules.json owns sakura_core/types."
+    },
+    {
+      "prefix": "sakura_core/env/",
+      "layer": "L3-domain",
+      "reason": "Shared editor environment/SharedData domain state of the monolith.",
+      "removal_condition": "Remove when a sakura_shareddata_runtime component in modules.json owns sakura_core/env."
+    },
+    {
+      "prefix": "sakura_core/config/",
+      "layer": "L3-domain",
+      "reason": "Settings and workspace configuration sources of the monolith, domain state below the UI.",
+      "removal_condition": "Remove when a sakura_config component in modules.json owns sakura_core/config."
+    },
+    {
+      "prefix": "sakura_core/theme/",
+      "layer": "L3-domain",
+      "reason": "Theme/color-scheme domain model of the monolith, still owned by sakura_app.",
+      "removal_condition": "Remove when a sakura_theme component in modules.json owns sakura_core/theme."
+    },
+    {
+      "prefix": "sakura_core/textmate/",
+      "layer": "L3-domain",
+      "reason": "TextMate grammar domain model of the monolith, still owned by sakura_app.",
+      "removal_condition": "Remove when a sakura_textmate component in modules.json owns sakura_core/textmate."
+    },
+    {
+      "prefix": "sakura_core/markdown/",
+      "layer": "L3-domain",
+      "reason": "Markdown document analysis of the monolith, still owned by sakura_app.",
+      "removal_condition": "Remove when a sakura_markdown component in modules.json owns sakura_core/markdown."
+    },
+    {
+      "prefix": "sakura_core/grep/",
+      "layer": "L3-domain",
+      "reason": "Grep search domain logic of the monolith, still owned by sakura_app.",
+      "removal_condition": "Remove when a sakura_grep component in modules.json owns sakura_core/grep."
+    },
+    {
+      "prefix": "sakura_core/func/",
+      "layer": "L3-domain",
+      "reason": "Function-code domain tables shared by commands and key bindings, still owned by sakura_app.",
+      "removal_condition": "Remove when a sakura_funccode component in modules.json owns sakura_core/func."
+    },
+    {
+      "prefix": "sakura_core/recent/",
+      "layer": "L3-domain",
+      "reason": "Most-recently-used domain lists of the monolith, still owned by sakura_app.",
+      "removal_condition": "Remove when a sakura_recent component in modules.json owns sakura_core/recent."
+    },
+    {
+      "prefix": "sakura_core/workbench/",
+      "layer": "L3-workbench-model",
+      "reason": "Monolith remainder of the VS Code-shaped workbench model; the extracted workbench/editor components derive to the same rank.",
+      "removal_condition": "Remove when sakura_workbench_model and sakura_workbench_layout components in modules.json own the remaining sakura_core/workbench subtrees."
+    },
+    {
+      "prefix": "sakura_core/workbench/win32/",
+      "layer": "L4-legacy-ui",
+      "reason": "HWND-level rendering of workbench parts; it is UI, not model, and must stay above the workbench model it paints.",
+      "removal_condition": "Remove when a sakura_workbench_win32 component in modules.json owns sakura_core/workbench/win32."
+    },
+    {
+      "prefix": "sakura_core/terminal/",
+      "layer": "L3-workbench-model",
+      "reason": "Monolith terminal session/parser/runtime model backing the integrated terminal view.",
+      "removal_condition": "Remove when a sakura_terminal_runtime component in modules.json owns sakura_core/terminal/session, parser, model and runtime."
+    },
+    {
+      "prefix": "sakura_core/terminal/window/",
+      "layer": "L4-legacy-ui",
+      "reason": "Win32 window and control code for the terminal panel; UI above the terminal model.",
+      "removal_condition": "Remove when a sakura_terminal_win32 component in modules.json owns sakura_core/terminal/window."
+    },
+    {
+      "prefix": "sakura_core/terminal/tmux/",
+      "layer": "L2-platform",
+      "reason": "TmuxRuntimeAdapter and TmuxWaitChannelService are the sakura_app-owned remainder of the directory whose other files belong to sakura_terminal_tmux_core; they must share that component's platform rank.",
+      "removal_condition": "Remove when sakura_terminal_tmux_core in modules.json also owns TmuxRuntimeAdapter and TmuxWaitChannelService."
+    },
+    {
+      "prefix": "sakura_core/terminal/cli/",
+      "layer": "L2-platform",
+      "reason": "Kept aligned with the terminal-harness family so any file added to the harness CLI directory before it is registered in modules.json lands on the harness layer instead of the terminal model layer.",
+      "removal_condition": "Remove when sakura_core/terminal/cli contains no file outside sakura_terminal_cli and sakura_terminal_tools in modules.json and the directory is no longer listed in sakura_app.ownership_exclusions."
+    },
+    {
+      "prefix": "sakura_core/senp/",
+      "layer": "L3-workbench-model",
+      "reason": "SENP package management and extension runtime model of the monolith, peer of the workbench model.",
+      "removal_condition": "Remove when a sakura_senp component in modules.json owns sakura_core/senp."
+    },
+    {
+      "prefix": "sakura_core/view/",
+      "layer": "L4-legacy-ui",
+      "reason": "Legacy CEditView text-view UI of the monolith.",
+      "removal_condition": "Remove when a sakura_editor_view component in modules.json owns sakura_core/view."
+    },
+    {
+      "prefix": "sakura_core/cmd/",
+      "layer": "L4-legacy-ui",
+      "reason": "Legacy command handlers implemented as CViewCommander members, i.e. UI-bound.",
+      "removal_condition": "Remove when a sakura_commands component in modules.json owns sakura_core/cmd."
+    },
+    {
+      "prefix": "sakura_core/window/",
+      "layer": "L4-legacy-ui",
+      "reason": "Legacy top-level editor windows; sakura_win32_editor_frame already derives to this same rank from the win32-adapters family.",
+      "removal_condition": "Remove when a sakura_editor_window component in modules.json owns the remaining sakura_core/window sources."
+    },
+    {
+      "prefix": "sakura_core/dlg/",
+      "layer": "L4-legacy-ui",
+      "reason": "Legacy modal dialogs of the monolith.",
+      "removal_condition": "Remove when a sakura_dialogs component in modules.json owns sakura_core/dlg."
+    },
+    {
+      "prefix": "sakura_core/prop/",
+      "layer": "L4-legacy-ui",
+      "reason": "Common-settings property sheets of the monolith.",
+      "removal_condition": "Remove when a sakura_propertysheets component in modules.json owns sakura_core/prop."
+    },
+    {
+      "prefix": "sakura_core/typeprop/",
+      "layer": "L4-legacy-ui",
+      "reason": "Type-settings property sheets of the monolith.",
+      "removal_condition": "Remove when a sakura_propertysheets component in modules.json owns sakura_core/typeprop."
+    },
+    {
+      "prefix": "sakura_core/outline/",
+      "layer": "L4-legacy-ui",
+      "reason": "Outline dialog and docking window UI of the monolith.",
+      "removal_condition": "Remove when a sakura_outline_ui component in modules.json owns sakura_core/outline."
+    },
+    {
+      "prefix": "sakura_core/macro/",
+      "layer": "L4-legacy-ui",
+      "reason": "Macro engines driving the view/commander UI objects of the monolith.",
+      "removal_condition": "Remove when a sakura_macro component in modules.json owns sakura_core/macro."
+    },
+    {
+      "prefix": "sakura_core/plugin/",
+      "layer": "L4-legacy-ui",
+      "reason": "Legacy plug-in host bound to window and command objects of the monolith.",
+      "removal_condition": "Remove when a sakura_plugin_host component in modules.json owns sakura_core/plugin."
+    },
+    {
+      "prefix": "sakura_core/print/",
+      "layer": "L4-legacy-ui",
+      "reason": "Print preview windows and printing UI of the monolith.",
+      "removal_condition": "Remove when a sakura_print component in modules.json owns sakura_core/print."
+    },
+    {
+      "prefix": "sakura_core/uiparts/",
+      "layer": "L4-legacy-ui",
+      "reason": "Shared Win32 UI widgets of the monolith.",
+      "removal_condition": "Remove when a sakura_uiparts component in modules.json owns sakura_core/uiparts."
+    },
+    {
+      "prefix": "sakura_core/agent/",
+      "layer": "L4-legacy-ui",
+      "reason": "Legacy visitor/agent objects wired into the editor window lifecycle of the monolith.",
+      "removal_condition": "Remove when a sakura_editor_agents component in modules.json owns sakura_core/agent."
+    },
+    {
+      "prefix": "sakura_core/update/",
+      "layer": "L4-legacy-ui",
+      "reason": "Self-update flow driven from the UI, including the installer relaunch prompt, still owned by sakura_app.",
+      "removal_condition": "Remove when a sakura_update component in modules.json owns sakura_core/update."
+    },
+    {
+      "prefix": "sakura_core/accessibility/",
+      "layer": "L4-legacy-ui",
+      "reason": "MSAA/UI Automation surfaces attached to the legacy windows of the monolith.",
+      "removal_condition": "Remove when a sakura_accessibility component in modules.json owns sakura_core/accessibility."
+    },
+    {
+      "prefix": "sakura_core/_main/",
+      "layer": "L5-composition",
+      "reason": "Process factory, control/editor process objects and WinMain of the monolith; sakura_editor_app_lifecycle already derives to this same rank.",
+      "removal_condition": "Remove when a sakura_process_composition component in modules.json owns the remaining sakura_core/_main sources."
+    },
+    {
+      "prefix": "sakura_core/",
+      "layer": "L5-composition",
+      "reason": "Catch-all for the monolith root files (CEditApp, CSelectLang, StdAfx.cpp) that wire the whole application together.",
+      "removal_condition": "Remove when every sakura_core subtree is owned by a named component in modules.json and sakura_app no longer lists the bare sakura_core directory in its sources."
+    }
+  ],
+  "exclude_prefixes": [
+    "sakura_core/terminal/vendor/"
+  ]
+}

@@ -1,0 +1,3 @@
+# GitHub association cache written by issue_commits.py
+.cache/
+__pycache__/

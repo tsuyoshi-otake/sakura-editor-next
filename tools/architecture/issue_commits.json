@@ -1,0 +1,4 @@
+{
+  "_comment": "Manual Issue->commit overrides for issue_commits.resolve_issue_commits. Shape: {\"289\": {\"include\": [\"<sha>\", ...], \"exclude\": [\"<sha>\", ...]}}. Entries here win over GitHub PR association and over git-log grep. Keep it empty unless an association is provably wrong.",
+  "_schema": {"<issue-number>": {"include": ["<sha>"], "exclude": ["<sha>"]}}
+}

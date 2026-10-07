@@ -40,6 +40,11 @@ The public entry scripts live at the repository root; run them from there.
 - After editing `src/main/dependencies/dependencies.json`, run `py -3 tools/dependency_ledger.py generate` then `py -3 tools/dependency_ledger.py check`. Architecture-gates runs the same check.
 - The lint simulates LF and CRLF inputs for the semantic-graph schema and semantic-inventory scanner, and verifies that committed generated projections remain equivalent. Do not substitute `generate --check` for this preflight; run both checks.
 
+## Architecture Analysis Tools
+
+- `tools/architecture/` holds the stdlib-only measurement scripts for the Issue #289 locality plan (`docs/agent-locality-refactoring-plan.md`): upward-include layering (`include_layers.py` with `layers.json`), Issue Reading Volume (`irv.py`, `irv_calibrate.py`), Issue-to-commit resolution (`issue_commits.py` with the manual overrides in `issue_commits.json`), and per-Issue footprint (`issue_footprint.py`). Component ownership comes from `src/main/modules/modules.json` through `component_ownership.py`.
+- They are diagnostics, not CI gates yet; plan step S02 owns turning `include_layers.py` into one. `tools/architecture/tests` is collected by the repository pytest run. The GitHub association cache in `tools/architecture/.cache/` is regenerable and stays ignored.
+
 ## Documentation Contract
 
 Keep these files synchronized with script behavior:
