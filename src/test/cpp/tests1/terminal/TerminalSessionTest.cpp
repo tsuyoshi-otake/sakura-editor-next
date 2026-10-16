@@ -50,7 +50,6 @@ public:
 	};
 
 	terminal::TerminalStartResult startResult = terminal::TerminalStartResult::Success();
-	terminal::TerminalLaunchOptions launchOptions;
 	bool blockWrites = false;
 	bool failWrites = false;
 	bool failResize = false;
@@ -202,6 +201,7 @@ public:
 		m_cv.notify_all();
 	}
 
+	terminal::TerminalLaunchOptions LaunchOptions() const { const std::lock_guard lock(m_mutex); return launchOptions; }
 	std::size_t TotalBytesRead() const { const std::lock_guard lock(m_mutex); return totalBytesRead; }
 	bool WriteEntered() const { const std::lock_guard lock(m_mutex); return writeEntered; }
 	bool WaitEntered() const { const std::lock_guard lock(m_mutex); return waitEntered; }
@@ -218,6 +218,7 @@ private:
 	mutable std::mutex m_mutex;
 	std::condition_variable m_cv;
 	std::deque<ReadEvent> readEvents;
+	terminal::TerminalLaunchOptions launchOptions;
 	std::vector<std::uint8_t> writtenBytes;
 	std::vector<terminal::TerminalSize> resizes;
 	std::vector<std::chrono::milliseconds> waitTimeouts;
@@ -273,30 +274,53 @@ TEST(TerminalSession, EndOfFileTransitionsRunningSessionToExited)
 	auto backend = std::make_unique<FakeTerminalBackend>();
 	auto* fake = backend.get();
 	std::atomic<bool> sawClosing{ false };
+	std::mutex completionMutex;
+	std::vector<terminal::TerminalSessionCompletionResult> completions;
 	terminal::CTerminalSession session( std::move(backend), { {}, [&](auto state, auto) {
 		if( state == terminal::TerminalSessionState::Closing ) sawClosing.store(true);
+	}, [&](const auto result) {
+		const std::lock_guard lock(completionMutex);
+		completions.push_back(result);
 	} } );
 	ASSERT_TRUE(session.Start(DefaultLaunchOptions()).succeeded);
 	fake->waitResults = { true };
 	fake->PushEndOfFile();
 	ASSERT_TRUE(WaitUntil([&] { return session.GetState() == terminal::TerminalSessionState::Exited; }));
 	EXPECT_TRUE(sawClosing.load());
+	// Exited is the early signal. The lifecycle worker closes the backend after
+	// it and reports completion only once that close has quiesced.
+	ASSERT_TRUE(WaitUntil([&] { const std::lock_guard lock(completionMutex); return completions.size() == 1; }));
 	EXPECT_EQ(1u, fake->CloseCalls());
 	session.Close();
 	EXPECT_EQ(1u, fake->CloseCalls());
+	const std::lock_guard lock(completionMutex);
+	ASSERT_EQ(1u, completions.size());
+	EXPECT_EQ(terminal::TerminalSessionCompletionKind::Exited, completions.front().kind);
 }
 
 TEST(TerminalSession, UnexpectedOutputPipeFailureTransitionsToFailed)
 {
 	auto backend = std::make_unique<FakeTerminalBackend>();
 	auto* fake = backend.get();
-	terminal::CTerminalSession session(std::move(backend));
+	std::mutex completionMutex;
+	std::vector<terminal::TerminalSessionCompletionResult> completions;
+	terminal::CTerminalSession session( std::move(backend), terminal::TerminalSessionCallbacks{ {}, {}, [&](const auto result) {
+		const std::lock_guard lock(completionMutex);
+		completions.push_back(result);
+	} } );
 	ASSERT_TRUE(session.Start(DefaultLaunchOptions()).succeeded);
 	fake->PushReadFailure(109);
 	ASSERT_TRUE(WaitUntil([&] { return session.GetState() == terminal::TerminalSessionState::Failed; }));
 	EXPECT_EQ(109u, session.GetLastError());
 	EXPECT_EQ(1u, fake->ForceTerminateCalls());
+	// Failed is the early signal. The lifecycle worker closes the backend after
+	// it and reports completion only once that close has quiesced.
+	ASSERT_TRUE(WaitUntil([&] { const std::lock_guard lock(completionMutex); return completions.size() == 1; }));
 	EXPECT_EQ(1u, fake->CloseCalls());
+	EXPECT_EQ(1u, fake->ForceTerminateCalls());
+	const std::lock_guard lock(completionMutex);
+	EXPECT_EQ(terminal::TerminalSessionCompletionKind::Failed, completions.front().kind);
+	EXPECT_EQ(109u, completions.front().errorCode);
 }
 
 TEST(TerminalSession, CloseUsesBoundedGraceThenJobFallbackAndIsIdempotent)
@@ -645,9 +669,10 @@ TEST(TerminalSession, PreservesExecutableArgumentsAndWorkingDirectoryWithSpaces)
 	terminal::CTerminalSession session(std::move(backend));
 	const auto options = DefaultLaunchOptions();
 	ASSERT_TRUE(session.Start(options).succeeded);
-	EXPECT_EQ(options.executablePath, fake->launchOptions.executablePath);
-	EXPECT_EQ(options.arguments, fake->launchOptions.arguments);
-	EXPECT_EQ(options.workingDirectory, fake->launchOptions.workingDirectory);
+	const auto launched = fake->LaunchOptions();
+	EXPECT_EQ(options.executablePath, launched.executablePath);
+	EXPECT_EQ(options.arguments, launched.arguments);
+	EXPECT_EQ(options.workingDirectory, launched.workingDirectory);
 }
 
 TEST(TerminalSession, OutputQueueAppliesHighLowWaterBackpressureWithoutLoss)
