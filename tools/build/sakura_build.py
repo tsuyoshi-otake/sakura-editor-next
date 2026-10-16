@@ -114,8 +114,10 @@ from sakura_build_lib.test_inventory import (
     TestInventoryError,
     collect_gtest_inventory,
     compare_inventories,
+    ensure_collect_may_replace,
     load_inventory,
     refresh_runtime_mappings,
+    resolve_declared_runners,
     verify_runtime_mappings,
     write_inventory,
 )
@@ -374,7 +376,12 @@ def parser() -> argparse.ArgumentParser:
     inventory_observe_graduation.add_argument("--resource-evidence", type=Path, required=True)
     inventory_observe_graduation.add_argument("--test-inventory", type=Path, default=Path("src/test/test-inventory.json"))
     inventory_observe_graduation.add_argument("--semantic-baseline", type=Path, default=Path("tools/build/baselines/editor-core-semantic.json"))
-    inventory_observe_graduation.add_argument("--runner", action="append", required=True, help="runner-id=executable (repeat for every stable inventory runner)")
+    inventory_observe_graduation.add_argument(
+        "--runner",
+        action="append",
+        default=[],
+        help="runner-id=executable; omit to use every declared kind: test runner's Debug output, or repeat for each of them",
+    )
     inventory_observe_graduation.add_argument("--timeout-seconds", type=int, default=60)
     inventory_observe_graduation.add_argument("--output", type=Path, default=Path("build/evidence/r0/repository-graduation.json"))
     inventory_snapshot_resource_ids = inventory_commands.add_parser("snapshot-resource-ids")
@@ -612,16 +619,32 @@ def parser() -> argparse.ArgumentParser:
     inventory_compare.add_argument("after", type=Path)
     inventory_verify_runtime = inventory_commands.add_parser("verify-runtime")
     inventory_verify_runtime.add_argument("inventory", type=Path)
-    inventory_verify_runtime.add_argument("--runner", action="append", required=True, help="runner-id=executable")
+    inventory_verify_runtime.add_argument(
+        "--runner",
+        action="append",
+        default=[],
+        help="runner-id=executable; omit to use every declared kind: test runner's Debug output, or repeat for each of them",
+    )
     inventory_verify_runtime.add_argument("--timeout-seconds", type=int, default=60)
     inventory_refresh_runtime = inventory_commands.add_parser("refresh-runtime")
     inventory_refresh_runtime.add_argument("inventory", type=Path)
-    inventory_refresh_runtime.add_argument("--runner", action="append", required=True, help="runner-id=executable")
+    inventory_refresh_runtime.add_argument(
+        "--runner",
+        action="append",
+        default=[],
+        help="runner-id=executable; omit to use every declared kind: test runner's Debug output, or repeat for each of them",
+    )
     inventory_refresh_runtime.add_argument(
         "--remap",
         action="append",
         default=[],
         help="stable-test-id=runner-id::selector; required when an existing selector was renamed",
+    )
+    inventory_refresh_runtime.add_argument(
+        "--retire",
+        action="append",
+        default=[],
+        help="stable-test-id of a test deleted on purpose; rejected while its selector is still discovered",
     )
     inventory_refresh_runtime.add_argument("--timeout-seconds", type=int, default=60)
 
@@ -1276,6 +1299,7 @@ def _run_test_inventory(args, repo: Path) -> int:
             destination = args.output if args.output.is_absolute() else repo / args.output
             detected_revision, source_dirty = _git_source_state(repo)
             revision = args.source_revision or detected_revision
+            ensure_collect_may_replace(destination, args.runner_id)
             inventory = collect_gtest_inventory(executable, args.runner_id, repo, revision, source_dirty, args.timeout_seconds)
             changed = write_inventory(destination, inventory)
             output(
@@ -1299,6 +1323,7 @@ def _run_test_inventory(args, repo: Path) -> int:
                     raise TestInventoryError("TEST_RUNNER_ARGUMENT", f"expected unique runner-id=executable: {value}")
                 executable = Path(executable_value)
                 runners[runner_id] = executable if executable.is_absolute() else repo / executable
+            runners = resolve_declared_runners(repo, runners)
             if args.inventory_command == "refresh-runtime":
                 remaps: dict[str, tuple[str, str]] = {}
                 for value in args.remap:
@@ -1326,6 +1351,7 @@ def _run_test_inventory(args, repo: Path) -> int:
                     revision,
                     source_dirty,
                     args.timeout_seconds,
+                    retire=args.retire,
                 )
                 report.update({
                     "ok": True,
@@ -1588,7 +1614,10 @@ def main(argv: list[str] | None = None) -> int:
                 test_inventory_path = _repository_path(repo, args.test_inventory, "--test-inventory")
                 semantic_baseline_path = _repository_path(repo, args.semantic_baseline, "--semantic-baseline")
                 destination = _repository_path(repo, args.output, "--output")
-                runners = _role_paths(repo, args.runner, "--runner")
+                try:
+                    runners = resolve_declared_runners(repo, _role_paths(repo, args.runner, "--runner"))
+                except TestInventoryError as error:
+                    raise BuildError(error.code, str(error), EXIT_USAGE) from error
                 result = collect_repository_graduation_evidence(
                     graph,
                     product_id=args.product,

@@ -79,21 +79,33 @@ cleanup rules centralized here.
 
 ## Running Tests
 
-`src/test/test-inventory.json` is the source-controlled pre-split guarantee
-baseline.  Refresh it only from a successfully rebuilt Debug `tests1.exe` via
-the canonical `test inventory collect` command.  Preserve each `test_id` when
-moving a test to a new executable; change only its runtime runner/selector
-mapping.  A discovery failure or an unexpected zero-test result must never
-replace the baseline.
+`src/test/test-inventory.json` is the source-controlled guarantee baseline for
+every `kind: test` component in `src/main/modules/modules.json`, not only
+`tests1`. Preserve each `test_id` when moving or renaming a test; change only its
+runtime runner/selector mapping. A discovery failure or an unexpected zero-test
+result must never replace the baseline.
 
-For an existing baseline, use `test inventory refresh-runtime` with every
-declared `--runner runner-id=executable` after Debug discovery. Confirm renames
-against source/history and pass each as an explicit
-`--remap stable-test-id=runner-id::selector`; do not delete the old stable ID and
-create a replacement. This also adds newly discovered tests and refreshes binary
-provenance. Then run `test inventory verify-runtime` with the same runner set:
-both `missing_selectors` and `unexpected_selectors` must be empty. A test-only
-rename or addition still requires this inventory update (#294).
+Update it only with `test inventory refresh-runtime` after building every
+declared runner in x64 Debug (`build-sln.bat x64 Debug`, then
+`build component <id> --context msvc-x64-debug` for each generated runner).
+Without `--runner` it uses every declared runner's Debug output; an explicit
+`--runner` set must name exactly the declared runners. Confirm renames against
+source/history and pass each as `--remap stable-test-id=runner-id::selector`.
+Record a test deleted on purpose with `--retire stable-test-id` and list those
+IDs in the commit message; never delete a stable ID and mint a replacement.
+Then run `test inventory verify-runtime`: both `missing_selectors` and
+`unexpected_selectors` must be empty for every runner. A test-only rename or
+addition still requires this inventory update (#294).
+
+Never point `test inventory collect` at this file. `collect` rebuilds one
+runner's discovery with fresh `tests1:` IDs, which is how #169 silently dropped
+six runners and every remapped stable ID; it now refuses to overwrite a
+`refresh-runtime` inventory (`TEST_INVENTORY_COLLECT_WOULD_DROP`). A new
+`kind: test` runner must speak the GoogleTest discovery protocol
+(`--gtest_list_tests`, `--gtest_filter=`), as the hand-written
+`tools/build/pilots` harnesses do, so its tests get stable IDs (#324).
+`CheckedInTestInventoryTests` in `tools/build/tests/test_build_model.py` fails
+when the baseline's runner set differs from the declared one.
 
 Full suite for a built configuration:
 

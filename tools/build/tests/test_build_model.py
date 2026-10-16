@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 TOOLS_BUILD = Path(__file__).resolve().parents[1]
+REPO_ROOT = TOOLS_BUILD.parents[1]
 if str(TOOLS_BUILD) not in sys.path:
     sys.path.insert(0, str(TOOLS_BUILD))
 
@@ -40,11 +41,16 @@ from sakura_build_lib.runner import (
 from sakura_build_lib.test_inventory import (
     TestInventoryError,
     compare_inventories,
+    declared_test_runners,
+    default_runner_executable,
+    ensure_collect_may_replace,
     guarantee_fingerprint,
     parse_gtest_list,
     refresh_runtime_mappings,
+    resolve_declared_runners,
     validate_inventory,
     verify_runtime_mappings,
+    write_inventory,
 )
 
 
@@ -1987,9 +1993,53 @@ class TestInventoryTests(unittest.TestCase):
         self.assertEqual(["Suite.Value/0", "Suite.Value/1"],
                          [item["runtime"]["selector"] for item in tests])
 
+    def test_runtime_refresh_retires_only_tests_that_are_gone(self):
+        old_tests = parse_gtest_list("Suite.\n  Deleted\n  Live\n", "leaf-tests")
+        inventory = {
+            "schema_version": 1,
+            "inventory_id": "split",
+            "source_revision": "a",
+            "source_dirty": False,
+            "discovery": {"framework": "googletest", "executable": "old.exe", "arguments": ["--gtest_list_tests"], "executable_sha256": "0" * 64},
+            "test_count": 2,
+            "disabled_count": 0,
+            "guarantee_fingerprint": guarantee_fingerprint(old_tests),
+            "tests": old_tests,
+        }
+        current = {
+            "discovery": {"executable": "leaf.exe", "executable_sha256": "1" * 64},
+            "tests": parse_gtest_list("Suite.\n  Live\n", "leaf-tests"),
+        }
+        runners = {"leaf-tests": Path("leaf.exe")}
+        deleted, live = "tests1:Suite.Deleted", "tests1:Suite.Live"
+
+        def refresh(remaps=None, retire=()):
+            return refresh_runtime_mappings(inventory, runners, remaps or {}, Path.cwd(), "b", True, 1, retire=retire)
+
+        with patch.object(test_inventory_module, "collect_gtest_inventory", return_value=current):
+            with self.assertRaisesRegex(TestInventoryError, "without explicit remap or retirement") as missing:
+                refresh()
+            self.assertEqual("TEST_RUNTIME_MISSING", missing.exception.code)
+            for retire, remaps, code in (
+                (["tests1:Suite.Unknown"], None, "TEST_RETIRE_UNKNOWN"),
+                ([live, deleted], None, "TEST_RETIRE_LIVE"),
+                ([deleted], {deleted: ("leaf-tests", "Suite.Live")}, "TEST_RETIRE_REMAPPED"),
+            ):
+                with self.subTest(code=code):
+                    with self.assertRaises(TestInventoryError) as raised:
+                        refresh(remaps, retire)
+                    self.assertEqual(code, raised.exception.code)
+            refreshed, report = refresh(retire=[deleted])
+
+        self.assertEqual([live], [item["test_id"] for item in refreshed["tests"]])
+        self.assertEqual(1, refreshed["test_count"])
+        self.assertEqual([deleted], report["retired"])
+        self.assertEqual([], report["additions"])
+
     def test_discovery_zero_tests_is_failure(self):
-        with self.assertRaisesRegex(TestInventoryError, "zero tests"):
+        with self.assertRaisesRegex(TestInventoryError, "zero tests for tests1"):
             parse_gtest_list("Running main() from code-main.cpp\n", "tests1")
+
 
     def test_compare_allows_runtime_remap_but_not_guarantee_drift(self):
         tests = parse_gtest_list("Suite.\n  Case\n", "tests1")
@@ -2018,6 +2068,137 @@ class TestInventoryTests(unittest.TestCase):
         after["guarantee_fingerprint"] = guarantee_fingerprint(after["tests"])
         after = validate_inventory(after)
         self.assertFalse(compare_inventories(before, after)["ok"])
+
+
+class DeclaredTestRunnerTests(unittest.TestCase):
+    def _repo(self, components):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        manifest = root / "src/main/modules/modules.json"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text(json.dumps({"components": components}), encoding="utf-8")
+        return root
+
+    def test_the_runner_set_is_every_kind_test_component(self):
+        root = self._repo([
+            {"id": "tests1", "kind": "test", "build_definition": "handwritten"},
+            {"id": "leaf_tests", "kind": "test", "build_definition": "generated"},
+            {"id": "leaf", "kind": "library", "build_definition": "generated"},
+        ])
+
+        self.assertEqual({"tests1": "handwritten", "leaf_tests": "generated"}, declared_test_runners(root))
+        self.assertEqual(
+            {
+                "leaf_tests": root / "build/components/msvc-x64-debug/leaf_tests/bin/leaf_tests.exe",
+                "tests1": root / "x64/Debug/tests1.exe",
+            },
+            resolve_declared_runners(root),
+        )
+        relocated = {"tests1": Path("a.exe"), "leaf_tests": Path("b.exe")}
+        self.assertEqual(relocated, resolve_declared_runners(root, relocated))
+        for requested in ({"tests1": Path("a.exe")}, {**relocated, "stray_tests": Path("c.exe")}):
+            with self.subTest(requested=sorted(requested)):
+                with self.assertRaises(TestInventoryError) as raised:
+                    resolve_declared_runners(root, requested)
+                self.assertEqual("TEST_RUNNER_SET_UNDECLARED", raised.exception.code)
+
+    def test_a_runner_without_a_known_output_must_be_passed_explicitly(self):
+        root = self._repo([{"id": "odd_tests", "kind": "test", "build_definition": "handwritten"}])
+        with self.assertRaises(TestInventoryError) as raised:
+            resolve_declared_runners(root)
+        self.assertEqual("TEST_RUNNER_EXECUTABLE_UNKNOWN", raised.exception.code)
+        self.assertEqual({"odd_tests": Path("odd.exe")}, resolve_declared_runners(root, {"odd_tests": Path("odd.exe")}))
+
+    def test_a_manifest_without_test_runners_is_an_error(self):
+        root = self._repo([{"id": "leaf", "kind": "library"}])
+        with self.assertRaises(TestInventoryError) as raised:
+            declared_test_runners(root)
+        self.assertEqual("TEST_RUNNER_DECLARATION", raised.exception.code)
+
+    def test_generated_runner_defaults_match_the_generated_project_output(self):
+        for runner_id, build_definition in declared_test_runners(REPO_ROOT).items():
+            if build_definition != "generated":
+                continue
+            with self.subTest(runner_id=runner_id):
+                project = (REPO_ROOT / f"src/main/modules/generated/msbuild/projects/{runner_id}.vcxproj").read_text(encoding="utf-8")
+                out_dir = f"<OutDir>$(SakuraRepoRoot)\\build\\components\\msvc-x64-debug\\{runner_id}\\bin\\</OutDir>"
+                self.assertIn(out_dir, project)
+                self.assertIn(f"<TargetName>{runner_id}</TargetName>", project)
+                self.assertEqual(
+                    REPO_ROOT / "build/components/msvc-x64-debug" / runner_id / "bin" / f"{runner_id}.exe",
+                    default_runner_executable(REPO_ROOT, runner_id, build_definition),
+                )
+
+
+class InventoryCollectGuardTests(unittest.TestCase):
+    def _inventory(self, tests, executable):
+        return {
+            "schema_version": 1,
+            "inventory_id": "guard",
+            "source_revision": "a",
+            "source_dirty": False,
+            "discovery": {"framework": "googletest", "executable": executable, "arguments": ["--gtest_list_tests"], "executable_sha256": "0" * 64},
+            "test_count": len(tests),
+            "disabled_count": 0,
+            "guarantee_fingerprint": guarantee_fingerprint(tests),
+            "tests": tests,
+        }
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+
+    def test_collect_may_create_or_replace_its_own_single_runner_output(self):
+        destination = self.root / "inventory.json"
+        ensure_collect_may_replace(destination, "tests1")
+        write_inventory(destination, self._inventory(parse_gtest_list("Suite.\n  Case\n", "tests1"), "x64/Debug/tests1.exe"))
+        ensure_collect_may_replace(destination, "tests1")
+
+    def test_collect_refuses_what_only_refresh_runtime_can_reproduce(self):
+        remapped = parse_gtest_list("Suite.\n  Old\n", "tests1")
+        remapped[0]["runtime"]["selector"] = "Suite.New"
+        cases = {
+            "runtime set": self._inventory(parse_gtest_list("Suite.\n  Case\n", "tests1"), "runtime-set:tests1"),
+            "other runner": self._inventory(parse_gtest_list("Suite.\n  Case\n", "leaf-tests"), "leaf.exe"),
+            "remapped stable ID": self._inventory(remapped, "x64/Debug/tests1.exe"),
+        }
+        for name, inventory in cases.items():
+            with self.subTest(name):
+                destination = self.root / f"{name}.json"
+                write_inventory(destination, inventory)
+                with self.assertRaises(TestInventoryError) as raised:
+                    ensure_collect_may_replace(destination, "tests1")
+                self.assertEqual("TEST_INVENTORY_COLLECT_WOULD_DROP", raised.exception.code)
+
+    def test_cli_collect_leaves_a_refresh_runtime_inventory_untouched(self):
+        destination = self.root / "inventory.json"
+        write_inventory(destination, self._inventory(parse_gtest_list("Suite.\n  Case\n", "leaf-tests"), "runtime-set:leaf-tests"))
+        before = destination.read_bytes()
+        stderr = io.StringIO()
+        with patch.object(sakura_build, "collect_gtest_inventory", side_effect=AssertionError("collect must not run")):
+            with patch("sys.stdout", io.StringIO()), patch("sys.stderr", stderr):
+                exit_code = sakura_build.main([
+                    "--repo-root", str(REPO_ROOT), "--format", "json",
+                    "test", "inventory", "collect", "--executable", str(self.root / "tests1.exe"), "--output", str(destination),
+                ])
+
+        self.assertEqual(sakura_build.EXIT_TEST, exit_code)
+        self.assertEqual(before, destination.read_bytes())
+
+
+class CheckedInTestInventoryTests(unittest.TestCase):
+    def test_the_baseline_covers_exactly_the_declared_runners(self):
+        # verify-runtime needs built runners; this half of the contract does not,
+        # so a runner dropped from the baseline fails here first (#324).
+        inventory = test_inventory_module.load_inventory(REPO_ROOT / "src/test/test-inventory.json")
+        counts: dict[str, int] = {}
+        for item in inventory["tests"]:
+            counts[item["runtime"]["runner_id"]] = counts.get(item["runtime"]["runner_id"], 0) + 1
+        declared = declared_test_runners(REPO_ROOT)
+        self.assertEqual(sorted(declared), sorted(counts))
+        self.assertEqual("runtime-set:" + ",".join(sorted(declared)), inventory["discovery"]["executable"])
 
 
 if __name__ == "__main__":

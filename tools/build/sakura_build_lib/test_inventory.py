@@ -3,6 +3,10 @@
 The inventory freezes a stable test ID separately from the runtime runner and
 GoogleTest selector.  A future runner split can therefore keep the ID while
 changing only its runtime mapping.
+
+The runners it must cover are declared once, as the ``kind: test`` components
+of ``src/main/modules/modules.json``; the inventory never vouches for its own
+runner set.  A test leaves the inventory only through an explicit retirement.
 """
 
 from __future__ import annotations
@@ -14,10 +18,13 @@ import os
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Collection, Mapping
 
 
 INVENTORY_SCHEMA_VERSION = 1
+MODULES_MANIFEST = Path("src/main/modules/modules.json")
+# The inventory records x64 Debug discovery (``legacy-tests1-msvc-x64-debug``).
+INVENTORY_CONTEXT = "msvc-x64-debug"
 
 
 class TestInventoryError(ValueError):
@@ -88,7 +95,7 @@ def parse_gtest_list(output: str, runner_id: str) -> list[dict[str, Any]]:
         )
 
     if not tests:
-        raise TestInventoryError("TEST_DISCOVERY_EMPTY", "GoogleTest discovery returned zero tests")
+        raise TestInventoryError("TEST_DISCOVERY_EMPTY", f"GoogleTest discovery returned zero tests for {runner_id}")
     return sorted(tests, key=lambda item: item["test_id"])
 
 
@@ -151,6 +158,93 @@ def collect_gtest_inventory(
     }
 
 
+def declared_test_runners(repo_root: Path) -> dict[str, str]:
+    """Return every ``kind: test`` component and its ``build_definition``.
+
+    This is the oracle for the inventory's runner set.  Comparing a baseline
+    against its own runners cannot notice a runner dropped from both, which is
+    how six runners disappeared unseen after #169 (#324).
+    """
+    path = repo_root / MODULES_MANIFEST
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise TestInventoryError("TEST_RUNNER_DECLARATION", f"cannot read declared test runners from {path}: {error}") from error
+    components = manifest.get("components") if isinstance(manifest, dict) else None
+    if not isinstance(components, list):
+        raise TestInventoryError("TEST_RUNNER_DECLARATION", f"{path}: expected a components array")
+    declared = {
+        component["id"]: component.get("build_definition", "")
+        for component in components
+        if isinstance(component, dict) and component.get("kind") == "test"
+    }
+    if not declared:
+        raise TestInventoryError("TEST_RUNNER_DECLARATION", f"{path}: declares no kind: test component")
+    return declared
+
+
+def default_runner_executable(repo_root: Path, runner_id: str, build_definition: str) -> Path:
+    """Return the x64 Debug executable of a declared runner.
+
+    A generated component's ``OutDir`` is ``build/components/<context>/<id>/bin``
+    (``generator.py``); ``tests1`` is the hand-written ``tests1.vcxproj``.
+    """
+    if build_definition == "generated":
+        return repo_root / "build" / "components" / INVENTORY_CONTEXT / runner_id / "bin" / f"{runner_id}.exe"
+    if runner_id == "tests1":
+        return repo_root / "x64" / "Debug" / "tests1.exe"
+    raise TestInventoryError(
+        "TEST_RUNNER_EXECUTABLE_UNKNOWN",
+        f"no default executable for {build_definition or 'undeclared'} runner {runner_id}; pass --runner {runner_id}=<executable>",
+    )
+
+
+def resolve_declared_runners(repo_root: Path, requested: Mapping[str, Path] | None = None) -> dict[str, Path]:
+    """Return executables for exactly the declared runners.
+
+    Without ``requested`` every declared runner uses its default Debug output.
+    An explicit set may relocate executables but must name the same runners.
+    """
+    declared = declared_test_runners(repo_root)
+    if not requested:
+        return {
+            runner_id: default_runner_executable(repo_root, runner_id, build_definition)
+            for runner_id, build_definition in sorted(declared.items())
+        }
+    missing = sorted(set(declared) - set(requested))
+    undeclared = sorted(set(requested) - set(declared))
+    if missing or undeclared:
+        raise TestInventoryError(
+            "TEST_RUNNER_SET_UNDECLARED",
+            f"runners must be exactly the kind: test components of {MODULES_MANIFEST.as_posix()}: "
+            f"missing={missing}, undeclared={undeclared}",
+        )
+    return dict(requested)
+
+
+def ensure_collect_may_replace(destination: Path, runner_id: str) -> None:
+    """Refuse to let ``collect`` replace what it could not have produced.
+
+    ``collect`` rewrites a file from one runner's discovery with ``tests1:``
+    IDs.  Replacing an inventory that holds another runner or a remapped
+    stable ID would drop them silently; ``refresh-runtime`` owns that file.
+    """
+    if not destination.exists():
+        return
+    existing = load_inventory(destination)
+    foreign = sorted({
+        item["test_id"]
+        for item in existing["tests"]
+        if item["runtime"]["runner_id"] != runner_id or item["test_id"] != f"tests1:{item['runtime']['selector']}"
+    })
+    if existing["discovery"]["executable"].startswith("runtime-set:") or foreign:
+        raise TestInventoryError(
+            "TEST_INVENTORY_COLLECT_WOULD_DROP",
+            f"{destination} is maintained by refresh-runtime ({len(foreign)} entries collect cannot reproduce, "
+            f"for example {foreign[:3]}); update it with `test inventory refresh-runtime` or collect to another path",
+        )
+
+
 def verify_runtime_mappings(
     inventory: Mapping[str, Any],
     runners: Mapping[str, Path],
@@ -208,14 +302,18 @@ def refresh_runtime_mappings(
     source_revision: str,
     source_dirty: bool,
     timeout_seconds: int,
+    *,
+    retire: Collection[str] = (),
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Refresh discovery while preserving stable IDs and rejecting silent loss.
 
     Existing runtime selectors keep their stable IDs. A disappeared selector is
     an error unless the caller explicitly maps its stable ID to a discovered
-    runner/selector pair. Newly discovered selectors extend the guarantee set.
+    runner/selector pair, or retires it because the test was deleted on
+    purpose. Newly discovered selectors extend the guarantee set.
     """
     validated = validate_inventory(inventory)
+    retired_ids = set(retire)
     discovered_by_runtime: dict[tuple[str, str], dict[str, Any]] = {}
     runner_discovery: list[dict[str, Any]] = []
     for runner_id in sorted(runners):
@@ -238,14 +336,30 @@ def refresh_runtime_mappings(
     unknown_remaps = sorted(set(remaps) - known_ids)
     if unknown_remaps:
         raise TestInventoryError("TEST_REMAP_UNKNOWN", f"remap references unknown stable IDs: {unknown_remaps}")
+    unknown_retirements = sorted(retired_ids - known_ids)
+    if unknown_retirements:
+        raise TestInventoryError("TEST_RETIRE_UNKNOWN", f"retire references unknown stable IDs: {unknown_retirements}")
+    conflicting = sorted(retired_ids & set(remaps))
+    if conflicting:
+        raise TestInventoryError("TEST_RETIRE_REMAPPED", f"stable IDs are both retired and remapped: {conflicting}")
 
     refreshed: list[dict[str, Any]] = []
     claimed: set[tuple[str, str]] = set()
     applied_remaps: list[dict[str, str]] = []
     missing: list[str] = []
+    retired: list[str] = []
     for old in validated["tests"]:
         old_runtime = old["runtime"]
         old_key = (old_runtime["runner_id"], old_runtime["selector"])
+        if old["test_id"] in retired_ids:
+            # Retirement records a deletion; a test that still runs is not deleted.
+            if old_key in discovered_by_runtime:
+                raise TestInventoryError(
+                    "TEST_RETIRE_LIVE",
+                    f"{old['test_id']} cannot be retired: {old_key[0]}::{old_key[1]} is still discovered",
+                )
+            retired.append(old["test_id"])
+            continue
         target_key = old_key if old_key in discovered_by_runtime else remaps.get(old["test_id"])
         if target_key is None or target_key not in discovered_by_runtime:
             missing.append(old["test_id"])
@@ -273,7 +387,7 @@ def refresh_runtime_mappings(
     if missing:
         raise TestInventoryError(
             "TEST_RUNTIME_MISSING",
-            f"{len(missing)} stable tests disappeared without explicit remap: {missing}",
+            f"{len(missing)} stable tests disappeared without explicit remap or retirement: {missing}",
         )
 
     additions: list[str] = []
@@ -316,6 +430,7 @@ def refresh_runtime_mappings(
         "test_count": len(refreshed),
         "additions": additions,
         "runtime_remaps": applied_remaps,
+        "retired": retired,
         "runners": runner_discovery,
     }
 

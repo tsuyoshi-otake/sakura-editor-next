@@ -10,6 +10,7 @@
 
 #include <array>
 #include <iostream>
+#include <string>
 #include <string_view>
 
 namespace {
@@ -95,6 +96,39 @@ void PrintObservation()
 	for (const auto& offset : kOffsets) std::cout << offset.Name() << '=' << offset.Value() << '\n';
 }
 
+// Every observed offset is pinned by the static_asserts above, so a runner that
+// was built at all has already proven the ABI shape; the case only reports it.
+bool AbiObservation()
+{
+	return true;
+}
+
+class TestCase final {
+public:
+	constexpr TestCase(std::string_view name, bool (*run)()) noexcept : m_name(name), m_run(run) {}
+	[[nodiscard]] constexpr std::string_view Name() const noexcept { return m_name; }
+	[[nodiscard]] bool Run() const { return m_run(); }
+
+private:
+	const std::string_view m_name;
+	bool (*const m_run)();
+};
+
+constexpr std::array kTests{
+	TestCase{"AbiObservation", AbiObservation},
+};
+
+bool Matches(std::string_view fullName, std::string_view filter)
+{
+	if (filter.empty() || filter == "*") return true;
+	const auto star = filter.find('*');
+	if (star == std::string_view::npos) return fullName == filter;
+	const auto prefix = filter.substr(0, star);
+	const auto suffix = filter.substr(star + 1);
+	return fullName.starts_with(prefix) && fullName.ends_with(suffix)
+		&& fullName.size() >= prefix.size() + suffix.size();
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -103,6 +137,28 @@ int main(int argc, char** argv)
 		PrintObservation();
 		return 0;
 	}
-	std::cout << "[       OK ] DLLSHAREDATA.AbiObservation\n";
-	return 0;
+	std::string_view filter = "DLLSHAREDATA.*";
+	for (int index = 1; index < argc; ++index) {
+		const std::string_view argument = argv[index];
+		if (argument == "--gtest_list_tests") {
+			std::cout << "DLLSHAREDATA.\n";
+			for (const auto& test : kTests) std::cout << "  " << test.Name() << '\n';
+			return 0;
+		}
+		constexpr std::string_view prefix = "--gtest_filter=";
+		if (argument.starts_with(prefix)) filter = argument.substr(prefix.size());
+	}
+
+	int selected = 0;
+	int failed = 0;
+	for (const auto& test : kTests) {
+		const std::string fullName = "DLLSHAREDATA." + std::string(test.Name());
+		if (!Matches(fullName, filter)) continue;
+		++selected;
+		const bool passed = test.Run();
+		std::cout << (passed ? "[       OK ] " : "[  FAILED  ] ") << fullName << '\n';
+		if (!passed) ++failed;
+	}
+	std::cout << "[==========] " << selected << " tests ran; " << failed << " failed.\n";
+	return failed == 0 && selected > 0 ? 0 : 1;
 }

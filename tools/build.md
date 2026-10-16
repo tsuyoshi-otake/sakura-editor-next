@@ -245,13 +245,6 @@ sakura-build.bat inventory observe-graduation ^
   --context msvc-x64-debug --product sakura_app ^
   --native-evidence build/evidence/r0/native-msbuild-product.json ^
   --resource-evidence build/evidence/r0/native-resource-table.json ^
-  --runner tests1=x64/Debug/tests1.exe ^
-  --runner sakura_filesystem_tests=build/components/msvc-x64-debug/sakura_filesystem_tests/bin/sakura_filesystem_tests.exe ^
-  --runner sakura_request_tests=build/components/msvc-x64-debug/sakura_request_tests/bin/sakura_request_tests.exe ^
-  --runner sakura_security_tests=build/components/msvc-x64-debug/sakura_security_tests/bin/sakura_security_tests.exe ^
-  --runner sakura_serialization_tests=build/components/msvc-x64-debug/sakura_serialization_tests/bin/sakura_serialization_tests.exe ^
-  --runner sakura_storage_tests=build/components/msvc-x64-debug/sakura_storage_tests/bin/sakura_storage_tests.exe ^
-  --runner sakura_uri_tests=build/components/msvc-x64-debug/sakura_uri_tests/bin/sakura_uri_tests.exe ^
   --output build/evidence/r0/repository-graduation.json
 
 sakura-build.bat inventory repository ^
@@ -488,33 +481,44 @@ source file/line/include数とCEditWnd/CEditView/CEditDoc/CEditApp/DLLSHAREDATA�
 診断情報です。R2以降のSelection/CaretまたはWorking Copyの縦切りでは、台帳を更新してから
 型付きport、ライフサイクル、テストの独立性を別ゲートで証明します。
 
-`tests1`分割前の保証集合は`src/test/test-inventory.json`で凍結します。`test_id`は
-source-controlledな安定ID、`runtime.runner_id`と`runtime.selector`は実行時mappingです。
-runner分割時は安定IDを維持し、runtime mappingだけを変更します。discovery失敗、0件取得、
-重複ID/selector、fingerprint不一致は終了コード7で失敗します。
+テストの保証集合は`src/test/test-inventory.json`で管理します。対象は`src/main/modules/modules.json`の
+`kind: test`コンポーネントすべてです。`test_id`はsource-controlledな安定ID、`runtime.runner_id`と
+`runtime.selector`は実行時mappingです。runner分割時は安定IDを維持し、runtime mappingだけを変更します。
+discovery失敗、0件取得、重複ID/selector、fingerprint不一致は終了コード7で失敗します。
 
 ```cmd
-py -3 tools/build/sakura_build.py test inventory collect --runner-id tests1 ^
-  --executable x64/Debug/tests1.exe ^
-  --output build/evidence/tests-current.json
+rem 宣言済みrunnerをすべてx64 Debugでビルドしてから実行する
+py -3 tools/build/sakura_build.py test inventory refresh-runtime src/test/test-inventory.json
 
+py -3 tools/build/sakura_build.py test inventory verify-runtime src/test/test-inventory.json
+
+rem 更新前の台帳と比べ、追加・削除・状態変更されたstable IDをレビューする
+git show HEAD:src/test/test-inventory.json > "%TEMP%\test-inventory-head.json"
 py -3 tools/build/sakura_build.py test inventory compare ^
-  src/test/test-inventory.json build/evidence/tests-current.json
-
-py -3 tools/build/sakura_build.py test inventory verify-runtime ^
-  src/test/test-inventory.json ^
-  --runner tests1=x64/Debug/tests1.exe ^
-  --runner sakura_uri_tests=build/components/msvc-x64-debug/sakura_uri_tests/bin/sakura_uri_tests.exe
+  "%TEMP%\test-inventory-head.json" src/test/test-inventory.json
 ```
+
+`compare`は2つの台帳をstable ID単位で比べます。追加・削除・状態変更が1件でもあれば`ok: false`
+（終了コード7）なので、`added_test_ids`と`missing_test_ids`がこの変更の意図どおりかを確認します。
+`collect`の出力は1 runner分しか持たないため、複数runnerの台帳と`compare`すると他runnerの
+テストがすべて`missing_test_ids`になります。
+
+`refresh-runtime`、`verify-runtime`、`inventory observe-graduation`は、`--runner`を省略すると宣言済み
+runnerのDebug出力（生成runnerは`build/components/msvc-x64-debug/<id>/bin/<id>.exe`、`tests1`は
+`x64/Debug/tests1.exe`）を使います。`--runner runner-id=executable`を指定する場合は宣言済みrunnerを
+過不足なく列挙する必要があり、不足または未宣言のrunnerは`TEST_RUNNER_SET_UNDECLARED`で拒否します。
 
 比較のhard gateはstable ID集合とenabled/disabled状態です。runner/selectorのremapは
 明示的に報告しますが、stable IDが維持されていれば保証差分とは扱いません。baselineには
 収集元revision、dirty状態、test executableのSHA-256を保存します。
 
-複数runnerの現在値で台帳を更新する場合は`refresh-runtime`を使います。既存selectorが消えた場合は
-silent deleteを拒否し、意味を維持した名称変更だけを`--remap stable-test-id=runner-id::selector`で
-明示します。新規selectorは保証追加としてstable ID集合へ加わります。更新後は必ず同じrunner集合で
-`verify-runtime`を実行し、missing／unexpectedがともに0であることを確認します。
+`refresh-runtime`は既存selectorのsilent deleteを拒否します。意味を維持した名称変更は
+`--remap stable-test-id=runner-id::selector`で、意図的に削除したテストは`--retire stable-test-id`で
+明示し、retireしたIDはcommit messageに列挙します。まだdiscoverされるテストのretireは
+`TEST_RETIRE_LIVE`で拒否します。新規selectorは保証追加としてstable ID集合へ加わります。更新後は
+必ず`verify-runtime`を実行し、すべてのrunnerでmissing／unexpectedがともに0であることを確認します。
+`collect`は1 runner分を新しい`tests1:` IDで作り直すため、`refresh-runtime`が管理する台帳への
+上書きを`TEST_INVENTORY_COLLECT_WOULD_DROP`で拒否します（#324）。
 
 ```cmd
 build-dev.bat <Platform> <Configuration>
