@@ -24,6 +24,8 @@ namespace {
 using namespace std::chrono_literals;
 
 struct BackendState {
+	explicit BackendState( std::string output ) : scriptedOutput(std::move(output)) {}
+
 	std::atomic<int> startCalls{};
 	std::atomic<int> gracefulCloseCalls{};
 	std::atomic<int> forceTerminateCalls{};
@@ -33,7 +35,8 @@ struct BackendState {
 	std::atomic<bool> failWrites{};
 	std::atomic<bool> writeEntered{};
 	std::atomic<std::size_t> outputOffset{};
-	std::string scriptedOutput;
+	// Fixed at creation; the reader worker reads it without a lock.
+	const std::string scriptedOutput;
 	std::wstring workingDirectory;
 	terminal::TerminalSize initialSize{};
 	bool failStart{};
@@ -101,13 +104,13 @@ struct ToolHarness {
 	{
 		terminal::TerminalTabManagerDependencies dependencies;
 		dependencies.createSession = [this](terminal::TerminalSessionCallbacks callbacks) {
-			auto state = std::make_shared<BackendState>();
-		state->failStart = failStart;
-		state->blockWrites.store(blockWrites);
-		{
-			const std::lock_guard lock(mutex);
-			state->scriptedOutput = scriptedOutput;
-			backends.push_back(state);
+			std::shared_ptr<BackendState> state;
+			{
+				const std::lock_guard lock(mutex);
+				state = std::make_shared<BackendState>(scriptedOutput);
+				state->failStart = failStart;
+				state->blockWrites.store(blockWrites);
+				backends.push_back(state);
 			}
 			return std::make_unique<terminal::CTerminalSession>(std::make_unique<ToolFakeBackend>(state), std::move(callbacks));
 		};
@@ -964,10 +967,16 @@ TEST(TerminalTool, DeferredProtocolResponseFinalizesWhenTheSessionStops)
 	ToolHarness harness;
 	harness.scriptedOutput = "\x1b[6n";
 	harness.blockWrites = true;
-	terminal::TerminalTabManager manager(harness.Dependencies());
+	std::atomic<int> outputNotifications{};
+	terminal::TerminalTabManager manager(harness.Dependencies(), [&outputNotifications](const terminal::TerminalTabEvent& event) {
+		if( event.kind == terminal::TerminalTabEventKind::OutputAvailable ) ++outputNotifications;
+	});
 	const auto id = manager.Activate({ 80, 24 }, L"C:\\workspace");
 	ASSERT_TRUE(id.has_value());
 	ASSERT_EQ(1u, harness.backends.size());
+	// The cursor-position request arrives on the reader worker. Draining before
+	// the session has queued it parses nothing and generates no reply (#331).
+	ASSERT_TRUE(WaitUntil([&] { return outputNotifications.load() > 0; }));
 	std::vector<std::uint8_t> fill(terminal::CTerminalSession::kInputLimitBytes, 0x41);
 	ASSERT_EQ(terminal::TerminalQueueInputResult::Accepted, manager.QueueInput(*id, fill));
 	ASSERT_TRUE(WaitUntil([&] { return harness.backends[0]->writeEntered.load(); }));
