@@ -1075,6 +1075,22 @@ class CMakeGenerationContractTests(unittest.TestCase):
             output = root / "build" / "x86_64-pc-windows-msvc" / "debug" / "sakura_native_ffi.lib"
             output.parent.mkdir(parents=True)
             output.write_bytes(b"stable native archive")
+            # IS_NEWER_THAN reports equal timestamps as newer, and files written
+            # within one clock tick share a timestamp, so the fixture states the
+            # order instead of relying on write timing.
+            inputs_mtime = output.stat().st_mtime_ns - 10_000_000_000
+            for path in (
+                manifest,
+                member_manifest,
+                simd_manifest,
+                unicode_manifest,
+                lock,
+                toolchain,
+                ffi_source,
+                simd_source,
+                unicode_source,
+            ):
+                os.utime(path, ns=(inputs_mtime, inputs_mtime))
             before = output.stat()
 
             options = [

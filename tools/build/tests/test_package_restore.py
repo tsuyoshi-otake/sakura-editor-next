@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -114,6 +115,17 @@ def _complete_fake_install(argv: list[str], **_kwargs) -> tuple[str, str]:
 
 
 class PackageRestoreTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # The fixture's tools/vcpkg is the vcpkg under test. _vcpkg_root prefers
+        # VCPKG_ROOT, which CI sets to a real vcpkg, and then <repo parent>/vcpkg,
+        # so neither may come from the machine running the tests.
+        isolated_parent = tempfile.TemporaryDirectory()
+        self.addCleanup(isolated_parent.cleanup)
+        for patcher in (patch.dict(os.environ), patch.object(tempfile, "tempdir", isolated_parent.name)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        os.environ.pop("VCPKG_ROOT", None)
+
     def test_restore_reuse_validate_and_gc_are_content_addressed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
