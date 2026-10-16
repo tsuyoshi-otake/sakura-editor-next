@@ -13,6 +13,7 @@ if str(TOOLS_BUILD) not in sys.path:
     sys.path.insert(0, str(TOOLS_BUILD))
 
 from sakura_build_lib.path_matrix import _MATRIX_FILES, _copy_minimal_repository, _run_child  # noqa: E402
+from sakura_build_lib.runner import NATIVE_ALIAS_OWNER_ENVIRONMENT  # noqa: E402
 
 
 class PathMatrixChildTests(unittest.TestCase):
@@ -93,25 +94,44 @@ class PathMatrixChildTests(unittest.TestCase):
         self.assertEqual(("success", 0), (success.status, success.returncode))
         self.assertEqual(("failed", 7), (failure.status, failure.returncode))
         self.assertEqual(("timeout", 8), (timeout.status, timeout.returncode))
+        self.assertNotIn("NATIVE_PATH_ALIAS_NONE_OWNED", timeout.stderr)
 
     @unittest.skipUnless(os.name == "nt", "native alias timeout cleanup is Windows-specific")
     def test_timeout_removes_the_run_owned_native_alias(self) -> None:
+        # sys.executable is a venv launcher in the usual local setup, so the
+        # interpreter that names the alias is not the process Popen.pid names.
         with tempfile.TemporaryDirectory(prefix="sakura-matrix-timeout-") as temporary:
             repo = Path(temporary) / "日本語" / "repo"
             repo.mkdir(parents=True)
             child = (
-                "import sys,time; from contextlib import ExitStack; from pathlib import Path; "
+                "import os,sys,time; from contextlib import ExitStack; from pathlib import Path; "
                 f"sys.path.insert(0, {str(TOOLS_BUILD)!r}); "
                 "from sakura_build_lib.runner import native_execution_root; "
                 "stack=ExitStack(); alias=stack.enter_context(native_execution_root(Path.cwd())); "
-                "print(alias, flush=True); time.sleep(30)"
+                f"print(os.environ[{NATIVE_ALIAS_OWNER_ENVIRONMENT!r}], alias, sep='\\n', flush=True); time.sleep(30)"
             )
-            result = _run_child([sys.executable, "-c", child], repo, timeout_seconds=0.5)
-            alias = Path(result.stdout.strip())
+            # The child needs about 0.2s to create its alias; the margin keeps
+            # a slow hosted runner from killing it first.
+            result = _run_child([sys.executable, "-c", child], repo, timeout_seconds=5)
+            owner, alias_text = result.stdout.strip().splitlines()
+            alias = Path(alias_text)
 
             self.assertEqual(("timeout", 8), (result.status, result.returncode))
-            self.assertTrue(str(alias))
+            self.assertTrue(alias.name.startswith(f"{owner}-"))
+            self.assertEqual((alias_text,), result.native_aliases_removed)
+            self.assertNotIn("NATIVE_PATH_ALIAS_NONE_OWNED", result.stderr)
             self.assertFalse(alias.exists())
+
+    @unittest.skipUnless(os.name == "nt", "native alias timeout cleanup is Windows-specific")
+    def test_timeout_without_an_owned_alias_on_a_non_ascii_root_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="sakura-matrix-unaliased-") as temporary:
+            repo = Path(temporary) / "日本語" / "repo"
+            repo.mkdir(parents=True)
+            result = _run_child([sys.executable, "-c", "import time; time.sleep(30)"], repo, timeout_seconds=0.5)
+
+        self.assertEqual(("timeout", 8), (result.status, result.returncode))
+        self.assertEqual((), result.native_aliases_removed)
+        self.assertIn("NATIVE_PATH_ALIAS_NONE_OWNED", result.stderr)
 
 
 if __name__ == "__main__":

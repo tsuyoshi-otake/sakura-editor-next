@@ -1618,6 +1618,10 @@ class CMakeGenerationContractTests(unittest.TestCase):
         assert msbuild is not None
         with tempfile.TemporaryDirectory() as temporary:
             library = Path(temporary) / "sakura_native_ffi.lib"
+            # The target's up-to-date check reads the stamp, not the library.
+            # Without this the checkout's own Debug stamp, newer than every
+            # Rust source after any Debug build, skips the target (#136).
+            stamp = Path(temporary) / "sakura_native_ffi.msbuild.stamp"
             library.write_bytes(b"up-to-date output placeholder")
             original = library.read_bytes()
             started = time.monotonic()
@@ -1631,6 +1635,7 @@ class CMakeGenerationContractTests(unittest.TestCase):
                     "/p:SAKURA_UTF16_BACKEND=rust",
                     "/p:SakuraNativeFfiCargo=issue239-cargo-missing",
                     f"/p:SakuraNativeFfiLibrary={library}",
+                    f"/p:SakuraNativeFfiStamp={stamp}",
                     "/m:1",
                     "/nr:false",
                     "/nologo",

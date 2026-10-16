@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -34,6 +35,18 @@ COMPONENT_ISOLATED_ENVIRONMENT = (
 )
 _CMAKE_DISCOVERY_ENVIRONMENT_VARIABLES = frozenset(COMPONENT_ISOLATED_ENVIRONMENT)
 NATIVE_PATH_IDENTITY_FILE = ".sakura-native-path.json"
+# A parent that may have to kill a child tree passes this token so that every
+# junction the tree creates carries an owner the parent knows.  Popen.pid is not
+# that owner: a venv launcher runs the real interpreter as a separate process.
+NATIVE_ALIAS_OWNER_ENVIRONMENT = "SAKURA_NATIVE_ALIAS_OWNER"
+_NATIVE_ALIAS_OWNER_LENGTH = 8
+# The process that leaves a shared ``.snp`` parent empty removes it.  Unless every
+# change to the parent's existence holds one lock, that removal can land between
+# another creator's mkdir and its mklink; six parallel creators lost 3 to 6 of
+# 240 cycles to it, with or without a retry.  A holder only runs mkdir and one
+# bounded mklink, so the lock bound is reached only when something is wedged.
+_NATIVE_ALIAS_LOCK_TIMEOUT_MILLISECONDS = 60_000
+_NATIVE_ALIAS_MKLINK_TIMEOUT_SECONDS = 30
 MSVC_SHOWINCLUDES_PREFIX = "Note: including file:"
 
 
@@ -213,6 +226,149 @@ def _is_ascii_path(path: Path) -> bool:
     return True
 
 
+def requires_native_alias(repo_root: Path) -> bool:
+    """Return whether ``native_execution_root`` would alias this checkout."""
+    return os.name == "nt" and not _is_ascii_path(repo_root.resolve())
+
+
+def new_native_alias_owner() -> str:
+    return uuid.uuid4().hex[:_NATIVE_ALIAS_OWNER_LENGTH]
+
+
+def _is_native_alias_owner(value: str) -> bool:
+    return len(value) == _NATIVE_ALIAS_OWNER_LENGTH and all(character in "0123456789abcdef" for character in value)
+
+
+def _native_alias_owner() -> str:
+    inherited = os.environ.get(NATIVE_ALIAS_OWNER_ENVIRONMENT)
+    if inherited is None:
+        return f"{os.getpid():x}"
+    if not _is_native_alias_owner(inherited):
+        raise BuildError(
+            "NATIVE_PATH_ALIAS_OWNER_INVALID",
+            f"{NATIVE_ALIAS_OWNER_ENVIRONMENT} must be {_NATIVE_ALIAS_OWNER_LENGTH} lowercase hex digits: {inherited!r}",
+            3,
+        )
+    return inherited
+
+
+def _is_native_alias_name(name: str) -> bool:
+    owner, separator, suffix = name.partition("-")
+    hexadecimal = "0123456789abcdef"
+    return (
+        bool(separator and owner)
+        and len(suffix) == 8
+        and all(character in hexadecimal for character in owner + suffix)
+    )
+
+
+def _is_junction(path: str | os.PathLike[str]) -> bool:
+    # os.path.isjunction needs Python 3.12; this API supports 3.10.
+    try:
+        return os.lstat(path).st_reparse_tag == stat.IO_REPARSE_TAG_MOUNT_POINT
+    except (AttributeError, OSError):
+        return False
+
+
+def _remove_dead_native_aliases(base: Path) -> None:
+    """Reclaim aliases whose checkout no longer exists.
+
+    A creator killed from outside (CI cancellation, ``taskkill /F``, power
+    loss) never reaches its own cleanup, and nothing else knows its owner
+    token.  A junction whose target is gone can never serve any process
+    again, so the next creator sharing ``base`` removes it.  ``rmdir`` on a
+    junction removes only the link.  Live junctions, plain directories, and
+    names this module does not generate are left alone, and a removal that
+    fails is left for the next creator rather than failing this one.
+    """
+    try:
+        entries = list(os.scandir(base))
+    except OSError:
+        return
+    for entry in entries:
+        if not _is_native_alias_name(entry.name) or not _is_junction(entry.path):
+            continue
+        if os.path.exists(entry.path):
+            continue
+        try:
+            os.rmdir(entry.path)
+        except OSError:
+            pass
+
+
+def _create_junction(link: Path, target: Path) -> None:
+    # ``/u`` makes cmd's built-ins write UTF-16LE to a pipe; without it the
+    # message arrives in the console code page and cannot be decoded reliably.
+    # It runs under the alias lock, so it is bounded like every wait on that lock.
+    try:
+        completed = subprocess.run(
+            [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/u", "/c", "mklink", "/J", str(link), str(target)],
+            capture_output=True,
+            check=False,
+            timeout=_NATIVE_ALIAS_MKLINK_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise OSError(f"mklink did not finish within {_NATIVE_ALIAS_MKLINK_TIMEOUT_SECONDS} s") from error
+    if completed.returncode or not link.is_dir():
+        detail = (completed.stderr or completed.stdout).decode("utf-16-le", errors="replace").strip()
+        raise OSError(f"mklink exit {completed.returncode}: {detail}")
+
+
+@contextmanager
+def _native_alias_parent_lock(base: Path):
+    """Hold the cross-process lock that serializes changes to ``base``'s existence.
+
+    It is a named mutex rather than a lock file, so it leaves nothing behind
+    and the OS releases it when its holder dies: a holder killed mid-mklink
+    hands ownership to the next waiter (``WAIT_ABANDONED``) instead of wedging
+    it.  The name lives in the session namespace (``Local\\``): an ancestor
+    ``.snp`` such as ``C:\\Codes\\.snp`` can be shared by several users, and a
+    ``Global\\`` mutex created by one user denies the others access.  Processes
+    in different sessions therefore still race on such a parent; that rare
+    case fails closed with ``NATIVE_PATH_ALIAS_UNAVAILABLE``, as before.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateMutexW.argtypes = (ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR)
+    kernel32.CreateMutexW.restype = wintypes.HANDLE
+    kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    kernel32.ReleaseMutex.argtypes = (wintypes.HANDLE,)
+    kernel32.ReleaseMutex.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    wait_object_0, wait_abandoned, wait_timeout = 0x0, 0x80, 0x102
+
+    key = hashlib.sha256(os.path.normcase(os.path.abspath(base)).encode("utf-8")).hexdigest()[:32]
+    handle = kernel32.CreateMutexW(None, False, f"Local\\sakura-native-alias-{key}")
+    if not handle:
+        raise OSError(ctypes.get_last_error(), f"could not open the alias lock for {base}")
+    try:
+        state = kernel32.WaitForSingleObject(handle, _NATIVE_ALIAS_LOCK_TIMEOUT_MILLISECONDS)
+        if state == wait_timeout:
+            raise OSError(f"timed out after {_NATIVE_ALIAS_LOCK_TIMEOUT_MILLISECONDS} ms waiting for the alias lock for {base}")
+        if state not in (wait_object_0, wait_abandoned):
+            raise OSError(ctypes.get_last_error(), f"could not wait for the alias lock for {base} (state {state:#x})")
+        try:
+            yield
+        finally:
+            kernel32.ReleaseMutex(handle)
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _remove_empty_native_alias_parent(base: Path) -> None:
+    try:
+        with _native_alias_parent_lock(base):
+            base.rmdir()
+    except OSError:
+        # Concurrent aliases legitimately keep the shared parent non-empty, and
+        # a parent that cannot be locked now is left for the next process.
+        pass
+
+
 def _native_alias_candidates(repo_root: Path) -> tuple[Path, ...]:
     candidates: list[Path] = []
     home = Path.home().resolve()
@@ -244,10 +400,14 @@ def native_execution_root(
     detection when either its source or build tree contains non-ASCII path
     segments.  A short-lived directory junction keeps the checkout and output
     identity unchanged while preventing the native tool from seeing a lossy
-    path spelling.  The junction is never a copy and is removed on every exit.
+    path spelling.  The junction is never a copy and is removed on every exit
+    this process survives; a parent that kills it instead removes the aliases
+    named with the owner token it passed in ``SAKURA_NATIVE_ALIAS_OWNER``.
+    Aliases nobody could clean up are reclaimed by the next creator once
+    their checkout is gone (``_remove_dead_native_aliases``).
     """
     resolved = repo_root.resolve()
-    if os.name != "nt" or _is_ascii_path(resolved):
+    if not requires_native_alias(resolved):
         yield resolved
         return
 
@@ -263,39 +423,38 @@ def native_execution_root(
             )
         aliases = (requested,)
     else:
-        aliases = tuple(candidate / ".snp" / f"{os.getpid():x}-{uuid.uuid4().hex[:8]}" for candidate in candidates)
+        owner = _native_alias_owner()
+        aliases = tuple(candidate / ".snp" / f"{owner}-{uuid.uuid4().hex[:8]}" for candidate in candidates)
 
     errors: list[str] = []
     alias: Path | None = None
     for current_alias in aliases:
         base = current_alias.parent
+        _remove_dead_native_aliases(base)
         try:
-            base.mkdir(parents=True, exist_ok=True)
-            if current_alias.exists():
-                raise OSError("alias path is already in use")
-            completed = subprocess.run(
-                [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/c", "mklink", "/J", str(current_alias), str(resolved)],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                check=False,
-            )
-            if completed.returncode or not current_alias.is_dir():
-                detail = (completed.stderr or completed.stdout).strip()
-                raise OSError(f"mklink exit {completed.returncode}: {detail}")
-            alias = current_alias
-            break
+            with _native_alias_parent_lock(base):
+                base.mkdir(parents=True, exist_ok=True)
+                if os.path.lexists(current_alias):
+                    # Another process owns this path (a recorded alias it recreated);
+                    # removing it here would pull the checkout out from under it.
+                    raise OSError("alias path is already in use")
+                try:
+                    _create_junction(current_alias, resolved)
+                except OSError:
+                    try:
+                        current_alias.rmdir()
+                    except OSError:
+                        pass
+                    try:
+                        base.rmdir()
+                    except OSError:
+                        pass
+                    raise
         except OSError as error:
             errors.append(f"{current_alias}: {error}")
-            try:
-                current_alias.rmdir()
-            except OSError:
-                pass
-            try:
-                base.rmdir()
-            except OSError:
-                pass
+            continue
+        alias = current_alias
+        break
 
     if alias is None:
         detail = "; ".join(errors) if errors else "no writable ASCII ancestor or temporary directory"
@@ -310,12 +469,11 @@ def native_execution_root(
         try:
             alias.rmdir()
         except OSError as error:
-            cleanup_error = error
-        try:
-            alias.parent.rmdir()
-        except OSError:
-            # Concurrent aliases legitimately keep the shared parent non-empty.
-            pass
+            # An owner or a later creator may already have reclaimed it;
+            # the outcome that matters is that no alias is left behind.
+            if os.path.lexists(alias):
+                cleanup_error = error
+        _remove_empty_native_alias_parent(alias.parent)
         if events is not None:
             events.emit(
                 "native_path_alias_removed",
@@ -350,32 +508,40 @@ def write_native_path_identity(build_dir: Path, repo_root: Path, execution_root:
         temporary.unlink(missing_ok=True)
 
 
-def cleanup_native_aliases_for_process(repo_root: Path, process_id: int) -> tuple[str, ...]:
-    """Remove only junctions owned by a terminated canonical CLI process."""
+def cleanup_native_aliases_for_owner(repo_root: Path, owner: str) -> tuple[str, ...]:
+    """Remove only junctions to ``repo_root`` named with a killed tree's owner token."""
+    if not _is_native_alias_owner(owner):
+        raise BuildError("NATIVE_PATH_ALIAS_OWNER_INVALID", f"native alias owner token is malformed: {owner!r}", 3)
     if os.name != "nt":
         return ()
     resolved = repo_root.resolve()
     removed: list[str] = []
     failures: list[str] = []
-    prefix = f"{process_id:x}-"
+    prefix = f"{owner}-"
     for candidate in _native_alias_candidates(resolved):
         base = candidate / ".snp"
-        if not base.is_dir():
+        try:
+            entries = list(base.iterdir())
+        except (FileNotFoundError, NotADirectoryError):
             continue
-        for alias in base.iterdir():
-            if not alias.name.startswith(prefix) or not alias.is_dir():
+        except OSError as error:
+            # An unreadable parent may still hold this tree's alias; report it
+            # as a cleanup failure instead of escaping the caller's contract.
+            failures.append(f"{base}: {error}")
+            continue
+        for alias in entries:
+            if not alias.name.startswith(prefix) or not _is_junction(alias):
                 continue
             try:
-                if not os.path.samefile(resolved, alias):
+                # A dangling junction carrying this token is dead and
+                # cannot be compared, but it is still this tree's to remove.
+                if os.path.exists(alias) and not os.path.samefile(resolved, alias):
                     continue
                 alias.rmdir()
                 removed.append(str(alias))
             except OSError as error:
                 failures.append(f"{alias}: {error}")
-        try:
-            base.rmdir()
-        except OSError:
-            pass
+        _remove_empty_native_alias_parent(base)
     if failures:
         raise BuildError("NATIVE_PATH_ALIAS_CLEANUP_FAILED", "; ".join(failures), 9)
     return tuple(removed)

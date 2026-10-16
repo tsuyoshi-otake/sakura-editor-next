@@ -185,3 +185,19 @@ add_test(NAME pytest
     --cov-fail-under=80
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
 )
+
+# The pytest run above never collects tools/build/tests: pytest's default
+# norecursedirs skips any directory named build, and two of its modules import
+# siblings by name.  unittest discovery puts the start directory on sys.path,
+# which is how those tests are written to run (#136).
+add_test(NAME BuildToolTests
+  COMMAND
+    "${UV_EXECUTABLE}"
+    run
+    python
+    -m unittest
+    discover
+    -s tools/build/tests
+    -p "test_*.py"
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)

@@ -27,12 +27,23 @@ class SearchLifecycleGateTest(unittest.TestCase):
     def test_architecture_job_runs_gate_without_a_path_condition(self):
         workflow = PATH.parent.parent / ".github/workflows/architecture-gates.yml"
         text = workflow.read_text(encoding="utf-8")
-        step = text.split("- name: Verify Search lifecycle and intentional counterexamples", 1)[1]
-        step = step.split("\n      - name:", 1)[0]
-        self.assertIn("python3 tools/verify-search-lifecycle.py", step)
-        self.assertIn(GATE.TOOL_URL, step)
-        self.assertNotIn("if:", step)
-        self.assertNotIn("continue-on-error", step)
+
+        def step(name):
+            body = text.split(f"- name: {name}\n", 1)[1]
+            return body.split("\n      - name:", 1)[0]
+
+        # The pinned jar is fetched once and shared with the SENP gate (#296).
+        download = step("Download pinned TLC tool")
+        gate = step("Verify Search lifecycle and intentional counterexamples")
+        self.assertLess(text.index("- name: Download pinned TLC tool"),
+                        text.index("- name: Verify Search lifecycle and intentional counterexamples"))
+        self.assertIn(GATE.TOOL_URL, download)
+        self.assertIn('--output "$RUNNER_TEMP/tla2tools.jar"', download)
+        self.assertIn("python3 tools/verify-search-lifecycle.py", gate)
+        self.assertIn('--jar "$RUNNER_TEMP/tla2tools.jar"', gate)
+        for body in (download, gate):
+            self.assertNotIn("if:", body)
+            self.assertNotIn("continue-on-error", body)
 
 
 if __name__ == "__main__":

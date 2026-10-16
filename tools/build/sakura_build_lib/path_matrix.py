@@ -15,7 +15,13 @@ from pathlib import Path
 from typing import Sequence
 
 from .model import load_semantic_graph
-from .runner import BuildError, cleanup_native_aliases_for_process
+from .runner import (
+    NATIVE_ALIAS_OWNER_ENVIRONMENT,
+    BuildError,
+    cleanup_native_aliases_for_owner,
+    new_native_alias_owner,
+    requires_native_alias,
+)
 
 
 DEFAULT_TIMEOUT_SECONDS = 300
@@ -35,6 +41,7 @@ class ChildResult:
     stdout: str
     stderr: str
     elapsed_ms: float
+    native_aliases_removed: tuple[str, ...] = ()
 
 
 def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
@@ -60,9 +67,11 @@ def _run_child(
 ) -> ChildResult:
     started = time.perf_counter()
     creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+    alias_owner = new_native_alias_owner()
     process = subprocess.Popen(
         list(command),
         cwd=cwd,
+        env={**os.environ, NATIVE_ALIAS_OWNER_ENVIRONMENT: alias_owner},
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -80,7 +89,7 @@ def _run_child(
             process.kill()
             stdout, stderr = process.communicate()
         try:
-            cleanup_native_aliases_for_process(cwd, process.pid)
+            removed = cleanup_native_aliases_for_owner(cwd, alias_owner)
         except BuildError as error:
             return ChildResult(
                 status="cleanup_failed",
@@ -89,12 +98,20 @@ def _run_child(
                 stderr=f"{stderr}\n{error.code}: {error}".strip(),
                 elapsed_ms=(time.perf_counter() - started) * 1000,
             )
+        if not removed and requires_native_alias(cwd):
+            # Legitimate when the child was killed before it reached a native
+            # tool, but an ownership mismatch looks the same, so report it.
+            stderr = (
+                f"{stderr}\nNATIVE_PATH_ALIAS_NONE_OWNED: the timed-out child left no native alias "
+                f"owned by {alias_owner} for {cwd}"
+            ).strip()
         return ChildResult(
             status="timeout",
             returncode=8,
             stdout=stdout,
             stderr=stderr,
             elapsed_ms=(time.perf_counter() - started) * 1000,
+            native_aliases_removed=removed,
         )
     return ChildResult(
         status="success" if process.returncode == 0 else "failed",

@@ -14,6 +14,12 @@ PAIRED = ROOT / "tools" / "measure-output-startup.ps1"
 SHARED = ROOT / "tools" / "measure-startup-performance.ps1"
 PAIRED_DOC = ROOT / "tools" / "measure-output-startup.md"
 STARTUP_DOC = ROOT / "tools" / "startup-performance.md"
+# The paired -SelfTest is CPU-bound interpreted PowerShell with no sleeps or
+# child processes.  It took 12 to 36 s per host on a loaded dev box (#136; the
+# slowness itself is #327).  This is a hang guard, not a performance gate: a
+# hosted runner's speed is unmeasured, so 120 s per host keeps headroom over the
+# slowest run here and still fails a real hang.
+PAIRED_SELF_TEST_TIMEOUT_SECONDS = 120
 
 
 def read_utf16le_script(path: Path) -> str:
@@ -1207,14 +1213,17 @@ class PairedStartupContractTests(unittest.TestCase):
         if not available:
             self.skipTest("Neither powershell.exe nor pwsh is available")
         for shell in available:
-            completed = subprocess.run(
-                [shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(PAIRED), "-SelfTest"],
-                cwd=ROOT,
-                capture_output=True,
-                text=True,
-                timeout=30,
-                check=False,
-            )
+            try:
+                completed = subprocess.run(
+                    [shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(PAIRED), "-SelfTest"],
+                    cwd=ROOT,
+                    capture_output=True,
+                    text=True,
+                    timeout=PAIRED_SELF_TEST_TIMEOUT_SECONDS,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired:
+                self.fail(f"{shell} -SelfTest exceeded {PAIRED_SELF_TEST_TIMEOUT_SECONDS} s")
             self.assertEqual(0, completed.returncode, completed.stderr)
             payload = json.loads(completed.stdout.strip().splitlines()[-1])
             self.assertTrue(payload["passed"])
