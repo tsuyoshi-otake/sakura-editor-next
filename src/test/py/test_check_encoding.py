@@ -12,7 +12,7 @@ WORKFLOW = REPO_ROOT / ".github/workflows/build-sakura.yml"
 BATCH_WRAPPER = REPO_ROOT / "checkEncoding.bat"
 
 
-def _run(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
+def _run_raw(*args: str, cwd: Path) -> subprocess.CompletedProcess[bytes]:
     return subprocess.run(
         [
             "pwsh",
@@ -24,10 +24,21 @@ def _run(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
             *args,
         ],
         cwd=cwd,
-        text=True,
-        encoding="utf-8",
         capture_output=True,
         check=False,
+    )
+
+
+def _run(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
+    # The checker's redirected output is UTF-8 whatever the console code page
+    # is (#326). Decoding here, strictly, names the offending bytes instead of
+    # leaving a stream None when a reader thread fails to decode it.
+    raw = _run_raw(*args, cwd=cwd)
+    return subprocess.CompletedProcess(
+        raw.args,
+        raw.returncode,
+        raw.stdout.decode("utf-8"),
+        raw.stderr.decode("utf-8"),
     )
 
 
@@ -155,6 +166,59 @@ def test_diff_rejects_an_invalid_base_commit(tmp_path: Path):
 
     assert result.returncode != 0
     assert "git rev-parse failed" in _combined_output(result)
+
+
+def test_an_operational_failure_is_reported_as_plain_prefixed_lines(tmp_path: Path):
+    _initialize_repository(tmp_path)
+
+    result = _run_raw(
+        "diff",
+        "-BaseSha",
+        "not-a-commit",
+        "-RepositoryRoot",
+        str(tmp_path),
+        cwd=tmp_path,
+    )
+
+    # The checker owns this report. It must not be the host's error view,
+    # whose colors, echoed source line and width-truncated ellipsis depend on
+    # the terminal and the console code page (#326).
+    assert result.returncode == 1
+    assert b"\x1b" not in result.stdout + result.stderr
+    lines = result.stderr.decode("utf-8").splitlines()
+    assert lines, "expected a diagnostic on stderr"
+    assert all(line.startswith("check-encoding: ") for line in lines), lines
+    assert "git rev-parse failed with exit code 128" in lines[0]
+
+
+def test_non_ascii_file_names_are_reported_in_utf8(tmp_path: Path):
+    accepted = tmp_path / "正常.cpp"
+    rejected = tmp_path / "不正.h"
+    accepted.write_bytes(b"int ok;\r\n")
+    rejected.write_bytes("// 日本語\n".encode())
+
+    result = _run("all", "-RepositoryRoot", str(tmp_path), cwd=tmp_path)
+
+    assert result.returncode == 1
+    assert f"OK {accepted}" in result.stdout
+    assert f"NG {rejected}" in result.stderr
+
+
+def test_diff_reads_non_ascii_paths_from_git(tmp_path: Path):
+    base_sha = _initialize_repository(tmp_path)
+    (tmp_path / "変更.cpp").write_bytes(b"\xef\xbb\xbf" + "// 変更\n".encode())
+    _git(tmp_path, "add", "変更.cpp")
+    _git(tmp_path, "commit", "-m", "add a non-ASCII path")
+
+    result = _run(
+        "diff", "-BaseSha", base_sha, "-RepositoryRoot", str(tmp_path), cwd=tmp_path
+    )
+
+    # git writes -z paths as UTF-8 bytes; decoding them with the console code
+    # page turns the name into one that does not exist on disk.
+    assert result.returncode == 0, _combined_output(result)
+    assert "OK 変更.cpp" in result.stdout
+    assert "Encoding check passed for 1 file(s)." in result.stdout
 
 
 def test_batch_wrapper_only_forwards_to_the_powershell_checker():

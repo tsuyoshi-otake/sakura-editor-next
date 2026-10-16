@@ -8,6 +8,26 @@ param(
 $ErrorActionPreference = 'Stop'
 $targetExtensions = @('.cpp', '.h', '.rc', '.rc2')
 
+# Redirected output is what CI and the tests read, so it is UTF-8 whatever the
+# console code page is (#326). An interactive console keeps the host's writer.
+# Setting [Console]::OutputEncoding instead would change the code page of the
+# console this process shares with its caller.
+$utf8 = [Text.UTF8Encoding]::new($false)
+if ([Console]::IsOutputRedirected) {
+	$outputWriter = [IO.StreamWriter]::new([Console]::OpenStandardOutput(), $utf8)
+	$outputWriter.AutoFlush = $true
+}
+else {
+	$outputWriter = [Console]::Out
+}
+if ([Console]::IsErrorRedirected) {
+	$errorWriter = [IO.StreamWriter]::new([Console]::OpenStandardError(), $utf8)
+	$errorWriter.AutoFlush = $true
+}
+else {
+	$errorWriter = [Console]::Error
+}
+
 function Invoke-GitText {
 	param(
 		[string[]]$Arguments
@@ -19,14 +39,21 @@ function Invoke-GitText {
 	$startInfo.UseShellExecute = $false
 	$startInfo.RedirectStandardOutput = $true
 	$startInfo.RedirectStandardError = $true
+	# git writes paths and messages as UTF-8; the default is the console code
+	# page, which turns a non-ASCII path into one that does not exist (#326).
+	$startInfo.StandardOutputEncoding = $utf8
+	$startInfo.StandardErrorEncoding = $utf8
 	foreach ($argument in $Arguments) {
 		$startInfo.ArgumentList.Add($argument)
 	}
 
 	$process = [Diagnostics.Process]::Start($startInfo)
 	try {
+		# Drain stderr concurrently: reading the streams one after the other
+		# deadlocks once git fills the stderr pipe while stdout is still open.
+		$stderrRead = $process.StandardError.ReadToEndAsync()
 		$stdout = $process.StandardOutput.ReadToEnd()
-		$stderr = $process.StandardError.ReadToEnd()
+		$stderr = $stderrRead.GetAwaiter().GetResult()
 		$process.WaitForExit()
 		if ($process.ExitCode -ne 0) {
 			throw "git $($Arguments[0]) failed with exit code $($process.ExitCode): $stderr"
@@ -47,7 +74,7 @@ function Get-DiffFiles {
 	param([string]$Commit)
 
 	if ([string]::IsNullOrWhiteSpace($Commit) -or $Commit -eq ('0' * 40)) {
-		Write-Host 'base SHA is empty or all-zero; branch creation has no diff'
+		$outputWriter.WriteLine('base SHA is empty or all-zero; branch creation has no diff')
 		return @()
 	}
 
@@ -133,39 +160,50 @@ function Test-OwnedSnapshotPath {
 		$normalized.Contains('/third_party/owned/')
 }
 
-$files = if ($Mode -eq 'all') {
-	Get-AllFiles
-}
-else {
-	Get-DiffFiles $BaseSha
-}
-$files = @(
-	$files | Where-Object { -not (Test-OwnedSnapshotPath $_) }
-)
 $failureCount = 0
-foreach ($file in $files) {
-	$fullPath = if ([IO.Path]::IsPathRooted($file)) { $file } else { Join-Path $RepositoryRoot $file }
-	Write-Host "checking $file"
-	$bytes = [IO.File]::ReadAllBytes($fullPath)
-	$extension = [IO.Path]::GetExtension($file).ToLowerInvariant()
-	$valid = if ($extension -in @('.cpp', '.h')) {
-		Test-SourceEncoding $bytes
+try {
+	$files = if ($Mode -eq 'all') {
+		Get-AllFiles
 	}
 	else {
-		Test-ResourceEncoding $bytes
+		Get-DiffFiles $BaseSha
 	}
-	if ($valid) {
-		Write-Host "OK $file"
+	$files = @(
+		$files | Where-Object { -not (Test-OwnedSnapshotPath $_) }
+	)
+	foreach ($file in $files) {
+		$fullPath = if ([IO.Path]::IsPathRooted($file)) { $file } else { Join-Path $RepositoryRoot $file }
+		$outputWriter.WriteLine("checking $file")
+		$bytes = [IO.File]::ReadAllBytes($fullPath)
+		$extension = [IO.Path]::GetExtension($file).ToLowerInvariant()
+		$valid = if ($extension -in @('.cpp', '.h')) {
+			Test-SourceEncoding $bytes
+		}
+		else {
+			Test-ResourceEncoding $bytes
+		}
+		if ($valid) {
+			$outputWriter.WriteLine("OK $file")
+		}
+		else {
+			$errorWriter.WriteLine("NG $file")
+			$failureCount++
+		}
 	}
-	else {
-		[Console]::Error.WriteLine("NG $file")
-		$failureCount++
+}
+catch {
+	# The checker owns this report. The host's error view would add colors,
+	# echo and truncate the source line, and encode it with the console code
+	# page (#326).
+	foreach ($line in $_.Exception.Message.Trim().Split("`n")) {
+		$errorWriter.WriteLine("check-encoding: $($line.TrimEnd("`r"))")
 	}
+	exit 1
 }
 
 if ($failureCount -gt 0) {
-	[Console]::Error.WriteLine("$failureCount file(s) have an unsupported encoding.")
+	$errorWriter.WriteLine("$failureCount file(s) have an unsupported encoding.")
 	exit 1
 }
-Write-Host "Encoding check passed for $($files.Count) file(s)."
+$outputWriter.WriteLine("Encoding check passed for $($files.Count) file(s).")
 exit 0
