@@ -15,10 +15,13 @@ SHARED = ROOT / "tools" / "measure-startup-performance.ps1"
 PAIRED_DOC = ROOT / "tools" / "measure-output-startup.md"
 STARTUP_DOC = ROOT / "tools" / "startup-performance.md"
 # The paired -SelfTest is CPU-bound interpreted PowerShell with no sleeps or
-# child processes.  It took 12 to 36 s per host on a loaded dev box (#136; the
-# slowness itself is #327).  This is a hang guard, not a performance gate: a
-# hosted runner's speed is unmeasured, so 120 s per host keeps headroom over the
-# slowest run here and still fails a real hang.
+# child processes.  Measured 2026-10-16 (#327) on a loaded dev box, median of 3
+# interleaved runs with the 25 job-query rejection cases included: 10.8 s in
+# pwsh 7 and 17.0 s in Windows PowerShell 5.1 (slowest single run 17.1 s), down
+# from 11.1 s and 21.8 s before the job-query conversion was batched.  This is a
+# hang guard, not a performance gate: a hosted runner's speed is unmeasured, so
+# 120 s per host keeps 7x headroom over the slowest run here and still fails a
+# real hang (#136).
 PAIRED_SELF_TEST_TIMEOUT_SECONDS = 120
 
 

@@ -106,6 +106,15 @@ $script:PairedJobQueryMaxCount = 4096
 $script:PairedJobQueryMaxBytes = [UInt64]1048576
 $script:PairedJobQueryMaxProcessCount = [UInt64]131072
 $script:PairedJobQueryMaxAttempts = 8
+# The CLR types a numeric job-query scalar may arrive as, from JSON or from the
+# native helper.  [bool] is deliberately absent, so a Boolean is never a count.
+# Every member is a sealed value
+# type, so an exact GetType() lookup answers the same as an -is chain, without a
+# function call on a path that runs about 38,000 times per self-test (#327).
+$script:PairedJobQueryNumericTypes = [Collections.Generic.HashSet[type]]::new([type[]]@(
+    [byte], [sbyte], [int16], [uint16], [int32], [uint32],
+    [int64], [uint64], [single], [double], [decimal]
+))
 $script:PairedCleanupTelemetryMaxCount = 4096
 $script:PairedCleanupTelemetryDelayedReconciliationStates = @(
     'not-attempted', 'accepted', 'exhausted', 'unavailable', 'exception'
@@ -300,6 +309,37 @@ function Test-PairedPropertyPresent {
     if ($null -eq $Object) { return $false }
     if ($Object -is [Collections.IDictionary]) { return $Object.Contains($Name) }
     return $null -ne $Object.PSObject.Properties[$Name]
+}
+
+# All-or-nothing batch form of Test-PairedPropertyPresent followed by
+# Get-PairedProperty for one name each: returns $null when any name is absent,
+# otherwise a hashtable of name -> value.  Each value is emitted through the
+# success pipeline exactly as Get-PairedProperty returns it (an empty
+# collection becomes $null, a one-element collection becomes its element), so a
+# caller sees the same value either way.  One call replaces 2 * N helper calls
+# in the hot job-query conversion.
+function Read-PairedPropertyValues {
+    param(
+        [AllowNull()] [object]$Object,
+        [string[]]$Names
+    )
+    if ($null -eq $Object) { return $null }
+    $isDictionary = $Object -is [Collections.IDictionary]
+    $values = @{}
+    foreach ($name in $Names) {
+        if ($isDictionary) {
+            if (-not $Object.Contains($name)) { return $null }
+            $slot = $Object[$name]
+        }
+        else {
+            $property = $Object.PSObject.Properties[$name]
+            if ($null -eq $property) { return $null }
+            $slot = $property.Value
+        }
+        if ($null -eq $slot -or $slot -is [string] -or $slot -is [ValueType]) { $values[$name] = $slot }
+        else { $values[$name] = foreach ($once in 0) { $slot } }
+    }
+    return $values
 }
 
 function Get-PairedNestedProperty {
@@ -2413,19 +2453,11 @@ function Test-PairedJobIdentityObservationContract {
     return [pscustomobject][ordered]@{ valid = $true; launchPresent = $true; cleanupPresent = $true; reason = 'observed' }
 }
 
-function Test-PairedJobQueryNumeric {
-    param([AllowNull()] [object]$Value)
-    return $Value -is [byte] -or $Value -is [sbyte] -or
-        $Value -is [int16] -or $Value -is [uint16] -or
-        $Value -is [int32] -or $Value -is [uint32] -or
-        $Value -is [int64] -or $Value -is [uint64] -or
-        $Value -is [single] -or $Value -is [double] -or $Value -is [decimal]
-}
-
 function Convert-PairedJobQueryBoolean {
     param([AllowNull()] [object]$Value)
     if ($Value -is [bool]) { return [bool]$Value }
-    if (-not (Test-PairedJobQueryNumeric $Value)) { return $null }
+    $isNumeric = $null -ne $Value -and $script:PairedJobQueryNumericTypes.Contains($Value.GetType())
+    if (-not $isNumeric) { return $null }
     try {
         $number = [decimal]$Value
         if ($number -eq 0) { return $false }
@@ -2449,7 +2481,8 @@ function Convert-PairedJobQueryBoundedUInt64 {
         [AllowNull()] [object]$Value,
         [Parameter(Mandatory = $true)] [UInt64]$Maximum
     )
-    if (-not (Test-PairedJobQueryNumeric $Value) -or $Value -is [bool]) { return $null }
+    $isNumeric = $null -ne $Value -and $script:PairedJobQueryNumericTypes.Contains($Value.GetType())
+    if (-not $isNumeric) { return $null }
     try {
         $number = [decimal]$Value
         if ($number -lt 0 -or $number -gt [decimal]$Maximum -or
@@ -2830,24 +2863,21 @@ function Convert-PairedJobQueryObservation {
             'assignedProcessCount', 'listedProcessCount', 'resized', 'attempts',
             'attemptsTruncated'
         )
-        foreach ($field in $requiredFields) {
-            if (-not (Test-PairedPropertyPresent $Raw $field)) {
-                return New-PairedUnavailableJobQueryObservation
-            }
-        }
-        $attempted = Convert-PairedJobQueryBoolean (Get-PairedProperty $Raw @('attempted'))
-        $skipped = Convert-PairedJobQueryBoolean (Get-PairedProperty $Raw @('skipped'))
-        $succeeded = Convert-PairedJobQueryBoolean (Get-PairedProperty $Raw @('succeeded'))
-        $resized = Convert-PairedJobQueryBoolean (Get-PairedProperty $Raw @('resized'))
-        $attemptsTruncated = Convert-PairedJobQueryBoolean (Get-PairedProperty $Raw @('attemptsTruncated'))
-        $queryCount = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $Raw @('queryCount')) ([UInt64]$script:PairedJobQueryMaxCount)
-        $attemptCount = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $Raw @('attemptCount')) ([UInt64]$script:PairedJobQueryMaxCount)
-        $capacityBytes = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $Raw @('capacityBytes')) $script:PairedJobQueryMaxBytes
-        $requiredBytes = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $Raw @('requiredBytes')) $script:PairedJobQueryMaxBytes
-        $returnLengthBytes = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $Raw @('returnLengthBytes')) $script:PairedJobQueryMaxBytes
-        $assignedProcessCount = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $Raw @('assignedProcessCount')) $script:PairedJobQueryMaxProcessCount
-        $listedProcessCount = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $Raw @('listedProcessCount')) $script:PairedJobQueryMaxProcessCount
-        $errorRaw = Get-PairedProperty $Raw @('errorCode')
+        $rawFields = Read-PairedPropertyValues $Raw $requiredFields
+        if ($null -eq $rawFields) { return New-PairedUnavailableJobQueryObservation }
+        $attempted = Convert-PairedJobQueryBoolean $rawFields['attempted']
+        $skipped = Convert-PairedJobQueryBoolean $rawFields['skipped']
+        $succeeded = Convert-PairedJobQueryBoolean $rawFields['succeeded']
+        $resized = Convert-PairedJobQueryBoolean $rawFields['resized']
+        $attemptsTruncated = Convert-PairedJobQueryBoolean $rawFields['attemptsTruncated']
+        $queryCount = Convert-PairedJobQueryBoundedUInt64 $rawFields['queryCount'] ([UInt64]$script:PairedJobQueryMaxCount)
+        $attemptCount = Convert-PairedJobQueryBoundedUInt64 $rawFields['attemptCount'] ([UInt64]$script:PairedJobQueryMaxCount)
+        $capacityBytes = Convert-PairedJobQueryBoundedUInt64 $rawFields['capacityBytes'] $script:PairedJobQueryMaxBytes
+        $requiredBytes = Convert-PairedJobQueryBoundedUInt64 $rawFields['requiredBytes'] $script:PairedJobQueryMaxBytes
+        $returnLengthBytes = Convert-PairedJobQueryBoundedUInt64 $rawFields['returnLengthBytes'] $script:PairedJobQueryMaxBytes
+        $assignedProcessCount = Convert-PairedJobQueryBoundedUInt64 $rawFields['assignedProcessCount'] $script:PairedJobQueryMaxProcessCount
+        $listedProcessCount = Convert-PairedJobQueryBoundedUInt64 $rawFields['listedProcessCount'] $script:PairedJobQueryMaxProcessCount
+        $errorRaw = $rawFields['errorCode']
         $errorCode = Convert-PairedJobQueryErrorCode $errorRaw
         if ($null -eq $attempted -or $null -eq $skipped -or $null -eq $succeeded -or
             $null -eq $resized -or $null -eq $attemptsTruncated -or
@@ -2859,7 +2889,7 @@ function Convert-PairedJobQueryObservation {
             $listedProcessCount -gt $assignedProcessCount) {
             return New-PairedUnavailableJobQueryObservation
         }
-        $rawAttemptsValue = Get-PairedProperty $Raw @('attempts')
+        $rawAttemptsValue = $rawFields['attempts']
         if ($null -eq $rawAttemptsValue) { return New-PairedUnavailableJobQueryObservation }
         $rawAttempts = @($rawAttemptsValue)
         $boundedAttempts = New-Object Collections.Generic.List[object]
@@ -2874,22 +2904,19 @@ function Convert-PairedJobQueryObservation {
                 'capacityBytes', 'requiredBytes', 'returnLengthBytes',
                 'assignedProcessCount', 'listedProcessCount', 'resized'
             )
-            foreach ($field in $attemptFields) {
-                if (-not (Test-PairedPropertyPresent $attempt $field)) {
-                    return New-PairedUnavailableJobQueryObservation
-                }
-            }
-            $attemptObserved = Convert-PairedJobQueryBoolean (Get-PairedProperty $attempt @('attempted'))
-            $attemptNumber = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $attempt @('attemptNumber')) ([UInt64]$script:PairedJobQueryMaxAttempts)
-            $attemptSucceeded = Convert-PairedJobQueryBoolean (Get-PairedProperty $attempt @('succeeded'))
-            $attemptErrorRaw = Get-PairedProperty $attempt @('errorCode')
+            $attemptValues = Read-PairedPropertyValues $attempt $attemptFields
+            if ($null -eq $attemptValues) { return New-PairedUnavailableJobQueryObservation }
+            $attemptObserved = Convert-PairedJobQueryBoolean $attemptValues['attempted']
+            $attemptNumber = Convert-PairedJobQueryBoundedUInt64 $attemptValues['attemptNumber'] ([UInt64]$script:PairedJobQueryMaxAttempts)
+            $attemptSucceeded = Convert-PairedJobQueryBoolean $attemptValues['succeeded']
+            $attemptErrorRaw = $attemptValues['errorCode']
             $attemptError = Convert-PairedJobQueryErrorCode $attemptErrorRaw
-            $attemptCapacity = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $attempt @('capacityBytes')) $script:PairedJobQueryMaxBytes
-            $attemptRequired = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $attempt @('requiredBytes')) $script:PairedJobQueryMaxBytes
-            $attemptReturn = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $attempt @('returnLengthBytes')) $script:PairedJobQueryMaxBytes
-            $attemptAssigned = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $attempt @('assignedProcessCount')) $script:PairedJobQueryMaxProcessCount
-            $attemptListed = Convert-PairedJobQueryBoundedUInt64 (Get-PairedProperty $attempt @('listedProcessCount')) $script:PairedJobQueryMaxProcessCount
-            $attemptResized = Convert-PairedJobQueryBoolean (Get-PairedProperty $attempt @('resized'))
+            $attemptCapacity = Convert-PairedJobQueryBoundedUInt64 $attemptValues['capacityBytes'] $script:PairedJobQueryMaxBytes
+            $attemptRequired = Convert-PairedJobQueryBoundedUInt64 $attemptValues['requiredBytes'] $script:PairedJobQueryMaxBytes
+            $attemptReturn = Convert-PairedJobQueryBoundedUInt64 $attemptValues['returnLengthBytes'] $script:PairedJobQueryMaxBytes
+            $attemptAssigned = Convert-PairedJobQueryBoundedUInt64 $attemptValues['assignedProcessCount'] $script:PairedJobQueryMaxProcessCount
+            $attemptListed = Convert-PairedJobQueryBoundedUInt64 $attemptValues['listedProcessCount'] $script:PairedJobQueryMaxProcessCount
+            $attemptResized = Convert-PairedJobQueryBoolean $attemptValues['resized']
             if ($null -eq $attemptObserved -or $null -eq $attemptNumber -or $attemptNumber -eq 0 -or
                 $null -eq $attemptSucceeded -or $null -eq $attemptCapacity -or
                 $null -eq $attemptRequired -or $null -eq $attemptReturn -or
@@ -3665,16 +3692,28 @@ function Convert-PairedProcessDiagnostics {
     $rawSnapshots = @($rawSnapshotsValue)
     $snapshotCount = 0
     foreach ($checkpoint in @($script:PairedDiagnosticCheckpointNames)) {
-        $target = @($empty.processTreeSnapshots | Where-Object { $_.checkpoint -eq $checkpoint } | Select-Object -First 1)
-        if (@($target).Count -eq 0) { continue }
-        $output = $target[0]
-        $source = @($rawSnapshots | Where-Object { [string](Get-PairedProperty $_ @('checkpoint', 'label')) -eq $checkpoint } | Select-Object -First 1)
-        if (@($source).Count -eq 0) {
+        # First-match scans written as loops: the Where-Object | Select-Object
+        # -First 1 pipelines they replace cost one pipeline setup per
+        # checkpoint per diagnostics conversion.
+        $output = $null
+        foreach ($candidate in $empty.processTreeSnapshots) {
+            if ($candidate.checkpoint -eq $checkpoint) { $output = $candidate; break }
+        }
+        if ($null -eq $output) { continue }
+        $source = $null
+        $sourceFound = $false
+        foreach ($candidate in $rawSnapshots) {
+            if ([string](Get-PairedProperty $candidate @('checkpoint', 'label')) -eq $checkpoint) {
+                $source = $candidate
+                $sourceFound = $true
+                break
+            }
+        }
+        if (-not $sourceFound) {
             $output.status = 'unavailable'
             continue
         }
         $snapshotCount++
-        $source = $source[0]
         $rawStatus = Get-PairedProperty $source @('status')
         $status = [string]$rawStatus
         $statusValid = $false
@@ -3820,14 +3859,16 @@ function Convert-PairedProcessDiagnostics {
         ($exitObservedValue -eq $null)) {
         $empty.observationStatus = 'unavailable'
     }
-    elseif (@($empty.processTreeSnapshots | Where-Object { $_.status -eq 'unavailable' }).Count -gt 0) {
-        $empty.observationStatus = 'unavailable'
-    }
-    elseif (@($empty.processTreeSnapshots | Where-Object { $_.status -eq 'observed' }).Count -gt 0) {
-        $empty.observationStatus = 'observed'
-    }
     else {
-        $empty.observationStatus = 'not-reached'
+        $anyUnavailable = $false
+        $anyObserved = $false
+        foreach ($snapshot in $empty.processTreeSnapshots) {
+            if ($snapshot.status -eq 'unavailable') { $anyUnavailable = $true }
+            if ($snapshot.status -eq 'observed') { $anyObserved = $true }
+        }
+        $empty.observationStatus = if ($anyUnavailable) { 'unavailable' }
+        elseif ($anyObserved) { 'observed' }
+        else { 'not-reached' }
     }
     return $empty
 }
@@ -5864,6 +5905,47 @@ function Invoke-PairedSelfTest {
         $selfTestError234Run.cleanupObservation.query.errorCode -eq 234)
     if (-not $selfTestGoodQueryVerified -or -not $selfTestPartialQueryVerified -or -not $selfTestError234Verified) {
         throw 'Paired job query observation normalization self-test failed.'
+    }
+    # Each case breaks exactly one rule of a job query that converts as
+    # 'succeeded', so every rejection rule is pinned by a case of its own (#327).
+    $selfTestJobQueryRejectionCases = [ordered]@{
+        'missing-field' = { param($q) [void]$q.PSObject.Properties.Remove('resized') }
+        'null-count' = { param($q) $q.returnLengthBytes = $null }
+        'null-boolean' = { param($q) $q.resized = $null }
+        'boolean-count' = { param($q) $q.capacityBytes = $true }
+        'string-boolean' = { param($q) $q.attempted = 'true' }
+        'number-two-boolean' = { param($q) $q.resized = 2 }
+        'negative-count' = { param($q) $q.queryCount = -1 }
+        'fractional-count' = { param($q) $q.requiredBytes = 1.5 }
+        'count-over-maximum' = { param($q) $q.queryCount = $script:PairedJobQueryMaxCount + 1 }
+        'listed-over-assigned' = { param($q) $q.listedProcessCount = 2 }
+        'succeeded-with-error' = { param($q) $q.errorCode = 5 }
+        'failed-without-error' = { param($q) $q.succeeded = $false }
+        'attempted-and-skipped' = { param($q) $q.skipped = $true }
+        'attempted-with-zero-queries' = { param($q) $q.queryCount = 0 }
+        'fewer-counted-than-recorded-attempts' = { param($q) $q.attemptCount = 1 }
+        'attempted-without-attempts' = { param($q) $q.attempts = @() }
+        'not-attempted-with-attempts' = { param($q) $q.attempted = $false }
+        'scalar-attempt' = { param($q) $q.attempts[1] = 'attempt' }
+        'attempt-missing-field' = { param($q) [void]$q.attempts[1].PSObject.Properties.Remove('resized') }
+        'attempt-number-zero' = { param($q) $q.attempts[1].attemptNumber = 0 }
+        'attempt-null-count' = { param($q) $q.attempts[1].returnLengthBytes = $null }
+        'attempt-not-attempted' = { param($q) $q.attempts[1].attempted = $false }
+        'attempt-succeeded-with-error' = { param($q) $q.attempts[1].errorCode = 5 }
+        'attempt-failed-without-error' = { param($q) $q.attempts[0].errorCode = 0 }
+        'attempt-listed-over-assigned' = { param($q) $q.attempts[1].listedProcessCount = 2 }
+    }
+    $selfTestJobQueryControl = Convert-PairedJobQueryObservation ($selfTestGoodJobQuery | ConvertTo-Json -Depth 10 | ConvertFrom-Json)
+    $selfTestJobQueryRulesNotEnforced = New-Object Collections.Generic.List[string]
+    foreach ($caseName in $selfTestJobQueryRejectionCases.Keys) {
+        $candidate = $selfTestGoodJobQuery | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+        & $selfTestJobQueryRejectionCases[$caseName] $candidate
+        if ((Convert-PairedJobQueryObservation $candidate).status -ne 'unavailable') {
+            [void]$selfTestJobQueryRulesNotEnforced.Add($caseName)
+        }
+    }
+    if ($selfTestJobQueryControl.status -ne 'succeeded' -or $selfTestJobQueryRulesNotEnforced.Count -ne 0) {
+        throw "Paired job query rejection self-test failed: $($selfTestJobQueryRulesNotEnforced -join ', ')"
     }
     $selfTestMalformedJobQueryDiagnostics = $selfTestStartupDiagnostics | ConvertTo-Json -Depth 20 | ConvertFrom-Json
     $selfTestMalformedJobQueryDiagnostics.processTreeSnapshots[0].jobQueryObservation =
