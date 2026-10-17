@@ -56,11 +56,11 @@ constexpr std::array kBuiltInResources{
 	BuiltInResource{ L"sakura-configuration-language-basics", 39010, 39011, true },
 	BuiltInResource{ L"sakura-legacy-language-basics", 39012, 39013, true },
 	BuiltInResource{ L"sakura-projects", 39014, 39015, true },
-	// The schema-2 packages are offered rather than installed. They show
-	// nothing without a GitHub connection, so the user admits them from the
-	// Extensions tool instead of finding two activity bar containers appear.
-	BuiltInResource{ L"sakura-github-pull-requests", 39016, 39017, false },
-	BuiltInResource{ L"sakura-github-actions", 39018, 39019, false },
+	// Installed by default on the owner's decision (#337), so an update brings
+	// them into existing profiles too. Without a GitHub connection their Views
+	// show the failed read with a Retry row, never placeholder data.
+	BuiltInResource{ L"sakura-github-pull-requests", 39016, 39017, true },
+	BuiltInResource{ L"sakura-github-actions", 39018, 39019, true },
 };
 constexpr DWORD kToolTimeoutMilliseconds = 30'000;
 constexpr std::size_t kMaximumToolOutputBytes = 4U * 1024U * 1024U;
@@ -634,6 +634,15 @@ std::vector<std::wstring_view> EmbeddedBuiltInExtensionIds()
 	return ids;
 }
 
+bool StartupInstallsBuiltIn(std::wstring_view extensionId,
+	bool explicitlyUninstalled, bool installedAsBuiltIn) noexcept
+{
+	if (explicitlyUninstalled) return false;
+	const auto builtIn = std::ranges::find(kBuiltInResources, extensionId, &BuiltInResource::Id);
+	return builtIn != kBuiltInResources.end()
+		&& (builtIn->InstalledByDefault() || installedAsBuiltIn);
+}
+
 std::optional<std::vector<ExtensionDescriptor>> DecodeInstalledExtensions(std::string_view json)
 {
 	const auto parsed = platform::serialization::CJsoncDocument::Parse(json);
@@ -912,8 +921,8 @@ ManagementOperationResult CWin32SenpManagementService::Start()
 			explicitlyUninstalled = std::ranges::find(m_uninstalledBuiltIns,
 				builtIn.Id()) != m_uninstalledBuiltIns.end();
 		}
-		if (current || explicitlyUninstalled) continue;
-		if (!builtIn.InstalledByDefault() && !installedAsBuiltIn) continue;
+		if (current) continue;
+		if (!StartupInstallsBuiltIn(builtIn.Id(), explicitlyUninstalled, installedAsBuiltIn)) continue;
 		loaded = InstallBuiltInPackage(builtIn.Id());
 		if (!loaded.Succeeded()) return loaded;
 	}

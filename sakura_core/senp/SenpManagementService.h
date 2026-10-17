@@ -221,6 +221,15 @@ struct ExtensionDescriptor final {
 //! Presentation that keys built-in metadata by ID is checked against this list.
 [[nodiscard]] std::vector<std::wstring_view> EmbeddedBuiltInExtensionIds();
 
+//! Startup's decision for an embedded built-in that the profile lacks or holds
+//! in an outdated copy: true when startup installs or refreshes it before the
+//! runtime starts. An explicit uninstall is honored across product updates. An
+//! installed-by-default built-in is installed whenever the profile lacks it, so
+//! a product update brings it into an existing profile; an offered one is only
+//! refreshed when the profile already holds it as a built-in.
+[[nodiscard]] bool StartupInstallsBuiltIn(std::wstring_view extensionId,
+	bool explicitlyUninstalled, bool installedAsBuiltIn) noexcept;
+
 struct ManagementSnapshot final {
 	EManagementState state = EManagementState::Created;
 	std::uint64_t revision = 0;

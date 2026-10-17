@@ -86,6 +86,11 @@ schema 2分岐は`runtime`のABI/module検証を経てmanifestを返し、`Unsup
 GitHub 2拡張をbuilt-in packageとして同梱する（RCDATA 39016-39019）。
 どちらも`installedByDefault=false`——GitHub接続が無ければ何も表示しないため、
 activity barに勝手に現れるのではなくExtensions toolから利用者が受理する。
+2026-10-17（#337）: 所有者の判断でこの既定を反転し、2拡張とも`installedByDefault=true`
+にした。起動時の照合は既定packageが無いprofileへ導入するため、新規profileだけでなく
+更新した既存profileにも更新後の最初のwindowで入る（Activity Barのcontainerも同じwindowに出る）。明示的にアンインストールした利用者は
+tombstoneによりそのまま残る。判定は`senp::StartupInstallsBuiltIn`に切り出し、
+`SenpBuiltInStartup.*`で全組み込みIDについて固定した。
 Rust 18件、`*Senp*` native 342件（既知の先行失敗1件のみ）、
 `tools/verify-senp-runtime.py --offline`が`{"status":"pass","survivors":[]}`、
 実packageの`inspect-builtin`がschema 2とcommand宣言を返すことを確認した。

@@ -105,9 +105,10 @@
   restored values at construction; it performs no durable writes. Profile
   restoration and dynamic package publication must be wired by native
   composition (U06). The v2 package gate is released now that the body, command,
-  persistence and tool adapters exist; the two GitHub packages ship as built-in
-  candidates that are offered rather than installed, so an incomplete capability
-  is never presented as a working VS Code feature.
+  persistence and tool adapters exist. The two GitHub packages were offered
+  rather than installed while those capabilities were incomplete; since #337
+  they are installed by default, including into existing profiles on update
+  (see the default-installation divergence in `../../senp/CLAUDE.md`).
 
 Run the focused `SenpViewContainer`, `ViewPaneStackLayout`, existing page/layout,
 SCM and `CustomUiAutomationProvider` tests after a solution build. Use

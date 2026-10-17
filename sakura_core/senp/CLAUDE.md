@@ -72,6 +72,11 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   embedded one, including offered (`installedByDefault == false`) built-ins the
   user installed; an offered built-in that is absent is still never installed
   on the user's behalf. Enablement and uninstall tombstones are preserved.
+  `senp::StartupInstallsBuiltIn` is that decision, and `SenpBuiltInStartup.*`
+  pins it for every embedded ID. No embedded built-in is offered today (#337).
+  A same-ID developer or publisher copy of an installed-by-default built-in is
+  a different trust class, so startup replaces it with the embedded package;
+  give a locally developed build of one a distinct ID.
 
 - The schema-2 admission gate is released. It was held closed only until the
   real application could accept a v2 package, run the GitHub tool, complete a
@@ -186,6 +191,18 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   the active profile state. Startup must honor that tombstone across product
   updates, while explicit reinstall clears it. Embedded package resources and
   immutable content cache remain available for an offline reinstall.
+- Because a missing default package is installed whenever the profile lacks it,
+  flipping a built-in to installed-by-default reaches existing profiles on
+  their first window after the update, not only fresh profiles. The GitHub
+  Pull Requests and GitHub Actions packages were offered until 2026-10-17 and
+  are installed by default since, on the owner's decision (#337). A profile
+  where the user uninstalled one keeps it uninstalled through its tombstone.
+  **Recorded divergence:** VS Code bundles neither extension; a user installs
+  both from the Marketplace. SENP has no gallery, so default installation
+  replaces that step. The divergence is the default only: the Views, command
+  IDs and upstream View identifiers are unchanged. A profile without a GitHub
+  connection sees the failed read as a Retry row (today `tool-unavailable`,
+  an untranslated failure token), never placeholder data.
 - Declarative `languages` and `grammars` use the VS Code contribution shape and
   are loaded in-process by `ISenpLanguageService`. Package management chooses
   enabled assets; the language service selects a grammar; the TextMate engine
