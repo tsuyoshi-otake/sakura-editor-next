@@ -97,12 +97,24 @@ class MinGWAdvisoryFailureContractTests(unittest.TestCase):
 
         cmake = CMAKE_LISTS.read_text(encoding="utf-8-sig")
         bound = re.search(
-            r"set_tests_properties\(UnitTest pytest BuildToolTests PROPERTIES TIMEOUT (\d+)\)",
+            r"get_property\((\w+) DIRECTORY PROPERTY TESTS\)\s*\n"
+            r"set_tests_properties\(\$\{\1\} PROPERTIES TIMEOUT (\d+)\)",
             cmake,
         )
         self.assertIsNotNone(bound, "every hosted ctest test needs its own TIMEOUT")
         # The step also reconfigures and rebuilds before ctest starts.
-        self.assertLessEqual(int(bound.group(1)), step_seconds - 120)
+        self.assertLessEqual(int(bound.group(2)), step_seconds - 120)
+
+        # A name list missed the CoverageTest that the Debug leg registers only
+        # with OpenCppCoverage installed; the directory's list cannot, as long
+        # as no test is registered after it is read.
+        registrations = [m.start() for m in re.finditer(r"(?m)^\s*add_test\(", cmake)]
+        self.assertIn(
+            "add_test(NAME CoverageTest", cmake, "the conditional test this guards"
+        )
+        self.assertLess(
+            max(registrations), bound.start(), "an add_test after the bound escapes it"
+        )
 
 
 if __name__ == "__main__":
