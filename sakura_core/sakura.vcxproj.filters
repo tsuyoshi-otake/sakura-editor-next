@@ -3355,6 +3355,9 @@
 	<ClCompile Include="..\sakura_core\workbench\viewcontainer\ViewContainerPageRegistry.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\extensions\BuiltInExtensionLocalization.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\extensions\CExtensionsWorkbenchTool.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>

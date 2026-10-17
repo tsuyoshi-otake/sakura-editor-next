@@ -626,6 +626,14 @@ bool ParseRuntimeContribution(const JsoncValue::Object& manifest,
 
 } // namespace
 
+std::vector<std::wstring_view> EmbeddedBuiltInExtensionIds()
+{
+	std::vector<std::wstring_view> ids;
+	ids.reserve(kBuiltInResources.size());
+	for (const auto& builtIn : kBuiltInResources) ids.push_back(builtIn.Id());
+	return ids;
+}
+
 std::optional<std::vector<ExtensionDescriptor>> DecodeInstalledExtensions(std::string_view json)
 {
 	const auto parsed = platform::serialization::CJsoncDocument::Parse(json);

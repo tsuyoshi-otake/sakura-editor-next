@@ -7,9 +7,12 @@
 #include "pch.h"
 #include "CSelectLang.h"
 #include "func/CFuncLookup.h"
+#include "senp/SenpManagementService.h"
 #include "window/CEditWnd.h"
 #include "window/CCustomFrameController.h"
+#include "workbench/extensions/BuiltInExtensionLocalization.h"
 
+#include <algorithm>
 #include <array>
 #include <filesystem>
 #include <fstream>
@@ -140,7 +143,7 @@ struct WorkbenchScmLocaleExpectation {
 
 struct WorkbenchExtensionsLocaleExpectation {
 	const wchar_t* dllName;
-	std::array<const wchar_t*, 36> strings;
+	std::array<const wchar_t*, 42> strings;
 };
 
 constexpr std::array<UINT, 5> kWorkbenchScmStringResourceIds = {
@@ -151,7 +154,7 @@ constexpr std::array<UINT, 5> kWorkbenchScmStringResourceIds = {
 	STR_WORKBENCH_SCM_GRAPH_UNAVAILABLE,
 };
 
-constexpr std::array<UINT, 36> kWorkbenchExtensionsStringResourceIds = {
+constexpr std::array<UINT, 42> kWorkbenchExtensionsStringResourceIds = {
 	STR_WORKBENCH_EXTENSIONS_TITLE,
 	STR_WORKBENCH_COMMAND_EXTENSIONS,
 	STR_WORKBENCH_EXTENSIONS_INSTALL_FROM_SENP,
@@ -188,6 +191,12 @@ constexpr std::array<UINT, 36> kWorkbenchExtensionsStringResourceIds = {
 	STR_SENP_LEGACY_LANGUAGE_BASICS_DESCRIPTION,
 	STR_SENP_SHELL_LANGUAGE_BASICS_NAME,
 	STR_SENP_SHELL_LANGUAGE_BASICS_DESCRIPTION,
+	STR_SENP_GITHUB_ACTIONS_NAME,
+	STR_SENP_GITHUB_ACTIONS_DESCRIPTION,
+	STR_SENP_GITHUB_PULL_REQUESTS_NAME,
+	STR_SENP_GITHUB_PULL_REQUESTS_DESCRIPTION,
+	STR_SENP_PROJECTS_NAME,
+	STR_SENP_PROJECTS_DESCRIPTION,
 };
 
 //! This is the complete function-code surface of the File menu's v8 default,
@@ -498,7 +507,11 @@ TEST(WorkbenchExtensionsLocalization, AllSelectedRuntimeResourcesContainLocalize
 			L"インフラストラクチャ言語の基本",
 			L"Docker、Terraform/HCL、Bicep、CloudFormation、AWS CDK、Kubernetes、Helm、および CI 設定の構文を強調表示します。",
 			L"レガシー言語の基本", L"Perl、COBOL、および固定形式/自由形式の Fortran の構文を強調表示します。",
-			L"シェル言語の基本", L"sh、Bash、zsh、ksh、csh、tcsh、および PowerShell の構文を強調表示します。" } },
+			L"シェル言語の基本", L"sh、Bash、zsh、ksh、csh、tcsh、および PowerShell の構文を強調表示します。",
+			L"GitHub Actions", L"リポジトリのワークフローと、ワークフロー実行の各試行を参照します。",
+			L"GitHub の Issue とプル リクエスト", L"リポジトリの Issue とプル リクエストを参照します。",
+			L"プロジェクト",
+			L"保存したフォルダーとワークスペースのプロジェクトを一覧表示し、Git 作業ツリーへ移動できます。" } },
 		WorkbenchExtensionsLocaleExpectation{ L"sakura_lang_en_US.dll", {
 			L"Extensions", L"Show Extensions", L"Install from .senp...", L"Install", L"Uninstall", L"Built-in", L"Enabled",
 			L"Disabled", L"No extensions.", L"Extension install failed", L"Extension uninstall failed",
@@ -515,7 +528,10 @@ TEST(WorkbenchExtensionsLocalization, AllSelectedRuntimeResourcesContainLocalize
 			L"Indent Rainbow", L"Colors indentation levels in the active editor.", L"Infrastructure Language Basics",
 			L"Docker, Terraform/HCL, Bicep, CloudFormation, AWS CDK, Kubernetes, Helm, and CI configuration syntax highlighting.",
 			L"Legacy Language Basics", L"Syntax highlighting for Perl, COBOL, and fixed/free-form Fortran.",
-			L"Shell Language Basics", L"Syntax highlighting for sh, Bash, zsh, ksh, csh, tcsh, and PowerShell." } },
+			L"Shell Language Basics", L"Syntax highlighting for sh, Bash, zsh, ksh, csh, tcsh, and PowerShell.",
+			L"GitHub Actions", L"Browse repository workflows and run attempts.",
+			L"GitHub Issues and Pull Requests", L"Browse repository issues and pull requests.",
+			L"Projects", L"Lists saved Folder and Workspace projects with bounded Git worktree navigation." } },
 		WorkbenchExtensionsLocaleExpectation{ L"sakura_lang_zh_CN.dll", {
 			L"扩展", L"显示扩展", L"从 .senp 安装...", L"安装", L"卸载", L"内置", L"已启用", L"已禁用", L"没有扩展。",
 			L"扩展安装失败", L"扩展卸载失败", L"安装开发者 SENP 包",
@@ -530,7 +546,10 @@ TEST(WorkbenchExtensionsLocalization, AllSelectedRuntimeResourcesContainLocalize
 			L"缩进彩虹", L"为活动编辑器中的缩进级别着色。", L"基础设施语言基础",
 			L"为 Docker、Terraform/HCL、Bicep、CloudFormation、AWS CDK、Kubernetes、Helm 和 CI 配置提供语法高亮。",
 			L"传统语言基础", L"为 Perl、COBOL 以及固定/自由格式 Fortran 提供语法高亮。",
-			L"Shell 语言基础", L"为 sh、Bash、zsh、ksh、csh、tcsh 和 PowerShell 提供语法高亮。" } },
+			L"Shell 语言基础", L"为 sh、Bash、zsh、ksh、csh、tcsh 和 PowerShell 提供语法高亮。",
+			L"GitHub Actions", L"浏览存储库的工作流以及工作流运行的各次尝试。",
+			L"GitHub 问题和拉取请求", L"浏览存储库的问题和拉取请求。",
+			L"项目", L"列出已保存的文件夹和工作区项目，并可导航到 Git 工作树。" } },
 	};
 
 	for (const auto& locale : locales) {
@@ -546,6 +565,64 @@ TEST(WorkbenchExtensionsLocalization, AllSelectedRuntimeResourcesContainLocalize
 			}
 			catch (const std::out_of_range&) {
 				ADD_FAILURE() << "selected language resource is missing Workbench Extensions string " << resourceId;
+			}
+		}
+	}
+}
+
+//! A built-in added to the embedded catalog without a localization row shows its
+//! English manifest text in every language (#336), so the two tables are tied here.
+TEST(WorkbenchExtensionsLocalization, EveryEmbeddedBuiltInIsLocalizedInEachSelectedRuntimeResource)
+{
+	ScopedLanguageSelection restoreLanguage;
+	const auto resourceDirectory = GetCurrentProcessDirectory();
+	ASSERT_TRUE(std::filesystem::is_regular_file(resourceDirectory / L"sakura_lang_en_US.dll"));
+	ASSERT_TRUE(std::filesystem::is_regular_file(resourceDirectory / L"sakura_lang_zh_CN.dll"));
+
+	const auto extensionIds = senp::EmbeddedBuiltInExtensionIds();
+	ASSERT_FALSE(extensionIds.empty());
+
+	// Non-empty text would also accept English copied into another language, so each
+	// row's strings must be pinned verbatim per language in the test above as well.
+	for (const auto extensionId : extensionIds) {
+		SCOPED_TRACE(std::wstring(extensionId));
+		const auto localization = workbench::extensions::FindBuiltInLocalization(extensionId);
+		if (!localization) {
+			continue;
+		}
+		for (const UINT resourceId : { localization->displayName, localization->description }) {
+			EXPECT_TRUE(std::ranges::find(kWorkbenchExtensionsStringResourceIds, resourceId)
+				!= kWorkbenchExtensionsStringResourceIds.end())
+				<< "built-in string " << resourceId << " has no pinned text per language";
+		}
+	}
+
+	CSelectLang::InitializeLanguageEnvironment();
+	for (const auto* dllName : { L"", L"sakura_lang_en_US.dll", L"sakura_lang_zh_CN.dll" }) {
+		SCOPED_TRACE(dllName);
+		CSelectLang::ChangeLang(dllName);
+		// ChangeLang ignores a DLL that failed to load, which would leave Japanese
+		// selected and test it again under this language's name.
+		ASSERT_EQ(std::wstring(dllName),
+			std::wstring(CSelectLang::GetLangInfo(CSelectLang::gm_Selected).GetDllName()));
+		for (const auto extensionId : extensionIds) {
+			const std::wstring id(extensionId);
+			SCOPED_TRACE(id);
+			const auto localization = workbench::extensions::FindBuiltInLocalization(extensionId);
+			if (!localization) {
+				ADD_FAILURE() << "embedded built-in has no localization row";
+				continue;
+			}
+			for (const UINT resourceId : { localization->displayName, localization->description }) {
+				SCOPED_TRACE(resourceId);
+				try {
+					const auto resource = cxx::load_string(
+						resourceId, std::optional<HMODULE>{ CSelectLang::getLangRsrcInstance() });
+					EXPECT_FALSE(resource.empty());
+				}
+				catch (const std::out_of_range&) {
+					ADD_FAILURE() << "selected language resource is missing the built-in string";
+				}
 			}
 		}
 	}

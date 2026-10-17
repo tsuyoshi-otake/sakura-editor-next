@@ -11,6 +11,7 @@ SPDX-License-Identifier: Zlib
 #include "CSelectLang.h"
 #include "sakura_rc.h"
 #include "senp/SenpManagementService.h"
+#include "workbench/extensions/BuiltInExtensionLocalization.h"
 #include "workbench/icons/CCodiconFont.h"
 #include "workbench/icons/CodiconGlyphTable.h"
 #include "workbench/icons/LabelRunPainter.h"
@@ -141,39 +142,12 @@ bool GetWindowBoundsInParent(HWND window, HWND parent, RECT& bounds) noexcept
 	return true;
 }
 
-struct BuiltInLocalizationIds final {
-	std::wstring_view extensionId;
-	UINT displayName;
-	UINT description;
-};
-
-constexpr std::array kBuiltInLocalizations{
-	BuiltInLocalizationIds{ L"sakura-configuration-language-basics",
-		STR_SENP_CONFIGURATION_LANGUAGE_BASICS_NAME,
-		STR_SENP_CONFIGURATION_LANGUAGE_BASICS_DESCRIPTION },
-	BuiltInLocalizationIds{ L"sakura-core-language-basics",
-		STR_SENP_CORE_LANGUAGE_BASICS_NAME, STR_SENP_CORE_LANGUAGE_BASICS_DESCRIPTION },
-	BuiltInLocalizationIds{ L"sakura-database-language-basics",
-		STR_SENP_DATABASE_LANGUAGE_BASICS_NAME,
-		STR_SENP_DATABASE_LANGUAGE_BASICS_DESCRIPTION },
-	BuiltInLocalizationIds{ L"sakura-indent-rainbow",
-		STR_SENP_INDENT_RAINBOW_NAME, STR_SENP_INDENT_RAINBOW_DESCRIPTION },
-	BuiltInLocalizationIds{ L"sakura-infrastructure-language-basics",
-		STR_SENP_INFRASTRUCTURE_LANGUAGE_BASICS_NAME,
-		STR_SENP_INFRASTRUCTURE_LANGUAGE_BASICS_DESCRIPTION },
-	BuiltInLocalizationIds{ L"sakura-legacy-language-basics",
-		STR_SENP_LEGACY_LANGUAGE_BASICS_NAME, STR_SENP_LEGACY_LANGUAGE_BASICS_DESCRIPTION },
-	BuiltInLocalizationIds{ L"sakura-shell-language-basics",
-		STR_SENP_SHELL_LANGUAGE_BASICS_NAME, STR_SENP_SHELL_LANGUAGE_BASICS_DESCRIPTION },
-};
-
 std::wstring LocalizedBuiltInMetadata(const senp::ExtensionDescriptor& extension,
 	std::wstring_view fallback, bool displayName)
 {
 	if (!extension.builtIn) return std::wstring(fallback);
-	const auto found = std::ranges::find(kBuiltInLocalizations, extension.id,
-		&BuiltInLocalizationIds::extensionId);
-	if (found == kBuiltInLocalizations.end()) return std::wstring(fallback);
+	const auto found = FindBuiltInLocalization(extension.id);
+	if (!found) return std::wstring(fallback);
 	const auto localized = Localized(displayName ? found->displayName : found->description);
 	return localized.empty() ? std::wstring(fallback) : localized;
 }

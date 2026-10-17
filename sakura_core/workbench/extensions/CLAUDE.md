@@ -32,6 +32,18 @@
   localize only its known embedded built-ins by stable extension ID in this UI
   composition layer; developer and publisher packages retain their manifest
   `displayName` and `description` verbatim.
+- That localization table is `BuiltInExtensionLocalization.cpp`, kept apart
+  from the HWND view so a new built-in's translation needs no view internals.
+  Every embedded built-in in `senp::EmbeddedBuiltInExtensionIds()` (the
+  `kBuiltInResources` table) needs a row there and both strings in the
+  Japanese, English, and Chinese resource tables. Adding a built-in without
+  them shows its English manifest text in every language, which is how the
+  Projects and GitHub packages shipped untranslated (#336).
+  `WorkbenchExtensionsLocalization.EveryEmbeddedBuiltInIsLocalizedInEachSelectedRuntimeResource`
+  fails until all three are present and until both string IDs are pinned,
+  with their exact text in each language, in
+  `AllSelectedRuntimeResourcesContainLocalizedExtensionStrings`. A non-empty
+  check alone would accept English copied into another language.
 
 ## Intentional SENP Divergence
 

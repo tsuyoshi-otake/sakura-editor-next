@@ -1445,6 +1445,7 @@
 	<ClCompile Include="..\sakura_core\workbench\SenpWindowExtensions.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\viewcontainer\ViewContainerPagePool.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\viewcontainer\ViewContainerPageRegistry.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\extensions\BuiltInExtensionLocalization.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\extensions\CExtensionsWorkbenchTool.cpp" />
 	<ClCompile Include="..\sakura_core\senp\SenpLanguageService.cpp" />
 	<ClCompile Include="..\sakura_core\senp\SenpManagementService.cpp" />

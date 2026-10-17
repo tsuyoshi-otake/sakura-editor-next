@@ -37,7 +37,10 @@ struct GrammarContribution final {
 	std::wstring scopeName;
 	std::wstring path;
 	std::vector<std::wstring> injectTo;
-	[[nodiscard]] bool operator==(const GrammarContribution&) const = default;
+
+private:
+	// Declared in the private section for the same reason as LanguageContribution's.
+	[[nodiscard]] friend bool operator==(const GrammarContribution&, const GrammarContribution&) = default;
 };
 
 struct ViewContainerContribution final {
@@ -213,6 +216,10 @@ struct ExtensionDescriptor final {
 //! no filesystem access and do not make unverified manifests installable.
 [[nodiscard]] std::optional<std::vector<ExtensionDescriptor>> DecodeInstalledExtensions(std::string_view json);
 [[nodiscard]] std::optional<ExtensionDescriptor> DecodeBuiltInExtension(std::string_view json);
+
+//! Stable IDs of every package embedded in this executable, in catalog order.
+//! Presentation that keys built-in metadata by ID is checked against this list.
+[[nodiscard]] std::vector<std::wstring_view> EmbeddedBuiltInExtensionIds();
 
 struct ManagementSnapshot final {
 	EManagementState state = EManagementState::Created;
