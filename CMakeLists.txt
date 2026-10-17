@@ -201,3 +201,12 @@ add_test(NAME BuildToolTests
     -p "test_*.py"
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
 )
+
+# ctest prints a test's captured output only when ctest itself ends the test.
+# A hosted step limit that kills a hung run first discards that output, and
+# with it the googletest [ RUN ] line naming the test that hung (#338).  Bound
+# each test here, below the 15-minute MinGW and MSVC step limits, so every
+# ctest invocation reports a hang itself; the MSVC leg's `ctest --timeout 600`
+# is only a default for a test that has no TIMEOUT.  Hosted runs take 1-4
+# minutes per test.
+set_tests_properties(UnitTest pytest BuildToolTests PROPERTIES TIMEOUT 600)

@@ -16,6 +16,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = REPO_ROOT / ".github/workflows/build-on-msys2.yml"
+CMAKE_LISTS = REPO_ROOT / "CMakeLists.txt"
 
 
 def _workflow() -> str:
@@ -85,6 +86,23 @@ class MinGWAdvisoryFailureContractTests(unittest.TestCase):
         cleanup = _step(self.job, "Clean up test process survivors")
         self.assertIn("if: ${{ always() }}", cleanup)
         self.assertIn("Cleanup-TestProcessSurvivors.ps1", cleanup)
+
+    def test_ctest_ends_a_hung_test_before_the_step_limit_does(self) -> None:
+        # Only a test that ctest itself times out has its captured output, and
+        # so the googletest line naming the hung test, printed (#338).
+        unit_tests = _step(self.job, "Run unit tests")
+        step = re.search(r"timeout-minutes: (\d+)", unit_tests)
+        self.assertIsNotNone(step)
+        step_seconds = int(step.group(1)) * 60
+
+        cmake = CMAKE_LISTS.read_text(encoding="utf-8-sig")
+        bound = re.search(
+            r"set_tests_properties\(UnitTest pytest BuildToolTests PROPERTIES TIMEOUT (\d+)\)",
+            cmake,
+        )
+        self.assertIsNotNone(bound, "every hosted ctest test needs its own TIMEOUT")
+        # The step also reconfigures and rebuilds before ctest starts.
+        self.assertLessEqual(int(bound.group(1)), step_seconds - 120)
 
 
 if __name__ == "__main__":
