@@ -272,6 +272,28 @@ class CiRustNativeWorkflowContractTests(unittest.TestCase):
         self.assertNotIn("cargo install cargo-audit", self.workflow)
         self.assertIn("AUDIT_RESULT: ${{ needs.rust-security-audit.result }}", self.workflow)
 
+    def test_audit_exceptions_expire_with_the_lock(self) -> None:
+        # Owner-approved temporary exceptions in .cargo/audit.toml, keyed by the
+        # crate version each was assessed against. The update that moves a crate
+        # must delete its entry here and its IDs there.
+        exceptions = {
+            ("wasmtime", "49.0.2", "#330"): [f"RUSTSEC-2026-{number:04d}" for number in range(353, 365)],
+            ("zip", "5.1.1", "#335"): ["RUSTSEC-2026-0367", "RUSTSEC-2026-0368", "RUSTSEC-2026-0369"],
+        }
+        config = tomllib.loads((REPO_ROOT / ".cargo/audit.toml").read_text(encoding="utf-8"))
+        self.assertEqual(
+            sorted(advisory for advisories in exceptions.values() for advisory in advisories),
+            sorted(config["advisories"]["ignore"]),
+        )
+        lock = tomllib.loads((REPO_ROOT / "rust/senp/Cargo.lock").read_text(encoding="utf-8"))
+        locked = {(package["name"], package["version"]) for package in lock["package"]}
+        for crate, version, issue in exceptions:
+            with self.subTest(crate=crate):
+                self.assertTrue(
+                    (crate, version) in locked,
+                    f"rust/senp no longer locks {crate} {version}; delete its audit exception ({issue})",
+                )
+
     def test_rust_gates_preserve_historical_release_promotion(self) -> None:
         for name in (
             "Prepare pinned Rust toolchain",

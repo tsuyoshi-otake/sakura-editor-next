@@ -1,0 +1,37 @@
+# cargo-audit reads this file from the directory it runs in. CI audits both
+# lockfiles from the repository root (.github/workflows/build-sakura.yml), so
+# run local audits from the root as well to get the same result.
+#
+# Every ignored advisory is an owner-approved temporary exception, assessed
+# against one locked crate version. test_audit_exceptions_expire_with_the_lock
+# in src/test/py/test_ci_plan.py fails once rust/senp/Cargo.lock leaves that
+# version, so the update that moves the crate must delete its IDs here.
+
+[advisories]
+ignore = [
+    # wasmtime 49.0.2 (#330, approved 2026-10-17). 49.0.3 fixes all twelve but
+    # is younger than the three-day minimum release age until
+    # 2026-10-17T17:11Z. SENP enables neither the async nor the gc feature,
+    # links no host imports, and runs extensions in the separate
+    # sakura_senp_host process under fuel, epoch, and memory limits, so the
+    # reachable remainder is a crash of that process.
+    "RUSTSEC-2026-0353",
+    "RUSTSEC-2026-0354",
+    "RUSTSEC-2026-0355",
+    "RUSTSEC-2026-0356",
+    "RUSTSEC-2026-0357",
+    "RUSTSEC-2026-0358",
+    "RUSTSEC-2026-0359",
+    "RUSTSEC-2026-0360",
+    "RUSTSEC-2026-0361",
+    "RUSTSEC-2026-0362",
+    "RUSTSEC-2026-0363",
+    "RUSTSEC-2026-0364",
+    # zip 5.1.1 (#335, approved 2026-10-17). All three concern extract() and
+    # Unix permission bits. SENP never calls extract(): it reads entries into
+    # memory, rejects every entry that is not a regular file, and runs on
+    # Windows.
+    "RUSTSEC-2026-0367",
+    "RUSTSEC-2026-0368",
+    "RUSTSEC-2026-0369",
+]
