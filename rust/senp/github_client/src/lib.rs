@@ -10,6 +10,11 @@ use std::fmt;
 pub const MAXIMUM_PAGE_ITEMS: usize = 100;
 pub const MAXIMUM_RESPONSE_BYTES: usize = 256 * 1024;
 const MAXIMUM_BODY_BYTES: usize = 240 * 1024;
+/// Labels a row keeps for display; GitHub allows 100 per issue, so the rest
+/// are counted instead of failing the row.
+pub const MAXIMUM_LABELS: usize = 32;
+/// The name GitHub itself shows for an account that no longer exists.
+const DELETED_ACCOUNT_LOGIN: &str = "ghost";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IssueState {
@@ -42,6 +47,9 @@ pub struct Issue {
     pub state: IssueState,
     pub author: String,
     pub labels: Vec<String>,
+    /// Labels the row carries beyond `labels`: past `MAXIMUM_LABELS`, or
+    /// without a usable name.
+    pub labels_omitted: usize,
     pub html_url: String,
     pub comments: u32,
 }
@@ -92,6 +100,7 @@ pub struct PullRequest {
     pub state: IssueState,
     pub author: String,
     pub labels: Vec<String>,
+    pub labels_omitted: usize,
     pub html_url: String,
     pub comments: Option<u32>,
     pub draft: bool,
@@ -147,7 +156,8 @@ struct ApiIssue {
     number: u64,
     title: String,
     state: String,
-    user: ApiUser,
+    #[serde(default)]
+    user: Option<ApiUser>,
     #[serde(default)]
     labels: Vec<ApiLabel>,
     html_url: String,
@@ -184,12 +194,15 @@ struct ApiPullRequest {
     number: u64,
     title: String,
     state: String,
-    user: ApiUser,
+    #[serde(default)]
+    user: Option<ApiUser>,
     #[serde(default)]
     labels: Vec<ApiLabel>,
     html_url: String,
     #[serde(default)]
     comments: Option<u32>,
+    // Always present on github.com; older GitHub Enterprise Server is out of
+    // scope for this release, so a missing `draft` stays a malformed row.
     draft: bool,
     #[serde(default)]
     merged_at: Option<String>,
@@ -220,7 +233,8 @@ struct ApiRepository {
 #[derive(Deserialize)]
 struct ApiComment {
     id: u64,
-    user: ApiUser,
+    #[serde(default)]
+    user: Option<ApiUser>,
     body: String,
     html_url: String,
     created_at: String,
@@ -232,9 +246,48 @@ struct ApiUser {
     login: String,
 }
 
+/// The REST schema allows a label to be a bare string or an object, and an
+/// object's `name` is optional. Anything else is an entry with no usable name.
 #[derive(Deserialize)]
-struct ApiLabel {
-    name: String,
+#[serde(untagged)]
+enum ApiLabel {
+    Name(String),
+    Object { name: Option<String> },
+    Other(de::IgnoredAny),
+}
+
+impl ApiLabel {
+    fn name(self) -> Option<String> {
+        match self {
+            Self::Name(name) | Self::Object { name: Some(name) } => {
+                bounded_text(&name, 128).then_some(name)
+            }
+            Self::Object { name: None } | Self::Other(_) => None,
+        }
+    }
+}
+
+/// Keeps the first `MAXIMUM_LABELS` usable names in GitHub's order and counts
+/// every other entry.
+fn display_labels(labels: Vec<ApiLabel>) -> (Vec<String>, usize) {
+    let total = labels.len();
+    let kept: Vec<String> = labels
+        .into_iter()
+        .filter_map(ApiLabel::name)
+        .take(MAXIMUM_LABELS)
+        .collect();
+    let omitted = total - kept.len();
+    (kept, omitted)
+}
+
+fn author(user: &Option<ApiUser>) -> &str {
+    user.as_ref()
+        .map_or(DELETED_ACCOUNT_LOGIN, |user| &user.login)
+}
+
+fn valid_author(user: &Option<ApiUser>) -> bool {
+    user.as_ref()
+        .is_none_or(|user| bounded_text(&user.login, 128))
 }
 
 #[derive(Default)]
@@ -361,24 +414,24 @@ fn valid_issue(value: &ApiIssue) -> bool {
     value.id > 0
         && value.number > 0
         && bounded_text(&value.title, 1024)
-        && bounded_text(&value.user.login, 128)
+        && valid_author(&value.user)
         && bounded_text(&value.html_url, 2048)
+        // Link activation policy; GitHub Enterprise Server is not declared for
+        // this release, so an http:// host is out of scope.
         && value.html_url.starts_with("https://")
-        && value.labels.len() <= 32
-        && value
-            .labels
-            .iter()
-            .all(|label| bounded_text(&label.name, 128))
 }
 
 fn issue(value: ApiIssue, state: IssueState) -> Issue {
+    let author = author(&value.user).to_owned();
+    let (labels, labels_omitted) = display_labels(value.labels);
     Issue {
         id: value.id,
         number: value.number,
         title: value.title,
         state,
-        author: value.user.login,
-        labels: value.labels.into_iter().map(|label| label.name).collect(),
+        author,
+        labels,
+        labels_omitted,
         html_url: value.html_url,
         comments: value.comments,
     }
@@ -397,14 +450,11 @@ fn valid_pull_request(value: &ApiPullRequest) -> bool {
     value.id > 0
         && value.number > 0
         && bounded_text(&value.title, 1024)
-        && bounded_text(&value.user.login, 128)
+        && valid_author(&value.user)
         && bounded_text(&value.html_url, 2048)
+        // Link activation policy; GitHub Enterprise Server is not declared for
+        // this release, so an http:// host is out of scope.
         && value.html_url.starts_with("https://")
-        && value.labels.len() <= 32
-        && value
-            .labels
-            .iter()
-            .all(|label| bounded_text(&label.name, 128))
         && value
             .merged_at
             .as_deref()
@@ -422,13 +472,16 @@ fn repository_ref(value: ApiRepositoryRef) -> RepositoryRef {
 }
 
 fn pull_request(value: ApiPullRequest, state: IssueState) -> PullRequest {
+    let author = author(&value.user).to_owned();
+    let (labels, labels_omitted) = display_labels(value.labels);
     PullRequest {
         id: value.id,
         number: value.number,
         title: value.title,
         state,
-        author: value.user.login,
-        labels: value.labels.into_iter().map(|label| label.name).collect(),
+        author,
+        labels,
+        labels_omitted,
         html_url: value.html_url,
         comments: value.comments,
         draft: value.draft,
@@ -512,7 +565,7 @@ pub fn parse_comment_page(data: &str) -> Result<CommentPage, ParseError> {
     for value in envelope.body {
         if value.id == 0
             || !ids.insert(value.id)
-            || !bounded_text(&value.user.login, 128)
+            || !valid_author(&value.user)
             || value.body.len() > MAXIMUM_BODY_BYTES
             || value.body.contains('\0')
             || !bounded_text(&value.html_url, 2048)
@@ -524,7 +577,7 @@ pub fn parse_comment_page(data: &str) -> Result<CommentPage, ParseError> {
         }
         comments.push(Comment {
             id: value.id,
-            author: value.user.login,
+            author: author(&value.user).to_owned(),
             body: value.body,
             html_url: value.html_url,
             created_at: value.created_at,
@@ -543,7 +596,7 @@ pub fn parse_comment_detail(data: &str) -> Result<Comment, ParseError> {
     }
     let value: ApiComment = item_body(data)?;
     if value.id == 0
-        || !bounded_text(&value.user.login, 128)
+        || !valid_author(&value.user)
         || value.body.len() > MAXIMUM_BODY_BYTES
         || value.body.contains('\0')
         || !bounded_text(&value.html_url, 2048)
@@ -555,7 +608,7 @@ pub fn parse_comment_detail(data: &str) -> Result<Comment, ParseError> {
     }
     Ok(Comment {
         id: value.id,
-        author: value.user.login,
+        author: author(&value.user).to_owned(),
         body: value.body,
         html_url: value.html_url,
         created_at: value.created_at,
@@ -863,5 +916,94 @@ mod tests {
                 .excluded_pull_requests,
             1
         );
+    }
+
+    fn forty_labels() -> String {
+        (0..40)
+            .map(|n| format!(r#"{{"name":"label-{n}"}}"#))
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    #[test]
+    fn a_row_with_many_labels_a_null_user_or_string_labels_degrades_without_failing_the_page() {
+        let page = format!(
+            r#"{{"body":[{{"id":1,"number":1,"title":"Many labels","state":"open","user":{{"login":"a"}},"labels":[{}],"html_url":"https://github.com/o/r/issues/1","comments":0}},{{"id":2,"number":2,"title":"Deleted author","state":"open","user":null,"labels":[],"html_url":"https://github.com/o/r/issues/2","comments":0}},{{"id":3,"number":3,"title":"String label","state":"open","user":{{"login":"c"}},"labels":["bug",{{"name":"x"}}],"html_url":"https://github.com/o/r/issues/3","comments":0}}]}}"#,
+            forty_labels()
+        );
+        let page = parse_issue_page(&page, IssueState::Open).unwrap();
+        assert_eq!(page.issues.len(), 3);
+        assert_eq!(page.issues[0].labels.len(), 32);
+        assert_eq!(page.issues[0].labels[0], "label-0");
+        assert_eq!(page.issues[0].labels[31], "label-31");
+        assert_eq!(page.issues[0].labels_omitted, 8);
+        assert_eq!(page.issues[1].author, "ghost");
+        assert_eq!(page.issues[2].labels, ["bug", "x"]);
+        assert_eq!(page.issues[2].labels_omitted, 0);
+    }
+
+    #[test]
+    fn unusable_label_entries_are_skipped_and_counted_and_an_absent_user_is_ghost() {
+        let pull = PULLS
+            .replace(
+                r#""user":{"login":"contributor"},"labels":[{"name":"ready"}]"#,
+                &format!(
+                    r#""labels":["ready",{{"name":""}},{{"color":"fff"}},{{"name":"{}"}},null,7,{{"name":null}}]"#,
+                    "n".repeat(129)
+                ),
+            );
+        let page = parse_pull_request_page(&pull, IssueState::Open).unwrap();
+        assert_eq!(page.pull_requests[0].labels, ["ready"]);
+        assert_eq!(page.pull_requests[0].labels_omitted, 6);
+        assert_eq!(page.pull_requests[0].author, "ghost");
+
+        let many = PULLS.replace(
+            r#""labels":[{"name":"ready"}]"#,
+            &format!(r#""labels":[{}]"#, forty_labels()),
+        );
+        let page = parse_pull_request_page(&many, IssueState::Open).unwrap();
+        assert_eq!(page.pull_requests[0].labels.len(), 32);
+        assert_eq!(page.pull_requests[0].labels_omitted, 8);
+        assert_eq!(page.pull_requests[0].author, "contributor");
+    }
+
+    #[test]
+    fn issue_and_pull_request_details_degrade_the_same_way_as_their_pages() {
+        let issue = format!(
+            r#"{{"id":11,"number":7,"title":"First issue","state":"open","user":null,"labels":[{}],"html_url":"https://github.com/o/r/issues/7","comments":0,"body":null,"created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-02T00:00:00Z"}}"#,
+            forty_labels()
+        );
+        let detail = parse_issue_detail(&item_completion(&issue)).unwrap();
+        assert_eq!(detail.issue.author, "ghost");
+        assert_eq!(detail.issue.labels.len(), 32);
+        assert_eq!(detail.issue.labels_omitted, 8);
+
+        let pull = PULLS
+            .strip_prefix("{\"body\":[")
+            .unwrap()
+            .strip_suffix("],\"nextPage\":2}")
+            .unwrap()
+            .replace(r#""user":{"login":"contributor"},"#, "")
+            .replace("\"draft\":false", "\"draft\":false,\"body\":null,\"created_at\":\"2026-09-01T00:00:00Z\",\"updated_at\":\"2026-09-03T00:00:00Z\"");
+        let detail = parse_pull_request_detail(&item_completion(&pull)).unwrap();
+        assert_eq!(detail.pull_request.author, "ghost");
+    }
+
+    #[test]
+    fn comments_with_a_null_or_absent_user_are_authored_by_ghost() {
+        let comment = |user: &str| {
+            format!(
+                r#"{{"id":91,{user}"body":"A comment","html_url":"https://github.com/o/r/issues/7#issuecomment-91","created_at":"2026-09-02T01:00:00Z","updated_at":"2026-09-02T01:00:00Z"}}"#
+            )
+        };
+        for user in [r#""user":null,"#, ""] {
+            let page = parse_comment_page(&format!(r#"{{"body":[{}]}}"#, comment(user))).unwrap();
+            assert_eq!(page.comments[0].author, "ghost");
+            let detail = parse_comment_detail(&item_completion(&comment(user))).unwrap();
+            assert_eq!(detail.author, "ghost");
+        }
+        // A present user is still validated.
+        let empty = comment(r#""user":{"login":""},"#);
+        assert!(parse_comment_detail(&item_completion(&empty)).is_err());
     }
 }

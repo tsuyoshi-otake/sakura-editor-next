@@ -247,14 +247,9 @@ pub fn complete(completion: &ToolCompleted) -> Option<Effect> {
                 Identity::parts(run, attempt, job),
                 positive32(page),
             ) else {
-                return Some(failed_page(
-                    WORKFLOWS,
-                    "",
-                    "Invalid step page completion",
-                ));
+                return Some(failed_page(WORKFLOWS, "", "Invalid step page completion"));
             };
-            let fail =
-                |message: String| failed_page(view, &identity.item(), message);
+            let fail = |message: String| failed_page(view, &identity.item(), message);
             Some(if completion.status != CompletionStatus::Succeeded {
                 fail(completion_message(completion).into())
             } else {
@@ -295,11 +290,7 @@ fn previous_page(view: &str, run: u64, latest: u32, page: u32) -> Effect {
         .and_then(|value| value.checked_mul(PAGE_SIZE))
         .filter(|value| *value < total)
     else {
-        return failed_page(
-            view,
-            &parent,
-            "Attempt page is outside this run",
-        );
+        return failed_page(view, &parent, "Attempt page is outside this run");
     };
     let count = PAGE_SIZE.min(total - offset);
     let items = (offset + 1..=offset + count)
@@ -371,18 +362,10 @@ fn job_item(job: Job) -> TreeItem {
 
 fn step_page(view: &str, identity: Identity, steps: Vec<Step>, page: u32) -> Effect {
     let Some(offset) = page.checked_sub(1).and_then(|p| p.checked_mul(PAGE_SIZE)) else {
-        return failed_page(
-            view,
-            &identity.item(),
-            "Invalid step page offset",
-        );
+        return failed_page(view, &identity.item(), "Invalid step page offset");
     };
     if offset as usize >= steps.len() && page != 1 {
-        return failed_page(
-            view,
-            &identity.item(),
-            "Step page is outside this job",
-        );
+        return failed_page(view, &identity.item(), "Step page is outside this job");
     }
     let next = if (offset as usize + PAGE_SIZE as usize) < steps.len() {
         Some(page + 1)
@@ -456,7 +439,7 @@ fn optional(value: Option<String>, absent: &str) -> String {
 }
 
 fn job_document(identity: Identity, job: Job) -> Effect {
-    let fields = vec![
+    let mut fields = vec![
         field("Job ID", job.id.to_string()),
         field("Run ID", job.run_id.to_string()),
         field("Attempt", job.run_attempt.to_string()),
@@ -480,10 +463,18 @@ fn job_document(identity: Identity, job: Job) -> Effect {
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "unassigned".into()),
         ),
-        field("Labels", job.labels.join(", ")),
+        // 32 runner labels of up to 256 bytes can exceed the 4,096-byte field
+        // limit, which would reject the whole effect batch.
+        field(
+            "Labels",
+            crate::clip(job.labels.join(", "), crate::TOOLTIP_BYTES),
+        ),
         field("Commit", job.head_sha),
-        field("URL", job.html_url),
     ];
+    // A skipped job can omit its URL; none is invented for it.
+    if let Some(url) = job.html_url {
+        fields.push(field("URL", url));
+    }
     let steps = if job.steps.is_empty() {
         DocumentSection::Markdown(MarkdownSection {
             text: "No steps were reported for this job.".into(),
@@ -689,6 +680,67 @@ mod tests {
         assert!(
             matches!(effect,Effect::PublishDocument(doc) if doc.title=="GitHub Actions read failed")
         );
+    }
+
+    #[test]
+    fn a_skipped_job_without_steps_labels_or_url_publishes_a_document_with_no_url_field() {
+        let mut value: serde_json::Value = serde_json::from_str(JOB).unwrap();
+        let object = value.as_object_mut().unwrap();
+        object.insert("status".into(), "completed".into());
+        object.insert("conclusion".into(), "skipped".into());
+        for key in ["steps", "labels", "html_url"] {
+            object.remove(key);
+        }
+        let effect = complete(&completion(
+            "jobdetail:51:2:71",
+            item_completion(&value.to_string()),
+        ))
+        .unwrap();
+        let Effect::PublishDocument(document) = effect else {
+            panic!("expected a job document")
+        };
+        let DocumentSection::Metadata(metadata) = &document.sections[0] else {
+            panic!()
+        };
+        assert!(metadata.fields.iter().all(|field| field.name != "URL"));
+        assert!(metadata
+            .fields
+            .iter()
+            .any(|field| field.name == "Labels" && field.value.is_empty()));
+        assert!(matches!(
+            &document.sections[1],
+            DocumentSection::Markdown(markdown) if markdown.text == "No steps were reported for this job."
+        ));
+    }
+
+    #[test]
+    fn a_job_with_the_largest_label_set_keeps_its_labels_field_inside_the_host_limit() {
+        // The client admits 32 runner labels of 256 bytes; joined they exceed
+        // the host's 4,096-byte field limit, which rejects the whole batch.
+        let mut value: serde_json::Value = serde_json::from_str(JOB).unwrap();
+        let labels: Vec<serde_json::Value> = (0..32)
+            .map(|n| format!("{n:02}{}", "l".repeat(254)).into())
+            .collect();
+        value["labels"] = labels.into();
+        let effect = complete(&completion(
+            "jobdetail:51:2:71",
+            item_completion(&value.to_string()),
+        ))
+        .unwrap();
+        let Effect::PublishDocument(document) = effect else {
+            panic!("expected a job document")
+        };
+        let DocumentSection::Metadata(metadata) = &document.sections[0] else {
+            panic!()
+        };
+        let labels = metadata
+            .fields
+            .iter()
+            .find(|field| field.name == "Labels")
+            .unwrap();
+        assert!(labels.value.len() <= 4096, "labels {}", labels.value.len());
+        assert!(labels.value.starts_with("00lll"));
+        assert!(labels.value.ends_with('\u{2026}'));
     }
 
     #[test]

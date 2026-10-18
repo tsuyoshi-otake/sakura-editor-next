@@ -162,7 +162,17 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   or cache state. Repository completions carry a JSON `body` plus a broker-
   validated `nextPage` number. Keep pagination even when extension-side filtering
   removes every row, and reject duplicate JSON members and malformed required
-  fields before publishing a View page.
+  fields before publishing a View page. A row degrades instead of failing its
+  page for data github.com legitimately sends: labels past 32 (or without a
+  usable name; a label may be a string or an object) are kept out and counted
+  as `+N`, a null or absent `user` (deleted account) is shown as `ghost`, and an
+  Actions job may omit `steps`, `labels` or `html_url`. Guests cut row
+  `label`/`description` to 1,024 bytes and `tooltip`/field values to 4,096 on a
+  character boundary, because the host rejects a whole effect batch for one
+  over-limit field. These stay strict on purpose: `https://` URLs (link
+  activation policy), required `draft`/`display_title`, the Actions
+  `run_attempt` match (#296 requires rejecting another attempt's response), and
+  GitHub Enterprise Server is out of scope for the first release.
 - A schema-2 tree page's `revision` is the provider's version of ONE parent's
   listing: the first page and every page appended through its cursors publish
   the same value, on success and on failure, and a later listing may keep or
@@ -411,7 +421,7 @@ DTOs. An Issue row keeps the database ID and repository Issue number as separate
 identity fields. Selection opens `github-issue:<number>` and reads only
 `issues/{number}`; expansion pages `issues/{number}/comments`; a comment document
 uses its database ID with `issues/comments/{id}`. The guest never embeds a body
-in command arguments. It validates the 64-KiB SENP completion envelope, 60-KiB
+in command arguments. It validates the 256-KiB SENP completion envelope, 240-KiB
 body bound, required HTTPS URLs and timestamps before publishing. Null Issue
 bodies, empty comments, empty pages, partial pages and failed reads are distinct
 terminal presentations.

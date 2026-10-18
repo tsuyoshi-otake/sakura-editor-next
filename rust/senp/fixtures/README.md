@@ -40,7 +40,7 @@ request, acknowledge delivery, or publish a contribution.
   column count. A text resource is at most 32 MiB; it is an opaque handle.
 - Labels/titles/descriptions and tree-item context values are at most 1,024
   UTF-8 bytes; tooltip/argument/
-  metadata values are at most 4,096; cursors 2,048; tool data 65,536; Markdown
+  metadata values are at most 4,096; cursors 2,048; tool data 262,144; Markdown
   262,144. The frame budget still applies to their sum and JSON escaping.
 - Partial tree pages require a next cursor; other terminal page states forbid
   it. Empty/failed pages contain no items. Repeated item IDs and a parent as its

@@ -329,7 +329,7 @@ G02のcodec/WITは実装済み。wireはUTF-8の厳密JSONで、固定recordの�
 signed-outの判定には使わない。
 
 v2では既存4 MiBのIPC上限より小さい1 MiB/frame・65,536 JSON nodesを適用する。
-最大64 effects/batch、256 items/page、32 document sections、64 KiBのtool結果文字列、
+最大64 effects/batch、256 items/page、32 document sections、256 KiBのtool結果文字列、
 256 KiBのMarkdown sectionとし、送信側にも集約上限を適用する。
 [共通fixtureと往復手順](../rust/senp/fixtures/README.md)でcasing、Unicode、数値、
 page状態とbatch内のread ID再使用を検査する。sequenceの順序・再送とackの所有は
@@ -530,7 +530,7 @@ E03のIssue item identityはGitHub database IDとIssue番号を両方保持す�
 `issues/{number}`だけからreadonly documentへ投影し、list payloadへ混ぜない。comment treeは
 Issue番号でpage取得し、各comment documentはdatabase IDの`issues/comments/{id}`から再取得する。
 これにより同じrepository内の表示番号とglobal comment identityを混同しない。SENP eventの
-64 KiB総量、本文60 KiB、page 100件の上限を越えるresponseはpublish前に拒否する。本文null、
+256 KiB総量、本文240 KiB、page 100件の上限を越えるresponseはpublish前に拒否する。本文null、
 空comment、空page、next page付きpartial、tool/parse failureは同じ空表示へ畳み込まない。
 
 E04のPR item identityもdatabase IDとrepository内番号を分離し、Issue identityとは異なる

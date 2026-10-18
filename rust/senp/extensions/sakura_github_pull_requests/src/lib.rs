@@ -1,5 +1,7 @@
 //! GitHub Issues and Pull Requests SENP extension.
 
+use std::cell::RefCell;
+
 use sakura_senp_github_client::{
     parse_comment_detail, parse_comment_page, parse_issue_detail, parse_issue_page,
     parse_pull_request_detail, parse_pull_request_page, Comment, Issue, IssueDetail, IssueState,
@@ -23,18 +25,144 @@ const OPEN_PULL_REQUEST: &str = "github.openPullRequest";
 /// data version of their own, so there is no finer value to publish.
 const LISTING_REVISION: u64 = 1;
 
+/// The host rejects the whole effect batch when one tree row or document
+/// field exceeds these, so every text built from GitHub data is cut to them.
+const LABEL_BYTES: usize = 1024;
+const TOOLTIP_BYTES: usize = 4096;
+const FIELD_BYTES: usize = 4096;
+
+/// Cuts `text` to at most `maximum` bytes on a character boundary, ending in an
+/// ellipsis when anything was removed.
+fn clip(text: String, maximum: usize) -> String {
+    if text.len() <= maximum {
+        return text;
+    }
+    let mut end = maximum - '\u{2026}'.len_utf8();
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    let mut clipped = text;
+    clipped.truncate(end);
+    clipped.push('\u{2026}');
+    clipped
+}
+
+/// Lists labels until `budget` bytes are used, then `+N` for every label that
+/// is not listed, including the `omitted` the client did not keep.
+fn labels_line(labels: &[String], omitted: usize, budget: usize) -> String {
+    let mut line = String::new();
+    let mut listed = 0;
+    for label in labels {
+        let separator = if listed == 0 { "" } else { ", " };
+        let hidden_after = labels.len() - listed - 1 + omitted;
+        let suffix = if hidden_after == 0 {
+            0
+        } else {
+            ", +".len() + hidden_after.to_string().len()
+        };
+        if line.len() + separator.len() + label.len() + suffix > budget {
+            break;
+        }
+        line.push_str(separator);
+        line.push_str(label);
+        listed += 1;
+    }
+    let hidden = labels.len() - listed + omitted;
+    if hidden > 0 {
+        if listed > 0 {
+            line.push_str(", ");
+        }
+        line.push_str(&format!("+{hidden}"));
+    }
+    line
+}
+
+/// The row tooltip: the link, then the labels line when there are labels.
+fn row_tooltip(html_url: String, labels: &[String], omitted: usize) -> String {
+    if labels.is_empty() && omitted == 0 {
+        return clip(html_url, TOOLTIP_BYTES);
+    }
+    let html_url = clip(html_url, TOOLTIP_BYTES / 2);
+    let prefix = format!("{html_url}\nLabels: ");
+    let line = labels_line(labels, omitted, TOOLTIP_BYTES - prefix.len());
+    format!("{prefix}{line}")
+}
+
+/// The repositories (each root and its remotes) both views read. A workspace
+/// event that names the same ones changes nothing either view shows.
+type RepositoryIdentity = Vec<(String, Vec<(String, String)>)>;
+
+#[derive(Default)]
+struct State {
+    scope: Option<(u64, u64, u64)>,
+    repositories: Option<RepositoryIdentity>,
+}
+
+impl State {
+    fn workspace_changed(
+        &mut self,
+        context: OperationContext,
+        change: WorkspaceChanged,
+    ) -> Vec<Effect> {
+        let scope = (
+            context.owner_generation,
+            context.workspace_revision,
+            context.account_generation,
+        );
+        if self.scope != Some(scope) {
+            self.scope = Some(scope);
+            self.repositories = None;
+        }
+        let repositories: RepositoryIdentity = change
+            .repositories
+            .iter()
+            .map(|repository| {
+                (
+                    repository.root_id.clone(),
+                    repository
+                        .remotes
+                        .iter()
+                        .map(|remote| (remote.name.clone(), remote.url.clone()))
+                        .collect(),
+                )
+            })
+            .collect();
+        if self.repositories.as_ref() == Some(&repositories) {
+            return Vec::new();
+        }
+        self.repositories = Some(repositories);
+        invalidations()
+    }
+}
+
+thread_local! {
+    static STATE: RefCell<State> = RefCell::new(State::default());
+}
+
+fn invalidations() -> Vec<Effect> {
+    vec![invalidate(ISSUES_VIEW), invalidate(PULL_REQUESTS_VIEW)]
+}
+
 struct GithubPullRequests;
 
 impl Guest for GithubPullRequests {
     fn activate(_: Activation) -> Vec<Effect> {
-        vec![invalidate(ISSUES_VIEW), invalidate(PULL_REQUESTS_VIEW)]
+        STATE.with(|state| *state.borrow_mut() = State::default());
+        invalidations()
     }
 
-    fn on_event(_: OperationContext, event: Event) -> Vec<Effect> {
-        dispatch(event)
+    fn on_event(context: OperationContext, event: Event) -> Vec<Effect> {
+        match event {
+            Event::WorkspaceChanged(change) => {
+                STATE.with(|state| state.borrow_mut().workspace_changed(context, change))
+            }
+            event => dispatch(event),
+        }
     }
 
-    fn deactivate(_: StopReason) {}
+    fn deactivate(_: StopReason) {
+        STATE.with(|state| *state.borrow_mut() = State::default());
+    }
 }
 
 fn invalidate(view_id: &str) -> Effect {
@@ -160,16 +288,14 @@ fn comments_request(parent_id: &str, cursor: &str) -> Option<Effect> {
 }
 
 fn item(issue: Issue) -> TreeItem {
-    let labels = issue.labels.join(", ");
     TreeItem {
         id: format!("issue:{}:{}", issue.id, issue.number),
-        label: format!("#{} {}", issue.number, issue.title),
-        description: format!("{} · @{}", issue.state.as_str(), issue.author),
-        tooltip: if labels.is_empty() {
-            issue.html_url
-        } else {
-            format!("{}\nLabels: {labels}", issue.html_url)
-        },
+        label: clip(format!("#{} {}", issue.number, issue.title), LABEL_BYTES),
+        description: clip(
+            format!("{} · @{}", issue.state.as_str(), issue.author),
+            LABEL_BYTES,
+        ),
+        tooltip: row_tooltip(issue.html_url, &issue.labels, issue.labels_omitted),
         icon: "issues".into(),
         collapsible_state: if issue.comments == 0 {
             CollapsibleState::Leaf
@@ -327,7 +453,7 @@ fn issue_document(detail: IssueDetail) -> Effect {
     let issue = detail.issue;
     Effect::PublishDocument(PublishDocument {
         resource_id: format!("github-issue:{}", issue.number),
-        title: format!("#{} {}", issue.number, issue.title),
+        title: clip(format!("#{} {}", issue.number, issue.title), LABEL_BYTES),
         revision: 1,
         sections: vec![
             DocumentSection::Metadata(MetadataSection {
@@ -632,16 +758,11 @@ fn pull_item(pull: PullRequest) -> TreeItem {
         pull.state.as_str()
     };
     let draft = if pull.draft { " · draft" } else { "" };
-    let labels = pull.labels.join(", ");
     TreeItem {
         id: format!("pull:{}:{}", pull.id, pull.number),
-        label: format!("#{} {}", pull.number, pull.title),
-        description: format!("{status}{draft} · @{}", pull.author),
-        tooltip: if labels.is_empty() {
-            pull.html_url
-        } else {
-            format!("{}\nLabels: {labels}", pull.html_url)
-        },
+        label: clip(format!("#{} {}", pull.number, pull.title), LABEL_BYTES),
+        description: clip(format!("{status}{draft} · @{}", pull.author), LABEL_BYTES),
+        tooltip: row_tooltip(pull.html_url, &pull.labels, pull.labels_omitted),
         icon: "git-pull-request".into(),
         collapsible_state: if pull.comments == Some(0) {
             CollapsibleState::Leaf
@@ -654,11 +775,7 @@ fn pull_item(pull: PullRequest) -> TreeItem {
     }
 }
 
-fn failed_view_page(
-    view_id: &str,
-    parent_id: String,
-    message: impl Into<String>,
-) -> Effect {
+fn failed_view_page(view_id: &str, parent_id: String, message: impl Into<String>) -> Effect {
     Effect::PublishTreePage(PublishTreePage {
         view_id: view_id.into(),
         parent_id,
@@ -790,13 +907,7 @@ fn complete_pull_comments(read: ToolCompleted) -> Effect {
     }
     let result = match parse_comment_page(&read.data) {
         Ok(value) => value,
-        Err(error) => {
-            return failed_view_page(
-                PULL_REQUESTS_VIEW,
-                parent_id,
-                error.to_string(),
-            )
-        }
+        Err(error) => return failed_view_page(PULL_REQUESTS_VIEW, parent_id, error.to_string()),
     };
     if result.next_page.is_some_and(|next| next <= page) {
         return failed_view_page(
@@ -836,7 +947,7 @@ fn pull_request_document(detail: PullRequestDetail) -> Effect {
     let pull = detail.pull_request;
     Effect::PublishDocument(PublishDocument {
         resource_id: format!("github-pull-request:{}", pull.number),
-        title: format!("#{} {}", pull.number, pull.title),
+        title: clip(format!("#{} {}", pull.number, pull.title), LABEL_BYTES),
         revision: 1,
         sections: vec![
             DocumentSection::Metadata(MetadataSection {
@@ -856,7 +967,7 @@ fn pull_request_document(detail: PullRequestDetail) -> Effect {
                     },
                     Field {
                         name: "Labels".into(),
-                        value: pull.labels.join(", "),
+                        value: labels_line(&pull.labels, pull.labels_omitted, FIELD_BYTES),
                     },
                     Field {
                         name: "Base".into(),
@@ -971,7 +1082,6 @@ fn dispatch(event: Event) -> Vec<Effect> {
         Event::DocumentRequest(request) => request_document(&request.resource_id)
             .map(|effect| vec![effect])
             .unwrap_or_default(),
-        Event::WorkspaceChanged(_) => vec![invalidate(ISSUES_VIEW), invalidate(PULL_REQUESTS_VIEW)],
         _ => Vec::new(),
     }
 }
@@ -988,7 +1098,10 @@ mod tests {
     /// of the tool completions this guest consumes and the wire-shaped pages it
     /// must publish. The host applies the same pages through `SenpTreeProvider`.
     fn fixture_scenarios() -> Vec<serde_json::Value> {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/tree-paging.jsonl");
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/tree-paging.jsonl"
+        );
         std::fs::read_to_string(path)
             .unwrap()
             .lines()
@@ -1038,10 +1151,7 @@ mod tests {
                     .map(|item| item["id"].as_str().unwrap())
                     .collect();
                 assert_eq!(ids, expected_ids);
-                assert_eq!(
-                    page.next_cursor,
-                    expected["nextCursor"].as_str().unwrap()
-                );
+                assert_eq!(page.next_cursor, expected["nextCursor"].as_str().unwrap());
                 assert_eq!(page.revision, expected["revision"].as_u64().unwrap());
                 assert_eq!(page.status, fixture_status(&expected["status"]));
                 revisions.push(page.revision);
@@ -1432,5 +1542,147 @@ mod tests {
                 matches!(&effects[0], Effect::PublishTreePage(page) if page.status == PageStatus::Failed)
             );
         }
+    }
+
+    /// A pull request page whose single row has `count` labels of `name_bytes`
+    /// bytes each and a title of exactly 1,024 bytes (multi-byte, so a cut at
+    /// the limit would land inside a character).
+    fn crowded_pull_page(count: usize, name_bytes: usize) -> String {
+        let title = format!("{}a", "\u{3042}".repeat(341));
+        assert_eq!(title.len(), 1024);
+        let labels = (0..count)
+            .map(|n| format!(r#"{{"name":"{n:03}{}"}}"#, "l".repeat(name_bytes - 3)))
+            .collect::<Vec<_>>()
+            .join(",");
+        PULLS
+            .replace("Cross-fork change", &title)
+            .replace(r#"{"name":"ready"}"#, &labels)
+    }
+
+    #[test]
+    fn a_crowded_pull_request_row_stays_inside_the_host_text_limits() {
+        // The host rejects the WHOLE effect batch when one label or description
+        // exceeds 1,024 bytes or one tooltip exceeds 4,096 bytes
+        // (`sakura_senp_host::effect_protocol`, `Check for TreeItem`). That
+        // crate is not a dependency of a guest, so the bounds are asserted here
+        // by value.
+        let effects = dispatch(Event::ToolCompleted(ToolCompleted {
+            read_id: "pulls:open:1".into(),
+            status: CompletionStatus::Succeeded,
+            data: crowded_pull_page(100, 128),
+            message: String::new(),
+        }));
+        let Effect::PublishTreePage(page) = &effects[0] else {
+            panic!("a crowded row must still publish a page")
+        };
+        assert_eq!(page.status, PageStatus::Partial);
+        let item = &page.items[0];
+        assert!(item.label.len() <= 1024, "label {}", item.label.len());
+        assert!(item.label.starts_with("#8 "));
+        assert!(item.label.ends_with('\u{2026}'));
+        assert!(item.description.len() <= 1024);
+        assert!(item.tooltip.len() <= 4096, "tooltip {}", item.tooltip.len());
+        let line = item.tooltip.lines().last().unwrap();
+        let shown = line.strip_prefix("Labels: ").unwrap();
+        let (listed, more) = shown.rsplit_once(", +").unwrap();
+        // 100 labels were sent: some are listed, the rest - kept but out of
+        // budget, or beyond the 32 the client keeps - are counted.
+        assert_eq!(
+            listed.split(", ").count() + more.parse::<usize>().unwrap(),
+            100
+        );
+        assert!(listed.split(", ").count() < 32);
+    }
+
+    #[test]
+    fn a_few_labels_are_listed_whole_and_only_the_client_omissions_are_counted() {
+        let effects = dispatch(Event::ToolCompleted(ToolCompleted {
+            read_id: "pulls:open:1".into(),
+            status: CompletionStatus::Succeeded,
+            data: crowded_pull_page(40, 8),
+            message: String::new(),
+        }));
+        let Effect::PublishTreePage(page) = &effects[0] else {
+            panic!()
+        };
+        let line = page.items[0].tooltip.lines().last().unwrap();
+        assert!(line.starts_with("Labels: 000lllll, 001lllll, "));
+        assert!(line.ends_with("031lllll, +8"), "{line}");
+        let effects = dispatch(Event::ToolCompleted(ToolCompleted {
+            read_id: "pulls:open:1".into(),
+            status: CompletionStatus::Succeeded,
+            data: PULLS.into(),
+            message: String::new(),
+        }));
+        let Effect::PublishTreePage(page) = &effects[0] else {
+            panic!()
+        };
+        assert!(page.items[0].tooltip.ends_with("\nLabels: ready"));
+    }
+
+    #[test]
+    fn a_workspace_event_that_names_the_same_repositories_invalidates_nothing() {
+        let change = |url: &str| WorkspaceChanged {
+            repositories: vec![Repository {
+                root_id: "root:0".into(),
+                branch: "main".into(),
+                ahead: 0,
+                remotes: vec![Remote {
+                    name: "origin".into(),
+                    url: url.into(),
+                }],
+            }],
+        };
+        let invalidated = |effects: Vec<Effect>| -> Vec<String> {
+            effects
+                .into_iter()
+                .filter_map(|effect| match effect {
+                    Effect::InvalidateTree(value) => Some(value.view_id),
+                    _ => None,
+                })
+                .collect()
+        };
+        let context = |workspace_revision| OperationContext {
+            operation_id: "op".into(),
+            owner_generation: 1,
+            workspace_revision,
+            account_generation: 1,
+            request_generation: 1,
+        };
+        let mut state = State::default();
+        let both = [ISSUES_VIEW, PULL_REQUESTS_VIEW];
+        let url = "https://github.com/o/r.git";
+        assert_eq!(
+            invalidated(state.workspace_changed(context(1), change(url))),
+            both
+        );
+        let second = invalidated(state.workspace_changed(context(1), change(url)));
+        assert!(
+            second.is_empty(),
+            "unchanged identity invalidated {second:?}"
+        );
+        // A different remote is a different repository for both views.
+        assert_eq!(
+            invalidated(
+                state.workspace_changed(context(1), change("https://github.com/o/other.git"))
+            ),
+            both
+        );
+        // A new scope forgets what was announced before it.
+        assert_eq!(
+            invalidated(
+                state.workspace_changed(context(2), change("https://github.com/o/other.git"))
+            ),
+            both
+        );
+        // Deactivation forgets it too: the next activation invalidates anyway,
+        // and the first event after it is not skipped on stale state.
+        let on_event = |context, change| {
+            GithubPullRequests::on_event(context, Event::WorkspaceChanged(change))
+        };
+        assert_eq!(invalidated(on_event(context(1), change(url))), both);
+        assert!(invalidated(on_event(context(1), change(url))).is_empty());
+        GithubPullRequests::deactivate(StopReason::Disabled);
+        assert_eq!(invalidated(on_event(context(1), change(url))), both);
     }
 }

@@ -33,13 +33,17 @@ pub struct Job {
     pub conclusion: Option<String>,
     pub started_at: Option<String>,
     pub completed_at: Option<String>,
-    pub html_url: String,
+    /// Absent on some skipped jobs; the job is then shown without a link.
+    #[serde(default)]
+    pub html_url: Option<String>,
     pub head_sha: String,
     pub runner_id: Option<u64>,
     pub runner_name: Option<String>,
     pub runner_group_id: Option<u64>,
     pub runner_group_name: Option<String>,
+    #[serde(default)]
     pub labels: Vec<String>,
+    #[serde(default)]
     pub steps: Vec<Step>,
 }
 
@@ -65,7 +69,7 @@ fn valid_job(value: &Job) -> bool {
         && valid_optional(&value.conclusion, 128)
         && valid_optional(&value.started_at, 64)
         && valid_optional(&value.completed_at, 64)
-        && valid_url(&value.html_url)
+        && value.html_url.as_deref().is_none_or(valid_url)
         && bounded_text(&value.head_sha, 128)
         && valid_optional(&value.runner_name, 1024)
         && valid_optional(&value.runner_group_name, 1024)
@@ -193,5 +197,25 @@ mod tests {
             parse_job(&"x".repeat(MAXIMUM_RESPONSE_BYTES + 1)),
             Err(ParseError::LimitExceeded)
         );
+    }
+
+    #[test]
+    fn a_skipped_job_without_steps_labels_or_url_members_is_valid() {
+        let mut value: serde_json::Value = serde_json::from_str(JOB).unwrap();
+        let object = value.as_object_mut().unwrap();
+        object.insert("status".into(), "completed".into());
+        object.insert("conclusion".into(), "skipped".into());
+        for key in ["steps", "labels", "html_url"] {
+            object.remove(key);
+        }
+        let job = parse_job(&item_completion(&value.to_string())).unwrap();
+        assert!(job.steps.is_empty());
+        assert!(job.labels.is_empty());
+        assert_eq!(job.html_url, None);
+        let data = format!(r#"{{"body":{{"total_count":1,"jobs":[{value}]}}}}"#);
+        assert_eq!(parse_jobs(&data).unwrap().items[0].html_url, None);
+        // A URL that is present is still held to the https policy.
+        let bad = JOB.replace("https://", "file://");
+        assert!(parse_job(&item_completion(&bad)).is_err());
     }
 }

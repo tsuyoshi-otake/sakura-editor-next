@@ -17,6 +17,27 @@ const OPEN_RUN: &str = "github-actions.workflow.run.open";
 const REFRESH: &str = "github-actions.explorer.refresh";
 const REFRESH_BRANCH: &str = "github-actions.explorer.current-branch.refresh";
 const PAGE_SIZE: u32 = 20;
+/// The host rejects the whole effect batch when one tree row label exceeds
+/// 1,024 bytes or one tooltip exceeds 4,096 bytes, so GitHub-supplied text is
+/// cut to them.
+const LABEL_BYTES: usize = 1024;
+const TOOLTIP_BYTES: usize = 4096;
+
+/// Cuts `text` to at most `maximum` bytes on a character boundary, ending in an
+/// ellipsis when anything was removed.
+fn clip(text: String, maximum: usize) -> String {
+    if text.len() <= maximum {
+        return text;
+    }
+    let mut end = maximum - '\u{2026}'.len_utf8();
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    let mut clipped = text;
+    clipped.truncate(end);
+    clipped.push('\u{2026}');
+    clipped
+}
 
 /// A tree page's `revision` versions ONE parent's listing, not the page: the
 /// first page and every page appended through its cursors carry this same
@@ -284,11 +305,7 @@ impl State {
                     return failed_page(WORKFLOWS, "", "Invalid workflow page completion");
                 };
                 if completion.status != CompletionStatus::Succeeded {
-                    return failed_page(
-                        WORKFLOWS,
-                        "",
-                        completion_message(&completion),
-                    );
+                    return failed_page(WORKFLOWS, "", completion_message(&completion));
                 }
                 match parse_workflows(&completion.data) {
                     Ok(result) if forward_page(result.next_page, page) => page_effect(
@@ -298,9 +315,7 @@ impl State {
                         next_cursor(result.next_page),
                         String::new(),
                     ),
-                    Ok(_) => {
-                        failed_page(WORKFLOWS, "", "Invalid workflow next page")
-                    }
+                    Ok(_) => failed_page(WORKFLOWS, "", "Invalid workflow next page"),
                     Err(error) => failed_page(WORKFLOWS, "", error.to_string()),
                 }
             }
@@ -322,18 +337,10 @@ impl State {
                     format!("workflow:{workflow}")
                 };
                 if (*code == "w") != (workflow != 0) {
-                    return failed_page(
-                        view,
-                        &parent,
-                        "Mismatched run page parent",
-                    );
+                    return failed_page(view, &parent, "Mismatched run page parent");
                 }
                 if completion.status != CompletionStatus::Succeeded {
-                    return failed_page(
-                        view,
-                        &parent,
-                        completion_message(&completion),
-                    );
+                    return failed_page(view, &parent, completion_message(&completion));
                 }
                 match parse_runs(&completion.data) {
                     Ok(result) if forward_page(result.next_page, page)
@@ -546,9 +553,12 @@ fn page_effect(
 fn workflow_item(workflow: Workflow) -> TreeItem {
     TreeItem {
         id: format!("workflow:{}", workflow.id),
-        label: workflow.name,
+        label: clip(workflow.name, LABEL_BYTES),
         description: String::new(),
-        tooltip: format!("{}\n{}", workflow.path, workflow.html_url),
+        tooltip: clip(
+            format!("{}\n{}", workflow.path, workflow.html_url),
+            TOOLTIP_BYTES,
+        ),
         icon: String::new(),
         collapsible_state: CollapsibleState::Collapsed,
         command_id: String::new(),
@@ -587,11 +597,14 @@ fn run_item(view: &str, run: Run) -> TreeItem {
     };
     TreeItem {
         id: format!("run:{}:{}", run.id, run.run_attempt),
-        label,
+        label: clip(label, LABEL_BYTES),
         description: String::new(),
-        tooltip: format!(
-            "{attempt}{state}\n\n{}",
-            status::event_text(&run.event, run.run_attempt)
+        tooltip: clip(
+            format!(
+                "{attempt}{state}\n\n{}",
+                status::event_text(&run.event, run.run_attempt)
+            ),
+            TOOLTIP_BYTES,
         ),
         icon: status::run_icon(&run.status, run.conclusion.as_deref()),
         collapsible_state: CollapsibleState::Collapsed,
@@ -1093,7 +1106,10 @@ mod tests {
     /// must publish. The host applies the same pages through `SenpTreeProvider`.
     #[test]
     fn shared_fixture_pages_publish_one_listing_revision_across_pages() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/tree-paging.jsonl");
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/tree-paging.jsonl"
+        );
         let scenarios: Vec<serde_json::Value> = std::fs::read_to_string(path)
             .unwrap()
             .lines()
@@ -1114,10 +1130,7 @@ mod tests {
                 let published = page(&effect);
                 let expected = &entry["page"];
                 assert_eq!(published.view_id, expected["viewId"].as_str().unwrap());
-                assert_eq!(
-                    published.parent_id,
-                    expected["parentId"].as_str().unwrap()
-                );
+                assert_eq!(published.parent_id, expected["parentId"].as_str().unwrap());
                 let ids: Vec<_> = published
                     .items
                     .iter()
@@ -1151,5 +1164,30 @@ mod tests {
                 scenario["name"]
             );
         }
+    }
+
+    #[test]
+    fn workflow_and_run_rows_stay_inside_the_host_text_limits() {
+        // The host rejects the WHOLE effect batch when one label exceeds 1,024
+        // bytes or one tooltip exceeds 4,096 bytes
+        // (`sakura_senp_host::effect_protocol`, `Check for TreeItem`); a guest
+        // cannot depend on that crate, so the bounds are asserted by value.
+        let item = workflow_item(Workflow {
+            id: 31,
+            name: "n".repeat(1024),
+            path: format!(".github/workflows/{}", "\u{3042}".repeat(676) + "ab"),
+            state: "active".into(),
+            html_url: format!("https://github.com/{}", "u".repeat(2048 - 19)),
+        });
+        assert!(item.tooltip.len() <= 4096, "tooltip {}", item.tooltip.len());
+        assert!(item.tooltip.ends_with('\u{2026}'));
+        assert_eq!(item.label.len(), 1024);
+        let long = RUN.replace(
+            "\"name\":\"Build\"",
+            &format!("\"name\":\"{}\"", "w".repeat(1024)),
+        );
+        let item = run_item(BRANCH, parse_run(&item_completion(&long)).unwrap());
+        assert!(item.label.len() <= 1024, "label {}", item.label.len());
+        assert!(item.label.ends_with('\u{2026}'));
     }
 }
