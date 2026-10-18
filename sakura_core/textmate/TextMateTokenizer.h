@@ -54,10 +54,26 @@ struct TextMateRuleStackFrame final {
 	//! degenerate case: the rule can then only be closed by an enclosing
 	//! `while` condition failing, or by running out of document).
 	std::unique_ptr<OnigmoPattern> endOrWhilePattern;
+	//! The `end`/`while` source text this instance's `endOrWhilePattern` was
+	//! compiled from, *after* `\1`..`\9` back-reference substitution against
+	//! the specific begin match. Empty for the root frame and for frames
+	//! whose rule has no end/while source. Stored (not just the compiled
+	//! pattern) because two frames pushed from the same rule can differ only
+	//! here -- e.g. two heredocs with different delimiters -- and
+	//! `Equivalent` must see that difference.
+	std::wstring endOrWhileSource;
 	bool isWhileRule = false;
 };
 
 using RuleStackHandle = std::shared_ptr<const TextMateRuleStackFrame>;
+
+//! Structural equality of two rule stacks, in the spirit of vscode-textmate's
+//! `StateStackImpl.equals`: pointer-equal fast path, then frame-by-frame
+//! comparison of `rule`, `owningGrammar`, `name`, `contentName`, `isWhileRule`
+//! and `endOrWhileSource`, walking `parent` chains iteratively (no recursion;
+//! stacks can be arbitrarily deep). Two stacks are equivalent iff they
+//! tokenize every following line identically.
+[[nodiscard]] bool Equivalent(const RuleStackHandle& a, const RuleStackHandle& b);
 
 //! One contiguous, non-empty run of a tokenized line sharing one scope path.
 //! `scopes` is ordered outermost to innermost, matching

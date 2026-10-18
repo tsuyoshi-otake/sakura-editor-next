@@ -32,3 +32,50 @@ control the Editor-owned guide surface.
 and the optional `editorIndentGuide.background2` through `background6` color
 cycle are not implemented. Those settings/tokens remain unregistered rather
 than being accepted as inert capabilities.
+
+## Incremental TextMate tokenization
+
+`CEditView` consumes `CDocLineMgr`'s bounded 64-record text-edit log through
+`textmate::TextMateLineCache` (see `sakura_core/textmate/CLAUDE.md`) instead
+of `CLayoutMgr::GetLayoutGeneration()` -- the generation also advances on
+layout-only rewraps and over-invalidated the whole token cache. Session
+lifetime: the language is selected the way VS Code does it, at model
+creation, not on edits. `textEditorModel.ts`'s `getOrCreateLanguage` calls
+`languageService.createByFilepathOrFirstLine(resource, firstLineText)` only
+from `createTextEditorModel`; content edits never re-run first-line
+detection (`TextFileEditorModel.onModelContentChanged` and
+`UntitledTextEditorModel` only run ML `autoDetectLanguage`, and only for an
+extensionless plaintext file). So `CreateSession` runs only on (a)
+language-service revision change, (b) resource-path change, or (c) a
+whole-document replacement -- a `full` record or an uncollectable edit-log
+gap, Sakura's equivalent of model creation (a file load arrives as
+`AppendAsMove`/`AddNewLine` `full` records, so a session created while the
+document was still empty is re-selected once content arrives). Ordinary
+edits, including line-0 edits, never call `CreateSession`. For the cases
+that still select: a null session is adopted or dropped, a different
+`LanguageId` adopts the new session and resets the cache, an unchanged ID
+keeps the session. Divergence from VS Code kept deliberately: VS Code keeps
+the model across a reload, while a Sakura reload is a whole-document
+replacement and therefore re-selects; and Sakura has no ML language
+detection, so an untitled document keeps its language. A third, narrower
+divergence follows from the bounded log: a per-line `AddNewLine` load and
+any burst of more than 64 edits between two paints (for example Replace
+All) both reach the view as the same uncollectable gap, and the view cannot
+tell them apart, so the burst re-selects too. It changes the outcome only
+when first-line matching decides the language, that is, when no filename,
+filename pattern or extension matches.
+
+When a tokenized line's end state changes (`EnsureResult::
+firstNewlyInvalidatedLine`), the lines below may need repainting even though
+the legacy edit repaint region knows nothing about TextMate state; the view
+invalidates from that line's layout row to the bottom, only when the row is
+inside the visible text area. Two repaint triggers exist: (1) a state
+transition reported by the current `EnsureResolved` call repaints below the
+affected line, and (2) a requested line that is still unresolved (pending
+work beyond the budget) schedules a whole-window `InvalidateRect` so a later
+paint continues tokenization -- this is progress-driven, not a repaint loop.
+Lines merely staying invalid without either trigger never repaint.
+
+The minimap overview counts as token-ready only when the cache is fully
+resolved (`IsTextMateFullyResolved`), not merely when the final line holds
+stale tokens.

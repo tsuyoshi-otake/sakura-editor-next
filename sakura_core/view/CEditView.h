@@ -64,6 +64,7 @@
 #include "view/MiniMapOverview.h"
 #include "workbench/rendering/FrameNativeSurfacePayloadAdapter.h"
 #include "senp/SenpLanguageService.h"
+#include "textmate/TextMateLineCache.h"
 
 class CDropTarget; /// 2002/2/3 aroka ヘッダー軽量化
 class COpeBlk;///
@@ -296,6 +297,12 @@ protected:
 		CLogicInt logicalLine);
 	void ApplyTextMateTokenStyle(SColorStrategyInfo& info,
 		const textmate::TextMateToken* token);
+	//! True when the TextMate line cache holds no invalid line -- the state the
+	//! minimap needs before rebuilding its token-colored overview raster.
+	[[nodiscard]] bool IsTextMateFullyResolved() const noexcept {
+		return m_textMateSession != nullptr
+			&& m_textMateCache.FirstInvalidLine() >= m_textMateCache.LineCount();
+	}
 
 	//色分け
 public:
@@ -856,14 +863,10 @@ public:
 	// Reused composition storage. A complete overview plus slider is assembled
 	// here and transferred to the window in one operation.
 	std::vector<std::uint32_t> m_miniMapFramePixels;
-	struct TextMateCachedLine final {
-		textmate::RuleStackHandle stateAfter;
-		std::vector<textmate::TextMateToken> tokens;
-	};
 	std::unique_ptr<senp::ISenpTextMateSession> m_textMateSession;
-	std::vector<TextMateCachedLine> m_textMateLines;
+	textmate::TextMateLineCache m_textMateCache;
 	std::wstring m_textMateResourcePath;
-	std::uint64_t m_textMateLayoutGeneration = 0;
+	std::uint64_t m_textMateTextRevision = 0;	//!< last applied CDocLineMgr text revision
 	std::uint64_t m_textMateServiceRevision = 0;
 	std::size_t m_textMateTokenizeBudget = 128;
 	// Translucent editor overlays share a one-pixel AlphaBlend source. Keep it

@@ -23,8 +23,11 @@
 #pragma once
 
 #include <Windows.h>
+#include <cstdint>
+#include <deque>
 #include <memory_resource>
 #include <memory>
+#include <vector>
 #include "_main/global.h" // 2002/2/10 aroka
 #include "basis/SakuraBasis.h"
 #include "util/design_template.h"
@@ -42,6 +45,18 @@ struct DocLineReplaceArg {
 	CLogicPoint		ptNewPos;			//!< [out] 挿入された部分の次の位置
 	int				nDelSeq;			//!< [in] 削除行のOpeシーケンス
 	int				nInsSeq;			//!< [out] 挿入行の元のシーケンス
+};
+
+//! 論理行単位で記録される1回分のテキスト変更。`firstLine` は先頭の変更行で、
+//! 旧 `[firstLine, firstLine+oldLineCount)` が `newLineCount` 行に置き換わった。
+//! `full` は正確な範囲を記述できない変更 (一括ロード/リロード/復元経路) を示し、
+//! 利用側は「全て変わった」として扱わなければならない。
+struct DocTextEdit {
+	std::uint64_t	revision;
+	CLogicInt		firstLine;
+	CLogicInt		oldLineCount;
+	CLogicInt		newLineCount;
+	bool			full;
 };
 
 /*-----------------------------------------------------------------------
@@ -74,6 +89,35 @@ public:
 	void DeleteLine( CDocLine* );				//!< 行の削除
 	void AppendAsMove( CDocLineMgr& other );	//!< 他のCDocLineMgrの内容を末尾に追加する
 
+	//テキスト変更リビジョン/編集ログ（論理行単位）
+	//! 単調増加リビジョン。記録された変更ごとに1ずつ進む。
+	std::uint64_t GetTextRevision() const noexcept { return m_textRevision; }
+	//! `sinceRevision` より新しい記録を全て `out` に追加する。ログの上限 (64件)
+	//! を超えて古い記録が押し出されている場合は false (利用側は全無効化する)。
+	bool CollectTextEdits( std::uint64_t sinceRevision, std::vector<DocTextEdit>& out ) const;
+	//! ReplaceData 中の行リスト一括操作が個別に "full" を記録しないようにする
+	//! RAII ガード。デストラクタで正確な変更範囲を1件記録する。
+	//! 生成は CSearchAgent::ReplaceData の1箇所のみでネストはあり得ない
+	//! (m_inDocMutation は検査用の bool)。
+	class ScopedDocMutation final {
+	public:
+		ScopedDocMutation( CDocLineMgr& mgr, const DocLineReplaceArg& arg );
+		~ScopedDocMutation();
+		ScopedDocMutation( const ScopedDocMutation& ) = delete;
+		ScopedDocMutation& operator=( const ScopedDocMutation& ) = delete;
+	private:
+		CDocLineMgr&	m_mgr;
+		CLogicInt		m_linesBefore = CLogicInt(0);
+		CLogicInt		m_fromY = CLogicInt(0);
+		CLogicInt		m_toY = CLogicInt(0);
+		CLogicInt		m_toX = CLogicInt(0);
+		int				m_toLineLenWithoutEOL = 0;
+		int				m_toLineLenWithEOL = 0;
+		bool			m_hasInsData = false;
+	};
+	void RecordTextEdit( CLogicInt firstLine, CLogicInt oldLineCount, CLogicInt newLineCount );
+	void RecordTextEditFull();
+
 	// メモリリソースのアクセス
 	std::shared_ptr<std::pmr::memory_resource> GetMemoryResource() const { return m_docLineMemRes; }
 	void SetMemoryResource(std::shared_ptr<std::pmr::memory_resource> memoryResource) { m_docLineMemRes = memoryResource; }
@@ -95,10 +139,15 @@ protected:
 	//                        メンバ変数                           //
 	// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
 private:
+	void NoteStructuralMutation();	//!< 行リスト一括操作から呼ぶ。ガード非適用時は "full" を記録する
+	void PushTextEditRecord( const DocTextEdit& record ) noexcept;	//!< 記録失敗時はログを空にして抜けを作る
 	CDocLine*	m_pDocLineTop;		//!< 最初の行
 	CDocLine*	m_pDocLineBot;		//!< 最後の行(※1行しかない場合はm_pDocLineTopと等しくなる)
 	CLogicInt	m_nLines;			//!< 全行数
 	std::shared_ptr<std::pmr::memory_resource> m_docLineMemRes;
+	std::uint64_t			m_textRevision = 0;
+	std::deque<DocTextEdit>	m_textEditLog;	//!< 上限64件
+	bool					m_inDocMutation = false;	//!< ScopedDocMutation の生存中だけ true
 
 public:
 	//$$ kobake注: 以下、絶対に切り離したい（最低切り離せなくても、変数の意味をコメントで明確に記すべき）変数群

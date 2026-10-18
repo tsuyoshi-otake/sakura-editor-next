@@ -71,6 +71,7 @@ CDocLineMgr::~CDocLineMgr()
 //! pPosの直前に新しい行を挿入
 CDocLine* CDocLineMgr::InsertNewLine(CDocLine* pPos)
 {
+	NoteStructuralMutation();
 	CDocLine* pcDocLineNew = new (m_docLineMemRes->allocate(sizeof(CDocLine))) CDocLine();
 	_InsertBeforePos(pcDocLineNew,pPos);
 	return pcDocLineNew;
@@ -79,6 +80,7 @@ CDocLine* CDocLineMgr::InsertNewLine(CDocLine* pPos)
 //! 最下部に新しい行を挿入
 CDocLine* CDocLineMgr::AddNewLine()
 {
+	NoteStructuralMutation();
 	CDocLine* pcDocLineNew = new (m_docLineMemRes->allocate(sizeof(CDocLine))) CDocLine();
 	_PushBottom(pcDocLineNew);
 	return pcDocLineNew;
@@ -87,6 +89,7 @@ CDocLine* CDocLineMgr::AddNewLine()
 //! 全ての行を削除する
 void CDocLineMgr::DeleteAllLine()
 {
+	NoteStructuralMutation();
 	CDocLine* pDocLine = m_pDocLineTop;
 	while( pDocLine ){
 		CDocLine* pDocLineNext = pDocLine->GetNextLine();
@@ -100,6 +103,7 @@ void CDocLineMgr::DeleteAllLine()
 //! 行の削除
 void CDocLineMgr::DeleteLine( CDocLine* pcDocLineDel )
 {
+	NoteStructuralMutation();
 	//Prev切り離し
 	if( pcDocLineDel->GetPrevLine() ){
 		pcDocLineDel->GetPrevLine()->m_pNext = pcDocLineDel->GetNextLine();
@@ -137,6 +141,7 @@ void CDocLineMgr::DeleteLine( CDocLine* pcDocLineDel )
 //! 元のCDocLineMgrの内容は空になる
 void CDocLineMgr::AppendAsMove( CDocLineMgr& other )
 {
+	NoteStructuralMutation();
 	if( other.GetDocLineTop() == nullptr ){ return; }
 
 	// 双方向リンクをつなぐ
@@ -155,6 +160,112 @@ void CDocLineMgr::AppendAsMove( CDocLineMgr& other )
 
 	// 所有権が移ったので空っぽにしておく
 	other._Init();
+}
+
+// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
+//              テキスト変更リビジョン/編集ログ                 //
+// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
+
+void CDocLineMgr::PushTextEditRecord( const DocTextEdit& record ) noexcept
+{
+	try {
+		m_textEditLog.push_back( record );
+		while( m_textEditLog.size() > 64 ) m_textEditLog.pop_front();
+	}
+	catch( ... ) {
+		// デストラクタ(ScopedDocMutation)経由では例外を投げられない。
+		// 記録を失ったまま進むと差分が壊れるので、ログを空にして
+		// CollectTextEdits 側が「抜け」を検出して全無効化するようにする。
+		m_textEditLog.clear();
+	}
+}
+
+void CDocLineMgr::RecordTextEdit( CLogicInt firstLine, CLogicInt oldLineCount, CLogicInt newLineCount )
+{
+	++m_textRevision;
+	PushTextEditRecord(DocTextEdit{ m_textRevision, firstLine, oldLineCount, newLineCount, false });
+}
+
+void CDocLineMgr::RecordTextEditFull()
+{
+	++m_textRevision;
+	PushTextEditRecord(DocTextEdit{ m_textRevision, CLogicInt(0), CLogicInt(0), CLogicInt(0), true });
+}
+
+void CDocLineMgr::NoteStructuralMutation()
+{
+	// ScopedDocMutation の中では ReplaceData が正確な範囲を記録するので何もしない
+	if( !m_inDocMutation ) RecordTextEditFull();
+}
+
+bool CDocLineMgr::CollectTextEdits( std::uint64_t sinceRevision, std::vector<DocTextEdit>& out ) const
+{
+	if( sinceRevision >= m_textRevision ) return true;
+	if( m_textEditLog.empty() || m_textEditLog.front().revision > sinceRevision + 1 ) {
+		return false; // 記録が押し出されて差分を再構成できない
+	}
+	for( const auto& record : m_textEditLog ) {
+		if( record.revision > sinceRevision ) out.push_back( record );
+	}
+	return true;
+}
+
+CDocLineMgr::ScopedDocMutation::ScopedDocMutation(
+	CDocLineMgr& mgr, const DocLineReplaceArg& arg )
+	: m_mgr( mgr )
+{
+	// ReplaceData は自分自身を呼ばないのでネストはあり得ない (不変条件)。
+	assert( !m_mgr.m_inDocMutation );
+	m_mgr.m_inDocMutation = true;
+	m_linesBefore = m_mgr.GetLineCount();
+	m_fromY = arg.sDelRange.GetFrom().y;
+	m_toY = arg.sDelRange.GetTo().y;
+	m_toX = arg.sDelRange.GetTo().x;
+	const CDocLine* pcToLine = m_mgr.GetLine( m_toY );
+	m_toLineLenWithoutEOL = pcToLine == nullptr ? 0 : static_cast<int>( pcToLine->GetLengthWithoutEOL() );
+	m_toLineLenWithEOL = pcToLine == nullptr ? 0 : static_cast<int>( pcToLine->GetLengthWithEOL() );
+	m_hasInsData = arg.pInsData != nullptr && arg.pInsData->size() > 0;
+}
+
+CDocLineMgr::ScopedDocMutation::~ScopedDocMutation()
+{
+	assert( m_mgr.m_inDocMutation );
+
+	// 変更された旧行の数。範囲の終端行 to.y は常に影響を受けるものとして
+	// 数える (VS Code の inclusive endLineNumber と同じく、行頭終端で
+	// 実際には変わらない行を1行余分に無効化するだけで済む安全側の近似)。
+	// サクラの座標系では「行末以降」の位置が (行の文字数+EOL長, 同一y) で
+	// 表されるので、そこまで達する削除は EOL を消して次行を連結する
+	// → 次行も変更行になる。部分行の削除が連結になった場合、その連結が
+	// 消去済み領域をまたいで最初に残った行 (= to.y) を取り込むので、
+	// to.y を含めて数えれば必ずカバーできる。
+	// from.y が論理行数を超える入力は ReplaceData の呼び出し規約に存在しない
+	// (先頭位置は常に実在する行または直後の phantom 行)。assert で契約を示す。
+	const CLogicInt linesAfter = m_mgr.GetLineCount();
+	assert( m_fromY <= m_linesBefore );
+	const CLogicInt from = m_fromY;
+	CLogicInt lastAffected = m_toY;
+	if( m_toY < m_linesBefore && static_cast<int>( m_toX ) > m_toLineLenWithoutEOL ) {
+		++lastAffected;
+	}
+	// 挿入データがある場合、挿入位置にある最初の生き残り行も変更される
+	// (行全体が削除されたときは、その次の行が書き換え・連結対象になる)。
+	if( m_hasInsData ) {
+		CLogicInt insFirst = m_toY;
+		if( m_toY < m_linesBefore && static_cast<int>( m_toX ) >= m_toLineLenWithEOL ) {
+			++insFirst;
+		}
+		if( insFirst > lastAffected ) lastAffected = insFirst;
+	}
+	CLogicInt oldCount = lastAffected - m_fromY + CLogicInt(1);
+	// sDelRange は常に正規化済み (from <= to) なので lastAffected >= m_fromY。
+	assert( oldCount >= CLogicInt(1) );
+	const CLogicInt maxOld = m_linesBefore - from;
+	if( oldCount > maxOld ) oldCount = maxOld;
+	const CLogicInt newCount = oldCount + ( linesAfter - m_linesBefore );
+	assert( newCount >= CLogicInt(0) );
+	m_mgr.RecordTextEdit( from, oldCount, newCount );
+	m_mgr.m_inDocMutation = false;
 }
 
 // -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //

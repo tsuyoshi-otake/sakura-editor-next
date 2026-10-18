@@ -21,6 +21,18 @@ workbench owns those states through adapters described in
 - Add document-wide state through `CEditDoc`; do not create a second owner or global mutable copy of document state.
 - File open/save behavior belongs in `CDocFileOperation` or its collaborating load/save agents, not in view or window code.
 - A logical-line mutation must account for layout invalidation/rebuild, selection/caret observers, and undo/redo ownership.
+- Every logical-line text mutation is recorded on `CDocLineMgr` in a bounded
+  64-record edit log (`DocTextEdit{revision, firstLine, oldLineCount,
+  newLineCount, full}`) behind the monotonically increasing
+  `GetTextRevision()`. Writers must go through `CSearchAgent::ReplaceData`
+  (wrapped by `CDocLineMgr::ScopedDocMutation`, which records one precise
+  range record in its destructor) or the line-list bulk ops
+  (`InsertNewLine`, `AddNewLine`, `DeleteAllLine`, `DeleteLine`,
+  `AppendAsMove`), each of which records a `full` record when no mutation
+  guard is active. Consumers replay records via `CollectTextEdits`; a gap or
+  `full` record must be handled as complete invalidation. Layout-only
+  rewraps (`CLayoutMgr::_DoLayout`) do not mutate logical text and therefore
+  never advance the text revision.
 - Keep text encoding conversion at the file/charset boundary. Internal editing logic should operate on the established document representation.
 - `CEditDoc::HandleCommand` is a document-facing command entry point; command routing policy and dispatcher lifecycle remain under `cmd/`.
 

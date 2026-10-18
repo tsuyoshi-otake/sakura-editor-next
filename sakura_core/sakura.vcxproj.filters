@@ -3942,6 +3942,9 @@
     <ClCompile Include="..\sakura_core\textmate\TextMateJsonGrammarLoader.cpp">
       <Filter>Cpp Source Files\textmate</Filter>
     </ClCompile>
+    <ClCompile Include="..\sakura_core\textmate\TextMateLineCache.cpp">
+      <Filter>Cpp Source Files\textmate</Filter>
+    </ClCompile>
     <ClCompile Include="..\sakura_core\textmate\TextMatePlistGrammarLoader.cpp">
       <Filter>Cpp Source Files\textmate</Filter>
     </ClCompile>

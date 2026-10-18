@@ -868,54 +868,118 @@ const std::vector<textmate::TextMateToken>* CEditView::GetTextMateTokens(
 	auto* service = GetEditWnd().GetSenpLanguageService();
 	if( service == nullptr ) {
 		m_textMateSession.reset();
-		m_textMateLines.clear();
+		m_textMateCache.Reset(0);
 		return nullptr;
 	}
 
-	const std::uint64_t layoutGeneration =
-		m_pcEditDoc->m_cLayoutMgr.GetLayoutGeneration();
+	const std::uint64_t textRevision = m_pcEditDoc->m_cDocLineMgr.GetTextRevision();
 	const std::uint64_t serviceRevision = service->Revision();
 	const std::wstring resourcePath = m_pcEditDoc->m_cDocFile.GetFilePath();
-	if( m_textMateLayoutGeneration != layoutGeneration
-		|| m_textMateServiceRevision != serviceRevision
-		|| m_textMateResourcePath != resourcePath ) {
-		m_textMateSession.reset();
-		m_textMateLines.clear();
-		m_textMateLayoutGeneration = layoutGeneration;
-		m_textMateServiceRevision = serviceRevision;
-		m_textMateResourcePath = resourcePath;
-
+	const std::size_t logicalLineCount = static_cast<std::size_t>(
+		static_cast<int>(m_pcEditDoc->m_cDocLineMgr.GetLineCount()));
+	const auto firstLineText = [this]() -> std::wstring_view {
 		const CDocLine* first = m_pcEditDoc->m_cDocLineMgr.GetLine(CLogicInt(0));
-		const std::wstring_view firstLine = first == nullptr
+		return first == nullptr
 			? std::wstring_view{}
 			: std::wstring_view(first->GetPtr(),
 				static_cast<std::size_t>(first->GetLengthWithoutEOL()));
-		m_textMateSession = service->CreateSession(resourcePath, firstLine);
+	};
+
+	if( m_textMateServiceRevision != serviceRevision
+		|| m_textMateResourcePath != resourcePath ) {
+		// Language service or file identity changed: full session rebuild.
+		m_textMateSession.reset();
+		m_textMateServiceRevision = serviceRevision;
+		m_textMateResourcePath = resourcePath;
+		m_textMateTextRevision = textRevision;
+		m_textMateCache.Reset(logicalLineCount);
+		m_textMateSession = service->CreateSession(resourcePath, firstLineText());
+	} else if( textRevision != m_textMateTextRevision ) {
+		// Text changed: replay the bounded edit log into the line cache.
+		// A layout-only rewrap does not move the text revision, so it keeps
+		// every stored token -- GetLayoutGeneration() over-invalidated here.
+		std::vector<DocTextEdit> edits;
+		const bool collected = m_pcEditDoc->m_cDocLineMgr.CollectTextEdits(
+			m_textMateTextRevision, edits);
+		if( collected ) {
+			m_textMateCache.ApplyEdits(edits, logicalLineCount);
+		} else {
+			// Records were evicted from the bounded log: nothing reconstructible.
+			m_textMateCache.Reset(logicalLineCount);
+		}
+		m_textMateTextRevision = textRevision;
+
+		// VS Code selects the language only at model creation
+		// (textEditorModel.ts getOrCreateLanguage ->
+		// languageService.createByFilepathOrFirstLine from
+		// createTextEditorModel); content edits never re-run first-line
+		// detection -- typing "#!..." on line 1 does not switch languages.
+		// The Sakura equivalent of model creation is a whole-document
+		// replacement: a `full` record (a file load arrives as
+		// AppendAsMove/AddNewLine `full` records, so a session created while
+		// the document was still empty is re-selected once content arrives)
+		// or an uncollectable edit-log gap. Ordinary edits, including line-0
+		// edits, never re-select.
+		bool reselect = !collected;
+		for( const auto& e : edits ) {
+			if( e.full ) { reselect = true; break; }
+		}
+		if( reselect ) {
+			auto candidate = service->CreateSession(resourcePath, firstLineText());
+			const bool keep = candidate != nullptr && m_textMateSession != nullptr
+				&& candidate->LanguageId() == m_textMateSession->LanguageId();
+			if( !keep ) {
+				// New language, session gained or lost: stored states belong to
+				// another grammar, so resolution restarts.
+				m_textMateSession = std::move(candidate);
+				m_textMateCache.Reset(logicalLineCount);
+			}
+		}
 	}
 	if( !m_textMateSession ) return nullptr;
 
 	const std::size_t requested = static_cast<std::size_t>(static_cast<int>(logicalLine));
-	while( m_textMateLines.size() <= requested && m_textMateTokenizeBudget > 0 ) {
-		const auto sourceLine = static_cast<int>(m_textMateLines.size());
-		const CDocLine* line = m_pcEditDoc->m_cDocLineMgr.GetLine(CLogicInt(sourceLine));
-		if( line == nullptr ) break;
-		const std::wstring_view text(line->GetPtr(),
-			static_cast<std::size_t>(line->GetLengthWithoutEOL()));
-		const textmate::RuleStackHandle previous = m_textMateLines.empty()
-			? m_textMateSession->InitialState()
-			: m_textMateLines.back().stateAfter;
-		textmate::RuleStackHandle next;
-		auto tokenized = m_textMateSession->TokenizeLine(text, previous, next);
-		m_textMateLines.push_back({ std::move(next), std::move(tokenized.tokens) });
-		--m_textMateTokenizeBudget;
+	const auto ensured = m_textMateCache.EnsureResolved(requested,
+		m_textMateTokenizeBudget,
+		m_textMateSession->InitialState(),
+		[this](std::size_t index) -> std::wstring_view {
+			const CDocLine* line = m_pcEditDoc->m_cDocLineMgr.GetLine(CLogicInt(static_cast<int>(index)));
+			return line == nullptr ? std::wstring_view{}
+				: std::wstring_view(line->GetPtr(),
+					static_cast<std::size_t>(line->GetLengthWithoutEOL()));
+		},
+		[this](std::wstring_view text, const textmate::RuleStackHandle& prev,
+			textmate::RuleStackHandle& next) {
+			auto result = m_textMateSession->TokenizeLine(text, prev, next);
+			return std::move(result.tokens);
+		});
+	m_textMateTokenizeBudget -= ensured.tokenized;
+
+	if( ensured.firstNewlyInvalidatedLine.has_value() ) {
+		// A tokenized line's end state changed in this call: the lines below may
+		// need different colors than their stored tokens show, but the legacy
+		// repaint region (ReplaceData_CEditView3) knows nothing about TextMate
+		// state. In VS Code onDidChangeTokens repaints those lines; here,
+		// schedule a repaint from the newly invalidated line's layout row to the
+		// bottom, only when that row is inside the visible text area.
+		CLayoutPoint layoutPoint;
+		m_pcEditDoc->m_cLayoutMgr.LogicToLayout(
+			CLogicPoint(CLogicInt(0),
+				CLogicInt(static_cast<int>(*ensured.firstNewlyInvalidatedLine))),
+			&layoutPoint);
+		const int yTop = GetTextArea().GenerateYPx(layoutPoint.y);
+		if( yTop < GetTextArea().GetAreaBottom() ) {
+			const RECT rc{ 0, yTop, GetTextArea().GetAreaRight(), GetTextArea().GetAreaBottom() };
+			::InvalidateRect(GetHwnd(), &rc, FALSE);
+		}
 	}
-	if( requested >= m_textMateLines.size() ) {
+
+	if( m_textMateCache.IsInvalid(requested) || !m_textMateCache.HasTokens(requested) ) {
 		// TextMate state is line-ordered. Continue in later paint turns instead of
 		// blocking a large jump into a long file on one synchronous scan.
 		::InvalidateRect(GetHwnd(), nullptr, FALSE);
-		return nullptr;
 	}
-	return &m_textMateLines[requested].tokens;
+	return m_textMateCache.GetTokens(requested);
 }
 
 void CEditView::ApplyTextMateTokenStyle(SColorStrategyInfo& info,
@@ -1057,9 +1121,12 @@ void CEditView::DrawMiniMapFrame(HDC hdc)
 	const int logicalLineCount = static_cast<int>(
 		m_pcEditDoc->m_cDocLineMgr.GetLineCount());
 	if( logicalLineCount > 0 ) {
-		const auto* finalLineTokens = GetTextMateTokens(CLogicInt(logicalLineCount - 1));
+		// Still advance the cache toward the final line inside the same budget;
+		// readiness itself means fully resolved -- a stale-but-tokenized final
+		// line after an edit must not rebuild the overview with old colors.
+		[[maybe_unused]] const auto* finalLineTokens = GetTextMateTokens(CLogicInt(logicalLineCount - 1));
 		textMateAvailable = m_textMateSession != nullptr;
-		textMateReady = !textMateAvailable || finalLineTokens != nullptr;
+		textMateReady = !textMateAvailable || IsTextMateFullyResolved();
 	}
 	std::uint64_t styleFingerprint = 1469598103934665603ULL;
 	const auto mixStyle = [&styleFingerprint](std::uint64_t value) noexcept {

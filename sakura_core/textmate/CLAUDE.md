@@ -209,6 +209,39 @@ glob:
   its owning grammar for nested repository references. This reaches the regex engine through
   `OnigmoPattern::Compile`/`Search`.
 
+## Incremental line cache
+
+`TextMateLineCache` (`TextMateLineCache.h/.cpp`) is the per-line incremental
+owner, modeled on VS Code's `TrackingTokenizationStateStore`
+(`textModelTokens.ts`): one entry per logical line (`stateAfter` +
+`tokens`) plus a sorted vector of disjoint half-open `[start,end)`
+invalid-line ranges (O(R) per edit, O(log R) lookup; R is the range count).
+
+- `AcceptChange(firstLine, oldLineCount, newLineCount)` splices only the
+  difference in place (a 1->1 in-line edit moves nothing) and keeps the last
+  old line's `stateAfter` on the last new entry as the convergence anchor.
+  At least one line is always marked invalid, matching VS Code's
+  `eolCount + 1` produced-lines rule.
+- `EnsureResolved(uptoLine, budget, initialState, lineText, tokenize)`
+  re-tokenizes from the smallest invalid line. After tokenizing line L it
+  compares the produced end state to the state previously stored at that
+  position with `textmate::Equivalent`; equality means line L+1 is not
+  invalidated (convergence), while lines invalidated by other edits stay
+  invalid. Newly invalidated lines are reported in
+  `EnsureResult::firstNewlyInvalidatedLine` so the owner can repaint below
+  them. An invalid line keeps returning its previous tokens for painting;
+  only a never-tokenized line returns none.
+- `ApplyEdits` replays `CDocLineMgr` `DocTextEdit` records and fails closed
+  (`Reset`, all-invalid) on a `full` record or a net-delta that does not
+  reach the document's real line count.
+- `Equivalent` compares rule stacks structurally and iteratively (rule,
+  owningGrammar, name, contentName, isWhileRule, `endOrWhileSource`,
+  parents); `endOrWhileSource` is the begin-match-substituted `end`/`while`
+  source stored on `TextMateRuleStackFrame` at push time.
+
+Tokenization stays budgeted on the UI thread; there is deliberately no
+background tokenizer thread in this design.
+
 ### `.vcxproj` registration
 
 Keep both halves of each pair in sync — MSBuild source lists are explicit, so

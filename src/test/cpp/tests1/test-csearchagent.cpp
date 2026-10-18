@@ -22,6 +22,7 @@
 #include <utility>
 #include <vector>
 #include "doc/logic/CDocLineMgr.h"
+#include "textmate/TextMateLineCache.h"
 
 namespace {
 
@@ -791,4 +792,263 @@ TEST(CSearchAgent, DISABLED_SearchStringMicrobenchmark)
 				corpus.name, nPatternLen, msBmh, msSimd, msProd, msSimd / msBmh );
 		}
 	}
+}
+
+/* =========================================================================
+	CDocLineMgr テキスト変更ログ (#358)
+	実際の ReplaceData が記録した編集範囲を検査する。
+========================================================================= */
+
+namespace {
+
+//! sinceRevision 以降の記録を集める。取りこぼし時は ASSERT で失敗させる。
+std::vector<DocTextEdit> CollectTextEditsOrFail(CDocLineMgr& m, std::uint64_t sinceRevision)
+{
+	std::vector<DocTextEdit> edits;
+	EXPECT_TRUE(m.CollectTextEdits(sinceRevision, edits));
+	return edits;
+}
+
+void DoReplaceData(CDocLineMgr& m, CLogicPoint from, CLogicPoint to, COpeLineData* pInsData)
+{
+	DocLineReplaceArg arg{};
+	arg.sDelRange = CLogicRange(from, to);
+	arg.pcmemDeleted = nullptr;
+	arg.pInsData = pInsData;
+	arg.nDelSeq = 1;
+	arg.nInsSeq = -1;
+	CSearchAgent(&m).ReplaceData(&arg, false);
+}
+
+} // namespace
+
+// 行をまたぐ削除と挿入を1回の ReplaceData で記録する。
+// BBB\n を丸ごと削除しつつ DDD\n + EEE を挿入するので、削除行に加えて
+// 先頭に文字列が連結される CCC 行も変更行になる (old=2, new=2)。
+TEST(CDocLineMgrTextEditLog, ReplaceDataRecordsPreciseRange)
+{
+	CDocLineMgr m;
+	SetLines(m, 1, {L"AAA\n", L"BBB\n", L"CCC\n"});
+	const auto seen = m.GetTextRevision();
+
+	COpeLineData insData = MakeOpeLineData({{L"DDD\n", 2}, {L"EEE", 3}});
+	DoReplaceData(m, CLogicPoint(0, 1), CLogicPoint(0, 2), &insData);
+	EXPECT_EQ(int(m.GetLineCount()), 3);
+	EXPECT_STREQ(m.GetLine(CLogicInt(0))->GetPtr(), L"AAA\n");
+	EXPECT_STREQ(m.GetLine(CLogicInt(1))->GetPtr(), L"DDD\n");
+	EXPECT_STREQ(m.GetLine(CLogicInt(2))->GetPtr(), L"EEECCC\n");
+
+	const auto edits = CollectTextEditsOrFail(m, seen);
+	ASSERT_EQ(edits.size(), 1u);
+	EXPECT_FALSE(edits[0].full);
+	EXPECT_EQ(int(edits[0].firstLine), 1);
+	EXPECT_EQ(int(edits[0].oldLineCount), 2);
+	EXPECT_EQ(int(edits[0].newLineCount), 2);
+	EXPECT_EQ(m.GetTextRevision(), seen + 1);
+
+	textmate::TextMateLineCache cache;
+	cache.Reset(3);
+	cache.ApplyEdits(edits, static_cast<size_t>(int(m.GetLineCount())));
+	EXPECT_EQ(cache.LineCount(), static_cast<size_t>(int(m.GetLineCount())));
+}
+
+// 最終行だけを書き換える編集。
+TEST(CDocLineMgrTextEditLog, EditOnLastLine)
+{
+	CDocLineMgr m;
+	SetLines(m, 1, {L"AAA\n", L"BBB\n", L"CCC\n"});
+	const auto seen = m.GetTextRevision();
+
+	COpeLineData insData = MakeOpeLineData({{L"XYZ", 2}});
+	DoReplaceData(m, CLogicPoint(0, 2), CLogicPoint(3, 2), &insData);
+	EXPECT_STREQ(m.GetLine(CLogicInt(2))->GetPtr(), L"XYZ\n");
+
+	const auto edits = CollectTextEditsOrFail(m, seen);
+	ASSERT_EQ(edits.size(), 1u);
+	EXPECT_EQ(int(edits[0].firstLine), 2);
+	EXPECT_EQ(int(edits[0].oldLineCount), 1);
+	EXPECT_EQ(int(edits[0].newLineCount), 1);
+
+	textmate::TextMateLineCache cache;
+	cache.Reset(3);
+	cache.ApplyEdits(edits, static_cast<size_t>(int(m.GetLineCount())));
+	EXPECT_EQ(cache.LineCount(), static_cast<size_t>(int(m.GetLineCount())));
+}
+
+// 最終改行の後ろ (ファントム行位置) への行挿入。
+TEST(CDocLineMgrTextEditLog, InsertAfterFinalEol)
+{
+	CDocLineMgr m;
+	SetLines(m, 1, {L"AAA\n", L"BBB\n"});
+	const auto seen = m.GetTextRevision();
+
+	COpeLineData insData = MakeOpeLineData({{L"CCC\n", 2}});
+	DoReplaceData(m, CLogicPoint(0, 2), CLogicPoint(0, 2), &insData);
+	EXPECT_EQ(int(m.GetLineCount()), 3);
+
+	const auto edits = CollectTextEditsOrFail(m, seen);
+	ASSERT_EQ(edits.size(), 1u);
+	EXPECT_EQ(int(edits[0].firstLine), 2);
+	EXPECT_EQ(int(edits[0].oldLineCount), 0);
+	EXPECT_EQ(int(edits[0].newLineCount), 1);
+
+	textmate::TextMateLineCache cache;
+	cache.Reset(2);
+	cache.ApplyEdits(edits, static_cast<size_t>(int(m.GetLineCount())));
+	EXPECT_EQ(cache.LineCount(), static_cast<size_t>(int(m.GetLineCount())));
+}
+
+// 行末の改行だけを削除して次行と連結する編集は、2行を1行に置き換える記録になる。
+TEST(CDocLineMgrTextEditLog, DeleteFinalEolRecordsTwoLines)
+{
+	CDocLineMgr m;
+	SetLines(m, 1, {L"AAA\n", L"BBB\n", L"CCC\n"});
+	const auto seen = m.GetTextRevision();
+
+	DoReplaceData(m, CLogicPoint(3, 1), CLogicPoint(4, 1), nullptr);
+	EXPECT_EQ(int(m.GetLineCount()), 2);
+	EXPECT_STREQ(m.GetLine(CLogicInt(1))->GetPtr(), L"BBBCCC\n");
+
+	const auto edits = CollectTextEditsOrFail(m, seen);
+	ASSERT_EQ(edits.size(), 1u);
+	EXPECT_EQ(int(edits[0].firstLine), 1);
+	EXPECT_EQ(int(edits[0].oldLineCount), 2);
+	EXPECT_EQ(int(edits[0].newLineCount), 1);
+
+	textmate::TextMateLineCache cache;
+	cache.Reset(3);
+	cache.ApplyEdits(edits, static_cast<size_t>(int(m.GetLineCount())));
+	EXPECT_EQ(cache.LineCount(), static_cast<size_t>(int(m.GetLineCount())));
+}
+
+// 末尾3行の削除。行数は減るが old は編集前の行数で切り詰められる。
+TEST(CDocLineMgrTextEditLog, DeleteLastThreeLines)
+{
+	CDocLineMgr m;
+	SetLines(m, 1, {L"0\n", L"1\n", L"2\n", L"3\n", L"4\n"});
+	const auto seen = m.GetTextRevision();
+
+	DoReplaceData(m, CLogicPoint(0, 2), CLogicPoint(0, 5), nullptr);
+	EXPECT_EQ(int(m.GetLineCount()), 2);
+
+	const auto edits = CollectTextEditsOrFail(m, seen);
+	ASSERT_EQ(edits.size(), 1u);
+	EXPECT_EQ(int(edits[0].firstLine), 2);
+	EXPECT_EQ(int(edits[0].oldLineCount), 3);
+	EXPECT_EQ(int(edits[0].newLineCount), 0);
+
+	textmate::TextMateLineCache cache;
+	cache.Reset(5);
+	cache.ApplyEdits(edits, static_cast<size_t>(int(m.GetLineCount())));
+	EXPECT_EQ(cache.LineCount(), static_cast<size_t>(int(m.GetLineCount())));
+}
+
+// 空のドキュメントへの挿入。
+TEST(CDocLineMgrTextEditLog, InsertIntoEmptyDocument)
+{
+	CDocLineMgr m;
+	const auto seen = m.GetTextRevision();
+
+	COpeLineData insData = MakeOpeLineData({{L"AAA\n", 1}, {L"BBB", 1}});
+	DoReplaceData(m, CLogicPoint(0, 0), CLogicPoint(0, 0), &insData);
+	EXPECT_EQ(int(m.GetLineCount()), 2);
+
+	const auto edits = CollectTextEditsOrFail(m, seen);
+	ASSERT_EQ(edits.size(), 1u);
+	EXPECT_EQ(int(edits[0].firstLine), 0);
+	EXPECT_EQ(int(edits[0].oldLineCount), 0);
+	EXPECT_EQ(int(edits[0].newLineCount), 2);
+
+	textmate::TextMateLineCache cache;
+	cache.Reset(0);
+	cache.ApplyEdits(edits, static_cast<size_t>(int(m.GetLineCount())));
+	EXPECT_EQ(cache.LineCount(), static_cast<size_t>(int(m.GetLineCount())));
+}
+
+// 全文書の置き換え。
+TEST(CDocLineMgrTextEditLog, ReplaceWholeDocument)
+{
+	CDocLineMgr m;
+	SetLines(m, 1, {L"AAA\n", L"BBB\n", L"CCC\n"});
+	const auto seen = m.GetTextRevision();
+
+	COpeLineData insData = MakeOpeLineData({{L"XYZ\n", 2}});
+	DoReplaceData(m, CLogicPoint(0, 0), CLogicPoint(0, 3), &insData);
+
+	const auto edits = CollectTextEditsOrFail(m, seen);
+	ASSERT_EQ(edits.size(), 1u);
+	EXPECT_EQ(int(edits[0].firstLine), 0);
+	EXPECT_EQ(int(edits[0].oldLineCount), 3);
+	EXPECT_EQ(int(edits[0].newLineCount), int(m.GetLineCount()));
+
+	textmate::TextMateLineCache cache;
+	cache.Reset(3);
+	cache.ApplyEdits(edits, static_cast<size_t>(int(m.GetLineCount())));
+	EXPECT_EQ(cache.LineCount(), static_cast<size_t>(int(m.GetLineCount())));
+}
+
+// 挿入データのない削除のみの編集 (ReplaceData の早期 return 経路)。
+TEST(CDocLineMgrTextEditLog, DeleteOnlyEditIsRecorded)
+{
+	CDocLineMgr m;
+	SetLines(m, 1, {L"AAA\n", L"BBB\n", L"CCC\n"});
+	const auto seen = m.GetTextRevision();
+
+	DoReplaceData(m, CLogicPoint(0, 1), CLogicPoint(3, 1), nullptr);
+	EXPECT_STREQ(m.GetLine(CLogicInt(1))->GetPtr(), L"\n");
+
+	const auto edits = CollectTextEditsOrFail(m, seen);
+	ASSERT_EQ(edits.size(), 1u);
+	EXPECT_EQ(int(edits[0].firstLine), 1);
+	EXPECT_EQ(int(edits[0].oldLineCount), 1);
+	EXPECT_EQ(int(edits[0].newLineCount), 1);
+	EXPECT_EQ(m.GetTextRevision(), seen + 1);
+}
+
+// 行内への1行挿入 (bInsOneLine の早期 return 経路)。
+TEST(CDocLineMgrTextEditLog, OneLineInsertInsideLineIsRecorded)
+{
+	CDocLineMgr m;
+	SetLines(m, 1, {L"AAA\n", L"BBB\n", L"CCC\n"});
+	const auto seen = m.GetTextRevision();
+
+	COpeLineData insData = MakeOpeLineData({{L"DDD", 2}});
+	DoReplaceData(m, CLogicPoint(0, 1), CLogicPoint(3, 1), &insData);
+	EXPECT_STREQ(m.GetLine(CLogicInt(1))->GetPtr(), L"DDD\n");
+
+	const auto edits = CollectTextEditsOrFail(m, seen);
+	ASSERT_EQ(edits.size(), 1u);
+	EXPECT_EQ(int(edits[0].firstLine), 1);
+	EXPECT_EQ(int(edits[0].oldLineCount), 1);
+	EXPECT_EQ(int(edits[0].newLineCount), 1);
+	EXPECT_EQ(m.GetTextRevision(), seen + 1);
+}
+
+// ログの上限を超える編集を行うと、取りこぼし側は全無効化を余儀なくされる。
+TEST(CDocLineMgrTextEditLog, OverflowYieldsFullInvalidation)
+{
+	CDocLineMgr m;
+	SetLines(m, 1, {L"AAA\n", L"BBB\n", L"CCC\n"});
+	const auto seen = m.GetTextRevision();
+
+	COpeLineData insData = MakeOpeLineData({{L"x", 2}});
+	for (int i = 0; i < 70; ++i) {
+		DoReplaceData(m, CLogicPoint(0, 0), CLogicPoint(0, 0), &insData);
+	}
+
+	std::vector<DocTextEdit> edits;
+	EXPECT_FALSE(m.CollectTextEdits(seen, edits));
+}
+
+// 行データ一括操作は範囲を特定できないため full 記録になる。
+TEST(CDocLineMgrTextEditLog, DeleteAllLineRecordsFull)
+{
+	CDocLineMgr m;
+	SetLines(m, 1, {L"AAA\n", L"BBB\n", L"CCC\n"});
+	const auto seen = m.GetTextRevision();
+	m.DeleteAllLine();
+
+	const auto edits = CollectTextEditsOrFail(m, seen);
+	ASSERT_GE(edits.size(), 1u);
+	EXPECT_TRUE(edits.back().full);
 }

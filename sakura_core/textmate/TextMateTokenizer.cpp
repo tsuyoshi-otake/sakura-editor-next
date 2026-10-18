@@ -277,6 +277,27 @@ OnigmoPattern* TextMateTokenizer::GetOrCompileStaticPattern(const TextMateRule* 
 	return raw;
 }
 
+bool textmate::Equivalent(const RuleStackHandle& a, const RuleStackHandle& b)
+{
+	if (a == b) return true; // covers nullptr == nullptr
+	const TextMateRuleStackFrame* fa = a.get();
+	const TextMateRuleStackFrame* fb = b.get();
+	while (fa && fb) {
+		if (fa == fb) return true; // shared tail: everything below equal
+		if (fa->rule != fb->rule
+			|| fa->owningGrammar != fb->owningGrammar
+			|| fa->isWhileRule != fb->isWhileRule
+			|| fa->name != fb->name
+			|| fa->contentName != fb->contentName
+			|| fa->endOrWhileSource != fb->endOrWhileSource) {
+			return false;
+		}
+		fa = fa->parent.get();
+		fb = fb->parent.get();
+	}
+	return fa == nullptr && fb == nullptr; // equal depth
+}
+
 TextMateLineTokenizeResult TextMateTokenizer::TokenizeLine(std::wstring_view line, const RuleStackHandle& previousState, RuleStackHandle& outNextState) const
 {
 	TextMateLineTokenizeResult result;
@@ -425,9 +446,9 @@ TextMateLineTokenizeResult TextMateTokenizer::TokenizeLine(std::wstring_view lin
 
 			const std::wstring& boundarySource = frame->isWhileRule ? best->rule->whileSource : best->rule->endSource;
 			if (!boundarySource.empty()) {
-				const std::wstring substituted = HasBackReference(boundarySource) ? SubstituteBackReferences(boundarySource, line, bestMatch) : boundarySource;
+				frame->endOrWhileSource = HasBackReference(boundarySource) ? SubstituteBackReferences(boundarySource, line, bestMatch) : boundarySource;
 				std::wstring diagnostic;
-				frame->endOrWhilePattern = OnigmoPattern::Compile(EncodeUtf8(substituted), &diagnostic);
+				frame->endOrWhilePattern = OnigmoPattern::Compile(EncodeUtf8(frame->endOrWhileSource), &diagnostic);
 				// A compile failure here leaves endOrWhilePattern null; the
 				// frame can then only be closed by an enclosing `while`
 				// failing or by the document ending. See the field comment

@@ -1365,6 +1365,7 @@
     <ClCompile Include="..\sakura_core\textmate\OnigmoRegexEngine.cpp" />
     <ClCompile Include="..\sakura_core\textmate\TextMateGrammarCompiler.cpp" />
     <ClCompile Include="..\sakura_core\textmate\TextMateJsonGrammarLoader.cpp" />
+    <ClCompile Include="..\sakura_core\textmate\TextMateLineCache.cpp" />
     <ClCompile Include="..\sakura_core\textmate\TextMatePlistGrammarLoader.cpp" />
     <ClCompile Include="..\sakura_core\textmate\TextMateTokenizer.cpp" />
     <ClCompile Include="..\sakura_core\textmate\TextMateUtf8.cpp" />

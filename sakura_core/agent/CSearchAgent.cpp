@@ -857,6 +857,10 @@ void CSearchAgent::ReplaceData( DocLineReplaceArg* pArg, bool bEnableExtEol )
 		nSetSeq = pArg->pInsData->back().nSeq;
 	}
 
+	// TextMate 編集ログ: この関数内の行リスト操作をまとめ、デストラクタで
+	// 正確な変更範囲を1件記録する (どの return 経路でも記録される)。
+	CDocLineMgr::ScopedDocMutation docMutation( *m_pcDocLineMgr, *pArg );
+
 	/* 現在行の情報を得る */
 	pCDocLine = m_pcDocLineMgr->GetLine( pArg->sDelRange.GetTo().GetY2() );
 	i = pArg->sDelRange.GetTo().y;

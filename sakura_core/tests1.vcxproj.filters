@@ -795,6 +795,9 @@
     <ClCompile Include="..\src\test\cpp\tests1\textmate\TextMateJsonGrammarLoaderTest.cpp">
       <Filter>Test Files\textmate</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\textmate\TextMateLineCacheTest.cpp">
+      <Filter>Test Files\textmate</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\textmate\TextMatePlistGrammarLoaderTest.cpp">
       <Filter>Test Files\textmate</Filter>
     </ClCompile>
