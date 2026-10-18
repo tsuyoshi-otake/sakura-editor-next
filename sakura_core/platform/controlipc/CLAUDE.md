@@ -221,6 +221,18 @@ pipe. They never recreate the handler. Pipe destruction releases that connection
 without disturbing another connection. The shared stopping gate drains active
 dispatch, then pipe-server shutdown destroys all retained sessions. A concrete
 SENP session must revoke grants before releasing its peer and own cancellation
-cleanup for its subscriptions. Process work must run on bounded Control workers;
-frame dispatch is admission/polling only. The concrete package authority, GitHub
-broker and Editor client are subsequent composition gates.
+cleanup for its subscriptions. Each broker session tracks only live grant
+records (expired ones are dropped before the tracked-grant cap check) and a
+bounded FIFO of the most recent `4 * MaximumTrackedGrants()` minted ids;
+destruction cancels the connection's executor scopes with one
+`CancelConnection`, never per remembered scope. A session-minted grant id that
+the registry no longer holds answers `Expired` so the editor re-issues, while
+an id the session never minted - or one evicted from the bounded history -
+stays `Unauthorized`, which the editor recovers from the same way. Executor
+scope states are reclaimed when idle (no reads, pending completions, resources
+or logs), so `MaximumScopes()` bounds live scopes rather than the count of
+owner identities a connection has ever seen; a retired owner that still holds
+subscriptions or unreleased resources is not idle (see
+`sakura_core/senp/CLAUDE.md`). Process work must run on bounded
+Control workers; frame dispatch is admission/polling only. The concrete package
+authority, GitHub broker and Editor client are subsequent composition gates.

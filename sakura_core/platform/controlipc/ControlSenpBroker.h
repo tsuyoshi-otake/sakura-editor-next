@@ -14,6 +14,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -147,8 +148,8 @@ private:
 	any other external process: frame processing is admission and state retrieval
 	only. An implementation owns its own workers, its own cancellation and its own
 	resource store, and must treat the scope as the sole authority for routing a
-	completion back. CancelScope is called from the session destructor and must
-	leave no worker able to touch that scope afterwards.
+	completion back. CancelConnection is called from the session destructor and
+	must leave no worker able to touch a scope of that connection afterwards.
 */
 class ISenpToolExecutor {
 public:
@@ -162,9 +163,13 @@ public:
 	[[nodiscard]] virtual std::optional<senp::effect::ToolCompleted> TakeCompleted(
 		const SenpToolExecutionScope& scope) noexcept = 0;
 	virtual void CancelRead(const SenpToolExecutionScope& scope, std::wstring_view readId) noexcept = 0;
-	//! Terminates every read and resource of this scope and completes physical
-	//! cleanup before returning. It is the destructor's cancellation obligation.
-	virtual void CancelScope(const SenpToolExecutionScope& scope) noexcept = 0;
+	//! Terminates every read, resource and queued job of every scope this
+	//! connection owns and completes physical cleanup before returning. It is
+	//! the session destructor's cancellation obligation, and it is by
+	//! connection rather than per remembered scope: an owner identity is
+	//! reissued on every workspace-revision or account change, so tracking the
+	//! distinct scopes a session ever minted would grow without bound.
+	virtual void CancelConnection(std::uint64_t sessionId, std::uint32_t clientProcessId) noexcept = 0;
 	[[nodiscard]] virtual EControlSenpRpcStatus ReadResource(const SenpToolExecutionScope& scope,
 		std::wstring_view handle, std::uint64_t offset, std::uint32_t length,
 		ControlSenpRpcResponse& response) noexcept = 0;
@@ -207,7 +212,7 @@ public:
 	It is composed by the control runtime only, after storage Hello has already
 	authenticated the connection. Each accepted pipe gets one session that owns a
 	connection-bound grant session; destroying that session revokes its grants and
-	cancels its executor scope before the peer handle is released.
+	cancels the connection's executor scopes before the peer handle is released.
 */
 class CControlSenpBroker final : public IControlIpcFrameHandler {
 public:
@@ -218,7 +223,8 @@ public:
 		return senp::CSenpToolGrants::MaximumGrants();
 	}
 	CControlSenpBroker(std::shared_ptr<senp::CSenpToolGrants> grants,
-		std::shared_ptr<ISenpToolExecutor> executor);
+		std::shared_ptr<ISenpToolExecutor> executor,
+		std::function<std::chrono::steady_clock::time_point()> clock = {});
 	~CControlSenpBroker() override;
 	CControlSenpBroker(const CControlSenpBroker&) = delete;
 	CControlSenpBroker& operator=(const CControlSenpBroker&) = delete;
@@ -231,6 +237,7 @@ private:
 
 	std::shared_ptr<senp::CSenpToolGrants> m_grants;
 	std::shared_ptr<ISenpToolExecutor> m_executor;
+	std::function<std::chrono::steady_clock::time_point()> m_clock;
 };
 
 } // namespace platform::controlipc

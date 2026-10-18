@@ -522,7 +522,7 @@ TEST(SenpGitHubToolExecutor, AResourceBelongsToExactlyOneScope)
 	EXPECT_FALSE(fixture.Executor().TakeCompleted(other));
 }
 
-TEST(SenpGitHubToolExecutor, CancellingTheScopeDropsItsReadsAndResources)
+TEST(SenpGitHubToolExecutor, CancellingTheConnectionDropsItsReadsAndResources)
 {
 	Fixture fixture;
 	const auto scope = Scope();
@@ -531,14 +531,102 @@ TEST(SenpGitHubToolExecutor, CancellingTheScopeDropsItsReadsAndResources)
 	const auto handle = ResourceHandle(*completed);
 	ASSERT_FALSE(handle.empty());
 
-	fixture.Executor().CancelScope(scope);
+	fixture.Executor().CancelConnection(scope.SessionId(), scope.ClientProcessId());
 	ControlSenpRpcResponse response;
 	EXPECT_EQ(EControlSenpRpcStatus::Unauthorized,
 		fixture.Executor().ReadResource(scope, handle, 0, 1024, response));
 	EXPECT_FALSE(fixture.Executor().TakeCompleted(scope));
 	// Cancelling twice is not an error and must not resurrect the scope.
-	fixture.Executor().CancelScope(scope);
+	fixture.Executor().CancelConnection(scope.SessionId(), scope.ClientProcessId());
 	EXPECT_FALSE(fixture.Executor().TakeCompleted(scope));
+}
+
+TEST(SenpGitHubToolExecutor, CancellingAConnectionLeavesAnotherConnectionIntact)
+{
+	Fixture fixture;
+	// One connection can hold scopes of more than one owner identity: a
+	// workspace-revision change reissues the owner, and the retired one's
+	// scope stays until the connection ends.
+	const auto scope = Scope();
+	auto olderOwner = Owner();
+	olderOwner.workspaceRevision = 1;
+	const SenpToolExecutionScope retired(7, 1234, L"profile-1", olderOwner);
+	const SenpToolExecutionScope other(8, 5678, L"profile-1", Owner());
+	const auto first = fixture.Fetch(scope, IssueList());
+	ASSERT_TRUE(first);
+	const auto firstHandle = ResourceHandle(*first);
+	ASSERT_FALSE(firstHandle.empty());
+	ASSERT_TRUE(fixture.Fetch(retired, IssueList()));
+	const auto second = fixture.Fetch(other, IssueList());
+	ASSERT_TRUE(second);
+	const auto otherHandle = ResourceHandle(*second);
+	ASSERT_FALSE(otherHandle.empty());
+
+	fixture.Executor().CancelConnection(scope.SessionId(), scope.ClientProcessId());
+
+	// Every scope the connection owned is gone, the retired owner revision
+	// included; the other connection's scope, reads and resources are intact.
+	ControlSenpRpcResponse response;
+	EXPECT_EQ(EControlSenpRpcStatus::Unauthorized,
+		fixture.Executor().ReadResource(scope, firstHandle, 0, 1024, response));
+	EXPECT_EQ(EControlSenpRpcStatus::Unauthorized,
+		fixture.Executor().ReadResource(retired, firstHandle, 0, 1024, response));
+	EXPECT_FALSE(fixture.Executor().TakeCompleted(scope));
+	EXPECT_EQ(EControlSenpRpcStatus::Succeeded,
+		fixture.Executor().ReadResource(other, otherHandle, 0, 64 * 1024, response));
+	EXPECT_EQ("[{\"id\":1,\"title\":\"first\"}]", response.ResourceBytes());
+	fixture.CredentialValue().SetStream(EBoundedProcessStatus::Succeeded, { "log bytes" });
+	EXPECT_EQ(EControlSenpRpcStatus::Succeeded, fixture.Executor().StartRead(other, JobLog()));
+	ASSERT_TRUE(fixture.Executor().WaitForIdle(kIdleTimeoutMilliseconds));
+	EXPECT_TRUE(fixture.Executor().TakeCompleted(other));
+}
+
+TEST(SenpGitHubToolExecutor, ReclaimsAnIdleScopeBeforeRefusingANewOne)
+{
+	Fixture fixture;
+	// A workspace-revision change reissues the owner identity, and a window
+	// that keeps committing collects one scope state per revision. A scope
+	// that holds nothing - no read, pending completion, resource or log - is
+	// idle and must not count against the global scope cap.
+	for (std::int64_t index = 0;
+		index < static_cast<std::int64_t>(CSenpGitHubToolExecutor::MaximumScopes()); ++index) {
+		auto owner = Owner();
+		owner.workspaceRevision = 2 + index;
+		const SenpToolExecutionScope scope(7, 1234, L"profile-1", owner);
+		const auto completed = fixture.Fetch(scope, IssueList());
+		ASSERT_TRUE(completed) << index;
+		const auto handle = ResourceHandle(*completed);
+		if (!handle.empty()) fixture.Executor().ReleaseResource(scope, handle);
+		// The retired owner is gone, so the editor cancels its read; that is
+		// what empties the last container a drained scope still holds.
+		fixture.Executor().CancelRead(scope, IssueList().ReadId());
+	}
+	// The next owner identity still gets a scope: the cap bounds live scopes,
+	// not how many identities a connection has ever seen.
+	auto owner = Owner();
+	owner.workspaceRevision = 2 + static_cast<std::int64_t>(CSenpGitHubToolExecutor::MaximumScopes());
+	const SenpToolExecutionScope scope(7, 1234, L"profile-1", owner);
+	EXPECT_EQ(EControlSenpRpcStatus::Succeeded, fixture.Executor().StartRead(scope, IssueList()));
+}
+
+TEST(SenpGitHubToolExecutor, ActiveScopesStillBoundTheGlobalCap)
+{
+	Fixture fixture;
+	// Each owner revision keeps a live read open, so none of these states is
+	// idle: the cap must still refuse once every slot holds real work.
+	for (std::int64_t index = 0;
+		index < static_cast<std::int64_t>(CSenpGitHubToolExecutor::MaximumScopes()); ++index) {
+		auto owner = Owner();
+		owner.workspaceRevision = 2 + index;
+		const SenpToolExecutionScope scope(7, 1234, L"profile-1", owner);
+		const auto completed = fixture.Fetch(scope, IssueList());
+		ASSERT_TRUE(completed) << index;
+	}
+	auto owner = Owner();
+	owner.workspaceRevision = 2 + static_cast<std::int64_t>(CSenpGitHubToolExecutor::MaximumScopes());
+	const SenpToolExecutionScope scope(7, 1234, L"profile-1", owner);
+	EXPECT_EQ(EControlSenpRpcStatus::ResourceExhausted,
+		fixture.Executor().StartRead(scope, IssueList()));
 }
 
 TEST(SenpGitHubToolExecutor, RepeatingAReadIdentityRefreshesInsteadOfSubscribingTwice)
@@ -802,7 +890,7 @@ TEST(SenpGitHubToolExecutor, CancellingAJobLogDropsItsResultAndItsStore)
 
 	// Cancelling a whole scope leaves nothing a later download could reach.
 	ASSERT_EQ(EControlSenpRpcStatus::Succeeded, fixture.Executor().StartRead(scope, JobLog()));
-	fixture.Executor().CancelScope(scope);
+	fixture.Executor().CancelConnection(scope.SessionId(), scope.ClientProcessId());
 	ASSERT_TRUE(fixture.Executor().WaitForIdle(kIdleTimeoutMilliseconds));
 	EXPECT_FALSE(fixture.Executor().TakeCompleted(scope));
 }

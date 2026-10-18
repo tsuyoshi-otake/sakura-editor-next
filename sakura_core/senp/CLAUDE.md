@@ -256,7 +256,29 @@ and approved capabilities. It never promotes Editor-supplied owner fields into
 authority. Every use rechecks the connection, complete owner scope, expiry, and
 current trusted authority. Session loss, owner replacement, profile shutdown,
 and broker shutdown have explicit revocation paths. The 64-record limit and
-five-minute lifetime bound abandoned grants. T03 adds the provider policy; this
+five-minute lifetime bound abandoned grants.
+
+The broker session tracks grant lifecycle, not only live grants. A grant id the
+session minted but the registry no longer holds (pruned after expiry, or
+revoked) must answer `Expired` so the editor re-issues; an id it never minted
+stays `Unauthorized`. The minted-id history is bounded to the most recent
+`4 * MaximumGrants()` ids; an evicted id falls back to `Unauthorized`, which the
+editor treats exactly like `Expired` (forget + re-issue). The session keeps only
+live records and drops expired ones before the tracked-grant cap check, so one
+connection can renew indefinitely while `MaximumGrants()` concurrently live
+grants still answer `ResourceExhausted`. Destruction cancels by connection, not
+by remembered scope: one `CancelConnection` tears down every executor scope the
+connection ever created, because an owner identity is reissued on every
+workspace-revision or account change and remembering each would grow without
+bound. On the executor side the global `MaximumScopes()` cap likewise bounds
+live scopes only: a scope state holding no reads, pending completions,
+resources or logs is idle and is reclaimed before a new scope is refused.
+That reclaim is only a backstop: an owner identity the editor has retired still
+holds its Manual-cadence read subscriptions and any page resource the guest has
+not released, so its scope stays non-idle until the connection closes unless
+the owner's scope is released explicitly (#354 follow-up).
+Issue, validate, and remaining-lifetime reads all share one injectable clock so
+tests drive expiry without sleeping. T03 adds the provider policy; this
 registry alone cannot construct an executable, argv, environment, or network
 request.
 

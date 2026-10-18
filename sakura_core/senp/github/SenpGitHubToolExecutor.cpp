@@ -425,6 +425,16 @@ EControlSenpRpcStatus CSenpGitHubToolExecutor::Ensure(const SenpToolExecutionSco
 {
 	state = Find(scope);
 	if (state) return EControlSenpRpcStatus::Succeeded;
+	// A scope that holds nothing - no read, pending completion, resource or
+	// log - is idle. Owner identities are reissued on every workspace-revision
+	// or account change, so a window that keeps committing would otherwise
+	// exhaust the global cap on retired identities alone. Reclaiming idle
+	// states here keeps the cap a bound on live scopes; the worker never holds
+	// a scope, so erasing under this mutex is the whole release.
+	std::erase_if(m_scopes, [](const auto& entry) {
+		return entry->reads.empty() && entry->pending.empty() && entry->resources.empty()
+			&& entry->logReads.empty() && entry->logs.empty();
+	});
 	if (m_scopes.size() >= MaximumScopes()) return EControlSenpRpcStatus::ResourceExhausted;
 	const auto profileId = Narrow(scope.ProfileId());
 	const auto extensionId = Narrow(scope.Owner().extensionId);
@@ -713,20 +723,28 @@ void CSenpGitHubToolExecutor::Release(ScopeState& state) noexcept
 	state.logReads.clear();
 }
 
-void CSenpGitHubToolExecutor::CancelScope(const SenpToolExecutionScope& scope) noexcept
+void CSenpGitHubToolExecutor::CancelConnection(const std::uint64_t sessionId,
+	const std::uint32_t clientProcessId) noexcept
 try {
 	std::unique_lock lock(m_mutex);
-	const auto found = std::ranges::find_if(m_scopes,
-		[&](const auto& state) { return state->scope == scope; });
-	if (found == m_scopes.end()) return;
-	std::erase_if(m_logQueue, [&](const auto& job) { return job.scope == (*found)->scope; });
-	if (m_runningLog && m_logStop && m_runningLogScope == (*found)->scope) {
+	// A connection ends once, but the owner identities it issued grants
+	// against are reissued on every workspace-revision or account change, so
+	// teardown matches the observed peer rather than any one scope.
+	const auto own = [&](const SenpToolExecutionScope& scope) {
+		return scope.SessionId() == sessionId && scope.ClientProcessId() == clientProcessId;
+	};
+	std::erase_if(m_logQueue, [&](const auto& job) { return own(job.scope); });
+	if (m_runningLog && m_logStop && own(m_runningLogScope)) {
 		(void)::SetEvent(m_logStop);
 	}
-	Release(**found);
-	// The worker never holds a scope - it only writes keyed pages - so erasing the
-	// record under this mutex is by itself proof that no worker can reach it.
-	m_scopes.erase(found);
+	std::erase_if(m_scopes, [&](const auto& state) {
+		if (!own(state->scope)) return false;
+		Release(*state);
+		return true;
+	});
+	// The worker never holds a scope - it only writes keyed pages - so erasing
+	// the records under this mutex is by itself proof that no worker can reach
+	// a scope of this connection afterwards.
 	lock.unlock();
 	m_wakeWorker.notify_all();
 } catch (const std::exception&) {

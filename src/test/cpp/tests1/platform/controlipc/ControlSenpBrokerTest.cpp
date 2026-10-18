@@ -5,6 +5,7 @@
 
 #include "senp/SenpTextResource.h"
 
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -21,16 +22,28 @@ senp::SenpApprovedToolOwner Approved(bool enabled = true,
 	return { L"profile-1", L"sample.github", kDigest, 5, capabilities, enabled };
 }
 
+senp::SenpApprovedToolOwner ApprovedFor(std::wstring extensionId)
+{
+	return { L"profile-1", std::move(extensionId), kDigest, 5,
+		senp::SenpToolCapability::GitHubRepositoryRead, true };
+}
+
 class Authority final : public senp::ISenpToolGrantAuthority {
 public:
-	explicit Authority(senp::SenpApprovedToolOwner value) : m_value(std::move(value)) {}
-	std::optional<senp::SenpApprovedToolOwner> Resolve(std::wstring_view, std::wstring_view) const override
+	explicit Authority(senp::SenpApprovedToolOwner value) { Set(std::move(value)); }
+	std::optional<senp::SenpApprovedToolOwner> Resolve(std::wstring_view profileId,
+		std::wstring_view extensionId) const override
 	{
-		return m_value;
+		const auto found = m_values.find(std::wstring(extensionId));
+		return found != m_values.end() && found->second.ProfileId() == profileId
+			? std::optional<senp::SenpApprovedToolOwner>(found->second) : std::nullopt;
 	}
-	void Set(senp::SenpApprovedToolOwner value) { m_value = std::move(value); }
+	void Set(senp::SenpApprovedToolOwner value)
+	{
+		m_values.insert_or_assign(std::wstring(value.ExtensionId()), std::move(value));
+	}
 private:
-	senp::SenpApprovedToolOwner m_value;
+	std::map<std::wstring, senp::SenpApprovedToolOwner> m_values;
 };
 
 //! Records what the broker admitted. It never blocks, mirroring the contract
@@ -58,9 +71,9 @@ public:
 	{
 		m_cancelledReads.emplace_back(scope, std::wstring(readId));
 	}
-	void CancelScope(const SenpToolExecutionScope& scope) noexcept override
+	void CancelConnection(std::uint64_t sessionId, std::uint32_t clientProcessId) noexcept override
 	{
-		m_cancelledScopes.push_back(scope);
+		m_cancelledConnections.emplace_back(sessionId, clientProcessId);
 	}
 	EControlSenpRpcStatus ReadResource(const SenpToolExecutionScope&, std::wstring_view handle,
 		std::uint64_t offset, std::uint32_t length, ControlSenpRpcResponse& response) noexcept override
@@ -111,9 +124,9 @@ public:
 	[[nodiscard]] const std::vector<SenpToolExecutionScope>& Polled() const noexcept { return m_polled; }
 	[[nodiscard]] const std::vector<std::pair<SenpToolExecutionScope, std::wstring>>&
 		CancelledReads() const noexcept { return m_cancelledReads; }
-	[[nodiscard]] const std::vector<SenpToolExecutionScope>& CancelledScopes() const noexcept
+	[[nodiscard]] const std::vector<SenpConnectionIdentity>& CancelledConnections() const noexcept
 	{
-		return m_cancelledScopes;
+		return m_cancelledConnections;
 	}
 	[[nodiscard]] const std::vector<std::wstring>& Released() const noexcept { return m_released; }
 	[[nodiscard]] const std::vector<std::wstring>& AccountQueries() const noexcept { return m_accountQueries; }
@@ -127,7 +140,7 @@ private:
 	std::vector<std::pair<SenpToolExecutionScope, SenpToolReadCommand>> m_started;
 	std::vector<SenpToolExecutionScope> m_polled;
 	std::vector<std::pair<SenpToolExecutionScope, std::wstring>> m_cancelledReads;
-	std::vector<SenpToolExecutionScope> m_cancelledScopes;
+	std::vector<SenpConnectionIdentity> m_cancelledConnections;
 	std::vector<std::wstring> m_released;
 	EControlSenpRpcStatus m_accountStatus = EControlSenpRpcStatus::Succeeded;
 	std::int64_t m_accountGeneration = 0;
@@ -141,6 +154,11 @@ private:
 ControlSenpRpcOwner Owner()
 {
 	return ControlSenpRpcOwner(L"sample.github", kDigest, 7, 11, 13);
+}
+
+ControlSenpRpcOwner OwnerB()
+{
+	return ControlSenpRpcOwner(L"other.github", kDigest, 7, 11, 13);
 }
 
 ControlIpcFrame RequestFrame(const ControlSenpRpcRequest& request, std::uint64_t requestId = 1)
@@ -166,12 +184,12 @@ std::optional<ControlSenpRpcResponse> ReadResponse(const ControlIpcFrameDispatch
 	return DecodeControlSenpRpcResponse(fields.fields.front().value);
 }
 
-ControlSenpRpcRequest IssueGrant()
+ControlSenpRpcRequest IssueGrant(ControlSenpRpcOwner owner = Owner())
 {
 	ControlSenpRpcRequest request;
 	request.SetOperation(EControlSenpRpcOperation::IssueGrant);
 	request.SetProfileId(L"profile-1");
-	request.SetOwner(Owner());
+	request.SetOwner(std::move(owner));
 	request.SetCapabilities(static_cast<std::uint32_t>(senp::SenpToolCapability::GitHubRepositoryRead));
 	return request;
 }
@@ -193,12 +211,12 @@ ControlSenpRpcRequest AdoptWorkspace()
 	return request;
 }
 
-ControlSenpRpcRequest StartRead(std::string grantId)
+ControlSenpRpcRequest StartRead(std::string grantId, ControlSenpRpcOwner owner = Owner())
 {
 	ControlSenpRpcRequest request;
 	request.SetOperation(EControlSenpRpcOperation::StartRead);
 	request.SetProfileId(L"profile-1");
-	request.SetOwner(Owner());
+	request.SetOwner(std::move(owner));
 	request.SetGrantId(std::move(grantId));
 	request.SetReadId(L"issues:open:1");
 	request.SetToolId(L"github");
@@ -215,7 +233,8 @@ public:
 		m_authority(std::make_shared<Authority>(Approved())),
 		m_grants(std::make_shared<senp::CSenpToolGrants>(m_authority)),
 		m_executor(std::make_shared<Executor>()),
-		m_broker(m_grants, m_executor), m_connection{ 31, 1701 }
+		m_now(std::chrono::steady_clock::now()),
+		m_broker(m_grants, m_executor, [this] { return m_now; }), m_connection{ 31, 1701 }
 	{
 	}
 
@@ -228,9 +247,12 @@ public:
 
 	std::unique_ptr<IControlIpcSessionHandler> Open() { return m_broker.CreateSession(m_connection); }
 
-	std::string Grant(IControlIpcSessionHandler& session)
+	void Advance(std::chrono::steady_clock::duration span) noexcept { m_now += span; }
+	void AdvancePastGrantLifetime() noexcept { Advance(senp::CSenpToolGrants::GrantLifetime() + std::chrono::minutes(1)); }
+
+	std::string Grant(IControlIpcSessionHandler& session, ControlSenpRpcOwner owner = Owner())
 	{
-		const auto reply = ReadResponse(session.HandleFrame(m_connection, RequestFrame(IssueGrant())));
+		const auto reply = ReadResponse(session.HandleFrame(m_connection, RequestFrame(IssueGrant(std::move(owner)))));
 		return reply && reply->Status() == EControlSenpRpcStatus::Succeeded ? reply->GrantId() : std::string{};
 	}
 
@@ -238,6 +260,7 @@ private:
 	std::shared_ptr<Authority> m_authority;
 	std::shared_ptr<senp::CSenpToolGrants> m_grants;
 	std::shared_ptr<Executor> m_executor;
+	std::chrono::steady_clock::time_point m_now;
 	CControlSenpBroker m_broker;
 	ControlIpcSessionContext m_connection;
 };
@@ -566,11 +589,13 @@ TEST(ControlSenpBroker, DestroyingTheSessionCancelsItsExecutorScope)
 		auto session = fixture.Open();
 		ASSERT_NE(nullptr, session);
 		ASSERT_FALSE(fixture.Grant(*session).empty());
-		EXPECT_TRUE(fixture.ToolExecutor()->CancelledScopes().empty());
+		EXPECT_TRUE(fixture.ToolExecutor()->CancelledConnections().empty());
 	}
-	ASSERT_EQ(1U, fixture.ToolExecutor()->CancelledScopes().size());
-	EXPECT_EQ(fixture.Connection().sessionId, fixture.ToolExecutor()->CancelledScopes().front().SessionId());
-	EXPECT_EQ(L"profile-1", fixture.ToolExecutor()->CancelledScopes().front().ProfileId());
+	// Teardown is by connection, exactly once, never once per minted scope.
+	const auto& cancelled = fixture.ToolExecutor()->CancelledConnections();
+	ASSERT_EQ(1U, cancelled.size());
+	EXPECT_EQ(fixture.Connection().sessionId, cancelled.front().SessionId());
+	EXPECT_EQ(fixture.Connection().clientProcessId, cancelled.front().ClientProcessId());
 	// Closing the session must also give the record back to the registry.
 	EXPECT_EQ(0U, fixture.Grants()->Size());
 }
@@ -622,6 +647,219 @@ TEST(ControlSenpBroker, WithoutAnExecutorTheToolBoundaryFailsExplicitly)
 		session->HandleFrame(connection, RequestFrame(StartRead(issued->GrantId()), 2)));
 	ASSERT_TRUE(started);
 	EXPECT_EQ(EControlSenpRpcStatus::Unavailable, started->Status());
+}
+
+TEST(ControlSenpBroker, IdleOwnerRecoversWithExpiredAfterAnotherOwnerRenews)
+{
+	Fixture fixture;
+	fixture.ToolAuthority()->Set(ApprovedFor(L"other.github"));
+	auto session = fixture.Open();
+	ASSERT_NE(nullptr, session);
+	const auto grantA = fixture.Grant(*session);
+	const auto grantB = fixture.Grant(*session, OwnerB());
+	ASSERT_FALSE(grantA.empty());
+	ASSERT_FALSE(grantB.empty());
+
+	// Owner B goes idle past the lifetime while owner A renews. A's Issue
+	// reclaims every expired record in the registry, so B's grant is gone even
+	// though this same connection minted it.
+	fixture.AdvancePastGrantLifetime();
+	const auto renewedA = fixture.Grant(*session);
+	ASSERT_FALSE(renewedA.empty());
+
+	const auto stale = ReadResponse(
+		session->HandleFrame(fixture.Connection(), RequestFrame(StartRead(grantB, OwnerB()), 7)));
+	ASSERT_TRUE(stale);
+	// A grant this session issued that the registry dropped must answer
+	// Expired, not InvalidRequest: the client forgets and re-issues on Expired
+	// but keeps and reuses the dead grant on InvalidRequest forever.
+	EXPECT_EQ(EControlSenpRpcStatus::Expired, stale->Status());
+	EXPECT_TRUE(fixture.ToolExecutor()->Started().empty());
+
+	const auto grantB2 = fixture.Grant(*session, OwnerB());
+	ASSERT_FALSE(grantB2.empty());
+	const auto started = ReadResponse(
+		session->HandleFrame(fixture.Connection(), RequestFrame(StartRead(grantB2, OwnerB()), 8)));
+	ASSERT_TRUE(started);
+	EXPECT_EQ(EControlSenpRpcStatus::Succeeded, started->Status());
+	EXPECT_EQ(1U, fixture.ToolExecutor()->Started().size());
+}
+
+TEST(ControlSenpBroker, IdleOwnerRecoversWithExpiredAcrossTwoConnections)
+{
+	Fixture fixture;
+	fixture.ToolAuthority()->Set(ApprovedFor(L"other.github"));
+	auto first = fixture.Open();
+	ASSERT_NE(nullptr, first);
+	const auto grantA = fixture.Grant(*first);
+	ASSERT_FALSE(grantA.empty());
+
+	fixture.SetConnection({ 32, 1702 });
+	auto second = fixture.Open();
+	ASSERT_NE(nullptr, second);
+	const auto grantB = fixture.Grant(*second, OwnerB());
+	ASSERT_FALSE(grantB.empty());
+
+	fixture.AdvancePastGrantLifetime();
+	// A renewal on the first connection reclaims B's registry record even
+	// though B belongs to another pipe.
+	fixture.SetConnection({ 31, 1701 });
+	const auto renewedA = fixture.Grant(*first);
+	ASSERT_FALSE(renewedA.empty());
+
+	fixture.SetConnection({ 32, 1702 });
+	const auto stale = ReadResponse(
+		second->HandleFrame(fixture.Connection(), RequestFrame(StartRead(grantB, OwnerB()), 7)));
+	ASSERT_TRUE(stale);
+	EXPECT_EQ(EControlSenpRpcStatus::Expired, stale->Status());
+	EXPECT_TRUE(fixture.ToolExecutor()->Started().empty());
+
+	// A grant id the second connection never minted keeps answering
+	// Unauthorized even after the first connection's record was pruned too:
+	// being dead does not make another pipe's grant this session's to name.
+	const auto foreign = ReadResponse(
+		second->HandleFrame(fixture.Connection(), RequestFrame(StartRead(grantA), 8)));
+	ASSERT_TRUE(foreign);
+	EXPECT_EQ(EControlSenpRpcStatus::Unauthorized, foreign->Status());
+
+	const auto grantB2 = fixture.Grant(*second, OwnerB());
+	ASSERT_FALSE(grantB2.empty());
+	const auto started = ReadResponse(
+		second->HandleFrame(fixture.Connection(), RequestFrame(StartRead(grantB2, OwnerB()), 9)));
+	ASSERT_TRUE(started);
+	EXPECT_EQ(EControlSenpRpcStatus::Succeeded, started->Status());
+	EXPECT_EQ(1U, fixture.ToolExecutor()->Started().size());
+}
+
+TEST(ControlSenpBroker, AConnectionRenewsIndefinitelyPastTheTrackedGrantCap)
+{
+	Fixture fixture;
+	auto session = fixture.Open();
+	ASSERT_NE(nullptr, session);
+	// Issue, let the grant expire, repeat: expired records leave the session's
+	// live set before the cap check, so renewal never exhausts it.
+	for (std::uint64_t round = 0; round < 70; ++round) {
+		const auto reply = ReadResponse(session->HandleFrame(
+			fixture.Connection(), RequestFrame(IssueGrant(), round + 1)));
+		ASSERT_TRUE(reply) << "round " << round;
+		EXPECT_EQ(EControlSenpRpcStatus::Succeeded, reply->Status()) << "round " << round;
+		fixture.AdvancePastGrantLifetime();
+	}
+}
+
+TEST(ControlSenpBroker, ConcurrentlyLiveGrantsFillTheTrackedCapThenRefuse)
+{
+	Fixture fixture;
+	auto session = fixture.Open();
+	ASSERT_NE(nullptr, session);
+	std::vector<std::string> grants;
+	for (std::size_t index = 0; index < CControlSenpBroker::MaximumTrackedGrants(); ++index) {
+		const auto reply = ReadResponse(session->HandleFrame(
+			fixture.Connection(), RequestFrame(IssueGrant(), index + 1)));
+		ASSERT_TRUE(reply) << "grant " << index;
+		ASSERT_EQ(EControlSenpRpcStatus::Succeeded, reply->Status()) << "grant " << index;
+		grants.push_back(reply->GrantId());
+	}
+	const auto refused = ReadResponse(session->HandleFrame(
+		fixture.Connection(), RequestFrame(IssueGrant(), 100)));
+	ASSERT_TRUE(refused);
+	EXPECT_EQ(EControlSenpRpcStatus::ResourceExhausted, refused->Status());
+}
+
+TEST(ControlSenpBroker, DestroyedSessionCancelsItsWholeConnectionOnceAfterPruning)
+{
+	Fixture fixture;
+	fixture.ToolAuthority()->Set(ApprovedFor(L"other.github"));
+	{
+		auto session = fixture.Open();
+		ASSERT_NE(nullptr, session);
+		ASSERT_FALSE(fixture.Grant(*session).empty());
+		ASSERT_FALSE(fixture.Grant(*session, OwnerB()).empty());
+		fixture.AdvancePastGrantLifetime();
+		// This renewal prunes both expired records; pruning is bookkeeping,
+		// so nothing may be cancelled while the session still lives.
+		ASSERT_FALSE(fixture.Grant(*session).empty());
+		EXPECT_TRUE(fixture.ToolExecutor()->CancelledConnections().empty());
+	}
+	// Owner identities are reissued on every workspace-revision or account
+	// change, so teardown cannot remember each scope: destruction makes
+	// exactly one connection-wide cancel, and the executor owns finding the
+	// scopes that belong to it.
+	const auto& cancelled = fixture.ToolExecutor()->CancelledConnections();
+	ASSERT_EQ(1U, cancelled.size());
+	EXPECT_EQ(fixture.Connection().sessionId, cancelled.front().SessionId());
+	EXPECT_EQ(fixture.Connection().clientProcessId, cancelled.front().ClientProcessId());
+	EXPECT_EQ(0U, fixture.Grants()->Size());
+}
+
+TEST(ControlSenpBroker, RenewalPrunesTheOldRecordWithoutCancellingItsScope)
+{
+	Fixture fixture;
+	auto session = fixture.Open();
+	ASSERT_NE(nullptr, session);
+	const auto grant = fixture.Grant(*session);
+	ASSERT_FALSE(grant.empty());
+	fixture.AdvancePastGrantLifetime();
+	const auto renewed = fixture.Grant(*session);
+	ASSERT_FALSE(renewed.empty());
+	// Pruning the old record is bookkeeping, not teardown: nothing may cancel
+	// the scope while the session lives because the renewed grant shares it.
+	EXPECT_TRUE(fixture.ToolExecutor()->CancelledConnections().empty());
+
+	const auto stale = ReadResponse(
+		session->HandleFrame(fixture.Connection(), RequestFrame(StartRead(grant), 3)));
+	ASSERT_TRUE(stale);
+	EXPECT_EQ(EControlSenpRpcStatus::Expired, stale->Status());
+}
+
+TEST(ControlSenpBroker, ARevokedGrantAnswersExpiredSoTheClientReissues)
+{
+	Fixture fixture;
+	auto session = fixture.Open();
+	ASSERT_NE(nullptr, session);
+	const auto grant = fixture.Grant(*session);
+	ASSERT_FALSE(grant.empty());
+
+	// Revocation also drops the record this session still tracks: same answer
+	// as expiry, because the client's recovery path is the same re-issue.
+	fixture.Grants()->RevokeOwner(L"profile-1", ToContributionOwner(Owner()));
+	const auto stale = ReadResponse(
+		session->HandleFrame(fixture.Connection(), RequestFrame(StartRead(grant), 3)));
+	ASSERT_TRUE(stale);
+	EXPECT_EQ(EControlSenpRpcStatus::Expired, stale->Status());
+}
+
+TEST(ControlSenpBroker, AnEvictedMintedGrantIdFallsBackToUnauthorized)
+{
+	Fixture fixture;
+	auto session = fixture.Open();
+	ASSERT_NE(nullptr, session);
+	// The minted-id history is bounded at four times the live-record cap: each
+	// issue followed by expiry drops the record, so minting one more than the
+	// bound evicts the oldest id.
+	std::vector<std::string> grants;
+	constexpr std::size_t kHistory = 4 * CControlSenpBroker::MaximumTrackedGrants();
+	for (std::size_t index = 0; index <= kHistory; ++index) {
+		const auto reply = ReadResponse(session->HandleFrame(
+			fixture.Connection(), RequestFrame(IssueGrant(), index + 1)));
+		ASSERT_TRUE(reply) << index;
+		ASSERT_EQ(EControlSenpRpcStatus::Succeeded, reply->Status()) << index;
+		grants.push_back(reply->GrantId());
+		fixture.AdvancePastGrantLifetime();
+	}
+	// An id that fell out of the bounded history answers like a grant this
+	// session never minted. That is safe: the editor treats Unauthorized
+	// exactly like Expired here - forget the cached grant and re-issue.
+	const auto evicted = ReadResponse(
+		session->HandleFrame(fixture.Connection(), RequestFrame(StartRead(grants.front()), 1000)));
+	ASSERT_TRUE(evicted);
+	EXPECT_EQ(EControlSenpRpcStatus::Unauthorized, evicted->Status());
+
+	// The most recent dead id is still remembered and answers Expired.
+	const auto latest = ReadResponse(
+		session->HandleFrame(fixture.Connection(), RequestFrame(StartRead(grants.back()), 1001)));
+	ASSERT_TRUE(latest);
+	EXPECT_EQ(EControlSenpRpcStatus::Expired, latest->Status());
 }
 
 } // namespace

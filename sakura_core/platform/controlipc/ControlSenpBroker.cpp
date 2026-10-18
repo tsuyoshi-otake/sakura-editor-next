@@ -10,6 +10,7 @@
 #include "platform/profiles/UserDataProfileIdentity.h"
 
 #include <algorithm>
+#include <deque>
 #include <utility>
 #include <vector>
 
@@ -17,6 +18,11 @@ namespace platform::controlipc {
 namespace {
 
 constexpr std::size_t kMaximumPayload = kControlIpcMaximumFrameBytes - kControlIpcHeaderBytes;
+
+//! The session remembers only the most recent minted grant ids, generously
+//! against the live-record cap: an id it evicts answers Unauthorized like one
+//! never minted, which the editor recovers from the same way as Expired.
+constexpr std::size_t kIssuedGrantIdHistory = 4 * CControlSenpBroker::MaximumTrackedGrants();
 
 ControlIpcFrame Frame(const ControlIpcFrame& request, EControlIpcKind kind,
 	std::vector<std::uint8_t> payload) noexcept
@@ -82,27 +88,30 @@ bool IsAdmittedToolOperation(const ControlSenpRpcRequest& request,
 
 	Frame handling stays bounded: it decodes, rechecks the control-owned grant,
 	then performs one admission or one state retrieval. It never waits on a
-	child process. Destruction cancels the executor scope of every grant this
-	connection minted before the grant session is closed, so no worker can
-	deliver into a released connection.
+	child process. Destruction cancels every executor scope of this connection
+	in one call before the grant session is closed, so no worker can deliver
+	into a released connection.
 */
 class CControlSenpBroker::Session final : public IControlIpcSessionHandler {
 public:
 	Session(std::unique_ptr<senp::CSenpToolGrantSession> grants,
-		std::shared_ptr<ISenpToolExecutor> executor, ControlIpcSessionContext connection) noexcept :
+		std::shared_ptr<ISenpToolExecutor> executor, ControlIpcSessionContext connection,
+		std::function<std::chrono::steady_clock::time_point()> clock) noexcept :
 		m_grants(std::move(grants)), m_executor(std::move(executor)),
-		m_connection(connection)
+		m_connection(connection), m_clock(std::move(clock))
 	{
+		if (!m_clock) m_clock = &std::chrono::steady_clock::now;
 	}
 
 	~Session() override
 	{
 		// Cancellation precedes grant revocation: a worker must lose its scope
-		// before the record that named it disappears.
+		// before the record that named it disappears. Teardown is by connection,
+		// not by remembered scope - an owner identity is reissued on every
+		// workspace-revision or account change, so remembering the distinct
+		// scopes this session ever minted would grow without bound.
 		if (m_executor) {
-			for (const auto& record : m_records) {
-				m_executor->CancelScope(record.Scope());
-			}
+			m_executor->CancelConnection(m_connection.sessionId, m_connection.clientProcessId);
 			// Unconditional: a connection that declared nothing withdraws
 			// nothing, and tracking whether it did would only add a way for the
 			// declaration to survive the connection that made it.
@@ -138,19 +147,23 @@ private:
 	class Record {
 	public:
 		Record() = default;
-		Record(std::string grantId, SenpToolExecutionScope scope, senp::SenpToolCapability capability) :
-			m_grantId(std::move(grantId)), m_scope(std::move(scope)), m_capability(capability)
+		Record(std::string grantId, SenpToolExecutionScope scope, senp::SenpToolCapability capability,
+			std::chrono::steady_clock::time_point expiresAt) :
+			m_grantId(std::move(grantId)), m_scope(std::move(scope)), m_capability(capability),
+			m_expiresAt(expiresAt)
 		{
 		}
 
 		[[nodiscard]] const std::string& GrantId() const noexcept { return m_grantId; }
 		[[nodiscard]] const SenpToolExecutionScope& Scope() const noexcept { return m_scope; }
 		[[nodiscard]] senp::SenpToolCapability Capability() const noexcept { return m_capability; }
+		[[nodiscard]] std::chrono::steady_clock::time_point ExpiresAt() const noexcept { return m_expiresAt; }
 
 	private:
 		std::string m_grantId;
 		SenpToolExecutionScope m_scope;
 		senp::SenpToolCapability m_capability{ senp::SenpToolCapability::None };
+		std::chrono::steady_clock::time_point m_expiresAt{};
 	};
 
 	static ControlIpcFrameDispatchResult Invalid(const ControlIpcFrame& frame)
@@ -196,17 +209,43 @@ private:
 	//! Rechecks the control-owned authority for the named record and returns the
 	//! scope only when the grant is still live for exactly this request.
 	[[nodiscard]] EControlSenpRpcStatus Authorize(const ControlSenpRpcRequest& request,
-		const Record*& record) const
+		const Record*& record)
 	{
 		record = Find(request.GrantId());
-		if (!record) return EControlSenpRpcStatus::Unauthorized;
+		if (!record) {
+			// A grant id this session minted but no longer tracks died either at
+			// expiry or by revocation, so the client re-issues on Expired. An id
+			// it never minted - or one the bounded history already evicted -
+			// stays a refusal, never an expiry hint.
+			return std::ranges::find(m_issued, request.GrantId()) != m_issued.end()
+				? EControlSenpRpcStatus::Expired : EControlSenpRpcStatus::Unauthorized;
+		}
 		const auto owner = ToContributionOwner(request.Owner());
 		if (record->Scope().ProfileId() != request.ProfileId() || !(record->Scope().Owner() == owner)) {
 			return EControlSenpRpcStatus::Unauthorized;
 		}
 		if (!m_grants) return EControlSenpRpcStatus::Closed;
 		const senp::SenpToolGrantRequest scoped(request.ProfileId(), owner, record->Capability());
-		return ToStatus(m_grants->Validate(request.GrantId(), scoped, std::chrono::steady_clock::now()));
+		const auto checked = m_grants->Validate(request.GrantId(), scoped, m_clock());
+		if (checked == senp::SenpToolGrantCheck::Invalid
+			|| checked == senp::SenpToolGrantCheck::Expired) {
+			// The session minted the grant but the registry no longer holds it:
+			// it expired or was pruned or revoked. The dead record leaves the
+			// live set here - never by cancelling its scope, which a renewed
+			// grant of the same owner can still share - and the client hears
+			// Expired so it re-issues.
+			Drop(request.GrantId());
+			record = nullptr;
+			return EControlSenpRpcStatus::Expired;
+		}
+		return ToStatus(checked);
+	}
+
+	void Drop(const std::string_view grantId) noexcept
+	{
+		const auto found = std::find_if(m_records.begin(), m_records.end(),
+			[&](const Record& record) { return record.GrantId() == grantId; });
+		if (found != m_records.end()) m_records.erase(found);
 	}
 
 	ControlSenpRpcResponse Dispatch(const ControlSenpRpcRequest& request)
@@ -304,20 +343,31 @@ private:
 
 	ControlSenpRpcResponse Issue(const ControlSenpRpcRequest& request)
 	{
+		const auto now = m_clock();
+		// The session tracks only live grants: expired records are dropped
+		// before the cap check, so one connection can renew indefinitely.
+		// Dropping never cancels a scope - a renewed grant shares it.
+		std::erase_if(m_records, [now](const Record& record) { return now >= record.ExpiresAt(); });
 		if (m_records.size() >= MaximumTrackedGrants()) {
 			return Terminal(EControlSenpRpcStatus::ResourceExhausted);
 		}
 		const auto capability = static_cast<senp::SenpToolCapability>(request.Capabilities());
 		const auto owner = ToContributionOwner(request.Owner());
 		const senp::SenpToolGrantRequest scoped(request.ProfileId(), owner, capability);
-		const auto issued = m_grants->Issue(scoped, std::chrono::steady_clock::now());
+		const auto issued = m_grants->Issue(scoped, now);
 		if (issued.Status() != senp::SenpToolGrantIssueStatus::Granted) {
 			return Terminal(ToStatus(issued.Status()));
 		}
-		m_records.emplace_back(issued.GrantId(),
-			SenpToolExecutionScope(m_connection.sessionId, m_connection.clientProcessId,
-				request.ProfileId(), owner),
-			capability);
+		SenpToolExecutionScope scope(m_connection.sessionId, m_connection.clientProcessId,
+			request.ProfileId(), owner);
+		m_records.emplace_back(issued.GrantId(), scope, capability, issued.ExpiresAt());
+		// The most recent minted ids are remembered so a record the registry
+		// dropped still answers Expired rather than Unauthorized. The history
+		// is bounded at four times the live-record cap; an evicted id falls
+		// back to Unauthorized, which the editor treats exactly like Expired
+		// (forget the cached grant and re-issue, SenpControlToolReads.cpp).
+		if (m_issued.size() >= kIssuedGrantIdHistory) m_issued.pop_front();
+		m_issued.push_back(issued.GrantId());
 
 		ControlSenpRpcResponse response;
 		response.SetStatus(EControlSenpRpcStatus::Succeeded);
@@ -325,7 +375,7 @@ private:
 		// The wire carries a relative lifetime: a steady_clock origin means
 		// nothing across processes and must never be published as a timestamp.
 		const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
-			issued.ExpiresAt() - std::chrono::steady_clock::now());
+			issued.ExpiresAt() - m_clock());
 		response.SetExpiresAtMilliseconds(remaining.count() > 0
 			? static_cast<std::uint64_t>(remaining.count()) : 0);
 		return response;
@@ -335,12 +385,16 @@ private:
 	std::shared_ptr<ISenpToolExecutor> m_executor;
 	const ControlIpcSessionContext m_connection;
 	std::vector<Record> m_records;
+	std::deque<std::string> m_issued;
+	std::function<std::chrono::steady_clock::time_point()> m_clock;
 };
 
 CControlSenpBroker::CControlSenpBroker(std::shared_ptr<senp::CSenpToolGrants> grants,
-	std::shared_ptr<ISenpToolExecutor> executor) :
-	m_grants(std::move(grants)), m_executor(std::move(executor))
+	std::shared_ptr<ISenpToolExecutor> executor,
+	std::function<std::chrono::steady_clock::time_point()> clock) :
+	m_grants(std::move(grants)), m_executor(std::move(executor)), m_clock(std::move(clock))
 {
+	if (!m_clock) m_clock = &std::chrono::steady_clock::now;
 }
 
 CControlSenpBroker::~CControlSenpBroker() = default;
@@ -353,7 +407,7 @@ std::unique_ptr<IControlIpcSessionHandler> CControlSenpBroker::CreateSession(
 	if (!m_grants || session.sessionId == 0 || session.clientProcessId == 0) return {};
 	auto grants = m_grants->OpenSession(session);
 	if (!grants) return {};
-	return std::make_unique<Session>(std::move(grants), m_executor, session);
+	return std::make_unique<Session>(std::move(grants), m_executor, session, m_clock);
 }
 
 } // namespace platform::controlipc
