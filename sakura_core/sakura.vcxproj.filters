@@ -1932,6 +1932,9 @@
     <ClInclude Include="..\sakura_core\textmate\TextMateJsonGrammarLoader.h">
       <Filter>Cpp Source Files\textmate</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\textmate\TextMateLineCache.h">
+      <Filter>Cpp Source Files\textmate</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\textmate\TextMatePlistGrammarLoader.h">
       <Filter>Cpp Source Files\textmate</Filter>
     </ClInclude>

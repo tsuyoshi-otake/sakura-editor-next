@@ -613,6 +613,7 @@
     <ClInclude Include="..\sakura_core\textmate\TextMateGrammarModel.h" />
     <ClInclude Include="..\sakura_core\textmate\TextMateGrammarValue.h" />
     <ClInclude Include="..\sakura_core\textmate\TextMateJsonGrammarLoader.h" />
+    <ClInclude Include="..\sakura_core\textmate\TextMateLineCache.h" />
     <ClInclude Include="..\sakura_core\textmate\TextMatePlistGrammarLoader.h" />
     <ClInclude Include="..\sakura_core\textmate\TextMateTokenizer.h" />
     <ClInclude Include="..\sakura_core\textmate\TextMateUtf8.h" />
