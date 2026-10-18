@@ -143,7 +143,7 @@ struct WorkbenchScmLocaleExpectation {
 
 struct WorkbenchExtensionsLocaleExpectation {
 	const wchar_t* dllName;
-	std::array<const wchar_t*, 43> strings;
+	std::array<const wchar_t*, 46> strings;
 };
 
 constexpr std::array<UINT, 5> kWorkbenchScmStringResourceIds = {
@@ -154,13 +154,16 @@ constexpr std::array<UINT, 5> kWorkbenchScmStringResourceIds = {
 	STR_WORKBENCH_SCM_GRAPH_UNAVAILABLE,
 };
 
-constexpr std::array<UINT, 43> kWorkbenchExtensionsStringResourceIds = {
+constexpr std::array<UINT, 46> kWorkbenchExtensionsStringResourceIds = {
 	STR_WORKBENCH_EXTENSIONS_TITLE,
 	STR_WORKBENCH_COMMAND_EXTENSIONS,
 	STR_WORKBENCH_EXTENSIONS_INSTALL_FROM_SENP,
 	STR_WORKBENCH_EXTENSIONS_INSTALL,
 	STR_WORKBENCH_EXTENSIONS_UNINSTALL,
 	STR_WORKBENCH_EXTENSIONS_STATUS_INVALID,
+	STR_WORKBENCH_EXTENSIONS_STATUS_INCOMPATIBLE,
+	STR_WORKBENCH_EXTENSIONS_STATUS_UNSUPPORTED,
+	STR_WORKBENCH_EXTENSIONS_STATUS_CONFLICT,
 	STR_WORKBENCH_EXTENSIONS_STATUS_BUILT_IN,
 	STR_WORKBENCH_EXTENSIONS_STATUS_ENABLED,
 	STR_WORKBENCH_EXTENSIONS_STATUS_DISABLED,
@@ -491,7 +494,8 @@ TEST(WorkbenchExtensionsLocalization, AllSelectedRuntimeResourcesContainLocalize
 	const std::array locales = {
 		WorkbenchExtensionsLocaleExpectation{ L"", {
 			L"拡張機能", L"拡張機能の表示", L"SENP パッケージからインストール...", L"インストール", L"アンインストール",
-			L"エラー", L"組み込み", L"有効", L"無効", L"拡張機能はありません。", L"拡張機能のインストールに失敗しました",
+			L"エラー", L"互換性のないランタイム", L"このウィンドウではサポートされていません", L"競合",
+			L"組み込み", L"有効", L"無効", L"拡張機能はありません。", L"拡張機能のインストールに失敗しました",
 			L"拡張機能のアンインストールに失敗しました", L"開発用 SENP パッケージのインストール",
 			L"開発用 .senp パッケージは発行元による信頼確認がありません。\n\n[はい]: インストールして有効化します。\n[いいえ]: 無効な状態でインストールします。\n[キャンセル]: 何もしません。",
 			L"SENP パッケージが拒否されました。", L"サポートされていないドロップ",
@@ -514,7 +518,8 @@ TEST(WorkbenchExtensionsLocalization, AllSelectedRuntimeResourcesContainLocalize
 			L"プロジェクト",
 			L"保存したフォルダーとワークスペースのプロジェクトを一覧表示し、Git 作業ツリーへ移動できます。" } },
 		WorkbenchExtensionsLocaleExpectation{ L"sakura_lang_en_US.dll", {
-			L"Extensions", L"Show Extensions", L"Install from .senp...", L"Install", L"Uninstall", L"Error", L"Built-in", L"Enabled",
+			L"Extensions", L"Show Extensions", L"Install from .senp...", L"Install", L"Uninstall", L"Error",
+			L"Incompatible runtime", L"Unsupported in this window", L"Conflict", L"Built-in", L"Enabled",
 			L"Disabled", L"No extensions.", L"Extension install failed", L"Extension uninstall failed",
 			L"Install Developer SENP Package", L"Developer .senp packages are not publisher-trusted.\n\nYes: install and enable it.\nNo: install it disabled.\nCancel: do nothing.",
 			L"The SENP package was rejected.", L"Unsupported drop", L"Only regular .senp files can be dropped on the Extensions view. No packages were installed.",
@@ -534,7 +539,8 @@ TEST(WorkbenchExtensionsLocalization, AllSelectedRuntimeResourcesContainLocalize
 			L"GitHub Issues and Pull Requests", L"Browse repository issues and pull requests.",
 			L"Projects", L"Lists saved Folder and Workspace projects with bounded Git worktree navigation." } },
 		WorkbenchExtensionsLocaleExpectation{ L"sakura_lang_zh_CN.dll", {
-			L"扩展", L"显示扩展", L"从 .senp 安装...", L"安装", L"卸载", L"错误", L"内置", L"已启用", L"已禁用", L"没有扩展。",
+			L"扩展", L"显示扩展", L"从 .senp 安装...", L"安装", L"卸载", L"错误",
+			L"不兼容的运行时", L"此窗口不支持", L"冲突", L"内置", L"已启用", L"已禁用", L"没有扩展。",
 			L"扩展安装失败", L"扩展卸载失败", L"安装开发者 SENP 包",
 			L"开发者 .senp 包未经发布者信任验证。\n\n是: 安装并启用。\n否: 安装但保持禁用。\n取消: 不执行任何操作。",
 			L"SENP 包被拒绝。", L"不支持的拖放", L"只能将普通 .senp 文件拖放到扩展视图。未安装任何包。", L"包过多",

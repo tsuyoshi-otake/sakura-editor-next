@@ -11,6 +11,19 @@ enum class SenpWindowExtensionsStatus : std::uint8_t {
 	Synchronized, Invalid, Unsupported, Conflict, Failed, Stopped,
 };
 
+enum class SenpWindowExtensionExclusionKind : std::uint8_t {
+	Incompatible, Unsupported, Invalid, Conflict,
+};
+
+//! Why one package of the last applied snapshot was left out of this window's
+//! cohort. `reason` is a short untranslated token in the style of the package
+//! tool's `invalidCode`; the Extensions View localizes only the label.
+struct SenpWindowExtensionExclusion final {
+	SenpWindowExtensionExclusionKind kind;
+	std::wstring reason;
+	[[nodiscard]] bool operator==(const SenpWindowExtensionExclusion&) const = default;
+};
+
 using SenpWindowOwnerTargetFactory = std::function<std::unique_ptr<ISenpOwnerProjectionTarget>(
 	const senp::ExtensionDescriptor&, const senp::ContributionOwnerIdentity&)>;
 
@@ -43,6 +56,10 @@ public:
 	[[nodiscard]] bool FocusView(std::string_view viewId) noexcept;
 	void RefreshStrings() noexcept;
 	[[nodiscard]] std::optional<SenpExtensionActivationState> State(std::wstring_view extensionId) const noexcept;
+	//! The reason the last snapshot excluded this package, or nothing when the
+	//! package joined the cohort. Read-only; the Extensions View paints it.
+	[[nodiscard]] std::optional<SenpWindowExtensionExclusion> Exclusion(
+		std::wstring_view extensionId) const noexcept;
 	//! Admission and native callbacks end immediately. False retains failed
 	//! runtime cleanup; explicit repeated Close owns the next join attempt.
 	[[nodiscard]] bool Close() noexcept;
@@ -57,6 +74,7 @@ private:
 	CSenpViewDeclarations m_declarations;
 	CSenpExtensionActivation m_activation;
 	std::map<std::wstring, std::unique_ptr<Entry>, std::less<>> m_entries;
+	std::map<std::wstring, SenpWindowExtensionExclusion, std::less<>> m_exclusions;
 	std::uint64_t m_revision{};
 	std::int64_t m_workspaceRevision{}, m_accountGeneration{};
 	bool m_synchronized{}, m_entered{}, m_closed{};

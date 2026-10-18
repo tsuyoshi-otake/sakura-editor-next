@@ -535,8 +535,11 @@ title bar; overflow `...` menus do not exist here), and place itself with
 `when` clauses of the form `view == <id>` joined by `||`. Any other context-key
 expression is refused rather than evaluated in part. Each View has at most
 eight actions and a (command, View) pair appears once. Rust `validate_manifest`
-and the native decoder apply the same rule; the window composition further
-requires a lower-case codicon name (a bundled glyph) and a declared View.
+and the native decoder apply the same rule; a menu item's command icon must be
+a lower-case `$(codicon)` (`[a-z0-9-]`, the bundled glyph vocabulary) — Rust
+refuses an upper-case ThemeIcon at pack/install so a package no window could
+compose is never installed (#352) — and the window composition additionally
+requires the named View to be declared.
 Recorded divergences: upstream GitHub Actions names its refresh icon by a
 package-relative `refresh.svg` pair, while the built-in package uses the
 equivalent `$(refresh)` codicon because the host never reads package images.
@@ -551,7 +554,9 @@ or none, joined by `&&` to `viewItem =~ /token/` and `viewItem == value` terms;
 a row shows the action when its contextValue contains every regex token and
 equals every value. Any other expression is refused. The icon may be a codicon or
 a path, and the path must name an entry of the bundled vocabulary; `view/title`
-still requires a codicon, and both the Rust and the native decoder enforce that.
+still requires a codicon. Both menus apply the lower-case codicon rule at
+pack/install (`valid_codicon`), and the native decoder enforces it again when
+the window composes the package.
 The action runs with the row's ID as its only argument. Item actions belong to
 the runtime generation, not to the structural View declaration.
 

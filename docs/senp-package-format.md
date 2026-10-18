@@ -266,6 +266,21 @@ validator は `path` の存在、archive の許可 path、scope/name の形式�
 検証します。grammar ファイルや `configuration` ファイルの内部 JSON schema
 そのものは `sakura_senp` では検証しません。
 
+#### schema 2 runtime package の `menus`
+
+schema 2 の runtime package はさらに `contributes.viewsContainers`、
+`contributes.views`、`contributes.commands`、`contributes.menus` を宣言
+できます。`menus` は `view/title` と `view/item/context` の 2 つだけを
+受け付けます。各 item が参照する command の `icon` は、window が実際に
+描画できる形式でなければなりません。`view/title` の action は bundled
+codicon を名前で描くため、`icon` は小文字の `$(codicon)` 形式
+(`[a-z0-9-]` のみ)である必要があります。`$(Refresh)` のように大文字を
+含む ThemeIcon は codicon 名として存在しないため、`pack` と install が
+拒否します。`view/item/context` の action は小文字の codicon か
+package 相対の icon path (`assets` 相当の `.svg`/`.png`)を受け付けます。
+command の `icon` 自体は menu に配置されない限り緩い ThemeIcon 規則で
+受理されますが、menu に置く時点で厳しい規則が適用されます。
+
 ### 完全な runtime manifest 例
 
 これはリポジトリの Indent Rainbow が使用する形です。

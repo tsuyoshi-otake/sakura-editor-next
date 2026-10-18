@@ -6245,6 +6245,13 @@ bool CEditWnd::InitializeSenpWindowExtensions()
 				? Diagnostic::ExecutableMissing : Diagnostic::None;
 		});
 	m_senpWindowExtensionsActive = true;
+	// The Extensions View paints why this window excluded a package; the
+	// composition owns that truth and the tool only reads it per row.
+	if (m_extensionsTool != nullptr) {
+		m_extensionsTool->SetExtensionExclusionQuery([this](std::wstring_view extensionId) {
+			return m_senpWindowExtensions ? m_senpWindowExtensions->Exclusion(extensionId) : std::nullopt;
+		});
+	}
 	return SynchronizeSenpWindowExtensions();
 }
 
@@ -6264,6 +6271,9 @@ bool CEditWnd::SynchronizeSenpWindowExtensions() try
 		m_workbenchRuntime->WorkspaceContext().Snapshot().revision,
 		m_senpAccountGeneration, std::chrono::steady_clock::now());
 	if (status != workbench::SenpWindowExtensionsStatus::Synchronized) return false;
+	// Exclusion reasons are per-snapshot state; a row label can change without
+	// any install/uninstall notification of its own.
+	if (m_extensionsTool != nullptr) m_extensionsTool->Refresh();
 	const auto operation = NextWorkbenchLayoutOperationId("senp.reconcile-contributions");
 	if (!operation) return false;
 	const auto result = m_workbenchRuntime->LayoutState().Reconcile(m_workbenchRuntime->Contributions().Snapshot(), {
@@ -6367,6 +6377,7 @@ std::int64_t CEditWnd::SenpAccountGeneration() noexcept
 void CEditWnd::StopSenpWindowExtensions() noexcept
 {
 	const bool wasActive = std::exchange(m_senpWindowExtensionsActive, false);
+	if (m_extensionsTool != nullptr) m_extensionsTool->SetExtensionExclusionQuery({});
 	m_senpAccountGeneration = 0;
 	// The seam is released below, so the next one has heard nothing. Keeping the
 	// counters would leave a new connection answering for no workspace at all.

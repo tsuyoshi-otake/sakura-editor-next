@@ -10,13 +10,14 @@
 #include "workbench/SenpExtensionActivation.h"
 #include "workbench/SenpWindowExtensions.h"
 
+#include <array>
 #include <deque>
 
 namespace workbench {
 namespace {
 using Clock = std::chrono::steady_clock;
 
-struct TargetState final { int revoked{}; };
+struct TargetState final { int revoked{}; std::function<void()> onRevoke; };
 class Target final : public ISenpOwnerProjectionTarget {
 public:
 	explicit Target(std::shared_ptr<TargetState> state) : m_state(std::move(state)) {}
@@ -25,7 +26,7 @@ public:
 	bool FailDocument(const senp::effect::OperationContext&, senp::InvocationStatus) noexcept override { return true; }
 	bool CompleteCommand(const senp::effect::OperationContext&, senp::effect::CompleteCommand) noexcept override { return true; }
 	bool ReleaseResource(std::wstring_view) noexcept override { return true; }
-	void Revoke() noexcept override { ++m_state->revoked; }
+	void Revoke() noexcept override { ++m_state->revoked; if (m_state->onRevoke) m_state->onRevoke(); }
 private:
 	std::shared_ptr<TargetState> m_state;
 };
@@ -368,8 +369,31 @@ TEST_F(SenpOwnerPublicationTest, WindowPackagesCarryAnImagePathContainerIconVerb
 	ASSERT_EQ(SenpWindowExtensionsStatus::Synchronized, run(L"$(github)", published));
 	EXPECT_EQ("github", published);
 	published.clear();
-	EXPECT_NE(SenpWindowExtensionsStatus::Synchronized, run(L"../explorer.svg", published));
+	// An unbounded path excludes this one package rather than failing the
+	// window: the snapshot still applies and records the reason (#352).
+	EXPECT_EQ(SenpWindowExtensionsStatus::Synchronized, run(L"../explorer.svg", published));
 	EXPECT_TRUE(published.empty());
+}
+
+TEST_F(SenpOwnerPublicationTest, WindowPackagesCarryAnImagePathContainerIconVerbatim_ExcludedRow)
+{
+	layout::WorkbenchContributionRegistry catalog;
+	CDlgFuncList dialog; viewcontainer::CViewContainerPages pages(dialog);
+	ASSERT_TRUE(pages.Create(m_owner));
+	auto target = std::make_shared<TargetState>();
+	CSenpWindowExtensions extensions(catalog, pages, L"host.exe",
+		[&](const auto&, const auto&) { return std::make_unique<Target>(target); },
+		[](std::string_view) { return true; },
+		[](auto launch) { return std::make_unique<Runtime>(std::move(launch), std::vector<senp::effect::Effect>{}); });
+	auto snapshot = Packages();
+	snapshot.extensions.front().viewContainers.front().icon = L"../explorer.svg";
+	ASSERT_EQ(SenpWindowExtensionsStatus::Synchronized, extensions.Synchronize(snapshot, 7, 9, Clock::now()));
+	const auto exclusion = extensions.Exclusion(L"sample.extension");
+	ASSERT_TRUE(exclusion.has_value());
+	EXPECT_EQ(SenpWindowExtensionExclusionKind::Unsupported, exclusion->kind);
+	EXPECT_EQ(L"icon", exclusion->reason);
+	EXPECT_FALSE(extensions.Exclusion(L"other.extension").has_value());
+	EXPECT_TRUE(extensions.Close()); pages.Close();
 }
 
 TEST_F(SenpOwnerPublicationTest, ViewTitleActionsReachOnlyTheBoundRuntime)
@@ -425,9 +449,14 @@ TEST_F(SenpOwnerPublicationTest, ViewTitleActionsReachOnlyTheBoundRuntime)
 	click();
 	EXPECT_EQ(1, invoked());
 	// The title bar is part of the declaration; changing it is a structural edit.
+	// The conflict excludes this package's update but retains its live cohort and
+	// still applies the rest of the snapshot (#352).
 	const auto revision = catalog.Snapshot().revision;
 	snapshot.revision++; snapshot.extensions.front().runtime.ViewTitle().clear();
-	EXPECT_EQ(SenpWindowExtensionsStatus::Conflict, extensions.Synchronize(snapshot, 7, 9, Clock::now()));
+	EXPECT_EQ(SenpWindowExtensionsStatus::Synchronized, extensions.Synchronize(snapshot, 7, 9, Clock::now()));
+	const auto conflict = extensions.Exclusion(L"sample.extension");
+	ASSERT_TRUE(conflict.has_value());
+	EXPECT_EQ(SenpWindowExtensionExclusionKind::Conflict, conflict->kind);
 	EXPECT_EQ(revision, catalog.Snapshot().revision); EXPECT_EQ(0, runtime->stops);
 	EXPECT_EQ(SenpExtensionActivationState::Active, extensions.State(L"sample.extension"));
 	EXPECT_TRUE(extensions.Close()); pages.Close(); ::DestroyWindow(host);
@@ -447,32 +476,46 @@ TEST_F(SenpOwnerPublicationTest, ViewTitleActionsTheNativeTitleBarCannotShowAreR
 			[](auto launch) { return std::make_unique<Runtime>(std::move(launch), std::vector<senp::effect::Effect>{}); });
 		auto snapshot = PackagesWithRefresh();
 		mutate(snapshot.extensions.front().runtime);
+		// One package this window cannot compose is excluded, never the window.
 		const auto status = extensions.Synchronize(snapshot, 7, 9, Clock::now());
 		EXPECT_FALSE(pages.Contains("sample.senp") && status != SenpWindowExtensionsStatus::Synchronized);
+		const auto exclusion = extensions.Exclusion(L"sample.extension");
 		EXPECT_TRUE(extensions.Close()); pages.Close();
-		return status;
+		return std::pair{ status, exclusion };
 	};
-	EXPECT_EQ(SenpWindowExtensionsStatus::Synchronized, run([](auto&) {}));
+	const auto composed = std::pair{ SenpWindowExtensionsStatus::Synchronized,
+		std::optional<SenpWindowExtensionExclusion>{} };
+	EXPECT_EQ(composed, run([](auto&) {}));
 	// A manifest ThemeIcon may be upper case; no bundled codicon is.
-	EXPECT_EQ(SenpWindowExtensionsStatus::Unsupported, run([](auto& runtime) {
-		runtime.commands[1] = senp::CommandContribution(L"sample.refresh", L"Refresh", L"$(Refresh)");
-	}));
-	EXPECT_EQ(SenpWindowExtensionsStatus::Invalid, run([](auto& runtime) {
-		runtime.ViewTitle()[0] = senp::ViewTitleMenuContribution(L"sample.refresh", { L"sample.other" });
-	}));
-	EXPECT_EQ(SenpWindowExtensionsStatus::Invalid, run([](auto& runtime) {
-		runtime.ViewTitle()[0] = senp::ViewTitleMenuContribution(L"sample.missing", { L"sample.projects" });
-	}));
-	EXPECT_EQ(SenpWindowExtensionsStatus::Invalid, run([](auto& runtime) {
-		runtime.ViewTitle().push_back({ L"sample.refresh", { L"sample.projects" } });
-	}));
-	EXPECT_EQ(SenpWindowExtensionsStatus::Unsupported, run([](auto& runtime) {
-		for (int i = 0; i != 8; ++i) {
-			const auto id = L"sample.extra" + std::to_wstring(i);
-			runtime.commands.push_back({ id, L"Extra", L"$(refresh)" });
-			runtime.ViewTitle().push_back({ id, { L"sample.projects" } });
-		}
-	}));
+	EXPECT_EQ((std::pair{ SenpWindowExtensionsStatus::Synchronized,
+		std::optional(SenpWindowExtensionExclusion{ SenpWindowExtensionExclusionKind::Unsupported, L"icon" }) }),
+		run([](auto& runtime) {
+			runtime.commands[1] = senp::CommandContribution(L"sample.refresh", L"Refresh", L"$(Refresh)");
+		}));
+	EXPECT_EQ((std::pair{ SenpWindowExtensionsStatus::Synchronized,
+		std::optional(SenpWindowExtensionExclusion{ SenpWindowExtensionExclusionKind::Invalid, L"menu" }) }),
+		run([](auto& runtime) {
+			runtime.ViewTitle()[0] = senp::ViewTitleMenuContribution(L"sample.refresh", { L"sample.other" });
+		}));
+	EXPECT_EQ((std::pair{ SenpWindowExtensionsStatus::Synchronized,
+		std::optional(SenpWindowExtensionExclusion{ SenpWindowExtensionExclusionKind::Invalid, L"menu" }) }),
+		run([](auto& runtime) {
+			runtime.ViewTitle()[0] = senp::ViewTitleMenuContribution(L"sample.missing", { L"sample.projects" });
+		}));
+	EXPECT_EQ((std::pair{ SenpWindowExtensionsStatus::Synchronized,
+		std::optional(SenpWindowExtensionExclusion{ SenpWindowExtensionExclusionKind::Invalid, L"menu" }) }),
+		run([](auto& runtime) {
+			runtime.ViewTitle().push_back({ L"sample.refresh", { L"sample.projects" } });
+		}));
+	EXPECT_EQ((std::pair{ SenpWindowExtensionsStatus::Synchronized,
+		std::optional(SenpWindowExtensionExclusion{ SenpWindowExtensionExclusionKind::Unsupported, L"actions" }) }),
+		run([](auto& runtime) {
+			for (int i = 0; i != 8; ++i) {
+				const auto id = L"sample.extra" + std::to_wstring(i);
+				runtime.commands.push_back({ id, L"Extra", L"$(refresh)" });
+				runtime.ViewTitle().push_back({ id, { L"sample.projects" } });
+			}
+		}));
 }
 
 TEST_F(SenpOwnerPublicationTest, InlineItemActionsDrawOnlyBundledIconsAndAreNotAStructuralField)
@@ -490,44 +533,60 @@ TEST_F(SenpOwnerPublicationTest, InlineItemActionsDrawOnlyBundledIconsAndAreNotA
 		mutate(snapshot.extensions.front().runtime);
 		const auto status = extensions.Synchronize(snapshot, 7, 9, Clock::now());
 		EXPECT_FALSE(pages.Contains("sample.senp") && status != SenpWindowExtensionsStatus::Synchronized);
+		const auto exclusion = extensions.Exclusion(L"sample.extension");
 		// Row actions belong to each runtime generation, so a changed set is not
 		// a structural edit of the declaration the way a title action is.
-		if (status == SenpWindowExtensionsStatus::Synchronized) {
+		if (status == SenpWindowExtensionsStatus::Synchronized && !exclusion) {
 			snapshot.revision++;
 			snapshot.extensions.front().runtime.ViewItemContext().front()
 				= senp::ViewItemMenuContribution(L"sample.logs", {}, { L"completed" }, {});
 			EXPECT_EQ(SenpWindowExtensionsStatus::Synchronized, extensions.Synchronize(snapshot, 7, 9, Clock::now()));
 		}
 		EXPECT_TRUE(extensions.Close()); pages.Close();
-		return status;
+		return std::pair{ status, exclusion };
 	};
-	EXPECT_EQ(SenpWindowExtensionsStatus::Synchronized, run([](auto&) {}));
-	EXPECT_EQ(SenpWindowExtensionsStatus::Synchronized, run([](auto& runtime) {
+	const auto composed = std::pair{ SenpWindowExtensionsStatus::Synchronized,
+		std::optional<SenpWindowExtensionExclusion>{} };
+	EXPECT_EQ(composed, run([](auto&) {}));
+	EXPECT_EQ(composed, run([](auto& runtime) {
 		runtime.commands[1] = senp::CommandContribution(L"sample.logs", L"View logs", L"$(output)");
 	}));
-	EXPECT_EQ(SenpWindowExtensionsStatus::Unsupported, run([](auto& runtime) {
-		runtime.commands[1] = senp::CommandContribution(L"sample.logs", L"View logs", L"$(Output)");
-	}));
+	// A ThemeIcon that is not a lower-case bundled codicon cannot draw.
+	EXPECT_EQ((std::pair{ SenpWindowExtensionsStatus::Synchronized,
+		std::optional(SenpWindowExtensionExclusion{ SenpWindowExtensionExclusionKind::Unsupported, L"icon" }) }),
+		run([](auto& runtime) {
+			runtime.commands[1] = senp::CommandContribution(L"sample.logs", L"View logs", L"$(Output)");
+		}));
 	// A package image path draws only when it names a compiled-in icon.
-	EXPECT_EQ(SenpWindowExtensionsStatus::Unsupported, run([](auto& runtime) {
-		runtime.commands[1] = senp::CommandContribution(L"sample.logs", L"View logs", L"resources/unknown.svg");
-	}));
-	EXPECT_EQ(SenpWindowExtensionsStatus::Invalid, run([](auto& runtime) {
-		runtime.ViewItemContext()[0] = senp::ViewItemMenuContribution(L"sample.logs", { L"sample.other" }, { L"job" }, {});
-	}));
-	EXPECT_EQ(SenpWindowExtensionsStatus::Invalid, run([](auto& runtime) {
-		runtime.ViewItemContext()[0] = senp::ViewItemMenuContribution(L"sample.missing", {}, { L"job" }, {});
-	}));
-	EXPECT_EQ(SenpWindowExtensionsStatus::Invalid, run([](auto& runtime) {
-		runtime.ViewItemContext().push_back({ L"sample.logs", { L"sample.projects" }, { L"step" }, {} });
-	}));
-	EXPECT_EQ(SenpWindowExtensionsStatus::Unsupported, run([](auto& runtime) {
-		for (int i = 0; i != 8; ++i) {
-			const auto id = L"sample.act" + std::to_wstring(i);
-			runtime.commands.push_back({ id, L"Act", L"$(output)" });
-			runtime.ViewItemContext().push_back({ id, { L"sample.projects" }, {}, { L"job" } });
-		}
-	}));
+	EXPECT_EQ((std::pair{ SenpWindowExtensionsStatus::Synchronized,
+		std::optional(SenpWindowExtensionExclusion{ SenpWindowExtensionExclusionKind::Unsupported, L"icon" }) }),
+		run([](auto& runtime) {
+			runtime.commands[1] = senp::CommandContribution(L"sample.logs", L"View logs", L"resources/unknown.svg");
+		}));
+	EXPECT_EQ((std::pair{ SenpWindowExtensionsStatus::Synchronized,
+		std::optional(SenpWindowExtensionExclusion{ SenpWindowExtensionExclusionKind::Invalid, L"menu" }) }),
+		run([](auto& runtime) {
+			runtime.ViewItemContext()[0] = senp::ViewItemMenuContribution(L"sample.logs", { L"sample.other" }, { L"job" }, {});
+		}));
+	EXPECT_EQ((std::pair{ SenpWindowExtensionsStatus::Synchronized,
+		std::optional(SenpWindowExtensionExclusion{ SenpWindowExtensionExclusionKind::Invalid, L"menu" }) }),
+		run([](auto& runtime) {
+			runtime.ViewItemContext()[0] = senp::ViewItemMenuContribution(L"sample.missing", {}, { L"job" }, {});
+		}));
+	EXPECT_EQ((std::pair{ SenpWindowExtensionsStatus::Synchronized,
+		std::optional(SenpWindowExtensionExclusion{ SenpWindowExtensionExclusionKind::Invalid, L"menu" }) }),
+		run([](auto& runtime) {
+			runtime.ViewItemContext().push_back({ L"sample.logs", { L"sample.projects" }, { L"step" }, {} });
+		}));
+	EXPECT_EQ((std::pair{ SenpWindowExtensionsStatus::Synchronized,
+		std::optional(SenpWindowExtensionExclusion{ SenpWindowExtensionExclusionKind::Unsupported, L"actions" }) }),
+		run([](auto& runtime) {
+			for (int i = 0; i != 8; ++i) {
+				const auto id = L"sample.act" + std::to_wstring(i);
+				runtime.commands.push_back({ id, L"Act", L"$(output)" });
+				runtime.ViewItemContext().push_back({ id, { L"sample.projects" }, {}, { L"job" } });
+			}
+		}));
 }
 
 TEST(SenpWindowExtensionsGeneration, CatalogSuggestionIsNonReservingAndExhaustsAtProtocolLimit)
@@ -559,31 +618,270 @@ TEST_F(SenpOwnerPublicationTest, WindowPackageConflictsPreserveLiveRuntimeAndRol
 	ASSERT_TRUE(extensions.Poll(Clock::now()));
 	const auto revision = catalog.Snapshot().revision;
 	snapshot.revision++; snapshot.extensions.front().views.front().title = L"Changed";
-	EXPECT_EQ(SenpWindowExtensionsStatus::Conflict, extensions.Synchronize(snapshot, 7, 9, Clock::now()));
+	// A structural update conflicts: the old cohort stays live, the update is
+	// excluded with a reason, and the snapshot still applies (#352).
+	EXPECT_EQ(SenpWindowExtensionsStatus::Synchronized, extensions.Synchronize(snapshot, 7, 9, Clock::now()));
 	EXPECT_EQ(revision, catalog.Snapshot().revision); EXPECT_EQ(0, runtime->stops);
 	EXPECT_EQ(SenpExtensionActivationState::Active, extensions.State(L"sample.extension"));
+	const auto conflict = extensions.Exclusion(L"sample.extension");
+	ASSERT_TRUE(conflict.has_value());
+	EXPECT_EQ(SenpWindowExtensionExclusionKind::Conflict, conflict->kind);
 	snapshot.extensions.front().views.front().title = L"Projects";
 	snapshot.extensions.front().views.front().provider = L"unknown.provider";
-	EXPECT_EQ(SenpWindowExtensionsStatus::Unsupported, extensions.Synchronize(snapshot, 7, 9, Clock::now()));
+	// An unsupported package is excluded per package; its old cohort is not
+	// retained (only a structural conflict is), while the window still applies
+	// the snapshot for every other package.
+	snapshot.revision++;
+	EXPECT_EQ(SenpWindowExtensionsStatus::Synchronized, extensions.Synchronize(snapshot, 7, 9, Clock::now()));
+	const auto unsupported = extensions.Exclusion(L"sample.extension");
+	ASSERT_TRUE(unsupported.has_value());
+	EXPECT_EQ(SenpWindowExtensionExclusionKind::Unsupported, unsupported->kind);
+	EXPECT_EQ(L"provider", unsupported->reason);
+	EXPECT_EQ(1, runtime->stops); EXPECT_EQ(1, target->revoked);
+	EXPECT_FALSE(pages.Contains("sample.senp"));
+	EXPECT_FALSE(extensions.State(L"sample.extension").has_value());
 	snapshot.extensions.front().views.front().provider = L"senp.tree";
+	snapshot.revision++;
+	EXPECT_EQ(SenpWindowExtensionsStatus::Synchronized, extensions.Synchronize(snapshot, 7, 9, Clock::now()));
+	EXPECT_FALSE(extensions.Exclusion(L"sample.extension").has_value());
+	EXPECT_TRUE(pages.Contains("sample.senp"));
+	EXPECT_EQ(SenpExtensionActivationState::Dormant, extensions.State(L"sample.extension"));
 	auto added = snapshot.extensions.front(); added.id = L"added.extension";
 	added.viewContainers.front().id = L"added.container";
 	added.views.front().id = L"added.view"; added.views.front().containerId = L"added.container";
 	snapshot.extensions.push_back(added);
-	// Ordered after the successful new cohort: page collision exercises rollback.
+	// Ordered after the successful new cohort: page collision exercises
+	// per-package rollback of a refused registration.
 	auto rejected = added; rejected.id = L"zzz.extension";
 	rejected.viewContainers.front().id = L"reserved.page";
 	rejected.views.front().id = L"rejected.view"; rejected.views.front().containerId = L"reserved.page";
 	snapshot.extensions.push_back(rejected);
+	snapshot.revision++;
 	ASSERT_TRUE(pages.RegisterContributedPages({ { "reserved.page", { layout::EViewContainerLocation::Sidebar },
 		[]() -> std::unique_ptr<viewcontainer::IViewContainerPage> { return {}; } } }).Succeeded());
-	EXPECT_EQ(SenpWindowExtensionsStatus::Failed, extensions.Synchronize(snapshot, 7, 9, Clock::now()));
-	EXPECT_FALSE(pages.Contains("added.container")); EXPECT_TRUE(pages.Contains("reserved.page"));
-	EXPECT_TRUE(pages.Contains("sample.senp")); EXPECT_EQ(1U, catalog.Snapshot().owners.size());
-	EXPECT_EQ(0, runtime->stops); EXPECT_EQ(1, runtime->starts);
+	EXPECT_EQ(SenpWindowExtensionsStatus::Synchronized, extensions.Synchronize(snapshot, 7, 9, Clock::now()));
+	const auto registration = extensions.Exclusion(L"zzz.extension");
+	ASSERT_TRUE(registration.has_value());
+	EXPECT_EQ(L"registration", registration->reason);
+	EXPECT_TRUE(pages.Contains("added.container")); EXPECT_TRUE(pages.Contains("reserved.page"));
+	EXPECT_FALSE(pages.Contains("zzz.extension")); EXPECT_TRUE(pages.Contains("sample.senp"));
+	EXPECT_EQ(2U, catalog.Snapshot().owners.size());
+	EXPECT_EQ(1, runtime->stops); EXPECT_EQ(1, runtime->starts);
 	ASSERT_TRUE(extensions.Poll(Clock::now()));
-	EXPECT_EQ(SenpExtensionActivationState::Active, extensions.State(L"sample.extension"));
+	EXPECT_EQ(SenpExtensionActivationState::Dormant, extensions.State(L"sample.extension"));
 	EXPECT_TRUE(extensions.Close()); EXPECT_TRUE(pages.Contains("reserved.page")); pages.Close();
+}
+
+TEST_F(SenpOwnerPublicationTest, OneUnsupportedPackageNeverStopsTheWindow)
+{
+	// A second enabled package that this window cannot compose: each mutator
+	// stands for a real defect class, and each must exclude only itself (#352).
+	const auto cases = std::to_array<std::pair<std::function<void(senp::ExtensionDescriptor&)>,
+		SenpWindowExtensionExclusion>>({
+		{ [](auto& extension) { extension.runtime.compatible = false; },
+			{ SenpWindowExtensionExclusionKind::Incompatible, L"runtime" } },
+		{ [](auto& extension) { extension.views.front().provider = L"unknown.provider"; },
+			{ SenpWindowExtensionExclusionKind::Unsupported, L"provider" } },
+		{ [](auto& extension) {
+			for (int i = 0; i != 9; ++i) {
+				const auto id = L"dev.act" + std::to_wstring(i);
+				extension.runtime.commands.push_back({ id, L"Act", L"$(add)" });
+				extension.runtime.ViewTitle().push_back({ id, { L"dev.view" } });
+			} },
+			{ SenpWindowExtensionExclusionKind::Unsupported, L"actions" } },
+		{ [](auto& extension) {
+			extension.runtime.commands.push_back({ L"dev.refresh", L"Refresh", L"$(Refresh)" });
+			extension.runtime.ViewTitle().push_back({ L"dev.refresh", { L"dev.view" } }); },
+			{ SenpWindowExtensionExclusionKind::Unsupported, L"icon" } },
+		{ [](auto& extension) { extension.views.front().containerId = L"foreign.container"; },
+			{ SenpWindowExtensionExclusionKind::Unsupported, L"container" } },
+		{ [](auto& extension) { extension.views.front().id = L"sample.projects"; },
+			{ SenpWindowExtensionExclusionKind::Conflict, L"registration" } },
+	});
+	for (const auto& [mutate, expected] : cases) {
+		layout::WorkbenchContributionRegistry catalog;
+		CDlgFuncList dialog; viewcontainer::CViewContainerPages pages(dialog);
+		ASSERT_TRUE(pages.Create(m_owner));
+		auto target = std::make_shared<TargetState>(); auto runtime = std::make_shared<RuntimeLifecycle>();
+		std::vector<std::wstring> factories;
+		CSenpWindowExtensions extensions(catalog, pages, L"host.exe",
+			[&](const auto& descriptor, const auto&) {
+				factories.push_back(descriptor.id);
+				return std::make_unique<Target>(target);
+			},
+			[](std::string_view) { return true; },
+			[runtime](auto launch) { return std::make_unique<Runtime>(std::move(launch), std::vector<senp::effect::Effect>{}, runtime); });
+		auto snapshot = Packages();
+		auto dev = snapshot.extensions.front();
+		dev.id = L"dev.extension";
+		dev.viewContainers.front().id = L"dev.container";
+		dev.views.front().id = L"dev.view"; dev.views.front().containerId = L"dev.container";
+		dev.runtime.activationEvents = { L"onView:dev.view" };
+		mutate(dev);
+		snapshot.extensions.push_back(std::move(dev));
+		ASSERT_EQ(SenpWindowExtensionsStatus::Synchronized, extensions.Synchronize(snapshot, 7, 9, Clock::now()));
+		// The good package composes and activates; the excluded one is neither
+		// registered nor ever offered to the activation/authority path.
+		EXPECT_TRUE(pages.Contains("sample.senp"));
+		EXPECT_EQ(SenpExtensionActivationState::Dormant, extensions.State(L"sample.extension"));
+		EXPECT_FALSE(extensions.State(L"dev.extension").has_value());
+		EXPECT_EQ(SenpExtensionActivationState::Unsupported,
+			extensions.RequestView(L"dev.view", false, Clock::now()));
+		EXPECT_EQ(SenpExtensionActivationState::Preparing,
+			extensions.RequestView(L"sample.projects", false, Clock::now()));
+		ASSERT_TRUE(extensions.Poll(Clock::now()));
+		EXPECT_EQ(SenpExtensionActivationState::Active, extensions.State(L"sample.extension"));
+		EXPECT_EQ(std::vector<std::wstring>{ L"sample.extension" }, factories);
+		EXPECT_EQ(1, runtime->starts);
+		const auto exclusion = extensions.Exclusion(L"dev.extension");
+		ASSERT_TRUE(exclusion.has_value());
+		EXPECT_EQ(expected, *exclusion);
+		EXPECT_TRUE(extensions.Close()); pages.Close();
+	}
+}
+
+TEST_F(SenpOwnerPublicationTest, AStructuralConflictRetainsItsCohortWhileOthersApply)
+{
+	layout::WorkbenchContributionRegistry catalog;
+	CDlgFuncList dialog; viewcontainer::CViewContainerPages pages(dialog);
+	ASSERT_TRUE(pages.Create(m_owner));
+	auto target = std::make_shared<TargetState>(); auto runtime = std::make_shared<RuntimeLifecycle>();
+	CSenpWindowExtensions extensions(catalog, pages, L"host.exe",
+		[target](const auto&, const auto&) { return std::make_unique<Target>(target); },
+		[](std::string_view) { return true; },
+		[runtime](auto launch) { return std::make_unique<Runtime>(std::move(launch), std::vector<senp::effect::Effect>{}, runtime); });
+	auto snapshot = Packages();
+	ASSERT_EQ(SenpWindowExtensionsStatus::Synchronized, extensions.Synchronize(snapshot, 7, 9, Clock::now()));
+	ASSERT_EQ(SenpExtensionActivationState::Preparing, extensions.RequestView(L"sample.projects", false, Clock::now()));
+	ASSERT_TRUE(extensions.Poll(Clock::now()));
+	ASSERT_EQ(SenpExtensionActivationState::Active, extensions.State(L"sample.extension"));
+	const auto owners0 = catalog.Snapshot().owners;
+	const auto found0 = std::ranges::find(owners0, "sample.extension", &layout::WorkbenchContributionOwner::ownerId);
+	ASSERT_NE(owners0.end(), found0);
+	const auto owner = found0->generation;
+
+	// The same snapshot both conflicts on one package and adds another: the
+	// conflict keeps its previous cohort and reports itself, while the new
+	// package registers and can activate (#352).
+	snapshot.revision++;
+	snapshot.extensions.front().views.front().title = L"Changed";
+	auto added = Packages().extensions.front();
+	added.id = L"added.extension";
+	added.viewContainers.front().id = L"added.container";
+	added.views.front().id = L"added.view"; added.views.front().containerId = L"added.container";
+	added.runtime.activationEvents = { L"onView:added.view" };
+	snapshot.extensions.push_back(added);
+	ASSERT_EQ(SenpWindowExtensionsStatus::Synchronized, extensions.Synchronize(snapshot, 7, 9, Clock::now()));
+	const auto conflict = extensions.Exclusion(L"sample.extension");
+	ASSERT_TRUE(conflict.has_value());
+	EXPECT_EQ(SenpWindowExtensionExclusionKind::Conflict, conflict->kind);
+	const auto owners1 = catalog.Snapshot().owners;
+	const auto found1 = std::ranges::find(owners1, "sample.extension", &layout::WorkbenchContributionOwner::ownerId);
+	ASSERT_NE(owners1.end(), found1);
+	EXPECT_EQ(owner, found1->generation);
+	EXPECT_EQ(0, runtime->stops);
+	EXPECT_EQ(SenpExtensionActivationState::Active, extensions.State(L"sample.extension"));
+	EXPECT_TRUE(pages.Contains("added.container"));
+	EXPECT_EQ(SenpExtensionActivationState::Preparing, extensions.RequestView(L"added.view", false, Clock::now()));
+	ASSERT_TRUE(extensions.Poll(Clock::now()));
+	EXPECT_EQ(2, runtime->starts);
+	EXPECT_TRUE(extensions.Close()); pages.Close();
+}
+
+TEST_F(SenpOwnerPublicationTest, ARefusedLivePackageLosesItsRuntimeBeforeItsDeclaration)
+{
+	layout::WorkbenchContributionRegistry catalog;
+	CDlgFuncList dialog; viewcontainer::CViewContainerPages pages(dialog);
+	ASSERT_TRUE(pages.Create(m_owner));
+	auto target = std::make_shared<TargetState>(); auto runtime = std::make_shared<RuntimeLifecycle>();
+	CSenpWindowExtensions extensions(catalog, pages, L"host.exe",
+		[target](const auto&, const auto&) { return std::make_unique<Target>(target); },
+		[](std::string_view) { return true; },
+		[runtime](auto launch) { return std::make_unique<Runtime>(std::move(launch), std::vector<senp::effect::Effect>{}, runtime); });
+	auto snapshot = Packages();
+	ASSERT_EQ(SenpWindowExtensionsStatus::Synchronized, extensions.Synchronize(snapshot, 7, 9, Clock::now()));
+	ASSERT_EQ(SenpExtensionActivationState::Preparing, extensions.RequestView(L"sample.projects", false, Clock::now()));
+	ASSERT_TRUE(extensions.Poll(Clock::now()));
+	ASSERT_EQ(SenpExtensionActivationState::Active, extensions.State(L"sample.extension"));
+	// The declaration's native ViewContainer windows are parked children; they
+	// exist exactly as long as the declaration does.
+	const auto parked = [&] {
+		int count = 0;
+		for (HWND child = ::GetWindow(pages.ParkingParent(), GW_CHILD); child != nullptr;
+			child = ::GetWindow(child, GW_HWNDNEXT)) ++count;
+		return count;
+	};
+	const int live = parked();
+	ASSERT_LT(0, live);
+	// Once the package's catalog owner is no longer current, its unchanged
+	// declaration cannot re-register: Register refuses it with Conflict.
+	const auto owners = catalog.Snapshot().owners;
+	const auto current = std::ranges::find(owners, "sample.extension", &layout::WorkbenchContributionOwner::ownerId);
+	ASSERT_NE(owners.end(), current);
+	ASSERT_EQ(layout::EWorkbenchContributionChangeStatus::Committed, catalog.DisposeOwner(*current));
+	int parkedAtRevoke = -1;
+	target->onRevoke = [&] { parkedAtRevoke = parked(); };
+	snapshot.revision++;
+	ASSERT_EQ(SenpWindowExtensionsStatus::Synchronized, extensions.Synchronize(snapshot, 7, 9, Clock::now()));
+	const auto exclusion = extensions.Exclusion(L"sample.extension");
+	ASSERT_TRUE(exclusion.has_value());
+	EXPECT_EQ((SenpWindowExtensionExclusion{ SenpWindowExtensionExclusionKind::Conflict, L"registration" }), *exclusion);
+	EXPECT_EQ(1, runtime->stops); EXPECT_EQ(1, target->revoked);
+	// The window stops a runtime before it removes that runtime's declaration,
+	// as it does for any package that leaves the cohort.
+	EXPECT_EQ(live, parkedAtRevoke);
+	EXPECT_GT(live, parked());
+	EXPECT_FALSE(extensions.State(L"sample.extension").has_value());
+	target->onRevoke = {};
+	EXPECT_TRUE(extensions.Close()); pages.Close();
+}
+
+TEST_F(SenpOwnerPublicationTest, DuplicateAndOverflowingPackagesExcludeOnlyThemselves)
+{
+	layout::WorkbenchContributionRegistry catalog;
+	CDlgFuncList dialog; viewcontainer::CViewContainerPages pages(dialog);
+	ASSERT_TRUE(pages.Create(m_owner));
+	auto target = std::make_shared<TargetState>();
+	CSenpWindowExtensions extensions(catalog, pages, L"host.exe",
+		[&](const auto&, const auto&) { return std::make_unique<Target>(target); },
+		[](std::string_view) { return true; },
+		[](auto launch) { return std::make_unique<Runtime>(std::move(launch), std::vector<senp::effect::Effect>{}); });
+	auto snapshot = Packages();
+	// Two enabled packages claim one ID; neither may compose under it.
+	auto duplicate = snapshot.extensions.front();
+	duplicate.id = L"dup.extension";
+	duplicate.viewContainers.front().id = L"dup.container";
+	duplicate.views.front().id = L"dup.view"; duplicate.views.front().containerId = L"dup.container";
+	snapshot.extensions.push_back(duplicate);
+	snapshot.extensions.push_back(duplicate);
+	for (int i = 0; i != 64; ++i) {
+		auto extra = snapshot.extensions.front();
+		extra.id = L"extra.extension-" + std::to_wstring(i);
+		extra.viewContainers.front().id = L"extra.container-" + std::to_wstring(i);
+		for (auto& view : extra.views) {
+			view.id = L"extra.view-" + std::to_wstring(i);
+			view.containerId = extra.viewContainers.front().id;
+		}
+		snapshot.extensions.push_back(std::move(extra));
+	}
+	// Both "dup.extension" claimants are excluded, so "sample.extension" and
+	// extra 0..62 are the 64 packages that compose; extra 63 is over the bound.
+	ASSERT_EQ(SenpWindowExtensionsStatus::Synchronized, extensions.Synchronize(snapshot, 7, 9, Clock::now()));
+	const auto ambiguous = extensions.Exclusion(L"dup.extension");
+	ASSERT_TRUE(ambiguous.has_value());
+	EXPECT_EQ(SenpWindowExtensionExclusionKind::Invalid, ambiguous->kind);
+	EXPECT_EQ(L"duplicate", ambiguous->reason);
+	EXPECT_FALSE(pages.Contains("dup.container"));
+	EXPECT_FALSE(extensions.State(L"dup.extension").has_value());
+	EXPECT_FALSE(extensions.Exclusion(L"sample.extension").has_value());
+	const auto overflow = extensions.Exclusion(L"extra.extension-63");
+	ASSERT_TRUE(overflow.has_value());
+	EXPECT_EQ(SenpWindowExtensionExclusionKind::Unsupported, overflow->kind);
+	EXPECT_EQ(L"limit", overflow->reason);
+	EXPECT_FALSE(extensions.Exclusion(L"extra.extension-62").has_value());
+	EXPECT_TRUE(pages.Contains("sample.senp"));
+	EXPECT_EQ(64U, catalog.Snapshot().owners.size());
+	EXPECT_TRUE(extensions.Close()); pages.Close();
 }
 
 TEST_F(SenpOwnerPublicationTest, WindowCloseRetainsFailedRuntimeCleanupWithoutPollingRetries)
@@ -633,11 +931,28 @@ TEST_F(SenpOwnerPublicationTest, WindowDeclarationConflictsCannotSuppressAuthori
 			unsupported.views.front().provider = L"unknown.provider";
 			snapshot.extensions.push_back(unsupported);
 		}
-		EXPECT_EQ(SenpWindowExtensionsStatus::Failed,
+		// A scope change or a disable revokes the old cohort outright: the
+		// conflict is reported on the row but nothing unauthorized is retained,
+		// and the window itself keeps running (#352).
+		EXPECT_EQ(SenpWindowExtensionsStatus::Synchronized,
 			extensions.Synchronize(snapshot, 7, accountChanged ? 10 : 9, Clock::now()));
-		EXPECT_EQ(1, runtime->stops); EXPECT_EQ(1, runtime->destroyed); EXPECT_EQ(1, target->revoked);
-		EXPECT_EQ(SenpExtensionActivationState::Stopped, extensions.State(L"sample.extension"));
+		EXPECT_EQ(1, runtime->stops); EXPECT_EQ(1, target->revoked);
+		EXPECT_FALSE(extensions.State(L"sample.extension").has_value());
 		EXPECT_FALSE(pages.Contains("sample.senp")); EXPECT_TRUE(catalog.Snapshot().owners.empty());
+		if (accountChanged) {
+			const auto exclusion = extensions.Exclusion(L"sample.extension");
+			ASSERT_TRUE(exclusion.has_value());
+			EXPECT_EQ(SenpWindowExtensionExclusionKind::Conflict, exclusion->kind);
+		} else {
+			EXPECT_FALSE(extensions.Exclusion(L"sample.extension").has_value());
+			const auto excluded = extensions.Exclusion(L"unsupported.extension");
+			ASSERT_TRUE(excluded.has_value());
+			EXPECT_EQ(SenpWindowExtensionExclusionKind::Unsupported, excluded->kind);
+			EXPECT_EQ(L"provider", excluded->reason);
+		}
+		// Retained runtime slots still own their physical cleanup.
+		ASSERT_TRUE(extensions.Poll(Clock::now()));
+		EXPECT_EQ(1, runtime->destroyed);
 		EXPECT_TRUE(extensions.Close()); pages.Close();
 	}
 }

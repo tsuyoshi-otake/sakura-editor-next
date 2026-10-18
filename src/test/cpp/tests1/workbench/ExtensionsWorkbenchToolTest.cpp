@@ -22,6 +22,7 @@ SPDX-License-Identifier: Zlib
 #include "sakura_rc.h"
 #include "senp/SenpManagementService.h"
 #include "senp/SenpRuntimeService.h"
+#include "workbench/SenpWindowExtensions.h"
 #include "workbench/extensions/CExtensionsWorkbenchTool.h"
 
 namespace {
@@ -383,6 +384,73 @@ TEST(ExtensionsWorkbenchTool, AnInvalidListingRowGetsNoRowAction)
 	tool.SetManagementService(&service);
 	// No row action exists for a row the package tool could not read.
 	EXPECT_EQ(nullptr, ::FindWindowExW(tool.GetHwnd(), nullptr, L"BUTTON", nullptr));
+}
+
+TEST(ExtensionsWorkbenchTool, RowStatusPaintsTheWindowExclusionBeforeThePackageState)
+{
+	using Tool = workbench::extensions::CExtensionsWorkbenchTool;
+	using Exclusion = workbench::SenpWindowExtensionExclusion;
+	using Kind = workbench::SenpWindowExtensionExclusionKind;
+	const auto label = [](UINT id) { return std::wstring(CSelectLang::LoadStringW(id)); };
+
+	senp::ExtensionDescriptor extension;
+	extension.id = L"dev.extension";
+	extension.installed = true;
+	extension.enabled = true;
+	extension.runtime.schemaVersion = 2;
+
+	// No exclusion: the row reports the runtime compatibility a package listed
+	// for another ABI carries, then the plain enable state.
+	extension.runtime.compatible = false;
+	EXPECT_EQ(label(STR_WORKBENCH_EXTENSIONS_STATUS_INCOMPATIBLE),
+		Tool::ComposeExtensionRowStatus(extension, nullptr));
+	extension.runtime.compatible = true;
+	EXPECT_EQ(label(STR_WORKBENCH_EXTENSIONS_STATUS_ENABLED),
+		Tool::ComposeExtensionRowStatus(extension, nullptr));
+	extension.builtIn = true;
+	EXPECT_EQ(label(STR_WORKBENCH_EXTENSIONS_STATUS_BUILT_IN),
+		Tool::ComposeExtensionRowStatus(extension, nullptr));
+
+	// An excluded package says why. An incompatible runtime and a declaration
+	// conflict carry their own labels; other exclusions name a short reason.
+	const Exclusion conflict{ Kind::Conflict, L"structure" };
+	EXPECT_EQ(label(STR_WORKBENCH_EXTENSIONS_STATUS_CONFLICT),
+		Tool::ComposeExtensionRowStatus(extension, &conflict));
+	const Exclusion incompatible{ Kind::Incompatible, L"runtime" };
+	EXPECT_EQ(label(STR_WORKBENCH_EXTENSIONS_STATUS_INCOMPATIBLE),
+		Tool::ComposeExtensionRowStatus(extension, &incompatible));
+	const Exclusion unsupported{ Kind::Unsupported, L"actions" };
+	EXPECT_EQ(label(STR_WORKBENCH_EXTENSIONS_STATUS_UNSUPPORTED) + L": actions",
+		Tool::ComposeExtensionRowStatus(extension, &unsupported));
+
+	// An invalid listing row still wins over every other status.
+	extension.invalidCode = L"checksumMismatch";
+	EXPECT_TRUE(Tool::ComposeExtensionRowStatus(extension, &conflict)
+		.starts_with(label(STR_WORKBENCH_EXTENSIONS_STATUS_INVALID)));
+
+	// The painted row consumes the query the window hands it.
+	const HWND parent = ::CreateWindowExW(0, L"STATIC", L"Extensions status test parent", WS_POPUP,
+		0, 0, 800, 600, nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
+	ASSERT_NE(nullptr, parent);
+	WindowGuard parentGuard(parent);
+	Tool tool;
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout(RECT{ 0, 0, 480, 320 }, 96);
+	FakeManagementService service;
+	service.snapshot.state = senp::EManagementState::Ready;
+	service.snapshot.extensions.push_back(extension);
+	tool.SetManagementService(&service);
+	int queries = 0;
+	tool.SetExtensionExclusionQuery([&](std::wstring_view id) {
+		++queries;
+		EXPECT_EQ(L"dev.extension", id);
+		return std::optional(unsupported);
+	});
+	MemorySurface surface(480, 320);
+	ASSERT_TRUE(surface.IsValid());
+	ASSERT_EQ(0, ::SendMessageW(tool.GetHwnd(), WM_PRINTCLIENT, reinterpret_cast<WPARAM>(surface.Dc()), 0));
+	EXPECT_EQ(1, queries);
+	tool.Close();
 }
 
 TEST(ExtensionsWorkbenchTool, InstallsAnAvailableBuiltInFromItsRowButton)

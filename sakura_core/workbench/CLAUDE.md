@@ -464,17 +464,28 @@ must not pump messages or destroy the owning window/registry while entered.
 `CSenpWindowExtensions` composes package snapshots, persistent declarations and
 lazy activation for one native window. Its target factory receives the actual
 runtime owner generation. Unchanged declarations survive package replacement;
-new hidden cohorts roll back if a later registration fails. Structural changes
-and non-tree/foreign-container metadata remain typed unsupported/conflict
-boundaries. A conflict may preserve an old runtime only while it is still enabled
-in the same workspace/account scope. If a rejected snapshot also revokes that
-authority, the composition closes instead of retaining unauthorized work.
-Removal revokes publication authority and signals runtime Stop before removing
-native pages; retained runtime slots own physical exit/cleanup independently.
-Close disables admission and native callbacks even when physical cleanup fails;
-the window must retain the composition and explicitly retry Close. Ordinary
-polling never retries a failed join. The window still owns timer scheduling,
-layout reconciliation, editor/tool target construction and CEditWnd integration.
+new hidden cohorts roll back if a later registration fails. One package this
+window cannot compose is excluded per package (#352): an unsupported/invalid
+`Prepare`, a duplicate ID, the 64-package bound, a refused declaration
+registration, or an incompatible runtime removes only that entry from the
+cohort, records a `SenpWindowExtensionExclusion` reason the Extensions View
+paints, and never reaches the activation `accepted` snapshot. An ID that
+several enabled packages claim excludes every claimant, because the row status
+and the activation path are keyed by ID and must not pick one by snapshot
+order. A refused registration of a package that is already live leaves the
+cohort like any other departing package: activation revokes its runtime first,
+and only then is its declaration removed. Structural
+changes remain a typed conflict boundary: the conflicted package keeps its
+previous registration and runtime only while still enabled in the same
+workspace/account scope; otherwise it is removed, and the rest of the snapshot
+applies either way. Activation failure, exceptions and a registration rollback
+that cannot complete are still whole-window failures. Removal revokes
+publication authority and signals runtime Stop before removing native pages;
+retained runtime slots own physical exit/cleanup independently. Close disables
+admission and native callbacks even when physical cleanup fails; the window
+must retain the composition and explicitly retry Close. Ordinary polling never
+retries a failed join. The window still owns timer scheduling, layout
+reconciliation, editor/tool target construction and CEditWnd integration.
 
 A package's `view/title` actions are part of its declaration (#297). The
 composition maps each to a `SenpViewTitleAction` on the named View when the

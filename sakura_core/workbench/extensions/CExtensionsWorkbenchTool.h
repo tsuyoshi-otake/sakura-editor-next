@@ -14,12 +14,17 @@ SPDX-License-Identifier: Zlib
 
 #include <cstddef>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
 namespace senp {
 class ISenpManagementService;
 struct ExtensionDescriptor;
+}
+
+namespace workbench {
+struct SenpWindowExtensionExclusion;
 }
 
 namespace workbench::extensions {
@@ -43,6 +48,15 @@ public:
 	bool Reparent(HWND parent) noexcept;
 	void SetPalette(const theme::ThemePalette& palette);
 	void SetManagementService(senp::ISenpManagementService* service) noexcept;
+	//! The window's package composition reports which snapshot packages it
+	//! excluded and why; the row paints that reason instead of a bare state.
+	void SetExtensionExclusionQuery(
+		std::function<std::optional<workbench::SenpWindowExtensionExclusion>(std::wstring_view)> query);
+	//! The status a row shows: the invalid-listing marker, then this window's
+	//! exclusion, then an incompatible runtime, then the install/enable state.
+	[[nodiscard]] static std::wstring ComposeExtensionRowStatus(
+		const senp::ExtensionDescriptor& extension,
+		const workbench::SenpWindowExtensionExclusion* exclusion);
 	//! Notifies the owning editor after a successful package-state transition so
 	//! its asynchronous decoration cache is requested again on the next paint.
 	void SetExtensionsChangedCallback(std::function<void()> callback);
@@ -107,6 +121,7 @@ private:
 	controls::COverlayScrollbar m_scrollbar;
 	std::vector<ActionButtonState> m_actionButtons;
 	senp::ISenpManagementService* m_service = nullptr;
+	std::function<std::optional<workbench::SenpWindowExtensionExclusion>(std::wstring_view)> m_exclusionQuery;
 	std::function<void()> m_extensionsChanged;
 	int m_scrollOffset = 0;
 	int m_contentHeight = 0;

@@ -11,6 +11,7 @@ SPDX-License-Identifier: Zlib
 #include "CSelectLang.h"
 #include "sakura_rc.h"
 #include "senp/SenpManagementService.h"
+#include "workbench/SenpWindowExtensions.h"
 #include "workbench/extensions/BuiltInExtensionLocalization.h"
 #include "workbench/icons/CCodiconFont.h"
 #include "workbench/icons/CodiconGlyphTable.h"
@@ -342,9 +343,49 @@ void CExtensionsWorkbenchTool::SetManagementService(senp::ISenpManagementService
 	Refresh();
 }
 
+void CExtensionsWorkbenchTool::SetExtensionExclusionQuery(
+	std::function<std::optional<workbench::SenpWindowExtensionExclusion>(std::wstring_view)> query)
+{
+	m_exclusionQuery = std::move(query);
+	Refresh();
+}
+
 void CExtensionsWorkbenchTool::SetExtensionsChangedCallback(std::function<void()> callback)
 {
 	m_extensionsChanged = std::move(callback);
+}
+
+std::wstring CExtensionsWorkbenchTool::ComposeExtensionRowStatus(
+	const senp::ExtensionDescriptor& extension,
+	const workbench::SenpWindowExtensionExclusion* exclusion)
+{
+	// An invalid listing row gets an explicit error status and no row action.
+	// The code/message are untranslated tool tokens; only the label localizes.
+	if (!extension.invalidCode.empty()) {
+		const std::wstring invalidLabel = Localized(STR_WORKBENCH_EXTENSIONS_STATUS_INVALID);
+		return extension.invalidMessage.empty()
+			? invalidLabel + L": " + extension.invalidCode
+			: invalidLabel + L": " + extension.invalidCode + L" - " + extension.invalidMessage;
+	}
+	// A package this window refused to compose says why. `reason` is an
+	// untranslated token, in the style of `invalidCode`.
+	if (exclusion != nullptr) {
+		switch (exclusion->kind) {
+		case workbench::SenpWindowExtensionExclusionKind::Conflict:
+			return Localized(STR_WORKBENCH_EXTENSIONS_STATUS_CONFLICT);
+		case workbench::SenpWindowExtensionExclusionKind::Incompatible:
+			return Localized(STR_WORKBENCH_EXTENSIONS_STATUS_INCOMPATIBLE);
+		default:
+			return exclusion->reason.empty()
+				? Localized(STR_WORKBENCH_EXTENSIONS_STATUS_UNSUPPORTED)
+				: Localized(STR_WORKBENCH_EXTENSIONS_STATUS_UNSUPPORTED) + L": " + exclusion->reason;
+		}
+	}
+	if (!extension.installed) return {};
+	if (!extension.runtime.compatible) return Localized(STR_WORKBENCH_EXTENSIONS_STATUS_INCOMPATIBLE);
+	return extension.builtIn ? Localized(STR_WORKBENCH_EXTENSIONS_STATUS_BUILT_IN)
+		: Localized(extension.enabled
+			? STR_WORKBENCH_EXTENSIONS_STATUS_ENABLED : STR_WORKBENCH_EXTENSIONS_STATUS_DISABLED);
 }
 
 void CExtensionsWorkbenchTool::Refresh()
@@ -719,17 +760,9 @@ void CExtensionsWorkbenchTool::PaintExtensionRow(
 	Text(dc, descriptionText, description, secondary, m_font.Get(),
 		DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 	const std::wstring publisher = extension.publisher + L"  " + extension.version;
-	// An invalid listing row gets an explicit error status and no row action.
-	// The code/message are untranslated tool tokens; only the label localizes.
-	const std::wstring invalidLabel = Localized(STR_WORKBENCH_EXTENSIONS_STATUS_INVALID);
-	const std::wstring status = !extension.invalidCode.empty()
-		? (extension.invalidMessage.empty()
-			? invalidLabel + L": " + extension.invalidCode
-			: invalidLabel + L": " + extension.invalidCode + L" - " + extension.invalidMessage)
-		: !extension.installed ? L"" : extension.builtIn
-		? Localized(STR_WORKBENCH_EXTENSIONS_STATUS_BUILT_IN)
-		: Localized(extension.enabled
-			? STR_WORKBENCH_EXTENSIONS_STATUS_ENABLED : STR_WORKBENCH_EXTENSIONS_STATUS_DISABLED);
+	const auto exclusion = m_exclusionQuery ? m_exclusionQuery(extension.id) : std::nullopt;
+	const std::wstring status = ComposeExtensionRowStatus(extension,
+		exclusion ? &*exclusion : nullptr);
 	LONG metadataRight = detailsRight;
 	if (extension.builtIn) {
 		HDC measureDc = dc;

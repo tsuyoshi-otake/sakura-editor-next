@@ -617,6 +617,21 @@ fn valid_theme_icon(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
 }
 
+/// A menu action draws a bundled codicon named by lower-case characters only
+/// (`[a-z0-9-]`), the same rule the window composition applies to
+/// `view/title` and `view/item/context` icons. A manifest `$(Name)` with
+/// upper case names no bundled glyph, so `pack` and install refuse it here
+/// rather than letting the installed package be excluded per window (#352).
+fn valid_codicon(value: &str) -> bool {
+    value.len() >= 4
+        && value.len() <= 163
+        && value.starts_with("$(")
+        && value.ends_with(')')
+        && value[2..value.len() - 1]
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+}
+
 /// An Activity Bar ViewContainer icon is either a `$(codicon)` ThemeIcon or,
 /// as VS Code's `viewsContainers` allows, a package-relative image path. The
 /// host never reads that file: a path draws only when it names an entry of the
@@ -1138,7 +1153,7 @@ fn validate_effect_contributions(
         };
         // A title item is a codicon button: without one it would need VS Code's
         // text rendering, and any group but `navigation` its overflow menu.
-        if menus.len() > 64 || !icon.is_some_and(valid_theme_icon) || item.group != "navigation" {
+        if menus.len() > 64 || !icon.is_some_and(valid_codicon) || item.group != "navigation" {
             return Err(invalid());
         }
         for view in targets {
@@ -1167,8 +1182,11 @@ fn validate_effect_contributions(
             return Err(invalid());
         };
         // An inline action is an icon on the row; other groups are VS Code's
-        // context menu, which a native Tree row does not have.
-        if icon.is_none() || item.group != "inline" {
+        // context menu, which a native Tree row does not have. The icon is a
+        // lower-case codicon or a package-relative image path.
+        if !icon.is_some_and(|icon| valid_codicon(icon) || valid_package_image_path(icon))
+            || item.group != "inline"
+        {
             return Err(invalid());
         }
         let targets: Vec<&str> = match when.view {
@@ -3390,6 +3408,28 @@ mod tests {
             .code,
             ErrorCode::InvalidManifest
         );
+        // A title button draws a bundled codicon, whose names are lower case.
+        // `$(Refresh)` is a well-formed ThemeIcon yet names no glyph, so pack
+        // refuses it instead of shipping a package every window would exclude.
+        for icon in ["$(Refresh)", "$(REFRESH)", "$(reFresh-all)"] {
+            assert_eq!(
+                with_view_title(
+                    serde_json::json!([{"command":"sample.refresh", "title":"Refresh", "icon": icon}]),
+                    serde_json::json!([item("sample.refresh", "view == sample.projects", "navigation")])
+                )
+                .unwrap_err()
+                .code,
+                ErrorCode::InvalidManifest,
+                "{icon}"
+            );
+        }
+        // The same command without a menu placement still parses: nothing tries
+        // to draw that icon.
+        assert!(with_view_title(
+            serde_json::json!([{"command":"sample.refresh", "title":"Refresh", "icon":"$(Refresh)"}]),
+            serde_json::json!([])
+        )
+        .is_ok());
         for bad_icon in [
             "refresh",
             "$(refresh",
@@ -3504,7 +3544,8 @@ mod tests {
     fn view_item_menus_reject_what_a_row_action_cannot_show() {
         let commands = serde_json::json!([
             {"command":"sample.logs", "title":"View logs", "icon":"resources/icons/light/logs.svg"},
-            {"command":"sample.plain", "title":"Plain"}
+            {"command":"sample.plain", "title":"Plain"},
+            {"command":"sample.upper", "title":"Upper", "icon":"$(Output)"}
         ]);
         let item = |command: &str, when: &str, group: &str| serde_json::json!({"command": command, "when": when, "group": group});
         let cases = [
@@ -3526,6 +3567,9 @@ mod tests {
             serde_json::json!([item("sample.logs", "viewItem =~ //", "inline")]),
             serde_json::json!([item("sample.logs", "view == sample.projects", "inline")]),
             serde_json::json!([item("sample.logs", "viewItem =~ /job/ && isWeb", "inline")]),
+            // A row action icon is a lower-case bundled codicon or a package
+            // image path; an upper-case ThemeIcon names no bundled glyph.
+            serde_json::json!([item("sample.upper", "viewItem =~ /job/", "inline")]),
             serde_json::json!([item(
                 "sample.logs",
                 "view == foreign.view && viewItem == job",
