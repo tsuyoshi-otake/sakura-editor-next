@@ -39,7 +39,7 @@ class ComponentEvidenceTests(unittest.TestCase):
 
     def test_declared_system_libraries_follow_final_link_closure(self) -> None:
         self.assertEqual(
-            {"advapi32.lib"},
+            {"advapi32.lib", "crypt32.lib", "wintrust.lib"},
             _declared_system_libraries(self.graph, ("sakura_security", "sakura_security_tests")),
         )
 
