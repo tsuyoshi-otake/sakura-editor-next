@@ -60,6 +60,81 @@ senp::ManagementSnapshot Packages(std::uint64_t revision = kManagementRevision,
 	return snapshot;
 }
 
+//! Opt-in stand-in for a `git` or `gh` child that is already running when the
+//! caller wants to stop it. Once armed, the next call blocks until the stop
+//! handle it was handed is signalled, bounded by a stand-in for the child's
+//! own timeout. A call handed no handle sits out the whole bound, which is
+//! what makes a stop that never arrived observable.
+class StopHandleBlock {
+public:
+	//! Every later Enter() blocks until its stop handle is signalled.
+	void Arm()
+	{
+		std::lock_guard lock(m_mutex);
+		m_blocked = true;
+	}
+	//! True when armed. The armed call records its entry so a test knows the
+	//! worker is actually parked inside the child work before it acts.
+	[[nodiscard]] bool Enter()
+	{
+		{
+			std::lock_guard lock(m_mutex);
+			if (!m_blocked) return false;
+			m_entered = true;
+		}
+		m_admitted.notify_all();
+		return true;
+	}
+	//! The bounded wait. True means the stop handle cut it short; the result
+	//! is recorded so a test can wait for the call to have returned.
+	[[nodiscard]] bool Wait(HANDLE stop, std::chrono::milliseconds bound)
+	{
+		const auto deadline = std::chrono::steady_clock::now() + bound;
+		bool stopped = false;
+		while (std::chrono::steady_clock::now() < deadline) {
+			if (stop && ::WaitForSingleObject(stop, 0) == WAIT_OBJECT_0) {
+				stopped = true;
+				break;
+			}
+			std::this_thread::sleep_for(std::chrono::milliseconds{ 5 });
+		}
+		{
+			std::lock_guard lock(m_mutex);
+			m_stopped = stopped;
+			m_finished = true;
+		}
+		m_returned.notify_all();
+		return stopped;
+	}
+	[[nodiscard]] bool WaitForEntered(std::uint32_t timeoutMilliseconds)
+	{
+		std::unique_lock lock(m_mutex);
+		return m_admitted.wait_for(lock, std::chrono::milliseconds{ timeoutMilliseconds },
+			[this]() { return m_entered; });
+	}
+	[[nodiscard]] bool WaitForFinished(std::uint32_t timeoutMilliseconds)
+	{
+		std::unique_lock lock(m_mutex);
+		return m_returned.wait_for(lock, std::chrono::milliseconds{ timeoutMilliseconds },
+			[this]() { return m_finished; });
+	}
+	//! Meaningful only after WaitForFinished: whether the stop handle, rather
+	//! than the stand-in timeout, ended the wait.
+	[[nodiscard]] bool StoppedByHandle()
+	{
+		std::lock_guard lock(m_mutex);
+		return m_finished && m_stopped;
+	}
+private:
+	std::mutex m_mutex;
+	std::condition_variable m_admitted;
+	std::condition_variable m_returned;
+	bool m_blocked = false;
+	bool m_entered = false;
+	bool m_finished = false;
+	bool m_stopped = false;
+};
+
 //! Records which profile home the worker asked for. It never blocks, so a test
 //! observes admission rather than the package tool's wall clock.
 class FakePackages final : public IControlSenpPackageSource {
@@ -159,21 +234,43 @@ public:
 		return gh::GhToolResolution{ L"C:\\Tools\\gh.exe", gh::GhToolDiscovery::SearchPath };
 	}
 	bool VerifyExecutableTrust(const std::wstring&) const override { return true; }
-	gh::GhProcessOutcome Run(const gh::GhProcessInvocation&, HANDLE) const override
+	gh::GhProcessOutcome Run(const gh::GhProcessInvocation&, HANDLE stop) const override
 	{
 		++(*m_runs);
+		if (m_blocking->Enter()) {
+			// The stand-in for a `gh --version` already running when Close
+			// arrives: only the stop handle it was handed can cut it short.
+			(void)m_blocking->Wait(stop, std::chrono::milliseconds{ 2000 });
+			return { ::platform::process::EBoundedProcessStatus::Cancelled, -1, {}, {} };
+		}
 		return { ::platform::process::EBoundedProcessStatus::Succeeded, 0,
 			Bytes("gh version 2.93.0 (2026-05-27)\n"), {} };
 	}
+	//! From the next call on, Run blocks until the stop handle it was given is
+	//! signalled, bounded by a stand-in for the child's own timeout.
+	void BlockRunUntilStop() { m_blocking->Arm(); }
+	//! Waits until a Run actually entered its blocked section, so a test knows
+	//! the refresh worker is parked inside the child work.
+	[[nodiscard]] bool WaitForRunEntered(std::uint32_t timeoutMilliseconds)
+	{
+		return m_blocking->WaitForEntered(timeoutMilliseconds);
+	}
 	[[nodiscard]] std::size_t Runs() const noexcept { return m_runs->load(); }
 private:
-	// Owned separately rather than a mutable counter: Run() is const to match
-	// the interface, and the pointee is mutable through the non-mutable pointer.
+	// Owned separately rather than mutable members: Run() is const to match
+	// the interface, and each pointee stays mutable through the pointer.
 	std::unique_ptr<std::atomic<std::size_t>> m_runs = std::make_unique<std::atomic<std::size_t>>(0);
+	std::unique_ptr<StopHandleBlock> m_blocking = std::make_unique<StopHandleBlock>();
 };
 
 class FakeCredential final : public gh::IGhAccountCredential {
 public:
+	//! The blocking mode is shared through the platform that creates this
+	//! credential, because the credential itself never leaves the lifecycle.
+	explicit FakeCredential(std::shared_ptr<StopHandleBlock> streaming) :
+		m_streaming(std::move(streaming))
+	{
+	}
 	gh::GhProcessOutcome RunAuthenticated(const std::vector<std::wstring>&, std::uint32_t,
 		std::size_t, std::size_t, HANDLE) override
 	{
@@ -183,19 +280,30 @@ public:
 		std::uint32_t timeout, std::size_t output, std::size_t error,
 		std::shared_ptr<::platform::process::IBoundedProcessOutputObserver>, HANDLE stop) override
 	{
+		if (m_streaming && m_streaming->Enter()) {
+			// The stand-in for a log download already running when the account
+			// is revoked: only the stop handle it was handed can cut it short.
+			(void)m_streaming->Wait(stop, std::chrono::milliseconds{ 5000 });
+			return { ::platform::process::EBoundedProcessStatus::Cancelled, -1, {}, {} };
+		}
 		return RunAuthenticated(arguments, timeout, output, error, stop);
 	}
-	void Revoke() noexcept override { m_revoked = true; }
-	[[nodiscard]] bool Revoked() const noexcept { return m_revoked; }
+	void Revoke() noexcept override {}
 private:
-	std::atomic<bool> m_revoked{ false };
+	std::shared_ptr<StopHandleBlock> m_streaming;
 };
 
 class FakeConnectionPlatform final : public gh::IGhConnectionPlatform {
 public:
 	gh::GhConnectionCheckResult Check(const gh::GhToolProbe& probe, std::wstring_view configurationDirectory,
-		std::wstring_view hostname, std::optional<std::wstring_view>, HANDLE) override
+		std::wstring_view hostname, std::optional<std::wstring_view>, HANDLE stop) override
 	{
+		if (m_checkBlocking->Enter()) {
+			// The stand-in for an account check already running when Close
+			// arrives: only the stop handle it was handed can cut it short.
+			(void)m_checkBlocking->Wait(stop, std::chrono::milliseconds{ 2000 });
+			return { gh::GhConnectionTerminal::Cancelled, std::nullopt, {} };
+		}
 		std::lock_guard lock(*m_mutex);
 		m_directories.emplace_back(configurationDirectory);
 		m_hosts.emplace_back(hostname);
@@ -204,8 +312,27 @@ public:
 		return { m_terminal,
 			gh::GhAccountIdentity(std::wstring(hostname), L"octocat", L"keyring",
 				std::wstring(configurationDirectory)),
-			std::make_shared<FakeCredential>() };
+			std::make_shared<FakeCredential>(m_streaming) };
 	}
+	//! From the next call on, Check blocks until the stop handle it was given
+	//! is signalled, bounded by a stand-in for the child's own timeout.
+	void BlockCheckUntilStop() { m_checkBlocking->Arm(); }
+	[[nodiscard]] bool WaitForCheckEntered(std::uint32_t timeoutMilliseconds)
+	{
+		return m_checkBlocking->WaitForEntered(timeoutMilliseconds);
+	}
+	//! Arms the credential every Check hands out: its streaming run then
+	//! blocks until the stop handle it was given is signalled.
+	void BlockStreamingUntilStop() { m_streaming->Arm(); }
+	[[nodiscard]] bool WaitForStreamingEntered(std::uint32_t timeoutMilliseconds)
+	{
+		return m_streaming->WaitForEntered(timeoutMilliseconds);
+	}
+	[[nodiscard]] bool WaitForStreamingFinished(std::uint32_t timeoutMilliseconds)
+	{
+		return m_streaming->WaitForFinished(timeoutMilliseconds);
+	}
+	[[nodiscard]] bool StreamingStoppedByHandle() { return m_streaming->StoppedByHandle(); }
 	void Set(gh::GhConnectionTerminal terminal)
 	{
 		std::lock_guard lock(*m_mutex);
@@ -233,6 +360,10 @@ private:
 	gh::GhConnectionTerminal m_terminal{ gh::GhConnectionTerminal::Succeeded };
 	std::vector<std::wstring> m_directories, m_hosts;
 	std::vector<gh::GhToolAvailability> m_probes;
+	//! Shared into each credential Check hands out, so the blocking mode is
+	//! observable even though the credential itself stays inside the lifecycle.
+	std::shared_ptr<StopHandleBlock> m_streaming = std::make_shared<StopHandleBlock>();
+	std::unique_ptr<StopHandleBlock> m_checkBlocking = std::make_unique<StopHandleBlock>();
 };
 
 class FakeRepositoryPlatform final : public gh::IGhLocalRepositoryPlatform {
@@ -243,19 +374,41 @@ public:
 			std::string("origin\thttps://github.com/me/project.git (fetch)\n"
 				"origin\thttps://github.com/me/project.git (push)\n") });
 	}
-	gh::GhLocalRepositoryRead Inspect(std::wstring_view root, HANDLE) const override
+	gh::GhLocalRepositoryRead Inspect(std::wstring_view root, HANDLE stop) const override
 	{
 		m_roots->Record(root);
+		if (m_blocking->Enter()) {
+			// A git inspect that can only be cut short by the stop handle the
+			// caller hands it. When the caller hands nothing, this sits out the
+			// whole bounded stand-in for the child's own timeout.
+			(void)m_blocking->Wait(stop, std::chrono::milliseconds{ 2000 });
+			return { gh::GhLocalRepositoryStatus::Cancelled, {}, {}, {} };
+		}
 		const auto found = m_entries.find(std::wstring(root));
 		if (found == m_entries.end()) return { gh::GhLocalRepositoryStatus::NotRepository, {}, {}, {} };
 		return { gh::GhLocalRepositoryStatus::Succeeded, std::get<0>(found->second),
 			std::get<1>(found->second), Bytes(std::get<2>(found->second)) };
+	}
+	//! From the next call on, Inspect blocks until the stop handle it was given
+	//! is signalled, bounded by a stand-in for the child's own timeout.
+	void BlockInspectUntilStop()
+	{
+		m_blocking->Arm();
+	}
+	//! Waits until an Inspect actually entered its blocked section, so a test
+	//! knows the refresh worker is parked inside the child work.
+	[[nodiscard]] bool WaitForInspectEntered(std::uint32_t timeoutMilliseconds)
+	{
+		return m_blocking->WaitForEntered(timeoutMilliseconds);
 	}
 	[[nodiscard]] std::vector<std::wstring> Roots() const
 	{
 		return m_roots->Snapshot();
 	}
 private:
+	//! Owned separately for the same reason as RootLog: Inspect() is const and
+	//! the blocking mode still has to be armed and observed from outside.
+	std::unique_ptr<StopHandleBlock> m_blocking = std::make_unique<StopHandleBlock>();
 	//! Owned separately from the object rather than as mutable members: Inspect()
 	//! and Roots() are const, and this is the only state either one mutates. A
 	//! unique_ptr member keeps the pointee non-const in those const methods, so
@@ -338,12 +491,12 @@ private:
 	std::shared_ptr<FakeRepositoryPlatform> m_repositories = std::make_shared<FakeRepositoryPlatform>();
 };
 
-ControlSenpRpcRequest IssueGrant(std::wstring profileId = kProfile)
+ControlSenpRpcRequest IssueGrant(std::wstring profileId = kProfile, std::int64_t accountGeneration = 13)
 {
 	ControlSenpRpcRequest request;
 	request.SetOperation(EControlSenpRpcOperation::IssueGrant);
 	request.SetProfileId(std::move(profileId));
-	request.SetOwner({ kExtension, Digest(), 7, 11, 13 });
+	request.SetOwner({ kExtension, Digest(), 7, 11, accountGeneration });
 	request.SetCapabilities(static_cast<std::uint32_t>(senp::SenpToolCapability::GitHubRepositoryRead));
 	return request;
 }
@@ -354,6 +507,23 @@ std::wstring WorkspaceFolder(const wchar_t* root = kWorkspaceRoot)
 	auto uri = ::platform::uri::Uri::FromWindowsPath(root);
 	EXPECT_TRUE(uri);
 	return uri ? uri.value->ToString() : std::wstring();
+}
+
+//! The job-log read the editor sends once it holds a grant: the same argument
+//! shape the broker and executor tests use for a job log.
+ControlSenpRpcRequest StartJobLog(std::string grantId, std::wstring profileId = kProfile,
+	std::int64_t accountGeneration = 1)
+{
+	ControlSenpRpcRequest request;
+	request.SetOperation(EControlSenpRpcOperation::StartRead);
+	request.SetProfileId(std::move(profileId));
+	request.SetOwner({ kExtension, Digest(), 7, 11, accountGeneration });
+	request.SetGrantId(std::move(grantId));
+	request.SetReadId(L"job:77:log");
+	request.SetToolId(std::wstring(kSenpGitHubToolId));
+	request.SetToolOperation(std::wstring(kSenpGitHubJobLogOperation));
+	request.SetArguments({ { L"id", L"77" } });
+	return request;
 }
 
 ControlSenpRpcRequest AdoptWorkspace(std::vector<std::wstring> folders, std::int64_t revision = 11,
@@ -856,6 +1026,31 @@ TEST(ControlSenpComposition, PublishesNoRepositoryWhileTwoConnectionsDeclareDiff
 	composition.Close();
 }
 
+TEST(ControlSenpComposition, CloseSignalsTheWorkerStopEventSoABlockedChildReturnsPromptly)
+{
+	Fakes fakes;
+	// The next inspect stands in for a `git` child that is already running
+	// when Close arrives: it can only be cut short by the stop handle it is
+	// handed, and otherwise sits out its own bounded timeout.
+	fakes.Repositories()->BlockInspectUntilStop();
+	CControlSenpComposition composition(Options(), Registry(), fakes.Dependencies());
+	auto session = composition.Handler()->CreateSession(kConnection);
+	ASSERT_NE(nullptr, session);
+	// The declaration admits the refresh that parks the worker inside Inspect.
+	ASSERT_EQ(EControlSenpRpcStatus::Succeeded, Adopt(*session, 1, { WorkspaceFolder() }));
+	ASSERT_TRUE(fakes.Repositories()->WaitForInspectEntered(kIdleTimeoutMilliseconds));
+	session.reset();
+
+	const auto began = std::chrono::steady_clock::now();
+	composition.Close();
+	const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+		std::chrono::steady_clock::now() - began);
+	// The child's own stand-in timeout is two seconds; a Close that passes the
+	// stop handle through returns well before it.
+	EXPECT_LT(elapsed, std::chrono::milliseconds{ 1500 })
+		<< L"Close() waited " << elapsed.count() << L"ms for a stoppable child";
+}
+
 TEST(ControlSenpComposition, CloseIsIdempotentAndLeavesNoConnectionAbleToReachAGrant)
 {
 	Fakes fakes;
@@ -870,6 +1065,110 @@ TEST(ControlSenpComposition, CloseIsIdempotentAndLeavesNoConnectionAbleToReachAG
 	EXPECT_FALSE(composition.PublishedRevision(kProfile).has_value());
 	EXPECT_EQ(nullptr, composition.Handler()->CreateSession(kConnection));
 	EXPECT_FALSE(composition.RequestRefresh(kProfile));
+}
+
+TEST(ControlSenpComposition, DestructionReleasesTheExecutorAndEveryConnectionLifecycle)
+{
+	Fakes fakes;
+	const auto toolUses = fakes.Tool().use_count();
+	const auto connectionUses = fakes.Connection().use_count();
+	{
+		CControlSenpComposition composition(Options(), Registry(), fakes.Dependencies());
+		ASSERT_TRUE(composition.RequestRefresh(kProfile));
+		ASSERT_TRUE(composition.WaitForIdle(kIdleTimeoutMilliseconds));
+		// A connected profile means a connection lifecycle exists inside the
+		// composition, holding the platform it was adopted through.
+		ASSERT_EQ(gh::GhConnectionState::Connected, composition.ConnectionState(kProfile));
+		EXPECT_GT(fakes.Connection().use_count(), connectionUses);
+	}
+	// The executor owns the profile source, which owns the revocation sink the
+	// lifecycles report to, which reaches back to the executor. Held strongly
+	// that is a cycle, and destroying the composition would leak the executor's
+	// worker, the source and every lifecycle with its platform.
+	EXPECT_EQ(toolUses, fakes.Tool().use_count());
+	EXPECT_EQ(connectionUses, fakes.Connection().use_count());
+}
+
+TEST(ControlSenpComposition, AccountRevocationReachesARunningJobLogThroughTheBoundSink)
+{
+	Fakes fakes;
+	// The credential the check hands out stands in for a log download already
+	// running when the account is revoked: only the stop handle the executor
+	// passes it can cut it short of its own bounded stand-in timeout.
+	fakes.Connection()->BlockStreamingUntilStop();
+	auto registry = Registry();
+	CControlSenpComposition composition(Options(), registry, fakes.Dependencies());
+	auto session = composition.Handler()->CreateSession(kConnection);
+	ASSERT_NE(nullptr, session);
+	ASSERT_EQ(EControlSenpRpcStatus::Succeeded, Adopt(*session, 1, { WorkspaceFolder() }));
+	ASSERT_TRUE(composition.WaitForIdle(kIdleTimeoutMilliseconds));
+	ASSERT_EQ(gh::GhConnectionState::Connected, composition.ConnectionState(kProfile));
+
+	// The first adopted account is generation 1, and the scope carries the
+	// owner's generation: anything else would not acquire the account at all.
+	const auto issued = ReadResponse(
+		session->HandleFrame(kConnection, RequestFrame(IssueGrant(kProfile, 1), 2)));
+	ASSERT_TRUE(issued.has_value());
+	ASSERT_EQ(EControlSenpRpcStatus::Succeeded, issued->Status());
+	const auto started = ReadResponse(session->HandleFrame(kConnection,
+		RequestFrame(StartJobLog(issued->GrantId()), 3)));
+	ASSERT_TRUE(started.has_value());
+	ASSERT_EQ(EControlSenpRpcStatus::Succeeded, started->Status());
+	ASSERT_TRUE(fakes.Connection()->WaitForStreamingEntered(kIdleTimeoutMilliseconds));
+
+	// Deleting the profile makes the next refresh fail resolution, which is
+	// the production path that withdraws the profile's connection lifecycle;
+	// its Close reports the revocation through the bound sink. The second
+	// declaration is what admits that refresh without the poll interval.
+	ASSERT_TRUE(registry->Delete(kProfile, { "delete-github-profile", std::nullopt }).Succeeded());
+	ASSERT_EQ(EControlSenpRpcStatus::Succeeded,
+		Adopt(*session, 4, { WorkspaceFolder(kOtherWorkspaceRoot) }));
+
+	// The download's own stand-in timeout is five seconds; a revocation that
+	// reaches it through the bound executor returns well before it.
+	ASSERT_TRUE(fakes.Connection()->WaitForStreamingFinished(1500));
+	EXPECT_TRUE(fakes.Connection()->StreamingStoppedByHandle());
+
+	session.reset();
+	composition.Close();
+}
+
+TEST(ControlSenpComposition, CloseStopsABlockedToolProbePromptly)
+{
+	Fakes fakes;
+	// The next `gh --version` stands in for a probe already running when Close
+	// arrives: only the stop handle the worker hands it can cut it short.
+	fakes.Tool()->BlockRunUntilStop();
+	CControlSenpComposition composition(Options(), Registry(), fakes.Dependencies());
+	ASSERT_TRUE(composition.RequestRefresh(kProfile));
+	ASSERT_TRUE(fakes.Tool()->WaitForRunEntered(kIdleTimeoutMilliseconds));
+
+	const auto began = std::chrono::steady_clock::now();
+	composition.Close();
+	const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+		std::chrono::steady_clock::now() - began);
+	// The child's own stand-in timeout is two seconds; a Close that passes the
+	// stop handle through returns well before it.
+	EXPECT_LT(elapsed, std::chrono::milliseconds{ 1500 })
+		<< L"Close() waited " << elapsed.count() << L"ms for a stoppable child";
+}
+
+TEST(ControlSenpComposition, CloseStopsABlockedConnectionCheckPromptly)
+{
+	Fakes fakes;
+	// The next account check stands in for the `gh` call already running when
+	// Close arrives: only the stop handle the worker hands it can cut it short.
+	fakes.Connection()->BlockCheckUntilStop();
+	CControlSenpComposition composition(Options(), Registry(), fakes.Dependencies());
+	ASSERT_TRUE(composition.RequestRefresh(kProfile));
+	ASSERT_TRUE(fakes.Connection()->WaitForCheckEntered(kIdleTimeoutMilliseconds));
+
+	const auto began = std::chrono::steady_clock::now();
+	composition.Close();
+	const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+		std::chrono::steady_clock::now() - began);
+	EXPECT_LT(elapsed, std::chrono::milliseconds{ 1500 })
+		<< L"Close() waited " << elapsed.count() << L"ms for a stoppable child";
 }
 
 } // namespace platform::controlipc

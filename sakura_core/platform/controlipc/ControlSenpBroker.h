@@ -226,10 +226,13 @@ public:
 class CControlSenpBroker final : public IControlIpcFrameHandler {
 public:
 	//! Sessions minted per connection stay bounded by the grant registry's own
-	//! maximum, so one connection cannot hold more capability records than grants.
+	//! per-connection quota, so a session tracks exactly as many live grants as
+	//! the registry would issue to it, and its minted-id history is four times
+	//! that. The registry total is shared by every connection; the per-session
+	//! cap is not.
 	[[nodiscard]] static constexpr std::size_t MaximumTrackedGrants() noexcept
 	{
-		return senp::CSenpToolGrants::MaximumGrants();
+		return senp::CSenpToolGrants::MaximumGrantsPerConnection();
 	}
 	CControlSenpBroker(std::shared_ptr<senp::CSenpToolGrants> grants,
 		std::shared_ptr<ISenpToolExecutor> executor,

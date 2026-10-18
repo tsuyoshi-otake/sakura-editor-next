@@ -110,7 +110,13 @@ class CSenpToolGrantSession;
 //! connection, owner scope and current trusted package authority.
 class CSenpToolGrants final {
 public:
-	[[nodiscard]] static constexpr std::size_t MaximumGrants() noexcept { return 64; }
+	[[nodiscard]] static constexpr std::size_t MaximumGrants() noexcept { return 256; }
+	//! Live grants one connection may hold at once. A window composes at most
+	//! four runtime owners (CSenpContributionOwners), so this is sized at four
+	//! owners times the capabilities one owner can hold - enough that every
+	//! owner a window runs can hold its whole capability set concurrently,
+	//! while no single editor can take every grant in the registry.
+	[[nodiscard]] static constexpr std::size_t MaximumGrantsPerConnection() noexcept { return 16; }
 	[[nodiscard]] static constexpr std::chrono::minutes GrantLifetime() noexcept {
 		return std::chrono::minutes(5);
 	}

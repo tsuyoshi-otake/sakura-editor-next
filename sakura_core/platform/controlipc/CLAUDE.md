@@ -244,5 +244,17 @@ operation is idempotent; the payload version stays 4, so an older Control
 refuses it as InvalidRequest while keeping the session, and the editor treats
 that refusal as "released at connection close" rather than a transport loss
 (see `sakura_core/senp/CLAUDE.md`). Process work must run on bounded
-Control workers; frame dispatch is admission/polling only. The concrete package
+Control workers; frame dispatch is admission/polling only. `CControlSenpComposition`
+owns one manual-reset stop event, created in its constructor, signalled first
+in `Close()` before the refresh queue closes and the worker joins, and handed
+to every `git`/`gh` child invocation the refresh worker launches so `Close()`
+never waits out a child's own timeout; it is closed exactly once in the
+destructor. The same composition binds each profile lifecycle's account
+revocations into the tool executor through `CControlSenpRevocationSink`: the
+sink is created before the profile source (so every `CGhConnectionLifecycle`
+receives it at adoption) and bound to the executor after it exists. The sink
+holds the executor weakly, because the executor owns the profile source that
+owns this sink and every lifecycle carrying it - a strong reference would be a
+cycle that leaks the executor's worker, the source and every lifecycle past
+the composition's destruction. An unbound or expired sink is a no-op. The concrete package
 authority, GitHub broker and Editor client are subsequent composition gates.

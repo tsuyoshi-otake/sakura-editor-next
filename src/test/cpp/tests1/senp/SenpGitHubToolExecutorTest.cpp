@@ -112,11 +112,11 @@ class ProfileSource final : public ISenpGitHubProfileSource {
 public:
 	std::shared_ptr<CGhConnectionLifecycle> Connection(std::wstring_view profileId) override
 	{
-		return profileId == m_profileId ? m_lifecycle : nullptr;
+		return Serves(profileId) ? m_lifecycle : nullptr;
 	}
 	std::optional<GhSelectedRepository> Repository(std::wstring_view profileId) override
 	{
-		if (profileId != m_profileId || !m_repository) return std::nullopt;
+		if (!Serves(profileId) || !m_repository) return std::nullopt;
 		return m_repository;
 	}
 	platform::controlipc::EControlSenpRpcStatus AdoptWorkspace(
@@ -132,6 +132,9 @@ public:
 	void SetLifecycle(std::shared_ptr<CGhConnectionLifecycle> lifecycle) { m_lifecycle = std::move(lifecycle); }
 	void ClearRepository() noexcept { m_repository.reset(); }
 	void SetRepository(GhSelectedRepository repository) { m_repository = std::move(repository); }
+	//! Serves the same connection and repository for one more profile, so a
+	//! test can hold a scope of another profile beside the first.
+	void AddProfile(std::wstring profileId) { m_profileIds.push_back(std::move(profileId)); }
 
 	// Assertions only ever read what this fixture recorded; nothing outside the
 	// class ever sets adoptStatus or appends to adopted/withdrawn directly, so
@@ -139,10 +142,14 @@ public:
 	[[nodiscard]] const std::vector<platform::controlipc::SenpWorkspaceAdoption>& Adopted() const noexcept { return m_adopted; }
 	[[nodiscard]] const std::vector<platform::controlipc::SenpConnectionIdentity>& Withdrawn() const noexcept { return m_withdrawn; }
 private:
+	[[nodiscard]] bool Serves(std::wstring_view profileId) const
+	{
+		return std::ranges::find(m_profileIds, profileId) != m_profileIds.end();
+	}
 	EControlSenpRpcStatus m_adoptStatus = EControlSenpRpcStatus::Succeeded;
 	std::vector<platform::controlipc::SenpWorkspaceAdoption> m_adopted;
 	std::vector<platform::controlipc::SenpConnectionIdentity> m_withdrawn;
-	std::wstring m_profileId{ L"profile-1" };
+	std::vector<std::wstring> m_profileIds{ L"profile-1" };
 	std::shared_ptr<CGhConnectionLifecycle> m_lifecycle;
 	std::optional<GhSelectedRepository> m_repository{
 		GhSelectedRepository(L"repo-identity-1", L"origin", L"github.com", L"owner", L"repo") };
@@ -1191,6 +1198,71 @@ TEST(SenpGitHubToolExecutor, CancellingAJobLogDropsItsResultAndItsStore)
 	fixture.Executor().CancelConnection(scope.SessionId(), scope.ClientProcessId());
 	ASSERT_TRUE(fixture.Executor().WaitForIdle(kIdleTimeoutMilliseconds));
 	EXPECT_FALSE(fixture.Executor().TakeCompleted(scope));
+}
+
+/*!
+	@brief Revoking an account releases exactly the scopes of the old generation.
+
+	Revocation by the connection lifecycle reaches the executor as a profile and
+	the generation that is now current: every scope of that profile still built
+	on a superseded generation - its reads, pending completions, resources and
+	queued or running log jobs - is released, while the current generation and
+	every other profile keep theirs.
+*/
+TEST(SenpGitHubToolExecutor, RevokeAccountDropsOnlyTheSupersededGenerationsWork)
+{
+	Fixture fixture;
+	fixture.Profiles().AddProfile(L"profile-2");
+	const auto ownerAt = [](const std::int64_t generation) {
+		auto owner = Owner();
+		owner.accountGeneration = generation;
+		return owner;
+	};
+	const SenpToolExecutionScope first(7, 1234, L"profile-1", ownerAt(1));
+	const SenpToolExecutionScope second(7, 1234, L"profile-1", ownerAt(2));
+	const SenpToolExecutionScope other(7, 1234, L"profile-2", ownerAt(1));
+
+	// A live read each, plus the page resource the first scope published.
+	const auto firstPage = fixture.Fetch(first, IssueList());
+	ASSERT_TRUE(firstPage);
+	const auto firstHandle = ResourceHandle(*firstPage);
+	ASSERT_FALSE(firstHandle.empty());
+	const auto otherPage = fixture.Fetch(other, IssueList());
+	ASSERT_TRUE(otherPage);
+	const auto otherHandle = ResourceHandle(*otherPage);
+	ASSERT_FALSE(otherHandle.empty());
+	EXPECT_EQ(EControlSenpRpcStatus::Succeeded, fixture.Executor().StartRead(second, IssueList()));
+	// A queued log job on the generation about to be revoked.
+	fixture.CredentialValue().SetStream(EBoundedProcessStatus::Succeeded, { "log bytes" });
+	EXPECT_EQ(EControlSenpRpcStatus::Succeeded, fixture.Executor().StartRead(first, JobLog()));
+
+	fixture.Executor().RevokeAccount(L"profile-1", 2);
+
+	ControlSenpRpcResponse response;
+	// The generation-1 scope answers like a released scope: nothing is found
+	// for it, and its queued log can never complete.
+	EXPECT_EQ(EControlSenpRpcStatus::Unauthorized,
+		fixture.Executor().ReadResource(first, firstHandle, 0, 1024, response));
+	EXPECT_FALSE(fixture.Executor().TakeCompleted(first));
+	EXPECT_TRUE(fixture.Executor().WaitForIdle(kIdleTimeoutMilliseconds));
+
+	// Generation 2 is untouched: its scope still exists and its read still
+	// answers through the ordinary drain.
+	EXPECT_EQ(EControlSenpRpcStatus::NotFound,
+		fixture.Executor().ReadResource(second, firstHandle, 0, 1024, response));
+	ASSERT_TRUE(fixture.Executor().TakeCompleted(second));
+	// And so is the scope of the other profile.
+	EXPECT_EQ(EControlSenpRpcStatus::Succeeded,
+		fixture.Executor().ReadResource(other, otherHandle, 0, 64 * 1024, response));
+
+	// Generation zero means no account is current: every scope of the profile
+	// goes, whatever generation each was admitted under.
+	fixture.Executor().RevokeAccount(L"profile-1", 0);
+	EXPECT_EQ(EControlSenpRpcStatus::Unauthorized,
+		fixture.Executor().ReadResource(second, firstHandle, 0, 1024, response));
+	EXPECT_FALSE(fixture.Executor().TakeCompleted(second));
+	EXPECT_EQ(EControlSenpRpcStatus::Succeeded,
+		fixture.Executor().ReadResource(other, otherHandle, 0, 64 * 1024, response));
 }
 
 TEST(SenpGitHubToolExecutor, StartsOnlyTheTwoOperationsThisToolNames)

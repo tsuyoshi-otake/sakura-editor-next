@@ -424,8 +424,10 @@ GhAuthenticatedAccount::GhAuthenticatedAccount(GhAccountIdentity identity,
 	m_credential(std::move(credential)) {}
 
 CGhConnectionLifecycle::CGhConnectionLifecycle(std::shared_ptr<IGhConnectionPlatform> platform,
-	CSenpToolGrants& grants, std::wstring profileId, std::wstring configurationDirectory) :
-	m_platform(std::move(platform)), m_grants(grants), m_profileId(std::move(profileId)),
+	CSenpToolGrants& grants, std::wstring profileId, std::wstring configurationDirectory,
+	std::shared_ptr<IGhAccountRevocationSink> revocation) :
+	m_platform(std::move(platform)), m_grants(grants), m_revocation(std::move(revocation)),
+	m_profileId(std::move(profileId)),
 	m_configurationDirectory(std::move(configurationDirectory)) {}
 
 CGhConnectionLifecycle::~CGhConnectionLifecycle()
@@ -467,6 +469,7 @@ GhConnectionOperationResult CGhConnectionLifecycle::Complete(
 	}
 	bool revoke{};
 	std::shared_ptr<IGhAccountCredential> revokedCredential;
+	std::int64_t currentAccountGeneration{};
 	GhConnectionTerminal terminal = checked.Terminal();
 	GhConnectionSnapshot snapshot(GhConnectionState::Unavailable, m_profileId, std::nullopt, 0);
 	{
@@ -513,9 +516,16 @@ GhConnectionOperationResult CGhConnectionLifecycle::Complete(
 			}
 		}
 		snapshot = SnapshotLocked();
+		currentAccountGeneration = m_accountGeneration;
 	}
 	if (revokedCredential) revokedCredential->Revoke();
-	if (revoke) m_grants.RevokeProfile(m_profileId);
+	// The revoked account's grants go first, then the running work they fed:
+	// the sink is told the generation that is current now, outside this mutex,
+	// so its teardown may observe this lifecycle without deadlocking.
+	if (revoke) {
+		m_grants.RevokeProfile(m_profileId);
+		if (m_revocation) m_revocation->RevokeAccount(m_profileId, currentAccountGeneration);
+	}
 	return { terminal, std::move(snapshot) };
 }
 
@@ -557,7 +567,10 @@ void CGhConnectionLifecycle::Disconnect() noexcept
 		m_state = GhConnectionState::Disconnected;
 	}
 	if (revokedCredential) revokedCredential->Revoke();
-	if (revoke) m_grants.RevokeProfile(m_profileId);
+	if (revoke) {
+		m_grants.RevokeProfile(m_profileId);
+		if (m_revocation) m_revocation->RevokeAccount(m_profileId, 0);
+	}
 }
 
 void CGhConnectionLifecycle::Close() noexcept
@@ -577,7 +590,10 @@ void CGhConnectionLifecycle::Close() noexcept
 		m_state = GhConnectionState::Unavailable;
 	}
 	if (revokedCredential) revokedCredential->Revoke();
-	if (revoke) m_grants.RevokeProfile(m_profileId);
+	if (revoke) {
+		m_grants.RevokeProfile(m_profileId);
+		if (m_revocation) m_revocation->RevokeAccount(m_profileId, 0);
+	}
 }
 
 } // namespace senp::github

@@ -209,6 +209,15 @@ SenpToolGrantIssue CSenpToolGrants::Impl::Issue(
 	if (records.size() >= CSenpToolGrants::MaximumGrants()) {
 		return { SenpToolGrantIssueStatus::ResourceExhausted, {}, {} };
 	}
+	// One connection gets its own quota inside the registry total: without it a
+	// single editor could hold every grant and starve every other window.
+	std::size_t held = 0;
+	for (const auto& entry : records) {
+		if (SameConnection(entry.second.Connection(), connection)) ++held;
+	}
+	if (held >= CSenpToolGrants::MaximumGrantsPerConnection()) {
+		return { SenpToolGrantIssueStatus::ResourceExhausted, {}, {} };
+	}
 	for (int attempt = 0; attempt < 4; ++attempt) {
 		const auto grantId = RandomGrantId();
 		if (!grantId) return { SenpToolGrantIssueStatus::Unavailable, {}, {} };

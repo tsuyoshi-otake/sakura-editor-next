@@ -16,6 +16,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -129,6 +130,17 @@ public:
 		std::wstring_view readId) noexcept override;
 	void CancelConnection(std::uint64_t sessionId, std::uint32_t clientProcessId) noexcept override;
 	void ReleaseScope(const platform::controlipc::SenpToolExecutionScope& scope) noexcept override;
+	/*!
+		@brief Releases every scope of one profile admitted under a superseded account generation.
+
+		The connection lifecycle reports a revocation as the account generation
+		that is current now - zero once no account remains. Every scope of that
+		profile whose owner carries another generation is torn down exactly the
+		way ReleaseScope tears it down: its reads, pending completions, resources
+		and queued or running log jobs. A scope of the current generation, and
+		every scope of another profile, is left intact.
+	*/
+	void RevokeAccount(std::wstring_view profileId, std::int64_t currentAccountGeneration) noexcept;
 	[[nodiscard]] platform::controlipc::EControlSenpRpcStatus ReadResource(
 		const platform::controlipc::SenpToolExecutionScope& scope, std::wstring_view handle,
 		std::uint64_t offset, std::uint32_t length,
@@ -271,6 +283,12 @@ private:
 	//! the editor could still be shown.
 	void ReleasePage(ScopeState& state, Read& read) noexcept;
 	void Release(ScopeState& state) noexcept;
+	//! The one scope teardown: drops queued log jobs, signals the running log's
+	//! stop event when it belongs to a matched scope, and releases then erases
+	//! every matched scope state. Called with the state mutex held; unlocking
+	//! and waking the worker stays the caller's step so every caller shares it.
+	void ReleaseMatching(
+		const std::function<bool(const platform::controlipc::SenpToolExecutionScope&)>& match) noexcept;
 	void Run() noexcept;
 	void Execute(const GhReadDispatch& dispatch);
 	void ExecuteLog(LogJob& job) noexcept;

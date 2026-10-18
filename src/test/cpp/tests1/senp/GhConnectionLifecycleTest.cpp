@@ -147,6 +147,28 @@ bool HasOverride(const GhProcessInvocation& invocation, const std::wstring_view 
 	});
 }
 
+//! Records every revocation the lifecycle reports, and on each call touches the
+//! lifecycle's own Snapshot: a sink invoked while the lifecycle mutex was still
+//! held would deadlock there, so the call arriving at all proves it was made
+//! after the lock was released.
+class RevocationSink final : public IGhAccountRevocationSink {
+public:
+	void Observe(CGhConnectionLifecycle* owner) noexcept { m_owner = owner; }
+	void RevokeAccount(std::wstring_view profileId,
+		std::int64_t currentAccountGeneration) noexcept override
+	{
+		if (m_owner) (void)m_owner->Snapshot();
+		m_calls.emplace_back(std::wstring(profileId), currentAccountGeneration);
+	}
+	[[nodiscard]] const std::vector<std::pair<std::wstring, std::int64_t>>& Calls() const noexcept
+	{
+		return m_calls;
+	}
+private:
+	CGhConnectionLifecycle* m_owner{};
+	std::vector<std::pair<std::wstring, std::int64_t>> m_calls;
+};
+
 } // namespace
 
 TEST(GhConnectionLifecycle, KeepsUnknownUntilACompletedCheckProvesDisconnected)
@@ -374,6 +396,136 @@ TEST(GhConnectionLifecycle, NativePlatformSeparatesConfirmedAuthenticationAbsenc
 	tool->Queue({ EBoundedProcessStatus::Succeeded, 0, Bytes(R"({"login":"account-b"})"), {} });
 	EXPECT_EQ(GhConnectionTerminal::IdentityMismatch,
 		platform.Check(probe, L"C:\\Profiles\\gh", L"github.com", std::nullopt, nullptr).Terminal());
+}
+
+TEST(GhConnectionLifecycle, AccountReplacementReachesTheRevocationSinkWithTheNewGeneration)
+{
+	auto authority = std::make_shared<Authority>();
+	CSenpToolGrants grants(authority);
+	auto platform = ConnectedPlatform(L"account-a");
+	auto sink = std::make_shared<RevocationSink>();
+	CGhConnectionLifecycle lifecycle(platform, grants, L"profile-1", L"C:\\Profiles\\gh", sink);
+	sink->Observe(&lifecycle);
+	auto first = lifecycle.Begin(L"github.com", L"account-a");
+	ASSERT_TRUE(first);
+	ASSERT_EQ(GhConnectionTerminal::Succeeded,
+		lifecycle.Complete(std::move(*first), AvailableProbe(), nullptr).Terminal());
+	EXPECT_TRUE(sink->Calls().empty());
+
+	platform->Set(GhConnectionTerminal::Succeeded, Account(L"account-b"),
+		std::make_shared<FakeCredential>());
+	auto second = lifecycle.Begin(L"github.com", L"account-b");
+	ASSERT_TRUE(second);
+	ASSERT_EQ(GhConnectionTerminal::Succeeded,
+		lifecycle.Complete(std::move(*second), AvailableProbe(), nullptr).Terminal());
+	// Exactly one revocation, carrying the generation that is current now: the
+	// superseded account's generation-1 work is what has to be released.
+	ASSERT_EQ(1U, sink->Calls().size());
+	EXPECT_EQ(L"profile-1", sink->Calls().front().first);
+	EXPECT_EQ(2, sink->Calls().front().second);
+}
+
+TEST(GhConnectionLifecycle, ReauthenticationRequiredReachesTheRevocationSinkWithGenerationZero)
+{
+	auto authority = std::make_shared<Authority>();
+	CSenpToolGrants grants(authority);
+	auto platform = ConnectedPlatform(L"account-a");
+	auto sink = std::make_shared<RevocationSink>();
+	CGhConnectionLifecycle lifecycle(platform, grants, L"profile-1", L"C:\\Profiles\\gh", sink);
+	sink->Observe(&lifecycle);
+	auto first = lifecycle.Begin(L"github.com", L"account-a");
+	ASSERT_TRUE(first);
+	ASSERT_EQ(GhConnectionTerminal::Succeeded,
+		lifecycle.Complete(std::move(*first), AvailableProbe(), nullptr).Terminal());
+
+	platform->Set(GhConnectionTerminal::AuthenticationRequired);
+	auto recheck = lifecycle.Begin(L"github.com", L"account-a");
+	ASSERT_TRUE(recheck);
+	const auto rejected = lifecycle.Complete(std::move(*recheck), AvailableProbe(), nullptr);
+	EXPECT_EQ(GhConnectionState::ReauthenticationRequired, rejected.Snapshot().State());
+	ASSERT_EQ(1U, sink->Calls().size());
+	EXPECT_EQ(L"profile-1", sink->Calls().front().first);
+	EXPECT_EQ(0, sink->Calls().front().second);
+}
+
+TEST(GhConnectionLifecycle, DisconnectAndCloseEachReachTheRevocationSinkOnce)
+{
+	auto authority = std::make_shared<Authority>();
+	CSenpToolGrants grants(authority);
+	auto sink = std::make_shared<RevocationSink>();
+	{
+		auto platform = ConnectedPlatform(L"account-a");
+		CGhConnectionLifecycle lifecycle(platform, grants, L"profile-1", L"C:\\Profiles\\gh", sink);
+		sink->Observe(&lifecycle);
+		auto attempt = lifecycle.Begin(L"github.com", L"account-a");
+		ASSERT_TRUE(attempt);
+		ASSERT_EQ(GhConnectionTerminal::Succeeded,
+			lifecycle.Complete(std::move(*attempt), AvailableProbe(), nullptr).Terminal());
+		lifecycle.Disconnect();
+	}
+	ASSERT_EQ(1U, sink->Calls().size());
+	EXPECT_EQ(L"profile-1", sink->Calls().front().first);
+	EXPECT_EQ(0, sink->Calls().front().second);
+
+	{
+		auto platform = ConnectedPlatform(L"account-a");
+		CGhConnectionLifecycle lifecycle(platform, grants, L"profile-1", L"C:\\Profiles\\gh", sink);
+		sink->Observe(&lifecycle);
+		auto attempt = lifecycle.Begin(L"github.com", L"account-a");
+		ASSERT_TRUE(attempt);
+		ASSERT_EQ(GhConnectionTerminal::Succeeded,
+			lifecycle.Complete(std::move(*attempt), AvailableProbe(), nullptr).Terminal());
+		lifecycle.Close();
+	}
+	ASSERT_EQ(2U, sink->Calls().size());
+	EXPECT_EQ(L"profile-1", sink->Calls().back().first);
+	EXPECT_EQ(0, sink->Calls().back().second);
+}
+
+/*!
+	@brief A successful re-check of the same login is still a revocation.
+
+	A re-check that adopts the identical account replaces the credential and
+	advances the account generation, so grants and reads issued against the old
+	generation must not survive it any more than they survive an account swap.
+*/
+TEST(GhConnectionLifecycle, ASuccessfulRecheckOfTheSameLoginStillRevokesTheOldAccount)
+{
+	auto authority = std::make_shared<Authority>();
+	CSenpToolGrants grants(authority);
+	auto session = grants.OpenSession({ 31, 1701 });
+	ASSERT_NE(nullptr, session);
+	auto platform = ConnectedPlatform(L"account-a");
+	auto sink = std::make_shared<RevocationSink>();
+	CGhConnectionLifecycle lifecycle(platform, grants, L"profile-1", L"C:\\Profiles\\gh", sink);
+	sink->Observe(&lifecycle);
+	auto first = lifecycle.Begin(L"github.com", L"account-a");
+	ASSERT_TRUE(first);
+	ASSERT_EQ(GhConnectionTerminal::Succeeded,
+		lifecycle.Complete(std::move(*first), AvailableProbe(), nullptr).Terminal());
+	auto oldLease = lifecycle.Acquire(1);
+	ASSERT_TRUE(oldLease);
+	const SenpToolGrantRequest request(L"profile-1", Owner(1), SenpToolCapability::GitHubRepositoryRead);
+	const auto issued = session->Issue(request, std::chrono::steady_clock::time_point{});
+	ASSERT_EQ(SenpToolGrantIssueStatus::Granted, issued.Status());
+
+	// The same login checked again: the account does not change, but its lease
+	// and every grant minted under the previous generation are still replaced.
+	platform->Set(GhConnectionTerminal::Succeeded, Account(L"account-a"),
+		std::make_shared<FakeCredential>());
+	auto second = lifecycle.Begin(L"github.com", L"account-a");
+	ASSERT_TRUE(second);
+	const auto rechecked = lifecycle.Complete(std::move(*second), AvailableProbe(), nullptr);
+	ASSERT_EQ(GhConnectionTerminal::Succeeded, rechecked.Terminal());
+	EXPECT_EQ(2, rechecked.Snapshot().AccountGeneration());
+	ASSERT_TRUE(rechecked.Snapshot().Account());
+	EXPECT_EQ(L"account-a", rechecked.Snapshot().Account()->Login());
+	EXPECT_EQ(EBoundedProcessStatus::InvalidRequest,
+		oldLease->Credential().RunAuthenticated({ L"api", L"user" }, 1000, 1024, 1024, nullptr).Status());
+	EXPECT_EQ(SenpToolGrantCheck::Invalid,
+		session->Validate(issued.GrantId(), request, std::chrono::steady_clock::time_point{}));
+	ASSERT_EQ(1U, sink->Calls().size());
+	EXPECT_EQ(2, sink->Calls().front().second);
 }
 
 TEST(GhConnectionLifecycle, RefusesAnUntrustedExecutableBeforeAnyTokenBearingCall)

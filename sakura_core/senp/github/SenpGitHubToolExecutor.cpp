@@ -756,6 +756,23 @@ void CSenpGitHubToolExecutor::Release(ScopeState& state) noexcept
 	state.logReads.clear();
 }
 
+void CSenpGitHubToolExecutor::ReleaseMatching(
+	const std::function<bool(const SenpToolExecutionScope&)>& match) noexcept
+{
+	std::erase_if(m_logQueue, [&](const auto& job) { return match(job.scope); });
+	if (m_runningLog && m_logStop && match(m_runningLogScope)) {
+		(void)::SetEvent(m_logStop);
+	}
+	std::erase_if(m_scopes, [&](const auto& state) {
+		if (!match(state->scope)) return false;
+		Release(*state);
+		return true;
+	});
+	// The worker never holds a scope - it only writes keyed pages - so erasing
+	// the state under this mutex is, exactly as for a whole connection, the
+	// whole of the guarantee that no worker can touch it afterwards.
+}
+
 void CSenpGitHubToolExecutor::CancelConnection(const std::uint64_t sessionId,
 	const std::uint32_t clientProcessId) noexcept
 try {
@@ -763,21 +780,9 @@ try {
 	// A connection ends once, but the owner identities it issued grants
 	// against are reissued on every workspace-revision or account change, so
 	// teardown matches the observed peer rather than any one scope.
-	const auto own = [&](const SenpToolExecutionScope& scope) {
+	ReleaseMatching([&](const SenpToolExecutionScope& scope) {
 		return scope.SessionId() == sessionId && scope.ClientProcessId() == clientProcessId;
-	};
-	std::erase_if(m_logQueue, [&](const auto& job) { return own(job.scope); });
-	if (m_runningLog && m_logStop && own(m_runningLogScope)) {
-		(void)::SetEvent(m_logStop);
-	}
-	std::erase_if(m_scopes, [&](const auto& state) {
-		if (!own(state->scope)) return false;
-		Release(*state);
-		return true;
 	});
-	// The worker never holds a scope - it only writes keyed pages - so erasing
-	// the records under this mutex is by itself proof that no worker can reach
-	// a scope of this connection afterwards.
 	lock.unlock();
 	m_wakeWorker.notify_all();
 } catch (const std::exception&) {
@@ -789,18 +794,24 @@ try {
 	// One retired owner ends exactly its own scope: its queued and running log
 	// jobs, its reads, pending completions and resources, while every other
 	// scope of the same connection - and every other connection - is intact.
-	std::erase_if(m_logQueue, [&](const auto& job) { return job.scope == scope; });
-	if (m_runningLog && m_logStop && m_runningLogScope == scope) {
-		(void)::SetEvent(m_logStop);
-	}
-	std::erase_if(m_scopes, [&](const auto& state) {
-		if (!(state->scope == scope)) return false;
-		Release(*state);
-		return true;
+	ReleaseMatching([&](const SenpToolExecutionScope& candidate) { return candidate == scope; });
+	lock.unlock();
+	m_wakeWorker.notify_all();
+} catch (const std::exception&) {
+}
+
+void CSenpGitHubToolExecutor::RevokeAccount(const std::wstring_view profileId,
+	const std::int64_t currentAccountGeneration) noexcept
+try {
+	std::unique_lock lock(m_mutex);
+	// The lifecycle reports the generation that is current now: everything the
+	// superseded account left running - scope states, queued log jobs, a
+	// download in flight - ends, while the current generation's work and every
+	// other profile's is intact.
+	ReleaseMatching([&](const SenpToolExecutionScope& scope) {
+		return scope.ProfileId() == profileId
+			&& scope.Owner().accountGeneration != currentAccountGeneration;
 	});
-	// The worker never holds a scope - it only writes keyed pages - so erasing
-	// the state under this mutex is, exactly as for a whole connection, the
-	// whole of the guarantee that no worker can touch it afterwards.
 	lock.unlock();
 	m_wakeWorker.notify_all();
 } catch (const std::exception&) {

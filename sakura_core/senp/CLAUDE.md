@@ -404,18 +404,22 @@ trusted package authority for the enabled extension digest, management revision,
 and approved capabilities. It never promotes Editor-supplied owner fields into
 authority. Every use rechecks the connection, complete owner scope, expiry, and
 current trusted authority. Session loss, owner replacement, profile shutdown,
-and broker shutdown have explicit revocation paths. The 64-record limit and
-five-minute lifetime bound abandoned grants.
+and broker shutdown have explicit revocation paths. The 256-record registry
+limit, the 16-record per-connection quota (`MaximumGrantsPerConnection()`, sized
+at the four runtime owners a window composes times the capabilities one owner
+can hold, so no single editor can starve every other), and the five-minute
+lifetime bound abandoned grants.
 
 The broker session tracks grant lifecycle, not only live grants. A grant id the
 session minted but the registry no longer holds (pruned after expiry, or
 revoked) must answer `Expired` so the editor re-issues; an id it never minted
 stays `Unauthorized`. The minted-id history is bounded to the most recent
-`4 * MaximumGrants()` ids; an evicted id falls back to `Unauthorized`, which the
+`4 * MaximumTrackedGrants()` ids; an evicted id falls back to `Unauthorized`, which the
 editor treats exactly like `Expired` (forget + re-issue). The session keeps only
 live records and drops expired ones before the tracked-grant cap check, so one
-connection can renew indefinitely while `MaximumGrants()` concurrently live
-grants still answer `ResourceExhausted`. Destruction cancels by connection, not
+connection can renew indefinitely while `MaximumGrantsPerConnection()`
+concurrently live grants still answer `ResourceExhausted` for that connection
+only. Destruction cancels by connection, not
 by remembered scope: one `CancelConnection` tears down every executor scope the
 connection ever created, because an owner identity is reissued on every
 workspace-revision or account change and remembering each would grow without
@@ -509,7 +513,22 @@ The candidate becomes Connected only after the fixed `user` endpoint reports
 the same login. Timeout, malformed output, and candidate failure preserve an
 existing usable account. Replacement, confirmed reauthentication, disconnect,
 and close revoke retained credential leases and every profile grant. A late
-candidate cannot cross the connection epoch. T06 adds bounded query and
+candidate cannot cross the connection epoch. A successful re-check of the same
+login is still a revocation: it replaces the credential and bumps the account
+generation, so grants and executor work admitted under the old generation must
+not survive it any more than an account swap's would
+(`GhConnectionLifecycle.ASuccessfulRecheckOfTheSameLoginStillRevokesTheOldAccount`).
+Every revocation path also reports the profile and the now-current account
+generation (zero once no account remains) to an `IGhAccountRevocationSink`
+after the lifecycle mutex is released; the control composition binds that sink
+to the executor's `RevokeAccount`, which releases exactly the scopes of the
+superseded generations so no queued or running `gh` work keeps using a revoked
+lease. Because the call is made outside the mutex, a revocation that loses a
+race with a newer adoption, or two revocations delivered out of order, can also
+release scopes of the generation that is current by then. That error is
+fail-closed and matches the grant layer, whose `RevokeProfile` already drops
+every grant of the profile whatever its generation: the editor re-issues, and
+work of a superseded generation is never kept. T06 adds bounded query and
 HTTP-envelope parsing. Do not widen either policy into a generic command
 runner.
 
@@ -524,7 +543,10 @@ before the session reports success. Cancel, timeout, UI close, disconnect and
 every process failure publish explicit terminals. Disconnect revokes Sakura's
 credential lease and grants but never runs `gh auth logout`; the presentation
 must disclose that shared gh authentication remains and show the CLI-reported
-credential storage source.
+credential storage source. The session is not composed in production yet;
+whoever composes it must call its `Disconnect`/`Close` from the lifecycle's
+Disconnect/Close so a running `gh auth login` cannot outlive the account state
+it answers for.
 
 `CGhRepositoryReader` owns T06's one-page response boundary. Query names come
 from a closed allowlist, values are percent-encoded, numeric page controls are

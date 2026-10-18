@@ -170,13 +170,26 @@ private:
 	friend class CGhConnectionLifecycle;
 };
 
+//! Receives the lifecycle's account revocations for whoever owns the running
+//! work they leave behind. Each call carries the account generation that is
+//! current now - zero once no account remains - and is always made after the
+//! lifecycle mutex was released, so an implementation may call back into this
+//! lifecycle without deadlocking.
+class IGhAccountRevocationSink {
+public:
+	virtual ~IGhAccountRevocationSink() = default;
+	virtual void RevokeAccount(std::wstring_view profileId,
+		std::int64_t currentAccountGeneration) noexcept = 0;
+};
+
 //! One Control-process profile connection. Begin publishes Checking but retains
 //! the usable account. Complete publishes a new account only after identity
 //! verification and only while the attempt epoch is current.
 class CGhConnectionLifecycle final {
 public:
 	CGhConnectionLifecycle(std::shared_ptr<IGhConnectionPlatform> platform,
-		CSenpToolGrants& grants, std::wstring profileId, std::wstring configurationDirectory);
+		CSenpToolGrants& grants, std::wstring profileId, std::wstring configurationDirectory,
+		std::shared_ptr<IGhAccountRevocationSink> revocation = {});
 	~CGhConnectionLifecycle();
 	CGhConnectionLifecycle(const CGhConnectionLifecycle&) = delete;
 	CGhConnectionLifecycle& operator=(const CGhConnectionLifecycle&) = delete;
@@ -193,6 +206,7 @@ private:
 	[[nodiscard]] GhConnectionSnapshot SnapshotLocked() const;
 	std::shared_ptr<IGhConnectionPlatform> m_platform;
 	CSenpToolGrants& m_grants;
+	std::shared_ptr<IGhAccountRevocationSink> m_revocation;
 	std::wstring m_profileId, m_configurationDirectory;
 	std::mutex m_mutex;
 	GhConnectionState m_state{ GhConnectionState::Unknown };

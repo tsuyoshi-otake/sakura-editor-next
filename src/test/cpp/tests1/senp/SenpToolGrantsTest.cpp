@@ -226,6 +226,28 @@ TEST(SenpToolGrants, InvalidRequestsAndBoundedCapacityFailClosed)
 	EXPECT_EQ(1U, grants.Size());
 }
 
+TEST(SenpToolGrants, PerConnectionQuotaBoundsOneConnectionWithoutBoundingTheOthers)
+{
+	auto authority = std::make_shared<Authority>(Approved());
+	CSenpToolGrants grants(authority);
+	auto session = grants.OpenSession({ 31, 1701 });
+	auto other = grants.OpenSession({ 32, 1702 });
+	ASSERT_NE(nullptr, session);
+	ASSERT_NE(nullptr, other);
+	const SenpToolGrantRequest request(L"profile-1", Owner(), SenpToolCapability::GitHubRepositoryRead);
+	for (std::size_t index = 0; index < CSenpToolGrants::MaximumGrantsPerConnection(); ++index) {
+		ASSERT_EQ(SenpToolGrantIssueStatus::Granted, session->Issue(request, kNow).Status()) << index;
+	}
+	// One connection cannot hold every grant in the registry: its own quota
+	// refuses the next one while a different connection is still admitted.
+	EXPECT_EQ(SenpToolGrantIssueStatus::ResourceExhausted, session->Issue(request, kNow).Status());
+	EXPECT_EQ(SenpToolGrantIssueStatus::Granted, other->Issue(request, kNow).Status());
+
+	// Revocation frees the connection's own quota the same way expiry does.
+	session->RevokeOwner(L"profile-1", Owner());
+	EXPECT_EQ(SenpToolGrantIssueStatus::Granted, session->Issue(request, kNow).Status());
+}
+
 TEST(SenpToolGrants, RetainedSessionObservesClosedAfterBrokerDestruction)
 {
 	auto authority = std::make_shared<Authority>(Approved());

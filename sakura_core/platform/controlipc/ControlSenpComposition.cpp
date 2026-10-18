@@ -237,13 +237,34 @@ std::optional<senp::SenpApprovedToolOwner> CControlSenpAuthorityGate::Resolve(
 	return owner;
 }
 
+void CControlSenpRevocationSink::Bind(
+	std::shared_ptr<senp::github::CSenpGitHubToolExecutor> executor) noexcept
+try {
+	std::lock_guard lock(m_mutex);
+	m_executor = std::move(executor);
+} catch (const std::exception&) {
+}
+
+void CControlSenpRevocationSink::RevokeAccount(const std::wstring_view profileId,
+	const std::int64_t currentAccountGeneration) noexcept
+try {
+	std::shared_ptr<senp::github::CSenpGitHubToolExecutor> executor;
+	{
+		std::lock_guard lock(m_mutex);
+		executor = m_executor.lock();
+	}
+	if (executor) executor->RevokeAccount(profileId, currentAccountGeneration);
+} catch (const std::exception&) {
+}
+
 CControlSenpProfileSource::CControlSenpProfileSource(std::shared_ptr<senp::CSenpToolGrants> grants,
 	std::shared_ptr<senp::github::IGhConnectionPlatform> platform, std::wstring configurationDirectory,
-	std::shared_ptr<CControlSenpRefreshQueue> refresh) :
+	std::shared_ptr<CControlSenpRefreshQueue> refresh,
+	std::shared_ptr<senp::github::IGhAccountRevocationSink> revocation) :
 	m_grants(std::move(grants)), m_platform(std::move(platform)),
 	m_configurationDirectory(::platform::IsAbsoluteWindowsPath(configurationDirectory)
 		? std::move(configurationDirectory) : std::wstring{}),
-	m_refresh(std::move(refresh))
+	m_refresh(std::move(refresh)), m_revocation(std::move(revocation))
 {
 }
 
@@ -282,12 +303,12 @@ try {
 	if (const auto found = m_profiles.find(profileId); found != m_profiles.end()) {
 		if (found->second.Connection()) return found->second.Connection();
 		found->second.SetConnection(std::make_shared<senp::github::CGhConnectionLifecycle>(
-			m_platform, *m_grants, profileId, m_configurationDirectory));
+			m_platform, *m_grants, profileId, m_configurationDirectory, m_revocation));
 		return found->second.Connection();
 	}
 	if (m_profiles.size() >= MaximumProfiles()) return nullptr;
 	auto connection = std::make_shared<senp::github::CGhConnectionLifecycle>(
-		m_platform, *m_grants, profileId, m_configurationDirectory);
+		m_platform, *m_grants, profileId, m_configurationDirectory, m_revocation);
 	m_profiles.emplace(profileId, Profile{ connection, std::nullopt });
 	return connection;
 } catch (const std::exception&) {
@@ -436,11 +457,12 @@ CControlSenpComposition::CControlSenpComposition(ControlSenpCompositionOptions o
 		MinimumRefreshInterval(), MaximumPendingRefreshes())),
 	m_grants(std::make_shared<senp::CSenpToolGrants>(
 		std::make_shared<CControlSenpAuthorityGate>(m_authority, m_refresh))),
+	m_revocationSink(std::make_shared<CControlSenpRevocationSink>()),
 	m_profiles(std::make_shared<CControlSenpProfileSource>(m_grants,
 		dependencies.ConnectionPlatform() ? dependencies.ConnectionPlatform()
 			: std::make_shared<senp::github::CWindowsGhConnectionPlatform>(
 				m_toolPlatform, m_options.WorkingDirectory()),
-		m_options.GhConfigurationDirectory(), m_refresh)),
+		m_options.GhConfigurationDirectory(), m_refresh, m_revocationSink)),
 	m_executor(std::make_shared<senp::github::CSenpGitHubToolExecutor>(
 		m_toolPlatform, m_profiles, m_options.WorkingDirectory())),
 	m_handler(std::make_shared<CControlSenpBroker>(m_grants, m_executor)),
@@ -448,6 +470,12 @@ CControlSenpComposition::CControlSenpComposition(ControlSenpCompositionOptions o
 	m_repositories(dependencies.RepositoryPlatform() ? dependencies.RepositoryPlatform()
 		: std::make_shared<const senp::github::CWindowsGhLocalRepositoryPlatform>())
 {
+	// The lifecycles were handed the sink before the executor existed; binding
+	// it now is what lets an account revocation reach running work. A null
+	// event only costs Close() its promptness, never its correctness, so a
+	// failed CreateEventW is not a construction failure.
+	m_revocationSink->Bind(m_executor);
+	m_stop = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
 	m_worker = foundation::CNativeWorkerThread::Start<CControlSenpComposition,
 		&CControlSenpComposition::Run>(this);
 }
@@ -455,6 +483,7 @@ CControlSenpComposition::CControlSenpComposition(ControlSenpCompositionOptions o
 CControlSenpComposition::~CControlSenpComposition()
 {
 	Close();
+	if (m_stop) (void)::CloseHandle(m_stop);
 }
 
 bool CControlSenpComposition::RequestRefresh(std::wstring_view profileId)
@@ -491,6 +520,9 @@ try {
 		if (m_closed) return;
 		m_closed = true;
 	}
+	// Signalled first: the worker may be parked inside a `git` or `gh` child
+	// whose own timeout would otherwise be what Join waits out.
+	if (m_stop) (void)::SetEvent(m_stop);
 	if (m_refresh) m_refresh->Close();
 	m_worker.Join();
 	// The grant registry closes first: a connection that is torn down while a
@@ -613,7 +645,10 @@ void CControlSenpComposition::RefreshRepository(const std::wstring& profileId)
 	workspace.revision = declared->Revision();
 	workspace.kind = workspace.folders.size() == 1 ? config::EWorkspaceKind::Folder
 		: config::EWorkspaceKind::Workspace;
-	const auto captured = m_repositories.Capture(workspace, nullptr);
+	const auto captured = m_repositories.Capture(workspace, m_stop);
+	// A stop observed mid-refresh publishes nothing: the profile keeps whatever
+	// it had rather than a repository derived from a cancelled inspect.
+	if (m_stop && ::WaitForSingleObject(m_stop, 0) == WAIT_OBJECT_0) return;
 	const auto selection = m_repositories.Select(captured, workspace.generation, workspace.revision);
 	// Anything other than one unambiguous GitHub remote publishes nothing, so
 	// the executor answers Unavailable instead of guessing an owner or repository.
@@ -631,11 +666,12 @@ void CControlSenpComposition::RefreshConnection(const std::wstring& profileId)
 	if (!attempt) return;
 	// Probing runs `gh --version`; it belongs on this worker and never on a frame.
 	if (!m_probe || m_probe->Status() != senp::github::GhToolAvailability::Available) {
-		m_probe = m_policy.Probe(nullptr);
+		m_probe = m_policy.Probe(m_stop);
 	}
 	// Complete blocks on the GitHub CLI. Its terminal is published into the
-	// lifecycle, which is the only place a read may learn the account from.
-	(void)connection->Complete(std::move(*attempt), *m_probe, nullptr);
+	// lifecycle, which is the only place a read may learn the account from. A
+	// cancelled check ends Cancelled, never half-adopted.
+	(void)connection->Complete(std::move(*attempt), *m_probe, m_stop);
 }
 
 void CControlSenpComposition::Discard(const std::wstring& profileId) noexcept

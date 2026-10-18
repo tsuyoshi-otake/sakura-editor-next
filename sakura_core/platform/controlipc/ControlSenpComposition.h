@@ -156,6 +156,29 @@ private:
 };
 
 /*!
+	@brief Forwards account revocations to the tool executor once it exists.
+
+	The per-profile connection lifecycles are created before the executor, so
+	the composition hands them this sink up front and binds the executor into
+	it afterwards. The binding is weak on purpose: the executor reaches this
+	sink back through the profile source it owns and every lifecycle that
+	received it, so a strong reference would be a cycle keeping the executor,
+	its worker, the source and every lifecycle alive past the composition. An
+	unbound or expired binding makes the calls a no-op, which is also what
+	makes destruction order safe.
+*/
+class CControlSenpRevocationSink final : public senp::github::IGhAccountRevocationSink {
+public:
+	void Bind(std::shared_ptr<senp::github::CSenpGitHubToolExecutor> executor) noexcept;
+	void RevokeAccount(std::wstring_view profileId,
+		std::int64_t currentAccountGeneration) noexcept override;
+
+private:
+	std::mutex m_mutex;
+	std::weak_ptr<senp::github::CSenpGitHubToolExecutor> m_executor;
+};
+
+/*!
 	@brief Production per-profile GitHub state for the tool executor.
 
 	Both lookups are bounded and never block, so they answer only what the
@@ -177,6 +200,8 @@ public:
 		std::shared_ptr<senp::github::IGhConnectionPlatform> platform,
 		std::wstring configurationDirectory,
 		std::shared_ptr<CControlSenpRefreshQueue> refresh
+			= nullptr,
+		std::shared_ptr<senp::github::IGhAccountRevocationSink> revocation
 			= nullptr);
 	~CControlSenpProfileSource() override;
 	CControlSenpProfileSource(const CControlSenpProfileSource&) = delete;
@@ -279,6 +304,7 @@ private:
 	std::shared_ptr<senp::github::IGhConnectionPlatform> m_platform;
 	const std::wstring m_configurationDirectory;
 	std::shared_ptr<CControlSenpRefreshQueue> m_refresh;
+	std::shared_ptr<senp::github::IGhAccountRevocationSink> m_revocation;
 	//! Owned separately from the class so DeclaredWorkspace() can lock it from a
 	//! const method without a class-level mutable member, matching
 	//! ControlSenpClient.h.
@@ -440,6 +466,11 @@ private:
 	std::shared_ptr<senp::CSenpControlPackageAuthority> m_authority;
 	std::shared_ptr<CControlSenpRefreshQueue> m_refresh;
 	std::shared_ptr<senp::CSenpToolGrants> m_grants;
+	//! Created before m_profiles so every connection lifecycle receives it at
+	//! construction; the executor is bound into it in the constructor body,
+	//! after m_executor exists. Declared before m_profiles so member
+	//! initialisation order matches the dependency.
+	std::shared_ptr<CControlSenpRevocationSink> m_revocationSink;
 	std::shared_ptr<CControlSenpProfileSource> m_profiles;
 	std::shared_ptr<senp::github::CSenpGitHubToolExecutor> m_executor;
 	std::shared_ptr<IControlIpcFrameHandler> m_handler;
@@ -447,6 +478,11 @@ private:
 	senp::github::CGhRepositorySelection m_repositories;
 	std::mutex m_workerMutex;
 	std::optional<senp::github::GhToolProbe> m_probe;
+	//! One manual-reset event the refresh worker's child invocations share.
+	//! Created in the constructor before the worker starts, signalled first in
+	//! Close(), and closed exactly once in the destructor. Null only when event
+	//! creation failed, which costs Close() promptness and nothing else.
+	HANDLE m_stop = nullptr;
 	bool m_closed = false;
 	foundation::CNativeWorkerThread m_worker;
 };
