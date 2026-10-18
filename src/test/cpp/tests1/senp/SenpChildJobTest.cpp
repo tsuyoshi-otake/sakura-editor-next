@@ -3,8 +3,10 @@
 #include "pch.h"
 #include <gtest/gtest.h>
 #include "senp/SenpChildJob.h"
+#include <algorithm>
 #include <array>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -165,6 +167,91 @@ TEST(SenpChildJob, RealChildProcessRunsInsideTheConfiguredJob)
 	EXPECT_EQ(::WaitForSingleObject(process.hProcess, 10000), WAIT_OBJECT_0);
 	::CloseHandle(process.hThread);
 	::CloseHandle(process.hProcess);
+}
+
+TEST(SenpChildJob, LaunchConfigUsesExecutableDirectoryAndAllowlistedUnicodeEnvironment)
+{
+	// The marker proves the child's environment is an explicit allowlist, not
+	// the whole test process environment the launch used to inherit.
+	struct ScopedEnvironmentVariable final {
+		explicit ScopedEnvironmentVariable(const wchar_t* name) : name(name) {}
+		~ScopedEnvironmentVariable() { ::SetEnvironmentVariableW(name.c_str(), nullptr); }
+		std::wstring name;
+	} marker{ L"B6D_MARKER" };
+	ASSERT_TRUE(::SetEnvironmentVariableW(L"B6D_MARKER", L"marker-value"));
+
+	const auto config = senp::detail::BuildSenpChildLaunchConfig(
+		L"C:\\senp\\bin\\sakura-senp-host.exe");
+	EXPECT_EQ(config.workingDirectory, L"C:\\senp\\bin");
+	EXPECT_NE(config.environmentFlags & CREATE_UNICODE_ENVIRONMENT, 0u);
+	ASSERT_FALSE(config.environment.empty());
+
+	std::vector<std::wstring> entries;
+	for (const wchar_t* cursor = config.environment.data(); *cursor != L'\0';) {
+		entries.emplace_back(cursor);
+		cursor += entries.back().size() + 1;
+	}
+	std::array<wchar_t, 32768> expected{};
+	ASSERT_LT(::GetEnvironmentVariableW(L"SystemRoot", expected.data(),
+		static_cast<DWORD>(expected.size())), expected.size());
+	const std::wstring expectedSystemRoot{ expected.data() };
+	expected.fill(L'\0');
+	ASSERT_LT(::GetEnvironmentVariableW(L"windir", expected.data(),
+		static_cast<DWORD>(expected.size())), expected.size());
+	const std::wstring expectedWindir{ expected.data() };
+	// The entry keeps the parent's own name casing, so the name is matched
+	// case-insensitively and the value exactly.
+	const auto entryHasValue = [](const std::wstring& e, std::wstring_view name,
+		const std::wstring& value) {
+		const auto equals = e.find(L'=');
+		return equals != std::wstring::npos && value == e.substr(equals + 1)
+			&& ::CompareStringOrdinal(e.data(), static_cast<int>(equals),
+				name.data(), static_cast<int>(name.size()), TRUE) == CSTR_EQUAL;
+	};
+	EXPECT_NE(std::find_if(entries.begin(), entries.end(), [&](const std::wstring& e) {
+		return entryHasValue(e, L"SystemRoot", expectedSystemRoot);
+	}), entries.end());
+	EXPECT_NE(std::find_if(entries.begin(), entries.end(), [&](const std::wstring& e) {
+		return entryHasValue(e, L"windir", expectedWindir);
+	}), entries.end());
+	EXPECT_EQ(entries.size(), 2u);
+	EXPECT_EQ(std::find_if(entries.begin(), entries.end(), [](const std::wstring& e) {
+		return e.starts_with(L"B6D_MARKER=");
+	}), entries.end());
+}
+
+TEST(SenpChildJob, ChildHandlesReportNoInheritFlagUntilEnabledForLaunch)
+{
+	// Mirrors the launchers' creation pattern: the child-side standard-stream
+	// handles exist non-inheritable for the whole window between creation and
+	// SetChildHandlesInheritable immediately before CreateProcessW.
+	SECURITY_ATTRIBUTES security{ sizeof(security), nullptr, FALSE };
+	HANDLE read = nullptr;
+	HANDLE write = nullptr;
+	ASSERT_TRUE(::CreatePipe(&read, &write, &security, 0));
+	DWORD flags = 0;
+	ASSERT_TRUE(::GetHandleInformation(write, &flags));
+	EXPECT_EQ(flags & HANDLE_FLAG_INHERIT, 0u);
+	HANDLE nul = ::CreateFileW(L"NUL", GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+		&security, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+	ASSERT_NE(nul, nullptr);
+	ASSERT_NE(nul, INVALID_HANDLE_VALUE);
+	ASSERT_TRUE(::GetHandleInformation(nul, &flags));
+	EXPECT_EQ(flags & HANDLE_FLAG_INHERIT, 0u);
+
+	const std::array<HANDLE, 2> childSide{ write, nul };
+	ASSERT_TRUE(senp::detail::SetChildHandlesInheritable(childSide));
+	ASSERT_TRUE(::GetHandleInformation(write, &flags));
+	EXPECT_NE(flags & HANDLE_FLAG_INHERIT, 0u);
+	ASSERT_TRUE(::GetHandleInformation(nul, &flags));
+	EXPECT_NE(flags & HANDLE_FLAG_INHERIT, 0u);
+
+	// The launchers close the child-side handles right after CreateProcessW;
+	// SetHandleInformation on a handle outside the list must fail closed.
+	EXPECT_FALSE(senp::detail::SetChildHandlesInheritable(std::array<HANDLE, 1>{ nullptr }));
+	::CloseHandle(read);
+	::CloseHandle(write);
+	::CloseHandle(nul);
 }
 
 } // namespace

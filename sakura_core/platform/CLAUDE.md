@@ -78,6 +78,15 @@ or root-process exit it terminates remaining job members and joins the stdin
 writer before returning. Tests that start descendants must verify the recorded
 PID is gone or signalled, then audit for surviving repository test processes.
 
+`process/AllowlistedEnvironment` builds the complementary explicit-allowlist
+block: `BuildAllowlistedEnvironmentBlock(names)` copies only the named
+variables out of the current process environment (case-insensitive ordinal
+name match, case-insensitive sort, double-NUL terminated) for callers that
+pass `CREATE_UNICODE_ENVIRONMENT`. An allowed name the parent does not define
+is simply absent. Launchers of untrusted or credential-adjacent children use
+this instead of `lpEnvironment = nullptr` so editor secrets never reach the
+child; the SENP host/tool launchers run it with `SystemRoot`/`windir` only.
+
 ## P0 Implementation Checkpoint (2026-07-31)
 
 - Implemented and unit-tested: typed service registration and dependency-ordered

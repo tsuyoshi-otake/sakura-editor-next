@@ -74,9 +74,9 @@ bool PipePair(std::wstring_view suffix, bool parentWrites, Handle& parent, Handl
 		PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
 		1, 65536, 65536, 0, protectedPipe.Attributes()));
 	if (!parent.Valid()) return false;
-	SECURITY_ATTRIBUTES inherited{ sizeof(inherited), nullptr, TRUE };
+	SECURITY_ATTRIBUTES childSide{ sizeof(childSide), nullptr, FALSE };
 	child.Reset(::CreateFileW(name.c_str(), parentWrites ? GENERIC_READ : GENERIC_WRITE,
-		0, &inherited, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
+		0, &childSide, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
 	if (!child.Valid()) return false;
 	Handle connected(::CreateEventW(nullptr, TRUE, FALSE, nullptr));
 	if (!connected.Valid()) return false;
@@ -107,11 +107,13 @@ public:
 		if (launch.hostExecutable.find(L'\0') != std::wstring::npos || launch.modulePath.find(L'\0') != std::wstring::npos
 			|| !std::filesystem::path(launch.hostExecutable).is_absolute() || !std::filesystem::path(launch.modulePath).is_absolute()
 			|| !std::filesystem::is_regular_file(launch.hostExecutable) || !std::filesystem::is_regular_file(launch.modulePath)) return false;
+		// Child-side handles are created non-inheritable; the inherit flag is
+		// set only for the minimal window around CreateProcessW below.
 		Handle childInput, childOutput;
 		if (!PipePair(L"-input", true, m_input, childInput) || !PipePair(L"-output", false, m_output, childOutput)) return false;
-		SECURITY_ATTRIBUTES inherited{ sizeof(inherited), nullptr, TRUE };
+		SECURITY_ATTRIBUTES childSide{ sizeof(childSide), nullptr, FALSE };
 		Handle error(::CreateFileW(L"NUL", GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
-			&inherited, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
+			&childSide, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
 		if (!error.Valid()) return false;
 		m_job.Reset(::CreateJobObjectW(nullptr, nullptr));
 		if (!m_job.Valid() || !ConfigureChildJob(m_job.Get(), kExtensionHostJobLimits)) return false;
@@ -139,9 +141,18 @@ public:
 		startup.lpAttributeList = attributes;
 		auto command = Quote(launch.hostExecutable) + L" --component " + Quote(launch.modulePath)
 			+ L" --component-sha256 " + Quote(launch.moduleSha256) + L" --protocol 2";
+		auto launchConfig = detail::BuildSenpChildLaunchConfig(launch.hostExecutable);
+		const std::array<HANDLE, 3> childSideHandles{ childInput.Get(), childOutput.Get(), error.Get() };
+		if (!detail::SetChildHandlesInheritable(childSideHandles)) return false;
 		PROCESS_INFORMATION process{};
-		if (!::CreateProcessW(launch.hostExecutable.c_str(), command.data(), nullptr, nullptr, TRUE,
-			CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT, nullptr, nullptr, &startup.StartupInfo, &process)) return false;
+		const BOOL created = ::CreateProcessW(launch.hostExecutable.c_str(), command.data(), nullptr, nullptr, TRUE,
+			CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT | launchConfig.environmentFlags,
+			launchConfig.environment.data(), launchConfig.workingDirectory.c_str(),
+			&startup.StartupInfo, &process);
+		childInput.Reset();
+		childOutput.Reset();
+		error.Reset();
+		if (!created) return false;
 		m_process.Reset(process.hProcess);
 		Handle initialThread(process.hThread);
 		m_pid = process.dwProcessId;

@@ -145,13 +145,13 @@ public:
 		const auto executable = HostExecutable();
 		if (!validDigest || executable.empty() || !std::filesystem::is_regular_file(executable)
 			|| !std::filesystem::is_regular_file(std::filesystem::path(modulePath))) return false;
-		SECURITY_ATTRIBUTES security{ sizeof(security), nullptr, TRUE };
+		// Child-side handles are created non-inheritable; the inherit flag is
+		// set only for the minimal window around CreateProcessW below.
+		SECURITY_ATTRIBUTES security{ sizeof(security), nullptr, FALSE };
 		ScopedHandle childInput;
 		ScopedHandle childOutput;
 		if (!::CreatePipe(childInput.Put(), m_input.Put(), &security, 0)
 			|| !::CreatePipe(m_output.Put(), childOutput.Put(), &security, 0)) return false;
-		if (!::SetHandleInformation(m_input.Get(), HANDLE_FLAG_INHERIT, 0)
-			|| !::SetHandleInformation(m_output.Get(), HANDLE_FLAG_INHERIT, 0)) return false;
 		ScopedHandle nullError(::CreateFileW(L"NUL", GENERIC_WRITE,
 			FILE_SHARE_READ | FILE_SHARE_WRITE, &security, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
 		if (!nullError.Valid()) return false;
@@ -185,12 +185,17 @@ public:
 		startup.lpAttributeList = attributes;
 		std::wstring command = QuoteArgument(executable) + L" --component " + QuoteArgument(modulePath)
 			+ L" --component-sha256 " + QuoteArgument(moduleSha256);
+		auto launchConfig = detail::BuildSenpChildLaunchConfig(executable);
+		const std::array<HANDLE, 3> childSide{ childInput.Get(), childOutput.Get(), nullError.Get() };
+		if (!detail::SetChildHandlesInheritable(childSide)) return false;
 		PROCESS_INFORMATION process{};
 		const BOOL created = ::CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr,
-			TRUE, CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT, nullptr, nullptr,
+			TRUE, CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT | launchConfig.environmentFlags,
+			launchConfig.environment.data(), launchConfig.workingDirectory.c_str(),
 			&startup.StartupInfo, &process);
 		childInput.Reset();
 		childOutput.Reset();
+		nullError.Reset();
 		if (!created) return false;
 		m_process.Reset(process.hProcess);
 		m_thread.Reset(process.hThread);

@@ -142,7 +142,9 @@ ProcessResult RunToolImpl(const std::vector<std::wstring>& arguments)
 		commandLine += QuoteArgument(argument);
 	}
 
-	SECURITY_ATTRIBUTES security{ sizeof(security), nullptr, TRUE };
+	// Child-side handles are created non-inheritable; the inherit flag is set
+	// only for the minimal window around CreateProcessW below.
+	SECURITY_ATTRIBUTES security{ sizeof(security), nullptr, FALSE };
 	ScopedHandle outputRead;
 	ScopedHandle outputWrite;
 	ScopedHandle errorRead;
@@ -152,9 +154,7 @@ ProcessResult RunToolImpl(const std::vector<std::wstring>& arguments)
 		|| !::CreatePipe(errorRead.Put(), errorWrite.Put(), &security, 0)) return result;
 	nullInput.Reset(::CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
 		&security, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
-	if (nullInput.Get() == nullptr || nullInput.Get() == INVALID_HANDLE_VALUE
-		|| !::SetHandleInformation(outputRead.Get(), HANDLE_FLAG_INHERIT, 0)
-		|| !::SetHandleInformation(errorRead.Get(), HANDLE_FLAG_INHERIT, 0)) return result;
+	if (nullInput.Get() == nullptr || nullInput.Get() == INVALID_HANDLE_VALUE) return result;
 
 	ScopedHandle job(::CreateJobObjectW(nullptr, nullptr));
 	if (job.Get() == nullptr || job.Get() == INVALID_HANDLE_VALUE
@@ -184,9 +184,13 @@ ProcessResult RunToolImpl(const std::vector<std::wstring>& arguments)
 	startup.StartupInfo.hStdOutput = outputWrite.Get();
 	startup.StartupInfo.hStdError = errorWrite.Get();
 	startup.lpAttributeList = attributes;
+	auto launchConfig = detail::BuildSenpChildLaunchConfig(executable.native());
+	const std::array<HANDLE, 3> childSide{ nullInput.Get(), outputWrite.Get(), errorWrite.Get() };
+	if (!detail::SetChildHandlesInheritable(childSide)) return result;
 	PROCESS_INFORMATION process{};
 	const BOOL created = ::CreateProcessW(executable.c_str(), commandLine.data(), nullptr, nullptr,
-		TRUE, CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT, nullptr, directory.c_str(),
+		TRUE, CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT | launchConfig.environmentFlags,
+		launchConfig.environment.data(), launchConfig.workingDirectory.c_str(),
 		&startup.StartupInfo, &process);
 	outputWrite.Reset();
 	errorWrite.Reset();

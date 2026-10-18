@@ -3,6 +3,10 @@
 #include "StdAfx.h"
 #include "senp/SenpChildJob.h"
 
+#include "platform/process/AllowlistedEnvironment.h"
+
+#include <filesystem>
+
 namespace senp {
 namespace {
 
@@ -52,6 +56,23 @@ bool ConfigureChildJob(HANDLE job, const ChildJobLimits& limits) noexcept
 	ui.UIRestrictionsClass = kUiRestrictionClasses;
 	if (!::SetInformationJobObject(job, JobObjectBasicUIRestrictions, &ui, sizeof(ui))) return false;
 	return detail::VerifyChildJobLimits(job, limits, &::QueryInformationJobObject);
+}
+
+detail::SenpChildLaunchConfig detail::BuildSenpChildLaunchConfig(std::wstring_view executablePath)
+{
+	SenpChildLaunchConfig config;
+	config.workingDirectory = std::filesystem::path(executablePath).parent_path().native();
+	config.environment = platform::process::BuildAllowlistedEnvironmentBlock(kSenpChildEnvironmentNames);
+	config.environmentFlags = CREATE_UNICODE_ENVIRONMENT;
+	return config;
+}
+
+bool detail::SetChildHandlesInheritable(std::span<const HANDLE> handles) noexcept
+{
+	for (const HANDLE handle : handles) {
+		if (!::SetHandleInformation(handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT)) return false;
+	}
+	return true;
 }
 
 } // namespace senp

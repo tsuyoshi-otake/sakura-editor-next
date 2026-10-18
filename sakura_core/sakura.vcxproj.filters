@@ -1590,6 +1590,9 @@
     <ClInclude Include="..\sakura_core\platform\VirtualStoreMigration.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\process\AllowlistedEnvironment.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\platform\process\BoundedProcessRunner.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>
@@ -3676,6 +3679,9 @@
       <Filter>Cpp Source Files\platform</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\platform\VirtualStoreMigration.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\process\AllowlistedEnvironment.cpp">
       <Filter>Cpp Source Files\platform</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\platform\process\BoundedProcessRunner.cpp">

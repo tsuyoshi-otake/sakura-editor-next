@@ -359,6 +359,35 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   at 63 MiB (measured 2026-10-18 under a real 256 MiB job). Raising an archive
   or expansion limit requires re-measuring this cap. A job memory kill reaches the same
   explicit terminal as any other host failure; there is no automatic restart.
+- All three launchers (v1 `HostProcess::Open`, v2 `HostConnection::Open`,
+  `RunToolImpl`) share one launch-environment contract through
+  `senp::detail::BuildSenpChildLaunchConfig` in `SenpChildJob.cpp`: the child's
+  working directory is the executable's own directory (never the editor's cwd,
+  which can be a UNC path), and its environment is the explicit
+  `kSenpChildEnvironmentNames` allowlist -- `SystemRoot` and `windir` only --
+  built by `platform::process::BuildAllowlistedEnvironmentBlock` and passed
+  with `CREATE_UNICODE_ENVIRONMENT`. Neither executable reads any other
+  variable; `GH_TOKEN`, `AWS_*` and the rest of the editor environment never
+  reach the child. Verified empirically 2026-10-18: the real host and tool
+  start and answer correctly under this two-name environment
+  (`tools/verify-senp-runtime.py --offline` passes, also with
+  `GH_TOKEN=dummy-marker` exported). Adding a name to the allowlist requires a
+  recorded startup failure that proves the need.
+- Child-side standard-stream handles are created NON-inheritable in all three
+  launchers; `senp::detail::SetChildHandlesInheritable` sets
+  `HANDLE_FLAG_INHERIT` immediately before `CreateProcessW` and the launcher
+  closes the child-side handles immediately after it returns, on success and
+  failure. This narrows but does not eliminate the race with the two
+  list-less `bInheritHandles=TRUE` callers in the same process
+  (`CEditView_ExecCmd.cpp`, `CPropComPlugin.cpp`): a concurrent CreateProcessW
+  from one of those inside the window would still pick the SENP handles up.
+  Closing it needs a process-wide launch lock -- residual risk, out of scope
+  (#344).
+  `SenpChildJob.ChildHandlesReportNoInheritFlagUntilEnabledForLaunch` pins
+  only the helper half (flag absent, then set). No test observes the
+  `SECURITY_ATTRIBUTES` each launcher creates its handles with; that half is
+  review-only, so a launcher that went back to inheritable creation would
+  not fail a test.
 
 
 ## Bounded text resource storage (U05, #296)
