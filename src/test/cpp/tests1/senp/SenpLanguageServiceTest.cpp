@@ -141,4 +141,21 @@ TEST(SenpLanguageServiceTest, ExactCloudFormationFilenameWinsOverGenericYamlExte
 	EXPECT_EQ(L"source.cloudformation", session->ScopeName());
 }
 
+TEST(SenpLanguageServiceTest, AnInvalidListingRowContributesNoLanguage)
+{
+	TemporaryGrammarDirectory directory;
+	directory.Write("yaml.tmLanguage.json", R"JSON({ "scopeName": "source.yaml", "patterns": [] })JSON");
+	FakeManagementService management;
+	management.snapshot.state = senp::EManagementState::Ready;
+	// The descriptor carries a grammar path but is flagged invalid: a row the
+	// package tool could not read is never an enabled contribution.
+	auto broken = CreateExtension(directory);
+	broken.invalidCode = L"invalidManifest";
+	broken.enabled = false;
+	management.snapshot.extensions.push_back(std::move(broken));
+	auto service = senp::CreateSenpLanguageService(management);
+	ASSERT_TRUE(service->Start());
+	EXPECT_EQ(nullptr, service->CreateSession(L"config.yaml", L""));
+}
+
 } // namespace

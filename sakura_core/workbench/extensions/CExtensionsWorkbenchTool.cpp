@@ -719,7 +719,14 @@ void CExtensionsWorkbenchTool::PaintExtensionRow(
 	Text(dc, descriptionText, description, secondary, m_font.Get(),
 		DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 	const std::wstring publisher = extension.publisher + L"  " + extension.version;
-	const std::wstring status = !extension.installed ? L"" : extension.builtIn
+	// An invalid listing row gets an explicit error status and no row action.
+	// The code/message are untranslated tool tokens; only the label localizes.
+	const std::wstring invalidLabel = Localized(STR_WORKBENCH_EXTENSIONS_STATUS_INVALID);
+	const std::wstring status = !extension.invalidCode.empty()
+		? (extension.invalidMessage.empty()
+			? invalidLabel + L": " + extension.invalidCode
+			: invalidLabel + L": " + extension.invalidCode + L" - " + extension.invalidMessage)
+		: !extension.installed ? L"" : extension.builtIn
 		? Localized(STR_WORKBENCH_EXTENSIONS_STATUS_BUILT_IN)
 		: Localized(extension.enabled
 			? STR_WORKBENCH_EXTENSIONS_STATUS_ENABLED : STR_WORKBENCH_EXTENSIONS_STATUS_DISABLED);

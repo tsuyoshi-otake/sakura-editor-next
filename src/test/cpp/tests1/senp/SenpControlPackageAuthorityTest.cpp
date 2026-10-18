@@ -83,6 +83,20 @@ TEST(SenpControlPackageAuthority, RefusesAPackageTheRuntimeCouldNotActivate)
 	}
 }
 
+TEST(SenpControlPackageAuthority, NeverGrantsAnInvalidListingRow)
+{
+	// A package tool's kind:"invalid" row names a state entry it could not
+	// read; no row action, activation, or tool grant may treat it as enabled.
+	auto invalid = Extension(L"pkg-broken");
+	invalid.invalidCode = L"checksumMismatch";
+	invalid.invalidMessage = L"module/extension.wasm";
+	CSenpControlPackageAuthority authority;
+	const auto published = authority.Publish(L"profile1", Snapshot({ invalid }));
+	EXPECT_EQ(Status::Published, published.Status());
+	EXPECT_EQ(0U, published.Approved());
+	EXPECT_FALSE(authority.Resolve(L"profile1", L"pkg-broken").has_value());
+}
+
 TEST(SenpControlPackageAuthority, RefusesADigestNoOwnerRequestCanCarry)
 {
 	const std::wstring rejected[] = { std::wstring(63, L'a'), std::wstring(64, L'A'),

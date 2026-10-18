@@ -61,7 +61,7 @@ SenpToolCapability Capabilities(const ExtensionDescriptor& extension) noexcept
 
 bool IsActivatable(const ExtensionDescriptor& extension) noexcept
 {
-	return extension.installed && extension.enabled
+	return extension.installed && extension.enabled && extension.invalidCode.empty()
 		&& extension.runtime.schemaVersion == kRuntimeSchemaVersion
 		&& extension.runtime.compatible;
 }

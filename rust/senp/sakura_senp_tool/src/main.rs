@@ -1,10 +1,12 @@
 use sakura_senp::{
     decode_hex, install_package, list_installed, list_uninstalled, pack_directory,
-    set_extension_enabled, uninstall_built_in, verify_package, TrustPolicy,
+    serialize_installed_listing, set_extension_enabled, uninstall_built_in, verify_package,
+    TrustPolicy,
 };
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;
+use std::io::Write;
 use std::path::Path;
 
 fn usage() -> ! {
@@ -157,10 +159,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             if arguments.next().is_some() {
                 usage();
             }
-            println!(
-                "{}",
-                serde_json::to_string(&list_installed(Path::new(&root))?)?
-            );
+            // JSON Lines: one bounded object per listed package; see
+            // sakura_senp::serialize_installed_listing for both budgets.
+            let output = serialize_installed_listing(&list_installed(Path::new(&root))?)?;
+            std::io::stdout().lock().write_all(output.as_bytes())?;
         }
         Some("list-uninstalled") => {
             let root = arguments.next().unwrap_or_else(|| usage());

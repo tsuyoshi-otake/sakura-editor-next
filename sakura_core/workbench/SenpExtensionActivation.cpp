@@ -34,8 +34,8 @@ ActivationState StateFor(Status status) noexcept
 
 bool Eligible(const senp::ExtensionDescriptor& extension) noexcept
 {
-	return extension.installed && extension.enabled && extension.runtime.schemaVersion == 2
-		&& extension.runtime.compatible;
+	return extension.installed && extension.enabled && extension.invalidCode.empty()
+		&& extension.runtime.schemaVersion == 2 && extension.runtime.compatible;
 }
 }
 

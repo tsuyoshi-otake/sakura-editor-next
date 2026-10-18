@@ -184,6 +184,27 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   installed listing re-reads every allowed payload file, requires exact
   checksum coverage and directory shape, rejects reparse points, and recomputes
   each SHA-256 before publishing contributions.
+- `sakura-senp-tool list` emits JSON Lines: one complete JSON object per
+  package, `kind:"installed"` or `kind:"invalid"`. A failure confined to
+  one profile state entry becomes an invalid row carrying the `SenpError`
+  code; root-level failures still fail the command. Each line stays within the
+  C++ decoder per-document budget (1 MiB, 65,536 nodes; an over-budget row is
+  emitted as invalid instead), and the whole stdout stays within
+  `kMaximumToolOutputBytes` (4 MiB; the producer fails with `OutputTooLarge`
+  rather than emitting a partial listing). C++ decodes each line independently:
+  an invalid or undecodable line becomes a descriptor with `invalidCode` set
+  (never enabled, no contributions, no runtime; `invalidCode`/
+  `invalidMessage` are untranslated tool tokens -- the Extensions View
+  localizes only the status label), and `ReadPipeBounded` records
+  overflow so a truncated stream is a typed failure, never parsed.
+  `README.md` stays mandatory, UTF-8, checksum-covered package validation but
+  left the listing (#356): the future details editor reads it on demand.
+- `Start()` reconciles every built-in once per call: one failing install no
+  longer stops the loop, failures are collected into the snapshot diagnostic as
+  `ReadyWithDiagnostics` naming the failed ids, and a later Start retries
+  exactly those ids instead of answering `AlreadyReady` while they exist.
+  `LoadBuiltInCatalog` stays all-or-nothing: an embedded package failing
+  inspection is a build defect, not a per-package degradation.
 - Runtime descriptors carry the validated lowercase SHA-256 for
   `module/extension.wasm`. The host reads the module once into a bounded byte
   vector, compares that digest, and gives those same bytes to Wasmtime. A path

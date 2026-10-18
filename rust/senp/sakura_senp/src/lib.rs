@@ -215,7 +215,6 @@ pub struct InstalledExtension {
     pub enabled: bool,
     pub signed: bool,
     pub trust: String,
-    pub readme: String,
     pub extension_path: PathBuf,
     pub module_sha256: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -225,6 +224,37 @@ pub struct InstalledExtension {
     /// never be started; the host could not instantiate it.
     pub compatible: bool,
 }
+
+/// One line of `sakura-senp-tool list` output (JSON Lines). A failure confined
+/// to one profile state entry becomes an `Invalid` row instead of failing the
+/// whole listing; the row's `code` is the `SenpError` code the entry produced.
+/// `README.md` is deliberately not part of either row: it stays mandatory,
+/// UTF-8, checksum-covered package validation, but no consumer shows it in the
+/// list, so it is read on demand rather than embedded in every row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum InstalledListRow {
+    Installed(Box<InstalledExtension>),
+    Invalid {
+        /// The profile state's validated extension id, or empty when no state
+        /// could be read far enough to prove one.
+        id: String,
+        /// The profile state's trust class, or empty when unknown.
+        trust: String,
+        code: ErrorCode,
+        /// Bounded diagnostic detail; never a path longer than
+        /// `INVALID_ROW_MESSAGE_BYTES`.
+        message: String,
+    },
+}
+
+/// `sakura-senp-tool list` line and total budgets. One line must fit the C++
+/// decoder's per-document limits (1 MiB, 65,536 JSON nodes); the whole stdout
+/// must stay within the 4 MiB tool-output budget.
+pub const LIST_LINE_MAX_BYTES: usize = 1024 * 1024;
+pub const LIST_LINE_MAX_NODES: usize = 65_536;
+pub const LIST_OUTPUT_MAX_BYTES: usize = 4 * 1024 * 1024;
+const INVALID_ROW_MESSAGE_BYTES: usize = 512;
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -279,6 +309,7 @@ pub enum ErrorCode {
     UntrustedPublisher,
     ReparsePoint,
     PublicationFailed,
+    OutputTooLarge,
 }
 
 #[derive(Debug)]
@@ -1872,7 +1903,6 @@ fn previous_enabled_state(root: &Path, id: &str, trust: &str) -> Result<Option<b
 struct InstalledContentSnapshot {
     entries: BTreeMap<String, Vec<u8>>,
     manifest: Manifest,
-    readme: String,
     signed: bool,
     module_sha256: Option<String>,
     compatible: bool,
@@ -2116,8 +2146,6 @@ fn read_installed_content(
     let (manifest, compatible) =
         parse_manifest_as(&entries[MANIFEST_PATH], AbiAdmission::Installed)?;
     validate_manifest_entries(&manifest, &entries)?;
-    let readme = String::from_utf8(entries[README_PATH].clone())
-        .map_err(|_| SenpError::new(ErrorCode::InvalidUtf8, README_PATH))?;
     let module_sha256 = manifest
         .runtime
         .as_ref()
@@ -2131,7 +2159,6 @@ fn read_installed_content(
     Ok(InstalledContentSnapshot {
         entries,
         manifest,
-        readme,
         signed,
         module_sha256,
         compatible,
@@ -2273,12 +2300,178 @@ pub fn install_package(
     install_verified_archive(root, policy, verified)
 }
 
-pub fn list_installed(root: &Path) -> Result<Vec<InstalledExtension>, SenpError> {
+/// One profile state entry that could not be listed. Sorting keeps the state
+/// file name so an entry with no provable id still has a deterministic slot.
+struct InvalidStateRow {
+    sort_name: String,
+    id: String,
+    trust: String,
+    code: ErrorCode,
+    message: String,
+}
+
+fn bounded_invalid_message(detail: &str) -> String {
+    if detail.len() <= INVALID_ROW_MESSAGE_BYTES {
+        return detail.to_owned();
+    }
+    let mut end = INVALID_ROW_MESSAGE_BYTES;
+    while !detail.is_char_boundary(end) {
+        end -= 1;
+    }
+    detail[..end].to_owned()
+}
+
+/// Reads one `profiles/` entry. `Ok(None)` is a non-state file or a tombstoned
+/// package; `Err` is a failure confined to this entry, which the caller lists
+/// as an invalid row instead of failing the whole command.
+fn list_state_entry(
+    root: &Path,
+    entry: &fs::DirEntry,
+    uninstalled: &BTreeMap<String, UninstalledState>,
+) -> Result<Option<InstalledExtension>, InvalidStateRow> {
+    let sort_name = entry.file_name().to_string_lossy().into_owned();
+    let invalid = |id: String, trust: String, error: SenpError| InvalidStateRow {
+        sort_name: sort_name.clone(),
+        id,
+        trust,
+        code: error.code,
+        message: bounded_invalid_message(&error.detail),
+    };
+    let stem_id = || {
+        entry
+            .path()
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .filter(|value| valid_identifier(value))
+            .unwrap_or("")
+            .to_owned()
+    };
+    let file_type = entry.file_type().map_err(|error| {
+        invalid(
+            String::new(),
+            String::new(),
+            io_error("inspect state", error),
+        )
+    })?;
+    if file_type.is_symlink() {
+        return Err(invalid(
+            stem_id(),
+            String::new(),
+            SenpError::new(ErrorCode::ReparsePoint, entry.path().display().to_string()),
+        ));
+    }
+    if !file_type.is_file()
+        || entry.path().extension().and_then(|value| value.to_str()) != Some("json")
+        || entry.file_name().to_string_lossy().starts_with('.')
+    {
+        return Ok(None);
+    }
+    let state_bytes = fs::read(entry.path())
+        .map_err(|error| invalid(String::new(), String::new(), io_error("read state", error)))?;
+    if state_bytes.len() as u64 > MAX_DOCUMENT_BYTES {
+        return Err(invalid(
+            stem_id(),
+            String::new(),
+            SenpError::new(ErrorCode::EntryTooLarge, entry.path().display().to_string()),
+        ));
+    }
+    let state: ProfileState =
+        strict_json(&state_bytes).map_err(|error| invalid(String::new(), String::new(), error))?;
+    if state.schema_version != 1
+        || !valid_identifier(&state.id)
+        || !valid_sha256(&state.archive_sha256)
+        || !matches!(state.trust.as_str(), "builtin" | "publisher" | "developer")
+    {
+        let id = if valid_identifier(&state.id) {
+            state.id.clone()
+        } else {
+            String::new()
+        };
+        return Err(invalid(
+            id,
+            state.trust.clone(),
+            SenpError::new(
+                ErrorCode::InvalidManifest,
+                "invalid profile extension state",
+            ),
+        ));
+    }
+    if (state.trust == "publisher") != state.signed {
+        return Err(invalid(
+            state.id,
+            state.trust,
+            SenpError::new(
+                ErrorCode::InvalidSignature,
+                "profile trust and signature state differ",
+            ),
+        ));
+    }
+    if uninstalled
+        .get(&state.id)
+        .is_some_and(|removed| removed.trust == state.trust)
+    {
+        return Ok(None);
+    }
+    let content = root.join("content").join(&state.archive_sha256);
+    let content_snapshot = read_installed_content(&content, &state.archive_sha256)
+        .map_err(|error| invalid(state.id.clone(), state.trust.clone(), error))?;
+    if content_snapshot.manifest.id != state.id {
+        return Err(invalid(
+            state.id,
+            state.trust,
+            SenpError::new(ErrorCode::InvalidManifest, "state and manifest ids differ"),
+        ));
+    }
+    if content_snapshot.signed != state.signed {
+        return Err(invalid(
+            state.id,
+            state.trust,
+            SenpError::new(
+                ErrorCode::InvalidSignature,
+                "profile and installed signature state differ",
+            ),
+        ));
+    }
+    Ok(Some(InstalledExtension {
+        module_path: content_snapshot
+            .manifest
+            .runtime
+            .as_ref()
+            .map(|_| content.join(MODULE_PATH)),
+        module_sha256: content_snapshot.module_sha256,
+        manifest: content_snapshot.manifest,
+        archive_sha256: state.archive_sha256,
+        enabled: state.enabled,
+        signed: state.signed,
+        trust: state.trust,
+        extension_path: content,
+        compatible: content_snapshot.compatible,
+    }))
+}
+
+/// Lists every installed package in the profile. A failure confined to one
+/// `profiles/` state entry yields an `Invalid` row; failures of the whole
+/// install root (reparse point, unreadable `profiles/`, more than
+/// `MAX_ENTRIES`, uninstalled-state read failure) still fail the command.
+/// Rows sort by extension id; invalid rows without a provable id sort last,
+/// by state file name.
+pub fn list_installed(root: &Path) -> Result<Vec<InstalledListRow>, SenpError> {
     reject_reparse_points(root)?;
     let uninstalled = read_uninstalled_states(root)?;
     let state_root = root.join("profiles");
-    if !state_root.exists() {
-        return Ok(Vec::new());
+    // A reparse-point `profiles/` (dangling or not) is a root-level refusal,
+    // like a reparse-point install root: the state directory's own boundary is
+    // untrusted. Only a truly absent `profiles/` is an empty listing.
+    match fs::symlink_metadata(&state_root) {
+        Ok(metadata) if metadata_is_reparse_point(&metadata) => {
+            return Err(SenpError::new(
+                ErrorCode::ReparsePoint,
+                state_root.display().to_string(),
+            ));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(io_error("inspect state root", error)),
     }
     let mut states = fs::read_dir(&state_root)
         .map_err(|error| io_error("read state root", error))?
@@ -2291,90 +2484,113 @@ pub fn list_installed(root: &Path) -> Result<Vec<InstalledExtension>, SenpError>
             states.len().to_string(),
         ));
     }
-    let mut installed = Vec::new();
+    let mut rows: Vec<(String, String, InstalledListRow)> = Vec::new();
     for entry in states {
-        if entry
-            .file_type()
-            .map_err(|error| io_error("inspect state", error))?
-            .is_symlink()
-        {
-            return Err(SenpError::new(
-                ErrorCode::ReparsePoint,
-                entry.path().display().to_string(),
-            ));
+        match list_state_entry(root, &entry, &uninstalled) {
+            Ok(Some(extension)) => {
+                let id = extension.manifest.id.clone();
+                rows.push((
+                    id,
+                    String::new(),
+                    InstalledListRow::Installed(Box::new(extension)),
+                ));
+            }
+            Ok(None) => {}
+            Err(invalid) => rows.push((
+                invalid.id.clone(),
+                invalid.sort_name,
+                InstalledListRow::Invalid {
+                    id: invalid.id,
+                    trust: invalid.trust,
+                    code: invalid.code,
+                    message: invalid.message,
+                },
+            )),
         }
-        if !entry
-            .file_type()
-            .map_err(|error| io_error("inspect state", error))?
-            .is_file()
-            || entry.path().extension().and_then(|value| value.to_str()) != Some("json")
-            || entry.file_name().to_string_lossy().starts_with('.')
-        {
-            continue;
-        }
-        let state_bytes = fs::read(entry.path()).map_err(|error| io_error("read state", error))?;
-        if state_bytes.len() as u64 > MAX_DOCUMENT_BYTES {
-            return Err(SenpError::new(
-                ErrorCode::EntryTooLarge,
-                entry.path().display().to_string(),
-            ));
-        }
-        let state: ProfileState = strict_json(&state_bytes)?;
-        if state.schema_version != 1
-            || !valid_identifier(&state.id)
-            || !valid_sha256(&state.archive_sha256)
-            || !matches!(state.trust.as_str(), "builtin" | "publisher" | "developer")
-        {
-            return Err(SenpError::new(
-                ErrorCode::InvalidManifest,
-                "invalid profile extension state",
-            ));
-        }
-        if (state.trust == "publisher") != state.signed {
-            return Err(SenpError::new(
-                ErrorCode::InvalidSignature,
-                "profile trust and signature state differ",
-            ));
-        }
-        if uninstalled
-            .get(&state.id)
-            .is_some_and(|removed| removed.trust == state.trust)
-        {
-            continue;
-        }
-        let content = root.join("content").join(&state.archive_sha256);
-        let content_snapshot = read_installed_content(&content, &state.archive_sha256)?;
-        if content_snapshot.manifest.id != state.id {
-            return Err(SenpError::new(
-                ErrorCode::InvalidManifest,
-                "state and manifest ids differ",
-            ));
-        }
-        if content_snapshot.signed != state.signed {
-            return Err(SenpError::new(
-                ErrorCode::InvalidSignature,
-                "profile and installed signature state differ",
-            ));
-        }
-        installed.push(InstalledExtension {
-            module_path: content_snapshot
-                .manifest
-                .runtime
-                .as_ref()
-                .map(|_| content.join(MODULE_PATH)),
-            module_sha256: content_snapshot.module_sha256,
-            manifest: content_snapshot.manifest,
-            archive_sha256: state.archive_sha256,
-            enabled: state.enabled,
-            signed: state.signed,
-            trust: state.trust,
-            readme: content_snapshot.readme,
-            extension_path: content,
-            compatible: content_snapshot.compatible,
-        });
     }
-    installed.sort_by(|left, right| left.manifest.id.cmp(&right.manifest.id));
-    Ok(installed)
+    rows.sort_by(|left, right| {
+        (left.0.is_empty(), left.0.as_str(), left.1.as_str()).cmp(&(
+            right.0.is_empty(),
+            right.0.as_str(),
+            right.1.as_str(),
+        ))
+    });
+    Ok(rows.into_iter().map(|(_, _, row)| row).collect())
+}
+
+fn json_node_count(value: &serde_json::Value) -> usize {
+    match value {
+        serde_json::Value::Array(items) => 1 + items.iter().map(json_node_count).sum::<usize>(),
+        serde_json::Value::Object(members) => {
+            1 + members.values().map(json_node_count).sum::<usize>()
+        }
+        _ => 1,
+    }
+}
+
+fn serialize_listing_line(
+    row: &InstalledListRow,
+) -> Result<(serde_json::Value, String), SenpError> {
+    let value = serde_json::to_value(row)
+        .map_err(|error| SenpError::new(ErrorCode::PublicationFailed, error.to_string()))?;
+    let line = serde_json::to_string(&value)
+        .map_err(|error| SenpError::new(ErrorCode::PublicationFailed, error.to_string()))?;
+    Ok((value, line))
+}
+
+fn serialize_installed_listing_bounded(
+    rows: &[InstalledListRow],
+    line_budget: usize,
+    output_budget: usize,
+) -> Result<String, SenpError> {
+    let mut output = String::new();
+    for row in rows {
+        let (mut value, mut line) = serialize_listing_line(row)?;
+        if line.len() > line_budget || json_node_count(&value) > LIST_LINE_MAX_NODES {
+            // An over-budget installed row cannot be trusted by the decoder;
+            // emit the typed invalid row in its place.
+            let (id, trust) = match row {
+                InstalledListRow::Installed(extension) => {
+                    (extension.manifest.id.clone(), extension.trust.clone())
+                }
+                InstalledListRow::Invalid { id, trust, .. } => (id.clone(), trust.clone()),
+            };
+            let replacement = InstalledListRow::Invalid {
+                id,
+                trust,
+                code: ErrorCode::OutputTooLarge,
+                message: "listing row exceeded the per-package output budget".to_owned(),
+            };
+            let pair = serialize_listing_line(&replacement)?;
+            value = pair.0;
+            line = pair.1;
+            if line.len() > line_budget || json_node_count(&value) > LIST_LINE_MAX_NODES {
+                return Err(SenpError::new(
+                    ErrorCode::OutputTooLarge,
+                    "invalid listing row exceeded the per-package output budget",
+                ));
+            }
+        }
+        if output.len() + line.len() + 1 > output_budget {
+            // No partial listing is trusted: stop and fail with a typed code.
+            return Err(SenpError::new(
+                ErrorCode::OutputTooLarge,
+                "installed listing exceeded the tool output budget",
+            ));
+        }
+        output.push_str(&line);
+        output.push('\n');
+    }
+    Ok(output)
+}
+
+/// Serializes `list` output as JSON Lines: one complete JSON object per listed
+/// package, each within `LIST_LINE_MAX_BYTES`/`LIST_LINE_MAX_NODES`, the whole
+/// document within `LIST_OUTPUT_MAX_BYTES`. An over-budget package line is
+/// replaced by a `kind:"invalid"` row; exceeding the total budget fails the
+/// command with `OutputTooLarge` before anything is written.
+pub fn serialize_installed_listing(rows: &[InstalledListRow]) -> Result<String, SenpError> {
+    serialize_installed_listing_bounded(rows, LIST_LINE_MAX_BYTES, LIST_OUTPUT_MAX_BYTES)
 }
 
 pub fn list_uninstalled(root: &Path) -> Result<Vec<String>, SenpError> {
@@ -2473,6 +2689,26 @@ pub fn set_extension_enabled(root: &Path, id: &str, enabled: bool) -> Result<(),
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    /// The `kind:"installed"` rows of a listing, in order.
+    fn installed_rows(rows: &[InstalledListRow]) -> Vec<&InstalledExtension> {
+        rows.iter()
+            .filter_map(|row| match row {
+                InstalledListRow::Installed(extension) => Some(extension.as_ref()),
+                InstalledListRow::Invalid { .. } => None,
+            })
+            .collect()
+    }
+
+    /// One `kind:"invalid"` row's `(id, code)`, asserting the shape exists.
+    fn invalid(rows: &[InstalledListRow]) -> Vec<(&str, ErrorCode)> {
+        rows.iter()
+            .filter_map(|row| match row {
+                InstalledListRow::Invalid { id, code, .. } => Some((id.as_str(), *code)),
+                InstalledListRow::Installed(_) => None,
+            })
+            .collect()
+    }
 
     fn fixture(root: &Path) {
         fs::create_dir_all(root.join("module")).unwrap();
@@ -2611,17 +2847,25 @@ mod tests {
             .is_file());
         let install_root = temp.path().join("installed");
         let listed = list_installed(&install_root).unwrap();
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].manifest.id, "sample-indent");
-        assert_eq!(listed[0].readme, "# Sample\n");
-        assert_eq!(listed[0].trust, "builtin");
-        assert!(listed[0].enabled);
-        assert_eq!(listed[0].module_sha256, Some(hex(&Sha256::digest(b"wasm"))));
+        let rows = installed_rows(&listed);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].manifest.id, "sample-indent");
+        assert!(serde_json::to_value(rows[0])
+            .unwrap()
+            .get("readme")
+            .is_none());
+        assert_eq!(rows[0].trust, "builtin");
+        assert!(rows[0].enabled);
+        assert_eq!(rows[0].module_sha256, Some(hex(&Sha256::digest(b"wasm"))));
         assert_eq!(
             serde_json::to_value(&listed[0]).unwrap()["moduleSha256"],
             hex(&Sha256::digest(b"wasm"))
         );
-        assert!(listed[0]
+        assert_eq!(
+            serde_json::to_value(&listed[0]).unwrap()["kind"],
+            "installed"
+        );
+        assert!(rows[0]
             .module_path
             .as_ref()
             .unwrap()
@@ -2632,7 +2876,7 @@ mod tests {
             .join("assets/icons/sample.txt")
             .is_file());
         set_extension_enabled(&install_root, "sample-indent", false).unwrap();
-        assert!(!list_installed(&install_root).unwrap()[0].enabled);
+        assert!(!installed_rows(&list_installed(&install_root).unwrap())[0].enabled);
         install_package(
             &first,
             &install_root,
@@ -2641,7 +2885,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(!list_installed(&install_root).unwrap()[0].enabled);
+        assert!(!installed_rows(&list_installed(&install_root).unwrap())[0].enabled);
     }
 
     #[test]
@@ -2745,11 +2989,12 @@ mod tests {
         )
         .unwrap();
         let listed = list_installed(&install_root).unwrap();
-        assert_eq!(listed.len(), 1);
-        assert!(listed[0].module_path.is_none());
-        assert_eq!(listed[0].module_sha256, None);
+        let rows = installed_rows(&listed);
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].module_path.is_none());
+        assert_eq!(rows[0].module_sha256, None);
         assert!(serde_json::to_value(&listed[0]).unwrap()["moduleSha256"].is_null());
-        assert!(listed[0]
+        assert!(rows[0]
             .extension_path
             .join("assets/syntaxes/shell-unix-bash.tmLanguage.json")
             .is_file());
@@ -3410,8 +3655,9 @@ mod tests {
         .unwrap();
 
         let listed = list_installed(&root).unwrap();
-        assert_eq!(listed.len(), 2);
-        let effect_entry = listed
+        let rows = installed_rows(&listed);
+        assert_eq!(rows.len(), 2);
+        let effect_entry = rows
             .iter()
             .find(|entry| entry.manifest.id == "sample-github")
             .unwrap();
@@ -3429,7 +3675,8 @@ mod tests {
         // the install root, and releasing this gate must not couple lifecycles.
         set_extension_enabled(&root, "sample-github", false).unwrap();
         let listed = list_installed(&root).unwrap();
-        for entry in &listed {
+        let rows = installed_rows(&listed);
+        for entry in &rows {
             assert_eq!(
                 entry.enabled,
                 entry.manifest.id == "sample-indent",
@@ -3438,8 +3685,7 @@ mod tests {
             );
         }
         assert_eq!(
-            listed
-                .iter()
+            rows.iter()
                 .find(|entry| entry.manifest.id == "sample-indent")
                 .unwrap()
                 .manifest
@@ -3525,8 +3771,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(list_installed(&root)
-            .unwrap()
+        assert!(installed_rows(&list_installed(&root).unwrap())
             .iter()
             .all(|entry| entry.compatible));
 
@@ -3538,8 +3783,9 @@ mod tests {
         assert_ne!(stale, ABI_V2);
         rewrite_installed_manifest(&content, &versioned_manifest(2, stale));
         let listed = list_installed(&root).unwrap();
-        assert_eq!(listed.len(), 2);
-        for entry in &listed {
+        let rows = installed_rows(&listed);
+        assert_eq!(rows.len(), 2);
+        for entry in &rows {
             assert_eq!(
                 entry.compatible,
                 entry.manifest.id == "sample-indent",
@@ -3547,7 +3793,7 @@ mod tests {
                 entry.manifest.id
             );
         }
-        let stale_entry = listed
+        let stale_entry = rows
             .iter()
             .find(|entry| entry.manifest.id == "sample-github")
             .unwrap();
@@ -3564,14 +3810,17 @@ mod tests {
         );
 
         // What is not an extension ABI at all, or the v1 ABI under a v2 manifest,
-        // is still malformed installed state and fails closed.
+        // is malformed installed state: its one entry degrades to an invalid
+        // row while the sibling stays listed, instead of failing the command.
         for abi in [ABI, "sakura:senp/extension@x.0.0", "other:world@3.0.0"] {
             rewrite_installed_manifest(&content, &versioned_manifest(2, abi));
+            let listed = list_installed(&root).unwrap();
             assert_eq!(
-                list_installed(&root).unwrap_err().code,
-                ErrorCode::AbiMismatch,
+                invalid(&listed),
+                [("sample-github", ErrorCode::AbiMismatch)],
                 "{abi}"
             );
+            assert_eq!(installed_rows(&listed).len(), 1, "{abi}");
         }
     }
 
@@ -3598,9 +3847,10 @@ mod tests {
         install_package(&package, &install_root, &TrustPolicy::DeveloperUnsigned).unwrap();
 
         let listed = list_installed(&install_root).unwrap();
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].trust, "developer");
-        assert!(!listed[0].enabled);
+        let rows = installed_rows(&listed);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].trust, "developer");
+        assert!(!rows[0].enabled);
     }
 
     #[test]
@@ -3625,8 +3875,14 @@ mod tests {
             b"tampered",
         )
         .unwrap();
-        let error = list_installed(&install_root).unwrap_err();
-        assert_eq!(error.code, ErrorCode::ChecksumMismatch);
+        // One tampered content directory degrades to an invalid row rather
+        // than failing the whole listing.
+        let listed = list_installed(&install_root).unwrap();
+        assert_eq!(
+            invalid(&listed),
+            [("sample-indent", ErrorCode::ChecksumMismatch)]
+        );
+        assert!(installed_rows(&listed).is_empty());
     }
 
     #[test]
@@ -3654,8 +3910,12 @@ mod tests {
             b"unlisted",
         )
         .unwrap();
-        let error = list_installed(&install_root).unwrap_err();
-        assert_eq!(error.code, ErrorCode::InvalidChecksumDocument);
+        let listed = list_installed(&install_root).unwrap();
+        assert_eq!(
+            invalid(&listed),
+            [("sample-indent", ErrorCode::InvalidChecksumDocument)]
+        );
+        assert!(installed_rows(&listed).is_empty());
     }
 
     #[test]
@@ -3691,7 +3951,11 @@ mod tests {
 
         assert_eq!(installed.archive_sha256, hash_a);
         let listed = list_installed(&temp.path().join("installed")).unwrap();
-        assert_eq!(listed[0].readme, "# Sample\n");
+        assert_eq!(installed_rows(&listed)[0].manifest.id, "sample-indent");
+        assert!(serde_json::to_value(&listed[0])
+            .unwrap()
+            .get("readme")
+            .is_none());
     }
 
     #[test]
@@ -3702,5 +3966,261 @@ mod tests {
         fs::write(source.join(README_PATH), [0xff, 0xfe]).unwrap();
         let error = pack_directory(&source, &temp.path().join("sample.senp"), None).unwrap_err();
         assert_eq!(error.code, ErrorCode::InvalidUtf8);
+    }
+
+    // ---- B3a: per-package listing isolation and one list budget (#356, #362) ----
+
+    fn fixture_with_id(root: &Path, id: &str) {
+        fixture(root);
+        let manifest = fs::read_to_string(root.join(MANIFEST_PATH))
+            .unwrap()
+            .replace("\"id\": \"sample-indent\"", &format!("\"id\": \"{id}\""));
+        fs::write(root.join(MANIFEST_PATH), manifest).unwrap();
+    }
+
+    fn install_built_in(source: &Path, install_root: &Path) -> String {
+        let package = source.with_extension("senp");
+        let hash = pack_directory(source, &package, None).unwrap();
+        install_package(
+            &package,
+            install_root,
+            &TrustPolicy::BuiltIn {
+                expected_archive_sha256: hash.clone(),
+            },
+        )
+        .unwrap();
+        hash
+    }
+
+    /// Three installed packages; `corrupt` names the one whose entry is
+    /// damaged. Returns `(install root, content dir of the damaged package)`.
+    fn three_installed(temp: &TempDir, corrupt: usize) -> (PathBuf, PathBuf) {
+        let root = temp.path().join("installed");
+        let mut damaged = PathBuf::new();
+        for (index, id) in ["pkg-alpha", "pkg-beta", "pkg-gamma"].iter().enumerate() {
+            let source = temp.path().join(format!("source-{index}"));
+            fixture_with_id(&source, id);
+            let hash = install_built_in(&source, &root);
+            if index == corrupt {
+                damaged = root.join("content").join(&hash);
+            }
+        }
+        (root, damaged)
+    }
+
+    #[test]
+    fn list_reports_one_bad_package_as_an_invalid_row() {
+        let temp = TempDir::new().unwrap();
+        let (root, damaged) = three_installed(&temp, 1);
+        fs::write(damaged.join(MODULE_PATH), b"tampered").unwrap();
+        let rows = list_installed(&root).unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(
+            installed_rows(&rows)
+                .iter()
+                .map(|entry| entry.manifest.id.as_str())
+                .collect::<Vec<_>>(),
+            ["pkg-alpha", "pkg-gamma"]
+        );
+        assert_eq!(invalid(&rows), [("pkg-beta", ErrorCode::ChecksumMismatch)]);
+    }
+
+    #[test]
+    fn list_reports_unreadable_state_as_an_invalid_row() {
+        let temp = TempDir::new().unwrap();
+        let (root, _) = three_installed(&temp, 1);
+        // State JSON that fails strict parsing. The id is not provable, so the
+        // invalid row carries an empty id and sorts last, by file name.
+        fs::write(root.join("profiles").join("pkg-beta.json"), b"{").unwrap();
+        let rows = list_installed(&root).unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(invalid(&rows), [("", ErrorCode::InvalidManifest)]);
+        assert!(matches!(rows.last(), Some(InstalledListRow::Invalid { id, .. }) if id.is_empty()));
+        // An oversized state document is the same per-entry failure.
+        fs::write(
+            root.join("profiles").join("pkg-alpha.json"),
+            vec![b' '; MAX_DOCUMENT_BYTES as usize + 1],
+        )
+        .unwrap();
+        let rows = list_installed(&root).unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(installed_rows(&rows).len(), 1);
+        assert_eq!(
+            invalid(&rows),
+            [
+                ("pkg-alpha", ErrorCode::EntryTooLarge),
+                ("", ErrorCode::InvalidManifest)
+            ]
+        );
+    }
+
+    #[test]
+    fn list_reports_state_manifest_id_mismatch_as_an_invalid_row() {
+        let temp = TempDir::new().unwrap();
+        let (root, damaged) = three_installed(&temp, 1);
+        // Repoint the middle package's profile state at a different id. The
+        // content directory itself is intact; only the state/manifest pair is
+        // inconsistent.
+        let archive = damaged.file_name().unwrap().to_str().unwrap().to_owned();
+        write_profile_state(
+            &root,
+            &ProfileState {
+                schema_version: 1,
+                id: "pkg-beta".to_owned(),
+                archive_sha256: archive.clone(),
+                enabled: true,
+                signed: false,
+                trust: "builtin".to_owned(),
+            },
+        )
+        .unwrap();
+        // Now claim the same content under a different profile id as well:
+        // the content's manifest id differs from the state's id.
+        write_profile_state(
+            &root,
+            &ProfileState {
+                schema_version: 1,
+                id: "pkg-delta".to_owned(),
+                archive_sha256: archive,
+                enabled: true,
+                signed: false,
+                trust: "builtin".to_owned(),
+            },
+        )
+        .unwrap();
+        let rows = list_installed(&root).unwrap();
+        assert_eq!(installed_rows(&rows).len(), 3);
+        assert_eq!(invalid(&rows), [("pkg-delta", ErrorCode::InvalidManifest)]);
+    }
+
+    #[test]
+    fn list_reports_trust_signature_mismatch_as_an_invalid_row() {
+        let temp = TempDir::new().unwrap();
+        let (root, damaged) = three_installed(&temp, 1);
+        let archive = damaged.file_name().unwrap().to_str().unwrap().to_owned();
+        // signed=true with trust "developer" contradicts the profile rule
+        // (trust == "publisher") == signed.
+        write_profile_state(
+            &root,
+            &ProfileState {
+                schema_version: 1,
+                id: "pkg-beta".to_owned(),
+                archive_sha256: archive,
+                enabled: true,
+                signed: true,
+                trust: "developer".to_owned(),
+            },
+        )
+        .unwrap();
+        let rows = list_installed(&root).unwrap();
+        assert_eq!(installed_rows(&rows).len(), 2);
+        assert_eq!(invalid(&rows), [("pkg-beta", ErrorCode::InvalidSignature)]);
+    }
+
+    #[test]
+    fn list_reports_a_symlink_state_entry_as_an_invalid_row() {
+        let temp = TempDir::new().unwrap();
+        let (root, _) = three_installed(&temp, 1);
+        let outside = temp.path().join("outside.json");
+        fs::write(&outside, b"{}").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, root.join("profiles").join("pkg-link.json")).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(&outside, root.join("profiles").join("pkg-link.json"))
+            .unwrap();
+        let rows = list_installed(&root).unwrap();
+        // A symlink state file is a per-entry failure (invalid row), not a
+        // root failure: the other packages stay listed.
+        assert_eq!(installed_rows(&rows).len(), 3);
+        assert_eq!(invalid(&rows), [("pkg-link", ErrorCode::ReparsePoint)]);
+    }
+
+    #[test]
+    fn list_still_fails_when_the_install_root_is_a_reparse_point() {
+        // Whole-root failures stay command failures: a reparse point at the
+        // install root (or at `profiles/`) means the profile's own boundary is
+        // violated, so no listing is produced at all.
+        let temp = TempDir::new().unwrap();
+        let target = temp.path().join("real-root");
+        fs::create_dir_all(&target).unwrap();
+        let link = temp.path().join("root-link");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_dir(&target, &link).unwrap();
+        assert_eq!(
+            list_installed(&link).unwrap_err().code,
+            ErrorCode::ReparsePoint
+        );
+
+        // A symlinked `profiles/` inside a real root is the same root-level
+        // refusal.
+        let (root, _) = three_installed(&temp, 0);
+        let moved = temp.path().join("moved-profiles");
+        fs::rename(root.join("profiles"), &moved).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&moved, root.join("profiles")).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_dir(&moved, root.join("profiles")).unwrap();
+        assert_eq!(
+            list_installed(&root).unwrap_err().code,
+            ErrorCode::ReparsePoint
+        );
+
+        // A dangling `profiles/` link is the same refusal, never an empty
+        // profile: following the link would report "not found".
+        fs::remove_dir_all(&moved).unwrap();
+        assert_eq!(
+            list_installed(&root).unwrap_err().code,
+            ErrorCode::ReparsePoint
+        );
+    }
+
+    #[test]
+    fn installed_rows_have_no_readme_and_a_large_readme_still_lists() {
+        let temp = TempDir::new().unwrap();
+        let source = temp.path().join("source");
+        fixture(&source);
+        // README.md stays mandatory and checksum-covered; it only leaves the
+        // listing. A 2 MiB one must list fine and keep its line small.
+        fs::write(source.join(README_PATH), vec![b'x'; 2 * 1024 * 1024]).unwrap();
+        let root = temp.path().join("installed");
+        install_built_in(&source, &root);
+        let rows = list_installed(&root).unwrap();
+        assert_eq!(rows.len(), 1);
+        let value = serde_json::to_value(&rows[0]).unwrap();
+        assert!(value.get("readme").is_none());
+        assert_eq!(value["kind"], "installed");
+        let output = serialize_installed_listing(&rows).unwrap();
+        assert!(output.len() < 64 * 1024, "{}", output.len());
+        assert!(output.ends_with('\n'));
+    }
+
+    #[test]
+    fn an_over_budget_line_becomes_an_invalid_row_and_the_total_budget_fails() {
+        let temp = TempDir::new().unwrap();
+        let (root, _) = three_installed(&temp, 1);
+        let rows = list_installed(&root).unwrap();
+        assert_eq!(rows.len(), 3);
+        // A row that cannot fit the decoder's per-document budget is replaced
+        // by the typed invalid row, never emitted over-budget.
+        let output =
+            serialize_installed_listing_bounded(&rows, 256, LIST_OUTPUT_MAX_BYTES).unwrap();
+        let lines: Vec<serde_json::Value> = output
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(lines.len(), 3);
+        assert!(lines
+            .iter()
+            .all(|line| line["kind"] == "invalid" && line["code"] == "outputTooLarge"));
+        // Exceeding the whole 4 MiB stdout budget is a typed command failure:
+        // nothing partial is produced for the caller to trust.
+        let error = serialize_installed_listing_bounded(&rows, LIST_LINE_MAX_BYTES, 4).unwrap_err();
+        assert_eq!(error.code, ErrorCode::OutputTooLarge);
+        // The production constants are the documented ones.
+        assert_eq!(LIST_LINE_MAX_BYTES, 1024 * 1024);
+        assert_eq!(LIST_LINE_MAX_NODES, 65_536);
+        assert_eq!(LIST_OUTPUT_MAX_BYTES, 4 * 1024 * 1024);
     }
 }

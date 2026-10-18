@@ -337,7 +337,6 @@ TEST(ExtensionsWorkbenchTool, UsesOneCompactListWithoutSearchOrSectionHeaders)
 		.version = L"0.1.0",
 		.publisher = L"sakura.builtin",
 		.description = L"Colors indentation levels in the active editor.",
-		.readme = L"# Indent Rainbow\n\nThis text belongs in the details surface.",
 		.installed = true,
 		.builtIn = true,
 		.enabled = true,
@@ -360,6 +359,30 @@ TEST(ExtensionsWorkbenchTool, UsesOneCompactListWithoutSearchOrSectionHeaders)
 	// no search header, Built-in section, Installed section, or README card.
 	EXPECT_EQ(palette.sideBar.ToColorRef(), surface.Pixel(2, 0));
 	EXPECT_EQ(palette.sideBar.ToColorRef(), surface.Pixel(2, 71));
+}
+
+TEST(ExtensionsWorkbenchTool, AnInvalidListingRowGetsNoRowAction)
+{
+	const HWND parent = ::CreateWindowExW(0, L"STATIC", L"Extensions invalid row parent", WS_POPUP,
+		0, 0, 800, 600, nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
+	ASSERT_NE(nullptr, parent);
+	WindowGuard parentGuard(parent);
+
+	workbench::extensions::CExtensionsWorkbenchTool tool;
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout(RECT{ 0, 0, 480, 320 }, 96);
+	FakeManagementService service;
+	service.snapshot.state = senp::EManagementState::Ready;
+	service.snapshot.extensions.push_back({
+		.id = L"pkg-broken",
+		.displayName = L"pkg-broken",
+		.installed = true,
+		.invalidCode = L"checksumMismatch",
+		.invalidMessage = L"module/extension.wasm",
+	});
+	tool.SetManagementService(&service);
+	// No row action exists for a row the package tool could not read.
+	EXPECT_EQ(nullptr, ::FindWindowExW(tool.GetHwnd(), nullptr, L"BUTTON", nullptr));
 }
 
 TEST(ExtensionsWorkbenchTool, InstallsAnAvailableBuiltInFromItsRowButton)

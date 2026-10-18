@@ -6,7 +6,9 @@ SPDX-License-Identifier: Zlib
 */
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -191,7 +193,6 @@ struct ExtensionDescriptor final {
 	std::wstring version;
 	std::wstring publisher;
 	std::wstring description;
-	std::wstring readme;
 	std::wstring extensionPath;
 	std::wstring modulePath;
 	//! SHA-256 of the exact runtime component bytes validated by the package
@@ -209,12 +210,22 @@ struct ExtensionDescriptor final {
 	std::vector<ViewContribution> views;
 	std::wstring trust;
 	RuntimeContribution runtime;
+	//! Non-empty when this row is the package tool's `kind:"invalid"` marker:
+	//! a profile state entry that could not be read or verified. The `code`
+	//! string comes from the tool's `SenpError` code, or `L"invalidRow"` when
+	//! the line itself could not be decoded. Every consumer must skip an
+	//! invalid row: it is never enabled, activated, or granted authority.
+	std::wstring invalidCode;
+	//! Bounded detail text from the invalid row, for display only.
+	std::wstring invalidMessage;
 	[[nodiscard]] bool operator==(const ExtensionDescriptor&) const = default;
 };
 
 //! Decode bounded output from the package authority. These functions perform
 //! no filesystem access and do not make unverified manifests installable.
-[[nodiscard]] std::optional<std::vector<ExtensionDescriptor>> DecodeInstalledExtensions(std::string_view json);
+//! `list` emits JSON Lines: one object per package, so one bad line degrades
+//! to an invalid descriptor instead of discarding the whole listing.
+[[nodiscard]] std::optional<std::vector<ExtensionDescriptor>> DecodeInstalledExtensions(std::string_view output);
 [[nodiscard]] std::optional<ExtensionDescriptor> DecodeBuiltInExtension(std::string_view json);
 
 //! Stable IDs of every package embedded in this executable, in catalog order.
@@ -271,11 +282,42 @@ public:
 	[[nodiscard]] virtual ManagementSnapshot Snapshot() const = 0;
 };
 
+namespace detail {
+
+//! The decoded output of one `sakura-senp-tool.exe` invocation. `output` and
+//! `error` are cut at 4 MiB; the truncation flags record that the producer was
+//! allowed to write more, so a cut stream is never parsed as complete output.
+struct ToolResult final {
+	bool launched = false;
+	bool timedOut = false;
+	unsigned long exitCode = 0x80004005L /* E_FAIL */;
+	std::string output;
+	std::string error;
+	bool outputTruncated = false;
+	bool errorTruncated = false;
+};
+
+//! Test seam for the two OS dependencies of CWin32SenpManagementService:
+//! spawning the package tool and reading this executable's embedded package
+//! resources. Hooks are constructor-injected per instance, never global; an
+//! empty std::function means the production path.
+struct SenpServiceHooks final {
+	std::function<ToolResult(const std::vector<std::wstring>& arguments)> runTool;
+	std::function<std::optional<std::vector<std::byte>>(int resourceId)> embeddedResource;
+};
+
+//! The 4 MiB bound applied to one tool output stream. `pipe` is a Win32
+//! HANDLE passed as void* so this header stays free of windows.h.
+void ReadPipeBounded(void* pipe, std::string& target, bool& overflow) noexcept;
+
+} // namespace detail
+
 //! Owns profile-scoped SENP package state. It never loads extension code; the
 //! runtime service consumes only enabled module paths from this authority.
 class CWin32SenpManagementService final : public ISenpManagementService {
 public:
-	explicit CWin32SenpManagementService(std::wstring profileRoot);
+	explicit CWin32SenpManagementService(std::wstring profileRoot,
+		detail::SenpServiceHooks hooks = {});
 	~CWin32SenpManagementService() override;
 
 	[[nodiscard]] ManagementOperationResult Start() override;
@@ -302,6 +344,12 @@ private:
 	ManagementSnapshot m_snapshot;
 	std::vector<ExtensionDescriptor> m_builtInCatalog;
 	std::vector<std::wstring> m_uninstalledBuiltIns;
+	//! Built-in ids whose last Start could not install them. A later Start
+	//! retries exactly these instead of answering AlreadyReady.
+	std::vector<std::wstring> m_failedBuiltIns;
+	//! Constructor-injected test seam; both std::functions stay empty in
+	//! production.
+	detail::SenpServiceHooks m_hooks;
 };
 
 } // namespace senp

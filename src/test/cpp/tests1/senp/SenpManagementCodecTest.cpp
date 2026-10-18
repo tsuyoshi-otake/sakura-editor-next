@@ -38,9 +38,9 @@ TEST(SenpManagementCodec, RetainsRuntimeMetadataForCatalogAndInstalledAuthoritie
 	EXPECT_EQ(L"Open", catalog->runtime.commands[0].Title());
 	EXPECT_EQ(L"sample:view", catalog->views[0].id);
 	auto installedJson = Candidate();
-	installedJson.insert(1, R"json("enabled":true,"compatible":true,"trust":"developer","readme":"","extensionPath":"C:/fixture",
-	"modulePath":"C:/fixture/module/extension.wasm","moduleSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",)json");
-	const auto installed = senp::DecodeInstalledExtensions("[" + installedJson + "]");
+	std::erase(installedJson, '\n');
+	installedJson.insert(1, R"json("kind":"installed","enabled":true,"compatible":true,"trust":"developer","extensionPath":"C:/fixture","modulePath":"C:/fixture/module/extension.wasm","moduleSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",)json");
+	const auto installed = senp::DecodeInstalledExtensions(installedJson + "\n");
 	ASSERT_TRUE(installed);
 	ASSERT_EQ(1U, installed->size());
 	EXPECT_TRUE(installed->front().enabled);
@@ -53,20 +53,24 @@ TEST(SenpManagementCodec, TakesRuntimeCompatibilityFromTheRustListingOnly)
 	// this build executes. A package built for another WIT world is still listed
 	// (it can be refreshed or removed) and C++ neither re-derives nor overrides that.
 	auto stale = Candidate();
+	std::erase(stale, '\n');
 	Replace(stale, "extension@3.0.0", "extension@2.0.0");
-	stale.insert(1, R"json("enabled":true,"compatible":false,"trust":"builtin","readme":"","extensionPath":"C:/fixture",
-	"modulePath":"C:/fixture/module/extension.wasm","moduleSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",)json");
-	const auto listed = senp::DecodeInstalledExtensions("[" + stale + "]");
+	stale.insert(1, R"json("kind":"installed","enabled":true,"compatible":false,"trust":"builtin","extensionPath":"C:/fixture","modulePath":"C:/fixture/module/extension.wasm","moduleSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",)json");
+	const auto listed = senp::DecodeInstalledExtensions(stale + "\n");
 	ASSERT_TRUE(listed);
 	ASSERT_EQ(1U, listed->size());
 	EXPECT_FALSE(listed->front().runtime.compatible);
 	EXPECT_EQ(L"sakura:senp/extension@2.0.0", listed->front().runtime.abi);
 
-	// The listing must say; an absent or non-boolean value fails closed.
+	// The listing must say; an absent or non-boolean value fails closed and the
+	// row degrades to an invalid descriptor rather than dropping the list.
 	for (const auto& mutation : { std::string{ "\"compatible\":false," }, std::string{ "\"compatible\":false" } }) {
 		auto json = stale;
 		Replace(json, mutation, mutation.back() == ',' ? "" : "\"compatible\":\"no\"");
-		EXPECT_FALSE(senp::DecodeInstalledExtensions("[" + json + "]")) << mutation;
+		const auto decoded = senp::DecodeInstalledExtensions(json + "\n");
+		ASSERT_TRUE(decoded);
+		ASSERT_EQ(1U, decoded->size());
+		EXPECT_EQ(L"invalidRow", decoded->front().invalidCode) << mutation;
 	}
 	// A built-in candidate comes from archive verification, which admits only
 	// the current ABI, so it is compatible by construction.
@@ -223,4 +227,85 @@ TEST(SenpManagementCodec, RejectsInlineItemActionsARowCannotShow)
 	auto title = WithViewTitle();
 	Replace(title, "\"$(refresh)\"", "\"resources/icons/light/logs.svg\"");
 	EXPECT_FALSE(senp::DecodeBuiltInExtension(title));
+}
+
+TEST(SenpManagementCodec, JsonLinesIsolateOneBadRowInsteadOfDroppingTheList)
+{
+	auto installedJson = Candidate();
+	std::erase(installedJson, '\n');
+	installedJson.insert(1, R"json("kind":"installed","enabled":true,"compatible":true,"trust":"developer","extensionPath":"C:/fixture","modulePath":"C:/fixture/module/extension.wasm","moduleSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",)json");
+	// One valid row, one tool-emitted invalid row, one line that is not JSON.
+	const std::string output = installedJson + "\n"
+		+ R"json({"kind":"invalid","id":"pkg-beta","trust":"builtin","code":"checksumMismatch","message":"module/extension.wasm"})json" + "\n"
+		+ "{this is not json\n";
+	const auto decoded = senp::DecodeInstalledExtensions(output);
+	ASSERT_TRUE(decoded);
+	ASSERT_EQ(3U, decoded->size());
+	EXPECT_TRUE(decoded->at(0).invalidCode.empty());
+	EXPECT_EQ(L"sample.extension", decoded->at(0).id);
+	EXPECT_TRUE(decoded->at(0).enabled);
+	EXPECT_EQ(L"pkg-beta", decoded->at(1).id);
+	EXPECT_EQ(L"checksumMismatch", decoded->at(1).invalidCode);
+	EXPECT_FALSE(decoded->at(1).enabled);
+	EXPECT_TRUE(decoded->at(1).views.empty());
+	EXPECT_EQ(1U, decoded->at(1).runtime.schemaVersion);
+	EXPECT_EQ(L"invalidRow", decoded->at(2).invalidCode);
+	EXPECT_TRUE(decoded->at(2).id.empty());
+	// A missing or truncated code still yields a flagged invalid row.
+	const auto fallback = senp::DecodeInstalledExtensions("{\"kind\":\"invalid\",\"id\":\"x\"}\n");
+	ASSERT_TRUE(fallback);
+	ASSERT_EQ(1U, fallback->size());
+	EXPECT_EQ(L"invalidRow", fallback->front().invalidCode);
+}
+
+TEST(SenpManagementCodec, RowsMustSayInstalledAndTheLineBoundIsMaxEntries)
+{
+	auto row = Candidate();
+	std::erase(row, '\n');
+	row.insert(1, R"json("kind":"installed","enabled":true,"compatible":true,"trust":"builtin","extensionPath":"C:/fixture","moduleSha256":null,)json");
+	// The producer bounds state entries at MAX_ENTRIES (256): that many lines
+	// decode, one more makes the whole stream untrustworthy.
+	std::string output;
+	for (std::size_t i = 0; i < 256; ++i) output += row + "\n";
+	const auto atBound = senp::DecodeInstalledExtensions(output);
+	ASSERT_TRUE(atBound);
+	EXPECT_EQ(256U, atBound->size());
+	output += row + "\n";
+	EXPECT_EQ(std::nullopt, senp::DecodeInstalledExtensions(output));
+
+	// A missing or unknown kind is never an installed row.
+	auto noKind = row;
+	Replace(noKind, "\"kind\":\"installed\",", "");
+	const auto missing = senp::DecodeInstalledExtensions(noKind + "\n");
+	ASSERT_TRUE(missing);
+	ASSERT_EQ(1U, missing->size());
+	EXPECT_EQ(L"invalidRow", missing->front().invalidCode);
+	auto future = row;
+	Replace(future, "\"kind\":\"installed\"", "\"kind\":\"future\"");
+	const auto unknown = senp::DecodeInstalledExtensions(future + "\n");
+	ASSERT_TRUE(unknown);
+	ASSERT_EQ(1U, unknown->size());
+	EXPECT_EQ(L"invalidRow", unknown->front().invalidCode);
+}
+
+TEST(SenpManagementCodec, ReadPipeBoundedRecordsOverflowInsteadOfParsingACutStream)
+{
+	const std::string payload(4U * 1024U * 1024U + 1U, 'x');
+	for (const std::size_t bytes : { 4U * 1024U * 1024U + 1U, 4U * 1024U * 1024U }) {
+		HANDLE read = nullptr;
+		HANDLE write = nullptr;
+		ASSERT_TRUE(::CreatePipe(&read, &write, nullptr, 0));
+		std::thread writer([write, &payload, bytes] {
+			DWORD written = 0;
+			(void)::WriteFile(write, payload.data(), static_cast<DWORD>(bytes), &written, nullptr);
+			::CloseHandle(write);
+		});
+		std::string output;
+		bool overflow = false;
+		senp::detail::ReadPipeBounded(static_cast<void*>(read), output, overflow);
+		writer.join();
+		::CloseHandle(read);
+		EXPECT_EQ(4U * 1024U * 1024U, output.size());
+		EXPECT_EQ(bytes > 4U * 1024U * 1024U, overflow);
+	}
 }

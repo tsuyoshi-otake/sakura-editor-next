@@ -411,6 +411,23 @@ manifest、署名の形式を再検査しますが、publisher 公開鍵を持�
 content、checksum、marker を同一ユーザー権限で書き換えられる場合の追加の
 改ざん耐性を、この format だけから主張してはいけません。
 
+`list` の出力は JSON Lines です。一覧対象の各 package につき 1 行の完全な
+JSON object を出力し、行の先頭 member は `kind` で `installed` または
+`invalid` です。1 件の profile state entry に閉じた失敗(読めない・過大・
+不正な state JSON、trust/署名の不整合、欠損・破損した content directory、
+state と manifest の id 不一致、symlink entry、per-line budget 超過)は、
+`{"kind":"invalid","id":<検証できた id または空>,"trust":<既知なら>,"code":
+<SenpError code 文字列>,"message":<bounded>}` という invalid row になり、
+command 全体は失敗しません。install root 全体の失敗(root の reparse
+point、`profiles/` が読めない、`MAX_ENTRIES` 超過、uninstalled state の読み
+取り失敗)は従来どおり command を失敗させます。行の budget は C++ decoder の
+per-document 上限(1 MiB / 65,536 JSON nodes)で、超える行は emit せず
+invalid row に置き換えます。stdout 全体は tool output budget の 4 MiB
+以内で、次の行が収まらない場合は途中の出力を信頼させず `OutputTooLarge`
+で失敗します。`README.md` は list 出力に含まれません。package 検証上は
+引き続き必須・UTF-8・4 MiB 以下・checksum 対象ですが、list の reader が
+存在しないため、将来の extension details editor が必要時に読みます。
+
 ## インストールと有効化
 
 tool の install root は次の profile-scoped layout です。
@@ -479,9 +496,10 @@ $root = (Join-Path $PWD 'out\profile')
 `pack` の標準出力は生成 archive の lowercase SHA-256 です。`install-dev` の
 標準出力は `VerifiedPackage` の JSON です。unsigned developer package は
 インストール直後 disabled なので、実行コードを使う場合も明示的に
-`set-enabled ... true` を行います。`list` の JSON は `enabled`、`trust`、
-`modulePath`、`moduleSha256` などを含みます。宣言型 package では module の
-値は null/省略相当になります。
+`set-enabled ... true` を行います。`list` は package ごとに 1 行の
+JSON object(JSON Lines)を出力し、`"kind":"installed"` の行は `enabled`、
+`trust`、`modulePath`、`moduleSha256` などを含みます。宣言型 package では
+module の値は null/省略相当になります。
 
 ### publisher 署名付き package
 
@@ -586,7 +604,8 @@ CLI は成功時に結果を stdout へ出し、失敗時は `ErrorCode: detail`
 `inspect-builtin` し、その後 `install-*`、`list` の順に切り分けると、
 package 内容の失敗と profile state の失敗を分離できます。`list` は installed
 content を再走査するため、インストール後に payload や checksum を直接編集
-しないでください。
+しないでください。破損した 1 件は `"kind":"invalid"` の row として報告される
+ため、その `code` で原因を切り分けられます。
 
 ## 実装との対応
 

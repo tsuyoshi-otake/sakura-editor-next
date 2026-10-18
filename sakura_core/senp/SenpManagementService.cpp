@@ -125,28 +125,9 @@ std::wstring ExecutableDirectory()
 	return std::filesystem::path(std::wstring(path.data(), length)).parent_path().native();
 }
 
-struct ProcessResult final {
-	bool launched = false;
-	bool timedOut = false;
-	DWORD exitCode = ERROR_GEN_FAILURE;
-	std::string output;
-	std::string error;
-};
+using ProcessResult = detail::ToolResult;
 
-void ReadPipeBounded(HANDLE pipe, std::string& target) noexcept
-{
-	std::array<char, 16384> buffer{};
-	for (;;) {
-		DWORD read = 0;
-		if (!::ReadFile(pipe, buffer.data(), static_cast<DWORD>(buffer.size()), &read, nullptr) || read == 0) break;
-		const auto room = kMaximumToolOutputBytes > target.size()
-			? kMaximumToolOutputBytes - target.size() : 0;
-		const auto copy = std::min<std::size_t>(room, read);
-		target.append(buffer.data(), copy);
-	}
-}
-
-ProcessResult RunTool(const std::vector<std::wstring>& arguments)
+ProcessResult RunToolImpl(const std::vector<std::wstring>& arguments)
 {
 	ProcessResult result;
 	const auto directory = ExecutableDirectory();
@@ -215,8 +196,10 @@ ProcessResult RunTool(const std::vector<std::wstring>& arguments)
 	result.launched = true;
 	ScopedHandle processHandle(process.hProcess);
 	ScopedHandle processThread(process.hThread);
-	std::thread outputReader(ReadPipeBounded, outputRead.Get(), std::ref(result.output));
-	std::thread errorReader(ReadPipeBounded, errorRead.Get(), std::ref(result.error));
+	std::thread outputReader(detail::ReadPipeBounded, static_cast<void*>(outputRead.Get()),
+		std::ref(result.output), std::ref(result.outputTruncated));
+	std::thread errorReader(detail::ReadPipeBounded, static_cast<void*>(errorRead.Get()),
+		std::ref(result.error), std::ref(result.errorTruncated));
 	const DWORD wait = ::WaitForSingleObject(processHandle.Get(), kToolTimeoutMilliseconds);
 	if (wait != WAIT_OBJECT_0) {
 		result.timedOut = true;
@@ -233,7 +216,14 @@ ProcessResult RunTool(const std::vector<std::wstring>& arguments)
 	return result;
 }
 
-std::optional<std::vector<std::byte>> EmbeddedResource(int id)
+ProcessResult RunTool(const std::vector<std::wstring>& arguments,
+	const detail::SenpServiceHooks& hooks)
+{
+	if (hooks.runTool) return hooks.runTool(arguments);
+	return RunToolImpl(arguments);
+}
+
+std::optional<std::vector<std::byte>> EmbeddedResourceImpl(int id)
 {
 	const HMODULE module = ::GetModuleHandleW(nullptr);
 	const HRSRC found = ::FindResourceW(module, MAKEINTRESOURCEW(id), RT_RCDATA);
@@ -243,6 +233,13 @@ std::optional<std::vector<std::byte>> EmbeddedResource(int id)
 	const auto* bytes = static_cast<const std::byte*>(::LockResource(loaded));
 	if (size == 0 || bytes == nullptr) return std::nullopt;
 	return std::vector<std::byte>(bytes, bytes + size);
+}
+
+std::optional<std::vector<std::byte>> EmbeddedResource(int id,
+	const detail::SenpServiceHooks& hooks)
+{
+	if (hooks.embeddedResource) return hooks.embeddedResource(id);
+	return EmbeddedResourceImpl(id);
 }
 
 bool WriteBytes(const std::filesystem::path& path, const std::vector<std::byte>& bytes)
@@ -626,6 +623,21 @@ bool ParseRuntimeContribution(const JsoncValue::Object& manifest,
 
 } // namespace
 
+void detail::ReadPipeBounded(void* pipe, std::string& target, bool& overflow) noexcept
+{
+	std::array<char, 16384> buffer{};
+	for (;;) {
+		DWORD read = 0;
+		if (!::ReadFile(static_cast<HANDLE>(pipe), buffer.data(),
+			static_cast<DWORD>(buffer.size()), &read, nullptr) || read == 0) break;
+		const auto room = kMaximumToolOutputBytes > target.size()
+			? kMaximumToolOutputBytes - target.size() : 0;
+		const auto copy = std::min<std::size_t>(room, read);
+		if (copy < read) overflow = true;
+		target.append(buffer.data(), copy);
+	}
+}
+
 std::vector<std::wstring_view> EmbeddedBuiltInExtensionIds()
 {
 	std::vector<std::wstring_view> ids;
@@ -643,96 +655,173 @@ bool StartupInstallsBuiltIn(std::wstring_view extensionId,
 		&& (builtIn->InstalledByDefault() || installedAsBuiltIn);
 }
 
-std::optional<std::vector<ExtensionDescriptor>> DecodeInstalledExtensions(std::string_view json)
+namespace {
+
+constexpr std::wstring_view kInvalidRowCode = L"invalidRow";
+// One line per profile state entry; the producer bounds those at MAX_ENTRIES
+// in rust/senp/sakura_senp/src/lib.rs. More lines can only be a corrupt stream.
+constexpr std::size_t kMaximumListingLines = 256;
+constexpr std::size_t kInvalidFieldBound = 128;
+constexpr std::size_t kInvalidMessageBound = 1024;
+
+std::wstring BoundedInvalidText(const std::wstring* value, std::size_t bound)
 {
-	const auto parsed = platform::serialization::CJsoncDocument::Parse(json);
-	if (!parsed.Succeeded()) return std::nullopt;
-	const auto* array = std::get_if<JsoncValue::Array>(&parsed.value->Value());
-	if (array == nullptr || array->size() > 256) return std::nullopt;
-	std::vector<ExtensionDescriptor> result;
-	result.reserve(array->size());
-	for (const auto& value : *array) {
-		const auto* object = std::get_if<JsoncValue::Object>(&value.Value());
-		if (object == nullptr) return std::nullopt;
-		const auto manifestMember = object->find(L"manifest");
-		const auto* manifest = manifestMember == object->end()
-			? nullptr : std::get_if<JsoncValue::Object>(&manifestMember->second.Value());
-		const auto* archive = StringMember(*object, L"archiveSha256");
-		const auto* enabled = BoolMember(*object, L"enabled");
-		const auto* signedPackage = BoolMember(*object, L"signed");
-		const auto* trust = StringMember(*object, L"trust");
-		const auto* readme = StringMember(*object, L"readme");
-		const auto* extensionPath = StringMember(*object, L"extensionPath");
-		const auto* modulePath = StringMember(*object, L"modulePath");
-		const auto* compatible = BoolMember(*object, L"compatible");
-		const auto moduleSha256Member = object->find(L"moduleSha256");
-		const auto* moduleSha256 = moduleSha256Member == object->end()
-			? nullptr : std::get_if<std::wstring>(&moduleSha256Member->second.Value());
-		if (manifest == nullptr || archive == nullptr || enabled == nullptr || compatible == nullptr
-			|| signedPackage == nullptr || trust == nullptr || readme == nullptr || extensionPath == nullptr) {
-			return std::nullopt;
-		}
-		const auto isLowerSha256 = [](std::wstring_view value) noexcept {
-			return value.size() == 64 && std::ranges::all_of(value, [](wchar_t ch) {
-				return (ch >= L'0' && ch <= L'9') || (ch >= L'a' && ch <= L'f');
-			});
-		};
-		if (modulePath != nullptr) {
-			if (modulePath->empty() || moduleSha256 == nullptr || !isLowerSha256(*moduleSha256)) {
-				return std::nullopt;
-			}
-		} else if (moduleSha256Member == object->end()
-			|| !std::holds_alternative<std::monostate>(moduleSha256Member->second.Value())) {
-			return std::nullopt;
-		}
-		const auto* id = StringMember(*manifest, L"id");
-		const auto* displayName = StringMember(*manifest, L"displayName");
-		const auto* version = StringMember(*manifest, L"version");
-		const auto* publisher = StringMember(*manifest, L"publisher");
-		const auto* description = StringMember(*manifest, L"description");
-		const auto contributesMember = manifest->find(L"contributes");
-		const auto* contributes = contributesMember == manifest->end() ? nullptr
-			: std::get_if<JsoncValue::Object>(&contributesMember->second.Value());
-		const auto decorationsMember = contributes == nullptr ? JsoncValue::Object::const_iterator{}
-			: contributes->find(L"editorDecorations");
-		const auto* decorations = contributes == nullptr || decorationsMember == contributes->end()
-			? nullptr : std::get_if<JsoncValue::Array>(&decorationsMember->second.Value());
-		std::vector<LanguageContribution> languages;
-		std::vector<GrammarContribution> grammars;
-		std::vector<ViewContainerContribution> viewContainers;
-		std::vector<ViewContribution> views;
-		RuntimeContribution runtime;
-		if (id == nullptr || displayName == nullptr || version == nullptr
-			|| publisher == nullptr || description == nullptr || archive->size() != 64
-			|| decorations == nullptr || contributes == nullptr
-			|| !ParseLanguageContributions(*contributes, languages)
-			|| !ParseGrammarContributions(*contributes, grammars)
-			|| !ParseWorkbenchViewContributions(*contributes, viewContainers, views)
-			|| !ParseRuntimeContribution(*manifest, *contributes, runtime)) return std::nullopt;
-		runtime.compatible = *compatible;
-		result.push_back({
-			.id = *id,
-			.displayName = *displayName,
-			.version = *version,
-			.publisher = *publisher,
-			.description = *description,
-			.readme = *readme,
-			.extensionPath = *extensionPath,
-			.modulePath = modulePath == nullptr ? std::wstring{} : *modulePath,
-			.moduleSha256 = moduleSha256 == nullptr ? std::wstring{} : *moduleSha256,
-			.archiveSha256 = *archive,
-			.installed = true,
-			.builtIn = *trust == L"builtin",
-			.enabled = *enabled,
-			.signedPackage = *signedPackage,
-			.contributesIndentDecorations = !decorations->empty(),
-			.languages = std::move(languages),
-			.grammars = std::move(grammars),
-			.viewContainers = std::move(viewContainers),
-			.views = std::move(views),
-			.trust = *trust,
-			.runtime = std::move(runtime),
+	if (value == nullptr) return {};
+	return value->substr(0, bound);
+}
+
+//! The descriptor for a `kind:"invalid"` line, or for a line the decoder could
+//! not read: it carries no contributions, is not enabled, and owns no runtime.
+ExtensionDescriptor InvalidDescriptor(std::wstring id, std::wstring trust,
+	std::wstring code, std::wstring message)
+{
+	ExtensionDescriptor row;
+	row.id = std::move(id);
+	row.displayName = row.id.empty() ? L"invalid package" : row.id;
+	row.description = message;
+	row.installed = true;
+	row.trust = std::move(trust);
+	row.invalidCode = std::move(code);
+	row.invalidMessage = std::move(message);
+	return row;
+}
+
+std::optional<ExtensionDescriptor> DecodeInstalledObject(const JsoncValue::Object& object)
+{
+	const auto manifestMember = object.find(L"manifest");
+	const auto* manifest = manifestMember == object.end()
+		? nullptr : std::get_if<JsoncValue::Object>(&manifestMember->second.Value());
+	const auto* archive = StringMember(object, L"archiveSha256");
+	const auto* enabled = BoolMember(object, L"enabled");
+	const auto* signedPackage = BoolMember(object, L"signed");
+	const auto* trust = StringMember(object, L"trust");
+	const auto* extensionPath = StringMember(object, L"extensionPath");
+	const auto* modulePath = StringMember(object, L"modulePath");
+	const auto* compatible = BoolMember(object, L"compatible");
+	const auto moduleSha256Member = object.find(L"moduleSha256");
+	const auto* moduleSha256 = moduleSha256Member == object.end()
+		? nullptr : std::get_if<std::wstring>(&moduleSha256Member->second.Value());
+	if (manifest == nullptr || archive == nullptr || enabled == nullptr || compatible == nullptr
+		|| signedPackage == nullptr || trust == nullptr || extensionPath == nullptr) {
+		return std::nullopt;
+	}
+	const auto isLowerSha256 = [](std::wstring_view value) noexcept {
+		return value.size() == 64 && std::ranges::all_of(value, [](wchar_t ch) {
+			return (ch >= L'0' && ch <= L'9') || (ch >= L'a' && ch <= L'f');
 		});
+	};
+	if (modulePath != nullptr) {
+		if (modulePath->empty() || moduleSha256 == nullptr || !isLowerSha256(*moduleSha256)) {
+			return std::nullopt;
+		}
+	} else if (moduleSha256Member == object.end()
+		|| !std::holds_alternative<std::monostate>(moduleSha256Member->second.Value())) {
+		return std::nullopt;
+	}
+	const auto* id = StringMember(*manifest, L"id");
+	const auto* displayName = StringMember(*manifest, L"displayName");
+	const auto* version = StringMember(*manifest, L"version");
+	const auto* publisher = StringMember(*manifest, L"publisher");
+	const auto* description = StringMember(*manifest, L"description");
+	const auto contributesMember = manifest->find(L"contributes");
+	const auto* contributes = contributesMember == manifest->end() ? nullptr
+		: std::get_if<JsoncValue::Object>(&contributesMember->second.Value());
+	const auto decorationsMember = contributes == nullptr ? JsoncValue::Object::const_iterator{}
+		: contributes->find(L"editorDecorations");
+	const auto* decorations = contributes == nullptr || decorationsMember == contributes->end()
+		? nullptr : std::get_if<JsoncValue::Array>(&decorationsMember->second.Value());
+	std::vector<LanguageContribution> languages;
+	std::vector<GrammarContribution> grammars;
+	std::vector<ViewContainerContribution> viewContainers;
+	std::vector<ViewContribution> views;
+	RuntimeContribution runtime;
+	if (id == nullptr || displayName == nullptr || version == nullptr
+		|| publisher == nullptr || description == nullptr || archive->size() != 64
+		|| decorations == nullptr || contributes == nullptr
+		|| !ParseLanguageContributions(*contributes, languages)
+		|| !ParseGrammarContributions(*contributes, grammars)
+		|| !ParseWorkbenchViewContributions(*contributes, viewContainers, views)
+		|| !ParseRuntimeContribution(*manifest, *contributes, runtime)) return std::nullopt;
+	runtime.compatible = *compatible;
+	return ExtensionDescriptor{
+		.id = *id,
+		.displayName = *displayName,
+		.version = *version,
+		.publisher = *publisher,
+		.description = *description,
+		.extensionPath = *extensionPath,
+		.modulePath = modulePath == nullptr ? std::wstring{} : *modulePath,
+		.moduleSha256 = moduleSha256 == nullptr ? std::wstring{} : *moduleSha256,
+		.archiveSha256 = *archive,
+		.installed = true,
+		.builtIn = *trust == L"builtin",
+		.enabled = *enabled,
+		.signedPackage = *signedPackage,
+		.contributesIndentDecorations = !decorations->empty(),
+		.languages = std::move(languages),
+		.grammars = std::move(grammars),
+		.viewContainers = std::move(viewContainers),
+		.views = std::move(views),
+		.trust = *trust,
+		.runtime = std::move(runtime),
+	};
+}
+
+ExtensionDescriptor DecodeInstalledLine(std::string_view line)
+{
+	const auto parsed = platform::serialization::CJsoncDocument::Parse(line);
+	const auto* object = parsed.Succeeded()
+		? std::get_if<JsoncValue::Object>(&parsed.value->Value()) : nullptr;
+	if (object == nullptr) {
+		return InvalidDescriptor({}, {}, std::wstring(kInvalidRowCode),
+			L"listing line is not a JSON object");
+	}
+	const auto* kind = StringMember(*object, L"kind");
+	if (kind != nullptr && *kind == L"invalid") {
+		auto code = BoundedInvalidText(StringMember(*object, L"code"), kInvalidFieldBound);
+		return InvalidDescriptor(
+			BoundedInvalidText(StringMember(*object, L"id"), kInvalidFieldBound),
+			BoundedInvalidText(StringMember(*object, L"trust"), kInvalidFieldBound),
+			code.empty() ? std::wstring(kInvalidRowCode) : std::move(code),
+			BoundedInvalidText(StringMember(*object, L"message"), kInvalidMessageBound));
+	}
+	// Rows must say what they are: a missing or unknown kind never decodes as
+	// installed.
+	if (kind == nullptr || *kind != L"installed") {
+		return InvalidDescriptor({}, {}, std::wstring(kInvalidRowCode),
+			L"listing row kind is missing or unknown");
+	}
+	auto decoded = DecodeInstalledObject(*object);
+	if (!decoded) {
+		return InvalidDescriptor({}, {}, std::wstring(kInvalidRowCode),
+			L"listing row could not be decoded");
+	}
+	return std::move(*decoded);
+}
+
+} // namespace
+
+std::optional<std::vector<ExtensionDescriptor>> DecodeInstalledExtensions(std::string_view output)
+{
+	// `list` emits JSON Lines: one complete object per package. Each line is
+	// decoded on its own, so one bad row degrades to an invalid descriptor
+	// instead of discarding the whole listing.
+	std::vector<ExtensionDescriptor> result;
+	for (std::size_t offset = 0; offset <= output.size();) {
+		const auto newline = output.find('\n', offset);
+		auto line = output.substr(offset, newline == std::string_view::npos
+			? newline : newline - offset);
+		offset = newline == std::string_view::npos ? output.size() + 1 : newline + 1;
+		while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t')) {
+			line.remove_suffix(1);
+		}
+		if (!line.empty()) {
+			// A stream longer than the producer's own bound is not a listing to
+			// truncate and trust: the whole reload fails and keeps its snapshot.
+			if (result.size() >= kMaximumListingLines) return std::nullopt;
+			result.push_back(DecodeInstalledLine(line));
+		}
+		if (newline == std::string_view::npos) break;
 	}
 	return result;
 }
@@ -825,10 +914,11 @@ struct StagedBuiltInPackage final {
 };
 
 std::optional<StagedBuiltInPackage> StageBuiltInPackage(
-	const BuiltInResource& builtIn, std::wstring_view installRoot, std::wstring& diagnostic)
+	const BuiltInResource& builtIn, std::wstring_view installRoot, std::wstring& diagnostic,
+	const detail::SenpServiceHooks& hooks)
 {
-	const auto package = EmbeddedResource(builtIn.PackageResource());
-	const auto hashBytes = EmbeddedResource(builtIn.HashResource());
+	const auto package = EmbeddedResource(builtIn.PackageResource(), hooks);
+	const auto hashBytes = EmbeddedResource(builtIn.HashResource(), hooks);
 	if (!package || !hashBytes) {
 		diagnostic = L"Built-in SENP resources are missing: " + std::wstring(builtIn.Id());
 		return std::nullopt;
@@ -858,8 +948,10 @@ std::wstring ProcessDiagnostic(const ProcessResult& result, std::wstring_view fa
 
 } // namespace
 
-CWin32SenpManagementService::CWin32SenpManagementService(std::wstring profileRoot)
+CWin32SenpManagementService::CWin32SenpManagementService(std::wstring profileRoot,
+	detail::SenpServiceHooks hooks)
 	: m_profileRoot(std::move(profileRoot))
+	, m_hooks(std::move(hooks))
 	, m_installRoot((std::filesystem::path(m_profileRoot) / L"senp").native())
 {
 }
@@ -885,25 +977,34 @@ bool CWin32SenpManagementService::IsStopped() const noexcept
 
 ManagementOperationResult CWin32SenpManagementService::Start()
 {
+	std::vector<std::wstring> retry;
 	{
 		std::lock_guard lock(m_mutex);
-		if (m_snapshot.state == EManagementState::Ready
-			|| m_snapshot.state == EManagementState::ReadyWithDiagnostics) {
-			return { EManagementOperationStatus::AlreadyReady, m_snapshot };
-		}
 		if (m_snapshot.state == EManagementState::Stopped) {
 			return { EManagementOperationStatus::Stopped, m_snapshot };
 		}
+		if (m_snapshot.state == EManagementState::Ready
+			|| m_snapshot.state == EManagementState::ReadyWithDiagnostics) {
+			// A Start that previously lost built-in installs does not answer
+			// AlreadyReady: exactly those ids are attempted again.
+			if (m_failedBuiltIns.empty()) return { EManagementOperationStatus::AlreadyReady, m_snapshot };
+			retry = m_failedBuiltIns;
+		}
 	}
-	const auto catalog = LoadBuiltInCatalog();
-	if (!catalog.Succeeded()) return catalog;
+	if (retry.empty()) {
+		const auto catalog = LoadBuiltInCatalog();
+		if (!catalog.Succeeded()) return catalog;
+	}
 	auto loaded = ReloadInstalled();
 	if (!loaded.Succeeded()) return loaded;
 	// A built-in tracks the product that bundles it, as VS Code's built-in
 	// extensions do. An offered (not installed-by-default) built-in the user
 	// installed is refreshed too, never installed on their behalf: a copy left
 	// by an earlier build may target a runtime ABI this host cannot run (#299).
+	std::vector<std::wstring> failed;
 	for (const auto& builtIn : kBuiltInResources) {
+		if (!retry.empty()
+			&& std::ranges::find(retry, builtIn.Id()) == retry.end()) continue;
 		bool current = false;
 		bool explicitlyUninstalled = false;
 		bool installedAsBuiltIn = false;
@@ -923,8 +1024,27 @@ ManagementOperationResult CWin32SenpManagementService::Start()
 		}
 		if (current) continue;
 		if (!StartupInstallsBuiltIn(builtIn.Id(), explicitlyUninstalled, installedAsBuiltIn)) continue;
+		// One failing built-in never stops the reconciliation: every package is
+		// attempted once per Start and the failures are named in the diagnostic.
 		loaded = InstallBuiltInPackage(builtIn.Id());
-		if (!loaded.Succeeded()) return loaded;
+		if (!loaded.Succeeded()) failed.emplace_back(builtIn.Id());
+	}
+	if (!failed.empty()) {
+		std::wstring diagnostic = L"Built-in SENP packages could not be installed:";
+		for (const auto& id : failed) {
+			diagnostic.push_back(L' ');
+			diagnostic += id;
+		}
+		std::lock_guard lock(m_mutex);
+		m_failedBuiltIns = std::move(failed);
+		m_snapshot.diagnostic = std::move(diagnostic);
+		m_snapshot.state = EManagementState::ReadyWithDiagnostics;
+		++m_snapshot.revision;
+		return { EManagementOperationStatus::Succeeded, m_snapshot };
+	}
+	{
+		std::lock_guard lock(m_mutex);
+		m_failedBuiltIns.clear();
 	}
 	return loaded;
 }
@@ -935,7 +1055,7 @@ ManagementOperationResult CWin32SenpManagementService::LoadBuiltInCatalog()
 	catalog.reserve(kBuiltInResources.size());
 	for (const auto& builtIn : kBuiltInResources) {
 		std::wstring diagnostic;
-		const auto staged = StageBuiltInPackage(builtIn, m_installRoot, diagnostic);
+		const auto staged = StageBuiltInPackage(builtIn, m_installRoot, diagnostic, m_hooks);
 		if (!staged) {
 			std::lock_guard lock(m_mutex);
 			m_snapshot.state = EManagementState::Failed;
@@ -943,10 +1063,11 @@ ManagementOperationResult CWin32SenpManagementService::LoadBuiltInCatalog()
 			m_snapshot.diagnostic = std::move(diagnostic);
 			return { EManagementOperationStatus::Unavailable, m_snapshot };
 		}
-		const auto inspected = RunTool({ L"inspect-builtin", staged->path.native(), staged->hash });
+		const auto inspected = RunTool({ L"inspect-builtin", staged->path.native(), staged->hash }, m_hooks);
 		std::error_code ignored;
 		std::filesystem::remove(staged->path, ignored);
-		if (!inspected.launched || inspected.timedOut || inspected.exitCode != 0) {
+		if (!inspected.launched || inspected.timedOut || inspected.exitCode != 0
+			|| inspected.outputTruncated) {
 			std::lock_guard lock(m_mutex);
 			m_snapshot.state = EManagementState::Failed;
 			++m_snapshot.revision;
@@ -971,25 +1092,32 @@ ManagementOperationResult CWin32SenpManagementService::LoadBuiltInCatalog()
 ManagementOperationResult CWin32SenpManagementService::ReloadInstalled()
 {
 	if (IsStopped()) return Terminal(EManagementOperationStatus::Stopped);
-	const auto listed = RunTool({ L"list", m_installRoot });
-	if (!listed.launched || listed.timedOut || listed.exitCode != 0) {
+	const auto failedListing = [&](const ProcessResult& result, std::wstring fallback) {
 		std::lock_guard lock(m_mutex);
 		m_snapshot.state = m_snapshot.extensions.empty()
 			? EManagementState::Failed : EManagementState::ReadyWithDiagnostics;
 		++m_snapshot.revision;
-		m_snapshot.diagnostic = ProcessDiagnostic(listed, L"Installed SENP extensions could not be read");
-		return { EManagementOperationStatus::Failed, m_snapshot };
+		m_snapshot.diagnostic = ProcessDiagnostic(result, std::move(fallback));
+		return ManagementOperationResult{ EManagementOperationStatus::Failed, m_snapshot };
+	};
+	const auto listed = RunTool({ L"list", m_installRoot }, m_hooks);
+	// A truncated stream is a typed failure, never a partial listing to parse.
+	if (!listed.launched || listed.timedOut || listed.exitCode != 0) {
+		return failedListing(listed, L"Installed SENP extensions could not be read");
 	}
-	const auto listedUninstalled = RunTool({ L"list-uninstalled", m_installRoot });
+	if (listed.outputTruncated) {
+		return failedListing(listed,
+			L"Installed SENP extension listing exceeded the 4 MiB output budget");
+	}
+	const auto listedUninstalled = RunTool({ L"list-uninstalled", m_installRoot }, m_hooks);
 	if (!listedUninstalled.launched || listedUninstalled.timedOut
 		|| listedUninstalled.exitCode != 0) {
-		std::lock_guard lock(m_mutex);
-		m_snapshot.state = m_snapshot.extensions.empty()
-			? EManagementState::Failed : EManagementState::ReadyWithDiagnostics;
-		++m_snapshot.revision;
-		m_snapshot.diagnostic = ProcessDiagnostic(listedUninstalled,
+		return failedListing(listedUninstalled,
 			L"Uninstalled SENP extension preferences could not be read");
-		return { EManagementOperationStatus::Failed, m_snapshot };
+	}
+	if (listedUninstalled.outputTruncated) {
+		return failedListing(listedUninstalled,
+			L"Uninstalled SENP extension preferences exceeded the 4 MiB output budget");
 	}
 	const auto parsed = DecodeInstalledExtensions(listed.output);
 	const auto parsedUninstalled = ParseUninstalled(listedUninstalled.output);
@@ -1027,8 +1155,9 @@ ManagementOperationResult CWin32SenpManagementService::InstallDeveloperPackage(
 	if (package.extension() != L".senp" || !std::filesystem::is_regular_file(package)) {
 		return Terminal(EManagementOperationStatus::InvalidRequest, L"Select a regular .senp package");
 	}
-	const auto installed = RunTool({ L"install-dev", package.native(), m_installRoot });
-	if (!installed.launched || installed.timedOut || installed.exitCode != 0) {
+	const auto installed = RunTool({ L"install-dev", package.native(), m_installRoot }, m_hooks);
+	if (!installed.launched || installed.timedOut || installed.exitCode != 0
+		|| installed.outputTruncated) {
 		return Terminal(EManagementOperationStatus::Failed,
 			ProcessDiagnostic(installed, L"Developer SENP package was rejected"));
 	}
@@ -1042,7 +1171,7 @@ ManagementOperationResult CWin32SenpManagementService::InstallDeveloperPackage(
 			? nullptr : std::get_if<JsoncValue::Object>(&manifestMember->second.Value());
 		const auto* id = manifest == nullptr ? nullptr : StringMember(*manifest, L"id");
 		if (id == nullptr) return Terminal(EManagementOperationStatus::Failed, L"SENP install result is invalid");
-		const auto enabled = RunTool({ L"set-enabled", m_installRoot, *id, L"true" });
+		const auto enabled = RunTool({ L"set-enabled", m_installRoot, *id, L"true" }, m_hooks);
 		if (!enabled.launched || enabled.timedOut || enabled.exitCode != 0) {
 			return Terminal(EManagementOperationStatus::Failed,
 				ProcessDiagnostic(enabled, L"Developer SENP extension could not be enabled"));
@@ -1076,14 +1205,14 @@ ManagementOperationResult CWin32SenpManagementService::InstallBuiltInPackage(
 		}
 	}
 	std::wstring diagnostic;
-	const auto staged = StageBuiltInPackage(*builtIn, m_installRoot, diagnostic);
+	const auto staged = StageBuiltInPackage(*builtIn, m_installRoot, diagnostic, m_hooks);
 	if (!staged) return Terminal(EManagementOperationStatus::Failed, std::move(diagnostic));
 	const auto installed = RunTool({
 		L"install-builtin", staged->path.native(), m_installRoot, staged->hash,
-	});
+	}, m_hooks);
 	std::error_code ignored;
 	std::filesystem::remove(staged->path, ignored);
-	if (!installed.launched || installed.timedOut || installed.exitCode != 0) {
+	if (!installed.launched || installed.timedOut || installed.exitCode != 0 || installed.outputTruncated) {
 		return Terminal(EManagementOperationStatus::Failed,
 			ProcessDiagnostic(installed, L"Built-in SENP package was rejected"));
 	}
@@ -1125,7 +1254,7 @@ ManagementOperationResult CWin32SenpManagementService::UninstallBuiltInPackage(
 	}
 	const auto uninstalled = RunTool({
 		L"uninstall-builtin", m_installRoot, std::wstring(extensionId), archiveSha256,
-	});
+	}, m_hooks);
 	if (!uninstalled.launched || uninstalled.timedOut || uninstalled.exitCode != 0) {
 		return Terminal(EManagementOperationStatus::Failed,
 			ProcessDiagnostic(uninstalled, L"Built-in SENP extension could not be uninstalled"));
