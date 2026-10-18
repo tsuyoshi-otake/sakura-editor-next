@@ -45,11 +45,17 @@ struct SenpTextResourceStore::Impl {
 		TextResourceState state{ TextResourceState::Loading };
 		TextResourceEnd end{ TextResourceEnd::None };
 	};
+	struct OwnerUsage final {
+		std::size_t resources{}, allocated{};
+	};
+	using OwnerKey = std::pair<std::string, std::string>;
 	std::map<std::wstring, Entry, std::less<>> entries;
+	std::map<OwnerKey, OwnerUsage> owners;
 	const std::uint64_t instance{ NextStoreId() };
 	std::uint64_t next{ 1 };
 	std::size_t bytes{}, allocated{};
 	bool closed{};
+	static OwnerKey Key(const TextResourceScope& scope) { return { scope.profileId, scope.extensionId }; }
 	auto Find(const TextResourceScope& scope, std::wstring_view handle) noexcept {
 		auto entry = entries.find(handle);
 		return entry != entries.end() && entry->second.scope == scope ? entry : entries.end();
@@ -61,6 +67,11 @@ struct SenpTextResourceStore::Impl {
 	}
 	void Clear(Entry& entry) noexcept {
 		bytes -= entry.size; allocated -= entry.pages.size() * kChunkBytes;
+		const auto owner = owners.find(Key(entry.scope));
+		if (owner != owners.end()) {
+			owner->second.allocated -= entry.pages.size() * kChunkBytes;
+			if (!owner->second.resources && !owner->second.allocated) owners.erase(owner);
+		}
 		entry.pages.clear(); entry.size = 0;
 	}
 };
@@ -74,8 +85,13 @@ TextResourceCreated SenpTextResourceStore::Create(TextResourceScope scope)
 	if (!Valid(scope)) return {};
 	if (self.entries.size() == kResources || self.next == (std::numeric_limits<std::uint64_t>::max)())
 		return { TextResourceResult::LimitReached, {} };
+	// The owner node is an allocation too: prepare it before any counter moves.
+	auto owner = self.owners.find(Impl::Key(scope));
+	if (owner == self.owners.end()) owner = self.owners.emplace(Impl::Key(scope), Impl::OwnerUsage{}).first;
+	if (owner->second.resources == kOwnerResources) return { TextResourceResult::LimitReached, {} };
 	TextResourceCreated result{ TextResourceResult::Accepted, L"text:" + std::to_wstring(self.instance) + L":" + std::to_wstring(self.next++) };
 	self.entries.emplace(result.handle, Impl::Entry{ std::move(scope) });
+	++owner->second.resources;
 	return result;
 }
 TextResourceResult SenpTextResourceStore::Append(const TextResourceScope& scope, std::wstring_view handle,
@@ -91,7 +107,9 @@ TextResourceResult SenpTextResourceStore::Append(const TextResourceScope& scope,
 	if (bytes.empty() || bytes.size() > kChunkBytes) return TextResourceResult::Invalid;
 	const auto pages = (entry.size + bytes.size() + kChunkBytes - 1) / kChunkBytes;
 	const auto additional = pages - entry.pages.size();
-	if (bytes.size() > kResourceBytes - entry.size || additional * kChunkBytes > kTotalBytes - self.allocated) {
+	const auto owner = self.owners.find(Impl::Key(scope));
+	if (bytes.size() > kResourceBytes - entry.size || additional * kChunkBytes > kTotalBytes - self.allocated
+		|| owner == self.owners.end() || additional * kChunkBytes > kOwnerBytes - owner->second.allocated) {
 		Impl::Finish(entry, TextResourceEnd::LimitExceeded); return TextResourceResult::LimitReached;
 	}
 	// Prepare all allocations before changing bytes or ownership counters.
@@ -109,6 +127,7 @@ TextResourceResult SenpTextResourceStore::Append(const TextResourceScope& scope,
 		consumed += count;
 	}
 	entry.size += bytes.size(); self.bytes += bytes.size(); self.allocated += additional * kChunkBytes;
+	owner->second.allocated += additional * kChunkBytes;
 	return TextResourceResult::Accepted;
 }
 TextResourceResult SenpTextResourceStore::Finish(const TextResourceScope& scope, std::wstring_view handle, TextResourceEnd end)
@@ -161,11 +180,14 @@ TextResourceResult SenpTextResourceStore::Release(const TextResourceScope& scope
 	if (self.closed) return TextResourceResult::Closed;
 	auto found = self.Find(scope, handle);
 	if (found == self.entries.end()) return TextResourceResult::NotFound;
+	const auto owner = self.owners.find(Impl::Key(scope));
+	if (owner != self.owners.end() && owner->second.resources) --owner->second.resources;
+	// Clear erases the owner node once both counters reach zero.
 	self.Clear(found->second); self.entries.erase(found); return TextResourceResult::Accepted;
 }
 void SenpTextResourceStore::Close() noexcept
 {
-	auto& self = *m_impl; self.closed = true; self.entries.clear(); self.bytes = 0; self.allocated = 0;
+	auto& self = *m_impl; self.closed = true; self.entries.clear(); self.owners.clear(); self.bytes = 0; self.allocated = 0;
 }
 TextResourceUsage SenpTextResourceStore::Usage() const noexcept
 {
@@ -203,8 +225,9 @@ TextDecodedChunk SenpTextResourceDecoder::Decode(std::size_t offset, std::string
 		if (point == '\r') point = '\n';
 		if (point < 0x20 && point != '\n' && point != '\t') point += 0x2400;
 		else if (point == 0x7f) point = 0x2421;
-		else if ((point >= 0x80 && point <= 0x9f) || point == 0x200e || point == 0x200f
-			|| (point >= 0x202a && point <= 0x202e) || (point >= 0x2066 && point <= 0x2069)) point = 0xfffd;
+		else if ((point >= 0x80 && point <= 0x9f) || point == 0x61c || point == 0x200e || point == 0x200f
+			|| (point >= 0x202a && point <= 0x202e) || (point >= 0x2066 && point <= 0x2069)
+			|| point == 0x2028 || point == 0x2029) point = 0xfffd;
 		if (point <= 0xffff) result.text.push_back(static_cast<wchar_t>(point));
 		else { point -= 0x10000; result.text.push_back(static_cast<wchar_t>(0xd800 + (point >> 10)));
 			result.text.push_back(static_cast<wchar_t>(0xdc00 + (point & 0x3ff))); }

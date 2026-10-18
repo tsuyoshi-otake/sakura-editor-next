@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 use wasmtime::component::{Component, Linker};
-use wasmtime::{Config, Engine, Store, StoreLimitsBuilder};
+use wasmtime::{Config, Engine, Store};
 
 struct EpochClock {
     stop: Arc<AtomicBool>,
@@ -60,11 +60,7 @@ impl Runtime {
         let engine = Engine::new(&config)?;
         let component = Component::from_binary(&engine, &bytes)?;
         let linker = Linker::new(&engine);
-        let limits = StoreLimitsBuilder::new()
-            .memory_size(32 * 1024 * 1024)
-            .instances(1)
-            .tables(4)
-            .build();
+        let limits = super::guest_limits::GuestLimits::default();
         let mut store = Store::new(&engine, super::HostState { limits });
         store.limiter(|state| &mut state.limits);
         store.set_fuel(super::call_fuel(0))?;

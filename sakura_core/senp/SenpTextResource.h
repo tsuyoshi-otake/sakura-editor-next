@@ -46,6 +46,8 @@ public:
 	static constexpr std::size_t kResourceBytes = 32 * 1024 * 1024;
 	static constexpr std::size_t kTotalBytes = 64 * 1024 * 1024;
 	static constexpr std::size_t kResources = 64;
+	static constexpr std::size_t kOwnerResources = 16;
+	static constexpr std::size_t kOwnerBytes = 32 * 1024 * 1024;
 	SenpTextResourceStore();
 	~SenpTextResourceStore();
 	SenpTextResourceStore(const SenpTextResourceStore&) = delete;

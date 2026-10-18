@@ -44,7 +44,7 @@ nativeのpendingと受取待ちcompletionの合計も16件。要求キューは4
 `sakura-senp-host --component <path> --component-sha256 <sha256>`は既存v1を選ぶ。
 末尾の`--protocol 2`だけが[専用v2 dispatcher](../rust/senp/sakura_senp_host/src/runtime_v2.rs)を選ぶ。
 受信JSONからv1/v2を推測しない。SHA-256を照合した同じcomponent byteをWasmtimeへ渡し、WASIを付けない。
-Wasm memoryは32 MiB、fuelは1,000万、epochは10 msごと・20 ticks。
+Wasm memoryは合計32 MiB（memory数4、table数4、table要素合計1,048,576、instance 1のaggregate上限）、fuelは1,000万、epochは10 msごと・20 ticks。
 instantiateにもWasm実行が含まれるため、epoch clockはinstantiateより先に開始して失敗時もjoinする。
 WITからliftしたhost値とコンパイルのメモリ・時間はWasm Storeの制限だけでは覆えないため、
 G03bのnative jobとIPC期限が追加の所有者になる。
@@ -346,6 +346,7 @@ U04はRust peer fixtureを含む90 focused tests、3,780件のruntime inventory�
 profile、extension、package digest、grant、owner/workspace/account generation、revisionを
 全操作で一致させる。opaque handleだけでは認可にならず、brokerはgrantの現在の有効性も確認する。
 64 KiB固定pageを使い、1 resource 32 MiB、Control内64 MiBの割当payload、64 handleで有界にする。
+1 owner（profileId+extensionId）あたりは16 handle・32 MiB割当までで、超過はそのownerのみLimitReached/LimitExceededになる。
 offsetは単調増加し、1回のappend/readは64 KiB以下。1 byteずつ受け取ってもchunkごとのmetadataを増やさない。
 allocationは状態commit前に準備し、例外時のprefixを保持する。callerがFinishとproducer停止を所有する。
 上限では別resourceを暗黙evictせず、受理済みprefixをPartial/LimitExceededとして残す。

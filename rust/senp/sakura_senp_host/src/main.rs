@@ -9,9 +9,12 @@ use std::thread;
 use std::time::Duration;
 
 use wasmtime::component::{Component, Linker};
-use wasmtime::{Config, Engine, Store, StoreLimits, StoreLimitsBuilder};
+use wasmtime::{Config, Engine, Store};
 
+mod guest_limits;
 mod runtime_v2;
+
+use guest_limits::GuestLimits;
 
 wasmtime::component::bindgen!({
     path: "../wit/senp-extension.wit",
@@ -99,7 +102,7 @@ struct OutputSlot {
 }
 
 struct HostState {
-    limits: StoreLimits,
+    limits: GuestLimits,
 }
 
 struct Runtime {
@@ -122,11 +125,7 @@ impl Runtime {
         let engine = Engine::new(&config)?;
         let component = Component::from_binary(&engine, &component_bytes)?;
         let linker = Linker::new(&engine);
-        let limits = StoreLimitsBuilder::new()
-            .memory_size(32 * 1024 * 1024)
-            .instances(1)
-            .tables(4)
-            .build();
+        let limits = GuestLimits::default();
         let mut store = Store::new(&engine, HostState { limits });
         store.limiter(|state| &mut state.limits);
         store.set_fuel(call_fuel(0))?;

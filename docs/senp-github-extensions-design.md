@@ -116,7 +116,7 @@ Close/owner失効、CEditDoc/undo保持とnative選択/scroll/focusを`SenpReado
 Save Allは全working copyを扱うWorkbenchへ渡し、readonly inputの保存とは分ける。
 U04は既存native Markdown previewのworkerへ構造化本文を接続し、metadata/tableを文字列のまま描画する。
 script・command linkは実行せず、local/remote画像は権限未定義のためblockedにする。
-U05は64 KiB chunk、32 MiB/resource、Control内64 MiBのmemory-only storeとnative readonly textを提供する。
+U05は64 KiB chunk、32 MiB/resource、Control内64 MiBのmemory-only storeとnative readonly textを提供する。1 owner（profileId+extensionId）あたり16 resource・32 MiB割当の上限を持つ。
 UTF-8の継続decode、文字選択、検索、コピー、partial/失効を検証する。
 U06途中でtext-section routingは`SenpReadonlyDocumentHost`へ接続した。隣接する構造化sectionと
 broker-authorized text resourceを1つのreadonly input内でnative pageとして保持し、page selectorは
@@ -579,10 +579,10 @@ Stepの一覧と状態はJobs APIの`steps`が根拠。
 | 待機要求 | 全体64、拡張ownerごと16。上限はBusy、UI入力threadを待たせない |
 | 通常要求 / ログ / login | queue待ち・retry込み30秒 / 120秒 / 10分 |
 | JSON / stderr / IPC frame | 1応答4 MiB / 64 KiB / 4 MiB。header・envelope分も上限内 |
-| TextResource | 64 KiB chunk、1job 32 MiB、Control全体64 MiB。初回はmemoryのみ |
+| TextResource | 64 KiB chunk、1job 32 MiB、Control全体64 MiB、1 owner 16 handle/32 MiB割当。初回はmemoryのみ |
 | Tree | 1page 50項目、1View 2,000項目、深さ16。上限時は明示的に絞込みへ誘導 |
 | host/session | v2 host最大4、ownerごと1。非表示で未使用のhostを停止し、使用中ならBusy |
-| Wasm | 1call 200 ms/fuel制限、memory 64 MiBを初期値。DTO検証後の取り込みもbudget内 |
+| Wasm | 1call 200 ms/fuel制限、memory合計32 MiB（4 memory/4 table/要素合計1,048,576/instance 1）。DTO検証後の取り込みもbudget内 |
 | gh子processのmemory | 1job 256 MiB、同時総量512 MiBを初期値。内部bufferにも上限を掛け、超過はResourceLimitExceeded |
 | 応答cache | Control全体32 MiBのLRU、JSONのみ。private本文・ログを初回は永続化しない |
 

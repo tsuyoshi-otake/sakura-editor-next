@@ -45,6 +45,7 @@ Rust peer fixture読取を含む90 testsと3,780件のruntime inventory照合が
 3テーマ・3 DPIのvisibility/resize/scroll/refresh計216描画試行が合格し、再描画差分・capture欠落・process残存は0。
 U05のchunk本文・native検索/コピーも実装。owner/grant/revisionごとのmemory-only storeは
 64 KiB chunk、32 MiB/resource、Control内64 MiBの割当上限を持ち、partial/失効を区別する。
+1 owner（profileId+extensionId）あたり16 handle・32 MiB割当の上限も持つ。
 60 focused tests、同一binaryの別名実行26件（32 MiB本文一致を含む）、3,807件のinventoryが合格。
 450描画試行の再描画差分は最大0.00309%で、非ゼロは本文外の丸い角だけだった。
 schema 2は引き続きUnsupportedRuntimeで、実composition接続と状態永続化はU06の工程。

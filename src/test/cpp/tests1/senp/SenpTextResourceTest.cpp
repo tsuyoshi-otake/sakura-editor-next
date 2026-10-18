@@ -111,15 +111,20 @@ TEST(SenpTextResource, ResourceLimitPreservesOnlyTheAcceptedPrefixAndRequiresPro
 }
 TEST(SenpTextResource, TotalBudgetCountsAllocatedPagesAndNeverEvictsAnotherReader)
 {
-	SenpTextResourceStore store; const auto scope = Scope(); const auto first = store.Create(scope).handle;
-	const auto second = store.Create(scope).handle; const auto third = store.Create(scope).handle;
+	SenpTextResourceStore store; const auto scope = Scope();
+	auto scopeB = Scope(); scopeB.extensionId = "sakura.github-pull-requests";
+	auto scopeC = Scope(); scopeC.extensionId = "sakura.senp-sample";
+	// Two owners at their 32 MiB quotas together fill the global 64 MiB pool.
+	const auto first = store.Create(scope).handle;
+	const auto second = store.Create(scopeB).handle; const auto third = store.Create(scopeC).handle;
 	const std::string chunk(SenpTextResourceStore::kChunkBytes, 'x');
-	for (const auto& id : { first, second })
-		for (std::size_t offset = 0; offset < SenpTextResourceStore::kResourceBytes; offset += chunk.size())
-			ASSERT_EQ(store.Append(scope, id, offset, chunk), TextResourceResult::Accepted);
+	for (std::size_t offset = 0; offset < SenpTextResourceStore::kResourceBytes; offset += chunk.size())
+		ASSERT_EQ(store.Append(scope, first, offset, chunk), TextResourceResult::Accepted);
+	for (std::size_t offset = 0; offset < SenpTextResourceStore::kResourceBytes; offset += chunk.size())
+		ASSERT_EQ(store.Append(scopeB, second, offset, chunk), TextResourceResult::Accepted);
 	EXPECT_EQ(store.Usage().allocatedBytes, SenpTextResourceStore::kTotalBytes);
-	EXPECT_EQ(store.Append(scope, third, 0, "x"), TextResourceResult::LimitReached);
-	EXPECT_EQ(store.Read(scope, third, 0, 1).state, TextResourceState::Failed);
+	EXPECT_EQ(store.Append(scopeC, third, 0, "x"), TextResourceResult::LimitReached);
+	EXPECT_EQ(store.Read(scopeC, third, 0, 1).state, TextResourceState::Failed);
 	EXPECT_EQ(store.Read(scope, first, 0, 1).bytes, "x");
 	EXPECT_EQ(store.Expire(scope, first), TextResourceResult::Expired);
 	EXPECT_EQ(store.Usage().allocatedBytes, SenpTextResourceStore::kResourceBytes);
@@ -135,8 +140,18 @@ TEST(SenpTextResource, ExpiryErasesPrivateBytesAndCloseReclaimsAllSlots)
 	const auto expired = store.Read(scope, id, 7, 1);
 	EXPECT_EQ(expired.result, TextResourceResult::Expired); EXPECT_EQ(expired.state, TextResourceState::Expired);
 	EXPECT_TRUE(expired.bytes.empty()); EXPECT_EQ(expired.length, 0u); EXPECT_EQ(store.Usage().bytes, 0u);
-	for (std::size_t i = 1; i < SenpTextResourceStore::kResources; ++i) ASSERT_EQ(store.Create(scope).result, TextResourceResult::Accepted);
+	// The expired handle counts against the owner's 16 live slots until Release.
+	for (std::size_t i = 1; i < SenpTextResourceStore::kOwnerResources; ++i)
+		ASSERT_EQ(store.Create(scope).result, TextResourceResult::Accepted);
 	EXPECT_EQ(store.Create(scope).result, TextResourceResult::LimitReached);
+	// Four owners at their caps fill the global pool; the next is refused.
+	for (const auto* suffix : { "-b", "-c", "-d" }) {
+		auto other = Scope(); other.extensionId += suffix;
+		for (std::size_t i = 0; i < SenpTextResourceStore::kOwnerResources; ++i)
+			ASSERT_EQ(store.Create(other).result, TextResourceResult::Accepted);
+	}
+	auto foreign = Scope(); foreign.extensionId += "-e";
+	EXPECT_EQ(store.Create(foreign).result, TextResourceResult::LimitReached);
 	store.Close(); store.Close(); EXPECT_TRUE(store.Usage().closed); EXPECT_EQ(store.Usage().resources, 0u);
 	EXPECT_EQ(store.Create(scope).result, TextResourceResult::Closed);
 	EXPECT_EQ(store.Read(scope, id, 0, 1).result, TextResourceResult::Closed);
@@ -194,6 +209,95 @@ TEST(SenpTextResource, ControlsAnsiOscAndBidiCannotPerformActionsAndNewlinesNorm
 		ASSERT_EQ(part.result, TextDecodeResult::Accepted); output += part.text;
 	}
 	EXPECT_EQ(output, L"a\nb\nc\n\t\u2400\u241b]52;c;c2VjcmV0\u2407\u241b[31m\u2421\ufffd\ufffd");
+}
+TEST(SenpTextResource, ArabicMarkAndLineSeparatorsAreReplacedAndBomZeroWidthSurvive)
+{
+	SenpTextResourceDecoder decoder;
+	const std::string input = "\xd8\x9c\xe2\x80\xa8\xe2\x80\xa9\xef\xbb\xbf\xe2\x80\x8b";
+	const auto part = decoder.Decode(0, input, true);
+	ASSERT_EQ(part.result, TextDecodeResult::Accepted);
+	EXPECT_EQ(part.text, L"\ufffd\ufffd\ufffd\ufeff\u200b");
+}
+TEST(SenpTextResource, ArabicMarkIsReplacedEvenWhenSplitAcrossChunks)
+{
+	SenpTextResourceDecoder decoder;
+	ASSERT_EQ(decoder.Decode(0, "\xd8", false).result, TextDecodeResult::Accepted);
+	const auto part = decoder.Decode(1, "\x9c", true);
+	ASSERT_EQ(part.result, TextDecodeResult::Accepted);
+	EXPECT_EQ(part.text, L"\ufffd");
+}
+TEST(SenpTextResource, OwnerQuotaBoundsOneOwnerWithoutStarvingOthers)
+{
+	SenpTextResourceStore store;
+	auto ownerA = Scope();
+	auto ownerB = Scope(); ownerB.extensionId = "sakura.github-pull-requests";
+	const std::string chunk(SenpTextResourceStore::kChunkBytes, 'x');
+	// Owner A fills its 32 MiB allocated quota across two resources.
+	for (int resource = 0; resource < 2; ++resource) {
+		const auto id = store.Create(ownerA).handle;
+		for (std::size_t offset = 0; offset < 16 * 1024 * 1024; offset += chunk.size())
+			ASSERT_EQ(store.Append(ownerA, id, offset, chunk), TextResourceResult::Accepted);
+	}
+	// A third resource's first append exceeds the owner quota; B is unaffected.
+	const auto thirdA = store.Create(ownerA).handle;
+	EXPECT_EQ(store.Append(ownerA, thirdA, 0, "x"), TextResourceResult::LimitReached);
+	EXPECT_EQ(store.Read(ownerA, thirdA, 0, 1).end, TextResourceEnd::LimitExceeded);
+	const auto b = store.Create(ownerB).handle;
+	for (std::size_t offset = 0; offset < 1024 * 1024; offset += chunk.size())
+		ASSERT_EQ(store.Append(ownerB, b, offset, chunk), TextResourceResult::Accepted);
+	// Sixteen live entries per owner; the seventeenth is refused per owner.
+	while (store.Create(ownerA).result == TextResourceResult::Accepted) {}
+	while (store.Create(ownerB).result == TextResourceResult::Accepted) {}
+	EXPECT_EQ(store.Create(ownerA).result, TextResourceResult::LimitReached);
+	EXPECT_EQ(store.Create(ownerB).result, TextResourceResult::LimitReached);
+	// The global pool still caps across owners: two more owners fill it to 64.
+	auto ownerC = Scope(); ownerC.extensionId = "sakura.senp-sample";
+	auto ownerD = Scope(); ownerD.extensionId = "sakura.indent-rainbow";
+	while (store.Create(ownerC).result == TextResourceResult::Accepted) {}
+	while (store.Create(ownerD).result == TextResourceResult::Accepted) {}
+	// A fifth owner with zero entries is refused by the global cap alone.
+	auto ownerE = Scope(); ownerE.extensionId = "sakura.projects";
+	EXPECT_EQ(store.Create(ownerE).result, TextResourceResult::LimitReached);
+	// Releasing one of A's entries frees exactly one slot for A.
+	EXPECT_EQ(store.Release(ownerA, thirdA), TextResourceResult::Accepted);
+	EXPECT_EQ(store.Create(ownerA).result, TextResourceResult::Accepted);
+}
+TEST(SenpTextResource, OwnerAccountingReturnsToZeroAfterFullRelease)
+{
+	SenpTextResourceStore store;
+	auto ownerA = Scope();
+	auto ownerB = Scope(); ownerB.extensionId = "sakura.github-pull-requests";
+	std::vector<std::wstring> handles;
+	for (int i = 0; i < 16; ++i) {
+		const auto id = store.Create(i % 2 ? ownerB : ownerA).handle;
+		ASSERT_FALSE(id.empty()); handles.push_back(id);
+		ASSERT_EQ(store.Append(i % 2 ? ownerB : ownerA, id, 0, "x"), TextResourceResult::Accepted);
+	}
+	for (std::size_t i = 0; i < handles.size(); ++i)
+		EXPECT_EQ(store.Release(i % 2 ? ownerB : ownerA, handles[i]), TextResourceResult::Accepted);
+	const auto usage = store.Usage();
+	EXPECT_EQ(usage.resources, 0u); EXPECT_EQ(usage.bytes, 0u); EXPECT_EQ(usage.allocatedBytes, 0u);
+	// The owner's own counters returned too: A again gets its whole 32 MiB and 16 slots.
+	const std::string chunk(SenpTextResourceStore::kChunkBytes, 'x');
+	const auto full = store.Create(ownerA).handle;
+	for (std::size_t offset = 0; offset < SenpTextResourceStore::kOwnerBytes; offset += chunk.size())
+		ASSERT_EQ(store.Append(ownerA, full, offset, chunk), TextResourceResult::Accepted);
+	for (std::size_t i = 1; i < SenpTextResourceStore::kOwnerResources; ++i)
+		ASSERT_EQ(store.Create(ownerA).result, TextResourceResult::Accepted);
+	EXPECT_EQ(store.Create(ownerA).result, TextResourceResult::LimitReached);
+}
+TEST(SenpTextResource, OwnerIsTheProfileAndExtensionPair)
+{
+	// The same extension in another profile is another owner; a grant change is the same owner.
+	SenpTextResourceStore store;
+	const auto owner = Scope();
+	auto otherProfile = Scope(); otherProfile.profileId = "profile-2";
+	auto otherGrant = Scope(); otherGrant.grantId = "grant:10"; otherGrant.ownerGeneration = 5;
+	for (std::size_t i = 0; i < SenpTextResourceStore::kOwnerResources; ++i)
+		ASSERT_EQ(store.Create(i % 2 ? otherGrant : owner).result, TextResourceResult::Accepted);
+	EXPECT_EQ(store.Create(owner).result, TextResourceResult::LimitReached);
+	EXPECT_EQ(store.Create(otherGrant).result, TextResourceResult::LimitReached);
+	EXPECT_EQ(store.Create(otherProfile).result, TextResourceResult::Accepted);
 }
 TEST(SenpTextResource, DecoderRejectsStaleAndOversizedInputWithoutConsumingAndEnforcesTheTotalBound)
 {

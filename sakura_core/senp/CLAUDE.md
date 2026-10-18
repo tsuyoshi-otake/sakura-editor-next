@@ -129,8 +129,32 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   only that worker performs host I/O. Both pipe directions use OVERLAPPED I/O
   under one absolute frame deadline; cancellation drains kernel completion
   before freeing its buffers. The job enforces a 512 MiB process memory cap
-  in addition to Wasm Store limits, active-process limit 1 and kill-on-close,
+  in addition to the Wasm Store limits, active-process limit 1 and kill-on-close,
   all through the shared `senp::ConfigureChildJob` below.
+  Store limits are the aggregate `GuestLimits`
+  (`rust/senp/sakura_senp_host/src/guest_limits.rs`, shared by the v1 and v2
+  hosts): the SUM of all linear memories against 32 MiB, at most 4 memories,
+  4 tables, a SUM of 1,048,576 table elements and 1 instance, each still
+  honouring the declared type maximum. Shipped built-ins, the sample and the
+  test fixture all carry exactly one core memory (17-18 min pages) and one
+  table (36-106 elements, min == max); the headroom covers a WASI adapter
+  memory. Approved charges are never refunded: the failure callbacks carry no
+  size, and wasmtime 49.0.2 also calls them WITHOUT a preceding approval
+  (`table_grow_failed` on an overflowing table size,
+  `src/runtime/vm/table.rs:642-647`; `memory_grow_failed` only for 1-byte-page
+  memories, `src/runtime/vm/memory.rs:643-648`), so a refund keyed to the last
+  approval would hand back an earlier grant and could be repeated -
+  over-counting after a post-approval OS failure is fail-closed. Denied growth
+  keeps the
+  `Ok(false)` mapping (`memory.grow` returns -1, the guest then traps into the
+  existing GuestFailed path); `trap_on_grow_failure` stays off.
+  Host-side lifting of guest `list<...>` results (e.g. `activate`/`on-event`
+  returning `list<effect>`) cannot be bounded before `MAX_ITEMS`/`MAX_EFFECTS`
+  in wasmtime 49.0.2 - bindgen lifts the whole list into a host Vec before any
+  host code runs, and the `ResourceLimiter` trait has no lift hook. That lift
+  amplification is bounded only by the 512 MiB job cap, which terminates that
+  owner's host (`HostUnavailable`) without affecting other owners; a WIT-level
+  chunked-return design is the fix if it ever becomes necessary.
   Do not reuse v1's synchronous writer for v2. Stop requests cancellation;
   Join serializes the sole thread join and also requests Stop. Process/worker
   exit observations are distinct from a requested stop. No automatic restart.
@@ -712,12 +736,22 @@ immediately and does not wait on its status.
 
 Append accepts the next byte offset and at most 64 KiB. Fixed 64 KiB pages bound
 one resource to 32 MiB and the Control store to 64 MiB of allocated payload pages,
-including unused tails, with at most 64 resource slots. Pages and their index
-grow amortized O(B); byte-sized appends do not allocate per-chunk metadata.
-Allocation is prepared before committing bytes/counters. Allocation exceptions
-leave the previous prefix intact and require the caller to Finish and stop its
-producer. Every limit/failure/cancel/expiry requires physical producer cleanup
-by the broker; the store never owns or retries a process, download or timer.
+including unused tails, with at most 64 resource slots. Each owner
+(`profileId` + `extensionId`) may additionally hold at most 16 live resources
+and 32 MiB allocated; exceeding the owner quota returns LimitReached for that
+owner only and finishes the entry LimitExceeded exactly like the global path.
+An entry counts toward the owner's 16 until Release/Close - Expired tombstones
+still count, matching `kResources`; production never calls Expire, and
+`CSenpGitHubToolExecutor::Release(ScopeState&)` releases every handle of a
+revoked scope, so a restarted generation is not starved. Bytes are refunded in
+`Clear` (which Expire already calls), and an owner's map node is erased once
+both counters return to zero. Pages and their index grow amortized O(B);
+byte-sized appends do not allocate per-chunk metadata. Every allocation
+(including the owner map node) is prepared before committing bytes/counters.
+Allocation exceptions leave the previous prefix intact and require the caller
+to Finish and stop its producer. Every limit/failure/cancel/expiry requires
+physical producer cleanup by the broker; the store never owns or retries a
+process, download or timer.
 
 Loading, Complete, Partial, Failed and Expired are separate states. A resource
 limit retains its accepted prefix with LimitExceeded, without evicting another
@@ -727,9 +761,16 @@ expired handles so tombstones cannot exhaust the bounded registration pool.
 
 `SenpTextResourceDecoder` performs strict incremental UTF-8 decoding in O(B),
 retaining at most three bytes. It normalizes CR/LF across chunk boundaries and
-makes control, ANSI/OSC and bidi-format input inert. A malformed or truncated
-scalar rejects the current chunk and closes the decoder. The consumer owns text
-storage and indexing; neither decoder nor store reparses earlier content.
+makes control, ANSI/OSC and bidi-format input inert: C1 controls, LRM/RLM,
+bidi embeddings/overrides/isolates, U+061C (ARABIC LETTER MARK) and
+U+2028/U+2029 are replaced with U+FFFD - the log view is a Rich Edit control
+that breaks paragraphs on the two separators, so a guest could forge visible
+lines otherwise (VS Code likewise treats them as unusual line terminators).
+U+FEFF, zero-width characters, tag characters and U+FFFE are deliberately left
+unchanged: they neither reorder nor forge lines, and rewriting them would only
+corrupt legitimate text. A malformed or truncated scalar rejects the current
+chunk and closes the decoder. The consumer owns text storage and indexing;
+neither decoder nor store reparses earlier content.
 
 Verify `SenpTextResource.*`, including actual 32/64 MiB allocations and every
 authorization dimension. U06 owns native publication; T02/T08 still own live
