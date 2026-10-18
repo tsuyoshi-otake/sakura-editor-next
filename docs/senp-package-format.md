@@ -293,7 +293,8 @@ codicon を名前で描くため、`icon` は小文字の `$(codicon)` 形式
 (`[a-z0-9-]` のみ)である必要があります。`$(Refresh)` のように大文字を
 含む ThemeIcon は codicon 名として存在しないため、`pack` と install が
 拒否します。`view/item/context` の action は小文字の codicon か
-package 相対の icon path (`assets` 相当の `.svg`/`.png`)を受け付けます。
+package 相対の icon path(`.svg` か `.png` で終わる 260 バイト以下の相対 path。
+各 segment は英数字と `.`・`_`・`-` だけで、`.` と `..` は使えません)を受け付けます。
 command の `icon` 自体は menu に配置されない限り緩い ThemeIcon 規則で
 受理されますが、menu に置く時点で厳しい規則が適用されます。
 
@@ -452,8 +453,9 @@ JSON object を出力し、行の先頭 member は `kind` で `installed` また
 `invalid` です。1 件の profile state entry に閉じた失敗(読めない・過大・
 不正な state JSON、trust/署名の不整合、欠損・破損した content directory、
 state と manifest の id 不一致、symlink entry、per-line budget 超過)は、
-`{"kind":"invalid","id":<検証できた id または空>,"trust":<既知なら>,"code":
-<SenpError code 文字列>,"message":<bounded>}` という invalid row になり、
+`{"kind":"invalid","id":<検証できた id または空>,"trust":<既知なら>,
+"state":<`profiles/` の state ファイル名>,"code":<SenpError code の camelCase
+文字列（例: `outputTooLarge`）>,"message":<bounded>}` という invalid row になり、
 command 全体は失敗しません。install root 全体の失敗(root の reparse
 point、`profiles/` が読めない、`MAX_ENTRIES` 超過、uninstalled state の読み
 取り失敗)は従来どおり command を失敗させます。行の budget は C++ decoder の

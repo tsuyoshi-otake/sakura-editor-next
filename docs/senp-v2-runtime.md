@@ -44,7 +44,7 @@ nativeのpendingと受取待ちcompletionの合計も16件。要求キューは4
 `sakura-senp-host --component <path> --component-sha256 <sha256>`は既存v1を選ぶ。
 末尾の`--protocol 2`だけが[専用v2 dispatcher](../rust/senp/sakura_senp_host/src/runtime_v2.rs)を選ぶ。
 受信JSONからv1/v2を推測しない。SHA-256を照合した同じcomponent byteをWasmtimeへ渡し、WASIを付けない。
-Wasm memoryは合計32 MiB（memory数4、table数4、table要素合計1,048,576、instance 1のaggregate上限）、fuelは1,000万、epochは10 msごと・20 ticks。
+Wasm memoryは合計32 MiB（memory数4、table数4、table要素合計1,048,576、instance 1のaggregate上限）、fuelは1呼び出しあたり基本1,000万に、その呼び出しが運ぶpayload 1 byteにつき1,024を加えた値、epochは10 msごと・20 ticks。
 instantiateにもWasm実行が含まれるため、epoch clockはinstantiateより先に開始して失敗時もjoinする。
 WITからliftしたhost値とコンパイルのメモリ・時間はWasm Storeの制限だけでは覆えないため、
 G03bのnative jobとIPC期限が追加の所有者になる。
@@ -62,7 +62,7 @@ parent側はOVERLAPPED付きのローカルbyte pipeを使用する。読取り�
 束ね、部分frameのたびに期限を延ばさない。handshakeとactivation応答はcold-start予算
 （既定30秒、launchで注入可）を使い、通常の交換は最も早い受理済みinvocationのdeadline
 （<= 10秒）に従う。pending中のinvocationがないframe（ackやDeactivate）はguestを呼ばないため、
-pipe I/Oだけを覆う1秒の固定上限を持つ。各waitはbounded slice（既定10秒、launchで注入可）に
+pipe I/Oだけを覆う1秒の固定上限を持つ。pipe I/Oの各waitはbounded slice（既定10秒、launchで注入可）に
 分割して絶対deadlineまで繰り返し、INFINITEは渡さない。終了処理は250 msの猶予を使う。
 取消や期限切れでのI/O失敗はsession全体を終了し、他の受理済み要求も明示的な失敗にする。
 待機中はevent/process handleを待ち、idle pollingや自動再起動を行わない。
