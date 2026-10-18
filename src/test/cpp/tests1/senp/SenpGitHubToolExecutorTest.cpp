@@ -1284,3 +1284,48 @@ TEST(SenpGitHubToolExecutor, StartsOnlyTheTwoOperationsThisToolNames)
 	ASSERT_TRUE(fixture.Executor().WaitForIdle(kIdleTimeoutMilliseconds));
 	EXPECT_FALSE(fixture.Executor().TakeCompleted(scope));
 }
+
+/*!
+	@brief A page over the body's byte limit completes as too large, not invalid.
+
+	The reader's strict parse refuses an over-limit 200 body before building
+	any DOM, so the completion the guest sees names the real cause - the output
+	limit - rather than a syntax error the page never had.
+*/
+TEST(SenpGitHubToolExecutor, AnOversizedPageCompletesAsOutputLimitExceeded)
+{
+	Fixture fixture;
+	constexpr auto limit = kMaximumRepositoryPageBodyBytes;
+	std::string body = "[";
+	while (body.size() < limit + limit / 2) body += R"({"id":1,"title":"a"},)";
+	body.back() = ']';
+	fixture.CredentialValue().Set(
+		"HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n\r\n" + body);
+	const auto completed = fixture.Fetch(Scope(), IssueList());
+	ASSERT_TRUE(completed);
+	EXPECT_EQ(effect::CompletionStatus::Failed, completed->status);
+	EXPECT_EQ(L"output-limit-exceeded", completed->message);
+	EXPECT_FALSE(fixture.Executor().TakeCompleted(Scope()));
+}
+
+/*!
+	@brief A page under the byte limit that breaks a parser bound is too large.
+
+	A 600 KiB-class body can still exceed the parser's node bound. That is the
+	page being more than this boundary can hold, not the page being malformed,
+	so it completes with the same token an over-limit capture would.
+*/
+TEST(SenpGitHubToolExecutor, APageOverTheNodeLimitCompletesAsOutputLimitExceeded)
+{
+	Fixture fixture;
+	std::string body = "[";
+	for (std::size_t index = 0; index < 65540; ++index) body += "0,";
+	body += "0]";
+	ASSERT_LT(body.size(), kMaximumRepositoryPageBodyBytes);
+	fixture.CredentialValue().Set(
+		"HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n\r\n" + body);
+	const auto completed = fixture.Fetch(Scope(), IssueList());
+	ASSERT_TRUE(completed);
+	EXPECT_EQ(effect::CompletionStatus::Failed, completed->status);
+	EXPECT_EQ(L"output-limit-exceeded", completed->message);
+}

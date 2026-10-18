@@ -1037,9 +1037,10 @@ void CSenpGitHubToolExecutor::Execute(const GhReadDispatch& dispatch)
 	page.currentPage = response.CurrentPage();
 	page.nextPage = response.NextPage();
 	page.etag = response.ETag();
-	if (response.Body().size() > MaximumPageBytes()) {
-		page.status = GhRepositoryResponseStatus::OutputLimitExceeded;
-	} else if (response.Status() == GhRepositoryResponseStatus::Succeeded) {
+	// A Succeeded body is already within kMaximumRepositoryPageBodyBytes - the
+	// reader's strict parse refuses anything larger as OutputLimitExceeded, so
+	// no size check lives here.
+	if (response.Status() == GhRepositoryResponseStatus::Succeeded) {
 		page.body.assign(response.Body().begin(), response.Body().end());
 	}
 	// The terminal and the page it answers for become visible together, under

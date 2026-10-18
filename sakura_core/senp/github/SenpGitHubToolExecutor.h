@@ -98,8 +98,6 @@ public:
 	[[nodiscard]] static constexpr std::size_t MaximumScopes() noexcept { return 32; }
 	[[nodiscard]] static constexpr std::size_t MaximumReadsPerScope() noexcept { return 32; }
 	[[nodiscard]] static constexpr std::size_t MaximumResourcesPerScope() noexcept { return 8; }
-	//! A page larger than this is refused instead of being cached or published.
-	[[nodiscard]] static constexpr std::size_t MaximumPageBytes() noexcept { return 2u * 1024u * 1024u; }
 	/*!
 		@brief Largest body one completion may carry.
 

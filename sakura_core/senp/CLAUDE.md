@@ -239,6 +239,39 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   activation policy), required `draft`/`display_title`, the Actions
   `run_attempt` match (#296 requires rejecting another attempt's response), and
   GitHub Enterprise Server is out of scope for the first release.
+- The repository read path owns one page-body bound (#349):
+  `kMaximumRepositoryPageBodyBytes` in `GhRepositoryRead.h` equals the strict
+  parser's `kMaximumInputBytes` (1 MiB), because there is no streaming parser.
+  `CGhRepositoryReader` parses the 200 body in place; the parser itself refuses
+  an over-limit body as `InputTooLarge` before building any DOM, and the reader
+  maps every parser resource diagnostic (`InputTooLarge`,
+  `MaximumDepth/Nodes/StringLength/KeyLengthExceeded`) to `OutputLimitExceeded`
+  while syntax errors stay `InvalidJson`. (`MaximumStringLengthExceeded` cannot
+  occur here: a string over 1 Mi UTF-16 units does not fit in a 1 MiB body. It
+  is mapped so the switch stays exhaustive.) The `gh api --include` capture is
+  bounded at body limit + a 64 KiB header allowance (`kReadOutputBytes`), and a
+  process `OutputLimitExceeded` is typed through instead of degrading to
+  `Failed`. The executor adds no second size check: a `Succeeded` body is
+  already within the bound, so a resource-limit refusal inside
+  `ProjectRepositoryPage` is unreachable and the projection keeps returning
+  `std::optional<std::string>`.
+- Transient memory of that path, measured 2026-10-18 in Debug with a
+  per-thread `_CrtSetAllocHook`
+  (`GhPageProjection.OnePageProjectionPeaksUnderAMeasuredHeapCeiling`). The
+  scheduler's 64 account lanes are queues, not threads: every `gh` read runs
+  on the executor's single worker, and every projection runs under its state
+  mutex when a completion is taken, so a Control process holds at most one
+  read parse and one projection at a time. On a page just under 1 MiB, an
+  `issues` list peaks inside the parse at 7,995,694 B (7.65x body) for both
+  `ParseStrict` and the projection. An `issue` whose body string fills the
+  page parses at 4,258,096 B and projects at 6,477,392 B (6.20x); releasing the
+  source DOM before serializing lowered that from 9,033,245 B, and the test's
+  ceiling fails a projection that keeps both trees. Worst case per Control
+  process: one read (capture 1,114,112 + envelope body 1,048,576 + parse
+  7,995,694) + one projection 7,995,694 + the page cache
+  (`MaximumCachedPages()` 8 x 1,048,576) = 26,542,684 B, about 25.3 MiB.
+  The capture bound has no test: the credential seam does not record the
+  output limit it is given.
 - A schema-2 tree page's `revision` is the provider's version of ONE parent's
   listing: the first page and every page appended through its cursors publish
   the same value, on success and on failure, and a later listing may keep or

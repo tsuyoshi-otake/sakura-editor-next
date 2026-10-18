@@ -6,12 +6,19 @@
 
 #include "senp/github/GhConnectionLifecycle.h"
 
+#include <sakura/serialization/JsoncDocument.h>
+
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
 
 namespace senp::github {
+
+//! Largest page body a read can succeed with: the strict parser admits no
+//! more, and this boundary has no streaming parser - one DOM per read lane.
+inline constexpr std::size_t kMaximumRepositoryPageBodyBytes
+	= platform::serialization::CJsoncDocument::kMaximumInputBytes;
 
 enum class GhRepositoryResponseStatus : std::uint8_t {
 	Succeeded,

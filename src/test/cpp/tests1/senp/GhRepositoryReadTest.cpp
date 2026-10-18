@@ -4,6 +4,7 @@
 #include "senp/github/GhRepositoryRead.h"
 
 #include <memory>
+#include <string>
 #include <tuple>
 
 namespace {
@@ -297,4 +298,79 @@ TEST(GhRepositoryRead, PreservesTimeoutCancelAndOutputLimitWithoutPublishingBody
 		EXPECT_EQ(expected, result.Status());
 		EXPECT_TRUE(result.Body().empty());
 	}
+}
+
+TEST(GhRepositoryRead, ABodyOverThePageLimitIsTooLargeNotInvalidJson)
+{
+	// A valid JSON array roughly half again over the strict parser's input
+	// limit. The body is well-formed, so the only honest answer is that it is
+	// too large - reporting it as invalid JSON would misstate what failed.
+	constexpr auto limit = kMaximumRepositoryPageBodyBytes;
+	std::string body = "[";
+	while (body.size() < limit + limit / 2) body += R"({"id":1,"title":"a"},)";
+	body.back() = ']';
+	Fixture fixture;
+	fixture.CredentialValue().Set(EBoundedProcessStatus::Succeeded,
+		"HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n\r\n" + body);
+	auto account = fixture.Account();
+	const auto result = fixture.Reader().Read(account, fixture.Probe(), Request(), nullptr);
+	EXPECT_EQ(GhRepositoryResponseStatus::OutputLimitExceeded, result.Status());
+	EXPECT_TRUE(result.Body().empty());
+}
+
+TEST(GhRepositoryRead, ABodyOfExactlyTheLimitStillSucceeds)
+{
+	// The bound is exclusive: one array of one string sized to the byte is a
+	// page the parser admits, and the reader must not refuse its own boundary.
+	constexpr auto limit = kMaximumRepositoryPageBodyBytes;
+	std::string body = "[\"";
+	body.append(limit - 4, 'a');
+	body += "\"]";
+	ASSERT_EQ(limit, body.size());
+	Fixture fixture;
+	fixture.CredentialValue().Set(EBoundedProcessStatus::Succeeded,
+		"HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n\r\n" + body);
+	auto account = fixture.Account();
+	const auto result = fixture.Reader().Read(account, fixture.Probe(), Request(), nullptr);
+	EXPECT_EQ(GhRepositoryResponseStatus::Succeeded, result.Status());
+	EXPECT_EQ(body.size(), result.Body().size());
+}
+
+TEST(GhRepositoryRead, AParserResourceLimitIsTooLargeNotInvalidJson)
+{
+	// Each body parses far enough to hit a parser resource bound - node count,
+	// depth, key length - which is the page being too large, not the page being
+	// malformed. A small body that is simply broken stays InvalidJson. A string
+	// over the parser's 1 Mi-unit bound cannot fit inside the 1 MiB body bound,
+	// so that diagnostic has no body here.
+	std::string nodes = "[";
+	for (std::size_t index = 0; index < 65540; ++index) nodes += "0,";
+	nodes += "0]";
+	ASSERT_LT(nodes.size(), kMaximumRepositoryPageBodyBytes);
+	const std::string depth(80, '[');
+	for (const auto& [body, expected] : std::vector<std::pair<std::string, GhRepositoryResponseStatus>>{
+		{ nodes, GhRepositoryResponseStatus::OutputLimitExceeded },
+		{ depth + std::string(80, ']'), GhRepositoryResponseStatus::OutputLimitExceeded },
+		{ "{\"" + std::string(70000, 'k') + "\":1}", GhRepositoryResponseStatus::OutputLimitExceeded },
+		{ "{", GhRepositoryResponseStatus::InvalidJson },
+	}) {
+		Fixture fixture;
+		fixture.CredentialValue().Set(EBoundedProcessStatus::Succeeded,
+			"HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n\r\n" + body);
+		auto account = fixture.Account();
+		EXPECT_EQ(expected, fixture.Reader().Read(account, fixture.Probe(), Request(), nullptr).Status());
+	}
+}
+
+TEST(GhRepositoryRead, ATruncatedCaptureIsOutputLimitExceededNotFailure)
+{
+	// A capture that hit the process output bound can still leave a parseable
+	// header block over a cut body; what ran out is the capture, not the read.
+	Fixture fixture;
+	fixture.CredentialValue().Set(EBoundedProcessStatus::OutputLimitExceeded,
+		"HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n\r\n[1,2");
+	auto account = fixture.Account();
+	const auto result = fixture.Reader().Read(account, fixture.Probe(), Request(), nullptr);
+	EXPECT_EQ(GhRepositoryResponseStatus::OutputLimitExceeded, result.Status());
+	EXPECT_TRUE(result.Body().empty());
 }

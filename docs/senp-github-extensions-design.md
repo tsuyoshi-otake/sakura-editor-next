@@ -578,7 +578,7 @@ Stepの一覧と状態はJobs APIの`steps`が根拠。
 | gh process | Control全体2本まで、同じhost/accountのAPI readは1本。loginも総数に含む |
 | 待機要求 | 全体64、拡張ownerごと16。上限はBusy、UI入力threadを待たせない |
 | 通常要求 / ログ / login | queue待ち・retry込み30秒 / 120秒 / 10分 |
-| JSON / stderr / IPC frame | 1応答4 MiB / 64 KiB / 4 MiB。header・envelope分も上限内 |
+| JSON / stderr / IPC frame | 1応答のJSON body 1 MiB（strict parserの上限。gh captureはbody上限+header分64 KiB。超過とparserの資源上限はOutputLimitExceeded）/ 64 KiB / 4 MiB |
 | TextResource | 64 KiB chunk、1job 32 MiB、Control全体64 MiB、1 owner 16 handle/32 MiB割当。初回はmemoryのみ |
 | Tree | 1page 50項目、1View 2,000項目、深さ16。上限時は明示的に絞込みへ誘導 |
 | host/session | v2 host最大4、ownerごと1。非表示で未使用のhostを停止し、使用中ならBusy |

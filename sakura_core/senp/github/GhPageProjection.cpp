@@ -22,7 +22,7 @@ namespace {
 using platform::serialization::CJsoncDocument;
 using platform::serialization::JsoncValue;
 
-struct ProjectionField;
+class ProjectionField;
 using ProjectionFields = std::span<const ProjectionField>;
 
 /*!
@@ -278,16 +278,22 @@ std::optional<std::string> ProjectRepositoryPage(const std::wstring_view shape, 
 try {
 	const auto* projection = FindShape(shape);
 	if (!projection) return std::nullopt;
-	const auto parsed = CJsoncDocument::ParseStrict(body);
+	auto parsed = CJsoncDocument::ParseStrict(body);
 	if (!parsed.Succeeded()) return std::nullopt;
 	// A response is one object or one list of them. Anything else is not the
 	// shape's answer, and projecting it would state a structure it never had.
 	const auto& value = parsed.value->Value();
 	if (!std::holds_alternative<JsoncValue::Object>(value)
 		&& !std::holds_alternative<JsoncValue::Array>(value)) return std::nullopt;
+	// The source DOM is done once the projected value exists. Releasing it
+	// before serializing keeps it apart from the serializer's copies, which
+	// is the peak for a page dominated by one long string the shape keeps
+	// (GhPageProjection.OnePageProjectionPeaksUnderAMeasuredHeapCeiling).
+	auto projectedValue = Project(*parsed.value, projection->Fields());
+	parsed.value.reset();
 	std::string projected;
 	projected.reserve(body.size() / 8);
-	if (!Serialize(Project(*parsed.value, projection->Fields()), projected)) return std::nullopt;
+	if (!Serialize(projectedValue, projected)) return std::nullopt;
 	return projected;
 } catch (const std::exception&) {
 	return std::nullopt;

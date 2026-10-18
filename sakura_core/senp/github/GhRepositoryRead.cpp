@@ -18,7 +18,11 @@ namespace senp::github {
 namespace {
 
 constexpr std::uint32_t kReadTimeoutMilliseconds = 30000;
-constexpr std::size_t kReadOutputBytes = 4u * 1024u * 1024u;
+// `gh api --include` output is the body plus one status line and the headers;
+// the capture bound is the page-body limit plus this named header allowance.
+constexpr std::size_t kReadHeaderAllowanceBytes = 64u * 1024u;
+constexpr std::size_t kReadOutputBytes
+	= kMaximumRepositoryPageBodyBytes + kReadHeaderAllowanceBytes;
 constexpr std::size_t kReadErrorBytes = 64u * 1024u;
 constexpr std::size_t kMaximumHeaderBytes = 64u * 1024u;
 
@@ -245,6 +249,32 @@ GhRepositoryResponse Terminal(const GhRepositoryResponseStatus status, const std
 	return { status, 0, {}, std::nullopt, page, std::nullopt };
 }
 
+//! Whether a parse diagnostic is the page exceeding a resource bound rather
+//! than being malformed. A body already under the byte limit can still run
+//! out of nodes, depth or a string/key allowance; every such refusal is the
+//! page being too large for this boundary, and anything else is bad JSON.
+bool IsParserResourceLimit(const platform::serialization::EJsoncDiagnosticCode code) noexcept
+{
+	using platform::serialization::EJsoncDiagnosticCode;
+	switch (code) {
+	case EJsoncDiagnosticCode::InputTooLarge:
+	case EJsoncDiagnosticCode::MaximumDepthExceeded:
+	case EJsoncDiagnosticCode::MaximumNodesExceeded:
+	case EJsoncDiagnosticCode::MaximumStringLengthExceeded:
+	case EJsoncDiagnosticCode::MaximumKeyLengthExceeded:
+		return true;
+	case EJsoncDiagnosticCode::None:
+	case EJsoncDiagnosticCode::InvalidUtf8:
+	case EJsoncDiagnosticCode::UnexpectedToken:
+	case EJsoncDiagnosticCode::UnexpectedEndOfInput:
+	case EJsoncDiagnosticCode::InvalidEscape:
+	case EJsoncDiagnosticCode::InvalidNumber:
+	case EJsoncDiagnosticCode::DuplicateKey:
+		return false;
+	}
+	return false;
+}
+
 } // namespace
 
 GhRepositoryResponse::GhRepositoryResponse(const GhRepositoryResponseStatus status, const int httpStatus,
@@ -282,6 +312,12 @@ try {
 	}
 	const auto outcome = account.Credential().RunAuthenticated(prepared.Arguments(),
 		kReadTimeoutMilliseconds, kReadOutputBytes, kReadErrorBytes, stop);
+	// A capture cut at the output bound can still carry a well-formed header
+	// block; what ran out is the capture, so it reports the limit regardless of
+	// how much of the envelope survived.
+	if (outcome.Status() == platform::process::EBoundedProcessStatus::OutputLimitExceeded) {
+		return Terminal(GhRepositoryResponseStatus::OutputLimitExceeded, page);
+	}
 	auto envelope = ParseEnvelope(outcome.StandardOutput());
 	if (!envelope) {
 		return Terminal(outcome.Status() == platform::process::EBoundedProcessStatus::Succeeded
@@ -307,10 +343,18 @@ try {
 	if (!envelope->HasJsonContent()) {
 		return { GhRepositoryResponseStatus::InvalidEnvelope, 200, {}, envelope->Etag(), page, std::nullopt };
 	}
-	const std::string body(reinterpret_cast<const char*>(envelope->Body().data()), envelope->Body().size());
+	// The strict parser owns the byte bound: it refuses a body over
+	// kMaximumRepositoryPageBodyBytes as InputTooLarge before building any DOM.
+	// That and every other parser resource limit mean the page is too large;
+	// only malformed JSON is invalid.
+	const auto& bodyBytes = envelope->Body();
+	const std::string_view body(reinterpret_cast<const char*>(bodyBytes.data()), bodyBytes.size());
 	const auto parsed = platform::serialization::CJsoncDocument::ParseStrict(body);
 	if (!parsed.Succeeded()) {
-		return { GhRepositoryResponseStatus::InvalidJson, 200, {}, envelope->Etag(), page, std::nullopt };
+		const auto code = parsed.diagnostic ? parsed.diagnostic->code
+			: platform::serialization::EJsoncDiagnosticCode::None;
+		return { IsParserResourceLimit(code) ? GhRepositoryResponseStatus::OutputLimitExceeded
+			: GhRepositoryResponseStatus::InvalidJson, 200, {}, envelope->Etag(), page, std::nullopt };
 	}
 	const auto& value = parsed.value->Value();
 	if (!std::holds_alternative<platform::serialization::JsoncValue::Object>(value)
