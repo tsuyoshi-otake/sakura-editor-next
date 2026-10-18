@@ -85,7 +85,10 @@ std::wstring CurrentDirectory()
 TEST(GhToolPolicyEnvironmentChild, ObservesTheSanitizedProcessEnvironment)
 {
 	if (::GetEnvironmentVariableW(kEnvironmentChildRole, nullptr, 0) == 0) return;
-	if (::GetEnvironmentVariableW(kEnvironmentSecret, nullptr, 0) != 0) ::ExitProcess(9);
+	for (const wchar_t* name : { kEnvironmentSecret, L"CLICOLOR_FORCE", L"GIT_DIR",
+		L"GIT_CONFIG_COUNT", L"GIT_CONFIG_PARAMETERS" }) {
+		if (::GetEnvironmentVariableW(name, nullptr, 0) != 0) ::ExitProcess(9);
+	}
 }
 
 TEST(GhToolPolicy, ReportsMissingMalformedAndUnsupportedVersionsExplicitly)
@@ -141,7 +144,10 @@ TEST(GhToolPolicy, BuildsOneFixedRestGetWithoutShellOrAmbientGithubSelectors)
 		L"repos/octo-org/octo-repo/issues/42/comments" }), invocation.Arguments());
 	for (const auto name : { L"GH_TOKEN", L"GITHUB_TOKEN", L"GH_ENTERPRISE_TOKEN", L"GITHUB_ENTERPRISE_TOKEN",
 		L"GH_HOST", L"GH_REPO", L"GH_DEBUG", L"DEBUG", L"GH_PAGER", L"PAGER", L"GH_BROWSER", L"BROWSER",
-		L"GH_FORCE_TTY", L"GH_HTTP_UNIX_SOCKET", L"GH_CONFIG_DIR", L"GH_EDITOR", L"GIT_EDITOR", L"VISUAL", L"EDITOR" }) {
+		L"GH_FORCE_TTY", L"GH_HTTP_UNIX_SOCKET", L"GH_CONFIG_DIR", L"GH_EDITOR", L"GIT_EDITOR", L"VISUAL", L"EDITOR",
+		L"CLICOLOR_FORCE", L"CLICOLOR", L"NO_COLOR", L"GIT_DIR", L"GIT_WORK_TREE", L"GIT_CONFIG",
+		L"GIT_CONFIG_GLOBAL", L"GIT_CONFIG_SYSTEM", L"GIT_CONFIG_NOSYSTEM", L"GIT_CONFIG_COUNT",
+		L"GIT_CONFIG_PARAMETERS" }) {
 		EXPECT_TRUE(ContainsName(invocation.EnvironmentRemovals(), name)) << testing::PrintToString(name);
 	}
 	EXPECT_EQ((std::vector<std::pair<std::wstring, std::wstring>>{
@@ -208,15 +214,24 @@ TEST(GhToolPolicy, RequiresAnAvailableProbeAndPreservesEveryProcessTerminal)
 TEST(GhToolPolicy, BoundedRunnerRemovesAmbientNamesCaseInsensitively)
 {
 	ASSERT_TRUE(::SetEnvironmentVariableW(kEnvironmentSecret, L"must-not-cross-boundary"));
+	ASSERT_TRUE(::SetEnvironmentVariableW(L"CLICOLOR_FORCE", L"1"));
+	ASSERT_TRUE(::SetEnvironmentVariableW(L"GIT_DIR", L"C:\\elsewhere"));
+	ASSERT_TRUE(::SetEnvironmentVariableW(L"GIT_CONFIG_COUNT", L"1"));
+	ASSERT_TRUE(::SetEnvironmentVariableW(L"GIT_CONFIG_PARAMETERS", L"'gh.some=x'"));
 	platform::process::BoundedProcessRequest request(CurrentExecutable(), CurrentDirectory(), {
 		L"--gtest_filter=GhToolPolicyEnvironmentChild.ObservesTheSanitizedProcessEnvironment",
 		L"--gtest_color=no",
 	});
 	request.SetEnvironmentOverrides({ { kEnvironmentChildRole, L"1" } });
-	request.SetEnvironmentRemovals({ L"sakura_gh_policy_ambient_secret" });
+	auto removals = GhAmbientEnvironmentRemovals();
+	removals.push_back(L"sakura_gh_policy_ambient_secret");
+	request.SetEnvironmentRemovals(std::move(removals));
 	request.SetTimeoutMilliseconds(3000);
 	const auto result = platform::process::RunBoundedProcess(request, nullptr);
-	ASSERT_TRUE(::SetEnvironmentVariableW(kEnvironmentSecret, nullptr));
+	for (const wchar_t* name : { kEnvironmentSecret, L"CLICOLOR_FORCE", L"GIT_DIR",
+		L"GIT_CONFIG_COUNT", L"GIT_CONFIG_PARAMETERS" }) {
+		ASSERT_TRUE(::SetEnvironmentVariableW(name, nullptr));
+	}
 	EXPECT_EQ(EBoundedProcessStatus::Succeeded, result.Status());
 	EXPECT_EQ(0, result.ExitCode());
 }

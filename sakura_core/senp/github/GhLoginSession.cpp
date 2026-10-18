@@ -15,17 +15,6 @@ constexpr std::uint32_t kLoginTimeoutMilliseconds = 5u * 60u * 1000u;
 constexpr std::size_t kLoginOutputBytes = 64u * 1024u;
 constexpr std::size_t kLoginErrorBytes = 64u * 1024u;
 
-const std::vector<std::wstring>& RemovedEnvironment()
-{
-	static const std::vector<std::wstring> values{
-		L"GH_TOKEN", L"GITHUB_TOKEN", L"GH_ENTERPRISE_TOKEN", L"GITHUB_ENTERPRISE_TOKEN",
-		L"GH_HOST", L"GH_REPO", L"GH_DEBUG", L"DEBUG", L"GH_PAGER", L"PAGER",
-		L"GH_BROWSER", L"BROWSER", L"GH_FORCE_TTY", L"GH_HTTP_UNIX_SOCKET",
-		L"GH_EDITOR", L"GIT_EDITOR", L"VISUAL", L"EDITOR",
-	};
-	return values;
-}
-
 bool IsHostname(const std::wstring_view value) noexcept
 {
 	if (value.empty() || value.size() > 253 || value.front() == L'.' || value.back() == L'.') return false;
@@ -167,10 +156,12 @@ try {
 		m_state->storageNotice.clear();
 	}
 	auto observer = std::make_shared<LoginOutputObserver>(m_state, operation, epoch);
+	const std::vector<std::pair<std::wstring, std::wstring>> overrides{
+		{ L"GH_CONFIG_DIR", m_configurationDirectory }, { L"GH_NO_UPDATE_NOTIFIER", L"1" },
+		{ L"GH_SPINNER_DISABLED", L"1" } };
 	GhProcessInvocation invocation(probe.ExecutablePath(), m_workingDirectory,
 		{ L"auth", L"login", L"--hostname", hostname, L"--web", L"--skip-ssh-key" },
-		{ { L"GH_CONFIG_DIR", m_configurationDirectory }, { L"GH_NO_UPDATE_NOTIFIER", L"1" },
-			{ L"GH_SPINNER_DISABLED", L"1" } }, RemovedEnvironment(), kLoginTimeoutMilliseconds,
+		overrides, GhAmbientEnvironmentRemovalsExcept(overrides), kLoginTimeoutMilliseconds,
 		kLoginOutputBytes, kLoginErrorBytes, observer);
 	const auto outcome = m_platform->Run(invocation, stop);
 	auto terminal = OutcomeTerminal(outcome.Status());

@@ -2,6 +2,7 @@
 /* Copyright (C) 2026, Sakura Editor Organization. SPDX-License-Identifier: Zlib */
 #include "StdAfx.h"
 #include "senp/github/GhRepositorySelection.h"
+#include "senp/github/GhText.h"
 #include "workbench/worktree/GitWorktreePorcelainParser.h"
 
 #include <algorithm>
@@ -15,12 +16,6 @@ namespace {
 
 constexpr std::size_t kMaximumRoots = 64, kMaximumRemotes = 64;
 constexpr std::size_t kMaximumGitOutput = 256u * 1024u;
-
-bool EqualInsensitive(std::wstring_view left, std::wstring_view right) noexcept
-{
-	return left.size() == right.size() && ::CompareStringOrdinal(left.data(), static_cast<int>(left.size()),
-		right.data(), static_cast<int>(right.size()), TRUE) == CSTR_EQUAL;
-}
 
 std::optional<std::wstring> Utf8(std::string_view bytes)
 {
@@ -127,7 +122,7 @@ GhRemoteCandidate ParseRemote(std::wstring name, std::wstring url)
 	if (!IsRepoPart(owner) || !IsRepoPart(repository)) {
 		return { std::move(name), std::move(url), GhRemoteKind::Malformed };
 	}
-	if (sshAlias && !EqualInsensitive(host, L"github.com")) {
+	if (sshAlias && !EqualsInsensitive(host, L"github.com")) {
 		return { std::move(name), std::move(url), GhRemoteKind::UnresolvedSshAlias };
 	}
 	return { std::move(name), std::move(url), GhRemoteKind::GitHub,
@@ -360,7 +355,7 @@ try {
 		if (github.empty()) return { GhRepositorySelectionStatus::NoGitHubRemote };
 		const auto first = github.front();
 		const bool distinct = std::ranges::any_of(github, [first](const auto* item) {
-			return !EqualInsensitive(item->Hostname(), first->Hostname())
+			return !EqualsInsensitive(item->Hostname(), first->Hostname())
 				|| item->Owner() != first->Owner() || item->Repository() != first->Repository();
 		});
 		if (distinct) return { GhRepositorySelectionStatus::MultipleRepositories };

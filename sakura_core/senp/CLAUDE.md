@@ -420,9 +420,24 @@ absolute PATH entries, accepts the measured `2.93.0` contract exactly, and
 constructs either `--version` or one fixed `gh api --method GET --include`
 invocation. Repository identity and path segments are validated separately;
 extensions never provide flags, cwd, stdin, headers, executable paths, or
-environment values. Ambient GitHub tokens, repository/host selectors, debug,
-pager, browser, editor, forced-TTY, socket, and config-directory overrides are
-removed in the bounded child environment. `CGhConnectionLifecycle` owns the
+environment values. `GhAmbientEnvironmentRemovals()` in `GhToolPolicy` is the
+single owner of the ambient-name scrub list every gh child applies: GitHub
+tokens, host/repository selectors, debug, pager, browser, editor, forced-TTY,
+socket, config-directory and colour routing, plus inherited git configuration
+(`GIT_DIR`, `GIT_CONFIG*` and friends; removing `GIT_CONFIG_COUNT` neutralizes
+the `GIT_CONFIG_KEY/VALUE_<n>` pairs git reads only under it). The
+policy/read, connection-lifecycle and login-session invocation builders all
+use it, subtracting the names each invocation overrides itself via
+`GhAmbientEnvironmentRemovalsExcept`, because the bounded runner rejects a
+request that both overrides and removes one name. A repository read whose
+request hostname is not the authenticated account's own host (ordinal
+case-insensitive, after remote parsing lowercases it) is refused as
+`InvalidRequest`: `CSenpGitHubToolExecutor::StartRead` fails fast so the guest
+sees the refusal synchronously, and `CGhRepositoryReader::Read` enforces the
+same comparison before `PrepareRepositoryRead`, the boundary that actually
+launches gh — matching the check the job-log path already made. The shared
+ordinal comparison lives in `GhText.h` (`EqualsInsensitive`); do not add
+file-local copies again. `CGhConnectionLifecycle` owns the
 T04 account candidate. An initial snapshot stays Unknown until a complete
 `gh auth status --json hosts` check proves authentication is absent. The
 selected account is pinned to an explicit profile config directory; its token

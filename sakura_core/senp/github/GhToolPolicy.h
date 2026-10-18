@@ -157,6 +157,18 @@ private:
 	std::vector<std::uint8_t> m_standardOutput, m_standardError;
 };
 
+//! The single ambient-name scrub list every gh child environment applies:
+//! credentials, host/repository selectors, debug, pager, browser, editor,
+//! forced-TTY, socket, config-directory and colour routing, plus inherited git
+//! configuration. Removing GIT_CONFIG_COUNT neutralizes the GIT_CONFIG_KEY/VALUE
+//! pairs git reads only under it, so no wildcard support is needed.
+[[nodiscard]] const std::vector<std::wstring>& GhAmbientEnvironmentRemovals();
+
+//! The scrub list minus the names one invocation overrides itself: the bounded
+//! runner rejects a request that both overrides and removes one name.
+[[nodiscard]] std::vector<std::wstring> GhAmbientEnvironmentRemovalsExcept(
+	const std::vector<std::pair<std::wstring, std::wstring>>& overrides);
+
 //! Build the exact process request an invocation runs as, so a caller and a test
 //! can ask whether the runner would accept it without launching anything.
 [[nodiscard]] platform::process::BoundedProcessRequest BuildBoundedProcessRequest(

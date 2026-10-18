@@ -224,6 +224,18 @@ TEST(GhRepositoryRead, RejectsMalformedEnvelopeContentTypeAndJsonRoot)
 	}
 }
 
+TEST(GhRepositoryRead, RefusesAReadForAHostOtherThanTheAccountsOwn)
+{
+	// The account was verified against github.com; a request naming another
+	// host must be refused before gh is ever launched for it.
+	Fixture fixture;
+	auto account = fixture.Account();
+	const auto refused = fixture.Reader().Read(account, fixture.Probe(),
+		{ L"evil.example", L"owner", L"repo", { L"issues" } }, nullptr);
+	EXPECT_EQ(GhRepositoryResponseStatus::InvalidRequest, refused.Status());
+	EXPECT_TRUE(fixture.CredentialValue().Arguments().empty());
+}
+
 TEST(GhRepositoryRead, PreservesTimeoutCancelAndOutputLimitWithoutPublishingBody)
 {
 	for (const auto [status, expected] : {

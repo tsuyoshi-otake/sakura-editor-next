@@ -2,6 +2,7 @@
 /* Copyright (C) 2026, Sakura Editor Organization. SPDX-License-Identifier: Zlib */
 #include "StdAfx.h"
 #include "senp/github/GhToolPolicy.h"
+#include "senp/github/GhText.h"
 #include "platform/process/WindowsExecutableResolver.h"
 
 #include <algorithm>
@@ -26,17 +27,6 @@ const std::vector<std::pair<std::wstring, std::wstring>>& FixedEnvironment()
 		{ L"GH_PROMPT_DISABLED", L"1" },
 		{ L"GH_NO_UPDATE_NOTIFIER", L"1" },
 		{ L"GH_SPINNER_DISABLED", L"1" },
-	};
-	return values;
-}
-
-const std::vector<std::wstring>& RemovedEnvironment()
-{
-	static const std::vector<std::wstring> values{
-		L"GH_TOKEN", L"GITHUB_TOKEN", L"GH_ENTERPRISE_TOKEN", L"GITHUB_ENTERPRISE_TOKEN",
-		L"GH_HOST", L"GH_REPO", L"GH_DEBUG", L"DEBUG", L"GH_PAGER", L"PAGER",
-		L"GH_BROWSER", L"BROWSER", L"GH_FORCE_TTY", L"GH_HTTP_UNIX_SOCKET", L"GH_CONFIG_DIR",
-		L"GH_EDITOR", L"GIT_EDITOR", L"VISUAL", L"EDITOR",
 	};
 	return values;
 }
@@ -240,10 +230,37 @@ GhProcessInvocation Invocation(std::wstring executable, std::wstring workingDire
 	const std::size_t outputLimit, const std::size_t errorLimit)
 {
 	return { std::move(executable), std::move(workingDirectory), std::move(arguments),
-		FixedEnvironment(), RemovedEnvironment(), timeout, outputLimit, errorLimit };
+		FixedEnvironment(), GhAmbientEnvironmentRemovals(), timeout, outputLimit, errorLimit };
 }
 
 } // namespace
+
+const std::vector<std::wstring>& GhAmbientEnvironmentRemovals()
+{
+	static const std::vector<std::wstring> values{
+		L"GH_TOKEN", L"GITHUB_TOKEN", L"GH_ENTERPRISE_TOKEN", L"GITHUB_ENTERPRISE_TOKEN",
+		L"GH_HOST", L"GH_REPO", L"GH_DEBUG", L"DEBUG", L"GH_PAGER", L"PAGER",
+		L"GH_BROWSER", L"BROWSER", L"GH_FORCE_TTY", L"GH_HTTP_UNIX_SOCKET", L"GH_CONFIG_DIR",
+		L"GH_EDITOR", L"GIT_EDITOR", L"VISUAL", L"EDITOR",
+		L"CLICOLOR_FORCE", L"CLICOLOR", L"NO_COLOR",
+		L"GIT_DIR", L"GIT_WORK_TREE", L"GIT_CONFIG", L"GIT_CONFIG_GLOBAL",
+		L"GIT_CONFIG_SYSTEM", L"GIT_CONFIG_NOSYSTEM", L"GIT_CONFIG_COUNT",
+		L"GIT_CONFIG_PARAMETERS",
+	};
+	return values;
+}
+
+std::vector<std::wstring> GhAmbientEnvironmentRemovalsExcept(
+	const std::vector<std::pair<std::wstring, std::wstring>>& overrides)
+{
+	std::vector<std::wstring> values;
+	for (const auto& name : GhAmbientEnvironmentRemovals()) {
+		const bool overridden = std::ranges::any_of(overrides,
+			[&name](const auto& entry) { return EqualsInsensitive(entry.first, name); });
+		if (!overridden) values.push_back(name);
+	}
+	return values;
+}
 
 GhToolVersion::GhToolVersion(const std::uint32_t major, const std::uint32_t minor,
 	const std::uint32_t patch) noexcept : m_major(major), m_minor(minor), m_patch(patch) {}

@@ -2,6 +2,7 @@
 /* Copyright (C) 2026, Sakura Editor Organization. SPDX-License-Identifier: Zlib */
 #include "StdAfx.h"
 #include "senp/github/GhRepositoryRead.h"
+#include "senp/github/GhText.h"
 
 #include <sakura/serialization/JsoncDocument.h>
 
@@ -242,6 +243,13 @@ GhRepositoryResponse CGhRepositoryReader::Read(GhAuthenticatedAccount& account,
 	const GhToolProbe& probe, const GhRepositoryReadRequest& request, HANDLE stop) const
 try {
 	const auto page = CurrentPage(request);
+	// The remote parser admits any https:// host; a read is admitted only for
+	// the authenticated account's own host, so it can never aim gh at a host
+	// the token was not issued for. This is the same check the job-log path
+	// already makes before it builds a process.
+	if (!EqualsInsensitive(account.Identity().Hostname(), request.Hostname())) {
+		return Terminal(GhRepositoryResponseStatus::InvalidRequest, page);
+	}
 	const auto prepared = m_policy.PrepareRepositoryRead(probe, request);
 	if (prepared.Status() != GhRepositoryReadStatus::Succeeded) {
 		if (prepared.Status() == GhRepositoryReadStatus::InvalidRequest) {

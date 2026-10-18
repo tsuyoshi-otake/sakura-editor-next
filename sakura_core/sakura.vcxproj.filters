@@ -1407,6 +1407,9 @@
 	<ClInclude Include="..\sakura_core\senp\github\GhReadScheduler.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\senp\github\GhText.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
 	<ClInclude Include="..\sakura_core\senp\github\GhLogResource.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>

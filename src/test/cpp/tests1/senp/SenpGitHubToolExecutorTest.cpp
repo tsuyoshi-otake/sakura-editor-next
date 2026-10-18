@@ -127,6 +127,7 @@ public:
 	}
 	void SetLifecycle(std::shared_ptr<CGhConnectionLifecycle> lifecycle) { m_lifecycle = std::move(lifecycle); }
 	void ClearRepository() noexcept { m_repository.reset(); }
+	void SetRepository(GhSelectedRepository repository) { m_repository = std::move(repository); }
 
 	// Assertions only ever read what this fixture recorded; nothing outside the
 	// class ever sets adoptStatus or appends to adopted/withdrawn directly, so
@@ -396,6 +397,30 @@ TEST(SenpGitHubToolExecutor, PublishesOneFetchedPageAsAReadableResource)
 
 	// One terminal is drained exactly once.
 	EXPECT_FALSE(fixture.Executor().TakeCompleted(scope));
+}
+
+TEST(SenpGitHubToolExecutor, RefusesAReadForAHostOtherThanTheConnectedAccounts)
+{
+	Fixture fixture;
+	// The remote parser admits any https:// host; a workspace remote on another
+	// host must not aim gh at it with this account's token. The refusal is
+	// synchronous, the same way other invalid requests are refused here.
+	fixture.Profiles().SetRepository(GhSelectedRepository(L"repo-identity-2", L"origin",
+		L"evil.example", L"owner", L"repo"));
+	EXPECT_EQ(EControlSenpRpcStatus::InvalidRequest,
+		fixture.Executor().StartRead(Scope(), IssueList()));
+	EXPECT_TRUE(fixture.Executor().WaitForIdle(kIdleTimeoutMilliseconds));
+	EXPECT_TRUE(fixture.CredentialValue().Arguments().empty());
+
+	// The same host under different case is still the account's own host, so
+	// the host comparison admits it; the policy's own lowercase-host shape
+	// validation is what then ends that read, still without running gh.
+	fixture.Profiles().SetRepository(GhSelectedRepository(L"repo-identity-3", L"origin",
+		L"GitHub.com", L"owner", L"repo"));
+	EXPECT_EQ(EControlSenpRpcStatus::Succeeded, fixture.Executor().StartRead(Scope(),
+		{ L"issues:case", L"github", L"repositoryRead", { { L"shape", L"issues" } } }));
+	EXPECT_TRUE(fixture.Executor().WaitForIdle(kIdleTimeoutMilliseconds));
+	EXPECT_TRUE(fixture.CredentialValue().Arguments().empty());
 }
 
 TEST(SenpGitHubToolExecutor, AnswersAnItemReadInTheSameEnvelopeAsAPage)

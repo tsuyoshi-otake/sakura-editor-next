@@ -2,6 +2,7 @@
 /* Copyright (C) 2026, Sakura Editor Organization. SPDX-License-Identifier: Zlib */
 #include "StdAfx.h"
 #include "senp/github/GhConnectionLifecycle.h"
+#include "senp/github/GhText.h"
 #include "platform/process/WindowsExecutableResolver.h"
 #include <sakura/serialization/JsoncDocument.h>
 
@@ -75,12 +76,6 @@ private:
 	std::wstring m_value;
 };
 
-bool EqualsInsensitive(const std::wstring_view left, const std::wstring_view right) noexcept
-{
-	return left.size() == right.size() && ::CompareStringOrdinal(left.data(), static_cast<int>(left.size()),
-		right.data(), static_cast<int>(right.size()), TRUE) == CSTR_EQUAL;
-}
-
 bool IsHostname(const std::wstring_view value) noexcept
 {
 	if (value.empty() || value.size() > 253 || value.front() == L'.' || value.back() == L'.') return false;
@@ -152,23 +147,7 @@ GhConnectionTerminal ProcessTerminal(const platform::process::EBoundedProcessSta
 std::vector<std::wstring> RemovedEnvironment(
 	const std::vector<std::pair<std::wstring, std::wstring>>& overrides)
 {
-	static const std::vector<std::wstring> inherited{
-		L"GH_TOKEN", L"GITHUB_TOKEN", L"GH_ENTERPRISE_TOKEN", L"GITHUB_ENTERPRISE_TOKEN",
-		L"GH_HOST", L"GH_REPO", L"GH_DEBUG", L"DEBUG", L"GH_PAGER", L"PAGER",
-		L"GH_BROWSER", L"BROWSER", L"GH_FORCE_TTY", L"GH_HTTP_UNIX_SOCKET",
-		L"GH_EDITOR", L"GIT_EDITOR", L"VISUAL", L"EDITOR",
-	};
-	std::vector<std::wstring> values;
-	values.reserve(inherited.size());
-	for (const auto& name : inherited) {
-		const bool overridden = std::ranges::any_of(overrides, [&name](const auto& entry) {
-			return entry.first.size() == name.size()
-				&& ::CompareStringOrdinal(entry.first.data(), static_cast<int>(entry.first.size()),
-					name.data(), static_cast<int>(name.size()), TRUE) == CSTR_EQUAL;
-		});
-		if (!overridden) values.push_back(name);
-	}
-	return values;
+	return GhAmbientEnvironmentRemovalsExcept(overrides);
 }
 
 std::vector<std::pair<std::wstring, std::wstring>> Environment(

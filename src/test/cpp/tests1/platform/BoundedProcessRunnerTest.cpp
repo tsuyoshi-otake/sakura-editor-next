@@ -240,4 +240,22 @@ TEST(BoundedProcessRunner, RejectsMalformedRequestsBeforeLaunch)
 	EXPECT_EQ(EBoundedProcessStatus::LaunchFailed, RunBoundedProcess(missing, nullptr).Status());
 }
 
+TEST(BoundedProcessRunner, RefusesAnEnvironmentChangeListOneNameBeyondTheBound)
+{
+	auto request = ChildRequest(L"echo");
+	std::vector<std::wstring> removals;
+	// Overrides and removals share the bound; the request's own role override
+	// is one of the counted entries.
+	for (std::size_t index = request.EnvironmentOverrides().size();
+		index < kMaximumBoundedProcessEnvironmentOverrides; ++index) {
+		removals.push_back(L"SAKURA_BPR_UNUSED_" + std::to_wstring(index));
+	}
+	request.SetEnvironmentRemovals(removals);
+	EXPECT_TRUE(IsExecutableBoundedProcessRequest(request));
+	removals.push_back(L"SAKURA_BPR_ONE_TOO_MANY");
+	request.SetEnvironmentRemovals(std::move(removals));
+	EXPECT_FALSE(IsExecutableBoundedProcessRequest(request));
+	EXPECT_EQ(EBoundedProcessStatus::InvalidRequest, RunBoundedProcess(request, nullptr).Status());
+}
+
 } // namespace platform::process

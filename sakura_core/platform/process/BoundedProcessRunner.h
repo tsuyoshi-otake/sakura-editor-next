@@ -123,7 +123,10 @@ inline constexpr std::size_t kMaximumBoundedProcessArguments = 128;
 inline constexpr std::size_t kMaximumBoundedProcessArgumentLength = 32768;
 inline constexpr std::size_t kMaximumBoundedProcessCommandLineLength = 32000;
 inline constexpr std::size_t kMaximumBoundedProcessStandardInputBytes = 4u * 1024u * 1024u;
-inline constexpr std::size_t kMaximumBoundedProcessEnvironmentOverrides = 32;
+// Overrides plus removals share this one bound. The gh ambient scrub list
+// alone is 30 removals and a token-bearing call adds up to five overrides, so
+// 32 could not express a real gh invocation; 64 keeps the list a fixed bound.
+inline constexpr std::size_t kMaximumBoundedProcessEnvironmentOverrides = 64;
 inline constexpr std::size_t kMaximumBoundedProcessOutputBytes = 64u * 1024u * 1024u;
 inline constexpr std::size_t kMaximumBoundedProcessErrorBytes = 4u * 1024u * 1024u;
 

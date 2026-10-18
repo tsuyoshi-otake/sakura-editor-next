@@ -2,6 +2,7 @@
 /* Copyright (C) 2026, Sakura Editor Organization. SPDX-License-Identifier: Zlib */
 #include "StdAfx.h"
 #include "senp/github/GhLogResource.h"
+#include "senp/github/GhText.h"
 
 #include <algorithm>
 #include <span>
@@ -11,12 +12,6 @@ namespace {
 
 constexpr std::uint32_t kLogTimeoutMilliseconds = 120000;
 constexpr std::size_t kErrorBytes = 64u * 1024u;
-
-bool EqualsInsensitive(const std::wstring_view left, const std::wstring_view right) noexcept
-{
-	return left.size() == right.size() && ::CompareStringOrdinal(left.data(), static_cast<int>(left.size()),
-		right.data(), static_cast<int>(right.size()), TRUE) == CSTR_EQUAL;
-}
 
 enum class SinkFailure : std::uint8_t { None, LimitExceeded, ResourceUnavailable };
 

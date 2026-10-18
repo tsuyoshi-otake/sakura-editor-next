@@ -325,11 +325,17 @@ TEST(GhConnectionLifecycle, StatesOneThingAboutEveryEnvironmentNameATokenBearing
 	const auto& status = tool->Invocations()[1];
 	EXPECT_FALSE(HasOverride(status, L"GH_TOKEN", L"secret-token"));
 	EXPECT_TRUE(removes(status, L"GH_TOKEN"));
+	EXPECT_TRUE(removes(status, L"CLICOLOR_FORCE"));
+	EXPECT_TRUE(removes(status, L"GIT_DIR"));
+	EXPECT_TRUE(removes(status, L"GIT_CONFIG_COUNT"));
+	EXPECT_TRUE(removes(status, L"GIT_CONFIG_PARAMETERS"));
 	EXPECT_TRUE(::platform::process::IsExecutableBoundedProcessRequest(BuildBoundedProcessRequest(status)));
 	const auto& identity = tool->Invocations()[3];
 	EXPECT_TRUE(HasOverride(identity, L"GH_TOKEN", L"secret-token"));
 	EXPECT_FALSE(removes(identity, L"GH_TOKEN"));
 	EXPECT_TRUE(removes(identity, L"GITHUB_TOKEN"));
+	EXPECT_TRUE(removes(identity, L"GIT_WORK_TREE"));
+	EXPECT_TRUE(removes(identity, L"GIT_CONFIG_PARAMETERS"));
 	EXPECT_TRUE(::platform::process::IsExecutableBoundedProcessRequest(BuildBoundedProcessRequest(identity)));
 	tool->Queue({ EBoundedProcessStatus::Succeeded, 0, Bytes("{}"), {} });
 	ASSERT_TRUE(checked.Credential());

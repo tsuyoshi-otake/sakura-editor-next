@@ -128,6 +128,12 @@ bool HasOverride(const GhProcessInvocation& invocation, const std::wstring_view 
 	});
 }
 
+bool Removes(const GhProcessInvocation& invocation, const std::wstring_view name)
+{
+	return std::ranges::any_of(invocation.EnvironmentRemovals(),
+		[&](const std::wstring& entry) { return entry == name; });
+}
+
 } // namespace
 
 TEST(GhLoginSession, RunsOnlyTheFixedWebFlowAndPublishesAfterIdentityVerification)
@@ -146,6 +152,16 @@ TEST(GhLoginSession, RunsOnlyTheFixedWebFlowAndPublishesAfterIdentityVerificatio
 	EXPECT_EQ((std::vector<std::wstring>{ L"auth", L"login", L"--hostname", L"github.com",
 		L"--web", L"--skip-ssh-key" }), login.Arguments());
 	EXPECT_TRUE(HasOverride(login, L"GH_CONFIG_DIR", L"C:\\Profiles\\gh"));
+	// The login invocation shares the one gh ambient scrub list, minus the
+	// names it overrides itself: GH_CONFIG_DIR is set, not removed.
+	EXPECT_FALSE(Removes(login, L"GH_CONFIG_DIR"));
+	EXPECT_TRUE(Removes(login, L"GH_TOKEN"));
+	EXPECT_TRUE(Removes(login, L"CLICOLOR_FORCE"));
+	EXPECT_TRUE(Removes(login, L"GIT_DIR"));
+	EXPECT_TRUE(Removes(login, L"GIT_CONFIG_COUNT"));
+	EXPECT_TRUE(Removes(login, L"GIT_CONFIG_PARAMETERS"));
+	EXPECT_TRUE(::platform::process::IsExecutableBoundedProcessRequest(
+		BuildBoundedProcessRequest(login)));
 	EXPECT_EQ(1U, fixture.Connection().Calls());
 }
 

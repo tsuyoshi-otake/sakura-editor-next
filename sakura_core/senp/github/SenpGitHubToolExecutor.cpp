@@ -5,6 +5,7 @@
 
 #include "senp/github/GhLogResource.h"
 #include "senp/github/GhPageProjection.h"
+#include "senp/github/GhText.h"
 
 #include <algorithm>
 #include <array>
@@ -475,9 +476,19 @@ try {
 	}
 	const auto repository = m_profiles->Repository(scope.ProfileId());
 	if (!repository) return EControlSenpRpcStatus::Unavailable;
-	if (!m_profiles->Connection(scope.ProfileId())) return EControlSenpRpcStatus::NotConnected;
+	const auto connection = m_profiles->Connection(scope.ProfileId());
+	if (!connection) return EControlSenpRpcStatus::NotConnected;
 	const auto request = BuildRepositoryReadRequest(*repository, command.Arguments());
 	if (!request) return EControlSenpRpcStatus::InvalidRequest;
+	// Fail fast at the guest-visible boundary too: a read is admitted only for
+	// the authenticated account's own host, and the reader re-checks it at the
+	// boundary that actually launches gh. A snapshot without an account keeps
+	// the existing path: the queued read ends Unauthorized when no account can
+	// be acquired for its generation.
+	const auto account = connection->Snapshot().Account();
+	if (account && !EqualsInsensitive(account->Hostname(), request->Hostname())) {
+		return EControlSenpRpcStatus::InvalidRequest;
+	}
 	// The request no longer spells the shape, and the page it comes back with has
 	// to be reduced to that shape's fields. Reading the argument again here keeps
 	// one definition of what a request is and still remembers the question.
