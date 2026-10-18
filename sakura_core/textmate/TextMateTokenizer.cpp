@@ -22,10 +22,14 @@ constexpr int kMaxIncludeExpansionDepth = 64;
 //! resolved leaf rule (`Match`/`BeginEnd`/`BeginWhile`) reached by expanding
 //! `patterns`/`include`, or the current frame's own `end`/`while` pattern.
 struct Candidate final {
-	const TextMateRule* rule = nullptr; // null when isFrameBoundary
+	const TextMateRule* rule = nullptr; // null only for the frame's own end/while
 	const Grammar* owningGrammar = nullptr;
 	OnigmoPattern* pattern = nullptr;
-	bool isFrameBoundary = false; // true => this is the current frame's end/while
+
+	//! True when this is the current frame's `end`/`while` pattern.
+	//! `CollectMatchableRules` never yields a null leaf rule, so a null `rule`
+	//! identifies the frame boundary without a second, separately set flag.
+	bool IsFrameBoundary() const noexcept { return rule == nullptr; }
 };
 
 struct OwnedRule final {
@@ -373,18 +377,18 @@ TextMateLineTokenizeResult TextMateTokenizer::TokenizeLine(std::wstring_view lin
 		// block above), never as a per-position candidate the way `end` is.
 		const bool hasBoundary = stack->endOrWhilePattern != nullptr && !stack->isWhileRule;
 		if (hasBoundary && !frameRule->applyEndPatternLast) {
-			candidates.push_back({nullptr, stack->owningGrammar, stack->endOrWhilePattern.get(), true});
+			candidates.push_back({nullptr, stack->owningGrammar, stack->endOrWhilePattern.get()});
 		}
 		{
 			std::vector<OwnedRule> leafRules;
 			std::vector<const TextMateRule*> visited;
 			CollectMatchableRules(*stack->owningGrammar, m_externalResolver, frameRule, leafRules, 0, visited);
 			for (const auto& leaf : leafRules) {
-				candidates.push_back({leaf.rule, leaf.grammar, GetOrCompileStaticPattern(leaf.rule), false});
+				candidates.push_back({leaf.rule, leaf.grammar, GetOrCompileStaticPattern(leaf.rule)});
 			}
 		}
 		if (hasBoundary && frameRule->applyEndPatternLast) {
-			candidates.push_back({nullptr, stack->owningGrammar, stack->endOrWhilePattern.get(), true});
+			candidates.push_back({nullptr, stack->owningGrammar, stack->endOrWhilePattern.get()});
 		}
 
 		const Candidate* best = nullptr;
@@ -414,7 +418,7 @@ TextMateLineTokenizeResult TextMateTokenizer::TokenizeLine(std::wstring_view lin
 			result.tokens.push_back(TextMateToken{pos, whole.utf16Begin, BuildScopePath(stack, true)});
 		}
 
-		if (best->isFrameBoundary) {
+		if (best->IsFrameBoundary()) {
 			// Frame's own `end` closes it (a `while` frame's boundary is
 			// never a same-line candidate; see the `hasBoundary` comment
 			// above, so reaching here always means an `end` pattern).
