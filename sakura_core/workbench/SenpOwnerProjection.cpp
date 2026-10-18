@@ -41,7 +41,7 @@ public:
 	}
 	[[nodiscard]] bool Execute(senp::effect::CommandInvoked command) noexcept override
 	{
-		return m_coordinator && m_coordinator->Execute(std::move(command));
+		return m_projection && m_projection->ExecuteCommand(std::move(command));
 	}
 private:
 	CSenpOwnerProjection* m_projection{};
@@ -119,6 +119,8 @@ ESenpOwnerProjectionStatus CSenpOwnerProjection::Pump(const senp::CSenpRuntimeSe
 		const auto admission = m_coordinator->SubmitWorkspace(*m_workspace,
 			now + senp::CSenpRuntimeSession::kMaximumLifetime);
 		if (admission.Status() == senp::AdmissionStatus::Accepted) {
+			if (!RecordRoot(admission.Context(), RootKind::Workspace))
+				m_coordinator->Cancel(admission.Context());
 			m_workspace.reset();
 			applied = true;
 		} else if (admission.Status() != senp::AdmissionStatus::Busy) {
@@ -287,7 +289,34 @@ void CSenpOwnerProjection::Cancel(const senp::effect::OperationContext& context)
 		return terminal.m_context.ownerGeneration == context.ownerGeneration
 			&& terminal.m_context.requestGeneration == context.requestGeneration;
 	});
+	m_roots.erase(context.requestGeneration);
 	m_coordinator->Cancel(context);
+}
+
+bool CSenpOwnerProjection::ExecuteCommand(senp::effect::CommandInvoked command) noexcept
+{
+	if (m_closed) return false;
+	const auto admission = m_coordinator->SubmitCommand(std::move(command),
+		std::chrono::steady_clock::now() + senp::CSenpRuntimeSession::kMaximumLifetime);
+	if (admission.Status() != senp::AdmissionStatus::Accepted) return false;
+	if (!RecordRoot(admission.Context(), RootKind::Command)) {
+		m_coordinator->Cancel(admission.Context());
+		return false;
+	}
+	return true;
+}
+
+bool CSenpOwnerProjection::RecordRoot(const senp::effect::OperationContext& context,
+	const RootKind kind) noexcept
+{
+	if (m_roots.size() >= senp::CSenpRuntimeSession::kMaximumPending) return false;
+	try { return m_roots.emplace(context.requestGeneration, kind).second; }
+	catch (const std::exception&) { return false; }
+}
+
+void CSenpOwnerProjection::Released(const senp::effect::OperationContext& request) noexcept
+{
+	m_roots.erase(request.requestGeneration);
 }
 
 bool CSenpOwnerProjection::Failed(const senp::effect::OperationContext& context,
@@ -304,7 +333,19 @@ bool CSenpOwnerProjection::Failed(const senp::effect::OperationContext& context,
 	for (const auto& [id, provider] : m_trees) {
 		if (provider->Failed(context, status, now) == tree::TreeResult::Applied) return true;
 	}
-	return false;
+	// Command and Workspace roots are tracked here because nothing else claims
+	// them. Cancelled, TimedOut and a guest Rejected end only this invocation:
+	// a workspace event has no surface of its own (VS Code logs event-listener
+	// failures to the extension host and shows nothing), and a command reports
+	// one status line. HostUnavailable, ProtocolError, and a terminal for a
+	// context this projection never admitted are owner terminals instead.
+	const auto found = m_roots.find(context.requestGeneration);
+	if (found == m_roots.end() || context.ownerGeneration != m_owner.generation) return false;
+	const bool invocationTerminal = status == senp::InvocationStatus::Cancelled
+		|| status == senp::InvocationStatus::TimedOut || status == senp::InvocationStatus::Rejected;
+	if (!invocationTerminal) return false;
+	if (found->second == RootKind::Command) return m_target.FailCommand(context, status);
+	return true;
 }
 
 void CSenpOwnerProjection::Close() noexcept
@@ -330,6 +371,7 @@ void CSenpOwnerProjection::FinishClose() noexcept
 	m_documentQueue.clear();
 	m_toolCompletions.clear();
 	m_toolReads.clear();
+	m_roots.clear();
 	m_target.Revoke();
 }
 

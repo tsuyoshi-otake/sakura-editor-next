@@ -271,6 +271,23 @@ bool CSenpReadonlyOwnerTarget::CompleteCommand(const senp::effect::OperationCont
 	try { return m_commandCompleted(context, completion); } catch (const std::exception&) { return false; }
 }
 
+bool CSenpReadonlyOwnerTarget::FailCommand(const senp::effect::OperationContext& context,
+	const senp::InvocationStatus status) noexcept
+{
+	// The invocation ended without the guest producing a completion, so the
+	// line is synthesized from the terminal through the same status callback a
+	// real completion takes. A Cancelled terminal that is really the owner
+	// closing never reaches here: Revoke has already dropped the callback, and
+	// Matches has already refused the context. One that does reach here came
+	// from the user or the extension and is still worth saying once.
+	if (!Matches(context) || !m_commandCompleted) return false;
+	senp::effect::CompleteCommand completion{};
+	completion.status = status == senp::InvocationStatus::TimedOut ? senp::effect::CompletionStatus::TimedOut
+		: status == senp::InvocationStatus::Cancelled ? senp::effect::CompletionStatus::Cancelled
+		: senp::effect::CompletionStatus::Failed;
+	try { return m_commandCompleted(context, completion); } catch (const std::exception&) { return false; }
+}
+
 bool CSenpReadonlyOwnerTarget::ReleaseResource(std::wstring_view handle) noexcept
 {
 	if (m_revoked || !m_resourceReleased || handle.empty()) return false;

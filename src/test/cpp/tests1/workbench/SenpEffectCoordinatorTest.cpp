@@ -230,7 +230,7 @@ TEST(SenpEffectCoordinator, RoutesFailureAndMakesRejectedTargetTerminal)
 	target.SetNext(ESenpEffectTargetStatus::Rejected);
 	fixture.Process().CompleteWith({ senp::effect::OpenDocument{ L"sample:invalid" } });
 	ASSERT_EQ(senp::AdmissionStatus::Accepted,
-		coordinator.SubmitVisibility(L"sample.projects", true, Clock::now() + 1s).Status());
+		coordinator.Submit({ L"sample.projects", L"", L"" }, Clock::now() + 1s).status);
 	fixture.Owners().Poll(Clock::now());
 	EXPECT_EQ(ESenpEffectDrainStatus::Rejected, coordinator.Drain(Clock::now()).Status());
 	EXPECT_FALSE(coordinator.IsCurrent());

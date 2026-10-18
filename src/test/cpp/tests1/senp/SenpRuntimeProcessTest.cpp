@@ -159,12 +159,16 @@ TEST_F(SenpRuntimeProcess, FaultyPeersCannotLeaveBlockedIoOrPendingInvocations)
 		Activate(runtime);
 		const auto started = Clock::now();
 		ToolCompleted large{ L"read:1", CompletionStatus::Succeeded, std::wstring(65536, L'x'), L"" };
-		const auto admission = runtime.Submit(Context(), large, Clock::now() + 5s);
+		const auto admission = runtime.Submit(Context(), large, Clock::now() + 2s);
 		ASSERT_EQ(admission.status, AdmissionStatus::Accepted);
 		auto result = WaitResult(runtime);
 		ASSERT_TRUE(result);
 		EXPECT_EQ(result->context.operationId, admission.operationId);
-		EXPECT_EQ(result->status, InvocationStatus::HostUnavailable);
+		// The exchange now waits until the invocation's own deadline, so a
+		// blocked peer ends the invocation there - TimedOut when the drain sees
+		// the deadline first, HostUnavailable when the pipe failure lands first.
+		EXPECT_TRUE(result->status == InvocationStatus::TimedOut
+			|| result->status == InvocationStatus::HostUnavailable);
 		EXPECT_TRUE(result->effects.empty());
 		VerifyExit(runtime);
 		EXPECT_LT(Clock::now() - started, 4s);
@@ -243,6 +247,81 @@ TEST_F(SenpRuntimeProcess, LaunchedHostRunsInsideTheSharedChildJob)
 	ASSERT_TRUE(::IsProcessInJob(process, nullptr, &inJob));
 	EXPECT_TRUE(inJob);
 	::CloseHandle(process);
+	VerifyExit(runtime);
+}
+
+TEST_F(SenpRuntimeProcess, WarmExchangeIsBoundByTheInvocationDeadlineNotAFixedSecond)
+{
+	// The peer answers after 1.5 s. The exchange bound is the invocation's own
+	// deadline (<= 10 s), so a healthy-but-slow reply still completes (#345).
+	CSenpEffectRuntime runtime(Launch(L"delayed-reply"));
+	Activate(runtime);
+	const auto admission = runtime.Submit(Context(), TreeRequest{ L"issues", L"", L"" }, Clock::now() + 10s);
+	ASSERT_EQ(admission.status, AdmissionStatus::Accepted);
+	const auto result = WaitResult(runtime);
+	ASSERT_TRUE(result);
+	EXPECT_EQ(result->context.operationId, admission.operationId);
+	EXPECT_EQ(result->status, InvocationStatus::EffectsReady);
+	VerifyExit(runtime);
+}
+
+TEST_F(SenpRuntimeProcess, UnansweredInvocationEndsAtItsDeadlineAndStopsTheHost)
+{
+	// A peer that never replies fails closed at the invocation deadline; the
+	// exchange fails there too, which ends the transport (HostUnavailable for
+	// the owner, an owner terminal).
+	CSenpEffectRuntime runtime(Launch(L"blocked-read"));
+	Activate(runtime);
+	const auto started = Clock::now();
+	ASSERT_EQ(runtime.Submit(Context(), TreeRequest{ L"issues", L"", L"" }, Clock::now() + 2s).status,
+		AdmissionStatus::Accepted);
+	const auto result = WaitResult(runtime);
+	ASSERT_TRUE(result);
+	EXPECT_TRUE(result->status == InvocationStatus::TimedOut
+		|| result->status == InvocationStatus::HostUnavailable);
+	EXPECT_GE(Clock::now() - started, 1500ms);
+	EXPECT_LT(Clock::now() - started, 4s);
+	// TakeCompleted expires the invocation on this thread, which can run a few
+	// milliseconds before the worker's own wait reaches the same deadline. The
+	// worker must then stop the host by itself - before any Stop or Join here,
+	// which would otherwise produce Stopped on their own.
+	const auto stopBy = Clock::now() + 1s;
+	while (runtime.Snapshot().phase != RuntimePhase::Stopped && Clock::now() < stopBy) ::Sleep(5);
+	EXPECT_EQ(runtime.Snapshot().phase, RuntimePhase::Stopped);
+	VerifyExit(runtime);
+}
+
+TEST_F(SenpRuntimeProcess, ColdStartHonoursItsOwnBudgetAcrossWaitSlices)
+{
+	// Hello lands at 1 s while each wait slice is only 200 ms: the exchange
+	// must keep waiting until its absolute deadline instead of failing at the
+	// first slice.
+	auto launch = Launch(L"delayed-hello");
+	launch.waitSlice = 200ms;
+	CSenpEffectRuntime runtime(std::move(launch));
+	const auto started = Clock::now();
+	ASSERT_EQ(runtime.Start().status, AdmissionStatus::Accepted);
+	const auto activation = WaitResult(runtime);
+	ASSERT_TRUE(activation);
+	EXPECT_EQ(activation->status, InvocationStatus::EffectsReady);
+	EXPECT_GE(Clock::now() - started, 900ms);
+	VerifyExit(runtime);
+}
+
+TEST_F(SenpRuntimeProcess, UnansweredHelloFailsAtTheColdStartBudgetNotEarlierNotLater)
+{
+	auto launch = Launch(L"blocked-hello");
+	launch.coldStartBudget = 2s;
+	launch.waitSlice = 200ms;
+	CSenpEffectRuntime runtime(std::move(launch));
+	const auto started = Clock::now();
+	ASSERT_EQ(runtime.Start().status, AdmissionStatus::Accepted);
+	const auto activation = WaitResult(runtime);
+	ASSERT_TRUE(activation);
+	EXPECT_NE(activation->status, InvocationStatus::EffectsReady);
+	const auto elapsed = Clock::now() - started;
+	EXPECT_GE(elapsed, 1500ms);
+	EXPECT_LT(elapsed, 3s);
 	VerifyExit(runtime);
 }
 

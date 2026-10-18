@@ -14,6 +14,15 @@ struct EffectRuntimeLaunch final {
 	std::wstring extensionId{};
 	effect::OperationContext context{};
 	std::int64_t generation{};
+	//! Test-injectable budgets; production leaves both defaults. The cold-start
+	//! budget caps how long Begin waits for the handshake and the activation
+	//! answer (default kMaximumColdStart). The wait slice bounds one overlapped
+	//! wait inside an exchange, never the exchange itself - its absolute
+	//! deadline does that.
+	std::chrono::milliseconds coldStartBudget{
+		std::chrono::duration_cast<std::chrono::milliseconds>(kMaximumColdStart) };
+	std::chrono::milliseconds waitSlice{
+		std::chrono::duration_cast<std::chrono::milliseconds>(CSenpRuntimeSession::kMaximumLifetime) };
 };
 
 struct EffectRuntimeSnapshot final {

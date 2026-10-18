@@ -3,6 +3,7 @@
 #include "StdAfx.h"
 #include "senp/SenpContributionOwners.h"
 #include <algorithm>
+#include <thread>
 
 namespace senp {
 namespace {
@@ -51,6 +52,33 @@ struct CSenpContributionOwners::Impl {
 	std::int64_t generation{};
 	bool entered{};
 	bool closed{};
+	//! This service lives on the window UI thread; every public entry except
+	//! teardown refuses a call from anywhere else and mutates nothing (#339).
+	const std::thread::id uiThread{ std::this_thread::get_id() };
+	bool OnUiThread() const noexcept { return uiThread == std::this_thread::get_id(); }
+	//! Close body callable by the destructor regardless of thread.
+	bool Terminate() noexcept
+	{
+		closed = true;
+		for (auto& slot : slots) Retire(*slot, effect::StopReason::Shutdown, OwnerChangeStatus::Cancelled, Clock::now());
+		// Signal every process before joining any worker. This avoids serializing
+		// four full deadlines while other owners remain callable.
+		for (auto it = slots.begin(); it != slots.end();) {
+			auto& slot = **it;
+			try {
+				if (!slot.joined) {
+					slot.joinAttempted = true; // Explicit Close may retry a failed join once.
+					slot.runtime->Join();
+					slot.joined = true;
+				}
+				const auto state = slot.runtime->Snapshot();
+				if (state.workerExited && state.processExitConfirmed) { it = slots.erase(it); continue; }
+			} catch (...) {}
+			slot.phase = Phase::CleanupFailed;
+			++it;
+		}
+		return slots.empty();
+	}
 	explicit Impl(EffectRuntimeFactory create) : factory(std::move(create))
 	{
 		slots.reserve(kMaximumHosts);
@@ -151,12 +179,20 @@ struct CSenpContributionOwners::Impl {
 
 CSenpContributionOwners::CSenpContributionOwners(EffectRuntimeFactory factory)
 	: m_impl(std::make_unique<Impl>(std::move(factory))) {}
-CSenpContributionOwners::~CSenpContributionOwners() { (void)Close(); }
+// Teardown skips only the UI-thread check; a destructor reached from inside
+// a service callback still leaves finalization to the outer call.
+CSenpContributionOwners::~CSenpContributionOwners()
+{
+	if (m_impl->entered) return;
+	CallGuard guard(m_impl->entered);
+	(void)m_impl->Terminate();
+}
 
 OwnerChangeResult CSenpContributionOwners::Prepare(EffectRuntimeLaunch launch, std::wstring packageDigest,
 	PrepareOwnerPublication publication, const Time now)
 {
 	auto& s = *m_impl;
+	if (!s.OnUiThread()) return { OwnerChangeStatus::Failed };
 	if (s.closed) return { OwnerChangeStatus::Stopped };
 	if (s.entered || s.slots.size() >= kMaximumHosts || s.transitions.size() >= kMaximumTransitions)
 		return { OwnerChangeStatus::Busy };
@@ -209,7 +245,7 @@ OwnerChangeResult CSenpContributionOwners::Prepare(EffectRuntimeLaunch launch, s
 void CSenpContributionOwners::Poll(const Time now)
 {
 	auto& s = *m_impl;
-	if (s.entered) return; // The outer bounded drain retains finalization ownership.
+	if (!s.OnUiThread() || s.entered) return; // The outer bounded drain retains finalization ownership.
 	CallGuard guard(s.entered);
 	for (auto it = s.slots.begin(); it != s.slots.end();) {
 		auto& slot = **it;
@@ -226,7 +262,7 @@ void CSenpContributionOwners::Poll(const Time now)
 bool CSenpContributionOwners::Revoke(const std::wstring_view extensionId, const effect::StopReason reason)
 {
 	auto& s = *m_impl;
-	if (s.entered) return false;
+	if (!s.OnUiThread() || s.entered) return false;
 	CallGuard guard(s.entered);
 	bool found{};
 	for (auto& slot : s.slots) if (slot->owner.extensionId == extensionId) {
@@ -240,6 +276,7 @@ InvocationAdmission CSenpContributionOwners::Submit(const ContributionOwnerIdent
 	const std::int64_t requestGeneration, const Time deadline)
 {
 	auto& s = *m_impl;
+	if (!s.OnUiThread()) return { AdmissionStatus::Unavailable };
 	if (s.entered) return { AdmissionStatus::Busy };
 	auto* slot = s.Current(owner.extensionId);
 	if (s.closed || !slot || slot->owner != owner) return { AdmissionStatus::Unavailable };
@@ -257,7 +294,7 @@ InvocationAdmission CSenpContributionOwners::Submit(const ContributionOwnerIdent
 bool CSenpContributionOwners::Cancel(const ContributionOwnerIdentity& owner, const std::wstring_view operationId)
 {
 	auto& s = *m_impl;
-	if (s.entered || !IsCurrent(owner)) return false;
+	if (!s.OnUiThread() || s.entered || !IsCurrent(owner)) return false;
 	CallGuard guard(s.entered);
 	auto& slot = *s.Current(owner.extensionId);
 	try { return slot.runtime->Cancel(operationId); }
@@ -266,13 +303,13 @@ bool CSenpContributionOwners::Cancel(const ContributionOwnerIdentity& owner, con
 
 bool CSenpContributionOwners::IsCurrent(const ContributionOwnerIdentity& owner) const noexcept
 {
-	const auto* current = m_impl->Current(owner.extensionId);
+	const auto* current = m_impl->OnUiThread() ? m_impl->Current(owner.extensionId) : nullptr;
 	return !m_impl->closed && current && current->owner == owner;
 }
 
 std::optional<OwnerChangeResult> CSenpContributionOwners::TakeTransition()
 {
-	if (m_impl->entered) return std::nullopt;
+	if (!m_impl->OnUiThread() || m_impl->entered) return std::nullopt;
 	auto& values = m_impl->transitions;
 	const auto found = std::ranges::find_if(values, [](const auto& result) { return result.status != OwnerChangeStatus::Accepted; });
 	if (found == values.end()) return std::nullopt;
@@ -283,7 +320,10 @@ std::optional<OwnerChangeResult> CSenpContributionOwners::TakeTransition()
 
 ContributionOwnersSnapshot CSenpContributionOwners::Snapshot() const noexcept
 {
-	ContributionOwnersSnapshot result{ .transitions = m_impl->transitions.size(), .closed = m_impl->closed };
+	ContributionOwnersSnapshot result{ .closed = true };
+	if (!m_impl->OnUiThread()) return result;
+	result.transitions = m_impl->transitions.size();
+	result.closed = m_impl->closed;
 	for (const auto& slot : m_impl->slots) switch (slot->phase) {
 	case Phase::Preparing: ++result.preparing; break;
 	case Phase::Active: ++result.active; break;
@@ -296,27 +336,9 @@ ContributionOwnersSnapshot CSenpContributionOwners::Snapshot() const noexcept
 bool CSenpContributionOwners::Close() noexcept
 {
 	auto& s = *m_impl;
-	if (s.entered) return false;
+	if (!s.OnUiThread() || s.entered) return false;
 	CallGuard guard(s.entered);
-	s.closed = true;
-	for (auto& slot : s.slots) s.Retire(*slot, effect::StopReason::Shutdown, OwnerChangeStatus::Cancelled, Clock::now());
-	// Signal every process before joining any worker. This avoids serializing
-	// four full deadlines while other owners remain callable.
-	for (auto it = s.slots.begin(); it != s.slots.end();) {
-		auto& slot = **it;
-		try {
-			if (!slot.joined) {
-				slot.joinAttempted = true; // Explicit Close may retry a failed join once.
-				slot.runtime->Join();
-				slot.joined = true;
-			}
-			const auto state = slot.runtime->Snapshot();
-			if (state.workerExited && state.processExitConfirmed) { it = s.slots.erase(it); continue; }
-		} catch (...) {}
-		slot.phase = Phase::CleanupFailed;
-		++it;
-	}
-	return s.slots.empty();
+	return s.Terminate();
 }
 
 } // namespace senp

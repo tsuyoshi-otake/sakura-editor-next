@@ -49,10 +49,15 @@ std::wstring Quote(std::wstring_view value)
 	return result;
 }
 
-DWORD Remaining(Time deadline)
+//! Bound for a frame no pending invocation waits on. An Ack is write-only and
+//! never enters the guest, and a Deactivate is already clamped by the shorter
+//! stop deadline, so this constant only has to cover kernel pipe I/O.
+constexpr std::chrono::milliseconds kPassiveExchangeDeadline{ 1000 };
+
+DWORD Remaining(Time deadline, const DWORD cap)
 {
 	const auto milliseconds = std::chrono::ceil<std::chrono::milliseconds>(deadline - Clock::now()).count();
-	return static_cast<DWORD>(std::clamp<std::int64_t>(milliseconds, 0, 10000));
+	return static_cast<DWORD>(std::clamp<std::int64_t>(milliseconds, 0, cap));
 }
 
 bool PipePair(std::wstring_view suffix, bool parentWrites, Handle& parent, Handle& child)
@@ -113,6 +118,7 @@ public:
 		SIZE_T size{};
 		(void)::InitializeProcThreadAttributeList(nullptr, 2, 0, &size);
 		if (size == 0) return false;
+		m_waitSlice = static_cast<DWORD>(std::clamp<std::int64_t>(launch.waitSlice.count(), 1, 60000));
 		std::vector<std::byte> storage(size);
 		auto attributes = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(storage.data());
 		if (!::InitializeProcThreadAttributeList(attributes, 2, 0, &size)) return false;
@@ -179,7 +185,7 @@ private:
 		if (!event.Valid()) return false;
 		auto cursor = static_cast<std::byte*>(buffer);
 		while (length > 0) {
-			if (Remaining(deadline) == 0 || ::WaitForSingleObject(cancel, 0) == WAIT_OBJECT_0) return false;
+			if (Clock::now() >= deadline || ::WaitForSingleObject(cancel, 0) == WAIT_OBJECT_0) return false;
 			::ResetEvent(event.Get());
 			OVERLAPPED overlapped{};
 			overlapped.hEvent = event.Get();
@@ -190,7 +196,15 @@ private:
 			DWORD transferred{};
 			if (!issued) {
 				const std::array<HANDLE, 3> waits{ event.Get(), cancel, m_process.Get() };
-				if (::WaitForMultipleObjects(static_cast<DWORD>(waits.size()), waits.data(), FALSE, Remaining(deadline)) != WAIT_OBJECT_0) {
+				// Wait in bounded slices - never INFINITE - until the absolute
+				// deadline, so a cold start longer than one slice is not read
+				// as a hung host. Only the deadline, cancel or the peer's own
+				// exit ends the exchange.
+				for (;;) {
+					const auto observed = ::WaitForMultipleObjects(static_cast<DWORD>(waits.size()),
+						waits.data(), FALSE, Remaining(deadline, m_waitSlice));
+					if (observed == WAIT_OBJECT_0) break;
+					if (observed == WAIT_TIMEOUT && Clock::now() < deadline) continue;
 					(void)::CancelIoEx(pipe, &overlapped);
 					(void)::TerminateJobObject(m_job.Get(), ERROR_CANCELLED);
 					// CancelIoEx requests cancellation; kernel completion owns the
@@ -208,6 +222,7 @@ private:
 	}
 	Handle m_input, m_output, m_process, m_job;
 	DWORD m_pid{};
+	DWORD m_waitSlice{ 10000 };
 };
 } // namespace
 
@@ -217,6 +232,7 @@ struct CSenpEffectRuntime::Impl final {
 
 	void Worker()
 	{
+		const auto waitSlice = static_cast<DWORD>(std::clamp<std::int64_t>(launch.waitSlice.count(), 1, 60000));
 		HostConnection process;
 		try {
 			if (process.Open(launch)) {
@@ -235,15 +251,21 @@ struct CSenpEffectRuntime::Impl final {
 						session.Expire(now);
 						if (session.Phase() == RuntimePhase::Stopped) break;
 						if (session.Phase() == RuntimePhase::Stopping && !stopDeadline) stopDeadline = now + 250ms;
-						// The handshake is answered only once the host has read,
-						// verified and compiled its component, which is the whole
-						// cold start; every later exchange answers from a guest that
-						// is already resident.
-						deadline = now + (session.Phase() == RuntimePhase::Handshaking
-							? kMaximumColdStart : std::chrono::seconds(1));
+						// An exchange is bound by the work it serves: the earliest
+						// pending invocation deadline (an ordinary request's <= 10 s,
+						// the activation's cold-start budget while starting). With
+						// nothing pending only passive frames travel - acks and the
+						// Deactivate, which never make the guest run (Deactivate is
+						// also under the shorter stop deadline) - so they get the
+						// small named bound that covers kernel pipe I/O alone. A
+						// hung host still fails closed at its invocation deadline
+						// and becomes an owner terminal (HostUnavailable); this
+						// worker is off the UI thread, so the longer bound cannot
+						// stall paint or input.
+						deadline = now + kPassiveExchangeDeadline;
 						if (const auto expires = session.NextDeadline()) {
-							deadline = (std::min)(deadline, *expires);
-							idleWait = Remaining(*expires);
+							deadline = *expires;
+							idleWait = Remaining(*expires, waitSlice);
 						}
 						if (stopDeadline) deadline = (std::min)(deadline, *stopDeadline);
 						::ResetEvent(changed.Get());
@@ -307,7 +329,9 @@ InvocationAdmission CSenpEffectRuntime::Start()
 	std::lock_guard lock(s.mutex);
 	if (!s.changed.Valid() || !s.cancelIo.Valid()) return { AdmissionStatus::Unavailable };
 	const auto now = Clock::now();
-	auto result = s.session.Begin(s.launch.extensionId, s.launch.context, now + 10s, now);
+	// The activation may spend the launch's cold-start budget (default
+	// kMaximumColdStart): it covers the whole handshake, not one invocation.
+	auto result = s.session.Begin(s.launch.extensionId, s.launch.context, now + s.launch.coldStartBudget, now);
 	if (result.status != AdmissionStatus::Accepted) return result;
 	try {
 		s.workerExited = false;

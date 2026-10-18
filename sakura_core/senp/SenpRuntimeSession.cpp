@@ -122,7 +122,9 @@ InvocationAdmission CSenpRuntimeSession::Begin(std::wstring extensionId,
 {
 	auto& s = *m_impl;
 	if (s.phase != RuntimePhase::Idle) return { AdmissionStatus::Unavailable };
-	if (deadline <= now || deadline - now > kMaximumLifetime) return { AdmissionStatus::InvalidRequest };
+	// Begin is the cold start - launch, verify, compile, handshake - so it may
+	// spend the whole cold-start budget rather than one invocation's lifetime.
+	if (deadline <= now || deadline - now > kMaximumColdStart) return { AdmissionStatus::InvalidRequest };
 	context.operationId = s.MintOperation();
 	if (context.operationId.empty()) { s.Fail(InvocationStatus::ProtocolError); return { AdmissionStatus::Unavailable }; }
 	Activate activation{ context, std::move(extensionId) };

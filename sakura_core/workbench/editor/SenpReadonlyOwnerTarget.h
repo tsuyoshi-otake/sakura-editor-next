@@ -286,6 +286,8 @@ public:
 		senp::InvocationStatus status) noexcept override;
 	[[nodiscard]] bool CompleteCommand(const senp::effect::OperationContext& context,
 		senp::effect::CompleteCommand completion) noexcept override;
+	[[nodiscard]] bool FailCommand(const senp::effect::OperationContext& context,
+		senp::InvocationStatus status) noexcept override;
 	[[nodiscard]] bool ReleaseResource(std::wstring_view handle) noexcept override;
 	[[nodiscard]] bool StartToolRead(const senp::effect::OperationContext& context,
 		senp::effect::StartToolRead read) noexcept override;

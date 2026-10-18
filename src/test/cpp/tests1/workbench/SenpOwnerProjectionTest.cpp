@@ -44,6 +44,7 @@ public:
 	senp::EffectRuntimeSnapshot Snapshot() const override { return m_state; }
 	void Next(std::vector<senp::effect::Effect> effects) { m_effects = std::move(effects); }
 	void Next(senp::InvocationStatus status) noexcept { m_status = status; }
+	void PushResult(senp::InvocationResult result) { m_results.push_back(std::move(result)); }
 	[[nodiscard]] const std::vector<senp::effect::Event>& Events() const noexcept { return m_events; }
 private:
 	senp::EffectRuntimeLaunch m_launch;
@@ -102,6 +103,11 @@ public:
 	}
 	bool CompleteCommand(const senp::effect::OperationContext&,
 		senp::effect::CompleteCommand) noexcept override { return m_accept; }
+	bool FailCommand(const senp::effect::OperationContext&,
+		senp::InvocationStatus status) noexcept override
+	{
+		m_failedCommands.push_back(status); return m_accept;
+	}
 	bool ReleaseResource(std::wstring_view) noexcept override { return m_accept; }
 	bool StartToolRead(const senp::effect::OperationContext& context,
 		senp::effect::StartToolRead read) noexcept override
@@ -122,6 +128,10 @@ public:
 	[[nodiscard]] int Revokes() const noexcept { return m_revokes; }
 	[[nodiscard]] int ToolReads() const noexcept { return m_toolReads; }
 	[[nodiscard]] int ToolCancels() const noexcept { return m_toolCancels; }
+	[[nodiscard]] const std::vector<senp::InvocationStatus>& FailedCommands() const noexcept
+	{
+		return m_failedCommands;
+	}
 	[[nodiscard]] const senp::effect::PublishDocument& Document() const noexcept { return m_document; }
 private:
 	bool m_accept{ true };
@@ -133,6 +143,7 @@ private:
 	senp::effect::PublishDocument m_document;
 	std::wstring m_readId;
 	int m_toolReads{}, m_toolCancels{};
+	std::vector<senp::InvocationStatus> m_failedCommands;
 };
 
 class Fixture final {
@@ -305,6 +316,85 @@ TEST(SenpOwnerProjection, InvalidationDeliveredDuringDrainReloadsInsteadOfFailin
 	EXPECT_EQ(ESenpOwnerProjectionStatus::Applied, projection.Pump(Clock::now()));
 	EXPECT_EQ(tree::TreeChildrenState::Complete, tree->Model().Node(L"")->state);
 	projection.Close(); EXPECT_EQ(1, target.Revokes());
+}
+
+TEST(SenpOwnerProjection, TimedOutCommandEndsItsInvocationAndKeepsTheOwner)
+{
+	Fixture fixture; const auto owner = fixture.Activate(); Target target;
+	CSenpOwnerProjection projection(fixture.Owners(), owner, target); fixture.Port().Bind(projection);
+	ASSERT_TRUE(projection.RegisterTree(L"sample.projects", { L"sample.open" }));
+	auto tree = projection.Tree(L"sample.projects"); ASSERT_TRUE(tree);
+	// The command's invocation times out without an answer. That is an
+	// invocation terminal (#355): the target hears it once, the owner and the
+	// coordinator stay current, and the extension keeps working.
+	fixture.Process().Next(senp::InvocationStatus::TimedOut);
+	ASSERT_TRUE(tree->ExecuteViewCommand(L"sample.open"));
+	fixture.Owners().Poll(Clock::now());
+	EXPECT_EQ(ESenpOwnerProjectionStatus::Applied, projection.Pump(Clock::now()));
+	ASSERT_EQ(1U, target.FailedCommands().size());
+	EXPECT_EQ(senp::InvocationStatus::TimedOut, target.FailedCommands()[0]);
+	EXPECT_TRUE(projection.IsCurrent());
+	EXPECT_TRUE(fixture.Owners().IsCurrent(owner));
+	// A later tree load is still admitted on the same owner and drains clean.
+	fixture.Process().Next({ senp::effect::PublishTreePage{ L"sample.projects", L"", {}, L"", 1,
+		senp::effect::PageStatus::Empty, L"" } });
+	tree->SetVisible(true, Clock::now());
+	fixture.Owners().Poll(Clock::now());
+	EXPECT_EQ(ESenpOwnerProjectionStatus::Applied, projection.Pump(Clock::now()));
+	EXPECT_TRUE(projection.IsCurrent());
+	projection.Close(); EXPECT_EQ(1, target.Revokes());
+}
+
+TEST(SenpOwnerProjection, TimedOutWorkspaceEventEndsQuietlyAndKeepsTheOwner)
+{
+	Fixture fixture; const auto owner = fixture.Activate(); Target target;
+	CSenpOwnerProjection projection(fixture.Owners(), owner, target); fixture.Port().Bind(projection);
+	// A workspace event has no surface of its own, matching VS Code which only
+	// logs event-listener failures. Its timeout is still an invocation
+	// terminal, not a reason to revoke the owner.
+	EXPECT_TRUE(projection.PublishWorkspace({ { { L"root:0", L"main", {} } } }));
+	fixture.Process().Next(senp::InvocationStatus::TimedOut);
+	EXPECT_EQ(ESenpOwnerProjectionStatus::Applied, projection.Pump(Clock::now()));
+	fixture.Owners().Poll(Clock::now());
+	EXPECT_EQ(ESenpOwnerProjectionStatus::Applied, projection.Pump(Clock::now()));
+	EXPECT_TRUE(target.FailedCommands().empty());
+	EXPECT_TRUE(projection.IsCurrent());
+	EXPECT_TRUE(fixture.Owners().IsCurrent(owner));
+	projection.Close();
+}
+
+TEST(SenpOwnerProjection, CommandProtocolErrorAndUnknownContextsStayOwnerTerminals)
+{
+	Fixture fixture; const auto owner = fixture.Activate(); Target target;
+	CSenpOwnerProjection projection(fixture.Owners(), owner, target); fixture.Port().Bind(projection);
+	ASSERT_TRUE(projection.RegisterTree(L"sample.projects", { L"sample.open" }));
+	// ProtocolError is a transport/contract failure, not an invocation result:
+	// it still ends the owner.
+	fixture.Process().Next(senp::InvocationStatus::ProtocolError);
+	ASSERT_TRUE(projection.Tree(L"sample.projects")->ExecuteViewCommand(L"sample.open"));
+	fixture.Owners().Poll(Clock::now());
+	EXPECT_EQ(ESenpOwnerProjectionStatus::Rejected, projection.Pump(Clock::now()));
+	EXPECT_FALSE(projection.IsCurrent());
+	EXPECT_TRUE(target.FailedCommands().empty());
+	// The publication hub turns a rejected projection into an owner revocation.
+	ASSERT_TRUE(fixture.Owners().Revoke(owner.extensionId, senp::effect::StopReason::ProtocolError));
+	EXPECT_FALSE(fixture.Owners().IsCurrent(owner));
+	projection.Close();
+}
+
+TEST(SenpOwnerProjection, TerminalForANeverAdmittedContextRetiresTheOwner)
+{
+	Fixture fixture; const auto owner = fixture.Activate(); Target target;
+	CSenpOwnerProjection projection(fixture.Owners(), owner, target); fixture.Port().Bind(projection);
+	// A terminal naming a lineage this owner never minted cannot be an
+	// invocation result; it fails closed as an owner terminal.
+	senp::effect::OperationContext foreign{ L"s1:o77", owner.generation, owner.workspaceRevision,
+		owner.accountGeneration, 77 };
+	fixture.Process().PushResult({ foreign, false, senp::InvocationStatus::TimedOut });
+	fixture.Owners().Poll(Clock::now());
+	EXPECT_FALSE(fixture.Owners().IsCurrent(owner));
+	EXPECT_TRUE(target.FailedCommands().empty());
+	projection.Close();
 }
 
 } // namespace

@@ -251,4 +251,14 @@ TEST_F(SenpRuntimeLifecycle, EscapedPayloadsHitTheByteBudgetBeforeTheCountBudget
 	EXPECT_EQ(session.CompletionCount(), 10U);
 }
 
+TEST_F(SenpRuntimeLifecycle, ActivationMayUseTheWholeColdStartBudget)
+{
+	CSenpRuntimeSession first{ 9 };
+	EXPECT_EQ(first.Begin(L"test.extension", Context(), now + 20s, now).status, AdmissionStatus::Accepted);
+	EXPECT_EQ(first.NextDeadline(), now + 20s);
+	CSenpRuntimeSession second{ 9 };
+	EXPECT_EQ(second.Begin(L"test.extension", Context(), now + 31s, now).status,
+		AdmissionStatus::InvalidRequest);
+}
+
 } // namespace

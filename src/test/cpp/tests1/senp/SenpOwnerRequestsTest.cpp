@@ -5,6 +5,7 @@
 #include "senp/SenpOwnerRequests.h"
 #include <deque>
 #include <map>
+#include <thread>
 
 namespace {
 using namespace senp;
@@ -202,5 +203,109 @@ TEST(SenpOwnerRequests, CancellationSuppressesEveryDerivedTerminal)
 	requests.Close();
 	EXPECT_FALSE(requests.IsCurrent());
 	EXPECT_TRUE(requests.Snapshot().Closed());
+}
+
+TEST(SenpOwnerRequests, AdmissionReservesCompletionCapacity)
+{
+	OwnerFixture fixture;
+	const auto owner = fixture.Activate();
+	CSenpOwnerRequests requests(fixture.Owners(), owner);
+	fixture.Bind(requests);
+	// One lineage stays in flight while fifteen derived completions pile up
+	// undrained under it. The terminal budget counts both sides, so a new root
+	// is refused before it mints an invocation it could never publish (#339).
+	fixture.Host().SetAutoComplete(false);
+	const auto root = requests.Submit(effect::TreeRequest{ L"sample.projects" }, Clock::now() + 10s);
+	ASSERT_EQ(AdmissionStatus::Accepted, root.Status());
+	fixture.Host().SetAutoComplete(true);
+	for (int i = 0; i < 15; ++i)
+		ASSERT_EQ(AdmissionStatus::Accepted, requests.SubmitDerived(root.Context(),
+			effect::ToolCompleted{ L"read." + std::to_wstring(i),
+				effect::CompletionStatus::Succeeded, L"{}", L"" }, Clock::now() + 10s).Status());
+	fixture.Owners().Poll(Clock::now());
+	ASSERT_EQ(15U, requests.Snapshot().Completed());
+	EXPECT_EQ(1U, requests.Snapshot().Invocations());
+	EXPECT_EQ(1U, requests.Snapshot().Requests());
+	EXPECT_EQ(AdmissionStatus::Busy,
+		requests.Submit(effect::TreeRequest{ L"sample.projects" }, Clock::now() + 10s).Status());
+	requests.Close();
+}
+
+TEST(SenpOwnerRequests, ForeignThreadCallsAreRefusedAndMutateNothing)
+{
+	OwnerFixture fixture;
+	const auto owner = fixture.Activate();
+	CSenpOwnerRequests requests(fixture.Owners(), owner);
+	fixture.Bind(requests);
+	const auto root = requests.Submit(effect::TreeRequest{ L"sample.projects" }, Clock::now() + 10s);
+	ASSERT_EQ(AdmissionStatus::Accepted, root.Status());
+	AdmissionStatus submitted{ AdmissionStatus::Accepted };
+	bool published = true, finished = true, cancelled = true, current = true, closed = true;
+	bool took = true;
+	OwnerRequestsSnapshot foreign{ 1, 1, 1, 1, false };
+	std::thread worker([&] {
+		submitted = requests.Submit(effect::TreeRequest{ L"sample.projects" }, Clock::now() + 1s).Status();
+		published = requests.Publish({ root.Context(), false, InvocationStatus::TimedOut });
+		took = requests.TakeCompleted().has_value();
+		finished = requests.Finish(root.Context());
+		cancelled = requests.Cancel(root.Context());
+		current = requests.IsCurrent();
+		foreign = requests.Snapshot();
+		requests.Close();
+	});
+	worker.join();
+	EXPECT_EQ(AdmissionStatus::Unavailable, submitted);
+	EXPECT_FALSE(published);
+	EXPECT_FALSE(took);
+	EXPECT_FALSE(finished);
+	EXPECT_FALSE(cancelled);
+	EXPECT_FALSE(current);
+	EXPECT_TRUE(foreign.Closed());
+	// Nothing the foreign thread attempted changed the owning thread's state.
+	EXPECT_TRUE(requests.IsCurrent());
+	EXPECT_EQ(1U, requests.Snapshot().Requests());
+	EXPECT_EQ(1U, requests.Snapshot().Invocations());
+	requests.Close();
+	EXPECT_TRUE(requests.Snapshot().Closed());
+}
+
+TEST(SenpContributionOwners, ForeignThreadCallsAreRefusedAndMutateNothing)
+{
+	OwnerFixture fixture;
+	const auto owner = fixture.Activate();
+	OwnerChangeResult prepared{ OwnerChangeStatus::Activated };
+	InvocationAdmission submitted{ AdmissionStatus::Accepted, L"op" };
+	bool revoked = true, cancelled = true, current = true, closed = true;
+	bool transitioned = true;
+	ContributionOwnersSnapshot snapshot{ 1, 1, 1, 1, 1, false };
+	std::thread worker([&] {
+		prepared = fixture.Owners().Prepare({ .hostExecutable = L"host.exe",
+			.modulePath = L"module.wasm", .moduleSha256 = std::wstring(64, L'a'),
+			.extensionId = L"foreign.sample" }, std::wstring(64, L'b'),
+			[](const auto&, const auto*) -> std::unique_ptr<ISenpOwnerPublication> { return nullptr; },
+			Clock::now());
+		fixture.Owners().Poll(Clock::now());
+		submitted = fixture.Owners().Submit(owner, effect::TreeRequest{ L"sample.projects" }, 1,
+			Clock::now() + 1s);
+		revoked = fixture.Owners().Revoke(owner.extensionId, effect::StopReason::Disabled);
+		cancelled = fixture.Owners().Cancel(owner, L"s1:o1");
+		current = fixture.Owners().IsCurrent(owner);
+		transitioned = fixture.Owners().TakeTransition().has_value();
+		snapshot = fixture.Owners().Snapshot();
+		closed = fixture.Owners().Close();
+	});
+	worker.join();
+	EXPECT_EQ(OwnerChangeStatus::Failed, prepared.status);
+	EXPECT_EQ(AdmissionStatus::Unavailable, submitted.status);
+	EXPECT_FALSE(revoked);
+	EXPECT_FALSE(cancelled);
+	EXPECT_FALSE(current);
+	EXPECT_FALSE(transitioned);
+	EXPECT_TRUE(snapshot.closed);
+	EXPECT_FALSE(closed);
+	// The owning thread still sees the live owner the foreign thread could not touch.
+	EXPECT_TRUE(fixture.Owners().IsCurrent(owner));
+	EXPECT_EQ(1U, fixture.Owners().Snapshot().active);
+	EXPECT_TRUE(fixture.Owners().Close());
 }
 } // namespace

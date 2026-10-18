@@ -42,6 +42,11 @@ private:
 //! generation while receiving a distinct transport operation ID. Publication
 //! callbacks enqueue completions only; callers drain them after owner Poll has
 //! returned, so applying an effect cannot reenter the owner service.
+//! Admission reserves terminal capacity: pending invocations plus undrained
+//! completions stay below the cap, so an admitted invocation can always be
+//! published. The UI-thread contract is enforced: calls from any thread but
+//! the constructing one are refused with the method's existing typed refusal
+//! (Unavailable, false or an empty optional) and mutate nothing.
 class CSenpOwnerRequests final {
 public:
 	CSenpOwnerRequests(CSenpContributionOwners& owners, ContributionOwnerIdentity owner);

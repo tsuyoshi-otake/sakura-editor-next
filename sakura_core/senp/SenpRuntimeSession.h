@@ -59,6 +59,8 @@ class CSenpRuntimeSession final {
 public:
 	using Time = std::chrono::steady_clock::time_point;
 	static constexpr std::size_t kMaximumPending = 16;
+	//! Bound for ordinary Submit deadlines. Begin (activation) is the cold
+	//! start and may instead use up to kMaximumColdStart.
 	static constexpr auto kMaximumLifetime = std::chrono::seconds(10);
 
 	explicit CSenpRuntimeSession(std::int64_t generation);

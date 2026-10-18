@@ -156,6 +156,35 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   returns, then either derive more work or explicitly `Finish`. Cancelling a
   lineage suppresses already-queued delivery and cancels every live invocation.
   Close this broker before destroying its borrowed owner service.
+  Admission reserves terminal capacity: `Submit` applies the same
+  `invocations + completed < 16` reservation as `SubmitDerived`, so an admitted
+  invocation can always be published, and `Publish` checks capacity before it
+  mutates (#339). Both this broker and `CSenpContributionOwners` are bound to
+  the thread that constructed them: any public entry called from another thread
+  refuses with its existing typed refusal and mutates nothing; only teardown
+  through the destructor bypasses the check.
+
+- **Failure granularity, smallest first: invocation < owner < package < window
+  snapshot (#355, #345, #339).** A non-activation invocation that ends
+  `Cancelled`, `TimedOut` or guest `Rejected` is an invocation terminal: the
+  consumer finalizes and shows it - tree pages get their existing Retry row,
+  documents get `FailDocument`, commands get one status-line message, and a
+  workspace event gets no UI (VS Code only logs event-listener errors to the
+  extension host log). The owner is never revoked for these. An owner terminal
+  revokes the owner with no automatic restart and lets declared Views show
+  their existing Failed/Retry: it covers activation failure or timeout,
+  `ProtocolError`, `HostUnavailable` (transport failure, process exit, job
+  kill), an effect invalid for its request, and a terminal for a context the
+  projection never admitted. `CSenpOwnerProjection` records the kind of every
+  root event it admits - Command and Workspace, the kinds tree providers and
+  the document maps do not already track - bounded by the lineage cap and
+  erased when the coordinator releases the lineage, and dispatches these
+  terminals from that record; derived tool completions keep their originating
+  root's kind, matched by owner plus request generation like documents.
+  Package and window-snapshot granularity are the composition's concern
+  (#352), not this layer's. `CSenpEffectCoordinator::SubmitVisibility` was
+  removed: it had no caller, so the `VisibilityChanged` wire event stays on
+  the codec only.
 
 - Built-in GitHub guests request only the fixed `github` / `repositoryRead`
   tool operation. The shared Rust `github_client` crate converts bounded DTOs;

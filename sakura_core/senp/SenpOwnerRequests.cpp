@@ -4,6 +4,7 @@
 #include "senp/SenpOwnerRequests.h"
 #include <algorithm>
 #include <map>
+#include <thread>
 
 namespace senp {
 namespace {
@@ -43,6 +44,22 @@ class CSenpOwnerRequests::Impl {
 	std::vector<InvocationResult> completed;
 	std::int64_t lastRequestGeneration{};
 	bool closed{};
+	//! This broker lives on the window UI thread; every public entry except
+	//! teardown refuses a call from anywhere else and mutates nothing (#339).
+	const std::thread::id uiThread{ std::this_thread::get_id() };
+	bool OnUiThread() const noexcept { return uiThread == std::this_thread::get_id(); }
+	//! Close body callable by the destructor regardless of thread.
+	void Terminate() noexcept
+	{
+		if (closed) return;
+		closed = true;
+		completed.clear();
+		for (auto& [_, request] : requests) {
+			request.suppressed = true;
+			for (const auto& operationId : request.invocations) (void)owners.Cancel(owner, operationId);
+		}
+		requests.clear();
+	}
 	bool Scope(const effect::OperationContext& context) const noexcept
 	{
 		return context.ownerGeneration == owner.generation
@@ -94,13 +111,19 @@ public:
 
 CSenpOwnerRequests::CSenpOwnerRequests(CSenpContributionOwners& owners, ContributionOwnerIdentity owner)
 	: m_impl(std::make_unique<Impl>(owners, std::move(owner))) {}
-CSenpOwnerRequests::~CSenpOwnerRequests() { Close(); }
+CSenpOwnerRequests::~CSenpOwnerRequests() { m_impl->Terminate(); }
 
 OwnerRequestAdmission CSenpOwnerRequests::Submit(effect::Event event, const CSenpRuntimeSession::Time deadline) noexcept
 {
 	auto& state = *m_impl;
+	if (!state.OnUiThread()) return { AdmissionStatus::Unavailable };
 	if (state.closed || !state.owners.IsCurrent(state.owner)) return {};
 	if (state.requests.size() >= kMaximumRequests) return { AdmissionStatus::Busy };
+	// Admission reserves terminal capacity too: an admitted invocation must
+	// always be publishable, so pending plus undrained completions share the
+	// same bound a derived admission already applied.
+	if (state.InvocationCount() + state.completed.size() >= kMaximumRequests)
+		return { AdmissionStatus::Busy };
 	if (state.lastRequestGeneration == effect::kMaximumCounter) return { AdmissionStatus::InvalidRequest };
 	const auto generation = state.lastRequestGeneration + 1;
 	effect::OperationContext scope{ {}, state.owner.generation, state.owner.workspaceRevision,
@@ -117,6 +140,7 @@ OwnerRequestAdmission CSenpOwnerRequests::SubmitDerived(const effect::OperationC
 	effect::Event event, const CSenpRuntimeSession::Time deadline) noexcept
 {
 	auto& state = *m_impl;
+	if (!state.OnUiThread()) return { AdmissionStatus::Unavailable };
 	if (state.closed || !state.owners.IsCurrent(state.owner)) return {};
 	auto* lineage = state.Find(request);
 	if (!lineage || lineage->suppressed) return { AdmissionStatus::InvalidRequest };
@@ -128,17 +152,20 @@ OwnerRequestAdmission CSenpOwnerRequests::SubmitDerived(const effect::OperationC
 bool CSenpOwnerRequests::Publish(InvocationResult result) noexcept
 {
 	auto& state = *m_impl;
-	if (state.closed || result.activation || !state.Scope(result.context)) return false;
+	if (!state.OnUiThread() || state.closed || result.activation || !state.Scope(result.context)) return false;
 	auto* request = state.Find(result.context);
 	if (!request) return false;
 	const auto invocation = std::ranges::find(request->invocations, result.context.operationId);
 	if (invocation == request->invocations.end()) return false;
-	request->invocations.erase(invocation);
 	if (request->suppressed) {
+		request->invocations.erase(invocation);
 		if (request->invocations.empty()) state.requests.erase(result.context.requestGeneration);
 		return true;
 	}
+	// Capacity is checked before anything mutates: a false answer here must
+	// not leave the lineage missing the invocation it will never re-offer.
 	if (state.completed.size() >= kMaximumRequests) return false;
+	request->invocations.erase(invocation);
 	try { state.completed.push_back(std::move(result)); }
 	catch (...) { return false; }
 	return true;
@@ -146,6 +173,7 @@ bool CSenpOwnerRequests::Publish(InvocationResult result) noexcept
 
 std::optional<InvocationResult> CSenpOwnerRequests::TakeCompleted() noexcept
 {
+	if (!m_impl->OnUiThread()) return std::nullopt;
 	auto& values = m_impl->completed;
 	if (values.empty()) return std::nullopt;
 	auto result = std::move(values.front());
@@ -156,6 +184,7 @@ std::optional<InvocationResult> CSenpOwnerRequests::TakeCompleted() noexcept
 bool CSenpOwnerRequests::Finish(const effect::OperationContext& request) noexcept
 {
 	auto& state = *m_impl;
+	if (!state.OnUiThread()) return false;
 	const auto found = state.requests.find(request.requestGeneration);
 	if (found == state.requests.end() || !SameScope(found->second.scope, request)
 		|| !found->second.invocations.empty()
@@ -167,6 +196,7 @@ bool CSenpOwnerRequests::Finish(const effect::OperationContext& request) noexcep
 bool CSenpOwnerRequests::Cancel(const effect::OperationContext& context) noexcept
 {
 	auto& state = *m_impl;
+	if (!state.OnUiThread()) return false;
 	auto* request = state.Find(context);
 	if (!request || request->suppressed) return false;
 	request->suppressed = true;
@@ -179,25 +209,19 @@ bool CSenpOwnerRequests::Cancel(const effect::OperationContext& context) noexcep
 
 bool CSenpOwnerRequests::IsCurrent() const noexcept
 {
-	return !m_impl->closed && m_impl->owners.IsCurrent(m_impl->owner);
+	return m_impl->OnUiThread() && !m_impl->closed && m_impl->owners.IsCurrent(m_impl->owner);
 }
 
 void CSenpOwnerRequests::Close() noexcept
 {
-	auto& state = *m_impl;
-	if (state.closed) return;
-	state.closed = true;
-	state.completed.clear();
-	for (auto& [_, request] : state.requests) {
-		request.suppressed = true;
-		for (const auto& operationId : request.invocations) (void)state.owners.Cancel(state.owner, operationId);
-	}
-	state.requests.clear();
+	if (!m_impl->OnUiThread()) return;
+	m_impl->Terminate();
 }
 
 OwnerRequestsSnapshot CSenpOwnerRequests::Snapshot() const noexcept
 {
 	const auto& state = *m_impl;
+	if (!state.OnUiThread()) return { 0, 0, 0, 0, true };
 	return { state.requests.size(), state.InvocationCount(), state.completed.size(),
 		state.lastRequestGeneration, state.closed };
 }

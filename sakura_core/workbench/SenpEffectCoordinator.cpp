@@ -73,10 +73,10 @@ senp::OwnerRequestAdmission CSenpEffectCoordinator::SubmitDocument(std::wstring 
 	return SubmitEvent(senp::effect::DocumentRequest{ std::move(resourceId) }, deadline);
 }
 
-senp::OwnerRequestAdmission CSenpEffectCoordinator::SubmitVisibility(std::wstring viewId,
-	const bool visible, const senp::CSenpRuntimeSession::Time deadline) noexcept
+senp::OwnerRequestAdmission CSenpEffectCoordinator::SubmitCommand(senp::effect::CommandInvoked command,
+	const senp::CSenpRuntimeSession::Time deadline) noexcept
 {
-	return SubmitEvent(senp::effect::VisibilityChanged{ std::move(viewId), visible }, deadline);
+	return SubmitEvent(std::move(command), deadline);
 }
 
 senp::OwnerRequestAdmission CSenpEffectCoordinator::SubmitWorkspace(
@@ -131,7 +131,7 @@ SenpEffectDrainResult CSenpEffectCoordinator::Drain(const senp::CSenpRuntimeSess
 			m_requests.Close();
 			return { ESenpEffectDrainStatus::Closed, terminals + 1 };
 		}
-		if (!retained) (void)m_requests.Finish(result->context);
+		if (!retained && m_requests.Finish(result->context)) m_target.Released(result->context);
 	}
 	return { terminals == 0 ? ESenpEffectDrainStatus::Idle : ESenpEffectDrainStatus::Applied,
 		terminals };
@@ -139,7 +139,9 @@ SenpEffectDrainResult CSenpEffectCoordinator::Drain(const senp::CSenpRuntimeSess
 
 bool CSenpEffectCoordinator::Finish(const senp::effect::OperationContext& request) noexcept
 {
-	return !m_closed && !m_pumping && m_requests.Finish(request);
+	if (m_closed || m_pumping || !m_requests.Finish(request)) return false;
+	m_target.Released(request);
+	return true;
 }
 
 void CSenpEffectCoordinator::Close() noexcept

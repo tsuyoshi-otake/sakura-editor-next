@@ -469,6 +469,27 @@ TEST_F(SenpReadonlyOwnerTargetTest, ShowsNoTextPageForAnOwnerTheAuthorityDoesNot
 	EXPECT_TRUE(target.OutstandingTextResource().empty());
 }
 
+TEST_F(SenpReadonlyOwnerTargetTest, FailedCommandReportsItsLineThroughTheCompletionCallback)
+{
+	std::vector<senp::effect::CompletionStatus> statuses;
+	CSenpReadonlyOwnerTarget target(Owner(), *controller, surface, 970000, nullptr, {},
+		[&](const senp::effect::OperationContext&, const senp::effect::CompleteCommand& completion) {
+			statuses.push_back(completion.status); return true; }, {}, nullptr);
+	const senp::effect::OperationContext command{ L"s3:o1", 3, 4, 5, 9 };
+	EXPECT_TRUE(target.FailCommand(command, senp::InvocationStatus::TimedOut));
+	EXPECT_TRUE(target.FailCommand(command, senp::InvocationStatus::Cancelled));
+	EXPECT_TRUE(target.FailCommand(command, senp::InvocationStatus::Rejected));
+	ASSERT_EQ(3U, statuses.size());
+	EXPECT_EQ(senp::effect::CompletionStatus::TimedOut, statuses[0]);
+	EXPECT_EQ(senp::effect::CompletionStatus::Cancelled, statuses[1]);
+	EXPECT_EQ(senp::effect::CompletionStatus::Failed, statuses[2]);
+	// A context naming another owner is not this target's command to report.
+	senp::effect::OperationContext foreign = command;
+	foreign.ownerGeneration = 99;
+	EXPECT_FALSE(target.FailCommand(foreign, senp::InvocationStatus::TimedOut));
+	EXPECT_EQ(3U, statuses.size());
+}
+
 TEST_F(SenpReadonlyOwnerTargetTest, PublishesRefreshesAndRevokesNativeDocument)
 {
 	CSenpReadonlyOwnerTarget target(Owner(), *controller, surface, 920000);

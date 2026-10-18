@@ -14,6 +14,9 @@ impl Guest for Fixture {
     fn on_event(&mut self, _: &wire::EventMessage) -> Result<Vec<wire::Effect>, GuestFailed> {
         match self.0.as_str() {
             "blocked-read" => std::thread::sleep(Duration::from_secs(30)),
+            // One slow-but-healthy guest: the reply lands inside an ordinary
+            // invocation deadline but past a fixed short exchange cap.
+            "delayed-reply" => std::thread::sleep(Duration::from_millis(1500)),
             "crash" => std::process::exit(66),
             "memory-limit" => {
                 let mut allocations = Vec::new();
@@ -70,6 +73,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 output.write_all(&100u32.to_le_bytes())?;
                 output.write_all(b"{")?;
                 output.flush()?;
+                std::thread::sleep(Duration::from_secs(30));
+            }
+        }
+        // A cold start owns the Hello exchange: "delayed-hello" is a peer that
+        // verifies and compiles slowly but answers inside the cold-start
+        // budget; "blocked-hello" never answers within the test's horizon.
+        if matches!(request.body, wire::Message::Hello(_)) {
+            if scenario == "delayed-hello" {
+                std::thread::sleep(Duration::from_millis(1000));
+            }
+            if scenario == "blocked-hello" {
                 std::thread::sleep(Duration::from_secs(30));
             }
         }

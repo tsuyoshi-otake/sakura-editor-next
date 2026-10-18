@@ -28,6 +28,10 @@ public:
 		const senp::effect::OperationContext& context,
 		senp::InvocationStatus status,
 		senp::CSenpRuntimeSession::Time now) noexcept = 0;
+	//! Called once when the coordinator releases a lineage - after a drained
+	//! terminal finishes it, or through an explicit Finish. Lets a target drop
+	//! bookkeeping that has no other terminal of its own.
+	virtual void Released(const senp::effect::OperationContext&) noexcept {}
 };
 
 enum class ESenpEffectDrainStatus : std::uint8_t {
@@ -71,8 +75,10 @@ public:
 
 	[[nodiscard]] senp::OwnerRequestAdmission SubmitDocument(std::wstring resourceId,
 		senp::CSenpRuntimeSession::Time deadline) noexcept;
-	[[nodiscard]] senp::OwnerRequestAdmission SubmitVisibility(std::wstring viewId,
-		bool visible, senp::CSenpRuntimeSession::Time deadline) noexcept;
+	//! A user-invoked command. Unlike Execute this returns the admission context
+	//! so the caller can record the root kind for later failure dispatch.
+	[[nodiscard]] senp::OwnerRequestAdmission SubmitCommand(senp::effect::CommandInvoked command,
+		senp::CSenpRuntimeSession::Time deadline) noexcept;
 	//! One complete workspace snapshot. The payload replaces whatever the
 	//! extension last heard rather than amending it, so a repository that is gone
 	//! is expressed by its absence and no retraction event is needed.

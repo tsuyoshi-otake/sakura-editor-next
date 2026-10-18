@@ -59,9 +59,12 @@ extensionのevent/effectから実行ファイルや引数を指定する経路�
 destructorもStop/Joinを担当する。workerから利用者callbackを呼ばないためjoin再入は発生しない。
 
 parent側はOVERLAPPED付きのローカルbyte pipeを使用する。読取り・書込みを同じ絶対期限へ
-束ね、部分frameのたびに期限を延ばさない。handshakeは最大10秒、通常の交換は最大1秒で、
-要求deadlineが早ければそれに従う。終了処理は250 msの猶予を使う。取消や期限切れでの
-I/O失敗はsession全体を終了し、他の受理済み要求も明示的な失敗にする。
+束ね、部分frameのたびに期限を延ばさない。handshakeとactivation応答はcold-start予算
+（既定30秒、launchで注入可）を使い、通常の交換は最も早い受理済みinvocationのdeadline
+（<= 10秒）に従う。pending中のinvocationがないframe（ackやDeactivate）はguestを呼ばないため、
+pipe I/Oだけを覆う1秒の固定上限を持つ。各waitはbounded slice（既定10秒、launchで注入可）に
+分割して絶対deadlineまで繰り返し、INFINITEは渡さない。終了処理は250 msの猶予を使う。
+取消や期限切れでのI/O失敗はsession全体を終了し、他の受理済み要求も明示的な失敗にする。
 待機中はevent/process handleを待ち、idle pollingや自動再起動を行わない。
 
 pipeは現在のユーザーだけのDACL、最初のinstance、remote拒否で作成する。

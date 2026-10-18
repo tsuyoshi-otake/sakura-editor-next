@@ -118,11 +118,15 @@ and lifecycle rules as the rest of the native workbench.
   still rejects multiple Views targeting one container; a grouped provider may
   create exactly one native page for all matching Views in that ViewContainer.
 - `CSenpEffectCoordinator` adapts one current SENP owner to Tree, document,
-  visibility, command, and derived-tool event admission. Owner publication only
+  command, workspace, and derived-tool event admission. Owner publication only
   queues validated terminals. `Drain` runs after owner `Poll`, calls native
-  targets at most 16 times, releases ordinary lineages, and retains a lineage
-  only when the target explicitly owns later derived work. A rejected target
-  is a terminal result whose caller owns owner revocation.
+  targets at most 16 times, releases ordinary lineages (notifying the target
+  once through `Released`), and retains a lineage only when the target
+  explicitly owns later derived work. A rejected target is a terminal result
+  whose caller owns owner revocation. Which failures are invocation terminals
+  and which revoke the owner is the shared policy in
+  `../senp/CLAUDE.md` (invocation < owner < package < window snapshot): the
+  projection records each admitted root's kind and `Failed` dispatches on it.
 - Use the canonical VS Code IDs in `WorkbenchIds`. A physical Part ID is never a
   View ID: in particular `workbench.parts.auxiliarybar` and `outline` describe
   different layers and must remain independently movable and visible.

@@ -266,10 +266,15 @@ protected:
 		ASSERT_NE(nullptr, m_owner.get());
 	}
 
+	//! Activation is the cold start: the owner service guarantees a terminal
+	//! transition by kMaximumColdStart, and the fixture host is an unoptimized
+	//! Cargo build whose component compile alone can approach 12 s.
+	static constexpr auto kActivationWait = senp::kMaximumColdStart + std::chrono::seconds(2);
 	template<class Predicate>
-	bool Await(CSenpOwnerComposition& composition, Predicate predicate) const
+	bool Await(CSenpOwnerComposition& composition, Predicate predicate,
+		const std::chrono::milliseconds wait = std::chrono::seconds(12)) const
 	{
-		const auto deadline = Clock::now() + std::chrono::seconds(12);
+		const auto deadline = Clock::now() + wait;
 		while (Clock::now() < deadline) {
 			if (!composition.Poll(Clock::now())) return false;
 			if (predicate()) return true;
@@ -661,7 +666,7 @@ TEST_F(SenpOwnerComposition, RealSamplePublishesTwoTreesAndStructuredDocument)
 	ASSERT_TRUE(Await(composition, [&] {
 		transition = composition.TakeTransition();
 		return transition.has_value();
-	}));
+	}, kActivationWait));
 	ASSERT_EQ(senp::OwnerChangeStatus::Activated, transition->status);
 	ASSERT_EQ(2U, providers.size());
 	ASSERT_TRUE(pages.Contains("sample.senp"));
@@ -747,7 +752,7 @@ TEST_F(SenpOwnerComposition, RealGithubIssuesAndPullRequestsReachNativeProviders
 	ASSERT_TRUE(Await(composition, [&] {
 		transition = composition.TakeTransition();
 		return transition.has_value();
-	}));
+	}, kActivationWait));
 	ASSERT_EQ(senp::OwnerChangeStatus::Activated, transition->status);
 	ASSERT_EQ(2U, providers.size());
 
@@ -891,7 +896,7 @@ TEST_F(SenpOwnerComposition, RealGithubActionsReachNativeProviders)
 	ASSERT_TRUE(Await(composition, [&] {
 		transition = composition.TakeTransition();
 		return transition.has_value();
-	}));
+	}, kActivationWait));
 	ASSERT_EQ(senp::OwnerChangeStatus::Activated, transition->status);
 	ASSERT_EQ(2U, providers.size());
 

@@ -38,6 +38,12 @@ public:
 		senp::InvocationStatus status) noexcept = 0;
 	[[nodiscard]] virtual bool CompleteCommand(const senp::effect::OperationContext& context,
 		senp::effect::CompleteCommand completion) noexcept = 0;
+	//! One admitted command invocation that ended Cancelled, TimedOut or guest
+	//! Rejected. This is an invocation terminal, never an owner terminal; the
+	//! default consumes it silently and a target with a status surface reports
+	//! one line. Returning false revokes the owner.
+	[[nodiscard]] virtual bool FailCommand(const senp::effect::OperationContext&,
+		senp::InvocationStatus) noexcept { return true; }
 	[[nodiscard]] virtual bool ReleaseResource(std::wstring_view handle) noexcept = 0;
 	//! Starts one broker-authorized read without waiting. The target owns its
 	//! cancellation and returns completions only from TakeToolRead on the UI thread.
@@ -92,6 +98,11 @@ private:
 		const senp::effect::OperationContext& context, ESenpEffectTargetStatus status) const noexcept;
 	void Cancel(const senp::effect::OperationContext& context) noexcept;
 	void FinishClose() noexcept;
+	// Kinds the tree providers and the document maps do not already track.
+	enum class RootKind : std::uint8_t { Command, Workspace };
+	[[nodiscard]] bool ExecuteCommand(senp::effect::CommandInvoked command) noexcept;
+	[[nodiscard]] bool RecordRoot(const senp::effect::OperationContext& context, RootKind kind) noexcept;
+	void Released(const senp::effect::OperationContext& request) noexcept override;
 
 	senp::ContributionOwnerIdentity m_owner;
 	ISenpOwnerProjectionTarget& m_target;
@@ -103,6 +114,10 @@ private:
 	std::map<std::wstring, std::pair<senp::effect::OperationContext, std::wstring>, std::less<>> m_documents;
 	std::map<std::wstring, senp::effect::OperationContext, std::less<>> m_toolReads;
 	std::vector<SenpToolReadTerminal> m_toolCompletions;
+	//! requestGeneration -> admitted root kind, for the roots nothing else
+	//! tracks. Bounded by the lineage cap and erased when the coordinator
+	//! releases the lineage, when it is cancelled, or at close.
+	std::map<std::int64_t, RootKind> m_roots;
 	bool m_pumping{};
 	bool m_closeRequested{};
 	bool m_closed{};

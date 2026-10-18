@@ -149,7 +149,8 @@ def main() -> int:
             str(output / "github-actions-extension.wasm")], ROOT, 30)
         (output / "github-actions-extension.sha256").write_text(
             hashlib.sha256((output / "github-actions-extension.wasm").read_bytes()).hexdigest() + "\n", encoding="ascii")
-        for scenario in ("echo", "blocked-read", "blocked-write", "partial", "oversized", "crash", "memory-limit"):
+        for scenario in ("echo", "blocked-read", "blocked-write", "partial", "oversized", "crash",
+                         "memory-limit", "delayed-reply", "delayed-hello", "blocked-hello"):
             (output / f"{scenario}.wasm").write_bytes(b"native pipe test scenario; not a Wasm component")
         if args.prepare_only:
             status = "prepared"
@@ -181,8 +182,26 @@ def main() -> int:
                 "RealGithubIssuesAndPullRequestsReachNativeProviders",
                 "RealGithubActionsReachNativeProviders",
             }
-            missing = sorted(required_compositions - composition_cases)
-            if len(process_cases) != 7 or len(owner_cases) < 15 or missing \
+            # Named too: the deadline and cold-start cases pin the failure
+            # granularity this suite exists to prove, so a renamed or dropped
+            # one must not silently shrink the gate.
+            required_processes = {
+                "RealWasmV2ActivationEventAndFuelTrapUseTheNativeSession",
+                "RealGithubIssuesComponentPublishesTheFilteredPageAndNextCursor",
+                "FaultyPeersCannotLeaveBlockedIoOrPendingInvocations",
+                "DeadlineOwnsItsResultAndCrashFinalizesTheOtherAcceptedRequests",
+                "ConcurrentStopsAndJoinsHaveOneWorkerCleanupOwner",
+                "FailedLaunchAndImmediateStopStillProduceOneTerminalOutcome",
+                "LaunchedHostRunsInsideTheSharedChildJob",
+                "WarmExchangeIsBoundByTheInvocationDeadlineNotAFixedSecond",
+                "UnansweredInvocationEndsAtItsDeadlineAndStopsTheHost",
+                "ColdStartHonoursItsOwnBudgetAcrossWaitSlices",
+                "UnansweredHelloFailsAtTheColdStartBudgetNotEarlierNotLater",
+                "ContributionOwnerUpdateFailureAndShutdownKeepPhysicalCleanup",
+            }
+            missing = sorted(required_compositions - composition_cases
+                             | required_processes - {case.get("name") for case in process_cases})
+            if len(owner_cases) < 15 or missing \
                     or any(case.find("skipped") is not None or case.find("failure") is not None for case in cases):
                 raise RuntimeError(
                     "required process cases are missing, skipped or failed"
