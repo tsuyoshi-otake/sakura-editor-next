@@ -424,6 +424,10 @@ bool CControlProcess::StartControlPlatform()
 		}
 		ControlPlatformRuntimeOptions options;
 		options.profileDirectory = *profileDirectory;
+		// Each editor window retains one authenticated SENP connection for its
+		// whole lifetime, so the shared session budget must exceed the number
+		// of simultaneously open editor windows.
+		options.pipeOptions.maximumSessions = 16;
 		options.storageDirectory = platform::profiles::BuildProfilePlatformMetadataDirectory(*profileDirectory);
 		options.legacyProfileAlias = GetProfileName();
 
