@@ -18,11 +18,13 @@ SPDX-License-Identifier: Zlib
 #include <condition_variable>
 #include <deque>
 #include <filesystem>
+#include <list>
 #include <map>
 #include <mutex>
 #include <set>
 #include <thread>
 #include <tuple>
+#include <unordered_map>
 #include <utility>
 
 namespace senp {
@@ -32,8 +34,42 @@ using platform::serialization::JsoncValue;
 
 constexpr DWORD kProtocolTimeoutMilliseconds = 1000;
 constexpr std::size_t kMaximumFrameBytes = 4U * 1024U * 1024U;
-constexpr std::size_t kMaximumCachedLines = 4096;
-constexpr std::size_t kMaximumPendingLines = 1024;
+//! Longest admitted line, in UTF-16 code units.
+constexpr std::size_t kMaximumLineUnits = 64U * 1024U;
+//! Most slots one `decorations` reply may carry. The bundled indent
+//! extension caps its own output per request at the same count.
+constexpr std::size_t kMaximumReplySlots = 10000;
+//! Byte bound on the pending queue. An entry is charged its key twice (the
+//! queue and its dedupe set each hold a copy) plus its own size.
+constexpr std::size_t kMaximumPendingBytes = 4U * 1024U * 1024U;
+//! Byte bound on the decoration cache. An entry is charged its key twice
+//! (the map and its LRU list each hold a copy), its decoration vector's
+//! capacity, and its own size.
+constexpr std::size_t kMaximumCacheBytes = 16U * 1024U * 1024U;
+//! One `decorate` frame carries at most kMaximumBatchLines lines. Past its
+//! first line it carries at most kMaximumBatchUnits UTF-16 units, so an
+//! extension that emits at most one slot per unit (the indent extension
+//! emits one per indent level) never exceeds kMaximumReplySlots because
+//! of how lines were grouped; a longer first line travels alone, exactly
+//! as it would unbatched.
+constexpr std::size_t kMaximumBatchLines = 64;
+constexpr std::size_t kMaximumBatchUnits = kMaximumReplySlots;
+//! The longest key: "<generation>:<tabSize>:" plus the line's UTF-8, at
+//! most 3 bytes per UTF-16 unit.
+constexpr std::size_t kMaximumKeyBytes = 20U + 1U + 2U + 1U + kMaximumLineUnits * 3U;
+
+//! Worst-case `decorate` frame for `units` UTF-16 units over `lines` lines:
+//! AppendQuoted's widest expansion is a control character escaped to six
+//! bytes (\u00XX), each line adds its `{"line":N,"text":""},` wrapper, and
+//! the frame adds its header.
+constexpr std::size_t WorstCaseDecorateFrameBytes(std::size_t units, std::size_t lines) noexcept
+{
+	return units * 6U + lines * 32U + 128U;
+}
+static_assert(WorstCaseDecorateFrameBytes(kMaximumLineUnits, 1) <= kMaximumFrameBytes,
+	"a lone longest line always fits one decorate frame");
+static_assert(WorstCaseDecorateFrameBytes(kMaximumBatchUnits, kMaximumBatchLines) <= kMaximumFrameBytes,
+	"a full batch always fits one decorate frame");
 
 class ScopedHandle final {
 public:
@@ -131,23 +167,21 @@ bool ReadExactTimed(HANDLE pipe, HANDLE process, void* bytes, std::size_t length
 	return true;
 }
 
-class HostProcess final {
+class HostProcess final : public detail::ISenpExtensionHost {
 public:
-	HostProcess() = default;
+	explicit HostProcess(std::wstring hostExecutable) : m_hostExecutable(std::move(hostExecutable)) {}
 	~HostProcess() { Close(); }
 	HostProcess(const HostProcess&) = delete;
 	HostProcess& operator=(const HostProcess&) = delete;
-	HostProcess(HostProcess&&) = default;
-	HostProcess& operator=(HostProcess&&) = default;
 
-	[[nodiscard]] bool Open(std::wstring_view modulePath, std::wstring_view moduleSha256)
+	[[nodiscard]] bool Open(std::wstring_view modulePath, std::wstring_view moduleSha256) override
 	{
 		Close();
 		const bool validDigest = moduleSha256.size() == 64
 			&& std::ranges::all_of(moduleSha256, [](wchar_t ch) {
 				return (ch >= L'0' && ch <= L'9') || (ch >= L'a' && ch <= L'f');
 			});
-		const auto executable = HostExecutable();
+		const auto& executable = !m_hostExecutable.empty() ? m_hostExecutable : HostExecutable();
 		if (!validDigest || executable.empty() || !std::filesystem::is_regular_file(executable)
 			|| !std::filesystem::is_regular_file(std::filesystem::path(modulePath))) return false;
 		// Child-side handles are created non-inheritable; the inherit flag is
@@ -210,20 +244,29 @@ public:
 			&& detail::AcceptExtensionHello(response);
 	}
 
-	[[nodiscard]] bool Decorate(std::wstring_view line, std::uint32_t tabSize,
-		std::vector<IndentDecoration>& target)
+	[[nodiscard]] bool Decorate(std::uint32_t tabSize,
+		const std::vector<detail::DecorateLine>& lines,
+		std::vector<std::pair<std::uint32_t, IndentDecoration>>& slots) override
 	{
 		std::string request = R"({"type":"decorate","revision":1,"tabSize":)";
 		request += std::to_string(tabSize);
-		request += R"(,"lines":[{"line":0,"text":)";
-		workbench::commands::json::AppendQuoted(request, line);
-		request += R"(}]})";
+		request += R"(,"lines":[)";
+		for (std::size_t index = 0; index < lines.size(); ++index) {
+			if (index != 0) request.push_back(',');
+			request += R"({"line":)";
+			request += std::to_string(lines[index].line);
+			request += R"(,"text":)";
+			workbench::commands::json::AppendQuoted(request, lines[index].text);
+			request.push_back('}');
+		}
+		request += R"(]})";
 		std::string response;
 		if (!Exchange(request, response)) return false;
-		return detail::ParseIndentDecorations(response, target);
+		return detail::ParseDecorationSlots(response,
+			static_cast<std::uint32_t>(lines.size()), slots);
 	}
 
-	void Close() noexcept
+	void Close() noexcept override
 	{
 		if (m_process.Valid() && ::WaitForSingleObject(m_process.Get(), 0) != WAIT_OBJECT_0) {
 			std::string ignored;
@@ -257,6 +300,7 @@ private:
 		return ReadExactTimed(m_output.Get(), m_process.Get(), response.data(), response.size());
 	}
 
+	const std::wstring m_hostExecutable;
 	ScopedHandle m_input;
 	ScopedHandle m_output;
 	ScopedHandle m_process;
@@ -266,15 +310,44 @@ private:
 };
 
 struct PendingLine final {
+	//! "<generation>:<tabSize>:<UTF-8 line>"; the only copy of the line text,
+	//! re-decoded from `textOffset` when the worker builds the frame.
 	std::string key;
-	std::wstring text;
+	std::size_t textOffset = 0;
+	//! The line's UTF-16 length, counted against kMaximumBatchUnits.
+	std::size_t units = 0;
 	std::uint32_t tabSize = 4;
 	std::uintptr_t repaintWindow = 0;
+	//! Accounted bytes against kMaximumPendingBytes.
+	std::size_t bytes = 0;
+};
+// The longest admitted line always fits an empty pending queue, so
+// admission never starves a line that is alone in the queue.
+static_assert(2U * kMaximumKeyBytes + sizeof(PendingLine) <= kMaximumPendingBytes,
+	"the longest admitted line always fits the pending byte cap");
+
+//! The `(id, modulePath, moduleSha256)` triple that decides whether a host
+//! survives a management revision change.
+struct ExtensionIdentity final {
+	std::wstring id;
+	std::wstring modulePath;
+	std::wstring moduleSha256;
+	[[nodiscard]] auto operator<=>(const ExtensionIdentity&) const = default;
+};
+
+//! Retired identities and the diagnostic each one surfaces.
+using RetiredHosts = std::map<ExtensionIdentity, std::wstring>;
+
+struct LiveHost final {
+	ExtensionIdentity identity;
+	std::unique_ptr<detail::ISenpExtensionHost> host;
 };
 
 class CWin32SenpRuntimeService final : public ISenpRuntimeService {
 public:
-	explicit CWin32SenpRuntimeService(ISenpManagementService& management) : m_management(management) {}
+	explicit CWin32SenpRuntimeService(ISenpManagementService& management,
+		detail::SenpRuntimeHooks hooks)
+		: m_management(management), m_hooks(std::move(hooks)) {}
 	~CWin32SenpRuntimeService() override { Stop(); }
 
 	[[nodiscard]] bool Start() override
@@ -301,8 +374,9 @@ public:
 			if (m_worker.joinable()) m_worker.join();
 			std::lock_guard lock(m_mutex);
 			m_pending.clear();
+			m_pendingBytes = 0;
 			m_pendingKeys.clear();
-			m_cache.clear();
+			InvalidateCacheLocked();
 			m_snapshot.activeHosts = 0;
 			m_snapshot.state = ERuntimeState::Stopped;
 			++m_snapshot.revision;
@@ -315,8 +389,9 @@ public:
 		try {
 			std::lock_guard lock(m_mutex);
 			++m_extensionSetGeneration;
-			m_cache.clear();
+			InvalidateCacheLocked();
 			m_pending.clear();
+			m_pendingBytes = 0;
 			m_pendingKeys.clear();
 		} catch (...) {
 		}
@@ -325,7 +400,16 @@ public:
 	[[nodiscard]] std::optional<std::vector<IndentDecoration>> RequestIndentDecorations(
 		std::wstring_view line, std::uint32_t tabSize, std::uintptr_t repaintWindow) override
 	{
-		if (line.size() > 64U * 1024U || tabSize == 0 || tabSize > 32) return std::vector<IndentDecoration>{};
+		if (line.size() > kMaximumLineUnits || tabSize == 0 || tabSize > 32) {
+			return std::vector<IndentDecoration>{};
+		}
+		// The key is the only stored copy of the text: a line whose UTF-8
+		// encoding cannot round-trip (an unpaired surrogate, or any other
+		// lossy conversion) is never queued, so the worker never decorates
+		// text that differs from what was painted.
+		const auto utf8 = workbench::commands::json::ToUtf8(line);
+		const auto roundTrip = workbench::commands::json::ToWideStrict(utf8);
+		if (!roundTrip || *roundTrip != line) return std::vector<IndentDecoration>{};
 		std::lock_guard lock(m_mutex);
 		// Package changes explicitly advance this runtime-owned generation. Paint
 		// never takes the management-service lock or copies the extension catalog.
@@ -333,14 +417,21 @@ public:
 		key.push_back(':');
 		key += std::to_string(tabSize);
 		key.push_back(':');
-		key += workbench::commands::json::ToUtf8(line);
+		const std::size_t textOffset = key.size();
+		key += utf8;
 		if (m_snapshot.state != ERuntimeState::Ready && m_snapshot.state != ERuntimeState::ReadyWithDiagnostics) {
 			return std::vector<IndentDecoration>{};
 		}
-		if (const auto found = m_cache.find(key); found != m_cache.end()) return found->second;
-		if (m_pendingKeys.contains(key) || m_pending.size() >= kMaximumPendingLines) return std::nullopt;
+		if (const auto found = m_cache.find(key); found != m_cache.end()) {
+			m_cacheOrder.splice(m_cacheOrder.begin(), m_cacheOrder, found->second.order);
+			return found->second.decorations;
+		}
+		if (m_pendingKeys.contains(key)) return std::nullopt;
+		const std::size_t bytes = 2U * key.size() + sizeof(PendingLine);
+		if (m_pendingBytes + bytes > kMaximumPendingBytes) return std::nullopt;
 		m_pendingKeys.insert(key);
-		m_pending.push_back({ key, std::wstring(line), tabSize, repaintWindow });
+		m_pendingBytes += bytes;
+		m_pending.push_back({ std::move(key), textOffset, line.size(), tabSize, repaintWindow, bytes });
 		m_changed.notify_one();
 		return std::nullopt;
 	}
@@ -352,77 +443,234 @@ public:
 	}
 
 private:
-	void WorkerMain() noexcept
+	void Repaint(std::uintptr_t repaintWindow) noexcept
 	{
-		std::vector<HostProcess> hosts;
-		std::uint64_t managementRevision = 0;
-		for (;;) {
-			PendingLine work;
-			{
-				std::unique_lock lock(m_mutex);
-				m_changed.wait(lock, [this] { return m_stop || !m_pending.empty(); });
-				if (m_stop) break;
-				work = std::move(m_pending.front());
-				m_pending.pop_front();
+		if (repaintWindow == 0) return;
+		if (m_hooks.repaint) {
+			m_hooks.repaint(repaintWindow);
+			return;
+		}
+		const HWND repaint = reinterpret_cast<HWND>(repaintWindow);
+		if (::IsWindow(repaint)) ::InvalidateRect(repaint, nullptr, FALSE);
+	}
+
+	//! Drops every cached result. Called only when the effective host set or
+	//! the extension-set generation changed - never as an overflow policy,
+	//! where oldest-first eviction is the contract.
+	void InvalidateCacheLocked()
+	{
+		m_cache.clear();
+		m_cacheOrder.clear();
+		m_cacheBytes = 0;
+	}
+
+	void StoreResultLocked(std::string key, std::vector<IndentDecoration> decorations)
+	{
+		const std::size_t bytes = 2U * key.size()
+			+ decorations.capacity() * sizeof(IndentDecoration) + sizeof(CacheEntry);
+		m_cacheOrder.push_front(key);
+		m_cache.emplace(std::move(key), CacheEntry{ m_cacheOrder.begin(), std::move(decorations), bytes });
+		m_cacheBytes += bytes;
+		// Least recently used first. The entry just stored always stays, even
+		// when it alone exceeds the cap (many hosts, each contributing up to
+		// kMaximumReplySlots), so its repaint finds a value instead of
+		// re-queueing the same work.
+		while (m_cacheBytes > kMaximumCacheBytes && m_cacheOrder.size() > 1) {
+			const auto oldest = m_cache.find(m_cacheOrder.back());
+			m_cacheBytes -= oldest->second.bytes;
+			m_cache.erase(oldest);
+			m_cacheOrder.pop_back();
+		}
+	}
+
+	void PublishHostSetLocked(std::size_t activeHosts, std::wstring diagnostic)
+	{
+		m_snapshot.activeHosts = activeHosts;
+		m_snapshot.diagnostic = std::move(diagnostic);
+		m_snapshot.state = m_snapshot.diagnostic.empty()
+			? ERuntimeState::Ready : ERuntimeState::ReadyWithDiagnostics;
+		++m_snapshot.revision;
+	}
+
+	//! The snapshot names the first retired identity's reason; no retired
+	//! identity means every desired host is live.
+	[[nodiscard]] static std::wstring RetirementDiagnostic(const RetiredHosts& retired)
+	{
+		return retired.empty() ? std::wstring{} : retired.begin()->second;
+	}
+
+	//! R0's explicit failure terminal: the host is closed, its identity is
+	//! retired (never reopened while the same identity is desired), and the
+	//! cache is invalidated because the effective host set changed.
+	[[nodiscard]] std::vector<LiveHost>::iterator RetireHost(
+		std::vector<LiveHost>& hosts, std::vector<LiveHost>::iterator failed,
+		RetiredHosts& retired)
+	{
+		retired.emplace(failed->identity,
+			L"A SENP extension failed while computing editor decorations: " + failed->identity.id);
+		failed->host->Close();
+		const auto next = hosts.erase(failed);
+		std::lock_guard lock(m_mutex);
+		InvalidateCacheLocked();
+		PublishHostSetLocked(hosts.size(), RetirementDiagnostic(retired));
+		return next;
+	}
+
+	//! R3's per-host restart: diff the desired identities against the live
+	//! set, close only removed/changed hosts, open only added/changed ones,
+	//! and invalidate the cache only when the effective set changed.
+	void ReconcileHosts(const ManagementSnapshot& management, std::vector<LiveHost>& hosts,
+		RetiredHosts& retired,
+		const std::function<std::unique_ptr<detail::ISenpExtensionHost>()>& factory)
+	{
+		std::set<ExtensionIdentity> desired;
+		for (const auto& extension : management.extensions) {
+			if (!extension.enabled || !extension.contributesIndentDecorations) continue;
+			desired.insert({ extension.id, extension.modulePath, extension.moduleSha256 });
+		}
+		bool changed = false;
+		for (auto it = hosts.begin(); it != hosts.end();) {
+			if (desired.contains(it->identity)) ++it;
+			else {
+				it->host->Close();
+				it = hosts.erase(it);
+				changed = true;
 			}
-			const auto management = m_management.Snapshot();
-			if (management.revision != managementRevision) {
-				hosts.clear();
-				std::wstring diagnostic;
-				for (const auto& extension : management.extensions) {
-					if (!extension.enabled || !extension.contributesIndentDecorations) continue;
-					HostProcess host;
-					if (host.Open(extension.modulePath, extension.moduleSha256)) hosts.push_back(std::move(host));
-					else diagnostic = L"An enabled SENP extension host could not be started";
+		}
+		// A retired identity stays closed while it remains desired; once the
+		// package set drops it, its retirement record and diagnostic go too.
+		std::erase_if(retired, [&](const auto& entry) { return !desired.contains(entry.first); });
+		for (const auto& identity : desired) {
+			if (retired.contains(identity)
+				|| std::ranges::find(hosts, identity, &LiveHost::identity) != hosts.end()) continue;
+			auto host = factory();
+			if (host->Open(identity.modulePath, identity.moduleSha256)) {
+				hosts.push_back({ identity, std::move(host) });
+			} else {
+				retired.emplace(identity,
+					L"An enabled SENP extension host could not be started: " + identity.id);
+			}
+			changed = true;
+		}
+		auto diagnostic = RetirementDiagnostic(retired);
+		std::lock_guard lock(m_mutex);
+		if (changed) InvalidateCacheLocked();
+		// Releasing a retirement changes no live host, but its diagnostic
+		// must still clear.
+		if (changed || diagnostic != m_snapshot.diagnostic) {
+			PublishHostSetLocked(hosts.size(), std::move(diagnostic));
+		}
+	}
+
+	void ProcessBatch(std::vector<PendingLine>& batch, std::vector<LiveHost>& hosts,
+		RetiredHosts& retired)
+	{
+		// Re-derive each line's text from its key. Admission proved the UTF-8
+		// round trip, so the strict decode is engaged by construction.
+		const auto tabSize = batch.front().tabSize;
+		std::vector<detail::DecorateLine> lines(batch.size());
+		for (std::size_t index = 0; index < batch.size(); ++index) {
+			lines[index] = { static_cast<std::uint32_t>(index),
+				workbench::commands::json::ToWideStrict(
+					std::string_view(batch[index].key).substr(batch[index].textOffset)).value() };
+		}
+		// One frame per host per batch. A failed host retires (R0); the
+		// batch's lines still complete from the remaining hosts.
+		std::vector<std::vector<IndentDecoration>> results(batch.size());
+		for (auto it = hosts.begin(); it != hosts.end();) {
+			std::vector<std::pair<std::uint32_t, IndentDecoration>> slots;
+			if (!it->host->Decorate(tabSize, lines, slots)) {
+				it = RetireHost(hosts, it, retired);
+			} else {
+				for (const auto& slot : slots) {
+					if (slot.first < results.size()) results[slot.first].push_back(slot.second);
 				}
-				managementRevision = management.revision;
-				std::lock_guard lock(m_mutex);
-				m_cache.clear();
-				m_snapshot.activeHosts = hosts.size();
-				m_snapshot.diagnostic = std::move(diagnostic);
-				m_snapshot.state = m_snapshot.diagnostic.empty()
-					? ERuntimeState::Ready : ERuntimeState::ReadyWithDiagnostics;
-				++m_snapshot.revision;
+				++it;
 			}
-			std::vector<IndentDecoration> decorations;
-			bool succeeded = true;
-			for (auto& host : hosts) {
-				std::vector<IndentDecoration> contributed;
-				if (!host.Decorate(work.text, work.tabSize, contributed)) {
-					succeeded = false;
-					break;
-				}
-				decorations.insert(decorations.end(), contributed.begin(), contributed.end());
-			}
+		}
+		// Every line reaches a stored result: merged, sorted, and cached, so
+		// a repaint finds a value instead of re-queueing the same work.
+		for (std::size_t index = 0; index < batch.size(); ++index) {
+			auto& decorations = results[index];
 			std::sort(decorations.begin(), decorations.end(), [](const auto& left, const auto& right) {
 				return std::tie(left.visualStart, left.depth, left.visualLength)
 					< std::tie(right.visualStart, right.depth, right.visualLength);
 			});
 			{
 				std::lock_guard lock(m_mutex);
-				m_pendingKeys.erase(work.key);
-				if (succeeded) {
-					if (m_cache.size() >= kMaximumCachedLines) m_cache.clear();
-					m_cache.emplace(std::move(work.key), std::move(decorations));
-				} else {
-					m_snapshot.state = ERuntimeState::ReadyWithDiagnostics;
-					m_snapshot.diagnostic = L"A SENP extension failed while computing editor decorations";
-					++m_snapshot.revision;
-				}
+				m_pendingKeys.erase(batch[index].key);
+				StoreResultLocked(std::move(batch[index].key), std::move(decorations));
 			}
-			const HWND repaint = reinterpret_cast<HWND>(work.repaintWindow);
-			if (repaint != nullptr && ::IsWindow(repaint)) ::InvalidateRect(repaint, nullptr, FALSE);
+			Repaint(batch[index].repaintWindow);
 		}
 	}
 
+	void WorkerMain() noexcept
+	{
+		const auto factory = [this]() -> std::unique_ptr<detail::ISenpExtensionHost> {
+			if (m_hooks.hostFactory) return m_hooks.hostFactory();
+			return std::make_unique<HostProcess>(m_hooks.hostExecutable);
+		};
+		std::vector<LiveHost> hosts;
+		RetiredHosts retired;
+		std::uint64_t managementRevision = 0;
+		for (;;) {
+			{
+				std::unique_lock lock(m_mutex);
+				m_changed.wait(lock, [this] { return m_stop || !m_pending.empty(); });
+				if (m_stop) break;
+			}
+			// Reconcile before draining: requests keep queueing while this
+			// polls, and a changed revision takes one Snapshot() (R2).
+			if (const auto revision = m_management.Revision(); revision != managementRevision) {
+				ReconcileHosts(m_management.Snapshot(), hosts, retired, factory);
+				managementRevision = revision;
+			}
+			std::vector<PendingLine> batch;
+			{
+				std::lock_guard lock(m_mutex);
+				// NotifyExtensionsChanged may have emptied the queue while
+				// the reconcile ran.
+				if (m_pending.empty()) continue;
+				// Front tabSize only, FIFO (R2): other tabSizes wait for the
+				// next pass instead of widening this frame.
+				// The first line always goes; later lines join only while the
+				// frame stays within kMaximumBatchUnits.
+				const auto tabSize = m_pending.front().tabSize;
+				std::size_t units = 0;
+				while (!m_pending.empty() && batch.size() < kMaximumBatchLines
+					&& m_pending.front().tabSize == tabSize
+					&& (batch.empty() || units + m_pending.front().units <= kMaximumBatchUnits)) {
+					units += m_pending.front().units;
+					m_pendingBytes -= m_pending.front().bytes;
+					batch.push_back(std::move(m_pending.front()));
+					m_pending.pop_front();
+				}
+			}
+			ProcessBatch(batch, hosts, retired);
+		}
+	}
+
+	struct CacheEntry final {
+		std::list<std::string>::iterator order;
+		std::vector<IndentDecoration> decorations;
+		std::size_t bytes = 0;
+	};
+
 	ISenpManagementService& m_management;
+	const detail::SenpRuntimeHooks m_hooks;
 	mutable std::mutex m_mutex;
 	std::condition_variable m_changed;
 	std::thread m_worker;
 	bool m_stop = false;
 	std::deque<PendingLine> m_pending;
+	std::size_t m_pendingBytes = 0;
 	std::set<std::string> m_pendingKeys;
-	std::map<std::string, std::vector<IndentDecoration>> m_cache;
+	//! LRU order, most recently used first; a cache hit moves the entry to
+	//! the front. Keyed by the same exact text key as the pending dedupe set.
+	std::list<std::string> m_cacheOrder;
+	std::unordered_map<std::string, CacheEntry> m_cache;
+	std::size_t m_cacheBytes = 0;
 	std::uint64_t m_extensionSetGeneration = 0;
 	RuntimeSnapshot m_snapshot;
 };
@@ -446,19 +694,20 @@ bool AcceptExtensionHello(std::string_view response)
 		&& abiText != nullptr && *abiText == L"sakura:senp/extension@1.0.0";
 }
 
-bool ParseIndentDecorations(std::string_view response,
-	std::vector<IndentDecoration>& target)
+bool ParseDecorationSlots(std::string_view response, std::uint32_t lineCount,
+	std::vector<std::pair<std::uint32_t, IndentDecoration>>& slots)
 {
 	const auto parsed = platform::serialization::CJsoncDocument::ParseStrict(response);
 	const auto* root = parsed.Succeeded() ? std::get_if<JsoncValue::Object>(&parsed.value->Value()) : nullptr;
 	if (root == nullptr) return false;
 	const auto type = root->find(L"type");
-	const auto slots = root->find(L"slots");
+	const auto members = root->find(L"slots");
 	const auto* typeText = type == root->end() ? nullptr : std::get_if<std::wstring>(&type->second.Value());
-	const auto* array = slots == root->end() ? nullptr : std::get_if<JsoncValue::Array>(&slots->second.Value());
-	if (typeText == nullptr || *typeText != L"decorations" || array == nullptr || array->size() > 10000) return false;
-	target.clear();
-	target.reserve(array->size());
+	const auto* array = members == root->end() ? nullptr : std::get_if<JsoncValue::Array>(&members->second.Value());
+	if (typeText == nullptr || *typeText != L"decorations" || array == nullptr
+		|| array->size() > kMaximumReplySlots) return false;
+	slots.clear();
+	slots.reserve(array->size());
 	for (const auto& value : *array) {
 		const auto* object = std::get_if<JsoncValue::Object>(&value.Value());
 		if (object == nullptr) return false;
@@ -470,11 +719,13 @@ bool ParseIndentDecorations(std::string_view response,
 		const auto* start = integer(L"visualStart");
 		const auto* length = integer(L"visualLength");
 		const auto* depth = integer(L"depth");
-		if (line == nullptr || *line != 0 || start == nullptr || length == nullptr || depth == nullptr
+		if (line == nullptr || *line < 0 || *line >= lineCount
+			|| start == nullptr || length == nullptr || depth == nullptr
 			|| *start < 0 || *length <= 0 || *depth < 0
 			|| *start > UINT32_MAX || *length > UINT32_MAX || *depth > UINT32_MAX) return false;
-		target.push_back({ static_cast<std::uint32_t>(*start),
-			static_cast<std::uint32_t>(*length), static_cast<std::uint32_t>(*depth) });
+		slots.push_back({ static_cast<std::uint32_t>(*line),
+			{ static_cast<std::uint32_t>(*start),
+				static_cast<std::uint32_t>(*length), static_cast<std::uint32_t>(*depth) } });
 	}
 	return true;
 }
@@ -482,9 +733,9 @@ bool ParseIndentDecorations(std::string_view response,
 } // namespace detail
 
 std::unique_ptr<ISenpRuntimeService> CreateWin32SenpRuntimeService(
-	ISenpManagementService& management)
+	ISenpManagementService& management, detail::SenpRuntimeHooks hooks)
 {
-	return std::make_unique<CWin32SenpRuntimeService>(management);
+	return std::make_unique<CWin32SenpRuntimeService>(management, std::move(hooks));
 }
 
 } // namespace senp

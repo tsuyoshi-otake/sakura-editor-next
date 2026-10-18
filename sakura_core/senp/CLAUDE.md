@@ -428,12 +428,76 @@ failure with a visual placeholder or an unrelated legacy plugin path.
 - The v1 host handshake and decorations reply are strict JSON decoded by
   `senp::detail::AcceptExtensionHello` (exactly `type=="hello"`,
   `protocol==1`, `abi=="sakura:senp/extension@1.0.0"`) and
-  `senp::detail::ParseIndentDecorations` in `SenpRuntimeService.cpp`; a
+  `senp::detail::ParseDecorationSlots` in `SenpRuntimeService.cpp`; a
   rejected reply takes the same `false` path a missing reply takes. v1 reads
   through `ReadExactTimed`, a bounded `PeekNamedPipe` poll: its anonymous
   `CreatePipe` pipes do not support overlapped I/O, the loop is capped by
   `kProtocolTimeoutMilliseconds`, runs only on the v1 worker thread, and
   checks host exit every iteration.
+- The v1 decoration worker (#347/#348/#350) keeps explicit bounds and
+  terminals rather than count-only buckets:
+  - **Failure is a terminal, not a retry loop.** A host whose `Open` or
+    `Decorate` exchange fails is closed and its `(id, modulePath,
+    moduleSha256)` identity retired; it is never reopened while the same
+    identity is desired. The batch's lines still complete from the
+    surviving hosts and are cached, `InvalidateRect` fires only for a
+    stored result, and retiring a host invalidates the cache exactly like
+    a host-set diff, so no repaint can re-queue the same work. The
+    diagnostic names the first retired identity with its own reason
+    ("failed while computing" or "could not be started") and clears when
+    the package set drops that identity, even if no live host changed.
+  - **Divergence from VS Code (recorded).** VS Code restarts a crashed
+    extension host automatically up to 3 times within 5 minutes and then
+    offers a manual restart. A v1 host here is one extension's process,
+    and a retry would resend the same visible lines that just failed, so
+    this worker retires on the first failure; the identity comes back
+    only through a package change (new digest, disable/enable, reinstall)
+    or an editor restart. The bundled indent extension rejects more than
+    10000 slots per request, so one line with more than 10000 indent
+    levels retires it; batching never causes that on its own (below).
+  - **Byte-bounded LRU.** Pending queue 4 MiB (`kMaximumPendingBytes`),
+    decoration cache 16 MiB (`kMaximumCacheBytes`). Both charge each key
+    twice, because each structure holds two copies (queue + dedupe set,
+    map + LRU list), plus the entry size and, for the cache, the
+    decoration vector's capacity. Cache overflow evicts
+    least-recently-used entries one by one; nothing is `clear()`ed on
+    overflow. The entry just stored is never evicted by its own insertion,
+    even when it alone exceeds the cap (many hosts each contributing a
+    full reply), so its repaint always finds a value. Keys keep exact
+    text (no hashing - a collision would paint another line's
+    decorations), and the pending entry stores only the key: the worker
+    re-derives the UTF-16 text from its recorded text offset, so the line
+    text lives in one structure. A line whose UTF-8 encoding cannot
+    round-trip (an unpaired surrogate or any other lossy conversion) is
+    answered with an empty result at admission and never queued. A
+    `static_assert` proves the longest admitted line (64 Ki UTF-16 units,
+    at most 3 UTF-8 bytes each, plus the key prefix, charged twice) fits
+    an empty pending queue.
+  - **Batched frames, revision polling.** The worker polls
+    `ISenpManagementService::Revision()` and takes `Snapshot()` only when
+    it changed. Each pass drains the pending queue's front `tabSize`
+    group FIFO into one `decorate` frame per live host: at most
+    `kMaximumBatchLines` (64) lines, and past the first line at most
+    `kMaximumBatchUnits` (10000) UTF-16 units. 10000 is also the reply
+    slot bound (`kMaximumReplySlots`), so an extension emitting at most
+    one slot per unit - the indent extension emits one per indent level -
+    never overflows a reply because lines were grouped; a longer first
+    line travels alone, exactly as it would unbatched. `static_assert`s
+    prove that both a lone longest line and a full batch fit the 4 MiB
+    transport frame even when every character is a control character
+    escaped to six bytes, so the native side never builds a frame it
+    must refuse (which would wrongly retire the host). Reply slots map
+    back through the caller-assigned `line` index. Other tabSizes wait
+    for the next pass.
+  - **Per-host restart.** A management revision diffs the enabled
+    `contributesIndentDecorations` set by identity: removed/changed
+    hosts close, added/changed open, the rest keep their process. The
+    cache is invalidated only when that effective set changed.
+  - The worker's OS dependencies sit behind constructor-injected
+    `detail::SenpRuntimeHooks` (host factory, repaint callback, and the
+    host executable path - empty means the `sakura-senp-host.exe` beside
+    this executable), never a global hook. Fixture-gated tests launch the
+    `test-fixtures` peer through it.
 - Child-side standard-stream handles are created NON-inheritable in all three
   launchers; `senp::detail::SetChildHandlesInheritable` sets
   `HANDLE_FLAG_INHERIT` immediately before `CreateProcessW` and the launcher

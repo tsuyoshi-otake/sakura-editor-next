@@ -617,6 +617,7 @@ public:
 	[[nodiscard]] senp::ManagementOperationResult Refresh() override { return Unavailable(); }
 	void Stop() noexcept override { m_snapshot.state = senp::EManagementState::Stopped; }
 	[[nodiscard]] senp::ManagementSnapshot Snapshot() const override { return m_snapshot; }
+	[[nodiscard]] std::uint64_t Revision() const override { return m_snapshot.revision; }
 
 private:
 	[[nodiscard]] senp::ManagementOperationResult Unavailable() const

@@ -50,6 +50,7 @@ public:
 	}
 	void Stop() noexcept override {}
 	senp::ManagementSnapshot Snapshot() const override { return snapshot; }
+	std::uint64_t Revision() const override { return snapshot.revision; }
 
 	senp::ManagementSnapshot snapshot;
 };

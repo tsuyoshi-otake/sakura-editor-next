@@ -4,11 +4,17 @@
 #include <gtest/gtest.h>
 #include "senp/SenpEffectRuntime.h"
 #include "senp/SenpContributionOwners.h"
+#include "senp/SenpRuntimeService.h"
+#include "senp/SenpManagementService.h"
+#include <atomic>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <set>
 #include <thread>
+#include <vector>
+#include <tlhelp32.h>
 
 namespace {
 using namespace senp;
@@ -398,6 +404,235 @@ TEST_F(SenpRuntimeProcess, ContributionOwnerUpdateFailureAndShutdownKeepPhysical
 		if (process) { EXPECT_EQ(::WaitForSingleObject(process, 0), WAIT_OBJECT_0); ::CloseHandle(process); }
 		else EXPECT_EQ(::GetLastError(), ERROR_INVALID_PARAMETER);
 	}
+}
+
+// Management authority for the v1 decoration worker's fixture tests: a
+// Ready catalog the worker polls through Revision()/Snapshot().
+class V1FakeManagement final : public ISenpManagementService {
+public:
+	void SetExtensions(std::vector<ExtensionDescriptor> extensions)
+	{
+		std::lock_guard lock(m_mutex);
+		m_snapshot.state = EManagementState::Ready;
+		m_snapshot.extensions = std::move(extensions);
+		++m_snapshot.revision;
+	}
+
+	// Holds the worker inside its next Revision() poll until Release(), so
+	// requests offered meanwhile drain as one batch.
+	void Hold() { m_hold.store(true); }
+	void Release() { m_hold.store(false); }
+
+	[[nodiscard]] ManagementOperationResult Start() override { return Unavailable(); }
+	[[nodiscard]] ManagementOperationResult InstallDeveloperPackage(
+		std::wstring_view, bool) override { return Unavailable(); }
+	[[nodiscard]] ManagementOperationResult InstallBuiltInPackage(
+		std::wstring_view) override { return Unavailable(); }
+	[[nodiscard]] ManagementOperationResult UninstallBuiltInPackage(
+		std::wstring_view) override { return Unavailable(); }
+	[[nodiscard]] ManagementOperationResult SetExtensionEnabled(
+		std::wstring_view, bool) override { return Unavailable(); }
+	[[nodiscard]] ManagementOperationResult UninstallPackage(
+		std::wstring_view) override { return Unavailable(); }
+	[[nodiscard]] ManagementOperationResult Refresh() override { return Unavailable(); }
+	void Stop() noexcept override {}
+	[[nodiscard]] ManagementSnapshot Snapshot() const override
+	{
+		std::lock_guard lock(m_mutex);
+		return m_snapshot;
+	}
+	[[nodiscard]] std::uint64_t Revision() const override
+	{
+		const auto deadline = Clock::now() + 30s;
+		while (m_hold.load() && Clock::now() < deadline) ::Sleep(1);
+		std::lock_guard lock(m_mutex);
+		return m_snapshot.revision;
+	}
+
+private:
+	[[nodiscard]] ManagementOperationResult Unavailable() const
+	{
+		return { EManagementOperationStatus::Unavailable, {} };
+	}
+
+	mutable std::mutex m_mutex;
+	ManagementSnapshot m_snapshot;
+	std::atomic<bool> m_hold{ false };
+};
+
+// The live processes carrying a fixture executable name. The v1 tests
+// require that none survive their host terminal, and compare PIDs across a
+// revision change.
+std::set<DWORD> FixtureProcessIds(const wchar_t* name)
+{
+	const HANDLE snapshot = ::CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+	if (snapshot == INVALID_HANDLE_VALUE) return {};
+	std::set<DWORD> ids;
+	PROCESSENTRY32W entry{ sizeof(entry) };
+	for (BOOL next = ::Process32FirstW(snapshot, &entry); next; next = ::Process32NextW(snapshot, &entry)) {
+		if (_wcsicmp(entry.szExeFile, name) == 0) ids.insert(entry.th32ProcessID);
+	}
+	::CloseHandle(snapshot);
+	return ids;
+}
+
+// Polls a v1 decoration request until the worker stored its result; the
+// diagnostic is published before the batch's results are cached.
+std::optional<std::vector<IndentDecoration>> WaitDecorations(
+	ISenpRuntimeService& service, std::wstring_view line)
+{
+	const auto deadline = Clock::now() + 12s;
+	for (;;) {
+		auto result = service.RequestIndentDecorations(line, 4, 0);
+		if (result || Clock::now() >= deadline) return result;
+		::Sleep(5);
+	}
+}
+
+TEST_F(SenpRuntimeProcess, V1HostOverJobMemoryCapIsRetiredWithDiagnostic)
+{
+	// The fixture allocates ~768 MiB on the first `decorate`; the shared
+	// 512 MiB job cap kills it mid-exchange, so the worker's R0 terminal
+	// (diagnostic + retirement) is what must surface, like the v2
+	// memory-limit oracle in FaultyPeersCannotLeaveBlockedIoOrPendingInvocations.
+	V1FakeManagement management;
+	ExtensionDescriptor extension;
+	extension.id = L"ext.memory";
+	extension.enabled = true;
+	extension.contributesIndentDecorations = true;
+	extension.modulePath = (fixtures / L"memory-limit.wasm").native();
+	extension.moduleSha256 = std::wstring(64, L'0');
+	management.SetExtensions({ extension });
+
+	detail::SenpRuntimeHooks hooks;
+	hooks.hostExecutable = (fixtures / L"senp-host-fixture.exe").native();
+	const auto service = senp::CreateWin32SenpRuntimeService(management, hooks);
+	ASSERT_TRUE(service->Start());
+	(void)service->RequestIndentDecorations(L"\tvalue", 4, 0);
+	const auto deadline = Clock::now() + 12s;
+	while (service->Snapshot().state != ERuntimeState::ReadyWithDiagnostics
+		&& Clock::now() < deadline) ::Sleep(5);
+	const auto snapshot = service->Snapshot();
+	ASSERT_EQ(snapshot.state, ERuntimeState::ReadyWithDiagnostics);
+	EXPECT_NE(snapshot.diagnostic.find(L"ext.memory"), std::wstring::npos);
+	EXPECT_EQ(snapshot.activeHosts, 0U);
+	// The 12 s bound above is well inside the fixture's own 30 s watchdog.
+	// The line completes from the remaining (zero) hosts and is cached.
+	const auto cached = WaitDecorations(*service, L"\tvalue");
+	ASSERT_TRUE(cached.has_value());
+	EXPECT_TRUE(cached->empty());
+	service->Stop();
+	EXPECT_TRUE(FixtureProcessIds(L"senp-host-fixture.exe").empty());
+}
+
+TEST_F(SenpRuntimeProcess, NonV1HelloPeerIsRefusedAtOpenAndNeverDecorated)
+{
+	// The peer answers the hello with protocol 2: Open must refuse it before
+	// any `decorate` frame exists (the hello precedes the exchange in code),
+	// and the refused identity is retired like any other failure.
+	V1FakeManagement management;
+	ExtensionDescriptor extension;
+	extension.id = L"ext.hello";
+	extension.enabled = true;
+	extension.contributesIndentDecorations = true;
+	extension.modulePath = (fixtures / L"wrong-hello.wasm").native();
+	extension.moduleSha256 = std::wstring(64, L'0');
+	management.SetExtensions({ extension });
+
+	detail::SenpRuntimeHooks hooks;
+	hooks.hostExecutable = (fixtures / L"senp-host-fixture.exe").native();
+	const auto service = senp::CreateWin32SenpRuntimeService(management, hooks);
+	ASSERT_TRUE(service->Start());
+	(void)service->RequestIndentDecorations(L"\tvalue", 4, 0);
+	const auto deadline = Clock::now() + 12s;
+	while (service->Snapshot().state != ERuntimeState::ReadyWithDiagnostics
+		&& Clock::now() < deadline) ::Sleep(5);
+	const auto snapshot = service->Snapshot();
+	ASSERT_EQ(snapshot.state, ERuntimeState::ReadyWithDiagnostics);
+	EXPECT_NE(snapshot.diagnostic.find(L"ext.hello"), std::wstring::npos);
+	EXPECT_EQ(snapshot.activeHosts, 0U);
+	// A later revision carrying the same identity leaves it retired: the
+	// next line drives a reconcile pass and still completes with no host.
+	management.SetExtensions({ extension });
+	ASSERT_TRUE(WaitDecorations(*service, L"\tafter").has_value());
+	EXPECT_EQ(service->Snapshot().activeHosts, 0U);
+	EXPECT_NE(service->Snapshot().diagnostic.find(L"ext.hello"), std::wstring::npos);
+	service->Stop();
+	EXPECT_TRUE(FixtureProcessIds(L"senp-host-fixture.exe").empty());
+}
+
+// A v1 extension backed by the fixture peer in its echo mode.
+ExtensionDescriptor V1EchoExtension(const std::filesystem::path& fixtures, std::wstring id)
+{
+	ExtensionDescriptor extension;
+	extension.id = std::move(id);
+	extension.enabled = true;
+	extension.contributesIndentDecorations = true;
+	extension.modulePath = (fixtures / L"echo.wasm").native();
+	extension.moduleSha256 = std::wstring(64, L'0');
+	return extension;
+}
+
+TEST_F(SenpRuntimeProcess, V1BatchedFrameRoundTripsThroughTheRealPipe)
+{
+	// #348: four lines queued while the worker is held drain as one
+	// `decorate` frame. The peer decodes that frame strictly and answers one
+	// slot per line (depth = the line's index in the frame, length = its
+	// UTF-16 length + 1), so each cached result proves both the native frame
+	// encoding - quotes, backslashes, control characters, non-ASCII - and
+	// the slot-to-line mapping.
+	V1FakeManagement management;
+	management.SetExtensions({ V1EchoExtension(fixtures, L"ext.echo") });
+	detail::SenpRuntimeHooks hooks;
+	hooks.hostExecutable = (fixtures / L"senp-host-fixture.exe").native();
+	const auto service = senp::CreateWin32SenpRuntimeService(management, hooks);
+	management.Hold();
+	ASSERT_TRUE(service->Start());
+	const std::vector<std::wstring> lines{
+		L"\tvalue", L"a\"b\\c", std::wstring(L"x") + wchar_t{ 1 } + L"y",
+		std::wstring{ wchar_t{ 0x65e5 }, wchar_t{ 0x672c } } + L"\U0001F600" };
+	for (const auto& line : lines) (void)service->RequestIndentDecorations(line, 4, 0);
+	management.Release();
+	for (std::size_t index = 0; index < lines.size(); ++index) {
+		const auto result = WaitDecorations(*service, lines[index]);
+		ASSERT_TRUE(result.has_value()) << index;
+		ASSERT_EQ(result->size(), 1U) << index;
+		EXPECT_EQ(result->front().depth, index) << index;
+		EXPECT_EQ(result->front().visualLength, lines[index].size() + 1) << index;
+	}
+	EXPECT_EQ(service->Snapshot().state, ERuntimeState::Ready);
+	service->Stop();
+	EXPECT_TRUE(FixtureProcessIds(L"senp-host-fixture.exe").empty());
+}
+
+TEST_F(SenpRuntimeProcess, V1RevisionChangeKeepsTheUnchangedHostProcess)
+{
+	// #350: removing A closes only A's process; B's process was already
+	// running before the revision change and still serves after it.
+	V1FakeManagement management;
+	const auto a = V1EchoExtension(fixtures, L"ext.a");
+	const auto b = V1EchoExtension(fixtures, L"ext.b");
+	management.SetExtensions({ a, b });
+	detail::SenpRuntimeHooks hooks;
+	hooks.hostExecutable = (fixtures / L"senp-host-fixture.exe").native();
+	const auto service = senp::CreateWin32SenpRuntimeService(management, hooks);
+	ASSERT_TRUE(service->Start());
+	const auto first = WaitDecorations(*service, L"\tfirst");
+	ASSERT_TRUE(first.has_value());
+	EXPECT_EQ(first->size(), 2U);
+	const auto before = FixtureProcessIds(L"senp-host-fixture.exe");
+	ASSERT_EQ(before.size(), 2U);
+
+	management.SetExtensions({ b });
+	const auto second = WaitDecorations(*service, L"\tsecond");
+	ASSERT_TRUE(second.has_value());
+	EXPECT_EQ(second->size(), 1U);
+	const auto after = FixtureProcessIds(L"senp-host-fixture.exe");
+	ASSERT_EQ(after.size(), 1U);
+	EXPECT_TRUE(before.contains(*after.begin()));
+	EXPECT_EQ(service->Snapshot().activeHosts, 1U);
+	service->Stop();
+	EXPECT_TRUE(FixtureProcessIds(L"senp-host-fixture.exe").empty());
 }
 
 } // namespace

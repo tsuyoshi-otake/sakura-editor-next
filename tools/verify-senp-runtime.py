@@ -150,7 +150,8 @@ def main() -> int:
         (output / "github-actions-extension.sha256").write_text(
             hashlib.sha256((output / "github-actions-extension.wasm").read_bytes()).hexdigest() + "\n", encoding="ascii")
         for scenario in ("echo", "blocked-read", "blocked-write", "partial", "oversized", "crash",
-                         "memory-limit", "delayed-reply", "delayed-hello", "blocked-hello"):
+                         "memory-limit", "delayed-reply", "delayed-hello", "blocked-hello",
+                         "wrong-hello"):
             (output / f"{scenario}.wasm").write_bytes(b"native pipe test scenario; not a Wasm component")
         if args.prepare_only:
             status = "prepared"
@@ -198,6 +199,13 @@ def main() -> int:
                 "ColdStartHonoursItsOwnBudgetAcrossWaitSlices",
                 "UnansweredHelloFailsAtTheColdStartBudgetNotEarlierNotLater",
                 "ContributionOwnerUpdateFailureAndShutdownKeepPhysicalCleanup",
+                # The v1 decoration worker over the real pipe and job (#340,
+                # #348, #350): retirement, hello refusal, the batched frame
+                # and the per-host process survival.
+                "V1HostOverJobMemoryCapIsRetiredWithDiagnostic",
+                "NonV1HelloPeerIsRefusedAtOpenAndNeverDecorated",
+                "V1BatchedFrameRoundTripsThroughTheRealPipe",
+                "V1RevisionChangeKeepsTheUnchangedHostProcess",
             }
             missing = sorted(required_compositions - composition_cases
                              | required_processes - {case.get("name") for case in process_cases})

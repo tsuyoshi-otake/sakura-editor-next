@@ -294,6 +294,9 @@ public:
 	[[nodiscard]] virtual ManagementOperationResult Refresh() = 0;
 	virtual void Stop() noexcept = 0;
 	[[nodiscard]] virtual ManagementSnapshot Snapshot() const = 0;
+	//! The revision of the last published snapshot, without copying it.
+	//! Callers poll this and take `Snapshot()` only when it changed.
+	[[nodiscard]] virtual std::uint64_t Revision() const = 0;
 };
 
 namespace detail {
@@ -348,6 +351,7 @@ public:
 	[[nodiscard]] ManagementOperationResult Refresh() override;
 	void Stop() noexcept override;
 	[[nodiscard]] ManagementSnapshot Snapshot() const override;
+	[[nodiscard]] std::uint64_t Revision() const override;
 
 private:
 	[[nodiscard]] ManagementOperationResult LoadBuiltInCatalog();

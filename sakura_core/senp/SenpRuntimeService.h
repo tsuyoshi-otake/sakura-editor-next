@@ -7,9 +7,12 @@ SPDX-License-Identifier: Zlib
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
+#include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace senp {
@@ -59,14 +62,51 @@ namespace detail {
 //! any extra, missing or mistyped member fails.
 [[nodiscard]] bool AcceptExtensionHello(std::string_view response);
 
-//! Decodes a v1 "decorations" reply into `target`. The reply is strict JSON,
-//! not configuration JSONC.
-[[nodiscard]] bool ParseIndentDecorations(std::string_view response,
-	std::vector<IndentDecoration>& target);
+//! Decodes a v1 "decorations" reply into `slots`. The reply is strict JSON,
+//! not configuration JSONC. Every slot's `line` is a caller-assigned index
+//! within the request's `lines` array and must be below `lineCount`.
+[[nodiscard]] bool ParseDecorationSlots(std::string_view response,
+	std::uint32_t lineCount,
+	std::vector<std::pair<std::uint32_t, IndentDecoration>>& slots);
+
+//! One line inside a batched `decorate` frame; `line` is the caller-assigned
+//! index the reply slots map back to.
+struct DecorateLine final {
+	std::uint32_t line = 0;
+	std::wstring text;
+};
+
+//! One extension host process. The production implementation is the v1 pipe
+//! host; tests substitute scripted peers through `SenpRuntimeHooks`.
+class ISenpExtensionHost {
+public:
+	virtual ~ISenpExtensionHost() = default;
+	[[nodiscard]] virtual bool Open(std::wstring_view modulePath,
+		std::wstring_view moduleSha256) = 0;
+	//! Sends one `decorate` frame covering `lines` and appends the reply's
+	//! slots, each keyed by the caller-assigned `DecorateLine::line` index.
+	[[nodiscard]] virtual bool Decorate(std::uint32_t tabSize,
+		const std::vector<DecorateLine>& lines,
+		std::vector<std::pair<std::uint32_t, IndentDecoration>>& slots) = 0;
+	virtual void Close() noexcept = 0;
+};
+
+//! Test seam for the two OS dependencies of the v1 runtime worker: spawning
+//! extension hosts and repainting the requester. Hooks are
+//! constructor-injected per instance, never global; an empty std::function
+//! means the production path.
+struct SenpRuntimeHooks final {
+	std::function<std::unique_ptr<ISenpExtensionHost>()> hostFactory;
+	//! Called from the worker thread after a result was cached. Empty means
+	//! `InvalidateRect(hwnd, nullptr, FALSE)` on a live window.
+	std::function<void(std::uintptr_t)> repaint;
+	//! Empty means the `sakura-senp-host.exe` beside this executable.
+	std::wstring hostExecutable;
+};
 
 } // namespace detail
 
 [[nodiscard]] std::unique_ptr<ISenpRuntimeService> CreateWin32SenpRuntimeService(
-	ISenpManagementService& management);
+	ISenpManagementService& management, detail::SenpRuntimeHooks hooks = {});
 
 } // namespace senp

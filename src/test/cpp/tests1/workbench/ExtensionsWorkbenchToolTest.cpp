@@ -271,6 +271,7 @@ public:
 	}
 	void Stop() noexcept override {}
 	[[nodiscard]] senp::ManagementSnapshot Snapshot() const override { return snapshot; }
+	[[nodiscard]] std::uint64_t Revision() const override { return snapshot.revision; }
 
 	// A failed operation keeps the previous snapshot and carries the tool's
 	// diagnostic, as the real service does.

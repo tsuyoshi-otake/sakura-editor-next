@@ -256,11 +256,15 @@ buildし、既定では`~/tmp/senp-runtime-fixtures/`へ置く。`--output-dir`�
 `--prepare-only`はfixture作成だけで、結果は`prepared`となり検査合格とはしない。
 native helperは`test-fixtures` featureでのみbuildし、package catalogや配布先へ入れない。
 
-runnerが`SAKURA_SENP_RUNTIME_FIXTURES`を設定して6つの`SenpRuntimeProcess` testsを実行する。
+runnerが`SAKURA_SENP_RUNTIME_FIXTURES`を設定して`SenpRuntimeProcess` testsを実行する。
+必須の16件は件数ではなく名前で指定し、1件でも欠けるかskipされれば不合格にする。
 変数がない通常の単体実行ではこのsuiteは明示的にskipするが、受入runnerはskipを不合格にする。
 実componentのactivate/on-event/fuel trap、読取り停止、書込み停止、partial/oversized frame、
 crash、jobメモリ上限、複数pendingのdeadline、同時Stop/Join、起動失敗に加え、
 実Wasmのowner更新・digest不一致での旧版維持・全process回収を検査する。
+v1のindent装飾workerについては、jobメモリ上限で落ちたhostの退役と診断、v1以外のhelloの拒否、
+実pipeを通る複数行frameの往復（tab、引用符、制御文字、サロゲートペア）、
+revision変更で変わっていない拡張のhost process（PID）が残ることを検査する。
 副作用はテスト用job/processと作業ディレクトリだけで、package installや可視windowの起動はない。
 
 Rust codec出力→C++読取・出力→Rust読取の順で交換し、両言語の正規化byteも比較する。

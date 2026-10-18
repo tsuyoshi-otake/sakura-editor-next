@@ -1339,4 +1339,10 @@ ManagementSnapshot CWin32SenpManagementService::Snapshot() const
 	return m_snapshot;
 }
 
+std::uint64_t CWin32SenpManagementService::Revision() const
+{
+	std::lock_guard lock(m_mutex);
+	return m_snapshot.revision;
+}
+
 } // namespace senp

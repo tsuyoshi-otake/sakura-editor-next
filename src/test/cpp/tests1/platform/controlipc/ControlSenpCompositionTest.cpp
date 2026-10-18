@@ -222,6 +222,7 @@ public:
 	} catch (const std::exception&) {
 	}
 	senp::ManagementSnapshot Snapshot() const override { return Packages(); }
+	std::uint64_t Revision() const override { return Packages().revision; }
 private:
 	std::shared_ptr<std::vector<std::wstring>> m_log;
 	std::wstring m_profileHome;
