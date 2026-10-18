@@ -72,6 +72,8 @@ fn tree_page(request: TreeRequest) -> PublishTreePage {
         parent_id: request.parent_id.clone(),
         items: Vec::new(),
         next_cursor: String::new(),
+        // A page's revision versions the listing, not the page: every page of
+        // one parent's listing carries the same value, on success and failure.
         revision: 1,
         status: PageStatus::Complete,
         message: String::new(),
@@ -114,7 +116,6 @@ fn tree_page(request: TreeRequest) -> PublishTreePage {
                 "Second page",
                 CollapsibleState::Leaf,
             )];
-            page.revision = 2;
         }
         (STATES_VIEW, "state:empty", "") => page.status = PageStatus::Empty,
         (STATES_VIEW, "state:error", "") => {
@@ -221,6 +222,24 @@ mod tests {
             };
             assert_eq!(page.status, status);
         }
+    }
+
+    #[test]
+    fn paged_rows_keep_one_listing_revision_across_pages() {
+        let revision = |cursor: &str| {
+            let effects = dispatch(Event::TreeRequest(TreeRequest {
+                view_id: STATES_VIEW.into(),
+                parent_id: "state:loading".into(),
+                cursor: cursor.into(),
+            }));
+            let Effect::PublishTreePage(page) = &effects[0] else {
+                panic!()
+            };
+            page.revision
+        };
+        // A page's revision versions the listing, not the page: the host rejects
+        // an appended page whose value differs from the stored one.
+        assert_eq!(revision(""), revision("page:2"));
     }
 
     #[test]

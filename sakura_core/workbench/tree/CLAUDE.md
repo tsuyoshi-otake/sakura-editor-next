@@ -10,6 +10,22 @@
   copying the whole retained payload for every page. Reject duplicate,
   ancestor, reparented and malformed IDs; reject inconsistent page revisions
   and repeated cursors while preserving the last good snapshot.
+- A page's `revision` is the provider's version of ONE parent's listing: the
+  first page and every page appended through its cursors carry the same value,
+  and a later listing (refresh or invalidation) may keep or raise it. The host
+  rejects a lower value as Stale, and an appended page whose value differs
+  from the stored one ("the tree changed while this page was loading").
+  Providers must not derive it from the page number or the workspace revision.
+- On `TreeLoadKind::NextPage` only, an item whose id is already a retained
+  DIRECT child of the same parent is dropped rather than rejected: offset
+  paging repeats the boundary row when an item is created or closed between
+  the two fetches. The retained node keeps its position, payload, subtree,
+  expansion and selection, and dropped items count toward neither item nor
+  byte totals. Still `Invalid`, atomically: an id repeated inside one page,
+  an appended id retained under another parent, an ancestor/cyclic id.
+  Initial/Refresh keep full replacement semantics. An offset shift in the
+  other direction (a skipped item) is undetectable; Refresh restores the
+  full list (#351).
 - Root loads first. Leaves and collapsed/hidden branches never fetch. Pending
   parent loads deduplicate. Refresh preserves stable selection and user expansion;
   removed descendants and collapsed/hidden subscribers cancel explicitly.

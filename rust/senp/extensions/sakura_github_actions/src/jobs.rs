@@ -112,7 +112,6 @@ pub fn tree_request(request: &TreeRequest) -> Option<Effect> {
         failed_page(
             &request.view_id,
             &request.parent_id,
-            1,
             "Invalid run, attempt, job or step page identity",
         )
     };
@@ -170,7 +169,7 @@ pub fn complete(completion: &ToolCompleted) -> Option<Effect> {
     match parts.as_slice() {
         ["joblog", run, attempt, job] => {
             let Some(identity) = Identity::parts(run, attempt, job) else {
-                return Some(failed_page(WORKFLOWS, "", 1, "Invalid job log completion"));
+                return Some(failed_page(WORKFLOWS, "", "Invalid job log completion"));
             };
             Some(if completion.status != CompletionStatus::Succeeded {
                 failed_document(identity.log_resource(), completion_message(completion))
@@ -183,7 +182,7 @@ pub fn complete(completion: &ToolCompleted) -> Option<Effect> {
         }
         ["jobdetail", run, attempt, job] => {
             let Some(identity) = Identity::parts(run, attempt, job) else {
-                return Some(failed_page(WORKFLOWS, "", 1, "Invalid job completion"));
+                return Some(failed_page(WORKFLOWS, "", "Invalid job completion"));
             };
             Some(if completion.status != CompletionStatus::Succeeded {
                 failed_document(identity.resource(), completion_message(completion))
@@ -202,7 +201,7 @@ pub fn complete(completion: &ToolCompleted) -> Option<Effect> {
                 positive32(attempt),
                 positive32(page),
             ) else {
-                return Some(failed_page(WORKFLOWS, "", 1, "Invalid job page completion"));
+                return Some(failed_page(WORKFLOWS, "", "Invalid job page completion"));
             };
             let latest = *shape == "runjobs";
             let parent = if latest {
@@ -210,7 +209,7 @@ pub fn complete(completion: &ToolCompleted) -> Option<Effect> {
             } else {
                 format!("attempt:{run}:{attempt}")
             };
-            let fail = |message: String| failed_page(view, &parent, u64::from(page), message);
+            let fail = |message: String| failed_page(view, &parent, message);
             Some(if completion.status != CompletionStatus::Succeeded {
                 fail(completion_message(completion).into())
             } else {
@@ -232,7 +231,6 @@ pub fn complete(completion: &ToolCompleted) -> Option<Effect> {
                         page_effect(
                             view,
                             &parent,
-                            u64::from(page),
                             items,
                             next_cursor(result.next_page),
                             String::new(),
@@ -252,12 +250,11 @@ pub fn complete(completion: &ToolCompleted) -> Option<Effect> {
                 return Some(failed_page(
                     WORKFLOWS,
                     "",
-                    1,
                     "Invalid step page completion",
                 ));
             };
             let fail =
-                |message: String| failed_page(view, &identity.item(), u64::from(page), message);
+                |message: String| failed_page(view, &identity.item(), message);
             Some(if completion.status != CompletionStatus::Succeeded {
                 fail(completion_message(completion).into())
             } else {
@@ -301,7 +298,6 @@ fn previous_page(view: &str, run: u64, latest: u32, page: u32) -> Effect {
         return failed_page(
             view,
             &parent,
-            u64::from(page),
             "Attempt page is outside this run",
         );
     };
@@ -314,7 +310,7 @@ fn previous_page(view: &str, run: u64, latest: u32, page: u32) -> Effect {
     } else {
         String::new()
     };
-    page_effect(view, &parent, u64::from(page), items, cursor, String::new())
+    page_effect(view, &parent, items, cursor, String::new())
 }
 
 // Upstream's AttemptNode. Its icon is that attempt's own status, which would
@@ -378,7 +374,6 @@ fn step_page(view: &str, identity: Identity, steps: Vec<Step>, page: u32) -> Eff
         return failed_page(
             view,
             &identity.item(),
-            u64::from(page),
             "Invalid step page offset",
         );
     };
@@ -386,7 +381,6 @@ fn step_page(view: &str, identity: Identity, steps: Vec<Step>, page: u32) -> Eff
         return failed_page(
             view,
             &identity.item(),
-            u64::from(page),
             "Step page is outside this job",
         );
     }
@@ -424,7 +418,6 @@ fn step_page(view: &str, identity: Identity, steps: Vec<Step>, page: u32) -> Eff
     page_effect(
         view,
         &identity.item(),
-        u64::from(page),
         items,
         next_cursor(next),
         String::new(),

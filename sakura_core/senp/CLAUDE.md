@@ -163,6 +163,15 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   validated `nextPage` number. Keep pagination even when extension-side filtering
   removes every row, and reject duplicate JSON members and malformed required
   fields before publishing a View page.
+- A schema-2 tree page's `revision` is the provider's version of ONE parent's
+  listing: the first page and every page appended through its cursors publish
+  the same value, on success and on failure, and a later listing may keep or
+  raise it. Guests publish a page-independent constant (never the page number
+  or the workspace revision): invalidation already fences a stale page by
+  ticket, and offset pages carry no data version. On append the host drops an
+  item that repeats a retained direct child of the same parent (offset-shift
+  duplicate, #351); in-page duplicates, ids retained under another parent and
+  ancestor/cyclic ids still fail the page atomically.
 
 - `README.md`, `senp.json`, `LICENSE`, and complete SHA-256 coverage are
   mandatory. `module/extension.wasm` is mandatory only when `runtime` is

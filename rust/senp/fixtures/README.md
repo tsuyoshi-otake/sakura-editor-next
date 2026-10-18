@@ -50,6 +50,21 @@ request, acknowledge delivery, or publish a contribution.
   completions cannot carry success data. Session-level replay and sequence/ack
   ordering are separate stateful checks in G03.
 
+`tree-paging.jsonl` is shared by the guest crates and the native
+`SenpTreeProvider` test. Each line is one scenario: `name`, `guest`, an ordered
+`pages` list, and `children`, the final retained child ids of the scenario's
+single parent after every page is applied in order. A page entry records
+`requestCursor` (the cursor the host sends for that page; empty for the first),
+`completion` (the `ToolCompleted` input the guest consumes: `readId`, `status`,
+`data`, `message`), and `page`, the wire-shaped `publishTreePage` record the
+guest is expected to publish (`viewId`, `parentId`, full `items`,
+`nextCursor`, `revision`, `status`, `message`). Guests compare parentId, item
+ids, nextCursor, revision and status; the host decodes the page through the
+real provider conversion. `issues-offset-shift` exercises an offset page that
+repeats the previous page's boundary item; `workflows-second-page` exercises a
+plain second page. Every page of one scenario publishes the same `revision`
+because a revision versions the parent's listing, not the page (#351).
+
 ## Verify
 
 Run from the repository root after `build-sln.bat x64 Debug`. Rust dependencies

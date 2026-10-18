@@ -3,6 +3,11 @@
 #include "pch.h"
 #include <gtest/gtest.h>
 #include "workbench/tree/SenpTreeProvider.h"
+#include "senp/SenpEffectProtocol.h"
+#include <sakura/serialization/JsoncDocument.h>
+#include <filesystem>
+#include <fstream>
+#include <set>
 #include <stdexcept>
 
 namespace workbench::tree {
@@ -65,6 +70,35 @@ TEST(TreeViewModel, AppendsAnEmptyFilteredPageWithoutDroppingTheNextCursor)
 	EXPECT_EQ(TreeChildrenState::Complete, model.Node(L"")->state);
 	EXPECT_EQ(CountBytes(model), model.RetainedBytes());
 }
+TEST(TreeViewModel, AppendDropsAnOffsetShiftDuplicateAndKeepsTheRetainedPayload)
+{
+	TreeViewModel model;
+	ASSERT_EQ(TreeResult::Applied, model.Apply(Begin(model), Page(L"", { Leaf(L"a"), Leaf(L"b"), Leaf(L"c") }, 7, L"n1")).result);
+	// An item created or closed between two offset fetches repeats the boundary
+	// row on the next page; the appended copy is dropped and the retained node wins.
+	auto shifted = Leaf(L"c"); shifted.label = L"c retitled";
+	ASSERT_EQ(TreeResult::Applied, model.Apply(Begin(model, L"", TreeLoadKind::NextPage), Page(L"", { shifted, Leaf(L"d") }, 7)).result);
+	EXPECT_EQ((std::vector<std::wstring>{ L"a", L"b", L"c", L"d" }), model.Node(L"")->children);
+	EXPECT_EQ(L"c", model.Node(L"c")->item.label);
+	EXPECT_EQ(4, model.ItemCount());
+	EXPECT_EQ(TreeChildrenState::Complete, model.Node(L"")->state);
+	EXPECT_EQ(CountBytes(model), model.RetainedBytes());
+}
+TEST(TreeViewModel, AppendOfOnlyRetainedIdsStillAdvancesTheCursor)
+{
+	TreeViewModel model;
+	ASSERT_EQ(TreeResult::Applied, model.Apply(Begin(model), Page(L"", { Leaf(L"a"), Leaf(L"b") }, 3, L"n1")).result);
+	// A whole page of retained ids carries no new rows, but its next cursor
+	// still commits so Load more keeps making progress.
+	ASSERT_EQ(TreeResult::Applied, model.Apply(Begin(model, L"", TreeLoadKind::NextPage), Page(L"", { Leaf(L"a"), Leaf(L"b") }, 3, L"n2")).result);
+	EXPECT_EQ(2, model.ItemCount());
+	EXPECT_EQ((std::vector<std::wstring>{ L"a", L"b" }), model.Node(L"")->children);
+	EXPECT_EQ(L"n2", model.Node(L"")->nextCursor);
+	EXPECT_EQ(TreeChildrenState::Partial, model.Node(L"")->state);
+	ASSERT_EQ(TreeResult::Applied, model.Apply(Begin(model, L"", TreeLoadKind::NextPage), Page(L"", { Leaf(L"c") }, 3)).result);
+	EXPECT_EQ((std::vector<std::wstring>{ L"a", L"b", L"c" }), model.Node(L"")->children);
+	EXPECT_EQ(CountBytes(model), model.RetainedBytes());
+}
 TEST(TreeViewModel, RefreshKeepsStableSelectionAndUserExpansionAndRemovesOldDescendants)
 {
 	TreeViewModel model;
@@ -92,7 +126,16 @@ TEST(TreeViewModel, RejectsDuplicateForeignAncestorAndStalePagesAtomically)
 	}
 	EXPECT_EQ(TreeResult::Invalid, model.Apply(Begin(model, L"folder", TreeLoadKind::Refresh), Page(L"folder", { Leaf(L"x"), Leaf(L"x") }, 6)).result);
 	EXPECT_FALSE(model.Node(L"x"));
-	EXPECT_EQ(TreeResult::Invalid, model.Apply(Begin(model, L"", TreeLoadKind::NextPage), Page(L"", { Leaf(L"sibling") }, 5)).result);
+	// An appended page may repeat a retained direct child of the same parent:
+	// offset paging re-reads the boundary row, so the copy is dropped (#351).
+	ASSERT_EQ(TreeResult::Applied, model.Apply(Begin(model, L"", TreeLoadKind::NextPage), Page(L"", { Leaf(L"sibling") }, 5, L"n2")).result);
+	EXPECT_EQ((std::vector<std::wstring>{ L"folder", L"sibling" }), model.Node(L"")->children);
+	EXPECT_EQ(3, model.ItemCount());
+	// The same id retained under another parent is still a reparenting attempt
+	// and fails the appended page atomically.
+	EXPECT_EQ(TreeResult::Invalid, model.Apply(Begin(model, L"", TreeLoadKind::NextPage), Page(L"", { Leaf(L"child") }, 5, L"n3")).result);
+	EXPECT_EQ(L"folder", model.Node(L"child")->parentId);
+	EXPECT_EQ(3, model.ItemCount());
 	EXPECT_EQ(TreeResult::Stale, model.Apply(Begin(model, L"", TreeLoadKind::NextPage), Page(L"", { Leaf(L"new") }, 6)).result);
 	EXPECT_EQ(TreeLoadKind::Refresh, model.Node(L"")->retryKind);
 	EXPECT_EQ(TreeResult::Stale, model.Apply(Begin(model, L"", TreeLoadKind::Refresh), Page(L"", { Leaf(L"new") }, 4)).result);
@@ -394,6 +437,107 @@ TEST(SenpTreeProviderOptions, RejectsItemActionsARowCannotCarry)
 	EXPECT_THROW((void)make({ emptyToken }), std::invalid_argument);
 	auto unbounded = action(0); unbounded.SetContains(std::vector<std::wstring>(9, L"job"));
 	EXPECT_THROW((void)make({ unbounded }), std::invalid_argument);
+}
+
+// The JSONL fixture is shared with the guest crates (rust/senp/fixtures). Each
+// line is one scenario: the tool-completion inputs the guest consumes and the
+// wire-shaped tree pages it is expected to publish, plus the retained child
+// list after every page is applied in order.
+std::filesystem::path TreePagingFixturePath()
+{
+	auto directory = std::filesystem::current_path();
+	for (std::size_t level = 0; level < 8; ++level) {
+		const auto path = directory / "rust/senp/fixtures/tree-paging.jsonl";
+		if (std::filesystem::is_regular_file(path)) return path;
+		const auto parent = directory.parent_path();
+		if (parent == directory) break;
+		directory = parent;
+	}
+	return {};
+}
+std::wstring FixtureText(const platform::serialization::JsoncValue::Object& fields, const wchar_t* name)
+{
+	return std::get<std::wstring>(fields.at(name).Value());
+}
+// The fixture's `page` member is a wire-shaped publishTreePage record (the same
+// shape as the effect-protocol fixture). Locating its raw text in the line is
+// plumbing; the page itself is decoded by the real senp::effect::Decode.
+std::string RawPageJson(std::string_view line, std::size_t index)
+{
+	std::size_t search = 0;
+	for (;;) {
+		const auto at = line.find("\"page\":", search);
+		if (at == std::string_view::npos) return {};
+		const auto open = line.find('{', at);
+		if (open == std::string_view::npos) return {};
+		std::size_t depth = 0, end = open;
+		bool inString = false, escape = false;
+		for (; end < line.size(); ++end) {
+			const char c = line[end];
+			if (escape) { escape = false; continue; }
+			if (inString && c == '\\') { escape = true; continue; }
+			if (c == '"') inString = !inString;
+			else if (!inString && c == '{') ++depth;
+			else if (!inString && c == '}' && --depth == 0) { ++end; break; }
+		}
+		if (index-- == 0) return std::string(line.substr(open, end - open));
+		search = end;
+	}
+}
+TEST(SenpTreeProviderPagingFixture, SharedFixturePagesApplyThroughTheRealProviderConversion)
+{
+	std::ifstream input(TreePagingFixturePath(), std::ios::binary);
+	ASSERT_TRUE(input.good());
+	std::string line;
+	std::size_t cases = 0;
+	while (std::getline(input, line)) {
+		SCOPED_TRACE(cases);
+		const auto document = platform::serialization::CJsoncDocument::ParseStrict(line);
+		ASSERT_TRUE(document.Succeeded());
+		const auto& scenario = std::get<platform::serialization::JsoncValue::Object>(document.value->Value());
+		const auto& pages = std::get<platform::serialization::JsoncValue::Array>(scenario.at(L"pages").Value());
+		ASSERT_FALSE(pages.empty());
+		std::vector<senp::effect::PublishTreePage> expected;
+		std::set<std::wstring> declared;
+		for (std::size_t index = 0; index < pages.size(); ++index) {
+			const auto raw = RawPageJson(line, index);
+			ASSERT_FALSE(raw.empty());
+			// Wrap the page in a full effects envelope and let the real decoder
+			// produce the DTO; the test never maps JSON members itself.
+			const auto wire = std::string("{\"protocol\":2,\"sequence\":1,\"sessionGeneration\":1,\"body\":{\"type\":\"effects\",\"data\":{\"context\":{\"operationId\":\"fixture-1\",\"ownerGeneration\":1,\"workspaceRevision\":1,\"accountGeneration\":1,\"requestGeneration\":1},\"effects\":[{\"type\":\"publishTreePage\",\"data\":") + raw + "}]}}}";
+			const auto envelope = senp::effect::Decode(wire);
+			ASSERT_TRUE(envelope);
+			const auto* message = std::get_if<senp::effect::EffectsMessage>(&envelope->body);
+			ASSERT_TRUE(message);
+			ASSERT_EQ(1U, message->effects.size());
+			const auto* page = std::get_if<senp::effect::PublishTreePage>(&message->effects[0]);
+			ASSERT_TRUE(page);
+			expected.push_back(*page);
+			for (const auto& item : expected.back().items) if (!item.commandId.empty()) declared.insert(item.commandId);
+		}
+		const auto runtime = std::make_shared<TreeRuntimeProbe>();
+		SenpTreeProvider provider({ expected[0].viewId, { 1, 2, 3 }, { declared.begin(), declared.end() }, runtime });
+		const SenpTreeProvider::Time now{};
+		provider.SetVisible(true, now);
+		for (std::size_t index = 0; index < pages.size(); ++index) {
+			const auto& fields = std::get<platform::serialization::JsoncValue::Object>(pages[index].Value());
+			const auto parentId = expected[index].parentId;
+			if (index) ASSERT_EQ(TreeResult::Accepted, provider.LoadNext(parentId, now));
+			ASSERT_EQ(index + 1, runtime->Submitted().size());
+			const auto& submitted = runtime->Submitted()[index];
+			EXPECT_EQ(parentId, submitted.request.parentId);
+			EXPECT_EQ(FixtureText(fields, L"requestCursor"), submitted.request.cursor);
+			ASSERT_EQ(TreeResult::Applied, provider.Apply(submitted.context, expected[index], now));
+		}
+		std::vector<std::wstring> children;
+		for (const auto& entry : std::get<platform::serialization::JsoncValue::Array>(scenario.at(L"children").Value()))
+			children.push_back(std::get<std::wstring>(entry.Value()));
+		const auto* parent = provider.Model().Inspect(expected[0].parentId);
+		ASSERT_TRUE(parent);
+		EXPECT_EQ(children, parent->children);
+		++cases;
+	}
+	EXPECT_EQ(2U, cases);
 }
 }
 } // namespace workbench::tree

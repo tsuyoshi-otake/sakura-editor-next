@@ -203,6 +203,13 @@ container移動を反復する。High Contrastはpalette投影の検査で、OS�
 保持文字列・metadata計8 MiB、同時8 parent loadsを上限とする。page全体を検証し、変更するnodeと
 兄弟列だけを準備してから反映する。全payloadの複製を避け、重複・循環・付替え・古いrevisionや
 cursor不整合は既存snapshotを残して失敗にする。refreshはstable IDの選択と利用者の展開を保持する。
+pageの`revision`は同一parentのlisting全体のprovider版数であり、先頭pageとcursor経由で追加される
+全pageが同じ値を持ち、後のlistingは同じか大きい値を取る。hostは小さい値、または追加pageで
+保持値と異なる値をStaleとして拒否する。NextPageでは、同じ親の保持済み直接子と同じidを持つitemを
+offsetずれの重複として捨てる(page取得の合間にremote listが動いた場合、境界rowが重複して返る)。
+保持側のnodeは位置・payload・subtree・展開・選択を維持し、捨てたitemは件数・byte計上しない。
+page内の重複id、別の親に保持されたid、祖先/循環idは従来どおりInvalidでpage全体を失敗にする。
+逆向きのoffsetずれ(取りこぼし)は検知できず、Refreshが全一覧を復元する(#351)。
 
 [SenpTreeProvider](../sakura_core/workbench/tree/SenpTreeProvider.h)はvisible rootから必要な枝だけを
 非同期で取得し、葉・閉じた枝・非表示Viewは取得しない。同じ親の処理を重複させず、30秒の期限、

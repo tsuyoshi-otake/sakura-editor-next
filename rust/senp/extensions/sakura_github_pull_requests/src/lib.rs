@@ -16,6 +16,13 @@ const OPEN_ISSUE: &str = "github.openIssue";
 const OPEN_COMMENT: &str = "github.openIssueComment";
 const OPEN_PULL_REQUEST: &str = "github.openPullRequest";
 
+/// A tree page's `revision` versions ONE parent's listing, not the page: the
+/// first page and every page appended through its cursors carry this same
+/// value, on success and on failure. The host already fences a page that
+/// crosses an invalidation by ticket, and GitHub REST offset pages carry no
+/// data version of their own, so there is no finer value to publish.
+const LISTING_REVISION: u64 = 1;
+
 struct GithubPullRequests;
 
 impl Guest for GithubPullRequests {
@@ -195,12 +202,12 @@ fn comment_item(comment: Comment) -> TreeItem {
     }
 }
 
-fn failed_page(parent_id: String, revision: u64, message: impl Into<String>) -> Effect {
-    failed_view_page(ISSUES_VIEW, parent_id, revision, message)
+fn failed_page(parent_id: String, message: impl Into<String>) -> Effect {
+    failed_view_page(ISSUES_VIEW, parent_id, message)
 }
 
 fn failed(message: impl Into<String>) -> Effect {
-    failed_page(String::new(), 1, message)
+    failed_page(String::new(), message)
 }
 
 fn complete_tool(read: ToolCompleted) -> Effect {
@@ -247,7 +254,7 @@ fn complete_tool(read: ToolCompleted) -> Effect {
         parent_id: String::new(),
         items,
         next_cursor,
-        revision: u64::from(page),
+        revision: LISTING_REVISION,
         status,
         message: String::new(),
     })
@@ -275,7 +282,6 @@ fn complete_comments(read: ToolCompleted) -> Effect {
     if read.status != CompletionStatus::Succeeded {
         return failed_page(
             parent_id,
-            u64::from(page),
             if read.message.is_empty() {
                 "GitHub comments read failed".into()
             } else {
@@ -285,14 +291,10 @@ fn complete_comments(read: ToolCompleted) -> Effect {
     }
     let result = match parse_comment_page(&read.data) {
         Ok(value) => value,
-        Err(error) => return failed_page(parent_id, u64::from(page), error.to_string()),
+        Err(error) => return failed_page(parent_id, error.to_string()),
     };
     if result.next_page.is_some_and(|next| next <= page) {
-        return failed_page(
-            parent_id,
-            u64::from(page),
-            "Invalid GitHub comments next page",
-        );
+        return failed_page(parent_id, "Invalid GitHub comments next page");
     }
     let items: Vec<_> = result.comments.into_iter().map(comment_item).collect();
     let next_cursor = result
@@ -311,7 +313,7 @@ fn complete_comments(read: ToolCompleted) -> Effect {
         parent_id,
         items,
         next_cursor,
-        revision: u64::from(page),
+        revision: LISTING_REVISION,
         status,
         message: String::new(),
     })
@@ -454,7 +456,6 @@ fn complete_detail(read: ToolCompleted) -> Effect {
             return failed_view_page(
                 PULL_REQUESTS_VIEW,
                 String::new(),
-                1,
                 "Invalid pull request detail identity",
             );
         };
@@ -656,7 +657,6 @@ fn pull_item(pull: PullRequest) -> TreeItem {
 fn failed_view_page(
     view_id: &str,
     parent_id: String,
-    revision: u64,
     message: impl Into<String>,
 ) -> Effect {
     Effect::PublishTreePage(PublishTreePage {
@@ -664,7 +664,7 @@ fn failed_view_page(
         parent_id,
         items: Vec::new(),
         next_cursor: String::new(),
-        revision,
+        revision: LISTING_REVISION,
         status: PageStatus::Failed,
         message: message.into(),
     })
@@ -675,7 +675,6 @@ fn complete_pull_requests(read: ToolCompleted) -> Effect {
         return failed_view_page(
             PULL_REQUESTS_VIEW,
             String::new(),
-            1,
             "Unknown GitHub read completion",
         );
     };
@@ -683,7 +682,6 @@ fn complete_pull_requests(read: ToolCompleted) -> Effect {
         return failed_view_page(
             PULL_REQUESTS_VIEW,
             String::new(),
-            1,
             "Invalid GitHub read identity",
         );
     };
@@ -691,7 +689,6 @@ fn complete_pull_requests(read: ToolCompleted) -> Effect {
         return failed_view_page(
             PULL_REQUESTS_VIEW,
             String::new(),
-            1,
             "Invalid GitHub state filter",
         );
     };
@@ -699,7 +696,6 @@ fn complete_pull_requests(read: ToolCompleted) -> Effect {
         return failed_view_page(
             PULL_REQUESTS_VIEW,
             String::new(),
-            1,
             "Invalid GitHub page identity",
         );
     };
@@ -707,7 +703,6 @@ fn complete_pull_requests(read: ToolCompleted) -> Effect {
         return failed_view_page(
             PULL_REQUESTS_VIEW,
             String::new(),
-            1,
             if read.message.is_empty() {
                 "GitHub read failed".into()
             } else {
@@ -718,14 +713,13 @@ fn complete_pull_requests(read: ToolCompleted) -> Effect {
     let page_result = match parse_pull_request_page(&read.data, state) {
         Ok(value) => value,
         Err(error) => {
-            return failed_view_page(PULL_REQUESTS_VIEW, String::new(), 1, error.to_string())
+            return failed_view_page(PULL_REQUESTS_VIEW, String::new(), error.to_string())
         }
     };
     if page_result.next_page.is_some_and(|next| next <= page) {
         return failed_view_page(
             PULL_REQUESTS_VIEW,
             String::new(),
-            1,
             "Invalid GitHub next page",
         );
     }
@@ -750,7 +744,7 @@ fn complete_pull_requests(read: ToolCompleted) -> Effect {
         parent_id: String::new(),
         items,
         next_cursor,
-        revision: u64::from(page),
+        revision: LISTING_REVISION,
         status,
         message: String::new(),
     })
@@ -768,7 +762,6 @@ fn complete_pull_comments(read: ToolCompleted) -> Effect {
         return failed_view_page(
             PULL_REQUESTS_VIEW,
             String::new(),
-            1,
             "Invalid GitHub comments read identity",
         );
     };
@@ -780,7 +773,6 @@ fn complete_pull_comments(read: ToolCompleted) -> Effect {
         return failed_view_page(
             PULL_REQUESTS_VIEW,
             String::new(),
-            1,
             "Invalid GitHub comments read identity",
         );
     };
@@ -789,7 +781,6 @@ fn complete_pull_comments(read: ToolCompleted) -> Effect {
         return failed_view_page(
             PULL_REQUESTS_VIEW,
             parent_id,
-            u64::from(page),
             if read.message.is_empty() {
                 "GitHub comments read failed".into()
             } else {
@@ -803,7 +794,6 @@ fn complete_pull_comments(read: ToolCompleted) -> Effect {
             return failed_view_page(
                 PULL_REQUESTS_VIEW,
                 parent_id,
-                u64::from(page),
                 error.to_string(),
             )
         }
@@ -812,7 +802,6 @@ fn complete_pull_comments(read: ToolCompleted) -> Effect {
         return failed_view_page(
             PULL_REQUESTS_VIEW,
             parent_id,
-            u64::from(page),
             "Invalid GitHub comments next page",
         );
     }
@@ -833,7 +822,7 @@ fn complete_pull_comments(read: ToolCompleted) -> Effect {
         parent_id,
         items,
         next_cursor,
-        revision: u64::from(page),
+        revision: LISTING_REVISION,
         status,
         message: String::new(),
     })
@@ -933,7 +922,6 @@ fn dispatch(event: Event) -> Vec<Effect> {
                 Some(effect) => vec![effect],
                 None => vec![failed_page(
                     request.parent_id,
-                    1,
                     "Invalid comments page request",
                 )],
             }
@@ -946,7 +934,6 @@ fn dispatch(event: Event) -> Vec<Effect> {
                 None => vec![failed_view_page(
                     PULL_REQUESTS_VIEW,
                     String::new(),
-                    1,
                     "Invalid Issues page cursor",
                 )],
             }
@@ -957,7 +944,6 @@ fn dispatch(event: Event) -> Vec<Effect> {
                 None => vec![failed_view_page(
                     PULL_REQUESTS_VIEW,
                     request.parent_id,
-                    1,
                     "Invalid comments page request",
                 )],
             }
@@ -996,6 +982,77 @@ export!(GithubPullRequests);
 mod tests {
     use super::*;
     use sakura_senp_github_client::item_completion;
+
+    /// The JSONL fixture is shared with the native provider test
+    /// (`rust/senp/fixtures/tree-paging.jsonl`): each line is one scenario made
+    /// of the tool completions this guest consumes and the wire-shaped pages it
+    /// must publish. The host applies the same pages through `SenpTreeProvider`.
+    fn fixture_scenarios() -> Vec<serde_json::Value> {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/tree-paging.jsonl");
+        std::fs::read_to_string(path)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .filter(|scenario: &serde_json::Value| {
+                scenario["guest"] == "sakura-github-pull-requests"
+            })
+            .collect()
+    }
+
+    fn fixture_status(value: &serde_json::Value) -> PageStatus {
+        match value.as_str().unwrap() {
+            "complete" => PageStatus::Complete,
+            "partial" => PageStatus::Partial,
+            "empty" => PageStatus::Empty,
+            "failed" => PageStatus::Failed,
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn shared_fixture_pages_publish_one_listing_revision_across_pages() {
+        let scenarios = fixture_scenarios();
+        assert!(!scenarios.is_empty());
+        for scenario in &scenarios {
+            let mut revisions = Vec::new();
+            for entry in scenario["pages"].as_array().unwrap() {
+                let completion = &entry["completion"];
+                assert_eq!(completion["status"], "succeeded");
+                let effects = dispatch(Event::ToolCompleted(ToolCompleted {
+                    read_id: completion["readId"].as_str().unwrap().into(),
+                    status: CompletionStatus::Succeeded,
+                    data: completion["data"].as_str().unwrap().into(),
+                    message: completion["message"].as_str().unwrap().into(),
+                }));
+                let Effect::PublishTreePage(page) = &effects[0] else {
+                    panic!("{} did not publish a tree page", scenario["name"])
+                };
+                let expected = &entry["page"];
+                assert_eq!(page.view_id, expected["viewId"].as_str().unwrap());
+                assert_eq!(page.parent_id, expected["parentId"].as_str().unwrap());
+                let ids: Vec<_> = page.items.iter().map(|item| item.id.as_str()).collect();
+                let expected_ids: Vec<_> = expected["items"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|item| item["id"].as_str().unwrap())
+                    .collect();
+                assert_eq!(ids, expected_ids);
+                assert_eq!(
+                    page.next_cursor,
+                    expected["nextCursor"].as_str().unwrap()
+                );
+                assert_eq!(page.revision, expected["revision"].as_u64().unwrap());
+                assert_eq!(page.status, fixture_status(&expected["status"]));
+                revisions.push(page.revision);
+            }
+            assert!(
+                revisions.windows(2).all(|pair| pair[0] == pair[1]),
+                "{}: every page of one listing carries the same revision",
+                scenario["name"]
+            );
+        }
+    }
 
     const PULLS: &str = r#"{"body":[{"id":51,"number":8,"title":"Cross-fork change","state":"open","user":{"login":"contributor"},"labels":[{"name":"ready"}],"html_url":"https://github.com/base/project/pull/8","comments":2,"draft":false,"merged_at":null,"base":{"ref":"main","sha":"bbbb","repo":{"full_name":"base/project"}},"head":{"ref":"feature","sha":"hhhh","repo":{"full_name":"fork/project"}}}],"nextPage":2}"#;
 

@@ -153,20 +153,24 @@ TreeChange TreeViewModel::Apply(const TreeLoadRequest& request, TreeChildrenPage
 	if (parent->value.hasSnapshot && (page.revision < parent->value.revision || (append && page.revision != parent->value.revision)))
 		return reject(TreeResult::Stale, L"The tree changed while this page was loading. Refresh to continue.");
 	if (!page.nextCursor.empty() && page.nextCursor == request.cursor) return reject(TreeResult::Invalid, L"The provider repeated its page cursor.");
-	std::unordered_set<std::wstring> ids;
+	std::unordered_set<std::wstring> ids, dropped;
 	std::size_t newItems{}, nextBytes = state.bytes;
 	for (const auto& item : page.items) {
 		if (!ValidItem(item) || !ids.insert(item.id).second || state.Descendant(request.parentId, item.id))
 			return reject(TreeResult::Invalid, L"The tree contains duplicate or cyclic item identities.");
 		const auto* old = state.Find(item.id);
-		if (old && (append || old->value.parentId != request.parentId)) return reject(TreeResult::Invalid, L"An item identity belongs to another tree position.");
+		if (old && old->value.parentId != request.parentId) return reject(TreeResult::Invalid, L"An item identity belongs to another tree position.");
+		// An offset page may repeat a retained direct child when the remote list
+		// shifted between the two fetches. The appended copy is dropped: the
+		// retained node keeps its position, payload, subtree and expansion.
+		if (old && append) { dropped.insert(item.id); continue; }
 		if (!old) { ++newItems; nextBytes += request.parentId.size() * sizeof(wchar_t); }
 		else nextBytes -= Bytes(old->value.item);
 		nextBytes += Bytes(item);
 	}
 	std::vector<std::wstring> removalRoots;
 	if (!append) for (const auto& old : parent->value.children) if (!ids.contains(old)) removalRoots.push_back(old);
-	for (const auto& item : page.items) if (item.collapsibleState == TreeItemCollapsibleState::None) {
+	for (const auto& item : page.items) if (item.collapsibleState == TreeItemCollapsibleState::None && !dropped.contains(item.id)) {
 		const auto* old = state.Find(item.id);
 		if (!old) continue;
 		for (const auto& child : old->value.children) removalRoots.push_back(child);
@@ -185,7 +189,7 @@ TreeChange TreeViewModel::Apply(const TreeLoadRequest& request, TreeChildrenPage
 	}
 	std::vector<std::wstring> children = append ? parent->value.children : std::vector<std::wstring>{};
 	children.reserve(children.size() + page.items.size());
-	for (const auto& item : page.items) children.push_back(item.id);
+	for (const auto& item : page.items) if (!dropped.contains(item.id)) children.push_back(item.id);
 	for (const auto& child : parent->value.children) nextBytes -= child.size() * sizeof(wchar_t);
 	for (const auto& child : children) nextBytes += child.size() * sizeof(wchar_t);
 	nextBytes -= (parent->value.nextCursor.size() + parent->value.message.size()) * sizeof(wchar_t);
@@ -210,7 +214,7 @@ TreeChange TreeViewModel::Apply(const TreeLoadRequest& request, TreeChildrenPage
 	changed.MutableCancelled().reserve(kMaximumTreeLoads);
 	for (const auto& id : removalRoots) state.Remove(id, changed.MutableCancelled());
 	for (auto& item : page.items) {
-		if (item.id.empty()) continue; // Moved into a prepared addition above.
+		if (item.id.empty() || dropped.contains(item.id)) continue; // Moved into a prepared addition above, or dropped as an offset-shift copy.
 		auto* existing = state.Find(item.id);
 		if (existing) {
 			if (item.collapsibleState == TreeItemCollapsibleState::None) {

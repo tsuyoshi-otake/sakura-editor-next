@@ -11,3 +11,5 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 sakura-senp-github-client = { path = "../../github_client" }
 wit-bindgen.workspace = true
+[dev-dependencies]
+serde_json = { workspace = true }

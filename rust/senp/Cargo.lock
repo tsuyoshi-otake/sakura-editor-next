@@ -871,6 +871,7 @@ name = "sakura-github-actions"
 version = "0.1.0"
 dependencies = [
  "sakura-senp-github-client",
+ "serde_json",
  "wit-bindgen 0.46.0",
 ]
 
@@ -879,6 +880,7 @@ name = "sakura-github-pull-requests"
 version = "0.1.0"
 dependencies = [
  "sakura-senp-github-client",
+ "serde_json",
  "wit-bindgen 0.46.0",
 ]
 

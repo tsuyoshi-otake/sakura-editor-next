@@ -18,6 +18,13 @@ const REFRESH: &str = "github-actions.explorer.refresh";
 const REFRESH_BRANCH: &str = "github-actions.explorer.current-branch.refresh";
 const PAGE_SIZE: u32 = 20;
 
+/// A tree page's `revision` versions ONE parent's listing, not the page: the
+/// first page and every page appended through its cursors carry this same
+/// value, on success and on failure. The host already fences a page that
+/// crosses an invalidation by ticket, and GitHub REST offset pages carry no
+/// data version of their own, so there is no finer value to publish.
+const LISTING_REVISION: u64 = 1;
+
 struct GithubActions;
 
 thread_local! {
@@ -201,7 +208,7 @@ impl State {
         }
         let view = request.view_id.as_str();
         let parent = request.parent_id.as_str();
-        let fail = |message| failed_page(view, parent, 1, message);
+        let fail = |message| failed_page(view, parent, message);
         if parent.is_empty() {
             let Some(page) = page_cursor(&request.cursor) else {
                 return fail("Invalid page cursor");
@@ -226,7 +233,6 @@ impl State {
                 BranchState::Detached => page_effect(
                     view,
                     parent,
-                    1,
                     Vec::new(),
                     String::new(),
                     "Detached HEAD; use Workflows to browse runs".into(),
@@ -259,7 +265,7 @@ impl State {
         match parts.as_slice() {
             ["detail", run, attempt] => {
                 let (Some(run), Some(attempt)) = (positive(run), positive32(attempt)) else {
-                    return failed_page(WORKFLOWS, "", 1, "Invalid workflow detail completion");
+                    return failed_page(WORKFLOWS, "", "Invalid workflow detail completion");
                 };
                 let resource = document_id(run, attempt);
                 if completion.status != CompletionStatus::Succeeded {
@@ -275,13 +281,12 @@ impl State {
             }
             ["workflows", page] => {
                 let Some(page) = positive32(page) else {
-                    return failed_page(WORKFLOWS, "", 1, "Invalid workflow page completion");
+                    return failed_page(WORKFLOWS, "", "Invalid workflow page completion");
                 };
                 if completion.status != CompletionStatus::Succeeded {
                     return failed_page(
                         WORKFLOWS,
                         "",
-                        u64::from(page),
                         completion_message(&completion),
                     );
                 }
@@ -289,26 +294,25 @@ impl State {
                     Ok(result) if forward_page(result.next_page, page) => page_effect(
                         WORKFLOWS,
                         "",
-                        u64::from(page),
                         result.items.into_iter().map(workflow_item).collect(),
                         next_cursor(result.next_page),
                         String::new(),
                     ),
                     Ok(_) => {
-                        failed_page(WORKFLOWS, "", u64::from(page), "Invalid workflow next page")
+                        failed_page(WORKFLOWS, "", "Invalid workflow next page")
                     }
-                    Err(error) => failed_page(WORKFLOWS, "", u64::from(page), error.to_string()),
+                    Err(error) => failed_page(WORKFLOWS, "", error.to_string()),
                 }
             }
             ["runs", code, workflow, page] => {
                 let (Some(view), Some(page)) = (code_view(code), positive32(page)) else {
-                    return failed_page(WORKFLOWS, "", 1, "Invalid run page completion");
+                    return failed_page(WORKFLOWS, "", "Invalid run page completion");
                 };
                 let workflow = if *code == "b" && *workflow == "0" {
                     0
                 } else {
                     let Some(workflow) = positive(workflow) else {
-                        return failed_page(view, "", 1, "Invalid workflow identity");
+                        return failed_page(view, "", "Invalid workflow identity");
                     };
                     workflow
                 };
@@ -321,7 +325,6 @@ impl State {
                     return failed_page(
                         view,
                         &parent,
-                        u64::from(page),
                         "Mismatched run page parent",
                     );
                 }
@@ -329,7 +332,6 @@ impl State {
                     return failed_page(
                         view,
                         &parent,
-                        u64::from(page),
                         completion_message(&completion),
                     );
                 }
@@ -340,12 +342,12 @@ impl State {
                         if workflow != 0 { run.workflow_id == workflow } else {
                             matches!(&self.branch, BranchState::Selected(branch) if run.head_branch.as_ref() == Some(branch))
                         }
-                    }) => page_effect(view, &parent, u64::from(page), result.items.into_iter().map(|run| run_item(view, run)).collect(), next_cursor(result.next_page), String::new()),
-                    Ok(_) => failed_page(view, &parent, u64::from(page), "Mismatched run filter or next page"),
-                    Err(error) => failed_page(view, &parent, u64::from(page), error.to_string()),
+                    }) => page_effect(view, &parent, result.items.into_iter().map(|run| run_item(view, run)).collect(), next_cursor(result.next_page), String::new()),
+                    Ok(_) => failed_page(view, &parent, "Mismatched run filter or next page"),
+                    Err(error) => failed_page(view, &parent, error.to_string()),
                 }
             }
-            _ => failed_page(WORKFLOWS, "", 1, "Unknown Actions read completion"),
+            _ => failed_page(WORKFLOWS, "", "Unknown Actions read completion"),
         }
     }
 }
@@ -501,13 +503,13 @@ fn completion_message(completion: &ToolCompleted) -> &str {
     }
 }
 
-fn failed_page(view: &str, parent: &str, revision: u64, message: impl Into<String>) -> Effect {
+fn failed_page(view: &str, parent: &str, message: impl Into<String>) -> Effect {
     Effect::PublishTreePage(PublishTreePage {
         view_id: view.into(),
         parent_id: parent.into(),
         items: Vec::new(),
         next_cursor: String::new(),
-        revision,
+        revision: LISTING_REVISION,
         status: PageStatus::Failed,
         message: message.into(),
     })
@@ -516,7 +518,6 @@ fn failed_page(view: &str, parent: &str, revision: u64, message: impl Into<Strin
 fn page_effect(
     view: &str,
     parent: &str,
-    revision: u64,
     items: Vec<TreeItem>,
     next_cursor: String,
     message: String,
@@ -533,7 +534,7 @@ fn page_effect(
         parent_id: parent.into(),
         items,
         next_cursor,
-        revision,
+        revision: LISTING_REVISION,
         status,
         message,
     })
@@ -1084,5 +1085,71 @@ mod tests {
         assert!(
             matches!(&effects[0], Effect::CompleteCommand(value) if value.status == CompletionStatus::Failed)
         );
+    }
+
+    /// The JSONL fixture is shared with the native provider test
+    /// (`rust/senp/fixtures/tree-paging.jsonl`): each line is one scenario made
+    /// of the tool completions this guest consumes and the wire-shaped pages it
+    /// must publish. The host applies the same pages through `SenpTreeProvider`.
+    #[test]
+    fn shared_fixture_pages_publish_one_listing_revision_across_pages() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/tree-paging.jsonl");
+        let scenarios: Vec<serde_json::Value> = std::fs::read_to_string(path)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .filter(|scenario: &serde_json::Value| scenario["guest"] == "sakura-github-actions")
+            .collect();
+        assert!(!scenarios.is_empty());
+        let state = State::default();
+        for scenario in &scenarios {
+            let mut revisions = Vec::new();
+            for entry in scenario["pages"].as_array().unwrap() {
+                let completion = &entry["completion"];
+                assert_eq!(completion["status"], "succeeded");
+                let effect = state.complete(completed(
+                    completion["readId"].as_str().unwrap(),
+                    completion["data"].as_str().unwrap().into(),
+                ));
+                let published = page(&effect);
+                let expected = &entry["page"];
+                assert_eq!(published.view_id, expected["viewId"].as_str().unwrap());
+                assert_eq!(
+                    published.parent_id,
+                    expected["parentId"].as_str().unwrap()
+                );
+                let ids: Vec<_> = published
+                    .items
+                    .iter()
+                    .map(|item| item.id.as_str())
+                    .collect();
+                let expected_ids: Vec<_> = expected["items"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|item| item["id"].as_str().unwrap())
+                    .collect();
+                assert_eq!(ids, expected_ids);
+                assert_eq!(
+                    published.next_cursor,
+                    expected["nextCursor"].as_str().unwrap()
+                );
+                assert_eq!(published.revision, expected["revision"].as_u64().unwrap());
+                let status = match expected["status"].as_str().unwrap() {
+                    "complete" => PageStatus::Complete,
+                    "partial" => PageStatus::Partial,
+                    "empty" => PageStatus::Empty,
+                    "failed" => PageStatus::Failed,
+                    _ => unreachable!(),
+                };
+                assert_eq!(published.status, status);
+                revisions.push(published.revision);
+            }
+            assert!(
+                revisions.windows(2).all(|pair| pair[0] == pair[1]),
+                "{}: every page of one listing carries the same revision",
+                scenario["name"]
+            );
+        }
     }
 }
