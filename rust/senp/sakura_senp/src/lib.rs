@@ -6,10 +6,11 @@ use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{Cursor, Read, Seek, Write};
 use std::path::{Component, Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use zip::read::ZipArchive;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, DateTime, ZipWriter};
@@ -310,6 +311,7 @@ pub enum ErrorCode {
     ReparsePoint,
     PublicationFailed,
     OutputTooLarge,
+    Busy,
 }
 
 #[derive(Debug)]
@@ -439,11 +441,41 @@ fn normalized_entry_name(raw: &[u8]) -> Result<String, SenpError> {
     let path = Path::new(value);
     for component in path.components() {
         match component {
-            Component::Normal(part) if !part.is_empty() => {}
+            Component::Normal(part)
+                if !part.is_empty()
+                    && !part.to_str().is_some_and(|segment| {
+                        is_windows_reserved_name(segment) || segment.ends_with(['.', ' '])
+                    }) => {}
             _ => return Err(SenpError::new(ErrorCode::UnsafePath, value)),
         }
     }
     Ok(value.to_owned())
+}
+
+/// True for a path segment (or package id) that Windows resolves to a device:
+/// `CON PRN AUX NUL COM0-9 LPT0-9` (also the superscript digits Windows
+/// reserves for COM/LPT), compared case-insensitively, with or without any
+/// extension. Windows ignores everything from the first dot and trailing
+/// spaces before it, so `nul.txt` and `com1.tar.gz` name the device too.
+fn is_windows_reserved_name(segment: &str) -> bool {
+    let stem = segment
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches(' ')
+        .to_ascii_uppercase();
+    if matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL") {
+        return true;
+    }
+    stem.strip_prefix("COM")
+        .or_else(|| stem.strip_prefix("LPT"))
+        .is_some_and(|digit| {
+            let mut chars = digit.chars();
+            matches!(
+                (chars.next(), chars.next()),
+                (Some('0'..='9' | '\u{b9}' | '\u{b2}' | '\u{b3}'), None)
+            )
+        })
 }
 
 fn case_fold_path(value: &str) -> String {
@@ -579,6 +611,13 @@ fn valid_identifier(value: &str) -> bool {
         })
         && !value.starts_with(['.', '-'])
         && !value.ends_with(['.', '-'])
+}
+
+/// A package id also names `profiles/<id>.json`, so it must not be a device
+/// name on Windows. Other identifiers (languages, publishers, ...) never become
+/// file names and keep the plain `valid_identifier` rule.
+fn valid_package_id(value: &str) -> bool {
+    valid_identifier(value) && !is_windows_reserved_name(value)
 }
 
 fn valid_workbench_identifier(value: &str) -> bool {
@@ -788,7 +827,7 @@ fn validate_manifest_as(manifest: &Manifest, admission: AbiAdmission) -> Result<
     } else {
         valid_workbench_identifier
     };
-    if !valid_identifier(&manifest.id) || !valid_identifier(&manifest.publisher) {
+    if !valid_package_id(&manifest.id) || !valid_identifier(&manifest.publisher) {
         return Err(SenpError::new(
             ErrorCode::InvalidManifest,
             "invalid id or publisher",
@@ -1363,6 +1402,44 @@ fn parse_manifest_as(bytes: &[u8], admission: AbiAdmission) -> Result<(Manifest,
     }
 }
 
+/// zip 5.1.1 folds central-directory entries with one exact name into a single
+/// index, so `read_zip_entries` never sees the duplicate. The end-of-central-
+/// directory record states how many entries the archive really holds; any
+/// difference from what the reader indexed is a duplicate name. ZIP64 is not
+/// part of the format (64 MiB and 256 entries at most), so an archive that
+/// defers its count to a ZIP64 record is rejected rather than trusted.
+fn reject_collapsed_duplicate_entries(bytes: &[u8], parsed: usize) -> Result<(), SenpError> {
+    const EOCD_LEN: usize = 22;
+    const EOCD_SIGNATURE: [u8; 4] = [0x50, 0x4b, 0x05, 0x06];
+    const ZIP64_LOCATOR_SIGNATURE: [u8; 4] = [0x50, 0x4b, 0x06, 0x07];
+    let invalid = |detail: &str| SenpError::new(ErrorCode::InvalidZip, detail);
+    let comment_ends_the_file = |at: usize| {
+        let comment = usize::from(u16::from_le_bytes([bytes[at + 20], bytes[at + 21]]));
+        at + EOCD_LEN + comment == bytes.len()
+    };
+    let record = (0..=bytes.len().saturating_sub(EOCD_LEN))
+        .rev()
+        .find(|&at| {
+            bytes.len() >= EOCD_LEN
+                && bytes[at..at + 4] == EOCD_SIGNATURE
+                && comment_ends_the_file(at)
+        })
+        .ok_or_else(|| invalid("end of central directory record not found"))?;
+    let declared = u16::from_le_bytes([bytes[record + 10], bytes[record + 11]]);
+    if declared == u16::MAX
+        || (record >= 20 && bytes[record - 20..record - 16] == ZIP64_LOCATOR_SIGNATURE)
+    {
+        return Err(invalid("ZIP64 archives are not supported"));
+    }
+    if usize::from(declared) != parsed {
+        return Err(SenpError::new(
+            ErrorCode::DuplicateEntry,
+            format!("central directory declares {declared} entries, {parsed} are distinct"),
+        ));
+    }
+    Ok(())
+}
+
 fn read_zip_entries<R: Read + Seek>(
     archive: &mut ZipArchive<R>,
 ) -> Result<BTreeMap<String, Vec<u8>>, SenpError> {
@@ -1419,19 +1496,30 @@ fn read_zip_entries<R: Read + Seek>(
         if !folded.insert(case_fold_path(&name)) || entries.contains_key(&name) {
             return Err(SenpError::new(ErrorCode::DuplicateEntry, name));
         }
-        let mut bytes = Vec::with_capacity(entry.size() as usize);
-        entry
-            .read_to_end(&mut bytes)
-            .map_err(|error| SenpError::new(ErrorCode::InvalidZip, error.to_string()))?;
-        if bytes.len() as u64 != entry.size() {
-            return Err(SenpError::new(
-                ErrorCode::InvalidZip,
-                "uncompressed size mismatch",
-            ));
-        }
+        // The exact read makes the declared-size budget above a bound on the
+        // bytes that really arrive.
+        let declared = entry.size();
+        let bytes = read_entry_exact(&mut entry, declared)?;
         entries.insert(name, bytes);
     }
     Ok(entries)
+}
+
+/// Reads one entry through a bound of `declared + 1` bytes, so a stream that
+/// inflates past its declared size is stopped after one byte of excess instead
+/// of being drained into memory. Fewer bytes than declared are rejected too.
+fn read_entry_exact(reader: &mut impl Read, declared: u64) -> Result<Vec<u8>, SenpError> {
+    let mismatch = || SenpError::new(ErrorCode::InvalidZip, "uncompressed size mismatch");
+    let bound = declared.saturating_add(1);
+    let mut bytes = Vec::with_capacity(usize::try_from(bound).map_err(|_| mismatch())?);
+    reader
+        .take(bound)
+        .read_to_end(&mut bytes)
+        .map_err(|error| SenpError::new(ErrorCode::InvalidZip, error.to_string()))?;
+    if bytes.len() as u64 != declared {
+        return Err(mismatch());
+    }
+    Ok(bytes)
 }
 
 fn parse_checksums(bytes: &[u8]) -> Result<BTreeMap<String, String>, SenpError> {
@@ -1514,6 +1602,7 @@ fn verify_archive_snapshot(
     }
     let mut archive = ZipArchive::new(Cursor::new(snapshot.bytes.as_slice()))
         .map_err(|error| SenpError::new(ErrorCode::InvalidZip, error.to_string()))?;
+    reject_collapsed_duplicate_entries(&snapshot.bytes, archive.len())?;
     let entries = read_zip_entries(&mut archive)?;
     for required in [MANIFEST_PATH, README_PATH, LICENSE_PATH, CHECKSUM_PATH] {
         if !entries.contains_key(required) {
@@ -1759,10 +1848,96 @@ fn publish_atomic(temporary: &Path, target: &Path) -> Result<(), SenpError> {
     Ok(())
 }
 
-fn temporary_suffix() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_nanos())
+/// Distinguishes temporary names created within one clock tick: the Windows
+/// system clock advances in ~15.6 ms steps, so nanoseconds alone collide.
+static TEMPORARY_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+fn temporary_suffix() -> String {
+    temporary_suffix_at(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos()),
+    )
+}
+
+fn temporary_suffix_at(nanos: u128) -> String {
+    let sequence = TEMPORARY_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{nanos}-{sequence}")
+}
+
+/// Lock file inside the install root that serializes every mutating command
+/// (install, uninstall, set-enabled) across processes. Readers never take it.
+const ROOT_LOCK_FILE: &str = ".senp-root.lock";
+/// Longest a mutator waits for the lock before failing with `Busy`. Well under
+/// the native 30 s tool timeout, so the caller gets a typed answer first.
+const ROOT_LOCK_WAIT: Duration = Duration::from_secs(10);
+const ROOT_LOCK_POLL_FIRST: Duration = Duration::from_millis(5);
+const ROOT_LOCK_POLL_MAX: Duration = Duration::from_millis(200);
+
+#[cfg(test)]
+thread_local! {
+    static ROOT_LOCK_WAIT_OVERRIDE: std::cell::Cell<Option<Duration>> =
+        const { std::cell::Cell::new(None) };
+}
+
+fn root_lock_wait() -> Duration {
+    #[cfg(test)]
+    if let Some(wait) = ROOT_LOCK_WAIT_OVERRIDE.with(std::cell::Cell::get) {
+        return wait;
+    }
+    ROOT_LOCK_WAIT
+}
+
+/// Exclusive hold on one install root. The OS releases it when the handle
+/// closes, including when the process dies, so a crash never strands the root.
+#[derive(Debug)]
+struct RootLock {
+    _file: File,
+}
+
+/// Polls `try_lock` with exponential backoff until `wait` has elapsed, then
+/// fails with a typed `Busy`.
+fn acquire_root_lock_within(root: &Path, wait: Duration) -> Result<RootLock, SenpError> {
+    let path = root.join(ROOT_LOCK_FILE);
+    reject_reparse_points(&path)?;
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .map_err(|error| io_error("open install lock", error))?;
+    let deadline = Instant::now() + wait;
+    let mut delay = ROOT_LOCK_POLL_FIRST;
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(RootLock { _file: file }),
+            Err(TryLockError::WouldBlock) => {
+                let now = Instant::now();
+                if now >= deadline {
+                    return Err(SenpError::new(
+                        ErrorCode::Busy,
+                        format!(
+                            "another SENP package operation holds the install root; gave up after {} ms",
+                            wait.as_millis()
+                        ),
+                    ));
+                }
+                std::thread::sleep(delay.min(deadline - now));
+                delay = (delay * 2).min(ROOT_LOCK_POLL_MAX);
+            }
+            Err(TryLockError::Error(error)) => return Err(io_error("lock install root", error)),
+        }
+    }
+}
+
+/// Lock for a mutator that must not create the root: an absent root has
+/// nothing to protect and the operation reports its own natural error.
+fn lock_existing_root(root: &Path) -> Result<Option<RootLock>, SenpError> {
+    match fs::metadata(root) {
+        Ok(_) => acquire_root_lock_within(root, root_lock_wait()).map(Some),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(io_error("inspect install root", error)),
+    }
 }
 
 fn write_profile_state(root: &Path, state: &ProfileState) -> Result<(), SenpError> {
@@ -1874,7 +2049,7 @@ fn read_uninstalled_states(root: &Path) -> Result<BTreeMap<String, UninstalledSt
         let entry_path = entry.path();
         let filename = entry_path.file_stem().and_then(|value| value.to_str());
         if state.schema_version != 1
-            || !valid_identifier(&state.id)
+            || !valid_package_id(&state.id)
             || filename != Some(state.id.as_str())
             || !valid_sha256(&state.archive_sha256)
             || state.trust != "builtin"
@@ -1908,7 +2083,7 @@ fn previous_enabled_state(root: &Path, id: &str, trust: &str) -> Result<Option<b
         ));
     }
     let state: ProfileState = strict_json(&bytes)?;
-    if state.schema_version != 1 || state.id != id || !valid_identifier(&state.id) {
+    if state.schema_version != 1 || state.id != id || !valid_package_id(&state.id) {
         return Err(SenpError::new(
             ErrorCode::InvalidManifest,
             "previous profile state does not match the extension",
@@ -2195,21 +2370,17 @@ fn install_verified_archive(
     reject_reparse_points(root)?;
     fs::create_dir_all(root).map_err(|error| io_error("create install root", error))?;
     reject_reparse_points(root)?;
+    let _lock = acquire_root_lock_within(root, root_lock_wait())?;
     let content_root = root.join("content");
     let state_root = root.join("profiles");
     fs::create_dir_all(&content_root).map_err(|error| io_error("create content root", error))?;
     fs::create_dir_all(&state_root).map_err(|error| io_error("create state root", error))?;
     let destination = content_root.join(&verified.archive_sha256);
     reject_reparse_points(&destination)?;
-    if destination.exists() {
-        let installed = read_installed_content(&destination, &verified.archive_sha256)?;
-        if installed.entries != entries {
-            return Err(SenpError::new(
-                ErrorCode::ChecksumMismatch,
-                "existing content does not match the verified archive",
-            ));
-        }
-    } else {
+    let intact = destination.exists()
+        && read_installed_content(&destination, &verified.archive_sha256)
+            .is_ok_and(|installed| installed.entries == entries);
+    if !intact {
         let staging = content_root.join(format!(
             ".{}.{}.{}.tmp",
             verified.archive_sha256,
@@ -2248,25 +2419,39 @@ fn install_verified_archive(
                     "staged content does not match the verified archive",
                 ));
             }
-            match fs::rename(&staging, &destination) {
-                Ok(()) => {}
-                Err(_error) if destination.is_dir() => {
-                    let existing = read_installed_content(&destination, &verified.archive_sha256)?;
-                    if existing.entries != entries {
-                        return Err(SenpError::new(
-                            ErrorCode::ChecksumMismatch,
-                            "published content does not match the verified archive",
-                        ));
-                    }
-                    fs::remove_dir_all(&staging)
-                        .map_err(|cleanup| io_error("remove duplicate staging", cleanup))?;
-                }
-                Err(error) => {
-                    return Err(SenpError::new(
+            // The root lock means nobody else publishes this digest, so
+            // whatever sits at `destination` failed verification above. Move
+            // it aside first; a rename that cannot happen (files in use) is an
+            // explicit error, never a silent success.
+            let quarantine = if destination.exists() {
+                let aside = content_root.join(format!(
+                    ".{}.corrupt.{}",
+                    verified.archive_sha256,
+                    temporary_suffix()
+                ));
+                fs::rename(&destination, &aside).map_err(|error| {
+                    SenpError::new(
                         ErrorCode::PublicationFailed,
-                        error.to_string(),
-                    ));
+                        format!("move corrupt content aside: {error}"),
+                    )
+                })?;
+                Some(aside)
+            } else {
+                None
+            };
+            if let Err(error) = fs::rename(&staging, &destination) {
+                if let Some(aside) = &quarantine {
+                    // Put the previous state back rather than leave a hole.
+                    let _ = fs::rename(aside, &destination);
                 }
+                return Err(SenpError::new(
+                    ErrorCode::PublicationFailed,
+                    error.to_string(),
+                ));
+            }
+            if let Some(aside) = quarantine {
+                // Best effort: the repaired content is already published.
+                let _ = fs::remove_dir_all(&aside).or_else(|_| fs::remove_file(&aside));
             }
             Ok::<(), SenpError>(())
         })();
@@ -2360,7 +2545,7 @@ fn list_state_entry(
             .path()
             .file_stem()
             .and_then(|value| value.to_str())
-            .filter(|value| valid_identifier(value))
+            .filter(|value| valid_package_id(value))
             .unwrap_or("")
             .to_owned()
     };
@@ -2396,11 +2581,11 @@ fn list_state_entry(
     let state: ProfileState =
         strict_json(&state_bytes).map_err(|error| invalid(String::new(), String::new(), error))?;
     if state.schema_version != 1
-        || !valid_identifier(&state.id)
+        || !valid_package_id(&state.id)
         || !valid_sha256(&state.archive_sha256)
         || !matches!(state.trust.as_str(), "builtin" | "publisher" | "developer")
     {
-        let id = if valid_identifier(&state.id) {
+        let id = if valid_package_id(&state.id) {
             state.id.clone()
         } else {
             String::new()
@@ -2621,13 +2806,14 @@ pub fn uninstall_built_in(
     id: &str,
     expected_archive_sha256: &str,
 ) -> Result<(), SenpError> {
-    if !valid_identifier(id) || !valid_sha256(expected_archive_sha256) {
+    if !valid_package_id(id) || !valid_sha256(expected_archive_sha256) {
         return Err(SenpError::new(
             ErrorCode::InvalidManifest,
             "invalid built-in uninstall request",
         ));
     }
     reject_reparse_points(root)?;
+    let _lock = lock_existing_root(root)?;
     let state_path = root.join("profiles").join(format!("{id}.json"));
     reject_reparse_points(&state_path)?;
     let bytes = match fs::read(&state_path) {
@@ -2678,12 +2864,13 @@ pub fn uninstall_built_in(
 }
 
 pub fn set_extension_enabled(root: &Path, id: &str, enabled: bool) -> Result<(), SenpError> {
-    if !valid_identifier(id) {
+    if !valid_package_id(id) {
         return Err(SenpError::new(
             ErrorCode::InvalidManifest,
             "invalid extension id",
         ));
     }
+    let _lock = lock_existing_root(root)?;
     let state_path = root.join("profiles").join(format!("{id}.json"));
     let bytes = fs::read(&state_path).map_err(|error| io_error("read profile state", error))?;
     let mut state: ProfileState = strict_json(&bytes)?;
@@ -4266,5 +4453,442 @@ mod tests {
         assert_eq!(LIST_LINE_MAX_BYTES, 1024 * 1024);
         assert_eq!(LIST_LINE_MAX_NODES, 65_536);
         assert_eq!(LIST_OUTPUT_MAX_BYTES, 4 * 1024 * 1024);
+    }
+
+    // ---- B4a: archive and package-store hygiene -------------------------
+
+    /// A reader that serves `total` zero bytes and counts what it handed out.
+    struct CountingReader {
+        remaining: u64,
+        served: u64,
+    }
+
+    impl CountingReader {
+        fn new(total: u64) -> Self {
+            Self {
+                remaining: total,
+                served: 0,
+            }
+        }
+    }
+
+    impl Read for CountingReader {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            let count = (buffer.len() as u64).min(self.remaining) as usize;
+            buffer[..count].fill(0);
+            self.remaining -= count as u64;
+            self.served += count as u64;
+            Ok(count)
+        }
+    }
+
+    /// A Deflate ZIP of `(name, payload)` entries.
+    fn deflated_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+        for (name, payload) in entries {
+            writer.start_file(*name, options).unwrap();
+            writer.write_all(payload).unwrap();
+        }
+        writer.finish().unwrap().into_inner()
+    }
+
+    /// Deterministic, poorly compressible bytes.
+    fn noise(length: usize) -> Vec<u8> {
+        let mut state = 0x2545_f491_u32;
+        (0..length)
+            .map(|_| {
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                (state >> 24) as u8
+            })
+            .collect()
+    }
+
+    /// Rewrites the declared uncompressed size of `name` in its local and
+    /// central headers, leaving the compressed bytes untouched.
+    fn declare_size(zip: &mut [u8], name: &str, declared: u32) {
+        let mut patched = 0;
+        for index in 0..zip.len().saturating_sub(46) {
+            let (name_length_at, size_at, name_at) = match zip[index..index + 4] {
+                [0x50, 0x4b, 0x03, 0x04] => (index + 26, index + 22, index + 30),
+                [0x50, 0x4b, 0x01, 0x02] => (index + 28, index + 24, index + 46),
+                _ => continue,
+            };
+            let length = u16::from_le_bytes([zip[name_length_at], zip[name_length_at + 1]]);
+            if &zip[name_at..name_at + usize::from(length)] == name.as_bytes() {
+                zip[size_at..size_at + 4].copy_from_slice(&declared.to_le_bytes());
+                patched += 1;
+            }
+        }
+        assert_eq!(patched, 2, "local and central header of {name}");
+    }
+
+    fn zip_entries(bytes: &[u8]) -> Result<BTreeMap<String, Vec<u8>>, SenpError> {
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+        read_zip_entries(&mut archive)
+    }
+
+    #[test]
+    fn entry_read_stops_one_byte_past_the_declared_size() {
+        // Declared 0 but the stream carries megabytes: the reader must not be
+        // drained, and the entry is rejected after at most 1 byte.
+        let mut reader = CountingReader::new(8 * 1024 * 1024);
+        let error = read_entry_exact(&mut reader, 0).unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidZip);
+        assert!(reader.served <= 1, "served {} bytes", reader.served);
+
+        let mut reader = CountingReader::new(8 * 1024 * 1024);
+        let error = read_entry_exact(&mut reader, 16).unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidZip);
+        assert!(reader.served <= 17, "served {} bytes", reader.served);
+    }
+
+    #[test]
+    fn entry_read_requires_exactly_the_declared_size() {
+        let error = read_entry_exact(&mut CountingReader::new(10), 16).unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidZip);
+        let bytes = read_entry_exact(&mut CountingReader::new(16), 16).unwrap();
+        assert_eq!(bytes, vec![0u8; 16]);
+        assert!(read_entry_exact(&mut CountingReader::new(0), 0)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn deflate_entry_declaring_zero_bytes_is_rejected() {
+        // 65 MiB of zeros inflate from a tiny Deflate stream.
+        let payload = vec![0u8; 65 * 1024 * 1024];
+        let mut zip = deflated_zip(&[("assets/bomb.bin", payload.as_slice())]);
+        declare_size(&mut zip, "assets/bomb.bin", 0);
+        let error = zip_entries(&zip).unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidZip);
+    }
+
+    #[test]
+    fn declared_entry_size_must_match_the_real_size() {
+        let payload = noise(1000);
+        let honest = deflated_zip(&[("assets/data.bin", payload.as_slice())]);
+        assert_eq!(zip_entries(&honest).unwrap()["assets/data.bin"], payload);
+
+        let mut understated = honest.clone();
+        declare_size(&mut understated, "assets/data.bin", 10);
+        assert_eq!(
+            zip_entries(&understated).unwrap_err().code,
+            ErrorCode::InvalidZip
+        );
+
+        let mut overstated = honest;
+        declare_size(&mut overstated, "assets/data.bin", 2000);
+        assert_eq!(
+            zip_entries(&overstated).unwrap_err().code,
+            ErrorCode::InvalidZip
+        );
+    }
+
+    #[test]
+    fn two_central_directory_entries_with_one_exact_name_are_a_duplicate() {
+        let mut zip = deflated_zip(&[("assets/a.txt", b"first"), ("assets/b.txt", b"second")]);
+        // Rename the second entry in its local and central headers.
+        let mut renamed = 0;
+        for index in 0..zip.len() - 30 {
+            let name_at = match zip[index..index + 4] {
+                [0x50, 0x4b, 0x03, 0x04] => index + 30,
+                [0x50, 0x4b, 0x01, 0x02] => index + 46,
+                _ => continue,
+            };
+            if &zip[name_at..name_at + 12] == b"assets/b.txt" {
+                zip[name_at..name_at + 12].copy_from_slice(b"assets/a.txt");
+                renamed += 1;
+            }
+        }
+        assert_eq!(renamed, 2);
+        let snapshot = ArchiveSnapshot {
+            archive_sha256: archive_digest(&zip),
+            bytes: zip,
+        };
+        let error =
+            verify_archive_snapshot(&snapshot, &TrustPolicy::DeveloperUnsigned).unwrap_err();
+        assert_eq!(error.code, ErrorCode::DuplicateEntry);
+    }
+
+    #[test]
+    fn central_directory_count_check_accepts_honest_archives_and_rejects_zip64() {
+        let zip = deflated_zip(&[("assets/a.txt", b"first"), ("assets/b.txt", b"second")]);
+        assert!(reject_collapsed_duplicate_entries(&zip, 2).is_ok());
+        assert_eq!(
+            reject_collapsed_duplicate_entries(&zip, 1)
+                .unwrap_err()
+                .code,
+            ErrorCode::DuplicateEntry
+        );
+        // An EOCD record that defers to ZIP64 is not part of the format.
+        let mut zip64 = zip.clone();
+        let eocd = zip64.len() - 22;
+        zip64[eocd + 10..eocd + 12].copy_from_slice(&0xffff_u16.to_le_bytes());
+        assert_eq!(
+            reject_collapsed_duplicate_entries(&zip64, 2)
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidZip
+        );
+        assert_eq!(
+            reject_collapsed_duplicate_entries(b"not a zip", 0)
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidZip
+        );
+    }
+
+    #[test]
+    fn windows_reserved_names_are_rejected_in_entry_paths() {
+        for rejected in [
+            "assets/NUL.txt",
+            "assets/con",
+            "assets/Com1.json",
+            "assets/lpt9",
+            "assets/COM0.x.y",
+            "assets/aux/readme.txt",
+            "assets/prn .txt",
+            "assets/com\u{b9}.json",
+            "assets/LPT\u{b2}",
+            "assets/COM\u{b3}.txt",
+            "Com1.json",
+        ] {
+            let error = normalized_entry_name(rejected.as_bytes()).unwrap_err();
+            assert_eq!(error.code, ErrorCode::UnsafePath, "{rejected}");
+            assert!(!valid_asset_path(rejected), "{rejected}");
+        }
+        for accepted in [
+            "assets/console",
+            "assets/nullable.txt",
+            "assets/com10",
+            "assets/com10.json",
+            "assets/lpt",
+            "assets/auxiliary/x.txt",
+            "assets/.con",
+            "assets/icon.com1",
+        ] {
+            assert!(
+                normalized_entry_name(accepted.as_bytes()).is_ok(),
+                "{accepted}"
+            );
+        }
+    }
+
+    #[test]
+    fn trailing_dot_or_space_is_rejected_in_entry_paths() {
+        for rejected in [
+            "assets/name.",
+            "assets/name ",
+            "assets/dir./x.txt",
+            "assets/ ",
+        ] {
+            let error = normalized_entry_name(rejected.as_bytes()).unwrap_err();
+            assert_eq!(error.code, ErrorCode::UnsafePath, "{rejected}");
+        }
+        assert!(normalized_entry_name(b"assets/name.txt").is_ok());
+    }
+
+    #[test]
+    fn windows_reserved_names_are_rejected_as_package_ids() {
+        for rejected in [
+            "nul", "con", "aux", "prn", "com1", "lpt1", "com0", "nul.ext",
+        ] {
+            assert!(!valid_package_id(rejected), "{rejected}");
+        }
+        for accepted in [
+            "console",
+            "nullable",
+            "com10",
+            "lpt",
+            "my-nul",
+            "sample-indent",
+        ] {
+            assert!(valid_package_id(accepted), "{accepted}");
+        }
+        let temp = TempDir::new().unwrap();
+        let source = temp.path().join("source");
+        fixture_with_id(&source, "nul");
+        let error = pack_directory(&source, &temp.path().join("nul.senp"), None).unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidManifest);
+        fixture_with_id(&source, "lpt1");
+        let error = pack_directory(&source, &temp.path().join("lpt1.senp"), None).unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidManifest);
+        fixture_with_id(&source, "com10");
+        pack_directory(&source, &temp.path().join("com10.senp"), None).unwrap();
+    }
+
+    #[test]
+    fn installed_listing_turns_a_reserved_id_into_an_invalid_row() {
+        let temp = TempDir::new().unwrap();
+        let (root, _) = three_installed(&temp, 1);
+        // A state file (named so the file system can hold it) that claims a
+        // device name as its package id.
+        let state = fs::read_to_string(root.join("profiles/pkg-beta.json"))
+            .unwrap()
+            .replace("pkg-beta", "nul");
+        fs::write(root.join("profiles/pkg-beta.json"), state).unwrap();
+        let rows = list_installed(&root).unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(installed_rows(&rows).len(), 2);
+        assert_eq!(invalid(&rows), [("", ErrorCode::InvalidManifest)]);
+    }
+
+    #[test]
+    fn temporary_suffixes_differ_even_with_a_frozen_clock() {
+        let first = temporary_suffix_at(42);
+        let second = temporary_suffix_at(42);
+        assert_ne!(first, second);
+        assert_ne!(temporary_suffix(), temporary_suffix());
+    }
+
+    /// One package installed at `<temp>/installed`; returns
+    /// `(package file, install root, content dir, policy)`.
+    fn installed_sample(temp: &TempDir) -> (PathBuf, PathBuf, PathBuf, TrustPolicy) {
+        let source = temp.path().join("source");
+        fixture(&source);
+        let package = temp.path().join("sample.senp");
+        let hash = pack_directory(&source, &package, None).unwrap();
+        let root = temp.path().join("installed");
+        let policy = TrustPolicy::BuiltIn {
+            expected_archive_sha256: hash.clone(),
+        };
+        install_package(&package, &root, &policy).unwrap();
+        let content = root.join("content").join(&hash);
+        (package, root, content, policy)
+    }
+
+    fn quarantine_leftovers(root: &Path) -> Vec<String> {
+        fs::read_dir(root.join("content"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.contains(".corrupt."))
+            .collect()
+    }
+
+    #[test]
+    fn install_repairs_corrupt_content_of_the_same_digest() {
+        let temp = TempDir::new().unwrap();
+        let (package, root, content, policy) = installed_sample(&temp);
+        fs::write(content.join(README_PATH), b"tampered").unwrap();
+        let rows = list_installed(&root).unwrap();
+        assert_eq!(
+            invalid(&rows),
+            [("sample-indent", ErrorCode::ChecksumMismatch)]
+        );
+
+        install_package(&package, &root, &policy).unwrap();
+
+        let rows = list_installed(&root).unwrap();
+        assert!(invalid(&rows).is_empty());
+        assert_eq!(installed_rows(&rows).len(), 1);
+        assert_eq!(fs::read(content.join(README_PATH)).unwrap(), b"# Sample\n");
+        assert!(quarantine_leftovers(&root).is_empty());
+    }
+
+    #[test]
+    fn install_repairs_content_that_is_not_even_a_directory() {
+        let temp = TempDir::new().unwrap();
+        let (package, root, content, policy) = installed_sample(&temp);
+        fs::remove_dir_all(&content).unwrap();
+        fs::write(&content, b"not a directory").unwrap();
+        install_package(&package, &root, &policy).unwrap();
+        assert!(content.join(MODULE_PATH).is_file());
+        assert!(invalid(&list_installed(&root).unwrap()).is_empty());
+        assert!(quarantine_leftovers(&root).is_empty());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn install_reports_an_error_when_the_corrupt_content_cannot_be_moved_aside() {
+        let temp = TempDir::new().unwrap();
+        let (package, root, content, policy) = installed_sample(&temp);
+        fs::write(content.join(README_PATH), b"tampered").unwrap();
+        // A held handle inside the directory makes the rename fail.
+        let held = File::open(content.join(MODULE_PATH)).unwrap();
+        let error = install_package(&package, &root, &policy).unwrap_err();
+        assert_eq!(error.code, ErrorCode::PublicationFailed);
+        assert_eq!(fs::read(content.join(README_PATH)).unwrap(), b"tampered");
+        assert!(quarantine_leftovers(&root).is_empty());
+        drop(held);
+        install_package(&package, &root, &policy).unwrap();
+        assert!(invalid(&list_installed(&root).unwrap()).is_empty());
+    }
+
+    /// Runs `body` with a short mutator lock wait so contention tests stay fast.
+    fn with_lock_wait(wait: Duration, body: impl FnOnce()) {
+        ROOT_LOCK_WAIT_OVERRIDE.with(|cell| cell.set(Some(wait)));
+        body();
+        ROOT_LOCK_WAIT_OVERRIDE.with(|cell| cell.set(None));
+    }
+
+    #[test]
+    fn a_held_root_lock_makes_every_mutator_fail_with_busy_but_not_readers() {
+        let temp = TempDir::new().unwrap();
+        let (package, root, _, policy) = installed_sample(&temp);
+        let lock = acquire_root_lock_within(&root, Duration::from_secs(1)).unwrap();
+        with_lock_wait(Duration::from_millis(300), || {
+            let started = Instant::now();
+            let error = set_extension_enabled(&root, "sample-indent", false).unwrap_err();
+            assert_eq!(error.code, ErrorCode::Busy);
+            let waited = started.elapsed();
+            assert!(
+                waited >= Duration::from_millis(250),
+                "gave up after {waited:?}"
+            );
+            assert!(waited < Duration::from_secs(5), "waited {waited:?}");
+            assert_eq!(
+                install_package(&package, &root, &policy).unwrap_err().code,
+                ErrorCode::Busy
+            );
+            let hash = "0".repeat(64);
+            assert_eq!(
+                uninstall_built_in(&root, "sample-indent", &hash)
+                    .unwrap_err()
+                    .code,
+                ErrorCode::Busy
+            );
+        });
+        // Readers never block on the lock.
+        assert_eq!(installed_rows(&list_installed(&root).unwrap()).len(), 1);
+        assert!(list_uninstalled(&root).unwrap().is_empty());
+        // A rejected mutator changed nothing.
+        assert!(installed_rows(&list_installed(&root).unwrap())[0].enabled);
+
+        drop(lock);
+        set_extension_enabled(&root, "sample-indent", false).unwrap();
+        assert!(!installed_rows(&list_installed(&root).unwrap())[0].enabled);
+        install_package(&package, &root, &policy).unwrap();
+    }
+
+    #[test]
+    fn a_mutator_waits_for_a_lock_released_within_the_bound() {
+        let temp = TempDir::new().unwrap();
+        let (_, root, _, _) = installed_sample(&temp);
+        let lock = acquire_root_lock_within(&root, Duration::from_secs(1)).unwrap();
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(150));
+            drop(lock);
+        });
+        with_lock_wait(Duration::from_secs(5), || {
+            set_extension_enabled(&root, "sample-indent", false).unwrap();
+        });
+        releaser.join().unwrap();
+        assert!(!installed_rows(&list_installed(&root).unwrap())[0].enabled);
+    }
+
+    #[test]
+    fn the_mutator_lock_wait_stays_under_the_native_tool_timeout() {
+        assert!(ROOT_LOCK_WAIT <= Duration::from_secs(10));
+        assert_eq!(root_lock_wait(), ROOT_LOCK_WAIT);
+    }
+
+    #[test]
+    fn mutators_on_a_missing_root_keep_their_natural_error_and_create_nothing() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("absent");
+        let error = set_extension_enabled(&root, "sample-indent", true).unwrap_err();
+        assert_eq!(error.code, ErrorCode::Io);
+        assert!(!root.exists());
     }
 }

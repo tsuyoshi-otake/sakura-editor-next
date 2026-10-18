@@ -118,7 +118,17 @@ ZIP entry name、checksum 文書のパス、manifest が参照する asset path 
 - `/` 区切りだけを使用する。`\`、NUL、`:` を含めない。
 - `/` または `\` で始めず、`/` で終わらない。
 - 各 path component は通常の名前であり、`.`、`..`、root、prefix を含めない。
-- 大文字小文字を畳み込んだ同一 path も重複として拒否する。
+- 大文字小文字を畳み込んだ同一 path も重複として拒否する。ZIP の central
+  directory が同じ名前の entry を 2 つ持つ archive も `DuplicateEntry` です
+  （EOCD が宣言する entry 数と、実際に別々の名前として読めた数の差で検出）。
+  ZIP64 は定義外なので、EOCD が ZIP64 に委ねる archive は `InvalidZip` です。
+- Windows の予約デバイス名（`CON` `PRN` `AUX` `NUL` `COM0`-`COM9` `LPT0`-`LPT9`、
+  上付き数字 `¹` `²` `³` の COM/LPT を含む）を path component に使わない。
+  大文字小文字を区別せず、最初の `.` より前で判定するため `NUL.txt` や
+  `com1.tar.gz` も拒否され、`console`、`nullable`、`com10` は許可されます。
+  package の `id` にも同じ規則を適用します（`profiles/<id>.json` がデバイス名
+  になるため）。
+- component は `.` または空白で終わらない（Windows は末尾の `.` と空白を無視する）。
 - grammar の `path` と language の `configuration` は `assets/` で始まり、1,024 バイト以下でなければならない。
 - archive の `assets/**` entry 名には、上記の manifest 参照 path 以外の個別の長さ上限はありません（entry・archive 全体のサイズ上限は適用されます）。
 
@@ -139,6 +149,12 @@ entry、許可されない compression も拒否します。ソースまたは�
 | ZIP entry 数 | 256 |
 | compression ratio | `uncompressed_size / max(compressed_size, 1)` の整数商が 100 以下 |
 | `assets/` のディレクトリ深さ（pack 時） | 16 以下 |
+
+各 entry は宣言された展開後サイズを上限に `宣言サイズ + 1` バイトまでだけ
+読み、宣言より多くても少なくても `InvalidZip`（`uncompressed size mismatch`）
+です。宣言サイズ 0 の Deflate entry も同じ扱いです。読めた bytes は宣言サイズと
+一致するため、宣言サイズで計上する展開後合計の上限が実際に読む bytes の上限に
+なります。
 
 `pack` は checksum と署名のために 2 entry 分を予約するため、payload は
 最大 254 entry です。署名なしの完成アーカイブは最大 255 entry、署名あり
@@ -417,7 +433,12 @@ publisher key が policy にないため成功しません。publisher package �
 `content/<archive-sha256>/` に staging し、entry と
 `.senp-archive-sha256` marker を検査してから公開します。profile の選択は
 `profiles/<id>.json` に別途 atomic に公開されます。既存の同じ archive digest
-の content があれば、内容が完全一致する場合だけ再利用します。
+の content があれば、内容が完全一致する場合だけ再利用します。一致しない
+（破損している）場合は、新しく staging した検証済み content で修復します:
+既存 directory を `content/.<archive-sha256>.corrupt.<suffix>` へ rename して
+退避し、staging を公開し、退避先を best-effort で削除します。退避の rename
+が失敗した場合（ファイルが使用中など）は `PublicationFailed` で、成功を装い
+ません。
 
 `list` はインストール済み content の path、サイズ、checksum coverage、
 manifest、署名の形式を再検査しますが、publisher 公開鍵を持たないため、
@@ -449,6 +470,7 @@ tool の install root は次の profile-scoped layout です。
 
 ```text
 <root>/
+├── .senp-root.lock             # 変更系コマンドの排他ロック（空ファイル）
 ├── content/
 │   └── <archive-sha256>/       # 検証済み payload と marker
 ├── profiles/
@@ -461,6 +483,15 @@ profile state は package の `id`、archive SHA-256、`signed`、trust class、
 enabled state を持ちます。publisher/built-in の再インストールは、同じ id
 かつ同じ trust class の既存 enabled state を保持します。developer unsigned
 package は常に disabled です。
+
+install、`uninstall-builtin`、`set-enabled` は install root 単位で
+`.senp-root.lock` に対する排他ロック（`std::fs::File::try_lock`）を取り、
+プロセスをまたいで直列化されます。ロックは `try_lock` を 5 ms から 200 ms
+までの指数バックオフでポーリングし、最大 10 秒（native 側 tool の 30 秒
+timeout より十分短い）待っても取れなければ `Busy` で失敗します。ロックは
+ファイルを閉じる（プロセスが終了する場合を含む）と OS が解放します。
+`list`、`list-uninstalled`、`verify`、`inspect-builtin` などの読み取りはロックを取らず、
+待たされません。
 
 組み込み package を `uninstall-builtin` すると、content を削除せずに
 `uninstalled/<id>.json` tombstone を先に公開します。これにより製品更新時も
@@ -609,11 +640,12 @@ CLI は成功時に結果を stdout へ出し、失敗時は `ErrorCode: detail`
 | `InvalidChecksumDocument` | LF 終端、CR の不存在、space 2 個、lowercase digest、strictly sorted path、全 payload coverage を確認する。通常は `pack` で再生成する。 |
 | `ChecksumMismatch` | package bytes、entry bytes、built-in archive pin、または既存 content が変わっていないか。 |
 | `UnsupportedCompression` / `CompressionRatioLimit` | ZIP を `Stored` または `Deflated` にする。過剰な圧縮率や破損した compressed size を避ける。 |
-| `UnsafePath` / `UnsupportedEntry` / `DuplicateEntry` | `/` path、`.`/`..`、backslash、case-fold 重複、directory/symlink、許可リスト外 entry を確認する。 |
+| `UnsafePath` / `UnsupportedEntry` / `DuplicateEntry` | `/` path、`.`/`..`、backslash、末尾の `.`/空白、Windows 予約名、case-fold 重複、同名 entry の重複、directory/symlink、許可リスト外 entry を確認する。 |
 | `UnsignedPackage` / `UntrustedPublisher` / `InvalidSignature` | policy と package 種別を揃える。publisher package は対応公開鍵、built-in は archive hash、developer は unsigned を使う。 |
 | `EntryTooLarge` / `ExpandedSizeLimit` / `TooManyEntries` | document 4 MiB、entry 32 MiB、全体 64 MiB、entry 256 件、pack payload 254 件以内か。 |
 | `ReparsePoint` | source、install root、content、profile、state 配下の symlink/reparse point を除去する。 |
-| `PublicationFailed` | install root の staging、profile の atomic publication、既存 content の競合を確認する。 |
+| `PublicationFailed` | install root の staging、profile の atomic publication、破損 content の退避 rename（ファイル使用中など）を確認する。 |
+| `Busy` | 別の install / uninstall / set-enabled が同じ install root で実行中。最大 10 秒待っても取れなかった。完了を待って再実行する。 |
 
 最初に `pack` が作った archive を同じ key/pin で `verify` または
 `inspect-builtin` し、その後 `install-*`、`list` の順に切り分けると、

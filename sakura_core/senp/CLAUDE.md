@@ -194,6 +194,22 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   installed listing re-reads every allowed payload file, requires exact
   checksum coverage and directory shape, rejects reparse points, and recomputes
   each SHA-256 before publishing contributions.
+- Archive and package-store hygiene (#353, #342, #362): every ZIP entry is read
+  through `declared + 1` bytes and must match its declared size exactly (zip
+  5.1.1 does not bound Deflate output), so the declared-size expanded budget
+  also bounds the bytes actually read. Exact duplicate entry names are caught by comparing the EOCD
+  entry count with what the reader indexed (zip 5.1.1 folds them); ZIP64 is
+  rejected. Windows device names (`CON`, `NUL`, `COM0-9`, `LPT0-9`, superscript
+  digits, any extension) and trailing dot/space are rejected in entry path
+  components, and device names also in package ids (`valid_package_id`; other
+  identifiers keep `valid_identifier`). Temporary names carry a per-process
+  counter next to the pid and clock.
+- Mutators (install, built-in uninstall, set-enabled) serialize across
+  processes on `<root>/.senp-root.lock` via `File::try_lock`, polling with
+  backoff for at most 10 s and then failing with the typed `Busy` code; readers
+  never take it. Under that lock an install whose existing `content/<sha>` fails
+  verification renames it aside, publishes the staged verified content and
+  removes the quarantine best-effort; a failed rename is `PublicationFailed`.
 - `sakura-senp-tool list` emits JSON Lines: one complete JSON object per
   package, `kind:"installed"` or `kind:"invalid"`. A failure confined to
   one profile state entry becomes an invalid row carrying the `SenpError`
