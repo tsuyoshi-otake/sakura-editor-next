@@ -100,11 +100,13 @@
     </Lib>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="$(SakuraRepoRoot)\sakura_core\include\sakura\request\HttpDate.h" />
     <ClInclude Include="$(SakuraRepoRoot)\sakura_core\include\sakura\request\RequestService.h" />
     <ClInclude Include="$(SakuraRepoRoot)\sakura_core\include\sakura\request\win32\WinHttpRequestRuntime.h" />
     <ClInclude Include="$(SakuraRepoRoot)\sakura_core\include\sakura\request\win32\WinHttpSystemProxyResolver.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="$(SakuraRepoRoot)\sakura_core\platform\request\HttpDate.cpp" />
     <ClCompile Include="$(SakuraRepoRoot)\sakura_core\platform\request\RequestService.cpp" />
     <ClCompile Include="$(SakuraRepoRoot)\sakura_core\platform\request\win32\WinHttpRequestRuntime.cpp" />
     <ClCompile Include="$(SakuraRepoRoot)\sakura_core\platform\request\win32\WinHttpSystemProxyResolver.cpp" />

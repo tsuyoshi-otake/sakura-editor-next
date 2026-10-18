@@ -15,9 +15,11 @@ file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/pdb")
 
 add_library(sakura_request STATIC
   "${SAKURA_REPO_ROOT}/sakura_core/platform/request/RequestService.cpp"
+  "${SAKURA_REPO_ROOT}/sakura_core/platform/request/HttpDate.cpp"
   "${SAKURA_REPO_ROOT}/sakura_core/platform/request/win32/WinHttpRequestRuntime.cpp"
   "${SAKURA_REPO_ROOT}/sakura_core/platform/request/win32/WinHttpSystemProxyResolver.cpp"
   "${SAKURA_REPO_ROOT}/sakura_core/include/sakura/request/RequestService.h"
+  "${SAKURA_REPO_ROOT}/sakura_core/include/sakura/request/HttpDate.h"
   "${SAKURA_REPO_ROOT}/sakura_core/include/sakura/request/win32/WinHttpRequestRuntime.h"
   "${SAKURA_REPO_ROOT}/sakura_core/include/sakura/request/win32/WinHttpSystemProxyResolver.h"
 )

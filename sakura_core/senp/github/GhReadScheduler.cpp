@@ -475,14 +475,25 @@ GhReadMutationStatus CGhReadScheduler::Complete(const std::uint64_t ticket,
 			cooldown = SaturatingAdd(nowMilliseconds,
 				std::min<std::uint64_t>(*response.RetryAfterSeconds() * 1000ULL, kMaximumCooldownMilliseconds));
 		}
-		if (response.RateLimitResetUnixSeconds() && *response.RateLimitResetUnixSeconds() > nowUnixSeconds) {
+		// An absolute instant - X-RateLimit-Reset or an HTTP-date Retry-After -
+		// waits until that instant, clamped by the same maximum cooldown.
+		const auto untilInstant = [&](const std::optional<std::uint64_t>& instant) {
+			if (!instant || *instant <= nowUnixSeconds) return;
 			const auto delta = std::min<std::uint64_t>(
-				*response.RateLimitResetUnixSeconds() - nowUnixSeconds, kMaximumCooldownMilliseconds / 1000ULL);
-			const auto reset = SaturatingAdd(nowMilliseconds, delta * 1000ULL);
-			cooldown = cooldown ? std::max(*cooldown, reset) : reset;
+				*instant - nowUnixSeconds, kMaximumCooldownMilliseconds / 1000ULL);
+			const auto until = SaturatingAdd(nowMilliseconds, delta * 1000ULL);
+			cooldown = cooldown ? std::max(*cooldown, until) : until;
+		};
+		untilInstant(response.RateLimitResetUnixSeconds());
+		untilInstant(response.RetryAfterUnixSeconds());
+		// A Retry-After HTTP-date is the server's explicit answer even when it
+		// lies in the past: that means no wait, not the unknown-hint cooldown.
+		if (!cooldown && !response.RetryAfterUnixSeconds()) {
+			cooldown = SaturatingAdd(nowMilliseconds, kUnknownRateLimitMilliseconds);
 		}
-		if (!cooldown) cooldown = SaturatingAdd(nowMilliseconds, kUnknownRateLimitMilliseconds);
-		if (auto lane = m_state->FindLane(entry.key)) lane->cooldownUntil = std::max(lane->cooldownUntil, *cooldown);
+		if (cooldown) {
+			if (auto lane = m_state->FindLane(entry.key)) lane->cooldownUntil = std::max(lane->cooldownUntil, *cooldown);
+		}
 	}
 	if (const auto interval = GhReadSchedulerState::PollInterval(entry)) {
 		entry.nextPollAt = SaturatingAdd(nowMilliseconds, *interval);

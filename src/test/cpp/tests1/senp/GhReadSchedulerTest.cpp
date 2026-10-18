@@ -19,10 +19,11 @@ GhReadResourceKey Key(const std::wstring& resource = L"issues",
 
 GhRepositoryResponse Response(const GhRepositoryResponseStatus status,
 	const int httpStatus = 200, std::optional<std::uint32_t> retryAfter = std::nullopt,
-	std::optional<std::uint64_t> reset = std::nullopt)
+	std::optional<std::uint64_t> reset = std::nullopt,
+	std::optional<std::uint64_t> retryAfterUnix = std::nullopt)
 {
 	return { status, httpStatus, {}, std::nullopt, 1, std::nullopt,
-		std::move(retryAfter), std::move(reset) };
+		std::move(retryAfter), std::move(reset), std::move(retryAfterUnix) };
 }
 
 //! Admits one subscription and asserts that it was admitted, so a test that
@@ -121,6 +122,57 @@ TEST(GhReadScheduler, AppliesTypedRateLimitCooldownWithoutTreatingOrdinaryForbid
 	EXPECT_EQ(L"actions", third->Key().Request().ResourceSegments().front());
 	EXPECT_TRUE(waiting.Poll(121001));
 	EXPECT_TRUE(thirdRead.Poll(121001));
+}
+
+TEST(GhReadScheduler, TreatsAHttpDateRetryAfterLikeARateLimitResetInstant)
+{
+	// The clock inputs are the scheduler's own parameters, so the expected
+	// cooldown end is stated in milliseconds relative to them.
+	CGhReadScheduler scheduler;
+	auto limited = Admitted(scheduler, Key(L"issues"));
+	auto waiting = Admitted(scheduler, Key(L"pulls"));
+	const auto first = scheduler.TryDispatch(1000);
+	ASSERT_TRUE(first);
+	EXPECT_EQ(GhReadMutationStatus::Applied, scheduler.Complete(first->Ticket(),
+		Response(GhRepositoryResponseStatus::RateLimited, 429, std::nullopt, std::nullopt, 200), 1000, 100));
+	const auto observation = limited.Poll(1000);
+	ASSERT_TRUE(observation);
+	EXPECT_EQ(GhReadPhase::RateLimited, observation->Phase());
+	ASSERT_TRUE(observation->NextAllowedAtMilliseconds());
+	EXPECT_EQ(101000U, *observation->NextAllowedAtMilliseconds());
+	EXPECT_FALSE(scheduler.TryDispatch(100999));
+	EXPECT_TRUE(scheduler.TryDispatch(101000));
+	EXPECT_TRUE(waiting.Poll(101000));
+
+	// A past date is the server's explicit "retry now": it installs no
+	// cooldown at all, rather than the unknown-hint one.
+	CGhReadScheduler past;
+	auto pastLimited = Admitted(past, Key(L"issues"));
+	auto pastWaiting = Admitted(past, Key(L"pulls"));
+	const auto pastFirst = past.TryDispatch(1000);
+	ASSERT_TRUE(pastFirst);
+	EXPECT_EQ(GhReadMutationStatus::Applied, past.Complete(pastFirst->Ticket(),
+		Response(GhRepositoryResponseStatus::RateLimited, 429, std::nullopt, std::nullopt, 50), 1000, 100));
+	const auto pastObservation = pastLimited.Poll(1000);
+	ASSERT_TRUE(pastObservation);
+	EXPECT_FALSE(pastObservation->NextAllowedAtMilliseconds());
+	const auto pastSecond = past.TryDispatch(1000);
+	ASSERT_TRUE(pastSecond);
+	EXPECT_EQ(L"pulls", pastSecond->Key().Request().ResourceSegments().front());
+	EXPECT_EQ(GhReadPhase::Running, pastWaiting.Poll(1000)->Phase());
+
+	// A date beyond the maximum cooldown is clamped to it (24h in seconds).
+	CGhReadScheduler clamped;
+	auto clampedLimited = Admitted(clamped, Key(L"issues"));
+	const auto clampedFirst = clamped.TryDispatch(0);
+	ASSERT_TRUE(clampedFirst);
+	EXPECT_EQ(GhReadMutationStatus::Applied, clamped.Complete(clampedFirst->Ticket(),
+		Response(GhRepositoryResponseStatus::RateLimited, 429, std::nullopt, std::nullopt,
+			100 + 2 * 86400), 5000, 100));
+	const auto clampedObservation = clampedLimited.Poll(5000);
+	ASSERT_TRUE(clampedObservation);
+	ASSERT_TRUE(clampedObservation->NextAllowedAtMilliseconds());
+	EXPECT_EQ(5000U + 86400U * 1000U, *clampedObservation->NextAllowedAtMilliseconds());
 }
 
 TEST(GhReadScheduler, PollsOnlyVisibleSubscribersAtTheFastestVisibleCadence)

@@ -43,7 +43,9 @@ E02でこの境界を`rust/senp/github_client`として実装した。`repositor
 **page・単体を問わず同じ封筒**で届く:
 `{"bytes":N,"httpStatus":N,"page":N[,"resource":"…"][,"nextPage":N][,"etag":"…"][,"notModified":true][,"body":<生JSON>]}`。
 brokerが行った転送を述べ、GitHubの応答そのものは`body`の下に入る。`nextPage`はHTTP Linkから
-検証した次page番号だけを渡す。単体取得の応答をこの封筒ごと1件のDTOとして読もうとすると
+検証した次page番号だけを渡す。`etag`はreaderが検証したentity tagをそのままJSON stringとして
+escapeして載せる(切り詰めも文字の欠落もない)ので、guestはそれをそのまま`etag`引数に返せる。
+`notModified`は304応答を示すフラグで、bodyは載らない。単体取得の応答をこの封筒ごと1件のDTOとして読もうとすると
 **実データでのみ**失敗する——封筒無しの缶詰データは拡張側の単体テストを通ってしまうので、
 `item_completion`が封筒を1箇所に書き、境界の両側のテストがそれを使う。
 SDKは未知GitHub fieldを許容するが、重複JSON member、必須fieldの欠落・型不整合、

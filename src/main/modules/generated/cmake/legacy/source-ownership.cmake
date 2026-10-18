@@ -22,6 +22,7 @@ list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/harnessbridge
 list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/harnessbridge/HarnessBridgeProtocol.cpp")
 list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/harnessbridge/HarnessBridgeSecurity.cpp")
 list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/harnessbridge/HarnessBridgeServiceHost.cpp")
+list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/request/HttpDate.cpp")
 list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/request/RequestService.cpp")
 list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/request/win32/WinHttpRequestRuntime.cpp")
 list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/request/win32/WinHttpSystemProxyResolver.cpp")
@@ -249,9 +250,11 @@ endif()
 if(NOT TARGET sakura_request)
   add_library(sakura_request STATIC
     "${CMAKE_SOURCE_DIR}/sakura_core/platform/request/RequestService.cpp"
+    "${CMAKE_SOURCE_DIR}/sakura_core/platform/request/HttpDate.cpp"
     "${CMAKE_SOURCE_DIR}/sakura_core/platform/request/win32/WinHttpRequestRuntime.cpp"
     "${CMAKE_SOURCE_DIR}/sakura_core/platform/request/win32/WinHttpSystemProxyResolver.cpp"
     "${CMAKE_SOURCE_DIR}/sakura_core/include/sakura/request/RequestService.h"
+    "${CMAKE_SOURCE_DIR}/sakura_core/include/sakura/request/HttpDate.h"
     "${CMAKE_SOURCE_DIR}/sakura_core/include/sakura/request/win32/WinHttpRequestRuntime.h"
     "${CMAKE_SOURCE_DIR}/sakura_core/include/sakura/request/win32/WinHttpSystemProxyResolver.h"
   )

@@ -209,6 +209,26 @@ std::wstring ResourceHandle(const effect::ToolCompleted& completed)
 	return end == std::wstring::npos ? std::wstring() : completed.data.substr(start, end - start);
 }
 
+//! Reads the etag member back out of a completion envelope, unescaping the
+//! JSON string exactly the way the guest's parser does.
+std::wstring EnvelopeEntityTag(const effect::ToolCompleted& completed)
+{
+	const auto begin = completed.data.find(L"\"etag\":\"");
+	if (begin == std::wstring::npos) return {};
+	std::wstring value;
+	for (std::size_t index = begin + 8; index < completed.data.size(); ++index) {
+		const auto character = completed.data[index];
+		if (character == L'\\') {
+			if (index + 1 >= completed.data.size()) return {};
+			value.push_back(completed.data[++index]);
+			continue;
+		}
+		if (character == L'"') return value;
+		value.push_back(character);
+	}
+	return {};
+}
+
 } // namespace
 
 TEST(SenpGitHubToolExecutor, TranslatesOnlyTheClosedShapeSet)
@@ -397,6 +417,92 @@ TEST(SenpGitHubToolExecutor, PublishesOneFetchedPageAsAReadableResource)
 
 	// One terminal is drained exactly once.
 	EXPECT_FALSE(fixture.Executor().TakeCompleted(scope));
+}
+
+TEST(SenpGitHubToolExecutor, PublishesTheEntityTagVerbatimAndAcceptsItBack)
+{
+	Fixture fixture;
+	const auto scope = Scope();
+	const auto completed = fixture.Fetch(scope, IssueList());
+	ASSERT_TRUE(completed);
+	EXPECT_EQ(effect::CompletionStatus::Succeeded, completed->status);
+	// The tag travels as a JSON string, so its quotes are escaped, not
+	// dropped: the guest must be able to hand the same value back.
+	EXPECT_NE(std::wstring::npos, completed->data.find(L",\"etag\":\"W/\\\"abc\\\"\""));
+	EXPECT_EQ(L"W/\"abc\"", EnvelopeEntityTag(*completed));
+
+	// A fresh read on another resource sends the tag back as If-None-Match.
+	const SenpToolReadCommand conditional{ L"pulls:conditional", L"github", L"repositoryRead",
+		{ { L"shape", L"pulls" }, { L"etag", EnvelopeEntityTag(*completed) } } };
+	const auto refreshed = fixture.Fetch(scope, conditional);
+	ASSERT_TRUE(refreshed);
+	EXPECT_EQ(effect::CompletionStatus::Succeeded, refreshed->status);
+	const auto& arguments = fixture.CredentialValue().Arguments();
+	EXPECT_NE(arguments.end(), std::ranges::find(arguments, L"If-None-Match: W/\"abc\""));
+}
+
+TEST(SenpGitHubToolExecutor, RoundTripsAnEntityTagAtTheEnvelopeBound)
+{
+	Fixture fixture;
+	const auto scope = Scope();
+	// The reader bounds an entity tag at 256 bytes; the envelope must carry
+	// all of them, not cut the tag at an unrelated length.
+	const std::string tag = "\"" + std::string(254, 'a') + "\"";
+	fixture.CredentialValue().Set("HTTP/2.0 200 OK\r\nContent-Type: application/json\r\nETag: "
+		+ tag + "\r\n\r\n[{\"id\":1,\"title\":\"first\"}]");
+	const auto completed = fixture.Fetch(scope, IssueList());
+	ASSERT_TRUE(completed);
+	EXPECT_EQ(effect::CompletionStatus::Succeeded, completed->status);
+	const std::wstring widened(tag.begin(), tag.end());
+	EXPECT_EQ(widened, EnvelopeEntityTag(*completed));
+
+	const SenpToolReadCommand conditional{ L"pulls:conditional", L"github", L"repositoryRead",
+		{ { L"shape", L"pulls" }, { L"etag", widened } } };
+	const auto refreshed = fixture.Fetch(scope, conditional);
+	ASSERT_TRUE(refreshed);
+	EXPECT_EQ(effect::CompletionStatus::Succeeded, refreshed->status);
+	const auto& arguments = fixture.CredentialValue().Arguments();
+	EXPECT_NE(arguments.end(), std::ranges::find(arguments, L"If-None-Match: " + widened));
+}
+
+TEST(SenpGitHubToolExecutor, AnswersANotModifiedReadWithTheFlagInsteadOfABody)
+{
+	Fixture fixture;
+	fixture.CredentialValue().Set("HTTP/2.0 304 Not Modified\r\nETag: \"same\"\r\n\r\n");
+	const auto scope = Scope();
+	const SenpToolReadCommand conditional{ L"issues:conditional", L"github", L"repositoryRead",
+		{ { L"shape", L"issues" }, { L"state", L"open" }, { L"etag", L"\"same\"" } } };
+	const auto completed = fixture.Fetch(scope, conditional);
+	ASSERT_TRUE(completed);
+	EXPECT_EQ(effect::CompletionStatus::Succeeded, completed->status);
+	EXPECT_NE(std::wstring::npos, completed->data.find(LR"(,"notModified":true)"));
+	EXPECT_EQ(L"\"same\"", EnvelopeEntityTag(*completed));
+	// A body-less answer carries no body member at all.
+	EXPECT_EQ(std::wstring::npos, completed->data.find(LR"(,"body":)"));
+}
+
+TEST(SenpGitHubToolExecutor, ANotModifiedRefreshKeepsThePageResourceItAlreadyPublished)
+{
+	Fixture fixture;
+	const auto scope = Scope();
+	const auto first = fixture.Fetch(scope, IssueList());
+	ASSERT_TRUE(first);
+	const auto handle = ResourceHandle(*first);
+	ASSERT_FALSE(handle.empty());
+
+	// Not modified means the page the read already published is still the
+	// current one: that resource stays readable, and the answer names no new,
+	// empty resource in its place.
+	fixture.CredentialValue().Set("HTTP/2.0 304 Not Modified\r\nETag: W/\"abc\"\r\n\r\n");
+	const auto refreshed = fixture.Fetch(scope, IssueList());
+	ASSERT_TRUE(refreshed);
+	EXPECT_EQ(effect::CompletionStatus::Succeeded, refreshed->status);
+	EXPECT_NE(std::wstring::npos, refreshed->data.find(LR"(,"notModified":true)"));
+	EXPECT_TRUE(ResourceHandle(*refreshed).empty());
+	ControlSenpRpcResponse response;
+	ASSERT_EQ(EControlSenpRpcStatus::Succeeded,
+		fixture.Executor().ReadResource(scope, handle, 0, 64 * 1024, response));
+	EXPECT_EQ("[{\"id\":1,\"title\":\"first\"}]", response.ResourceBytes());
 }
 
 TEST(SenpGitHubToolExecutor, RefusesAReadForAHostOtherThanTheConnectedAccounts)

@@ -133,6 +133,7 @@
     <ClCompile Include="..\src\test\cpp\tests1\platform\VirtualStoreMigrationTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\PlatformServiceRegistryTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\RequestServiceTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\platform\request\HttpDateTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\request\WinHttpRequestRuntimeTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\request\WinHttpSystemProxyResolverTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\AtomicFileStorageServiceTest.cpp" />

@@ -38,7 +38,8 @@ public:
 		std::uint32_t currentPage, std::optional<std::uint32_t> nextPage,
 		std::optional<std::uint32_t> retryAfterSeconds = std::nullopt,
 		std::optional<std::uint64_t> rateLimitResetUnixSeconds
-			= std::nullopt);
+			= std::nullopt,
+		std::optional<std::uint64_t> retryAfterUnixSeconds = std::nullopt);
 	[[nodiscard]] GhRepositoryResponseStatus Status() const noexcept { return m_status; }
 	[[nodiscard]] int HttpStatus() const noexcept { return m_httpStatus; }
 	[[nodiscard]] const std::vector<std::uint8_t>& Body() const noexcept { return m_body; }
@@ -48,6 +49,9 @@ public:
 	[[nodiscard]] bool HasNextPage() const noexcept { return m_nextPage.has_value(); }
 	[[nodiscard]] const std::optional<std::uint32_t>& RetryAfterSeconds() const noexcept { return m_retryAfterSeconds; }
 	[[nodiscard]] const std::optional<std::uint64_t>& RateLimitResetUnixSeconds() const noexcept { return m_rateLimitResetUnixSeconds; }
+	//! An HTTP-date Retry-After stored as the absolute instant it names, so the
+	//! scheduler can treat it exactly like an X-RateLimit-Reset timestamp.
+	[[nodiscard]] const std::optional<std::uint64_t>& RetryAfterUnixSeconds() const noexcept { return m_retryAfterUnixSeconds; }
 private:
 	GhRepositoryResponseStatus m_status{ GhRepositoryResponseStatus::InvalidRequest };
 	int m_httpStatus{};
@@ -57,6 +61,7 @@ private:
 	std::optional<std::uint32_t> m_nextPage;
 	std::optional<std::uint32_t> m_retryAfterSeconds;
 	std::optional<std::uint64_t> m_rateLimitResetUnixSeconds;
+	std::optional<std::uint64_t> m_retryAfterUnixSeconds;
 };
 
 //! Executes a policy-built request through a verified account lease, then

@@ -209,6 +209,50 @@ TEST(GhRepositoryRead, SeparatesRateLimitedResponsesAndValidatesCooldownHeaders)
 		fixture.Reader().Read(account, fixture.Probe(), Request(), nullptr).Status());
 }
 
+TEST(GhRepositoryRead, ParsesAHttpDateRetryAfterAsAnAbsoluteInstant)
+{
+	// RFC 9110 allows Retry-After to be an IMF-fixdate instead of delta
+	// seconds. The envelope stores it as the absolute instant it names so the
+	// scheduler can wait on it exactly as on an X-RateLimit-Reset timestamp.
+	Fixture dated;
+	dated.CredentialValue().Set(EBoundedProcessStatus::Failed,
+		"HTTP/2.0 429 Too Many Requests\r\nRetry-After: Wed, 21 Oct 2026 07:28:00 GMT\r\n\r\n{}");
+	{
+		auto account = dated.Account();
+		const auto result = dated.Reader().Read(account, dated.Probe(), Request(), nullptr);
+		EXPECT_EQ(GhRepositoryResponseStatus::RateLimited, result.Status());
+		EXPECT_FALSE(result.RetryAfterSeconds());
+		ASSERT_TRUE(result.RetryAfterUnixSeconds());
+		EXPECT_EQ(1792567680U, *result.RetryAfterUnixSeconds());
+	}
+
+	// A Retry-After date also marks a 403 as rate limited, the same way the
+	// delta-seconds form does.
+	Fixture forbidden;
+	forbidden.CredentialValue().Set(EBoundedProcessStatus::Failed,
+		"HTTP/2.0 403 Forbidden\r\nRetry-After: Wed, 21 Oct 2026 07:28:00 GMT\r\n\r\n{}");
+	{
+		auto account = forbidden.Account();
+		const auto result = forbidden.Reader().Read(account, forbidden.Probe(), Request(), nullptr);
+		EXPECT_EQ(GhRepositoryResponseStatus::RateLimited, result.Status());
+		ASSERT_TRUE(result.RetryAfterUnixSeconds());
+		EXPECT_EQ(1792567680U, *result.RetryAfterUnixSeconds());
+	}
+
+	// A value that is neither delta-seconds nor a fixdate still breaks the
+	// envelope: a non-GMT zone and a malformed date are both refused.
+	for (const auto* header : { "Retry-After: Wed, 21 Oct 2026 07:28:00 UTC",
+		"Retry-After: Wednesday, 21 Oct 2026 07:28:00 GMT",
+		"Retry-After: Wed, 32 Oct 2026 07:28:00 GMT" }) {
+		Fixture fixture;
+		fixture.CredentialValue().Set(EBoundedProcessStatus::Failed,
+			std::string("HTTP/2.0 429 Too Many Requests\r\n") + header + "\r\n\r\n{}");
+		auto account = fixture.Account();
+		EXPECT_EQ(GhRepositoryResponseStatus::InvalidEnvelope,
+			fixture.Reader().Read(account, fixture.Probe(), Request(), nullptr).Status()) << header;
+	}
+}
+
 TEST(GhRepositoryRead, RejectsMalformedEnvelopeContentTypeAndJsonRoot)
 {
 	for (const auto& [output, expected] : std::vector<std::pair<std::string, GhRepositoryResponseStatus>>{

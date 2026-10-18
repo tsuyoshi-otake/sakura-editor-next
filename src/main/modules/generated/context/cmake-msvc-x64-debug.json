@@ -173,6 +173,6 @@
     "utf16-scan-backend": "sakura-utf16-cpp-provider"
   },
   "projection_schema": 1,
-  "semantic_graph_hash": "sha256:5b6c5f6f26cb093be060e8b4faf57376e20c5ad29025720a79d7eabdca954439",
+  "semantic_graph_hash": "sha256:bfd008e78e279d48a6ee397af20420e2fea3f5a136bae2ce5a32b5c929761beb",
   "staging_sets": []
 }

@@ -472,8 +472,14 @@ follows a Link URL, and exposes only a validated next-page number. A 200 body
 must have GitHub JSON content type, strict UTF-8 JSON, and an object or array
 root. 304, 401, 403 and 404 remain distinct even when gh exits nonzero; malformed
 headers, duplicate relevant headers, scalar JSON, and process terminals fail
-closed without publishing a body. Endpoint-specific DTO fields remain owned by
-the extension SDK stages after T06.
+closed without publishing a body. Retry-After accepts delta-seconds (bounded at
+one day) or an RFC 9110 IMF-fixdate, which is stored as an absolute instant via
+the shared `platform::request::ParseHttpDate` and cooled down exactly like an
+X-RateLimit-Reset timestamp; any other value still invalidates the envelope.
+The completion envelope publishes the validated entity tag verbatim as an
+escaped JSON string (no character dropping, no truncation), so the guest can
+send the same value back as the `etag` argument. Endpoint-specific DTO fields
+remain owned by the extension SDK stages after T06.
 
 `CGhReadScheduler` owns T07's Control-wide read admission. Its resource key
 includes profile, account generation, host, repository identity, endpoint and

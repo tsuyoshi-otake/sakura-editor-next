@@ -4,10 +4,12 @@
 #include "senp/github/GhRepositoryRead.h"
 #include "senp/github/GhText.h"
 
+#include <sakura/request/HttpDate.h>
 #include <sakura/serialization/JsoncDocument.h>
 
 #include <algorithm>
 #include <charconv>
+#include <chrono>
 #include <cctype>
 #include <limits>
 #include <string_view>
@@ -33,6 +35,8 @@ public:
 	void SetNextPage(const std::optional<std::uint32_t> page) noexcept { nextPage_ = page; }
 	const std::optional<std::uint32_t>& RetryAfterSeconds() const noexcept { return retryAfterSeconds_; }
 	void SetRetryAfterSeconds(const std::uint32_t seconds) noexcept { retryAfterSeconds_ = seconds; }
+	const std::optional<std::uint64_t>& RetryAfterUnixSeconds() const noexcept { return retryAfterUnixSeconds_; }
+	void SetRetryAfterUnixSeconds(const std::uint64_t seconds) noexcept { retryAfterUnixSeconds_ = seconds; }
 	const std::optional<std::uint64_t>& RateLimitResetUnixSeconds() const noexcept { return rateLimitResetUnixSeconds_; }
 	void SetRateLimitResetUnixSeconds(const std::uint64_t seconds) noexcept { rateLimitResetUnixSeconds_ = seconds; }
 	const std::optional<std::uint32_t>& RateLimitRemaining() const noexcept { return rateLimitRemaining_; }
@@ -50,6 +54,7 @@ private:
 	std::optional<std::string> etag_;
 	std::optional<std::uint32_t> nextPage_;
 	std::optional<std::uint32_t> retryAfterSeconds_;
+	std::optional<std::uint64_t> retryAfterUnixSeconds_;
 	std::optional<std::uint64_t> rateLimitResetUnixSeconds_;
 	std::optional<std::uint32_t> rateLimitRemaining_;
 	bool jsonContent_{};
@@ -173,10 +178,23 @@ std::optional<Envelope> ParseEnvelope(const std::vector<std::uint8_t>& bytes)
 			if (value.find("rel=\"next\"") != std::string_view::npos && !next) return std::nullopt;
 			envelope.SetNextPage(next);
 		} else if (EqualsInsensitive(name, "retry-after")) {
-			if (envelope.RetryAfterSeconds()) return std::nullopt;
-			const auto seconds = ParseUnsigned64(value);
-			if (!seconds || *seconds > 86400) return std::nullopt;
-			envelope.SetRetryAfterSeconds(static_cast<std::uint32_t>(*seconds));
+			if (envelope.RetryAfterSeconds() || envelope.RetryAfterUnixSeconds()) return std::nullopt;
+			if (const auto seconds = ParseUnsigned64(value)) {
+				// Delta-seconds keeps its day bound; anything further out is not a
+				// hint this boundary will schedule on.
+				if (*seconds > 86400) return std::nullopt;
+				envelope.SetRetryAfterSeconds(static_cast<std::uint32_t>(*seconds));
+			} else if (const auto date = platform::request::ParseHttpDate(value)) {
+				// An IMF-fixdate is stored as the absolute instant it names; the
+				// scheduler waits until it exactly as it would an
+				// X-RateLimit-Reset timestamp.
+				const auto unix = std::chrono::duration_cast<std::chrono::seconds>(
+					date->time_since_epoch()).count();
+				envelope.SetRetryAfterUnixSeconds(
+					static_cast<std::uint64_t>((std::max<std::int64_t>)(unix, 0)));
+			} else {
+				return std::nullopt;
+			}
 		} else if (EqualsInsensitive(name, "x-ratelimit-reset")) {
 			if (envelope.RateLimitResetUnixSeconds()) return std::nullopt;
 			const auto seconds = ParseUnsigned64(value);
@@ -233,11 +251,13 @@ GhRepositoryResponse::GhRepositoryResponse(const GhRepositoryResponseStatus stat
 	std::vector<std::uint8_t> body, std::optional<std::string> etag,
 	const std::uint32_t currentPage, std::optional<std::uint32_t> nextPage,
 	std::optional<std::uint32_t> retryAfterSeconds,
-	std::optional<std::uint64_t> rateLimitResetUnixSeconds) :
+	std::optional<std::uint64_t> rateLimitResetUnixSeconds,
+	std::optional<std::uint64_t> retryAfterUnixSeconds) :
 	m_status(status), m_httpStatus(httpStatus), m_body(std::move(body)), m_etag(std::move(etag)),
 	m_currentPage(currentPage), m_nextPage(std::move(nextPage)),
 	m_retryAfterSeconds(std::move(retryAfterSeconds)),
-	m_rateLimitResetUnixSeconds(std::move(rateLimitResetUnixSeconds)) {}
+	m_rateLimitResetUnixSeconds(std::move(rateLimitResetUnixSeconds)),
+	m_retryAfterUnixSeconds(std::move(retryAfterUnixSeconds)) {}
 
 GhRepositoryResponse CGhRepositoryReader::Read(GhAuthenticatedAccount& account,
 	const GhToolProbe& probe, const GhRepositoryReadRequest& request, HANDLE stop) const
@@ -273,9 +293,11 @@ try {
 	}
 	if (envelope->Status() == 401) return { GhRepositoryResponseStatus::Unauthorized, 401, {}, envelope->Etag(), page, std::nullopt };
 	if (envelope->Status() == 429 || (envelope->Status() == 403
-		&& (envelope->RetryAfterSeconds() || envelope->RateLimitRemaining().value_or(1U) == 0U))) {
+		&& (envelope->RetryAfterSeconds() || envelope->RetryAfterUnixSeconds()
+			|| envelope->RateLimitRemaining().value_or(1U) == 0U))) {
 		return { GhRepositoryResponseStatus::RateLimited, envelope->Status(), {}, envelope->Etag(), page,
-			std::nullopt, envelope->RetryAfterSeconds(), envelope->RateLimitResetUnixSeconds() };
+			std::nullopt, envelope->RetryAfterSeconds(), envelope->RateLimitResetUnixSeconds(),
+			envelope->RetryAfterUnixSeconds() };
 	}
 	if (envelope->Status() == 403) return { GhRepositoryResponseStatus::Forbidden, 403, {}, envelope->Etag(), page, std::nullopt };
 	if (envelope->Status() == 404) return { GhRepositoryResponseStatus::NotFound, 404, {}, envelope->Etag(), page, std::nullopt };

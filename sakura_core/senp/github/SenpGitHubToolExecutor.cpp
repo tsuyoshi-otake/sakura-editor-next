@@ -232,7 +232,7 @@ std::wstring Describe(const GhRepositoryResponseStatus status)
 	}
 }
 
-//! Only the printable characters an ETag or handle may contribute are kept, so the
+//! Only the printable characters a handle may contribute are kept, so the
 //! envelope cannot carry a quote, a reverse solidus or a control character.
 bool IsEnvelopeCharacter(const wchar_t character) noexcept
 {
@@ -258,6 +258,21 @@ std::wstring JsonToken(const std::wstring& value)
 		if (!IsEnvelopeCharacter(character)) continue;
 		token.push_back(character);
 		if (token.size() >= 128) break;
+	}
+	return token;
+}
+
+//! An entity tag is published verbatim as a JSON string: the quote and the
+//! reverse solidus are escaped rather than dropped, and the value is not cut
+//! short, so what the guest reads back is exactly the tag the envelope
+//! validated. The reader already bounds it at 256 bytes of printable ASCII,
+//! which is also all this writer has to escape.
+std::wstring JsonEscapedEntityTag(const std::string& value)
+{
+	std::wstring token;
+	for (const unsigned char character : value) {
+		if (character == '"' || character == 0x5c) token.push_back(0x5c);
+		token.push_back(static_cast<wchar_t>(character));
 	}
 	return token;
 }
@@ -629,20 +644,27 @@ std::optional<effect::ToolCompleted> CSenpGitHubToolExecutor::Publish(ScopeState
 	// 256 KiB, so what travels is the page reduced to the fields the shape names -
 	// never the page cut short, which would be a body nothing can parse. The
 	// bounds it still has to clear are stated rather than discovered: a projected
-	// page over the budget and one that is not UTF-8 are refused by name.
-	const auto projected = ProjectRepositoryPage(read.shape, page.body);
-	if (!projected) return Refused(read.readId, L"page-unprojectable");
-	if (projected->size() > MaximumInlineBodyBytes()) return Refused(read.readId, L"page-too-large");
+	// page over the budget and one that is not UTF-8 are refused by name. A
+	// not-modified page has no body to project: its whole content is the flag
+	// written below, so nothing is parsed for it.
 	std::wstring body;
-	if (!Widen(*projected, body)) return Refused(read.readId, L"invalid-encoding");
+	if (page.status == GhRepositoryResponseStatus::Succeeded) {
+		const auto projected = ProjectRepositoryPage(read.shape, page.body);
+		if (!projected) return Refused(read.readId, L"page-unprojectable");
+		if (projected->size() > MaximumInlineBodyBytes()) return Refused(read.readId, L"page-too-large");
+		if (!Widen(*projected, body)) return Refused(read.readId, L"invalid-encoding");
+	}
 	// A refresh replaces what this read published rather than adding to it, so
-	// the slot is given up before the next one is taken.
-	ReleasePage(state, read);
+	// the slot is given up before the next one is taken. A not-modified answer
+	// replaces nothing: the representation the read already published is still
+	// the current one, so its resource stays and no empty one is created.
+	const bool replaces = page.status == GhRepositoryResponseStatus::Succeeded;
+	if (replaces) ReleasePage(state, read);
 	// The resource is the same bytes kept for a document that wants to name the
 	// raw response. It is an extra rather than the answer, so a scope with no
 	// slot left still gets its page - only without one.
 	std::wstring handle;
-	if (state.resources.size() < MaximumResourcesPerScope()) {
+	if (replaces && state.resources.size() < MaximumResourcesPerScope()) {
 		const auto created = m_store.Create(state.resourceScope);
 		if (created.result == TextResourceResult::Accepted) {
 			const std::string_view bytes = page.body;
@@ -669,7 +691,7 @@ std::optional<effect::ToolCompleted> CSenpGitHubToolExecutor::Publish(ScopeState
 		+ LR"(,"page":)" + std::to_wstring(page.currentPage);
 	if (!handle.empty()) data += LR"(,"resource":")" + JsonToken(handle) + LR"(")";
 	if (page.nextPage) data += LR"(,"nextPage":)" + std::to_wstring(*page.nextPage);
-	if (page.etag) data += LR"(,"etag":")" + JsonToken(*page.etag) + LR"(")";
+	if (page.etag) data += LR"(,"etag":")" + JsonEscapedEntityTag(*page.etag) + LR"(")";
 	// A body-less answer is only ever a not-modified one, and saying the page is
 	// unchanged is the whole content of that answer. Writing an empty body
 	// instead would be handing the extension something to parse that is not JSON.
