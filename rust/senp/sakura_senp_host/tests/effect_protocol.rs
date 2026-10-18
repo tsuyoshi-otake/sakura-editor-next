@@ -45,8 +45,45 @@ fn shared_fixtures_agree_on_grammar_bounds_and_typed_round_trips() {
         }
         count += 1;
     }
-    assert_eq!(count, 73);
-    assert_eq!(accepted, 26);
+    assert_eq!(count, 78);
+    assert_eq!(accepted, 27);
+}
+
+#[test]
+fn rejects_array_form_records_and_variants() {
+    // The shared wire contract admits JSON objects only for records and
+    // {type,data} variants; serde's derive also accepts positional array
+    // spellings and the {variant:null} map form of a unit variant, which the
+    // native codec rejects, so the decoder must reject them too.
+    for (name, input, error) in [
+        (
+            "body-as-array",
+            r#"{"protocol":2,"sequence":1,"sessionGeneration":1,"body":["ack",{"ackSequence":1}]}"#,
+            "invalidEnvelope",
+        ),
+        (
+            "record-as-array",
+            r#"{"protocol":2,"sequence":1,"sessionGeneration":1,"body":{"type":"ack","data":[7]}}"#,
+            "invalidEnvelope",
+        ),
+        (
+            "map-form-unit-variant",
+            r#"{"protocol":2,"sequence":1,"sessionGeneration":1,"body":{"type":"effects","data":{"context":{"operationId":"op-1","ownerGeneration":1,"workspaceRevision":0,"accountGeneration":0,"requestGeneration":1},"effects":[{"type":"publishTreePage","data":{"viewId":"ext.tree","parentId":"","items":[{"id":"item-1","label":"item","description":"","tooltip":"","icon":"","collapsibleState":{"leaf":null},"commandId":"","arguments":[],"contextValue":""}],"nextCursor":"","revision":1,"status":"complete","message":""}}]}}}"#,
+            "invalidEnvelope",
+        ),
+    ] {
+        assert_eq!(decode(input.as_bytes()).unwrap_err(), error, "{name}");
+    }
+    // The envelope itself as an array fails in the typed decode: serde's
+    // positional form requires every field and the input carries only two, so
+    // it surfaces as invalidJson before reaching the canonical-shape gate.
+    assert_eq!(
+        decode(br#"[2,{"type":"ack","data":{"ackSequence":1}}]"#).unwrap_err(),
+        "invalidJson"
+    );
+    // A canonical object-form envelope still decodes.
+    let ok = r#"{"protocol":2,"sequence":1,"sessionGeneration":1,"body":{"type":"ack","data":{"ackSequence":1}}}"#;
+    assert!(decode(ok.as_bytes()).is_ok());
 }
 
 fn verify_wit_round_trip(envelope: &sakura_senp_host::effect_protocol::Envelope) {
@@ -96,7 +133,7 @@ fn accepts_peer_serialized_fixtures_when_requested() {
         assert!(decode(line.unwrap().as_bytes()).is_ok());
         count += 1;
     }
-    assert_eq!(count, 26);
+    assert_eq!(count, 27);
 }
 
 #[test]

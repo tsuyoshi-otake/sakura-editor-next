@@ -67,7 +67,7 @@ TEST(SenpEffectProtocol, SharedFixturesAgreeOnGrammarBoundsAndTypedRoundTrips)
 		}
 		++cases;
 	}
-	EXPECT_EQ(73U, cases); EXPECT_EQ(26U, accepted);
+	EXPECT_EQ(78U, cases); EXPECT_EQ(27U, accepted);
 	if (output.is_open()) { output.flush(); EXPECT_TRUE(output.good()); }
 }
 
@@ -78,7 +78,7 @@ TEST(SenpEffectProtocol, AcceptsPeerSerializedFixturesWhenRequested)
 	std::ifstream input(path, std::ios::binary); ASSERT_TRUE(input.good());
 	std::string line; std::size_t count = 0;
 	while (std::getline(input, line)) { SCOPED_TRACE(count); ASSERT_TRUE(Decode(line)); ++count; }
-	EXPECT_EQ(26U, count);
+	EXPECT_EQ(27U, count);
 }
 
 TEST(SenpEffectProtocol, RejectsFrameLimitInvalidUnicodeAndInvalidOutgoingFields)

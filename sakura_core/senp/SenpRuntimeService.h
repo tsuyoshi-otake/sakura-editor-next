@@ -52,6 +52,20 @@ public:
 	[[nodiscard]] virtual RuntimeSnapshot Snapshot() const = 0;
 };
 
+namespace detail {
+
+//! Test seam for the v1 hello reply decode: strict JSON carrying exactly the
+//! members type=="hello", protocol==1, abi=="sakura:senp/extension@1.0.0";
+//! any extra, missing or mistyped member fails.
+[[nodiscard]] bool AcceptExtensionHello(std::string_view response);
+
+//! Decodes a v1 "decorations" reply into `target`. The reply is strict JSON,
+//! not configuration JSONC.
+[[nodiscard]] bool ParseIndentDecorations(std::string_view response,
+	std::vector<IndentDecoration>& target);
+
+} // namespace detail
+
 [[nodiscard]] std::unique_ptr<ISenpRuntimeService> CreateWin32SenpRuntimeService(
 	ISenpManagementService& management);
 

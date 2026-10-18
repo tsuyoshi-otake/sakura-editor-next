@@ -465,8 +465,21 @@ pub fn decode(bytes: &[u8]) -> Result<Envelope, &'static str> {
     if bytes.is_empty() || bytes.len() > MAX_FRAME_BYTES {
         return Err("frameLimit");
     }
+    // The typed decode stays first: it is what rejects duplicate members, which
+    // a Value parse would silently collapse before the envelope ever saw them.
     let envelope: Envelope = serde_json::from_slice(bytes).map_err(|_| "invalidJson")?;
     validate(&envelope)?;
+    // Every wire type carries deny_unknown_fields and none uses Option,
+    // defaults, flatten or a free-form Value, so re-serializing the validated
+    // envelope is the identity for every canonical input. Requiring that
+    // equality rejects the non-canonical spellings serde would otherwise
+    // accept -- positional arrays for records, [tag, content] for variants and
+    // {"variant":null} for unit variants -- matching the native codec. The
+    // second graph is bounded by the frame and node budgets already enforced.
+    let input: serde_json::Value = serde_json::from_slice(bytes).map_err(|_| "invalidJson")?;
+    if serde_json::to_value(&envelope).ok().as_ref() != Some(&input) {
+        return Err("invalidEnvelope");
+    }
     Ok(envelope)
 }
 
@@ -927,6 +940,8 @@ impl Check for DocumentSection {
         if !budget.node() {
             return false;
         }
+        // Second node: the native parser counts the {type,data} variant object
+        // and its `type` string as separate JSON nodes (JsoncDocument CountNode).
         if !budget.node() {
             return false;
         }
@@ -943,6 +958,8 @@ impl Check for Event {
         if !budget.node() {
             return false;
         }
+        // Second node: the native parser counts the {type,data} variant object
+        // and its `type` string as separate JSON nodes (JsoncDocument CountNode).
         if !budget.node() {
             return false;
         }
@@ -962,6 +979,8 @@ impl Check for Effect {
         if !budget.node() {
             return false;
         }
+        // Second node: the native parser counts the {type,data} variant object
+        // and its `type` string as separate JSON nodes (JsoncDocument CountNode).
         if !budget.node() {
             return false;
         }
@@ -981,6 +1000,8 @@ impl Check for Message {
         if !budget.node() {
             return false;
         }
+        // Second node: the native parser counts the {type,data} variant object
+        // and its `type` string as separate JSON nodes (JsoncDocument CountNode).
         if !budget.node() {
             return false;
         }

@@ -34,6 +34,9 @@ const BASE_FUEL: u64 = 10_000_000;
 const FUEL_PER_PAYLOAD_BYTE: u64 = 1024;
 const EPOCH_TICK_MILLISECONDS: u64 = 10;
 const CALL_DEADLINE_TICKS: u64 = 20;
+/// The ABI string the v1 hello reply advertises. The native consumer pins the
+/// exact reply bytes, so this literal is shared by the reply arm and its test.
+const V1_ABI: &str = "sakura:senp/extension@1.0.0";
 
 /// Fuel for one call carrying `payload_bytes` of payload. Saturating rather than
 /// wrapping: a payload big enough to overflow this is one the frame bound has
@@ -324,7 +327,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let response = match request {
             Request::Hello { protocol: 1 } => Response::Hello {
                 protocol: 1,
-                abi: "sakura:senp/extension@1.0.0",
+                abi: V1_ABI,
             },
             Request::Hello { .. } => Response::Error {
                 code: "unsupportedProtocol",
@@ -399,6 +402,22 @@ mod tests {
         let expected = format!("{:x}", Sha256::digest(&bytes));
         assert!(verify_component_bytes(bytes.clone(), &"0".repeat(64)).is_err());
         assert!(verify_component_bytes(bytes, &expected.to_uppercase()).is_err());
+    }
+
+    #[test]
+    fn hello_reply_is_the_exact_v1_handshake_bytes() {
+        // Built the same way the `Request::Hello { protocol: 1 }` arm builds it.
+        // `senp::detail::AcceptExtensionHello` (pinned by
+        // `SenpRuntimeService.HelloReplyRequiresExactlyTheV1Members`) accepts
+        // exactly this byte string and rejects any added or missing member.
+        let reply = Response::Hello {
+            protocol: 1,
+            abi: V1_ABI,
+        };
+        assert_eq!(
+            serde_json::to_string(&reply).unwrap(),
+            r#"{"type":"hello","protocol":1,"abi":"sakura:senp/extension@1.0.0"}"#
+        );
     }
 
     #[test]

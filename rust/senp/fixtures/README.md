@@ -3,8 +3,8 @@
 `effect-protocol.jsonl` is shared by the native `SenpEffectProtocol` tests and
 Rust host integration tests. Each line contains `name`, `valid` and the literal
 wire `input`. Optional `fill` replaces one `~fill~` marker with that many ASCII
-`x` bytes so boundary cases stay compact in source control. There are 73 cases:
-26 accepted and 47 rejected. Missing fixtures or unexpected counts fail tests.
+`x` bytes so boundary cases stay compact in source control. There are 78 cases:
+27 accepted and 51 rejected. Missing fixtures or unexpected counts fail tests.
 
 The v1 world and executable dispatch are unchanged. The v2 WIT world compiles
 separately. `effect_bridge` exhaustively maps its records/variants to the wire
@@ -19,8 +19,15 @@ request, acknowledge delivery, or publish a contribution.
   Protocol is exactly 2. Sequence and session generation are positive.
 - Every record requires every declared member and rejects unknown members.
   Adjacent variants contain exactly `type` and `data`, with camelCase names.
+  Records and variants are JSON objects only: positional arrays and the
+  `{"variant":null}` spelling of a unit variant are rejected by both codecs.
 - Strings are UTF-8 JSON, with valid Unicode scalar values. No BOM, comments,
   trailing commas, duplicate decoded keys or extra root values are accepted.
+  Free text (labels, tooltips, messages, markdown, arguments) may carry an
+  escaped U+0000; `nulInLabel` pins that codec-level parity. Native consumers
+  must stay length-aware: the tree model still refuses such a page because
+  Win32 TreeView text is NUL-terminated, so accepting it there would silently
+  truncate the row.
 - Counters are integers in `0..INT64_MAX`. Floats, exponent notation, negative
   zero and unsigned values above `INT64_MAX` do not become integer counters.
   A repository's `ahead` is WIT `u32`, so both codecs also reject it above
@@ -93,10 +100,10 @@ Remove-Item Env:SENP_PROTOCOL_PEER_FILE
 Get-FileHash (Join-Path $protocolOutput 'cpp.jsonl'), (Join-Path $protocolOutput 'rust.jsonl')
 ```
 
-Both peers must read 26 envelopes; both SHA-256 values must agree. Unicode,
+Both peers must read 27 envelopes; both SHA-256 values must agree. Unicode,
 control escaping, array order, field names and variant tags are included.
-The 2026-09-08 Debug exchange produced identical
-`14637bafa2c5e84e75d9e6773c3df0cfcf50aef9ff4548a791bc49a4b4bc520e`.
+The 2026-10-18 Debug exchange produced identical
+`7c9ba43064f311e4376c3d4d1980285c3632340db1ae840c89c323482769eb56`.
 An aggregate-node regression failed before the bounded writer fix and passed
 after it; the native Debug case fell from 18.3 s to 3.4 s in this local run.
 These are machine-specific observations, not runtime performance guarantees.

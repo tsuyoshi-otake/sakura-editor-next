@@ -88,13 +88,25 @@ failure with a visual placeholder or an unrelated legacy plugin path.
 - The v2 event/effect wire contract is `SenpEffectProtocol` and
   `sakura_senp_host::effect_protocol`, with separate WIT bindings under
   `rust/senp/wit/v2/`. All records require every named member; variants use
-  `type`/`data` and reject unknown cases. The transport uses strict JSON, not
+  `type`/`data` and reject unknown cases. Records and variants are JSON objects
+  only -- serde's derive would also accept positional arrays and the
+  `{"variant":null}` spelling of a unit variant, so the Rust decoder requires
+  the input to equal the canonical re-serialization of the validated envelope
+  (the second `Value` graph stays inside the same frame/node budget). The
+  transport uses strict JSON, not
   configuration JSONC. Frames are at most 1 MiB and 65,536 JSON nodes; counters
   are exact nonnegative integers up to `INT64_MAX`, with positive sequence,
   session generation and owner generation. Account generation zero means no
   adopted account yet, not proof of a signed-out user. A batch rejects duplicate
   read IDs and command completions. Session replay, sequence ordering and ack
   ownership belong to the session state machine, not the stateless codec.
+- Free text (labels, tooltips, messages, markdown, arguments) may carry an
+  escaped U+0000: VS Code accepts any JS string and both codecs accept it.
+  Every native consumer must stay length-aware rather than route such text
+  through `c_str()`-terminated Win32 APIs. `TreeViewModel`'s `Text()` already
+  rejects NUL and fails the whole page closed -- a documented divergence kept
+  because Win32 TreeView text is NUL-terminated and accepting would silently
+  truncate the row.
 - Validate aggregate output budgets while traversing/serializing the typed
   graph. Do not first clone it or build an unbounded intermediate JSON tree.
   The shared accepted/rejected fixtures and bidirectional exchange procedure
@@ -389,6 +401,15 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   (`tools/verify-senp-runtime.py --offline` passes, also with
   `GH_TOKEN=dummy-marker` exported). Adding a name to the allowlist requires a
   recorded startup failure that proves the need.
+- The v1 host handshake and decorations reply are strict JSON decoded by
+  `senp::detail::AcceptExtensionHello` (exactly `type=="hello"`,
+  `protocol==1`, `abi=="sakura:senp/extension@1.0.0"`) and
+  `senp::detail::ParseIndentDecorations` in `SenpRuntimeService.cpp`; a
+  rejected reply takes the same `false` path a missing reply takes. v1 reads
+  through `ReadExactTimed`, a bounded `PeekNamedPipe` poll: its anonymous
+  `CreatePipe` pipes do not support overlapped I/O, the loop is capped by
+  `kProtocolTimeoutMilliseconds`, runs only on the v1 worker thread, and
+  checks host exit every iteration.
 - Child-side standard-stream handles are created NON-inheritable in all three
   launchers; `senp::detail::SetChildHandlesInheritable` sets
   `HANDLE_FLAG_INHERIT` immediately before `CreateProcessW` and the launcher

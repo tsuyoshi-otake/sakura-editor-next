@@ -105,6 +105,11 @@ bool WriteAll(HANDLE pipe, const void* bytes, std::size_t length) noexcept
 	return true;
 }
 
+// The v1 transport is a pair of anonymous pipes from CreatePipe, which do not
+// support overlapped I/O, so the event-driven wait used by the v2 Transfer is
+// not available without changing the transport. This bounded PeekNamedPipe
+// poll stands instead: it is capped by kProtocolTimeoutMilliseconds, runs only
+// on the v1 worker thread, and checks host-process exit on every iteration.
 bool ReadExactTimed(HANDLE pipe, HANDLE process, void* bytes, std::size_t length) noexcept
 {
 	auto* cursor = static_cast<std::byte*>(bytes);
@@ -202,7 +207,7 @@ public:
 		m_assignedToJob = true;
 		std::string response;
 		return Exchange(R"({"type":"hello","protocol":1})", response)
-			&& response.find(R"("type":"hello")") != std::string::npos;
+			&& detail::AcceptExtensionHello(response);
 	}
 
 	[[nodiscard]] bool Decorate(std::wstring_view line, std::uint32_t tabSize,
@@ -215,7 +220,7 @@ public:
 		request += R"(}]})";
 		std::string response;
 		if (!Exchange(request, response)) return false;
-		return ParseDecorations(response, target);
+		return detail::ParseIndentDecorations(response, target);
 	}
 
 	void Close() noexcept
@@ -250,39 +255,6 @@ private:
 			|| responseLength == 0 || responseLength > kMaximumFrameBytes) return false;
 		response.resize(responseLength);
 		return ReadExactTimed(m_output.Get(), m_process.Get(), response.data(), response.size());
-	}
-
-	[[nodiscard]] static bool ParseDecorations(std::string_view response,
-		std::vector<IndentDecoration>& target)
-	{
-		const auto parsed = platform::serialization::CJsoncDocument::Parse(response);
-		const auto* root = parsed.Succeeded() ? std::get_if<JsoncValue::Object>(&parsed.value->Value()) : nullptr;
-		if (root == nullptr) return false;
-		const auto type = root->find(L"type");
-		const auto slots = root->find(L"slots");
-		const auto* typeText = type == root->end() ? nullptr : std::get_if<std::wstring>(&type->second.Value());
-		const auto* array = slots == root->end() ? nullptr : std::get_if<JsoncValue::Array>(&slots->second.Value());
-		if (typeText == nullptr || *typeText != L"decorations" || array == nullptr || array->size() > 10000) return false;
-		target.clear();
-		target.reserve(array->size());
-		for (const auto& value : *array) {
-			const auto* object = std::get_if<JsoncValue::Object>(&value.Value());
-			if (object == nullptr) return false;
-			const auto integer = [object](std::wstring_view name) -> const std::int64_t* {
-				const auto found = object->find(name);
-				return found == object->end() ? nullptr : std::get_if<std::int64_t>(&found->second.Value());
-			};
-			const auto* line = integer(L"line");
-			const auto* start = integer(L"visualStart");
-			const auto* length = integer(L"visualLength");
-			const auto* depth = integer(L"depth");
-			if (line == nullptr || *line != 0 || start == nullptr || length == nullptr || depth == nullptr
-				|| *start < 0 || *length <= 0 || *depth < 0
-				|| *start > UINT32_MAX || *length > UINT32_MAX || *depth > UINT32_MAX) return false;
-			target.push_back({ static_cast<std::uint32_t>(*start),
-				static_cast<std::uint32_t>(*length), static_cast<std::uint32_t>(*depth) });
-		}
-		return true;
 	}
 
 	ScopedHandle m_input;
@@ -456,6 +428,58 @@ private:
 };
 
 } // namespace
+
+namespace detail {
+
+bool AcceptExtensionHello(std::string_view response)
+{
+	const auto parsed = platform::serialization::CJsoncDocument::ParseStrict(response);
+	const auto* root = parsed.Succeeded() ? std::get_if<JsoncValue::Object>(&parsed.value->Value()) : nullptr;
+	if (root == nullptr || root->size() != 3) return false;
+	const auto type = root->find(L"type");
+	const auto protocol = root->find(L"protocol");
+	const auto abi = root->find(L"abi");
+	const auto* typeText = type == root->end() ? nullptr : std::get_if<std::wstring>(&type->second.Value());
+	const auto* version = protocol == root->end() ? nullptr : std::get_if<std::int64_t>(&protocol->second.Value());
+	const auto* abiText = abi == root->end() ? nullptr : std::get_if<std::wstring>(&abi->second.Value());
+	return typeText != nullptr && *typeText == L"hello" && version != nullptr && *version == 1
+		&& abiText != nullptr && *abiText == L"sakura:senp/extension@1.0.0";
+}
+
+bool ParseIndentDecorations(std::string_view response,
+	std::vector<IndentDecoration>& target)
+{
+	const auto parsed = platform::serialization::CJsoncDocument::ParseStrict(response);
+	const auto* root = parsed.Succeeded() ? std::get_if<JsoncValue::Object>(&parsed.value->Value()) : nullptr;
+	if (root == nullptr) return false;
+	const auto type = root->find(L"type");
+	const auto slots = root->find(L"slots");
+	const auto* typeText = type == root->end() ? nullptr : std::get_if<std::wstring>(&type->second.Value());
+	const auto* array = slots == root->end() ? nullptr : std::get_if<JsoncValue::Array>(&slots->second.Value());
+	if (typeText == nullptr || *typeText != L"decorations" || array == nullptr || array->size() > 10000) return false;
+	target.clear();
+	target.reserve(array->size());
+	for (const auto& value : *array) {
+		const auto* object = std::get_if<JsoncValue::Object>(&value.Value());
+		if (object == nullptr) return false;
+		const auto integer = [object](std::wstring_view name) -> const std::int64_t* {
+			const auto found = object->find(name);
+			return found == object->end() ? nullptr : std::get_if<std::int64_t>(&found->second.Value());
+		};
+		const auto* line = integer(L"line");
+		const auto* start = integer(L"visualStart");
+		const auto* length = integer(L"visualLength");
+		const auto* depth = integer(L"depth");
+		if (line == nullptr || *line != 0 || start == nullptr || length == nullptr || depth == nullptr
+			|| *start < 0 || *length <= 0 || *depth < 0
+			|| *start > UINT32_MAX || *length > UINT32_MAX || *depth > UINT32_MAX) return false;
+		target.push_back({ static_cast<std::uint32_t>(*start),
+			static_cast<std::uint32_t>(*length), static_cast<std::uint32_t>(*depth) });
+	}
+	return true;
+}
+
+} // namespace detail
 
 std::unique_ptr<ISenpRuntimeService> CreateWin32SenpRuntimeService(
 	ISenpManagementService& management)
