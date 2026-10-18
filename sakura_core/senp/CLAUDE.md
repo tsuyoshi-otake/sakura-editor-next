@@ -444,8 +444,33 @@ tests drive expiry without sleeping. T03 adds the provider policy; this
 registry alone cannot construct an executable, argv, environment, or network
 request.
 
-`CGhToolPolicy` is the next closed boundary. It discovers only `gh.exe` through
-absolute PATH entries, accepts the measured `2.93.0` contract exactly, and
+`CGhToolPolicy` is the next closed boundary. It discovers `gh.exe` first from
+the per-machine install location (`SHGetKnownFolderPath(FOLDERID_ProgramFiles)`
++ `GitHub CLI\gh.exe` — the `ProgramFiles` environment variable is never
+trusted) and then through absolute PATH entries, and the probe reports which
+source won (`GhToolDiscovery`). Before the version probe runs, the resolved
+file must carry a valid embedded Authenticode signature whose leaf signer
+subject organization is exactly `GitHub, Inc.`: `WinVerifyTrust` runs with
+`WTD_UI_NONE`, `WTD_REVOKE_NONE` and `WTD_CACHE_ONLY_URL_RETRIEVAL` so
+verification cannot hang offline, through the
+`platform::security::VerifiedSignerOrganization` primitive behind the
+`IGhToolPlatform::VerifyExecutableTrust` seam. A self-built or
+third-party-repackaged unsigned `gh` (Scoop and Chocolatey shims included;
+the user docs say so), and a binary signed by any other
+publisher, is refused as `UntrustedExecutable` and surfaces like the other
+unavailable states — this is the credential-forwarding boundary, so the
+rejected binary receives no invocation at all, version probe included. The
+trust decision is bound to the canonical resolved path recorded in the probe
+and holds for every later call that consumes that probe. The organization
+match is case-sensitive. The file is read once, at probe time; replacing it
+at the same path afterwards is not re-verified. A Program Files install needs
+administrator rights to replace. A PATH-discovered copy in a user-writable
+directory does not, and that window is accepted residual risk, because a
+process that can write there already runs as the user. The editor-side
+`workbench/account/GhCommandRunner` resolves `gh.exe` through PATH without
+this check; it runs only `gh auth status` and forwards no token, so it is a
+follow-up rather than part of this boundary. It accepts the
+measured `2.93.0` contract exactly, and
 constructs either `--version` or one fixed `gh api --method GET --include`
 invocation. Repository identity and path segments are validated separately;
 extensions never provide flags, cwd, stdin, headers, executable paths, or

@@ -94,7 +94,11 @@ private:
 
 class ToolPlatform final : public IGhToolPlatform {
 public:
-	std::optional<std::wstring> ResolveExecutable() const override { return L"C:\\Tools\\gh.exe"; }
+	std::optional<GhToolResolution> ResolveExecutable() const override
+	{
+		return GhToolResolution{ L"C:\\Tools\\gh.exe", GhToolDiscovery::SearchPath };
+	}
+	bool VerifyExecutableTrust(const std::wstring&) const override { return true; }
 	GhProcessOutcome Run(const GhProcessInvocation&, HANDLE) const override
 	{
 		return { EBoundedProcessStatus::Succeeded, 0, Bytes("gh version 2.93.0 (2026-05-27)\n"), {} };

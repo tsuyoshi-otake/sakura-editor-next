@@ -21,7 +21,7 @@
       "sources": ["sakura_core", "src/main/cpp/cxx"],
       "public_headers": [],
       "private_headers": [],
-      "ownership_exclusions": ["sakura_core/platform/uri", "sakura_core/include/sakura/uri", "sakura_core/platform/serialization", "sakura_core/include/sakura/serialization", "sakura_core/platform/filesystem", "sakura_core/include/sakura/filesystem", "sakura_core/platform/security/CurrentUserSecurityAttributes.cpp", "sakura_core/include/sakura/security", "sakura_core/platform/storage/CAtomicFileStorageService.cpp", "sakura_core/platform/storage/CAtomicFileStorageService.h", "sakura_core/platform/storage/StorageTypes.cpp", "sakura_core/platform/storage/StorageSnapshotCache.cpp", "sakura_core/include/sakura/storage", "sakura_core/platform/request", "sakura_core/include/sakura/request", "sakura_core/platform/controlipc/ControlIpcProtocol.cpp", "sakura_core/platform/controlipc/ControlIpcNamedPipeTransport.cpp", "sakura_core/platform/controlipc/ControlPlatformEndpoint.cpp", "sakura_core/platform/controlipc/security", "sakura_core/include/sakura/controlipc", "sakura_core/workbench/editor/selection/SelectionSession.cpp", "sakura_core/include/sakura/editor/SelectionSession.h", "sakura_core/workbench/editor/frame/EditorFrameEvents.cpp", "sakura_core/window/Win32EditorFrameAdapter.cpp", "sakura_core/include/sakura/editor/EditorFrameEvents.h", "sakura_core/include/sakura/editor/win32/Win32EditorFrameAdapter.h", "sakura_core/workbench/editor/document/DocumentSession.cpp", "sakura_core/include/sakura/editor/document", "sakura_core/_main/editor_lifecycle/EditorAppLifecycle.cpp", "sakura_core/include/sakura/editor/lifecycle", "sakura_core/include/sakura/shareddata", "sakura_core/platform/harnessbridge", "sakura_core/include/sakura/harnessbridge", "sakura_core/terminal/tmux/TmuxArgumentParser.cpp", "sakura_core/terminal/tmux/TmuxArgumentParser.h", "sakura_core/terminal/tmux/TmuxCli.cpp", "sakura_core/terminal/tmux/TmuxCli.h", "sakura_core/terminal/tmux/TmuxCommandDispatcher.cpp", "sakura_core/terminal/tmux/TmuxCommandDispatcher.h", "sakura_core/terminal/tmux/TmuxCommandTypes.h", "sakura_core/terminal/tmux/TmuxFormatEvaluator.cpp", "sakura_core/terminal/tmux/TmuxFormatEvaluator.h", "sakura_core/terminal/tmux/TmuxTargetResolver.cpp", "sakura_core/terminal/tmux/TmuxTargetResolver.h", "sakura_core/terminal/cli"],
+      "ownership_exclusions": ["sakura_core/platform/uri", "sakura_core/include/sakura/uri", "sakura_core/platform/serialization", "sakura_core/include/sakura/serialization", "sakura_core/platform/filesystem", "sakura_core/include/sakura/filesystem", "sakura_core/platform/security/CurrentUserSecurityAttributes.cpp", "sakura_core/platform/security/AuthenticodeSignatureVerifier.cpp", "sakura_core/include/sakura/security", "sakura_core/platform/storage/CAtomicFileStorageService.cpp", "sakura_core/platform/storage/CAtomicFileStorageService.h", "sakura_core/platform/storage/StorageTypes.cpp", "sakura_core/platform/storage/StorageSnapshotCache.cpp", "sakura_core/include/sakura/storage", "sakura_core/platform/request", "sakura_core/include/sakura/request", "sakura_core/platform/controlipc/ControlIpcProtocol.cpp", "sakura_core/platform/controlipc/ControlIpcNamedPipeTransport.cpp", "sakura_core/platform/controlipc/ControlPlatformEndpoint.cpp", "sakura_core/platform/controlipc/security", "sakura_core/include/sakura/controlipc", "sakura_core/workbench/editor/selection/SelectionSession.cpp", "sakura_core/include/sakura/editor/SelectionSession.h", "sakura_core/workbench/editor/frame/EditorFrameEvents.cpp", "sakura_core/window/Win32EditorFrameAdapter.cpp", "sakura_core/include/sakura/editor/EditorFrameEvents.h", "sakura_core/include/sakura/editor/win32/Win32EditorFrameAdapter.h", "sakura_core/workbench/editor/document/DocumentSession.cpp", "sakura_core/include/sakura/editor/document", "sakura_core/_main/editor_lifecycle/EditorAppLifecycle.cpp", "sakura_core/include/sakura/editor/lifecycle", "sakura_core/include/sakura/shareddata", "sakura_core/platform/harnessbridge", "sakura_core/include/sakura/harnessbridge", "sakura_core/terminal/tmux/TmuxArgumentParser.cpp", "sakura_core/terminal/tmux/TmuxArgumentParser.h", "sakura_core/terminal/tmux/TmuxCli.cpp", "sakura_core/terminal/tmux/TmuxCli.h", "sakura_core/terminal/tmux/TmuxCommandDispatcher.cpp", "sakura_core/terminal/tmux/TmuxCommandDispatcher.h", "sakura_core/terminal/tmux/TmuxCommandTypes.h", "sakura_core/terminal/tmux/TmuxFormatEvaluator.cpp", "sakura_core/terminal/tmux/TmuxFormatEvaluator.h", "sakura_core/terminal/tmux/TmuxTargetResolver.cpp", "sakura_core/terminal/tmux/TmuxTargetResolver.h", "sakura_core/terminal/cli"],
       "public_include_roots": [],
       "private_include_roots": ["."],
       "state_owner": "legacy application and process state",
@@ -37,7 +37,7 @@
       "provider_by_context": {"msvc-x64-debug": "sakura_app", "cmake-msvc-x64-debug": "sakura_app", "cmake-msvc-x64-release": "sakura_app", "msvc-x64-release": "sakura_app", "mingw-x64-debug": "sakura_app", "mingw-x64-release": "sakura_app"},
       "backend_targets": {"msbuild": ["sakura_core/sakura.vcxproj"], "cmake": ["sakura"]},
       "compile_profile": null,
-      "system_libraries": ["advapi32", "bcrypt", "comctl32", "crypt32", "d2d1", "dbghelp", "dwmapi", "dwrite", "htmlhelp", "imm32", "mpr", "msimg32", "ole32", "oleacc", "oleaut32", "shlwapi", "uiautomationcore", "uuid", "uxtheme", "version", "windowscodecs", "winhttp", "winmm", "winspool"]
+      "system_libraries": ["advapi32", "bcrypt", "comctl32", "crypt32", "d2d1", "dbghelp", "dwmapi", "dwrite", "htmlhelp", "imm32", "mpr", "msimg32", "ole32", "oleacc", "oleaut32", "shlwapi", "uiautomationcore", "uuid", "uxtheme", "version", "windowscodecs", "winhttp", "winmm", "winspool", "wintrust"]
     },
     {
       "id": "tests1",
@@ -66,7 +66,7 @@
       "provider_by_context": {},
       "backend_targets": {"msbuild": ["sakura_core/tests1.vcxproj"], "cmake": ["tests1"]},
       "compile_profile": null,
-      "system_libraries": ["advapi32", "bcrypt", "comctl32", "crypt32", "d2d1", "dbghelp", "dwmapi", "dwrite", "gdiplus", "htmlhelp", "imagehlp", "imm32", "mpr", "msimg32", "ole32", "oleacc", "oleaut32", "psapi", "shlwapi", "uiautomationcore", "uuid", "uxtheme", "version", "windowscodecs", "winhttp", "winmm", "winspool"]
+      "system_libraries": ["advapi32", "bcrypt", "comctl32", "crypt32", "d2d1", "dbghelp", "dwmapi", "dwrite", "gdiplus", "htmlhelp", "imagehlp", "imm32", "mpr", "msimg32", "ole32", "oleacc", "oleaut32", "psapi", "shlwapi", "uiautomationcore", "uuid", "uxtheme", "version", "windowscodecs", "winhttp", "winmm", "winspool", "wintrust"]
     },
     {
       "id": "sakura_terminal_tmux_core",
@@ -302,8 +302,8 @@
       "build_definition": "generated",
       "supported_contexts": ["msvc-x64-debug", "cmake-msvc-x64-debug", "msvc-x64-release", "cmake-msvc-x64-release", "mingw-x64-debug", "mingw-x64-release"],
       "owner": "sakura_core/platform/security",
-      "sources": ["sakura_core/platform/security/CurrentUserSecurityAttributes.cpp"],
-      "public_headers": ["sakura_core/include/sakura/security/CurrentUserSecurityAttributes.h"],
+      "sources": ["sakura_core/platform/security/CurrentUserSecurityAttributes.cpp", "sakura_core/platform/security/AuthenticodeSignatureVerifier.cpp"],
+      "public_headers": ["sakura_core/include/sakura/security/CurrentUserSecurityAttributes.h", "sakura_core/include/sakura/security/AuthenticodeSignatureVerifier.h"],
       "private_headers": [],
       "ownership_exclusions": [],
       "public_include_roots": ["sakura_core/include"],
@@ -321,7 +321,7 @@
       "provider_by_context": {},
       "backend_targets": {"msbuild": ["src/main/modules/generated/msbuild/projects/sakura_security.vcxproj"], "cmake": ["sakura_security"]},
       "compile_profile": null,
-      "system_libraries": ["advapi32"]
+      "system_libraries": ["advapi32", "crypt32", "wintrust"]
     },
     {
       "id": "sakura_security_tests",

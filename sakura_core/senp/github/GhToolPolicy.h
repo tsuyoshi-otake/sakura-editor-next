@@ -26,6 +26,27 @@ enum class GhToolAvailability : std::uint8_t {
 	TimedOut,
 	Cancelled,
 	OutputLimitExceeded,
+	UntrustedExecutable,
+};
+
+//! Which discovery source produced the resolved executable path. The
+//! per-machine Program Files install location wins over PATH so a
+//! user-writable PATH entry cannot shadow the vendor install of a
+//! token-bearing tool.
+enum class GhToolDiscovery : std::uint8_t {
+	None,
+	ProgramFiles,
+	SearchPath,
+};
+
+class GhToolResolution final {
+public:
+	GhToolResolution(std::wstring executablePath, GhToolDiscovery source) noexcept;
+	[[nodiscard]] const std::wstring& ExecutablePath() const noexcept { return m_executablePath; }
+	[[nodiscard]] GhToolDiscovery Source() const noexcept { return m_source; }
+private:
+	std::wstring m_executablePath;
+	GhToolDiscovery m_source{ GhToolDiscovery::None };
 };
 
 class GhToolVersion final {
@@ -44,12 +65,14 @@ public:
 	[[nodiscard]] GhToolAvailability Status() const noexcept { return m_status; }
 	[[nodiscard]] const std::wstring& ExecutablePath() const noexcept { return m_executablePath; }
 	[[nodiscard]] const std::optional<GhToolVersion>& Version() const noexcept { return m_version; }
+	[[nodiscard]] GhToolDiscovery Source() const noexcept { return m_source; }
 private:
 	GhToolProbe(GhToolAvailability status, std::wstring executablePath,
-		std::optional<GhToolVersion> version) noexcept;
+		std::optional<GhToolVersion> version, GhToolDiscovery source) noexcept;
 	GhToolAvailability m_status{ GhToolAvailability::InvalidConfiguration };
 	std::wstring m_executablePath;
 	std::optional<GhToolVersion> m_version;
+	GhToolDiscovery m_source{ GhToolDiscovery::None };
 	friend class CGhToolPolicy;
 };
 
@@ -183,13 +206,19 @@ private:
 class IGhToolPlatform {
 public:
 	virtual ~IGhToolPlatform() = default;
-	[[nodiscard]] virtual std::optional<std::wstring> ResolveExecutable() const = 0;
+	[[nodiscard]] virtual std::optional<GhToolResolution> ResolveExecutable() const = 0;
+	//! True only when the file carries a valid embedded Authenticode signature
+	//! whose leaf signer subject organization is exactly the GitHub publisher.
+	//! This is the credential-forwarding boundary: no token may reach a binary
+	//! that fails it.
+	[[nodiscard]] virtual bool VerifyExecutableTrust(const std::wstring& executablePath) const = 0;
 	[[nodiscard]] virtual GhProcessOutcome Run(const GhProcessInvocation& invocation, HANDLE stop) const = 0;
 };
 
 class CWindowsGhToolPlatform final : public IGhToolPlatform {
 public:
-	[[nodiscard]] std::optional<std::wstring> ResolveExecutable() const override;
+	[[nodiscard]] std::optional<GhToolResolution> ResolveExecutable() const override;
+	[[nodiscard]] bool VerifyExecutableTrust(const std::wstring& executablePath) const override;
 	[[nodiscard]] GhProcessOutcome Run(const GhProcessInvocation& invocation, HANDLE stop) const override;
 };
 

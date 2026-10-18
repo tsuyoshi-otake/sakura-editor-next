@@ -13,10 +13,12 @@ set(CMAKE_OBJECT_PATH_MAX 220)
 
 add_library(sakura_security STATIC
   "${SAKURA_REPO_ROOT}/sakura_core/platform/security/CurrentUserSecurityAttributes.cpp"
+  "${SAKURA_REPO_ROOT}/sakura_core/platform/security/AuthenticodeSignatureVerifier.cpp"
   "${SAKURA_REPO_ROOT}/sakura_core/include/sakura/security/CurrentUserSecurityAttributes.h"
+  "${SAKURA_REPO_ROOT}/sakura_core/include/sakura/security/AuthenticodeSignatureVerifier.h"
 )
 target_include_directories(sakura_security PUBLIC "${SAKURA_REPO_ROOT}/sakura_core/include")
 target_compile_features(sakura_security PRIVATE cxx_std_20)
 target_compile_options(sakura_security PRIVATE -fpack-struct=8 -include "${SAKURA_REPO_ROOT}/src/main/modules/generated/abi/mingw-x64-debug/sakura_security.h")
 target_compile_definitions(sakura_security PRIVATE _WIN32_WINNT=0x0A00 NOMINMAX UNICODE _UNICODE)
-target_link_libraries(sakura_security PUBLIC advapi32)
+target_link_libraries(sakura_security PUBLIC advapi32 crypt32 wintrust)

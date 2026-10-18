@@ -19,6 +19,8 @@ Even when GitHub CLI is available, installing it again will not enable a feature
 
 The app cannot find `gh.exe`. It may not be installed or may not be available to the app. Follow the [official GitHub CLI installation instructions](https://github.com/cli/cli#installation), restart Sakura Editor NEXT, and check the view again.
 
+Extensions (for example the GitHub Issues and Actions views) only use a `gh.exe` signed by GitHub, Inc. The app looks for `C:\Program Files\GitHub CLI\gh.exe` first and then searches `PATH`. Scoop and Chocolatey shims and self-built copies of `gh.exe` do not carry GitHub's signature, so extensions do not use them, even when **Accounts** does not say that GitHub CLI cannot be found. Reinstall with the official installer or `winget install GitHub.cli`.
+
 ## Git cannot be found
 
 When **Source Control** says Git cannot be found, the app cannot locate `git.exe`. Install Git from the [official Git for Windows download page](https://git-scm.com/download/win). If it is already installed, check whether the directory containing `git.exe` is on the Windows `PATH`. Restart Sakura Editor NEXT after changing the installation or `PATH`.

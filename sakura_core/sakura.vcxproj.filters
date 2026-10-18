@@ -1710,6 +1710,9 @@
 	  <Filter>Cpp Source Files\platform</Filter>
 	</ClInclude>
 
+    <ClInclude Include="..\sakura_core\include\sakura\security\AuthenticodeSignatureVerifier.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\include\sakura\security\CurrentUserSecurityAttributes.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>
@@ -3688,6 +3691,9 @@
       <Filter>Cpp Source Files\platform</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\platform\process\WindowsExecutableResolver.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\security\AuthenticodeSignatureVerifier.cpp">
       <Filter>Cpp Source Files\platform</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\platform\filesystem\CFileService.cpp">

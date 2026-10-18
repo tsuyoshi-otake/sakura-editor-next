@@ -38,7 +38,9 @@ target_link_libraries(sakura_controlipc_security PUBLIC advapi32 bcrypt)
 
 add_library(sakura_security STATIC
   "${SAKURA_REPO_ROOT}/sakura_core/platform/security/CurrentUserSecurityAttributes.cpp"
+  "${SAKURA_REPO_ROOT}/sakura_core/platform/security/AuthenticodeSignatureVerifier.cpp"
   "${SAKURA_REPO_ROOT}/sakura_core/include/sakura/security/CurrentUserSecurityAttributes.h"
+  "${SAKURA_REPO_ROOT}/sakura_core/include/sakura/security/AuthenticodeSignatureVerifier.h"
 )
 target_include_directories(sakura_security PUBLIC "${SAKURA_REPO_ROOT}/sakura_core/include")
 target_compile_features(sakura_security PRIVATE cxx_std_20)
@@ -46,7 +48,7 @@ set_property(TARGET sakura_security PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded
 set_target_properties(sakura_security PROPERTIES COMPILE_PDB_NAME "sakura_security.compile" COMPILE_PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/pdb" PDB_NAME "sakura_security" PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/pdb")
 target_compile_options(sakura_security PRIVATE /source-charset:utf-8 /execution-charset:utf-8 /Zp8 /Zc:wchar_t "/FI${SAKURA_REPO_ROOT}/src/main/modules/generated/abi/cmake-msvc-x64-debug/sakura_security.h")
 target_compile_definitions(sakura_security PRIVATE _ITERATOR_DEBUG_LEVEL=2 _WIN32_WINNT=0x0A00 NOMINMAX UNICODE _UNICODE)
-target_link_libraries(sakura_security PUBLIC advapi32)
+target_link_libraries(sakura_security PUBLIC advapi32 crypt32 wintrust)
 
 add_library(sakura_controlipc_transport STATIC
   "${SAKURA_REPO_ROOT}/sakura_core/platform/controlipc/ControlIpcNamedPipeTransport.cpp"

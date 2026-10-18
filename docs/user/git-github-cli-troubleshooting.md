@@ -19,6 +19,8 @@ GitHub CLI が見つかっていても、拡張や機能自体が未対応なら
 
 GitHub CLI（実行ファイル名 `gh.exe`）が未導入、またはアプリから見つけられない状態です。GitHub CLI の[公式インストール手順](https://github.com/cli/cli#installation)に従って導入し、Sakura Editor NEXT を再起動してから画面をもう一度確認してください。
 
+拡張機能（GitHub の Issue や Actions のビューなど）が使う `gh.exe` は、GitHub, Inc. の署名があるものに限ります。アプリはまず `C:\Program Files\GitHub CLI\gh.exe` を探し、次に `PATH` を探します。Scoop や Chocolatey のシム、自分でビルドした `gh.exe` には GitHub の署名がないため、［アカウント］で「未検出」と表示されていなくても拡張機能からは使われません。公式インストーラーまたは `winget install GitHub.cli` で導入し直してください。
+
 ## Git が見つからない
 
 SCM 画面で「Git が見つかりません」と表示された場合、アプリから `git.exe` が見つけられません。Git for Windows の[公式ダウンロードページ](https://git-scm.com/download/win)から導入してください。すでに導入済みなら、`git.exe` のあるフォルダーが Windows の `PATH` に含まれるか確認します。設定後は Sakura Editor NEXT を再起動してください。

@@ -350,6 +350,7 @@ try {
 	}
 	switch (probe.Status()) {
 	case GhToolAvailability::NotInstalled: return { GhConnectionTerminal::ToolUnavailable, std::nullopt, {} };
+	case GhToolAvailability::UntrustedExecutable: return { GhConnectionTerminal::ToolUnavailable, std::nullopt, {} };
 	case GhToolAvailability::UnsupportedVersion: return { GhConnectionTerminal::UnsupportedVersion, std::nullopt, {} };
 	case GhToolAvailability::TimedOut: return { GhConnectionTerminal::TimedOut, std::nullopt, {} };
 	case GhToolAvailability::Cancelled: return { GhConnectionTerminal::Cancelled, std::nullopt, {} };

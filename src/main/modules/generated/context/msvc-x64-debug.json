@@ -185,7 +185,7 @@
     "utf16-scan-backend": "sakura-utf16-cpp-provider"
   },
   "projection_schema": 1,
-  "semantic_graph_hash": "sha256:bfd008e78e279d48a6ee397af20420e2fea3f5a136bae2ce5a32b5c929761beb",
+  "semantic_graph_hash": "sha256:d8f3b5c721e604f5b8ab20d9822f796681c09378967d3e87ffec7634ed366562",
   "staging_sets": [
     "sakura-editor-msvc-x64-debug-runtime-stage"
   ]

@@ -132,7 +132,10 @@ CGhLoginSession::~CGhLoginSession()
 
 GhLoginTerminal CGhLoginSession::Run(const GhToolProbe& probe, std::wstring hostname, HANDLE stop)
 try {
-	if (!m_platform || probe.Status() == GhToolAvailability::NotInstalled) return GhLoginTerminal::ToolUnavailable;
+	if (!m_platform || probe.Status() == GhToolAvailability::NotInstalled
+		|| probe.Status() == GhToolAvailability::UntrustedExecutable) {
+		return GhLoginTerminal::ToolUnavailable;
+	}
 	if (probe.Status() == GhToolAvailability::UnsupportedVersion) return GhLoginTerminal::UnsupportedVersion;
 	if (probe.Status() != GhToolAvailability::Available || !probe.Version() || !probe.Version()->Supported()
 		|| !platform::IsAbsoluteWindowsPath(probe.ExecutablePath())

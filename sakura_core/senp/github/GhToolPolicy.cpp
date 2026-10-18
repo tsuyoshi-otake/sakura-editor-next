@@ -4,6 +4,10 @@
 #include "senp/github/GhToolPolicy.h"
 #include "senp/github/GhText.h"
 #include "platform/process/WindowsExecutableResolver.h"
+#include <sakura/security/AuthenticodeSignatureVerifier.h>
+
+#include <KnownFolders.h>
+#include <ShlObj.h>
 
 #include <algorithm>
 #include <array>
@@ -269,9 +273,12 @@ bool GhToolVersion::Supported() const noexcept
 	return m_major == kSupportedMajor && m_minor == kSupportedMinor && m_patch == kSupportedPatch;
 }
 
+GhToolResolution::GhToolResolution(std::wstring executablePath, const GhToolDiscovery source) noexcept :
+	m_executablePath(std::move(executablePath)), m_source(source) {}
+
 GhToolProbe::GhToolProbe(const GhToolAvailability status, std::wstring executablePath,
-	std::optional<GhToolVersion> version) noexcept : m_status(status),
-	m_executablePath(std::move(executablePath)), m_version(std::move(version)) {}
+	std::optional<GhToolVersion> version, const GhToolDiscovery source) noexcept : m_status(status),
+	m_executablePath(std::move(executablePath)), m_version(std::move(version)), m_source(source) {}
 
 GhRepositoryReadRequest::GhRepositoryReadRequest(std::wstring hostname, std::wstring owner,
 	std::wstring repository, std::vector<std::wstring> resourceSegments) :
@@ -317,9 +324,36 @@ GhProcessOutcome::GhProcessOutcome(const platform::process::EBoundedProcessStatu
 	m_status(status), m_exitCode(exitCode), m_standardOutput(std::move(standardOutput)),
 	m_standardError(std::move(standardError)) {}
 
-std::optional<std::wstring> CWindowsGhToolPlatform::ResolveExecutable() const
+std::optional<GhToolResolution> CWindowsGhToolPlatform::ResolveExecutable() const
 {
-	return platform::ResolveWindowsExecutable(L"gh.exe");
+	// The per-machine install location is checked before PATH so a user-writable
+	// PATH entry cannot shadow the vendor install for a credential-bearing tool.
+	// The ProgramFiles environment variable is never trusted; only the known
+	// folder identifies the machine location.
+	PWSTR rawFolder = nullptr;
+	const HRESULT knownFolder = ::SHGetKnownFolderPath(FOLDERID_ProgramFiles, KF_FLAG_DEFAULT,
+		nullptr, &rawFolder);
+	// The shell allocates the string even on failure; this owner frees it on
+	// every path, including an allocation failure while it is copied.
+	const std::unique_ptr<wchar_t, decltype(&::CoTaskMemFree)> folder(rawFolder, &::CoTaskMemFree);
+	if (SUCCEEDED(knownFolder) && folder) {
+		const std::wstring directory = std::wstring(folder.get()) + L"\\GitHub CLI";
+		if (auto resolved = platform::ResolveWindowsExecutableFromPath(L"gh.exe", directory)) {
+			return GhToolResolution(std::move(*resolved), GhToolDiscovery::ProgramFiles);
+		}
+	}
+	if (auto resolved = platform::ResolveWindowsExecutable(L"gh.exe")) {
+		return GhToolResolution(std::move(*resolved), GhToolDiscovery::SearchPath);
+	}
+	return std::nullopt;
+}
+
+bool CWindowsGhToolPlatform::VerifyExecutableTrust(const std::wstring& executablePath) const
+{
+	const auto organization = platform::security::VerifiedSignerOrganization(executablePath);
+	// Exact, case-sensitive: the organization is the CA-verified legal name, so
+	// a differently cased value names a different subject.
+	return organization.has_value() && *organization == L"GitHub, Inc.";
 }
 
 platform::process::BoundedProcessRequest BuildBoundedProcessRequest(const GhProcessInvocation& invocation)
@@ -356,24 +390,36 @@ CGhToolPolicy::CGhToolPolicy(std::shared_ptr<const IGhToolPlatform> platform, st
 GhToolProbe CGhToolPolicy::Probe(HANDLE stop) const
 try {
 	if (!m_platform || !platform::IsAbsoluteWindowsPath(m_workingDirectory)) {
-		return { GhToolAvailability::InvalidConfiguration, {}, std::nullopt };
+		return { GhToolAvailability::InvalidConfiguration, {}, std::nullopt, GhToolDiscovery::None };
 	}
-	const auto executable = m_platform->ResolveExecutable();
-	if (!executable) return { GhToolAvailability::NotInstalled, {}, std::nullopt };
-	if (!platform::IsAbsoluteWindowsPath(*executable)) {
-		return { GhToolAvailability::InvalidConfiguration, {}, std::nullopt };
+	const auto resolution = m_platform->ResolveExecutable();
+	if (!resolution) {
+		return { GhToolAvailability::NotInstalled, {}, std::nullopt, GhToolDiscovery::None };
 	}
-	const auto outcome = m_platform->Run(Invocation(*executable, m_workingDirectory,
+	if (!platform::IsAbsoluteWindowsPath(resolution->ExecutablePath())) {
+		return { GhToolAvailability::InvalidConfiguration, {}, std::nullopt, resolution->Source() };
+	}
+	const auto& executable = resolution->ExecutablePath();
+	// The publisher check is bound to this canonical path: nothing below, and no
+	// later call that consumes this probe, may hand a token to a binary that is
+	// not signed by GitHub, Inc.
+	if (!m_platform->VerifyExecutableTrust(executable)) {
+		return { GhToolAvailability::UntrustedExecutable, executable, std::nullopt,
+			resolution->Source() };
+	}
+	const auto outcome = m_platform->Run(Invocation(executable, m_workingDirectory,
 		{ L"--version" }, kProbeTimeoutMilliseconds, kProbeOutputBytes, kErrorBytes), stop);
 	if (outcome.Status() != platform::process::EBoundedProcessStatus::Succeeded) {
-		return { ProbeTerminal(outcome.Status()), *executable, std::nullopt };
+		return { ProbeTerminal(outcome.Status()), executable, std::nullopt, resolution->Source() };
 	}
 	const auto version = ParseVersion(outcome.StandardOutput());
-	if (!version) return { GhToolAvailability::ProbeFailed, *executable, std::nullopt };
+	if (!version) {
+		return { GhToolAvailability::ProbeFailed, executable, std::nullopt, resolution->Source() };
+	}
 	return { version->Supported() ? GhToolAvailability::Available : GhToolAvailability::UnsupportedVersion,
-		*executable, version };
+		executable, version, resolution->Source() };
 } catch (const std::exception&) {
-	return { GhToolAvailability::ProbeFailed, {}, std::nullopt };
+	return { GhToolAvailability::ProbeFailed, {}, std::nullopt, GhToolDiscovery::None };
 }
 
 GhRepositoryReadResult CGhToolPolicy::ReadRepository(const GhToolProbe& probe,

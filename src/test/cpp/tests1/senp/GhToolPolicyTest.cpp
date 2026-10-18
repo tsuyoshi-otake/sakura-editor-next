@@ -2,9 +2,13 @@
 /* Copyright (C) 2026, Sakura Editor Organization. SPDX-License-Identifier: Zlib */
 #include "pch.h"
 #include "senp/github/GhToolPolicy.h"
+#include "platform/process/WindowsExecutableResolver.h"
 
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
 #include <memory>
+#include <optional>
 
 namespace {
 using namespace senp::github;
@@ -21,14 +25,18 @@ std::vector<std::uint8_t> Bytes(const std::string_view value)
 class FakePlatform final : public IGhToolPlatform {
 public:
 	void SetExecutable(std::optional<std::wstring> value) { m_executable = std::move(value); }
+	void SetDiscoverySource(GhToolDiscovery value) noexcept { m_source = value; }
+	void SetTrusted(bool value) noexcept { m_trusted = value; }
 	void SetOutcome(GhProcessOutcome value) { m_outcome = std::move(value); }
 	void SetThrowOnResolve(bool value) noexcept { m_throwOnResolve = value; }
 	void SetThrowOnRun(bool value) noexcept { m_throwOnRun = value; }
-	std::optional<std::wstring> ResolveExecutable() const override
+	std::optional<GhToolResolution> ResolveExecutable() const override
 	{
 		if (m_throwOnResolve) throw std::runtime_error("resolver failure");
-		return m_executable;
+		if (!m_executable) return std::nullopt;
+		return GhToolResolution{ *m_executable, m_source };
 	}
+	bool VerifyExecutableTrust(const std::wstring&) const override { return m_trusted; }
 	GhProcessOutcome Run(const GhProcessInvocation& invocation, HANDLE) const override
 	{
 		if (m_throwOnRun) throw std::runtime_error("runner failure");
@@ -38,6 +46,8 @@ public:
 	[[nodiscard]] const std::vector<GhProcessInvocation>& Invocations() const noexcept { return *m_invocations; }
 private:
 	std::optional<std::wstring> m_executable{ L"C:\\Tools\\gh.exe" };
+	GhToolDiscovery m_source{ GhToolDiscovery::SearchPath };
+	bool m_trusted{ true };
 	GhProcessOutcome m_outcome{ EBoundedProcessStatus::Succeeded, 0,
 		Bytes("gh version 2.93.0 (2026-05-27)\nhttps://github.com/cli/cli/releases/tag/v2.93.0\n"), {} };
 	std::shared_ptr<std::vector<GhProcessInvocation>> m_invocations{
@@ -125,6 +135,95 @@ TEST(GhToolPolicy, AcceptsOnlyTheMeasuredCliContractVersion)
 	EXPECT_EQ(0U, probe.Version()->Patch());
 	ASSERT_EQ(1U, platform->Invocations().size());
 	EXPECT_EQ(std::vector<std::wstring>{ L"--version" }, platform->Invocations()[0].Arguments());
+}
+
+TEST(GhToolPolicy, RejectsAnExecutableThatFailsPublisherVerificationWithoutInvokingIt)
+{
+	auto platform = std::make_shared<FakePlatform>();
+	auto policy = Policy(platform);
+	platform->SetTrusted(false);
+	const auto probe = policy.Probe(nullptr);
+	EXPECT_EQ(GhToolAvailability::UntrustedExecutable, probe.Status());
+	EXPECT_EQ(L"C:\\Tools\\gh.exe", probe.ExecutablePath());
+	EXPECT_TRUE(platform->Invocations().empty())
+		<< L"an untrusted binary must not receive even the version probe";
+	EXPECT_EQ(GhRepositoryReadStatus::ToolUnavailable,
+		policy.ReadRepository(probe, Read(), nullptr).Status());
+	EXPECT_TRUE(platform->Invocations().empty())
+		<< L"an untrusted binary must not receive a token-bearing invocation";
+}
+
+TEST(GhToolPolicy, ReportsWhichDiscoverySourceResolvedTheExecutable)
+{
+	auto platform = std::make_shared<FakePlatform>();
+	auto policy = Policy(platform);
+	EXPECT_EQ(GhToolDiscovery::SearchPath, policy.Probe(nullptr).Source());
+	platform->SetDiscoverySource(GhToolDiscovery::ProgramFiles);
+	const auto probe = policy.Probe(nullptr);
+	ASSERT_EQ(GhToolAvailability::Available, probe.Status());
+	EXPECT_EQ(GhToolDiscovery::ProgramFiles, probe.Source());
+}
+
+TEST(GhToolPolicy, PrefersTheProgramFilesInstallOverPathResolution)
+{
+	const std::wstring installed = L"C:\\Program Files\\GitHub CLI\\gh.exe";
+	if (::GetFileAttributesW(installed.c_str()) == INVALID_FILE_ATTRIBUTES) {
+		GTEST_SKIP() << "requires the vendor GitHub CLI install under Program Files";
+	}
+	// PATH holds only a directory with its own gh.exe. The vendor install must
+	// still win, so a PATH entry cannot shadow it.
+	struct ShadowPath final {
+		ShadowPath()
+		{
+			const DWORD required = ::GetEnvironmentVariableW(L"PATH", nullptr, 0);
+			if (required != 0) {
+				std::wstring value(required, L'\0');
+				value.resize(::GetEnvironmentVariableW(L"PATH", value.data(), required));
+				original = std::move(value);
+			}
+			directory = std::filesystem::temp_directory_path()
+				/ (L"sakura-gh-shadow-" + std::to_wstring(::GetCurrentProcessId()));
+			std::filesystem::create_directories(directory);
+			std::ofstream(directory / L"gh.exe", std::ios::binary) << "not gh";
+			::SetEnvironmentVariableW(L"PATH", directory.c_str());
+		}
+		~ShadowPath()
+		{
+			::SetEnvironmentVariableW(L"PATH", original ? original->c_str() : nullptr);
+			std::error_code ignored;
+			std::filesystem::remove_all(directory, ignored);
+		}
+		std::optional<std::wstring> original;
+		std::filesystem::path directory;
+	} shadow;
+
+	const auto fromPath = platform::ResolveWindowsExecutable(L"gh.exe");
+	ASSERT_TRUE(fromPath) << "the shadow copy must be resolvable through PATH, or this test proves nothing";
+	const auto resolution = CWindowsGhToolPlatform().ResolveExecutable();
+	ASSERT_TRUE(resolution);
+	EXPECT_EQ(GhToolDiscovery::ProgramFiles, resolution->Source());
+	EXPECT_NE(*fromPath, resolution->ExecutablePath());
+	const std::wstring_view suffix = L"\\GitHub CLI\\gh.exe";
+	const auto& path = resolution->ExecutablePath();
+	ASSERT_GE(path.size(), suffix.size());
+	EXPECT_EQ(CSTR_EQUAL, ::CompareStringOrdinal(path.data() + path.size() - suffix.size(),
+		static_cast<int>(suffix.size()), suffix.data(), static_cast<int>(suffix.size()), TRUE));
+}
+
+TEST(GhToolPolicy, VerifiesTheRealCliSignatureAndRejectsUnsignedAndWrongPublisherBinaries)
+{
+	const CWindowsGhToolPlatform platform;
+	if (::GetFileAttributesW(L"C:\\Program Files\\GitHub CLI\\gh.exe") == INVALID_FILE_ATTRIBUTES) {
+		GTEST_SKIP() << "requires the vendor GitHub CLI install under Program Files";
+	}
+	EXPECT_TRUE(platform.VerifyExecutableTrust(L"C:\\Program Files\\GitHub CLI\\gh.exe"));
+	EXPECT_FALSE(platform.VerifyExecutableTrust(CurrentExecutable()))
+		<< L"a self-built unsigned binary must never receive a token";
+	const wchar_t* const signedByOther = L"C:\\Program Files\\Git\\mingw64\\bin\\git.exe";
+	if (::GetFileAttributesW(signedByOther) != INVALID_FILE_ATTRIBUTES) {
+		EXPECT_FALSE(platform.VerifyExecutableTrust(signedByOther))
+			<< L"a valid non-GitHub signature is not the GitHub publisher";
+	}
 }
 
 TEST(GhToolPolicy, BuildsOneFixedRestGetWithoutShellOrAmbientGithubSelectors)

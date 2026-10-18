@@ -918,6 +918,7 @@ target_link_libraries(sakura_core
     winhttp
     winmm
     winspool
+    wintrust
 )
 
 # Both toolchains link the one archive and compile the Rust candidate paths, so

@@ -100,9 +100,11 @@
     </Lib>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="$(SakuraRepoRoot)\sakura_core\include\sakura\security\AuthenticodeSignatureVerifier.h" />
     <ClInclude Include="$(SakuraRepoRoot)\sakura_core\include\sakura\security\CurrentUserSecurityAttributes.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="$(SakuraRepoRoot)\sakura_core\platform\security\AuthenticodeSignatureVerifier.cpp" />
     <ClCompile Include="$(SakuraRepoRoot)\sakura_core\platform\security\CurrentUserSecurityAttributes.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

@@ -26,6 +26,7 @@ list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/request/HttpD
 list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/request/RequestService.cpp")
 list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/request/win32/WinHttpRequestRuntime.cpp")
 list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/request/win32/WinHttpSystemProxyResolver.cpp")
+list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/security/AuthenticodeSignatureVerifier.cpp")
 list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/security/CurrentUserSecurityAttributes.cpp")
 list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/serialization/JsoncDocument.cpp")
 list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/storage/CAtomicFileStorageService.cpp")
@@ -274,11 +275,13 @@ endif()
 if(NOT TARGET sakura_security)
   add_library(sakura_security STATIC
     "${CMAKE_SOURCE_DIR}/sakura_core/platform/security/CurrentUserSecurityAttributes.cpp"
+    "${CMAKE_SOURCE_DIR}/sakura_core/platform/security/AuthenticodeSignatureVerifier.cpp"
     "${CMAKE_SOURCE_DIR}/sakura_core/include/sakura/security/CurrentUserSecurityAttributes.h"
+    "${CMAKE_SOURCE_DIR}/sakura_core/include/sakura/security/AuthenticodeSignatureVerifier.h"
   )
   target_include_directories(sakura_security PUBLIC "${CMAKE_SOURCE_DIR}/sakura_core/include")
   target_compile_features(sakura_security PRIVATE cxx_std_20)
-  target_link_libraries(sakura_security PUBLIC advapi32)
+  target_link_libraries(sakura_security PUBLIC advapi32 crypt32 wintrust)
   if(MSVC)
     set_property(TARGET sakura_security PROPERTY MSVC_RUNTIME_LIBRARY "$<$<CONFIG:Debug>:MultiThreadedDebug>$<$<CONFIG:Release>:MultiThreaded>")
     target_compile_options(sakura_security PRIVATE "$<$<CONFIG:Debug>:/source-charset:utf-8>" "$<$<CONFIG:Debug>:/execution-charset:utf-8>" "$<$<CONFIG:Debug>:/Zp8>" "$<$<CONFIG:Debug>:/Zc:wchar_t>" "$<$<CONFIG:Debug>:/FI${CMAKE_SOURCE_DIR}/src/main/modules/generated/abi/cmake-msvc-x64-debug/sakura_security.h>" "$<$<CONFIG:Release>:/source-charset:utf-8>" "$<$<CONFIG:Release>:/execution-charset:utf-8>" "$<$<CONFIG:Release>:/Zp8>" "$<$<CONFIG:Release>:/Zc:wchar_t>" "$<$<CONFIG:Release>:/FI${CMAKE_SOURCE_DIR}/src/main/modules/generated/abi/cmake-msvc-x64-release/sakura_security.h>")

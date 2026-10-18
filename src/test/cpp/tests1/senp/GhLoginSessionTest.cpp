@@ -69,7 +69,11 @@ private:
 
 class ToolPlatform final : public IGhToolPlatform {
 public:
-	std::optional<std::wstring> ResolveExecutable() const override { return L"C:\\Tools\\gh.exe"; }
+	std::optional<GhToolResolution> ResolveExecutable() const override
+	{
+		return GhToolResolution{ L"C:\\Tools\\gh.exe", GhToolDiscovery::SearchPath };
+	}
+	bool VerifyExecutableTrust(const std::wstring&) const override { return true; }
 	GhProcessOutcome Run(const GhProcessInvocation& invocation, HANDLE) const override
 	{
 		m_state->invocations.push_back(invocation);

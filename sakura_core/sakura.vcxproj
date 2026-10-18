@@ -78,7 +78,7 @@
     </ResourceCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
-      <AdditionalDependencies>$(FmtLibrary);lunasvg.lib;advapi32.lib;comctl32.lib;Crypt32.lib;Imm32.lib;mpr.lib;Shlwapi.lib;Dwmapi.lib;Version.lib;Winhttp.lib;Bcrypt.lib;d2d1.lib;dwrite.lib;d3d11.lib;dxgi.lib;dcomp.lib;dbghelp.lib;htmlhelp.lib;Msimg32.lib;oleacc.lib;oleaut32.lib;uiautomationcore.lib;UxTheme.lib;windowscodecs.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>$(FmtLibrary);lunasvg.lib;advapi32.lib;comctl32.lib;Crypt32.lib;Imm32.lib;mpr.lib;Shlwapi.lib;Dwmapi.lib;Version.lib;Winhttp.lib;Wintrust.lib;Bcrypt.lib;d2d1.lib;dwrite.lib;d3d11.lib;dxgi.lib;dcomp.lib;dbghelp.lib;htmlhelp.lib;Msimg32.lib;oleacc.lib;oleaut32.lib;uiautomationcore.lib;UxTheme.lib;windowscodecs.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalOptions>/MANIFESTINPUT:..\build\$(Platform)\CMakeTools\sakura.exe.manifest</AdditionalOptions>
     </Link>
@@ -539,6 +539,7 @@
     <ClInclude Include="..\sakura_core\platform\controlipc\ControlPlatformServiceHost.h" />
     <ClInclude Include="..\sakura_core\platform\controlipc\ControlPlatformClient.h" />
 	<ClInclude Include="..\sakura_core\platform\controlipc\EditorControlPlatformRuntime.h" />
+    <ClInclude Include="..\sakura_core\include\sakura\security\AuthenticodeSignatureVerifier.h" />
     <ClInclude Include="..\sakura_core\include\sakura\security\CurrentUserSecurityAttributes.h" />
     <ClInclude Include="..\sakura_core\platform\storage\CInMemoryStorageService.h" />
     <ClInclude Include="..\sakura_core\include\sakura\storage\IStorageAuthority.h" />
@@ -1259,6 +1260,7 @@
     <ClCompile Include="..\sakura_core\platform\process\AllowlistedEnvironment.cpp" />
     <ClCompile Include="..\sakura_core\platform\process\BoundedProcessRunner.cpp" />
     <ClCompile Include="..\sakura_core\platform\process\WindowsExecutableResolver.cpp" />
+    <ClCompile Include="..\sakura_core\platform\security\AuthenticodeSignatureVerifier.cpp" />
     <ClCompile Include="..\sakura_core\platform\filesystem\CFileService.cpp" />
     <ClCompile Include="..\sakura_core\platform\filesystem\CWin32FileSystemProvider.cpp" />
     <ClCompile Include="..\sakura_core\platform\filesystem\FileSystemFactory.cpp" />

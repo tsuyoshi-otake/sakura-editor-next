@@ -82,7 +82,11 @@ private:
 
 class FakeToolPlatform final : public IGhToolPlatform {
 public:
-	std::optional<std::wstring> ResolveExecutable() const override { return L"C:\\Tools\\gh.exe"; }
+	std::optional<GhToolResolution> ResolveExecutable() const override
+	{
+		return GhToolResolution{ L"C:\\Tools\\gh.exe", GhToolDiscovery::SearchPath };
+	}
+	bool VerifyExecutableTrust(const std::wstring&) const override { return m_state->trusted; }
 	GhProcessOutcome Run(const GhProcessInvocation& invocation, HANDLE) const override
 	{
 		EXPECT_TRUE(::platform::process::IsExecutableBoundedProcessRequest(
@@ -98,12 +102,14 @@ public:
 		return value;
 	}
 	void Queue(GhProcessOutcome value) { m_state->outcomes.push_back(std::move(value)); }
+	void SetTrusted(bool value) noexcept { m_state->trusted = value; }
 	[[nodiscard]] const std::vector<GhProcessInvocation>& Invocations() const noexcept { return m_state->invocations; }
 private:
 	class State final {
 	private:
 		std::vector<GhProcessOutcome> outcomes;
 		std::vector<GhProcessInvocation> invocations;
+		bool trusted{ true };
 		friend class FakeToolPlatform;
 	};
 	std::shared_ptr<State> m_state{ std::make_shared<State>() };
@@ -368,4 +374,17 @@ TEST(GhConnectionLifecycle, NativePlatformSeparatesConfirmedAuthenticationAbsenc
 	tool->Queue({ EBoundedProcessStatus::Succeeded, 0, Bytes(R"({"login":"account-b"})"), {} });
 	EXPECT_EQ(GhConnectionTerminal::IdentityMismatch,
 		platform.Check(probe, L"C:\\Profiles\\gh", L"github.com", std::nullopt, nullptr).Terminal());
+}
+
+TEST(GhConnectionLifecycle, RefusesAnUntrustedExecutableBeforeAnyTokenBearingCall)
+{
+	auto tool = std::make_shared<FakeToolPlatform>();
+	tool->SetTrusted(false);
+	const auto probe = CGhToolPolicy(tool, L"C:\\Sakura").Probe(nullptr);
+	ASSERT_EQ(GhToolAvailability::UntrustedExecutable, probe.Status());
+	CWindowsGhConnectionPlatform platform(tool, L"C:\\Sakura");
+	const auto checked = platform.Check(probe, L"C:\\Profiles\\gh", L"github.com", std::nullopt, nullptr);
+	EXPECT_EQ(GhConnectionTerminal::ToolUnavailable, checked.Terminal());
+	EXPECT_TRUE(tool->Invocations().empty())
+		<< L"an untrusted binary must not receive auth status or auth token";
 }

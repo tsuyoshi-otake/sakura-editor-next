@@ -154,7 +154,11 @@ private:
 
 class FakeToolPlatform final : public gh::IGhToolPlatform {
 public:
-	std::optional<std::wstring> ResolveExecutable() const override { return std::wstring(L"C:\\Tools\\gh.exe"); }
+	std::optional<gh::GhToolResolution> ResolveExecutable() const override
+	{
+		return gh::GhToolResolution{ L"C:\\Tools\\gh.exe", gh::GhToolDiscovery::SearchPath };
+	}
+	bool VerifyExecutableTrust(const std::wstring&) const override { return true; }
 	gh::GhProcessOutcome Run(const gh::GhProcessInvocation&, HANDLE) const override
 	{
 		++(*m_runs);

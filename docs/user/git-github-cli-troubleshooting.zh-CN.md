@@ -19,6 +19,8 @@
 
 应用找不到 `gh.exe`。它可能尚未安装，或者应用无法找到它。请按照 [GitHub CLI 官方安装说明](https://github.com/cli/cli#installation)安装，重启 Sakura Editor NEXT，然后再次查看该视图。
 
+扩展（例如 GitHub Issue 和 Actions 视图）只使用带有 GitHub, Inc. 签名的 `gh.exe`。应用先查找 `C:\Program Files\GitHub CLI\gh.exe`，然后搜索 `PATH`。Scoop 或 Chocolatey 的 shim 以及自行构建的 `gh.exe` 没有 GitHub 的签名，因此即使“帐户”中没有显示“未检测到”，扩展也不会使用它们。请使用官方安装程序或 `winget install GitHub.cli` 重新安装。
+
 ## 找不到 Git
 
 如果“源代码管理”显示找不到 Git，表示应用无法找到 `git.exe`。请从 [Git for Windows 官方下载页面](https://git-scm.com/download/win)安装。如果已经安装，请确认包含 `git.exe` 的目录位于 Windows 的 `PATH` 中。完成安装或修改 `PATH` 后，重启 Sakura Editor NEXT。
