@@ -277,7 +277,7 @@ OnigmoPattern* TextMateTokenizer::GetOrCompileStaticPattern(const TextMateRule* 
 	return raw;
 }
 
-bool textmate::Equivalent(const RuleStackHandle& a, const RuleStackHandle& b)
+bool Equivalent(const RuleStackHandle& a, const RuleStackHandle& b)
 {
 	if (a == b) return true; // covers nullptr == nullptr
 	const TextMateRuleStackFrame* fa = a.get();
