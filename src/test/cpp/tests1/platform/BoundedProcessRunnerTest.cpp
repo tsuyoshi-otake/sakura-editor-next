@@ -9,9 +9,11 @@
 
 #include "platform/process/BoundedProcessRunner.h"
 
+#include <algorithm>
 #include <array>
 #include <charconv>
 #include <string>
+#include <string_view>
 
 namespace platform::process {
 namespace {
@@ -226,6 +228,52 @@ TEST(BoundedProcessRunner, TimeoutOwnsAndTerminatesTheChildProcessTree)
 		EXPECT_EQ(WAIT_OBJECT_0, ::WaitForSingleObject(process, 1000));
 		::CloseHandle(process);
 	}
+}
+
+TEST(BoundedProcessRunner, BuildsTheEnvironmentBlockInASingleAllocation)
+{
+	// The block may carry a secret override (GH_TOKEN), so it is built in one
+	// allocation: every reallocation would free an older, unscrubbed copy.
+	const std::vector<std::pair<std::wstring, std::wstring>> overrides{
+		{ L"SAKURA_BPR_B6C_FIRST", L"one" },
+		{ L"SAKURA_BPR_B6C_SECOND", L"two" },
+	};
+	const auto block = detail::BuildEnvironmentBlock(overrides, {});
+	EXPECT_EQ(block.capacity(), block.size());
+
+	std::vector<std::wstring> entries;
+	for (std::size_t offset = 0; offset + 1 < block.size();) {
+		const std::wstring_view entry(block.data() + offset);
+		if (entry.empty()) break;
+		entries.emplace_back(entry);
+		offset += entry.size() + 1;
+	}
+	const auto first = std::ranges::find(entries, L"SAKURA_BPR_B6C_FIRST=one");
+	const auto second = std::ranges::find(entries, L"SAKURA_BPR_B6C_SECOND=two");
+	ASSERT_NE(entries.end(), first);
+	ASSERT_NE(entries.end(), second);
+	EXPECT_LT(first, second) << L"entries stay sorted case-insensitively";
+	ASSERT_GE(block.size(), 2U);
+	EXPECT_EQ(L'\0', block[block.size() - 1]);
+	EXPECT_EQ(L'\0', block[block.size() - 2]) << L"the block ends in a double NUL";
+}
+
+TEST(BoundedProcessRunner, HandsSensitiveStandardOutputToTheCallerWithoutACopy)
+{
+	// The flag exists so a secret-bearing stream (gh auth token) is captured
+	// into one preallocated, scrubbed buffer rather than copied and freed.
+	auto request = ChildRequest(L"echo");
+	request.SetStandardInput("secret-marker");
+	request.SetMaximumStandardOutputBytes(4096);
+	request.SetSensitiveStandardOutput(true);
+	auto result = RunBoundedProcess(request, nullptr);
+
+	ASSERT_EQ(EBoundedProcessStatus::Succeeded, result.Status());
+	auto output = result.TakeStandardOutput();
+	EXPECT_NE(std::string::npos, Bytes(output).find("stdout:secret-marker"));
+	EXPECT_TRUE(result.StandardOutput().empty()) << L"the result no longer owns the bytes";
+	EXPECT_EQ(4096U, output.capacity())
+		<< L"the runner reserved the full limit before reading, so no reallocation happened";
 }
 
 TEST(BoundedProcessRunner, RejectsMalformedRequestsBeforeLaunch)

@@ -296,6 +296,10 @@ TEST(GhConnectionLifecycle, NativePlatformPinsConfigAccountAndVerifiesIdentityBe
 	EXPECT_EQ((std::vector<std::wstring>{ L"auth", L"token", L"--hostname", L"github.com", L"--user", L"account-a" }),
 		tool->Invocations()[2].Arguments());
 	EXPECT_EQ(L"user", tool->Invocations()[3].Arguments().back());
+	EXPECT_FALSE(tool->Invocations()[1].SensitiveStandardOutput());
+	EXPECT_TRUE(tool->Invocations()[2].SensitiveStandardOutput())
+		<< L"gh auth token writes the credential to stdout";
+	EXPECT_TRUE(BuildBoundedProcessRequest(tool->Invocations()[2]).SensitiveStandardOutput());
 	EXPECT_TRUE(HasOverride(tool->Invocations()[1], L"GH_CONFIG_DIR", L"C:\\Profiles\\gh"));
 	EXPECT_FALSE(HasOverride(tool->Invocations()[1], L"GH_TOKEN", L"secret-token"));
 	EXPECT_TRUE(HasOverride(tool->Invocations()[3], L"GH_TOKEN", L"secret-token"));

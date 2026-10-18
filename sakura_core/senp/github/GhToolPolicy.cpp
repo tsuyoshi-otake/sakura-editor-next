@@ -332,14 +332,17 @@ platform::process::BoundedProcessRequest BuildBoundedProcessRequest(const GhProc
 	request.SetMaximumStandardOutputBytes(invocation.MaximumOutputBytes());
 	request.SetMaximumStandardErrorBytes(invocation.MaximumErrorBytes());
 	request.SetOutputObserver(invocation.OutputObserver());
+	request.SetSensitiveStandardOutput(invocation.SensitiveStandardOutput());
 	return request;
 }
 
 GhProcessOutcome CWindowsGhToolPlatform::Run(const GhProcessInvocation& invocation, HANDLE stop) const
 {
 	const auto request = BuildBoundedProcessRequest(invocation);
-	const auto result = platform::process::RunBoundedProcess(request, stop);
-	return { result.Status(), result.ExitCode(), result.StandardOutput(), result.StandardError() };
+	auto result = platform::process::RunBoundedProcess(request, stop);
+	// Move stdout out instead of copying: for a sensitive invocation the copy
+	// would be a second token-bearing buffer freed without scrubbing.
+	return { result.Status(), result.ExitCode(), result.TakeStandardOutput(), result.StandardError() };
 }
 
 GhRepositoryReadResult::GhRepositoryReadResult(const GhRepositoryReadStatus status, const int exitCode,

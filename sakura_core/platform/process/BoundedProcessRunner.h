@@ -67,6 +67,7 @@ public:
 	{
 		m_outputObserver = std::move(value);
 	}
+	void SetSensitiveStandardOutput(const bool value) noexcept { m_sensitiveStandardOutput = value; }
 
 	[[nodiscard]] const std::wstring& ExecutablePath() const noexcept { return m_executablePath; }
 	[[nodiscard]] const std::wstring& WorkingDirectory() const noexcept { return m_workingDirectory; }
@@ -87,6 +88,7 @@ public:
 	{
 		return m_outputObserver;
 	}
+	[[nodiscard]] bool SensitiveStandardOutput() const noexcept { return m_sensitiveStandardOutput; }
 
 private:
 	std::wstring m_executablePath;
@@ -96,6 +98,7 @@ private:
 	std::vector<std::pair<std::wstring, std::wstring>> m_environmentOverrides;
 	std::vector<std::wstring> m_environmentRemovals;
 	std::shared_ptr<IBoundedProcessOutputObserver> m_outputObserver;
+	bool m_sensitiveStandardOutput{ false };
 	std::uint32_t m_timeoutMilliseconds{ 15000 };
 	std::size_t m_maximumStandardOutputBytes{ 4u * 1024u * 1024u };
 	std::size_t m_maximumStandardErrorBytes{ 64u * 1024u };
@@ -104,17 +107,37 @@ private:
 class BoundedProcessResult final {
 public:
 	explicit BoundedProcessResult(EBoundedProcessStatus status) noexcept : m_status(status) {}
+	//! A result built for a request that marked its standard output sensitive
+	//! zeroes whatever output bytes it still owns before they are freed. Bytes
+	//! already handed out through TakeStandardOutput are the caller's to scrub.
+	~BoundedProcessResult()
+	{
+		if (m_sensitiveStandardOutput && !m_standardOutput.empty()) {
+			::SecureZeroMemory(m_standardOutput.data(), m_standardOutput.size());
+		}
+	}
+	BoundedProcessResult(BoundedProcessResult&&) noexcept = default;
+	BoundedProcessResult& operator=(BoundedProcessResult&&) noexcept = default;
+	BoundedProcessResult(const BoundedProcessResult&) = delete;
+	BoundedProcessResult& operator=(const BoundedProcessResult&) = delete;
 	[[nodiscard]] EBoundedProcessStatus Status() const noexcept { return m_status; }
 	[[nodiscard]] int ExitCode() const noexcept { return m_exitCode; }
 	[[nodiscard]] const std::vector<std::uint8_t>& StandardOutput() const noexcept { return m_standardOutput; }
 	[[nodiscard]] const std::vector<std::uint8_t>& StandardError() const noexcept { return m_standardError; }
 	[[nodiscard]] bool Succeeded() const noexcept { return m_status == EBoundedProcessStatus::Succeeded; }
+	//! Moves the captured standard output out without copying; the result is
+	//! left empty and no longer owns the bytes.
+	[[nodiscard]] std::vector<std::uint8_t> TakeStandardOutput() noexcept
+	{
+		return std::move(m_standardOutput);
+	}
 
 private:
 	EBoundedProcessStatus m_status{ EBoundedProcessStatus::InvalidRequest };
 	int m_exitCode{ -1 };
 	std::vector<std::uint8_t> m_standardOutput;
 	std::vector<std::uint8_t> m_standardError;
+	bool m_sensitiveStandardOutput{ false };
 
 	friend BoundedProcessResult RunBoundedProcess(const BoundedProcessRequest&, HANDLE);
 };
@@ -138,5 +161,15 @@ inline constexpr std::size_t kMaximumBoundedProcessErrorBytes = 4u * 1024u * 102
 //! Run one exact executable with bounded streams, deadline, cancellation, and
 //! kill-on-close ownership for its complete process tree.
 [[nodiscard]] BoundedProcessResult RunBoundedProcess(const BoundedProcessRequest& request, HANDLE stop);
+
+namespace detail {
+//! Builds the exact environment block RunBoundedProcess passes to
+//! CreateProcessW. Declared here so tests can observe its single-allocation
+//! guarantee; the block may carry secret overrides, so callers keep it inside
+//! the same scrubbed lifetime the runner uses.
+[[nodiscard]] std::vector<wchar_t> BuildEnvironmentBlock(
+	const std::vector<std::pair<std::wstring, std::wstring>>& overrides,
+	const std::vector<std::wstring>& removals);
+} // namespace detail
 
 } // namespace platform::process

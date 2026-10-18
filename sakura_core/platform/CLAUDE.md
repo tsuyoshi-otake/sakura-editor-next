@@ -63,6 +63,16 @@ launch failure, timeout, cancellation, and either stream limit are distinct
 terminal states. Environment changes are explicit name/value overrides; tool
 adapters own tool-specific policy and executable discovery.
 
+Because overrides can carry secrets, the environment block is computed to its
+final size first and built in one allocation, then zeroed on every exit path;
+a growing buffer would free older copies that already hold `GH_TOKEN`. A
+request may mark its standard output sensitive: the runner then preallocates
+the capture buffer to the stream's limit before reading (no reallocation),
+zeroes every buffer that held output bytes before freeing it — the drain
+buffer and the result's buffer on destruction — and the caller takes ownership
+through `BoundedProcessResult::TakeStandardOutput()` without a copy. The
+default path is unchanged in behaviour and cost.
+
 The runner owns the complete child tree. On every timeout, cancellation, limit,
 or root-process exit it terminates remaining job members and joins the stdin
 writer before returning. Tests that start descendants must verify the recorded

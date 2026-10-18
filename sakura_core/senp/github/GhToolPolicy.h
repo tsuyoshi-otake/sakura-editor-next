@@ -132,12 +132,18 @@ public:
 	{
 		return m_outputObserver;
 	}
+	//! Marks the invocation's standard output as carrying a secret: the runner
+	//! preallocates its capture buffer once and zeroes every buffer that held
+	//! the bytes before they are freed. Used by `gh auth token`.
+	void SetSensitiveStandardOutput(const bool value) noexcept { m_sensitiveStandardOutput = value; }
+	[[nodiscard]] bool SensitiveStandardOutput() const noexcept { return m_sensitiveStandardOutput; }
 private:
 	std::wstring m_executablePath, m_workingDirectory;
 	std::vector<std::wstring> m_arguments;
 	std::vector<std::pair<std::wstring, std::wstring>> m_environmentOverrides;
 	std::vector<std::wstring> m_environmentRemovals;
 	std::shared_ptr<platform::process::IBoundedProcessOutputObserver> m_outputObserver;
+	bool m_sensitiveStandardOutput{};
 	std::uint32_t m_timeoutMilliseconds{};
 	std::size_t m_maximumOutputBytes{}, m_maximumErrorBytes{};
 };

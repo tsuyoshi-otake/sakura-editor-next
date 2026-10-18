@@ -442,6 +442,15 @@ T04 account candidate. An initial snapshot stays Unknown until a complete
 `gh auth status --json hosts` check proves authentication is absent. The
 selected account is pinned to an explicit profile config directory; its token
 travels only through native private pipes and a scrubbed child environment.
+The `gh auth token` invocation marks its standard output sensitive, so the
+bounded runner captures it into one preallocated buffer, zeroes every buffer
+that held the bytes (including the result's on destruction), and
+`CWindowsGhToolPlatform::Run` moves the buffer into the outcome instead of
+copying it. The lifecycle takes that buffer under a guard before it checks
+the run's status, so a timed-out or truncated run scrubs its partial output
+too, and `ParseToken` scrubs the buffer it is handed. The child
+environment block itself is built in a single final-size allocation so no
+reallocation frees an unscrubbed buffer that already holds `GH_TOKEN`.
 The candidate becomes Connected only after the fixed `user` endpoint reports
 the same login. Timeout, malformed output, and candidate failure preserve an
 existing usable account. Replacement, confirmed reauthentication, disconnect,

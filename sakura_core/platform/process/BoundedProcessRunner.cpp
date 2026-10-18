@@ -106,7 +106,9 @@ bool EqualEnvironmentName(std::wstring_view left, std::wstring_view right) noexc
 			right.data(), static_cast<int>(right.size()), TRUE) == CSTR_EQUAL;
 }
 
-std::vector<wchar_t> BuildEnvironmentBlock(
+} // namespace
+
+std::vector<wchar_t> detail::BuildEnvironmentBlock(
 	const std::vector<std::pair<std::wstring, std::wstring>>& overrides,
 	const std::vector<std::wstring>& removals)
 {
@@ -127,13 +129,25 @@ std::vector<wchar_t> BuildEnvironmentBlock(
 		}
 		::FreeEnvironmentStringsW(parent);
 	}
-	for (const auto& [name, value] : overrides) entries.push_back(name + L"=" + value);
+	for (const auto& [name, value] : overrides) {
+		std::wstring entry;
+		entry.reserve(name.size() + value.size() + 1);
+		entry.append(name);
+		entry.push_back(L'=');
+		entry.append(value);
+		entries.push_back(std::move(entry));
+	}
 	std::sort(entries.begin(), entries.end(), [](const std::wstring& left, const std::wstring& right) {
 		return std::lexicographical_compare(left.begin(), left.end(), right.begin(), right.end(),
 			[](wchar_t a, wchar_t b) { return std::towupper(a) < std::towupper(b); });
 	});
 
+	// One allocation of the final size: a reallocation would free an older
+	// buffer that already holds secret overrides without scrubbing it.
+	std::size_t length = 1;
+	for (const auto& entry : entries) length += entry.size() + 1;
 	std::vector<wchar_t> block;
+	block.reserve(length);
 	for (const auto& entry : entries) {
 		block.insert(block.end(), entry.begin(), entry.end());
 		block.push_back(L'\0');
@@ -142,10 +156,13 @@ std::vector<wchar_t> BuildEnvironmentBlock(
 	return block;
 }
 
+namespace {
+
 enum class DrainStatus : std::uint8_t { Complete, OutputLimitExceeded, ObserverRejected };
 
 DrainStatus DrainPipe(HANDLE pipe, std::vector<std::uint8_t>& sink, const std::size_t budget,
-	const EBoundedProcessStream stream, const std::shared_ptr<IBoundedProcessOutputObserver>& observer)
+	const EBoundedProcessStream stream, const std::shared_ptr<IBoundedProcessOutputObserver>& observer,
+	const bool sensitive)
 {
 	for (;;) {
 		DWORD available{};
@@ -160,18 +177,20 @@ DrainStatus DrainPipe(HANDLE pipe, std::vector<std::uint8_t>& sink, const std::s
 		const std::size_t room = budget - sink.size();
 		if (read > room) {
 			sink.insert(sink.end(), buffer.begin(), buffer.begin() + room);
+			if (sensitive) ::SecureZeroMemory(buffer.data(), read);
 			return DrainStatus::OutputLimitExceeded;
 		}
 		sink.insert(sink.end(), buffer.begin(), buffer.begin() + read);
+		bool accepted = true;
 		if (observer) {
 			try {
-				if (!observer->OnOutput(stream, std::span<const std::uint8_t>(buffer.data(), read))) {
-					return DrainStatus::ObserverRejected;
-				}
+				accepted = observer->OnOutput(stream, std::span<const std::uint8_t>(buffer.data(), read));
 			} catch (...) {
-				return DrainStatus::ObserverRejected;
+				accepted = false;
 			}
 		}
+		if (sensitive) ::SecureZeroMemory(buffer.data(), read);
+		if (!accepted) return DrainStatus::ObserverRejected;
 	}
 }
 
@@ -342,7 +361,7 @@ try {
 		return Terminal(EBoundedProcessStatus::LaunchFailed);
 	}
 
-	auto environment = BuildEnvironmentBlock(request.EnvironmentOverrides(), request.EnvironmentRemovals());
+	auto environment = detail::BuildEnvironmentBlock(request.EnvironmentOverrides(), request.EnvironmentRemovals());
 	const WideEnvironmentGuard environmentGuard(environment);
 	STARTUPINFOEXW startup{};
 	startup.StartupInfo.cb = sizeof(startup);
@@ -365,6 +384,7 @@ try {
 	ScopedHandle processHandle(process.hProcess);
 	ScopedHandle threadHandle(process.hThread);
 	BoundedProcessResult result(EBoundedProcessStatus::Succeeded);
+	result.m_sensitiveStandardOutput = request.SensitiveStandardOutput();
 	result.m_standardOutput.reserve(request.MaximumStandardOutputBytes());
 	result.m_standardError.reserve(request.MaximumStandardErrorBytes());
 	std::jthread writer([ownedHandle = std::move(inputWrite), payload = request.StandardInput()]() {
@@ -383,9 +403,11 @@ try {
 	bool exited = false;
 	for (;;) {
 		const auto outputStatus = DrainPipe(outputRead.Get(), result.m_standardOutput,
-			request.MaximumStandardOutputBytes(), EBoundedProcessStream::StandardOutput, request.OutputObserver());
+			request.MaximumStandardOutputBytes(), EBoundedProcessStream::StandardOutput,
+			request.OutputObserver(), request.SensitiveStandardOutput());
 		const auto errorStatus = DrainPipe(errorRead.Get(), result.m_standardError,
-			request.MaximumStandardErrorBytes(), EBoundedProcessStream::StandardError, request.OutputObserver());
+			request.MaximumStandardErrorBytes(), EBoundedProcessStream::StandardError,
+			request.OutputObserver(), false);
 		if (outputStatus != DrainStatus::Complete || errorStatus != DrainStatus::Complete) {
 			status = outputStatus == DrainStatus::ObserverRejected || errorStatus == DrainStatus::ObserverRejected
 				? EBoundedProcessStatus::ObserverRejected : EBoundedProcessStatus::OutputLimitExceeded;

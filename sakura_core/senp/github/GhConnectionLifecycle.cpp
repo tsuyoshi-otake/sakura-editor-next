@@ -36,19 +36,6 @@ private:
 	std::vector<std::uint8_t>& m_value;
 };
 
-class WideStringGuard final {
-public:
-	explicit WideStringGuard(std::wstring& value) noexcept : m_value(value) {}
-	~WideStringGuard()
-	{
-		if (!m_value.empty()) ::SecureZeroMemory(m_value.data(), m_value.size() * sizeof(wchar_t));
-	}
-	WideStringGuard(const WideStringGuard&) = delete;
-	WideStringGuard& operator=(const WideStringGuard&) = delete;
-private:
-	std::wstring& m_value;
-};
-
 class SensitiveToken final {
 public:
 	SensitiveToken() = default;
@@ -165,13 +152,16 @@ GhProcessInvocation Invocation(std::wstring executable, std::wstring workingDire
 	std::vector<std::wstring> arguments, const std::wstring_view configurationDirectory,
 	const std::uint32_t timeout, const std::size_t outputLimit,
 	const std::size_t errorLimit, std::optional<std::wstring_view> token = std::nullopt,
-	std::shared_ptr<platform::process::IBoundedProcessOutputObserver> outputObserver = nullptr)
+	std::shared_ptr<platform::process::IBoundedProcessOutputObserver> outputObserver = nullptr,
+	const bool sensitiveStandardOutput = false)
 {
 	auto environment = Environment(configurationDirectory, token);
 	auto removals = RemovedEnvironment(environment);
-	return { std::move(executable), std::move(workingDirectory), std::move(arguments),
-		std::move(environment), std::move(removals), timeout, outputLimit, errorLimit,
-		std::move(outputObserver) };
+	GhProcessInvocation invocation{ std::move(executable), std::move(workingDirectory),
+		std::move(arguments), std::move(environment), std::move(removals), timeout,
+		outputLimit, errorLimit, std::move(outputObserver) };
+	invocation.SetSensitiveStandardOutput(sensitiveStandardOutput);
+	return invocation;
 }
 
 class CWindowsGhAccountCredential final : public IGhAccountCredential {
@@ -384,11 +374,15 @@ try {
 		: GhConnectionTerminal::Failed, std::nullopt, {} };
 	auto tokenResult = m_platform->Run(Invocation(probe.ExecutablePath(), m_workingDirectory,
 		{ L"auth", L"token", L"--hostname", std::wstring(hostname), L"--user", selected->Login() },
-		configurationDirectory, kTokenTimeoutMilliseconds, kTokenOutputBytes, kErrorBytes), stop);
+		configurationDirectory, kTokenTimeoutMilliseconds, kTokenOutputBytes, kErrorBytes,
+		std::nullopt, nullptr, true), stop);
+	// A timed-out or truncated run can still hold part of the token.
+	auto tokenOutput = tokenResult.TakeStandardOutput();
+	const ByteBufferGuard tokenOutputGuard(tokenOutput);
 	if (tokenResult.Status() != platform::process::EBoundedProcessStatus::Succeeded) {
 		return { ProcessTerminal(tokenResult.Status()), std::nullopt, {} };
 	}
-	auto token = ParseToken(tokenResult.TakeStandardOutput());
+	auto token = ParseToken(std::move(tokenOutput));
 	if (!token) return { GhConnectionTerminal::Failed, std::nullopt, {} };
 	const auto identityResult = m_platform->Run(Invocation(probe.ExecutablePath(), m_workingDirectory,
 		{ L"api", L"--hostname", std::wstring(hostname), L"--method", L"GET",
