@@ -263,19 +263,17 @@ void CSenpControlToolReads::CancelAll(const senp::ContributionOwnerIdentity& own
 		if (!entry) return;
 		entry->retired = true;
 		// A resource read goes with the reads for the same reason: the surface
-		// that asked is being revoked with its owner. A queued release stays -
-		// it is what tells the control side the resource is no longer wanted.
+		// that asked is being revoked with its owner. Queued releases and
+		// cancellations go too - the RetireOwner the Retire command sends
+		// releases the whole Control-side scope, reads and unreleased resources
+		// alike, so per-read cancels would only mint a grant for an owner that
+		// is already gone (or silently drop the cancel when the package can no
+		// longer be resolved for one).
 		std::erase_if(m_state->m_commands, [&](const Command& queued) {
-			return (queued.kind == Command::Kind::Start || queued.kind == Command::Kind::Resource)
+			return (queued.kind == Command::Kind::Start || queued.kind == Command::Kind::Cancel
+				|| queued.kind == Command::Kind::Resource || queued.kind == Command::Kind::Release)
 				&& queued.owner == owner;
 		});
-		for (const auto& read : entry->outstanding) {
-			Command command;
-			command.kind = Command::Kind::Cancel;
-			command.owner = owner;
-			command.read.readId = read.readId;
-			if (!EnqueueLocked(std::move(command))) break;
-		}
 		entry->outstanding.clear();
 		entry->completions.clear();
 		entry->resourceHandle.clear();
@@ -718,6 +716,29 @@ void CSenpControlToolReads::Worker() noexcept
 void CSenpControlToolReads::Run(Command command) noexcept
 {
 	if (command.kind == Command::Kind::Retire) {
+		// A retired owner's Control-side scope is released explicitly; without
+		// this it would keep its read subscriptions and any unreleased resource
+		// until the connection closes. No grant is minted for it - the
+		// connection itself is the authority - and no connection is opened just
+		// to retire: with none, the scope dies with the teardown anyway.
+		if (m_client.State() == EControlSenpClientState::Connected) {
+			auto request = Compose(EControlSenpRpcOperation::RetireOwner, command.owner, {});
+			const auto answer = m_client.Execute(request);
+			// Mixed build: an older Control does not know the operation and
+			// answers an Error frame that keeps the session open; the client
+			// maps InvalidRequest and UnsupportedVersion to ProtocolError while
+			// staying Connected. Disconnecting there would kill every other
+			// owner's live reads in this window, so the connection stays up and
+			// the scope is released at connection close, exactly as before this
+			// operation existed. Only transport loss - an unanswered exchange
+			// the keep-open set cannot explain - disconnects, as the other
+			// commands do; the Control-side teardown then cancels everything.
+			if (!answer.Answered()
+				&& !(answer.Outcome() == platform::controlipc::EControlSenpClientOutcome::ProtocolError
+					&& m_client.State() == EControlSenpClientState::Connected)) {
+				m_client.Disconnect();
+			}
+		}
 		std::erase_if(m_grants, [&](const Grant& grant) { return grant.identity == command.owner; });
 		try {
 			std::lock_guard<std::mutex> lock(m_state->m_mutex);

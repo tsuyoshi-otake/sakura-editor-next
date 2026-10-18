@@ -128,6 +128,7 @@ public:
 	void CancelRead(const platform::controlipc::SenpToolExecutionScope& scope,
 		std::wstring_view readId) noexcept override;
 	void CancelConnection(std::uint64_t sessionId, std::uint32_t clientProcessId) noexcept override;
+	void ReleaseScope(const platform::controlipc::SenpToolExecutionScope& scope) noexcept override;
 	[[nodiscard]] platform::controlipc::EControlSenpRpcStatus ReadResource(
 		const platform::controlipc::SenpToolExecutionScope& scope, std::wstring_view handle,
 		std::uint64_t offset, std::uint32_t length,

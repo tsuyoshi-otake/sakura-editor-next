@@ -34,6 +34,11 @@ enum class EControlSenpRpcOperation : std::uint8_t {
 	ReleaseResource = 6,
 	QueryAccount = 7,
 	AdoptWorkspace = 8,
+	//! Releases one retired owner's whole scope - its reads, pending
+	//! completions, resources and log work - for the connection that asks. It
+	//! names an owner but carries no grant: the connection itself is the
+	//! authority, so a peer can only ever retire a scope of its own pipe.
+	RetireOwner = 9,
 };
 
 //! Transport-neutral view of the account a profile has adopted. It is deliberately

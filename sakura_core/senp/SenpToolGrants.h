@@ -150,6 +150,11 @@ public:
 		std::chrono::steady_clock::time_point now);
 	[[nodiscard]] SenpToolGrantCheck Validate(std::string_view grantId,
 		const SenpToolGrantRequest& request, std::chrono::steady_clock::time_point now);
+	//! Revokes this connection's grants for exactly one profile and owner.
+	//! Deliberately narrower than CSenpToolGrants::RevokeOwner, which is
+	//! registry-wide: a RetireOwner may only release what this pipe minted, so
+	//! another window's identical owner identity keeps its grants.
+	void RevokeOwner(std::wstring_view profileId, const ContributionOwnerIdentity& owner) noexcept;
 	void Close() noexcept;
 private:
 	std::shared_ptr<CSenpToolGrants::Impl> m_grants;

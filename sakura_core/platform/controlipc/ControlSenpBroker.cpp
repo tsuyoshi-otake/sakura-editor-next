@@ -254,6 +254,7 @@ private:
 		if (request.Operation() == EControlSenpRpcOperation::IssueGrant) return Issue(request);
 		if (request.Operation() == EControlSenpRpcOperation::QueryAccount) return Account(request);
 		if (request.Operation() == EControlSenpRpcOperation::AdoptWorkspace) return Adopt(request);
+		if (request.Operation() == EControlSenpRpcOperation::RetireOwner) return Retire(request);
 		const Record* record = nullptr;
 		if (const auto status = Authorize(request, record); status != EControlSenpRpcStatus::Succeeded) {
 			return Terminal(status);
@@ -339,6 +340,38 @@ private:
 			SenpConnectionIdentity(m_connection.sessionId, m_connection.clientProcessId),
 			request.ProfileId(), request.Workspace());
 		return Terminal(m_executor->AdoptWorkspace(adoption));
+	}
+
+	/*!
+		@brief Releases one retired owner's scope for exactly this connection.
+
+		Like the account query and the workspace declaration this is answered
+		before Authorize: it carries no grant because the authority is the
+		connection itself. The scope is built only from what the OS observed for
+		this pipe plus the profile and owner the request names, so a peer can
+		only ever release a scope of its own connection. The order is deliberate:
+		the session's records for that scope go first - the minted-id history
+		stays, so a later request naming one of those grant ids still answers
+		Expired - then the registry's grants for this connection and owner, then
+		the executor's scope state. Idempotent: a second retirement for the same
+		owner answers Succeeded the same way.
+	*/
+	ControlSenpRpcResponse Retire(const ControlSenpRpcRequest& request)
+	{
+		if (!platform::profiles::IsOpaqueUserDataProfileId(request.ProfileId())) {
+			return Terminal(EControlSenpRpcStatus::InvalidRequest);
+		}
+		const SenpToolExecutionScope scope(m_connection.sessionId, m_connection.clientProcessId,
+			request.ProfileId(), ToContributionOwner(request.Owner()));
+		std::erase_if(m_records, [&](const Record& record) { return record.Scope() == scope; });
+		// Connection-scoped, never the registry-wide RevokeOwner: another window
+		// holding the identical owner identity keeps its grants.
+		m_grants->RevokeOwner(request.ProfileId(), scope.Owner());
+		// The grant side is already released, so a missing executor reports
+		// Unavailable rather than pretending nothing was retired.
+		if (!m_executor) return Terminal(EControlSenpRpcStatus::Unavailable);
+		m_executor->ReleaseScope(scope);
+		return Terminal(EControlSenpRpcStatus::Succeeded);
 	}
 
 	ControlSenpRpcResponse Issue(const ControlSenpRpcRequest& request)

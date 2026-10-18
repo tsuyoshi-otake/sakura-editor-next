@@ -24,6 +24,11 @@ constexpr std::size_t kMaximumPayload = kControlIpcMaximumFrameBytes - kControlI
 //! `resourceFinal` flag with the end, length and revision that make a
 //! ReadResource answer a whole text-resource chunk.
 constexpr std::uint8_t kControlSenpRpcPayloadVersion = 4;
+// RetireOwner (operation 9) joined the closed set without bumping this version:
+// the version is checked for exact equality, so a bump would refuse every
+// operation between mismatched builds. An older Control refuses the unknown
+// operation as InvalidRequest and keeps the session open, which is exactly the
+// mixed-build answer the editor retires against.
 constexpr std::uint64_t kMaximumGeneration = static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)());
 
 template<class T> void Put(std::vector<std::uint8_t>& bytes, T value)
@@ -135,7 +140,7 @@ bool GetWideBounded(std::span<const std::uint8_t> bytes, std::size_t& offset, st
 bool IsOperation(std::uint8_t operation) noexcept
 {
 	return operation >= static_cast<std::uint8_t>(EControlSenpRpcOperation::IssueGrant)
-		&& operation <= static_cast<std::uint8_t>(EControlSenpRpcOperation::AdoptWorkspace);
+		&& operation <= static_cast<std::uint8_t>(EControlSenpRpcOperation::RetireOwner);
 }
 
 bool IsAccountState(std::uint8_t state) noexcept
@@ -228,6 +233,12 @@ bool IsCoherentRequest(const ControlSenpRpcRequest& request) noexcept
 	case EControlSenpRpcOperation::ReleaseResource:
 		return !request.GrantId().empty() && request.Capabilities() == 0 && !hasRead && !hasTool
 			&& request.Arguments().empty() && hasResource && request.Offset() == 0 && request.Length() == 0;
+	case EControlSenpRpcOperation::RetireOwner:
+		// Retiring an owner needs no grant: the connection itself is the
+		// authority, so anything a grant-scoped operation carries could only be
+		// a claim nothing downstream rechecks.
+		return request.GrantId().empty() && request.Capabilities() == 0 && !hasRead && !hasTool
+			&& request.Arguments().empty() && !hasResource && request.Offset() == 0 && request.Length() == 0;
 	default:
 		return false;
 	}

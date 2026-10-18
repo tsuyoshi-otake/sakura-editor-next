@@ -75,6 +75,10 @@ public:
 	{
 		m_cancelledConnections.emplace_back(sessionId, clientProcessId);
 	}
+	void ReleaseScope(const SenpToolExecutionScope& scope) noexcept override
+	{
+		m_releasedScopes.push_back(scope);
+	}
 	EControlSenpRpcStatus ReadResource(const SenpToolExecutionScope&, std::wstring_view handle,
 		std::uint64_t offset, std::uint32_t length, ControlSenpRpcResponse& response) noexcept override
 	{
@@ -128,6 +132,10 @@ public:
 	{
 		return m_cancelledConnections;
 	}
+	[[nodiscard]] const std::vector<SenpToolExecutionScope>& ReleasedScopes() const noexcept
+	{
+		return m_releasedScopes;
+	}
 	[[nodiscard]] const std::vector<std::wstring>& Released() const noexcept { return m_released; }
 	[[nodiscard]] const std::vector<std::wstring>& AccountQueries() const noexcept { return m_accountQueries; }
 	[[nodiscard]] const std::vector<SenpWorkspaceAdoption>& Adopted() const noexcept { return m_adopted; }
@@ -141,6 +149,7 @@ private:
 	std::vector<SenpToolExecutionScope> m_polled;
 	std::vector<std::pair<SenpToolExecutionScope, std::wstring>> m_cancelledReads;
 	std::vector<SenpConnectionIdentity> m_cancelledConnections;
+	std::vector<SenpToolExecutionScope> m_releasedScopes;
 	std::vector<std::wstring> m_released;
 	EControlSenpRpcStatus m_accountStatus = EControlSenpRpcStatus::Succeeded;
 	std::int64_t m_accountGeneration = 0;
@@ -199,6 +208,15 @@ ControlSenpRpcRequest QueryAccount()
 	ControlSenpRpcRequest request;
 	request.SetOperation(EControlSenpRpcOperation::QueryAccount);
 	request.SetProfileId(L"profile-1");
+	return request;
+}
+
+ControlSenpRpcRequest RetireOwner(ControlSenpRpcOwner owner = Owner())
+{
+	ControlSenpRpcRequest request;
+	request.SetOperation(EControlSenpRpcOperation::RetireOwner);
+	request.SetProfileId(L"profile-1");
+	request.SetOwner(std::move(owner));
 	return request;
 }
 
@@ -598,6 +616,112 @@ TEST(ControlSenpBroker, DestroyingTheSessionCancelsItsExecutorScope)
 	EXPECT_EQ(fixture.Connection().clientProcessId, cancelled.front().ClientProcessId());
 	// Closing the session must also give the record back to the registry.
 	EXPECT_EQ(0U, fixture.Grants()->Size());
+}
+
+TEST(ControlSenpBroker, RetireOwnerReleasesExactlyThatConnectionsScope)
+{
+	Fixture fixture;
+	fixture.ToolAuthority()->Set(ApprovedFor(L"other.github"));
+	auto first = fixture.Open();
+	ASSERT_NE(nullptr, first);
+	// Owners A and B live on connection 1; owner A also lives on connection 2.
+	// Each holds a grant and a live read.
+	const auto grantA1 = fixture.Grant(*first);
+	const auto grantB1 = fixture.Grant(*first, OwnerB());
+	ASSERT_FALSE(grantA1.empty());
+	ASSERT_FALSE(grantB1.empty());
+	ASSERT_TRUE(ReadResponse(
+		first->HandleFrame(fixture.Connection(), RequestFrame(StartRead(grantA1), 3))));
+	ASSERT_TRUE(ReadResponse(
+		first->HandleFrame(fixture.Connection(), RequestFrame(StartRead(grantB1, OwnerB()), 4))));
+
+	fixture.SetConnection({ 32, 1702 });
+	auto second = fixture.Open();
+	ASSERT_NE(nullptr, second);
+	const auto grantA2 = fixture.Grant(*second);
+	ASSERT_FALSE(grantA2.empty());
+	ASSERT_TRUE(ReadResponse(
+		second->HandleFrame(fixture.Connection(), RequestFrame(StartRead(grantA2), 5))));
+	EXPECT_EQ(3U, fixture.Grants()->Size());
+
+	fixture.SetConnection({ 31, 1701 });
+	// No grant precedes it: the connection itself is the authority, so a peer
+	// can only ever release a scope of its own pipe.
+	const auto retired = ReadResponse(
+		first->HandleFrame(fixture.Connection(), RequestFrame(RetireOwner(), 6)));
+	ASSERT_TRUE(retired);
+	EXPECT_EQ(EControlSenpRpcStatus::Succeeded, retired->Status());
+
+	// The executor released exactly scope (conn1, A) - built from the observed
+	// connection, never from anything the request could claim.
+	const auto& released = fixture.ToolExecutor()->ReleasedScopes();
+	ASSERT_EQ(1U, released.size());
+	EXPECT_EQ(fixture.Connection().sessionId, released.front().SessionId());
+	EXPECT_EQ(fixture.Connection().clientProcessId, released.front().ClientProcessId());
+	EXPECT_EQ(L"profile-1", released.front().ProfileId());
+	EXPECT_EQ(ToContributionOwner(Owner()), released.front().Owner());
+
+	// The grant side is released for this connection only: conn1/B's and
+	// conn2/A's registry records survive the retirement.
+	EXPECT_EQ(2U, fixture.Grants()->Size());
+
+	// The retired grant id answers Expired - the minted history is kept, so the
+	// client re-issues rather than treating it as a grant it never had.
+	const auto stale = ReadResponse(
+		first->HandleFrame(fixture.Connection(), RequestFrame(StartRead(grantA1), 7)));
+	ASSERT_TRUE(stale);
+	EXPECT_EQ(EControlSenpRpcStatus::Expired, stale->Status());
+
+	// The other scopes keep working: conn1/B's read and conn2/A's read are
+	// untouched.
+	const auto stillB = ReadResponse(
+		first->HandleFrame(fixture.Connection(), RequestFrame(StartRead(grantB1, OwnerB()), 8)));
+	ASSERT_TRUE(stillB);
+	EXPECT_EQ(EControlSenpRpcStatus::Succeeded, stillB->Status());
+	fixture.SetConnection({ 32, 1702 });
+	const auto stillA2 = ReadResponse(
+		second->HandleFrame(fixture.Connection(), RequestFrame(StartRead(grantA2), 9)));
+	ASSERT_TRUE(stillA2);
+	EXPECT_EQ(EControlSenpRpcStatus::Succeeded, stillA2->Status());
+
+	// Idempotent: a second retirement of the same owner answers the same way.
+	fixture.SetConnection({ 31, 1701 });
+	const auto again = ReadResponse(
+		first->HandleFrame(fixture.Connection(), RequestFrame(RetireOwner(), 10)));
+	ASSERT_TRUE(again);
+	EXPECT_EQ(EControlSenpRpcStatus::Succeeded, again->Status());
+
+	// A profile id outside the opaque user-data space is refused outright and
+	// releases nothing.
+	auto foreign = RetireOwner();
+	foreign.SetProfileId(L"../other");
+	const auto refused = ReadResponse(
+		first->HandleFrame(fixture.Connection(), RequestFrame(foreign, 11)));
+	ASSERT_TRUE(refused);
+	EXPECT_EQ(EControlSenpRpcStatus::InvalidRequest, refused->Status());
+	EXPECT_EQ(2U, fixture.Grants()->Size());
+}
+
+TEST(ControlSenpBroker, RetireOwnerStillReleasesTheGrantSideWithoutAnExecutor)
+{
+	auto authority = std::make_shared<Authority>(Approved());
+	auto grants = std::make_shared<senp::CSenpToolGrants>(authority);
+	CControlSenpBroker broker(grants, nullptr);
+	const ControlIpcSessionContext connection{ 31, 1701 };
+	auto session = broker.CreateSession(connection);
+	ASSERT_NE(nullptr, session);
+
+	const auto issued = ReadResponse(session->HandleFrame(connection, RequestFrame(IssueGrant())));
+	ASSERT_TRUE(issued);
+	ASSERT_EQ(EControlSenpRpcStatus::Succeeded, issued->Status());
+	EXPECT_EQ(1U, grants->Size());
+
+	// The missing executor boundary is reported, but only after the grant side
+	// was released: Unavailable must not leave the record behind.
+	const auto retired = ReadResponse(session->HandleFrame(connection, RequestFrame(RetireOwner(), 2)));
+	ASSERT_TRUE(retired);
+	EXPECT_EQ(EControlSenpRpcStatus::Unavailable, retired->Status());
+	EXPECT_EQ(0U, grants->Size());
 }
 
 TEST(ControlSenpBroker, RejectsAFrameThatIsNotAWellFormedSenpPayload)

@@ -9,6 +9,7 @@
 namespace {
 using namespace senp;
 using namespace senp::github;
+using platform::controlipc::ControlSenpRpcRequest;
 using platform::controlipc::ControlSenpRpcResponse;
 using platform::controlipc::EControlSenpAccountState;
 using platform::controlipc::EControlSenpRpcStatus;
@@ -581,6 +582,73 @@ TEST(SenpGitHubToolExecutor, CancellingAConnectionLeavesAnotherConnectionIntact)
 	EXPECT_TRUE(fixture.Executor().TakeCompleted(other));
 }
 
+TEST(SenpGitHubToolExecutor, ReleasingAScopeDropsOnlyThatScopesWork)
+{
+	Fixture fixture;
+	const auto scope = Scope();
+	// A second owner on the same connection, and the same owner on another
+	// connection: ReleaseScope must leave both intact.
+	auto older = Owner();
+	older.workspaceRevision = 1;
+	const SenpToolExecutionScope sibling(7, 1234, L"profile-1", older);
+	const SenpToolExecutionScope foreign(8, 5678, L"profile-1", Owner());
+
+	const auto first = fixture.Fetch(scope, IssueList());
+	ASSERT_TRUE(first);
+	const auto handle = ResourceHandle(*first);
+	ASSERT_FALSE(handle.empty());
+	// A finished-but-undrained read leaves a pending completion behind: the
+	// first drain produced one terminal and this second read's is still held.
+	const SenpToolReadCommand pulls{ L"pulls:open", L"github", L"repositoryRead",
+		{ { L"shape", L"pulls" } } };
+	ASSERT_EQ(EControlSenpRpcStatus::Succeeded, fixture.Executor().StartRead(scope, pulls));
+	// A log job is queued (or already running) for the same scope when it ends.
+	fixture.CredentialValue().SetStream(EBoundedProcessStatus::Succeeded, { "log bytes" });
+	ASSERT_EQ(EControlSenpRpcStatus::Succeeded, fixture.Executor().StartRead(scope, JobLog()));
+	const auto keptSibling = fixture.Fetch(sibling, IssueList());
+	ASSERT_TRUE(keptSibling);
+	const auto keptForeign = fixture.Fetch(foreign, IssueList());
+	ASSERT_TRUE(keptForeign);
+
+	fixture.Executor().ReleaseScope(scope);
+	ASSERT_TRUE(fixture.Executor().WaitForIdle(kIdleTimeoutMilliseconds));
+
+	// Reads, pending completions, resources and log work of that scope are
+	// gone, and the scope itself is erased rather than merely emptied.
+	ControlSenpRpcResponse response;
+	EXPECT_EQ(EControlSenpRpcStatus::Unauthorized,
+		fixture.Executor().ReadResource(scope, handle, 0, 1024, response));
+	EXPECT_FALSE(fixture.Executor().TakeCompleted(scope));
+	// Releasing it again is a no-op, not an error.
+	fixture.Executor().ReleaseScope(scope);
+
+	EXPECT_EQ(EControlSenpRpcStatus::Succeeded,
+		fixture.Executor().ReadResource(sibling, ResourceHandle(*keptSibling), 0, 64 * 1024, response));
+	EXPECT_EQ(EControlSenpRpcStatus::Succeeded,
+		fixture.Executor().ReadResource(foreign, ResourceHandle(*keptForeign), 0, 64 * 1024, response));
+	// A new scope is admitted in the freed slot.
+	const SenpToolExecutionScope replacement(9, 9999, L"profile-1", Owner());
+	EXPECT_EQ(EControlSenpRpcStatus::Succeeded, fixture.Executor().StartRead(replacement, IssueList()));
+}
+
+TEST(SenpGitHubToolExecutor, ReleasingAnUnknownScopeIsANoOp)
+{
+	Fixture fixture;
+	const auto scope = Scope();
+	const auto completed = fixture.Fetch(scope, IssueList());
+	ASSERT_TRUE(completed);
+	const auto handle = ResourceHandle(*completed);
+	ASSERT_FALSE(handle.empty());
+
+	const SenpToolExecutionScope unknown(9, 9999, L"profile-1", Owner());
+	fixture.Executor().ReleaseScope(unknown);
+
+	ControlSenpRpcResponse response;
+	EXPECT_EQ(EControlSenpRpcStatus::Succeeded,
+		fixture.Executor().ReadResource(scope, handle, 0, 64 * 1024, response));
+	EXPECT_EQ("[{\"id\":1,\"title\":\"first\"}]", response.ResourceBytes());
+}
+
 TEST(SenpGitHubToolExecutor, ReclaimsAnIdleScopeBeforeRefusingANewOne)
 {
 	Fixture fixture;
@@ -810,6 +878,101 @@ TEST(SenpGitHubToolExecutor, PublishesAJobLogAsAResourceOfItsOwnStore)
 	fixture.Executor().ReleaseResource(scope, handle);
 	EXPECT_EQ(EControlSenpRpcStatus::NotFound,
 		fixture.Executor().ReadResource(scope, handle, 0, 1024, response));
+}
+
+/*!
+	@brief Production-path regression: retired owners must not exhaust the scope cap.
+
+	Drives the same sequence the editor sends - IssueGrant, StartRead, PollRead,
+	then the grant-free RetireOwner the seam's Retire command produces - through a
+	real broker session over the real grant registry and this executor. Each
+	retired owner keeps a Manual-cadence subscription and a page resource the
+	guest never released, so its scope is never idle and the idle reclaim cannot
+	help: without RetireOwner the 33rd distinct owner identity is refused
+	ResourceExhausted. `MaximumScopes()` is 32.
+*/
+TEST(SenpGitHubToolExecutor, RetiringOwnersReleasesTheirScopesThroughTheBroker)
+{
+	Fixture fixture;
+	auto registry = std::make_shared<CSenpToolGrants>(std::make_shared<Authority>());
+	// The broker borrows the executor; the fixture owns it for the test's life.
+	std::shared_ptr<platform::controlipc::ISenpToolExecutor> borrowed(&fixture.Executor(),
+		[](platform::controlipc::ISenpToolExecutor*) {});
+	platform::controlipc::CControlSenpBroker broker(registry, borrowed);
+	const platform::controlipc::ControlIpcSessionContext connection{ 7, 1234 };
+	auto session = broker.CreateSession(connection);
+	ASSERT_NE(nullptr, session);
+
+	std::uint64_t requestId = 1;
+	const auto send = [&](platform::controlipc::ControlSenpRpcRequest& request) {
+		auto payload = platform::controlipc::EncodeControlSenpRpcRequest(request);
+		EXPECT_TRUE(payload.has_value());
+		auto fields = platform::controlipc::EncodeControlIpcFields(
+			{ { static_cast<std::uint16_t>(platform::controlipc::EControlIpcFieldTag::SenpPayload),
+				payload.value_or(std::vector<std::uint8_t>{}) } });
+		EXPECT_TRUE(fields.has_value());
+		const platform::controlipc::ControlIpcFrame frame{
+			{ platform::controlipc::kControlIpcMajorVersion,
+				platform::controlipc::kControlIpcMinorVersion,
+				platform::controlipc::EControlIpcKind::SenpRequest,
+				platform::controlipc::EControlIpcFlags::Request, requestId++, 7 },
+			fields.value_or(std::vector<std::uint8_t>{}) };
+		const auto result = session->HandleFrame(connection, frame);
+		if (result.responseFrames.size() != 1) return ControlSenpRpcResponse{};
+		const auto outer = platform::controlipc::DecodeControlIpcFields(
+			result.responseFrames.front().payload);
+		if (outer.outcome != platform::controlipc::EControlIpcFieldDecodeOutcome::Decoded
+			|| outer.fields.size() != 1) {
+			return ControlSenpRpcResponse{};
+		}
+		return platform::controlipc::DecodeControlSenpRpcResponse(outer.fields.front().value)
+			.value_or(ControlSenpRpcResponse{});
+	};
+
+	for (std::int64_t index = 0;
+		index <= static_cast<std::int64_t>(CSenpGitHubToolExecutor::MaximumScopes()); ++index) {
+		auto owner = Owner();
+		owner.workspaceRevision = 2 + index;
+		const auto wireOwner = platform::controlipc::FromContributionOwner(owner);
+
+		ControlSenpRpcRequest issue;
+		issue.SetOperation(platform::controlipc::EControlSenpRpcOperation::IssueGrant);
+		issue.SetProfileId(L"profile-1");
+		issue.SetOwner(wireOwner);
+		issue.SetCapabilities(static_cast<std::uint32_t>(SenpToolCapability::GitHubRepositoryRead));
+		const auto issued = send(issue);
+		ASSERT_EQ(EControlSenpRpcStatus::Succeeded, issued.Status()) << index;
+
+		ControlSenpRpcRequest read;
+		read.SetOperation(platform::controlipc::EControlSenpRpcOperation::StartRead);
+		read.SetProfileId(L"profile-1");
+		read.SetOwner(wireOwner);
+		read.SetGrantId(issued.GrantId());
+		read.SetReadId(L"issues:" + std::to_wstring(index));
+		read.SetToolId(L"github");
+		read.SetToolOperation(L"repositoryRead");
+		read.SetArguments({ { L"shape", L"issues" } });
+		const auto started = send(read);
+		ASSERT_EQ(EControlSenpRpcStatus::Succeeded, started.Status()) << index;
+		ASSERT_TRUE(fixture.Executor().WaitForIdle(kIdleTimeoutMilliseconds)) << index;
+
+		// The completion is drained; its page resource stays held on purpose,
+		// exactly as it does while the guest has not sent ReleaseResource.
+		ControlSenpRpcRequest poll;
+		poll.SetOperation(platform::controlipc::EControlSenpRpcOperation::PollRead);
+		poll.SetProfileId(L"profile-1");
+		poll.SetOwner(wireOwner);
+		poll.SetGrantId(issued.GrantId());
+		const auto drained = send(poll);
+		ASSERT_TRUE(drained.HasCompletion()) << index;
+
+		ControlSenpRpcRequest retire;
+		retire.SetOperation(platform::controlipc::EControlSenpRpcOperation::RetireOwner);
+		retire.SetProfileId(L"profile-1");
+		retire.SetOwner(wireOwner);
+		const auto retired = send(retire);
+		EXPECT_EQ(EControlSenpRpcStatus::Succeeded, retired.Status()) << index;
+	}
 }
 
 TEST(SenpGitHubToolExecutor, KeepsALogAndAPageApartWithinOneScope)

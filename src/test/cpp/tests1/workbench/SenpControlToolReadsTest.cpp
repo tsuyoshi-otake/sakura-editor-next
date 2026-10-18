@@ -142,6 +142,37 @@ public:
 		std::lock_guard<std::mutex> lock(m_state->mutex);
 		return m_state->cancelledReads;
 	}
+	[[nodiscard]] int Retired() const
+	{
+		std::lock_guard<std::mutex> lock(m_state->mutex);
+		return m_state->retired;
+	}
+	[[nodiscard]] std::vector<ControlSenpRpcRequest> RetireRequests() const
+	{
+		std::lock_guard<std::mutex> lock(m_state->mutex);
+		return m_state->retireRequests;
+	}
+	//! When set, RetireOwner is answered with a session-preserving Error frame
+	//! instead of a SENP response - what an older Control that does not know
+	//! the operation sends.
+	[[nodiscard]] bool RefusesRetire() const
+	{
+		std::lock_guard<std::mutex> lock(m_state->mutex);
+		return m_state->refuseRetire;
+	}
+	void SetRefuseRetire(bool value)
+	{
+		std::lock_guard<std::mutex> lock(m_state->mutex);
+		m_state->refuseRetire = value;
+	}
+	//! Records a RetireOwner the channel refused at the Error layer: the
+	//! request still reached the control side, it was merely not understood.
+	void RecordRetire(const ControlSenpRpcRequest& request)
+	{
+		std::lock_guard<std::mutex> lock(m_state->mutex);
+		++m_state->retired;
+		m_state->retireRequests.push_back(request);
+	}
 
 	void Sever()
 	{
@@ -295,6 +326,11 @@ private:
 			m_state->releasedResources.push_back(request.ResourceHandle());
 			response.SetStatus(EControlSenpRpcStatus::Succeeded);
 			return response;
+		case EControlSenpRpcOperation::RetireOwner:
+			++m_state->retired;
+			m_state->retireRequests.push_back(request);
+			response.SetStatus(EControlSenpRpcStatus::Succeeded);
+			return response;
 		default:
 			response.SetStatus(EControlSenpRpcStatus::InvalidRequest);
 			return response;
@@ -340,6 +376,12 @@ private:
 		int resourceReads = 0;
 		int releases = 0;
 		std::vector<std::wstring> releasedResources;
+		//! RetireOwner requests seen, whether answered or refused. RetireOwner
+		//! carries no grant, so nothing here authorizes it - the real broker's
+		//! authority is the connection itself.
+		int retired = 0;
+		std::vector<ControlSenpRpcRequest> retireRequests;
+		bool refuseRetire = false;
 		std::wstring resourceHandle = L"log-1";
 		std::string resourceBody = "run step output";
 		std::int64_t resourceRevision = 11;
@@ -390,6 +432,20 @@ public:
 		auto decoded = platform::controlipc::DecodeControlSenpRpcRequest(fields.fields.front().value);
 		if (!decoded) {
 			return { false, platform::controlipc::EControlIpcTransportDisconnectReason::IoError, 0, L"" };
+		}
+		if (decoded->Operation() == EControlSenpRpcOperation::RetireOwner && m_broker->RefusesRetire()) {
+			// An older Control does not know the operation: it answers the Error
+			// frame and keeps the session, so the editor must not read it as
+			// transport loss.
+			m_broker->RecordRetire(*decoded);
+			auto error = platform::controlipc::EncodeControlIpcError(
+				{ platform::controlipc::EControlIpcTerminalStatus::InvalidRequest, {} });
+			if (!error) {
+				return { false, platform::controlipc::EControlIpcTransportDisconnectReason::IoError, 0, L"" };
+			}
+			responses.push_back(Answer(request, platform::controlipc::EControlIpcKind::Error,
+				std::move(*error)));
+			return { true, platform::controlipc::EControlIpcTransportDisconnectReason::None, 0, L"" };
 		}
 		const auto response = m_broker->Dispatch(*decoded);
 		if (!response) {
@@ -693,8 +749,110 @@ TEST(SenpControlToolReads, RevocationCancelsEveryReadOfTheScopeAndRetiresIt)
 	EXPECT_EQ(0U, reads.OutstandingReads());
 	EXPECT_FALSE(reads.Take(Owner()));
 	ASSERT_TRUE(reads.WaitForSettled(kSettle));
-	EXPECT_EQ(2, broker->Cancelled());
+	// One RetireOwner releases the whole Control-side scope, so no per-read
+	// CancelRead is sent any more.
+	EXPECT_EQ(0, broker->Cancelled());
+	EXPECT_EQ(1, broker->Retired());
 	EXPECT_FALSE(reads.Take(Owner()));
+}
+
+TEST(SenpControlToolReads, RetiringAnOwnerSendsExactlyOneGrantFreeRetireOwner)
+{
+	auto broker = std::make_shared<Broker>();
+	CFixedEndpointReader reader;
+	CSenpControlToolReads reads(Options(broker), reader);
+
+	ASSERT_TRUE(reads.Start(Owner(), Context(L"tool.1", 1), Read(L"issues:open:1")));
+	ASSERT_TRUE(reads.Start(Owner(), Context(L"tool.2", 2), Read(L"comments:1")));
+	ASSERT_TRUE(WaitUntil([&] { return broker->Started() == 2; }));
+
+	reads.CancelAll(Owner());
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+
+	EXPECT_EQ(0U, reads.OutstandingReads());
+	EXPECT_FALSE(reads.Take(Owner()));
+	// The RetireOwner covers reads and unreleased resources, so nothing else
+	// goes on the wire for this owner: no CancelRead, no ReleaseResource and
+	// no fresh IssueGrant past the one its reads already minted.
+	EXPECT_EQ(0, broker->Cancelled());
+	EXPECT_EQ(0, broker->Releases());
+	EXPECT_EQ(1, broker->Issued());
+	const auto retired = broker->RetireRequests();
+	ASSERT_EQ(1u, retired.size());
+	EXPECT_EQ(EControlSenpRpcOperation::RetireOwner, retired.front().Operation());
+	EXPECT_EQ(kSenpProfile, retired.front().ProfileId());
+	EXPECT_EQ(platform::controlipc::FromContributionOwner(Owner()), retired.front().Owner());
+	EXPECT_TRUE(retired.front().GrantId().empty());
+	EXPECT_EQ(0U, retired.front().Capabilities());
+	EXPECT_EQ(ESenpControlToolReadsState::Connected, reads.State());
+}
+
+TEST(SenpControlToolReads, KeepsTheConnectionWhenAnOlderControlRefusesRetireOwner)
+{
+	auto broker = std::make_shared<Broker>();
+	// An older Control answers the unknown operation with a session-preserving
+	// Error frame rather than a SENP response.
+	broker->SetRefuseRetire(true);
+	CFixedEndpointReader reader;
+	CSenpControlToolReads reads(Options(broker), reader);
+
+	ASSERT_TRUE(reads.Start(Owner(), Context(L"tool.1", 1), Read(L"issues:open:1")));
+	ASSERT_TRUE(reads.Start(OtherOwner(), Context(L"tool.2", 1), Read(L"runs:1")));
+	ASSERT_TRUE(WaitUntil([&] { return broker->Started() == 2; }));
+
+	reads.CancelAll(Owner());
+	ASSERT_TRUE(WaitUntil([&] { return broker->Retired() == 1; }));
+
+	// The refusal kept the session open, so it is not transport loss:
+	// disconnecting would kill the other owner's live read in this window. The
+	// retired scope is released at connection close, as before RetireOwner.
+	EXPECT_EQ(ESenpControlToolReadsState::Connected, reads.State());
+	EXPECT_EQ(2, broker->Issued());
+
+	broker->Publish({ L"runs:1", senp::effect::CompletionStatus::Succeeded, L"[2]", L"" });
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+	const auto completion = reads.Take(OtherOwner());
+	ASSERT_TRUE(completion);
+	EXPECT_EQ(L"runs:1", completion->readId);
+	EXPECT_EQ(senp::effect::CompletionStatus::Succeeded, completion->status);
+}
+
+TEST(SenpControlToolReads, DisconnectsWhenTransportDiesDuringTheRetire)
+{
+	auto broker = std::make_shared<Broker>();
+	CFixedEndpointReader reader;
+	CSenpControlToolReads reads(Options(broker), reader);
+
+	ASSERT_TRUE(reads.Start(Owner(), Context(L"tool.1", 1), Read(L"issues:open:1")));
+	ASSERT_TRUE(WaitUntil([&] { return broker->Started() == 1; }));
+
+	// A real transport loss still disconnects, as every other command does:
+	// the Control-side teardown then cancels everything anyway.
+	broker->Sever();
+	reads.CancelAll(Owner());
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+	EXPECT_EQ(ESenpControlToolReadsState::Disconnected, reads.State());
+	EXPECT_EQ(0, broker->Retired());
+}
+
+TEST(SenpControlToolReads, SendsNoRetireOwnerWithoutAConnection)
+{
+	auto broker = std::make_shared<Broker>();
+	CFixedEndpointReader reader;
+	reader.ClearEndpoint();
+	CSenpControlToolReads reads(Options(broker), reader);
+
+	ASSERT_TRUE(reads.Start(Owner(), Context(L"tool.1", 1), Read(L"issues:open:1")));
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+
+	reads.CancelAll(Owner());
+	ASSERT_TRUE(reads.WaitForSettled(kSettle));
+
+	// No connection is opened just to retire: with none, the scope dies with
+	// the connection teardown anyway.
+	EXPECT_EQ(0, broker->Hello());
+	EXPECT_EQ(0, broker->Retired());
+	EXPECT_TRUE(broker->Requests().empty());
 }
 
 TEST(SenpControlToolReads, RefusesEveryReadItCannotAccountFor)

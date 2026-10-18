@@ -750,6 +750,29 @@ try {
 } catch (const std::exception&) {
 }
 
+void CSenpGitHubToolExecutor::ReleaseScope(const SenpToolExecutionScope& scope) noexcept
+try {
+	std::unique_lock lock(m_mutex);
+	// One retired owner ends exactly its own scope: its queued and running log
+	// jobs, its reads, pending completions and resources, while every other
+	// scope of the same connection - and every other connection - is intact.
+	std::erase_if(m_logQueue, [&](const auto& job) { return job.scope == scope; });
+	if (m_runningLog && m_logStop && m_runningLogScope == scope) {
+		(void)::SetEvent(m_logStop);
+	}
+	std::erase_if(m_scopes, [&](const auto& state) {
+		if (!(state->scope == scope)) return false;
+		Release(*state);
+		return true;
+	});
+	// The worker never holds a scope - it only writes keyed pages - so erasing
+	// the state under this mutex is, exactly as for a whole connection, the
+	// whole of the guarantee that no worker can touch it afterwards.
+	lock.unlock();
+	m_wakeWorker.notify_all();
+} catch (const std::exception&) {
+}
+
 EControlSenpRpcStatus CSenpGitHubToolExecutor::ReadResource(const SenpToolExecutionScope& scope,
 	const std::wstring_view handle, const std::uint64_t offset, const std::uint32_t length,
 	ControlSenpRpcResponse& response) noexcept

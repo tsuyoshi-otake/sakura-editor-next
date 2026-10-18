@@ -135,6 +135,8 @@ public:
 		const platform::controlipc::ControlIpcSessionContext& connection,
 		const SenpToolGrantRequest& request, std::chrono::steady_clock::time_point now);
 	void RevokeConnection(const platform::controlipc::ControlIpcSessionContext& connection) noexcept;
+	void RevokeConnectionOwner(const platform::controlipc::ControlIpcSessionContext& connection,
+		std::wstring_view profileId, const ContributionOwnerIdentity& owner) noexcept;
 	void RevokeOwner(std::wstring_view profileId, const ContributionOwnerIdentity& owner) noexcept;
 	void RevokeProfile(std::wstring_view profileId) noexcept;
 	void Close() noexcept;
@@ -268,6 +270,18 @@ void CSenpToolGrants::Impl::RevokeConnection(
 	});
 }
 
+void CSenpToolGrants::Impl::RevokeConnectionOwner(
+	const platform::controlipc::ControlIpcSessionContext& connection,
+	const std::wstring_view profileId, const ContributionOwnerIdentity& owner) noexcept
+{
+	std::lock_guard lock(mutex);
+	std::erase_if(records, [&](const auto& entry) {
+		return SameConnection(entry.second.Connection(), connection)
+			&& entry.second.Request().ProfileId() == profileId
+			&& entry.second.Request().Owner() == owner;
+	});
+}
+
 void CSenpToolGrants::Impl::RevokeOwner(const std::wstring_view profileId,
 	const ContributionOwnerIdentity& owner) noexcept
 {
@@ -323,6 +337,12 @@ SenpToolGrantCheck CSenpToolGrantSession::Validate(const std::string_view grantI
 {
 	return m_grants ? m_grants->Validate(grantId, m_connection, request, now)
 		: SenpToolGrantCheck::Closed;
+}
+
+void CSenpToolGrantSession::RevokeOwner(const std::wstring_view profileId,
+	const ContributionOwnerIdentity& owner) noexcept
+{
+	if (m_grants) m_grants->RevokeConnectionOwner(m_connection, profileId, owner);
 }
 
 void CSenpToolGrantSession::Close() noexcept

@@ -44,6 +44,15 @@ ControlSenpRpcRequest QueryAccount()
 	return request;
 }
 
+ControlSenpRpcRequest RetireOwner()
+{
+	ControlSenpRpcRequest request;
+	request.SetOperation(EControlSenpRpcOperation::RetireOwner);
+	request.SetProfileId(L"profile-1");
+	request.SetOwner(Owner());
+	return request;
+}
+
 ControlSenpRpcRequest AdoptWorkspace()
 {
 	ControlSenpRpcRequest request;
@@ -454,6 +463,75 @@ TEST(ControlSenpRpc, RejectsAWorkspaceAdoptionThatCarriesAnOwnerOrCannotBeChecke
 	tooMany.Workspace().SetFolders(
 		std::vector<std::wstring>(kControlSenpRpcMaximumWorkspaceFolders + 1, L"file:///c:/work"));
 	EXPECT_FALSE(EncodeControlSenpRpcRequest(tooMany));
+}
+
+TEST(ControlSenpRpc, RoundTripsTheOwnerScopedRetirement)
+{
+	const auto retire = RetireOwner();
+	const auto encoded = EncodeControlSenpRpcRequest(retire);
+	ASSERT_TRUE(encoded);
+	const auto decoded = DecodeControlSenpRpcRequest(*encoded);
+	ASSERT_TRUE(decoded);
+	EXPECT_EQ(EControlSenpRpcOperation::RetireOwner, decoded->Operation());
+	EXPECT_EQ(L"profile-1", decoded->ProfileId());
+	// The owner is the whole payload: the connection itself is the authority,
+	// so it carries no grant.
+	EXPECT_EQ(retire.Owner(), decoded->Owner());
+	EXPECT_TRUE(decoded->GrantId().empty());
+	EXPECT_EQ(0U, decoded->Capabilities());
+}
+
+TEST(ControlSenpRpc, RejectsAnOwnerRetirementThatCarriesMoreThanTheOwner)
+{
+	// Every field a grant-scoped operation carries would be a claim nothing
+	// downstream rechecks, so each one is refused rather than ignored.
+	auto withGrant = RetireOwner();
+	withGrant.SetGrantId("grant-1");
+	EXPECT_FALSE(EncodeControlSenpRpcRequest(withGrant));
+
+	auto withCapabilities = RetireOwner();
+	withCapabilities.SetCapabilities(1);
+	EXPECT_FALSE(EncodeControlSenpRpcRequest(withCapabilities));
+
+	auto withRead = RetireOwner();
+	withRead.SetReadId(L"issues:open:1");
+	EXPECT_FALSE(EncodeControlSenpRpcRequest(withRead));
+
+	auto withTool = RetireOwner();
+	withTool.SetToolId(L"github");
+	EXPECT_FALSE(EncodeControlSenpRpcRequest(withTool));
+
+	auto withOperation = RetireOwner();
+	withOperation.SetToolOperation(L"repositoryRead");
+	EXPECT_FALSE(EncodeControlSenpRpcRequest(withOperation));
+
+	auto withArgument = RetireOwner();
+	withArgument.SetArguments({ { L"shape", L"issues" } });
+	EXPECT_FALSE(EncodeControlSenpRpcRequest(withArgument));
+
+	auto withResource = RetireOwner();
+	withResource.SetResourceHandle(L"log-1");
+	EXPECT_FALSE(EncodeControlSenpRpcRequest(withResource));
+
+	auto withOffset = RetireOwner();
+	withOffset.SetOffset(64);
+	EXPECT_FALSE(EncodeControlSenpRpcRequest(withOffset));
+
+	auto withLength = RetireOwner();
+	withLength.SetLength(64);
+	EXPECT_FALSE(EncodeControlSenpRpcRequest(withLength));
+
+	auto withWorkspace = RetireOwner();
+	withWorkspace.SetWorkspace(AdoptWorkspace().Workspace());
+	EXPECT_FALSE(EncodeControlSenpRpcRequest(withWorkspace));
+
+	auto withoutOwner = RetireOwner();
+	withoutOwner.SetOwner(ControlSenpRpcOwner{});
+	EXPECT_FALSE(EncodeControlSenpRpcRequest(withoutOwner));
+
+	auto withoutProfile = RetireOwner();
+	withoutProfile.SetProfileId(L"");
+	EXPECT_FALSE(EncodeControlSenpRpcRequest(withoutProfile));
 }
 
 TEST(ControlSenpRpc, RejectsADeclaredFolderCountNoEncoderWouldHaveWritten)

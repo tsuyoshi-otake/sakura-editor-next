@@ -231,8 +231,18 @@ an id the session never minted - or one evicted from the bounded history -
 stays `Unauthorized`, which the editor recovers from the same way. Executor
 scope states are reclaimed when idle (no reads, pending completions, resources
 or logs), so `MaximumScopes()` bounds live scopes rather than the count of
-owner identities a connection has ever seen; a retired owner that still holds
-subscriptions or unreleased resources is not idle (see
-`sakura_core/senp/CLAUDE.md`). Process work must run on bounded
+owner identities a connection has ever seen. That idle reclaim is a backstop:
+a retired owner that still holds subscriptions or unreleased resources is not
+idle, so `RetireOwner` (operation 9) releases such a scope explicitly. It is
+answered before `Authorize` - it carries no grant - and its authority is the
+connection itself: the scope is built only from the observed session and peer
+PID plus the request's profile and owner. The session erases its records for
+that scope, the grant session revokes that owner's grants for this connection
+only (`CSenpToolGrantSession::RevokeOwner`, never the registry-wide revoke),
+and `ISenpToolExecutor::ReleaseScope` finishes the executor side. The
+operation is idempotent; the payload version stays 4, so an older Control
+refuses it as InvalidRequest while keeping the session, and the editor treats
+that refusal as "released at connection close" rather than a transport loss
+(see `sakura_core/senp/CLAUDE.md`). Process work must run on bounded
 Control workers; frame dispatch is admission/polling only. The concrete package
 authority, GitHub broker and Editor client are subsequent composition gates.

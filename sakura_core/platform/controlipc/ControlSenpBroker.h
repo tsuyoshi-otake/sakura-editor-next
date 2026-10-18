@@ -170,6 +170,15 @@ public:
 	//! reissued on every workspace-revision or account change, so tracking the
 	//! distinct scopes a session ever minted would grow without bound.
 	virtual void CancelConnection(std::uint64_t sessionId, std::uint32_t clientProcessId) noexcept = 0;
+	//! Terminates exactly one scope - its reads (subscriptions), pending
+	//! completions, resources, log reads and queued/running log jobs - and
+	//! completes physical cleanup before returning, under the same guarantee
+	//! as CancelConnection. RetireOwner calls it for the scope built from the
+	//! OS-observed connection plus the request's profile and owner, so a peer
+	//! can only ever release a scope of its own pipe. Every other scope of
+	//! the same connection, and every other connection, is left intact; an
+	//! unknown scope is a no-op.
+	virtual void ReleaseScope(const SenpToolExecutionScope& scope) noexcept = 0;
 	[[nodiscard]] virtual EControlSenpRpcStatus ReadResource(const SenpToolExecutionScope& scope,
 		std::wstring_view handle, std::uint64_t offset, std::uint32_t length,
 		ControlSenpRpcResponse& response) noexcept = 0;

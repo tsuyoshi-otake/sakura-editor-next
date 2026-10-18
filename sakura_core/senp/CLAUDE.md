@@ -273,10 +273,23 @@ workspace-revision or account change and remembering each would grow without
 bound. On the executor side the global `MaximumScopes()` cap likewise bounds
 live scopes only: a scope state holding no reads, pending completions,
 resources or logs is idle and is reclaimed before a new scope is refused.
-That reclaim is only a backstop: an owner identity the editor has retired still
-holds its Manual-cadence read subscriptions and any page resource the guest has
-not released, so its scope stays non-idle until the connection closes unless
-the owner's scope is released explicitly (#354 follow-up).
+That reclaim is only a backstop. The explicit release is `RetireOwner`
+(operation 9): when the editor retires an owner identity it sends one
+grant-free request whose authority is the connection itself - the broker
+builds the scope only from the OS-observed session and peer PID plus the
+request's profile and owner, so a peer can only ever release its own
+connection's scope. The broker then drops the session's records for that
+scope (keeping the minted-id history, so a late request still answers
+`Expired`), revokes that owner's grants for that connection only through
+`CSenpToolGrantSession::RevokeOwner` - never the registry-wide
+`CSenpToolGrants::RevokeOwner`, which would take another window's identical
+owner identity with it - and calls `ISenpToolExecutor::ReleaseScope`, which
+terminates the scope's reads, pending completions, resources, log reads and
+queued/running log jobs before erasing it. The operation is idempotent. On a
+mixed build an older Control refuses the unknown operation with a
+session-preserving Error frame, so the editor keeps the connection and the
+scope is released at connection close, exactly as before `RetireOwner`
+existed (#354).
 Issue, validate, and remaining-lifetime reads all share one injectable clock so
 tests drive expiry without sleeping. T03 adds the provider policy; this
 registry alone cannot construct an executable, argv, environment, or network
