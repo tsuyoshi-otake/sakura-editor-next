@@ -242,6 +242,10 @@ pub enum InstalledListRow {
         id: String,
         /// The profile state's trust class, or empty when unknown.
         trust: String,
+        /// The `profiles/` state file name (`<stem>.json`). This is the
+        /// uninstall identity for a row whose manifest id cannot be proven —
+        /// the manifest id of a corrupt state may be empty or a device name.
+        state: String,
         code: ErrorCode,
         /// Bounded diagnostic detail; never a path longer than
         /// `INVALID_ROW_MESSAGE_BYTES`.
@@ -2482,13 +2486,19 @@ fn install_verified_archive(
             trust: trust.to_owned(),
         },
     )?;
-    let uninstalled_path = root
-        .join("uninstalled")
-        .join(format!("{}.json", verified.manifest.id));
-    match fs::remove_file(&uninstalled_path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(io_error("clear uninstalled state", error)),
+    // Only an explicit built-in reinstall clears the uninstall tombstone: a
+    // developer or publisher install of a tombstoned id must leave the marker
+    // in place, or uninstalling a built-in would never survive the user's own
+    // same-id packages (#362).
+    if matches!(policy, TrustPolicy::BuiltIn { .. }) {
+        let uninstalled_path = root
+            .join("uninstalled")
+            .join(format!("{}.json", verified.manifest.id));
+        match fs::remove_file(&uninstalled_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(io_error("clear uninstalled state", error)),
+        }
     }
     Ok(verified)
 }
@@ -2503,10 +2513,11 @@ pub fn install_package(
     install_verified_archive(root, policy, verified)
 }
 
-/// One profile state entry that could not be listed. Sorting keeps the state
-/// file name so an entry with no provable id still has a deterministic slot.
+/// One profile state entry that could not be listed. The state file name keeps
+/// an entry with no provable id in a deterministic sort slot and doubles as
+/// the emitted `state` uninstall identity.
 struct InvalidStateRow {
-    sort_name: String,
+    state: String,
     id: String,
     trust: String,
     code: ErrorCode,
@@ -2532,9 +2543,9 @@ fn list_state_entry(
     entry: &fs::DirEntry,
     uninstalled: &BTreeMap<String, UninstalledState>,
 ) -> Result<Option<InstalledExtension>, InvalidStateRow> {
-    let sort_name = entry.file_name().to_string_lossy().into_owned();
+    let state = entry.file_name().to_string_lossy().into_owned();
     let invalid = |id: String, trust: String, error: SenpError| InvalidStateRow {
-        sort_name: sort_name.clone(),
+        state: state.clone(),
         id,
         trust,
         code: error.code,
@@ -2701,10 +2712,11 @@ pub fn list_installed(root: &Path) -> Result<Vec<InstalledListRow>, SenpError> {
             Ok(None) => {}
             Err(invalid) => rows.push((
                 invalid.id.clone(),
-                invalid.sort_name,
+                invalid.state.clone(),
                 InstalledListRow::Invalid {
                     id: invalid.id,
                     trust: invalid.trust,
+                    state: invalid.state,
                     code: invalid.code,
                     message: invalid.message,
                 },
@@ -2752,15 +2764,20 @@ fn serialize_installed_listing_bounded(
         if line.len() > line_budget || json_node_count(&value) > LIST_LINE_MAX_NODES {
             // An over-budget installed row cannot be trusted by the decoder;
             // emit the typed invalid row in its place.
-            let (id, trust) = match row {
-                InstalledListRow::Installed(extension) => {
-                    (extension.manifest.id.clone(), extension.trust.clone())
-                }
-                InstalledListRow::Invalid { id, trust, .. } => (id.clone(), trust.clone()),
+            let (id, trust, state) = match row {
+                InstalledListRow::Installed(extension) => (
+                    extension.manifest.id.clone(),
+                    extension.trust.clone(),
+                    format!("{}.json", extension.manifest.id),
+                ),
+                InstalledListRow::Invalid {
+                    id, trust, state, ..
+                } => (id.clone(), trust.clone(), state.clone()),
             };
             let replacement = InstalledListRow::Invalid {
                 id,
                 trust,
+                state,
                 code: ErrorCode::OutputTooLarge,
                 message: "listing row exceeded the per-package output budget".to_owned(),
             };
@@ -2860,6 +2877,58 @@ pub fn uninstall_built_in(
         // The published tombstone is authoritative even if stale profile
         // cleanup is delayed. list_installed continues to fail closed.
         Err(_) => Ok(()),
+    }
+}
+
+/// The identity `uninstall_extension` accepts: the `profiles/` state file
+/// name (`<stem>.json`) exactly as `list` emitted it — `<id>.json` for an
+/// installed row, the emitted `state` field for an invalid one. Any stem a
+/// directory listing can produce is allowed (corrupt rows exist to be
+/// removed); the refusals are only what could escape `profiles/` or hit a
+/// device path: separators, dot stems, trailing dot/space, reserved names.
+fn valid_state_file_name(name: &str) -> bool {
+    let Some(stem) = name.strip_suffix(".json") else {
+        return false;
+    };
+    !stem.is_empty()
+        && stem.len() <= 128
+        && !stem.starts_with('.')
+        && !stem.ends_with(['.', ' '])
+        // Separators leave `profiles/`; `:` names an NTFS alternate data
+        // stream of another entry. No listed state file can contain a
+        // character Win32 refuses in a file name.
+        && !stem.chars().any(|c| {
+            c.is_control() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
+        })
+        && !is_windows_reserved_name(stem)
+}
+
+/// Removes one `profiles/` state entry: the recovery path for a non-built-in
+/// installed package and for a `kind:"invalid"` listing row. `state_name` is
+/// the state file name — `<id>.json` for an installed row, the emitted
+/// `state` field for an invalid one; never the manifest id, which a corrupt
+/// state may not prove (it can even be a device name). No tombstone is
+/// written: only built-ins are auto-installed, so only their removal needs
+/// one — a developer/publisher tombstone would silently shadow a same-id
+/// row of another trust class forever. Removing the content cache (`content/`
+/// `<sha>`) is out of scope; a garbage collector owns that.
+pub fn uninstall_extension(root: &Path, state_name: &str) -> Result<(), SenpError> {
+    if !valid_state_file_name(state_name) {
+        return Err(SenpError::new(
+            ErrorCode::InvalidManifest,
+            "invalid extension state name",
+        ));
+    }
+    reject_reparse_points(root)?;
+    let _lock = lock_existing_root(root)?;
+    let state_path = root.join("profiles").join(state_name);
+    reject_reparse_points(&state_path)?;
+    match fs::remove_file(&state_path) {
+        Ok(()) => Ok(()),
+        // An already-absent state is a successful uninstall: the row that
+        // prompted this call may have been cleaned up concurrently.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(io_error("remove profile state", error)),
     }
 }
 
@@ -3164,6 +3233,143 @@ mod tests {
             uninstall_built_in(&install_root, "sample-indent", &"0".repeat(64)).unwrap_err();
         assert_eq!(error.code, ErrorCode::InvalidManifest);
         assert_eq!(list_installed(&install_root).unwrap().len(), 1);
+        assert!(list_uninstalled(&install_root).unwrap().is_empty());
+    }
+
+    #[test]
+    fn uninstall_extension_removes_only_that_state_and_keeps_the_built_in_tombstone() {
+        let temp = TempDir::new().unwrap();
+        let source = temp.path().join("source");
+        fixture(&source);
+        let package = temp.path().join("sample.senp");
+        let hash = pack_directory(&source, &package, None).unwrap();
+        let install_root = temp.path().join("installed");
+        install_package(
+            &package,
+            &install_root,
+            &TrustPolicy::BuiltIn {
+                expected_archive_sha256: hash.clone(),
+            },
+        )
+        .unwrap();
+        // The built-in goes away by tombstone; a developer copy of the same
+        // package is what uninstall_extension removes.
+        uninstall_built_in(&install_root, "sample-indent", &hash).unwrap();
+        install_package(&package, &install_root, &TrustPolicy::DeveloperUnsigned).unwrap();
+
+        let rows = list_installed(&install_root).unwrap();
+        // The developer row is listed beside the tombstone (different trust).
+        assert_eq!(installed_rows(&rows).len(), 1);
+        assert_eq!(installed_rows(&rows)[0].trust, "developer");
+        assert_eq!(list_uninstalled(&install_root).unwrap(), ["sample-indent"]);
+
+        uninstall_extension(&install_root, "sample-indent.json").unwrap();
+        assert!(list_installed(&install_root).unwrap().is_empty());
+        // The built-in tombstone must survive a developer uninstall.
+        assert_eq!(list_uninstalled(&install_root).unwrap(), ["sample-indent"]);
+        // Content cache is untouched — GC is a separate concern.
+        assert!(install_root.join("content").join(&hash).is_dir());
+        // Re-running on an absent state is an idempotent success.
+        uninstall_extension(&install_root, "sample-indent.json").unwrap();
+    }
+
+    #[test]
+    fn uninstall_extension_removes_an_invalid_row_by_its_state_file_name() {
+        let temp = TempDir::new().unwrap();
+        let install_root = temp.path().join("installed");
+        fs::create_dir_all(install_root.join("profiles")).unwrap();
+        // A corrupt state: schema fields do not match ProfileState at all.
+        fs::write(
+            install_root.join("profiles").join("corrupt-pkg.json"),
+            br#"{"broken":true}"#,
+        )
+        .unwrap();
+        let rows = list_installed(&install_root).unwrap();
+        assert_eq!(rows.len(), 1);
+        let InstalledListRow::Invalid { id, state, .. } = &rows[0] else {
+            panic!("expected an invalid row");
+        };
+        assert_eq!(*id, "");
+        assert_eq!(state, "corrupt-pkg.json");
+
+        uninstall_extension(&install_root, state).unwrap();
+        assert!(list_installed(&install_root).unwrap().is_empty());
+        assert!(!install_root
+            .join("profiles")
+            .join("corrupt-pkg.json")
+            .exists());
+    }
+
+    #[test]
+    fn uninstall_extension_rejects_identities_that_leave_the_state_dir() {
+        let temp = TempDir::new().unwrap();
+        let install_root = temp.path().join("installed");
+        fs::create_dir_all(install_root.join("profiles")).unwrap();
+        for name in [
+            "".to_owned(),
+            "noext".to_owned(),
+            ".json".to_owned(),
+            "..json".to_owned(),
+            "CON.json".to_owned(),
+            "nul.json".to_owned(),
+            "a/b.json".to_owned(),
+            "a\\b.json".to_owned(),
+            "pkg:stream.json".to_owned(),
+            "a*b.json".to_owned(),
+            "a\u{1}b.json".to_owned(),
+            format!("{}.json", "x".repeat(129)),
+        ] {
+            let error = uninstall_extension(&install_root, &name).unwrap_err();
+            assert_eq!(
+                error.code,
+                ErrorCode::InvalidManifest,
+                "identity {name:?} must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn a_developer_install_keeps_the_built_in_uninstall_tombstone() {
+        let temp = TempDir::new().unwrap();
+        let source = temp.path().join("source");
+        fixture(&source);
+        let package = temp.path().join("sample.senp");
+        let hash = pack_directory(&source, &package, None).unwrap();
+        let install_root = temp.path().join("installed");
+        install_package(
+            &package,
+            &install_root,
+            &TrustPolicy::BuiltIn {
+                expected_archive_sha256: hash.clone(),
+            },
+        )
+        .unwrap();
+        uninstall_built_in(&install_root, "sample-indent", &hash).unwrap();
+        assert_eq!(list_uninstalled(&install_root).unwrap(), ["sample-indent"]);
+
+        // Installing the same bytes as a developer copy must NOT clear the
+        // tombstone — only an explicit built-in reinstall does (#362).
+        install_package(&package, &install_root, &TrustPolicy::DeveloperUnsigned).unwrap();
+        assert_eq!(
+            list_uninstalled(&install_root).unwrap(),
+            ["sample-indent"],
+            "developer install cleared the built-in tombstone"
+        );
+        // The developer row still lists (tombstone trust differs).
+        let listing = list_installed(&install_root).unwrap();
+        let rows = installed_rows(&listing);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].trust, "developer");
+
+        // The explicit built-in reinstall clears it.
+        install_package(
+            &package,
+            &install_root,
+            &TrustPolicy::BuiltIn {
+                expected_archive_sha256: hash,
+            },
+        )
+        .unwrap();
         assert!(list_uninstalled(&install_root).unwrap().is_empty());
     }
 
@@ -4844,6 +5050,12 @@ mod tests {
             let hash = "0".repeat(64);
             assert_eq!(
                 uninstall_built_in(&root, "sample-indent", &hash)
+                    .unwrap_err()
+                    .code,
+                ErrorCode::Busy
+            );
+            assert_eq!(
+                uninstall_extension(&root, "sample-indent.json")
                     .unwrap_err()
                     .code,
                 ErrorCode::Busy

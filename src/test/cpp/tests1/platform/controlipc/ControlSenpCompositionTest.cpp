@@ -134,6 +134,8 @@ public:
 	senp::ManagementOperationResult InstallDeveloperPackage(std::wstring_view, bool) override { return {}; }
 	senp::ManagementOperationResult InstallBuiltInPackage(std::wstring_view) override { return {}; }
 	senp::ManagementOperationResult UninstallBuiltInPackage(std::wstring_view) override { return {}; }
+	senp::ManagementOperationResult SetExtensionEnabled(std::wstring_view, bool) override { return {}; }
+	senp::ManagementOperationResult UninstallPackage(std::wstring_view) override { return {}; }
 	senp::ManagementOperationResult Refresh() override
 	{
 		m_log->push_back(L"refresh:" + m_profileHome);

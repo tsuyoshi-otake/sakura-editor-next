@@ -1,7 +1,7 @@
 use sakura_senp::{
     decode_hex, install_package, list_installed, list_uninstalled, pack_directory,
-    serialize_installed_listing, set_extension_enabled, uninstall_built_in, verify_package,
-    TrustPolicy,
+    serialize_installed_listing, set_extension_enabled, uninstall_built_in, uninstall_extension,
+    verify_package, TrustPolicy,
 };
 use std::collections::BTreeMap;
 use std::env;
@@ -10,7 +10,7 @@ use std::io::Write;
 use std::path::Path;
 
 fn usage() -> ! {
-    eprintln!("usage: sakura-senp-tool componentize <core.wasm> <component.wasm> | pack <source-dir> <output.senp> [signing-key-hex] | pack-builtin <source-dir> <output.senp> <hash-file> | verify <package.senp> [publisher=public-key-hex] | inspect-builtin <package.senp> <archive-sha256> | install <package.senp> <root> [publisher=public-key-hex] | install-builtin <package.senp> <root> <archive-sha256> | uninstall-builtin <root> <id> <archive-sha256> | install-dev <package.senp> <root> | list <root> | list-uninstalled <root> | set-enabled <root> <id> <true|false>");
+    eprintln!("usage: sakura-senp-tool componentize <core.wasm> <component.wasm> | pack <source-dir> <output.senp> [signing-key-hex] | pack-builtin <source-dir> <output.senp> <hash-file> | verify <package.senp> [publisher=public-key-hex] | inspect-builtin <package.senp> <archive-sha256> | install <package.senp> <root> [publisher=public-key-hex] | install-builtin <package.senp> <root> <archive-sha256> | uninstall-builtin <root> <id> <archive-sha256> | uninstall <root> <state-name.json> | install-dev <package.senp> <root> | list <root> | list-uninstalled <root> | set-enabled <root> <id> <true|false>");
     std::process::exit(2);
 }
 
@@ -153,6 +153,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 usage();
             }
             uninstall_built_in(Path::new(&root), &id, &expected_archive_sha256)?;
+        }
+        Some("uninstall") => {
+            let root = arguments.next().unwrap_or_else(|| usage());
+            let state_name = arguments.next().unwrap_or_else(|| usage());
+            if arguments.next().is_some() {
+                usage();
+            }
+            // state_name is the `profiles/` file name a `list` row carries:
+            // `<id>.json` for installed rows, the emitted `state` field for
+            // invalid rows — never the manifest id of a corrupt state.
+            uninstall_extension(Path::new(&root), &state_name)?;
         }
         Some("list") => {
             let root = arguments.next().unwrap_or_else(|| usage());

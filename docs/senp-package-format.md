@@ -484,7 +484,7 @@ enabled state を持ちます。publisher/built-in の再インストールは�
 かつ同じ trust class の既存 enabled state を保持します。developer unsigned
 package は常に disabled です。
 
-install、`uninstall-builtin`、`set-enabled` は install root 単位で
+install、`uninstall`、`uninstall-builtin`、`set-enabled` は install root 単位で
 `.senp-root.lock` に対する排他ロック（`std::fs::File::try_lock`）を取り、
 プロセスをまたいで直列化されます。ロックは `try_lock` を 5 ms から 200 ms
 までの指数バックオフでポーリングし、最大 10 秒（native 側 tool の 30 秒
@@ -498,6 +498,30 @@ timeout より十分短い）待っても取れなければ `Busy` で失敗し�
 active profile から隠れた状態を維持します。`install-builtin` による明示的な
 再インストールは tombstone を消し、同じ embedded content を offline で
 再利用できます。tombstone がある extension は `set-enabled` できません。
+tombstone を消すのは `install-builtin`（built-in policy での明示的な
+再インストール）だけで、同じ id の developer / publisher install は
+tombstone を残したままにします。
+
+### 非 built-in package と invalid row の削除
+
+built-in 以外の installed package、および `list` が `"kind":"invalid"`
+として報告する壊れた profile state は、`uninstall` で削除します。
+
+```powershell
+& $tool uninstall $root my-language.json
+& $tool uninstall $root corrupt-pkg.json
+```
+
+第 2 引数は manifest の id ではなく `profiles/` の state file 名です。
+installed row では `<id>.json`、invalid row ではその行が持つ `state`
+field の値をそのまま使います。壊れた state の manifest id は証明できない
+（空や device name になり得る）ため、identity は常に file name 側です。
+このコマンドは tombstone を書きません。tombstone は auto-install される
+built-in 専用で、developer / publisher 用に書くと別 trust class の
+同名 row を永久に隠してしまいます。content cache（`content/<sha>`）の
+回収は範囲外で、別の GC が担当します。`uninstall` も他の mutator と同じ
+`.senp-root.lock` を取り、取れなければ `Busy` で終了コード 1 です。
+存在しない state file は冪等に成功扱いになります。
 
 archive format 自体はインストール UI や marketplace protocol を定義しません。
 Sakura Editor NEXT はローカル開発 package の導入 UI として、Extensions
@@ -510,6 +534,14 @@ directory、存在しない file、または 17 files 以上を含む drop は p
 確認を表示し、enable して install、disabled で install、または cancel を
 明示的に選択します。途中で cancel または install failure になった場合、
 後続 package は処理しませんが、それ以前に成功した install は維持されます。
+
+Extensions View の各行は、VS Code と同じく installed な非 built-in package に
+`有効化` / `無効化` と `アンインストール` を表示します。それぞれ
+`set-enabled` と `uninstall`（state file 名は `<id>.json`）を呼びます。
+invalid row には `state` field を使う `アンインストール` だけを表示し、
+`state` を持たない行には操作を表示しません。アンインストールは VS Code と
+同じく確認ダイアログなしで実行し、失敗した場合だけ tool の診断メッセージを
+表示して直前の一覧を維持します。
 
 marketplace、gallery search、network install は引き続き未実装です。tool を
 直接使う場合は下記のコマンドを使用してください。
@@ -645,7 +677,7 @@ CLI は成功時に結果を stdout へ出し、失敗時は `ErrorCode: detail`
 | `EntryTooLarge` / `ExpandedSizeLimit` / `TooManyEntries` | document 4 MiB、entry 32 MiB、全体 64 MiB、entry 256 件、pack payload 254 件以内か。 |
 | `ReparsePoint` | source、install root、content、profile、state 配下の symlink/reparse point を除去する。 |
 | `PublicationFailed` | install root の staging、profile の atomic publication、破損 content の退避 rename（ファイル使用中など）を確認する。 |
-| `Busy` | 別の install / uninstall / set-enabled が同じ install root で実行中。最大 10 秒待っても取れなかった。完了を待って再実行する。 |
+| `Busy` | 別の install / uninstall / uninstall-builtin / set-enabled が同じ install root で実行中。最大 10 秒待っても取れなかった。完了を待って再実行する。 |
 
 最初に `pack` が作った archive を同じ key/pin で `verify` または
 `inspect-builtin` し、その後 `install-*`、`list` の順に切り分けると、

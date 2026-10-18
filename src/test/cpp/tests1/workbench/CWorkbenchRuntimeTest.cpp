@@ -610,6 +610,10 @@ public:
 		std::wstring_view) override { return Unavailable(); }
 	[[nodiscard]] senp::ManagementOperationResult UninstallBuiltInPackage(
 		std::wstring_view) override { return Unavailable(); }
+	[[nodiscard]] senp::ManagementOperationResult SetExtensionEnabled(
+		std::wstring_view, bool) override { return Unavailable(); }
+	[[nodiscard]] senp::ManagementOperationResult UninstallPackage(
+		std::wstring_view) override { return Unavailable(); }
 	[[nodiscard]] senp::ManagementOperationResult Refresh() override { return Unavailable(); }
 	void Stop() noexcept override { m_snapshot.state = senp::EManagementState::Stopped; }
 	[[nodiscard]] senp::ManagementSnapshot Snapshot() const override { return m_snapshot; }

@@ -13,6 +13,7 @@ SPDX-License-Identifier: Zlib
 #include <chrono>
 #include <cstring>
 #include <filesystem>
+#include <memory>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -233,11 +234,35 @@ public:
 		std::wstring_view extensionId) override
 	{
 		lastBuiltInUninstall = std::wstring(extensionId);
+		if (failUninstall) return Failure();
 		for (auto& extension : snapshot.extensions) {
 			if (extension.id != extensionId) continue;
 			extension.installed = false;
 			extension.enabled = false;
 		}
+		return { senp::EManagementOperationStatus::Succeeded, snapshot };
+	}
+	[[nodiscard]] senp::ManagementOperationResult SetExtensionEnabled(
+		std::wstring_view extensionId, bool enabled) override
+	{
+		lastEnabledId = std::wstring(extensionId);
+		lastEnabledValue = enabled;
+		for (auto& extension : snapshot.extensions) {
+			if (extension.id != extensionId) continue;
+			extension.enabled = enabled;
+		}
+		return { senp::EManagementOperationStatus::Succeeded, snapshot };
+	}
+	[[nodiscard]] senp::ManagementOperationResult UninstallPackage(
+		std::wstring_view stateName) override
+	{
+		lastPackageUninstall = std::wstring(stateName);
+		if (failUninstall) return Failure();
+		const auto stem = std::wstring_view(stateName).substr(
+			0, stateName.size() > 5 ? stateName.size() - 5 : 0);
+		std::erase_if(snapshot.extensions, [&](const auto& extension) {
+			return extension.id == stem || extension.stateName == stateName;
+		});
 		return { senp::EManagementOperationStatus::Succeeded, snapshot };
 	}
 	[[nodiscard]] senp::ManagementOperationResult Refresh() override
@@ -247,9 +272,22 @@ public:
 	void Stop() noexcept override {}
 	[[nodiscard]] senp::ManagementSnapshot Snapshot() const override { return snapshot; }
 
+	// A failed operation keeps the previous snapshot and carries the tool's
+	// diagnostic, as the real service does.
+	[[nodiscard]] senp::ManagementOperationResult Failure() const
+	{
+		auto failed = snapshot;
+		failed.diagnostic = L"package store busy";
+		return { senp::EManagementOperationStatus::Failed, std::move(failed) };
+	}
+
 	senp::ManagementSnapshot snapshot;
+	bool failUninstall = false;
 	std::wstring lastBuiltInInstall;
 	std::wstring lastBuiltInUninstall;
+	std::wstring lastEnabledId;
+	std::wstring lastPackageUninstall;
+	bool lastEnabledValue = false;
 	std::vector<std::wstring> developerInstallPaths;
 	std::vector<bool> developerInstallEnabled;
 };
@@ -382,8 +420,324 @@ TEST(ExtensionsWorkbenchTool, AnInvalidListingRowGetsNoRowAction)
 		.invalidMessage = L"module/extension.wasm",
 	});
 	tool.SetManagementService(&service);
-	// No row action exists for a row the package tool could not read.
+	// A row the package tool could not read, and that names no state file to
+	// remove, has no row action at all: never a button that cannot work.
 	EXPECT_EQ(nullptr, ::FindWindowExW(tool.GetHwnd(), nullptr, L"BUTTON", nullptr));
+}
+
+TEST(ExtensionsWorkbenchTool, AnInvalidListingRowShowsOnlyUninstall)
+{
+	const HWND parent = ::CreateWindowExW(0, L"STATIC", L"Extensions invalid row parent", WS_POPUP,
+		0, 0, 800, 600, nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
+	ASSERT_NE(nullptr, parent);
+	WindowGuard parentGuard(parent);
+
+	workbench::extensions::CExtensionsWorkbenchTool tool;
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout(RECT{ 0, 0, 480, 320 }, 96);
+	FakeManagementService service;
+	service.snapshot.state = senp::EManagementState::Ready;
+	service.snapshot.extensions.push_back({
+		.id = L"pkg-broken",
+		.displayName = L"pkg-broken",
+		.installed = true,
+		.invalidCode = L"checksumMismatch",
+		.invalidMessage = L"module/extension.wasm",
+		.stateName = L"pkg-broken.json",
+	});
+	tool.SetManagementService(&service);
+	// The only action on an unreadable state row is Uninstall: never Enable
+	// or Install.
+	const auto uninstall = std::wstring(CSelectLang::LoadStringW(STR_WORKBENCH_EXTENSIONS_UNINSTALL));
+	EXPECT_NE(nullptr, ::FindWindowExW(tool.GetHwnd(), nullptr, L"BUTTON", uninstall.c_str()));
+	const auto enable = std::wstring(CSelectLang::LoadStringW(STR_WORKBENCH_EXTENSIONS_ENABLE));
+	const auto install = std::wstring(CSelectLang::LoadStringW(STR_WORKBENCH_EXTENSIONS_INSTALL));
+	EXPECT_EQ(nullptr, ::FindWindowExW(tool.GetHwnd(), nullptr, L"BUTTON", enable.c_str()));
+	EXPECT_EQ(nullptr, ::FindWindowExW(tool.GetHwnd(), nullptr, L"BUTTON", install.c_str()));
+}
+
+TEST(ExtensionsWorkbenchTool, UninstallsAnInvalidRowByItsStateFileName)
+{
+	const HWND parent = ::CreateWindowExW(0, L"STATIC", L"Extensions invalid uninstall parent", WS_POPUP,
+		0, 0, 800, 600, nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
+	ASSERT_NE(nullptr, parent);
+	WindowGuard parentGuard(parent);
+
+	workbench::extensions::CExtensionsWorkbenchTool tool;
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout(RECT{ 0, 0, 480, 320 }, 96);
+	FakeManagementService service;
+	service.snapshot.state = senp::EManagementState::Ready;
+	service.snapshot.extensions.push_back({
+		.id = L"pkg-broken",
+		.displayName = L"pkg-broken",
+		.installed = true,
+		.invalidCode = L"checksumMismatch",
+		.stateName = L"pkg-broken.json",
+	});
+	tool.SetManagementService(&service);
+	int modals = 0;
+	tool.SetMessageBoxHook([&modals](HWND, const std::wstring&, const std::wstring&, UINT) {
+		++modals;
+		return IDOK;
+	});
+
+	const auto uninstall = std::wstring(CSelectLang::LoadStringW(STR_WORKBENCH_EXTENSIONS_UNINSTALL));
+	const HWND button = ::FindWindowExW(tool.GetHwnd(), nullptr, L"BUTTON", uninstall.c_str());
+	ASSERT_NE(nullptr, button);
+	(void)::SendMessageW(button, BM_CLICK, 0, 0);
+	// VS Code uninstalls on the click: no confirmation. The service is invoked
+	// with the state file name, never the manifest id of a corrupt state row.
+	EXPECT_EQ(0, modals);
+	EXPECT_EQ(L"pkg-broken.json", service.lastPackageUninstall);
+	EXPECT_EQ(nullptr, ::FindWindowExW(tool.GetHwnd(), nullptr, L"BUTTON", nullptr));
+}
+
+TEST(ExtensionsWorkbenchTool, AnInstalledDeveloperRowShowsDisableAndUninstall)
+{
+	const HWND parent = ::CreateWindowExW(0, L"STATIC", L"Extensions dev row parent", WS_POPUP,
+		0, 0, 800, 600, nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
+	ASSERT_NE(nullptr, parent);
+	WindowGuard parentGuard(parent);
+
+	workbench::extensions::CExtensionsWorkbenchTool tool;
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout(RECT{ 0, 0, 480, 320 }, 96);
+	FakeManagementService service;
+	service.snapshot.state = senp::EManagementState::Ready;
+	service.snapshot.extensions.push_back({
+		.id = L"dev-pkg",
+		.displayName = L"Dev Package",
+		.installed = true,
+		.enabled = true,
+		.trust = L"developer",
+	});
+	tool.SetManagementService(&service);
+	// VS Code parity: an installed extension offers Disable and Uninstall.
+	const auto disable = std::wstring(CSelectLang::LoadStringW(STR_WORKBENCH_EXTENSIONS_DISABLE));
+	const auto enable = std::wstring(CSelectLang::LoadStringW(STR_WORKBENCH_EXTENSIONS_ENABLE));
+	const auto uninstall = std::wstring(CSelectLang::LoadStringW(STR_WORKBENCH_EXTENSIONS_UNINSTALL));
+	EXPECT_NE(nullptr, ::FindWindowExW(tool.GetHwnd(), nullptr, L"BUTTON", disable.c_str()));
+	EXPECT_NE(nullptr, ::FindWindowExW(tool.GetHwnd(), nullptr, L"BUTTON", uninstall.c_str()));
+	EXPECT_EQ(nullptr, ::FindWindowExW(tool.GetHwnd(), nullptr, L"BUTTON", enable.c_str()));
+}
+
+TEST(ExtensionsWorkbenchTool, TogglesADeveloperPackageEnabledStateFromItsRowButton)
+{
+	const HWND parent = ::CreateWindowExW(0, L"STATIC", L"Extensions dev toggle parent", WS_POPUP,
+		0, 0, 800, 600, nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
+	ASSERT_NE(nullptr, parent);
+	WindowGuard parentGuard(parent);
+
+	workbench::extensions::CExtensionsWorkbenchTool tool;
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout(RECT{ 0, 0, 480, 320 }, 96);
+	FakeManagementService service;
+	service.snapshot.state = senp::EManagementState::Ready;
+	service.snapshot.extensions.push_back({
+		.id = L"dev-pkg",
+		.displayName = L"Dev Package",
+		.installed = true,
+		.enabled = true,
+		.trust = L"developer",
+	});
+	tool.SetManagementService(&service);
+
+	const auto disable = std::wstring(CSelectLang::LoadStringW(STR_WORKBENCH_EXTENSIONS_DISABLE));
+	const HWND button = ::FindWindowExW(tool.GetHwnd(), nullptr, L"BUTTON", disable.c_str());
+	ASSERT_NE(nullptr, button);
+	(void)::SendMessageW(button, BM_CLICK, 0, 0);
+	EXPECT_EQ(L"dev-pkg", service.lastEnabledId);
+	EXPECT_FALSE(service.lastEnabledValue);
+	// After disabling, the same slot flips to Enable.
+	const auto enable = std::wstring(CSelectLang::LoadStringW(STR_WORKBENCH_EXTENSIONS_ENABLE));
+	EXPECT_NE(nullptr, ::FindWindowExW(tool.GetHwnd(), nullptr, L"BUTTON", enable.c_str()));
+}
+
+TEST(ExtensionsWorkbenchTool, UninstallsADeveloperPackageWithTheStableIdStateName)
+{
+	const HWND parent = ::CreateWindowExW(0, L"STATIC", L"Extensions dev uninstall parent", WS_POPUP,
+		0, 0, 800, 600, nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
+	ASSERT_NE(nullptr, parent);
+	WindowGuard parentGuard(parent);
+
+	workbench::extensions::CExtensionsWorkbenchTool tool;
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout(RECT{ 0, 0, 480, 320 }, 96);
+	FakeManagementService service;
+	service.snapshot.state = senp::EManagementState::Ready;
+	service.snapshot.extensions.push_back({
+		.id = L"dev-pkg",
+		.displayName = L"Dev Package",
+		.installed = true,
+		.enabled = true,
+		.trust = L"developer",
+	});
+	tool.SetManagementService(&service);
+	int modals = 0;
+	tool.SetMessageBoxHook([&modals](HWND, const std::wstring&, const std::wstring&, UINT) {
+		++modals;
+		return IDOK;
+	});
+
+	const auto uninstall = std::wstring(CSelectLang::LoadStringW(STR_WORKBENCH_EXTENSIONS_UNINSTALL));
+	const HWND button = ::FindWindowExW(tool.GetHwnd(), nullptr, L"BUTTON", uninstall.c_str());
+	ASSERT_NE(nullptr, button);
+	(void)::SendMessageW(button, BM_CLICK, 0, 0);
+	EXPECT_EQ(0, modals);
+	// Uninstall for an installed package uses `<id>.json` as the state name.
+	EXPECT_EQ(L"dev-pkg.json", service.lastPackageUninstall);
+	EXPECT_EQ(nullptr, ::FindWindowExW(tool.GetHwnd(), nullptr, L"BUTTON", nullptr));
+}
+
+TEST(ExtensionsWorkbenchTool, AFailedUninstallKeepsTheRowAndReportsTheDiagnostic)
+{
+	const HWND parent = ::CreateWindowExW(0, L"STATIC", L"Extensions modal close parent", WS_POPUP,
+		0, 0, 800, 600, nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
+	ASSERT_NE(nullptr, parent);
+	WindowGuard parentGuard(parent);
+
+	auto tool = std::make_unique<workbench::extensions::CExtensionsWorkbenchTool>();
+	ASSERT_TRUE(tool->Create(parent));
+	tool->Layout(RECT{ 0, 0, 480, 320 }, 96);
+	auto service = std::make_unique<FakeManagementService>();
+	service->snapshot.state = senp::EManagementState::Ready;
+	service->snapshot.extensions.push_back({
+		.id = L"dev-pkg",
+		.displayName = L"Dev Package",
+		.installed = true,
+		.enabled = true,
+		.trust = L"developer",
+	});
+	service->failUninstall = true;
+	auto* toolPtr = tool.get();
+	tool->SetManagementService(service.get());
+	int changed = 0;
+	tool->SetExtensionsChangedCallback([&changed] { ++changed; });
+	std::vector<std::pair<std::wstring, std::wstring>> modals;
+	tool->SetMessageBoxHook([&modals](HWND, const std::wstring& message, const std::wstring& title, UINT) {
+		modals.emplace_back(message, title);
+		return IDOK;
+	});
+
+	const auto uninstall = std::wstring(CSelectLang::LoadStringW(STR_WORKBENCH_EXTENSIONS_UNINSTALL));
+	const HWND button = ::FindWindowExW(toolPtr->GetHwnd(), nullptr, L"BUTTON", uninstall.c_str());
+	ASSERT_NE(nullptr, button);
+	(void)::SendMessageW(button, BM_CLICK, 0, 0);
+	EXPECT_EQ(L"dev-pkg.json", service->lastPackageUninstall);
+	ASSERT_EQ(1u, modals.size());
+	EXPECT_EQ(L"package store busy", modals[0].first);
+	EXPECT_EQ(std::wstring(CSelectLang::LoadStringW(STR_WORKBENCH_EXTENSIONS_UNINSTALL_FAILED)),
+		modals[0].second);
+	EXPECT_EQ(0, changed);
+	// The previous snapshot stands: the row and its actions are still there.
+	EXPECT_NE(nullptr, ::FindWindowExW(toolPtr->GetHwnd(), nullptr, L"BUTTON", uninstall.c_str()));
+}
+
+TEST(ExtensionsWorkbenchTool, AFailureModalThatClosesTheToolEndsTheUninstall)
+{
+	const HWND parent = ::CreateWindowExW(0, L"STATIC", L"Extensions modal close parent", WS_POPUP,
+		0, 0, 800, 600, nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
+	ASSERT_NE(nullptr, parent);
+	WindowGuard parentGuard(parent);
+
+	auto tool = std::make_unique<workbench::extensions::CExtensionsWorkbenchTool>();
+	ASSERT_TRUE(tool->Create(parent));
+	tool->Layout(RECT{ 0, 0, 480, 320 }, 96);
+	auto service = std::make_unique<FakeManagementService>();
+	service->snapshot.state = senp::EManagementState::Ready;
+	service->snapshot.extensions.push_back({
+		.id = L"dev-pkg",
+		.displayName = L"Dev Package",
+		.installed = true,
+		.enabled = true,
+		.trust = L"developer",
+	});
+	service->failUninstall = true;
+	auto* toolPtr = tool.get();
+	tool->SetManagementService(service.get());
+	int changed = 0;
+	tool->SetExtensionsChangedCallback([&changed] { ++changed; });
+	// The failure report pumps messages: a Close() arriving there nulls the
+	// service and destroys the window. Nothing after the modal may use either.
+	int modals = 0;
+	tool->SetMessageBoxHook([toolPtr, &modals](HWND, const std::wstring&, const std::wstring&, UINT) {
+		++modals;
+		toolPtr->Close();
+		return IDOK;
+	});
+
+	const auto uninstall = std::wstring(CSelectLang::LoadStringW(STR_WORKBENCH_EXTENSIONS_UNINSTALL));
+	const HWND button = ::FindWindowExW(toolPtr->GetHwnd(), nullptr, L"BUTTON", uninstall.c_str());
+	ASSERT_NE(nullptr, button);
+	(void)::SendMessageW(button, BM_CLICK, 0, 0);
+	EXPECT_EQ(1, modals);
+	EXPECT_EQ(L"dev-pkg.json", service->lastPackageUninstall);
+	EXPECT_EQ(0, changed);
+	EXPECT_EQ(nullptr, toolPtr->GetHwnd());
+}
+
+TEST(ExtensionsWorkbenchTool, AFailedBuiltInUninstallReportsThroughTheModalSeam)
+{
+	const HWND parent = ::CreateWindowExW(0, L"STATIC", L"Extensions built-in failure parent", WS_POPUP,
+		0, 0, 800, 600, nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
+	ASSERT_NE(nullptr, parent);
+	WindowGuard parentGuard(parent);
+
+	workbench::extensions::CExtensionsWorkbenchTool tool;
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout(RECT{ 0, 0, 480, 320 }, 96);
+	FakeManagementService service;
+	service.snapshot.state = senp::EManagementState::Ready;
+	service.snapshot.extensions.push_back({
+		.id = L"sakura-indent-rainbow",
+		.displayName = L"Indent Rainbow",
+		.installed = true,
+		.builtIn = true,
+		.enabled = true,
+	});
+	service.failUninstall = true;
+	tool.SetManagementService(&service);
+	int changed = 0;
+	tool.SetExtensionsChangedCallback([&changed] { ++changed; });
+	// Built-in failures use the same seam as every other modal, so a Close()
+	// during them falls under the same post-modal rule.
+	std::vector<std::wstring> titles;
+	tool.SetMessageBoxHook([&titles](HWND, const std::wstring&, const std::wstring& title, UINT) {
+		titles.push_back(title);
+		return IDOK;
+	});
+
+	const auto uninstall = std::wstring(CSelectLang::LoadStringW(STR_WORKBENCH_EXTENSIONS_UNINSTALL));
+	const HWND button = ::FindWindowExW(tool.GetHwnd(), nullptr, L"BUTTON", uninstall.c_str());
+	ASSERT_NE(nullptr, button);
+	(void)::SendMessageW(button, BM_CLICK, 0, 0);
+	EXPECT_EQ(L"sakura-indent-rainbow", service.lastBuiltInUninstall);
+	ASSERT_EQ(1u, titles.size());
+	EXPECT_EQ(std::wstring(CSelectLang::LoadStringW(STR_WORKBENCH_EXTENSIONS_UNINSTALL_FAILED)), titles[0]);
+	EXPECT_EQ(0, changed);
+}
+
+TEST(ExtensionsWorkbenchTool, AModalDuringDeveloperInstallRunsNoServiceCall)
+{
+	DropViewFixture fixture;
+	ASSERT_TRUE(fixture.Initialize());
+	TemporaryPackageFile package(L".senp");
+	ASSERT_TRUE(package.IsValid());
+	auto* toolPtr = &fixture.tool;
+	fixture.tool.SetMessageBoxHook([toolPtr](HWND, const std::wstring&, const std::wstring&, UINT) {
+		// A Close() arriving while the confirmation modal pumps messages must
+		// not let the handler reach the nulled service afterwards.
+		toolPtr->Close();
+		return IDYES;
+	});
+	// The drop path drives InstallDeveloperPackagePath's modal per package.
+	const HWND view = toolPtr->GetHwnd();
+	ASSERT_NE(nullptr, view);
+	(void)SendDrop(view, { package.Path().wstring() });
+	EXPECT_TRUE(fixture.service.developerInstallPaths.empty());
+	EXPECT_TRUE(fixture.service.developerInstallEnabled.empty());
+	EXPECT_EQ(nullptr, toolPtr->GetHwnd());
 }
 
 TEST(ExtensionsWorkbenchTool, RowStatusPaintsTheWindowExclusionBeforeThePackageState)

@@ -218,6 +218,11 @@ struct ExtensionDescriptor final {
 	std::wstring invalidCode;
 	//! Bounded detail text from the invalid row, for display only.
 	std::wstring invalidMessage;
+	//! The `profiles/` state file name a `kind:"invalid"` row emits. It is the
+	//! uninstall identity for a state entry whose manifest id cannot be proven,
+	//! because an invalid row's `id` may be empty or a device name. Empty for rows
+	//! decoded from `kind:"installed"` lines (their state is `<id>.json`).
+	std::wstring stateName;
 	[[nodiscard]] bool operator==(const ExtensionDescriptor&) const = default;
 };
 
@@ -277,6 +282,15 @@ public:
 		std::wstring_view extensionId) = 0;
 	[[nodiscard]] virtual ManagementOperationResult UninstallBuiltInPackage(
 		std::wstring_view extensionId) = 0;
+	//! VS Code Enable/Disable on an installed non-built-in extension.
+	[[nodiscard]] virtual ManagementOperationResult SetExtensionEnabled(
+		std::wstring_view extensionId, bool enabled) = 0;
+	//! Removes one profile state entry. `stateName` is the `profiles/` file
+	//! name: `<id>.json` for an installed row, the invalid row's `stateName`
+	//! field for a corrupt state. Not for built-ins (tombstones belong to
+	//! UninstallBuiltInPackage).
+	[[nodiscard]] virtual ManagementOperationResult UninstallPackage(
+		std::wstring_view stateName) = 0;
 	[[nodiscard]] virtual ManagementOperationResult Refresh() = 0;
 	virtual void Stop() noexcept = 0;
 	[[nodiscard]] virtual ManagementSnapshot Snapshot() const = 0;
@@ -327,6 +341,10 @@ public:
 		std::wstring_view extensionId) override;
 	[[nodiscard]] ManagementOperationResult UninstallBuiltInPackage(
 		std::wstring_view extensionId) override;
+	[[nodiscard]] ManagementOperationResult SetExtensionEnabled(
+		std::wstring_view extensionId, bool enabled) override;
+	[[nodiscard]] ManagementOperationResult UninstallPackage(
+		std::wstring_view stateName) override;
 	[[nodiscard]] ManagementOperationResult Refresh() override;
 	void Stop() noexcept override;
 	[[nodiscard]] ManagementSnapshot Snapshot() const override;

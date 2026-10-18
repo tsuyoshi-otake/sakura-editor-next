@@ -672,7 +672,7 @@ std::wstring BoundedInvalidText(const std::wstring* value, std::size_t bound)
 //! The descriptor for a `kind:"invalid"` line, or for a line the decoder could
 //! not read: it carries no contributions, is not enabled, and owns no runtime.
 ExtensionDescriptor InvalidDescriptor(std::wstring id, std::wstring trust,
-	std::wstring code, std::wstring message)
+	std::wstring code, std::wstring message, std::wstring stateName = {})
 {
 	ExtensionDescriptor row;
 	row.id = std::move(id);
@@ -682,6 +682,7 @@ ExtensionDescriptor InvalidDescriptor(std::wstring id, std::wstring trust,
 	row.trust = std::move(trust);
 	row.invalidCode = std::move(code);
 	row.invalidMessage = std::move(message);
+	row.stateName = std::move(stateName);
 	return row;
 }
 
@@ -782,7 +783,8 @@ ExtensionDescriptor DecodeInstalledLine(std::string_view line)
 			BoundedInvalidText(StringMember(*object, L"id"), kInvalidFieldBound),
 			BoundedInvalidText(StringMember(*object, L"trust"), kInvalidFieldBound),
 			code.empty() ? std::wstring(kInvalidRowCode) : std::move(code),
-			BoundedInvalidText(StringMember(*object, L"message"), kInvalidMessageBound));
+			BoundedInvalidText(StringMember(*object, L"message"), kInvalidMessageBound),
+			BoundedInvalidText(StringMember(*object, L"state"), kInvalidFieldBound));
 	}
 	// Rows must say what they are: a missing or unknown kind never decodes as
 	// installed.
@@ -1015,7 +1017,11 @@ ManagementOperationResult CWin32SenpManagementService::Start()
 				builtIn.Id(), &ExtensionDescriptor::id);
 			installedAsBuiltIn = installed != m_snapshot.extensions.end() && installed->installed
 				&& installed->builtIn;
+			// `current` requires the built-in trust class too: a same-id
+			// developer/publisher copy of identical bytes is a different trust
+			// class and startup must replace it with the embedded package.
 			current = installed != m_snapshot.extensions.end() && installed->installed
+				&& installed->builtIn
 				&& candidate != m_builtInCatalog.end()
 				&& installed->archiveSha256 == candidate->archiveSha256;
 			explicitlyUninstalled = std::ranges::find(m_uninstalledBuiltIns,
@@ -1197,7 +1203,10 @@ ManagementOperationResult CWin32SenpManagementService::InstallBuiltInPackage(
 			extensionId, &ExtensionDescriptor::id);
 		const auto candidate = std::ranges::find(m_builtInCatalog,
 			extensionId, &ExtensionDescriptor::id);
+		// Same trust class too: a developer/publisher copy of identical bytes
+		// is not "already installed": it must be replaced with built-in trust.
 		if (installed != m_snapshot.extensions.end() && installed->installed
+			&& installed->builtIn
 			&& candidate != m_builtInCatalog.end()
 			&& installed->archiveSha256 == candidate->archiveSha256) {
 			return { EManagementOperationStatus::AlreadyReady, m_snapshot };
@@ -1257,6 +1266,49 @@ ManagementOperationResult CWin32SenpManagementService::UninstallBuiltInPackage(
 	if (!uninstalled.launched || uninstalled.timedOut || uninstalled.exitCode != 0) {
 		return Terminal(EManagementOperationStatus::Failed,
 			ProcessDiagnostic(uninstalled, L"Built-in SENP extension could not be uninstalled"));
+	}
+	return ReloadInstalled();
+}
+
+ManagementOperationResult CWin32SenpManagementService::SetExtensionEnabled(
+	std::wstring_view extensionId, bool enabled)
+{
+	if (extensionId.empty() || extensionId.size() > 128 || IsStopped()) {
+		return Terminal(IsStopped() ? EManagementOperationStatus::Stopped
+			: EManagementOperationStatus::InvalidRequest);
+	}
+	{
+		std::lock_guard lock(m_mutex);
+		const auto installed = std::ranges::find(m_snapshot.extensions,
+			extensionId, &ExtensionDescriptor::id);
+		if (installed == m_snapshot.extensions.end() || !installed->installed
+			|| installed->builtIn || !installed->invalidCode.empty()) {
+			return { EManagementOperationStatus::InvalidRequest, m_snapshot };
+		}
+	}
+	const auto result = RunTool({
+		L"set-enabled", m_installRoot, std::wstring(extensionId), enabled ? L"true" : L"false",
+	}, m_hooks);
+	if (!result.launched || result.timedOut || result.exitCode != 0) {
+		return Terminal(EManagementOperationStatus::Failed,
+			ProcessDiagnostic(result, L"SENP extension could not change enable state"));
+	}
+	return ReloadInstalled();
+}
+
+ManagementOperationResult CWin32SenpManagementService::UninstallPackage(
+	std::wstring_view stateName)
+{
+	if (stateName.empty() || stateName.size() > 256 || IsStopped()) {
+		return Terminal(IsStopped() ? EManagementOperationStatus::Stopped
+			: EManagementOperationStatus::InvalidRequest);
+	}
+	const auto uninstalled = RunTool({
+		L"uninstall", m_installRoot, std::wstring(stateName),
+	}, m_hooks);
+	if (!uninstalled.launched || uninstalled.timedOut || uninstalled.exitCode != 0) {
+		return Terminal(EManagementOperationStatus::Failed,
+			ProcessDiagnostic(uninstalled, L"SENP extension could not be uninstalled"));
 	}
 	return ReloadInstalled();
 }

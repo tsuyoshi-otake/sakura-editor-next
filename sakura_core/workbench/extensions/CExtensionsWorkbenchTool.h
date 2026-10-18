@@ -16,6 +16,7 @@ SPDX-License-Identifier: Zlib
 #include <functional>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace senp {
@@ -48,6 +49,17 @@ public:
 	bool Reparent(HWND parent) noexcept;
 	void SetPalette(const theme::ThemePalette& palette);
 	void SetManagementService(senp::ISenpManagementService* service) noexcept;
+	//! Test seam replacing MessageBoxW: hooks can answer programmatically and
+	//! simulate a Close() mid-modal to prove post-modal re-validation. An empty
+	//! hook keeps the real modal.
+	void SetMessageBoxHook(
+		std::function<int(HWND, const std::wstring&, const std::wstring&, UINT)> hook) noexcept
+	{
+		m_messageBox = std::move(hook);
+	}
+	//! Every modal call goes through this so the hook can replace MessageBoxW
+	//! and so post-modal re-validation has one choke point.
+	int ShowModalMessageBox(const std::wstring& message, const std::wstring& title, UINT flags);
 	//! The window's package composition reports which snapshot packages it
 	//! excluded and why; the row paints that reason instead of a bare state.
 	void SetExtensionExclusionQuery(
@@ -69,16 +81,33 @@ public:
 
 	[[nodiscard]] HWND GetHwnd() const noexcept { return m_window; }
 
-private:
+	//! Row-action kinds: Install/Uninstall on built-ins; Enable/Disable plus
+	//! Uninstall on installed non-built-ins; Uninstall only on invalid rows.
 	enum class ERowAction {
 		Install,
 		Uninstall,
+		Enable,
+		Disable,
 	};
+	//! Which service operation a row action invokes: built-ins keep the
+	//! tombstone flow, packages use the plain state removal, invalid rows are
+	//! removed by their state file name.
+	enum class ERowTarget {
+		BuiltIn,
+		Package,
+		Invalid,
+	};
+
+private:
 	struct ActionButtonState final {
 		HWND window = nullptr;
 		std::wstring extensionId;
+		//! The `profiles/` state file name for Invalid targets (`<id>.json` is
+		//! derived for Package targets).
+		std::wstring stateName;
 		std::size_t rowIndex = 0;
 		ERowAction action = ERowAction::Install;
+		ERowTarget target = ERowTarget::BuiltIn;
 		bool hovered = false;
 		bool trackingMouse = false;
 	};
@@ -103,6 +132,21 @@ private:
 	void DestroyActionButtons() noexcept;
 	void InstallBuiltIn(std::wstring_view extensionId);
 	void UninstallBuiltIn(std::wstring_view extensionId);
+	void SetPackageEnabled(std::wstring_view extensionId, bool enabled);
+	void UninstallPackage(const ActionButtonState& row);
+	//! The service/window pair a modal may have torn down while pumping
+	//! messages. Any path that continues after a ShowModalMessageBox return
+	//! checks it again before touching the service.
+	[[nodiscard]] bool IsUsable() const noexcept
+	{
+		return m_service != nullptr && m_window != nullptr && ::IsWindow(m_window) != FALSE;
+	}
+	//! The row actions a descriptor gets (VS Code parity): built-ins keep
+	//! Install/Uninstall; installed non-built-ins get Enable/Disable plus
+	//! Uninstall; invalid rows get only Uninstall by state name, and nothing
+	//! when they name no state file.
+	[[nodiscard]] static std::vector<std::pair<ERowAction, ERowTarget>> RowActions(
+		const senp::ExtensionDescriptor& extension);
 	[[nodiscard]] EDeveloperPackageInstallResult InstallDeveloperPackagePath(
 		std::wstring_view packagePath);
 	void HandleDroppedFiles(HDROP drop) noexcept;
@@ -123,6 +167,7 @@ private:
 	senp::ISenpManagementService* m_service = nullptr;
 	std::function<std::optional<workbench::SenpWindowExtensionExclusion>(std::wstring_view)> m_exclusionQuery;
 	std::function<void()> m_extensionsChanged;
+	std::function<int(HWND, const std::wstring&, const std::wstring&, UINT)> m_messageBox;
 	int m_scrollOffset = 0;
 	int m_contentHeight = 0;
 	bool m_active = false;

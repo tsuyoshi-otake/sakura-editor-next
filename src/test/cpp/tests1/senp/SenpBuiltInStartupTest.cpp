@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 #include "senp/SenpManagementService.h"
 
+#include <memory>
 #include <set>
 
 // Every embedded built-in is installed by default (#337), so startup brings a
@@ -61,10 +62,11 @@ std::string CatalogJson(std::string_view id)
 		+ R"json(","signed":false,"manifest":)json" + ManifestJson(id) + "}";
 }
 
-std::string InstalledLine(std::string_view id)
+std::string InstalledLine(std::string_view id, std::string_view trust = "builtin")
 {
 	return std::string(R"json({"kind":"installed","archiveSha256":")json") + std::string(64, 'a')
-		+ R"json(","enabled":true,"signed":false,"trust":"builtin","compatible":true,)json"
+		+ R"json(","enabled":true,"signed":false,"trust":")json" + std::string(trust)
+		+ R"json(","compatible":true,)json"
 		+ R"json("extensionPath":"C:/senp/content","moduleSha256":null,"manifest":)json"
 		+ ManifestJson(id) + "}\n";
 }
@@ -99,8 +101,25 @@ struct FakeTool final {
 			installedIds.insert(WideToUtf8(id));
 			return result;
 		}
+		if (verb == L"set-enabled") {
+			setEnabledCalls.push_back(arguments.at(2) + L"=" + arguments.at(3));
+			if (failMutators) {
+				result.exitCode = 1;
+				result.error = "Busy: another mutator holds the install root lock";
+			}
+			return result;
+		}
+		if (verb == L"uninstall") {
+			uninstallCalls.push_back(arguments.at(2));
+			if (failMutators) {
+				result.exitCode = 1;
+				result.error = "Busy: another mutator holds the install root lock";
+			}
+			return result;
+		}
 		if (verb == L"list") {
 			for (const auto& id : installedIds) result.output += InstalledLine(id);
+			for (const auto& line : extraRows) result.output += line;
 			return result;
 		}
 		if (verb == L"list-uninstalled") {
@@ -119,8 +138,12 @@ struct FakeTool final {
 	}
 
 	std::wstring failId;
+	bool failMutators = false;
 	std::set<std::string> installedIds;
+	std::vector<std::string> extraRows;
 	std::vector<std::wstring> installCalls;
+	std::vector<std::wstring> setEnabledCalls;
+	std::vector<std::wstring> uninstallCalls;
 };
 
 TEST(SenpBuiltInStartup, OneFailedInstallStopsNoOtherAndTheNextStartRetriesOnlyIt)
@@ -197,6 +220,127 @@ TEST(SenpBuiltInStartup, ATruncatedListingIsATypedFailureThatKeepsTheSnapshot)
 	// The previous snapshot survives; no cut stream was parsed.
 	ASSERT_EQ(1U, truncated.snapshot.extensions.size());
 	EXPECT_EQ(L"sakura-indent-rainbow", truncated.snapshot.extensions.front().id);
+}
+
+// A same-id developer or publisher copy of a default-installed built-in is a
+// different trust class: identical archive bytes do not make it "current" -
+// startup must replace it with the embedded package (#362).
+TEST(SenpBuiltInStartup, ADeveloperCopyOfABuiltInIsReplacedAtStart)
+{
+	auto fake = std::make_shared<FakeTool>();
+	// A developer-trust row already holds identical archive bytes of a
+	// default-installed built-in. Same sha, different trust class.
+	fake->extraRows.push_back(InstalledLine("sakura-indent-rainbow", "developer"));
+	senp::CWin32SenpManagementService service(L"C:\\senp-test-profile", {
+		.runTool = [fake](const auto& args) { return (*fake)(args); },
+		.embeddedResource = [](int id) {
+			if (id % 2 == 1) {
+				std::vector<std::byte> hash(64, std::byte{ 'a' });
+				return std::optional(std::move(hash));
+			}
+			return std::optional(std::vector<std::byte>{ std::byte{ 0x7f } });
+		},
+	});
+	const auto started = service.Start();
+	EXPECT_TRUE(started.Succeeded());
+	// The developer copy must have been refreshed with the embedded built-in -
+	// not accepted as current and left in the wrong trust class.
+	EXPECT_TRUE(std::ranges::find(fake->installCalls, L"sakura-indent-rainbow")
+		!= fake->installCalls.end());
+}
+
+// The row-level Install over that same developer copy is not "already
+// installed" either: the explicit built-in install must run (#362).
+TEST(SenpBuiltInStartup, InstallingABuiltInOverADeveloperCopyIsNotAlreadyReady)
+{
+	auto fake = std::make_shared<FakeTool>();
+	fake->extraRows.push_back(InstalledLine("sakura-indent-rainbow", "developer"));
+	// The startup replacement fails, so the developer copy is still the
+	// listed row when the explicit install arrives; the catalog is loaded.
+	fake->failId = L"sakura-indent-rainbow";
+	senp::CWin32SenpManagementService service(L"C:\\senp-test-profile", {
+		.runTool = [fake](const auto& args) { return (*fake)(args); },
+		.embeddedResource = [](int id) {
+			if (id % 2 == 1) {
+				std::vector<std::byte> hash(64, std::byte{ 'a' });
+				return std::optional(std::move(hash));
+			}
+			return std::optional(std::vector<std::byte>{ std::byte{ 0x7f } });
+		},
+	});
+	(void)service.Start();
+	const auto startupInstalls = std::ranges::count(fake->installCalls, L"sakura-indent-rainbow");
+	ASSERT_GE(startupInstalls, 1);
+	const auto snapshot = service.Snapshot();
+	const auto listed = std::ranges::find(snapshot.extensions,
+		L"sakura-indent-rainbow", &senp::ExtensionDescriptor::id);
+	ASSERT_NE(snapshot.extensions.end(), listed);
+	ASSERT_FALSE(listed->builtIn);
+
+	fake->failId.clear();
+	const auto installed = service.InstallBuiltInPackage(L"sakura-indent-rainbow");
+	EXPECT_EQ(senp::EManagementOperationStatus::Succeeded, installed.status);
+	EXPECT_EQ(startupInstalls + 1, std::ranges::count(fake->installCalls, L"sakura-indent-rainbow"));
+}
+
+namespace {
+
+std::unique_ptr<senp::CWin32SenpManagementService> ServiceWithRows(std::shared_ptr<FakeTool> fake)
+{
+	return std::make_unique<senp::CWin32SenpManagementService>(L"C:\\senp-test-profile",
+		senp::detail::SenpServiceHooks{
+			.runTool = [fake](const auto& args) { return (*fake)(args); },
+			.embeddedResource = [](int) { return std::optional<std::vector<std::byte>>{}; },
+		});
+}
+
+} // namespace
+
+TEST(SenpBuiltInStartup, SetEnabledRunsTheToolAndAFailedRunKeepsTheSnapshot)
+{
+	auto fake = std::make_shared<FakeTool>();
+	fake->extraRows.push_back(InstalledLine("dev-pkg", "developer"));
+	auto service = ServiceWithRows(fake);
+	ASSERT_TRUE(service->Refresh().Succeeded());
+	ASSERT_EQ(1U, service->Snapshot().extensions.size());
+
+	const auto disabled = service->SetExtensionEnabled(L"dev-pkg", false);
+	EXPECT_TRUE(disabled.Succeeded());
+	ASSERT_EQ(1U, fake->setEnabledCalls.size());
+	EXPECT_EQ(L"dev-pkg=false", fake->setEnabledCalls.front());
+
+	fake->failMutators = true;
+	const auto failed = service->SetExtensionEnabled(L"dev-pkg", true);
+	EXPECT_EQ(senp::EManagementOperationStatus::Failed, failed.status);
+	EXPECT_FALSE(failed.snapshot.diagnostic.empty());
+	// The snapshot keeps its previous rows on a failed operation.
+	ASSERT_EQ(1U, failed.snapshot.extensions.size());
+	EXPECT_EQ(L"dev-pkg", failed.snapshot.extensions.front().id);
+
+	// A built-in or unknown id is refused before any tool call: only the two
+	// real calls above reached the tool.
+	EXPECT_EQ(senp::EManagementOperationStatus::InvalidRequest,
+		service->SetExtensionEnabled(L"sakura-indent-rainbow", false).status);
+	EXPECT_EQ(2U, fake->setEnabledCalls.size());
+}
+
+TEST(SenpBuiltInStartup, UninstallPackageRunsTheToolByStateNameAndFailsWithADiagnostic)
+{
+	auto fake = std::make_shared<FakeTool>();
+	fake->extraRows.push_back(InstalledLine("dev-pkg", "developer"));
+	auto service = ServiceWithRows(fake);
+	ASSERT_TRUE(service->Refresh().Succeeded());
+
+	const auto removed = service->UninstallPackage(L"dev-pkg.json");
+	EXPECT_TRUE(removed.Succeeded());
+	ASSERT_EQ(1U, fake->uninstallCalls.size());
+	EXPECT_EQ(L"dev-pkg.json", fake->uninstallCalls.front());
+
+	fake->failMutators = true;
+	const auto failed = service->UninstallPackage(L"corrupt.json");
+	EXPECT_EQ(senp::EManagementOperationStatus::Failed, failed.status);
+	EXPECT_FALSE(failed.snapshot.diagnostic.empty());
+	ASSERT_EQ(1U, failed.snapshot.extensions.size());
 }
 
 } // namespace

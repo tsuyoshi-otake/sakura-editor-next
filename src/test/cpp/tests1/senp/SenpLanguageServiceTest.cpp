@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 Copyright (C) 2026, Sakura Editor Organization
 
@@ -33,6 +33,14 @@ public:
 		return { senp::EManagementOperationStatus::InvalidRequest, snapshot };
 	}
 	senp::ManagementOperationResult UninstallBuiltInPackage(std::wstring_view) override
+	{
+		return { senp::EManagementOperationStatus::InvalidRequest, snapshot };
+	}
+	senp::ManagementOperationResult SetExtensionEnabled(std::wstring_view, bool) override
+	{
+		return { senp::EManagementOperationStatus::InvalidRequest, snapshot };
+	}
+	senp::ManagementOperationResult UninstallPackage(std::wstring_view) override
 	{
 		return { senp::EManagementOperationStatus::InvalidRequest, snapshot };
 	}

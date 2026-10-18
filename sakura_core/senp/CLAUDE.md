@@ -277,6 +277,23 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   the active profile state. Startup must honor that tombstone across product
   updates, while explicit reinstall clears it. Embedded package resources and
   immutable content cache remain available for an offline reinstall.
+  Only an explicit `install-builtin` clears the tombstone: a developer or
+  publisher install of a tombstoned id leaves it in place (#362). Non-built-in
+  installed packages and `kind:"invalid"` listing rows are removed with
+  `uninstall <root> <state-name.json>`: the identity is the `profiles/` state
+  file name (`<id>.json` installed, the row's `state` field when invalid),
+  never an unprovable manifest id. It writes no tombstone — tombstones exist
+  only to block built-in auto-install — and content cache GC stays a separate
+  concern. Non-built-in enable/disable goes through `set-enabled`, and startup
+  only treats a built-in as current when the installed copy also carries
+  built-in trust.
+- The package authority grants `tools.github.repository.read` only to an
+  installed, enabled, valid, schema-2, compatible package — trust class does
+  not matter (#362 KEEP decision): an enabled developer package is the
+  development path for GitHub-reading extensions, matching VS Code where any
+  installed extension may request GitHub access. A disabled, invalid,
+  incompatible, or not-installed package receives nothing; a window's
+  composition exclusion is separate from grants and still blocks activation.
 - Because a missing default package is installed whenever the profile lacks it,
   flipping a built-in to installed-by-default reaches existing profiles on
   their first window after the update, not only fresh profiles. The GitHub

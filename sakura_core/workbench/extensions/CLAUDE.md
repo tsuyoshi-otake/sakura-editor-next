@@ -18,6 +18,29 @@
   uninstall keeps the catalog row and changes the action back to `Install`;
   runtime and language consumers observe the management revision and stop using
   the removed package immediately.
+- Row actions per row kind (VS Code parity): built-in rows keep
+  Install/Uninstall; an installed non-built-in package gets Enable/Disable
+  (toggling by current state) plus Uninstall; an invalid listing row gets
+  Uninstall only, keyed by the row's `state` file name, never by a manifest
+  id the corrupt state cannot prove. An invalid row that names no state file
+  gets no action rather than a button that cannot work. Uninstall routes
+  through `UninstallPackage` (plain state removal), Enable/Disable through
+  `SetExtensionEnabled`; both keep the previous snapshot and surface the
+  tool's diagnostic (e.g. a `Busy` lock failure) on error.
+- Uninstall runs on the click with no confirmation dialog, as VS Code's
+  Uninstall action does, for built-in and installed rows alike. The developer
+  trust prompt on install is the only confirmation in this View; it is a trust
+  decision, not an "are you sure".
+- Modals pump messages: a `Close()` during any MessageBox can null
+  `m_service`/`m_window`. Every box (the developer trust prompt and every
+  failure report) routes through `ShowModalMessageBox`; never call
+  `::MessageBoxW` directly here. The `SetMessageBoxHook` seam lets tests
+  answer and close mid-modal. A path that continues after a modal re-checks
+  `IsUsable()` before touching the service; a failure report is the last
+  step of its action and is followed only by the null-safe `Refresh()`. The
+  tool itself is owned by the workbench host for the window's lifetime and is
+  never deleted from inside its own message dispatch, so `this` outlives any
+  modal; only its HWND and service may vanish.
 - Extension rows contain identity and compact status metadata. `README.md`
   belongs to an extension-details editor and must not be rendered as an inline
   card in the list. Until that editor exists, rows remain non-activating rather

@@ -97,6 +97,22 @@ TEST(SenpControlPackageAuthority, NeverGrantsAnInvalidListingRow)
 	EXPECT_FALSE(authority.Resolve(L"profile1", L"pkg-broken").has_value());
 }
 
+TEST(SenpControlPackageAuthority, AnEnabledDeveloperPackageGetsExactlyItsDeclaredCapability)
+{
+	// KEEP: a user-enabled developer package can request the same tool grants
+	// as any installed extension (VS Code parity). The grant is bound to the
+	// declared capability only: trust class never widens it.
+	auto developer = Extension(L"dev.github-reader", Digest(L'b'));
+	developer.trust = L"developer";
+	CSenpControlPackageAuthority authority;
+	const auto published = authority.Publish(L"profile1", Snapshot({ developer }));
+	EXPECT_EQ(Status::Published, published.Status());
+	EXPECT_EQ(1U, published.Approved());
+	const auto resolved = authority.Resolve(L"profile1", L"dev.github-reader");
+	ASSERT_TRUE(resolved.has_value());
+	EXPECT_EQ(SenpToolCapability::GitHubRepositoryRead, resolved->Capabilities());
+}
+
 TEST(SenpControlPackageAuthority, RefusesADigestNoOwnerRequestCanCarry)
 {
 	const std::wstring rejected[] = { std::wstring(63, L'a'), std::wstring(64, L'A'),

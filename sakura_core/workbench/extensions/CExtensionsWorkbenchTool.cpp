@@ -20,6 +20,7 @@ SPDX-License-Identifier: Zlib
 #include <algorithm>
 #include <array>
 #include <filesystem>
+#include <map>
 
 namespace workbench::extensions {
 namespace {
@@ -77,10 +78,18 @@ std::wstring Localized(UINT resourceId)
 	return std::wstring(CSelectLang::LoadStringW(resourceId));
 }
 
-std::wstring ActionLabel(bool installed)
+std::wstring ActionLabel(CExtensionsWorkbenchTool::ERowAction action)
 {
-	return Localized(installed
-		? STR_WORKBENCH_EXTENSIONS_UNINSTALL : STR_WORKBENCH_EXTENSIONS_INSTALL);
+	switch (action) {
+	case CExtensionsWorkbenchTool::ERowAction::Uninstall:
+		return Localized(STR_WORKBENCH_EXTENSIONS_UNINSTALL);
+	case CExtensionsWorkbenchTool::ERowAction::Enable:
+		return Localized(STR_WORKBENCH_EXTENSIONS_ENABLE);
+	case CExtensionsWorkbenchTool::ERowAction::Disable:
+		return Localized(STR_WORKBENCH_EXTENSIONS_DISABLE);
+	default:
+		return Localized(STR_WORKBENCH_EXTENSIONS_INSTALL);
+	}
 }
 
 std::wstring DeveloperPackageFilter()
@@ -97,12 +106,12 @@ std::wstring DeveloperPackageFilter()
 	return filter;
 }
 
-void ShowLocalizedMessage(HWND owner, UINT messageId, UINT titleId, UINT flags) noexcept
+void ShowLocalizedMessage(CExtensionsWorkbenchTool* tool, UINT messageId, UINT titleId, UINT flags) noexcept
 {
 	try {
 		const auto message = Localized(messageId);
 		const auto title = Localized(titleId);
-		::MessageBoxW(owner, message.c_str(), title.c_str(), flags);
+		tool->ShowModalMessageBox(message, title, flags);
 	}
 	catch (...) {
 		::OutputDebugStringW(L"Sakura Editor NEXT: localized Extensions message could not be shown.\n");
@@ -359,7 +368,8 @@ std::wstring CExtensionsWorkbenchTool::ComposeExtensionRowStatus(
 	const senp::ExtensionDescriptor& extension,
 	const workbench::SenpWindowExtensionExclusion* exclusion)
 {
-	// An invalid listing row gets an explicit error status and no row action.
+	// An invalid listing row gets an explicit error status; its only action is
+	// Uninstall by state file name (see RowActions).
 	// The code/message are untranslated tool tokens; only the label localizes.
 	if (!extension.invalidCode.empty()) {
 		const std::wstring invalidLabel = Localized(STR_WORKBENCH_EXTENSIONS_STATUS_INVALID);
@@ -474,32 +484,38 @@ void CExtensionsWorkbenchTool::SyncActionButtons()
 	std::vector<ActionButtonState> next;
 	for (std::size_t index = 0; index < snapshot.extensions.size(); ++index) {
 		const auto& extension = snapshot.extensions[index];
-		if (!extension.builtIn) continue;
-		const auto action = extension.installed ? ERowAction::Uninstall : ERowAction::Install;
-		auto existing = std::ranges::find(m_actionButtons, extension.id,
-			&ActionButtonState::extensionId);
-		ActionButtonState state;
-		if (existing != m_actionButtons.end()) {
-			state = *existing;
-		} else {
-			state.extensionId = extension.id;
-			state.window = ::CreateWindowExW(0, L"BUTTON", L"",
-				WS_CHILD | WS_TABSTOP | BS_OWNERDRAW,
-				0, 0, 0, 0, m_window, nullptr, G_AppInstance(), nullptr);
-			if (state.window == nullptr
-				|| ::SetWindowSubclass(state.window, ActionButtonSubclassProc,
-					kActionButtonSubclassId, reinterpret_cast<DWORD_PTR>(this)) == FALSE) {
-				if (state.window != nullptr) ::DestroyWindow(state.window);
-				continue;
+		for (const auto& [action, target] : RowActions(extension)) {
+			// Rows are keyed by (id, stateName, action): invalid rows may share
+			// an empty manifest id, so the state name disambiguates them.
+			auto existing = std::ranges::find_if(m_actionButtons, [&](const auto& button) {
+				return button.extensionId == extension.id && button.action == action
+					&& button.stateName == extension.stateName;
+			});
+			ActionButtonState state;
+			if (existing != m_actionButtons.end()) {
+				state = *existing;
+			} else {
+				state.extensionId = extension.id;
+				state.window = ::CreateWindowExW(0, L"BUTTON", L"",
+					WS_CHILD | WS_TABSTOP | BS_OWNERDRAW,
+					0, 0, 0, 0, m_window, nullptr, G_AppInstance(), nullptr);
+				if (state.window == nullptr
+					|| ::SetWindowSubclass(state.window, ActionButtonSubclassProc,
+						kActionButtonSubclassId, reinterpret_cast<DWORD_PTR>(this)) == FALSE) {
+					if (state.window != nullptr) ::DestroyWindow(state.window);
+					continue;
+				}
 			}
+			state.rowIndex = index;
+			state.action = action;
+			state.target = target;
+			state.stateName = extension.stateName;
+			::SetWindowTextW(state.window, ActionLabel(action).data());
+			const int controlId = kActionButtonControlBase + static_cast<int>(next.size());
+			::SetWindowLongPtrW(state.window, GWLP_ID, controlId);
+			::SendMessageW(state.window, WM_SETFONT, reinterpret_cast<WPARAM>(m_font.Get()), TRUE);
+			next.push_back(std::move(state));
 		}
-		state.rowIndex = index;
-		state.action = action;
-		::SetWindowTextW(state.window, ActionLabel(action == ERowAction::Uninstall).data());
-		const int controlId = kActionButtonControlBase + static_cast<int>(next.size());
-		::SetWindowLongPtrW(state.window, GWLP_ID, controlId);
-		::SendMessageW(state.window, WM_SETFONT, reinterpret_cast<WPARAM>(m_font.Get()), TRUE);
-		next.push_back(std::move(state));
 	}
 	for (auto& obsolete : m_actionButtons) {
 		const auto retained = std::ranges::find(next, obsolete.window, &ActionButtonState::window);
@@ -507,13 +523,20 @@ void CExtensionsWorkbenchTool::SyncActionButtons()
 	}
 	m_actionButtons = std::move(next);
 	HDC measureDc = ::GetDC(m_window);
+	// Buttons stack right-to-left inside their row: the rightmost slot is the
+	// row's last action (Uninstall keeps the same right edge built-ins had).
+	std::map<std::size_t, int> rowRight;
 	for (const auto& button : m_actionButtons) {
 		const int rowTop = diagnosticHeight + static_cast<int>(button.rowIndex) * rowHeight
 			- m_scrollOffset;
 		const int top = rowTop + rowHeight - bottom - buttonHeight;
 		const int buttonWidth = ActionButtonWidth(
-			measureDc, ActionLabel(button.action == ERowAction::Uninstall), m_font.Get(), m_dpi);
-		const int left = std::max<LONG>(client.left, client.right - right - buttonWidth);
+			measureDc, ActionLabel(button.action), m_font.Get(), m_dpi);
+		int edge = rowRight.count(button.rowIndex)
+			? rowRight[button.rowIndex]
+			: client.right - right;
+		const int left = std::max<LONG>(client.left, edge - buttonWidth);
+		rowRight[button.rowIndex] = left - Scale(8, m_dpi);
 		const bool visible = top < client.bottom && top + buttonHeight > client.top;
 		::SetWindowPos(button.window, HWND_TOP, left, top, buttonWidth, buttonHeight,
 			SWP_NOACTIVATE | SWP_NOCOPYBITS | (visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
@@ -562,7 +585,7 @@ void CExtensionsWorkbenchTool::InstallBuiltIn(std::wstring_view extensionId)
 			? Localized(STR_WORKBENCH_EXTENSIONS_BUILTIN_INSTALL_FAILED)
 			: result.snapshot.diagnostic;
 		const auto title = Localized(STR_WORKBENCH_EXTENSIONS_INSTALL_FAILED);
-		::MessageBoxW(m_window, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
+		ShowModalMessageBox(message, title, MB_OK | MB_ICONERROR);
 	}
 	else if (m_extensionsChanged) {
 		m_extensionsChanged();
@@ -579,7 +602,77 @@ void CExtensionsWorkbenchTool::UninstallBuiltIn(std::wstring_view extensionId)
 			? Localized(STR_WORKBENCH_EXTENSIONS_BUILTIN_UNINSTALL_FAILED)
 			: result.snapshot.diagnostic;
 		const auto title = Localized(STR_WORKBENCH_EXTENSIONS_UNINSTALL_FAILED);
-		::MessageBoxW(m_window, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
+		ShowModalMessageBox(message, title, MB_OK | MB_ICONERROR);
+	}
+	else if (m_extensionsChanged) {
+		m_extensionsChanged();
+	}
+	Refresh();
+}
+
+std::vector<std::pair<CExtensionsWorkbenchTool::ERowAction, CExtensionsWorkbenchTool::ERowTarget>>
+CExtensionsWorkbenchTool::RowActions(const senp::ExtensionDescriptor& extension)
+{
+	// An invalid state row can only be removed: never enabled or installed.
+	if (!extension.invalidCode.empty()) {
+		if (extension.stateName.empty()) return {};
+		return { { ERowAction::Uninstall, ERowTarget::Invalid } };
+	}
+	if (extension.builtIn) {
+		return { { extension.installed ? ERowAction::Uninstall : ERowAction::Install,
+			ERowTarget::BuiltIn } };
+	}
+	if (!extension.installed) return {};
+	// VS Code shows Enable/Disable and Uninstall on installed extensions.
+	// Order is right-to-left placement: Uninstall keeps the right edge every
+	// row already used for it.
+	return {
+		{ ERowAction::Uninstall, ERowTarget::Package },
+		{ extension.enabled ? ERowAction::Disable : ERowAction::Enable, ERowTarget::Package },
+	};
+}
+
+int CExtensionsWorkbenchTool::ShowModalMessageBox(
+	const std::wstring& message, const std::wstring& title, UINT flags)
+{
+	if (m_messageBox) return m_messageBox(m_window, message, title, flags);
+	return ::MessageBoxW(m_window, message.c_str(), title.c_str(), flags);
+}
+
+void CExtensionsWorkbenchTool::SetPackageEnabled(std::wstring_view extensionId, bool enabled)
+{
+	if (!IsUsable() || extensionId.empty()) return;
+	const auto result = m_service->SetExtensionEnabled(extensionId, enabled);
+	if (!result.Succeeded()) {
+		const std::wstring message = result.snapshot.diagnostic.empty()
+			? Localized(STR_WORKBENCH_EXTENSIONS_SET_ENABLED_FAILED)
+			: result.snapshot.diagnostic;
+		const auto title = Localized(enabled
+			? STR_WORKBENCH_EXTENSIONS_ENABLE : STR_WORKBENCH_EXTENSIONS_DISABLE);
+		ShowModalMessageBox(message, title, MB_OK | MB_ICONERROR);
+	}
+	else if (m_extensionsChanged) {
+		m_extensionsChanged();
+	}
+	Refresh();
+}
+
+void CExtensionsWorkbenchTool::UninstallPackage(const ActionButtonState& row)
+{
+	if (!IsUsable()) return;
+	// Invalid rows uninstall by their state file name; installed packages by
+	// `<id>.json`. The service/tool validates the name on its own boundary.
+	const std::wstring identity = row.target == ERowTarget::Invalid
+		? row.stateName : row.extensionId + L".json";
+	if (identity.empty() || identity == L".json") return;
+	// VS Code uninstalls on the click, without a confirmation dialog, exactly
+	// like the built-in rows here. The only modal is the failure report, and
+	// nothing but the null-safe Refresh runs after it.
+	const auto result = m_service->UninstallPackage(identity);
+	if (!result.Succeeded()) {
+		const auto title = Localized(STR_WORKBENCH_EXTENSIONS_UNINSTALL_FAILED);
+		const std::wstring failure = result.snapshot.diagnostic.empty() ? title : result.snapshot.diagnostic;
+		ShowModalMessageBox(failure, title, MB_OK | MB_ICONERROR);
 	}
 	else if (m_extensionsChanged) {
 		m_extensionsChanged();
@@ -613,16 +706,18 @@ CExtensionsWorkbenchTool::InstallDeveloperPackagePath(std::wstring_view packageP
 	}
 	const auto confirmation = Localized(STR_WORKBENCH_EXTENSIONS_DEVELOPER_WARNING);
 	const auto confirmationTitle = Localized(STR_WORKBENCH_EXTENSIONS_DEVELOPER_WARNING_TITLE);
-	const int choice = ::MessageBoxW(m_window,
-		confirmation.c_str(), confirmationTitle.c_str(),
+	const int choice = ShowModalMessageBox(confirmation, confirmationTitle,
 		MB_YESNOCANCEL | MB_ICONWARNING | MB_DEFBUTTON3);
 	if (choice == IDCANCEL) return EDeveloperPackageInstallResult::Cancelled;
+	// The modal pumped messages: a Close() during it nulled the service and
+	// destroyed the window. Dereferencing either now is a use-after-null.
+	if (!IsUsable()) return EDeveloperPackageInstallResult::Cancelled;
 	const auto result = m_service->InstallDeveloperPackage(packagePath, choice == IDYES);
 	if (!result.Succeeded()) {
 		const std::wstring message = result.snapshot.diagnostic.empty()
 			? Localized(STR_WORKBENCH_EXTENSIONS_PACKAGE_REJECTED) : result.snapshot.diagnostic;
 		const auto failureTitle = Localized(STR_WORKBENCH_EXTENSIONS_INSTALL_FAILED);
-		::MessageBoxW(m_window, message.c_str(), failureTitle.c_str(), MB_OK | MB_ICONERROR);
+		ShowModalMessageBox(message, failureTitle, MB_OK | MB_ICONERROR);
 		Refresh();
 		return EDeveloperPackageInstallResult::Failed;
 	}
@@ -639,12 +734,12 @@ void CExtensionsWorkbenchTool::HandleDroppedFiles(HDROP drop) noexcept
 	try {
 		const UINT count = ::DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
 		if (count == 0) {
-			ShowLocalizedMessage(m_window, STR_WORKBENCH_EXTENSIONS_DROP_UNSUPPORTED,
+			ShowLocalizedMessage(this, STR_WORKBENCH_EXTENSIONS_DROP_UNSUPPORTED,
 				STR_WORKBENCH_EXTENSIONS_DROP_UNSUPPORTED_TITLE, MB_OK | MB_ICONWARNING);
 			return;
 		}
 		if (count > kMaximumDroppedDeveloperPackages) {
-			ShowLocalizedMessage(m_window, STR_WORKBENCH_EXTENSIONS_DROP_TOO_MANY,
+			ShowLocalizedMessage(this, STR_WORKBENCH_EXTENSIONS_DROP_TOO_MANY,
 				STR_WORKBENCH_EXTENSIONS_DROP_TOO_MANY_TITLE, MB_OK | MB_ICONWARNING);
 			return;
 		}
@@ -654,7 +749,7 @@ void CExtensionsWorkbenchTool::HandleDroppedFiles(HDROP drop) noexcept
 		for (UINT index = 0; index < count; ++index) {
 			const UINT required = ::DragQueryFileW(drop, index, nullptr, 0);
 			if (required == 0 || required >= kDeveloperPackagePathLimit) {
-				ShowLocalizedMessage(m_window, STR_WORKBENCH_EXTENSIONS_DROP_UNSUPPORTED,
+				ShowLocalizedMessage(this, STR_WORKBENCH_EXTENSIONS_DROP_UNSUPPORTED,
 					STR_WORKBENCH_EXTENSIONS_DROP_UNSUPPORTED_TITLE,
 					MB_OK | MB_ICONWARNING);
 				return;
@@ -662,14 +757,14 @@ void CExtensionsWorkbenchTool::HandleDroppedFiles(HDROP drop) noexcept
 			std::wstring path(required + 1, L'\0');
 			const UINT copied = ::DragQueryFileW(drop, index, path.data(), required + 1);
 			if (copied != required) {
-				ShowLocalizedMessage(m_window, STR_WORKBENCH_EXTENSIONS_DROP_UNSUPPORTED,
+				ShowLocalizedMessage(this, STR_WORKBENCH_EXTENSIONS_DROP_UNSUPPORTED,
 					STR_WORKBENCH_EXTENSIONS_DROP_UNSUPPORTED_TITLE,
 					MB_OK | MB_ICONWARNING);
 				return;
 			}
 			path.resize(copied);
 			if (!IsRegularSenpFile(path)) {
-				ShowLocalizedMessage(m_window, STR_WORKBENCH_EXTENSIONS_DROP_UNSUPPORTED,
+				ShowLocalizedMessage(this, STR_WORKBENCH_EXTENSIONS_DROP_UNSUPPORTED,
 					STR_WORKBENCH_EXTENSIONS_DROP_UNSUPPORTED_TITLE,
 					MB_OK | MB_ICONWARNING);
 				return;
@@ -678,11 +773,15 @@ void CExtensionsWorkbenchTool::HandleDroppedFiles(HDROP drop) noexcept
 		}
 
 		for (const auto& path : paths) {
+			// InstallDeveloperPackagePath shows a modal per package and
+			// re-validates after it; the view must still be alive between
+			// packages before starting the next one.
+			if (!IsUsable()) return;
 			const auto result = InstallDeveloperPackagePath(path);
 			if (result != EDeveloperPackageInstallResult::Succeeded) return;
 		}
 	} catch (...) {
-		ShowLocalizedMessage(m_window, STR_WORKBENCH_EXTENSIONS_DROP_READ_FAILED,
+		ShowLocalizedMessage(this, STR_WORKBENCH_EXTENSIONS_DROP_READ_FAILED,
 			STR_WORKBENCH_EXTENSIONS_INSTALL_FAILED, MB_OK | MB_ICONWARNING);
 	}
 }
@@ -764,12 +863,13 @@ void CExtensionsWorkbenchTool::PaintExtensionRow(
 	const std::wstring status = ComposeExtensionRowStatus(extension,
 		exclusion ? &*exclusion : nullptr);
 	LONG metadataRight = detailsRight;
-	if (extension.builtIn) {
-		HDC measureDc = dc;
-		const int actionWidth = ActionButtonWidth(
-			measureDc, ActionLabel(extension.installed), m_font.Get(), m_dpi);
-		metadataRight = std::max(detailsLeft, detailsRight
-			- actionWidth - Scale(kActionButtonMetadataGapDip, m_dpi));
+	int actionsWidth = 0;
+	for (const auto& rowAction : RowActions(extension)) {
+		actionsWidth += ActionButtonWidth(dc, ActionLabel(rowAction.first), m_font.Get(), m_dpi)
+			+ Scale(kActionButtonMetadataGapDip, m_dpi);
+	}
+	if (actionsWidth > 0) {
+		metadataRight = std::max(detailsLeft, detailsRight - actionsWidth);
 	}
 	RECT statusBounds{ detailsLeft, bounds.top + Scale(45, m_dpi), metadataRight,
 		bounds.bottom - Scale(3, m_dpi) };
@@ -812,7 +912,7 @@ void CExtensionsWorkbenchTool::PaintActionButton(
 	Fill(dc, bounds, background);
 	RECT label = bounds;
 	if (pressed) ::OffsetRect(&label, 0, 1);
-	const auto actionLabel = ActionLabel(action == ERowAction::Uninstall);
+	const auto actionLabel = ActionLabel(action);
 	Text(dc, actionLabel, label,
 		m_palette.buttonForeground.ToColorRef(), m_font.Get(),
 		DT_CENTER | DT_VCENTER | DT_SINGLELINE);
@@ -919,10 +1019,24 @@ LRESULT CExtensionsWorkbenchTool::HandleMessage(
 		if (HIWORD(wParam) == BN_CLICKED) {
 			const HWND button = reinterpret_cast<HWND>(lParam);
 			if (const auto* state = FindActionButton(button); state != nullptr) {
-				const auto extensionId = state->extensionId;
-				const auto action = state->action;
-				if (action == ERowAction::Install) InstallBuiltIn(extensionId);
-				else UninstallBuiltIn(extensionId);
+				// Copy the row state: handlers run modals that may resync or
+				// destroy this very button vector.
+				const auto row = *state;
+				switch (row.action) {
+				case ERowAction::Install:
+					InstallBuiltIn(row.extensionId);
+					break;
+				case ERowAction::Uninstall:
+					if (row.target == ERowTarget::BuiltIn) UninstallBuiltIn(row.extensionId);
+					else UninstallPackage(row);
+					break;
+				case ERowAction::Enable:
+					SetPackageEnabled(row.extensionId, true);
+					break;
+				case ERowAction::Disable:
+					SetPackageEnabled(row.extensionId, false);
+					break;
+				}
 				return 0;
 			}
 		}
