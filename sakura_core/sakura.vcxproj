@@ -757,6 +757,7 @@
     <ClInclude Include="..\sakura_core\workbench\editor\CEmptyEditorSurface.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\CDiffSurface.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\SenpReadonlyWorkbench.h" />
+    <ClInclude Include="..\sakura_core\senp\SenpChildJob.h" />
     <ClInclude Include="..\sakura_core\senp\SenpTextResource.h" />
     <ClInclude Include="..\sakura_core\senp\SenpToolGrants.h" />
     <ClInclude Include="..\sakura_core\senp\SenpControlPackageAuthority.h" />
@@ -1448,6 +1449,7 @@
 	<ClCompile Include="..\sakura_core\workbench\extensions\BuiltInExtensionLocalization.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\extensions\CExtensionsWorkbenchTool.cpp" />
 	<ClCompile Include="..\sakura_core\senp\SenpLanguageService.cpp" />
+	<ClCompile Include="..\sakura_core\senp\SenpChildJob.cpp" />
 	<ClCompile Include="..\sakura_core\senp\SenpManagementService.cpp" />
 	<ClCompile Include="..\sakura_core\senp\SenpTextResource.cpp" />
 	<ClCompile Include="..\sakura_core\senp\SenpToolGrants.cpp" />

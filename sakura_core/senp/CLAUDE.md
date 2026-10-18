@@ -117,7 +117,8 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   only that worker performs host I/O. Both pipe directions use OVERLAPPED I/O
   under one absolute frame deadline; cancellation drains kernel completion
   before freeing its buffers. The job enforces a 512 MiB process memory cap
-  in addition to Wasm Store limits, active-process limit 1 and kill-on-close.
+  in addition to Wasm Store limits, active-process limit 1 and kill-on-close,
+  all through the shared `senp::ConfigureChildJob` below.
   Do not reuse v1's synchronous writer for v2. Stop requests cancellation;
   Join serializes the sole thread join and also requests Stop. Process/worker
   exit observations are distinct from a requested stop. No automatic restart.
@@ -295,6 +296,23 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   handles and is assigned atomically at creation to a kill-on-close job. Each
   has explicit timeout and cleanup ownership. Paint and input paths never wait
   for the host.
+- All three launchers configure that job through one helper,
+  `senp::ConfigureChildJob` (`SenpChildJob.h` / `SenpChildJob.cpp`), which sets
+  and then reads back every limit: kill-on-close, active-process 1,
+  die-on-unhandled-exception and the full basic UI restriction set (the
+  children are console helpers created with `CREATE_NO_WINDOW`; none needs a
+  desktop, USER32 handles, global atoms, the clipboard or display settings).
+  Any API failure or read-back mismatch is a launch failure, so no unbounded
+  child may run. The memory cap differs per child: both host protocols get
+  `kExtensionHostJobLimits` = 512 MiB (#340 parity), and `RunToolImpl` gets
+  `kPackageToolJobLimits` = 256 MiB, sized from the tool's bounded worst
+  case: install holds the 64 MiB archive snapshot, its 64 MiB of verified
+  entries and the re-read of the staged copy at once. With a 62 MiB
+  incompressible package (the largest the limits admit) install and
+  same-digest repair peaked at 187 MiB committed, verify at 125 MiB and list
+  at 63 MiB (measured 2026-10-18 under a real 256 MiB job). Raising an archive
+  or expansion limit requires re-measuring this cap. A job memory kill reaches the same
+  explicit terminal as any other host failure; there is no automatic restart.
 
 
 ## Bounded text resource storage (U05, #296)

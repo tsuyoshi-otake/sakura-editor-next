@@ -8,6 +8,8 @@ SPDX-License-Identifier: Zlib
 
 #include "senp/SenpManagementService.h"
 
+#include "senp/SenpChildJob.h"
+
 #include <sakura/serialization/JsoncDocument.h>
 
 #include <algorithm>
@@ -155,11 +157,8 @@ ProcessResult RunToolImpl(const std::vector<std::wstring>& arguments)
 		|| !::SetHandleInformation(errorRead.Get(), HANDLE_FLAG_INHERIT, 0)) return result;
 
 	ScopedHandle job(::CreateJobObjectW(nullptr, nullptr));
-	if (job.Get() == nullptr || job.Get() == INVALID_HANDLE_VALUE) return result;
-	JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
-	limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-	if (!::SetInformationJobObject(job.Get(), JobObjectExtendedLimitInformation,
-		&limits, sizeof(limits))) return result;
+	if (job.Get() == nullptr || job.Get() == INVALID_HANDLE_VALUE
+		|| !ConfigureChildJob(job.Get(), kPackageToolJobLimits)) return result;
 
 	SIZE_T attributeBytes = 0;
 	(void)::InitializeProcThreadAttributeList(nullptr, 2, 0, &attributeBytes);

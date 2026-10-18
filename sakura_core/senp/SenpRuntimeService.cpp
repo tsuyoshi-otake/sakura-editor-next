@@ -8,6 +8,7 @@ SPDX-License-Identifier: Zlib
 
 #include "senp/SenpRuntimeService.h"
 
+#include "senp/SenpChildJob.h"
 #include "senp/SenpManagementService.h"
 #include "workbench/commands/CommandArgumentsJson.h"
 #include <sakura/serialization/JsoncDocument.h>
@@ -156,11 +157,7 @@ public:
 		if (!nullError.Valid()) return false;
 
 		m_job.Reset(::CreateJobObjectW(nullptr, nullptr));
-		if (!m_job.Valid()) return false;
-		JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
-		limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-		if (!::SetInformationJobObject(m_job.Get(), JobObjectExtendedLimitInformation,
-			&limits, sizeof(limits))) return false;
+		if (!m_job.Valid() || !ConfigureChildJob(m_job.Get(), kExtensionHostJobLimits)) return false;
 
 		SIZE_T attributeBytes = 0;
 		(void)::InitializeProcThreadAttributeList(nullptr, 2, 0, &attributeBytes);

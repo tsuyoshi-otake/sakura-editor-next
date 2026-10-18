@@ -2,6 +2,7 @@
 /* Copyright (C) 2026, Sakura Editor Organization. SPDX-License-Identifier: Zlib */
 #include "StdAfx.h"
 #include "senp/SenpEffectRuntime.h"
+#include "senp/SenpChildJob.h"
 #include <sakura/security/CurrentUserSecurityAttributes.h>
 #include <algorithm>
 #include <array>
@@ -108,17 +109,7 @@ public:
 			&inherited, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
 		if (!error.Valid()) return false;
 		m_job.Reset(::CreateJobObjectW(nullptr, nullptr));
-		JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
-		limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-			| JOB_OBJECT_LIMIT_PROCESS_MEMORY | JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
-		limits.BasicLimitInformation.ActiveProcessLimit = 1;
-		limits.ProcessMemoryLimit = 512U * 1024U * 1024U;
-		if (!m_job.Valid() || !::SetInformationJobObject(m_job.Get(), JobObjectExtendedLimitInformation, &limits, sizeof(limits))) return false;
-		JOBOBJECT_EXTENDED_LIMIT_INFORMATION confirmed{};
-		if (!::QueryInformationJobObject(m_job.Get(), JobObjectExtendedLimitInformation, &confirmed, sizeof(confirmed), nullptr)
-			|| confirmed.ProcessMemoryLimit != limits.ProcessMemoryLimit
-			|| confirmed.BasicLimitInformation.ActiveProcessLimit != 1
-			|| (confirmed.BasicLimitInformation.LimitFlags & limits.BasicLimitInformation.LimitFlags) != limits.BasicLimitInformation.LimitFlags) return false;
+		if (!m_job.Valid() || !ConfigureChildJob(m_job.Get(), kExtensionHostJobLimits)) return false;
 		SIZE_T size{};
 		(void)::InitializeProcThreadAttributeList(nullptr, 2, 0, &size);
 		if (size == 0) return false;

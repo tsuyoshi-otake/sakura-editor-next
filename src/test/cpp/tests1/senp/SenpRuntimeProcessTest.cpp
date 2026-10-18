@@ -231,6 +231,21 @@ TEST_F(SenpRuntimeProcess, FailedLaunchAndImmediateStopStillProduceOneTerminalOu
 	}
 }
 
+TEST_F(SenpRuntimeProcess, LaunchedHostRunsInsideTheSharedChildJob)
+{
+	CSenpEffectRuntime runtime(Launch());
+	Activate(runtime);
+	const auto pid = runtime.Snapshot().processId;
+	ASSERT_NE(pid, 0U);
+	const HANDLE process = ::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+	ASSERT_NE(process, nullptr);
+	BOOL inJob = FALSE;
+	ASSERT_TRUE(::IsProcessInJob(process, nullptr, &inJob));
+	EXPECT_TRUE(inJob);
+	::CloseHandle(process);
+	VerifyExit(runtime);
+}
+
 TEST_F(SenpRuntimeProcess, ContributionOwnerUpdateFailureAndShutdownKeepPhysicalCleanup)
 {
 	struct Publication final : ISenpOwnerPublication {
