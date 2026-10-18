@@ -17,7 +17,7 @@
         "id": "infrastructure-yaml",
         "aliases": ["Infrastructure YAML", "Docker Compose", "Kubernetes", "Helm", "GitHub Actions", "Azure Pipelines"],
         "filenames": ["compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml", "kustomization.yaml", "kustomization.yml", "Chart.yaml", "Chart.yml", "values.yaml", "values.yml", "action.yaml", "action.yml", "azure-pipelines.yaml", "azure-pipelines.yml"],
-        "filenamePatterns": ["docker-compose.*.yaml", "docker-compose.*.yml", "*.k8s.yaml", "*.k8s.yml", "*.kubernetes.yaml", "*.kubernetes.yml", "*.helm.yaml", "*.helm.yml", "*.github*workflows*.yaml", "*.github*workflows*.yml", "azure-pipelines-*.yaml", "azure-pipelines-*.yml"]
+        "filenamePatterns": ["docker-compose.*.yaml", "docker-compose.*.yml", "*.k8s.yaml", "*.k8s.yml", "*.kubernetes.yaml", "*.kubernetes.yml", "*.helm.yaml", "*.helm.yml", "**/.github/workflows/*.yaml", "**/.github/workflows/*.yml", "azure-pipelines-*.yaml", "azure-pipelines-*.yml"]
       }
     ],
     "grammars": [

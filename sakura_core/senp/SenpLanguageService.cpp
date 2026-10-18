@@ -38,24 +38,104 @@ std::wstring Fold(std::wstring_view value)
 	return folded;
 }
 
-bool GlobMatches(std::wstring_view pattern, std::wstring_view value) noexcept
+// VS Code glob tokens: '*' stays inside one path segment, '?' matches one
+// non-'/' character, and '**' is special only as a whole segment. A '**'
+// segment not at the end absorbs its trailing '/' and matches zero or more
+// complete segments; a trailing '**' absorbs its leading '/' and also matches
+// the bare prefix. A '**' run that is not a whole segment degrades to '*'.
+// Every other character is a literal: '{' and '[' carry no syntax here.
+enum class GlobTokenKind { Literal, Single, Star, GlobStar, GlobStarSlash, SlashGlobStar };
+
+struct GlobToken final {
+	GlobTokenKind kind;
+	wchar_t literal;
+};
+
+std::vector<GlobToken> TokenizeGlob(std::wstring_view pattern)
+{
+	std::vector<GlobToken> tokens;
+	for (std::size_t index = 0; index < pattern.size();) {
+		const wchar_t ch = pattern[index];
+		if (ch == L'*' && index + 1 < pattern.size() && pattern[index + 1] == L'*'
+			&& (index == 0 || pattern[index - 1] == L'/')
+			&& (index + 2 == pattern.size() || pattern[index + 2] == L'/')) {
+			if (index + 2 < pattern.size()) {
+				tokens.push_back({ GlobTokenKind::GlobStarSlash, 0 });
+				index += 3;
+			} else if (index == 0) {
+				tokens.push_back({ GlobTokenKind::GlobStar, 0 });
+				index += 2;
+			} else if (!tokens.empty() && tokens.back().kind == GlobTokenKind::GlobStarSlash) {
+				tokens.push_back({ GlobTokenKind::GlobStar, 0 });
+				index += 2;
+			} else {
+				tokens.pop_back(); // the preceding '/' literal belongs to '**'
+				tokens.push_back({ GlobTokenKind::SlashGlobStar, 0 });
+				index += 2;
+			}
+		} else if (ch == L'*') {
+			tokens.push_back({ GlobTokenKind::Star, 0 });
+			++index;
+		} else if (ch == L'?') {
+			tokens.push_back({ GlobTokenKind::Single, 0 });
+			++index;
+		} else {
+			tokens.push_back({ GlobTokenKind::Literal,
+				static_cast<wchar_t>(::towlower(ch)) });
+			++index;
+		}
+	}
+	return tokens;
+}
+
+bool GlobMatches(std::wstring_view pattern, std::wstring_view value)
 {
 	if (pattern.size() > 1024 || value.size() > 32768) return false;
-	std::vector<bool> previous(value.size() + 1, false);
-	std::vector<bool> current(value.size() + 1, false);
+	const auto tokens = TokenizeGlob(pattern);
+	const std::size_t count = value.size();
+	std::vector<bool> previous(count + 1, false);
+	std::vector<bool> current(count + 1, false);
+	std::vector<bool> open(count + 1, false);
 	previous[0] = true;
-	for (const wchar_t rawPattern : pattern) {
+	for (const auto& token : tokens) {
 		std::fill(current.begin(), current.end(), false);
-		const wchar_t patternChar = static_cast<wchar_t>(::towlower(rawPattern));
-		if (patternChar == L'*') current[0] = previous[0];
-		for (std::size_t index = 1; index <= value.size(); ++index) {
+		std::fill(open.begin(), open.end(), false);
+		current[0] = previous[0] && (token.kind == GlobTokenKind::Star
+			|| token.kind == GlobTokenKind::GlobStar
+			|| token.kind == GlobTokenKind::GlobStarSlash
+			|| token.kind == GlobTokenKind::SlashGlobStar);
+		for (std::size_t index = 1; index <= count; ++index) {
 			const wchar_t valueChar = static_cast<wchar_t>(::towlower(value[index - 1]));
-			if (patternChar == L'*') current[index] = previous[index] || current[index - 1];
-			else if (patternChar == L'?' || patternChar == valueChar) current[index] = previous[index - 1];
+			switch (token.kind) {
+			case GlobTokenKind::Literal:
+				current[index] = previous[index - 1] && token.literal == valueChar;
+				break;
+			case GlobTokenKind::Single:
+				current[index] = previous[index - 1] && valueChar != L'/';
+				break;
+			case GlobTokenKind::Star:
+				current[index] = previous[index]
+					|| (current[index - 1] && valueChar != L'/');
+				break;
+			case GlobTokenKind::GlobStar:
+				current[index] = previous[index] || current[index - 1];
+				break;
+			case GlobTokenKind::GlobStarSlash:
+				// '**/' consumes zero or more complete segments: an open run may
+				// swallow any characters but may only close on a '/'.
+				open[index] = previous[index - 1] || open[index - 1];
+				current[index] = previous[index] || (open[index - 1] && valueChar == L'/');
+				break;
+			case GlobTokenKind::SlashGlobStar:
+				// '/**' at the end consumes nothing or a '/' followed by anything.
+				open[index] = open[index - 1] || (previous[index - 1] && valueChar == L'/');
+				current[index] = previous[index] || open[index];
+				break;
+			}
 		}
 		previous.swap(current);
 	}
-	return previous[value.size()];
+	return previous[count];
 }
 
 bool HasPathPrefix(const std::filesystem::path& root, const std::filesystem::path& candidate)
@@ -76,13 +156,20 @@ std::optional<std::string> ReadGrammar(const ExtensionDescriptor& extension, std
 	if (error || root.empty()) return std::nullopt;
 	const auto path = std::filesystem::weakly_canonical(root / std::filesystem::path(relative), error);
 	if (error || !HasPathPrefix(root, path) || !std::filesystem::is_regular_file(path, error)
-		|| error || std::filesystem::file_size(path, error) > kMaximumGrammarBytes || error) return std::nullopt;
+		|| error) return std::nullopt;
 	std::ifstream input(path, std::ios::binary);
 	if (!input) return std::nullopt;
-	std::string source(static_cast<std::size_t>(std::filesystem::file_size(path, error)), '\0');
-	if (error || (!source.empty() && !input.read(source.data(), static_cast<std::streamsize>(source.size())))) {
-		return std::nullopt;
+	// Read once in bounded chunks; no file_size call, so a concurrent resize
+	// cannot change the limit decision or the buffer size midway.
+	std::string source;
+	constexpr std::size_t kChunkBytes = 64U * 1024U;
+	while (input && source.size() <= kMaximumGrammarBytes) {
+		const std::size_t offset = source.size();
+		source.resize(offset + kChunkBytes);
+		input.read(source.data() + offset, static_cast<std::streamsize>(kChunkBytes));
+		source.resize(offset + static_cast<std::size_t>(input.gcount()));
 	}
+	if (input.bad() || source.size() > kMaximumGrammarBytes) return std::nullopt;
 	return source;
 }
 
@@ -150,18 +237,29 @@ int MatchScore(const LanguageContribution& language, std::wstring_view resourceP
 {
 	const std::filesystem::path path(resourcePath);
 	const std::wstring filename = Fold(path.filename().native());
-	const std::wstring foldedPath = Fold(resourcePath);
+	std::optional<std::wstring> foldedSlashedPath;
 	int score = 0;
 	for (const auto& candidate : language.filenames) {
 		if (Fold(candidate) == filename) score = (std::max)(score, 40'000 + static_cast<int>(candidate.size()));
 	}
 	for (const auto& candidate : language.extensions) {
 		const auto extension = Fold(candidate);
-		if (filename.ends_with(extension)) score = (std::max)(score, 30'000 + static_cast<int>(extension.size()));
+		if (filename.ends_with(extension)) score = (std::max)(score, 20'000 + static_cast<int>(extension.size()));
 	}
 	for (const auto& candidate : language.filenamePatterns) {
-		if (GlobMatches(candidate, filename) || GlobMatches(candidate, foldedPath)) {
-			score = (std::max)(score, 20'000 + static_cast<int>(candidate.size()));
+		// VS Code's filepatternOnPath rule: a pattern containing '/' is matched
+		// against the '/'-normalised full path, any other pattern only against
+		// the basename.
+		if (candidate.find(L'/') != std::wstring::npos) {
+			if (!foldedSlashedPath) {
+				foldedSlashedPath = Fold(resourcePath);
+				std::ranges::replace(*foldedSlashedPath, L'\\', L'/');
+			}
+			if (GlobMatches(candidate, *foldedSlashedPath)) {
+				score = (std::max)(score, 30'000 + static_cast<int>(candidate.size()));
+			}
+		} else if (GlobMatches(candidate, filename)) {
+			score = (std::max)(score, 30'000 + static_cast<int>(candidate.size()));
 		}
 	}
 	if (language.firstLine.size() <= 4096 && FirstLineMatches(language.firstLine, firstLine)) {

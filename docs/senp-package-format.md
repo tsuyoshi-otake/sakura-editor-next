@@ -250,7 +250,7 @@ manifest は拒否されます。
 | `aliases` | string array | 任意 | 最大 32 件。一意、空でなく各 1,024 バイト以下。 |
 | `extensions` | string array | 任意 | 最大 128 件。一意、空でなく各 1,024 バイト以下。各値は `.` で始まり、`/`、`\`, `:`, NUL を含まない。 |
 | `filenames` | string array | 任意 | 最大 128 件。一意、空でなく各 1,024 バイト以下。`/`、`\`, `:`, NUL を含まない。 |
-| `filenamePatterns` | string array | 任意 | 最大 128 件。一意、空でなく各 1,024 バイト以下。 |
+| `filenamePatterns` | string array | 任意 | 最大 128 件。一意、空でなく各 1,024 バイト以下。VS Code glob 規則で照合。`/` を含む pattern は `/` 正規化した full path に、含まない pattern は basename のみに適用。`*` は segment 内、`?` は `/` 以外の 1 文字、segment 全体の `**` は 0 個以上の segment に一致。VS Code の `{a,b}` / `[...]` 構文は未対応で literal として扱う。 |
 | `mimetypes` | string array | 任意 | 最大 32 件。一意、空でなく各 1,024 バイト以下。 |
 | `firstLine` | string | 任意 | 空でなく 4,096 バイト以下。NUL を含まない。 |
 | `configuration` | string | 任意 | `assets/` で始まる正規化 path、1,024 バイト以下。参照先の file が必須。 |

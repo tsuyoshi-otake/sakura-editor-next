@@ -309,7 +309,22 @@ failure with a visual placeholder or an unrelated legacy plugin path.
 - Declarative `languages` and `grammars` use the VS Code contribution shape and
   are loaded in-process by `ISenpLanguageService`. Package management chooses
   enabled assets; the language service selects a grammar; the TextMate engine
-  tokenizes; the Editor and theme service own final presentation.
+  tokenizes; the Editor and theme service own final presentation. Language
+  association follows VS Code `getAssociationByPath`: the tiers are
+  `filenames` > `filenamePatterns` > `extensions` > `firstLine`, `firstLine`
+  applies only when no path tier matched, and within a tier the longest match
+  wins. A `filenamePatterns` entry containing `/` is matched against the
+  `/`-normalised full path; any other pattern sees only the basename. In the
+  glob, `*` stays inside one segment, `?` matches one non-`/` character, and
+  `**` is special only as a whole segment (leading `**/` also matches zero
+  segments, trailing `/**` also matches the bare prefix). **Recorded
+  divergence:** VS Code's glob expands `{a,b}` and `[...]`; this matcher has no
+  brace or class syntax and treats `{` and `[` as literal characters. Manifest
+  validation admits them and no built-in pattern uses them, so such a pattern
+  never matches the files VS Code would match and the file falls through to the
+  extension tier. **Recorded divergence:** equal scores resolve by the sorted
+  (language id, extension id) registration order; VS Code's
+  last-registered-wins has no equivalent across separately installed packages.
 - Declarative `viewsContainers.activitybar` and `views` entries may select only
   product-owned host providers from integrity-pinned built-ins. The package owns
   the stable ViewContainer/View existence and metadata; the host retains Git,

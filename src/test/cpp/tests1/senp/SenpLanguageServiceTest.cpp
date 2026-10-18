@@ -104,6 +104,41 @@ senp::ExtensionDescriptor CreateExtension(const TemporaryGrammarDirectory& direc
 	return extension;
 }
 
+void WriteStubGrammar(const TemporaryGrammarDirectory& directory, std::wstring_view languageId)
+{
+	std::string narrow;
+	for (const wchar_t ch : languageId) narrow.push_back(static_cast<char>(ch));
+	directory.Write(narrow + ".tmLanguage.json",
+		"{ \"scopeName\": \"source." + narrow + "\", \"patterns\": [] }");
+}
+
+senp::ExtensionDescriptor CreatePatternExtension(const TemporaryGrammarDirectory& directory,
+	std::initializer_list<senp::LanguageContribution> languages)
+{
+	senp::ExtensionDescriptor extension;
+	extension.id = L"test.pattern-languages";
+	extension.extensionPath = directory.Path().wstring();
+	extension.installed = true;
+	extension.enabled = true;
+	extension.languages.assign(languages);
+	for (const auto& language : extension.languages) {
+		extension.grammars.push_back({ language.id, L"source." + language.id,
+			L"assets/syntaxes/" + language.id + L".tmLanguage.json", {} });
+		WriteStubGrammar(directory, language.id);
+	}
+	return extension;
+}
+
+std::unique_ptr<senp::ISenpLanguageService> StartService(FakeManagementService& management,
+	senp::ExtensionDescriptor extension)
+{
+	management.snapshot.state = senp::EManagementState::Ready;
+	management.snapshot.extensions.push_back(std::move(extension));
+	auto service = senp::CreateSenpLanguageService(management);
+	EXPECT_TRUE(service->Start());
+	return service;
+}
+
 TEST(SenpLanguageServiceTest, SelectsTerraformByExtensionAndTokenizesWithContributedGrammar)
 {
 	TemporaryGrammarDirectory directory;
@@ -164,6 +199,200 @@ TEST(SenpLanguageServiceTest, AnInvalidListingRowContributesNoLanguage)
 	auto service = senp::CreateSenpLanguageService(management);
 	ASSERT_TRUE(service->Start());
 	EXPECT_EQ(nullptr, service->CreateSession(L"config.yaml", L""));
+}
+
+TEST(SenpLanguageServiceTest, FilenamePatternWinsOverPlainExtension)
+{
+	TemporaryGrammarDirectory directory;
+	FakeManagementService management;
+	auto service = StartService(management, CreatePatternExtension(directory, {
+		{ L"yaml", {}, { L".yaml", L".yml" }, {}, {}, {}, {}, {} },
+		{ L"infrastructure-yaml", {}, {}, {}, { L"docker-compose.*.yml" }, {}, {}, {} },
+	}));
+	auto session = service->CreateSession(L"docker-compose.dev.yml", L"");
+	ASSERT_NE(nullptr, session);
+	EXPECT_EQ(L"infrastructure-yaml", session->LanguageId());
+}
+
+TEST(SenpLanguageServiceTest, JsonFilenamePatternWinsOverPlainExtension)
+{
+	TemporaryGrammarDirectory directory;
+	FakeManagementService management;
+	auto service = StartService(management, CreatePatternExtension(directory, {
+		{ L"json", {}, { L".json" }, {}, {}, {}, {}, {} },
+		{ L"template-json", {}, {}, {}, { L"*.template.json" }, {}, {}, {} },
+	}));
+	auto session = service->CreateSession(L"x.template.json", L"");
+	ASSERT_NE(nullptr, session);
+	EXPECT_EQ(L"template-json", session->LanguageId());
+}
+
+TEST(SenpLanguageServiceTest, PatternWithoutSlashMatchesBasenameOnly)
+{
+	TemporaryGrammarDirectory directory;
+	FakeManagementService management;
+	auto service = StartService(management, CreatePatternExtension(directory, {
+		{ L"workflows", {}, {}, {}, { L"*workflows*" }, {}, {}, {} },
+	}));
+	// The pattern has no '/', so it sees only the basename a.yml and must not
+	// match a directory name elsewhere in the path.
+	EXPECT_EQ(nullptr, service->CreateSession(L"C:\\repo\\workflows\\a.yml", L""));
+}
+
+TEST(SenpLanguageServiceTest, SlashPatternMatchesFullPathSegments)
+{
+	TemporaryGrammarDirectory directory;
+	FakeManagementService management;
+	auto service = StartService(management, CreatePatternExtension(directory, {
+		{ L"actions", {}, {}, {}, { L"**/.github/workflows/*.yml" }, {}, {}, {} },
+	}));
+	auto session = service->CreateSession(L"C:\\repo\\.github\\workflows\\ci.yml", L"");
+	ASSERT_NE(nullptr, session);
+	EXPECT_EQ(L"actions", session->LanguageId());
+	// A single '*' never crosses a segment boundary.
+	EXPECT_EQ(nullptr, service->CreateSession(L"C:\\repo\\.github\\workflows\\sub\\ci.yml", L""));
+	// The literal '.github' segment is required.
+	EXPECT_EQ(nullptr, service->CreateSession(L"C:\\repo\\github\\workflows\\ci.yml", L""));
+}
+
+TEST(SenpLanguageServiceTest, LeadingDoubleStarMatchesZeroSegments)
+{
+	TemporaryGrammarDirectory directory;
+	FakeManagementService management;
+	auto service = StartService(management, CreatePatternExtension(directory, {
+		{ L"marker", {}, {}, {}, { L"**/marker.yml" }, {}, {}, {} },
+	}));
+	// '**/' consumes zero segments, so the bare filename matches too.
+	auto session = service->CreateSession(L"marker.yml", L"");
+	ASSERT_NE(nullptr, session);
+	EXPECT_EQ(L"marker", session->LanguageId());
+}
+
+TEST(SenpLanguageServiceTest, FilenameBeatsFilenamePattern)
+{
+	TemporaryGrammarDirectory directory;
+	FakeManagementService management;
+	auto service = StartService(management, CreatePatternExtension(directory, {
+		{ L"compose-exact", {}, {}, { L"compose.yml" }, {}, {}, {}, {} },
+		{ L"compose-pattern", {}, {}, {}, { L"*compose*.yml" }, {}, {}, {} },
+	}));
+	auto session = service->CreateSession(L"compose.yml", L"");
+	ASSERT_NE(nullptr, session);
+	EXPECT_EQ(L"compose-exact", session->LanguageId());
+}
+
+TEST(SenpLanguageServiceTest, LongestFilenamePatternWins)
+{
+	TemporaryGrammarDirectory directory;
+	FakeManagementService management;
+	auto service = StartService(management, CreatePatternExtension(directory, {
+		{ L"short", {}, {}, {}, { L"*compose*.yml" }, {}, {}, {} },
+		{ L"long", {}, {}, {}, { L"docker-compose.*.yml" }, {}, {}, {} },
+	}));
+	auto session = service->CreateSession(L"docker-compose.dev.yml", L"");
+	ASSERT_NE(nullptr, session);
+	EXPECT_EQ(L"long", session->LanguageId());
+}
+
+TEST(SenpLanguageServiceTest, FirstLineLosesToAnyPathMatch)
+{
+	TemporaryGrammarDirectory directory;
+	FakeManagementService management;
+	auto service = StartService(management, CreatePatternExtension(directory, {
+		{ L"shellscript", {}, {}, {}, {}, {}, L"^#!", {} },
+		{ L"yaml", {}, { L".yml" }, {}, {}, {}, {}, {} },
+	}));
+	auto session = service->CreateSession(L"a.yml", L"#!/bin/sh");
+	ASSERT_NE(nullptr, session);
+	EXPECT_EQ(L"yaml", session->LanguageId());
+}
+
+TEST(SenpLanguageServiceTest, FirstLineAppliesWithoutPathMatch)
+{
+	TemporaryGrammarDirectory directory;
+	FakeManagementService management;
+	auto service = StartService(management, CreatePatternExtension(directory, {
+		{ L"shellscript", {}, {}, {}, {}, {}, L"^#!", {} },
+		{ L"yaml", {}, { L".yml" }, {}, {}, {}, {}, {} },
+	}));
+	auto session = service->CreateSession(L"a.zzz", L"#!/bin/sh");
+	ASSERT_NE(nullptr, session);
+	EXPECT_EQ(L"shellscript", session->LanguageId());
+}
+
+TEST(SenpLanguageServiceTest, QuestionMarkNeverMatchesASeparator)
+{
+	TemporaryGrammarDirectory directory;
+	FakeManagementService management;
+	auto service = StartService(management, CreatePatternExtension(directory, {
+		{ L"qmark", {}, {}, {}, { L"**/a?b/*.yml" }, {}, {}, {} },
+	}));
+	auto session = service->CreateSession(L"C:\\repo\\axb\\c.yml", L"");
+	ASSERT_NE(nullptr, session);
+	EXPECT_EQ(L"qmark", session->LanguageId());
+	EXPECT_EQ(nullptr, service->CreateSession(L"C:\\repo\\a\\b\\c.yml", L""));
+}
+
+TEST(SenpLanguageServiceTest, DoubleStarSlashClosesOnlyAtASegmentBoundary)
+{
+	TemporaryGrammarDirectory directory;
+	FakeManagementService management;
+	auto service = StartService(management, CreatePatternExtension(directory, {
+		{ L"actions", {}, {}, {}, { L"**/.github/workflows/*.yml" }, {}, {}, {} },
+	}));
+	// '**/' may not stop in the middle of the 'x.github' segment.
+	EXPECT_EQ(nullptr, service->CreateSession(L"C:\\repo\\x.github\\workflows\\ci.yml", L""));
+}
+
+TEST(SenpLanguageServiceTest, InnerDoubleStarMatchesZeroOrMoreSegments)
+{
+	TemporaryGrammarDirectory directory;
+	FakeManagementService management;
+	auto service = StartService(management, CreatePatternExtension(directory, {
+		{ L"actions", {}, {}, {}, { L"**/.github/**/*.yml" }, {}, {}, {} },
+	}));
+	auto direct = service->CreateSession(L"C:\\repo\\.github\\ci.yml", L"");
+	ASSERT_NE(nullptr, direct);
+	EXPECT_EQ(L"actions", direct->LanguageId());
+	auto nested = service->CreateSession(L"C:\\repo\\.github\\a\\b\\ci.yml", L"");
+	ASSERT_NE(nullptr, nested);
+	EXPECT_EQ(L"actions", nested->LanguageId());
+}
+
+TEST(SenpLanguageServiceTest, TrailingDoubleStarMatchesTheFolderAndEverythingBelowIt)
+{
+	TemporaryGrammarDirectory directory;
+	FakeManagementService management;
+	auto service = StartService(management, CreatePatternExtension(directory, {
+		{ L"dotgithub", {}, {}, {}, { L"**/.github/**" }, {}, {}, {} },
+	}));
+	auto bare = service->CreateSession(L"C:\\repo\\.github", L"");
+	ASSERT_NE(nullptr, bare);
+	EXPECT_EQ(L"dotgithub", bare->LanguageId());
+	auto inside = service->CreateSession(L"C:\\repo\\.github\\workflows\\ci.yml", L"");
+	ASSERT_NE(nullptr, inside);
+	EXPECT_EQ(L"dotgithub", inside->LanguageId());
+	// '.githubx' is a different segment; '/**' may not consume past it.
+	EXPECT_EQ(nullptr, service->CreateSession(L"C:\\repo\\.githubx\\a.yml", L""));
+}
+
+TEST(SenpLanguageServiceTest, GrammarOverTheLimitIsRefused)
+{
+	TemporaryGrammarDirectory directory;
+	auto extension = CreatePatternExtension(directory, {
+		{ L"yaml", {}, { L".yml" }, {}, {}, {}, {}, {} },
+		{ L"json", {}, { L".json" }, {}, {}, {}, {}, {} },
+	});
+	// Content is irrelevant: the file is refused before parsing. Grammars are
+	// read at Start, so the oversized file must replace the stub beforehand.
+	directory.Write("yaml.tmLanguage.json", std::string(32U * 1024U * 1024U + 1U, 'x'));
+	FakeManagementService management;
+	auto service = StartService(management, std::move(extension));
+	EXPECT_EQ(nullptr, service->CreateSession(L"a.yml", L""));
+	// A sibling language whose grammar is under the limit still loads.
+	auto session = service->CreateSession(L"a.json", L"");
+	ASSERT_NE(nullptr, session);
+	EXPECT_EQ(L"json", session->LanguageId());
 }
 
 } // namespace
