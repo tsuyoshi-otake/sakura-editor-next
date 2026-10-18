@@ -154,6 +154,93 @@ TEST(TreeViewModel, PageFailureAndRepeatedCursorPreserveTheLastSuccessfulSnapsho
 	EXPECT_EQ(L"Network failed", model.Node(L"")->message); EXPECT_TRUE(model.Demand().empty());
 	EXPECT_EQ(CountBytes(model), model.RetainedBytes());
 }
+TEST(TreeViewModel, HostRejectionsRecordTypedFailureReasons)
+{
+	TreeViewModel model;
+	const auto reason = [&] { return model.Node(L"")->reason; };
+	auto fail = [&](std::wstring_view message) {
+		auto page = Page(L"", {}, 1); page.state = TreePageState::Failed; page.message = std::wstring(message);
+		return page;
+	};
+	// A provider message is preserved verbatim and its reason names the provider.
+	ASSERT_EQ(TreeResult::Applied, model.Apply(Begin(model), fail(L"rate-limited")).result);
+	EXPECT_EQ(TreeFailureReason::ProviderMessage, reason()); EXPECT_EQ(L"rate-limited", model.Node(L"")->message);
+	// An empty provider message is the host's generic load failure, not verbatim text.
+	ASSERT_EQ(TreeResult::Applied, model.Apply(Begin(model, L"", TreeLoadKind::Refresh), fail(L"")).result);
+	EXPECT_EQ(TreeFailureReason::LoadFailed, reason()); EXPECT_TRUE(model.Node(L"")->message.empty());
+	// A malformed page is a typed rejection, not a provider sentence.
+	{
+		auto bad = Page(L"other", {}, 1);
+		EXPECT_EQ(TreeResult::Invalid, model.Apply(Begin(model, L"", TreeLoadKind::Refresh), std::move(bad)).result);
+		EXPECT_EQ(TreeFailureReason::InvalidPage, reason());
+	}
+}
+TEST(TreeViewModel, EveryRejectedPathNamesItsOwnReason)
+{
+	TreeViewModel model;
+	ASSERT_EQ(TreeResult::Applied, model.Apply(Begin(model), Page(L"", { Branch(L"folder", true), Leaf(L"sibling") }, 5, L"n")).result);
+	ASSERT_EQ(TreeResult::Applied, model.Apply(Begin(model, L"folder"), Page(L"folder", { Leaf(L"child") }, 5)).result);
+	const auto reason = [&](std::wstring_view parent) { return model.Node(parent)->reason; };
+	// Stale: a lower revision than the retained listing.
+	EXPECT_EQ(TreeResult::Stale, model.Apply(Begin(model, L"folder", TreeLoadKind::Refresh), Page(L"folder", {}, 4)).result);
+	EXPECT_EQ(TreeFailureReason::StaleListing, reason(L"folder"));
+	// RepeatedCursor: the next page cursor repeats the request's own cursor.
+	EXPECT_EQ(TreeResult::Invalid, model.Apply(Begin(model, L"", TreeLoadKind::NextPage), Page(L"", {}, 5, L"n")).result);
+	EXPECT_EQ(TreeFailureReason::RepeatedCursor, reason(L""));
+	// DuplicateIdentity: one id repeated inside a single page.
+	EXPECT_EQ(TreeResult::Invalid, model.Apply(Begin(model, L"", TreeLoadKind::Refresh), Page(L"", { Leaf(L"x"), Leaf(L"x") }, 6)).result);
+	EXPECT_EQ(TreeFailureReason::DuplicateIdentity, reason(L""));
+	// InvalidPage: an item that fails validation is not an identity conflict.
+	{
+		auto blank = Leaf(L"blank"); blank.label.clear();
+		EXPECT_EQ(TreeResult::Invalid, model.Apply(Begin(model, L"", TreeLoadKind::Refresh), Page(L"", { blank }, 6)).result);
+		EXPECT_EQ(TreeFailureReason::InvalidPage, reason(L""));
+	}
+	// MovedIdentity: an id already retained under another parent.
+	EXPECT_EQ(TreeResult::Invalid, model.Apply(Begin(model, L"", TreeLoadKind::Refresh), Page(L"", { Leaf(L"child") }, 6)).result);
+	EXPECT_EQ(TreeFailureReason::MovedIdentity, reason(L""));
+	// InvalidPage: a structurally malformed page (items on an Empty page).
+	{
+		auto bad = Page(L"", { Leaf(L"orphan") }, 6); bad.state = TreePageState::Empty;
+		EXPECT_EQ(TreeResult::Invalid, model.Apply(Begin(model, L"", TreeLoadKind::Refresh), std::move(bad)).result);
+		EXPECT_EQ(TreeFailureReason::InvalidPage, reason(L""));
+	}
+	// LimitReached: a child admitted past the depth bound.
+	{
+		TreeViewModel deep;
+		std::wstring parent;
+		for (std::size_t i = 0; i < kMaximumTreeDepth; ++i) {
+			const auto id = L"depth" + std::to_wstring(i);
+			ASSERT_EQ(TreeResult::Applied, deep.Apply(Begin(deep, parent), Page(parent, { Branch(id, true) })).result);
+			parent = id;
+		}
+		EXPECT_EQ(TreeResult::LimitExceeded, deep.Apply(Begin(deep, parent), Page(parent, { Leaf(L"too-deep") })).result);
+		EXPECT_EQ(TreeFailureReason::LimitReached, deep.Node(parent)->reason);
+	}
+}
+TEST(TreeViewModel, ProviderReasonAlwaysCarriesTextAndBeginClearsTheFailure)
+{
+	TreeViewModel model;
+	const auto root = [&] { return *model.Node(L""); };
+	// A valid provider message is kept verbatim under the provider reason.
+	ASSERT_EQ(TreeResult::Applied, model.Fail(Begin(model), TreeFailureReason::ProviderMessage, L"Sign in to continue."));
+	EXPECT_EQ(TreeFailureReason::ProviderMessage, root().reason); EXPECT_EQ(L"Sign in to continue.", root().message);
+	// An invalid provider message is dropped and the failure becomes a plain load failure.
+	ASSERT_EQ(TreeResult::Applied, model.Fail(Begin(model), TreeFailureReason::ProviderMessage, std::wstring(4097, L'x')));
+	EXPECT_EQ(TreeChildrenState::Failed, root().state);
+	EXPECT_EQ(TreeFailureReason::LoadFailed, root().reason); EXPECT_TRUE(root().message.empty());
+	// A Failed page without a message is the same host reason.
+	auto failed = Page(L"", {}); failed.state = TreePageState::Failed;
+	ASSERT_EQ(TreeResult::Applied, model.Apply(Begin(model), std::move(failed)).result);
+	EXPECT_EQ(TreeFailureReason::LoadFailed, root().reason); EXPECT_TRUE(root().message.empty());
+	// A retry clears the recorded failure: a loading node carries no stale reason.
+	ASSERT_EQ(TreeResult::Applied, model.Fail(Begin(model), TreeFailureReason::RequestTimedOut));
+	ASSERT_EQ(TreeFailureReason::RequestTimedOut, root().reason);
+	const auto retry = Begin(model);
+	EXPECT_EQ(TreeChildrenState::Loading, root().state);
+	EXPECT_EQ(TreeFailureReason::ProviderMessage, root().reason); EXPECT_TRUE(root().message.empty());
+	(void)retry;
+}
 TEST(TreeViewModel, CollapseCancelsSubtreeLoadsAndMovesHiddenSelectionToItsParent)
 {
 	TreeViewModel model;
@@ -177,7 +264,7 @@ TEST(TreeViewModel, InvalidateAndCloseFenceEveryOldTicket)
 	EXPECT_EQ(TreeResult::Stale, model.Apply(old, Page(L"", { Leaf(L"stale") })).result);
 	ASSERT_EQ(TreeResult::Applied, model.Apply(fresh, Page(L"", { Branch(L"folder", true) })).result);
 	const auto child = Begin(model, L"folder"); EXPECT_EQ(std::vector<std::uint64_t>{ child.ticket }, model.Close());
-	EXPECT_EQ(TreeResult::Stale, model.Fail(child, L"late failure"));
+	EXPECT_EQ(TreeResult::Stale, model.Fail(child, TreeFailureReason::ProviderMessage, L"late failure"));
 	EXPECT_EQ(TreeResult::Unavailable, model.Begin(L"", TreeLoadKind::Refresh).result);
 	EXPECT_EQ(TreeChildrenState::Stopped, model.Node(L"")->state); EXPECT_EQ(0, model.ItemCount());
 	EXPECT_TRUE(model.Close().empty()); EXPECT_EQ(0, model.RetainedBytes());
@@ -413,6 +500,47 @@ TEST_F(SenpTreeProviderTest, InlineItemActionsMatchTheRowContextValueAndPassOnly
 	runtime->current = false;
 	EXPECT_FALSE(rows.ExecuteItemAction(L"item", L"test.logs"));
 	EXPECT_EQ(1, runtime->Executed().size());
+}
+TEST_F(SenpTreeProviderTest, HostFailuresRecordTypedFailureReasons)
+{
+	// Busy and unavailable admissions name different reasons.
+	runtime->admission = senp::AdmissionStatus::Busy; provider.SetVisible(true, now);
+	EXPECT_EQ(TreeFailureReason::ProviderBusy, provider.Model().Node(L"")->reason);
+	runtime->admission = senp::AdmissionStatus::Unavailable;
+	SenpTreeProvider unavailable({ L"test.tree", { 1, 2, 3 }, { L"test.open" }, runtime });
+	unavailable.SetVisible(true, now);
+	EXPECT_EQ(TreeFailureReason::ProviderUnavailable, unavailable.Model().Node(L"")->reason);
+	unavailable.Close();
+	// An out-of-scope admission context is an invalid request identity.
+	runtime->admission = senp::AdmissionStatus::Accepted; runtime->invalidScope = true;
+	SenpTreeProvider scoped({ L"test.tree", { 1, 2, 3 }, { L"test.open" }, runtime });
+	scoped.SetVisible(true, now);
+	EXPECT_EQ(TreeFailureReason::InvalidRequestIdentity, scoped.Model().Node(L"")->reason);
+	scoped.Close(); runtime->invalidScope = false;
+	// A deadline exceeded request is a request timeout.
+	SenpTreeProvider slow({ L"test.tree", { 1, 2, 3 }, { L"test.open" }, runtime });
+	slow.SetVisible(true, now);
+	slow.Pump(now + SenpTreeProvider::kLoadLifetime);
+	EXPECT_EQ(TreeFailureReason::RequestTimedOut, slow.Model().Node(L"")->reason);
+	slow.Close();
+	// A wire page the native model cannot convert is an invalid page.
+	SenpTreeProvider invalid({ L"test.tree", { 1, 2, 3 }, { L"test.open" }, runtime });
+	invalid.SetVisible(true, now);
+	auto bad = Wire(); bad.viewId = L"other.tree";
+	EXPECT_EQ(TreeResult::Invalid, invalid.Apply(runtime->Submitted().back().context, std::move(bad), now));
+	EXPECT_EQ(TreeFailureReason::InvalidPage, invalid.Model().Node(L"")->reason);
+	invalid.Close();
+	// Invocation terminals map to their own reasons.
+	for (int i = 0; i < 3; ++i) {
+		SenpTreeProvider failing({ L"test.tree", { 1, 2, 3 }, { L"test.open" }, runtime });
+		failing.SetVisible(true, now);
+		const auto context = runtime->Submitted().back().context;
+		const auto status = i == 0 ? senp::InvocationStatus::TimedOut : i == 1 ? senp::InvocationStatus::Cancelled : senp::InvocationStatus::HostUnavailable;
+		EXPECT_EQ(TreeResult::Applied, failing.Failed(context, status, now));
+		EXPECT_EQ(i == 0 ? TreeFailureReason::ProviderTimedOut : i == 1 ? TreeFailureReason::Cancelled : TreeFailureReason::LoadFailed,
+			failing.Model().Node(L"")->reason);
+		failing.Close();
+	}
 }
 TEST(SenpTreeProviderOptions, RejectsItemActionsARowCannotCarry)
 {

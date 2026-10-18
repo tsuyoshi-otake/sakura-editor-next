@@ -13,6 +13,7 @@
 #include <oleacc.h>
 #include <UIAutomation.h>
 #include <wrl/client.h>
+#include <filesystem>
 
 namespace workbench::tree {
 namespace {
@@ -226,6 +227,47 @@ TEST_F(SenpTreeView, LocalizedHostRowsRefreshWithoutReloadingProviderState)
 		L"Empty now", L"Not loaded now", L"Unavailable now");
 	EXPECT_EQ(L"Loading now", Text(loading));
 	EXPECT_EQ(2, runtime->Calls().size());
+}
+TEST_F(SenpTreeView, FailedRowsLocalizeHostReasonsAndExactExecutorTokens)
+{
+	Create(); Complete({ NativeItem(L"root") }, L"", 5);
+	const auto fail = [&](std::wstring_view message) {
+		senp::effect::PublishTreePage page{ L"test.tree", L"", {}, L"", 5, senp::effect::PageStatus::Failed, std::wstring(message) };
+		ASSERT_EQ(TreeResult::Applied, provider->Apply(runtime->Calls().back().context, std::move(page), std::chrono::steady_clock::now()));
+		DispatchTreeMessages();
+	};
+	const auto retry = [&] { provider->Refresh(std::chrono::steady_clock::now()); DispatchTreeMessages(); };
+	const auto text = [&] { return Text(TreeView_GetNextSibling(tree, TreeView_GetRoot(tree))); };
+	// A raw executor token never reaches the row: the built-in English table
+	// answers even before the owner installs a localized one.
+	retry(); fail(L"tool-unavailable");
+	EXPECT_EQ(L"Retry - The GitHub tool is unavailable. Check the account connection.", text());
+	// An installed table replaces both reason and token text on existing rows.
+	std::array<std::wstring, kTreeFailureReasonCount> reasons{};
+	reasons[static_cast<std::size_t>(TreeFailureReason::StaleListing)] = L"REASON:stale";
+	std::array<std::wstring, kTreeTokenTextCount> tokens{};
+	tokens[static_cast<std::size_t>(TreeTokenText::ToolUnavailable)] = L"TOKEN:tool-unavailable";
+	tokens[static_cast<std::size_t>(TreeTokenText::RateLimited)] = L"TOKEN:rate-limited";
+	tokens[static_cast<std::size_t>(TreeTokenText::TooLarge)] = L"TOKEN:page-too-large";
+	tokens[static_cast<std::size_t>(TreeTokenText::AccessDenied)] = L"TOKEN:denied";
+	tokens[static_cast<std::size_t>(TreeTokenText::ControlUnavailable)] = L"TOKEN:broker-lost";
+	body->SetLocalizedFailureText(reasons, tokens);
+	EXPECT_EQ(L"Retry - TOKEN:tool-unavailable", text());
+	for (const auto& [token, expected] : std::vector<std::pair<std::wstring_view, std::wstring>>{
+		{ L"rate-limited", L"Retry - TOKEN:rate-limited" }, { L"page-too-large", L"Retry - TOKEN:page-too-large" },
+		{ L"denied", L"Retry - TOKEN:denied" }, { L"the control connection was lost", L"Retry - TOKEN:broker-lost" } }) {
+		retry(); fail(token);
+		EXPECT_EQ(expected, text());
+	}
+	// Anything that is not an exact token stays the provider's own text.
+	retry(); fail(L"Rate limited by proxy");
+	EXPECT_EQ(L"Retry - Rate limited by proxy", text());
+	// A host reason resolves through the reason table, not a stored literal.
+	retry();
+	senp::effect::PublishTreePage stale{ L"test.tree", L"", {}, L"", 4, senp::effect::PageStatus::Complete, L"" };
+	ASSERT_EQ(TreeResult::Stale, provider->Apply(runtime->Calls().back().context, std::move(stale), std::chrono::steady_clock::now()));
+	DispatchTreeMessages();
+	EXPECT_EQ(L"Retry - REASON:stale", text());
 }
 TEST_F(SenpTreeView, PageAndRetryAreNativeActionsWithExplicitTerminals)
 {
@@ -552,6 +594,68 @@ TEST_F(SenpDeclaredTreeViewsTest, LosingPreparedCandidateCannotCloseWinningRunti
 	EXPECT_FALSE(provider->Model().IsClosed()); EXPECT_TRUE(runtime->Cancelled().empty());
 	EXPECT_TRUE(::IsWindow(winningTree)); EXPECT_TRUE(winner->Pump());
 	EXPECT_EQ(1U, runtime->Calls().size());
+}
+
+TEST_F(SenpDeclaredTreeViewsTest, PreparedAndRefreshedRowsShowSelectedLanguageFailureText)
+{
+	//! Minimal scoped restore of the selected resource module, mirroring the
+	//! guard in test-loadstring.cpp (file-local there, so replicated here).
+	struct RestoreLanguage final {
+		RestoreLanguage()
+			: thread(::GetThreadUILanguage()), had(!CSelectLang::gm_Langs.empty())
+		{
+			if (had && CSelectLang::gm_Selected < CSelectLang::gm_Langs.size())
+				previous = CSelectLang::GetLangInfo(CSelectLang::gm_Selected).GetDllName();
+		}
+		~RestoreLanguage()
+		{
+			if (had) CSelectLang::ChangeLang(previous);
+			else { CSelectLang::ChangeLang(L""); CSelectLang::gm_Langs.clear(); CSelectLang::gm_Selected = 0; }
+			::SetThreadUILanguage(thread);
+		}
+		const LANGID thread;
+		const bool had;
+		std::filesystem::path previous;
+	};
+	RestoreLanguage restoreLanguage;
+	CreateDeclaration(); ASSERT_NE(nullptr, declaredBody);
+	declaredBody->SetVisible(true); DispatchTreeMessages();
+	BindVisual();
+	const auto lastRow = [&] {
+		auto row = TreeView_GetRoot(tree);
+		while (const auto next = TreeView_GetNextSibling(tree, row)) row = next;
+		return row;
+	};
+	const auto rowText = [&] { return Text(lastRow()); };
+	const auto fail = [&](std::wstring_view message) {
+		senp::effect::PublishTreePage page{ L"test.tree", L"", {}, L"", 1, senp::effect::PageStatus::Failed, std::wstring(message) };
+		ASSERT_EQ(TreeResult::Applied, provider->Apply(runtime->Calls().back().context, std::move(page), std::chrono::steady_clock::now()));
+		DispatchTreeMessages();
+	};
+	// The Prepare install point: a declared tree body localizes an executor
+	// token and a host reason in the selected language from creation, not in
+	// the built-in English and never the raw wire token.
+	provider->Refresh(std::chrono::steady_clock::now()); DispatchTreeMessages();
+	fail(L"tool-unavailable");
+	const auto retryText = std::wstring(LS(STR_WORKBENCH_TREE_RETRY));
+	const auto japaneseToken = retryText + L" - " + std::wstring(LS(STR_WORKBENCH_TREE_TOKEN_TOOL_UNAVAILABLE));
+	EXPECT_EQ(japaneseToken, rowText());
+	EXPECT_NE(rowText(), L"Retry - The GitHub tool is unavailable. Check the account connection.");
+	EXPECT_NE(rowText(), L"Retry - tool-unavailable");
+	provider->Refresh(std::chrono::steady_clock::now()); DispatchTreeMessages();
+	provider->Pump(std::chrono::steady_clock::now() + SenpTreeProvider::kLoadLifetime * 2);
+	DispatchTreeMessages();
+	const auto japaneseTimedOut = retryText + L" - " + std::wstring(LS(STR_WORKBENCH_TREE_FAIL_REQUEST_TIMED_OUT));
+	EXPECT_EQ(japaneseTimedOut, rowText());
+	// The RefreshStrings install point: switching the selected language repaints
+	// the existing Retry row in the new language.
+	CSelectLang::InitializeLanguageEnvironment();
+	CSelectLang::ChangeLang(L"sakura_lang_en_US.dll");
+	declarations->RefreshStrings(); DispatchTreeMessages();
+	const auto englishTimedOut = std::wstring(LS(STR_WORKBENCH_TREE_RETRY)) + L" - "
+		+ std::wstring(LS(STR_WORKBENCH_TREE_FAIL_REQUEST_TIMED_OUT));
+	ASSERT_NE(englishTimedOut, japaneseTimedOut);
+	EXPECT_EQ(englishTimedOut, rowText());
 }
 
 TEST_F(SenpDeclaredTreeViewsTest, DISABLED_VisualCaptureProbe)

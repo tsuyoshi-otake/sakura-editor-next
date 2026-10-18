@@ -127,6 +127,7 @@ TreeLoadAdmission TreeViewModel::Begin(std::wstring_view parentId, TreeLoadKind 
 	state.pending.emplace(request.ticket, Impl::Pending{ request, kind, node->value.state });
 	state.bytes -= node->value.message.size() * sizeof(wchar_t);
 	node->pending = request.ticket; node->value.state = TreeChildrenState::Loading; node->value.message.clear();
+	node->value.reason = TreeFailureReason::ProviderMessage;
 	node->value.retryKind = kind;
 	return { TreeResult::Accepted, std::move(request) };
 }
@@ -138,7 +139,7 @@ TreeChange TreeViewModel::Apply(const TreeLoadRequest& request, TreeChildrenPage
 	if (!pending) return { TreeResult::Stale, {} };
 	auto* parent = state.Find(request.parentId);
 	const bool append = pending->kind == TreeLoadKind::NextPage;
-	auto reject = [&](TreeResult result, const wchar_t* reason) {
+	auto reject = [&](TreeResult result, TreeFailureReason reason) {
 		(void)Fail(request, reason);
 		if (parent && result == TreeResult::Stale) parent->value.retryKind = TreeLoadKind::Refresh;
 		return TreeChange{ result, {} };
@@ -148,18 +149,19 @@ TreeChange TreeViewModel::Apply(const TreeLoadRequest& request, TreeChildrenPage
 		|| (page.state == TreePageState::Partial) != !page.nextCursor.empty()
 		|| (page.state != TreePageState::Complete && page.state != TreePageState::Partial && page.state != TreePageState::Empty && page.state != TreePageState::Failed)
 		|| ((page.state == TreePageState::Empty || page.state == TreePageState::Failed) && !page.items.empty()))
-		return reject(TreeResult::Invalid, L"Invalid tree page.");
-	if (page.state == TreePageState::Failed) { (void)Fail(request, page.message.empty() ? L"The tree could not be loaded." : std::move(page.message)); return { TreeResult::Applied, {} }; }
+		return reject(TreeResult::Invalid, TreeFailureReason::InvalidPage);
+	if (page.state == TreePageState::Failed) { (void)Fail(request, TreeFailureReason::ProviderMessage, std::move(page.message)); return { TreeResult::Applied, {} }; }
 	if (parent->value.hasSnapshot && (page.revision < parent->value.revision || (append && page.revision != parent->value.revision)))
-		return reject(TreeResult::Stale, L"The tree changed while this page was loading. Refresh to continue.");
-	if (!page.nextCursor.empty() && page.nextCursor == request.cursor) return reject(TreeResult::Invalid, L"The provider repeated its page cursor.");
+		return reject(TreeResult::Stale, TreeFailureReason::StaleListing);
+	if (!page.nextCursor.empty() && page.nextCursor == request.cursor) return reject(TreeResult::Invalid, TreeFailureReason::RepeatedCursor);
 	std::unordered_set<std::wstring> ids, dropped;
 	std::size_t newItems{}, nextBytes = state.bytes;
 	for (const auto& item : page.items) {
-		if (!ValidItem(item) || !ids.insert(item.id).second || state.Descendant(request.parentId, item.id))
-			return reject(TreeResult::Invalid, L"The tree contains duplicate or cyclic item identities.");
+		if (!ValidItem(item)) return reject(TreeResult::Invalid, TreeFailureReason::InvalidPage);
+		if (!ids.insert(item.id).second || state.Descendant(request.parentId, item.id))
+			return reject(TreeResult::Invalid, TreeFailureReason::DuplicateIdentity);
 		const auto* old = state.Find(item.id);
-		if (old && old->value.parentId != request.parentId) return reject(TreeResult::Invalid, L"An item identity belongs to another tree position.");
+		if (old && old->value.parentId != request.parentId) return reject(TreeResult::Invalid, TreeFailureReason::MovedIdentity);
 		// An offset page may repeat a retained direct child when the remote list
 		// shifted between the two fetches. The appended copy is dropped: the
 		// retained node keeps its position, payload, subtree and expansion.
@@ -196,7 +198,7 @@ TreeChange TreeViewModel::Apply(const TreeLoadRequest& request, TreeChildrenPage
 	nextBytes += (page.nextCursor.size() + page.message.size()) * sizeof(wchar_t);
 	if ((!page.items.empty() && parent->value.depth >= kMaximumTreeDepth)
 		|| state.nodes.size() - removedCount + newItems > kMaximumTreeItems || nextBytes > kMaximumTreeBytes)
-		return reject(TreeResult::LimitExceeded, L"The tree limit was reached. Narrow the result set and refresh.");
+		return reject(TreeResult::LimitExceeded, TreeFailureReason::LimitReached);
 	// Allocate only changed nodes and the changed sibling list. Tree-wide string
 	// cloning would turn a long sequence of small pages into O(N^2) payload copies.
 	// Node handles transfer preallocated map storage during the nonallocating commit.
@@ -237,16 +239,18 @@ TreeChange TreeViewModel::Apply(const TreeLoadRequest& request, TreeChildrenPage
 	return changed;
 }
 
-TreeResult TreeViewModel::Fail(const TreeLoadRequest& request, std::wstring message)
+TreeResult TreeViewModel::Fail(const TreeLoadRequest& request, TreeFailureReason reason, std::wstring message)
 {
 	auto& state = *m_impl;
 	if (!state.Match(request)) return TreeResult::Stale;
-	if (!Text(message, 4096)) message = L"The tree could not be loaded.";
+	if (!Text(message, 4096)) message.clear();
 	auto* node = state.Find(request.parentId);
 	state.bytes -= node->value.message.size() * sizeof(wchar_t);
 	if (state.bytes + message.size() * sizeof(wchar_t) > kMaximumTreeBytes) message.clear();
+	// A provider reason always names text the view can show; without any it is a plain load failure.
+	if (reason == TreeFailureReason::ProviderMessage && message.empty()) reason = TreeFailureReason::LoadFailed;
 	state.bytes += message.size() * sizeof(wchar_t);
-	node->pending = 0; node->value.state = TreeChildrenState::Failed; node->value.message = std::move(message);
+	node->pending = 0; node->value.state = TreeChildrenState::Failed; node->value.reason = reason; node->value.message = std::move(message);
 	state.pending.erase(request.ticket);
 	return TreeResult::Applied;
 }

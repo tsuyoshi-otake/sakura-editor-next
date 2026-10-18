@@ -102,14 +102,14 @@ public:
 		auto submitted = options.runtime->Submit({ options.viewId, request.request.parentId, request.request.cursor }, now + senp::CSenpRuntimeSession::kMaximumLifetime);
 		if (submitted.status != senp::AdmissionStatus::Accepted) {
 			(void)model.Fail(request.request, submitted.status == senp::AdmissionStatus::Busy
-				? L"The provider is busy. Retry when it is available." : L"The provider is unavailable.");
+				? TreeFailureReason::ProviderBusy : TreeFailureReason::ProviderUnavailable);
 			pending.erase(it); Changed(parentId);
 			return submitted.status == senp::AdmissionStatus::Busy ? TreeResult::Busy : TreeResult::Unavailable;
 		}
 		if (!Scope(submitted.Context()) || !Id(submitted.Context().operationId) || submitted.Context().operationId.size() > 96
 			|| submitted.Context().requestGeneration <= lastRequestGeneration) {
 			options.runtime->Cancel(submitted.Context());
-			(void)model.Fail(request.request, L"The provider returned an invalid request identity.");
+			(void)model.Fail(request.request, TreeFailureReason::InvalidRequestIdentity);
 			pending.erase(it); Changed(parentId); return TreeResult::Invalid;
 		}
 		lastRequestGeneration = submitted.Context().requestGeneration;
@@ -147,7 +147,7 @@ void SenpTreeProvider::Pump(Time now)
 	for (auto it = state.pending.begin(); it != state.pending.end();) {
 		if (now < it->second.deadline) { ++it; continue; }
 		const auto parent = it->second.request.parentId;
-		(void)state.model.Fail(it->second.request, L"The tree request timed out. Retry to try again.");
+		(void)state.model.Fail(it->second.request, TreeFailureReason::RequestTimedOut);
 		state.options.runtime->Cancel(it->second.context); it = state.pending.erase(it);
 		state.Changed(parent);
 	}
@@ -229,7 +229,7 @@ TreeResult SenpTreeProvider::Apply(const senp::effect::OperationContext& context
 	const auto it = state.Find(context); if (it == state.pending.end()) return TreeResult::Stale;
 	const auto parent = it->second.request.parentId;
 	const auto reject = [&]() {
-		(void)state.model.Fail(it->second.request, L"The provider returned an invalid tree page.");
+		(void)state.model.Fail(it->second.request, TreeFailureReason::InvalidPage);
 		state.options.runtime->Cancel(it->second.context); state.pending.erase(it); state.Changed(parent); return TreeResult::Invalid;
 	};
 	if (page.viewId != state.options.viewId || page.revision < 0 || page.items.size() > kMaximumTreePageItems) return reject();
@@ -259,8 +259,8 @@ TreeResult SenpTreeProvider::Failed(const senp::effect::OperationContext& contex
 	const auto it = m_impl->Find(context); if (it == m_impl->pending.end()) return TreeResult::Stale;
 	if (status == senp::InvocationStatus::EffectsReady) return TreeResult::Invalid;
 	const auto parent = it->second.request.parentId;
-	(void)m_impl->model.Fail(it->second.request, status == senp::InvocationStatus::TimedOut
-		? L"The provider timed out." : status == senp::InvocationStatus::Cancelled ? L"The request was cancelled." : L"The provider could not load the tree.");
+	(void)m_impl->model.Fail(it->second.request, status == senp::InvocationStatus::TimedOut ? TreeFailureReason::ProviderTimedOut
+		: status == senp::InvocationStatus::Cancelled ? TreeFailureReason::Cancelled : TreeFailureReason::LoadFailed);
 	m_impl->options.runtime->Cancel(it->second.context); m_impl->pending.erase(it); m_impl->Changed(parent); Pump(now);
 	return TreeResult::Applied;
 }

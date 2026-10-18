@@ -13,12 +13,87 @@
 #include <set>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace workbench::tree {
 namespace {
 constexpr wchar_t kClass[] = L"SakuraSenpTreeView";
 constexpr UINT kSync = WM_APP + 0x5e8, kInvoke = WM_APP + 0x5e9;
 constexpr UINT_PTR kDeadlineTimer = 1, kTreeSubclass = 296;
+//! English fallback per host failure reason, indexed by TreeFailureReason.
+//! A view whose owner never installs a localized table still never shows a
+//! raw token or an empty row.
+constexpr std::wstring_view kDefaultFailureTexts[] = {
+	L"", // ProviderMessage: the provider's own text is used instead.
+	L"The provider is busy. Retry when it is available.",
+	L"The provider is unavailable.",
+	L"The provider returned an invalid request identity.",
+	L"The tree request timed out. Retry to try again.",
+	L"The provider returned an invalid tree page.",
+	L"The provider timed out.",
+	L"The request was cancelled.",
+	L"The tree could not be loaded.",
+	L"The tree changed while this page was loading. Refresh to continue.",
+	L"The provider repeated its page cursor.",
+	L"The tree contains duplicate or cyclic item identities.",
+	L"An item identity belongs to another tree position.",
+	L"The tree limit was reached. Narrow the result set and refresh.",
+};
+static_assert(std::size(kDefaultFailureTexts) == kTreeFailureReasonCount,
+	"one fallback string per TreeFailureReason");
+//! English fallback per token display group, indexed by TreeTokenText.
+constexpr std::wstring_view kDefaultTokenTexts[] = {
+	L"The GitHub request was rate limited. Retry when the limit resets.",
+	L"The GitHub request was denied. Check the account connection.",
+	L"The GitHub resource was not found.",
+	L"The GitHub request was invalid.",
+	L"The GitHub tool is unavailable. Check the account connection.",
+	L"The GitHub tool answered with an unsupported version.",
+	L"The GitHub request timed out.",
+	L"The request was cancelled.",
+	L"The result was too large to load. Narrow it and retry.",
+	L"GitHub returned a response that could not be read.",
+	L"The GitHub request failed.",
+	L"The result page is unavailable. Retry to fetch it again.",
+	L"The GitHub resource is unavailable.",
+	L"The control process connection is unavailable. Retry to reconnect.",
+	L"The request was refused.",
+	L"The control process is busy. Retry later.",
+};
+static_assert(std::size(kDefaultTokenTexts) == kTreeTokenTextCount,
+	"one fallback string per TreeTokenText");
+//! The single authoritative token set: exact provider messages minted by the
+//! executor and broker, mapped to their display group. A token added here
+//! automatically localizes; an owner never lists the wire tokens.
+constexpr std::pair<std::wstring_view, TreeTokenText> kTokenGroups[] = {
+	{ L"rate-limited", TreeTokenText::RateLimited },
+	{ L"denied", TreeTokenText::AccessDenied },
+	{ L"forbidden", TreeTokenText::AccessDenied },
+	{ L"unauthorized", TreeTokenText::AccessDenied },
+	{ L"not-found", TreeTokenText::NotFound },
+	{ L"unavailable-or-not-found", TreeTokenText::NotFound },
+	{ L"invalid-request", TreeTokenText::InvalidRequest },
+	{ L"tool-unavailable", TreeTokenText::ToolUnavailable },
+	{ L"unsupported-version", TreeTokenText::UnsupportedVersion },
+	{ L"timed-out", TreeTokenText::TimedOut },
+	{ L"cancelled", TreeTokenText::Cancelled },
+	{ L"output-limit-exceeded", TreeTokenText::TooLarge },
+	{ L"page-too-large", TreeTokenText::TooLarge },
+	{ L"resource-limit", TreeTokenText::TooLarge },
+	{ L"invalid-envelope", TreeTokenText::Unreadable },
+	{ L"invalid-json", TreeTokenText::Unreadable },
+	{ L"page-unprojectable", TreeTokenText::Unreadable },
+	{ L"invalid-encoding", TreeTokenText::Unreadable },
+	{ L"failed", TreeTokenText::Failed },
+	{ L"page-unavailable", TreeTokenText::PageUnavailable },
+	{ L"resource-unavailable", TreeTokenText::ResourceUnavailable },
+	{ L"the control endpoint is unavailable", TreeTokenText::ControlUnavailable },
+	{ L"the control connection was replaced", TreeTokenText::ControlUnavailable },
+	{ L"the control connection was lost", TreeTokenText::ControlUnavailable },
+	{ L"the tool broker was stopped", TreeTokenText::ControlUnavailable },
+	{ L"the control side refused the tool read", TreeTokenText::ReadRefused },
+	{ L"the control side is saturated", TreeTokenText::ControlBusy },
+};
 int Dip(int value, unsigned int dpi) noexcept { return ::MulDiv(value, dpi, 96); }
 SenpTreeProvider::Time Now() noexcept { return std::chrono::steady_clock::now(); }
 void Fill(HDC dc, RECT rect, COLORREF color) noexcept
@@ -131,6 +206,28 @@ public:
 	}
 	std::wstring Label(const TreeNodeSnapshot& node) const
 	{ return node.item.description.empty() ? node.item.label : node.item.label + L" - " + node.item.description; }
+	//! The text a failed Retry row appends to the Retry label: a host reason
+	//! resolves through the reason table, a provider message through the exact
+	//! token table, and everything else is the provider's own text.
+	std::wstring_view FailureText(TreeFailureReason reason) const
+	{
+		const auto index = static_cast<std::size_t>(reason);
+		if (index < kTreeFailureReasonCount && !options.failureTexts[index].empty()) return options.failureTexts[index];
+		return index < std::size(kDefaultFailureTexts) && !kDefaultFailureTexts[index].empty()
+			? kDefaultFailureTexts[index] : kDefaultFailureTexts[static_cast<std::size_t>(TreeFailureReason::LoadFailed)];
+	}
+	std::wstring_view TokenText(TreeTokenText group) const
+	{
+		const auto index = static_cast<std::size_t>(group);
+		if (index < kTreeTokenTextCount && !options.tokenTexts[index].empty()) return options.tokenTexts[index];
+		return kDefaultTokenTexts[index];
+	}
+	std::wstring_view MessageText(const TreeNodeSnapshot& node) const
+	{
+		if (node.reason != TreeFailureReason::ProviderMessage) return FailureText(node.reason);
+		for (const auto& [token, group] : kTokenGroups) if (token == node.message) return TokenText(group);
+		return node.message;
+	}
 	void Insert(std::unique_ptr<Row> row, HTREEITEM parent, bool hasChildren)
 	{
 		row->token = nextToken++;
@@ -165,7 +262,8 @@ public:
 		switch (node.state) {
 		case TreeChildrenState::Loading: row->kind = RowKind::Loading; row->label = options.loadingText; break;
 		case TreeChildrenState::Partial: row->kind = RowKind::More; row->label = options.loadMoreText; break;
-		case TreeChildrenState::Failed: row->kind = RowKind::Retry; row->label = options.retryText; if (!node.message.empty()) row->label += L" - " + node.message; break;
+		case TreeChildrenState::Failed: row->kind = RowKind::Retry; row->label = options.retryText;
+			if (const auto text = MessageText(node); !text.empty()) row->label += L" - " + std::wstring(text); break;
 		case TreeChildrenState::Empty: row->kind = RowKind::Empty; row->label = options.noItemsText; break;
 		case TreeChildrenState::Unrequested: case TreeChildrenState::Stale: row->kind = RowKind::Unrequested; row->label = options.notLoadedText; break;
 		case TreeChildrenState::Stopped: row->kind = RowKind::Stopped; row->label = options.providerUnavailableText; break;
@@ -173,6 +271,31 @@ public:
 		}
 		if (node.state == TreeChildrenState::Empty && parent != TVI_ROOT) return;
 		Insert(std::move(row), parent, false);
+	}
+	void RelabelStatusRows()
+	{
+		for (auto& [handle, row] : rows) {
+			if (row->kind == RowKind::Item) continue;
+			const auto* parent = options.provider->Model().Inspect(row->parent);
+			if (!parent) continue;
+			std::wstring label;
+			switch (row->kind) {
+			case RowKind::Loading: label = options.loadingText; break;
+			case RowKind::More: label = options.loadMoreText; break;
+			case RowKind::Retry:
+				label = options.retryText;
+				if (const auto text = MessageText(*parent); !text.empty()) label += L" - " + std::wstring(text);
+				break;
+			case RowKind::Empty: label = options.noItemsText; break;
+			case RowKind::Unrequested: label = options.notLoadedText; break;
+			case RowKind::Stopped: label = options.providerUnavailableText; break;
+			case RowKind::Item: continue;
+			}
+			row->label = std::move(label);
+			TVITEMW item{}; item.mask = TVIF_TEXT; item.hItem = handle; item.pszText = row->label.data();
+			if (!TreeView_SetItem(tree, &item)) { Fault(); return; }
+		}
+		::InvalidateRect(tree, nullptr, FALSE);
 	}
 	void SyncBranch(std::wstring_view id)
 	{
@@ -497,28 +620,17 @@ void CSenpTreeView::SetLocalizedStatusText(std::wstring loading, std::wstring lo
 		options.loadingText = std::move(loading); options.loadMoreText = std::move(loadMore);
 		options.retryText = std::move(retry); options.noItemsText = std::move(noItems);
 		options.notLoadedText = std::move(notLoaded); options.providerUnavailableText = std::move(providerUnavailable);
-		for (auto& [handle, row] : m_impl->rows) {
-			if (row->kind == Impl::RowKind::Item) continue;
-			const auto* parent = m_impl->options.provider->Model().Inspect(row->parent);
-			if (!parent) continue;
-			std::wstring label;
-			switch (row->kind) {
-			case Impl::RowKind::Loading: label = options.loadingText; break;
-			case Impl::RowKind::More: label = options.loadMoreText; break;
-			case Impl::RowKind::Retry:
-				label = options.retryText;
-				if (!parent->message.empty()) label += L" - " + parent->message;
-				break;
-			case Impl::RowKind::Empty: label = options.noItemsText; break;
-			case Impl::RowKind::Unrequested: label = options.notLoadedText; break;
-			case Impl::RowKind::Stopped: label = options.providerUnavailableText; break;
-			case Impl::RowKind::Item: continue;
-			}
-			row->label = std::move(label);
-			TVITEMW item{}; item.mask = TVIF_TEXT; item.hItem = handle; item.pszText = row->label.data();
-			if (!TreeView_SetItem(m_impl->tree, &item)) { m_impl->Fault(); return; }
-		}
-		::InvalidateRect(m_impl->tree, nullptr, FALSE);
+		m_impl->RelabelStatusRows();
+	} catch (...) { m_impl->Fault(); }
+}
+void CSenpTreeView::SetLocalizedFailureText(std::array<std::wstring, kTreeFailureReasonCount> reasons,
+	std::array<std::wstring, kTreeTokenTextCount> tokens) noexcept
+{
+	if (!m_impl->Usable()) return;
+	try {
+		m_impl->options.failureTexts = std::move(reasons);
+		m_impl->options.tokenTexts = std::move(tokens);
+		m_impl->RelabelStatusRows();
 	} catch (...) { m_impl->Fault(); }
 }
 void CSenpTreeView::Layout(const RECT& bounds, unsigned int dpi) noexcept

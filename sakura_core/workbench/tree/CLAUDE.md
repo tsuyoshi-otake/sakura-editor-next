@@ -30,6 +30,19 @@
   parent loads deduplicate. Refresh preserves stable selection and user expansion;
   removed descendants and collapsed/hidden subscribers cancel explicitly.
   Failed, busy and timed-out loads require an explicit retry. Do not poll data.
+  Host failure reasons are typed: the model and provider record a
+  `TreeFailureReason` on the snapshot, and `CSenpTreeView` localizes it at the
+  row through the owner-installed `failureTexts` table (built-in English
+  fallback otherwise). A provider page message stays verbatim, except an
+  exact executor/broker token (`tool-unavailable`, `rate-limited`,
+  `page-too-large`, `denied`, the control-broker sentences, ...) resolved
+  through the view's `tokenTexts` exact-match table; wire tokens are unchanged.
+  The model owns the reason's meaning: `ProviderMessage` is recorded only with
+  non-empty text (an empty, invalid or over-budget message becomes
+  `LoadFailed`), and `Begin` clears a recorded failure.
+  The token set lives only in `SenpTreeView.cpp` (`kTokenGroups` maps each
+  wire token to a `TreeTokenText` display group); owners supply localized
+  text per display group, never a token list.
 - Demand raised while the runtime delivers results (`CanSubmit()` is false,
   i.e. inside the coordinator's drain) is not a failed admission. It stays
   queued in the model and the owner's post-drain provider Pump admits it.

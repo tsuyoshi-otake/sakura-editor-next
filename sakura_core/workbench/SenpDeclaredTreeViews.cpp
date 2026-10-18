@@ -10,8 +10,10 @@
 #include "CSelectLang.h"
 #include <CommCtrl.h>
 #include <algorithm>
+#include <array>
 #include <map>
 #include <utility>
+#include <vector>
 
 namespace workbench {
 namespace {
@@ -43,6 +45,73 @@ std::wstring StatusText(Activation state)
 }
 std::wstring RetryText() { return Localized(STR_WORKBENCH_TREE_RETRY, L"Retry"); }
 std::wstring DetailsText() { return Localized(STR_WORKBENCH_VIEW_DETAILS, L"Details"); }
+//! The localized display tables for host failure reasons and provider-message
+//! token groups; the token set itself lives in SenpTreeView.cpp's kTokenGroups.
+std::pair<std::array<std::wstring, tree::kTreeFailureReasonCount>,
+	std::array<std::wstring, tree::kTreeTokenTextCount>> FailureTexts()
+{
+	std::array<std::wstring, tree::kTreeFailureReasonCount> reasons{};
+	reasons[static_cast<std::size_t>(tree::TreeFailureReason::ProviderBusy)] =
+		Localized(STR_WORKBENCH_TREE_FAIL_PROVIDER_BUSY, L"The provider is busy. Retry when it is available.");
+	reasons[static_cast<std::size_t>(tree::TreeFailureReason::ProviderUnavailable)] =
+		Localized(STR_WORKBENCH_TREE_FAIL_PROVIDER_UNAVAILABLE, L"The provider is unavailable.");
+	reasons[static_cast<std::size_t>(tree::TreeFailureReason::InvalidRequestIdentity)] =
+		Localized(STR_WORKBENCH_TREE_FAIL_INVALID_REQUEST_IDENTITY, L"The provider returned an invalid request identity.");
+	reasons[static_cast<std::size_t>(tree::TreeFailureReason::RequestTimedOut)] =
+		Localized(STR_WORKBENCH_TREE_FAIL_REQUEST_TIMED_OUT, L"The tree request timed out. Retry to try again.");
+	reasons[static_cast<std::size_t>(tree::TreeFailureReason::InvalidPage)] =
+		Localized(STR_WORKBENCH_TREE_FAIL_INVALID_PAGE, L"The provider returned an invalid tree page.");
+	reasons[static_cast<std::size_t>(tree::TreeFailureReason::ProviderTimedOut)] =
+		Localized(STR_WORKBENCH_TREE_FAIL_PROVIDER_TIMED_OUT, L"The provider timed out.");
+	reasons[static_cast<std::size_t>(tree::TreeFailureReason::Cancelled)] =
+		Localized(STR_WORKBENCH_TREE_FAIL_CANCELLED, L"The request was cancelled.");
+	reasons[static_cast<std::size_t>(tree::TreeFailureReason::LoadFailed)] =
+		Localized(STR_WORKBENCH_TREE_FAIL_LOAD_FAILED, L"The tree could not be loaded.");
+	reasons[static_cast<std::size_t>(tree::TreeFailureReason::StaleListing)] =
+		Localized(STR_WORKBENCH_TREE_FAIL_STALE_LISTING, L"The tree changed while this page was loading. Refresh to continue.");
+	reasons[static_cast<std::size_t>(tree::TreeFailureReason::RepeatedCursor)] =
+		Localized(STR_WORKBENCH_TREE_FAIL_REPEATED_CURSOR, L"The provider repeated its page cursor.");
+	reasons[static_cast<std::size_t>(tree::TreeFailureReason::DuplicateIdentity)] =
+		Localized(STR_WORKBENCH_TREE_FAIL_DUPLICATE_IDENTITY, L"The tree contains duplicate or cyclic item identities.");
+	reasons[static_cast<std::size_t>(tree::TreeFailureReason::MovedIdentity)] =
+		Localized(STR_WORKBENCH_TREE_FAIL_MOVED_IDENTITY, L"An item identity belongs to another tree position.");
+	reasons[static_cast<std::size_t>(tree::TreeFailureReason::LimitReached)] =
+		Localized(STR_WORKBENCH_TREE_FAIL_LIMIT_REACHED, L"The tree limit was reached. Narrow the result set and refresh.");
+	std::array<std::wstring, tree::kTreeTokenTextCount> tokens{};
+	tokens[static_cast<std::size_t>(tree::TreeTokenText::RateLimited)] =
+		Localized(STR_WORKBENCH_TREE_TOKEN_RATE_LIMITED, L"The GitHub request was rate limited. Retry when the limit resets.");
+	tokens[static_cast<std::size_t>(tree::TreeTokenText::AccessDenied)] =
+		Localized(STR_WORKBENCH_TREE_TOKEN_ACCESS_DENIED, L"The GitHub request was denied. Check the account connection.");
+	tokens[static_cast<std::size_t>(tree::TreeTokenText::NotFound)] =
+		Localized(STR_WORKBENCH_TREE_TOKEN_NOT_FOUND, L"The GitHub resource was not found.");
+	tokens[static_cast<std::size_t>(tree::TreeTokenText::InvalidRequest)] =
+		Localized(STR_WORKBENCH_TREE_TOKEN_INVALID_REQUEST, L"The GitHub request was invalid.");
+	tokens[static_cast<std::size_t>(tree::TreeTokenText::ToolUnavailable)] =
+		Localized(STR_WORKBENCH_TREE_TOKEN_TOOL_UNAVAILABLE, L"The GitHub tool is unavailable. Check the account connection.");
+	tokens[static_cast<std::size_t>(tree::TreeTokenText::UnsupportedVersion)] =
+		Localized(STR_WORKBENCH_TREE_TOKEN_UNSUPPORTED_VERSION, L"The GitHub tool answered with an unsupported version.");
+	tokens[static_cast<std::size_t>(tree::TreeTokenText::TimedOut)] =
+		Localized(STR_WORKBENCH_TREE_TOKEN_TIMED_OUT, L"The GitHub request timed out.");
+	tokens[static_cast<std::size_t>(tree::TreeTokenText::Cancelled)] =
+		Localized(STR_WORKBENCH_TREE_TOKEN_CANCELLED, L"The request was cancelled.");
+	tokens[static_cast<std::size_t>(tree::TreeTokenText::TooLarge)] =
+		Localized(STR_WORKBENCH_TREE_TOKEN_TOO_LARGE, L"The result was too large to load. Narrow it and retry.");
+	tokens[static_cast<std::size_t>(tree::TreeTokenText::Unreadable)] =
+		Localized(STR_WORKBENCH_TREE_TOKEN_UNREADABLE, L"GitHub returned a response that could not be read.");
+	tokens[static_cast<std::size_t>(tree::TreeTokenText::Failed)] =
+		Localized(STR_WORKBENCH_TREE_TOKEN_FAILED, L"The GitHub request failed.");
+	tokens[static_cast<std::size_t>(tree::TreeTokenText::PageUnavailable)] =
+		Localized(STR_WORKBENCH_TREE_TOKEN_PAGE_UNAVAILABLE, L"The result page is unavailable. Retry to fetch it again.");
+	tokens[static_cast<std::size_t>(tree::TreeTokenText::ResourceUnavailable)] =
+		Localized(STR_WORKBENCH_TREE_TOKEN_RESOURCE_UNAVAILABLE, L"The GitHub resource is unavailable.");
+	tokens[static_cast<std::size_t>(tree::TreeTokenText::ControlUnavailable)] =
+		Localized(STR_WORKBENCH_TREE_TOKEN_CONTROL_UNAVAILABLE, L"The control process connection is unavailable. Retry to reconnect.");
+	tokens[static_cast<std::size_t>(tree::TreeTokenText::ReadRefused)] =
+		Localized(STR_WORKBENCH_TREE_TOKEN_READ_REFUSED, L"The request was refused.");
+	tokens[static_cast<std::size_t>(tree::TreeTokenText::ControlBusy)] =
+		Localized(STR_WORKBENCH_TREE_TOKEN_CONTROL_BUSY, L"The control process is busy. Retry later.");
+	return { std::move(reasons), std::move(tokens) };
+}
 bool CanRetry(Activation state) noexcept { return state == Activation::Failed || state == Activation::Busy; }
 void Fill(HDC dc, const RECT& bounds, COLORREF color) noexcept
 {
@@ -172,6 +241,8 @@ struct CSenpDeclaredTreeViews::Impl final : std::enable_shared_from_this<Impl> {
 						Localized(STR_WORKBENCH_TREE_NO_ITEMS, L"No items"),
 						Localized(STR_WORKBENCH_TREE_NOT_LOADED, L"Not loaded"),
 						Localized(STR_WORKBENCH_TREE_PROVIDER_UNAVAILABLE, L"Provider unavailable"));
+					auto failures = FailureTexts();
+					current->SetLocalizedFailureText(std::move(failures.first), std::move(failures.second));
 				}
 				LayoutChildren();
 				::RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
@@ -408,6 +479,8 @@ public:
 			options.noItemsText = Localized(STR_WORKBENCH_TREE_NO_ITEMS, L"No items");
 			options.notLoadedText = Localized(STR_WORKBENCH_TREE_NOT_LOADED, L"Not loaded");
 			options.providerUnavailableText = Localized(STR_WORKBENCH_TREE_PROVIDER_UNAVAILABLE, L"Provider unavailable");
+			auto failures = FailureTexts();
+			options.failureTexts = std::move(failures.first); options.tokenTexts = std::move(failures.second);
 			auto body = tree::CSenpTreeView::Create(std::move(options));
 			if (!body) return false;
 			m_bodies.emplace(slot->first, std::move(body));

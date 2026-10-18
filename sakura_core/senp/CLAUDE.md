@@ -304,8 +304,9 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   both from the Marketplace. SENP has no gallery, so default installation
   replaces that step. The divergence is the default only: the Views, command
   IDs and upstream View identifiers are unchanged. A profile without a GitHub
-  connection sees the failed read as a Retry row (today `tool-unavailable`,
-  an untranslated failure token), never placeholder data.
+  connection sees the failed read as a Retry row whose executor token
+  (`tool-unavailable`, ...) is localized by the tree view's exact-match token
+  table while the wire token itself is unchanged, never placeholder data.
 - Declarative `languages` and `grammars` use the VS Code contribution shape and
   are loaded in-process by `ISenpLanguageService`. Package management chooses
   enabled assets; the language service selects a grammar; the TextMate engine

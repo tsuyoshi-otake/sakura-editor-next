@@ -23,6 +23,28 @@ enum class TreeChildrenState : std::uint8_t { Unrequested, Loading, Complete, Pa
 enum class TreePageState : std::uint8_t { Complete, Partial, Empty, Failed };
 enum class TreeLoadKind : std::uint8_t { Initial, Refresh, NextPage };
 enum class TreeResult : std::uint8_t { Applied, Accepted, Unchanged, Busy, Invalid, Stale, LimitExceeded, Unavailable };
+//! WHY a load failed, recorded by the host. `ProviderMessage` means the
+//! provider supplied the text; every other value names a host reason the view
+//! localizes. The value count feeds SenpTreeViewOptions::failureTexts.
+//! Only a Failed node's reason is meaningful: Begin resets it, and Fail records
+//! `ProviderMessage` only with non-empty text (an empty, invalid or over-budget
+//! message becomes `LoadFailed`).
+enum class TreeFailureReason : std::uint8_t {
+	ProviderMessage,
+	ProviderBusy,
+	ProviderUnavailable,
+	InvalidRequestIdentity,
+	RequestTimedOut,
+	InvalidPage,
+	ProviderTimedOut,
+	Cancelled,
+	LoadFailed,
+	StaleListing,
+	RepeatedCursor,
+	DuplicateIdentity,
+	MovedIdentity,
+	LimitReached,
+};
 
 struct TreeItem final {
 	std::wstring id, label, description, tooltip, icon, commandId;
@@ -67,6 +89,7 @@ struct TreeNodeSnapshot final {
 	std::vector<std::wstring> children;
 	TreeChildrenState state{ TreeChildrenState::Unrequested };
 	TreeLoadKind retryKind{ TreeLoadKind::Initial };
+	TreeFailureReason reason{ TreeFailureReason::ProviderMessage };
 	std::wstring nextCursor, message;
 	std::uint64_t revision{};
 	std::size_t depth{};
@@ -85,7 +108,7 @@ public:
 	TreeViewModel& operator=(const TreeViewModel&) = delete;
 	[[nodiscard]] TreeLoadAdmission Begin(std::wstring_view parentId, TreeLoadKind kind);
 	[[nodiscard]] TreeChange Apply(const TreeLoadRequest& request, TreeChildrenPage page);
-	[[nodiscard]] TreeResult Fail(const TreeLoadRequest& request, std::wstring message);
+	[[nodiscard]] TreeResult Fail(const TreeLoadRequest& request, TreeFailureReason reason, std::wstring message = {});
 	[[nodiscard]] TreeResult Cancel(const TreeLoadRequest& request);
 	[[nodiscard]] TreeChange SetExpanded(std::wstring_view id, bool expanded);
 	[[nodiscard]] bool Select(std::wstring_view id);
