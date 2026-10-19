@@ -169,7 +169,6 @@ struct HostScript final {
 	std::atomic<int> decorateCalls{ 0 };
 	std::atomic<int> closeCalls{ 0 };
 	std::atomic<int> maxFrameLines{ 0 };
-	std::wstring openedModulePath;
 	std::wstring openedSha256;
 	bool openSucceeds = true;
 	//! Consulted before openSucceeds so a test can refuse opens by package
@@ -186,7 +185,6 @@ public:
 	[[nodiscard]] bool Open(std::wstring_view modulePath, std::wstring_view moduleSha256) override
 	{
 		++m_script->openCalls;
-		m_script->openedModulePath = modulePath;
 		m_script->openedSha256 = moduleSha256;
 		if (m_script->onOpen) return m_script->onOpen(modulePath, moduleSha256);
 		return m_script->openSucceeds;
@@ -421,38 +419,50 @@ TEST(SenpRuntimeService, PackageChangeClearsTheCrashHistory)
 	fixture.management.SetExtensions({ extA });
 	fixture.Start();
 
+	// Each step waits for both the crash (Close) and the restart (Open)
+	// it causes before sending the next request: waiting on the reopen
+	// count alone can be satisfied by a reconcile's open ahead of the
+	// crash, which lets two requests share one batch (one crash).
+	const auto settled = [&](int closes, int opens) {
+		return WaitFor([&] {
+			return hostA->closeCalls.load() + fixture.fallbackScript->closeCalls.load() >= closes
+				&& fixture.fallbackScript->openCalls.load() >= opens;
+		});
+	};
+
 	// Two crashes under the sha-'a' package.
 	fixture.Request(L"first");
-	ASSERT_TRUE(WaitFor([&] { return fixture.fallbackScript->openCalls.load() >= 1; }));
+	ASSERT_TRUE(settled(1, 1));
 	fixture.Request(L"second");
-	ASSERT_TRUE(WaitFor([&] { return fixture.fallbackScript->openCalls.load() >= 2; }));
+	ASSERT_TRUE(settled(2, 2));
 
 	// A digest change drops the identity; the sha-'b' crash is its own
-	// first. `swap` is the request that wakes the worker to the new set.
+	// first. `swap` is the request that wakes the worker to the new set:
+	// the reconcile closes the sha-'a' host and opens sha-'b', which then
+	// crashes once and restarts.
 	auto upgraded = extA;
 	upgraded.moduleSha256 = std::wstring(64, L'b');
 	fixture.management.SetExtensions({ upgraded });
-	ASSERT_TRUE(WaitFor([&] { return fixture.fallbackScript->openCalls.load() >= 2; }));
 	fixture.Request(L"swap");
-	ASSERT_TRUE(WaitFor([&] { return fixture.fallbackScript->openCalls.load() >= 3; }));
+	ASSERT_TRUE(settled(4, 4));
 	EXPECT_EQ(fixture.service->Snapshot().state, senp::ERuntimeState::Ready);
 
 	// Back at sha-'a': had its two crashes survived, this first failure
-	// would already be the third. It restarts instead, and retiring takes
-	// two further failures of its own.
+	// would already be the third and no restart would follow. It restarts
+	// instead, and retiring takes two further failures of its own.
 	fixture.management.SetExtensions({ extA });
-	ASSERT_TRUE(WaitFor([&] { return fixture.fallbackScript->openCalls.load() >= 4; }));
 	fixture.Request(L"reverted-1");
-	ASSERT_TRUE(WaitFor([&] { return fixture.fallbackScript->openCalls.load() >= 5; }));
+	ASSERT_TRUE(settled(6, 6));
 	EXPECT_EQ(fixture.service->Snapshot().state, senp::ERuntimeState::Ready);
 	EXPECT_TRUE(fixture.service->Snapshot().diagnostic.empty());
 	fixture.Request(L"reverted-2");
-	ASSERT_TRUE(WaitFor([&] { return fixture.fallbackScript->openCalls.load() >= 6; }));
+	ASSERT_TRUE(settled(7, 7));
 	EXPECT_EQ(fixture.service->Snapshot().state, senp::ERuntimeState::Ready);
 	fixture.Request(L"reverted-3");
 	ASSERT_TRUE(WaitFor([&] {
 		return fixture.service->Snapshot().state == senp::ERuntimeState::ReadyWithDiagnostics;
 	}));
+	EXPECT_EQ(fixture.fallbackScript->openCalls.load(), 7);
 }
 
 TEST(SenpRuntimeService, TypedRejectionDropsTheResultWithoutACrash)
