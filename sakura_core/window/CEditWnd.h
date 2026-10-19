@@ -1358,6 +1358,9 @@ private:
 	//! revision: the Source Control tool publishes state, not a version, so there
 	//! is no counter to compare instead.
 	std::wstring m_senpRepositorySignature;
+	//! The extension-host runtime diagnostic the timer last published to the
+	//! Extensions View; compared per turn so only a change refreshes.
+	std::wstring m_senpRuntimeDiagnostic;
 	bool m_senpWindowExtensionsActive{};
 	std::vector<std::function<bool(const theme::ThemePalette&, const LOGFONT&, unsigned int)>> m_senpStyleSinks;
 	//! One text pump per owner. False means that owner is gone, which is also

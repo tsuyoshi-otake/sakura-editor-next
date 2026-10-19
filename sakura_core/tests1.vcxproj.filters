@@ -92,6 +92,9 @@
     <ClInclude Include="..\src\test\cpp\tests1\Utf16Phase8Benchmark.h">
       <Filter>Test Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\test\cpp\tests1\ScopedLanguageSelection.h">
+      <Filter>Test Files</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\test\cpp\tests1\workbench\OutputServiceRustShadowAbi.h">
       <Filter>Test Files\workbench</Filter>
     </ClInclude>
@@ -415,6 +418,9 @@
 	  <Filter>Test Files\platform</Filter>
 	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\platform\BoundedProcessRunnerTest.cpp">
+	  <Filter>Test Files\platform</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\platform\InheritedHandleListTest.cpp">
 	  <Filter>Test Files\platform</Filter>
 	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\GitSourceControlTest.cpp">

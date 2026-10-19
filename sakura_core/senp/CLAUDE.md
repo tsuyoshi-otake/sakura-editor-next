@@ -249,29 +249,41 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   while syntax errors stay `InvalidJson`. (`MaximumStringLengthExceeded` cannot
   occur here: a string over 1 Mi UTF-16 units does not fit in a 1 MiB body. It
   is mapped so the switch stays exhaustive.) The `gh api --include` capture is
-  bounded at body limit + a 64 KiB header allowance (`kReadOutputBytes`), and a
+  bounded at body limit + a 64 KiB header allowance
+  (`kMaximumRepositoryReadOutputBytes`, shared by the credential path and
+  `CGhToolPolicy::ReadRepository`), and a
   process `OutputLimitExceeded` is typed through instead of degrading to
   `Failed`. The executor adds no second size check: a `Succeeded` body is
   already within the bound, so a resource-limit refusal inside
   `ProjectRepositoryPage` is unreachable and the projection keeps returning
-  `std::optional<std::string>`.
-- Transient memory of that path, measured 2026-10-18 in Debug with a
+  `std::optional<std::string>`. Each page is parsed exactly once (#364):
+  the response carries the validating parse's DOM on `GhRepositoryResponse`,
+  the executor's `Page` stores it next to the body, and `Publish` hands it
+  to `ProjectRepositoryPageDocument` - the body `ProjectRepositoryPage`
+  parses then lands on the same implementation, so output stays
+  byte-identical and a second publish of one page (two reads sharing a
+  cache key) is what reparses the kept body.
+- Transient memory of that path, measured 2026-10-19 in Debug with a
   per-thread `_CrtSetAllocHook`
   (`GhPageProjection.OnePageProjectionPeaksUnderAMeasuredHeapCeiling`). The
   scheduler's 64 account lanes are queues, not threads: every `gh` read runs
   on the executor's single worker, and every projection runs under its state
   mutex when a completion is taken, so a Control process holds at most one
   read parse and one projection at a time. On a page just under 1 MiB, an
-  `issues` list peaks inside the parse at 7,995,694 B (7.65x body) for both
-  `ParseStrict` and the projection. An `issue` whose body string fills the
-  page parses at 4,258,096 B and projects at 6,477,392 B (6.20x); releasing the
-  source DOM before serializing lowered that from 9,033,245 B, and the test's
-  ceiling fails a projection that keeps both trees. Worst case per Control
-  process: one read (capture 1,114,112 + envelope body 1,048,576 + parse
-  7,995,694) + one projection 7,995,694 + the page cache
-  (`MaximumCachedPages()` 8 x 1,048,576) = 26,542,684 B, about 25.3 MiB.
-  The capture bound has no test: the credential seam does not record the
-  output limit it is given.
+  `issues` list still peaks inside the one parse at 7,995,694 B (7.65x body);
+  that DOM now travels with the response and the projection adds only
+  1,995,287 B (1.91x) on top of it. An `issue` whose body string fills the
+  page parses at 4,258,096 B and adds 3,791,188 B (3.63x) while serializing,
+  because the consumed source DOM is released before the output grows. The
+  test's ceilings fail a projection that reparses the body or keeps both
+  trees. Worst case per Control process: the read's capture is freed before
+  the projection runs, so the resident peak is the projection phase - envelope
+  body 1,048,576 + live `issues` DOM 7,995,694 + added 1,995,287 = 11,039,557 B
+  - plus the body-only page cache (`MaximumCachedPages()` 8 x 1,048,576
+  = 8,388,608) = 19,428,165 B, about 18.5 MiB.
+  The credential fake records the timeout and both capture bounds it is
+  given, and `GhRepositoryRead.LaunchesTheReadAtThePageBodyPlusHeaderCaptureBound`
+  pins the exact 1,114,112 B bound on the live reader path.
 - A schema-2 tree page's `revision` is the provider's version of ONE parent's
   listing: the first page and every page appended through its cursors publish
   the same value, on success and on failure, and a later listing may keep or
@@ -467,27 +479,40 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   `CreatePipe` pipes do not support overlapped I/O, the loop is capped by
   `kProtocolTimeoutMilliseconds`, runs only on the v1 worker thread, and
   checks host exit every iteration.
-- The v1 decoration worker (#347/#348/#350) keeps explicit bounds and
+- The v1 decoration worker (#347/#348/#350/#364) keeps explicit bounds and
   terminals rather than count-only buckets:
-  - **Failure is a terminal, not a retry loop.** A host whose `Open` or
-    `Decorate` exchange fails is closed and its `(id, modulePath,
-    moduleSha256)` identity retired; it is never reopened while the same
-    identity is desired. The batch's lines still complete from the
-    surviving hosts and are cached, `InvalidateRect` fires only for a
-    stored result, and retiring a host invalidates the cache exactly like
-    a host-set diff, so no repaint can re-queue the same work. The
-    diagnostic names the first retired identity with its own reason
-    ("failed while computing" or "could not be started") and clears when
-    the package set drops that identity, even if no live host changed.
-  - **Divergence from VS Code (recorded).** VS Code restarts a crashed
-    extension host automatically up to 3 times within 5 minutes and then
-    offers a manual restart. A v1 host here is one extension's process,
-    and a retry would resend the same visible lines that just failed, so
-    this worker retires on the first failure; the identity comes back
-    only through a package change (new digest, disable/enable, reinstall)
-    or an editor restart. The bundled indent extension rejects more than
-    10000 slots per request, so one line with more than 10000 indent
-    levels retires it; batching never causes that on its own (below).
+  - **VS Code's crash policy, per extension identity.** A host whose
+    `Open` or `Decorate` exchange fails is counted as a crash against its
+    `(id, modulePath, moduleSha256)` identity under the injected
+    `SenpRuntimeHooks::clock`, closed, and the cache invalidated like a
+    host-set diff. Fewer than three crashes inside
+    `kExtensionHostCrashWindow` (5 minutes, pruned by age like VS Code's
+    `ExtensionHostCrashTracker`) leaves the identity restartable: the
+    worker wakes on `m_retryPending` and reopens it at a later boundary,
+    never in a tight loop inside one pass. The third crash retires the
+    identity: it stays closed while still desired, and the snapshot
+    diagnostic names it with VS Code's message shape ("terminated
+    unexpectedly 3 times within the last 5 minutes"). Removing or
+    changing the package identity erases its crash history, retirement
+    record, and diagnostic. The one recorded difference from VS Code is
+    scope: VS Code tracks one host serving many extensions, while a v1
+    host here is one extension's process, so the window and limit apply
+    per identity.
+  - **Rejections are results, not crashes.** `Decorate` returns the
+    tri-state `EDecorateResult`: only `Failed` (transport loss or a reply
+    outside the protocol) enters the crash policy. `ClassifyDecorationReply`
+    returns `Rejected` for a typed `extensionRejected` error and for a
+    `decorations` payload that fails validation (over `kMaximumReplySlots`,
+    a `line` index outside the request, or a slot field out of range); a
+    rejected request simply contributes no slots and its lines still
+    complete from the surviving hosts. `extensionTrap` and any other
+    error code stay `Failed`. The bundled indent extension's refusal of
+    more than 10000 slots per request therefore drops that request's
+    decorations without retiring the extension.
+  - **Every admission reaches a terminal.** A pending-queue offer that
+    would exceed `kMaximumPendingBytes` is answered with an explicit
+    empty result - the same terminal an invalid line gets - because
+    `nullopt` would promise a repaint nothing was queued to deliver.
   - **Byte-bounded LRU.** Pending queue 4 MiB (`kMaximumPendingBytes`),
     decoration cache 16 MiB (`kMaximumCacheBytes`). Both charge each key
     twice, because each structure holds two copies (queue + dedupe set,
@@ -522,25 +547,53 @@ failure with a visual placeholder or an unrelated legacy plugin path.
     must refuse (which would wrongly retire the host). Reply slots map
     back through the caller-assigned `line` index. Other tabSizes wait
     for the next pass.
-  - **Per-host restart.** A management revision diffs the enabled
+  - **Revision-diff reconcile.** A management revision diffs the enabled
     `contributesIndentDecorations` set by identity: removed/changed
     hosts close, added/changed open, the rest keep their process. The
-    cache is invalidated only when that effective set changed.
+    cache is invalidated only when that effective set changed. The
+    snapshot's `diagnostic` carries the repeated-crash reason, which the
+    Extensions View folds into its diagnostic strip through the tool's
+    runtime diagnostic query; the window's 500 ms timer refreshes the
+    view when the diagnostic changes. Recorded divergence from VS Code:
+    VS Code raises a localized notification with a "Restart Extension
+    Host" action. This repository has no notification surface for the
+    v1 runtime and no per-identity restart command, so the text appears
+    only in that strip, in English like the neighbouring management
+    diagnostics, and only one retired identity is named. A retired
+    identity comes back when its package changes or the editor restarts.
   - The worker's OS dependencies sit behind constructor-injected
-    `detail::SenpRuntimeHooks` (host factory, repaint callback, and the
-    host executable path - empty means the `sakura-senp-host.exe` beside
-    this executable), never a global hook. Fixture-gated tests launch the
-    `test-fixtures` peer through it.
-- Child-side standard-stream handles are created NON-inheritable in all three
-  launchers; `senp::detail::SetChildHandlesInheritable` sets
-  `HANDLE_FLAG_INHERIT` immediately before `CreateProcessW` and the launcher
-  closes the child-side handles immediately after it returns, on success and
-  failure. This narrows but does not eliminate the race with the two
-  list-less `bInheritHandles=TRUE` callers in the same process
-  (`CEditView_ExecCmd.cpp`, `CPropComPlugin.cpp`): a concurrent CreateProcessW
-  from one of those inside the window would still pick the SENP handles up.
-  Closing it needs a process-wide launch lock -- residual risk, out of scope
-  (#344).
+    `detail::SenpRuntimeHooks` (host factory, repaint callback, the crash
+    clock, and the host executable path - empty means the
+    `sakura-senp-host.exe` beside this executable), never a global hook.
+    Fixture-gated tests launch the `test-fixtures` peer through it.
+- Every SENP child goes through one launch site,
+  `senp::detail::LaunchSenpChildProcess` in `SenpChildJob`: it computes the
+  shared `BuildSenpChildLaunchConfig` itself (executable-directory working
+  directory, `kSenpChildEnvironmentNames` allowlist block,
+  `CREATE_UNICODE_ENVIRONMENT`), hands the child exactly the declared
+  stdin/stdout/stderr handles through `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`,
+  joins the caller's job at creation through `PROC_THREAD_ATTRIBUTE_JOB_LIST`,
+  and ORs the caller's own flags (CREATE_NO_WINDOW; CREATE_SUSPENDED when a
+  caller must finish setup before resuming) with
+  `EXTENDED_STARTUPINFO_PRESENT` whenever an attribute list exists.
+  `SenpChildJob.LaunchedChildInheritsOnlyTheAllowlistedEnvironment` launches
+  a real cmd.exe child through it and asserts the captured `set` output
+  contains SystemRoot/windir but neither GH_TOKEN nor a unique marker. The
+  child-side handles are still created NON-inheritable in all three
+  launchers; the launch function sets `HANDLE_FLAG_INHERIT` only for the
+  duration of the call (restoring the exact prior flag state afterwards) and
+  the launcher closes the child-side handles immediately after it returns,
+  on success and failure. The former list-less `bInheritHandles=TRUE` callers in the same
+  process are closed too: `CPropComPlugin.cpp` needs no child handles and now
+  passes `bInheritHandles=FALSE` (clearing `STARTF_USESTDHANDLES` from the
+  inherited STARTUPINFO), while `CEditView_ExecCmd.cpp` and
+  `CViewCommander_TagJump.cpp` launch through
+  `platform::process::InheritedHandleList`, which hands the child exactly the
+  declared std handles through `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`. A
+  concurrent CreateProcessW inside the brief inheritable window therefore no
+  longer picks the SENP handles up (#344, #364). Residual risk: any *future*
+  list-less `bInheritHandles=TRUE` caller in the process would reopen the
+  same race; the helper exists so new launchers have no reason to add one.
   `SenpChildJob.ChildHandlesReportNoInheritFlagUntilEnabledForLaunch` pins
   only the helper half (flag absent, then set). No test observes the
   `SECURITY_ATTRIBUTES` each launcher creates its handles with; that half is
@@ -629,9 +682,12 @@ at the same path afterwards is not re-verified. A Program Files install needs
 administrator rights to replace. A PATH-discovered copy in a user-writable
 directory does not, and that window is accepted residual risk, because a
 process that can write there already runs as the user. The editor-side
-`workbench/account/GhCommandRunner` resolves `gh.exe` through PATH without
-this check; it runs only `gh auth status` and forwards no token, so it is a
-follow-up rather than part of this boundary. It accepts the
+`workbench/account/GhCommandRunner` applies the same publisher gate through
+the shared `platform::security::VerifyGitHubCliTrust` primitive behind its
+injected `detail::GhExecutableGate` seam: a resolved gh.exe that fails the
+signature or organization check is refused as `Unavailable` and receives no
+invocation at all, even though the fixed `gh auth status --json hosts` query
+forwards no token. It accepts the
 measured `2.93.0` contract exactly, and
 constructs either `--version` or one fixed `gh api --method GET --include`
 invocation. Repository identity and path segments are validated separately;

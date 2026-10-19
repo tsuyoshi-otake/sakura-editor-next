@@ -2,6 +2,7 @@
 /* Copyright (C) 2026, Sakura Editor Organization. SPDX-License-Identifier: Zlib */
 #include "pch.h"
 #include "CSelectLang.h"
+#include "ScopedLanguageSelection.h"
 #include "sakura_rc.h"
 #include <gtest/gtest.h>
 #include "workbench/editor/SenpReadonlyDocumentHost.h"
@@ -197,17 +198,7 @@ TEST_F(SenpReadonlyDocumentHostTest, MixedSectionsPreserveOrderAndRetainedPageSt
 
 TEST_F(SenpReadonlyDocumentHostTest, LocaleRefreshRetainsSelectedPageAndProviderData)
 {
-	struct RestoreLanguage final {
-		LANGID thread{ ::GetThreadUILanguage() };
-		bool initialized{ !CSelectLang::gm_Langs.empty() };
-		std::wstring dll{ initialized && CSelectLang::gm_Selected < CSelectLang::gm_Langs.size()
-			? CSelectLang::GetLangInfo(CSelectLang::gm_Selected).GetDllName() : L"" };
-		~RestoreLanguage() {
-			CSelectLang::ChangeLang(dll);
-			if (!initialized) { CSelectLang::gm_Langs.clear(); CSelectLang::gm_Selected = 0; }
-			::SetThreadUILanguage(thread);
-		}
-	} restore;
+	tests1::ScopedLanguageSelection restore;
 	CSelectLang::InitializeLanguageEnvironment();
 	Publish(); Create();
 	ASSERT_EQ(SenpDocumentHostState::Ready, host->State());

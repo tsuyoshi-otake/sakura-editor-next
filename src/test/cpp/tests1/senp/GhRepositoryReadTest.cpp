@@ -30,9 +30,12 @@ public:
 class Credential final : public IGhAccountCredential {
 public:
 	GhProcessOutcome RunAuthenticated(const std::vector<std::wstring>& arguments,
-		std::uint32_t, std::size_t, std::size_t, HANDLE) override
+		std::uint32_t timeout, std::size_t output, std::size_t error, HANDLE) override
 	{
 		m_arguments = arguments;
+		m_timeoutMilliseconds = timeout;
+		m_maximumOutputBytes = output;
+		m_maximumErrorBytes = error;
 		return m_outcome;
 	}
 	GhProcessOutcome RunAuthenticatedStreaming(const std::vector<std::wstring>& arguments,
@@ -48,9 +51,15 @@ public:
 			Bytes(output), {} };
 	}
 	[[nodiscard]] const std::vector<std::wstring>& Arguments() const noexcept { return m_arguments; }
+	[[nodiscard]] std::uint32_t TimeoutMilliseconds() const noexcept { return m_timeoutMilliseconds; }
+	[[nodiscard]] std::size_t MaximumOutputBytes() const noexcept { return m_maximumOutputBytes; }
+	[[nodiscard]] std::size_t MaximumErrorBytes() const noexcept { return m_maximumErrorBytes; }
 private:
 	GhProcessOutcome m_outcome{ EBoundedProcessStatus::Failed, 1, {}, {} };
 	std::vector<std::wstring> m_arguments;
+	std::uint32_t m_timeoutMilliseconds = 0;
+	std::size_t m_maximumOutputBytes = 0;
+	std::size_t m_maximumErrorBytes = 0;
 };
 
 class ConnectionPlatform final : public IGhConnectionPlatform {
@@ -147,7 +156,7 @@ TEST(GhRepositoryRead, ReturnsOneJsonPageWithEtagAndOnlyTheNextPageNumber)
 		"Link: <https://api.github.com/repositories/1/issues?per_page=50&page=3>; rel=\"next\", "
 		"<https://api.github.com/repositories/1/issues?page=8>; rel=\"last\"\r\n\r\n[{\"id\":1}]");
 	auto account = fixture.Account();
-	const auto result = fixture.Reader().Read(account, fixture.Probe(), Request({ { L"page", L"2" } }), nullptr);
+	auto result = fixture.Reader().Read(account, fixture.Probe(), Request({ { L"page", L"2" } }), nullptr);
 	EXPECT_EQ(GhRepositoryResponseStatus::Succeeded, result.Status());
 	EXPECT_EQ(200, result.HttpStatus());
 	EXPECT_EQ(2U, result.CurrentPage());
@@ -155,6 +164,15 @@ TEST(GhRepositoryRead, ReturnsOneJsonPageWithEtagAndOnlyTheNextPageNumber)
 	EXPECT_EQ(3U, *result.NextPage());
 	EXPECT_EQ("W/\"abc\"", *result.ETag());
 	EXPECT_EQ("[{\"id\":1}]", std::string(result.Body().begin(), result.Body().end()));
+	// The validating parse's DOM travels with the page so projection parses
+	// nothing a second time.
+	auto document = result.TakeDocument();
+	ASSERT_TRUE(document.has_value());
+	const auto* array = std::get_if<platform::serialization::JsoncValue::Array>(&document->Value());
+	ASSERT_NE(nullptr, array);
+	ASSERT_EQ(1U, array->size());
+	EXPECT_NE(nullptr, std::get_if<platform::serialization::JsoncValue::Object>(&array->front().Value()));
+	EXPECT_FALSE(result.TakeDocument().has_value());
 }
 
 TEST(GhRepositoryRead, NormalizesNotModifiedEvenWhenTheCliReturnsNonzero)
@@ -360,6 +378,24 @@ TEST(GhRepositoryRead, AParserResourceLimitIsTooLargeNotInvalidJson)
 		auto account = fixture.Account();
 		EXPECT_EQ(expected, fixture.Reader().Read(account, fixture.Probe(), Request(), nullptr).Status());
 	}
+}
+
+TEST(GhRepositoryRead, LaunchesTheReadAtThePageBodyPlusHeaderCaptureBound)
+{
+	// The capture bound was review-only until the seam recorded it: the reader
+	// must launch `gh api --include` bounded at the page-body limit plus the
+	// fixed 64 KiB header allowance - not the 4 MiB the old policy constant
+	// once implied, and not unlimited.
+	Fixture fixture;
+	fixture.CredentialValue().Set(EBoundedProcessStatus::Succeeded,
+		"HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n\r\n[]");
+	auto account = fixture.Account();
+	const auto result = fixture.Reader().Read(account, fixture.Probe(), Request(), nullptr);
+	ASSERT_EQ(GhRepositoryResponseStatus::Succeeded, result.Status());
+	EXPECT_EQ(kMaximumRepositoryPageBodyBytes + 64u * 1024u,
+		fixture.CredentialValue().MaximumOutputBytes());
+	EXPECT_EQ(64u * 1024u, fixture.CredentialValue().MaximumErrorBytes());
+	EXPECT_EQ(30000u, fixture.CredentialValue().TimeoutMilliseconds());
 }
 
 TEST(GhRepositoryRead, ATruncatedCaptureIsOutputLimitExceededNotFailure)

@@ -6,6 +6,7 @@
 */
 #include "pch.h"
 #include "CSelectLang.h"
+#include "ScopedLanguageSelection.h"
 #include "func/CFuncLookup.h"
 #include "senp/SenpManagementService.h"
 #include "window/CEditWnd.h"
@@ -91,40 +92,6 @@ std::filesystem::path GetCurrentProcessDirectory()
 	}
 	return std::filesystem::path(std::wstring_view(path.data(), length)).parent_path();
 }
-
-//! Restores both the selected resource module and thread UI language on all
-//! GoogleTest exit paths, including ASSERT_*/exception unwinding.
-class ScopedLanguageSelection final {
-public:
-	ScopedLanguageSelection()
-		: m_threadLanguage(::GetThreadUILanguage())
-		, m_hadLanguageEnvironment(!CSelectLang::gm_Langs.empty())
-	{
-		if (m_hadLanguageEnvironment && CSelectLang::gm_Selected < CSelectLang::gm_Langs.size()) {
-			m_previousDll = CSelectLang::GetLangInfo(CSelectLang::gm_Selected).GetDllName();
-		}
-	}
-
-	~ScopedLanguageSelection()
-	{
-		if (m_hadLanguageEnvironment) {
-			CSelectLang::ChangeLang(m_previousDll);
-		} else {
-			CSelectLang::ChangeLang(L"");
-			CSelectLang::gm_Langs.clear();
-			CSelectLang::gm_Selected = 0;
-		}
-		::SetThreadUILanguage(m_threadLanguage);
-	}
-
-	ScopedLanguageSelection(const ScopedLanguageSelection&) = delete;
-	ScopedLanguageSelection& operator=(const ScopedLanguageSelection&) = delete;
-
-private:
-	LANGID m_threadLanguage;
-	bool m_hadLanguageEnvironment;
-	std::filesystem::path m_previousDll;
-};
 
 struct FileMenuLocaleExpectation {
 	const wchar_t* dllName;
@@ -399,7 +366,7 @@ TEST(CSelectLang, MissingStringReturnsEmpty)
 
 TEST(FileMenuLocalization, AllV8FileFunctionNamesResolveFromEachSelectedRuntimeResource)
 {
-	ScopedLanguageSelection restoreLanguage;
+	tests1::ScopedLanguageSelection restoreLanguage;
 	const auto resourceDirectory = GetCurrentProcessDirectory();
 	ASSERT_TRUE(std::filesystem::is_regular_file(resourceDirectory / L"sakura_lang_en_US.dll"))
 		<< "build-sln must stage sakura_lang_en_US.dll beside tests1.exe";
@@ -450,7 +417,7 @@ TEST(FileMenuLocalization, AllV8FileFunctionNamesResolveFromEachSelectedRuntimeR
 
 TEST(WorkbenchScmLocalization, AllSelectedRuntimeResourcesContainLocalizedScmViewStrings)
 {
-	ScopedLanguageSelection restoreLanguage;
+	tests1::ScopedLanguageSelection restoreLanguage;
 	const auto resourceDirectory = GetCurrentProcessDirectory();
 	ASSERT_TRUE(std::filesystem::is_regular_file(resourceDirectory / L"sakura_lang_en_US.dll"));
 	ASSERT_TRUE(std::filesystem::is_regular_file(resourceDirectory / L"sakura_lang_zh_CN.dll"));
@@ -485,7 +452,7 @@ TEST(WorkbenchScmLocalization, AllSelectedRuntimeResourcesContainLocalizedScmVie
 
 TEST(WorkbenchExtensionsLocalization, AllSelectedRuntimeResourcesContainLocalizedExtensionStrings)
 {
-	ScopedLanguageSelection restoreLanguage;
+	tests1::ScopedLanguageSelection restoreLanguage;
 	const auto resourceDirectory = GetCurrentProcessDirectory();
 	ASSERT_TRUE(std::filesystem::is_regular_file(resourceDirectory / L"sakura_lang_en_US.dll"));
 	ASSERT_TRUE(std::filesystem::is_regular_file(resourceDirectory / L"sakura_lang_zh_CN.dll"));
@@ -581,7 +548,7 @@ TEST(WorkbenchExtensionsLocalization, AllSelectedRuntimeResourcesContainLocalize
 //! English manifest text in every language (#336), so the two tables are tied here.
 TEST(WorkbenchExtensionsLocalization, EveryEmbeddedBuiltInIsLocalizedInEachSelectedRuntimeResource)
 {
-	ScopedLanguageSelection restoreLanguage;
+	tests1::ScopedLanguageSelection restoreLanguage;
 	const auto resourceDirectory = GetCurrentProcessDirectory();
 	ASSERT_TRUE(std::filesystem::is_regular_file(resourceDirectory / L"sakura_lang_en_US.dll"));
 	ASSERT_TRUE(std::filesystem::is_regular_file(resourceDirectory / L"sakura_lang_zh_CN.dll"));
@@ -637,7 +604,7 @@ TEST(WorkbenchExtensionsLocalization, EveryEmbeddedBuiltInIsLocalizedInEachSelec
 
 TEST(FileMenuLocalization, LegacyMissingFunctionUsesTheSelectedLocaleUndefinedResource)
 {
-	ScopedLanguageSelection restoreLanguage;
+	tests1::ScopedLanguageSelection restoreLanguage;
 	const auto resourceDirectory = GetCurrentProcessDirectory();
 	ASSERT_TRUE(std::filesystem::is_regular_file(resourceDirectory / L"sakura_lang_en_US.dll"));
 	ASSERT_TRUE(std::filesystem::is_regular_file(resourceDirectory / L"sakura_lang_zh_CN.dll"));
@@ -656,7 +623,7 @@ TEST(FileMenuLocalization, LegacyMissingFunctionUsesTheSelectedLocaleUndefinedRe
 
 TEST(NativeHostLocalization, SelectedResourceModulesContainEveryHostLabel)
 {
-	ScopedLanguageSelection restoreLanguage;
+	tests1::ScopedLanguageSelection restoreLanguage;
 	CSelectLang::InitializeLanguageEnvironment();
 	const std::array resourceIds = {
 		STR_EXPLORER_DELETE_CONFIRM_TRASH_FILE,

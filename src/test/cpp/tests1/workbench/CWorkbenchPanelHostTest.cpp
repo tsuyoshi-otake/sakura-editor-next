@@ -10,6 +10,7 @@
 
 #include "workbench/CWorkbenchPanelHost.h"
 #include "CSelectLang.h"
+#include "ScopedLanguageSelection.h"
 #include "sakura_rc.h"
 
 #include <memory>
@@ -267,16 +268,7 @@ TEST(WorkbenchPanelHost, AcceptsTheCompletePersistedLayoutExtentDomain)
 
 TEST(WorkbenchPanelHost, OwnsViewContainerTitleOverflowGeometry)
 {
-	struct RestoreLanguage final {
-		LANGID thread = ::GetThreadUILanguage();
-		bool initialized = !CSelectLang::gm_Langs.empty();
-		std::wstring dll = initialized ? CSelectLang::GetLangInfo(CSelectLang::gm_Selected).GetDllName() : L"";
-		~RestoreLanguage() {
-			CSelectLang::ChangeLang(dll);
-			if (!initialized) { CSelectLang::gm_Langs.clear(); CSelectLang::gm_Selected = 0; }
-			::SetThreadUILanguage(thread);
-		}
-	} restore;
+	tests1::ScopedLanguageSelection restore;
 	CSelectLang::InitializeLanguageEnvironment();
 	workbench::CWorkbenchPanelHost host(workbench::WorkbenchEdge::Left, 280);
 	auto tool = std::make_unique<RecordingTool>();

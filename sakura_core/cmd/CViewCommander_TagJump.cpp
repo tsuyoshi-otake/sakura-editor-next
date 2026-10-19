@@ -33,6 +33,7 @@
 #include "CEditApp.h"
 #include "util/window.h"
 #include "util/module.h"
+#include "platform/process/InheritedHandleList.h"
 #include "util/string_ex2.h"
 #include "env/CSakuraEnvironment.h"
 #include "agent/CGrepAgent.h"
@@ -567,9 +568,10 @@ bool CViewCommander::Command_TagsMake( void )
 				0, FALSE, DUPLICATE_SAME_ACCESS );
 
 	//CreateProcessに渡すSTARTUPINFOを作成
-	STARTUPINFO	sui;
-	ZeroMemory( &sui, sizeof(sui) );
-	sui.cb          = sizeof(sui);
+	// 継承するハンドルをPROC_THREAD_ATTRIBUTE_HANDLE_LISTで明示し、
+	// 親プロセスの無関係なハンドルが子プロセスへ漏れないようにする
+	platform::process::InheritedHandleList cInheritHandles;
+	STARTUPINFOW&	sui = cInheritHandles.StartupInfo();
 	sui.dwFlags     = STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES;
 	sui.wShowWindow = SW_HIDE;
 	sui.hStdInput   = GetStdHandle( STD_INPUT_HANDLE );
@@ -603,10 +605,13 @@ bool CViewCommander::Command_TagsMake( void )
 	}
 
 	//コマンドライン実行
-	BOOL bProcessResult = CreateProcess(
-		nullptr, cmdline, nullptr, nullptr, TRUE,
-		CREATE_NEW_CONSOLE, nullptr, cDlgTagsMake.m_szPath, &sui, &pi
-	);
+	// ハンドルリストの構築に失敗した場合も起動失敗として扱う
+	BOOL bProcessResult = cInheritHandles.Prepare()
+		&& CreateProcess(
+			nullptr, cmdline, nullptr, nullptr, cInheritHandles.InheritHandles(),
+			CREATE_NEW_CONSOLE | cInheritHandles.AdditionalCreationFlags(),
+			nullptr, cDlgTagsMake.m_szPath, cInheritHandles.LaunchStartupInfo(), &pi
+		);
 	if( !bProcessResult )
 	{
 		WarningMessage( m_pCommanderView->GetHwnd(), LS(STR_ERR_CEDITVIEW_CMD04), cmdline );

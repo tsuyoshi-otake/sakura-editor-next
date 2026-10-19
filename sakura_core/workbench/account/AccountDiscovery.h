@@ -205,6 +205,27 @@ struct AccountDiscoveryRunners final {
 [[nodiscard]] GhAuthStatusResult RunGhAuthStatus(
 	const GhAuthStatusRequest& request, HANDLE stop);
 
+namespace detail {
+
+//! The two platform calls RunGhAuthStatus makes before any launch: resolving
+//! the gh.exe candidate and verifying it carries the shared GitHub-publisher
+//! Authenticode signature. Production binds
+//! platform::ResolveWindowsExecutable and
+//! platform::security::VerifyGitHubCliTrust; tests substitute both so each
+//! branch is covered without a real gh.exe or a real signature.
+struct GhExecutableGate final {
+	std::function<std::optional<std::wstring>()> resolveExecutable;
+	std::function<bool(std::wstring_view)> verifyExecutableTrust;
+};
+
+//! The gate-checking RunGhAuthStatus. The public overload binds the real
+//! resolver and verifier described on GhExecutableGate.
+[[nodiscard]] GhAuthStatusResult RunGhAuthStatus(
+	const GhAuthStatusRequest& request, HANDLE stop,
+	const GhExecutableGate& gate);
+
+} // namespace detail
+
 //! Run both local sources synchronously through the injected boundaries. The
 //! default runners are workbench::scm::RunGit and RunGhAuthStatus.
 [[nodiscard]] AccountDiscoverySnapshot DiscoverAccounts(

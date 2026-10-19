@@ -575,3 +575,23 @@ presentation, and exact Problems UTF-16 range navigation remain open gates.
   Sakura does not. The value is rejected by the configuration descriptor and
   no `.hide` command or menu entry is registered. This avoids advertising an
   unsupported state or silently mapping it to a different layout.
+
+## Account discovery process boundary (2026-10-19, #364)
+
+`workbench/account/GhCommandRunner.cpp` runs the fixed `gh auth status
+--json hosts` query through the shared `platform::process::RunBoundedProcess`
+boundary rather than a private pipe/job/attribute-list stack: the child gets
+only its three standard handles, an empty stdin payload (gh never reads
+stdin), a kill-on-close job, and the GH_DEBUG-removal / fixed non-interactive
+override environment (`detail::BuildGhAuthStatusEnvironmentBlock`,
+`GhAuthStatusEnvironment.h`). gh's stderr is discarded inside a 64 KiB bound
+(`kMaximumGhAuthStatusStandardErrorBytes`); a larger diagnostic stream ends as
+`OutputLimitExceeded` instead of being drained unbounded. Before any launch
+the resolved `gh.exe` must pass the shared GitHub-publisher gate: the
+injected `detail::GhExecutableGate` seam (`AccountDiscovery.h`) supplies the
+resolver and verifier, and production binds
+`platform::ResolveWindowsExecutable` +
+`platform::security::VerifyGitHubCliTrust` (leaf signer organization exactly
+`GitHub, Inc.`). A resolution failure or a refused signature returns
+`Unavailable`, which the account source reports as its existing
+not-installed state; the untrusted binary receives no invocation at all.

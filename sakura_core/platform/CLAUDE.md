@@ -78,6 +78,12 @@ or root-process exit it terminates remaining job members and joins the stdin
 writer before returning. Tests that start descendants must verify the recorded
 PID is gone or signalled, then audit for surviving repository test processes.
 
+`process/InheritedHandleList` owns the STARTUPINFOEXW +
+`PROC_THREAD_ATTRIBUTE_HANDLE_LIST` pair for launchers that redirect child
+stdio: the list holds exactly the distinct, non-null, inheritable std handles,
+and when it is empty the launch runs with `bInheritHandles=FALSE` so no ambient
+inheritable handle can leak into the child.
+
 `process/AllowlistedEnvironment` builds the complementary explicit-allowlist
 block: `BuildAllowlistedEnvironmentBlock(names)` copies only the named
 variables out of the current process environment (case-insensitive ordinal
@@ -86,6 +92,14 @@ pass `CREATE_UNICODE_ENVIRONMENT`. An allowed name the parent does not define
 is simply absent. Launchers of untrusted or credential-adjacent children use
 this instead of `lpEnvironment = nullptr` so editor secrets never reach the
 child; the SENP host/tool launchers run it with `SystemRoot`/`windir` only.
+
+`include/sakura/security/AuthenticodeSignatureVerifier.h` verifies embedded
+Authenticode signatures offline (`VerifiedSignerOrganization` returns the leaf
+signer's O= attribute; `VerifyGitHubCliTrust` is the exact `GitHub, Inc.`
+publisher gate every `gh.exe` launch boundary shares). Verification runs
+`WinVerifyTrust` with `WTD_UI_NONE`, `WTD_REVOKE_NONE` and
+`WTD_CACHE_ONLY_URL_RETRIEVAL`, so it never touches the network or hangs
+offline.
 
 ## P0 Implementation Checkpoint (2026-07-31)
 

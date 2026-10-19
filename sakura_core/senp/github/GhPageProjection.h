@@ -4,6 +4,8 @@
 /* Copyright (C) 2026, Sakura Editor Organization. SPDX-License-Identifier: Zlib */
 #pragma once
 
+#include <sakura/serialization/JsoncDocument.h>
+
 #include <optional>
 #include <string>
 #include <string_view>
@@ -36,5 +38,17 @@ namespace senp::github {
 */
 [[nodiscard]] std::optional<std::string> ProjectRepositoryPage(
 	std::wstring_view shape, const std::string& body);
+
+/*!
+	@brief The same projection over an already-validated page DOM.
+
+	The read boundary parses every page once for validation; the DOM it built
+	is moved in here rather than parsed again. The document is consumed - a
+	second read wanting the same page falls back to the body overload. A
+	distinct name, not an overload: a `const char*` would otherwise convert to
+	`bool` and silently bind the JsoncValue constructor.
+*/
+[[nodiscard]] std::optional<std::string> ProjectRepositoryPageDocument(
+	std::wstring_view shape, platform::serialization::JsoncValue document);
 
 } // namespace senp::github

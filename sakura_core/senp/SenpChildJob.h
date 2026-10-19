@@ -5,6 +5,7 @@
 #include <windows.h>
 
 #include <array>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -19,7 +20,7 @@ namespace senp {
 //! restriction set. `processMemoryBytes == 0` requests no per-process memory
 //! cap.
 struct ChildJobLimits final {
-	SIZE_T processMemoryBytes = 0;
+	const SIZE_T processMemoryBytes = 0;
 };
 
 //! Both extension host protocols compile and run untrusted Wasm inside a
@@ -71,9 +72,9 @@ using QueryJobInformationFn = BOOL(WINAPI*)(HANDLE, JOBOBJECTINFOCLASS, LPVOID, 
 //! explicit allowlisted Unicode environment block instead of inheriting the
 //! whole editor environment.
 struct SenpChildLaunchConfig final {
-	std::wstring workingDirectory;
+	const std::wstring workingDirectory;
 	std::vector<wchar_t> environment;
-	DWORD environmentFlags = 0;
+	const DWORD environmentFlags = 0;
 };
 
 //! Computes the shared SENP child launch environment for `executablePath`:
@@ -88,6 +89,33 @@ struct SenpChildLaunchConfig final {
 //! the minimal window PROC_THREAD_ATTRIBUTE_HANDLE_LIST requires; the caller
 //! closes (or clears) them immediately after CreateProcessW returns.
 [[nodiscard]] bool SetChildHandlesInheritable(std::span<const HANDLE> handles) noexcept;
+
+//! The child-side standard-stream handles one SENP child receives as
+//! stdin/stdout/stderr, in that order. Entries may be nullptr; only distinct
+//! valid handles are handed to the child.
+struct SenpChildStdHandles final {
+	const HANDLE input = nullptr;
+	const HANDLE output = nullptr;
+	const HANDLE error = nullptr;
+};
+
+//! The single CreateProcessW call site every SENP child goes through: the v1
+//! and v2 extension hosts and the package tool. It computes the shared launch
+//! config itself (executable-directory working directory, the
+//! kSenpChildEnvironmentNames allowlist environment block,
+//! CREATE_UNICODE_ENVIRONMENT), makes each distinct non-null entry of
+//! `stdHandles` inheritable only for the duration of this call and restores
+//! the exact prior flag state afterwards, hands exactly those handles to the
+//! child through PROC_THREAD_ATTRIBUTE_HANDLE_LIST, and joins `job` (may be
+//! nullptr) at creation through PROC_THREAD_ATTRIBUTE_JOB_LIST.
+//! `creationFlags` carries the caller's own flags (CREATE_NO_WINDOW, or
+//! CREATE_SUSPENDED when a caller must finish setup before resuming the
+//! child); EXTENDED_STARTUPINFO_PRESENT is applied here whenever an
+//! attribute list exists. Returns the child process/thread handles.
+[[nodiscard]] std::optional<PROCESS_INFORMATION> LaunchSenpChildProcess(
+	std::wstring_view executablePath, std::wstring& commandLine,
+	const SenpChildStdHandles& stdHandles, DWORD creationFlags,
+	HANDLE job) noexcept;
 
 } // namespace detail
 

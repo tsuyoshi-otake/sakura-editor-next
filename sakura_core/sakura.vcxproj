@@ -505,6 +505,7 @@
     <ClInclude Include="..\sakura_core\platform\VirtualStoreMigration.h" />
     <ClInclude Include="..\sakura_core\platform\process\AllowlistedEnvironment.h" />
     <ClInclude Include="..\sakura_core\platform\process\BoundedProcessRunner.h" />
+    <ClInclude Include="..\sakura_core\platform\process\InheritedHandleList.h" />
     <ClInclude Include="..\sakura_core\platform\process\WindowsExecutableResolver.h" />
     <ClInclude Include="..\sakura_core\platform\filesystem\CFileService.h" />
     <ClInclude Include="..\sakura_core\platform\filesystem\CWin32FileSystemProvider.h" />
@@ -713,6 +714,7 @@
 	<ClInclude Include="..\sakura_core\workbench\panel\CBottomPanelTool.h" />
 	<ClInclude Include="..\sakura_core\workbench\outline\COutlineWorkbenchTool.h" />
 	<ClInclude Include="..\sakura_core\workbench\account\AccountDiscovery.h" />
+	<ClInclude Include="..\sakura_core\workbench\account\GhAuthStatusEnvironment.h" />
 	<ClInclude Include="..\sakura_core\workbench\agent\AgentWorkspacesModel.h" />
 	<ClInclude Include="..\sakura_core\workbench\worktree\GitWorktreePorcelainParser.h" />
 	<ClInclude Include="..\sakura_core\workbench\worktree\GitWorktreeDiscoverySource.h" />
@@ -1260,6 +1262,7 @@
     <ClCompile Include="..\sakura_core\platform\VirtualStoreMigration.cpp" />
     <ClCompile Include="..\sakura_core\platform\process\AllowlistedEnvironment.cpp" />
     <ClCompile Include="..\sakura_core\platform\process\BoundedProcessRunner.cpp" />
+    <ClCompile Include="..\sakura_core\platform\process\InheritedHandleList.cpp" />
     <ClCompile Include="..\sakura_core\platform\process\WindowsExecutableResolver.cpp" />
     <ClCompile Include="..\sakura_core\platform\security\AuthenticodeSignatureVerifier.cpp" />
     <ClCompile Include="..\sakura_core\platform\filesystem\CFileService.cpp" />

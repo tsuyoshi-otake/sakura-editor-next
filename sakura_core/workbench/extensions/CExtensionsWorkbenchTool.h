@@ -64,6 +64,10 @@ public:
 	//! excluded and why; the row paints that reason instead of a bare state.
 	void SetExtensionExclusionQuery(
 		std::function<std::optional<workbench::SenpWindowExtensionExclusion>(std::wstring_view)> query);
+	//! The window's extension-host runtime reports its own diagnostic (a
+	//! repeatedly crashed, retired identity). It joins the management
+	//! diagnostic on the same banner the View already paints.
+	void SetRuntimeDiagnosticQuery(std::function<std::wstring()> query);
 	//! The status a row shows: the invalid-listing marker, then this window's
 	//! exclusion, then an incompatible runtime, then the install/enable state.
 	[[nodiscard]] static std::wstring ComposeExtensionRowStatus(
@@ -151,6 +155,9 @@ private:
 		std::wstring_view packagePath);
 	void HandleDroppedFiles(HDROP drop) noexcept;
 	[[nodiscard]] ActionButtonState* FindActionButton(HWND window) noexcept;
+	//! The banner's text: the management diagnostic first, then the runtime
+	//! one; the single strip clips whatever will not fit.
+	[[nodiscard]] std::wstring ComposeDiagnosticText(const std::wstring& management) const;
 	void ScrollTo(int offset);
 	void UpdateScrollBar(int viewportHeight);
 	void UpdateContentMetrics();
@@ -166,6 +173,7 @@ private:
 	std::vector<ActionButtonState> m_actionButtons;
 	senp::ISenpManagementService* m_service = nullptr;
 	std::function<std::optional<workbench::SenpWindowExtensionExclusion>(std::wstring_view)> m_exclusionQuery;
+	std::function<std::wstring()> m_runtimeDiagnosticQuery;
 	std::function<void()> m_extensionsChanged;
 	std::function<int(HWND, const std::wstring&, const std::wstring&, UINT)> m_messageBox;
 	int m_scrollOffset = 0;

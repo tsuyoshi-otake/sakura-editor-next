@@ -574,6 +574,9 @@ bool CPropPlugin::BrowseReadMe(const std::wstring& sReadMeName)
 	//CreateProcessに渡すSTARTUPINFOを作成
 	STARTUPINFO	sui;
 	::GetStartupInfo(&sui);
+	//子プロセスにハンドルを継承させない。親のSTARTUPINFOがSTARTF_USESTDHANDLESを
+	//持っていても引き継がないよう明示的に外す
+	sui.dwFlags &= ~STARTF_USESTDHANDLES;
 
 	PROCESS_INFORMATION	pi;
 	ZeroMemory( &pi, sizeof(pi) );
@@ -581,7 +584,7 @@ bool CPropPlugin::BrowseReadMe(const std::wstring& sReadMeName)
 	WCHAR	szCmdLine[1024];
 	wcscpy_s(szCmdLine, std::size(szCmdLine), cCmdLineBuf.c_str());
 	//リソースリーク対策
-	BOOL bRet = ::CreateProcess( nullptr, szCmdLine, nullptr, nullptr, TRUE,
+	BOOL bRet = ::CreateProcess( nullptr, szCmdLine, nullptr, nullptr, FALSE,
 		CREATE_NEW_CONSOLE, nullptr, nullptr, &sui, &pi );
 
 	//プロセス作成に成功した場合

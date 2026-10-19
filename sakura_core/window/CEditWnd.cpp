@@ -290,7 +290,7 @@ private:
 //		2010/5/19	Uchi
 //		2012/10/19	syat	各国語対応のため定数化
 struct SFuncMenuName {
-	EFunctionCode	eFunc;
+	const EFunctionCode	eFunc;
 	int				nNameId[2];		// 選択文字列ID
 };
 
@@ -3158,6 +3158,12 @@ bool CEditWnd::InitializeWorkbench()
 			Views_Redraw();
 		});
 		m_extensionsTool->SetManagementService(m_workbenchRuntime->Extensions());
+		// The extension-host runtime owns the crash diagnostic; the tool reads
+		// it lazily and the 500 ms timer refreshes the view when it changes.
+		m_extensionsTool->SetRuntimeDiagnosticQuery([this]() -> std::wstring {
+			const auto* runtime = GetSenpRuntime();
+			return runtime == nullptr ? std::wstring{} : runtime->Snapshot().diagnostic;
+		});
 	}
 	const auto workspaceRoot = GetSemanticWorkspaceRoot();
 	m_explorerTool->SetRoot(workspaceRoot);
@@ -16260,6 +16266,16 @@ void CEditWnd::OnEditTimer( void )
 	// repository for, so it is refreshed on the window's own cadence rather than
 	// only where a synchronization happens to run.
 	if (m_senpWindowExtensionsActive) DeclareSenpWorkspace();
+	// A crash retirement changes the runtime diagnostic without any window
+	// event; publishing it on the timer's cadence is what the Extensions View's
+	// diagnostic strip exists for.
+	if (auto* runtime = GetSenpRuntime()) {
+		const auto diagnostic = runtime->Snapshot().diagnostic;
+		if (diagnostic != m_senpRuntimeDiagnostic) {
+			m_senpRuntimeDiagnostic = diagnostic;
+			if (m_extensionsTool != nullptr) m_extensionsTool->Refresh();
+		}
+	}
 	// Before the poll, so a branch the Source Control worker published on the
 	// previous turn reaches the packages on this one rather than the next.
 	if (m_senpWindowExtensionsActive) PublishSenpWorkspaceRepositories();

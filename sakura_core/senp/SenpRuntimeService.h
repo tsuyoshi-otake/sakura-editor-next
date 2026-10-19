@@ -6,6 +6,7 @@ SPDX-License-Identifier: Zlib
 */
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -37,6 +38,10 @@ struct RuntimeSnapshot final {
 	ERuntimeState state = ERuntimeState::Created;
 	std::uint64_t revision = 0;
 	std::size_t activeHosts = 0;
+	//! Carries the repeated-crash diagnostic ("Extension host terminated
+	//! unexpectedly 3 times within the last 5 minutes: <id>") while a retired
+	//! identity stays in the desired set; with several retired identities only
+	//! the first (in identity order) is named.
 	std::wstring diagnostic;
 };
 
@@ -62,6 +67,25 @@ namespace detail {
 //! any extra, missing or mistyped member fails.
 [[nodiscard]] bool AcceptExtensionHello(std::string_view response);
 
+//! What one `decorate` exchange concluded. `Rejected` is a request-scoped
+//! answer - a typed `extensionRejected` error or a `decorations` payload that
+//! fails validation - so it drops this request's results while the host stays
+//! live. `Failed` is the host itself: transport loss or a reply that is not
+//! the protocol, which the worker's crash policy answers.
+enum class EDecorateResult : std::uint8_t {
+	Succeeded,
+	Rejected,
+	Failed,
+};
+
+//! Decodes a v1 reply into `slots`, classifying the answer so a rejected or
+//! out-of-bounds result is told apart from a dead host. A `decorations` reply
+//! whose slots fail validation is `Rejected`; an `error` reply is `Rejected`
+//! only for the `extensionRejected` provider code.
+[[nodiscard]] EDecorateResult ClassifyDecorationReply(std::string_view response,
+	std::uint32_t lineCount,
+	std::vector<std::pair<std::uint32_t, IndentDecoration>>& slots);
+
 //! Decodes a v1 "decorations" reply into `slots`. The reply is strict JSON,
 //! not configuration JSONC. Every slot's `line` is a caller-assigned index
 //! within the request's `lines` array and must be below `lineCount`.
@@ -70,10 +94,10 @@ namespace detail {
 	std::vector<std::pair<std::uint32_t, IndentDecoration>>& slots);
 
 //! One line inside a batched `decorate` frame; `line` is the caller-assigned
-//! index the reply slots map back to.
+//! index the reply slots map back to. Both members are fixed at admission.
 struct DecorateLine final {
-	std::uint32_t line = 0;
-	std::wstring text;
+	const std::uint32_t line = 0;
+	const std::wstring text;
 };
 
 //! One extension host process. The production implementation is the v1 pipe
@@ -85,14 +109,15 @@ public:
 		std::wstring_view moduleSha256) = 0;
 	//! Sends one `decorate` frame covering `lines` and appends the reply's
 	//! slots, each keyed by the caller-assigned `DecorateLine::line` index.
-	[[nodiscard]] virtual bool Decorate(std::uint32_t tabSize,
+	//! The tri-state keeps a rejected result off the host-failure path.
+	[[nodiscard]] virtual EDecorateResult Decorate(std::uint32_t tabSize,
 		const std::vector<DecorateLine>& lines,
 		std::vector<std::pair<std::uint32_t, IndentDecoration>>& slots) = 0;
 	virtual void Close() noexcept = 0;
 };
 
-//! Test seam for the two OS dependencies of the v1 runtime worker: spawning
-//! extension hosts and repainting the requester. Hooks are
+//! Test seam for the OS dependencies of the v1 runtime worker: spawning
+//! extension hosts, repainting the requester, and the crash clock. Hooks are
 //! constructor-injected per instance, never global; an empty std::function
 //! means the production path.
 struct SenpRuntimeHooks final {
@@ -100,6 +125,9 @@ struct SenpRuntimeHooks final {
 	//! Called from the worker thread after a result was cached. Empty means
 	//! `InvalidateRect(hwnd, nullptr, FALSE)` on a live window.
 	std::function<void(std::uintptr_t)> repaint;
+	//! The clock the per-extension crash window is counted against. Empty
+	//! means `std::chrono::steady_clock::now`.
+	std::function<std::chrono::steady_clock::time_point()> clock;
 	//! Empty means the `sakura-senp-host.exe` beside this executable.
 	std::wstring hostExecutable;
 };

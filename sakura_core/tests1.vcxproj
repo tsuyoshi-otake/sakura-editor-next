@@ -341,6 +341,7 @@
 	<ClCompile Include="..\src\test\cpp\tests1\platform\AllowlistedEnvironmentTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\platform\AuthenticodeSignatureVerifierTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\platform\BoundedProcessRunnerTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\platform\InheritedHandleListTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\GitSourceControlTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\GitLineStagingTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\GitSyncCommandsTest.cpp" />
@@ -436,6 +437,7 @@
   <ItemGroup>
     <ClInclude Include="..\src\test\resources\pch.h" />
     <ClInclude Include="..\src\test\cpp\tests1\Utf16Phase8Benchmark.h" />
+    <ClInclude Include="..\src\test\cpp\tests1\ScopedLanguageSelection.h" />
     <ClInclude Include="..\src\test\resources\testing\CrtAllocHook.hpp" />
     <ClInclude Include="..\src\test\resources\testing\HResultEq.hpp" />
     <ClInclude Include="..\src\test\resources\testing\StartEditorProcess.hpp" />

@@ -15,20 +15,21 @@
 namespace {
 
 struct ScopedEnvironmentVariable final {
-	explicit ScopedEnvironmentVariable(const wchar_t* name) : name(name)
+	explicit ScopedEnvironmentVariable(const wchar_t* name) : m_name(name)
 	{
 		std::array<wchar_t, 32768> buffer{};
-		const DWORD length = ::GetEnvironmentVariableW(name, buffer.data(),
+		const DWORD length = ::GetEnvironmentVariableW(m_name.c_str(), buffer.data(),
 			static_cast<DWORD>(buffer.size()));
-		if (length != 0 && length < buffer.size()) original = std::wstring(buffer.data(), length);
+		if (length != 0 && length < buffer.size()) m_original = std::wstring(buffer.data(), length);
 	}
 	~ScopedEnvironmentVariable()
 	{
-		::SetEnvironmentVariableW(name.c_str(),
-			original.has_value() ? original->c_str() : nullptr);
+		::SetEnvironmentVariableW(m_name.c_str(),
+			m_original.has_value() ? m_original->c_str() : nullptr);
 	}
-	std::wstring name;
-	std::optional<std::wstring> original;
+private:
+	std::wstring m_name;
+	std::optional<std::wstring> m_original;
 };
 
 std::vector<std::wstring> ParseBlock(const std::vector<wchar_t>& block)
@@ -138,6 +139,28 @@ TEST(AllowlistedEnvironment, EmptyAllowlistProducesEmptyBlock)
 	ASSERT_EQ(block.size(), 2u);
 	EXPECT_EQ(block[0], L'\0');
 	EXPECT_EQ(block[1], L'\0');
+}
+
+TEST(AllowlistedEnvironment, SharedFlattenTerminatesEmptyAndNonEmptyBlocks)
+{
+	namespace detail = platform::process::detail;
+
+	// The empty case lives in the one shared builder: a valid double-NUL block.
+	const auto emptyBlock = detail::FlattenEnvironmentEntries({});
+	ASSERT_EQ(emptyBlock.size(), 2u);
+	EXPECT_EQ(emptyBlock[0], L'\0');
+	EXPECT_EQ(emptyBlock[1], L'\0');
+
+	// A non-empty list ends in exactly one extra NUL after the last entry's
+	// own terminator: "...A=1\0\0", and the entry text itself is intact.
+	const std::vector<std::wstring> entries{ L"B=2", L"A=1" };
+	const auto block = detail::FlattenEnvironmentEntries(entries);
+	const std::size_t payload = (3 + 1) * 2; // "B=2" + NUL + "A=1" + NUL
+	ASSERT_EQ(block.size(), payload + 1);
+	EXPECT_EQ(block[payload - 1], L'\0');   // last entry's terminator
+	EXPECT_EQ(block[block.size() - 1], L'\0'); // the single extra terminator
+	EXPECT_EQ(block[block.size() - 2], block[payload - 1]);
+	EXPECT_NE(block[block.size() - 3], L'\0'); // no second extra NUL
 }
 
 } // namespace

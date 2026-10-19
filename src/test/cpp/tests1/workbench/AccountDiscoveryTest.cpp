@@ -7,11 +7,14 @@
 #include "pch.h"
 
 #include "workbench/account/AccountDiscovery.h"
+#include "workbench/account/GhAuthStatusEnvironment.h"
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
+#include <cwctype>
 #include <string>
 #include <thread>
 #include <utility>
@@ -24,6 +27,24 @@ AccountDiscoveryRequest Request()
 	AccountDiscoveryRequest request;
 	request.workingDirectory = L"C:\\repo";
 	return request;
+}
+
+std::wstring CurrentDirectory()
+{
+	std::array<wchar_t, 32768> buffer{};
+	const DWORD length = ::GetCurrentDirectoryW(static_cast<DWORD>(buffer.size()),
+		buffer.data());
+	if (length == 0 || length >= buffer.size()) return {};
+	return std::wstring(buffer.data(), length);
+}
+
+std::wstring HostnameExecutable()
+{
+	std::array<wchar_t, 32768> buffer{};
+	const UINT length = ::GetSystemDirectoryW(buffer.data(),
+		static_cast<UINT>(buffer.size()));
+	if (length == 0 || length >= buffer.size()) return {};
+	return std::wstring(buffer.data(), length) + L"\\hostname.exe";
 }
 
 scm::GitExecutionResult GitSuccess(std::string_view output)
@@ -359,6 +380,166 @@ TEST(AccountDiscovery, ServiceReportsMissingGitHubExecutableOnlyAfterDiscoverySe
 	EXPECT_TRUE(service.GitHubCliExecutableMissing());
 	service.Stop();
 	EXPECT_FALSE(service.GitHubCliExecutableMissing());
+}
+
+TEST(GhCommandRunnerEnvironment, BlockDropsGhDebugForcesFixedValuesKeepsParentSortedTerminated)
+{
+	struct ScopedEnvironmentVariable final {
+		explicit ScopedEnvironmentVariable(const wchar_t* name) : m_name(name)
+		{
+			std::array<wchar_t, 32768> buffer{};
+			const DWORD length = ::GetEnvironmentVariableW(m_name.c_str(), buffer.data(),
+				static_cast<DWORD>(buffer.size()));
+			if (length != 0 && length < buffer.size()) m_original.assign(buffer.data(), length);
+		}
+		~ScopedEnvironmentVariable()
+		{
+			::SetEnvironmentVariableW(m_name.c_str(),
+				m_original.empty() ? nullptr : m_original.c_str());
+		}
+	private:
+		std::wstring m_name;
+		std::wstring m_original;
+	};
+	ScopedEnvironmentVariable debug(L"GH_DEBUG");
+	ScopedEnvironmentVariable forceTty(L"GH_FORCE_TTY");
+	ScopedEnvironmentVariable kept(L"SAKURA_GH_ENV_KEEP");
+	ASSERT_TRUE(::SetEnvironmentVariableW(L"GH_DEBUG", L"api"));
+	ASSERT_TRUE(::SetEnvironmentVariableW(L"GH_FORCE_TTY", L"1"));
+	ASSERT_TRUE(::SetEnvironmentVariableW(L"SAKURA_GH_ENV_KEEP", L"keep-value"));
+
+	const auto block = detail::BuildGhAuthStatusEnvironmentBlock();
+
+	// Double-NUL terminated, even on the last entry.
+	ASSERT_GE(block.size(), 2u);
+	EXPECT_EQ(block[block.size() - 1], L'\0');
+	EXPECT_EQ(block[block.size() - 2], L'\0');
+
+	std::vector<std::wstring> entries;
+	for (const wchar_t* cursor = block.data(); *cursor != L'\0';) {
+		entries.emplace_back(cursor);
+		cursor += entries.back().size() + 1;
+	}
+
+	const auto nameOf = [](const std::wstring& entry) {
+		const auto equals = entry.find(L'=');
+		return equals == std::wstring::npos ? entry : entry.substr(0, equals);
+	};
+	const auto equalName = [](std::wstring_view left, std::wstring_view right) {
+		return left.size() == right.size()
+			&& ::CompareStringOrdinal(left.data(), static_cast<int>(left.size()),
+				right.data(), static_cast<int>(right.size()), TRUE) == CSTR_EQUAL;
+	};
+	const auto findEntry = [&](std::wstring_view name) -> const std::wstring* {
+		const auto found = std::find_if(entries.begin(), entries.end(),
+			[&](const std::wstring& entry) { return equalName(nameOf(entry), name); });
+		return found == entries.end() ? nullptr : &*found;
+	};
+
+	// Inherited GH_DEBUG is suppressed; an unrelated variable survives.
+	EXPECT_EQ(findEntry(L"GH_DEBUG"), nullptr);
+	const auto* keptEntry = findEntry(L"SAKURA_GH_ENV_KEEP");
+	ASSERT_NE(keptEntry, nullptr);
+	EXPECT_EQ(keptEntry->substr(keptEntry->find(L'=') + 1), L"keep-value");
+
+	// The fixed non-interactive values are present exactly, and an inherited
+	// GH_FORCE_TTY was replaced, not duplicated.
+	const auto valueOf = [](const std::wstring* entry) {
+		return entry->substr(entry->find(L'=') + 1);
+	};
+	EXPECT_EQ(valueOf(findEntry(L"GH_FORCE_TTY")), L"0");
+	EXPECT_EQ(valueOf(findEntry(L"GH_NO_UPDATE_NOTIFIER")), L"1");
+	EXPECT_EQ(valueOf(findEntry(L"GH_PAGER")), L"cat");
+	EXPECT_EQ(valueOf(findEntry(L"GH_PROMPT_DISABLED")), L"1");
+	EXPECT_EQ(valueOf(findEntry(L"NO_COLOR")), L"1");
+
+	// Windows requires the block sorted case-insensitively.
+	EXPECT_TRUE(std::is_sorted(entries.begin(), entries.end(),
+		[](const std::wstring& left, const std::wstring& right) {
+			return std::lexicographical_compare(left.begin(), left.end(), right.begin(), right.end(),
+				[](wchar_t a, wchar_t b) { return std::towupper(a) < std::towupper(b); });
+		}));
+}
+
+// #364: the account-side runner applies the shared GitHub-publisher
+// Authenticode gate through the injected detail::GhExecutableGate. Each test
+// below keeps one half of the gate observable.
+TEST(GhCommandRunnerTrust, UnresolvedExecutableStaysUnavailableWithoutVerifying)
+{
+	bool verified = false;
+	const detail::GhExecutableGate gate{
+		[]() -> std::optional<std::wstring> { return std::nullopt; },
+		[&](std::wstring_view) { verified = true; return true; },
+	};
+	GhAuthStatusRequest request;
+	request.workingDirectory = CurrentDirectory();
+	const auto result = detail::RunGhAuthStatus(request, nullptr, gate);
+	EXPECT_EQ(EAccountCommandStatus::Unavailable, result.status);
+	EXPECT_FALSE(verified);
+}
+
+TEST(GhCommandRunnerTrust, UntrustedResolvedExecutableIsUnavailableAndNeverLaunched)
+{
+	// The verifier is consulted with the resolved path, and its refusal stops
+	// the launch entirely: the nonexistent path makes a skipped gate
+	// observable, since launching it would report LaunchFailed instead.
+	std::optional<std::wstring> seenPath;
+	const detail::GhExecutableGate gate{
+		[]() -> std::optional<std::wstring> { return L"C:\\nonexistent\\gh.exe"; },
+		[&](const std::wstring_view path) { seenPath.emplace(path); return false; },
+	};
+	GhAuthStatusRequest request;
+	request.workingDirectory = CurrentDirectory();
+	const auto result = detail::RunGhAuthStatus(request, nullptr, gate);
+	EXPECT_EQ(EAccountCommandStatus::Unavailable, result.status);
+	ASSERT_TRUE(seenPath.has_value());
+	EXPECT_EQ(*seenPath, L"C:\\nonexistent\\gh.exe");
+}
+
+TEST(GhCommandRunnerTrust, ALaunchableButRefusedExecutableStillNeverRuns)
+{
+	// hostname.exe would exit 0 if it ran, so Unavailable - not Succeeded and
+	// not LaunchFailed - proves the publisher gate stopped the launch.
+	const std::wstring executable = HostnameExecutable();
+	ASSERT_FALSE(executable.empty());
+	const detail::GhExecutableGate gate{
+		[&]() -> std::optional<std::wstring> { return executable; },
+		[](std::wstring_view) { return false; },
+	};
+	GhAuthStatusRequest request;
+	request.workingDirectory = CurrentDirectory();
+	const auto result = detail::RunGhAuthStatus(request, nullptr, gate);
+	EXPECT_EQ(EAccountCommandStatus::Unavailable, result.status);
+}
+
+TEST(GhCommandRunnerTrust, TrustedExecutableRunsThroughTheBoundedBoundary)
+{
+	// The gate passes and the bounded runner launches for real: hostname.exe
+	// (always present beside cmd.exe) rejects the fixed gh arguments and
+	// exits nonzero. A refused executable would return Unavailable before
+	// any launch and a missing binary LaunchFailed, so Failed with the
+	// child's own exit code proves the trusted binary actually ran. Its
+	// output is not gh JSON, so the parse stays Invalid.
+	const std::wstring executable = HostnameExecutable();
+	ASSERT_FALSE(executable.empty());
+	const detail::GhExecutableGate gate{
+		[&]() -> std::optional<std::wstring> { return executable; },
+		[](std::wstring_view) { return true; },
+	};
+	GhAuthStatusRequest request;
+	request.workingDirectory = CurrentDirectory();
+	const auto result = detail::RunGhAuthStatus(request, nullptr, gate);
+	EXPECT_EQ(EAccountCommandStatus::Failed, result.status);
+	EXPECT_NE(0, result.exitCode);
+	EXPECT_EQ(EGitHubAuthParseStatus::Invalid, result.parseStatus);
+}
+
+TEST(GhCommandRunnerTrust, APartiallySpecifiedGateFailsClosed)
+{
+	GhAuthStatusRequest request;
+	request.workingDirectory = CurrentDirectory();
+	EXPECT_EQ(EAccountCommandStatus::InvalidRequest,
+		detail::RunGhAuthStatus(request, nullptr, {}).status);
 }
 
 } // namespace

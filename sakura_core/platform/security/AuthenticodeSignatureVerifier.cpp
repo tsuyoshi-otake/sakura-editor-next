@@ -70,4 +70,10 @@ std::optional<std::wstring> VerifiedSignerOrganization( const std::wstring_view 
 	return result;
 }
 
+bool VerifyGitHubCliTrust( const std::wstring_view filePath ) noexcept
+{
+	const auto organization = VerifiedSignerOrganization(filePath);
+	return organization.has_value() && *organization == L"GitHub, Inc.";
+}
+
 } // namespace platform::security

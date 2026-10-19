@@ -160,45 +160,16 @@ ProcessResult RunToolImpl(const std::vector<std::wstring>& arguments)
 	if (job.Get() == nullptr || job.Get() == INVALID_HANDLE_VALUE
 		|| !ConfigureChildJob(job.Get(), kPackageToolJobLimits)) return result;
 
-	SIZE_T attributeBytes = 0;
-	(void)::InitializeProcThreadAttributeList(nullptr, 2, 0, &attributeBytes);
-	if (attributeBytes == 0) return result;
-	std::vector<std::uint8_t> attributeStorage(attributeBytes);
-	auto* const attributes = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attributeStorage.data());
-	if (!::InitializeProcThreadAttributeList(attributes, 2, 0, &attributeBytes)) return result;
-	struct AttributeListGuard final {
-		LPPROC_THREAD_ATTRIBUTE_LIST value{};
-		~AttributeListGuard() { if (value != nullptr) ::DeleteProcThreadAttributeList(value); }
-	} attributeGuard{ attributes };
-	const std::array<HANDLE, 3> inheritedHandles{ nullInput.Get(), outputWrite.Get(), errorWrite.Get() };
-	if (!::UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
-		const_cast<HANDLE*>(inheritedHandles.data()), sizeof(inheritedHandles), nullptr, nullptr)) return result;
-	HANDLE jobHandle = job.Get();
-	if (!::UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST,
-		&jobHandle, sizeof(jobHandle), nullptr, nullptr)) return result;
-
-	STARTUPINFOEXW startup{};
-	startup.StartupInfo.cb = sizeof(startup);
-	startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
-	startup.StartupInfo.hStdInput = nullInput.Get();
-	startup.StartupInfo.hStdOutput = outputWrite.Get();
-	startup.StartupInfo.hStdError = errorWrite.Get();
-	startup.lpAttributeList = attributes;
-	auto launchConfig = detail::BuildSenpChildLaunchConfig(executable.native());
-	const std::array<HANDLE, 3> childSide{ nullInput.Get(), outputWrite.Get(), errorWrite.Get() };
-	if (!detail::SetChildHandlesInheritable(childSide)) return result;
-	PROCESS_INFORMATION process{};
-	const BOOL created = ::CreateProcessW(executable.c_str(), commandLine.data(), nullptr, nullptr,
-		TRUE, CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT | launchConfig.environmentFlags,
-		launchConfig.environment.data(), launchConfig.workingDirectory.c_str(),
-		&startup.StartupInfo, &process);
+	const auto process = detail::LaunchSenpChildProcess(executable.native(), commandLine,
+		{ nullInput.Get(), outputWrite.Get(), errorWrite.Get() },
+		CREATE_NO_WINDOW, job.Get());
 	outputWrite.Reset();
 	errorWrite.Reset();
 	nullInput.Reset();
-	if (!created) return result;
+	if (!process) return result;
 	result.launched = true;
-	ScopedHandle processHandle(process.hProcess);
-	ScopedHandle processThread(process.hThread);
+	ScopedHandle processHandle(process->hProcess);
+	ScopedHandle processThread(process->hThread);
 	std::thread outputReader(detail::ReadPipeBounded, static_cast<void*>(outputRead.Get()),
 		std::ref(result.output), std::ref(result.outputTruncated));
 	std::thread errorReader(detail::ReadPipeBounded, static_cast<void*>(errorRead.Get()),

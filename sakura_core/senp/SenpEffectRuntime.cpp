@@ -117,45 +117,19 @@ public:
 		if (!error.Valid()) return false;
 		m_job.Reset(::CreateJobObjectW(nullptr, nullptr));
 		if (!m_job.Valid() || !ConfigureChildJob(m_job.Get(), kExtensionHostJobLimits)) return false;
-		SIZE_T size{};
-		(void)::InitializeProcThreadAttributeList(nullptr, 2, 0, &size);
-		if (size == 0) return false;
 		m_waitSlice = static_cast<DWORD>(std::clamp<std::int64_t>(launch.waitSlice.count(), 1, 60000));
-		std::vector<std::byte> storage(size);
-		auto attributes = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(storage.data());
-		if (!::InitializeProcThreadAttributeList(attributes, 2, 0, &size)) return false;
-		struct AttributeGuard final {
-			LPPROC_THREAD_ATTRIBUTE_LIST value;
-			~AttributeGuard() { ::DeleteProcThreadAttributeList(value); }
-		} guard{ attributes };
-		std::array<HANDLE, 3> handles{ childInput.Get(), childOutput.Get(), error.Get() };
-		auto job = m_job.Get();
-		if (!::UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, handles.data(), sizeof(handles), nullptr, nullptr)
-			|| !::UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST, &job, sizeof(job), nullptr, nullptr)) return false;
-		STARTUPINFOEXW startup{};
-		startup.StartupInfo.cb = sizeof(startup);
-		startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
-		startup.StartupInfo.hStdInput = childInput.Get();
-		startup.StartupInfo.hStdOutput = childOutput.Get();
-		startup.StartupInfo.hStdError = error.Get();
-		startup.lpAttributeList = attributes;
 		auto command = Quote(launch.hostExecutable) + L" --component " + Quote(launch.modulePath)
 			+ L" --component-sha256 " + Quote(launch.moduleSha256) + L" --protocol 2";
-		auto launchConfig = detail::BuildSenpChildLaunchConfig(launch.hostExecutable);
-		const std::array<HANDLE, 3> childSideHandles{ childInput.Get(), childOutput.Get(), error.Get() };
-		if (!detail::SetChildHandlesInheritable(childSideHandles)) return false;
-		PROCESS_INFORMATION process{};
-		const BOOL created = ::CreateProcessW(launch.hostExecutable.c_str(), command.data(), nullptr, nullptr, TRUE,
-			CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT | launchConfig.environmentFlags,
-			launchConfig.environment.data(), launchConfig.workingDirectory.c_str(),
-			&startup.StartupInfo, &process);
+		const auto process = detail::LaunchSenpChildProcess(launch.hostExecutable, command,
+			{ childInput.Get(), childOutput.Get(), error.Get() },
+			CREATE_NO_WINDOW, m_job.Get());
 		childInput.Reset();
 		childOutput.Reset();
 		error.Reset();
-		if (!created) return false;
-		m_process.Reset(process.hProcess);
-		Handle initialThread(process.hThread);
-		m_pid = process.dwProcessId;
+		if (!process) return false;
+		m_process.Reset(process->hProcess);
+		Handle initialThread(process->hThread);
+		m_pid = process->dwProcessId;
 		return true;
 	}
 

@@ -8,6 +8,7 @@
 #include "markdown/MarkdownRemoteImageFetcher.h"
 #include "theme/CThemeService.h"
 #include "CSelectLang.h"
+#include "ScopedLanguageSelection.h"
 #include <CommCtrl.h>
 #include <algorithm>
 #include <atomic>
@@ -17,17 +18,7 @@
 
 namespace workbench::editor::tests {
 namespace {
-struct ScopedLanguageSelection final {
-	const LANGID threadLanguage{ ::GetThreadUILanguage() };
-	const bool hadEnvironment{ !CSelectLang::gm_Langs.empty() };
-	const std::wstring previousDll{ hadEnvironment && CSelectLang::gm_Selected < CSelectLang::gm_Langs.size()
-		? CSelectLang::GetLangInfo(CSelectLang::gm_Selected).GetDllName() : L"" };
-	~ScopedLanguageSelection() {
-		if (hadEnvironment) CSelectLang::ChangeLang(previousDll);
-		else { CSelectLang::ChangeLang(L""); CSelectLang::gm_Langs.clear(); CSelectLang::gm_Selected = 0; }
-		::SetThreadUILanguage(threadLanguage);
-	}
-};
+using tests1::ScopedLanguageSelection;
 using Model = editor::SenpReadonlyDocument;
 using Context = senp::effect::OperationContext;
 using Published = senp::effect::PublishDocument;

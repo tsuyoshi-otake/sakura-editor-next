@@ -198,53 +198,24 @@ public:
 		m_job.Reset(::CreateJobObjectW(nullptr, nullptr));
 		if (!m_job.Valid() || !ConfigureChildJob(m_job.Get(), kExtensionHostJobLimits)) return false;
 
-		SIZE_T attributeBytes = 0;
-		(void)::InitializeProcThreadAttributeList(nullptr, 2, 0, &attributeBytes);
-		if (attributeBytes == 0) return false;
-		std::vector<std::uint8_t> attributeStorage(attributeBytes);
-		auto* const attributes = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attributeStorage.data());
-		if (!::InitializeProcThreadAttributeList(attributes, 2, 0, &attributeBytes)) return false;
-		struct AttributeListGuard final {
-			LPPROC_THREAD_ATTRIBUTE_LIST value{};
-			~AttributeListGuard() { if (value != nullptr) ::DeleteProcThreadAttributeList(value); }
-		} attributeGuard{ attributes };
-		const std::array<HANDLE, 3> inheritedHandles{ childInput.Get(), childOutput.Get(), nullError.Get() };
-		if (!::UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
-			const_cast<HANDLE*>(inheritedHandles.data()), sizeof(inheritedHandles), nullptr, nullptr)) return false;
-		HANDLE jobHandle = m_job.Get();
-		if (!::UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST,
-			&jobHandle, sizeof(jobHandle), nullptr, nullptr)) return false;
-
-		STARTUPINFOEXW startup{};
-		startup.StartupInfo.cb = sizeof(startup);
-		startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
-		startup.StartupInfo.hStdInput = childInput.Get();
-		startup.StartupInfo.hStdOutput = childOutput.Get();
-		startup.StartupInfo.hStdError = nullError.Get();
-		startup.lpAttributeList = attributes;
 		std::wstring command = QuoteArgument(executable) + L" --component " + QuoteArgument(modulePath)
 			+ L" --component-sha256 " + QuoteArgument(moduleSha256);
-		auto launchConfig = detail::BuildSenpChildLaunchConfig(executable);
-		const std::array<HANDLE, 3> childSide{ childInput.Get(), childOutput.Get(), nullError.Get() };
-		if (!detail::SetChildHandlesInheritable(childSide)) return false;
-		PROCESS_INFORMATION process{};
-		const BOOL created = ::CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr,
-			TRUE, CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT | launchConfig.environmentFlags,
-			launchConfig.environment.data(), launchConfig.workingDirectory.c_str(),
-			&startup.StartupInfo, &process);
+		const auto process = detail::LaunchSenpChildProcess(executable, command,
+			{ childInput.Get(), childOutput.Get(), nullError.Get() },
+			CREATE_NO_WINDOW, m_job.Get());
 		childInput.Reset();
 		childOutput.Reset();
 		nullError.Reset();
-		if (!created) return false;
-		m_process.Reset(process.hProcess);
-		m_thread.Reset(process.hThread);
+		if (!process) return false;
+		m_process.Reset(process->hProcess);
+		m_thread.Reset(process->hThread);
 		m_assignedToJob = true;
 		std::string response;
 		return Exchange(R"({"type":"hello","protocol":1})", response)
 			&& detail::AcceptExtensionHello(response);
 	}
 
-	[[nodiscard]] bool Decorate(std::uint32_t tabSize,
+	[[nodiscard]] detail::EDecorateResult Decorate(std::uint32_t tabSize,
 		const std::vector<detail::DecorateLine>& lines,
 		std::vector<std::pair<std::uint32_t, IndentDecoration>>& slots) override
 	{
@@ -261,8 +232,8 @@ public:
 		}
 		request += R"(]})";
 		std::string response;
-		if (!Exchange(request, response)) return false;
-		return detail::ParseDecorationSlots(response,
+		if (!Exchange(request, response)) return detail::EDecorateResult::Failed;
+		return detail::ClassifyDecorationReply(response,
 			static_cast<std::uint32_t>(lines.size()), slots);
 	}
 
@@ -337,6 +308,15 @@ struct ExtensionIdentity final {
 
 //! Retired identities and the diagnostic each one surfaces.
 using RetiredHosts = std::map<ExtensionIdentity, std::wstring>;
+
+//! VS Code's extension-host crash policy
+//! (`ExtensionHostCrashTracker` in abstractExtensionService.ts): crashes older
+//! than this window do not count, and the identity retires on the third crash
+//! inside it. VS Code tracks one host serving every extension; a v1 host here
+//! is one extension's process, so the same policy applies per identity.
+constexpr auto kExtensionHostCrashWindow = std::chrono::minutes(5);
+constexpr std::size_t kExtensionHostCrashLimit = 3;
+using CrashMap = std::map<ExtensionIdentity, std::deque<std::chrono::steady_clock::time_point>>;
 
 struct LiveHost final {
 	ExtensionIdentity identity;
@@ -428,7 +408,10 @@ public:
 		}
 		if (m_pendingKeys.contains(key)) return std::nullopt;
 		const std::size_t bytes = 2U * key.size() + sizeof(PendingLine);
-		if (m_pendingBytes + bytes > kMaximumPendingBytes) return std::nullopt;
+		// A refused admission answers an explicit empty result, the same
+		// terminal an invalid line gets: `nullopt` here would promise a repaint
+		// nothing was queued to deliver.
+		if (m_pendingBytes + bytes > kMaximumPendingBytes) return std::vector<IndentDecoration>{};
 		m_pendingKeys.insert(key);
 		m_pendingBytes += bytes;
 		m_pending.push_back({ std::move(key), textOffset, line.size(), tabSize, repaintWindow, bytes });
@@ -483,10 +466,10 @@ private:
 		}
 	}
 
-	void PublishHostSetLocked(std::size_t activeHosts, std::wstring diagnostic)
+	void PublishHostSetLocked(std::size_t activeHosts, const RetiredHosts& retired)
 	{
 		m_snapshot.activeHosts = activeHosts;
-		m_snapshot.diagnostic = std::move(diagnostic);
+		m_snapshot.diagnostic = RetirementDiagnostic(retired);
 		m_snapshot.state = m_snapshot.diagnostic.empty()
 			? ERuntimeState::Ready : ERuntimeState::ReadyWithDiagnostics;
 		++m_snapshot.revision;
@@ -499,31 +482,100 @@ private:
 		return retired.empty() ? std::wstring{} : retired.begin()->second;
 	}
 
-	//! R0's explicit failure terminal: the host is closed, its identity is
-	//! retired (never reopened while the same identity is desired), and the
-	//! cache is invalidated because the effective host set changed.
-	[[nodiscard]] std::vector<LiveHost>::iterator RetireHost(
-		std::vector<LiveHost>& hosts, std::vector<LiveHost>::iterator failed,
-		RetiredHosts& retired)
+	//! The crash-window state VS Code's ExtensionHostCrashTracker keeps:
+	//! crashes older than the window fall off before the new one is counted,
+	//! and the answer is how many remain inside it.
+	[[nodiscard]] std::size_t RecordCrash(CrashMap& crashes, const ExtensionIdentity& identity)
 	{
-		retired.emplace(failed->identity,
-			L"A SENP extension failed while computing editor decorations: " + failed->identity.id);
+		const auto now = m_hooks.clock ? m_hooks.clock() : std::chrono::steady_clock::now();
+		auto& recent = crashes[identity];
+		while (!recent.empty() && now - recent.front() >= kExtensionHostCrashWindow) {
+			recent.pop_front();
+		}
+		recent.push_back(now);
+		return recent.size();
+	}
+
+	//! The diagnostic a third crash inside the window publishes, matching VS
+	//! Code's "Extension host terminated unexpectedly 3 times within the last
+	//! 5 minutes" with the extension named instead of the host.
+	[[nodiscard]] static std::wstring CrashRetirementDiagnostic(const ExtensionIdentity& identity)
+	{
+		return L"A SENP extension host terminated unexpectedly 3 times within the last 5 minutes: "
+			+ identity.id;
+	}
+
+	//! VS Code's crash policy at one failed host (R0's explicit terminal, now
+	//! counted rather than instant): the crash is recorded against the
+	//! identity, the host is closed, and the cache is invalidated because the
+	//! effective host set changed. Fewer than three crashes inside the window
+	//! leaves the identity restartable - the worker wakes to reopen it at the
+	//! next boundary; the third retires it like the old first failure did.
+	[[nodiscard]] std::vector<LiveHost>::iterator FailHost(
+		std::vector<LiveHost>& hosts, std::vector<LiveHost>::iterator failed,
+		RetiredHosts& retired, CrashMap& crashes)
+	{
+		const auto identity = failed->identity;
+		const std::size_t recent = RecordCrash(crashes, identity);
 		failed->host->Close();
 		const auto next = hosts.erase(failed);
-		std::lock_guard lock(m_mutex);
-		InvalidateCacheLocked();
-		PublishHostSetLocked(hosts.size(), RetirementDiagnostic(retired));
+		const bool exhausted = recent >= kExtensionHostCrashLimit;
+		if (exhausted) {
+			retired.emplace(identity, CrashRetirementDiagnostic(identity));
+		}
+		{
+			std::lock_guard lock(m_mutex);
+			InvalidateCacheLocked();
+			PublishHostSetLocked(hosts.size(), retired);
+			if (!exhausted) m_retryPending = true;
+		}
+		m_changed.notify_all();
 		return next;
+	}
+
+	//! Opens every desired identity that is neither live nor retired - a new
+	//! package, or a crashed host coming back at a later boundary. A failed
+	//! open counts as a crash, so a host that can never start retires after
+	//! three attempts inside the window instead of being retried forever.
+	//! Every identity is tried at most once per call, never in a tight loop.
+	void OpenMissingHosts(const std::set<ExtensionIdentity>& desired,
+		std::vector<LiveHost>& hosts, RetiredHosts& retired, CrashMap& crashes,
+		const std::function<std::unique_ptr<detail::ISenpExtensionHost>()>& factory,
+		bool& changed)
+	{
+		bool retry = false;
+		for (const auto& identity : desired) {
+			if (retired.contains(identity)
+				|| std::ranges::find(hosts, identity, &LiveHost::identity) != hosts.end()) continue;
+			auto host = factory();
+			if (host->Open(identity.modulePath, identity.moduleSha256)) {
+				hosts.push_back({ identity, std::move(host) });
+			} else if (RecordCrash(crashes, identity) >= kExtensionHostCrashLimit) {
+				retired.emplace(identity, CrashRetirementDiagnostic(identity));
+			} else {
+				retry = true;
+			}
+			changed = true;
+		}
+		const auto diagnostic = RetirementDiagnostic(retired);
+		std::lock_guard lock(m_mutex);
+		if (changed) InvalidateCacheLocked();
+		// Releasing a retirement changes no live host, but its diagnostic
+		// must still clear.
+		if (changed || diagnostic != m_snapshot.diagnostic) {
+			PublishHostSetLocked(hosts.size(), retired);
+		}
+		if (retry) m_retryPending = true;
 	}
 
 	//! R3's per-host restart: diff the desired identities against the live
 	//! set, close only removed/changed hosts, open only added/changed ones,
 	//! and invalidate the cache only when the effective set changed.
 	void ReconcileHosts(const ManagementSnapshot& management, std::vector<LiveHost>& hosts,
-		RetiredHosts& retired,
+		RetiredHosts& retired, CrashMap& crashes, std::set<ExtensionIdentity>& desired,
 		const std::function<std::unique_ptr<detail::ISenpExtensionHost>()>& factory)
 	{
-		std::set<ExtensionIdentity> desired;
+		desired.clear();
 		for (const auto& extension : management.extensions) {
 			if (!extension.enabled || !extension.contributesIndentDecorations) continue;
 			desired.insert({ extension.id, extension.modulePath, extension.moduleSha256 });
@@ -538,52 +590,41 @@ private:
 			}
 		}
 		// A retired identity stays closed while it remains desired; once the
-		// package set drops it, its retirement record and diagnostic go too.
+		// package set drops it, its retirement record, crash history and
+		// diagnostic go too.
 		std::erase_if(retired, [&](const auto& entry) { return !desired.contains(entry.first); });
-		for (const auto& identity : desired) {
-			if (retired.contains(identity)
-				|| std::ranges::find(hosts, identity, &LiveHost::identity) != hosts.end()) continue;
-			auto host = factory();
-			if (host->Open(identity.modulePath, identity.moduleSha256)) {
-				hosts.push_back({ identity, std::move(host) });
-			} else {
-				retired.emplace(identity,
-					L"An enabled SENP extension host could not be started: " + identity.id);
-			}
-			changed = true;
-		}
-		auto diagnostic = RetirementDiagnostic(retired);
-		std::lock_guard lock(m_mutex);
-		if (changed) InvalidateCacheLocked();
-		// Releasing a retirement changes no live host, but its diagnostic
-		// must still clear.
-		if (changed || diagnostic != m_snapshot.diagnostic) {
-			PublishHostSetLocked(hosts.size(), std::move(diagnostic));
-		}
+		std::erase_if(crashes, [&](const auto& entry) { return !desired.contains(entry.first); });
+		OpenMissingHosts(desired, hosts, retired, crashes, factory, changed);
 	}
 
 	void ProcessBatch(std::vector<PendingLine>& batch, std::vector<LiveHost>& hosts,
-		RetiredHosts& retired)
+		RetiredHosts& retired, CrashMap& crashes)
 	{
 		// Re-derive each line's text from its key. Admission proved the UTF-8
 		// round trip, so the strict decode is engaged by construction.
 		const auto tabSize = batch.front().tabSize;
-		std::vector<detail::DecorateLine> lines(batch.size());
+		std::vector<detail::DecorateLine> lines;
+		lines.reserve(batch.size());
 		for (std::size_t index = 0; index < batch.size(); ++index) {
-			lines[index] = { static_cast<std::uint32_t>(index),
+			lines.push_back({ static_cast<std::uint32_t>(index),
 				workbench::commands::json::ToWideStrict(
-					std::string_view(batch[index].key).substr(batch[index].textOffset)).value() };
+					std::string_view(batch[index].key).substr(batch[index].textOffset)).value() });
 		}
-		// One frame per host per batch. A failed host retires (R0); the
-		// batch's lines still complete from the remaining hosts.
+		// One frame per host per batch. A failed host follows the crash
+		// policy (R0); a rejected reply drops only that host's results for
+		// this batch, and the batch's lines still complete from the
+		// surviving hosts.
 		std::vector<std::vector<IndentDecoration>> results(batch.size());
 		for (auto it = hosts.begin(); it != hosts.end();) {
 			std::vector<std::pair<std::uint32_t, IndentDecoration>> slots;
-			if (!it->host->Decorate(tabSize, lines, slots)) {
-				it = RetireHost(hosts, it, retired);
+			const auto outcome = it->host->Decorate(tabSize, lines, slots);
+			if (outcome == detail::EDecorateResult::Failed) {
+				it = FailHost(hosts, it, retired, crashes);
 			} else {
-				for (const auto& slot : slots) {
-					if (slot.first < results.size()) results[slot.first].push_back(slot.second);
+				if (outcome == detail::EDecorateResult::Succeeded) {
+					for (const auto& slot : slots) {
+						if (slot.first < results.size()) results[slot.first].push_back(slot.second);
+					}
 				}
 				++it;
 			}
@@ -613,18 +654,34 @@ private:
 		};
 		std::vector<LiveHost> hosts;
 		RetiredHosts retired;
+		CrashMap crashes;
+		std::set<ExtensionIdentity> desired;
 		std::uint64_t managementRevision = 0;
 		for (;;) {
+			bool retry;
 			{
 				std::unique_lock lock(m_mutex);
-				m_changed.wait(lock, [this] { return m_stop || !m_pending.empty(); });
+				m_changed.wait(lock, [this] {
+					return m_stop || !m_pending.empty() || m_retryPending;
+				});
 				if (m_stop) break;
+				retry = std::exchange(m_retryPending, false);
 			}
 			// Reconcile before draining: requests keep queueing while this
 			// polls, and a changed revision takes one Snapshot() (R2).
+			bool reconciled = false;
 			if (const auto revision = m_management.Revision(); revision != managementRevision) {
-				ReconcileHosts(m_management.Snapshot(), hosts, retired, factory);
+				ReconcileHosts(m_management.Snapshot(), hosts, retired, crashes, desired, factory);
 				managementRevision = revision;
+				reconciled = true;
+			}
+			// A crashed identity is reopened once per boundary, like VS
+			// Code restarting its extension host. Reconcile already tried
+			// every missing host this pass, so the retry only runs when no
+			// reconcile did.
+			if (retry && !reconciled) {
+				bool changed = false;
+				OpenMissingHosts(desired, hosts, retired, crashes, factory, changed);
 			}
 			std::vector<PendingLine> batch;
 			{
@@ -647,7 +704,7 @@ private:
 					m_pending.pop_front();
 				}
 			}
-			ProcessBatch(batch, hosts, retired);
+			ProcessBatch(batch, hosts, retired, crashes);
 		}
 	}
 
@@ -663,6 +720,10 @@ private:
 	std::condition_variable m_changed;
 	std::thread m_worker;
 	bool m_stop = false;
+	//! Wakes the worker so a crashed-but-restartable identity is reopened at
+	//! this boundary. Set by FailHost and by an OpenMissingHosts pass whose
+	//! open failed below the crash limit.
+	bool m_retryPending = false;
 	std::deque<PendingLine> m_pending;
 	std::size_t m_pendingBytes = 0;
 	std::set<std::string> m_pendingKeys;
@@ -694,23 +755,36 @@ bool AcceptExtensionHello(std::string_view response)
 		&& abiText != nullptr && *abiText == L"sakura:senp/extension@1.0.0";
 }
 
-bool ParseDecorationSlots(std::string_view response, std::uint32_t lineCount,
+EDecorateResult ClassifyDecorationReply(std::string_view response, std::uint32_t lineCount,
 	std::vector<std::pair<std::uint32_t, IndentDecoration>>& slots)
 {
 	const auto parsed = platform::serialization::CJsoncDocument::ParseStrict(response);
 	const auto* root = parsed.Succeeded() ? std::get_if<JsoncValue::Object>(&parsed.value->Value()) : nullptr;
-	if (root == nullptr) return false;
+	if (root == nullptr) return EDecorateResult::Failed;
 	const auto type = root->find(L"type");
-	const auto members = root->find(L"slots");
 	const auto* typeText = type == root->end() ? nullptr : std::get_if<std::wstring>(&type->second.Value());
+	if (typeText == nullptr) return EDecorateResult::Failed;
+	// A typed error reply is the host speaking the protocol. Only
+	// `extensionRejected` is a dropped provider result - a trap or a
+	// host-level refusal means the host itself needs the crash policy.
+	if (*typeText == L"error") {
+		const auto code = root->find(L"code");
+		const auto* codeText = code == root->end() ? nullptr : std::get_if<std::wstring>(&code->second.Value());
+		return codeText != nullptr && *codeText == L"extensionRejected"
+			? EDecorateResult::Rejected : EDecorateResult::Failed;
+	}
+	if (*typeText != L"decorations") return EDecorateResult::Failed;
+	const auto members = root->find(L"slots");
 	const auto* array = members == root->end() ? nullptr : std::get_if<JsoncValue::Array>(&members->second.Value());
-	if (typeText == nullptr || *typeText != L"decorations" || array == nullptr
-		|| array->size() > kMaximumReplySlots) return false;
+	// A `decorations` answer outside the accepted bounds - more than
+	// kMaximumReplySlots slots, a line index outside the request, a slot
+	// field out of range - is a rejected result, not a dead host.
+	if (array == nullptr || array->size() > kMaximumReplySlots) return EDecorateResult::Rejected;
 	slots.clear();
 	slots.reserve(array->size());
 	for (const auto& value : *array) {
 		const auto* object = std::get_if<JsoncValue::Object>(&value.Value());
-		if (object == nullptr) return false;
+		if (object == nullptr) return EDecorateResult::Rejected;
 		const auto integer = [object](std::wstring_view name) -> const std::int64_t* {
 			const auto found = object->find(name);
 			return found == object->end() ? nullptr : std::get_if<std::int64_t>(&found->second.Value());
@@ -722,12 +796,20 @@ bool ParseDecorationSlots(std::string_view response, std::uint32_t lineCount,
 		if (line == nullptr || *line < 0 || *line >= lineCount
 			|| start == nullptr || length == nullptr || depth == nullptr
 			|| *start < 0 || *length <= 0 || *depth < 0
-			|| *start > UINT32_MAX || *length > UINT32_MAX || *depth > UINT32_MAX) return false;
+			|| *start > UINT32_MAX || *length > UINT32_MAX || *depth > UINT32_MAX) {
+			return EDecorateResult::Rejected;
+		}
 		slots.push_back({ static_cast<std::uint32_t>(*line),
 			{ static_cast<std::uint32_t>(*start),
 				static_cast<std::uint32_t>(*length), static_cast<std::uint32_t>(*depth) } });
 	}
-	return true;
+	return EDecorateResult::Succeeded;
+}
+
+bool ParseDecorationSlots(std::string_view response, std::uint32_t lineCount,
+	std::vector<std::pair<std::uint32_t, IndentDecoration>>& slots)
+{
+	return ClassifyDecorationReply(response, lineCount, slots) == EDecorateResult::Succeeded;
 }
 
 } // namespace detail

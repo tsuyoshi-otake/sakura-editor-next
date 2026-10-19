@@ -18,11 +18,9 @@ namespace senp::github {
 namespace {
 
 constexpr std::uint32_t kReadTimeoutMilliseconds = 30000;
-// `gh api --include` output is the body plus one status line and the headers;
-// the capture bound is the page-body limit plus this named header allowance.
-constexpr std::size_t kReadHeaderAllowanceBytes = 64u * 1024u;
-constexpr std::size_t kReadOutputBytes
-	= kMaximumRepositoryPageBodyBytes + kReadHeaderAllowanceBytes;
+// The capture bound (page-body limit plus the fixed 64 KiB header allowance
+// `gh api --include` prepends to stdout) is shared with the policy path as
+// kMaximumRepositoryReadOutputBytes.
 constexpr std::size_t kReadErrorBytes = 64u * 1024u;
 constexpr std::size_t kMaximumHeaderBytes = 64u * 1024u;
 
@@ -311,7 +309,7 @@ try {
 		return Terminal(GhRepositoryResponseStatus::ToolUnavailable, page);
 	}
 	const auto outcome = account.Credential().RunAuthenticated(prepared.Arguments(),
-		kReadTimeoutMilliseconds, kReadOutputBytes, kReadErrorBytes, stop);
+		kReadTimeoutMilliseconds, kMaximumRepositoryReadOutputBytes, kReadErrorBytes, stop);
 	// A capture cut at the output bound can still carry a well-formed header
 	// block; what ran out is the capture, so it reports the limit regardless of
 	// how much of the envelope survived.
@@ -363,7 +361,12 @@ try {
 	}
 	const auto etag = envelope->Etag();
 	const auto nextPage = envelope->NextPage();
-	return { GhRepositoryResponseStatus::Succeeded, 200, envelope->TakeBody(), etag, page, nextPage };
+	auto response = GhRepositoryResponse{ GhRepositoryResponseStatus::Succeeded, 200,
+		envelope->TakeBody(), etag, page, nextPage };
+	// The validating parse's DOM rides along: projection consumes it instead
+	// of parsing the same page a second time.
+	response.SetDocument(std::move(*parsed.value));
+	return response;
 } catch (...) {
 	return Terminal(GhRepositoryResponseStatus::Failed, CurrentPage(request));
 }

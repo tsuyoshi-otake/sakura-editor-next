@@ -33,6 +33,7 @@
 #include "charset/CShiftJis.h"
 #include "util/window.h"
 #include "util/tchar_template.h"
+#include "platform/process/InheritedHandleList.h"
 #include "apiwrap/StdControl.h"
 #include "mem/CNativeA.h"
 
@@ -222,13 +223,20 @@ bool CEditView::ExecCmd( const WCHAR* pszCmd, int nFlgOpt, const WCHAR* pszCurDi
 	// To Here 2007.03.18 maru 子プロセスの標準入力ハンドル
 	
 	//CreateProcessに渡すSTARTUPINFOを作成
-	STARTUPINFO	sui = { sizeof(sui) };
+	// 標準入出力を渡す起動では、継承するハンドルをPROC_THREAD_ATTRIBUTE_HANDLE_LISTで
+	// 明示し、親プロセスの無関係なハンドルが子プロセスへ漏れないようにする
+	platform::process::InheritedHandleList cInheritHandles;
+	STARTUPINFOW&	sui = cInheritHandles.StartupInfo();
 	if( bGetStdout || bSendStdin ) {
 		sui.dwFlags = STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES;
 		sui.wShowWindow = bGetStdout ? SW_HIDE : SW_SHOW;
 		sui.hStdInput   = hStdIn     ? hStdIn       : ::GetStdHandle(STD_INPUT_HANDLE);
 		sui.hStdOutput  = bGetStdout ? hStdOutWrite : ::GetStdHandle(STD_OUTPUT_HANDLE);
 		sui.hStdError   = bGetStdout ? hStdOutWrite : ::GetStdHandle(STD_ERROR_HANDLE);
+		if( !cInheritHandles.Prepare() ) {
+			//ハンドルリストの構築に失敗。安全に起動できない
+			return false;
+		}
 	}
 
 	PROCESS_INFORMATION	pi{};
@@ -238,8 +246,9 @@ bool CEditView::ExecCmd( const WCHAR* pszCmd, int nFlgOpt, const WCHAR* pszCurDi
 	//コマンドライン実行
 	WCHAR	cmdline[1024];
 	wcscpy_s( cmdline, pszCmd );
-	if( CreateProcess( nullptr, cmdline, nullptr, nullptr, TRUE,
-				CREATE_NEW_CONSOLE, nullptr, bCurDir ? pszCurDir : nullptr, &sui, &pi ) == FALSE ) {
+	if( CreateProcess( nullptr, cmdline, nullptr, nullptr, cInheritHandles.InheritHandles(),
+				CREATE_NEW_CONSOLE | cInheritHandles.AdditionalCreationFlags(), nullptr,
+				bCurDir ? pszCurDir : nullptr, cInheritHandles.LaunchStartupInfo(), &pi ) == FALSE ) {
 		//実行に失敗した場合、コマンドラインベースのアプリケーションと判断して
 		// command(9x) か cmd(NT) を呼び出す
 
@@ -257,8 +266,9 @@ bool CEditView::ExecCmd( const WCHAR* pszCmd, int nFlgOpt, const WCHAR* pszCurDi
 			( bGetStdout ? L"/C " : L"/K " ),
 			pszCmd
 		);
-		if( CreateProcess( nullptr, cmdline, nullptr, nullptr, TRUE,
-					CREATE_NEW_CONSOLE, nullptr, bCurDir ? pszCurDir : nullptr, &sui, &pi ) == FALSE ) {
+		if( CreateProcess( nullptr, cmdline, nullptr, nullptr, cInheritHandles.InheritHandles(),
+					CREATE_NEW_CONSOLE | cInheritHandles.AdditionalCreationFlags(), nullptr,
+					bCurDir ? pszCurDir : nullptr, cInheritHandles.LaunchStartupInfo(), &pi ) == FALSE ) {
 			MessageBox( nullptr, cmdline, LS(STR_EDITVIEW_EXECCMD_ERR), MB_OK | MB_ICONEXCLAMATION );
 
 			return false;

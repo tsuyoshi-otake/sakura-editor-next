@@ -168,16 +168,11 @@ void CDocLineMgr::AppendAsMove( CDocLineMgr& other )
 
 void CDocLineMgr::PushTextEditRecord( const DocTextEdit& record ) noexcept
 {
-	try {
-		m_textEditLog.push_back( record );
-		while( m_textEditLog.size() > 64 ) m_textEditLog.pop_front();
-	}
-	catch( ... ) {
-		// デストラクタ(ScopedDocMutation)経由では例外を投げられない。
-		// 記録を失ったまま進むと差分が壊れるので、ログを空にして
-		// CollectTextEdits 側が「抜け」を検出して全無効化するようにする。
-		m_textEditLog.clear();
-	}
+	// 追記/上限切り詰め/失敗時の全消去は AppendBoundedEditRecord の継ぎ目が
+	// 担う。デストラクタ(ScopedDocMutation)経由では例外を投げられない。
+	// 記録を失ったまま進むと差分が壊れるので、失敗時はログを空にして
+	// CollectTextEdits 側が「抜け」を検出して全無効化するようにする。
+	AppendBoundedEditRecord( m_textEditLog, record, 64 );
 }
 
 void CDocLineMgr::RecordTextEdit( CLogicInt firstLine, CLogicInt oldLineCount, CLogicInt newLineCount )
@@ -201,7 +196,7 @@ void CDocLineMgr::NoteStructuralMutation()
 bool CDocLineMgr::CollectTextEdits( std::uint64_t sinceRevision, std::vector<DocTextEdit>& out ) const
 {
 	if( sinceRevision >= m_textRevision ) return true;
-	if( m_textEditLog.empty() || m_textEditLog.front().revision > sinceRevision + 1 ) {
+	if( EditRecordLogHasGap( m_textEditLog, sinceRevision ) ) {
 		return false; // 記録が押し出されて差分を再構成できない
 	}
 	for( const auto& record : m_textEditLog ) {

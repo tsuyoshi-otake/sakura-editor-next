@@ -5,6 +5,7 @@
 
 #include "platform/process/AllowlistedEnvironment.h"
 
+#include <algorithm>
 #include <filesystem>
 
 namespace senp {
@@ -60,11 +61,11 @@ bool ConfigureChildJob(HANDLE job, const ChildJobLimits& limits) noexcept
 
 detail::SenpChildLaunchConfig detail::BuildSenpChildLaunchConfig(std::wstring_view executablePath)
 {
-	SenpChildLaunchConfig config;
-	config.workingDirectory = std::filesystem::path(executablePath).parent_path().native();
-	config.environment = platform::process::BuildAllowlistedEnvironmentBlock(kSenpChildEnvironmentNames);
-	config.environmentFlags = CREATE_UNICODE_ENVIRONMENT;
-	return config;
+	return {
+		std::filesystem::path(executablePath).parent_path().native(),
+		platform::process::BuildAllowlistedEnvironmentBlock(kSenpChildEnvironmentNames),
+		CREATE_UNICODE_ENVIRONMENT,
+	};
 }
 
 bool detail::SetChildHandlesInheritable(std::span<const HANDLE> handles) noexcept
@@ -73,6 +74,104 @@ bool detail::SetChildHandlesInheritable(std::span<const HANDLE> handles) noexcep
 		if (!::SetHandleInformation(handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT)) return false;
 	}
 	return true;
+}
+
+std::optional<PROCESS_INFORMATION> detail::LaunchSenpChildProcess(
+	const std::wstring_view executablePath, std::wstring& commandLine,
+	const SenpChildStdHandles& stdHandles, const DWORD creationFlags,
+	const HANDLE job) noexcept
+{
+	try {
+		if (executablePath.empty() || executablePath.size() >= 32768
+			|| commandLine.empty() || commandLine.size() >= 32768) return std::nullopt;
+		// Copy the path: CreateProcessW's lpApplicationName must be
+		// NUL-terminated while a wstring_view need not be.
+		const std::wstring executable(executablePath);
+		auto config = BuildSenpChildLaunchConfig(executablePath);
+
+		// Collect the distinct non-null child-side handles and make exactly
+		// those inheritable. The guard restores the exact prior flag state
+		// when this call returns, so a handle that stays open is not left
+		// ambient-inheritable for unrelated children.
+		std::vector<HANDLE> listed;
+		for (const HANDLE handle :
+			{ stdHandles.input, stdHandles.output, stdHandles.error }) {
+			if (handle != nullptr && handle != INVALID_HANDLE_VALUE
+				&& std::ranges::find(listed, handle) == listed.end()) {
+				listed.push_back(handle);
+			}
+		}
+		std::vector<HANDLE> raised;
+		struct InheritWindow final {
+			~InheritWindow()
+			{
+				for (const HANDLE handle : lifted) {
+					(void)::SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0);
+				}
+			}
+			const std::vector<HANDLE>& lifted;
+		} window{ raised };
+		for (const HANDLE handle : listed) {
+			DWORD flags = 0;
+			if (!::GetHandleInformation(handle, &flags)) return std::nullopt;
+			if ((flags & HANDLE_FLAG_INHERIT) == 0) raised.push_back(handle);
+		}
+		if (!SetChildHandlesInheritable(listed)) return std::nullopt;
+
+		// PROC_THREAD_ATTRIBUTE_HANDLE_LIST admits exactly the listed handles;
+		// PROC_THREAD_ATTRIBUTE_JOB_LIST joins the job at creation, so no
+		// suspend/resume window exists. No list at all keeps the classic
+		// STARTUPINFO layout (bInheritHandles FALSE, no extended flag).
+		const DWORD attributeCount = (listed.empty() ? 0u : 1u)
+			+ (job != nullptr && job != INVALID_HANDLE_VALUE ? 1u : 0u);
+		SIZE_T attributeBytes = 0;
+		LPPROC_THREAD_ATTRIBUTE_LIST attributes = nullptr;
+		std::vector<std::uint8_t> attributeStorage;
+		if (attributeCount != 0) {
+			(void)::InitializeProcThreadAttributeList(nullptr, attributeCount, 0, &attributeBytes);
+			if (attributeBytes == 0) return std::nullopt;
+			attributeStorage.assign(attributeBytes, std::uint8_t{});
+			attributes = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attributeStorage.data());
+			if (!::InitializeProcThreadAttributeList(attributes, attributeCount, 0, &attributeBytes)) {
+				return std::nullopt;
+			}
+		}
+		struct AttributeListGuard final {
+			const LPPROC_THREAD_ATTRIBUTE_LIST value;
+			~AttributeListGuard() { if (value != nullptr) ::DeleteProcThreadAttributeList(value); }
+		} attributeGuard{ attributes };
+		if (!listed.empty()
+			&& !::UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+				listed.data(), static_cast<SIZE_T>(listed.size() * sizeof(HANDLE)),
+				nullptr, nullptr)) return std::nullopt;
+		if (job != nullptr && job != INVALID_HANDLE_VALUE) {
+			HANDLE jobHandle = job;
+			if (!::UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST,
+					&jobHandle, sizeof(jobHandle), nullptr, nullptr)) return std::nullopt;
+		}
+
+		STARTUPINFOEXW startup{};
+		startup.StartupInfo.cb = static_cast<DWORD>(
+			attributes != nullptr ? sizeof(startup) : sizeof(STARTUPINFOW));
+		startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+		startup.StartupInfo.hStdInput = stdHandles.input;
+		startup.StartupInfo.hStdOutput = stdHandles.output;
+		startup.StartupInfo.hStdError = stdHandles.error;
+		startup.lpAttributeList = attributes;
+		const DWORD flags = creationFlags | config.environmentFlags
+			| (attributes != nullptr ? DWORD{ EXTENDED_STARTUPINFO_PRESENT } : 0u);
+		PROCESS_INFORMATION process{};
+		if (!::CreateProcessW(executable.c_str(), commandLine.data(), nullptr, nullptr,
+				listed.empty() ? FALSE : TRUE, flags, config.environment.data(),
+				config.workingDirectory.c_str(), &startup.StartupInfo, &process)) {
+			return std::nullopt;
+		}
+		return process;
+	} catch (const std::exception&) {
+		// Only allocation inside this body can throw; the handle-list launch
+		// itself fails via return values, so a narrowed catch is sufficient.
+		return std::nullopt;
+	}
 }
 
 } // namespace senp

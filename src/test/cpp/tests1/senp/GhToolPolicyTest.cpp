@@ -2,6 +2,7 @@
 /* Copyright (C) 2026, Sakura Editor Organization. SPDX-License-Identifier: Zlib */
 #include "pch.h"
 #include "senp/github/GhToolPolicy.h"
+#include "senp/github/GhRepositoryRead.h"
 #include "platform/process/WindowsExecutableResolver.h"
 
 #include <algorithm>
@@ -193,6 +194,7 @@ TEST(GhToolPolicy, PrefersTheProgramFilesInstallOverPathResolution)
 			std::error_code ignored;
 			std::filesystem::remove_all(directory, ignored);
 		}
+	private:
 		std::optional<std::wstring> original;
 		std::filesystem::path directory;
 	} shadow;
@@ -254,7 +256,10 @@ TEST(GhToolPolicy, BuildsOneFixedRestGetWithoutShellOrAmbientGithubSelectors)
 		{ L"GH_SPINNER_DISABLED", L"1" } }),
 		invocation.EnvironmentOverrides());
 	EXPECT_EQ(30000U, invocation.TimeoutMilliseconds());
-	EXPECT_EQ(4U * 1024U * 1024U, invocation.MaximumOutputBytes());
+	// The policy read captures the same `gh api --include` envelope as the
+	// credential path, so it shares the page-body-plus-64KiB-header bound.
+	EXPECT_EQ(kMaximumRepositoryPageBodyBytes + 64U * 1024U,
+		invocation.MaximumOutputBytes());
 	EXPECT_EQ(64U * 1024U, invocation.MaximumErrorBytes());
 }
 

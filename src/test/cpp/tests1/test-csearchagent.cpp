@@ -42,7 +42,7 @@ void SetLines(CDocLineMgr& m, int seq, std::initializer_list<std::wstring_view> 
 
 struct RawLineData {
 	const wchar_t* line;
-	int seq;
+	const int seq;
 };
 
 COpeLineData MakeOpeLineData(std::initializer_list<RawLineData> lines)
@@ -719,7 +719,7 @@ TEST(CSearchAgent, DISABLED_SearchStringMicrobenchmark)
 {
 	struct Corpus {
 		const char* name;
-		std::wstring text;
+		const std::wstring text;
 	};
 	std::vector<Corpus> corpora;
 	{
@@ -1051,4 +1051,85 @@ TEST(CDocLineMgrTextEditLog, DeleteAllLineRecordsFull)
 	const auto edits = CollectTextEditsOrFail(m, seen);
 	ASSERT_GE(edits.size(), 1u);
 	EXPECT_TRUE(edits.back().full);
+}
+
+namespace {
+
+// push_back が std::bad_alloc を投げるコンテナで、上限付き追記の失敗経路を
+// 直接駆動するためのアロケータ。`*m_failures > 0` の間、確保ごとに残り回数を
+// 1減らして投げる。
+template<typename T>
+class ThrowingAllocator final {
+public:
+	using value_type = T;
+	ThrowingAllocator() noexcept = default;
+	explicit ThrowingAllocator( const std::shared_ptr<int>& failures ) noexcept
+		: m_failures( failures ) {}
+	template<typename U>
+	ThrowingAllocator( const ThrowingAllocator<U>& other ) noexcept
+		: m_failures( other.m_failures ) {}
+	T* allocate( std::size_t n ) {
+		if( m_failures && *m_failures > 0 ) {
+			--*m_failures;
+			throw std::bad_alloc();
+		}
+		return std::allocator<T>{}.allocate( n );
+	}
+	void deallocate( T* p, std::size_t n ) noexcept { std::allocator<T>{}.deallocate( p, n ); }
+	template<typename U> bool operator==( const ThrowingAllocator<U>& other ) const noexcept {
+		return m_failures == other.m_failures;
+	}
+	template<typename U> bool operator!=( const ThrowingAllocator<U>& other ) const noexcept {
+		return !(*this == other);
+	}
+private:
+	template<typename> friend class ThrowingAllocator;
+	std::shared_ptr<int> m_failures;
+};
+
+} // namespace
+
+// #364: PushTextEditRecord の記録失敗経路。デストラクタ経由では例外を
+// 透過できないため、失敗時はログを空にして CollectTextEdits が「抜け」を
+// 検出するのが契約。継ぎ目 (CDocLineMgr::AppendBoundedEditRecord /
+// EditRecordLogHasGap) をアロケータが投げる deque で直接駆動する。
+TEST(CDocLineMgrTextEditLog, PushFailureClearsTheLogSoConsumersSeeAGap)
+{
+	using Log = std::deque<DocTextEdit, ThrowingAllocator<DocTextEdit>>;
+	const auto failures = std::make_shared<int>( 0 );
+	Log log{ ThrowingAllocator<DocTextEdit>( failures ) };
+
+	// 通常経路: 追記と 64 件上限の切り詰めは失敗しない。
+	for (std::uint64_t rev = 1; rev <= 65; ++rev) {
+		CDocLineMgr::AppendBoundedEditRecord( log,
+			DocTextEdit{ rev, CLogicInt(0), CLogicInt(1), CLogicInt(1), false }, 64 );
+	}
+	ASSERT_EQ( 64u, log.size() );
+	EXPECT_EQ( 2u, log.front().revision );
+
+	// 追記中の確保失敗: 部分記録を残さずログ全体を空にする。noexcept も契約。
+	// 実装によっては push_back が新ブロックを即座に確保しないことがあるため、
+	// 空になるまで試行する (std::deque は一ブロック分の空きを使い切れば必ず
+	// 確保するので、有限回で必ず失敗に到達する)。
+	*failures = 128;
+	for (std::uint64_t rev = 66; rev < 66 + 128 && !log.empty(); ++rev) {
+		static_assert( noexcept(
+			CDocLineMgr::AppendBoundedEditRecord( log, DocTextEdit{}, 64 ) ) );
+		CDocLineMgr::AppendBoundedEditRecord( log,
+			DocTextEdit{ rev, CLogicInt(0), CLogicInt(1), CLogicInt(1), false }, 64 );
+	}
+	EXPECT_TRUE( log.empty() )
+		<< "a bounded append whose allocation fails must leave no partial record";
+
+	// CollectTextEdits と同じ抜け判定: 空ログは差分を再構成できない。
+	EXPECT_TRUE( CDocLineMgr::EditRecordLogHasGap( log, 65 ) );
+
+	// 対照: 追記が普通に成功したログは抜けにならない。MSVC の deque は
+	// コンストラクタで先頭ブロック群を確保するため、カウンタのリセットは
+	// 構築より先に行う。
+	*failures = 0;
+	Log intact{ ThrowingAllocator<DocTextEdit>( failures ) };
+	CDocLineMgr::AppendBoundedEditRecord( intact,
+		DocTextEdit{ 1, CLogicInt(0), CLogicInt(0), CLogicInt(1), false }, 64 );
+	EXPECT_FALSE( CDocLineMgr::EditRecordLogHasGap( intact, 0 ) );
 }

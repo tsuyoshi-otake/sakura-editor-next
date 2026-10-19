@@ -359,9 +359,23 @@ void CExtensionsWorkbenchTool::SetExtensionExclusionQuery(
 	Refresh();
 }
 
+void CExtensionsWorkbenchTool::SetRuntimeDiagnosticQuery(std::function<std::wstring()> query)
+{
+	m_runtimeDiagnosticQuery = std::move(query);
+	Refresh();
+}
+
 void CExtensionsWorkbenchTool::SetExtensionsChangedCallback(std::function<void()> callback)
 {
 	m_extensionsChanged = std::move(callback);
+}
+
+std::wstring CExtensionsWorkbenchTool::ComposeDiagnosticText(const std::wstring& management) const
+{
+	if (!m_runtimeDiagnosticQuery) return management;
+	auto runtime = m_runtimeDiagnosticQuery();
+	if (runtime.empty()) return management;
+	return management.empty() ? std::move(runtime) : management + L" " + runtime;
 }
 
 std::wstring CExtensionsWorkbenchTool::ComposeExtensionRowStatus(
@@ -450,7 +464,8 @@ void CExtensionsWorkbenchTool::UpdateContentMetrics()
 	RECT client{};
 	::GetClientRect(m_window, &client);
 	const auto snapshot = m_service == nullptr ? senp::ManagementSnapshot{} : m_service->Snapshot();
-	const int diagnosticHeight = snapshot.diagnostic.empty() ? 0 : Scale(kDiagnosticHeightDip, m_dpi);
+	const int diagnosticHeight = ComposeDiagnosticText(snapshot.diagnostic).empty()
+		? 0 : Scale(kDiagnosticHeightDip, m_dpi);
 	const int rowsHeight = snapshot.extensions.empty() ? Scale(kEmptyMessageHeightDip, m_dpi)
 		: static_cast<int>(snapshot.extensions.size()) * Scale(kExtensionRowHeightDip, m_dpi);
 	m_contentHeight = diagnosticHeight + rowsHeight;
@@ -464,13 +479,13 @@ void CExtensionsWorkbenchTool::SyncActionButtons()
 	const auto snapshot = m_service == nullptr ? senp::ManagementSnapshot{} : m_service->Snapshot();
 	RECT client{};
 	::GetClientRect(m_window, &client);
-	const int diagnosticHeight = snapshot.diagnostic.empty() ? 0 : Scale(kDiagnosticHeightDip, m_dpi);
+	const int diagnosticHeight = ComposeDiagnosticText(snapshot.diagnostic).empty()
+		? 0 : Scale(kDiagnosticHeightDip, m_dpi);
 	const int rowHeight = Scale(kExtensionRowHeightDip, m_dpi);
 	const int buttonHeight = ActionButtonHeight(m_dpi);
 	const int right = Scale(kActionButtonRightDip, m_dpi);
 	const int bottom = Scale(kActionButtonBottomDip, m_dpi);
 	struct PreviousBounds final {
-		HWND window = nullptr;
 		RECT bounds{};
 	};
 	std::vector<PreviousBounds> previousBounds;
@@ -478,7 +493,7 @@ void CExtensionsWorkbenchTool::SyncActionButtons()
 	for (const auto& button : m_actionButtons) {
 		RECT bounds{};
 		if (GetWindowBoundsInParent(button.window, m_window, bounds)) {
-			previousBounds.push_back({ button.window, bounds });
+			previousBounds.push_back({ bounds });
 		}
 	}
 	std::vector<ActionButtonState> next;
@@ -796,10 +811,11 @@ void CExtensionsWorkbenchTool::Paint(HDC dc)
 	::IntersectClipRect(dc, client.left, client.top, client.right, client.bottom);
 	int y = client.top - m_scrollOffset;
 	const auto snapshot = m_service == nullptr ? senp::ManagementSnapshot{} : m_service->Snapshot();
-	if (!snapshot.diagnostic.empty()) {
+	const auto diagnosticText = ComposeDiagnosticText(snapshot.diagnostic);
+	if (!diagnosticText.empty()) {
 		RECT diagnostic{ client.left + Scale(kEmptyMessageLeftDip, m_dpi), y,
 			client.right - Scale(kEmptyMessageRightDip, m_dpi), y + Scale(kDiagnosticHeightDip, m_dpi) };
-		Text(dc, snapshot.diagnostic, diagnostic, m_palette.warning.ToColorRef(), m_font.Get(),
+		Text(dc, diagnosticText, diagnostic, m_palette.warning.ToColorRef(), m_font.Get(),
 			DT_LEFT | DT_VCENTER | DT_WORDBREAK | DT_END_ELLIPSIS);
 		y = diagnostic.bottom;
 	}

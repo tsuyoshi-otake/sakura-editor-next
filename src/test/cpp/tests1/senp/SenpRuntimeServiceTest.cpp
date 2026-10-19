@@ -172,7 +172,10 @@ struct HostScript final {
 	std::wstring openedModulePath;
 	std::wstring openedSha256;
 	bool openSucceeds = true;
-	std::function<bool(const std::vector<senp::detail::DecorateLine>&,
+	//! Consulted before openSucceeds so a test can refuse opens by package
+	//! identity regardless of which scripted host instance handles them.
+	std::function<bool(std::wstring_view, std::wstring_view)> onOpen;
+	std::function<senp::detail::EDecorateResult(const std::vector<senp::detail::DecorateLine>&,
 		std::vector<std::pair<std::uint32_t, senp::IndentDecoration>>&)> onDecorate;
 };
 
@@ -185,9 +188,10 @@ public:
 		++m_script->openCalls;
 		m_script->openedModulePath = modulePath;
 		m_script->openedSha256 = moduleSha256;
+		if (m_script->onOpen) return m_script->onOpen(modulePath, moduleSha256);
 		return m_script->openSucceeds;
 	}
-	[[nodiscard]] bool Decorate(std::uint32_t,
+	[[nodiscard]] senp::detail::EDecorateResult Decorate(std::uint32_t,
 		const std::vector<senp::detail::DecorateLine>& lines,
 		std::vector<std::pair<std::uint32_t, senp::IndentDecoration>>& slots) override
 	{
@@ -199,7 +203,7 @@ public:
 		}
 		if (m_script->onDecorate) return m_script->onDecorate(lines, slots);
 		for (const auto& line : lines) slots.push_back({ line.line, { 0, 1, 0 } });
-		return true;
+		return senp::detail::EDecorateResult::Succeeded;
 	}
 	void Close() noexcept override { ++m_script->closeCalls; }
 
@@ -214,11 +218,16 @@ struct RuntimeFixture final {
 	{
 		hooks.hostFactory = [this]() -> std::unique_ptr<senp::detail::ISenpExtensionHost> {
 			std::shared_ptr<HostScript> script;
+			// Hosts created past the scripted list - every crash restart -
+			// share the one fallback script so a test controls them too.
 			if (nextScript < scripts.size()) script = scripts[nextScript++];
-			else script = std::make_shared<HostScript>();
+			else script = fallbackScript;
 			return std::make_unique<FakeHost>(std::move(script));
 		};
 		hooks.repaint = [this](std::uintptr_t) { ++repaints; };
+		// A manual clock: tests advance `now` past the five-minute crash
+		// window without sleeping.
+		hooks.clock = [this] { return now; };
 	}
 
 	senp::ExtensionDescriptor Extension(std::wstring id, std::wstring_view sha = {})
@@ -251,8 +260,10 @@ struct RuntimeFixture final {
 	FakeManagement management;
 	senp::detail::SenpRuntimeHooks hooks;
 	std::vector<std::shared_ptr<HostScript>> scripts;
+	const std::shared_ptr<HostScript> fallbackScript = std::make_shared<HostScript>();
 	std::size_t nextScript = 0;
 	std::atomic<int> repaints{ 0 };
+	std::chrono::steady_clock::time_point now{};
 	std::unique_ptr<senp::ISenpRuntimeService> service;
 
 	void Start()
@@ -262,28 +273,26 @@ struct RuntimeFixture final {
 	}
 };
 
-TEST(SenpRuntimeService, FailedHostIsRetiredAndLineCompletesFromSurvivors)
+TEST(SenpRuntimeService, FailedHostRestartsAndLineCompletesFromSurvivors)
 {
 	RuntimeFixture fixture;
 	const auto hostA = std::make_shared<HostScript>();
 	hostA->onDecorate = [](const std::vector<senp::detail::DecorateLine>&,
-		std::vector<std::pair<std::uint32_t, senp::IndentDecoration>>&) { return false; };
+		std::vector<std::pair<std::uint32_t, senp::IndentDecoration>>&) {
+		return senp::detail::EDecorateResult::Failed;
+	};
 	const auto hostB = std::make_shared<HostScript>();
 	fixture.scripts = { hostA, hostB };
 	fixture.management.SetExtensions({ fixture.Extension(L"ext.a"), fixture.Extension(L"ext.b") });
 	fixture.Start();
 
 	// The same line requested ten times meets one failed exchange, not ten:
-	// the line completes from B, is cached empty-for-A's-part, and repaints
-	// once. A dead host is retired, never reopened at the same identity.
+	// the line keeps resolving from B's survivor result while A's first
+	// crash is being handled.
 	int lastCalls = 0;
 	for (int i = 0; i < 10; ++i) {
 		const auto result = fixture.Request(L"\tvalue", 4, 7);
-		if (i == 9) {
-			EXPECT_TRUE(result.has_value());
-			// The surviving host B contributes its decoration.
-			if (result) EXPECT_EQ(result->size(), 1U);
-		}
+		if (i == 9) EXPECT_TRUE(result.has_value());
 		(void)WaitFor([&] {
 			return hostA->decorateCalls.load() > lastCalls || result.has_value();
 		}, 2s);
@@ -292,31 +301,233 @@ TEST(SenpRuntimeService, FailedHostIsRetiredAndLineCompletesFromSurvivors)
 	EXPECT_EQ(hostA->decorateCalls.load(), 1);
 	EXPECT_EQ(hostA->closeCalls.load(), 1);
 	EXPECT_EQ(hostA->openCalls.load(), 1);
-	EXPECT_EQ(fixture.repaints.load(), 1);
+	// Crash one is below the limit: the identity stays desired and its host
+	// is reopened on the shared fallback script. That host joining the
+	// effective set invalidates the cache, so the next request is decorated
+	// again - now from both A's restarted host and B - and stored+repainted.
+	ASSERT_TRUE(WaitFor([&] { return fixture.fallbackScript->openCalls.load() >= 1; }));
+	EXPECT_EQ(fixture.service->Snapshot().state, senp::ERuntimeState::Ready);
+	std::optional<std::vector<senp::IndentDecoration>> recomputed;
+	ASSERT_TRUE(WaitFor([&] {
+		recomputed = fixture.Request(L"\tvalue", 4, 7);
+		return recomputed.has_value();
+	}));
+	ASSERT_TRUE(recomputed);
+	EXPECT_EQ(recomputed->size(), 2U);
+	EXPECT_EQ(fixture.repaints.load(), 2);
 }
 
-TEST(SenpRuntimeService, FailureProducesDiagnosticNamingExtension)
+TEST(SenpRuntimeService, ThirdCrashInsideFiveMinutesPublishesTheDiagnostic)
 {
 	RuntimeFixture fixture;
 	const auto hostA = std::make_shared<HostScript>();
-	hostA->onDecorate = [](const std::vector<senp::detail::DecorateLine>&,
-		std::vector<std::pair<std::uint32_t, senp::IndentDecoration>>&) { return false; };
+	const auto fail = [](const std::vector<senp::detail::DecorateLine>&,
+		std::vector<std::pair<std::uint32_t, senp::IndentDecoration>>&) {
+		return senp::detail::EDecorateResult::Failed;
+	};
+	hostA->onDecorate = fail;
+	fixture.fallbackScript->onDecorate = fail;
 	fixture.scripts = { hostA };
 	fixture.management.SetExtensions({ fixture.Extension(L"ext.a") });
 	fixture.Start();
 
-	fixture.Request(L"\tvalue");
+	// Crashes one and two restart the host at the next boundary instead of
+	// retiring it; the third inside the window publishes VS Code's
+	// repeated-crash diagnostic and retires the identity.
+	fixture.Request(L"first");
+	ASSERT_TRUE(WaitFor([&] { return fixture.fallbackScript->openCalls.load() >= 1; }));
+	EXPECT_EQ(fixture.service->Snapshot().state, senp::ERuntimeState::Ready);
+	fixture.Request(L"second");
+	ASSERT_TRUE(WaitFor([&] { return fixture.fallbackScript->openCalls.load() >= 2; }));
+	EXPECT_EQ(fixture.service->Snapshot().state, senp::ERuntimeState::Ready);
+	fixture.Request(L"third");
 	ASSERT_TRUE(WaitFor([&] {
 		return fixture.service->Snapshot().state == senp::ERuntimeState::ReadyWithDiagnostics;
 	}));
-	EXPECT_NE(fixture.service->Snapshot().diagnostic.find(L"ext.a"), std::wstring::npos);
-	EXPECT_EQ(fixture.service->Snapshot().activeHosts, 0U);
+	const auto snapshot = fixture.service->Snapshot();
+	EXPECT_NE(snapshot.diagnostic.find(L"ext.a"), std::wstring::npos);
+	EXPECT_NE(snapshot.diagnostic.find(L"3 times within the last 5 minutes"), std::wstring::npos);
+	EXPECT_EQ(snapshot.activeHosts, 0U);
 	// The retired identity is never reopened, even across a revision bump
 	// that still advertises the same identity. `other` resolves from the
 	// remaining (zero) hosts.
 	fixture.management.SetExtensions({ fixture.Extension(L"ext.a") });
 	ASSERT_TRUE(fixture.WaitCached(L"other"));
 	EXPECT_EQ(hostA->openCalls.load(), 1);
+	EXPECT_EQ(fixture.fallbackScript->openCalls.load(), 2);
+}
+
+TEST(SenpRuntimeService, CrashesOlderThanFiveMinutesDoNotCount)
+{
+	RuntimeFixture fixture;
+	const auto hostA = std::make_shared<HostScript>();
+	const auto fail = [](const std::vector<senp::detail::DecorateLine>&,
+		std::vector<std::pair<std::uint32_t, senp::IndentDecoration>>&) {
+		return senp::detail::EDecorateResult::Failed;
+	};
+	hostA->onDecorate = fail;
+	fixture.fallbackScript->onDecorate = fail;
+	fixture.scripts = { hostA };
+	fixture.management.SetExtensions({ fixture.Extension(L"ext.a") });
+	fixture.Start();
+
+	// Three failures each more than five minutes apart: every crash is the
+	// first inside the window, so the identity restarts every time and is
+	// never retired. Without the window the third failure would retire it.
+	for (int i = 0; i < 3; ++i) {
+		fixture.Request(L"window-" + std::to_wstring(i));
+		ASSERT_TRUE(WaitFor([&] { return fixture.fallbackScript->openCalls.load() >= i + 1; }));
+		EXPECT_EQ(fixture.service->Snapshot().state, senp::ERuntimeState::Ready);
+		EXPECT_TRUE(fixture.service->Snapshot().diagnostic.empty());
+		fixture.now += std::chrono::minutes(6);
+	}
+}
+
+TEST(SenpRuntimeService, FailedReopenCountsAsACrash)
+{
+	RuntimeFixture fixture;
+	const auto hostA = std::make_shared<HostScript>();
+	hostA->onDecorate = [](const std::vector<senp::detail::DecorateLine>&,
+		std::vector<std::pair<std::uint32_t, senp::IndentDecoration>>&) {
+		return senp::detail::EDecorateResult::Failed;
+	};
+	// Every restart attempt fails to open: one failed decorate plus two
+	// failed opens reaches the limit with no further request at all.
+	fixture.fallbackScript->openSucceeds = false;
+	fixture.scripts = { hostA };
+	fixture.management.SetExtensions({ fixture.Extension(L"ext.a") });
+	fixture.Start();
+
+	fixture.Request(L"first");
+	ASSERT_TRUE(WaitFor([&] {
+		return fixture.service->Snapshot().state == senp::ERuntimeState::ReadyWithDiagnostics;
+	}));
+	EXPECT_EQ(fixture.fallbackScript->openCalls.load(), 2);
+	EXPECT_NE(fixture.service->Snapshot().diagnostic.find(L"ext.a"), std::wstring::npos);
+}
+
+TEST(SenpRuntimeService, PackageChangeClearsTheCrashHistory)
+{
+	RuntimeFixture fixture;
+	const auto hostA = std::make_shared<HostScript>();
+	const auto fail = [](const std::vector<senp::detail::DecorateLine>&,
+		std::vector<std::pair<std::uint32_t, senp::IndentDecoration>>&) {
+		return senp::detail::EDecorateResult::Failed;
+	};
+	hostA->onDecorate = fail;
+	fixture.fallbackScript->onDecorate = fail;
+	fixture.scripts = { hostA };
+	const auto extA = fixture.Extension(L"ext.a");
+	fixture.management.SetExtensions({ extA });
+	fixture.Start();
+
+	// Two crashes under the sha-'a' package.
+	fixture.Request(L"first");
+	ASSERT_TRUE(WaitFor([&] { return fixture.fallbackScript->openCalls.load() >= 1; }));
+	fixture.Request(L"second");
+	ASSERT_TRUE(WaitFor([&] { return fixture.fallbackScript->openCalls.load() >= 2; }));
+
+	// A digest change drops the identity; the sha-'b' crash is its own
+	// first. `swap` is the request that wakes the worker to the new set.
+	auto upgraded = extA;
+	upgraded.moduleSha256 = std::wstring(64, L'b');
+	fixture.management.SetExtensions({ upgraded });
+	ASSERT_TRUE(WaitFor([&] { return fixture.fallbackScript->openCalls.load() >= 2; }));
+	fixture.Request(L"swap");
+	ASSERT_TRUE(WaitFor([&] { return fixture.fallbackScript->openCalls.load() >= 3; }));
+	EXPECT_EQ(fixture.service->Snapshot().state, senp::ERuntimeState::Ready);
+
+	// Back at sha-'a': had its two crashes survived, this first failure
+	// would already be the third. It restarts instead, and retiring takes
+	// two further failures of its own.
+	fixture.management.SetExtensions({ extA });
+	ASSERT_TRUE(WaitFor([&] { return fixture.fallbackScript->openCalls.load() >= 4; }));
+	fixture.Request(L"reverted-1");
+	ASSERT_TRUE(WaitFor([&] { return fixture.fallbackScript->openCalls.load() >= 5; }));
+	EXPECT_EQ(fixture.service->Snapshot().state, senp::ERuntimeState::Ready);
+	EXPECT_TRUE(fixture.service->Snapshot().diagnostic.empty());
+	fixture.Request(L"reverted-2");
+	ASSERT_TRUE(WaitFor([&] { return fixture.fallbackScript->openCalls.load() >= 6; }));
+	EXPECT_EQ(fixture.service->Snapshot().state, senp::ERuntimeState::Ready);
+	fixture.Request(L"reverted-3");
+	ASSERT_TRUE(WaitFor([&] {
+		return fixture.service->Snapshot().state == senp::ERuntimeState::ReadyWithDiagnostics;
+	}));
+}
+
+TEST(SenpRuntimeService, TypedRejectionDropsTheResultWithoutACrash)
+{
+	RuntimeFixture fixture;
+	const auto hostA = std::make_shared<HostScript>();
+	hostA->onDecorate = [](const std::vector<senp::detail::DecorateLine>& lines,
+		std::vector<std::pair<std::uint32_t, senp::IndentDecoration>>& slots) {
+		// Garbage a `Succeeded` classification would wrongly merge.
+		for (const auto& line : lines) slots.push_back({ line.line, { 9, 9, 9 } });
+		return senp::detail::EDecorateResult::Rejected;
+	};
+	fixture.scripts = { hostA };
+	fixture.management.SetExtensions({ fixture.Extension(L"ext.a") });
+	fixture.Start();
+
+	// The line reaches its explicit empty result and the host stays live:
+	// no close, no restart, no retired id - VS Code drops a rejected
+	// provider result for that request, it does not kill the host.
+	const auto result = fixture.WaitCached(L"keep");
+	ASSERT_TRUE(result);
+	EXPECT_TRUE(result->empty());
+	EXPECT_EQ(hostA->closeCalls.load(), 0);
+	EXPECT_EQ(hostA->openCalls.load(), 1);
+	EXPECT_EQ(hostA->decorateCalls.load(), 1);
+	EXPECT_EQ(fixture.service->Snapshot().state, senp::ERuntimeState::Ready);
+	EXPECT_TRUE(fixture.service->Snapshot().diagnostic.empty());
+}
+
+TEST(SenpRuntimeService, RejectedRepliesAreClassifiedNotFailed)
+{
+	using senp::detail::ClassifyDecorationReply;
+	using senp::detail::EDecorateResult;
+	std::vector<std::pair<std::uint32_t, senp::IndentDecoration>> slots;
+	// The provider's typed refusal is a dropped result, not a host failure.
+	EXPECT_EQ(ClassifyDecorationReply(
+		R"({"type":"error","code":"extensionRejected","detail":"too many"})", 1, slots),
+		EDecorateResult::Rejected);
+	// A decorations payload outside the accepted bounds - a depth past
+	// UINT32_MAX, a line index outside the request, more than
+	// kMaximumReplySlots slots, a non-array slots member - is the same
+	// kind of dropped result.
+	EXPECT_EQ(ClassifyDecorationReply(
+		R"({"type":"decorations","slots":[{"line":0,"visualStart":0,"visualLength":1,"depth":4294967296}]})", 1, slots),
+		EDecorateResult::Rejected);
+	EXPECT_EQ(ClassifyDecorationReply(
+		R"({"type":"decorations","slots":[{"line":5,"visualStart":0,"visualLength":1,"depth":0}]})", 1, slots),
+		EDecorateResult::Rejected);
+	EXPECT_EQ(ClassifyDecorationReply(
+		R"({"type":"decorations","slots":"none"})", 1, slots), EDecorateResult::Rejected);
+	std::string tooMany = R"({"type":"decorations","slots":[)";
+	for (int i = 0; i <= 10000; ++i) {
+		if (i != 0) tooMany.push_back(',');
+		tooMany += R"({"line":0,"visualStart":0,"visualLength":1,"depth":0})";
+	}
+	tooMany += "]}";
+	EXPECT_EQ(ClassifyDecorationReply(tooMany, 1, slots), EDecorateResult::Rejected);
+	// Host-level answers stay failures: a trapped extension, a host-level
+	// or unknown error code, a missing code, an unknown type, and anything
+	// that is not the protocol at all.
+	EXPECT_EQ(ClassifyDecorationReply(
+		R"({"type":"error","code":"extensionTrap","detail":"trap"})", 1, slots),
+		EDecorateResult::Failed);
+	EXPECT_EQ(ClassifyDecorationReply(
+		R"({"type":"error","code":"runtimeUnavailable","detail":"x"})", 1, slots),
+		EDecorateResult::Failed);
+	EXPECT_EQ(ClassifyDecorationReply(
+		R"({"type":"error","detail":"no code"})", 1, slots), EDecorateResult::Failed);
+	EXPECT_EQ(ClassifyDecorationReply(R"({"type":"other","slots":[]})", 1, slots),
+		EDecorateResult::Failed);
+	EXPECT_EQ(ClassifyDecorationReply("{", 1, slots), EDecorateResult::Failed);
+	EXPECT_EQ(ClassifyDecorationReply("", 1, slots), EDecorateResult::Failed);
+	// A well-formed decorations reply still succeeds.
+	EXPECT_EQ(ClassifyDecorationReply(std::string(kDecorations), 1, slots),
+		EDecorateResult::Succeeded);
 }
 
 TEST(SenpRuntimeService, CacheEvictsLeastRecentlyUsedByBytes)
@@ -369,7 +580,7 @@ TEST(SenpRuntimeService, CacheKeepsTheNewestEntryEvenAboveTheCap)
 		for (const auto& line : lines) {
 			for (std::uint32_t i = 0; i < 1'500'000; ++i) slots.push_back({ line.line, { i, 1, 0 } });
 		}
-		return true;
+		return senp::detail::EDecorateResult::Succeeded;
 	};
 	fixture.scripts = { host };
 	fixture.management.SetExtensions({ fixture.Extension(L"ext.a") });
@@ -430,25 +641,37 @@ TEST(SenpRuntimeService, RetirementDiagnosticKeepsItsReasonUntilReleased)
 {
 	RuntimeFixture fixture;
 	const auto hostA = std::make_shared<HostScript>();
-	hostA->openSucceeds = false;
 	const auto hostB = std::make_shared<HostScript>();
+	// Every ext.a open fails no matter which scripted instance the worker's
+	// restarts land on: three crashes inside the window retire it.
+	const auto failExtA = [](std::wstring_view modulePath, std::wstring_view) {
+		return modulePath.find(L"ext.a") == std::wstring_view::npos;
+	};
+	hostA->onOpen = failExtA;
+	hostB->onOpen = failExtA;
+	fixture.fallbackScript->onOpen = failExtA;
 	fixture.scripts = { hostA, hostB };
 	const auto extA = fixture.Extension(L"ext.a");
 	const auto extB = fixture.Extension(L"ext.b");
 	fixture.management.SetExtensions({ extA });
 	fixture.Start();
 
-	ASSERT_TRUE(fixture.WaitCached(L"first"));
+	// The request wakes the worker; three failed opens inside the window
+	// retire the identity and publish the repeated-crash diagnostic.
+	fixture.Request(L"first");
+	ASSERT_TRUE(WaitFor([&] {
+		return fixture.service->Snapshot().state == senp::ERuntimeState::ReadyWithDiagnostics;
+	}));
 	auto snapshot = fixture.service->Snapshot();
-	ASSERT_EQ(snapshot.state, senp::ERuntimeState::ReadyWithDiagnostics);
-	EXPECT_NE(snapshot.diagnostic.find(L"could not be started: ext.a"), std::wstring::npos);
+	EXPECT_NE(snapshot.diagnostic.find(L"3 times within the last 5 minutes: ext.a"), std::wstring::npos);
+	ASSERT_TRUE(fixture.WaitCached(L"first"));
 
 	// Adding B changes the live set; A's retirement keeps its own reason.
 	fixture.management.SetExtensions({ extA, extB });
 	ASSERT_TRUE(fixture.WaitCached(L"second"));
 	snapshot = fixture.service->Snapshot();
 	EXPECT_EQ(snapshot.activeHosts, 1U);
-	EXPECT_NE(snapshot.diagnostic.find(L"could not be started: ext.a"), std::wstring::npos);
+	EXPECT_NE(snapshot.diagnostic.find(L"3 times within the last 5 minutes: ext.a"), std::wstring::npos);
 
 	// Dropping the retired A changes no live host, yet its diagnostic clears.
 	fixture.management.SetExtensions({ extB });
@@ -456,14 +679,14 @@ TEST(SenpRuntimeService, RetirementDiagnosticKeepsItsReasonUntilReleased)
 	snapshot = fixture.service->Snapshot();
 	EXPECT_EQ(snapshot.state, senp::ERuntimeState::Ready);
 	EXPECT_TRUE(snapshot.diagnostic.empty());
-	EXPECT_EQ(hostA->openCalls.load(), 1);
 	EXPECT_EQ(hostB->closeCalls.load(), 0);
 }
 
 TEST(SenpRuntimeService, PendingQueueIsByteBounded)
 {
 	RuntimeFixture fixture;
-	fixture.scripts = { std::make_shared<HostScript>() };
+	const auto host = std::make_shared<HostScript>();
+	fixture.scripts = { host };
 	fixture.management.SetExtensions({ fixture.Extension(L"ext.a") });
 	// Hold the worker in the first Revision() poll until every request has
 	// been offered, so admission (not drain speed) decides the queue depth.
@@ -481,18 +704,53 @@ TEST(SenpRuntimeService, PendingQueueIsByteBounded)
 	}
 	for (const auto& line : lines) fixture.Request(line);
 	fixture.management.ReleaseRevision();
-	// Settle barrier: the last line resolves only after every admitted line
-	// was processed, so the counting pass below is deterministic.
-	// lines[79] itself was rejected and is completed by the barrier's own
-	// re-requests, so the count covers lines[0..78] only.
-	ASSERT_TRUE(fixture.WaitCached(lines[79]));
+	// Settle barrier: each 65000-unit line is its own frame, so 32 admitted
+	// lines mean 32 decorate calls before the counting pass below runs -
+	// a rejected offer resolves empty immediately and cannot wait on one.
+	ASSERT_TRUE(WaitFor([&] { return host->decorateCalls.load() >= 32; }));
 	int firstPass = 0;
 	for (std::size_t i = 0; i + 1 < lines.size(); ++i) {
-		if (fixture.Request(lines[i]).has_value()) ++firstPass;
+		// A cached result is non-empty; a refused admission resolves as the
+		// explicit empty terminal rather than `nullopt`.
+		const auto result = fixture.Request(lines[i]);
+		if (result.has_value() && !result->empty()) ++firstPass;
 	}
 	EXPECT_EQ(firstPass, 32);
 	// Rejected lines are still completable on a later request.
 	for (const auto& line : lines) ASSERT_TRUE(fixture.WaitCached(line));
+}
+
+TEST(SenpRuntimeService, PendingAdmissionRejectionIsAnExplicitEmptyResult)
+{
+	RuntimeFixture fixture;
+	fixture.scripts = { std::make_shared<HostScript>() };
+	fixture.management.SetExtensions({ fixture.Extension(L"ext.a") });
+	// Hold the worker in the first Revision() poll so nothing drains while
+	// the bounded queue fills.
+	fixture.management.ArmRevisionGate();
+	fixture.Start();
+
+	// ~65000-byte keys charge about 130 KiB each, so the 4 MiB cap admits
+	// 32 and refuses the rest. A refused line resolves immediately to an
+	// explicit empty result - `nullopt` here would promise a repaint that
+	// nothing was queued to deliver.
+	const std::wstring body(65000, L'y');
+	for (int i = 0; i < 32; ++i) {
+		auto line = body;
+		line.replace(0, 6, std::to_wstring(i));
+		EXPECT_FALSE(fixture.Request(line).has_value());
+	}
+	auto refused = body;
+	refused.replace(0, 6, L"refused");
+	const auto result = fixture.Request(refused);
+	ASSERT_TRUE(result.has_value());
+	EXPECT_TRUE(result->empty());
+	fixture.management.ReleaseRevision();
+	for (int i = 0; i < 32; ++i) {
+		auto line = body;
+		line.replace(0, 6, std::to_wstring(i));
+		ASSERT_TRUE(fixture.WaitCached(line));
+	}
 }
 
 TEST(SenpRuntimeService, BatchedDecorateSendsOneFramePerHost)
@@ -506,7 +764,7 @@ TEST(SenpRuntimeService, BatchedDecorateSendsOneFramePerHost)
 		for (const auto& line : lines) {
 			slots.push_back({ line.line, { 4, 1, static_cast<std::uint32_t>(line.text.size()) } });
 		}
-		return true;
+		return senp::detail::EDecorateResult::Succeeded;
 	};
 	const auto hostB = std::make_shared<HostScript>();
 	fixture.scripts = { hostA, hostB };
@@ -596,15 +854,19 @@ TEST(SenpRuntimeService, RetiredHostInvalidatesTheCache)
 {
 	RuntimeFixture fixture;
 	const auto hostA = std::make_shared<HostScript>();
-	hostA->onDecorate = [](const std::vector<senp::detail::DecorateLine>& lines,
+	const auto failMarked = [](const std::vector<senp::detail::DecorateLine>& lines,
 		std::vector<std::pair<std::uint32_t, senp::IndentDecoration>>& slots) {
 		for (const auto& line : lines) {
 			// Fail on the marked line, otherwise contribute a depth-9 marker.
-			if (line.text.find(L"fail-me") != std::wstring::npos) return false;
+			if (line.text.find(L"fail-me") != std::wstring::npos) {
+				return senp::detail::EDecorateResult::Failed;
+			}
 			slots.push_back({ line.line, { 0, 1, 9 } });
 		}
-		return true;
+		return senp::detail::EDecorateResult::Succeeded;
 	};
+	hostA->onDecorate = failMarked;
+	fixture.fallbackScript->onDecorate = failMarked;
 	const auto hostB = std::make_shared<HostScript>();
 	fixture.scripts = { hostA, hostB };
 	fixture.management.SetExtensions({ fixture.Extension(L"ext.a"), fixture.Extension(L"ext.b") });
@@ -615,10 +877,17 @@ TEST(SenpRuntimeService, RetiredHostInvalidatesTheCache)
 	ASSERT_TRUE(first);
 	ASSERT_EQ(first->size(), 2U);
 
-	// A dies on M; that retires it and invalidates every result computed
-	// with it. L's next request is recomputed from B alone.
-	fixture.Request(L"fail-me");
-	ASSERT_TRUE(WaitFor([&] { return hostA->closeCalls.load() >= 1; }));
+	// A's three marked requests crash it to retirement; every result
+	// computed with A is invalidated. L's next request is recomputed
+	// from B alone.
+	for (int i = 0; i < 3; ++i) {
+		fixture.Request(L"fail-me-" + std::to_wstring(i));
+		ASSERT_TRUE(WaitFor([&] { return fixture.service->Snapshot().state
+			== senp::ERuntimeState::ReadyWithDiagnostics || fixture.fallbackScript->openCalls.load() >= i + 1; }));
+	}
+	ASSERT_TRUE(WaitFor([&] {
+		return fixture.service->Snapshot().state == senp::ERuntimeState::ReadyWithDiagnostics;
+	}));
 	const auto second = fixture.WaitCached(L"keep");
 	ASSERT_TRUE(second);
 	ASSERT_EQ(second->size(), 1U);
@@ -664,7 +933,7 @@ TEST(SenpRuntimeService, StopJoinsWithQueuedBatch)
 		std::vector<std::pair<std::uint32_t, senp::IndentDecoration>>& slots) {
 		(void)WaitFor([&] { return release.load(); });
 		for (const auto& line : lines) slots.push_back({ line.line, { 0, 1, 0 } });
-		return true;
+		return senp::detail::EDecorateResult::Succeeded;
 	};
 	fixture.scripts = { host };
 	fixture.management.SetExtensions({ fixture.Extension(L"ext.a") });

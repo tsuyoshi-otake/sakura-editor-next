@@ -52,11 +52,11 @@ struct DocLineReplaceArg {
 //! `full` は正確な範囲を記述できない変更 (一括ロード/リロード/復元経路) を示し、
 //! 利用側は「全て変わった」として扱わなければならない。
 struct DocTextEdit {
-	std::uint64_t	revision;
-	CLogicInt		firstLine;
-	CLogicInt		oldLineCount;
-	CLogicInt		newLineCount;
-	bool			full;
+	const std::uint64_t	revision;
+	const CLogicInt		firstLine;
+	const CLogicInt		oldLineCount;
+	const CLogicInt		newLineCount;
+	const bool			full;
 };
 
 /*-----------------------------------------------------------------------
@@ -117,6 +117,31 @@ public:
 	};
 	void RecordTextEdit( CLogicInt firstLine, CLogicInt oldLineCount, CLogicInt newLineCount );
 	void RecordTextEditFull();
+
+	// -- -- 編集ログの純粋継ぎ目（テストが直接駆動できる）-- -- //
+	//! `record` を `log` の末尾へ追加し、`capacity` を超えた分を先頭から
+	//! 落とす。途中で例外が出た場合はログを空にして「抜け」を作る。
+	//! noexcept: PushTextEditRecord 経由の呼び出しは ScopedDocMutation の
+	//! デストラクタからも行われるため、例外を透過できない。
+	template<class Log>
+	static void AppendBoundedEditRecord( Log& log, const typename Log::value_type& record,
+		std::size_t capacity ) noexcept
+	{
+		try {
+			log.push_back( record );
+			while( log.size() > capacity ) log.pop_front();
+		}
+		catch( ... ) {
+			log.clear();
+		}
+	}
+	//! CollectTextEdits の抜け判定: 空、または先頭記録が `sinceRevision+1`
+	//! より新しいログからは差分を再構成できない。
+	template<class Log>
+	static bool EditRecordLogHasGap( const Log& log, std::uint64_t sinceRevision ) noexcept
+	{
+		return log.empty() || log.front().revision > sinceRevision + 1;
+	}
 
 	// メモリリソースのアクセス
 	std::shared_ptr<std::pmr::memory_resource> GetMemoryResource() const { return m_docLineMemRes; }

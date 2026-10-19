@@ -73,7 +73,10 @@ public:
 	ThreadAllocPeak(const ThreadAllocPeak&) = delete;
 	ThreadAllocPeak& operator=(const ThreadAllocPeak&) = delete;
 
-	[[nodiscard]] std::size_t Peak() const noexcept { return m_peak; }
+	[[nodiscard]] std::size_t Peak() const noexcept
+	{
+		return m_peak > 0 ? static_cast<std::size_t>(m_peak) : 0;
+	}
 
 private:
 	static int __cdecl Hook(int allocType, void* data, size_t size, int blockUse,
@@ -82,35 +85,40 @@ private:
 		auto* self = s_active;
 		if (!self || blockUse == _CRT_BLOCK || ::GetCurrentThreadId() != self->m_thread) return TRUE;
 		if (allocType == _HOOK_ALLOC) {
-			self->m_live += size;
+			self->m_live += static_cast<std::ptrdiff_t>(size);
 		} else if (allocType == _HOOK_REALLOC) {
-			self->m_live += size - _msize_dbg(data, blockUse);
+			self->m_live += static_cast<std::ptrdiff_t>(size)
+				- static_cast<std::ptrdiff_t>(_msize_dbg(data, blockUse));
 		} else if (allocType == _HOOK_FREE) {
-			self->m_live -= _msize_dbg(data, blockUse);
+			self->m_live -= static_cast<std::ptrdiff_t>(_msize_dbg(data, blockUse));
 		}
 		if (self->m_live > self->m_peak) self->m_peak = self->m_live;
 		return TRUE;
 	}
 
+	// Signed: a measured call may free what an earlier call allocated - the
+	// projection consumes and releases the DOM the parse built - and an
+	// unsigned counter would wrap negative net movement into a giant peak.
 	inline static ThreadAllocPeak* s_active = nullptr;
 	_CRT_ALLOC_HOOK m_previous{};
 	DWORD m_thread{};
-	std::size_t m_live{};
-	std::size_t m_peak{};
+	std::ptrdiff_t m_live{};
+	std::ptrdiff_t m_peak{};
 };
 #endif
 
 } // namespace
 
-//! The projection transient per input byte, measured 2026-10-18 in Debug (see
-//! OnePageProjectionPeaksUnderAMeasuredHeapCeiling). A list page peaks inside
-//! the parse at 7.65x its body; the ceiling adds a quarter. A detail page whose
-//! body string fills it peaks while serializing at 6.20x, and at 8.65x when the
-//! source DOM is still alive there, so its ceiling sits between the two: the
-//! debug heap's sizes are deterministic for one build, and the ceiling has to
-//! fail a projection that keeps both trees.
-constexpr std::size_t kListProjectionPeakRatioCeiling = 10;
-constexpr std::size_t kDetailProjectionPeakRatioCeiling = 7;
+//! The projection transient per input byte, measured 2026-10-19 in Debug (see
+//! OnePageProjectionPeaksUnderAMeasuredHeapCeiling). The measured call now
+//! consumes the DOM the validating parse already built, so it adds no parse of
+//! its own: a list page projects at 1.91x its body, and a detail page whose
+//! body string fills it peaks while serializing at 3.63x. The list ceiling
+//! fails a projection that reparses (near the parse's own 7.65x) and the
+//! detail ceiling fails one that keeps both trees (8.65x), while each leaves
+//! the deterministic debug heap room.
+constexpr std::size_t kListProjectionPeakRatioCeiling = 3;
+constexpr std::size_t kDetailProjectionPeakRatioCeiling = 5;
 
 TEST(GhPageProjection, KeepsExactlyTheMembersTheIssueShapeNames)
 {
@@ -194,6 +202,33 @@ TEST(GhPageProjection, EscapesWhatJsonRequiresAndRefusesWhatIsNotTheShapesAnswer
 	EXPECT_FALSE(ProjectRepositoryPage(L"", "[]").has_value());
 }
 
+TEST(GhPageProjection, TheValidatedDomProjectsByteIdenticallyToTheBody)
+{
+	// The executor's normal path hands the validating parse's DOM straight to
+	// the projection; what it writes must be byte-identical to what parsing
+	// the kept body produces, because both land on the same projection.
+	const std::string page = R"([{"id":11,"number":7,"title":"Visible issue",)"
+		R"("state":"open","user":{"login":"octocat","id":583231,"site_admin":false},)"
+		R"("labels":[{"id":1,"name":"bug","color":"d73a4a","description":"broken"}],)"
+		R"("html_url":"https://github.com/o/r/issues/7","comments":2,)"
+		R"("body":"a very long report","reactions":{"total_count":3,"+1":3},)"
+		R"("closed_at":null,"author_association":"OWNER"}])";
+	auto parsed = platform::serialization::CJsoncDocument::ParseStrict(page);
+	ASSERT_TRUE(parsed.Succeeded());
+	const auto fromDom = ProjectRepositoryPageDocument(L"issues", std::move(*parsed.value));
+	const auto fromBody = ProjectRepositoryPage(L"issues", page);
+	ASSERT_TRUE(fromDom.has_value());
+	ASSERT_TRUE(fromBody.has_value());
+	EXPECT_EQ(*fromBody, *fromDom);
+
+	// The DOM entry refuses the same non-answers: no stated fields, and a
+	// page that is neither object nor list.
+	EXPECT_FALSE(ProjectRepositoryPageDocument(L"secrets",
+		platform::serialization::JsoncValue()).has_value());
+	EXPECT_FALSE(ProjectRepositoryPageDocument(L"issues",
+		platform::serialization::JsoncValue(std::int64_t{ 42 })).has_value());
+}
+
 TEST(GhPageProjection, EveryShapeARequestCanBeBuiltForHasAStatedFieldSet)
 {
 	const GhSelectedRepository repository(L"repo-identity-1", L"origin", L"github.com", L"owner", L"repo");
@@ -261,17 +296,21 @@ TEST(GhPageProjection, OnePageProjectionPeaksUnderAMeasuredHeapCeiling)
 	}) {
 		ASSERT_LT(page->size(), limit);
 		std::size_t parsePeak = 0;
+		platform::serialization::JsoncDocumentParseResult parsed;
 		{
 			ThreadAllocPeak peak;
-			const auto parsed = platform::serialization::CJsoncDocument::ParseStrict(*page);
+			parsed = platform::serialization::CJsoncDocument::ParseStrict(*page);
 			parsePeak = peak.Peak();
-			ASSERT_TRUE(parsed.Succeeded());
 		}
+		ASSERT_TRUE(parsed.Succeeded());
 		std::optional<std::string> projected;
 		std::size_t projectPeak = 0;
 		{
+			// The executor's path: projection consumes the DOM the validating
+			// parse already built, so this peak is projection alone - the parse
+			// above is the page's only one.
 			ThreadAllocPeak peak;
-			projected = ProjectRepositoryPage(shape, *page);
+			projected = ProjectRepositoryPageDocument(shape, std::move(*parsed.value));
 			projectPeak = peak.Peak();
 		}
 		ASSERT_TRUE(projected.has_value());

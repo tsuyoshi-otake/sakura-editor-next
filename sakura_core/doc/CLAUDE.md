@@ -30,7 +30,11 @@ workbench owns those states through adapters described in
   (`InsertNewLine`, `AddNewLine`, `DeleteAllLine`, `DeleteLine`,
   `AppendAsMove`), each of which records a `full` record when no mutation
   guard is active. Consumers replay records via `CollectTextEdits`; a gap or
-  `full` record must be handled as complete invalidation. Layout-only
+  `full` record must be handled as complete invalidation. The append/cap/
+  clear-on-failure operation is the noexcept pure seam
+  `CDocLineMgr::AppendBoundedEditRecord`, and `EditRecordLogHasGap` is the
+  gap predicate `CollectTextEdits` applies, so the recording-failure path is
+  testable with a throwing container. Layout-only
   rewraps (`CLayoutMgr::_DoLayout`) do not mutate logical text and therefore
   never advance the text revision.
 - Keep text encoding conversion at the file/charset boundary. Internal editing logic should operate on the established document representation.

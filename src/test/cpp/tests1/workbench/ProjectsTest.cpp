@@ -6,6 +6,7 @@
 #include "pch.h"
 
 #include "CSelectLang.h"
+#include "ScopedLanguageSelection.h"
 #include "sakura_rc.h"
 #include "_main/ControlPlatformProjectCatalogStore.h"
 #include "workbench/projects/CProjectsPage.h"
@@ -593,23 +594,7 @@ TEST(ProjectsPage, DeleteRemovesTheCatalogEntryWithoutChangingWorkspaceState)
 
 TEST(ProjectsPage, ShowsUnselectedProjectBranchWithoutActivatingOrMutatingWorkspace)
 {
-	const bool hadLanguageEnvironment = !CSelectLang::gm_Langs.empty();
-	const auto previousLanguage = hadLanguageEnvironment
-		? CSelectLang::GetLangInfo(CSelectLang::gm_Selected).GetDllName() : std::filesystem::path{};
-	const auto threadLanguage = ::GetThreadUILanguage();
-	struct RestoreLanguage final {
-		bool hadEnvironment;
-		std::filesystem::path previous;
-		LANGID threadLanguage;
-		~RestoreLanguage() {
-			CSelectLang::ChangeLang(previous);
-			if (!hadEnvironment) {
-				CSelectLang::gm_Langs.clear();
-				CSelectLang::gm_Selected = 0;
-			}
-			::SetThreadUILanguage(threadLanguage);
-		}
-	} restoreLanguage{ hadLanguageEnvironment, previousLanguage, threadLanguage };
+	tests1::ScopedLanguageSelection restoreLanguage;
 	CSelectLang::InitializeLanguageEnvironment();
 	CSelectLang::ChangeLang(L"sakura_lang_en_US.dll");
 	ASSERT_EQ(L"Projects", CSelectLang::LoadStringW(STR_WORKBENCH_PROJECTS_TITLE));

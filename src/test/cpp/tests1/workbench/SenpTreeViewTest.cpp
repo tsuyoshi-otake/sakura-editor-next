@@ -2,6 +2,7 @@
 /* Copyright (C) 2026, Sakura Editor Organization. SPDX-License-Identifier: Zlib */
 #include "pch.h"
 #include "CSelectLang.h"
+#include "ScopedLanguageSelection.h"
 #include "sakura_rc.h"
 #include <gtest/gtest.h>
 #include "workbench/tree/SenpTreeView.h"
@@ -598,26 +599,7 @@ TEST_F(SenpDeclaredTreeViewsTest, LosingPreparedCandidateCannotCloseWinningRunti
 
 TEST_F(SenpDeclaredTreeViewsTest, PreparedAndRefreshedRowsShowSelectedLanguageFailureText)
 {
-	//! Minimal scoped restore of the selected resource module, mirroring the
-	//! guard in test-loadstring.cpp (file-local there, so replicated here).
-	struct RestoreLanguage final {
-		RestoreLanguage()
-			: thread(::GetThreadUILanguage()), had(!CSelectLang::gm_Langs.empty())
-		{
-			if (had && CSelectLang::gm_Selected < CSelectLang::gm_Langs.size())
-				previous = CSelectLang::GetLangInfo(CSelectLang::gm_Selected).GetDllName();
-		}
-		~RestoreLanguage()
-		{
-			if (had) CSelectLang::ChangeLang(previous);
-			else { CSelectLang::ChangeLang(L""); CSelectLang::gm_Langs.clear(); CSelectLang::gm_Selected = 0; }
-			::SetThreadUILanguage(thread);
-		}
-		const LANGID thread;
-		const bool had;
-		std::filesystem::path previous;
-	};
-	RestoreLanguage restoreLanguage;
+	tests1::ScopedLanguageSelection restoreLanguage;
 	CreateDeclaration(); ASSERT_NE(nullptr, declaredBody);
 	declaredBody->SetVisible(true); DispatchTreeMessages();
 	BindVisual();

@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace senp::github {
@@ -19,6 +20,14 @@ namespace senp::github {
 //! more, and this boundary has no streaming parser - one DOM per read lane.
 inline constexpr std::size_t kMaximumRepositoryPageBodyBytes
 	= platform::serialization::CJsoncDocument::kMaximumInputBytes;
+
+//! `gh api --include` prints a status line and the response headers ahead of
+//! the body in one stdout stream, so every repository-read capture is bounded
+//! at the page-body limit plus a fixed 64 KiB header allowance. Both launch
+//! paths pass this same bound to the process runner: the credential seam in
+//! CGhRepositoryReader::Read and the policy's CGhToolPolicy::ReadRepository.
+inline constexpr std::size_t kMaximumRepositoryReadOutputBytes
+	= kMaximumRepositoryPageBodyBytes + 64u * 1024u;
 
 enum class GhRepositoryResponseStatus : std::uint8_t {
 	Succeeded,
@@ -46,7 +55,8 @@ public:
 		std::optional<std::uint32_t> retryAfterSeconds = std::nullopt,
 		std::optional<std::uint64_t> rateLimitResetUnixSeconds
 			= std::nullopt,
-		std::optional<std::uint64_t> retryAfterUnixSeconds = std::nullopt);
+		std::optional<std::uint64_t> retryAfterUnixSeconds = std::nullopt
+	);
 	[[nodiscard]] GhRepositoryResponseStatus Status() const noexcept { return m_status; }
 	[[nodiscard]] int HttpStatus() const noexcept { return m_httpStatus; }
 	[[nodiscard]] const std::vector<std::uint8_t>& Body() const noexcept { return m_body; }
@@ -59,6 +69,13 @@ public:
 	//! An HTTP-date Retry-After stored as the absolute instant it names, so the
 	//! scheduler can treat it exactly like an X-RateLimit-Reset timestamp.
 	[[nodiscard]] const std::optional<std::uint64_t>& RetryAfterUnixSeconds() const noexcept { return m_retryAfterUnixSeconds; }
+	//! The DOM the validating parse built, moved out so the projection parses
+	//! the page zero additional times. Present only on `Succeeded`.
+	void SetDocument(platform::serialization::JsoncValue document) { m_document = std::move(document); }
+	[[nodiscard]] std::optional<platform::serialization::JsoncValue> TakeDocument() noexcept
+	{
+		return std::exchange(m_document, std::nullopt);
+	}
 private:
 	GhRepositoryResponseStatus m_status{ GhRepositoryResponseStatus::InvalidRequest };
 	int m_httpStatus{};
@@ -69,6 +86,7 @@ private:
 	std::optional<std::uint32_t> m_retryAfterSeconds;
 	std::optional<std::uint64_t> m_rateLimitResetUnixSeconds;
 	std::optional<std::uint64_t> m_retryAfterUnixSeconds;
+	std::optional<platform::serialization::JsoncValue> m_document;
 };
 
 //! Executes a policy-built request through a verified account lease, then

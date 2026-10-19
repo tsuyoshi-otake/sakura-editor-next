@@ -5,6 +5,7 @@
 	SPDX-License-Identifier: Zlib
 */
 #include "StdAfx.h"
+#include "platform/process/AllowlistedEnvironment.h"
 #include "platform/process/BoundedProcessRunner.h"
 
 #include <algorithm>
@@ -137,23 +138,11 @@ std::vector<wchar_t> detail::BuildEnvironmentBlock(
 		entry.append(value);
 		entries.push_back(std::move(entry));
 	}
-	std::sort(entries.begin(), entries.end(), [](const std::wstring& left, const std::wstring& right) {
-		return std::lexicographical_compare(left.begin(), left.end(), right.begin(), right.end(),
-			[](wchar_t a, wchar_t b) { return std::towupper(a) < std::towupper(b); });
-	});
+	detail::SortEnvironmentEntries(entries);
 
-	// One allocation of the final size: a reallocation would free an older
+	// Flatten sizes the block exactly once: a reallocation would free an older
 	// buffer that already holds secret overrides without scrubbing it.
-	std::size_t length = 1;
-	for (const auto& entry : entries) length += entry.size() + 1;
-	std::vector<wchar_t> block;
-	block.reserve(length);
-	for (const auto& entry : entries) {
-		block.insert(block.end(), entry.begin(), entry.end());
-		block.push_back(L'\0');
-	}
-	block.push_back(L'\0');
-	return block;
+	return detail::FlattenEnvironmentEntries(entries);
 }
 
 namespace {

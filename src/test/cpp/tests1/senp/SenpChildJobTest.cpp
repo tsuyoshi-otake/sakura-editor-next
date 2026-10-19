@@ -17,7 +17,7 @@ constexpr DWORD kAllUiRestrictions = JOB_OBJECT_UILIMIT_DESKTOP
 	| JOB_OBJECT_UILIMIT_SYSTEMPARAMETERS;
 
 struct JobGuard final {
-	HANDLE value = ::CreateJobObjectW(nullptr, nullptr);
+	const HANDLE value = ::CreateJobObjectW(nullptr, nullptr);
 	~JobGuard() { if (value) ::CloseHandle(value); }
 };
 
@@ -176,7 +176,7 @@ TEST(SenpChildJob, LaunchConfigUsesExecutableDirectoryAndAllowlistedUnicodeEnvir
 	struct ScopedEnvironmentVariable final {
 		explicit ScopedEnvironmentVariable(const wchar_t* name) : name(name) {}
 		~ScopedEnvironmentVariable() { ::SetEnvironmentVariableW(name.c_str(), nullptr); }
-		std::wstring name;
+		const std::wstring name;
 	} marker{ L"B6D_MARKER" };
 	ASSERT_TRUE(::SetEnvironmentVariableW(L"B6D_MARKER", L"marker-value"));
 
@@ -252,6 +252,130 @@ TEST(SenpChildJob, ChildHandlesReportNoInheritFlagUntilEnabledForLaunch)
 	::CloseHandle(read);
 	::CloseHandle(write);
 	::CloseHandle(nul);
+}
+
+TEST(SenpChildJob, LaunchedChildInheritsOnlyTheAllowlistedEnvironment)
+{
+	// A real child proves the scrub: the parent carries a credential-shaped
+	// variable and a unique marker; the allowlisted block must forward
+	// neither. The guard restores the original values on every exit path.
+	class ScopedEnvironmentVariable final {
+	public:
+		explicit ScopedEnvironmentVariable(const wchar_t* name) : m_name(name)
+		{
+			std::array<wchar_t, 32768> buffer{};
+			const DWORD length = ::GetEnvironmentVariableW(name, buffer.data(),
+				static_cast<DWORD>(buffer.size()));
+			if (length != 0 && length < buffer.size()) m_original.assign(buffer.data(), length);
+		}
+		~ScopedEnvironmentVariable()
+		{
+			::SetEnvironmentVariableW(m_name.c_str(),
+				m_original.empty() ? nullptr : m_original.c_str());
+		}
+	private:
+		const std::wstring m_name;
+		std::wstring m_original;
+	};
+	ScopedEnvironmentVariable token{ L"GH_TOKEN" };
+	ScopedEnvironmentVariable marker{ L"SAKURA_B2_LAUNCH_MARKER" };
+	ASSERT_TRUE(::SetEnvironmentVariableW(L"GH_TOKEN", L"b2-token-value"));
+	ASSERT_TRUE(::SetEnvironmentVariableW(L"SAKURA_B2_LAUNCH_MARKER", L"b2-marker-value"));
+
+	// Resolve %SystemRoot%\System32\cmd.exe; the real child just runs `set`.
+	std::array<wchar_t, 32768> root{};
+	const DWORD rootLength = ::GetEnvironmentVariableW(L"SystemRoot", root.data(),
+		static_cast<DWORD>(root.size()));
+	ASSERT_GT(rootLength, 0u);
+	ASSERT_LT(rootLength, root.size());
+	const std::wstring executable = std::wstring(root.data(), rootLength) + L"\\System32\\cmd.exe";
+
+	struct HandleGuard final {
+		explicit HandleGuard(HANDLE& handle) : m_ref(handle) {}
+		~HandleGuard() { if (m_ref != nullptr && m_ref != INVALID_HANDLE_VALUE) ::CloseHandle(m_ref); }
+	private:
+		HANDLE& m_ref;
+	};
+	SECURITY_ATTRIBUTES security{ sizeof(security), nullptr, FALSE };
+	HANDLE outputRead = nullptr;
+	HANDLE outputWrite = nullptr;
+	ASSERT_TRUE(::CreatePipe(&outputRead, &outputWrite, &security, 0));
+	HandleGuard outputReadGuard{ outputRead };
+	HandleGuard outputWriteGuard{ outputWrite };
+	HANDLE nullInput = ::CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+		&security, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+	ASSERT_NE(nullInput, nullptr);
+	ASSERT_NE(nullInput, INVALID_HANDLE_VALUE);
+	HandleGuard nullInputGuard{ nullInput };
+	HANDLE nullError = ::CreateFileW(L"NUL", GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+		&security, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+	ASSERT_NE(nullError, nullptr);
+	ASSERT_NE(nullError, INVALID_HANDLE_VALUE);
+	HandleGuard nullErrorGuard{ nullError };
+
+	JobGuard job;
+	ASSERT_NE(job.value, nullptr);
+	ASSERT_TRUE(senp::ConfigureChildJob(job.value, senp::kExtensionHostJobLimits));
+
+	std::wstring command = L"\"" + executable + L"\" /d /c set";
+	const auto process = senp::detail::LaunchSenpChildProcess(executable, command,
+		{ nullInput, outputWrite, nullError }, CREATE_NO_WINDOW, job.value);
+	// The launchers close the child-side write end right after the call, so
+	// the parent read end observes EOF once the child exits.
+	::CloseHandle(outputWrite);
+	outputWrite = nullptr;
+	ASSERT_TRUE(process.has_value());
+	::CloseHandle(process->hThread);
+	struct ProcessGuard final {
+		explicit ProcessGuard(HANDLE handle) : m_value(handle) {}
+		~ProcessGuard() { (void)::TerminateProcess(m_value, ERROR_TIMEOUT); ::CloseHandle(m_value); }
+	private:
+		const HANDLE m_value;
+	} processGuard{ process->hProcess };
+
+	// Drain while waiting: `set` output under an inherited parent environment
+	// (the mutation this test guards against) exceeds the pipe buffer, so a
+	// plain wait-then-read would deadlock the child on a full pipe. Peek and
+	// drain between 100 ms wait slices instead; the total wait stays bounded
+	// at 30 s with TerminateProcess on timeout.
+	std::string output;
+	const auto drain = [&]() {
+		DWORD available = 0;
+		while (::PeekNamedPipe(outputRead, nullptr, 0, nullptr, &available, nullptr)
+			&& available != 0) {
+			std::array<char, 4096> buffer{};
+			DWORD bytes = 0;
+			if (!::ReadFile(outputRead, buffer.data(),
+					std::min<DWORD>(available, static_cast<DWORD>(buffer.size())), &bytes, nullptr)
+				|| bytes == 0) break;
+			output.append(buffer.data(), bytes);
+		}
+	};
+	const ULONGLONG deadline = ::GetTickCount64() + 30'000;
+	DWORD waited;
+	for (;;) {
+		drain();
+		waited = ::WaitForSingleObject(process->hProcess, 100);
+		if (waited != WAIT_TIMEOUT || ::GetTickCount64() >= deadline) break;
+	}
+	drain();
+	if (waited != WAIT_OBJECT_0) {
+		(void)::TerminateProcess(process->hProcess, ERROR_TIMEOUT);
+		(void)::WaitForSingleObject(process->hProcess, 1000);
+	}
+	ASSERT_EQ(waited, WAIT_OBJECT_0);
+
+	// `set` echoes the stored names; the allowlist block canonicalizes them
+	// uppercase for the case-insensitive ordering Windows requires, so the
+	// search text is uppercased too. GH_TOKEN and the marker are already
+	// uppercase names.
+	std::string upper = output;
+	std::ranges::transform(upper, upper.begin(),
+		[](const unsigned char c) { return static_cast<char>(std::toupper(c)); });
+	EXPECT_NE(upper.find("SYSTEMROOT="), std::string::npos);
+	EXPECT_NE(upper.find("WINDIR="), std::string::npos);
+	EXPECT_EQ(upper.find("GH_TOKEN"), std::string::npos);
+	EXPECT_EQ(upper.find("SAKURA_B2_LAUNCH_MARKER"), std::string::npos);
 }
 
 } // namespace

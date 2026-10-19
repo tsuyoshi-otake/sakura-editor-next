@@ -23,6 +23,31 @@ bool EqualEnvironmentName(std::wstring_view left, std::wstring_view right) noexc
 
 } // namespace
 
+void detail::SortEnvironmentEntries(std::vector<std::wstring>& entries)
+{
+	std::sort(entries.begin(), entries.end(), [](const std::wstring& left, const std::wstring& right) {
+		return std::lexicographical_compare(left.begin(), left.end(), right.begin(), right.end(),
+			[](wchar_t a, wchar_t b) { return std::towupper(a) < std::towupper(b); });
+	});
+}
+
+std::vector<wchar_t> detail::FlattenEnvironmentEntries(const std::vector<std::wstring>& entries)
+{
+	// An empty block still needs both terminators: CreateProcessW reads the
+	// environment up to the first double NUL.
+	std::size_t length = entries.empty() ? 2 : 1;
+	for (const auto& entry : entries) length += entry.size() + 1;
+	std::vector<wchar_t> block;
+	block.reserve(length);
+	for (const auto& entry : entries) {
+		block.insert(block.end(), entry.begin(), entry.end());
+		block.push_back(L'\0');
+	}
+	if (entries.empty()) block.push_back(L'\0');
+	block.push_back(L'\0');
+	return block;
+}
+
 std::vector<wchar_t> BuildAllowlistedEnvironmentBlock(std::span<const std::wstring_view> names)
 {
 	std::vector<std::wstring> entries;
@@ -39,23 +64,8 @@ std::vector<wchar_t> BuildAllowlistedEnvironmentBlock(std::span<const std::wstri
 		}
 		::FreeEnvironmentStringsW(parent);
 	}
-	std::sort(entries.begin(), entries.end(), [](const std::wstring& left, const std::wstring& right) {
-		return std::lexicographical_compare(left.begin(), left.end(), right.begin(), right.end(),
-			[](wchar_t a, wchar_t b) { return std::towupper(a) < std::towupper(b); });
-	});
-	// An empty block still needs both terminators: CreateProcessW reads the
-	// environment up to the first double NUL.
-	std::size_t length = entries.empty() ? 2 : 1;
-	for (const auto& entry : entries) length += entry.size() + 1;
-	std::vector<wchar_t> block;
-	block.reserve(length);
-	for (const auto& entry : entries) {
-		block.insert(block.end(), entry.begin(), entry.end());
-		block.push_back(L'\0');
-	}
-	if (entries.empty()) block.push_back(L'\0');
-	block.push_back(L'\0');
-	return block;
+	detail::SortEnvironmentEntries(entries);
+	return detail::FlattenEnvironmentEntries(entries);
 }
 
 } // namespace platform::process

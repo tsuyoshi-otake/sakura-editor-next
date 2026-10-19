@@ -203,6 +203,10 @@ private:
 		std::optional<std::uint32_t> nextPage;
 		std::optional<std::string> etag;
 		std::string body;
+		//! The validating parse's DOM, handed to the projection so a Succeeded
+		//! page is parsed once. `Publish` consumes it; a second publish of the
+		//! same page (two reads sharing a cache key) parses the kept body.
+		std::optional<platform::serialization::JsoncValue> document;
 	};
 	//! One finished log and the store that received it. The store held nothing
 	//! else, so releasing the log is simply dropping this.
@@ -275,7 +279,7 @@ private:
 		const platform::controlipc::SenpToolReadCommand& command);
 	void Drain(ScopeState& state);
 	[[nodiscard]] std::optional<effect::ToolCompleted> Publish(ScopeState& state,
-		Read& read, const Page& page);
+		Read& read, Page& page);
 	//! Drops the page resource one read owns, if it owns one. Called before a
 	//! read publishes again and when it ends, so the slot never outlives what
 	//! the editor could still be shown.

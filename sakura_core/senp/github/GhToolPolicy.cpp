@@ -2,6 +2,7 @@
 /* Copyright (C) 2026, Sakura Editor Organization. SPDX-License-Identifier: Zlib */
 #include "StdAfx.h"
 #include "senp/github/GhToolPolicy.h"
+#include "senp/github/GhRepositoryRead.h"
 #include "senp/github/GhText.h"
 #include "platform/process/WindowsExecutableResolver.h"
 #include <sakura/security/AuthenticodeSignatureVerifier.h>
@@ -22,7 +23,9 @@ constexpr std::uint32_t kSupportedMajor = 2, kSupportedMinor = 93, kSupportedPat
 constexpr std::uint32_t kProbeTimeoutMilliseconds = 5000;
 constexpr std::uint32_t kReadTimeoutMilliseconds = 30000;
 constexpr std::size_t kProbeOutputBytes = 16u * 1024u;
-constexpr std::size_t kReadOutputBytes = 4u * 1024u * 1024u;
+// ReadRepository captures the same `gh api --include` envelope as the
+// credential path, so both share kMaximumRepositoryReadOutputBytes
+// (page-body limit plus the 64 KiB header allowance).
 constexpr std::size_t kErrorBytes = 64u * 1024u;
 
 const std::vector<std::pair<std::wstring, std::wstring>>& FixedEnvironment()
@@ -350,10 +353,7 @@ std::optional<GhToolResolution> CWindowsGhToolPlatform::ResolveExecutable() cons
 
 bool CWindowsGhToolPlatform::VerifyExecutableTrust(const std::wstring& executablePath) const
 {
-	const auto organization = platform::security::VerifiedSignerOrganization(executablePath);
-	// Exact, case-sensitive: the organization is the CA-verified legal name, so
-	// a differently cased value names a different subject.
-	return organization.has_value() && *organization == L"GitHub, Inc.";
+	return platform::security::VerifyGitHubCliTrust(executablePath);
 }
 
 platform::process::BoundedProcessRequest BuildBoundedProcessRequest(const GhProcessInvocation& invocation)
@@ -430,7 +430,7 @@ try {
 		return { prepared.Status(), -1, {}, {} };
 	}
 	const auto outcome = m_platform->Run(Invocation(probe.ExecutablePath(), m_workingDirectory,
-		prepared.Arguments(), kReadTimeoutMilliseconds, kReadOutputBytes, kErrorBytes), stop);
+		prepared.Arguments(), kReadTimeoutMilliseconds, kMaximumRepositoryReadOutputBytes, kErrorBytes), stop);
 	return { ReadTerminal(outcome.Status()), outcome.ExitCode(),
 		outcome.StandardOutput(), outcome.StandardError() };
 } catch (const std::exception&) {

@@ -632,7 +632,7 @@ void CSenpGitHubToolExecutor::Drain(ScopeState& state)
 }
 
 std::optional<effect::ToolCompleted> CSenpGitHubToolExecutor::Publish(ScopeState& state,
-	Read& read, const Page& page)
+	Read& read, Page& page)
 {
 	if (page.status != GhRepositoryResponseStatus::Succeeded
 		&& page.status != GhRepositoryResponseStatus::NotModified) {
@@ -649,7 +649,9 @@ std::optional<effect::ToolCompleted> CSenpGitHubToolExecutor::Publish(ScopeState
 	// written below, so nothing is parsed for it.
 	std::wstring body;
 	if (page.status == GhRepositoryResponseStatus::Succeeded) {
-		const auto projected = ProjectRepositoryPage(read.shape, page.body);
+		const auto projected = page.document
+			? ProjectRepositoryPageDocument(read.shape, std::move(*page.document))
+			: ProjectRepositoryPage(read.shape, page.body);
 		if (!projected) return Refused(read.readId, L"page-unprojectable");
 		if (projected->size() > MaximumInlineBodyBytes()) return Refused(read.readId, L"page-too-large");
 		if (!Widen(*projected, body)) return Refused(read.readId, L"invalid-encoding");
@@ -1039,9 +1041,12 @@ void CSenpGitHubToolExecutor::Execute(const GhReadDispatch& dispatch)
 	page.etag = response.ETag();
 	// A Succeeded body is already within kMaximumRepositoryPageBodyBytes - the
 	// reader's strict parse refuses anything larger as OutputLimitExceeded, so
-	// no size check lives here.
+	// no size check lives here. That strict parse also hands over the DOM it
+	// built, so the page is parsed once: projection consumes it, and a
+	// published-again page falls back to the kept body.
 	if (response.Status() == GhRepositoryResponseStatus::Succeeded) {
 		page.body.assign(response.Body().begin(), response.Body().end());
+		page.document = response.TakeDocument();
 	}
 	// The terminal and the page it answers for become visible together, under
 	// the same lock the drain holds while it polls this scheduler. A terminal

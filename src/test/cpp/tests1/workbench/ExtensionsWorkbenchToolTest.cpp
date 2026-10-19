@@ -324,7 +324,7 @@ public:
 
 TEST(ExtensionsWorkbenchTool, CreatesNativeViewDuringSynchronousWindowMessages)
 {
-	const HWND parent = ::CreateWindowExW(0, L"STATIC", L"Extensions test parent", WS_POPUP,
+	const auto parent = ::CreateWindowExW(0, L"STATIC", L"Extensions test parent", WS_POPUP,
 		0, 0, 800, 600, nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
 	ASSERT_NE(nullptr, parent);
 	WindowGuard parentGuard(parent);
@@ -399,6 +399,47 @@ TEST(ExtensionsWorkbenchTool, UsesOneCompactListWithoutSearchOrSectionHeaders)
 	// no search header, Built-in section, Installed section, or README card.
 	EXPECT_EQ(palette.sideBar.ToColorRef(), surface.Pixel(2, 0));
 	EXPECT_EQ(palette.sideBar.ToColorRef(), surface.Pixel(2, 71));
+}
+
+TEST(ExtensionsWorkbenchTool, RuntimeDiagnosticJoinsTheBannerStrip)
+{
+	const auto parent = ::CreateWindowExW(0, L"STATIC", L"Extensions diagnostic parent", WS_POPUP,
+		0, 0, 800, 600, nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
+	ASSERT_NE(nullptr, parent);
+	WindowGuard parentGuard(parent);
+
+	workbench::extensions::CExtensionsWorkbenchTool tool;
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout(RECT{ 0, 0, 480, 320 }, 96);
+	FakeManagementService service;
+	service.snapshot.state = senp::EManagementState::Ready;
+	service.snapshot.extensions.push_back({
+		.id = L"sakura.indent-rainbow",
+		.displayName = L"Indent Rainbow",
+		.installed = true,
+		.builtIn = true,
+		.enabled = true,
+	});
+	tool.SetManagementService(&service);
+
+	const auto rowActionTop = [&tool] {
+		const auto button = ::FindWindowExW(tool.GetHwnd(), nullptr, L"BUTTON", nullptr);
+		EXPECT_NE(nullptr, button);
+		RECT bounds{};
+		::GetWindowRect(button, &bounds);
+		::MapWindowPoints(HWND_DESKTOP, tool.GetHwnd(), reinterpret_cast<POINT*>(&bounds), 2);
+		return bounds.top;
+	};
+	const auto undisturbed = rowActionTop();
+	// The runtime's crash retirement shares the banner the management
+	// diagnostic already reserves: the row moves down by the strip's height.
+	tool.SetRuntimeDiagnosticQuery([] {
+		return std::wstring(L"Extension host terminated unexpectedly 3 times within the last 5 minutes: ext.a");
+	});
+	EXPECT_EQ(undisturbed + 44, rowActionTop());
+	// A cleared diagnostic gives the strip back.
+	tool.SetRuntimeDiagnosticQuery({});
+	EXPECT_EQ(undisturbed, rowActionTop());
 }
 
 TEST(ExtensionsWorkbenchTool, AnInvalidListingRowGetsNoRowAction)
