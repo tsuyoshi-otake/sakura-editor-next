@@ -92864,57 +92864,50 @@
     },
     {
       "column": 15,
-      "evidence_sha256": "sha256:d91a07a94847157b4105b1942216a580006f148427d86432f6a3bcfe83354d2b",
-      "line": 172,
-      "path": "src/test/cpp/tests1/senp/SenpRuntimeServiceTest.cpp",
-      "rule_id": "state.public_mutable_field"
-    },
-    {
-      "column": 15,
       "evidence_sha256": "sha256:55d2ec991e50c0ed14ce39b76b658735b8bd241283e27cd314ee965468136a7e",
-      "line": 173,
+      "line": 172,
       "path": "src/test/cpp/tests1/senp/SenpRuntimeServiceTest.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 7,
       "evidence_sha256": "sha256:5e32900f8b2ed2ccae8b525b6cf665a14458a403048c1ef7aecb6d7cd46e19f8",
-      "line": 174,
+      "line": 173,
       "path": "src/test/cpp/tests1/senp/SenpRuntimeServiceTest.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 17,
       "evidence_sha256": "sha256:84ec2232bab09da2f209c324feb11c0e199c195cf568587009346311937f1195",
-      "line": 260,
+      "line": 258,
       "path": "src/test/cpp/tests1/senp/SenpRuntimeServiceTest.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 33,
       "evidence_sha256": "sha256:9cf386b539ebc7dcca5035e9595b64db6eaa5a1c995d3029c09f6fe64c837758",
-      "line": 261,
+      "line": 259,
       "path": "src/test/cpp/tests1/senp/SenpRuntimeServiceTest.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 43,
       "evidence_sha256": "sha256:2f394ed375da9b2e589d3a712f26ac77153cdd40cad513fb4c7fb298b98a9844",
-      "line": 262,
+      "line": 260,
       "path": "src/test/cpp/tests1/senp/SenpRuntimeServiceTest.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 14,
       "evidence_sha256": "sha256:7c8ce240a966ecea3590bacccd58e1c188fe2edcca07d6d75b93cf326e6f3302",
-      "line": 264,
+      "line": 262,
       "path": "src/test/cpp/tests1/senp/SenpRuntimeServiceTest.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 45,
       "evidence_sha256": "sha256:481fd04918fb27a28ca9c30450210007df5ded402c664c4a75fa48fa9b58b26d",
-      "line": 267,
+      "line": 265,
       "path": "src/test/cpp/tests1/senp/SenpRuntimeServiceTest.cpp",
       "rule_id": "state.public_mutable_field"
     },
@@ -96861,7 +96854,7 @@
       }
     },
     "filtered_test_hint_count": 2,
-    "finding_count": 13741,
+    "finding_count": 13740,
     "finding_count_by_rule": {
       "boundary.private_include": 72,
       "boundary.win32_type": 4901,
@@ -96873,7 +96866,7 @@
       "memory.raw_new": 248,
       "resource.stop_required_acquisition": 264,
       "state.mutable_member": 134,
-      "state.public_mutable_field": 6101,
+      "state.public_mutable_field": 6100,
       "state.raw_pointer_member": 21,
       "test.filtered_or_skipped": 2
     },
@@ -96883,7 +96876,7 @@
     "raw_delete_expression_count": 321,
     "raw_new_expression_count": 248,
     "source_file_count": 1857,
-    "source_line_count": 569081,
+    "source_line_count": 569092,
     "tracked_file_count": 1905,
     "win32_parameter_mention_count": 4901
   },
@@ -97040,8 +97033,8 @@
     ]
   },
   "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
-  "source_commit": "940d2810c76d50ef3501aa2a5b118d3767281f6b",
-  "source_fingerprint": "sha256:cb2a1d9c716ebace2f37aeb153c4b2d9080787c2b6f9db80faa46418f5188a69",
+  "source_commit": "90d46d05c82efe089ebc7020165a1a576ce6892f",
+  "source_fingerprint": "sha256:136e489c52f4b2c62950eb0ed24f3fb9f280c74e66fbfc13294dfce09aca7730",
   "tracked_source_paths": [
     ".github/actions/bootstrap-vcpkg/action.yml",
     ".github/dependabot.yml",
