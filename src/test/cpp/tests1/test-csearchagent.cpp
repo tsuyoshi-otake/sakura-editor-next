@@ -1057,9 +1057,10 @@ namespace {
 
 // push_back が std::bad_alloc を投げるコンテナで、上限付き追記の失敗経路を
 // 直接駆動するためのアロケータ。`*m_failures > 0` の間、確保ごとに残り回数を
-// 1減らして投げる。
+// 1減らして投げる。libstdc++ の std::deque はアロケータを基底クラスにする
+// (空基底最適化)ため、final にはできない。
 template<typename T>
-class ThrowingAllocator final {
+class ThrowingAllocator {
 public:
 	using value_type = T;
 	ThrowingAllocator() noexcept = default;
