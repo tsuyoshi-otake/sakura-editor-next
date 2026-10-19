@@ -144,8 +144,11 @@ std::optional<PROCESS_INFORMATION> detail::LaunchSenpChildProcess(
 			&& !::UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
 				listed.data(), static_cast<SIZE_T>(listed.size() * sizeof(HANDLE)),
 				nullptr, nullptr)) return std::nullopt;
+		// UpdateProcThreadAttribute stores the address, not the value: the
+		// job handle must outlive CreateProcessW, so it lives at this scope
+		// beside `listed` rather than inside the branch that registers it.
+		HANDLE jobHandle = job;
 		if (job != nullptr && job != INVALID_HANDLE_VALUE) {
-			HANDLE jobHandle = job;
 			if (!::UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST,
 					&jobHandle, sizeof(jobHandle), nullptr, nullptr)) return std::nullopt;
 		}
