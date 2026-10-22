@@ -516,13 +516,17 @@ TEST(WorkspaceArtifactDocumentSourceController, StopTransfersAStalledDispatcherW
 
 	EXPECT_EQ(EWorkspaceArtifactDocumentSourceStatus::Stopped, stopResult.status);
 	EXPECT_TRUE(stopResult.retirementPending || stopResult.retirementFinalized);
-	if (!stopResult.retirementFinalized) {
-		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-		while (!controller->IsRetirementFinalized() && std::chrono::steady_clock::now() < deadline) {
-			std::this_thread::sleep_for(std::chrono::milliseconds(1));
-		}
+	// Controller finalization precedes asynchronous reaper slot release, and the
+	// reaper holds the shared state (and with it both services) until it has
+	// joined the dispatcher. Drain the shared capacity before checking release.
+	auto& retirement = workbench::WorkerRetirementService::Instance();
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+	while ((!controller->IsRetirementFinalized() || retirement.ReservedOrPendingCount() != 0)
+		&& std::chrono::steady_clock::now() < deadline) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
 	}
 	EXPECT_TRUE(controller->IsRetirementFinalized());
+	EXPECT_EQ(0u, retirement.ReservedOrPendingCount());
 	retainedFiles.reset();
 	controller.reset();
 	EXPECT_TRUE(filesLifetime.expired());
