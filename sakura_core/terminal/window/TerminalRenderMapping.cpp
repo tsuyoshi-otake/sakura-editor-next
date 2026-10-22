@@ -106,6 +106,41 @@ TerminalSelectionRange NormalizeTerminalSelection( const TerminalModel& model, T
 	return { snapStart(origin), snapEnd(point) };
 }
 
+TerminalSelectionRange SelectTerminalWord( const TerminalModel& model, TerminalSelectionPoint point ) noexcept
+{
+	const auto* row = GetTerminalRow(model, point.row);
+	if( row == nullptr || point.column >= row->cells.size() ) return { point, point };
+	const auto isSeparator = [row]( std::size_t column ) noexcept {
+		const auto text = row->cells[column].Text();
+		if( text.empty() ) return true;
+		constexpr std::wstring_view separators = L" ()[]{}',\"`\u2500\u2018\u2019\u201c\u201d|";
+		return text.size() == 1 && separators.find(text.front()) != std::wstring_view::npos;
+	};
+	auto column = point.column;
+	while( column > 0 && row->cells[column].continuation ) --column;
+	// Half-open end: skip the continuation cells of the last wide grapheme.
+	const auto endAfter = [row]( std::size_t lead ) noexcept {
+		auto next = lead + 1;
+		while( next < row->cells.size() && row->cells[next].continuation ) ++next;
+		return next;
+	};
+	if( isSeparator(column) ) return { { point.row, column }, { point.row, endAfter(column) } };
+	auto begin = column;
+	while( begin > 0 ) {
+		auto previous = begin - 1;
+		while( previous > 0 && row->cells[previous].continuation ) --previous;
+		if( isSeparator(previous) ) break;
+		begin = previous;
+	}
+	auto end = column;
+	for( auto next = column + 1; next < row->cells.size(); ++next ) {
+		if( row->cells[next].continuation ) continue;
+		if( isSeparator(next) ) break;
+		end = next;
+	}
+	return { { point.row, begin }, { point.row, endAfter(end) } };
+}
+
 std::vector<std::size_t> MapDirtyRowsToViewport( const TerminalModel& model, const TerminalViewport& viewport, const std::vector<std::size_t>& dirtyScreenRows )
 {
 	std::vector<std::size_t> result;

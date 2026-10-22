@@ -1741,9 +1741,16 @@ public:
 			return 0;
 		case WM_LBUTTONDOWN:
 		case WM_MBUTTONDOWN:
-		case WM_RBUTTONDOWN: {
+		case WM_RBUTTONDOWN:
+		// CS_DBLCLKS turns the second press of a fast double click into these. Each
+		// is still a press; dropping it would lose the click and unbalance the
+		// application's mouse-up.
+		case WM_LBUTTONDBLCLK:
+		case WM_MBUTTONDBLCLK:
+		case WM_RBUTTONDBLCLK: {
 			const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
-			const auto button = message == WM_LBUTTONDOWN ? 0u : message == WM_MBUTTONDOWN ? 1u : 2u;
+			const auto button = message == WM_LBUTTONDOWN || message == WM_LBUTTONDBLCLK ? 0u :
+				message == WM_MBUTTONDOWN || message == WM_MBUTTONDBLCLK ? 1u : 2u;
 			if( button == 0 ) {
 				// A cancelled gesture may have been released outside this HWND.
 				// Retire its ownership before admitting any new host gesture.
@@ -1764,6 +1771,14 @@ public:
 			pressedMouseButton = button;
 			if( MouseReporting() && (wParam & MK_SHIFT) == 0 ) {
 				SendMouse(TerminalMouseAction::Press, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), button, wParam);
+			} else if( message == WM_LBUTTONDBLCLK && model ) {
+				// VS Code/xterm.js double-click selects the word under the pointer.
+				const auto word = SelectTerminalWord(*model, PointToCell(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)));
+				selecting = false;
+				selectionMoved = word.anchor != word.active;
+				selectionOrigin = selectionAnchor = word.anchor;
+				selectionActive = word.active;
+				::InvalidateRect(window, nullptr, FALSE);
 			} else if( message == WM_LBUTTONDOWN ) {
 				selecting = true;
 				selectionMoved = false;
@@ -1912,23 +1927,7 @@ public:
 	bool CopySelectionToClipboard()
 	{
 		if( !HasSelection() ) return false;
-		const auto text = ExtractTerminalSelection(*model, selectionAnchor, selectionActive);
-		if( !::OpenClipboard(window) ) return false;
-		bool copied = false;
-		if( ::EmptyClipboard() ) {
-			const auto bytes = (text.size() + 1) * sizeof(wchar_t);
-			const HGLOBAL memory = ::GlobalAlloc(GMEM_MOVEABLE, bytes);
-			if( memory ) {
-				if( void* destination = ::GlobalLock(memory) ) {
-					std::memcpy(destination, text.c_str(), bytes);
-					::GlobalUnlock(memory);
-					if( ::SetClipboardData(CF_UNICODETEXT, memory) ) copied = true;
-				}
-				if( !copied ) ::GlobalFree(memory);
-			}
-		}
-		::CloseClipboard();
-		return copied;
+		return WriteTerminalClipboardText(window, ExtractTerminalSelection(*model, selectionAnchor, selectionActive));
 	}
 
 	bool PasteFromClipboard()
@@ -1949,7 +1948,7 @@ public:
 						view.remove_suffix(1);
 					}
 					if( !view.empty() ) {
-						pasted = Send(EncodeTerminalPaste(view, model->Modes().bracketedPaste));
+						pasted = Send(EncodeTerminalClipboardPaste(view, model->Modes().bracketedPaste));
 					}
 					::GlobalUnlock(data);
 				}
@@ -1967,7 +1966,7 @@ public:
 				payload += FormatTerminalPastePath(path);
 			}
 			if( !payload.empty() ) {
-				return Send(EncodeTerminalPaste(payload, model->Modes().bracketedPaste));
+				return Send(EncodeTerminalClipboardPaste(payload, model->Modes().bracketedPaste));
 			}
 		}
 
@@ -1975,7 +1974,7 @@ public:
 		// bitmap as a temp PNG and paste the absolute path rather than inventing a
 		// proprietary image OSC the shell tools would ignore.
 		if( const auto imagePath = SaveClipboardImageAsPng(window) ) {
-			return Send(EncodeTerminalPaste(FormatTerminalPastePath(*imagePath),
+			return Send(EncodeTerminalClipboardPaste(FormatTerminalPastePath(*imagePath),
 				model->Modes().bracketedPaste));
 		}
 		return false;
@@ -2291,6 +2290,9 @@ bool CTerminalWnd::PreTranslateMessage( MSG& message )
 		switch( ResolveTerminalShortcut(event, m_impl->HasSelection()) ) {
 		case TerminalShortcutAction::Copy:
 			static_cast<void>(CopySelectionToClipboard());
+			return true;
+		case TerminalShortcutAction::CopyAndClearSelection:
+			if( CopySelectionToClipboard() ) m_impl->ClearSelection();
 			return true;
 		case TerminalShortcutAction::Paste:
 			static_cast<void>(PasteFromClipboard());

@@ -180,6 +180,40 @@ TEST(TerminalTabPresentation, SplitGroupKeepsActiveHeaderIdentityVisible)
 		TerminalTabsShowCondition::Always, 2, false, true));
 }
 
+TEST(TerminalTabPresentation, HeaderInlineActionsFollowUpstreamViewTitleWhenClause)
+{
+	const TerminalTabPresentationSettings defaults;
+	EXPECT_TRUE(terminal::ShouldShowTerminalHeaderInlineActions(defaults, 1, false));
+	// A second group hands Split/Kill to the tab list, unless the list is narrow.
+	EXPECT_FALSE(terminal::ShouldShowTerminalHeaderInlineActions(defaults, 2, false));
+	EXPECT_TRUE(terminal::ShouldShowTerminalHeaderInlineActions(defaults, 2, true));
+
+	// hideCondition never keeps the tab list, so the title never repeats them.
+	auto neverHidden = defaults;
+	neverHidden.hideCondition = TerminalTabsHideCondition::Never;
+	neverHidden.showActions = TerminalTabsShowCondition::Always;
+	EXPECT_FALSE(terminal::ShouldShowTerminalHeaderInlineActions(neverHidden, 1, false));
+
+	// Without tabs the title is the only place for them.
+	auto noTabs = defaults;
+	noTabs.tabsEnabled = false;
+	noTabs.showActions = TerminalTabsShowCondition::Never;
+	EXPECT_TRUE(terminal::ShouldShowTerminalHeaderInlineActions(noTabs, 3, false));
+}
+
+TEST(TerminalTabPresentation, HeaderActiveTerminalIsAlwaysPresentWithoutTabs)
+{
+	const TerminalTabPresentationSettings defaults;
+	EXPECT_TRUE(terminal::ShouldShowTerminalHeaderActiveTerminal(defaults, 1, false, false));
+	EXPECT_FALSE(terminal::ShouldShowTerminalHeaderActiveTerminal(defaults, 2, false, false));
+	EXPECT_TRUE(terminal::ShouldShowTerminalHeaderActiveTerminal(defaults, 2, false, true));
+
+	auto noTabs = defaults;
+	noTabs.tabsEnabled = false;
+	noTabs.showActiveTerminal = TerminalTabsShowCondition::Never;
+	EXPECT_TRUE(terminal::ShouldShowTerminalHeaderActiveTerminal(noTabs, 2, false, false));
+}
+
 TEST(TerminalTabPresentation, RowGeometryStaysBoundedAndDropsDescriptionFirst)
 {
 	for( int rowWidth = 1; rowWidth <= 240; ++rowWidth ) {

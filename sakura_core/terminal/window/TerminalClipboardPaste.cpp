@@ -284,4 +284,25 @@ std::vector<std::wstring> ReadClipboardFileDropPaths(HWND owner)
 	return paths;
 }
 
+bool WriteTerminalClipboardText(HWND owner, std::wstring_view text)
+{
+	if( !::OpenClipboard(owner) ) return false;
+	bool copied = false;
+	if( ::EmptyClipboard() ) {
+		const auto bytes = (text.size() + 1) * sizeof(wchar_t);
+		const HGLOBAL memory = ::GlobalAlloc(GMEM_MOVEABLE, bytes);
+		if( memory ) {
+			if( auto* destination = static_cast<wchar_t*>(::GlobalLock(memory)) ) {
+				std::memcpy(destination, text.data(), text.size() * sizeof(wchar_t));
+				destination[text.size()] = L'\0';
+				::GlobalUnlock(memory);
+				if( ::SetClipboardData(CF_UNICODETEXT, memory) ) copied = true;
+			}
+			if( !copied ) ::GlobalFree(memory);
+		}
+	}
+	::CloseClipboard();
+	return copied;
+}
+
 } // namespace terminal

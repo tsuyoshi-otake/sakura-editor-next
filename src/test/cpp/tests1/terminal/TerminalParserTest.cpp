@@ -23,7 +23,7 @@ TEST(TerminalParser, StreamsSplitUtf8AndSplitVtSequences)
 	parser.Feed("\xA5");
 	parser.Feed("\x1b[3");
 	parser.Feed("1mX");
-	EXPECT_EQ(L"日X", RowText(model.Rows()[0]));
+	EXPECT_EQ(L"\u65e5X", RowText(model.Rows()[0]));
 	EXPECT_EQ(terminal::TerminalColor::Indexed(1), model.Rows()[0].AttributesAt(2).foreground);
 }
 
@@ -265,18 +265,54 @@ TEST(TerminalParser, DecodesUtf8OscTitleAcrossFeedBoundaries)
 	parser.Feed("\x1b]2;\xE6");
 	parser.Feed("\x97");
 	parser.Feed("\xA5\x07");
-	EXPECT_EQ(L"日", model.Title());
+	EXPECT_EQ(L"\u65e5", model.Title());
 }
 
-TEST(TerminalParser, DisablesOsc52SixelAndArbitraryStringCommands)
+TEST(TerminalParser, DisablesSixelAndArbitraryStringCommands)
 {
 	terminal::TerminalModel model(20, 2);
 	terminal::TerminalParser parser(model);
-	parser.Feed("base\x1b]52;c;SGVsbG8=\x07");
-	parser.Feed("\x1bPqSIXEL-DATA\x1b\\");
+	parser.Feed("base\x1bPqSIXEL-DATA\x1b\\");
 	parser.Feed("\x1b_arbitrary-command\x1b\\ok");
 	EXPECT_TRUE(model.Title().empty());
 	EXPECT_EQ(L"baseok", RowText(model.Rows()[0]));
+	EXPECT_FALSE(model.ConsumeClipboardWrite().has_value());
+}
+
+TEST(TerminalParser, Osc52WritesDecodedUtf8ToTheClipboardButNeverAnswersReads)
+{
+	terminal::TerminalModel model(20, 2);
+	terminal::TerminalParser parser(model);
+	// "hi \u65e5" as UTF-8, split across feeds, ST terminator.
+	parser.Feed("base\x1b]52;c;aGkg");
+	parser.Feed("5pel\x1b\\ok");
+	EXPECT_EQ(L"baseok", RowText(model.Rows()[0]));
+	auto write = model.ConsumeClipboardWrite();
+	ASSERT_TRUE(write.has_value());
+	EXPECT_EQ(L"hi \u65e5", *write);
+	EXPECT_FALSE(model.ConsumeClipboardWrite().has_value());
+
+	// Only the latest request survives until the UI consumes it.
+	parser.Feed("\x1b]52;c;Zmlyc3Q=\x07\x1b]52;;c2Vjb25k\x07");
+	write = model.ConsumeClipboardWrite();
+	ASSERT_TRUE(write.has_value());
+	EXPECT_EQ(L"second", *write);
+
+	// A read query is ignored and nothing is written back to the application.
+	std::string responses;
+	terminal::TerminalModel queried(20, 2);
+	terminal::TerminalParser queryParser(queried, nullptr, [&]( std::string_view bytes ) { responses.append(bytes); });
+	queryParser.Feed("\x1b]52;c;?\x07");
+	EXPECT_FALSE(queried.ConsumeClipboardWrite().has_value());
+	EXPECT_TRUE(responses.empty());
+
+	// Malformed base64 clears like xterm; a missing selector field is ignored.
+	parser.Feed("\x1b]52;c;@@@\x07");
+	write = model.ConsumeClipboardWrite();
+	ASSERT_TRUE(write.has_value());
+	EXPECT_TRUE(write->empty());
+	parser.Feed("\x1b]52\x07");
+	EXPECT_FALSE(model.ConsumeClipboardWrite().has_value());
 }
 
 TEST(TerminalParser, ReplacesIncompleteUtf8OnlyWhenFlushed)

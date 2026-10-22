@@ -162,6 +162,23 @@ std::string EncodeTerminalPaste( std::wstring_view text, bool bracketedPaste )
 	return result;
 }
 
+std::string EncodeTerminalClipboardPaste( std::wstring_view text, bool bracketedPaste )
+{
+	// Match xterm.js prepareTextForTerminal/bracketTextForPaste: every CRLF or LF
+	// becomes CR (the Enter key), and inside a bracketed paste ESC is shown as
+	// U+241B so pasted text cannot terminate the bracket early.
+	std::wstring normalized;
+	normalized.reserve(text.size());
+	for( std::size_t index = 0; index < text.size(); ++index ) {
+		const auto value = text[index];
+		if( value == L'\r' && index + 1 < text.size() && text[index + 1] == L'\n' ) continue;
+		if( value == L'\n' ) normalized.push_back(L'\r');
+		else if( value == L'\x1b' && bracketedPaste ) normalized.push_back(L'\x241b');
+		else normalized.push_back(value);
+	}
+	return EncodeTerminalPaste(normalized, bracketedPaste);
+}
+
 std::string EncodeTerminalMouse( const TerminalMouseEvent& event, const TerminalModes& modes )
 {
 	if( !ShouldReportMouse(event, modes) ) return {};
@@ -195,7 +212,10 @@ TerminalShortcutAction ResolveTerminalShortcut( const TerminalKeyEvent& event, b
 	if( event.virtualKey == VK_INSERT && event.shift && !event.alt ) return TerminalShortcutAction::Paste;
 	if( !event.control || event.alt ) return TerminalShortcutAction::None;
 	if( event.virtualKey == 'C' ) {
-		if( event.shift || hasSelection ) return TerminalShortcutAction::Copy;
+		// VS Code binds Ctrl+Shift+C to copySelection and, on Windows, Ctrl+C to
+		// copyAndClearSelection, so a second Ctrl+C reaches the shell as SIGINT.
+		if( event.shift ) return TerminalShortcutAction::Copy;
+		if( hasSelection ) return TerminalShortcutAction::CopyAndClearSelection;
 		return TerminalShortcutAction::SendInterrupt;
 	}
 	if( event.virtualKey == VK_INSERT ) return TerminalShortcutAction::Copy;

@@ -249,6 +249,23 @@ inline constexpr std::size_t kMaximumTerminalTabTextLength = 256;
 	bool tabsNarrow,
 	bool activeGroupSplit ) noexcept;
 
+//! VS Code's view-title `when` clause for the active-terminal entry: present
+//! whenever tabs are disabled, otherwise per showActiveTerminal.
+[[nodiscard]] bool ShouldShowTerminalHeaderActiveTerminal(
+	const TerminalTabPresentationSettings& settings,
+	std::size_t groupCount,
+	bool tabsNarrow,
+	bool activeGroupSplit ) noexcept;
+
+//! VS Code's `shouldShowViewInlineActions` for the view-title Split and Kill
+//! actions. hideCondition `never` keeps the tab list visible, whose own inline
+//! actions replace them; disabled tabs always show them; otherwise showActions
+//! decides.
+[[nodiscard]] bool ShouldShowTerminalHeaderInlineActions(
+	const TerminalTabPresentationSettings& settings,
+	std::size_t groupCount,
+	bool tabsNarrow ) noexcept;
+
 //! Pure bounded row geometry. Lower-priority description space is dropped
 //! before the title, and every returned rectangle is non-inverted and contained
 //! by the input row.

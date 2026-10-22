@@ -11,6 +11,7 @@
 
 #include "terminal/DefaultTerminalLaunchProfileService.h"
 #include "terminal/input/TerminalShortcutPreset.h"
+#include "terminal/window/TerminalClipboardPaste.h"
 #include "terminal/window/TerminalHeaderLayout.h"
 #include "terminal/window/TerminalPaneLayout.h"
 #include "terminal/window/TerminalTabPresentation.h"
@@ -918,12 +919,25 @@ struct CTerminalTool::Impl {
 		}
 	}
 
+	//! VS Code drops the active-terminal entry and the Split/Kill title actions
+	//! once the tab list takes over (for example a second terminal group), so
+	//! every header layout, paint and hit test uses this one projection.
+	TerminalHeaderActionVisibility HeaderActionVisibility() const noexcept
+	{
+		const auto groupCount = paneGroups.size();
+		const bool tabsNarrow = IsTerminalTabsNarrow();
+		return TerminalHeaderActionVisibility{
+			ShouldShowTerminalHeaderActiveTerminal(tabPresentationSettings, groupCount, tabsNarrow, HasTerminalSplit()),
+			ShouldShowTerminalHeaderInlineActions(tabPresentationSettings, groupCount, tabsNarrow),
+		};
+	}
+
 	TerminalHeaderLayout HeaderLayout() const noexcept
 	{
 		RECT client{};
 		if( window ) ::GetClientRect(window, &client);
 		return CalculateTerminalHeaderLayout(client, dpi, panelActions.renderPanelActions,
-			panelActions.renderHeader ? 30 : 0);
+			panelActions.renderHeader ? 30 : 0, HeaderActionVisibility());
 	}
 
 	void InvalidateTabs()
@@ -1002,8 +1016,6 @@ struct CTerminalTool::Impl {
 
 	std::wstring HeaderProfileLabel()
 	{
-		if( !ShouldShowActiveTerminalHeader(tabPresentationSettings.showActiveTerminal,
-			paneGroups.size(), IsTerminalTabsNarrow(), HasTerminalSplit()) ) return {};
 		const auto tabs = manager->Snapshot();
 		const auto focused = FocusedTabId();
 		const auto found = std::find_if(tabs.begin(), tabs.end(), [focused](const auto& tab) {
@@ -1027,18 +1039,16 @@ struct CTerminalTool::Impl {
 
 	bool IsHeaderTargetEnabled( TerminalHeaderTarget target ) const noexcept
 	{
-		if( target == TerminalHeaderTarget::Split
-			|| target == TerminalHeaderTarget::Kill
-			|| target == TerminalHeaderTarget::More ) {
-			// VS Code resolves these actions against terminalGroupCount. A split
-			// pane adds another terminal instance but remains in the same group,
-			// so the actions stay available while the group is being split.
-			if( !ShouldShowTerminalTabPolicy(tabPresentationSettings.showActions,
-				paneGroups.size(), IsTerminalTabsNarrow()) ) return false;
-		}
+		// A hidden action is absent, never a disabled placeholder. More stays: VS
+		// Code always keeps the view-title overflow menu.
+		const auto visibility = HeaderActionVisibility();
 		switch( target ) {
+		case TerminalHeaderTarget::Profile:
+			return visibility.activeTerminal;
+		case TerminalHeaderTarget::Split:
+			return visibility.inlineActions;
 		case TerminalHeaderTarget::Kill:
-			return FocusedTabId().has_value();
+			return visibility.inlineActions && FocusedTabId().has_value();
 		case TerminalHeaderTarget::Maximize:
 			return panelActions.renderPanelActions && static_cast<bool>(panelActions.toggleMaximize);
 		case TerminalHeaderTarget::Close:
@@ -1136,7 +1146,7 @@ struct CTerminalTool::Impl {
 		if( !dc ) return;
 		const unsigned int effectiveDpi = paintDpi == 0 ? kDefaultDpi : paintDpi;
 		const auto layout = CalculateTerminalHeaderLayout(paintBounds, effectiveDpi,
-			includePanelActions, headerHeightDip);
+			includePanelActions, headerHeightDip, HeaderActionVisibility());
 		const int width = layout.header.right - layout.header.left;
 		const int height = layout.header.bottom - layout.header.top;
 		if( width <= 0 || height <= 0 ) return;
@@ -1440,6 +1450,9 @@ struct CTerminalTool::Impl {
 			InvalidateTabs();
 			InvalidateTerminalTabs();
 		}
+		// OSC 52 write from the application (for example a TUI's own selection
+		// copy). Best effort: a busy clipboard drops it, as in xterm.js.
+		if( result.clipboardWrite ) WriteTerminalClipboardText(window, *result.clipboardWrite);
 		if( auto* pane = FindPane(tabId); pane && pane->window ) {
 			PaintTerminalOutput(*pane->window, manager->Model(tabId), result,
 				pane->needsFullRepaint, pane->synchronizedOutputSince);
@@ -1563,7 +1576,7 @@ struct CTerminalTool::Impl {
 		const HWND source = owner ? owner : window;
 		if( !source ) return;
 		const TerminalHeaderLayout layout = externalBounds
-			? CalculateTerminalHeaderLayout(*externalBounds, externalDpi, false, 34)
+			? CalculateTerminalHeaderLayout(*externalBounds, externalDpi, false, 34, HeaderActionVisibility())
 			: HeaderLayout();
 		const RECT action = layout.RectFor(target);
 		POINT point{ action.left, action.bottom };
@@ -1611,7 +1624,8 @@ struct CTerminalTool::Impl {
 		if( !headerHost || headerBounds.right <= headerBounds.left || headerBounds.bottom <= headerBounds.top ) return false;
 		hostedHeaderBounds = headerBounds;
 		hostedHeaderDpi = headerDpi == 0 ? kDefaultDpi : headerDpi;
-		const auto layout = CalculateTerminalHeaderLayout(headerBounds, hostedHeaderDpi, false, 34);
+		const auto layout = CalculateTerminalHeaderLayout(headerBounds, hostedHeaderDpi, false, 34,
+			HeaderActionVisibility());
 		const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
 		const bool inHeader = ::PtInRect(&layout.header, point) != FALSE;
 

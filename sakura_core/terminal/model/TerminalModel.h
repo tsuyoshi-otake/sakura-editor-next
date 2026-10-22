@@ -6,8 +6,10 @@
 #include <cstdint>
 #include <deque>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace terminal {
@@ -186,6 +188,10 @@ public:
 	void SetBackground( TerminalColor color ) noexcept { m_attributes.background = color; }
 	void SetMode( int mode, bool enabled ) noexcept;
 	void SetTitle( std::wstring title );
+	//! OSC 52 write from the application. Only the latest request is retained
+	//! until the UI owner consumes it; reading the clipboard is never offered.
+	void RequestClipboardWrite( std::wstring text ) { m_pendingClipboardWrite = std::move(text); }
+	[[nodiscard]] std::optional<std::wstring> ConsumeClipboardWrite() noexcept { return std::exchange(m_pendingClipboardWrite, std::nullopt); }
 
 	std::size_t Columns() const noexcept { return m_columns; }
 	std::size_t RowCount() const noexcept { return m_rowsCount; }
@@ -259,6 +265,7 @@ private:
 	TerminalModes m_modes;
 	std::uint64_t m_synchronizedOutputCommitGeneration{};
 	std::wstring m_title;
+	std::optional<std::wstring> m_pendingClipboardWrite;
 	bool m_alternateScreen{};
 };
 

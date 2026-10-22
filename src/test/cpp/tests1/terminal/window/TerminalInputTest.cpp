@@ -21,6 +21,16 @@ TEST(TerminalInput, WrapsPasteOnlyWhenBracketedPasteIsEnabled)
 	EXPECT_EQ("\x1b[200~abc\x1b[201~", terminal::EncodeTerminalPaste(L"abc", true));
 }
 
+TEST(TerminalInput, PasteNormalizesLineEndingsAndNeutralizesEscapeLikeXtermJs)
+{
+	// xterm.js prepareTextForTerminal: CRLF and LF both become one CR.
+	EXPECT_EQ("a\rb\rc\rd", terminal::EncodeTerminalClipboardPaste(L"a\r\nb\nc\rd", false));
+	// bracketTextForPaste: ESC inside the bracket is shown as U+241B, so pasted
+	// text cannot close the bracket and inject keystrokes.
+	EXPECT_EQ("\x1b[200~x\xe2\x90\x9b[201~y\x1b[201~", terminal::EncodeTerminalClipboardPaste(L"x\x1b[201~y", true));
+	EXPECT_EQ(std::string("x\x1b", 2), terminal::EncodeTerminalClipboardPaste(L"x\x1b", false));
+}
+
 TEST(TerminalInput, EncodesNavigationModifiersAndControlKeys)
 {
 	EXPECT_EQ("\x1b[A", terminal::EncodeTerminalKey({ VK_UP }));
@@ -51,8 +61,11 @@ TEST(TerminalInput, ClaimsPlainTextKeysBeforeTheHostKeybindingTable)
 
 TEST(TerminalInput, ResolvesTerminalClipboardAndInterruptShortcuts)
 {
-	EXPECT_EQ(terminal::TerminalShortcutAction::Copy,
+	// Windows VS Code: Ctrl+C is copyAndClearSelection, Ctrl+Shift+C copySelection.
+	EXPECT_EQ(terminal::TerminalShortcutAction::CopyAndClearSelection,
 		terminal::ResolveTerminalShortcut({ 'C', false, true, false }, true));
+	EXPECT_EQ(terminal::TerminalShortcutAction::Copy,
+		terminal::ResolveTerminalShortcut({ 'C', true, true, false }, true));
 	EXPECT_EQ(terminal::TerminalShortcutAction::SendInterrupt,
 		terminal::ResolveTerminalShortcut({ 'C', false, true, false }, false));
 	EXPECT_EQ(terminal::TerminalShortcutAction::Copy,

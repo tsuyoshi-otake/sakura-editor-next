@@ -47,6 +47,9 @@ struct TerminalSelectionRange {
 	int cellWidth, int cellHeight, std::size_t columns,
 	TerminalViewportGeometry geometry = {} ) noexcept;
 [[nodiscard]] TerminalSelectionRange NormalizeTerminalSelection( const TerminalModel& model, TerminalSelectionPoint origin, TerminalSelectionPoint point ) noexcept;
+//! Word under a double-click, using VS Code's default terminal.integrated.wordSeparators.
+//! A separator or empty cell selects only itself. The range never crosses a row.
+[[nodiscard]] TerminalSelectionRange SelectTerminalWord( const TerminalModel& model, TerminalSelectionPoint point ) noexcept;
 [[nodiscard]] std::vector<std::size_t> MapDirtyRowsToViewport( const TerminalModel& model, const TerminalViewport& viewport, const std::vector<std::size_t>& dirtyScreenRows );
 [[nodiscard]] std::wstring ExtractTerminalSelection( const TerminalModel& model, TerminalSelectionPoint anchor, TerminalSelectionPoint active );
 

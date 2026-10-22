@@ -99,6 +99,8 @@ struct TerminalDrainResult {
 	std::size_t bytesDrained{};
 	TerminalScrollbackChange scrollbackChange;
 	std::vector<std::size_t> dirtyRows;
+	//! OSC 52 text the application asked to place on the system clipboard.
+	std::optional<std::wstring> clipboardWrite;
 };
 
 struct TerminalTabScrollbackChange final {

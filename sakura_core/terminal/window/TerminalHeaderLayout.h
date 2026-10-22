@@ -29,6 +29,16 @@ enum class TerminalHeaderTarget : std::uint8_t {
 	Count,
 };
 
+//! Optional header actions that the current terminal policy shows. A hidden
+//! action is absent: it takes no space and is not hit-testable, like a VS Code
+//! title menu item whose `when` clause is false.
+struct TerminalHeaderActionVisibility {
+	//! The active-terminal entry (VS Code's single-tab Focus item).
+	bool activeTerminal{ true };
+	//! Split and Kill (VS Code's `shouldShowViewInlineActions`).
+	bool inlineActions{ true };
+};
+
 //! Pure pixel layout used by terminal header painting and pointer hit testing.
 struct TerminalHeaderLayout {
 	RECT header{};
@@ -88,9 +98,11 @@ constexpr int kTerminalHeaderDefaultDpi = 96;
 //! An action is omitted (represented by an empty rectangle) when the client is too
 //! narrow to contain its complete hit target.  This keeps all returned rectangles
 //! inside the header and prevents partially clickable icons at small window widths.
+//! Actions hidden by `visibility` are also empty, but they leave their space to
+//! the actions further left instead of collapsing them.
 [[nodiscard]] inline TerminalHeaderLayout CalculateTerminalHeaderLayout(
 	const RECT& bounds, unsigned int dpi, bool includePanelActions = true,
-	int headerHeightDip = 30) noexcept
+	int headerHeightDip = 30, TerminalHeaderActionVisibility visibility = {}) noexcept
 {
 	using detail::ScaleTerminalHeaderDip;
 	TerminalHeaderLayout result;
@@ -109,7 +121,11 @@ constexpr int kTerminalHeaderDefaultDpi = 96;
 	LONG cursor = std::max<LONG>(left, result.header.right - rightInset);
 	bool hasActionSpace = true;
 
-	auto reserve = [&](TerminalHeaderTarget target, int widthDip, int leadingGapDip = 0) {
+	auto reserve = [&](TerminalHeaderTarget target, int widthDip, int leadingGapDip = 0, bool visible = true) {
+		if (!visible) {
+			result.targets[static_cast<std::size_t>(target)] = detail::EmptyTerminalHeaderRect(cursor, top, bottom);
+			return;
+		}
 		const int width = ScaleTerminalHeaderDip(widthDip, dpi);
 		const int leadingGap = ScaleTerminalHeaderDip(leadingGapDip, dpi);
 		const int candidateLeft = cursor - width;
@@ -131,11 +147,11 @@ constexpr int kTerminalHeaderDefaultDpi = 96;
 		reserve(TerminalHeaderTarget::Maximize, 28, 4);
 	}
 	reserve(TerminalHeaderTarget::More, 28);
-	reserve(TerminalHeaderTarget::Kill, 28);
-	reserve(TerminalHeaderTarget::Split, 28);
+	reserve(TerminalHeaderTarget::Kill, 28, 0, visibility.inlineActions);
+	reserve(TerminalHeaderTarget::Split, 28, 0, visibility.inlineActions);
 	reserve(TerminalHeaderTarget::Dropdown, 18);
 	reserve(TerminalHeaderTarget::New, 24);
-	reserve(TerminalHeaderTarget::Profile, 82);
+	reserve(TerminalHeaderTarget::Profile, 82, 0, visibility.activeTerminal);
 
 	const LONG titleLeft = std::min<LONG>(result.header.right,
 		result.header.left + ScaleTerminalHeaderDip(12, dpi));

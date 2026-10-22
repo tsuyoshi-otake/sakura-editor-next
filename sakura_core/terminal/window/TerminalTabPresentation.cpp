@@ -377,6 +377,26 @@ bool ShouldShowActiveTerminalHeader(
 	return ShouldShowTerminalTabPolicy(condition, groupCount, tabsNarrow);
 }
 
+bool ShouldShowTerminalHeaderActiveTerminal(
+	const TerminalTabPresentationSettings& settings,
+	std::size_t groupCount,
+	bool tabsNarrow,
+	bool activeGroupSplit ) noexcept
+{
+	return !settings.tabsEnabled
+		|| ShouldShowActiveTerminalHeader(settings.showActiveTerminal, groupCount, tabsNarrow, activeGroupSplit);
+}
+
+bool ShouldShowTerminalHeaderInlineActions(
+	const TerminalTabPresentationSettings& settings,
+	std::size_t groupCount,
+	bool tabsNarrow ) noexcept
+{
+	if( settings.hideCondition == TerminalTabsHideCondition::Never ) return false;
+	return !settings.tabsEnabled
+		|| ShouldShowTerminalTabPolicy(settings.showActions, groupCount, tabsNarrow);
+}
+
 TerminalTabRowLayout CalculateTerminalTabRowLayout(
 	const TerminalTabRowLayoutInput& input ) noexcept
 {

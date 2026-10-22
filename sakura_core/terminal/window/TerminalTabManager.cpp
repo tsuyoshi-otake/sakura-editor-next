@@ -530,6 +530,7 @@ TerminalDrainResult TerminalTabManager::DrainOutput( std::uint64_t tabId )
 	result.bytesDrained = drained.bytesDrained;
 	result.scrollbackChange = drained.scrollbackChange;
 	result.dirtyRows = drained.dirtyRows;
+	result.clipboardWrite = drained.clipboardWrite;
 	return result;
 }
 

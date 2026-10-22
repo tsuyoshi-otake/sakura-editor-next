@@ -1,5 +1,5 @@
 /*! @file
-	@brief Terminal clipboard paste helpers for text, dropped files, and images
+	@brief Terminal clipboard helpers: text write, and paste of text, dropped files, and images
 
 	Claude Code, Codex, and Cursor CLI accept image *paths*, not raw clipboard
 	bitmaps. When paste finds an image and no useful Unicode text, Sakura writes a
@@ -60,5 +60,9 @@ struct TerminalPasteImageEntry {
 
 //! Returns absolute paths from `CF_HDROP`, empty when the clipboard has no file drop.
 [[nodiscard]] std::vector<std::wstring> ReadClipboardFileDropPaths(HWND owner);
+
+//! Replaces the clipboard with `text` as `CF_UNICODETEXT`. Shared by selection
+//! copy and OSC 52 writes. The clipboard must not already be open by the caller.
+bool WriteTerminalClipboardText(HWND owner, std::wstring_view text);
 
 } // namespace terminal

@@ -97,6 +97,52 @@ TEST(TerminalHeaderLayout, OmitsPanelActionsWhenTheContainingPartOwnsCommonChrom
 		layout.RectFor(TerminalHeaderTarget::More).left);
 }
 
+TEST(TerminalHeaderLayout, HiddenActionsTakeNoSpaceAndAreNotHitTestable)
+{
+	const RECT bounds{ 0, 0, 600, 40 };
+	const auto all = CalculateTerminalHeaderLayout(bounds, 96, false, 34);
+	const auto hidden = CalculateTerminalHeaderLayout(bounds, 96, false, 34,
+		TerminalHeaderActionVisibility{ false, false });
+
+	for (const auto target : { TerminalHeaderTarget::Profile, TerminalHeaderTarget::Split, TerminalHeaderTarget::Kill }) {
+		const auto& rect = hidden.RectFor(target);
+		EXPECT_EQ(rect.left, rect.right);
+		ExpectValidRect(rect, hidden.header);
+		EXPECT_NE(target, hidden.HitTest(CenterOf(all.RectFor(target))));
+	}
+	// More keeps its slot; Dropdown moves up to where Kill was, with no gap.
+	EXPECT_EQ(all.RectFor(TerminalHeaderTarget::More).left, hidden.RectFor(TerminalHeaderTarget::More).left);
+	EXPECT_EQ(all.RectFor(TerminalHeaderTarget::Kill).right, hidden.RectFor(TerminalHeaderTarget::Dropdown).right);
+	EXPECT_GT(hidden.title.right, all.title.right);
+
+	const auto withProfile = CalculateTerminalHeaderLayout(bounds, 96, false, 34,
+		TerminalHeaderActionVisibility{ true, false });
+	EXPECT_LT(withProfile.RectFor(TerminalHeaderTarget::Profile).left,
+		withProfile.RectFor(TerminalHeaderTarget::Profile).right);
+	EXPECT_EQ(hidden.RectFor(TerminalHeaderTarget::New).left - 2,
+		withProfile.RectFor(TerminalHeaderTarget::Profile).right);
+}
+
+TEST(TerminalHeaderLayout, HiddenActionsLeaveTheirSpaceToTheRemainingActions)
+{
+	// 100 DIP fits More, Kill and Split but not Dropdown. Without Split and Kill,
+	// New and Dropdown fit instead of collapsing with them.
+	const RECT bounds{ 0, 0, 100, 34 };
+	const auto all = CalculateTerminalHeaderLayout(bounds, 96, false, 34);
+	EXPECT_EQ(all.RectFor(TerminalHeaderTarget::Dropdown).left, all.RectFor(TerminalHeaderTarget::Dropdown).right);
+	EXPECT_EQ(all.RectFor(TerminalHeaderTarget::New).left, all.RectFor(TerminalHeaderTarget::New).right);
+
+	const auto hidden = CalculateTerminalHeaderLayout(bounds, 96, false, 34,
+		TerminalHeaderActionVisibility{ true, false });
+	for (const auto target : { TerminalHeaderTarget::New, TerminalHeaderTarget::Dropdown, TerminalHeaderTarget::More }) {
+		const auto& rect = hidden.RectFor(target);
+		EXPECT_LT(rect.left, rect.right);
+		EXPECT_EQ(target, hidden.HitTest(CenterOf(rect)));
+	}
+	// Profile still collapses when its whole hit target does not fit.
+	EXPECT_EQ(hidden.RectFor(TerminalHeaderTarget::Profile).left, hidden.RectFor(TerminalHeaderTarget::Profile).right);
+}
+
 TEST(TerminalHeaderLayout, CollapsesWholeActionsForNarrowAndDegenerateBounds)
 {
 	const auto narrow = CalculateTerminalHeaderLayout(RECT{ 0, 0, 60, 30 }, 96);

@@ -553,6 +553,7 @@ struct TerminalInstance::Impl {
 			}
 			result.scrollbackChange = model->ConsumeScrollbackChange();
 			result.dirtyRows = model->ConsumeDirtyRows();
+			result.clipboardWrite = model->ConsumeClipboardWrite();
 		}
 		if (result.sequenceChanged) {
 			const std::lock_guard lock(stateMutex);

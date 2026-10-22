@@ -212,6 +212,28 @@ TEST(TerminalRenderMapping, ExtractsWideAndCombiningCellsWithoutContinuationDupl
 	EXPECT_EQ(L"\u65e5e\u0301", text);
 }
 
+TEST(TerminalRenderMapping, DoubleClickSelectsTheWordBetweenVsCodeWordSeparators)
+{
+	terminal::TerminalModel model(40, 2);
+	for( const auto character : std::wstring_view(L"git log (main) a日b") ) model.Print(character);
+	const auto word = [&model]( std::size_t column ) {
+		const auto range = terminal::SelectTerminalWord(model, { 0, column });
+		return terminal::ExtractTerminalSelection(model, range.anchor, range.active);
+	};
+	EXPECT_EQ(L"git", word(0));
+	EXPECT_EQ(L"git", word(2));
+	EXPECT_EQ(L"log", word(5));
+	EXPECT_EQ(L"main", word(10));
+	EXPECT_EQ(L"(", word(8));
+	EXPECT_EQ(L" ", word(3));
+	// A wide cell and its continuation both belong to the same word.
+	EXPECT_EQ(L"a日b", word(15));
+	EXPECT_EQ(L"a日b", word(17));
+	// Past the written text the empty cell selects only itself.
+	EXPECT_EQ((terminal::TerminalSelectionRange{ { 0, 30 }, { 0, 31 } }), terminal::SelectTerminalWord(model, { 0, 30 }));
+	EXPECT_EQ((terminal::TerminalSelectionRange{ { 0, 40 }, { 0, 40 } }), terminal::SelectTerminalWord(model, { 0, 40 }));
+}
+
 TEST(TerminalRenderMapping, UsesCrLfBetweenUnwrappedSelectedRows)
 {
 	terminal::TerminalModel model(8, 2);

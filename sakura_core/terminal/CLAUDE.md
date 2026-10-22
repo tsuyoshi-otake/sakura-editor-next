@@ -362,16 +362,36 @@ The typed visibility predicate implements VS Code's `tabs.enabled` and
 `tabs.hideCondition` values (`never`, `singleTerminal`, `singleGroup`); its
 `singleGroup` branch uses the number of terminal groups, never the number of
 terminal sessions in one split group. The pure `ShouldShowTerminalTabPolicy`
-helper applies `showActions` to the split/kill/more terminal chrome actions
-using the resolved single-terminal-or-narrow condition and the current number
-of terminal groups, not the number of split panes. The header uses the
-separate `ShouldShowActiveTerminalHeader` projection: when the active group is
-split, the focused pane's identity remains visible under
+helper resolves a `showActions`/`showActiveTerminal` condition against the
+current number of terminal groups (not split panes) and the narrow-list state.
+The header uses the separate `ShouldShowActiveTerminalHeader` projection: when
+the active group is split, the focused pane's identity remains visible under
 `singleTerminalOrNarrow`, as in the observed VS Code split-terminal chrome.
 Explicit `always`, `singleTerminal`, and `never` settings remain authoritative.
 This is an intentional fork-side presentation choice because the split panes
 otherwise lose their compact active-pane identity while the terminal list is
-present. The row projection now resolves the
+present.
+
+Header title actions follow VS Code's view-title `when` clauses, and a false
+clause means the action is absent, never a disabled placeholder (2026-10-22).
+`CTerminalTool::HeaderActionVisibility()` is the one projection used by every
+header layout, paint, hit test and click, through
+`CalculateTerminalHeaderLayout(..., TerminalHeaderActionVisibility)`; a hidden
+action gets an empty rectangle and leaves its space to the actions to its left.
+- Active-terminal entry (Profile slot, VS Code's single-tab Focus item):
+  `ShouldShowTerminalHeaderActiveTerminal`, always present when `tabs.enabled`
+  is false (VS Code's switch-terminal select box takes that place).
+- Split and Kill: `ShouldShowTerminalHeaderInlineActions`, VS Code's
+  `shouldShowViewInlineActions`. They are absent when `tabs.hideCondition` is
+  `never` (the visible list has its own inline actions), present when
+  `tabs.enabled` is false, otherwise decided by `showActions`.
+- New, the launch-profile dropdown and More are always present; More is VS
+  Code's view-title overflow menu and is not governed by `showActions`.
+With the defaults, adding a second terminal group therefore collapses the
+header to `+ v ... | maximize close`. Before this change the Profile icon,
+Split and Kill stayed in place, drawn in the border color, which looked broken.
+
+The row projection now resolves the
 default `terminal` codicon through the existing ThemeIcon/Codicon infrastructure
 and paints it in the geometry-owned icon slot; `defaultIcon`/`defaultColor`
 customization remains deferred because Sakura has no terminal-profile icon/color
@@ -408,6 +428,58 @@ has enabled mouse reporting, preserve the application's right-click event;
 are stored as half-open cell intervals, but mouse endpoints must be normalized to
 include both drag endpoints and the complete continuation cells of wide graphemes
 before painting or extracting clipboard text.
+
+### Double-click messages, word selection, and keyboard copy (2026-10-22)
+
+The terminal window class has `CS_DBLCLKS`, so a press that follows a click
+within the system double-click time arrives as `WM_xBUTTONDBLCLK` instead of
+`WM_xBUTTONDOWN`. Treat every `DBLCLK` as a press (selection start, mouse
+report, link gesture). Dropping it was the reported "sluggish copy": a quick
+click followed by a drag made no selection, so the next right-click pasted
+instead of copying. Measured on x64 Release with a throwaway `-PROF=` profile
+(posted messages, then clipboard read): 3 of 3 rounds pasted before the fix and
+3 of 3 copied after it. The input handlers themselves measured sub-millisecond,
+so do not look for this class of symptom in paint cost first.
+
+A left double-click selects a word with `SelectTerminalWord`, using VS Code's
+default `terminal.integrated.wordSeparators`
+(`` ()[]{}',"`─‘’“”| `` plus space); a separator or empty cell selects only
+itself, and the result is built as a half-open range directly — passing it
+through `NormalizeTerminalSelection` would include one cell too many because
+that helper treats the end as inclusive. The setting is not configurable yet.
+
+Keyboard copy follows VS Code on Windows: `Ctrl+C` with a selection is
+`workbench.action.terminal.copyAndClearSelection` (so a second `Ctrl+C` reaches
+the shell as SIGINT), `Ctrl+Shift+C` is `copySelection`, and `Ctrl+C` without a
+selection sends `^C`.
+
+Host clipboard paste goes through `EncodeTerminalClipboardPaste`, which applies
+xterm.js `prepareTextForTerminal` (CRLF and LF become CR) and, inside bracketed
+paste, `bracketTextForPaste` (ESC becomes U+241B so pasted text cannot close the
+bracket). `EncodeTerminalPaste` keeps raw bytes on purpose: the tmux facade's
+`PasteText` path depends on them.
+
+### OSC 52 is write-only (documented divergence)
+
+VS Code loads the xterm ClipboardAddon, which both writes the clipboard on
+`OSC 52 ; Pc ; base64` and answers the `?` read query. Sakura implements the
+write and deliberately ignores the read: answering it hands the user's
+clipboard to any program that can print an escape sequence, including `cat` of
+an untrusted file. `TerminalDispatch` decodes base64 (malformed input writes an
+empty string like xterm; requests over 1 MiB decoded are dropped), converts
+UTF-8 with U+FFFD replacement, and stores only the latest request in
+`TerminalModel`. The drain carries it out as `clipboardWrite`, and
+`CTerminalTool::HandleOutput` writes it on the UI thread through the shared
+`WriteTerminalClipboardText`. The selector `Pc` is not interpreted; every write
+goes to the Windows clipboard.
+
+This is what makes a TUI's own selection copy work: Claude Code (mouse
+reporting on) handles the drag itself and copies through OSC 52. Verified
+2026-10-22 on x64 Release: after a drag inside Claude Code the Windows clipboard
+held the selected row, including U+00B7. Right-click inside such a TUI is still
+delivered to the application (see above); Claude Code then reads the clipboard
+itself, which measured 0.7-0.9 s versus 20-35 ms for a host paste. `Ctrl+V` or
+`Shift`+right-click uses the host paste path.
 
 ## Terminal Web Links (Issue #310)
 

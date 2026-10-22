@@ -1425,6 +1425,39 @@ TEST(TerminalTool, HeaderActionsStayEnabledForMultipleSplitPanes)
 	::DestroyWindow(parent);
 }
 
+TEST(TerminalTool, SecondTerminalGroupRemovesHeaderSplitAndKillInsteadOfDisablingThem)
+{
+	ToolHarness harness;
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	terminal::CTerminalTool tool(harness.Dependencies());
+	ASSERT_TRUE(tool.Create(parent));
+	const RECT visible{ 0, 0, 640, 320 };
+	tool.Layout(visible, 96);
+	tool.Activate();
+	ASSERT_TRUE(tool.AddTerminal().has_value());
+	ASSERT_EQ(2u, tool.TabCount());
+	ASSERT_FALSE(tool.HasTerminalSplit());
+
+	// VS Code drops the active-terminal entry and Split/Kill once the tab list
+	// shows two groups, so New and the dropdown move up next to More. The old
+	// layout put Split under this point, and Split was disabled there.
+	const auto layout = terminal::CalculateTerminalHeaderLayout(visible, 96, true, 30,
+		terminal::TerminalHeaderActionVisibility{ false, false });
+	const auto add = layout.RectFor(terminal::TerminalHeaderTarget::New);
+	ASSERT_LT(add.left, add.right);
+	const int x = add.left + (add.right - add.left) / 2;
+	const int y = add.top + (add.bottom - add.top) / 2;
+	::SendMessageW(tool.GetHwnd(), WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(x, y));
+	::SendMessageW(tool.GetHwnd(), WM_LBUTTONUP, 0, MAKELPARAM(x, y));
+
+	EXPECT_EQ(3u, tool.TabCount());
+	EXPECT_FALSE(tool.HasTerminalSplit());
+
+	tool.Close();
+	::DestroyWindow(parent);
+}
+
 TEST(TerminalTool, NewSessionsUseNewWorkspaceButExistingSessionsKeepOriginalCwd)
 {
 	ToolHarness harness;

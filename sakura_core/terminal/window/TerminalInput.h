@@ -51,6 +51,7 @@ struct TerminalMouseEvent {
 enum class TerminalShortcutAction : std::uint8_t {
 	None,
 	Copy,
+	CopyAndClearSelection,
 	Paste,
 	SendInterrupt,
 };
@@ -64,6 +65,8 @@ enum class TerminalRightClickAction : std::uint8_t {
 [[nodiscard]] std::string EncodeTerminalKey( const TerminalKeyEvent& event );
 [[nodiscard]] std::string EncodeTerminalText( std::wstring_view text );
 [[nodiscard]] std::string EncodeTerminalPaste( std::wstring_view text, bool bracketedPaste );
+//! Host clipboard paste: xterm.js line-ending normalization and bracket sanitizing, then EncodeTerminalPaste.
+[[nodiscard]] std::string EncodeTerminalClipboardPaste( std::wstring_view text, bool bracketedPaste );
 [[nodiscard]] std::string EncodeTerminalMouse( const TerminalMouseEvent& event, const TerminalModes& modes );
 //! Whether the terminal must claim this key as text input before the host resolves
 //! its keybindings.

@@ -3,9 +3,53 @@
 #include "terminal/parser/TerminalDispatch.h"
 
 #include <algorithm>
+#include <optional>
 #include <string>
+#include <windows.h>
 
 namespace terminal {
+namespace {
+
+//! Upper bound on the decoded OSC 52 text; larger requests are ignored.
+constexpr std::size_t kMaxOsc52DecodedBytes = 1024 * 1024;
+
+std::optional<std::string> DecodeOsc52Base64( std::wstring_view encoded )
+{
+	std::string bytes;
+	bytes.reserve(encoded.size() / 4 * 3);
+	unsigned int buffer = 0;
+	int bits = 0;
+	for( const auto ch : encoded ) {
+		int value = -1;
+		if( ch >= L'A' && ch <= L'Z' ) value = ch - L'A';
+		else if( ch >= L'a' && ch <= L'z' ) value = ch - L'a' + 26;
+		else if( ch >= L'0' && ch <= L'9' ) value = ch - L'0' + 52;
+		else if( ch == L'+' ) value = 62;
+		else if( ch == L'/' ) value = 63;
+		else if( ch == L'=' ) break;
+		else return std::nullopt;
+		buffer = (buffer << 6) | static_cast<unsigned int>(value);
+		bits += 6;
+		if( bits >= 8 ) {
+			bits -= 8;
+			bytes.push_back(static_cast<char>((buffer >> bits) & 0xff));
+		}
+	}
+	return bytes;
+}
+
+std::wstring DecodeOsc52Utf8( const std::string& bytes )
+{
+	if( bytes.empty() ) return {};
+	// Flags 0 replaces invalid UTF-8 with U+FFFD instead of failing.
+	const auto length = ::MultiByteToWideChar(CP_UTF8, 0, bytes.data(), static_cast<int>(bytes.size()), nullptr, 0);
+	if( length <= 0 ) return {};
+	std::wstring text(static_cast<std::size_t>(length), L'\0');
+	::MultiByteToWideChar(CP_UTF8, 0, bytes.data(), static_cast<int>(bytes.size()), text.data(), length);
+	return text;
+}
+
+} // namespace
 
 int TerminalDispatch::Parameter( const std::vector<int>& parameters, std::size_t index, int defaultValue ) noexcept
 {
@@ -144,8 +188,23 @@ void TerminalDispatch::SelectGraphicRendition( const std::vector<int>& parameter
 
 void TerminalDispatch::Osc( unsigned int command, std::wstring_view payload )
 {
-	// OSC 52 clipboard and every non-title OSC are deliberately disabled. This
-	// also blocks arbitrary command/file-transfer extensions by default.
+	if( command == 52 ) {
+		// OSC 52 is write-only: VS Code's ClipboardAddon also answers the "?"
+		// read query, but handing clipboard contents to any program that prints
+		// a sequence is a disclosure channel, so reads fail closed here.
+		const auto separator = payload.find(L';');
+		if( separator == std::wstring_view::npos ) return;
+		const auto data = payload.substr(separator + 1);
+		if( data == L"?" ) return;
+		// xterm clears the selection on malformed base64; mirror that with an
+		// empty write. Oversized requests are dropped instead.
+		if( data.size() / 4 * 3 > kMaxOsc52DecodedBytes ) return;
+		const auto bytes = DecodeOsc52Base64(data);
+		m_model.RequestClipboardWrite(bytes ? DecodeOsc52Utf8(*bytes) : std::wstring{});
+		return;
+	}
+	// Every other non-title OSC is deliberately disabled. This also blocks
+	// arbitrary command/file-transfer extensions by default.
 	if( command != 0 && command != 2 ) return;
 	std::wstring title;
 	title.reserve(std::min<std::size_t>(payload.size(), 256));

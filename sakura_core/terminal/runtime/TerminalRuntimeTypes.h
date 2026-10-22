@@ -296,6 +296,8 @@ struct TerminalInstanceDrainResult final {
 	TerminalScrollbackChange scrollbackChange;
 	std::vector<std::size_t> dirtyRows;
 	TerminalContentRevision contentRevision;
+	//! Latest OSC 52 clipboard write decoded during this drain.
+	std::optional<std::wstring> clipboardWrite;
 };
 
 struct TerminalInstanceResizeResult final {
