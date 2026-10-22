@@ -91,6 +91,20 @@ code.
 - Use `tools/Remove-FileWithRetry.ps1` for bounded executable replacement retries. Preserve the underlying failure exit code when deletion ultimately fails.
 - Build-generation details and cross-generator constraints live in `src/main/CLAUDE.md`.
 
+### A read log that collapsed to the PCH is never rebuilt (2026-10-22, #367)
+
+- **Symptom:** the local x64 Debug `sakura.exe` crashed at startup on every launch, before any window appeared. Some runs failed with an access violation in `CEditView::Create` with `this == 0xFFFFFFFFFFFFFFFF`, others with `0xC0000374` heap corruption. Release and CI were unaffected.
+- **Not a code defect.** The linker kept the out-of-line `CEditWnd::GetView` COMDAT from a stale object. That copy reads `m_pcEditViewArr` at `this+0x1B0D0`, while the current layout places it at `+0x1B0F8`. The 0x28-byte difference is the Debug size of the `std::wstring` member that 940d2810c added to `CEditWnd.h`.
+- **Why one stale object breaks the whole program:** in Debug every in-class member function is a COMDAT, so a single stale object can supply the copy the whole program uses. The wrong-offset read or write then appears far from the header edit that caused it.
+- **Why the objects were stale:** 117 objects from one build batch (2026-10-18 22:16) had `CL.read.1.tlog` entries that listed only `sakura.pch`. Each of those sources directly includes headers outside the PCH, such as `window/CEditWnd.h`. `MinimalRebuildFromTracking` compares only the recorded inputs, so no header change could ever rebuild those objects.
+- **Detection:** a PCH-only entry is legitimate only when every header the source directly includes is already in the `/Yc` (`StdAfx.cpp`) entry's closure. 23 legitimate entries exist, for example `basis/` and `types/` sources. Any other PCH-only entry is poisoned.
+- **Repair:** delete the poisoned objects, or rebuild the project. The next incremental build recompiles them with real tracking. After the repair, every Debug object agreed on `+0x1B0F8`.
+- **Ruled out, in a minimal PCH project:**
+  - `TrackFileAccess=false` in the environment removes the source's entries, so the next tracked build recompiles it.
+  - A failed `/MP` batch also recompiles correctly.
+  - The mechanism that wrote the PCH-only entries is unconfirmed. Record it here when it is found.
+- **Diagnosing a "corruption" with an impossible value:** set a hardware write breakpoint (`ba w8`) on the field that holds the bad value. If it never fires, the reader is wrong, not a writer. Then compare the offset in the reader's disassembly against `?? #FIELD_OFFSET(Class, member)` from the PDB.
+
 ## Verification
 
 - Use root `build-dev.bat` for application-only iteration and `build-sln.bat` for changes that affect `tests1.vcxproj` or shared targets.
