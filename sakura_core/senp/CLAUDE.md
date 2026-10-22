@@ -139,7 +139,7 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   test fixture all carry exactly one core memory (17-18 min pages) and one
   table (36-106 elements, min == max); the headroom covers a WASI adapter
   memory. Approved charges are never refunded: the failure callbacks carry no
-  size, and wasmtime 49.0.2 also calls them WITHOUT a preceding approval
+  size, and wasmtime 49.0.4 also calls them WITHOUT a preceding approval
   (`table_grow_failed` on an overflowing table size,
   `src/runtime/vm/table.rs:642-647`; `memory_grow_failed` only for 1-byte-page
   memories, `src/runtime/vm/memory.rs:643-648`), so a refund keyed to the last
@@ -150,7 +150,7 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   existing GuestFailed path); `trap_on_grow_failure` stays off.
   Host-side lifting of guest `list<...>` results (e.g. `activate`/`on-event`
   returning `list<effect>`) cannot be bounded before `MAX_ITEMS`/`MAX_EFFECTS`
-  in wasmtime 49.0.2 - bindgen lifts the whole list into a host Vec before any
+  in wasmtime 49.0.4 - bindgen lifts the whole list into a host Vec before any
   host code runs, and the `ResourceLimiter` trait has no lift hook. That lift
   amplification is bounded only by the 512 MiB job cap, which terminates that
   owner's host (`HostUnavailable`) without affecting other owners; a WIT-level

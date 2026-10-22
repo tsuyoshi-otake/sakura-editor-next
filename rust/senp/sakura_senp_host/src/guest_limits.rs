@@ -5,7 +5,7 @@
 //! limiter instead charges every approved growth against store-wide sums.
 //!
 //! Charges are final once approved and are never refunded. The failure
-//! callbacks carry no size, and wasmtime 49.0.2 also calls them WITHOUT a
+//! callbacks carry no size, and wasmtime 49.0.4 also calls them WITHOUT a
 //! preceding approval: `table_grow_failed` when the new table size overflows
 //! (`src/runtime/vm/table.rs:642-647`, reachable through `Table::grow` and
 //! 64-bit table indices) and `memory_grow_failed` when a 1-byte-page memory
