@@ -23,29 +23,36 @@
     },
     {
       "column": 11,
-      "evidence_sha256": "sha256:2941cd31910da69a07eb6b95be8d68c46ed33a2799ebda27fb87d2704fb91b5b",
+      "evidence_sha256": "sha256:d3bcf50676c44f4fa6affd1dce990bd24e6ffcac86f586c2a00d20404757f1a0",
       "line": 14,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.private_include"
     },
     {
       "column": 11,
-      "evidence_sha256": "sha256:0d74740a1b03177a566a65b78690d933c6b8732687349808a81fc362bfed86e6",
+      "evidence_sha256": "sha256:2941cd31910da69a07eb6b95be8d68c46ed33a2799ebda27fb87d2704fb91b5b",
       "line": 15,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.private_include"
     },
     {
       "column": 11,
-      "evidence_sha256": "sha256:2a1e0e708a078958922b4ac68b29b873bdf1ecebc851d8d8a9ec12539f0ccc04",
+      "evidence_sha256": "sha256:0d74740a1b03177a566a65b78690d933c6b8732687349808a81fc362bfed86e6",
       "line": 16,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.private_include"
     },
     {
       "column": 11,
-      "evidence_sha256": "sha256:591f5e36a787d31f6a1a712011b03d800b3b5f3502c899bbdc25c26923c64ab9",
+      "evidence_sha256": "sha256:2a1e0e708a078958922b4ac68b29b873bdf1ecebc851d8d8a9ec12539f0ccc04",
       "line": 17,
+      "path": "sakura_core/terminal/window/CTerminalTool.cpp",
+      "rule_id": "boundary.private_include"
+    },
+    {
+      "column": 11,
+      "evidence_sha256": "sha256:591f5e36a787d31f6a1a712011b03d800b3b5f3502c899bbdc25c26923c64ab9",
+      "line": 18,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.private_include"
     },
@@ -16887,175 +16894,175 @@
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 96,
+      "line": 97,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 4,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 295,
+      "line": 296,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 52,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 312,
+      "line": 313,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 368,
+      "line": 369,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 372,
+      "line": 373,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 9,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 951,
+      "line": 965,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 10,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 954,
+      "line": 968,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 38,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1492,
+      "line": 1505,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 9,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1496,
+      "line": 1509,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 52,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1560,
+      "line": 1573,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 9,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1563,
+      "line": 1576,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 57,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1574,
+      "line": 1587,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 48,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 1607,
+      "line": 1620,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 63,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 1607,
+      "line": 1620,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 39,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 1689,
+      "line": 1703,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 54,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 1689,
+      "line": 1703,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 10,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 2361,
+      "line": 2375,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 29,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 2405,
+      "line": 2419,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 41,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 2565,
+      "line": 2579,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 61,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 2583,
+      "line": 2597,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 76,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 2583,
+      "line": 2597,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 1,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 2770,
+      "line": 2784,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 45,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 2775,
+      "line": 2789,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 72,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 2775,
+      "line": 2789,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 87,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 2775,
+      "line": 2789,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.win32_type"
     },
@@ -17174,35 +17181,35 @@
     {
       "column": 38,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1984,
+      "line": 1983,
       "path": "sakura_core/terminal/window/CTerminalWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 65,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 1984,
+      "line": 1983,
       "path": "sakura_core/terminal/window/CTerminalWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 80,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 1984,
+      "line": 1983,
       "path": "sakura_core/terminal/window/CTerminalWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 28,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 2037,
+      "line": 2036,
       "path": "sakura_core/terminal/window/CTerminalWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 1,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 2375,
+      "line": 2377,
       "path": "sakura_core/terminal/window/CTerminalWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
@@ -17256,6 +17263,13 @@
       "rule_id": "boundary.win32_type"
     },
     {
+      "column": 33,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 287,
+      "path": "sakura_core/terminal/window/TerminalClipboardPaste.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
       "column": 67,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
       "line": 59,
@@ -17266,6 +17280,13 @@
       "column": 68,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
       "line": 62,
+      "path": "sakura_core/terminal/window/TerminalClipboardPaste.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 33,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 66,
       "path": "sakura_core/terminal/window/TerminalClipboardPaste.h",
       "rule_id": "boundary.win32_type"
     },
@@ -31354,6 +31375,13 @@
       "rule_id": "boundary.win32_type"
     },
     {
+      "column": 8,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 1431,
+      "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
       "column": 31,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
       "line": 30,
@@ -36389,14 +36417,14 @@
     {
       "column": 5,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 715,
+      "line": 716,
       "path": "sakura_core/terminal/runtime/TerminalInstance.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 5,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 737,
+      "line": 738,
       "path": "sakura_core/terminal/runtime/TerminalInstance.cpp",
       "rule_id": "error.catch_all"
     },
@@ -36480,7 +36508,7 @@
     {
       "column": 5,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 610,
+      "line": 612,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "error.catch_all"
     },
@@ -50963,21 +50991,21 @@
     {
       "column": 20,
       "evidence_sha256": "sha256:aad4420d46e0cd902e2e462fb531cfbda6e2a12615bd31773910ce5bac016941",
-      "line": 1407,
+      "line": 1417,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 7,
       "evidence_sha256": "sha256:aad4420d46e0cd902e2e462fb531cfbda6e2a12615bd31773910ce5bac016941",
-      "line": 1411,
+      "line": 1421,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 35,
       "evidence_sha256": "sha256:aad4420d46e0cd902e2e462fb531cfbda6e2a12615bd31773910ce5bac016941",
-      "line": 1453,
+      "line": 1466,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
@@ -52769,14 +52797,14 @@
     {
       "column": 2,
       "evidence_sha256": "sha256:0a06a841e82a3f7809b4ae59af5eda45e7e805c40e8d967bb1abef61fe1efb49",
-      "line": 743,
+      "line": 744,
       "path": "sakura_core/terminal/runtime/TerminalInstance.cpp",
       "rule_id": "state.mutable_member"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:0a06a841e82a3f7809b4ae59af5eda45e7e805c40e8d967bb1abef61fe1efb49",
-      "line": 744,
+      "line": 745,
       "path": "sakura_core/terminal/runtime/TerminalInstance.cpp",
       "rule_id": "state.mutable_member"
     },
@@ -66489,42 +66517,42 @@
     {
       "column": 16,
       "evidence_sha256": "sha256:e9c035c6e975bd7adf2dc8bb325421659be16f9023835762da088db0811ba3b7",
-      "line": 36,
+      "line": 38,
       "path": "sakura_core/terminal/model/TerminalModel.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 16,
       "evidence_sha256": "sha256:e7c6ad4259b0022f46a7cd8c5bef83335723727fa0c7bd7984e5c482b151f708",
-      "line": 37,
+      "line": 39,
       "path": "sakura_core/terminal/model/TerminalModel.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 21,
       "evidence_sha256": "sha256:8c71cb0b1a512ec80401457b60b169f6d9f12931b7b53fff37a01d757d81c600",
-      "line": 60,
+      "line": 62,
       "path": "sakura_core/terminal/model/TerminalModel.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 28,
       "evidence_sha256": "sha256:23cae098d6c2100a3ac02c51013016454796c83135007a54bb4c991ea4adeb19",
-      "line": 64,
+      "line": 66,
       "path": "sakura_core/terminal/model/TerminalModel.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 34,
       "evidence_sha256": "sha256:e1183380cca3b52800c92dee4698c902fd5527bd08f22f5b0ddb80642bb3ab2b",
-      "line": 68,
+      "line": 70,
       "path": "sakura_core/terminal/model/TerminalModel.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 36,
       "evidence_sha256": "sha256:6a56fa79a2d7ba2062f96eda00f68fc48fe0c05ba95a9bc80b2251b249f09a4f",
-      "line": 69,
+      "line": 71,
       "path": "sakura_core/terminal/model/TerminalModel.h",
       "rule_id": "state.public_mutable_field"
     },
@@ -67189,112 +67217,112 @@
     {
       "column": 22,
       "evidence_sha256": "sha256:5389239a77b1f162b11444a97cf183537339cda187cc9b08bddacd13d225c004",
-      "line": 742,
-      "path": "sakura_core/terminal/runtime/TerminalInstance.cpp",
-      "rule_id": "state.public_mutable_field"
-    },
-    {
-      "column": 21,
-      "evidence_sha256": "sha256:33e4c5363d5add0afe9ddc55ced25a2e1806b31a79d043d420531b03d4e88eef",
       "line": 743,
       "path": "sakura_core/terminal/runtime/TerminalInstance.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 21,
-      "evidence_sha256": "sha256:99f1539037941d3394f1dfd90142f7eaf2d3a6fbe665f307c139061e34140b24",
+      "evidence_sha256": "sha256:33e4c5363d5add0afe9ddc55ced25a2e1806b31a79d043d420531b03d4e88eef",
       "line": 744,
+      "path": "sakura_core/terminal/runtime/TerminalInstance.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 21,
+      "evidence_sha256": "sha256:99f1539037941d3394f1dfd90142f7eaf2d3a6fbe665f307c139061e34140b24",
+      "line": 745,
       "path": "sakura_core/terminal/runtime/TerminalInstance.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 27,
       "evidence_sha256": "sha256:0b08633a6cb391a0202e29c5dfb705d0f13df8bd7ae130fe3b8526607a5ee859",
-      "line": 745,
+      "line": 746,
       "path": "sakura_core/terminal/runtime/TerminalInstance.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 24,
       "evidence_sha256": "sha256:df4c003f3fcc504189abdcf96a45a4f626dea6a158168d3fc89e41219b6fa16c",
-      "line": 749,
+      "line": 750,
       "path": "sakura_core/terminal/runtime/TerminalInstance.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 31,
       "evidence_sha256": "sha256:0061ca34d64cbe768f4b60dda871d2208e26466000dbce621f5d88a1250730d3",
-      "line": 750,
+      "line": 751,
       "path": "sakura_core/terminal/runtime/TerminalInstance.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 32,
       "evidence_sha256": "sha256:1d9d14266d9adac7f64deac53289aad2d8a4c11f59fa620e13e9cf3d09c513b0",
-      "line": 751,
+      "line": 752,
       "path": "sakura_core/terminal/runtime/TerminalInstance.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 26,
       "evidence_sha256": "sha256:28f7eaf93306fefacdd9f9e792317bb9e8d5c11055616cbf69e73962f1f9cd80",
-      "line": 757,
+      "line": 758,
       "path": "sakura_core/terminal/runtime/TerminalInstance.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 15,
       "evidence_sha256": "sha256:8eed2ef8a3238a629c7e3f7aa84e56376b24cf9fe018c5f697e59b5d273cec80",
-      "line": 760,
+      "line": 761,
       "path": "sakura_core/terminal/runtime/TerminalInstance.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 15,
       "evidence_sha256": "sha256:7d4dcaf8c620c76fd7618d863ca7839e4fee71f64b47073a2b495f0f4d92ef08",
-      "line": 761,
+      "line": 762,
       "path": "sakura_core/terminal/runtime/TerminalInstance.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 46,
       "evidence_sha256": "sha256:0081b384dff975002a395060869a1f062d3d6ca4a29b309f6165f6cab7f10ec4",
-      "line": 762,
+      "line": 763,
       "path": "sakura_core/terminal/runtime/TerminalInstance.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 33,
       "evidence_sha256": "sha256:960e57cd0749e0680a41d0f436a49d2adb572436cde6bc4065eeb2531e28426f",
-      "line": 763,
+      "line": 764,
       "path": "sakura_core/terminal/runtime/TerminalInstance.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 34,
       "evidence_sha256": "sha256:7df4ce14f9f66a2cbb36e877706d9198fcad85dddfe33326f587c534947bb183",
-      "line": 764,
+      "line": 765,
       "path": "sakura_core/terminal/runtime/TerminalInstance.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 36,
       "evidence_sha256": "sha256:b7243ac90bceede2b7dea64388bd2d34ed2c7f3f6f7ad2dae25382384752a175",
-      "line": 765,
+      "line": 766,
       "path": "sakura_core/terminal/runtime/TerminalInstance.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 28,
       "evidence_sha256": "sha256:9e1d00e5c062d67284604183f4b1242fc83dab424b302204562858d32a09d62a",
-      "line": 766,
+      "line": 767,
       "path": "sakura_core/terminal/runtime/TerminalInstance.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 41,
       "evidence_sha256": "sha256:66a431e68a49b73456f45b1f9e0fbaa924339ae1c01bf26485b79789c0c73692",
-      "line": 767,
+      "line": 768,
       "path": "sakura_core/terminal/runtime/TerminalInstance.cpp",
       "rule_id": "state.public_mutable_field"
     },
@@ -67691,408 +67719,415 @@
       "rule_id": "state.public_mutable_field"
     },
     {
+      "column": 30,
+      "evidence_sha256": "sha256:9e5985697edf540ab3b2b58ceda188bd758277b60f3e12ca1666572ffa8006b9",
+      "line": 300,
+      "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
       "column": 17,
       "evidence_sha256": "sha256:11d9f9bedb5b80ad5eef5b0a54726999e8c323321c467d8999aec24498c47cae",
-      "line": 344,
+      "line": 346,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 21,
       "evidence_sha256": "sha256:30fc8f68a2e25f3ac797411b34e8e44f2785edbab1f7a24ad1fbecdd10f270ae",
-      "line": 349,
+      "line": 351,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 27,
       "evidence_sha256": "sha256:a2c98f529a4b4a8a31053c201445c1a7da3533f78fc33be9c194dfbab3bbb09f",
-      "line": 350,
+      "line": 352,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 35,
       "evidence_sha256": "sha256:a6df670e7473cf0ee9337a0ba73c8c9ff8a7aeb4f53119860f1580826dea66a0",
-      "line": 351,
+      "line": 353,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 26,
       "evidence_sha256": "sha256:28f7eaf93306fefacdd9f9e792317bb9e8d5c11055616cbf69e73962f1f9cd80",
-      "line": 373,
+      "line": 375,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 28,
       "evidence_sha256": "sha256:5f5f06ef05ff6b218812df324872509291ed2d78e1d804642d32857258b393a3",
-      "line": 377,
+      "line": 379,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 21,
       "evidence_sha256": "sha256:e41d65ba7e5993d2048b1f8e227c1804f7768482e482b4c916ee3a2ae576dea1",
-      "line": 378,
+      "line": 380,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 26,
       "evidence_sha256": "sha256:a355d04c074af8f2acabc958b31ce4c9949bcd259c7a83141838a7c85dfbfd4a",
-      "line": 381,
+      "line": 383,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 28,
       "evidence_sha256": "sha256:5f5f06ef05ff6b218812df324872509291ed2d78e1d804642d32857258b393a3",
-      "line": 394,
+      "line": 396,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 21,
       "evidence_sha256": "sha256:e41d65ba7e5993d2048b1f8e227c1804f7768482e482b4c916ee3a2ae576dea1",
-      "line": 395,
+      "line": 397,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 26,
       "evidence_sha256": "sha256:a355d04c074af8f2acabc958b31ce4c9949bcd259c7a83141838a7c85dfbfd4a",
-      "line": 398,
+      "line": 400,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 17,
       "evidence_sha256": "sha256:11d9f9bedb5b80ad5eef5b0a54726999e8c323321c467d8999aec24498c47cae",
-      "line": 409,
+      "line": 411,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 21,
       "evidence_sha256": "sha256:30fc8f68a2e25f3ac797411b34e8e44f2785edbab1f7a24ad1fbecdd10f270ae",
-      "line": 440,
+      "line": 442,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 27,
       "evidence_sha256": "sha256:a2c98f529a4b4a8a31053c201445c1a7da3533f78fc33be9c194dfbab3bbb09f",
-      "line": 441,
+      "line": 443,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 30,
       "evidence_sha256": "sha256:52fd9e42f5f975fd0204ffe84521e19274cc054fa8c30836ea0886cfb57d35ae",
-      "line": 442,
+      "line": 444,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 30,
       "evidence_sha256": "sha256:f3fd014d8b686fe355ef75548d551c06dbb13e881514df01fd8066bc92b6710d",
-      "line": 443,
+      "line": 445,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 39,
       "evidence_sha256": "sha256:3d513b1bf40015275d1479ce134030644cd6d1296d0a7f31e3cb0e465bb94430",
-      "line": 445,
+      "line": 447,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 24,
       "evidence_sha256": "sha256:881f984a9e66070650d56b0e841c432aa3c7515e8d13c8a0c6f494e7774776f3",
-      "line": 446,
+      "line": 448,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 29,
       "evidence_sha256": "sha256:b2f1471706015bcc9e86d6b20d777774f3ea70c09fd720240c87abec136e5983",
-      "line": 452,
+      "line": 454,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 36,
       "evidence_sha256": "sha256:e3e0826f16f88a6b4436fd8942b87f0d131648391bd476146a9ee1214aa3b2db",
-      "line": 453,
+      "line": 455,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 24,
       "evidence_sha256": "sha256:c97956da7aa5e4735a47f2b157eb684764b950464a00c7e469c7bf9c921b4470",
-      "line": 454,
+      "line": 456,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 24,
       "evidence_sha256": "sha256:d8c757ec21ac472d0bc76155b3bb437bdfb9dd59268952bfead65c87bbb4b4c1",
-      "line": 455,
+      "line": 457,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 21,
       "evidence_sha256": "sha256:e41d65ba7e5993d2048b1f8e227c1804f7768482e482b4c916ee3a2ae576dea1",
-      "line": 485,
+      "line": 487,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 41,
       "evidence_sha256": "sha256:66a431e68a49b73456f45b1f9e0fbaa924339ae1c01bf26485b79789c0c73692",
-      "line": 487,
+      "line": 489,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 27,
       "evidence_sha256": "sha256:a2c98f529a4b4a8a31053c201445c1a7da3533f78fc33be9c194dfbab3bbb09f",
-      "line": 496,
+      "line": 498,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 31,
       "evidence_sha256": "sha256:ee9a7174f2a12a86efc92f2879e6c33c02aa41697cf3d3a67c0bfa2c42abdcc1",
-      "line": 500,
+      "line": 502,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 42,
       "evidence_sha256": "sha256:959c30939cbd9db3ec6bd7060597ef8e61c516449744136d32d46520951af0a5",
-      "line": 501,
+      "line": 503,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 21,
       "evidence_sha256": "sha256:30fc8f68a2e25f3ac797411b34e8e44f2785edbab1f7a24ad1fbecdd10f270ae",
-      "line": 505,
+      "line": 507,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 27,
       "evidence_sha256": "sha256:a2c98f529a4b4a8a31053c201445c1a7da3533f78fc33be9c194dfbab3bbb09f",
-      "line": 506,
+      "line": 508,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 15,
       "evidence_sha256": "sha256:c97fe6ac8e66f61a567ebb8fdb8ba8c09f8888a0a521114041b72c0c307488e0",
-      "line": 507,
+      "line": 509,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 31,
       "evidence_sha256": "sha256:ee9a7174f2a12a86efc92f2879e6c33c02aa41697cf3d3a67c0bfa2c42abdcc1",
-      "line": 512,
+      "line": 514,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 27,
       "evidence_sha256": "sha256:147c7770a9a2695742a12688f47edce0e0431c3c058bdaac0f80476a6aa26430",
-      "line": 517,
+      "line": 519,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 35,
       "evidence_sha256": "sha256:948ea94b9902336d50c612787639af9036c7f1fcc63643955b91bbda7fee96cf",
-      "line": 518,
+      "line": 520,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 34,
       "evidence_sha256": "sha256:72471fe05a8b73e6cd39a73bf757382dc38f5814574c90f6c31e285f1f0b6b27",
-      "line": 519,
+      "line": 521,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 32,
       "evidence_sha256": "sha256:f6b6d9080f2ed7343aee7589998dd0fb0f3beca6fad7dcd22e91c2a7ea667f84",
-      "line": 520,
+      "line": 522,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 36,
       "evidence_sha256": "sha256:9948dbee6d99cce673460ece0634714a43568338cea37fa46b2d8f25663a18c6",
-      "line": 521,
+      "line": 523,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 21,
       "evidence_sha256": "sha256:30fc8f68a2e25f3ac797411b34e8e44f2785edbab1f7a24ad1fbecdd10f270ae",
-      "line": 525,
+      "line": 527,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 20,
       "evidence_sha256": "sha256:b84ca8701f9f0262853b619adba137ac2899566bf8a6b250c3ebb264e29ff356",
-      "line": 526,
+      "line": 528,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 14,
       "evidence_sha256": "sha256:776ad54a25ecf6cbc19d7766888e78c9bfa7085d35ed8acbd9fe2997c8793a4a",
-      "line": 527,
+      "line": 529,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 39,
       "evidence_sha256": "sha256:a760a04c96a4f2aab0d78000dd7a508e514747a075d90114916b23a395aaa615",
-      "line": 531,
+      "line": 533,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 21,
       "evidence_sha256": "sha256:30fc8f68a2e25f3ac797411b34e8e44f2785edbab1f7a24ad1fbecdd10f270ae",
-      "line": 535,
+      "line": 537,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 20,
       "evidence_sha256": "sha256:b84ca8701f9f0262853b619adba137ac2899566bf8a6b250c3ebb264e29ff356",
-      "line": 536,
+      "line": 538,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 34,
       "evidence_sha256": "sha256:72471fe05a8b73e6cd39a73bf757382dc38f5814574c90f6c31e285f1f0b6b27",
-      "line": 537,
+      "line": 539,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 14,
       "evidence_sha256": "sha256:776ad54a25ecf6cbc19d7766888e78c9bfa7085d35ed8acbd9fe2997c8793a4a",
-      "line": 538,
-      "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
-      "rule_id": "state.public_mutable_field"
-    },
-    {
-      "column": 39,
-      "evidence_sha256": "sha256:a760a04c96a4f2aab0d78000dd7a508e514747a075d90114916b23a395aaa615",
       "line": 540,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
+      "column": 39,
+      "evidence_sha256": "sha256:a760a04c96a4f2aab0d78000dd7a508e514747a075d90114916b23a395aaa615",
+      "line": 542,
+      "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
       "column": 21,
       "evidence_sha256": "sha256:30fc8f68a2e25f3ac797411b34e8e44f2785edbab1f7a24ad1fbecdd10f270ae",
-      "line": 549,
+      "line": 551,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 17,
       "evidence_sha256": "sha256:bab9149614f612a1513a280636aa6e76fdc73f4626b22a549f8f54ba5c99fc58",
-      "line": 550,
+      "line": 552,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 39,
       "evidence_sha256": "sha256:a760a04c96a4f2aab0d78000dd7a508e514747a075d90114916b23a395aaa615",
-      "line": 553,
+      "line": 555,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 21,
       "evidence_sha256": "sha256:30fc8f68a2e25f3ac797411b34e8e44f2785edbab1f7a24ad1fbecdd10f270ae",
-      "line": 557,
+      "line": 559,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 19,
       "evidence_sha256": "sha256:cfe80b24a6d8acb11679efea4000b63fe1b7dc13edd8633d9cd83f0d22ddbeec",
-      "line": 558,
+      "line": 560,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 21,
       "evidence_sha256": "sha256:30fc8f68a2e25f3ac797411b34e8e44f2785edbab1f7a24ad1fbecdd10f270ae",
-      "line": 562,
+      "line": 564,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 17,
       "evidence_sha256": "sha256:bab9149614f612a1513a280636aa6e76fdc73f4626b22a549f8f54ba5c99fc58",
-      "line": 563,
+      "line": 565,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 21,
       "evidence_sha256": "sha256:30fc8f68a2e25f3ac797411b34e8e44f2785edbab1f7a24ad1fbecdd10f270ae",
-      "line": 567,
+      "line": 569,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 17,
       "evidence_sha256": "sha256:bab9149614f612a1513a280636aa6e76fdc73f4626b22a549f8f54ba5c99fc58",
-      "line": 568,
+      "line": 570,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 21,
       "evidence_sha256": "sha256:30fc8f68a2e25f3ac797411b34e8e44f2785edbab1f7a24ad1fbecdd10f270ae",
-      "line": 572,
+      "line": 574,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 19,
       "evidence_sha256": "sha256:cfe80b24a6d8acb11679efea4000b63fe1b7dc13edd8633d9cd83f0d22ddbeec",
-      "line": 573,
+      "line": 575,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 21,
       "evidence_sha256": "sha256:30fc8f68a2e25f3ac797411b34e8e44f2785edbab1f7a24ad1fbecdd10f270ae",
-      "line": 577,
+      "line": 579,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 20,
       "evidence_sha256": "sha256:b84ca8701f9f0262853b619adba137ac2899566bf8a6b250c3ebb264e29ff356",
-      "line": 578,
+      "line": 580,
       "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
       "rule_id": "state.public_mutable_field"
     },
@@ -69261,210 +69296,210 @@
     {
       "column": 13,
       "evidence_sha256": "sha256:7f15d31a724558c2e34e35fc096c1326948ce8cda70c58a91f7d3b3bbf4c1862",
-      "line": 95,
+      "line": 96,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 36,
       "evidence_sha256": "sha256:a436539c24c6c6d8d1d2017a2f9590f462bad47f5847d084dc47450815f2dd56",
-      "line": 99,
+      "line": 100,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 36,
       "evidence_sha256": "sha256:f52bb5da28d67ff555a45ceafc0ac116f6565602fe697aae10926cec82b6f273",
-      "line": 322,
+      "line": 323,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 56,
       "evidence_sha256": "sha256:f5462081faf6c54d30d6e4b1bd84b4aeec99ebe04ae736c3f514e9e6f879b3ce",
-      "line": 323,
+      "line": 324,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 38,
       "evidence_sha256": "sha256:0b27ec20c079fc571369659098df4c89030a715b4ae61ac71df842825c23d07c",
-      "line": 324,
+      "line": 325,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 31,
       "evidence_sha256": "sha256:b4b0f3b9a79fd2bd59adaf6f8f6ce21b7a03e9b9463ec0e59b19098157398aa7",
-      "line": 325,
+      "line": 326,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 16,
       "evidence_sha256": "sha256:5dc4a7ab1333633db0e9f7331ad10d9f46d84481ea04f7eaac6aeacb4cfd3ac8",
-      "line": 326,
+      "line": 327,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 33,
       "evidence_sha256": "sha256:1a8dfb4bb81ccce3afe59fe51e9a74f4a75cf99be1e16439330e4ca44017c741",
-      "line": 334,
+      "line": 335,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 30,
       "evidence_sha256": "sha256:e31896434c0c95b223fd76288b84b81d4334e91ee34cb4c4da17b4c44767b99b",
-      "line": 340,
+      "line": 341,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 43,
       "evidence_sha256": "sha256:3ec5ec44d8ca81f3c808a3133314df45cf78fc674528f3ac5776266fa358fc54",
-      "line": 341,
+      "line": 342,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 33,
       "evidence_sha256": "sha256:fabdde5e87959d34cfe07efdbff8833672881dc09b7de3f9d14f0bb3bdd8651c",
-      "line": 346,
+      "line": 347,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 34,
       "evidence_sha256": "sha256:f6e4c8c7d1ba609a3a99e32ea6db2834d4b92df1615b4faac8e2a04306f68f8f",
-      "line": 347,
+      "line": 348,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 30,
       "evidence_sha256": "sha256:7da36a853508620c3a28c0867435f3869f90cb9736472d37db972a48c6f727ef",
-      "line": 348,
+      "line": 349,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 16,
       "evidence_sha256": "sha256:a5eb982a054f904fd1fced603c29ef45763a533dd962ec909cca6f1c5d353a89",
-      "line": 349,
+      "line": 350,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 33,
       "evidence_sha256": "sha256:f6e4c8c7d1ba609a3a99e32ea6db2834d4b92df1615b4faac8e2a04306f68f8f",
-      "line": 363,
+      "line": 364,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 29,
       "evidence_sha256": "sha256:7da36a853508620c3a28c0867435f3869f90cb9736472d37db972a48c6f727ef",
-      "line": 364,
+      "line": 365,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 28,
       "evidence_sha256": "sha256:0bfd94f5789540aeb535341285ff0e23c77d6c536b2008ab073db974f0e1656f",
-      "line": 365,
+      "line": 366,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 27,
       "evidence_sha256": "sha256:824861f183e3bdda61f28174c677a9d7c2bc7d4441c8c8e13a25a8acee52acb7",
-      "line": 366,
+      "line": 367,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 15,
       "evidence_sha256": "sha256:a5eb982a054f904fd1fced603c29ef45763a533dd962ec909cca6f1c5d353a89",
-      "line": 375,
+      "line": 376,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 29,
       "evidence_sha256": "sha256:6ab483a889efb05ae1019ef3fa54b1af0db68ce02de0aacd116d55d093bd5b24",
-      "line": 379,
+      "line": 380,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 34,
       "evidence_sha256": "sha256:c9f626fcd8a56375eac66f60bb042571fcb07b53d82f6ba2e72c298e684d8334",
-      "line": 384,
+      "line": 385,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 22,
       "evidence_sha256": "sha256:67cffc81a8609732cab5de4ed81624f8a1c02a566b8c6056a4c37d46144435a4",
-      "line": 385,
+      "line": 386,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 20,
       "evidence_sha256": "sha256:ee6f4fcae18cd9c0ac0a88b4b10cfcfc9a015320d55ed96252011b7b96cae031",
-      "line": 386,
+      "line": 387,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 23,
       "evidence_sha256": "sha256:9f313980def85547874c1ccd8a00d35c8116be9a2f9e901b9c3f87a39fa78cdc",
-      "line": 387,
+      "line": 388,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 28,
       "evidence_sha256": "sha256:942b4c1ebf7958b2430d6398e9149f4906da257ccf3ba60a2a56cc010bee30b7",
-      "line": 391,
+      "line": 392,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 29,
       "evidence_sha256": "sha256:66f1e38a86ad4128deedf23cc55b26e9d5f6dffbaa8d2b7bdf98b66f4149c45f",
-      "line": 392,
+      "line": 393,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 61,
       "evidence_sha256": "sha256:065ed1157d81328447a5bebb5aa471e88241789b1f68b04e13be0efa02531ef9",
-      "line": 399,
+      "line": 400,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 15,
       "evidence_sha256": "sha256:5d0a1c8ad885cb03cbc72ac5cc80ebcd92f6b2ed6ee10cad49de62c3407a6181",
-      "line": 400,
+      "line": 401,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 30,
       "evidence_sha256": "sha256:f3bff6cee966e2a587f1d99eae614cd12e42e8b920223cad97935590bbcf7bec",
-      "line": 486,
+      "line": 487,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 30,
       "evidence_sha256": "sha256:2c4bf4db39b79785b6ba2469fc0ada9b091d39c5725d0755b86d5a79212f0c0e",
-      "line": 522,
+      "line": 523,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
@@ -70057,44 +70092,51 @@
       "rule_id": "state.public_mutable_field"
     },
     {
+      "column": 30,
+      "evidence_sha256": "sha256:9e5985697edf540ab3b2b58ceda188bd758277b60f3e12ca1666572ffa8006b9",
+      "line": 103,
+      "path": "sakura_core/terminal/window/TerminalTabManager.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
       "column": 27,
       "evidence_sha256": "sha256:fe95dad0775717dca4242e81c4e23b379c7236fae8c98e2426a3a43ecebf4ccf",
-      "line": 106,
+      "line": 108,
       "path": "sakura_core/terminal/window/TerminalTabManager.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 25,
       "evidence_sha256": "sha256:372670eb9c144e435d4183383bc5ef7a64caa080d40cb0dd9898192a2a4079ac",
-      "line": 132,
+      "line": 134,
       "path": "sakura_core/terminal/window/TerminalTabManager.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 25,
       "evidence_sha256": "sha256:96100a5072289b6dcac161085fafacf7fe3a0bd0d0763bfc38af7e2781fa254d",
-      "line": 133,
+      "line": 135,
       "path": "sakura_core/terminal/window/TerminalTabManager.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 43,
       "evidence_sha256": "sha256:602fcd4d8fc7089c50b838df4b59599c7f41c4b1c23243b26a028a5933484223",
-      "line": 137,
+      "line": 139,
       "path": "sakura_core/terminal/window/TerminalTabManager.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 56,
       "evidence_sha256": "sha256:85ba42174c14b0011bcc718265bfa4ff11705eee35cf596abd92ab7dd1c5f982",
-      "line": 140,
+      "line": 142,
       "path": "sakura_core/terminal/window/TerminalTabManager.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 33,
       "evidence_sha256": "sha256:8ccdf5fdab5fef8b5a69b360fc671e6a0bbbe5675243b5b1913ad3b244a2b4ba",
-      "line": 141,
+      "line": 143,
       "path": "sakura_core/terminal/window/TerminalTabManager.h",
       "rule_id": "state.public_mutable_field"
     },
@@ -96854,10 +96896,10 @@
       }
     },
     "filtered_test_hint_count": 2,
-    "finding_count": 13740,
+    "finding_count": 13746,
     "finding_count_by_rule": {
-      "boundary.private_include": 72,
-      "boundary.win32_type": 4901,
+      "boundary.private_include": 73,
+      "boundary.win32_type": 4904,
       "error.catch_all": 707,
       "global.get_dll_share_data": 705,
       "global.get_edit_doc": 7,
@@ -96866,19 +96908,19 @@
       "memory.raw_new": 248,
       "resource.stop_required_acquisition": 264,
       "state.mutable_member": 134,
-      "state.public_mutable_field": 6100,
+      "state.public_mutable_field": 6102,
       "state.raw_pointer_member": 21,
       "test.filtered_or_skipped": 2
     },
-    "include_directive_count": 11942,
+    "include_directive_count": 11947,
     "monolith_link_hint_count": 0,
-    "private_include_mention_count": 72,
+    "private_include_mention_count": 73,
     "raw_delete_expression_count": 321,
     "raw_new_expression_count": 248,
     "source_file_count": 1857,
-    "source_line_count": 569095,
+    "source_line_count": 569506,
     "tracked_file_count": 1905,
-    "win32_parameter_mention_count": 4901
+    "win32_parameter_mention_count": 4904
   },
   "rule_catalog": [
     {
@@ -97033,8 +97075,8 @@
     ]
   },
   "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
-  "source_commit": "1e78fd2225ba256158af761643e9d2f198e9d053",
-  "source_fingerprint": "sha256:3525735ab49c3d8c36fec3aa4bedcf71ec7c2035edc45282a50acaf3d42c611b",
+  "source_commit": "d5022fde71d5ced18db00cfa866bca4e388d5b2e",
+  "source_fingerprint": "sha256:dcf219cb92ecbab6d5bbaaec3bc44a19ed2dad3c4894e8e30f4a749173ace79e",
   "tracked_source_paths": [
     ".github/actions/bootstrap-vcpkg/action.yml",
     ".github/dependabot.yml",
