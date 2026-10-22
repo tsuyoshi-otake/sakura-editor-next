@@ -367,6 +367,10 @@ TEST(ExplorerTool, ProductionWorkerEnumeratesOnlyExpandedDirectoriesAndStopsOnCl
 	EXPECT_FALSE(IsExpanded(tree, childItem));
 
 	tool.Close();
+	// Close hands the worker to bounded asynchronous retirement.
+	EXPECT_TRUE(PumpMessagesUntil([&] {
+		return tool.GetWorkerState() == workbench::explorer::ExplorerWorkerState::Stopped;
+	}, std::chrono::seconds(2)));
 	EXPECT_EQ(workbench::explorer::ExplorerWorkerState::Stopped, tool.GetWorkerState());
 	::DestroyWindow(parent);
 }
@@ -714,6 +718,10 @@ TEST(ExplorerTool, ProductionWorkerRejectsOldRootsAndDebouncesDirectoryChanges)
 	}, std::chrono::seconds(15)));
 
 	tool.Close();
+	// Close hands the worker to bounded asynchronous retirement.
+	EXPECT_TRUE(PumpMessagesUntil([&] {
+		return tool.GetWorkerState() == workbench::explorer::ExplorerWorkerState::Stopped;
+	}, std::chrono::seconds(2)));
 	EXPECT_EQ(workbench::explorer::ExplorerWorkerState::Stopped, tool.GetWorkerState());
 	::DestroyWindow(parent);
 }
