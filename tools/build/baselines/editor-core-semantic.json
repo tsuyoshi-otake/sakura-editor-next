@@ -33582,91 +33582,84 @@
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 404,
+      "line": 408,
       "path": "src/test/cpp/tests1/workbench/ExplorerToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 410,
+      "line": 414,
       "path": "src/test/cpp/tests1/workbench/ExplorerToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 413,
+      "line": 417,
       "path": "src/test/cpp/tests1/workbench/ExplorerToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 464,
+      "line": 468,
       "path": "src/test/cpp/tests1/workbench/ExplorerToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 480,
+      "line": 484,
       "path": "src/test/cpp/tests1/workbench/ExplorerToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 541,
+      "line": 545,
       "path": "src/test/cpp/tests1/workbench/ExplorerToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 549,
+      "line": 553,
       "path": "src/test/cpp/tests1/workbench/ExplorerToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 574,
+      "line": 578,
       "path": "src/test/cpp/tests1/workbench/ExplorerToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 579,
+      "line": 583,
       "path": "src/test/cpp/tests1/workbench/ExplorerToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 628,
+      "line": 632,
       "path": "src/test/cpp/tests1/workbench/ExplorerToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 636,
+      "line": 640,
       "path": "src/test/cpp/tests1/workbench/ExplorerToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 659,
-      "path": "src/test/cpp/tests1/workbench/ExplorerToolTest.cpp",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 8,
-      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 684,
+      "line": 663,
       "path": "src/test/cpp/tests1/workbench/ExplorerToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
@@ -33674,6 +33667,13 @@
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
       "line": 688,
+      "path": "src/test/cpp/tests1/workbench/ExplorerToolTest.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 8,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 692,
       "path": "src/test/cpp/tests1/workbench/ExplorerToolTest.cpp",
       "rule_id": "boundary.win32_type"
     },
@@ -96918,7 +96918,7 @@
     "raw_delete_expression_count": 321,
     "raw_new_expression_count": 248,
     "source_file_count": 1857,
-    "source_line_count": 569510,
+    "source_line_count": 569518,
     "tracked_file_count": 1905,
     "win32_parameter_mention_count": 4904
   },
@@ -97075,8 +97075,8 @@
     ]
   },
   "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
-  "source_commit": "47a66811dae34dcd4e8cd4182e769bcc3414fbbe",
-  "source_fingerprint": "sha256:7cbc360f75739df704023dfaa93dd6bae0284749ab12ccc44919d3b598b11be6",
+  "source_commit": "999a21c23eca6804f9c8c15c5161870d77ac2528",
+  "source_fingerprint": "sha256:44b2855109da86c6f93fea4a8d1af4b0271cc9ea5fb8f757e43dfad158635b57",
   "tracked_source_paths": [
     ".github/actions/bootstrap-vcpkg/action.yml",
     ".github/dependabot.yml",
