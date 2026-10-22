@@ -278,6 +278,7 @@ class CiRustNativeWorkflowContractTests(unittest.TestCase):
         # must delete its entry here and its IDs there.
         exceptions = {
             ("wasmtime", "49.0.2", "#330"): [f"RUSTSEC-2026-{number:04d}" for number in range(353, 365)],
+            ("wasmtime", "49.0.2", "#368"): ["RUSTSEC-2026-0378", "RUSTSEC-2026-0379"],
             ("zip", "5.1.1", "#335"): ["RUSTSEC-2026-0367", "RUSTSEC-2026-0368", "RUSTSEC-2026-0369"],
         }
         config = tomllib.loads((REPO_ROOT / ".cargo/audit.toml").read_text(encoding="utf-8"))

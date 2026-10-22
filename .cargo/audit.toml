@@ -27,6 +27,14 @@ ignore = [
     "RUSTSEC-2026-0362",
     "RUSTSEC-2026-0363",
     "RUSTSEC-2026-0364",
+    # wasmtime 49.0.2 (#368, approved 2026-10-22). 49.0.4 fixes both but is
+    # younger than the three-day minimum release age until 2026-10-22T19:15Z.
+    # 0379 affects only the aarch64 Cranelift backend; SENP compiles hosts for
+    # x86_64-pc-windows-msvc only. 0378 lowers component-model streams, which
+    # wasmtime compiles only with component-model-async; no SENP crate enables
+    # it. Neither is reachable.
+    "RUSTSEC-2026-0378",
+    "RUSTSEC-2026-0379",
     # zip 5.1.1 (#335, approved 2026-10-17). All three concern extract() and
     # Unix permission bits. SENP never calls extract(): it reads entries into
     # memory, rejects every entry that is not a regular file, and runs on
