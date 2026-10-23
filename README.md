@@ -15,68 +15,92 @@
 <p align="center">
   <a href="#ダウンロード">ダウンロード</a> ・
   <a href="#主な特徴">主な特徴</a> ・
-  <a href="#起動パフォーマンス">起動パフォーマンス</a> ・
   <a href="#基本操作">基本操作</a> ・
-  <a href="#ビルド">ビルド</a> ・
+  <a href="#terminal">Terminal</a> ・
+  <a href="#gitgithub-機能">Git・GitHub</a> ・
+  <a href="#拡張機能senp">拡張機能</a> ・
   <a href="#プロジェクト情報">プロジェクト情報</a>
 </p>
 
 ## ダウンロード
 
 > [!IMPORTANT]
-> Sakura Editor NEXT は **Windows 11 build 22000 以降の x64 環境専用**です。x86 版および Windows 10 はサポートしません。
+> Sakura Editor NEXT は **Windows 11 build 22000 以降の x64 環境専用**です。x86 版および Windows 10 はサポートしません。CPU は AVX に対応している必要があります。
 
 | 種類 | 入手先 | 内容 |
 | --- | --- | --- |
 | 開発版 | [GitHub Actions](https://github.com/tsuyoshi-otake/sakura-editor-next/actions/workflows/build-sakura.yml?query=branch%3Amain) | `main` の最新ビルド |
 | リリース版 | [Releases](https://github.com/tsuyoshi-otake/sakura-editor-next/releases) | 公開済みの配布パッケージ |
 
+ソースからビルドする場合は [CONTRIBUTING.md](./CONTRIBUTING.md) を参照してください。
+
 ## 主な特徴
 
-- **ネイティブワークベンチ** — 左の Explorer、右の Outline、下の統合 Terminal を 1 つのウィンドウにまとめています。
-- **必要なときだけ起動する Terminal** — 新規プロファイルでは Explorer と Outline を表示し、Terminal は初めて使うまで起動しません。
+- **VS Code と同じワークベンチ構成** — Activity Bar、Primary Side Bar、エディター、Panel、Secondary Side Bar を 1 つのウィンドウにまとめています。
+  - **Primary Side Bar**（既定で表示、左）: Activity Bar のアイコンで Explorer、Search、Source Control、Extensions を切り替えます。既定でインストール済みの組み込み拡張機能の Projects、GitHub（Pull Requests／Issues）、GitHub Actions のアイコンも並びます。Outline は Explorer の中の View で、独立した Side Bar ではありません。
+  - **Panel**（既定で非表示、下）: Problems、Output、Terminal を切り替えます。
+  - **Secondary Side Bar**（既定で非表示、右）: 既定では空です。Activity Bar のアイコンまたは Side Bar のタイトルをドラッグして、コンテナーを移動できます。
+- **必要なときだけ起動する Terminal** — Terminal は初めて使うまで起動しません。
+- **コマンドパレット** — <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> で開きます。
+- **言語の自動判定** — ファイル名、ファイル名パターン、拡張子の順に判定し、どれにも一致しないときだけ先頭行を使います。VS Code の言語関連付けと同じ優先順位です。
+- **複数ウィンドウ** — エディターウィンドウは同時に 16 個まで開けます。17 個目は起動に失敗します。
 - **サクラエディタ由来の編集基盤** — 実績ある編集機能を引き継ぎながら、Windows 11 向けの x64 ネイティブアプリとして発展させています。
-
-## 起動パフォーマンス
-
-x64 Release 版は、AVX を最小要件とする単一の `sakura.exe` です。起動時に CPU と
-Windows の拡張状態を一度だけ確認し、AVX、AVX2、AVX-512F/BW のうち利用可能な
-最上位の実装へ処理を固定します。ISA ごとに別の実行ファイルを選ぶ必要はありません。
-
-2026-07-30 に Windows 11 Pro build 26200、AMD Ryzen 7 9700X、61.6 GiB RAM、
-x64 Release 版を使い、1,249,037 bytes の Markdown ファイルを各条件 5 回起動した結果は
-次のとおりです。
-
-| 条件 | ウィンドウ表示の中央値 | 文書準備完了の中央値 |
-| --- | ---: | ---: |
-| 新規プロファイル | 448.883 ms | 295.653 ms |
-| 作成済みプロファイル | 420.607 ms | 274.413 ms |
-
-この環境では全試行で AVX-512F/BW が選択されました。CPU・OS 判定と関数ディスパッチの
-初期化時間は、プロセス当たり中央値 0.0025 ms、範囲 0.0019–0.0098 ms でした。
+- **起動時の CPU 最適化** — x64 Release 版は単一の `sakura.exe` で、起動時に AVX、AVX2、AVX-512F/BW のうち使える最上位の実装を一度だけ選びます。
 
 > [!NOTE]
-> 上記は同一マシンのウォームファイルキャッシュ条件で得た開発時の参考値であり、性能保証ではありません。
-> 「文書準備完了」は全文レイアウトがスクロール範囲へ反映されたことを外部から確認した時点です。
-> 測定方法と指標の定義は [起動パフォーマンスの比較計測](./tools/startup-performance.md) を参照してください。
+> Run and Debug、Ports、Debug Console、Remote Development は未対応です。
 
 ## 基本操作
 
 | 操作 | ショートカット |
 | --- | --- |
-| 左パネルの表示／非表示 | <kbd>Ctrl</kbd>+<kbd>B</kbd> |
-| 下パネルの表示／非表示 | <kbd>Ctrl</kbd>+<kbd>J</kbd> |
+| Primary Side Bar の表示／非表示 | <kbd>Ctrl</kbd>+<kbd>B</kbd> |
+| Panel の表示／非表示 | <kbd>Ctrl</kbd>+<kbd>J</kbd> |
+| Secondary Side Bar の表示／非表示 | <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>B</kbd> |
+| コマンドパレット | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> |
+| Extensions を開く | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>X</kbd> |
 | Terminal の表示／フォーカス | <kbd>Ctrl</kbd>+<kbd>@</kbd>（英語配列では <kbd>Ctrl</kbd>+<kbd>&#96;</kbd>） |
-| Terminal への貼り付け | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd>（右クリックでも可） |
+| 最近開いた項目（Open Recent） | <kbd>Ctrl</kbd>+<kbd>R</kbd> |
+| エディターを閉じる | <kbd>Ctrl</kbd>+<kbd>W</kbd> |
+| Markdown プレビューの切り替え（Terminal では貼り付け） | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> |
+| Markdown プレビューを横に開く | <kbd>Ctrl</kbd>+<kbd>K</kbd> のあとに <kbd>V</kbd> |
+| フォルダーを開く | <kbd>Ctrl</kbd>+<kbd>K</kbd> のあとに <kbd>Ctrl</kbd>+<kbd>O</kbd> |
+| すべて保存 | <kbd>Ctrl</kbd>+<kbd>K</kbd> のあとに <kbd>S</kbd> |
+| フォルダーを閉じる | <kbd>Ctrl</kbd>+<kbd>K</kbd> のあとに <kbd>F</kbd> |
+| 表示の拡大／縮小／リセット | <kbd>Ctrl</kbd>+<kbd>+</kbd> ／ <kbd>Ctrl</kbd>+<kbd>-</kbd> ／ <kbd>Ctrl</kbd>+<kbd>0</kbd> |
 
-統合 Terminal は、ユーザーが指定したプロファイルを最優先します。指定がない場合はインストール済みの安定版 PowerShell から最も新しいものを選び、PowerShell 7 がない環境では Windows PowerShell 5.1 にフォールバックします。ネットワークへの問い合わせや自動インストールは行いません。
+- <kbd>Ctrl</kbd>+<kbd>K</kbd> を押したあと、5 秒以内に次のキーを押してください。
+- Terminal にフォーカスがあるときは、<kbd>Ctrl</kbd>+<kbd>B</kbd>、<kbd>Ctrl</kbd>+<kbd>J</kbd>、<kbd>Ctrl</kbd>+<kbd>R</kbd>、<kbd>Ctrl</kbd>+<kbd>W</kbd>、<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>X</kbd> など一部のショートカットはワークベンチではなくシェルに送られます。先にエディターや Explorer へフォーカスを戻してから押してください。一方、<kbd>Ctrl</kbd>+<kbd>K</kbd> で始まる連続キー、<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>、表示の拡大／縮小／リセットは、Terminal にフォーカスがあってもワークベンチが処理します。
 
-### Git・GitHub 機能
+## Terminal
 
-GitHub 関連の画面で `Unsupported`、Git／GitHub CLI 未検出、サインイン要求などが表示された場合は、[Git・GitHub 機能のトラブルシューティング](./docs/user/git-github-cli-troubleshooting.md)で原因と確認方法を確認できます（[English](./docs/user/git-github-cli-troubleshooting.en.md)・[简体中文](./docs/user/git-github-cli-troubleshooting.zh-CN.md)）。
-ソース管理で Git 未検出が確定した場合は画面内の［詳細］から、GitHub 関連ビューでは［詳細］から同じガイドを開けます。
+Panel の Terminal は、次の順でシェルを選びます。
 
-### Terminal への画像貼り付け
+1. ユーザーが指定したプロファイル
+2. インストール済みの安定版 PowerShell のうち最も新しいもの
+3. Windows PowerShell 5.1（PowerShell 7 がない環境）
+
+ネットワークへの問い合わせや自動インストールは行いません。
+
+### キーボードとマウス
+
+| 操作 | 動作 |
+| --- | --- |
+| <kbd>Ctrl</kbd>+<kbd>C</kbd> | 選択範囲があればコピーして選択を解除します。なければ割り込み（`^C`）をシェルへ送ります |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd>、<kbd>Ctrl</kbd>+<kbd>Insert</kbd> | 選択範囲をコピーします。`^C` はシェルへ送られません |
+| <kbd>Ctrl</kbd>+<kbd>V</kbd>、<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd>、<kbd>Shift</kbd>+<kbd>Insert</kbd> | 貼り付けます |
+| 右クリック | 選択範囲があればコピーして選択を解除します。なければ貼り付けます |
+| <kbd>Shift</kbd>+右クリック | TUI アプリがマウス操作を受け取っているときでも、右クリックと同じコピー／貼り付けを行います |
+| ダブルクリック | 単語を選択します。区切り文字は VS Code の既定値で、変更はできません |
+| <kbd>Ctrl</kbd>+クリック | カーソル下の `http://`／`https://` の URL を開きます |
+
+Claude Code のように TUI アプリがマウス操作を受け取っているとき、<kbd>Shift</kbd> なしの右クリックはアプリへ渡されます。TUI アプリが OSC 52 でクリップボードへ書き込む操作には対応していますが、クリップボードの読み取り要求には応答しません。
+
+### 既定で有効な GNU Screen 風のプレフィックス
+
+Terminal のメニュー［ショートカット］は、既定で「GNU Screen (Ctrl+A)」です。このため <kbd>Ctrl</kbd>+<kbd>A</kbd> は Terminal が受け取り、readline の行頭移動は届きません。<kbd>Ctrl</kbd>+<kbd>A</kbd> を 2 回押すと `^A` をシェルへ送ります。以前の動作に戻すには、［ショートカット］から「なし」を選びます。「tmux (Ctrl+B)」も選べます。
+
+### 画像の貼り付け
 
 クリップボードに画像だけがあるとき（Win+Shift+S のスクリーンショットなど）、Terminal への貼り付けは PNG を一時保存し、その絶対パスを入力します。Claude Code、Codex、Cursor CLI など、画像を**ファイルパス**として受け取るツール向けの動作です。
 
@@ -88,41 +112,31 @@ GitHub 関連の画面で `Unsupported`、Git／GitHub CLI 未検出、サイン
 
 Stock の VS Code 統合 Terminal にはない Sakura 独自の補助機能です。
 
+## Git・GitHub 機能
+
+表示や接続に問題があるときは、[Git・GitHub 機能のトラブルシューティング](./docs/user/git-github-cli-troubleshooting.md)で原因と確認方法を確認できます（[English](./docs/user/git-github-cli-troubleshooting.en.md)・[简体中文](./docs/user/git-github-cli-troubleshooting.zh-CN.md)）。
+
+- **Source Control** — Git が見つからないと、「Git が見つかりません。Git for Windows をインストールし、git.exe を PATH に追加してから Sakura Editor NEXT を再起動してください。」と表示され、［詳細］からガイドを開けます。
+- **GitHub Pull Requests／Actions の View** — 表示できない状態では、「このビューを表示できません。［拡張機能］で拡張機能の状態を確認してください。」と表示され、［詳細］からガイドを開けます。GitHub CLI が見つからないときは、この文の下に「GitHub CLI が見つかりません。導入または PATH を確認してください。」も表示されます。この 2 つの View では、［詳細］は表示できない状態のときだけ表示されます。これらの View が使う GitHub CLI はバージョン 2.93.0 だけです。
+- **Accounts メニュー** — Accounts（既定の縦型 Activity Bar では下部）には、Git の `user.name`／`user.email` と、GitHub CLI（`gh auth status`）で確認できたアカウントが表示されます。GitHub CLI は GitHub, Inc. の署名を確認できたものだけを起動します。Sakura Editor NEXT の画面にサインイン操作はありません。
+
 ## 拡張機能（SENP）
 
 Activity Bar の拡張機能アイコン、または <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>X</kbd> で Extensions View を開きます。SENP は Sakura Editor NEXT 独自のローカルパッケージ形式です。Marketplace、検索、自動更新はありません。
 
-- **組み込み拡張機能** — インデントの色分け、各言語の構文強調、Projects、GitHub Pull Requests／Actions は既定でインストール済みです。行の［アンインストール］で外し、［インストール］でネットワークなしに戻せます。
+- **組み込み拡張機能** — インデントの色分け、各言語の構文強調、Projects、GitHub Pull Requests（Issues を含む）、GitHub Actions は既定でインストール済みです。行の［アンインストール］で外し、［インストール］でネットワークなしに戻せます。
 - **開発用パッケージ** — Extensions View のタイトルメニューにある［SENP パッケージからインストール...］、または `.senp` ファイルのドラッグ＆ドロップで導入します。発行元による信頼確認がないため、確認ダイアログで［はい］を選んだときだけ有効になります。［いいえ］では無効のままインストールされます。
 - **行ごとの操作** — 組み込み以外のインストール済みパッケージには［有効化］／［無効化］と［アンインストール］が表示されます。VS Code と同じく、アンインストールは確認なしで実行されます。
 - **状態表示** — 問題のあるパッケージは、その行だけに「エラー」（読み取れない）、「互換性のないランタイム」、「このウィンドウではサポートされていません」、「競合」のいずれかが表示されます。ほかの拡張機能は影響を受けずに動作します。読み取れない行は［アンインストール］で削除できます。
-- **実行中の失敗** — インデントの色分けのように行の装飾を計算する拡張機能は、実行中に一度失敗すると、パッケージを更新するかエディターを再起動するまで停止します。VS Code のような自動再起動はありません。ほかの拡張機能の装飾は続きます。
+- **実行中の失敗** — インデントの色分けのように行の装飾を計算する拡張機能は、実行中に失敗しても自動で再起動します。5 分以内に 3 回失敗すると停止し、その理由が Extensions View の診断表示に英語で表示されます。停止した拡張機能は、パッケージを更新するかエディターを再起動すると戻ります。ほかの拡張機能の装飾は続きます。
 
 パッケージ形式と `sakura-senp-tool` の使い方は [SENP パッケージ形式](./docs/senp-package-format.md) を参照してください。
-
-## ビルド
-
-C++20 に対応した Visual Studio 2019 以降が必要です。Visual Studio 2022 では [`.vsconfig`](./.vsconfig) を使って必要なコンポーネントを導入できます。
-
-```cmd
-git clone --recursive https://github.com/tsuyoshi-otake/sakura-editor-next.git
-cd sakura-editor-next
-build-dev.bat x64 Debug
-```
-
-| 目的 | コマンド | 対象 |
-| --- | --- | --- |
-| 普段の編集・動作確認 | `build-dev.bat x64 Debug` | アプリ本体 |
-| 本体と単体テストの確認 | `build-sln.bat x64 Release` | アプリ本体と `tests1` |
-| 配布成果物の作成 | `build-all.bat x64 Release` | 本体、テスト、ヘルプ、インストーラ、ZIP |
-
-Visual Studio で [`sakura.sln`](./sakura.sln) を開くこともできます。環境構築、MinGW の実験的サポート、テスト手順などは [ビルド方法](./tools/build.md) を参照してください。
 
 ## プロジェクト情報
 
 | 項目 | リンク |
 | --- | --- |
-| コントリビュート | [CONTRIBUTING.md](./CONTRIBUTING.md) |
+| ビルド・テスト・起動計測・コントリビュート | [CONTRIBUTING.md](./CONTRIBUTING.md) |
 | セキュリティ | [GitHub Security Advisories](https://github.com/tsuyoshi-otake/sakura-editor-next/security/advisories) |
 | SENP パッケージ仕様・開発ガイド | [docs/senp-package-format.md](./docs/senp-package-format.md) |
 | 最新の変更 | [コミット履歴](https://github.com/tsuyoshi-otake/sakura-editor-next/commits/main/) ・ [Releases](https://github.com/tsuyoshi-otake/sakura-editor-next/releases) |
