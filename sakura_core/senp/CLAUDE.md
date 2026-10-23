@@ -454,8 +454,12 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   incompressible package (the largest the limits admit) install and
   same-digest repair peaked at 187 MiB committed, verify at 125 MiB and list
   at 63 MiB (measured 2026-10-18 under a real 256 MiB job). Raising an archive
-  or expansion limit requires re-measuring this cap. A job memory kill reaches the same
-  explicit terminal as any other host failure; there is no automatic restart.
+  or expansion limit requires re-measuring this cap. A job memory kill is a
+  host failure like any other: a v2 host's owner terminal has no automatic
+  restart, while a v1 host follows the crash policy below - restarted until
+  the third crash inside five minutes retires it
+  (`SenpRuntimeProcess.V1HostOverJobMemoryCapIsRetiredWithDiagnostic` drives
+  all three job kills).
 - All three launchers (v1 `HostProcess::Open`, v2 `HostConnection::Open`,
   `RunToolImpl`) share one launch-environment contract through
   `senp::detail::BuildSenpChildLaunchConfig` in `SenpChildJob.cpp`: the child's

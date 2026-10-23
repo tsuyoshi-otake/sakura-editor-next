@@ -491,10 +491,12 @@ std::optional<std::vector<IndentDecoration>> WaitDecorations(
 
 TEST_F(SenpRuntimeProcess, V1HostOverJobMemoryCapIsRetiredWithDiagnostic)
 {
-	// The fixture allocates ~768 MiB on the first `decorate`; the shared
-	// 512 MiB job cap kills it mid-exchange, so the worker's R0 terminal
-	// (diagnostic + retirement) is what must surface, like the v2
-	// memory-limit oracle in FaultyPeersCannotLeaveBlockedIoOrPendingInvocations.
+	// The fixture allocates ~768 MiB on every `decorate`; the shared 512 MiB
+	// job cap kills it mid-exchange. A job kill is a crash like any other
+	// under VS Code's policy (#364): the first two restart the host at the
+	// next boundary, the third inside five minutes retires the identity with
+	// the diagnostic. Unlike the v2 memory-limit oracle in
+	// FaultyPeersCannotLeaveBlockedIoOrPendingInvocations, a v1 host restarts.
 	V1FakeManagement management;
 	ExtensionDescriptor extension;
 	extension.id = L"ext.memory";
@@ -508,7 +510,27 @@ TEST_F(SenpRuntimeProcess, V1HostOverJobMemoryCapIsRetiredWithDiagnostic)
 	hooks.hostExecutable = (fixtures / L"senp-host-fixture.exe").native();
 	const auto service = senp::CreateWin32SenpRuntimeService(management, hooks);
 	ASSERT_TRUE(service->Start());
-	(void)service->RequestIndentDecorations(L"\tvalue", 4, 0);
+	// One line per crash, each sent only after the previous crash restarted
+	// the host: two lines in one batch would be one crash, not two. A
+	// restart is the first live host published at least two revisions after
+	// the request - the first request also opens the host, so a live host
+	// one revision later is that open, not the restart.
+	for (const auto line : { L"\tfirst", L"\tsecond" }) {
+		const auto requested = service->Snapshot().revision;
+		(void)service->RequestIndentDecorations(line, 4, 0);
+		const auto restartDeadline = Clock::now() + 12s;
+		for (;;) {
+			const auto snapshot = service->Snapshot();
+			if ((snapshot.revision >= requested + 2 && snapshot.activeHosts == 1U)
+				|| snapshot.state == ERuntimeState::ReadyWithDiagnostics
+				|| Clock::now() >= restartDeadline) break;
+			::Sleep(5);
+		}
+		const auto restarted = service->Snapshot();
+		ASSERT_EQ(restarted.state, ERuntimeState::Ready);
+		ASSERT_EQ(restarted.activeHosts, 1U);
+	}
+	(void)service->RequestIndentDecorations(L"\tthird", 4, 0);
 	const auto deadline = Clock::now() + 12s;
 	while (service->Snapshot().state != ERuntimeState::ReadyWithDiagnostics
 		&& Clock::now() < deadline) ::Sleep(5);
