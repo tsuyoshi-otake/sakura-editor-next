@@ -67,6 +67,8 @@ function Get-RequiredSourceCheckNames {
         'check-encoding',
         'MSBuild (Debug, x64)',
         'MSBuild (Release, x64)',
+        'Rust tests (Debug)',
+        'Rust tests (Release)',
         'cppcheck (x64, Release)',
         'doxygen (x64, Release)',
         'architecture-gates',
@@ -466,7 +468,7 @@ function Invoke-SourceCheckSelfTest {
     $verified = @(Resolve-RequiredSourceChecks -CheckRuns @($allSuccess) `
         -RequiredCheckNames $required -TrustedAppId $trustedAppId `
         -Repository $repository -SourceSha $sourceSha)
-    Assert-True ($verified.Count -eq 9) 'all nine trusted checks must be recorded'
+    Assert-True ($verified.Count -eq $required.Count) 'every required trusted check must be recorded'
     Assert-True (($verified.name -join '|') -eq ($required -join '|')) `
         'verified checks must retain the declared deterministic order'
 
@@ -731,7 +733,7 @@ function Invoke-SourceCheckSelfTest {
     $unrelatedResult = @(Resolve-RequiredSourceChecks -CheckRuns $withUnrelated `
         -RequiredCheckNames $required -TrustedAppId $trustedAppId `
         -Repository $repository -SourceSha $sourceSha)
-    Assert-True ($unrelatedResult.Count -eq 9) 'unrelated checks must not change the evidence set'
+    Assert-True ($unrelatedResult.Count -eq $required.Count) 'unrelated checks must not change the evidence set'
 
     Write-Host 'Resolve-ReleasePromotion source-check self-test passed.'
 }

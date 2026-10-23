@@ -2,7 +2,7 @@
 
 The resolver's ``-SelfTest`` path evaluates synthetic check runs before any
 Git, GitHub API, or filesystem output work.  These tests keep that executable
-decision and the nine recorded source contexts visible to the CI-collected
+decision and the eleven recorded source contexts visible to the CI-collected
 Python suite.
 """
 
@@ -21,6 +21,8 @@ EXPECTED_CHECKS = [
     "check-encoding",
     "MSBuild (Debug, x64)",
     "MSBuild (Release, x64)",
+    "Rust tests (Debug)",
+    "Rust tests (Release)",
     "cppcheck (x64, Release)",
     "doxygen (x64, Release)",
     "architecture-gates",
@@ -103,7 +105,7 @@ class ReleasePromotionSourceCheckTests(unittest.TestCase):
         self.assertLess(selftest_exit, self.text.index("Invoke-WebRequest"))
 
         for contract in (
-            "all nine trusted checks must be recorded",
+            "every required trusted check must be recorded",
             "no run from trusted GitHub Actions app 15368",
             "non-completed run(s)",
             "has no completed success",

@@ -119,8 +119,8 @@ class PrGateTopologyTests(unittest.TestCase):
         self.assertIn("default: false", self.build)
         self.assertEqual(
             self.build.count("github.event_name != 'pull_request' || inputs.run_native_build"),
-            4,
-            "Rust audit, MSVC vcpkg, advisory MinGW vcpkg, and MSBuild must share the caller decision",
+            5,
+            "Rust audit, MSVC vcpkg, advisory MinGW vcpkg, MSBuild, and Rust tests must share the caller decision",
         )
 
 
@@ -151,6 +151,7 @@ class PrGateTerminalTests(unittest.TestCase):
             "AUDIT_RESULT": "success",
             "VCPKG_RESULT": "success",
             "BUILD_RESULT": "success",
+            "RUST_TESTS_RESULT": "success",
             **values,
         }
         return execute_powershell(self.native_script, environment)
@@ -185,6 +186,7 @@ class PrGateTerminalTests(unittest.TestCase):
             AUDIT_RESULT="skipped",
             VCPKG_RESULT="skipped",
             BUILD_RESULT="skipped",
+            RUST_TESTS_RESULT="skipped",
         )
         self.assertEqual(docs.returncode, 0, docs.stderr)
 
@@ -196,6 +198,21 @@ class PrGateTerminalTests(unittest.TestCase):
         audit_absent = self.run_native(AUDIT_RESULT="skipped")
         self.assertNotEqual(audit_absent.returncode, 0)
         self.assertIn("Selected Rust dependency audit did not succeed", audit_absent.stderr)
+        # #375: the Cargo suites left the MSBuild job, so the gate must see
+        # their own terminal state rather than inferring it from MSBuild.
+        rust_tests_absent = self.run_native(RUST_TESTS_RESULT="skipped")
+        self.assertNotEqual(rust_tests_absent.returncode, 0)
+        self.assertIn("Selected Rust test matrix did not succeed", rust_tests_absent.stderr)
+        docs_ran_rust_tests = self.run_native(
+            PLAN_MODE="docs_only",
+            RUN_NATIVE_BUILD="false",
+            AUDIT_RESULT="skipped",
+            VCPKG_RESULT="skipped",
+            BUILD_RESULT="skipped",
+            RUST_TESTS_RESULT="success",
+        )
+        self.assertNotEqual(docs_ran_rust_tests.returncode, 0)
+        self.assertIn("unexpectedly ran native jobs", docs_ran_rust_tests.stderr)
         unsupported = self.run_native(PLAN_MODE="full_native", RUN_NATIVE_BUILD="false")
         self.assertNotEqual(unsupported.returncode, 0)
         self.assertIn("unsupported terminal state", unsupported.stderr)

@@ -726,6 +726,104 @@ jobs:
         name: Dev ${{ matrix.platform }} ${{ matrix.config }}
         path: 'sakura-*-Dev.zip'
 
+    - name: Rust candidate integration initialization (cpp production, ${{ matrix.config }})
+      if: ${{ !inputs.release_promotion }}
+      shell: pwsh
+      timeout-minutes: 5
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $test = Join-Path $env:GITHUB_WORKSPACE 'x64\${{ matrix.config }}\tests1.exe'
+        $testOutput = & $test '--gtest_filter=CpuDispatchTest.ConcurrentInitializationAndDiagnosticsAreStable' '--gtest_color=no' 2>&1
+        $testExitCode = $LASTEXITCODE
+        $testOutput | ForEach-Object { Write-Host $_ }
+        if ($testExitCode -ne 0) {
+          throw "rust initialization diagnostics failed with exit code $testExitCode."
+        }
+        $summary = $testOutput -join "`n"
+        if ($summary -notmatch '\[\s+PASSED\s+\]\s+1\s+test\.') {
+          throw 'rust initialization diagnostics did not execute exactly one test.'
+        }
+
+    - name: Rust candidate differential tests (cpp production, ${{ matrix.config }})
+      if: ${{ !inputs.release_promotion }}
+      shell: pwsh
+      timeout-minutes: 10
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $test = Join-Path $env:GITHUB_WORKSPACE 'x64\${{ matrix.config }}\tests1.exe'
+        $requiredTests = @(
+          'CpuDispatchTest.ProcessDispatchIsStable',
+          'CpuDispatchTest.DispatchDiagnosticsExposePerOperationBackendAndThresholds',
+          'CpuDispatchTest.Utf16ScannersHandleMixedMatchesAndEarliestResult',
+          'CpuDispatchTest.RustUtf16ScannersMatchReferenceAtEveryBoundary',
+          'CpuDispatchTest.RustUtf16ScannersRejectInvalidFfiSpans',
+          'CpuDispatchTest.RustUtf16ScannersMatchEveryLegalAlignment',
+          'CpuDispatchTest.RustUtf16ScannersTouchBothGuardPagesAtEveryShortLength',
+          'CpuDispatchTest.FindUtf16CharMatchesReferenceAtLengthsAndPositions'
+        )
+        $listedTests = & $test '--gtest_list_tests' '--gtest_color=no'
+        if ($LASTEXITCODE -ne 0) {
+          throw "rust gtest inventory failed with exit code $LASTEXITCODE."
+        }
+        $availableTests = [System.Collections.Generic.HashSet[string]]::new(
+          [System.StringComparer]::Ordinal
+        )
+        $suitePrefix = $null
+        foreach ($line in $listedTests) {
+          if ($line -match '^(\S.*\.)\s*(?:#.*)?$') {
+            $suitePrefix = $Matches[1]
+          } elseif ($null -ne $suitePrefix -and $line -match '^\s{2}([^\s#]+)') {
+            [void]$availableTests.Add("$suitePrefix$($Matches[1])")
+          }
+        }
+        $missingTests = @(
+          $requiredTests | Where-Object { -not $availableTests.Contains($_) }
+        )
+        if ($missingTests.Count -ne 0) {
+          throw "rust focused gtest filter contains missing tests: $($missingTests -join ', ')"
+        }
+        $filter = $requiredTests -join ':'
+        $testOutput = & $test "--gtest_filter=$filter" '--gtest_color=no' 2>&1
+        $testExitCode = $LASTEXITCODE
+        $testOutput | ForEach-Object { Write-Host $_ }
+        if ($testExitCode -ne 0) {
+          throw "rust Rust/FFI/dispatch tests failed with exit code $testExitCode."
+        }
+        $summary = $testOutput -join "`n"
+        if ($summary -notmatch "\[\s+PASSED\s+\]\s+$($requiredTests.Count)\s+tests?\.") {
+          throw "rust focused gtest run did not report all $($requiredTests.Count) required tests."
+        }
+
+    - name: Clean up Rust integration test process survivors
+      if: ${{ always() && steps.checkout.outcome == 'success' }}
+      run: .\tools\Cleanup-TestProcessSurvivors.ps1
+
+  # The Cargo suites build into rust/<workspace>/target and read nothing the
+  # MSBuild job produces; MSBuild's own Cargo invocations write under
+  # build/<platform>/<config>/rust. They ran after the headless tests in the
+  # MSBuild job and cost 749 s of MSBuild (Release, x64) on 2f1dfba35, so
+  # they run beside the MSBuild matrix instead (#375). The focused Rust/FFI
+  # checks that need tests1.exe stay in the MSBuild job.
+  rust-tests:
+    name: Rust tests
+    runs-on: *windows_runner
+    # A release promotion re-checks the main gate's required "Rust tests"
+    # results for the source SHA instead of running the suites again.
+    if: ${{ !inputs.release_promotion && (github.event_name != 'pull_request' || inputs.run_native_build) }}
+
+    strategy:
+      matrix:
+        config:
+          - Debug
+          - Release
+
+    steps:
+    ## see https://github.com/actions/checkout
+    - name: Check out the Rust workspaces
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        ref: ${{ env.CHECKOUT_REF }}
+
     - name: Prepare pinned Rust toolchain
       if: ${{ !inputs.release_promotion }}
       working-directory: rust/native
@@ -906,82 +1004,10 @@ jobs:
           throw "Rust product staticlib ($profile) failed with exit code $LASTEXITCODE."
         }
 
-    - name: Rust candidate integration initialization (cpp production, ${{ matrix.config }})
-      if: ${{ !inputs.release_promotion }}
-      shell: pwsh
-      timeout-minutes: 5
-      run: |
-        $ErrorActionPreference = 'Stop'
-        $test = Join-Path $env:GITHUB_WORKSPACE 'x64\${{ matrix.config }}\tests1.exe'
-        $testOutput = & $test '--gtest_filter=CpuDispatchTest.ConcurrentInitializationAndDiagnosticsAreStable' '--gtest_color=no' 2>&1
-        $testExitCode = $LASTEXITCODE
-        $testOutput | ForEach-Object { Write-Host $_ }
-        if ($testExitCode -ne 0) {
-          throw "rust initialization diagnostics failed with exit code $testExitCode."
-        }
-        $summary = $testOutput -join "`n"
-        if ($summary -notmatch '\[\s+PASSED\s+\]\s+1\s+test\.') {
-          throw 'rust initialization diagnostics did not execute exactly one test.'
-        }
-
-    - name: Rust candidate differential tests (cpp production, ${{ matrix.config }})
-      if: ${{ !inputs.release_promotion }}
-      shell: pwsh
-      timeout-minutes: 10
-      run: |
-        $ErrorActionPreference = 'Stop'
-        $test = Join-Path $env:GITHUB_WORKSPACE 'x64\${{ matrix.config }}\tests1.exe'
-        $requiredTests = @(
-          'CpuDispatchTest.ProcessDispatchIsStable',
-          'CpuDispatchTest.DispatchDiagnosticsExposePerOperationBackendAndThresholds',
-          'CpuDispatchTest.Utf16ScannersHandleMixedMatchesAndEarliestResult',
-          'CpuDispatchTest.RustUtf16ScannersMatchReferenceAtEveryBoundary',
-          'CpuDispatchTest.RustUtf16ScannersRejectInvalidFfiSpans',
-          'CpuDispatchTest.RustUtf16ScannersMatchEveryLegalAlignment',
-          'CpuDispatchTest.RustUtf16ScannersTouchBothGuardPagesAtEveryShortLength',
-          'CpuDispatchTest.FindUtf16CharMatchesReferenceAtLengthsAndPositions'
-        )
-        $listedTests = & $test '--gtest_list_tests' '--gtest_color=no'
-        if ($LASTEXITCODE -ne 0) {
-          throw "rust gtest inventory failed with exit code $LASTEXITCODE."
-        }
-        $availableTests = [System.Collections.Generic.HashSet[string]]::new(
-          [System.StringComparer]::Ordinal
-        )
-        $suitePrefix = $null
-        foreach ($line in $listedTests) {
-          if ($line -match '^(\S.*\.)\s*(?:#.*)?$') {
-            $suitePrefix = $Matches[1]
-          } elseif ($null -ne $suitePrefix -and $line -match '^\s{2}([^\s#]+)') {
-            [void]$availableTests.Add("$suitePrefix$($Matches[1])")
-          }
-        }
-        $missingTests = @(
-          $requiredTests | Where-Object { -not $availableTests.Contains($_) }
-        )
-        if ($missingTests.Count -ne 0) {
-          throw "rust focused gtest filter contains missing tests: $($missingTests -join ', ')"
-        }
-        $filter = $requiredTests -join ':'
-        $testOutput = & $test "--gtest_filter=$filter" '--gtest_color=no' 2>&1
-        $testExitCode = $LASTEXITCODE
-        $testOutput | ForEach-Object { Write-Host $_ }
-        if ($testExitCode -ne 0) {
-          throw "rust Rust/FFI/dispatch tests failed with exit code $testExitCode."
-        }
-        $summary = $testOutput -join "`n"
-        if ($summary -notmatch "\[\s+PASSED\s+\]\s+$($requiredTests.Count)\s+tests?\.") {
-          throw "rust focused gtest run did not report all $($requiredTests.Count) required tests."
-        }
-
-    - name: Clean up Rust integration test process survivors
-      if: ${{ always() && steps.checkout.outcome == 'success' }}
-      run: .\tools\Cleanup-TestProcessSurvivors.ps1
-
   pr-gate:
     name: Native PR Gate
     runs-on: ubuntu-latest
-    needs: [check-encoding, rust-security-audit, build-vcpkg-msvc, build]
+    needs: [check-encoding, rust-security-audit, build-vcpkg-msvc, build, rust-tests]
     if: ${{ always() && github.event_name == 'pull_request' }}
     steps:
       - name: Verify every selected terminal state
@@ -993,6 +1019,7 @@ jobs:
           AUDIT_RESULT: ${{ needs.rust-security-audit.result }}
           VCPKG_RESULT: ${{ needs.build-vcpkg-msvc.result }}
           BUILD_RESULT: ${{ needs.build.result }}
+          RUST_TESTS_RESULT: ${{ needs.rust-tests.result }}
         run: |
           if ($env:CI_PLAN_PROVIDED -ne 'true') {
             throw "Pull-request native work requires a caller-provided CI plan."
@@ -1011,11 +1038,14 @@ jobs:
             if ($env:BUILD_RESULT -ne 'success') {
               throw "Selected MSBuild matrix did not succeed: $env:BUILD_RESULT"
             }
+            if ($env:RUST_TESTS_RESULT -ne 'success') {
+              throw "Selected Rust test matrix did not succeed: $env:RUST_TESTS_RESULT"
+            }
           }
           elseif ($env:RUN_NATIVE_BUILD -eq 'false' -and $env:PLAN_MODE -eq 'docs_only') {
             $notSelected = -join ('s', 'kipped')
-            if ($env:AUDIT_RESULT -ne $notSelected -or $env:VCPKG_RESULT -ne $notSelected -or $env:BUILD_RESULT -ne $notSelected) {
-              throw "Documentation-only plan unexpectedly ran native jobs: audit=$env:AUDIT_RESULT vcpkg=$env:VCPKG_RESULT build=$env:BUILD_RESULT"
+            if ($env:AUDIT_RESULT -ne $notSelected -or $env:VCPKG_RESULT -ne $notSelected -or $env:BUILD_RESULT -ne $notSelected -or $env:RUST_TESTS_RESULT -ne $notSelected) {
+              throw "Documentation-only plan unexpectedly ran native jobs: audit=$env:AUDIT_RESULT vcpkg=$env:VCPKG_RESULT build=$env:BUILD_RESULT rust-tests=$env:RUST_TESTS_RESULT"
             }
           }
           else {
@@ -1028,3 +1058,4 @@ jobs:
           "- Rust audit: ``$env:AUDIT_RESULT``" >> $env:GITHUB_STEP_SUMMARY
           "- vcpkg: ``$env:VCPKG_RESULT``" >> $env:GITHUB_STEP_SUMMARY
           "- MSBuild: ``$env:BUILD_RESULT``" >> $env:GITHUB_STEP_SUMMARY
+          "- Rust tests: ``$env:RUST_TESTS_RESULT``" >> $env:GITHUB_STEP_SUMMARY

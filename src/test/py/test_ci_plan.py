@@ -227,7 +227,20 @@ class CiRustNativeWorkflowContractTests(unittest.TestCase):
             static_gate,
         )
 
-    def test_debug_release_rust_and_native_headless_gates_are_in_native_job(self) -> None:
+    def job(self, name: str) -> str:
+        marker = f"\n  {name}:\n"
+        self.assertEqual(
+            self.workflow.count(marker),
+            1,
+            f"expected exactly one workflow job named {name!r}",
+        )
+        start = self.workflow.index(marker) + 1
+        following = re.compile(r"^  [A-Za-z0-9_-]+:\n", re.MULTILINE).search(
+            self.workflow, start + len(marker) - 1
+        )
+        return self.workflow[start:following.start() if following else len(self.workflow)]
+
+    def test_cargo_gates_run_beside_the_native_job_that_keeps_the_headless_gate(self) -> None:
         cargo_gate = self.step("Rust tests and product staticlib (${{ matrix.config }})")
         self.assertIn("test --workspace --locked --release", cargo_gate)
         self.assertIn("test --workspace --locked --no-fail-fast", cargo_gate)
@@ -237,6 +250,40 @@ class CiRustNativeWorkflowContractTests(unittest.TestCase):
             "--target x86_64-pc-windows-msvc",
             cargo_gate,
         )
+
+        # #375: the Cargo suites build into rust/<workspace>/target and read
+        # nothing MSBuild produces, so they run in their own matrix job from
+        # the start of the workflow instead of after the native headless tests.
+        native = self.job("build")
+        rust_tests = self.job("rust-tests")
+        for name in (
+            "Prepare pinned Rust toolchain",
+            "Rust static checks (Debug matrix cell)",
+            "Rust tests and product staticlib (${{ matrix.config }})",
+        ):
+            with self.subTest(step=name):
+                self.assertIn(f"    - name: {name}\n", rust_tests)
+                self.assertNotIn(f"    - name: {name}\n", native)
+        self.assertNotIn("cargo", native)
+        self.assertNotIn("    needs:", rust_tests)
+        # The release resolver requires "Rust tests (Debug)" and "Rust tests
+        # (Release)"; a matrix job publishes "<name> (<config>)" check runs.
+        self.assertIn("    name: Rust tests\n", rust_tests)
+        self.assertIn("        config:\n          - Debug\n          - Release\n", rust_tests)
+        self.assertNotIn("platform:", rust_tests)
+        self.assertIn(
+            "if: ${{ !inputs.release_promotion && "
+            "(github.event_name != 'pull_request' || inputs.run_native_build) }}",
+            rust_tests,
+        )
+        # The focused Rust/FFI checks run tests1.exe, so they stay with the
+        # build that produced it.
+        for name in (
+            "Rust candidate integration initialization (cpp production, ${{ matrix.config }})",
+            "Rust candidate differential tests (cpp production, ${{ matrix.config }})",
+        ):
+            with self.subTest(step=name):
+                self.assertIn(f"    - name: {name}\n", native)
 
         self.assertIn("SAKURA_UTF16_BACKEND: cpp", self.workflow)
         self.assertNotIn("SAKURA_UTF16_BACKEND: rust", self.workflow)
@@ -249,14 +296,12 @@ class CiRustNativeWorkflowContractTests(unittest.TestCase):
         self.assertIn("& ctest", native_headless)
         self.assertIn("'--test-dir' 'build/${{ matrix.platform }}/CMakeTools'", native_headless)
         self.assertIn("'--timeout' '600'", native_headless)
-        self.assertLess(
-            self.workflow.index("Run headless tests"),
-            self.workflow.index("Rust tests and product staticlib"),
-        )
+        self.assertIn("    - name: Run headless tests\n", native)
         self.assertIn(
-            "needs: [check-encoding, rust-security-audit, build-vcpkg-msvc, build]",
+            "needs: [check-encoding, rust-security-audit, build-vcpkg-msvc, build, rust-tests]",
             self.workflow,
         )
+        self.assertIn("RUST_TESTS_RESULT: ${{ needs.rust-tests.result }}", self.workflow)
 
     def test_cargo_audit_uses_a_pinned_verified_official_binary(self) -> None:
         self.assertIn("  rust-security-audit:\n", self.workflow)
