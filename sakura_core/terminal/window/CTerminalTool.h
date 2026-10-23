@@ -190,6 +190,9 @@ public:
 	//! transition that never committed. Live sessions must not be present.
 	void DiscardWorkspaceProjection( std::wstring_view workspaceIdentityKey ) noexcept;
 	[[nodiscard]] HWND GetHwnd() const noexcept;
+	//! True when `message` targets a terminal instance (a pane renderer) or one of
+	//! its children: VS Code's `terminalFocus`, which the tabs list does not set.
+	[[nodiscard]] bool IsTerminalInstanceMessage( const MSG& message ) const noexcept;
 
 	static LRESULT CALLBACK WindowProc( HWND window, UINT message, WPARAM wParam, LPARAM lParam );
 

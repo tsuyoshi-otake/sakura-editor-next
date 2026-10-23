@@ -11206,9 +11206,15 @@ bool CEditWnd::PreTranslateWorkbenchMessage(MSG& message)
 		};
 		const HWND focusWindow = ::GetFocus();
 		const HWND chordFocusWindow = focusWindow != nullptr ? focusWindow : message.hwnd;
+		// The key's target, not GetFocus(), decides whether the terminal pane's own
+		// PreTranslateMessage would claim it further down this chain.
+		const workbench::editor::WorkbenchKeyFocusContext focusContext{
+			.terminalFocus = m_terminalTool != nullptr && m_terminalTool->IsTerminalInstanceMessage(message),
+		};
 		const auto input = m_workbenchKeybindingState.HandleKeyDown(
 			static_cast<std::uint32_t>(message.wParam), modifiers, ::GetTickCount64(),
 			reinterpret_cast<workbench::editor::WorkbenchKeybindingState::FocusToken>(chordFocusWindow),
+			focusContext,
 			[this](std::string_view commandId) {
 				return m_workbenchCommandRegistry != nullptr
 					&& m_workbenchCommandRegistry->Find(commandId).has_value();

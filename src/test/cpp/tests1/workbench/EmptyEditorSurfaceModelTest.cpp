@@ -64,30 +64,30 @@ TEST(WorkbenchKeybindingState, CtrlKSecondStrokesSelectTheExactStableCommands)
 	// Ctrl-up has no chord transition. Its re-press is a pass-through key-down,
 	// so Ctrl+K, Ctrl-up, Ctrl-down, Ctrl+O remains a valid VS Code chord.
 	EXPECT_EQ(EWorkbenchKeyInputDecision::BeginOrRestartChordAndConsume,
-		state.HandleKeyDown('K', controlOnly, 1000, 11, available).decision);
+		state.HandleKeyDown('K', controlOnly, 1000, 11, {}, available).decision);
 	EXPECT_EQ(EWorkbenchKeyInputDecision::PassThrough,
-		state.HandleKeyDown(0x11, controlOnly, 1001, 11, available).decision); // VK_CONTROL
+		state.HandleKeyDown(0x11, controlOnly, 1001, 11, {}, available).decision); // VK_CONTROL
 	EXPECT_TRUE(state.IsChordPending());
-	auto result = state.HandleKeyDown('O', controlOnly, 1002, 11, available);
+	auto result = state.HandleKeyDown('O', controlOnly, 1002, 11, {}, available);
 	EXPECT_EQ(EWorkbenchKeyInputDecision::ExecuteStableCommandAndConsume, result.decision);
 	EXPECT_EQ(command_ids::OpenFolder, result.commandId);
 	EXPECT_FALSE(state.IsChordPending());
 
 	EXPECT_EQ(EWorkbenchKeyInputDecision::BeginOrRestartChordAndConsume,
-		state.HandleKeyDown('K', controlOnly, 1100, 11, available).decision);
-	result = state.HandleKeyDown('S', {}, 1101, 11, available);
+		state.HandleKeyDown('K', controlOnly, 1100, 11, {}, available).decision);
+	result = state.HandleKeyDown('S', {}, 1101, 11, {}, available);
 	EXPECT_EQ(EWorkbenchKeyInputDecision::ExecuteStableCommandAndConsume, result.decision);
 	EXPECT_EQ(command_ids::SaveAll, result.commandId);
 
 	EXPECT_EQ(EWorkbenchKeyInputDecision::BeginOrRestartChordAndConsume,
-		state.HandleKeyDown('K', controlOnly, 1200, 11, available).decision);
-	result = state.HandleKeyDown('F', {}, 1201, 11, available);
+		state.HandleKeyDown('K', controlOnly, 1200, 11, {}, available).decision);
+	result = state.HandleKeyDown('F', {}, 1201, 11, {}, available);
 	EXPECT_EQ(EWorkbenchKeyInputDecision::ExecuteStableCommandAndConsume, result.decision);
 	EXPECT_EQ(command_ids::CloseFolder, result.commandId);
 
 	EXPECT_EQ(EWorkbenchKeyInputDecision::BeginOrRestartChordAndConsume,
-		state.HandleKeyDown('K', controlOnly, 1300, 11, available).decision);
-	result = state.HandleKeyDown('V', {}, 1301, 11, available);
+		state.HandleKeyDown('K', controlOnly, 1300, 11, {}, available).decision);
+	result = state.HandleKeyDown('V', {}, 1301, 11, {}, available);
 	EXPECT_EQ(EWorkbenchKeyInputDecision::ExecuteStableCommandAndConsume, result.decision);
 	EXPECT_EQ(command_ids::MarkdownShowPreviewToSide, result.commandId);
 }
@@ -99,24 +99,24 @@ TEST(WorkbenchKeybindingState, WrongModifiersAndSecondStrokesClearAndAreConsumed
 	WorkbenchKeybindingState state;
 	const auto begin = [&] {
 		EXPECT_EQ(EWorkbenchKeyInputDecision::BeginOrRestartChordAndConsume,
-			state.HandleKeyDown('K', controlOnly, 500, 1, available).decision);
+			state.HandleKeyDown('K', controlOnly, 500, 1, {}, available).decision);
 	};
 	begin();
 	EXPECT_EQ(EWorkbenchKeyInputDecision::CancelChordAndConsume,
-		state.HandleKeyDown('X', controlOnly, 501, 1, available).decision);
+		state.HandleKeyDown('X', controlOnly, 501, 1, {}, available).decision);
 	EXPECT_FALSE(state.IsChordPending());
 	begin();
 	EXPECT_EQ(EWorkbenchKeyInputDecision::CancelChordAndConsume,
-		state.HandleKeyDown('O', {}, 601, 1, available).decision);
+		state.HandleKeyDown('O', {}, 601, 1, {}, available).decision);
 	begin();
 	EXPECT_EQ(EWorkbenchKeyInputDecision::CancelChordAndConsume,
-		state.HandleKeyDown('O', { .control = true, .shift = true }, 701, 1, available).decision);
+		state.HandleKeyDown('O', { .control = true, .shift = true }, 701, 1, {}, available).decision);
 	begin();
 	EXPECT_EQ(EWorkbenchKeyInputDecision::CancelChordAndConsume,
-		state.HandleKeyDown('S', controlOnly, 801, 1, available).decision);
+		state.HandleKeyDown('S', controlOnly, 801, 1, {}, available).decision);
 	begin();
 	EXPECT_EQ(EWorkbenchKeyInputDecision::CancelChordAndConsume,
-		state.HandleKeyDown('F', { .alt = true }, 901, 1, available).decision);
+		state.HandleKeyDown('F', { .alt = true }, 901, 1, {}, available).decision);
 }
 
 TEST(WorkbenchKeybindingState, RepeatedFirstStrokeRestartsAndRenewsTheTimeout)
@@ -125,9 +125,9 @@ TEST(WorkbenchKeybindingState, RepeatedFirstStrokeRestartsAndRenewsTheTimeout)
 	WorkbenchKeybindingState state;
 	const WorkbenchKeyModifiers controlOnly{ .control = true };
 	EXPECT_EQ(EWorkbenchKeyInputDecision::BeginOrRestartChordAndConsume,
-		state.HandleKeyDown('K', controlOnly, 500, 11, available).decision);
+		state.HandleKeyDown('K', controlOnly, 500, 11, {}, available).decision);
 	EXPECT_EQ(EWorkbenchKeyInputDecision::BeginOrRestartChordAndConsume,
-		state.HandleKeyDown('K', controlOnly, 700, 11, available).decision);
+		state.HandleKeyDown('K', controlOnly, 700, 11, {}, available).decision);
 	EXPECT_FALSE(state.ExpireIfNeeded(700 + CtrlKChordState::TimeoutMs - 1));
 	EXPECT_TRUE(state.ExpireIfNeeded(700 + CtrlKChordState::TimeoutMs));
 	EXPECT_FALSE(state.IsChordPending());
@@ -139,26 +139,73 @@ TEST(WorkbenchKeybindingState, FocusCancellationAndExactDirectBindingsAreModeled
 	WorkbenchKeybindingState state;
 	const WorkbenchKeyModifiers controlOnly{ .control = true };
 	EXPECT_EQ(EWorkbenchKeyInputDecision::BeginOrRestartChordAndConsume,
-		state.HandleKeyDown('K', controlOnly, 100, 11, available).decision);
+		state.HandleKeyDown('K', controlOnly, 100, 11, {}, available).decision);
 	EXPECT_TRUE(state.CancelIfFocusChanged(12));
 	EXPECT_FALSE(state.IsChordPending());
 
-	auto result = state.HandleKeyDown('R', controlOnly, 200, 12, available);
+	auto result = state.HandleKeyDown('R', controlOnly, 200, 12, {}, available);
 	EXPECT_EQ(EWorkbenchKeyInputDecision::ExecuteStableCommandAndConsume, result.decision);
 	EXPECT_EQ(command_ids::OpenRecent, result.commandId);
-	result = state.HandleKeyDown('W', controlOnly, 201, 12, available);
+	result = state.HandleKeyDown('W', controlOnly, 201, 12, {}, available);
 	EXPECT_EQ(EWorkbenchKeyInputDecision::ExecuteStableCommandAndConsume, result.decision);
 	EXPECT_EQ(command_ids::CloseActiveEditor, result.commandId);
-	result = state.HandleKeyDown('V', { .control = true, .shift = true }, 202, 12, available);
+	result = state.HandleKeyDown('V', { .control = true, .shift = true }, 202, 12, {}, available);
 	EXPECT_EQ(EWorkbenchKeyInputDecision::ExecuteStableCommandAndConsume, result.decision);
 	EXPECT_EQ(command_ids::MarkdownTogglePreview, result.commandId);
-	result = state.HandleKeyDown('X', { .control = true, .shift = true }, 203, 12, available);
+	result = state.HandleKeyDown('X', { .control = true, .shift = true }, 203, 12, {}, available);
 	EXPECT_EQ(EWorkbenchKeyInputDecision::ExecuteStableCommandAndConsume, result.decision);
 	EXPECT_EQ(command_ids::ShowExtensions, result.commandId);
 	EXPECT_EQ(EWorkbenchKeyInputDecision::PassThrough,
-		state.HandleKeyDown('R', { .control = true, .shift = true }, 204, 12, available).decision);
+		state.HandleKeyDown('R', { .control = true, .shift = true }, 204, 12, {}, available).decision);
 	EXPECT_EQ(EWorkbenchKeyInputDecision::PassThrough,
-		state.HandleKeyDown('W', { .alt = true }, 205, 12, available).decision);
+		state.HandleKeyDown('W', { .alt = true }, 205, 12, {}, available).decision);
+}
+
+TEST(WorkbenchKeybindingState, FocusedTerminalReceivesDirectBindingsNotInCommandsToSkipShell)
+{
+	const auto available = [](std::string_view) { return true; };
+	WorkbenchKeybindingState state;
+	const WorkbenchKeyFocusContext terminal{ .terminalFocus = true };
+	const WorkbenchKeyModifiers controlOnly{ .control = true };
+	const WorkbenchKeyModifiers controlShift{ .control = true, .shift = true };
+
+	// None of these commands is in VS Code's default commandsToSkipShell, so a
+	// focused terminal instance keeps the key: Ctrl+Shift+V is its paste, and
+	// Ctrl+R / Ctrl+W are the shell's own reverse-search and word-erase.
+	EXPECT_EQ(EWorkbenchKeyInputDecision::PassThrough,
+		state.HandleKeyDown('V', controlShift, 100, 21, terminal, available).decision);
+	EXPECT_EQ(EWorkbenchKeyInputDecision::PassThrough,
+		state.HandleKeyDown('X', controlShift, 101, 21, terminal, available).decision);
+	EXPECT_EQ(EWorkbenchKeyInputDecision::PassThrough,
+		state.HandleKeyDown('R', controlOnly, 102, 21, terminal, available).decision);
+	EXPECT_EQ(EWorkbenchKeyInputDecision::PassThrough,
+		state.HandleKeyDown('W', controlOnly, 103, 21, terminal, available).decision);
+	EXPECT_FALSE(state.IsChordPending());
+
+	// The same keys outside a terminal instance still execute their exact commands.
+	auto result = state.HandleKeyDown('V', controlShift, 200, 22, {}, available);
+	EXPECT_EQ(EWorkbenchKeyInputDecision::ExecuteStableCommandAndConsume, result.decision);
+	EXPECT_EQ(command_ids::MarkdownTogglePreview, result.commandId);
+	result = state.HandleKeyDown('W', controlOnly, 201, 22, {}, available);
+	EXPECT_EQ(EWorkbenchKeyInputDecision::ExecuteStableCommandAndConsume, result.decision);
+	EXPECT_EQ(command_ids::CloseActiveEditor, result.commandId);
+}
+
+TEST(WorkbenchKeybindingState, FocusedTerminalStillDispatchesCtrlKChords)
+{
+	const auto available = [](std::string_view) { return true; };
+	WorkbenchKeybindingState state;
+	const WorkbenchKeyFocusContext terminal{ .terminalFocus = true };
+	const WorkbenchKeyModifiers controlOnly{ .control = true };
+
+	// terminal.integrated.allowChords (default true): a chord prefix is
+	// dispatched by the workbench even while a terminal instance has focus.
+	EXPECT_EQ(EWorkbenchKeyInputDecision::BeginOrRestartChordAndConsume,
+		state.HandleKeyDown('K', controlOnly, 100, 31, terminal, available).decision);
+	const auto result = state.HandleKeyDown('O', controlOnly, 101, 31, terminal, available);
+	EXPECT_EQ(EWorkbenchKeyInputDecision::ExecuteStableCommandAndConsume, result.decision);
+	EXPECT_EQ(command_ids::OpenFolder, result.commandId);
+	EXPECT_FALSE(state.IsChordPending());
 }
 
 TEST(WorkbenchKeybindingState, RegisteredDisabledCommandIsStillATerminalConsumedBinding)
@@ -171,7 +218,7 @@ TEST(WorkbenchKeybindingState, RegisteredDisabledCommandIsStillATerminalConsumed
 	WorkbenchCommandRegistry registry;
 	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, registry.RegisterBuiltinCommands().status);
 	WorkbenchKeybindingState state;
-	const auto result = state.HandleKeyDown('W', { .control = true }, 100, 1,
+	const auto result = state.HandleKeyDown('W', { .control = true }, 100, 1, {},
 		[&registry](std::string_view commandId) { return registry.Find(commandId).has_value(); });
 	EXPECT_EQ(EWorkbenchKeyInputDecision::ExecuteStableCommandAndConsume, result.decision);
 	EXPECT_EQ(command_ids::CloseActiveEditor, result.commandId);

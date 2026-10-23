@@ -2786,6 +2786,11 @@ HWND CTerminalTool::GetHwnd() const noexcept
 	return m_impl->window;
 }
 
+bool CTerminalTool::IsTerminalInstanceMessage( const MSG& message ) const noexcept
+{
+	return m_impl && m_impl->IsPaneMessage(message);
+}
+
 LRESULT CALLBACK CTerminalTool::WindowProc( HWND window, UINT message, WPARAM wParam, LPARAM lParam )
 {
 	if( message == WM_NCCREATE ) {

@@ -208,6 +208,69 @@ terminal, although VS Code lists both commands in its default
 `commandsToSkipShell`. Closing either gap requires a real
 `commandsToSkipShell`-shaped policy rather than more special cases here.
 
+### Workbench direct bindings yield to a focused terminal (2026-10-23, #372)
+
+`CEditWnd::PreTranslateWorkbenchMessage` resolves the workbench's own
+single-stroke bindings (`WorkbenchKeybindingState::DirectCommandId`:
+`Ctrl+Shift+V`, `Ctrl+Shift+X`, `Ctrl+R`, `Ctrl+W`) before the Panel's terminal
+sees the key. It used to do so regardless of focus, and a resolved binding is
+consumed even when its executor declines. So `Ctrl+Shift+V` in a focused terminal
+toggled the Markdown preview instead of pasting, `Ctrl+W` closed the active
+editor, and `Ctrl+R` opened Recent instead of reaching the shell.
+
+In VS Code, while a terminal instance has focus, a workbench keybinding fires
+only when its command is in `terminal.integrated.commandsToSkipShell`. None of
+these four commands is in the default list, and the `when` clause of
+`markdown.togglePreview` also requires `!terminalFocus`. On Windows, terminal
+paste is bound to both `Ctrl+V` and `Ctrl+Shift+V`.
+
+`WorkbenchKeybindingState::HandleKeyDown` now takes a `WorkbenchKeyFocusContext`.
+With `terminalFocus` set, every direct binding passes through to the terminal.
+`Ctrl+K` chords still dispatch, because `terminal.integrated.allowChords`
+defaults to true.
+
+`terminalFocus` is `CTerminalTool::IsTerminalInstanceMessage(message)`. It is true
+when the key targets a pane renderer or one of its children, and false for the
+tabs list. It tests the key's target window rather than `GetFocus()`, because the
+target decides whether the pane's own `PreTranslateMessage` claims the key
+further down the chain. That is the same pane test, `IsPaneMessage`, that the
+tool's terminal UI routing already uses.
+
+This is only the minimal case of the policy. There is still no skip list, and so
+no user setting, which is why `Ctrl+B` and `Ctrl+J` still reach the shell (see
+above).
+
+Known remaining gap: in VS Code, `markdown.togglePreview` also requires
+`editorFocus` on a Markdown resource. With focus in another view, such as
+Explorer, Sakura still toggles the active Markdown document's preview.
+
+Verified 2026-10-23 on x64 Debug:
+
+- **Unit, fail-before.** `WorkbenchKeybindingState.FocusedTerminalReceivesDirectBindingsNotInCommandsToSkipShell`
+  failed before the gate existed (it got `ExecuteStableCommandAndConsume`, not
+  `PassThrough`) and passes after. `FocusedTerminalStillDispatchesCtrlKChords`
+  is the regression guard for `allowChords`.
+- **Real window, before and after the fix.** An isolated `-PROF` profile was
+  launched with this repository's `CLAUDE.md` open and the Terminal shown. Keys
+  were posted with `PostMessage` to the target HWND after
+  `AttachThreadInput` + `SetKeyboardState` set the modifiers. No `SendInput` was
+  used and no foreground window was needed.
+
+  | Check | Before | After |
+  |---|---|---|
+  | `Ctrl+Shift+V` in the editor toggles the preview on, then off | yes | yes |
+  | `Ctrl+Shift+V` in the terminal pastes a command that writes a marker file | no | yes |
+  | Preview visible after the terminal `Ctrl+Shift+V` | toggled on | stays off |
+  | Editor still open after the terminal `Ctrl+W` | closed | open |
+
+- **Real window, `Ctrl+R` and `Ctrl+Shift+X`, after the fix only.** A second
+  probe uses the same profile and key method. A terminal `Ctrl+Shift+X` left the
+  set of visible child windows unchanged, so Extensions was not revealed. A
+  terminal `Ctrl+R` opened no `#32768` popup menu, so Open Recent did not
+  appear. Positive controls show that both detectors work: the same keys sent to
+  the editor did reveal Extensions and open the Open Recent menu. No before run
+  was made for these two keys. Their fail-before evidence is the unit test.
+
 ## DirectWrite Damage Rendering
 
 ### Native font line boxes (Issue #295)

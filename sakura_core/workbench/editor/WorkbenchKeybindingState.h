@@ -35,6 +35,15 @@ struct WorkbenchKeyModifiers {
 	}
 };
 
+//! Focus facts sampled with the same key-down, named after the VS Code context
+//! keys they stand for. Like the modifiers, they carry no HWND; unlike them they
+//! are fixed once sampled.
+struct WorkbenchKeyFocusContext {
+	//! `terminalFocus`: a terminal instance, not merely its tabs list, owns the
+	//! keyboard focus.
+	const bool terminalFocus = false;
+};
+
 //! The action selected by the pending Ctrl+K chord.
 enum class ECtrlKChordAction : std::uint8_t {
 	None,
@@ -205,7 +214,7 @@ public:
 	template <class IsCommandAvailable>
 	[[nodiscard]] WorkbenchKeyInputResult HandleKeyDown(std::uint32_t virtualKey,
 		WorkbenchKeyModifiers modifiers, std::uint64_t now, FocusToken focusToken,
-		IsCommandAvailable&& isCommandAvailable) noexcept
+		WorkbenchKeyFocusContext focus, IsCommandAvailable&& isCommandAvailable) noexcept
 	{
 		if (m_ctrlKChord.IsPending()) {
 			const auto chord = m_ctrlKChord.AdvancePendingKeyDown(virtualKey, modifiers);
@@ -231,6 +240,13 @@ public:
 			m_ctrlKChord.Begin(now, focusToken);
 			return { EWorkbenchKeyInputDecision::BeginOrRestartChordAndConsume, {} };
 		}
+		// A focused terminal instance sends every single-stroke binding to the
+		// shell unless its command is in terminal.integrated.commandsToSkipShell;
+		// chord prefixes still dispatch (terminal.integrated.allowChords). No
+		// direct command below is in VS Code's default list, and
+		// markdown.togglePreview's own `when` also requires !terminalFocus, which
+		// leaves Ctrl+Shift+V to the terminal's paste.
+		if (focus.terminalFocus) return {};
 		if (const auto commandId = DirectCommandId(virtualKey, modifiers);
 			!commandId.empty() && isCommandAvailable(commandId)) {
 			return { EWorkbenchKeyInputDecision::ExecuteStableCommandAndConsume, commandId };
