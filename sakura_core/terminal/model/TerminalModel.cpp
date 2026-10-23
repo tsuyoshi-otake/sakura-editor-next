@@ -200,16 +200,29 @@ void TerminalModel::Resize( std::size_t columns, std::size_t rows )
 		resizeColumns(m_savedMainRows);
 	}
 	if( rows != m_rowsCount ) {
-		while( m_rows.size() > rows ) {
-			TerminalRow outgoing = std::move(m_rows.front());
-			m_rows.pop_front();
-			if( !m_alternateScreen && m_scrollbackLimit != 0 ) {
-				AppendScrollbackRow(std::move(outgoing));
+		// xterm.js Buffer.resize: a shrink drops rows below the cursor first and
+		// only then moves rows off the top, so the cursor and the saved cursor
+		// stay on their lines.  Main-screen rows leaving the top become history;
+		// the alternate screen keeps none.  Growth appends blank rows, as xterm.js
+		// does for a Windows PTY because ConPTY reprints the screen (#374).
+		const auto shrinkScreen = [this, rows]( std::deque<TerminalRow>& screen, std::size_t& cursorRow,
+			std::size_t& savedCursorRow, bool keepsHistory ) {
+			while( screen.size() > rows ) {
+				if( cursorRow + 1 < screen.size() ) {
+					screen.pop_back();
+					continue;
+				}
+				TerminalRow outgoing = std::move(screen.front());
+				screen.pop_front();
+				if( keepsHistory ) AppendScrollbackRow(std::move(outgoing));
+				if( cursorRow > 0 ) --cursorRow;
+				if( savedCursorRow > 0 ) --savedCursorRow;
 			}
-		}
+		};
+		shrinkScreen(m_rows, m_cursorRow, m_savedCursorRow, !m_alternateScreen);
 		while( m_rows.size() < rows ) m_rows.push_back(MakeBlankRow(m_attributes));
 		if( m_alternateScreen ) {
-			while( m_savedMainRows.size() > rows ) m_savedMainRows.erase(m_savedMainRows.begin());
+			shrinkScreen(m_savedMainRows, m_savedMainCursorRow, m_savedMainSavedCursorRow, true);
 			while( m_savedMainRows.size() < rows ) m_savedMainRows.push_back(MakeBlankRow(m_savedMainAttributes));
 		}
 		m_rowsCount = rows;
@@ -221,8 +234,12 @@ void TerminalModel::Resize( std::size_t columns, std::size_t rows )
 	m_savedMainCursorRow = std::min(m_savedMainCursorRow, m_rowsCount - 1);
 	m_savedMainSavedCursorColumn = std::min(m_savedMainSavedCursorColumn, m_columns - 1);
 	m_savedMainSavedCursorRow = std::min(m_savedMainSavedCursorRow, m_rowsCount - 1);
+	// xterm.js resets the scroll region of both buffers, so the saved main
+	// screen's region is reset too while the alternate screen is shown.
 	m_scrollTop = 0;
 	m_scrollBottom = m_rowsCount - 1;
+	m_savedMainScrollTop = 0;
+	m_savedMainScrollBottom = m_rowsCount - 1;
 	m_dirtyRows.assign(m_rowsCount, true);
 }
 

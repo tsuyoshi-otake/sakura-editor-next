@@ -14,6 +14,16 @@ std::wstring RowText( const terminal::TerminalRow& row )
 	return result;
 }
 
+// Writes each visible row's index as its only character, so a resize test can
+// tell which rows survived and which line the cursor ended up on.
+void LabelRows( terminal::TerminalModel& model )
+{
+	for( std::size_t row = 0; row < model.RowCount(); ++row ) {
+		model.SetCursorPosition(0, row);
+		model.Print(static_cast<char32_t>(U'0' + row));
+	}
+}
+
 TEST(TerminalModel, StoresWideAndCombiningGraphemesWithoutPerCellHeapStorage)
 {
 	terminal::TerminalModel model(10, 2);
@@ -333,6 +343,152 @@ TEST(TerminalModel, ResizeShrinkingRepairsWideCellsOnActiveAndSavedMainScreens)
 	EXPECT_TRUE(model.Rows()[0].cells[2].Text().empty());
 	EXPECT_EQ(1u, model.Rows()[0].cells[2].width);
 	EXPECT_FALSE(model.Rows()[0].cells[2].continuation);
+}
+
+// The shrink tests below follow xterm.js Buffer.resize (#374): rows below the
+// cursor are dropped first, and only then do rows above it leave the screen.
+// A session started at the 120x30 fallback and then fitted to a 13-row Panel
+// must therefore keep its first prompt on screen.
+TEST(TerminalModel, ResizeShrinkKeepsAPromptOnTheFirstRowOnScreen)
+{
+	terminal::TerminalModel model(20, 30);
+	for( const auto character : std::u32string_view(U"PS>") ) model.Print(character);
+	model.ConsumeScrollbackChange();
+
+	model.Resize(20, 13);
+
+	ASSERT_EQ(13u, model.Rows().size());
+	EXPECT_EQ(L"PS>", RowText(model.Rows()[0]));
+	EXPECT_EQ(0u, model.CursorRow());
+	EXPECT_EQ(3u, model.CursorColumn());
+	EXPECT_EQ(0u, model.ScrollbackSize());
+	EXPECT_FALSE(model.ConsumeScrollbackChange().Changed());
+}
+
+TEST(TerminalModel, ResizeShrinkDropsRowsBelowTheCursorBeforeScrollingRowsAboveIt)
+{
+	terminal::TerminalModel model(4, 6);
+	LabelRows(model);
+	model.SetCursorPosition(1, 3);
+	model.ConsumeScrollbackChange();
+
+	model.Resize(4, 3);
+
+	ASSERT_EQ(3u, model.Rows().size());
+	EXPECT_EQ(L"1", RowText(model.Rows()[0]));
+	EXPECT_EQ(L"2", RowText(model.Rows()[1]));
+	EXPECT_EQ(L"3", RowText(model.Rows()[2]));
+	ASSERT_EQ(1u, model.ScrollbackSize());
+	EXPECT_EQ(L"0", RowText(model.Scrollback()[0]));
+	EXPECT_EQ(1u, model.ConsumeScrollbackChange().Appended());
+	EXPECT_EQ(2u, model.CursorRow());
+	EXPECT_EQ(1u, model.CursorColumn());
+}
+
+TEST(TerminalModel, ResizeShrinkWithTheCursorOnTheLastRowScrollsTopRowsIntoScrollback)
+{
+	terminal::TerminalModel model(4, 6);
+	LabelRows(model);
+	model.ConsumeScrollbackChange();
+
+	model.Resize(4, 3);
+
+	ASSERT_EQ(3u, model.Rows().size());
+	EXPECT_EQ(L"3", RowText(model.Rows()[0]));
+	EXPECT_EQ(L"5", RowText(model.Rows()[2]));
+	ASSERT_EQ(3u, model.ScrollbackSize());
+	EXPECT_EQ(L"0", RowText(model.Scrollback()[0]));
+	EXPECT_EQ(L"2", RowText(model.Scrollback()[2]));
+	EXPECT_EQ(3u, model.ConsumeScrollbackChange().Appended());
+	EXPECT_EQ(2u, model.CursorRow());
+}
+
+TEST(TerminalModel, ResizeShrinkKeepsTheSavedCursorOnItsLine)
+{
+	terminal::TerminalModel model(4, 6);
+	LabelRows(model);
+	model.SetCursorPosition(2, 4);
+	model.SaveCursor();
+	model.SetCursorPosition(0, 5);
+
+	model.Resize(4, 3);
+	model.RestoreCursor();
+
+	EXPECT_EQ(1u, model.CursorRow());
+	EXPECT_EQ(2u, model.CursorColumn());
+	EXPECT_EQ(L"4", RowText(model.Rows()[model.CursorRow()]));
+}
+
+TEST(TerminalModel, ResizeShrinkOnTheAlternateScreenDropsRowsBelowTheCursorAndKeepsNoHistory)
+{
+	terminal::TerminalModel model(4, 6);
+	model.Print(U'M');
+	model.SetAlternateScreen(true);
+	LabelRows(model);
+	model.SetCursorPosition(0, 3);
+	model.ConsumeScrollbackChange();
+
+	model.Resize(4, 3);
+
+	ASSERT_EQ(3u, model.Rows().size());
+	EXPECT_EQ(L"1", RowText(model.Rows()[0]));
+	EXPECT_EQ(L"3", RowText(model.Rows()[2]));
+	EXPECT_EQ(2u, model.CursorRow());
+	EXPECT_EQ(0u, model.ScrollbackSize());
+	EXPECT_FALSE(model.ConsumeScrollbackChange().Changed());
+	// The main screen's cursor is on its first row, so its cut drops only
+	// rows below it and the row above the cut stays on screen.
+	model.SetAlternateScreen(false);
+	EXPECT_EQ(L"M", RowText(model.Rows()[0]));
+	EXPECT_EQ(0u, model.CursorRow());
+}
+
+TEST(TerminalModel, ResizeShrinkUnderTheAlternateScreenAppliesTheSameRuleToTheMainScreen)
+{
+	terminal::TerminalModel model(4, 6);
+	LabelRows(model);
+	model.SetCursorPosition(0, 2);
+	model.SaveCursor();
+	model.SetCursorPosition(1, 3);
+	model.SetAlternateScreen(true);
+	model.ConsumeScrollbackChange();
+
+	model.Resize(4, 3);
+
+	// The main screen's own cursor decides its cut, and its top row becomes
+	// main-screen history even while the alternate screen is shown.
+	ASSERT_EQ(1u, model.ScrollbackSize());
+	EXPECT_EQ(L"0", RowText(model.Scrollback()[0]));
+	model.SetAlternateScreen(false);
+	ASSERT_EQ(3u, model.Rows().size());
+	EXPECT_EQ(L"1", RowText(model.Rows()[0]));
+	EXPECT_EQ(L"3", RowText(model.Rows()[2]));
+	EXPECT_EQ(2u, model.CursorRow());
+	EXPECT_EQ(1u, model.CursorColumn());
+	model.RestoreCursor();
+	EXPECT_EQ(1u, model.CursorRow());
+	EXPECT_EQ(L"2", RowText(model.Rows()[model.CursorRow()]));
+}
+
+TEST(TerminalModel, ResizeUnderTheAlternateScreenResetsTheMainScreenScrollRegion)
+{
+	// xterm.js resizes both buffers and resets each one's scroll region, so a
+	// DECSTBM region set before a TUI started cannot outlive a resize.  A line
+	// feed on the last row must then scroll the whole screen into history.
+	for( const std::size_t rows : { std::size_t{ 3 }, std::size_t{ 8 } } ) {
+		terminal::TerminalModel model(4, 6);
+		model.SetScrollRegion(1, 3);
+		model.SetAlternateScreen(true);
+		model.Resize(4, rows);
+		model.SetAlternateScreen(false);
+		model.SetCursorPosition(0, 0);
+		model.Print(U'T');
+		model.SetCursorPosition(0, rows - 1);
+		model.ExecuteControl(L'\n');
+
+		ASSERT_EQ(1u, model.ScrollbackSize()) << rows;
+		EXPECT_EQ(L"T", RowText(model.Scrollback()[0])) << rows;
+	}
 }
 
 TEST(TerminalModel, EraseAndScrollBlanksUseCurrentBackgroundRendition)

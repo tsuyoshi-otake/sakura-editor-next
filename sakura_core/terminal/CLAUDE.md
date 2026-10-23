@@ -729,6 +729,64 @@ in the pure geometry header so geometry tests do not require native HWND
 fixtures. `CTerminalWnd` interaction contracts use native-window fixtures, as
 demonstrated by `TerminalLinkTest.cpp`.
 
+## A row shrink keeps the cursor's line (2026-10-23, #374)
+
+Reported symptom: right after startup, an open Terminal showed no prompt. A
+small resize of the Panel made it appear.
+
+Root cause:
+
+- The first session starts at the 120x30 fallback (`CTerminalTool::CurrentSize`)
+  before the Panel has been measured.
+- pwsh prints its prompt on row 0.
+- The first real `NotifySize` (about 13 rows) reached `TerminalModel::Resize`.
+  `Resize` used to shrink by moving rows off the **top** into scrollback,
+  wherever the cursor was. So the prompt became history, and the cursor was
+  clamped onto a different line.
+- ConPTY does not reliably repaint after that shrink, so the screen stayed blank
+  until a later resize made it reprint.
+- Evidence: the scrollbar thumb in the report measured 13/30.
+
+The rule is now xterm.js `Buffer.resize` (`src/common/buffer/Buffer.ts`, checked
+at commit 991857a1b; VS Code consumes it as `@xterm/xterm`):
+
+- Rows below the cursor are dropped from the bottom first.
+- A top row leaves the screen only once the cursor is on the last row.
+  - On the main screen it becomes history. It honors
+    `terminal.integrated.scrollback` and is recorded in
+    `TerminalScrollbackChange`.
+  - On the alternate screen it is discarded.
+- The cursor and the DECSC saved cursor move up by the number of rows that left
+  the top, so both stay on their lines. xterm.js keeps `savedY` as an absolute
+  line.
+- While the alternate screen is active, the saved main screen shrinks by the
+  same rule with its own cursor. Its top rows become main-screen history, because
+  xterm.js `BufferSet.resize` resizes both buffers.
+- Every resize, shrink or growth, resets the scroll region of both buffers to
+  the full screen. Before #374 the saved main screen kept its old DECSTBM region
+  through a resize under the alternate screen. After the TUI exited, a line feed
+  on the last row then rotated a partial region and lost the line instead of
+  scrolling it into history.
+- Growth still only appends blank rows. That is xterm.js's Windows-PTY branch
+  ("conpty reprints the screen"). Do not pull rows back out of history.
+
+Not changed by #374:
+
+- The session still starts at 120x30 before the Panel is measured.
+- There is no reflow on a column change. For a Windows PTY, xterm.js enables
+  reflow only for ConPTY builds 21376 and later.
+- `ScrollUp` does not move the saved cursor the way xterm.js's absolute `savedY`
+  does. This divergence predates #374.
+
+Verified 2026-10-23 on x64 Debug with seven `TerminalModel` resize tests:
+
+- Five `ResizeShrink*` tests failed before the shrink fix. The prompt case had 17
+  history rows and an empty row 0, which is exactly the reported state.
+- `ResizeUnderTheAlternateScreenResetsTheMainScreenScrollRegion` failed before
+  the scroll-region reset. The line went nowhere: there was no history row.
+- `ResizeShrinkWithTheCursorOnTheLastRowScrollsTopRowsIntoScrollback` passed both
+  before and after. It is the regression guard for the unchanged case.
+
 ## Metadata-only live loop diagnostics (2026-08-28, #276)
 
 `TerminalSession` owns the opt-in PTY trace because it is the only boundary that
