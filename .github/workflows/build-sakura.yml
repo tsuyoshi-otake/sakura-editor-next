@@ -586,8 +586,13 @@ jobs:
       env:
         # Rollback-first keeps C++ authoritative while the linked Rust
         # candidate remains available to the focused differential tests.
+        # The values match the release contract exactly, so the bytes a
+        # main-push Release job tests are the bytes promotion may ship (#376).
+        # Neither production flag reaches the compiler; both only validate.
         SAKURA_UTF16_BACKEND: cpp
+        SAKURA_OUTPUT_BACKEND: rust
         SAKURA_UTF16_PRODUCTION_PACKAGE: true
+        SAKURA_OUTPUT_PRODUCTION_PACKAGE: true
       run: build-sln.bat ${{ matrix.platform }} ${{ matrix.config }}
       shell: cmd
 
@@ -649,6 +654,42 @@ jobs:
       run: zipArtifacts.bat ${{ matrix.platform }} ${{ matrix.config }}
       if: ${{ matrix.config == 'Release' && github.event_name != 'pull_request' }}
       shell: cmd
+
+    # A main-push Release job records the bytes it built and tested, where it
+    # built them, so release promotion can ship exactly those bytes instead of
+    # rebuilding them (#376). The contract values repeat the MSBuild step's.
+    # The record carries no retention of its own: it expires with the archives
+    # it describes.
+    - name: Record tested Release build
+      if: ${{ matrix.config == 'Release' && !inputs.release_promotion && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      env:
+        SAKURA_UTF16_BACKEND: cpp
+        SAKURA_OUTPUT_BACKEND: rust
+        SAKURA_UTF16_PRODUCTION_PACKAGE: true
+        SAKURA_OUTPUT_PRODUCTION_PACKAGE: true
+      run: >-
+        .\.github\scripts\Write-ReleaseBuildRecord.ps1
+        -SourceSha "${{ env.SAKURA_BUILD_SOURCE_SHA }}"
+        -Repository "${{ github.repository }}"
+        -RunId "${{ github.run_id }}"
+        -RunAttempt "${{ github.run_attempt }}"
+        -EventName "${{ github.event_name }}"
+        -Ref "${{ github.ref }}"
+        -Platform "${{ matrix.platform }}"
+        -Configuration "${{ matrix.config }}"
+        -Utf16Backend "$env:SAKURA_UTF16_BACKEND"
+        -OutputBackend "$env:SAKURA_OUTPUT_BACKEND"
+        -Utf16ProductionPackage "$env:SAKURA_UTF16_PRODUCTION_PACKAGE"
+        -OutputProductionPackage "$env:SAKURA_OUTPUT_PRODUCTION_PACKAGE"
+        -OutputPath release-build-record.json
+
+    - name: Upload tested Release build record
+      uses: actions/upload-artifact@v7
+      if: ${{ matrix.config == 'Release' && !inputs.release_promotion && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      with:
+        name: Release build record ${{ matrix.platform }} ${{ matrix.config }}
+        path: release-build-record.json
+        if-no-files-found: error
 
     # The package workspace intentionally contains the immutable release source,
     # which can predate this workflow and therefore cannot supply its own

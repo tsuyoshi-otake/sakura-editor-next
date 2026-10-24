@@ -15,6 +15,11 @@ on:
         required: true
         default: false
         type: boolean
+      rebuild:
+        description: Rebuild the package from source instead of reusing the tested main-push Release build.
+        required: true
+        default: false
+        type: boolean
 
 defaults:
   run:
@@ -39,6 +44,9 @@ jobs:
       release_tag: ${{ steps.release.outputs.release_tag }}
       source_sha: ${{ steps.release.outputs.source_sha }}
       file_version: ${{ steps.release.outputs.file_version }}
+      package_mode: ${{ steps.package.outputs.package_mode }}
+      artifact_run_id: ${{ steps.package.outputs.artifact_run_id }}
+      artifact_ids: ${{ steps.package.outputs.artifact_ids }}
     steps:
     - name: Select release tag
       id: tag
@@ -90,9 +98,164 @@ jobs:
         if-no-files-found: error
         retention-days: 30
 
+    # The main-push MSBuild (Release, x64) job the resolver accepted already
+    # built and tested these exact bytes. Ship them when that run still proves
+    # them through its build record; rebuild only when the proof is absent
+    # (a source older than the record, expired archives, a run that was not a
+    # main push) or a dispatch asks for it. Contradicting evidence fails (#376).
+    - name: Select release package source
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        REBUILD_REQUESTED: ${{ github.event_name == 'workflow_dispatch' && inputs.rebuild && 'true' || 'false' }}
+      run: >-
+        .\.github\scripts\Select-ReleasePackageSource.ps1
+        -SourceEvidencePath release-source.json
+        -Repository "${{ github.repository }}"
+        -Token "$env:GITHUB_TOKEN"
+        -RebuildRequested "$env:REBUILD_REQUESTED"
+        -OutputPath release-package-source.json
+
+    - name: Export release package source
+      id: package
+      run: |
+        $package = Get-Content -LiteralPath release-package-source.json -Raw | ConvertFrom-Json
+        "package_mode=$($package.mode)" >> $env:GITHUB_OUTPUT
+        if ($package.mode -ceq 'reuse') {
+          "artifact_run_id=$($package.run.id)" >> $env:GITHUB_OUTPUT
+          "artifact_ids=$((@($package.artifacts) | ForEach-Object { $_.id }) -join ',')" >> $env:GITHUB_OUTPUT
+        }
+
+    - name: Upload release package source
+      uses: actions/upload-artifact@v7
+      with:
+        name: Release package source
+        path: release-package-source.json
+        if-no-files-found: error
+        retention-days: 30
+
+  reuse:
+    name: Reuse tested main-push package
+    needs: resolve
+    if: ${{ needs.resolve.outputs.package_mode == 'reuse' }}
+    runs-on: windows-2022
+    permissions:
+      actions: read
+      contents: read
+    steps:
+    # Lay the tested bytes out in the release source checkout exactly where a
+    # rebuild leaves them, so the same provenance helper proves the tag, the
+    # source, its build number, and every binary version in both paths.
+    - name: Checkout release source
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        ref: ${{ needs.resolve.outputs.source_sha }}
+        fetch-depth: 0
+
+    - name: Checkout release provenance helper
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        ref: ${{ github.workflow_sha }}
+        fetch-depth: 1
+        path: release-orchestration
+
+    - name: Download release package source
+      uses: actions/download-artifact@v8
+      with:
+        name: Release package source
+        path: ${{ runner.temp }}/release-package-source
+
+    - name: Download tested main-push package
+      uses: actions/download-artifact@v8
+      with:
+        artifact-ids: ${{ needs.resolve.outputs.artifact_ids }}
+        run-id: ${{ needs.resolve.outputs.artifact_run_id }}
+        repository: ${{ github.repository }}
+        github-token: ${{ github.token }}
+        path: ${{ runner.temp }}/tested-package
+
+    - name: Lay out tested main-push package
+      env:
+        SAKURA_UTF16_BACKEND: cpp
+        SAKURA_OUTPUT_BACKEND: rust
+        SAKURA_UTF16_PRODUCTION_PACKAGE: true
+        SAKURA_OUTPUT_PRODUCTION_PACKAGE: true
+      run: >-
+        .\release-orchestration\.github\scripts\Import-ReleaseBuildRecord.ps1
+        -PackageSourcePath "$env:RUNNER_TEMP\release-package-source\release-package-source.json"
+        -DownloadRoot "$env:RUNNER_TEMP\tested-package"
+        -SourceRoot .
+        -Platform x64
+        -Configuration Release
+        -Utf16Backend "$env:SAKURA_UTF16_BACKEND"
+        -OutputBackend "$env:SAKURA_OUTPUT_BACKEND"
+        -Utf16ProductionPackage "$env:SAKURA_UTF16_PRODUCTION_PACKAGE"
+        -OutputProductionPackage "$env:SAKURA_OUTPUT_PRODUCTION_PACKAGE"
+
+    - name: Record release provenance
+      env:
+        RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+        SAKURA_UTF16_BACKEND: cpp
+        SAKURA_OUTPUT_BACKEND: rust
+        SAKURA_UTF16_PRODUCTION_PACKAGE: true
+        SAKURA_OUTPUT_PRODUCTION_PACKAGE: true
+      run: >-
+        .\release-orchestration\.github\scripts\Write-ReleaseProvenance.ps1
+        -SourceSha "${{ needs.resolve.outputs.source_sha }}"
+        -ReleaseTag "$env:RELEASE_TAG"
+        -Platform x64
+        -Configuration Release
+        -Utf16Backend "$env:SAKURA_UTF16_BACKEND"
+        -OutputBackend "$env:SAKURA_OUTPUT_BACKEND"
+        -Utf16ProductionPackage "$env:SAKURA_UTF16_PRODUCTION_PACKAGE"
+        -OutputProductionPackage "$env:SAKURA_OUTPUT_PRODUCTION_PACKAGE"
+        -OutputPath release-provenance.json
+
+    - name: Upload release provenance
+      uses: actions/upload-artifact@v7
+      with:
+        name: Release provenance x64 Release
+        path: release-provenance.json
+        if-no-files-found: error
+
+    - name: Upload Installer
+      uses: actions/upload-artifact@v7
+      with:
+        name: Installer x64 Release
+        path: 'sakura-*-Installer.zip'
+        if-no-files-found: error
+
+    - name: Upload Exe
+      uses: actions/upload-artifact@v7
+      with:
+        name: Exe x64 Release
+        path: 'sakura-*-Exe.zip'
+        if-no-files-found: error
+
+    - name: Upload Log
+      uses: actions/upload-artifact@v7
+      with:
+        name: Log x64 Release
+        path: 'sakura-*-Log.zip'
+        if-no-files-found: error
+
+    - name: Upload Asm
+      uses: actions/upload-artifact@v7
+      with:
+        name: Asm x64 Release
+        path: 'sakura-*-Asm.zip'
+        if-no-files-found: error
+
+    - name: Upload Dev
+      uses: actions/upload-artifact@v7
+      with:
+        name: Dev x64 Release
+        path: 'sakura-*-Dev.zip'
+        if-no-files-found: error
+
   package:
     name: Package exact tested source
     needs: resolve
+    if: ${{ needs.resolve.outputs.package_mode == 'rebuild' }}
     uses: ./.github/workflows/build-sakura.yml
     with:
       source_sha: ${{ needs.resolve.outputs.source_sha }}
@@ -105,7 +268,14 @@ jobs:
 
   smoke:
     name: Smoke packaged distribution
-    needs: [resolve, package]
+    needs: [resolve, package, reuse]
+    # Exactly one package path runs: package and reuse each compare the one
+    # package_mode value with a different constant. Smoke therefore requires
+    # the success of the path resolve selected, and of no other.
+    if: >-
+      ${{ !cancelled() && needs.resolve.result == 'success' &&
+      ((needs.resolve.outputs.package_mode == 'reuse' && needs.reuse.result == 'success') ||
+      (needs.resolve.outputs.package_mode == 'rebuild' && needs.package.result == 'success')) }}
     # The shipped installer requires Windows 10.0.22000 or later. The
     # windows-2022 image is build 20348, which rejects the installer before it
     # can copy any files; pin the smoke environment to a compatible image.
@@ -177,8 +347,8 @@ jobs:
 
   publish:
     name: Publish verified release
-    needs: [resolve, package, smoke]
-    if: ${{ github.event_name == 'push' || inputs.publish }}
+    needs: [resolve, package, reuse, smoke]
+    if: ${{ !cancelled() && needs.smoke.result == 'success' && (github.event_name == 'push' || inputs.publish) }}
     runs-on: windows-2022
     permissions:
       actions: read

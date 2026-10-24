@@ -125,15 +125,22 @@ class ReleasePromotionWorkflowContractTests(unittest.TestCase):
             "call build-sln.bat ${{ matrix.platform }} ${{ matrix.config }}", self.promotion
         )
 
-    def test_ordinary_build_branch_is_preserved(self) -> None:
+    def test_ordinary_build_branch_compiles_the_release_contract(self) -> None:
+        # #376: a main-push Release job builds the bytes promotion may reuse,
+        # so it must be given the same contract the promotion build is given.
         expected = """\
     - name: MSBuild
       if: ${{ !inputs.release_promotion }}
       env:
         # Rollback-first keeps C++ authoritative while the linked Rust
         # candidate remains available to the focused differential tests.
+        # The values match the release contract exactly, so the bytes a
+        # main-push Release job tests are the bytes promotion may ship (#376).
+        # Neither production flag reaches the compiler; both only validate.
         SAKURA_UTF16_BACKEND: cpp
+        SAKURA_OUTPUT_BACKEND: rust
         SAKURA_UTF16_PRODUCTION_PACKAGE: true
+        SAKURA_OUTPUT_PRODUCTION_PACKAGE: true
       run: build-sln.bat ${{ matrix.platform }} ${{ matrix.config }}
       shell: cmd
 
@@ -141,6 +148,8 @@ class ReleasePromotionWorkflowContractTests(unittest.TestCase):
         self.assertEqual(expected, self.ordinary)
 
     def test_provenance_step_passes_the_exact_build_contract(self) -> None:
+        # The reuse job's provenance step is pinned with the rest of the reuse
+        # path in test_release_package_reuse_contracts.py.
         start = self.workflow.index("    - name: Record release provenance\n")
         end = self.workflow.index("    - name: Upload release provenance\n", start)
         step = self.workflow[start:end]
