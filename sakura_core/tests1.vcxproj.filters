@@ -189,6 +189,12 @@
     <ClCompile Include="..\src\test\cpp\tests1\workbench\MarkerPositionAdapterTest.cpp">
       <Filter>Test Files\workbench</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\MarkerNavigationModelTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\ProblemsStatusbarProjectionTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\workbench\InputBoxGeometryTest.cpp">
       <Filter>Test Files\workbench</Filter>
     </ClCompile>

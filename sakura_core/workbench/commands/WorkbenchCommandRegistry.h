@@ -389,6 +389,13 @@ struct WorkbenchProblemsViewCommandExecutors {
 	//! `workbench.action.showErrorsWarnings` (keybinding-registered opener).
 	WorkbenchCommandExecutor toggleProblems;
 	WorkbenchCommandExecutor showErrorsWarnings;
+	//! `editor.action.marker.nextInFiles`/`prevInFiles` (Go menu + palette +
+	//! F8/Shift+F8) and `editor.action.marker.next`/`prev` (palette +
+	//! Alt+F8/Shift+Alt+F8) from upstream `gotoError.ts`.
+	WorkbenchCommandExecutor markerNextInFiles;
+	WorkbenchCommandExecutor markerPrevInFiles;
+	WorkbenchCommandExecutor markerNext;
+	WorkbenchCommandExecutor markerPrev;
 };
 
 //! Upstream's title-bar entry, registered into `MenuId.TitleBarUpdate` at

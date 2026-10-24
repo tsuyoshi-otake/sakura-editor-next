@@ -256,6 +256,10 @@ void PrintTo(EFunctionCode eFuncCode, std::ostream* os)
 	case F_REDETECT_POWERSHELL: *os << "F_REDETECT_POWERSHELL"; break;
 	case F_SHOW_PROBLEMS: *os << "F_SHOW_PROBLEMS"; break;
 	case F_RUN_BUILD_TASK: *os << "F_RUN_BUILD_TASK"; break;
+	case F_MARKER_NEXT_IN_FILES: *os << "F_MARKER_NEXT_IN_FILES"; break;
+	case F_MARKER_PREV_IN_FILES: *os << "F_MARKER_PREV_IN_FILES"; break;
+	case F_MARKER_NEXT: *os << "F_MARKER_NEXT"; break;
+	case F_MARKER_PREV: *os << "F_MARKER_PREV"; break;
 	case F_TAGJUMP: *os << "F_TAGJUMP"; break;
 	case F_TAGJUMPBACK: *os << "F_TAGJUMPBACK"; break;
 	case F_TAGJUMP_LIST: *os << "F_TAGJUMP_LIST"; break;

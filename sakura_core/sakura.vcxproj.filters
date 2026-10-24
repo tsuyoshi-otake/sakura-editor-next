@@ -1527,10 +1527,16 @@
     <ClInclude Include="..\sakura_core\workbench\tasks\TaskTerminalSessionFactory.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\problems\MarkerNavigationModel.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\workbench\problems\MarkerPositionAdapter.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\workbench\problems\MarkerService.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\problems\ProblemsStatusbarProjection.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\workbench\output\IOutputService.h">
@@ -4300,10 +4306,16 @@
     <ClCompile Include="..\sakura_core\workbench\tasks\TaskTerminalSessionFactory.cpp">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\problems\MarkerNavigationModel.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
     <ClCompile Include="..\sakura_core\workbench\problems\MarkerPositionAdapter.cpp">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\workbench\problems\MarkerService.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\problems\ProblemsStatusbarProjection.cpp">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\workbench\output\OutputProviderFactory.cpp">

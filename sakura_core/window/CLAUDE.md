@@ -608,6 +608,48 @@ wiring.
   `sakura.status.macroRecording`; do not disguise them under unrelated VS Code
   IDs merely to make the customization menu look canonical.
 
+## Problems status entries and marker navigation (#382)
+
+- `status.problems` (LEFT, priority 50) paints between `status.scm` (10000)
+  and the legacy parts, text `$(error) N $(warning) N[ $(info) N]` with
+  upstream `packNumber` thresholds and the
+  `Errors: n, Warnings: n, Infos: n` / `No Problems` tooltip. Clicking executes
+  `workbench.actions.view.toggleProblems`. The value-typed
+  `ProblemsStatusbarState` is pushed by `CEditWnd::UpdateProblemsStatusbar`;
+  `CMainStatusBar` parses the `$(name)` codicons at paint and never queries
+  `MarkerService` itself.
+- `status.problemsVisibility` (LEFT, 49) appears only while
+  `problems.visibility` is false: `$(whole-word)` on the warning-colored
+  background (the `kind: 'warning'` affordance), clicking executes
+  `workbench.action.openSettings` with the canonical
+  `["@id:problems.visibility"]` argument payload. `problems.visibility=false`
+  also hides the Problems view via `SetBuiltinViewVisibility`, matching
+  upstream `Problems::setMarkersVisibility`.
+- `statusbar.currentProblem` (LEFT, 0) shows `$(severity) <first line>` for
+  the marker under the caret only while `problems.showCurrentInStatus` is on.
+  It has no command and no tooltip, as upstream.
+- Status-bar hit targets now carry `command` + `argumentsJson` + `tooltip`.
+  `SyncStatusbarTooltips` rebuilds the tooltip control's TTF_SUBCLASS tools
+  only when the (rect, text) set actually changes; the callbacks pass the
+  command's argument payload through to `TryExecuteWorkbenchStableCommand`.
+- `CEditWnd::ExecuteMarkerNavigationCommand` is the `MarkerController` analog:
+  it keeps one `CMarkerNavigationModel` session per window (`m_markerNavigation`
+  + `m_markerNavigationDocUri`), drops it when the active document changes
+  (upstream `onDidChangeModel` → `_cleanUp`) or when navigation lands in another
+  resource (upstream's fresh controller in the destination editor), resets
+  `_nextIdx` when the caret leaves the selected marker
+  (`onDidChangeCursorPosition`), refreshes the marker run through `SetMarkers`
+  on every invocation (`onMarkerChanged` → `updateMarker`), and honors the
+  upstream `reusePosition` step when the resource filter changes. Landing goes
+  through `OpenDocumentAtMarkerPosition`, so `editor.action.marker.*` and a
+  Problems-panel double-click land identically.
+- `CCaret::ShowCaretPosInfo` is the caret hook: it calls
+  `CEditWnd::OnEditorCaretMoved`, which performs the reset check above and
+  pushes the status-bar update. Marker changes feed the same update through
+  `OnWorkbenchServiceProjectionChanged`; the `problems.*` settings cohort is
+  read atomically by `ApplyProblemsViewSettings` (autoReveal, visibility,
+  showCurrentInStatus, sortOrder).
+
 
 ## Closing the last tab closes in place, not by process replacement (2026-08-13, #145)
 

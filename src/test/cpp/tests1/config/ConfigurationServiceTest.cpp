@@ -266,9 +266,34 @@ TEST(ConfigurationService, BuiltinProblemsAutoRevealMatchesUpstreamDefaultAndSco
 	EXPECT_EQ(EConfigurationOutcome::InvalidKey, service.Update({
 		Source(EConfigurationScope::Profile, profile), "problems.defaultViewMode",
 		ConfigurationValue(L"tree"), "problems-viewmode" }).outcome);
-	EXPECT_EQ(EConfigurationOutcome::InvalidKey, service.Update({
+
+	// `problems.sortOrder` accepts only upstream's two enum values.
+	const auto sortOrder = service.GetValue("problems.sortOrder", profile);
+	ASSERT_EQ(EConfigurationOutcome::Applied, sortOrder.outcome);
+	ASSERT_TRUE(sortOrder.value.has_value());
+	EXPECT_EQ(L"severity", std::get<std::wstring>(sortOrder.value->Value()));
+	EXPECT_EQ(EConfigurationOutcome::Applied, service.Update({
 		Source(EConfigurationScope::Profile, profile), "problems.sortOrder",
 		ConfigurationValue(L"position"), "problems-sortorder" }).outcome);
+	EXPECT_EQ(EConfigurationOutcome::InvalidValue, service.Update({
+		Source(EConfigurationScope::Profile, profile), "problems.sortOrder",
+		ConfigurationValue(L"name"), "problems-sortorder-name" }).outcome);
+
+	// `problems.visibility` / `problems.showCurrentInStatus` upstream defaults.
+	for (const auto& [key, expectedDefault] : {
+			std::pair{ "problems.visibility", true },
+			std::pair{ "problems.showCurrentInStatus", false } }) {
+		const auto value = service.GetValue(key, profile);
+		ASSERT_EQ(EConfigurationOutcome::Applied, value.outcome) << key;
+		ASSERT_TRUE(value.value.has_value()) << key;
+		EXPECT_EQ(expectedDefault, std::get<bool>(value.value->Value())) << key;
+	}
+	EXPECT_EQ(EConfigurationOutcome::Applied, service.Update({
+		Source(EConfigurationScope::Profile, profile), "problems.visibility",
+		ConfigurationValue(false), "problems-visibility" }).outcome);
+	EXPECT_EQ(EConfigurationOutcome::Applied, service.Update({
+		Source(EConfigurationScope::Profile, profile), "problems.showCurrentInStatus",
+		ConfigurationValue(true), "problems-showcurrent" }).outcome);
 }
 
 TEST(ConfigurationService, ReadSnapshotPreservesRequestOrderAndUsesEffectivePrecedence)

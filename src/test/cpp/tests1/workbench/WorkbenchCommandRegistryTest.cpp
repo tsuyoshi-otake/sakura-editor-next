@@ -599,6 +599,83 @@ TEST(WorkbenchCommandRegistry, ProblemsAndOutputUseCanonicalIdsAcrossTheirSuppor
 		"workbench.action.output.toggleOutput.activity").has_value());
 }
 
+TEST(WorkbenchCommandRegistry, MarkerNavigationCommandsUseCanonicalIdsAndF8Aliases)
+{
+	WorkbenchCommandRegistry registry;
+	int nextInFilesCalls{};
+	int prevInFilesCalls{};
+	int nextCalls{};
+	int prevCalls{};
+	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded,
+		registry.RegisterProblemsViewCommands({
+			.markerNextInFiles = [&nextInFilesCalls] {
+				++nextInFilesCalls;
+				return workbench::commands::WorkbenchCommandExecutionResult{
+					EWorkbenchCommandExecutionStatus::Succeeded, {} };
+			},
+			.markerPrevInFiles = [&prevInFilesCalls] {
+				++prevInFilesCalls;
+				return workbench::commands::WorkbenchCommandExecutionResult{
+					EWorkbenchCommandExecutionStatus::Succeeded, {} };
+			},
+			.markerNext = [&nextCalls] {
+				++nextCalls;
+				return workbench::commands::WorkbenchCommandExecutionResult{
+					EWorkbenchCommandExecutionStatus::Succeeded, {} };
+			},
+			.markerPrev = [&prevCalls] {
+				++prevCalls;
+				return workbench::commands::WorkbenchCommandExecutionResult{
+					EWorkbenchCommandExecutionStatus::Succeeded, {} };
+			},
+		}).status);
+
+	// upstream gotoError.ts の安定 ID、Go-menu 寄与、F8 系の整数別名。
+	const std::array<std::pair<std::string_view, std::int32_t>, 4> commands = {
+		std::pair{ "editor.action.marker.nextInFiles", 31012 },
+		std::pair{ "editor.action.marker.prevInFiles", 31013 },
+		std::pair{ "editor.action.marker.next", 31014 },
+		std::pair{ "editor.action.marker.prev", 31015 },
+	};
+	for (const auto& [id, functionCode] : commands) {
+		const auto palette = registry.ResolveSurface(
+			EWorkbenchCommandSurface::CommandPalette, std::string(id) + ".palette");
+		ASSERT_TRUE(palette.has_value());
+		EXPECT_EQ(id, palette->commandId);
+		const auto key = registry.ResolveSurface(
+			EWorkbenchCommandSurface::Keybinding, std::string(id) + ".key");
+		ASSERT_TRUE(key.has_value());
+		EXPECT_EQ(id, key->commandId);
+		ASSERT_TRUE(key->binding.legacyFunctionCode.has_value());
+		EXPECT_EQ(functionCode, *key->binding.legacyFunctionCode);
+	}
+	// *InFiles の 2 本だけが MenubarGoMenu (group 6_problem_nav) 相当の
+	// Menu surface を持つ。next/prev は upstream では marker navigation
+	// widget の title menu 寄与のみで、このビルドでは Menu surface を持たない。
+	EXPECT_TRUE(registry.ResolveSurface(EWorkbenchCommandSurface::Menu,
+		"editor.action.marker.nextInFiles.goMenu").has_value());
+	EXPECT_TRUE(registry.ResolveSurface(EWorkbenchCommandSurface::Menu,
+		"editor.action.marker.prevInFiles.goMenu").has_value());
+	EXPECT_FALSE(registry.ResolveSurface(EWorkbenchCommandSurface::Menu,
+		"editor.action.marker.next.goMenu").has_value());
+	EXPECT_FALSE(registry.ResolveSurface(EWorkbenchCommandSurface::Menu,
+		"editor.action.marker.prev.goMenu").has_value());
+
+	const auto context = EnabledContext();
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
+		registry.Execute("editor.action.marker.nextInFiles", context).status);
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
+		registry.Execute("editor.action.marker.prevInFiles", context).status);
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
+		registry.Execute("editor.action.marker.next", context).status);
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
+		registry.Execute("editor.action.marker.prev", context).status);
+	EXPECT_EQ(1, nextInFilesCalls);
+	EXPECT_EQ(1, prevInFilesCalls);
+	EXPECT_EQ(1, nextCalls);
+	EXPECT_EQ(1, prevCalls);
+}
+
 TEST(WorkbenchCommandRegistry, BuiltinExecutorsAreBoundAtomicallyAndReachTypedSuccess)
 {
 	WorkbenchCommandRegistry registry;

@@ -659,6 +659,9 @@ void CCaret::ShowEditCaret()
 //2007.10.17 kobake 重複するコードを整理
 void CCaret::ShowCaretPosInfo()
 {
+	// Marker-navigation/session state and the `statusbar.currentProblem` entry
+	// track the caret even while the legacy status fields are suppressed.
+	GetEditWnd().OnEditorCaretMoved();
 	if (!GetEditWnd().HasActiveEditorInput()) return;
 
 	//必要なインターフェース

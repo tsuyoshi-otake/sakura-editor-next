@@ -69,6 +69,7 @@
 #include "config/WorkspaceContextTypes.h"
 #include "workbench/recent/RecentlyOpenedWorkspaceMenuProjection.h"
 #include "workbench/output/IOutputService.h"
+#include "workbench/problems/MarkerNavigationModel.h"
 #include "workbench/problems/MarkerService.h"
 #include "markdown/MarkdownPreviewCommandState.h"
 #include "markdown/MarkdownPreviewLayout.h"
@@ -466,6 +467,9 @@ public:
 	void OnAfterLoad(const SLoadInfo& sLoadInfo) override;
 	ELoadFinalizationStatus OnFinalLoad(ELoadResult eLoadResult) override;
 	void OnAfterSave(const SSaveInfo& sSaveInfo) override;
+	//! Caret/doc-change hook for the marker-navigation session and the
+	//! `statusbar.currentProblem` entry. Called from `CCaret::ShowCaretPosInfo`.
+	void OnEditorCaretMoved();
 	//! Arms the common load listener while the old native content is still intact.
 	//! FileCloseOpen uses this after target/check/close-veto validation and before its close event.
 	void PrepareLegacyLoadReplacement();
@@ -1168,9 +1172,21 @@ private:
 	void ApplyTerminalTabPresentationSettings();
 	//! Reads the supported editor.minimap.* cohort from one configuration revision.
 	void ApplyMiniMapSettings();
-	//! Applies `problems.autoReveal` to the Problems page; the view itself owns
-	//! the per-reveal decision once the flag reaches it.
+	//! Reads the `problems.*` cohort once and pushes each value to its consumer:
+	//! `autoReveal` to the Problems page, `visibility` / `sortOrder` /
+	//! `showCurrentInStatus` to the marker-navigation session and the
+	//! `status.problems*` status entries.
 	void ApplyProblemsViewSettings();
+	//! Runs one `editor.action.marker.*` step. `multiFile` distinguishes the
+	//! `*InFiles` variants (whole MarkerService snapshot) from the same-file ones.
+	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult
+		ExecuteMarkerNavigationCommand(bool next, bool multiFile);
+	//! Canonical file URI string of the active document, or empty when the
+	//! active editor has no resource identity.
+	[[nodiscard]] std::wstring ActiveDocumentResourceUri() const;
+	//! Rebuilds the `status.problems*` state from the MarkerService snapshot and
+	//! pushes it to the native status bar. Pure feed, never a marker authority.
+	void UpdateProblemsStatusbar();
 	[[nodiscard]] minimap::Options ReadMiniMapSettings() const;
 	//! Resolves VS Code's editor-owned `editor.guides.indentation` setting and
 	//! applies it to every editor pane; SENP decoration state is not consulted.
@@ -1261,6 +1277,17 @@ private:
 	//! gate is disconnected and their exact subscriptions are removed.
 	workbench::problems::MarkerService* m_markerService = nullptr;
 	std::optional<workbench::problems::MarkerSubscriptionId> m_markerSubscriptionId;
+	//! Live `editor.action.marker.*` session - the port of upstream's per-editor
+	//! MarkerController model. Dropped when the active document or the resource
+	//! filter changes, like upstream's `onDidChangeModel`/`matches` teardown.
+	std::optional<workbench::problems::CMarkerNavigationModel> m_markerNavigation;
+	//! Document URI the navigation session belongs to; a doc switch invalidates it.
+	std::wstring m_markerNavigationDocUri;
+	//! Cached `problems.*` values applied by ApplyProblemsViewSettings.
+	workbench::problems::EMarkerSortOrder m_problemsSortOrder =
+		workbench::problems::EMarkerSortOrder::Severity;
+	bool m_problemsVisibility = true;
+	bool m_problemsShowCurrentInStatus = false;
 	workbench::output::IOutputService* m_outputService = nullptr;
 	std::optional<workbench::output::OutputServiceSubscriptionId> m_outputSubscriptionId;
 	//! The window's own update stack. Owned rather than borrowed because the

@@ -117,12 +117,29 @@ std::vector<ConfigurationDescriptor> BuiltinConfigurationDescriptors()
 			{ Kind::Integer, std::nullopt, {}, 1, 50 } },
 		// VS Code's `problems.autoReveal` (markers.contribution.ts, default true):
 		// the Problems view reveals the active document's resource row when the
-		// active file only filter is off. The sibling keys problems.defaultViewMode,
-		// problems.showCurrentInStatus, and problems.sortOrder stay unregistered:
-		// their surfaces do not exist in this fork, so they remain latent unknown
-		// keys rather than accepted-but-unhonored capability.
+		// active file only filter is off. The sibling key problems.defaultViewMode
+		// stays unregistered: its surface does not exist in this fork, so it
+		// remains a latent unknown key rather than accepted-but-unhonored
+		// capability.
 		{ "problems.autoReveal", ConfigurationValue(true),
 			{ Scope::Profile, Scope::Workspace, Scope::Folder }, { Kind::Boolean } },
+		// VS Code's `problems.visibility` (problemsConfigurationNodeBase in
+		// workbench/common/configuration.ts, default true): the global Problems
+		// visibility switch. `false` turns marker-based surfaces off and surfaces
+		// the `status.problemsVisibility` status-bar affordance.
+		{ "problems.visibility", ConfigurationValue(true),
+			{ Scope::Profile, Scope::Workspace, Scope::Folder }, { Kind::Boolean } },
+		// VS Code's `problems.showCurrentInStatus` (markers.contribution.ts,
+		// default false): show the marker under the caret in the status bar via
+		// the `statusbar.currentProblem` entry.
+		{ "problems.showCurrentInStatus", ConfigurationValue(false),
+			{ Scope::Profile, Scope::Workspace, Scope::Folder }, { Kind::Boolean } },
+		// VS Code's `problems.sortOrder` (markers.contribution.ts, default
+		// "severity"): ordering used by Problems surfaces, including
+		// editor.action.marker.* navigation (severity-first vs position-first).
+		{ "problems.sortOrder", ConfigurationValue(L"severity"),
+			{ Scope::Profile, Scope::Workspace, Scope::Folder },
+			{ Kind::String, 16, { L"severity", L"position" } } },
 		// VS Code 1.18's Git status in the File Explorer. `git.decorations.enabled`
 		// belongs to the Git extension and decides whether decorations are provided
 		// at all; the two `explorer.decorations.*` keys belong to the workbench and

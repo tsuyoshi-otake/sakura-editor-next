@@ -61,10 +61,22 @@ public:
 	*/
 	void SetScmStatusCommands(std::vector<workbench::scm::ScmCommand> commands);
 	//! Stable workbench commands used by built-in status entries and the context menu.
-	void SetWorkbenchCommandCallback(std::function<void(std::string_view)> callback);
+	void SetWorkbenchCommandCallback(std::function<void(std::string_view, std::string_view)> callback);
 	void SetStatusbarVisibilityCallback(std::function<void(std::string_view, bool)> callback);
 	void SetStatusbarViewSnapshot(workbench::statusbar::StatusbarViewSnapshot snapshot);
 	void SetNotificationState(std::size_t pendingCount, std::size_t unreadCount, bool centerVisible);
+	//! `status.problems` / `status.problemsVisibility` / `statusbar.currentProblem`
+	//! の表示値。upstream の IStatusbarEntry.text/tooltip を
+	//! `$(name)` codicon 形式のまま受け取り、描画は LabelRunPainter が解決する。
+	struct ProblemsStatusbarState {
+		std::wstring problemsText;
+		std::wstring problemsTooltip;
+		bool problemsVisibilityOff{};
+		std::wstring problemsVisibilityTooltip;
+		std::wstring currentProblemText;
+		[[nodiscard]] bool operator==(const ProblemsStatusbarState&) const noexcept = default;
+	};
+	void SetProblemsStatus(ProblemsStatusbarState state);
 	[[nodiscard]] bool IsStatusbarEntryVisible(std::string_view id, bool providerVisible = true) const noexcept;
 	[[nodiscard]] int ReservedRightWidth() const noexcept;
 	[[nodiscard]] static std::string_view LegacyEntryIdForPart(int part) noexcept;
@@ -85,6 +97,21 @@ private:
 		//! 1 つの表示 ID（`status.scm`）に複数の項目がぶら下がるため、実行先は
 		//! 表示 ID ではなくヒット領域ごとに持つ。
 		std::string command;
+		//! コマンド引数 JSON（upstream `Command.arguments`）。空なら引数なし。
+		std::string argumentsJson;
+		//! ホバー時ツールチップ。空ならツールを登録しない。
+		std::wstring tooltip;
+	};
+
+	//! ツールチップ 1 ツールの登録内容。ヒット領域は描画のたびに再計算されるため、
+	//! 実際に変わった時だけ TTM 再登録する（連続再描画でツールチップが閉じないように）。
+	struct StatusbarTooltipTool {
+		RECT bounds{};
+		std::wstring text;
+		[[nodiscard]] bool operator==(const StatusbarTooltipTool& rhs) const noexcept
+		{
+			return ::EqualRect(&bounds, &rhs.bounds) != FALSE && text == rhs.text;
+		}
 	};
 
 	static LRESULT CALLBACK StatusBarSubclassProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
@@ -93,6 +120,8 @@ private:
 	[[nodiscard]] bool InvokeBuiltinItemAt(POINT point) const;
 	void ShowContextMenu(POINT screenPoint);
 	[[nodiscard]] std::optional<std::string> EntryIdAt(POINT clientPoint) const;
+	//! ヒット領域の tooltip を tooltip コントロールへ反映する。
+	void SyncStatusbarTooltips();
 	//! アイコン用の HFONT を書体名と字高の組で貸し出す。同じ組は 1 個だけ作り、
 	//! 再描画のたびに CreateFontIndirectW を呼ばない。失敗したら nullptr を返す。
 	[[nodiscard]] HFONT AcquireIconFont(std::wstring_view faceName, int height) const noexcept;
@@ -102,14 +131,17 @@ private:
 	CEditWnd*	m_pOwner;
 	HWND		m_hwndStatusBar = nullptr;
 	HWND		m_hwndProgressBar = nullptr;
+	HWND		m_hwndTooltip = nullptr;
 	theme::ThemePalette m_palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
 	std::vector<workbench::scm::ScmCommand> m_scmCommands;
 	mutable std::vector<StatusbarHitTarget> m_statusbarHitTargets;
 	workbench::statusbar::StatusbarViewSnapshot m_statusbarViewSnapshot;
+	ProblemsStatusbarState m_problemsStatus;
+	std::vector<StatusbarTooltipTool> m_statusbarTooltipTools;
 	std::size_t m_notificationPendingCount = 0;
 	std::size_t m_notificationUnreadCount = 0;
 	bool m_notificationCenterVisible = false;
-	std::function<void(std::string_view)> m_workbenchCommandCallback;
+	std::function<void(std::string_view, std::string_view)> m_workbenchCommandCallback;
 	std::function<void(std::string_view, bool)> m_statusbarVisibilityCallback;
 	mutable std::vector<IconFont> m_iconFontCache;
 	mutable workbench::rendering::CGdiBackBuffer m_backBuffer;

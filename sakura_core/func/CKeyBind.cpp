@@ -548,6 +548,7 @@ EFunctionCode CKeyBind::GetFuncCodeAt( KEYDATA& KeyData, int nState, BOOL bGetDe
 //Jan. 14, 2001 JEPRO	Ctrl+F7 に「大文字」, Alt+F7 に「UTF-7→SJISコード変換」, Shift+Alt+F7 に「SJIS→UTF-7コード変換」, Ctrl+Alt+F7 に「UTF-7で開き直す」を追加
 //Nov. 9, 2000 JEPRO	Shift+F8 に「CRLF改行でコピー」を追加
 //Jan. 14, 2001 JEPRO	Ctrl+F8 に「全角→半角」, Alt+F8 に「UTF-8→SJISコード変換」, Shift+Alt+F8 に「SJIS→UTF-8コード変換」, Ctrl+Alt+F8 に「UTF-8で開き直す」を追加
+//VS Code 互換: F8/Shift+F8 を「ファイル内の次/前の問題へ移動」、Alt+F8/Shift+Alt+F8 を「次/前の問題へ移動」に変更（gotoError.ts の editor.action.marker.* 既定キー）
 //Jan. 14, 2001 JEPRO	Ctrl+F9 に「半角＋全ひら→全角・カタカナ」, Alt+F9 に「Unicode→SJISコード変換」, Ctrl+Alt+F9 に「Unicodeで開き直す」を追加
 //Oct. 28, 2000 JEPRO F10 に「SQL*Plusで実行」を追加(F5からの移動)
 //Jan. 14, 2001 JEPRO	Ctrl+F10 に「半角＋全カタ→全角・ひらがな」, Alt+F10 に「EUC→SJISコード変換」, Shift+Alt+F10 に「SJIS→EUCコード変換」, Ctrl+Alt+F10 に「EUCで開き直す」を追加
@@ -673,7 +674,7 @@ static const KEYDATAINIT	KeyDataInit[] = {
 	{ VK_F5,	{ L"F5" },			{ F_REDRAW,			F_0,				F_EXECMD_DIALOG,		F_0,				F_UUDECODE,				F_0,				F_TABTOSPACE,			F_SPACETOTAB }, },
 	{ VK_F6,	{ L"F6" },			{ F_BEGIN_SEL,		F_BEGIN_BOX,		F_TOLOWER,				F_0,				F_BASE64DECODE,			F_0,				F_0,					F_0 }, },
 	{ VK_F7,	{ L"F7" },			{ F_CUT,			F_0,				F_TOUPPER,				F_0,				F_CODECNV_UTF72SJIS,	F_CODECNV_SJIS2UTF7,F_FILE_REOPEN_UTF7,		F_0 }, },
-	{ VK_F8,	{ L"F8" },			{ F_COPY,			F_COPY_CRLF,		F_TOHANKAKU,			F_0,				F_CODECNV_UTF82SJIS,	F_CODECNV_SJIS2UTF8,F_FILE_REOPEN_UTF8,		F_0 }, },
+	{ VK_F8,	{ L"F8" },			{ F_MARKER_NEXT_IN_FILES,F_MARKER_PREV_IN_FILES,F_TOHANKAKU,		F_0,				F_MARKER_NEXT,		F_MARKER_PREV,		F_FILE_REOPEN_UTF8,		F_0 }, },
 	{ VK_F9,	{ L"F9" },			{ F_PASTE,			F_PASTEBOX,			F_TOZENKAKUKATA,		F_0,				F_CODECNV_UNICODE2SJIS,	F_0,				F_FILE_REOPEN_UNICODE,	F_0 }, },
 	{ VK_F10,	{ L"F10" },			{ _SQL_RUN,			F_DUPLICATELINE,	F_TOZENKAKUHIRA,		F_0,				F_CODECNV_EUC2SJIS,		F_CODECNV_SJIS2EUC,	F_FILE_REOPEN_EUC,		F_0 }, },
 	{ VK_F11,	{ L"F11" },			{ F_OUTLINE,		F_ACTIVATE_SQLPLUS,	F_HANKATATOZENKATA,		F_0,				F_CODECNV_EMAIL,		F_CODECNV_SJIS2JIS,	F_FILE_REOPEN_JIS,		F_0 }, },

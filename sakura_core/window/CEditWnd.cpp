@@ -56,6 +56,7 @@
 #include "agent/CGrepAgent.h"
 #include "env/CMarkMgr.h"
 #include "doc/logic/CDocLine.h"
+#include "parse/CWordParse.h"
 #include "doc/CDocFileOperation.h"
 #include "doc/layout/CLayout.h"
 #include "debug/CRunningTimer.h"
@@ -148,7 +149,9 @@
 #include "workbench/scm/GitScmPublisher.h"
 #include "workbench/scm/GitStageCommands.h"
 #include "workbench/scm/GitSyncCommands.h"
+#include "workbench/problems/MarkerNavigationModel.h"
 #include "workbench/problems/MarkerPositionAdapter.h"
+#include "workbench/problems/ProblemsStatusbarProjection.h"
 #include "workbench/layout/WorkbenchLayoutStateService.h"
 #include "workbench/win32/PaneCompositeProjectionService.h"
 #include "workbench/win32/ProblemsOutputPanelProjection.h"
@@ -2258,6 +2261,10 @@ void CEditWnd::DispatchEditorFunction(EFunctionCode functionCode)
 		case F_EXITALL: commandId = command_ids::Quit; break;
 		case F_RUN_BUILD_TASK: commandId = workbench::commands::kTasksBuildCommandId; break;
 		case F_SHOW_PROBLEMS: commandId = "workbench.actions.view.problems"; break;
+		case F_MARKER_NEXT_IN_FILES: commandId = "editor.action.marker.nextInFiles"; break;
+		case F_MARKER_PREV_IN_FILES: commandId = "editor.action.marker.prevInFiles"; break;
+		case F_MARKER_NEXT: commandId = "editor.action.marker.next"; break;
+		case F_MARKER_PREV: commandId = "editor.action.marker.prev"; break;
 		default: break;
 		}
 		if (!commandId.empty()) {
@@ -4122,6 +4129,10 @@ bool CEditWnd::InitializeWorkbench()
 				return showProblemsResult();
 			},
 			.showErrorsWarnings = showProblemsResult,
+			.markerNextInFiles = [this]() { return ExecuteMarkerNavigationCommand(true, true); },
+			.markerPrevInFiles = [this]() { return ExecuteMarkerNavigationCommand(false, true); },
+			.markerNext = [this]() { return ExecuteMarkerNavigationCommand(true, false); },
+			.markerPrev = [this]() { return ExecuteMarkerNavigationCommand(false, false); },
 		});
 		if (!problemsRegistration.Succeeded()) {
 			CloseWorkbench();
@@ -4196,7 +4207,8 @@ bool CEditWnd::InitializeWorkbench()
 			return false;
 		}
 	});
-	m_cStatusBar.SetWorkbenchCommandCallback([this](std::string_view command) {
+	m_cStatusBar.SetWorkbenchCommandCallback(
+		[this](std::string_view command, std::string_view argumentsJson) {
 		// Remote Development is not a supported authority in this product. Keep the
 		// VS Code `status.host` affordance visible, but fail closed instead of
 	// approximating SSH/WSL/container windows with local state.
@@ -4207,12 +4219,13 @@ bool CEditWnd::InitializeWorkbench()
 		return;
 	}
 		bool handled = false;
-		(void)TryExecuteWorkbenchStableCommand(command, handled);
+		(void)TryExecuteWorkbenchStableCommand(command, handled, argumentsJson);
 	});
 	m_cStatusBar.SetStatusbarVisibilityCallback([this](std::string_view id, bool hidden) {
 		SetStatusbarEntryHidden(id, hidden);
 	});
 	RefreshStatusbarPresentation();
+	UpdateProblemsStatusbar();
 
 	if (m_workbenchRuntime != nullptr) {
 		const HWND editorWindow = GetHwnd();
@@ -6220,6 +6233,10 @@ void CEditWnd::RefreshStatusbarPresentation()
 	std::vector<StatusbarEntry> entries{
 		{ "status.host", LocalizedWorkbenchString(STR_WORKBENCH_STATUS_REMOTE_HOST), EStatusbarEntryAlignment::Left, true },
 		{ "status.scm", LocalizedWorkbenchString(STR_WORKBENCH_SOURCE_CONTROL_TITLE), EStatusbarEntryAlignment::Left, true },
+		{ "status.problems", LocalizedWorkbenchString(STR_WORKBENCH_STATUS_PROBLEMS), EStatusbarEntryAlignment::Left, true },
+		// upstream は問題がオフの間だけ entry を足す: providerVisible に出すのと同じ。
+		{ "status.problemsVisibility", LocalizedWorkbenchString(STR_WORKBENCH_STATUS_PROBLEMS_VISIBILITY), EStatusbarEntryAlignment::Left, !m_problemsVisibility },
+		{ "statusbar.currentProblem", LocalizedWorkbenchString(STR_WORKBENCH_STATUS_CURRENT_PROBLEM), EStatusbarEntryAlignment::Left, m_problemsShowCurrentInStatus },
 		{ "status.editor.selection", LocalizedWorkbenchString(STR_WORKBENCH_STATUS_SELECTION), EStatusbarEntryAlignment::Right, true },
 		{ "status.editor.eol", LocalizedWorkbenchString(STR_WORKBENCH_STATUS_LINE_ENDING), EStatusbarEntryAlignment::Right, true },
 		{ "sakura.status.editor.characterCode", LocalizedWorkbenchString(STR_WORKBENCH_STATUS_CHARACTER_CODE), EStatusbarEntryAlignment::Right, true },
@@ -7646,6 +7663,9 @@ bool CEditWnd::ShowTaskQuickPick(
 
 void CEditWnd::OnWorkbenchServiceProjectionChanged()
 {
+	// The `status.problems*` entries read the same marker snapshot; they must not
+	// be gated on the bottom panel existing.
+	UpdateProblemsStatusbar();
 	if (m_bottomPanelTool == nullptr || m_markerService == nullptr || m_outputService == nullptr
 		|| !m_workbenchServiceProjectionGate) {
 		return;
@@ -9951,23 +9971,254 @@ void CEditWnd::ApplyTerminalScrollbackSetting()
 
 void CEditWnd::ApplyProblemsViewSettings()
 {
-	if (m_bottomPanelTool == nullptr) return;
 	bool autoReveal = true;
+	bool visibility = true;
+	bool showCurrentInStatus = false;
+	workbench::problems::EMarkerSortOrder sortOrder =
+		workbench::problems::EMarkerSortOrder::Severity;
 	if (m_workbenchRuntime != nullptr) {
 		try {
-			const auto lookup = m_workbenchRuntime->Configuration().GetValue(
-				"problems.autoReveal", BuildWorkbenchConfigurationTarget());
-			if (lookup.value) {
-				if (const auto* value = std::get_if<bool>(&lookup.value->Value());
+			// The whole `problems.*` cohort must come from one configuration
+			// revision; a per-key lookup could mix values from two writes.
+			const std::vector<std::string> keys{
+				"problems.autoReveal",
+				"problems.visibility",
+				"problems.showCurrentInStatus",
+				"problems.sortOrder",
+			};
+			const auto read = m_workbenchRuntime->Configuration().ReadSnapshot(
+				keys, BuildWorkbenchConfigurationTarget());
+			if (read.snapshot && read.snapshot->values.size() == keys.size()) {
+				const auto& values = read.snapshot->values;
+				const auto boolValue = [&values](std::size_t index, bool fallback) {
+					if (index < values.size()) {
+						if (const auto* value = std::get_if<bool>(&values[index].Value());
+							value != nullptr) return *value;
+					}
+					return fallback;
+				};
+				autoReveal = boolValue(0, autoReveal);
+				visibility = boolValue(1, visibility);
+				showCurrentInStatus = boolValue(2, showCurrentInStatus);
+				if (const auto* value = std::get_if<std::wstring>(&values[3].Value());
 					value != nullptr) {
-					autoReveal = *value;
+					sortOrder = workbench::problems::MarkerSortOrderFromSetting(*value);
 				}
 			}
 		} catch (...) {
 			autoReveal = true;
+			visibility = true;
+			showCurrentInStatus = false;
+			sortOrder = workbench::problems::EMarkerSortOrder::Severity;
 		}
 	}
-	m_bottomPanelTool->SetProblemsAutoReveal(autoReveal);
+	// Upstream keeps a live MarkerList on the sort order captured at creation;
+	// re-sorting mid-session has no upstream counterpart, so only new sessions
+	// pick up a changed `problems.sortOrder`.
+	m_problemsVisibility = visibility;
+	m_problemsShowCurrentInStatus = showCurrentInStatus;
+	m_problemsSortOrder = sortOrder;
+	// upstream Problems::setMarkersVisibility(): `problems.visibility` は
+	// Problems view 自体の表示切替でもある (status.problemsVisibility は
+	// オフ時だけ現れる警告 affordance)。
+	if (!SetBuiltinViewVisibility(workbench::layout::ids::view::Problems, visibility)) {
+		::OutputDebugStringW(L"Sakura Editor NEXT: problems.visibility view toggle failed.\n");
+	}
+	if (m_bottomPanelTool != nullptr) {
+		m_bottomPanelTool->SetProblemsAutoReveal(autoReveal);
+	}
+	RefreshStatusbarPresentation();
+	UpdateProblemsStatusbar();
+}
+
+std::wstring CEditWnd::ActiveDocumentResourceUri() const
+{
+	const CEditDoc* document = GetDocument();
+	if (document == nullptr || !document->m_cDocFile.GetFilePathClass().IsValidPath()) {
+		return {};
+	}
+	try {
+		const auto uri = platform::uri::Uri::FromWindowsPath(document->m_cDocFile.GetFilePath());
+		return uri.value ? uri.value->ToString() : std::wstring{};
+	}
+	catch (...) {
+		return {};
+	}
+}
+
+void CEditWnd::UpdateProblemsStatusbar()
+{
+	CMainStatusBar::ProblemsStatusbarState state;
+	try {
+		// `status.problems` は upstream と同じく visibility 設定とは独立して
+		// 常に件数を出す。visibility=false は problemsVisibility 警告項目が担う。
+		if (m_markerService != nullptr) {
+			const auto snapshot = m_markerService->Snapshot();
+			const auto counts = workbench::problems::CountProblemsStatusMarkers(snapshot);
+			const auto many = LocalizedWorkbenchString(STR_WORKBENCH_STATUS_MANY_PROBLEMS);
+			state.problemsText = workbench::problems::BuildProblemsStatusText(counts,
+				many.empty() ? std::wstring_view(L"10K+") : std::wstring_view(many));
+			state.problemsTooltip = workbench::problems::BuildProblemsStatusTooltip(counts,
+				LocalizedWorkbenchString(STR_WORKBENCH_STATUS_ERRORS_TITLE),
+				LocalizedWorkbenchString(STR_WORKBENCH_STATUS_WARNINGS_TITLE),
+				LocalizedWorkbenchString(STR_WORKBENCH_STATUS_INFOS_TITLE),
+				LocalizedWorkbenchString(STR_WORKBENCH_STATUS_NO_PROBLEMS));
+			if (m_problemsShowCurrentInStatus) {
+				const auto caret = GetActiveView().GetCaret().GetCaretLogicPos();
+				const workbench::problems::MarkerNavigationPosition position{
+					static_cast<std::uint32_t>((std::max)(0, static_cast<int>(caret.y))),
+					static_cast<std::uint32_t>((std::max)(0, static_cast<int>(caret.x))),
+				};
+				if (const auto current = workbench::problems::FindCurrentProblemStatus(
+						snapshot, ActiveDocumentResourceUri(), true, position)) {
+					state.currentProblemText = current->text;
+				}
+			}
+		}
+		state.problemsVisibilityOff = !m_problemsVisibility;
+		if (state.problemsVisibilityOff) {
+			state.problemsVisibilityTooltip =
+				LocalizedWorkbenchString(STR_WORKBENCH_STATUS_PROBLEMS_OFF_TOOLTIP);
+		}
+	}
+	catch (...) {
+		::OutputDebugStringW(L"Sakura Editor NEXT: Problems statusbar projection failed.\n");
+	}
+	m_cStatusBar.SetProblemsStatus(std::move(state));
+}
+
+void CEditWnd::OnEditorCaretMoved()
+{
+	if (m_markerNavigation) {
+		const auto documentUri = ActiveDocumentResourceUri();
+		if (documentUri != m_markerNavigationDocUri) {
+			// upstream `onDidChangeModel` -> `_cleanUp()`: セッションは
+			// 所属していたエディタのモデルと一緒に破棄される。
+			m_markerNavigation.reset();
+			m_markerNavigationDocUri.clear();
+		}
+		else if (const auto selected = m_markerNavigation->Selected()) {
+			// upstream `onDidChangeCursorPosition`: 選択マーカーのレンジを
+			// キャレットが外れた時だけ `_nextIdx` を初期化し直す。
+			const auto caret = GetActiveView().GetCaret().GetCaretLogicPos();
+			const workbench::problems::MarkerNavigationPosition position{
+				static_cast<std::uint32_t>((std::max)(0, static_cast<int>(caret.y))),
+				static_cast<std::uint32_t>((std::max)(0, static_cast<int>(caret.x))),
+			};
+			if (!workbench::problems::MarkerNavigationRangeContainsPosition(
+					m_markerNavigation->MarkerAt(selected->markerIndex).range, position)) {
+				m_markerNavigation->ResetIndex();
+			}
+		}
+	}
+	UpdateProblemsStatusbar();
+}
+
+workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteMarkerNavigationCommand(
+	bool next, bool multiFile)
+{
+	using Status = workbench::commands::EWorkbenchCommandExecutionStatus;
+	if (m_markerService == nullptr) {
+		return { Status::Unsupported, "marker service is unavailable" };
+	}
+	CEditDoc* document = GetDocument();
+	if (!HasActiveEditorInput() || document == nullptr
+		|| !document->m_cDocFile.GetFilePathClass().IsValidPath()) {
+		// upstream `navigate` が model/uri の無いエディタで即時 return する経路。
+		return { Status::NotApplicable, "active editor has no resource" };
+	}
+	const std::wstring modelUri = ActiveDocumentResourceUri();
+	if (modelUri.empty()) {
+		return { Status::Failed, "active document uri could not be built" };
+	}
+
+	try {
+		const std::optional<std::wstring> filter = multiFile
+			? std::nullopt : std::optional<std::wstring>(modelUri);
+		const auto snapshot = m_markerService->Snapshot();
+
+		// upstream `MarkerController._getOrCreateModel(uri)`: 所属ドキュメントが
+		// 変わった古いセッションは matches 判定の前に落とす(onDidChangeModel)。
+		if (m_markerNavigation && m_markerNavigationDocUri != modelUri) {
+			m_markerNavigation.reset();
+			m_markerNavigationDocUri.clear();
+		}
+		bool reusePosition = false;
+		if (m_markerNavigation && m_markerNavigation->Matches(filter)) {
+			// upstream `onMarkerChanged` -> `updateMarker()`: 走査配列だけ最新化する。
+			m_markerNavigation->SetMarkers(workbench::problems::BuildMarkerNavigationMarkers(
+				snapshot, filter, m_problemsSortOrder));
+		}
+		else {
+			reusePosition = m_markerNavigation.has_value();
+			m_markerNavigation.emplace(filter,
+				workbench::problems::BuildMarkerNavigationMarkers(
+					snapshot, filter, m_problemsSortOrder),
+				m_problemsSortOrder);
+			m_markerNavigationDocUri = modelUri;
+		}
+
+		// upstream `model.getWordAtPosition` の注入: アクティブ ドキュメントの
+		// 論理行上で単語範囲を引く。空レンジのマーカーだけが叩く。
+		const CDocLineMgr& lines = document->m_cDocLineMgr;
+		const workbench::problems::CMarkerNavigationModel::WordAtPosition wordAtPosition =
+			[&lines](workbench::problems::MarkerNavigationPosition position)
+			-> std::optional<std::pair<std::uint32_t, std::uint32_t>> {
+				const CDocLine* docLine = lines.GetLine(CLogicInt(position.line));
+				if (docLine == nullptr) return std::nullopt;
+				const auto length = (std::max)(CLogicInt(0), docLine->GetLengthWithoutEOL());
+				CLogicInt from, to;
+				if (!CWordParse::WhereCurrentWord_2(docLine->GetPtr(),
+						static_cast<std::size_t>(length), position.column,
+						true, &from, &to, nullptr, nullptr)) {
+					return std::nullopt;
+				}
+				return std::pair<std::uint32_t, std::uint32_t>{
+					static_cast<std::uint32_t>((std::max)(0, static_cast<int>(from))),
+					static_cast<std::uint32_t>((std::max)(0, static_cast<int>(to))),
+				};
+			};
+
+		const auto caret = GetActiveView().GetCaret().GetCaretLogicPos();
+		const workbench::problems::MarkerNavigationPosition position{
+			static_cast<std::uint32_t>((std::max)(0, static_cast<int>(caret.y))),
+			static_cast<std::uint32_t>((std::max)(0, static_cast<int>(caret.x))),
+		};
+
+		// upstream `reusePosition`: フィルタが変わってモデルを作り直した直後の
+		// 1 ステップで進行位置を合わせ、その後の実 move が新旧の差分になる。
+		if (reusePosition) {
+			m_markerNavigation->Move(true, modelUri, position, wordAtPosition);
+		}
+		m_markerNavigation->Move(next, modelUri, position, wordAtPosition);
+
+		const auto selected = m_markerNavigation->Selected();
+		if (!selected) {
+			// マーカー無し/末尾越え: upstream も showAtMarker せず終了する。
+			return { Status::Succeeded, {} };
+		}
+		const auto& marker = m_markerNavigation->MarkerAt(selected->markerIndex);
+		const auto markerUri = platform::uri::Uri::Parse(marker.resourceUri);
+		if (!markerUri.value) {
+			return { Status::Failed, "selected marker resource uri is unparsable" };
+		}
+		const auto path = markerUri.value->ToWindowsPath();
+		if (!path.value) {
+			return { Status::Unsupported, "selected marker resource is not a file" };
+		}
+		OpenDocumentAtMarkerPosition(*path.value, marker.range.startLine,
+			marker.range.startColumn);
+		if (marker.resourceUri != modelUri) {
+			// upstream は別ファイルへ飛ぶとそのエディタの controller が
+			// fresh な MarkerList を作る: こちら側のセッションは畳む。
+			m_markerNavigation.reset();
+			m_markerNavigationDocUri.clear();
+		}
+		return { Status::Succeeded, {} };
+	}
+	catch (...) {
+		return { Status::Failed, "marker navigation failed" };
+	}
 }
 
 bool CEditWnd::IsAuxiliaryViewContainerActive(std::string_view containerId) const

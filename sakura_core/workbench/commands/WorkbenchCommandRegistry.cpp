@@ -27,6 +27,10 @@ constexpr std::int32_t kLegacyRunBuildTaskFunctionCode = 31009;
 //! `F_SHOW_PROBLEMS` in `Funccode_x.hsrc` - the integer alias only; this pure
 //! registry deliberately never includes generated function enums.
 constexpr std::int32_t kLegacyShowProblemsFunctionCode = 31011;
+constexpr std::int32_t kLegacyMarkerNextInFilesFunctionCode = 31012;
+constexpr std::int32_t kLegacyMarkerPrevInFilesFunctionCode = 31013;
+constexpr std::int32_t kLegacyMarkerNextFunctionCode = 31014;
+constexpr std::int32_t kLegacyMarkerPrevFunctionCode = 31015;
 //! Integer mirror of generated F_OPEN_WORKSPACE_FOLDER. Keep this pure boundary independent of generated headers.
 constexpr std::int32_t kLegacyOpenWorkspaceFolderFunctionCode = 30997;
 //! Integer mirrors of the Funccode_x.hsrc File command allocations.
@@ -802,6 +806,10 @@ std::uint32_t ResolveBuiltinWorkbenchCommandTitleResourceId(std::string_view com
 		{"workbench.action.tasks.build", STR_WORKBENCH_COMMAND_TASKS_BUILD},
 		{"workbench.action.tasks.test", STR_WORKBENCH_COMMAND_TASKS_TEST},
 		{"workbench.action.tasks.showLog", STR_WORKBENCH_COMMAND_TASKS_SHOW_LOG},
+		{"editor.action.marker.nextInFiles", STR_WORKBENCH_COMMAND_MARKER_NEXT_IN_FILES},
+		{"editor.action.marker.prevInFiles", STR_WORKBENCH_COMMAND_MARKER_PREV_IN_FILES},
+		{"editor.action.marker.next", STR_WORKBENCH_COMMAND_MARKER_NEXT},
+		{"editor.action.marker.prev", STR_WORKBENCH_COMMAND_MARKER_PREV},
 	};
 	for (const auto& [id, resourceId] : kTitles) if (id == commandId) return resourceId;
 	return 0;
@@ -1169,6 +1177,24 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterProblemsVie
 		return std::vector<WorkbenchCommandSurfaceBinding>{
 			{ EWorkbenchCommandSurface::ViewTitle, std::string(base) + std::string(name), std::nullopt } };
 	};
+	// `editor.action.marker.*` are upstream EditorActions (`EditorContextKeys.focus`
+	// is not published here, so `workbenchReady` like the rest of this batch).
+	// Their Keybinding slots carry the integer alias the native F8-family table
+	// dispatches; `goMenu` is nullopt for the pair that has no Go-menu entry.
+	const auto markerDescriptor = [](std::string id, std::string title,
+		std::optional<std::string> goMenuSlot, std::int32_t functionCode) {
+		std::vector<WorkbenchCommandSurfaceBinding> bindings{
+			{ EWorkbenchCommandSurface::CommandPalette, id + ".palette", std::nullopt } };
+		if (goMenuSlot) {
+			bindings.push_back({ EWorkbenchCommandSurface::Menu, std::move(*goMenuSlot), std::nullopt });
+		}
+		bindings.push_back({ EWorkbenchCommandSurface::Keybinding, id + ".key", functionCode });
+		return WorkbenchCommandDescriptor{
+			std::move(id), std::move(title), kBuiltinOwner,
+			"workbenchReady", "workbenchReady",
+			EWorkbenchCommandExecutorTarget::Editor, std::move(bindings)
+		};
+	};
 	std::vector<Entry> commands{
 		Entry{ descriptor("problems.action.open", "Open", keyBinding("problems.action.open")),
 			std::move(executors.open), {} },
@@ -1226,6 +1252,32 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterProblemsVie
 			"Focus Problems (Errors, Warnings, Infos)",
 			keyBinding("workbench.action.showErrorsWarnings")),
 			std::move(executors.showErrorsWarnings), {} },
+		// Upstream `gotoError.ts`: the InFiles pair contributes to
+		// `MenuId.MenubarGoMenu` group `6_problem_nav` with the short menu
+		// titles "Next &&Problem"/"Previous &&Problem"; this registry carries
+		// one title per command, so the Go-menu slot reuses the action title -
+		// the same recorded per-surface-title simplification as Explorer's.
+		// `editor.action.marker.next`/`prev` contribute only to the
+		// MarkerNavigationWidget title menu, which does not exist here, so they
+		// carry palette + keybinding surfaces alone.
+		Entry{ markerDescriptor("editor.action.marker.nextInFiles",
+			"Go to Next Problem in Files (Error, Warning, Info)",
+			"editor.action.marker.nextInFiles.goMenu",
+			kLegacyMarkerNextInFilesFunctionCode),
+			std::move(executors.markerNextInFiles), {} },
+		Entry{ markerDescriptor("editor.action.marker.prevInFiles",
+			"Go to Previous Problem in Files (Error, Warning, Info)",
+			"editor.action.marker.prevInFiles.goMenu",
+			kLegacyMarkerPrevInFilesFunctionCode),
+			std::move(executors.markerPrevInFiles), {} },
+		Entry{ markerDescriptor("editor.action.marker.next",
+			"Go to Next Problem (Error, Warning, Info)", {},
+			kLegacyMarkerNextFunctionCode),
+			std::move(executors.markerNext), {} },
+		Entry{ markerDescriptor("editor.action.marker.prev",
+			"Go to Previous Problem (Error, Warning, Info)", {},
+			kLegacyMarkerPrevFunctionCode),
+			std::move(executors.markerPrev), {} },
 	};
 	return RegisterAtomicBatch(std::move(commands));
 }

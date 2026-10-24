@@ -33,11 +33,20 @@ constexpr UINT_PTR kSakuraStatusBarSubclassId = 1;
 
 constexpr std::string_view kNotificationStatusId = "status.notifications";
 constexpr std::string_view kRemoteHostStatusId = "status.host";
+constexpr std::string_view kProblemsStatusId = "status.problems";
+constexpr std::string_view kProblemsVisibilityStatusId = "status.problemsVisibility";
+constexpr std::string_view kCurrentProblemStatusId = "statusbar.currentProblem";
 constexpr std::string_view kRemoteShowMenuCommand = "workbench.action.remote.showMenu";
 constexpr std::string_view kShowNotificationsCommand = "notifications.showList";
 constexpr std::string_view kHideNotificationsCommand = "notifications.hideList";
 constexpr std::string_view kToggleStatusbarCommand = "workbench.action.toggleStatusbarVisibility";
+constexpr std::string_view kToggleProblemsCommand = "workbench.actions.view.toggleProblems";
+constexpr std::string_view kOpenSettingsCommand = "workbench.action.openSettings";
+//! upstream getMarkersItemTurnedOff: `Command.arguments = ['@id:problems.visibility']`.
+constexpr std::string_view kProblemsVisibilityCommandArguments = "[\"@id:problems.visibility\"]";
 constexpr wchar_t kRemoteHostLabel[] = L"$(remote)";
+//! upstream getMarkersItemTurnedOff().text is exactly '$(whole-word)'.
+constexpr wchar_t kProblemsVisibilityLabel[] = L"$(whole-word)";
 
 constexpr std::array<std::string_view, 8> kLegacyStatusbarIds{
 	"", "status.editor.selection", "status.editor.eol", "sakura.status.editor.characterCode",
@@ -144,6 +153,14 @@ void CMainStatusBar::CreateStatusBar()
 
 	DarkMode::setProgressBarCtrlSubclass(m_hwndProgressBar);
 
+	// ステータス項目のツールチップ。TTF_SUBCLASS でこのバーへ流れる
+	// マウスメッセージをフックしてもらい、各ヒット領域の矩形を登録する。
+	m_hwndTooltip = ::CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr,
+		WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX,
+		CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+		m_hwndStatusBar, nullptr,
+		CEditApp::getInstance()->GetAppInstance(), nullptr);
+
 	if( nullptr != m_pOwner->m_cFuncKeyWnd.GetHwnd() ){
 		m_pOwner->m_cFuncKeyWnd.SizeBox_ONOFF( FALSE );
 	}
@@ -163,6 +180,11 @@ void CMainStatusBar::DestroyStatusBar()
 	// ここで破棄してよい。
 	ReleaseIconFonts();
 	m_backBuffer.Reset();
+	m_statusbarTooltipTools.clear();
+	if (m_hwndTooltip != nullptr && ::IsWindow(m_hwndTooltip)) {
+		::DestroyWindow(m_hwndTooltip);
+	}
+	m_hwndTooltip = nullptr;
 	if (m_hwndStatusBar != nullptr) {
 		::RemoveWindowSubclass(m_hwndStatusBar, StatusBarSubclassProc, kSakuraStatusBarSubclassId);
 		::DestroyWindow(m_hwndStatusBar);
@@ -203,7 +225,8 @@ void CMainStatusBar::SetScmStatusCommands(std::vector<workbench::scm::ScmCommand
 	if (m_hwndStatusBar != nullptr) ::InvalidateRect(m_hwndStatusBar, nullptr, FALSE);
 }
 
-void CMainStatusBar::SetWorkbenchCommandCallback(std::function<void(std::string_view)> callback)
+void CMainStatusBar::SetWorkbenchCommandCallback(
+	std::function<void(std::string_view, std::string_view)> callback)
 {
 	m_workbenchCommandCallback = std::move(callback);
 }
@@ -228,6 +251,13 @@ void CMainStatusBar::SetNotificationState(
 	m_notificationPendingCount = pendingCount;
 	m_notificationUnreadCount = unreadCount;
 	m_notificationCenterVisible = centerVisible;
+	if (m_hwndStatusBar != nullptr) ::InvalidateRect(m_hwndStatusBar, nullptr, FALSE);
+}
+
+void CMainStatusBar::SetProblemsStatus(ProblemsStatusbarState state)
+{
+	if (m_problemsStatus == state) return;
+	m_problemsStatus = std::move(state);
 	if (m_hwndStatusBar != nullptr) ::InvalidateRect(m_hwndStatusBar, nullptr, FALSE);
 }
 
@@ -302,6 +332,7 @@ LRESULT CALLBACK CMainStatusBar::StatusBarSubclassProc(HWND window, UINT message
 	case WM_PRINTCLIENT:
 		if (self != nullptr && reinterpret_cast<HDC>(wParam) != nullptr) {
 			self->PaintStatusBar(reinterpret_cast<HDC>(wParam));
+			self->SyncStatusbarTooltips();
 			return 0;
 		}
 		break;
@@ -310,6 +341,7 @@ LRESULT CALLBACK CMainStatusBar::StatusBarSubclassProc(HWND window, UINT message
 			PAINTSTRUCT paint{};
 			const HDC dc = ::BeginPaint(window, &paint);
 			self->PaintStatusBar(dc);
+			self->SyncStatusbarTooltips();
 			::EndPaint(window, &paint);
 			return 0;
 		}
@@ -351,6 +383,10 @@ LRESULT CALLBACK CMainStatusBar::StatusBarSubclassProc(HWND window, UINT message
 		if (self != nullptr && self->m_hwndStatusBar == window) {
 			self->m_backBuffer.Reset();
 			self->m_hwndStatusBar = nullptr;
+			if (self->m_hwndTooltip != nullptr && ::IsWindow(self->m_hwndTooltip)) {
+				::DestroyWindow(self->m_hwndTooltip);
+			}
+			self->m_hwndTooltip = nullptr;
 		}
 		break;
 	default:
@@ -452,6 +488,67 @@ void CMainStatusBar::PaintStatusBar(HDC dc) const noexcept
 		}
 	}
 
+	// VS Code の左寄せ優先度順: status.scm.*(10000) -> status.problems(50) ->
+	// status.problemsVisibility(49) -> statusbar.currentProblem(0)。
+	// `status.problems` のテキストは upstream の IStatusbarEntry.text
+	// ("$(error) N $(warning) N[ $(info) N]") をそのまま渡されており、
+	// ParseLabelWithIcons が `$(name)` を codicon に解決する。
+	if (IsStatusbarEntryVisible(kProblemsStatusId) && !m_problemsStatus.problemsText.empty()) {
+		const int iconSide = InlineStatusIconSide(height, dpi);
+		const auto runs = workbench::icons::ParseLabelWithIcons(
+			m_problemsStatus.problemsText, workbench::icons::CCodiconFont::Instance().FaceName());
+		const int itemWidth = workbench::icons::StatusItemPartWidthPixels(
+			measureLabelRuns(runs, iconSide), dpi);
+		const int right = std::min(width, scmWidth + itemWidth);
+		if (right > scmWidth) {
+			const RECT itemRect{ scmWidth, 0, right, height };
+			drawLabelRuns(runs, itemRect, iconSide);
+			m_statusbarHitTargets.push_back({
+				std::string(kProblemsStatusId), itemRect,
+				std::string(kToggleProblemsCommand), {}, m_problemsStatus.problemsTooltip });
+			scmWidth = right;
+		}
+	}
+
+	// `problems.visibility` が false の間だけ現れる警告項目（upstream kind:'warning'）。
+	// パレットの警告色を背景にして警告 affordance に対応させる。
+	if (m_problemsStatus.problemsVisibilityOff && IsStatusbarEntryVisible(kProblemsVisibilityStatusId)) {
+		const int iconSide = InlineStatusIconSide(height, dpi);
+		const auto runs = workbench::icons::ParseLabelWithIcons(
+			kProblemsVisibilityLabel, workbench::icons::CCodiconFont::Instance().FaceName());
+		const int itemWidth = workbench::icons::StatusItemPartWidthPixels(
+			measureLabelRuns(runs, iconSide), dpi);
+		const int right = std::min(width, scmWidth + itemWidth);
+		if (right > scmWidth) {
+			const RECT itemRect{ scmWidth, 0, right, height };
+			FillSolidRect(target, itemRect, m_palette.warning.ToColorRef());
+			drawLabelRuns(runs, itemRect, iconSide);
+			m_statusbarHitTargets.push_back({
+				std::string(kProblemsVisibilityStatusId), itemRect,
+				std::string(kOpenSettingsCommand),
+				std::string(kProblemsVisibilityCommandArguments),
+				m_problemsStatus.problemsVisibilityTooltip });
+			scmWidth = right;
+		}
+	}
+
+	// `statusbar.currentProblem`: キャレットが乗ったマーカーの severity codicon +
+	// メッセージ先頭行。コマンドもツールチップも持たない（upstream はクリック不可）。
+	if (!m_problemsStatus.currentProblemText.empty() && IsStatusbarEntryVisible(kCurrentProblemStatusId)) {
+		const int iconSide = InlineStatusIconSide(height, dpi);
+		const auto runs = workbench::icons::ParseLabelWithIcons(
+			m_problemsStatus.currentProblemText, workbench::icons::CCodiconFont::Instance().FaceName());
+		const int itemWidth = workbench::icons::StatusItemPartWidthPixels(
+			measureLabelRuns(runs, iconSide), dpi);
+		const int right = std::min(width, scmWidth + itemWidth);
+		if (right > scmWidth) {
+			const RECT itemRect{ scmWidth, 0, right, height };
+			drawLabelRuns(runs, itemRect, iconSide);
+			m_statusbarHitTargets.push_back({ std::string(kCurrentProblemStatusId), itemRect });
+			scmWidth = right;
+		}
+	}
+
 	const int partCount = static_cast<int>(::SendMessageW(m_hwndStatusBar, SB_GETPARTS, 0, 0));
 	// パート 0 はレガシーのドキュメント状態が占める帯。ドキュメントが無い場合は
 	// ステータスバー自身のクライアント矩形を使う。
@@ -534,15 +631,48 @@ bool CMainStatusBar::InvokeBuiltinItemAt(POINT point) const
 			// 通知だけは表示状態で show/hide が入れ替わるので、公開された 1 本の
 			// コマンドではなく現在の状態から決める。
 			m_workbenchCommandCallback(
-				m_notificationCenterVisible ? kHideNotificationsCommand : kShowNotificationsCommand);
+				m_notificationCenterVisible ? kHideNotificationsCommand : kShowNotificationsCommand, {});
 			return true;
 		}
 		if (!target.command.empty()) {
-			m_workbenchCommandCallback(target.command);
+			m_workbenchCommandCallback(target.command, target.argumentsJson);
 			return true;
 		}
 	}
 	return false;
+}
+
+void CMainStatusBar::SyncStatusbarTooltips()
+{
+	std::vector<StatusbarTooltipTool> tools;
+	for (const auto& target : m_statusbarHitTargets) {
+		if (!target.tooltip.empty()) {
+			tools.push_back({ target.bounds, target.tooltip });
+		}
+	}
+	if (tools == m_statusbarTooltipTools) return;
+	m_statusbarTooltipTools = std::move(tools);
+	if (m_hwndTooltip == nullptr || !::IsWindow(m_hwndTooltip)) return;
+
+	TOOLINFOW tool{};
+	tool.cbSize = sizeof(tool);
+	while (::SendMessageW(m_hwndTooltip, TTM_GETTOOLCOUNT, 0, 0) > 0) {
+		// TTM_ENUMTOOLS はインデックス指定なので uId を知らなくても取り出せる。
+		if (!::SendMessageW(m_hwndTooltip, TTM_ENUMTOOLSW, 0,
+				reinterpret_cast<LPARAM>(&tool))) break;
+		::SendMessageW(m_hwndTooltip, TTM_DELTOOLW, 0, reinterpret_cast<LPARAM>(&tool));
+	}
+	tool = {};
+	tool.cbSize = sizeof(tool);
+	tool.uFlags = TTF_SUBCLASS;
+	tool.hwnd = m_hwndStatusBar;
+	for (std::size_t i = 0; i < m_statusbarTooltipTools.size(); ++i) {
+		const auto& entry = m_statusbarTooltipTools[i];
+		tool.uId = i + 1;
+		tool.rect = entry.bounds;
+		tool.lpszText = const_cast<LPWSTR>(entry.text.c_str());
+		::SendMessageW(m_hwndTooltip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&tool));
+	}
 }
 
 std::optional<std::string> CMainStatusBar::EntryIdAt(POINT clientPoint) const
@@ -600,7 +730,7 @@ void CMainStatusBar::ShowContextMenu(POINT screenPoint)
 		m_pOwner->GetHwnd(), nullptr);
 	::DestroyMenu(menu);
 	if (selected == kHideStatusbarMenu) {
-		if (m_workbenchCommandCallback) m_workbenchCommandCallback(kToggleStatusbarCommand);
+		if (m_workbenchCommandCallback) m_workbenchCommandCallback(kToggleStatusbarCommand, {});
 	} else if (selected == kHideClickedMenu && clickedEntry != nullptr) {
 		if (m_statusbarVisibilityCallback) m_statusbarVisibilityCallback(clickedEntry->id, true);
 	} else if (selected >= kFirstEntryMenu && selected - kFirstEntryMenu < menuEntries.size()) {

@@ -105,3 +105,73 @@ from markers remain unimplemented.
   document's line content, and applying the resulting `CLogicPoint` through
   `CEditWnd`) is intentionally not part of this file's ownership; see
   `window/CLAUDE.md` for where that native seam lives.
+
+## Marker navigation model (`MarkerNavigationModel.h`/`.cpp`, #382)
+
+`CMarkerNavigationModel` is the pure port of upstream VS Code
+`markerNavigationService.ts` `MarkerList`: it owns a sorted marker run plus the
+`_nextIdx` move/init/reset semantics behind `editor.action.marker.nextInFiles`,
+`prevInFiles`, `next`, and `prev`. It has no HWND, no document, and no
+subscription; callers feed it `MarkerService::Snapshot()` output.
+
+- `BuildMarkerNavigationMarkers` flattens a snapshot with the upstream
+  `severities: Error|Warning|Info` filter (Hint markers are out) and the
+  upstream `compareMarker` order: resource URI ordinal first, then
+  severity→start (`problems.sortOrder = "severity"`, the default) or
+  start→severity (`"position"`). The optional resource filter is
+  `extUri.isEqual`-equivalent, not a string prefix.
+- `Matches` mirrors upstream `matches(uri)` exactly: a filterless model (the
+  `*InFiles` session) matches only a filterless (`nullopt`) query — a following
+  same-file command builds a fresh URI-filtered model with the `reusePosition`
+  step instead; a URI-filtered model matches only `toString() ===` string-equal
+  URIs (not `isEqual`; both sides are canonical `Uri::ToString()` strings).
+- `Move` reproduces upstream `_initIdx`/`move`: first move finds the first
+  `isEqual` resource run, resolves the marker containing the caret (empty
+  ranges are expanded through the injected `WordAtPosition`, the
+  `model.getWordAtPosition` analog) or the next marker start it went past —
+  with the one-step-back correction on backward — and wraps to 0 / last when
+  the resource's markers are all behind. A resource with no markers resolves
+  the string-ordinal insertion index. Later moves only advance/wrap `_nextIdx`.
+  The query URI is canonicalized to `Uri::ToString()` form at entry because the
+  upstream scan always compares `uri.toString()` strings.
+- `SetMarkers` is upstream `updateMarker()`: identical content keeps `_nextIdx`;
+  any change resets it to `-1`. `Selected` returns upstream's
+  `MarkerCoordinate` (index, 1-based ordinal, total).
+- **Divergence: no inline peek widget.** Upstream same-file navigation opens
+  the `MarkerNavigationWidget` peek UI; this fork lands the caret at the marker
+  start through `OpenDocumentAtMarkerPosition` → `MarkerPositionAdapter` and
+  shows no peek. The widget, its title menu (the upstream surface for
+  `editor.action.marker.next`/`prev`), and its `markersNavigationVisible`
+  context key are unimplemented; those two commands therefore carry no Menu
+  surface binding. The `*InFiles` pair's `goMenu` Menu-slot bindings are
+  recorded metadata for parity — no native Go menubar exists.
+- Session ownership (filter matching, the `reusePosition` step, doc-switch and
+  caret-leave resets, landing) lives in `CEditWnd`, the
+  `MarkerController` analog; see `window/CLAUDE.md`.
+
+## Problems status-bar projection (`ProblemsStatusbarProjection.h`/`.cpp`, #382)
+
+Pure value projection for the native `status.problems` (LEFT, priority 50),
+`status.problemsVisibility` (LEFT, 49), and `statusbar.currentProblem`
+(LEFT, 0) entries.
+
+- `BuildProblemsStatusText` reproduces upstream `getMarkersText` verbatim:
+  `"$(error) N $(warning) N"` always, `" $(info) N"` only when infos exist.
+  `PackMarkerCount` is upstream `packNumber`: >9999 → the localized
+  many-problems text ("10K+"), >999 → first digit + "K", else the number.
+- `BuildProblemsStatusTooltip` is upstream `getMarkersTooltip`: only nonzero
+  categories joined by `", "`; all-zero yields the localized "No Problems".
+- `FindCurrentProblemStatus` is upstream
+  `ShowCurrentMarkerInStatusbarContribution.getMarker`: gated on
+  `problems.showCurrentInStatus`, resource-filtered to the active document,
+  severity-sorted, first marker containing the caret; text is
+  `"$(severity) <first message line>"`.
+- Consumers are the native status bar (which stores the pushed text, parses
+  `$(name)` codicons at paint, and owns hit targets/tooltips) and `CEditWnd`
+  (which pushes the state on marker/caret/config changes). Neither becomes a
+  marker authority.
+- **Recorded payload divergence:** the `status.problemsVisibility` click
+  delivers the canonical `["@id:problems.visibility"]` arguments JSON to
+  `workbench.action.openSettings`, but the registered settings executor opens
+  the native settings dialog and does not consume `@id:` queries — there is no
+  settings-search surface to apply it to.
