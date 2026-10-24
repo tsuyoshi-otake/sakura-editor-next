@@ -115,6 +115,14 @@ std::vector<ConfigurationDescriptor> BuiltinConfigurationDescriptors()
 		{ "scm.inputMaxLineCount", ConfigurationValue(10),
 			{ Scope::Profile, Scope::Workspace, Scope::Folder },
 			{ Kind::Integer, std::nullopt, {}, 1, 50 } },
+		// VS Code's `problems.autoReveal` (markers.contribution.ts, default true):
+		// the Problems view reveals the active document's resource row when the
+		// active file only filter is off. The sibling keys problems.defaultViewMode,
+		// problems.showCurrentInStatus, and problems.sortOrder stay unregistered:
+		// their surfaces do not exist in this fork, so they remain latent unknown
+		// keys rather than accepted-but-unhonored capability.
+		{ "problems.autoReveal", ConfigurationValue(true),
+			{ Scope::Profile, Scope::Workspace, Scope::Folder }, { Kind::Boolean } },
 		// VS Code 1.18's Git status in the File Explorer. `git.decorations.enabled`
 		// belongs to the Git extension and decides whether decorations are provided
 		// at all; the two `explorer.decorations.*` keys belong to the workbench and

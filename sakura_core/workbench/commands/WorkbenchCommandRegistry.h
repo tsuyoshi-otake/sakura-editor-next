@@ -336,6 +336,61 @@ struct WorkbenchTaskCommandExecutors {
 	WorkbenchCommandExecutor showLog;
 };
 
+/*!
+	@brief Executors for the Problems view's `problems.action.*` family and its
+	view-scoped `workbench.actions.*` commands.
+
+	Upstream registers these in `markers.contribution.ts`: the marker commands
+	are `KeybindingsRegistry` rules plus `MenuId.ProblemsPanelContext` entries,
+	the filter toggles live in the view's `viewFilterSubmenu`, Collapse All and
+	the view-mode pair live in `MenuId.ViewTitle`, and the two palette
+	message-layout commands are ordinary `Action2`s. A command left empty here
+	still registers and still resolves, but executes as `Unsupported` - the
+	sanctioned typed boundary for commands whose service (quick fixes, the
+	files-exclude store, table view mode) does not exist in this fork.
+
+	Upstream's Enter/Ctrl+Enter/Ctrl+C/Escape chords are view-focus-scoped
+	keybindings the native Problems page handles in its own message pump; the
+	registry keeps the command IDs so the panel, menus, and palette converge on
+	one executor instead of a parallel action table.
+*/
+struct WorkbenchProblemsViewCommandExecutors {
+	//! `problems.action.open` (Enter) and `problems.action.openToSide` (Ctrl+Enter).
+	WorkbenchCommandExecutor open;
+	WorkbenchCommandExecutor openToSide;
+	//! `problems.action.copy` / `problems.action.copyMessage` /
+	//! `problems.action.copyRelatedInformationMessage` context commands.
+	WorkbenchCommandExecutor copy;
+	WorkbenchCommandExecutor copyMessage;
+	WorkbenchCommandExecutor copyRelatedInformationMessage;
+	//! `problems.action.clearFilterText` (Escape in the filter) /
+	//! `problems.action.focusFilter` (Ctrl+F) /
+	//! `problems.action.focusProblemsFromFilter` (Ctrl+Down in the filter).
+	WorkbenchCommandExecutor clearFilterText;
+	WorkbenchCommandExecutor focusFilter;
+	WorkbenchCommandExecutor focusProblemsFromFilter;
+	//! Palette-only message layout pair.
+	WorkbenchCommandExecutor showMultilineMessage;
+	WorkbenchCommandExecutor showSinglelineMessage;
+	//! `problems.action.showQuickFixes` - unsupported without a fix service.
+	WorkbenchCommandExecutor showQuickFixes;
+	//! The viewFilterSubmenu severity/scope toggles.
+	WorkbenchCommandExecutor toggleErrors;
+	WorkbenchCommandExecutor toggleWarnings;
+	WorkbenchCommandExecutor toggleInfos;
+	WorkbenchCommandExecutor toggleActiveFile;
+	//! `...toggleExcludedFiles` - unsupported without a files-exclude store.
+	WorkbenchCommandExecutor toggleExcludedFiles;
+	//! `MenuId.ViewTitle`: collapseAll and the viewAsTree/viewAsTable pair.
+	WorkbenchCommandExecutor collapseAll;
+	WorkbenchCommandExecutor viewAsTree;
+	WorkbenchCommandExecutor viewAsTable;
+	//! `workbench.actions.view.toggleProblems` (status bar + palette) and
+	//! `workbench.action.showErrorsWarnings` (keybinding-registered opener).
+	WorkbenchCommandExecutor toggleProblems;
+	WorkbenchCommandExecutor showErrorsWarnings;
+};
+
 //! Upstream's title-bar entry, registered into `MenuId.TitleBarUpdate` at
 //! order 0 with the title `"Update"`.
 inline constexpr std::string_view kUpdateIndicatorCommandId = "workbench.actions.updateIndicator";
@@ -445,6 +500,14 @@ public:
 	//! while only `build` carries a keybinding binding.
 	[[nodiscard]] WorkbenchCommandRegistrationResult RegisterTaskCommands(
 		WorkbenchTaskCommandExecutors executors = {});
+	//! Registers the Problems view command family as one atomic batch, using
+	//! upstream's own stable IDs from `markers.ts`/`markers.contribution.ts`:
+	//! the `problems.action.*` marker/filter commands, the
+	//! `workbench.actions.workbench.panel.markers.view.*` filter-submenu and
+	//! view-title actions, `workbench.actions.view.toggleProblems`, and
+	//! `workbench.action.showErrorsWarnings`.
+	[[nodiscard]] WorkbenchCommandRegistrationResult RegisterProblemsViewCommands(
+		WorkbenchProblemsViewCommandExecutors executors = {});
 	[[nodiscard]] WorkbenchCommandRegistrationResult DisposeOwner(const WorkbenchCommandOwner& owner);
 	[[nodiscard]] std::optional<WorkbenchCommandDescriptor> Find(std::string_view commandId) const;
 	[[nodiscard]] std::optional<ResolvedWorkbenchCommandSurface> ResolveSurface(

@@ -243,6 +243,34 @@ TEST(ConfigurationService, BuiltinActivityBarLocationIsWindowScopedAndBounded)
 		"workbench.activityBar.location", ConfigurationValue(L"top"), "activity-bar-language" }).outcome);
 }
 
+TEST(ConfigurationService, BuiltinProblemsAutoRevealMatchesUpstreamDefaultAndScope)
+{
+	CConfigurationService service(BuiltinConfigurationDescriptors());
+	const auto profile = Target();
+
+	const auto initial = service.GetValue("problems.autoReveal", profile);
+	ASSERT_EQ(EConfigurationOutcome::Applied, initial.outcome);
+	ASSERT_TRUE(initial.value.has_value());
+	EXPECT_EQ(true, std::get<bool>(initial.value->Value()));
+
+	EXPECT_EQ(EConfigurationOutcome::Applied, service.Update({
+		Source(EConfigurationScope::Workspace, Target(L"default", L"file:///C:/work")),
+		"problems.autoReveal", ConfigurationValue(false), "problems-autoreveal-workspace" }).outcome);
+	EXPECT_EQ(EConfigurationOutcome::InvalidValue, service.Update({
+		Source(EConfigurationScope::Profile, profile), "problems.autoReveal",
+		ConfigurationValue(L"true"), "problems-autoreveal-string" }).outcome);
+	EXPECT_EQ(EConfigurationOutcome::InvalidScope, service.Update({
+		Source(EConfigurationScope::Application, {}), "problems.autoReveal",
+		ConfigurationValue(true), "problems-autoreveal-application" }).outcome);
+	// The sibling keys stay unregistered: surfaces for them do not exist here.
+	EXPECT_EQ(EConfigurationOutcome::InvalidKey, service.Update({
+		Source(EConfigurationScope::Profile, profile), "problems.defaultViewMode",
+		ConfigurationValue(L"tree"), "problems-viewmode" }).outcome);
+	EXPECT_EQ(EConfigurationOutcome::InvalidKey, service.Update({
+		Source(EConfigurationScope::Profile, profile), "problems.sortOrder",
+		ConfigurationValue(L"position"), "problems-sortorder" }).outcome);
+}
+
 TEST(ConfigurationService, ReadSnapshotPreservesRequestOrderAndUsesEffectivePrecedence)
 {
 	auto service = Service();

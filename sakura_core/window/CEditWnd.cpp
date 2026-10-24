@@ -2257,6 +2257,7 @@ void CEditWnd::DispatchEditorFunction(EFunctionCode functionCode)
 		case F_WINCLOSE: commandId = command_ids::CloseWindow; break;
 		case F_EXITALL: commandId = command_ids::Quit; break;
 		case F_RUN_BUILD_TASK: commandId = workbench::commands::kTasksBuildCommandId; break;
+		case F_SHOW_PROBLEMS: commandId = "workbench.actions.view.problems"; break;
 		default: break;
 		}
 		if (!commandId.empty()) {
@@ -3354,6 +3355,7 @@ bool CEditWnd::InitializeWorkbench()
 	ApplyTerminalShortcutPresetSetting();
 	ApplyTerminalScrollbackSetting();
 	ApplyTerminalTabPresentationSettings();
+	ApplyProblemsViewSettings();
 		m_terminalTool->SetPanelActions({
 			.renderPanelActions = false,
 			.renderHeader = false,
@@ -4042,6 +4044,86 @@ bool CEditWnd::InitializeWorkbench()
 			.showLog = [this]() { return ExecuteTaskShowLogCommand(); },
 		});
 		if (!tasksRegistration.Succeeded()) {
+			CloseWorkbench();
+			return false;
+		}
+		// The Problems view's `problems.action.*` family plus its view-scoped
+		// `workbench.actions.*` commands. View actions dispatch to the bottom
+		// panel tool; a view action the tool rejects is the command's typed
+		// `Unsupported` terminal, not an executor error.
+		const auto problemsView = [this](std::string_view commandId) {
+			if (m_bottomPanelTool != nullptr
+				&& m_bottomPanelTool->ExecuteProblemsViewCommand(commandId)) {
+				return workbench::commands::WorkbenchCommandExecutionResult{
+					workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} };
+			}
+			return workbench::commands::WorkbenchCommandExecutionResult{
+				workbench::commands::EWorkbenchCommandExecutionStatus::Unsupported,
+				"problems view command is not supported" };
+		};
+		auto problemsViewCommand = [problemsView](std::string_view commandId) {
+			return workbench::commands::WorkbenchCommandExecutor{
+				[problemsView, id = std::string(commandId)]() { return problemsView(id); } };
+		};
+		const auto showProblemsResult = [this]() {
+			return ExecuteShowProblemsCommand()
+				? workbench::commands::WorkbenchCommandExecutionResult{
+					workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} }
+				: workbench::commands::WorkbenchCommandExecutionResult{
+					workbench::commands::EWorkbenchCommandExecutionStatus::Failed,
+					"problems layout command failed" };
+		};
+		const auto problemsRegistration = m_workbenchCommandRegistry->RegisterProblemsViewCommands({
+			.open = problemsViewCommand("problems.action.open"),
+			.openToSide = problemsViewCommand("problems.action.openToSide"),
+			.copy = problemsViewCommand("problems.action.copy"),
+			.copyMessage = problemsViewCommand("problems.action.copyMessage"),
+			.copyRelatedInformationMessage =
+				problemsViewCommand("problems.action.copyRelatedInformationMessage"),
+			.clearFilterText = problemsViewCommand("problems.action.clearFilterText"),
+			.focusFilter = problemsViewCommand("problems.action.focusFilter"),
+			.focusProblemsFromFilter =
+				problemsViewCommand("problems.action.focusProblemsFromFilter"),
+			.showMultilineMessage = problemsViewCommand("problems.action.showMultilineMessage"),
+			.showSinglelineMessage = problemsViewCommand("problems.action.showSinglelineMessage"),
+			.showQuickFixes = problemsViewCommand("problems.action.showQuickFixes"),
+			.toggleErrors = problemsViewCommand(
+				"workbench.actions.workbench.panel.markers.view.toggleErrors"),
+			.toggleWarnings = problemsViewCommand(
+				"workbench.actions.workbench.panel.markers.view.toggleWarnings"),
+			.toggleInfos = problemsViewCommand(
+				"workbench.actions.workbench.panel.markers.view.toggleInfos"),
+			.toggleActiveFile = problemsViewCommand(
+				"workbench.actions.workbench.panel.markers.view.toggleActiveFile"),
+			.toggleExcludedFiles = problemsViewCommand(
+				"workbench.actions.workbench.panel.markers.view.toggleExcludedFiles"),
+			.collapseAll = problemsViewCommand(
+				"workbench.actions.treeView.workbench.panel.markers.view.collapseAll"),
+			.viewAsTree = problemsViewCommand(
+				"workbench.actions.table.workbench.panel.markers.view.viewAsTree"),
+			.viewAsTable = problemsViewCommand(
+				"workbench.actions.table.workbench.panel.markers.view.viewAsTable"),
+			// Upstream toggles the already-visible Problems view off and opens it
+			// otherwise; hide goes through the same model-owned visibility path
+			// the panel's own close action uses.
+			.toggleProblems = [this, showProblemsResult]() {
+				if (m_workbenchRuntime != nullptr
+					&& IsBuiltinWorkbenchViewActive(workbench::layout::ids::view::Problems)
+					&& IsWorkbenchPanelVisible(workbench::WorkbenchEdge::Bottom)) {
+					if (!SetBuiltinPartVisibility(workbench::layout::ids::part::Panel, false)
+						|| !ApplyCurrentWorkbenchLayoutState(true, false)) {
+						return workbench::commands::WorkbenchCommandExecutionResult{
+							workbench::commands::EWorkbenchCommandExecutionStatus::Failed,
+							"panel hide failed" };
+					}
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} };
+				}
+				return showProblemsResult();
+			},
+			.showErrorsWarnings = showProblemsResult,
+		});
+		if (!problemsRegistration.Succeeded()) {
 			CloseWorkbench();
 			return false;
 		}
@@ -8417,6 +8499,17 @@ void CEditWnd::UpdateWorkspaceFromDocument()
 	} else {
 		m_workspaceContext->ClearSelectedFile();
 	}
+	// The Problems view's Show Active File Only filter and autoReveal consume the
+	// same canonical file URI the task problem matchers produce, never a raw path.
+	if (m_bottomPanelTool != nullptr) {
+		std::optional<std::wstring> resourceUri;
+		if (GetDocument()->m_cDocFile.GetFilePathClass().IsValidPath()) {
+			const auto uri = platform::uri::Uri::FromWindowsPath(
+				GetDocument()->m_cDocFile.GetFilePath());
+			if (uri.value) resourceUri = uri.value->ToString();
+		}
+		m_bottomPanelTool->SetProblemsActiveDocument(std::move(resourceUri));
+	}
 	// A document path is only a terminal-launch fallback. It never promotes its
 	// parent to workspace identity, Explorer/SCM root, or .vscode authority.
 	if (m_terminalTool) m_terminalTool->SetWorkingDirectory(m_workspaceContext->GetNewTerminalWorkingDirectory());
@@ -9854,6 +9947,27 @@ void CEditWnd::ApplyTerminalScrollbackSetting()
 		}
 	}
 	m_terminalTool->SetScrollbackLimit(lines);
+}
+
+void CEditWnd::ApplyProblemsViewSettings()
+{
+	if (m_bottomPanelTool == nullptr) return;
+	bool autoReveal = true;
+	if (m_workbenchRuntime != nullptr) {
+		try {
+			const auto lookup = m_workbenchRuntime->Configuration().GetValue(
+				"problems.autoReveal", BuildWorkbenchConfigurationTarget());
+			if (lookup.value) {
+				if (const auto* value = std::get_if<bool>(&lookup.value->Value());
+					value != nullptr) {
+					autoReveal = *value;
+				}
+			}
+		} catch (...) {
+			autoReveal = true;
+		}
+	}
+	m_bottomPanelTool->SetProblemsAutoReveal(autoReveal);
 }
 
 bool CEditWnd::IsAuxiliaryViewContainerActive(std::string_view containerId) const
@@ -12732,6 +12846,7 @@ LRESULT CEditWnd::DispatchEvent(
 		ApplyScmInputLineCountSetting();
 		ApplyTerminalScrollbackSetting();
 		ApplyTerminalTabPresentationSettings();
+		ApplyProblemsViewSettings();
 		return 0;
 	case MYWM_COMPLETE_STARTUP_WORKBENCH:
 		m_startupWorkbenchCompletionPosted = false;

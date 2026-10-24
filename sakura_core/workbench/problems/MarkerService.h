@@ -62,6 +62,15 @@ enum class EMarkerSeverity : std::uint8_t {
 	Hint = 3,
 };
 
+//! VS Code's IRelatedInformation: a secondary location attached to one marker.
+struct ProblemRelatedInformation final {
+	platform::uri::Uri resource;
+	MarkerRange range;
+	std::string message;
+
+	[[nodiscard]] bool operator==(const ProblemRelatedInformation&) const noexcept = default;
+};
+
 //! Value copied at the API boundary; no document, HWND, transport, or I/O handle escapes into the model.
 struct ProblemMarker final {
 	MarkerRange range;
@@ -69,6 +78,7 @@ struct ProblemMarker final {
 	std::string message;
 	std::optional<std::string> code;
 	std::optional<std::string> source;
+	std::vector<ProblemRelatedInformation> relatedInformation;
 
 	[[nodiscard]] bool operator==(const ProblemMarker&) const noexcept = default;
 };

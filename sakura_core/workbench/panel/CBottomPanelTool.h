@@ -161,6 +161,15 @@ public:
 	void SetPalette(const theme::ThemePalette& palette);
 	//! Applies an already-committed value projection without querying any producer or callback.
 	void SetProblemsSnapshot(win32::ProblemsPanelSnapshot snapshot);
+	//! The canonical URI of the active editor's document, used by `problems.autoReveal`
+	//! and the Show Active File Only filter. Empty means no file-backed editor.
+	void SetProblemsActiveDocument(std::optional<std::wstring> resourceUri);
+	//! `problems.autoReveal`. Applied to later reveals; true reveals the resource row.
+	void SetProblemsAutoReveal(bool enabled);
+	//! Runs one registered Problems-view command (`problems.action.*` or the
+	//! `workbench.actions.*.workbench.panel.markers.view.*` actions). False marks
+	//! a command whose upstream service does not exist in this fork.
+	[[nodiscard]] bool ExecuteProblemsViewCommand(std::string_view commandId) noexcept;
 	//! Applies an already-committed value projection without querying any producer or callback.
 	void SetOutputSnapshot(win32::OutputPanelSnapshot snapshot);
 	void SetProblemActivationCallback(ProblemActivationCallback callback);

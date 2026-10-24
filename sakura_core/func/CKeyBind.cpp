@@ -736,7 +736,7 @@ static const KEYDATAINIT	KeyDataInit[] = {
 	{ 'J',		{ L"J" },			{ F_0,				F_0,				F_TOGGLE_BOTTOM_PANEL,	F_0,				F_0,					F_0,				F_0,					F_0 }, },
 	{ 'K',		{ L"K" },			{ F_0,				F_0,				F_LineCutToEnd,			F_LineDeleteToEnd,	F_0,					F_0,				F_0,					F_0 }, },
 	{ 'L',		{ L"L" },			{ F_0,				F_0,				F_LOADKEYMACRO,			F_EXECKEYMACRO,		F_LTRIM,				F_0,				F_TOLOWER,				F_TOUPPER }, },
-	{ 'M',		{ L"M" },			{ F_0,				F_0,				F_SAVEKEYMACRO,			F_RECKEYMACRO,		F_MERGE,				F_0,				F_0,					F_0 }, },
+	{ 'M',		{ L"M" },			{ F_0,				F_0,				F_SAVEKEYMACRO,			F_SHOW_PROBLEMS,	F_MERGE,				F_0,				F_0,					F_0 }, },
 	{ 'N',		{ L"N" },			{ F_0,				F_0,				F_FILENEW,				F_0,				F_JUMPHIST_NEXT,		F_0,				F_0,					F_0 }, },
 	{ 'O',		{ L"O" },			{ F_0,				F_0,				F_FILEOPEN,				F_0,				F_0,					F_0,				F_0,					F_0 }, },
 	{ 'P',		{ L"P" },			{ F_0,				F_0,				F_PRINT,				F_PRINT_PREVIEW,	F_JUMPHIST_PREV,		F_0,				F_PRINT_PAGESETUP,		F_0 }, },

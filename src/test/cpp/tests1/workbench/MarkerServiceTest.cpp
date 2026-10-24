@@ -128,6 +128,50 @@ TEST(MarkerService, RejectsInvalidRangesAndBoundViolationsWithoutChangingTheSnap
 	EXPECT_EQ("good", snapshot.resources.front().markers.front().message);
 }
 
+TEST(MarkerService, RejectsInvalidRelatedInformationWithoutChangingTheSnapshot)
+{
+	MarkerService service;
+	const auto resource = Resource(L"file:///C:/Work/main.cpp");
+	const auto collection = Collection();
+	ASSERT_EQ(EMarkerOperationStatus::Replaced, service.Replace(ReplaceRequest(collection, resource, { Marker(1, "good") })).status);
+
+	auto valid = Marker(2);
+	valid.relatedInformation.push_back({
+		.resource = Resource(L"file:///C:/Work/other.cpp"),
+		.range = { 3, 1, 3, 6 },
+		.message = "declared here",
+	});
+	EXPECT_EQ(EMarkerOperationStatus::Replaced,
+		service.Replace(ReplaceRequest(collection, resource, { valid })).status);
+	ASSERT_EQ(1U, service.Snapshot().resources.front().markers.front().relatedInformation.size());
+
+	auto badRange = Marker(3);
+	badRange.relatedInformation.push_back({
+		.resource = Resource(L"file:///C:/Work/other.cpp"),
+		.range = { 3, 1, 2, 6 },
+		.message = "backwards",
+	});
+	EXPECT_EQ(EMarkerOperationStatus::InvalidMarker,
+		service.Replace(ReplaceRequest(collection, resource, { badRange })).status);
+
+	auto tooMany = Marker(5);
+	for (std::size_t index = 0; index < 65; ++index) {
+		tooMany.relatedInformation.push_back({
+			.resource = Resource(L"file:///C:/Work/other.cpp"),
+			.range = { 0, 0, 0, 1 },
+			.message = "item",
+		});
+	}
+	EXPECT_EQ(EMarkerOperationStatus::InvalidMarker,
+		service.Replace(ReplaceRequest(collection, resource, { tooMany })).status);
+
+	const auto snapshot = service.Snapshot();
+	ASSERT_EQ(1U, snapshot.resources.size());
+	// The last accepted replacement (the valid related-information marker) survives.
+	EXPECT_EQ("Unexpected token", snapshot.resources.front().markers.front().message);
+	ASSERT_EQ(1U, snapshot.resources.front().markers.front().relatedInformation.size());
+}
+
 TEST(MarkerService, DisposesOnlyTheExactOwnerGeneration)
 {
 	MarkerService service;

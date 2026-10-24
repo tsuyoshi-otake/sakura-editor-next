@@ -24,6 +24,9 @@ constexpr std::int32_t kLegacyToggleMaximizedPanelFunctionCode = 30999;
 //! `F_RUN_BUILD_TASK` in `Funccode_x.hsrc` - the integer alias only; this pure
 //! registry deliberately never includes generated function enums.
 constexpr std::int32_t kLegacyRunBuildTaskFunctionCode = 31009;
+//! `F_SHOW_PROBLEMS` in `Funccode_x.hsrc` - the integer alias only; this pure
+//! registry deliberately never includes generated function enums.
+constexpr std::int32_t kLegacyShowProblemsFunctionCode = 31011;
 //! Integer mirror of generated F_OPEN_WORKSPACE_FOLDER. Keep this pure boundary independent of generated headers.
 constexpr std::int32_t kLegacyOpenWorkspaceFolderFunctionCode = 30997;
 //! Integer mirrors of the Funccode_x.hsrc File command allocations.
@@ -171,7 +174,7 @@ WorkbenchCommandDescriptor MakeProblemsDescriptor()
 		{
 			{ EWorkbenchCommandSurface::CommandPalette, "workbench.actions.view.problems.palette", std::nullopt },
 			{ EWorkbenchCommandSurface::Menu, "workbench.actions.view.problems.menu", std::nullopt },
-			{ EWorkbenchCommandSurface::Keybinding, "workbench.actions.view.problems.key", std::nullopt },
+			{ EWorkbenchCommandSurface::Keybinding, "workbench.actions.view.problems.key", kLegacyShowProblemsFunctionCode },
 		},
 	};
 }
@@ -1123,6 +1126,106 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterTaskCommand
 			std::move(executors.test), {} },
 		Entry{ MakeTaskCommandDescriptor(std::string(kTasksShowLogCommandId), "Tasks: Show Task Log", false, false),
 			std::move(executors.showLog), {} },
+	};
+	return RegisterAtomicBatch(std::move(commands));
+}
+
+WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterProblemsViewCommands(
+	WorkbenchProblemsViewCommandExecutors executors)
+{
+	// IDs, titles, and surfaces follow upstream `markers.ts` and
+	// `markers.contribution.ts`. Upstream's ProblemsPanelContext entries map to
+	// the Menu surface (they are menus, not palette entries), the
+	// viewFilterSubmenu and `MenuId.ViewTitle` contributions map to ViewTitle,
+	// and the keybinding-registered rules keep a Keybinding slot with no
+	// integer alias because the native view handles those chords itself.
+	// `problemFocus`-style when clauses are context keys this provider does
+	// not publish, so every descriptor uses `workbenchReady`.
+	const auto descriptor = [](std::string id, std::string title,
+		std::vector<WorkbenchCommandSurfaceBinding> bindings) {
+		return WorkbenchCommandDescriptor{
+			std::move(id), std::move(title), kBuiltinOwner,
+			"workbenchReady", "workbenchReady",
+			EWorkbenchCommandExecutorTarget::LegacyNative, std::move(bindings)
+		};
+	};
+	const auto keyBinding = [](std::string_view id) {
+		return std::vector<WorkbenchCommandSurfaceBinding>{
+			{ EWorkbenchCommandSurface::Keybinding, std::string(id) + ".key", std::nullopt } };
+	};
+	const auto contextMenu = [](std::string_view id, const bool key) {
+		std::vector<WorkbenchCommandSurfaceBinding> bindings{
+			{ EWorkbenchCommandSurface::Menu, std::string(id) + ".context", std::nullopt } };
+		if (key) {
+			bindings.push_back(
+				{ EWorkbenchCommandSurface::Keybinding, std::string(id) + ".key", std::nullopt });
+		}
+		return bindings;
+	};
+	constexpr std::string_view kMarkersView = "workbench.actions.workbench.panel.markers.view.";
+	constexpr std::string_view kMarkersTreeView = "workbench.actions.treeView.workbench.panel.markers.view.";
+	constexpr std::string_view kMarkersTableView = "workbench.actions.table.workbench.panel.markers.view.";
+	const auto viewAction = [](std::string_view base, std::string_view name) {
+		return std::vector<WorkbenchCommandSurfaceBinding>{
+			{ EWorkbenchCommandSurface::ViewTitle, std::string(base) + std::string(name), std::nullopt } };
+	};
+	std::vector<Entry> commands{
+		Entry{ descriptor("problems.action.open", "Open", keyBinding("problems.action.open")),
+			std::move(executors.open), {} },
+		Entry{ descriptor("problems.action.openToSide", "Open to the Side",
+			keyBinding("problems.action.openToSide")), std::move(executors.openToSide), {} },
+		Entry{ descriptor("problems.action.copy", "Copy", contextMenu("problems.action.copy", true)),
+			std::move(executors.copy), {} },
+		Entry{ descriptor("problems.action.copyMessage", "Copy Message",
+			contextMenu("problems.action.copyMessage", false)), std::move(executors.copyMessage), {} },
+		Entry{ descriptor("problems.action.copyRelatedInformationMessage", "Copy Message",
+			contextMenu("problems.action.copyRelatedInformationMessage", false)),
+			std::move(executors.copyRelatedInformationMessage), {} },
+		Entry{ descriptor("problems.action.clearFilterText", "Clear filters text",
+			keyBinding("problems.action.clearFilterText")), std::move(executors.clearFilterText), {} },
+		Entry{ descriptor("problems.action.focusFilter", "Focus problems filter",
+			keyBinding("problems.action.focusFilter")), std::move(executors.focusFilter), {} },
+		Entry{ descriptor("problems.action.focusProblemsFromFilter", "Focus problems view",
+			keyBinding("problems.action.focusProblemsFromFilter")),
+			std::move(executors.focusProblemsFromFilter), {} },
+		Entry{ descriptor("problems.action.showMultilineMessage",
+			"Problems: Show message in multiple lines",
+			{ { EWorkbenchCommandSurface::CommandPalette,
+				"problems.action.showMultilineMessage.palette", std::nullopt } }),
+			std::move(executors.showMultilineMessage), {} },
+		Entry{ descriptor("problems.action.showSinglelineMessage",
+			"Problems: Show message in single line",
+			{ { EWorkbenchCommandSurface::CommandPalette,
+				"problems.action.showSinglelineMessage.palette", std::nullopt } }),
+			std::move(executors.showSinglelineMessage), {} },
+		Entry{ descriptor("problems.action.showQuickFixes", "Show fixes",
+			keyBinding("problems.action.showQuickFixes")), std::move(executors.showQuickFixes), {} },
+		Entry{ descriptor(std::string(kMarkersView) + "toggleErrors", "Show Errors",
+			viewAction(kMarkersView, "toggleErrors")), std::move(executors.toggleErrors), {} },
+		Entry{ descriptor(std::string(kMarkersView) + "toggleWarnings", "Show Warnings",
+			viewAction(kMarkersView, "toggleWarnings")), std::move(executors.toggleWarnings), {} },
+		Entry{ descriptor(std::string(kMarkersView) + "toggleInfos", "Show Infos",
+			viewAction(kMarkersView, "toggleInfos")), std::move(executors.toggleInfos), {} },
+		Entry{ descriptor(std::string(kMarkersView) + "toggleActiveFile", "Show Active File Only",
+			viewAction(kMarkersView, "toggleActiveFile")), std::move(executors.toggleActiveFile), {} },
+		Entry{ descriptor(std::string(kMarkersView) + "toggleExcludedFiles", "Show Excluded Files",
+			viewAction(kMarkersView, "toggleExcludedFiles")),
+			std::move(executors.toggleExcludedFiles), {} },
+		Entry{ descriptor(std::string(kMarkersTreeView) + "collapseAll", "Collapse All",
+			viewAction(kMarkersTreeView, "collapseAll")), std::move(executors.collapseAll), {} },
+		Entry{ descriptor(std::string(kMarkersTableView) + "viewAsTree", "View as Tree",
+			viewAction(kMarkersTableView, "viewAsTree")), std::move(executors.viewAsTree), {} },
+		Entry{ descriptor(std::string(kMarkersTableView) + "viewAsTable", "View as Table",
+			viewAction(kMarkersTableView, "viewAsTable")), std::move(executors.viewAsTable), {} },
+		Entry{ descriptor("workbench.actions.view.toggleProblems",
+			"Toggle Problems (Errors, Warnings, Infos)",
+			{ { EWorkbenchCommandSurface::CommandPalette,
+				"workbench.actions.view.toggleProblems.palette", std::nullopt } }),
+			std::move(executors.toggleProblems), {} },
+		Entry{ descriptor("workbench.action.showErrorsWarnings",
+			"Focus Problems (Errors, Warnings, Infos)",
+			keyBinding("workbench.action.showErrorsWarnings")),
+			std::move(executors.showErrorsWarnings), {} },
 	};
 	return RegisterAtomicBatch(std::move(commands));
 }

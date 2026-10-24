@@ -345,6 +345,7 @@ const EFunctionCode pnFuncList_Search[] = {	//Oct. 16, 2000 JEPRO 変数名変�
 	F_NEW_TERMINAL		,	//新しい統合ターミナル
 	F_REDETECT_POWERSHELL	,	//PowerShellを再検出
 	F_RUN_BUILD_TASK	,	//ビルドタスクの実行
+	F_SHOW_PROBLEMS		,	//問題パネルを表示
 	F_TOGGLE_MARKDOWN_PREVIEW	,	//Markdownプレビューの表示切替
 	F_TAGJUMP			,	//タグジャンプ機能
 	F_TAGJUMP_CLOSE		,	//閉じてタグジャンプ(元ウィンドウを閉じる) // Apr. 03, 2003 genta

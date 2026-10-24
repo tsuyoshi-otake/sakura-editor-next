@@ -254,6 +254,8 @@ void PrintTo(EFunctionCode eFuncCode, std::ostream* os)
 	case F_SHOW_FOCUS_TERMINAL: *os << "F_SHOW_FOCUS_TERMINAL"; break;
 	case F_NEW_TERMINAL: *os << "F_NEW_TERMINAL"; break;
 	case F_REDETECT_POWERSHELL: *os << "F_REDETECT_POWERSHELL"; break;
+	case F_SHOW_PROBLEMS: *os << "F_SHOW_PROBLEMS"; break;
+	case F_RUN_BUILD_TASK: *os << "F_RUN_BUILD_TASK"; break;
 	case F_TAGJUMP: *os << "F_TAGJUMP"; break;
 	case F_TAGJUMPBACK: *os << "F_TAGJUMPBACK"; break;
 	case F_TAGJUMP_LIST: *os << "F_TAGJUMP_LIST"; break;

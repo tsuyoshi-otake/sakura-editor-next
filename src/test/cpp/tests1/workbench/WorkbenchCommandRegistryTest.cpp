@@ -572,7 +572,13 @@ TEST(WorkbenchCommandRegistry, ProblemsAndOutputUseCanonicalIdsAcrossTheirSuppor
 		const auto resolved = registry.ResolveSurface(surface, slot);
 		ASSERT_TRUE(resolved.has_value());
 		EXPECT_EQ("workbench.actions.view.problems", resolved->commandId);
-		EXPECT_FALSE(resolved->binding.legacyFunctionCode.has_value());
+		// Only the keybinding surface carries the F_SHOW_PROBLEMS (31011)
+		// compatibility alias for Ctrl+Shift+M.
+		EXPECT_EQ(surface == EWorkbenchCommandSurface::Keybinding,
+			resolved->binding.legacyFunctionCode.has_value());
+		if (surface == EWorkbenchCommandSurface::Keybinding) {
+			EXPECT_EQ(31011, *resolved->binding.legacyFunctionCode);
+		}
 	}
 
 	const std::array<std::pair<EWorkbenchCommandSurface, std::string_view>, 3> outputBindings = {

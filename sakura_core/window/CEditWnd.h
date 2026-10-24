@@ -561,6 +561,9 @@ public:
 	void ToggleSecondarySidebar(bool activate = false);
 	[[nodiscard]] bool IsSecondarySidebarVisible() const noexcept;
 	void FocusIntegratedTerminal();
+	//! workbench.actions.view.problems (Ctrl+Shift+M). The F_SHOW_PROBLEMS
+	//! funccode reaches this through the same entry point as the stable command.
+	[[nodiscard]] bool ExecuteShowProblemsCommand();
 	void NewIntegratedTerminal();
 	void RedetectPowerShell();
 	void ToggleMarkdownPreview();
@@ -1086,7 +1089,6 @@ private:
 	[[nodiscard]] bool ExecuteToggleSidebarVisibilityCommand();
 	[[nodiscard]] bool ExecuteShowExplorerCommand();
 	[[nodiscard]] bool ExecuteShowExtensionsCommand();
-	[[nodiscard]] bool ExecuteShowProblemsCommand();
 	[[nodiscard]] bool ExecuteShowOutputCommand(bool requestFocus = true);
 	[[nodiscard]] bool ExecuteToggleOutputCommand();
 	//! Applies one supported value of VS Code's workbench.activityBar.location.
@@ -1166,6 +1168,9 @@ private:
 	void ApplyTerminalTabPresentationSettings();
 	//! Reads the supported editor.minimap.* cohort from one configuration revision.
 	void ApplyMiniMapSettings();
+	//! Applies `problems.autoReveal` to the Problems page; the view itself owns
+	//! the per-reveal decision once the flag reaches it.
+	void ApplyProblemsViewSettings();
 	[[nodiscard]] minimap::Options ReadMiniMapSettings() const;
 	//! Resolves VS Code's editor-owned `editor.guides.indentation` setting and
 	//! applies it to every editor pane; SENP decoration state is not consulted.

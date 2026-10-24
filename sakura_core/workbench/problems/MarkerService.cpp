@@ -22,17 +22,26 @@ constexpr std::size_t kMaximumResourcesPerCollection = 1'024U;
 constexpr std::size_t kMaximumMarkersPerResource = 1'024U;
 constexpr std::size_t kMaximumMarkerMessageBytes = 4'096U;
 constexpr std::size_t kMaximumMarkerMetadataBytes = 256U;
+//! VS Code accepts a bounded related-information list on each marker.
+constexpr std::size_t kMaximumRelatedInformation = 64U;
 constexpr std::size_t kMaximumPayloadBytes = 64U * 1'024U;
 constexpr std::size_t kMaximumSubscriptions = 256U;
 constexpr std::size_t kMaximumPendingNotifications = 1'024U;
 constexpr std::size_t kMaximumResourceUriCharacters = 8'192U;
 
-bool IsValidUtf8Text(const std::string_view value, const bool permitSpace, const std::size_t maximumBytes) noexcept
+bool IsValidUtf8Text(const std::string_view value, const bool permitSpace, const std::size_t maximumBytes,
+	const bool permitNewlines = false) noexcept
 {
 	if (value.empty() || value.size() > maximumBytes) return false;
 	for (std::size_t index = 0; index < value.size();) {
 		const auto first = static_cast<unsigned char>(value[index]);
 		if (first < 0x80) {
+			// VS Code marker messages are multiline: tab, LF, and CR are legal
+			// inside a message even though they are never legal in an id.
+			if (permitNewlines && (first == 0x09 || first == 0x0a || first == 0x0d)) {
+				++index;
+				continue;
+			}
 			if (first < (permitSpace ? 0x20 : 0x21) || first == 0x7f) return false;
 			++index;
 			continue;
@@ -275,12 +284,21 @@ MarkerOperationResult MarkerService::Replace(const ReplaceMarkersRequest& reques
 			return { EMarkerOperationStatus::MaximumPayloadExceeded, Revision() };
 		}
 		if (!marker.range.IsValid() || !IsValidSeverity(marker.severity)
-			|| !IsValidUtf8Text(marker.message, true, kMaximumMarkerMessageBytes)
+			|| !IsValidUtf8Text(marker.message, true, kMaximumMarkerMessageBytes, true)
 			|| (marker.code && !IsValidUtf8Text(*marker.code, true, kMaximumMarkerMetadataBytes))
-			|| (marker.source && !IsValidUtf8Text(*marker.source, true, kMaximumMarkerMetadataBytes))) {
+			|| (marker.source && !IsValidUtf8Text(*marker.source, true, kMaximumMarkerMetadataBytes))
+			|| marker.relatedInformation.size() > kMaximumRelatedInformation
+			|| std::ranges::any_of(marker.relatedInformation, [](const ProblemRelatedInformation& related) {
+				return !related.range.IsValid() || !IsValidResource(related.resource)
+					|| !IsValidUtf8Text(related.message, true, kMaximumMarkerMessageBytes, true);
+			})) {
 			return { EMarkerOperationStatus::InvalidMarker, Revision() };
 		}
 		payloadBytes += marker.message.size() + (marker.code ? marker.code->size() : 0U) + (marker.source ? marker.source->size() : 0U);
+		for (const auto& related : marker.relatedInformation) {
+			payloadBytes += related.message.size();
+			if (payloadBytes > kMaximumPayloadBytes) return { EMarkerOperationStatus::MaximumPayloadExceeded, Revision() };
+		}
 		if (payloadBytes > kMaximumPayloadBytes) return { EMarkerOperationStatus::MaximumPayloadExceeded, Revision() };
 	}
 

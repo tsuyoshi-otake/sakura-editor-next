@@ -678,7 +678,7 @@ MATCHER(IsInitializedCommonSettingKeyBind, "Checks if CommonSetting_KeyBind is p
 		/* アルファベット */
 		//keycode,	keyname,					なし,				Shitf+,				Ctrl+,					Shift+Ctrl+,		Alt+,					Shit+Alt+,			Ctrl+Alt+,				Shift+Ctrl+Alt+
 		{ 'A',		{ L"A" },					{ F_0,				F_0,				F_SELECTALL,			F_0,				F_SORT_ASC,				F_0,				F_0,					F_0 }, },
-		{ 'B',		{ L"B" },					{ F_0,				F_0,				F_TOGGLE_LEFT_EXPLORER,	F_0,				F_0,					F_0,				F_TOGGLE_SECONDARY_SIDEBAR,	F_0 }, },
+		{ 'B',		{ L"B" },					{ F_0,				F_0,				F_TOGGLE_LEFT_EXPLORER,	F_RUN_BUILD_TASK,	F_0,					F_0,				F_TOGGLE_SECONDARY_SIDEBAR,	F_0 }, },
 		{ 'C',		{ L"C" },					{ F_0,				F_0,				F_COPY,					F_OPEN_HfromtoC,	F_0,					F_0,				F_0,					F_0 }, },
 		{ 'D',		{ L"D" },					{ F_0,				F_0,				F_WordCut,				F_WordDelete,		F_SORT_DESC,			F_0,				F_0,					F_0 }, },
 		{ 'E',		{ L"E" },					{ F_0,				F_0,				F_CUT_LINE,				F_DELETE_LINE,		F_0,					F_0,				F_CASCADE,				F_0 }, },
@@ -689,7 +689,7 @@ MATCHER(IsInitializedCommonSettingKeyBind, "Checks if CommonSetting_KeyBind is p
 		{ 'J',		{ L"J" },					{ F_0,				F_0,				F_TOGGLE_BOTTOM_PANEL,	F_0,				F_0,					F_0,				F_0,					F_0 }, },
 		{ 'K',		{ L"K" },					{ F_0,				F_0,				F_LineCutToEnd,			F_LineDeleteToEnd,	F_0,					F_0,				F_0,					F_0 }, },
 		{ 'L',		{ L"L" },					{ F_0,				F_0,				F_LOADKEYMACRO,			F_EXECKEYMACRO,		F_LTRIM,				F_0,				F_TOLOWER,				F_TOUPPER }, },
-		{ 'M',		{ L"M" },					{ F_0,				F_0,				F_SAVEKEYMACRO,			F_RECKEYMACRO,		F_MERGE,				F_0,				F_0,					F_0 }, },
+		{ 'M',		{ L"M" },					{ F_0,				F_0,				F_SAVEKEYMACRO,			F_SHOW_PROBLEMS,	F_MERGE,				F_0,				F_0,					F_0 }, },
 		{ 'N',		{ L"N" },					{ F_0,				F_0,				F_FILENEW,				F_0,				F_JUMPHIST_NEXT,		F_0,				F_0,					F_0 }, },
 		{ 'O',		{ L"O" },					{ F_0,				F_0,				F_FILEOPEN,				F_0,				F_0,					F_0,				F_0,					F_0 }, },
 		{ 'P',		{ L"P" },					{ F_0,				F_0,				F_PRINT,				F_PRINT_PREVIEW,	F_JUMPHIST_PREV,		F_0,				F_PRINT_PAGESETUP,		F_0 }, },

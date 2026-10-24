@@ -528,6 +528,12 @@ composites with `CreateCompatibleDC`/`BitBlt`, and even
 - Once the registry recognizes a stable command, Disabled, Unsupported, Failed,
   or context-refresh failure is terminal and must not fall through to the
   historical native action.
+- `DispatchEditorFunction` silently drops funccodes in the
+  `F_CHGMOD_INS`(31001)..`F_CANCEL_MODE`(31099) numeric range whenever no
+  editor input is active, regardless of what the code actually does. Any new
+  workbench-level funccode placed in that range — `F_SHOW_PROBLEMS`(31011) is
+  one — must instead be routed through the stable-command switch above that
+  gate (like `F_RUN_BUILD_TASK`), or it does nothing on a fresh window.
 - Native executors commit the layout/view model first and apply one validated
   current snapshot. The same snapshot refreshes core context keys; no local
   button selection or `CShareData` field may become a competing command state.
@@ -543,9 +549,8 @@ composites with `CreateCompatibleDC`/`BitBlt`, and even
 - Problems and Output content is service-backed. Projection setters remain
   callback-free, Output selection mutates the model before local selection, and
   a `ChannelShown` change reveals Output while honoring `preserveFocus`.
-  `MarkerService::Replace` has no production caller — the extension diagnostic
-  RPC was removed in #169 and the Tasks problem-matcher producer is not wired
-  yet — so Problems is service-backed but empty. Legacy diagnostics repaint
+  `MarkerService::Replace` is called by the Tasks problem-matcher producer
+  (#380); the extension diagnostic RPC was removed in #169. Legacy diagnostics repaint
   only current-document decorations and never become Problems authority.
 - Problem activation applies the marker's range start:
   `OpenDocumentAtMarkerPosition` converts the stored zero-based UTF-16
