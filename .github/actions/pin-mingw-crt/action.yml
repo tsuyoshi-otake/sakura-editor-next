@@ -1,0 +1,45 @@
+name: Pin the mingw-w64 CRT
+description: >
+  Replace the mingw-w64 CRT, headers, and winpthreads that msys2/setup-msys2
+  installed with one verified revision, so every MinGW link uses a CRT this
+  repository has built against.
+
+runs:
+  using: composite
+  steps:
+    # `update: true` installs whatever MSYS2 published last. On 2026-10-23 that
+    # became r532, whose libmingwex.a references __mingw_fe_dfl_env without
+    # defining it, so every x64-mingw-static link that pulls in fesetenv (the
+    # bregonig DLL first) fails with an undefined reference. r495 is the last
+    # revision both MinGW jobs passed with, and r532 was also younger than the
+    # repository's three-day minimum release age (#378).
+    #
+    # The four packages come from one mingw-w64 source revision and must move
+    # together. The hashes are the bytes this repository verified; pacman then
+    # checks the detached MSYS2 signature beside each file. Remove this pin, and
+    # its call in each workflow, once MSYS2 ships a CRT that defines the symbol
+    # and that release is at least three days old.
+    - name: Install the pinned mingw-w64 CRT revision
+      shell: msys2 {0}
+      run: |
+        set -euo pipefail
+        base='https://repo.msys2.org/mingw/mingw64'
+        work="$(mktemp -d)"
+        trap 'rm -rf "$work"' EXIT
+        cat > "$work/SHA256SUMS" <<'EOF'
+        2a304ce7b1200dd7441af8ae38d978cead7c9ac620ed220913d4072502cf3a1e  mingw-w64-x86_64-crt-14.0.0.r495.g63ebe6cdb-1-any.pkg.tar.zst
+        c8cffc339349a50978c0d3fd6d49e33e377165f20d7f360c999cc1622dde4626  mingw-w64-x86_64-headers-14.0.0.r495.g63ebe6cdb-1-any.pkg.tar.zst
+        e657ade501916ef2f0ff8b5f5d93dc65d39f1a0ec66cfee8206026b240f60518  mingw-w64-x86_64-libwinpthread-14.0.0.r495.g63ebe6cdb-2-any.pkg.tar.zst
+        32d4cbc4b4b910eb9ac42be3741c860ca9421582058b6b15c337e0bc368a37bc  mingw-w64-x86_64-winpthreads-14.0.0.r495.g63ebe6cdb-2-any.pkg.tar.zst
+        EOF
+        cd "$work"
+        packages=()
+        while read -r _ file; do
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors \
+            --remote-name "$base/$file" --remote-name "$base/$file.sig"
+          packages+=("$file")
+        done < SHA256SUMS
+        sha256sum --check --strict SHA256SUMS
+        pacman --upgrade --noconfirm "${packages[@]}"
+        pacman --query mingw-w64-x86_64-crt mingw-w64-x86_64-headers \
+          mingw-w64-x86_64-libwinpthread mingw-w64-x86_64-winpthreads

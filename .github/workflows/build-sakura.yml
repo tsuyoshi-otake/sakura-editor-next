@@ -206,6 +206,11 @@ jobs:
           mingw-w64-x86_64-gdb
           mingw-w64-x86_64-ctags
 
+    # The CRT that `update: true` would install breaks every static MinGW link
+    # (#378); see the action for the pin and its removal condition.
+    - name: Pin the mingw-w64 CRT
+      uses: ./.github/actions/pin-mingw-crt
+
     - run: uv venv
       shell: msys2 {0}
 

@@ -108,6 +108,11 @@ jobs:
             mingw-w64-x86_64-gdb
             mingw-w64-x86_64-ctags
 
+      # The CRT that `update: true` would install breaks every static MinGW link
+      # (#378); see the action for the pin and its removal condition.
+      - name: Pin the mingw-w64 CRT
+        uses: ./.github/actions/pin-mingw-crt
+
       # rustup ships with the runner image, but the release this repository
       # builds against is declared by rust/native/rust-toolchain.toml, which the
       # MSVC gate reads the same way. Add the GNU target so the one native
