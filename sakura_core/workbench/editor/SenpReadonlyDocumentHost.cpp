@@ -99,7 +99,7 @@ class SenpReadonlyDocumentHost::Impl {
 		if (root) { auto window = root; root = nullptr; ::DestroyWindow(window); }
 		selector = label = notice = nullptr; copy = {};
 	}
-	void LayoutChildren() {
+	void LayoutChildren(bool repaint = true) {
 		if (!root) return;
 		RECT bounds{}; ::GetClientRect(root, &bounds);
 		const bool navigation = pages.size() > 1;
@@ -120,6 +120,9 @@ class SenpReadonlyDocumentHost::Impl {
 			if (page->structured) page->structured->Layout(bounds, dpi);
 			else if (page->text && page->text->view) page->text->view->Layout(bounds, dpi);
 		}
+		if (repaint) Repaint();
+	}
+	void Repaint() const noexcept {
 		::RedrawWindow(root, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW);
 	}
 	SenpDocumentHostState Terminal(SenpDocumentHostState result) {
@@ -152,10 +155,12 @@ class SenpReadonlyDocumentHost::Impl {
 		}
 		if (auto* previous = Current(); previous && previous->Window() != page.Window()) ::ShowWindow(previous->Window(), SW_HIDE);
 		active = index; ::SendMessageW(selector, CB_SETCURSEL, index, 0);
-		LayoutChildren();
+		// Publish one frame after the page is shown. Repainting inside the layout
+		// pass would first present the vacated host with no page, then the page.
+		LayoutChildren(false);
 		if (state != SenpDocumentHostState::Ready) return false;
 		::ShowWindow(page.Window(), SW_SHOWNA);
-		::RedrawWindow(root, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW);
+		Repaint();
 		if (focus) ::SetFocus(page.Focus());
 		return true;
 	}

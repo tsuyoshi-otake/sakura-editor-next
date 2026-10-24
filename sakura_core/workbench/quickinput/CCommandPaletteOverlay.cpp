@@ -444,11 +444,23 @@ void CCommandPaletteOverlay::Layout() noexcept
 		(void)::MapWindowPoints(nullptr, m_parent,
 			reinterpret_cast<POINT*>(&previousBounds), 2);
 	}
+	const bool wasTopmostChild = ::GetWindow(m_parent, GW_CHILD) == m_window;
 	::SetWindowPos(m_window, HWND_TOP, x, y, width, height,
 		SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
 	Layout(width, height);
-	if (repaintParent) {
+	if (!repaintParent) return;
+	// The frame calls Layout() after every WM_PAINT. Repainting the parent there
+	// when nothing moved re-invalidates the frame inside its own paint and turns
+	// one paint into an endless cover/repaint strobe (#377). Only a changed
+	// rectangle exposes stale pixels that the synchronous repair must cover.
+	const RECT nextBounds{ x, y, x + width, y + height };
+	if (::EqualRect(&previousBounds, &nextBounds) == FALSE) {
 		PaintParentRegionNow(m_parent, previousBounds);
+		PaintOverlayNow(m_window);
+	} else if (!wasTopmostChild) {
+		// A sibling raised above the overlay may have painted over it. Raising
+		// with SWP_NOREDRAW does not restore those pixels; repainting only the
+		// overlay subtree does, without re-invalidating the parent.
 		PaintOverlayNow(m_window);
 	}
 }

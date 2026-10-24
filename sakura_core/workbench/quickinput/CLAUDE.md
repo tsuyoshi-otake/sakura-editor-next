@@ -71,3 +71,18 @@ finish selection and layout, synchronously paint the final subtree, and only
 then publish the selection callback. A callback is allowed to change the theme;
 running it against the previous overlay bounds creates a visible intermediate
 frame and is therefore outside the contract.
+
+`CEditWnd` calls `Layout()` after every frame `WM_PAINT`, so `Layout()` must be
+idempotent for unchanged bounds: it repairs the parent region and repaints the
+overlay only when its rectangle actually changed. Repainting the parent with
+`RDW_INVALIDATE | RDW_UPDATENOW` from inside the frame's own paint re-enters
+`WM_PAINT` and turns one paint into a self-sustaining cover/repaint strobe; the
+open theme picker visibly flickered that way (#377). Callers that change the
+overlay's content without moving it (filtering, palette changes) own their own
+`PaintOverlayNow`. With unchanged bounds, the one exception is z-order: if a
+sibling had been raised above the overlay, re-raising it with `SWP_NOREDRAW`
+does not restore covered pixels, so `Layout()` repaints the overlay subtree
+only (never the parent, which is what would re-enter the frame's paint).
+`FramePaintLayoutDoesNotRetriggerItsOwnPaint` pins the loop with a paint-coupled
+parent (65 paints and nesting depth 31 before the fix, exactly one after);
+`LayoutRepaintsTheOverlayWhenASiblingWasRaisedAboveIt` pins the z-order case.

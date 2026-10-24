@@ -12,6 +12,7 @@
 
 #include "workbench/controls/CInputBoxGeometry.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <string>
 #include <vector>
@@ -447,6 +448,106 @@ TEST_F(CommandPaletteOverlayTest, FilteringShrinksAndSynchronouslyRepaintsTheVac
 	RECT after{};
 	ASSERT_TRUE(::GetWindowRect(OverlayWindow(), &after));
 	EXPECT_LT(after.bottom - after.top, before.bottom - before.top);
+	for (const HWND window : { m_parent, OverlayWindow(), InputWindow(), ListWindow() }) {
+		ASSERT_NE(nullptr, window);
+		RECT pending{};
+		EXPECT_FALSE(::GetUpdateRect(window, &pending, FALSE));
+	}
+}
+
+struct PaintCoupledParent {
+	workbench::quickinput::CCommandPaletteOverlay* overlay{};
+	int paints{};
+	int depth{};
+	int maximumDepth{};
+};
+
+LRESULT CALLBACK PaintCoupledParentProc(HWND window, UINT message, WPARAM wParam,
+	LPARAM lParam, UINT_PTR, DWORD_PTR data)
+{
+	if (message != WM_PAINT) return ::DefSubclassProc(window, message, wParam, lParam);
+	auto& state = *reinterpret_cast<PaintCoupledParent*>(data);
+	const LRESULT result = ::DefSubclassProc(window, message, wParam, lParam);
+	++state.paints;
+	// Bound the probe so a regression fails the assertion instead of the stack.
+	if (state.paints > 64) return result;
+	++state.depth;
+	state.maximumDepth = (std::max)(state.maximumDepth, state.depth);
+	state.overlay->Layout();
+	--state.depth;
+	return result;
+}
+
+TEST_F(CommandPaletteOverlayTest, FramePaintLayoutDoesNotRetriggerItsOwnPaint)
+{
+	// CEditWnd calls Layout() after every frame WM_PAINT. With unchanged bounds
+	// that call must not re-invalidate the frame, or each paint schedules the
+	// next and the open Quick Pick strobes between siblings and itself (#377).
+	ASSERT_TRUE(m_overlay.Show(ManyTestItems(), L"item-0"));
+	PaintCoupledParent state{ .overlay = &m_overlay };
+	ASSERT_TRUE(::SetWindowSubclass(m_parent, PaintCoupledParentProc, 1,
+		reinterpret_cast<DWORD_PTR>(&state)));
+	RECT before{};
+	ASSERT_TRUE(::GetWindowRect(OverlayWindow(), &before));
+
+	(void)::RedrawWindow(m_parent, nullptr, nullptr,
+		RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE | RDW_ALLCHILDREN);
+	MSG message{};
+	for (int index = 0; index < 64
+		&& ::PeekMessageW(&message, nullptr, WM_PAINT, WM_PAINT, PM_REMOVE) != FALSE; ++index) {
+		::DispatchMessageW(&message);
+	}
+	ASSERT_TRUE(::RemoveWindowSubclass(m_parent, PaintCoupledParentProc, 1));
+
+	EXPECT_EQ(1, state.paints);
+	EXPECT_EQ(1, state.maximumDepth);
+	RECT after{};
+	ASSERT_TRUE(::GetWindowRect(OverlayWindow(), &after));
+	EXPECT_TRUE(::EqualRect(&before, &after));
+	EXPECT_TRUE(m_overlay.IsVisible());
+	RECT pending{};
+	EXPECT_FALSE(::GetUpdateRect(m_parent, &pending, FALSE));
+}
+
+TEST_F(CommandPaletteOverlayTest, LayoutRepaintsTheOverlayWhenASiblingWasRaisedAboveIt)
+{
+	ASSERT_TRUE(m_overlay.Show(ManyTestItems(), L"item-0"));
+	RECT bounds{};
+	ASSERT_TRUE(::GetWindowRect(OverlayWindow(), &bounds));
+	::MapWindowPoints(nullptr, m_parent, reinterpret_cast<POINT*>(&bounds), 2);
+	const HWND sibling = ::CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE,
+		bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top,
+		m_parent, nullptr, ::GetModuleHandleW(nullptr), nullptr);
+	ASSERT_NE(nullptr, sibling);
+	ASSERT_TRUE(::SetWindowPos(sibling, HWND_TOP, 0, 0, 0, 0,
+		SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOREDRAW));
+	ASSERT_EQ(sibling, ::GetWindow(m_parent, GW_CHILD));
+	(void)::InvalidateRect(OverlayWindow(), nullptr, FALSE);
+
+	m_overlay.Layout();
+
+	EXPECT_EQ(OverlayWindow(), ::GetWindow(m_parent, GW_CHILD));
+	RECT pending{};
+	EXPECT_FALSE(::GetUpdateRect(OverlayWindow(), &pending, FALSE));
+	::DestroyWindow(sibling);
+}
+
+TEST_F(CommandPaletteOverlayTest, ParentResizeStillRepairsTheVacatedRegion)
+{
+	ASSERT_TRUE(m_overlay.Show(ManyTestItems(), L"item-0"));
+	RECT before{};
+	ASSERT_TRUE(::GetWindowRect(OverlayWindow(), &before));
+	(void)::RedrawWindow(m_parent, nullptr, nullptr,
+		RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE | RDW_ALLCHILDREN);
+
+	ASSERT_TRUE(::SetWindowPos(m_parent, nullptr, 0, 0, 640, 700,
+		SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW));
+	(void)::ValidateRect(m_parent, nullptr);
+	m_overlay.Layout();
+
+	RECT after{};
+	ASSERT_TRUE(::GetWindowRect(OverlayWindow(), &after));
+	EXPECT_FALSE(::EqualRect(&before, &after));
 	for (const HWND window : { m_parent, OverlayWindow(), InputWindow(), ListWindow() }) {
 		ASSERT_NE(nullptr, window);
 		RECT pending{};

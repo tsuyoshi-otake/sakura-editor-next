@@ -196,6 +196,28 @@ TEST_F(SenpReadonlyDocumentHostTest, MixedSectionsPreserveOrderAndRetainedPageSt
 	EXPECT_FALSE(host->TakeTextRead());
 }
 
+TEST_F(SenpReadonlyDocumentHostTest, PageSwitchPublishesOneFrameWithTheSelectedPageShown)
+{
+	Publish(); Create();
+	ASSERT_EQ(SenpDocumentHostState::Ready, host->State());
+	ASSERT_TRUE(host->SelectPage(2, false));
+	ASSERT_TRUE(host->SelectPage(0, false));
+	struct Paints { int count{}; } paints;
+	const auto counter = [](HWND window, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR data) -> LRESULT {
+		if (message == WM_PAINT) ++reinterpret_cast<Paints*>(data)->count;
+		return ::DefSubclassProc(window, message, wParam, lParam);
+	};
+	ASSERT_TRUE(::SetWindowSubclass(host->Window(), counter, 2, reinterpret_cast<DWORD_PTR>(&paints)));
+
+	// The previous page is hidden and the retained page is shown inside one
+	// transaction; an extra synchronous paint in between presents an empty host.
+	ASSERT_TRUE(host->SelectPage(2, false));
+
+	ASSERT_TRUE(::RemoveWindowSubclass(host->Window(), counter, 2));
+	EXPECT_EQ(1, paints.count);
+	EXPECT_EQ(std::optional<std::size_t>{ 2 }, host->ActivePage());
+}
+
 TEST_F(SenpReadonlyDocumentHostTest, LocaleRefreshRetainsSelectedPageAndProviderData)
 {
 	tests1::ScopedLanguageSelection restore;
