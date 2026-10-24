@@ -129,11 +129,35 @@ alias after the source/high bits have been preserved by the native dispatcher.
 Problems and Output are Command Palette/Menu/Keybinding commands, not Activity
 Bar commands.
 
-Output also has a distinct native show-only route for extension
-`OutputChannel.show`; it must not toggle an already visible panel off.
+Output also has a distinct native show-only route
+(`ExecuteShowOutputCommand`, reached through a `ChannelShown` service
+notification); it must not toggle an already visible panel off.
 
 The focused command/context/catalog cohort passes 19/19 and the integrated
 profile/runtime/command cohort passes 79/79. The Command Palette UI and
 extension-host command contribution bridge are not yet complete consumers of
 this registry, so this checkpoint is a verified spine rather than complete
 command compatibility.
+
+## Default keybindings follow VS Code (owner decision, 2026-10-24, #379)
+
+Where a VS Code default chord collides with a legacy Sakura assignment, the
+VS Code chord wins — the same precedent that bound `Ctrl+B` to
+`workbench.action.toggleSidebarVisibility` above. Each key lands with the
+phase that implements its command, and the displaced function keeps its
+command but loses the default chord in `func/CKeyBind.cpp`:
+
+| Chord | VS Code command | Displaced legacy default (`func/CKeyBind.cpp`) | Phase |
+| --- | --- | --- | --- |
+| `Ctrl+Shift+B` | `workbench.action.tasks.build` | — (unbound) | #380 |
+| `Ctrl+Shift+M` | `workbench.actions.view.problems` | `F_RECKEYMACRO` ('M' row) | #381 |
+| `F8` | `editor.action.marker.nextInFiles` | `F_COPY` | #382 |
+| `Shift+F8` | `editor.action.marker.prevInFiles` | `F_COPY_CRLF` | #382 |
+| `Alt+F8` | `editor.action.marker.next` | `F_CODECNV_UTF82SJIS` | #382 |
+| `Shift+Alt+F8` | `editor.action.marker.prev` | `F_CODECNV_SJIS2UTF8` | #382 |
+| `Ctrl+Shift+U` | `workbench.action.output.toggleOutput` | `F_LineDeleteToStart` ('U' row) | #383 |
+
+This is a divergence-free target, not a description of the current table: the
+rows above still carry the legacy assignments and unbound slots until each
+phase lands. A phase that cannot take its chord records the reason here
+instead of silently keeping the legacy default.

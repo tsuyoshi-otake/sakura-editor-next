@@ -260,9 +260,10 @@ composites with `CreateCompatibleDC`/`BitBlt`, and even
   may retain the historical shared-data behavior.
 - The bounded native adapter projects committed built-in active surfaces for
   Explorer, Outline, Source Control, Extensions, Terminal, Problems, and Output.
-  "Extensions" here is the whole ViewContainer — Marketplace and any
-  contributed views together, see "Extensions ViewContainer Marketplace"
-  below — never only its contributed-views section. Activation does not imply
+  "Extensions" here is the whole SENP ViewContainer — the flat extension list
+  and its install surfaces together, see
+  [`../workbench/extensions/CLAUDE.md`](../workbench/extensions/CLAUDE.md) —
+  never only a contributed-views section. Activation does not imply
   focus; an explicit coherent model focus is applied only after the projected
   native bounds exist. User-originated Outline expansion and bottom-panel tab
   selection first ask the model owner and may be vetoed; snapshot projection
@@ -532,8 +533,9 @@ composites with `CreateCompatibleDC`/`BitBlt`, and even
   button selection or `CShareData` field may become a competing command state.
 - Problems and Output native requests route through
   `workbench.actions.view.problems` and
-  `workbench.action.output.toggleOutput`. Extension `OutputChannel.show` uses
-  the show-only executor, so an already visible Output panel remains visible.
+  `workbench.action.output.toggleOutput`. The show-only reveal is
+  `ExecuteShowOutputCommand`, reached through a `ChannelShown` service
+  notification, so an already visible Output panel remains visible.
   Runtime-backed windows borrow the runtime Marker/Output services, subscribe
   through an HWND-only coalescing gate, and re-snapshot on the UI thread.
   Service callbacks never capture raw `CEditWnd`; teardown closes the gate and
@@ -541,11 +543,16 @@ composites with `CreateCompatibleDC`/`BitBlt`, and even
 - Problems and Output content is service-backed. Projection setters remain
   callback-free, Output selection mutates the model before local selection, and
   a `ChannelShown` change reveals Output while honoring `preserveFocus`.
-  Legacy diagnostics repaint only current-document decorations and never become
-  Problems authority.
-- Problem activation currently opens the retained URI only. Applying its exact
-  range is unsupported until a dedicated UTF-16-code-unit to Sakura-position
-  adapter exists; do not approximate it with byte or display columns.
+  `MarkerService::Replace` has no production caller — the extension diagnostic
+  RPC was removed in #169 and the Tasks problem-matcher producer is not wired
+  yet — so Problems is service-backed but empty. Legacy diagnostics repaint
+  only current-document decorations and never become Problems authority.
+- Problem activation applies the marker's range start:
+  `OpenDocumentAtMarkerPosition` converts the stored zero-based UTF-16
+  line/column through `workbench::problems::MarkerPositionAdapter` against the
+  real document's line contents before posting `MYWM_SETCARETPOS`. The Search
+  view shares the same activation path, so a marker and a search match land
+  identically.
 
 The integrated runtime/service/native-bridge cohort passes 210/210 and compiles
 through the native window. Command Palette, arbitrary extension view

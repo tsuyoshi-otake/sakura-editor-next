@@ -3,9 +3,9 @@
 ## Ownership
 
 `OutputService` is the process-local, HWND-free authority for Output and
-structured Log channels. Native panel tabs and extension output-channel RPC are
-projections/adapters; neither owns channel content, active-channel selection, or
-owner lifetime.
+structured Log channels. Native panel tabs are projections/adapters; they own
+neither channel content, active-channel selection, nor owner lifetime. The
+extension output-channel RPC that used to sit beside them was removed in #169.
 
 ## Channel and Operation Rules
 
@@ -36,17 +36,16 @@ owner lifetime.
 
 ## Verified Checkpoint
 
-`CWorkbenchRuntime` owns `OutputService`; `CEditWnd` renders authoritative
-channel snapshots through a coalesced UI-thread projection; and extension
-Output RPC mutates the service before best-effort legacy cache projection.
-Native channel selection is model-first with exact owner/generation, expected
-revision, a stable non-wrapping operation ID, and `preserveFocus`.
+`CWorkbenchRuntime` owns the selected `IOutputService` provider; `CEditWnd`
+renders authoritative channel snapshots through a coalesced UI-thread
+projection. The Git `Log` channel below is the only production content
+producer. Native channel selection is model-first with exact owner/generation,
+expected revision, a stable non-wrapping operation ID, and `preserveFocus`.
 
 The canonical `workbench.action.output.toggleOutput` command remains the user
-toggle, while extension `OutputChannel.show` is a non-toggle reveal. Every
-extension-host mutation carries one bounded session-scoped operation ID and
-reuses it for transport replay. The integrated native cohort passes 210/210 and
-the extension-host API cohort passes 15/15.
+toggle, while a service `Show` mutation is a non-toggle reveal: its
+`ChannelShown` notification reveals the Output view without stealing focus
+when `preserveFocus` is set. The integrated native cohort passes 210/210.
 
 ## Rust Migration Boundary
 
@@ -189,5 +188,10 @@ reproducing upstream VS Code's own built-in Git extension Output channel
 format. It is documented in `sakura_core/workbench/scm/CLAUDE.md`'s "Git Output
 Channel" section rather than here, since its format contract and divergences
 are SCM-specific; this file records only that the producer exists and that it
-adds no new `OutputService` invariant. It is not yet wired into any production
-`RunGit` call site (`CEditWnd.cpp`, `CScmWorkbenchTool.cpp`).
+adds no new `OutputService` invariant. `CEditWnd` wires it into every Git
+operation it invokes: `MakeGitOutputSink(m_outputService)` feeds `RunGitLogged`
+behind each command context's `run` callback (branch, init, clone, stage,
+discard, commit, sync) and the diff/line-staging readers. The
+`CScmWorkbenchTool` background status/history poll and
+`senp/github/GhRepositorySelection.cpp` still call `RunGit` directly and do not
+log.

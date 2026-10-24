@@ -37,13 +37,16 @@ native Problems rendering are adapters outside this directory.
 
 ## Verified Checkpoint
 
-`CWorkbenchRuntime` owns `MarkerService`; `CEditWnd` projects authoritative
-snapshots through a coalesced UI-thread gate; and extension diagnostic RPC
-updates the service before best-effort legacy decoration projection. Atomic
-collection clear removes only the exact owner generation and collection with
-one committed revision. Missing/repeated delete, clear, and empty-set requests
-are accepted desired-absence operations so legacy decorations cannot remain
-after the authoritative marker is gone.
+`CWorkbenchRuntime` owns `MarkerService`; `CEditWnd` borrows it only to
+subscribe through a coalesced UI-thread gate and to project authoritative
+snapshots. No production producer writes to it: the extension diagnostic RPC
+was removed in #169, and nothing outside `src/test/` calls
+`MarkerService::Replace`, so the Problems view stays empty until a real
+producer lands (the Tasks problem-matcher path below). Atomic collection clear
+removes only the exact owner generation and collection with one committed
+revision. Missing/repeated delete, clear, and empty-set requests are accepted
+desired-absence operations so legacy decorations cannot remain after the
+authoritative marker is gone.
 
 The integrated Phase 6 cohort passes 210/210. `workbench::tasks::ProblemMatcherEngine`
 (`sakura_core/workbench/tasks/ProblemMatcherEngine.h`/`.cpp`) can now translate
@@ -51,15 +54,16 @@ captured task output lines into `ReplaceMarkersRequest` values a caller hands to
 this service, but Task execution does not yet call it: no production adapter
 resolves a task's `problemMatchers` names, feeds live output through the engine,
 and calls `Replace` here, so Task problem matchers remain functionally unwired
-end to end. Native activation deliberately opens only the resource for now:
-full-range navigation and decorations must first convert VS Code's zero-based,
-half-open UTF-16 code-unit positions to Sakura document coordinates without
-truncating the stored URI/range.
+end to end. Native activation now applies the marker's range start:
+`CEditWnd::OpenDocumentAtMarkerPosition` converts the stored zero-based UTF-16
+line/column through the `MarkerPositionAdapter` below against the real
+document's line contents before posting `MYWM_SETCARETPOS`. Editor decorations
+from markers remain unimplemented.
 
 ## Position adapter (`MarkerPositionAdapter.h`/`.cpp`, 2026-08-20, #221)
 
 - `ConvertMarkerPositionToLogicPoint` / `ConvertMarkerRangeStartToLogicPoint` /
-  `ConvertMarkerRangeToLogicRange` are the seam the paragraph above asks for.
+  `ConvertMarkerRangeToLogicRange` are the seam the paragraph above names.
   They are pure: no HWND, no `CEditDoc`, no I/O. The only document-dependent
   input is the injected `LogicLineContentLookup` callback, which the caller
   backs with the real document; the conversion math itself is a function of

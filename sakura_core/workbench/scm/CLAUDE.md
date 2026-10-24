@@ -1568,10 +1568,11 @@ remains the sole owner of channel content; nothing here retains its own copy.
   background worker thread (as `CScmWorkbenchTool.cpp`'s periodic status-refresh
   thread already does), provided each call supplies its own `stop` handle and
   its own `nextAppendOperationId` sequence.
-- **Not yet wired into any production call site.** `CScmWorkbenchTool.cpp` and
-  `CEditWnd.cpp`'s existing `RunGit(...)` calls are unchanged; replacing them
-  with `RunGitLogged(...)` and threading a `GitOutputSink` through is future
-  work, out of scope for this adapter-only change.
+- **Wired into `CEditWnd`'s Git operations.** Every Git command `CEditWnd.cpp`
+  runs goes through `RunGitLogged(...)` with `MakeGitOutputSink(m_outputService)`.
+  The background status/history poll in `CScmWorkbenchTool.cpp` and
+  `senp/github/GhRepositorySelection.cpp` still call raw `RunGit(...)` and do
+  not log to the Git channel.
 
 ## Verification
 
