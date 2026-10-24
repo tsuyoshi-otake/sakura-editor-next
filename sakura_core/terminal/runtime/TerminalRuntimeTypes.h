@@ -293,6 +293,10 @@ struct TerminalInstanceDrainResult final {
 	bool protocolInputPending{};
 	bool protocolInputRejected{};
 	std::size_t bytesDrained{};
+	//! Raw bytes drained this call, populated only for `Task` origin instances
+	//! so a task consumer (for example a problem collector) sees the same byte
+	//! stream the terminal parser consumed.
+	std::vector<std::uint8_t> drainedOutput;
 	TerminalScrollbackChange scrollbackChange;
 	std::vector<std::size_t> dirtyRows;
 	TerminalContentRevision contentRevision;

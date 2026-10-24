@@ -18,6 +18,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -62,6 +63,10 @@ struct TaskExecutionSessionCallbacks final {
 	//! May arrive synchronously from Start or asynchronously from a host worker,
 	//! but only after the host process and its worker callbacks are quiescent.
 	std::function<void(TaskSessionExit)> exited;
+	//! Drained raw process output for this session, in arrival order. The span
+	//! borrows the draining call's storage; an observer must copy what it keeps.
+	//! Optional: sessions without an observer still drain for the terminal UI.
+	std::function<void(std::span<const std::uint8_t>)> output;
 };
 
 struct TaskExecutionSessionStartResult final {
@@ -104,6 +109,33 @@ struct TaskExecutionSessionCloseResult final {
 		return { ETaskExecutionSessionCloseKind::HostFailure, errorCode, std::move(diagnostic) };
 	}
 };
+
+enum class ETaskExecutionRunState : std::uint8_t;
+
+/*!
+	@brief Per-run observation boundary injected by the composition root.
+
+	A run observer is created after a Start reservation succeeds and is owned by
+	the run record. `OnOutput` is called outside the service lock for every
+	drained output chunk, in session arrival order; `OnTerminal` is called
+	exactly once, outside the lock, when the run first reaches a terminal state,
+	whichever of exit, cancel, close, host failure, or service Stop produced it.
+	Implementations must not reenter `TaskExecutionService` mutation APIs from
+	either callback.
+*/
+class ITaskRunObserver {
+public:
+	virtual ~ITaskRunObserver() = default;
+	virtual void OnOutput(std::span<const std::uint8_t> bytes) noexcept = 0;
+	virtual void OnTerminal(
+		ETaskExecutionRunState terminalState, std::uint32_t exitCode,
+		const std::wstring& diagnostic) noexcept = 0;
+};
+
+//! Returning nullptr is the supported way to decline observation for one run
+//! (for example a task without problemMatchers).
+using TaskRunObserverFactory = std::function<std::shared_ptr<ITaskRunObserver>(
+	std::uint64_t runId, const TaskConfigurationDefinition& definition)>;
 
 //! The execution service owns the returned session until it reaches a terminal state.
 class ITaskExecutionSession {
@@ -261,7 +293,8 @@ struct TaskExecutionServiceLimits final {
 */
 class TaskExecutionService final {
 public:
-	explicit TaskExecutionService(std::shared_ptr<ITaskExecutionSessionFactory> factory, TaskExecutionServiceLimits limits = {});
+	explicit TaskExecutionService(std::shared_ptr<ITaskExecutionSessionFactory> factory,
+		TaskExecutionServiceLimits limits = {}, TaskRunObserverFactory runObserverFactory = {});
 	~TaskExecutionService();
 
 	TaskExecutionService(const TaskExecutionService&) = delete;

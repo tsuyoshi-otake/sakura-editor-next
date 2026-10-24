@@ -117,9 +117,11 @@
 #include "workbench/scm/ScmNativeSurfaceAdapter.h"
 #include "workbench/WorkbenchZoom.h"
 #include "workbench/commands/ApiCommandArguments.h"
+#include "workbench/commands/CommandArgumentsJson.h"
 #include "workbench/commands/ExplorerCommandArguments.h"
 #include "workbench/commands/ExplorerCommandIds.h"
 #include "workbench/commands/WorkbenchCommandRegistry.h"
+#include "workbench/tasks/TaskProblemCollector.h"
 #include "workbench/commands/WorkbenchContextKeyService.h"
 #include "workbench/outline/COutlineWorkbenchTool.h"
 #include "workbench/editor/CEditDocLegacyEditorBackend.h"
@@ -2254,6 +2256,7 @@ void CEditWnd::DispatchEditorFunction(EFunctionCode functionCode)
 		case F_CLOSE_ACTIVE_EDITOR: commandId = command_ids::CloseActiveEditor; break;
 		case F_WINCLOSE: commandId = command_ids::CloseWindow; break;
 		case F_EXITALL: commandId = command_ids::Quit; break;
+		case F_RUN_BUILD_TASK: commandId = workbench::commands::kTasksBuildCommandId; break;
 		default: break;
 		}
 		if (!commandId.empty()) {
@@ -3354,6 +3357,12 @@ bool CEditWnd::InitializeWorkbench()
 		m_terminalTool->SetPanelActions({
 			.renderPanelActions = false,
 			.renderHeader = false,
+			// The Terminal menu's task entries and the Command Palette run the
+			// same registered command and observe the same terminal result.
+			.runCommand = [this](std::string_view commandId) {
+				bool handled = false;
+				(void)TryExecuteWorkbenchStableCommand(commandId, handled);
+			},
 		});
 	if (!m_bottomWorkbenchPanel->Create(GetHwnd(), G_AppInstance(), std::move(bottomPanelTool))) {
 		m_bottomPanelTool = nullptr;
@@ -4023,6 +4032,16 @@ bool CEditWnd::InitializeWorkbench()
 			.showUpdateInfo = [this]() { return ExecuteUpdateCommand(EUpdateCommand::ShowUpdateInfo); },
 		});
 		if (!updateRegistration.Succeeded()) {
+			CloseWorkbench();
+			return false;
+		}
+		const auto tasksRegistration = m_workbenchCommandRegistry->RegisterTaskCommands({
+			.runTask = [this]() { return ExecuteTaskRunTaskCommand(); },
+			.build = [this]() { return ExecuteTaskGroupCommand(L"build"); },
+			.test = [this]() { return ExecuteTaskGroupCommand(L"test"); },
+			.showLog = [this]() { return ExecuteTaskShowLogCommand(); },
+		});
+		if (!tasksRegistration.Succeeded()) {
 			CloseWorkbench();
 			return false;
 		}
@@ -7335,6 +7354,212 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteUpdateQuit
 workbench::commands::WorkbenchUpdateCommandContext CEditWnd::BuildWorkbenchUpdateCommandContext() const
 {
 	return workbench::commands::WorkbenchUpdateCommandContext{ m_updateStateId };
+}
+
+std::vector<workbench::tasks::TaskConfigurationDefinition> CEditWnd::EnumerateRunnableTasks() const
+{
+	std::vector<workbench::tasks::TaskConfigurationDefinition> runnable;
+	if (m_workbenchRuntime == nullptr) return runnable;
+	const auto context = m_workbenchRuntime->WorkspaceContext().Snapshot();
+	for (const auto& folder : context.folders) {
+		const auto slot = m_workbenchRuntime->TaskCatalogForFolder(folder.uri);
+		if (!slot) continue;
+		for (const auto& definition : slot->catalog.definitions) {
+			if (definition.IsRunnable()) runnable.push_back(definition);
+		}
+	}
+	return runnable;
+}
+
+void CEditWnd::AppendTasksChannelLine(std::string_view text)
+{
+	if (m_outputService == nullptr) return;
+	try {
+		(void)workbench::tasks::AppendTasksOutputLine(*m_outputService, text);
+	}
+	catch (...) { /* Diagnostics never own a command's terminal result. */ }
+}
+
+std::optional<std::string> CEditWnd::NextTaskExecutionOperationId()
+{
+	if (m_taskExecutionOperationSequence == (std::numeric_limits<std::uint64_t>::max)()) {
+		return std::nullopt;
+	}
+	const auto sequence = ++m_taskExecutionOperationSequence;
+	std::string operationId = "sakura.native-task.v1/";
+	operationId += std::to_string(static_cast<unsigned long long>(::GetCurrentProcessId()));
+	operationId += '/';
+	operationId += std::to_string(static_cast<unsigned long long>(
+		reinterpret_cast<std::uintptr_t>(GetHwnd())));
+	operationId += '/';
+	operationId += std::to_string(static_cast<unsigned long long>(sequence));
+	if (!workbench::tasks::TaskExecutionService::IsValidOperationId(operationId)) return std::nullopt;
+	return operationId;
+}
+
+workbench::commands::WorkbenchCommandExecutionResult CEditWnd::StartWorkbenchTask(
+	const workbench::tasks::TaskConfigurationDefinition& definition)
+{
+	using workbench::commands::EWorkbenchCommandExecutionStatus;
+
+	auto* const service = m_workbenchRuntime == nullptr ? nullptr : m_workbenchRuntime->TaskExecution();
+	if (service == nullptr) {
+		return { EWorkbenchCommandExecutionStatus::Failed, "task execution service is not available" };
+	}
+	auto operationId = NextTaskExecutionOperationId();
+	if (!operationId) {
+		return { EWorkbenchCommandExecutionStatus::Failed, "task operation id could not be minted" };
+	}
+	workbench::tasks::TaskExecutionStartRequest request;
+	request.operation.operationId = std::move(*operationId);
+	request.definition = definition;
+	const auto result = service->Start(request);
+	if (result.Succeeded()) {
+		return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
+	}
+	std::string detail = "task '" + workbench::commands::json::ToUtf8(definition.label) + "' could not start ("
+		+ std::to_string(static_cast<unsigned>(result.status)) + '/'
+		+ std::to_string(static_cast<unsigned>(result.reason)) + ')';
+	AppendTasksChannelLine(detail);
+	return { EWorkbenchCommandExecutionStatus::Failed, detail };
+}
+
+workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteTaskRunTaskCommand()
+{
+	using workbench::commands::EWorkbenchCommandExecutionStatus;
+
+	const auto runnable = EnumerateRunnableTasks();
+	if (runnable.empty()) {
+		const char* detail = "no runnable tasks are configured in this workspace";
+		AppendTasksChannelLine(detail);
+		return { EWorkbenchCommandExecutionStatus::NotApplicable, detail };
+	}
+	if (runnable.size() == 1) return StartWorkbenchTask(runnable.front());
+	// A dismissed pick leaves nothing running; upstream resolves the command
+	// without error, which maps to Succeeded here rather than a fake selection.
+	return ShowTaskQuickPick(runnable)
+		? workbench::commands::WorkbenchCommandExecutionResult{ EWorkbenchCommandExecutionStatus::Succeeded, {} }
+		: workbench::commands::WorkbenchCommandExecutionResult{ EWorkbenchCommandExecutionStatus::Failed,
+			"task selection surface could not be shown" };
+}
+
+workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteTaskGroupCommand(std::wstring_view group)
+{
+	using workbench::commands::EWorkbenchCommandExecutionStatus;
+
+	const auto runnable = EnumerateRunnableTasks();
+	const workbench::tasks::TaskConfigurationDefinition* fallback = nullptr;
+	for (const auto& definition : runnable) {
+		if (!definition.group || definition.group->id != group) continue;
+		if (definition.group->isDefault) return StartWorkbenchTask(definition);
+		if (fallback == nullptr) fallback = &definition;
+	}
+	if (fallback != nullptr) return StartWorkbenchTask(*fallback);
+	std::string detail = "no " + workbench::commands::json::ToUtf8(group) + " task is configured in this workspace";
+	AppendTasksChannelLine(detail);
+	return { EWorkbenchCommandExecutionStatus::NotApplicable, detail };
+}
+
+workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteTaskShowLogCommand()
+{
+	using workbench::commands::EWorkbenchCommandExecutionStatus;
+	namespace tasks = workbench::tasks;
+	namespace output = workbench::output;
+
+	if (m_outputService == nullptr) {
+		return { EWorkbenchCommandExecutionStatus::Failed, "output service is not available" };
+	}
+	const auto ensured = tasks::EnsureTasksOutputChannel(*m_outputService);
+	if (!ensured.Succeeded()) {
+		return { EWorkbenchCommandExecutionStatus::Failed, "tasks output channel could not be created" };
+	}
+	const auto snapshot = m_outputService->Snapshot();
+	const auto channel = std::ranges::find(snapshot.channels, std::string_view(tasks::kTasksOutputChannelId),
+		&output::OutputChannelSnapshot::channelId);
+	if (channel == snapshot.channels.end()) {
+		return { EWorkbenchCommandExecutionStatus::Failed, "tasks output channel is not present after creation" };
+	}
+	auto operationId = NextOutputPanelOperationId();
+	if (!operationId) {
+		return { EWorkbenchCommandExecutionStatus::Failed, "output operation id could not be minted" };
+	}
+	const auto shown = m_outputService->Show({
+		.operation = {
+			.operationId = std::move(*operationId),
+			.expectedRevision = snapshot.revision,
+		},
+		.owner = channel->owner,
+		.channelId = channel->channelId,
+	});
+	return shown.Succeeded()
+		? workbench::commands::WorkbenchCommandExecutionResult{ EWorkbenchCommandExecutionStatus::Succeeded, {} }
+		: workbench::commands::WorkbenchCommandExecutionResult{ EWorkbenchCommandExecutionStatus::Failed,
+			"tasks output channel could not be shown" };
+}
+
+bool CEditWnd::ShowTaskQuickPick(
+	const std::vector<workbench::tasks::TaskConfigurationDefinition>& tasks)
+{
+	if (m_commandPaletteOverlay == nullptr) return false;
+
+	// Selection key = source document text + label. Both parts are already
+	// catalog-unique inputs, so the pick never needs positional identity that a
+	// reconcile could reorder out from under it.
+	const auto keyOf = [](const workbench::tasks::TaskConfigurationDefinition& definition) {
+		std::wstring key = definition.sourceUri ? definition.sourceUri->ToString() : std::wstring();
+		key.push_back(L'\n');
+		key += definition.label;
+		return key;
+	};
+	const auto makeItems = [&keyOf](const std::vector<workbench::tasks::TaskConfigurationDefinition>& source) {
+		std::vector<workbench::quickinput::CommandPaletteItem> items;
+		items.reserve(source.size());
+		for (const auto& definition : source) {
+			items.push_back({
+				.id = keyOf(definition),
+				.label = definition.label,
+				.description = definition.command,
+				.enabled = true,
+			});
+		}
+		return items;
+	};
+	const auto lowercase = [](std::wstring_view value) {
+		std::wstring result(value);
+		for (auto& character : result) {
+			character = static_cast<wchar_t>(std::towlower(character));
+		}
+		return result;
+	};
+	m_commandPaletteOverlay->SetStringsCallback([] {
+		return workbench::quickinput::QuickInputStrings {
+			.placeholder = LocalizedWorkbenchString(STR_WORKBENCH_TASK_PICKER_PLACEHOLDER),
+			.noResults = LocalizedWorkbenchString(STR_WORKBENCH_COMMAND_PALETTE_NO_RESULTS),
+		};
+	});
+	m_commandPaletteOverlay->SetSearchCallback(
+		[tasks, makeItems, lowercase](std::wstring_view query) {
+			if (query.empty()) return makeItems(tasks);
+			const auto loweredQuery = lowercase(query);
+			std::vector<workbench::tasks::TaskConfigurationDefinition> filtered;
+			for (const auto& definition : tasks) {
+				if (lowercase(definition.label).find(loweredQuery) != std::wstring::npos) {
+					filtered.push_back(definition);
+				}
+			}
+			return makeItems(filtered);
+		});
+	m_commandPaletteOverlay->SetSelectionCallback({});
+	m_commandPaletteOverlay->SetAcceptCallback([this, keyOf](std::wstring acceptedKey) {
+		for (const auto& definition : EnumerateRunnableTasks()) {
+			if (keyOf(definition) != acceptedKey) continue;
+			(void)StartWorkbenchTask(definition);
+			return;
+		}
+		AppendTasksChannelLine("the selected task no longer exists in this workspace");
+	});
+	m_commandPaletteOverlay->SetCancelCallback({});
+	return m_commandPaletteOverlay->Show(makeItems(tasks));
 }
 
 void CEditWnd::OnWorkbenchServiceProjectionChanged()

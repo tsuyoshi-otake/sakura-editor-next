@@ -39,22 +39,23 @@ native Problems rendering are adapters outside this directory.
 
 `CWorkbenchRuntime` owns `MarkerService`; `CEditWnd` borrows it only to
 subscribe through a coalesced UI-thread gate and to project authoritative
-snapshots. No production producer writes to it: the extension diagnostic RPC
-was removed in #169, and nothing outside `src/test/` calls
-`MarkerService::Replace`, so the Problems view stays empty until a real
-producer lands (the Tasks problem-matcher path below). Atomic collection clear
+snapshots. The first production producer is wired in #380:
+`workbench::tasks::TaskProblemCollector` resolves a task's configured
+`problemMatchers` names through `BuiltinProblemMatchers`, feeds the run's
+drained terminal output through `ProblemMatcherEngine`, and applies the
+resulting `ReplaceMarkersRequest` values here under the matcher owner and a
+per-run generation from `CTaskMarkerGenerationBook`. The book also tracks the
+last-delivered resource set per owner so a rerun replaces prior markers and
+clears resources the new run no longer reports, matching upstream
+`problemCollectors.ts` `changeOne`/`remove` semantics. The extension
+diagnostic RPC removed in #169 remains absent. Atomic collection clear
 removes only the exact owner generation and collection with one committed
 revision. Missing/repeated delete, clear, and empty-set requests are accepted
 desired-absence operations so legacy decorations cannot remain after the
 authoritative marker is gone.
 
-The integrated Phase 6 cohort passes 210/210. `workbench::tasks::ProblemMatcherEngine`
-(`sakura_core/workbench/tasks/ProblemMatcherEngine.h`/`.cpp`) can now translate
-captured task output lines into `ReplaceMarkersRequest` values a caller hands to
-this service, but Task execution does not yet call it: no production adapter
-resolves a task's `problemMatchers` names, feeds live output through the engine,
-and calls `Replace` here, so Task problem matchers remain functionally unwired
-end to end. Native activation now applies the marker's range start:
+The integrated Phase 6 cohort passes 210/210. Native activation now applies
+the marker's range start:
 `CEditWnd::OpenDocumentAtMarkerPosition` converts the stored zero-based UTF-16
 line/column through the `MarkerPositionAdapter` below against the real
 document's line contents before posting `MYWM_SETCARETPOS`. Editor decorations

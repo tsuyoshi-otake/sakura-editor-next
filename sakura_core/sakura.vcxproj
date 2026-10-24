@@ -647,6 +647,7 @@
 	<ClInclude Include="..\sakura_core\workbench\tasks\TaskConfigurationCatalog.h" />
 	<ClInclude Include="..\sakura_core\workbench\tasks\ProblemMatcherEngine.h" />
 	<ClInclude Include="..\sakura_core\workbench\tasks\TaskExecutionService.h" />
+	<ClInclude Include="..\sakura_core\workbench\tasks\TaskProblemCollector.h" />
 	<ClInclude Include="..\sakura_core\workbench\tasks\TaskTerminalSessionFactory.h" />
 	<ClInclude Include="..\sakura_core\workbench\problems\MarkerPositionAdapter.h" />
 	<ClInclude Include="..\sakura_core\workbench\problems\MarkerService.h" />
@@ -1398,6 +1399,7 @@
 	<ClCompile Include="..\sakura_core\workbench\tasks\TaskConfigurationCatalog.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\tasks\ProblemMatcherEngine.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\tasks\TaskExecutionService.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\tasks\TaskProblemCollector.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\tasks\TaskTerminalSessionFactory.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\problems\MarkerPositionAdapter.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\problems\MarkerService.cpp" />

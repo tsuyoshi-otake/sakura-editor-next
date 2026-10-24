@@ -9,6 +9,8 @@
 
 #include "workbench/tasks/TaskConfigurationCatalog.h"
 
+#include "workbench/tasks/ProblemMatcherEngine.h"
+
 #include <sakura/uri/UriIdentity.h>
 
 #include <algorithm>
@@ -212,9 +214,19 @@ TaskConfigurationCatalogResult ParseDefinition(
 	}
 	if (const auto matcher = object->find(L"problemMatcher"); matcher != object->end()) {
 		if (!ReadStringOrArray(matcher->second, kMaximumProblemMatchers, definition.problemMatchers)) {
-			return Failure(ETaskConfigurationCatalogStatus::InvalidSchema, "task problem matcher must be bounded strings");
+			// VS Code accepts a string, an array of named matchers, or inline
+			// matcher objects. Inline objects and other shapes stay unsupported.
+			definition.unsupportedCapabilities = definition.unsupportedCapabilities | ETaskUnsupportedCapability::ProblemMatcher;
 		}
-		definition.unsupportedCapabilities = definition.unsupportedCapabilities | ETaskUnsupportedCapability::ProblemMatcher;
+		else {
+			for (const auto& name : definition.problemMatchers) {
+				const auto resolved = BuiltinProblemMatchers::Resolve(name);
+				if (!resolved.Succeeded()) {
+					definition.unsupportedCapabilities = definition.unsupportedCapabilities | ETaskUnsupportedCapability::ProblemMatcher;
+					break;
+				}
+			}
+		}
 	}
 	return { ETaskConfigurationCatalogStatus::Applied, {} };
 }

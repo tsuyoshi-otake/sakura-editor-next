@@ -11,9 +11,12 @@ terminal, process, problem matcher, or native panel.
 - Validate and copy a complete bounded catalog before commit. Duplicate labels,
   invalid entries, and oversized input leave the previous catalog intact.
 - Shell and Process tasks may be marked runnable only when their unsupported
-  capability flags are empty. Custom execution, dependencies, background
-  tracking, and problem matchers remain explicit unsupported capabilities until
-  their owners exist.
+  capability flags are empty. Custom execution, dependencies, and background
+  tracking remain explicit unsupported capabilities until their owners exist.
+  Problem matchers are supported only for the exact `$msCompile`, `$gcc`, and
+  `$tsc` built-ins that `BuiltinProblemMatchers::Resolve` recognizes; any other
+  matcher name or an inline matcher object stays a typed unsupported flag, so
+  the task remains non-runnable rather than silently dropping the matcher.
 - Multi-root resolution is folder-scoped. Do not silently select the first
   folder or put every folder into one global catalog.
 
@@ -69,13 +72,56 @@ default or a silently dropped line.
   document access, so a pattern that supplies `column` but not `endColumn`
   produces a minimal one-character range (`endColumn = column + 1`) instead.
 - This class only translates already-captured text into requests it hands
-  back to the caller; it does not call `MarkerService` itself, does not read
-  `TaskConfigurationCatalog::problemMatchers` names, and is not yet wired to
-  `TaskExecutionService`'s output path. Resolving a task's configured
-  `problemMatchers` string(s) into a `ProblemMatcherDefinition` (built-in
-  lookup vs. a workspace-defined matcher) and feeding live task output through
-  this engine into the runtime-owned `MarkerService` remain the composition
-  adapter's job, not this pure class's.
+  back to the caller; it does not call `MarkerService` itself and does not
+  read `TaskConfigurationCatalog::problemMatchers` names. Resolving a task's
+  configured `problemMatchers` string(s) into a `ProblemMatcherDefinition`
+  and feeding live task output through this engine into the runtime-owned
+  `MarkerService` is the composition adapter's job — that adapter now exists
+  as `TaskProblemCollector` below.
+
+## Tasks → Problems Producer (`TaskProblemCollector.h/.cpp`, #380)
+
+`TaskExecutionService` accepts an optional `TaskRunObserverFactory`. For every
+accepted run it asks the factory for an `ITaskRunObserver` and delivers that
+run's drained output bytes plus its exactly-once terminal state. Both terminal
+session factories forward the raw stream, and the runtime-backed adapter
+flushes the final drained bytes before publishing completion, so the observer
+sees the same byte stream the terminal VT parser consumed.
+
+`MakeTaskRunObserverFactory(markers, output, book)` is the production
+composition: it declines tasks without a `BuiltinProblemMatchers`-resolvable
+`$name`, reports an unresolvable matcher name to the Tasks Output channel, and
+otherwise returns an observer that buffers bounded output (4 MiB cap), splits
+it into LF-separated UTF-8 lines at the run's terminal transition, invokes
+`ProblemMatcherEngine`, and applies each `ReplaceMarkersRequest` through
+`MarkerService::Replace` under the matcher owner and the run's generation.
+
+- `CTaskMarkerGenerationBook` mints each run's marker-owner generation at
+  observer creation, keyed by a stable owner ID derived from the task source
+  URI and label. A delayed terminal callback from an older run therefore can
+  never mint a generation newer than an in-flight run's, and
+  `MarkerService::Replace`'s own generation fencing rejects any stale write
+  that still slips through.
+- The book also keeps the last-delivered resource set per owner. On a
+  terminal transition the collector computes `changeOne`-equivalent
+  replacements for newly reported resources and `remove`-equivalent empty
+  replacements for resources the new run no longer reports, matching upstream
+  `problemCollectors.ts` semantics: a rerun with zero matches clears the
+  prior run's markers rather than leaving them stranded.
+- A task with no matchers gets no observer and costs nothing. Matcher-engine
+  typed failures (`InvalidUtf8Line`, capacity, and friends) and
+  `MarkerService` failures are appended to the `tasks` Output channel as
+  diagnostics; they never change the run's terminal result.
+- `EnsureTasksOutputChannel`/`AppendTasksOutputLine` own the core `tasks`
+  channel (`ownerId: core.tasks`, generation 1, `Output` kind, label
+  `Tasks`). The channel is created idempotently and carries task-system
+  messages only — configuration errors, unknown matcher names, collector
+  failures, and command diagnostics. Task process output never enters this
+  channel; it stays in the terminal instance.
+- Workspace-root resolution derives the folder URI from a `/.vscode/tasks.json`
+  source URI. Workspace-file tasks without a folder root get the typed
+  `MissingWorkspaceRoot` failure for `Relative` matchers, matching upstream's
+  treatment of an unresolvable `${workspaceFolder}`.
 
 ## Verified Checkpoint
 
@@ -109,12 +155,20 @@ than copying a stale number here.
 
 Variable/environment resolution, dependency/background scheduling, provider/
 custom executions, presentation policies, and extension Task RPC remain
-incomplete. `ProblemMatcherEngine` gives problem-matcher text translation a
-pure, tested home, but it is not yet composed into the production Task
-adapter, so a running task's output does not yet reach `MarkerService`.
-Production currently constructs the adapter without a
-Task-output presentation sink; bytes are bounded and drained but not visible in
-the native Terminal panel. The future projection must share a runtime-owned
-terminal model/session authority with the panel rather than treating
-`OutputService` or a HWND-local buffer as a substitute for VS Code's Task
-Terminal.
+incomplete. The Tasks → Problems producer above is composed in production:
+`CWorkbenchRuntime` injects the collector factory into `TaskExecutionService`
+through a lazy output-provider lookup (the provider is composed after the
+service, and no run can start before Ready publication). A running task's
+output reaches `MarkerService` through `TaskProblemCollector`, so the Problems
+view now has a real producer for `$msCompile`/`$gcc`/`$tsc` matchers.
+
+Task terminals run as real `Task`-origin `TerminalInstance`s in the shared
+`CTerminalRuntimeService`: drained bytes feed the instance's live VT model and
+are also copied into `TerminalInstanceDrainResult::drainedOutput` for the
+observer, so output lands in the runtime-owned terminal authority rather than
+a discarded drain or a view-local buffer. Recorded divergence: the native
+panel's `TerminalTabManager` only projects `Interactive`-origin topology
+sessions, so a Task terminal is not yet visible as a panel tab the way
+VS Code reveals its task terminal. Surfacing Task instances as panel tabs is
+a future projection; it must keep the same runtime-owned instance authority
+rather than duplicating a HWND-local buffer.

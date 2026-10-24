@@ -314,9 +314,37 @@ struct WorkbenchUpdateCommandExecutors {
 	WorkbenchCommandExecutor showUpdateInfo;
 };
 
+/*!
+	@brief Executors for the Tasks workbench commands.
+
+	Upstream registers `workbench.action.tasks.runTask`,
+	`workbench.action.tasks.build`, `workbench.action.tasks.test`, and
+	`workbench.action.tasks.showLog` in `abstractTaskService.ts` and contributes
+	`runTask` and `build` to the Terminal menu in `task.contribution.ts`. Only
+	`build` carries a default upstream keybinding (`Ctrl+Shift+B`); the others
+	register without one, so only `build`'s Keybinding surface carries the
+	integer compatibility alias the native keybinding table dispatches.
+	Upstream's run handlers accept an optional task payload; this native
+	composition resolves the operand itself (quick pick for `runTask`, the
+	default `build`/`test` group task for the group commands), so the executors
+	take no argument.
+*/
+struct WorkbenchTaskCommandExecutors {
+	WorkbenchCommandExecutor runTask;
+	WorkbenchCommandExecutor build;
+	WorkbenchCommandExecutor test;
+	WorkbenchCommandExecutor showLog;
+};
+
 //! Upstream's title-bar entry, registered into `MenuId.TitleBarUpdate` at
 //! order 0 with the title `"Update"`.
 inline constexpr std::string_view kUpdateIndicatorCommandId = "workbench.actions.updateIndicator";
+
+//! The four task command IDs upstream registers in `abstractTaskService.ts`.
+inline constexpr std::string_view kTasksRunTaskCommandId = "workbench.action.tasks.runTask";
+inline constexpr std::string_view kTasksBuildCommandId = "workbench.action.tasks.build";
+inline constexpr std::string_view kTasksTestCommandId = "workbench.action.tasks.test";
+inline constexpr std::string_view kTasksShowLogCommandId = "workbench.action.tasks.showLog";
 
 //! The states in which upstream's title-bar entry is visible
 //! (`updateTitleBarEntry.ts`'s `ACTIONABLE_STATES`), as one `when` clause.
@@ -409,6 +437,14 @@ public:
 	//! stable IDs, titles, and `updateState` clauses.
 	[[nodiscard]] WorkbenchCommandRegistrationResult RegisterUpdateCommands(
 		WorkbenchUpdateCommandExecutors executors = {});
+	//! Registers the Tasks commands (`workbench.action.tasks.runTask`,
+	//! `workbench.action.tasks.build`, `workbench.action.tasks.test`,
+	//! `workbench.action.tasks.showLog`) as one atomic batch, using upstream's
+	//! own stable IDs, palette titles, and surface shape: `runTask` and `build`
+	//! appear in the Terminal menu and all four appear in the Command Palette,
+	//! while only `build` carries a keybinding binding.
+	[[nodiscard]] WorkbenchCommandRegistrationResult RegisterTaskCommands(
+		WorkbenchTaskCommandExecutors executors = {});
 	[[nodiscard]] WorkbenchCommandRegistrationResult DisposeOwner(const WorkbenchCommandOwner& owner);
 	[[nodiscard]] std::optional<WorkbenchCommandDescriptor> Find(std::string_view commandId) const;
 	[[nodiscard]] std::optional<ResolvedWorkbenchCommandSurface> ResolveSurface(

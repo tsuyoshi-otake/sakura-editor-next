@@ -145,8 +145,8 @@ TEST(TaskConfigurationCatalog, EnumeratesUnsupportedCapabilitiesButNeverMarksThe
 	const auto workspace = ParseUri(L"file:///C:/Work/demo.code-workspace");
 	ASSERT_TRUE(artifacts.Apply(Update(EWorkspaceArtifactDocumentSource::WorkspaceFile, workspace, 13, 1, R"json({
   "tasks": { "version": "2.0.0", "tasks": [
-    { "label": "extension", "type": "npm", "dependsOn": ["prepare"], "isBackground": true, "problemMatcher": "$tsc" },
-    { "label": "shell-with-problem", "type": "shell", "command": "build", "problemMatcher": ["$gcc"] }
+    { "label": "extension", "type": "npm", "dependsOn": ["prepare"], "isBackground": true, "problemMatcher": "$eslint-stylish" },
+    { "label": "shell-with-problem", "type": "shell", "command": "build", "problemMatcher": [{ "owner": "custom", "pattern": {} }] }
   ] }
 })json")).Succeeded());
 	ASSERT_TRUE(catalog.Apply(artifacts.Tasks()).Succeeded());
@@ -164,6 +164,32 @@ TEST(TaskConfigurationCatalog, EnumeratesUnsupportedCapabilitiesButNeverMarksThe
 	EXPECT_EQ(L"shell-with-problem", shell.label);
 	EXPECT_FALSE(shell.IsRunnable());
 	EXPECT_TRUE(HasUnsupportedCapability(shell.unsupportedCapabilities, ETaskUnsupportedCapability::ProblemMatcher));
+}
+
+TEST(TaskConfigurationCatalog, SupportedBuiltinProblemMatcherNamesStayRunnable)
+{
+	CWorkspaceArtifactDocumentService artifacts;
+	CTaskConfigurationCatalog catalog;
+	const auto workspace = ParseUri(L"file:///C:/Work/demo.code-workspace");
+	ASSERT_TRUE(artifacts.Apply(Update(EWorkspaceArtifactDocumentSource::WorkspaceFile, workspace, 15, 1, R"json({
+  "tasks": { "version": "2.0.0", "tasks": [
+    { "label": "msbuild", "type": "shell", "command": "cl", "problemMatcher": "$msCompile" },
+    { "label": "gcc-build", "type": "shell", "command": "make", "problemMatcher": ["$gcc", "$tsc"] },
+    { "label": "unknown-matcher", "type": "shell", "command": "lint", "problemMatcher": "$eslint-stylish" },
+    { "label": "mixed-matcher", "type": "shell", "command": "mixed", "problemMatcher": ["$gcc", "$eslint-stylish"] }
+  ] }
+})json")).Succeeded());
+	ASSERT_TRUE(catalog.Apply(artifacts.Tasks()).Succeeded());
+	const auto snapshot = catalog.Snapshot();
+	ASSERT_EQ(4U, snapshot.definitions.size());
+	for (const auto& definition : snapshot.definitions) {
+		const bool supported = definition.label == L"gcc-build" || definition.label == L"msbuild";
+		EXPECT_EQ(supported, definition.IsRunnable()) << definition.label;
+		EXPECT_EQ(!supported,
+			HasUnsupportedCapability(definition.unsupportedCapabilities, ETaskUnsupportedCapability::ProblemMatcher))
+			<< definition.label;
+	}
+	EXPECT_EQ((std::vector<std::wstring> { L"$msCompile" }), snapshot.definitions[2].problemMatchers);
 }
 
 TEST(TaskConfigurationCatalog, FencesStaleRevisionsAndPreservesAcceptedDefinitions)

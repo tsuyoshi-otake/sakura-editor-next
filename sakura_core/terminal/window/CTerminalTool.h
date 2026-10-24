@@ -35,6 +35,9 @@ struct TerminalPanelActions {
 	//! When false, the physical Panel Part supplies the one shared header row and
 	//! this tool renders only the terminal content surface.
 	bool renderHeader = true;
+	//! Executes a stable workbench command ID (`workbench.action.tasks.*`) for the
+	//! Terminal menu's task entries. Empty means the host has no command surface.
+	std::function<void(std::string_view)> runCommand;
 };
 
 enum class TerminalWorkspaceResetOutcome : std::uint8_t {

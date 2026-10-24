@@ -180,6 +180,9 @@
     <ClCompile Include="..\src\test\cpp\tests1\workbench\TaskExecutionServiceTest.cpp">
       <Filter>Test Files\workbench</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\TaskProblemCollectorTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\workbench\TaskTerminalSessionFactoryTest.cpp">
       <Filter>Test Files\workbench</Filter>
     </ClCompile>

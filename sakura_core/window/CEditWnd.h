@@ -166,6 +166,9 @@ class CBottomPanelTool;
 namespace quickinput {
 class CCommandPaletteOverlay;
 }
+namespace tasks {
+struct TaskConfigurationDefinition;
+}
 namespace editor {
 class CEditDocLegacyEditorBackend;
 class CEditorServiceLegacyAdapter;
@@ -910,6 +913,36 @@ private:
 	//! ordinary quit. Separate because the quit can destroy this window before it
 	//! returns, and that constraint is worth stating in one place.
 	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteUpdateQuitAndInstall();
+	//! `workbench.action.tasks.runTask`: enumerates runnable tasks across every
+	//! folder-scoped catalog and offers them through Quick Pick, matching
+	//! upstream's task selection surface. Zero runnable tasks is
+	//! `NotApplicable`, never a guessed default.
+	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteTaskRunTaskCommand();
+	//! `workbench.action.tasks.build`/`tasks.test` (`group` is L"build"/L"test").
+	//! Upstream prefers the group's `isDefault` entry and falls back to the
+	//! first task in that group; an empty group is `NotApplicable`.
+	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteTaskGroupCommand(
+		std::wstring_view group);
+	//! `workbench.action.tasks.showLog`: ensures the `tasks` Output channel and
+	//! reveals it, mirroring upstream's `showTasksLog` which opens the channel
+	//! even before it has content.
+	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteTaskShowLogCommand();
+	//! Runnable (fully supported) task definitions across every workspace
+	//! folder catalog, in canonical folder order then catalog label order.
+	[[nodiscard]] std::vector<workbench::tasks::TaskConfigurationDefinition> EnumerateRunnableTasks() const;
+	//! Hands one copied definition to `TaskExecutionService` under a fresh
+	//! operation id. A typed service rejection is a terminal command failure.
+	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult StartWorkbenchTask(
+		const workbench::tasks::TaskConfigurationDefinition& definition);
+	//! Quick Pick over `tasks`. The accept callback re-enumerates and matches
+	//! the accepted item's source/label key so a catalog change between the
+	//! enumeration and the pick cannot run a stale definition.
+	[[nodiscard]] bool ShowTaskQuickPick(
+		const std::vector<workbench::tasks::TaskConfigurationDefinition>& tasks);
+	//! One task-system message into the `tasks` channel. The result is
+	//! deliberately ignored: diagnostics never own a command's terminal result.
+	void AppendTasksChannelLine(std::string_view text);
+	[[nodiscard]] std::optional<std::string> NextTaskExecutionOperationId();
 	//! Runs one of the built-in Git provider's working-tree commands.
 	//! `argumentsJson` is the payload `BuildGitStageArguments` produces; it is
 	//! empty for the `*All` members and for a Command Palette invocation.
@@ -1310,6 +1343,7 @@ private:
 	std::uint64_t m_editorOperationSequence = 0;
 	std::uint64_t m_workbenchLayoutOperationSequence = 0;
 	std::uint64_t m_outputPanelOperationSequence = 0;
+	std::uint64_t m_taskExecutionOperationSequence = 0;
 	std::unique_ptr<workbench::CActivityBar> m_activityBar;
 	//! Horizontal top/bottom placement renders an independent composite bar for
 	//! the Secondary Side Bar; default placement leaves this HWND empty/hidden.

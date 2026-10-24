@@ -204,6 +204,9 @@ ProblemMatcherLookupResult BuiltinProblemMatchers::Resolve(const std::wstring_vi
 	if (name == L"$gcc") {
 		definition.owner = L"gcc";
 		definition.source = L"gcc";
+		// Upstream's gcc matcher declares no fileLocation, which defaults to
+		// relative to the workspace folder.
+		definition.fileLocation = EProblemMatcherFileLocation::Relative;
 		ProblemMatcherPattern pattern;
 		pattern.regexp = LR"(^(.*?):(\d+):(\d+):\s*(warning|error)\s*:\s*(.*)$)";
 		pattern.file = 1;
@@ -218,6 +221,8 @@ ProblemMatcherLookupResult BuiltinProblemMatchers::Resolve(const std::wstring_vi
 	if (name == L"$tsc") {
 		definition.owner = L"typescript";
 		definition.source = L"ts";
+		// Upstream's tsc matcher resolves files relative to the workspace folder.
+		definition.fileLocation = EProblemMatcherFileLocation::Relative;
 		ProblemMatcherPattern pattern;
 		pattern.regexp = LR"(^(.*?)\((\d+),(\d+)\):\s*(error|warning)\s+(TS\d+)\s*:\s*(.*)$)";
 		pattern.file = 1;

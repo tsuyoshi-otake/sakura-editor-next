@@ -55,6 +55,10 @@ struct ConfigurationFileSourceControllerResult;
 
 namespace workbench {
 
+namespace tasks {
+class CTaskMarkerGenerationBook;
+}
+
 namespace workspace {
 class CWorkspaceArtifactDocumentSourceController;
 struct WorkspaceArtifactDocumentSourceResult;
@@ -270,6 +274,9 @@ private:
 	//! Catalog selection is semantic-folder scoped and atomically derived from
 	//! the artifact service. Execution owns copied definitions, never catalogs.
 	tasks::CFolderTaskCatalogRegistry m_taskCatalogs;
+	//! Fresh MarkerService owner generation per task run, shared with the
+	//! Tasks -> Problems run observers the execution service creates.
+	std::shared_ptr<tasks::CTaskMarkerGenerationBook> m_taskMarkerGenerations;
 	tasks::TaskExecutionService m_taskExecution;
 	std::optional<std::uint64_t> m_workspaceArtifactSubscription;
 	//! These HWND-free authorities remain internal until Start reaches a ready

@@ -53,6 +53,8 @@ constexpr UINT kCommandRedetectPowerShell = 4;
 constexpr UINT kCommandSplitTerminal = 5;
 constexpr UINT kCommandCloseSplit = 6;
 constexpr UINT kCommandSplitTerminalDown = 7;
+constexpr UINT kCommandRunTask = 8;
+constexpr UINT kCommandRunBuildTask = 9;
 constexpr UINT kCommandProfileFirst = 1000;
 constexpr UINT kCommandTabFirst = 2000;
 constexpr UINT kCommandShortcutPresetFirst = 3000;
@@ -1528,6 +1530,10 @@ struct CTerminalTool::Impl {
 			::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 		}
 		::AppendMenuW(menu, MF_STRING, kCommandNewTerminal, LS(STR_TERMINAL_NEW));
+		if( panelActions.runCommand ) {
+			::AppendMenuW(menu, MF_STRING, kCommandRunTask, LS(STR_TERMINAL_RUN_TASK));
+			::AppendMenuW(menu, MF_STRING, kCommandRunBuildTask, LS(STR_TERMINAL_RUN_BUILD_TASK));
+		}
 		::AppendMenuW(menu, MF_STRING | (focusedId ? 0 : MF_GRAYED), kCommandRestartTerminal, LS(STR_TERMINAL_RESTART));
 		::AppendMenuW(menu, MF_STRING | (focusedId ? 0 : MF_GRAYED), kCommandCloseTerminal, LS(STR_TERMINAL_CLOSE));
 		::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -1875,6 +1881,8 @@ struct CTerminalTool::Impl {
 			}
 			switch( LOWORD(wParam) ) {
 			case kCommandNewTerminal: AddTerminal(); break;
+			case kCommandRunTask: if( panelActions.runCommand ) panelActions.runCommand("workbench.action.tasks.runTask"); break;
+			case kCommandRunBuildTask: if( panelActions.runCommand ) panelActions.runCommand("workbench.action.tasks.build"); break;
 			case kCommandRestartTerminal: if( const auto id = FocusedTabId() ) RestartTerminal(*id); break;
 			case kCommandCloseTerminal: if( const auto id = FocusedTabId() ) DeleteTerminal(*id); break;
 			case kCommandRedetectPowerShell: if( profileService ) profileService->Redetect(); break;

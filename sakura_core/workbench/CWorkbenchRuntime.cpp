@@ -18,6 +18,7 @@
 #include "workbench/output/OutputProviderFactory.h"
 #include "workbench/output/OutputService.h"
 #include "workbench/output/OutputServiceRustProvider.h"
+#include "workbench/tasks/TaskProblemCollector.h"
 #include "workbench/workspace/WorkspaceConfigurationDocumentParser.h"
 #include "workbench/workspace/WorkspaceArtifactDocumentSourceController.h"
 #include "workbench/workspace/WorkspaceResourceDescriptors.h"
@@ -319,7 +320,20 @@ CWorkbenchRuntime::CWorkbenchRuntime(
 	, m_senpRuntime(m_senpManagement ? senp::CreateWin32SenpRuntimeService(*m_senpManagement) : nullptr)
 	, m_senpLanguage(m_senpManagement ? senp::CreateSenpLanguageService(*m_senpManagement) : nullptr)
 	, m_workspaceArtifacts(std::make_shared<workspace::CWorkspaceArtifactDocumentService>())
-	, m_taskExecution(std::move(dependencies.taskExecutionSessionFactory))
+	, m_taskMarkerGenerations(std::make_shared<tasks::CTaskMarkerGenerationBook>())
+	, m_taskExecution(std::move(dependencies.taskExecutionSessionFactory), {},
+		[this](const std::uint64_t runId, const tasks::TaskConfigurationDefinition& definition)
+			-> std::shared_ptr<tasks::ITaskRunObserver> {
+			// The output provider is composed after this service; a run can
+			// only start after Ready publication, so resolve it lazily here.
+			output::IOutputService* output = nullptr;
+			{
+				std::lock_guard lock(m_stateMutex);
+				output = m_outputProvider.get();
+			}
+			if (output == nullptr) return {};
+			return tasks::MakeTaskRunObserverFactory(m_markers, *output, m_taskMarkerGenerations)(runId, definition);
+		})
 	, m_markers(problems::MarkerServiceLimits {
 		.maximumOwners = 128U,
 	})

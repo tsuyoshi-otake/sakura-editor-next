@@ -135,6 +135,7 @@ struct TaskExecutionService::Impl final : std::enable_shared_from_this<Impl> {
 		std::uint32_t exitCode{};
 		std::wstring diagnostic;
 		std::shared_ptr<ITaskExecutionSession> session;
+		std::shared_ptr<ITaskRunObserver> observer;
 		std::string closingOperationId;
 		std::string closingFingerprint;
 		ETaskExecutionOperationReason closeFailureReason{ ETaskExecutionOperationReason::None };
@@ -157,6 +158,7 @@ struct TaskExecutionService::Impl final : std::enable_shared_from_this<Impl> {
 	std::condition_variable notificationDrainCondition;
 	std::shared_ptr<ITaskExecutionSessionFactory> factory;
 	TaskExecutionServiceLimits limits;
+	TaskRunObserverFactory runObserverFactory;
 	std::map<std::uint64_t, Run> runs;
 	std::map<std::string, CompletedOperation, std::less<>> completedOperations;
 	std::deque<std::string> completedOperationOrder;
@@ -225,8 +227,10 @@ struct TaskExecutionService::Impl final : std::enable_shared_from_this<Impl> {
 		}
 	}
 
-	explicit Impl(std::shared_ptr<ITaskExecutionSessionFactory> initialFactory, TaskExecutionServiceLimits initialLimits)
-		: factory(std::move(initialFactory)), limits(std::move(initialLimits))
+	explicit Impl(std::shared_ptr<ITaskExecutionSessionFactory> initialFactory, TaskExecutionServiceLimits initialLimits,
+		TaskRunObserverFactory initialObserverFactory)
+		: factory(std::move(initialFactory)), limits(std::move(initialLimits)),
+		runObserverFactory(std::move(initialObserverFactory))
 	{
 		if (limits.maximumActiveRuns == 0) limits.maximumActiveRuns = 1;
 		if (limits.maximumRetainedRuns == 0) limits.maximumRetainedRuns = 1;
@@ -338,8 +342,41 @@ struct TaskExecutionService::Impl final : std::enable_shared_from_this<Impl> {
 		}
 	}
 
+	// The observer sees every drained output chunk outside the model lock, in
+	// the session's arrival order, while the run is still non-terminal.
+	void ForwardRunOutput(const std::uint64_t runId, const std::span<const std::uint8_t> bytes)
+	{
+		std::shared_ptr<ITaskRunObserver> observer;
+		{
+			std::lock_guard lock(mutex);
+			const auto found = runs.find(runId);
+			if (found == runs.end() || IsTerminalTaskRunState(found->second.state)) return;
+			observer = found->second.observer;
+		}
+		if (!observer) return;
+		try { observer->OnOutput(bytes); }
+		catch (...) { /* A host worker must never observe a model/listener fault. */ }
+	}
+
+	// Terminal ownership is recorded before this call, so a throwing observer can
+	// never strand a run between states; delivery precedes listener notifications
+	// so observers of the terminal change already see the finalized projection.
+	static void DeliverRunTerminalNoexcept(
+		const std::shared_ptr<ITaskRunObserver>& observer,
+		const ETaskExecutionRunState state, const std::uint32_t exitCode,
+		const std::wstring& diagnostic) noexcept
+	{
+		if (!observer) return;
+		try { observer->OnTerminal(state, exitCode, diagnostic); }
+		catch (...) { /* Observer faults are isolated from service progress. */ }
+	}
+
 	void CompleteFromSession(const std::uint64_t runId, const TaskSessionExit exit)
 	{
+		std::shared_ptr<ITaskRunObserver> observer;
+		ETaskExecutionRunState terminalState{};
+		std::uint32_t terminalExitCode{};
+		std::wstring terminalDiagnostic;
 		{
 			std::lock_guard lock(mutex);
 			const auto found = runs.find(runId);
@@ -355,9 +392,15 @@ struct TaskExecutionService::Impl final : std::enable_shared_from_this<Impl> {
 			found->second.session.reset();
 			if (activeRunCount != 0) --activeRunCount;
 			if (revision != std::numeric_limits<std::uint64_t>::max()) ++revision;
+			// Captured before pruning can erase this run's record.
+			observer = found->second.observer;
+			terminalState = found->second.state;
+			terminalExitCode = found->second.exitCode;
+			terminalDiagnostic = found->second.diagnostic;
 			QueueNotificationLocked(found->second);
 			PruneTerminalRunsLocked();
 		}
+		DeliverRunTerminalNoexcept(observer, terminalState, terminalExitCode, terminalDiagnostic);
 		DeliverNotifications();
 		ProcessDeferredStop();
 	}
@@ -389,6 +432,10 @@ struct TaskExecutionService::Impl final : std::enable_shared_from_this<Impl> {
 
 	void FinalizeClose(const std::uint64_t runId, const TaskExecutionSessionCloseResult& closeResult)
 	{
+		std::shared_ptr<ITaskRunObserver> observer;
+		ETaskExecutionRunState terminalState{};
+		std::uint32_t terminalExitCode{};
+		std::wstring terminalDiagnostic;
 		{
 			std::lock_guard lock(mutex);
 			const auto found = runs.find(runId);
@@ -413,9 +460,14 @@ struct TaskExecutionService::Impl final : std::enable_shared_from_this<Impl> {
 			run.session.reset();
 			if (activeRunCount != 0) --activeRunCount;
 			if (revision != std::numeric_limits<std::uint64_t>::max()) ++revision;
+			observer = run.observer;
+			terminalState = run.state;
+			terminalExitCode = run.exitCode;
+			terminalDiagnostic = run.diagnostic;
 			QueueNotificationLocked(run);
 			PruneTerminalRunsLocked();
 		}
+		DeliverRunTerminalNoexcept(observer, terminalState, terminalExitCode, terminalDiagnostic);
 		DeliverNotifications();
 	}
 
@@ -429,6 +481,9 @@ struct TaskExecutionService::Impl final : std::enable_shared_from_this<Impl> {
 			return;
 		}
 		catch (...) {
+			std::shared_ptr<ITaskRunObserver> observer;
+			ETaskExecutionRunState terminalState{};
+			std::uint32_t terminalExitCode{};
 			{
 				std::lock_guard lock(mutex);
 				const auto found = runs.find(runId);
@@ -442,9 +497,13 @@ struct TaskExecutionService::Impl final : std::enable_shared_from_this<Impl> {
 				run.session.reset();
 				if (activeRunCount != 0) --activeRunCount;
 				if (revision != std::numeric_limits<std::uint64_t>::max()) ++revision;
+				observer = run.observer;
+				terminalState = run.state;
+				terminalExitCode = run.exitCode;
 				QueueNotificationLocked(run);
 				PruneTerminalRunsLocked();
 			}
+			DeliverRunTerminalNoexcept(observer, terminalState, terminalExitCode, {});
 			try { DeliverNotifications(); }
 			catch (...) { /* Listener delivery is advisory after terminal ownership is recorded. */ }
 		}
@@ -469,8 +528,9 @@ struct TaskExecutionService::Impl final : std::enable_shared_from_this<Impl> {
 	}
 };
 
-TaskExecutionService::TaskExecutionService(std::shared_ptr<ITaskExecutionSessionFactory> factory, TaskExecutionServiceLimits limits)
-	: m_impl(std::make_shared<Impl>(std::move(factory), std::move(limits)))
+TaskExecutionService::TaskExecutionService(std::shared_ptr<ITaskExecutionSessionFactory> factory,
+	TaskExecutionServiceLimits limits, TaskRunObserverFactory runObserverFactory)
+	: m_impl(std::make_shared<Impl>(std::move(factory), std::move(limits), std::move(runObserverFactory)))
 {
 }
 
@@ -576,10 +636,31 @@ TaskExecutionOperationResult TaskExecutionService::Start(const TaskExecutionStar
 		return stoppedBeforeCreationResult;
 	}
 
+	// The run observer is bound before the session exists, so every drained
+	// output chunk and the single terminal transition are observable from the
+	// first byte. A factory that throws or declines leaves the run unobserved.
+	if (m_impl->runObserverFactory) {
+		std::shared_ptr<ITaskRunObserver> observer;
+		try { observer = m_impl->runObserverFactory(runId, request.definition); }
+		catch (...) { observer.reset(); }
+		if (observer) {
+			std::lock_guard lock(m_impl->mutex);
+			if (const auto found = m_impl->runs.find(runId);
+				found != m_impl->runs.end() && !IsTerminalTaskRunState(found->second.state)) {
+				found->second.observer = std::move(observer);
+			}
+		}
+	}
+
 	const std::weak_ptr<Impl> weakImpl = m_impl;
 	const TaskExecutionSessionCallbacks callbacks { [weakImpl, runId](TaskSessionExit exit) {
 		try {
 			if (const auto impl = weakImpl.lock()) impl->CompleteFromSession(runId, std::move(exit));
+		}
+		catch (...) { /* A host worker must never observe a model/listener fault. */ }
+	}, [weakImpl, runId](const std::span<const std::uint8_t> bytes) {
+		try {
+			if (const auto impl = weakImpl.lock()) impl->ForwardRunOutput(runId, bytes);
 		}
 		catch (...) { /* A host worker must never observe a model/listener fault. */ }
 	} };
@@ -795,6 +876,13 @@ TaskExecutionOperationResult TaskExecutionService::Impl::Stop()
 	TaskExecutionOperationResult result;
 	std::chrono::steady_clock::time_point deadline;
 	bool unownedSessionFailure{};
+	struct StopTerminal final {
+		std::shared_ptr<ITaskRunObserver> observer;
+		ETaskExecutionRunState state{};
+		std::uint32_t exitCode{};
+		std::wstring diagnostic;
+	};
+	std::vector<StopTerminal> stopTerminals;
 	{
 		std::unique_lock lock(mutex);
 		if (s_notificationDispatchingImpl == this) {
@@ -825,6 +913,8 @@ TaskExecutionOperationResult TaskExecutionService::Impl::Stop()
 				run.closeFailureReason = ETaskExecutionOperationReason::SessionCloseHostFailure;
 				if (activeRunCount != 0) --activeRunCount;
 				if (revision != std::numeric_limits<std::uint64_t>::max()) ++revision;
+				try { stopTerminals.push_back({ run.observer, run.state, run.exitCode, run.diagnostic }); }
+				catch (...) { /* Terminal ownership is already recorded; delivery is advisory. */ }
 				QueueNotificationLocked(run);
 				unownedSessionFailure = true;
 			}
@@ -849,6 +939,9 @@ TaskExecutionOperationResult TaskExecutionService::Impl::Stop()
 	} publication { *this, result };
 
 	try {
+		for (const auto& terminal : stopTerminals) {
+			DeliverRunTerminalNoexcept(terminal.observer, terminal.state, terminal.exitCode, terminal.diagnostic);
+		}
 		DeliverNotifications();
 		ETaskExecutionOperationReason failureReason = unownedSessionFailure
 			? ETaskExecutionOperationReason::SessionCloseHostFailure : ETaskExecutionOperationReason::None;

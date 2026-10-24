@@ -1521,6 +1521,9 @@
     <ClInclude Include="..\sakura_core\workbench\tasks\TaskExecutionService.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\tasks\TaskProblemCollector.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\workbench\tasks\TaskTerminalSessionFactory.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
@@ -4289,6 +4292,9 @@
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\workbench\tasks\TaskExecutionService.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\tasks\TaskProblemCollector.cpp">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\workbench\tasks\TaskTerminalSessionFactory.cpp">

@@ -530,6 +530,7 @@ struct TerminalInstance::Impl {
 		static_cast<void>(FlushPendingProtocolInput());
 		const auto bytes = sessionValue->DrainOutput();
 		result.bytesDrained = bytes.size();
+		if (request.origin == TerminalInstanceOrigin::Task) result.drainedOutput = bytes;
 		bool parserFailed = false;
 		std::wstring beforeTitle;
 		std::uint64_t beforeSynchronizedCommit = 0;

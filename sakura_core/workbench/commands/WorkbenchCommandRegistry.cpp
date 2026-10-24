@@ -21,6 +21,9 @@ const WorkbenchCommandOwner kBuiltinOwner{ "sakura.builtin", 1 };
 constexpr std::int32_t kLegacyToggleLeftExplorerFunctionCode = 30991;
 //! Compatibility alias for user-assigned native shortcuts; no default chord.
 constexpr std::int32_t kLegacyToggleMaximizedPanelFunctionCode = 30999;
+//! `F_RUN_BUILD_TASK` in `Funccode_x.hsrc` - the integer alias only; this pure
+//! registry deliberately never includes generated function enums.
+constexpr std::int32_t kLegacyRunBuildTaskFunctionCode = 31009;
 //! Integer mirror of generated F_OPEN_WORKSPACE_FOLDER. Keep this pure boundary independent of generated headers.
 constexpr std::int32_t kLegacyOpenWorkspaceFolderFunctionCode = 30997;
 //! Integer mirrors of the Funccode_x.hsrc File command allocations.
@@ -691,6 +694,36 @@ WorkbenchCommandDescriptor MakeUpdateMenuDescriptor(
 	};
 }
 
+//!
+//! @brief One of the four upstream Tasks commands.
+//!
+//! Upstream registers the command IDs in `abstractTaskService.ts` and
+//! contributes surfaces in `task.contribution.ts`: all four commands reach the
+//! Command Palette under the "Tasks" category, `runTask` and `build` also
+//! reach the Terminal menu (with the distinct menu titles "Run Task..." and
+//! "Run Build Task..."), and only `build` carries a default keybinding
+//! (`Ctrl+Shift+B`). This registry carries one title per command, so the
+//! Terminal-menu slot reuses the palette title - the same recorded
+//! simplification as the Explorer palette retitle.
+//!
+WorkbenchCommandDescriptor MakeTaskCommandDescriptor(
+	std::string id, std::string title, bool terminalMenu, bool keybinding)
+{
+	std::vector<WorkbenchCommandSurfaceBinding> bindings;
+	bindings.push_back({ EWorkbenchCommandSurface::CommandPalette, id + ".palette", std::nullopt });
+	if (terminalMenu) bindings.push_back({ EWorkbenchCommandSurface::Menu, id + ".menu", std::nullopt });
+	if (keybinding) bindings.push_back({ EWorkbenchCommandSurface::Keybinding, id + ".key", kLegacyRunBuildTaskFunctionCode });
+	return {
+		std::move(id),
+		std::move(title),
+		kBuiltinOwner,
+		"workbenchReady",
+		"workbenchReady",
+		EWorkbenchCommandExecutorTarget::Terminal,
+		std::move(bindings),
+	};
+}
+
 } // namespace
 
 std::uint32_t ResolveBuiltinWorkbenchCommandTitleResourceId(std::string_view commandId) noexcept
@@ -762,6 +795,10 @@ std::uint32_t ResolveBuiltinWorkbenchCommandTitleResourceId(std::string_view com
 		{"update.showUpdateInfo", STR_WORKBENCH_COMMAND_UPDATE_INFO}, {"update.checking", STR_WORKBENCH_COMMAND_UPDATE_CHECKING},
 		{"update.downloading", STR_WORKBENCH_COMMAND_UPDATE_DOWNLOADING}, {"update.updating", STR_WORKBENCH_COMMAND_UPDATE_UPDATING},
 		{"update.cancelling", STR_WORKBENCH_COMMAND_UPDATE_CANCELLING}, {"update", STR_WORKBENCH_COMMAND_UPDATE_INDICATOR},
+		{"workbench.action.tasks.runTask", STR_WORKBENCH_COMMAND_TASKS_RUN_TASK},
+		{"workbench.action.tasks.build", STR_WORKBENCH_COMMAND_TASKS_BUILD},
+		{"workbench.action.tasks.test", STR_WORKBENCH_COMMAND_TASKS_TEST},
+		{"workbench.action.tasks.showLog", STR_WORKBENCH_COMMAND_TASKS_SHOW_LOG},
 	};
 	for (const auto& [id, resourceId] : kTitles) if (id == commandId) return resourceId;
 	return 0;
@@ -1065,6 +1102,27 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterUpdateComma
 				   EWorkbenchCommandExecutorTarget::Editor,
 				   { { EWorkbenchCommandSurface::Menu, "workbench.titleBar.update", std::nullopt } } },
 			{}, {} },
+	};
+	return RegisterAtomicBatch(std::move(commands));
+}
+
+WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterTaskCommands(
+	WorkbenchTaskCommandExecutors executors)
+{
+	// Command IDs, contribution shapes, and titles follow upstream's
+	// `abstractTaskService.ts` and `task.contribution.ts`. `runTask` and
+	// `build` reach the Terminal menu; every command reaches the Command
+	// Palette; only `build` binds `Ctrl+Shift+B`, carried here as the integer
+	// compatibility alias the native keybinding table dispatches.
+	std::vector<Entry> commands{
+		Entry{ MakeTaskCommandDescriptor(std::string(kTasksRunTaskCommandId), "Tasks: Run Task", true, false),
+			std::move(executors.runTask), {} },
+		Entry{ MakeTaskCommandDescriptor(std::string(kTasksBuildCommandId), "Tasks: Run Build Task", true, true),
+			std::move(executors.build), {} },
+		Entry{ MakeTaskCommandDescriptor(std::string(kTasksTestCommandId), "Tasks: Run Test Task", false, false),
+			std::move(executors.test), {} },
+		Entry{ MakeTaskCommandDescriptor(std::string(kTasksShowLogCommandId), "Tasks: Show Task Log", false, false),
+			std::move(executors.showLog), {} },
 	};
 	return RegisterAtomicBatch(std::move(commands));
 }

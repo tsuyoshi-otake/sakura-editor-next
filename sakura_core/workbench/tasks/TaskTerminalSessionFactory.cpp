@@ -227,8 +227,13 @@ private:
 					}
 					if (!current) break;
 					const auto bytes = current->DrainOutput();
-					if (!bytes.empty() && outputSink) {
-						try { outputSink(bytes); } catch (...) {}
+					if (!bytes.empty()) {
+						if (outputSink) {
+							try { outputSink(bytes); } catch (...) {}
+						}
+						if (callbacks.output) {
+							try { callbacks.output(bytes); } catch (...) {}
+						}
 					}
 					const bool requested = drainRequested.exchange(false, std::memory_order_acq_rel);
 					if (current->GetQueuedOutputBytes() == 0 && !requested) break;
@@ -247,6 +252,9 @@ private:
 
 		void Complete(const terminal::TerminalSessionCompletionResult completion) noexcept
 		{
+			// Flush trailing output before the terminal state is published so a
+			// consumer sees the complete stream the terminal parser consumed.
+			DrainAvailableOutput();
 			TaskExecutionSessionCallbacks callbackCopy;
 			TaskSessionExit exit;
 			{

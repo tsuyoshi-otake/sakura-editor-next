@@ -243,15 +243,38 @@ private:
 			}
 			if (!current.IsValid() || event.coordinate.instanceId != current) return;
 			if (event.kind == terminal::TerminalInstanceEventKind::OutputAvailable && runtime) {
-				static_cast<void>(runtime->DrainOutput(current));
+				ForwardDrainedOutput(runtime->DrainOutput(current));
 			}
 			if (event.kind == terminal::TerminalInstanceEventKind::Completed && event.outcome) {
 				Complete(*event.outcome);
 			}
 		}
 
+		void ForwardDrainedOutput(const terminal::TerminalInstanceDrainResult& drained) noexcept
+		{
+			if (drained.drainedOutput.empty()) return;
+			TaskExecutionSessionCallbacks callbackCopy;
+			{
+				const std::lock_guard lock(mutex);
+				callbackCopy = callbacks;
+			}
+			if (callbackCopy.output) {
+				try { callbackCopy.output(drained.drainedOutput); } catch (...) {}
+			}
+		}
+
 		void Complete(const terminal::TerminalInstanceOutcome& outcome) noexcept
 		{
+			// Flush trailing output before the terminal state is published so a
+			// consumer sees the complete stream the terminal parser consumed.
+			terminal::TerminalInstanceId current;
+			{
+				const std::lock_guard lock(mutex);
+				current = instanceId;
+			}
+			if (current.IsValid() && runtime) {
+				ForwardDrainedOutput(runtime->DrainOutput(current));
+			}
 			TaskExecutionSessionCallbacks callbackCopy;
 			TaskSessionExit exit;
 			{
