@@ -157,7 +157,8 @@ command but loses the default chord in `func/CKeyBind.cpp`:
 | `Shift+Alt+F8` | `editor.action.marker.prev` | `F_CODECNV_SJIS2UTF8` | #382 |
 | `Ctrl+Shift+U` | `workbench.action.output.toggleOutput` | `F_LineDeleteToStart` ('U' row) | #383 |
 
-This is a divergence-free target, not a description of the current table: the
-rows above still carry the legacy assignments and unbound slots until each
-phase lands. A phase that cannot take its chord records the reason here
-instead of silently keeping the legacy default.
+As of #383 every row above is landed: the table describes the current
+`func/CKeyBind.cpp` assignments, and each displaced legacy function keeps its
+command but no longer owns the default chord. A future phase that cannot take
+its chord records the reason here instead of silently keeping the legacy
+default.

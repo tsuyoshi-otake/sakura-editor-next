@@ -568,6 +568,10 @@ public:
 	//! workbench.actions.view.problems (Ctrl+Shift+M). The F_SHOW_PROBLEMS
 	//! funccode reaches this through the same entry point as the stable command.
 	[[nodiscard]] bool ExecuteShowProblemsCommand();
+	//! workbench.action.output.toggleOutput (Ctrl+Shift+U): show Output, or hide
+	//! the Panel when Output is already the active view. F_TOGGLE_OUTPUT reaches
+	//! this through the same entry point as the stable command.
+	[[nodiscard]] bool ExecuteToggleOutputCommand();
 	void NewIntegratedTerminal();
 	void RedetectPowerShell();
 	void ToggleMarkdownPreview();
@@ -1094,7 +1098,21 @@ private:
 	[[nodiscard]] bool ExecuteShowExplorerCommand();
 	[[nodiscard]] bool ExecuteShowExtensionsCommand();
 	[[nodiscard]] bool ExecuteShowOutputCommand(bool requestFocus = true);
-	[[nodiscard]] bool ExecuteToggleOutputCommand();
+	//! One registered Output view command (`workbench.output.action.*`,
+	//! `workbench.action.*LogOutput*`, `workbench.action.showOutputChannels`).
+	//! View-local state dispatches to the panel tool, service mutations go
+	//! through OutputService, and unlanded capabilities answer `Unsupported`.
+	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteOutputViewCommand(
+		std::string_view commandId);
+	//! Routes one Output channel selection through OutputService::Show with a
+	//! fresh bounded operation ID and `preserveFocus = true`, like upstream's
+	//! `workbench.action.output.show.<id>` handlers.
+	[[nodiscard]] bool SelectOutputChannelById(const std::string& channelId);
+	//! `workbench.action.showOutputChannels`: the grouped extension/core quick pick.
+	[[nodiscard]] bool ShowOutputChannelQuickPick();
+	//! `workbench.action.saveActiveLogOutputAs`: a real save dialog plus a UTF-8
+	//! write of the active channel's projected text. Cancel is `Succeeded`.
+	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult SaveActiveOutputAs();
 	//! Applies one supported value of VS Code's workbench.activityBar.location.
 	//! Hidden is deliberately absent from the type and from every native surface.
 	[[nodiscard]] bool SetActivityBarLocation(workbench::ActivityBarLocation location,
@@ -1177,6 +1195,7 @@ private:
 	//! `showCurrentInStatus` to the marker-navigation session and the
 	//! `status.problems*` status entries.
 	void ApplyProblemsViewSettings();
+	void ApplyOutputViewSettings();
 	//! Runs one `editor.action.marker.*` step. `multiFile` distinguishes the
 	//! `*InFiles` variants (whole MarkerService snapshot) from the same-file ones.
 	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult

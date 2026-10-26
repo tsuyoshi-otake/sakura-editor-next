@@ -2265,6 +2265,10 @@ void CEditWnd::DispatchEditorFunction(EFunctionCode functionCode)
 		case F_MARKER_PREV_IN_FILES: commandId = "editor.action.marker.prevInFiles"; break;
 		case F_MARKER_NEXT: commandId = "editor.action.marker.next"; break;
 		case F_MARKER_PREV: commandId = "editor.action.marker.prev"; break;
+		// Without this route the legacy `isDocumentModeCommand` range
+		// ([F_CHGMOD_INS, F_CANCEL_MODE]) swallows the code whenever no editor
+		// document is open; the stable command must work on the empty surface.
+		case F_TOGGLE_OUTPUT: commandId = "workbench.action.output.toggleOutput"; break;
 		default: break;
 		}
 		if (!commandId.empty()) {
@@ -3363,6 +3367,7 @@ bool CEditWnd::InitializeWorkbench()
 	ApplyTerminalScrollbackSetting();
 	ApplyTerminalTabPresentationSettings();
 	ApplyProblemsViewSettings();
+	ApplyOutputViewSettings();
 		m_terminalTool->SetPanelActions({
 			.renderPanelActions = false,
 			.renderHeader = false,
@@ -4138,6 +4143,33 @@ bool CEditWnd::InitializeWorkbench()
 			CloseWorkbench();
 			return false;
 		}
+		// The Output view's title actions and channel quick pick, upstream's
+		// `output.contribution.ts` surface. `ExecuteOutputViewCommand` owns the
+		// per-command terminal: view-local actions reach the panel tool, service
+		// mutations reach OutputService, and unlanded capabilities answer
+		// `Unsupported`.
+		const auto outputView = [this](std::string_view commandId) {
+			return ExecuteOutputViewCommand(commandId);
+		};
+		auto outputViewCommand = [outputView](std::string_view commandId) {
+			return workbench::commands::WorkbenchCommandExecutor{
+				[outputView, id = std::string(commandId)]() { return outputView(id); } };
+		};
+		const auto outputRegistration = m_workbenchCommandRegistry->RegisterOutputViewCommands({
+			.clearOutput = outputViewCommand("workbench.output.action.clearOutput"),
+			.toggleAutoScroll = outputViewCommand("workbench.output.action.toggleAutoScroll"),
+			.openActiveLogOutputFile =
+				outputViewCommand("workbench.action.openActiveLogOutputFile"),
+			.saveActiveLogOutputAs =
+				outputViewCommand("workbench.action.saveActiveLogOutputAs"),
+			.showOutputChannels = outputViewCommand("workbench.action.showOutputChannels"),
+			.clearFilterText = outputViewCommand(
+				"workbench.actions.workbench.panel.output.clearFilterText"),
+		});
+		if (!outputRegistration.Succeeded()) {
+			CloseWorkbench();
+			return false;
+		}
 		ConfigureCustomFrameActions();
 		// After the frame callbacks exist, so the first committed state can paint
 		// the indicator instead of waiting for the next transition.
@@ -4182,30 +4214,14 @@ bool CEditWnd::InitializeWorkbench()
 				problem.range.startColumn);
 		});
 	m_bottomPanelTool->SetOutputChannelSelectionCallback([this](const std::string& channelId) {
-		if (m_outputService == nullptr) return false;
-		try {
-			const auto snapshot = m_outputService->Snapshot();
-			const auto channel = std::ranges::find(snapshot.channels, channelId,
-				&workbench::output::OutputChannelSnapshot::channelId);
-			if (channel == snapshot.channels.end()) return false;
-			auto operationId = NextOutputPanelOperationId();
-			if (!operationId) return false;
-			const auto result = m_outputService->Show({
-				.operation = {
-					.operationId = std::move(*operationId),
-					.expectedRevision = snapshot.revision,
-				},
-				.owner = channel->owner,
-				.channelId = channelId,
-				.preserveFocus = true,
-			});
-			return result.Succeeded()
-				|| (result.status == workbench::output::EOutputOperationStatus::NotApplicable
-					&& result.reason == workbench::output::EOutputOperationReason::None);
-		}
-		catch (...) {
-			return false;
-		}
+		return SelectOutputChannelById(channelId);
+	});
+	// The Output view's buttons and `...` menu run through the registered
+	// stable commands so the title actions, menus, and palette converge on one
+	// executor and one typed terminal result.
+	m_bottomPanelTool->SetOutputViewCommandCallback([this](std::string_view commandId) {
+		bool handled = false;
+		return TryExecuteWorkbenchStableCommand(commandId, handled);
 	});
 	m_cStatusBar.SetWorkbenchCommandCallback(
 		[this](std::string_view command, std::string_view argumentsJson) {
@@ -9069,6 +9085,218 @@ bool CEditWnd::ExecuteToggleOutputCommand()
 	}
 }
 
+bool CEditWnd::SelectOutputChannelById(const std::string& channelId)
+{
+	if (m_outputService == nullptr) return false;
+	try {
+		const auto snapshot = m_outputService->Snapshot();
+		const auto channel = std::ranges::find(snapshot.channels, channelId,
+			&workbench::output::OutputChannelSnapshot::channelId);
+		if (channel == snapshot.channels.end()) return false;
+		auto operationId = NextOutputPanelOperationId();
+		if (!operationId) return false;
+		const auto result = m_outputService->Show({
+			.operation = {
+				.operationId = std::move(*operationId),
+				.expectedRevision = snapshot.revision,
+			},
+			.owner = channel->owner,
+			.channelId = channelId,
+			.preserveFocus = true,
+		});
+		return result.Succeeded()
+			|| (result.status == workbench::output::EOutputOperationStatus::NotApplicable
+				&& result.reason == workbench::output::EOutputOperationReason::None);
+	}
+	catch (...) {
+		return false;
+	}
+}
+
+workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteOutputViewCommand(
+	std::string_view commandId)
+{
+	using Status = workbench::commands::EWorkbenchCommandExecutionStatus;
+	using Result = workbench::commands::WorkbenchCommandExecutionResult;
+	// View-local state is the panel tool's own authority; everything else the
+	// executor answers itself. A rejected view command is `Unsupported`, never
+	// a silent success.
+	if (commandId == "workbench.output.action.toggleAutoScroll"
+		|| commandId == "workbench.actions.workbench.panel.output.clearFilterText") {
+		return m_bottomPanelTool != nullptr && m_bottomPanelTool->ExecuteOutputViewCommand(commandId)
+			? Result{ Status::Succeeded, {} }
+			: Result{ Status::Unsupported, "output view command is not supported" };
+	}
+	if (commandId == "workbench.output.action.clearOutput") {
+		if (m_outputService == nullptr) {
+			return Result{ Status::Unsupported, "no output service" };
+		}
+		try {
+			const auto snapshot = m_outputService->Snapshot();
+			if (!snapshot.activeChannelId) return Result{ Status::NotApplicable, "no active channel" };
+			const auto channel = std::ranges::find(snapshot.channels, *snapshot.activeChannelId,
+				&workbench::output::OutputChannelSnapshot::channelId);
+			if (channel == snapshot.channels.end()) {
+				return Result{ Status::NotApplicable, "active channel missing" };
+			}
+			auto operationId = NextOutputPanelOperationId();
+			if (!operationId) return Result{ Status::Failed, "operation id unavailable" };
+			const auto clear = m_outputService->Clear({
+				.operation = {
+					.operationId = std::move(*operationId),
+					.expectedRevision = snapshot.revision,
+				},
+				.owner = channel->owner,
+				.channelId = channel->channelId,
+			});
+			return clear.Succeeded()
+				? Result{ Status::Succeeded, {} }
+				: Result{ Status::Failed, "output clear rejected" };
+		}
+		catch (...) {
+			return Result{ Status::Failed, "output clear threw" };
+		}
+	}
+	if (commandId == "workbench.action.saveActiveLogOutputAs") return SaveActiveOutputAs();
+	if (commandId == "workbench.action.showOutputChannels") {
+		return ShowOutputChannelQuickPick()
+			? Result{ Status::Succeeded, {} }
+			: Result{ Status::Failed, "output channel quick pick failed" };
+	}
+	// Upstream opens the channel's backing log file. This fork's channels are
+	// service-owned text, not file resources, so there is no honest route; the
+	// command reports its typed unsupported terminal instead of faking one.
+	if (commandId == "workbench.action.openActiveLogOutputFile") {
+		return Result{ Status::Unsupported, "no file-backed output channel" };
+	}
+	return Result{ Status::Unsupported, "unknown output view command" };
+}
+
+bool CEditWnd::ShowOutputChannelQuickPick()
+{
+	if (m_outputService == nullptr || GetHwnd() == nullptr || !EnsureQuickInputOverlay()) return false;
+	try {
+		const auto panel = workbench::win32::ProjectOutputPanel(m_outputService->Snapshot());
+		const auto groups = workbench::win32::GroupOutputViewChannels(panel.channels);
+		const auto ids = std::make_shared<std::vector<std::string>>();
+		std::vector<workbench::quickinput::CommandPaletteItem> items;
+		items.reserve(panel.channels.size() + 1);
+		const auto append = [&](const std::vector<std::size_t>& indexes) {
+			for (const std::size_t index : indexes) {
+				ids->push_back(panel.channels[index].channelId);
+				items.push_back({
+					.id = L"output-channel:" + std::to_wstring(ids->size() - 1),
+					.label = panel.channels[index].label,
+				});
+			}
+		};
+		// Upstream's picker lists extension channels, a separator, then the core
+		// channels; the separator exists only when both groups are non-empty.
+		append(groups.extensionChannels);
+		if (groups.HasSeparator()) items.push_back({ .separator = true });
+		append(groups.coreChannels);
+		m_commandPaletteOverlay->SetStringsCallback([] {
+			return workbench::quickinput::QuickInputStrings{
+				.placeholder = LocalizedWorkbenchString(
+					STR_WORKBENCH_OUTPUT_CHANNEL_PICKER_PLACEHOLDER),
+				.noResults = LocalizedWorkbenchString(STR_WORKBENCH_COMMAND_PALETTE_NO_RESULTS),
+			};
+		});
+		m_commandPaletteOverlay->SetSearchCallback(
+			[items](std::wstring_view query) {
+				if (query.empty()) return items;
+				std::wstring lowered(query);
+				for (auto& character : lowered) character = static_cast<wchar_t>(std::towlower(character));
+				std::vector<workbench::quickinput::CommandPaletteItem> filtered;
+				for (const auto& item : items) {
+					if (item.separator) continue;
+					std::wstring label = item.label;
+					for (auto& character : label) character = static_cast<wchar_t>(std::towlower(character));
+					if (label.find(lowered) != std::wstring::npos) filtered.push_back(item);
+				}
+				return filtered;
+			});
+		m_commandPaletteOverlay->SetSelectionCallback({});
+		m_commandPaletteOverlay->SetAcceptCallback([this, ids](std::wstring id) {
+			constexpr std::wstring_view kPrefix = L"output-channel:";
+			if (!id.starts_with(kPrefix)) return;
+			const auto index = static_cast<std::size_t>(_wtoi(id.c_str() + kPrefix.size()));
+			if (index >= ids->size()) return;
+			(void)SelectOutputChannelById((*ids)[index]);
+		});
+		m_commandPaletteOverlay->SetCancelCallback({});
+		const std::wstring initiallySelected = panel.activeChannelId
+			? L"output-channel:" + std::to_wstring(static_cast<std::size_t>(std::distance(
+				ids->begin(), std::ranges::find(*ids, *panel.activeChannelId))))
+			: std::wstring{};
+		const bool selected = std::ranges::find(*ids, panel.activeChannelId.value_or(std::string{}))
+			!= ids->end();
+		return m_commandPaletteOverlay->Show(items, selected ? initiallySelected : std::wstring{});
+	}
+	catch (...) {
+		return false;
+	}
+}
+
+workbench::commands::WorkbenchCommandExecutionResult CEditWnd::SaveActiveOutputAs()
+{
+	using Status = workbench::commands::EWorkbenchCommandExecutionStatus;
+	using Result = workbench::commands::WorkbenchCommandExecutionResult;
+	if (m_outputService == nullptr || GetHwnd() == nullptr) {
+		return Result{ Status::Unsupported, "no output service" };
+	}
+	try {
+		const auto snapshot = m_outputService->Snapshot();
+		if (!snapshot.activeChannelId) return Result{ Status::NotApplicable, "no active channel" };
+		const auto channel = std::ranges::find(snapshot.channels, *snapshot.activeChannelId,
+			&workbench::output::OutputChannelSnapshot::channelId);
+		if (channel == snapshot.channels.end()) {
+			return Result{ Status::NotApplicable, "active channel missing" };
+		}
+		const auto panel = workbench::win32::ProjectOutputPanel(snapshot);
+		const auto panelChannel = std::ranges::find(panel.channels, channel->channelId,
+			&workbench::win32::OutputPanelChannel::channelId);
+		if (panelChannel == panel.channels.end()) {
+			return Result{ Status::NotApplicable, "active channel missing" };
+		}
+		// Upstream's save dialog defaults the file name to the channel label with
+		// a .log extension.
+		std::wstring fileName = panelChannel->label;
+		for (auto& character : fileName) {
+			if (std::wcschr(L"\\/:*?\"<>|", character) != nullptr) character = L'_';
+		}
+		fileName += L".log";
+		std::array<wchar_t, MAX_PATH> path{};
+		path[fileName.copy(path.data(), path.size() - 1)] = L'\0';
+		OPENFILENAMEW dialog{};
+		dialog.lStructSize = sizeof(dialog);
+		dialog.hwndOwner = GetHwnd();
+		dialog.lpstrFile = path.data();
+		dialog.nMaxFile = static_cast<DWORD>(path.size());
+		dialog.lpstrFilter = L"Log Files (*.log)\0*.log\0All Files (*.*)\0*.*\0";
+		dialog.lpstrDefExt = L"log";
+		dialog.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+		// A cancelled save is the command's terminal answer too, not a failure.
+		if (::GetSaveFileNameW(&dialog) == FALSE) return Result{ Status::Succeeded, {} };
+		const HANDLE file = ::CreateFileW(path.data(), GENERIC_WRITE, 0, nullptr,
+			CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+		if (file == INVALID_HANDLE_VALUE) return Result{ Status::Failed, "create file failed" };
+		DWORD written = 0;
+		const auto& text = channel->projectedText;
+		const bool ok = ::WriteFile(file, text.data(),
+			static_cast<DWORD>(std::min<std::size_t>(text.size(),
+				std::numeric_limits<DWORD>::max())), &written, nullptr)
+			&& written == text.size();
+		::CloseHandle(file);
+		return ok
+			? Result{ Status::Succeeded, {} }
+			: Result{ Status::Failed, "write file failed" };
+	}
+	catch (...) {
+		return Result{ Status::Failed, "save output threw" };
+	}
+}
+
 void CEditWnd::PersistWorkbenchExtent(workbench::WorkbenchEdge edge, int extentDip)
 {
 	auto& settings = m_pShareData->m_Common.m_sWorkbench;
@@ -10029,6 +10257,29 @@ void CEditWnd::ApplyProblemsViewSettings()
 	}
 	RefreshStatusbarPresentation();
 	UpdateProblemsStatusbar();
+}
+
+void CEditWnd::ApplyOutputViewSettings()
+{
+	bool smartScroll = true;
+	if (m_workbenchRuntime != nullptr) {
+		try {
+			const std::vector<std::string> keys{ "output.smartScroll.enabled" };
+			const auto read = m_workbenchRuntime->Configuration().ReadSnapshot(
+				keys, BuildWorkbenchConfigurationTarget());
+			if (read.snapshot && read.snapshot->values.size() == keys.size()) {
+				if (const auto* value = std::get_if<bool>(&read.snapshot->values[0].Value());
+					value != nullptr) {
+					smartScroll = *value;
+				}
+			}
+		} catch (...) {
+			smartScroll = true;
+		}
+	}
+	if (m_bottomPanelTool != nullptr) {
+		m_bottomPanelTool->SetOutputSmartScroll(smartScroll);
+	}
 }
 
 std::wstring CEditWnd::ActiveDocumentResourceUri() const
@@ -13098,6 +13349,7 @@ LRESULT CEditWnd::DispatchEvent(
 		ApplyTerminalScrollbackSetting();
 		ApplyTerminalTabPresentationSettings();
 		ApplyProblemsViewSettings();
+		ApplyOutputViewSettings();
 		return 0;
 	case MYWM_COMPLETE_STARTUP_WORKBENCH:
 		m_startupWorkbenchCompletionPosted = false;

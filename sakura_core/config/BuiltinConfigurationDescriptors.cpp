@@ -123,6 +123,11 @@ std::vector<ConfigurationDescriptor> BuiltinConfigurationDescriptors()
 		// capability.
 		{ "problems.autoReveal", ConfigurationValue(true),
 			{ Scope::Profile, Scope::Workspace, Scope::Folder }, { Kind::Boolean } },
+		// VS Code's `output.smartScroll.enabled` (output.contribution.ts, default
+		// true): a caret on a non-last line locks the Output view's auto scroll;
+		// a caret on the last line unlocks it.
+		{ "output.smartScroll.enabled", ConfigurationValue(true),
+			{ Scope::Profile, Scope::Workspace, Scope::Folder }, { Kind::Boolean } },
 		// VS Code's `problems.visibility` (problemsConfigurationNodeBase in
 		// workbench/common/configuration.ts, default true): the global Problems
 		// visibility switch. `false` turns marker-based surfaces off and surfaces

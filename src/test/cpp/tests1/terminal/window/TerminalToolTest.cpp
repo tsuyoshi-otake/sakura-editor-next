@@ -542,7 +542,8 @@ TEST(BottomPanelComposite, DetachSwitchAndMessageRoutingPreserveTerminalUntilExp
 	workbench::win32::OutputPanelSnapshot output;
 	output.revision = 4;
 	output.activeChannelId = "git";
-	output.channels.push_back({ "git", L"Git", L"git status", true, true });
+	output.channels.push_back({ .channelId = "git", .label = L"Git",
+		.projectedText = L"git status", .visible = true, .lastShowPreservedFocus = true });
 	panel.SetOutputSnapshot(std::move(output));
 	ASSERT_EQ(std::optional<std::string>("git"), panel.SelectedOutputChannelId());
 	ASSERT_EQ(std::optional<std::string_view>(containerIds::Terminal),

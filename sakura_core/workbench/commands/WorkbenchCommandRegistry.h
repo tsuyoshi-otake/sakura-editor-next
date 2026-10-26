@@ -398,6 +398,39 @@ struct WorkbenchProblemsViewCommandExecutors {
 	WorkbenchCommandExecutor markerPrev;
 };
 
+/*!
+	@brief Executors for the Output view's title actions and channel commands.
+
+	Upstream registers these in `output.contribution.ts`: the `MenuId.ViewTitle`
+	actions are `workbench.output.action.clearOutput`,
+	`workbench.output.action.toggleAutoScroll` (icon and tooltip flip with
+	`outputScrollLock`), `workbench.action.openActiveLogOutputFile`, and
+	`workbench.action.saveActiveLogOutputAs` inside the `...` submenu, while
+	`workbench.action.showOutputChannels` is a palette command that opens the
+	grouped channel quick pick. `workbench.actions.workbench.panel.output.clearFilterText`
+	is a keybinding-only ViewAction upstream (Escape in the filter). A command
+	left empty still registers and still resolves, but executes as `Unsupported`
+	- the sanctioned typed boundary for capabilities (file-backed log output)
+	this fork has not landed.
+*/
+struct WorkbenchOutputViewCommandExecutors {
+	//! `MenuId.ViewTitle` group `navigation` and `MenuId.CommandPalette`:
+	//! clear the active channel.
+	WorkbenchCommandExecutor clearOutput;
+	//! `MenuId.ViewTitle`: lock/unlock scroll, tooltips `Turn Auto Scrolling
+	//! Off`/`Turn Auto Scrolling On` by `outputScrollLock` state.
+	WorkbenchCommandExecutor toggleAutoScroll;
+	//! `...` submenu: `workbench.action.openActiveLogOutputFile` /
+	//! `workbench.action.saveActiveLogOutputAs`.
+	WorkbenchCommandExecutor openActiveLogOutputFile;
+	WorkbenchCommandExecutor saveActiveLogOutputAs;
+	//! Command Palette: `workbench.action.showOutputChannels`.
+	WorkbenchCommandExecutor showOutputChannels;
+	//! Escape in the Output filter:
+	//! `workbench.actions.workbench.panel.output.clearFilterText`.
+	WorkbenchCommandExecutor clearFilterText;
+};
+
 //! Upstream's title-bar entry, registered into `MenuId.TitleBarUpdate` at
 //! order 0 with the title `"Update"`.
 inline constexpr std::string_view kUpdateIndicatorCommandId = "workbench.actions.updateIndicator";
@@ -515,6 +548,13 @@ public:
 	//! `workbench.action.showErrorsWarnings`.
 	[[nodiscard]] WorkbenchCommandRegistrationResult RegisterProblemsViewCommands(
 		WorkbenchProblemsViewCommandExecutors executors = {});
+	//! Registers the Output view command family as one atomic batch, using
+	//! upstream's own stable IDs from `output.contribution.ts`: the
+	//! `workbench.output.action.*` view-title actions, the
+	//! `workbench.action.*LogOutput*` `...` entries, and
+	//! `workbench.action.showOutputChannels`.
+	[[nodiscard]] WorkbenchCommandRegistrationResult RegisterOutputViewCommands(
+		WorkbenchOutputViewCommandExecutors executors = {});
 	[[nodiscard]] WorkbenchCommandRegistrationResult DisposeOwner(const WorkbenchCommandOwner& owner);
 	[[nodiscard]] std::optional<WorkbenchCommandDescriptor> Find(std::string_view commandId) const;
 	[[nodiscard]] std::optional<ResolvedWorkbenchCommandSurface> ResolveSurface(

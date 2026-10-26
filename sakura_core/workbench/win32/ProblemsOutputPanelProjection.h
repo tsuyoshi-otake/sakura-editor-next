@@ -13,6 +13,8 @@
 #include <string>
 #include <vector>
 
+#include "workbench/output/OutputServiceTypes.h"
+
 namespace workbench::problems {
 struct ProblemsSnapshot;
 }
@@ -184,6 +186,11 @@ struct OutputPanelChannel final {
 	std::string channelId;
 	std::wstring label;
 	std::wstring projectedText;
+	//! Output/Log channel classification from the service model.
+	workbench::output::EOutputChannelKind kind{ workbench::output::EOutputChannelKind::Output };
+	//! The channel owner's stable id (for example "core.tasks"); extension-versus-core
+	//! grouping in `workbench.action.showOutputChannels` reads this, never the label.
+	std::string ownerId;
 	bool visible{};
 	bool lastShowPreservedFocus{};
 
@@ -204,5 +211,73 @@ struct OutputPanelSnapshot final {
 
 //! Projects a copied OutputService snapshot into a deterministic native presentation value.
 [[nodiscard]] OutputPanelSnapshot ProjectOutputPanel(const output::OutputServiceSnapshot& snapshot);
+
+// ---------------------------------------------------------------------------
+// VS Code Output view (`workbench.panel.output`) projections.
+// Pure: no HWND, theme, font, or mutation; consumed by the native panel tool.
+// ---------------------------------------------------------------------------
+
+//! The Output view filter's parsed text. Upstream's classic filter splits the
+//! input on commas with `splitGlobAware` (commas inside double quotes are
+//! literal), trims each piece, and treats `!`-prefixed pieces as exclusion
+//! patterns. Surrounding double quotes are stripped from each pattern.
+struct OutputViewFilterOptions final {
+	std::vector<std::wstring> includePatterns;
+	std::vector<std::wstring> excludePatterns;
+
+	[[nodiscard]] bool operator==(const OutputViewFilterOptions&) const noexcept = default;
+};
+
+[[nodiscard]] OutputViewFilterOptions ParseOutputViewFilterText(std::wstring_view filterText);
+
+//! One half-open character range inside `OutputViewFilteredText::text`, where
+//! an include pattern matched. The native view paints these as upstream's
+//! find-match highlight decorations.
+struct OutputViewTextRange final {
+	std::uint32_t offset{};
+	std::uint32_t length{};
+
+	[[nodiscard]] constexpr bool operator==(const OutputViewTextRange&) const noexcept = default;
+};
+
+//! The filtered display text for one channel. `text` joins the visible lines
+//! with \r\n, the native control's line ending; `hiddenLineCount` feeds no
+//! badge upstream but keeps the projection's loss explicit.
+struct OutputViewFilteredText final {
+	std::wstring text;
+	std::vector<OutputViewTextRange> matchRanges;
+	std::uint32_t hiddenLineCount{};
+
+	[[nodiscard]] bool operator==(const OutputViewFilteredText&) const noexcept = default;
+};
+
+//! Upstream's per-line filter: a line is visible when no exclude pattern is a
+//! substring of it and (with no include patterns, or when at least one include
+//! pattern is a substring). Matching is case-sensitive like upstream's Matcher.
+[[nodiscard]] OutputViewFilteredText ApplyOutputViewFilter(
+	std::wstring_view projectedText, const OutputViewFilterOptions& options);
+
+//! Upstream's channel grouping for both `workbench.action.showOutputChannels`
+//! and the view-title `workbench.output.menu.switchOutput` selector: channels
+//! whose owner is not a `core.*` workbench producer count as extension
+//! channels and come first, then the core channels. Upstream also has a third
+//! `2_user_outputchannels` group behind `channel.user`; this service has no
+//! user-channel kind, so the projection carries the two groups it can prove.
+//! Each group is ordered by label.
+struct OutputViewChannelGroups final {
+	std::vector<std::size_t> extensionChannels;
+	std::vector<std::size_t> coreChannels;
+
+	//! Upstream inserts one separator only when both groups are non-empty.
+	[[nodiscard]] bool HasSeparator() const noexcept
+	{
+		return !extensionChannels.empty() && !coreChannels.empty();
+	}
+
+	[[nodiscard]] bool operator==(const OutputViewChannelGroups&) const noexcept = default;
+};
+
+[[nodiscard]] OutputViewChannelGroups GroupOutputViewChannels(
+	const std::vector<OutputPanelChannel>& channels);
 
 } // namespace workbench::win32

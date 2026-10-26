@@ -697,6 +697,8 @@ OutputPanelSnapshot ProjectOutputPanel(const output::OutputServiceSnapshot& snap
 			.channelId = channel.channelId,
 			.label = Utf8ToWide(channel.label),
 			.projectedText = Utf8ToWide(channel.projectedText),
+			.kind = channel.kind,
+			.ownerId = channel.owner.ownerId,
 			.visible = channel.visible,
 			.lastShowPreservedFocus = channel.lastShowPreservedFocus,
 		});
@@ -705,6 +707,143 @@ OutputPanelSnapshot ProjectOutputPanel(const output::OutputServiceSnapshot& snap
 		return left.channelId < right.channelId;
 	});
 	return result;
+}
+
+namespace {
+
+//! Upstream's `splitGlobAware` for the Output filter: commas inside double
+//! quotes do not split. A trailing unclosed quote keeps the rest of the text
+//! in the last piece, the same as upstream's scan.
+[[nodiscard]] std::vector<std::wstring> SplitOutputFilterGlobAware(std::wstring_view text)
+{
+	std::vector<std::wstring> pieces;
+	std::wstring piece;
+	bool quoted = false;
+	for (const wchar_t character : text) {
+		if (character == L'"') {
+			quoted = !quoted;
+			piece.push_back(character);
+			continue;
+		}
+		if (character == L',' && !quoted) {
+			pieces.push_back(std::move(piece));
+			piece.clear();
+			continue;
+		}
+		piece.push_back(character);
+	}
+	pieces.push_back(std::move(piece));
+	return pieces;
+}
+
+[[nodiscard]] std::wstring TrimOutputFilterPiece(std::wstring piece)
+{
+	const auto isSpace = [](const wchar_t character) {
+		return character == L' ' || character == L'\t';
+	};
+	const auto first = std::find_if_not(piece.begin(), piece.end(), isSpace);
+	const auto last = std::find_if_not(piece.rbegin(), piece.rend(), isSpace).base();
+	if (first >= last) return {};
+	return std::wstring(first, last);
+}
+
+[[nodiscard]] int CompareOutputChannelLabels(const OutputPanelChannel& left,
+	const OutputPanelChannel& right) noexcept
+{
+	// Upstream sorts channel descriptors by label (locale-aware); the native
+	// projection keeps the comparison deterministic and case-insensitive.
+	return ::CompareStringOrdinal(left.label.data(), static_cast<int>(left.label.size()),
+		right.label.data(), static_cast<int>(right.label.size()), TRUE) - CSTR_EQUAL;
+}
+
+} // namespace
+
+OutputViewFilterOptions ParseOutputViewFilterText(const std::wstring_view filterText)
+{
+	OutputViewFilterOptions options;
+	for (auto& piece : SplitOutputFilterGlobAware(filterText)) {
+		auto pattern = TrimOutputFilterPiece(std::move(piece));
+		if (pattern.empty()) continue;
+		// Negation reads the trimmed piece itself; a `!` inside double quotes is
+		// literal include text. Surrounding quotes strip after that check.
+		const bool exclude = pattern.front() == L'!';
+		if (exclude) pattern.erase(pattern.begin());
+		if (pattern.size() >= 2 && pattern.front() == L'"' && pattern.back() == L'"') {
+			pattern = pattern.substr(1, pattern.size() - 2);
+		}
+		if (pattern.empty()) continue;
+		(exclude ? options.excludePatterns : options.includePatterns)
+			.push_back(std::move(pattern));
+	}
+	return options;
+}
+
+OutputViewFilteredText ApplyOutputViewFilter(
+	const std::wstring_view projectedText, const OutputViewFilterOptions& options)
+{
+	OutputViewFilteredText result;
+	const auto matches = [](std::wstring_view line, std::wstring_view pattern) {
+		return !pattern.empty() && line.find(pattern) != std::wstring_view::npos;
+	};
+	std::size_t cursor = 0;
+	while (cursor <= projectedText.size()) {
+		const auto newline = projectedText.find(L'\n', cursor);
+		const auto end = newline == std::wstring_view::npos ? projectedText.size() : newline;
+		auto line = projectedText.substr(cursor, end - cursor);
+		if (!line.empty() && line.back() == L'\r') line.remove_suffix(1);
+		cursor = end + 1;
+
+		const auto excluded = std::any_of(options.excludePatterns.begin(),
+			options.excludePatterns.end(), [&](const std::wstring& pattern) {
+				return matches(line, pattern);
+			});
+		const auto included = options.includePatterns.empty()
+			|| std::any_of(options.includePatterns.begin(), options.includePatterns.end(),
+				[&](const std::wstring& pattern) { return matches(line, pattern); });
+		if (excluded || !included) {
+			++result.hiddenLineCount;
+			continue;
+		}
+		if (!result.text.empty()) result.text += L"\r\n";
+		const std::uint32_t lineOffset = static_cast<std::uint32_t>(result.text.size());
+		result.text += line;
+		for (const auto& pattern : options.includePatterns) {
+			for (std::size_t position = line.find(pattern); position != std::wstring_view::npos;
+				position = line.find(pattern, position + pattern.size())) {
+				result.matchRanges.push_back({
+					lineOffset + static_cast<std::uint32_t>(position),
+					static_cast<std::uint32_t>(pattern.size()) });
+			}
+		}
+		if (newline == std::wstring_view::npos) break;
+	}
+	return result;
+}
+
+OutputViewChannelGroups GroupOutputViewChannels(const std::vector<OutputPanelChannel>& channels)
+{
+	// VS Code partitions channel descriptors by `extensionId` into the
+	// `0_ext_outputchannels`, `1_core_outputchannels`, and
+	// `2_user_outputchannels` menu groups. This service has no extension-id or
+	// user field; its owner ids use `core.*` for workbench-internal producers,
+	// so the core group is the `core.` prefix and every other owner (including
+	// the built-in Git provider's `workbench.scm.git`, which is an extension
+	// channel upstream) lands in the extension group.
+	const auto byLabel = [&channels](const std::size_t left, const std::size_t right) {
+		const int order = CompareOutputChannelLabels(channels[left], channels[right]);
+		return order != 0 ? order < 0 : left < right;
+	};
+	OutputViewChannelGroups groups;
+	for (std::size_t index = 0; index < channels.size(); ++index) {
+		if (channels[index].ownerId.starts_with("core.")) {
+			groups.coreChannels.push_back(index);
+		} else {
+			groups.extensionChannels.push_back(index);
+		}
+	}
+	std::sort(groups.extensionChannels.begin(), groups.extensionChannels.end(), byLabel);
+	std::sort(groups.coreChannels.begin(), groups.coreChannels.end(), byLabel);
+	return groups;
 }
 
 } // namespace workbench::win32

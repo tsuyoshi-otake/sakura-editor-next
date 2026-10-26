@@ -130,6 +130,10 @@ public:
 	using ProblemActivationCallback = std::function<void(const win32::ProblemsPanelEntry&)>;
 	//! Commits a user-originated Output channel selection to the owning model.
 	using OutputChannelSelectionCallback = std::function<bool(const std::string& channelId)>;
+	//! Routes a user-originated Output view-title action to the stable command
+	//! owner. The callback executes the registered command and reports its
+	//! terminal success; the view never executes service mutations itself.
+	using OutputViewCommandCallback = std::function<bool(std::string_view commandId)>;
 	//! Commits a user-originated ViewContainer selection to the owning model.
 	//! The callback receives one canonical ID and is never called by Apply.
 	using ContainerSelectionCallback = std::function<bool(std::string_view containerId)>;
@@ -172,8 +176,17 @@ public:
 	[[nodiscard]] bool ExecuteProblemsViewCommand(std::string_view commandId) noexcept;
 	//! Applies an already-committed value projection without querying any producer or callback.
 	void SetOutputSnapshot(win32::OutputPanelSnapshot snapshot);
+	//! Runs one registered Output-view command (`workbench.output.action.*`,
+	//! `workbench.actions.*.workbench.panel.output.*`). Commands the Output
+	//! service or file routes own (clear, open-in-editor, save-as, channel pick)
+	//! return false here so the host executor answers its own typed terminal.
+	[[nodiscard]] bool ExecuteOutputViewCommand(std::string_view commandId) noexcept;
+	//! `output.smartScroll.enabled` (upstream default true). Clicking a non-last
+	//! line locks auto-scrolling only while this is set.
+	void SetOutputSmartScroll(bool enabled);
 	void SetProblemActivationCallback(ProblemActivationCallback callback);
 	void SetOutputChannelSelectionCallback(OutputChannelSelectionCallback callback);
+	void SetOutputViewCommandCallback(OutputViewCommandCallback callback);
 	void SetContainerSelectionCallback(ContainerSelectionCallback callback);
 	void SetTabSelectionCallback(TabSelectionCallback callback);
 	//! Sets the common Panel Part chrome actions. The callbacks are invoked only for

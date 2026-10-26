@@ -513,6 +513,7 @@ BOOL CViewCommander::HandleCommand(
 	case F_TOGGLE_SECONDARY_SIDEBAR:	GetEditWindow()->ToggleSecondarySidebar(true);break;
 	case F_SHOW_FOCUS_TERMINAL:	GetEditWindow()->FocusIntegratedTerminal();break;
 	case F_SHOW_PROBLEMS:		(void)GetEditWindow()->ExecuteShowProblemsCommand();break;
+	case F_TOGGLE_OUTPUT:		(void)GetEditWindow()->ExecuteToggleOutputCommand();break;
 	case F_NEW_TERMINAL:		GetEditWindow()->NewIntegratedTerminal();break;
 	case F_REDETECT_POWERSHELL:	GetEditWindow()->RedetectPowerShell();break;
 	case F_TOGGLE_MARKDOWN_PREVIEW:	GetEditWindow()->ToggleMarkdownPreview();break;

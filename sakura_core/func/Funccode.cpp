@@ -350,6 +350,7 @@ const EFunctionCode pnFuncList_Search[] = {	//Oct. 16, 2000 JEPRO 変数名変�
 	F_MARKER_PREV_IN_FILES	,	//ファイル内の前の問題へ移動
 	F_MARKER_NEXT		,	//次の問題へ移動
 	F_MARKER_PREV		,	//前の問題へ移動
+	F_TOGGLE_OUTPUT		,	//出力パネルの表示切替
 	F_TOGGLE_MARKDOWN_PREVIEW	,	//Markdownプレビューの表示切替
 	F_TAGJUMP			,	//タグジャンプ機能
 	F_TAGJUMP_CLOSE		,	//閉じてタグジャンプ(元ウィンドウを閉じる) // Apr. 03, 2003 genta

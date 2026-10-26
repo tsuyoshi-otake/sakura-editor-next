@@ -590,7 +590,13 @@ TEST(WorkbenchCommandRegistry, ProblemsAndOutputUseCanonicalIdsAcrossTheirSuppor
 		const auto resolved = registry.ResolveSurface(surface, slot);
 		ASSERT_TRUE(resolved.has_value());
 		EXPECT_EQ("workbench.action.output.toggleOutput", resolved->commandId);
-		EXPECT_FALSE(resolved->binding.legacyFunctionCode.has_value());
+		// Only the keybinding surface carries the F_TOGGLE_OUTPUT (31016)
+		// compatibility alias for Ctrl+Shift+U.
+		EXPECT_EQ(surface == EWorkbenchCommandSurface::Keybinding,
+			resolved->binding.legacyFunctionCode.has_value());
+		if (surface == EWorkbenchCommandSurface::Keybinding) {
+			EXPECT_EQ(31016, *resolved->binding.legacyFunctionCode);
+		}
 	}
 
 	EXPECT_FALSE(registry.ResolveSurface(EWorkbenchCommandSurface::ActivityBar,
@@ -674,6 +680,100 @@ TEST(WorkbenchCommandRegistry, MarkerNavigationCommandsUseCanonicalIdsAndF8Alias
 	EXPECT_EQ(1, prevInFilesCalls);
 	EXPECT_EQ(1, nextCalls);
 	EXPECT_EQ(1, prevCalls);
+}
+
+TEST(WorkbenchCommandRegistry, OutputViewCommandsUseCanonicalIdsAndUpstreamSurfaces)
+{
+	WorkbenchCommandRegistry registry;
+	int clearCalls{};
+	int autoScrollCalls{};
+	int openInEditorCalls{};
+	int saveAsCalls{};
+	int showChannelsCalls{};
+	int clearFilterCalls{};
+	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded,
+		registry.RegisterOutputViewCommands({
+			.clearOutput = [&clearCalls] {
+				++clearCalls;
+				return workbench::commands::WorkbenchCommandExecutionResult{
+					EWorkbenchCommandExecutionStatus::Succeeded, {} };
+			},
+			.toggleAutoScroll = [&autoScrollCalls] {
+				++autoScrollCalls;
+				return workbench::commands::WorkbenchCommandExecutionResult{
+					EWorkbenchCommandExecutionStatus::Succeeded, {} };
+			},
+			.openActiveLogOutputFile = [&openInEditorCalls] {
+				++openInEditorCalls;
+				return workbench::commands::WorkbenchCommandExecutionResult{
+					EWorkbenchCommandExecutionStatus::Succeeded, {} };
+			},
+			.saveActiveLogOutputAs = [&saveAsCalls] {
+				++saveAsCalls;
+				return workbench::commands::WorkbenchCommandExecutionResult{
+					EWorkbenchCommandExecutionStatus::Succeeded, {} };
+			},
+			.showOutputChannels = [&showChannelsCalls] {
+				++showChannelsCalls;
+				return workbench::commands::WorkbenchCommandExecutionResult{
+					EWorkbenchCommandExecutionStatus::Succeeded, {} };
+			},
+			.clearFilterText = [&clearFilterCalls] {
+				++clearFilterCalls;
+				return workbench::commands::WorkbenchCommandExecutionResult{
+					EWorkbenchCommandExecutionStatus::Succeeded, {} };
+			},
+		}).status);
+
+	// upstream output.contribution.ts の安定 ID と surface。
+	// clearOutput は ViewTitle (navigation order 2) と CommandPalette。
+	EXPECT_TRUE(registry.ResolveSurface(EWorkbenchCommandSurface::ViewTitle,
+		"workbench.output.action.clearOutput").has_value());
+	EXPECT_TRUE(registry.ResolveSurface(EWorkbenchCommandSurface::CommandPalette,
+		"workbench.output.action.clearOutput.palette").has_value());
+	// toggleAutoScroll の登録タイトルは `Toggle Auto Scrolling`。
+	// `Turn Auto Scrolling Off`/`On` は tooltip 側で、title には使わない。
+	const auto autoScroll = registry.Find("workbench.output.action.toggleAutoScroll");
+	ASSERT_TRUE(autoScroll.has_value());
+	EXPECT_EQ("Toggle Auto Scrolling", autoScroll->title);
+	EXPECT_TRUE(registry.ResolveSurface(EWorkbenchCommandSurface::ViewTitle,
+		"workbench.output.action.toggleAutoScroll").has_value());
+	// `...` overflow の 2 本も ViewTitle 寄与。
+	EXPECT_TRUE(registry.ResolveSurface(EWorkbenchCommandSurface::ViewTitle,
+		"workbench.action.openActiveLogOutputFile").has_value());
+	EXPECT_TRUE(registry.ResolveSurface(EWorkbenchCommandSurface::ViewTitle,
+		"workbench.action.saveActiveLogOutputAs").has_value());
+	// showOutputChannels は palette-only。
+	EXPECT_TRUE(registry.ResolveSurface(EWorkbenchCommandSurface::CommandPalette,
+		"workbench.action.showOutputChannels.palette").has_value());
+	EXPECT_FALSE(registry.ResolveSurface(EWorkbenchCommandSurface::ViewTitle,
+		"workbench.action.showOutputChannels").has_value());
+	// clearFilterText は keybinding-only の ViewAction。整数別名は持たない。
+	const auto clearFilter = registry.ResolveSurface(EWorkbenchCommandSurface::Keybinding,
+		"workbench.actions.workbench.panel.output.clearFilterText.key");
+	ASSERT_TRUE(clearFilter.has_value());
+	EXPECT_FALSE(clearFilter->binding.legacyFunctionCode.has_value());
+
+	const auto context = EnabledContext();
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
+		registry.Execute("workbench.output.action.clearOutput", context).status);
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
+		registry.Execute("workbench.output.action.toggleAutoScroll", context).status);
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
+		registry.Execute("workbench.action.openActiveLogOutputFile", context).status);
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
+		registry.Execute("workbench.action.saveActiveLogOutputAs", context).status);
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
+		registry.Execute("workbench.action.showOutputChannels", context).status);
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
+		registry.Execute("workbench.actions.workbench.panel.output.clearFilterText",
+			context).status);
+	EXPECT_EQ(1, clearCalls);
+	EXPECT_EQ(1, autoScrollCalls);
+	EXPECT_EQ(1, openInEditorCalls);
+	EXPECT_EQ(1, saveAsCalls);
+	EXPECT_EQ(1, showChannelsCalls);
+	EXPECT_EQ(1, clearFilterCalls);
 }
 
 TEST(WorkbenchCommandRegistry, BuiltinExecutorsAreBoundAtomicallyAndReachTypedSuccess)

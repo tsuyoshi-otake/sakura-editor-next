@@ -31,6 +31,7 @@ constexpr std::int32_t kLegacyMarkerNextInFilesFunctionCode = 31012;
 constexpr std::int32_t kLegacyMarkerPrevInFilesFunctionCode = 31013;
 constexpr std::int32_t kLegacyMarkerNextFunctionCode = 31014;
 constexpr std::int32_t kLegacyMarkerPrevFunctionCode = 31015;
+constexpr std::int32_t kLegacyToggleOutputFunctionCode = 31016;
 //! Integer mirror of generated F_OPEN_WORKSPACE_FOLDER. Keep this pure boundary independent of generated headers.
 constexpr std::int32_t kLegacyOpenWorkspaceFolderFunctionCode = 30997;
 //! Integer mirrors of the Funccode_x.hsrc File command allocations.
@@ -195,7 +196,7 @@ WorkbenchCommandDescriptor MakeOutputDescriptor()
 		{
 			{ EWorkbenchCommandSurface::CommandPalette, "workbench.action.output.toggleOutput.palette", std::nullopt },
 			{ EWorkbenchCommandSurface::Menu, "workbench.action.output.toggleOutput.menu", std::nullopt },
-			{ EWorkbenchCommandSurface::Keybinding, "workbench.action.output.toggleOutput.key", std::nullopt },
+			{ EWorkbenchCommandSurface::Keybinding, "workbench.action.output.toggleOutput.key", kLegacyToggleOutputFunctionCode },
 		},
 	};
 }
@@ -810,6 +811,11 @@ std::uint32_t ResolveBuiltinWorkbenchCommandTitleResourceId(std::string_view com
 		{"editor.action.marker.prevInFiles", STR_WORKBENCH_COMMAND_MARKER_PREV_IN_FILES},
 		{"editor.action.marker.next", STR_WORKBENCH_COMMAND_MARKER_NEXT},
 		{"editor.action.marker.prev", STR_WORKBENCH_COMMAND_MARKER_PREV},
+		{"workbench.output.action.clearOutput", STR_WORKBENCH_PANEL_OUTPUT_CLEAR},
+		{"workbench.output.action.toggleAutoScroll", STR_WORKBENCH_PANEL_OUTPUT_TOGGLE_AUTO_SCROLL},
+		{"workbench.action.openActiveLogOutputFile", STR_WORKBENCH_PANEL_OUTPUT_OPEN_IN_EDITOR},
+		{"workbench.action.saveActiveLogOutputAs", STR_WORKBENCH_PANEL_OUTPUT_SAVE_AS},
+		{"workbench.action.showOutputChannels", STR_WORKBENCH_COMMAND_SHOW_OUTPUT_CHANNELS},
 	};
 	for (const auto& [id, resourceId] : kTitles) if (id == commandId) return resourceId;
 	return 0;
@@ -1278,6 +1284,70 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterProblemsVie
 			"Go to Previous Problem (Error, Warning, Info)", {},
 			kLegacyMarkerPrevFunctionCode),
 			std::move(executors.markerPrev), {} },
+	};
+	return RegisterAtomicBatch(std::move(commands));
+}
+
+WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterOutputViewCommands(
+	WorkbenchOutputViewCommandExecutors executors)
+{
+	// IDs, titles, and surfaces follow upstream `output.contribution.ts`. The
+	// channel selector itself is a `SubmenuItemAction`, not a command, so the
+	// ViewTitle surface carries only the three registered actions; the two
+	// `...` overflow commands keep a ViewTitle slot of their own,
+	// `showOutputChannels` is a palette-only Action2, and `clearFilterText` is
+	// upstream's keybinding-only ViewAction (Escape while the filter has
+	// focus), so it keeps a Keybinding slot with no integer alias like the
+	// Problems key rules. `outputChannelFocus`-style when clauses are context
+	// keys this provider does not publish, so every descriptor uses
+	// `workbenchReady`.
+	const auto descriptor = [](std::string id, std::string title,
+		std::vector<WorkbenchCommandSurfaceBinding> bindings) {
+		return WorkbenchCommandDescriptor{
+			std::move(id), std::move(title), kBuiltinOwner,
+			"workbenchReady", "workbenchReady",
+			EWorkbenchCommandExecutorTarget::LegacyNative, std::move(bindings)
+		};
+	};
+	const auto viewAction = [](std::string_view id) {
+		return std::vector<WorkbenchCommandSurfaceBinding>{
+			{ EWorkbenchCommandSurface::ViewTitle, std::string(id), std::nullopt } };
+	};
+	std::vector<Entry> commands{
+		// Upstream also contributes clearOutput to `MenuId.CommandPalette` (and
+		// to `MenuId.EditorContext` under `inOutput`, a surface this provider
+		// does not have).
+		Entry{ descriptor("workbench.output.action.clearOutput", "Clear Output",
+			{ { EWorkbenchCommandSurface::ViewTitle,
+				"workbench.output.action.clearOutput", std::nullopt },
+				{ EWorkbenchCommandSurface::CommandPalette,
+					"workbench.output.action.clearOutput.palette", std::nullopt } }),
+			std::move(executors.clearOutput), {} },
+		// Upstream's registered title is `Toggle Auto Scrolling`; the toggled
+		// `outputScrollLock` state only swaps the tooltip to
+		// `Turn Auto Scrolling On`.
+		Entry{ descriptor("workbench.output.action.toggleAutoScroll",
+			"Toggle Auto Scrolling",
+			viewAction("workbench.output.action.toggleAutoScroll")),
+			std::move(executors.toggleAutoScroll), {} },
+		Entry{ descriptor("workbench.action.openActiveLogOutputFile",
+			"Open Output in Editor",
+			viewAction("workbench.action.openActiveLogOutputFile")),
+			std::move(executors.openActiveLogOutputFile), {} },
+		Entry{ descriptor("workbench.action.saveActiveLogOutputAs", "Save Output As...",
+			viewAction("workbench.action.saveActiveLogOutputAs")),
+			std::move(executors.saveActiveLogOutputAs), {} },
+		Entry{ descriptor("workbench.action.showOutputChannels",
+			"Output: Show Output Channels...",
+			{ { EWorkbenchCommandSurface::CommandPalette,
+				"workbench.action.showOutputChannels.palette", std::nullopt } }),
+			std::move(executors.showOutputChannels), {} },
+		Entry{ descriptor("workbench.actions.workbench.panel.output.clearFilterText",
+			"Clear filters text",
+			{ { EWorkbenchCommandSurface::Keybinding,
+				"workbench.actions.workbench.panel.output.clearFilterText.key",
+				std::nullopt } }),
+			std::move(executors.clearFilterText), {} },
 	};
 	return RegisterAtomicBatch(std::move(commands));
 }

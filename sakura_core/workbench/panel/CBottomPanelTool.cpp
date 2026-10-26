@@ -12,6 +12,7 @@
 #include "workbench/icons/CSetiFont.h"
 #include "workbench/icons/SetiFileIcon.h"
 #include "workbench/icons/SetiIconPainter.h"
+#include "workbench/output/OutputServiceTypes.h"
 #include "workbench/rendering/CGdiBackBuffer.h"
 #include "workbench/viewcontainer/CViewContainerPages.h"
 #include "workbench/viewcontainer/ViewPaneChrome.h"
@@ -21,6 +22,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cwctype>
 #include <iterator>
 #include <string>
 #include <utility>
@@ -43,6 +45,12 @@ constexpr UINT_PTR kProblemsFilterButton = 112;
 constexpr UINT_PTR kProblemsCollapseAllButton = 113;
 constexpr UINT_PTR kProblemsEmptyMessage = 114;
 constexpr UINT_PTR kProblemsClearFilters = 115;
+constexpr UINT_PTR kOutputFilterEdit = 116;
+constexpr UINT_PTR kOutputClearButton = 117;
+constexpr UINT_PTR kOutputScrollLockButton = 118;
+constexpr UINT_PTR kOutputMoreActionsButton = 119;
+constexpr UINT_PTR kOutputFindEdit = 120;
+constexpr UINT_PTR kOutputFindCount = 121;
 constexpr unsigned int kDefaultDpi = 96;
 //! Panel header metrics in DIP. Layout and paint must read the same values:
 //! the header rule is the header row's last device rows, so a painter that
@@ -56,6 +64,10 @@ constexpr int kProblemsRowHeightDip = 22;
 constexpr int kProblemsFilterRowHeightDip = 44;
 constexpr int kProblemsFilterWidthDipThreshold = 600;
 constexpr int kProblemsFilterHeightDipThreshold = 100;
+//! The Output view's find widget row and its view-title filter's body row
+//! reuse the Problems view's upstream thresholds and row heights.
+constexpr int kOutputFindRowHeightDip = 30;
+constexpr int kOutputSelectorWidthDip = 200;
 
 bool IsPanelTabId(UINT_PTR id) noexcept
 {
@@ -148,6 +160,15 @@ bool EnsureClass(HINSTANCE instance)
 bool IsProblemsViewActionId(UINT_PTR id) noexcept
 {
 	return id == kProblemsFilterButton || id == kProblemsCollapseAllButton;
+}
+
+//! The Output view's inline view-title actions (upstream `MenuId.ViewTitle`,
+//! group `navigation`): clear-all, the scroll lock toggle, and the `...` menu
+//! holding Open Output in Editor / Save Output As...
+bool IsOutputViewActionId(UINT_PTR id) noexcept
+{
+	return id == kOutputClearButton || id == kOutputScrollLockButton
+		|| id == kOutputMoreActionsButton;
 }
 
 //! Row identity stored on each HTREEITEM's lParam: index into Impl::problemsRows.
@@ -284,10 +305,22 @@ struct CBottomPanelTool::Impl {
 	HWND problemsTooltip = nullptr;
 	HWND outputSelector = nullptr;
 	HWND outputText = nullptr;
+	HWND outputFilterEdit = nullptr;
+	HWND outputClearButton = nullptr;
+	HWND outputScrollLockButton = nullptr;
+	HWND outputMoreActionsButton = nullptr;
+	HWND outputFindEdit = nullptr;
+	HWND outputFindCount = nullptr;
 	HWND maximizeButton = nullptr;
 	HWND closeButton = nullptr;
+	//! Msftedit.dll provides the Output text surface (plain-text Rich Edit).
+	//! A null module means the OS component could not be loaded; the plain EDIT
+	//! fallback then keeps text/copy/scroll working but loses caret tracking
+	//! (smart-scroll click lock) and the include-match highlight decorations.
+	HMODULE outputRichEditModule = nullptr;
 	RECT terminalHeaderBounds{};
 	RECT problemsHeaderBounds{};
+	RECT outputHeaderBounds{};
 	RECT bounds{};
 	unsigned int dpi = kDefaultDpi;
 	theme::ThemePalette palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
@@ -316,6 +349,22 @@ struct CBottomPanelTool::Impl {
 	bool problemsFilterUpdating = false;
 	win32::OutputPanelSnapshot outputs;
 	std::optional<std::string> selectedOutputChannelId;
+	//! Channel id per selector row; an empty entry marks the Output/Log group
+	//! separator row, which cannot be selected.
+	std::vector<std::string> outputSelectorIds;
+	//! The text currently committed to the output control, kept for incremental
+	//! appends and the logical-line math the smart-scroll rule needs.
+	std::wstring outputDisplayText;
+	std::wstring outputFilterText;
+	OutputViewCommandCallback outputViewCommand;
+	bool outputScrollLock = false;
+	bool outputSmartScroll = true;
+	bool outputFindVisible = false;
+	bool outputFilterInHeader = true;
+	//! Set while the tool itself rewrites a control, so the resulting
+	//! EN_CHANGE / EN_SELCHANGE is not mistaken for user input.
+	bool outputFilterUpdating = false;
+	bool outputTextUpdating = false;
 	CBottomPanelTool::PanelActions panelActions;
 	bool closed = false;
 
@@ -351,11 +400,18 @@ struct CBottomPanelTool::Impl {
 			::InvalidateRect(problemsTree, nullptr, FALSE);
 		}
 		for (const HWND control : { problemsFilterEdit, problemsFilterBadge, problemsFilterButton,
-			problemsCollapseAllButton, problemsEmptyMessage, problemsClearFilters }) {
+			problemsCollapseAllButton, problemsEmptyMessage, problemsClearFilters,
+			outputFilterEdit, outputClearButton, outputScrollLockButton,
+			outputMoreActionsButton, outputFindEdit, outputFindCount }) {
 			if (control) ::InvalidateRect(control, nullptr, FALSE);
 		}
 		if (outputText) {
 			::SendMessageW(outputText, EM_SETBKGNDCOLOR, TRUE, palette.bottomPanel.ToColorRef());
+			// The Rich Edit surface keeps its own character colors; reapplying
+			// the current text re-renders them against the new palette.
+			outputTextUpdating = true;
+			const_cast<Impl*>(this)->RenderOutputText(true);
+			outputTextUpdating = false;
 			::InvalidateRect(outputText, nullptr, FALSE);
 		}
 		if (outputSelector) ::InvalidateRect(outputSelector, nullptr, FALSE);
@@ -369,7 +425,7 @@ struct CBottomPanelTool::Impl {
 		const bool tab = IsPanelTabId(id);
 		const std::string_view buttonContainerId = ContainerIdForButtonId(id);
 		const bool disabled = (item.itemState & ODS_DISABLED) != 0;
-		const bool viewAction = IsProblemsViewActionId(id);
+		const bool viewAction = IsProblemsViewActionId(id) || IsOutputViewActionId(id);
 		const bool activeTab = tab && activeContainerId == buttonContainerId;
 		const bool pressed = (item.itemState & ODS_SELECTED) != 0;
 		const HBRUSH background = (activeTab || pressed || viewAction) ? raisedBrush : panelBrush;
@@ -412,7 +468,18 @@ struct CBottomPanelTool::Impl {
 			const int centerX = (item.rcItem.left + item.rcItem.right) / 2;
 			const int centerY = (item.rcItem.top + item.rcItem.bottom) / 2;
 			const int side = Scale(16, dpi);
-			const std::wstring_view glyph = id == kProblemsFilterButton ? L"filter" : L"collapse-all";
+			std::wstring_view glyph = L"collapse-all";
+			switch (id) {
+			case kProblemsFilterButton: glyph = L"filter"; break;
+			case kProblemsCollapseAllButton: glyph = L"collapse-all"; break;
+			case kOutputClearButton: glyph = L"clear-all"; break;
+			// Upstream's toggleAutoScroll base icon is codicon-lock while
+			// scrolling is live; CONTEXT_OUTPUT_SCROLL_LOCK toggles it to
+			// codicon-unlock in the locked state.
+			case kOutputScrollLockButton: glyph = outputScrollLock ? L"unlock" : L"lock"; break;
+			case kOutputMoreActionsButton: glyph = L"ellipsis"; break;
+			default: break;
+			}
 			viewcontainer::PaintViewPaneIcon(item.hDC,
 				{ centerX - side / 2, centerY - side / 2, centerX + (side + 1) / 2, centerY + (side + 1) / 2 },
 				glyph, disabled ? palette.disabledText.ToColorRef() : palette.secondaryText.ToColorRef());
@@ -470,6 +537,20 @@ struct CBottomPanelTool::Impl {
 		int itemIndex = item.itemID == static_cast<UINT>(-1)
 			? static_cast<int>(::SendMessageW(outputSelector, CB_GETCURSEL, 0, 0))
 			: static_cast<int>(item.itemID);
+		// The Output/Log group separator row has no channel id; it paints as a
+		// rule, like upstream's separator entry in the channel dropdown.
+		if (itemIndex >= 0 && static_cast<std::size_t>(itemIndex) < outputSelectorIds.size()
+			&& outputSelectorIds[static_cast<std::size_t>(itemIndex)].empty()) {
+			const int centerY = (item.rcItem.top + item.rcItem.bottom) / 2;
+			RECT rule{ item.rcItem.left + Scale(8, dpi), centerY,
+				item.rcItem.right - Scale(8, dpi), centerY + std::max(1, Scale(1, dpi)) };
+			const HBRUSH ruleBrush = ::CreateSolidBrush(palette.border.ToColorRef());
+			if (ruleBrush) {
+				::FillRect(item.hDC, &rule, ruleBrush);
+				::DeleteObject(ruleBrush);
+			}
+			return;
+		}
 		if (itemIndex >= 0) {
 			::SendMessageW(outputSelector, CB_GETLBTEXT, itemIndex, reinterpret_cast<LPARAM>(label));
 		}
@@ -610,8 +691,20 @@ struct CBottomPanelTool::Impl {
 		if (!window) return;
 		const int width = std::max(0L, bounds.right - bounds.left);
 		const int height = std::max(0L, bounds.bottom - bounds.top);
+		// The Output view's filter widget follows the same upstream rule as
+		// Problems: it stays in the view title while the pane is wide enough
+		// and drops into a body row below 600x100. The find widget is always a
+		// body row. The selector row budget below is those body rows' height.
+		const bool outputActivePage = IsActivePageAttached() && activeContainerId == containerIds::Output;
+		const int contentEstimate = std::max(0,
+			height - std::min(height, Scale(kPanelHeaderHeightDip, dpi)));
+		outputFilterInHeader = !(width < Scale(kProblemsFilterWidthDipThreshold, dpi)
+			&& contentEstimate > Scale(kProblemsFilterHeightDipThreshold, dpi));
+		const int outputRowsDip = (outputActivePage && !outputFilterInHeader
+				? kProblemsFilterRowHeightDip : 0)
+			+ (outputActivePage && outputFindVisible ? kOutputFindRowHeightDip : 0);
 		const auto vertical = CalculateBottomPanelVerticalLayout(
-			height, Scale(kPanelHeaderHeightDip, dpi), Scale(kOutputSelectorHeightDip, dpi));
+			height, Scale(kPanelHeaderHeightDip, dpi), Scale(outputRowsDip, dpi));
 		const int headerHeight = vertical.headerHeight;
 		const int actionWidth = Scale(30, dpi);
 		::SetWindowPos(window, nullptr, bounds.left, bounds.top, width, height,
@@ -624,7 +717,7 @@ struct CBottomPanelTool::Impl {
 			int height{};
 			bool visible = true;
 		};
-		std::array<Placement, 17> placements{};
+		std::array<Placement, 24> placements{};
 		std::size_t placementCount = 0;
 		const auto place = [&placements, &placementCount](HWND child, int left, int top, int childWidth,
 			int childHeight, bool visible = true) {
@@ -663,6 +756,10 @@ struct CBottomPanelTool::Impl {
 		// Collapse All action share the same physical row as the tabs, using the
 		// region the terminal toolbar uses when Terminal is the active page.
 		problemsHeaderBounds = RECT{ toolbarLeft, 0, commonActionLeft, headerHeight };
+		// The Output view's title actions occupy the same physical view-title
+		// region: channel selector, filter widget, Clear Output, the scroll
+		// lock toggle, and the `...` menu, in upstream's ViewTitle order.
+		outputHeaderBounds = RECT{ toolbarLeft, 0, commonActionLeft, headerHeight };
 
 		// VS Code's Panel view-container order, matching desiredTabWidthsDip.
 		const std::array tabButtons{
@@ -767,11 +864,76 @@ struct CBottomPanelTool::Impl {
 			place(problemsEmptyMessage, 0, 0, 0, 0, false);
 			place(problemsClearFilters, 0, 0, 0, 0, false);
 		}
-		place(outputSelector, 0, vertical.contentTop, width, vertical.outputSelectorHeight,
-			IsActivePageAttached() && activeContainerId == containerIds::Output);
-		place(outputText, 0, vertical.contentTop + vertical.outputSelectorHeight, width,
-			vertical.contentHeight - vertical.outputSelectorHeight,
-			IsActivePageAttached() && activeContainerId == containerIds::Output);
+		// Output view chrome. Upstream's view-title row carries the channel
+		// selector first, then Clear Output, the auto-scroll lock, and the `...`
+		// actions menu; the filter widget sits between the selector and the
+		// actions while the pane is wide enough.
+		if (outputActivePage && !::IsRectEmpty(&outputHeaderBounds)) {
+			const int headerLeft = static_cast<int>(outputHeaderBounds.left);
+			int actionRight = static_cast<int>(outputHeaderBounds.right);
+			const int outputActionWidth = Scale(28, dpi);
+			const auto placeViewAction = [&](HWND button) {
+				place(button, std::max(headerLeft, actionRight - outputActionWidth), 0,
+					std::min(outputActionWidth, actionRight - headerLeft), headerHeight, true);
+				actionRight -= outputActionWidth;
+			};
+			placeViewAction(outputMoreActionsButton);
+			placeViewAction(outputScrollLockButton);
+			placeViewAction(outputClearButton);
+			const int selectorWidth = std::min(Scale(kOutputSelectorWidthDip, dpi),
+				std::max(0, (actionRight - headerLeft) / 2));
+			const int selectorEditHeight = Scale(22, dpi);
+			// A dropdown combo's window height bounds its dropped list, not the
+			// edit field; the field top-aligns inside the rect.
+			place(outputSelector, headerLeft + Scale(4, dpi),
+				std::max(0, (headerHeight - selectorEditHeight) / 2), selectorWidth,
+				std::max(selectorEditHeight, Scale(240, dpi)), true);
+			if (outputFilterInHeader) {
+				const int editHeight = Scale(24, dpi);
+				const int editLeft = headerLeft + Scale(4, dpi) + selectorWidth + Scale(8, dpi);
+				place(outputFilterEdit, editLeft, std::max(0, (headerHeight - editHeight) / 2),
+					std::max(0, actionRight - editLeft - Scale(4, dpi)), editHeight, true);
+			} else {
+				place(outputFilterEdit, 0, 0, 0, 0, false);
+			}
+		} else {
+			place(outputSelector, 0, 0, 0, 0, false);
+			place(outputFilterEdit, 0, 0, 0, 0, false);
+			place(outputClearButton, 0, 0, 0, 0, false);
+			place(outputScrollLockButton, 0, 0, 0, 0, false);
+			place(outputMoreActionsButton, 0, 0, 0, 0, false);
+		}
+		// Body rows beneath the header: the filter widget when it dropped out
+		// of the title, then the find widget while it is open.
+		int outputBodyTop = vertical.contentTop;
+		if (outputActivePage && !outputFilterInHeader && vertical.outputSelectorHeight > 0) {
+			const int rowHeight = std::min(Scale(kProblemsFilterRowHeightDip, dpi),
+				vertical.outputSelectorHeight);
+			const int editHeight = Scale(24, dpi);
+			place(outputFilterEdit, Scale(8, dpi),
+				outputBodyTop + std::max(0, (rowHeight - editHeight) / 2),
+				std::max(0, width - Scale(16, dpi)), editHeight, true);
+			outputBodyTop += rowHeight;
+		}
+		if (outputActivePage && outputFindVisible
+			&& vertical.outputSelectorHeight - (outputBodyTop - vertical.contentTop) > 0) {
+			const int rowHeight = std::min(Scale(kOutputFindRowHeightDip, dpi),
+				vertical.outputSelectorHeight - (outputBodyTop - vertical.contentTop));
+			const int editHeight = Scale(24, dpi);
+			const int editTop = outputBodyTop + std::max(0, (rowHeight - editHeight) / 2);
+			const int countWidth = Scale(96, dpi);
+			place(outputFindEdit, Scale(8, dpi), editTop,
+				std::max(0, width - countWidth - Scale(20, dpi)), editHeight, true);
+			place(outputFindCount, std::max(0, width - countWidth - Scale(8, dpi)),
+				outputBodyTop, countWidth, rowHeight, true);
+			outputBodyTop += rowHeight;
+		} else {
+			place(outputFindEdit, 0, 0, 0, 0, false);
+			place(outputFindCount, 0, 0, 0, 0, false);
+		}
+		place(outputText, 0, outputBodyTop, width,
+			std::max(0, vertical.contentTop + vertical.contentHeight - outputBodyTop),
+			outputActivePage);
 		// CTerminalTool::Layout uses SWP_SHOWWINDOW for its own root. Keep an
 		// inactive terminal hidden in this transaction and only invoke that layout
 		// after the chrome transaction when Terminal is the committed tab.
@@ -1378,16 +1540,297 @@ struct CBottomPanelTool::Impl {
 		::SelectObject(draw.nmcd.hdc, previousFont);
 	}
 
+	[[nodiscard]] const win32::OutputPanelChannel* SelectedOutputChannel() const noexcept
+	{
+		if (!selectedOutputChannelId) return nullptr;
+		const auto channel = std::ranges::find(outputs.channels, *selectedOutputChannelId,
+			&win32::OutputPanelChannel::channelId);
+		return channel != outputs.channels.end() ? &*channel : nullptr;
+	}
+
+	//! Applies the filtered text to the control. A pure append is committed with
+	//! EM_REPLACESEL at the end so live channels do not repaint the whole body
+	//! on every produced line; any other change is a full replace.
+	void WriteOutputText(const win32::OutputViewFilteredText& filtered)
+	{
+		if (outputText == nullptr) return;
+		struct UpdatingGuard {
+			Impl* self;
+			bool was;
+			~UpdatingGuard() { self->outputTextUpdating = was; }
+		} guard{ this, outputTextUpdating };
+		outputTextUpdating = true;
+		const bool append = filtered.text.size() >= outputDisplayText.size()
+			&& filtered.text.compare(0, outputDisplayText.size(), outputDisplayText) == 0;
+		if (append && !outputDisplayText.empty()) {
+			const int length = static_cast<int>(outputDisplayText.size());
+			::SendMessageW(outputText, EM_SETSEL, length, length);
+			::SendMessageW(outputText, EM_REPLACESEL, FALSE,
+				reinterpret_cast<LPARAM>(filtered.text.data() + length));
+		} else if (outputRichEditModule != nullptr) {
+			SETTEXTEX replace{ ST_DEFAULT, 1200 };
+			::SendMessageW(outputText, EM_SETTEXTEX,
+				reinterpret_cast<WPARAM>(&replace),
+				reinterpret_cast<LPARAM>(filtered.text.c_str()));
+		} else {
+			::SetWindowTextW(outputText, filtered.text.c_str());
+		}
+		outputDisplayText = filtered.text;
+		if (outputRichEditModule == nullptr) return;
+		// Base colors first, then the include-pattern match ranges as upstream's
+		// find-match highlight decorations.
+		CHARFORMAT2W base{};
+		base.cbSize = sizeof(base);
+		base.dwMask = CFM_COLOR | CFM_BACKCOLOR;
+		base.crTextColor = palette.primaryText.ToColorRef();
+		base.crBackColor = palette.bottomPanel.ToColorRef();
+		::SendMessageW(outputText, EM_SETCHARFORMAT, SCF_ALL, reinterpret_cast<LPARAM>(&base));
+		if (!filtered.matchRanges.empty()) {
+			CHARFORMAT2W match{};
+			match.cbSize = sizeof(match);
+			match.dwMask = CFM_BACKCOLOR;
+			match.crBackColor = palette.searchMatchHighlightBackground.ToColorRef();
+			for (const auto& range : filtered.matchRanges) {
+				CHARRANGE matchRange{
+					static_cast<LONG>(range.offset),
+					static_cast<LONG>(range.offset + range.length) };
+				::SendMessageW(outputText, EM_EXSETSEL, 0,
+					reinterpret_cast<LPARAM>(&matchRange));
+				::SendMessageW(outputText, EM_SETCHARFORMAT, SCF_SELECTION,
+					reinterpret_cast<LPARAM>(&match));
+			}
+			::SendMessageW(outputText, EM_SETSEL, outputDisplayText.size(), outputDisplayText.size());
+		}
+	}
+
+	//! The committed render path: selected channel text through the view filter,
+	//! then reveal-last-line unless the user locked scrolling.
+	void RenderOutputText(bool forceFullReplace = false)
+	{
+		const auto* channel = SelectedOutputChannel();
+		const auto filtered = win32::ApplyOutputViewFilter(
+			channel != nullptr ? std::wstring_view(channel->projectedText) : std::wstring_view{},
+			win32::ParseOutputViewFilterText(outputFilterText));
+		if (forceFullReplace) outputDisplayText.clear();
+		WriteOutputText(filtered);
+		if (!outputScrollLock) {
+			// Upstream reveals the last line on every content change unless the
+			// scroll lock is set; EM_SCROLLCARET after a caret-at-end write lands
+			// on the last wrapped line.
+			::SendMessageW(outputText, EM_SETSEL, outputDisplayText.size(), outputDisplayText.size());
+			::SendMessageW(outputText, EM_SCROLLCARET, 0, 0);
+		}
+	}
+
+	//! `output.smartScroll.enabled`: an explicit caret move onto a non-last
+	//! logical line locks auto-scrolling; a caret on the last line unlocks it.
+	void UpdateOutputScrollLockFromCaret()
+	{
+		if (!outputSmartScroll || outputTextUpdating || outputRichEditModule == nullptr) return;
+		CHARRANGE selection{};
+		::SendMessageW(outputText, EM_EXGETSEL, 0, reinterpret_cast<LPARAM>(&selection));
+		const auto caret = static_cast<std::size_t>(std::max<LONG>(0, selection.cpMin));
+		const auto clamped = std::min(caret, outputDisplayText.size());
+		const std::size_t caretLine = static_cast<std::size_t>(std::count(
+			outputDisplayText.begin(), outputDisplayText.begin() + clamped, L'\n'));
+		const std::size_t lastLine = static_cast<std::size_t>(std::count(
+			outputDisplayText.begin(), outputDisplayText.end(), L'\n'));
+		const bool locked = caretLine != lastLine;
+		if (locked != outputScrollLock) SetOutputScrollLock(locked);
+	}
+
+	void SetOutputScrollLock(const bool locked)
+	{
+		outputScrollLock = locked;
+		UpdateOutputTooltips();
+		if (outputScrollLockButton) ::InvalidateRect(outputScrollLockButton, nullptr, FALSE);
+		if (!locked && outputText != nullptr) {
+			// Unlocking means auto-scrolling is on again; upstream's next content
+			// change reveals the end, and doing it immediately matches the
+			// "Turn Auto Scrolling On" affordance the user just picked.
+			::SendMessageW(outputText, EM_SETSEL, outputDisplayText.size(), outputDisplayText.size());
+			::SendMessageW(outputText, EM_SCROLLCARET, 0, 0);
+		}
+	}
+
+	void ClearOutputFilterText()
+	{
+		if (outputFilterText.empty()) return;
+		outputFilterText.clear();
+		if (outputFilterEdit) {
+			outputFilterUpdating = true;
+			::SetWindowTextW(outputFilterEdit, L"");
+			outputFilterUpdating = false;
+		}
+		RenderOutputText();
+	}
+
+	void ShowOutputFind(const bool show)
+	{
+		if (outputFindVisible == show) {
+			if (show && outputFindEdit) ::SetFocus(outputFindEdit);
+			return;
+		}
+		outputFindVisible = show;
+		LayoutChildren();
+		if (show) {
+			if (outputFindEdit) {
+				::SetFocus(outputFindEdit);
+				::SendMessageW(outputFindEdit, EM_SETSEL, 0, -1);
+			}
+		} else {
+			if (outputFindEdit) ::SetWindowTextW(outputFindEdit, L"");
+			if (outputFindCount) ::SetWindowTextW(outputFindCount, L"");
+			if (outputText) ::SetFocus(outputText);
+		}
+	}
+
+	//! Finds the next/previous case-insensitive occurrence in the displayed
+	//! (filtered) text and reports "n of m" like upstream's find widget count.
+	void OutputFindNext(const bool previous)
+	{
+		if (outputText == nullptr || outputFindEdit == nullptr) return;
+		const int length = ::GetWindowTextLengthW(outputFindEdit);
+		std::wstring query(static_cast<std::size_t>(std::max(0, length)), L'\0');
+		if (!query.empty()) ::GetWindowTextW(outputFindEdit, query.data(),
+			static_cast<int>(query.size() + 1));
+		const auto lower = [](const std::wstring& value) {
+			std::wstring lowered = value;
+			for (auto& character : lowered) character = static_cast<wchar_t>(std::towlower(character));
+			return lowered;
+		};
+		const std::wstring loweredText = lower(outputDisplayText);
+		const std::wstring loweredQuery = lower(query);
+		std::vector<std::size_t> matches;
+		if (!loweredQuery.empty()) {
+			for (std::size_t position = loweredText.find(loweredQuery);
+				position != std::wstring::npos;
+				position = loweredText.find(loweredQuery, position + 1)) {
+				matches.push_back(position);
+			}
+		}
+		std::size_t current = matches.size();
+		if (!matches.empty()) {
+			DWORD start = 0, end = 0;
+			::SendMessageW(outputText, EM_GETSEL,
+				reinterpret_cast<WPARAM>(&start), reinterpret_cast<LPARAM>(&end));
+			if (previous) {
+				const auto above = std::lower_bound(matches.begin(), matches.end(),
+					static_cast<std::size_t>(start));
+				current = above == matches.begin() ? matches.size() - 1
+					: static_cast<std::size_t>(above - matches.begin() - 1);
+			} else {
+				const auto next = std::upper_bound(matches.begin(), matches.end(),
+					static_cast<std::size_t>(end));
+				current = next == matches.end() ? 0
+					: static_cast<std::size_t>(next - matches.begin());
+			}
+			const auto begin = static_cast<int>(matches[current]);
+			::SendMessageW(outputText, EM_SETSEL, begin, begin + static_cast<int>(query.size()));
+			::SendMessageW(outputText, EM_SCROLLCARET, 0, 0);
+		}
+		if (outputFindCount) {
+			std::wstring count;
+			if (!query.empty() && matches.empty()) count = LS(STR_WORKBENCH_PANEL_OUTPUT_FIND_NO_RESULTS);
+			else if (!matches.empty()) {
+				count = FormatProblemsMessage(LS(STR_WORKBENCH_PANEL_OUTPUT_FIND_COUNT),
+					std::to_wstring(current + 1), std::to_wstring(matches.size()));
+			}
+			::SetWindowTextW(outputFindCount, count.c_str());
+		}
+	}
+
+	void ShowOutputActionsMenu()
+	{
+		HMENU menu = ::CreatePopupMenu();
+		if (menu == nullptr) return;
+		const auto appendItem = [&](UINT id, UINT textId) {
+			MENUITEMINFOW itemInfo{};
+			itemInfo.cbSize = sizeof(itemInfo);
+			itemInfo.fMask = MIIM_ID | MIIM_STRING;
+			itemInfo.wID = id;
+			itemInfo.dwTypeData = const_cast<wchar_t*>(LS(textId));
+			::InsertMenuItemW(menu, static_cast<UINT>(-1), TRUE, &itemInfo);
+		};
+		appendItem(1, STR_WORKBENCH_PANEL_OUTPUT_OPEN_IN_EDITOR);
+		appendItem(2, STR_WORKBENCH_PANEL_OUTPUT_SAVE_AS);
+		RECT buttonRect{};
+		::GetWindowRect(outputMoreActionsButton, &buttonRect);
+		const UINT flags = TPM_LEFTALIGN | TPM_TOPALIGN | TPM_LEFTBUTTON;
+		const int selected = ::TrackPopupMenu(menu, flags | TPM_RETURNCMD | TPM_NONOTIFY,
+			buttonRect.left, buttonRect.bottom, 0, window, nullptr);
+		::DestroyMenu(menu);
+		switch (selected) {
+		case 1: (void)RunOutputCommand("workbench.action.openActiveLogOutputFile"); break;
+		case 2: (void)RunOutputCommand("workbench.action.saveActiveLogOutputAs"); break;
+		default: break;
+		}
+	}
+
+	//! One user-originated view-title action, executed through the registered
+	//! stable command so enablement and terminal status stay the registry's.
+	bool RunOutputCommand(std::string_view commandId) noexcept
+	{
+		if (!outputViewCommand) return false;
+		try {
+			return outputViewCommand(commandId);
+		}
+		catch (...) {
+			return false;
+		}
+	}
+
+	//! Executes one registered Output-view command. Only commands whose state is
+	//! view-local are handled here; everything else returns false so the host
+	//! executor answers its own typed terminal (service mutations, file routes).
+	[[nodiscard]] bool ExecuteOutputViewCommand(std::string_view commandId) noexcept
+	{
+		if (commandId == "workbench.output.action.toggleAutoScroll") {
+			SetOutputScrollLock(!outputScrollLock);
+			return true;
+		}
+		if (commandId == "workbench.actions.workbench.panel.output.clearFilterText") {
+			ClearOutputFilterText();
+			return true;
+		}
+		return false;
+	}
+
+	//! Upstream command titles on the view-title action tooltips: Clear Output,
+	//! Turn Auto Scrolling On/Off, and the `...` menu's first entry.
+	void UpdateOutputTooltips()
+	{
+		if (problemsTooltip == nullptr) return;
+		const auto setTip = [this](HWND control, std::wstring text) {
+			if (control == nullptr) return;
+			TOOLINFOW tool{};
+			tool.cbSize = sizeof(tool);
+			tool.uFlags = TTF_IDISHWND;
+			tool.hwnd = window;
+			tool.uId = reinterpret_cast<UINT_PTR>(control);
+			tool.lpszText = text.data();
+			::SendMessageW(problemsTooltip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&tool));
+		};
+		setTip(outputClearButton, LS(STR_WORKBENCH_PANEL_OUTPUT_CLEAR));
+		setTip(outputScrollLockButton, LS(outputScrollLock
+			? STR_WORKBENCH_PANEL_OUTPUT_AUTO_SCROLL_ON : STR_WORKBENCH_PANEL_OUTPUT_AUTO_SCROLL_OFF));
+		setTip(outputMoreActionsButton, LS(STR_WORKBENCH_PANEL_MORE_ACTIONS));
+	}
+
 	void SelectOutput(int index)
 	{
 		if (index < 0 || static_cast<std::size_t>(index) >= outputs.channels.size()) {
 			selectedOutputChannelId.reset();
-			::SetWindowTextW(outputText, L"");
+			RenderOutputText();
 			return;
 		}
 		selectedOutputChannelId = outputs.channels[static_cast<std::size_t>(index)].channelId;
-		::SendMessageW(outputSelector, CB_SETCURSEL, index, 0);
-		::SetWindowTextW(outputText, outputs.channels[static_cast<std::size_t>(index)].projectedText.c_str());
+		const auto selectedId = *selectedOutputChannelId;
+		const auto comboIndex = std::ranges::find(outputSelectorIds, selectedId);
+		::SendMessageW(outputSelector, CB_SETCURSEL,
+			comboIndex != outputSelectorIds.end()
+				? static_cast<WPARAM>(comboIndex - outputSelectorIds.begin()) : static_cast<WPARAM>(-1), 0);
+		RenderOutputText();
 	}
 
 	void SelectOutputForSnapshot()
@@ -1412,14 +1855,33 @@ struct CBottomPanelTool::Impl {
 	void RefreshOutputs()
 	{
 		::SendMessageW(outputSelector, CB_RESETCONTENT, 0, 0);
+		// Upstream's `workbench.output.menu.switchOutput` selector lists the
+		// `0_ext_outputchannels` group, then `1_core_outputchannels`, with a
+		// separator row between the non-empty groups and each group ordered by
+		// label. The parallel channel ids resolve a selection back to the
+		// model's identity; an empty id marks the separator row, which cannot
+		// be selected.
+		const auto groups = win32::GroupOutputViewChannels(outputs.channels);
+		outputSelectorIds.clear();
+		outputSelectorIds.reserve(outputs.channels.size() + 1);
 		int selected = -1;
-		for (std::size_t index = 0; index < outputs.channels.size(); ++index) {
-			::SendMessageW(outputSelector, CB_ADDSTRING, 0,
-				reinterpret_cast<LPARAM>(outputs.channels[index].label.c_str()));
-			if (selectedOutputChannelId && outputs.channels[index].channelId == *selectedOutputChannelId) {
-				selected = static_cast<int>(index);
+		const auto appendGroup = [&](const std::vector<std::size_t>& indexes) {
+			for (const std::size_t channelIndex : indexes) {
+				const auto& channel = outputs.channels[channelIndex];
+				::SendMessageW(outputSelector, CB_ADDSTRING, 0,
+					reinterpret_cast<LPARAM>(channel.label.c_str()));
+				outputSelectorIds.push_back(channel.channelId);
+				if (selectedOutputChannelId && channel.channelId == *selectedOutputChannelId) {
+					selected = static_cast<int>(channelIndex);
+				}
 			}
+		};
+		appendGroup(groups.extensionChannels);
+		if (groups.HasSeparator()) {
+			::SendMessageW(outputSelector, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L""));
+			outputSelectorIds.emplace_back();
 		}
+		appendGroup(groups.coreChannels);
 		SelectOutput(selected);
 	}
 
@@ -1510,6 +1972,9 @@ void CBottomPanelTool::Layout(const RECT& contentRect, unsigned int dpi)
 		m_impl->ApplyFont(m_impl->problemsClearFilters);
 		m_impl->ApplyFont(m_impl->outputSelector);
 		m_impl->ApplyFont(m_impl->outputText);
+		m_impl->ApplyFont(m_impl->outputFilterEdit);
+		m_impl->ApplyFont(m_impl->outputFindEdit);
+		m_impl->ApplyFont(m_impl->outputFindCount);
 		m_impl->ApplyFont(m_impl->maximizeButton);
 		m_impl->ApplyFont(m_impl->closeButton);
 	}
@@ -1564,6 +2029,35 @@ bool CBottomPanelTool::PreTranslateMessage(MSG& message)
 			return true;
 		}
 	}
+	if (m_impl->activeContainerId == containerIds::Output
+		&& message.message == WM_KEYDOWN) {
+		const HWND focus = ::GetFocus();
+		const bool ctrl = (::GetKeyState(VK_CONTROL) & 0x8000) != 0;
+		// actions.find: Ctrl+F opens the find widget while the view owns focus.
+		if (ctrl && message.wParam == 'F'
+			&& (focus == m_impl->outputText || focus == m_impl->outputFindEdit)) {
+			m_impl->ShowOutputFind(true);
+			return true;
+		}
+		// workbench.actions.workbench.panel.output.clearFilterText: Esc in the
+		// filter input.
+		if (message.wParam == VK_ESCAPE && focus == m_impl->outputFilterEdit) {
+			m_impl->ClearOutputFilterText();
+			return true;
+		}
+		if (focus == m_impl->outputFindEdit) {
+			if (message.wParam == VK_ESCAPE) {
+				m_impl->ShowOutputFind(false);
+				return true;
+			}
+			const bool shift = (::GetKeyState(VK_SHIFT) & 0x8000) != 0;
+			// editor.action.nextMatchFindAction / previousMatchFindAction.
+			if (message.wParam == VK_RETURN || message.wParam == VK_F3) {
+				m_impl->OutputFindNext(shift);
+				return true;
+			}
+		}
+	}
 	return m_impl->IsSharedPage(m_impl->activeContainerId)
 		&& m_impl->sharedPages->PreTranslatePage(m_impl->activeContainerId, message);
 }
@@ -1585,12 +2079,20 @@ void CBottomPanelTool::Close()
 	m_impl->problems = {};
 	m_impl->outputs = {};
 	m_impl->selectedOutputChannelId.reset();
+	m_impl->outputSelectorIds.clear();
+	m_impl->outputDisplayText.clear();
+	m_impl->outputFilterText.clear();
+	m_impl->outputViewCommand = {};
+	m_impl->outputScrollLock = false;
+	m_impl->outputFindVisible = false;
 	m_impl->panelActions = {};
 	m_impl->terminal->SetPanelHeaderHost(nullptr);
 	m_impl->terminal->Close();
 	m_impl->problemsScrollbar.Destroy();
 	if (m_impl->window) ::DestroyWindow(m_impl->window);
 	m_impl->window = nullptr;
+	if (m_impl->outputRichEditModule) ::FreeLibrary(m_impl->outputRichEditModule);
+	m_impl->outputRichEditModule = nullptr;
 	m_impl->backBuffer.Reset();
 	m_impl->DestroyBrushes();
 }
@@ -1645,6 +2147,18 @@ void CBottomPanelTool::SetOutputSnapshot(win32::OutputPanelSnapshot snapshot)
 	m_impl->Refresh();
 }
 
+bool CBottomPanelTool::ExecuteOutputViewCommand(std::string_view commandId) noexcept
+{
+	if (m_impl->closed || m_impl->outputText == nullptr) return false;
+	return m_impl->ExecuteOutputViewCommand(commandId);
+}
+
+void CBottomPanelTool::SetOutputSmartScroll(bool enabled)
+{
+	if (!m_impl || m_impl->closed) return;
+	m_impl->outputSmartScroll = enabled;
+}
+
 void CBottomPanelTool::SetProblemActivationCallback(ProblemActivationCallback callback)
 {
 	if (m_impl && !m_impl->closed) m_impl->problemActivation = std::move(callback);
@@ -1653,6 +2167,11 @@ void CBottomPanelTool::SetProblemActivationCallback(ProblemActivationCallback ca
 void CBottomPanelTool::SetOutputChannelSelectionCallback(OutputChannelSelectionCallback callback)
 {
 	if (m_impl && !m_impl->closed) m_impl->outputChannelSelection = std::move(callback);
+}
+
+void CBottomPanelTool::SetOutputViewCommandCallback(OutputViewCommandCallback callback)
+{
+	if (m_impl && !m_impl->closed) m_impl->outputViewCommand = std::move(callback);
 }
 
 void CBottomPanelTool::SetContainerSelectionCallback(ContainerSelectionCallback callback)
@@ -1695,8 +2214,17 @@ void CBottomPanelTool::RefreshStrings()
 	if (m_impl->problemsClearFilters) {
 		::SetWindowTextW(m_impl->problemsClearFilters, LS(STR_WORKBENCH_PANEL_PROBLEMS_CLEAR_FILTERS));
 	}
+	if (m_impl->outputFilterEdit) {
+		::SendMessageW(m_impl->outputFilterEdit, EM_SETCUEBANNER, TRUE,
+			reinterpret_cast<LPARAM>(LS(STR_WORKBENCH_PANEL_OUTPUT_FILTER_PLACEHOLDER)));
+	}
+	if (m_impl->outputFindEdit) {
+		::SendMessageW(m_impl->outputFindEdit, EM_SETCUEBANNER, TRUE,
+			reinterpret_cast<LPARAM>(LS(STR_WORKBENCH_PANEL_OUTPUT_FIND_PLACEHOLDER)));
+	}
 	m_impl->Refresh();
 	m_impl->UpdateProblemsTooltips();
+	m_impl->UpdateOutputTooltips();
 	if (m_impl->window) ::InvalidateRect(m_impl->window, nullptr, FALSE);
 }
 bool CBottomPanelTool::ApplyActiveContainer(const std::string_view containerId)
@@ -1874,9 +2402,65 @@ LRESULT CALLBACK CBottomPanelTool::WindowProc(HWND window, UINT message, WPARAM 
 		impl.outputSelector = ::CreateWindowExW(0, L"COMBOBOX", L"",
 			WS_CHILD | WS_TABSTOP | CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL,
 			0, 0, 0, 0, window, reinterpret_cast<HMENU>(kOutputSelector), instance, nullptr);
-		impl.outputText = ::CreateWindowExW(0, L"EDIT", L"",
-			WS_CHILD | WS_TABSTOP | WS_VSCROLL | WS_HSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | ES_AUTOHSCROLL,
-			0, 0, 0, 0, window, reinterpret_cast<HMENU>(kOutputText), instance, nullptr);
+		// VS Code's Output view is a read-only editor: word-wrapped, no line
+		// numbers, find-capable. Plain-text Rich Edit supplies that surface
+		// (Msftedit.dll ships with Windows); the stock EDIT fallback below
+		// keeps text and copy working if the component ever fails to load.
+		impl.outputRichEditModule = ::LoadLibraryExW(L"Msftedit.dll", nullptr,
+			LOAD_LIBRARY_SEARCH_SYSTEM32);
+		if (impl.outputRichEditModule != nullptr) {
+			impl.outputText = ::CreateWindowExW(0, MSFTEDIT_CLASS, L"",
+				WS_CHILD | WS_TABSTOP | WS_VSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL,
+				0, 0, 0, 0, window, reinterpret_cast<HMENU>(kOutputText), instance, nullptr);
+		}
+		if (impl.outputText != nullptr && impl.outputRichEditModule != nullptr) {
+			::SendMessageW(impl.outputText, EM_SETTEXTMODE, TM_PLAINTEXT | TM_SINGLELEVELUNDO, 0);
+			::SendMessageW(impl.outputText, EM_SETEVENTMASK, 0, ENM_SELCHANGE);
+			::SendMessageW(impl.outputText, EM_SETTARGETDEVICE, 0, 1);
+		} else {
+			::FreeLibrary(impl.outputRichEditModule);
+			impl.outputRichEditModule = nullptr;
+			impl.outputText = ::CreateWindowExW(0, L"EDIT", L"",
+				WS_CHILD | WS_TABSTOP | WS_VSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL,
+				0, 0, 0, 0, window, reinterpret_cast<HMENU>(kOutputText), instance, nullptr);
+		}
+		impl.outputFilterEdit = ::CreateWindowExW(0, L"EDIT", L"",
+			WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL | ES_LEFT,
+			0, 0, 0, 0, window, reinterpret_cast<HMENU>(kOutputFilterEdit), instance, nullptr);
+		if (impl.outputFilterEdit) {
+			::SendMessageW(impl.outputFilterEdit, EM_SETCUEBANNER, TRUE,
+				reinterpret_cast<LPARAM>(LS(STR_WORKBENCH_PANEL_OUTPUT_FILTER_PLACEHOLDER)));
+		}
+		impl.outputClearButton = ::CreateWindowExW(0, L"BUTTON", L"", actionStyle,
+			0, 0, 0, 0, window, reinterpret_cast<HMENU>(kOutputClearButton), instance, nullptr);
+		impl.outputScrollLockButton = ::CreateWindowExW(0, L"BUTTON", L"", actionStyle,
+			0, 0, 0, 0, window, reinterpret_cast<HMENU>(kOutputScrollLockButton), instance, nullptr);
+		impl.outputMoreActionsButton = ::CreateWindowExW(0, L"BUTTON", L"", actionStyle,
+			0, 0, 0, 0, window, reinterpret_cast<HMENU>(kOutputMoreActionsButton), instance, nullptr);
+		impl.outputFindEdit = ::CreateWindowExW(0, L"EDIT", L"",
+			WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL | ES_LEFT,
+			0, 0, 0, 0, window, reinterpret_cast<HMENU>(kOutputFindEdit), instance, nullptr);
+		if (impl.outputFindEdit) {
+			::SendMessageW(impl.outputFindEdit, EM_SETCUEBANNER, TRUE,
+				reinterpret_cast<LPARAM>(LS(STR_WORKBENCH_PANEL_OUTPUT_FIND_PLACEHOLDER)));
+		}
+		impl.outputFindCount = ::CreateWindowExW(0, L"STATIC", L"",
+			WS_CHILD | SS_LEFT | SS_CENTERIMAGE,
+			0, 0, 0, 0, window, reinterpret_cast<HMENU>(kOutputFindCount), instance, nullptr);
+		if (impl.problemsTooltip) {
+			for (const HWND control : { impl.outputClearButton, impl.outputScrollLockButton,
+				impl.outputMoreActionsButton }) {
+				if (control == nullptr) continue;
+				TOOLINFOW tool{};
+				tool.cbSize = sizeof(tool);
+				tool.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
+				tool.hwnd = window;
+				tool.uId = reinterpret_cast<UINT_PTR>(control);
+				tool.lpszText = LPSTR_TEXTCALLBACKW;
+				::SendMessageW(impl.problemsTooltip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&tool));
+			}
+			impl.UpdateOutputTooltips();
+		}
 		impl.ApplyControlPalette();
 		(void)impl.ApplyActiveContainer(containerIds::Terminal);
 		return 0;
@@ -1918,12 +2502,41 @@ LRESULT CALLBACK CBottomPanelTool::WindowProc(HWND window, UINT message, WPARAM 
 		case kOutputSelector:
 			if (HIWORD(wParam) == CBN_SELCHANGE) {
 				const auto selected = static_cast<int>(::SendMessageW(impl.outputSelector, CB_GETCURSEL, 0, 0));
-				if (selected >= 0 && static_cast<std::size_t>(selected) < impl.outputs.channels.size()) {
-					(void)self->RequestOutputChannelSelection(impl.outputs.channels[static_cast<std::size_t>(selected)].channelId);
+				if (selected >= 0 && static_cast<std::size_t>(selected) < impl.outputSelectorIds.size()
+					&& !impl.outputSelectorIds[static_cast<std::size_t>(selected)].empty()) {
+					(void)self->RequestOutputChannelSelection(
+						impl.outputSelectorIds[static_cast<std::size_t>(selected)]);
 				} else {
+					// The separator row is not selectable; restore the committed selection.
 					impl.RefreshOutputs();
 				}
 			}
+			return 0;
+		case kOutputFilterEdit:
+			if (HIWORD(wParam) == EN_CHANGE && !impl.outputFilterUpdating) {
+				const int length = ::GetWindowTextLengthW(impl.outputFilterEdit);
+				std::wstring text(static_cast<std::size_t>(std::max(0, length)), L'\0');
+				if (!text.empty()) ::GetWindowTextW(impl.outputFilterEdit, text.data(),
+					static_cast<int>(text.size() + 1));
+				impl.outputFilterText = text;
+				impl.RenderOutputText();
+			}
+			return 0;
+		case kOutputFindEdit:
+			if (HIWORD(wParam) == EN_CHANGE) impl.OutputFindNext(false);
+			return 0;
+		case kOutputClearButton:
+			if (HIWORD(wParam) == BN_CLICKED) {
+				(void)impl.RunOutputCommand("workbench.output.action.clearOutput");
+			}
+			return 0;
+		case kOutputScrollLockButton:
+			if (HIWORD(wParam) == BN_CLICKED) {
+				(void)impl.RunOutputCommand("workbench.output.action.toggleAutoScroll");
+			}
+			return 0;
+		case kOutputMoreActionsButton:
+			if (HIWORD(wParam) == BN_CLICKED) impl.ShowOutputActionsMenu();
 			return 0;
 		}
 		break;
@@ -2007,6 +2620,10 @@ LRESULT CALLBACK CBottomPanelTool::WindowProc(HWND window, UINT message, WPARAM 
 				impl.problemsScrollbar.Update();
 			}
 			break;
+		}
+		if (header && header->idFrom == kOutputText && header->code == EN_SELCHANGE) {
+			impl.UpdateOutputScrollLockFromCaret();
+			return 0;
 		}
 		break;
 	}

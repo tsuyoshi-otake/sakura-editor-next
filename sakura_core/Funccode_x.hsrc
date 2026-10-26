@@ -383,6 +383,7 @@ F_MARKER_NEXT_IN_FILES	= 31012,	//ファイル内の次の問題へ移動				F8
 F_MARKER_PREV_IN_FILES	= 31013,	//ファイル内の前の問題へ移動				Shift+F8
 F_MARKER_NEXT		= 31014,	//次の問題へ移動								Alt+F8
 F_MARKER_PREV		= 31015,	//前の問題へ移動								Shift+Alt+F8
+F_TOGGLE_OUTPUT		= 31016,	//出力パネルの表示切替						Ctrl+Shift+U
 F_CHGMOD_EOL_CRLF	= 31081,	//入力改行コード指定(CRLF)				なし
 F_CHGMOD_EOL_LF		= 31082,	//入力改行コード指定(LF)				なし
 F_CHGMOD_EOL_CR		= 31083,	//入力改行コード指定(CR)				なし

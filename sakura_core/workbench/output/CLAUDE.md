@@ -47,6 +47,21 @@ toggle, while a service `Show` mutation is a non-toggle reveal: its
 `ChannelShown` notification reveals the Output view without stealing focus
 when `preserveFocus` is set. The integrated native cohort passes 210/210.
 
+Issue #383 adds the upstream Output view action surface
+(`workbench.output.action.clearOutput`,
+`workbench.output.action.toggleAutoScroll`,
+`workbench.action.openActiveLogOutputFile`,
+`workbench.action.saveActiveLogOutputAs`,
+`workbench.action.showOutputChannels`, and the keybinding-only
+`workbench.actions.workbench.panel.output.clearFilterText`) plus the native
+channel selector, text filter, find, and smart-scroll chrome. Two recorded
+approximations: upstream groups the channel selector by extension/core/user
+origin, but this service has no separate user-channel metadata, so
+`GroupOutputViewChannels` treats `core.*` owner IDs as core and every other
+owner as extension-like; and `workbench.action.openActiveLogOutputFile`
+returns a typed unsupported terminal because channels are service-owned text,
+not file resources — there is no honest on-disk target to open.
+
 ## Rust Migration Boundary
 
 Issue #270's first Rust candidate is replay-only and test-owned. It receives

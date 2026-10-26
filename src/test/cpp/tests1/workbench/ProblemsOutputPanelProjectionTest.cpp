@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -348,4 +348,130 @@ TEST(ProblemsOutputPanelProjection, PreservesStoppedSnapshotsWithoutInventingPre
 	EXPECT_TRUE(projectedOutput.stopped);
 	EXPECT_FALSE(projectedOutput.activeChannelId.has_value());
 	EXPECT_TRUE(projectedOutput.channels.empty());
+}
+
+TEST(ProblemsOutputPanelProjection, ParsesOutputViewFilterTextLikeUpstreamParseText)
+{
+	using workbench::win32::ParseOutputViewFilterText;
+
+	const auto empty = ParseOutputViewFilterText(L"");
+	EXPECT_TRUE(empty.includePatterns.empty());
+	EXPECT_TRUE(empty.excludePatterns.empty());
+
+	// Upstream's splitGlobAware: commas split, pieces trim, `!` negates,
+	// surrounding double quotes strip, empties drop.
+	const auto parsed = ParseOutputViewFilterText(L" error , !noise ,, warn ");
+	EXPECT_EQ(2U, parsed.includePatterns.size());
+	EXPECT_EQ(L"error", parsed.includePatterns[0]);
+	EXPECT_EQ(L"warn", parsed.includePatterns[1]);
+	EXPECT_EQ(1U, parsed.excludePatterns.size());
+	EXPECT_EQ(L"noise", parsed.excludePatterns[0]);
+
+	// A comma inside double quotes is literal, and the quotes strip.
+	const auto quoted = ParseOutputViewFilterText(L"\"one,two\" , !\"x,y\"");
+	ASSERT_EQ(1U, quoted.includePatterns.size());
+	EXPECT_EQ(L"one,two", quoted.includePatterns[0]);
+	ASSERT_EQ(1U, quoted.excludePatterns.size());
+	EXPECT_EQ(L"x,y", quoted.excludePatterns[0]);
+
+	// `!` negation inside quotes stays an include pattern.
+	const auto bangQuoted = ParseOutputViewFilterText(L"\"!literal\"");
+	ASSERT_EQ(1U, bangQuoted.includePatterns.size());
+	EXPECT_EQ(L"!literal", bangQuoted.includePatterns[0]);
+	EXPECT_TRUE(bangQuoted.excludePatterns.empty());
+}
+
+TEST(ProblemsOutputPanelProjection, AppliesOutputViewFilterPerLineWithMatchRanges)
+{
+	using workbench::win32::ApplyOutputViewFilter;
+	using workbench::win32::OutputViewFilterOptions;
+
+	const auto unfiltered = ApplyOutputViewFilter(L"first\nsecond\n", {});
+	EXPECT_EQ(L"first\r\nsecond\r\n", unfiltered.text);
+	EXPECT_EQ(0U, unfiltered.hiddenLineCount);
+	EXPECT_TRUE(unfiltered.matchRanges.empty());
+
+	// Case-sensitive substring matching, like upstream's Matcher.
+	OutputViewFilterOptions includes{ .includePatterns = { L"ERR" } };
+	const auto included = ApplyOutputViewFilter(L"ERR one\nerr two\nno match", includes);
+	EXPECT_EQ(L"ERR one", included.text);
+	EXPECT_EQ(2U, included.hiddenLineCount);
+	ASSERT_EQ(1U, included.matchRanges.size());
+	EXPECT_EQ(0U, included.matchRanges[0].offset);
+	EXPECT_EQ(3U, included.matchRanges[0].length);
+
+	OutputViewFilterOptions excludes{ .excludePatterns = { L"debug" } };
+	const auto excluded = ApplyOutputViewFilter(L"debug line\nkept\n", excludes);
+	EXPECT_EQ(L"kept\r\n", excluded.text);
+	EXPECT_EQ(1U, excluded.hiddenLineCount);
+
+	// Both sets combine: a line survives when no exclude hits and at least one
+	// include hits.
+	OutputViewFilterOptions both{
+		.includePatterns = { L"error", L"warn" },
+		.excludePatterns = { L"deprecation" },
+	};
+	const auto combined = ApplyOutputViewFilter(
+		L"error: fail\nwarn: ok\nwarn: deprecation notice\ninfo", both);
+	EXPECT_EQ(L"error: fail\r\nwarn: ok", combined.text);
+	EXPECT_EQ(2U, combined.hiddenLineCount);
+	EXPECT_EQ(2U, combined.matchRanges.size());
+}
+
+TEST(ProblemsOutputPanelProjection, OrdersSelectorGroupsByOwnerLikeUpstreamMenuGroups)
+{
+	using workbench::win32::GroupOutputViewChannels;
+	using workbench::win32::OutputPanelChannel;
+	using workbench::output::EOutputChannelKind;
+
+	// Upstream's `workbench.output.menu.switchOutput` selector uses the same
+	// `0_ext_outputchannels`/`1_core_outputchannels` groups as the channel
+	// quick pick, never an Output-versus-Log kind split: a Log channel owned
+	// by an extension still lands in the extension group.
+	std::vector<OutputPanelChannel> channels{
+		{ .channelId = "core-b", .label = L"B Core", .kind = EOutputChannelKind::Output,
+			.ownerId = "core.tasks" },
+		{ .channelId = "ext-log", .label = L"Git", .kind = EOutputChannelKind::Log,
+			.ownerId = "workbench.scm.git" },
+		{ .channelId = "core-a", .label = L"A Core", .kind = EOutputChannelKind::Log,
+			.ownerId = "core.main" },
+	};
+	const auto groups = GroupOutputViewChannels(channels);
+	ASSERT_EQ(1U, groups.extensionChannels.size());
+	EXPECT_EQ("ext-log", channels[groups.extensionChannels[0]].channelId);
+	ASSERT_EQ(2U, groups.coreChannels.size());
+	EXPECT_EQ("core-a", channels[groups.coreChannels[0]].channelId);
+	EXPECT_EQ("core-b", channels[groups.coreChannels[1]].channelId);
+	EXPECT_TRUE(groups.HasSeparator());
+}
+
+TEST(ProblemsOutputPanelProjection, GroupsExtensionAndCoreChannelsByOwnerId)
+{
+	using workbench::win32::GroupOutputViewChannels;
+	using workbench::win32::OutputPanelChannel;
+
+	// Upstream groups by the producer owner, never the label: `core.*` owners
+	// are the workbench's own channels; everything else is an extension channel.
+	std::vector<OutputPanelChannel> channels{
+		{ .channelId = "core-b", .label = L"Tasks", .ownerId = "core.tasks" },
+		{ .channelId = "ext-a", .label = L"Alpha", .ownerId = "publisher.ext" },
+		{ .channelId = "core-a", .label = L"Git", .ownerId = "core.git" },
+		{ .channelId = "ext-b", .label = L"Beta", .ownerId = "other.ext" },
+	};
+	const auto groups = GroupOutputViewChannels(channels);
+	ASSERT_EQ(2U, groups.extensionChannels.size());
+	EXPECT_EQ("ext-a", channels[groups.extensionChannels[0]].channelId);
+	EXPECT_EQ("ext-b", channels[groups.extensionChannels[1]].channelId);
+	ASSERT_EQ(2U, groups.coreChannels.size());
+	EXPECT_EQ("core-a", channels[groups.coreChannels[0]].channelId);
+	EXPECT_EQ("core-b", channels[groups.coreChannels[1]].channelId);
+	EXPECT_TRUE(groups.HasSeparator());
+
+	std::vector<OutputPanelChannel> coreOnly{
+		{ .channelId = "core-a", .label = L"Git", .ownerId = "core.git" },
+	};
+	const auto single = GroupOutputViewChannels(coreOnly);
+	EXPECT_TRUE(single.extensionChannels.empty());
+	EXPECT_EQ(1U, single.coreChannels.size());
+	EXPECT_FALSE(single.HasSeparator());
 }
